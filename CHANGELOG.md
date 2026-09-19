@@ -1402,6 +1402,28 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Gated by `tests/gates/toolchain/io_write_all_never_short.sh`, 6 mutations each RED. No compiler
   change; `build/cycc` unchanged.
 
+- **`cyriusly use <v> --global` destroyed `~/.cyrius/bin` before it had a replacement, checked
+  nothing, and reported a switch it had not made** (bite 17b). The sequence was
+  `sys_unlink(bin_link); sys_unlink(lib_link); sys_symlink(ver_bin, bin_link);
+  sys_symlink(ver_lib, lib_link);` followed unconditionally by `Now using Cyrius X`, with
+  `~/.cyrius/current` written *first*. Three failures in one: **(a)** between the unlink and the
+  symlink `~/.cyrius/bin` does not exist, so anything that fails there — ENOSPC, a concurrent
+  `cyriusly use`, a kill — leaves the user with no toolchain at all, from the command whose only
+  job is to keep one; **(b)** a failed symlink was reported as success (exit 0); **(c)** the two
+  links were switched independently, so one succeeding and the other failing left new binaries
+  over an old stdlib, with `current` naming the new version either way. Measured on 6.6.5: with
+  `bin` an ordinary directory it printed `Now using Cyrius 9.9.9`, exited 0 and left `bin`
+  untouched; with `bin` a symlink and `lib` a directory it re-pointed `bin` to 9.9.9, left `lib`
+  on 1.0.0 and wrote `current` = 9.9.9. **Fix — `rename()`, not a check around
+  unlink+symlink**, because a check comes *after* the damage: `symlink()` cannot replace an
+  existing entry but `rename()` can, in one step, so the link is never absent and a failure
+  leaves it exactly as it was. Both links now go through `_relink_atomic` (symlink to a unique
+  sibling, rename over the link); a failed second link rolls the first one **back** to the target
+  it named before; `current` is written **last**, since it is what names the version the links
+  serve. A `bin` that is a real directory now fails loudly (`errno 21`) instead of silently doing
+  nothing and claiming success. Gated by
+  `tests/gates/toolchain/cyriusly_use_switch_integrity.sh`, 6 mutations each RED.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**
@@ -1436,6 +1458,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   without. 25 checks on PE, 15 on every other host; both path components verified against
   something other than the module table, and the GetModuleFileNameW truncation contract
   (`cch` back, not a length) pinned on real hardware. 25/25 on cass.
+
+- `tests/gates/toolchain/cyriusly_use_switch_integrity.sh` — 4 axes over the `--global` toolchain
+  switch: `bin` a directory (fail loudly, change nothing), the half-switch (`bin` rolled back so
+  the pair never disagrees), anti-vacuous normal-switch and fresh-install runs, and a STATIC axis
+  self-tested on the 6.6.5 body for the never-absent window, which is a window rather than an
+  outcome and so has no honest deterministic dynamic test.
 
 - `tests/gates/toolchain/io_write_all_never_short.sh` — 4 axes over the `lib/io.cyr` whole-buffer
   write contract: anti-vacuous unconstrained (the size read back with `wc -c`, a different mechanism

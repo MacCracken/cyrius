@@ -333,6 +333,56 @@ fn _print_resolved_version(): i64 {
     return 0;
 }
 
+# ── v6.6.6: an ATOMIC `~/.cyrius/{bin,lib}` switch. CHANGELOG [6.6.6]
+#
+# ⛔ WHAT WAS WRONG: `sys_unlink(bin_link); sys_unlink(lib_link); sys_symlink(...);
+# sys_symlink(...)` with not one return value checked, then "Now using". Three failures in one
+# sequence: (a) between the unlink and the symlink ~/.cyrius/bin does not EXIST, so anything
+# that fails there (ENOSPC, a concurrent `cyriusly use`, a kill) leaves the user with no
+# toolchain at all; (b) a failed symlink was reported as SUCCESS; (c) the two links are switched
+# independently, so one succeeding and the other failing leaves new binaries over an old stdlib.
+# Measured: with `bin` an ordinary directory (an older install) `use 9.9.9 --global` printed "Now
+# using Cyrius 9.9.9" and exited 0 while `bin` still held the old files.
+#
+# ⭐ THE FIX IS rename(), NOT A CHECK ROUND unlink+symlink. A checked unlink+symlink still has
+# window (a), because the check comes after the damage. `symlink()` cannot replace an existing
+# entry, but `rename()` can and does so in ONE step, so the link is never absent and a failure
+# leaves it EXACTLY as it was — including when it is a directory, where the rename fails EISDIR
+# instead of the old sequence silently doing nothing and claiming success.
+
+# Point `link_path` at `target` atomically. Returns 0, or a negative errno.
+fn _relink_atomic(link_path, target): i64 {
+    var tmp = _io_tmp_name(link_path);     # "<link>.cyrtmp.<pid>.<ctr>" — a unique sibling
+    sys_unlink(tmp);                       # a leftover from a killed run
+    var r = sys_symlink(target, tmp);
+    if (r < 0) { return r; }
+    var rr = file_rename(tmp, link_path);
+    if (rr < 0) { sys_unlink(tmp); return rr; }
+    return 0;
+}
+
+# The target `path` currently names, NUL-terminated, or 0 when it is not a symlink. Read
+# BEFORE the switch so a half-applied switch can be rolled back to what the user had.
+fn _link_target_dup(path): i64 {
+    var b = alloc(4097);
+    var n = xreadlink(path, b, 4096);
+    if (n <= 0) { return 0; }
+    store8(b + n, 0);
+    return b;
+}
+
+# Report a failed switch on stderr: what could not be done, and the errno.
+fn _use_switch_err(what, path, err): i64 {
+    syscall(1, 2, "error: could not ", 17);
+    syscall(1, 2, what, strlen(what));
+    syscall(1, 2, " ", 1);
+    syscall(1, 2, path, strlen(path));
+    syscall(1, 2, " (errno ", 8);
+    fmt_int_fd(2, 0 - err);
+    syscall(1, 2, ") — nothing was changed\n", 26);
+    return 1;
+}
+
 # v5.11.26: `cyriusly use [<ver> [--global]]` — switch the active
 # toolchain. Pre-v5.11.26 always wrote `~/.cyrius/current` (global);
 # now defaults to writing `cyrius.cyml`'s `[package].cyrius` field
@@ -378,25 +428,17 @@ fn _cmd_use_v2(ver_cstr, is_global): i64 {
         return 0;
     }
 
-    # --global: legacy behavior. Write ~/.cyrius/current + recreate
-    # ~/.cyrius/{bin,lib} symlinks to versions/<ver>/{bin,lib}.
+    # --global: legacy behavior. Re-point ~/.cyrius/{bin,lib} at versions/<ver>/{bin,lib},
+    # then write ~/.cyrius/current. v6.6.6: every step is atomic AND checked, and the ORDER is
+    # links-then-`current` — `current` is what names the version the links serve, so writing it
+    # first (as this did) published a version the links might never reach. CHANGELOG [6.6.6]
     var current_path = _path_join(home, "current");
     var content = alloc(vlen + 2);
     memcpy(content, ver_cstr, vlen);
     store8(content + vlen, 10);
     store8(content + vlen + 1, 0);
-    # v6.6.6: crash-safe and checked (was an unchecked file_write_all) — a failed write must not
-    # go on to re-point bin/ and lib/ and report success. CHANGELOG [6.6.6]
-    if (file_write_atomic(current_path, content, vlen + 1) != 0) {
-        syscall(1, 2, "error: failed to write ", 23);
-        syscall(1, 2, current_path, strlen(current_path));
-        syscall(1, 2, " (left as it was)\n", 18);
-        return 1;
-    }
     var bin_link = _path_join(home, "bin");
     var lib_link = _path_join(home, "lib");
-    sys_unlink(bin_link);
-    sys_unlink(lib_link);
     var ver_bin = alloc(hlen + 11 + vlen + 5);
     memcpy(ver_bin, ver_dir, hlen + 10 + vlen);
     memcpy(ver_bin + hlen + 10 + vlen, "/bin", 4);
@@ -405,8 +447,22 @@ fn _cmd_use_v2(ver_cstr, is_global): i64 {
     memcpy(ver_lib, ver_dir, hlen + 10 + vlen);
     memcpy(ver_lib + hlen + 10 + vlen, "/lib", 4);
     store8(ver_lib + hlen + 10 + vlen + 4, 0);
-    sys_symlink(ver_bin, bin_link);
-    sys_symlink(ver_lib, lib_link);
+    # What the user has NOW, so a switch that fails half way is rolled back to it.
+    var old_bin = _link_target_dup(bin_link);
+    var old_lib = _link_target_dup(lib_link);
+    var rb = _relink_atomic(bin_link, ver_bin);
+    if (rb < 0) { return _use_switch_err("re-point", bin_link, rb); }
+    var rl = _relink_atomic(lib_link, ver_lib);
+    if (rl < 0) {
+        if (old_bin != 0) { _relink_atomic(bin_link, old_bin); }
+        return _use_switch_err("re-point", lib_link, rl);
+    }
+    var rc_cur = file_write_atomic(current_path, content, vlen + 1);
+    if (rc_cur != 0) {
+        if (old_bin != 0) { _relink_atomic(bin_link, old_bin); }
+        if (old_lib != 0) { _relink_atomic(lib_link, old_lib); }
+        return _use_switch_err("write", current_path, rc_cur);
+    }
     syscall(1, 1, "Now using Cyrius ", 17);
     syscall(1, 1, ver_cstr, vlen);
     syscall(1, 1, " (--global; ~/.cyrius/current + symlinks updated)\n", 50);
