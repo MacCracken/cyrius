@@ -37,6 +37,12 @@
 #      each exits non-zero with the file byte-for-byte and no temp beside it, and unconstrained
 #      writes the expected bytes (the formatted text from stdout mode; 80 lock lines for 80 lib
 #      files; 120 bundled fns). Tools are built from the tree into $D, never the live store.
+#   8. (6.6.6 bite 13 review) a replace keeps what the USER set: `cyrfmt --write` on a 0640
+#      source and through a symlink to a 0600 one, and `deps --lock` through a symlinked 0600
+#      cyrius.lock — each mode unchanged (under umask 022), each link still a link, and the file
+#      it names holds the new bytes. lib/io.cyr file_write_atomic keeps the mode; file_replace_
+#      atomic / cbt's _aw_open_replace also write through the link. The vendored lib/<dep>.cyr
+#      copy deliberately does NOT follow a link (the v6.5.37 corruption).
 #
 # MUTATION LEDGER (measured 6.6.6, each in a scratch copy of the tree):
 #   a. _ucd_write back to `file_write_all`, result unchecked   -> axis 2 FAIL (rc 0, 2048-byte
@@ -51,6 +57,13 @@
 #                                                                 FAIL (bundle 4132 -> 1024 B)
 #   f. ark / cyrius-init / cyrius_api_surface / cyriusly /      -> axis 4 FAIL, 8 keys, one per
 #      cyrsign / cyrsign-efi as of 6.6.5                           reverted writer
+#   g. cyrfmt + lib/io.cyr + cbt core/deps as first committed  -> axis 8 FAIL (mode 0640 -> 0644;
+#      (13b: file_write_atomic, plain _aw_open)                    link replaced, target unformatted;
+#                                                                 lock link replaced, 80 of 81 lines)
+#   h. _io_keep_mode dropped from file_write_atomic             -> axis 8 FAIL (0640/0600 -> 0644)
+#   i. cyrius.lock back on plain _aw_open                       -> axis 8 FAIL (lock link replaced)
+#   j. _io_keep_mode dropped from cbt's _aw_open                -> axis 8 FAIL (lock 0600 -> 0644)
+#   k. cyrfmt back on file_write_atomic                         -> axis 8 FAIL (link replaced)
 # Real tree -> PASS.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -264,5 +277,37 @@ grep -q 'write failed' "$D/a7b.out" || { fail "axis 7: distlib failed without sa
 [ "$(ls -A "$P7/dist")" = "dlp.cyr" ] || { fail "axis 7: a temp was left beside the bundle: $(ls -A "$P7/dist" | tr '\n' ' ')"; a7=1; }
 [ "$a7" = 0 ] && echo "  ok: axis 7: cyrius distlib under a size limit fails, says so, and leaves the bundle byte-for-byte; unconstrained it bundles all 120 fns"
 
+# ── axis 8: a replace keeps what the USER set on the file (6.6.6 bite 13 review) ──
+# The rename that makes these writes crash-safe puts a NEW inode at the path. As first
+# committed a 0600 source came back 0644 and a symlinked source was replaced by a regular copy
+# while the file it named stayed unformatted — the O_TRUNC writes they replaced kept both.
+# Modes are compared with `stat`'s own rendering of the fixture (a different route from the
+# tool's STAT_MODE read); a link must still be a link, and its target must hold the new bytes.
+_mode() { ls -ln "$1" | cut -c1-10; }
+a8=0
+P8="$D/p8"; mkdir -p "$P8/real"
+cp "$D/x5.orig" "$P8/m640.cyr" && chmod 640 "$P8/m640.cyr"; want640=$(_mode "$P8/m640.cyr")
+cp "$D/x5.orig" "$P8/real/src.cyr" && chmod 600 "$P8/real/src.cyr"; want600=$(_mode "$P8/real/src.cyr")
+ln -s real/src.cyr "$P8/link.cyr" || { echo "FAIL: axis 8: cannot make the symlink fixture"; exit 1; }
+rc=0; ( umask 022 && exec "$D/bin/cyrfmt" --write "$P8/m640.cyr" ) > /dev/null 2>&1 || rc=$?
+{ [ "$rc" -eq 0 ] && cmp -s "$P8/m640.cyr" "$D/x5.want"; } || { fail "axis 8: cyrfmt --write did not format the 0640 fixture (rc=$rc)"; a8=1; }
+[ "$(_mode "$P8/m640.cyr")" = "$want640" ] || { fail "axis 8: cyrfmt --write reset the source's mode: $(_mode "$P8/m640.cyr"), was $want640"; a8=1; }
+rc=0; ( cd "$P8" && umask 022 && exec "$D/bin/cyrfmt" --write link.cyr ) > /dev/null 2>&1 || rc=$?
+[ -L "$P8/link.cyr" ] || { fail "axis 8: cyrfmt --write REPLACED the symlink with a regular file (rc=$rc)"; a8=1; }
+cmp -s "$P8/real/src.cyr" "$D/x5.want" || { fail "axis 8: cyrfmt --write via a symlink left the file it names unformatted (rc=$rc)"; a8=1; }
+[ "$(_mode "$P8/real/src.cyr")" = "$want600" ] || { fail "axis 8: the symlinked source's mode was reset: $(_mode "$P8/real/src.cyr"), was $want600"; a8=1; }
+# deps --lock over a symlinked, 0600 cyrius.lock (the lock lives in the user's project)
+mkdir -p "$P6/shared"
+mv "$P6/cyrius.lock" "$P6/shared/real.lock" && chmod 600 "$P6/shared/real.lock" && ln -s shared/real.lock "$P6/cyrius.lock" \
+  || { echo "FAIL: axis 8: cannot make the lock fixture"; exit 1; }
+wantl=$(_mode "$P6/shared/real.lock")
+echo "fn f81(): i64 { return 81; }" > "$P6/lib/mod_81.cyr"
+rc=0; ( cd "$P6" && umask 022 && HOME="$D/home" CYRIUS_HOME="$D/home/.cyrius" exec "$D/bin/cyrius" deps --lock ) > "$D/a8.out" 2>&1 || rc=$?
+n8=$(grep -c '  lib/mod_[0-9]*\.cyr$' "$P6/shared/real.lock" 2>/dev/null || echo 0)
+[ -L "$P6/cyrius.lock" ] || { fail "axis 8: deps --lock REPLACED the symlinked cyrius.lock (rc=$rc)"; a8=1; }
+[ "$n8" -eq 81 ] || { fail "axis 8: deps --lock via a symlink did not relock the file it names (rc=$rc, $n8 of 81 lines)"; a8=1; }
+[ "$(_mode "$P6/shared/real.lock")" = "$wantl" ] || { fail "axis 8: deps --lock reset the lock's mode: $(_mode "$P6/shared/real.lock"), was $wantl"; a8=1; }
+[ "$a8" = 0 ] && echo "  ok: axis 8: cyrfmt --write and deps --lock keep the file's mode (0640/0600 under umask 022) and write THROUGH a symlink (the link stays, the file it names gets the bytes)"
+
 if [ "$FAIL" != 0 ]; then echo "FAIL: tool_writes_never_truncate"; exit 1; fi
-echo "PASS tool_writes_never_truncate (a short write fails loudly and leaves the replaced file whole: gen_unicode_data, cyrfmt --write, deps --lock, distlib; no truncating write of a user or tree file in programs/ or cbt/)"
+echo "PASS tool_writes_never_truncate (a short write fails loudly and leaves the replaced file whole: gen_unicode_data, cyrfmt --write, deps --lock, distlib; no truncating write of a user or tree file in programs/ or cbt/; a replace keeps the file's mode and writes through a symlink)"

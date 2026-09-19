@@ -2760,7 +2760,7 @@ fn cmd_update(): i64 {
         str_builder_add_cstr(tc_sb, "\n");
         var tc_str = str_data(str_builder_build(tc_sb));
         # v6.6.6: crash-safe and checked — was file_write_all with the result dropped.
-        if (file_write_atomic(".cyrius-toolchain", tc_str, strlen(tc_str)) != 0) {
+        if (file_replace_atomic(".cyrius-toolchain", tc_str, strlen(tc_str)) != 0) {
             _err("write failed: .cyrius-toolchain (left as it was)");
             return 1;
         }
@@ -2788,7 +2788,7 @@ fn cmd_update(): i64 {
             var cyml_str = str_data(str_builder_build(cyml_sb));
             # v6.6.6: the toml is deleted ONLY once the cyml is fully on disk — the unchecked
             # file_write_all here could leave a truncated cyml AND delete the only good copy.
-            if (file_write_atomic("cyrius.cyml", cyml_str, strlen(cyml_str)) != 0) {
+            if (file_replace_atomic("cyrius.cyml", cyml_str, strlen(cyml_str)) != 0) {
                 _err("write failed: cyrius.cyml (cyrius.toml kept)");
                 return 1;
             }
@@ -4074,7 +4074,7 @@ fn cmd_deps_lock(): i64 {
     # (recursively). See _deps_lock_dir for the v5.11.8-era root cause.
     # Crash-safe: the lock is built in a sibling temp and renamed over cyrius.lock only once
     # every line landed — a short write used to leave a truncated lock and exit 0 (CHANGELOG [6.6.6]).
-    var lock_h = _aw_open("cyrius.lock");
+    var lock_h = _aw_open_replace("cyrius.lock");
     if (lock_h == 0) { _err("cannot create cyrius.lock"); return 1; }
     # CVE-21 (v6.2.30): write the resolved git-dep commit pins FIRST (one
     # "commit\t<sha>\t<name>\t<git>\t<tag>" line each), BEFORE the per-file

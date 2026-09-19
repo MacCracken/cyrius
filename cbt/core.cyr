@@ -208,6 +208,7 @@ fn _aw_open(path): i64 {
     var tmp = _io_tmp_name(path);
     var fd = file_open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
     if (fd < 0) { return 0; }
+    _io_keep_mode(fd, path);   # an existing file keeps its permission bits (lib/io.cyr)
     var h = alloc(32);
     store64(h, fd);
     store64(h + 8, tmp);
@@ -225,6 +226,17 @@ fn _aw_write(h, buf, len): i64 {
         off = off + w;
     }
     return 0;
+}
+
+# `_aw_open` for a file the USER owns (cyrius.lock): a symlink there is written THROUGH — the
+# file it names is replaced and the link stays — as the open(O_TRUNC) this replaced did. The
+# vendored lib/<dep>.cyr copy must NOT use this: a symlinked vendored file is the v6.5.37
+# corruption (a write through it lands in the shared stdlib), so it keeps plain `_aw_open`,
+# which replaces the link. CHANGELOG [6.6.6]
+fn _aw_open_replace(path): i64 {
+    var real = _io_replace_target(path);
+    if (real < 0) { return 0; }
+    return _aw_open(real);
 }
 
 fn _aw_str(h, s): i64 { return _aw_write(h, s, strlen(s)); }

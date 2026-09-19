@@ -855,7 +855,26 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   lock that could not be written. `cyrius-init` counts a failed stdlib copy toward its existing
   "scaffold INCOMPLETE" report. Out of scope and unchanged: the compiler's own output write (the
   6.6.6 short-output issue), cyrld's output (every write already checked, rc 1), and temp/child-capture
-  files. No compiler change.
+  files. ⚠ **As first committed, every one of these replaces reset the file's mode and replaced a
+  symlink** (found in review): the rename puts a NEW inode at the path, created 0644 & ~umask, so
+  `cyrfmt --write` on a 0600 source left it `-rw-r--r--`, and on `link.cyr -> real.cyr` replaced
+  the link with a formatted regular copy while `real.cyr` stayed unformatted — the `O_TRUNC`
+  writes they replaced kept both (as gofmt does). Fixed at the root: `lib/io.cyr`
+  `file_write_atomic` (and cbt's `_aw_open`) now give the temp the existing file's permission
+  bits (`_io_keep_mode`: stat + fchmod of the temp before the rename; rwx only; a no-op on Windows
+  and agnos), and a new `file_replace_atomic` also writes THROUGH a symlink — the chain is
+  followed hop by hop, a relative target resolved against the link's own directory, a loop is
+  `-ELOOP` and writes nothing — for the files a USER owns: `cyrfmt --write`'s source,
+  `cyriusly use`'s `cyrius.cyml`, `cyrius update`'s `.cyrius-toolchain` and migrated
+  `cyrius.cyml`, and `cyrius.lock` (cbt `_aw_open_replace`). Everything else keeps replacing a
+  link rather than writing through it, deliberately: the vendored `lib/<dep>.cyr` copy (writing
+  through a symlinked vendored file is the v6.5.37 store corruption), tracked tree files (the
+  unicode tables, the api-surface snapshot), generated outputs and tool-owned files. What a
+  rename still cannot keep, documented at the function: other hard links, ownership when root
+  replaces another user's file, xattrs/ACLs. Measured: 0600 and 0755 sources keep their modes;
+  relative, absolute and two-hop links all survive with the file they name formatted; `cyrius
+  deps --lock` through a symlinked 0600 lock relocks the target and keeps 0600; `cyriusly use`
+  through a symlinked 0600 manifest likewise. No compiler change.
 
 - **`folds_agnos_parity.sh` PASSED "0/12 folded stdlibs … (12 skipped)" when its temp dir could not be
   created.** `D=$(mktemp -d)` was unchecked, so with an unusable `TMPDIR` every probe path became
@@ -1074,7 +1093,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `cyrius distlib` (built from the tree into the temp dir) under a 2-block limit: non-zero, the file
   byte-for-byte, no temp beside it; unconstrained each writes the expected bytes. Mutation-proven per
   writer (each 6.6.5 file put back: the static axis names it, and the dynamic axis sees the
-  truncation). ~1 s.
+  truncation). Axis 8 (bite 13 review): `cyrfmt --write` on a 0640 source and through a symlink
+  to a 0600 one, and `deps --lock` through a symlinked 0600 `cyrius.lock` — the mode unchanged under
+  umask 022 (compared against `ls`'s rendering, not the tool's STAT_MODE read), the link still a
+  link, the file it names holding the new bytes; mutation-proven five ways.
+- **`lib/io.cyr` `file_replace_atomic(path, buf, len)`** — `file_write_atomic` for a file someone
+  OWNS: crash-safe, a short write is an error, the permission bits are kept, and a symlink at
+  `path` is written through (the link stays). `file_write_atomic` itself now keeps an existing
+  file's mode too; it still replaces a symlink rather than writing through it.
+  `tests/tcyr/crossos/atomic_replace_keeps_mode_and_link.tcyr` pins both on every host — the mode
+  comes back through `STAT_MODE`, whose offset differs on every peer (30 asserts; Windows, with no
+  POSIX mode or readlink route, asserts the plain replace). Mutation-proven: `_io_keep_mode` dropped
+  (3 mode asserts fail), link resolution dropped (8 fail).
 - **`gates_never_write_tree.sh` axis 5** — STATIC, over every gate, `scripts/check.sh`, the
   `scripts/*-gate.sh` check.sh runs (derived from check.sh) and `programs/checks/*.cyr`: every temp
   dir is the canonical checked mktemp, one per line (a hand-built `${TMPDIR:-/tmp}/…` is refused; a

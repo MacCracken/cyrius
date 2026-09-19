@@ -1,0 +1,161 @@
+# atomic_replace_keeps_mode_and_link.tcyr — v6.6.6: a crash-safe REPLACE keeps what the user
+# set on the file. 6.6.6 moved every tool that rewrites a user's or the tree's file (cyrfmt
+# --write, cyrius.lock, cyrius.cyml, …) from open(O_TRUNC) to temp + fsync + rename, and the
+# rename puts a NEW inode at the path: a 0600 source came back 0644 and a symlinked source was
+# replaced by a regular copy while the file it named stayed unformatted (found in review).
+#   * file_write_atomic keeps an existing file's permission bits (lib/io.cyr _io_keep_mode);
+#     a symlink AT the path is still replaced, not written through — the safe default.
+#   * file_replace_atomic also writes THROUGH a symlink (relative targets resolve against the
+#     link's directory, chains are followed, a loop is -ELOOP and writes nothing).
+# Cross-OS because the mode comes back through STAT_MODE, whose offset differs on every peer
+# (24 x86-Linux, 16 aarch64-Linux, 4 macOS-arm64, 8 macOS-x86) — the class of bug that only a
+# real host shows. Windows has no POSIX mode or readlink route: there it asserts the plain
+# replace (content) only. Every name is per-process (tests run concurrently).
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/assert.cyr"
+
+var _scratch_pid = 0;
+fn _scratch(name, suffix): i64 {   # "/tmp/<name>.<pid><suffix>", NUL-terminated
+    if (_scratch_pid == 0) { _scratch_pid = sys_getpid(); }
+    var nl = strlen(name);
+    var sl = strlen(suffix);
+    var p = alloc(nl + sl + 32);
+    memcpy(p, "/tmp/", 5);
+    memcpy(p + 5, name, nl);
+    var o = 5 + nl;
+    store8(p + o, 46);
+    o = o + 1;
+    var d[24];
+    var n = 0;
+    var v = _scratch_pid;
+    while (n == 0 || v > 0) {
+        var q = v / 10;
+        store8(&d + n, 48 + v - q * 10);
+        n = n + 1;
+        v = q;
+    }
+    while (n > 0) {
+        n = n - 1;
+        store8(p + o, load8(&d + n));
+        o = o + 1;
+    }
+    memcpy(p + o, suffix, sl);
+    store8(p + o + sl, 0);
+    return p;
+}
+
+fn _content_is(path, want): i64 {   # 1 iff `path` holds exactly the bytes of cstring `want`
+    var b = alloc(256);
+    var n = file_read_all(path, b, 255);
+    if (n != strlen(want)) { return 0; }
+    return memeq(b, want, n);
+}
+
+#ifndef CYRIUS_TARGET_WIN
+fn _perm(path): i64 {   # rwx bits via stat (follows links); -1 if absent
+    var st[144];
+    if (xstat(path, &st) != 0) { return 0 - 1; }
+    return load32(&st + STAT_MODE) & 0x1FF;
+}
+
+fn _is_link(path): i64 {
+    var st[144];
+    if (sys_lstat(path, &st) != 0) { return 0; }
+    if ((load32(&st + STAT_MODE) & 0xF000) == 0xA000) { return 1; }
+    return 0;
+}
+#endif
+
+fn main(): i64 {
+    alloc_init();
+
+    #ifdef CYRIUS_TARGET_WIN
+    test_group("file_replace_atomic replaces a plain file (Windows: no mode, no readlink route)");
+    var wp = _scratch("cyr_arepl_win", ".txt") + 5;   # cwd-relative, per-process
+    file_write_all(wp, "old", 3);
+    assert_eq(file_replace_atomic(wp, "newer", 5), 0, "file_replace_atomic returns 0");
+    assert_eq(_content_is(wp, "newer"), 1, "the new bytes are in place");
+    xunlink(wp);
+    #endif
+
+    #ifndef CYRIUS_TARGET_WIN
+    var dir = _scratch("cyr_arepl", "");
+    assert_eq(sys_mkdir(dir, 448), 0, "private scratch dir created");
+
+    test_group("file_write_atomic keeps an existing file's permission bits");
+    var p600 = _scratch("cyr_arepl", "/p600");
+    file_write_all(p600, "old", 3);
+    sys_chmod(p600, 0x180);                                   # 0600, whatever the umask
+    assert_eq(_perm(p600), 0x180, "fixture is 0600");
+    assert_eq(file_write_atomic(p600, "new600", 6), 0, "replace a 0600 file");
+    assert_eq(_perm(p600), 0x180, "still 0600 after the replace (was 0644 & ~umask)");
+    assert_eq(_content_is(p600, "new600"), 1, "new bytes in place");
+    var p755 = _scratch("cyr_arepl", "/p755");
+    file_write_all(p755, "old", 3);
+    sys_chmod(p755, 0x1ED);                                   # 0755
+    assert_eq(file_write_atomic(p755, "new755", 6), 0, "replace a 0755 file");
+    assert_eq(_perm(p755), 0x1ED, "still 0755 (an executable stays executable)");
+    var pnew = _scratch("cyr_arepl", "/fresh");
+    assert_eq(file_write_atomic(pnew, "fresh", 5), 0, "create a new file");
+    assert_eq(_perm(pnew) & 0x180, 0x180, "a new file is owner-rw (the default create mode)");
+
+    test_group("file_write_atomic REPLACES a symlink at the path (the safe default)");
+    var t1 = _scratch("cyr_arepl", "/t1");
+    var l1 = _scratch("cyr_arepl", "/l1");
+    file_write_all(t1, "target-kept", 11);
+    assert_eq(xsymlink(t1, l1), 0, "symlink fixture");
+    assert_eq(file_write_atomic(l1, "own", 3), 0, "write_atomic on the link path");
+    assert_eq(_is_link(l1), 0, "the link was replaced by a regular file");
+    assert_eq(_content_is(t1, "target-kept"), 1, "the file it named was NOT written");
+
+    test_group("file_replace_atomic writes THROUGH a symlink and keeps the target's mode");
+    var t2 = _scratch("cyr_arepl", "/t2");
+    var l2 = _scratch("cyr_arepl", "/l2");
+    file_write_all(t2, "old", 3);
+    sys_chmod(t2, 0x1A0);                                     # 0640
+    assert_eq(xsymlink(t2, l2), 0, "absolute-target symlink fixture");
+    assert_eq(file_replace_atomic(l2, "through-abs", 11), 0, "replace via the link");
+    assert_eq(_is_link(l2), 1, "the link is still a link");
+    assert_eq(_content_is(t2, "through-abs"), 1, "the file it names got the bytes");
+    assert_eq(_perm(t2), 0x1A0, "and kept 0640");
+
+    # a RELATIVE target resolves against the link's own directory, not the cwd
+    var sub = _scratch("cyr_arepl", "/sub");
+    assert_eq(sys_mkdir(sub, 448), 0, "subdir fixture");
+    var t3 = _scratch("cyr_arepl", "/sub/t3");
+    var l3 = _scratch("cyr_arepl", "/sub/l3");
+    file_write_all(t3, "old", 3);
+    assert_eq(xsymlink("t3", l3), 0, "relative-target symlink fixture (sub/l3 -> t3)");
+    assert_eq(file_replace_atomic(l3, "through-rel", 11), 0, "replace via the relative link");
+    assert_eq(_is_link(l3), 1, "the relative link is still a link");
+    assert_eq(_content_is(t3, "through-rel"), 1, "sub/t3 got the bytes (not ./t3 in the cwd)");
+
+    # a chain l4 -> l3 -> t3
+    var l4 = _scratch("cyr_arepl", "/l4");
+    assert_eq(xsymlink(l3, l4), 0, "chain fixture");
+    assert_eq(file_replace_atomic(l4, "chained", 7), 0, "replace via a two-hop chain");
+    assert_eq(_is_link(l4) + _is_link(l3), 2, "both links survive");
+    assert_eq(_content_is(t3, "chained"), 1, "the end of the chain got the bytes");
+
+    test_group("file_replace_atomic refuses a symlink loop and writes nothing");
+    var la = _scratch("cyr_arepl", "/la");
+    var lb = _scratch("cyr_arepl", "/lb");
+    xsymlink(lb, la);
+    xsymlink(la, lb);
+    assert_eq(file_replace_atomic(la, "x", 1), 0 - 40, "-ELOOP");
+    assert_eq(_is_link(la) + _is_link(lb), 2, "the loop is left as it was");
+
+    xunlink(la); xunlink(lb); xunlink(l4); xunlink(l3); xunlink(t3); xrmdir(sub);
+    xunlink(l2); xunlink(t2); xunlink(l1); xunlink(t1);
+    xunlink(pnew); xunlink(p755); xunlink(p600);
+    assert_eq(xrmdir(dir), 0, "scratch dir empty and removed (no temp left behind)");
+    #endif
+
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);
