@@ -4,9 +4,27 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [6.6.5] — 2026-09-19
 
-The 6.6.5 repair release — every open issue in docs/development/issues/, one bite each.
+The 6.6.5 repair release — every open issue in docs/development/issues/, one bite each. All nine issues
+open at 2026-09-17 are fixed and archived, and every one widened under investigation: the fn-local-slot
+filing became the aggregate-layout guess (silently wrong since 5.8.17), the lint-wrapper filing became ~60
+CLI spellings across every verb (several deleted or rewrote files), the deps filing became `CVE-43`, and the
+stack-alignment filing uncovered three wrong ENTRY bases (PE, UEFI, x86 Mach-O). The pre-existing defects the
+release's own reviews turned up are NOT in 6.6.5 — by the user's call they are the 6.6.6 queue
+(`docs/development/roadmap.md` *v6.6.6*): six filed issues plus six roadmap items.
+
+**Bench:** self_compile **771 ms** (6.6.4: 744 ms, **+3.6%**); cycc **1,294,040 B** (+42,096 over 6.6.4's
+1,251,944 — the call-site alignment padding, the visibility pass-1 machinery, the recorded aggregate layout
+and the syscall rows, each itemised in its bite below); `.text` **1,127,672**. Release gate GREEN end to end:
+self-host fixpoint · seed-derive (`seed → cybs → cycc`, 29,024-byte seed) · check.sh · cross-OS on **ecb** /
+**ach** / **cass** / **pi**, all `SELFHOST_OK` + `LIBTEST_OK` with **83** crossos tests on real hardware — and,
+new this release, the Windows CLI itself (`cyrius lint` / `cyrius run`) exercised on cass.
+
+⚠ **Upgrading:** re-run `cyrius deps` at the bump — the aarch64 syscall peer moved `SYS_UNLINKAT` 35 → 263,
+so an un-re-vendored peer's `sys_unlink` would run nanosleep. thoth, kybernet and attn11 must switch a
+per-arch syscall literal BEFORE pinning 6.6.5, and repos running `cyrlint --strict-deferrals` will see newly
+matched deferrals — each affected repo's roadmap carries a "Moving the cyrius pin to 6.6.5" section.
 
 ### Fixed
 

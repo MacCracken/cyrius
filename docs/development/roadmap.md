@@ -37,10 +37,10 @@ unscheduled 6.x backlog. Whole-cycle framing plus v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.6.4** (2026-09-14, bump commit; tag pending) — cycc **1,251,944 B** (`.text` **1,097,472**) ·
-`check.sh` **GREEN 246/246** · seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi ·
-**314** `.tcyr` (**74** in `crossos/`) · **103** `lib/*.cyr` · **164** shell gates under
-`tests/gates/<bucket>/` · self_compile **744 ms** · **2 open issues** · **3 open proposals**.
+**Current head: v6.6.5** (2026-09-19, bump commit; tag pending) — cycc **1,294,040 B** (`.text` **1,127,672**) ·
+seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi ·
+**323** `.tcyr` (**83** in `crossos/`) · **103** `lib/*.cyr` · **175** shell gates under
+`tests/gates/<bucket>/` · **6 open issues** (the 6.6.6 queue, below) · **4 open proposals**.
 
 > ⚠ **Every figure above was DERIVED on the day, not carried** (re-derived 2026-09-14 at the 6.6.4 bump;
 > before that 2026-09-12 at the 6.6.3 handoff — the line had been version-stamped `v6.6.3` while still quoting
@@ -62,23 +62,50 @@ and agnos, one from the sweep's close) in six bites — the last of which found 
 child on native aarch64 had been exiting 1 before `execve` for 59 releases (`cbt/build.cyr`'s raw x86
 `getppid`), and that the pi release-gate leg had never built or run the CLI. It does now.
 
-**The open queue was at two**, both FILED by 6.6.4's own bites and neither packable into them. **6.6.5
-bite 3 closed the first** — `issues/archived/2026-09-13-private-impl-method-forward-call-fail-open.md`; it
-was four unstamped definition kinds rather than one, and the same root also produced false refusals in
-ordinary include order, false arity errors and silent struct-param SIGSEGVs. It carried slot `.3` (per-item
-`private`) with it. That leaves `issues/2026-09-13-fn-local-global-slots-shadow-other-files.md`
-(a fn-local struct literal / oversized array is a GLOBAL slot in the flat namespace), still in the
-repair window — and if its fix needs a per-file split for globals it should reuse bite 3's `_fn_def_slot`
-identity rule. ⚠ Bite 3's own review put ONE new filing back on the queue rather than shrinking it to one:
-`issues/2026-09-17-simd-arg-with-six-or-more-int-args-miscompiles.md` — a value-form SIMD argument
-alongside six or more int-class arguments binds the later int args to the wrong slots, on every call path,
-identical on 6.6.4 and 6.6.5 (so pre-existing, and the bite did not move it). It is the one thing found in
-that review that could NOT be packed, and the issue names why: the fix changes the value-form SIMD calling
-convention past the integer register ceiling, which is a different convention on each of the four gate
-targets. It wants its own slot in this window or the next, not a review round.
-⚠ **The window's labels have drifted from the version numbers:** 6.6.3 went to the sweep's
-repair set and 6.6.4 to the post-handoff filings, so slot `.3` (per-item `private`) lands as 6.6.5 at the
-earliest, with the two filings above alongside it. The slots have not been re-numbered — that is the user's call.
+**v6.6.5** repaired all nine issues open at 2026-09-17, one bite each (see CHANGELOG [6.6.5]). Its reviews
+turned up further pre-existing defects; by the user's call (2026-09-19) those are **not** in 6.6.5 and form
+the 6.6.6 queue below, rather than growing a release that had already closed its brief.
+
+### v6.6.6 — the queue carried out of 6.6.5 (user, 2026-09-19)
+
+Filed issues (each has a repro and acceptance criteria):
+
+1. `issues/2026-09-17-simd-arg-with-six-or-more-int-args-miscompiles.md` — **High, silent**: a value-form
+   SIMD arg alongside ≥ 6 int-class args binds the later int args to the wrong slots, every call path.
+   Different convention per gate target — bisect caller vs callee first.
+2. `issues/2026-09-19-global-redeclaration-reads-zero.md` — **silent**: redeclaring a global makes an earlier
+   read return 0, and the "last definition wins" warning is false.
+3. `issues/2026-09-19-toplevel-block-closure-drops-rest-of-program.md` — **silent**.
+4. `issues/2026-09-19-preprocessor-executes-directives-inside-multiline-strings.md` — **silent**.
+5. `issues/2026-09-19-lexer-attribute-prefix-swallows-comments.md` — loud (compile error), misattributed.
+6. `issues/2026-09-18-cyrius-init-does-not-build-for-windows.md` — `init`/`port` absent on Windows.
+
+Roadmap items (found in 6.6.5, not issue files):
+
+- **`--version` in four forks**: `main_aarch64{,_macho,_native}.cyr` and `main_cx.cyr` do not handle it, so
+  `cycc --version` on an ARM install compiles EMPTY stdin and writes a binary to stdout. Acceptance: every
+  fork prints the version; a fork-parity axis.
+- **`build/cycc-native-aarch64` lockstep gate**: it sat at a 2026-07-02 build for five releases and nothing
+  noticed (regenerated in 6.6.5 bite 5). Acceptance: the release gate fails when the tracked binary is not
+  what the cross-built native compiler produces from the tree.
+- **Remaining `sys_fork` sites with no PE arm** in `cbt/` (`build --target=cx/js`, `capacity`, `soak`, `self`,
+  git deps) and the empty `cyrius-<pid>` temp dir every CLI run leaves behind (since v6.4.81).
+- **`tests/tcyr/crossos/sync_mutex_contended.tcyr:135`** asserts an absolute `per < 250` ns; cass measures it
+  for real now that 6.6.5 routed QueryPerformanceCounter. Restate it the way bite 6 restated the bench bar.
+- **No ESYSXLAT row for `statfs`** (found while writing the 6.6.5 sibling notes): yukti's aarch64
+  `SYS_STATFS = 43` (`src/syscalls.cyr:51`) runs `accept()`, and yukti cannot fix it alone because cyrius has
+  no row for x86 137 (or an alias in the ≥1000 band). Acceptance: `SYS_STATFS` named in both peers with a
+  routed row, kernel-agreement gate green, a crossos companion; then yukti switches to the name.
+- ⛔ **`tests/gates/platform/syscall_xlat_generated.sh` can TRUNCATE a tracked source file.** It saves
+  `src/common/syscall_xlat.cyr` to a mktemp dir, regenerates the file IN PLACE, then restores from the saved
+  copy — and when the saved copy could not be written (a full `/tmp`, measured 2026-09-19 during the 6.6.5
+  close) it restored an EMPTY file into the tree mid-`check.sh`. Acceptance: the gate regenerates into a
+  temp file and compares, never writes the tracked file; a gate-wide audit for the same save/regen/restore
+  shape; a mutation with an unwritable temp dir must leave the tree byte-identical.
+
+⚠ **Process for 6.6.6** (user, 2026-09-19 — 6.6.5 took two days): one implementer + one reviewer per bite;
+the cross-OS leg once at the release gate unless a bite touches a target-specific backend; anything a
+review finds that is not the bite's own defect is FILED for the next release, not packed into this one.
 
 ---
 
@@ -134,7 +161,12 @@ gone green would have forced a full multi-host re-run. That is a legitimate defe
 the guard. Note the gate must run somewhere that is **not** this repo's `build/cycc`, or the
 gate itself becomes the destructive act.
 
-### `.3` — per-item `private` parses and silently privatises the whole file
+### `.3` — per-item `private` parses and silently privatises the whole file — ✅ **SHIPPED v6.5.56**
+
+> ⚠ This slot was carried here as pending from the 6.6.1 rewrite until the 6.6.5 close, while the fix
+> (the per-item diagnostic, `tests/gates/frontend/private_per_item_rejected.sh`) had shipped at v6.5.56 —
+> BEFORE this file was written. 6.6.5 bite 3 then fixed the diagnostic printing twice and leaving the file
+> flipped private (a false cascade). The text below is the original slot, kept for the reasoning.
 
 Twelve-plus releases live, no diagnostic. `_TL_VIS` (`src/frontend/parse.cyr:222-234`) handles
 token 153 by calling `_PRIV_MARK(FM_FILEID(...))` — a **FILE-level** flip — with an in-source
