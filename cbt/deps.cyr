@@ -263,8 +263,9 @@ fn _dep_copy_file(src, dst): i64 {
         sys_write(STDERR_FD, "\n", 1);
         return 1;
     }
-    var dfd = sys_open(dst, O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
-    if (dfd < 0) {
+    # Crash-safe: the vendored copy is replaced only once every byte landed (CHANGELOG [6.6.6]).
+    var dh = _aw_open(dst);
+    if (dh == 0) {
         sys_close(sfd);
         sys_write(STDERR_FD, "  error: cannot write ", 22);
         sys_write(STDERR_FD, dst, strlen(dst));
@@ -275,14 +276,21 @@ fn _dep_copy_file(src, dst): i64 {
     var buf = alloc(32768);
     var total = 0;
     var go = 1;
+    var rerr = 0;
     while (go == 1) {
         var n = syscall(0, sfd, buf, 32768);
+        if (n < 0) { rerr = 1; }
         if (n <= 0) { go = 0; }
-        else { syscall(1, dfd, buf, n); total = total + n; }
+        else { _aw_write(dh, buf, n); total = total + n; }
     }
     sys_close(sfd);
-    sys_close(dfd);
-    if (total == 0) { return 1; }
+    if (total == 0 || rerr != 0) { _aw_abort(dh); return 1; }
+    if (_aw_commit(dh) != 0) {
+        sys_write(STDERR_FD, "  error: write failed: ", 23);
+        sys_write(STDERR_FD, dst, strlen(dst));
+        sys_write(STDERR_FD, "\n", 1);
+        return 1;
+    }
     return 0;
 }
 
@@ -2509,7 +2517,8 @@ fn cmd_deps(): i64 {
                 if (_dep_lock_pin_same == 0) { _stamp_legacy = 1; }
             }
             if (copied > 0 || _dep_relock == 1 || _stamp_legacy == 1) {
-                cmd_deps_lock();
+                # v6.6.6: a lock that could not be written is an error, not a dropped rc.
+                if (cmd_deps_lock() != 0) { errors = errors + 1; }
             }
         }
     }
@@ -2750,7 +2759,11 @@ fn cmd_update(): i64 {
         str_builder_add_cstr(tc_sb, cur);
         str_builder_add_cstr(tc_sb, "\n");
         var tc_str = str_data(str_builder_build(tc_sb));
-        file_write_all(".cyrius-toolchain", tc_str, strlen(tc_str));
+        # v6.6.6: crash-safe and checked — was file_write_all with the result dropped.
+        if (file_write_atomic(".cyrius-toolchain", tc_str, strlen(tc_str)) != 0) {
+            _err("write failed: .cyrius-toolchain (left as it was)");
+            return 1;
+        }
         sys_write(STDOUT_FD, "  .cyrius-toolchain -> ", 23);
         println(cur);
     }
@@ -2773,7 +2786,12 @@ fn cmd_update(): i64 {
             }
             str_builder_add_cstr(cyml_sb, "---\n");
             var cyml_str = str_data(str_builder_build(cyml_sb));
-            file_write_all("cyrius.cyml", cyml_str, strlen(cyml_str));
+            # v6.6.6: the toml is deleted ONLY once the cyml is fully on disk — the unchecked
+            # file_write_all here could leave a truncated cyml AND delete the only good copy.
+            if (file_write_atomic("cyrius.cyml", cyml_str, strlen(cyml_str)) != 0) {
+                _err("write failed: cyrius.cyml (cyrius.toml kept)");
+                return 1;
+            }
             sys_unlink("cyrius.toml");
             println("  migrated cyrius.toml -> cyrius.cyml");
         }
@@ -3987,7 +4005,7 @@ fn _dep_is_cyrius_source_repo(): i64 {
 }
 
 # v6.0.2 — recursively hash every `.cyr` under `dir`, writing
-# `<sha256hex>  <path>\n` per file to `lock_fd`. Returns the count.
+# `<sha256hex>  <path>\n` per file to the `_aw_open` handle `lock_h`. Returns the count.
 # Recurses into subdirs (e.g. `lib/unicode/`) so nested stdlib modules
 # resolved by `cyrius deps` (v5.8.49 subdir-nested paths) are locked
 # too — a flat scan silently omitted them. Replaces the pre-v6.0.2
@@ -3995,7 +4013,7 @@ fn _dep_is_cyrius_source_repo(): i64 {
 # resolution from symlink to file-copy (`_dep_copy_file`): every
 # resolved dep became a real file, `readlink` returned -EINVAL on all
 # of them, and the lock came out empty ecosystem-wide.
-fn _deps_lock_dir(dir, lock_fd): i64 {
+fn _deps_lock_dir(dir, lock_h): i64 {
     var count = 0;
     var entries = dir_list(str_from(dir));
     # v6.6.3 — SORT. `dir_list` returns readdir order, which is stable on one machine
@@ -4024,17 +4042,17 @@ fn _deps_lock_dir(dir, lock_fd): i64 {
         if (load8(name) == 46) { continue; }   # skip ".", "..", dotfiles
         var path = make_path(dir, name);
         if (is_dir(str_from(path)) == 1) {
-            count = count + _deps_lock_dir(path, lock_fd);
+            count = count + _deps_lock_dir(path, lock_h);
             continue;
         }
         if (nlen < 5) { continue; }
         if (memeq(name + nlen - 4, ".cyr", 4) == 0) { continue; }
         var hash = _sha256sum_file(path);
         if (hash != 0) {
-            sys_write(lock_fd, hash, 64);
-            sys_write(lock_fd, "  ", 2);
-            sys_write(lock_fd, path, strlen(path));
-            sys_write(lock_fd, "\n", 1);
+            _aw_write(lock_h, hash, 64);
+            _aw_write(lock_h, "  ", 2);
+            _aw_write(lock_h, path, strlen(path));
+            _aw_write(lock_h, "\n", 1);
             count = count + 1;
         }
     }
@@ -4049,13 +4067,15 @@ fn cmd_deps_lock(): i64 {
         println("cyrius.lock: skipped (source repo — lib/ is authored stdlib, not resolved deps)");
         return 0;
     }
-    # v6.6.4: read the inherited lock BEFORE the O_TRUNC below — the bare `--lock` verb has no
+    # v6.6.4: read the inherited lock BEFORE the lock is rewritten below — the bare `--lock` verb has no
     # resolve behind it and needs the old lock's `commit\t` pins (carried forward below).
     if (_dep_lock_buf == 0) { _dep_lock_load(); }
     # Generate cyrius.lock by hashing every resolved .cyr under lib/
     # (recursively). See _deps_lock_dir for the v5.11.8-era root cause.
-    var lock_fd = sys_open("cyrius.lock", O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
-    if (lock_fd < 0) { _err("cannot create cyrius.lock"); return 1; }
+    # Crash-safe: the lock is built in a sibling temp and renamed over cyrius.lock only once
+    # every line landed — a short write used to leave a truncated lock and exit 0 (CHANGELOG [6.6.6]).
+    var lock_h = _aw_open("cyrius.lock");
+    if (lock_h == 0) { _err("cannot create cyrius.lock"); return 1; }
     # CVE-21 (v6.2.30): write the resolved git-dep commit pins FIRST (one
     # "commit\t<sha>\t<name>\t<git>\t<tag>" line each), BEFORE the per-file
     # content hashes, so they always fall inside _lock_commit_lookup's 64 KB
@@ -4066,8 +4086,8 @@ fn cmd_deps_lock(): i64 {
         var _ci = 0;
         while (_ci < vec_len(_dep_commit_lines)) {
             var _line = vec_get(_dep_commit_lines, _ci);
-            sys_write(lock_fd, _line, strlen(_line));
-            sys_write(lock_fd, "\n", 1);
+            _aw_write(lock_h, _line, strlen(_line));
+            _aw_write(lock_h, "\n", 1);
             _ci = _ci + 1;
             _cc = _cc + 1;
         }
@@ -4085,15 +4105,15 @@ fn cmd_deps_lock(): i64 {
                 if (_le - _lp > 7 && memeq(_dep_lock_buf + _lp, "commit", 6) == 1 && load8(_dep_lock_buf + _lp + 6) == 9) {
                     var _lw = _le;
                     if (_lw > _lp && load8(_dep_lock_buf + _lw - 1) == 13) { _lw = _lw - 1; }
-                    sys_write(lock_fd, _dep_lock_buf + _lp, _lw - _lp);
-                    sys_write(lock_fd, "\n", 1);
+                    _aw_write(lock_h, _dep_lock_buf + _lp, _lw - _lp);
+                    _aw_write(lock_h, "\n", 1);
                     _cc = _cc + 1;
                 }
                 _lp = _le + 1;
             }
         }
     }
-    var count = _deps_lock_dir("lib", lock_fd);
+    var count = _deps_lock_dir("lib", lock_h);
     # v6.6.4: record the stdlib pin LAST — `cyrius\t<pin>` — so the next resolve can tell
     # "the pin changed" (re-lock silently) from "the snapshot changed under the same pin"
     # (refuse; see _dep_lock_guard_stdlib_leaf). Tab-delimited like the commit lines.
@@ -4105,10 +4125,10 @@ fn cmd_deps_lock(): i64 {
     # for a hand-merged lock where the trailer is not last (the last-line placement is what
     # protects old readers; the explicit skip protects this reader).
     var _pv = _dep_lock_pin_value();
-    sys_write(lock_fd, "cyrius\t", 7);
-    sys_write(lock_fd, _pv, strlen(_pv));
-    sys_write(lock_fd, "\n", 1);
-    sys_close(lock_fd);
+    _aw_write(lock_h, "cyrius\t", 7);
+    _aw_write(lock_h, _pv, strlen(_pv));
+    _aw_write(lock_h, "\n", 1);
+    if (_aw_commit(lock_h) != 0) { _err("write failed: cyrius.lock (left as it was)"); return 1; }
     sys_write(STDOUT_FD, "cyrius.lock: ", 13);
     fmt_int(count);
     sys_write(STDOUT_FD, " deps locked", 12);

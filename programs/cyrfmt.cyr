@@ -6,10 +6,11 @@
 #        cyrfmt --write <file.cyr>         (format in-place — v5.5.22)
 #        cyrfmt -w <file.cyr>              (short form of --write)
 #
-# --write uses truncate-and-overwrite via `file_write_all` — not atomic
-# via temp+rename (sankoch feedback: the behavior matches gofmt -w in
-# practice, and cyrius doesn't expose sys_rename yet). Users running
-# cyrfmt on their own source should have git history as their backup.
+# --write replaces the file crash-safe (`file_write_atomic`: temp + fsync + rename), and a short
+# write is an error that leaves the source exactly as it was. ⛔ v6.6.6: it used `file_write_all`
+# (O_TRUNC, then one write) — it did detect the short count, but only after the USER'S SOURCE had
+# already been truncated. The old note here said "cyrius doesn't expose sys_rename yet";
+# `file_write_atomic` has existed since v6.4.57. CHANGELOG [6.6.6]
 
 include "lib/string.cyr"
 include "lib/fmt.cyr"
@@ -407,9 +408,10 @@ fn _fmt_one(path): i64 {
         if (_out_pos == n) {
             if (memeq(buf, _out_buf, n) == 1) { return 0; }
         }
-        var w = file_write_all(path, _out_buf, _out_pos);
-        if (w != _out_pos) {
-            println("cyrfmt: cannot write file");
+        if (file_write_atomic(path, _out_buf, _out_pos) != 0) {
+            syscall(1, 2, "cyrfmt: cannot write (left as it was): ", 39);
+            syscall(1, 2, path, strlen(path));
+            syscall(1, 2, "\n", 1);
             return 1;
         }
         return 0;

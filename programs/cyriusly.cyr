@@ -268,7 +268,13 @@ fn _write_cyml_cyrius_pin(ver_cstr): i64 {
     }
     store8(out + out_n, 0);
 
-    file_write_all("cyrius.cyml", out, out_n);
+    # v6.6.6: the user's manifest is replaced crash-safe and the write is CHECKED — this was an
+    # unchecked file_write_all, so a full disk truncated cyrius.cyml and `use` still said it
+    # worked. CHANGELOG [6.6.6]
+    if (file_write_atomic("cyrius.cyml", out, out_n) != 0) {
+        syscall(1, 2, "error: failed to write cyrius.cyml (left as it was)\n", 52);
+        return 1;
+    }
     return 0;
 }
 
@@ -379,7 +385,14 @@ fn _cmd_use_v2(ver_cstr, is_global): i64 {
     memcpy(content, ver_cstr, vlen);
     store8(content + vlen, 10);
     store8(content + vlen + 1, 0);
-    file_write_all(current_path, content, vlen + 1);
+    # v6.6.6: crash-safe and checked (was an unchecked file_write_all) — a failed write must not
+    # go on to re-point bin/ and lib/ and report success. CHANGELOG [6.6.6]
+    if (file_write_atomic(current_path, content, vlen + 1) != 0) {
+        syscall(1, 2, "error: failed to write ", 23);
+        syscall(1, 2, current_path, strlen(current_path));
+        syscall(1, 2, " (left as it was)\n", 18);
+        return 1;
+    }
     var bin_link = _path_join(home, "bin");
     var lib_link = _path_join(home, "lib");
     sys_unlink(bin_link);

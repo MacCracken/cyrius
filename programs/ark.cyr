@@ -82,15 +82,27 @@ fn db_register(name, version, source): i64 {
     sys_mkdir("/var/lib/ark", 0x1C0);
     var fd = sys_open(ARK_DB_PATH, O_WRONLY | O_CREAT | O_APPEND, 0x1A4);
     if (fd < 0) { return fd; }
-    sys_write(fd, name, strlen(name));
-    sys_write(fd, "|", 1);
-    sys_write(fd, version, strlen(version));
-    sys_write(fd, "|", 1);
+    # v6.6.6: the record is assembled first and appended in ONE checked write loop — the six
+    # unchecked writes could leave a half record in the database and still return 0.
     var sbuf[24];
     var slen = fmt_int_buf(source, &sbuf);
-    sys_write(fd, &sbuf, slen);
-    sys_write(fd, "\n", 1);
-    sys_close(fd);
+    var nl = strlen(name);
+    var vl = strlen(version);
+    var rec = alloc(nl + vl + slen + 4);
+    memcpy(rec, name, nl);
+    store8(rec + nl, 124);
+    memcpy(rec + nl + 1, version, vl);
+    store8(rec + nl + 1 + vl, 124);
+    memcpy(rec + nl + 2 + vl, &sbuf, slen);
+    store8(rec + nl + 2 + vl + slen, 10);
+    var rlen = nl + vl + slen + 3;
+    var off = 0;
+    while (off < rlen) {
+        var w = sys_write(fd, rec + off, rlen - off);
+        if (w <= 0) { sys_close(fd); return 0 - 5; }
+        off = off + w;
+    }
+    if (sys_close(fd) < 0) { return 0 - 5; }
     return 0;
 }
 
@@ -229,7 +241,10 @@ fn cmd_install(name): i64 {
     log_transaction("install", name);
 
     # Register in database
-    db_register(name, pkg_version(p), pkg_source(p));
+    if (db_register(name, pkg_version(p), pkg_source(p)) != 0) {
+        syscall(1, 2, "error: cannot record the package in the database\n", 49);
+        return 1;
+    }
 
     syscall(1, 1, "installed: ", 11);
     syscall(1, 1, name, strlen(name));
@@ -247,11 +262,17 @@ fn cmd_remove(name): i64 {
     }
     # Rewrite database without the entry
     sys_mkdir("/var/lib/ark", 0x1C0);
-    var fd = sys_open(ARK_DB_PATH, O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
-    if (fd < 0) { return 1; }
+    # v6.6.6: the database is rebuilt in memory and replaced crash-safe — it was opened O_TRUNC
+    # and streamed with unchecked writes, so a full disk emptied the package database and
+    # `remove` still reported success. CHANGELOG [6.6.6]
     var nlen = strlen(name);
     var len = vec_len(entries);
+    var total = 0;
     var ri = 0;
+    while (ri < len) { total = total + strlen(vec_get(entries, ri)) + 1; ri = ri + 1; }
+    var ob = alloc(total + 1);
+    var op = 0;
+    ri = 0;
     while (ri < len) {
         var line = vec_get(entries, ri);
         # Skip the entry matching name
@@ -260,12 +281,17 @@ fn cmd_remove(name): i64 {
             if (load8(line + nlen) == 124) { skip = 1; }
         }
         if (skip == 0) {
-            sys_write(fd, line, strlen(line));
-            sys_write(fd, "\n", 1);
+            var ll = strlen(line);
+            memcpy(ob + op, line, ll);
+            store8(ob + op + ll, 10);
+            op = op + ll + 1;
         }
         ri = ri + 1;
     }
-    sys_close(fd);
+    if (file_write_atomic(ARK_DB_PATH, ob, op) != 0) {
+        syscall(1, 2, "error: cannot rewrite the package database (left as it was)\n", 60);
+        return 1;
+    }
     log_transaction("remove", name);
     syscall(1, 1, "removed: ", 9);
     syscall(1, 1, name, strlen(name));

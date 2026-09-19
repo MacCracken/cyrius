@@ -401,12 +401,11 @@ fn _join(parent, child): i64 {
     return str_data(str_builder_build(sb));
 }
 
-# Write cstring content to path (O_WRONLY|O_CREAT|O_TRUNC, 0644). 0/-1.
+# Write cstring content to path, crash-safe (temp + fsync + rename, 0644). 0/-1.
+# v6.6.6: was O_TRUNC + ONE unchecked write — a short write left a truncated file and returned
+# 0, so `_rw`'s failure count never saw it (and `--inplace` could truncate an existing file).
 fn _write_file(path, content): i64 {
-    var fd = sys_open(path, 577, 420);
-    if (fd < 0) { return 0 - 1; }
-    sys_write(fd, content, strlen(content));
-    sys_close(fd);
+    if (file_write_atomic(path, content, strlen(content)) != 0) { return 0 - 1; }
     return 0;
 }
 
@@ -458,22 +457,25 @@ fn _rw_wia(templates_dir, tpl, proj_root, rel, inplace): i64 {
 # ────────────────────────────────────────────────────────────
 fn _mkdir(proj_root, rel) { sys_mkdir(_join(proj_root, rel), 493); }
 
-# Stream-copy src→dst (handles large stdlib files). 0/-1.
+# Copy src→dst crash-safe (whole file in memory, then temp + fsync + rename). 0/-1.
+# v6.6.6: was a stream copy with unchecked writes after O_TRUNC — a short write left a
+# truncated stdlib file in the new project and the scaffold reported success.
 fn _copy_file(src, dst): i64 {
-    var infd = sys_open(src, 0, 0);
-    if (infd < 0) { return 0 - 1; }
-    var outfd = sys_open(dst, 577, 420);
-    if (outfd < 0) { sys_close(infd); return 0 - 1; }
-    var buf = alloc(65536);
-    var go = 1;
-    while (go == 1) {
-        var n = sys_read(infd, buf, 65536);
-        if (n <= 0) { go = 0; }
-        else { sys_write(outfd, buf, n); }
+    var sz = _file_size_of(src);
+    if (sz < 0) { return 0 - 1; }
+    var buf = alloc(sz + 1);
+    if (sz > 0) {
+        if (file_read_all(src, buf, sz) != sz) { return 0 - 1; }
     }
-    sys_close(infd);
-    sys_close(outfd);
+    if (file_write_atomic(dst, buf, sz) != 0) { return 0 - 1; }
     return 0;
+}
+
+# Size of a file, or -1 (STAT_SIZE is the per-target st_size offset).
+fn _file_size_of(path): i64 {
+    var st = alloc(256);
+    if (sys_stat(path, st) < 0) { return 0 - 1; }
+    return load64(st + STAT_SIZE);
 }
 
 fn _count_newlines(path): i64 {
@@ -567,7 +569,11 @@ fn _vendor_stdlib(templates_dir, proj_root, inplace): i64 {
             var doit = 1;
             if (inplace == 1) { if (file_exists(dstf) == 1) { doit = 0; } }
             if (doit == 1) {
-                _copy_file(str_data(path_join(srcStr, nameStr)), dstf);
+                # v6.6.6: a failed copy counts toward the INCOMPLETE-scaffold report.
+                if (_copy_file(str_data(path_join(srcStr, nameStr)), dstf) != 0) {
+                    _rw_fails = _rw_fails + 1;
+                    _eprint("error: cannot write "); _eprint(dstf); _eprint("\n");
+                }
             }
         }
         i = i + 1;
@@ -1126,7 +1132,10 @@ fn _run_port(start): i64 {
     var locbuf = str_builder_new();
     str_builder_add_cstr(locbuf, str_data(str_from_int(loc)));
     str_builder_add_cstr(locbuf, "\n");
-    _write_file(_join(_join(target, _sv_olddir), "LINES_OF_SOURCE.txt"), str_data(str_builder_build(locbuf)));
+    if (_write_file(_join(_join(target, _sv_olddir), "LINES_OF_SOURCE.txt"), str_data(str_builder_build(locbuf))) != 0) {
+        _rw_fails = _rw_fails + 1;
+        _eprint("error: cannot write LINES_OF_SOURCE.txt\n");
+    }
 
     # structure
     _mkdir(target, "src");

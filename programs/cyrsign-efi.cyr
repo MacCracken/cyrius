@@ -100,10 +100,9 @@ fn main(): i64 {
     var out_len = 0;
     if (authenticode_pe_sign(pe, pe_len, key, cder, cl, out, &out_len) != 0) { _cse_err("authenticode_pe_sign failed"); return 1; }
 
-    var fd = sys_open(argv(4), 0x241, 0x1A4);       # O_WRONLY|O_CREAT|O_TRUNC, 0644
-    if (fd < 0) { _cse_err("cannot open output"); return 1; }
-    sys_write(fd, out, out_len);
-    sys_close(fd);
+    # v6.6.6: crash-safe and checked — one unchecked write after O_TRUNC left a truncated signed
+    # image with exit 0 on a full disk (or on any image past a single write's reach).
+    if (file_write_atomic(argv(4), out, out_len) != 0) { _cse_err("cannot write output (left as it was)"); return 1; }
 
     sys_write(1, "signed ", 7); sys_write(1, argv(1), strlen(argv(1)));
     sys_write(1, " -> ", 4);    sys_write(1, argv(4), strlen(argv(4))); sys_write(1, "\n", 1);

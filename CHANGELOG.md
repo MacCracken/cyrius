@@ -833,6 +833,30 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   The header's claim that it writes a fourth file (`tests/data/NormalizationTest.txt`) was false and is
   gone. No compiler change.
 
+- **Fourteen more writers in `programs/` and `cbt/` replaced a file the user or the tree owns with
+  `open(O_TRUNC)` + writes whose result was dropped or checked too late — the same defect as
+  gen_unicode_data, found by grepping the shape.** Measured at HEAD under a 2-block `RLIMIT_FSIZE`:
+  `cyrfmt --write` truncated the **user's source** 3,684 → 1,024 B (it did notice the short count —
+  after `O_TRUNC` had already emptied the file; its header said "cyrius doesn't expose sys_rename
+  yet", stale since `file_write_atomic` landed in v6.4.57); `cyrius deps --lock` left a 1,024-byte
+  `cyrius.lock` and **exited 0**; `cyrius distlib` truncated the committed bundle 4,132 → 1,024 B and
+  then blamed the bundle ("does not compile"). By code reading, the same shape in: cbt's vendored
+  `lib/<dep>.cyr` copy (unchecked stream copy), `.cyrius-toolchain`, the `cyrius.toml` → `cyrius.cyml`
+  migration (which then **deleted the toml** — the only good copy), `distlib --modular`'s module files
+  and `index.cyml` and the `.deps` sidecar (an unwritable one was skipped silently), `cyriusly use`'s
+  `cyrius.cyml` pin and `current` pointer, the tracked `docs/api-surface.snapshot` (`--update`),
+  `cyrsign`'s `.sig`, `cyrsign-efi`'s signed image, `cyrius-init`'s scaffold files and vendored stdlib,
+  and `ark`'s package database (rewrite and append). Each now writes crash-safe and treats a short
+  write as an error that leaves the file as it was: whole-buffer writers call `file_write_atomic`;
+  cbt's streamed writers (the lock, the dep copy, every distlib output) go through a new cbt-private
+  `_aw_open` / `_aw_write` / `_aw_commit` (sibling temp, every write looped with a sticky error, fsync +
+  rename only if all of it landed) in `cbt/core.cyr`. Two callers that dropped the lock's rc now honour
+  it: `cyrius deps` counts it as an error, and `cyrius publish` no longer goes on to `git tag` after a
+  lock that could not be written. `cyrius-init` counts a failed stdlib copy toward its existing
+  "scaffold INCOMPLETE" report. Out of scope and unchanged: the compiler's own output write (the
+  6.6.6 short-output issue), cyrld's output (every write already checked, rc 1), and temp/child-capture
+  files. No compiler change.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**
@@ -958,8 +982,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   exits non-zero, names the file, keeps all three seeded tables and leaves no temp; under a 150-block
   limit it fails PART-WAY and every table is either complete or exactly as seeded, never a prefix
   (limits chosen to hold under both 512- and 1024-byte `ulimit -f` units). The generator runs in a
-  scratch cwd over a copy of its UCD inputs, so a regressed tool cannot write the tree. Mutation-proven
-  (`file_write_all` put back; the 6.6.5 generator). <1 s.
+  scratch cwd over a copy of its UCD inputs, so a regressed tool cannot write the tree. Axis 4, STATIC
+  over `programs/*.cyr` + `cbt/*.cyr`: every `file_write_all(P, …)` and every `O_TRUNC` open (spelled
+  `O_TRUNC`, `0x241` or `577`) is keyed `<file>|<P>` against an allowlist of temps, child-output
+  captures and the linker's checked output, each with a reason — an entry that matches no live site
+  fails, so the list cannot rot. Axes 5-7 run `cyrfmt --write`, `cyrius deps --lock` and
+  `cyrius distlib` (built from the tree into the temp dir) under a 2-block limit: non-zero, the file
+  byte-for-byte, no temp beside it; unconstrained each writes the expected bytes. Mutation-proven per
+  writer (each 6.6.5 file put back: the static axis names it, and the dynamic axis sees the
+  truncation). ~1 s.
 
 ## [6.6.5] — 2026-09-19
 

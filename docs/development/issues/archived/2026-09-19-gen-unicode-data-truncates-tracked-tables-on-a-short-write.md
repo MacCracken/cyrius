@@ -69,6 +69,10 @@ tables keep their committed sizes. Pinned by `tests/gates/toolchain/tool_writes_
 (regeneration into OUTDIR byte-identical; a 4-block and a part-way 150-block size limit), mutation-proven
 by putting `file_write_all` back.
 
+The "Related sites" below were fixed in the same bite (13b), together with eleven more writers the
+shape-grep found in `programs/` and `cbt/` — see the 6.6.6 CHANGELOG. `cyrfmt --write` measured
+3,684 → 1,024 B on the user's source; `cyrius deps --lock` left a 1,024-byte lock with rc 0.
+
 ## Corrections to this filing
 
 - The tool's header claimed it writes FOUR files, the fourth being a "verbatim copy" of

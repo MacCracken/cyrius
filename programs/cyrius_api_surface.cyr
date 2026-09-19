@@ -796,15 +796,29 @@ fn main() {
     _sort_entries();
 
     if (update_mode == 1) {
-        var fd = file_open(snapshot_path, 0x241, 0x180);
-        if (fd < 0) {
-            syscall(SYS_WRITE, 2, "error: cannot open snapshot for writing: ", 41);
+        # v6.6.6: the snapshot is TRACKED (docs/api-surface.snapshot). It was opened O_TRUNC and
+        # streamed with unchecked writes, so a full disk left it truncated and still printed
+        # "snapshot updated". Now built in memory and written crash-safe; a short write is an
+        # error and leaves the snapshot as it was. CHANGELOG [6.6.6]
+        var total = 0;
+        var ei = 0;
+        while (ei < ENTRIES_COUNT) { total = total + load64(ENTRIES_LENS + ei * 8) + 1; ei = ei + 1; }
+        var ob = alloc(total + 1);
+        var op = 0;
+        ei = 0;
+        while (ei < ENTRIES_COUNT) {
+            var elen = load64(ENTRIES_LENS + ei * 8);
+            memcpy(ob + op, ENTRIES_BUF + load64(ENTRIES_OFFS + ei * 8), elen);
+            store8(ob + op + elen, 10);
+            op = op + elen + 1;
+            ei = ei + 1;
+        }
+        if (file_write_atomic(snapshot_path, ob, op) != 0) {
+            syscall(SYS_WRITE, 2, "error: cannot write snapshot (left as it was): ", 47);
             syscall(SYS_WRITE, 2, snapshot_path, strlen(snapshot_path));
             syscall(SYS_WRITE, 2, "\n", 1);
             return 1;
         }
-        _print_entries(fd);
-        file_close(fd);
         syscall(SYS_WRITE, 1, "snapshot updated: ", 18);
         var nb[24];
         var nl = fmt_int_buf(ENTRIES_COUNT, &nb);
