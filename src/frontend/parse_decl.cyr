@@ -1646,8 +1646,9 @@ fn PARSE_GVAR_REG(S): i64 {
     # declaration's static value sat in a slot nothing read (b = 0 in `var a = 5; var b = a;
     # var a = 5;`). An earlier deferred store is now superseded rather than clobbering
     # (_gv_supersede), which is the hazard the opt-out existed for (mabda `var F64_TWO = 0;`
-    # shadowed by math `var F64_TWO = 0x4000...;`). A shadowed ENUM constant has no store to
-    # clobber, so a var over one is static as well. CHANGELOG [6.6.6]
+    # shadowed by math `var F64_TWO = 0x4000...;`). A var over an ENUM constant is static as
+    # well — the enum's startup store now skips a slot that is not an enum constant's
+    # (PARSE_ENUM_DEF), which used to overwrite it. CHANGELOG [6.6.6]
     var sit_lit = 0;
     var sit_val = 0;
     var sit_shadow = 0;
@@ -1774,7 +1775,13 @@ fn PARSE_GVAR_REG(S): i64 {
     # destructure form stamps per name — each carries its own _GVAR_VIS (v6.6.4).
     var gvi = _gv_fold(S, vcnt, sti);   # 6.6.6: a redeclaration reuses the global's slot
     _GVAR_VIS(S, gvi, sti);
-    if (gvi == vcnt) { SVCNT(S, vcnt + 1); }
+    if (gvi == vcnt) {
+        SVCNT(S, vcnt + 1);
+        # A var over an enum constant keeps its own slot, and nothing stores the enum's
+        # value into it any more (PARSE_ENUM_DEF), so a constant one is its value from
+        # program start on every target, zero and cx included (_gv_cx_prestore).
+        if (sit_enumsh == 1 && cf_has == 1 && is_struct == 0) { sit_lit = 1; sit_val = cf_val; }
+    }
     else {
         # A redeclaration: a constant one wins from program start (see _gv_supersede) — on
         # every target, including a zero and including cx (_gv_cx_prestore).

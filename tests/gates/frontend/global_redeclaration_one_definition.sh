@@ -26,9 +26,9 @@
 # redeclaration at all (the last definition written once, or an assignment in its place),
 # compiled by the same compiler — so a row cannot pass by both sides sharing one defect.
 #
-# LEGS: host x86_64 (every row), cx (A/B/D, via the tree's own main_cx + cxvm — the only
+# LEGS: host x86_64 (every row), cx (A/B/D/L/N, via the tree's own main_cx + cxvm — the only
 # target where the value is STORED rather than baked into the image), aarch64 under
-# qemu-aarch64 when installed (A/B/D; qemu is not hardware — the crossos tcyr covers that).
+# qemu-aarch64 when installed (A/B/D/L/N; qemu is not hardware — the crossos tcyr covers that).
 #
 # MUTATION LEDGER (6.6.6 — each mutant is a scratch tree whose src/ carries the mutation, built
 # by build/cycc and run as CYCC=<mutant>, so the cx and aarch64 legs are built from it too):
@@ -38,7 +38,10 @@
 #   m4 _gv_cx_prestore made a no-op                -> RED cx A B D only
 #   m5 replay re-resolves by FINDVAR (no record)   -> RED row K only
 #   m6 shape check dropped from _gv_fold           -> RED row I only
-#   real tree                                      -> GREEN (11 host rows, 3 cx, 3 aarch64)
+#   (m1-m6 were measured before rows L/M/N existed; the review mutants below cover those)
+#   m7 enum startup store not limited to an enum's slot -> RED rows L M N, cx N, a64 L N
+#   m8 var over an enum not given its value on cx      -> RED cx L only
+#   real tree                                      -> GREEN (14 host rows, 5 cx, 5 aarch64)
 # Row H is a guard, not a detector: a fn body already read the last declaration before 6.6.6.
 set -eu
 
@@ -106,6 +109,17 @@ _row G 51 'fn p() { return (20, 21); }\nvar m, n = p();\nvar o = m;\nvar m = 30;
 # H — a fn body reads the one global
 _row H 7 'var a = 5;\nfn g() { return a; }\nvar a = 7;\nsyscall(60, g());\n' \
          'fn g() { return a; }\nvar a = 7;\nsyscall(60, g());\n'
+# L — a var over an ENUM constant, conflicting value: the var is the last definition, for an
+#     early read and a fn alike. The enum's startup store used to land in the var's slot after
+#     the var became static (6.6.6 pre-review: 55 here, i.e. both reads saw the enum's 5)
+_row L 77 'enum E { K = 5; }\nvar b = K;\nvar K = 7;\nfn g() { return K; }\nsyscall(60, b * 10 + g());\n' \
+          'var K = 7;\nvar b = K;\nfn g() { return K; }\nsyscall(60, b * 10 + g());\n'
+# M — the same through a fold: a var over the enum, then a constant redeclaration of the var
+_row M 77 'enum E { K = 5; }\nvar K = 5;\nvar b = K;\nvar K = 7;\nfn g() { return K; }\nsyscall(60, b * 10 + g());\n' \
+          'var K = 7;\nvar b = K;\nfn g() { return K; }\nsyscall(60, b * 10 + g());\n'
+# N — a var over an enum constant with the value ZERO: an early read sees 0, not the enum's 5
+_row N 10 'enum E { K = 5; }\nvar b = K;\nvar K = 0;\nsyscall(60, b + 10);\n' \
+          'var K = 0;\nvar b = K;\nsyscall(60, b + 10);\n'
 # I — a declaration-zone redeclaration that changes the type or size is refused by name
 NROWS=$((NROWS + 1))
 printf 'var a = 5;\nvar a: i32 = 7;\nsyscall(60, a);\n' > "$WORK/i1.cyr"
@@ -139,7 +153,9 @@ NCX=0
 if build "$ROOT/src/main_cx.cyr" "$WORK/cycc_cx" && build "$ROOT/programs/cxvm.cyr" "$WORK/cxvm"; then
     for spec in 'A|5|var a = 5;\nvar b = a;\nvar a = 5;\nsyscall(60, b);\n' \
                 'B|7|var a = 5;\nvar b = a;\nvar a = 7;\nsyscall(60, b);\n' \
-                'D|91|var n = 0;\nfn f5() { n = n + 1; return 5; }\nvar a = f5();\nvar b = a;\nvar a = 9;\nsyscall(60, b * 10 + n);\n'; do
+                'D|91|var n = 0;\nfn f5() { n = n + 1; return 5; }\nvar a = f5();\nvar b = a;\nvar a = 9;\nsyscall(60, b * 10 + n);\n' \
+                'L|77|enum E { K = 5; }\nvar b = K;\nvar K = 7;\nfn g() { return K; }\nsyscall(60, b * 10 + g());\n' \
+                'N|10|enum E { K = 5; }\nvar b = K;\nvar K = 0;\nsyscall(60, b + 10);\n'; do
         id=${spec%%|*}; rest=${spec#*|}; want=${rest%%|*}; src=${rest#*|}
         printf '%b' "$src" > "$WORK/x.cyr"
         if "$WORK/cycc_cx" < "$WORK/x.cyr" > "$WORK/x.cyx" 2> /dev/null && [ -s "$WORK/x.cyx" ]; then
@@ -160,7 +176,9 @@ if command -v qemu-aarch64 > /dev/null 2>&1; then
     if build "$ROOT/src/main_aarch64.cyr" "$WORK/cycc_a64"; then
         for spec in 'A|5|var a = 5;\nvar b = a;\nvar a = 5;\nsyscall(60, b);\n' \
                     'B|7|var a = 5;\nvar b = a;\nvar a = 7;\nsyscall(60, b);\n' \
-                    'D|91|var n = 0;\nfn f5() { n = n + 1; return 5; }\nvar a = f5();\nvar b = a;\nvar a = 9;\nsyscall(60, b * 10 + n);\n'; do
+                    'D|91|var n = 0;\nfn f5() { n = n + 1; return 5; }\nvar a = f5();\nvar b = a;\nvar a = 9;\nsyscall(60, b * 10 + n);\n' \
+                    'L|77|enum E { K = 5; }\nvar b = K;\nvar K = 7;\nfn g() { return K; }\nsyscall(60, b * 10 + g());\n' \
+                    'N|10|enum E { K = 5; }\nvar b = K;\nvar K = 0;\nsyscall(60, b + 10);\n'; do
             id=${spec%%|*}; rest=${spec#*|}; want=${rest%%|*}; src=${rest#*|}
             printf '%b' "$src" > "$WORK/y.cyr"
             if "$WORK/cycc_a64" < "$WORK/y.cyr" > "$WORK/y.bin" 2> /dev/null && [ -s "$WORK/y.bin" ]; then
@@ -183,7 +201,7 @@ fi
 DECL=$(grep -c '^_row ' "$0")
 DECL=$((DECL + 2))   # rows I and K are hand-rolled
 [ "$NROWS" -eq "$DECL" ] || bad "floor: $NROWS host rows ran, $DECL declared"
-[ "$NCX" -eq 3 ] || bad "floor: $NCX cx rows ran, want 3"
+[ "$NCX" -eq 5 ] || bad "floor: $NCX cx rows ran, want 5"
 
 if [ "$NFAIL" -ne 0 ]; then
     echo "FAIL: global_redeclaration_one_definition: $NFAIL check(s) failed"

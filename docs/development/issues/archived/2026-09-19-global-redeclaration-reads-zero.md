@@ -84,6 +84,14 @@ co-linked modules are an established, documented pattern (`lib/chrono.cyr`'s `CL
 - **Wider than filed:** the same second slot also (a) left a chain's third link unwarned — it
   compared against 0 — and (b) in a kernel build, whose deferred initializers replay after the
   top-level program, let the replay re-resolve the name onto a later `var` of the same name and
-  store into THAT slot; and (c) `enum E { K = 5; } var b = K; var K = 5;` read 0 the same way (a
-  var over an enum constant was never static). All three are fixed and gated.
+  store into THAT slot; and (c) a var over an ENUM constant with a CONFLICTING value
+  (`enum E { K = 5; } var b = K; var K = 7;`) gave `b` the enum's 5 while a fn read 7, because the
+  enum's startup store resolves the name last-match and runs before every deferred initializer.
+  All three are fixed and gated (gate rows F, K, L/M/N).
+- ⚠ **Correction to the first cut of this fix (review, before release):** it claimed
+  `enum E { K = 5; } var b = K; var K = 5;` "read 0 as well". It never did — it gives 5 at 6.6.5
+  on x86, aarch64 and cx, for exactly the reason in (c): the enum store fills the var's slot first.
+  That first cut made the var static without stopping the enum store, which then OVERWROTE the
+  var (`var K = 7` read 5 everywhere, fn included). The enum store now targets only an enum
+  constant's own slot (`PARSE_ENUM_DEF`).
 

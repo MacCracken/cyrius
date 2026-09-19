@@ -174,9 +174,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   name superseded (`_gv_supersede`, flag bits above the token index in the replay entry, honoured
   by `_gv_target`); cx, which has no image to bake into, stores those values ahead of the deferred
   initializers (`_gv_cx_prestore`); each replay entry records the slot it declared, so the replay
-  no longer re-resolves the name. A var over an ENUM constant (`var CLOCK_MONOTONIC = 1`) keeps
-  its own slot but is now static too — `enum E { K = 5; } var b = K; var K = 5;` read 0 as well.
-  After the first top-level statement a `var` is a statement and redeclaring a name starts a new
+  no longer re-resolves the name. A var over an ENUM constant (`var CLOCK_MONOTONIC = 1`) is the
+  last definition too: at 6.6.5 the enum's startup store (`PARSE_ENUM_DEF`, which runs before
+  every deferred initializer and resolves the name last-match) wrote the ENUM's value into the
+  var's slot, so `enum E { K = 5; } var b = K; var K = 7;` gave `b == 5` while a fn read 7, and
+  `var K = 0` there gave `b == 5`. That store now lands only in an enum constant's own slot
+  (`src/frontend/parse_types.cyr`), and the var keeps its own slot and holds its value from
+  program start on every target (cx included) — both reads see 7, and 0 for `var K = 0`. After
+  the first top-level statement a `var` is a statement and redeclaring a name starts a new
   variable for the code after it; that is unchanged (two in-tree tests re-declare a scratch
   buffer at a new size that way) and now documented. Byte impact: exit codes and output of all
   **326 `.tcyr` identical** to the 6.6.5-tree compiler; 18 binaries differ, every one from a var

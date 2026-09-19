@@ -573,8 +573,13 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
                 }
             } else {
                 # Pass 2 enum init (emit_code == 1): just set constant values
+                # 6.6.6: only into an ENUM constant's slot. When a declaration-zone `var`
+                # redeclares the name, FINDVAR (last match) returns the var, which already
+                # holds its own value from program start. This store runs before every
+                # deferred initializer, so it overwrote that value (`enum E { K = 5; }
+                # var K = 7;` read 5 under "last definition wins"). CHANGELOG [6.6.6]
                 var idx = FINDVAR(S, vnoff);
-                if (idx >= 0) { EMOVI(S, val); EVSTORE(S, idx); }
+                if (idx >= 0) { if (GVENUMID(S, idx) != 0) { EMOVI(S, val); EVSTORE(S, idx); } }
             }
             val = val + 1;
             # v5.8.21: accept either ';' (5) or ',' (31) between

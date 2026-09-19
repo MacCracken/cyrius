@@ -70,6 +70,20 @@ var gr_m = 30;
 # a fn body reads the one global too
 fn gr_read_c(): i64 { return gr_c; }
 
+# a var over an ENUM constant is the last definition: the enum's startup store must not land in
+# the var's slot (it did, once the var became static: every read below saw the enum's value)
+enum GrEnum { GR_EK = 5; GR_EF = 5; GR_EZ = 5; }
+var gr_ek_early = GR_EK;
+var GR_EK = 7;
+fn gr_read_ek(): i64 { return GR_EK; }
+# ... and through a fold (a var over the enum, then a constant redeclaration of that var)
+var GR_EF = 5;
+var gr_ef_early = GR_EF;
+var GR_EF = 7;
+# ... and with the value zero: an early read sees 0, not the enum's 5
+var gr_ez_early = GR_EZ;
+var GR_EZ = 0;
+
 assert_eq(gr_b, 5, "same-value redeclaration: an earlier read sees 5 (read 0 before 6.6.6)");
 assert_eq(gr_a, 5, "same-value redeclaration: the global is 5");
 assert_eq(gr_d, 7, "conflicting redeclaration: an earlier read sees the LAST definition");
@@ -87,5 +101,11 @@ assert_eq(gr_k, 4, "chain: the global is the last constant");
 assert_eq(gr_o, 30, "destructure then constant: an earlier read sees the constant");
 assert_eq(gr_m, 30, "destructure then constant: the superseded target holds the constant");
 assert_eq(gr_n, 21, "destructure then constant: the other target keeps its value");
+assert_eq(gr_ek_early, 7, "var over an enum constant: an earlier read sees the var");
+assert_eq(gr_read_ek(), 7, "var over an enum constant: a fn reads the var");
+assert_eq(gr_ef_early, 7, "var over an enum, then redeclared: an earlier read sees the last value");
+assert_eq(GR_EF, 7, "var over an enum, then redeclared: the global is the last value");
+assert_eq(gr_ez_early, 0, "zero var over an enum constant: an earlier read sees 0");
+assert_eq(GR_EZ, 0, "zero var over an enum constant: the global is 0");
 
 var r = assert_summary();
