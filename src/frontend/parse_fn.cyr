@@ -667,6 +667,14 @@ fn PARSE_RETURN(S): i64 {
                         # targets — simdmask==0 for every SIMD-free callee, so non-SIMD tail
                         # calls stay byte-identical. `_fnt_simdmask` is stored unconditionally.
                         if (_tc_cfi >= 0) { if (L64(_fnt_simdmask + _tc_cfi * 8) != 0) { tc_has_addr = 1; } }
+                        # ⛔ 6.6.6 — a retptr callee needs a destination the tail path never passes
+                        # (it pops the user args into the int registers, so the callee wrote its
+                        # result through argument 1), and a struct-returning CALLER must copy into
+                        # its own retptr, which a `jmp` cannot do. Both go to the normal path: the
+                        # struct-return branch below copies a same-struct call through a temp, and
+                        # refuses anything else instead of returning garbage. CHANGELOG [6.6.6]
+                        if (_ret_agg_class(S, _tc_cfi) == 2) { tc_has_addr = 1; }
+                        if (_cur_fn_ret_sid > 0) { if (_cur_fn_ret_stash > 0) { tc_has_addr = 1; } }
                         # v6.5.1 — a callee that has an overload-suffix sibling must go through
                         # PARSE_FNCALL, because that is the ONLY place the `_str`/`_int` dispatch
                         # lives. This tail path emits epilogue+jmp itself and never consults
@@ -976,14 +984,18 @@ fn PARSE_RETURN(S): i64 {
     # stdlib convention: `Str` values are 16-byte heap structs
     # passed around as pointers, not by-value).
     if (_cur_fn_ret_sid > 0 && _cur_fn_ret_stash > 0) {
+        # 6.6.6: `return f(..);` where `f` returns this same struct — emitted into a temp, then
+        # copied into our retptr like `return IDENT;`. It used to take the tail path and crash.
+        var srn_lli = _return_struct_call(S);
+        if (srn_lli < 0) {
         if (PEEKT(S) != 2) {
-            ERR_MSG(S, "struct-return fn: return must be a bare local identifier", 56);
+            ERR_MSG(S, "struct-return fn: return must be a bare local identifier, or a call to a fn returning the same struct", 101);
         }
         var srn_noff = PEEKV(S);
         if (TOKTYP(S, GTI(S) + 1) != 5) {
-            ERR_MSG(S, "struct-return fn: return must be a bare local identifier", 56);
+            ERR_MSG(S, "struct-return fn: return must be a bare local identifier, or a call to a fn returning the same struct", 101);
         }
-        var srn_lli = FINDLOCAL(S, srn_noff);
+        srn_lli = FINDLOCAL(S, srn_noff);
         if (srn_lli < 0) {
             ERR_MSG(S, "struct-return: identifier is not a local", 40);
         }
@@ -995,6 +1007,8 @@ fn PARSE_RETURN(S): i64 {
             ERR_MSG(S, "struct-return: identifier type != fn ret_sid", 44);
         }
         STI(S, GTI(S) + 1);            # consume IDENT
+        }
+        if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
         STI(S, GTI(S) + 1);            # consume ';'
         # Byte-copy size (aligned up to 8 — the retptr slot is already
         # 8-aligned so padded copies are safe)
@@ -1455,6 +1469,19 @@ fn _try_push_struct_addr_arg(S, fi, argc): i64 {
     if ((L64(_fnt_structmask + fi * 8) & (1 << argc)) == 0) { return 0; }
     if (PEEKT(S) != 2) { return 0; }
     var nx = TOKTYP(S, GTI(S) + 1);
+    # ⛔ 6.6.6 — a by-value struct param given a struct-valued CALL (`h(mk(1, 2))`): the callee
+    # takes the struct's ADDRESS, so the result needs storage to point at. It used to be pushed
+    # as a value — the first word for a rax:rdx return (the callee then dereferenced a field),
+    # and for a retptr return a call with no retptr at all (SIGSEGV). Top level has no frame; it
+    # falls through to PARSE_FNCALL, which refuses it by name. CHANGELOG [6.6.6]
+    if (nx == 10) {
+        if (GINFN(S) != 1) { return 0; }
+        if (_ret_agg_class(S, FINDFN(S, PEEKV(S))) == 0) { return 0; }
+        if (_call_is_whole_arg(S, GTI(S)) == 0) { return 0; }
+        EFLADDR(S, _struct_call_into_temp(S));
+        EPUSHR(S);
+        return 1;
+    }
     if (nx != 31) { if (nx != 11) { return 0; } }
     var li = 0 - 1;
     if (GINFN(S) == 1) { li = FINDLOCAL(S, PEEKV(S)); }
@@ -1745,6 +1772,144 @@ fn _owncall_args(S, fi, noff, int0): i64 {
     ECALLPOPS(S, n);
     _simd_arg_second_pass(S, &tbl, load64(&st + 8));
     return n;
+}
+
+# ⭐ 6.6.6 — A STRUCT-VALUED CALL NEEDS SOMEWHERE TO PUT ITS RESULT, WHEREVER IT IS WRITTEN.
+# How fn `fi` returns: 2 = a >16 B struct through a hidden retptr (x86/cx: int arg 0; aarch64:
+# X8), 1 = a 9-16 B non-Str struct in rax:rdx, 0 = anything else. The same predicate as the
+# callee's rough-scan (`_cur_fn_ret_stash` / `_cur_fn_ret_pair`) and PARSE_VAR's asv_try /
+# asv_pair, so caller and callee cannot disagree. CHANGELOG [6.6.6]
+fn _ret_agg_class(S, fi): i64 {
+    if (fi < 0) { return 0; }
+    var sid = GFRS(S, fi);
+    if (sid <= 0) { return 0; }
+    var sz = STRUCTSZ(S, sid - 1);
+    if (sz > 16) { return 2; }
+    if (sz > 8) { if (sid != _STR_SID(S)) { return 1; } }
+    return 0;
+}
+
+# An anonymous in-frame destination for struct `sid`: (n-1) fillers, then the slot that
+# addresses it (field 0), laid out exactly like a `var p: S` receive. Returns that slot.
+fn _agg_temp(S, sid): i64 {
+    var sz = STRUCTSZ(S, sid - 1);
+    var n = ((sz + 7) & (0 - 8)) / 8;
+    var j = 0;
+    while (j < n - 1) {
+        var f = GFLC(S);
+        S64(S + 0x5D9D000 + f * 8, 0 - 1);
+        SLDEP(S, f, GSDEP(S));
+        SLTYPE(S, f, 0);
+        SFLC(S, f + 1);
+        j = j + 1;
+    }
+    var t = GFLC(S);
+    S64(S + 0x5D9D000 + t * 8, 0 - 1);
+    SLDEP(S, t, GSDEP(S));
+    SLAGG(S, t, n);
+    SLTYPE(S, t, 0 - sid);
+    SFLC(S, t + 1);
+    if (t + 1 > _flc_hwm) { _flc_hwm = t + 1; }
+    return t;
+}
+
+# The call itself, cursor just past `(`: the retptr (x86/cx: pushed as int arg 0, before the user
+# args; aarch64: X8, after them), every user arg through the callee gates, the call, and for a
+# rax:rdx return the pair store. The result lands in the aggregate whose field-0 slot is `dst`.
+# Shared by PARSE_VAR's two receives and every call site below that used to have no destination.
+fn _struct_call_emit(S, fi, noff, dst): i64 {
+    var cls = _ret_agg_class(S, fi);
+    var n0 = 0;
+    if (cls == 2) { if (_AARCH64_BACKEND == 0) {
+        EFLADDR(S, dst);
+        EPUSHR(S);
+        n0 = 1;
+    } }
+    var n = _owncall_args(S, fi, noff, n0);
+    if (cls == 2) { if (_AARCH64_BACKEND == 1) { EFLADDR_X8(S, dst); } }
+    var tgt = L64(_fnt_offsets + fi * 8);
+    if (tgt >= 0) { ECALLTO(S, tgt); }
+    else { ECALLFIX(S, fi); }
+    ECALLCLEAN(S, n);
+    if (cls == 1) { EFLSTORE_STRUCT_INT_PAIR(S, dst); }
+    return 0;
+}
+
+# `IDENT ( args )` at the cursor, for a callee `_ret_agg_class` accepts: allocate a temp, emit
+# the call into it, return the temp's field-0 slot. CHANGELOG [6.6.6]
+fn _struct_call_into_temp(S): i64 {
+    var noff = PEEKV(S);
+    var fi = FINDFN(S, noff);
+    if (fi < 0) { fi = REGFN(S, noff); }
+    _vis_check(S, fi, noff);
+    _DEPRECATED_WARN(S, fi, noff);
+    var t = _agg_temp(S, GFRS(S, fi));
+    STI(S, GTI(S) + 1);   # consume IDENT
+    STI(S, GTI(S) + 1);   # consume `(`
+    _struct_call_emit(S, fi, noff, t);
+    return t;
+}
+
+# The token after the `)` that closes the call `IDENT (` at `ti` — what follows the call.
+fn _call_follow(S, ti): i64 {
+    var k = ti + 2;
+    var d = 1;
+    while (k < GTCNT(S)) {
+        var t = TOKTYP(S, k);
+        if (t == 10) { d = d + 1; }
+        if (t == 11) { d = d - 1; if (d == 0) { break; } }
+        k = k + 1;
+    }
+    return TOKTYP(S, k + 1);
+}
+
+# Is the call at `ti` the WHOLE argument (followed by `,` or `)`)? A call inside a larger
+# expression (`f(a) + 1`) is left to the ordinary value path.
+fn _call_is_whole_arg(S, ti): i64 {
+    var nx = _call_follow(S, ti);
+    if (nx == 31) { return 1; }
+    if (nx == 11) { return 1; }
+    return 0;
+}
+
+# `return f(..);` in a struct-returning fn, where `f` returns that same struct: the call into a
+# temp (returned), or -1 when the return expression is not that shape. CHANGELOG [6.6.6]
+fn _return_struct_call(S): i64 {
+    if (PEEKT(S) != 2) { return 0 - 1; }
+    if (TOKTYP(S, GTI(S) + 1) != 10) { return 0 - 1; }
+    var fi = FINDFN(S, PEEKV(S));
+    if (fi < 0) { return 0 - 1; }
+    if (GFRS(S, fi) != _cur_fn_ret_sid) { return 0 - 1; }
+    if (_ret_agg_class(S, fi) != 2) { return 0 - 1; }
+    return _struct_call_into_temp(S);
+}
+
+# `var G: S = f(..)` at top level, `f` returning `S` in rax:rdx: the global is not an inline
+# aggregate there (no receive path exists outside a fn), so `G.x` dereferenced the returned
+# first word — SIGSEGV. Refused by name, like the retptr form PARSE_FNCALL refuses. CHANGELOG [6.6.6]
+fn _refuse_toplevel_pair_init(S, pscale): i64 {
+    var ti = GTI(S) + 1;
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    if (TOKTYP(S, ti + 1) != 10) { return 0; }
+    var fi = FINDFN(S, TOKVAL(S, ti));
+    if (_ret_agg_class(S, fi) != 1) { return 0; }
+    if (GFRS(S, fi) != 0 - pscale) { return 0; }
+    _refuse_toplevel_struct_call(S, TOKVAL(S, ti));
+    return 0;
+}
+
+# A struct-valued call used where there is no frame to hold its result. Refused by name: before
+# 6.6.6 every such site compiled clean and SIGSEGV'd (the callee wrote through whatever the first
+# argument register held). CHANGELOG [6.6.6]
+fn _refuse_toplevel_struct_call(S, noff): i64 {
+    if (_panic == 1) { return 0; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    syscall(SYS_WRITE, 2, ": '", 3);
+    PRSTR(S + 0xEC00000 + noff);
+    syscall(SYS_WRITE, 2, "' returns a struct by value, and a struct result needs storage in a fn's frame — call it inside a fn\n", 103);
+    _had_error = 1;
+    return 0;
 }
 
 # v6.4.4/v6.4.7 mask classes: 1 = any 16-byte/1-XMM vector (f64v2 or an integer vector, so
@@ -2185,6 +2350,24 @@ fn PARSE_FNCALL(S, noff): i64 {
             syscall(SYS_WRITE, 2, ": #pure fn calls #alloc fn '", 28);
             PRSTR(S + 0xEC00000 + noff);
             syscall(SYS_WRITE, 2, "'\n", 2);
+        }
+    }
+    # ⛔ 6.6.6 — A >16 B STRUCT-RETURNING CALLEE WRITES ITS RESULT THROUGH A HIDDEN RETPTR, and
+    # until 6.6.6 only `var p: S = f(..)` supplied one. Everywhere else — an expression
+    # statement, an argument, `return f(..)` in a non-struct fn — the user args were marshalled
+    # as if there were none: on x86 the callee took argument 1 as its destination (SIGSEGV
+    # writing to 0x1), on aarch64 it wrote through whatever X8 held. Now the result lands in an
+    # anonymous frame temp, and the expression's VALUE is its first word — exactly what a struct
+    # local yields as an rvalue (`var k = r;`, `h(r)` into an untyped param), so the two agree.
+    # At top level there is no frame to hold it: refused by name. CHANGELOG [6.6.6]
+    if (_ret_agg_class(S, fi) == 2) {
+        if (GINFN(S) == 0) { _refuse_toplevel_struct_call(S, noff); }
+        else {
+            var _sct = _agg_temp(S, GFRS(S, fi));
+            _struct_call_emit(S, fi, noff, _sct);
+            EFLLOAD(S, _sct);
+            SESTYPE(S, 0);
+            return 0;
         }
     }
     # v6.4.31: on Win64 PE a value-form SIMD param (address-passed, struct_mask

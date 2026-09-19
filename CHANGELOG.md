@@ -73,6 +73,29 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   no retptr. Every other `ESTOREPARM` caller re-checked (see the issue's *Corrections*). Byte
   impact: 0 of 324 `.tcyr` changed; cycc **1,294,040 → 1,294,040 B**.
 
+- **A struct-valued call anywhere but a `var` initializer had nowhere to put its result — a
+  SIGSEGV for a >16 B struct, a silently dropped half for a 9-16 B one.** (bite 14c; filed
+  2026-09-19 from bite 1's review.) `fn fwd(): P3 { return s2(1, 2); }` crashed (exit 139, no
+  output); so did `s2(1, 2);`, `return s2(..)` in an `: i64` fn, `h(s2(..))`, and `r = s2(..)`
+  (on aarch64 that last one exited 0 with `r.x` = a stack address). **Root cause:** a >16 B
+  struct is returned through a hidden retptr the caller supplies, and only PARSE_VAR's receive
+  supplied one — PARSE_FNCALL and the tail-call path in PARSE_RETURN marshalled the user args as
+  if there were none, so the callee wrote through argument 1 (x86) or a stale X8 (aarch64). The
+  9-16 B rax:rdx return had the same hole: `q = p2(3, 4)` kept rax and left `q.y` stale, and
+  `hp(p2(..))` into a by-value struct param pushed the first word where the callee dereferences
+  an address. **Fix:** one emitter, `_struct_call_emit`, puts a struct-valued call's result into
+  a destination slot (retptr on x86/cx arg 0 or aarch64 X8, or the rax:rdx pair store), used by
+  both `var` receives (now a refactor onto it), a frame temp in PARSE_FNCALL (the expression's
+  value is the first word — what a struct local yields as an rvalue), the struct-param push (the
+  temp's address), `x = f(..)` for an inline struct local or global (temp, then the aggregate
+  copy), and `return f(..)` in a same-struct fn (temp, then `ESTRUCT_BYVAL_COPY` into the
+  caller's retptr). The tail-call path now diverts a retptr callee, and any call from a
+  struct-returning fn — so `return g()` of a NON-struct from a `: P3` fn, silently accepted before,
+  is now refused by the struct-return diagnostic. At top level there is no frame: every
+  struct-valued call that needs storage there is refused by name (all of them crashed). See the
+  issue's *Corrections to this filing*. Byte impact: **0 of 324 `.tcyr` and 0 of 85
+  `programs/*.cyr` changed**, all seven forks compile, cycc **1,294,040 → 1,298,280 B** (+4,240).
+
 ### Added
 
 - `tests/tcyr/crossos/simd_param_int_stack_args.tcyr` — 18 assertions with **literal** expectations
@@ -101,6 +124,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   compiler fails the 7 stack-passed fields on x86 and SIGILLs on aarch64. The matrix gate grew
   40 more rows (variants of 6..10 fields, one row per field, on all four legs — the probe brings
   its own bump `alloc`).
+- `struct_valued_call_sites.tcyr` grew 14 assertions (bite 14c): statement, `return f(..)` in a
+  `: P3` and an `: i64` fn, struct-param and untyped-param arguments, local / global / self-reading
+  assignment at 2 and 7 args, and the rax:rdx forms (struct param, local and global assignment,
+  `return`); 34 in total. The matrix gate grew 22 rows of the same shapes (14 on cx), with the
+  struct-valued checks reading field z so a first-word-only store cannot pass. Mutation-proven.
 
 ## [6.6.5] — 2026-09-19
 

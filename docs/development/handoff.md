@@ -80,7 +80,8 @@ slots have NOT been re-numbered — that is the user's call.
   pushed a vector as an int at any arity — and skipped every other callee gate (14a,
   [`…-struct-valued-assign-call-pushes-simd-args-as-ints`](issues/archived/2026-09-19-struct-valued-assign-call-pushes-simd-args-as-ints.md));
   ✅ a 7+-field enum variant read the wrong stack args (14b, [`…-enum-variant-ctor-seven-plus-fields-…`](issues/archived/2026-09-19-enum-variant-ctor-seven-plus-fields-reads-wrong-stack-args.md));
-  a >16 B struct-returning call outside a `var` initializer gets no retptr ([`…-retptr-struct-call-outside-var-init-crashes`](issues/2026-09-19-retptr-struct-call-outside-var-init-crashes.md));
+  ✅ a struct-valued call outside a `var` initializer had no destination — >16 B SIGSEGV, 9-16 B
+  dropped rdx; top level now refused by name (14c, [`…-retptr-struct-call-outside-var-init-crashes`](issues/archived/2026-09-19-retptr-struct-call-outside-var-init-crashes.md));
   an `async fn` never captures a vector param ([`…-async-fn-simd-param-not-captured`](issues/2026-09-19-async-fn-simd-param-not-captured.md)).
 - **`.4`–`.5` — DCE cannot compact on PE or x86 Mach-O** (rip-relative repair + re-run
   `_pe_layout` after compaction — both, or the binary looks fine and faults later).

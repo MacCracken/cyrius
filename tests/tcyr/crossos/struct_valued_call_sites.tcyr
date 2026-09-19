@@ -16,6 +16,15 @@
 # gave 149 for 182 and `var p: P2 = pr2(5, v)` 53 for 59, on x86_64 and aarch64 (qemu); Win64
 # (wine) page-faulted. Silent everywhere else: exit 0, no diagnostic.
 #
+# THE DEFECT (bite 14c). A >16 B struct is returned through a hidden retptr the CALLER supplies,
+# and only `var p: S = f(..)` supplied one. An expression statement, an argument, `return f(..)`
+# and `x = f(..)` marshalled the user args as if there were no retptr: on x86 the callee wrote its
+# result through argument 1 (SIGSEGV), on aarch64 through whatever X8 held (one shape exit 0 with
+# `x.x` = a stack address). The 9-16 B (rax:rdx) form had the same hole in two places: `x = f(..)`
+# kept rax and dropped rdx, and a struct-param argument `h(f(..))` passed the first word where
+# the callee dereferences an address (SIGSEGV). Each now gets a frame temp; a struct value used
+# as a scalar is its first word, exactly as a struct local is.
+#
 # ⭐ EVERY EXPECTED VALUE IS A LITERAL — the arguments written out as digits; the callees fold
 # their parameters positionally (lead*10^n + a*10^k + ...), so a missing, stale or shifted
 # parameter changes a specific digit.
@@ -56,6 +65,23 @@ fn sl3(s: Str, k): P3 { var p: P3; p.x = str_len(s) * 10 + k; p.y = 0; p.z = 0; 
 fn sl2(s: Str, k): P2 { var p: P2; p.x = str_len(s) * 10 + k; p.y = 0; return p; }
 fn st3(q: P3, k): P3 { var p: P3; p.x = q.z * 100 + q.y * 10 + k; p.y = 0; p.z = 0; return p; }
 fn st2(q: P3, k): P2 { var p: P2; p.x = q.z * 100 + q.y * 10 + k; p.y = 0; return p; }
+
+# --- 14c: struct-valued calls outside a `var` initializer ------------------------------------
+# x and z both carry the value: scalar uses read x (the first word), struct uses read z, so an
+# assignment that stored only the first word cannot pass.
+var CNT = 0;
+var GS = P3 { 0, 0, 0 };
+var GQ = P2 { 0, 0 };
+fn cq2(a, b): P3 { CNT = CNT + 1; var p: P3; p.x = a * 10 + b; p.y = 0; p.z = a * 10 + b; return p; }
+fn cq7(a, b, c, d, e, f, g): P3 { var p: P3; p.x = a * 1000000 + b * 100000 + c * 10000 + d * 1000 + e * 100 + f * 10 + g; p.y = 0; p.z = p.x; return p; }
+fn cp7(a, b, c, d, e, f, g): P2 { var p: P2; p.x = 0; p.y = a * 1000000 + b * 100000 + c * 10000 + d * 1000 + e * 100 + f * 10 + g; return p; }
+fn rq2(): P3 { return cq2(1, 2); }
+fn rq7(): P3 { return cq7(1, 2, 3, 4, 5, 6, 7); }
+fn ri7(): i64 { return cq7(1, 2, 3, 4, 5, 6, 7); }
+fn rp7(): P2 { return cp7(1, 2, 3, 4, 5, 6, 7); }
+fn hs(k, q: P3): i64 { return q.z + k; }
+fn hu(q): i64 { return q; }
+fn hy(q: P2): i64 { return q.y; }
 
 fn main(): i64 {
     alloc_init();
@@ -124,6 +150,35 @@ fn main(): i64 {
     assert_eq(s3.x, 974, "st3(src, 4) — src goes by address");
     var s4: P2 = st2(src, 5);
     assert_eq(s4.x, 975, "st2(src, 5)");
+
+    test_group("14c: a >16 B struct-valued call outside a var initializer");
+    cq2(1, 2);
+    assert_eq(CNT, 1, "cq2(1, 2); as a statement (SIGSEGV before)");
+    var t1: P3 = rq2();
+    assert_eq(t1.z, 12, "return cq2(1, 2) in a : P3 fn");
+    var t2: P3 = rq7();
+    assert_eq(t2.z, 1234567, "return cq7(1..7) in a : P3 fn — 7 ints + retptr, two on the x86 stack");
+    assert_eq(ri7(), 1234567, "return cq7(1..7) in an : i64 fn — the first word");
+    assert_eq(hs(5, cq2(3, 4)), 39, "hs(5, cq2(3, 4)) — a struct param gets the result's address");
+    assert_eq(hs(0, cq7(7, 6, 5, 4, 3, 2, 1)), 7654321, "hs(0, cq7(7..1))");
+    assert_eq(hu(cq2(5, 6)), 56, "hu(cq2(5, 6)) — an untyped param gets the first word, like hu(local)");
+    var t3: P3 = cq2(0, 0);
+    t3 = cq7(1, 2, 3, 4, 5, 6, 7);
+    assert_eq(t3.z, 1234567, "t3 = cq7(1..7) — assignment copies every field");
+    t3 = cq2(t3.x / 1000000, 9);
+    assert_eq(t3.z, 19, "t3 = cq2(t3.x / 1000000, 9) — an argument reading t3 sees the old value");
+    GS = cq7(7, 6, 5, 4, 3, 2, 1);
+    assert_eq(GS.z, 7654321, "GS = cq7(..) — a global struct");
+
+    test_group("14c: the 9-16 B (rax:rdx) forms of the same hole");
+    assert_eq(hy(cp7(1, 2, 3, 4, 5, 6, 7)), 1234567, "hy(cp7(1..7)) — the rdx half reaches a struct param");
+    var t4: P2 = cp7(0, 0, 0, 0, 0, 0, 0);
+    t4 = cp7(1, 2, 3, 4, 5, 6, 7);
+    assert_eq(t4.y, 1234567, "t4 = cp7(1..7) — rdx was dropped before");
+    GQ = cp7(7, 6, 5, 4, 3, 2, 1);
+    assert_eq(GQ.y, 7654321, "GQ = cp7(..) — a global");
+    var t5: P2 = rp7();
+    assert_eq(t5.y, 1234567, "return cp7(1..7) in a : P2 fn");
 
     test_group("the caller's vectors are untouched");
     assert_eq(load64(&v) * 10 + load64(&v + 8), 98, "v");

@@ -250,6 +250,33 @@ than out of the frame. The compiler records which of the two a variable is at it
 before v6.6.5 it guessed from the shape of the neighbouring stack slot and got it wrong for any
 pointer-mode struct declared after a closed `{ ... }` block.
 
+### Returning a struct by value (v6.6.6)
+
+A fn declared `: Point` returns the struct itself — a struct over 16 bytes through a hidden
+pointer the caller supplies, one of 9-16 bytes in two registers. Inside a fn the call may be
+written anywhere, and the result gets frame storage wherever it is:
+
+```cyrius
+struct P3 { x; y; z; }
+fn mk(a): P3 { var p: P3; p.x = a; p.y = a + 1; p.z = a + 2; return p; }
+fn take(q: P3): i64 { return q.z; }
+fn fwd(a): P3 { return mk(a); }       # forwards the whole struct
+
+fn f(): i64 {
+    var p: P3 = mk(1);                # every field
+    p = mk(5);                        # assignment copies every field (p may appear in the args)
+    var z = take(mk(7));              # a `q: P3` param receives the result's address — 9
+    var x = mk(9);                    # inferred as a P3
+    return z + p.z + mk(3);           # as a plain value, a struct is its FIRST word (3) — as `r` is
+}
+```
+
+⚠ At TOP LEVEL there is no frame to hold the result, so a struct-valued call there
+(`mk(1);`, `var g: P3 = mk(1);`, `g = mk(1);`) is a compile error naming the fn — call it inside
+a fn. Before v6.6.6 only `var p: T = f(..)` inside a fn worked; every other form, at top level
+or not, compiled clean and crashed (a >16 B result was written through the first argument) or
+silently lost the second half of a 9-16 B one.
+
 ⚠ **An array local over the per-fn frame budget (about 120 KB) keeps STATIC storage** — one
 buffer shared by every call and every thread — and the compiler says so:
 

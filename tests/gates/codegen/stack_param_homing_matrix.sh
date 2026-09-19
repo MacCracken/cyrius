@@ -56,6 +56,12 @@
 #   A2 `_call_arg_one` loses its SIMD arm                   -> RED  x86 48 · aarch64 48 · cx 24 (wine green:
 #                                                                  PE vectors go by pointer, mask is 0)
 #   A3 `_call_arg_one` loses its struct-address arm         -> RED  wine only (crash) — the PE vector pointer
+# bite 14c (rows 155-176, struct-valued calls outside a `var` initializer; cx rows 131-144):
+#   C0 the pre-14c frontend (commit d68d6f15's parse_*)     -> RED  x86/aarch64 SIGSEGV · cx 14 · wine crash
+#   C1 PARSE_FNCALL loses its retptr-temp path              -> RED  x86/aarch64 SIGSEGV · cx 6 · wine crash
+#   C2 the tail-call path no longer diverts retptr calls    -> RED  x86 SIGSEGV · aarch64 2 · cx 4 · wine crash
+#   C3 no `_try_struct_call_assign` (first word only)       -> RED  x86 8 · aarch64 8 · cx 4 · wine 8
+#   C4 no struct-valued-call arm in the struct-param push   -> RED  x86/aarch64 SIGSEGV · cx 2 · wine crash
 #   real tree                                              -> GREEN on all four legs (~5 s)
 set -u
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
@@ -64,8 +70,8 @@ CC="${CC:-$ROOT/build/cycc}"
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT INT TERM
 ulimit -c 0 2>/dev/null || true
-ROWS_FLOOR=154      # every leg but cx
-ROWS_CX_FLOOR=130   # cx: no 9-16 B rax:rdx rows (see gen)
+ROWS_FLOOR=176      # every leg but cx
+ROWS_CX_FLOOR=144   # cx: no 9-16 B rax:rdx rows (see gen)
 fail=0
 
 # ── generate the probe ────────────────────────────────────────────────────────────────────
@@ -186,6 +192,45 @@ BEGIN {
         }
       }
     }
+    # 6.6.6 bite 14c — a struct-valued call anywhere BUT a `var` initializer: only that form had a
+    # destination, so a >16 B (retptr) callee called elsewhere wrote through argument 1 (x86
+    # SIGSEGV; aarch64 through a stale X8) and a 9-16 B one lost rdx. Each shape at 2 and 7 int
+    # args (7 + the x86 retptr puts two on the stack). A struct VALUE used as a scalar is its
+    # first word, as a struct local is (`h(r)`, `var k = r`), so the i64 shapes read field x.
+    p("var LAST = 0;")
+    p("var GS = P3 { 0, 0, 0 };")
+    p("var GQ = P2 { 0, 0 };")
+    p("fn hs(q: P3): i64 { return q.z; }")
+    if (pair) p("fn hy(q: P2): i64 { return q.y; }")   # the rdx half: what a lost pair drops
+    p("fn hu(q): i64 { return q; }")
+    for (ni = 1; ni <= 2; ni++) {
+      n = (ni == 1) ? 2 : 7
+      sig = ""; args = ""; body = "0"; want = ""
+      for (i = 0; i < n; i++) {
+        sig = sig (i ? ", " : "") "a" i; args = args (i ? ", " : "") dig[i + 1]
+        body = body " + a" i " * " pow10(n - 1 - i); want = want dig[i + 1]
+      }
+      # x AND z carry the value: the i64 shapes read x (the first word), while the struct-valued
+      # shapes read z — so an assignment that stored only the first word cannot pass.
+      p("fn cq" n "(" sig "): P3 { var q: P3; q.x = " body "; q.y = 0; q.z = q.x; LAST = q.x; return q; }")
+      p("fn rq" n "(): P3 { return cq" n "(" args "); }")
+      p("fn ri" n "(): i64 { return cq" n "(" args "); }")
+      row++; call[row] = "LAST = 0; cq" n "(" args "); chk(" row ", LAST, " want ");"
+      row++; call[row] = "var T" row ": P3 = rq" n "(); chk(" row ", T" row ".z, " want ");"
+      row++; call[row] = "chk(" row ", ri" n "(), " want ");"
+      row++; call[row] = "chk(" row ", hs(cq" n "(" args ")), " want ");"
+      row++; call[row] = "chk(" row ", hu(cq" n "(" args ")), " want ");"
+      row++; call[row] = "var T" row ": P3 = cq" n "(" args "); T" row ".z = 0; T" row " = cq" n "(" args "); chk(" row ", T" row ".z, " want ");"
+      row++; call[row] = "GS.z = 0; GS = cq" n "(" args "); chk(" row ", GS.z, " want ");"
+      if (pair) {
+        p("fn cp" n "(" sig "): P2 { var q: P2; q.x = 0; q.y = " body "; return q; }")
+        p("fn rp" n "(): P2 { return cp" n "(" args "); }")
+        row++; call[row] = "chk(" row ", hy(cp" n "(" args ")), " want ");"
+        row++; call[row] = "var T" row ": P2 = cp" n "(" args "); T" row ".y = 0; T" row " = cp" n "(" args "); chk(" row ", T" row ".y, " want ");"
+        row++; call[row] = "GQ.y = 0; GQ = cp" n "(" args "); chk(" row ", GQ.y, " want ");"
+        row++; call[row] = "var T" row ": P2 = rp" n "(); chk(" row ", T" row ".y, " want ");"
+      }
+    }
     p("fn main(): i64 {")
     for (c = 1; c <= nc; c++) {
       p("    var V" c ": " cls[c] ";")
@@ -273,4 +318,4 @@ if command -v wine > /dev/null 2>&1; then
 else echo "  SKIP: wine not installed (Win64 leg — the cass hardware leg still covers it)"; fi
 
 if [ "$fail" != 0 ]; then echo "FAIL stack_param_homing_matrix"; exit 1; fi
-echo "PASS stack_param_homing_matrix: $(cat "$T/rows") generated rows ($ROWS_CX on cx) — 4 vector classes x 3 positions x 5..9 int args, 2 vectors + 7 ints, struct return x 5..9, vector args into struct-valued var receives, enum variants of 6..10 fields — bind every argument on every leg that ran"
+echo "PASS stack_param_homing_matrix: $(cat "$T/rows") generated rows ($ROWS_CX on cx) — 4 vector classes x 3 positions x 5..9 int args, 2 vectors + 7 ints, struct return x 5..9, vector args into struct-valued var receives, enum variants of 6..10 fields, struct-valued calls outside a var initializer — bind every argument on every leg that ran"

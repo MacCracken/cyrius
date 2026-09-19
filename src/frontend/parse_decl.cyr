@@ -2770,6 +2770,7 @@ fn PARSE_VAR(S): i64 {
             }
         }
     }
+    if (GINFN(S) == 0) { if (pscale < 0) { if (PEEKT(S) == 4) { _refuse_toplevel_pair_init(S, pscale); } } }   # 6.6.6
     if (asv_try == 1) {
         var asv_sid = 0 - pscale;
         var asv_sz = STRUCTSZ(S, asv_sid - 1);
@@ -2828,34 +2829,13 @@ fn PARSE_VAR(S): i64 {
             ERR_MSG(S, "fn return struct-id differs from declared var type", 50);
         }
         STI(S, GTI(S) + 1);                         # consume '('
-        # Push hidden retptr as first arg on x86 (SysV: RDI, Win64:
-        # RCX) — ECALLPOPS / EPOPARG reverse-pops the stack into
-        # arg regs in user-arg order, with retptr counted as arg 0.
-        # On aarch64 (v5.9.26), the retptr lives in X8 (dedicated
-        # indirect-result register, AAPCS64 §6.9), separate from the
-        # X0..X7 user-arg sequence. Skip the stack push here; load
-        # X8 directly via EFLADDR_X8 AFTER the regular args are
-        # popped into X0..X5, so the cross-call register state is:
-        #   x86:     [RDI=retptr, RSI=arg0, RDX=arg1, ...]
-        #   aarch64: [X0=arg0, X1=arg1, ..., X8=retptr]
-        var asv_argc = 0;
-        if (_AARCH64_BACKEND == 0) {
-            EFLADDR(S, asv_named);
-            EPUSHR(S);
-            asv_argc = 1;
-        }
-        # 6.6.6: through PARSE_FNCALL's callee-mask gates (`_owncall_args`) — this loop was a
-        # bare `PCMPE + EPUSHR` per argument, so a value-form vector went in as an int arg.
-        # The vector loads happen inside, after ECALLPOPS; X8 below touches no V register.
-        # CHANGELOG [6.6.6]
-        asv_argc = _owncall_args(S, asv_fi, asv_fnoff, asv_argc);
-        if (_AARCH64_BACKEND == 1) {
-            EFLADDR_X8(S, asv_named);
-        }
-        var asv_fn_target = L64(_fnt_offsets + asv_fi * 8);
-        if (asv_fn_target >= 0) { ECALLTO(S, asv_fn_target); }
-        else { ECALLFIX(S, asv_fi); }
-        ECALLCLEAN(S, asv_argc);
+        # The hidden retptr is int arg 0 on x86/cx (SysV RDI, Win64 RCX — pushed before the user
+        # args so ECALLPOPS reverse-pops it into the first arg register) and X8 on aarch64 (the
+        # AAPCS64 indirect-result register, loaded after the user args are popped into X0..).
+        # 6.6.6: the whole call is `_struct_call_emit`, shared with every other call site that
+        # needs a destination for a struct result (PARSE_FNCALL's temp, struct-param args,
+        # assignment, `return f()`), which had none. CHANGELOG [6.6.6]
+        _struct_call_emit(S, asv_fi, asv_fnoff, asv_named);
         if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
         STI(S, GTI(S) + 1);                         # consume ';'
         return 0;
@@ -2922,15 +2902,9 @@ fn PARSE_VAR(S): i64 {
             ERR_MSG(S, "fn return struct-id differs from declared var type", 50);
         }
         STI(S, GTI(S) + 1);                         # consume '('
-        # NO hidden retptr — pair-return uses rax/rdx, not RDI.
-        # 6.6.6: the callee-mask gates, as in asv_try above. CHANGELOG [6.6.6]
-        var asp_argc = _owncall_args(S, asp_fi, asp_fnoff, 0);
-        var asp_fn_target = L64(_fnt_offsets + asp_fi * 8);
-        if (asp_fn_target >= 0) { ECALLTO(S, asp_fn_target); }
-        else { ECALLFIX(S, asp_fi); }
-        ECALLCLEAN(S, asp_argc);
-        # Receive rax+rdx into the 2-slot local.
-        EFLSTORE_STRUCT_INT_PAIR(S, asp_named);
+        # NO hidden retptr — pair-return uses rax/rdx, received into the 2-slot local.
+        # 6.6.6: `_struct_call_emit`, as in asv_try above. CHANGELOG [6.6.6]
+        _struct_call_emit(S, asp_fi, asp_fnoff, asp_named);
         if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
         STI(S, GTI(S) + 1);                         # consume ';'
         return 0;

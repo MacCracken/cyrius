@@ -1652,6 +1652,47 @@ fn _agc_operand(S, onoff): i64 {
     return gn;
 }
 
+# ⛔ 6.6.6 — `x = f(..);` where `x` is an inline struct (local or global) and `f` returns that
+# struct BY VALUE. The declaration form (`var x: S = f(..)`) always had a destination; this one
+# fell to the scalar store, so a >16 B return had no retptr at all (x86: SIGSEGV writing through
+# argument 1; aarch64: exit 0 with `x.x` = a stack address) and a 9-16 B one kept rax and dropped
+# rdx (`q = p2(3, 4)` left `q.y` stale). Now: the call into a temp, then the same copy `x = t`
+# performs. Through a temp rather than straight into `x`, so an argument that reads `x` (or is
+# `x`, address-passed) sees the old value. At top level there is no frame for the temp: a
+# retptr callee is refused by PARSE_FNCALL, a rax:rdx one here. CHANGELOG [6.6.6]
+fn _try_struct_call_assign(S, noff): i64 {
+    if (PEEKT(S) != 2) { return 0; }
+    if (TOKTYP(S, GTI(S) + 1) != 10) { return 0; }
+    var fi = FINDFN(S, PEEKV(S));
+    var cls = _ret_agg_class(S, fi);
+    if (cls == 0) { return 0; }
+    if (_call_follow(S, GTI(S)) != 5) { return 0; }
+    var n = _agc_operand(S, noff);
+    if (n <= 1) { return 0; }
+    if (_agc_t != 0 - GFRS(S, fi)) { return 0; }
+    if (GINFN(S) != 1) {
+        if (cls == 1) { _refuse_toplevel_struct_call(S, PEEKV(S)); }
+        return 0;
+    }
+    var dli = _agc_li;
+    var dgv = _agc_gvi;
+    var t = _struct_call_into_temp(S);
+    if (dgv >= 0) {
+        _agc_copy_bytes(S, 0 - 1, dgv, t, 0 - 1, STRUCTSZ(S, GFRS(S, fi) - 1));
+        SLVAR(S, dgv);
+    } else {
+        var i = 0;
+        while (i < n) {
+            EFLLOAD(S, t - i);
+            EFLSTORE(S, dli - i);
+            i = i + 1;
+        }
+    }
+    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
+    STI(S, GTI(S) + 1);   # consume ';'
+    return 1;
+}
+
 fn _try_aggregate_copy_assign(S, noff): i64 {
     if (PEEKT(S) != 2) { return 0; }
     if (TOKTYP(S, GTI(S) + 1) != 5) { return 0; }
@@ -2404,6 +2445,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
             # ⚠ Must be read BEFORE PCMPE — afterwards the token cursor has moved past the
             # callee name and FINDFN would resolve nothing.
             if (_try_aggregate_copy_assign(S, noff) == 1) { return 0; }
+            if (_try_struct_call_assign(S, noff) == 1) { return 0; }   # 6.6.6
             # v6.5.61 — `r = f(...)` into a VECTOR local needs the 16/32-byte receive the
             # declaration form has; without it this fell to the 8-byte EFLSTORE below.
             if (_try_vector_call_assign(S, noff) == 1) { return 0; }
