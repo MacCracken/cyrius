@@ -1,0 +1,445 @@
+#!/bin/sh
+# gates_never_write_tree.sh — v6.6.6. A gate READS the tree it checks; it never writes it, not
+# even "temporarily", and a broken temp dir can fail a gate but can never damage the tree.
+#
+# ⛔ THE INCIDENT (measured 2026-09-19, the 6.6.5 close). tests/gates/platform/
+# syscall_xlat_generated.sh copied the committed src/common/syscall_xlat.cyr to mktemp,
+# regenerated the table IN PLACE, and on a diff copied the backup back. /tmp was full: the
+# backup copy was created EMPTY, the regenerated table "differed" from it, and the gate
+# restored the EMPTY file over the tracked source in the middle of check.sh — then reported
+# the table STALE, a false diagnosis on top of the damage. Reproduced on the 6.6.5 tree with
+# TMPDIR on a 476 KiB tmpfs (the generator binary fits, the backup does not): the tracked file
+# went 7450 -> 0 bytes.
+#
+# ⭐ THE ROOT CAUSE IS "A GATE WRITES THE TREE", NOT "THE BACKUP FAILED". Save/modify/restore
+# is only as safe as the restore, and the restore is exactly the step that runs when things
+# are already going wrong (full disk, a timeout kill, ^C). The gate-wide audit found four:
+#   * syscall_xlat_generated.sh — the incident. Now regenerates to $D and diffs; the generator
+#     takes an OUT path and writes crash-safe (programs/gen_syscall_xlat.cyr).
+#   * cybs_if_else_rbx.sh — backed up src/common/util.cyr, injected a probe IN PLACE, ran cybs,
+#     restored; a kill in between left the probe in the tree. Now injects into a copy of src/.
+#   * lexid_buckets_by_content.sh — with an unusable TMPDIR `mktemp -d` printed nothing and
+#     its fixture writer joined "" + "uni.cyr": two 20000-fn files landed in the REPO ROOT, and
+#     the gate then PASSED on timings of compiling nothing. Now checks the temp dir.
+#   * audit_scope_covers_suite.sh — wrote its probe into tests/tcyr/lang/ and relied on rm + an
+#     EXIT trap; SIGKILL runs no trap, and a killed run left the probe in the tree (measured).
+#     Now runs `cyrius audit` in a scratch copy. MISSED by the first audit round: its method
+#     (TMPDIR missing / read-only, then `git status`) cannot see a write the gate cleans up
+#     itself, and the static detector did not follow a write through a variable.
+# AUDIT METHOD (6.6.6, round 2 — the one that works): every gate run in NORMAL mode against a
+# scratch copy of the tree (HEAD + the working changes + build/, its own git repo, HOME and
+# CYRIUS_HOME scratch with every store slot COPIED), then `find -cnewer <stamp>` over it. ctime,
+# not mtime and not `git status`: a gate that restores the same bytes, with the original
+# mtime, still moves the ctime. Result: the only gate that changed anything outside the
+# gitignored build/ outputs was the 6.6.5 audit_scope_covers_suite.sh, which the same run
+# confirms. Two gates were not RUN, because they write FIXED /tmp names and would clobber a
+# concurrent check.sh (io_rdwr_agnos.sh, syscall_wrapper_pass.sh); both were read by hand and
+# write only /tmp.
+#
+# ⚠ WHAT THIS GATE PINS, AND WHAT IT DOES NOT. Axis 1 is static and covers EVERY gate plus
+# scripts/check.sh, but only the shapes it can see: a write spelled against "$ROOT/..." or a
+# variable assigned "$ROOT/...", a backup/write-back pair, an in-place editor. A write to a
+# cwd-relative path after `cd "$ROOT"` (lexid's shape) is not statically decidable and is
+# pinned only for the gates axis 2 runs. Gitignored build/ outputs are EXEMPT — check.sh and
+# several gates build tools there by design; the three TRACKED build/ files (derived from
+# .gitignore's `!/build/` lines) are not.
+#
+# AXES
+#   1. STATIC, every gate + scripts/check.sh: no gate backs a tracked file up into a temp var
+#      and writes it back, edits a tracked path in place (`sed -i`, `perl -i`, python
+#      `open('<tracked>', 'w')`), or writes/creates/deletes a path under $ROOT — spelled out or
+#      through a variable assigned "$ROOT/..." (followed through two further assignments).
+#      Self-tested first on fixtures carrying each shape, and on clean look-alikes, so a
+#      detector that matches nothing — or everything — cannot read green.
+#   2. DYNAMIC: the four gates above run against a SCRATCH copy of the tree under a normal, a
+#      missing, a read-only and a cp-fails-into-temp ("disk full") TMPDIR. Every file and dir
+#      in the copy is stamped to 2000-01-01 first, so ANY write — including a restore that puts
+#      the same bytes back — shows up under `find -newer`, and a cksum manifest catches content.
+#      Under a missing/read-only TMPDIR each must also FAIL (not pass vacuously). The scratch
+#      tree carries build/cyrfmt and an EMPTY tests/tcyr/lang, benches/ and fuzz/, so
+#      audit_scope_covers_suite.sh's three `cyrius audit` sweeps cost <1 s here (fmt over
+#      src/lib/cbt, one probe test) instead of ~5 min, and its pre-6.6.6 version reaches its write.
+#   3. DYNAMIC: a STALE committed table is reported STALE and left EXACTLY as it was — the gate
+#      neither "fixes" it by regenerating in place nor restores anything over it.
+#   4. DYNAMIC: the generator's own write. A short write is an ERROR — under RLIMIT_FSIZE (the
+#      kernel's full-disk sequence: a short count, then EFBIG) and into an unwritable dir it
+#      exits non-zero, creates no OUT, leaves an existing OUT byte-for-byte, and leaves no temp
+#      behind; unconstrained it reproduces the committed table (anti-vacuous). And end to end:
+#      syscall_xlat_generated.sh with a generator that cannot write says "could not write",
+#      never STALE, and does not touch the tree.
+#
+# MUTATION LEDGER (measured 6.6.6, each in a scratch copy of the tree):
+#   a. 6.6.5 syscall_xlat_generated.sh + 6.6.5 generator  -> axis 2 FAIL (normal: table
+#      rewritten in place; cp-fault: 7450 -> 0 bytes) and axis 1 FAIL (backup/restore pair)
+#   b. 6.6.5 cybs_if_else_rbx.sh                          -> axis 2 FAIL (util.cyr rewritten)
+#                                                            and axis 1 FAIL
+#   c. 6.6.5 lexid_buckets_by_content.sh                  -> axis 2 FAIL (uni.cyr/var.cyr
+#      created in the tree root; rc 0 under a missing TMPDIR)
+#   d. detector write-back pattern disabled               -> axis 1 self-test FAIL (restore_cp;
+#      restore_redirect is still caught, by the $ROOT-path writer below — two nets on one shape)
+#   e. detector in-place-editor report disabled           -> axis 1 self-test FAIL (sed_inplace,
+#                                                            py_inplace)
+#   f. 6.6.5 audit_scope_covers_suite.sh                  -> axis 1 FAIL ($PROBE = $ROOT/tests/
+#      tcyr/lang/_audit_scope_probe.tcyr: rm + redirect) and axis 2 FAIL (normal and cp-fault
+#      runs: tests/tcyr/lang written — the probe created and removed again)
+#   g. detector's $ROOT-path writer disabled              -> axis 1 self-test FAIL (var_probe,
+#      root_literal, var_chain, tracked_build); with the 6.6.5 audit gate put back as well, only
+#      axis 2 still sees it (normal + cp-fault) — which is exactly how round 1 missed it
+#   h. generator back to file_write_all + `<= 0` (OUT     -> axis 4 FAIL (rc 0 and a 2048-byte
+#      kept)                                                 OUT under the size limit; the gate
+#                                                            then says STALE, not "could not write")
+# Real tree -> PASS.
+#
+# ⚠ Runs ONLY against a scratch copy. It never runs a gate against the real tree it lives in.
+# ⚠ This file is excluded from its own static scan: its fixtures spell the forbidden shapes.
+# ⚠ Root can write a chmod-555 dir, so the read-only mode derives whether it IS read-only
+#   before demanding a failure, rather than assuming it.
+ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
+cd "$ROOT" || exit 2
+W=$(mktemp -d) && [ -d "$W" ] || { echo "FAIL: gates_never_write_tree: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
+trap 'chmod -R u+w "$W" 2>/dev/null; rm -rf "$W"' EXIT
+FAIL=0
+SELF="tests/gates/toolchain/gates_never_write_tree.sh"
+
+# ── axis 1: the static shape ──────────────────────────────────────────────────────────
+# Prints each tracked path that file $1 backs up into a temp var AND writes back, or edits in
+# place, and each write whose target is a path under $ROOT.
+_rx_escape() { printf '%s' "$1" | sed 's/[][\.*^$]/\\&/g'; }
+# The tracked build/ files, from .gitignore's re-include lines — works without git.
+TRACKED_BUILD=$(sed -n 's|^!/build/\([A-Za-z0-9_.-]*\)$|\1|p' .gitignore 2>/dev/null | tr '\n' ' ')
+[ -n "$TRACKED_BUILD" ] || { echo "FAIL: axis 1: no '!/build/<file>' lines in .gitignore — cannot tell a tracked build/ file from an output"; exit 1; }
+# (c) writes whose target is a TREE path. POSIX awk only (CI's awk is mawk: no intervals, no
+# gensub). A variable counts as a tree path when assigned "$ROOT/..." or "$<tree var>/...".
+cat > "$W/treewrite.awk" <<'AWK'
+function lastref(seg, v,    tmp, off, k) {
+    tmp = seg; off = 0; k = 0
+    while (match(tmp, "\\$(\\{" v "\\}|" v ")([^A-Za-z0-9_]|$)")) {
+        k = off + RSTART; RL = RLENGTH
+        off = off + RSTART; tmp = substr(seg, off + 1)
+    }
+    return k
+}
+function nosubst(s,    t) {   # blank out $( ... ) command substitutions, innermost first
+    t = s
+    while (match(t, /\$\([^()]*\)/)) t = substr(t, 1, RSTART - 1) "X" substr(t, RSTART + RLENGTH)
+    return t
+}
+BEGIN { n = split(tracked, tw, " "); for (j = 1; j <= n; j++) TB["build/" tw[j]] = 1 }
+{
+    line = $0
+    if (line ~ /^[ \t]*#/) line = ""
+    L[NR] = line
+    if (match(line, /^[ \t]*(export[ \t]+)?[A-Za-z_][A-Za-z0-9_]*="?\$\{?[A-Za-z_][A-Za-z0-9_]*\}?\/[^" \t;&|)]*/)) {
+        s = substr(line, RSTART, RLENGTH)
+        sub(/^[ \t]*(export[ \t]+)?/, "", s)
+        name = s; sub(/=.*/, "", name)
+        base = s; sub(/^[^=]*="?\$\{?/, "", base); sub(/[}\/].*/, "", base)
+        path = s; sub(/^[^=]*="?\$\{?[A-Za-z_][A-Za-z0-9_]*\}?\//, "", path)
+        if (name != "ROOT") { A[name] = base; P[name] = path }
+    }
+}
+END {
+    tv["ROOT"] = ""
+    for (pass = 0; pass < 3; pass++)
+        for (nm in A) if ((A[nm] in tv) && !(nm in tv)) tv[nm] = (tv[A[nm]] == "" ? "" : tv[A[nm]] "/") P[nm]
+    for (i = 1; i <= NR; i++) {
+        line = L[i]; ns = nosubst(line)
+        for (v in tv) {
+            r = "\"?\\$(\\{" v "\\}|" v ")([^A-Za-z0-9_]|$)"
+            op = ""; src = line
+            if (match(line, ">>?\\|?[ \t]*" r)) op = "redirect"
+            else if (match(line, "(^|[^A-Za-z0-9_])tee[ \t]+(-[a-z]+[ \t]+)*" r)) op = "tee"
+            else if (match(line, "(^|[ \t])of=" r)) op = "dd of="
+            else {
+                src = ns
+                if (match(ns, "(^|[^A-Za-z0-9_-])(touch|rm|rmdir|mkdir|truncate)[ \t]([^;&|]*[ \t])?" r)) op = "create/delete"
+                else if (match(ns, "(^|[^A-Za-z0-9_-])(sed[ \t]+-i|perl[ \t]+-[a-z]*i)[^;&|]*[ \t]" r)) op = "in-place edit"
+                else if (match(ns, "(^|[^A-Za-z0-9_-])(cp|mv|ln|install)[ \t][^;&|]*[ \t]\"?\\$(\\{" v "\\}|" v ")(/[^ \t\";&|)]*)?\"?[ \t]*($|[;&|)])")) op = "copy/move destination"
+            }
+            if (op == "") continue
+            st = RSTART; seg = substr(src, st, RLENGTH)
+            k = lastref(seg, v)
+            after = substr(src, st + k - 1 + RL - 1)
+            suf = ""
+            if (match(after, /^[}]?\/[^ \t";&|)<>]*/)) { suf = substr(after, 1, RLENGTH); sub(/^[}]?\//, "", suf) }
+            full = tv[v]; if (suf != "") full = (full == "" ? suf : full "/" suf)
+            if (full ~ /^\.\.(\/|$)/) continue
+            if (full ~ /^build\// && !(full in TB)) continue
+            print (v == "ROOT" ? "" : "$" v " = ") "$ROOT/" full " (" op ", line " i ")"
+        }
+    }
+}
+AWK
+_detect() {
+    grep -v '^[[:space:]]*#' "$1" > "$W/nc" 2>/dev/null || return 0
+    # (a) backup: `cp [-flags] P "$VAR/..."` with VAR != ROOT, P an existing tree file
+    sed -nE 's/.*(^|[^A-Za-z0-9_])cp[[:space:]]+(-[A-Za-z]+[[:space:]]+)*"?(\$\{?ROOT\}?\/)?([A-Za-z0-9_][A-Za-z0-9_.\/-]*)"?[[:space:]]+"?\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?\/.*/\5 \4/p' "$W/nc" \
+    | while read -r var p; do
+        [ "$var" = ROOT ] && continue
+        [ -f "$ROOT/$p" ] || continue
+        pe=$(_rx_escape "$p")
+        # write-back: P as the LAST operand of cp/mv, or the target of > / >>
+        if grep -Eq "((^|[^A-Za-z0-9_])(cp|mv)[[:space:]].*[[:space:]]|>>?[[:space:]]*)\"?(\\\$\\{?ROOT\\}?/)?$pe\"?[[:space:]]*(\$|[;&|)])" "$W/nc"; then
+            echo "$p (backed up to \$$var and written back)"
+        fi
+    done
+    # (b) in-place editors on a literal tree path
+    for p in $(sed -nE "s/.*(sed[[:space:]]+-i|perl[[:space:]]+-[a-z]*i[a-z]*)[^|;&]*[[:space:]]\"?(\\\$\\{?ROOT\\}?\\/)?([A-Za-z0-9_][A-Za-z0-9_.\\/-]*)\"?[[:space:]]*(\$|[;&|)]).*/\\3/p" "$W/nc") \
+             $(sed -nE "s/.*open\\(['\"]([A-Za-z0-9_][A-Za-z0-9_.\\/-]*)['\"][[:space:]]*,[[:space:]]*['\"][wa].*/\\1/p" "$W/nc"); do
+        [ -f "$ROOT/$p" ] && echo "$p (edited in place)"
+    done
+    # (c) a write, create or delete whose target is under $ROOT (spelled, or via a variable)
+    awk -v tracked="$TRACKED_BUILD" -f "$W/treewrite.awk" "$1"
+}
+
+# Self-test FIRST — the detector must see each shape, and must not see a temp-only write.
+mkdir -p "$W/fx"
+{ printf 'cp src/common/syscall_xlat.cyr "$D/committed.cyr"\n'
+  printf './gen\ncp "$D/committed.cyr" src/common/syscall_xlat.cyr\n'; } > "$W/fx/restore_cp.sh"
+{ printf 'cp "$ROOT/src/common/util.cyr" "${D}/util.bak"\n'
+  printf 'cat "$D/util.bak" > "$ROOT/src/common/util.cyr"\n'; } > "$W/fx/restore_redirect.sh"
+printf "sed -i 's/a/b/' lib/string.cyr\n" > "$W/fx/sed_inplace.sh"
+printf "open('src/common/util.cyr','w').write(s)\n" > "$W/fx/py_inplace.sh"
+# the 6.6.5 audit_scope_covers_suite.sh shape: a NEW file under the tree, through a variable
+{ printf 'PROBE="$ROOT/tests/tcyr/lang/_probe.tcyr"\n'
+  printf 'cat > "$PROBE" <<%sEOF%s\nfn main(): i64 { return 0; }\nEOF\n' "'" "'"; } > "$W/fx/var_probe.sh"
+printf 'echo x >> "${ROOT}/tests/tcyr/new.tcyr"\n' > "$W/fx/root_literal.sh"
+{ printf 'TD=$ROOT/tests\nF="${TD}/fixtures/x.cyr"\n'
+  printf 'cp "$W/gen.cyr" "$F"\n'; } > "$W/fx/var_chain.sh"
+printf 'cp "$D/cycc.new" "$ROOT/build/cycc"\n' > "$W/fx/tracked_build.sh"
+{ printf 'cp "$ROOT/lib/fs.cyr" "$T/w/fs_copy.cyr"\n'
+  printf 'cp src/common/util.cyr "$D/u.cyr"; sed -i s/a/b/ "$D/u.cyr"\n'
+  printf 'SRC="$ROOT/src/main.cyr"\ncat "$SRC" | "$CC" > "$D/out" 2>&1\ncp "$SRC" "$D/src_copy.cyr"\n'
+  printf 'mkdir -p "$T/home/versions/$(cat "$ROOT/VERSION")"\n'
+  printf '"$ROOT/build/cycc" < "$ROOT/programs/cyrlint.cyr" > "$ROOT/build/cyrlint" 2> /dev/null\n'
+  printf 'PROBE_DIR="$D/p"; mkdir -p "$PROBE_DIR"\necho ok >&2\n'; } > "$W/fx/clean.sh"
+st_ok=1; nshape=0
+for f in restore_cp restore_redirect sed_inplace py_inplace var_probe root_literal var_chain tracked_build; do
+    nshape=$((nshape + 1))
+    [ -n "$(_detect "$W/fx/$f.sh")" ] || { echo "FAIL: axis 1 self-test: the detector did not flag the '$f' shape"; st_ok=0; }
+done
+[ -z "$(_detect "$W/fx/clean.sh")" ] || { echo "FAIL: axis 1 self-test: the detector flagged a temp-only write or a read: $(_detect "$W/fx/clean.sh")"; st_ok=0; }
+[ "$st_ok" = 1 ] || FAIL=1
+
+nscan=0; nbad=0
+for g in $(find tests/gates -name '*.sh' | LC_ALL=C sort) scripts/check.sh; do
+    [ "$g" = "$SELF" ] && continue
+    nscan=$((nscan + 1))
+    hits=$(_detect "$g")
+    if [ -n "$hits" ]; then
+        echo "$hits" | sed "s|^|FAIL: axis 1: $g writes the tree it checks: |"
+        nbad=$((nbad + 1))
+    fi
+done
+# Floor: 176 gate scripts at 6.6.6 including this one (derive: find tests/gates -name '*.sh' | wc -l).
+if [ "$nscan" -lt 150 ]; then
+    echo "FAIL: axis 1: only $nscan files scanned (floor 150) — the gate tree moved"; FAIL=1
+elif [ "$nbad" -ne 0 ]; then
+    FAIL=1
+elif [ "$st_ok" = 1 ]; then
+    echo "  ok: axis 1: $nscan gate scripts carry no backup/restore, in-place edit, or write under \$ROOT outside the gitignored build/ outputs (detector self-tested on $nshape shapes + 1 clean)"
+fi
+
+# ── axes 2+3: run the rewriting-shaped gates against a SCRATCH tree ──────────────────
+T="$W/tree"
+mkdir -p "$T/build" "$T/programs" "$T/tests/data" "$T/tests/gates/platform" \
+         "$T/tests/gates/toolchain" "$T/tests/gates/frontend" "$T/tests/tcyr/lang" \
+         "$T/benches" "$T/fuzz" || { echo "FAIL: cannot stage $T"; exit 1; }
+# (tests/tcyr/lang, benches/ and fuzz/ are empty on purpose: they are what audit_scope_covers_suite
+#  walks and where its pre-6.6.6 version wrote its probe, so that version reaches the write here;
+#  with them empty and no cyrlint/cyrdoc staged, its three audit sweeps take under a second)
+for x in src lib cbt bootstrap; do cp -R "$x" "$T/$x" || { echo "FAIL: cannot stage $x/ into the scratch tree"; exit 1; }; done
+cp -R tests/data/syscalls "$T/tests/data/syscalls" \
+  && cp programs/gen_syscall_xlat.cyr "$T/programs/" \
+  && cp cyrius.cyml VERSION "$T/" \
+  && cp tests/gates/platform/syscall_xlat_generated.sh "$T/tests/gates/platform/" \
+  && cp tests/gates/toolchain/cybs_if_else_rbx.sh "$T/tests/gates/toolchain/" \
+  && cp tests/gates/toolchain/audit_scope_covers_suite.sh "$T/tests/gates/toolchain/" \
+  && cp tests/gates/frontend/lexid_buckets_by_content.sh "$T/tests/gates/frontend/" \
+  || { echo "FAIL: cannot stage the scratch tree"; exit 1; }
+[ -f cyrius.lock ] && cp cyrius.lock "$T/"
+for b in cycc cyrius cyrfmt; do
+    [ -x "build/$b" ] || { echo "FAIL: build/$b missing — check.sh stages it; run from check.sh or build it"; exit 1; }
+    cp "build/$b" "$T/build/$b" || { echo "FAIL: cannot stage build/$b"; exit 1; }
+done
+find "$T" -exec touch -t 200001010000 {} + || { echo "FAIL: cannot stamp the scratch tree"; exit 1; }
+touch -t 200101010000 "$W/stamp"
+_manifest() { ( cd "$T" && find . -type f | LC_ALL=C sort | xargs cksum ); }
+_manifest > "$W/m0"
+[ "$(wc -l < "$W/m0")" -gt 150 ] || { echo "FAIL: the scratch manifest has $(wc -l < "$W/m0") files (floor 150)"; exit 1; }
+
+# A `cp` that fails exactly the way a full disk makes it fail — destination created, nothing
+# lands, exit 1 — but ONLY for destinations under the fault dir. Everything else is the real cp.
+REAL_CP=$(command -v cp)
+mkdir -p "$W/shim" "$W/tmpfault" "$W/tmpok" "$W/ro"
+cat > "$W/shim/cp" <<EOF
+#!/bin/sh
+for a; do last=\$a; done
+case "\$last" in
+    "$W/tmpfault"/*)
+        isdir=0; n=\$#; i=0
+        for a; do i=\$((i + 1)); [ \$i -lt \$n ] || break; case \$a in -*) ;; *) [ -d "\$a" ] && isdir=1 ;; esac; done
+        if [ \$isdir = 1 ]; then mkdir -p "\$last"; else : > "\$last"; fi
+        echo "cp: error writing '\$last': No space left on device" >&2
+        exit 1 ;;
+esac
+exec "$REAL_CP" "\$@"
+EOF
+chmod +x "$W/shim/cp"
+chmod 555 "$W/ro"
+ro_real=1; ( : > "$W/ro/probe" ) 2>/dev/null && { ro_real=0; rm -f "$W/ro/probe"; }
+
+nrun=0; A2=0
+_run() {  # _run <gate-rel> <mode> -> checks the tree afterwards
+    g=$1; mode=$2
+    case $mode in
+        normal)  td="$W/tmpok";            pth=$PATH ;;
+        missing) td="$W/absent/tmp";       pth=$PATH ;;
+        ro)      td="$W/ro";               pth=$PATH ;;
+        cpfault) td="$W/tmpfault";         pth="$W/shim:$PATH" ;;
+    esac
+    rm -rf "$W/absent"
+    rc=0
+    ( cd "$T" && TMPDIR="$td" PATH="$pth" timeout 300 sh "$g" ) > "$W/out" 2>&1 || rc=$?
+    nrun=$((nrun + 1))
+    newer=$(find "$T" -newer "$W/stamp" | head -5)
+    _manifest > "$W/m1"
+    if [ -n "$newer" ] || ! cmp -s "$W/m0" "$W/m1"; then
+        echo "FAIL: axis 2: $g [$mode TMPDIR] WROTE THE TREE it checks:"
+        [ -n "$newer" ] && echo "$newer" | sed -e "s|^$T\$|      written: the tree root (a file was created or removed there)|" -e "s|^$T/|      written: |"
+        diff "$W/m0" "$W/m1" | grep '^[<>]' | head -4 | sed 's/^/      /'
+        FAIL=1; A2=1
+        # re-stage what it touched so the next run starts clean
+        ( cd "$ROOT" && for f in $(diff "$W/m0" "$W/m1" | awk '/^[<>]/ {print $4}' | sort -u); do   # "< CRC SIZE ./path"
+              f=${f#./}; if [ -f "$f" ]; then "$REAL_CP" "$f" "$T/$f"; else rm -f "$T/$f"; fi
+          done )
+        find "$T" -newer "$W/stamp" -exec touch -t 200001010000 {} +
+        return 1
+    fi
+    case $mode in
+        missing|ro)
+            if [ "$mode" = ro ] && [ "$ro_real" = 0 ]; then return 0; fi
+            if [ "$rc" -eq 0 ]; then
+                echo "FAIL: axis 2: $g PASSED with an unusable TMPDIR ($mode) — it tested nothing"
+                FAIL=1; A2=1; return 1
+            fi ;;
+        cpfault)
+            # audit_scope's first act is to copy the tree into its temp dir; with that copy
+            # failing it must stop, not measure a partial tree
+            if [ "$g" = tests/gates/toolchain/audit_scope_covers_suite.sh ] && [ "$rc" -eq 0 ]; then
+                echo "FAIL: axis 2: $g PASSED although copying the tree into its temp dir failed"
+                FAIL=1; A2=1; return 1
+            fi ;;
+        normal)
+            if [ "$rc" -ne 0 ]; then
+                echo "FAIL: axis 2: $g does not pass on the scratch tree (rc=$rc) — the harness is not testing it:"
+                tail -3 "$W/out" | sed 's/^/      /'; FAIL=1; A2=1; return 1
+            fi ;;
+    esac
+    return 0
+}
+
+for m in normal missing ro cpfault; do _run tests/gates/platform/syscall_xlat_generated.sh $m; done
+for m in normal missing ro cpfault; do _run tests/gates/toolchain/cybs_if_else_rbx.sh $m; done
+for m in missing ro; do _run tests/gates/frontend/lexid_buckets_by_content.sh $m; done
+for m in normal missing ro cpfault; do _run tests/gates/toolchain/audit_scope_covers_suite.sh $m; done
+if [ "$nrun" -ne 14 ]; then
+    echo "FAIL: axis 2: $nrun gate runs, expected 14"; FAIL=1
+elif [ "$A2" = 0 ]; then
+    echo "  ok: axis 2: 14 runs of the 4 formerly tree-writing gates (normal / missing / read-only$([ "$ro_real" = 0 ] && echo ' [not enforced: running as root]') / cp-fails-into-temp TMPDIR) left the scratch tree byte- and mtime-identical"
+fi
+
+# ── axis 3: a STALE table is reported, and left exactly as it is ──────────────────────
+X="$T/src/common/syscall_xlat.cyr"
+awk '!/if \(n == 294\) \{ return "inotify_init1"; \}/' "$ROOT/src/common/syscall_xlat.cyr" > "$W/stale.cyr"
+if cmp -s "$W/stale.cyr" "$ROOT/src/common/syscall_xlat.cyr"; then
+    echo "FAIL: axis 3: the 294 row is not in src/common/syscall_xlat.cyr — pick another row to drop"; FAIL=1
+else
+    "$REAL_CP" "$W/stale.cyr" "$X"; touch -t 200001010000 "$X" "$T/src/common"
+    _manifest > "$W/m0"
+    rc=0; ( cd "$T" && TMPDIR="$W/tmpok" timeout 300 sh tests/gates/platform/syscall_xlat_generated.sh ) > "$W/out" 2>&1 || rc=$?
+    _manifest > "$W/m1"
+    if [ "$rc" -eq 0 ] || ! grep -q 'syscall_xlat.cyr is STALE' "$W/out"; then
+        echo "FAIL: axis 3: a stale committed table was not reported STALE (rc=$rc)"; FAIL=1
+    elif [ -n "$(find "$T" -newer "$W/stamp")" ] || ! cmp -s "$W/m0" "$W/m1" || ! cmp -s "$X" "$W/stale.cyr"; then
+        echo "FAIL: axis 3: reporting the stale table REWROTE it — the gate must diff, never regenerate in place"; FAIL=1
+    else
+        echo "  ok: axis 3: a stale table is reported STALE and left byte-for-byte as committed"
+    fi
+    "$REAL_CP" "$ROOT/src/common/syscall_xlat.cyr" "$X"; touch -t 200001010000 "$X" "$T/src/common"
+fi
+
+# ── axis 4: the generator treats a short write as an ERROR, and the gate calls it that ──
+# RLIMIT_FSIZE reproduces a full disk exactly as the writer sees it — the write that crosses
+# the limit comes back SHORT, the next one fails EFBIG (SIGXFSZ ignored, as a shell `trap ''`
+# is inherited across exec) — with no mount and no root. 4 blocks is 2 KiB under dash and
+# 4 KiB under bash, both below the ~7.4 KB table and above every message the generator prints.
+# `file_write_all` + `<= 0` reads the short count as success and leaves a truncated table,
+# which the gate would then misreport as STALE (measured: the pre-6.6.6 write path).
+A4=0
+G="$W/gen"
+( cd "$T" && ./build/cyrius build programs/gen_syscall_xlat.cyr "$G" ) > "$W/genbuild.out" 2>&1
+if [ ! -x "$G" ] || [ ! -s "$G" ]; then
+    echo "FAIL: axis 4: programs/gen_syscall_xlat.cyr does not build:"; tail -3 "$W/genbuild.out" | sed 's/^/      /'
+    FAIL=1; A4=1
+else
+    mkdir -p "$W/g_ok" "$W/g_fsz"
+    rc=0; ( cd "$T" && "$G" "$W/g_ok/out.cyr" ) > "$W/g0.out" 2>&1 || rc=$?
+    if [ "$rc" -ne 0 ] || ! cmp -s "$W/g_ok/out.cyr" "$ROOT/src/common/syscall_xlat.cyr"; then
+        echo "FAIL: axis 4: unconstrained, the generator does not write the committed table to OUT (rc=$rc) — the size-limit rows below would test nothing"
+        FAIL=1; A4=1
+    fi
+    printf 'SENTINEL -- must survive a failed regeneration\n' > "$W/g_fsz/keep.cyr"
+    cp "$W/g_fsz/keep.cyr" "$W/keep.orig"
+    rc1=0; ( cd "$T" && trap '' XFSZ && ulimit -f 4 && exec "$G" "$W/g_fsz/new.cyr" ) > "$W/g1.out" 2>&1 || rc1=$?
+    rc2=0; ( cd "$T" && trap '' XFSZ && ulimit -f 4 && exec "$G" "$W/g_fsz/keep.cyr" ) > "$W/g2.out" 2>&1 || rc2=$?
+    left=$(cd "$W/g_fsz" && ls -A | LC_ALL=C sort | tr '\n' ' ')
+    if [ "$rc1" -eq 0 ] || [ -e "$W/g_fsz/new.cyr" ]; then
+        echo "FAIL: axis 4: a SHORT write was reported as success (rc=$rc1, OUT $( [ -e "$W/g_fsz/new.cyr" ] && wc -c < "$W/g_fsz/new.cyr" | tr -d ' ' || echo absent) bytes)"
+        FAIL=1; A4=1
+    elif [ "$rc2" -eq 0 ] || ! cmp -s "$W/g_fsz/keep.cyr" "$W/keep.orig"; then
+        echo "FAIL: axis 4: a failed regeneration changed the EXISTING OUT (rc=$rc2) — a truncated table replaced it"
+        FAIL=1; A4=1
+    elif [ "$left" != "keep.cyr " ]; then
+        echo "FAIL: axis 4: a failed write left files behind in OUT's dir: $left"
+        FAIL=1; A4=1
+    elif ! grep -q 'write failed' "$W/g1.out"; then
+        echo "FAIL: axis 4: the generator failed without saying why:"; sed 's/^/      /' "$W/g1.out" | head -3
+        FAIL=1; A4=1
+    fi
+    if [ "$ro_real" = 1 ]; then
+        rc3=0; ( cd "$T" && "$G" "$W/ro/out.cyr" ) > "$W/g3.out" 2>&1 || rc3=$?
+        if [ "$rc3" -eq 0 ] || [ -e "$W/ro/out.cyr" ]; then
+            echo "FAIL: axis 4: OUT in an unwritable dir was reported as success (rc=$rc3)"; FAIL=1; A4=1
+        fi
+    fi
+    # End to end: the scratch tree's build/cyrius becomes a wrapper that builds with the real
+    # CLI and then runs the BUILT program under the same limit, so syscall_xlat_generated.sh's
+    # own generator cannot write — while its temp dir is fine.
+    mv "$T/build/cyrius" "$W/cyrius.real"
+    cat > "$T/build/cyrius" <<EOF
+#!/bin/sh
+"$W/cyrius.real" "\$@" || exit \$?
+for a; do out=\$a; done
+[ "\$1" = build ] && [ -x "\$out" ] || exit 0
+mv "\$out" "\$out.real" || exit 1
+printf '#!/bin/sh\ntrap "" XFSZ\nulimit -f 4\nexec "%s.real" "\$@"\n' "\$out" > "\$out" && chmod +x "\$out"
+EOF
+    chmod +x "$T/build/cyrius"
+    touch -t 200001010000 "$T/build/cyrius" "$T/build"
+    _manifest > "$W/m0"
+    rc=0; ( cd "$T" && TMPDIR="$W/tmpok" timeout 300 sh tests/gates/platform/syscall_xlat_generated.sh ) > "$W/out" 2>&1 || rc=$?
+    _manifest > "$W/m1"
+    if [ "$rc" -eq 0 ] || ! grep -q 'could not write its output' "$W/out" || grep -q 'is STALE' "$W/out"; then
+        echo "FAIL: axis 4: syscall_xlat_generated.sh with a generator that cannot write did not say so (rc=$rc):"
+        grep 'axis 1' "$W/out" | head -2 | sed 's/^/      /'
+        FAIL=1; A4=1
+    elif [ -n "$(find "$T" -newer "$W/stamp")" ] || ! cmp -s "$W/m0" "$W/m1"; then
+        echo "FAIL: axis 4: syscall_xlat_generated.sh WROTE THE TREE when its generator could not write"; FAIL=1; A4=1
+    fi
+    mv -f "$W/cyrius.real" "$T/build/cyrius"
+    [ "$A4" = 0 ] && echo "  ok: axis 4: a short write (RLIMIT_FSIZE) or an unwritable dir$([ "$ro_real" = 0 ] && echo ' [not enforced: root]') fails the generator with no OUT, an existing OUT kept, no temp left; the gate reports 'could not write', never STALE, tree untouched"
+fi
+
+if [ "$FAIL" != 0 ]; then echo "FAIL: gates_never_write_tree"; exit 1; fi
+echo "PASS gates_never_write_tree (static: no gate or check.sh writes a path under \$ROOT but gitignored build/ outputs, edits one in place, or backs one up and restores it; dynamic: the 4 gates that did leave a stamped scratch tree untouched under 4 TMPDIR faults; the generator fails a short write)"

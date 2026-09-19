@@ -24,7 +24,8 @@ set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
 [ -x bootstrap/asm ] || { echo "SKIP: bootstrap/asm missing"; exit 0; }
-D=$(mktemp -d); trap 'rm -rf "$D"' EXIT
+D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: cybs-if-else-rbx: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
+trap 'rm -rf "$D"' EXIT
 fail=0
 
 # --- axis 1 (STRUCTURAL): rbx must be saved across the recursive else-body parse ---
@@ -59,16 +60,24 @@ fi
 # build gen1, and require gen1 to WORK. Before the fix gen1 built and then died with SIGILL on
 # its first real compile — which is precisely why nothing but the seed chain ever noticed.
 # Bounded: one cybs run plus one small compile, not a full seed-derive.
+#
+# ⛔ v6.6.6 — THE PROBE GOES INTO A COPY, NEVER INTO src/. This axis used to back
+# src/common/util.cyr up to mktemp, inject the probe IN PLACE, run cybs, and copy the backup
+# back — the same save/modify/restore shape that let syscall_xlat_generated.sh restore an
+# EMPTY file over a tracked source when /tmp filled at the 6.6.5 close. Here a kill between
+# the injection and the restore (a timeout, a ^C) also left the probe in the tree. cybs now
+# compiles a scratch copy of src/ ($D/t/src; lib/ is a plain symlink to the tree's lib/ —
+# NOT write-protected, and safe only because cybs reads it), so the tracked file is only
+# ever READ. tests/gates/toolchain/gates_never_write_tree.sh pins it.
+# CHANGELOG [6.6.6]
 if [ -s "$D/cybs" ]; then
-    cp src/common/util.cyr "$D/util.bak"
-    python3 - <<'PY'
-p='src/common/util.cyr'; s=open(p).read()
-a='var _vecv_base = 0;    # 0x1D8000 enum_const_val'
-assert s.count(a)==1, "anchor moved — update this gate"
-open(p,'w').write(s.replace(a, a+'\nfn _cy_gate_probe(x): i64 { if (x != 0) { return x; } return 0; }', 1))
-PY
-    cat src/main.cyr | "$D/cybs" > "$D/gen1" 2>/dev/null || true
-    cp "$D/util.bak" src/common/util.cyr
+    mkdir -p "$D/t" && cp -R src "$D/t/src" && ln -s "$ROOT/lib" "$D/t/lib" \
+        || { echo "  FAIL axis 3: could not stage a scratch copy of src/ under $D"; exit 1; }
+    A='var _vecv_base = 0;    # 0x1D8000 enum_const_val'
+    awk -v a="$A" '{ print } index($0, a) { print "fn _cy_gate_probe(x): i64 { if (x != 0) { return x; } return 0; }"; n++ }
+        END { exit n == 1 ? 0 : 1 }' src/common/util.cyr > "$D/t/src/common/util.cyr" \
+        || { echo "  FAIL axis 3: the util.cyr anchor moved (or the probe could not be written) — update this gate"; exit 1; }
+    ( cd "$D/t" && cat src/main.cyr | "$D/cybs" > "$D/gen1" 2>/dev/null ) || true
     chmod +x "$D/gen1" 2>/dev/null || true
     if [ ! -s "$D/gen1" ]; then
         echo "  FAIL axis 3: cybs produced no gen1 with a branching fn in util.cyr"
@@ -89,12 +98,15 @@ PY
     fi
 fi
 
-# --- premise: util.cyr really is clean afterwards (the gate must not leave its probe behind) ---
-if grep -q "_cy_gate_probe" src/common/util.cyr; then
-    echo "  FAIL premise: the gate left its probe in src/common/util.cyr"
+# --- premise: the probe really went into the COPY (anti-vacuous) and the tree never saw it ---
+if [ -s "$D/cybs" ] && ! grep -q "_cy_gate_probe" "$D/t/src/common/util.cyr"; then
+    echo "  FAIL premise: the scratch util.cyr does not carry the probe — axis 3 tested nothing"
+    fail=1
+elif grep -q "_cy_gate_probe" src/common/util.cyr; then
+    echo "  FAIL premise: the probe is in the TRACKED src/common/util.cyr"
     fail=1
 else
-    echo "  ok premise: util.cyr restored"
+    echo "  ok premise: the probe was injected into a scratch copy; src/common/util.cyr was only read"
 fi
 
 [ "$fail" -eq 0 ] || { echo "FAIL: cybs-if-else-rbx"; exit 1; }

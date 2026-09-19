@@ -20,15 +20,46 @@
 # here — it is exactly what the broken version did. The gate plants a deliberately
 # mis-formatted `.tcyr` two levels down and requires audit to FAIL on it, then removes it and
 # requires audit to pass. Without that, every fix to this reports success by not looking.
+#
+# ⛔ v6.6.6 — THE PROBE GOES INTO A SCRATCH COPY OF THE TREE, NEVER INTO tests/. This gate used
+# to write its probe to $ROOT/tests/tcyr/lang/ and rely on `rm` + an EXIT trap to take it back
+# out — a write-then-restore of the tree it checks, the shape that let syscall_xlat_generated.sh
+# restore an EMPTY file over a tracked source at the 6.6.5 close. SIGKILL (a timeout, a dying
+# parent) runs no trap: measured in a scratch copy of 6.6.5, a kill ~105 s in left
+# `?? tests/tcyr/lang/_audit_scope_probe.tcyr` behind, and a real 6.6.5 check.sh run found one
+# left by two killed runs. `cyrius audit` now runs in $WORK/t, a copy of every directory it
+# walks plus the manifest and the four tools it resolves from ./build, so the tree is only
+# ever READ. tests/gates/toolchain/gates_never_write_tree.sh pins it. CHANGELOG [6.6.6]
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC="$ROOT/build/cycc"
 [ -x "$CC" ] || { echo "FAIL: audit_scope_covers_suite: build/cycc missing"; exit 1; }
-WORK=$(mktemp -d)
-PROBE="$ROOT/tests/tcyr/lang/_audit_scope_probe.tcyr"
-trap 'rm -rf "$WORK"; rm -f "$PROBE"' EXIT
 fail() { echo "FAIL: audit_scope_covers_suite: $1"; exit 1; }
+WORK=$(mktemp -d) && [ -d "$WORK" ] || fail "mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"
+trap 'rm -rf "$WORK"' EXIT
+
+# The scratch tree. `_audit_sweep` walks lib/ src/ programs/ tests/ benches/ fuzz/ cbt/ (lib/
+# and cbt/ only when cyrius.cyml names the package `cyrius`, so the manifest comes too) and
+# resolves cyrfmt/cyrlint/cyrdoc from ./build when ./build/cycc exists. Copies, never links: a
+# symlinked subtree would put the tree back under the probe.
+T="$WORK/t"
+mkdir -p "$T/build" || fail "could not create the scratch tree under $WORK"
+for d in lib src programs tests benches fuzz cbt; do
+    [ -d "$ROOT/$d" ] || continue
+    cp -R "$ROOT/$d" "$T/$d" || fail "could not copy $d/ into the scratch tree (a full TMPDIR?)"
+done
+for f in cyrius.cyml cyrius.lock VERSION; do
+    [ -f "$ROOT/$f" ] || continue
+    cp "$ROOT/$f" "$T/$f" || fail "could not copy $f into the scratch tree"
+done
+for b in cycc cyrfmt cyrlint cyrdoc; do
+    [ -x "$ROOT/build/$b" ] || continue
+    cp "$ROOT/build/$b" "$T/build/$b" || fail "could not copy build/$b into the scratch tree"
+done
+[ -x "$T/build/cyrfmt" ] || fail "build/cyrfmt missing — the fmt stage would print 'skip' and axis 2 could measure nothing"
+PROBE="$T/tests/tcyr/lang/_audit_scope_probe.tcyr"
+[ -d "$T/tests/tcyr/lang" ] || fail "tests/tcyr/lang/ is missing from the scratch tree — the probe has nowhere to go"
 
 # Built from source against build/cycc — never the installed `cyrius`, which is the last
 # release and would test the wrong binary.
@@ -37,7 +68,7 @@ fail() { echo "FAIL: audit_scope_covers_suite: $1"; exit 1; }
 chmod +x "$WORK/cyrius"
 
 # ── axis 1: the scope banner names the suite directories ──────────────────────────
-SCOPE=$( cd "$ROOT" && "$WORK/cyrius" audit 2>&1 | grep -m1 '^  scope:' || true )
+SCOPE=$( cd "$T" && "$WORK/cyrius" audit 2>&1 | grep -m1 '^  scope:' || true )
 [ -n "$SCOPE" ] || fail "axis 1: audit printed no 'scope:' line at all"
 for d in tests benches fuzz; do
     echo "$SCOPE" | grep -qw "$d" || fail "axis 1: audit scope does not include '$d' — got: $SCOPE"
@@ -67,14 +98,12 @@ fmt_total() {   # named-lines + the "… and N more" remainder, from an audit tr
     echo $((named + more))
 }
 
-# ⚠ 6.6.5 — unlink the probe BEFORE measuring the baseline. The trap removes it on a normal
-# exit, but a KILLED run (Ctrl-C, a timeout, a parent that dies) leaves it in the tree; the
-# next run then counts it in BASE, the +1 delta collapses to BASE -> BASE, and this gate
-# reports the recursive descent as broken when nothing is wrong with it. Observed on a
-# 6.6.5 check.sh run that followed two killed ones.
+# ⚠ 6.6.5 — no probe in BASE. A probe that a pre-6.6.6 run left in a working tree is COPIED
+# into the scratch tree with everything else; counted in BASE it would collapse the +1 delta
+# to BASE -> BASE and read as a broken descent. Unlinked from the COPY — the tree is not ours.
 rm -f "$PROBE"
 set +e
-( cd "$ROOT" && "$WORK/cyrius" audit > "$WORK/base.out" 2>&1 )
+( cd "$T" && "$WORK/cyrius" audit > "$WORK/base.out" 2>&1 )
 set -e
 BASE=$(fmt_total "$WORK/base.out")
 [ "$BASE" -gt 0 ] || fail "axis 2 setup: the fmt stage reported 0 failing files, so a +1 delta cannot be measured — the section markers or the cap wording changed and this gate is blind"
@@ -98,7 +127,7 @@ syscall(60, ec);
 PROBE_EOF
 
 set +e
-( cd "$ROOT" && "$WORK/cyrius" audit > "$WORK/bad.out" 2>&1 )
+( cd "$T" && "$WORK/cyrius" audit > "$WORK/bad.out" 2>&1 )
 set -e
 WITH=$(fmt_total "$WORK/bad.out")
 rm -f "$PROBE"
@@ -108,10 +137,10 @@ rm -f "$PROBE"
 # ── axis 3: the count returns once the probe is removed ───────────────────────────
 # Guards the opposite error: a count that drifts on its own would satisfy axis 2 by accident.
 set +e
-( cd "$ROOT" && "$WORK/cyrius" audit > "$WORK/good.out" 2>&1 )
+( cd "$T" && "$WORK/cyrius" audit > "$WORK/good.out" 2>&1 )
 set -e
 AFTER=$(fmt_total "$WORK/good.out")
 [ "$AFTER" -eq "$BASE" ] \
     || fail "axis 3: the fmt count did not return to $BASE after the probe was removed (got $AFTER) — it is drifting between runs, so axis 2's +1 proves nothing"
 
-echo "PASS: audit_scope_covers_suite (scope names tests/benches/fuzz; a mis-formatted .tcyr two levels down moves the fmt count $BASE -> $WITH and back)"
+echo "PASS: audit_scope_covers_suite (scope names tests/benches/fuzz; a mis-formatted .tcyr two levels down moves the fmt count $BASE -> $WITH and back — measured in a scratch copy, the tree is only read)"

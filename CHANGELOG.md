@@ -752,6 +752,38 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   in the shared frontend, so all seven forks get it; cycc **1,310,856 B → 1,310,856 B** (unchanged —
   the inlined machines and the new fn cancel).
 
+- **A full `/tmp` let `syscall_xlat_generated.sh` truncate a TRACKED source file mid-check.sh — and
+  three more gates wrote the tree they check.** Axis 1 copied the committed `src/common/syscall_xlat.cyr`
+  into mktemp, regenerated the table IN PLACE, and on a diff copied the backup back. When the backup copy
+  could not be written (a full `/tmp`, measured at the 6.6.5 close) it was created EMPTY, the regenerated
+  table "differed" from it, and the gate restored the empty file over the tracked source — then reported
+  the table **STALE**, a false diagnosis on top of the damage. Reproduced on the 6.6.5 tree in a scratch
+  copy with `TMPDIR` on a 476 KiB tmpfs (the generator binary fits, the backup does not): **7,450 → 0
+  bytes**. The root cause is the write, not the failed backup — save/modify/restore is only as safe as the
+  restore, and the restore is the step that runs when things are already going wrong — so the fix removes
+  the write: `programs/gen_syscall_xlat.cyr` takes an optional OUT path (default unchanged) and writes it
+  with `file_write_atomic` (temp + fsync + rename, and a short write is an ERROR — `file_write_all` +
+  `<= 0` accepted a partial write as success), and the gate regenerates to `$D/regen.cyr` and diffs. A
+  generator that cannot write its output is now a gate failure ("could not write"), not "stale". The same
+  root cause, three more times: `cybs_if_else_rbx.sh` backed up `src/common/util.cyr`, injected its probe
+  IN PLACE and restored it (a timeout or ^C in between left the probe in the tree) — it now compiles a
+  scratch copy of `src/`; `lexid_buckets_by_content.sh` never checked `mktemp -d`, so with an unusable
+  `TMPDIR` its fixture writer joined `"" + "uni.cyr"`, dropped two 20,000-fn files (~718 KB each) into the
+  REPO ROOT, and then PASSED on timings of compiling nothing ("1ms vs 1ms") — it now fails on the temp
+  dir; and `audit_scope_covers_suite.sh` wrote its probe into `tests/tcyr/lang/` and relied on `rm` + an
+  EXIT trap, which SIGKILL never runs (measured: a kill ~105 s in left
+  `?? tests/tcyr/lang/_audit_scope_probe.tcyr`) — `cyrius audit` now runs in a scratch copy of the dirs it
+  walks. ⚠ **The first audit round missed that fourth one.** It ran every gate with `TMPDIR` missing and
+  then read-only and read `git status` — which cannot see a write a gate cleans up after itself — and its
+  static detector did not follow a write through a variable. Round 2 ran all 174 runnable gates in
+  NORMAL mode against a scratch copy of the tree (own git repo, scratch `HOME`/`CYRIUS_HOME` with every
+  store slot copied) and compared **ctimes** (`find -cnewer`, so even a restore of identical bytes with
+  the original mtime shows): 0 of 174 changed anything, `build/` included, and the pre-fix versions of
+  all three runnable-in-place offenders (the xlat, cybs and audit gates) each showed up as positive
+  controls. Not run: `io_rdwr_agnos.sh` and `syscall_wrapper_pass.sh`, which write FIXED `/tmp` names
+  and would clobber a concurrent check.sh — read by hand, they write only `/tmp`. No compiler change —
+  cycc unchanged (1,294,040 B).
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**
@@ -852,6 +884,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   → axes 1, 2, 3, 5 red; PP_REF_PASS's gate reverted → axis 4 red; PP_LEXST's char-literal states
   removed → axis 8 red; PP_IS_HOST_ONLY's `in_string` gate reverted → axis 9 red); ledger in the
   gate header.
+
+- **`tests/gates/toolchain/gates_never_write_tree.sh`** — pins "a gate reads the tree it checks and does
+  not write it", and claims no more than it pins. Axis 1, STATIC, over every gate and `scripts/check.sh`:
+  no backup/write-back pair of a tracked file, no in-place editor (`sed -i`, `perl -i`, python
+  `open(..., 'w')`) on a tracked path, and no write/create/delete of a path under `$ROOT` — spelled out,
+  or through a variable assigned `"$ROOT/..."` (followed through two more assignments). Gitignored
+  `build/` outputs are exempt (check.sh and several gates build tools there by design); the three TRACKED
+  `build/` files, derived from `.gitignore`, are not. Self-tested on 8 shapes and a clean look-alike first,
+  so a detector matching nothing — or everything — cannot read green. A write to a cwd-relative path after
+  `cd "$ROOT"` (lexid's shape) is not statically decidable and is pinned only where axis 2 runs. Axis 2
+  runs the four offenders against a SCRATCH tree stamped to 2000-01-01 under a normal, a missing, a
+  read-only and a cp-fails-into-temp ("disk full") `TMPDIR` — 14 runs; any write, even a restore of the
+  same bytes, shows under `find -newer` — and requires each to FAIL, not pass, when the temp dir is
+  unusable. Axis 3: a stale table is reported STALE and left byte-for-byte. Axis 4: under `RLIMIT_FSIZE`
+  (the kernel's full-disk sequence — a short count, then EFBIG — with no mount and no root) and into an
+  unwritable dir the generator exits non-zero, creates no OUT, leaves an existing OUT untouched and no
+  temp behind; and `syscall_xlat_generated.sh` with a generator that cannot write says "could not write",
+  never STALE. Mutation-proven eight ways (each 6.6.5 gate; each detector half; the generator back on
+  `file_write_all` + `<= 0`, which leaves a 2,048-byte OUT with rc 0). ~10 s.
 
 ## [6.6.5] — 2026-09-19
 
@@ -4512,7 +4563,6 @@ plus two backend fixup files.
   all three were run by hand at this cut and pass. Checked the same shape one level out too: no
   cyrius fixture is embedded in `.github/workflows/*.yml`, and all eight sibling repos are clean.
 
-
 - **Release gate GREEN.** `check.sh` **240 passed / 0 failed**; cross-OS self-host on REAL
   hardware — **ecb** (macOS-arm64) · **ach** (Intel-Mac) · **cass** (Windows/PE) · **pi**
   (aarch64) all `SELFHOST_OK + crossos LIBTEST_OK`; seed → cybs → cycc byte-identical.
@@ -6510,7 +6560,6 @@ band this release fixes. The win is entirely for large consumers — and the ban
 hit is ordinary project scale: any unit whose function count lands just under a power of two
 was running at 97–100 % load.
 
-
 ## [6.5.50] — 2026-09-04
 
 Issue-queue burn-down: five open filings closed or advanced, plus a build-log pass.
@@ -6605,7 +6654,6 @@ at a smaller scale.
   Unreachable-fn floor **84 → 75** (24,856 → 18,736 bytes). A stale comment instructing the reader
   to "call `ir_lower_all` with mode 0 to emit x86" — a function that never did anything and now does
   not exist — was corrected in the same pass.
-
 
 ## [6.5.49] — 2026-09-04
 
@@ -7456,7 +7504,6 @@ unreaped child may double-count) and explicitly instructs the next reader **not 
 identify the second process first. A gate loosened on an unproven theory stops distinguishing a
 sampling artefact from a real leak.
 
-
 ## [6.5.41] — 2026-09-02
 
 **Queue drain: one consumer-filed fix, and four filings that had rotted in place.** Six
@@ -7547,7 +7594,6 @@ true when it was written.
   `cyrius.cyml` files under `~/Repos`, **128 pin something other than current**, and **45 pin into
   the 6.5.31–6.5.35 band carrying the v6.5.36 enum Critical**. Those repos are today *accidentally
   protected* by the very defect the fix removes. The code is ~75 lines; the decision is not.
-
 
 ## [6.5.40] — 2026-09-02
 
@@ -7695,7 +7741,6 @@ It takes the maximum now.
 pool first** — both report a wall no real consumer would meet. Every measurement here uses
 generated source at real density (~45 % comment, reused identifier vocabulary), derived from
 this repo's own stdlib.
-
 
 ## [6.5.39] — 2026-09-01
 
@@ -7863,7 +7908,6 @@ why this is pinned by a gate instead.
   acceptance criterion re-derived** (it names files that no longer exist and undercounts the
   guards 4 vs 7, one of which is a tautology). The `lazy-init` proposal closed as COMPLETE.
 * `thread_local.cyr`'s slot-range comment corrected from "16 slots" to 128.
-
 
 ## [6.5.38] — 2026-09-01
 
@@ -8190,7 +8234,6 @@ cass + pi** all `SELFHOST_OK` + `LIBTEST_OK` (55 crossos tests each) on REAL har
 286/286. Bench `self_compile` **720.5 ms** vs `.36`'s 711.1 — ⚠ inside noise, not a regression:
 two runs on commit `fa66d50b` with IDENTICAL code measured 777.9 and 716.9 ms, a 61 ms
 same-commit spread.
-
 
 ## [6.5.36] — 2026-08-28
 
@@ -9180,7 +9223,6 @@ pre-fix compiler (1 warning before, 0 after, axis 6 green throughout).
 
 ⚠ The lookup **must** run before `PCMPE` consumes the RHS; afterwards the token cursor has
 moved past the callee name and `FINDFN` resolves nothing.
-
 
 ### Fixed — decimal float literals past ~9 significant digits parsed to a DIFFERENT number
 
@@ -10680,7 +10722,6 @@ flag, so check mode never engaged: it formatted to stdout and exited 0 against *
 `cat` included. It passed in the *baseline* tree while advertising the filing's sharpest symptom.
 Argument order corrected; the axis is now mutation-proven (old rc=1, new rc=0).
 
-
 ## [6.5.17] — 2026-08-10
 
 ### Verification
@@ -10789,7 +10830,6 @@ fold tables updated.
 `0 warnings` on a file that does not parse, because cyrlint is a line scanner with no parser.
 Giving it one is a design fork, so it was filed rather than guessed at.
 
-
 ## [6.5.16] — 2026-08-09
 
 ### Verification
@@ -10886,7 +10926,6 @@ All 12 fold-table rows re-derived from `lib/` headers.
 - **`getuid-geteuid-broken-on-both-macho-targets-hidden-by-a-hardcoded-is-root`** — `-9` on ecb,
   **SIGSYS** on ach, invisible because `is_root()` hardcodes `return 0` on macOS so nothing
   calls them. Pre-existing; measured identical on the 6.5.15 baseline.
-
 
 ## [6.5.15] — 2026-08-09
 
@@ -10994,7 +11033,6 @@ from one site share a slot, so a retaining loop reported **a failed file open as
 storage relocations are now disproven — frame slot too short, static too shared — which settles
 that the fix needs escape analysis or a scope-tied arena, not relocation. Full detail in
 `docs/development/issues/2026-07-28-sock-send-result-allocates-per-call.md`.
-
 
 ## [6.5.14] — 2026-08-08
 
@@ -12405,7 +12443,6 @@ touch loop, and this path exited before reaching it. It also silently falsified
 "which re-runs `install.sh --refresh-only`" — it never got there. Only the steps that
 genuinely require a version change are skipped now.
 
-
 ## [6.5.2] — 2026-07-29
 
 **The `CYRIUS_IR=3` substrate, unblocked — plus the agnos ABI class the 6.5.1 arity
@@ -12763,7 +12800,6 @@ running `take_int`'s body). **Fixed compiler-side in this same release — see t
 first entry above.** A stdlib should never have to rename its public API around a
 codegen defect, so the fold and the compiler fix ship together rather than leaving
 the defect live for a release.
-
 
 ## [6.5.0] — 2026-07-29
 
@@ -13398,7 +13434,6 @@ already-gated release is how the seed gets broken. What *could* be fixed safely 
 claimed "13.3 MB TS frontend reservation" does not exist and is corrected in all three comment blocks,
 and the stale `0x1D0B000` base (which lands inside `fixup_tbl`) is corrected in `src/main.cyr` and
 `src/frontend/ts/lex.cyr`. Tracked in `issues/2026-07-27-ts-arena-overlaps-token-arrays.md`.
-
 
 ### Verification
 
@@ -15800,7 +15835,6 @@ stops the warning from reading like a hard cap.
 - Removed a leftover `build/boot_serial.tmp.*` scratch file.
 - Dead-code floor recorded: **65 unreachable fns** (24,793 B) — all intentional API surface
   (stdlib vec/arena/atomic, `--lex-ts`, IR substrate, Mach-O/aarch64 emit helpers).
-
 
 ## [6.4.45] — 2026-07-10
 
@@ -61904,7 +61938,6 @@ surfaces, the dynamic vec-shaped table from sit's original
 writeup becomes the right move. Pinned as a v5.8.x / v5.9.x
 consideration.
 
-
 ## [5.7.6] — 2026-04-26
 
 **CYRIUS-TS JSX INNER-EXPR TOKENIZATION (P4.3d) — empty
@@ -61970,7 +62003,6 @@ clean.
 
 - cc5: 697,840 B → **704,976 B** (+7,136 B). 3-step
   self-host fixpoint clean.
-
 
 ## [5.7.5] — 2026-04-26
 
@@ -77760,7 +77792,6 @@ landed after a `cyrfmt` normalization pass.
   unmasked `echo: hello` back (opcode=1, len=11).
 - cc3 self-host unchanged (stdlib-only addition; compiler not touched).
 - 5/5 check.sh PASS.
-
 
 ## [4.5.0] — 2026-04-14
 

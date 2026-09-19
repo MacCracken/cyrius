@@ -30,14 +30,22 @@
 #
 # Run via:
 #   cyrius build programs/gen_syscall_xlat.cyr build/gen_syscall_xlat
-#   ./build/gen_syscall_xlat
-# Writes: src/common/syscall_xlat.cyr
+#   ./build/gen_syscall_xlat [OUT]
+# Writes: OUT, default src/common/syscall_xlat.cyr — crash-safe (temp + rename), and a short
+# write is a FAILURE, never a truncated table.
+#
+# ⛔ v6.6.6 — WHY OUT EXISTS. The gate that pins this table used to regenerate it IN PLACE
+# after copying the committed file to mktemp, then copy it back. On a full /tmp (measured at
+# the 6.6.5 close) the backup was written EMPTY, the regenerated table "differed" from it, and
+# the gate restored the empty file over the tracked one mid-check.sh. A check must never write
+# the thing it checks: the gate now passes OUT under its own temp dir and diffs. CHANGELOG [6.6.6]
 
 include "lib/syscalls.cyr"
 include "lib/string.cyr"
 include "lib/alloc.cyr"
 include "lib/io.cyr"
 include "lib/fmt.cyr"
+include "lib/args.cyr"
 
 var MAXSYS = 512;
 var NAMEPOOL = 32768;
@@ -389,6 +397,9 @@ fn emit_num(out, oo_p, v): i64 {
 }
 
 fn main(): i64 {
+    args_init();
+    var outp = "src/common/syscall_xlat.cyr";
+    if (argc() >= 2) { outp = argv(1); }
     var xb = alloc(262144);
     var ab = alloc(262144);
     var xlen = file_read_all("lib/syscalls_x86_64_linux.cyr", xb, 262143);
@@ -538,12 +549,19 @@ fn main(): i64 {
     }
     emit(out, oo, "    return 0;\n}\n");
 
-    var n_written = file_write_all("src/common/syscall_xlat.cyr", out, load64(oo));
-    if (n_written <= 0) {
-        println("gen_syscall_xlat: write failed");
+    # file_write_atomic: temp + fsync + rename, and it loops until every byte lands — so a
+    # full disk returns an error and leaves OUT as it was. `file_write_all` + `<= 0` accepted a
+    # short write as success and left a truncated table. CHANGELOG [6.6.6]
+    var wr = file_write_atomic(outp, out, load64(oo));
+    if (wr != 0) {
+        syscall(SYS_WRITE, 2, "gen_syscall_xlat: write failed: ", 32);
+        syscall(SYS_WRITE, 2, outp, strlen(outp));
+        syscall(SYS_WRITE, 2, "\n", 1);
         return 1;
     }
-    syscall(SYS_WRITE, 1, "gen_syscall_xlat: wrote src/common/syscall_xlat.cyr — x86 names ", 66);
+    syscall(SYS_WRITE, 1, "gen_syscall_xlat: wrote ", 24);
+    syscall(SYS_WRITE, 1, outp, strlen(outp));
+    syscall(SYS_WRITE, 1, " — x86 names ", 15);
     print_num(xc);
     syscall(SYS_WRITE, 1, ", aarch64 names ", 16);
     print_num(ac);

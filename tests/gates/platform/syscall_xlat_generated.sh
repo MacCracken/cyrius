@@ -33,29 +33,42 @@
 # past (v6.5.43).
 #
 # ⚠ NO `set -e`: compiles exit non-zero as DATA.
+#
+# ⛔ v6.6.6 — THIS GATE NEVER WRITES THE TREE. Axis 1 used to copy the committed table to
+# mktemp, regenerate it IN PLACE, and copy the backup back on a diff. When /tmp was full
+# (measured at the 6.6.5 close) the backup landed EMPTY, the regenerated table "differed"
+# from it, and the gate restored the empty file over src/common/syscall_xlat.cyr mid-check.sh
+# — and reported the table STALE, a false diagnosis on top of the damage. The generator now
+# takes an OUT path and writes crash-safe; axis 1 regenerates under $D and diffs, so a broken
+# temp dir can fail this gate but can no longer touch the tracked file.
+# tests/gates/toolchain/gates_never_write_tree.sh pins it — the write shapes statically across
+# every gate, and this gate by running it under four TMPDIR faults and with a generator that
+# cannot write (which must read "could not write", never STALE). CHANGELOG [6.6.6]
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
-D=$(mktemp -d); trap 'rm -rf "$D"' EXIT
+D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: syscall_xlat_generated: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
+trap 'rm -rf "$D"' EXIT
 FAIL=0
 
 # ── axis 1: the table is REGENERATABLE and matches what is committed ──────────────
 # A hand-edited or stale table is the self-drifting shape this repo keeps finding; the only
-# way to keep it honest is to re-derive and diff.
+# way to keep it honest is to re-derive and diff. The regenerated copy goes to $D/regen.cyr;
+# a generator that cannot write it exits non-zero, which is a gate FAILURE, not "stale".
 ./build/cyrius build programs/gen_syscall_xlat.cyr "$D/gen" > /dev/null 2>&1
 if [ ! -x "$D/gen" ]; then
     echo "FAIL: axis 1: the generator does not build"
     FAIL=1
+elif ! "$D/gen" "$D/regen.cyr" > "$D/gen.out" 2>&1 || [ ! -s "$D/regen.cyr" ]; then
+    echo "FAIL: axis 1: the generator could not write its output under $D:"
+    sed 's/^/      /' "$D/gen.out" 2>/dev/null | head -3
+    FAIL=1
+elif ! cmp -s "$D/regen.cyr" src/common/syscall_xlat.cyr; then
+    echo "FAIL: axis 1: src/common/syscall_xlat.cyr is STALE — regenerating it changes it."
+    echo "      The stdlib syscall tables or ESYSXLAT moved; regenerate and commit:"
+    echo "      cyrius build programs/gen_syscall_xlat.cyr build/gen_syscall_xlat && ./build/gen_syscall_xlat"
+    FAIL=1
 else
-    cp src/common/syscall_xlat.cyr "$D/committed.cyr"
-    "$D/gen" > /dev/null 2>&1
-    if ! cmp -s "$D/committed.cyr" src/common/syscall_xlat.cyr; then
-        echo "FAIL: axis 1: src/common/syscall_xlat.cyr is STALE — regenerating it changes it."
-        echo "      The stdlib syscall tables or ESYSXLAT moved; re-run the generator and commit."
-        cp "$D/committed.cyr" src/common/syscall_xlat.cyr
-        FAIL=1
-    else
-        echo "  ok: the committed table re-derives byte-identically from the stdlib peers"
-    fi
+    echo "  ok: the committed table re-derives byte-identically from the stdlib peers (regenerated under \$D, tree untouched)"
 fi
 
 # ── axis 2: ZERO false positives on the compiler's own aarch64 source ─────────────

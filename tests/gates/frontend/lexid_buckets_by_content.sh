@@ -31,10 +31,15 @@
 # and rebuilding the host compiler takes the ratio to 4.56 and the gate goes RED.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
-D=$(mktemp -d); trap 'rm -rf "$D"' EXIT
+# ⛔ v6.6.6 — CHECK THE TEMP DIR. With an unusable TMPDIR `mktemp -d` printed nothing, the
+# fixture writer below joined "" + "uni.cyr" and wrote BOTH 20000-fn fixtures into the repo
+# root (cwd), then the timing read "/uni.cyr", compiled nothing twice and PASSED ("1ms vs 1ms").
+# Measured with TMPDIR at a missing and at a read-only dir. CHANGELOG [6.6.6]
+D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: lexid_buckets_by_content: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
+trap 'rm -rf "$D"' EXIT
 CC="$ROOT/build/cycc"
 
-python3 - "$D" <<'PY'
+python3 - "$D" <<'PY' || { echo "FAIL: lexid_buckets_by_content: could not write the fixtures under $D"; exit 1; }
 import sys, os
 d = sys.argv[1]; n = 20000
 uni = ['fn f%09d(): i64 { return %d; }' % (i, i % 97) for i in range(n)]
