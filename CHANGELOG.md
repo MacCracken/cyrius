@@ -180,8 +180,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   other build reads): while the replay runs, FINDVAR ranks the program's globals below any
   declaration-zone match (`_fv_hidden`, `src/frontend/parse_types.cyr`; the zone end is
   recorded in `src/main.cyr` before the kernel's `PARSE_PROG`). A name only the program
-  declares still resolves, as it did. A var over an ENUM constant (`var CLOCK_MONOTONIC = 1`) is the
-  last definition too: at 6.6.5 the enum's startup store (`PARSE_ENUM_DEF`, which runs before
+  declares still resolves, as it did. A var over an ENUM constant (`var CLOCK_MONOTONIC = 1`)
+  is the last definition too: at 6.6.5 the enum's startup store (`PARSE_ENUM_DEF`, which runs before
   every deferred initializer and resolves the name last-match) wrote the ENUM's value into the
   var's slot, so `enum E { K = 5; } var b = K; var K = 7;` gave `b == 5` while a fn read 7, and
   `var K = 0` there gave `b == 5`. That store now lands only in an enum constant's own slot
@@ -192,14 +192,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `qb == 0`): the old opt-out that sent every shadowing declaration to the runtime-store path is
   gone, because the hazard it guarded — a replay re-resolving its store onto the later slot — is
   what the recorded slots remove, so any constant declaration that shadows is static (and stored
-  first on cx) and `qb` reads 7. After
-  the first top-level statement a `var` is a statement and redeclaring a name starts a new
-  variable for the code after it; that is unchanged (two in-tree tests re-declare a scratch
-  buffer at a new size that way) and now documented. Byte impact: exit codes and output of all
-  **326 `.tcyr` identical** to the 6.6.5-tree compiler; 18 binaries differ, every one from a var
-  over an enum constant or a merged same-value slot (e.g. `lib/chrono.cyr`'s `CLOCK_MONOTONIC`);
-  124 `programs/`/`benches/`/`fuzz/` sources compile with the same result (4 binaries differ, same
-  cause); all seven forks compile; self-compile time unchanged (~852 ms either way). cycc
+  first on cx) and `qb` reads 7. After the first top-level statement a `var` is a statement and
+  redeclaring a name starts a new variable for the code after it; that is unchanged (two in-tree
+  tests re-declare a scratch buffer at a new size that way) and now documented. Byte impact
+  (re-measured after the review fixes): exit codes and output of the other **326 `.tcyr`
+  identical** to the 6.6.5-tree compiler (the new test fails 13 of its 31 asserts there); 18
+  binaries differ, every one a `lib/chrono.cyr` user — its `CLOCK_REALTIME` / `CLOCK_MONOTONIC`
+  are vars over the syscall enum's same-value constants, now static with the enum's startup store
+  into them gone; the 110 `programs/`/`benches/`/`fuzz/` sources and `cbt/cyrius.cyr` compile
+  with the same result (4 binaries differ, same cause); all seven forks compile; self-compile time
+  unchanged (~855 ms either way). An agnos kernel image built into scratch is 16 B smaller than at
+  6.6.5 and unchanged across the review fixes: `kernel/core/gpu_regs.cyr` declares
+  `GPU_AZ_IX_AUDIO_DESCRIPTOR0 = 0x28` twice, and at 6.6.5 the second was a deferred store, which
+  agnos never reaches (its top-level program ends in `arch_halt()`) — so every read of it in the
+  kernel saw 0; it now reads 0x28. cycc
   **1,306,640 → 1,310,864 B**. Verified under qemu-aarch64, wine (PE) and cxvm — not hardware;
   the new crossos test carries it to ecb/ach/cass/pi.
 
