@@ -857,6 +857,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   6.6.6 short-output issue), cyrld's output (every write already checked, rc 1), and temp/child-capture
   files. No compiler change.
 
+- **`folds_agnos_parity.sh` PASSED "0/12 folded stdlibs … (12 skipped)" when its temp dir could not be
+  created.** `D=$(mktemp -d)` was unchecked, so with an unusable `TMPDIR` every probe path became
+  root-absolute (`/lin.cyr`, `/ag.err`), every Linux build "failed", every fold was classed SKIP, and
+  the gate exited 0 having checked nothing. Reproduced verbatim at HEAD. The temp dir is now checked
+  (missing and chmod-555 `TMPDIR` both FAIL, naming it), and — independently — a floor of 10 on the
+  folds actually checked (a normal run checks 11 of 12; `niyama` is skipped on Linux too): a scratch
+  copy whose compiler always fails now FAILs "only 0/12 folds were checked", where the 6.6.5 gate
+  PASSed the same run.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**

@@ -1,7 +1,7 @@
-# `folds_agnos_parity.sh` PASSES "0/12 … (12 skipped)" when its temp dir cannot be created — OPEN
+# `folds_agnos_parity.sh` PASSES "0/12 … (12 skipped)" when its temp dir cannot be created — FIXED
 
-**Status:** 🟡 open — found during 6.6.6 bite 12 (gate-wide audit under a missing `TMPDIR`);
-reconfirmed at the bite-12 tree.
+**Status:** ✅ FIXED in 6.6.6 (bite 13) — found during 6.6.6 bite 12 (gate-wide audit under a
+missing `TMPDIR`); reproduced verbatim at HEAD before the fix.
 **Placement:** unpinned — 6.x-line backlog (the next repair batch).
 **Discovered:** 2026-09-19
 **Severity:** Medium — a gate reads GREEN having checked nothing. It does not write the tree
@@ -45,3 +45,12 @@ run that checks none must not be a PASS.
 - Triage the rest of the family in the same change: bite 12's audit found 32 gates that exit 0 with
   a missing `TMPDIR`. Most are static source scans that legitimately need no temp dir; re-derive the
   list (`TMPDIR=/nonexistent sh <gate>` for each, keep the rc=0 ones) and check each for a vacuous pass.
+
+## Resolution (6.6.6, bite 13c)
+
+`D=$(mktemp -d) && [ -d "$D" ] || { echo FAIL…; exit 1; }`, and a floor of 10 on `checked` (a normal
+run checks 11 of 12). `TMPDIR=/nonexistent` and a chmod-555 `TMPDIR` now FAIL naming the temp dir; a
+scratch copy whose `build/cycc` always fails (every fold SKIPped) FAILs "only 0/12 folds were checked"
+where the 6.6.5 gate PASSed. The acceptance item "triage the rest of the family" landed in bite 13f —
+every gate's `mktemp` is now checked and `gates_never_write_tree.sh` forbids the unchecked shape; the
+gates that still exit 0 under a missing `TMPDIR` were re-derived there (see the CHANGELOG).

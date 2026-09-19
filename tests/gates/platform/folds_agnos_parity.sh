@@ -25,7 +25,10 @@ set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 CC="$ROOT/build/cycc"
-D=$(mktemp -d)
+# v6.6.6: CHECK THE TEMP DIR. Unchecked, a failed mktemp left D empty, every probe path became
+# root-absolute (/lin.cyr, /ag.err), each Linux build "failed", all 12 folds were classed SKIP —
+# and the gate PASSED "0/12 … (12 skipped)". CHANGELOG [6.6.6]
+D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: folds-agnos-parity: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$D"' EXIT
 
 # Dependency-ordered. sigil before yantra, yukti before vani, tls before sandhi,
@@ -106,6 +109,17 @@ done
 # Never silent about what was not covered.
 if [ "$skipped" != "0" ]; then
     printf '%s\n' "  $skipped of 12 folds NOT checked (reported, not hidden):$skiplist"
+fi
+
+# v6.6.6: a FLOOR on what was actually checked. Skips are reported, not hidden — but a run in
+# which (nearly) every fold was skipped has checked nothing and must not read as PASS. A normal
+# run checks 11 of 12 (niyama is skipped: `undefined variable 'NFD'` on Linux too); the floor is
+# 10, so one more fold falling out of the harness is tolerated and a broken harness is not.
+# Mutation (6.6.6): build/cycc replaced by `exit 1` in a scratch copy -> this gate FAILs "0/12
+# checked"; the 6.6.5 gate PASSed the same run. TMPDIR=/nonexistent and a chmod-555 TMPDIR -> FAIL.
+if [ "$checked" -lt 10 ]; then
+    echo "FAIL: folds-agnos-parity — only $checked/12 folds were checked (floor 10; $skipped skipped) — the harness, not the folds, is broken"
+    exit 1
 fi
 
 if [ "$fails" = "0" ]; then
