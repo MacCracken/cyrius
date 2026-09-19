@@ -1442,6 +1442,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   stat followed by a read races a concurrent writer). All three sites use it. Gated by
   `tests/gates/toolchain/manifest_read_whole_file.sh`, 6 mutations each RED.
 
+- **`cyrius deps --lock` silently omitted any file it could not hash, and reported success**
+  (bite 17d). `cbt/deps.cyr`'s `_deps_lock_dir` wrote a hash line only under `if (hash != 0)`,
+  so a file `_sha256sum_file` failed on skipped both the line and the count and nothing above it
+  ever knew. Measured: `chmod 000 lib/m2.cyr` in a three-file project, then `cyrius deps --lock`
+  → `cyrius.lock: 2 deps locked`, exit 0, with `m2.cyr` simply absent from the lock. That is
+  worse than a wrong hash: `cyrius.lock` is an integrity record and `deps --verify` checks the
+  lines that are *in* it, so a file with no line is a file with nothing to check — the entry you
+  least want missing is exactly the one the tool dropped, quietly, while printing a success line.
+  **Fix — fail closed and keep the old lock:** the walker records the failure (in globals, since
+  it recurses into subdirectories) and `cmd_deps_lock` `_aw_abort`s the handle, so the previous
+  `cyrius.lock` is left byte-for-byte and no partial lock is created where there was none. The
+  error names the file and counts the rest (`cannot hash lib/m2.cyr (and 1 more)`). Gated by
+  `tests/gates/toolchain/deps_lock_covers_every_file.sh`, 5 mutations each RED. ⚠ Downstream
+  effect: a repo whose `lib/` contains an unreadable or dangling `*.cyr` now fails `cyrius deps`
+  instead of locking around it.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**
@@ -1476,6 +1492,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   without. 25 checks on PE, 15 on every other host; both path components verified against
   something other than the module table, and the GetModuleFileNameW truncation contract
   (`cch` back, not a length) pinned on real hardware. 25/25 on cass.
+
+- `tests/gates/toolchain/deps_lock_covers_every_file.sh` — 4 axes: an anti-vacuous clean lock
+  (one line per `.cyr`, the count derived by `find` and every hash re-confirmed by `sha256sum`),
+  one unhashable file (rc != 0, named, the old lock byte-for-byte), two unhashable files (counted,
+  no lock created), and a STATIC axis self-tested on the 6.6.5 body. The unhashable shape is a
+  dangling symlink rather than `chmod 000`, so the gate cannot read green under a root CI.
 
 - `tests/gates/toolchain/manifest_read_whole_file.sh` — 4 axes: a 144 KB manifest pinned
   byte-for-byte as an independent awk edit produces it, a `[package]` past the old cap still

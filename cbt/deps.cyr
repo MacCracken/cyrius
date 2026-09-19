@@ -4007,6 +4007,30 @@ fn _dep_is_cyrius_source_repo(): i64 {
     return 0;
 }
 
+# ⛔ v6.6.6: a `.cyr` under lib/ that cannot be HASHED FAILS the lock — it is not dropped from
+# it. `if (hash != 0)` skipped the write and skipped the count, so `chmod 000 lib/m2.cyr` then
+# `cyrius deps --lock` printed "cyrius.lock: 2 deps locked" and exited 0 over a 3-file lib/,
+# with m2.cyr simply absent from cyrius.lock — and `deps --verify` then passes, because a file
+# with no line in the lock is a file with nothing to check. The lock is an INTEGRITY record:
+# "this file could not be read" is the one thing it must never record as "this file is fine".
+# The count is carried in globals because _deps_lock_dir recurses, and the abort is in
+# cmd_deps_lock so the old cyrius.lock is left exactly as it was. CHANGELOG [6.6.6]
+var _dep_lock_unhashable = 0;         # how many .cyr files _sha256sum_file could not hash
+var _dep_lock_unhashable_first = 0;   # the first such path, for the error
+
+# Report the unhashable files and why the lock was not written.
+fn _dep_lock_unhashable_err(): i64 {
+    sys_write(STDERR_FD, "error: cannot hash ", 19);
+    sys_write(STDERR_FD, _dep_lock_unhashable_first, strlen(_dep_lock_unhashable_first));
+    if (_dep_lock_unhashable > 1) {
+        sys_write(STDERR_FD, " (and ", 6);
+        fmt_int_fd(STDERR_FD, _dep_lock_unhashable - 1);
+        sys_write(STDERR_FD, " more)", 6);
+    }
+    sys_write(STDERR_FD, " — cyrius.lock would not cover it; left as it was\n", 52);
+    return 1;
+}
+
 # v6.0.2 — recursively hash every `.cyr` under `dir`, writing
 # `<sha256hex>  <path>\n` per file to the `_aw_open` handle `lock_h`. Returns the count.
 # Recurses into subdirs (e.g. `lib/unicode/`) so nested stdlib modules
@@ -4051,13 +4075,17 @@ fn _deps_lock_dir(dir, lock_h): i64 {
         if (nlen < 5) { continue; }
         if (memeq(name + nlen - 4, ".cyr", 4) == 0) { continue; }
         var hash = _sha256sum_file(path);
-        if (hash != 0) {
-            _aw_write(lock_h, hash, 64);
-            _aw_write(lock_h, "  ", 2);
-            _aw_write(lock_h, path, strlen(path));
-            _aw_write(lock_h, "\n", 1);
-            count = count + 1;
+        if (hash == 0) {
+            # v6.6.6: RECORDED, not skipped — cmd_deps_lock aborts on it. CHANGELOG [6.6.6]
+            _dep_lock_unhashable = _dep_lock_unhashable + 1;
+            if (_dep_lock_unhashable_first == 0) { _dep_lock_unhashable_first = path; }
+            continue;
         }
+        _aw_write(lock_h, hash, 64);
+        _aw_write(lock_h, "  ", 2);
+        _aw_write(lock_h, path, strlen(path));
+        _aw_write(lock_h, "\n", 1);
+        count = count + 1;
     }
     return count;
 }
@@ -4117,6 +4145,10 @@ fn cmd_deps_lock(): i64 {
         }
     }
     var count = _deps_lock_dir("lib", lock_h);
+    if (_dep_lock_unhashable != 0) {
+        _aw_abort(lock_h);
+        return _dep_lock_unhashable_err();
+    }
     # v6.6.4: record the stdlib pin LAST — `cyrius\t<pin>` — so the next resolve can tell
     # "the pin changed" (re-lock silently) from "the snapshot changed under the same pin"
     # (refuse; see _dep_lock_guard_stdlib_leaf). Tab-delimited like the commit lines.
