@@ -22,15 +22,28 @@
 # Axis 2 is the scan, and catches a NEW copy site added later.
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
-T=$(mktemp -d); trap 'pkill -f "$T/bin/victim" 2>/dev/null; rm -rf "$T"' EXIT
-mkdir -p "$T/bin"
+# ⛔ v6.6.6: CHECK THE TEMP DIR, AND REAP THE VICTIM BY PID. This line was
+# `T=$(mktemp -d); trap 'pkill -f "$T/bin/victim" …' EXIT` — with an unusable TMPDIR, T was empty,
+# the `cp` into "/bin/victim" failed and was misreported as "SKIP … no /bin/sleep" (rc 0), and the
+# EXIT trap ran a BOX-WIDE `pkill -f /bin/victim`, which matches every OTHER run's
+# "<its T>/bin/victim" — two check.sh runs on one box could kill each other's victim mid-axis.
+# The gate now kills only the PID it started. CHANGELOG [6.6.6]
+# Mutation (6.6.6, `pkill` shimmed on PATH to a logger): the 6.6.5 gate under TMPDIR=/nonexistent
+# -> rc 0 and the log holds `pkill -f /bin/victim`; this gate -> FAIL, and the log stays empty on
+# both that run and a normal PASS run.
+VPID=""
+T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL install_atomic_over_running_binary: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
+trap 'if [ -n "$VPID" ]; then kill "$VPID" 2>/dev/null; wait "$VPID" 2>/dev/null; fi; rm -rf "$T"' EXIT
+mkdir -p "$T/bin" || { echo "FAIL install_atomic_over_running_binary: cannot create $T/bin"; exit 1; }
 
 # ── axis 1 — install over a RUNNING binary (the reported failure) ────────────────────────────
-cp /bin/sleep "$T/bin/victim" 2>/dev/null || { echo "SKIP install_atomic_over_running_binary: no /bin/sleep"; exit 0; }
-cp /bin/true  "$T/bin/replacement"
+[ -x /bin/sleep ] && [ -x /bin/true ] || { echo "SKIP install_atomic_over_running_binary: no /bin/sleep or /bin/true on this host"; exit 0; }
+cp /bin/sleep "$T/bin/victim" && cp /bin/true "$T/bin/replacement" \
+  || { echo "FAIL install_atomic_over_running_binary: cannot stage /bin/sleep and /bin/true into $T/bin"; exit 1; }
 "$T/bin/victim" 30 &
+VPID=$!
 sleep 1
-kill -0 %1 2>/dev/null || { echo "SKIP install_atomic_over_running_binary: victim did not stay running"; exit 0; }
+kill -0 "$VPID" 2>/dev/null || { echo "SKIP install_atomic_over_running_binary: victim did not stay running"; exit 0; }
 
 # The premise: a plain `cp` MUST fail here. If it does not, this platform cannot reproduce
 # ETXTBSY and the axis would be vacuous — say so rather than passing silently.

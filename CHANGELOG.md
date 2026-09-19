@@ -866,6 +866,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   copy whose compiler always fails now FAILs "only 0/12 folds were checked", where the 6.6.5 gate
   PASSed the same run.
 
+- **`install_atomic_over_running_binary.sh`: an unusable `TMPDIR` gave a vacuous SKIP (rc 0) and an
+  EXIT trap that ran a BOX-WIDE `pkill -f /bin/victim`.** `T=$(mktemp -d)` was unchecked and the trap
+  killed by pattern: with `T` empty the pattern `/bin/victim` matches every OTHER run's
+  `<its T>/bin/victim`, so two check.sh runs on one box could kill each other's victim mid-axis; the
+  failed `cp` into `/bin/victim` was misreported as "no /bin/sleep". Reproduced verbatim at HEAD with
+  `pkill` shimmed. The temp dir is now checked before the trap exists, the victim is killed and reaped
+  by the PID the gate started (`$!`), and a failure to stage into the gate's own dir is a FAIL; the
+  shimmed `pkill` log stays empty on the fault run and on a normal PASS.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**

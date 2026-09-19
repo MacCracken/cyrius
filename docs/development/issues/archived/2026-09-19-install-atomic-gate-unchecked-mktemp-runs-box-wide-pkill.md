@@ -1,7 +1,7 @@
-# `install_atomic_over_running_binary.sh`: an unusable TMPDIR gives a vacuous SKIP (rc 0) and an EXIT trap that runs a BOX-WIDE `pkill -f /bin/victim` — OPEN
+# `install_atomic_over_running_binary.sh`: an unusable TMPDIR gives a vacuous SKIP (rc 0) and an EXIT trap that runs a BOX-WIDE `pkill -f /bin/victim` — FIXED
 
-**Status:** 🟡 open — found during 6.6.6 bite 12 (review of the gate-wide temp-dir audit);
-reconfirmed at the bite-12 tree with `pkill` shimmed (the real one was never run).
+**Status:** ✅ FIXED in 6.6.6 (bite 13) — found during 6.6.6 bite 12 (review of the gate-wide
+temp-dir audit); reproduced verbatim at HEAD with `pkill` shimmed before the fix.
 **Placement:** unpinned — 6.x-line backlog (the next repair batch).
 **Discovered:** 2026-09-19
 **Severity:** Medium — two defects on one unchecked line: the gate passes vacuously, and it signals
@@ -45,3 +45,12 @@ say what actually failed.
 
 - With `TMPDIR=/nonexistent` the gate FAILs and the shimmed `pkill` log is empty.
 - A normal run still reproduces ETXTBSY and passes; the victim is reaped by PID.
+
+## Resolution (6.6.6, bite 13d)
+
+The temp dir is checked BEFORE the trap is installed; the victim's PID is taken from `$!` and the
+EXIT trap kills and reaps only that PID (`kill "$VPID"; wait "$VPID"`) — no pattern kill at all. A
+failure to stage `/bin/sleep` / `/bin/true` into the gate's own temp dir is a FAIL naming the dir;
+the SKIP is reserved for a host that genuinely has no `/bin/sleep`. With the shimmed `pkill`, the
+repro now prints `FAIL … mktemp -d failed (TMPDIR=/nonexistent)`, rc 1, and the log is empty — on
+that run and on a normal PASS run (ETXTBSY still reproduced).
