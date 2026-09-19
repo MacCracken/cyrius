@@ -255,6 +255,37 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   that wrapper OUT of the cross-OS leg entirely. Out of this bite's scope; triaged for the sweep,
   not touched here.
 
+- **The preprocessor EXECUTED `#ifdef` / `#ifndef` / `#if` / `#else` / `#elif` / `#endif` /
+  `#ifplat` / `#endplat` / `#define` / `#@srcline` / `#ref` lines that sat inside a multi-line
+  string literal, and rewrote the string's bytes** (bite 4; filed 2026-09-19, pre-existing —
+  the installed 6.6.4 compiler gives the same bytes). Silent: exit 0, no diagnostic of any kind,
+  and the program's string data was simply not what its source said. The filed repro
+  `var s = "ab\n#ifdef NOPE\ncd\n#endif\nef";` built a binary holding **`ab\n\n\n\nef`** — both
+  directive lines executed and blanked, and the `cd` between them dropped as a false branch. A
+  `#@file` line inside a string was mangled a different way: PP_PASS's v6.5.21 forgery guard
+  injected a space into it (`# @file`). `#@srcline` inside a string broke the build outright
+  (`undefined variable 'source'`), and a continuation line beginning `#ref ` killed it with
+  `error: cannot open #ref file: ;`. **Root cause.** A cyrius string literal may hold a raw LF —
+  `src/main.cyr:893` and `src/frontend/parse_expr.cyr:1201` both spell an error message that way —
+  but each of the three line-oriented passes carried its own inline copy of a lexical state
+  machine that RESET `in_string` at every newline. The reason was written down at the site: *"cyrius
+  source uses single-line strings (`\n` escape, not literal LF inside a string)"*. That premise was
+  false about the compiler's own source, so any line inside a multi-line string was read as a fresh
+  line of code. **Fix:** one state machine, `PP_LEXST` in `src/frontend/lex_pp.cyr`, shared by
+  PP_PASS, PP_IFDEF_PASS and PP_REF_PASS, whose string state crosses newlines. The newline reset
+  was only ever a blast-radius bound for a `"` the machine mis-read, and both real sources of that
+  are now STATES rather than accidents: a `"` inside a `#` comment (the v5.9.34 vyakarana 1.0.2
+  case, previously handled) and a `"` inside a char literal such as `var q = '"';`
+  (`tests/fixtures/lint_lexical/escapes.cyr` — never handled before, and the reason removing the
+  reset needed more than deleting three lines). PP_REF_PASS had no lexical state at all and gets
+  it here; its pre-6.6.6 quirk of dropping a `#ref ` line whose next byte is not `"` is preserved
+  byte-for-byte. Directives outside strings are unchanged: **all 328 `.tcyr` exit codes identical**
+  to the pre-fix compiler, `build/cycc` reproduces itself and `seed-derive` stays machine-derivable.
+  A census of the 773 in-tree sources found **13 files with a line that ends inside a string** and
+  **none** whose continuation line starts with `#`, so nothing in the tree changes meaning. Fixed
+  in the shared frontend, so all seven forks get it; cycc **1,310,856 B → 1,310,856 B** (unchanged —
+  the inlined machines and the new fn cancel).
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**
@@ -337,6 +368,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `tests/gates/codegen/hidden_temp_census.sh` names the two new registration sites: `_gv_reg8`
   (the pass-1 destructure's per-name registration, moved out of `PARSE_GVAR_REG`) and
   `_gv_target`'s sink, which goes through `_HTEMP` like every other dead unnamed global.
+- `tests/tcyr/crossos/pp_directive_inside_multiline_string.tcyr` (bite 4) — 9 assertions on
+  multi-line string literals whose continuation lines start `#ifdef`/`#endif`, `#define`,
+  `#@file`, `#ifplat`/`#endplat` and `#ref `. Each expectation is the SAME bytes spelled on one
+  physical line with `\n` escapes, a form that cannot meet the code path under test, so the two
+  sides are genuinely independent. In `crossos/` because the preprocessor is shared by all seven
+  forks and only that directory is executed on real ecb / ach / cass / pi.
+- `tests/gates/frontend/pp_directive_inside_multiline_string.sh` (bite 4, registered in
+  `programs/checks/main.cyr`) — 8 axes: the four damaged directive shapes, the same string inside
+  an INCLUDED file (PP_IFDEF_PASS's separate copy of the machine), a `#ref ` continuation line
+  (PP_REF_PASS, which had no lexical state at all), and three over-correction guards —
+  `#define`/`#ifdef`/`#ifndef` outside a string still select branches, a `"` in a `#` comment and
+  a `"` in a char literal do not poison a later directive. Expected bytes come from a payload file
+  that the `.cyr` source is GENERATED from. Mutation-proven three ways (the newline reset re-armed
+  → axes 1, 2, 3, 5 red; PP_REF_PASS's gate reverted → axis 4 red; PP_LEXST's char-literal states
+  removed → axis 8 red); ledger in the gate header.
 
 ## [6.6.5] — 2026-09-19
 

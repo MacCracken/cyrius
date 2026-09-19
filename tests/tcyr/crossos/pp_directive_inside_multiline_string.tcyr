@@ -1,0 +1,121 @@
+# pp_directive_inside_multiline_string.tcyr — v6.6.6 bite 4.
+#
+# A cyrius string literal may hold a RAW newline (src/main.cyr and
+# src/frontend/parse_expr.cyr both spell error messages that way). The three
+# line-oriented preprocessor passes decide "is this line a directive?" from the
+# line's first non-space byte, and until 6.6.6 each RESET its `in_string` flag at
+# every newline — so a line sitting INSIDE a multi-line string was read as a
+# fresh line of code and its `#ifdef` / `#endif` / `#define` were EXECUTED. The
+# repro below used to hold `ab\n\n\n\nef`: both directive lines blanked and the
+# `cd` between them dropped, with no diagnostic of any kind.
+#
+# ⭐ WHY IT LIVES IN crossos/. The defect is in the PREPROCESSOR, which every one
+# of the seven forks shares — but the release gate only EXECUTES
+# tests/tcyr/crossos/ on real ecb / ach / cass / pi, so a file anywhere else
+# would never run the fixed pass on macOS, Windows or aarch64. Nothing here is
+# target-specific, and that is the point.
+#
+# ⭐ HOW THE EXPECTATION IS DERIVED DIFFERENTLY FROM THE ACTUAL. Each `*_want`
+# below spells the same bytes on ONE physical line using `\n` escapes. A
+# single-line literal cannot contain a beginning-of-line `#`, so it never meets
+# the code path under test; the multi-line twin is the only side the preprocessor
+# can damage. Comparing the two is therefore a real cross-check, not a restatement.
+#
+# See docs/development/issues/archived/
+#   2026-09-19-preprocessor-executes-directives-inside-multiline-strings.md
+include "lib/assert.cyr"
+include "lib/string.cyr"
+
+# The filed repro, verbatim.
+var repro = "ab
+#ifdef NOPE
+cd
+#endif
+ef";
+var repro_want = "ab\n#ifdef NOPE\ncd\n#endif\nef";
+
+# `#define` inside a string: the line used to be deleted outright.
+var defined_in = "p
+#define FOO 9
+q";
+var defined_want = "p\n#define FOO 9\nq";
+
+# `#@file` inside a string. PP_PASS neutralises a user-authored marker by
+# injecting a space (`# @file`) to keep it out of the file map; when the marker
+# is really just string text, that injection mangles the data.
+var marker_in = "m
+#@file z
+n";
+var marker_want = "m\n#@file z\nn";
+
+# `#ifplat` / `#endplat` — the pair PP_PASS handles separately from `#ifdef`.
+var plat_in = "s
+#ifplat x86
+t
+#endplat
+u";
+var plat_want = "s\n#ifplat x86\nt\n#endplat\nu";
+
+# `#ref ` at the start of a continuation line, with the string's CLOSING quote
+# right after it. PP_REF_PASS carried no lexical state at all and read this as a
+# real `#ref "…"`, killing the build with `cannot open #ref file: ;`.
+var ref_in = "r
+#ref ";
+var ref_want = "r\n#ref ";
+
+# Directives OUTSIDE a string must still fire, on every fork. If the fix
+# over-corrected, `sel` would come out 22 (or the file would not compile).
+#define PP_MLS_ON 1
+#ifdef PP_MLS_ON
+var sel = 11;
+#endif
+#ifndef PP_MLS_ON
+var sel = 22;
+#endif
+
+# A char literal holding a `"` on an EARLIER line. The reset-at-newline used to
+# be the only thing stopping that quote from poisoning the rest of the buffer,
+# so removing the reset required the state machine to learn char literals.
+#
+# Both of the next two pairs need the #ifndef arm: if the quote leaks, the
+# `#ifdef`/`#endif` lines are passed through as ordinary `#` comments and BOTH
+# bodies survive, so a lone #ifdef arm would still read 33 and score a false pass.
+var quote_char = '"';
+#ifdef PP_MLS_ON
+var after_char = 33;
+#endif
+#ifndef PP_MLS_ON
+var after_char = 66;
+#endif
+
+# Same for a `"` inside a `#` comment — the v5.9.34 vyakarana 1.0.2 case.
+# A quote inside this comment: "
+#ifdef PP_MLS_ON
+var after_comment = 44;
+#endif
+#ifndef PP_MLS_ON
+var after_comment = 88;
+#endif
+
+fn main(): i64 {
+    assert_streq(repro, repro_want,
+      "#ifdef/#endif inside a multi-line string are DATA, and the body between them survives");
+    assert_streq(defined_in, defined_want,
+      "#define inside a multi-line string keeps its whole line");
+    assert_streq(marker_in, marker_want,
+      "#@file inside a multi-line string is not neutralised with an injected space");
+    assert_streq(plat_in, plat_want,
+      "#ifplat/#endplat inside a multi-line string are DATA");
+    assert_streq(ref_in, ref_want,
+      "a continuation line starting `#ref ` is DATA, and the build survives it");
+
+    assert_eq(sel, 11, "#define + #ifdef OUTSIDE a string still selects the true branch");
+    assert_eq(after_char, 33, "a char literal holding a quote does not poison a later #ifdef");
+    assert_eq(after_comment, 44, "a quote inside a # comment does not poison a later #ifdef");
+    assert_eq(quote_char, 34, "the char literal itself still lexes to 0x22");
+
+    var rc = assert_summary();
+    return rc;
+}
+var ec = main();
+syscall(60, ec);

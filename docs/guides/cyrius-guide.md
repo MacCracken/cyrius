@@ -1251,11 +1251,13 @@ them too (it also used to read only the first 64 KB of a file). Whitespace at th
 line INSIDE a multi-line string, and blank lines inside one, are string data — neither the
 trailing-whitespace rule nor the blank-line rule warns on them.
 
-⚠ **Not yet in the compiler:** the PREPROCESSOR still reads line by line, so a line inside a
-multi-line string that begins with `#ifdef` / `#endif` / `#define` is EXECUTED — the directive
-line and a false branch vanish from the string data, silently (filed:
-`docs/development/issues/2026-09-19-preprocessor-executes-directives-inside-multiline-strings.md`).
-Until it is fixed, do not start a line of a multi-line string with a directive keyword.
+**The preprocessor reads it the same way (v6.6.6).** A line inside a multi-line string that
+begins with `#ifdef` / `#ifndef` / `#if` / `#else` / `#elif` / `#endif` / `#ifplat` /
+`#endplat` / `#define` / `#@file` / `#@srcline` / `#ref` is string DATA. Until 6.6.6 it was
+EXECUTED: the directive line and any false branch vanished from the string data, silently and
+with no diagnostic — `"ab` / `#ifdef NOPE` / `cd` / `#endif` / `ef"` compiled to the bytes
+`ab\n\n\n\nef`. The three line-oriented passes now share one state machine (`PP_LEXST`) whose
+string state crosses newlines, so a string literal means what it says wherever it starts.
 
 ⚠ **A `#` is not always a comment.** `#naked`, `#inline`, `#pure`, `#io`, `#alloc`,
 `#must_use`, `#regalloc`, `#deprecated`, `#assert` and `#pe_import` are attribute TOKENS, and
