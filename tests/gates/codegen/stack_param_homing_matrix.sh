@@ -65,6 +65,8 @@
 # bite 14 review (the refusal section at the end — x86 / aarch64 / win64 compilers):
 #   R0 the four PE vector-retptr loops as committed in 14a (HEAD 76a5a614) -> RED [arity/win64] COMPILED
 #   R1 only `_try_vector_call_assign` back to its own loop                 -> RED [arity/win64] 3 times, want 4
+#   R2 the struct-param arm's top level back to a bare `return 0`         -> RED [toplevel-arg/x86,aarch64,win64]
+#                                                                             1 times, want 2
 #   real tree                                              -> GREEN on all four legs (~5 s)
 set -u
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
@@ -359,8 +361,24 @@ var e = main();
 syscall(60, e);
 EOF
 refuse_all arity "$T/ra.cyr" "expects 2 arguments, got 1" 4
+# 6.6.6 bite 14 review — a struct-valued call passed to a by-value struct param at TOP LEVEL,
+# where there is no frame to hold the result. The retptr (>16 B) form was refused; the rax:rdx
+# (9-16 B) form fell through the same arm and compiled clean — SIGSEGV. Mutation: the nx==10
+# arm's top-level `return 0` without `_refuse_toplevel_pair_arg` -> RED ("1 times, want 2").
+cat > "$T/rt.cyr" <<'EOF'
+struct P3 { x; y; z; }
+struct P2 { x; y; }
+fn p2(a, b): P2 { var q: P2; q.x = a; q.y = b; return q; }
+fn s3(a, b): P3 { var q: P3; q.x = a; q.y = b; q.z = a + b; return q; }
+fn hy(q: P2): i64 { return q.y; }
+fn hs(q: P3): i64 { return q.z; }
+var k = hy(p2(1, 2));
+var j = hs(s3(1, 2));
+syscall(60, k + j);
+EOF
+refuse_all toplevel-arg "$T/rt.cyr" "returns a struct by value" 2
 # Floor: the x86 compiler always runs, so every probe above must have counted at least once.
-REFUSE_FLOOR=1
+REFUSE_FLOOR=2
 if [ "$nrefuse" -lt "$REFUSE_FLOOR" ]; then echo "  FAIL: only $nrefuse refusal cases ran (floor $REFUSE_FLOOR)"; fail=1; fi
 echo "  ok:   refusals — $nrefuse compiler x probe cases named their diagnostic"
 

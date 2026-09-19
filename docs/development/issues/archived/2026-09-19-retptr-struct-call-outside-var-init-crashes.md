@@ -91,6 +91,11 @@ is not.
   these are now compile errors naming the callee. Supporting them would need a global-storage
   receive path — a feature, not this fix. `var t = p2(1, 2)` (untyped, rax:rdx) still yields the
   first word, as it always has.
+  ⚠ As first committed one top-level form still slipped through: `var k = hy(p2(1, 2));` — a
+  rax:rdx call passed to a by-value struct param — compiled clean and SIGSEGV'd, because the
+  struct-param arm left top level to PARSE_FNCALL and PARSE_FNCALL refuses only the retptr class.
+  Found by bite 14's review; refused by name since (`_refuse_toplevel_pair_arg`), pinned by the
+  refusal section of `stack_param_homing_matrix.sh`.
 - **A non-struct `return g()` in a struct-returning fn was silently accepted** by the same tail
   path (the caller then read the retptr buffer it had never been given data for). With the divert
   it reaches the struct-return branch and is refused: "return must be a bare local identifier, or

@@ -1457,10 +1457,12 @@ fn _try_push_struct_addr_arg(S, fi, argc): i64 {
     # ⛔ 6.6.6 — a by-value struct param given a struct-valued CALL (`h(mk(1, 2))`): the callee
     # takes the struct's ADDRESS, so the result needs storage to point at. It used to be pushed
     # as a value — the first word for a rax:rdx return (the callee then dereferenced a field),
-    # and for a retptr return a call with no retptr at all (SIGSEGV). Top level has no frame; it
-    # falls through to PARSE_FNCALL, which refuses it by name. CHANGELOG [6.6.6]
+    # and for a retptr return a call with no retptr at all (SIGSEGV). Top level has no frame: a
+    # retptr callee falls through to PARSE_FNCALL, which refuses it by name; a rax:rdx one is
+    # refused here (as first committed it fell through too, and PARSE_FNCALL refuses only the
+    # retptr class, so `hy(p2(1, 2))` compiled clean and SIGSEGV'd). CHANGELOG [6.6.6]
     if (nx == 10) {
-        if (GINFN(S) != 1) { return 0; }
+        if (GINFN(S) != 1) { return _refuse_toplevel_pair_arg(S); }
         if (_ret_agg_class(S, FINDFN(S, PEEKV(S))) == 0) { return 0; }
         if (_call_is_whole_arg(S, GTI(S)) == 0) { return 0; }
         EFLADDR(S, _struct_call_into_temp(S));
@@ -1854,6 +1856,16 @@ fn _refuse_toplevel_pair_init(S, pscale): i64 {
     if (_ret_agg_class(S, fi) != 1) { return 0; }
     if (GFRS(S, fi) != 0 - pscale) { return 0; }
     _refuse_toplevel_struct_call(S, TOKVAL(S, ti));
+    return 0;
+}
+
+# `h(p2(..))` at top level, `h` taking the struct by address and `p2` returning it in rax:rdx:
+# there is no frame to put the pair in, so refuse it by name. Always returns 0 — the argument
+# is then pushed by the ordinary path, and `_had_error` keeps the binary from being written.
+fn _refuse_toplevel_pair_arg(S): i64 {
+    if (_ret_agg_class(S, FINDFN(S, PEEKV(S))) != 1) { return 0; }
+    if (_call_is_whole_arg(S, GTI(S)) == 0) { return 0; }
+    _refuse_toplevel_struct_call(S, PEEKV(S));
     return 0;
 }
 

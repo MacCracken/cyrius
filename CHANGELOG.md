@@ -98,7 +98,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   caller's retptr). The tail-call path now diverts a retptr callee, and any call from a
   struct-returning fn — so `return g()` of a NON-struct from a `: P3` fn, silently accepted before,
   is now refused by the struct-return diagnostic. At top level there is no frame: every
-  struct-valued call that needs storage there is refused by name (all of them crashed). See the
+  struct-valued call that needs storage there is refused by name (all of them crashed) — as first
+  committed, bar one: `var k = hy(p2(1, 2));`, a 9-16 B call passed to a by-value struct param,
+  still compiled clean and SIGSEGV'd (the struct-param arm deferred top level to PARSE_FNCALL,
+  which refuses only the retptr class); the review caught it and it is refused too. See the
   issue's *Corrections to this filing*. Byte impact: **0 of 324 `.tcyr` and 0 of 85
   `programs/*.cyr` changed**, all seven forks compile, cycc **1,294,040 → 1,298,280 B** (+4,240).
 
