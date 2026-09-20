@@ -8,6 +8,38 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **A macro name matched in the MIDDLE of an identifier, and inside a STRING LITERAL — two more
+  unbounded name matches in the preprocessor, both silent.** (bite 15b.) `PP_MACRO_PASS` decided
+  "this is a macro invocation" from the bytes alone: any upper-case byte began a candidate name.
+  (1) **No left word boundary.** With `#define ID(a) (a)`, `fn myID(a)` was rewritten to
+  `fn my((a))` and `myID(5)` to `my((5))`, so a program defining both `myID` (returning 9) and
+  `my` (returning 7) **called the wrong function and exited 7**, with nothing printed but
+  `duplicate fn 'my'` — a warning naming a function the source never wrote twice. The right-hand
+  side was never at risk: `PP_HASH_ID` hashes up to the `(`, so `IDX(1)` hashes `IDX` and cannot
+  match `ID`. (2) **No lexical state.** An invocation inside a string literal was expanded and
+  the program's own data rewritten: `"ID(5) literal"` measured **11** bytes instead of 13, and
+  `"line1<LF>ID(5) here"` **14** instead of 16. ⚠ That second half is the defect **bite 4** fixed
+  in *"the four line-oriented passes"* — `PP_MACRO_PASS` is the **fifth** pass and is
+  BYTE-oriented (it has no `bol`), which is exactly how it was left out of that census; it shares
+  `PP_LEXST` now, like the other four. **Fix:** `PP_MACRO_START` — the byte must start an
+  identifier (`PP_IDBYTE` of the previous byte is 0, or it is byte 0) and `PP_LEXST_INSTR` of the
+  state must be 0. Comments are deliberately NOT excluded: `#` opens a comment, the lexer drops
+  it, and a `#define` body stops at the newline, so an expansion inside one cannot change the
+  emitted binary — an unobservable change a gate could not hold. Gate
+  `tests/gates/frontend/macro_invocation_boundary.sh` (7 axes; mutations N1–N4 each RED, and the
+  whole pre-6.6.6 compiler red on 4 of 7): every expected value comes from a twin with the macro
+  RENAMED to one that cannot match, and axis 7 proves that twin equals a build with no macro at
+  all, so no pair is two equally-broken compiles. ⛔ **There is no companion `.tcyr`, and the
+  reason is a separate, pre-existing defect recorded in the gate header and handed to this
+  release's find list**: a function-like `#define` beside
+  `include "lib/assert.cyr"` does not compile at all (`error:4261:6: expected '}', got end of
+  file`, byte-identical on b6b3bbd6), so the first cut of the coverage — a `crossos/*.tcyr` —
+  produced IDENTICAL binaries from the fixed and the unfixed compiler, a test that could not
+  fail. Blast radius measured before the change: a census of `~/Repos` finds **zero**
+  function-like macros in any `.cyr`/`.tcyr`/`.bcyr`/`.fcyr`/`.scyr` source, so nothing in the
+  ecosystem changes meaning; cycc **1,315,040 B (unchanged)**, 0 of 330 `.tcyr` binaries changed
+  a byte, seed-derive green.
+
 - **cycc exited 0 after a FAILED write of its own output, and `cyrius build` then printed
   `OK (65536 bytes)` for a truncated binary.** (bite 15a.) Six of the seven driver forks ended
   with the same hand-rolled loop — stop on the first `write` that returns `<= 0`, then fall
