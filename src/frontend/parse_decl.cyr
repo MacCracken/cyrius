@@ -1522,10 +1522,14 @@ fn _gv_hide_program(S, on): i64 {
     return 0;
 }
 
-# cx has no file image to bake a value into, so a superseding constant is stored FIRST, ahead
-# of every deferred initializer — the same "from program start" the image gives every other
-# target. Only a redeclaration records a value on cx (see PARSE_GVAR_REG).
-# 6.6.6 bite 19d — cx prestores EVERY constant global, not only a redeclared one.
+# cx has no file image to bake a value into, so a CONSTANT global is stored FIRST, ahead of
+# every deferred initializer — the same "from program start" the image gives every other
+# target.
+#
+# 6.6.6 bite 19d — EVERY constant global, not only a redeclared one. ⚠ The line that stood
+# here read "Only a redeclaration records a value on cx (see PARSE_GVAR_REG)", which was both
+# the behaviour and the defect: a plain `var a = 5;` recorded nothing, so a forward read of it
+# got 0 on cx and 5 everywhere else.
 #
 # cx opts out of the static-init path (`_TARGET_CX != 1` in PARSE_GVAR_REG): its globals live
 # in cxvm-allocated memory zeroed at startup, so the runtime store in EMIT_GVAR_INITS is what
