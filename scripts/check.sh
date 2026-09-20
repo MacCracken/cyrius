@@ -150,6 +150,54 @@ trap _chk_finish EXIT
 trap _chk_finish INT
 trap _chk_finish TERM
 
+# ── v6.6.6 (bite 27b): REAP THE STAGED HOMES A KILLED RUN LEFT BEHIND ────────────────
+#
+# THE DEFECT. The EXIT/INT/TERM trap above removes this run's staged CYRIUS_HOME, and bite
+# 25b fixed the one path that escaped it. Neither can help with SIGKILL: no trap runs, and
+# the ~19 MB tree stays in $TMPDIR for ever. Five of them (95 MB) were sitting in /tmp when
+# this was written, the oldest three hours old, on a box where /tmp is RAM.
+#
+# ⚠ REAPED BY AGE AND BY OWNERSHIP, NEVER BY COUNT — the same rule, and for the same
+# reason, as cross-os-selfhost.sh's `_co_reap_stale` for its `_cyaud_*` staging dirs: "keep
+# the newest N" deletes a LIVE run's tree the moment two runs overlap, and several lanes run
+# check.sh at once on this box. So a home is reclaimed only when BOTH hold:
+#   * it has not been touched for $CYRIUS_CHECK_REAP_MINS minutes (default 240 — a full run
+#     is ~13 minutes, so four hours is finished by definition), AND
+#   * the run that created it is gone. Every home carries `.owner`, written with the
+#     creating shell's PID as the FIRST thing after mktemp, so the window in which a live
+#     home looks unowned is microseconds; `kill -0` is the liveness oracle, and a PID we
+#     cannot signal counts as ALIVE (the safe direction — we decline to delete).
+# Best-effort throughout: a reap that fails must never fail the run.
+_CHK_REAP_MINS="${CYRIUS_CHECK_REAP_MINS:-240}"
+_chk_home_is_owned() {
+    [ -f "$1/.owner" ] || return 1
+    _op=$(cat "$1/.owner" 2>/dev/null || true)
+    case "$_op" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    kill -0 "$_op" 2>/dev/null
+}
+_chk_reap_stale_homes() {
+    _rtmp="${TMPDIR:-/tmp}"
+    [ -d "$_rtmp" ] || return 0
+    _reaped=0
+    for _h in "$_rtmp"/cyrius-check-home.*; do
+        [ -d "$_h" ] || continue
+        if [ "$_CHK_REAP_MINS" -gt 0 ]; then
+            # find is the age oracle; -mmin/-maxdepth are POSIX and present on BSD find too.
+            [ -n "$(find "$_h" -maxdepth 0 -type d -mmin +"$_CHK_REAP_MINS" 2>/dev/null)" ] || continue
+        fi
+        if _chk_home_is_owned "$_h"; then continue; fi
+        rm -rf "$_h" 2>/dev/null || true
+        [ -d "$_h" ] || _reaped=$((_reaped + 1))
+    done
+    if [ "$_reaped" -gt 0 ]; then
+        printf "check: reaped %s stale staged CYRIUS_HOME tree(s) in %s (unowned, older than %s min)\n" \
+            "$_reaped" "$_rtmp" "$_CHK_REAP_MINS"
+    fi
+}
+_chk_reap_stale_homes
+
 # ── v6.6.4: the suite runs against a THROWAWAY CYRIUS_HOME staged from the working tree ──
 #
 # Gates that stage a consumer pinned at `cyrius = "$(cat VERSION)"` resolve their stdlib
@@ -177,6 +225,9 @@ _chk_stage_home() {
   _CHK_LIVE_HOME="${CYRIUS_HOME:-$HOME/.cyrius}"
   if [ -z "${CYRIUS_HOME:-}" ]; then
     _CHK_HOME=$(mktemp -d "${TMPDIR:-/tmp}/cyrius-check-home.XXXXXX") && [ -d "$_CHK_HOME" ] || { printf "error: mktemp -d failed for the throwaway CYRIUS_HOME (TMPDIR=%s)\n" "${TMPDIR:-/tmp}" >&2; exit 1; }
+    # v6.6.6 (bite 27b): stamp the owner FIRST, before anything slow, so a concurrent run's
+    # reaper can never mistake this home for abandoned. See _chk_reap_stale_homes above.
+    printf '%s\n' "$$" > "$_CHK_HOME/.owner"
     _CHK_VER="$(tr -d '[:space:]' < VERSION)"
     mkdir -p "$_CHK_HOME/versions"
     if [ -d "$_CHK_LIVE_HOME/versions" ]; then

@@ -1324,6 +1324,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   for its harness, and since check.sh EXPORTS the home it stages, that gate was GREEN
   standalone and RED inside the full run it belongs to.
 
+- **A SIGKILLed `check.sh` left its ~19 MB staged `CYRIUS_HOME` in `$TMPDIR` for ever**
+  (bite 27b). The EXIT/INT/TERM trap removes this run's home and bite 25b fixed the one path
+  that `exec`ed past it; no trap runs on SIGKILL. Five leaked trees (95 MB) were sitting in
+  `/tmp` when this was written, on a box where `/tmp` is RAM. check.sh now reaps them at
+  startup, by the same rule `scripts/cross-os-selfhost.sh` uses for its `_cyaud_*` staging
+  dirs — **by AGE and by OWNERSHIP, never by count**, because several lanes run check.sh here
+  at once and deleting a live run's home is worse than the leak. Every staged home carries
+  `.owner` (the creating shell's PID, stamped as the first thing after `mktemp`), and a home
+  is reclaimed only when it is older than `$CYRIUS_CHECK_REAP_MINS` (default 240 — a full run
+  is ~13 minutes) **and** that PID is gone; a PID we cannot signal counts as alive. Gate:
+  `tests/gates/toolchain/check_stale_home_reaper.sh` (registered in
+  `programs/checks/main.cyr`) — axis 4 starts a REAL second check.sh run, holds it open, and
+  runs a reaper against its home with the age gate turned OFF, with axis 5 as the
+  anti-vacuous twin (the same home with `.owner` removed IS reaped). Mutation-proven four
+  ways; the stamp and the ownership guard are proven independently.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**
