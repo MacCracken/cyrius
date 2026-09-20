@@ -12,6 +12,22 @@
 #     fn mk4(): f64v4 { ... }     fn bad(): f64v2 { return mk4(); }     -> 32 B into a 16 B return
 #     fn bad(): f64v2 { return (41, 7); }                         -> caller read 0 (X10-X12)
 #
+# TWO MORE SHAPES THE 6.6.6 RULE REFUSES, whose pre-6.6.6 behaviour is NOT uniformly wrong and
+# so is written down here rather than in the defect list (both measured at the lane parent):
+#   X13  `return callptr(fp, 41, 7);`  -> high lane 7 on x86_64 and 7 under qemu-aarch64, 5
+#        under wine-PE (all three built from the 701fb02f tree, which predates the refusal).
+#        Right on two targets, wrong on the third. `callptr` is a BUILTIN token, not an IDENT
+#        naming a declared fn, so there is no declared return type for the exact-type test or
+#        for the PE arm's `GFRS(callee) == _cur_fn_ret_scalar` to key on — exactly the asymmetry
+#        noted below. Refused.
+#   X14  `return G;` for a correctly-typed vector GLOBAL -> read a STALE REGISTER, not G, on
+#        x86_64. With `var G: f64v2 = mkv(41,7); var H: f64v2 = mkv(3,4);` ahead of it the
+#        caller got 3 — H's low lane, the last thing left in XMM0 — not G's 41. (`load64(&G)`
+#        reads 0 at the parent too: the top-level initializer of a vector global never stores,
+#        a separate pre-existing defect reported by bite 21's review, not fixed here.) The two
+#        `return IDENT;` branches resolve the name with FINDLOCAL, so a global never matched
+#        and fell straight through to the scalar path. Refused.
+#
 # ROOT CAUSE. PARSE_RETURN's `_is_simd128` / `_is_simd256` branches handle exactly
 # `return IDENT;` for a local of the matching class and fall through to the scalar PCMPE path
 # for everything else, so rax held whatever the expression left there and rdx was never written.
@@ -47,8 +63,10 @@
 #
 # MUTATION LEDGER (6.6.6 — each mutant is a scratch tree from `git archive HEAD` with the named
 # hunk of src/frontend/parse_fn.cyr reverted, rebuilt with build/cycc, run as CYCC=<mutant>):
-#   m1 all three sites reverted             -> RED, all 12 refusal rows (host)
-#   m2 PARSE_RETURN refusal only reverted   -> RED, the 9 rows X1-X9 (host); X10-X12 stay green
+#   m1 all three sites reverted             -> RED, all 14 refusal rows (host)
+#   m2 PARSE_RETURN refusal only reverted   -> RED, 11 rows: X1-X9 plus X13 and X14, which that
+#                                              one refusal is the only site for; X10-X12 (the
+#                                              tuple rows) stay green
 #   m3 tail-call guard only reverted        -> RED, rows X6 and X7 only — the two CALL-form
 #                                              rows, which the tail path takes before the
 #                                              vector branch can see them
@@ -58,8 +76,8 @@
 #                                              GREEN under m4, which is what proves the guard
 #                                              is keyed on the vector classes and not on the
 #                                              tuple syntax.
-#   real tree                               -> GREEN (82 rows: 48 refusals, 34 acceptances —
-#                                              12 refusal rows x 4 legs, 9 acceptance rows x 4
+#   real tree                               -> GREEN (90 rows: 56 refusals, 34 acceptances —
+#                                              14 refusal rows x 4 legs, 9 acceptance rows x 4
 #                                              minus A7's two skipped legs, see a_legs —
 #                                              across host + cx + qemu-aarch64 + wine-PE)
 # Mutants were measured on a host-only copy of this file; the other legs share the frontend.
@@ -137,9 +155,18 @@ var r = main(); syscall(60, r);
 fn main(): i64 { var v: f64v4 = bad(); return load64(&v); }
 var r = main(); syscall(60, r);
 ' ;;
+    X13) printf '%s' "$MKV"'fn bad(): f64v2 { var fp = &mkv; return callptr(fp, 41, 7); }
+fn main(): i64 { var v: f64v2 = bad(); return load64(&v); }
+var r = main(); syscall(60, r);
+' ;;
+    X14) printf '%s' "$MKV"'var G: f64v2 = mkv(41, 7);
+fn bad(): f64v2 { return G; }
+fn main(): i64 { var v: f64v2 = bad(); return load64(&v); }
+var r = main(); syscall(60, r);
+' ;;
     esac
 }
-REFUSE_ROWS="X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12"
+REFUSE_ROWS="X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14"
 
 a_src() {  # $1 row id -> source on stdout
     case "$1" in

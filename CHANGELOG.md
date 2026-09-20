@@ -2634,12 +2634,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   spelling *was* caught. Bite 21's review found it; that arm now calls
   `_refuse_vector_tuple_return` (rows X10-X12). The PAIR class keeps the tuple — rax:rdx IS its
   ABI — and so does the scalar arity-2/arity-3 multi-return; rows A7, A8 and A9 pin exactly
-  those and stay green under the new mutant m4. Gate after this fix: **12 refusals + 9
-  acceptances**, 82 rows green across the four legs; mutation-proven 12, 9, 2 and 3 rows red
-  for all three sites, the PARSE_RETURN half, the tail-call half and the multi-return half.
-  Ecosystem re-scan over 18,152 `.cyr`/`.tcyr` outside this repo: 6,234 vector-returning fns,
-  and **every** `return` in them is a bare local/parameter identifier (5,766) or a bare call
-  (468) — zero tuples — so the tuple refusal rejects nothing downstream. Self-host fixpoint
+  those and stay green under the new mutant m4. **Two further shapes this rule refuses, written
+  down here because neither was uniformly broken before it and a reader would otherwise meet
+  them as a surprise build error:** `return callptr(fp, 41, 7);` (row X13) — `callptr` is a
+  builtin token, not an IDENT naming a declared fn, so there is no declared return type for the
+  exact-type test or for the PE arm to key on; built from the 701fb02f tree it returned the
+  right high lane on x86_64 (7) and under qemu-aarch64 (7) and the WRONG one under wine-PE (5),
+  so refusing removes a target-dependent miscompile, not a working feature. And `return G;` for
+  a correctly-typed vector GLOBAL (row X14) — both `return IDENT;` branches resolve the name
+  with FINDLOCAL, so a global never matched and fell through to the scalar path, handing back a
+  STALE REGISTER: with `var G: f64v2 = mkv(41,7); var H: f64v2 = mkv(3,4);` the caller read 3,
+  H's low lane, not G's 41. Final gate: **14 refusals + 9 acceptances**, 90 rows green across
+  the four legs; mutation-proven 14, 11, 2 and 3 rows red for all three sites, the PARSE_RETURN
+  half, the tail-call half and the multi-return half. Ecosystem re-scan over 18,152
+  `.cyr`/`.tcyr` outside this repo: 6,234 vector-returning fns, and **every** `return` in them
+  is a bare local/parameter identifier (5,766) or a bare call (468) — zero tuples, zero
+  `callptr`, zero globals — so none of the three newly-refused shapes rejects anything
+  downstream. Self-host fixpoint
   green, seed-derive green, cycc 1,315,416 -> 1,319,688 B (the review fix is absorbed by
   text-segment padding: 1,319,688 B before and after), all seven forks compile, and all 332
   `.tcyr` give identical exit codes against the pre-bite compiler.

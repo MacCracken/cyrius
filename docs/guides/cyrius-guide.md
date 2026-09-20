@@ -285,15 +285,24 @@ was never written. (The >16-byte form has error'd on an uncarryable shape since 
 ⚠ **A fn returning a vector can `return` only what the vector return ABI carries**: a local of
 that vector type, or a call to a fn *declared* to return the same one. Anything else — an
 integer, a scalar local, `load64(&v)`, a bare `return;`, `x + y` (there is no vector `+`), a
-multi-value `return (a, b);`, or a call returning a scalar or a different-width vector — is a
-compile error since v6.6.6 naming what it got. Before v6.6.6 every one of those compiled clean
-and handed back a half-written register pair; `return x + y;` returned `y` unchanged.
+multi-value `return (a, b);`, a `callptr(..)` through a function pointer, a **global** of the
+right vector type, or a call returning a scalar or a different-width vector — is a compile error
+since v6.6.6 naming what it got. Before v6.6.6 every one of those compiled clean and handed back
+a half-written register pair; `return x + y;` returned `y` unchanged and `return G;` for a
+global read a stale register rather than `G`. The two that are worth spelling out because they
+look reasonable:
 
-`return (a, b);` is worth spelling out because it looks reasonable: it is the **ret2
-int-register** convention (rax:rdx), which is the ABI of a 9-16 byte *struct*, not of a vector.
-It stays legal for a struct return and for the scalar multi-value `var a, b = f();` form — only
-the vector classes refuse it. To build a vector, store the lanes into a local and return the
-local.
+* `return (a, b);` is the **ret2 int-register** convention (rax:rdx), which is the ABI of a
+  9-16 byte *struct*, not of a vector. It stays legal for a struct return and for the scalar
+  multi-value `var a, b = f();` form — only the vector classes refuse it. To build a vector,
+  store the lanes into a local and return the local.
+* `return callptr(fp, ..);` has no declared callee type to check, so the compiler cannot know
+  the target returns this vector; it happened to work on x86_64 and aarch64 and returned the
+  wrong lane on Windows. ⚠ There is **no** working spelling for a vector-returning `callptr`
+  today: `var v: f64v2 = callptr(fp, 41, 7);` is broken too, and has been — measured at 6.6.5
+  and at 6.6.6 it reads `0` and a garbage high lane on x86_64, with no diagnostic. Reported for
+  a later bite. Call the function by name where you can; a call by name into a vector local is
+  correct on every target.
 
 ⚠ **A copy moves one struct into a variable of that SAME struct type.** `p = q` and
 `var p: P3 = q` between two DIFFERENT struct types are a compile error since v6.6.6
