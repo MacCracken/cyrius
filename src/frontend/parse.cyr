@@ -698,8 +698,12 @@ var _cur_fn_ret_pair = 0;
 # pointer to the caller's copy) from the other pointer-mode struct local, `var a = str_from(x)`,
 # whose slot holds a heap handle and for which `a = b` must stay a pointer rebind. Recorded
 # rather than re-derived because a value-form vector parameter owns 2-4 slots, so the parameter
-# COUNT is not the slot count. Set once at the end of the parameter loop; saved/restored around
-# the async constructor exactly like `_cur_fn_ix`. See `_local_is_sptr_param`. CHANGELOG [6.6.6]
+# COUNT is not the slot count. Set once at the end of the parameter loop; zeroed by the fn
+# teardown, and saved/restored around the async constructor and the generic-instance re-emit
+# exactly like `_cur_fn_ix` (the constructor's save was added at bite 16's review — until then
+# this line described a save/restore that did not exist, and the constructor was correct only
+# because the teardown happens to zero this four lines before it runs). See
+# `_local_is_sptr_param`. CHANGELOG [6.6.6]
 var _cur_fn_pslots = 0;
 
 # ⭐ 6.6.6 (bite 14 review) — THE STRUCT-RESULT RECORD, for the two call paths whose callee a

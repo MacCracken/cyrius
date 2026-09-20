@@ -2516,6 +2516,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and all 103 `lib/*.cyr` compile to BYTE-IDENTICAL binaries; 2,002 sibling `*/src/*.cyr`
   across 141 ecosystem repos show **0 compile-status differences**.
 
+- **`_cur_fn_pslots` was correct only by LINE ORDER, while its comment claimed a save/restore
+  that did not exist.** (bite 16g; found by bite 16's review.) `src/frontend/parse.cyr` said the
+  variable is "saved/restored around the async constructor exactly like `_cur_fn_ix`";
+  `_async_emit_constructor` saves ELEVEN pieces of state and this was not among them. The
+  constructor got the right answer only because `_PARSE_FN_DEF_IMPL`'s teardown zeroes the
+  variable four lines before the constructor is emitted. Move either line and the constructor
+  inherits the body's parameter span — every slot in it then reads as an address-passed struct
+  parameter — with no test to catch it. A line-order dependency documented as a save/restore is
+  the invariant the next edit silently breaks, so it is now really a save/restore
+  (`sv_psl`, beside `sv_ix`), and the comment states the actual rule. Deliberately
+  behaviour-neutral: `build/cycc` is unchanged in size, all 85 `programs/*.cyr` and 103
+  `lib/*.cyr` stay BYTE-IDENTICAL and all 330 pre-existing `.tcyr` exit identically — that
+  byte-identity IS the evidence, since a change of behaviour here would move them.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**

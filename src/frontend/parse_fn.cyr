@@ -4510,6 +4510,15 @@ fn _async_emit_constructor(S, noff_f, fi_impl, pc): i64 {
     var sv_scalar = _cur_fn_ret_scalar;
     var sv_naked = _cur_fn_naked;
     var sv_ix = _cur_fn_ix;
+    # 6.6.6 (bite 16 review) — the constructor is its OWN fn, so it owns no parameter span.
+    # This was correct only by LINE ORDER: `_PARSE_FN_DEF_IMPL`'s teardown zeroes
+    # `_cur_fn_pslots` four lines before it emits the constructor. `parse.cyr`'s comment
+    # claimed a save/restore that did not exist — and a line-order dependency documented as a
+    # save/restore is the kind of invariant the next edit silently breaks, with no test to
+    # catch it (the constructor would inherit the BODY's parameter span). Now it really is a
+    # save/restore, matching `sv_ix` beside it. CHANGELOG [6.6.6]
+    var sv_psl = _cur_fn_pslots;
+    _cur_fn_pslots = 0;
     SINFN(S, 1);
     SFLC(S, 0);
     vec_truncate(rp_vec, 0);
@@ -4643,6 +4652,7 @@ fn _async_emit_constructor(S, noff_f, fi_impl, pc): i64 {
     _cur_fn_ret_scalar = sv_scalar;
     _cur_fn_naked = sv_naked;
     _cur_fn_ix = sv_ix;
+    _cur_fn_pslots = sv_psl;   # 6.6.6 — see the save above
     return 0;
 }
 
