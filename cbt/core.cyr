@@ -165,9 +165,18 @@ fn _progress_close(): i64 {
     return 0;
 }
 
+# v6.6.6 (bite 24 review) — HOW MANY NAMED DIAGNOSTICS THE CLI HAS PRINTED ITSELF.
+# A caller samples it around a fallible step and compares afterwards, so a failure cbt
+# already NAMED is not then attributed to something else. `cmd_build` is the first user:
+# bite 24a's rename refusal made it print `FAILED (compiler exit 1)` and "the compiler's
+# diagnostics are above" for a compiler that had exited 0 and written nothing. Monotonic
+# and never reset, so nested users cannot clobber each other. CHANGELOG [6.6.6].
+var _err_count = 0;
+
 # Error: always prints to stderr
 fn _err(msg): i64 {
     _progress_close();
+    _err_count = _err_count + 1;
     sys_write(STDERR_FD, "error: ", 7);
     sys_write(STDERR_FD, msg, strlen(msg));
     sys_write(STDERR_FD, "\n", 1);
@@ -177,6 +186,7 @@ fn _err(msg): i64 {
 # Error with context: "error: msg: ctx"
 fn _err_ctx(msg, ctx): i64 {
     _progress_close();
+    _err_count = _err_count + 1;
     sys_write(STDERR_FD, "error: ", 7);
     sys_write(STDERR_FD, msg, strlen(msg));
     sys_write(STDERR_FD, ": ", 2);

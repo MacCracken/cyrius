@@ -174,6 +174,10 @@ fn cmd_build(source, output): i64 {
     # still land here mid-line — that is long-standing and deliberate, and the `FAILED
     # (compiler exit N)` line below points at them. CHANGELOG [6.6.6].
     if (_verbose == 0) { _progress_open = 1; }
+    # v6.6.6 (bite 24 review) — sample the named-diagnostic counter so the verdict below
+    # can tell "the compiler rejected the source" from "cbt itself refused, and said so".
+    # See `_err_count` (cbt/core.cyr). CHANGELOG [6.6.6].
+    var pre_err = _err_count;
     var r = compile(source, output);
     _progress_open = 0;
     if (r == 0) {
@@ -228,11 +232,26 @@ fn cmd_build(source, output): i64 {
         # v6.5.50 — a bare `FAIL` told the user nothing: not which stage failed, not the
         # compiler's exit status, and not where its diagnostics went. The compiler writes
         # its own errors to stderr, so name the status and point at them.
-        sys_write(STDOUT_FD, "FAILED (compiler exit ", 22);
-        fmt_int(r);
-        sys_write(STDOUT_FD, ")\n", 2);
-        if (_verbose == 0) {
-            sys_write(STDERR_FD, "  the compiler's diagnostics are above; re-run with -v for the resolved compiler, source and include set\n", 105);
+        # ⛔ v6.6.6 (bite 24 review) — BUT ONLY WHEN THE COMPILER IS WHAT FAILED, AND ONLY
+        # WITH ITS REAL STATUS. `compile()` returns a flat 1 for every failure, so this
+        # printed `FAILED (compiler exit 1)` plus "the compiler's diagnostics are above"
+        # for bite 24a's rename refusal — where the compiler had exited 0, written no
+        # diagnostics, and the only message above was cbt's own. Two questions, two
+        # answers: `_err_count` moved means cbt already NAMED this failure (say nothing
+        # more, the diagnostic is the message); otherwise `_cc_last_exit` is the child's
+        # real status, and -1 means it never exited normally, which is not a status to
+        # quote. CHANGELOG [6.6.6].
+        if (_err_count != pre_err) { println("FAILED"); }
+        else {
+            if (_cc_last_exit < 0) { println("FAILED (the compiler did not exit normally)"); }
+            else {
+                sys_write(STDOUT_FD, "FAILED (compiler exit ", 22);
+                fmt_int(_cc_last_exit);
+                sys_write(STDOUT_FD, ")\n", 2);
+            }
+            if (_verbose == 0) {
+                sys_write(STDERR_FD, "  the compiler's diagnostics are above; re-run with -v for the resolved compiler, source and include set\n", 105);
+            }
         }
     }
     return r;

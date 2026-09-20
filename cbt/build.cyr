@@ -836,7 +836,17 @@ fn _artifact_size(path): i64 {
     return n;
 }
 
+# v6.6.6 (bite 24 review) — THE COMPILER CHILD'S REAL EXIT STATUS from the last
+# `compile()`, or -1 when the child never ran or did not exit normally. `compile()`
+# returns a flat 1 for EVERY failure — a missing output directory, an unwritable output,
+# bite 24a's failed rename, and a genuine non-zero exit from cycc all look identical to
+# the caller — so `cyrius build`'s `FAILED (compiler exit N)` was printing that flat 1 and
+# calling it the child's status. Recorded here rather than returned so the contract every
+# other `compile()` caller tests (`== 0` / `!= 0`) is unchanged. CHANGELOG [6.6.6].
+var _cc_last_exit = 0 - 1;
+
 fn compile(source, output): i64 {
+    _cc_last_exit = 0 - 1;
     var cc = current_cc();
     # v6.2.27: --target=aarch64-bare-metal-elf routes to the aarch64
     # cross-compiler (the same env knobs apply — kernel_mode + ELF64 kernel).
@@ -920,6 +930,13 @@ fn compile(source, output): i64 {
     if (_cc_stderr_to != 0) { wrc = _win_compile_spawn_err(cc, actual_source, output, _cc_stderr_to); }
     else { wrc = _win_compile_spawn(cc, actual_source, output); }
     if (tmp_src != 0) { sys_unlink(tmp_src); }
+    # v6.6.6 (bite 24 review) — the PE arm's status; see `_cc_last_exit`. `wrc` is what
+    # `_win_wait_close` read out of the cmd.exe that ran the compiler, i.e. the compiler's
+    # own exit code on every path that got as far as running it. ⚠ ONE residual ambiguity,
+    # and it is in lib/, not here: `_win_compile_spawn` also returns a bare 1 when
+    # CreateProcessW itself fails, so that (rare, unnamed) case reports as "compiler exit
+    # 1". Fixing it means giving that wrapper a distinguishable failure value.
+    _cc_last_exit = wrc;
     if (wrc != 0) { sys_unlink(output); return 1; }
     return 0;
     #endif
@@ -1068,6 +1085,10 @@ fn compile(source, output): i64 {
     # Unlink here, ABOVE the success/failure split, so neither return path can skip it.
     if (tmp_src != 0) { sys_unlink(tmp_src); }
     var status = load32(&status_buf);
+    # v6.6.6 (bite 24 review) — record the child's REAL status; see `_cc_last_exit`.
+    # Left at -1 when the child was signalled, because then there is no exit status to
+    # report and a caller must not invent one.
+    if (WIFEXITED(status) == 1) { _cc_last_exit = WEXITSTATUS(status); }
     if (WIFEXITED(status) == 1) {
         if (WEXITSTATUS(status) == 0) {
             # Atomic rename: tmp_out → output. Old `output` (if any)

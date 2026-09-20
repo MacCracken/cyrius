@@ -2107,6 +2107,33 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the pre-flight checks is **green on purpose** (the flag alone is the other valid
   remedy).
 
+- **`cyrius build` blamed the compiler for failures the compiler had nothing to do with,
+  and quoted a status it never read.** (bite 24 review.) `compile()` returns a flat `1`
+  for *every* failure — a missing output directory, an unwritable output, bite 24a's
+  failed rename, and a genuine non-zero exit from cycc are indistinguishable to the
+  caller — and `cmd_build` printed that return value as `FAILED (compiler exit N)`
+  followed by `the compiler's diagnostics are above`. Measured at `1ed45ba`:
+  `cyrius build a.cyr bin.d` (bin.d a directory) printed `error: could not rename the
+  temp output onto: bin.d`, then `FAILED (compiler exit 1)` and the diagnostics pointer —
+  for a compiler that **exited 0 and wrote nothing**, with the only message above being
+  cbt's own. A verdict that names the wrong component sends the reader to the wrong
+  place; a status that is a constant tells them nothing even when the compiler *did*
+  fail. **Fix, two halves:** `_err_count` (`cbt/core.cyr`, bumped by `_err`/`_err_ctx`)
+  lets a caller ask "did I already name this failure myself" — if so the verdict is a
+  bare `FAILED` and nothing more, because the diagnostic already *is* the message; and
+  `_cc_last_exit` (`cbt/build.cyr`) records the child's real `WEXITSTATUS` — `-1` when it
+  never ran or did not exit normally, which is reported as `FAILED (the compiler did not
+  exit normally)` rather than an invented number. `compile()`'s return contract is
+  unchanged, so no other caller moves. Two new rows on the existing
+  `tests/gates/toolchain/build_log_informative.sh` (the gate that already owns "the build
+  log tells the truth", so its row 2 positive control runs in the same pass): row **2b**
+  stands a stub compiler that exits **42** beside a copy of the CLI — cycc exits 1 for
+  every compile error, so nothing else can tell a real status from the constant — and
+  reads the expected 42 back by *running* the stub; row **2c** requires a CLI-raised
+  failure to claim no compiler exit and point at no compiler diagnostics while still
+  naming its own error and exiting non-zero. 4 mutants, each RED on exactly its own rows;
+  the over-fix that always prints a bare `FAILED` is caught by row 2.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**
