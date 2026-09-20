@@ -211,6 +211,40 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   cycc **1,315,040 B (unchanged)**, fixpoint + seed-derive green, all 7 forks compile, 0 of 330
   `.tcyr` binaries changed a byte.
 
+- **The compiler could not read its own environment on Windows — every `CYRIUS_*` knob was
+  invisible to `cycc.exe`.** (bite 18b.) `_read_env` (`src/backend/common/runtime.cyr`) had a
+  Linux arm (`/proc/self/environ`) and a macOS arm (init-stack envp) and fell through to
+  `return 0` on PE. Measured on **real cass**: `CYRIUS_STATS=1 cycc.exe < p.cyr` printed
+  **zero bytes** of stderr where Linux prints the seven-row meter block, and `CYRIUS_DCE=1`
+  eliminated nothing (the note still said "set CYRIUS_DCE=1 to eliminate"). **20 names** are
+  affected — derived from the `_read_env` call sites reachable from `src/main_win.cyr`, not
+  hand-listed: `CYRIUS_STATS`, `CYRIUS_DCE`, `CYRIUS_DCE_VERBOSE`, `CYRIUS_DEBUG_PHASES`,
+  `CYRIUS_DECODE_AUDIT`, `CYRIUS_SYMS`, `CYRIUS_WX`, `CYRIUS_IR`, `CYRIUS_MONOMORPH`,
+  `CYRIUS_ASYNC`, `CYRIUS_STACK_ARRAYS`, `CYRIUS_TYPE_CHECK`, `CYRIUS_FILEID_DUMP`,
+  `CYRIUS_POISON`, `CYRIUS_MACHO`, `CYRIUS_MACHO_ARM`, `CYRIUS_TARGET_WIN`,
+  `CYRIUS_TARGET_EFI`, `CYRIUS_ALLOW_PARENT_INCLUDES`, `CYRIUS_ALLOW_ABSOLUTE_INCLUDES`.
+  **Fix:** a `CYRIUS_TARGET_WIN` arm calling the `0xF015` GetEnvironmentVariableA reroute into
+  the static `_env_scratch` (no allocation — this runs in the gvar-init prologue, before
+  `alloc_init`), refusing a value that does not fit rather than handing one back cut short,
+  exactly as `lib/io.cyr`'s `getenv` does. ⭐ **The reroute has existed since v6.0.85 and
+  nothing ever called it from here** — the comment above `_read_env` still said the Windows
+  lookup was "queued for v5.5.x tail", five minors after it had shipped. The stdlib hit the
+  identical shape at v6.5.45 and *that* half was fixed; the compiler's own copy, one call
+  away in this repo, was not, because the two were investigated as separate bugs instead of
+  as one class. ⚠ **`cyrius capacity` is NOT unblocked by this, and the premise that it was
+  is wrong**: `cmd_capacity` (`cbt/commands.cyr`) spawns the compiler with `sys_fork()` +
+  `/bin/sh -c "CYRIUS_STATS=1 cycc"`, and `sys_fork` returns **-1** on PE (probe run under
+  wine), so it fails before any environment is involved — verified end-to-end by building
+  `cyrius.exe` and running `capacity`, which reports `error: no stats output from compiler`
+  with the fixed compiler in place. That needs a Windows spawn arm in `cmd_capacity`, which
+  is a different defect in a different file. Gate
+  `tests/gates/platform/pe_compiler_reads_env.sh` (Linux oracle supplies the expected meter
+  labels / PE import directory — 0 `GetEnvironmentVariableA` entries at 6.6.5, 1 at 6.6.6 /
+  two knobs read in two different source files under wine; both mutants built and run).
+  Linux `build/cycc` is **byte-identical** (the new arm is behind `#ifdef CYRIUS_TARGET_WIN`
+  and is stripped from every ELF build); the PE self-host fixpoint was re-taken **on real
+  cass**, where the natively-built compiler is also byte-identical to the Linux cross-build.
+
 - **On Windows, `O_TRUNC` did not truncate and `O_APPEND` did not append — silent data
   corruption on every rewrite.** (bite 18a.) `EOPEN_PE` (`src/backend/x86/emit.cyr`) built
   CreateFileW's `dwCreationDisposition` out of `O_CREAT` and `O_EXCL` alone and hardcoded

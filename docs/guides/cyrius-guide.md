@@ -2718,6 +2718,19 @@ These reroute to `FindFirstFileW`, `FindNextFileW`, `FindClose` (0xF016–0xF018
 and `GetFileAttributesW` (0xF019) on Windows. Paths are converted to UTF-16LE
 with `/` translated to `\` for Windows naming. Results come back as UTF-8 Str.
 
+**Environment**
+- `getenv(name)` → pointer to value, or 0
+
+Windows has no `/proc/self/environ`; the lookup routes to
+`GetEnvironmentVariableA` (0xF015). The compiler reads its own `CYRIUS_*` knobs
+the same way — `CYRIUS_STATS`, `CYRIUS_DCE`, `CYRIUS_SYMS` and the rest all work
+against `cycc.exe` from v6.6.6 (before that `cycc.exe` saw none of them).
+
+> ⚠ Setting one from `cmd.exe`: write `set CYRIUS_STATS=1&& cycc.exe …` with **no
+> space before the `&&`**. `set VAR=1 & prog` puts a trailing space *in the value*,
+> and the compiler's knobs test for exactly `"1"`, so the variable silently fails
+> to match and the run looks like an unfixed compiler.
+
 ### Syscall Routing Model
 
 On Windows, syscalls do not map to a single kernel boundary. Instead, the compiler
