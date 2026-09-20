@@ -28,7 +28,7 @@
 #   2. STATIC: every pillar that runs install.sh with `CYRIUS_INSTALL_TARBALL=` first tests
 #      that the sidecar is THERE — the two in `cbt/*.cyr` (same-line, inside the remote
 #      command string) and the two `run: |` blocks in `.github/workflows/ci.yml` (the test a
-#      line of its own above it). Floor: 4 sites, scan self-tested on 3 shapes.
+#      line of its own above it). Floor: 4 sites, scan self-tested on 4 shapes.
 #   3. BEHAVIOURAL, and the axis that makes axis 1 more than a string check: the REAL
 #      `scripts/install.sh`, in a throwaway HOME + CYRIUS_HOME, over a locally built
 #      tarball. (a) correct sidecar -> it says the checksum verified; (b) ONE BYTE appended
@@ -168,9 +168,12 @@ done
 printf 'x CYRIUS_INSTALL_TARBALL=$T sh install.sh\n' > "$D/fx/p_bad.yml"
 printf 'test -f "$T.sha256" || exit 1\nCYRIUS_INSTALL_TARBALL=$T sh install.sh\n' > "$D/fx/p_ok.yml"
 printf "ssh h '[ -f \$HOME/c.tar.gz.sha256 ] && CYRIUS_INSTALL_TARBALL=\$HOME/c.tar.gz sh install.sh'\n" > "$D/fx/p_inline.cyr"
+# a COMMENT naming the sidecar is not a guard — this is how ledger row h passed the first cut
+printf '# REQUIRE the .sha256 sidecar before installing\nCYRIUS_INSTALL_TARBALL=$T sh install.sh\n' > "$D/fx/p_cmt.yml"
 [ "$(_pillar_scan "$D/fx/p_bad.yml")" = "$D/fx/p_bad.yml:1:0" ]    || { fail "axis 2 self-test: an unguarded pillar is not seen as unguarded: '$(_pillar_scan "$D/fx/p_bad.yml")'"; a2=1; }
 [ "$(_pillar_scan "$D/fx/p_ok.yml")" = "$D/fx/p_ok.yml:2:1" ]      || { fail "axis 2 self-test: a pillar guarded a few lines above is not seen as guarded: '$(_pillar_scan "$D/fx/p_ok.yml")'"; a2=1; }
 [ "$(_pillar_scan "$D/fx/p_inline.cyr")" = "$D/fx/p_inline.cyr:1:1" ] || { fail "axis 2 self-test: a pillar guarded on its own line is not seen as guarded: '$(_pillar_scan "$D/fx/p_inline.cyr")'"; a2=1; }
+[ "$(_pillar_scan "$D/fx/p_cmt.yml")" = "$D/fx/p_cmt.yml:2:0" ]    || { fail "axis 2 self-test: a COMMENT naming the sidecar was accepted as the guard: '$(_pillar_scan "$D/fx/p_cmt.yml")'"; a2=1; }
 ninst=$(grep -c . "$D/pillars"); ninst=${ninst:-0}
 [ "$ninst" -ge 4 ] || { fail "axis 2: found $ninst install-pillar line(s) (floor 4 — ecb + ach in cbt/, macos-14 + ach in ci.yml) — the scan read nothing, or a pillar was deleted"; a2=1; }
 nguard=0
@@ -182,7 +185,7 @@ while IFS=: read -r f ln g; do
     fi
 done < "$D/pillars"
 [ "$nguard" -ge 4 ] || { fail "axis 2: only $nguard install pillar(s) test for the sidecar (floor 4)"; a2=1; }
-[ "$a2" = 0 ] && echo "  ok: axis 2: all $ninst install pillar(s) — 2 in cbt/, 2 in ci.yml — refuse to start unless the .sha256 is there (scan self-tested on 3 shapes)"
+[ "$a2" = 0 ] && echo "  ok: axis 2: all $ninst install pillar(s) — 2 in cbt/, 2 in ci.yml — refuse to start unless the .sha256 is there (scan self-tested on 4 shapes)"
 
 # ── axis 3: what the sidecar actually buys, measured against the REAL install.sh ──
 # A throwaway HOME and CYRIUS_HOME: nothing here touches the live store.
