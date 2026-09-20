@@ -1,0 +1,175 @@
+# struct_param_byvalue_copy.tcyr — 6.6.6. A BY-VALUE STRUCT PARAMETER OVER 8 BYTES IS
+# ADDRESS-PASSED, AND EVERY PATH THAT COPIES OR RETURNS IT HAS TO GO THE EXTRA INDIRECTION.
+#
+# ⛔ THE DEFECT, in every release before 6.6.6, silent or fatal depending on the shape. A
+# struct parameter wider than 8 bytes travels as a POINTER (`_param_wants_struct_ptr` sets the
+# callee's structmask and the caller pushes `&local`), so the parameter's frame slot holds the
+# caller's ADDRESS, not the struct. Field access already knew that
+# (`_resolve_field_base_addr`); the copy and return paths did not, and each of them read or
+# wrote the slot as if it WERE the struct:
+#
+#   q = r;       -> stored r's first word OVER the pointer; the next `q.z` SIGSEGV'd.
+#   q = mk(..);  -> SIGSEGV (the callee's retptr was the parameter's pointer word).
+#   r = q;       -> copied the POINTER into r's field 0, silently. `r.z` was 0.
+#   return q;    -> from a >16 B fn, byte-copied the pointer word into the retptr buffer;
+#                   from a 9-16 B fn, loaded the ADDRESS as the rax:rdx pair. Both exit 0.
+#
+# ⭐ EVERY EXPECTED VALUE IS DERIVED A DIFFERENT WAY FROM THE THING UNDER TEST. Each subject
+# that assigns to or from a parameter is paired with a CONTROL that reaches the same state
+# through FIELD STORES ONLY — a lowering that has always worked and does not touch any of the
+# four assignment arms — and the assertions pin BOTH the hand-computed constant AND the
+# subject-vs-control equality. Comparing only the two would pass on a build where both are
+# wrong.
+#
+# ⭐ THE ANTI-VACUOUS HALF IS LOAD-BEARING, AND IT IS WHY THE FIX IS NOT "deep-copy every
+# pointer-mode struct local". `Str` (and `Result` / `Option` / `Tagged`) are 16-byte structs
+# BY NAME whose slot holds a HEAP HANDLE — they are value-passed, not address-passed, and
+# `a = b` between two of them is a POINTER REBIND the whole stdlib is built on. The `str_`
+# group below pins that rebind, as a local and as a parameter. A fix keyed on "pointer-mode
+# struct" rather than on "address-passed parameter" turns those into 16-byte header copies and
+# reddens this file.
+#
+# Mutations that redden this file (each applied to the 6.6.6 tree, rebuilt, measured):
+#   * `_local_is_sptr_param` returning 0 always (i.e. the pre-6.6.6 compiler) -> the file does
+#     not reach its end: `param_dst_local_src` SIGSEGVs on the very first group.
+#   * dropping only the RETURN half (the two `_sptr_param_temp` calls in PARSE_RETURN)
+#     -> ret_retptr_param 0 (want 9) and ret_pair_param 0 (want 4).
+#   * `_local_is_sptr_param` without its `_classify_param_type` exclusion -> the `str_` group
+#     goes red (str_param_rebind 2, want 1): a Str parameter starts deep-copying its header.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/assert.cyr"
+
+struct P3 { x; y; z; }          # 24 B — the retptr class
+struct P2 { x; y; }             # 16 B — the rax:rdx pair class
+struct Acc { a; b; c; }
+
+var G3 = P3{70, 80, 90};
+var GD = P3{0, 0, 0};
+
+fn mk3(a, b, c): P3 { var p: P3; p.x = a; p.y = b; p.z = c; return p; }
+fn mk2(a, b): P2 { var p: P2; p.x = a; p.y = b; return p; }
+
+fn Acc_mk(self, n): Acc { var t: Acc; t.a = n; t.b = n + 1; t.c = n + 2; return t; }
+fn Acc_add(l, r): Acc { var t: Acc; t.a = load64(l) + load64(r); t.b = 0; t.c = 0; return t; }
+
+# ------------------------------------------------- (1) the parameter as ASSIGNMENT TARGET --
+# SUBJECT: `q = r`, the filed repro. Before 6.6.6 this SIGSEGV'd.
+fn param_dst_local_src(q: P3) { var r: P3 = mk3(4, 5, 9); q = r; return q.z * 100 + q.y; }
+# CONTROL: the same end state reached by field stores only.
+fn param_dst_local_src_ctl(q: P3) { q.x = 4; q.y = 5; q.z = 9; return q.z * 100 + q.y; }
+
+# SUBJECT: `q = <call>` — the struct-call assignment arm. Before 6.6.6 this SIGSEGV'd.
+fn param_dst_call_src(q: P3) { q = mk3(1, 7, 8); return q.z * 100 + q.y; }
+fn param_dst_call_src_ctl(q: P3) { q.x = 1; q.y = 7; q.z = 8; return q.z * 100 + q.y; }
+
+# SUBJECT: `q = <method>` and `q = a + b` — the PCMPE arm (method / overloaded operator).
+fn param_dst_method_src(q: Acc) { var b: Acc; b.a = 0; q = b.mk(3); return q.c * 100 + q.a; }
+fn param_dst_method_src_ctl(q: Acc) { q.a = 3; q.b = 4; q.c = 5; return q.c * 100 + q.a; }
+
+fn param_dst_op_src(q: Acc) {
+    var l: Acc; l.a = 6; l.b = 0; l.c = 0;
+    var r: Acc; r.a = 7; r.b = 0; r.c = 0;
+    q = l + r;
+    return q.a;
+}
+
+# SUBJECT: `q = G`, a global inline struct into a parameter.
+fn param_dst_global_src(q: P3) { q = G3; return q.y * 100 + q.z; }
+fn param_dst_global_src_ctl(q: P3) { q.x = 70; q.y = 80; q.z = 90; return q.y * 100 + q.z; }
+
+# ------------------------------------------------- (2) the parameter as ASSIGNMENT SOURCE --
+# SUBJECT: `r = q` — before 6.6.6 this copied the POINTER into r's field 0, silently.
+fn local_dst_param_src(q: P3) { var r: P3; r.x = 0; r.y = 0; r.z = 0; r = q; return r.z * 100 + r.y; }
+fn local_dst_param_src_ctl(q: P3) { var r: P3; r.x = q.x; r.y = q.y; r.z = q.z; return r.z * 100 + r.y; }
+
+# SUBJECT: `G = q` — a parameter into a global inline struct.
+fn global_dst_param_src(q: P3) { GD = q; return GD.z * 100 + GD.y; }
+fn global_dst_param_src_ctl(q: P3) { GD.x = q.x; GD.y = q.y; GD.z = q.z; return GD.z * 100 + GD.y; }
+
+# SUBJECT: `q = w` between two parameters must COPY, not alias. Writing through `q` afterwards
+# must leave `w` alone — an alias is what the 8-byte pointer store produced, and it happened to
+# read back correctly, which is exactly why this needs the write to discriminate.
+fn param_dst_param_src(q: P3, w: P3) { q = w; q.x = 99; return w.x; }
+
+# ---------------------------------------------------------- (3) RETURNING a parameter ------
+# SUBJECT: `return q;` from a >16 B (retptr) fn and from a 9-16 B (rax:rdx pair) fn.
+fn ret_retptr_param(q: P3): P3 { return q; }
+fn ret_pair_param(q: P2): P2 { return q; }
+
+# ---------------------------------------------- (4) what must NOT change (anti-vacuous) ----
+# A write through a by-value struct parameter still reaches the CALLER's struct: the parameter
+# is address-passed and always was. This bite changed how the struct is COPIED, not the ABI.
+fn writes_through(q: P3) { q.z = 77; return 0; }
+
+# A `Str` parameter (16 B by name, a heap handle by ABI) keeps POINTER-REBIND assignment.
+# `a = b` then clobbering a's length word must be visible through `b` — that is an alias.
+fn str_param_rebind(a: Str, b: Str) { a = b; store64(a + 8, 1); return str_len(b); }
+
+fn drive_param_dst_local_src() { var s: P3 = mk3(1, 2, 3); return param_dst_local_src(s); }
+fn drive_param_dst_local_src_ctl() { var s: P3 = mk3(1, 2, 3); return param_dst_local_src_ctl(s); }
+fn drive_param_dst_call_src() { var s: P3 = mk3(1, 2, 3); return param_dst_call_src(s); }
+fn drive_param_dst_call_src_ctl() { var s: P3 = mk3(1, 2, 3); return param_dst_call_src_ctl(s); }
+fn drive_param_dst_method_src() { var s: Acc; s.a = 0; s.b = 0; s.c = 0; return param_dst_method_src(s); }
+fn drive_param_dst_method_src_ctl() { var s: Acc; s.a = 0; s.b = 0; s.c = 0; return param_dst_method_src_ctl(s); }
+fn drive_param_dst_op_src() { var s: Acc; s.a = 0; s.b = 0; s.c = 0; return param_dst_op_src(s); }
+fn drive_param_dst_global_src() { var s: P3 = mk3(1, 2, 3); return param_dst_global_src(s); }
+fn drive_param_dst_global_src_ctl() { var s: P3 = mk3(1, 2, 3); return param_dst_global_src_ctl(s); }
+fn drive_local_dst_param_src() { var s: P3 = mk3(1, 5, 6); return local_dst_param_src(s); }
+fn drive_local_dst_param_src_ctl() { var s: P3 = mk3(1, 5, 6); return local_dst_param_src_ctl(s); }
+fn drive_global_dst_param_src() { var s: P3 = mk3(1, 5, 6); return global_dst_param_src(s); }
+fn drive_param_dst_param_src() {
+    var s: P3 = mk3(1, 2, 3);
+    var u: P3 = mk3(5, 6, 7);
+    return param_dst_param_src(s, u);
+}
+fn drive_ret_retptr_param() { var s: P3 = mk3(1, 2, 9); var t: P3 = ret_retptr_param(s); return t.z; }
+fn drive_ret_pair_param() { var s: P2 = mk2(3, 4); var t: P2 = ret_pair_param(s); return t.y; }
+fn drive_writes_through() { var s: P3 = mk3(1, 2, 3); var d = writes_through(s); return s.z; }
+
+fn drive_str_local_rebind() {
+    var a = str_from("abcde");
+    var b = str_from("xy");
+    a = b;
+    store64(a + 8, 1);
+    return str_len(b);
+}
+fn drive_str_param_rebind() {
+    var a = str_from("abcde");
+    var b = str_from("xy");
+    return str_param_rebind(a, b);
+}
+
+alloc_init();
+
+test_group("a by-value struct parameter as the assignment TARGET");
+assert_eq(drive_param_dst_local_src(), 905, "q = r copies r's 24 bytes through q's pointer");
+assert_eq(drive_param_dst_local_src(), drive_param_dst_local_src_ctl(), "q = r matches field-by-field stores");
+assert_eq(drive_param_dst_call_src(), 807, "q = mk3(..) writes the callee's result through q");
+assert_eq(drive_param_dst_call_src(), drive_param_dst_call_src_ctl(), "q = <call> matches field-by-field stores");
+assert_eq(drive_param_dst_method_src(), 503, "q = b.mk(3) writes the method's result through q");
+assert_eq(drive_param_dst_method_src(), drive_param_dst_method_src_ctl(), "q = <method> matches field-by-field stores");
+assert_eq(drive_param_dst_op_src(), 13, "q = l + r writes the operator's result through q");
+assert_eq(drive_param_dst_global_src(), 8090, "q = G3 copies the global's 24 bytes through q");
+assert_eq(drive_param_dst_global_src(), drive_param_dst_global_src_ctl(), "q = <global> matches field-by-field stores");
+
+test_group("a by-value struct parameter as the assignment SOURCE");
+assert_eq(drive_local_dst_param_src(), 605, "r = q reads q's struct, not its pointer");
+assert_eq(drive_local_dst_param_src(), drive_local_dst_param_src_ctl(), "r = q matches field-by-field reads");
+assert_eq(drive_global_dst_param_src(), 605, "G = q reads q's struct, not its pointer");
+assert_eq(drive_param_dst_param_src(), 5, "q = w COPIES: writing q afterwards leaves w alone");
+
+test_group("returning a by-value struct parameter");
+assert_eq(drive_ret_retptr_param(), 9, "return q; from a >16 B fn returns the struct");
+assert_eq(drive_ret_pair_param(), 4, "return q; from a 9-16 B fn returns both halves");
+
+test_group("what this bite must NOT have changed");
+assert_eq(drive_writes_through(), 77, "a write through a by-value struct parameter still reaches the caller");
+assert_eq(drive_str_local_rebind(), 1, "a = b between two Str LOCALS is still a pointer rebind");
+assert_eq(drive_str_param_rebind(), 1, "a = b between two Str PARAMETERS is still a pointer rebind");
+
+var r = assert_summary();

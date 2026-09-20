@@ -275,6 +275,16 @@ fn f(): i64 {
 }
 ```
 
+⚠ **A by-value struct PARAMETER over 8 bytes is address-passed** — the parameter's slot holds
+the caller's address, which is why writing `q.z = 5` inside the callee is visible to the caller.
+Since v6.6.6 every path that copies or returns such a parameter goes through that address:
+`q = r`, `q = mk(..)`, `q = b.mk(..)`, `q = a + b`, `q = G`, `r = q`, `G = q`, `q = w` (a copy,
+not an alias) and `return q;` all move the whole struct. Before v6.6.6 they moved the POINTER
+instead — `q = r` overwrote it and the next `q.z` SIGSEGV'd, `r = q` put the pointer in `r`'s
+first field, and `return q;` returned the address as the value, silently. `Str` (and `Result` /
+`Option` / `Tagged`) are unaffected: they are heap handles passed by value, so `a = b` between
+two of them is still a rebind.
+
 ⚠ At TOP LEVEL there is no frame to hold the result, so a struct-valued call there
 (`mk(1);`, `var g: P3 = mk(1);`, `g = mk(1);`, `take(mk(1))` — and the method and operator
 forms alike) is a compile error naming the fn — call it inside a fn. An untyped

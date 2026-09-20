@@ -2254,6 +2254,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         var cl_saved_ret_scalar = _cur_fn_ret_scalar;
         var cl_saved_naked = _cur_fn_naked;
         var cl_saved_ix = _cur_fn_ix;
+        var cl_saved_psl = _cur_fn_pslots;   # 6.6.6 — the closure body owns slot 0+ from here
         # Snapshot the enclosing local tables before the closure overwrites slot 0+.
         var cl_locsnap = _cl_save_locals(S, cl_saved_flc);
         var cl_saved_fs_floor = _fs_floor;   # 6.6.5: the closure body's fn-static mark
@@ -2269,6 +2270,9 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         _cur_fn_ret_scalar = 0;
         _cur_fn_naked = 0;
         _cur_fn_ix = clfi;
+        # 6.6.6 — a closure takes no by-value struct parameter, and leaving the ENCLOSING fn's
+        # span here would read the closure's own slot 0+ as parameters. See _local_is_sptr_param.
+        _cur_fn_pslots = 0;
         # v6.3.8 — save capture state and run the free-var pre-scan BEFORE the
         # prologue/params, so the env-param decision is made in one pass. The
         # cursor is at the first param (the opening `|` was consumed above); the
@@ -2424,6 +2428,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         _cur_fn_ret_scalar = cl_saved_ret_scalar;
         _cur_fn_naked = cl_saved_naked;
         _cur_fn_ix = cl_saved_ix;
+        _cur_fn_pslots = cl_saved_psl;   # 6.6.6
         # Restore the enclosing fn's local tables clobbered by the closure's slots.
         _cl_restore_locals(S, cl_locsnap, cl_saved_flc);
         # v6.3.8 — restore capture state so the enclosing context resolves

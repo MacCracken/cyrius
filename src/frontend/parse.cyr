@@ -692,6 +692,16 @@ var _cur_fn_ret_sid = 0;
 # fn rough-scan + PARSE_FN_DEF teardown.
 var _cur_fn_ret_pair = 0;
 
+# ⭐ 6.6.6 — HOW MANY FRAME SLOTS THE CURRENT FN'S PARAMETER LIST OWNS. Parameters are
+# registered first, from slot 0 up, so `li < _cur_fn_pslots` IS "this local is a parameter" —
+# the one fact that separates an ADDRESS-PASSED by-value struct parameter (its slot holds a
+# pointer to the caller's copy) from the other pointer-mode struct local, `var a = str_from(x)`,
+# whose slot holds a heap handle and for which `a = b` must stay a pointer rebind. Recorded
+# rather than re-derived because a value-form vector parameter owns 2-4 slots, so the parameter
+# COUNT is not the slot count. Set once at the end of the parameter loop; saved/restored around
+# the async constructor exactly like `_cur_fn_ix`. See `_local_is_sptr_param`. CHANGELOG [6.6.6]
+var _cur_fn_pslots = 0;
+
 # ⭐ 6.6.6 (bite 14 review) — THE STRUCT-RESULT RECORD, for the two call paths whose callee a
 # destination cannot see in its tokens: a method call `s.m(..)` (the callee depends on `s`'s
 # type) and an overloaded operator `a + b`. Each puts a struct result in a frame temp and
@@ -1634,17 +1644,28 @@ fn _EVAL_CONST_ATOM(S): i64 {
 # that has to know: a local aggregate is named at its DEEPEST slot, so its word k is slot
 # `li - k`; a global's fields ascend from its named slot (`EVADDR(gvi) + off`), so its word k
 # is slot `gvi + k`. CHANGELOG [6.6.5]
+# 6.6.6 — `_agc_pp` is the third answer: the operand IS an aggregate, but its slot holds the
+# ADDRESS of one (a by-value struct PARAMETER). Read it beside `_agc_li`; the copy below takes
+# the addressed path for it exactly as it does for a global. CHANGELOG [6.6.6]
 var _agc_li = 0 - 1;
 var _agc_gvi = 0 - 1;
 var _agc_t = 0;
+var _agc_pp = 0;
 fn _agc_operand(S, onoff): i64 {
     _agc_li = 0 - 1;
     _agc_gvi = 0 - 1;
     _agc_t = 0;
+    _agc_pp = 0;
     if (GINFN(S) == 1) {
         var li = FINDLOCAL(S, onoff);
         if (li >= 0) {
-            if (GLAGG(S, li) == 0) { return 0; }
+            if (GLAGG(S, li) == 0) {
+                # 6.6.6 — span 0 is "not inline", which an address-passed struct parameter also
+                # is. It owns ONE slot holding the caller's pointer, so it is an aggregate
+                # operand reached through one indirection. See `_local_is_sptr_param`.
+                if (_local_is_sptr_param(S, li) == 0) { return 0; }
+                _agc_pp = 1;
+            }
             var lt = GLTYPE(S, li);
             if (lt >= 0) { return 0; }
             _agc_li = li;
@@ -1691,6 +1712,7 @@ fn _try_struct_call_assign(S, noff): i64 {
     }
     var dli = _agc_li;
     var dgv = _agc_gvi;
+    if (_agc_pp == 1) { dli = _AGC_DREF(dli); }
     var t = _struct_call_into_temp(S);
     _agc_from_temp(S, t, dli, dgv, n, GFRS(S, fi));
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
@@ -1699,11 +1721,18 @@ fn _try_struct_call_assign(S, noff): i64 {
 }
 
 # The copy both struct-call assignments end with: temp `t` (field-0 slot, `n` slots of struct
-# `sid`) into the destination local `dli` or global `dgv` (the other is -1). CHANGELOG [6.6.6]
+# `sid`) into the destination local `dli` or global `dgv` (the other is -1). A `dli` in the
+# `_AGC_DREF` band is a by-value PARAMETER whose slot holds the struct's ADDRESS (6.6.6) — the
+# slot-index loop cannot express that, so it takes the same addressed copy a global takes.
+# CHANGELOG [6.6.6]
 fn _agc_from_temp(S, t, dli, dgv, n, sid): i64 {
     if (dgv >= 0) {
         _agc_copy_bytes(S, 0 - 1, dgv, t, 0 - 1, STRUCTSZ(S, sid - 1));
         SLVAR(S, dgv);
+        return 0;
+    }
+    if (dli <= 0 - 1000) {
+        _agc_copy_bytes(S, dli, 0 - 1, t, 0 - 1, STRUCTSZ(S, sid - 1));
         return 0;
     }
     var i = 0;
@@ -1733,7 +1762,9 @@ fn _pcmpe_struct_assign(S, noff): i64 {
     if (n <= 1) { return 0; }
     if (_agc_t != 0 - _sc_sid) { return 0; }
     if (t < 0) { _refuse_toplevel_struct_call(S, _sc_fn); return 0; }
-    _agc_from_temp(S, t, _agc_li, _agc_gvi, n, _sc_sid);
+    var pdli = _agc_li;
+    if (_agc_pp == 1) { pdli = _AGC_DREF(pdli); }
+    _agc_from_temp(S, t, pdli, _agc_gvi, n, _sc_sid);
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
     STI(S, GTI(S) + 1);   # consume ';'
     return 1;
@@ -1752,12 +1783,14 @@ fn _try_aggregate_copy_assign(S, noff): i64 {
     var nslots = _agc_operand(S, noff);
     if (nslots <= 1) { return 0; }
     var dst_li = _agc_li;
+    if (_agc_pp == 1) { dst_li = _AGC_DREF(dst_li); }
     var dst_gv = _agc_gvi;
     var lt = _agc_t;
     var snslots = _agc_operand(S, TOKVAL(S, GTI(S)));
     if (snslots != nslots) { return 0; }
     if (_agc_t != lt) { return 0; }
     var src_li = _agc_li;
+    if (_agc_pp == 1) { src_li = _AGC_DREF(src_li); }
     var src_gv = _agc_gvi;
     # ⛔ v6.6.1 — A NEGATIVE GLTYPE DOES NOT MEAN "INLINE AGGREGATE", AND ASSUMING IT DID SHIPPED
     # A SILENT MISCOMPILE IN v6.5.57. Two different layouts share the same negative type marker:
@@ -1779,10 +1812,15 @@ fn _try_aggregate_copy_assign(S, noff): i64 {
     # passed the filler test and this copied STRUCTSZ/8 slots over their neighbours anyway.
     # Measured: an unreached `defer` ran, because the copy landed on its runtime flag.
     # 6.6.5 asks the bit that registration set (inside `_agc_operand`). CHANGELOG [6.6.5]
+    # 6.6.6 — the frame-span guard applies to an INLINE local only, and a `_AGC_DREF`-encoded
+    # parameter is already outside `>= 0` so it skips the guard by construction: it owns ONE
+    # slot whatever the struct's width, and measuring its span here would reject every such
+    # parameter back into the 8-byte store this bite exists to remove.
     if (dst_li >= 0) { if (dst_li - nslots + 1 < 0) { return 0; } }
     if (src_li >= 0) { if (src_li - nslots + 1 < 0) { return 0; } }
-    if (dst_gv >= 0 || src_gv >= 0) {
-        # A global on either side: byte-exact, addressed. See `_agc_copy_bytes`.
+    if (dst_gv >= 0 || src_gv >= 0 || dst_li <= 0 - 1000 || src_li <= 0 - 1000) {
+        # A global or an address-passed parameter on either side: byte-exact, addressed.
+        # See `_agc_copy_bytes`.
         var nb = nslots * 8;
         if (lt < 0) { if (lt > 0 - 2048) { nb = STRUCTSZ(S, (0 - lt) - 1); } }
         _agc_copy_bytes(S, dst_li, dst_gv, src_li, src_gv, nb);

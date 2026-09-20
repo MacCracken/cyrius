@@ -327,8 +327,21 @@ fn _resolve_field_base_addr(S, idx, sid): i64 {
 # Locals address identically (`EFLADDR_X1(named) + off`), which is also what makes this work
 # unchanged inside a coroutine, where `_ECORO_LEA` supplies the heap-frame base.
 # CHANGELOG [6.6.5]
+# ⭐ 6.6.6 — A THIRD ADDRESSING MODE, ENCODED IN THE SLOT INDEX: `0 - 1000 - li` means THE SLOT
+# HOLDS THE ADDRESS (an address-passed by-value struct parameter — see `_local_is_sptr_param`),
+# so the base is `[slot]`, not `&slot`. Those are the two instructions the field-access path
+# already emitted for one (`_resolve_field_base_addr`).
+# ⚠ Encoded in the index rather than passed as a flag because **cybs, the 29 KB bootstrap
+# compiler, caps a fn at SIX parameters** and `_agc_copy_bytes` already takes six — a seventh
+# is a bare `syntax error` from cybs alone, with `build/cycc` compiling it fine (the exact
+# silent-cybs class the Release Gate's seed-derive step exists to catch). The band is free: a
+# real slot is >= 0, "no local" is -1, and slots cap well below 1000. Same encode-in-the-index
+# convention `_resolve_field_base_addr` uses for captures. CHANGELOG [6.6.6]
+fn _AGC_DREF(li): i64 { return 0 - 1000 - li; }
 fn _agc_addr_x1(S, li, gv, boff): i64 {
-    if (gv >= 0) { EVADDR_X1(S, gv); } else { EFLADDR_X1(S, li); }
+    if (gv >= 0) { EVADDR_X1(S, gv); }
+    elif (li <= 0 - 1000) { EFLLOAD(S, 0 - 1000 - li); EMOVCA(S); }
+    else { EFLADDR_X1(S, li); }
     if (boff > 0) { EADDIMM_X1(S, boff); }
     return 0;
 }

@@ -1011,6 +1011,10 @@ fn PARSE_RETURN(S): i64 {
         }
         if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
         STI(S, GTI(S) + 1);            # consume ';'
+        # 6.6.6 — `return q;` where `q` is a by-value struct PARAMETER: its slot holds the
+        # caller's ADDRESS, so the byte-copy below would copy the pointer word. Materialise the
+        # struct into an inline temp and return THAT. See `_local_is_sptr_param`.
+        if (_local_is_sptr_param(S, srn_lli) == 1) { srn_lli = _sptr_param_temp(S, srn_lli, _cur_fn_ret_sid); }
         # Byte-copy size (aligned up to 8 — the retptr slot is already
         # 8-aligned so padded copies are safe)
         var srn_sz = STRUCTSZ(S, _cur_fn_ret_sid - 1);
@@ -1098,6 +1102,9 @@ fn PARSE_RETURN(S): i64 {
                         if ((0 - _ip_lt) == _cur_fn_ret_sid) {
                             STI(S, GTI(S) + 1);     # consume IDENT
                             STI(S, GTI(S) + 1);     # consume ';'
+                            # 6.6.6 — an address-passed parameter holds the caller's pointer,
+                            # not the pair. Materialise it inline first.
+                            if (_local_is_sptr_param(S, _ip_lli) == 1) { _ip_lli = _sptr_param_temp(S, _ip_lli, _cur_fn_ret_sid); }
                             EFLLOAD_STRUCT_INT_PAIR(S, _ip_lli);
                             var _ip_rp = EJMP0(S);
                             vec_push(rp_vec, _ip_rp);
@@ -1543,6 +1550,47 @@ fn _push_struct_addr_global(S): i64 {
 fn _local_struct_is_ptr(S, li, lt): i64 {
     if (GLAGG(S, li) == 1) { return 0; }
     return 1;
+}
+
+# ⛔ 6.6.6 — A BY-VALUE STRUCT PARAMETER OVER 8 BYTES IS ADDRESS-PASSED, so its slot holds a
+# POINTER to the caller's struct (`_param_wants_struct_ptr` sets the callee's structmask and the
+# caller pushes `&local`). Field access already went the extra indirection
+# (`_resolve_field_base_addr`); the COPY and RETURN paths did not, and every one of them was
+# silent or fatal. Measured at 6.6.5: `q = r` stored r's first word OVER the pointer and the next
+# `q.z` SIGSEGV'd; `r = q` copied the pointer into r's field 0; `return q;` from a 9-16 B fn
+# loaded the ADDRESS as the rax:rdx pair and from a >16 B fn byte-copied the pointer word.
+#
+# ⭐ `li < _cur_fn_pslots` IS the discriminator, and it has to be, because the OTHER pointer-mode
+# struct local — `var a = str_from(x)`, a heap handle — looks identical in every recorded field.
+# `a = b` between two of those must stay a POINTER REBIND (that is the Str convention the whole
+# stdlib is built on), while `q = r` on a parameter must copy through. Nothing but "is it a
+# parameter" separates them. CHANGELOG [6.6.6]
+fn _local_is_sptr_param(S, li): i64 {
+    if (li < 0) { return 0; }
+    if (li >= _cur_fn_pslots) { return 0; }
+    if (GINFN(S) != 1) { return 0; }
+    if (GLAGG(S, li) != 0) { return 0; }
+    var lt = GLTYPE(S, li);
+    if (lt >= 0) { return 0; }
+    if (lt <= 0 - 2048) { return 0; }
+    var sid = 0 - lt;
+    if (STRUCTSZ(S, sid - 1) <= 8) { return 0; }
+    # ⛔ `Str` / `Result` / `Option` / `Tagged` are 16 B structs BY NAME whose slot holds a HEAP
+    # HANDLE — `_param_wants_struct_ptr` excludes them, so they are value-passed and `a = b`
+    # between two of them is a pointer rebind the whole stdlib depends on. Asked through the
+    # SAME classifier that built the callee's structmask, on the recorded sid's name, so the two
+    # cannot disagree about which parameters are address-passed.
+    if (_classify_param_type(S, L64(S + 0x1A6018 + (sid - 1) * 8)) != 0) { return 0; }
+    return 1;
+}
+
+# 6.6.6 — materialise an address-passed struct parameter as an INLINE frame aggregate, so the
+# `return` paths (which address a local's slots directly) read the struct and not the pointer.
+# Returns the temp's field-0 slot. CHANGELOG [6.6.6]
+fn _sptr_param_temp(S, li, sid): i64 {
+    var t = _agg_temp(S, sid);
+    _agc_copy_bytes(S, t, 0 - 1, _AGC_DREF(li), 0 - 1, STRUCTSZ(S, sid - 1));
+    return t;
 }
 
 # ⭐ 6.6.5 — PARSE_FNCALL's `: Str` param auto-coercion, EXTRACTED so the method-call path
@@ -3263,6 +3311,7 @@ fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
     var sv_rscal = _cur_fn_ret_scalar;
     var sv_naked = _cur_fn_naked;
     var sv_ix = _cur_fn_ix;
+    var sv_psl = _cur_fn_pslots;   # 6.6.6
     var sv_tppmask = _cur_fn_tp_pmask;   # v6.3.39 (B3): restore across the nested re-emit
     var sv_n0 = _tp_n0; var sv_c0 = _tp_c0; var sv_n1 = _tp_n1; var sv_c1 = _tp_c1;
     var locsnap = _cl_save_locals(S, sv_flc);
@@ -3296,6 +3345,7 @@ fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
     _cur_fn_ret_scalar = sv_rscal;
     _cur_fn_naked = sv_naked;
     _cur_fn_ix = sv_ix;
+    _cur_fn_pslots = sv_psl;   # 6.6.6
     _cur_fn_tp_pmask = sv_tppmask;   # v6.3.39 (B3)
     # The instance is emitted INLINE in the enclosing fn's code range (jumped over),
     # so mark the enclosing fn to skip its regalloc byte-scan post-pass (it would
@@ -4978,6 +5028,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     _cur_fn_ret_stash = 0;
     _cur_fn_ret_scalar = 0;
     _cur_fn_ret_pair = 0;
+    _cur_fn_pslots = 0;   # 6.6.6 — recorded at the end of the parameter loop
     var _rs_save_ti = GTI(S);
     if (PEEKT(S) == 10) {
         STI(S, GTI(S) + 1);
@@ -5797,6 +5848,9 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     if (_cur_fn_ret_stash > 0) {
         if (_AARCH64_BACKEND == 0) { _pl_shift = 1; }
     }
+    # 6.6.6 — the parameter list owns slots 0..GFLC-1 and nothing else has been registered
+    # yet, so THIS is the boundary `_local_is_sptr_param` tests. CHANGELOG [6.6.6]
+    _cur_fn_pslots = GFLC(S);
     _stkp_flush(S, int_pc + _pl_shift);
     # Parse body
     if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
@@ -7035,6 +7089,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     _cur_fn_ret_sid = 0;
     # v5.10.45 Phase 1 — clear pair-return flag.
     _cur_fn_ret_pair = 0;
+    _cur_fn_pslots = 0;   # 6.6.6 — parameter slot span (see _local_is_sptr_param)
     # v5.8.20 — same for the #pure mirror.
     _cur_fn_is_pure = 0;
     # v5.11.62 — clear per-fn array-byte attribution tracker so top-level

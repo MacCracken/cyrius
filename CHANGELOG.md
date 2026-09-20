@@ -2385,6 +2385,38 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   construct; the 8 B case compiles AND computes, against a shell-computed expectation).
   cycc 1,310,856 -> 1,310,952 B. All 330 `.tcyr` exit identically to the 6.6.5 compiler.
 
+- **Assigning to or from a by-value struct PARAMETER moved its POINTER, not the struct — a
+  SIGSEGV in one direction and a silent wrong value in the other.** (bite 16b; found by bite
+  14's review.) A struct parameter wider than 8 bytes is ADDRESS-PASSED
+  (`_param_wants_struct_ptr` sets the callee's structmask and the caller pushes `&local`), so
+  the parameter's frame slot holds the caller's address. Field access already went that extra
+  indirection (`_resolve_field_base_addr`); the copy and return paths did not, because they
+  keyed on the recorded inline span — which for an address-passed parameter is 0, the same
+  answer as "not an aggregate" — so all four assignment arms (`_agc_operand`,
+  `_try_aggregate_copy_assign`, `_try_struct_call_assign`, `_pcmpe_struct_assign`) and both
+  `return IDENT;` paths fell through to the 8-byte scalar store/load. Measured on 6.6.5:
+  `fn h(q: P3): i64 { var r: P3 = s2(4,5); q = r; return q.z; }` SIGSEGV'd (the store landed on
+  the pointer); `q = mk(7,8)` SIGSEGV'd; `r = q` put the pointer in `r`'s first field and read
+  `r.z` as 0; `return q;` returned the ADDRESS — as a byte-copy of the pointer word from a
+  >16 B fn, and as the rax:rdx pair from a 9-16 B one — both exit 0, no diagnostic.
+  **Fix:** one predicate, `_local_is_sptr_param` (`src/frontend/parse_fn.cyr`), recorded against
+  the parameter-slot span the parameter loop now stores (`_cur_fn_pslots`), and a third
+  addressing mode in `_agc_addr_x1` for it — the slot is the BASE, `[slot]` rather than `&slot`.
+  The `return` paths materialise the parameter into an inline frame temp first and reuse the
+  existing copy. ⭐ The predicate deliberately does NOT match the other pointer-mode struct
+  local, `var a = str_from(x)`: `Str` / `Result` / `Option` / `Tagged` are 16-byte structs BY
+  NAME whose slot holds a HEAP HANDLE, they are value-passed, and `a = b` between two of them
+  must stay the pointer rebind the stdlib is built on — so it asks the SAME classifier that
+  built the callee's structmask (`_classify_param_type`, on the recorded sid's name) rather
+  than re-deciding. The ABI is unchanged: writing `q.z = 5` in the callee still reaches the
+  caller's struct. ⚠ The deref is encoded in the slot index (`_AGC_DREF`, the `-1000-li` band)
+  and not passed as a flag because **cybs caps a fn at SIX parameters** — a seventh is a bare
+  `syntax error` from cybs while `build/cycc` compiles it fine, caught here by the seed-derive
+  gate. Gated by `tests/tcyr/crossos/struct_param_byvalue_copy.tcyr` (18 assertions; every
+  subject paired with a field-store control, plus a `Str` rebind group that reddens an
+  over-broad fix), mutation-proven three ways. cycc 1,310,952 -> 1,315,080 B. All 330
+  pre-existing `.tcyr` exit identically to the 6.6.5 compiler.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**
