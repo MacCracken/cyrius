@@ -1711,9 +1711,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - `tests/gates/toolchain/release_verify_private_temp.sh` — 4 axes over the release installer's
   staging, run hermetically with `curl`, `cyrsign` and the checksum tools stubbed on `PATH`:
-  an anti-vacuous install, the CVE-44 exploit (all six fixed `/tmp` names pre-planted, two of
-  them symlinks out of `/tmp`, with the link targets required byte-for-byte), the
-  abort-never-fall-back rule, and a static check over `scripts/ci.sh`.
+  an anti-vacuous install, the CVE-44 exploit (the two version-specific `/tmp` names pre-created,
+  the tarball as a symlink out of `/tmp`, with its link target required byte-for-byte and the
+  planted files neither written nor removed), the abort-never-fall-back rule, and a static check
+  over `scripts/ci.sh`. The four version-INDEPENDENT names are deliberately not planted — they
+  are shared with every process on the box, so planting them would collide with a concurrent run;
+  the static axis is what pins that the fixed installer touches none of them.
 
 - `tests/gates/toolchain/deps_lock_covers_every_file.sh` — 4 axes: an anti-vacuous clean lock
   (one line per `.cyr`, the count derived by `find` and every hash re-confirmed by `sha256sum`),
@@ -1721,17 +1724,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   no lock created), and a STATIC axis self-tested on the 6.6.5 body. The unhashable shape is a
   dangling symlink rather than `chmod 000`, so the gate cannot read green under a root CI.
 
-- `tests/gates/toolchain/manifest_read_whole_file.sh` — 4 axes: a 144 KB manifest pinned
+- `tests/gates/toolchain/manifest_read_whole_file.sh` — 5 axes: a 144 KB manifest pinned
   byte-for-byte as an independent awk edit produces it, a `[package]` past the old cap still
   read, a >32 KB `cyrius.toml` migrated whole before it is deleted, and a STATIC axis that
   derives every capped read of a path the same function writes back or unlinks (allowlisting
-  only files the tool itself made, each entry required to stay live).
+  only files the tool itself made, each entry required to stay live). Axis 5 (bite 17i) is the
+  read side: a path that opens but cannot be read must never come back as content.
 
-- `tests/gates/toolchain/cyriusly_use_switch_integrity.sh` — 4 axes over the `--global` toolchain
+- `tests/gates/toolchain/cyriusly_use_switch_integrity.sh` — 6 axes over the `--global` toolchain
   switch: `bin` a directory (fail loudly, change nothing), the half-switch (`bin` rolled back so
   the pair never disagrees), anti-vacuous normal-switch and fresh-install runs, and a STATIC axis
   self-tested on the 6.6.5 body for the never-absent window, which is a window rather than an
-  outcome and so has no honest deterministic dynamic test.
+  outcome and so has no honest deterministic dynamic test. Axes 5 and 6 (bites 17k, 17l) cover
+  the two SHELL twins that switch the same links and the truthfulness of "nothing was changed".
 
 - `tests/gates/toolchain/io_write_all_never_short.sh` — 4 axes over the `lib/io.cyr` whole-buffer
   write contract: anti-vacuous unconstrained (the size read back with `wc -c`, a different mechanism
