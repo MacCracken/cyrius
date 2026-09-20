@@ -318,6 +318,11 @@ fn ISENDIF(S, pos, bl): i64 {
     if (load8(S + pos + 3) != 100) { return 0; }
     if (load8(S + pos + 4) != 105) { return 0; }
     if (load8(S + pos + 5) != 102) { return 0; }
+    # v6.6.6 — the name must END here, or `#endifoo note` (a COMMENT) closes the
+    # conditional early and whatever should have been skipped is compiled in, with
+    # no diagnostic at all. ISELSE already carried this rule inline; every other
+    # unbounded probe was missing it. See PP_NAMEBOUND. CHANGELOG [6.6.6]
+    if (PP_NAMEBOUND(S, pos + 6, bl) == 0) { return 0; }
     return 1;
 }
 
@@ -350,6 +355,8 @@ fn ISENDPLAT(S, pos, bl): i64 {
     if (load8(S + pos + 5) != 108) { return 0; }
     if (load8(S + pos + 6) != 97)  { return 0; }
     if (load8(S + pos + 7) != 116) { return 0; }
+    # v6.6.6 — same word boundary as ISENDIF. See PP_NAMEBOUND. CHANGELOG [6.6.6]
+    if (PP_NAMEBOUND(S, pos + 8, bl) == 0) { return 0; }
     return 1;
 }
 
@@ -387,6 +394,8 @@ fn ISSRCLINE(S, pos, bl): i64 {
     if (load8(S + pos + 6) != 105) { return 0; }   # 'i'
     if (load8(S + pos + 7) != 110) { return 0; }   # 'n'
     if (load8(S + pos + 8) != 101) { return 0; }   # 'e'
+    # v6.6.6 — same word boundary as ISENDIF. See PP_NAMEBOUND. CHANGELOG [6.6.6]
+    if (PP_NAMEBOUND(S, pos + 9, bl) == 0) { return 0; }
     return 1;
 }
 

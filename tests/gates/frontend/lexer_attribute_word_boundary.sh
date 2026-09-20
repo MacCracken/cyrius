@@ -63,6 +63,12 @@
 #           and did not; scored against the spaced twin so it cannot be vacuous
 #   C5      over-correction guard for cyrdoc: a real `#inline` is still an
 #           attribute, so the fn below it is still reported undocumented
+#   E1..E6  the three probes left unbounded in the same file after D (bite 5h):
+#           ISENDIF, ISENDPLAT, ISSRCLINE. ISELSE already carried the boundary
+#           inline, which is why these three stood out. `#endifoo note` — a
+#           COMMENT — CLOSED a conditional, so code inside a skipped `#ifdef`
+#           was compiled in silently; `#@srclinex 10` shifted every diagnostic
+#           in the file by one line. E2/E4/E6 are the arm axes.
 #   D1..D6  the SAME root cause in the preprocessor (review round): PP_IS_HOST_ONLY
 #           and the three ISDERIVE* probes in src/frontend/lex_pp.cyr, plus the
 #           fourth reader of `#derive` (programs/cyrius_api_surface.cyr). These
@@ -92,16 +98,23 @@
 #   M5  `_lx_attr_bound` in programs/cyrlint.cyr forced to 1 → 1 FAIL: C1
 #   M6  `_cf_attr_bound` in programs/cyrfmt.cyr  forced to 1 → 1 FAIL: C2
 #   M7  PP_NAMEBOUND body replaced by `return 1;` (the preprocessor's prefix match)
-#       → 3 FAIL: D1 (a comment refuses the bare-metal build), D3 (the derive
-#         comment compiles to DIFFERENT bytes), D4 (a comment generates accessors).
-#         D6 stays green — it is the mirror, and M9 is its mutation.
+#       → 6 FAIL: D1 (a comment refuses the bare-metal build), D3 (the derive
+#         comment compiles to DIFFERENT bytes), D4 (a comment generates
+#         accessors), E1 (a comment closes a skipped #ifdef, and the code inside
+#         it compiles), E3 (same for #ifplat), E5 (a comment shifts every
+#         diagnostic line). D6 stays green — it is the mirror, and M9 is its
+#         mutation.
 #   M8  PP_NAMEBOUND body replaced by `return 0;` (nothing ever arms)
-#       → 2 FAIL: D2 (#host_only stops refusing), D5 (#derive stops generating)
+#       → D2, D5, E2, E4, E6 RED, and the mutated compiler can no longer build
+#         cyrlint, cyrfmt, cyrdoc or api-surface AT ALL — every `#endif` in their
+#         sources stops closing — so groups C and D6 report build failures rather
+#         than axis results. Recorded as measured; it is the widest blast radius
+#         of any mutation here and the clearest proof the boundary is load-bearing.
 #   M9  `_api_derive_bound` in programs/cyrius_api_surface.cyr forced to 1
 #       → 1 FAIL: D6, listing four accessors for a comment
 #   M11 `_doc_attr_bound` in programs/cyrdoc.cyr forced to 1 → 1 FAIL: C4
 #   M12 `_doc_attr_bound` in programs/cyrdoc.cyr forced to 0 → 1 FAIL: C5
-#   real tree → 33/33 green
+#   real tree → 39/39 green
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
@@ -472,6 +485,98 @@ if build_tool cyrius_api_surface; then
             "$(comm -13 "$D/none.snap" "$D/cmt.snap" | tr '\n' ' ')"
         fail=$((fail+1))
     fi
+fi
+
+# ── Group E — the THREE remaining unbounded probes in the same file (v6.6.6 bite
+#    5h). ISELSE already carried a word boundary inline; ISENDIF, ISENDPLAT and
+#    ISSRCLINE did not, and all three fail silently: `#endifoo note` — a COMMENT —
+#    CLOSED a conditional, so code inside a skipped `#ifdef` was compiled in with
+#    no diagnostic, and `#@srclinex 10` shifted every diagnostic in the file by a
+#    line. Scored against the spaced twin, the same way group A is.
+
+# Compare $1.cyr against its twin $1_t.cyr: same compiler rc and same first error.
+twin_axis() {
+    ax=$1; desc=$2
+    rcu=0; ( cd "$D" && "$CC" < "$ax.cyr" > "$ax.bin" 2> "$ax.err" ) || rcu=$?
+    rct=0; ( cd "$D" && "$CC" < "${ax}_t.cyr" > "${ax}_t.bin" 2> "${ax}_t.err" ) || rct=$?
+    gu=$(head -1 "$D/$ax.err" | cut -c1-60); gt=$(head -1 "$D/${ax}_t.err" | cut -c1-60)
+    if [ "$rcu" = "$rct" ] && [ "$gu" = "$gt" ]; then
+        printf '  ok: axis %s — %s (matches its spaced twin: rc=%s)\n' "$ax" "$desc" "$rcu"
+        pass=$((pass+1))
+    else
+        printf '  FAIL: axis %s — %s: unspaced rc=%s [%s], twin rc=%s [%s]\n' \
+            "$ax" "$desc" "$rcu" "$gu" "$rct" "$gt"
+        fail=$((fail+1))
+    fi
+    rm -f "$D/$ax.bin" "$D/${ax}_t.bin"
+}
+
+printf '#ifdef NOPE_XYZ\nvar A = 1;\n#endifoo note\nvar A = 42;\n#endif\nsyscall(60, A);\n'  > "$D/E1.cyr"
+printf '#ifdef NOPE_XYZ\nvar A = 1;\n# endifoo note\nvar A = 42;\n#endif\nsyscall(60, A);\n' > "$D/E1_t.cyr"
+twin_axis E1 '`#endifoo note` does not close a skipped #ifdef'
+
+# E2 — the arm axis: a real #endif must still RESUME the skipped region, or
+# everything after it stays swallowed and E1 passes for the wrong reason.
+printf '#ifdef NOPE_XYZ\nvar Z = UNDEFINED_THING;\n#endif\nvar A = 7;\nsyscall(60, A);\n' > "$D/E2.cyr"
+compile E2
+if [ "$rc" -ne 0 ]; then
+    printf '  FAIL: axis E2 — a real `#endif` no longer closes the block: %s\n' \
+        "$(grep -m1 error "$D/E2.err" | cut -c1-80)"
+    fail=$((fail+1))
+else
+    got=0; ( "$D/E2.bin" ) || got=$?
+    if [ "$got" = 7 ]; then
+        printf '  ok: axis E2 — a real `#endif` still closes the block (exit 7)\n'
+        pass=$((pass+1))
+    else
+        printf '  FAIL: axis E2 — #endif stopped arming: exit=%s, want 7\n' "$got"
+        fail=$((fail+1))
+    fi
+fi
+rm -f "$D/E2.bin"
+
+# E3/E4 — #endplat. Written so the answer does not depend on the host arch: one
+# #ifplat block is taken and the other skipped whichever way round it runs.
+printf '#ifplat aarch64\nvar Q = 1;\n#endplatx note\nvar R = UNDEFINED_THING_X;\n#endplat\nvar B = 7;\nsyscall(60, B);\n'  > "$D/E3.cyr"
+printf '#ifplat aarch64\nvar Q = 1;\n# endplatx note\nvar R = UNDEFINED_THING_X;\n#endplat\nvar B = 7;\nsyscall(60, B);\n' > "$D/E3_t.cyr"
+twin_axis E3 '`#endplatx note` does not close an #ifplat'
+
+printf '#ifplat x86\nvar A = 5;\n#endplat\n#ifplat aarch64\nvar A = 5;\n#endplat\nvar B = 7;\nsyscall(60, B);\n' > "$D/E4.cyr"
+compile E4
+if [ "$rc" -ne 0 ]; then
+    printf '  FAIL: axis E4 — a real `#endplat` no longer closes the block: %s\n' \
+        "$(grep -m1 error "$D/E4.err" | cut -c1-80)"
+    fail=$((fail+1))
+else
+    got=0; ( "$D/E4.bin" ) || got=$?
+    if [ "$got" = 7 ]; then
+        printf '  ok: axis E4 — a real `#endplat` still closes the block (exit 7)\n'
+        pass=$((pass+1))
+    else
+        printf '  FAIL: axis E4 — #endplat stopped arming: exit=%s, want 7\n' "$got"
+        fail=$((fail+1))
+    fi
+fi
+rm -f "$D/E4.bin"
+
+# E5/E6 — #@srcline. The observable is the LINE NUMBER in a diagnostic, so the
+# comment form must report its twin's line and the real directive must not.
+printf '#@srclinex 10\nvar BAD = UNDEFINED_X;\n'  > "$D/E5.cyr"
+printf '# @srclinex 10\nvar BAD = UNDEFINED_X;\n' > "$D/E5_t.cyr"
+twin_axis E5 '`#@srclinex 10` does not shift the diagnostic line'
+
+printf '#@srcline 10\nvar BAD = UNDEFINED_X;\n'  > "$D/E6.cyr"
+printf '# @srcline 10\nvar BAD = UNDEFINED_X;\n' > "$D/E6_t.cyr"
+( cd "$D" && "$CC" < "E6.cyr"   > /dev/null 2> "E6.err" )   || true
+( cd "$D" && "$CC" < "E6_t.cyr" > /dev/null 2> "E6_t.err" ) || true
+l6=$(head -1 "$D/E6.err" | sed -n 's/^error:<source>:\([0-9]*\):.*/\1/p')
+l6t=$(head -1 "$D/E6_t.err" | sed -n 's/^error:<source>:\([0-9]*\):.*/\1/p')
+if [ -n "$l6" ] && [ -n "$l6t" ] && [ "$l6" != "$l6t" ]; then
+    printf '  ok: axis E6 — a real `#@srcline` still arms (line %s vs the comment form'"'"'s %s)\n' "$l6" "$l6t"
+    pass=$((pass+1))
+else
+    printf '  FAIL: axis E6 — #@srcline stopped arming: real=[%s] comment=[%s]\n' "$l6" "$l6t"
+    fail=$((fail+1))
 fi
 
 if [ "$fail" -gt 0 ]; then

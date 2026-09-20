@@ -8,6 +8,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **A COMMENT could CLOSE a conditional, and code inside a skipped `#ifdef` was compiled in
+  silently.** (bite 5h.) Found by grepping the SHAPE the review round named rather than the
+  names it listed: after `PP_NAMEBOUND` landed, three probes in the same file still had no word
+  boundary — `ISENDIF`, `ISENDPLAT` and `ISSRCLINE`. ⚠ `ISELSE` already carried the rule inline
+  ("Reject identifier continuation so `#elseif` doesn't match"), which is what made the other
+  three stand out: the invariant was known and applied once. Measured on 2420b1f8's compiler:
+  `#ifdef NOPE` / `var A = 1;` / `#endifoo note` / `var A = 42;` / `#endif` — a file whose third
+  line is prose — **compiled and exited 42**, i.e. the supposedly-skipped `var A = 42` was
+  compiled in; with the boundary it is correctly refused, exactly as its `# endifoo note` twin
+  is. `#endplatx` does the same to `#ifplat`, and `#@srclinex 10` shifted **every diagnostic in
+  the file by one line** (`:1:` for a defect on line 2). All three now take `PP_NAMEBOUND`.
+  Gate grows group E (33 → **39 axes**); E1/E3/E5 are scored against their spaced twins and
+  E2/E4/E6 are the arm axes, and ⚠ the M8 mutation (`PP_NAMEBOUND` → 0) turns out to be the
+  widest in the file: the mutated compiler cannot build cyrlint, cyrfmt, cyrdoc **or**
+  api-surface at all, because every `#endif` in their sources stops closing.
+  `tests/tcyr/crossos/attribute_word_boundary.tcyr` carries the `#endifoo` shape to the cross-OS
+  hosts as a compile-time assertion. cycc **1,315,016 B unchanged**; 0 of 330 `.tcyr` binaries
+  changed a byte.
+
 - **CVE-44's consumer side: program DATA could still mint a file-map span.** (bite 5g, review
   round.) Bite 5b closed the producer routes, and `PP_NEUT_FMARK` skips string literals on
   purpose so a program whose data contains `#@file` keeps its bytes. That left `FM_BUILD`

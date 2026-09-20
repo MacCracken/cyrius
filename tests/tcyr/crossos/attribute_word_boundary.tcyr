@@ -28,6 +28,10 @@
 #   3. #pure / #io / #alloc still arm and still run their fns
 #   4. #must_use still arms and its fn still returns its value
 #   5. #regalloc still arms on a same-line fn definition
+#   7. a COMMENT must not close a conditional: `#endifoo note` inside a skipped
+#      `#ifdef` used to close it, so the undefined reference after it was compiled
+#      in — silently, with no diagnostic. (ISENDIF, ISENDPLAT and ISSRCLINE, bite
+#      5h; ISELSE already carried the boundary inline.)
 #   6. the SAME root cause in the PREPROCESSOR (review round): the three ISDERIVE*
 #      probes in src/frontend/lex_pp.cyr matched `#derive(Serialize)` as an 18-byte
 #      prefix, so `#derive(Serialize)x note` — a COMMENT — armed the derive
@@ -73,6 +77,15 @@ fn awb_must(): i64 { return 30; }
 #derive(accessors)
 struct awb_pt { x: i64; y: i64; }
 var awb_p[2];
+
+# A COMMENT must not close a conditional. Under the pre-6.6.6 ISENDIF — a byte
+# prefix with no boundary — `#endifoo note` closed this block, and the undefined
+# reference below it was compiled in, so this file would not build. The whole
+# block is a compile-time assertion; there is nothing to run.
+#ifdef AWB_NEVER_DEFINED_XYZ
+#endifoo note
+var awb_bad = AWB_UNDEFINED_THING;
+#endif
 
 #pure
 fn awb_pure(a): i64 { return a * 2; }
