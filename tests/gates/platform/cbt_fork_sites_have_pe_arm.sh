@@ -162,9 +162,11 @@ code ~ /^[ \t]*#ifndef[ \t]+CYRIUS_TARGET_WIN/ { nd = 1; next }
 code ~ /^[ \t]*#endif/ {
     if (inwin == 1) {
         # `armed` needs the arm to RETURN (otherwise control falls into the fork), but the
-        # arm TEXT is collected either way: `cmd_soak` spawns in its #ifdef block and puts
+        # arm TEXT is collected either way: an arm may spawn in its #ifdef block and leave
         # the fork in the sibling #ifndef, so its handler name is only in a non-returning
-        # block. Collecting only returning blocks reported that arm as silent.
+        # block. Collecting only returning blocks reported that arm as silent. (`cmd_soak`
+        # was the example until 6.6.6's review moved its self-host step into
+        # `_self_host_step`; `compile()` in cbt/build.cyr still has the shape.)
         if (winret == 1) { armed = 1 }
         hand = hand winbody
         inwin = 0
@@ -236,10 +238,16 @@ echo "axis 1 — every sys_fork() site in cbt/ is unreachable on PE:"
 scan cbt/*.cyr > "$T/sites"
 NSITE=$(grep -c 'fn=' "$T/sites" || true)
 NFILE=$(cut -d: -f1 "$T/sites" | sort -u | wc -l)
-# Floors, not equalities: a new site is welcome, it just has to be armed. 17 sites across
-# 4 files at 6.6.6 (build.cyr 10, commands.cyr 3, deps.cyr 3, pulsar.cyr 1). A detector
+# Floors, not equalities: a new site is welcome, it just has to be armed. 16 sites across
+# 4 files at 6.6.6 (build.cyr 10, commands.cyr 2, deps.cyr 3, pulsar.cyr 1). A detector
 # that suddenly matches nothing must fail loudly rather than report "0 unarmed".
-check "the scan finds at least the 17 known sites (found $NSITE)" yes "$([ "$NSITE" -ge 17 ] && echo yes || echo no)"
+# ⚠ THIS FLOOR WAS LOWERED 17 -> 16, deliberately, at the bite-23 review: `cmd_soak`'s
+# POSIX fork and its `#ifdef CYRIUS_TARGET_WIN` spawn arm were BOTH deleted when its
+# self-host step moved into `_self_host_step` -> `_pulsar_raw_compile`, which already has
+# an armed site of its own. The PE behaviour this gate pins is unchanged — axis 4's wine
+# rows still exercise soak's refusal and its step-2 exit code, now through that helper.
+# Lower this number only when a site is REMOVED, never to make a red gate green.
+check "the scan finds at least the 16 known sites (found $NSITE)" yes "$([ "$NSITE" -ge 16 ] && echo yes || echo no)"
 check "…across at least 4 cbt/ files (found $NFILE)" yes "$([ "$NFILE" -ge 4 ] && echo yes || echo no)"
 grep 'pe=UNARMED' "$T/sites" > "$T/unarmed" || true
 if [ -s "$T/unarmed" ]; then

@@ -30,6 +30,16 @@
 # cross fork `src/main_aarch64.cyr`, which is a plausible edit and still yields five
 # distinct answers. M3 in the ledger is exactly that mutant.
 #
+# ⭐ AXES 6 AND 7 ARE THE REVIEW FIX (6.6.6, bite 23 round 2). Axis 5 knows two fn NAMES,
+# and a THIRD self-host loop was already outside it (`_self_host_gate`,
+# programs/checks/selfhost.cyr). Axis 6 therefore DISCOVERS the loops — any fn in cbt/ or
+# programs/checks/ that names a fork and reports an equality verdict — and requires each
+# to be either a HOST-compiler loop that asks `_self_host_src()`, or one pinned to the
+# tracked x86-64 Linux `build/cycc`, whose own fork IS `src/main.cyr`. Axis 7 then pins
+# the two things that decide whether a host-compiler loop can complete at all: it SIGNS
+# the freshly built compiler before running it (AMFI SIGKILLs an unsigned arm64 Mach-O)
+# and it compares BYTES, never sizes.
+#
 # MUTATION LEDGER (each applied to a copy of cbt/ in a temp tree, gate re-run against it)
 #   M1. `_self_host_src` reverted to the 5a583c1e body (PE arm + src/main.cyr)  -> RED
 #       (axis 3: 2 distinct forks for 5 hosts; axis 4: 3 rows disagree with their recipe)
@@ -39,6 +49,18 @@
 #   M3. aarch64-Linux -> src/main_aarch64.cyr (the CROSS fork; axis 3 still green) -> RED
 #   M4. cmd_self re-hardcodes "src/main.cyr" instead of asking _self_host_src()  -> RED
 #   M5. Windows arm -> src/main.cyr                                              -> RED
+#   M6. cmd_soak compares `_file_size(cc5_t) != _file_size(cc4_t)` again        -> axis 7 RED
+#       ("decides on _file_size()" — and see the discovery-predicate note below: the
+#        FIRST cut of axis 6 met this mutant with its corpus floor instead)
+#   M7. cmd_soak step 2 calls `_pulsar_raw_compile` directly (runs it UNSIGNED) -> axis 7 RED
+#   M7b. cmd_self's /bin/sh script loses its `codesign`                         -> axis 7 RED
+#   M8. `_self_host_gate` pointed at src/main_aarch64_native.cyr (not build/cycc's fork)
+#                                                                                -> axis 6 RED
+#   M9. `CC_PATH = _root_path("build/cyrius")` (shape (b)'s premise broken)     -> axis 6 RED
+#   M10. the discovery predicate forced to 0 (the detector's own control)   -> axes 6+7 RED
+#   M11. a NEW loop added to cbt/build.cyr that neither asks nor pins build/cycc
+#                                                                                -> axis 6 RED
+#        (this is the row that proves discovery is live rather than a list of names)
 #   Real tree -> GREEN.
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -214,9 +236,164 @@ for fnname in cmd_self cmd_soak; do
   fi
 done
 
+# ── axis 6 — EVERY self-host loop in the tree, DERIVED, not the two verbs named above ──
+# Axis 5 knows two fn NAMES. That is exactly as much as it can see, and a third loop was
+# already sitting outside it at 6.6.6 (`_self_host_gate` in programs/checks/selfhost.cyr,
+# found by review). So this axis DISCOVERS the loops instead: any fn, anywhere in cbt/ or
+# programs/checks/, that names a compiler fork (literally or by asking) AND reports an
+# equality verdict about two binaries. A new loop is admitted automatically and has to
+# answer for itself.
+#
+# Two legitimate shapes, and nothing else:
+#   (a) it ASKS `_self_host_src()` and writes no fork path of its own — the loop runs THIS
+#       HOST's compiler, so the fork is a per-target question;
+#   (b) it is pinned to `build/cycc` / `CC_PATH` — the TRACKED x86-64 Linux compiler, whose
+#       own fork IS `src/main.cyr`, so naming that fork is correct and asking would be
+#       WRONG (it would hand an x86 ELF a macOS fork on a Mac).
+# `CC_PATH = _root_path("build/cycc")` is re-derived from programs/checks/main.cyr rather
+# than assumed, so pointing CC_PATH at a host compiler turns this red.
+#
+# ⚠ HONEST LIMIT, stated rather than hidden: under (b) the axis checks that `src/main.cyr`
+# is among the forks the body names, not that every OTHER fork on those lines is a
+# cross-compile target. `cmd_pulsar` legitimately names `src/main_aarch64{,_native}.cyr`
+# in the same body, as the sources of the cross-compilers it builds, and telling those
+# apart from a self-host step needs semantics a text scan does not have.
+echo "axis 6 — every self-host loop in the tree, discovered:"
+# ⚠ THE DISCOVERY PREDICATE IS TWO-PRONGED, and the second prong is the one that survives
+# a mutation. "Names a fork AND reports an equality verdict" alone is satisfied by DELETING
+# the verdict: the first cut of this axis met mutant M6 (cmd_soak back on `_file_size`) with
+# "the loop scan found 4, expected 5 — did the detector stop matching?", which is the same
+# "did it move?" answer axis 2's floor comment already calls the wrong one. So a fn that
+# ASKS `_self_host_src()` AND runs something is a loop no matter what it then compares —
+# asking is what only a host-compiler self-host loop does. (`_target_cc_has_js` and
+# `_emit_js_refuse` ask too and run nothing, which is why the second half of that prong is
+# there.) Broadening the VERDICT list to `_file_size` instead was measured and rejected: it
+# drags in five cross-compile gates in programs/checks that are not self-host loops at all.
+cat > "$D/loops.awk" <<'AWK'
+function flush() {
+    if (fname == "") return
+    fork = ""; asks = 0; verdict = 0; ccpin = 0; runs = 0; sized = 0
+    shell = 0; cs = 0; step = 0; raw = 0
+    n = split(body, L, "\n")
+    for (i = 1; i <= n; i++) {
+        l = L[i]
+        if (l ~ /_self_host_src\(\)/) asks = 1
+        if (l ~ /_files_identical\(|_win_files_equal\(|_self_host_same\(|cmp -s/) verdict = 1
+        if (l ~ /CC_PATH|build\/cycc/) ccpin = 1
+        if (l ~ /sys_execve\(|_win_compile_spawn\(|_self_host_step\(|_pulsar_raw_compile\(|\/bin\/sh/) runs = 1
+        if (l ~ /\/bin\/sh/) shell = 1
+        if (l ~ /codesign/) cs = 1
+        if (l ~ /_self_host_step\(/) step = 1
+        if (l ~ /sys_execve\(|_win_compile_spawn\(|_pulsar_raw_compile\(/) raw = 1
+        if (l ~ /_file_size\(/) sized = 1
+        while (match(l, /"src\/main[A-Za-z0-9_]*\.cyr"/)) {
+            f = substr(l, RSTART + 1, RLENGTH - 2)
+            if (index(" " fork " ", " " f " ") == 0) fork = fork " " f
+            l = substr(l, RSTART + RLENGTH)
+        }
+    }
+    if ((asks == 1 && runs == 1) || (fork != "" && verdict == 1))
+        printf "%s %s asks=%d ccpin=%d runs=%d sized=%d shell=%d cs=%d step=%d raw=%d forks=%s\n", \
+               FILENAME, fname, asks, ccpin, runs, sized, shell, cs, step, raw, (fork == "" ? "-" : substr(fork, 2))
+    fname = ""; body = ""
+}
+/^fn [A-Za-z_]/ { flush(); fname = $2; sub(/\(.*/, "", fname); body = "" }
+{
+    code = $0
+    # Strip a `#` comment but never a preprocessor directive (same rule as the PE gate's
+    # detector). The WHY-invariants above these loops quote fork paths on purpose.
+    if (code !~ /^[ \t]*#(ifdef|ifndef|endif|else|elif)/) sub(/#.*/, "", code)
+    if (fname != "") body = body "\n" code
+}
+END { flush() }
+AWK
+: > "$D/loops"
+for f in cbt/*.cyr programs/checks/*.cyr; do
+  [ -f "$f" ] || continue
+  awk -f "$D/loops.awk" "$f" >> "$D/loops" || true
+done
+NLOOP=$(grep -c . "$D/loops" 2>/dev/null || true)
+[ -n "$NLOOP" ] || NLOOP=0
+# Floor, not an equality: a new loop is welcome, it just has to answer for itself. Five at
+# 6.6.6 — cmd_self, cmd_soak, _win_cmd_self, cmd_pulsar, _self_host_gate. A detector that
+# matches nothing must fail loudly rather than report "0 wrong loops".
+if [ "$NLOOP" -lt 5 ]; then
+  echo "FAIL axis6: the loop scan found $NLOOP self-host loops, expected at least 5 — did the detector stop matching?"
+  fail=1
+fi
+# The x86-64-Linux-compiler premise for shape (b), re-derived every run.
+CCPATH_SRC=$(grep -oE 'CC_PATH[[:space:]]*=[[:space:]]*_root_path\("[^"]*"\)' programs/checks/main.cyr | grep -oE '"[^"]*"' | tr -d '"' | head -1 || true)
+if [ "$CCPATH_SRC" != "build/cycc" ]; then
+  echo "FAIL axis6: CC_PATH resolves to '${CCPATH_SRC:-<not found>}', not build/cycc — shape (b)'s premise no longer holds"
+  fail=1
+fi
+while read -r lfile lfn lasks lccpin lruns lsized lshell lcs lstep lraw lforks; do
+  [ -n "${lfn:-}" ] || continue
+  a=${lasks#asks=}; c=${lccpin#ccpin=}; fks=${lforks#forks=}
+  if [ "$a" = "1" ] && [ "$fks" = "-" ]; then
+    note "$(printf '%-34s %-18s asks _self_host_src()' "$lfile" "$lfn")"
+  elif [ "$c" = "1" ] && printf '%s\n' "$fks" | tr ' ' '\n' | grep -qx 'src/main.cyr'; then
+    note "$(printf '%-34s %-18s pinned to build/cycc + its own fork' "$lfile" "$lfn")"
+  elif [ "$a" = "1" ]; then
+    echo "FAIL axis6: $lfile $lfn asks _self_host_src() AND hard-codes a fork ($fks) — one of the two is wrong"
+    fail=1
+  else
+    echo "FAIL axis6: $lfile $lfn self-hosts from '$fks' without asking _self_host_src() and without pinning build/cycc"
+    fail=1
+  fi
+done < "$D/loops"
+
+# ── axis 7 — a HOST-compiler loop SIGNS what it runs and compares BYTES ───────────────
+# Scoped to the loops that answer shape (a): those are the ones that run on Apple Silicon,
+# where the two facts below decide whether the verb can complete at all.
+#   * An UNSIGNED arm64 Mach-O is SIGKILLed by AMFI. `compile()` does not sign — only
+#     `run_binary_timed` does — so `cmd_soak` executing its step-1 output directly could
+#     never finish step 2 on ecb: measured at 5a583c1e as `FAIL: self-host size mismatch`
+#     on a box where `cyrius self` PASSes.
+#   * SIZE IS NOT A SELF-HOST VERDICT. Measured on real ach (Intel macOS) at 5a583c1e:
+#     step 1 and step 2 were both 1,699,840 bytes and DIFFERED at byte 217 — Mach-O pads
+#     to a page, so the 16 bytes of `#@pkgver` disappeared into the padding and soak
+#     scored a PASS over two different compilers. A green placebo, not a pass.
+# THE SIGNING TEST IS "EVERY RUN GOES THROUGH `_self_host_step`", not "the word codesign
+# appears somewhere in the body": mutant M7 moved ONE of soak's two steps back to a direct
+# `_pulsar_raw_compile` and a per-body flag still read as signed, because the OTHER step
+# was fine. `cmd_self` hands the whole two-step to `/bin/sh`, so its script is checked for
+# `codesign` instead. `_win_*` loops are exempt from the signing half only: PE has no
+# codesign and its spawn helper IS `_win_compile_spawn`.
+echo "axis 7 — ⭐ host-compiler loops sign what they run and compare bytes:"
+NHOST=0
+while read -r lfile lfn lasks lccpin lruns lsized lshell lcs lstep lraw lforks; do
+  [ -n "${lfn:-}" ] || continue
+  [ "${lasks#asks=}" = "1" ] || continue
+  NHOST=$((NHOST + 1))
+  if [ "${lsized#sized=}" = "1" ]; then
+    echo "FAIL axis7: $lfile $lfn decides on _file_size() — a self-host verdict is a BYTE compare"
+    fail=1
+  fi
+  if [ "${lruns#runs=}" != "1" ]; then
+    echo "FAIL axis7: $lfile $lfn reports a self-host verdict without running anything"
+    fail=1
+  fi
+  case "$lfn" in _win_*) continue ;; esac
+  if [ "${lshell#shell=}" = "1" ]; then
+    if [ "${lcs#cs=}" != "1" ]; then
+      echo "FAIL axis7: $lfile $lfn hands the self-host to /bin/sh without a codesign (AMFI SIGKILLs an unsigned arm64 Mach-O)"
+      fail=1
+    fi
+  elif [ "${lstep#step=}" != "1" ] || [ "${lraw#raw=}" = "1" ]; then
+    echo "FAIL axis7: $lfile $lfn runs a compiler outside _self_host_step() — that is the only path that signs a copy before executing it"
+    fail=1
+  fi
+done < "$D/loops"
+if [ "$NHOST" -lt 3 ]; then
+  echo "FAIL axis7: only $NHOST host-compiler loops found, expected at least 3 (cmd_self, cmd_soak, _win_cmd_self)"
+  fail=1
+fi
+note "$(printf '%d host-compiler loops checked' "$NHOST")"
+
 if [ "$fail" -ne 0 ]; then
   echo "FAIL self_host_src_per_target"
   exit 1
 fi
-echo "PASS self_host_src_per_target: $nrows hosts, $ndistinct distinct forks, all agreeing with their shipping recipe"
+echo "PASS self_host_src_per_target: $nrows hosts, $ndistinct distinct forks agreeing with their shipping recipe; $NLOOP self-host loops, $NHOST of them on the host compiler"
 exit 0

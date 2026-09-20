@@ -1869,9 +1869,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   **Fix:** `_self_host_src()` (`cbt/build.cyr`) now answers for all five hosts —
   `src/main.cyr` / `main_aarch64_native.cyr` / `main_aarch64_macho.cyr` / `main_x86_macho.cyr` /
   `main_win.cyr` — the mapping the platform tarball scripts and `cyrius pulsar` already use, and
-  `cmd_self`'s `/bin/sh` script asks it instead of naming `src/main.cyr` twice. `cmd_soak` already
-  asked, so it is fixed with it. A missing fork is now refused BY NAME rather than silently
-  substituted. ⚠ **Two further halves, without which the right fork still could not pass on macOS:**
+  `cmd_self`'s `/bin/sh` script asks it instead of naming `src/main.cyr` twice. `cmd_soak` asks
+  the same helper, so it picks the right fork too — ⚠ **but that did NOT make `cyrius soak` work;
+  this bullet originally claimed it was "fixed with it" and that was wrong. See the `cyrius soak`
+  entry below**, added at this bite's review. A missing fork is now refused BY NAME rather than
+  silently substituted. ⚠ **Two further halves, without which the right fork still could not pass on macOS:**
   the script `chmod +x`'d step 1's output but never signed it (AMFI kills an unsigned arm64
   Mach-O), and signing it in place would have broken the comparison — `codesign` **rewrites** the
   file it signs, measured on ecb as a 2,396-byte difference for a perfect fixpoint, the same
@@ -1884,8 +1886,50 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   this target is missing: <that host's fork>` — never a fallback to `src/main.cyr`. New gate
   `tests/gates/toolchain/self_host_src_per_target.sh` **evaluates** the real mapping (extracted fns,
   compiled once per target macro set, run, string read back) rather than grepping it, and derives
-  the expected fork from the shipping recipes; 6 mutants, all RED, ledger in the gate header.
+  the expected fork from the shipping recipes; 13 mutants, all RED, ledger in the gate header.
   cbt-only — `build/cycc` is unchanged.
+
+- **`cyrius soak` never once self-hosted correctly: it compiled two DIFFERENT compilers, then
+  compared their SIZES.** (bite 23 review; measured at `5a583c1e` on four hosts.) Three faults in
+  one loop, each on its own enough to make the verdict meaningless:
+  **(1)** step 1 went through the CLI's `compile()`, which prepends `#@incdir src` and
+  `#@pkgver <version>`, while step 2 piped the source **raw** — so the two steps built different
+  compilers. In this repo on x86-64 Linux that is 1,315,048 B against 1,315,032 B, i.e. **every**
+  `cyrius soak` here printed `FAIL: self-host size mismatch`. This is exactly the defect
+  `cmd_pulsar` was fixed for at v6.6.4 (`_pulsar_raw_compile`); `cmd_soak` was the twin nobody
+  brought along.
+  **(2)** step 2 executed the step-1 output **unsigned**, and Apple Silicon's AMFI SIGKILLs an
+  unsigned arm64 Mach-O (rc 137, 0-byte output — measured on ecb), so on macOS-arm64 the step
+  could never complete at all. `compile()` does not sign; only `run_binary_timed` does.
+  **(3)** the verdict was `_file_size(a) != _file_size(b)`. On real **ach** (Intel macOS) that made
+  the whole thing a **green placebo**: step 1 and step 2 were both 1,699,840 bytes and **differed at
+  byte 217** — Mach-O pads to a page, so the 16 bytes of `#@pkgver` vanished into the padding and
+  soak reported a PASS over two different compilers. On PE `_file_size` is an unrouted raw stat
+  answering -38 for every path, so the test read `-1 != -1` there.
+  **Fix:** both steps go through one new helper, `_self_host_step` (`cbt/build.cyr`), which
+  compiles RAW via `_pulsar_raw_compile` and, on macOS, copies the compiler, signs the **copy** and
+  runs that — signing in place would rewrite the file under comparison (`codesign` adds
+  LC_CODE_SIGNATURE; +2,396 B measured on ecb). The copy uses a plain `_copy_binary`, **not**
+  `_dep_copy_file`: that is the vendoring writer and it refuses a destination reached through a
+  symlinked directory, and on macOS `/tmp` **is** a symlink — the first cut of this fix hit
+  `refusing to vendor into a SYMLINKED directory: /tmp` on ecb. The verdict is now
+  `_self_host_same`, one byte compare for every target with a non-empty floor, and `_win_cmd_self`
+  was moved onto it too. `cmd_soak` also reports a missing or unresolvable compiler by name
+  instead of letting each iteration blame the self-host. **Verified on REAL hardware:** `cyrius
+  soak 1` goes FAIL → PASS on x86-64 Linux, **ecb** (macOS arm64) and **pi** (aarch64 Linux), and
+  on **ach** turns a placebo PASS into a real one; `cyrius self` still PASSes on all four.
+  Windows via wine (an emulator, not hardware): `cbt_fork_sites_have_pe_arm.sh` still gets soak's
+  refusal and its `step 2 exited 3` row, now through the shared helper — that gate's fork-site
+  floor drops 17 → 16 because soak's own fork and PE arm are gone into it.
+  `self_host_src_per_target.sh` gained **axis 6**, which DISCOVERS every self-host loop in
+  `cbt/` + `programs/checks/` instead of naming two verbs (the review's other find: a third loop,
+  `_self_host_gate` in `programs/checks/selfhost.cyr`, was invisible to the old axis 5 — it is
+  correct, because it compiles with the tracked x86-64 Linux `build/cycc` whose own fork **is**
+  `src/main.cyr`, and the gate now re-derives that premise from `CC_PATH` rather than assuming it),
+  and **axis 7**, which requires every host-compiler loop to run only through `_self_host_step`
+  (or, for `cmd_self`'s shell script, to carry a `codesign`) and to compare bytes. 7 further
+  mutants, all RED — including a synthetic new loop, which is the row that proves discovery is
+  live. cbt-only — `build/cycc` is unchanged at **1,315,032 B**.
 
 - **`cyrius build --target=js` off x86-64 Linux did not fail — it reported OK and wrote a
   compiled BINARY over the `.js`.** (bite 23b; found by bite 9's review.) The TypeScript
@@ -1942,7 +1986,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   exclusion matching no tracked file fails, and a ratchet whose real count has dropped *below*
   its ceiling fails too, because a ceiling nobody lowers silently re-opens the carve-out. Its
   positive control proves `fmt --check` is live in both directions every run, since a sweep
-  running a broken checker calls every file clean and exits 0. 5 mutants, all RED. ⚠ The gate's
+  running a broken checker calls every file clean and exits 0. 6 mutants, all RED. ⚠ The gate's
   own first run reported `0 files were actually checked`: its exclusion helper was a
   `printf | while`, whose subshell cannot answer for the caller, so every path read as excluded
   — which is why it now carries a corpus floor *and* a checked floor.

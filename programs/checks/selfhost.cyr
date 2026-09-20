@@ -920,6 +920,17 @@ fn _self_host_pipe_env2(src_path, compiler_path, out_path, env_kv1, env_kv2): i6
 
 fn _self_host_gate(): i64 {
     _section("Self-Hosting");
+    # v6.6.6 — ⚠ `src/main.cyr` IS CORRECT HERE, and asking `_self_host_src()` would be
+    # WRONG. This gate compiles with `CC_PATH`, which `_setup_paths` pins to
+    # `<root>/build/cycc` — the TRACKED x86-64 Linux compiler — so `src/main.cyr` is that
+    # compiler's own fork and the pair is matched by definition. `cyrius self` / `cyrius
+    # soak` ask instead because they run THIS HOST's installed compiler, which on ARM or
+    # macOS is a different binary built from a different fork; naming main.cyr there was
+    # the bite-23a defect. Keep the pairing derivable: if this gate ever compiles with a
+    # HOST compiler it must ask, and
+    # tests/gates/toolchain/self_host_src_per_target.sh axis 6 — which DISCOVERS every
+    # self-host loop in the tree rather than naming two verbs — is what enforces the
+    # choice. CHANGELOG [6.6.6].
     var src = _root_path("src/main.cyr");
     var cc_a = _tmp_path("audit_cc_a_");
     var cc_b = _tmp_path("audit_cc_b_");

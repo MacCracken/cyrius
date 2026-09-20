@@ -2370,6 +2370,24 @@ fn cmd_soak(iters): i64 {
         _skip_deps = saved_skip_deps;
         return 1;
     }
+    # v6.6.6 — the loop no longer goes through `compile()`, which owned BOTH of these
+    # messages; say it here ONCE rather than letting every iteration report an execve of
+    # a path that is null or absent as "step 1 exited 127". `current_cc()` is not always
+    # `_cc`: on arm64-macOS `find_tools` sets `_arch = ARCH_AARCH64`, so it answers with
+    # `cycc_aarch64` (on that platform the same native binary as `cycc`, per
+    # scripts/build-macos-arm64-tarball.sh) — and a tree missing it must say so, not
+    # blame the self-host. CHANGELOG [6.6.6].
+    var soak_cc = current_cc();
+    if (soak_cc == 0) {
+        _err("soak: cycc not found. Install Cyrius or set CYRIUS_HOME.");
+        _skip_deps = saved_skip_deps;
+        return 1;
+    }
+    if (file_exists(soak_cc) == 0) {
+        _err_ctx("soak: compiler not found", soak_cc);
+        _skip_deps = saved_skip_deps;
+        return 1;
+    }
 
     var soak_pass = 0;
     var soak_fail = 0;
@@ -2390,67 +2408,42 @@ fn cmd_soak(iters): i64 {
         # unsuffixed path is looked up as `<path>.exe` and never found. CHANGELOG [6.6.6]
         var cc5_t = _cbt_tmpexe("soak_a");
         var cc4_t = _cbt_tmpfile("soak_b");
-        if (compile(soak_src, cc5_t) != 0) { iter_ok = 0; }
+        # v6.6.6 — BOTH STEPS GO THROUGH `_self_host_step` (cbt/build.cyr) AND THE
+        # VERDICT IS A BYTE COMPARE. Three separate reasons this loop reported on
+        # something other than the self-host, all of them fixed there rather than here so
+        # `cmd_self` and this cannot drift apart again:
+        #   * step 1 was `compile()`, which PREPENDS `#@incdir src` + `#@pkgver`, while
+        #     step 2 piped the file RAW — two different compilers, then compared. In this
+        #     repo on x86-64 Linux that alone made every `cyrius soak` print
+        #     "FAIL: self-host size mismatch" (1,315,048 vs 1,315,032 B);
+        #   * step 2 ran cc5_t UNSIGNED, and Apple Silicon's AMFI SIGKILLs an unsigned
+        #     arm64 Mach-O, so on ecb the step could never complete at all;
+        #   * the comparison was on SIZE — and on PE `_file_size` answers -38 for every
+        #     path, so `-1 != -1` scored a PASS over files that need not exist.
+        # The PE spawn arm moved into `_pulsar_raw_compile` with the rest of the step;
+        # its exit code is still the verdict ("step 2 exited N"). CHANGELOG [6.6.6].
+        var s1 = _self_host_step(soak_cc, soak_src, cc5_t);
+        if (s1 != 0) {
+            sys_write(STDOUT_FD, "FAIL: self-host step 1 exited ", 30);
+            fmt_int(s1);
+            sys_write(STDOUT_FD, "\n", 1);
+            iter_ok = 0;
+        }
         if (iter_ok == 1) {
-            # Run cc5_t to compile itself.
-            # v6.6.6 — PE arm. `sys_fork` is a -1 stub on Windows, so this child never
-            # ran: cc4_t was never written, `_file_size` answered -1 for both, the sizes
-            # therefore MATCHED, and every soak iteration scored a self-host PASS on
-            # Windows without compiling anything. ⚠ The spawn's EXIT CODE decides —
-            # the first cut of this arm called it for effect and dropped the code, so a
-            # child that page-faulted (rc 5) still reached the byte compare and was
-            # reported as "self-host output differs". CHANGELOG [6.6.6].
-            #ifdef CYRIUS_TARGET_WIN
-            var src2 = _win_compile_spawn(cc5_t, soak_src, cc4_t);
-            if (src2 != 0) {
+            var s2 = _self_host_step(cc5_t, soak_src, cc4_t);
+            if (s2 != 0) {
                 sys_write(STDOUT_FD, "FAIL: self-host step 2 exited ", 30);
-                fmt_int(src2);
+                fmt_int(s2);
                 sys_write(STDOUT_FD, "\n", 1);
                 iter_ok = 0;
             }
-            #endif
-            #ifndef CYRIUS_TARGET_WIN
-            var pid2 = sys_fork();
-            if (pid2 == 0) {
-                var sfd = sys_open(soak_src, O_RDONLY, 0);
-                sys_dup2(sfd, 0); sys_close(sfd);
-                var ofd = sys_open(cc4_t, O_WRONLY | O_CREAT | O_TRUNC, 0x1ED);
-                sys_dup2(ofd, 1); sys_close(ofd);
-                var argv[24];   # N BYTES per CLAUDE.md buffer contract: cmd + NUL = 16 B
-                store64(&argv, cc5_t);
-                store64(&argv + 8, 0);
-                sys_execve(cc5_t, &argv, _envp);
-                sys_exit(127);
-            }
-            var sb2[1];
-            sys_waitpid(pid2, &sb2, 0);
-            #endif
-
-            # Compare.
-            # ⚠ v6.6.6 — THE COMPARISON WAS UNUSABLE ON WINDOWS TOO, and fixing only the
-            # spawn above would have left it that way. `_file_size` is a raw `syscall(4)`
-            # (stat), which is not a PE reroute and answers -38 for EVERY path, so
-            # `sz1 != sz2` was `-1 != -1` — false — and each iteration scored a self-host
-            # PASS over two files that need not even exist. PE compares BYTES instead,
-            # which is what "self-host" means anyway and fails closed when either file is
-            # missing. CHANGELOG [6.6.6].
-            # ⚠ Only when step 2 actually ran. A failed spawn has already said why, and a
-            # second "output differs" on top of it names the wrong cause.
-            if (iter_ok == 1) {
-                #ifdef CYRIUS_TARGET_WIN
-                if (_win_files_equal(cc5_t, cc4_t) == 0) {
-                    sys_write(STDOUT_FD, "FAIL: self-host output differs\n", 31);
-                    iter_ok = 0;
-                }
-                #endif
-                #ifndef CYRIUS_TARGET_WIN
-                var sz1 = _file_size(cc5_t);
-                var sz2 = _file_size(cc4_t);
-                if (sz1 != sz2) {
-                    sys_write(STDOUT_FD, "FAIL: self-host size mismatch\n", 30);
-                    iter_ok = 0;
-                }
-                #endif
+        }
+        # ⚠ Only when step 2 actually ran. A failed spawn has already said why, and a
+        # second "output differs" on top of it names the wrong cause.
+        if (iter_ok == 1) {
+            if (_self_host_same(cc5_t, cc4_t) == 0) {
+                sys_write(STDOUT_FD, "FAIL: self-host output differs\n", 31);
+                iter_ok = 0;
             }
         }
         sys_unlink(cc5_t);

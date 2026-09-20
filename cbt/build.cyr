@@ -1341,6 +1341,105 @@ fn _self_host_src(): i64 {
     return "src/main.cyr";
 }
 
+# v6.6.6 — ONE STEP OF A SELF-HOST LOOP: run compiler `cc` over `src` into `out`, and
+# return the child's exit status (0 = ok). Every self-host loop that uses THIS HOST's
+# compiler goes through here, so the three things below cannot be got right in one loop
+# and wrong in the other.
+#
+# ⛔ RAW, NEVER `compile()`. `_materialize_source` prepends `#@incdir <dir>` whenever the
+# entry file sits in a subdirectory, and `#@pkgver <version>` whenever the manifest
+# resolves one — which for `src/main*.cyr` in this repo is always. A loop whose step 1
+# goes through `compile()` and whose step 2 pipes the file RAW has therefore built TWO
+# DIFFERENT COMPILERS and then reports on the difference. MEASURED here at 6.6.6 on
+# x86-64 Linux: step 1 1,315,048 B, step 2 1,315,032 B — 16 bytes of the
+# `CYRIUS_PKG_VERSION` declaration — so `cyrius soak 1` in this repo printed
+# "FAIL: self-host size mismatch" on EVERY host, blaming the self-host for the CLI's own
+# prepend. `cmd_pulsar` had exactly this defect and was fixed at v6.6.4; `cmd_soak` was
+# its untouched twin. `_pulsar_raw_compile` keeps its v6.6.4 name because
+# tests/gates/toolchain/released_slot_written_from_tag.sh pins a call site by text.
+#
+# ⛔ SIGN A COPY, RUN THE COPY. On Apple Silicon AMFI SIGKILLs an UNSIGNED arm64 Mach-O —
+# measured on ecb, `cat src/main_aarch64_macho.cyr | ./build/cycc > u; chmod +x u;
+# cat src/main_aarch64_macho.cyr | u > o` gives rc 137 and a 0-byte `o` — and nothing on
+# the compile path signs (only `run_binary_timed` does). But `codesign` REWRITES the file
+# it signs (LC_CODE_SIGNATURE, +2,396 B measured on ecb), so signing step 1's output IN
+# PLACE makes a perfect fixpoint compare as DIFFERENT — the artifact behind the v6.0.44
+# "x86-macOS doesn't self-host" retraction. Signing a COPY leaves the pristine pair for
+# the comparison; this is the native twin of the `cp $cycc $ccr` + `codesign $ccr` in
+# `cmd_self`'s /bin/sh script. CHANGELOG [6.6.6].
+fn _self_host_step(cc, src, out): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    return _self_host_step_macos(cc, src, out);
+    #endif
+    return _pulsar_raw_compile(cc, src, out);
+}
+
+# The macOS half, split out because the driver's preprocessor has no nested `#ifdef`
+# idiom — the same flat-per-target shape `_self_host_src_macos` uses.
+fn _self_host_step_macos(cc, src, out): i64 {
+    var ccr = _cbt_tmpexe("selfhost_signed");
+    if (_copy_binary(cc, ccr) != 0) { _err_ctx("self-host: could not stage a signable copy of", cc); return 0 - 1; }
+    sys_chmod(ccr, 0x1ED);
+    _macho_codesign(ccr);
+    var rc = _pulsar_raw_compile(ccr, src, out);
+    sys_unlink(ccr);
+    return rc;
+}
+
+# v6.6.6 — a plain byte copy of a BINARY into the CLI's own private temp directory.
+#
+# ⚠ DELIBERATELY NOT `_dep_copy_file`. That is the VENDORING writer, and it refuses any
+# destination reached through a symlinked directory — the v6.5.37 guard that stops a
+# project's `lib/` overwriting the shared stdlib. On macOS `/tmp` IS a symlink to
+# `/private/tmp`, and `_dep_vendor_mode` is left at 1 by the startup dep resolution, so
+# the first cut of `_self_host_step_macos` borrowed that helper and refused to run on the
+# exact host it was added for: measured on ecb, "refusing to vendor into a SYMLINKED
+# directory: /tmp" and `FAIL: self-host step 1 exited -1`. The guard is right for
+# vendoring and wrong here — staging a compiler under `<tmpdir>/` is not vendoring.
+# Fails CLOSED on a short write and on an empty source. CHANGELOG [6.6.6].
+var _copy_bin_buf = 0;
+fn _copy_binary(src, dst): i64 {
+    if (_copy_bin_buf == 0) { _copy_bin_buf = alloc(65536); }
+    var sfd = sys_open(src, O_RDONLY, 0);
+    if (sfd < 0) { return 1; }
+    var dfd = sys_open(dst, O_WRONLY | O_CREAT | O_TRUNC, 0x1ED);
+    if (dfd < 0) { sys_close(sfd); return 1; }
+    var total = 0;
+    var rc = 0;
+    var go = 1;
+    while (go == 1) {
+        var n = sys_read(sfd, _copy_bin_buf, 65536);
+        if (n < 0) { rc = 1; go = 0; }
+        elif (n == 0) { go = 0; }
+        elif (sys_write(dfd, _copy_bin_buf, n) != n) { rc = 1; go = 0; }
+        else { total = total + n; }
+    }
+    sys_close(sfd);
+    sys_close(dfd);
+    if (total <= 0) { rc = 1; }
+    return rc;
+}
+
+# v6.6.6 — "are these two compiler binaries the same file?", the verdict a self-host loop
+# reports, answered one way for every target.
+#
+# ⚠ SIZE IS NOT THE ANSWER, AND TWO EMPTY FILES ARE NOT A MATCH. `cmd_soak`'s POSIX arm
+# decided on `_file_size(a) != _file_size(b)`; two compilers can differ in 38,927 bytes at
+# the SAME length (measured at 6.6.3, on the pulsar path this same rule was written for).
+# `_files_identical` alone answers 1 for two 0-byte files, which is exactly what a spawn
+# that never started leaves behind, so it needs the non-empty floor `cmd_pulsar` carries
+# inline. On PE `_file_size` is a raw stat with no reroute and answers -38 for every path,
+# so the size test read `-1 != -1` — false — and every iteration scored a PASS over files
+# that need not exist; `_win_files_equal` is the PE arm and has that floor built in.
+# CHANGELOG [6.6.6].
+fn _self_host_same(a, b): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    return _win_files_equal(a, b);
+    #endif
+    if (_file_size(a) <= 0) { return 0; }
+    return _files_identical(a, b);
+}
+
 # v6.6.6 — DOES THIS HOST'S COMPILER HAVE `--emit-js` AT ALL?
 #
 # The TypeScript front end (`src/frontend/ts/lex.cyr`, `parse.cyr`) and the JS emitter
@@ -1647,7 +1746,11 @@ fn _win_cmd_self(): i64 {
         xunlink(t2);
         return 1;
     }
-    var same = _win_files_equal(t1, t2);
+    # v6.6.6 (review) — through `_self_host_same`, the ONE verdict every self-host loop
+    # reports; it dispatches straight back to `_win_files_equal` here. Calling the PE
+    # helper directly is how the POSIX arm of `cmd_soak` came to keep a SIZE compare
+    # while this one compared bytes. CHANGELOG [6.6.6].
+    var same = _self_host_same(t1, t2);
     xunlink(t1);
     xunlink(t2);
     if (same == 1) {
