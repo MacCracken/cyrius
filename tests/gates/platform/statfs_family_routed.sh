@@ -58,6 +58,10 @@
 #   9. rename all three wrappers in lib/syscalls_linux_common.cyr -> FAIL on the derived
 #      check's own floor ("only 0 statfs-family wrappers found … floor 3"), so a canonical
 #      peer that moves cannot silently leave the mirror check inspecting nothing
+#  10. shadow `stat` on PATH with a GNU-shaped stub reporting f_bsize 4096 but f_frsize 1024
+#      (legal — ext2 fragments, UFS) -> the `%S` version this gate shipped with FAILs both legs
+#      ("f_bsize 4096, coreutils says 1024"), the `%s` version PASSes; and with the stub's `%s`
+#      itself moved to 1024 the `%s` version FAILs, so the fix did not just silence the oracle
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
@@ -377,10 +381,16 @@ EOF
 # never had it would be a false red.
 WANT=""
 if stat --version 2>/dev/null | grep -q GNU; then
-    WANT=$(stat -f -c '%S %b' / 2>/dev/null || true)
+    # ⚠ `%s`, NOT `%S`. coreutils calls `%s` the "block size (for faster transfers)" — f_bsize,
+    # which is what the probe prints — and `%S` the "fundamental block size (for block counts)",
+    # which is f_frsize, a DIFFERENT field. This gate shipped with `%S` and read green anyway
+    # because ext4 sets both to 4096, so the oracle was not the comparison the header claims and
+    # would have false-RED on any filesystem where the two differ (ext2 with a fragment size, UFS).
+    # An oracle that happens to agree on the developer's box is the vacuous shape one step out.
+    WANT=$(stat -f -c '%s %b' / 2>/dev/null || true)
     case "$WANT" in
         [0-9]*" "[0-9]*) ;;
-        *) bad "axis D: GNU stat is installed but \`stat -f -c '%S %b' /\` gave '$WANT'; this
+        *) bad "axis D: GNU stat is installed but \`stat -f -c '%s %b' /\` gave '$WANT'; this
       axis needs coreutils' own statfs to compare against and will not assert against itself"
            WANT="" ;;
     esac

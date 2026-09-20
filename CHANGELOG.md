@@ -2348,6 +2348,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   whole body with `#ifndef CYRIUS_TARGET_AGNOS`, and `assert_summary()` over ZERO assertions
   returns 0, so an agnos run would have read green having asserted nothing.
 
+- **The new statfs gate's "independent oracle" compared the wrong field** (bite 11 review fix):
+  `stat -f -c '%S %b' /`. coreutils' `%S` is the FUNDAMENTAL block size (`f_frsize`); the probe
+  prints `f_bsize`, which is `%s`. On ext4 both are 4096, so the axis read green while not being
+  the comparison the gate header and the entry above claim — and it would have false-RED on any
+  filesystem where the two differ (ext2 with a fragment size, UFS). Proven both ways with a
+  GNU-shaped `stat` stub on PATH reporting `f_bsize` 4096 / `f_frsize` 1024: the `%S` version
+  fails both legs, the `%s` version passes, and moving the stub's `%s` to 1024 fails again — so
+  the fix did not simply silence the oracle (ledger entry 10).
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**
