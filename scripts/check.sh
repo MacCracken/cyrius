@@ -9,7 +9,8 @@
 #   1. cd's to the repo root so child gates see the expected CWD,
 #   2. builds build/cyrius_check on demand (mirrors the v5.8.44
 #      auto-build pattern for build/cyrius_api_surface),
-#   3. exec's the binary, propagating its exit code.
+#   3. runs the binary and exits with its status — NEVER `exec`, because the
+#      EXIT trap that removes the staged CYRIUS_HOME must run. CHANGELOG [6.6.6]
 #
 # scripts/lib/audit-walk.sh stays bash for the v5.9.x window — it
 # is still consumed by the bash scripts/cyrius dispatcher, queued
