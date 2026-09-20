@@ -1374,6 +1374,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   or is built by `sockaddr_in[6](a, P)`). Self-tested on 6 shapes + a clean file; mutation-proven
   seven ways (the 6.6.5 `fs.tcyr`, `async_sendrecv.cyr`, `tls_native_scaffold.tcyr` and
   `syscall_wrappers.tcyr` put back; each detector disabled; a stale allowlist entry).
+- **Release gate step 1b — the tracked ARM compiler must be what this tree cross-builds**
+  (bite 8a, `scripts/release-gate.sh`). `build/cycc-native-aarch64` is the only cross-binary this
+  repo tracks (ARM self-host needs a binary that already runs on ARM), and NOTHING verified it:
+  check.sh does not, CI does not, and the release gate's pi leg builds its own compilers fresh from
+  source, so a stale tracked binary was invisible to every gate while `install.sh --refresh-only`
+  copied it into `versions/<v>/bin/` and `verify-store.sh` restored it from the tag. It sat at a
+  2026-07-02 build for ~60 releases — by the end not merely old but WRONG (6.6.5 moved the aarch64
+  peer's `SYS_UNLINKAT` 35 → 263, so the stale emitter had no 263→35 row and `sys_unlink` traced as
+  `fanotify_mark`) — and 6.6.5 bite 5 had to regenerate it by hand. The gate re-derives it locally in
+  ~0.9 s (`cycc < main_aarch64.cyr` → `cycc_aarch64 < main_aarch64_native.cyr`; deterministic, no ARM
+  hardware) and `cmp`s. Not in check.sh on purpose — it is a two-compiler cross-build and check.sh is
+  the inner loop; SKIPPED (named, not silently) under `--quick`. A red result says in the gate output
+  what it means and prints both `cyrius pulsar` and the two-line by-hand recipe. Mutation-proven:
+  the tree as committed → RED (1,505,480 B tracked vs 1,506,056 B derived); regenerated in a scratch
+  copy → GREEN; `src/main_aarch64_native.cyr` reverted one commit in that scratch → step 1 still
+  GREEN and 1b RED **at the same byte size** (`differ: char 97`), which is why it `cmp`s rather than
+  compares sizes; the binary removed → RED naming it as tracked.
 
 ## [6.6.5] — 2026-09-19
 
