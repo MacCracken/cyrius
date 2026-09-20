@@ -640,7 +640,12 @@ fn _cmtools_starship(): i64 {
     var n = file_read_all(conf, buf, 131071);
     if (n < 0) { n = 0; }
     store8(buf + n, 0);
-    if (strstr(buf, "custom.cyrius") != 0) {
+    # ⛔ `strstr` returns an INDEX or -1 — it is not a C pointer. `!= 0` was therefore
+    # true for "not found" (-1) as well as for every hit past offset 0, so the ONLY
+    # config this branch ever let through was one whose first 13 bytes are literally
+    # "custom.cyrius". Every real user got "already configured" and no segment written:
+    # `--cmtools=starship` was a no-op for its entire life. CHANGELOG [6.6.6].
+    if (strstr(buf, "custom.cyrius") >= 0) {
         _print("  starship: Cyrius segment already configured\n");
         return 0;
     }
@@ -1223,7 +1228,11 @@ fn _run_port(start): i64 {
         str_builder_add_cstr(marker, _sv_olddir);
         str_builder_add_cstr(marker, "/");
         var markerc = str_data(str_builder_build(marker));
-        if (strstr(gbuf, markerc) == 0) {
+        # Same `strstr`-is-an-index defect as _cmtools_starship above, inverted: `== 0`
+        # meant "the marker is the file's first bytes", so an existing .gitignore never
+        # got the port lines (marker absent → -1 → skipped) unless it happened to start
+        # with them. `< 0` is "not present anywhere". CHANGELOG [6.6.6].
+        if (strstr(gbuf, markerc) < 0) {
             var ab = str_builder_new();
             str_builder_add_cstr(ab, "\n# Cyrius port\n/");
             str_builder_add_cstr(ab, _sv_olddir);

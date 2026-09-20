@@ -1088,6 +1088,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   one of these mutants, which is why the two new rows exist. lib-only; `build/cycc` byte-identical
   at 1,310,864 B; all **329** `.tcyr` pass a per-file exit-code loop.
 
+- **`cyrius init --cmtools=starship` never wrote the segment it reported adding, and `cyrius port`
+  never appended its lines to an existing `.gitignore`.** (bite 6a.) Both probes in
+  `programs/cyrius-init.cyr` read `strstr` as if it were C's pointer-returning strstr; it returns
+  the match **index or -1** (`lib/string.cyr`). `strstr(buf, "custom.cyrius") != 0` is therefore
+  TRUE for *not found*, so the tool printed `starship: Cyrius segment already configured` and wrote
+  nothing for every config that did not literally **begin** with those 13 bytes — i.e. for every
+  real user, for the flag's entire life. The port probe is the same mistake inverted:
+  `strstr(gbuf, markerc) == 0` means "the marker is the file's first bytes", so an existing
+  `.gitignore` got its `/rust-old/target/` + `/build/` lines only in the one case it should have
+  skipped. Measured on HEAD before the fix: a starship.toml came back byte-identical while the tool
+  reported success, and `/target\n` came back byte-identical with no report at all. Neither is
+  visible from an exit code — both paths return 0, one of them while printing a reassuring
+  "already configured". Fixed to `>= 0` (present) and `< 0` (absent). Gated by
+  `tests/gates/toolchain/init_substring_probes_polarity.sh`, which checks **both polarities** of
+  each probe — the obvious wrong fix is to invert to "always write", which duplicates the segment
+  on every init — and carries a census axis: no `strstr(...) == 0 / != 0` anywhere in `lib/`,
+  `src/`, `programs/`, `cbt/` or `tests/`, with a floor on sites found. Those two were the only
+  instances in the tree. programs-only; `build/cycc` untouched.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**
