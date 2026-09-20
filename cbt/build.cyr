@@ -677,6 +677,12 @@ fn _cbt_tmpdir(): i64 {
     # arity differs) is for OUR directory at exit, not for clearing somebody's.
     var base = _cbt_tmpbase();
     if (base == 0) {
+        # v6.6.6 (bite 24 review) — CLOSE THE PROGRESS LINE FIRST. These two fail-closed
+        # diagnostics are printed HERE rather than through `_err`/`_err_ctx` (they are
+        # multi-line and go to stdout, where the open line is), so bite 24d's remedy did
+        # not reach them — and `compile()` calls `_cbt_tmpfile` while the header is open.
+        # CHANGELOG [6.6.6].
+        _progress_close();
         println("error: cannot create a private temp directory: neither %TEMP% nor %TMP% is set (fail-closed)");
         sys_exit(1);
     }
@@ -702,6 +708,11 @@ fn _cbt_tmpdir(): i64 {
         }
         attempt = attempt + 1;
     }
+    # v6.6.6 (bite 24 review) — see the branch above. REACHABLE on POSIX, not just PE:
+    # 16 taken candidates under a private-namespace tmpfs reproduce it, and it printed
+    # `compile src/a.cyr -> out.bin [x86_64] error: cannot create a private temp
+    # directory under /tmp (fail-closed)`. CHANGELOG [6.6.6].
+    _progress_close();
     sys_write(STDOUT_FD, "error: cannot create a private temp directory under ", 52);
     sys_write(STDOUT_FD, base, strlen(base));
     println(" (fail-closed)");

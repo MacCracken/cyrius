@@ -2131,6 +2131,26 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   RED on exactly its own axes (all three markers; only the `.scyr` one — axis 8 alone; the
   naive newline — the control alone; the marker demoted to a comment).
 
+- **The fail-closed temp-directory refusal printed itself into the middle of the build
+  header too — and it never went through `_err` at all.** (bite 24 review.)
+  `_cbt_tmpdir`'s two refusals (`%TEMP%`/`%TMP%` both unset; all 16 candidate names
+  taken) are written **directly**, multi-line, to stdout — which is where the open
+  progress line is — so bite 24d's `_progress_close()` remedy, which only `_err` /
+  `_err_ctx` invoke, never reached them. `compile()` gets there via
+  `_materialize_source` → `_cbt_tmpfile` with the header open. **Reachable on POSIX,
+  not only on PE**: reproduced at `3920ced` inside a private mount + PID namespace with
+  the 16 candidates pre-created, giving `compile src/a.cyr -> out.bin [x86_64] error:
+  cannot create a private temp directory under /tmp (fail-closed)`. **Fix:**
+  `_progress_close()` at the head of both fail-closed branches. Two axes on
+  `tests/gates/toolchain/cli_progress_line_not_spliced.sh`: axis **10** reproduces it in
+  that namespace — fresh tmpfs over `/tmp`, private PID space, so the candidate names are
+  ours, another lane's `/tmp` is neither read nor written, and nothing survives the run —
+  and axis **11** asserts the property over the source, which is the *only* cover for the
+  PE-only branch and for hosts without unprivileged namespaces. 3 mutants: both closes
+  removed (10 + 11), only the PE-only one removed (**11 alone** — the axis paying for
+  itself), and the reachable one demoted to a comment (10 + 11, which is what axis 11's
+  comment-stripping buys).
+
 - **`cyrius build` blamed the compiler for failures the compiler had nothing to do with,
   and quoted a status it never read.** (bite 24 review.) `compile()` returns a flat `1`
   for *every* failure — a missing output directory, an unwritable output, bite 24a's

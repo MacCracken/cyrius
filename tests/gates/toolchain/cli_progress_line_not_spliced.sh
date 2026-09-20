@@ -31,6 +31,16 @@
 # Axes 6-9 cover them: two runtime, one structural (for the `.scyr` walker, which no cheap
 # runtime axis reaches), and a positive control of their own.
 #
+# ⛔ AND THE ERRORS THAT NEVER WENT THROUGH `_err` AT ALL (bite 24 review). `_cbt_tmpdir`
+# prints its two FAIL-CLOSED diagnostics directly — multi-line, on stdout, which is where
+# the open line is — so `_progress_close()` was never called for them, and `compile()`
+# reaches that fn through `_materialize_source` with the header open. Reachable on POSIX,
+# not just on PE:
+#   compile src/a.cyr -> out.bin [x86_64] error: cannot create a private temp directory
+#   under /tmp (fail-closed)
+# Axes 10 (runtime, in a private mount+PID namespace) and 11 (structural, for the PE-only
+# branch and for hosts without namespaces) cover those.
+#
 # ⭐ THIS GATE PINS THE PROPERTY, NOT THE MECHANISM. Either remedy is correct: don't open
 # the line until the verb is going to run, or close it before the error. (The 6.6.6 fix
 # uses both — a pre-flight check for `--target=js` / `--target=cx`, and a `_progress_open`
@@ -79,6 +89,13 @@
 #   N4. the fuzz marker demoted to a COMMENT
 #       -> RED: axes 6 and 8. Axis 8 reds only because it strips comments from the window;
 #          without that it would read the comment as the fix.
+#   P1. both `_progress_close()` calls removed from `_cbt_tmpdir`
+#       -> RED: axes 10 and 11.
+#   P2. ONLY the PE-only branch's close removed (%TEMP% and %TMP% both unset)
+#       -> RED: axis 11 ALONE. That branch cannot be reached from POSIX at all, which is
+#          why the structural axis exists alongside the namespace one.
+#   P3. the reachable close demoted to a COMMENT
+#       -> RED: axes 10 and 11 (axis 11 strips comments too).
 #   Real tree -> GREEN.
 #
 # ⚠ qemu-aarch64 is an EMULATOR, not hardware; it is only used to reach the aarch64
@@ -264,9 +281,85 @@ elif ! grep -qE '^  h\.fcyr  +PASS$' "$D/a9.out"; then
   sed 's/^/    /' "$D/a9.out"; fail=1
 fi
 
+# ── axis 10 — the fail-closed temp-directory diagnostic (bite 24 review) ─────────────
+# `_cbt_tmpdir` prints its two fail-closed messages DIRECTLY (multi-line, on stdout —
+# where the open line is), so they never went through `_err`/`_err_ctx` and bite 24d's
+# remedy did not reach them. `compile()` reaches `_cbt_tmpdir` via `_materialize_source`
+# while the header is open, so this spliced too. REACHABLE on POSIX, not only on PE:
+# 16 taken candidates is all it takes.
+#
+# The run is fully isolated — a private mount namespace with a fresh tmpfs over /tmp and
+# a private PID namespace, so the candidate names are ours, the real /tmp is untouched
+# (another lane's `cyrius-*` dirs are neither read nor created), and nothing survives the
+# namespace. The CLI is handed in on fd 3 because $D lives under the /tmp we mask.
+# ⚠ The source must be in a SUBDIRECTORY: `_materialize_source` only needs a temp file
+# when it has something to prepend, and `src/` earns the `#@incdir` marker (v6.5.7).
+if unshare -rm true >/dev/null 2>&1 && unshare -rpf --mount-proc true >/dev/null 2>&1; then
+  exec 3<"$D/cli"
+  unshare -rmpf --mount-proc sh -c '
+    mount -t tmpfs none /tmp || exit 9
+    mkdir -p /tmp/w/src /tmp/w/build || exit 9
+    cat <&3 > /tmp/w/cyrius && chmod +x /tmp/w/cyrius || exit 9
+    cp "$1"/build/cycc /tmp/w/build/cycc && chmod +x /tmp/w/build/cycc || exit 9
+    printf "fn main(): i64 { return 0; }\n" > /tmp/w/src/a.cyr
+    # Occupy every one of the 16 candidates for every plausible in-namespace PID, in ONE
+    # mkdir so the fork count stays small and the CLI lands well inside the window.
+    ARGS=""; p=2
+    while [ $p -le 250 ]; do
+      ARGS="$ARGS /tmp/cyrius-$p"
+      j=1; while [ $j -le 15 ]; do ARGS="$ARGS /tmp/cyrius-$p-$j"; j=$((j+1)); done
+      p=$((p+1))
+    done
+    mkdir -p $ARGS || exit 9
+    cd /tmp/w || exit 9
+    ulimit -c 0
+    CYRIUS_RESOLVED=1 ./cyrius build src/a.cyr out.bin 2>&1
+  ' _ "$R" >"$D/a10.out" 2>&1 || true
+  exec 3<&-
+  if ! grep -q 'cannot create a private temp directory' "$D/a10.out"; then
+    echo "FAIL axis10: the fail-closed temp-directory path was never reached — the axis is"
+    echo "            vacuous, not passing. Either the PID window (2-250) missed the CLI or"
+    echo "            _materialize_source no longer needs a temp file for a src/ entry."
+    sed 's/^/    /' "$D/a10.out"; fail=1
+  else
+    sp=$(grep -nE "^($VERBS) .*(error:|cannot create)" "$D/a10.out" || true)
+    if [ -n "$sp" ]; then
+      echo "FAIL axis10: the fail-closed temp-directory diagnostic is spliced INTO the header:"
+      printf '%s\n' "$sp" | sed 's/^/    /'
+      fail=1
+    fi
+  fi
+else
+  echo "  SKIP axis 10 — unprivileged user/PID namespaces unavailable (the fail-closed"
+  echo "       temp-directory diagnostic; axis 11 still asserts it structurally)."
+fi
+
+# ── axis 11 — STRUCTURAL: every fail-closed exit in `_cbt_tmpdir` closes the line ────
+# The PE-only branch (%TEMP% and %TMP% both unset) has no runtime axis here at all, and
+# axis 10 SKIPs where namespaces are unavailable, so the property is also asserted over
+# the source. Derived from the function body with a floor, not from a list of messages.
+tdbody=$(awk '/^fn _cbt_tmpdir\(\)/{f=1} f{print} f&&/^}/{exit}' cbt/build.cyr | grep -v '^[ 	]*#')
+tdexits=$(printf '%s\n' "$tdbody" | grep -c 'sys_exit(')
+if [ "$tdexits" -lt 2 ]; then
+  echo "FAIL axis11: found $tdexits fail-closed exits in _cbt_tmpdir (expected at least 2) —"
+  echo "             the axis is measuring nothing; re-derive before lowering the floor."
+  fail=1
+else
+  tdclose=$(printf '%s\n' "$tdbody" | awk '
+    /_progress_close\(\)/ { seen = 1 }
+    /sys_exit\(/ { if (seen) { ok++ } ; seen = 0 }
+    END { print ok + 0 }')
+  if [ "$tdclose" -ne "$tdexits" ]; then
+    echo "FAIL axis11: $tdclose of $tdexits fail-closed exits in _cbt_tmpdir close the progress"
+    echo "             line first. That fn prints its diagnostics DIRECTLY (stdout, multi-line),"
+    echo "             so _err/_err_ctx's _progress_close() never runs for them."
+    fail=1
+  fi
+fi
+
 if [ "$fail" -ne 0 ]; then
   echo "FAIL cli_progress_line_not_spliced"
   exit 1
 fi
-echo "PASS cli_progress_line_not_spliced: 6 named-failure paths (build x4, fuzz, smoke), none spliced into an open header; $pad_with_compile of $pad_total padded headers mark the line open; native + js + fuzz results still land ON the header line"
+echo "PASS cli_progress_line_not_spliced: 7 named-failure paths (build x4, fuzz, smoke, fail-closed tmpdir), none spliced into an open header; $pad_with_compile of $pad_total padded headers mark the line open, $tdclose of $tdexits _cbt_tmpdir exits close it; native + js + fuzz results still land ON the header line"
 exit 0
