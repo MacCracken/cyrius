@@ -358,10 +358,6 @@ fn cmd_doctest(arg): i64 {
                     # run. A short write was worse: the example was TRUNCATED and whatever
                     # the prefix happened to compile to was scored against the expected
                     # exit code. Both are failures now, by name. CHANGELOG [6.6.6].
-                    if (fd < 0) {
-                        _err_ctx("doctest: cannot create the example's temp source", tmpf);
-                        dt_fail = dt_fail + 1;
-                    }
                     var dt_wrote = 0 - 1;
                     if (fd >= 0) {
                         dt_wrote = _dt_write_all(fd, code, code_len);
@@ -371,6 +367,9 @@ fn cmd_doctest(arg): i64 {
                             dt_fail = dt_fail + 1;
                             sys_unlink(tmpf);
                         }
+                    } else {
+                        _err_ctx("doctest: cannot create the example's temp source", tmpf);
+                        dt_fail = dt_fail + 1;
                     }
                     if (dt_wrote == 0) {
                         var tmpbin = _cbt_tmpexe("dt_bin");

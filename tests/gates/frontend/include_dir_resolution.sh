@@ -143,7 +143,12 @@ n_abs=$(awk '/^fn _source_incdir/,/^}/' "$ROOT/cbt/build.cyr" | grep -c 'if (loa
 check "absolute source path → no marker" 1 "$n_abs"
 n_dot=$(awk '/^fn _source_incdir/,/^}/' "$ROOT/cbt/build.cyr" | grep -c 'if (load8(source + j - 1) == 47) { return 0; }')
 check ".. component → no marker" 1 "$n_dot"
-n_first=$(awk '/if \(tfd >= 0\) \{/,/Prepend dep includes/' "$ROOT/cbt/build.cyr" | grep -c 'sys_write(tfd, "#@incdir ", 9);')
+# v6.6.6 (bite 26b): the writer is `_mat_write` now — a CHECKED write, because every write
+# here used to discard its result and a short one compiled a truncated source. The claim this
+# axis makes is about ORDER (the marker is written before anything else, so it lands at byte
+# 0), which the awk range enforces; the pattern is deliberately writer-name-agnostic so the
+# next hardening pass does not read as a regression here.
+n_first=$(awk '/if \(tfd >= 0\) \{/,/Prepend dep includes/' "$ROOT/cbt/build.cyr" | grep -cE '[a-z_]*write\(tfd, "#@incdir ", 9\);')
 check "marker written before the dep prepend (byte 0)" 1 "$n_first"
 
 # ── AXIS 9: the adjacent defect from the same filing, same command. A missing output

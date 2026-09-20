@@ -538,16 +538,12 @@ fn _materialize_source(source): i64 {
         # Unlink first so O_EXCL succeeds on re-runs with same PID
         sys_unlink(tmp);
         var tfd = sys_open(tmp, O_WRONLY | O_CREAT | O_EXCL, 0x180);
-        # v6.6.6 (bite 26b) — a temp that could not be created used to fall straight
-        # through to `return source`, i.e. compile the entry file with the manifest's
-        # includes, the `-D` defines and every `[build].modules` file SILENTLY DROPPED.
-        # That is the same wrong-translation-unit outcome as a short write, reached by a
-        # different door. CHANGELOG [6.6.6].
-        if (tfd < 0) {
-            _err_ctx("could not create the preprocessed source", tmp);
-            return 0;
-        }
         _mat_err = 0;
+        # v6.6.6 (bite 26b) — the `else` below. A temp that could not be created used to
+        # fall straight through to `return source`, i.e. compile the entry file with the
+        # manifest's includes, the `-D` defines and every `[build].modules` file SILENTLY
+        # DROPPED. That is the same wrong-translation-unit outcome as a short write,
+        # reached by a different door. CHANGELOG [6.6.6].
         if (tfd >= 0) {
             # v6.5.7: `#@incdir` FIRST — cycc honours the marker only at byte 0, so
             # that the CLI's value is the one it reads and a marker further down the
@@ -604,14 +600,13 @@ fn _materialize_source(source): i64 {
                     # was SKIPPED IN SILENCE, so a typo'd or unreadable module produced a
                     # translation unit missing that whole file and the build failed (or
                     # worse, succeeded) with nothing pointing at the manifest.
-                    if (mfd < 0) {
-                        _err_ctx("build module cannot be read (declared in [build].modules)", mpath);
-                        _mat_err = 1;
-                    }
                     if (mfd >= 0) {
                         _mat_copy_fd(tfd, mfd);
                         sys_close(mfd);
                         _mat_write(tfd, "\n", 1);
+                    } else {
+                        _err_ctx("build module cannot be read (declared in [build].modules)", mpath);
+                        _mat_err = 1;
                     }
                     mi = mi + 1;
                 }
@@ -641,13 +636,12 @@ fn _materialize_source(source): i64 {
             # that vanishes or loses read permission between that check and this open lands
             # here, and "a translation unit of pure stdlib, OK, exit 0" is exactly what that
             # guard exists to stop.
-            if (sfd2 < 0) {
-                _err_ctx("could not read the entry source", source);
-                _mat_err = 1;
-            }
             if (sfd2 >= 0) {
                 _mat_copy_fd(tfd, sfd2);
                 sys_close(sfd2);
+            } else {
+                _err_ctx("could not read the entry source", source);
+                _mat_err = 1;
             }
             # A close failure is a write failure (delayed allocation, quota, NFS commit):
             # the bytes are only durable once close returns 0.
@@ -658,6 +652,9 @@ fn _materialize_source(source): i64 {
                 return 0;
             }
             actual_source = tmp;
+        } else {
+            _err_ctx("could not create the preprocessed source", tmp);
+            return 0;
         }
     }
     return actual_source;

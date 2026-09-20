@@ -61,9 +61,9 @@
 #      (the defect's essence, reached through the helper)          exits 0 not 42) — the STATIC
 #                                                                  axis passes it, which is why
 #                                                                  axis 2 has to run the binary
-#   c. the `tfd < 0` refusal removed, temp creation silently    -> axis 4 FAIL (the refusal is
-#      falling back to the raw source                              part of the checked shape)
-#   d. the `mfd < 0` refusal removed only                       -> axis 3 FAIL (missing + unreadable
+#   c. the temp-creation refusal removed (the `else` on the    -> axis 4 FAIL (the refusal is
+#      `tfd >= 0` block), silently falling back to the raw source   part of the checked shape)
+#   d. the `[build].modules` refusal removed only               -> axis 3 FAIL (missing + unreadable
 #                                                                  module both rc 0)
 #   e. cbt/quality.cyr's doctest writer back to the bare        -> axis 4 FAIL (quality.cyr|code)
 #      `syscall(1, fd, code, code_len)`
