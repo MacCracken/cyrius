@@ -764,6 +764,16 @@ fn cmd_self(): i64 {
     # Delegate to inline self-hosting check script
     # (keeps fixup table small — full inline version needs too many relocations)
     _status("=== Self-Hosting Check ===");
+    # v6.6.6 — PE arm. The /bin/sh script below uses `cat`, `chmod` and `cmp`, none of
+    # which is a Windows command, and the fork that would have run it is a -1 stub
+    # (lib/syscalls_windows.cyr) whose wait decoded an uninitialised status slot — so on
+    # Windows `cyrius self` reported a verdict about a self-host that never happened.
+    # `_win_cmd_self` reproduces the SAME contract natively (two CreateProcessW
+    # redirects + a byte compare) rather than refusing, because cycc genuinely does
+    # self-host on cass and this verb is how a user checks it. CHANGELOG [6.6.6].
+    #ifdef CYRIUS_TARGET_WIN
+    return _win_cmd_self();
+    #endif
     var pid = sys_fork();
     if (pid == 0) {
         var argv[40];   # N BYTES per CLAUDE.md buffer contract: 4 ptrs need 32 B
@@ -2076,6 +2086,19 @@ fn cmd_capacity(source, check_mode, json_mode): i64 {
     var cap_source = _materialize_source(source);
     var tmpout = _cbt_tmpfile("cap_out");
     var tmperr = _cbt_tmpfile("cap_err");
+    # v6.6.6 — PE arm. `/bin/sh` does not exist on Windows and `sys_fork` is a -1 stub,
+    # so this used to "wait" on -1 and decode an uninitialised status slot; whenever that
+    # garbage happened to read as WIFEXITED/0, `cyrius capacity --check` then found no
+    # stats lines in an empty stderr capture and reported `ok (all caps under 85%)` for a
+    # compile that never ran — the exact placebo the guard further down exists to stop.
+    # `_win_capacity_spawn` runs the same thing through cmd.exe. CHANGELOG [6.6.6].
+    var cap_rc = 0;
+    #ifdef CYRIUS_TARGET_WIN
+    cap_rc = _win_capacity_spawn(cc, cap_source, tmperr);
+    if (cap_source != source) { xunlink(cap_source); }
+    if (cap_rc < 0) { return 1; }
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
     var pid = sys_fork();
     if (pid == 0) {
         var sfd = sys_open(cap_source, O_RDONLY, 0);
@@ -2113,9 +2136,12 @@ fn cmd_capacity(source, check_mode, json_mode): i64 {
     # the preprocessed temp was never removed. Same "we made it" test (the fn returns
     # `source` itself when no prepend was needed).
     if (cap_source != source) { sys_unlink(cap_source); }
+    cap_rc = 1;
     var cap_status = load32(&status_buf);
+    if (WIFEXITED(cap_status) == 1) { cap_rc = WEXITSTATUS(cap_status); }
+    #endif
     var cap_failed = 1;
-    if (WIFEXITED(cap_status) == 1) { if (WEXITSTATUS(cap_status) == 0) { cap_failed = 0; } }
+    if (cap_rc == 0) { cap_failed = 0; }
 
     # Read stderr output.
     # v6.4.73: 1 MiB, was 8 KiB. The stats block is printed at the END of the
@@ -2126,7 +2152,24 @@ fn cmd_capacity(source, check_mode, json_mode): i64 {
     var errbuf = alloc(1048576);
     var errlen = file_read_all(tmperr, errbuf, 1048575);
     sys_unlink(tmperr);
-    if (errlen <= 0) { _err("no stats output from compiler"); return 1; }
+    if (errlen <= 0) {
+        _err("no stats output from compiler");
+        # v6.6.6 — NAME the Windows reason. The spawn above is real now, so an empty
+        # capture here means the compiler ran and printed nothing: `CYRIUS_STATS` is read
+        # by `_read_env` (src/backend/common/runtime.cyr), which reads /proc/self/environ
+        # and returns 0 on PE, so the stats block is never emitted at all. That is a
+        # COMPILER-side gap (a GetEnvironmentVariableW lookup in the PE arm), not a spawn
+        # one; say so instead of leaving a bare "no stats". CHANGELOG [6.6.6].
+        #ifdef CYRIUS_TARGET_WIN
+        var cw1 = "  cycc.exe cannot see CYRIUS_STATS: _read_env reads /proc/self/environ,\n";
+        var cw2 = "  which does not exist on Windows, so no stats block is printed. Run\n";
+        var cw3 = "  `cyrius capacity` on a POSIX host until the PE env lookup is wired.\n";
+        sys_write(STDERR_FD, cw1, strlen(cw1));
+        sys_write(STDERR_FD, cw2, strlen(cw2));
+        sys_write(STDERR_FD, cw3, strlen(cw3));
+        #endif
+        return 1;
+    }
     store8(errbuf + errlen, 0);
     # The compile itself must have SUCCEEDED before any utilization number means
     # anything. A failed compile produces no stats lines, and every consumer below
@@ -2299,11 +2342,24 @@ fn cmd_soak(iters): i64 {
         var iter_ok = 1;
 
         # 1. Self-hosting check
-        var cc5_t = _cbt_tmpfile("soak_a");
+        # v6.6.6 — `_cbt_tmpexe`, not `_cbt_tmpfile`: cc5_t is EXECUTED below, and on
+        # Windows CreateProcessW appends `.exe` to an extensionless program name, so an
+        # unsuffixed path is looked up as `<path>.exe` and never found. CHANGELOG [6.6.6]
+        var cc5_t = _cbt_tmpexe("soak_a");
         var cc4_t = _cbt_tmpfile("soak_b");
         if (compile("src/main.cyr", cc5_t) != 0) { iter_ok = 0; }
         if (iter_ok == 1) {
-            # Run cc5_t to compile itself
+            # Run cc5_t to compile itself.
+            # v6.6.6 — PE arm. `sys_fork` is a -1 stub on Windows, so this child never
+            # ran: cc4_t was never written, `_file_size` answered -1 for both, the sizes
+            # therefore MATCHED, and every soak iteration scored a self-host PASS on
+            # Windows without compiling anything. CHANGELOG [6.6.6].
+            var soak_spawned = 0;
+            #ifdef CYRIUS_TARGET_WIN
+            _win_compile_spawn(cc5_t, "src/main.cyr", cc4_t);
+            soak_spawned = 1;
+            #endif
+            #ifndef CYRIUS_TARGET_WIN
             var pid2 = sys_fork();
             if (pid2 == 0) {
                 var sfd = sys_open("src/main.cyr", O_RDONLY, 0);
@@ -2318,14 +2374,32 @@ fn cmd_soak(iters): i64 {
             }
             var sb2[1];
             sys_waitpid(pid2, &sb2, 0);
+            soak_spawned = 1;
+            #endif
+            if (soak_spawned == 0) { iter_ok = 0; }
 
-            # Compare
+            # Compare.
+            # ⚠ v6.6.6 — THE COMPARISON WAS UNUSABLE ON WINDOWS TOO, and fixing only the
+            # spawn above would have left it that way. `_file_size` is a raw `syscall(4)`
+            # (stat), which is not a PE reroute and answers -38 for EVERY path, so
+            # `sz1 != sz2` was `-1 != -1` — false — and each iteration scored a self-host
+            # PASS over two files that need not even exist. PE compares BYTES instead,
+            # which is what "self-host" means anyway and fails closed when either file is
+            # missing. CHANGELOG [6.6.6].
+            #ifdef CYRIUS_TARGET_WIN
+            if (_win_files_equal(cc5_t, cc4_t) == 0) {
+                sys_write(STDOUT_FD, "FAIL: self-host output differs\n", 31);
+                iter_ok = 0;
+            }
+            #endif
+            #ifndef CYRIUS_TARGET_WIN
             var sz1 = _file_size(cc5_t);
             var sz2 = _file_size(cc4_t);
             if (sz1 != sz2) {
                 sys_write(STDOUT_FD, "FAIL: self-host size mismatch\n", 30);
                 iter_ok = 0;
             }
+            #endif
         }
         sys_unlink(cc5_t);
         sys_unlink(cc4_t);

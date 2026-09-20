@@ -1948,6 +1948,23 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                         sys_write(STDERR_FD, "\n", 1);
                         errors += 1;
                     }
+                    # v6.6.6 — REFUSE BY NAME ON PE. `sys_fork` is `return 0 - 1` on
+                    # Windows (lib/syscalls_windows.cyr), so the clone below never ran
+                    # and the CVE-43 status check reported `git clone failed for dep
+                    # '<name>' from <url>` — a statement about git that git never made,
+                    # sending the reader to look at a remote that is fine. The verify
+                    # half already asks `_git_exec_available()` before believing a fork
+                    # failure (6.6.5); the clone half did not. CHANGELOG [6.6.6].
+                    if (git_ok == 1 && _git_exec_available() == 0) {
+                        _ew("error: dep '");
+                        _ew(dep_name);
+                        _ew("' needs a git clone, which cyrius cannot run on this platform\n");
+                        _ew("       (no fork). Pre-populate the dep cache from a POSIX host, or\n");
+                        _ew("       vendor the dep with a [deps.NAME] path/version entry.\n");
+                        errors = errors + 1;
+                        git_ok = 0;
+                        dep_pin_ok = 0;
+                    }
                     if (git_ok == 1) {
                         # CVE-15 (v6.1.33): clone via ARGV — no /bin/sh string, no
                         # sys_system. Each field is a distinct argv element AND a
@@ -3133,6 +3150,13 @@ fn _git_err_first_line(): i64 {
 # the directory every content command reads, and a pristine copy parked beside a tampered
 # cache compared clean at exit 0 (measured). `pol` adds the fsck message-id policy above.
 fn _git_run(clone_dir, idx, a1, a2, a3, a4, outf, pol): i64 {
+    # v6.6.6 — PE arm, defence in depth. `_git_exec_available()` already gates every
+    # CALLER (6.6.5 for the verify half, 6.6.6 for the clone), but the fork here is a -1
+    # stub on Windows and a future caller that forgot the gate would read `-1` as "git
+    # said no". Refuse at the source so the answer is the same either way. CHANGELOG [6.6.6]
+    #ifdef CYRIUS_TARGET_WIN
+    return 0 - 1;
+    #endif
     var cl = strlen(clone_dir);
     var pe = cl;
     while (pe > 0 && load8(clone_dir + pe - 1) != 47) { pe = pe - 1; }

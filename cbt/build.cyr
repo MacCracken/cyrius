@@ -9,6 +9,13 @@
 # cyrius includes). We fork cycc with [cc, "--emit-js", source, 0] and dup2 the
 # output file onto stdout. x86-Linux-only (the TS frontend is). See CHANGELOG [6.1.12].
 fn _emit_js(source, output): i64 {
+    # v6.6.6 — PE arm. The fork below is a -1 stub on Windows and the wait that follows
+    # it decodes an uninitialised status slot, so this used to report a plausible result
+    # for a compiler that never ran. It cannot work there at all: see
+    # `_win_emit_js_refuse`. CHANGELOG [6.6.6].
+    #ifdef CYRIUS_TARGET_WIN
+    return _win_emit_js_refuse();
+    #endif
     var cc = current_cc();
     if (cc == 0) {
         _err("cycc not found. Install Cyrius or set CYRIUS_HOME.");
@@ -73,6 +80,20 @@ fn _ensure_cc_cx(): i64 {
     }
     sys_mkdir("build", 0x1ED);
     var out = "./build/cycc_cx";
+    # v6.6.6 — PE arm. `.exe` is not cosmetic: `_emit_cx` SPAWNS this binary, and
+    # CreateProcessW with no application name appends `.exe` to an extensionless program
+    # name, so `./build/cycc_cx` would be looked up as `./build/cycc_cx.exe` and never
+    # found. Same rule `_cbt_tmpexe` exists for. CHANGELOG [6.6.6].
+    #ifdef CYRIUS_TARGET_WIN
+    out = "./build/cycc_cx.exe";
+    if (_win_compile_spawn(cc, "src/main_cx.cyr", out) == 0) {
+        _cc_cx = out;
+        return 0;
+    }
+    xunlink(out);
+    _err("failed to build the cx compiler (cycc_cx) from src/main_cx.cyr");
+    return 1;
+    #endif
     var pid = sys_fork();
     if (pid == 0) {
         var sfd = sys_open("src/main_cx.cyr", O_RDONLY, 0);
@@ -117,6 +138,17 @@ fn _emit_cx(source, output): i64 {
     str_builder_add_int(tmp_out_sb, tmp_pid);
     var tmp_out = str_data(str_builder_build(tmp_out_sb));
     sys_unlink(tmp_out);
+    # v6.6.6 — PE arm. Keeps the tmp-then-rename: `file_rename` (lib/io.cyr) IS routed
+    # on PE as MoveFileExW/0xF034, so a failed cx emit cannot leave a truncated .cyx over
+    # a previously-good one on Windows either. CHANGELOG [6.6.6].
+    #ifdef CYRIUS_TARGET_WIN
+    if (_win_compile_spawn(cc, source, tmp_out) == 0) {
+        if (file_rename(tmp_out, output) == 0) { return 0; }
+        _err_ctx("cx emit: could not rename the temp output onto", output);
+    }
+    xunlink(tmp_out);
+    return 1;
+    #endif
     var pid = sys_fork();
     if (pid == 0) {
         var sfd = sys_open(source, O_RDONLY, 0);
@@ -161,6 +193,18 @@ fn _ensure_cxvm(): i64 {
     }
     sys_mkdir("build", 0x1ED);
     var out = "./build/cxvm";
+    # v6.6.6 — PE arm; `.exe` for the same CreateProcessW lookup rule as cycc_cx above
+    # (`_win_run_cx` spawns this one). CHANGELOG [6.6.6].
+    #ifdef CYRIUS_TARGET_WIN
+    out = "./build/cxvm.exe";
+    if (_win_compile_spawn(cc, "programs/cxvm.cyr", out) == 0) {
+        _cxvm = out;
+        return 0;
+    }
+    xunlink(out);
+    _err("failed to build cxvm from programs/cxvm.cyr");
+    return 1;
+    #endif
     var pid = sys_fork();
     if (pid == 0) {
         var sfd = sys_open("programs/cxvm.cyr", O_RDONLY, 0);
@@ -1016,6 +1060,12 @@ fn compile(source, output): i64 {
 # Run a binary — directly for x86, via qemu for aarch64
 # Run a shell command via /bin/sh -c. Returns exit code.
 fn sys_system(cmd): i64 {
+    # v6.6.6 — PE arm. There is no `/bin/sh` on Windows and the fork was a -1 stub, so
+    # every caller (the pin/tag probes in cbt/cyrius.cyr, `cyrius hooks install`, the
+    # release tag check) read a decoded uninitialised status. CHANGELOG [6.6.6].
+    #ifdef CYRIUS_TARGET_WIN
+    return _win_system(cmd);
+    #endif
     var argv[40];   # N BYTES per CLAUDE.md buffer contract: 4 ptrs need 32 B
     var pid = sys_fork();
     if (pid == 0) {
@@ -1353,6 +1403,154 @@ fn _win_run_timed(path, timeout_ms, args): i64 {
     if (killed == 1) { return _RUN_TIMEOUT_KILLED; }
     return ec;
 }
+
+# ── v6.6.6 — the REST of the fork sites (bite 9b) ───────────────────────────────────
+#
+# 6.6.5 gave a PE arm to the compile spawn, the tool spawn, the program run and the cx
+# run. It did NOT cover the other ten `sys_fork` call sites in cbt/, and `sys_fork` is
+# `return 0 - 1` on PE (lib/syscalls_windows.cyr) with `sys_waitpid` the same — so the
+# parent took the pid != 0 branch, "waited" on -1 and decoded an UNINITIALISED status
+# slot. `cyrius build --target=cx`, `--target=js`, `capacity`, `soak`, `self` and the
+# git-dep clone were therefore broken or SILENTLY WRONG on Windows: a garbage status
+# that happened to decode as WIFEXITED/0 reported success for a child that never ran.
+# Each one below either gets the CreateProcessW spawn the fixed paths use, or refuses
+# BY NAME — never a silent nothing. CHANGELOG [6.6.6].
+
+# `cyrius build --target=js` cannot work on Windows and the reason is structural, not a
+# missing spawn: the TypeScript front end and the JS emitter are included by
+# `src/main.cyr` ALONE (`src/frontend/ts/*`, `src/backend/js/emit.cyr`), so `cycc.exe`
+# — built from `src/main_win.cyr` — has no `--emit-js` flag to spawn with. Say that,
+# rather than fork a compiler that would reject the flag.
+fn _win_emit_js_refuse(): i64 {
+    _err("build --target=js is not available on Windows");
+    var m1 = "  cycc.exe is built from src/main_win.cyr, which does not include the\n";
+    var m2 = "  TypeScript front end or the JS emitter (src/main.cyr only), so it has\n";
+    var m3 = "  no --emit-js. Emit the JS on an x86-64 Linux host.\n";
+    sys_write(STDERR_FD, m1, strlen(m1));
+    sys_write(STDERR_FD, m2, strlen(m2));
+    sys_write(STDERR_FD, m3, strlen(m3));
+    return 1;
+}
+
+# The cross-OS self-host driver (`cyrius audit --internal=platform-check`) reconstructs
+# the environment from /proc/self/environ and drives ssh/scp to ecb/ach/cass/pi. It is a
+# LINUX-HOST tool by construction; cass is one of the hosts it talks TO.
+fn _win_co_run_refuse(cmd): i64 {
+    _err_ctx("the cross-OS self-host driver only runs on a Linux host", cmd);
+    return 1;
+}
+
+# `/bin/sh -c <cmd>` has no Windows equivalent; `cmd /s /c` is the shell that exists.
+# `exec_cmd` (lib/process_win.cyr) already builds exactly that command line, and it
+# returns -1 when the spawn itself fails — which must not be handed back as an exit
+# code, because -1 is not one. A POSIX-only command string (`cp x y && chmod +x y`)
+# still fails here, but it fails with cmd.exe's own status and its own message on the
+# terminal, instead of a decoded uninitialised stack slot.
+fn _win_system(cmd): i64 {
+    var rc = exec_cmd(cmd);
+    if (rc < 0) {
+        _err_ctx("could not start cmd.exe for", cmd);
+        return 1;
+    }
+    return rc;
+}
+
+# Byte-compare two files without reading either whole into memory (PE-only helper).
+# Used by the Windows
+# arm of `cyrius self`, where the two candidates are ~1.2 MB compilers.
+# ⚠ `_file_size` is a raw `syscall(4)` (stat), which is NOT a PE reroute and answers
+# -38 for BOTH paths — so the size pre-check is inert on Windows by design and the
+# streaming compare below is what actually decides. Stated because a size check that
+# silently always passes is exactly the kind of green placebo this release is about.
+fn _win_files_equal(a, b): i64 {
+    var fa = sys_open(a, O_RDONLY, 0);
+    if (fa < 0) { return 0; }
+    var fb = sys_open(b, O_RDONLY, 0);
+    if (fb < 0) { sys_close(fa); return 0; }
+    var ba = alloc(65536);
+    var bb = alloc(65536);
+    var same = 1;
+    var go = 1;
+    while (go == 1) {
+        var na = sys_read(fa, ba, 65536);
+        var nb = sys_read(fb, bb, 65536);
+        if (na != nb) { same = 0; go = 0; }
+        elif (na <= 0) { go = 0; }
+        elif (memeq(ba, bb, na) == 0) { same = 0; go = 0; }
+    }
+    sys_close(fa);
+    sys_close(fb);
+    return same;
+}
+
+# The Windows arm of `cyrius self`. The POSIX body hands a `/bin/sh` script the whole
+# two-step (`cat src/main.cyr | cc > a && chmod +x a && cat src/main.cyr | a > b &&
+# cmp -s a b`); none of `cat`, `chmod` or `cmp` is a Windows command, and the fork that
+# would have run them is a stub. The same contract is reproduced natively: two
+# `_win_compile_spawn` redirects and a byte compare. ⚠ Both temps go through
+# `_cbt_tmpexe`, because the SECOND spawn EXECUTES the first one's output and
+# CreateProcessW appends `.exe` to an extensionless program name.
+fn _win_cmd_self(): i64 {
+    # ⚠ src/main_win.cyr, NOT src/main.cyr — THE PER-TARGET SOURCE. The POSIX script
+    # below names src/main.cyr because on x86-64 Linux that IS the right fork. Handing a
+    # PE cycc.exe the Linux fork compiles fine and produces a PE built from Linux syscall
+    # numbers, which page-faults the moment the second step tries to RUN it (measured
+    # under wine: "Unhandled page fault on write access ... at 0000000140001060"). Same
+    # rule the cross-OS legs already follow (cbt/commands.cyr's ecb sequence uses
+    # src/main_aarch64_macho.cyr). CHANGELOG [6.6.6].
+    var self_src = "src/main_win.cyr";
+    if (file_exists(self_src) == 0) {
+        _err_ctx("self-host: the Windows compiler source is missing", self_src);
+        return 1;
+    }
+    var t1 = _cbt_tmpexe("self_a");
+    var t2 = _cbt_tmpexe("self_b");
+    if (_win_compile_spawn(_cc, self_src, t1) != 0) {
+        _err_ctx("self-host: the installed compiler could not compile", self_src);
+        xunlink(t1);
+        return 1;
+    }
+    if (_win_compile_spawn(t1, self_src, t2) != 0) {
+        _err_ctx("self-host: the freshly built compiler could not compile", self_src);
+        xunlink(t1);
+        xunlink(t2);
+        return 1;
+    }
+    var same = _win_files_equal(t1, t2);
+    xunlink(t1);
+    xunlink(t2);
+    if (same == 1) {
+        println("  PASS: cycc==cycc byte-identical");
+        return 0;
+    }
+    println("  FAIL: cycc!=cycc");
+    return 1;
+}
+
+# The Windows arm of `cyrius capacity`. The POSIX body forks `/bin/sh -c
+# "CYRIUS_STATS=1 <cc>"` with stdin on the materialised source, stdout on /dev/null and
+# stderr on a temp file. `cmd /s /c` does all four: `set` before an `&` sets the
+# variable in the same shell the child inherits, and `nul` is Windows' /dev/null.
+# ⚠ NO SPACE before the `&`: `set X=1 & prog` sets X to "1 " (trailing space included),
+# which would be passed to cycc as the stats flag and silently not match.
+fn _win_capacity_spawn(cc, source, errfile): i64 {
+    var wbuf = alloc(16384);
+    var o = 0;
+    o = _w_append_cstr(wbuf, o, "cmd /s /c \"set CYRIUS_STATS=1& \"");
+    o = _w_append_cstr(wbuf, o, cc);
+    o = _w_append_cstr(wbuf, o, "\" < \"");
+    o = _w_append_cstr(wbuf, o, source);
+    o = _w_append_cstr(wbuf, o, "\" > nul 2> \"");
+    o = _w_append_cstr(wbuf, o, errfile);
+    o = _w_append_cstr(wbuf, o, "\"\"");
+    _w_terminate(wbuf, o);
+    var pi[24];
+    if (_win_create_process(wbuf, 0, 0, &pi) == 0) {
+        _err_ctx("failed to spawn the compiler for capacity stats", cc);
+        return 0 - 1;
+    }
+    return _win_wait_close(&pi);
+}
 #endif
 
 # v6.6.5 — run a tool with an ARBITRARY number of arguments. run_tool caps at 3,
@@ -1484,6 +1682,11 @@ fn _co_build_envp(): i64 {
 # exit status (0 = success). Used by the cross-OS self-host gate so the
 # proven ssh/scp self-host sequence runs with full env.
 fn _co_run_sh(cmd): i64 {
+    # v6.6.6 — PE arm: refuse by name. This driver reads /proc/self/environ and shells
+    # out to ssh/scp; cass is one of the hosts it connects TO. CHANGELOG [6.6.6].
+    #ifdef CYRIUS_TARGET_WIN
+    return _win_co_run_refuse(cmd);
+    #endif
     var envp = _co_build_envp();
     if (envp == 0) { envp = _envp; }
     var pid = sys_fork();

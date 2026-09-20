@@ -13,6 +13,19 @@ fn _pulsar_raw_compile(cc, src, out): i64 {
     str_builder_add_cstr(tmp_sb, out);
     str_builder_add_cstr(tmp_sb, ".pulsar.new");
     var tmp = str_data(str_builder_build(tmp_sb));
+    # v6.6.6 — PE arm. `sys_fork` is a -1 stub on Windows, so the parent decoded an
+    # uninitialised status slot: whenever that read as WIFEXITED/0 the rename below moved
+    # a temp that was never written, or `_file_size` (a raw stat, also unrouted on PE)
+    # answered -1 and the guard caught it — either way `cyrius pulsar` reported a rebuild
+    # it had not done. `_win_compile_spawn` is exactly this redirect. CHANGELOG [6.6.6].
+    var prc = 0;
+    #ifdef CYRIUS_TARGET_WIN
+    prc = _win_compile_spawn(cc, src, tmp);
+    if (prc != 0) { xunlink(tmp); return prc; }
+    sys_chmod(tmp, 0x1ED);
+    if (file_rename(tmp, out) != 0) { xunlink(tmp); return 1; }
+    return 0;
+    #endif
     var pid = sys_fork();
     if (pid == 0) {
         var sfd = sys_open(src, O_RDONLY, 0);

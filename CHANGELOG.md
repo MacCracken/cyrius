@@ -1690,6 +1690,48 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   refusal, and whose axis 4 pins the rmdir-not-sweep contract with a file planted in the live
   directory. 2 mutations, each RED.
 
+- **Twelve of the CLI's seventeen `sys_fork` sites had no Windows arm, so `cyrius self` reported a
+  self-host that never happened and `build --target=cx` / `--target=js` / `capacity` / `soak` /
+  git deps were broken or silently wrong on Windows.** (bite 9b.) `lib/syscalls_windows.cyr`
+  defines `sys_fork` and `sys_waitpid` as `return 0 - 1` stubs, so a POSIX fork/wait does not
+  *fail* on PE — it **succeeds wrongly**: `pid` is `-1`, the parent takes the `pid != 0` branch,
+  "waits" on nothing and decodes an **uninitialised stack slot** as the child's status. 6.6.5
+  armed four sites (the compile spawn, the tool spawn, the program run, the cx run); with
+  `_sha256sum_file`, which has spawned through `exec_capture` since CVE-14, that left **twelve
+  of seventeen** (the census is derived, not counted by hand: the gate below prints it).
+  **Measured on real cass (Windows 11) against the 6.6.5 CLI**: `cyrius self` **exits 0** after
+  printing only `=== Self-Hosting Check ===` — a green self-host verdict for a self-host that
+  never ran, and still exit 0 with `src\main_win.cyr` deleted; `build --target=cx` prints `FAIL`
+  with no reason although `cycc_cx.exe` ships in the Windows tarball and its build script claims
+  the verb works; `--target=js` the same; `capacity` says "no stats output from compiler" about a
+  compiler it never started; a git dep reports `git clone failed for dep 'X' from <url>`, a
+  statement about git that git never made. **Fix** — every site now spawns through
+  CreateProcessW or refuses by name: `_emit_cx` / `_ensure_cc_cx` / `_ensure_cxvm` /
+  `_pulsar_raw_compile` / `cmd_soak`'s inner compile go through `_win_compile_spawn` (with `.exe`
+  on the paths the CLI then *executes*, because CreateProcessW appends `.exe` to an extensionless
+  program name); `cmd_capacity` runs `cmd /s /c "set CYRIUS_STATS=1& …"`; `sys_system` routes to
+  `exec_cmd`; `cyrius self` gets a native two-step self-host plus a byte compare
+  (`_win_cmd_self`), from **`src/main_win.cyr`, the per-target source** — handing a PE `cycc.exe`
+  the Linux fork compiles fine and page-faults when step two runs it; `build --target=js`, the
+  cross-OS ssh driver and a git clone **refuse by name** (the JS emitter and the TypeScript front
+  end are included by `src/main.cyr` alone, so `cycc.exe` has no `--emit-js` to spawn with).
+  `cmd_soak`'s comparison was fixed with it: `_file_size` is a raw `syscall(4)` that answers `-38`
+  for every path on PE, so `sz1 != sz2` was `-1 != -1` and every soak iteration scored a
+  self-host **pass** over two files that need not exist; PE compares bytes. **After, on real
+  cass**: `build --target=cx` exit 0 with the `.cyx` written and `cyrius run` of it returning the
+  program's own code; `self` exit 0 with `PASS: cycc==cycc byte-identical` — a genuine PE
+  self-host — and exit 1 *by name* when the source is absent; `--target=js` and `capacity` fail
+  with the reason spelled out. Gated by `tests/gates/platform/cbt_fork_sites_have_pe_arm.sh`,
+  which **derives the site list from `cbt/*.cyr`** so a new fork site cannot be added without an
+  arm, requires each arm to *name* what it does (an `#ifdef CYRIUS_TARGET_WIN return 0;` is the
+  silent nothing, and would read greener than the bug), requires every `fn _win_*` defined in
+  `cbt/` to be **reachable** in the cross-built PE CLI, and runs the verbs under wine with the
+  `self`-without-`main_win.cyr` negative control. 4 mutations, each RED. ⚠ **`cyrius capacity`
+  still cannot report numbers on Windows**, and now says so instead of implying it tried:
+  `CYRIUS_STATS` is read by `_read_env` (`src/backend/common/runtime.cyr`), which reads
+  `/proc/self/environ` and returns 0 on PE. Wiring the `GetEnvironmentVariableW` lookup is a
+  **compiler** change and is not in this bite.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**
