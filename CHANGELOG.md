@@ -1262,11 +1262,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   leak needs a suite name. `exec`'s only virtue here was propagating the driver's exit code,
   and an explicit `exit` does that while still going through the trap. Fix: run the driver,
   capture its status, `exit` with it. Swept the whole tree for the shape — an awk census of
-  all 220 shell scripts under `scripts/`, `tests/gates/` and `bootstrap/` for `exec` in
-  command position (heredoc-, subshell- and redirection-aware), crossed with the 118 that
+  every shell script under `scripts/`, `tests/gates/` and `bootstrap/` for `exec` in
+  command position (heredoc-, subshell- and redirection-aware), crossed with those that
   install a cleanup trap: check.sh was the only violation, and the two remaining top-level
   `exec`s (`scripts/cyrius`, `scripts/differential-smoke.sh`) are thin shims with no
-  cleanup to skip. Gate: `tests/gates/toolchain/check_sh_targeted_path_cleans_up.sh`
+  cleanup to skip. (The gate re-derives every one of those counts on each run and holds
+  floors under them, so no absolute number is written down here to go stale.) Gate: `tests/gates/toolchain/check_sh_targeted_path_cleans_up.sh`
   (registered in `programs/checks/main.cyr`), anti-vacuous as a before/after pair — the stub
   driver records that the home existed *while it ran*, so a check.sh that stopped staging
   cannot pass by making the survivor count trivially zero. Mutation-proven five ways.
