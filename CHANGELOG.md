@@ -1732,6 +1732,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `/proc/self/environ` and returns 0 on PE. Wiring the `GetEnvironmentVariableW` lookup is a
   **compiler** change and is not in this bite.
 
+- **A gate's `EXIT` trap ran `wineserver -k` with no prefix set, so a failure in one lane
+  could kill another lane's wine jobs.** (bite 9d, from bite 9's review.)
+  `tests/gates/platform/cbt_fork_sites_have_pe_arm.sh` installed
+  `trap 'wineserver -k; rm -rf "$T"' EXIT` immediately after `mktemp -d`, but `WINEPREFIX` was
+  exported inside axis 4's `else` branch — so whenever axis 3 failed (or the run was
+  interrupted before axis 4), the trap's bare `wineserver -k` reached the **default** prefix
+  and killed whatever else was using it, on a box where several gates run wine at once. The
+  two sibling gates that kill wineserver (`cli_args_never_dropped.sh`,
+  `stack_param_homing_matrix.sh`) do it inline after the prefix is set, never from a trap. The
+  prefix path is now bound before the trap is installed and the trap runs only when that
+  directory exists.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**

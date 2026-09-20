@@ -98,7 +98,15 @@ check() {
 [ -x "$ROOT/build/cycc" ] || { echo "FAIL: cbt-fork-sites-have-pe-arm — build/cycc not built"; exit 1; }
 
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: cbt_fork_sites_have_pe_arm: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
-trap 'wineserver -k > /dev/null 2>&1; rm -rf "$T"' EXIT
+# ⚠ THE KILL IS SCOPED TO *OUR* PREFIX, and only once axis 4 has created it. The first
+# cut ran a bare `wineserver -k` from the trap while `WINEPREFIX` was exported inside
+# axis 4's else-branch: if axis 3 failed, axis 4 bailed out before that export and the
+# trap then killed the DEFAULT prefix's server — i.e. another lane's wine jobs, on a box
+# where several gates run wine concurrently. The two sibling gates that kill wineserver
+# (cli_args_never_dropped.sh, stack_param_homing_matrix.sh) do it inline after the
+# prefix is set, never from a trap. CHANGELOG [6.6.6].
+WP="$T/wine"
+trap '[ -d "$WP" ] && WINEPREFIX="$WP" wineserver -k > /dev/null 2>&1; rm -rf "$T"' EXIT
 
 # ── THE DETECTOR. For one source file, print one line per `sys_fork()` CALL (comments and
 # string literals masked first, because three files in cbt/ discuss `sys_fork` in prose
@@ -314,7 +322,7 @@ if ! command -v wine > /dev/null 2>&1 || ! command -v winepath > /dev/null 2>&1;
 elif [ ! -s "$T/cc_win" ]; then
     echo "  FAIL: axis 4 cannot run — the PE compiler was not built in axis 3"; fails=$((fails + 1))
 else
-    export WINEPREFIX="$T/wine" WINEDEBUG=-all WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d'
+    export WINEPREFIX="$WP" WINEDEBUG=-all WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d'
     WN="$T/wn"; mkdir -p "$WN/bin" "$WN/w/src" "$WN/w/lib"
     build_pe() {
         if ! "$T/cc_win" < "$1" > "$2" 2> "$T/bp.err"; then
