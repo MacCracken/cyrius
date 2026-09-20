@@ -37,7 +37,7 @@
 #   * the driver run but its status discarded (`"$CHECK_BIN" "$@"; exit 0`) -> axis 1 RED
 #     on the exit code alone; the cleanup assertions stay green. A cleanup that loses the
 #     verdict is not a fix.
-#   * `"$@"` dropped from the driver invocation -> axis 1 RED on the forwarded argv.
+#   * the selector dropped from the driver invocation -> axis 1 RED on the forwarded argv.
 #   * `rm -rf "$_CHK_STAGED_DIR"` deleted from `_chk_finish` -> axes 1 AND 2 RED (both
 #     paths leak), axis 0 GREEN.
 #   * the scanner pointed at a tree with no top-level `exec` anywhere -> axis 3's
@@ -75,6 +75,10 @@ STUB
     chmod +x "$_w/root/scripts/install.sh"
     cat > "$_w/root/build/cyrius_check" <<STUB
 #!/bin/sh
+# v6.6.6 (bite 27a): check.sh now RESOLVES the selector before running anything, and asks
+# the driver for its own suite names to do it. The stub answers that question and logs
+# every OTHER invocation, so the argv assertion below still sees the real run's argv.
+if [ "\$1" = "--list-suites" ]; then printf 'alpha\nbeta\n'; exit 0; fi
 { printf 'ARGV'; for a in "\$@"; do printf ' %s' "\$a"; done; printf '\n'; } >> "$_w/driver.log"
 echo "HOME_SEEN=\${CYRIUS_HOME:-<unset>}" >> "$_w/driver.log"
 if [ -d "\${CYRIUS_HOME:-/nonexistent}" ]; then
@@ -96,8 +100,14 @@ _run() {
     _w=$1
     shift
     RC=0
-    ( cd "$_w/root" && HOME="$_w/home" TMPDIR="$_w/tmp" sh scripts/check.sh "$@" ) \
-        > "$_w/out" 2>&1 || RC=$?
+    # ⛔ `env -u CYRIUS_HOME`, added 6.6.6 with bite 27a. check.sh EXPORTS the home it
+    # stages, so inside a real check.sh run every gate inherits CYRIUS_HOME — and the
+    # nested check.sh here then took the "caller supplied a home" branch and staged
+    # NOTHING, making axes 0-2 fail on the harness rather than on the tree. Measured on
+    # HEAD before this line existed: the gate passed standalone and was RED in the full
+    # run it is part of. The harness must control its own home.
+    ( cd "$_w/root" && env -u CYRIUS_HOME HOME="$_w/home" TMPDIR="$_w/tmp" \
+        sh scripts/check.sh "$@" ) > "$_w/out" 2>&1 || RC=$?
     LEFT=$(ls -d "$_w"/tmp/cyrius-check-home.* 2>/dev/null | wc -l)
 }
 
@@ -106,7 +116,7 @@ echo "axis 0/1: sh check.sh <suite> stages a home, uses it, and removes it"
 W1="$D/w1"
 mkdir -p "$W1"
 _stand_up "$W1" "$ROOT/scripts/check.sh"
-_run "$W1" alpha beta
+_run "$W1" alpha
 
 HOME_SEEN=$(sed -n 's/^HOME_SEEN=//p' "$W1/driver.log" | head -1)
 HOME_EXISTED=$(sed -n 's/^HOME_EXISTED=//p' "$W1/driver.log" | head -1)
@@ -122,7 +132,7 @@ esac
 # axis 1 — it is gone afterwards, the exit code survived, the argv was forwarded.
 [ "$LEFT" = "0" ] || _fail "$LEFT staged CYRIUS_HOME tree(s) survived the targeted run — the EXIT trap did not run"
 [ "$RC" = "7" ] || _fail "check.sh exited $RC, not the driver's 7 — the targeted path lost the verdict"
-[ "$ARGV" = "alpha beta" ] || _fail "the driver received argv '$ARGV', expected 'alpha beta'"
+[ "$ARGV" = "alpha" ] || _fail "the driver received argv '$ARGV', expected 'alpha'"
 
 # ── axis 2 — the FULL path keeps the property ─────────────────────────────────────────
 echo "axis 2: a full run cleans up too"

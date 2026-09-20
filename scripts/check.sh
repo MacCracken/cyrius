@@ -12,6 +12,13 @@
 #   3. runs the binary and exits with its status — NEVER `exec`, because the
 #      EXIT trap that removes the staged CYRIUS_HOME must run. CHANGELOG [6.6.6]
 #
+# USAGE: `sh scripts/check.sh` is the full run. `sh scripts/check.sh <selector>` runs ONE
+# driver suite, one gate bucket or one gate; `--list` prints every selector and an
+# unrecognised one exits 2 listing them. Both selector vocabularies are DERIVED from the
+# registrations (the driver's own suite table; this file's `_chk_gate` lines plus the
+# `_gate(…, "tests/gates/…")` literals in programs/checks/*.cyr), never written down twice.
+# CHANGELOG [6.6.6]
+#
 # scripts/lib/audit-walk.sh stays bash for the v5.9.x window — it
 # is still consumed by the bash scripts/cyrius dispatcher, queued
 # for cyrius conversion at v5.9.5 alongside that dispatcher. The
@@ -46,6 +53,17 @@ _CHK_FAILS=0
 _CHK_STAGED_DIR=""    # the throwaway CYRIUS_HOME to remove, when we staged one
 _CHK_STARTED=0        # 1 once we are past setup, i.e. once a summary is meaningful
 _CHK_DRIVER="programs/checks (the cyrius check binary)"
+
+# The shell gates this script is supposed to run, read back out of its OWN source. One
+# reader for the summary and for the selector below, so a targeted run and the NOT RUN
+# bookkeeping can never disagree about what the registered set is.
+_chk_shell_manifest() {
+    grep -oE '^_chk_gate "\$ROOT/[^"]+"' "$ROOT/scripts/check.sh" \
+        | sed 's|^_chk_gate "\$ROOT/||; s|"$||'
+}
+# What THIS run is expected to produce results for. A full run expects all of them; a
+# targeted shell-gate run narrows it, so the summary does not report the rest as NOT RUN.
+_CHK_MANIFEST=$(_chk_shell_manifest)
 
 # Run one shell gate. ALWAYS returns 0 — `set -e` must not turn a red gate into an abort;
 # the tally is the verdict.
@@ -83,9 +101,9 @@ _chk_finish() {
     if [ -n "$_CHK_STAGED_DIR" ]; then rm -rf "$_CHK_STAGED_DIR"; fi
     if [ "$_CHK_STARTED" != "1" ]; then exit "$_xrc"; fi
 
-    # Everything this script is supposed to run, read back out of its own source.
-    _manifest=$(grep -oE '^_chk_gate "\$ROOT/[^"]+"' "$ROOT/scripts/check.sh" \
-                | sed 's|^_chk_gate "\$ROOT/||; s|"$||')
+    # Everything THIS run is supposed to have produced a result for (the full registered
+    # set, or the subset a targeted run selected — see _CHK_MANIFEST).
+    _manifest="$_CHK_MANIFEST"
     _total=$(printf '%s\n' "$_manifest" | grep -c . || true)
     _notrun=""
     _nnot=0
@@ -152,8 +170,12 @@ trap _chk_finish TERM
 # `_try_redirect_to_pinned` when a consumer's pin equals its own version, so a consumer
 # pinned at VERSION would otherwise be served by the RELEASED cbt, and a cbt regression in
 # the tree would pass twelve wrapper-driven gates (found by the bite-4 review).
-_CHK_LIVE_HOME="${CYRIUS_HOME:-$HOME/.cyrius}"
-if [ -z "${CYRIUS_HOME:-}" ]; then
+# v6.6.6 (bite 27a): a FUNCTION, called after the selector is resolved. `check.sh --list`
+# and `check.sh <typo>` used to stage 19 MB and a full toolchain refresh before printing
+# their one line of output. Nothing about resolving a selector needs a home.
+_chk_stage_home() {
+  _CHK_LIVE_HOME="${CYRIUS_HOME:-$HOME/.cyrius}"
+  if [ -z "${CYRIUS_HOME:-}" ]; then
     _CHK_HOME=$(mktemp -d "${TMPDIR:-/tmp}/cyrius-check-home.XXXXXX") && [ -d "$_CHK_HOME" ] || { printf "error: mktemp -d failed for the throwaway CYRIUS_HOME (TMPDIR=%s)\n" "${TMPDIR:-/tmp}" >&2; exit 1; }
     _CHK_VER="$(tr -d '[:space:]' < VERSION)"
     mkdir -p "$_CHK_HOME/versions"
@@ -177,7 +199,8 @@ if [ -z "${CYRIUS_HOME:-}" ]; then
     export PATH="$_CHK_HOME/bin:$PATH"
     _CHK_STAGED_DIR="$_CHK_HOME"   # removed by the single _chk_finish EXIT trap
     printf "check: staged CYRIUS_HOME=%s (versions/%s from the tree; other slots + deps aliased from %s; PATH prefixed with its bin/)\n" "$_CHK_HOME" "$_CHK_VER" "$_CHK_LIVE_HOME"
-fi
+  fi
+}
 
 CHECK_BIN="$ROOT/build/cyrius_check"
 # v6.0.90: programs/check.cyr split into programs/checks/ (slim dispatcher
@@ -234,22 +257,114 @@ if [ ! -x "$CHECK_BIN" ] || [ -z "$NEWEST_SRC" ] || [ "$NEWEST_SRC" -nt "$CHECK_
     mv -f "$CHECK_BIN.new" "$CHECK_BIN"
 fi
 
-# Run the cyrius gate suite. On a targeted run (a suite name was passed), run only the
-# driver — the bare-metal boot gate and the shell gates below are a full-run capstone.
+# ── ⛔ v6.6.6 (bite 27a): A TARGETED RUN RUNS THAT SUITE — AND A TYPO IS AN ERROR ─────
 #
-# ⛔ v6.6.6: THIS WAS `exec "$CHECK_BIN" "$@"`, AND exec DOES NOT RUN THE EXIT TRAP. The
-# process is REPLACED, so `_chk_finish` — the only thing that removes the throwaway
-# CYRIUS_HOME staged ~90 lines above — never ran on this path at all. Every targeted
-# invocation left a 19 MB tree behind in $TMPDIR, for ever; four of them were sitting in
-# /tmp while this was written. The full-run path had always been fine, which is why it
-# survived the v6.6.4 staging work: the leak is invisible unless you pass a suite name.
-# exec's only virtue here was propagating the exit code, and an explicit `exit` does that
-# while still going through the trap. CHANGELOG [6.6.6]
+# THE DEFECT. `sh scripts/check.sh <anything>` ran the WHOLE suite. The argument was
+# forwarded to the check binary (bite 25b even gated that it was forwarded) and the binary
+# threw it away: programs/checks/main.cyr includes lib/args.cyr, never called args_init(),
+# and no line of it read argv(n). So `check.sh nosuchsuitename` ran all 130 registered rows
+# for thirteen minutes and reported on all of them — an unrecognised name was not an error,
+# it was a full run. The comment that stood here ("On a targeted run … run only the
+# driver") described the intended behaviour, not the behaviour.
+#
+# THE TWO HALVES. A run is the cyrius driver AND the shell gates below, so selection has to
+# cover both or a "targeted run" silently means "the driver half, all of it". Hence three
+# kinds of selector, and EVERY one of them is DERIVED, never listed here:
+#   * a driver suite — asked of the binary (`--list-suites`), which answers out of its own
+#     suite table, the same table its run loop walks;
+#   * a shell-gate BUCKET (`codegen`, `frontend`, …, plus `scripts`) — derived from this
+#     file's own `_chk_gate` lines, the same read `_chk_finish` uses for NOT RUN;
+#   * a single shell gate, by basename.
+# A hand-written list of any of the three is the shape this release keeps finding rotted.
+#
+# An unknown selector exits 2 and PRINTS the valid ones; an ambiguous one (a name that is
+# both a suite and a bucket) exits 2 rather than picking. Neither stages a CYRIUS_HOME —
+# _chk_stage_home is called only once a selector has resolved.
+#
+# ⛔ The driver-suite path keeps bite 25b's property: the driver's exit status IS the
+# verdict and no summary is printed, because the shell-gate manifest is not part of that
+# run. It goes through `exit`, never `exec`, so the EXIT trap still removes the staged home
+# (that was 25b's bug: `exec` replaces the process and runs no trap).
+# CHANGELOG [6.6.6]
+# ⚠ A full run drives its shell gates from TWO registries and a selector has to see both,
+# or "run that gate" works for 60 of the 192 and reports the other 132 as unknown. The
+# other one is `_gate(<name>, "tests/gates/…")` inside programs/checks/*.cyr — 132 rows
+# the check binary runs as part of its `regression` phase. Both are read back out of the
+# CALLS, so neither can drift from what actually runs. (Cross-checked when this was
+# written: the union is exactly the 189 files under tests/gates/ plus the 3 scripts/*.sh
+# gates — nothing registered twice, nothing registered and missing, nothing orphaned.
+# DERIVE these numbers, never quote this line.)
+_chk_driver_gate_manifest() {
+    grep -ohE '"tests/gates/[A-Za-z0-9_./-]+\.sh"' "$ROOT"/programs/checks/*.cyr | tr -d '"'
+}
+_chk_gate_registry() { { _chk_shell_manifest; _chk_driver_gate_manifest; } | sort -u; }
+_chk_shell_buckets() { _chk_gate_registry | sed 's|/[^/]*$||; s|^tests/gates/||' | sort -u; }
+_chk_shell_names()   { _chk_gate_registry | sed 's|.*/||; s|\.sh$||' | sort -u; }
+_chk_list_selectors() {
+    echo "usage: sh scripts/check.sh [<selector>]   (no selector = the full run)"
+    echo ""
+    echo "driver suites (programs/checks/main.cyr — runs that phase of the check binary):"
+    "$CHECK_BIN" --list-suites 2>/dev/null | sed 's/^/  /'
+    echo "gate buckets (runs every registered gate in that bucket, from both registries):"
+    _chk_shell_buckets | sed 's/^/  /'
+    echo "gates (runs that one gate script):"
+    _chk_shell_names | sed 's/^/  /'
+}
+
 if [ $# -gt 0 ]; then
-    _CHK_TARGETED_RC=0
-    "$CHECK_BIN" "$@" || _CHK_TARGETED_RC=$?
-    exit "$_CHK_TARGETED_RC"
+    case "$1" in
+        --list|-l|--list-suites|--help|-h)
+            _chk_list_selectors
+            exit 0
+            ;;
+    esac
+    if [ $# -gt 1 ]; then
+        printf "error: check.sh takes at most ONE selector (got %s: %s)\n" "$#" "$*" >&2
+        _chk_list_selectors >&2
+        exit 2
+    fi
+    _CHK_SEL=$1
+    _CHK_KIND=""
+    if "$CHECK_BIN" --list-suites 2>/dev/null | grep -qx -- "$_CHK_SEL"; then _CHK_KIND="suite"; fi
+    if _chk_shell_buckets | grep -qx -- "$_CHK_SEL"; then _CHK_KIND="${_CHK_KIND:+$_CHK_KIND }bucket"; fi
+    if _chk_shell_names | grep -qx -- "$_CHK_SEL"; then _CHK_KIND="${_CHK_KIND:+$_CHK_KIND }gate"; fi
+    case "$_CHK_KIND" in
+        "")
+            printf "error: unknown check selector '%s' — nothing registered by that name\n" "$_CHK_SEL" >&2
+            _chk_list_selectors >&2
+            exit 2
+            ;;
+        *" "*)
+            printf "error: selector '%s' is ambiguous — it names a %s; rename one of them\n" "$_CHK_SEL" "$_CHK_KIND" >&2
+            exit 2
+            ;;
+    esac
+
+    _chk_stage_home
+    if [ "$_CHK_KIND" = "suite" ]; then
+        _CHK_TARGETED_RC=0
+        "$CHECK_BIN" "$_CHK_SEL" || _CHK_TARGETED_RC=$?
+        exit "$_CHK_TARGETED_RC"
+    fi
+    # A bucket or a single gate. Narrow the manifest FIRST so the end-of-run summary
+    # reports on exactly what was selected instead of calling the other ~128 NOT RUN.
+    if [ "$_CHK_KIND" = "bucket" ]; then
+        _CHK_MANIFEST=$(_chk_gate_registry | grep -E "^(tests/gates/)?$_CHK_SEL/")
+    else
+        _CHK_MANIFEST=$(_chk_gate_registry | grep -E "(^|/)$_CHK_SEL\.sh\$")
+    fi
+    _CHK_SEL_N=$(printf '%s\n' "$_CHK_MANIFEST" | grep -c . || true)
+    [ "$_CHK_SEL_N" -gt 0 ] || { printf "error: selector '%s' resolved to 0 gates — the registry reader and the selector disagree\n" "$_CHK_SEL" >&2; exit 2; }
+    printf "check: selector '%s' -> %s of %s registered gate(s)\n" \
+        "$_CHK_SEL" "$_CHK_SEL_N" "$(_chk_gate_registry | grep -c . || true)"
+    _CHK_STARTED=1
+    for _m in $_CHK_MANIFEST; do
+        _chk_gate "$ROOT/$_m"
+    done
+    exit 0    # _chk_finish turns the tally into the verdict
 fi
+
+_chk_stage_home
 
 # ⛔ v6.6.6: RECORD the driver's verdict, do NOT abort on it. `"$CHECK_BIN"` used to be a
 # bare command under `set -e`, so any red row in it skipped every shell gate below — see the

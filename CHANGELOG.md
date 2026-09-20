@@ -1296,6 +1296,34 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   orphans that, not the stand-in. Mutation-proven five ways, including "the primitive is
   correct but nobody calls it", which axes 0 and 1 cannot see.
 
+- **`sh scripts/check.sh <suite>` ran the WHOLE suite — an unknown name was not even an
+  error** (bite 27a). check.sh forwarded the argument to the check binary (bite 25b even
+  gated that it was forwarded) and the binary discarded it: `programs/checks/main.cyr`
+  includes `lib/args.cyr`, never called `args_init()`, and no line of it read `argv(n)` —
+  `grep -n 'args_init()' programs/checks/*.cyr` returned nothing. So
+  `sh scripts/check.sh nosuchsuitename` ran all 192 registered gates for ~13 minutes and
+  reported on all of them, while check.sh's own comment at the call site read "On a targeted
+  run (a suite name was passed), run only the driver". Selection now covers BOTH halves of a
+  run, because covering one half silently means "all of the other": a **driver suite**
+  (`selfhost`, `var-grow`, `fn-grow`, `idpool`, `heapmap`, `tcyr`, `regression`, `fmt`,
+  `lint`), a **gate bucket** (`codegen`, `frontend`, …, plus `scripts`), or a **single gate**
+  by basename. `--list` prints all of them; an unknown selector exits 2 and lists them; an
+  ambiguous one exits 2 rather than guessing; and neither stages a `CYRIUS_HOME` any more
+  (`_chk_stage_home` is called only once a selector resolves). Every vocabulary is DERIVED
+  from the registrations, never written down twice: the driver answers `--list-suites` out of
+  the same one-row-per-phase table `main()` walks, and the gate names come from BOTH
+  registries — check.sh's `_chk_gate` lines and the `_gate(…, "tests/gates/…")` literals in
+  `programs/checks/*.cyr`. ⭐ That second registry is the trap: the first cut read check.sh's
+  lines only and called 132 of the 192 registered gates unknown. Measured: `check.sh heapmap`
+  is 25 ms against a 13-minute full run. The targeted path keeps bite 25b's property (the
+  driver's exit status is the verdict, via `exit`, never `exec`, so the EXIT trap still
+  removes the staged home) and a targeted gate run narrows the NOT-RUN manifest to the
+  selection. Gate: `tests/gates/toolchain/check_targeted_run_selects.sh` (registered in
+  `programs/checks/main.cyr`), 8 axes, mutation-proven four ways. Also fixed in passing:
+  `tests/gates/toolchain/check_sh_targeted_path_cleans_up.sh` did not clear `CYRIUS_HOME`
+  for its harness, and since check.sh EXPORTS the home it stages, that gate was GREEN
+  standalone and RED inside the full run it belongs to.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**
