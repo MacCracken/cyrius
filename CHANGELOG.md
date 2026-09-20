@@ -2021,6 +2021,30 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   no temp sibling). 4 mutants, all RED; the half-fix that swaps in `file_rename` and still discards
   the result is green on the structural axis and caught by the runtime ones.
 
+- **A bare `cyrius capacity` metered `src/main.cyr` — the x86-64 Linux fork — on every
+  host, so inside a cyrius checkout on ARM or macOS it reported the wrong compiler's table
+  occupancy.** (bite 24b.) The no-argument default in `cbt/cyrius.cyr`'s `capacity`
+  dispatch was the bare literal, one of seven per-target forks. On ARM it therefore
+  compiled a compiler that host does not build and cannot run, and printed its `fn_table`
+  / `var_table` / `fixup_table` / `code_size` as though they were the local compiler's —
+  with nothing in the output saying so. `capacity --check`'s entire job is to warn before
+  a cap bites, and it was watching a fork nobody on that host ships. Same class as bite
+  23a (`cyrius self` / `cyrius soak`). **Fix:** ask `_self_host_src()` (`cbt/build.cyr`)
+  first — the same owner bite 23a introduced, not a second copy of an `#ifdef` chain whose
+  arm order decides the answer — and keep `src/main.cyr` / `src/lib.cyr` as the fallbacks,
+  since a non-cyrius project has no per-target fork and must keep working on ARM and
+  macOS. **Measured on real pi** (aarch64, Linux 6.8.0-1064-raspi) with a two-fork
+  workspace and the tracked aarch64-native cycc: the pre-fix CLI answered
+  `note: 1 unreachable fns` (the 2-fn `src/main.cyr` probe) and the fixed CLI
+  `note: 8 unreachable fns` (the 9-fn `src/main_aarch64_native.cyr`). New gate
+  `tests/gates/toolchain/capacity_meters_host_fork.sh`: the dispatch asks, and asks before
+  the fallbacks; a checkout carrying BOTH forks is metered by fn count (expected value
+  derived from the probe source, not from what the CLI printed); and a plain
+  `src/main.cyr` project is still metered by both CLIs. 3 mutants, all RED. ⚠ The gate's
+  own first cut ordered the `_self_host_src()` **call** rather than the `file_exists` that
+  **uses** it, and passed the mutant that swaps the two arms — an unreachable improvement
+  reading as a fix — which is why the both-forks runtime axis exists.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**
