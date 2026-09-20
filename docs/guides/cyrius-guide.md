@@ -1273,6 +1273,15 @@ fourth is the `#host_only` scanner: an included file holding `var doc = "intro` 
 `end";` used to be recorded as a host-only module, so every `--target=…-bare-metal-elf` build
 that pulled it was refused. A `#host_only` really at column 0 still annotates the file.
 
+**And so does macro expansion (v6.6.6).** A `#define NAME(a) …` macro is expanded only where an
+IDENTIFIER STARTS and only outside a string literal. Until 6.6.6 the macro pass — the FIFTH, and
+the one the sentence above did not cover, because it is byte-oriented rather than line-oriented —
+matched the name anywhere: `myID(5)` with `#define ID(a) (a)` in scope was rewritten to `my((5))`,
+so a program with both `myID` and `my` defined silently CALLED THE WRONG ONE, and `"ID(5) literal"`
+lost two bytes of its own data. Both are fixed; a name that merely ends an identifier, and a name
+inside a string, are now left alone. (Inside a `#` COMMENT a macro is still expanded — a `#define`
+body stops at the newline, so that cannot change what is compiled.)
+
 ⚠ **A `#` is not always a comment.** `#naked`, `#inline`, `#pure`, `#io`, `#alloc`,
 `#must_use`, `#regalloc`, `#deprecated`, `#assert` and `#pe_import` are attribute TOKENS, and
 the lexer keeps reading the line after them — so `#naked fn isr() {` opens a real brace.

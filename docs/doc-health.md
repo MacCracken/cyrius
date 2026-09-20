@@ -173,6 +173,20 @@ type: state
 > `vidya/` compiler gotcha added (`grep the SHAPE, not the name; a rule applied inline once is
 > the tell`); no other `vidya/` file touched, and the per-minor structural refresh remains a
 > closeout item.
+
+> **Touched at 6.6.6 (bite 15, not a sweep):** `docs/guides/cyrius-guide.md`'s
+> "the preprocessor reads it the same way" paragraph said *"the four line-oriented passes now
+> share one state machine"* — true as written, and still an incomplete picture of the rule a
+> reader takes from it, because MACRO EXPANSION is a FIFTH pass that is byte-oriented and had
+> neither the string state nor a left word boundary: `"ID(5) literal"` lost two bytes of its
+> own data and `myID(5)` called `my`. A paragraph for it was added beneath, including the one
+> place a macro IS still expanded (inside a `#` comment) and why that cannot change what is
+> compiled. The lesson is the same as the attribute-boundary entry above: a doc sentence scoped
+> to the passes that were FIXED reads as a statement about the whole preprocessor.
+> `docs/development/issues/archived/2026-09-19-cycc-exits-zero-after-a-short-output-write.md`
+> gained four corrections, of which the load-bearing one is that the filing's own "grep
+> `while (wgo == 1)`" recipe finds six of the ELEVEN sites. One `vidya/` compiler gotcha added
+> (a test whose oracle lives in the same file the defect damages cannot fail).
 >
 > ⚖️ **Not re-verified at 6.6.6:** the tier tables and the "At a glance" anchors below still
 > carry their 2026-09-08 v6.6.1 figures. cycc is **1,315,016 B** as of this bite
