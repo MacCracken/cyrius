@@ -282,6 +282,15 @@ integer, a field, a bare `return;` — is a compile error since v6.6.6 naming wh
 v6.6.6 every one of those compiled clean and handed back the first register plus a second that
 was never written. (The >16-byte form has error'd on an uncarryable shape since v5.5.36.)
 
+⚠ **A copy moves one struct into a variable of that SAME struct type.** `p = q` and
+`var p: P3 = q` between two DIFFERENT struct types are a compile error since v6.6.6
+(`cannot copy 'q' into a variable of a different struct/vector type: 'p'`), and so is a copy
+between two different vector types (`f64v4 = f64v2`). Before v6.6.6 both compiled clean and
+fell through to a plain 8-byte store: the assignment copied one word of three and left the rest
+of `p` stale, and the declaration stored `q`'s *address* into a struct-typed slot, so `p.x` read
+back a stack address. The struct-*literal* form (`var p: P3 = Q3{..}`) has been an error since
+v6.6.5. A source that is **not** a struct or vector still binds as a pointer, unchanged.
+
 ⚠ **A by-value struct PARAMETER over 8 bytes is address-passed** — the parameter's slot holds
 the caller's address, which is why writing `q.z = 5` inside the callee is visible to the caller.
 Since v6.6.6 every path that copies or returns such a parameter goes through that address:

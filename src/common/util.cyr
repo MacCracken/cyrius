@@ -2344,6 +2344,30 @@ fn ERR_MSG(S, msg, len): i64 {
     return 0;
 }
 
+# ⛔ 6.6.6 — A STRUCT COPY BETWEEN TWO DIFFERENT STRUCT TYPES WAS SILENTLY ACCEPTED.
+# Both copy paths — `p = q;` (`_try_aggregate_copy_assign`, parse.cyr) and
+# `var p: P = q;` (`_try_struct_copy_init`, parse_decl.cyr) — answered a type mismatch
+# with `return 0`, which falls through to the generic 8-byte store. So:
+#   struct P3{x;y;z;} struct Q3{a;b;c;}   p = q;        -> one word of three copied,
+#                                                          p.x became q.a, p.y/p.z stale
+#   var p: P3 = q;                                      -> q's ADDRESS stored into a
+#                                                          struct-typed slot; p.x read 139
+# Both compiled clean, exit 0, no diagnostic. The LITERAL form (`var p: P3 = Q3{..}`) has
+# been a hard error since 6.6.5; these are the same rule with nothing behind it.
+# ⚠ A source with NO aggregate type (ts >= 0) must still fall through — that is the
+# deliberate pointer-bind path ("the C semantics of `P *b = a`", CHANGELOG [6.6.5]).
+# Struct sids and vector descriptors are both stored NEGATIVE, so one test covers a
+# struct/struct, a vector/vector and a struct/vector pair.
+# Returns 1 after reporting, 0 when the pair is fine or is not this shape.
+# CHANGELOG [6.6.6]
+fn _AGG_ASSIGN_TYPE_ERR(S, td, ts, dnoff, snoff): i64 {
+    if (td >= 0) { return 0; }
+    if (ts >= 0) { return 0; }
+    if (td == ts) { return 0; }
+    ERR_IDENT(S, "cannot copy ", snoff, " into a variable of a different struct/vector type: ", dnoff);
+    return 1;
+}
+
 # ── Compiler-state heap zero-init (v5.8.63) ──────────────────────────
 # Writes the post-brk scratch-state region (S+0x18C100..S+0x1903F8 +
 # IR state at S+0xF3A000..S+0xF3A028 (5 counters; relocated out of the

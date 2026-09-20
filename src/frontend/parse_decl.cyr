@@ -2125,6 +2125,20 @@ fn _sci_global_src(S, snoff, pscale): i64 {
     return gvi;
 }
 
+# 6.6.6 — the recorded aggregate type of a GLOBAL source name in the local `0 - sid`
+# convention, or 0 when the name is not an inline aggregate global. `_sci_global_src`
+# above folds "wrong type" into the same -1 as "not a global" and "holds an address",
+# so it cannot tell a type MISMATCH from a shape that must fall through; this can.
+# See `_AGG_ASSIGN_TYPE_ERR` (src/common/util.cyr). CHANGELOG [6.6.6]
+fn _sci_gsrc_type(S, snoff): i64 {
+    var gvi = FINDVAR(S, snoff);
+    if (gvi < 0) { return 0; }
+    if (GVPM(S, gvi) != 2) { return 0; }
+    var gt = GVTYPE(S, gvi);
+    if (gt <= 0) { return 0; }
+    return 0 - gt;
+}
+
 fn _try_struct_copy_init(S, noff, pscale): i64 {
     if (pscale >= 0) { return 0; }
     if (PEEKT(S) != 4) { return 0; }
@@ -2142,11 +2156,23 @@ fn _try_struct_copy_init(S, noff, pscale): i64 {
     _sci_gsrc = 0 - 1;
     if (src_li < 0) {
         var _gs = _sci_global_src(S, TOKVAL(S, ci_ti), pscale);
-        if (_gs < 0) { return 0; }
+        if (_gs < 0) {
+            # 6.6.6 — a struct-typed GLOBAL source of a DIFFERENT type is a type error, not a
+            # fall-through to the scalar init. See `_AGG_ASSIGN_TYPE_ERR`. CHANGELOG [6.6.6]
+            _AGG_ASSIGN_TYPE_ERR(S, pscale, _sci_gsrc_type(S, TOKVAL(S, ci_ti)), noff, TOKVAL(S, ci_ti));
+            return 0;
+        }
         _sci_gsrc = _gs;
     }
     else {
-    if (GLTYPE(S, src_li) != pscale) { return 0; }   # same struct sid as b
+    # 6.6.6 — this bail USED to be the whole answer to a type mismatch, and it falls through
+    # to the scalar init, which stores the SOURCE'S ADDRESS into a slot the compiler has
+    # marked struct-typed: `var p: P3 = q;` for a `Q3 q` read back a stack address through
+    # `p.x`, silently. See `_AGG_ASSIGN_TYPE_ERR` (src/common/util.cyr). CHANGELOG [6.6.6]
+    if (GLTYPE(S, src_li) != pscale) {
+        _AGG_ASSIGN_TYPE_ERR(S, pscale, GLTYPE(S, src_li), noff, TOKVAL(S, ci_ti));
+        return 0;
+    }   # same struct sid as b
     # ⛔ 6.6.5 — THE SOURCE MUST BE INLINE, OR THIS IS NOT A COPY AT ALL. This path had no
     # layout check whatsoever: given a POINTER-mode `a` (`var a: P = mk();`) it copied a's slot
     # plus the slots BELOW it — a's address, then a neighbouring local's value — into b, so

@@ -734,6 +734,14 @@ sh "$ROOT/tests/gates/codegen/cx_forward_read_constant_global.sh"
 # printed nothing and exited 0: a PASS over the preprocessor defect it is named for. The runner
 # now requires the binary's own "N passed" line for any test whose source calls assert_summary.
 sh "$ROOT/tests/gates/toolchain/crossos_runner_rejects_a_silent_binary.sh"
+# 6.6.6: copying between two DIFFERENT struct (or vector) types is an error, not an 8-byte
+# store. Both copy paths answered a type mismatch with `return 0`, which falls through to the
+# generic scalar store: `p = q` between a P3 and a Q3 copied ONE word of three and left the
+# rest of `p` stale, and `var p: P3 = q;` stored q's ADDRESS into a struct-typed slot (p.x read
+# a stack address) — both silent, exit 0. The LITERAL form has been a hard error since 6.6.5.
+# Acceptance rows are checked against field-by-field CONTROL programs, and the pointer-bind and
+# scalar-source paths are pinned so a future tightening cannot quietly take them out.
+sh "$ROOT/tests/gates/frontend/struct_copy_type_checked.sh"
 
 # 6.6.5: the `return f(args);` tail path must divert to PARSE_FNCALL for exactly the
 # arguments PARSE_FNCALL treats specially — no more. The `: Str` literal divert added here

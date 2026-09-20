@@ -2571,6 +2571,33 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   so a `.tcyr` structurally cannot cover the target the bug lives on. `build/cycc` is
   **unchanged** — `src/backend/cx/emit.cyr` is reached only from `src/main_cx.cyr`.
 
+- **Copying between two DIFFERENT struct (or vector) types was silently accepted, on BOTH the
+  assignment and the declaration path.** (bite 21d; found by bite 16's review.) No diagnostic,
+  exit 0. `struct P3{x;y;z;} struct Q3{a;b;c;}` with `var p: P3 = ...; var q: Q3 = ...`:
+  `p = q;` copied ONE word of three — `p.x` silently became `q.a` while `p.y`/`p.z` stayed
+  stale — and `var p: P3 = q;` stored `q`'s **address** into a slot the compiler had marked
+  struct-typed, so `p.x` read back a stack address (measured: 139). Both shapes reproduce on
+  6.6.5 and on this lane's parent. **Root cause, one sentence:** both copy paths —
+  `_try_aggregate_copy_assign` (`src/frontend/parse.cyr`) and `_try_struct_copy_init`
+  (`src/frontend/parse_decl.cyr`) — answered a type mismatch with `return 0`, which falls
+  through to the generic 8-byte store, and neither reported anything. The struct-LITERAL form
+  (`var p: P3 = Q3{..}`) has been a hard error since v6.6.5; these were the same rule with
+  nothing behind it. All three bail sites (local source, global source, assignment) now call
+  `_AGG_ASSIGN_TYPE_ERR` (`src/common/util.cyr`), which reports
+  `cannot copy 'q' into a variable of a different struct/vector type: 'p'`. Struct ids and
+  vector descriptors are both stored negative, so the one test covers a struct/struct, a
+  vector/vector (`f64v4 = f64v2` used to drop two lanes) and a struct/vector pair, and it
+  covers a **1-slot** struct, whose 8-byte store is byte-correct but binds the wrong field
+  names. ⚠ A source with **no** aggregate type still falls through — that is the deliberate
+  pointer-bind path (the C semantics of `P *b = a`, CHANGELOG [6.6.5]) — and a scalar source
+  keeps its existing *warning* rather than becoming an error; both are pinned as acceptance
+  rows so a later tightening cannot take them out quietly. Gated by
+  `tests/gates/frontend/struct_copy_type_checked.sh` (9 refusals + 7 acceptances, every
+  acceptance cross-checked against a field-by-field control program; mutation-proven 9/9, 5,
+  3 and 1 rows red for all three sites and each alone). Self-host fixpoint green, seed-derive
+  green, cycc 1,315,344 -> 1,315,416 B, all seven forks compile, and all 332 `.tcyr` produce
+  identical exit codes against the pre-bite compiler.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**

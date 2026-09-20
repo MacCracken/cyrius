@@ -1785,12 +1785,29 @@ fn _try_aggregate_copy_assign(S, noff): i64 {
     # layout, the two answered the same assignment differently, which is worse than both being
     # wrong. Every combination now goes through `_agc_operand`. CHANGELOG [6.6.5]
     var nslots = _agc_operand(S, noff);
-    if (nslots <= 1) { return 0; }
+    # 6.6.6 — the destination's recorded type, read BEFORE the span test, and the source
+    # probed even when the destination is a ONE-slot (<= 8 B) struct: such a struct has no
+    # multi-slot copy but it still has a TYPE, and the declaration form reports a mismatch
+    # for it. Two paths answering the same pair differently is the shape 6.6.5 called out.
+    # `dt < 0` gates the probe so an ordinary scalar `x = y;` does not pay for it.
+    # See `_AGG_ASSIGN_TYPE_ERR` (src/common/util.cyr). CHANGELOG [6.6.6]
+    var dt = _agc_t;
+    var src_noff = TOKVAL(S, GTI(S));
+    if (nslots <= 1) {
+        if (dt < 0) {
+            _agc_operand(S, src_noff);
+            _AGG_ASSIGN_TYPE_ERR(S, dt, _agc_t, noff, src_noff);
+        }
+        return 0;
+    }
     var dst_li = _agc_li;
     if (_agc_pp == 1) { dst_li = _AGC_DREF(dst_li); }
     var dst_gv = _agc_gvi;
     var lt = _agc_t;
-    var snslots = _agc_operand(S, TOKVAL(S, GTI(S)));
+    var snslots = _agc_operand(S, src_noff);
+    # 6.6.6 — this pair of tests USED to be the whole answer to a type mismatch, and the
+    # answer was `return 0` = the generic 8-byte store. See `_AGG_ASSIGN_TYPE_ERR`.
+    if (_AGG_ASSIGN_TYPE_ERR(S, lt, _agc_t, noff, src_noff) == 1) { return 0; }
     if (snslots != nslots) { return 0; }
     if (_agc_t != lt) { return 0; }
     var src_li = _agc_li;
