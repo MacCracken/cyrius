@@ -37,7 +37,7 @@ unscheduled 6.x backlog. Whole-cycle framing plus v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.6.5** (2026-09-20, bump commit; tag pending) — cycc **1,328,336 B** (`.text` **1,163,064**) ·
+**Current head: v6.6.6** (2026-09-20, bump commit; tag pending) — cycc **1,328,336 B** (`.text` **1,163,064**) ·
 seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi ·
 **340** `.tcyr` (**99** in `crossos/`) · **104** `lib/*.cyr` · **226** shell gates under
 `tests/gates/<bucket>/` · **2 open issues** · **4 open proposals**.
