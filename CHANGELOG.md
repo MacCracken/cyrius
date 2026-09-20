@@ -2260,9 +2260,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   sidecar)`; one byte appended, sidecar present → rc 1, `checksum mismatch`, nothing
   unpacked; the *same* tampered tarball with no sidecar → zero mentions of a checksum and
   `binaries installed` **from the tampered file** before an unrelated failure. New gate
-  `tests/gates/toolchain/install_pillars_ship_the_checksum.sh` (4 axes, 6 mutants), whose
+  `tests/gates/toolchain/install_pillars_ship_the_checksum.sh` (4 axes, 7 mutants), whose
   axis 3 runs the real install.sh over all three cases in a throwaway `HOME` +
-  `CYRIUS_HOME`. ⚠ `scripts/cross-os-selfhost.sh`'s `ecb-install` arm and
+  `CYRIUS_HOME`. ⚠ **That axis's "refused before it unpacked anything" half asserted
+  nothing as first committed**: it grepped the refusing run for `no bin/`, which install.sh
+  prints only *after* an unpack whose tree has no `bin/` — and the gate's fixture tarball
+  has one, so no run could ever emit it. It is differential now: the verified run and the
+  unverified run both reach the unpack and are *required* to show it (tar/gzip's own
+  diagnostics, or install.sh's post-extract verdicts), and the refusing run must not — so
+  the claim rests on a marker the gate has just watched two other runs produce. Ledger
+  row `g` isolates it: downgrading install.sh's local-sidecar mismatch from `err` to
+  `warn … continuing anyway` (the pre-CVE-21 advisory shape) turns **only** that assertion
+  red; the `no bin/` grep it replaced caught none of it. ⚠ `scripts/cross-os-selfhost.sh`'s
+  `ecb-install` arm and
   `scripts/cass-install-gate.sh` have the **same shape and are not fixed here** — they
   belong to a parallel lane, and that lane's `scripts/*.sh` sweep and this gate's
   `cbt/*.cyr` sweep are complementary halves of one claim, neither covering the other.
