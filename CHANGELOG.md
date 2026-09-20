@@ -288,10 +288,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (`tests/fixtures/lint_lexical/escapes.cyr` — never handled before, and the reason removing the
   reset needed more than deleting three lines). PP_REF_PASS had no lexical state at all and gets
   it here; its pre-6.6.6 quirk of dropping a `#ref ` line whose next byte is not `"` is preserved
-  byte-for-byte. Directives outside strings are unchanged: **all 328 `.tcyr` exit codes identical**
-  to the pre-fix compiler, `build/cycc` reproduces itself and `seed-derive` stays machine-derivable.
-  A census of the 773 in-tree sources found **13 files with a line that ends inside a string** and
-  **none** whose continuation line starts with `#`, so nothing in the tree changes meaning. Fixed
+  byte-for-byte. Directives outside strings are unchanged: **all 328 pre-existing `.tcyr` exit
+  codes identical** to the pre-fix compiler, `build/cycc` reproduces itself and `seed-derive` stays machine-derivable.
+  A census of all **798** tracked `.cyr`/`.tcyr`/`.bcyr`/`.fcyr`/`.scyr`/`.smcyr` sources —
+  simulating `PP_LEXST` byte by byte — finds **14 files with a line that begins inside a string**
+  (13 besides the new `.tcyr`) and **two** whose continuation line starts with `#`:
+  `tests/fixtures/lint_deferrals/rawstr.cyr` and `rawstr_todo.cyr`, both plain `# text` prose,
+  both compiling byte-identically before and after. No directive-shaped continuation line exists
+  in the tree or across the 18,561 ecosystem sources, so nothing changes meaning. *(The first cut
+  of this bullet claimed **none** started with `#`; the implementer's own census had named those
+  two fixtures, so the count was wrong even though the conclusion was not.)* Fixed
   in the shared frontend, so all seven forks get it; cycc **1,310,856 B → 1,310,856 B** (unchanged —
   the inlined machines and the new fn cancel).
 
