@@ -301,8 +301,11 @@ look reasonable:
   wrong lane on Windows. ⚠ There is **no** working spelling for a vector-returning `callptr`
   today: `var v: f64v2 = callptr(fp, 41, 7);` is broken too, and has been — measured at 6.6.5
   and at 6.6.6 it reads `0` and a garbage high lane on x86_64, with no diagnostic. Reported for
-  a later bite. Call the function by name where you can; a call by name into a vector local is
-  correct on every target.
+  a later bite. Two spellings that DO work, both verified: call the function by name into a
+  vector local (`var v: f64v2 = mkv(41, 7);`), or, when the target really must be indirect,
+  give it an out-pointer and have it store the lanes —
+  `var v: f64v2; var ig = callptr(fp, &v, 41, 7); return v;` — which carries both lanes
+  correctly.
 
 ⚠ **A copy moves one struct into a variable of that SAME struct type.** `p = q` and
 `var p: P3 = q` between two DIFFERENT struct types are a compile error since v6.6.6
