@@ -2617,8 +2617,23 @@ the syscall arity (number of arguments) and compares against a routing table:
 - **Unknown arity**: returns -38
 
 Each routable pair emits the kernel32 call inline. Unknown syscalls return -38
-(ENOSYS), matching POSIX semantics, so code paths that are dead on Windows
-(e.g., POSIX fork/execve) can compile without routing them.
+(ENOSYS), matching POSIX semantics, so a path that is genuinely dead on Windows can
+compile without being routed.
+
+> ⛔ **v6.6.6 — the example that used to close that sentence was the opposite of dead.**
+> It read *"(e.g., POSIX fork/execve) can compile without routing them"*, and that belief
+> is what licensed twelve unguarded `sys_fork` sites in `cbt/`. `fork`/`execve`/`waitpid`
+> are not unrouted syscalls returning -38 — they are **wrappers**
+> (`lib/syscalls_windows.cyr`) that `return 0 - 1`. So a POSIX fork/wait on PE does not
+> fail; it **succeeds wrongly**: `pid` is `-1`, the parent takes the `pid != 0` branch,
+> `sys_waitpid` also answers -1 without touching the buffer, and the caller then decodes
+> an **uninitialised stack slot** as the child's exit status. Whenever that garbage reads
+> as `WIFEXITED` with status 0, the code reports success for a child that never existed —
+> measured on real cass, `cyrius self` printed its header and exited 0 without compiling
+> anything. **A fork path on Windows needs an `#ifdef CYRIUS_TARGET_WIN` arm that spawns
+> (`_win_compile_spawn`, `exec_cmd`, …) or refuses by name; "it is dead there" is not a
+> property the stub gives you.** Pinned by
+> `tests/gates/platform/cbt_fork_sites_have_pe_arm.sh`. See CHANGELOG [6.6.6].
 
 ### Win64 MS-x64 ABI Details
 

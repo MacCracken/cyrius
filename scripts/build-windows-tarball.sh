@@ -40,6 +40,13 @@ cat cbt/cyrius.cyr   | "$WORK/cc_win" > "$WORK/$STAGE/bin/cyrius.exe"
 # cycc_cx's PE cross-native brk-fault (Win32 has no brk → now mmap→VirtualAlloc
 # per-target); verified on cass (native compile→run round-trip). A binary-install
 # Windows user can `cyrius build --target=cx` AND `cyrius run *.cyx`.
+# ⛔ v6.6.6 — THAT LAST SENTENCE WAS FALSE FROM THE DAY IT WAS WRITTEN, and shipping
+# cycc_cx.exe is what made it look true. `_emit_cx` (cbt/build.cyr) spawned the cx
+# compiler with `sys_fork`, a -1 stub on PE, so `cyrius build --target=cx` printed a bare
+# `FAIL` on real cass however present cycc_cx.exe was — measured at 6.6.5. Both halves of
+# the sentence hold as of 6.6.6 (the emit spawns through CreateProcessW), and the claim
+# now has a gate behind it: tests/gates/platform/cbt_fork_sites_have_pe_arm.sh. A binary
+# in the tarball is not a verb that works.
 # v6.6.5 — cyaudit + cyrius_api_surface were MISSING, so `cyrius vet`, `cyrius deny`
 # and `cyrius api-surface` had no tool to spawn on a Windows install at all. Never
 # noticed because the tool spawn itself was a -1 stub (lib/syscalls_windows.cyr
