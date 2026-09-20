@@ -228,8 +228,18 @@ fn ESETCC(S, op): i64 {
     if (op == 18) { CX_EMIT(S, 49, 0, 0, 1); }  # ne
     if (op == 19) { CX_EMIT(S, 50, 0, 0, 1); }  # lt
     if (op == 20) { CX_EMIT(S, 51, 0, 0, 1); }  # gt
-    if (op == 21) { CX_EMIT(S, 50, 0, 1, 0); CX_EMIT(S, 48, 0, 0, 1); CX_EMIT(S, 33, 0, 0, 2); }  # lte = lt|eq
-    if (op == 22) { CX_EMIT(S, 51, 0, 1, 0); CX_EMIT(S, 48, 0, 0, 1); CX_EMIT(S, 33, 0, 0, 2); }  # gte = gt|eq
+    # `lte`/`gte` have no single cx opcode, so they are `(lhs < rhs) | (lhs == rhs)`.
+    # The strict half MUST land in the scratch r2 that the closing `or` reads, and it
+    # must compare r0 against r1 in that order — it did NEITHER until 6.6.6. It emitted
+    # `lt r0, r1, r0` (destination r0, operands SWAPPED), so the `or` read whatever r2
+    # happened to hold from an earlier emit and the strict half was computed backwards
+    # AND then destroyed by the following `eq`. Result: `a <= b` / `a >= b` were wrong
+    # for every rhs but 0, and wrong even for rhs 0 once anything had left r2 non-zero
+    # (ESHLIMM's shift immediate is the common writer — that is why a `g * 8` earlier in
+    # the program flipped a later `size <= 0` guard). `>`/`<`/`==`/`!=` are single
+    # opcodes and were never affected. CHANGELOG [6.6.6].
+    if (op == 21) { CX_EMIT(S, 50, 2, 0, 1); CX_EMIT(S, 48, 0, 0, 1); CX_EMIT(S, 33, 0, 0, 2); }  # lte = lt|eq
+    if (op == 22) { CX_EMIT(S, 51, 2, 0, 1); CX_EMIT(S, 48, 0, 0, 1); CX_EMIT(S, 33, 0, 0, 2); }  # gte = gt|eq
     return 0;
 }
 

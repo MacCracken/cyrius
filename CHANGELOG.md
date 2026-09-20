@@ -2544,6 +2544,33 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   term but the last was wrong, and a maintainer re-deriving from the comment would have "fixed"
   a correct gate. Corrected and spelled out against the probe's four fields.
 
+- **On the cx backend `<=` and `>=` compared the wrong way round and folded in a stale register,
+  so three unrelated-looking defects all came from one emitter.** (bite 21a; found by bite 7.)
+  cx has single opcodes for `lt`/`gt`/`eq`/`ne` but none for `lte`/`gte`, so
+  `src/backend/cx/emit.cyr` ESETCC synthesizes them as `(a<b)|(a==b)`. The strict half was
+  emitted as `lt r0, r1, r0` — destination `r0` instead of the scratch `r2` that the closing
+  `or` reads, **and** its operands swapped — so it was computed backwards, immediately
+  overwritten by the `eq`, and the `or` folded in whatever `r2` happened to hold from an
+  earlier emit. `ESHLIMM` (the `x * 2^k` strength reduction) parks its shift immediate in
+  `r2`, so a `g * 8` anywhere earlier in the program poisoned every later `<=` / `>=`.
+  Three consumer-visible symptoms, all fixed by the one two-line correction: `lib/assert.cyr`
+  `assert_gte` / `assert_lte` FAILED for every input while `assert_gt` / `assert_lt` passed
+  (`assert(100 >= 32, ...)` scored `(32 > 100) == 32` = 0); `lib/vec.cyr` `vec_get` aborted
+  `vec: index out of bounds` on a populated vec, because `0 >= 1` evaluated as
+  `(1 > 0) == 1` = TRUE; and `fn zalloc(size) { if (size <= 0) { return 0; } ... }` returned 0
+  for `zalloc(64)` once anything had left `r2` non-zero — which reads as the CALLER corrupting
+  its first argument and sends the reader into the call ABI, where nothing is wrong.
+  **Why it survived cx's whole life:** with a right-hand side of `0` and a clean `r2` the wrong
+  sequence is accidentally correct — `(0 < a) == 0` is `a <= 0` — and `if (x <= 0)` is the
+  commonest shape in the tree, so the emitter looked right on exactly the cases anyone tried.
+  `<` `>` `==` `!=` are single opcodes and were never affected. Gated by
+  `tests/gates/codegen/cx_relational_or_equal.sh` (12 axes, each checked against both a literal
+  expectation and the same source through the x86 backend; mutation-proven at 7/12, 3/12 and
+  4/12 red for the two arms together and each alone). Shell gate rather than a `.tcyr` for the
+  `cx_multi_return` reason: a `.tcyr` pulls in assert/fmt, which the cx backend cannot compile,
+  so a `.tcyr` structurally cannot cover the target the bug lives on. `build/cycc` is
+  **unchanged** — `src/backend/cx/emit.cyr` is reached only from `src/main_cx.cyr`.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**
