@@ -118,6 +118,18 @@ fn sys_utimensat(dirfd, path, times, flags): i64 {
     #ifdef CYRIUS_TARGET_LINUX
     return syscall(SYS_UTIMENSAT, dirfd, path, times, flags);
     #endif
+    # DEFAULT ARM — no #else in this preprocessor, so a per-target chain that
+    # names only some targets falls off the end on every other one and the fn
+    # returns WHATEVER IS IN THE RETURN REGISTER. v6.6.6 gave the cx driver a
+    # CYRIUS_TARGET_CX predefine, which pulled this file into the cx build for
+    # the first time; both arms above then matched nothing and
+    # `sys_utimensat(AT_FDCWD, "/missing", 0, 0)` answered 0 — a FAILED file-time
+    # set reading as SUCCESS. -ENOSYS is the honest answer on any target this
+    # chain does not name (cx: cxvm routes only read/write/open/close/lseek/exit).
+    # Deliberately a trailing default rather than one more named arm, so an
+    # eighth target inherits the error instead of the garbage.
+    # CHANGELOG [6.6.6]
+    return 0 - 38;
 }
 
 # ================================================================

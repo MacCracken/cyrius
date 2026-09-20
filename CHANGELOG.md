@@ -1053,6 +1053,34 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   are fine); and `vec_get` aborts with "index out of bounds" on a populated vec after certain
   preceding calls. The new .tcyr is written around all three and says so at the site.
 
+- **Five stdlib fns answered with whatever was left in the return register on cx, because this
+  preprocessor has no `#else` and their per-target `#ifdef` chains did not name cx.** (bite 7,
+  found in review.) Giving the cx driver a `CYRIUS_TARGET_CX` predefine (the bullet above) pulled
+  `lib/syscalls_linux_common.cyr` and `lib/sys.cyr` into the cx build for the first time, and a fn
+  written as `#ifdef A … #endif #ifdef B … #endif` with no default has its WHOLE BODY removed on
+  every target it does not name. **An empty body compiles** — no error, no warning, no failed
+  gate — so `sys_utimensat(AT_FDCWD, "/missing", 0, 0)` answered **0** on cx where the host says
+  `-2` (a failed file-time set reading as SUCCESS); `sys_uname` and `sys_sysinfo` answered a HEAP
+  POINTER (measured: 219296, 222496); `sys_gettid` answered a stale register; and `is_root()` — a
+  boolean read as `if (is_root())` — answered whatever was there, i.e. "yes, root" on any non-zero
+  leftover. `signal_ignore`/`signal_default` were the same defect one file over and were caught
+  only because an unrelated compile gate went red in the same area; these five were not.
+  Fixed with a DEFAULT ARM on each (`-38`/ENOSYS, and `0` for `is_root`, where a non-zero "error"
+  would be indistinguishable from "root") rather than a sixth named `#ifdef`, so an eighth target
+  inherits the error instead of the garbage. Gated by two new axes in
+  `tests/gates/toolchain/cx_tcyr_runs.sh`: row 5 runs all seven arms **on cxvm** and asserts each
+  documented value, with a host counter-probe proving those values are the arms and not luck
+  (`-2`/`0`/a real tid natively); row 6 probe-compiles every `lib/*.cyr` for cx (23 of 104 compile
+  today, floor 20) and scans the **closures** of the ones that compile for any fn whose body the
+  preprocessor removes, with the cx define set derived from `src/main_cx.cyr`'s own
+  `PP_PREDEFINE` lines — so no list is written down anywhere. ⚠ Row 6's first cut asked whether
+  the module an empty fn lives in compiles for cx; `lib/syscalls_linux_common.cyr` does not
+  (it carries no syscall numbers and is only ever reached through `lib/syscalls.cyr`), so it
+  dismissed the reverted `sys_utimensat` as unreachable and went GREEN on the mutant — reachability
+  is a property of the closure, never of the file in isolation. Rows 1-4 stay green through every
+  one of these mutants, which is why the two new rows exist. lib-only; `build/cycc` byte-identical
+  at 1,310,864 B; all **329** `.tcyr` pass a per-file exit-code loop.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**

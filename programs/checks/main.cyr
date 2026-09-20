@@ -358,7 +358,11 @@ fn _run_regression_gates(): i64 {
     # so every per-target stdlib arm compiled to nothing there and
     # `include "lib/assert.cyr"` did not compile — no .tcyr had ever run on cxvm,
     # and the five cx gates above prove codegen shapes, not that the stdlib works.
-    _gate("cx compiles + RUNS a real .tcyr on cxvm (assert/alloc/fmt/string), same assertion count as native (v6.6.6)", "tests/gates/toolchain/cx_tcyr_runs.sh");
+    # Rows 5-6 added at the bite-7 review: an EMPTY fn body COMPILES, so a
+    # per-target #ifdef chain that does not name cx returns the leftover return
+    # register with no diagnostic anywhere. Row 5 asserts the VALUES on cxvm,
+    # row 6 scans every cx-compilable module's closure for the SHAPE.
+    _gate("cx compiles + RUNS a real .tcyr on cxvm, per-target arms answer their documented value, no reachable empty fn bodies (v6.6.6)", "tests/gates/toolchain/cx_tcyr_runs.sh");
     println("");
 
     _section("Parser fuzz (VR-02)");
