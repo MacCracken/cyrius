@@ -2614,7 +2614,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   only `return <simd_call>(..)`. The vector branches now refuse anything the ABI cannot carry,
   naming the construct (`a vector-returning fn carries its result in a fixed register pair, so
   \`return\` takes a local of that vector type or a call to a fn declared to return the same one
-  — got \`5\``). ⚠ **Two sites.** `return f(args);` is taken by the TAIL-CALL path before the
+  — got \`5\``). ⚠ **Two sites** — a third was found by this bite's review and is corrected
+  at the end of this bullet; the counts in the next few sentences are as first committed.
+  `return f(args);` is taken by the TAIL-CALL path before the
   vector branch ever sees it, and a `jmp` hands the callee's return convention straight back to
   our caller, so a `: f64v2` fn tail-jumping into a scalar `sc()` left the second register
   unwritten — that path now diverts to the normal one unless the callee is declared to return the
@@ -2625,7 +2627,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Windows — the shape this bite removes. Gated by `tests/gates/codegen/simd_return_shapes.sh`:
   9 refusals + 6 acceptances on each of four legs (host x86_64, cx under cxvm, aarch64 under
   qemu-aarch64, Win64 PE under wine — emulation, **not** hardware), 60 rows green, both lanes of
-  every accepted vector checked by separate programs. ⚠ **As first committed the refusal had a
+  every accepted vector checked by separate programs — all superseded below. ⚠ **As first committed the refusal had a
   THIRD site open, and the text above claimed it did not.** `return (a, b);` is taken by
   PARSE_RETURN's MULTI-RETURN arm, ~330 lines *above* the refusal, which hands the values back
   in the ret2/ret3 int convention (rax:rdx[:r3]) and returns out of the function — so
@@ -2650,8 +2652,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `.cyr`/`.tcyr` outside this repo: 6,234 vector-returning fns, and **every** `return` in them
   is a bare local/parameter identifier (5,766) or a bare call (468) — zero tuples, zero
   `callptr`, zero globals — so none of the three newly-refused shapes rejects anything
-  downstream. Self-host fixpoint
-  green, seed-derive green, cycc 1,315,416 -> 1,319,688 B (the review fix is absorbed by
+  downstream. Self-host fixpoint green, seed-derive green, cycc 1,315,416 -> 1,319,688 B (the review fix is absorbed by
   text-segment padding: 1,319,688 B before and after), all seven forks compile, and all 332
   `.tcyr` give identical exit codes against the pre-bite compiler.
 

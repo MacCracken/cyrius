@@ -1244,12 +1244,21 @@ fn PARSE_RETURN(S): i64 {
             }
         }
     }
-    # 6.6.6 — EVERYTHING ELSE. The two branches above take `return IDENT;` for a local of the
-    # matching vector class and return outright; the only other shape the vector return ABI can
-    # carry is a call to a fn declared to return the SAME vector type (a register passthrough on
-    # SysV/aarch64/cx, the retptr marshalling arm below on PE). Anything else used to fall
-    # through to the scalar PCMPE path and hand back a half-written register pair, silently.
-    # See `_refuse_simd_return`. CHANGELOG [6.6.6]
+    # 6.6.6 — EVERYTHING THAT REACHES HERE. The two branches above take `return IDENT;` for a
+    # local of the matching vector class and return outright; the only other shape the vector
+    # return ABI can carry is a call to a fn declared to return the SAME vector type (a register
+    # passthrough on SysV/aarch64/cx, the retptr marshalling arm below on PE). Anything else
+    # used to fall through to the scalar PCMPE path and hand back a half-written register pair,
+    # silently.
+    # ⛔ THIS SITE IS ONE OF THREE, AND THE OTHER TWO ARE ABOVE IT — this comment read
+    # "EVERYTHING ELSE" when first written and that was FALSE, which is how `return (a, b);`
+    # shipped unrefused. PARSE_RETURN is a SEQUENCE OF ARMS, each of which recognises a return
+    # spelling, emits it, and `return 0`s out of this function; a check placed here is a check
+    # only for the spellings that fall through every arm above to reach it. The two that do not:
+    # the TAIL-CALL arm (~line 613, diverted by `_cur_fn_returns_vector` + `_simd_ret_call_ok`)
+    # and the MULTI-RETURN arm (~line 909, `_refuse_vector_tuple_return`). Before adding a
+    # fourth check here, enumerate the early returns above it again — they are the paths this
+    # one cannot see. See `_refuse_simd_return`. CHANGELOG [6.6.6]
     if (_cur_fn_returns_vector(S) == 1) {
         if (_simd_ret_call_ok(S) == 0) { _refuse_simd_return(S); }
     }
