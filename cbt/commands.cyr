@@ -480,7 +480,14 @@ fn _fuzz_run_one(path, passcnt_ptr, failcnt_ptr, found_ptr): i64 {
     sys_write(STDOUT_FD, path, pl);
     var pad = 26 - pl;
     while (pad > 0) { sys_write(STDOUT_FD, " ", 1); pad = pad - 1; }
-    if (compile(path, tmpbin) == 0) {
+    # v6.6.6 (bite 24 review) — the header above is left open so `PASS` lands on it, which
+    # is bite 24d's shape at a caller bite 24d did not reach. Live, not latent:
+    # `CYRIUS_HOME=<empty> cyrius fuzz h.fcyr` printed `  h.fcyr   error: cycc not found.
+    # Install Cyrius or set CYRIUS_HOME.` / `COMPILE FAIL`. CHANGELOG [6.6.6].
+    _progress_open = 1;
+    var fr = compile(path, tmpbin);
+    _progress_open = 0;
+    if (fr == 0) {
         var ec = run_binary_timed(tmpbin, _run_timeout_ms(), 0);
         sys_unlink(tmpbin);
         if (ec == 0) {
@@ -2584,7 +2591,12 @@ fn cmd_soak(iters): i64 {
                 sys_write(STDOUT_FD, snd, snl);
                 var spad = 44 - snl;
                 while (spad > 0) { sys_write(STDOUT_FD, " ", 1); spad = spad - 1; }
-                if (compile(snd, stmpbin) == 0) {
+                # v6.6.6 (bite 24 review) — same open-header shape as `_fuzz_run_one`; a
+                # named compile() error would splice into this line. CHANGELOG [6.6.6].
+                _progress_open = 1;
+                var scr = compile(snd, stmpbin);
+                _progress_open = 0;
+                if (scr == 0) {
                     var sec = run_binary_timed(stmpbin, _run_timeout_ms(), 0);
                     sys_unlink(stmpbin);
                     if (sec == 0) {
@@ -2650,7 +2662,13 @@ fn cmd_smoke(): i64 {
                 sys_write(STDOUT_FD, nd, nl);
                 var pad = 44 - nl;
                 while (pad > 0) { sys_write(STDOUT_FD, " ", 1); pad = pad - 1; }
-                if (compile(nd, tmpbin) == 0) {
+                # v6.6.6 (bite 24 review) — same open-header shape as `_fuzz_run_one`, and
+                # live the same way: `CYRIUS_HOME=<empty> cyrius smoke` spliced `error:
+                # cycc not found` into this line. CHANGELOG [6.6.6].
+                _progress_open = 1;
+                var smr = compile(nd, tmpbin);
+                _progress_open = 0;
+                if (smr == 0) {
                     var ec = run_binary_timed(tmpbin, _run_timeout_ms(), 0);
                     sys_unlink(tmpbin);
                     if (ec == 0) {

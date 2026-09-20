@@ -2097,7 +2097,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   from inside `compile()`, such as a missing output directory or bite 24a's failed rename.
   The compiler child's own stderr still lands mid-line: that is long-standing and
   deliberate, and the `FAILED (compiler exit N)` line points at it. New gate
-  `tests/gates/toolchain/build_progress_line_not_spliced.sh` pins the **property**, not
+  `tests/gates/toolchain/cli_progress_line_not_spliced.sh` (⚠ renamed from
+  `build_progress_line_not_spliced.sh` by the bite's review, see below) pins the
+  **property**, not
   either mechanism: no output line both starts with a progress verb (derived from
   `cmd_build`, not typed) and carries an `error:`, across four named-failure paths, each
   anti-vacuous in that the error must also be *present*. Its positive control is the
@@ -2106,6 +2108,28 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   still be on the same physical line in the same run. 4 mutants; the one that removes only
   the pre-flight checks is **green on purpose** (the flag alone is the other valid
   remedy).
+
+- **Three more CLI verbs spliced a named error into their progress column — and two of
+  them did it on any machine with no compiler installed.** (bite 24 review, the other
+  half of 24d.) `cmd_build` was not the only caller leaving a header open across
+  `compile()`: `_fuzz_run_one` and the `.scyr` / `.smcyr` walkers in `cmd_soak` /
+  `cmd_smoke` pad a filename to a fixed column and leave the line open for `PASS`/`FAIL`.
+  Measured at `1ed45ba`: `CYRIUS_HOME=<empty> cyrius fuzz h.fcyr` printed
+  `  h.fcyr                    error: cycc not found. Install Cyrius or set CYRIUS_HOME.`
+  followed by `COMPILE FAIL`, and `cyrius smoke` the same. **Fix:** the three sites set
+  `_progress_open` around their `compile()` call, exactly as `cmd_build` does. The gate
+  that owns this property was **renamed** `build_progress_line_not_spliced.sh` →
+  **`tests/gates/toolchain/cli_progress_line_not_spliced.sh`**, because the property was
+  never build-specific and a gate whose name is narrower than its claim invites this gap.
+  Four new axes: `cyrius fuzz` and `cyrius smoke` at runtime, a positive control that the
+  aligned `PASS` still lands ON the padded line, and a **structural** axis that derives
+  every padded progress header in `cbt/` from the padding loop itself — not from a list of
+  function names, so a fourth walker is covered the day it is written — and requires each
+  one that then compiles to mark the line open. That structural axis is what covers
+  `cmd_soak`'s `.scyr` walker, which sits past a full self-host loop and no cheap runtime
+  axis reaches; it strips comments from the window first, both ways round. 4 mutants, each
+  RED on exactly its own axes (all three markers; only the `.scyr` one — axis 8 alone; the
+  naive newline — the control alone; the marker demoted to a comment).
 
 - **`cyrius build` blamed the compiler for failures the compiler had nothing to do with,
   and quoted a status it never read.** (bite 24 review.) `compile()` returns a flat `1`
