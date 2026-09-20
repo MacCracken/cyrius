@@ -2209,6 +2209,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   value, so it cannot pass against a build that ignored the manifest. cbt-only; `build/cycc`
   unchanged.
 
+- **`tests/gates/toolchain/tool_writes_never_truncate.sh` axis 4 was RED, and is green
+  honestly** (bite 26c). Two keys, each decided on its merits rather than by widening the
+  allowlist to fit. `cbt/build.cyr|dst` — `_copy_binary`'s `O_TRUNC` open, added with the
+  macOS self-host step — is a staging copy of a compiler binary into the CLI's **own
+  private temp directory** (`_cbt_tmpexe`), with every write already checked (a short one
+  returns rc 1) and an empty source already refused; temp+rename there would rename a temp
+  onto a temp, so it is **allowlisted with that reason** rather than made "crash-safe".
+  `cbt/commands.cyr|cc4_t` matched **no live site**: bite 23 routed `cmd_soak` through
+  `_self_host_step` → `_pulsar_raw_compile`, whose own temp is the already-listed
+  `cbt/pulsar.cyr|tmp`, so the entry is **deleted** — which is exactly what the gate's
+  dead-entry arm exists to force. Re-proven: restoring the dead entry turns axis 4 RED
+  again (ledger row `o`).
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**

@@ -73,7 +73,20 @@
 #   m. programs/cyrius-init.cyr as first committed (13b)        -> axis 4 FAIL (cyrius-init|conf,
 #                                                                 cyrius-init|gi; |path dead)
 #   n. the append half of the axis-4 detector disabled          -> axis 4 self-test FAIL
+#   o. (6.6.6 bite 26c) the `cbt/commands.cyr|cc4_t` entry      -> axis 4 FAIL (allowlist entry
+#      restored                                                    matches no live site)
 # Real tree -> PASS.
+#
+# ⚠ 6.6.6 bite 26c — THIS AXIS WAS RED AT 67ea9c17 AND IS NOW GREEN HONESTLY, not by
+# widening. Two keys, decided on their merits:
+#   - `cbt/build.cyr|dst` was a NEW site (bite 19's `_copy_binary`, the macOS self-host
+#     step) that nobody had ruled on. It is a staging copy of a compiler binary into the
+#     CLI's own private temp directory, every write already checked and an empty source
+#     already refused — temp+rename there would rename a temp onto a temp — so it is
+#     allowlisted with that reason rather than "made crash-safe".
+#   - `cbt/commands.cyr|cc4_t` matched no live site: bite 23 routed `cmd_soak` through
+#     `_self_host_step` -> `_pulsar_raw_compile`, whose own temp is the already-listed
+#     `cbt/pulsar.cyr|tmp`. Deleted, which is what the dead-entry arm exists to force.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: tool_writes_never_truncate: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
@@ -159,8 +172,8 @@ ALLOW='programs/cyrld.cyr|out_path|the linker output: every write is checked and
 cbt/build.cyr|tmp_out|the compiler child'"'"'s stdout (cycc'"'"'s own output write)
 cbt/build.cyr|out|the compiler child'"'"'s stdout (cycc'"'"'s own output write)
 cbt/build.cyr|_cc_stderr_to|a child'"'"'s stderr capture
+cbt/build.cyr|dst|_copy_binary'"'"'s staging copy of a compiler into the CLI'"'"'s OWN private temp dir (_cbt_tmpexe): not a user or tree file, every write checked (a short one returns rc 1) and an empty source refused, so temp+rename would only rename a temp onto a temp
 cbt/pulsar.cyr|tmp|the compiler child'"'"'s stdout (cycc'"'"'s own output write)
-cbt/commands.cyr|cc4_t|the compiler child'"'"'s stdout (cycc'"'"'s own output write)
 cbt/commands.cyr|tmperr|a child'"'"'s stderr capture in the private temp dir
 cbt/commands.cyr|entry|a _cbt_tmpfile probe source (short write checked: it then fails to compile)
 cbt/commands.cyr|dl_entry|a _cbt_tmpfile probe source
