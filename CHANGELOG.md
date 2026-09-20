@@ -2530,6 +2530,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `lib/*.cyr` stay BYTE-IDENTICAL and all 330 pre-existing `.tcyr` exit identically — that
   byte-identity IS the evidence, since a change of behaviour here would move them.
 
+- **`tests/gates/codegen/stack_param_homing_matrix.sh`'s anti-vacuity floor was three releases
+  of probes behind, and one of its comments stated an expectation the code contradicts.**
+  (bite 16h; found by bite 16's review.) `REFUSE_FLOOR=3` was unchanged while the probe count
+  grew to 5 and the measured count to 15, so a leg could have gone quiet and the gate would
+  still have read GREEN. The floor is now DERIVED and EXACT — `refuse_all` call sites in the
+  file times the cross-compilers that actually got built (x86 always; aarch64/Win64 only when
+  qemu/wine are installed) — so adding a probe or a target raises it in the same edit; the
+  header states plainly what it cannot catch (deleting a `refuse_all` line removes it from the
+  count and the floor alike). Mutation-proven: dropping the aarch64 leg -> RED at 10 of 15,
+  dropping the `nrefuse` increment -> RED at 0. Separately, the `pair-return-ok` acceptance
+  probe's comment claimed `3 + 5 + 9 + 13 = 30` where the code computes — correctly — 27; every
+  term but the last was wrong, and a maintainer re-deriving from the comment would have "fixed"
+  a correct gate. Corrected and spelled out against the probe's four fields.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**

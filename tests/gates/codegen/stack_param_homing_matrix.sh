@@ -84,6 +84,7 @@
 #   real tree                                              -> GREEN on all four legs (~5 s)
 set -u
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"   # absolute: captured BEFORE the cd below
 cd "$ROOT"
 CC="${CC:-$ROOT/build/cycc}"
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: stack_param_homing_matrix: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
@@ -559,8 +560,13 @@ accept_on pair-return-ok/x86 "$CC" "$T/rpok.cyr"
 accept_on pair-return-ok/aarch64 "$T/cc_a64" "$T/rpok.cyr"
 accept_on pair-return-ok/win64 "$T/cc_win" "$T/rpok.cyr"
 [ "$naccept" -ge 1 ] || { echo "  FAIL: no compiler accepted the legal pair-return shapes"; fail=1; }
-# x86 runs natively here, so its binary must also COMPUTE: 3 + 5 + 9 + 13 = 30, built below from
-# the same literals by shell arithmetic rather than copied from the probe.
+# x86 runs natively here, so its binary must also COMPUTE: 2 + 4 + 8 + 13 = 27, built below from
+# the same literals by shell arithmetic rather than copied from the probe. (This line read
+# "3 + 5 + 9 + 13 = 30" until bite 16's review: wrong in every term but the last, while the code
+# two lines below was right. A maintainer re-deriving the expectation from the comment would
+# have "fixed" a correct gate — so the terms are spelled out against the probe here.
+# a.y = r_local(1, 2).y = 2 · b.y = r_samecall(3, 4).y = 4 · c.y = r_method(7) -> n+1 = 8 ·
+# d.x = r_operator() -> 6 + 7 = 13.)
 if [ -s "$T/ac.out" ]; then
     # a.y and b.y are the SECOND literal of each mk2 call; c.y is the method's n+1; d.x is the
     # operator's sum of the two first fields. Written out here, computed arithmetically there.
@@ -635,9 +641,28 @@ if "$CC" < "$T/rook.cyr" > "$T/rook.bin" 2>/dev/null; then
     [ "$op_got" = "$op_want" ] || { echo "  FAIL: [op-arity-ok/x86] a correct 2-parameter operator exits $op_got, want $op_want"; fail=1; }
 else echo "  FAIL: [op-arity-ok/x86] a correct 2-parameter operator was refused"; fail=1; fi
 
-# Floor: the x86 compiler always runs, so every probe above must have counted at least once.
-REFUSE_FLOOR=3
-if [ "$nrefuse" -lt "$REFUSE_FLOOR" ]; then echo "  FAIL: only $nrefuse refusal cases ran (floor $REFUSE_FLOOR)"; fail=1; fi
+# Floor: DERIVED, and it is the EXACT count, not a token minimum. It stood at a hard-coded 3
+# while the probe count grew to 5 and the measured count to 15 (bite 16's review), so a probe
+# could have stopped being written — or a whole leg stopped reaching it — and `nrefuse` would
+# still have cleared 3. The right number is "one per `refuse_all` call site in THIS file, per
+# compiler that actually got built", and both halves are counted here rather than written down,
+# so adding a probe or a target raises the floor in the same edit. x86 always runs; the aarch64
+# and Win64 cross-compilers are built only when qemu / wine are installed, which is why they
+# are tested for rather than assumed.
+# ⚠ WHAT IT CANNOT CATCH, stated so nobody trusts it further than it goes: deleting a whole
+# `refuse_all` line removes it from the count AND from the floor, so the floor adapts and stays
+# green — a floor derived from the same file cannot detect its own line being deleted. That
+# shape is covered by the ROW floor and by each probe's `want` count instead. What this DOES
+# catch is a leg or an increment going quiet while the probes stay: measured 2026-09-19,
+# dropping the aarch64 leg from `refuse_all` -> RED ("only 10 ... floor 15 = 5 probes x 3
+# compilers"), dropping the `nrefuse` increment -> RED ("only 0"). Real tree GREEN at 15.
+_rsites=$(grep -c '^refuse_all ' "$SELF")
+[ "$_rsites" -ge 1 ] || { echo "  FAIL: could not derive the refusal floor from $SELF"; fail=1; _rsites=1; }
+_rcc=1
+[ -s "$T/cc_a64" ] && _rcc=$((_rcc + 1))
+[ -s "$T/cc_win" ] && _rcc=$((_rcc + 1))
+REFUSE_FLOOR=$(( _rsites * _rcc ))
+if [ "$nrefuse" -lt "$REFUSE_FLOOR" ]; then echo "  FAIL: only $nrefuse refusal cases ran (floor $REFUSE_FLOOR = $_rsites probes x $_rcc compilers)"; fail=1; fi
 echo "  ok:   refusals — $nrefuse compiler x probe cases named their diagnostic"
 
 if [ "$fail" != 0 ]; then echo "FAIL stack_param_homing_matrix"; exit 1; fi
