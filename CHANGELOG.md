@@ -2219,7 +2219,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   nothing has spoken for this yet, `_MAT_ERR_NAMED` = an `_err_ctx` already has) and the
   generic verdict is emitted only for the first; a `close` failure no longer downgrades a
   named cause. Pinned by axis 3, which requires **exactly one** `error:` line per failure
-  and re-reads axis 2's own capture for the write half (ledger row `g`).
+  and re-reads axis 2's own capture for the write half (ledger row `g`). The gate's own
+  limited runner also had its environment written as an assignment *command*
+  (`HOME=… CYRIUS_HOME=… && trap …`), which sets shell variables rather than the `exec`'s
+  environment — only `HOME` reached the child, because it was already exported — so the one
+  axis that proves the fix was running in a different environment from the anti-vacuous
+  axis and surviving on the CLI's `$HOME/.cyrius` fallback. Corrected to the prefix form,
+  and axis 1 now measures that the two runners hand the child the same environment
+  (ledger row `h`).
 
 - **`tests/gates/toolchain/tool_writes_never_truncate.sh` axis 4 was RED, and is green
   honestly** (bite 26c). Two keys, each decided on its merits rather than by widening the

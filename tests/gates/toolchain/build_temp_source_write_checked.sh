@@ -30,7 +30,9 @@
 #   1. ANTI-VACUOUS. Unconstrained, the same fixture builds and the binary exits 42, and
 #      the fixture is shown to actually need the temp (its `fn main` is the LAST line, so
 #      any short copy loses it, and the source sits in a subdirectory, which is what makes
-#      `_materialize_source` allocate a temp at all).
+#      `_materialize_source` allocate a temp at all). The limited and unlimited runners are
+#      also shown to hand the child the SAME environment, so the only difference between
+#      this axis and axis 2 is the size limit.
 #   2. Under 200 blocks the build exits NON-ZERO, names the preprocessed source it could
 #      not write, never prints `OK (`, and leaves NO output binary. Every expected value is
 #      read a different way from the CLI's own report: the exit status, the presence of the
@@ -75,6 +77,10 @@
 #      module/entry-open arms setting `_MAT_ERR_WRITE`, so a       unreadable-module cases each
 #      named cause falls into the generic write verdict            print 2 `error:` lines, the
 #                                                                  second blaming a write)
+#   h. (bite 26 review) `_lim`'s env back to the assignment-   -> axis 1 FAIL (_lim and _run give
+#      COMMAND spelling (`HOME=… CYRIUS_HOME=… && trap …`),        the child different
+#      which sets shell variables, not the exec's environment      environments: CYRIUS_HOME
+#                                                                  reaches only _run)
 # Real tree -> PASS.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -97,7 +103,13 @@ cp "$CC" "$D/bin/cycc" && chmod +x "$D/bin/cyrius" "$D/bin/cycc" \
 CLI="$D/bin/cyrius"
 mkdir -p "$D/home/.cyrius"
 _run() { ( cd "$D/p" && HOME="$D/home" CYRIUS_HOME="$D/home/.cyrius" exec "$CLI" "$@" ); }
-_lim() { ( cd "$D/p" && HOME="$D/home" CYRIUS_HOME="$D/home/.cyrius" && trap '' XFSZ && ulimit -f 200 && exec "$CLI" "$@" ); }
+# ⚠ The assignments are a PREFIX on `exec`, not a standalone assignment command (bite 26
+# review). `HOME=… CYRIUS_HOME=… && trap …` sets shell variables in the subshell, and only
+# `HOME` reached the child — because HOME is already exported, so assigning it updates the
+# exported value, while CYRIUS_HOME was never in the environment to begin with. The axis
+# survived on the CLI's `$HOME/.cyrius` fallback, which happened to be the same directory:
+# an accidental equivalence in the one axis that proves the fix. Measured with `exec env`.
+_lim() { ( cd "$D/p" && trap '' XFSZ && ulimit -f 200 && HOME="$D/home" CYRIUS_HOME="$D/home/.cyrius" exec "$CLI" "$@" ); }
 
 # ── the fixture: a big source in a SUBDIRECTORY, `fn main` on the last line ──
 mkdir -p "$D/p/src"
@@ -110,6 +122,19 @@ SRCB=$(wc -c < "$D/p/src/app.cyr" | tr -d ' ')
 
 # ── axis 1: anti-vacuous — unconstrained it builds and the binary exits 42 ───
 a1=0
+# …and the two runners hand the child the SAME environment, so the only difference between
+# axis 1 and axis 2 is the size limit. Measured by pointing CLI at `env` — a lost variable
+# is invisible otherwise, which is how the wrong spelling survived (bite 26 review).
+if _envtool=$(command -v env); then
+    _cli_real="$CLI"; CLI="$_envtool"
+    e1=$(_run 2>/dev/null | grep -E '^(HOME|CYRIUS_HOME)=' | LC_ALL=C sort)
+    e2=$(_lim 2>/dev/null | grep -E '^(HOME|CYRIUS_HOME)=' | LC_ALL=C sort)
+    CLI="$_cli_real"
+    [ "$(printf '%s\n' "$e1" | grep -c .)" -eq 2 ] \
+      || { fail "axis 1: _run does not export both HOME and CYRIUS_HOME to the child: [$(echo $e1)]"; a1=1; }
+    [ "$e1" = "$e2" ] \
+      || { fail "axis 1: _lim and _run give the child DIFFERENT environments — axis 2 is not testing what axis 1 tests: _run [$(echo $e1)] vs _lim [$(echo $e2)]"; a1=1; }
+fi
 rc=0; _run build src/app.cyr out1 > "$D/a1.out" 2>&1 || rc=$?
 [ "$rc" -eq 0 ] || { fail "axis 1: the fixture does not build unconstrained (rc=$rc):"; tail -3 "$D/a1.out" | sed 's/^/      /'; a1=1; }
 [ -s "$D/p/out1" ] || { fail "axis 1: no output binary was produced"; a1=1; }
