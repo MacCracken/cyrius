@@ -732,11 +732,22 @@ fn _cbt_tmpdir_cleanup(): i64 {
     return xrmdir(d);
 }
 
-# Exit the CLI, sweeping the private temp dir first. Every PARENT-side `sys_exit` in
-# cbt/ that can run after `_cbt_tmpdir()` has been called goes through here; main's
-# own return value is swept at the bottom of cbt/cyrius.cyr. (The `sys_exit`s inside
-# forked children never reach this — they are a different process — and the two in
-# `_cbt_tmpdir` itself run before any directory exists.) CHANGELOG [6.6.6].
+# Exit the CLI, sweeping the private temp dir first. Every PARENT-side `sys_exit` in cbt/
+# goes through here; main's own return value is swept at the bottom of cbt/cyrius.cyr,
+# and THAT is the path doing the work today.
+#
+# ⚠ THE FOUR ROUTED SITES ARE DEFENSIVE, NOT LOAD-BEARING — this comment used to claim
+# they were "the paths that can run after a temp directory exists", which was overstated.
+# Three of them are in `_try_redirect_to_pinned`, which `main()` calls before anything
+# allocates a temp dir; the fourth (`_dep_find_stdlib_dir`'s uninstalled-pin exit) is
+# reached only from `cyrius deps`, which allocates none of its own. What makes the routing
+# worth having is the NEXT early exit somebody writes — so the rule, not those four sites,
+# is what is gated: `tests/gates/toolchain/cli_temp_dir_no_leak.sh` axis 5 derives every
+# `sys_exit(` in cbt/ and requires each to be inside a forked child or inside
+# `_cbt_tmpdir` / `_cbt_exit`. A new parent-side `sys_exit` anywhere else turns it RED.
+# (The `sys_exit`s inside forked children never reach this — they are a different process,
+# and the parent's temp dir is not theirs to remove — and the two in `_cbt_tmpdir` itself
+# run before any directory exists.) CHANGELOG [6.6.6].
 fn _cbt_exit(code): i64 {
     _cbt_tmpdir_cleanup();
     sys_exit(code);

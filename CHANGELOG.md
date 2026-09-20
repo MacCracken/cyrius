@@ -1677,9 +1677,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   newest of them EMPTY**; the 2 non-empty ones held a `test_bin` from a killed runner. Every
   `cyrius run` / `lint` / `test` / `build` (of a source in a subdirectory, i.e. every real project)
   / `lsp` / `deps` added one, forever. **Fix:** `_cbt_tmpdir_cleanup()` removes it from the CLI's
-  single normal exit at the bottom of `cbt/cyrius.cyr`, and `_cbt_exit(code)` does the same for the
-  four parent-side `sys_exit` paths that can run after a temp directory exists
-  (`cbt/cyrius.cyr` ×3, `cbt/deps.cyr` ×1). **`rmdir`, deliberately never a recursive sweep:** it
+  single normal exit at the bottom of `cbt/cyrius.cyr`, and `_cbt_exit(code)` routes the four
+  early parent-side `sys_exit` paths (`cbt/cyrius.cyr` ×3, `cbt/deps.cyr` ×1). ⚠ **Corrected at
+  bite 9g:** this bullet and `_cbt_exit`'s comment first called those four "the paths that can
+  run after a temp directory exists", which was overstated — three are in
+  `_try_redirect_to_pinned`, which `main()` calls before anything allocates a temp dir, and the
+  fourth is reached only from `cyrius deps`, which allocates none of its own. They are
+  **defensive**; the normal exit is what does the work today. **`rmdir`, deliberately never a recursive sweep:** it
   fails on a non-empty directory, which is the right answer — `cyrius lsp` with no `CYRIUS_HOME`
   prints that path and tells the user to copy the binary out of it, and a SIGKILLed `cyrius test`
   leaves its `test_bin` for a post-mortem. ⚠ **Windows still leaks and that is said, not hidden:**
@@ -1743,6 +1747,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `stack_param_homing_matrix.sh`) do it inline after the prefix is set, never from a trap. The
   prefix path is now bound before the trap is installed and the trap runs only when that
   directory exists.
+
+- **A new parent-side `sys_exit` in the CLI could silently reintroduce the temp-directory
+  leak, and the claim that bite 9a's routing prevented it was overstated.** (bite 9g, from
+  bite 9's review.) `_cbt_exit` was documented as covering "the four parent-side `sys_exit`
+  paths that can run after a temp directory exists"; three of those four are in
+  `_try_redirect_to_pinned`, which `main()` calls **before** anything allocates a temp dir,
+  and the fourth (`_dep_find_stdlib_dir`'s uninstalled-pin exit) is reached only from
+  `cyrius deps`, which allocates none of its own — so all four are defensive and no gate row
+  exercised any of them. Rather than gate an unreachable path, the **rule** is now enforced:
+  a new **axis 5** in `tests/gates/toolchain/cli_temp_dir_no_leak.sh` derives every
+  `sys_exit(` in `cbt/` (36 of them) and requires each to be inside a **forked child** —
+  identified from the source, by tracking which variable each fn assigned from `sys_fork()`,
+  because the name varies (`pid`, `pid2`, `gpid`, …) — or inside `_cbt_tmpdir` / `_cbt_exit`
+  themselves. Axes 2 and 3 can only watch the exits that exist today; this one catches the
+  next one written, which is exactly the case a leave-nothing-behind delta cannot see. The
+  comment and the 9a bullet now say what is true. 1 mutation, RED (a routed `_cbt_exit(1)`
+  turned back into a bare `sys_exit(1)` is named with its file and line).
 
 - **On Windows the CLI could report a self-host it never performed, and `cyrius soak` could
   never perform one at all.** (bite 9f, from bite 9's review.) Three defects in the PE arms

@@ -41,6 +41,9 @@
 #   * delete `_cbt_tmpdir_cleanup();` from the bottom of cbt/cyrius.cyr and rebuild the
 #     CLI -> axis 2 RED for every temp-creating verb (1 directory left each) and axis 3
 #     RED on both error paths; axes 0, 1 and 4 stay GREEN.
+#   * turn one routed `_cbt_exit(1)` (cbt/deps.cyr) back into a bare `sys_exit(1)` and
+#     rebuild -> axis 5 RED, naming the file and line; axes 0-4 stay GREEN (nothing
+#     drives that path, which is the point of the axis).
 #   * replace the `xrmdir(d)` body of `_cbt_tmpdir_cleanup` with a recursive sweep
 #     (unlink every entry, then rmdir) -> axis 4 RED (the planted file is gone); axes 2
 #     and 3 stay green, which is the point: axis 4 is the only one that sees it.
@@ -205,6 +208,96 @@ else
     rm -rf "$planted"
 fi
 sweep_for "$T/p4"
+
+# ── AXIS 5 — ⭐ EVERY PARENT-SIDE EXIT IS ROUTED. Axes 2 and 3 can only watch the exits
+# that EXIST today; this one is about the next one somebody writes. Every `sys_exit(` in
+# cbt/ must be either inside a FORKED CHILD (a different process — the parent's temp dir
+# is not its to remove) or inside `_cbt_tmpdir` / `_cbt_exit` themselves. A new
+# parent-side `sys_exit` anywhere else is a new leak, and it is invisible to a
+# leave-nothing-behind delta because nothing drives that path yet.
+#
+# ⚠ THIS AXIS IS ALSO THE HONEST VERSION OF A CLAIM 6.6.6 OVERSTATED. `_cbt_exit`'s
+# comment said it covered "the four parent-side sys_exit paths that can run after a temp
+# directory exists"; three of those four are in `_try_redirect_to_pinned`, which main()
+# calls BEFORE anything allocates a temp dir, and the fourth is reached from `cyrius
+# deps`, which allocates none of its own. They are defensive, not load-bearing — so the
+# thing worth gating is not those four sites but the RULE they follow.
+echo "axis 5 — ⭐ every sys_exit() in cbt/ is child-side or routed through _cbt_exit:"
+cat > "$T/exits.awk" <<'AWK'
+# A `sys_exit` is CHILD-side when it sits inside an `if (<v> == 0) { ... }` whose <v> was
+# assigned from `sys_fork()` earlier in the same fn — derived from the source, never a
+# name list (the fork variable is `pid`, `pid2`, `gpid`, `cpid`, ... across cbt/).
+/^fn [A-Za-z_]/ { fname = $2; sub(/\(.*/, "", fname); depth = 0; child = -1; delete forkv }
+{
+    line = $0
+    gsub(/"[^"]*"/, "", line)
+    if (line !~ /^[ \t]*#(ifdef|ifndef|endif|else|elif)/) { sub(/#.*/, "", line) }
+    if (match(line, /var[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*=[ \t]*sys_fork\(\)/)) {
+        v = substr(line, RSTART, RLENGTH)
+        sub(/^var[ \t]+/, "", v); sub(/[ \t]*=.*/, "", v)
+        forkv[v] = 1
+    }
+    ischild = 0
+    if (match(line, /if[ \t]*\([ \t]*[A-Za-z_][A-Za-z0-9_]*[ \t]*==[ \t]*0[ \t]*\)/)) {
+        w = substr(line, RSTART, RLENGTH)
+        sub(/^if[ \t]*\([ \t]*/, "", w); sub(/[ \t]*==.*/, "", w)
+        if (w in forkv) { ischild = 1 }
+    }
+    if (line ~ /sys_exit\(/) {
+        st = "PARENT"
+        if (child >= 0) { st = "child" }
+        printf "%s:%d fn=%s %s\n", FILENAME, FNR, fname, st
+    }
+    nop = gsub(/\{/, "{", line)
+    ncl = gsub(/\}/, "}", line)
+    if (ischild == 1 && child < 0) { child = depth }
+    depth = depth + nop - ncl
+    if (child >= 0 && depth <= child) { child = -1 }
+}
+AWK
+awk -f "$T/exits.awk" cbt/*.cyr > "$T/exits"
+NEX=$(grep -c 'fn=' "$T/exits" || true)
+NCH=$(grep -c ' child$' "$T/exits" || true)
+check "the scan found cbt/'s sys_exit sites (floor 30, found $NEX)" yes \
+    "$([ "$NEX" -ge 30 ] && echo yes || echo no)"
+check "  …most of them child-side (floor 25, found $NCH)" yes \
+    "$([ "$NCH" -ge 25 ] && echo yes || echo no)"
+grep ' PARENT$' "$T/exits" | grep -Ev 'fn=(_cbt_tmpdir|_cbt_exit) ' > "$T/stray" || true
+if [ -s "$T/stray" ]; then
+    echo "  parent-side sys_exit() outside _cbt_tmpdir/_cbt_exit — each one leaks the temp dir:"
+    sed 's/^/    /' "$T/stray"
+fi
+check "no parent-side sys_exit bypasses _cbt_exit" 0 "$(wc -l < "$T/stray" | tr -d ' ')"
+# The detector's own control: three shapes in one file, one of each verdict.
+mkdir -p "$T/ax5"
+cat > "$T/ax5/probe.cyr" <<'EOF'
+fn forked(): i64 {
+    var gpid = sys_fork();
+    if (gpid == 0) {
+        if (1 == 0) { sys_exit(126); }
+        sys_exit(127);
+    }
+    return 0;
+}
+fn after_the_child(): i64 {
+    var pid = sys_fork();
+    if (pid == 0) {
+        sys_exit(127);
+    }
+    sys_exit(1);
+    return 0;
+}
+fn no_fork_at_all(): i64 {
+    sys_exit(3);
+    return 0;
+}
+EOF
+awk -f "$T/exits.awk" "$T/ax5/probe.cyr" > "$T/ax5/out"
+check "  ⭐ ANTI-VACUOUS: a child-side exit is cleared" 3 "$(grep -c ' child$' "$T/ax5/out" || true)"
+check "  ⭐ ANTI-VACUOUS: an exit AFTER the child block is flagged" 1 \
+    "$(grep -c 'fn=after_the_child PARENT' "$T/ax5/out" || true)"
+check "  ⭐ ANTI-VACUOUS: a fork-free exit is flagged" 1 \
+    "$(grep -c 'fn=no_fork_at_all PARENT' "$T/ax5/out" || true)"
 
 echo ""
 if [ "$fails" = "0" ]; then
