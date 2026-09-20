@@ -1563,6 +1563,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   That is this release's recurring shape (a check that can be satisfied by the wrong thing),
   caught by mutating the check itself.
 
+- **On Windows the pid-named probe directory could never be removed, so the fix turned one
+  leftover into one per run** (bite 17m, from bite 17's review). 17h gave every test fixture a
+  `<base>.<pid>` name. `syscalls_meta.tcyr` creates a directory, and on PE `xrmdir` returns -1 —
+  no `RemoveDirectoryW` reroute is wired, and wiring one is a compiler change this bite cannot
+  verify on real hardware — so the directory survives the run **on that target only**. With a
+  fixed name one directory is reused; with the pid, every run leaves a new one. Measured under
+  **wine (emulation, not hardware)**: three runs of the HEAD PE build left `_vr01_mdir.32`,
+  `_vr01_mdir.220` and `_vr01_mdir.228`; three runs of the fixed-name build left one
+  `_vr01_mdir`; both pass 5/5. The 17h CHANGELOG's "nothing left behind" was measured on Linux
+  and is now scoped to it. **Fix:** the fixed name under `#ifdef CYRIUS_TARGET_WIN`, the pid name
+  everywhere else — the race a pid answers cannot happen on Windows anyway, where the cross-OS
+  leg runs alone in `C:\cyrius-tests\_cyaud`, wiped per run. Axis 8's allowlist now carries a
+  **rule per entry** (`chdir` / `win_guarded`) that the gate **re-checks** instead of trusting:
+  `win_guarded` requires every bare relative name in the file to sit inside a
+  `#ifdef CYRIUS_TARGET_WIN` block *and* `test_scratch` to still be used for the other targets.
+  Removing the guard, or giving the non-PE branch the fixed name, each redden it.
+
 - **Five `lib/` modules called other modules' functions without including them, so a bare
   `include` compiled with `warning: undefined function` — and an undefined function is a
   `ud2`/SIGILL stub, not a link error** (bite 17g). `lib/fmt.cyr` called `strlen`/`memcpy`
@@ -1608,7 +1625,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   in the same corpus read tree-relative paths. **So the fix is in the name:** `test_scratch(base)`
   (new, `lib/assert.cyr`) returns `"<base>.<pid>"` — unique per process on every target, still
   relative, still no `/`. After it, 6 concurrent `atomic_write` runs and 4 each of the others all
-  pass 23/23, 6/6 and 13/13 with nothing left behind. Pinned by a new **axis 8** in
+  pass 23/23, 6/6 and 13/13 **on Linux** with nothing left behind (see 17m for the one target
+  where the pid had to be held back). Pinned by a new **axis 8** in
   `tests/gates/toolchain/gates_never_write_tree.sh`, which refuses a bare relative literal (or a
   variable assigned one) at any creating call under `tests/`; it found the last two of the five
   itself. One allowlisted file, `tests/tcyr/platform/fs.tcyr`, already creates a pid-named

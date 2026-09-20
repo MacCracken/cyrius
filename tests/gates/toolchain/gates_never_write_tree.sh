@@ -147,6 +147,12 @@
 #                                                         syscalls_combined 1)
 #   z. fs.tcyr's sys_chdir removed while it stays     -> axis 8 FAIL (the allowlist entry is
 #      allowlisted                                        hiding a real fixed cwd fixture)
+#   z2. syscalls_meta's `#ifdef CYRIUS_TARGET_WIN`    -> axis 8 FAIL (line 31 names a fixed
+#      guard removed (bite 17 review)                     cwd-relative fixture outside a WIN
+#                                                         block); and with the NON-PE branch
+#                                                         given the fixed name too, FAIL at
+#                                                         line 35 — an allowlist rule that is
+#                                                         re-checked, not taken on trust
 # Real tree -> PASS.
 #
 # ⚠ Runs ONLY against a scratch copy. It never runs a gate against the real tree it lives in.
@@ -641,6 +647,12 @@ fi
 # children, because other tests in the same corpus read TREE-relative paths. So the fix is in
 # the NAME: `test_scratch(base)` (lib/assert.cyr) returns "<base>.<pid>", unique per process on
 # every target, still relative, still no "/". This axis refuses the bare literal.
+# ⚠ ONE TARGET CANNOT CLEAN UP AT ALL, and there a per-pid name is WORSE: on PE `xrmdir`
+# returns -1 (no RemoveDirectoryW reroute is wired), so syscalls_meta.tcyr's mkdir'd directory
+# survives the run — with a fixed name one directory is reused, with a pid name a new one
+# appears per run. That branch keeps the fixed name under `#ifdef CYRIUS_TARGET_WIN` and is
+# allowlisted below under the `win_guarded` rule, which re-checks the guard rather than
+# trusting the entry.
 _cwd_create() {   # prints "<line>: <text>" for every fixed cwd-relative fixture a test creates
     awk '
     /^[ \t]*#/ { next }
@@ -700,19 +712,58 @@ for f in varlit direct openflags opencreat; do
 done
 [ -z "$(_cwd_create "$W/fx8/clean.tcyr")" ] || { echo "FAIL: axis 8 self-test: a test_scratch name, a tree-relative READ or a comment was flagged: $(_cwd_create "$W/fx8/clean.tcyr")"; st8=1; }
 [ "$st8" = 0 ] || FAIL=1
-# The ONE other way to be safe: chdir into a per-process directory FIRST, and then the fixed
-# names inside it are the test's own. Allowlisted by file, with the reason, and the entry is
-# only honoured while the file still contains that chdir — so deleting the chdir reddens.
-ALLOW8='tests/tcyr/platform/fs.tcyr|it creates a pid-named private dir and sys_chdirs INTO it before any fixture, so the fixed names are inside it — and they must stay literal, because the bare-literal coercion is what this test is testing'
+# Two ways to be safe other than `test_scratch`, each an allowlist RULE that the gate re-checks
+# rather than takes on trust — `<file>|<rule>|<reason>`:
+#   chdir       the test chdirs into a per-process directory FIRST, so the fixed names inside it
+#               are its own. Honoured only while the file still calls sys_chdir.
+#   win_guarded the fixed name is inside a `#ifdef CYRIUS_TARGET_WIN` block. Honoured only while
+#               EVERY flagged line really is inside one — checked by tracking the #ifdef nesting,
+#               not by the file merely mentioning the macro.
+# ⚠ win_guarded exists because on PE the cleanup is IMPOSSIBLE: `xrmdir` returns -1 there (no
+# RemoveDirectoryW reroute is wired, lib/io.cyr), so a per-pid directory name would leave a NEW
+# directory on every Windows run where a fixed one is at least reused — the pid turning one leak
+# into one-per-run on the one target that cannot clean up. Measured under wine (emulation, not
+# hardware): the pid build left _vr01_mdir.32, .220, .228 in three runs; the guarded build left
+# one _vr01_mdir. And the race a pid answers cannot happen there anyway — Windows runs the
+# cross-OS leg alone in C:\cyrius-tests\_cyaud, wiped per run by scripts/cross-os-selfhost.sh.
+ALLOW8='tests/tcyr/platform/fs.tcyr|chdir|it creates a pid-named private dir and sys_chdirs INTO it before any fixture, so the fixed names are inside it — and they must stay literal, because the bare-literal coercion is what this test is testing
+tests/tcyr/crossos/syscalls_meta.tcyr|win_guarded|on PE xrmdir cannot remove the directory at all, so a per-pid name would leak one directory per run there instead of reusing one; the pid name is still used on every other target'
+# _win_lines <file> — the line numbers inside a `#ifdef CYRIUS_TARGET_WIN` block
+_win_lines() {
+    awk '
+    /^[ \t]*#ifdef[ \t]+CYRIUS_TARGET_WIN[ \t]*$/ { depth++; winat[depth] = 1; next }
+    /^[ \t]*#ifn?def[ \t]/ { depth++; winat[depth] = 0; next }
+    /^[ \t]*#endif/ { if (depth > 0) depth--; next }
+    { w = 0; for (i = 1; i <= depth; i++) if (winat[i]) w = 1; if (w) print NR }' "$1"
+}
 n8=0; bad8=0; nallow8=0
 for t in $(find tests/tcyr tests/fixtures -type f \( -name '*.tcyr' -o -name '*.cyr' \) | LC_ALL=C sort); do
     n8=$((n8 + 1))
     h=$(_cwd_create "$t")
     [ -z "$h" ] && continue
-    case "$ALLOW8" in
-        *"$t|"*)
+    rule8=$(printf '%s\n' "$ALLOW8" | grep -F "$t|" | cut -d'|' -f2)
+    case "$rule8" in
+        chdir)
             nallow8=$((nallow8 + 1))
             grep -qE 'sys_chdir\(' "$t" || { echo "FAIL: axis 8: $t is allowlisted for chdir-ing into its own private directory, but no longer calls sys_chdir — the allowlist is now hiding a real fixed cwd fixture"; bad8=1; }
+            ;;
+        win_guarded)
+            nallow8=$((nallow8 + 1))
+            # The NAME must be WIN-guarded, not the creating call — the call is shared by both
+            # branches (that is the point: one mkdir, two names). So: every bare relative literal
+            # the file assigns, and every one spelled inline at a creating call, is inside a
+            # `#ifdef CYRIUS_TARGET_WIN` block, and the per-process name is still there for
+            # every other target.
+            _win_lines "$t" > "$W/win8.lines"
+            : > "$W/win8.bad"
+            grep -nE '^[ \t]*var[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*=[ \t]*"[^"/]*"[ \t]*;' "$t" | cut -d: -f1 | while read -r wl; do
+                grep -qx "$wl" "$W/win8.lines" || echo "FAIL: axis 8: $t line $wl names a fixed cwd-relative fixture OUTSIDE a #ifdef CYRIUS_TARGET_WIN block — the allowlist covers only the PE branch, where the directory cannot be removed" >> "$W/win8.bad"
+            done
+            printf '%s\n' "$h" | grep -E '\("[^"/]*"' | cut -d: -f1 | while read -r wl; do
+                grep -qx "$wl" "$W/win8.lines" || echo "FAIL: axis 8: $t line $wl creates a fixed cwd-relative fixture OUTSIDE a #ifdef CYRIUS_TARGET_WIN block" >> "$W/win8.bad"
+            done
+            grep -q 'test_scratch(' "$t" || echo "FAIL: axis 8: $t no longer calls test_scratch — the fixed name is being used on EVERY target, not just the one that cannot clean up" >> "$W/win8.bad"
+            [ -s "$W/win8.bad" ] && { cat "$W/win8.bad"; bad8=1; }
             ;;
         *) echo "$h" | sed "s|^|FAIL: axis 8: $t: CREATES a fixed cwd-relative fixture — the check driver's cwd is the REPO ROOT, so concurrent runs race and a killed run leaks (use test_scratch) at line |"; bad8=1 ;;
     esac
@@ -727,7 +778,7 @@ if [ "$n8" -lt 400 ]; then
 elif [ "$bad8" != 0 ]; then
     FAIL=1
 elif [ "$st8" = 0 ]; then
-    echo "  ok: axis 8: $n8 tests/tcyr + tests/fixtures files create no fixed cwd-relative fixture ($nallow8 allowlisted, each still chdir-ing into its own dir; self-tested on 4 shapes + 1 clean file)"
+    echo "  ok: axis 8: $n8 tests/tcyr + tests/fixtures files create no fixed cwd-relative fixture ($nallow8 allowlisted, each re-checked against its rule — chdir-into-its-own-dir, or inside a #ifdef CYRIUS_TARGET_WIN block; self-tested on 4 shapes + 1 clean file)"
 fi
 
 # ── axis 7: STATIC — every scripts/*.sh, not just the gates ─────────────────────────────

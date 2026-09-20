@@ -19,7 +19,21 @@ fn main(): i64 {
     # v6.6.6: PID-suffixed (test_scratch, lib/assert.cyr). The name was fixed and the check
     # driver's cwd is the REPO ROOT, so two check.sh runs in one checkout raced over the same
     # directory. Still cwd-relative — Windows has no /tmp. CHANGELOG [6.6.6]
+    #
+    # ⚠ EXCEPT ON PE, WHERE THE DIRECTORY CANNOT BE REMOVED AT ALL. `xrmdir` returns -1 there
+    # (no RemoveDirectoryW reroute is wired — lib/io.cyr, and wiring one is a COMPILER change),
+    # so a per-pid name would leave a NEW directory behind on EVERY Windows run where the fixed
+    # name at least gets reused: the pid would turn one leak into one-per-run, on the single
+    # target where cleanup is impossible. The race a pid answers cannot happen there either —
+    # the cross-OS leg runs alone in C:\cyrius-tests\_cyaud, which scripts/cross-os-selfhost.sh
+    # wipes per run. So: pid everywhere it can be cleaned up, fixed name where it cannot.
+    # Allowlisted with this reason in gates_never_write_tree.sh axis 8. CHANGELOG [6.6.6]
+    #ifdef CYRIUS_TARGET_WIN
+    var mdir = "_vr01_mdir";
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
     var mdir = test_scratch("_vr01_mdir");
+    #endif
     sys_mkdir(mdir, 493);                        # 0755; return not asserted (idempotent re-runs)
     assert_eq(is_dir(str_from(mdir)), 1, "the directory exists after sys_mkdir");
     # 6.6.5 — AND REMOVE IT. This test created `_vr01_mdir` and never removed it, so every
