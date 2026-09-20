@@ -6,9 +6,12 @@
 # main_cx.cyr) had NO `--version` arm, and main_x86_macho.cyr had no
 # command-line scan at all. cycc's fall-through for an unrecognised invocation
 # is "compile stdin", so on an ARM install `cycc --version` compiled EMPTY input
-# and wrote a 65,888-byte ELF to stdout with exit 0 — and scripts/install.sh
-# reads `cycc --version | awk '{print $2}'`, so it reported a field of that
-# binary as the toolchain version. Nothing noticed, because no gate ever ran a
+# and wrote a 65,888-byte ELF to stdout with exit 0 — and the `[custom.cyrius]`
+# STARSHIP PROMPT SEGMENT scripts/install.sh installs runs
+# `cycc --version | awk '{print $2}'` whenever the shell is inside a cyrius
+# project, so the prompt showed a field of that binary as the toolchain version.
+# (The installer itself never reads `cycc --version`; this header said it did
+# until the review corrected it.) Nothing noticed, because no gate ever ran a
 # fork's compiler with a flag.
 #
 # The fork list is DERIVED from the tree (src/main*.cyr), never written down
@@ -107,7 +110,7 @@ assert_version() {
         echo "FAIL: runtime $label: --version printed $lines lines (want exactly 1)"
         return 1
     fi
-    got=$(awk '{print $2}' < "$out")     # the field scripts/install.sh reads
+    got=$(awk '{print $2}' < "$out")     # the field the installed starship prompt reads
     if [ "$got" != "$VER" ]; then
         echo "FAIL: runtime $label: --version field 2 is '$got', VERSION says '$VER'"
         return 1

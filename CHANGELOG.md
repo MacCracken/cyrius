@@ -985,9 +985,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `main_aarch64.cyr`, `main_aarch64_native.cyr`, `main_aarch64_macho.cyr` and `main_cx.cyr` had no
   `--version` arm at all; `main_x86_macho.cyr` had no command-line scan of any kind. cycc's
   fall-through for an unrecognised invocation is "compile stdin", so `cycc --version` on a Raspberry
-  Pi produced a 65,888-byte aarch64 ELF on stdout (24 bytes of `.cyx` from `cycc_cx`) and exited 0 —
-  and `scripts/install.sh` reads `cycc --version | awk '{print $2}'`, so it reported a field of that
-  binary as the installed toolchain version. Two distinct root causes behind one symptom: the three
+  Pi produced a 65,888-byte aarch64 ELF on stdout (24 bytes of `.cyx` from `cycc_cx`) and exited 0.
+  The visible consequence was in the SHELL PROMPT: the `[custom.cyrius]` starship segment
+  `scripts/install.sh` installs (`scripts/install.sh:1046`, `:1060`) runs
+  `cycc --version 2>/dev/null | awk '{print $2}'` whenever the shell is inside a cyrius project
+  (`when = test -f cyrius.cyml || test -f cyrius.toml`, and only once the `[ -f bootstrap/asm ]`
+  branch that reads `VERSION` in this repo has failed), so on an ARM or cx install the prompt showed
+  a field of that binary as the toolchain version. ⚠ The installer itself never reads
+  `cycc --version` — the first three cuts of this entry, of the gate header and of the vidya entry
+  all said it did, which would have made this a mis-recorded install rather than a garbage prompt
+  field. Corrected in review. Two distinct root causes behind one symptom: the three
   aarch64 drivers and `main_cx.cyr` simply never grew the arm `main.cyr`/`main_win.cyr` have had
   since v5.4.19; the two Mach-O drivers cannot use it, because **`main_aarch64_macho.cyr`'s
   `/proc/self/cmdline` scan has been DEAD since it was copied in at v5.11.63** — macOS has no
