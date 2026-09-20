@@ -349,17 +349,26 @@ jobs:
           # + fncall0/2 internally. Exit-code mapping in
           # dlopen_runner.cyr's header: 99 = green; 10..36 =
           # specific sub-test failure.
+          # 6.6.6: the runner opens ./cyrius_audit_shared.so RELATIVE and must be RUN
+          # WITH THE DIR THAT HOLDS IT AS ITS CWD. It was a fixed /tmp name until
+          # 6.6.6 made every scratch path per-run, and this step — a second, inlined
+          # copy of what programs/checks/services.cyr's _shared_dlopen_gate does — was
+          # not moved with it: it kept staging at /tmp and running from the repo root,
+          # so the open failed and the runner exited 11. Local check.sh passed the
+          # whole time, because THAT caller was updated. If you change the fixture's
+          # path again, both callers move together.
+          W=$(mktemp -d) && [ -d "$W" ] || { echo "FAIL: mktemp -d"; exit 1; }
           cat tests/fixtures/shared/lib.cyr | ./build/cycc \
-              > /tmp/cyrius_audit_shared.so
-          chmod +x /tmp/cyrius_audit_shared.so
+              > "$W/cyrius_audit_shared.so"
+          chmod +x "$W/cyrius_audit_shared.so"
           cat tests/fixtures/shared/dlopen_runner.cyr | ./build/cycc \
-              > /tmp/cyrius_audit_dlopen_runner
-          chmod +x /tmp/cyrius_audit_dlopen_runner
+              > "$W/cyrius_audit_dlopen_runner"
+          chmod +x "$W/cyrius_audit_dlopen_runner"
           set +e
-          /tmp/cyrius_audit_dlopen_runner
+          ( cd "$W" && ./cyrius_audit_dlopen_runner )
           rc=$?
           set -e
-          rm -f /tmp/cyrius_audit_shared.so /tmp/cyrius_audit_dlopen_runner
+          rm -rf "$W"
           if [ "$rc" -ne 99 ]; then
               echo "FAIL: dlopen runner exit=$rc (expected 99 = all green)"
               exit 1

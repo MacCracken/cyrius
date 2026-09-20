@@ -114,6 +114,14 @@ Everything else 6.6.6 turned up and deliberately did not pack, consolidated here
 - **`[build].modules` is silently ignored unless the manifest also has a `[deps]` section**
   (`_auto_deps()` returns before it scans for `[build]`).
 - **`_self_host_step_macos` leaks its staging copy on a failed `_copy_binary`** — one `sys_unlink(ccr);`.
+- ⚠ **CI inlines its own copies of local gates, and nothing checks the two agree.** Several
+  `.github/workflows/ci.yml` steps say "CI equivalent inlines the same fixture pair" and then
+  duplicate what a `programs/checks/*.cyr` gate does. 6.6.6 changed `dlopen_runner.cyr` to open
+  its `.so` RELATIVE (per-run scratch instead of a fixed `/tmp` name) and updated the local
+  dispatcher only: `check.sh` stayed green through the whole release and the Ubuntu CI job
+  exited 11. The fixture now names both callers in its header, which is a comment, not a check.
+  A static guard — every fixture with a cwd or path contract is invoked the same way by every
+  caller — is the real fix.
 - ⚠ **`check.sh` is LOAD-SENSITIVE now, and does not say so.** Bite 8c gave the check driver's
   children a deadline (`CYRIUS_CHECK_TIMEOUT`, 120 s) so one hung test can no longer hang the
   suite — a real fix. But a child killed at the deadline reports as an ordinary row failure, so

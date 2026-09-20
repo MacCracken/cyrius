@@ -2,7 +2,13 @@
 # tests/fixtures/shared/lib.cyr; the dispatcher compiles lib.cyr to
 # cyrius_audit_shared.so in its private scratch dir, then compiles this and runs it WITH
 # THAT DIR AS ITS CWD — the path below is relative (v6.6.6: it was a fixed /tmp name shared
-# by concurrent check.sh runs). Exit code:
+# by concurrent check.sh runs).
+# ⛔ TWO CALLERS, AND THEY MUST MOVE TOGETHER: programs/checks/services.cyr's
+# _shared_dlopen_gate, and the "Regression — shared object (.so + dlopen)" step in
+# .github/workflows/ci.yml, which inlines its own copy of this pair. 6.6.6 changed the path
+# here and updated only the first, so local check.sh stayed green while CI exited 11 — the
+# open failed because that step staged the .so at the old /tmp path and ran the binary from
+# the repo root. Exit code:
 #   99 — all sub-tests green
 #   10 — dynlib_bootstrap_cpu_features failed (need /lib64/ld-linux)
 #   11 — dynlib_open failed
