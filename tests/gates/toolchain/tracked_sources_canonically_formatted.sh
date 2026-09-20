@@ -22,36 +22,52 @@
 # deliberately mis-indented file is checked every run and MUST be rejected, and a
 # canonical one MUST be accepted; the sweep's verdict is only trusted after both.
 #
-# MUTATION LEDGER
+# MUTATION LEDGER (applied to a staged copy of the tree, the gate re-run against it)
 #   P1. cbt/commands.cyr's `_toml_section_at` body de-indented again   -> RED (sweep)
 #   P2. an exclusion pattern that matches no tracked file             -> RED (rot)
 #   P3. one more unformatted file under src/frontend/ (ratchet burst) -> RED (ratchet)
 #   P4. the ratchet ceiling left high after the area was cleaned      -> RED (rot)
 #   P5. the control's "must be rejected" file made canonical          -> RED (control)
+#   P6. programs/cyrfmt.cyr absent (the checker cannot be built)      -> RED, by name
 #   Real tree -> GREEN.
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$R" || exit 1
-command -v cyrius >/dev/null 2>&1 || { echo "FAIL tracked_sources_canonically_formatted: cyrius CLI not on PATH — the sweep cannot run, and a skip here is what let cbt/commands.cyr sit unformatted"; exit 1; }
 D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: tracked_sources_canonically_formatted: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$D"' EXIT
 fail=0
 
-chk() { cyrius fmt --check "$1" >/dev/null 2>&1; }
+# ⚠ BUILD cyrfmt FROM SOURCE, do not shell out to the installed `cyrius fmt`. Two reasons,
+# both measured: the installed wrapper resolves `./build/cyrfmt`, which is gitignored and
+# absent on a fresh checkout (the control caught exactly that, as `tool not found`), and a
+# STALE build/cyrfmt would judge this tree by an older contract. The sibling gate
+# `cyrfmt_string_continuation.sh` builds from source for the same reason.
+CC="$R/build/cycc"
+[ -x "$CC" ] || { echo "FAIL tracked_sources_canonically_formatted: no build/cycc"; exit 1; }
+[ -f programs/cyrfmt.cyr ] || { echo "FAIL tracked_sources_canonically_formatted: programs/cyrfmt.cyr is missing"; exit 1; }
+cat programs/cyrfmt.cyr | "$CC" > "$D/cyrfmt" 2>"$D/cyrfmt.err" || true
+[ -s "$D/cyrfmt" ] || { echo "FAIL tracked_sources_canonically_formatted: cyrfmt did not compile"; sed -n '1,10p' "$D/cyrfmt.err"; exit 1; }
+chmod +x "$D/cyrfmt"
+
+chk() { "$D/cyrfmt" --check "$1" >/dev/null 2>&1; }
 
 # ── control — prove the checker is alive before believing a clean sweep ──────────────
 printf 'fn main(): i64 {\n    var x = some_call(1,\n      2);\n    return x;\n}\n' > "$D/ctl_good.cyr"
 printf 'fn main(): i64 {\nvar x = 1;\n        return x;\n}\n'                     > "$D/ctl_bad.cyr"
+# ⚠ A control failure ABORTS. Sweeping 311 files with a broken checker prints 173 lines of
+# noise naming innocent files, which is what the first cut did in a tree with no formatter.
 if ! chk "$D/ctl_good.cyr"; then
-  echo "FAIL control: a canonically formatted file was REJECTED — the sweep below would"
-  echo "              flag the whole tree for a checker problem, not a formatting one"
-  cyrius fmt --check "$D/ctl_good.cyr" 2>&1 | sed 's/^/    /'
-  fail=1
+  echo "FAIL control: a canonically formatted file was REJECTED — every verdict below would"
+  echo "              be about the checker, not about the tree"
+  "$D/cyrfmt" --check "$D/ctl_good.cyr" 2>&1 | sed 's/^/    /'
+  echo "FAIL tracked_sources_canonically_formatted"
+  exit 1
 fi
 if chk "$D/ctl_bad.cyr"; then
-  echo 'FAIL control: a deliberately mis-indented file was ACCEPTED — cyrius fmt --check'
-  echo "              is inert here, so a green sweep would mean nothing"
-  fail=1
+  echo "FAIL control: a deliberately mis-indented file was ACCEPTED — the checker is inert"
+  echo "              here, so a green sweep would mean nothing"
+  echo "FAIL tracked_sources_canonically_formatted"
+  exit 1
 fi
 
 # ── the corpus, derived ──────────────────────────────────────────────────────────────
