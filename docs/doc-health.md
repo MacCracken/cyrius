@@ -200,7 +200,7 @@ type: state
 > running the shape did.
 >
 > ⚖️ **Not re-verified at 6.6.6:** the tier tables and the "At a glance" anchors below still
-> carry their 2026-09-08 v6.6.1 figures. cycc is **1,315,016 B** as of this bite
+> carry their 2026-09-08 v6.6.1 figures. cycc is **1,315,040 B** as of this bite
 > (`docs/development/state.md` carries the live stamp); the 1,247,608 B anchor below is the
 > v6.6.1 one and has not been re-tallied here.
 
