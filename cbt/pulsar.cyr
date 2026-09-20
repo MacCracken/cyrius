@@ -66,7 +66,44 @@ fn _pulsar_install_bin(src, dst): i64 {
     return 0;
 }
 
+# v6.6.6 (bite 24c) — IS THIS AN x86-64 LINUX HOST? `cmd_pulsar` is an x86-64-Linux-host
+# ORCHESTRATOR and nothing said so. Every stage execs the TRACKED `build/cycc`, an x86-64
+# Linux ELF, on the x86-64 Linux fork `src/main.cyr`; the aarch64 cross compilers it then
+# builds are x86-HOSTED by construction. Both literals are correct FOR THAT HOST — which is
+# why they stay — but off it the first `_pulsar_raw_compile` exec fails and the verb dies
+# with `cycc compile failed`, a message about the compiler for a problem that is about the
+# verb. Derived from `_self_host_src()` (cbt/build.cyr, bite 23a) rather than a fresh
+# `#ifdef` ladder, for the reason bite 23b gives: the mapping's ARM ORDER decides the
+# answer and a second copy drifts. ⚠ Deliberately NOT `_target_cc_has_js()`, which today
+# computes the same comparison — that predicate answers "does this host's cycc have a TS
+# front end", a different question whose answer merely coincides. CHANGELOG [6.6.6].
+fn _pulsar_host_is_x86_linux(): i64 {
+    if (streq(_self_host_src(), "src/main.cyr") == 1) { return 1; }
+    return 0;
+}
+
+fn _pulsar_refuse_host(): i64 {
+    _err("pulsar is an x86-64 Linux-host verb and this is not an x86-64 Linux host");
+    var m1 = "  it rebuilds the TRACKED x86-64 Linux build/cycc from src/main.cyr and then the\n";
+    var m2 = "  x86-hosted cross compilers from it, so every stage execs an x86-64 Linux ELF.\n";
+    var m3 = "  the compiler here is built from ";
+    var m4 = " — rebuild it directly instead:\n    cat ";
+    var m5 = " | ./build/cycc > cycc.new\n";
+    var fk = _self_host_src();
+    sys_write(STDERR_FD, m1, strlen(m1));
+    sys_write(STDERR_FD, m2, strlen(m2));
+    sys_write(STDERR_FD, m3, strlen(m3));
+    sys_write(STDERR_FD, fk, strlen(fk));
+    sys_write(STDERR_FD, m4, strlen(m4));
+    sys_write(STDERR_FD, fk, strlen(fk));
+    sys_write(STDERR_FD, m5, strlen(m5));
+    return 1;
+}
+
 fn cmd_pulsar(): i64 {
+    # The host check runs BEFORE the progress line, so the refusal is not spliced into it
+    # (bite 24d's lesson, applied at the site that would otherwise repeat it).
+    if (_pulsar_host_is_x86_linux() == 0) { return _pulsar_refuse_host(); }
     _status("pulsar: rebuilding from source...");
     if (file_exists("src/main.cyr") == 0) {
         _err("not in a cyrius repo (no src/main.cyr)");

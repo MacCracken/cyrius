@@ -2045,6 +2045,29 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   **uses** it, and passed the mutant that swaps the two arms — an unreachable improvement
   reading as a fix — which is why the both-forks runtime axis exists.
 
+- **`cyrius pulsar` is an x86-64-Linux-host orchestrator and said nothing about it, so off
+  that host it died on an exec with `error: cycc compile failed`.** (bite 24c.)
+  `cmd_pulsar` rebuilds the *tracked* x86-64 Linux `build/cycc` from `src/main.cyr`, then
+  builds the aarch64 cross compilers **with that binary** (x86-hosted by construction),
+  then the tools, then runs `scripts/install.sh --refresh-only`. Both literals are right
+  for that host — which is why they stay — but on ecb, ach or pi the first
+  `_pulsar_raw_compile` execs an x86-64 Linux ELF that cannot run, the child exits 127, and
+  the verb reports a *compiler* failure for a problem that is about the *verb*: a user
+  reads it as a broken toolchain and goes looking in the wrong place. **Fix:** a named
+  refusal as the first statement of `cmd_pulsar`, before the progress line, saying it is an
+  x86-64-Linux-host verb, why (the recipe), which fork this host's compiler is built from,
+  and what to run instead. The predicate derives from `_self_host_src()` (bite 23a's owner
+  of the per-target mapping) rather than a fresh `#ifdef` ladder — deliberately *not*
+  `_target_cc_has_js()`, which computes the same comparison today but answers a different
+  question. **Measured on real pi** (aarch64, Linux 6.8.0-1064-raspi): pre-fix
+  `pulsar: rebuilding from source...` / `  cycc...` / `error: cycc stage-2 compile failed`;
+  fixed, the named refusal with no progress line. New gate
+  `tests/gates/toolchain/pulsar_is_x86_linux_host_verb.sh` — the check is first and derives
+  from the one mapping; the aarch64 CLI refuses by name with no progress line and no
+  "cycc compile failed"; the x86-64 Linux CLI still starts; and the *recipe* the refusal is
+  about is re-derived every run, so a pulsar that later became per-target turns the gate red
+  rather than leaving a now-wrong refusal in place. 4 mutants, all RED.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**
