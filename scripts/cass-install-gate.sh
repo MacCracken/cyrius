@@ -22,8 +22,7 @@ TB="cyrius-${V}-x86_64-windows.tar.gz"
 # names straight into cass's %USERPROFILE% (plus a fixed _coiw home inside the .ps1),
 # so two runs overwrote each other's tarball, test source and install sandbox — and a
 # second run could install a tarball the first was still unpacking. CHANGELOG [6.6.6]
-T=$(mktemp -d "${TMPDIR:-/tmp}/cyrius-cig.XXXXXX") && [ -d "$T" ] || {
-    echo "ERROR: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
+T=$(mktemp -d "${TMPDIR:-/tmp}/cyrius-cig.XXXXXX") && [ -d "$T" ] || { echo "ERROR: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 RUNID="$$_$(basename "$T" | sed 's/.*\.//' | tr -cd 'A-Za-z0-9')"
 RD="_cig_$RUNID"
 _cig_cleanup() {
