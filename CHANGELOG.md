@@ -8,6 +8,31 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **A comment beginning `#ref ` had its first five bytes DELETED and the rest parsed as code —
+  and `include ` with no quoted name lost eight bytes the same way.** (bite 5c.) Both consumed
+  their bytes on the PREDICATE match and only then looked for the `"`: `PP_REF_PASS` did
+  `_rhandled = 1; ip = ip + 5;`, the two include sites did `ip = ip + 8;`. With no quote the
+  bytes were already gone. For `#ref ` that is a **silent mutilation of a comment** — `#` opens a
+  comment, so `#ref counting is fine` is prose, and it reached the lexer as `counting is fine`.
+  ⛔ **It is invisible unless the same file also holds a real `#ref "x"`**, because only that sets
+  `found` and triggers `PP_REF_PASS`'s copy-back; with one present, the comment's neighbour dies
+  with `expected '=', got identifier 'is'` — a diagnostic naming a word from the middle of a
+  comment. The include shape reported a token from the middle of the mangled line
+  (`include foo bar` → `expected '=', got identifier 'bar'`, column 5 of a line whose column 5 is
+  `u`). **Fix:** check the quote BEFORE anything moves. A `#ref ` line without one is left
+  alone — it IS a comment, and nothing else is correct. An `include ` line without one is now
+  `error: include expects a quoted filename: include "name.cyr"`, at **both** include sites
+  (`PP_IFDEF_PASS` carries its own copy of the handler); `include` at column 0 is a directive and
+  nothing else, and a census found **zero** such lines in this repo or any sibling under
+  `~/Repos`, so a clear error is strictly better than passing mangled bytes on. Gate
+  `tests/gates/frontend/directive_prefix_never_eats_bytes.sh` (7 axes, 3 mutations each RED):
+  each comment axis is scored against a **twin** spelled `# ref …`, a form no predicate can
+  match, which must compile to identical bytes — and ⚠ the ledger records that the *lone*
+  `#ref ` comment axis stays GREEN against the defect, which is exactly why the axis with a real
+  `#ref` present is the one that catches it. Also repairs two unescaped `"` in the bite 5a/5b
+  gate registrations in `programs/checks/main.cyr`, which stopped the check driver compiling.
+  cycc **1,310,856 B → 1,310,920 B (+64)**; 0 of 330 `.tcyr` binaries changed a byte.
+
 - **An INCLUDED file could forge a `#@file` marker and defeat `private` visibility (CVE-44).**
   (bite 5b.) `private` is enforced through the file map: the preprocessor mints
   `#@file "NAME" BASE` markers, `FM_BUILD` turns them into spans, and a reference to a private

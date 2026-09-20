@@ -1297,6 +1297,16 @@ were a language rule ("put a space after the `#`"); it is fixed, and the boundar
 # Processed during PP_REF_PASS before main compilation
 ```
 
+The quoted filename is required, and it must follow `#ref ` immediately. A line that merely
+*begins* `#ref ` and has no quote is an ordinary comment — `#ref counting is fine` is prose and
+compiles to the same bytes as `# ref counting is fine`. ⚠ Until v6.6.6 it was not: the pass
+consumed the five bytes `#ref ` the moment the line matched and only then looked for the quote,
+so the comment reached the lexer as `counting is fine` and was parsed as code. It was invisible
+unless the same file also held a real `#ref "x"` (only that triggers the pass's copy-back), and
+then the comment's neighbour failed with an error naming a word from the middle of the comment.
+`include ` had the same shape and now reports `include expects a quoted filename` instead of
+passing mangled bytes on.
+
 ## Inline Assembly
 
 ```
