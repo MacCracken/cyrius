@@ -114,6 +114,14 @@ Everything else 6.6.6 turned up and deliberately did not pack, consolidated here
 - **`[build].modules` is silently ignored unless the manifest also has a `[deps]` section**
   (`_auto_deps()` returns before it scans for `[build]`).
 - **`_self_host_step_macos` leaks its staging copy on a failed `_copy_binary`** — one `sys_unlink(ccr);`.
+- ⚠ **`check.sh` is LOAD-SENSITIVE now, and does not say so.** Bite 8c gave the check driver's
+  children a deadline (`CYRIUS_CHECK_TIMEOUT`, 120 s) so one hung test can no longer hang the
+  suite — a real fix. But a child killed at the deadline reports as an ordinary row failure, so
+  on a loaded box the suite goes RED with messages like `premise: doc_huge is past cyrdoc's
+  first 1 MB buffer — expected [yes], got [no]`, which read exactly like defects. Measured at
+  the 6.6.6 close: RED with four agents working, 291/291 GREEN on the same tree minutes later
+  with the box quiet. A timed-out child must SAY it timed out and name the knob; until it does,
+  a red run under load costs the reader the same bisect twice.
 - **`cyrius run` prints its own vague `error: compile failed`** after cbt has already named the cause —
   the second-verdict shape bite 24 fixed for `cyrius build`.
 
