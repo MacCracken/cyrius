@@ -2106,11 +2106,16 @@ semantics, sugarier surface. A Future re-runs its body on each `await`
 and resume mid-body across an `await`* (a poll-driven state machine, without
 bundling the whole call) are a planned follow-on requiring a poll-based runtime;
 the current model is deferred-then-forced, which matches the run-to-completion
-runtime. `async` generic fns and struct-returning `async fn`s are not yet
-supported, nor is a value-form vector PARAMETER (`async fn f(v: f64v2)`) — an
-`async fn` captures each argument as one 8-byte value, so since v6.6.6 that is a
-compile error naming the parameter; pass a pointer to the vector instead (before
-v6.6.6 it compiled and computed with the wrong vector).
+runtime. `async` generic fns are not yet supported, nor is a value-form vector
+PARAMETER (`async fn f(v: f64v2)`) — an `async fn` captures each argument as one
+8-byte value, so since v6.6.6 that is a compile error naming the parameter; pass
+a pointer to the vector instead (before v6.6.6 it compiled and computed with the
+wrong vector). A **by-value struct RETURN** over 8 bytes is likewise unsupported
+and, since v6.6.6, a compile error naming the fn: a Future carries one i64, so a
+>16 B return (hidden retptr) came back as garbage and a 9–16 B one (rax:rdx) lost
+its high half — both silently, exit 0, before v6.6.6. A struct of 8 bytes or less
+IS one i64 and works, as does `Str` (a heap handle); for anything wider, return a
+pointer.
 
 ## Global Initializers
 

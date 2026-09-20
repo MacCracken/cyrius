@@ -188,6 +188,45 @@ CYRIUS_ASYNC=1 "$T/stage1" < "$T/r.cyr" > "$T/rp" 2>"$T/rp.err" || {
 chmod +x "$T/rp"; grp=0; "$T/rp" > /dev/null 2>&1 || grp=$?
 [ "$grp" -eq 0 ] || { echo "FAIL coroutine_midbody_suspend axis4: the pointer-to-vector async fns exit $grp (1 = coroutine, 2 = plain, want 95 each)"; exit 1; }
 
+# ── axis 4b — a BY-VALUE STRUCT RETURN from an `async fn` (6.6.6) ────────────────────────
+# A Future carries ONE i64 (`future_force` returns what the body left in rax), so the two
+# by-value struct return ABIs never arrive: over 16 B the hidden retptr is consumed building
+# the Future (the constructor is itself classified as a retptr callee) and the body writes
+# through whatever the first argument register held; 9-16 B is rax:rdx and the Future drops
+# rdx. BOTH WERE SILENT. Measured on the pre-fix compiler at 6.6.5 with this exact fixture:
+# the 24 B `P3` printed 0 and exited 0, and the 16 B `P2` came back holding `.x` only.
+# A struct of 8 B or less IS one i64, so it must keep working — that is the anti-vacuous half,
+# and it is why the refusal keys on `_ret_agg_class` and not on "returns a struct".
+# Mutation: drop the `_refuse_async_struct_return` call in parse_fn.cyr -> RED
+# ("a 24-byte struct return COMPILED"). Ledger: mutated tree RED, real tree GREEN (2026-09-19).
+for sz in 24 16; do
+  flds='x; y; z;'; [ "$sz" = 16 ] && flds='x; y;'
+  cat > "$T/r.cyr" <<EOF
+${PRE}
+struct Pv { $flds }
+async fn mkv(a, b): Pv { var p: Pv; p.x = a; p.y = b; return p; }
+fn main(): i64 { alloc_init(); syscall(60, future_force(mkv(4, 5)) & 0xFF); return 0; }
+var e = main();
+EOF
+  refuse "a $sz-byte struct return from an async fn" "returns a struct by value, and a Future carries one i64"
+done
+# ... and the <= 8 B struct, which IS one i64, still compiles AND computes. Expected value is
+# built here by shell arithmetic from the same two inputs, not copied from the probe.
+as_a=17; as_b=23; as_want=$(( as_a + as_b ))
+cat > "$T/r8.cyr" <<EOF
+${PRE}
+struct P1 { x; }
+async fn mk1(a, b): P1 { var p: P1; p.x = a + b; return p; }
+fn main(): i64 { alloc_init(); syscall(60, future_force(mk1($as_a, $as_b)) & 0xFF); return 0; }
+var e = main();
+EOF
+CYRIUS_ASYNC=1 "$T/stage1" < "$T/r8.cyr" > "$T/r8" 2>"$T/r8.err" || {
+  echo "FAIL coroutine_midbody_suspend axis4b: the 8-byte struct return did not compile"; grep -m2 '^error' "$T/r8.err"; exit 1; }
+[ -s "$T/r8" ] || { echo "FAIL coroutine_midbody_suspend axis4b: 8-byte struct-return probe is empty"; exit 1; }
+chmod +x "$T/r8"; g8=0; "$T/r8" > /dev/null 2>&1 || g8=$?
+[ "$g8" -eq "$as_want" ] || {
+  echo "FAIL coroutine_midbody_suspend axis4b: the 8-byte struct return exits $g8, want $as_want"; exit 1; }
+
 # ── axis 5 — MULTI-PARAMETER coroutines (v6.5.70; refused outright at v6.5.69) ───────────
 # The constructor pre-binds arguments into coroutine-frame slots. This is the SAME machinery
 # as the arity-7 fix in the same release — the constructor could not place arguments into

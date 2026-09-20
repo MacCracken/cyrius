@@ -2040,6 +2040,28 @@ fn _refuse_async_simd_param(S, pnoff): i64 {
     return 0;
 }
 
+# ⛔ 6.6.6 — an `async fn` hands its result back through ONE i64: `future_force` returns what the
+# body left in rax. A struct returned BY VALUE does not travel that way. Over 16 B the ABI is a
+# hidden retptr that nothing supplies — the coroutine CONSTRUCTOR is itself classified as a retptr
+# callee, so the caller's buffer address is consumed building the Future and the body writes its
+# result through whatever the first argument register held. 9-16 B is rax:rdx and the Future has
+# no second word, so the high half is dropped. Both were SILENT: measured at 6.6.5,
+# `async fn a2(a,b): P3` (24 B) made `print_num(future_force(a2(4,5)))` print 0 and exit 0, and the
+# 16 B `P2` came back with `.x` only. A struct of 8 B or less IS one i64, and `Str` is a heap
+# handle, so those keep working — `_ret_agg_class` is exactly that distinction. Refused by name
+# until a Future can carry a struct. CHANGELOG [6.6.6]
+fn _refuse_async_struct_return(S, fnoff, fi): i64 {
+    if (_ret_agg_class(S, fi) == 0) { return 0; }
+    if (_panic == 1) { return 0; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    syscall(SYS_WRITE, 2, ": `async fn ", 12);
+    PRSTR(S + 0xEC00000 + fnoff);
+    syscall(SYS_WRITE, 2, "` returns a struct by value, and a Future carries one i64 — return a pointer to it\n", 85);
+    _had_error = 1;
+    return 0;
+}
+
 # A struct-valued call used where there is no frame to hold its result. Refused by name: before
 # 6.6.6 every such site compiled clean and SIGSEGV'd (the callee wrote through whatever the first
 # argument register held). CHANGELOG [6.6.6]
@@ -5760,6 +5782,9 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
         }
         }
     }
+    # 6.6.6 — the Future carries one i64, so a by-value struct return never arrives.
+    # See `_refuse_async_struct_return`. CHANGELOG [6.6.6]
+    if (_is_async == 1) { _refuse_async_struct_return(S, _async_noff_f, fi); }
     # Record first param name offset for inlining (stored in fn_inline later)
     # Emit the stack param stores the loop deferred, now that the int-class TOTAL is known.
     # `_pl_shift` mirrors the in-loop `_pp_shift`: an x86 retptr (SysV rdi / Win64 rcx) is

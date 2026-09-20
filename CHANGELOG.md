@@ -2368,6 +2368,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (index 14 for statfs, 44 for fstatfs) or says nothing claims the number any more, which is
   what the sibling `note:` had been contradicting too (ledger entries 11-12).
 
+- **An `async fn` declared with a by-value struct return handed back garbage, silently.**
+  (bite 16a; found by bite 14's review.) A Future carries ONE i64 — `future_force` returns what
+  the body left in rax — so neither by-value struct-return ABI arrives. Over 16 B the ABI is a
+  hidden retptr that nothing supplies: the coroutine CONSTRUCTOR is itself classified as a retptr
+  callee, so the caller's buffer address is consumed building the Future and the body writes its
+  result through whatever the first argument register held. At 9-16 B the ABI is rax:rdx and the
+  Future has no second word, so the high half is dropped. Measured on 6.6.5 (`CYRIUS_ASYNC=1`):
+  `struct P3{x;y;z;} async fn a2(a,b): P3 {…}` made `print_num(future_force(a2(4,5)))` print **0**
+  and exit 0, both called inline and through a stored `var F = a2(4,5)`; the 16 B `P2` came back
+  holding `.x` only. **Refused by name** until a Future can carry a struct —
+  `` `async fn a2` returns a struct by value, and a Future carries one i64 — return a pointer to
+  it`` — keyed on `_ret_agg_class`, so a struct of 8 B or less (which IS one i64) and `Str` (a heap
+  handle) keep working unchanged. `src/frontend/parse_fn.cyr`. Gated by a new axis 4b in
+  `tests/gates/frontend/coroutine_midbody_suspend.sh` (both refused size classes name the
+  construct; the 8 B case compiles AND computes, against a shell-computed expectation).
+  cycc 1,310,856 -> 1,310,952 B. All 330 `.tcyr` exit identically to the 6.6.5 compiler.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**
