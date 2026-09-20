@@ -27,22 +27,27 @@
 # for every non-cyrius project on ARM and macOS, which is a much larger blast radius than
 # the bug. The gate measures both directions in one run.
 #
-# MUTATION LEDGER (measured; each mutant a `git archive HEAD` copy with one file overlaid,
+# MUTATION LEDGER (measured; each mutant a `git archive HEAD` copy with cbt/ overlaid,
 # the aarch64 cross compiler and BOTH CLIs rebuilt from it, gate re-run against it)
-#   M1. the dispatch reverted to the HEAD shape (bare "src/main.cyr", no ask)
-#       -> RED: axis 1; axis 2 (the aarch64 CLI answers `error: no file given` for a
-#          checkout that carries its own fork); axis 2b (it meters fn_table 2, the
-#          src/main.cyr probe, where 9 is its own fork)
+#   M1. the pre-fix shape (the dispatch resolves its own default from `src/main.cyr`)
+#       -> RED: axis 1 names all three problems and stops there (a missing resolver is
+#          loud, not a silent pass)
 #   M2. `_self_host_src()` consulted but the two literal fallbacks DELETED
 #       -> RED: axis 3 ONLY. Axes 1, 2 and 2b stay GREEN — which is why the positive
 #          control is in the same run.
 #   M3. the two `file_exists` arms swapped so `src/main.cyr` is tested FIRST
-#       -> RED: axis 1 (order) and axis 2b. ⚠ This mutant is why axis 2b exists and why
-#          axis 1 orders the file_exists rather than the CALL: the gate's first cut
-#          compared where `_self_host_src()` was called, and M3 leaves that line where it
-#          is, so it PASSED — an unreachable improvement reading as a fix, inside a real
-#          checkout where both files exist. Axis 2 also misses it (its workspace has no
-#          src/main.cyr to win), so a structural-only order check was the sole guard.
+#       -> RED: axis 1 (order) and axis 2b (the aarch64 CLI meters fn_table 2, the
+#          src/main.cyr probe, where 9 is its own fork). ⚠ This mutant is why axis 2b
+#          exists and why axis 1 orders the `file_exists` rather than the CALL: the gate's
+#          first cut compared where `_self_host_src()` was called, and M3 leaves that line
+#          where it is, so it PASSED — an unreachable improvement reading as a fix, inside
+#          a real checkout where both files exist.
+#   M4. the resolution inlined back into `main` (the first cut of this fix)
+#       -> RED: axis 1. ⚠ This is not hypothetical — that first cut SHIPPED for one
+#          commit and turned `self_host_src_per_target.sh` axis 6 red with
+#          `cbt/cyrius.cyr main asks _self_host_src() AND hard-codes a fork`, because
+#          `main` also runs a compiler (the pin re-exec) and therefore counts as a
+#          self-host loop. The helper is load-bearing, not tidiness.
 #   Real tree -> GREEN.
 #
 # ⚠ qemu-aarch64 is an EMULATOR, not hardware. It is used because the choice under test is
@@ -61,32 +66,60 @@ CC="$R/build/cycc"
 [ -x "$CC" ] || { echo "FAIL capacity_meters_host_fork: no build/cycc"; exit 1; }
 fail=0
 
-# ── axis 1 — the dispatch ASKS, and asks BEFORE the generic fallbacks ─────────────────
+# ── axis 1 — the resolver ASKS, and asks BEFORE the generic fallbacks ────────────────
+# ⚠ The resolution is a HELPER (`_capacity_default_src` in cbt/build.cyr), not inline in
+# the dispatch. That is not style: `self_host_src_per_target.sh` axis 6 discovers every fn
+# that both asks `_self_host_src()` and runs something, and `main` runs plenty — the first
+# cut of this fix put the chain inline and turned that gate RED with "main asks
+# _self_host_src() AND hard-codes a fork". So axis 1 checks the dispatch DELEGATES and the
+# helper decides.
 blk=$(awk '/if \(streq\(cmd, "capacity"\) == 1\) \{/{on=1} on{print; if (/return cmd_capacity\(/) exit}' cbt/cyrius.cyr || true)
 if [ -z "$blk" ]; then
   echo "FAIL axis1: could not extract the capacity dispatch from cbt/cyrius.cyr"
   echo "FAIL capacity_meters_host_fork"; exit 1
 fi
+printf '%s\n' "$blk" | grep -q '_capacity_default_src()' || {
+  echo "FAIL axis1: the capacity dispatch does not call _capacity_default_src() — it is"
+  echo "            resolving the default itself, and on ARM/macOS that means src/main.cyr"
+  fail=1; }
+inline=$(printf '%s\n' "$blk" | sed 's/#.*$//' | grep -n '"src/main[A-Za-z0-9_]*\.cyr"' || true)
+if [ -n "$inline" ]; then
+  echo "FAIL axis1: the capacity dispatch names a compiler fork inline — that is what made"
+  echo "            main a self-host loop that both asks and hard-codes (axis 6 of"
+  echo "            self_host_src_per_target.sh):"
+  printf '%s\n' "$inline" | sed 's/^/    /'
+  fail=1
+fi
 # ⚠ The order that matters is where the fork is TESTED, not where `_self_host_src()` is
 # CALLED — the gate's own first cut compared the call site and passed mutant M3, which
 # hoists the call and then tests `src/main.cyr` first (an unreachable improvement inside
 # any cyrius checkout, since both files exist there). So the variable the call is bound to
-# is derived from the block and its `file_exists` is what gets ordered.
-sv=$(printf '%s\n' "$blk" | sed -n 's/^[ \t]*var[ \t]*\([A-Za-z_][A-Za-z_0-9]*\)[ \t]*=[ \t]*_self_host_src();.*/\1/p' | head -1)
-ml=$(printf '%s\n' "$blk" | grep -n 'file_exists("src/main.cyr")' | head -1 | cut -d: -f1 || true)
+# is derived from the helper and its `file_exists` is what gets ordered.
+res=$(awk '/^fn _capacity_default_src\(\): i64 \{/,/^\}/' cbt/build.cyr || true)
+if [ -z "$res" ]; then
+  echo "FAIL axis1: _capacity_default_src is missing from cbt/build.cyr"
+  echo "FAIL capacity_meters_host_fork"; exit 1
+fi
+if printf '%s\n' "$res" | grep -q '#ifdef'; then
+  echo "FAIL axis1: _capacity_default_src has grown its own #ifdef target ladder instead of"
+  echo "            asking _self_host_src() — a second copy of the mapping drifts"
+  fail=1
+fi
+sv=$(printf '%s\n' "$res" | sed -n 's/^[ \t]*var[ \t]*\([A-Za-z_][A-Za-z_0-9]*\)[ \t]*=[ \t]*_self_host_src();.*/\1/p' | head -1)
+ml=$(printf '%s\n' "$res" | grep -n 'file_exists("src/main.cyr")' | head -1 | cut -d: -f1 || true)
 if [ -z "${sv:-}" ]; then
-  echo "FAIL axis1: the capacity default does not bind _self_host_src() — it is metering"
+  echo "FAIL axis1: _capacity_default_src does not bind _self_host_src() — it is metering"
   echo "            src/main.cyr, the x86-64 Linux fork, on every host"
   fail=1
 else
-  sl=$(printf '%s\n' "$blk" | grep -n "file_exists($sv)" | head -1 | cut -d: -f1 || true)
+  sl=$(printf '%s\n' "$res" | grep -n "file_exists($sv)" | head -1 | cut -d: -f1 || true)
   if [ -z "${sl:-}" ]; then
     echo "FAIL axis1: '$sv' is bound from _self_host_src() but never tested with file_exists"
     fail=1
   elif [ -n "$ml" ] && [ "$sl" -ge "$ml" ]; then
-    echo "FAIL axis1: the host fork ('$sv') is tested at line $sl of the block, AFTER the"
-    echo "            src/main.cyr fallback at $ml — a cyrius checkout has BOTH files, so the"
-    echo "            fallback wins and the improvement is unreachable"
+    echo "FAIL axis1: the host fork ('$sv') is tested at line $sl of _capacity_default_src,"
+    echo "            AFTER the src/main.cyr fallback at $ml — a cyrius checkout has BOTH"
+    echo "            files, so the fallback wins and the improvement is unreachable"
     fail=1
   fi
 fi
@@ -222,8 +255,8 @@ if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 if [ "$HAVE_A64" -eq 1 ]; then
-  echo "PASS capacity_meters_host_fork: dispatch asks _self_host_src() first; aarch64 CLI meters its own fork where x86-64 refuses; both still meter a plain src/main.cyr project (qemu, not hardware)"
+  echo "PASS capacity_meters_host_fork: the dispatch delegates and _capacity_default_src asks _self_host_src() first; aarch64 CLI meters its own fork where x86-64 refuses; both still meter a plain src/main.cyr project (qemu, not hardware)"
 else
-  echo "PASS capacity_meters_host_fork: dispatch asks _self_host_src() first; x86-64 half only (no qemu-aarch64)"
+  echo "PASS capacity_meters_host_fork: the dispatch delegates and _capacity_default_src asks _self_host_src() first; x86-64 half only (no qemu-aarch64)"
 fi
 exit 0

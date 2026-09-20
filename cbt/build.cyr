@@ -1369,6 +1369,25 @@ fn _self_host_src(): i64 {
     return "src/main.cyr";
 }
 
+# v6.6.6 (bite 24b) — the no-argument default for `cyrius capacity`. THE HOST'S OWN FORK
+# FIRST: the dispatch used to start at the bare literal `src/main.cyr`, which is the x86-64
+# LINUX fork, so inside a cyrius checkout on ARM or macOS a bare `cyrius capacity` compiled
+# a compiler that host does not build and cannot run and reported ITS table occupancy as
+# the local compiler's. Asks `_self_host_src()` — the one owner of the per-target mapping,
+# bite 23a — rather than a second copy of its `#ifdef` ladder.
+# ⚠ The two literals are FALLBACKS and must stay: a non-cyrius project has no per-target
+# fork, so on ARM the first test simply misses and `src/main.cyr` / `src/lib.cyr` answer as
+# before. Returns 0 when nothing matches, which `cmd_capacity` reports as "no file given".
+# Defined here, not inline in `main`, so `main` does not become a fn that both asks
+# `_self_host_src()` and names a fork — see the note at the call site. CHANGELOG [6.6.6].
+fn _capacity_default_src(): i64 {
+    var cap_self = _self_host_src();
+    if (file_exists(cap_self) == 1) { return cap_self; }
+    if (file_exists("src/main.cyr") == 1) { return "src/main.cyr"; }
+    if (file_exists("src/lib.cyr") == 1) { return "src/lib.cyr"; }
+    return 0;
+}
+
 # v6.6.6 — ONE STEP OF A SELF-HOST LOOP: run compiler `cc` over `src` into `out`, and
 # return the child's exit status (0 = ok). Every self-host loop that uses THIS HOST's
 # compiler goes through here, so the three things below cannot be got right in one loop

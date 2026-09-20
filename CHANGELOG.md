@@ -2043,7 +2043,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `src/main.cyr` project is still metered by both CLIs. 3 mutants, all RED. ⚠ The gate's
   own first cut ordered the `_self_host_src()` **call** rather than the `file_exists` that
   **uses** it, and passed the mutant that swaps the two arms — an unreachable improvement
-  reading as a fix — which is why the both-forks runtime axis exists.
+  reading as a fix — which is why the both-forks runtime axis exists. ⚠ And the fix's own
+  first cut put the chain **inline in `main`**, which turned bite 23a's
+  `self_host_src_per_target.sh` axis 6 red — `main asks _self_host_src() AND hard-codes a
+  fork` — because `main` also runs a compiler (the pin re-exec) and so counts as a
+  self-host loop. The resolution lives in `_capacity_default_src` (`cbt/build.cyr`) for
+  that reason, and the gate now pins the delegation.
 
 - **`cyrius pulsar` is an x86-64-Linux-host orchestrator and said nothing about it, so off
   that host it died on an exec with `error: cycc compile failed`.** (bite 24c.)

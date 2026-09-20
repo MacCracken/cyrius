@@ -763,22 +763,14 @@ fn main(): i64 {
     if (streq(cmd, "capacity") == 1) {
         if (_cli_operands_ok("capacity", 0, 1) == 0) { return 1; }
         var cap_src = _cli_pos_at(0);
-        if (cap_src == 0) {
-            # v6.6.6 (bite 24b) — THE HOST'S OWN FORK FIRST. This default was the bare
-            # literal `src/main.cyr`, which is the x86-64 LINUX fork: inside a cyrius
-            # checkout on ARM or macOS a bare `cyrius capacity` metered a compiler that
-            # host does not build and cannot run, and reported its table caps as if they
-            # were the local compiler's. Same class as bite 23a's `cyrius self` / `soak`,
-            # and it asks the same owner — `_self_host_src()` (cbt/build.cyr) — rather
-            # than growing a second copy of the per-target mapping. The two literals stay
-            # as FALLBACKS: a non-cyrius project has no per-target fork, so on ARM the
-            # first test simply misses and `src/main.cyr` / `src/lib.cyr` answer as before.
-            # CHANGELOG [6.6.6].
-            var cap_self = _self_host_src();
-            if (file_exists(cap_self) == 1) { cap_src = cap_self; }
-            elif (file_exists("src/main.cyr") == 1) { cap_src = "src/main.cyr"; }
-            elif (file_exists("src/lib.cyr") == 1) { cap_src = "src/lib.cyr"; }
-        }
+        # v6.6.6 (bite 24b) — THE HOST'S OWN FORK FIRST; see `_capacity_default_src`
+        # (cbt/build.cyr). This used to be an inline chain starting at the bare literal
+        # `src/main.cyr`, the x86-64 LINUX fork. ⚠ It stays a HELPER and does not come back
+        # inline: `self_host_src_per_target.sh` axis 6 discovers every fn that both asks
+        # `_self_host_src()` and runs something, and `main` runs plenty — inlining it here
+        # makes main a self-host loop that asks AND hard-codes a fork, which is the shape
+        # that axis exists to reject. CHANGELOG [6.6.6].
+        if (cap_src == 0) { cap_src = _capacity_default_src(); }
         return cmd_capacity(cap_src, _cli_has("--check"), _cli_has("--json"));
     }
 
