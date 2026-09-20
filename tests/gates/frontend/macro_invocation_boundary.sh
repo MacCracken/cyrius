@@ -30,10 +30,25 @@
 # the literal with a `while (load8(...))` loop in the program itself and compare
 # against the twin's answer, so the gate never asserts a length it computed.
 #
-# ⚠ COMMENTS ARE DELIBERATELY NOT EXCLUDED, and there is no axis for them: `#`
-# opens a comment, the lexer drops it, and a `#define` body cannot contain a
-# newline — so an expansion inside a comment cannot change the emitted binary.
-# An unobservable change is not something a gate can hold.
+# ⛔ THE FIRST CUT OF THIS FILE SAID, HERE: "comments are deliberately not excluded,
+# and there is no axis for them — `#` opens a comment, the lexer drops it, and a
+# `#define` body cannot contain a newline, so an expansion inside a comment cannot
+# change the emitted binary. An unobservable change is not something a gate can
+# hold." THAT WAS FALSE, and saying it is what left the shape untested. The argument
+# only covers the bytes an expansion WRITES; PP_EXPAND's argument scan READS to the
+# matching `)` with no line bound, so an UNBALANCED `(` in a comment ate the code
+# after it:
+#
+#     #define M(a) 0
+#     # TODO: fix M(
+#     var r = 42;
+#     var t = 1;
+#     syscall(60, r + t);          → exit 0, empty stderr. 43 is correct.
+#
+# Fixed by bounding — not excluding — in `PP_MACRO_CALLABLE` / `PP_ARGS_ON_LINE`: an
+# invocation that STARTS in a `#` comment must CLOSE on the same line. Excluding
+# comments outright would regress attribute lines, which PP_LEXST also reads as
+# comments and whose macros legitimately expand (axis 10).
 #
 # Axes:
 #   1  the filed shape: `myID(5)` calls myID, and the binary is byte-identical to
@@ -49,6 +64,21 @@
 #      get wrong
 #   7  anti-vacuous: with the macro DEFINED but spelled so it cannot match, every
 #      axis-1..4 program compiles to the same bytes as with no macro at all
+#   8  an UNBALANCED `(` in a whole-line `#` comment does not delete the code that
+#      follows it (exit 43, byte-identical to the renamed-macro twin)
+#   9  the same from a TRAILING comment on a real line of code — the shape that
+#      needs no contrived file at all
+#  10  over-correction guard: a macro on an ATTRIBUTE line still expands. PP_LEXST
+#      reads `#inline fn f(): i64 { return N(5); }` as a comment, so a blanket
+#      "never expand in a comment" passes axes 8 and 9 and breaks this. Its oracle
+#      is a HAND-EXPANDED twin, not a number
+#  11  the one accepted behaviour change, pinned so it cannot decay into silence: an
+#      invocation whose args WRAP on an attribute line no longer expands, and fails
+#      LOUDLY (`undefined function`, compiler exit 1) rather than mis-compiling
+#  12  a stray `)` in a LATER comment — legal prose — closed the comment's `(` at
+#      depth 0 and the expansion ate two whole statements. The axis that makes the
+#      newline stop itself load-bearing: 8 and 9 survive its removal by luck of
+#      paren balance, 12 does not
 #
 # ⚠ NO COMPANION `.tcyr`, AND THE REASON IS ITSELF A DEFECT: a function-like
 # `#define` in a file that also `include`s lib/assert.cyr does not compile at all
@@ -74,12 +104,24 @@
 #      advances, so nothing is ever "in a string")
 #      → 2 FAIL / 5 ok: axes 3 and 4 — the same pair, from the other end.
 #   N4 PP_MACRO_START returns 0 always (the over-correction: no macro ever
-#      expands) → 2 FAIL / 5 ok: axes 5 and 6, each as a COMPILE failure
+#      expands) → axes 5, 6, 10, each as a COMPILE failure
 #      (`refusing to emit binary with 1 reachable undefined function(s)` — the
 #      unexpanded `DBL(...)` is read as a call to a function nobody defined),
 #      which is why `compile()` here fails loudly instead of returning quietly.
-#   the whole pre-6.6.6 compiler (the defect itself) → 4 FAIL: axes 1, 2, 3, 4
-#   real tree → 7/7 green
+#   N5 the comment bound REVERTED (PP_MACRO_CALLABLE returns 1 for `lst == 3` too)
+#      → axes 8, 9, 11, 12 — the defect itself.
+#   N6 the comment bound made a blanket EXCLUSION (`lst == 3` → not an invocation)
+#      → axis 10: the attribute line stops expanding. This is why 8/9/12 alone are
+#      not enough coverage, and why the fix bounds instead of excluding.
+#   N7 only the `c == 10` arm of PP_ARGS_ON_LINE deleted → axes 11, 12. 8 and 9
+#      survive it because the code after them is paren-BALANCED, so the runaway
+#      scan runs off the end of the file anyway; axis 12 is the one that needs the
+#      newline itself.
+#   the whole pre-6.6.6 compiler (both defects) → 8 FAIL: axes 1, 2, 3, 4, 8, 9, 11, 12
+#   real tree → 12/12 green
+#
+# Ledger re-run in full at bite 15d (2026-09-19), cycc 1,315,040 B — unchanged again
+# by the comment bound; N1–N4 reconfirmed against the 12-axis file.
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
@@ -245,6 +287,125 @@ if [ "$nv" -eq 4 ]; then
 else
     printf '  FAIL: axis 7 — only %s of 4 twins match the no-macro build\n' "$nv"
     fail=$((fail+1))
+fi
+
+# ── axis 8 — an unbalanced `(` in a whole-line comment must not eat the code below.
+#    The twin renames the MACRO and leaves the comment exactly as written, so the two
+#    files differ only in whether that `M(` can be found — nothing else moves.
+cat > "$D/a8.cyr" <<'EOF'
+#define M(a) 0
+# TODO: fix M(
+var r = 42;
+var t = 1;
+syscall(60, r + t);
+EOF
+sed 's/^#define M(/#define ZM(/' "$D/a8.cyr" > "$D/a8t.cyr"
+compile a8; compile a8t
+if [ -s "$D/a8.bin" ] && [ -s "$D/a8t.bin" ]; then
+    run_exit a8; got8=$got
+    run_exit a8t; gotT=$got
+    if [ "$got8" = "$gotT" ] && cmp -s "$D/a8.bin" "$D/a8t.bin"; then
+        printf '  ok: axis 8 — an unbalanced `(` in a comment keeps the code below it (exit %s, the twin answer)\n' "$got8"
+        pass=$((pass+1))
+    else
+        printf '  FAIL: axis 8 — comment-opened expansion: exit %s, twin %s, bytes %s\n' "$got8" "$gotT" \
+            "$(cmp -s "$D/a8.bin" "$D/a8t.bin" && echo same || echo differ)"
+        fail=$((fail+1))
+    fi
+fi
+
+# ── axis 9 — the same shape from a TRAILING comment on a line of real code.
+cat > "$D/a9.cyr" <<'EOF'
+#define M(a) 0
+var r = 42;  # see M(
+var t = 1;
+syscall(60, r + t);
+EOF
+sed 's/^#define M(/#define ZM(/' "$D/a9.cyr" > "$D/a9t.cyr"
+compile a9; compile a9t
+if [ -s "$D/a9.bin" ] && [ -s "$D/a9t.bin" ]; then
+    run_exit a9; got9=$got
+    run_exit a9t; gotT=$got
+    if [ "$got9" = "$gotT" ] && cmp -s "$D/a9.bin" "$D/a9t.bin"; then
+        printf '  ok: axis 9 — a TRAILING comment does not eat the next line (exit %s, the twin answer)\n' "$got9"
+        pass=$((pass+1))
+    else
+        printf '  FAIL: axis 9 — trailing-comment expansion: exit %s, twin %s, bytes %s\n' "$got9" "$gotT" \
+            "$(cmp -s "$D/a9.bin" "$D/a9t.bin" && echo same || echo differ)"
+        fail=$((fail+1))
+    fi
+fi
+
+# ── axis 10 — over-correction guard. `#inline` is an ATTRIBUTE, but PP_LEXST reads
+#    the `#` as a comment opener, so a blanket "never expand in a comment" would pass
+#    axes 8 and 9 and silently stop expanding here. Oracle: the same file with the
+#    macro HAND-EXPANDED — a different derivation from any number in this gate.
+cat > "$D/a10.cyr" <<'EOF'
+#define N(a) (a + 1)
+#inline fn f(): i64 { return N(5); }
+var r = f();
+syscall(60, r);
+EOF
+sed 's/return N(5);/return (5 + 1);/' "$D/a10.cyr" > "$D/a10t.cyr"
+compile a10; compile a10t
+if [ -s "$D/a10.bin" ] && [ -s "$D/a10t.bin" ]; then
+    run_exit a10; gotA=$got
+    run_exit a10t; gotT=$got
+    if [ "$gotA" = "$gotT" ] && cmp -s "$D/a10.bin" "$D/a10t.bin"; then
+        printf '  ok: axis 10 — a macro on an ATTRIBUTE line still expands (exit %s, the hand-expanded answer)\n' "$gotA"
+        pass=$((pass+1))
+    else
+        printf '  FAIL: axis 10 — attribute-line expansion: exit %s, hand-expanded %s, bytes %s\n' "$gotA" "$gotT" \
+            "$(cmp -s "$D/a10.bin" "$D/a10t.bin" && echo same || echo differ)"
+        fail=$((fail+1))
+    fi
+fi
+
+# ── axis 11 — the accepted loss, pinned. A WRAPPED invocation on an attribute line is
+#    indistinguishable from the axis-8 shape without a list of attribute names to keep
+#    in sync (the drift CLAUDE.md warns about), so it is no longer expanded. It must
+#    fail LOUDLY. If this ever starts passing quietly, the bound was widened wrongly.
+printf '#define ADD(a,b) (a + b)\n#inline fn f(): i64 { return ADD(1,\n2); }\nvar r = f();\nsyscall(60, r);\n' > "$D/a11.cyr"
+rc11=0
+( "$CC" < "$D/a11.cyr" > "$D/a11.bin" 2> "$D/a11.err" ) || rc11=$?
+if [ "$rc11" -ne 0 ] && grep -q "undefined function 'ADD'" "$D/a11.err"; then
+    printf '  ok: axis 11 — a WRAPPED invocation on an attribute line fails loudly (exit %s, names ADD)\n' "$rc11"
+    pass=$((pass+1))
+else
+    printf '  FAIL: axis 11 — wrapped attribute-line invocation: compiler exit %s, stderr %s\n' "$rc11" \
+        "$(head -c 90 "$D/a11.err")"
+    fail=$((fail+1))
+fi
+
+# ── axis 12 — the axis that makes the NEWLINE STOP load-bearing rather than a
+#    belt-and-braces. In axes 8 and 9 the code that follows is paren-BALANCED, so the
+#    runaway scan happens to run off the end of the file and stops there anyway; drop
+#    the newline test alone and they still pass. Here a LATER COMMENT contains a
+#    stray `)` — perfectly legal prose — and it closes the comment's `(` at depth 0,
+#    so the expansion eats `var r` and `var t` and the program exits 0. This is the
+#    shape that fails on every mutation of the bound, including dropping just the
+#    `c == 10` arm of PP_ARGS_ON_LINE.
+cat > "$D/a12.cyr" <<'EOF'
+#define M(a) 0
+# TODO: fix M(
+var r = 42;
+var t = 1;
+# and then ) done
+syscall(60, r + t);
+EOF
+sed 's/^#define M(/#define ZM(/' "$D/a12.cyr" > "$D/a12t.cyr"
+compile a12; compile a12t
+if [ -s "$D/a12.bin" ] && [ -s "$D/a12t.bin" ]; then
+    run_exit a12; gotC=$got
+    run_exit a12t; gotT=$got
+    if [ "$gotC" = "$gotT" ] && cmp -s "$D/a12.bin" "$D/a12t.bin"; then
+        printf '  ok: axis 12 — a stray `)` in a LATER comment cannot close an earlier one (exit %s, the twin answer)\n' "$gotC"
+        pass=$((pass+1))
+    else
+        printf '  FAIL: axis 12 — stray `)` closed the comment paren: exit %s, twin %s, bytes %s\n' "$gotC" "$gotT" \
+            "$(cmp -s "$D/a12.bin" "$D/a12t.bin" && echo same || echo differ)"
+        fail=$((fail+1))
+    fi
 fi
 
 if [ "$fail" -gt 0 ]; then

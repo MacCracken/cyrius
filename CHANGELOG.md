@@ -8,6 +8,40 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **A macro invocation opened inside a `#` COMMENT silently DELETED the code after it — and the
+  argument for leaving comments alone, written into six places earlier in this same release, was
+  wrong.** (bite 15d.) With `#define M(a) 0` in scope, the comment `# TODO: fix M(` expanded
+  against the `)` of a `syscall(...)` four lines down and `PP_EXPAND` swallowed **every byte in
+  between**, so the whole program body vanished: exit **0** with an **empty stderr** where 43 is
+  correct. A trailing comment on a real line of code does it too (`var r = 42;  # see M(` →
+  exit 42, the next statement gone), and a stray `)` in a LATER comment — legal prose — closes
+  the paren at depth 0 and eats exactly the two statements between them. Pre-existing (identical
+  on `b6b3bbd6`); what is new is that bite 15b examined this exact question and answered it
+  wrongly, in `PP_MACRO_START`'s comment, the gate header, the gate's `_gate(...)` registration,
+  the CHANGELOG entry above, `docs/guides/cyrius-guide.md` and `docs/doc-health.md`: *"a `#define`
+  body cannot contain a newline, so an expansion inside a comment cannot change the emitted
+  binary."* ⚠ **That argues only about the bytes an expansion WRITES.** The bytes it READS are
+  the other half, and the argument scan had no line bound. The claim is true of a single-line
+  invocation in a comment, and only of that — verified byte-identical, and still expanded.
+  **Fix:** bound, do not exclude — `PP_MACRO_CALLABLE` / `PP_ARGS_ON_LINE`
+  (`src/frontend/lex_pp.cyr`): an invocation that STARTS inside a comment must CLOSE on the same
+  line, or it is not an invocation. A blanket "never expand in a comment" would have passed the
+  new axes and **regressed attribute lines**, because `PP_LEXST` reads `#inline fn f(): i64 {
+  return N(5); }` as a comment and that macro legitimately expands (mutation N6 is exactly that
+  over-correction, and it is RED). **One accepted behaviour change**, pinned as its own axis: an
+  invocation whose args *wrap* on an attribute line no longer expands, and now fails **loudly**
+  (`undefined function 'ADD'`, compiler exit 1) rather than mis-compiling — telling an attribute
+  line from a comment needs a list of attribute names kept in sync with `lex.cyr`, which is the
+  drift `CLAUDE.md` warns about, and the census behind bite 15b found **zero** function-like
+  macros anywhere in `~/Repos`. Gate: the same
+  `tests/gates/frontend/macro_invocation_boundary.sh`, now **12 axes** — 8 (whole-line comment),
+  9 (trailing comment), 10 (attribute line still expands, oracle = a hand-expanded twin), 11 (the
+  accepted loss is loud), 12 (the stray `)` in a later comment, which is the axis that makes the
+  newline stop itself load-bearing: 8 and 9 survive its removal on paren balance alone). Full
+  ledger re-run: N1–N7 each RED on a different axis set, pre-6.6.6 compiler RED on 8 of 12.
+  cycc **1,315,040 B (unchanged)**, fixpoint + seed-derive green, all 7 forks compile, 0 of 330
+  `.tcyr` binaries changed a byte.
+
 - **A macro name matched in the MIDDLE of an identifier, and inside a STRING LITERAL — two more
   unbounded name matches in the preprocessor, both silent.** (bite 15b.) `PP_MACRO_PASS` decided
   "this is a macro invocation" from the bytes alone: any upper-case byte began a candidate name.
@@ -23,11 +57,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   BYTE-oriented (it has no `bol`), which is exactly how it was left out of that census; it shares
   `PP_LEXST` now, like the other four. **Fix:** `PP_MACRO_START` — the byte must start an
   identifier (`PP_IDBYTE` of the previous byte is 0, or it is byte 0) and `PP_LEXST_INSTR` of the
-  state must be 0. Comments are deliberately NOT excluded: `#` opens a comment, the lexer drops
-  it, and a `#define` body stops at the newline, so an expansion inside one cannot change the
-  emitted binary — an unobservable change a gate could not hold. Gate
-  `tests/gates/frontend/macro_invocation_boundary.sh` (7 axes; mutations N1–N4 each RED, and the
-  whole pre-6.6.6 compiler red on 4 of 7): every expected value comes from a twin with the macro
+  state must be 0. ⚠ This entry also said *"comments are deliberately NOT excluded … an
+  expansion inside one cannot change the emitted binary — an unobservable change a gate could
+  not hold."* **That was false**, and bite 15d (below) both fixes it and explains why. Gate
+  `tests/gates/frontend/macro_invocation_boundary.sh` (12 axes; mutations N1–N7 each RED, and the
+  whole pre-6.6.6 compiler red on 8 of 12): every expected value comes from a twin with the macro
   RENAMED to one that cannot match, and axis 7 proves that twin equals a build with no macro at
   all, so no pair is two equally-broken compiles. ⛔ **There is no companion `.tcyr`, and the
   reason is a separate, pre-existing defect recorded in the gate header and handed to this

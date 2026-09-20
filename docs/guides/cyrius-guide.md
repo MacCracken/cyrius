@@ -1279,8 +1279,28 @@ the one the sentence above did not cover, because it is byte-oriented rather tha
 matched the name anywhere: `myID(5)` with `#define ID(a) (a)` in scope was rewritten to `my((5))`,
 so a program with both `myID` and `my` defined silently CALLED THE WRONG ONE, and `"ID(5) literal"`
 lost two bytes of its own data. Both are fixed; a name that merely ends an identifier, and a name
-inside a string, are now left alone. (Inside a `#` COMMENT a macro is still expanded — a `#define`
-body stops at the newline, so that cannot change what is compiled.)
+inside a string, are now left alone.
+
+⛔ **And an invocation opened in a `#` comment used to delete your code.** This guide said, for one
+release, that a macro inside a comment "cannot change what is compiled — a `#define` body stops at
+the newline". That covers only what an expansion *writes*. What it *reads* ran to the matching `)`
+wherever that was, so with `#define M(a) 0` in scope the comment
+
+```
+# TODO: fix M(
+var r = 42;
+var t = 1;
+syscall(60, r + t);
+```
+
+expanded `M(` against the `)` of the `syscall` and swallowed everything between them — the program
+body was gone, and it exited 0 with nothing on stderr. Since v6.6.6 an invocation that *starts*
+inside a comment must also *close* on that line; if it does not, it is not an invocation and the
+bytes stay comment. A single-line `# see M(1)` is still expanded, and still changes nothing. One
+consequence to know: on an ATTRIBUTE line (`#inline fn f(): i64 { return N(5); }`, which the
+preprocessor's state machine reads as a comment) a macro call still expands, but one whose
+arguments **wrap onto the next line** no longer does — it fails loudly with `undefined function`
+rather than compiling something you did not write.
 
 ⚠ **A `#` is not always a comment.** `#naked`, `#inline`, `#pure`, `#io`, `#alloc`,
 `#must_use`, `#regalloc`, `#deprecated`, `#assert` and `#pe_import` are attribute TOKENS, and

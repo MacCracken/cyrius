@@ -188,6 +188,17 @@ type: state
 > `while (wgo == 1)`" recipe finds six of the ELEVEN sites. One `vidya/` compiler gotcha added
 > (a test whose oracle lives in the same file the defect damages cannot fail).
 >
+> ⛔ **Corrected at 6.6.6 (bite 15d), one bite after it was written here:** the sentence above —
+> "the one place a macro IS still expanded (inside a `#` comment) and why that cannot change what
+> is compiled" — **was false**, and this file was one of six places asserting it. An expansion
+> opened in a comment read forward to the matching `)` with no line bound, so `# TODO: fix M(`
+> deleted every statement up to the next `)` and the program exited 0 with an empty stderr. The
+> guide paragraph now says so, and the rule it states is the fixed one: an invocation that starts
+> in a comment must close on that line. ⚠ The lesson to take is narrower than "the doc was
+> stale": the doc faithfully recorded a justification that had been reasoned about and was wrong
+> about the READ side of the operation, so re-reading the doc would never have caught it. Only
+> running the shape did.
+>
 > ⚖️ **Not re-verified at 6.6.6:** the tier tables and the "At a glance" anchors below still
 > carry their 2026-09-08 v6.6.1 figures. cycc is **1,315,016 B** as of this bite
 > (`docs/development/state.md` carries the live stamp); the 1,247,608 B anchor below is the

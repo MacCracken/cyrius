@@ -2507,10 +2507,25 @@ fn PP_IDBYTE(b): i64 {
 #   line-oriented — it has no `bol`, so it was not one of "the four line-oriented
 #   passes". It shares PP_LEXST here, like the other four.
 #
-# Comments are deliberately NOT excluded: `#` opens a comment, the lexer drops it,
-# and an expansion inside one cannot change the emitted binary (a `#define` body
-# stops at the newline, so no expansion can introduce one). Excluding them would be
-# an unobservable change, and this gate would have nothing to assert.
+# ⛔ Comments are NOT excluded HERE, and the reason is NOT the one this comment gave
+# for one release. It read: "an expansion inside a comment cannot change the emitted
+# binary (a `#define` body stops at the newline, so no expansion can introduce one)".
+# That argues only about the bytes the expansion WRITES. The bytes it READS are the
+# other half, and PP_EXPAND's argument scan runs to the matching `)` with no line
+# bound — so with `#define M(a) 0` in scope, the comment
+#
+#     # TODO: fix M(
+#     var r = 42;
+#     var t = 1;
+#     syscall(60, r + t);
+#
+# expanded `M(` against the `)` of `syscall(...)` and DELETED every byte between
+# them: the whole program body vanished, exit 0 with an empty stderr where 43 is
+# correct. Reachable from a trailing comment on a real line too (`var r = 42;  # see M(`).
+# The claim is true only of a SINGLE-LINE invocation, which is why the bound — not the
+# exclusion — is the fix: see PP_ARGS_ON_LINE. A blanket "no expansion in a comment"
+# would ALSO regress attribute lines, since PP_LEXST reads `#inline fn f(): i64 {
+# return N(5); }` as a comment and that line's macro legitimately expands.
 # CHANGELOG [6.6.6]
 fn PP_MACRO_START(S, ip, lst): i64 {
     if (PP_LEXST_INSTR(lst) == 1) { return 0; }
@@ -2520,6 +2535,56 @@ fn PP_MACRO_START(S, ip, lst): i64 {
     if (ip == 0) { return 1; }
     if (PP_IDBYTE(load8(S + _SRCB + ip - 1)) == 1) { return 0; }
     return 1;
+}
+
+# Offset of the `(` that closes the candidate macro name starting at `ip`, or -1 if
+# the name is followed by anything else. Lifted out of PP_MACRO_PASS unchanged (it
+# was an inline loop) so the callable test below can share it and so PP_MACRO_PASS
+# keeps few enough call/global references for cybs. CHANGELOG [6.6.6]
+fn PP_MACRO_LPAREN(S, ip, bl): i64 {
+    var mp = ip;
+    while (mp < bl) {
+        var mc = load8(S + _SRCB + mp);
+        if (mc == 40) { return mp; }
+        if (PP_IDBYTE(mc) == 0) { return 0 - 1; }
+        mp = mp + 1;
+    }
+    return 0 - 1;
+}
+
+# 1 iff the invocation whose `(` sits at `lp` closes on the SAME LINE.
+#
+# v6.6.6 — the bound that makes expanding inside a `#` comment safe. PP_EXPAND
+# consumes input to the matching `)` wherever it is, so an UNBALANCED `(` in a
+# comment swallowed the code that followed it — silently, and with exit 0. A comment
+# ends at the newline, so an invocation that starts in one is harmless exactly while
+# it also ENDS in one. Not applied to code: a wrapped invocation (`ADD(1,\n2)`) is
+# legitimate and PP_EXPAND has kept it line-faithful since v6.5.19. CHANGELOG [6.6.6]
+fn PP_ARGS_ON_LINE(S, lp, bl): i64 {
+    var depth = 0;
+    var q = lp;
+    while (q < bl) {
+        var c = load8(S + _SRCB + q);
+        if (c == 10) { return 0; }
+        if (c == 40) { depth = depth + 1; }
+        elif (c == 41) {
+            depth = depth - 1;
+            if (depth == 0) { return 1; }
+        }
+        q = q + 1;
+    }
+    return 0;
+}
+
+# 1 iff a candidate name at `ip` really is an invocation to expand: it is followed by
+# `(`, and — when it sits inside a `#` comment (PP_LEXST state 3) — the matching `)`
+# is on that same line. See PP_ARGS_ON_LINE. CHANGELOG [6.6.6]
+fn PP_MACRO_CALLABLE(S, ip, bl, lst): i64 {
+    var lp = PP_MACRO_LPAREN(S, ip, bl);
+    if (lp < 0) { return 0; }
+    if (lst != 3) { return 1; }
+    var ok = PP_ARGS_ON_LINE(S, lp, bl);
+    return ok;
 }
 
 # Find macro by name hash at input position, return index or -1
@@ -3450,22 +3515,14 @@ fn PP_MACRO_PASS(S): i64 {
         if (PP_MACRO_START(S, ip, lst) == 1) {
                 var mmi = PP_FIND_MACRO(S, ip);
                 if (mmi >= 0) {
-                    # Verify ( follows the name (skip alpha chars to find it)
-                    var mp = ip;
-                    while (mp < bl) {
-                        var mc = load8(S + _SRCB + mp);
-                        if (mc == 40) { break; }
-                        if (mc >= 65) { if (mc <= 90) { mp = mp + 1; } else { break; } }
-                        elif (mc >= 97) { if (mc <= 122) { mp = mp + 1; } else { break; } }
-                        elif (mc >= 48) { if (mc <= 57) { mp = mp + 1; } else { break; } }
-                        elif (mc == 95) { mp = mp + 1; }
-                        else { break; }
+                    # v6.6.6 — the `(` probe (was an inline loop here) plus the
+                    # same-line bound that keeps an invocation opened inside a `#`
+                    # comment from swallowing the code after it. See PP_MACRO_CALLABLE.
+                    if (PP_MACRO_CALLABLE(S, ip, bl, lst) == 1) {
+                        ip = PP_EXPAND(S, mmi, ip, bl, out, op);
+                        op = load64(S + 0x190700);
+                        expanded = 1;
                     }
-                    if (mp < bl) { if (load8(S + _SRCB + mp) == 40) {
-                            ip = PP_EXPAND(S, mmi, ip, bl, out, op);
-                            op = load64(S + 0x190700);
-                            expanded = 1;
-                        } }
                 }
         }
         # ⚠ v6.6.6 — this block carried a 17-line comment headed "v6.5.21 — NEUTRALISE
