@@ -25,8 +25,10 @@
 #      `.sha256` in the SAME scp (sidecars counted separately from tarballs, so a sidecar
 #      cannot be mistaken for the artifact). Floor: at least 2 such scp sites. The detector
 #      is self-tested on both shapes.
-#   2. STATIC: every remote command that runs install.sh with `CYRIUS_INSTALL_TARBALL=`
-#      first tests that the sidecar is THERE. Floor: at least 2 sites.
+#   2. STATIC: every pillar that runs install.sh with `CYRIUS_INSTALL_TARBALL=` first tests
+#      that the sidecar is THERE — the two in `cbt/*.cyr` (same-line, inside the remote
+#      command string) and the two `run: |` blocks in `.github/workflows/ci.yml` (the test a
+#      line of its own above it). Floor: 4 sites, scan self-tested on 3 shapes.
 #   3. BEHAVIOURAL, and the axis that makes axis 1 more than a string check: the REAL
 #      `scripts/install.sh`, in a throwaway HOME + CYRIUS_HOME, over a locally built
 #      tarball. (a) correct sidecar -> it says the checksum verified; (b) ONE BYTE appended
@@ -57,13 +59,27 @@
 #      still runs and still reports the mismatch; it just      match". The `no bin/` grep this
 #      no longer stops the install.                            assertion replaced caught none of
 #                                                              it — see the axis-3 note.
+#   h. (bite 26 review) the `test -f "$TARBALL.sha256"`    -> axis 2 FAIL (naming
+#      dropped from the macos-14 ci.yml pillar only,          .github/workflows/ci.yml:<line>,
+#      its explanatory COMMENT left standing                  3 of 4 guarded). ⚠ The first cut
+#                                                             of the window scan PASSED this —
+#                                                             it matched any `.sha256` in the
+#                                                             preceding lines, including the
+#                                                             comment. It now requires a real
+#                                                             `test -f` / `[ -f` and ignores
+#                                                             whole-line comments.
 # Real tree -> PASS.
 #
-# ⚠ NOT COVERED, and said plainly rather than implied: `scripts/cross-os-selfhost.sh`'s
-# `ecb-install` arm and `scripts/cass-install-gate.sh` have the SAME shape and are NOT fixed
-# by this bite — they belong to a parallel lane (bite 25a) that was not in this checkout. If
-# that lane's `install_gates_ship_the_checksum.sh` lands, its `scripts/*.sh` sweep and this
-# gate's `cbt/*.cyr` sweep are complementary halves of one claim; neither covers the other.
+# ⚠ NOT COVERED, and said plainly rather than implied — this enumeration is what a future
+# reader will trust, so it is the COMPLETE list. `grep -rn CYRIUS_INSTALL_TARBALL` finds five
+# live pillars. Four are covered here: `cbt/commands.cyr` ×2 (axes 1 + 2) and
+# `.github/workflows/ci.yml` ×2 (axis 2 — they take their tarball from the artifact store,
+# not an scp, so axis 1 does not apply to them). The fifth,
+# `scripts/cross-os-selfhost.sh`'s `ecb-install` arm, and `scripts/cass-install-gate.sh`
+# beside it, have the SAME shape and are NOT fixed by this bite — they belong to a parallel
+# lane (bite 25a) that was not in this checkout, so nothing here was narrowed to compensate.
+# If that lane's `install_gates_ship_the_checksum.sh` lands, its `scripts/*.sh` sweep and this
+# gate's sweep are complementary halves of one claim; neither covers the other.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: install_pillars_ship_the_checksum: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
@@ -114,25 +130,59 @@ done < "$D/sites"
 [ "$a1" = 0 ] && echo "  ok: axis 1: $nsite scp-a-release-tarball site(s) in cbt/, every one also shipping its .sha256 (detector self-tested on 3 shapes)"
 
 # ── axis 2: the far side REQUIRES the sidecar before it installs ─────────────
+# FOUR pillars, two shapes, one rule (bite 26 review widened this from cbt/ alone — the two
+# CI ones were absent from the sweep AND from the "not covered" note, which is what a future
+# reader would have trusted). In cbt/*.cyr a pillar is ONE remote command string, so the test
+# sits on the same line. In .github/workflows/ci.yml it is a `run: |` block — the macos-14
+# funcgate and the self-hosted Intel-Mac (ach) funcgate, each installing a tarball downloaded
+# from the artifact store onto another machine — so the test is a line of its own above it,
+# required within the preceding 10 lines. Both were fail-open: the sidecar reaches the runner
+# only because upload-artifact takes the whole OUT_DIR and build-macos-*-tarball.sh puts it
+# there, and NOTHING required it.
 a2=0
-ninst=$(grep -c 'CYRIUS_INSTALL_TARBALL=' cbt/*.cyr | awk -F: '{s += $2} END {print s+0}')
-[ "$ninst" -ge 2 ] || { fail "axis 2: found $ninst install-pillar line(s) in cbt/ (floor 2)"; a2=1; }
+_pillar_scan() {   # <file> -> "<file>:<line>:<0|1 guarded>" per live pillar
+    awk -v F="$1" '
+        /CYRIUS_INSTALL_TARBALL=/ {
+            c = $0; sub(/^[ \t]*#/, "#", c)
+            if (c ~ /^#/) { prev[NR] = $0; next }              # a commented-out pillar is not a site
+            g = ($0 ~ /\.tar\.gz\.sha256[ \t]*\]/) ? 1 : 0     # same-line test (the cbt shape)
+            if (g == 0) {                                      # …or a test in the 10 lines above (the YAML shape)
+                s = (NR > 10) ? NR - 10 : 1
+                for (i = s; i < NR; i++) if (prev[i] ~ /\.sha256/ && prev[i] ~ /(test -[fs]|\[ -[fs])/) g = 1
+            }
+            printf "%s:%d:%d\n", F, NR, g
+        }
+        # A whole-line comment is NOT a guard, and the window test above requires a real file
+        # TEST beside the name. The first cut matched any .sha256 in the preceding lines, so
+        # deleting the test -f from a pillar left the explanatory COMMENT above it standing
+        # and the gate still read green (measured; that is ledger row h).
+        { c = $0; sub(/^[ \t]*/, "", c); prev[NR] = (substr(c, 1, 1) == "#") ? "" : $0 }
+    ' "$1"
+}
+: > "$D/pillars"
+for f in $(ls cbt/*.cyr | LC_ALL=C sort) .github/workflows/ci.yml; do
+    [ -f "$f" ] || { fail "axis 2: $f is missing — an install pillar's file is gone"; a2=1; continue; }
+    _pillar_scan "$f" >> "$D/pillars"
+done
+# self-test, so the scan cannot pass by seeing nothing or by calling everything guarded
+printf 'x CYRIUS_INSTALL_TARBALL=$T sh install.sh\n' > "$D/fx/p_bad.yml"
+printf 'test -f "$T.sha256" || exit 1\nCYRIUS_INSTALL_TARBALL=$T sh install.sh\n' > "$D/fx/p_ok.yml"
+printf "ssh h '[ -f \$HOME/c.tar.gz.sha256 ] && CYRIUS_INSTALL_TARBALL=\$HOME/c.tar.gz sh install.sh'\n" > "$D/fx/p_inline.cyr"
+[ "$(_pillar_scan "$D/fx/p_bad.yml")" = "$D/fx/p_bad.yml:1:0" ]    || { fail "axis 2 self-test: an unguarded pillar is not seen as unguarded: '$(_pillar_scan "$D/fx/p_bad.yml")'"; a2=1; }
+[ "$(_pillar_scan "$D/fx/p_ok.yml")" = "$D/fx/p_ok.yml:2:1" ]      || { fail "axis 2 self-test: a pillar guarded a few lines above is not seen as guarded: '$(_pillar_scan "$D/fx/p_ok.yml")'"; a2=1; }
+[ "$(_pillar_scan "$D/fx/p_inline.cyr")" = "$D/fx/p_inline.cyr:1:1" ] || { fail "axis 2 self-test: a pillar guarded on its own line is not seen as guarded: '$(_pillar_scan "$D/fx/p_inline.cyr")'"; a2=1; }
+ninst=$(grep -c . "$D/pillars"); ninst=${ninst:-0}
+[ "$ninst" -ge 4 ] || { fail "axis 2: found $ninst install-pillar line(s) (floor 4 — ecb + ach in cbt/, macos-14 + ach in ci.yml) — the scan read nothing, or a pillar was deleted"; a2=1; }
 nguard=0
-grep -n 'CYRIUS_INSTALL_TARBALL=' cbt/*.cyr > "$D/pillars" 2>/dev/null
-while IFS= read -r hit; do
-    [ -n "$hit" ] || continue
-    body=${hit#*:*:}
-    case "$body" in
-        [\ \t]*\#*) continue;;
-    esac
-    case "$body" in
-        *'.tar.gz.sha256 ]'*) nguard=$((nguard + 1));;
-        *) fail "axis 2: an install pillar runs install.sh without first testing that the .sha256 arrived — a dropped sidecar silently returns it to the unverified path:"
-           echo "      $(echo "$hit" | cut -c1-120)…"; a2=1;;
-    esac
+while IFS=: read -r f ln g; do
+    [ -n "$f" ] || continue
+    if [ "$g" = 1 ]; then nguard=$((nguard + 1)); else
+        fail "axis 2: the install pillar at $f:$ln runs install.sh without first testing that the .sha256 is there — install.sh verifies a local tarball ONLY when a sidecar sits beside it, so a dropped or unshipped sidecar installs unverified with everything still green:"
+        echo "      $(sed -n "${ln}p" "$f" | cut -c1-120)…"; a2=1
+    fi
 done < "$D/pillars"
-[ "$nguard" -ge 2 ] || { fail "axis 2: only $nguard install pillar(s) test for the sidecar (floor 2)"; a2=1; }
-[ "$a2" = 0 ] && echo "  ok: axis 2: all $ninst install pillar(s) refuse to start unless the .sha256 is on the far side"
+[ "$nguard" -ge 4 ] || { fail "axis 2: only $nguard install pillar(s) test for the sidecar (floor 4)"; a2=1; }
+[ "$a2" = 0 ] && echo "  ok: axis 2: all $ninst install pillar(s) — 2 in cbt/, 2 in ci.yml — refuse to start unless the .sha256 is there (scan self-tested on 3 shapes)"
 
 # ── axis 3: what the sidecar actually buys, measured against the REAL install.sh ──
 # A throwaway HOME and CYRIUS_HOME: nothing here touches the live store.
@@ -195,4 +245,4 @@ done
 [ "$a4" = 0 ] && echo "  ok: axis 4: both macOS tarball builders write the .sha256 and land it in OUT_DIR beside the tarball"
 
 if [ "$FAIL" != 0 ]; then echo "FAIL: install_pillars_ship_the_checksum"; exit 1; fi
-echo "PASS install_pillars_ship_the_checksum (both macOS install pillars ship the .sha256 and require it on the far side; install.sh verifies it, refuses a 1-byte tamper, and without it checks nothing)"
+echo "PASS install_pillars_ship_the_checksum (both macOS scp pillars ship the .sha256; all FOUR install pillars — 2 in cbt/, 2 in ci.yml — require it before they install; install.sh verifies it, refuses a 1-byte tamper before it unpacks anything, and without it checks nothing)"

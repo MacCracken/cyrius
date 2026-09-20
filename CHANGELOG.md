@@ -2260,9 +2260,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   sidecar)`; one byte appended, sidecar present → rc 1, `checksum mismatch`, nothing
   unpacked; the *same* tampered tarball with no sidecar → zero mentions of a checksum and
   `binaries installed` **from the tampered file** before an unrelated failure. New gate
-  `tests/gates/toolchain/install_pillars_ship_the_checksum.sh` (4 axes, 7 mutants), whose
+  `tests/gates/toolchain/install_pillars_ship_the_checksum.sh` (4 axes, 8 mutants), whose
   axis 3 runs the real install.sh over all three cases in a throwaway `HOME` +
-  `CYRIUS_HOME`. ⚠ **That axis's "refused before it unpacked anything" half asserted
+  `CYRIUS_HOME`. ⚠ **There are four install pillars, not two.** `.github/workflows/ci.yml`
+  carries two more — the `macos-14` funcgate and the self-hosted Intel-Mac (`ach`) funcgate,
+  each installing a tarball downloaded from the artifact store onto another machine — and
+  the first cut of this bite neither fixed them nor listed them as uncovered. They were
+  verified only *incidentally*: `upload-artifact` takes the whole `OUT_DIR` and
+  `build-macos-*-tarball.sh` puts the sidecar there, so it happened to arrive, and nothing
+  **required** it. Both now `test -f "$TARBALL.sha256"` before installing, axis 2 sweeps
+  `.github/workflows/ci.yml` alongside `cbt/*.cyr` (floor 4, two guard shapes: same-line
+  inside a remote command string, or a line of its own within the preceding 10), and the
+  gate's NOT-COVERED paragraph is now the complete five-pillar enumeration rather than a
+  partial one. Ledger row `h`: dropping the guard from the macos-14 pillar turns axis 2 red
+  naming the file and line — and it **passed** the first window scan, which matched any
+  `.sha256` above the pillar including the comment explaining the guard, so the scan now
+  requires a real `test -f` / `[ -f` and ignores whole-line comments. ⚠ **That axis's "refused before it unpacked anything" half asserted
   nothing as first committed**: it grepped the refusing run for `no bin/`, which install.sh
   prints only *after* an unpack whose tree has no `bin/` — and the gate's fixture tarball
   has one, so no run could ever emit it. It is differential now: the verified run and the

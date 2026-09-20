@@ -970,6 +970,13 @@ jobs:
           V=$(tr -d '[:space:]' < VERSION)
           TARBALL="$PWD/macho-arm64/cyrius-$V-aarch64-macos.tar.gz"
           test -f "$TARBALL" || { echo "ERROR: tarball missing: $TARBALL"; ls -la macho-arm64; exit 1; }
+          # v6.6.6 (bite 26 review) — REQUIRE the .sha256 sidecar, don't hope for it.
+          # install.sh verifies a local tarball fail-closed ONLY when a sidecar sits beside
+          # it (the CVE-21 branch); with none it installs the file unverified and this job
+          # stays green. The sidecar reaches the runner only because upload-artifact takes
+          # the whole OUT_DIR — nothing required it, which is the identical fail-open the
+          # two cbt install pillars had. CHANGELOG [6.6.6].
+          test -f "$TARBALL.sha256" || { echo "ERROR: checksum sidecar missing: $TARBALL.sha256 — refusing to install an unverified tarball"; ls -la macho-arm64; exit 1; }
           export CYRIUS_HOME="$HOME/_ciih"
           CYRIUS_VERSION="$V" CYRIUS_INSTALL_TARBALL="$TARBALL" sh scripts/install.sh
           sh scripts/funcgate-posix.sh "$CYRIUS_HOME/bin/cyrius" "$HOME/_cifg" "$CYRIUS_HOME"
@@ -1034,6 +1041,11 @@ jobs:
           V=$(tr -d '[:space:]' < VERSION)
           TARBALL="$PWD/macho-x86/cyrius-$V-x86_64-macos.tar.gz"
           test -f "$TARBALL" || { echo "ERROR: tarball missing: $TARBALL"; ls -la macho-x86; exit 1; }
+          # v6.6.6 (bite 26 review) — REQUIRE the .sha256 sidecar; see the arm64 twin above.
+          # This pillar runs on the SELF-HOSTED Intel Mac, installing a tarball downloaded
+          # from the artifact store onto real hardware, so an unverified install here lands
+          # on a machine the project trusts. CHANGELOG [6.6.6].
+          test -f "$TARBALL.sha256" || { echo "ERROR: checksum sidecar missing: $TARBALL.sha256 — refusing to install an unverified tarball"; ls -la macho-x86; exit 1; }
           export CYRIUS_HOME="$HOME/_ciih_x86"
           CYRIUS_VERSION="$V" CYRIUS_INSTALL_TARBALL="$TARBALL" sh scripts/install.sh
           sh scripts/funcgate-posix.sh "$CYRIUS_HOME/bin/cyrius" "$HOME/_cifg_x86" "$CYRIUS_HOME"
