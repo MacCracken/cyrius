@@ -32,9 +32,16 @@
 #
 # MUTATION LEDGER (6.6.6 bite 6, run on this host against a staged copy of the tree, with
 # the mutant compiler rebuilt to its own fixpoint where the mutation is in src/):
-#   * delete `sys_rename` + `sys_readlink` from lib/syscalls_windows.cyr
-#       → axis 1 RED (rc=1, 3 undefined-fn warnings, 0-byte output), axis 5 RED on the
-#         peer census, axes 3-4 RED (there is no binary to run). 10 checks red.
+#   * delete `sys_rename` + `sys_self_exe_w` from lib/syscalls_windows.cyr
+#       → axis 1 RED (rc=1, 5 undefined-fn warnings, 0-byte output), axis 5 RED on the
+#         peer census, axes 3-4 RED (there is no binary to run). 11 checks red.
+#   * put a `sys_readlink` ENOSYS stub BACK into lib/syscalls_windows.cyr
+#       → axis 5 RED, 1 check. This is the mutation for the review fix: the stub leaves
+#         axes 1-4 GREEN (it changes nothing about the build — same rc, same MZ, same
+#         155,648 B, 0 undefined fns), which is the point. What it changes is that
+#         `readlink("/proc/self/exe")` — the exact line this filing is about — starts
+#         COMPILING for PE and silently degrading to argv(0), i.e. the half-fix axes 3-4
+#         exist to catch gets waved through at the build step instead.
 #   * make `_PE_ROUTE_MODULEPATH` (src/frontend/parse_expr.cyr) return 0, so the reroute
 #     degrades to -38/-ENOSYS and `_self_path` falls back to argv0
 #       → axes 1, 2 and 5 all stay GREEN — it still compiles and still ships, which is
@@ -118,8 +125,17 @@ check "install.ps1 copies programs\\ into the active home" yes \
     "$(grep -q 'CyriusHome\\programs' scripts/install.ps1 && echo yes || echo no)"
 check "the Windows peer defines the module-path wrapper" 1 \
     "$(grep -c '^fn sys_self_exe_w(' lib/syscalls_windows.cyr || true)"
-check "the Windows peer defines sys_rename and sys_readlink" 2 \
-    "$(grep -cE '^fn (sys_rename|sys_readlink)\(' lib/syscalls_windows.cyr || true)"
+check "the Windows peer defines sys_rename" 1 \
+    "$(grep -c '^fn sys_rename(' lib/syscalls_windows.cyr || true)"
+# ⛔ AND DOES NOT STUB readlink. `readlink("/proc/self/exe")` is the shape this whole
+# filing is about; an ENOSYS stub for it would make that line COMPILE for PE and then
+# silently fall back to argv(0) — the half-fix axes 3-4 exist to catch, handed a free
+# pass at the build step. Measured: with the scaffolder's call guarded, the stub changes
+# nothing about the PE build (same rc, same MZ, same 155,648 B, 0 undefined fns), so it
+# was pure diagnostic loss. A REAL readlink (DeviceIoControl + FSCTL_GET_REPARSE_POINT)
+# is welcome and would need this line updated deliberately; a stub is not.
+check "…and does NOT stub sys_readlink (the hard error is the diagnostic)" 0 \
+    "$(grep -c '^fn sys_readlink(' lib/syscalls_windows.cyr || true)"
 # The routable-number warning is what a consumer reads to decide whether a syscall is
 # safe on PE; a route missing from it is a diagnostic that lies.
 check "the routable-numbers warning names 0xF03A" 1 \

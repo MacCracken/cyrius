@@ -1120,10 +1120,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `_PE_ROUTE_MODULEPATH` (`src/frontend/parse_expr.cyr`, its own fn for the cybs
   reference limit), stubbed in the aarch64 + cx emitters. Like the `GetCommandLineW`
   route it returns the raw UTF-16 and the narrowing happens in cyrius via `_args_w2u8`,
-  so there is no new hand-written widen/narrow loop in the emitter. **(2)** three wrappers
-  in the Windows peer — `sys_rename` (**real**: the already-live `0xF034`/MoveFileExW),
-  `sys_readlink` (honest `-38`/ENOSYS — Windows reparse points are not POSIX symlinks) and
-  `sys_self_exe_w`; `_self_path` grew a Windows arm on the last of these that also
+  so there is no new hand-written widen/narrow loop in the emitter. **(2)** two wrappers
+  in the Windows peer — `sys_rename` (**real**: the already-live `0xF034`/MoveFileExW) and
+  `sys_self_exe_w`; `_self_path` grew a Windows arm on the second of these that also
   normalises `\` → `/` once, so every `/`-scanning path helper below it is unchanged.
   ⚠ **`argv(0)` is not a substitute** and the filing's suggestion that it might be was
   wrong: on Windows argv[0] is whatever the parent wrote on the command line, and
@@ -1152,6 +1151,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   derives its tool list from the tarball script itself — being in the packaging list can
   no longer be mistaken for building — and whose axes 3-4 run the binary from a relative
   path under wine, the one thing an argv0 fallback cannot pass.
+
+- **A `sys_readlink` ENOSYS stub for PE was removed before it could hide the next instance
+  of this same bug.** (bite 6d, review fix on 6b.) 6b added three Windows wrappers; only
+  two are load-bearing. With the scaffolder's `readlink("/proc/self/exe")` now behind
+  `#ifndef CYRIUS_TARGET_WIN`, deleting the stub was measured to leave the PE build
+  identical — rc=0, `MZ`, 155,648 B, 0 undefined functions — so it bought nothing, while
+  converting the v6.3.2 reachable-undef **hard error** (the diagnostic that made this
+  filing findable at all) into a silent `-38` for every future PE consumer. That matters
+  because `readlink("/proc/self/exe")` is precisely the shape this filing is about: with a
+  stub present that line compiles for PE and falls back to `argv(0)`, which on Windows is
+  whatever the parent typed — the half-fix `cyrius_init_builds_for_pe.sh` axes 3-4 exist
+  to catch, handed a free pass at the build step instead. `lib/io.cyr`'s `xreadlink`
+  already degrades to `-1` behind its own `#ifdef` for callers that want a degrade, and
+  `lib/fs.cyr`'s `is_symlink` answers 0 the same way. Axis 5 now pins the **absence**
+  (mutation: adding the stub back reddens it); a real reparse-point implementation would
+  be welcome and would update that line deliberately.
 
 ### Changed
 

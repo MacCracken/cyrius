@@ -58,12 +58,12 @@ Reproduced verbatim on HEAD before the fix (`rc=1`, 0-byte output, the two named
    `src/frontend/parse_expr.cyr`, stubbed in the aarch64 and cx emitters). Like the
    `GetCommandLineW` route it hands back the raw UTF-16 and the narrowing happens in
    cyrius (`_args_w2u8`), so no new hand-assembly loop. cycc 1,310,864 → 1,310,936 B.
-2. **Three wrappers in `lib/syscalls_windows.cyr`** — `sys_rename` (REAL: the already
-   live `0xF034`/MoveFileExW), `sys_readlink` (honest `-38`/ENOSYS; Windows reparse
-   points are not POSIX symlinks) and `sys_self_exe_w` (the new route).
-   `programs/cyrius-init.cyr`'s `_self_path` grew a Windows arm that uses the last of
+2. **Two wrappers in `lib/syscalls_windows.cyr`** — `sys_rename` (REAL: the already
+   live `0xF034`/MoveFileExW) and `sys_self_exe_w` (the new route).
+   `programs/cyrius-init.cyr`'s `_self_path` grew a Windows arm that uses the second of
    these and normalises `\` → `/` once, so every `/`-scanning path helper below it keeps
-   working unchanged.
+   working unchanged. ⚠ A third wrapper — `sys_readlink` returning `-38`/ENOSYS — was in
+   the first cut and was **removed in review**: see the last correction below.
 3. **Packaging** — `scripts/build-windows-tarball.sh` ships `cyrius-init.exe` **and**
    `programs/cyrius-init-templates`, and `scripts/install.ps1` copies `programs\` into
    both `versions\<v>\` and the active home (it copied only `bin\` and `lib\`, so the
@@ -95,3 +95,13 @@ list" can never again be mistaken for "it builds".
   templates reach the tarball and stop there.
 - **The line numbers drifted** — `sys_rename` was at `:1054`, not `:1007`, by the time
   this was fixed.
+- **The first cut of the fix defined `sys_readlink` for PE; review removed it.** The
+  filing's Cause section frames the readlink arm as needing "its own arm", which it does —
+  but the arm is `sys_self_exe_w`, not a readlink stub. Measured: with the scaffolder's
+  call behind `#ifndef CYRIUS_TARGET_WIN`, deleting the `-38` stub leaves the PE build
+  byte-identical (rc=0, `MZ`, 155,648 B, 0 undefined fns). All it changed was the
+  diagnostic — and the shape it would have silenced is this filing's own:
+  `readlink("/proc/self/exe")` compiles for PE with a stub present and then degrades to
+  `argv(0)`, which is the half-fix the gate's axes 3-4 exist to catch. `lib/io.cyr`'s
+  `xreadlink` is the portable façade for callers that want a degrade. Axis 5 now pins the
+  absence.

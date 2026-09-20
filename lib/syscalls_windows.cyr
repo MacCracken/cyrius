@@ -455,7 +455,7 @@ fn sys_qpc_ns(): i64 {
 }
 
 # ================================================================
-# v6.6.6 — the three raw-floor names a POSIX tool reaches for path work
+# v6.6.6 — the two raw-floor names a POSIX tool reaches for path work
 # ================================================================
 #
 # ⛔ This peer INCLUDES NOTHING, so a name missing here is missing for PE entirely, and
@@ -465,6 +465,21 @@ fn sys_qpc_ns(): i64 {
 # Windows install — the CLI answered `tool not found`. Same shape as the v6.5.25
 # getpid/getppid gap, one surface wider. See
 # docs/development/issues/archived/2026-09-18-cyrius-init-does-not-build-for-windows.md.
+#
+# ⛔ AND `sys_readlink` IS DELIBERATELY NOT ONE OF THEM. The first cut of this fix added a
+# third wrapper returning -38/ENOSYS, and it was measured to buy nothing: with the
+# scaffolder's readlink call now behind `#ifndef CYRIUS_TARGET_WIN`, deleting the stub
+# leaves the PE build byte-for-byte the same (rc=0, MZ, 155,648 B, 0 undefined fns). What
+# it cost was the diagnostic. `readlink("/proc/self/exe")` is the ONE shape this filing is
+# about, and with a -38 stub present that line COMPILES for PE and then silently falls
+# back to argv(0) — which on Windows is whatever the parent typed, so a tool that needs
+# its own install root gets the wrong directory and scaffolds nothing. That is exactly the
+# half-fix `tests/gates/toolchain/cyrius_init_builds_for_pe.sh` exists to forbid, and a
+# stub here would have made it compile. The hard error is the feature: it forces the next
+# PE consumer to pick `sys_self_exe_w` (below) or `xreadlink` (lib/io.cyr, which already
+# degrades to -1 behind its own `#ifdef`), instead of getting a silent wrong answer.
+# A REAL readlink — DeviceIoControl + FSCTL_GET_REPARSE_POINT — would be welcome; a stub
+# that only makes the wrong code build is not. CHANGELOG [6.6.6].
 
 # rename(old, new) — REAL, not a degrade: 0xF034 (61492) → kernel32!MoveFileExW with
 # MOVEFILE_REPLACE_EXISTING, live since v6.4.57 and already the Windows arm of
@@ -473,14 +488,6 @@ fn sys_qpc_ns(): i64 {
 # ⚠ Unlike rename(2) this CAN move across volumes (MOVEFILE_COPY_ALLOWED is not set, so
 # it does not; a cross-volume move fails, as rename(2) does with EXDEV).
 fn sys_rename(oldpath, newpath): i64 { return syscall(61492, oldpath, newpath); }
-
-# readlink(path, buf, bufsize) — HONEST DEGRADE. Windows reparse points are not POSIX
-# symlinks (DeviceIoControl + FSCTL_GET_REPARSE_POINT, a different contract and a
-# different result shape), so this returns -38/-ENOSYS rather than faking a length.
-# Callers already test `>= 0` — lib/fs.cyr's is_symlink answers 0 (not a link) on PE by
-# its own guard. Deliberately NOT used for "where am I": `sys_self_exe_w` below is the
-# Windows answer to readlink("/proc/self/exe"), and it is a different API.
-fn sys_readlink(path, buf, bufsize): i64 { return 0 - 38; }
 
 # GetModuleFileNameW(NULL, wbuf, cch) — 0xF03A (61498), the Windows source for the full
 # path of THIS executable. `cch` is the buffer capacity in WCHARs (wbuf must hold

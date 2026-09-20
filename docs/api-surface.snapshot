@@ -4590,7 +4590,6 @@ syscalls_windows::sys_qpc/1
 syscalls_windows::sys_qpc_ns/0
 syscalls_windows::sys_qpf/1
 syscalls_windows::sys_read/3
-syscalls_windows::sys_readlink/3
 syscalls_windows::sys_rename/2
 syscalls_windows::sys_sched_yield/0
 syscalls_windows::sys_self_exe_w/2
