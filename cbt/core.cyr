@@ -148,8 +148,26 @@ var _cli_no_default = 0;
 # Output helpers — consistent error/warn/info/status
 # ================================================================
 
+# v6.6.6 (bite 24d) — IS THERE AN UNTERMINATED PROGRESS LINE ON STDOUT?
+# `cmd_build` deliberately leaves `compile a.cyr -> out [x86_64] ` open so the `OK` lands
+# on the same line. When the verb then failed with a NAMED error, the error was spliced
+# into that line — `... [x86_64] error: could not rename ...` — which reads as one
+# corrupted line rather than a diagnostic, and the `FAILED` that follows then looks like
+# it belongs to the error text. The line is the caller's to close, so the caller marks it
+# open and `_err`/`_err_ctx` close it before writing. Deliberately STDOUT: that is where
+# the open line is; closing it on stderr would leave it open. CHANGELOG [6.6.6].
+var _progress_open = 0;
+
+fn _progress_close(): i64 {
+    if (_progress_open == 0) { return 0; }
+    _progress_open = 0;
+    sys_write(STDOUT_FD, "\n", 1);
+    return 0;
+}
+
 # Error: always prints to stderr
 fn _err(msg): i64 {
+    _progress_close();
     sys_write(STDERR_FD, "error: ", 7);
     sys_write(STDERR_FD, msg, strlen(msg));
     sys_write(STDERR_FD, "\n", 1);
@@ -158,6 +176,7 @@ fn _err(msg): i64 {
 
 # Error with context: "error: msg: ctx"
 fn _err_ctx(msg, ctx): i64 {
+    _progress_close();
     sys_write(STDERR_FD, "error: ", 7);
     sys_write(STDERR_FD, msg, strlen(msg));
     sys_write(STDERR_FD, ": ", 2);

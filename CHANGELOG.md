@@ -2073,6 +2073,33 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   about is re-derived every run, so a pulsar that later became per-target turns the gate red
   rather than leaving a now-wrong refusal in place. 4 mutants, all RED.
 
+- **A named error from `cyrius build` was printed INSIDE the progress header, so a
+  diagnostic read as one corrupted line.** (bite 24d.) `cmd_build` deliberately leaves
+  `compile a.cyr -> out [x86_64] ` (and the `[js]` / `[cx]` equivalents) unterminated so
+  the `OK` finishes the line — but every verb was then *called* with that line open, so
+  each one's own error was spliced into it: `emit-cx a.cyr -> out.cyx [cx] error: cycc not
+  found — cannot build the cx compiler` followed by a bare `FAIL`; `compile a.cyr -> bin.d
+  [x86_64] error: could not rename the temp output onto: bin.d` followed by `FAILED
+  (compiler exit 1)`; and on aarch64, bite 23b's five-line `--target=js` refusal opening
+  mid-header. All the information was there, which is why it survived — but the `FAIL`
+  after it reads as part of the error rather than the verdict. **Fix, both halves:**
+  `--target=js` and `--target=cx` now run their pre-flight check (`_target_cc_has_js()`,
+  `_ensure_cc_cx()`) *before* the header is written, so a verb that cannot run prints no
+  header at all; and a `_progress_open` flag (`cbt/core.cyr`), set around the call, lets
+  `_err` / `_err_ctx` close the line first — the only remedy available for errors raised
+  from inside `compile()`, such as a missing output directory or bite 24a's failed rename.
+  The compiler child's own stderr still lands mid-line: that is long-standing and
+  deliberate, and the `FAILED (compiler exit N)` line points at it. New gate
+  `tests/gates/toolchain/build_progress_line_not_spliced.sh` pins the **property**, not
+  either mechanism: no output line both starts with a progress verb (derived from
+  `cmd_build`, not typed) and carries an `error:`, across four named-failure paths, each
+  anti-vacuous in that the error must also be *present*. Its positive control is the
+  load-bearing axis — "always newline after the header" makes every negative axis green
+  and throws away the v6.5.50 single-line build report, so `OK` and `OK (N bytes)` must
+  still be on the same physical line in the same run. 4 mutants; the one that removes only
+  the pre-flight checks is **green on purpose** (the flag alone is the other valid
+  remedy).
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**
