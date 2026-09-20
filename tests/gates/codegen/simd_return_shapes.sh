@@ -10,6 +10,7 @@
 #     fn bad(): f64v2 { var v: f64v2 = mkv(41,7); return load64(&v); }  -> lo right, hi stale
 #     fn sc(): i64 { return 5; }  fn bad(): f64v2 { return sc(); }      -> garbage
 #     fn mk4(): f64v4 { ... }     fn bad(): f64v2 { return mk4(); }     -> 32 B into a 16 B return
+#     fn bad(): f64v2 { return (41, 7); }                         -> caller read 0 (X10-X12)
 #
 # ROOT CAUSE. PARSE_RETURN's `_is_simd128` / `_is_simd256` branches handle exactly
 # `return IDENT;` for a local of the matching class and fall through to the scalar PCMPE path
@@ -17,11 +18,17 @@
 # The v6.4.31 `_TARGET_PE` arm covers only `return <simd_call>(..)`. This is the same shape as
 # bite 16c's 9-16 byte struct pair, one type class over.
 #
-# ⚠ TWO SITES, AND THE TAIL-CALL ONE IS NOT OPTIONAL. `return f(args);` is taken by the tail
-# path BEFORE the vector branch sees it, and a `jmp` hands the callee's return convention
-# straight back to OUR caller — so the two CALL-form rows (X6 `return sc();` and X7
-# `return mk4();`) are invisible to the PARSE_RETURN refusal alone. Mutant m3 is that half
-# reverted, and it reddens exactly those two.
+# ⚠ THREE SITES, AND ONLY ONE OF THEM IS THE PARSE_RETURN REFUSAL. Two earlier arms of
+# PARSE_RETURN handle a `return` themselves and `return 0` out of the function, so the refusal
+# ~330 lines down never sees them:
+#   * the TAIL-CALL path takes `return f(args);` and a `jmp` hands the callee's return
+#     convention straight back to OUR caller — rows X6 and X7. Mutant m3.
+#   * the MULTI-RETURN path takes `return (a, b);` and hands the values back in the ret2/ret3
+#     INT convention (rax:rdx[:r3]), which is not the vector ABI on any target — rows X10-X12,
+#     added by bite 21's review, which found the first refusal shipped with this hole open.
+#     Mutant m4. The PAIR class is untouched (rax:rdx IS its ABI) and so is the scalar
+#     multi-return: rows A7 (pair, host + win64) and A8/A9 (scalar, all four legs) are exactly
+#     those, and they must stay GREEN under m4 as well as on the real tree.
 #
 # ⚠ THE CALL FORM IS TESTED ON THE EXACT DECLARED TYPE while `return IDENT;` accepts any local
 # of the same CLASS. Deliberate: the IDENT branches byte-copy 16/32 bytes (right whatever the
@@ -40,12 +47,20 @@
 #
 # MUTATION LEDGER (6.6.6 — each mutant is a scratch tree from `git archive HEAD` with the named
 # hunk of src/frontend/parse_fn.cyr reverted, rebuilt with build/cycc, run as CYCC=<mutant>):
-#   m1 both sites reverted                  -> RED, all 9 refusal rows (host)
-#   m2 PARSE_RETURN refusal only reverted   -> RED, all 9 refusal rows (host)
+#   m1 all three sites reverted             -> RED, all 12 refusal rows (host)
+#   m2 PARSE_RETURN refusal only reverted   -> RED, the 9 rows X1-X9 (host); X10-X12 stay green
 #   m3 tail-call guard only reverted        -> RED, rows X6 and X7 only — the two CALL-form
 #                                              rows, which the tail path takes before the
 #                                              vector branch can see them
-#   real tree                               -> GREEN (60 rows: 36 refusals, 24 acceptances,
+#   m4 multi-return guard only reverted     -> RED, rows X10, X11 and X12 only — the tuple
+#                                              rows, which the multi-return arm takes before
+#                                              the vector branch can see them. A7/A8/A9 stay
+#                                              GREEN under m4, which is what proves the guard
+#                                              is keyed on the vector classes and not on the
+#                                              tuple syntax.
+#   real tree                               -> GREEN (82 rows: 48 refusals, 34 acceptances —
+#                                              12 refusal rows x 4 legs, 9 acceptance rows x 4
+#                                              minus A7's two skipped legs, see a_legs —
 #                                              across host + cx + qemu-aarch64 + wine-PE)
 # Mutants were measured on a host-only copy of this file; the other legs share the frontend.
 set -eu
@@ -110,9 +125,21 @@ var r = main(); syscall(60, r);
 fn main(): i64 { var v: f64v2 = bad(); return load64(&v); }
 var r = main(); syscall(60, r);
 ' ;;
+    X10) printf '%s' 'fn bad(): f64v2 { return (41, 7); }
+fn main(): i64 { var v: f64v2 = bad(); return load64(&v); }
+var r = main(); syscall(60, r);
+' ;;
+    X11) printf '%s' 'fn bad(): i64v2 { return (41, 7); }
+fn main(): i64 { var v: i64v2 = bad(); return load64(&v); }
+var r = main(); syscall(60, r);
+' ;;
+    X12) printf '%s' 'fn bad(): f64v4 { return (41, 7, 9); }
+fn main(): i64 { var v: f64v4 = bad(); return load64(&v); }
+var r = main(); syscall(60, r);
+' ;;
     esac
 }
-REFUSE_ROWS="X1 X2 X3 X4 X5 X6 X7 X8 X9"
+REFUSE_ROWS="X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12"
 
 a_src() {  # $1 row id -> source on stdout
     case "$1" in
@@ -140,10 +167,49 @@ var r = main(); syscall(60, r);
 fn main(): i64 { return sc(); }
 var r = main(); syscall(60, r);
 ' ;;
+    # A7-A9: the tuple return is refused for the VECTOR classes ONLY. These three are the
+    # shapes X10-X12 sit next to and must not take with them — the rax:rdx pair struct, whose
+    # ABI the ret2 convention IS, and the scalar arity-2/arity-3 multi-return. Each packs its
+    # values into distinct decimal digits so a row cannot pass with the operands swapped or
+    # with one register left unwritten.
+    A7) printf '%s' 'struct P2 { a; b; }
+fn good(): P2 { return (41, 7); }
+fn main(): i64 { var p: P2 = good(); return p.a + p.b; }
+var r = main(); syscall(60, r);
+' ;;
+    A8) printf '%s' 'fn two(): i64 { return (5, 6); }
+fn main(): i64 { var a, b = two(); return a * 10 + b; }
+var r = main(); syscall(60, r);
+' ;;
+    A9) printf '%s' 'fn three(): i64 { return (1, 2, 3); }
+fn main(): i64 { var a, b, c = three(); return a * 100 + b * 10 + c; }
+var r = main(); syscall(60, r);
+' ;;
     esac
 }
-ACCEPT_ROWS="A1 A2 A3 A4 A5 A6"
-a_want() { case "$1" in A1) echo 41;; A2) echo 7;; A3) echo 41;; A4) echo 7;; A5) echo 41;; A6) echo 33;; esac; }
+ACCEPT_ROWS="A1 A2 A3 A4 A5 A6 A7 A8 A9"
+# Which legs an acceptance row RUNS on. Everything runs everywhere except A7, whose int-class
+# 16-byte pair return is a per-target ABI the tuple guard has nothing to do with:
+#   cx      — refuses it outright with its own diagnostic (`cx: int-class 16B struct pair-return
+#             ABI not supported`), which is itself the proof the FRONTEND passed the tuple
+#             through; the vector refusal would have stopped it before the backend saw it.
+#   aarch64 — silently loses the second register: 41 for 48. PRE-EXISTING — measured identical
+#             on this lane's parent compiler (701fb02f), so it is not this bite's and not this
+#             gate's to turn red. Reported by bite 21's review for a later bite.
+# A8 and A9 (the SCALAR arity-2/arity-3 multi-return) run on all four legs and are green on all
+# four, so the "tuple syntax still works" property is not host-only.
+a_legs() { case "$1" in A7) echo "host win64";; *) echo "host cx aarch64 win64";; esac; }
+# Every expectation is derived a different way from the program that produces it: the vector
+# rows read a lane the source stored a literal into, A7 sums two distinct fields (41+7=48, and
+# 7+41 is the same — so A7 is paired with X10, which has the same operands and must be REFUSED),
+# A8/A9 pack each return slot into its own decimal digit so a swap or an unwritten register
+# cannot land on the expected number.
+a_want() {
+    case "$1" in
+    A1) echo 41;; A2) echo 7;; A3) echo 41;; A4) echo 7;; A5) echo 41;; A6) echo 33;;
+    A7) echo 48;; A8) echo 56;; A9) echo 123;;
+    esac
+}
 
 # ---- legs ------------------------------------------------------------------------------------
 refuse_all() {  # $1 leg label  $2 compiler
@@ -164,6 +230,7 @@ refuse_all() {  # $1 leg label  $2 compiler
 
 accept_all() {  # $1 leg label  $2 compiler  $3 runner fn name
     for row in $ACCEPT_ROWS; do
+        case " $(a_legs "$row") " in *" $1 "*) ;; *) echo "  skip: $1 $row (see a_legs)"; continue;; esac
         a_src "$row" > "$W/a.cyr"
         cat "$W/a.cyr" | "$2" > "$W/a.out" 2>/dev/null || true
         naccept=$((naccept+1))
@@ -222,9 +289,25 @@ else
     echo "  SKIP: wine not installed (the cass hardware leg still covers it)"
 fi
 
-# Anti-vacuous: 9 refusals + 6 acceptances on host and on cx even with qemu and wine absent.
-[ "$nrefuse" -ge 18 ] || bad "only $nrefuse refusal rows ran (floor 18 = 9 rows x host + cx)"
-[ "$naccept" -ge 12 ] || bad "only $naccept acceptance rows ran (floor 12 = 6 rows x host + cx)"
+# Anti-vacuous. The floor is DERIVED from the row tables (every row on host + cx, the two legs
+# that are always present) so adding a row cannot leave a stale hard-coded number behind.
+nr_rows=$(set -- $REFUSE_ROWS; echo $#)
+[ "$nrefuse" -ge $((nr_rows * 2)) ] || bad "only $nrefuse refusal rows ran (floor $((nr_rows * 2)) = $nr_rows rows x host + cx)"
+# The acceptance floor sums a_legs over the two always-present legs rather than multiplying, so
+# a row excluded from a leg is subtracted here automatically and an over-broad exclusion lowers
+# the floor visibly instead of silently passing.
+na_floor=0
+for row in $ACCEPT_ROWS; do
+    for leg in host cx; do
+        case " $(a_legs "$row") " in *" $leg "*) na_floor=$((na_floor + 1));; esac
+    done
+done
+[ "$naccept" -ge "$na_floor" ] || bad "only $naccept acceptance rows ran (floor $na_floor = a_legs summed over host + cx)"
+# And every row id in both tables must actually produce a source — a typo'd id would otherwise
+# compile an EMPTY program, which cycc accepts (exit 0, runnable binary) and would score a row.
+for row in $REFUSE_ROWS $ACCEPT_ROWS; do
+    if [ "$(r_src "$row"; a_src "$row")" = "" ]; then bad "row $row has no source in either table"; fi
+done
 # And the message this gate greps for must still be the one the compiler emits.
 n=$(grep -c "$MSG" src/frontend/parse_fn.cyr || true)
 [ "$n" -ge 1 ] || bad "src/frontend/parse_fn.cyr no longer spells '$MSG' — reworded?"

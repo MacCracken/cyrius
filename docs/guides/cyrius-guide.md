@@ -284,10 +284,16 @@ was never written. (The >16-byte form has error'd on an uncarryable shape since 
 
 ⚠ **A fn returning a vector can `return` only what the vector return ABI carries**: a local of
 that vector type, or a call to a fn *declared* to return the same one. Anything else — an
-integer, a scalar local, `load64(&v)`, a bare `return;`, `x + y` (there is no vector `+`), or a
-call returning a scalar or a different-width vector — is a compile error since v6.6.6 naming
-what it got. Before v6.6.6 every one of those compiled clean and handed back a half-written
-register pair; `return x + y;` returned `y` unchanged.
+integer, a scalar local, `load64(&v)`, a bare `return;`, `x + y` (there is no vector `+`), a
+multi-value `return (a, b);`, or a call returning a scalar or a different-width vector — is a
+compile error since v6.6.6 naming what it got. Before v6.6.6 every one of those compiled clean
+and handed back a half-written register pair; `return x + y;` returned `y` unchanged.
+
+`return (a, b);` is worth spelling out because it looks reasonable: it is the **ret2
+int-register** convention (rax:rdx), which is the ABI of a 9-16 byte *struct*, not of a vector.
+It stays legal for a struct return and for the scalar multi-value `var a, b = f();` form — only
+the vector classes refuse it. To build a vector, store the lanes into a local and return the
+local.
 
 ⚠ **A copy moves one struct into a variable of that SAME struct type.** `p = q` and
 `var p: P3 = q` between two DIFFERENT struct types are a compile error since v6.6.6
