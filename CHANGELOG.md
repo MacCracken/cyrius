@@ -1425,6 +1425,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   ecb arm was extracted and run for real (exit 0, remote dir removed); the two install arms
   and the cass install gate are syntax-checked and their staging exercised, but `cyrius audit`'s
   install arms were not run (they install a toolchain on both Macs).
+  ⚠ **As first committed this traded a collision for an accumulation.** A RED run deliberately
+  keeps its remote staging dir (the failure messages point inside it), and with a per-run name
+  nothing ever reclaimed it — where the old fixed name had self-limited each host to one stale
+  tree, and each tree holds the extracted bundle plus two ~1.5 MB compilers on hosts including
+  the pi. Setup now reaps `_cyaud_*` staging dirs **by AGE, not by count**: anything untouched
+  for two hours, on the POSIX hosts through `find "$HOME" -maxdepth 1 -type d -name '_cyaud_*'
+  -mmin +120 -exec rm -rf {} +` and on cass through the `Get-ChildItem … LastWriteTime -lt
+  (Get-Date).AddHours(-2)` equivalent. Count-based ("keep the newest N") is the shape that
+  deletes a LIVE parallel run's tree — the very defect the per-run names just removed — and a
+  leg takes minutes, so two hours means finished. Best-effort in every arm: a reap that fails
+  never fails the gate. Verified on all four hosts, one at a time, against fake staging dirs in
+  a probe directory (old ones reaped, fresh ones kept), plus a read-only `-print` pass over the
+  real `$HOME` on each.
 - **`check.sh` runs EVERY gate and reports at the END; a gate that did not run is named,
   never counted as a pass** (bite 8b). The script is `set -e` and invoked the check binary as
   a bare `"$CHECK_BIN"`, so ONE red row anywhere in the driver aborted it before a single one

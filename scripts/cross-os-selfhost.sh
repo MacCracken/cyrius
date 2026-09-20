@@ -83,6 +83,34 @@ _co_cleanup() {
 }
 trap _co_cleanup EXIT
 
+# v6.6.6 (review fix on the per-run staging above): unique names removed the COLLISION and
+# introduced an ACCUMULATION. A RED run deliberately KEEPS its remote staging dir so the paths
+# in the failure messages still exist — and with a per-run name, every failed run leaves a new
+# one that nothing ever reclaims, where the old fixed name self-limited the host to a single
+# stale tree. Each tree holds the extracted src+lib+tests bundle and two ~1.5 MB compilers,
+# and pi has the small disk.
+#
+# ⚠ REAPED BY AGE, NEVER BY COUNT. "keep the newest N" is precisely the shape that can delete
+# a LIVE run's tree — the defect the per-run names just fixed (the old pre-run
+# `rm -rf ~/_cyaud` could delete a running build mid-compile), reintroduced with extra steps
+# as soon as two runs go in parallel, which is the whole point of this change. A cross-OS leg
+# takes minutes, so a staging dir untouched for two hours is finished by definition, and the
+# newest failure is kept for as long as anyone is likely to look at it.
+# Best-effort in every arm: a reap that fails must never fail the gate.
+_co_reap_stale() {
+  case "$1" in
+    cass)
+      ssh $SSHO cass "Get-ChildItem -Path 'C:\\cyrius-tests' -Directory -Filter '_cyaud_*' | Where-Object { \$_.LastWriteTime -lt (Get-Date).AddHours(-2) } | Remove-Item -Recurse -Force" >/dev/null 2>&1 || true
+      ;;
+    *)
+      # -maxdepth/-mmin/`-exec … +` are POSIX-find and present on macOS's BSD find too;
+      # `exit 0` because find returns non-zero if a directory vanishes under it (another
+      # run's own cleanup), which is not this script's problem.
+      ssh $SSHO "$1" 'find "$HOME" -maxdepth 1 -type d -name "_cyaud_*" -mmin +120 -exec rm -rf {} + 2>/dev/null; exit 0' >/dev/null 2>&1 || true
+      ;;
+  esac
+}
+
 # Cross-OS LIB-TEST fallback (v6.0.75) — INTERIM mechanism, the trigger is
 # opt-in so normal self-host runs stay lean. Arg 2 (or $CYRIUS_CROSS_OS_LIBTEST)
 # is a glob; when set, AFTER the cycc self-host passes on this host, the
@@ -171,6 +199,7 @@ case "$HOST" in
   ecb)
     cat src/main_aarch64.cyr       | "$CO_TMP"/_co_l                   > "$CO_TMP"/_co_x  && chmod +x "$CO_TMP"/_co_x
     cat src/main_aarch64_macho.cyr | CYRIUS_MACHO_ARM=1 "$CO_TMP"/_co_x > "$CO_TMP"/_co_m
+    _co_reap_stale ecb
     ssh $SSHO ecb "rm -rf ~/$RD && mkdir ~/$RD"
     scp -q $SSHO "$CO_TMP"/_co.tgz "$CO_TMP"/_co_m "$CO_TMP"/_co_cx.cyx "$CO_TMP"/_co_cx.cyr "ecb:~/$RD/"
     # Self-host twice + cmp, then the v6.0.37 exit-code-propagation guard
@@ -200,6 +229,7 @@ case "$HOST" in
     # x86 ELF cycc told to emit Mach-O builds the x86 Mach-O cycc (its driver
     # hardcodes _TARGET_MACHO=1, so no env flag is needed to RUN it).
     cat src/main_x86_macho.cyr | CYRIUS_MACHO=1 "$CO_TMP"/_co_l > "$CO_TMP"/_co_mx
+    _co_reap_stale ach
     ssh $SSHO ach "rm -rf ~/$RD && mkdir ~/$RD"
     scp -q $SSHO "$CO_TMP"/_co.tgz "$CO_TMP"/_co_mx "ach:~/$RD/"
     # NO codesign (see header — unsigned x86_64 Mach-O runs on Intel 13.7.8).
@@ -229,6 +259,7 @@ case "$HOST" in
     # it: the shipped native source must self-host byte-identical on real ARM hardware too.
     cat src/main_aarch64.cyr | "$CO_TMP"/_co_l  > "$CO_TMP"/_co_x   && chmod +x "$CO_TMP"/_co_x
     cat src/main_aarch64.cyr | "$CO_TMP"/_co_x  > "$CO_TMP"/_co_a64 && chmod +x "$CO_TMP"/_co_a64
+    _co_reap_stale pi
     ssh $SSHO pi "rm -rf ~/$RD && mkdir ~/$RD"
     scp -q $SSHO "$CO_TMP"/_co.tgz "$CO_TMP"/_co_a64 "$CO_TMP"/_co_cx.cyx "$CO_TMP"/_co_cx.cyr "pi:~/$RD/"
     # Self-host twice + cmp, then cx C: build a NATIVE aarch64 cxvm with r1 and
@@ -279,6 +310,7 @@ case "$HOST" in
     # image ($WLT) — the old `taskkill /F /IM _lt.exe` at setup killed any concurrent
     # run's child, which is the same collision this bite is removing. Our directory is
     # per-run, so a previous run's orphan can no longer block setup either.
+    _co_reap_stale cass
     ssh $SSHO cass 'cmd /c "mkdir C:\cyrius-tests\'"$RD"'"'
     scp -q $SSHO "$CO_TMP"/_co.tgz "cass:$WRDS"/_co.tgz
     scp -q $SSHO "$CO_TMP"/_co_exe "cass:$WRDS"/cycc.exe
@@ -401,6 +433,7 @@ case "$HOST" in
     # v6.6.6: everything this leg drops on ecb lives in the per-run ~/$RD (it used fixed
     # ~/_coih, ~/_cofg, ~/_co_t.out and fixed names straight in $HOME, so two runs
     # installed over each other's sandboxed CYRIUS_HOME).
+    _co_reap_stale ecb
     ssh $SSHO ecb "rm -rf ~/$RD && mkdir ~/$RD"
     scp -q $SSHO scripts/install.sh scripts/funcgate-posix.sh "$CO_TMP"/_co_t.cyr "$CO_TMP/_co_dist/cyrius-$V-aarch64-macos.tar.gz" "ecb:~/$RD/"
     ssh $SSHO ecb "CYRIUS_VERSION=$V CYRIUS_HOME=\$HOME/$RD/ih CYRIUS_INSTALL_TARBALL=\$HOME/$RD/cyrius-$V-aarch64-macos.tar.gz sh \$HOME/$RD/install.sh >/dev/null 2>&1 && CYRIUS_HOME=\$HOME/$RD/ih \$HOME/$RD/ih/bin/cyrius build \$HOME/$RD/_co_t.cyr \$HOME/$RD/t.out >/dev/null 2>&1 && (r=0; \$HOME/$RD/t.out || r=\$?; [ \$r -eq 42 ])"
