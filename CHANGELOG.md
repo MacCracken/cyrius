@@ -8,6 +8,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **cx read 0 for a global initialized from a constant declared BELOW it; every other target
+  read the value.** (bite 19d.) `var b = a; var a = 5; syscall(60, b);` -> 5 on x86 / aarch64 /
+  Mach-O / PE, **0** on cx. **Root cause:** cx opts out of the static-init path on purpose (its
+  globals live in cxvm-allocated memory zeroed at startup, so skipping the runtime store would
+  leave them zero), which makes the deferred replay `EMIT_GVAR_INITS` — in DECLARATION ORDER —
+  the only thing that gives a global its value, so a read above the declaration saw 0.
+  Everywhere else the constant is baked into the file image and position does not matter.
+  `_gv_cx_prestore` already existed for the redeclaration and shadow cases, because those
+  RECORD a value in `gvar_initval`. **Fix:** record the folded constant for cx too, without
+  setting `sit_lit`, so cx keeps its runtime store (which writes the same value) and the
+  prestore now covers every constant global (`src/frontend/parse_decl.cyr`). Gate:
+  `tests/gates/codegen/cx_forward_read_constant_global.sh` — 6 rows on host + cx + aarch64
+  under qemu, each compared against a control declared in dependency order AND run on the host,
+  so cx is checked against a second implementation rather than a number in the gate; three
+  mutants, each built as a scratch TREE because running a mutant only as `CYCC=` against the
+  real tree builds the REAL cx compiler and reads green. **Row E is the negative half**: a
+  COMPUTED initializer is not a constant and still runs in declaration order everywhere, so a
+  forward read of one is 0 by design — prestoring everything would change that. Also
+  `tests/tcyr/crossos/forward_read_constant_global.tcyr` (7 assertions) as the cross-target
+  agreement pin. cycc **1,315,280 -> 1,315,280 B** (no change).
+
 - **The `too many initialized globals` cap REPORTED and then stored anyway, writing past the
   gvar_toks buffer.** (bite 19e.) `ERR_MSG` sets `_had_error` and returns — deliberately, so one
   run surfaces every violation — and the three gvar_toks registration sites read the count,

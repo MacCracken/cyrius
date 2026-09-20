@@ -1525,6 +1525,22 @@ fn _gv_hide_program(S, on): i64 {
 # cx has no file image to bake a value into, so a superseding constant is stored FIRST, ahead
 # of every deferred initializer — the same "from program start" the image gives every other
 # target. Only a redeclaration records a value on cx (see PARSE_GVAR_REG).
+# 6.6.6 bite 19d — cx prestores EVERY constant global, not only a redeclared one.
+#
+# cx opts out of the static-init path (`_TARGET_CX != 1` in PARSE_GVAR_REG): its globals live
+# in cxvm-allocated memory zeroed at startup, so the runtime store in EMIT_GVAR_INITS is what
+# gives them their value. But that replay runs in DECLARATION ORDER, so a forward read saw 0:
+#
+#     var b = a;      # 5 on x86 / aarch64 / Mach-O / PE, 0 on cx
+#     var a = 5;
+#     syscall(60, b);
+#
+# On every other target `a` is baked into the file image, so `b`'s initializer reads 5 no
+# matter where `a` is declared. The prestore below existed for the redeclaration and shadow
+# cases only, because those are the ones that RECORDED a value in gvar_initval. Recording the
+# folded constant for cx too — without setting `sit_lit`, so cx keeps its runtime store —
+# makes this loop cover every constant global and puts cx back in agreement with the other
+# five targets. CHANGELOG [6.6.6]
 fn _gv_cx_prestore(S): i64 {
     var n = GVCNT(S);
     var vi = 0;
@@ -1857,6 +1873,12 @@ fn PARSE_GVAR_REG(S): i64 {
     # static-init vars would silently fall out of the last-var chain
     # and the binary would exit with whatever rax held — exit-code
     # corruption the runtime-store path can't reproduce.
+    # 6.6.6: on cx a constant global is ALSO recorded here, so _gv_cx_prestore gives it its
+    # value before the deferred-init replay and a forward read stops seeing 0. `sit_lit` stays
+    # 0, so cx keeps the runtime store as well — it writes the same value. See _gv_cx_prestore.
+    if (_TARGET_CX == 1) { if (cf_has == 1) { if (is_struct == 0) { if (sit_lit == 0) {
+        S64(_vgsi_base + gvi * 8, cf_val);
+    } } } }
     if (sit_lit == 1) {
         S64(_vgsi_base + gvi * 8, sit_val);
         SLVAR(S, gvi);

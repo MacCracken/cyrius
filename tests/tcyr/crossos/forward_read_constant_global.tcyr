@@ -1,0 +1,59 @@
+# forward_read_constant_global.tcyr — a global initializer that READS a constant declared
+# BELOW it gets that constant's value, on every target (6.6.6 bite 19d).
+#
+# In the declaration zone a constant global's value is available from program start: it is
+# baked into the file image on x86 / aarch64 / Mach-O / PE, and prestored before the deferred
+# replay on cx. Position in the file does not change the value. cx was the odd one out until
+# 6.6.6 — it opts out of the static-init path (its globals live in cxvm memory zeroed at
+# startup, so skipping the runtime store would leave them zero), which made the deferred
+# replay, in DECLARATION ORDER, the only thing that gave a global its value; a read above the
+# declaration saw 0.
+#
+# This file is in the cross-host set because it is an agreement property: the value must be the
+# same on every target, and the mechanism that produces it is per target (image write on four
+# of them, a prestore on cx). It is the .tcyr half of
+# tests/gates/codegen/cx_forward_read_constant_global.sh, which carries the cx leg.
+#
+# ⚠ A COMPUTED initializer is NOT a constant and still runs in declaration order everywhere —
+# a forward read of one is 0 by design (docs/guides/cyrius-guide.md, "Global Initializers").
+# frc_from_computed pins that, so a future change cannot "fix" this by prestoring everything.
+#
+# ⚠ HONEST STATUS OF THIS FILE AS A DETECTOR: it is GREEN on the 6.6.5 compiler for all four
+# cross-host targets, because only cx got this wrong (measured: x86 5, cx 0). It is here as the
+# AGREEMENT pin — it is what fails if a later change makes one of the four diverge — and the
+# mutation-proven detector for the cx defect is the shell gate, which carries the cx leg.
+# (cx cannot run this file itself: the cx backend has no `alloc`, so lib/assert.cyr does not
+# build there; the gate uses bare `syscall(60, ...)` programs for that reason.)
+# CHANGELOG [6.6.6]
+include "lib/assert.cyr"
+
+var frc_b = frc_a;
+var frc_a = 5;
+
+var frc_expr = frc_six * 2;
+var frc_six = 6;
+
+var frc_or = FRC_LO | FRC_HI;
+var FRC_LO = 1;
+var FRC_HI = 4;
+
+var frc_zero_read = frc_zero;
+var frc_zero = 0;
+
+var frc_redecl_seen = frc_r;
+var frc_r = 5;
+var frc_r = 9;
+
+fn frc_f(): i64 { return 3; }
+var frc_from_computed = frc_computed;
+var frc_computed = frc_f();
+
+var r1 = assert_eq(frc_b, 5, "a forward-read constant global reads its value");
+var r2 = assert_eq(frc_expr, 12, "a forward read inside an expression reads the value, not 0");
+var r3 = assert_eq(frc_or, 5, "two forward-read constants both resolve");
+var r4 = assert_eq(frc_zero_read + 7, 7, "a forward-read ZERO constant stays zero");
+var r5 = assert_eq(frc_redecl_seen, 9, "a constant redeclaration wins from program start");
+var r6 = assert_eq(frc_from_computed, 0, "a forward read of a COMPUTED initializer is 0, by design");
+var r7 = assert_eq(frc_computed, 3, "...and the computed initializer itself still runs");
+
+var r = assert_summary();

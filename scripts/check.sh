@@ -284,6 +284,13 @@ sh "$ROOT/tests/gates/frontend/duplicate_symbol_warning_at_scale.sh"
 # pin the diagnostic, the refusal for all three registration shapes, and the 4096 boundary.
 sh "$ROOT/tests/gates/memory/gvar_toks_cap_guards_the_store.sh"
 
+# 6.6.6 bite 19d: a global initializer that READS a constant declared below it got 0 on cx and
+# the right value on every other target. cx opts out of the static-init path (its globals live
+# in cxvm memory zeroed at startup), which left the deferred replay — in declaration order —
+# as the only thing that gives a global its value. Rows are checked against controls declared
+# in dependency order AND run on the host, so cx is compared with a second implementation.
+sh "$ROOT/tests/gates/codegen/cx_forward_read_constant_global.sh"
+
 # 6.6.5: the `return f(args);` tail path must divert to PARSE_FNCALL for exactly the
 # arguments PARSE_FNCALL treats specially — no more. The `: Str` literal divert added here
 # was armed by a literal at ANY paren depth, so `return deep(n-1, str_from("x"))` lost its
