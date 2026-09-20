@@ -1152,6 +1152,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   no longer be mistaken for building — and whose axes 3-4 run the binary from a relative
   path under wine, the one thing an argv0 fallback cannot pass.
 
+- **The new PE reroute and its two wrappers shipped with nothing in `tests/tcyr/crossos/`,
+  so no gate ever executed them on real hardware.** (bite 6e, review fix on 6b.) The
+  release gate's cross-OS leg runs `cross-os-selfhost.sh <host> crossos`, and the runner
+  reads `tests/tcyr/<subdir>` — so the only thing that ran `0xF03A` at all was
+  `cyrius_init_builds_for_pe.sh` axes 3-4 under wine, which the gate itself labels NOT
+  hardware verification and SKIPs where wine is absent; no CI workflow installs wine, so
+  in CI the route was executed zero times. CLAUDE.md's rule — every new syscall wrapper
+  needs a companion in `tcyr/crossos/` — is what 6.6.5's `win_qpc_clock.tcyr` did for
+  `0xF038`/`0xF039` one release earlier. `tests/tcyr/crossos/win_self_exe_path.tcyr` now
+  verifies the module path in both components against sources that are not kernel32's
+  module table (the filesystem for the directory, `argv(0)` via GetCommandLineW for the
+  basename), pins the `sys_rename` round-trip **and** its replace-existing semantics on
+  every host, and pins the truncation contract the `_self_path_win` fix rests on by asking
+  for the path in a 4-WCHAR buffer and requiring exactly 4 back. **25/25 on real cass
+  (10.0.26200.9457)**, invoked in place and as `..\_lt.exe` from a subdirectory; 15/15
+  native Linux. Four mutants in the file's ledger, each measured: unrouting `0xF03A` → 7
+  RED, wrong kernel32 import → 8, byte count instead of WCHAR count → 2, unrouted
+  `sys_rename` → 7 on both wine and Linux.
+
 - **A `sys_readlink` ENOSYS stub for PE was removed before it could hide the next instance
   of this same bug.** (bite 6d, review fix on 6b.) 6b added three Windows wrappers; only
   two are load-bearing. With the scaffolder's `readlink("/proc/self/exe")` now behind
@@ -1196,6 +1215,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   plus row M (a malformed `var x = f(1;` still reports the error in the NEXT declaration) and row S
   (static parity: every `src/main*.cyr` fork calls the shared skip, fork list derived). Mutation-
   proven six ways, including a fork-by-fork revert; ledger in the header.
+
+- `tests/tcyr/crossos/win_self_exe_path.tcyr` (bite 6e) — the cross-host companion for the
+  `0xF03A`/GetModuleFileNameW reroute and `sys_rename`, the one the first cut of bite 6 shipped
+  without. 25 checks on PE, 15 on every other host; both path components verified against
+  something other than the module table, and the GetModuleFileNameW truncation contract
+  (`cch` back, not a length) pinned on real hardware. 25/25 on cass.
+
 - `tests/tcyr/crossos/simd_param_int_stack_args.tcyr` — 18 assertions with **literal** expectations
   (the arguments written as digits): f64v2/f32v4/i32v4/f64v4 with 5-8 ints, vector first / middle /
   after the spill, two vectors, stack-arg order, the method and tail paths, struct return at 6 and 8.

@@ -79,7 +79,10 @@ rendered `cyrius.cyml` carrying no `{PROJ}` and valid UTF-8; `--__mode=port` `rc
 
 Gated by `tests/gates/toolchain/cyrius_init_builds_for_pe.sh` (mutation ledger in its
 header) — axis 2 derives its tool list from the tarball script, so "it is in the packaging
-list" can never again be mistaken for "it builds".
+list" can never again be mistaken for "it builds" — and by
+`tests/tcyr/crossos/win_self_exe_path.tcyr`, which is what the release gate's cross-OS leg
+runs on real ecb/ach/cass/pi (25/25 on cass; the wine axes above are explicitly NOT
+hardware verification).
 
 ## Corrections to this filing
 
@@ -105,3 +108,9 @@ list" can never again be mistaken for "it builds".
   `argv(0)`, which is the half-fix the gate's axes 3-4 exist to catch. `lib/io.cyr`'s
   `xreadlink` is the portable façade for callers that want a degrade. Axis 5 now pins the
   absence.
+- **The first cut shipped no `tests/tcyr/crossos/` companion**, so nothing the release
+  gate runs on ecb/ach/cass/pi ever executed the new reroute — the wine axes are labelled
+  "NOT hardware verification" and SKIP where wine is absent, and CI has no wine at all.
+  `tests/tcyr/crossos/win_self_exe_path.tcyr` was added in review; CLAUDE.md's
+  "every new syscall wrapper needs a companion in `tcyr/crossos/`" is the rule that was
+  missed.

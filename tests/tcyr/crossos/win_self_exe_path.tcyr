@@ -1,0 +1,311 @@
+# win_self_exe_path.tcyr — v6.6.6. The companion test for the two Windows wrappers this
+# release added: `sys_self_exe_w` (PE reroute 0xF03A → kernel32!GetModuleFileNameW,
+# src/frontend/parse_expr.cyr `_PE_ROUTE_MODULEPATH`, emitter EGETMODFILENAME_PE) and
+# `sys_rename` (0xF034 → MoveFileExW).
+#
+# ⭐ THIS FILE LIVES IN tests/tcyr/crossos/ BECAUSE THAT DIRECTORY IS THE SELECTOR.
+# scripts/release-gate.sh runs `cross-os-selfhost.sh <host> crossos`, and
+# cross-os-libtest-runner.sh sets ROOT=tests/tcyr/<subdir> — so a wrapper with no file in
+# THIS directory is never executed on ecb/ach/cass/pi at all. The first cut of the 6.6.6
+# Windows-scaffolder fix shipped without one: the only thing that ran the new reroute was
+# `tests/gates/toolchain/cyrius_init_builds_for_pe.sh` axes 3-4 under wine, which the gate
+# itself labels NOT hardware verification and SKIPs where wine is absent — and no CI
+# workflow has wine, so in CI the route was never executed once. "A wrapper that COMPILES
+# on five targets is not a wrapper that RUNS" (CLAUDE.md) is the rule that was missed;
+# 6.6.5's `win_qpc_clock.tcyr` did it correctly for 0xF038/0xF039 one release earlier.
+#
+# ⭐ AND THE EXPECTED VALUES COME FROM SOMEWHERE ELSE. A test that checked
+# GetModuleFileNameW's output against GetModuleFileNameW would pass on a route wired to
+# the wrong import or handed a stale buffer. So the path is verified in BOTH components,
+# each by something that is not kernel32's module table:
+#   * its DIRECTORY is proved real by creating, reading back and removing a file there
+#     THROUGH THE ABSOLUTE PATH — the filesystem answers, and the directory half is the
+#     half the scaffolder actually walks (it wants this path's grandparent);
+#   * its BASENAME is compared against `argv(0)`, which arrives through a different pair
+#     of imports (GetCommandLineW + CommandLineToArgvW, lib/args_win.cyr);
+#   * the rename axis reads the moved file's bytes back rather than trusting the return.
+#
+# ⚠ AND NOT BY OPENING THE EXECUTABLE ITSELF, which is the obvious idea: measured under
+# wine 11.17 at 6.6.6, `sys_open(<own module path>, O_RDONLY)` returns -1 while the SAME
+# bytes at another name open fine (fd 84). EOPEN_PE hardcodes dwDesiredAccess to
+# GENERIC_READ|GENERIC_WRITE regardless of O_RDONLY (its v5.5.1 simplification, still
+# documented in src/backend/x86/emit.cyr), and a running image is mapped without
+# FILE_SHARE_WRITE — so the open is a sharing violation, not a bad path. Filed separately;
+# do not "fix" this test by adding an `MZ` check, it would fail on a correct route.
+#
+# ⛔ THE TRUNCATION AXIS IS THE ONE WITH HISTORY. GetModuleFileNameW does NOT report the
+# size it needed: on ERROR_INSUFFICIENT_BUFFER it returns `cch` ITSELF and leaves the path
+# truncated. `programs/cyrius-init.cyr`'s `_self_path_win` read that value as a length, so
+# a path of 4096 WCHARs or more stored its terminating NUL two bytes past an 8192-byte
+# allocation and then resolved the scaffolder's templates directory from half a path. The
+# fix refuses a full buffer — and this file pins the OS behaviour that fix depends on, on
+# real hardware, by asking for the path in a 4-WCHAR buffer and requiring exactly 4 back.
+#
+# MUTATION LEDGER (6.6.6, each mutant PE cross-compiler built from a staged tree with the
+# real build/cycc and run under wine 11.17; real tree = 25/25 under wine, 15/15 native
+# Linux, and see the cass line at the bottom). Baseline for the PE axes is 25 checks.
+#   - make `_PE_ROUTE_MODULEPATH` (src/frontend/parse_expr.cyr) return 0, so 0xF03A is
+#     unroutable and `sys_self_exe_w` degrades to -38 → 7 RED, starting at "the route
+#     fired" and including the truncation contract (-38, not 4);
+#   - register 0xF03A against GetCommandLineW instead of GetModuleFileNameW → 8 RED: the
+#     return is a POINTER, so it is not a plausible count, the path is not absolute and
+#     the basename disagrees with argv(0);
+#   - emit the BYTE count instead of the WCHAR count (`add eax, eax` after the call)
+#     → 2 RED. Only two, and that is worth knowing: the OS NUL-terminates the buffer
+#     itself, so the path still parses and the directory probe still passes. What catches
+#     it is the `b - 1 >= wn` assertion (UTF-8 is never shorter than the UTF-16 unit
+#     count) and the 4-WCHAR contract axis returning 8. Without those two the mutant is
+#     invisible here;
+#   - define `sys_rename` as `return 0` without routing MoveFileExW → 7 RED under wine,
+#     and the same 7 natively on Linux with the x86_64 peer mutated the same way, so the
+#     portable axis really is portable.
+#
+# ⭐ RUN ON REAL WINDOWS, not just wine: 25/25 on cass (10.0.26200.9457), both invoked in
+# place and invoked as `..\_lt.exe` from a subdirectory — the second because that is the
+# case where argv(0) and the module path genuinely differ, and it is the case the
+# scaffolder failed. The 4-WCHAR truncation axis returns 4 on real Windows too, which is
+# the point of running it there: it is an OS contract, and the fix in
+# `programs/cyrius-init.cyr` is built on it.
+#
+# The portable axis is not filler — `sys_rename` is a stdlib wrapper on every target, and
+# `_run_port` in the scaffolder is its only heavy consumer. It runs on ecb, ach, pi and
+# Linux as well as cass.
+#
+# See CHANGELOG [6.6.6],
+# docs/development/issues/archived/2026-09-18-cyrius-init-does-not-build-for-windows.md.
+
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+include "lib/args.cyr"
+
+fn _wsep_is_win(): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    return 1;
+    #endif
+    return 0;
+}
+
+# The Win32 call, behind #ifdef so this file compiles on every target: `sys_self_exe_w`
+# lives in lib/syscalls_windows.cyr, which lib/syscalls.cyr selects only for PE.
+fn _wsep_self_w(wbuf, cch): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    return sys_self_exe_w(wbuf, cch);
+    #endif
+    return 0;
+}
+
+fn _wsep_lower(c): i64 {
+    if (c >= 65) {
+        if (c <= 90) { return c + 32; }
+    }
+    return c;
+}
+
+# Last component of a path, accepting BOTH separators: Windows hands back `\` and the
+# scaffolder normalises to `/`, so a basename helper that knew only one would be testing
+# its own assumption.
+fn _wsep_basename(p): i64 {
+    var i = 0;
+    var last = 0;
+    var c = load8(p + i);
+    while (c != 0) {
+        if (c == 92) { last = i + 1; }
+        if (c == 47) { last = i + 1; }
+        i = i + 1;
+        c = load8(p + i);
+    }
+    return p + last;
+}
+
+# Case-insensitive C-string compare. Windows filenames are case-preserving but
+# case-insensitive, and argv(0) is whatever the caller TYPED, so a byte-exact compare
+# against the on-disk spelling would be testing the shell, not the reroute.
+fn _wsep_ieq(a, b): i64 {
+    var i = 0;
+    while (i < 4096) {
+        var ca = _wsep_lower(load8(a + i));
+        var cb = _wsep_lower(load8(b + i));
+        if (ca != cb) { return 0; }
+        if (ca == 0) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn _wsep_exists(path): i64 {
+    var fd = sys_open(path, 0, 0);
+    if (fd < 0) { return 0; }
+    sys_close(fd);
+    return 1;
+}
+
+fn _wsep_write(path, data, n): i64 {
+    var fd = sys_open(path, 577, 420);          # O_WRONLY|O_CREAT|O_TRUNC, 0644
+    if (fd < 0) { return 0 - 1; }
+    var w = sys_write(fd, data, n);
+    sys_close(fd);
+    return w;
+}
+
+fn test_the_module_path_is_absolute_and_names_a_real_directory() {
+    test_group("windows: GetModuleFileNameW answers an absolute path whose directory is real");
+    if (_wsep_is_win() == 0) {
+        println("    SKIP: not a PE target — the portable rename axis below runs here");
+        assert_eq(1, 1, "SKIPPED off Windows");
+        return;
+    }
+    var wbuf = alloc(8192);                     # exactly 4096 WCHARs
+    var wn = _wsep_self_w(wbuf, 4096);
+    var got = 0;
+    if (wn > 0) { got = 1; }
+    assert_eq(got, 1, "sys_self_exe_w returned a positive WCHAR count (anti-vacuous: the route fired)");
+    var fits = 0;
+    if (wn < 4096) { fits = 1; }
+    assert_eq(fits, 1, "the path fits the buffer (a return of exactly cch means TRUNCATED, not a length)");
+    store8(wbuf + wn * 2, 0);
+    store8(wbuf + wn * 2 + 1, 0);
+    var path = alloc(4096);
+    var b = _args_w2u8(wbuf, path, 4096);       # bytes INCLUDING the trailing NUL
+    var narrowed = 0;
+    if (b > 1) { narrowed = 1; }
+    assert_eq(narrowed, 1, "the UTF-16 narrowed to a non-empty UTF-8 path");
+    # UTF-8 is never SHORTER than the UTF-16 unit count, so this can only fail if the
+    # narrowing hit its own cap — the second half of the 6.6.6 truncation fix.
+    var whole = 0;
+    if (b - 1 >= wn) { whole = 1; }
+    assert_eq(whole, 1, "the narrowing did not silently truncate at _args_w2u8's cap");
+    # Absolute: `X:\…` (a drive) or `\\…` (a UNC share). argv(0) can be neither, which is
+    # the entire reason this reroute exists.
+    var abs = 0;
+    if (load8(path + 1) == 58) {                # ':'
+        if (load8(path + 2) == 92) { abs = 1; }
+        if (load8(path + 2) == 47) { abs = 1; }
+    }
+    if (load8(path) == 92) {
+        if (load8(path + 1) == 92) { abs = 1; }
+    }
+    assert_eq(abs, 1, "the module path is ABSOLUTE (drive-qualified or UNC), unlike argv(0)");
+    # THE INDEPENDENT CHECK: the filesystem, not kernel32. The DIRECTORY half is the half
+    # the scaffolder walks, so prove it exists by writing a file into it through the
+    # absolute path and reading the bytes back out. A route returning a stale buffer, a
+    # byte count, or another module's name fails here.
+    var bn = _wsep_basename(path);
+    var dlen = bn - path;
+    var has_dir = 0;
+    if (dlen > 0) { has_dir = 1; }
+    assert_eq(has_dir, 1, "the path has a directory component (anti-vacuous: not a bare filename)");
+    var leaf = 0;
+    if (load8(bn) != 0) { leaf = 1; }
+    assert_eq(leaf, 1, "…and a non-empty basename (it does not end in a separator)");
+    var probe = alloc(4160);
+    memcpy(probe, path, dlen);                  # includes the trailing separator
+    memcpy(probe + dlen, "_wsep_probe.tmp", 15);
+    store8(probe + dlen + 15, 0);
+    sys_unlink(probe);
+    var w = _wsep_write(probe, "moduledir", 9);
+    assert_eq(w, 9, "a file writes into the directory the route named (it is a REAL directory)");
+    var pfd = sys_open(probe, 0, 0);
+    var pbuf = alloc(32);
+    var pr = sys_read(pfd, pbuf, 32);
+    sys_close(pfd);
+    assert_eq(pr, 9, "…and reads back through the same absolute path");
+    assert_eq(memeq(pbuf, "moduledir", 9), 1, "…with the bytes that were written");
+    sys_unlink(probe);
+    assert_eq(_wsep_exists(probe), 0, "cleanup: the probe file is removed");
+}
+
+fn test_the_module_path_names_this_binary() {
+    test_group("windows: the module path's basename agrees with argv(0) (a DIFFERENT import)");
+    if (_wsep_is_win() == 0) {
+        assert_eq(1, 1, "SKIPPED off Windows");
+        return;
+    }
+    if (argc() < 1) {
+        assert_eq(1, 1, "SKIPPED: argc()==0 on this host, nothing to cross-check against");
+        return;
+    }
+    var wbuf = alloc(8192);
+    var wn = _wsep_self_w(wbuf, 4096);
+    if (wn <= 0) {
+        assert_eq(0, 1, "sys_self_exe_w returned nothing to compare (the route did not fire)");
+        return;
+    }
+    store8(wbuf + wn * 2, 0);
+    store8(wbuf + wn * 2 + 1, 0);
+    var path = alloc(4096);
+    _args_w2u8(wbuf, path, 4096);
+    # argv(0) comes from GetCommandLineW + CommandLineToArgvW (lib/args_win.cyr) — a
+    # different kernel32/shell32 pair from GetModuleFileNameW, so agreement is evidence.
+    var same = _wsep_ieq(_wsep_basename(path), _wsep_basename(argv(0)));
+    assert_eq(same, 1, "the module path ends in the same filename the command line named");
+}
+
+fn test_a_too_small_buffer_returns_the_capacity_not_a_length() {
+    test_group("windows: a too-small buffer returns cch ITSELF — the contract the 6.6.6 fix rests on");
+    if (_wsep_is_win() == 0) {
+        assert_eq(1, 1, "SKIPPED off Windows");
+        return;
+    }
+    # ⛔ THIS IS THE ONE WORTH READING TWICE. Unlike most Win32 "give me a buffer" calls,
+    # GetModuleFileNameW does NOT return the size it needed — it returns the capacity it
+    # was given and leaves the result truncated. Reading that as a length is what made
+    # `_self_path_win` store a NUL two bytes past its allocation and then use half a path.
+    # No full Windows module path is 4 WCHARs or shorter ("C:\x" is already 4), so a
+    # 4-WCHAR ask is always the insufficient-buffer case.
+    var small = alloc(64);
+    var r = _wsep_self_w(small, 4);
+    assert_eq(r, 4, "a 4-WCHAR buffer returns exactly 4 — the capacity, NOT the length the path needs");
+}
+
+# ── The portable half: sys_rename on every host ─────────────────────
+fn test_rename_moves_a_file_and_replaces_an_existing_one() {
+    test_group("every host: sys_rename moves a CWD-relative file, and replaces an existing target");
+    var a = "_wsep_a.tmp";
+    var b = "_wsep_b.tmp";
+    sys_unlink(a);
+    sys_unlink(b);
+    var w = _wsep_write(a, "first", 5);
+    assert_eq(w, 5, "wrote the source file (anti-vacuous: there is something to move)");
+    var rc1 = sys_rename(a, b);
+    assert_eq(rc1 < 0, 0, "sys_rename reported success");
+    assert_eq(_wsep_exists(a), 0, "the source is GONE from its old name");
+    assert_eq(_wsep_exists(b), 1, "the target exists under its new name");
+    # Read the bytes back rather than trusting the return value.
+    var fd = sys_open(b, 0, 0);
+    var buf = alloc(64);
+    var n = sys_read(fd, buf, 64);
+    sys_close(fd);
+    assert_eq(n, 5, "the moved file still has its 5 bytes");
+    assert_eq(memeq(buf, "first", 5), 1, "…and they are the bytes that were written");
+    # Replace-existing: rename(2) replaces atomically, and MoveFileExW is routed with
+    # MOVEFILE_REPLACE_EXISTING so PE matches. A route missing that flag fails here.
+    var w2 = _wsep_write(a, "second", 6);
+    assert_eq(w2, 6, "wrote a second source file");
+    var rc2 = sys_rename(a, b);
+    assert_eq(rc2 < 0, 0, "sys_rename over an EXISTING target reported success");
+    var fd2 = sys_open(b, 0, 0);
+    var buf2 = alloc(64);
+    var n2 = sys_read(fd2, buf2, 64);
+    sys_close(fd2);
+    assert_eq(n2, 6, "the target now holds the second file's 6 bytes");
+    assert_eq(memeq(buf2, "second", 6), 1, "…so the replace really happened");
+    assert_eq(_wsep_exists(a), 0, "the second source is gone too");
+    sys_unlink(b);
+    assert_eq(_wsep_exists(b), 0, "cleanup: the test leaves no file behind");
+}
+
+fn main(): i64 {
+    alloc_init();
+    args_init();
+    test_the_module_path_is_absolute_and_names_a_real_directory();
+    test_the_module_path_names_this_binary();
+    test_a_too_small_buffer_returns_the_capacity_not_a_length();
+    test_rename_moves_a_file_and_replaces_an_existing_one();
+    return assert_summary();
+}
+
+var r = main();
+syscall(60, r);
