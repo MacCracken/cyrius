@@ -1291,6 +1291,57 @@ fn PRSTR(s): i64 {
     return 0;
 }
 
+# ⛔ v6.6.6 — WRITE EVERY BYTE OF THE OUTPUT, OR SAY SO AND EXIT NON-ZERO.
+#
+# Six of the seven driver forks ended with the same hand-rolled loop: stop on the
+# first `write` that returns <= 0, then fall through to `exit(_had_error)`. It
+# recorded the failure NOWHERE, so a full disk — or a quota, or RLIMIT_FSIZE —
+# produced a TRUNCATED executable reported as a successful build. Measured at 6.6.5:
+# a 64 KB tmpfs gave `cyrius build` a 65536-byte stub of a 71272-byte image and it
+# printed `OK (65536 bytes)`, rc=0; `cat x.cyr | cycc > out` under `ulimit -f 100`
+# did the same. Every CI step that trusts `$?` shipped the stub, and `cyrius build`
+# renamed it over the previous good artifact.
+#
+# The missing half is simply comparing what landed against what was asked for. It
+# lives HERE, once, because six copies of a loop is how one of them ends up with the
+# check and the other five without it — the shape this release keeps finding. Every
+# write of the compiler's own output (ELF / Mach-O / PE image, cx bytecode, --emit-js
+# text, --version) goes through it. CHANGELOG [6.6.6]
+fn _write_out_all(base, len): i64 {
+    var written = 0;
+    var eno = 0;
+    var wgo = 1;
+    while (wgo == 1) {
+        if (written >= len) { wgo = 0; }
+        else {
+            var w = syscall(SYS_WRITE, 1, base + written, len - written);
+            if (w <= 0) {
+                if (w < 0) { eno = 0 - w; }
+                wgo = 0;
+            } else { written = written + w; }
+        }
+    }
+    if (written < len) { _write_out_failed(written, len, eno); }
+    return written;
+}
+
+# The diagnostic + exit half of _write_out_all. Split out so the loop keeps a handful
+# of statements and one string literal: this file is on the seed path and cybs
+# mis-compiles a fn carrying too many global references. `eno` is 0 when the kernel
+# reported a short count rather than an error (a full disk yields both, in that
+# order). CHANGELOG [6.6.6]
+fn _write_out_failed(written, len, eno): i64 {
+    syscall(SYS_WRITE, 2, "error: could not write the output (", 35);
+    PRNUM(written);
+    syscall(SYS_WRITE, 2, " of ", 4);
+    PRNUM(len);
+    syscall(SYS_WRITE, 2, " bytes): errno ", 15);
+    PRNUM(eno);
+    syscall(SYS_WRITE, 2, "\n", 1);
+    syscall(SYS_EXIT, 1);
+    return 0;
+}
+
 # v6.4.77 — printable names for the BUILTIN / INTRINSIC token types.
 #
 # WHY THIS IS SEPARATE FROM TOKNAME: 51 entries means 51 string-literal (global)

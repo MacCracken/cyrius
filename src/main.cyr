@@ -726,7 +726,7 @@ if (_vn > 0) {
         if (_vi + 4 <= _vn) {
             if (load8(&_vbuf + _vi) == 45 && load8(&_vbuf + _vi + 1) == 45) {
                 if (load8(&_vbuf + _vi + 2) == 118 && load8(&_vbuf + _vi + 3) == 101) {
-                    syscall(SYS_WRITE, 1, _VERSION_STR_CYCC, _VERSION_LEN_CYCC);
+                    _write_out_all(_VERSION_STR_CYCC, _VERSION_LEN_CYCC);
                     syscall(SYS_EXIT, 0);
                 }
             }
@@ -2235,17 +2235,12 @@ _capacity_warnings(S, 67108864, 1);
 EMITELF(S);
 if (_prof_on == 1) { _prof_emit_end = _prof_clock_ns(); }
 # Write ELF output (loop on partial writes)
+# v6.6.6 — the loop that used to sit here stopped on the first failing `write` and
+# then exited 0 with a TRUNCATED image. _write_out_all (src/common/util.cyr) is the
+# same loop plus the comparison it was missing, shared by every fork so the check
+# cannot be present in one and absent in the rest. CHANGELOG [6.6.6]
 var olen = L64(S + 0x1903F8);
-var written = 0;
-var wgo = 1;
-while (wgo == 1) {
-    var w = syscall(SYS_WRITE, 1, _output_base + written, olen - written);
-    if (w <= 0) { wgo = 0; }
-    else {
-        written = written + w;
-        if (written >= olen) { wgo = 0; }
-    }
-}
+_write_out_all(_output_base, olen);
 if (_prof_on == 1) { _prof_write_end = _prof_clock_ns(); }
 
 # v5.6.5 O1: total compile time to stderr if CYRIUS_PROF=1.

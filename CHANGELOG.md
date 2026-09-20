@@ -8,6 +8,37 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **cycc exited 0 after a FAILED write of its own output, and `cyrius build` then printed
+  `OK (65536 bytes)` for a truncated binary.** (bite 15a.) Six of the seven driver forks ended
+  with the same hand-rolled loop — stop on the first `write` that returns `<= 0`, then fall
+  through to `exit(_had_error)`. `written < olen` was never tested, so a full disk (or a quota,
+  or `RLIMIT_FSIZE`) produced a **truncated executable reported as a successful build**.
+  Reproduced on the 6.6.6 tree exactly as filed: on a 64 KB tmpfs, `cyrius build
+  programs/gen_syscall_xlat.cyr` printed `OK (65536 bytes)` for a 484,064-byte image, exited 0
+  and **renamed the stub over the previous artifact**; `cat … | cycc > out` under
+  `ulimit -f 100` with `SIGXFSZ` ignored wrote 51,200 of 67,160 bytes and exited 0. Every CI
+  step that trusts `$?` shipped it. Two more paths had the same defect: the **cx** fork ignored
+  the return value of **all six** of its writes (header, version byte, entry offset, bytecode,
+  zeroed var data, string data), and `_ej_flush` (`--emit-js`) described itself as
+  "partial-write safe" while `if (n <= 0) { return 0; }` returned SUCCESS. **Fix:**
+  `_write_out_all` / `_write_out_failed` in `src/common/util.cyr` — one loop that compares what
+  landed against what was asked for, prints
+  `error: could not write the output (N of M bytes): errno E` on stderr and exits 1. It lives in
+  the shared file, and **every** fd-1 write in `src/` now goes through it (the seven forks'
+  images, cx's six pieces, the JS flush, `--version`), because six copies of a loop is precisely
+  how one of them ends up with the check and the other five without it. After the fix the filed
+  repro gives `cyrius-build-rc=1`, `FAILED (compiler exit 1)`, **no artifact at all** (cbt
+  unlinks its temp output and never renames), and `cycc-rc=1`. Gate
+  `tests/gates/toolchain/output_write_failure_is_loud.sh` (7 axes, 4 mutations each RED): it
+  injects the failure with `RLIMIT_FSIZE` + an ignored `SIGXFSZ` rather than a mount, since
+  `unshare -r` skips silently where user namespaces are off, and **N and M are both read off the
+  filesystem**, never from the message under test. ⚠ The exit status and the message are
+  SEPARATE axes because mutation M3 (diagnostic kept, `exit 0`) leaves the message axis green —
+  and exiting 0 is the entire filed defect. Axis 7 is a source census (zero raw `SYS_WRITE, 1`
+  outside the helper; 7 of 7 forks wired), so a new fork or a new output path with its own loop
+  turns the gate RED instead of being silently uncovered. cycc **1,315,016 B → 1,315,040 B
+  (+24)**; 0 of 330 `.tcyr` binaries changed a byte; seed-derive green.
+
 - **A COMMENT could CLOSE a conditional, and code inside a skipped `#ifdef` was compiled in
   silently.** (bite 5h.) Found by grepping the SHAPE the review round named rather than the
   names it listed: after `PP_NAMEBOUND` landed, three probes in the same file still had no word

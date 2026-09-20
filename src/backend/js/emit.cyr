@@ -859,14 +859,15 @@ fn _ej_prelude(): i64 {
     return 0;
 }
 
-# Flush the JS buffer to stdout (partial-write safe).
+# Flush the JS buffer to stdout.
+#
+# v6.6.6 — this said "partial-write safe" and was not: `if (n <= 0) { return 0; }`
+# returned SUCCESS after a failed write, so `cycc --emit-js > out` on a full disk
+# produced truncated JavaScript and exited 0. Same defect, same fix as the six ELF
+# forks — _write_out_all reports the short write and exits non-zero.
+# CHANGELOG [6.6.6]
 fn _ej_flush(): i64 {
-    var w = 0;
-    while (w < _js_len) {
-        var n = syscall(SYS_WRITE, 1, _js_buf + w, _js_len - w);
-        if (n <= 0) { return 0; }
-        w = w + n;
-    }
+    _write_out_all(_js_buf, _js_len);
     return 0;
 }
 
