@@ -38,6 +38,51 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 [ -x build/cycc ] || { echo "ERROR: build/cycc missing (run bootstrap first)"; exit 1; }
 
+# ── v6.6.6: PER-RUN STAGING, LOCAL **AND** REMOTE ────────────────────────────
+# WHY: this script used ~40 FIXED staging names — /tmp/_co_* on the build host, ~/_cyaud
+# on the POSIX targets and a fixed _cyaud under C:\cyrius-tests on cass. Two runs at once
+# therefore overwrote each other's cross-compilers and each other's remote checkouts, and the
+# pre-run `rm -rf ~/_cyaud` could delete a LIVE run's tree mid-compile. That is the whole
+# reason CLAUDE.md says "run cross-os-selfhost.sh ONE host at a time" — a documented
+# workaround standing in for a fix. The names below are private to this run on BOTH
+# sides, so a second run (another worktree, a CI matrix on one runner, the four hosts in
+# parallel) cannot collide. CHANGELOG [6.6.6]
+CO_TMP=$(mktemp -d "${TMPDIR:-/tmp}/cyrius-co.XXXXXX") && [ -d "$CO_TMP" ] || {
+  echo "ERROR: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
+# Alphanumeric + underscore only: this lands in a Windows directory name and in an
+# unquoted cmd.exe argument.
+RUNID="$$_$(basename "$CO_TMP" | sed 's/.*\.//' | tr -cd 'A-Za-z0-9')"
+RD="_cyaud_$RUNID"                 # POSIX targets: ~/$RD
+WRD="C:\\cyrius-tests\\$RD"        # cass, cmd.exe form
+WRDS="/cyrius-tests/$RD"           # cass, scp form
+WLT="_lt_$RUNID.exe"               # cass lib-test binary — per-run so the reap below
+                                   # cannot kill another run's child by image name.
+
+# Local scratch always goes; the remote staging dir goes only on a GREEN run, because
+# every failure message here points at files inside it (cass's _cl*.txt, the r1/r2 pair).
+# The cass reap targets THIS run's image name only: a `timeout`-ed ssh kills the local
+# end and leaves the remote test running, and that child holds a lock on the directory.
+_co_cleanup() {
+  _corc=$?
+  rm -rf "$CO_TMP"
+  if [ -n "${SSHO:-}" ]; then
+    if [ "$HOST" = cass ]; then
+      ssh $SSHO cass "cmd /c \"taskkill /F /IM $WLT\"" >/dev/null 2>&1 || true
+    fi
+    if [ "$_corc" = 0 ]; then
+      case "$HOST" in
+        cass)        ssh $SSHO cass "cmd /c \"rmdir /s /q $WRD\"" >/dev/null 2>&1 || true ;;
+        ecb-install) ssh $SSHO ecb  "rm -rf ~/$RD"                >/dev/null 2>&1 || true ;;
+        ecb|ach|pi)  ssh $SSHO "$HOST" "rm -rf ~/$RD"             >/dev/null 2>&1 || true ;;
+      esac
+    else
+      echo "  (remote staging kept for inspection on $HOST: $RD — delete it when done)"
+    fi
+  fi
+  exit "$_corc"
+}
+trap _co_cleanup EXIT
+
 # Cross-OS LIB-TEST fallback (v6.0.75) — INTERIM mechanism, the trigger is
 # opt-in so normal self-host runs stay lean. Arg 2 (or $CYRIUS_CROSS_OS_LIBTEST)
 # is a glob; when set, AFTER the cycc self-host passes on this host, the
@@ -85,7 +130,7 @@ SSHO="-o ConnectTimeout=20 -o BatchMode=yes -o HostName=$IP -o HostKeyAlias=$HN 
 # Linux-side seed + source bundle (shared by the self-host cases; harmless for
 # ecb-install, which builds its own tarball). Built from clean source so what
 # we verify is what we ship.
-cat src/main.cyr | ./build/cycc > /tmp/_co_l && chmod +x /tmp/_co_l
+cat src/main.cyr | ./build/cycc > "$CO_TMP"/_co_l && chmod +x "$CO_TMP"/_co_l
 # cx Release C (v6.4.20): a portable-.cyx fixture, built once with the LOCAL
 # cx bytecode compiler (cycc_cx), shipped to every host. Each self-host leg
 # rebuilds cxvm with the just-self-hosted NATIVE cycc and runs this .cyx —
@@ -99,9 +144,9 @@ cat src/main.cyr | ./build/cycc > /tmp/_co_l && chmod +x /tmp/_co_l
 # f64v_add (per-lane fadd), and f64v_sqrt (the new cxvm fsqrt opcode 0x68).
 # A green leg now means the cx SIMD emitters + frame fix run on that host's
 # native cxvm, not just that a write halts. (Text output length 10, not 9.)
-cat src/main_cx.cyr | ./build/cycc > /tmp/_co_ccx && chmod +x /tmp/_co_ccx
-printf 'fn main(): i64 { var A[24]; var B[16]; var R[16]; store64(&A + 0, f64_from(10)); store64(&A + 8, f64_from(20)); store64(&B + 0, f64_from(3)); store64(&B + 8, f64_from(4)); f64v_add(&R, &A, &B, 2); if (f64_to(load64(&R + 0)) != 13) { return 1; } if (f64_to(load64(&R + 8)) != 24) { return 2; } store64(&A + 0, f64_from(9)); store64(&A + 8, f64_from(16)); f64v_sqrt(&R, &A, 2); if (f64_to(load64(&R + 0)) != 3) { return 3; } if (f64_to(load64(&R + 8)) != 4) { return 4; } var w = syscall(1, 1, "cx-simd-ok\\n", 10); if (w == 10) { return 42; } return 5; }\nvar e = main();\nsyscall(60, e);\n' > /tmp/_co_cx.cyr
-cat /tmp/_co_cx.cyr | /tmp/_co_ccx > /tmp/_co_cx.cyx
+cat src/main_cx.cyr | ./build/cycc > "$CO_TMP"/_co_ccx && chmod +x "$CO_TMP"/_co_ccx
+printf 'fn main(): i64 { var A[24]; var B[16]; var R[16]; store64(&A + 0, f64_from(10)); store64(&A + 8, f64_from(20)); store64(&B + 0, f64_from(3)); store64(&B + 8, f64_from(4)); f64v_add(&R, &A, &B, 2); if (f64_to(load64(&R + 0)) != 13) { return 1; } if (f64_to(load64(&R + 8)) != 24) { return 2; } store64(&A + 0, f64_from(9)); store64(&A + 8, f64_from(16)); f64v_sqrt(&R, &A, 2); if (f64_to(load64(&R + 0)) != 3) { return 3; } if (f64_to(load64(&R + 8)) != 4) { return 4; } var w = syscall(1, 1, "cx-simd-ok\\n", 10); if (w == 10) { return 42; } return 5; }\nvar e = main();\nsyscall(60, e);\n' > "$CO_TMP"/_co_cx.cyr
+cat "$CO_TMP"/_co_cx.cyr | "$CO_TMP"/_co_ccx > "$CO_TMP"/_co_cx.cyx
 # tests/win: v6.0.71 callptr→real-Win64 regression (cass leg). tests/tcyr +
 # lib/assert.cyr only ride along when the lib-test fallback is triggered.
 #
@@ -117,24 +162,24 @@ cat /tmp/_co_cx.cyr | /tmp/_co_ccx > /tmp/_co_cx.cyx
 # portability gap. If you add a corpus test that reads a file, its input belongs here —
 # a missing input is indistinguishable from a broken port in the failure list.
 if [ -n "$LIBTEST" ]; then
-  tar czf /tmp/_co.tgz src lib cbt cyrius.cyml tests/win tests/tcyr tests/fixtures tests/data VERSION programs/cxvm.cyr programs/vidya.cyr
+  tar czf "$CO_TMP"/_co.tgz src lib cbt cyrius.cyml tests/win tests/tcyr tests/fixtures tests/data VERSION programs/cxvm.cyr programs/vidya.cyr
 else
-  tar czf /tmp/_co.tgz src lib cbt cyrius.cyml tests/win VERSION programs/cxvm.cyr
+  tar czf "$CO_TMP"/_co.tgz src lib cbt cyrius.cyml tests/win VERSION programs/cxvm.cyr
 fi
 
 case "$HOST" in
   ecb)
-    cat src/main_aarch64.cyr       | /tmp/_co_l                   > /tmp/_co_x  && chmod +x /tmp/_co_x
-    cat src/main_aarch64_macho.cyr | CYRIUS_MACHO_ARM=1 /tmp/_co_x > /tmp/_co_m
-    ssh $SSHO ecb 'rm -rf ~/_cyaud && mkdir ~/_cyaud'
-    scp -q $SSHO /tmp/_co.tgz /tmp/_co_m /tmp/_co_cx.cyx /tmp/_co_cx.cyr ecb:~/_cyaud/
+    cat src/main_aarch64.cyr       | "$CO_TMP"/_co_l                   > "$CO_TMP"/_co_x  && chmod +x "$CO_TMP"/_co_x
+    cat src/main_aarch64_macho.cyr | CYRIUS_MACHO_ARM=1 "$CO_TMP"/_co_x > "$CO_TMP"/_co_m
+    ssh $SSHO ecb "rm -rf ~/$RD && mkdir ~/$RD"
+    scp -q $SSHO "$CO_TMP"/_co.tgz "$CO_TMP"/_co_m "$CO_TMP"/_co_cx.cyx "$CO_TMP"/_co_cx.cyr "ecb:~/$RD/"
     # Self-host twice + cmp, then the v6.0.37 exit-code-propagation guard
     # (fn main(){return 42;} must exit 42 — catches the rot-class where
     # main() is never called and the program exits with argc). Then cx C:
     # build a NATIVE Mach-O cxvm with the just-self-hosted r1r and run the
     # portable .cyx I/O fixture — proves EMACHO_SYSXLAT translates the guest's
     # runtime syscall number (must exit 42; guest write() must return 9).
-    ssh $SSHO ecb 'cd ~/_cyaud && tar xzf _co.tgz && chmod +x _co_m && codesign -s - -f _co_m \
+    ssh $SSHO ecb "cd ~/$RD && "'tar xzf _co.tgz && chmod +x _co_m && codesign -s - -f _co_m \
       && cat src/main_aarch64_macho.cyr | CYRIUS_MACHO_ARM=1 ./_co_m > r1 \
       && cp r1 r1r && chmod +x r1r && codesign -s - -f r1r \
       && cat src/main_aarch64_macho.cyr | CYRIUS_MACHO_ARM=1 ./r1r > r2 \
@@ -154,15 +199,15 @@ case "$HOST" in
   ach)
     # x86 ELF cycc told to emit Mach-O builds the x86 Mach-O cycc (its driver
     # hardcodes _TARGET_MACHO=1, so no env flag is needed to RUN it).
-    cat src/main_x86_macho.cyr | CYRIUS_MACHO=1 /tmp/_co_l > /tmp/_co_mx
-    ssh $SSHO ach 'rm -rf ~/_cyaud && mkdir ~/_cyaud'
-    scp -q $SSHO /tmp/_co.tgz /tmp/_co_mx ach:~/_cyaud/
+    cat src/main_x86_macho.cyr | CYRIUS_MACHO=1 "$CO_TMP"/_co_l > "$CO_TMP"/_co_mx
+    ssh $SSHO ach "rm -rf ~/$RD && mkdir ~/$RD"
+    scp -q $SSHO "$CO_TMP"/_co.tgz "$CO_TMP"/_co_mx "ach:~/$RD/"
     # NO codesign (see header — unsigned x86_64 Mach-O runs on Intel 13.7.8).
     # Self-host twice + cmp, then the v6.0.37 exit-code-propagation guard
     # (fn main(){return 42;} must exit 42 — catches the rot-class where main()
     # is never called and the program exits with argc), mirroring the ecb leg.
     # Without the guard a byte-identical-but-broken cycc could self-host green.
-    ssh $SSHO ach 'cd ~/_cyaud && tar xzf _co.tgz && chmod +x _co_mx \
+    ssh $SSHO ach "cd ~/$RD && "'tar xzf _co.tgz && chmod +x _co_mx \
       && cat src/main_x86_macho.cyr | ./_co_mx > r1 && chmod +x r1 \
       && cat src/main_x86_macho.cyr | ./r1 > r2 \
       && cmp r1 r2 \
@@ -182,14 +227,14 @@ case "$HOST" in
     # updated, so at 6.6.3 the full release gate passed GREEN on all four hosts while
     # #inline-before-a-declaration failed to compile on the native ARM fork. n1/n2 below close
     # it: the shipped native source must self-host byte-identical on real ARM hardware too.
-    cat src/main_aarch64.cyr | /tmp/_co_l  > /tmp/_co_x   && chmod +x /tmp/_co_x
-    cat src/main_aarch64.cyr | /tmp/_co_x  > /tmp/_co_a64 && chmod +x /tmp/_co_a64
-    ssh $SSHO pi 'rm -rf ~/_cyaud && mkdir ~/_cyaud'
-    scp -q $SSHO /tmp/_co.tgz /tmp/_co_a64 /tmp/_co_cx.cyx /tmp/_co_cx.cyr pi:~/_cyaud/
+    cat src/main_aarch64.cyr | "$CO_TMP"/_co_l  > "$CO_TMP"/_co_x   && chmod +x "$CO_TMP"/_co_x
+    cat src/main_aarch64.cyr | "$CO_TMP"/_co_x  > "$CO_TMP"/_co_a64 && chmod +x "$CO_TMP"/_co_a64
+    ssh $SSHO pi "rm -rf ~/$RD && mkdir ~/$RD"
+    scp -q $SSHO "$CO_TMP"/_co.tgz "$CO_TMP"/_co_a64 "$CO_TMP"/_co_cx.cyx "$CO_TMP"/_co_cx.cyr "pi:~/$RD/"
     # Self-host twice + cmp, then cx C: build a NATIVE aarch64 cxvm with r1 and
     # run the portable .cyx I/O fixture — proves ESYSXLAT translates the guest's
     # runtime syscall number (incl. open→openat AT_FDCWD shift). Must exit 42.
-    ssh $SSHO pi 'cd ~/_cyaud && tar xzf _co.tgz && chmod +x _co_a64 \
+    ssh $SSHO pi "cd ~/$RD && "'tar xzf _co.tgz && chmod +x _co_a64 \
       && cat src/main_aarch64.cyr | ./_co_a64 > r1 && chmod +x r1 \
       && cat src/main_aarch64.cyr | ./r1 > r2 \
       && cmp r1 r2 \
@@ -218,28 +263,28 @@ case "$HOST" in
     ;;
   cass)
     # x86 ELF -> PE-emitting cross-compiler (cycc_win) -> native PE cycc.exe.
-    cat src/main_win.cyr | /tmp/_co_l > /tmp/_co_w && chmod +x /tmp/_co_w
-    cat src/main_win.cyr | /tmp/_co_w > /tmp/_co_exe
-    printf 'fn main() { return 42; }' > /tmp/_co_ec.cyr
+    cat src/main_win.cyr | "$CO_TMP"/_co_l > "$CO_TMP"/_co_w && chmod +x "$CO_TMP"/_co_w
+    cat src/main_win.cyr | "$CO_TMP"/_co_w > "$CO_TMP"/_co_exe
+    printf 'fn main() { return 42; }' > "$CO_TMP"/_co_ec.cyr
     # v6.4.14 — run under C:\cyrius-tests, the dir cass has a standing Windows
     # Defender exclusion for. The old %USERPROFILE%\_cyaud was NOT excluded, so
     # Defender's ML classifier (Bearfoos.A!ml) could QUARANTINE a freshly-built
     # cycc.exe mid-run → 0-byte output → a FALSE self-host FAIL on a perfectly
     # good compiler. Writing to the excluded root makes the verdict trustworthy.
-    # ⛔ REAP ORPHANS FIRST — this leg must be re-runnable without a human. A test that
-    # hangs on Windows is killed by the per-test `timeout`, but that only kills the LOCAL
-    # ssh: the remote `_lt.exe` keeps running and holds a file lock, so the NEXT run's
-    # `rmdir` fails, `mkdir` then errors "already exists", and `set -e` aborts setup before
-    # a single test runs. Measured: one orphaned `_lt.exe` (PID 3336) blocked the whole leg
-    # until it was killed by hand. `taskkill` is allowed to fail — usually there is nothing
-    # to reap — so it is explicitly not part of the `set -e` chain.
-    ssh $SSHO cass 'taskkill /F /IM _lt.exe' >/dev/null 2>&1 || true
-    ssh $SSHO cass 'cmd /c "rmdir /s /q C:\cyrius-tests\_cyaud 2>nul & mkdir C:\cyrius-tests\_cyaud"'
-    scp -q $SSHO /tmp/_co.tgz cass:/cyrius-tests/_cyaud/_co.tgz
-    scp -q $SSHO /tmp/_co_exe cass:/cyrius-tests/_cyaud/cycc.exe
-    scp -q $SSHO /tmp/_co_ec.cyr cass:/cyrius-tests/_cyaud/_ec.cyr
-    scp -q $SSHO /tmp/_co_cx.cyx cass:/cyrius-tests/_cyaud/_co_cx.cyx
-    scp -q $SSHO /tmp/_co_cx.cyr cass:/cyrius-tests/_cyaud/_co_cx.cyr
+    # ⛔ ORPHAN REAPING — this leg must be re-runnable without a human. A test that hangs
+    # on Windows is killed by the per-test `timeout`, but that only kills the LOCAL ssh:
+    # the remote lib-test binary keeps running and holds a file lock on its directory.
+    # Measured once: one orphaned `_lt.exe` (PID 3336) blocked the whole leg until it was
+    # killed by hand. v6.6.6 moved the reap to the EXIT trap and made it name THIS run's
+    # image ($WLT) — the old `taskkill /F /IM _lt.exe` at setup killed any concurrent
+    # run's child, which is the same collision this bite is removing. Our directory is
+    # per-run, so a previous run's orphan can no longer block setup either.
+    ssh $SSHO cass 'cmd /c "mkdir C:\cyrius-tests\'"$RD"'"'
+    scp -q $SSHO "$CO_TMP"/_co.tgz "cass:$WRDS"/_co.tgz
+    scp -q $SSHO "$CO_TMP"/_co_exe "cass:$WRDS"/cycc.exe
+    scp -q $SSHO "$CO_TMP"/_co_ec.cyr "cass:$WRDS"/_ec.cyr
+    scp -q $SSHO "$CO_TMP"/_co_cx.cyx "cass:$WRDS"/_co_cx.cyx
+    scp -q $SSHO "$CO_TMP"/_co_cx.cyr "cass:$WRDS"/_co_cx.cyr
     # cmd.exe for `<` redirection. The &&-chain stops at the first failure and
     # cmd /c returns that command's exit code, which ssh propagates back, so a
     # broken cycc.exe (emits 0 code today) fails the gate for the right reason.
@@ -260,15 +305,15 @@ case "$HOST" in
     # is a standalone command that set -e catches.) A broken cass PE self-host
     # slipped past as SELFHOST_OK exactly this way. Wrap the whole chain in an
     # explicit `if` so ANY leg's failure is a hard, visible exit 1 — never masked.
-    if ssh $SSHO cass 'cmd /c "cd /d C:\cyrius-tests\_cyaud && tar xzf _co.tgz && cycc.exe < src\main_win.cyr > c2.exe && c2.exe < src\main_win.cyr > c3.exe && fc /b c2.exe c3.exe"' \
-      && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\_cyaud && c2.exe < _ec.cyr > _ec.exe && _ec.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
-      && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\_cyaud && c2.exe < tests\win\callptr_real_win64.cyr > cpr.exe && cpr.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
-      && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\_cyaud && c2.exe < tests\win\nanosleep_pe.cyr > nsp.exe && nsp.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
-      && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\_cyaud && c2.exe < tests\win\var_syscall_arity_pe.cyr > vsa.exe && vsa.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
-      && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\_cyaud && c2.exe < tests\win\dir_list_pe.cyr > dlp.exe && dlp.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
-      && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\_cyaud && c2.exe < tests\win\async_iocp_pe.cyr > aip.exe && aip.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
-      && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\_cyaud && c2.exe < programs\cxvm.cyr > cxvm.exe && cxvm.exe < _co_cx.cyx > nul & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
-      && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\_cyaud && c2.exe < src\main_cx.cyr > cycc_cx.exe && cycc_cx.exe < _co_cx.cyr > nat.cyx && cxvm.exe < nat.cyx > nul & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"'; then
+    if ssh $SSHO cass 'cmd /c "cd /d C:\cyrius-tests\'"$RD"' && tar xzf _co.tgz && cycc.exe < src\main_win.cyr > c2.exe && c2.exe < src\main_win.cyr > c3.exe && fc /b c2.exe c3.exe"' \
+      && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\'"$RD"' && c2.exe < _ec.cyr > _ec.exe && _ec.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
+      && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\'"$RD"' && c2.exe < tests\win\callptr_real_win64.cyr > cpr.exe && cpr.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
+      && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\'"$RD"' && c2.exe < tests\win\nanosleep_pe.cyr > nsp.exe && nsp.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
+      && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\'"$RD"' && c2.exe < tests\win\var_syscall_arity_pe.cyr > vsa.exe && vsa.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
+      && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\'"$RD"' && c2.exe < tests\win\dir_list_pe.cyr > dlp.exe && dlp.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
+      && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\'"$RD"' && c2.exe < tests\win\async_iocp_pe.cyr > aip.exe && aip.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
+      && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\'"$RD"' && c2.exe < programs\cxvm.cyr > cxvm.exe && cxvm.exe < _co_cx.cyx > nul & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
+      && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\'"$RD"' && c2.exe < src\main_cx.cyr > cycc_cx.exe && cycc_cx.exe < _co_cx.cyr > nat.cyx && cxvm.exe < nat.cyx > nul & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"'; then
       :   # all cass legs passed (self-host fixpoint + the 5 exit-42 guards + cx-C portable-.cyx I/O + v6.4.22 native cycc_cx compile→run round-trip)
     else
       echo "SELFHOST_FAIL: cass — Windows self-host fixpoint (fc /b c2.exe c3.exe) or an exit-code guard FAILED (rc=$?). NOT SELFHOST_OK."
@@ -289,21 +334,21 @@ case "$HOST" in
     # quarantines (CLAUDE.md, cass gotchas). Expected: the filed repro 2/2, plain lint
     # 0, and `run argc a b c` == 4 (argv[0] + 3). `set X=v&&` has NO space before && —
     # cmd keeps a trailing space in the value otherwise.
-    cat cbt/cyrius.cyr       | /tmp/_co_w > /tmp/_co_cli.exe
-    cat programs/cyrlint.cyr | /tmp/_co_w > /tmp/_co_lint.exe
-    printf '# a deferred item with no tracking pointer\nfn f(): i64 { return 0; }\n' > /tmp/_co_ld.cyr
+    cat cbt/cyrius.cyr       | "$CO_TMP"/_co_w > "$CO_TMP"/_co_cli.exe
+    cat programs/cyrlint.cyr | "$CO_TMP"/_co_w > "$CO_TMP"/_co_lint.exe
+    printf '# a deferred item with no tracking pointer\nfn f(): i64 { return 0; }\n' > "$CO_TMP"/_co_ld.cyr
     # v6.6.5 (bite 9) — the WRAPPED form, with CRLF line ends: cyrlint.exe must join the two
     # comment lines into one paragraph with CR counted as whitespace (a Windows checkout's
     # line ends), or `later bite` is never seen and this exits 0. Linux proves the logic
     # (tests/gates/toolchain/cyrlint_cross_line.sh axis 3); this proves the shipped PE build.
-    printf '# The immediate-offset form is a later\r\n# bite.\r\nfn f(): i64 { return 0; }\r\n' > /tmp/_co_split.cyr
-    printf 'include "lib/args.cyr"\nfn main(): i64 { args_init(); return argc(); }\nvar r = main();\nsyscall(60, r);\n' > /tmp/_co_argc.cyr
-    ssh $SSHO cass 'cmd /c "mkdir C:\cyrius-tests\_cyaud\wh\bin & mkdir C:\cyrius-tests\_cyaud\wtmp"'
-    scp -q $SSHO /tmp/_co_cli.exe cass:/cyrius-tests/_cyaud/wh/bin/cyrius.exe
-    scp -q $SSHO /tmp/_co_lint.exe cass:/cyrius-tests/_cyaud/wh/bin/cyrlint.exe
-    scp -q $SSHO /tmp/_co_exe cass:/cyrius-tests/_cyaud/wh/bin/cycc.exe
-    scp -q $SSHO /tmp/_co_ld.cyr /tmp/_co_argc.cyr /tmp/_co_split.cyr cass:/cyrius-tests/_cyaud/
-    _CLI='cd /d C:\cyrius-tests\_cyaud && set CYRIUS_HOME=C:\cyrius-tests\_cyaud\wh&& set TEMP=C:\cyrius-tests\_cyaud\wtmp&& set TMP=C:\cyrius-tests\_cyaud\wtmp&& wh\bin\cyrius.exe'
+    printf '# The immediate-offset form is a later\r\n# bite.\r\nfn f(): i64 { return 0; }\r\n' > "$CO_TMP"/_co_split.cyr
+    printf 'include "lib/args.cyr"\nfn main(): i64 { args_init(); return argc(); }\nvar r = main();\nsyscall(60, r);\n' > "$CO_TMP"/_co_argc.cyr
+    ssh $SSHO cass 'cmd /c "mkdir C:\cyrius-tests\'"$RD"'\wh\bin & mkdir C:\cyrius-tests\'"$RD"'\wtmp"'
+    scp -q $SSHO "$CO_TMP"/_co_cli.exe "cass:$WRDS"/wh/bin/cyrius.exe
+    scp -q $SSHO "$CO_TMP"/_co_lint.exe "cass:$WRDS"/wh/bin/cyrlint.exe
+    scp -q $SSHO "$CO_TMP"/_co_exe "cass:$WRDS"/wh/bin/cycc.exe
+    scp -q $SSHO "$CO_TMP"/_co_ld.cyr "$CO_TMP"/_co_argc.cyr "$CO_TMP"/_co_split.cyr "cass:$WRDS"/
+    _CLI='cd /d C:\cyrius-tests\'"$RD"' && set CYRIUS_HOME=C:\cyrius-tests\'"$RD"'\wh&& set TEMP=C:\cyrius-tests\'"$RD"'\wtmp&& set TMP=C:\cyrius-tests\'"$RD"'\wtmp&& wh\bin\cyrius.exe'
     if ssh $SSHO cass "cmd /v /c \"$_CLI lint _co_ld.cyr --strict-deferrals > _cl1.txt 2> _cl1e.txt & if !errorlevel! NEQ 2 (exit 1) else (exit 0)\"" \
       && ssh $SSHO cass "cmd /v /c \"$_CLI lint --strict-deferrals _co_ld.cyr > _cl2.txt 2> _cl2e.txt & if !errorlevel! NEQ 2 (exit 1) else (exit 0)\"" \
       && ssh $SSHO cass "cmd /v /c \"$_CLI lint _co_ld.cyr > _cl3.txt 2> _cl3e.txt & if !errorlevel! NEQ 0 (exit 1) else (exit 0)\"" \
@@ -311,7 +356,7 @@ case "$HOST" in
       && ssh $SSHO cass "cmd /v /c \"$_CLI run _co_argc.cyr a b c > _cl4.txt 2> _cl4e.txt & if !errorlevel! NEQ 4 (exit 1) else (exit 0)\""; then
       :   # the CLI spawns its tools and its programs on real Windows
     else
-      echo "SELFHOST_FAIL: cass — the Windows CLI spawn FAILED (lint --strict-deferrals must be 2 in both positions, plain lint 0, the CRLF-wrapped deferral 2, run argc a b c 4). Remote output: C:\cyrius-tests\_cyaud\_cl*.txt. NOT SELFHOST_OK."
+      echo "SELFHOST_FAIL: cass — the Windows CLI spawn FAILED (lint --strict-deferrals must be 2 in both positions, plain lint 0, the CRLF-wrapped deferral 2, run argc a b c 4). Remote output: $WRD\\_cl*.txt. NOT SELFHOST_OK."
       exit 1
     fi
     # v6.0.71 callptr→real-Win64-callee regression: the NATIVE cycc.exe compiles
@@ -350,12 +395,15 @@ case "$HOST" in
     # Packaging-rot guard (v6.0.38): build the real tarball via the same
     # script the release uses, run the REAL install.sh on ecb under a
     # sandboxed CYRIUS_HOME, then `cyrius build` fn-main-42 and assert exit 42.
-    sh scripts/build-macos-arm64-tarball.sh /tmp/_co_dist >/dev/null 2>&1
+    sh scripts/build-macos-arm64-tarball.sh "$CO_TMP"/_co_dist >/dev/null 2>&1
     V=$(tr -d '[:space:]' < VERSION)
-    printf 'fn main() { return 42; }' > /tmp/_co_t.cyr
-    ssh $SSHO ecb 'rm -rf ~/_coih ~/_co_t.out ~/_cofg'
-    scp -q $SSHO scripts/install.sh scripts/funcgate-posix.sh /tmp/_co_t.cyr "/tmp/_co_dist/cyrius-$V-aarch64-macos.tar.gz" ecb:~/
-    ssh $SSHO ecb "CYRIUS_VERSION=$V CYRIUS_HOME=\$HOME/_coih CYRIUS_INSTALL_TARBALL=\$HOME/cyrius-$V-aarch64-macos.tar.gz sh \$HOME/install.sh >/dev/null 2>&1 && CYRIUS_HOME=\$HOME/_coih \$HOME/_coih/bin/cyrius build \$HOME/_co_t.cyr \$HOME/_co_t.out >/dev/null 2>&1 && (r=0; \$HOME/_co_t.out || r=\$?; [ \$r -eq 42 ])"
+    printf 'fn main() { return 42; }' > "$CO_TMP"/_co_t.cyr
+    # v6.6.6: everything this leg drops on ecb lives in the per-run ~/$RD (it used fixed
+    # ~/_coih, ~/_cofg, ~/_co_t.out and fixed names straight in $HOME, so two runs
+    # installed over each other's sandboxed CYRIUS_HOME).
+    ssh $SSHO ecb "rm -rf ~/$RD && mkdir ~/$RD"
+    scp -q $SSHO scripts/install.sh scripts/funcgate-posix.sh "$CO_TMP"/_co_t.cyr "$CO_TMP/_co_dist/cyrius-$V-aarch64-macos.tar.gz" "ecb:~/$RD/"
+    ssh $SSHO ecb "CYRIUS_VERSION=$V CYRIUS_HOME=\$HOME/$RD/ih CYRIUS_INSTALL_TARBALL=\$HOME/$RD/cyrius-$V-aarch64-macos.tar.gz sh \$HOME/$RD/install.sh >/dev/null 2>&1 && CYRIUS_HOME=\$HOME/$RD/ih \$HOME/$RD/ih/bin/cyrius build \$HOME/$RD/_co_t.cyr \$HOME/$RD/t.out >/dev/null 2>&1 && (r=0; \$HOME/$RD/t.out || r=\$?; [ \$r -eq 42 ])"
     # v6.0.63 FUNCTIONAL gate — the REAL consumer flow (init -> lib sync -> deps
     # -> build a vec-grown fib that allocates -> run/assert -> hash). Self-host +
     # the single-file build above BOTH pass while is_dir/dir_list are broken
@@ -366,7 +414,7 @@ case "$HOST" in
     # tracked-broken host to exit 4 (visible RED, not blocking Linux, NEVER green).
     # Issue: 2026-06-04-shipped-broken-functionality-found-by-consumers.md.
     _frc=0
-    ssh $SSHO ecb "sh \$HOME/funcgate-posix.sh \$HOME/_coih/bin/cyrius \$HOME/_cofg \$HOME/_coih" || _frc=$?
+    ssh $SSHO ecb "sh \$HOME/$RD/funcgate-posix.sh \$HOME/$RD/ih/bin/cyrius \$HOME/$RD/fg \$HOME/$RD/ih" || _frc=$?
     if [ "$_frc" -ne 0 ]; then
       echo "FUNCGATE_FAIL: ecb arm64 macOS real-flow broken (rc=$_frc) — see 2026-06-04-shipped-broken-functionality-found-by-consumers.md"
       if [ "${FUNCGATE_ALLOW_KNOWN_BROKEN:-0}" = "1" ]; then
@@ -442,10 +490,10 @@ if [ -n "$LIBTEST" ]; then
     # cost driver, the connections were. The runner is scp'd rather than inlined because
     # nesting a remote for-loop inside ssh quoting is exactly the class of bug the cass
     # notes in CLAUDE.md warn about.
-    scp -q $SSHO scripts/cross-os-libtest-runner.sh "$HOST:~/_cyaud/_lt_run.sh" || {
+    scp -q $SSHO scripts/cross-os-libtest-runner.sh "$HOST:~/$RD/_lt_run.sh" || {
       echo "LIBTEST_FAIL: could not ship the runner to $HOST"; exit 1; }
-    LT_OUT=$(ssh $SSHO "$HOST" "cd ~/_cyaud && sh _lt_run.sh '$LT_CC' '$LT_SIGN' '$LIBTEST'" 2>&1) || true
-    ssh $SSHO "$HOST" 'rm -f ~/_cyaud/_lt_run.sh' >/dev/null 2>&1 || true
+    LT_OUT=$(ssh $SSHO "$HOST" "cd ~/$RD && sh _lt_run.sh '$LT_CC' '$LT_SIGN' '$LIBTEST'" 2>&1) || true
+    ssh $SSHO "$HOST" "rm -f ~/$RD/_lt_run.sh" >/dev/null 2>&1 || true
     LT_SUM=$(printf '%s\n' "$LT_OUT" | grep '__LIBTEST_SUMMARY__' | tail -1)
     if [ -z "$LT_SUM" ]; then
       printf '%s\n' "$LT_OUT" | tail -8
@@ -497,7 +545,7 @@ if [ -n "$LIBTEST" ]; then
       wt=$(echo "$t" | tr '/' '\\')
       cass_n=$((cass_n + 1))
       rc=0
-      timeout 90 ssh $SSHO cass "cmd /v /c \"cd /d C:\\cyrius-tests\\_cyaud && c2.exe < $wt > _lt.exe && _lt.exe & if !errorlevel! NEQ 0 (exit 1) else (exit 0)\"" >/dev/null 2>&1 || rc=$?
+      timeout 90 ssh $SSHO cass "cmd /v /c \"cd /d C:\\cyrius-tests\\$RD && c2.exe < $wt > $WLT && $WLT & if !errorlevel! NEQ 0 (exit 1) else (exit 0)\"" >/dev/null 2>&1 || rc=$?
       if [ "$rc" = "0" ]; then
         cass_p=$((cass_p + 1))
       elif [ "$rc" = "124" ]; then

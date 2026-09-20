@@ -150,8 +150,9 @@ if [ "$QUICK" = "1" ]; then
     exit 0
 fi
 
-# 4. cross-OS self-host + cross-host platform LIBTEST (SEQUENTIAL — fixed /tmp+_cyaud
-# paths clobber if concurrent). v6.3.43 promoted LIBTEST from an opt-in fallback to a
+# 4. cross-OS self-host + cross-host platform LIBTEST. Walked SEQUENTIALLY for load and for
+# readable output — NOT for safety any more: v6.6.6 gave cross-os-selfhost.sh per-run local
+# and remote staging, so concurrent runs no longer clobber (the old reason written here). v6.3.43 promoted LIBTEST from an opt-in fallback to a
 # STANDING per-host gate — the platform-variant tcyr (fs/thread/sync/alloc/args/process/
 # syscalls on cass+ecb) run on real hardware every release, so macOS/Windows stdlib rot
 # is caught here, not by ports.

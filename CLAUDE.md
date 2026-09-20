@@ -364,7 +364,12 @@ per-session memory files so they survive environment changes.
 - check.sh's grep summary masks tcyr segfaults/exit-code failures — run a per-file exit-code loop before claiming green.
 - **CI shell-loop gates (SKIP/XFAIL) must be tested under `bash -eo pipefail`** — `var=$(failing_cmd)` trips `set -e` before the bookkeeping. The release gate's cross-OS step runs only the `tests/tcyr/crossos/` SUBDIR (the `vr01_` filename prefix it used to glob was retired at v6.5.11 and zero such files remain); reproduce full-corpus aarch64 failures locally with `qemu-aarch64`.
 - **cass (Windows) gotchas**: Defender ML (`Bearfoos.A!ml`) quarantines the unsigned cycc.exe → 0-byte output / "cannot execute" that LOOKS like a compiler bug — run under the excluded `C:\cyrius-tests`, check `Get-MpThreat`. `cmd /c "prog & echo %errorlevel%"` falsely reports 0 (parse-time expansion). `prog < in > out 2>nul &` corrupts the redirect — use `2> err & exit` then inspect. Wrap multi-host SSH chains in `if…else exit 1`, never bare `&&` chains under `set -e` (non-final failures pass silently).
-- Run `cross-os-selfhost.sh` ONE host at a time — fixed /tmp + remote paths clobber under concurrency.
+- `cross-os-selfhost.sh` is SAFE TO RUN CONCURRENTLY since v6.6.6 — it stages in a private
+  `mktemp -d` locally and a per-run `~/_cyaud_<id>` / `C:\cyrius-tests\_cyaud_<id>` remotely,
+  and removes both on a green run. This line read *"run it ONE host at a time — fixed /tmp +
+  remote paths clobber under concurrency"*, which was a documented workaround standing in for
+  the fix: ~40 fixed names, and the pre-run `rm -rf ~/_cyaud` could delete a LIVE run's tree.
+  The release gate still walks the hosts sequentially, for load, not for safety.
 - A helper that compiles is not a helper that works — end-to-end verify new helpers before commit.
 - Hardware-only bugs (GPU/COM, no debugger/stdout): exit-code probes over SSH.
 - Logic-preserving refactors are proven with the byte-identical self-host + differential-corpus recipe — and stale includes invalidate the comparison (refresh first).

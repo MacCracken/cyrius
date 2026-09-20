@@ -1391,6 +1391,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   copy → GREEN; `src/main_aarch64_native.cyr` reverted one commit in that scratch → step 1 still
   GREEN and 1b RED **at the same byte size** (`differ: char 97`), which is why it `cmp`s rather than
   compares sizes; the binary removed → RED naming it as tracked.
+- **`scripts/cross-os-selfhost.sh` stages per-run, locally and on every host** (bite 8d) —
+  and CLAUDE.md's "run it ONE host at a time" rule is retired with it. It carried ~40 FIXED
+  names: `/tmp/_co_*` on the build host, `~/_cyaud` on ecb/ach/pi, `C:\cyrius-tests\_cyaud` on
+  cass, `~/_coih` / `~/_cofg` / four files straight in `$HOME` for the install leg, and a
+  `taskkill /F /IM _lt.exe` that killed ANY run's Windows test child by image name. Two runs
+  therefore overwrote each other's cross-compilers, bundles and sandboxed installs, and the
+  pre-run `rm -rf ~/_cyaud` could delete a LIVE run's tree mid-compile — a documented
+  workaround standing in for a fix, exactly the shape CLAUDE.md warns about. Now: a checked
+  `mktemp -d` locally, `~/_cyaud_<pid>_<rand>` / `C:\cyrius-tests\_cyaud_<pid>_<rand>` remotely,
+  a per-run Windows test-binary name, and an EXIT trap that removes local scratch always and
+  the remote dir on a GREEN run (a red one keeps it and says where, because the failure
+  messages point inside it). `cross-os-libtest-runner.sh` took its `cd ~/_cyaud` as `$4`.
+  The same shape is fixed in `scripts/cass-install-gate.sh` + `.ps1` (`-RunDir`, a per-run
+  `%USERPROFILE%` dir, and the scratch `CYRIUS_HOME` moved out of the fixed `_coiw`) and in
+  the three inline sequences in `cbt/commands.cyr`'s `_cross_os_selfhost` (`cyrius audit`'s
+  ecb self-host arm and the ecb/ach install arms). **Verified on REAL hardware, one host at a
+  time: ecb, ach, pi and cass each returned SELFHOST_OK + LIBTEST_OK (89/89 crossos tests
+  apiece), and no `_cyaud_*` staging dir was left on any host.** The rewritten `cyrius audit`
+  ecb arm was extracted and run for real (exit 0, remote dir removed); the two install arms
+  and the cass install gate are syntax-checked and their staging exercised, but `cyrius audit`'s
+  install arms were not run (they install a toolchain on both Macs).
 
 ## [6.6.5] — 2026-09-19
 

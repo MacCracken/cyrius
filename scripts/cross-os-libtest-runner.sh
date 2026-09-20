@@ -18,8 +18,12 @@
 # tests/tcyr/crossos/macro_expansion_with_include.tcyr. So stdout is captured and a test whose
 # SOURCE calls assert_summary must produce its "N passed" line. See the block at the check
 # itself, and tests/gates/toolchain/crossos_runner_rejects_a_silent_binary.sh.
-CC_CMD="$1"; DO_SIGN="$2"; SUBDIR="$3"
-cd ~/_cyaud || exit 2
+# v6.6.6: $4 is the staging directory. It used to be a hardcoded `cd ~/_cyaud`, which is
+# the same fixed-name collision the caller just removed — two runs on one host shared it.
+# The caller already cd's into its per-run dir before invoking this, so "." is the default.
+# CHANGELOG [6.6.6]
+CC_CMD="$1"; DO_SIGN="$2"; SUBDIR="$3"; RUNDIR="${4:-.}"
+cd "$RUNDIR" || exit 2
 
 # ⛔ EVERY TEST RUN IS TIME-BOUNDED (v6.5.19). A test that HANGS on the target used to
 # wedge this loop forever: the caller's ssh has no command timeout (ConnectTimeout covers
