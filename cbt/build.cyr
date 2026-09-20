@@ -600,10 +600,13 @@ fn _materialize_source(source): i64 {
 # so the syntax pre-pass needs a temp. On real Windows "/tmp" is `<drive>:\tmp`, which a
 # stock install does not have, so it failed closed on the FIRST run. Now: `sys_getpid()`
 # (GetCurrentProcessId on PE, SYS_GETPID elsewhere), the per-user %TEMP% (then %TMP%)
-# as the base on Windows, and a FILETIME nonce in the Windows name because there is no
-# RemoveDirectoryW reroute (lib/io.cyr `xrmdir`), so our own empty dirs are never
-# removed and Windows recycles PIDs quickly — a PID-only name would run out of the 16
-# suffixes on a busy box and brick the CLI. CHANGELOG [6.6.5].
+# as the base on Windows, and a FILETIME nonce in the Windows name. The nonce was added
+# at 6.6.5 because there was no RemoveDirectoryW reroute, so our own empty dirs were
+# never removed while Windows recycles PIDs quickly — a PID-only name would run out of
+# the 16 suffixes on a busy box and brick the CLI. ⚠ 6.6.6 WIRED THAT REROUTE (0xF03A)
+# and the directory is now removed at exit on PE too, so the nonce is no longer
+# load-bearing — it is kept because a SIGKILLed run still leaves one and the cost is a
+# few characters of path. CHANGELOG [6.6.5], [6.6.6].
 var _cbt_tmpdir_p = 0;
 
 #ifdef CYRIUS_TARGET_WIN
@@ -640,10 +643,10 @@ fn _cbt_tmpdir(): i64 {
     # mkdir is EXCLUSIVE, so every attempt below fails closed: we never reuse a
     # directory somebody else created. The suffix loop exists only so our OWN
     # leftovers (PID reuse on a long-lived box) self-heal instead of bricking the
-    # CLI. Deliberately no rmdir-and-retry: `sys_rmdir` does not exist on the
-    # Windows peer and this file cross-compiles to PE — CLAUDE.md's rule about
-    # Linux-syscall use in cbt/, which the first cut of this helper broke and the
-    # PE cross-compile gate caught.
+    # CLI. Deliberately no rmdir-and-retry: reusing a name we did not just create is
+    # the CVE-35/CVE-36 shape, and `xrmdir` (lib/io.cyr, the portable wrapper — never
+    # the raw `sys_rmdir`, which does not exist on the Windows peer and whose agnos
+    # arity differs) is for OUR directory at exit, not for clearing somebody's.
     var base = _cbt_tmpbase();
     if (base == 0) {
         println("error: cannot create a private temp directory: neither %TEMP% nor %TMP% is set (fail-closed)");
@@ -720,10 +723,12 @@ fn _cbt_tmpexe(name): i64 {
 # `cyrius test` leaves its `test_bin` for a post-mortem. Deleting either would turn a
 # cleanup into data loss. The 2 non-empty leftovers in that sample are exactly those.
 #
-# ⚠ WINDOWS STILL LEAKS. `xrmdir` (lib/io.cyr) degrades to -1 on PE: no
-# RemoveDirectoryW reroute is wired and wiring one is a COMPILER change (src/backend/
-# pe/emit.cyr), which this bite may not make. Said plainly rather than hidden — and it
-# is why `_cbt_tmpdir` puts a FILETIME nonce in the Windows name (see :582).
+# ⚠ WINDOWS IS COVERED TOO, and that took a compiler change. `xrmdir` (lib/io.cyr) used
+# to degrade to -1 on PE because no RemoveDirectoryW reroute was wired, so this helper
+# could not do anything there and the first cut of this bite shipped saying so. A `-1`
+# degrade is only honest while nothing depends on the call succeeding; something now
+# does, so 6.6.6 wired `syscall(0xF03A)` → kernel32!RemoveDirectoryW (EREMOVEDIRW_PE,
+# src/backend/x86/emit.cyr) rather than leave the leak open on one target.
 # CHANGELOG [6.6.6].
 fn _cbt_tmpdir_cleanup(): i64 {
     if (_cbt_tmpdir_p == 0) { return 0; }
@@ -869,9 +874,9 @@ fn compile(source, output): i64 {
     # early return anywhere after this point, add the unlink with it — the sites are
     # the `#ifdef CYRIUS_TARGET_WIN` block, the `probe_fd < 0` block, and the one above
     # the success/failure split.
-    # (The directory itself is left: `sys_rmdir` is not on the Windows peer and this
-    # file cross-compiles to PE — same constraint _cbt_tmpdir documents. An empty
-    # 0700 directory costs an inode; the 2.8 GB was the files.)
+    # (The directory itself is left to `_cbt_tmpdir_cleanup` at exit — one place, all
+    # targets, PE included since 6.6.6's RemoveDirectoryW reroute. An empty 0700
+    # directory costs an inode; the 2.8 GB was the files.)
     var tmp_src = 0;
     if (actual_source != source) { tmp_src = actual_source; }
     # v6.0.85 — Windows path. Win32 has no fork/dup2/execve, and SYS_RENAME(82)

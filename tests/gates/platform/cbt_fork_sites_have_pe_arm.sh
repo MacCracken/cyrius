@@ -429,8 +429,50 @@ else
     check "⭐ wine: soak reports the step-2 EXIT CODE" 1 "$(grep -c 'step 2 exited 3' "$T/out2" || true)"
     check "  …instead of blaming the byte compare" 0 "$(grep -c 'output differs' "$T/out2" || true)"
 
+    # ⭐ AND THE WINDOWS CLI REMOVES ITS PRIVATE TEMP DIRECTORY. `_cbt_tmpdir()` creates
+    # `%TEMP%\cyrius-<pid>-t<nonce>` on first use in every run; 6.6.6 removes it at exit
+    # through `xrmdir`, which on PE degraded to -1 with no reroute wired — so Windows kept
+    # leaking one empty directory per invocation after POSIX stopped. Measured under wine
+    # against this tree's parent: the same five verbs leave 2 directories before the
+    # 0xF03A RemoveDirectoryW reroute and 0 after. This row is a DELTA over the verbs axis
+    # 4 already ran, so it costs nothing extra.
     ls -d "$WTU"/cyrius-* 2> /dev/null | LC_ALL=C sort > "$T/wt_after"
+    check "⭐ wine: the verbs above left no cyrius-* directory in %TEMP%" 0 \
+        "$(comm -13 "$T/wt_before" "$T/wt_after" | wc -l | tr -d ' ')"
     for d in $(comm -13 "$T/wt_before" "$T/wt_after"); do rmdir "$d" 2> /dev/null || true; done
+    # ⭐ PREMISE for that row, and its anti-vacuous half: a delta of 0 is also what a CLI
+    # that never made a directory produces. This probes the PRIMITIVE directly — five
+    # `xrmdir` behaviours on PE, each one a distinct exit code — so removing the reroute
+    # turns it RED even if no verb happened to allocate.
+    mkdir -p "$T/rdp"
+    cat > "$T/rd.cyr" <<'EOF'
+include "lib/io.cyr"
+fn main(): i64 {
+    alloc_init();
+    var d = "rdprobe_dir";
+    if (xmkdir(d, 448) != 0) { return 1; }
+    if (xrmdir(d) != 0) { return 2; }
+    if (xrmdir(d) == 0) { return 3; }
+    if (xmkdir(d, 448) != 0) { return 4; }
+    var fd = xopen("rdprobe_dir/f", O_WRONLY | O_CREAT | O_TRUNC);
+    if (fd < 0) { return 5; }
+    sys_close(fd);
+    if (xrmdir(d) == 0) { return 6; }
+    if (xunlink("rdprobe_dir/f") != 0) { return 7; }
+    if (xrmdir(d) != 0) { return 8; }
+    return 0;
+}
+var r = main();
+syscall(60, r);
+EOF
+    if ! "$T/cc_win" < "$T/rd.cyr" > "$T/rd.exe" 2> "$T/rd.err"; then
+        echo "  FAIL: the xrmdir probe did not cross-build for PE"; grep -E '^error' "$T/rd.err" | head -2
+        fails=$((fails + 1))
+    else
+        ( cd "$T/rdp" && WINEDEBUG=-all timeout 300 wine "$T/rd.exe" > /dev/null 2>&1 ); RDP=$?
+        check "  ⭐ PREMISE: xrmdir really removes a directory on PE (5 behaviours)" 0 "$RDP"
+        check "  …and left nothing behind" 0 "$(ls -A "$T/rdp" | wc -l | tr -d ' ')"
+    fi
     SOCK="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WINEPREFIX" 2> /dev/null)-$(printf '%x' "$(stat -c '%i' "$WINEPREFIX" 2> /dev/null || echo 0)")"
     wineserver -k > /dev/null 2>&1 || true
     wineserver -w > /dev/null 2>&1 || true

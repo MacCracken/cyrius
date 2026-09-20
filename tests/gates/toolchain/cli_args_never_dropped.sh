@@ -52,6 +52,12 @@
 #
 # MUTATION LEDGER — every row RUN, not asserted (2026-09-18, at 6.6.5). "fails" is
 # the number of assertions that went red; the gate exits 1 on any of them.
+#   M47 (bite 9h) `_cbt_tmpbase`'s PE arm -> `return "/tmp";`                24 fails
+#       ⭐ the row this replaced read the base out of the EMPTY cyrius-* dirs
+#       every wrun left behind, which only worked while PE had no
+#       RemoveDirectoryW reroute. It now makes %TEMP% a directory that does
+#       not exist (a HKCU\Environment write — wine ignores the unix TEMP)
+#       and requires the fail-closed refusal to NAME it.
 #   M1  restore the 6.6.4 lint loop (first non---strict token is the file)  15 fails
 #   M2  ignore unknown flags once an operand has been seen                  26 fails
 #   M3  iterate only operand 0 in cmd_lint/cmd_fmt/cmd_doc                   6 fails
@@ -985,12 +991,36 @@ else
     wrun test pass.tcyr fail.tcyr
     ne_check "wine: cyrius.exe test pass fail fails" "$RC"
     check "  …having RUN both (1 passed, 1 failed)" 1 "$(grep -c '^1 passed, 1 failed' "$T/out" || true)"
-    # Our own debris: every wrun that needed a temp left an EMPTY cyrius-* dir in the
-    # prefix's %TEMP% (PE has no RemoveDirectoryW reroute, lib/io.cyr xrmdir). rmdir
-    # removes only empty directories, and only the ones this gate created.
+    # ⛔ v6.6.6 (bite 9h): THE BASE IS PROVED FROM THE CLI'S OWN REFUSAL, not from debris.
+    # This row used to read `%TEMP%` is the base out of the EMPTY cyrius-* directories every
+    # wrun left behind, which worked only because PE had no RemoveDirectoryW reroute and
+    # `xrmdir` returned -1 there. 6.6.6 wired that reroute, the CLI removes its directory on
+    # Windows too, and a row whose evidence is another bug's symptom went RED with nothing
+    # wrong. (The 16-candidate squeeze the POSIX gates use cannot be reproduced here: the
+    # Windows name carries a FILETIME nonce, so the candidate names are unpredictable.)
+    # Instead, point the prefix's %TEMP% at a directory that does not exist — wine takes
+    # TEMP/TMP from HKCU\Environment and IGNORES the unix environment for these two, which
+    # is why this is a registry write and not a variable — and require the documented
+    # fail-closed refusal to NAME that base. That is a stronger statement than "something
+    # appeared under the path we computed": it is the CLI saying where it looked.
+    WREG_OK=0
+    WINEDEBUG=-all timeout 120 wine reg add 'HKCU\Environment' /v TEMP /d 'C:\cyr-no-such-base' /f > /dev/null 2>&1 && WREG_OK=1
+    WINEDEBUG=-all timeout 120 wine reg add 'HKCU\Environment' /v TMP /d 'C:\cyr-no-such-base' /f > /dev/null 2>&1 || WREG_OK=0
+    if [ "$WREG_OK" = 1 ]; then
+        check "wine: the override took (floor)" "C:\cyr-no-such-base" \
+            "$(WINEDEBUG=-all timeout 120 wine cmd /c 'echo %TEMP%' 2> /dev/null | tr -d '\r')"
+        wrun test pass.tcyr fail.tcyr
+        check "⭐ wine: the private temp base is %TEMP% (named in the fail-closed refusal)" 1 \
+            "$(grep -c 'cannot create a private temp directory under C:.cyr-no-such-base' "$T/out" || true)"
+        WINEDEBUG=-all timeout 120 wine reg add 'HKCU\Environment' /v TEMP /d "$WTEMP" /f > /dev/null 2>&1 || true
+        WINEDEBUG=-all timeout 120 wine reg add 'HKCU\Environment' /v TMP /d "$WTEMP" /f > /dev/null 2>&1 || true
+    else
+        echo "  FAIL: wine: could not set HKCU\\Environment TEMP for the base probe"; fails=$((fails + 1))
+    fi
+    # Our own debris, if any survived (a non-empty directory is NOT removed, by contract).
     ls -d "$WTEMPU"/cyrius-* 2> /dev/null | LC_ALL=C sort > "$T/wtemp_after"
     NEWT=$(comm -13 "$T/wtemp_before" "$T/wtemp_after")
-    check "wine: the private temp dirs were created under %TEMP%, not /tmp" yes "$([ -n "$NEWT" ] && echo yes || echo no)"
+    check "wine: and the runs above left no temp directory behind" "" "$NEWT"
     for d in $NEWT; do rmdir "$d" 2> /dev/null || true; done
     # Stop this prefix's wineserver and remove its socket dir (/tmp/.wine-<uid>/
     # server-<dev>-<inode>, keyed on the prefix directory), so the leg leaves nothing

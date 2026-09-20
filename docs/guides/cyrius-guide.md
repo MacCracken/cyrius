@@ -2259,7 +2259,7 @@ primitive: `xopen`, `xunlink`, `xrmdir`, `xmkdir`, `xmkdir_p`, `xsymlink`, `xrea
 `sys_*` — agnos's syscalls carry an **explicit byte length** and reorder flags, so a
 Linux-shaped `sys_open(path, O_RDONLY, 0)` lands `O_RDONLY` in `namelen`: a silent ABI
 miscompile, no trap, that breaks every file op off Linux. Windows reroutes through kernel32
-(`DeleteFileW`, `MoveFileExW`, …) behind the same names. `cyrlint` flags a raw `sys_open`
+(`DeleteFileW`, `MoveFileExW`, `RemoveDirectoryW` since v6.6.6, …) behind the same names. `cyrlint` flags a raw `sys_open`
 with literal flags for exactly this reason and points at the wrappers.
 
 The set was **completed at v6.5.7** (`xmkdir`, `xmkdir_p`, `xsymlink`, `xreadlink`, `xlink`,

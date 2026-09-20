@@ -1686,9 +1686,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   **defensive**; the normal exit is what does the work today. **`rmdir`, deliberately never a recursive sweep:** it
   fails on a non-empty directory, which is the right answer — `cyrius lsp` with no `CYRIUS_HOME`
   prints that path and tells the user to copy the binary out of it, and a SIGKILLed `cyrius test`
-  leaves its `test_bin` for a post-mortem. ⚠ **Windows still leaks and that is said, not hidden:**
-  `xrmdir` (`lib/io.cyr`) degrades to `-1` on PE because no `RemoveDirectoryW` reroute is wired and
-  wiring one is a **compiler** change (`src/backend/pe/emit.cyr`), which this bite does not make.
+  leaves its `test_bin` for a post-mortem. ⚠ **Windows leaked too, and bite 9h closed that** (see below):
+  `xrmdir` (`lib/io.cyr`) degraded to `-1` on PE because no `RemoveDirectoryW` reroute was wired.
+  This bullet first said so and stopped there; a `-1` degrade is only honest while nothing depends
+  on the call succeeding.
   Gated by `tests/gates/toolchain/cli_temp_dir_no_leak.sh` — whose axis 1 proves the premise by
   occupying all 16 candidate names for the CLI's own pid and requiring the documented fail-closed
   refusal, and whose axis 4 pins the rmdir-not-sweep contract with a file planted in the live
@@ -1747,6 +1748,46 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `stack_param_homing_matrix.sh`) do it inline after the prefix is set, never from a trap. The
   prefix path is now bound before the trap is installed and the trap runs only when that
   directory exists.
+
+- **Windows leaked one empty temp directory per `cyrius` run, because `xrmdir` could not remove
+  a directory on PE at all.** (bite 9h, from bite 9's review.) Bite 9a stopped the leak on POSIX
+  and reported Windows as a standing exception: `xrmdir` (`lib/io.cyr`) returned `-1` there
+  because no `RemoveDirectoryW` reroute was wired, and wiring one is a **compiler** change. That
+  is not one of the reasons a fix may be left half-done — a `-1` degrade is only honest while
+  nothing depends on the call succeeding, and `_cbt_tmpdir_cleanup` now does. **Fix:** the
+  reroute, end to end — `syscall(0xF03A, path)` → `kernel32!RemoveDirectoryW`, as a new
+  `EREMOVEDIRW_PE` (`src/backend/x86/emit.cyr`, `EDELETEFILEW_PE`'s shape exactly: one argument,
+  the inline UTF-8→UTF-16 widener, the rbx-anchored `and rsp,-16` frame that is
+  alignment-agnostic, BOOL → 0/-1), a lazy kernel32 import (`src/backend/pe/emit.cyr`), the
+  `parse_expr.cyr` dispatch, stubs on the aarch64 and cx emitters, and `xrmdir`'s PE arm.
+  **Three standing permissions written around the gap went with it:** `tests/tcyr/crossos/
+  syscalls_meta.tcyr` asserted its `xrmdir` only `if (rd == 0)` — the one target where it could
+  fail was the one not asking — and kept a FIXED directory name under `#ifdef
+  CYRIUS_TARGET_WIN` because a per-pid name could never be cleaned up there; both are gone, and
+  with them the `win_guarded` allowlist rule in `gates_never_write_tree.sh` axis 8 that existed
+  solely to bless them. **On REAL cass (Windows 11):** the pre-fix CLI takes `%TEMP%`'s
+  `cyrius-*` count from **6 to 8** over five verbs, the fixed one leaves it at **6**;
+  `syscalls_meta.tcyr` is **7/7 with nothing left behind** (6/7 assertions before, one skipped);
+  a five-behaviour `xrmdir` probe (create, remove, refuse a missing one, refuse a NON-empty one,
+  remove after emptying) exits 0. Also 7/7 on x86-64 Linux and under qemu-aarch64 and wine.
+  cycc **1,310,864 → 1,315,032 B** (+4,168); **0 of 328 `.tcyr` binaries changed** and all seven
+  compiler forks compile; self-host fixpoint and `seed → cybs → cycc` both byte-identical.
+  Gated by two new rows in `cbt_fork_sites_have_pe_arm.sh` axis 4 — a `%TEMP%` delta over the
+  verbs it already runs, plus the five-behaviour probe as the premise, because a delta of 0 is
+  also what a CLI that never made a directory produces. 1 mutation, RED on all three rows. ⚠ **Two
+  existing gate rows had been reading their PREMISE out of the leak**, so closing it turned
+  them RED with nothing wrong — `test_runner_bounded.sh` axis 4 ("the build created a temp dir
+  to inspect", RED since bite 9a and not run again until now) and `cli_args_never_dropped.sh`'s
+  "the private temp dirs were created under %TEMP%, not /tmp". Both now prove the same facts
+  without the debris: the first takes all 16 candidate names for the build's own pid and
+  requires the documented fail-closed refusal (`cli_temp_dir_no_leak.sh` axis 1's technique),
+  and additionally asserts the directory is GONE afterwards — which subsumes the old
+  `cpp_*` count, since `xrmdir` removes an empty directory only; the second points the wine
+  prefix's `%TEMP%` at a directory that does not exist (a `HKCU\Environment` write — wine
+  ignores the unix `TEMP`) and requires the refusal to NAME that base, which is the CLI saying
+  where it looked rather than an inference from what it left. Each is mutation-proven
+  separately. A gate whose premise is another defect's symptom fails when that defect is
+  fixed; both were rewritten, not relaxed.
 
 - **A new parent-side `sys_exit` in the CLI could silently reintroduce the temp-directory
   leak, and the claim that bite 9a's routing prevented it was overstated.** (bite 9g, from

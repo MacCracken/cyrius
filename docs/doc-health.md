@@ -121,6 +121,17 @@ type: state
 > `docs/api-surface.snapshot` regenerated (+6, now 5,194). ⚠ The pattern this ledger keeps
 > catching held again: **every one of the four was a claim about behaviour nobody had run.**
 >
+> **Touched at 6.6.6 (bite 9h, not a sweep):** `docs/stdlib-reference.md`'s `xrmdir` row said
+> "**-1 on Windows** (no `RemoveDirectoryW` reroute wired)" and
+> `docs/guides/cyrius-guide.md`'s wrapper paragraph listed only `DeleteFileW`/`MoveFileExW` as
+> the kernel32 reroutes behind those names. Both were TRUE when written and stopped being true
+> the moment that reroute was wired (`syscall(0xF03A)`); both now say so with the release that
+> changed them. ⚠ The same statement was load-bearing in four non-doc places — a source
+> comment, a conditional assertion in a crossos test, a per-target fixed name in the same test
+> and a whole allowlist RULE in a gate — which is the reason this correction is recorded here
+> rather than edited away: a degrade repeated often enough stops reading as a gap and starts
+> reading as a design.
+>
 > **Touched at 6.6.5 (bite 5, not a sweep):** `docs/guides/cyrius-guide.md` gained a
 > "raw syscall numbers are the most portable-LOOKING thing that is not portable" rule in the
 > cross-platform section — three ordered rules plus the six x86 numbers cyrius deliberately

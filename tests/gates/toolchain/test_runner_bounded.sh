@@ -50,6 +50,11 @@
 #      rows are for.
 #
 # MUTATION PROOF (all re-run at v6.5.19, RED then GREEN, against these assertions):
+#   * v6.6.6 (bite 9h), axis 4 rewritten: delete the top-level `_cbt_tmpdir_cleanup()`
+#     from cbt/cyrius.cyr and rebuild -> the "the build's own temp directory is gone"
+#     row RED (it names the survivor), the 16-candidate-squeeze premise and every other
+#     row GREEN. That separation is the point of the rewrite: the premise no longer
+#     depends on the leak it used to read itself out of.
 #   * `sys_kill(pid, 9)` -> `sys_kill(pid, 0)` + blocking wait -> `WNOHANG` in
 #     `run_binary_timed` -> axis 1b RED (max live children 2 vs 1), every other axis
 #     GREEN — including the single-file orphan row, which is precisely why axis 1b
@@ -381,25 +386,53 @@ printf 'fn main() { return 0; }\nvar r = main();\n' > "$T/pj/src/main.cyr"
 # matrix on one runner) and read its live cpp_* as this build's leak. The temp is named
 # /tmp/cyrius-<pid>[-t<nonce>…] after the CLI's own pid; the build records it (the `exec`
 # keeps the pid) and only that process's dirs are inspected. CHANGELOG [6.6.6]
+# ⛔ v6.6.6 (bite 9h): THE PREMISE IS PROVED A DIFFERENT WAY, because the CLI now REMOVES
+# the directory on the way out (`_cbt_tmpdir_cleanup`). This axis used to read its premise —
+# "the build created a temp dir to inspect" — out of the LEFTOVER directory, i.e. it used
+# another bug's symptom as its evidence, so closing that leak turned it RED with nothing
+# wrong. (Polling for the directory while the build runs does not work either: this project
+# is a 2-line main.cyr and the build is over in well under the poll interval.) The squeeze
+# below is the technique cli_temp_dir_no_leak.sh axis 1 uses and it is deterministic: the
+# occupying `sh -c` takes all 16 candidate names for ITS OWN pid and then `exec`s the CLI,
+# which therefore inherits that pid and must fail closed with its documented message.
+( cd "$T/pj" && timeout 300 sh -c '
+    echo $$ > "$0"
+    for s in "" -1 -2 -3 -4 -5 -6 -7 -8 -9 -10 -11 -12 -13 -14 -15; do
+        mkdir -p "/tmp/cyrius-$$$s" || exit 90
+    done
+    shift
+    exec "$@"' "$T/pj.sq.pid" x "$CY" build src/main.cyr "$T/pj/sqout" > "$T/pj.sq.out" 2>&1 ) || true
+check "premise: 'cyrius build' allocates a private temp dir (16-candidate squeeze)" 1 \
+    "$(grep -c '16 candidates were taken' "$T/pj.sq.out" || true)"
+sqpid=$(cat "$T/pj.sq.pid" 2> /dev/null || true)
+if [ -n "$sqpid" ]; then
+    for s in "" -1 -2 -3 -4 -5 -6 -7 -8 -9 -10 -11 -12 -13 -14 -15; do
+        rmdir "/tmp/cyrius-$sqpid$s" 2> /dev/null || true
+    done
+fi
+
 ( cd "$T/pj" && timeout 300 sh -c 'echo $$ > "$0"; exec "$@"' "$T/pj.pid" "$CY" build src/main.cyr "$T/pj/out" > "$T/pj.out" 2> "$T/pj.err" ) || true
 check "premise: the build really did use the manifest prepend" 1 \
     "$([ -f "$T/pj/out" ] && echo 1 || echo 0)"
+# ⭐ THE DIRECTORY IS GONE, which subsumes the old cpp_* count: `xrmdir` removes an EMPTY
+# directory only, so a leaked `cpp_<pid>` keeps it alive and both rows name it. The
+# survivor's contents are printed, because "it survived" without saying why is not a
+# diagnostic.
 leftover=0
-bpid=$(cat "$T/pj.pid" 2>/dev/null || true)
-newdirs=""
+survivors=0
+bpid=$(cat "$T/pj.pid" 2> /dev/null || true)
 if [ -n "$bpid" ]; then
-    for d in /tmp/cyrius-"$bpid" /tmp/cyrius-"$bpid"-*; do [ -d "$d" ] && newdirs="$newdirs $d"; done
+    for d in /tmp/cyrius-"$bpid" /tmp/cyrius-"$bpid"-*; do
+        if [ -d "$d" ]; then
+            survivors=$((survivors + 1))
+            n=$(ls -A "$d" 2>/dev/null | grep -c '^cpp_' || true)
+            leftover=$((leftover + n))
+            echo "    survived: $d ->$(ls -A "$d" 2>/dev/null | tr '\n' ' ')"
+        fi
+    done
 fi
-for d in $newdirs; do
-    n=$(ls -A "$d" 2>/dev/null | grep -c '^cpp_' || true)
-    leftover=$((leftover + n))
-done
-# ANTI-VACUOUS: if the build created no temp dir at all there is nothing to leak and the
-# check would pass for the wrong reason — the exact failure mode the header records for the
-# hermetic-CYRIUS_HOME bug that made an earlier axis vacuous.
-check "premise: the build created a temp dir to inspect" 1 \
-    "$([ -n "$newdirs" ] && echo 1 || echo 0)"
 check "no cpp_* preprocessed source left by THIS build" 0 "$leftover"
+check "⭐ and the build's own temp directory is gone afterwards" 0 "$survivors"
 
 echo ""
 if [ "$fails" = "0" ]; then

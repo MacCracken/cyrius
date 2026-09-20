@@ -200,7 +200,7 @@ here. All take/return raw cstrings + POSIX-shaped `0` / negative-errno.
 |----------|-----------|-------------|
 | `xopen` | `xopen(path, flags) → fd` | Open a regular file (namelen-bridged; 0644 default create mode) |
 | `xunlink` | `xunlink(path) → 0/-errno` | Unlink. Windows routes to `DeleteFileW` (v6.4.58) |
-| `xrmdir` | `xrmdir(path) → 0/-errno` | Remove an empty directory. **-1 on Windows** (no `RemoveDirectoryW` reroute wired) |
+| `xrmdir` | `xrmdir(path) → 0/-errno` | Remove an empty directory. Windows routes to `RemoveDirectoryW` (v6.6.6; **-1 before that**) |
 | `xmkdir` | `xmkdir(path, mode) → 0/-errno` | v6.5.7 — create a directory. Windows **does** route here |
 | `xmkdir_p` | `xmkdir_p(path, mode) → 0/-1` | v6.5.7 — `mkdir -p`. Existing directory is success; tries the full path first, walks parents only on failure; paths >1023 bytes return -1 rather than truncating |
 | `xsymlink` | `xsymlink(target, linkpath) → 0/-errno` | v6.5.7 — symlink. **-1 on Windows** |

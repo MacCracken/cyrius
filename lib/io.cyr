@@ -152,9 +152,13 @@ fn xunlink(path): i64 {
 # how yukti shipped `sys_rmdir(mount_point_cstr)` (v6.5.2 fold): a warning nobody read, until
 # v6.5.1 made an arity mismatch fatal.
 #
-# Windows returns -1 rather than rerouting: unlike `xunlink`'s DeleteFileW (0xF035) there is
-# no RemoveDirectoryW reroute wired, and inventing one is a COMPILER change. Same honest
-# degrade `xstat` already makes on PE. Wire the reroute when a consumer actually needs it.
+# v6.6.6 — WINDOWS NOW ROUTES, through kernel32!RemoveDirectoryW (0xF03A), exactly as
+# `xunlink` routes to DeleteFileW (0xF035). This comment used to read "Windows returns -1
+# rather than rerouting ... wire the reroute when a consumer actually needs it", and one
+# did: the CLI's private temp directory (`<TEMP>/cyrius-<pid>-t<nonce>`, created on every
+# run since v6.4.81) is removed at exit on POSIX from 6.6.6 and could not be removed at all
+# on PE, so Windows leaked one empty directory per invocation. A `-1` degrade is only honest
+# while nothing depends on the call succeeding. CHANGELOG [6.6.6].
 fn xrmdir(path): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
     var rn = 0;
@@ -162,7 +166,7 @@ fn xrmdir(path): i64 {
     return sys_rmdir(path, rn);
     #endif
     #ifdef CYRIUS_TARGET_WIN
-    return -1;   # no RemoveDirectoryW reroute wired (see above)
+    return syscall(0xF03A, path);   # v6.6.6: kernel32!RemoveDirectoryW (EREMOVEDIRW_PE)
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
     #ifndef CYRIUS_TARGET_WIN
@@ -179,8 +183,8 @@ fn xrmdir(path): i64 {
 # argument binding to garbage. That divergence is the whole reason this wrapper
 # exists; it is the same trap `xrmdir` was added for at v6.5.2.
 #
-# Windows DOES route here (83 is in the PE reroute set), unlike xrmdir which has no
-# RemoveDirectoryW wired. Returns 0 on success, negative errno on POSIX/agnos.
+# Windows DOES route here (83 is in the PE reroute set); so does `xrmdir` since v6.6.6
+# (0xF03A RemoveDirectoryW). Returns 0 on success, negative errno on POSIX/agnos.
 # CHANGELOG [6.5.7]
 fn xmkdir(path, mode): i64 {
     #ifdef CYRIUS_TARGET_AGNOS

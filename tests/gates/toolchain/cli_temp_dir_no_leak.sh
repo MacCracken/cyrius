@@ -33,9 +33,11 @@
 # the 2 non-empty directories in the sample above were). A cleanup that deleted them
 # would be data loss, so a file planted in the live directory must SURVIVE.
 #
-# ⚠ WINDOWS IS NOT COVERED AND THAT IS NOT AN OVERSIGHT. `xrmdir` (lib/io.cyr) degrades
-# to -1 on PE: no RemoveDirectoryW reroute is wired and wiring one is a COMPILER change.
-# This gate is POSIX-only by construction (it counts `/tmp/cyrius-*`).
+# ⚠ THIS GATE IS POSIX-ONLY BY CONSTRUCTION (it counts `/tmp/cyrius-*`). Windows IS
+# covered — 6.6.6 wired the `RemoveDirectoryW` reroute `xrmdir` was missing on PE — but
+# the rows that prove it need wine and the cross-built PE CLI, so they live in
+# `tests/gates/platform/cbt_fork_sites_have_pe_arm.sh` axis 4 (a `%TEMP%` delta over the
+# verbs it already runs, plus a direct five-behaviour `xrmdir` probe as the premise).
 #
 # MUTATION PROOF (run at 6.6.6, in a scratch tree — RED then GREEN):
 #   * delete `_cbt_tmpdir_cleanup();` from the bottom of cbt/cyrius.cyr and rebuild the
