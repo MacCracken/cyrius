@@ -1259,6 +1259,30 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   driver records that the home existed *while it ran*, so a check.sh that stopped staging
   cannot pass by making the survivor count trivially zero. Mutation-proven five ways.
 
+- **A SIGKILLed `check.sh` left the check driver running: observed at PPID=1, nine minutes
+  old.** (bite 25c.) Bite 8c gave every child the driver forks a
+  `PR_SET_PDEATHSIG(SIGKILL)` guard, set between fork and execve, so a killed driver cannot
+  leave a test burning a core. Nothing protected the **driver itself**: `scripts/check.sh`
+  spawns `build/cyrius_check`, and a POSIX shell cannot set `PR_SET_PDEATHSIG` for a child
+  it is about to exec. So the run's owner could be gone while the driver ground on through
+  the suite, holding a core and writing into a `$TMPDIR` nobody owned. Fix: the driver arms
+  the guard **for itself**, as the first statement of `main()`, via a new
+  `_regression_die_with_parent()` in `lib/regression.cyr` (Linux-only, `#ifdef
+  CYRIUS_TARGET_LINUX`, with the same `getppid` re-check as its sibling for the
+  parent-died-first race). ⭐ **Self-arming, not a watchdog, and the defect is the reason:**
+  a watchdog is another process and another process can be SIGKILLed too — the identical
+  failure one level up. A SIGKILLed process runs no cleanup, *ever*, so nothing in user
+  space can be relied on to outlive it; only the kernel can deliver the signal. ⚖️ The
+  *deadline* half was already covered and is not re-asserted: bite 8c bounded every child of
+  the driver in both modules it forks through, and bite 8's review bounded the pipe pumps in
+  front of those waits, so the driver cannot hang except in a child and its children are
+  bounded. Gate: `tests/gates/toolchain/check_driver_dies_with_check_sh.sh` (registered in
+  `programs/checks/main.cyr`) — axis 0 is the anti-vacuous control (the same spinner with
+  the guard call removed must SURVIVE, so a kernel where PDEATHSIG is moot reddens axis 0
+  rather than greening axis 1), and axis 3 compiles the REAL `programs/checks/main.cyr` and
+  orphans that, not the stand-in. Mutation-proven five ways, including "the primitive is
+  correct but nobody calls it", which axes 0 and 1 cannot see.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**

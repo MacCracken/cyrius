@@ -221,6 +221,34 @@ fn _regression_child_guard(ppid_before): i64 {
     return 0;
 }
 
+# ⛔ v6.6.6 — AND THE RUNNER ARMS ONE FOR ITSELF, which is the case the guard above cannot
+# reach. `_regression_child_guard` protects every child THIS module forks. Nothing
+# protected the check DRIVER, because this module does not fork it: `scripts/check.sh`
+# spawns `build/cyrius_check`, and a POSIX shell cannot set PR_SET_PDEATHSIG for a child it
+# is about to exec. So a SIGKILLed check.sh left the driver running — OBSERVED at PPID=1,
+# nine minutes old, still grinding through a suite nobody was watching.
+#
+# ⭐ WHY SELF-ARMING AND NOT A WATCHDOG. A watchdog is another process, and another process
+# can be SIGKILLed too — the failure mode is identical one level up, and the whole reason
+# this defect exists is that a SIGKILLed process runs no cleanup, ever. Self-arming asks
+# the KERNEL to deliver SIGKILL when this process's parent dies, however it dies; nothing
+# in user space has to survive for it to work. Same reasoning as the child guard, applied
+# to a process nobody forked on our behalf.
+#
+# ⚠ Residual, and it is inherent: if the parent is already gone before this runs, there is
+# no death to signal. The getppid re-check catches the parent dying DURING the call (the
+# signal was delivered to nobody and will never fire again, so exit now); it cannot catch a
+# parent that died before the first getppid. The window is a few instructions at startup.
+# Linux only — prctl is not a Darwin/BSD syscall and is not routed on PE. CHANGELOG [6.6.6]
+fn _regression_die_with_parent(): i64 {
+    #ifdef CYRIUS_TARGET_LINUX
+    var ppid0 = syscall(SYS_GETPPID);
+    sys_prctl(1, 9, 0, 0, 0);
+    if (syscall(SYS_GETPPID) != ppid0) { sys_exit(1); }
+    #endif
+    return 0;
+}
+
 # Wait for `pid`, but not for ever. Returns 1 if the child was reaped normally, 0 if the
 # deadline (or a waitpid error) forced a SIGKILL; `stbuf` holds the status either way.
 # A waitpid error KILLS rather than returning: a bare return there is an ABANDONMENT path,
