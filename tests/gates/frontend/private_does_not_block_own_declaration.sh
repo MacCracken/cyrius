@@ -14,11 +14,19 @@
 #
 # THE ROOT CAUSE. v6.5.0 put the cross-file `private` check inside FINDVAR on purpose: every
 # REFERENCE resolves through it, so one check covers them all (the fn side had shipped with 2
-# of at least 13 paths wired). But two callers are not references — PARSE_GVAR_REG's
-# `sit_shadow` probe and CHKDUPVAL both ask "does this name already exist?" while REGISTERING
-# a new global. Running the visibility check for a DECLARATION-time probe turned the answer
-# into an accusation. Fix: `_findvar_core` is pure resolution; `FINDVAR` is that plus the
-# check; declaration-time probes call the core (src/frontend/parse_types.cyr).
+# of at least 13 paths wired). But THREE callers are not references — PARSE_GVAR_REG's
+# `sit_shadow` probe, CHKDUPVAL and CHK_ENUM_SHADOW all ask "does this name already exist?"
+# while REGISTERING a new global. Running the visibility check for a DECLARATION-time probe
+# turned the answer into an accusation. Fix: `_findvar_core` is pure resolution; `FINDVAR` is
+# that plus the check; declaration-time probes call the core (src/frontend/parse_types.cyr).
+#
+# ⚠ THE FIRST CUT OF THIS GATE MISSED THE THIRD PROBE, AND THE REASON IS IN ITS OWN ROW SET.
+# Every accepting row it shipped with declared the name with a `= NUM ;` literal, which is
+# exactly the `chk_has == 1` arm that reaches CHKDUPVAL. CHK_ENUM_SHADOW is the OTHER arm —
+# `chk_has == 0`, i.e. every initializer that is not an int literal — so an expression, a
+# string or a call init stayed REFUSED while the gate read green. Rows I/J/K are that arm: the
+# same declaration with `= 2 + 3`, `= "abcd"` and `= f()`. A row set that samples one arm of a
+# two-arm dispatch reports a verdict about the arm it did not run.
 #
 # ⚠ THE NEGATIVE HALF IS THE POINT OF THE GATE. A one-line "fix" here is to delete the check,
 # and every positive row would still pass. Rows D/E/F/G are the enforcement rows: a genuine
@@ -32,15 +40,17 @@
 #
 # MUTATION LEDGER (6.6.6 — each mutant is a scratch tree whose src/ carries the mutation,
 # built by build/cycc and run as CYCC=<mutant>):
-#   1. the sit_shadow probe put back on FINDVAR      -> RED rows A B C H
+#   1. the sit_shadow probe put back on FINDVAR      -> RED rows A B C H I J K
 #   2. CHKDUPVAL's probe put back on FINDVAR         -> RED rows A B C H
-#   3. _vis_check_var made a no-op (the "just delete
+#   3. CHK_ENUM_SHADOW's probe put back on FINDVAR   -> RED rows I J K
+#   4. _vis_check_var made a no-op (the "just delete
 #      the check" fix)                               -> RED rows D E F G
-#   4. real tree                                     -> GREEN (8 rows)
-# ⚠ Mutants 1 and 2 redden the SAME rows, measured — every accepting row here declares with a
-#   `= NUM ;` literal, so BOTH probes fire on it and either one alone reproduces the defect.
-#   That is why the fix had to move both, and why neither mutant is redundant: each proves its
-#   own probe is on the core.
+#   5. real tree                                     -> GREEN (11 rows)
+# ⚠ Mutants 1 and 2 redden the SAME `= NUM ;` rows, measured — both probes fire on a literal
+#   declaration and either one alone reproduces the defect. That is why the fix had to move
+#   both, and why neither mutant is redundant: each proves its own probe is on the core.
+#   Mutant 1 additionally reddens I/J/K (sit_shadow runs for every initializer shape), and
+#   mutant 3 reddens ONLY I/J/K — which is the row set that did not exist when 19b shipped.
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -99,6 +109,26 @@ _acc C 14 \
 #     own value; the fold means the LAST declaration wins for everyone who is allowed to see it.
 _acc H 22 \
   'var PDB_LIMIT = 11;\npublic fn pdb_cap(): i64 { return PDB_LIMIT * 2; }\n' \
+  'include "lib/a.cyr"\ninclude "lib/b.cyr"\nvar r = pdb_cap();\nsyscall(60, r);\n'
+
+# ── the CHK_ENUM_SHADOW arm: initializers that are NOT an int literal ──────────────────
+# Rows A/B/C/H all declare with `= NUM ;` (`chk_has == 1`), which routes through CHKDUPVAL.
+# Everything else routes through CHK_ENUM_SHADOW instead, and that probe was still on FINDVAR
+# after 19b. Each row's value is deliberately DIFFERENT from a.cyr's 5, so resolving a's slot
+# by mistake would give a different answer rather than an accidental match.
+# I — an EXPRESSION initializer. b's own 6, times 3.
+_acc I 18 \
+  'private\nvar PDB_LIMIT = 2 + 4;\npublic fn pdb_cap(): i64 { return PDB_LIMIT * 3; }\n' \
+  'include "lib/a.cyr"\ninclude "lib/b.cyr"\nvar r = pdb_cap();\nsyscall(60, r);\n'
+# J — a STRING initializer: the shape from the patra/SecureYeoman miscompile this probe exists
+#     for. The value is the 4th byte of b's own literal ('d' = 100) — a's PDB_LIMIT is the
+#     integer 5, so a wrong resolution cannot produce it.
+_acc J 100 \
+  'private\nvar PDB_LIMIT = "abcd";\npublic fn pdb_cap(): i64 { return load8(PDB_LIMIT + 3); }\n' \
+  'include "lib/a.cyr"\ninclude "lib/b.cyr"\nvar r = pdb_cap();\nsyscall(60, r);\n'
+# K — a CALL initializer (a deferred global), doubled: 13 * 2.
+_acc K 26 \
+  'private\nfn pdb_src(): i64 { return 13; }\nvar PDB_LIMIT = pdb_src();\npublic fn pdb_cap(): i64 { return PDB_LIMIT * 2; }\n' \
   'include "lib/a.cyr"\ninclude "lib/b.cyr"\nvar r = pdb_cap();\nsyscall(60, r);\n'
 
 # ── the enforcement half: a genuine cross-file ACCESS is still refused ─────────────────

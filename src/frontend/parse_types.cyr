@@ -844,10 +844,10 @@ fn _gv_note_blockscoped(S, noff): i64 {
 # 6.6.6 bite 19b — RESOLUTION vs. a DECLARATION-TIME PROBE.
 #
 # FINDVAR is the one resolver, and v6.5.0 put the cross-file `private` check inside it on
-# purpose: every REFERENCE goes through it, so one check covers them all. But two callers are
-# not references at all — PARSE_GVAR_REG's `sit_shadow` probe and CHKDUPVAL both ask "does this
-# name already exist?" while REGISTERING a new global, and neither is reading the prior one.
-# Running the visibility check for them made a legal program fail:
+# purpose: every REFERENCE goes through it, so one check covers them all. But THREE callers are
+# not references at all — PARSE_GVAR_REG's `sit_shadow` probe, CHKDUPVAL and CHK_ENUM_SHADOW all
+# ask "does this name already exist?" while REGISTERING a new global, and none is reading the
+# prior one. Running the visibility check for them made a legal program fail:
 #
 #     lib/a.cyr:  private            lib/b.cyr:  private
 #                 var LIMIT = 5;                 var B_CAP = LIMIT * 2;
@@ -861,7 +861,14 @@ fn _gv_note_blockscoped(S, noff): i64 {
 #
 # So the lookup is split: `_findvar_core` is pure resolution and `FINDVAR` is that plus the
 # visibility check, exactly as before for every reference. Declaration-time probes call the
-# core. CHANGELOG [6.6.6]
+# core.
+#
+# ⚠ THE FIRST CUT OF THIS FIX MOVED TWO OF THE THREE, and said in this comment and in the
+# CHANGELOG that there were two. CHK_ENUM_SHADOW is the one it missed, and it is the arm that
+# runs for every NON-int-literal initializer — so `var X = 2 + 3;` beside another file's
+# `private var X` stayed refused while `var X = 5;` was fixed. When you find a probe, grep for
+# the SHAPE (a FINDVAR call reached from a registration path) rather than counting the ones
+# already named. CHANGELOG [6.6.6]
 fn _findvar_core(S, noff): i64 {
     var vcnt = GVCNT(S);
     var vi = vcnt - 1;
@@ -1039,8 +1046,15 @@ fn CHKDUPVAL(S, noff, newval): i64 {
 # reliable, uncapped, growable per-symbol marker (1-based enum-id; 0 = plain var).
 # Fail loud so the collision surfaces at compile time — the fix is to rename the
 # variable. See issues/2026-07-01-string-literal-global-garbage-in-large-programs.md.
+#
+# 6.6.6: `_findvar_core`, not `FINDVAR` — this is the THIRD declaration-time probe, and it was
+# missed when the other two moved. It runs for every global whose initializer is NOT an int
+# literal (`chk_has == 0`), so with a `private` file already owning the name, `var X = 2 + 3;`
+# / `= "abcd"` / `= f();` in another `private` file was reported as an illegal ACCESS to the
+# first file's X rather than compiled. The 19b gate could not see it: every accepting row it
+# had used `= NUM ;`, which takes the CHKDUPVAL path instead. CHANGELOG [6.6.6]
 fn CHK_ENUM_SHADOW(S, noff): i64 {
-    var pi = FINDVAR(S, noff);
+    var pi = _findvar_core(S, noff);
     if (pi < 0) { return 0; }
     if (GVENUMID(S, pi) == 0) { return 0; }   # prior symbol is a plain var, not an enum const
     syscall(SYS_WRITE, 2, "error:", 6);
