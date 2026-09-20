@@ -19,7 +19,11 @@
 # on x86 alone.
 #
 # Coverage:
-#   1. an attribute-prefixed comment does not change the program (7 shapes)
+#   1. an attribute-prefixed comment does not change the program (10 shapes,
+#      three of them `name(` — the review round found that taking `(` as a
+#      boundary at all ten sites left `#io(fd) reads a byte` still failing with
+#      `unexpected '('`; only `#deprecated(`, `#pe_import(` and `#assert(` end
+#      at a paren now)
 #   2. #inline still arms on a fn the compiler CAN inline
 #   3. #pure / #io / #alloc still arm and still run their fns
 #   4. #must_use still arms and its fn still returns its value
@@ -44,6 +48,9 @@ include "lib/vec.cyr"
 #purely local
 #naked-eye check
 #iota
+#io(fd) reads a byte
+#naked(truth) hurts
+#pure(ly) awesome
 
 #inline
 fn awb_inc(a): i64 { return a + 1; }
@@ -72,14 +79,15 @@ fn awb_pure(a): i64 { return a * 2; }
 
 fn main(): i64 {
     test_group("attribute-prefixed comments are comments");
-    # Each of the seven `#`-lines above is a comment the old lexer read as code.
-    # If any of them had armed, this file would not have compiled, so reaching
-    # here at all is the assertion; the value below just makes it explicit.
-    var seven = 7;
-    assert_eq(seven, 7, "the file compiled with 7 attribute-prefixed comments");
+    # Each of the ten `#`-lines above is a comment the old lexer read as code — the
+    # seven from the filing's table plus the three `name(` shapes the review round
+    # added. If any of them had armed, this file would not have compiled, so
+    # reaching here at all is the assertion; the values below make it explicit.
+    var ten = 10;
+    assert_eq(ten, 10, "the file compiled with 10 attribute-prefixed comments");
     # Same for the three `#derive(...)x note` lines: under the old preprocessor the
     # first of them armed ISDERIVE and the derive handler died on the line after it.
-    assert_eq(seven + 3, 10, "the file compiled with 3 derive-prefixed comments");
+    assert_eq(ten - 7, 3, "the file compiled with 3 derive-prefixed comments");
 
     test_group("every attribute still arms and still runs");
     assert_eq(awb_inc(41), 42, "#inline fn returns its value");

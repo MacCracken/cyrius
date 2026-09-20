@@ -8,6 +8,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **`(` was accepted as a word boundary for all ten attributes, so `#io(fd) reads a byte` still
+  did not compile.** (bite 5e, review round.) Bite 5a's boundary allowed whitespace, end of
+  input **or `(`** at every site, on the reasoning that `(` is "the only byte that legitimately
+  follows `#deprecated` / `#pe_import`" — which is true of those two and of no others. So the
+  filed defect survived for a narrower input class: `#io(fd) reads a byte` died with
+  `unexpected '('`, and so did `#naked(truth) hurts`, `#pure(ly) awesome`, `#alloc(16) bytes`,
+  `#inline(always) hint`, `#must_use(result) note` and `#regalloc(2) hint` — all of them
+  comments. **Fix:** `LEXATTRBOUND` takes an `ap` (allow-paren) argument and only three of the
+  ten call sites pass 1. `#deprecated(` and `#pe_import(` because the parenthesis is syntax —
+  and **`#assert(` although it is not**: that is the one form the compiler already rejects OUT
+  LOUD (`#assert: expected constant expression`), and reading it as a comment would silently
+  drop a compile-time assertion the author wrote. A loud error on rare prose beats a silent hole
+  in a check, so `#assert(` keeps its paren boundary and axis B11 pins it against a later
+  "no paren anywhere" tidy-up. The three mirror readers (`_lx_attr_bound`, `_cf_attr_bound`,
+  `_doc_attr_bound`) take the same argument and the same three exceptions.
+  `docs/guides/cyrius-guide.md` documented the first cut's rule exactly as shipped, so it is
+  corrected here too. Gate grows to 31 axes / 10 mutations (A8, A9 are the paren comments; M10
+  is the first cut itself, `(` unconditional, and it turns them RED).
+  `tests/tcyr/crossos/attribute_word_boundary.tcyr` carries the three paren shapes to the
+  cross-OS hosts. cycc **1,310,920 B unchanged**; 0 of 330 `.tcyr` binaries changed a byte.
+
 - **Two more `#`-name prefix matches with no word boundary — and in the PREPROCESSOR they fail
   SILENTLY.** (bite 5d, review round.) Bite 5a gave the LEXER's ten attributes a word boundary;
   the same shape was left twice over in `src/frontend/lex_pp.cyr`, where nothing reports an

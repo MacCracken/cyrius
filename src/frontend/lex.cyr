@@ -810,20 +810,30 @@ include "src/frontend/lex_pp.cyr"
 # identifier `ctl`, and the diagnostic pointed at the comment's second word.
 # The set of words that broke a comment was invisible to the author.
 #
-# Only whitespace, end of input, or `(` (the `#deprecated(` / `#pe_import(`
-# form) can legitimately follow an attribute name, so anything else means this
-# `#` opens an ordinary comment. Strictly more permissive: no program that
-# compiles today can contain `#io` followed by a non-boundary byte, because
-# today the tail is parsed as code and fails.
-# CHANGELOG [6.6.6]
-fn LEXATTRBOUND(S, q, bl): i64 {
+# Only whitespace, end of input, or `(` can legitimately follow an attribute
+# name, so anything else means this `#` opens an ordinary comment. Strictly more
+# permissive: no program that compiles today can contain `#io` followed by a
+# non-boundary byte, because today the tail is parsed as code and fails.
+#
+# `ap` — ALLOW PAREN, and only three of the ten sites pass 1. The first cut took
+# `(` as a boundary everywhere, which left the filed defect standing for a
+# narrower input class: `#io(fd) reads a byte` still died with `unexpected '('`,
+# and so did `#naked(truth)`, `#pure(ly)`, `#alloc(16)`, `#inline(always)`,
+# `#must_use(result)` and `#regalloc(2)`. For those seven the `(` form is not
+# syntax, so the line is a comment. `#deprecated(` and `#pe_import(` ARE syntax.
+# ⚠ `#assert(` passes 1 as well although it is not syntax either: it is the one
+# attribute whose parenthesised form the compiler already REJECTS OUT LOUD
+# (`#assert: expected constant expression`), and turning that into a comment
+# would silently DROP a compile-time assertion the author wrote. A loud error on
+# a rare prose comment beats a silent hole in an assertion. CHANGELOG [6.6.6]
+fn LEXATTRBOUND(S, q, bl, ap): i64 {
     if (q >= bl) { return 1; }
     var b = load8(S + 0x459D000 + q);
     if (b == 32) { return 1; }
     if (b == 9) { return 1; }
     if (b == 10) { return 1; }
     if (b == 13) { return 1; }
-    if (b == 40) { return 1; }
+    if (b == 40) { if (ap == 1) { return 1; } }
     return 0;
 }
 
@@ -1473,7 +1483,7 @@ fn LEX(S): i64 {
                                 if (load8(S + 0x459D000 + p + 4) == 101) {
                                     if (load8(S + 0x459D000 + p + 5) == 114) {
                                         if (load8(S + 0x459D000 + p + 6) == 116) {
-                                          if (LEXATTRBOUND(S, p + 7, bl) == 1) {
+                                          if (LEXATTRBOUND(S, p + 7, bl, 1) == 1) {
                                             # Emit token 107 = HASH_ASSERT, skip "assert"
                                             ADDTOK(S, 107, 0);
                                             p = p + 7;
@@ -1500,7 +1510,7 @@ fn LEX(S): i64 {
                                         if (load8(S + 0x459D000 + p + 6) == 108) {
                                             if (load8(S + 0x459D000 + p + 7) == 111) {
                                                 if (load8(S + 0x459D000 + p + 8) == 99) {
-                                                  if (LEXATTRBOUND(S, p + 9, bl) == 1) {
+                                                  if (LEXATTRBOUND(S, p + 9, bl, 0) == 1) {
                                                     ADDTOK(S, 109, 0);   # token 109 = HASH_REGALLOC
                                                     p = p + 9;
                                                     while (p < bl) {
@@ -1532,7 +1542,7 @@ fn LEX(S): i64 {
                                                 if (load8(S + 0x459D000 + p + 8) == 116) {
                                                     if (load8(S + 0x459D000 + p + 9) == 101) {
                                                         if (load8(S + 0x459D000 + p + 10) == 100) {
-                                                          if (LEXATTRBOUND(S, p + 11, bl) == 1) {
+                                                          if (LEXATTRBOUND(S, p + 11, bl, 1) == 1) {
                                                             ADDTOK(S, 124, 0);   # token 124 = HASH_DEPRECATED
                                                             p = p + 11;
                                                             continue;
@@ -1552,7 +1562,7 @@ fn LEX(S): i64 {
                                         if (load8(S + 0x459D000 + p + 6) == 117) {
                                             if (load8(S + 0x459D000 + p + 7) == 115) {
                                                 if (load8(S + 0x459D000 + p + 8) == 101) {
-                                                  if (LEXATTRBOUND(S, p + 9, bl) == 1) {
+                                                  if (LEXATTRBOUND(S, p + 9, bl, 0) == 1) {
                                                     ADDTOK(S, 122, 0);   # token 122 = HASH_MUST_USE
                                                     p = p + 9;
                                                     while (p < bl) {
@@ -1575,7 +1585,7 @@ fn LEX(S): i64 {
                         if (load8(S + 0x459D000 + p + 2) == 117) {
                             if (load8(S + 0x459D000 + p + 3) == 114) {
                                 if (load8(S + 0x459D000 + p + 4) == 101) {
-                                  if (LEXATTRBOUND(S, p + 5, bl) == 1) {
+                                  if (LEXATTRBOUND(S, p + 5, bl, 0) == 1) {
                                     ADDTOK(S, 125, 0);   # token 125 = HASH_PURE
                                     p = p + 5;
                                     while (p < bl) {
@@ -1594,7 +1604,7 @@ fn LEX(S): i64 {
                 if (p + 2 < bl) {
                     if (load8(S + 0x459D000 + p + 1) == 105) {
                         if (load8(S + 0x459D000 + p + 2) == 111) {
-                          if (LEXATTRBOUND(S, p + 3, bl) == 1) {
+                          if (LEXATTRBOUND(S, p + 3, bl, 0) == 1) {
                             ADDTOK(S, 126, 0);   # token 126 = HASH_IO
                             p = p + 3;
                             while (p < bl) {
@@ -1616,7 +1626,7 @@ fn LEX(S): i64 {
                             if (load8(S + 0x459D000 + p + 3) == 108) {
                                 if (load8(S + 0x459D000 + p + 4) == 111) {
                                     if (load8(S + 0x459D000 + p + 5) == 99) {
-                                      if (LEXATTRBOUND(S, p + 6, bl) == 1) {
+                                      if (LEXATTRBOUND(S, p + 6, bl, 0) == 1) {
                                         ADDTOK(S, 127, 0);   # token 127 = HASH_ALLOC
                                         p = p + 6;
                                         while (p < bl) {
@@ -1640,7 +1650,7 @@ fn LEX(S): i64 {
                             if (load8(S + 0x459D000 + p + 3) == 107) {
                                 if (load8(S + 0x459D000 + p + 4) == 101) {
                                     if (load8(S + 0x459D000 + p + 5) == 100) {
-                                      if (LEXATTRBOUND(S, p + 6, bl) == 1) {
+                                      if (LEXATTRBOUND(S, p + 6, bl, 0) == 1) {
                                         ADDTOK(S, 133, 0);   # token 133 = HASH_NAKED (128 is f64v_dot — collision fix, review P1)
                                         p = p + 6;
                                         while (p < bl) {
@@ -1677,7 +1687,7 @@ fn LEX(S): i64 {
                                 if (load8(S + 0x459D000 + p + 4) == 105) {
                                     if (load8(S + 0x459D000 + p + 5) == 110) {
                                         if (load8(S + 0x459D000 + p + 6) == 101) {
-                                          if (LEXATTRBOUND(S, p + 7, bl) == 1) {
+                                          if (LEXATTRBOUND(S, p + 7, bl, 0) == 1) {
                                             ADDTOK(S, 163, 0);   # token 163 = HASH_INLINE (150-162 are taken)
                                             p = p + 7;
                                             while (p < bl) {
@@ -1706,7 +1716,7 @@ fn LEX(S): i64 {
                                             if (load8(S + 0x459D000 + p + 7) == 111) {
                                                 if (load8(S + 0x459D000 + p + 8) == 114) {
                                                     if (load8(S + 0x459D000 + p + 9) == 116) {
-                                                      if (LEXATTRBOUND(S, p + 10, bl) == 1) {
+                                                      if (LEXATTRBOUND(S, p + 10, bl, 1) == 1) {
                                                         ADDTOK(S, 110, 0);   # token 110 = HASH_PE_IMPORT
                                                         p = p + 10;
                                                         while (p < bl) {

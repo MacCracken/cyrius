@@ -1280,14 +1280,22 @@ the lexer keeps reading the line after them — so `#naked fn isr() {` opens a r
 `#naked fn f() {` drew false `unmatched closing brace` warnings and `cyrius fmt` rewrote the fn
 body flush left).
 
-An attribute name ENDS at a word boundary: the next byte must be whitespace, end of input, or
-`(` (the `#deprecated("…")` / `#pe_import(…)` form). Anything else and the `#` opens an ordinary
-comment, so `#ioctl numbers`, `#allocator notes`, `#assertion holds` and `#naked-eye check` are
-all comments and compile to the same bytes as `# ioctl numbers` does. ⚠ Until v6.6.6 the lexer
-matched these names as byte PREFIXES with no boundary, so those same lines did NOT compile —
-`#ioctl numbers` lexed as `#io` + the identifier `ctl` and reported `expected '=', got identifier
-'numbers'`, pointing at the comment's second word. That was a lexer defect written up as if it
-were a language rule ("put a space after the `#`"); it is fixed, and the boundary is the rule.
+An attribute name ENDS at a word boundary: the next byte must be whitespace or end of input.
+Anything else and the `#` opens an ordinary comment, so `#ioctl numbers`, `#allocator notes`,
+`#assertion holds`, `#naked-eye check` and `#io(fd) reads a byte` are all comments and compile
+to the same bytes as `# ioctl numbers` does. ⚠ Until v6.6.6 the lexer matched these names as
+byte PREFIXES with no boundary, so those same lines did NOT compile — `#ioctl numbers` lexed as
+`#io` + the identifier `ctl` and reported `expected '=', got identifier 'numbers'`, pointing at
+the comment's second word. That was a lexer defect written up as if it were a language rule
+("put a space after the `#`"); it is fixed, and the boundary is the rule.
+
+**Three names also end at `(`**: `#deprecated("…")` and `#pe_import(…)`, where the parenthesis
+is part of the syntax, and `#assert(…)`, where it is NOT — the compiler rejects that form with
+`#assert: expected constant expression`, and it stays a loud error on purpose rather than
+becoming a silent comment, because a dropped compile-time assertion is worth more noise than a
+rare prose comment opening `#assert(`. For the other seven, `#pure(ly) awesome` and friends are
+comments. (v6.6.6's first cut took `(` as a boundary for all ten, which left `#io(fd) reads a
+byte` failing with `unexpected '('` — the filed defect, one input class narrower.)
 
 ## Ref Directive
 

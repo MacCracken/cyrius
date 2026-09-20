@@ -61,16 +61,20 @@ fn _doc_skip_sp(line, si, len): i64 {
     return si;
 }
 
-# 1 iff the byte at `line[q]` ENDS an attribute name: whitespace, end of line, or `(`
-# (the `#deprecated(` / `#pe_import(` form). v6.6.6 gave the lexer this boundary —
-# before it, `#ioctl numbers` matched the `#io` PREFIX and the rest of the comment
-# was parsed as code. Mirrors LEXATTRBOUND in src/frontend/lex.cyr; the three
-# _*_attr_len readers must take the same boundary or they disagree with the
+# 1 iff the byte at `q` ENDS an attribute name: whitespace, end of buffer, or —
+# when `ap` is 1 — `(`. v6.6.6 gave the lexer this boundary; before it,
+# `#ioctl numbers` matched the `#io` PREFIX and the rest of the comment was parsed
+# as code. `ap` is 1 at only three of the ten names: `#deprecated(` and
+# `#pe_import(` are real syntax, and `#assert(` is the one whose parenthesised form
+# the compiler REJECTS OUT LOUD, so reading it as a comment would silently drop an
+# assertion the author wrote. Mirrors LEXATTRBOUND in src/frontend/lex.cyr; the
+# three _*_attr_len readers must take the same boundary or they disagree with the
 # compiler about which `#` lines are comments. CHANGELOG [6.6.6]
-fn _doc_attr_bound(line, q, len): i64 {
+fn _doc_attr_bound(line, q, len, ap): i64 {
     if (q >= len) { return 1; }
     var b = load8(line + q);
-    if (b == 32 || b == 9 || b == 10 || b == 13 || b == 40) { return 1; }
+    if (b == 32 || b == 9 || b == 10 || b == 13) { return 1; }
+    if (b == 40) { if (ap == 1) { return 1; } }
     return 0;
 }
 
@@ -82,16 +86,16 @@ fn _doc_attr_len(line, si, len): i64 {
     var n = len - si;
     if (n < 3) { return 0; }
     var p = line + si;
-    if (memeq(p, "#io", 3) == 1) { if (_doc_attr_bound(line, si + 3, len) == 1) { return 3; } }
-    if (n >= 5) { if (memeq(p, "#pure", 5) == 1) { if (_doc_attr_bound(line, si + 5, len) == 1) { return 5; } } }
-    if (n >= 6) { if (memeq(p, "#alloc", 6) == 1) { if (_doc_attr_bound(line, si + 6, len) == 1) { return 6; } } }
-    if (n >= 6) { if (memeq(p, "#naked", 6) == 1) { if (_doc_attr_bound(line, si + 6, len) == 1) { return 6; } } }
-    if (n >= 7) { if (memeq(p, "#inline", 7) == 1) { if (_doc_attr_bound(line, si + 7, len) == 1) { return 7; } } }
-    if (n >= 7) { if (memeq(p, "#assert", 7) == 1) { if (_doc_attr_bound(line, si + 7, len) == 1) { return 7; } } }
-    if (n >= 9) { if (memeq(p, "#regalloc", 9) == 1) { if (_doc_attr_bound(line, si + 9, len) == 1) { return 9; } } }
-    if (n >= 9) { if (memeq(p, "#must_use", 9) == 1) { if (_doc_attr_bound(line, si + 9, len) == 1) { return 9; } } }
-    if (n >= 10) { if (memeq(p, "#pe_import", 10) == 1) { if (_doc_attr_bound(line, si + 10, len) == 1) { return 10; } } }
-    if (n >= 11) { if (memeq(p, "#deprecated", 11) == 1) { if (_doc_attr_bound(line, si + 11, len) == 1) { return 11; } } }
+    if (memeq(p, "#io", 3) == 1) { if (_doc_attr_bound(line, si + 3, len, 0) == 1) { return 3; } }
+    if (n >= 5) { if (memeq(p, "#pure", 5) == 1) { if (_doc_attr_bound(line, si + 5, len, 0) == 1) { return 5; } } }
+    if (n >= 6) { if (memeq(p, "#alloc", 6) == 1) { if (_doc_attr_bound(line, si + 6, len, 0) == 1) { return 6; } } }
+    if (n >= 6) { if (memeq(p, "#naked", 6) == 1) { if (_doc_attr_bound(line, si + 6, len, 0) == 1) { return 6; } } }
+    if (n >= 7) { if (memeq(p, "#inline", 7) == 1) { if (_doc_attr_bound(line, si + 7, len, 0) == 1) { return 7; } } }
+    if (n >= 7) { if (memeq(p, "#assert", 7) == 1) { if (_doc_attr_bound(line, si + 7, len, 1) == 1) { return 7; } } }
+    if (n >= 9) { if (memeq(p, "#regalloc", 9) == 1) { if (_doc_attr_bound(line, si + 9, len, 0) == 1) { return 9; } } }
+    if (n >= 9) { if (memeq(p, "#must_use", 9) == 1) { if (_doc_attr_bound(line, si + 9, len, 0) == 1) { return 9; } } }
+    if (n >= 10) { if (memeq(p, "#pe_import", 10) == 1) { if (_doc_attr_bound(line, si + 10, len, 1) == 1) { return 10; } } }
+    if (n >= 11) { if (memeq(p, "#deprecated", 11) == 1) { if (_doc_attr_bound(line, si + 11, len, 1) == 1) { return 11; } } }
     return 0;
 }
 

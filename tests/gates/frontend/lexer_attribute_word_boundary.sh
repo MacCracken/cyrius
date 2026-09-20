@@ -15,10 +15,18 @@
 # invisible to the author. Filed as
 # docs/development/issues/2026-09-19-lexer-attribute-prefix-swallows-comments.md.
 #
-# v6.6.6 added LEXATTRBOUND: an attribute name must be followed by whitespace, end
-# of input, or `(` (the `#deprecated(` / `#pe_import(` form). Strictly more
+# v6.6.6 added LEXATTRBOUND: an attribute name must be followed by whitespace or
+# end of input — or `(`, at the THREE sites that pass ap=1. Strictly more
 # permissive — no program that compiled before could contain `#io<ident-byte>`,
 # because the tail was parsed as code and failed.
+#
+# ⚠ THE FIRST CUT TOOK `(` AS A BOUNDARY AT ALL TEN SITES, which left the filed
+# defect standing for a narrower input class: `#io(fd) reads a byte` still died
+# with `unexpected '('`, and so did `#naked(truth)`, `#pure(ly)`, `#alloc(16)`,
+# `#inline(always)`, `#must_use(result)` and `#regalloc(2)`. Only `#deprecated(`
+# and `#pe_import(` are syntax. `#assert(` keeps ap=1 on purpose (axis B11): the
+# compiler rejects that form OUT LOUD today, and a comment reading would silently
+# drop an assertion — a loud error on rare prose beats a silent hole in a check.
 #
 # The review round found the same shape TWICE MORE, in the preprocessor's own
 # scanners (PP_NAMEBOUND now bounds them) and once more in the api-surface tool.
@@ -37,12 +45,15 @@
 # turns this gate RED instead of being silently uncovered.
 #
 # Axes:
+#   A0      the spaced twin itself still compiles (anti-vacuous)
 #   A1..A7  each comment from the filing's table compiles AND is byte-identical
 #           to its spaced twin (A1 is the filed repro verbatim)
-#   A8      the spaced twin itself still compiles (anti-vacuous)
+#   A8..A9  the `(` shapes the first cut still refused: `#io(fd) reads a byte`,
+#           `#naked(truth) hurts`
 #   B0      census: lex.cyr's attribute set == the probe table == the boundary
 #           call-site count
 #   B1..B10 each attribute still arms, by its own observable effect
+#   B11     `#assert(` is STILL A LOUD ERROR (the deliberate exception above)
 #   C1      cyrlint reads `#ioctl notes {` as a COMMENT (no false brace warning)
 #   C2      cyrfmt --check agrees with the compiler about the same line
 #   C3      over-correction guard: cyrlint still reads `#naked fn f() {` as an
@@ -56,33 +67,34 @@
 #           `#derive(Serialize)x note` armed the derive machinery and CHANGED THE
 #           EMITTED BINARY (4472 B vs the twin's 4456 B) with rc=0 either way.
 #
-# MUTATION LEDGER (2026-09-19, cycc 1,310,856 B, measured). Each mutation is
-# applied to the working tree, a compiler is built from it with the good cycc,
-# and the gate is run against that compiler (CYRIUS_CC); the tree is restored
-# from a copy afterwards:
-#   M1 LEXATTRBOUND body replaced by `return 1;` (the pre-6.6.6 prefix match)
-#      → 7 FAIL / 15 ok: A1..A7, each reproducing the filing's error message
-#        verbatim (A1 `expected '=', got identifier 'numbers'`)
-#   M2 LEXATTRBOUND body replaced by `return 0;` (nothing ever arms)
-#      → 10 FAIL / 12 ok: B1..B10 — the axis group that stops the fix being
-#        "make every `#` a comment". A1..A8 stay green.
-#   M3 the `b == 40` (`(`) row deleted from LEXATTRBOUND
-#      → 2 FAIL / 20 ok: B3 (#deprecated) and B9 (#pe_import(), the two
-#        attributes whose boundary byte is `(`
-#   M4 one LEXATTRBOUND call site neutered (`#io` → `if (1 == 1)`)
-#      → 3 FAIL / 19 ok: B0 on the call-site census (9 != 10), plus A1 and A7
-#   M5 `_lx_attr_bound` in programs/cyrlint.cyr forced to 1 → 1 FAIL: C1
-#   M6 `_cf_attr_bound` in programs/cyrfmt.cyr  forced to 1 → 1 FAIL: C2
-#   M7 PP_NAMEBOUND body replaced by `return 1;` (the pre-6.6.6 prefix match)
-#      → 3 FAIL / 25 ok: D1 (the bare-metal build is refused by a comment), D3
-#        (the derive comment compiles to DIFFERENT bytes), D4 (a comment generates
-#        accessors). D6 stays green — it is the mirror, and M9 is its mutation.
-#   M8 PP_NAMEBOUND body replaced by `return 0;` (nothing ever arms)
-#      → 2 FAIL / 26 ok: D2 (#host_only stops refusing) and D5 (#derive(accessors)
-#        stops generating) — the over-correction guard for the preprocessor half.
-#   M9 `_api_derive_bound` in programs/cyrius_api_surface.cyr forced to 1
-#      → 1 FAIL: D6, listing four accessors for a comment.
-#   real tree → 28/28 green
+# MUTATION LEDGER (2026-09-19, cycc 1,310,920 B, measured). Each mutation is
+# applied to a scratch copy of the tree, a compiler is built from it with the good
+# cycc, and the gate is run against that compiler (CYRIUS_CC) with ROOT set to the
+# scratch tree; the tree is restored afterwards. Only the FAILING axes are listed.
+#   M1  LEXATTRBOUND body replaced by `return 1;` (the pre-6.6.6 prefix match)
+#       → 9 FAIL: A1..A9, each reproducing the filing's error message verbatim
+#         (A1 `expected '=', got identifier 'numbers'`)
+#   M2  LEXATTRBOUND body replaced by `return 0;` (nothing ever arms)
+#       → 11 FAIL: B1..B11 — the axis group that stops the fix being "make every
+#         `#` a comment"; A0..A9 stay green, which is the point of having both.
+#   M3  the `b == 40` (`(`) row deleted from LEXATTRBOUND
+#       → 3 FAIL: B3 (#deprecated), B9 (#pe_import() and B11 (#assert( goes silent)
+#   M10 the `(` row made unconditional again — `if (b == 40) { return 1; }`, i.e.
+#       the review round's first cut, `(` a boundary at all ten sites
+#       → 2 FAIL: A8, A9 (`#io(fd) reads a byte`, `#naked(truth) hurts`)
+#   M4  one LEXATTRBOUND call site neutered (`#io` → `if (1 == 1)`)
+#       → 4 FAIL: B0 on the call-site census (9 != 10), plus A1, A7 and A8
+#   M5  `_lx_attr_bound` in programs/cyrlint.cyr forced to 1 → 1 FAIL: C1
+#   M6  `_cf_attr_bound` in programs/cyrfmt.cyr  forced to 1 → 1 FAIL: C2
+#   M7  PP_NAMEBOUND body replaced by `return 1;` (the preprocessor's prefix match)
+#       → 3 FAIL: D1 (a comment refuses the bare-metal build), D3 (the derive
+#         comment compiles to DIFFERENT bytes), D4 (a comment generates accessors).
+#         D6 stays green — it is the mirror, and M9 is its mutation.
+#   M8  PP_NAMEBOUND body replaced by `return 0;` (nothing ever arms)
+#       → 2 FAIL: D2 (#host_only stops refusing), D5 (#derive stops generating)
+#   M9  `_api_derive_bound` in programs/cyrius_api_surface.cyr forced to 1
+#       → 1 FAIL: D6, listing four accessors for a comment
+#   real tree → 31/31 green
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
@@ -109,23 +121,24 @@ compile() {
 printf '# ioctl numbers\nvar A = 42;\nsyscall(60, A);\n' > "$D/twin.cyr"
 compile twin
 if [ "$rc" -ne 0 ]; then
-    printf '  FAIL: axis A8 — the spaced twin `# ioctl numbers` does not compile: %s\n' \
+    printf '  FAIL: axis A0 — the spaced twin `# ioctl numbers` does not compile: %s\n' \
         "$(head -1 "$D/twin.err" | cut -c1-90)"
     fail=$((fail+1))
 else
     got=0; ( "$D/twin.bin" ) || got=$?
     if [ "$got" = 42 ]; then
-        printf '  ok: axis A8 — the spaced twin compiles and runs (exit 42)\n'
+        printf '  ok: axis A0 — the spaced twin compiles and runs (exit 42)\n'
         pass=$((pass+1))
     else
-        printf '  FAIL: axis A8 — spaced twin exit=%s, want 42\n' "$got"
+        printf '  FAIL: axis A0 — spaced twin exit=%s, want 42\n' "$got"
         fail=$((fail+1))
     fi
 fi
 
 ax=0
 for row in 'ioctl numbers' 'allocator notes' 'inlined by hand' 'assertion holds' \
-           'purely local' 'naked-eye check' 'iota'; do
+           'purely local' 'naked-eye check' 'iota' 'io(fd) reads a byte' \
+           'naked(truth) hurts'; do
     ax=$((ax+1))
     printf '#%s\nvar A = 42;\nsyscall(60, A);\n' "$row" > "$D/a$ax.cyr"
     compile "a$ax"
@@ -233,6 +246,14 @@ arm B9 'expected string, got number 3' '#pe_import( still arms (the `(` boundary
 '#pe_import(3)\nvar A = 42;\nsyscall(60, A);\n'
 arm B10 "expected '('" '#pe_import arms at end of line too (the whitespace boundary)' \
 '#pe_import\nvar A = 42;\nsyscall(60, A);\n'
+# B11 is the DELIBERATE EXCEPTION, and it is an axis so that a later "no paren
+# anywhere" tidy-up cannot make it silent. `#assert(8 == 9)` is not syntax — the
+# compiler rejects it — but it is plainly an assertion the author wrote, and
+# reading it as a comment would DROP a compile-time check without a word. So
+# `#assert` passes ap=1 like `#deprecated` and `#pe_import`, and stays loud.
+arm B11 '#assert: expected constant expression' \
+'#assert( stays a LOUD error rather than becoming a silent comment' \
+'#assert(8 == 9)\nvar A = 42;\nsyscall(60, A);\n'
 
 # ── Group C — the three mirror readers must take the same boundary as the lexer,
 #    or a tool disagrees with the compiler about which `#` lines are comments.
@@ -244,13 +265,13 @@ build_tool() {
     return 0
 }
 
-printf '#ioctl notes here {\n#naked\nfn isr(): i64 { return 1; }\n' > "$D/tool.cyr"
+printf '#ioctl notes here {\n#io(fd) reads a byte {\n#naked\nfn isr(): i64 { return 1; }\n' > "$D/tool.cyr"
 printf '#naked fn isr(): i64 { return 1; }\n' > "$D/tool_attr.cyr"
 
 if build_tool cyrlint; then
     out=$("$D/cyrlint" "$D/tool.cyr" 2>&1) || true
     if printf '%s' "$out" | grep -q '^0 warnings'; then
-        printf '  ok: axis C1 — cyrlint reads `#ioctl notes here {` as a comment\n'
+        printf '  ok: axis C1 — cyrlint reads `#ioctl notes here {` and `#io(fd) ... {` as comments\n'
         pass=$((pass+1))
     else
         printf '  FAIL: axis C1 — cyrlint warned on an attribute-prefixed comment: %s\n' \
