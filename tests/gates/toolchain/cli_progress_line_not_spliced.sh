@@ -298,10 +298,15 @@ if unshare -rm true >/dev/null 2>&1 && unshare -rpf --mount-proc true >/dev/null
   exec 3<"$D/cli"
   unshare -rmpf --mount-proc sh -c '
     mount -t tmpfs none /tmp || exit 9
-    mkdir -p /tmp/w/src /tmp/w/build || exit 9
-    cat <&3 > /tmp/w/cyrius && chmod +x /tmp/w/cyrius || exit 9
-    cp "$1"/build/cycc /tmp/w/build/cycc && chmod +x /tmp/w/build/cycc || exit 9
-    printf "fn main(): i64 { return 0; }\n" > /tmp/w/src/a.cyr
+    # The workspace comes from mktemp even here. The tmpfs is private and dies with the
+    # namespace, so a fixed name would be harmless — but naming one would be indefensible
+    # to a reader (and to tests/gates/toolchain/gates_never_write_tree.sh axis 5, which
+    # cannot see that this /tmp is not the shared one).
+    NSW=$(mktemp -d) && [ -d "$NSW" ] || { echo "FAIL: axis10: mktemp -d inside the namespace"; exit 9; }
+    mkdir -p "$NSW/src" "$NSW/build" || exit 9
+    cat <&3 > "$NSW/cyrius" && chmod +x "$NSW/cyrius" || exit 9
+    cp "$1"/build/cycc "$NSW/build/cycc" && chmod +x "$NSW/build/cycc" || exit 9
+    printf "fn main(): i64 { return 0; }\n" > "$NSW/src/a.cyr"
     # Occupy every one of the 16 candidates for every plausible in-namespace PID, in ONE
     # mkdir so the fork count stays small and the CLI lands well inside the window.
     ARGS=""; p=2
@@ -311,7 +316,7 @@ if unshare -rm true >/dev/null 2>&1 && unshare -rpf --mount-proc true >/dev/null
       p=$((p+1))
     done
     mkdir -p $ARGS || exit 9
-    cd /tmp/w || exit 9
+    cd "$NSW" || exit 9
     ulimit -c 0
     CYRIUS_RESOLVED=1 ./cyrius build src/a.cyr out.bin 2>&1
   ' _ "$R" >"$D/a10.out" 2>&1 || true
