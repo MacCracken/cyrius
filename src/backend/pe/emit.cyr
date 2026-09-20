@@ -1104,6 +1104,27 @@ fn _pe_ensure_qpf(S): i64 {
 }
 fn _pe_qpf_get(): i64 { return _pe_qpf_idx; }
 
+# v6.6.6 — kernel32!GetModuleFileNameW, the Windows answer to readlink("/proc/self/exe").
+# `DWORD GetModuleFileNameW(HMODULE, LPWSTR, DWORD)`; the emitter passes hModule = NULL
+# (= this executable), so the reroute takes only the wide buffer and its WCHAR capacity.
+#
+# ⛔ WHY IT EXISTS: programs/cyrius-init.cyr resolves its OWN path to find
+# <root>/programs/cyrius-init-templates, and had exactly two arms — macOS (F_GETPATH) and
+# "/proc/self/exe". Windows has neither, so the scaffolder reached an undefined
+# `sys_readlink` and `cyrius init` / `cyrius port` did not exist on a Windows install at
+# all. argv(0) is not a substitute: it is whatever the parent put on the command line, so
+# it can be relative or a bare name, and the templates path is its GRANDPARENT. See
+# docs/development/issues/archived/2026-09-18-cyrius-init-does-not-build-for-windows.md.
+var _pe_getmodfn_ready = 0;
+var _pe_getmodfn_idx   = 0;
+fn _pe_ensure_getmodfn(S): i64 {
+    if (_pe_getmodfn_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_getmodfn_idx, "GetModuleFileNameW");
+    _pe_getmodfn_ready = 1;
+    return 0;
+}
+fn _pe_getmodfn_get(): i64 { return _pe_getmodfn_idx; }
+
 # v6.0.61 Stage 2: thread-local storage imports (lib/thread_local.cyr).
 var _pe_getcurtid_ready = 0;
 var _pe_getcurtid_idx   = 0;

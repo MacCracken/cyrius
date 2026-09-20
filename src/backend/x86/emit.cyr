@@ -2188,6 +2188,42 @@ fn EQPF_PE(S): i64 {
     return _pe_srw_call_1arg(S, _pe_qpf_get());
 }
 
+# v6.6.6: syscall(0xF03A, wbuf, cch) → kernel32!GetModuleFileNameW(NULL, wbuf, cch) —
+# the Windows source for "the full path of THIS executable", the thing
+# readlink("/proc/self/exe") answers on Linux and fcntl(F_GETPATH) on macOS. Stack on
+# entry (top→bottom): [cch] [wbuf] [sc_nr=0xF03A], i.e. argc == 3.
+#
+# hModule is hardcoded NULL (rcx = 0) — the module of the running process — so the
+# cyrius-side wrapper passes only the buffer and its capacity IN WCHARs. The result is
+# UTF-16LE and is NOT narrowed here: the same split as syscall(0xF006)/GetCommandLineW,
+# which hands back a raw LPWSTR that `_args_w2u8` (lib/args.cyr) converts in cyrius —
+# host-testable there, and no new hand-assembly loop here. Returns the WCHAR count in
+# eax (0 on failure); `mov eax, eax` zero-extends the DWORD rather than trusting the
+# callee to have cleared the high half. rbx-anchored + `and rsp,-16`, so it is
+# alignment-agnostic like every path-API reroute (see _pe_call_2arg_aligned).
+# CHANGELOG [6.6.6].
+fn EGETMODFILENAME_PE(S): i64 {
+    _pe_ensure_getmodfn(S);
+    var mf_idx = _pe_getmodfn_get();
+    EB(S, 0x58);                                        # pop rax (cch)
+    EB(S, 0x49); EB(S, 0x89); EB(S, 0xC0);              # mov r8, rax  (nSize, in WCHARs)
+    EB(S, 0x58);                                        # pop rax (wbuf)
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xC2);              # mov rdx, rax (lpFilename)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
+    EB(S, 0x31); EB(S, 0xC9);                           # xor ecx, ecx (hModule = NULL)
+    EB(S, 0x53);                                        # push rbx
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);              # mov rbx, rsp
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0); # and rsp, -16
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x20); # sub rsp, 0x20 (shadow)
+    EB(S, 0xFF); EB(S, 0x15);                           # call [rip+GetModuleFileNameW]
+    _pe_iat_fixup_add(S, GCP(S), mf_idx);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);              # mov rsp, rbx
+    EB(S, 0x5B);                                        # pop rbx
+    EB(S, 0x89); EB(S, 0xC0);                           # mov eax, eax (DWORD → zero-ext)
+    return 0;
+}
+
 # v6.0.65: stub for the macho-ARM syscall-routed query (real impl in
 # src/backend/aarch64/emit.cyr next to ESYSXLAT). parse_expr.cyr references it
 # for the _TARGET_MACHO==2 whitelist warning; that path is dead on x86, so this

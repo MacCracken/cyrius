@@ -453,3 +453,43 @@ fn sys_qpc_ns(): i64 {
     var t = load64(&c);
     return (t / _sys_qpf_hz) * 1000000000 + ((t % _sys_qpf_hz) * 1000000000) / _sys_qpf_hz;
 }
+
+# ================================================================
+# v6.6.6 — the three raw-floor names a POSIX tool reaches for path work
+# ================================================================
+#
+# ⛔ This peer INCLUDES NOTHING, so a name missing here is missing for PE entirely, and
+# under the v6.3.2 reachable-undef hard error that is a BUILD FAILURE, not a degrade.
+# `programs/cyrius-init.cyr` named `sys_readlink` and `sys_rename` unguarded, so it did
+# not cross-compile to PE at all and `cyrius init` / `cyrius port` were absent from every
+# Windows install — the CLI answered `tool not found`. Same shape as the v6.5.25
+# getpid/getppid gap, one surface wider. See
+# docs/development/issues/archived/2026-09-18-cyrius-init-does-not-build-for-windows.md.
+
+# rename(old, new) — REAL, not a degrade: 0xF034 (61492) → kernel32!MoveFileExW with
+# MOVEFILE_REPLACE_EXISTING, live since v6.4.57 and already the Windows arm of
+# lib/io.cyr's portable `file_rename`. Returns 0 on success / -1 on failure (the BOOL is
+# folded to the POSIX contract by the emitter), which is what POSIX callers check.
+# ⚠ Unlike rename(2) this CAN move across volumes (MOVEFILE_COPY_ALLOWED is not set, so
+# it does not; a cross-volume move fails, as rename(2) does with EXDEV).
+fn sys_rename(oldpath, newpath): i64 { return syscall(61492, oldpath, newpath); }
+
+# readlink(path, buf, bufsize) — HONEST DEGRADE. Windows reparse points are not POSIX
+# symlinks (DeviceIoControl + FSCTL_GET_REPARSE_POINT, a different contract and a
+# different result shape), so this returns -38/-ENOSYS rather than faking a length.
+# Callers already test `>= 0` — lib/fs.cyr's is_symlink answers 0 (not a link) on PE by
+# its own guard. Deliberately NOT used for "where am I": `sys_self_exe_w` below is the
+# Windows answer to readlink("/proc/self/exe"), and it is a different API.
+fn sys_readlink(path, buf, bufsize): i64 { return 0 - 38; }
+
+# GetModuleFileNameW(NULL, wbuf, cch) — 0xF03A (61498), the Windows source for the full
+# path of THIS executable. `cch` is the buffer capacity in WCHARs (wbuf must hold
+# cch * 2 bytes); the result is UTF-16LE, and the return value is the WCHAR count written
+# (0 on failure). NOT narrowed here — the caller converts with `_args_w2u8`
+# (lib/args.cyr), exactly as lib/args_win.cyr does for GetCommandLineW's raw LPWSTR.
+#
+# ⚠ argv(0) is NOT a substitute and that is why this reroute exists: on Windows argv[0]
+# is whatever the parent wrote on the command line, so it can be relative or a bare name,
+# and a tool that derives an install root from its own GRANDPARENT directory (the
+# scaffolder's templates dir) gets the wrong answer or none. CHANGELOG [6.6.6].
+fn sys_self_exe_w(wbuf, cch): i64 { return syscall(61498, wbuf, cch); }

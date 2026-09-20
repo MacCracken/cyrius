@@ -167,6 +167,10 @@ fn EGETSYSTIME_PE(S) { return 0; }
 # without these stubs is the v6.4.26 trap. See CHANGELOG [6.6.5].
 fn EQPC_PE(S)        { return 0; }
 fn EQPF_PE(S)        { return 0; }
+# v6.6.6: EGETMODFILENAME_PE (kernel32!GetModuleFileNameW — the Windows
+# readlink("/proc/self/exe")) — same x86/PE-only cohort, same stub reason.
+# See CHANGELOG [6.6.6].
+fn EGETMODFILENAME_PE(S) { return 0; }
 # v6.0.54: close the .23 stub gap. ECREATEDIR_PE (mkdir/83) +
 # EDELETEF_PE (unlink/87) shipped x86-only at v5.11.22-23 and never
 # got aarch64 stubs — they fired "undefined function" warnings on

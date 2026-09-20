@@ -1107,6 +1107,33 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `src/`, `programs/`, `cbt/` or `tests/`, with a floor on sites found. Those two were the only
   instances in the tree. programs-only; `build/cycc` untouched.
 
+- **`cyrius init` and `cyrius port` did not exist on a Windows install — the scaffolder did
+  not cross-compile to PE at all.** (bite 6b; filed 2026-09-18.) `programs/cyrius-init.cyr`
+  resolved its own path with exactly two arms — macOS `fcntl(F_GETPATH)` and
+  `readlink("/proc/self/exe")` — and moved a port's source tree aside with `sys_rename`.
+  `lib/syscalls_windows.cyr` defined neither wrapper, so the PE build refused with
+  `error: refusing to emit binary with 2 reachable undefined function(s)` and a 0-byte
+  file; `build-windows-tarball.sh` skipped the binary, and the CLI answered `tool not
+  found` for both verbs. Three pieces: **(1)** a new PE reroute `0xF03A` →
+  `kernel32!GetModuleFileNameW(NULL, wbuf, cch)` — `EGETMODFILENAME_PE`
+  (`src/backend/x86/emit.cyr`), registered in `src/backend/pe/emit.cyr`, dispatched from
+  `_PE_ROUTE_MODULEPATH` (`src/frontend/parse_expr.cyr`, its own fn for the cybs
+  reference limit), stubbed in the aarch64 + cx emitters. Like the `GetCommandLineW`
+  route it returns the raw UTF-16 and the narrowing happens in cyrius via `_args_w2u8`,
+  so there is no new hand-written widen/narrow loop in the emitter. **(2)** three wrappers
+  in the Windows peer — `sys_rename` (**real**: the already-live `0xF034`/MoveFileExW),
+  `sys_readlink` (honest `-38`/ENOSYS — Windows reparse points are not POSIX symlinks) and
+  `sys_self_exe_w`; `_self_path` grew a Windows arm on the last of these that also
+  normalises `\` → `/` once, so every `/`-scanning path helper below it is unchanged.
+  ⚠ **`argv(0)` is not a substitute** and the filing's suggestion that it might be was
+  wrong: on Windows argv[0] is whatever the parent wrote on the command line, and
+  `_resolve_templates_dir` needs that path's GRANDPARENT — measured with the reroute
+  stubbed, a relative `..\bin\cyrius-init.exe` from another directory exits 1 having
+  written nothing, while still compiling and still passing a `--dry-run`.
+  cycc **1,310,864 → 1,310,936 B** (+72). All seven forks compile; seed-derive GREEN;
+  all **329** `.tcyr` and all **84** other `programs/*.cyr` build **byte-identically** to
+  the pre-change compiler (the route adds a literal-number arm nothing else reaches).
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**
