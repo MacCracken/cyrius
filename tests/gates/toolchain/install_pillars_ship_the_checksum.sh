@@ -88,9 +88,9 @@ cat > "$D/scp.awk" <<'AWK'
 AWK
 _scp_sites() { awk -v FILE="$2" -f "$D/scp.awk" "$1"; }
 mkdir -p "$D/fx"
-printf '    var x = "…; scp -q scripts/install.sh /tmp/d/cyrius-$V-aarch64-macos.tar.gz ecb:~/; ssh …";\n' > "$D/fx/bad.cyr"
-printf '    var x = "…; scp -q scripts/install.sh /tmp/d/cyrius-$V-aarch64-macos.tar.gz /tmp/d/cyrius-$V-aarch64-macos.tar.gz.sha256 ecb:~/; ssh …";\n' > "$D/fx/good.cyr"
-printf '    # scp -q /tmp/d/cyrius-$V-aarch64-macos.tar.gz ecb:~/ in a comment is not a site\n' > "$D/fx/cmt.cyr"
+printf '    var x = "…; scp -q scripts/install.sh $_T/dist/cyrius-$V-aarch64-macos.tar.gz ecb:~/; ssh …";\n' > "$D/fx/bad.cyr"
+printf '    var x = "…; scp -q scripts/install.sh $_T/dist/cyrius-$V-aarch64-macos.tar.gz $_T/dist/cyrius-$V-aarch64-macos.tar.gz.sha256 ecb:~/; ssh …";\n' > "$D/fx/good.cyr"
+printf '    # scp -q $_T/dist/cyrius-$V-aarch64-macos.tar.gz ecb:~/ in a comment is not a site\n' > "$D/fx/cmt.cyr"
 a1=0
 [ "$(_scp_sites "$D/fx/bad.cyr" x)" = 'x|1|0' ]  || { fail "axis 1 self-test: an scp with no sidecar is not seen as 1 tarball / 0 sidecars: '$(_scp_sites "$D/fx/bad.cyr" x)'"; a1=1; }
 [ "$(_scp_sites "$D/fx/good.cyr" x)" = 'x|1|1' ] || { fail "axis 1 self-test: an scp WITH a sidecar is miscounted: '$(_scp_sites "$D/fx/good.cyr" x)'"; a1=1; }
