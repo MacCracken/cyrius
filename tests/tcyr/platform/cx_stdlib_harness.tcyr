@@ -12,13 +12,14 @@
 # hand-written syscall-only programs. Pinned on cxvm by
 # tests/gates/toolchain/cx_tcyr_runs.sh. See CHANGELOG [6.6.6].
 #
-# ⚠ DELIBERATELY NO lib/vec.cyr CALLS. vec compiles for cx now, but it does not
-# RUN there: a pre-existing cx codegen defect (reproduced against the 6.6.5
-# compiler, so not from this release, and filed for the next one) corrupts a
-# call's first argument after certain preceding calls, so `vec_get(v, 0)` on a
-# 1-element vec aborts with "vec: index out of bounds". Adding vec coverage
-# here is the right move the day that is fixed — don't add it before, or this
-# file stops running on cx and the cx row goes back to proving nothing.
+# ⭐ vec AND the `>=`/`<=` asserts are covered here as of bite 21. Both were
+# written around when this file was first added: `vec_get(v, 0)` on a populated
+# vec aborted "index out of bounds" and assert_gte/assert_lte scored backwards,
+# and both were the SAME cx defect — ESETCC synthesised `(a<b)|(a==b)` with the
+# strict half emitted to the wrong destination register, so the `or` folded in
+# whatever the last shift had parked in the scratch. Fixed in
+# src/backend/cx/emit.cyr; the workarounds are gone, which is what makes this
+# file a regression test for it. CHANGELOG [6.6.6].
 include "lib/assert.cyr";
 
 # --- allocator: a bump alloc that is 8-aligned and actually writable ---
@@ -35,13 +36,10 @@ var q = alloc(32);
 assert_nonnull(q, "second alloc succeeds");
 assert_neq(p, q, "two allocations do not overlap");
 var after = alloc_used();
-# NB assert_gt, not assert_gte. assert_gte/assert_lte evaluate `a >= b` as a
-# CALL ARGUMENT (`assert(a >= b, name)`), and `>=`/`<=` in argument position
-# mis-evaluate on cx while `>`/`<` are fine — another pre-existing cx backend
-# defect (6.6.5 reproduces it), filed for the next release and NOT introduced
-# here. `x >= 32` is written `x > 31`.
+# assert_gte, deliberately: it evaluates `a >= b` in CALL-ARGUMENT position,
+# which is exactly the shape bite 21a fixed on cx. Written as `> 31` before.
 var grew = after - before;
-assert_gt(grew, 31, "alloc_used advances by at least the request");
+assert_gte(grew, 32, "alloc_used advances by at least the request");
 var pend = p + 63;
 assert_gt(q, pend, "the second block starts past the first");
 
@@ -51,6 +49,14 @@ var n = fmt_int_buf(0 - 4207, &buf);
 assert_eq(n, 5, "fmt_int_buf writes 5 bytes for -4207");
 assert_eq(load8(&buf), 45, "fmt_int_buf emits the minus sign");
 assert_eq(load8(&buf + 4), 55, "fmt_int_buf emits the last digit");
+
+# --- vec: the container whose vec_get aborted on cx until bite 21a ---
+var v = vec_new();
+vec_push(v, 11);
+vec_push(v, 22);
+assert_eq(vec_len(v), 2, "vec_len after two pushes");
+assert_eq(vec_get(v, 0), 11, "vec_get reads element 0 (the shape that aborted on cx)");
+assert_eq(vec_get(v, 1), 22, "vec_get reads the last element");
 
 # --- string: strlen + the harness's own string comparison ---
 var s = "cyrius-x";
