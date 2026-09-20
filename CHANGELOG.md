@@ -6,6 +6,39 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+The 6.6.6 repair release — the 6.6.5 queue, and then what looking at it turned up. Every one of the six
+filed issues and six roadmap items that opened it is fixed (bites 1–12). The reviews then found ~40 more
+defects, and by the user's call they were **batched into themed bites of this release instead of filed**:
+call-ABI (14, 16, 21), lexer/preprocessor (5, 15), globals (19), write-safety (13, 17, 26), the CLI on
+Windows and off x86 (23, 24), the gate runner (25, 27). 27 bites, 193 commits, five parallel lanes.
+Two issues are open at the close, both pre-dating this release.
+
+**The one every consumer should read:** on Windows, `O_APPEND` did not append — it overwrote from offset
+0 — and `O_TRUNC` did not truncate, leaving the old tail of a rewritten file behind. **18 repos use
+O_APPEND outside vendored code and several are audit logs or journals** (sigil, hapi, ark's transaction
+log, patra's JSONL, agnosai's durable state, kriya's tee); 43 use O_TRUNC. Nothing needs a source change
+— pinning 6.6.6 fixes it. See *PE open flags* below.
+
+**Security:** **CVE-44** — the release installer staged a tarball AND its signature inputs at fixed `/tmp`
+names, so a local user could swap them between download and verify. **CVE-45** — an INCLUDED file, a
+`#define` macro body or a `#derive` tail could each forge a `#@file` marker, which is what `private`
+visibility is enforced against; it was live in this repo, where a deliberate error in `lex_pp.cyr` was
+attributed to a file that exists nowhere in the tree.
+
+**Bench:** self_compile **869 ms** (6.6.5: 771 ms, **+12.7%**); cycc **1,328,336 B** (+34,296 over
+6.6.5's 1,294,040); `.text` **1,163,064**. The growth is the release's own surface — nine new refusals
+that name what they refuse, the per-target self-host mapping, the checked write path in all seven
+drivers, and the PE flag decoder — not one dominant patch. Release gate GREEN end to end: self-host
+fixpoint · ARM-binary lockstep (new this release, and red until the closeout regenerated it) ·
+seed-derive (29,024-byte seed) · check.sh · cross-OS on **ecb** / **ach** / **cass** / **pi** · bench.
+
+⚠ **Five lanes each passed their own `check.sh` and the merged tree still failed four ways** — two lanes
+minted the same PE reroute number for different kernel32 functions; one lane's `--version` prints were
+raw fd-1 writes while another's fix required every fd-1 write to go through a checked helper; a gate
+scanner read its own new prose as code; and `cyrius capacity` on Windows had quietly become WORKING, with
+the CLI still carrying an excuse and its gate still asserting the refusal. A per-lane green is not a
+merged green.
+
 ### Fixed
 
 - **cx read 0 for a global initialized from a constant declared BELOW it; every other target

@@ -37,10 +37,10 @@ unscheduled 6.x backlog. Whole-cycle framing plus v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.6.5** (2026-09-19, bump commit; tag pending) — cycc **1,294,040 B** (`.text` **1,127,672**) ·
+**Current head: v6.6.5** (2026-09-20, bump commit; tag pending) — cycc **1,328,336 B** (`.text` **1,163,064**) ·
 seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi ·
-**323** `.tcyr` (**83** in `crossos/`) · **103** `lib/*.cyr` · **175** shell gates under
-`tests/gates/<bucket>/` · **6 open issues** (the 6.6.6 queue, below) · **4 open proposals**.
+**340** `.tcyr` (**99** in `crossos/`) · **104** `lib/*.cyr` · **226** shell gates under
+`tests/gates/<bucket>/` · **2 open issues** · **4 open proposals**.
 
 > ⚠ **Every figure above was DERIVED on the day, not carried** (re-derived 2026-09-14 at the 6.6.4 bump;
 > before that 2026-09-12 at the 6.6.3 handoff — the line had been version-stamped `v6.6.3` while still quoting
@@ -66,48 +66,56 @@ child on native aarch64 had been exiting 1 before `execve` for 59 releases (`cbt
 turned up further pre-existing defects; by the user's call (2026-09-19) those are **not** in 6.6.5 and form
 the 6.6.6 queue below, rather than growing a release that had already closed its brief.
 
-### v6.6.6 — the queue carried out of 6.6.5 (user, 2026-09-19)
+### v6.6.6 — SHIPPED 2026-09-20
 
-Filed issues (each has a repro and acceptance criteria):
+Every item below shipped. Detail is in `CHANGELOG.md`; this section keeps only the shape, because the
+release's own lesson is about how the queue behaved, not what was in it.
 
-1. `issues/2026-09-17-simd-arg-with-six-or-more-int-args-miscompiles.md` — **High, silent**: a value-form
-   SIMD arg alongside ≥ 6 int-class args binds the later int args to the wrong slots, every call path.
-   Different convention per gate target — bisect caller vs callee first.
-2. `issues/2026-09-19-global-redeclaration-reads-zero.md` — **silent**: redeclaring a global makes an earlier
-   read return 0, and the "last definition wins" warning is false.
-3. `issues/2026-09-19-toplevel-block-closure-drops-rest-of-program.md` — **silent**.
-4. `issues/2026-09-19-preprocessor-executes-directives-inside-multiline-strings.md` — **silent**.
-5. `issues/2026-09-19-lexer-attribute-prefix-swallows-comments.md` — loud (compile error), misattributed.
-6. `issues/2026-09-18-cyrius-init-does-not-build-for-windows.md` — `init`/`port` absent on Windows.
+The six filed issues and six roadmap items that opened it were all fixed (bites 1–12). The reviews then
+turned up ~40 more defects, and by the user's call ("lets not end up with a dozen new issues —
+strategically fix items that could be batched into this version as well") they were BATCHED into themed
+bites of the same release rather than filed: call-ABI (14, 16, 21), lexer/preprocessor (5, 15), globals
+(19), write-safety (13, 17, 26), the CLI on Windows and off x86 (23, 24), and the gate runner (25, 27).
+27 bites, 193 commits, five parallel lanes merged at the end. **CVE-44** (the release installer staged a
+tarball and its signature inputs at fixed `/tmp` names) and **CVE-45** (an included file could forge a
+`#@file` marker and defeat `private` visibility) were spent here.
 
-Roadmap items (found in 6.6.5, not issue files):
+⚠ **What the merge taught, which no single lane could see.** Five lanes each passed their own `check.sh`
+and the merged tree still failed four ways: two lanes minted the SAME PE reroute number for different
+kernel32 functions (they only missed each other because their routing arms test different argc); one
+lane's `--version` prints were raw fd-1 writes while another's output-write fix required every fd-1 write
+to go through a checked helper; a gate scanner read its own newly-added prose as code; and `cyrius
+capacity` on Windows had become WORKING — one lane armed the spawn, another wired the env lookup, and
+both the CLI's excuse and the gate asserting the refusal would have pinned a defect that no longer
+existed. A per-lane green is not a merged green.
 
-- **`--version` in four forks**: `main_aarch64{,_macho,_native}.cyr` and `main_cx.cyr` do not handle it, so
-  `cycc --version` on an ARM install compiles EMPTY stdin and writes a binary to stdout. Acceptance: every
-  fork prints the version; a fork-parity axis.
-- **`build/cycc-native-aarch64` lockstep gate**: it sat at a 2026-07-02 build for five releases and nothing
-  noticed (regenerated in 6.6.5 bite 5). Acceptance: the release gate fails when the tracked binary is not
-  what the cross-built native compiler produces from the tree.
-- **Remaining `sys_fork` sites with no PE arm** in `cbt/` (`build --target=cx/js`, `capacity`, `soak`, `self`,
-  git deps) and the empty `cyrius-<pid>` temp dir every CLI run leaves behind (since v6.4.81).
-- **`tests/tcyr/crossos/sync_mutex_contended.tcyr:135`** asserts an absolute `per < 250` ns; cass measures it
-  for real now that 6.6.5 routed QueryPerformanceCounter. Restate it the way bite 6 restated the bench bar.
-- **No ESYSXLAT row for `statfs`** (found while writing the 6.6.5 sibling notes): yukti's aarch64
-  `SYS_STATFS = 43` (`src/syscalls.cyr:51`) runs `accept()`, and yukti cannot fix it alone because cyrius has
-  no row for x86 137 (or an alias in the ≥1000 band). Acceptance: `SYS_STATFS` named in both peers with a
-  routed row, kernel-agreement gate green, a crossos companion; then yukti switches to the name.
-- ⛔ **`tests/gates/platform/syscall_xlat_generated.sh` can TRUNCATE a tracked source file.** It saves
-  `src/common/syscall_xlat.cyr` to a mktemp dir, regenerates the file IN PLACE, then restores from the saved
-  copy — and when the saved copy could not be written (a full `/tmp`, measured 2026-09-19 during the 6.6.5
-  close) it restored an EMPTY file into the tree mid-`check.sh`. Acceptance: the gate regenerates into a
-  temp file and compares, never writes the tracked file; a gate-wide audit for the same save/regen/restore
-  shape; a mutation with an unwritable temp dir must leave the tree byte-identical.
+### v6.6.7 — the tail 6.6.6 did not pack
 
-⚠ **Process for 6.6.6** (user, 2026-09-19 — 6.6.5 took two days): one implementer + one reviewer per bite;
-the cross-OS leg once at the release gate unless a bite touches a target-specific backend; anything a
-review finds that is not the bite's own defect is FILED for the next release, not packed into this one.
+Two filed issues (`docs/development/issues/`): a top-level `for x in a..b` cannot use its own loop
+variable and nesting two SIGSEGVs; and compile time is QUADRATIC in the global count (20,000 globals
+~11 s, 70,000 over two minutes). Both predate 6.6.6.
 
----
+Everything else 6.6.6 turned up and deliberately did not pack, consolidated here rather than filed:
+
+- **Stdlib self-sufficiency** — 46 of 103 `lib/*.cyr` still compile alone with undefined fns, and 31 more
+  cannot be included alone at all. `stdlib_modules_self_sufficient.sh` ratchets it at 26. The sweep is a
+  232-consumer blast radius for `fmt.cyr` alone and risks duplicate-fn collisions, so it wants a slot.
+- **`O_DIRECTORY` / `O_NOFOLLOW` on PE** — a semantics decision, not a port:
+  `FILE_FLAG_OPEN_REPARSE_POINT` OPENS what `O_NOFOLLOW` REFUSES, and `lib/sigil.cyr`'s
+  `luks_write_keyfile` relies on the refusal. The user's call.
+- **22 arch-neutral raw syscall literals unrouted on DARWIN** — raw 228 (`clock_gettime`) in chrono,
+  bench, hashseed, mabda, patra, sakshi, tls_native_conn, plus 35, 79, 319.
+  `raw_syscall_literals_routed.sh` derives ROUTED from ESYSXLAT only; a Darwin axis would be red on 20
+  sites 6.6.6 did not cause.
+- **Shell gates are still orphaned by a SIGKILLed `check.sh`** — `_chk_gate` runs each as `sh "$g"` and a
+  POSIX shell cannot arm PDEATHSIG. Closing it needs a small guarded launcher binary in the check path.
+- **An enum constant past var index 1024 is not constant-folded** (`PARSE_ENUM_DEF`'s `vcnt < 1024`), so
+  it stays invisible to `CHKDUPVAL`'s enum probe. Correct, just unfolded.
+- **`[build].modules` is silently ignored unless the manifest also has a `[deps]` section**
+  (`_auto_deps()` returns before it scans for `[build]`).
+- **`_self_host_step_macos` leaks its staging copy on a failed `_copy_binary`** — one `sys_unlink(ccr);`.
+- **`cyrius run` prints its own vague `error: compile failed`** after cbt has already named the cause —
+  the second-verdict shape bite 24 fixed for `cyrius build`.
 
 ## The shape of v6.6.x
 
