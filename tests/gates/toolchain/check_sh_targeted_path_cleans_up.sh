@@ -171,6 +171,11 @@ FNR == 1 { hd = "" }
     c = line
     sub(/^[ \t]*#.*$/, "", c)
     if (c == "") next
+    # A `sh -c '...'` body is a CHILD shell: an exec there replaces the child, not this
+    # script, and skips no trap of ours. Two gates arm PDEATHSIG that way and were flagged
+    # as violations at the 6.6.6 lane merge. Track the single-quoted program and skip it.
+    if (inq) { if (gsub(/'/, "'", c) % 2 == 1) inq = 0; next }
+    if (c ~ /sh[ \t]+-c[ \t]*'/ && gsub(/'/, "'", c) % 2 == 1) { inq = 1; next }
     # `exec` in COMMAND position only: start of line, or after ; & | { or then/else/do.
     # Without this, prose containing the word ("the exec scanner") matches and the census
     # flags its own error messages — measured on this gate's first run.

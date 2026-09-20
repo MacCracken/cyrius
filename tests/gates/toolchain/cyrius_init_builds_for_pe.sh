@@ -138,8 +138,11 @@ check "…and does NOT stub sys_readlink (the hard error is the diagnostic)" 0 \
     "$(grep -c '^fn sys_readlink(' lib/syscalls_windows.cyr || true)"
 # The routable-number warning is what a consumer reads to decide whether a syscall is
 # safe on PE; a route missing from it is a diagnostic that lies.
-check "the routable-numbers warning names 0xF03A" 1 \
-    "$(grep -c '0xF03A (kernel32: GetModuleFileNameW)' src/frontend/parse_expr.cyr || true)"
+# v6.6.6 INTEGRATION: the other tooling lane minted 0xF03B (RemoveDirectoryW) in the same
+# release, so the warning names the pair as a range. Match GetModuleFileNameW wherever it
+# sits in that list rather than pinning one spelling of its neighbours.
+check "the routable-numbers warning names the GetModuleFileNameW reroute" 1 \
+    "$(grep -c '0xF03A[^ ]* (kernel32: GetModuleFileNameW' src/frontend/parse_expr.cyr || true)"
 
 # ── AXES 3+4: run the thing, from the SHIPPED layout. Not hardware — cass does that.
 if ! command -v wine > /dev/null 2>&1; then

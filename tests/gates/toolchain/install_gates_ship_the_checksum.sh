@@ -216,12 +216,16 @@ if grep -q '^scp ' "$D/calls.log"; then
 fi
 
 # ── axis 3 — the SWEEP: every scp of a release tarball in scripts/ carries its sidecar ─
-echo "axis 3: every scp site in scripts/ that stages a release tarball stages its sidecar"
+echo "axis 3: every scp site in scripts/ AND cbt/ that stages a release tarball stages its sidecar"
 SITES=0
 BAD=0
-for f in scripts/*.sh; do
+# v6.6.6 INTEGRATION: cbt/*.cyr is in the ENFORCED sweep now. It sat in a separate
+# ratchet (axis 3b) only because the two install pillars lived in another lane this
+# release; bite 26a fixed them, the ratchet went red the way it was built to, and the
+# two halves are one claim again. CHANGELOG [6.6.6]
+for f in scripts/*.sh cbt/*.cyr; do
     # Join backslash continuations so a multi-line scp is one record.
-    sed -e :a -e '/\\$/N; s/\\\n//; ta' "$f" | grep -E '(^|[;&|[:space:]])scp ' | while IFS= read -r line; do
+    sed -e 's/^[[:space:]]*#.*$//' -e :a -e '/\\$/N; s/\\\n//; ta' "$f" | grep -E '(^|[;&|"[:space:]])scp ' | while IFS= read -r line; do
         case "$line" in
             *.tar.gz*|*'${TB}'*|*'$TB'*) ;;
             *) continue ;;
@@ -234,47 +238,17 @@ for f in scripts/*.sh; do
 done > "$D/sweep.log"
 SITES=$(grep -c . "$D/sweep.log" || true)
 BAD=$(grep -c '^BAD ' "$D/sweep.log" || true)
-[ "$SITES" -ge 2 ] || _fail "the sweep found only $SITES scp-a-release-tarball site(s) (expected >= 2) — the scan is not seeing them"
+[ "$SITES" -ge 4 ] || _fail "the sweep found only $SITES scp-a-release-tarball site(s) (expected >= 4: 2 in scripts/, 2 cbt/ install pillars) — the scan is not seeing them"
 if [ "$BAD" != "0" ]; then
     _fail "$BAD of $SITES scp-a-release-tarball site(s) ship no sidecar:"
     grep '^BAD ' "$D/sweep.log" | sed 's/^/    /'
 else
-    echo "  $SITES scripts/ site(s), all shipping a$SUF sidecar"
-fi
-
-# ── axis 3b — the RATCHET over the two LIVE sites axis 3 does not enforce ─────────────
-# `cbt/commands.cyr`'s _cross_os_selfhost() inlines the ecb and ach install pillars as
-# shell strings, and both stage a macOS tarball with no sidecar — so `cyrius audit`'s
-# Intel-Mac pillar has never verified a hash. cbt/ is another lane's this release, so the
-# two are pinned here rather than fixed: a THIRD one reddens this, and so does FIXING them
-# (with the instruction to fold cbt into the sweep above and delete this block). A
-# carve-out that goes red when the defect is repaired cannot outlive it. CHANGELOG [6.6.6]
-echo "axis 3b: the cbt install pillars axis 3 does not cover have not multiplied"
-for f in cbt/*.cyr; do
-    sed -e 's/^[[:space:]]*#.*$//' "$f" | grep -nE '(^|[;&|"[:space:]])scp ' | while IFS= read -r line; do
-        case "$line" in *.tar.gz*) ;; *) continue ;; esac
-        case "$line" in
-            *"$SUF"*) echo "OK $f:${line%%:*}" ;;
-            *) echo "BAD $f:${line%%:*}" ;;
-        esac
-    done
-done > "$D/cbtsweep.log"
-CBT_SITES=$(grep -c . "$D/cbtsweep.log" || true)
-CBT_BAD=$(grep -c '^BAD ' "$D/cbtsweep.log" || true)
-if [ "$CBT_SITES" -lt 2 ]; then
-    _fail "the cbt scan found only $CBT_SITES tarball-staging site(s) (expected >= 2) — it is blind, so its verdict means nothing"
-elif [ "$CBT_BAD" = "0" ]; then
-    _fail "cbt's install pillars now ship their sidecars — DELETE axis 3b, fold cbt/*.cyr into axis 3's enforced sweep and raise its floor to $((SITES + CBT_SITES))"
-elif [ "$CBT_BAD" != "2" ]; then
-    _fail "cbt's uncovered tarball-staging sites moved 2 -> $CBT_BAD: either a new one was added (ship its sidecar) or one of the two was fixed (fix the other, then retire axis 3b):"
-    sed 's/^/    /' "$D/cbtsweep.log"
-else
-    echo "  known-open, NOT enforced: $CBT_BAD cbt/ site(s) stage a tarball with no$SUF (the ecb + ach install pillars)"
+    echo "  $SITES scripts/ + cbt/ site(s), all shipping a$SUF sidecar"
 fi
 
 echo ""
 if [ "$FAILS" = "0" ]; then
-    echo "PASS: install gates ship the checksum ($SITES scripts/ scp sites enforced, $CBT_BAD cbt site(s) known-open, builder sidecar verified)"
+    echo "PASS: install gates ship the checksum ($SITES scp sites enforced across scripts/ and cbt/, builder sidecar verified)"
     exit 0
 fi
 echo "FAILED: $FAILS assertion(s)"
