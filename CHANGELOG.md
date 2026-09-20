@@ -8,6 +8,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **The attribute gate claimed it covered cyrdoc and did not — and that claim was the reason
+  given for declining the coverage the filing asked for.** (bite 5f, review round.)
+  `tests/gates/frontend/lexer_attribute_word_boundary.sh` had C1/C3 for cyrlint and C2 for
+  cyrfmt, and **no cyrdoc axis at all**, while both its registration in
+  `programs/checks/main.cyr` and the archived filing's "Corrections" section stated it "covers
+  the compiler and all three mirror readers (cyrlint, cyrfmt, cyrdoc) in one place" — and that
+  sentence is what justified not adding the row to `tests/gates/toolchain/cyrlint_cross_line.sh`
+  where the acceptance asked for it. cyrdoc's only existing coverage tested `#inline fn`, not
+  the boundary. **Fix:** axes C4 and C5, using cyrdoc's OWN observable rather than cyrlint's —
+  `_doc_attr_len` decides whether a `#` line above a fn is DOCUMENTATION or an ATTRIBUTE, so a
+  comment misread as an attribute leaves the fn undocumented and `--check` exits 1. C4 scores
+  the word and paren comment forms against the SPACED twin so it cannot pass vacuously; C5 is
+  the over-correction guard (a real `#inline` must still leave the fn undocumented). Mutations
+  M11 (`_doc_attr_bound` → 1) and M12 (→ 0) are each RED on exactly one of them. Both claim
+  strings are corrected rather than deleted, because *a claim that a check exists is not the
+  check* is the lesson worth keeping. Gate 31 → **33 axes / 12 mutations**.
+
 - **`(` was accepted as a word boundary for all ten attributes, so `#io(fd) reads a byte` still
   did not compile.** (bite 5e, review round.) Bite 5a's boundary allowed whitespace, end of
   input **or `(`** at every site, on the reasoning that `(` is "the only byte that legitimately

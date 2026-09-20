@@ -58,6 +58,11 @@
 #   C2      cyrfmt --check agrees with the compiler about the same line
 #   C3      over-correction guard: cyrlint still reads `#naked fn f() {` as an
 #           attribute (the v6.6.5 defect this must not undo)
+#   C4      cyrdoc reads an attribute-prefixed comment as DOCUMENTATION — the
+#           third mirror, which this gate claimed to cover from the day it landed
+#           and did not; scored against the spaced twin so it cannot be vacuous
+#   C5      over-correction guard for cyrdoc: a real `#inline` is still an
+#           attribute, so the fn below it is still reported undocumented
 #   D1..D6  the SAME root cause in the preprocessor (review round): PP_IS_HOST_ONLY
 #           and the three ISDERIVE* probes in src/frontend/lex_pp.cyr, plus the
 #           fourth reader of `#derive` (programs/cyrius_api_surface.cyr). These
@@ -94,7 +99,9 @@
 #       → 2 FAIL: D2 (#host_only stops refusing), D5 (#derive stops generating)
 #   M9  `_api_derive_bound` in programs/cyrius_api_surface.cyr forced to 1
 #       → 1 FAIL: D6, listing four accessors for a comment
-#   real tree → 31/31 green
+#   M11 `_doc_attr_bound` in programs/cyrdoc.cyr forced to 1 → 1 FAIL: C4
+#   M12 `_doc_attr_bound` in programs/cyrdoc.cyr forced to 0 → 1 FAIL: C5
+#   real tree → 33/33 green
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
@@ -285,6 +292,43 @@ if build_tool cyrlint; then
     else
         printf '  FAIL: axis C3 — cyrlint lost the attribute reading: %s\n' \
             "$(printf '%s' "$out" | grep -m1 warning | cut -c1-90)"
+        fail=$((fail+1))
+    fi
+fi
+
+# C4/C5 — cyrdoc, the THIRD mirror reader. ⚠ This axis did not exist until the
+# review round, although this gate's registration in programs/checks/main.cyr and
+# the archived filing BOTH claimed it covered "all three mirror readers", and that
+# claim was the stated reason for not putting the coverage in cyrlint_cross_line.sh
+# where the filing's acceptance asked for it. cyrdoc's observable is different from
+# cyrlint's and cyrfmt's: `_doc_attr_len` decides whether a `#` line above a fn is
+# DOCUMENTATION (a comment) or an ATTRIBUTE, so an attribute-prefixed comment read
+# as an attribute leaves the fn undocumented and `--check` exits 1.
+if build_tool cyrdoc; then
+    printf '#ioctl notes here {\nfn dd(): i64 { return 1; }\n' > "$D/doc_c.cyr"
+    printf '#io(fd) reads a byte\nfn dd(): i64 { return 1; }\n' > "$D/doc_p.cyr"
+    printf '# ioctl notes here {\nfn dd(): i64 { return 1; }\n' > "$D/doc_t.cyr"
+    printf '#inline\nfn dd(): i64 { return 1; }\n' > "$D/doc_a.cyr"
+    rcd=0; "$D/cyrdoc" --check "$D/doc_t.cyr" >/dev/null 2>&1 || rcd=$?
+    rcc=0; "$D/cyrdoc" --check "$D/doc_c.cyr" >/dev/null 2>&1 || rcc=$?
+    rcp=0; "$D/cyrdoc" --check "$D/doc_p.cyr" >/dev/null 2>&1 || rcp=$?
+    if [ "$rcd" -ne 0 ]; then
+        printf '  FAIL: axis C4 — the SPACED twin is not documentation to cyrdoc either (rc=%s); the axis would be vacuous\n' "$rcd"
+        fail=$((fail+1))
+    elif [ "$rcc" -eq 0 ] && [ "$rcp" -eq 0 ]; then
+        printf '  ok: axis C4 — cyrdoc reads `#ioctl notes here {` and `#io(fd) ...` as documentation\n'
+        pass=$((pass+1))
+    else
+        printf '  FAIL: axis C4 — cyrdoc read an attribute-prefixed comment as an attribute (word form rc=%s, paren form rc=%s)\n' \
+            "$rcc" "$rcp"
+        fail=$((fail+1))
+    fi
+    rca=0; "$D/cyrdoc" --check "$D/doc_a.cyr" >/dev/null 2>&1 || rca=$?
+    if [ "$rca" -ne 0 ]; then
+        printf '  ok: axis C5 — cyrdoc still reads a real `#inline` as an attribute (fn stays undocumented)\n'
+        pass=$((pass+1))
+    else
+        printf '  FAIL: axis C5 — cyrdoc lost the attribute reading: `#inline` counted as the fn'"'"'s doc comment\n'
         fail=$((fail+1))
     fi
 fi

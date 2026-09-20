@@ -71,18 +71,25 @@ a gate proving each attribute still arms on all targets while the prefixed comme
 
 ## Corrections to this filing
 
-Two places where the filing was wrong or incomplete, recorded because the fix had to
-depart from it:
+Places where the filing — or the first cut of the fix — was wrong or incomplete,
+recorded because the fix had to depart from it. Items 0 and 2 are the review round's
+findings against bites 5a–5c and were fixed in bites 5e and 5f.
+
+0. **The boundary shipped in bite 5a was itself too wide, and the filed defect survived
+   in it.** `(` was accepted after all ten names, so `#io(fd) reads a byte` — a comment —
+   still failed with `unexpected '('`, together with `#naked(truth)`, `#pure(ly)`,
+   `#alloc(16)`, `#inline(always)`, `#must_use(result)` and `#regalloc(2)`. Corrected in
+   bite 5e: only `#deprecated(`, `#pe_import(` (syntax) and `#assert(` (rejected out loud
+   today, and a silent comment there would drop an assertion) end at a paren.
 
 1. **The proposed boundary would not have satisfied the filing's own acceptance.** "Fix
    direction" says *require a non-identifier byte (or end of input) after the attribute
    name*. `-` is not an identifier byte, so under that rule `#naked-eye check` — row 6 of
    the filing's own table, which the Acceptance section requires to COMPILE — would still
    arm `#naked` and still fail with `unexpected '-'`. The boundary shipped is an
-   ALLOWLIST: whitespace, end of input, or `(` (the only byte that legitimately follows
-   `#deprecated` / `#pe_import`). That is what makes every row of the table compile. It is
-   still strictly more permissive than the old prefix match, for the reason the filing
-   gives.
+   ALLOWLIST: whitespace or end of input, plus `(` at the three names that end at one
+   (see item 0). That is what makes every row of the table compile. It is still strictly
+   more permissive than the old prefix match, for the reason the filing gives.
 
 2. **The acceptance asked for the new coverage as a row in
    `tests/gates/toolchain/cyrlint_cross_line.sh`.** It landed instead as a dedicated gate,
@@ -91,6 +98,16 @@ depart from it:
    over-correction axis that cyrlint must still read `#naked fn f() {` as an attribute.
    Putting the compiler's boundary inside a cyrlint gate would have filed the lexer's
    coverage under the linter's name.
+
+   ⛔ **That paragraph was FALSE WHEN WRITTEN, and its falsehood was load-bearing.** The
+   gate had C1/C3 for cyrlint and C2 for cyrfmt and **no cyrdoc axis at all** — while
+   "it covers all three mirror readers in one place" was the reason given for declining
+   the placement the acceptance asked for. Fixed in bite 5f: axes C4 (cyrdoc reads
+   `#ioctl notes here {` and `#io(fd) …` as documentation, scored against the spaced twin
+   so it cannot be vacuous) and C5 (a real `#inline` is still an attribute), with
+   mutations M11/M12 each RED. The lesson is the release's own: *a claim that a check
+   exists is not the check*, and a claim used to justify declining coverage has to be
+   verified before it is made.
 
 Also worth recording: the filing lists `#deprecated` as checked before `#must_use` "so
 `#deprecated` doesn't trigger the lexer prefix check for `#must_use`". That ordering was
@@ -101,4 +118,6 @@ reach another's, so ordering is now purely cosmetic.
 and each produces a binary BYTE-IDENTICAL to the same program written with a space after
 the `#`. Self-host fixpoint + `seed-derive-cycc.sh` green; 0 of 330 pre-existing `.tcyr`
 binaries changed a byte. Gate: `tests/gates/frontend/lexer_attribute_word_boundary.sh`
-(22 axes, 6 mutations each RED). Cross-host: `tests/tcyr/crossos/attribute_word_boundary.tcyr`.
+(**33 axes, 12 mutations** each RED after bites 5d–5f; 22 axes / 6 mutations as first shipped).
+Cross-host: `tests/tcyr/crossos/attribute_word_boundary.tcyr`, which also carries the three
+`name(` comment shapes and the `#derive(...)x` shapes added in the review round.
