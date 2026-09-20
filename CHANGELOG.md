@@ -8,6 +8,31 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **A `var` declared inside a TOP-LEVEL BLOCK leaked out of the block — and an inner
+  declaration of an outer name OVERWROTE the outer global.** (bite 19a; the maintainer's
+  language decision of 2026-09-19.) `var c = 1; var x = 0; x = 1; if (c == 1) { var t = 5; }
+  syscall(60, t);` compiled and exited **5**, while the identical shape inside a `fn` is
+  `undefined variable 't'` — one spelling, two scoping rules. Worse than visibility: with the
+  6.6.6 one-global-per-name fold, `var a = 1; ... if (g == 1) { var a = 2; }` made the outer
+  `a` read **2** after the block (x86; cx and aarch64 already read 1, so the fixpoint, the cx
+  leg and the aarch64 leg could all be green over it). **Root cause:** `PARSE_VAR`'s
+  `GINFN == 0` arm registers a GLOBAL, and the global var table has no scope mechanism at all —
+  `SCOPE_POP` (`src/common/util.cyr`) cleared only the FRAME-LOCAL table. **Fix:** `_gvs_push` /
+  `_gvs_pop` (`src/common/util.cyr`), a per-depth mark of `GVCNT` taken at `SCOPE_PUSH`; at
+  `SCOPE_POP` every global registered since the mark is marked dead, so `FINDVAR` stops seeing
+  it. No new heap region and no `brk` change — the mark stack is `alloc`'d and the dead flag is
+  the existing `_var_dead` byte, given the distinct value **2** so the diagnostic can tell "left
+  its block" from "compiler temporary". A later read, write or `&addr` now errors, names the
+  variable and says where to declare it instead (`_gv_note_blockscoped`,
+  `src/frontend/parse_types.cyr`, wired into all three resolver paths). A survey of **12,604**
+  `.cyr`/`.tcyr`/`.bcyr`/`.fcyr` sources across `~/Repos` (vendored `lib/` excluded) found **no**
+  file that reads a top-level block `var` after its block, so no consumer needs to change.
+  Gates: `tests/gates/frontend/toplevel_block_var_scope.sh` (12 host rows + 3 cx + 3
+  aarch64-under-qemu, five mutants, each row checked against a no-block CONTROL program) and
+  `tests/tcyr/crossos/toplevel_block_var_scope.tcyr` (RED on the 6.6.5 compiler: 2 where 1 is
+  correct). Guide: *Global Initializers -> A top-level block scopes its `var`s*. cycc
+  **1,315,040 -> 1,315,280 B** (+240).
+
 - **A macro invocation opened inside a `#` COMMENT silently DELETED the code after it — and the
   argument for leaving comments alone, written into six places earlier in this same release, was
   wrong.** (bite 15d.) With `#define M(a) 0` in scope, the comment `# TODO: fix M(` expanded

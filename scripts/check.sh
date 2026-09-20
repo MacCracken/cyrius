@@ -245,6 +245,14 @@ sh "$ROOT/tests/gates/frontend/global_redeclaration_one_definition.sh"
 # the pass-2 skip is copied into every `src/main*.cyr`.
 sh "$ROOT/tests/gates/frontend/toplevel_decl_block_closure.sh"
 
+# 6.6.6 bite 19a: a `var` declared inside a TOP-LEVEL block is scoped to that block, like one
+# in a fn body. It used to register a GLOBAL — and the global var table had no scope mechanism
+# at all — so `if (c == 1) { var t = 5; } syscall(60, t);` compiled and exited 5 while the same
+# shape inside a fn is `undefined variable 't'`. One spelling, two scoping rules. Rows are
+# checked against no-block CONTROL programs; the refusal rows assert the error names the
+# variable, the note says where to declare it, and no binary is emitted.
+sh "$ROOT/tests/gates/frontend/toplevel_block_var_scope.sh"
+
 # 6.6.5: the `return f(args);` tail path must divert to PARSE_FNCALL for exactly the
 # arguments PARSE_FNCALL treats specially — no more. The `: Str` literal divert added here
 # was armed by a literal at ANY paren depth, so `return deep(n-1, str_from("x"))` lost its

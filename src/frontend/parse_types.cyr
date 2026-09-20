@@ -815,6 +815,32 @@ fn _fv_hidden(vi): i64 {
     return 1;
 }
 
+# 6.6.6 bite 19a — the follow-up to a FINDVAR miss: was this name a `var` declared inside a
+# TOP-LEVEL BLOCK, which now leaves scope with its block (see _gvs_push, util.cyr)? Such a
+# slot is marked dead with 2 (1 is a compiler temporary / a fn-local static), so a miss can
+# say WHICH variable and WHERE to put it instead of the bare "missing include or enum?".
+# Printed as a `note:` after the error so the error text every gate greps stays unchanged.
+# CHANGELOG [6.6.6]
+fn _gv_blockscoped(S, noff): i64 {
+    var vi = GVCNT(S) - 1;
+    while (vi >= 0) {
+        if (GVDEAD(S, vi) == 2) {
+            if (STREQ(S, L64(_varn_base + vi * 8), noff) == 1) { return 1; }
+        }
+        vi = vi - 1;
+    }
+    return 0;
+}
+fn _gv_note_blockscoped(S, noff): i64 {
+    if (_gv_blockscoped(S, noff) == 0) { return 0; }
+    syscall(SYS_WRITE, 2, "note: '", 7);
+    PRSTR(S + 0xEC00000 + noff);
+    syscall(SYS_WRITE, 2, "' was declared inside a top-level block and goes out of scope at its '}'\n", 73);
+    syscall(SYS_WRITE, 2, "      (since 6.6.6 a top-level block scopes its `var`s like a fn body does)\n", 76);
+    syscall(SYS_WRITE, 2, "      declare it at top level, before the block, to use it after the block\n", 75);
+    return 0;
+}
+
 # Find variable by name offset, return LAST match index or -1.
 # Last-match semantics ensure each function's `var buf[N]` shadows earlier ones.
 fn FINDVAR(S, noff): i64 {

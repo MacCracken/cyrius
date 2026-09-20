@@ -1,0 +1,65 @@
+# toplevel_block_var_scope.tcyr — a `var` declared inside a TOP-LEVEL block is scoped to
+# that block, exactly like one inside a fn body (6.6.6 bite 19a, the user's decision).
+#
+# WHY A CROSS-HOST TEST. Scoping is decided in the shared front end, but the *consequence*
+# tested here is which STORAGE SLOT the block's `var` writes: before 19a a top-level block
+# `var` registered a GLOBAL with no scope mechanism at all, so a same-named inner `var`
+# redeclared — and therefore OVERWROTE — the outer one (measured 2 where 1 is correct).
+# The slot a store lands in is per-target codegen, so this runs on ecb/ach/cass/pi too.
+#
+# RED on the pre-6.6.6 compiler: `tbs_outer` reads 2 after the block instead of 1.
+# CHANGELOG [6.6.6]
+include "lib/assert.cyr"
+
+var tbs_outer = 1;
+var tbs_sum = 0;
+var tbs_inner_seen = 0;
+var tbs_go = 0;
+
+# `tbs_go = 1;` is a statement, so everything below it is parsed by pass 2 — which is
+# where a top-level block's `var` is registered, and the arm 19a fixed.
+tbs_go = 1;
+
+if (tbs_go == 1) {
+    var tbs_outer = 2;          # a NEW variable that lives only until this block's `}`
+    tbs_inner_seen = tbs_outer; # ...and IS visible, by its own name, inside the block
+}
+
+# The outer global is untouched. Computed a different way than the assertion reads it:
+# tbs_sum accumulates, so a leak would show up as 2 in BOTH checks, not just one.
+tbs_sum = tbs_sum + tbs_outer;
+
+var r1 = assert_eq(tbs_outer, 1, "top-level block `var` does not overwrite the outer global");
+var r2 = assert_eq(tbs_inner_seen, 2, "a top-level block `var` is visible inside its own block");
+var r3 = assert_eq(tbs_sum, 1, "the outer global still reads 1 after the block closes");
+
+# Nested top-level blocks: the inner block's `var` is visible to it and to nothing outside.
+var tbs_nest = 0;
+if (tbs_go == 1) {
+    var tbs_a = 3;
+    if (tbs_a == 3) {
+        var tbs_b = 4;
+        tbs_nest = tbs_a + tbs_b;
+    }
+}
+var r4 = assert_eq(tbs_nest, 7, "nested top-level blocks see their own and the enclosing block's vars");
+
+# A C-style top-level `for` scopes its induction variable the same way: two loops may each
+# declare `tbs_i` without the second inheriting the first's final value.
+var tbs_loops = 0;
+for (var tbs_i = 0; tbs_i < 3; tbs_i = tbs_i + 1) { tbs_loops = tbs_loops + tbs_i; }
+for (var tbs_i = 0; tbs_i < 2; tbs_i = tbs_i + 1) { tbs_loops = tbs_loops + 10; }
+var r5 = assert_eq(tbs_loops, 23, "each top-level `for` scopes its own induction variable");
+
+# A top-level `while` block, and a global assigned (not declared) inside one — assignment
+# to an OUTER global from inside a block is unaffected by the new scoping.
+var tbs_w = 0;
+var tbs_n = 0;
+while (tbs_n < 4) {
+    var tbs_step = 2;
+    tbs_w = tbs_w + tbs_step;
+    tbs_n = tbs_n + 1;
+}
+var r6 = assert_eq(tbs_w, 8, "a top-level `while` block var is re-declared each iteration and the outer global still takes the writes");
+
+var r = assert_summary();

@@ -1112,11 +1112,56 @@ fn SMOD(S, v): i64 { S64(S + 0x18FEC8, v); return 0; }
 fn GUSEC(S): i64 { return L64(S + 0x1903D0); }
 fn SUSEC(S, v): i64 { S64(S + 0x1903D0, v); return 0; }
 
-fn SCOPE_PUSH(S): i64 { SSDEP(S, GSDEP(S) + 1); return 0; }
+# ── Top-level block scope for `var` (6.6.6 bite 19a) ─────────────────
+# A `var` declared inside a TOP-LEVEL block (`if (c) { var t = 5; }` outside any fn) went
+# through PARSE_VAR's GINFN==0 arm and registered a GLOBAL, and the global table had no
+# scope mechanism at all — so the name stayed visible after the block closed and
+# `syscall(60, t);` below it compiled and exited 5, while the same shape inside a fn is
+# `undefined variable 't'`. Two scoping rules for one spelling is a language defect, and
+# the user chose the fn rule for both: a top-level block's vars now leave scope with it.
+#
+# The slot is NOT reclaimed (GVCNT never shrinks — its storage is addressable for the life
+# of the program and the block's own code already stores into it); only the NAME goes away,
+# which is what `_var_dead` already expresses for compiler temporaries and fn-local statics.
+# The mark is 2 rather than 1 so the diagnostic can tell "out of scope" from "internal" and
+# name the variable — see _gv_blockscoped in parse_types.cyr.
+#
+# The marks are kept per scope DEPTH, and a depth whose push happened inside a fn stores -1
+# so its pop does nothing: push/pop are balanced by depth, so the value a pop reads is always
+# the one its own push wrote, and a fn body's blocks can never mark a global.
+# CHANGELOG [6.6.6]
+var _gvs_mark = 0;
+fn _gvs_push(S): i64 {
+    if (_gvs_mark == 0) { _gvs_mark = alloc(1024 * 8); }
+    var d = GSDEP(S);
+    if (d < 0) { return 0; }
+    if (d >= 1024) { return 0; }
+    var m = 0 - 1;
+    if (GINFN(S) != 1) { m = GVCNT(S); }
+    S64(_gvs_mark + d * 8, m);
+    return 0;
+}
+fn _gvs_pop(S, dep): i64 {
+    if (_gvs_mark == 0) { return 0; }
+    if (dep < 0) { return 0; }
+    if (dep >= 1024) { return 0; }
+    var lo = L64(_gvs_mark + dep * 8);
+    S64(_gvs_mark + dep * 8, 0 - 1);
+    if (lo < 0) { return 0; }
+    var hi = GVCNT(S);
+    while (lo < hi) {
+        if (GVDEAD(S, lo) == 0) { SVDEAD(S, lo, 2); }
+        lo = lo + 1;
+    }
+    return 0;
+}
+
+fn SCOPE_PUSH(S): i64 { SSDEP(S, GSDEP(S) + 1); _gvs_push(S); return 0; }
 fn SCOPE_POP(S): i64 {
     # Mark out-of-scope locals as invisible by clearing their names.
     # Do NOT change GFLC — stack slots are permanent for the function frame.
     var dep = GSDEP(S);
+    _gvs_pop(S, dep);   # 6.6.6: a TOP-LEVEL block's `var`s leave scope here too (see _gvs_push)
     _fs_pop(S, dep);   # 6.6.5: fn-local STATIC arrays leave scope here too (see _fs_push)
     var lc = GFLC(S);
     var si = lc - 1;

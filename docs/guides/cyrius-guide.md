@@ -2159,6 +2159,57 @@ earlier one.
 declaration's value landed in the slot nothing read: `var a = 5; var b = a; var a = 5;`
 set `b` to **0**, silently, and with `var a = 7` it was still 0 under the warning above.
 
+### A top-level block scopes its `var`s (6.6.6)
+
+A `var` declared inside a **top-level block** — the body of an `if` / `elif` / `else` /
+`while` / `for` / `switch` written outside every function — belongs to that block and is
+gone at its `}`, exactly like a `var` in a function body:
+
+```
+var limit = 1;
+var go = 0;
+go = 1;
+
+if (go == 1) {
+    var limit = 2;      # a NEW variable, scoped to this block
+    var t = 5;          # ...and so is this one
+}                       # both end here
+
+# syscall(60, t);       # error: undefined variable 't'
+syscall(60, limit);     # 1 — the outer global was never touched
+```
+
+Assigning to an **outer** global from inside a block is unchanged; only *declarations*
+are scoped. To use a value after the block, declare it above the block and assign inside:
+
+```
+var t = 0;
+if (go == 1) { t = 5; }   # assignment, not a declaration
+syscall(60, t);           # 5
+```
+
+Reading, writing or taking the address of a block-scoped name after its block is a
+compile error that names the variable and says where to declare it instead:
+
+```
+error:<source>:5:14: undefined variable 't' (missing include or enum?)
+    syscall(60, t);
+                 ^
+note: 't' was declared inside a top-level block and goes out of scope at its '}'
+      (since 6.6.6 a top-level block scopes its `var`s like a fn body does)
+      declare it at top level, before the block, to use it after the block
+```
+
+⚠ **This is a deliberate language change, made by the maintainer on 2026-09-19.** Before
+6.6.6 a top-level block's `var` registered a *global*: the name stayed visible after the
+block, and an inner declaration of an outer name **overwrote the outer global** (measured
+2 where 1 is correct in the example above). One spelling had two scoping rules depending
+on whether it sat inside a `fn`. The compile error above is the intended, loud outcome for
+code that relied on the leak — a survey of ~12,600 `.cyr` sources across the ecosystem at
+the time of the change found no file that did. Pinned by
+`tests/tcyr/crossos/toplevel_block_var_scope.tcyr` and
+`tests/gates/frontend/toplevel_block_var_scope.sh`.
+
 ## String Standard Library
 
 ```

@@ -2572,6 +2572,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
                 PRSTR(S + 0xEC00000 + noff);
                 syscall(SYS_WRITE, 2, "'\n", 2);
                 _err_excerpt(S);   # v6.5.39: excerpt+caret, like every syntax error
+                _gv_note_blockscoped(S, noff);   # 6.6.6: see there
                 _had_error = 1; if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0;
             }
             var vt = GVTYPE(S, idx);
