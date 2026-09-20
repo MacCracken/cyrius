@@ -2873,6 +2873,8 @@ fn EREMOVEDIRW_PE(S): i64 {
 #                O_TRUNC alone   → TRUNCATE_EXISTING (5)
 #                O_CREAT alone   → OPEN_ALWAYS (4)
 #                neither         → OPEN_EXISTING (3)
+#   then TRUNCATE_EXISTING forces GENERIC_WRITE into the access word (see the note at
+#        the bottom of this fn) — Win32 refuses that disposition without it.
 # CHANGELOG [6.6.6]
 fn _pe_open_flags(S): i64 {
     EB(S, 0x58);                                        # pop rax (mode, no Win32 equivalent)
@@ -2913,6 +2915,21 @@ fn _pe_open_flags(S): i64 {
     EB(S, 0x81); EB(S, 0xF9); EB(S, 0xC0); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); # cmp ecx, 0xC0
     EB(S, 0x75); EB(S, 0x05);                           # jne +5 (skip the override)
     EB(S, 0xB8); EB(S, 0x01); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); # mov eax, 1 (CREATE_NEW)
+    # ⚠ TRUNCATE_EXISTING is the ONE disposition Win32 refuses without GENERIC_WRITE in
+    # dwDesiredAccess — CreateFileW fails ERROR_INVALID_PARAMETER (87), it does not
+    # silently open read-only. MEASURED on real cass (Win 10.0.26200) with a CreateFileW
+    # P/Invoke matrix: disp=5 with GENERIC_READ, with GENERIC_READ|FILE_WRITE_DATA and
+    # with GENERIC_READ|FILE_APPEND_DATA all fail 87; GENERIC_WRITE succeeds. (Every other
+    # disposition is happy with any access: CREATE_ALWAYS truncates to 0 B under
+    # GENERIC_READ alone, CREATE_NEW and OPEN_ALWAYS create under it.) So the access word
+    # has to satisfy what the disposition is being asked to DO. Without this, the 6.6.6
+    # decode traded one Windows divergence for another: `open(p, O_RDONLY|O_TRUNC)` and
+    # `open(p, O_WRONLY|O_TRUNC|O_APPEND)` truncate on Linux and returned -1 on Windows.
+    # ⚠ wine ACCEPTS all three refused forms, so this is invisible under wine and pinned
+    # only by the cass leg + the emitter-shape axis of the gate. CHANGELOG [6.6.6]
+    EB(S, 0x83); EB(S, 0xF8); EB(S, 0x05);              # cmp eax, 5 (TRUNCATE_EXISTING?)
+    EB(S, 0x75); EB(S, 0x07);                           # jne +7 (other dispositions need nothing)
+    EB(S, 0x41); EB(S, 0x81); EB(S, 0xC9); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); EB(S, 0x40); # or r9d, GENERIC_WRITE
     EB(S, 0x41); EB(S, 0x89); EB(S, 0xC2);              # mov r10d, eax
     return 0;
 }

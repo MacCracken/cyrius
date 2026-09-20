@@ -23,6 +23,14 @@
 # on Linux with EBADF. They are the only rows that can tell a decoded access mode from a
 # generous constant.
 #
+# ⚠ AND THE ROWS THAT ONLY REAL WINDOWS CAN FAIL are the two TRUNCATE_EXISTING ones
+# ("O_TRUNC truncates even when the caller did not ask for write access" and its O_APPEND
+# sibling). Win32 ties the two CreateFileW words together — TRUNCATE_EXISTING is REFUSED
+# (ERROR_INVALID_PARAMETER) unless dwDesiredAccess carries GENERIC_WRITE — and wine does
+# not enforce that, so the first cut of this fix decoded each word independently, passed
+# every local axis, and returned -1 on cass where Linux truncates. A translation table is
+# not a per-field mapping; the fields constrain each other.
+#
 # CWD-relative paths + xunlink, like atomic_write.tcyr: the cross-OS runner's CWD on cass is
 # C:\cyrius-tests and there is no /tmp there. Everything this creates is removed at the end.
 include "lib/alloc.cyr"
@@ -102,6 +110,34 @@ file_close(fs2);
 assert_eq(fsize(ps), 19, "the write landed at EOF despite the seek (19 = 17 + 2)");
 assert_eq(streq(slurp(ps), "0123456789abcdef\nQQ"), 1, "seed untouched at offset 0");
 
+test_group("⭐ O_TRUNC truncates even when the caller did not ask for write access");
+# ⚠ THIS ROW IS RED ONLY ON HARDWARE. TRUNCATE_EXISTING is the one disposition Win32
+# refuses unless dwDesiredAccess carries GENERIC_WRITE — CreateFileW returns
+# ERROR_INVALID_PARAMETER (87), measured on real cass with a P/Invoke matrix
+# (GENERIC_READ, GENERIC_READ|FILE_WRITE_DATA and GENERIC_READ|FILE_APPEND_DATA all
+# refused; GENERIC_WRITE accepted). wine ACCEPTS all three, so the first cut of the 6.6.6
+# decode — which chose the disposition without consulting the access word — passed every
+# local axis and returned -1 on Windows where Linux truncates. `_pe_open_flags` now forces
+# GENERIC_WRITE in when it selects TRUNCATE_EXISTING.
+var pro = "cyr_open_rdonly_trunc.txt";
+seed_file(pro);
+var fro = file_open(pro, O_RDONLY | O_TRUNC, 420);
+assert_neq(fro, 0 - 1, "O_RDONLY|O_TRUNC opens");
+file_close(fro);
+assert_eq(fsize(pro), 0, "and the file is 0 bytes (the truncation happened)");
+
+test_group("O_TRUNC|O_APPEND without O_CREAT — the same TRUNCATE_EXISTING access rule");
+# The append access bit (FILE_APPEND_DATA) is not GENERIC_WRITE either, so this combination
+# hit the identical -1 on cass before the access word was forced.
+var pta = "cyr_open_trunc_append.txt";
+seed_file(pta);
+var fta = file_open(pta, O_WRONLY | O_TRUNC | O_APPEND, 420);
+assert_neq(fta, 0 - 1, "O_WRONLY|O_TRUNC|O_APPEND opens");
+file_write(fta, "XYZ", 3);
+file_close(fta);
+assert_eq(fsize(pta), 3, "truncated first, then the write landed at the new EOF");
+assert_eq(streq(slurp(pta), "XYZ"), 1, "no old tail survived");
+
 test_group("O_TRUNC without O_CREAT refuses a missing file (TRUNCATE_EXISTING)");
 var pm = "cyr_open_missing.txt";
 xunlink(pm);
@@ -147,6 +183,8 @@ assert_eq(file_write(frw, "!", 1), 1, "an O_RDWR handle writes");
 file_close(frw);
 assert_eq(fsize(prw), 18, "the O_RDWR write landed after the read cursor");
 
+xunlink(pro);
+xunlink(pta);
 xunlink(pt);
 xunlink(pn);
 xunlink(pa);

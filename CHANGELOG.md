@@ -262,19 +262,37 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the race with any later seek or second writer); disposition `O_CREAT|O_EXCL` → `CREATE_NEW`
   (the v6.4.58 exclusive-create behaviour, unchanged), `O_CREAT|O_TRUNC` → `CREATE_ALWAYS`,
   `O_TRUNC` alone → `TRUNCATE_EXISTING`, `O_CREAT` alone → `OPEN_ALWAYS`, else `OPEN_EXISTING`.
-  Split into its own emit fn so `EOPEN_PE` does not grow past what cybs compiles. ⚠ The comment
+  Split into its own emit fn so `EOPEN_PE` does not grow past what cybs compiles.
+  ⭐ **The two CreateFileW words are NOT independent, which the first cut of this fix assumed
+  and real Windows refuses.** `TRUNCATE_EXISTING` fails `ERROR_INVALID_PARAMETER` unless
+  `dwDesiredAccess` carries `GENERIC_WRITE` — measured on cass with a `CreateFileW` P/Invoke
+  matrix: `GENERIC_READ`, `GENERIC_READ|FILE_WRITE_DATA` and `GENERIC_READ|FILE_APPEND_DATA`
+  are all refused, while every other disposition is happy with any access (`CREATE_ALWAYS`
+  truncates to 0 B under `GENERIC_READ` alone). So `open(p, O_RDONLY|O_TRUNC)` and
+  `open(p, O_WRONLY|O_TRUNC|O_APPEND)`, which truncate on Linux, returned **-1** on Windows —
+  the decode had traded one divergence for another. `_pe_open_flags` now forces
+  `GENERIC_WRITE` in when it selects that disposition. ⚠ **wine accepts all three refused
+  forms**, so the local behaviour axis passed that first cut 30/30 while real cass ran 25/30:
+  a concrete instance of "a green wine run is not hardware verification", and the reason the
+  gate's emitter-shape axis carries the `or $0x40000000,%r9d` count as the only local guard on
+  that half. Residual, documented in `lib/syscalls_windows.cyr` and the guide: a Windows
+  handle from `O_RDONLY|O_TRUNC` can also be written (Linux: `EBADF`), and `O_TRUNC|O_APPEND`
+  *without* `O_CREAT` writes at the file pointer rather than at EOF. ⚠ The comment
   in `lib/syscalls_windows.cyr` had recorded this as a cosmetic gap ("`O_TRUNC` and the access
   mode are not decoded") next to `O_DIRECTORY`/`O_NOFOLLOW`; it was not cosmetic, and that note
   is corrected. `O_DIRECTORY`/`O_NOFOLLOW` stay ignored **deliberately** — their Win32
   near-equivalents do not mean what POSIX means (`FILE_FLAG_OPEN_REPARSE_POINT` *opens* a
   symlink where `O_NOFOLLOW` *refuses*, and `lib/sigil.cyr`'s keyfile path depends on the
   refusal), so mapping them is a semantics decision, not a port.
-  Coverage: `tests/tcyr/crossos/open_flag_translation.tcyr` (25 content-asserted rows,
-  **25/25 on real cass**, 16/9 red there on the 6.6.5 compiler) + gate
-  `tests/gates/platform/pe_open_flag_translation.sh` (POSIX oracle on the Linux kernel /
-  emitter shape via objdump / wine behaviour; three mutants built and run, ledger in the
-  header — including one the shape axis deliberately does NOT catch). cycc **1,315,040 B
-  (unchanged)**; 0 of 331 `.tcyr` binaries changed exit code against 6.6.5.
+  Coverage: `tests/tcyr/crossos/open_flag_translation.tcyr` (**30** content-asserted rows,
+  **30/30 on real cass**, 12 red there on the 6.6.5 compiler and 5 red on this bite's first
+  cut) + gate `tests/gates/platform/pe_open_flag_translation.sh` (POSIX oracle on the Linux
+  kernel / emitter shape via objdump / wine behaviour; **four** mutants built and run, ledger
+  in the header — including one the shape axis deliberately does NOT catch and one **wine**
+  does not catch). cycc **1,315,040 B (unchanged)**; 0 of 331 `.tcyr` binaries changed exit
+  code against 6.6.5. ⚠ This bite's rebuilt `build/cycc` was left **uncommitted** by its first
+  cut — the tracked compiler, which CI and `install.sh` bootstrap from, did not contain the
+  fix; it is committed with the review round.
 
 - **A macro name matched in the MIDDLE of an identifier, and inside a STRING LITERAL — two more
   unbounded name matches in the preprocessor, both silent.** (bite 15b.) `PP_MACRO_PASS` decided

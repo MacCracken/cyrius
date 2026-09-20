@@ -2704,6 +2704,15 @@ overwrote from offset 0):
 | `O_CREAT` alone | `OPEN_ALWAYS` |
 | neither | `OPEN_EXISTING` |
 
+The two words are not independent: Win32 **refuses** `TRUNCATE_EXISTING` unless
+`dwDesiredAccess` carries `GENERIC_WRITE` (`ERROR_INVALID_PARAMETER` — `FILE_WRITE_DATA`
+and `FILE_APPEND_DATA` do *not* satisfy it), so the translation adds that bit whenever it
+selects that disposition. Two residual divergences follow, both harmless in practice but
+worth knowing: on Windows a handle from `O_RDONLY|O_TRUNC` can also be written (Linux
+gives `EBADF`), and `O_TRUNC|O_APPEND` *without* `O_CREAT` writes at the file pointer
+rather than at EOF (with `O_CREAT` the disposition is `CREATE_ALWAYS`, which needs no
+extra access, so the real append survives).
+
 `O_DIRECTORY` and `O_NOFOLLOW` are still ignored on Windows, deliberately: the
 near-equivalent Win32 flags do not mean what POSIX means (`FILE_FLAG_OPEN_REPARSE_POINT`
 *opens* a symlink where `O_NOFOLLOW` *refuses*). Use `is_dir` / `dir_list` rather than

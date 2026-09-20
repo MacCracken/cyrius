@@ -104,6 +104,20 @@ enum OFlags {
     # src/backend/x86/emit.cyr); pinned by tests/tcyr/crossos/open_flag_translation.tcyr
     # on real cass. CHANGELOG [6.6.6]
     #
+    # ⚠ TWO RESIDUAL DIVERGENCES, both from ONE Win32 rule: TRUNCATE_EXISTING is REFUSED
+    # (ERROR_INVALID_PARAMETER) unless dwDesiredAccess carries GENERIC_WRITE — measured on
+    # real cass; FILE_WRITE_DATA and FILE_APPEND_DATA do NOT satisfy it, and wine does not
+    # enforce the rule at all. `_pe_open_flags` therefore adds GENERIC_WRITE whenever it
+    # selects that disposition, which buys the POSIX-visible behaviour (the file IS
+    # truncated) at the cost of:
+    #   · `open(p, O_RDONLY|O_TRUNC)` — the Windows handle can also be written; Linux
+    #     returns EBADF for a write on it. No caller in the ecosystem passes that pair.
+    #   · `open(p, O_TRUNC|O_APPEND)` WITHOUT O_CREAT — the handle carries GENERIC_WRITE
+    #     beside FILE_APPEND_DATA, so NT writes at the file pointer rather than at EOF. The
+    #     file has just been truncated, so a single writer sees no difference; a concurrent
+    #     appender would. (With O_CREAT the disposition is CREATE_ALWAYS, which needs no
+    #     extra access, so the real append survives there.)
+    #
     # ⚠ STILL NOT HONOURED, and deliberately so — these two are dwFlagsAndAttributes bits
     # whose Win32 near-equivalents do NOT mean what POSIX means, so mapping them is a
     # semantic decision, not a port: FILE_FLAG_OPEN_REPARSE_POINT opens the symlink
