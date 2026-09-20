@@ -295,7 +295,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   decision left open, not a silent gap.
   Coverage: `tests/tcyr/crossos/open_flag_translation.tcyr` (**30** content-asserted rows,
   **30/30 on real cass**, 12 red there on the 6.6.5 compiler and 5 red on this bite's first
-  cut) + gate `tests/gates/platform/pe_open_flag_translation.sh` (POSIX oracle on the Linux
+  cut — and 30/30 on **all four** cross-OS gate hosts, ecb / ach / pi included, since that
+  directory is what the cross-OS leg runs and a Linux-only row would have failed there) + gate `tests/gates/platform/pe_open_flag_translation.sh` (POSIX oracle on the Linux
   kernel / emitter shape via objdump / wine behaviour; **four** mutants built and run, ledger
   in the header — including one the shape axis deliberately does NOT catch and one **wine**
   does not catch). cycc **1,315,040 B (unchanged)**; 0 of 331 `.tcyr` binaries changed exit

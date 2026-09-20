@@ -31,6 +31,12 @@
 # every local axis, and returned -1 on cass where Linux truncates. A translation table is
 # not a per-field mapping; the fields constrain each other.
 #
+# Measured green on every release-gate host with the 30 rows below: real cass (Windows/PE),
+# ecb (macOS arm64), ach (Intel Mac), pi (aarch64 Linux) and x86_64 Linux. Darwin truncates
+# on O_RDONLY|O_TRUNC exactly as Linux does, so the two TRUNCATE_EXISTING rows are POSIX
+# rows everywhere and a Win32 divergence in one place — that is what makes them a fair
+# cross-host gate rather than a Linux-ism.
+#
 # CWD-relative paths + xunlink, like atomic_write.tcyr: the cross-OS runner's CWD on cass is
 # C:\cyrius-tests and there is no /tmp there. Everything this creates is removed at the end.
 include "lib/alloc.cyr"
