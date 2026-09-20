@@ -2784,7 +2784,7 @@ fn EDELETEFILEW_PE(S): i64 {
     return 0;
 }
 
-# v6.6.6: RemoveDirectoryW(lpPathName) — `syscall(0xF03A, path)`, the reroute behind
+# v6.6.6: RemoveDirectoryW(lpPathName) — `syscall(0xF03B, path)`, the reroute behind
 # lib/io.cyr's `xrmdir` on PE. EDELETEFILEW_PE above with a different kernel32 import:
 # same 1-argument shape ([path] [sc_nr] on entry), same inline UTF-8 -> UTF-16LE widener
 # into a 528-byte frame buffer, same BOOL -> 0/-1 dec+sar, same rbx-anchored

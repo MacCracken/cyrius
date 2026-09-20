@@ -521,7 +521,7 @@ fn _pe_ensure_deletef(S): i64 {
 }
 fn _pe_deletef_get(): i64 { return _pe_deletef_idx; }
 
-# v6.6.6: RemoveDirectoryW auto-import for the `syscall(0xF03A, path)` reroute
+# v6.6.6: RemoveDirectoryW auto-import for the `syscall(0xF03B, path)` reroute
 # (lib/io.cyr's xrmdir). It is the last piece of the CLI's private temp directory
 # cleanup: `_cbt_tmpdir()` creates `<TEMP>/cyrius-<pid>-t<nonce>` on every run and
 # `xrmdir` degraded to -1 on PE with no reroute wired, so Windows leaked one empty

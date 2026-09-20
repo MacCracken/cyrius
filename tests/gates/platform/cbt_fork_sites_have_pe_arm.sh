@@ -448,7 +448,7 @@ else
     # through `xrmdir`, which on PE degraded to -1 with no reroute wired — so Windows kept
     # leaking one empty directory per invocation after POSIX stopped. Measured under wine
     # against this tree's parent: the same five verbs leave 2 directories before the
-    # 0xF03A RemoveDirectoryW reroute and 0 after. This row is a DELTA over the verbs axis
+    # 0xF03B RemoveDirectoryW reroute and 0 after. This row is a DELTA over the verbs axis
     # 4 already ran, so it costs nothing extra.
     ls -d "$WTU"/cyrius-* 2> /dev/null | LC_ALL=C sort > "$T/wt_after"
     check "⭐ wine: the verbs above left no cyrius-* directory in %TEMP%" 0 \

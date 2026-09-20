@@ -125,7 +125,7 @@ type: state
 > "**-1 on Windows** (no `RemoveDirectoryW` reroute wired)" and
 > `docs/guides/cyrius-guide.md`'s wrapper paragraph listed only `DeleteFileW`/`MoveFileExW` as
 > the kernel32 reroutes behind those names. Both were TRUE when written and stopped being true
-> the moment that reroute was wired (`syscall(0xF03A)`); both now say so with the release that
+> the moment that reroute was wired (`syscall(0xF03B)`); both now say so with the release that
 > changed them. ⚠ The same statement was load-bearing in four non-doc places — a source
 > comment, a conditional assertion in a crossos test, a per-target fixed name in the same test
 > and a whole allowlist RULE in a gate — which is the reason this correction is recorded here

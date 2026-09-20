@@ -721,7 +721,7 @@ fn _materialize_source(source): i64 {
 # as the base on Windows, and a FILETIME nonce in the Windows name. The nonce was added
 # at 6.6.5 because there was no RemoveDirectoryW reroute, so our own empty dirs were
 # never removed while Windows recycles PIDs quickly — a PID-only name would run out of
-# the 16 suffixes on a busy box and brick the CLI. ⚠ 6.6.6 WIRED THAT REROUTE (0xF03A)
+# the 16 suffixes on a busy box and brick the CLI. ⚠ 6.6.6 WIRED THAT REROUTE (0xF03B)
 # and the directory is now removed at exit on PE too, so the nonce is no longer
 # load-bearing — it is kept because a SIGKILLed run still leaves one and the cost is a
 # few characters of path. CHANGELOG [6.6.5], [6.6.6].
@@ -856,7 +856,7 @@ fn _cbt_tmpexe(name): i64 {
 # to degrade to -1 on PE because no RemoveDirectoryW reroute was wired, so this helper
 # could not do anything there and the first cut of this bite shipped saying so. A `-1`
 # degrade is only honest while nothing depends on the call succeeding; something now
-# does, so 6.6.6 wired `syscall(0xF03A)` → kernel32!RemoveDirectoryW (EREMOVEDIRW_PE,
+# does, so 6.6.6 wired `syscall(0xF03B)` → kernel32!RemoveDirectoryW (EREMOVEDIRW_PE,
 # src/backend/x86/emit.cyr) rather than leave the leak open on one target.
 # CHANGELOG [6.6.6].
 fn _cbt_tmpdir_cleanup(): i64 {

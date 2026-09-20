@@ -152,7 +152,7 @@ fn xunlink(path): i64 {
 # how yukti shipped `sys_rmdir(mount_point_cstr)` (v6.5.2 fold): a warning nobody read, until
 # v6.5.1 made an arity mismatch fatal.
 #
-# v6.6.6 — WINDOWS NOW ROUTES, through kernel32!RemoveDirectoryW (0xF03A), exactly as
+# v6.6.6 — WINDOWS NOW ROUTES, through kernel32!RemoveDirectoryW (0xF03B), exactly as
 # `xunlink` routes to DeleteFileW (0xF035). This comment used to read "Windows returns -1
 # rather than rerouting ... wire the reroute when a consumer actually needs it", and one
 # did: the CLI's private temp directory (`<TEMP>/cyrius-<pid>-t<nonce>`, created on every
@@ -166,7 +166,7 @@ fn xrmdir(path): i64 {
     return sys_rmdir(path, rn);
     #endif
     #ifdef CYRIUS_TARGET_WIN
-    return syscall(0xF03A, path);   # v6.6.6: kernel32!RemoveDirectoryW (EREMOVEDIRW_PE)
+    return syscall(0xF03B, path);   # v6.6.6: kernel32!RemoveDirectoryW (EREMOVEDIRW_PE)
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
     #ifndef CYRIUS_TARGET_WIN
@@ -184,7 +184,7 @@ fn xrmdir(path): i64 {
 # exists; it is the same trap `xrmdir` was added for at v6.5.2.
 #
 # Windows DOES route here (83 is in the PE reroute set); so does `xrmdir` since v6.6.6
-# (0xF03A RemoveDirectoryW). Returns 0 on success, negative errno on POSIX/agnos.
+# (0xF03B RemoveDirectoryW). Returns 0 on success, negative errno on POSIX/agnos.
 # CHANGELOG [6.5.7]
 fn xmkdir(path, mode): i64 {
     #ifdef CYRIUS_TARGET_AGNOS

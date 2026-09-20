@@ -1659,11 +1659,11 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                     return 0;
                 }
             }
-            # v6.6.6: 0xF03A RemoveDirectoryW(path) (1-arg → argc 2) — lib/io.cyr's
+            # v6.6.6: 0xF03B RemoveDirectoryW(path) (1-arg → argc 2) — lib/io.cyr's
             # xrmdir on PE, which degraded to -1 with no reroute wired. That is why the
             # CLI's private temp directory (`<TEMP>/cyrius-<pid>-t<nonce>`) leaked one
             # empty directory per run on Windows. Same shape as DeleteFileW above.
-            if (sc_num == 61498) {
+            if (sc_num == 61499) {
                 if (argc == 2) {
                     EREMOVEDIRW_PE(S);
                     _cfo = 0;
