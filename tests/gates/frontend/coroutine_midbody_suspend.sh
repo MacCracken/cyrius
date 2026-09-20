@@ -227,6 +227,42 @@ chmod +x "$T/r8"; g8=0; "$T/r8" > /dev/null 2>&1 || g8=$?
 [ "$g8" -eq "$as_want" ] || {
   echo "FAIL coroutine_midbody_suspend axis4b: the 8-byte struct return exits $g8, want $as_want"; exit 1; }
 
+# ── axis 4c — a VALUE-FORM VECTOR RETURN from an `async fn` (6.6.6, bite 16 review) ──────
+# The same "a Future carries ONE i64" limit as 4b, one type class over — and it survived 4b
+# because that refusal keys on `_ret_agg_class`, which answers only for structs. A vector
+# travels in XMM/V (SysV/aarch64) or by pointer (Win64) and never in rax. Measured on the
+# compiler that shipped 16a: `async fn av(a,b): f64v2 { ... return v; }` +
+# `future_force(av(7,9))` compiled with ZERO diagnostics and yielded 0, where the
+# byte-identical SYNC fn yields 7 — that sync control is the anti-vacuous half below, so a
+# refusal that merely broke vectors outright would not pass this axis. Both size classes
+# (16 B / 32 B) and both element kinds, because `_is_simd_any` is a BAND test.
+# Mutation: drop the `_refuse_async_vec_return` call in parse_fn.cyr -> RED
+# ("an f64v2 return COMPILED"). Ledger: mutated tree RED, real tree GREEN (2026-09-19).
+for vt in f64v2 f32v4 f64v4 i32v4; do
+  cat > "$T/r.cyr" <<EOF
+${PRE}include "lib/simd.cyr"
+async fn av(a, b): $vt { var v: $vt; store64(&v, a); store64(&v + 8, b); return v; }
+fn main(): i64 { alloc_init(); var g = future_force(av(7, 9)); syscall(60, load64(&g) & 0xFF); return 0; }
+var e = main();
+EOF
+  refuse "an $vt return from an async fn" "returns a value-form vector, which an .async fn. does not capture yet"
+done
+# ... and the byte-identical SYNCHRONOUS fn still compiles AND computes, so what is refused is
+# the `async`, not the vector. Inputs are shell variables; the probe never carries a literal.
+vs_a=7; vs_b=9
+cat > "$T/rv.cyr" <<EOF
+${PRE}include "lib/simd.cyr"
+fn av(a, b): f64v2 { var v: f64v2; store64(&v, a); store64(&v + 8, b); return v; }
+fn main(): i64 { alloc_init(); var g: f64v2 = av($vs_a, $vs_b); syscall(60, load64(&g) & 0xFF); return 0; }
+var e = main();
+EOF
+CYRIUS_ASYNC=1 "$T/stage1" < "$T/rv.cyr" > "$T/rv" 2>"$T/rv.err" || {
+  echo "FAIL coroutine_midbody_suspend axis4c: the SYNC vector return did not compile"; grep -m2 '^error' "$T/rv.err"; exit 1; }
+[ -s "$T/rv" ] || { echo "FAIL coroutine_midbody_suspend axis4c: sync vector-return probe is empty"; exit 1; }
+chmod +x "$T/rv"; gv=0; "$T/rv" > /dev/null 2>&1 || gv=$?
+[ "$gv" -eq "$vs_a" ] || {
+  echo "FAIL coroutine_midbody_suspend axis4c: the sync vector return exits $gv, want $vs_a"; exit 1; }
+
 # ── axis 5 — MULTI-PARAMETER coroutines (v6.5.70; refused outright at v6.5.69) ───────────
 # The constructor pre-binds arguments into coroutine-frame slots. This is the SAME machinery
 # as the arity-7 fix in the same release — the constructor could not place arguments into
@@ -500,5 +536,5 @@ chmod +x "$T/a9"; timeout 30 "$T/a9"; g9=$?
   echo "  local, which the \`guard\` word catches). Controls are the non-async fns."
   exit 1; }
 
-echo "PASS coroutine_midbody_suspend: vector params refused by name (4 classes x coroutine/plain; a pointer works) · mid-body suspend resumes in place · in loops · multi-parameter · &local across suspends · arity 6/7/8 against plain-fn controls · &struct-local (typed AND literal, single- and multi-word) across a suspend with a trashed stack · no-await async fns bit-identical"
+echo "PASS coroutine_midbody_suspend: vector params refused by name (4 classes x coroutine/plain; a pointer works) · by-value struct returns (24 B / 16 B) and value-form vector returns (4 classes) refused by name, with the <= 8 B struct and the sync vector fn still computing · mid-body suspend resumes in place · in loops · multi-parameter · &local across suspends · arity 6/7/8 against plain-fn controls · &struct-local (typed AND literal, single- and multi-word) across a suspend with a trashed stack · no-await async fns bit-identical"
 exit 0

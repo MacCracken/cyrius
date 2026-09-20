@@ -2180,6 +2180,28 @@ fn _refuse_async_struct_return(S, fnoff, fi): i64 {
     return 0;
 }
 
+# ⛔ 6.6.6 (bite 16 review) — THE SAME "A FUTURE CARRIES ONE i64" LIMIT, ONE TYPE CLASS OVER.
+# `_refuse_async_struct_return` above keys on `_ret_agg_class`, which answers only for STRUCTS
+# (`GFRS` positive) — so a VALUE-FORM VECTOR return slipped straight through the hole the struct
+# refusal had just closed. A vector travels in XMM/V (SysV/aarch64) or by pointer (Win64), never
+# in rax, and the Future has nowhere to put it: measured on the compiler that shipped 16a,
+# `async fn av(a,b): f64v2 { ... return v; }` + `future_force(av(7,9))` compiled with ZERO
+# diagnostics and yielded 0 where the byte-identical SYNC fn yields 7. This is the exact shape
+# `_refuse_async_simd_param` (20 lines up) already refuses on the PARAMETER side — the return
+# half was simply never wired to it. Refused by name until a Future can carry a vector.
+# CHANGELOG [6.6.6]
+fn _refuse_async_vec_return(S, fnoff, fi): i64 {
+    if (_is_simd_any(S, GFRS(S, fi)) == 0) { return 0; }
+    if (_panic == 1) { return 0; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    syscall(SYS_WRITE, 2, ": `async fn ", 12);
+    PRSTR(S + 0xEC00000 + fnoff);
+    syscall(SYS_WRITE, 2, "` returns a value-form vector, which an `async fn` does not capture yet — return a pointer to it\n", 99);
+    _had_error = 1;
+    return 0;
+}
+
 # A struct-valued call used where there is no frame to hold its result. Refused by name: before
 # 6.6.6 every such site compiled clean and SIGSEGV'd (the callee wrote through whatever the first
 # argument register held). CHANGELOG [6.6.6]
@@ -5903,9 +5925,12 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
         }
         }
     }
-    # 6.6.6 — the Future carries one i64, so a by-value struct return never arrives.
-    # See `_refuse_async_struct_return`. CHANGELOG [6.6.6]
+    # 6.6.6 — the Future carries one i64, so neither a by-value struct return nor a value-form
+    # vector return ever arrives. See `_refuse_async_struct_return` / `_refuse_async_vec_return`
+    # (two fns, because the struct test reads `GFRS` as a sid and the vector test reads the same
+    # word as a descriptor — one predicate cannot answer both). CHANGELOG [6.6.6]
     if (_is_async == 1) { _refuse_async_struct_return(S, _async_noff_f, fi); }
+    if (_is_async == 1) { _refuse_async_vec_return(S, _async_noff_f, fi); }
     # Record first param name offset for inlining (stored in fn_inline later)
     # Emit the stack param stores the loop deferred, now that the int-class TOTAL is known.
     # `_pl_shift` mirrors the in-loop `_pp_shift`: an x86 retptr (SysV rdi / Win64 rcx) is

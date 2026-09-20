@@ -2472,6 +2472,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   comes from the unresolvable RETURN TYPE resyncing into the `for` header, and still measures
   two syntax-class errors.
 
+- **An `async fn` declared with a value-form VECTOR return handed back garbage, silently — the
+  same limit bite 16a closed, one type class over.** (bite 16e; found by bite 16's review.) 16a's
+  refusal keys on `_ret_agg_class`, which answers only for STRUCTS, so a vector return went
+  straight through the hole it had just closed. A vector travels in XMM/V (SysV/aarch64) or by
+  pointer (Win64), never in rax, and a Future has nowhere to put it. Measured on the compiler
+  that shipped 16a (`CYRIUS_ASYNC=1`): `async fn av(a,b): f64v2 { … return v; }` +
+  `future_force(av(7,9))` compiled with ZERO diagnostics and yielded **0**, where the
+  byte-identical SYNC fn yields 7. bite 14d already refused async vector PARAMETERS by name
+  (`_refuse_async_simd_param`), so only the return half was unwired. **Refused by name** —
+  `` `async fn av` returns a value-form vector, which an `async fn` does not capture yet —
+  return a pointer to it`` — via `_refuse_async_vec_return`, a BAND test (`_is_simd_any`) so it
+  covers every 16 B and 32 B class, float and integer alike. `src/frontend/parse_fn.cyr`. Gated
+  by a new axis 4c in `tests/gates/frontend/coroutine_midbody_suspend.sh` (4 vector classes
+  refused by name, plus the synchronous fn still computing, so a refusal that merely broke
+  vectors would not pass). cycc 1,315,248 -> 1,315,344 B. All 330 pre-existing `.tcyr` exit
+  identically to the 6.6.5 compiler.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**

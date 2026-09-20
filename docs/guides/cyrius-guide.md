@@ -2138,7 +2138,11 @@ and, since v6.6.6, a compile error naming the fn: a Future carries one i64, so a
 >16 B return (hidden retptr) came back as garbage and a 9–16 B one (rax:rdx) lost
 its high half — both silently, exit 0, before v6.6.6. A struct of 8 bytes or less
 IS one i64 and works, as does `Str` (a heap handle); for anything wider, return a
-pointer.
+pointer. A **value-form vector RETURN** (`async fn f(): f64v2`) is refused for the
+same reason and in the same words — a vector travels in XMM/V, or by pointer on
+Win64, never in rax — so it too yielded 0 with no diagnostic before v6.6.6. Every
+16-byte and 32-byte class is covered, `f64v2`/`f32v4`/`f64v4`/`i32v4` alike;
+return a pointer to the vector.
 
 ## Global Initializers
 
