@@ -495,6 +495,30 @@ var _pp_hostonly_hit = 0;      # 1 once a #host_only module has been pulled at a
 var _pp_hostonly_user = 0;     # 1 if the pull came from the USER's own source
 var _pp_hostonly_name[128];    # the filename to name in the diagnostic (1024 B in .bss)
 
+# WORD BOUNDARY after a `#`-directive NAME in this file's own scanners.
+#
+# WHY: the same defect LEXATTRBOUND fixed in the lexer's `#` branch (a byte PREFIX
+# match that never checked the name had ENDED) was present twice more in the
+# PREPROCESSOR — PP_IS_HOST_ONLY and the three ISDERIVE* probes — where it is worse,
+# because neither reports an error: `#host_onlyish note` silently marked a module
+# host-only and broke every `CYRIUS_KERNEL=1` build that included it, and
+# `#derive(Serialize)x note` silently ARMED the derive machinery and changed the
+# emitted binary. Only whitespace or end of buffer can follow these names (unlike an
+# attribute, neither takes a `(` after the name — `#derive`'s parenthesis is INSIDE
+# the name it matches, and stacked derives sit on consecutive LINES).
+#
+# `n` is the buffer length, not the bounded scan window: a name ending exactly at the
+# window edge still has a real byte after it. CHANGELOG [6.6.6]
+fn PP_NAMEBOUND(base, q, n): i64 {
+    if (q >= n) { return 1; }
+    var b = load8(base + q);
+    if (b == 32) { return 1; }
+    if (b == 9) { return 1; }
+    if (b == 10) { return 1; }
+    if (b == 13) { return 1; }
+    return 0;
+}
+
 # Does the freshly-read include text carry a first-column `#host_only` line?
 # Bounded to the first 4096 bytes: this is a FILE-level annotation and belongs at the
 # top, and a bounded scan keeps it off the hot path. Requires column 0 so prose that
@@ -526,7 +550,11 @@ fn PP_IS_HOST_ONLY(buf, n): i64 {
                                         if (load8(buf + i + 6) == 111) {  # 'o'
                                             if (load8(buf + i + 7) == 110) {  # 'n'
                                                 if (load8(buf + i + 8) == 108) {  # 'l'
-                                                    if (load8(buf + i + 9) == 121) { return 1; }  # 'y'
+                                                    if (load8(buf + i + 9) == 121) {  # 'y'
+                                                        # v6.6.6 — the name must END here, or `#host_onlyish`
+                                                        # (a COMMENT) marks the module host-only. See PP_NAMEBOUND.
+                                                        if (PP_NAMEBOUND(buf, i + 10, n) == 1) { return 1; }
+                                                    }
                                                 }
                                             }
                                         }
@@ -819,6 +847,8 @@ fn PP_MARK_INCLUDED(S, fname): i64 {
 }
 
 # "#derive(Serialize)" = 23 64 65 72 69 76 65 28 53 65 72 69 61 6C 69 7A 65 29
+# v6.6.6 — the closing `)` must END the name (PP_NAMEBOUND), or a COMMENT arms the
+# derive machinery and silently changes the emitted binary. CHANGELOG [6.6.6]
 fn ISDERIVE(S, pos, bl): i64 {
     if (pos + 18 >= bl) { return 0; }
     if (load8(S + pos) != 35) { return 0; }
@@ -839,10 +869,12 @@ fn ISDERIVE(S, pos, bl): i64 {
     if (load8(S + pos + 15) != 122) { return 0; }
     if (load8(S + pos + 16) != 101) { return 0; }
     if (load8(S + pos + 17) != 41) { return 0; }
+    if (PP_NAMEBOUND(S, pos + 18, bl) == 0) { return 0; }
     return 1;
 }
 
 # "#derive(Deserialize)" = 20 bytes
+# v6.6.6 — same word boundary as ISDERIVE. See PP_NAMEBOUND. CHANGELOG [6.6.6]
 fn ISDERIVE_DE(S, pos, bl): i64 {
     if (pos + 20 >= bl) { return 0; }
     if (load8(S + pos) != 35) { return 0; }
@@ -865,6 +897,7 @@ fn ISDERIVE_DE(S, pos, bl): i64 {
     if (load8(S + pos + 17) != 122) { return 0; }
     if (load8(S + pos + 18) != 101) { return 0; }
     if (load8(S + pos + 19) != 41) { return 0; }
+    if (PP_NAMEBOUND(S, pos + 20, bl) == 0) { return 0; }
     return 1;
 }
 
@@ -2298,6 +2331,7 @@ fn PP_DERIVE_DESER(S, src_base, ip, bl, out, op): i64 {
 }
 
 # "#derive(accessors)" = 18 bytes: 35 100 101 114 105 118 101 40 97 99 99 101 115 115 111 114 115 41
+# v6.6.6 — same word boundary as ISDERIVE. See PP_NAMEBOUND. CHANGELOG [6.6.6]
 fn ISDERIVE_ACC(S, pos, bl): i64 {
     if (pos + 18 >= bl) { return 0; }
     if (load8(S + pos) != 35) { return 0; }
@@ -2318,6 +2352,7 @@ fn ISDERIVE_ACC(S, pos, bl): i64 {
     if (load8(S + pos + 15) != 114) { return 0; }
     if (load8(S + pos + 16) != 115) { return 0; }
     if (load8(S + pos + 17) != 41) { return 0; }
+    if (PP_NAMEBOUND(S, pos + 18, bl) == 0) { return 0; }
     return 1;
 }
 

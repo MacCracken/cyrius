@@ -24,6 +24,13 @@
 #   3. #pure / #io / #alloc still arm and still run their fns
 #   4. #must_use still arms and its fn still returns its value
 #   5. #regalloc still arms on a same-line fn definition
+#   6. the SAME root cause in the PREPROCESSOR (review round): the three ISDERIVE*
+#      probes in src/frontend/lex_pp.cyr matched `#derive(Serialize)` as an 18-byte
+#      prefix, so `#derive(Serialize)x note` — a COMMENT — armed the derive
+#      machinery and CHANGED THE EMITTED BINARY with rc=0 either way. That one is
+#      codegen-visible, which is why it belongs on the cross-OS hosts and not only
+#      in the x86 shell gate. (PP_IS_HOST_ONLY, the other half, only scans INCLUDED
+#      files, so it needs a companion file and stays in the shell gate.)
 include "lib/assert.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -52,6 +59,14 @@ fn awb_must(): i64 { return 30; }
 
 #regalloc fn awb_reg(a, b): i64 { var c = a + b; return c * 2; }
 
+#derive(Serialize)x note
+#derive(Deserialize)x note
+#derive(accessors)x note
+
+#derive(accessors)
+struct awb_pt { x: i64; y: i64; }
+var awb_p[2];
+
 #pure
 fn awb_pure(a): i64 { return a * 2; }
 
@@ -62,6 +77,9 @@ fn main(): i64 {
     # here at all is the assertion; the value below just makes it explicit.
     var seven = 7;
     assert_eq(seven, 7, "the file compiled with 7 attribute-prefixed comments");
+    # Same for the three `#derive(...)x note` lines: under the old preprocessor the
+    # first of them armed ISDERIVE and the derive handler died on the line after it.
+    assert_eq(seven + 3, 10, "the file compiled with 3 derive-prefixed comments");
 
     test_group("every attribute still arms and still runs");
     assert_eq(awb_inc(41), 42, "#inline fn returns its value");
@@ -70,6 +88,12 @@ fn main(): i64 {
     assert_eq(awb_must(), 30, "#must_use fn returns its value");
     assert_eq(awb_reg(3, 4), 14, "#regalloc fn on the same line still defines it");
     assert_eq(awb_pure(21), 42, "#pure fn returns its value");
+
+    test_group("#derive still arms after the boundary");
+    awb_pt_set_x(&awb_p, 20);
+    awb_pt_set_y(&awb_p, 22);
+    assert_eq(awb_pt_x(&awb_p) + awb_pt_y(&awb_p), 42,
+      "#derive(accessors) still generates working getters and setters");
     return assert_summary();
 }
 

@@ -20,6 +20,10 @@
 # permissive — no program that compiled before could contain `#io<ident-byte>`,
 # because the tail was parsed as code and failed.
 #
+# The review round found the same shape TWICE MORE, in the preprocessor's own
+# scanners (PP_NAMEBOUND now bounds them) and once more in the api-surface tool.
+# Group D covers those; the shape, not the name, is what this gate pins.
+#
 # ⭐ HOW EXPECTED IS DERIVED THE OTHER WAY ROUND. Group A never asks the compiler
 # what a comment should produce. It compiles the SPACED twin (`# ioctl numbers`),
 # which no prefix rule can ever read as an attribute, and requires the unspaced
@@ -43,6 +47,14 @@
 #   C2      cyrfmt --check agrees with the compiler about the same line
 #   C3      over-correction guard: cyrlint still reads `#naked fn f() {` as an
 #           attribute (the v6.6.5 defect this must not undo)
+#   D1..D6  the SAME root cause in the preprocessor (review round): PP_IS_HOST_ONLY
+#           and the three ISDERIVE* probes in src/frontend/lex_pp.cyr, plus the
+#           fourth reader of `#derive` (programs/cyrius_api_surface.cyr). These
+#           fail SILENTLY rather than with a diagnostic, which is why they are here
+#           and not left to the filing's table: `#host_onlyish note` marked a module
+#           host-only and broke every bare-metal build that included it, and
+#           `#derive(Serialize)x note` armed the derive machinery and CHANGED THE
+#           EMITTED BINARY (4472 B vs the twin's 4456 B) with rc=0 either way.
 #
 # MUTATION LEDGER (2026-09-19, cycc 1,310,856 B, measured). Each mutation is
 # applied to the working tree, a compiler is built from it with the good cycc,
@@ -61,7 +73,16 @@
 #      → 3 FAIL / 19 ok: B0 on the call-site census (9 != 10), plus A1 and A7
 #   M5 `_lx_attr_bound` in programs/cyrlint.cyr forced to 1 → 1 FAIL: C1
 #   M6 `_cf_attr_bound` in programs/cyrfmt.cyr  forced to 1 → 1 FAIL: C2
-#   real tree → 22/22 green
+#   M7 PP_NAMEBOUND body replaced by `return 1;` (the pre-6.6.6 prefix match)
+#      → 3 FAIL / 25 ok: D1 (the bare-metal build is refused by a comment), D3
+#        (the derive comment compiles to DIFFERENT bytes), D4 (a comment generates
+#        accessors). D6 stays green — it is the mirror, and M9 is its mutation.
+#   M8 PP_NAMEBOUND body replaced by `return 0;` (nothing ever arms)
+#      → 2 FAIL / 26 ok: D2 (#host_only stops refusing) and D5 (#derive(accessors)
+#        stops generating) — the over-correction guard for the preprocessor half.
+#   M9 `_api_derive_bound` in programs/cyrius_api_surface.cyr forced to 1
+#      → 1 FAIL: D6, listing four accessors for a comment.
+#   real tree → 28/28 green
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
@@ -254,6 +275,136 @@ if build_tool cyrfmt; then
         pass=$((pass+1))
     else
         printf '  FAIL: axis C2 — cyrfmt --check rejected an attribute-prefixed comment (rc=%s)\n' "$rcf"
+        fail=$((fail+1))
+    fi
+fi
+
+# ── Group D — THE SAME ROOT CAUSE IN THE PREPROCESSOR (v6.6.6, review round).
+#    LEXATTRBOUND fixed the lexer's `#` branch. Two more `#`-name probes in
+#    src/frontend/lex_pp.cyr matched a byte PREFIX with no boundary, and there the
+#    failure is SILENT rather than a diagnostic: `#host_onlyish note` marked a module
+#    host-only (breaking every bare-metal build that included it) and
+#    `#derive(Serialize)x note` armed the derive machinery and CHANGED THE EMITTED
+#    BINARY. Both are scored against a spaced twin, as group A is.
+
+# D1/D2 — PP_IS_HOST_ONLY. A CYRIUS_KERNEL build is a bare-metal ELF, so these axes
+# compare BYTES and exit codes of the COMPILER, never run the output.
+mkdir -p "$D/ho"
+printf 'include "m.cyr"\nvar A = hf();\nsyscall(60, A);\n' > "$D/ho/e.cyr"
+ho_build() {
+    printf '%b' "$2" > "$D/ho/m.cyr"
+    horc=0
+    ( cd "$D/ho" && CYRIUS_KERNEL=1 "$CC" < e.cyr > "$1.bin" 2> "$1.err" ) || horc=$?
+}
+ho_build hosp '# host_onlyish note\nfn hf(): i64 { return 7; }\n'
+if [ "$horc" -ne 0 ]; then
+    printf '  FAIL: axis D1 — the spaced twin `# host_onlyish` does not build: %s\n' \
+        "$(head -1 "$D/ho/hosp.err" | cut -c1-90)"
+    fail=$((fail+1))
+else
+    ho_build hoat '#host_onlyish note\nfn hf(): i64 { return 7; }\n'
+    if [ "$horc" -ne 0 ]; then
+        printf '  FAIL: axis D1 — `#host_onlyish note` (a COMMENT) refused the bare-metal build: %s\n' \
+            "$(head -1 "$D/ho/hoat.err" | cut -c1-90)"
+        fail=$((fail+1))
+    elif cmp -s "$D/ho/hoat.bin" "$D/ho/hosp.bin"; then
+        printf '  ok: axis D1 — `#host_onlyish note` is a comment (bytes == spaced twin)\n'
+        pass=$((pass+1))
+    else
+        printf '  FAIL: axis D1 — `#host_onlyish note` built, but not to the spaced twin'"'"'s bytes\n'
+        fail=$((fail+1))
+    fi
+fi
+ho_build hoarm '#host_only\nfn hf(): i64 { return 7; }\n'
+if [ "$horc" -ne 0 ] && grep -q 'host-only module' "$D/ho/hoarm.err"; then
+    printf '  ok: axis D2 — a real `#host_only` module is still refused under CYRIUS_KERNEL\n'
+    pass=$((pass+1))
+else
+    printf '  FAIL: axis D2 — `#host_only` no longer arms (rc=%s): %s\n' \
+        "$horc" "$(head -1 "$D/ho/hoarm.err" | cut -c1-70)"
+    fail=$((fail+1))
+fi
+
+# D3 — ISDERIVE. The comment form must be byte-identical to its spaced twin; on the
+# defect it COMPILED TOO, just to different bytes, so rc alone would not have caught it.
+printf '# derive(Serialize)x note\nstruct P { a: i64 }\nvar A = 42;\nsyscall(60, A);\n' > "$D/dvsp.cyr"
+printf '#derive(Serialize)x note\nstruct P { a: i64 }\nvar A = 42;\nsyscall(60, A);\n' > "$D/dvat.cyr"
+compile dvsp
+if [ "$rc" -ne 0 ]; then
+    printf '  FAIL: axis D3 — the spaced twin `# derive(Serialize)x` does not compile\n'
+    fail=$((fail+1))
+else
+    compile dvat
+    if [ "$rc" -ne 0 ]; then
+        printf '  FAIL: axis D3 — `#derive(Serialize)x note` did not compile: %s\n' \
+            "$(grep -m1 error "$D/dvat.err" | cut -c1-90)"
+        fail=$((fail+1))
+    elif cmp -s "$D/dvat.bin" "$D/dvsp.bin"; then
+        printf '  ok: axis D3 — `#derive(Serialize)x note` is a comment (binary == spaced twin)\n'
+        pass=$((pass+1))
+    else
+        printf '  FAIL: axis D3 — `#derive(Serialize)x note` armed the derive (binary != spaced twin)\n'
+        fail=$((fail+1))
+    fi
+fi
+
+# D4/D5 — #derive(accessors), by the generated getters rather than by bytes: the
+# comment form must leave `P_a` UNDEFINED, the real form must run.
+accbody='struct P { a: i64; b: i64; }\nvar p[2];\nfn main() { P_set_a(&p, 20); P_set_b(&p, 22); syscall(60, P_a(&p) + P_b(&p)); }\n'
+printf "#derive(accessors)x note\n$accbody" > "$D/dacc0.cyr"
+printf "#derive(accessors)\n$accbody" > "$D/dacc1.cyr"
+rc=0; ( cd "$D" && "$CC" < dacc0.cyr > dacc0.bin 2> dacc0.err ) || rc=$?
+if [ "$rc" -ne 0 ] && grep -q "undefined function 'P_a'" "$D/dacc0.err"; then
+    printf '  ok: axis D4 — `#derive(accessors)x note` does not generate accessors\n'
+    pass=$((pass+1))
+else
+    printf '  FAIL: axis D4 — a comment armed #derive(accessors) (compiler rc=%s)\n' "$rc"
+    fail=$((fail+1))
+fi
+compile dacc1
+if [ "$rc" -ne 0 ]; then
+    printf '  FAIL: axis D5 — a real `#derive(accessors)` did not compile: %s\n' \
+        "$(grep -m1 error "$D/dacc1.err" | cut -c1-90)"
+    fail=$((fail+1))
+else
+    got=0; ( "$D/dacc1.bin" ) || got=$?
+    if [ "$got" = 42 ]; then
+        printf '  ok: axis D5 — a real `#derive(accessors)` still arms (exit 42)\n'
+        pass=$((pass+1))
+    else
+        printf '  FAIL: axis D5 — #derive(accessors) stopped arming: exit=%s, want 42\n' "$got"
+        fail=$((fail+1))
+    fi
+fi
+rm -f "$D/dacc1.bin" "$D/dacc0.bin" "$D/dvat.bin" "$D/dvsp.bin"
+
+# D6 — the FOURTH reader of this directive: programs/cyrius_api_surface.cyr copies the
+# compiler's derive detection to list synthesized accessors, and copied the missing
+# boundary with it. Expected is computed a different way again: the comment form's
+# snapshot must equal the snapshot of a file carrying NO derive line at all.
+if build_tool cyrius_api_surface; then
+    api_snap() {
+        rm -rf "$D/api"; mkdir -p "$D/api/src" "$D/api/lib"
+        printf "$1" > "$D/api/src/m.cyr"
+        ( cd "$D/api" && "$D/cyrius_api_surface" --update --snapshot="$2" ) >/dev/null 2>&1 || true
+    }
+    apibody='struct P { a: i64; b: i64; }\nfn keep(): i64 { return 1; }\n'
+    api_snap "$apibody"                          "$D/none.snap"
+    api_snap "#derive(accessors)x note\n$apibody" "$D/cmt.snap"
+    api_snap "#derive(accessors)\n$apibody"       "$D/arm.snap"
+    nnone=$(grep -c . "$D/none.snap" 2>/dev/null || echo 0)
+    narm=$(grep -c . "$D/arm.snap" 2>/dev/null || echo 0)
+    if [ "$narm" -le "$nnone" ]; then
+        printf '  FAIL: axis D6 — api-surface no longer lists derived accessors (%s vs %s entries)\n' \
+            "$narm" "$nnone"
+        fail=$((fail+1))
+    elif cmp -s "$D/cmt.snap" "$D/none.snap"; then
+        printf '  ok: axis D6 — api-surface reads `#derive(accessors)x note` as a comment (%s entries, armed %s)\n' \
+            "$nnone" "$narm"
+        pass=$((pass+1))
+    else
+        printf '  FAIL: axis D6 — api-surface listed accessors for a COMMENT: %s\n' \
+            "$(comm -13 "$D/none.snap" "$D/cmt.snap" | tr '\n' ' ')"
         fail=$((fail+1))
     fi
 fi

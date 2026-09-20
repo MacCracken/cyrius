@@ -8,6 +8,29 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Two more `#`-name prefix matches with no word boundary — and in the PREPROCESSOR they fail
+  SILENTLY.** (bite 5d, review round.) Bite 5a gave the LEXER's ten attributes a word boundary;
+  the same shape was left twice over in `src/frontend/lex_pp.cyr`, where nothing reports an
+  error. (1) `PP_IS_HOST_ONLY` matched `#host_only` as a byte prefix, so an included module
+  opening `#host_onlyish note` — a **comment** — was recorded host-only and every
+  `CYRIUS_KERNEL=1` build that pulled it was refused with `bare-metal build includes host-only
+  module`; with a space after the `#` the same build compiles. (2) The three `ISDERIVE*` probes
+  matched `#derive(Serialize)` as an 18-byte prefix, so `#derive(Serialize)x note` **armed the
+  derive machinery and changed the emitted binary** — 4472 B against the spaced twin's 4456 B,
+  with `rc=0` either way, which is worse than the filed symptom because nothing at all is
+  printed. **Fix:** `PP_NAMEBOUND` — the name must be followed by whitespace, CR/LF or end of
+  buffer. No `(` case here: `#derive`'s parenthesis is inside the name it matches, and stacked
+  derives sit on consecutive lines. A fourth reader copied the same missing boundary —
+  `programs/cyrius_api_surface.cyr` listed four synthesized accessors for a commented-out derive
+  — and takes the boundary in the same change (`_api_derive_bound`). Gate
+  `tests/gates/frontend/lexer_attribute_word_boundary.sh` grows group D (22 → 28 axes, 6 → 9
+  mutations each RED): D1/D3 score the comment against its spaced twin and demand byte-identical
+  output, D2/D5 are the over-correction guard (`#host_only` must still refuse, `#derive` must
+  still generate), and D6 derives its expected value a third way — the comment form's api-surface
+  snapshot must equal that of a file carrying NO derive line. `tests/tcyr/crossos/attribute_word_boundary.tcyr`
+  gains the derive shapes, since that half is codegen-visible and belongs on the cross-OS hosts.
+  cycc 1,310,920 B → **1,310,920 B (unchanged)**; 0 of 330 `.tcyr` binaries changed a byte.
+
 - **A comment beginning `#ref ` had its first five bytes DELETED and the rest parsed as code —
   and `include ` with no quoted name lost eight bytes the same way.** (bite 5c.) Both consumed
   their bytes on the PREDICATE match and only then looked for the `"`: `PP_REF_PASS` did
