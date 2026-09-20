@@ -244,6 +244,80 @@ fn _regression_wait_deadline(pid, stbuf, timeout_ms): i64 {
     return 0;
 }
 
+# ⛔ v6.6.6 — THE PIPE, NOT ONLY THE WAIT. `_regression_wait_deadline` bounds the WAIT; the
+# verbs below reach it only AFTER they have finished pumping the child's pipe, and those
+# pumps were unbounded `while` loops. A child that holds its end open and neither reads nor
+# writes therefore blocked the runner BEFORE the deadline could run — the write side on the
+# ~1 MB `src/main.cyr` pipes as soon as the 64 KB pipe buffer fills, the read side for ever.
+# Found by the review of bite 8c, which is why this landed a commit later than the wait.
+#
+# Both helpers take the deadline as an IDLE one: no progress for `timeout_ms` and they give
+# up, leaving the caller's bounded wait to kill the child. That is the right shape here —
+# a compiler still emitting bytes is working, and the total is bounded anyway because the
+# read side stops at `cap` and the write side at `n`. `timeout_ms <= 0` is the historical
+# unbounded pump. CHANGELOG [6.6.6]
+
+# poll(2) one fd. `events` is POLLIN (1) or POLLOUT (4). >0 ready (POLLHUP/POLLERR come back
+# whether or not you asked, which is what ends a drain when the child exits), 0 timed out,
+# <0 syscall error. syscall 7 is translated by the backend (Darwin poll, aarch64 ppoll).
+fn _regression_poll_fd(fd, events, timeout_ms): i64 {
+    var pfd[8];
+    store32(&pfd,     fd);
+    store16(&pfd + 4, events);
+    store16(&pfd + 6, 0);
+    return syscall(7, &pfd, 1, timeout_ms);
+}
+
+# Write all `n` bytes of `buf` to `fd`, waiting at most `timeout_ms` for the child to make
+# room each time. Returns the bytes actually written — short means the child stopped
+# draining (the caller then closes the fd and its bounded wait deals with the child).
+#
+# ⚠ THE CHUNK IS THE WHOLE TRICK, AND THE FIRST CUT OF THIS FUNCTION DID NOT HAVE IT — it
+# polled and then wrote all `n` remaining bytes, which STILL BLOCKS FOR EVER: a blocking
+# write of more than the pipe can hold does not come back with a short count, it waits until
+# the whole thing is delivered. POLLOUT on a pipe promises only PIPE_BUF (4096) bytes of
+# room, so after a ready poll a chunk of at most 4096 cannot block — and a 1 MB write after
+# the same ready poll blocks on byte 65537. Axis 2d of
+# tests/gates/toolchain/check_driver_bounded.sh caught exactly that and is the reason the
+# axis exists. The unbounded path (`timeout_ms <= 0`) keeps writing in one go, as before.
+fn regression_pipe_write_all(fd, buf, n, timeout_ms): i64 {
+    var written = 0;
+    var chunk_cap = n;
+    if (timeout_ms > 0) { chunk_cap = 4096; }   # PIPE_BUF — what POLLOUT actually promises
+    while (written < n) {
+        if (timeout_ms > 0) {
+            if (_regression_poll_fd(fd, 4, timeout_ms) <= 0) { return written; }
+        }
+        var chunk = n - written;
+        if (chunk > chunk_cap) { chunk = chunk_cap; }
+        var w = sys_write(fd, buf + written, chunk);
+        if (w <= 0) { return written; }
+        written = written + w;
+    }
+    return written;
+}
+
+# Drain `fd` into `buf` (at most `cap`), waiting at most `timeout_ms` for each next chunk.
+# Returns the bytes read.
+fn regression_pipe_read_all(fd, buf, cap, timeout_ms): i64 {
+    var total = 0;
+    var rgo = 1;
+    while (rgo == 1) {
+        if (timeout_ms > 0) {
+            if (_regression_poll_fd(fd, 1, timeout_ms) <= 0) { rgo = 0; }
+        }
+        if (rgo == 1) {
+            var n = sys_read(fd, buf + total, cap - total);
+            if (n <= 0) { rgo = 0; }
+            else {
+                total = total + n;
+                if (total >= cap) { rgo = 0; }
+            }
+        }
+    }
+    return total;
+}
+
 # Pipe `src_path`'s bytes to `bin_path`'s stdin. Captures stdout
 # to `out_path` (pass 0 for /dev/null) and discards stderr.
 # Returns WEXITSTATUS or 128+sig on signal; -1 on syscall
@@ -292,12 +366,7 @@ fn regression_pipe_to_bin_capture(bin_path, src_path, out_path, envp): i64 {
     }
     sys_close(rfd);
     sys_close(out_fd);
-    var written = 0;
-    while (written < src_n) {
-        var w = sys_write(wfd, src_buf + written, src_n - written);
-        if (w <= 0) { written = src_n; }
-        else { written = written + w; }
-    }
+    regression_pipe_write_all(wfd, src_buf, src_n, _regression_timeout_ms());
     sys_close(wfd);
     var stbuf[4];
     # v6.6.6: -2 is the module's documented TIMEOUT code (see the calling conventions at

@@ -48,24 +48,10 @@ fn _ipc_session(bin_path, req_buf, req_len, out_buf, out_cap): i64 {
     sys_close(p2c_r);
     sys_close(c2p_w);
 
-    var written = 0;
-    while (written < req_len) {
-        var w = sys_write(p2c_w, req_buf + written, req_len - written);
-        if (w <= 0) { written = req_len; }
-        else { written = written + w; }
-    }
+    regression_pipe_write_all(p2c_w, req_buf, req_len, _regression_long_timeout_ms());
     sys_close(p2c_w);
 
-    var total = 0;
-    var rgo = 1;
-    while (rgo == 1) {
-        var n = sys_read(c2p_r, out_buf + total, out_cap - total);
-        if (n <= 0) { rgo = 0; }
-        else {
-            total = total + n;
-            if (total >= out_cap) { rgo = 0; }
-        }
-    }
+    var total = regression_pipe_read_all(c2p_r, out_buf, out_cap, _regression_long_timeout_ms());
     sys_close(c2p_r);
     var stbuf[1];
     _regression_wait_deadline(pid, &stbuf, _regression_long_timeout_ms());

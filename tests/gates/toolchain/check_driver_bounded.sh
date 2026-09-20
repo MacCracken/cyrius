@@ -76,6 +76,21 @@
 #         derived list:      52 files, 41 forks, 31 guards, 10 blocking waits => RED
 #     The first cut of this gate shipped the first number, in the same release that measured
 #     the hang. A census is only as honest as the list it reads.
+#
+# MUTATION PROOF, the PIPE half (axis 2d + the pump row), added when the same review pointed
+# out that the deadline sits AFTER an unbounded pump:
+#   * lib/regression.cyr + programs/checks/* at the bite's base, 1 MB piped into a child that
+#     never reads -> the harness NEVER RETURNS (rc 124 at a 25 s backstop). With the fix ->
+#     150 (the module's timeout) in 6 s. The drain fixture returns 7 either way, which is the
+#     anti-vacuous half: bounding a pump must not truncate a working pipe.
+#   * ⚠ THE FIRST CUT OF `regression_pipe_write_all` POLLED AND THEN WROTE EVERYTHING LEFT,
+#     AND AXIS 2D STAYED RED. A blocking write larger than the pipe does not come back short
+#     — it waits until every byte is delivered — so a ready POLLOUT is no protection at all
+#     past the 64 KB buffer. POLLOUT promises PIPE_BUF (4096) bytes of room and nothing more,
+#     so the helper now writes at most that per ready poll. Recorded because "poll, then
+#     write" reads correct and is not, and the gate is what said so.
+#   * the pump census over the base tree -> 15 hits (3 lib/process.cyr, 1 lib/regression.cyr,
+#     2 crosshost, 1 platform_efi, 8 selfhost); over this tree -> 0.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -97,7 +112,12 @@ trap 'rm -rf "$T"' EXIT
 printf 'fn spin(): i64 { var i = 0; while (1 == 1) { i = i + 1; } return i; }\nfn main(): i64 { return spin(); }\nvar r = main();\nsyscall(60, r);\n' > "$T/spin.cyr"
 # And one that finishes immediately with a DISTINCTIVE exit code, for the anti-vacuous row.
 printf 'fn main(): i64 { var w = syscall(1, 1, "driver-fixture-ran\\n", 19); return 7; }\nvar r = main();\nsyscall(60, r);\n' > "$T/fine.cyr"
-for f in spin fine; do
+# A third fixture, for the PIPE axis: it DRAINS stdin to EOF and then exits 7 — a stack
+# buffer and a raw read(2), so it needs no includes. The spinner above never reads, so a
+# source larger than the 64 KB pipe buffer blocks the WRITER in sys_write before the wait
+# deadline can ever run; this one is the same call that has to keep working.
+printf 'fn main(): i64 { var p[65536]; var go = 1; while (go == 1) { var n = syscall(0, 0, &p, 65536); if (n <= 0) { go = 0; } } return 7; }\nvar r = main();\nsyscall(60, r);\n' > "$T/drain.cyr"
+for f in spin fine drain; do
     if ! "$ROOT/build/cycc" < "$T/$f.cyr" > "$T/$f" 2> "$T/$f.err"; then
         echo "FAIL: check_driver_bounded — the $f fixture did not compile:"; cat "$T/$f.err"; exit 1
     fi
@@ -133,6 +153,17 @@ fn main(): i64 {
     var bin = argv(1);
     if (bin == 0) { return 2; }
     store64(&HARNESS_ENVP, 0);
+    # PIPE MODE (HARNESS_PIPE_SRC=<file>): drive regression_pipe_to_bin_capture, the verb
+    # that pumps a whole source INTO the child's stdin BEFORE it waits. Selected by env, not
+    # by argv, because argv(2) is already axis 1b's second binary.
+    var src = getenv("HARNESS_PIPE_SRC");
+    if (src != 0) {
+        var prc = regression_pipe_to_bin_capture(bin, src, 0, &HARNESS_ENVP);
+        if (prc == 0 - 2) { return 150; }
+        if (prc == 0 - 1) { return 151; }
+        if (prc < 0) { return 152; }
+        return prc;
+    }
     var st[16];
     var buf = alloc(65536);
     var n = regression_exec_capture_status(bin, buf, 65536, &HARNESS_ENVP, &st);
@@ -346,6 +377,44 @@ else
 fi
 wait 2>/dev/null || true
 
+# ── AXIS 2d — ⭐ THE PIPE, NOT ONLY THE WAIT. Every verb here reaches its bounded wait only
+# AFTER it has finished pumping the child's pipe, and those pumps were unbounded `while`
+# loops — so a child that holds its end open and never drains blocks the runner BEFORE the
+# deadline can run. Measured on the WRITE side, which is the one the driver actually hits:
+# the compiler pipes ~1 MB of src/main.cyr into a child, and 64 KB into a child that never
+# reads is enough to block for ever. The anti-vacuous partner is a fixture that DOES drain
+# stdin: bounding the pump must not truncate a working pipe.
+echo "axis 2d — ⭐ the pipe pump is bounded too, not just the wait:"
+# ~1 MB, comfortably past the 64 KB pipe buffer, built here rather than borrowed from the
+# tree so the axis does not depend on any particular file's size.
+: > "$T/big.src"
+i=0
+while [ "$i" -lt 64 ]; do
+    dd if=/dev/zero bs=16384 count=1 2>/dev/null | tr '\0' 'x' >> "$T/big.src"
+    i=$((i + 1))
+done
+bigsz=$(wc -c < "$T/big.src")
+check "premise: the source is bigger than a pipe buffer" "yes" \
+    "$([ "$bigsz" -gt 200000 ] && echo yes || echo no)"
+rc=0
+HARNESS_PIPE_SRC="$T/big.src" CYRIUS_CHECK_TIMEOUT=30 timeout 120 "$T/harness" "$T/drain" \
+    > "$T/w0.out" 2>&1 || rc=$?
+check "ANTI-VACUOUS: a child that DRAINS the pipe still gets it all and returns its code" 7 "$rc"
+t0=$(date +%s)
+rc=0
+HARNESS_PIPE_SRC="$T/big.src" CYRIUS_CHECK_TIMEOUT=3 timeout 60 "$T/harness" "$T/spin" \
+    > "$T/w1.out" 2>&1 || rc=$?
+el=$(( $(date +%s) - t0 ))
+check "a child that never drains the pipe no longer blocks the runner" "yes" \
+    "$([ "$rc" != 124 ] && echo yes || echo no)"
+check "and it ended within the deadlines, not the 60s backstop" "yes" \
+    "$([ "$el" -lt 30 ] && echo yes || echo no)"
+if [ "$rc" = 124 ]; then
+    echo "        the harness never returned: the write pump in regression_pipe_to_bin_capture"
+    echo "        is blocked in sys_write with the pipe full. regression_pipe_write_all's poll"
+    echo "        is what bounds it — the wait deadline is never reached from there."
+fi
+
 # ── AXIS 2c — ⭐ THE SECOND MODULE. Everything above drives lib/regression.cyr. The driver
 # ALSO forks through lib/process.cyr, and that module was still unbounded and unguarded when
 # the first cut of this gate went green — so this axis exists because a census scoped by hand
@@ -468,6 +537,35 @@ blocking_lines=$(for f in $FILES; do
 blocking=$(printf '%s\n' "$blocking_lines" | grep -c . || true)
 check "blocking, deadline-free waits left in the driver" 0 "$blocking"
 if [ "$blocking" != "0" ]; then printf '%s\n' "$blocking_lines" | sed 's/^/        /'; fi
+# The PIPE half of the same habit (axis 2d's defect): a `sys_read`/`sys_write` on the line
+# directly under a `while (`, INSIDE A FUNCTION THAT FORKS. That scoping is the whole
+# definition — a pump on a child's pipe is the one that can block for ever, while the same
+# idiom over a regular file (lib/io.cyr's `file_read_all`, process_agnos.cyr's ELF slurp)
+# cannot and is not a finding. Deriving it from "the enclosing fn calls sys_fork()" also
+# means the helpers are exempt without naming them: their bodies are the loop, and they do
+# not fork.
+# ⚠ SCOPE, stated so nobody reads this row as wider than it is: it is the POSIX
+# fork+pipe idiom. lib/process_win.cyr's `run_capture` has the same unbounded drain over a
+# Windows HANDLE with no fork in sight, and needs a PE mechanism (there is no poll(2)
+# there) — this row does not see it and does not claim to.
+pump_lines=$(for f in $FILES; do
+        awk -v F="$f" '
+            /^fn / { infn = 1; forked = 0; np = 0 }
+            { line = $0; sub(/^[ \t]*#.*$/, "", line) }
+            line ~ /sys_fork\(\)/ { forked = 1 }
+            line ~ /sys_(read|write)\(/ {
+                if (prev ~ /while \(/) { pend[np] = F ":" FNR ": " line; np = np + 1 }
+            }
+            { if (line ~ /[^ \t]/) prev = line }
+            /^}/ {
+                if (infn == 1 && forked == 1) { for (i = 0; i < np; i++) print pend[i] }
+                infn = 0; forked = 0; np = 0
+            }
+        ' "$f"
+    done)
+pumps=$(printf '%s\n' "$pump_lines" | grep -c . || true)
+check "unbounded pipe pumps left in the driver (loops inside forking fns)" 0 "$pumps"
+if [ "$pumps" != "0" ]; then printf '%s\n' "$pump_lines" | sed 's/^/        /'; fi
 nfork=$(grep -h 'sys_fork()' $FILES | grep -c 'var ' || true)
 nguard=$(grep -hE '_(regression|proc)_child_guard\(' $FILES | grep -vc '^fn ' || true)
 # ONE exemption, by MARKER rather than by file, so it is a line someone has to write and

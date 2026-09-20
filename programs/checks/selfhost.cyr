@@ -401,12 +401,7 @@ fn _self_host_pipe(src_path, compiler_path, out_path): i64 {
     }
     sys_close(read_fd);
     sys_close(out_fd);
-    var written = 0;
-    while (written < src_n) {
-        var w = sys_write(write_fd, src_buf + written, src_n - written);
-        if (w <= 0) { written = src_n; }
-        else { written = written + w; }
-    }
+    regression_pipe_write_all(write_fd, src_buf, src_n, _regression_timeout_ms());
     sys_close(write_fd);
     var status_buf[1];
     _regression_wait_deadline(pid, &status_buf, _regression_timeout_ms());
@@ -457,12 +452,7 @@ fn _compile_capture_stderr(src_path, compiler_path, stderr_path): i64 {
     }
     sys_close(read_fd);
     sys_close(err_fd);
-    var written = 0;
-    while (written < src_n) {
-        var w = sys_write(write_fd, src_buf + written, src_n - written);
-        if (w <= 0) { written = src_n; }
-        else { written = written + w; }
-    }
+    regression_pipe_write_all(write_fd, src_buf, src_n, _regression_timeout_ms());
     sys_close(write_fd);
     var status_buf[1];
     _regression_wait_deadline(pid, &status_buf, _regression_timeout_ms());
@@ -615,12 +605,7 @@ fn _self_host_pipe_elf64k_base(src_path, compiler_path, out_path, base_env): i64
     }
     sys_close(read_fd);
     sys_close(out_fd);
-    var written = 0;
-    while (written < src_n) {
-        var w = sys_write(write_fd, src_buf + written, src_n - written);
-        if (w <= 0) { written = src_n; }
-        else { written = written + w; }
-    }
+    regression_pipe_write_all(write_fd, src_buf, src_n, _regression_timeout_ms());
     sys_close(write_fd);
     var status_buf[1];
     _regression_wait_deadline(pid, &status_buf, _regression_timeout_ms());
@@ -672,12 +657,7 @@ fn _self_host_pipe_efi(src_path, compiler_path, out_path): i64 {
     }
     sys_close(read_fd);
     sys_close(out_fd);
-    var written = 0;
-    while (written < src_n) {
-        var w = sys_write(write_fd, src_buf + written, src_n - written);
-        if (w <= 0) { written = src_n; }
-        else { written = written + w; }
-    }
+    regression_pipe_write_all(write_fd, src_buf, src_n, _regression_timeout_ms());
     sys_close(write_fd);
     var status_buf[1];
     _regression_wait_deadline(pid, &status_buf, _regression_timeout_ms());
@@ -739,12 +719,7 @@ fn _self_host_pipe_agnos(src_path, compiler_path, out_path): i64 {
     }
     sys_close(read_fd);
     sys_close(out_fd);
-    var written = 0;
-    while (written < src_n) {
-        var w = sys_write(write_fd, src_buf + written, src_n - written);
-        if (w <= 0) { written = src_n; }
-        else { written = written + w; }
-    }
+    regression_pipe_write_all(write_fd, src_buf, src_n, _regression_timeout_ms());
     sys_close(write_fd);
     var status_buf[1];
     _regression_wait_deadline(pid, &status_buf, _regression_timeout_ms());
@@ -805,12 +780,7 @@ fn _self_host_pipe_win(src_path, compiler_path, out_path): i64 {
     }
     sys_close(read_fd);
     sys_close(out_fd);
-    var written = 0;
-    while (written < src_n) {
-        var w = sys_write(write_fd, src_buf + written, src_n - written);
-        if (w <= 0) { written = src_n; }
-        else { written = written + w; }
-    }
+    regression_pipe_write_all(write_fd, src_buf, src_n, _regression_timeout_ms());
     sys_close(write_fd);
     var status_buf[1];
     _regression_wait_deadline(pid, &status_buf, _regression_timeout_ms());
@@ -883,12 +853,7 @@ fn _self_host_pipe_env(src_path, compiler_path, out_path, env_kv): i64 {
     }
     sys_close(read_fd);
     sys_close(out_fd);
-    var written = 0;
-    while (written < src_n) {
-        var w = sys_write(write_fd, src_buf + written, src_n - written);
-        if (w <= 0) { written = src_n; }
-        else { written = written + w; }
-    }
+    regression_pipe_write_all(write_fd, src_buf, src_n, _regression_timeout_ms());
     sys_close(write_fd);
     var status_buf[1];
     _regression_wait_deadline(pid, &status_buf, _regression_timeout_ms());
@@ -946,12 +911,7 @@ fn _self_host_pipe_env2(src_path, compiler_path, out_path, env_kv1, env_kv2): i6
     }
     sys_close(read_fd);
     sys_close(out_fd);
-    var written = 0;
-    while (written < src_n) {
-        var w = sys_write(write_fd, src_buf + written, src_n - written);
-        if (w <= 0) { written = src_n; }
-        else { written = written + w; }
-    }
+    regression_pipe_write_all(write_fd, src_buf, src_n, _regression_timeout_ms());
     sys_close(write_fd);
     var status_buf2[1];
     _regression_wait_deadline(pid, &status_buf2, _regression_timeout_ms());

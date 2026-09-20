@@ -1483,7 +1483,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and the bounded wait kills the child). `spawn()` is the one deliberate exemption — its whole
   contract is that the child outlives the call — and it carries a `fork-guard-exempt` marker
   the census counts, so the exemption is a line someone justified rather than a blind spot.
-  Verified: the two measured repros both fixed; the 10 `.tcyr` that include process.cyr pass;
+  **And the deadline sat AFTER the pipe, which is the other half of the same defect.** Every
+  one of these verbs pumps the child's pipe BEFORE it reaches its bounded wait, and those
+  pumps were unbounded `while` loops: `regression_pipe_to_bin_capture` and the eight
+  `_self_host_pipe`-family functions push a whole source INTO the child's stdin, `_ipc_session`
+  drains the child's stdout, and process.cyr's capture verbs drain theirs. Measured at the
+  bite's base: 1 MB piped into a child that never reads it never returns at all. All fifteen
+  pumps now go through `regression_pipe_write_all` / `regression_pipe_read_all` /
+  `_proc_read_pipe`, which poll with an idle deadline. ⚠ **`poll` then write-everything is
+  NOT a bound** — a blocking write larger than the pipe waits for every byte rather than
+  returning short, so the first cut of the write helper polled POLLOUT and then blocked on
+  byte 65537 exactly as before; POLLOUT promises PIPE_BUF (4096) bytes of room, so the helper
+  writes at most that per ready poll. Axis 2d of the gate is what caught it.
+  Verified: the three measured repros all fixed; the 10 `.tcyr` that include process.cyr pass;
   the CLI (`cbt/cyrius.cyr`, which includes it) still cross-compiles to PE and Mach-O; and the
   deadline + poll path works on aarch64 under qemu-user (NOT hardware — the cross-OS leg at
   the release gate is).
@@ -1495,9 +1507,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   children in sequence, sampling the live child count while the runner is still alive; axis 2
   SIGKILL the runner and require the child to die with it; **axis 2c** the same three
   properties over the driver's OTHER fork module, `lib/process.cyr`, through `exec_vec` and
-  the `exec_capture` PIPE path; axis 3 a census (no blocking deadline-free wait left outside
-  a `*_wait_deadline` body, and `sys_fork()` sites == child-guard calls + declared
-  exemptions, two independently derived counts). ⚠ **Axis 3's file list is DERIVED from the
+  the `exec_capture` PIPE path; **axis 2d** a 1 MB source piped into a child that never
+  drains it (with a child that DOES drain it as the anti-vacuous partner); axis 3 a census
+  (no blocking deadline-free wait left outside a `*_wait_deadline` body; no `sys_read`/
+  `sys_write` loop left inside a function that forks — scoped that way so a file read is not
+  a finding, and stated not to cover `lib/process_win.cyr`'s HANDLE drain, which needs a PE
+  mechanism; and `sys_fork()` sites == child-guard calls + declared exemptions, two
+  independently derived counts). ⚠ **Axis 3's file list is DERIVED from the
   driver's own transitive `include` closure, because the hand-written one it shipped with was
   a list of the files whose defect was already known** — lib/process.cyr sat outside it while
   the census reported it clean. Measured both ways over the unfixed module: hand-written list

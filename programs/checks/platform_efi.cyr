@@ -1971,11 +1971,7 @@ fn _efi_stdlib_fallback_gate(): i64 {
     var src_cap = 4096;
     var src_buf = alloc(src_cap);
     var src_n = file_read_all(src_path, src_buf, src_cap);
-    var written = 0;
-    while (written < src_n) {
-        var w = sys_write(write_fd, src_buf + written, src_n - written);
-        if (w <= 0) { written = src_n; } else { written = written + w; }
-    }
+    regression_pipe_write_all(write_fd, src_buf, src_n, _regression_timeout_ms());
     sys_close(write_fd);
 
     var status_buf[1];
