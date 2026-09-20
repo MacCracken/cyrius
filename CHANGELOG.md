@@ -2598,6 +2598,35 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   green, cycc 1,315,344 -> 1,315,416 B, all seven forks compile, and all 332 `.tcyr` produce
   identical exit codes against the pre-bite compiler.
 
+- **A SIMD-returning fn accepted ANY return expression and handed back a half-written register
+  pair.** (bite 21e; found by bite 16's review — the same shape as bite 16c's 9-16 byte struct
+  pair, one type class over.) Measured at 6.6.5 and on this lane's parent, every one of these
+  compiled clean, exit 0, no diagnostic: `fn bad(): f64v2 { return 5; }` (caller read 0),
+  `return s;` for a scalar local, a bare `return;`, `return load64(&v);` (low lane right, high
+  lane stale), `return sc();` for a scalar-returning `sc`, `return mk4();` for a 32-byte `mk4`
+  from a `: f64v2` fn, and `return x + y;` for two `f64v2` params — which **returned `y`
+  unchanged**, since there is no vector `+`. **Root cause:** PARSE_RETURN's `_is_simd128` /
+  `_is_simd256` branches handle exactly `return IDENT;` for a local of the matching class and
+  fall through to the scalar PCMPE path for everything else; the v6.4.31 `_TARGET_PE` arm covers
+  only `return <simd_call>(..)`. The vector branches now refuse anything the ABI cannot carry,
+  naming the construct (`a vector-returning fn carries its result in a fixed register pair, so
+  \`return\` takes a local of that vector type or a call to a fn declared to return the same one
+  — got \`5\``). ⚠ **Two sites.** `return f(args);` is taken by the TAIL-CALL path before the
+  vector branch ever sees it, and a `jmp` hands the callee's return convention straight back to
+  our caller, so a `: f64v2` fn tail-jumping into a scalar `sc()` left the second register
+  unwritten — that path now diverts to the normal one unless the callee is declared to return the
+  same vector type. ⚠ The CALL form is tested on the exact declared type while `return IDENT;`
+  keeps accepting any local of the same class: the IDENT branches byte-copy 16/32 bytes, which is
+  right whatever the lane type, but the PE arm keys on `GFRS(callee) == _cur_fn_ret_scalar`, so a
+  same-class call of a different declared type would miss that arm and land on the generic path on
+  Windows — the shape this bite removes. Gated by `tests/gates/codegen/simd_return_shapes.sh`:
+  9 refusals + 6 acceptances on each of four legs (host x86_64, cx under cxvm, aarch64 under
+  qemu-aarch64, Win64 PE under wine — emulation, **not** hardware), 60 rows green, both lanes of
+  every accepted vector checked by separate programs; mutation-proven 9, 9 and 2 rows red for
+  both sites, the PARSE_RETURN half and the tail-call half. Self-host fixpoint green,
+  seed-derive green, cycc 1,315,416 -> 1,319,688 B, all seven forks compile, and all 332 `.tcyr`
+  give identical exit codes against the pre-bite compiler.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**

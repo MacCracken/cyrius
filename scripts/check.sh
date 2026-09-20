@@ -743,6 +743,16 @@ sh "$ROOT/tests/gates/toolchain/crossos_runner_rejects_a_silent_binary.sh"
 # scalar-source paths are pinned so a future tightening cannot quietly take them out.
 sh "$ROOT/tests/gates/frontend/struct_copy_type_checked.sh"
 
+# 6.6.6: a vector-returning fn `return`s only what the vector return ABI can carry. PARSE_RETURN
+# handled exactly `return IDENT;` for a local of the matching class and fell through to the
+# SCALAR path for everything else, so `fn bad(): f64v2 { return 5; }` compiled clean and handed
+# back a half-written register pair — and so did a bare `return;`, `return x + y;` (which
+# returned Y UNCHANGED), `return load64(&v);` and a call to a scalar or wrong-width fn. The
+# same shape as bite 16c's 9-16 byte struct pair, one type class over. Two sites: the tail-call
+# path takes `return f(..);` before the vector branch sees it. Legs: host, cx, qemu-aarch64,
+# wine-PE (emulation is NOT hardware — the ecb/ach/cass/pi gate is).
+sh "$ROOT/tests/gates/codegen/simd_return_shapes.sh"
+
 # 6.6.5: the `return f(args);` tail path must divert to PARSE_FNCALL for exactly the
 # arguments PARSE_FNCALL treats specially — no more. The `: Str` literal divert added here
 # was armed by a literal at ANY paren depth, so `return deep(n-1, str_from("x"))` lost its

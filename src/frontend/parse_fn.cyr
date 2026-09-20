@@ -681,6 +681,13 @@ fn PARSE_RETURN(S): i64 {
                         # from a `: P2` fn tail-jumped into a scalar fn and left rdx unwritten —
                         # the tail-call spelling of the shape `_refuse_pair_return` names.
                         if (_cur_fn_ret_pair == 1) { if (_pair_ret_call_ok(S) == 0) { tc_has_addr = 1; } }
+                        # 6.6.6 — and for the VECTOR return classes, for the same reason. A
+                        # `: f64v2` fn tail-jumping into a scalar `sc()` handed OUR caller
+                        # whatever `sc` left in one register and nothing in the other — the
+                        # tail-call spelling of the shape `_refuse_simd_return` names. Sending it
+                        # to the normal path is what lets that refusal see it. A callee declared
+                        # to return the same vector type keeps its `jmp` (its convention IS ours).
+                        if (_cur_fn_returns_vector(S) == 1) { if (_simd_ret_call_ok(S) == 0) { tc_has_addr = 1; } }
                         # v6.5.1 — a callee that has an overload-suffix sibling must go through
                         # PARSE_FNCALL, because that is the ONLY place the `_str`/`_int` dispatch
                         # lives. This tail path emits epilogue+jmp itself and never consults
@@ -1225,6 +1232,15 @@ fn PARSE_RETURN(S): i64 {
                 }
             }
         }
+    }
+    # 6.6.6 — EVERYTHING ELSE. The two branches above take `return IDENT;` for a local of the
+    # matching vector class and return outright; the only other shape the vector return ABI can
+    # carry is a call to a fn declared to return the SAME vector type (a register passthrough on
+    # SysV/aarch64/cx, the retptr marshalling arm below on PE). Anything else used to fall
+    # through to the scalar PCMPE path and hand back a half-written register pair, silently.
+    # See `_refuse_simd_return`. CHANGELOG [6.6.6]
+    if (_cur_fn_returns_vector(S) == 1) {
+        if (_simd_ret_call_ok(S) == 0) { _refuse_simd_return(S); }
     }
     # v6.4.31: `return <simd_call>(args);` on Win64 PE — a SIMD-returning fn
     # whose return expression is itself a SIMD-returning call (e.g.
@@ -2118,6 +2134,45 @@ fn _pair_ret_offender(S): i64 {
     syscall(SYS_WRITE, 2, "this expression", 15);
     return 0;
 }
+# ⛔ 6.6.6 — A SIMD-RETURNING FN ACCEPTED ANY RETURN EXPRESSION. The same shape as the pair
+# class above, one type class over. PARSE_RETURN's `_is_simd128` / `_is_simd256` branches handle
+# exactly `return IDENT;` for a local of the matching class; everything else fell through to the
+# scalar PCMPE path, so on 6.6.5 `fn bad(): f64v2 { return 5; }` compiled clean and handed back
+# a half-written register pair (measured 0), and so did `return s;` for a scalar local, a bare
+# `return;`, `return x + y;` (which returned Y UNCHANGED — there is no vector `+`),
+# `return load64(&v);`, `return sc();` for a scalar-returning `sc`, and `return mk4();` from a
+# `: f64v2` fn for a 32-byte `mk4`. The v6.4.31 `_TARGET_PE` arm below covers only
+# `return <simd_call>(..)`.
+# ⚠ THE CALL FORM IS TESTED ON THE EXACT DECLARED TYPE, not on the class, while `return IDENT;`
+# above accepts any local of the same class. That asymmetry is deliberate and load-bearing: the
+# `return IDENT;` branches byte-COPY 16/32 bytes, which is right whatever the lane type, but the
+# PE arm keys on `GFRS(callee) == _cur_fn_ret_scalar` — so a same-class call of a DIFFERENT
+# declared type would miss that arm and land on the generic path on Windows, which is the shape
+# this bite removes. Refusing is the conservative answer, never a miscompile.
+fn _simd_ret_call_ok(S): i64 {
+    if (PEEKT(S) != 2) { return 0; }
+    if (TOKTYP(S, GTI(S) + 1) != 10) { return 0; }
+    var fi = FINDFN(S, PEEKV(S));
+    if (fi < 0) { return 0; }
+    if (GFRS(S, fi) != _cur_fn_ret_scalar) { return 0; }
+    return 1;
+}
+fn _cur_fn_returns_vector(S): i64 {
+    if (_is_simd128(S, _cur_fn_ret_scalar) == 1) { return 1; }
+    if (_is_simd256(S, _cur_fn_ret_scalar) == 1) { return 1; }
+    return 0;
+}
+fn _refuse_simd_return(S): i64 {
+    if (_panic == 1) { return 0; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    syscall(SYS_WRITE, 2, ": a vector-returning fn carries its result in a fixed register pair, so `return` takes a local of that vector type or a call to a fn declared to return the same one — got `", 174);
+    _pair_ret_offender(S);   # names the construct; not pair-specific despite the name
+    syscall(SYS_WRITE, 2, "`\n", 2);
+    _had_error = 1;
+    return 0;
+}
+
 fn _refuse_pair_return(S): i64 {
     if (_panic == 1) { return 0; }
     syscall(SYS_WRITE, 2, "error:", 6);
