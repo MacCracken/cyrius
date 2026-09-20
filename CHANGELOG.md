@@ -1887,6 +1887,35 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the expected fork from the shipping recipes; 6 mutants, all RED, ledger in the gate header.
   cbt-only — `build/cycc` is unchanged.
 
+- **`cyrius build --target=js` off x86-64 Linux did not fail — it reported OK and wrote a
+  compiled BINARY over the `.js`.** (bite 23b; found by bite 9's review.) The TypeScript
+  front end (`src/frontend/ts/*`) and the JS emitter (`src/backend/js/emit.cyr`) — 7,672
+  lines, 322 KB of source — are included by `src/main.cyr` **alone**, and `--emit-js` is
+  parsed only there. Bite 9 gave the PE arm a named refusal because `sys_fork` is a -1 stub
+  on Windows; on aarch64, arm64-macOS and x86-macOS the fork is **real**, so `_emit_js`
+  genuinely exec'd a compiler that does not know the flag. cycc ignored it, read its **empty**
+  stdin, emitted a runnable binary, and the CLI renamed that over the output and printed `OK`.
+  Measured on real **pi** at `5a583c1e`: `emit-js t.ts -> out.js [js] OK`, exit **0**, and
+  `out.js` a **65,888-byte aarch64 ELF**. A green placebo, not a failure — which is why it had
+  never been reported. **Fix:** refuse, rather than add the front end to four more forks
+  (7,672 lines into every non-Linux compiler for a browser-JS emitter with no consumer there
+  is not cheap and is exactly the fork bloat the release is trying not to grow).
+  `_target_cc_has_js()` derives the answer from `_self_host_src()` — the bite 23a mapping —
+  so it cannot drift into a second copy of the per-target knowledge, which is how the PE arm
+  came to ship alone; and `_win_emit_js_refuse` now delegates to the same message, so all five
+  forks say the same thing and **name the fork this host's cycc is built from**. The guard
+  runs before the fork, so no output file is created. **Verified on REAL ecb, ach and pi:**
+  `build --target=js` exits 1, names `src/main_aarch64_macho.cyr` / `src/main_x86_macho.cyr` /
+  `src/main_aarch64_native.cyr` respectively, and leaves no file; on Windows (wine, not
+  hardware) it names `src/main_win.cyr`; x86-64 Linux still emits real JS. ⚠ Not applicable to
+  cx: `cycc_cx` is a compile TARGET, never a host the CLI runs on. New gate
+  `tests/gates/toolchain/emit_js_refused_off_x86_linux.sh` — axis 1 re-derives "src/main.cyr
+  alone" from the include graph so a fork that later GAINS the front end turns it red, axis 3
+  EVALUATES the predicate under each host's macro set, and axis 4's **positive** control keeps
+  "refuse everywhere" from passing. 4 mutants, all RED. `tests/gates/platform/
+  cbt_fork_sites_have_pe_arm.sh`'s wine row was updated for the shared wording and now also
+  asserts the fork name. cbt-only — `build/cycc` is unchanged.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**

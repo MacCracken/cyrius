@@ -389,7 +389,13 @@ else
 
     wrun build --target=js t.ts t.js
     check "wine: build --target=js FAILS" 1 "$RC"
-    check "  …BY NAME, not silently" 1 "$(grep -c 'target=js is not available on Windows' "$T/err" || true)"
+    # v6.6.6 bite 23b: the refusal is now SHARED with the four POSIX forks that also lack
+    # the TS front end, so the wording moved from "not available on Windows" to "not
+    # available on this target" plus the FORK this host's cycc is built from. The fork
+    # line is the stronger assertion and is checked here: a generic "unsupported" would
+    # satisfy the first row and tell a Windows user nothing about why.
+    check "  …BY NAME, not silently" 1 "$(grep -c 'target=js is not available on this target' "$T/err" || true)"
+    check "  …naming the PE fork it is built from" 1 "$(grep -c 'src/main_win.cyr' "$T/err" || true)"
     check "  …and names the reason (no --emit-js in the PE fork)" 1 "$(grep -c 'no --emit-js' "$T/err" || true)"
 
     wrun capacity p.cyr

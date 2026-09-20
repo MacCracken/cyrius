@@ -3160,7 +3160,7 @@ through the CLI: `cyrius build --target=js <in.tsx> <out.js>`.
 cycc --emit-js app.tsx                  # JS → stdout
 
 # Via the build CLI
-cyrius build --target=js app.tsx app.js # x86-Linux-only
+cyrius build --target=js app.tsx app.js # x86-Linux-only; refused BY NAME elsewhere (v6.6.6)
 ```
 
 ### Type Stripping
@@ -3330,6 +3330,18 @@ is out of range. The output is tested to round-trip through `node --check`
 (the TS frontend is not compiled for aarch64, Windows PE, or macOS). The
 standalone `cycc_aarch64` and `cycc_win` cross-compilers do not include
 the TS frontend.
+
+> ⛔ **v6.6.6 — until this release "x86-Linux-only" was documentation, not behaviour, and
+> what happened elsewhere was worse than a failure.** The CLI forked the host's cycc with
+> `--emit-js`; that compiler does not know the flag, so it **ignored it**, read its
+> **empty** stdin, emitted a runnable binary, and the CLI renamed that over the `.js` and
+> printed `OK`. Measured on real pi at 6.6.6: `emit-js t.ts -> out.js [js] OK`, exit 0,
+> `out.js` a 65,888-byte aarch64 ELF. `cyrius build --target=js` now **refuses by name**
+> on every host whose compiler is not built from `src/main.cyr`, naming that host's fork,
+> and writes no output file. Verified on real ecb, ach and pi; pinned by
+> `tests/gates/toolchain/emit_js_refused_off_x86_linux.sh`, whose axis 1 re-derives
+> "`src/main.cyr` alone carries the TS front end" from the include graph each run.
+> See CHANGELOG [6.6.6].
 
 ### Limitations
 

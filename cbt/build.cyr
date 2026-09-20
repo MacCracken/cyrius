@@ -16,6 +16,13 @@ fn _emit_js(source, output): i64 {
     #ifdef CYRIUS_TARGET_WIN
     return _win_emit_js_refuse();
     #endif
+    # v6.6.6 (bite 23b) — and the OTHER four forks. aarch64, arm64-macOS, x86-macOS and
+    # cx have no TS front end either, and there the fork below is a REAL fork: cycc
+    # ignores the unknown `--emit-js`, reads its empty stdin and emits a runnable binary,
+    # which this fn then renames over the .js and reports as OK (measured on real pi:
+    # exit 0, `out.js` a 65,888-byte aarch64 ELF). Derived from the fork, not a target
+    # list — see `_target_cc_has_js`. CHANGELOG [6.6.6].
+    if (_target_cc_has_js() == 0) { return _emit_js_refuse(); }
     var cc = current_cc();
     if (cc == 0) {
         _err("cycc not found. Install Cyrius or set CYRIUS_HOME.");
@@ -1334,6 +1341,49 @@ fn _self_host_src(): i64 {
     return "src/main.cyr";
 }
 
+# v6.6.6 — DOES THIS HOST'S COMPILER HAVE `--emit-js` AT ALL?
+#
+# The TypeScript front end (`src/frontend/ts/lex.cyr`, `parse.cyr`) and the JS emitter
+# (`src/backend/js/emit.cyr`) — 7,672 lines, 322 KB of source — are included by
+# `src/main.cyr` ALONE (`grep -l 'frontend/ts' src/main*.cyr` answers with one file), and
+# `--emit-js` is parsed only there. Bite 9 gave the PE arm a named refusal; the other
+# four forks had nothing, and what `cyrius build --target=js` did there was not "fail
+# without a reason" — it SUCCEEDED WRONGLY. Measured on real pi at 5a583c1e:
+#   $ cyrius build --target=js t.ts out.js
+#   emit-js t.ts -> out.js [js] OK        (exit 0)
+#   $ file out.js  ->  ELF 64-bit LSB executable, ARM aarch64   (65,888 bytes)
+# cycc ignored the unknown flag, read its EMPTY stdin, emitted a runnable ELF, and the
+# CLI renamed it over the .js and reported success. A green placebo, the shape this
+# release keeps finding.
+#
+# ⚠ DERIVED FROM THE FORK, NOT FROM A TARGET LIST. Asking `_self_host_src()` means this
+# answer cannot drift away from the mapping bite 23a pinned; a `#ifdef` ladder here would
+# be a second copy of the same per-target knowledge, which is the shape that let the PE
+# arm ship alone. `tests/gates/toolchain/emit_js_refused_off_x86_linux.sh` ties the
+# assumption to the actual include graph, so a fork that later GAINS the TS front end
+# turns the gate red instead of silently keeping a wrong refusal. CHANGELOG [6.6.6].
+fn _target_cc_has_js(): i64 {
+    if (streq(_self_host_src(), "src/main.cyr") == 1) { return 1; }
+    return 0;
+}
+
+# The refusal itself. NAMES the fork this host's cycc is built from, so the message is
+# about the actual compiler on the box rather than a generic "not supported".
+fn _emit_js_refuse(): i64 {
+    _err("build --target=js is not available on this target");
+    var m1 = "  the compiler here is built from ";
+    var m2 = ", which does not include\n";
+    var m3 = "  the TypeScript front end or the JS emitter (src/main.cyr alone does), so it\n";
+    var m4 = "  has no --emit-js. Emit the JS on an x86-64 Linux host.\n";
+    var fk = _self_host_src();
+    sys_write(STDERR_FD, m1, strlen(m1));
+    sys_write(STDERR_FD, fk, strlen(fk));
+    sys_write(STDERR_FD, m2, strlen(m2));
+    sys_write(STDERR_FD, m3, strlen(m3));
+    sys_write(STDERR_FD, m4, strlen(m4));
+    return 1;
+}
+
 # v6.6.5 — Windows spawn for run_tool_vec. run_tool/run_tool_argvtail both use
 # sys_fork/sys_waitpid, which are -1 STUBS on PE (lib/syscalls_windows.cyr): the fork
 # "succeeds" with -1, the parent waits on nothing and returns 1, so `cyrius lint` /
@@ -1490,15 +1540,12 @@ fn _win_run_timed(path, timeout_ms, args): i64 {
 # `src/main.cyr` ALONE (`src/frontend/ts/*`, `src/backend/js/emit.cyr`), so `cycc.exe`
 # — built from `src/main_win.cyr` — has no `--emit-js` flag to spawn with. Say that,
 # rather than fork a compiler that would reject the flag.
+# v6.6.6 (bite 23b): delegates, so Windows and the four POSIX forks that also lack the
+# TS front end give the SAME refusal, naming whichever fork this host's cycc is built
+# from. Kept as a named `_win_*` arm because `_emit_js`'s PE guard is what
+# `tests/gates/platform/cbt_fork_sites_have_pe_arm.sh` reads.
 fn _win_emit_js_refuse(): i64 {
-    _err("build --target=js is not available on Windows");
-    var m1 = "  cycc.exe is built from src/main_win.cyr, which does not include the\n";
-    var m2 = "  TypeScript front end or the JS emitter (src/main.cyr only), so it has\n";
-    var m3 = "  no --emit-js. Emit the JS on an x86-64 Linux host.\n";
-    sys_write(STDERR_FD, m1, strlen(m1));
-    sys_write(STDERR_FD, m2, strlen(m2));
-    sys_write(STDERR_FD, m3, strlen(m3));
-    return 1;
+    return _emit_js_refuse();
 }
 
 # The cross-OS self-host driver (`cyrius audit --internal=platform-check`) reconstructs
