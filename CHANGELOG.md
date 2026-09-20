@@ -1412,7 +1412,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   ecb arm was extracted and run for real (exit 0, remote dir removed); the two install arms
   and the cass install gate are syntax-checked and their staging exercised, but `cyrius audit`'s
   install arms were not run (they install a toolchain on both Macs).
-
+- **`check.sh` runs EVERY gate and reports at the END; a gate that did not run is named,
+  never counted as a pass** (bite 8b). The script is `set -e` and invoked the check binary as
+  a bare `"$CHECK_BIN"`, so ONE red row anywhere in the driver aborted it before a single one
+  of the 60 registered shell gates executed — while the binary's own `N passed, M failed` line
+  was the last thing printed and read exactly like a full run. Measured this release: bite 14's
+  genuinely RED `method_call_runs_every_callee` gate was invisible for a whole slot behind a
+  stale doc-stamp row. Every gate now goes through a runner that records pass/fail and returns
+  0, the expected list is DERIVED from check.sh's own source (`^_chk_gate "$ROOT/…"`) so it
+  cannot drift from the calls, and an EXIT/INT/TERM trap prints a summary naming what FAILED
+  and what NEVER RAN — so an interrupted or killed run shows a long NOT RUN list instead of
+  silence. The two headline numbers are derived independently (results recorded vs manifest
+  entries with no result) and the summary says so loudly if they do not add up.
+  `release-gate.sh` step 3 prints that block. Also here, because both cost a whole run while
+  this bite was being written: the check binary is now rebuilt to a side file and renamed into
+  place (a redirect straight at it fails **ETXTBSY** whenever a killed run left the previous
+  binary alive, aborting the suite for a reason unrelated to the tree), and the rebuild watch
+  covers all of `lib/*.cyr` rather than one hand-listed module out of the thirteen the suite
+  includes. Mutation ledger (stubbed 59-gate scratch tree): HEAD + a red driver row → **0** of
+  59 gates ran, no summary; fixed + red driver row → 59 of 59 ran, exit 1, the driver named;
+  one gate red → named; one gate file deleted → MISSING; all green → ALL GREEN, exit 0; a gate
+  that kills the runner mid-suite → `10 of 59 produced a result, 49 NOT RUN`, each listed.
 ## [6.6.5] — 2026-09-19
 
 The 6.6.5 repair release — every open issue in docs/development/issues/, one bite each. All nine issues

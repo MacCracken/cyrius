@@ -23,6 +23,114 @@ set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+# ── ⛔ v6.6.6: EVERY GATE RUNS, AND THE VERDICT IS THE SUMMARY AT THE END ─────────────
+#
+# THE DEFECT. This script is `set -e` and used to invoke the check binary as a bare
+# `"$CHECK_BIN"`, then the shell gates below it as bare `sh "$ROOT/tests/gates/…"`. So the
+# FIRST red row anywhere aborted the whole script: one failing row in the checks driver —
+# a stale doc stamp, say — and NOT ONE of the shell gates after it ever executed, while the
+# binary's own "N passed, M failed" line was the last thing printed and read exactly like a
+# full run. Measured this release: bite 14's genuinely RED `method_call_runs_every_callee`
+# gate was invisible for a whole slot behind a stale doc-stamp row. A suite that stops at
+# the first failure reports the first failure, not the state of the tree.
+#
+# THE RULE, and it is the reason for the manifest below: a gate that did not run is NOT a
+# pass and must never be summarised as one. The expected gate list is derived from THIS
+# FILE'S OWN SOURCE (`^_chk_gate "$ROOT/…"`), so it cannot drift from the calls; anything on
+# that list with no recorded result is printed under NOT RUN. The summary is an EXIT trap,
+# so it prints even if something aborts the script anyway — an abort then shows up as a
+# long NOT RUN list rather than as silence. CHANGELOG [6.6.6]
+_CHK_RESULTS=""       # one "<STATUS> <name>" line per gate that produced a result
+_CHK_FAILS=0
+_CHK_STAGED_DIR=""    # the throwaway CYRIUS_HOME to remove, when we staged one
+_CHK_STARTED=0        # 1 once we are past setup, i.e. once a summary is meaningful
+_CHK_DRIVER="programs/checks (the cyrius check binary)"
+
+# Run one shell gate. ALWAYS returns 0 — `set -e` must not turn a red gate into an abort;
+# the tally is the verdict.
+_chk_gate() {
+    _g=$1
+    shift
+    _gn=${_g#"$ROOT/"}
+    if [ ! -f "$_g" ]; then
+        echo "  FAIL: $_gn — gate script is MISSING"
+        _CHK_RESULTS="$_CHK_RESULTS
+MISSING $_gn"
+        _CHK_FAILS=$((_CHK_FAILS + 1))
+        return 0
+    fi
+    _grc=0
+    sh "$_g" "$@" || _grc=$?
+    if [ "$_grc" = 0 ]; then
+        _CHK_RESULTS="$_CHK_RESULTS
+PASS $_gn"
+    else
+        echo "  ^^ FAILED (exit $_grc): $_gn"
+        _CHK_RESULTS="$_CHK_RESULTS
+FAIL $_gn"
+        _CHK_FAILS=$((_CHK_FAILS + 1))
+    fi
+    return 0
+}
+
+_CHK_DONE=0
+_chk_finish() {
+    _xrc=$?
+    # INT/TERM handlers `exit`, which re-enters via the EXIT trap in some shells.
+    if [ "$_CHK_DONE" = "1" ]; then exit "$_xrc"; fi
+    _CHK_DONE=1
+    if [ -n "$_CHK_STAGED_DIR" ]; then rm -rf "$_CHK_STAGED_DIR"; fi
+    if [ "$_CHK_STARTED" != "1" ]; then exit "$_xrc"; fi
+
+    # Everything this script is supposed to run, read back out of its own source.
+    _manifest=$(grep -oE '^_chk_gate "\$ROOT/[^"]+"' "$ROOT/scripts/check.sh" \
+                | sed 's|^_chk_gate "\$ROOT/||; s|"$||')
+    _total=$(printf '%s\n' "$_manifest" | grep -c . || true)
+    _notrun=""
+    _nnot=0
+    for _m in $_manifest; do
+        if ! printf '%s\n' "$_CHK_RESULTS" | grep -qx "PASS $_m"; then
+            if ! printf '%s\n' "$_CHK_RESULTS" | grep -qxE "(FAIL|MISSING) $_m"; then
+                _notrun="$_notrun $_m"
+                _nnot=$((_nnot + 1))
+            fi
+        fi
+    done
+    echo ""
+    echo "── check.sh summary ────────────────────────────────────────────────"
+    # Two INDEPENDENTLY derived numbers that have to add up: results recorded (counted
+    # from the tally) and gates with no result (counted from the manifest). If they do not
+    # sum to the registered total, this bookkeeping is itself broken — say so rather than
+    # printing a self-consistent lie, which is the failure mode this whole block exists for.
+    _res_n=$(printf '%s\n' "$_CHK_RESULTS" | grep -cE '^(PASS|FAIL|MISSING) (tests/gates|scripts)/' || true)
+    printf '  shell gates: %s of %s produced a result, %s NOT RUN\n' "$_res_n" "$_total" "$_nnot"
+    printf '  failures:    %s (the check binary counts as one row here)\n' "$_CHK_FAILS"
+    if [ "$((_res_n + _nnot))" != "$_total" ]; then
+        printf '  ⚠ BOOKKEEPING: %s + %s != %s — this summary cannot be trusted\n' \
+            "$_res_n" "$_nnot" "$_total"
+    fi
+    if [ "$_CHK_FAILS" != "0" ]; then
+        echo "  FAILED:"
+        printf '%s\n' "$_CHK_RESULTS" | grep -E '^(FAIL|MISSING) ' | sed 's/^/    /'
+    fi
+    if [ "$_nnot" != "0" ]; then
+        echo "  NOT RUN — these did NOT execute and are NOT passes:"
+        for _m in $_notrun; do echo "    $_m"; done
+    fi
+    if [ "$_CHK_FAILS" = "0" ] && [ "$_nnot" = "0" ]; then
+        echo "  ALL GREEN"
+        echo "────────────────────────────────────────────────────────────────────"
+        exit "$_xrc"
+    fi
+    echo "────────────────────────────────────────────────────────────────────"
+    exit 1
+}
+# INT/TERM as well as EXIT: interrupting a long run is exactly when you most need to be
+# told which gates never executed, and dash does not run an EXIT trap on an untrapped INT.
+trap _chk_finish EXIT
+trap _chk_finish INT
+trap _chk_finish TERM
+
 # ── v6.6.4: the suite runs against a THROWAWAY CYRIUS_HOME staged from the working tree ──
 #
 # Gates that stage a consumer pinned at `cyrius = "$(cat VERSION)"` resolve their stdlib
@@ -66,7 +174,7 @@ if [ -z "${CYRIUS_HOME:-}" ]; then
     export CYRIUS_HOME="$_CHK_HOME"
     export CYRIUS_CHECK_STAGED_HOME=1
     export PATH="$_CHK_HOME/bin:$PATH"
-    trap 'rm -rf "$_CHK_HOME"' EXIT
+    _CHK_STAGED_DIR="$_CHK_HOME"   # removed by the single _chk_finish EXIT trap
     printf "check: staged CYRIUS_HOME=%s (versions/%s from the tree; other slots + deps aliased from %s; PATH prefixed with its bin/)\n" "$_CHK_HOME" "$_CHK_VER" "$_CHK_LIVE_HOME"
 fi
 
@@ -99,14 +207,23 @@ if [ ! -x "$CHECK_BIN" ] || [ -z "$NEWEST_SRC" ] || [ "$NEWEST_SRC" -nt "$CHECK_
     # hint that the suite never built. Cost real time during v6.5.40 (an undefined helper in a
     # debug edit produced a completely silent run). The compiler's own diagnostics are the
     # thing you need here, so they are shown.
-    if ! cat "$CHECK_SRC" | "$CC" > "$CHECK_BIN" 2>"$CHECK_BIN.err"; then
+    # ⛔ v6.6.6: build to a SIDE FILE and rename into place. Writing the redirect straight
+    # at $CHECK_BIN fails ETXTBSY whenever a previous run's check binary is still alive —
+    # which is exactly what an interrupted or killed run leaves behind, reparented to PID 1
+    # — and that aborted the whole suite before a single gate ran, for a reason that has
+    # nothing to do with the tree. Measured while writing this bite: one orphaned
+    # cyrius_check cost a full 13-minute run. rename(2) over a running binary is fine; the
+    # running process keeps its own inode. Same shape as the `cp new && mv -f` recipe
+    # CLAUDE.md prescribes for build/cycc. CHANGELOG [6.6.6]
+    if ! cat "$CHECK_SRC" | "$CC" > "$CHECK_BIN.new" 2>"$CHECK_BIN.err"; then
         printf "error: the check suite failed to compile:\n" >&2
         cat "$CHECK_BIN.err" >&2
-        rm -f "$CHECK_BIN" "$CHECK_BIN.err"
+        rm -f "$CHECK_BIN.new" "$CHECK_BIN.err"
         exit 1
     fi
     rm -f "$CHECK_BIN.err"
-    chmod +x "$CHECK_BIN"
+    chmod +x "$CHECK_BIN.new"
+    mv -f "$CHECK_BIN.new" "$CHECK_BIN"
 fi
 
 # Run the cyrius gate suite. On a targeted run (a suite name was passed),
@@ -114,45 +231,63 @@ fi
 if [ $# -gt 0 ]; then
     exec "$CHECK_BIN" "$@"
 fi
-"$CHECK_BIN"
+
+# ⛔ v6.6.6: RECORD the driver's verdict, do NOT abort on it. `"$CHECK_BIN"` used to be a
+# bare command under `set -e`, so any red row in it skipped every shell gate below — see the
+# header. The shell gates cover things the binary cannot, and a red doc stamp is no reason to
+# stop looking at them.
+_CHK_STARTED=1
+_CHK_DRIVER_RC=0
+"$CHECK_BIN" || _CHK_DRIVER_RC=$?
+if [ "$_CHK_DRIVER_RC" = "0" ]; then
+    _CHK_RESULTS="$_CHK_RESULTS
+PASS $_CHK_DRIVER"
+else
+    _CHK_RESULTS="$_CHK_RESULTS
+FAIL $_CHK_DRIVER"
+    _CHK_FAILS=$((_CHK_FAILS + 1))
+    echo ""
+    echo "  ^^ FAILED (exit $_CHK_DRIVER_RC): $_CHK_DRIVER"
+    echo "  CONTINUING — the shell gates below still run; the verdict is the summary at the end."
+fi
 
 # v6.2.28 D7: the bare-metal kernel BOOT gate — a real QEMU execution of the
 # kernel built via the formalized triple. This anti-rots the v6.2.27 kernel
 # codegen the way the macho port never was (a green checkmark is not
 # verification; the kernel actually running IS). Visibly skips when qemu is
 # absent rather than masquerading as green.
-sh "$ROOT/scripts/qemu-boot-gate.sh"
+_chk_gate "$ROOT/scripts/qemu-boot-gate.sh"
 
 # v6.4.47 (arc #3): UEFI Authenticode signing end-to-end gate — `cyrius sign-efi`
 # signs a synthetic PE and an independent oracle (openssl + from-scratch PE-hash)
 # confirms the signature is one a real UEFI firmware would accept. Skips if openssl
 # is absent. The sign path is lib/CLI-only (cycc byte-identical), so this is the
 # behavioral gate for the signer.
-sh "$ROOT/scripts/sign-efi-gate.sh"
+_chk_gate "$ROOT/scripts/sign-efi-gate.sh"
 
 # v6.4.81: value-form SIMD must exist on every EMIT path, not just the native
 # forks. main.cyr's PE/Mach-O CROSS arms were missing CYRIUS_HAS_VAL_SIMD_PARAMS
 # since v6.4.31, so the same source built differently depending on WHERE it was
 # built. Host-side by necessity: a tcyr runs natively on each host and therefore
 # exercises main_win.cyr (always correct), never the cross path.
-sh "$ROOT/tests/gates/platform/valform_simd_crosstarget.sh"
+_chk_gate "$ROOT/tests/gates/platform/valform_simd_crosstarget.sh"
 
 # v6.5.0 Phase 1 (public/private visibility): every fn must be attributed to the
 # source file its `fn` keyword is in. Phase 2 turns that partition into a visibility
 # boundary, so a wrong stamp means `private` silently mis-scopes. Gated here at
 # Phase 1 — while the table is still recorded-not-enforced — so the substrate is
 # never write-only and never unverified.
-sh "$ROOT/tests/gates/frontend/fileid_substrate.sh"
+_chk_gate "$ROOT/tests/gates/frontend/fileid_substrate.sh"
 
 # v6.5.0 Phase 2: file-scoped `private` / per-item `public`, WARN mode. Asserts
 # per-RESOLUTION-PATH (ordinary / tail / operator), because enforcement that covers
 # only the obvious path is the v6.4.81 `_cfo` shape repeating — that class was
 # declared fixed three times before the fourth occurrence turned up in a path nobody
 # had enumerated.
-sh "$ROOT/tests/gates/frontend/visibility_private.sh"
-sh "$ROOT/tests/gates/frontend/string_token_decoders.sh"
-sh "$ROOT/tests/gates/frontend/public_marker_scoped_to_its_item.sh"
-sh "$ROOT/tests/gates/frontend/derive_with_public.sh"
+_chk_gate "$ROOT/tests/gates/frontend/visibility_private.sh"
+_chk_gate "$ROOT/tests/gates/frontend/string_token_decoders.sh"
+_chk_gate "$ROOT/tests/gates/frontend/public_marker_scoped_to_its_item.sh"
+_chk_gate "$ROOT/tests/gates/frontend/derive_with_public.sh"
 
 # v6.5.1: overload-suffix dispatch must be ARITY-AWARE and POSITION-CONSISTENT.
 # Asserts across assign / return-tail / nested-arg because the two defects it covers
@@ -161,7 +296,7 @@ sh "$ROOT/tests/gates/frontend/derive_with_public.sh"
 # call spelled two ways ran two different functions. The 253-file corpus changes 0 bytes
 # under the arity fix, i.e. it had ZERO coverage of the shape, which is why this must be
 # a gate and not a .tcyr.
-sh "$ROOT/tests/gates/frontend/overload_arity_dispatch.sh"
+_chk_gate "$ROOT/tests/gates/frontend/overload_arity_dispatch.sh"
 
 # v6.5.1: the agnos O_RDWR flag-map gate (v6.4.27) was CI-ONLY — `ci.yml` ran it and
 # nothing local did, so `release-gate.sh` could report GREEN while CI went RED. It did
@@ -171,7 +306,7 @@ sh "$ROOT/tests/gates/frontend/overload_arity_dispatch.sh"
 # as grading check.sh by its stdout instead of its exit status — fixed the same way, by
 # making the local gate actually run it. `tests/gates/memory/heapmap.sh` is the only other CI-only
 # script and it is genuinely redundant: `_heapmap_gate()` in the check binary covers it.
-sh "$ROOT/tests/gates/platform/io_rdwr_agnos.sh"
+_chk_gate "$ROOT/tests/gates/platform/io_rdwr_agnos.sh"
 # v6.5.54: the NOP-harvest compactor must run under IR mode, and the resulting compiler
 # must WORK. It was gated off for every IR mode, so CYRIUS_IR=3 shipped 19,067 NOP
 # instructions against the default path's 44 (+65,320 B of .text). The gate could not
@@ -179,14 +314,14 @@ sh "$ROOT/tests/gates/platform/io_rdwr_agnos.sh"
 # so without the stage-3c CP repair the IR-built cycc dies at startup with
 # `alloc_init: mmap failed` — mutation-proven, and that reproduction check, not the NOP
 # count, is what this gate is really asserting.
-sh "$ROOT/tests/gates/codegen/ir_nop_harvest.sh"
+_chk_gate "$ROOT/tests/gates/codegen/ir_nop_harvest.sh"
 
 # v6.5.54: ir_build_edges must resolve jump targets within a function. Both BB finders
 # scanned the whole program per jump (one of them nesting a node scan inside that), which
 # put CYRIUS_IR=3 at 13,967 ms against 672 ms — 21x, and ALL of it here: with FOLD, LASE,
 # DCE and DSE all disabled it was still 13,910 ms. Pins the COST, not the mechanism, so any
 # sub-quadratic scheme passes.
-sh "$ROOT/tests/gates/codegen/ir_edges_scaling.sh"
+_chk_gate "$ROOT/tests/gates/codegen/ir_edges_scaling.sh"
 
 # v6.5.55: `enum N: stack` must construct payload variants with NO allocation, the plain boxed
 # form must be untouched, and a variant too wide for the (tag, payload) pair must be REJECTED
@@ -195,7 +330,7 @@ sh "$ROOT/tests/gates/codegen/ir_edges_scaling.sh"
 # file open as SUCCESS in a retaining loop while passing every gate of its day. This gate builds
 # N values at ONE call site, keeps them all live, and checks each — and pairs every zero-growth
 # assertion with a non-zero control so it cannot go vacuous.
-sh "$ROOT/tests/gates/codegen/stack_enum_no_alloc.sh"
+_chk_gate "$ROOT/tests/gates/codegen/stack_enum_no_alloc.sh"
 
 # v6.5.56 P0: identifier dedup must be an EXACT compare. It was a PREFIX compare that happened to
 # be exact only while `bucket = klen` put one length per chain; v6.5.50's content hash removed
@@ -205,12 +340,12 @@ sh "$ROOT/tests/gates/codegen/stack_enum_no_alloc.sh"
 # ⛔ The self-host fixpoint CANNOT see this — cycc's own source has 0 colliding pairs of 54,089,
 # and the mutation proof confirms a deliberately-broken compiler still reproduces itself
 # byte-identically. This gate pins the PROPERTY on known-colliding pairs instead.
-sh "$ROOT/tests/gates/frontend/lexid_prefix_exact.sh"
+_chk_gate "$ROOT/tests/gates/frontend/lexid_prefix_exact.sh"
 
 # v6.5.56: `private fn h()` must be rejected rather than silently privatising the whole file
 # (twelve releases live, no diagnostic). Axes 2-3 keep the fix honest: the own-line and
 # `private;` forms are the legitimate spellings and must keep working.
-sh "$ROOT/tests/gates/frontend/private_per_item_rejected.sh"
+_chk_gate "$ROOT/tests/gates/frontend/private_per_item_rejected.sh"
 
 # 6.6.5: `private` was enforced only against definitions PASS 1 REGISTERED, and pass 1 skipped
 # impl bodies, `mod` fns and everything after the first top-level statement — so a call that
@@ -220,7 +355,7 @@ sh "$ROOT/tests/gates/frontend/private_per_item_rejected.sh"
 # ABI). Axis 1 is static 7-fork parity — miss one fork and the hole comes back on that target
 # only; axis 2 compares the FORWARD refusal set against the BACKWARD one, so the expectation
 # is produced by a different compiler path, not a list in the gate.
-sh "$ROOT/tests/gates/frontend/private_forward_reference.sh"
+_chk_gate "$ROOT/tests/gates/frontend/private_forward_reference.sh"
 
 # 6.6.5: `s.m(x)` and `M_m(&s, x)` are one call syntax with TWO marshalling paths, and the
 # method one ran NONE of PARSE_FNCALL's callee gates — four silent failures in one argument
@@ -228,14 +363,14 @@ sh "$ROOT/tests/gates/frontend/private_forward_reference.sh"
 # an integer literal into `: cstring`), plus no arity check at all. Every row is a
 # DIFFERENTIAL against the identical free fn, so the expected value comes from PARSE_FNCALL
 # rather than from a list in the gate: a fifth gate added there and forgotten here fails.
-sh "$ROOT/tests/gates/frontend/method_call_runs_every_callee_gate.sh"
+_chk_gate "$ROOT/tests/gates/frontend/method_call_runs_every_callee_gate.sh"
 
 # 6.6.6: a top-level name declared twice is ONE global and the last definition wins. The
 # redeclaration used to get a second slot, so `var a = 5; var b = a; var a = 5;` read b as 0
 # and the "(last definition wins)" collision warning described a semantics the compiler did not
 # implement. Rows are checked against no-redeclaration CONTROL programs, with a cx leg (the one
 # target that stores the value rather than baking it) and an aarch64 leg under qemu.
-sh "$ROOT/tests/gates/frontend/global_redeclaration_one_definition.sh"
+_chk_gate "$ROOT/tests/gates/frontend/global_redeclaration_one_definition.sh"
 
 # 6.6.6: a block-bodied closure in a declaration-zone `var` used to end the program. Pass 1 and
 # pass 2 both found the end of the declaration by scanning to the first `;`, and the closure body
@@ -304,7 +439,7 @@ sh "$ROOT/tests/gates/toolchain/crossos_runner_rejects_a_silent_binary.sh"
 # was armed by a literal at ANY paren depth, so `return deep(n-1, str_from("x"))` lost its
 # TAIL CALL and a correct bounded recursion started SIGSEGVing. Depth 1 is PARSE_FNCALL's
 # own criterion. The gate pins its own stack limit so the verdict is not the box's.
-sh "$ROOT/tests/gates/codegen/tail_call_literal_divert_depth.sh"
+_chk_gate "$ROOT/tests/gates/codegen/tail_call_literal_divert_depth.sh"
 
 # v6.5.57: copying an aggregate must copy EVERY word. `dst = src;` used to copy only the first
 # 8 bytes for structs AND vectors — reported as a SIMD bug, but a two-field struct truncated
@@ -313,7 +448,7 @@ sh "$ROOT/tests/gates/codegen/tail_call_literal_divert_depth.sh"
 # base slot ever appears as an rbp disp and the picker could promote a later word whose real
 # writes go through rcx. With only two aggregates the picker never reaches its `count > 1`
 # threshold and a build with that exclusion removed still passes.
-sh "$ROOT/tests/gates/codegen/aggregate_copy_all_words.sh"
+_chk_gate "$ROOT/tests/gates/codegen/aggregate_copy_all_words.sh"
 
 # v6.5.58: the SIMD-param inline predicate must SEE a wide parameter whatever its width.
 # `_fn_has_simd_param` scanned slots [0, pc), but a wide param's SLTYPE lives on its NAMED slot,
@@ -321,14 +456,14 @@ sh "$ROOT/tests/gates/codegen/aggregate_copy_all_words.sh"
 # Single-128-bit and ALL 256-bit params were invisible and never inlined. Axis 2 is the control:
 # an i64-param fn must still be called, because general inlining is default-off for a measured
 # reason and this predicate exists to admit the SIMD wrappers WITHOUT switching it on.
-sh "$ROOT/tests/gates/codegen/simd_param_inline_reach.sh"
+_chk_gate "$ROOT/tests/gates/codegen/simd_param_inline_reach.sh"
 
 # v6.5.59: an INLINED 256-bit return must carry all four lanes. The replay re-parses the callee
 # inside the CALLER's function context, so `return r;` emitted the caller's return convention —
 # which moves ONE XMM. A 256-bit return is a PAIR, so lanes 2-3 were left stale, exit 0, no
 # diagnostic. ⭐ Every lane is asserted: a lane-0 check passes while half the vector is wrong,
 # which is why no existing SIMD test caught it.
-sh "$ROOT/tests/gates/codegen/inline_simd256_return_lanes.sh"
+_chk_gate "$ROOT/tests/gates/codegen/inline_simd256_return_lanes.sh"
 
 # v6.5.60, REWRITTEN v6.5.62: the fixed-lane SIMD wrappers must not pay a per-call AVX2 dispatch,
 # and the ymm kernel must keep its advantage where that advantage is real. ⛔ This gate's axis 2
@@ -336,7 +471,7 @@ sh "$ROOT/tests/gates/codegen/inline_simd256_return_lanes.sh"
 # have gone red on the correct change and stayed green through the wrong one, and never had a
 # chance at the +59 % that shipped at v6.5.24. Measured one variable at a time: the dispatch CALL
 # was the whole cost (~25 %); ymm at a fixed 4 lanes is free. Axes now measure behaviour.
-sh "$ROOT/tests/gates/codegen/simd_valueform_no_avx_transition.sh"
+_chk_gate "$ROOT/tests/gates/codegen/simd_valueform_no_avx_transition.sh"
 
 # v6.5.63: `#inline` must actually inline, must WARN when it cannot, and must not change results.
 # The directive had NO handler anywhere in src/ until now — it lexed as a comment and did nothing,
@@ -345,8 +480,8 @@ sh "$ROOT/tests/gates/codegen/simd_valueform_no_avx_transition.sh"
 # not there). ⭐ The failure mode is a quiet revert to doing nothing, which a results-only test
 # cannot see, so axis 1 counts call sites and axis 2 pins the diagnostic. Mutation-proven: arming
 # nothing gives "with=100 without=100" and axis 1 fires.
-sh "$ROOT/tests/gates/codegen/inline_directive.sh"
-sh "$ROOT/tests/gates/codegen/dce_data_vaddr_frozen.sh"
+_chk_gate "$ROOT/tests/gates/codegen/inline_directive.sh"
+_chk_gate "$ROOT/tests/gates/codegen/dce_data_vaddr_frozen.sh"
 
 # v6.6.3: a directive must reach EVERY per-target fork, and must not be INERT on any of them.
 # cyrius has seven forks of the entry point and each carries its OWN copy of the top-level
@@ -359,7 +494,7 @@ sh "$ROOT/tests/gates/codegen/dce_data_vaddr_frozen.sh"
 # compiler and requires the outputs to DIFFER — byte-identical output IS the proof of inertness,
 # and needs no disassembler, so it can never degrade into a skip. Mutation-proven on four
 # separate reverts (guard drop, arm drop, flag-consumer break, cx pass-2 revert).
-sh "$ROOT/tests/gates/frontend/directive_fork_parity.sh"
+_chk_gate "$ROOT/tests/gates/frontend/directive_fork_parity.sh"
 
 # v6.5.64: a fixed-lane vector op on three &local operands must emit the DIRECT form (two rbp
 # loads, the packed op, one store) with its result reload ELIDED by SLASE — while a real batch
@@ -369,7 +504,7 @@ sh "$ROOT/tests/gates/frontend/directive_fork_parity.sh"
 # reload rather than a short instruction stream. Axis 3 is the anti-vacuous control: the fast path
 # is chosen by token lookahead, so a loosened precondition would emit a 16-byte op over a real
 # batch's extent.
-sh "$ROOT/tests/gates/codegen/simd_direct_form.sh"
+_chk_gate "$ROOT/tests/gates/codegen/simd_direct_form.sh"
 
 # v6.5.67: a `: stack` enum value is TWO registers (rax=tag, rdx=payload). Consuming it where only
 # one survives must be a hard ERROR. v6.5.55 shipped the representation with nothing recording
@@ -378,7 +513,7 @@ sh "$ROOT/tests/gates/codegen/simd_direct_form.sh"
 # the v6.5.15 "failure reported as success" class on the payload. `?` was worse: rc=0 then SIGSEGV,
 # because it dereferences the tag. ⭐ Axis 6 is the anti-vacuous control — a BOXED Result must be
 # entirely unaffected, or the check would refuse the documented idiom at ~1,864 ecosystem sites.
-sh "$ROOT/tests/gates/frontend/stack_enum_lossy_context.sh"
+_chk_gate "$ROOT/tests/gates/frontend/stack_enum_lossy_context.sh"
 
 # v6.5.68: cycc's x86 LENGTH DECODER must be able to walk every function body cycc emits.
 # `DECODE_LEN` feeds `RA_SCAN_LOOPS`, which finds the backward edges that drive v6.5.35's
@@ -391,7 +526,7 @@ sh "$ROOT/tests/gates/frontend/stack_enum_lossy_context.sh"
 # size: an incomplete decoder returns 0 and callers fall back safely, but a WRONG length
 # desynchronises the walk over a real backward edge — and the reverted-fix mutant is byte-for-
 # byte the SAME SIZE as the correct compiler, so no size or NOP-count assertion can see it.
-sh "$ROOT/tests/gates/codegen/decode_len_coverage.sh"
+_chk_gate "$ROOT/tests/gates/codegen/decode_len_coverage.sh"
 
 # v6.5.68: the NOP runs the IR passes write AFTER every per-function compaction has already
 # run are collected by a whole-program pass, and the COMPACTED compiler must be a working one
@@ -402,7 +537,7 @@ sh "$ROOT/tests/gates/codegen/decode_len_coverage.sh"
 # IR gate without repairing `IR_NODE_CP`, producing a cycc that died with
 # `alloc_init: mmap failed`. Seven tables are repaired here, including the entry trampoline's
 # hand-emitted disp32, which no emitter registers at all.
-sh "$ROOT/tests/gates/codegen/wholeprogram_nop_compaction.sh"
+_chk_gate "$ROOT/tests/gates/codegen/wholeprogram_nop_compaction.sh"
 
 # v6.5.69: an `async fn` that awaits MID-BODY suspends and resumes where it left off. Before
 # this, `await` lowered to a synchronous `future_force` call and a parked task re-entered its
@@ -412,7 +547,7 @@ sh "$ROOT/tests/gates/codegen/wholeprogram_nop_compaction.sh"
 # passes on a compiler with no transform at all. Axis 2/3 are the anti-vacuous pair — an
 # `async fn` with no mid-body await must compile to BIT-IDENTICAL bytes, which is why the
 # transform is selected by the body rather than by the keyword.
-sh "$ROOT/tests/gates/frontend/coroutine_midbody_suspend.sh"
+_chk_gate "$ROOT/tests/gates/frontend/coroutine_midbody_suspend.sh"
 
 # v6.5.71: `#derive(accessors)` getters/setters reach the inline-replay path — a measured 3.45x
 # on the accessor shape, for generated code nobody hand-tunes. ⛔ Axis 2 is the load-bearing
@@ -422,7 +557,7 @@ sh "$ROOT/tests/gates/frontend/coroutine_midbody_suspend.sh"
 # therefore travels beside the text as a recorded name hash. Axis 1 counts CALLS, not values: an
 # inlining change is invisible to a result assertion (mutation-proven — disabling the side
 # channel leaves every answer correct and moves callq 3 -> 7).
-sh "$ROOT/tests/gates/frontend/derive_accessors_inlined.sh"
+_chk_gate "$ROOT/tests/gates/frontend/derive_accessors_inlined.sh"
 
 # v6.5.72: `CYRIUS_DCE=1` REMOVES dead code instead of padding it — the flag found unreachable
 # functions, overwrote them with 0x90 and reclaimed ZERO bytes while telling users to "set
@@ -431,7 +566,7 @@ sh "$ROOT/tests/gates/frontend/derive_accessors_inlined.sh"
 # six distinct causes, the last being ftype-3 fixups (absolute function addresses behind
 # indirect calls), which no body-level check can see because every body still decodes. A byte
 # count proves the pass ran; only compiling WITH the result proves it was repaired.
-sh "$ROOT/tests/gates/codegen/dce_eliminates.sh"
+_chk_gate "$ROOT/tests/gates/codegen/dce_eliminates.sh"
 
 
 # v6.5.2: every folded stdlib that builds for Linux must also build for agnos.
@@ -441,7 +576,7 @@ sh "$ROOT/tests/gates/codegen/dce_eliminates.sh"
 # target. Parity (Linux-OK-but-agnos-broken) rather than "must build", since the distlib
 # bundles deliberately do not carry their own stdlib deps. Reports its own coverage: 11/12
 # today, niyama skipped and named.
-sh "$ROOT/tests/gates/platform/folds_agnos_parity.sh"
+_chk_gate "$ROOT/tests/gates/platform/folds_agnos_parity.sh"
 
 # v6.5.2: ir_const_fold must not erase a following jump. EJCC/EJMP0 were the only two
 # x86 emitters that recorded their IR node AFTER emitting bytes, so the node's CP was the
@@ -450,13 +585,13 @@ sh "$ROOT/tests/gates/platform/folds_agnos_parity.sh"
 # corpus was 0/253 unaffected and could never have caught it. Capstone assertion is that
 # IR=3 self-hosts a byte-identical cycc — the strongest semantics-preserving statement
 # available on the largest program in the tree.
-sh "$ROOT/tests/gates/ir-opt/ir3_fold_jump_span.sh"
+_chk_gate "$ROOT/tests/gates/ir-opt/ir3_fold_jump_span.sh"
 
 # v6.5.3: a diagnostic's LINE must survive include expansion. Main-source errors used to
 # report `actual - includes_before_it` (line 2 said 1; two includes still said 1). Ten
 # shapes, incl. include-once skips and a NESTED include — mutation-proven: 8 of 10 fail on
 # the 6.5.2 binary, and the 2 that pass are the regression guards.
-sh "$ROOT/tests/gates/diagnostics/diag_line_after_include.sh"
+_chk_gate "$ROOT/tests/gates/diagnostics/diag_line_after_include.sh"
 
 # v6.5.34: `#@pkgver`'s "is the constant referenced?" scan ran on the ENTRY FILE's raw text,
 # before includes expanded — so CYRIUS_PKG_VERSION resolved from the entry file and failed
@@ -464,7 +599,7 @@ sh "$ROOT/tests/gates/diagnostics/diag_line_after_include.sh"
 # scan moved to the tail of PP_PASS, where the unit is expanded; the declaration is emitted
 # optimistically at the top and BLANKED TO SPACES if unused, so the binary of a program that
 # never asked for the feature is unchanged (auto_deps_verb_gate axis 5) and no line moves.
-sh "$ROOT/tests/gates/frontend/pkgver_visible_in_includes.sh"
+_chk_gate "$ROOT/tests/gates/frontend/pkgver_visible_in_includes.sh"
 
 # v6.5.5: an IR_RAW_EMIT marker only shields raw bytes until the NEXT RECORDED node.
 # ESWITCH_DISPATCH_PRE recorded one marker at the top, then emitted four recorded nodes
@@ -474,7 +609,7 @@ sh "$ROOT/tests/gates/frontend/pkgver_visible_in_includes.sh"
 # LASE bug; it is DCE (CYRIUS_LASE_OFF disables the shared NOP-filler for all three
 # passes, which is why the bisection pointed at LASE). CYRIUS_IR=3-only — markers emit no
 # bytes, so default codegen is byte-identical and the default corpus could never see it.
-sh "$ROOT/tests/gates/ir-opt/ir3_switch_dce.sh"
+_chk_gate "$ROOT/tests/gates/ir-opt/ir3_switch_dce.sh"
 
 # v6.5.34: the three remaining CYRIUS_IR=3 divergences, one per pass — LASE eliminating a
 # load whose width conversion IS the semantics, const_fold pairing operands across the NOPs
@@ -483,7 +618,7 @@ sh "$ROOT/tests/gates/ir-opt/ir3_switch_dce.sh"
 # the class the ir3_switch_dce gate above documents: bytes emitted with no node are bytes
 # liveness cannot see. All three are IR=3-only, so all 282 corpus files passed throughout.
 # With this, default-vs-IR=3 is at ZERO divergences across the whole corpus.
-sh "$ROOT/tests/gates/ir-opt/ir3_substrate_correctness.sh"
+_chk_gate "$ROOT/tests/gates/ir-opt/ir3_substrate_correctness.sh"
 
 # v6.5.35: the linear-scan register allocator finally USES the intervals it has computed
 # since v5.6.19. Two things blocked it, and the roadmap's "it is one line" framing named only
@@ -492,19 +627,19 @@ sh "$ROOT/tests/gates/ir-opt/ir3_substrate_correctness.sh"
 # `picked` was a LIFETIME cap of 5 that blocked assignment however many registers expire had
 # freed. Loop-aware extension via RA_SCAN_LOOPS replaces the blanket guard; the lifetime cap
 # now applies only when the bisection knob asks. -8.5% frame accesses on consumer programs.
-sh "$ROOT/tests/gates/ir-opt/regalloc_cross_bb.sh"
+_chk_gate "$ROOT/tests/gates/ir-opt/regalloc_cross_bb.sh"
 
 # ⛔ v6.6.1 — `f64_exp`/`f64_exp2` returned NaN for ±inf on BOTH the native x87 path and the
 # aarch64 polyfill: the range reduction subtracts a multiple of the argument from itself, so
 # ±inf becomes `inf - inf`. Filed from ganita's P(-1) audit, where sinh/cosh(±inf) came back NaN
 # and the consumer could not tell whose bug it was.
-sh "$ROOT/tests/gates/codegen/f64_exp_infinite_argument.sh"
+_chk_gate "$ROOT/tests/gates/codegen/f64_exp_infinite_argument.sh"
 
 # ⛔ v6.6.1 — `clock_now_ns()` on AGNOS read #40 (timer_ticks), which is FROZEN in a foreground
 # `run` program (IF cleared, so the 100 Hz ISR never fires). Anything timing itself measured
 # exactly zero. #95 (rdtsc) is the only correct monotonic source there — and cyrius already
 # documented that, two files away from the code that walked into it.
-sh "$ROOT/tests/gates/platform/agnos_monotonic_clock_rdtsc.sh"
+_chk_gate "$ROOT/tests/gates/platform/agnos_monotonic_clock_rdtsc.sh"
 
 # ⛔ v6.6.1 — `CYRIUS_DCE=1` emitted a PE that faulted 0xC0000005 BEFORE main, and an x86 Mach-O
 # that SIGSEGV'd on real Intel-Mac hardware. v6.5.72 made DCE physically remove dead bodies and
@@ -512,21 +647,21 @@ sh "$ROOT/tests/gates/platform/agnos_monotonic_clock_rdtsc.sh"
 # the import payload got written at the post-compaction cursor while the section header still
 # named the old offset — the loader mapped the IAT from zero padding. The filing named only
 # `--win`; Mach-O shares the path via main_x86_macho.cyr and was ALSO broken, unreported.
-sh "$ROOT/tests/gates/codegen/dce_pe_macho_layout_declines_compaction.sh"
+_chk_gate "$ROOT/tests/gates/codegen/dce_pe_macho_layout_declines_compaction.sh"
 
 # ⛔ v6.6.1 — `cyrius install`/`cyriusly install` copied binaries IN PLACE, so reinstalling the
 # version you are running overwrote the running image and died with ETXTBSY. v6.5.3 fixed exactly
 # this in ONE of THREE copy paths; the tarball path (what `cyriusly install` uses) survived and
 # was reported from a clean machine. The installer is frozen into each release's immutable tag,
 # so a broken one cannot be hot-fixed for an already-published version.
-sh "$ROOT/tests/gates/toolchain/install_atomic_over_running_binary.sh"
+_chk_gate "$ROOT/tests/gates/toolchain/install_atomic_over_running_binary.sh"
 
 # ⛔ v6.6.1 — a silent miscompile that shipped in v6.5.57 and was live for 17 releases.
 # `X = Y;` between two locals copied the number of slots the TYPE implies rather than the number
 # the VARIABLES occupy, so assigning one struct POINTER to another wrote over neighbouring
 # locals. Found only because it corrupted a loop bound in a consumer and the loop then walked
 # off its buffer into the process stack.
-sh "$ROOT/tests/gates/codegen/aggregate_copy_assign_slots.sh"
+_chk_gate "$ROOT/tests/gates/codegen/aggregate_copy_assign_slots.sh"
 
 # ⛔ v6.6.2 — THE BOXED TAGGED-UNION PRIMITIVES, AND THE GATE THAT WOULD HAVE CAUGHT v6.6.0.
 # `tagged_new` and `payload` were deleted at v6.6.0 as "nothing in the ecosystem called it
@@ -549,7 +684,7 @@ sh "$ROOT/tests/gates/codegen/aggregate_copy_assign_slots.sh"
 # regression (reachable via callptr since 6.0.70). Two failure modes: SIGSEGV with the register
 # picker on, and a SILENT write into the argument object with it off.
 # ⚠ The fixpoint and seed-derive are blind — cycc has zero call sites of these intrinsics.
-sh "$ROOT/tests/gates/codegen/simd_intrinsic_operand_slots.sh"
+_chk_gate "$ROOT/tests/gates/codegen/simd_intrinsic_operand_slots.sh"
 
 # ⛔ v6.6.2 — an `object;` build exported libc-reserved names as PREEMPTIBLE globals, so a linked
 # C library's own calls bound to cyrius's implementations. `memchr` returns an OFFSET or -1 where
@@ -557,9 +692,9 @@ sh "$ROOT/tests/gates/codegen/simd_intrinsic_operand_slots.sh"
 # sd_bus_call_method; the link succeeded, no duplicate-symbol error, and the failure surfaced in a
 # function the cyrius author never called. mabda has hand-carried an `objcopy -L` list for this,
 # and that list is wrong in both directions. Now STV_HIDDEN for the 11 derived names.
-sh "$ROOT/tests/gates/codegen/object_hides_libc_names.sh"
+_chk_gate "$ROOT/tests/gates/codegen/object_hides_libc_names.sh"
 
-sh "$ROOT/tests/gates/toolchain/boxed_union_primitives.sh"
+_chk_gate "$ROOT/tests/gates/toolchain/boxed_union_primitives.sh"
 
 # ⛔ v6.6.2 — THE PROCESS FIX. A public stdlib symbol cannot disappear without an ecosystem census
 # being taken and WRITTEN DOWN. v6.6.0 deleted `tagged_new`/`payload` on a survey of the 12
@@ -570,7 +705,7 @@ sh "$ROOT/tests/gates/toolchain/boxed_union_primitives.sh"
 # — first-party AND vendored lib/ + dist/, since 55-68 repos gitignore their stdlib — and reds
 # unless docs/retired-symbols.allow accounts for it with a migration reference.
 # ⚠ SKIPs loudly when there are no sibling checkouts (CI) rather than passing quietly.
-sh "$ROOT/tests/gates/toolchain/removed_symbol_census.sh"
+_chk_gate "$ROOT/tests/gates/toolchain/removed_symbol_census.sh"
 
 # ⛔ v6.6.2 — THE GUIDE TAUGHT AN API THE COMPILER NO LONGER HAD. Its Result worked example was
 # the PRE-FLIP one — five compile errors, two lines under the table announcing the arity change —
@@ -580,7 +715,7 @@ sh "$ROOT/tests/gates/toolchain/removed_symbol_census.sh"
 # ZERO. Every SIMD example in the guide did that, and the same mistake had made
 # tests/tcyr/simd/simd_f32v8.tcyr VACUOUS — the broken expression on BOTH sides of all 15
 # assertions, so they were 0 == 0 and passed whether or not f32v8 SIMD worked.
-sh "$ROOT/tests/gates/toolchain/guide_examples_compile.sh"
+_chk_gate "$ROOT/tests/gates/toolchain/guide_examples_compile.sh"
 
 # ⛔ v6.6.2 — `cyrius build <foreign-src>` OVERWROTE THE RUNNING COMPILER at the v6.6.0 cut: this
 # repo's manifest declares `output = build/cycc`, and the one-argument ladder means "that src +
@@ -588,7 +723,7 @@ sh "$ROOT/tests/gates/toolchain/guide_examples_compile.sh"
 # only because a stage binary happened to be in /tmp. The roadmap's pinned `.2` occupant.
 # ⚠ The gate runs entirely in a temp tree against a COPY — pointed at the real build/cycc, the
 # gate would itself be the destructive act.
-sh "$ROOT/tests/gates/toolchain/build_refuses_compiler_overwrite.sh"
+_chk_gate "$ROOT/tests/gates/toolchain/build_refuses_compiler_overwrite.sh"
 
 # ⛔ v6.6.2 — `funcgate-stage.sh` opened with an unguarded `rm -rf "$H"`, and its whole contract
 # is "stage a THROWAWAY CYRIUS_HOME". Pointed at $HOME/.cyrius on 2026-09-07 it destroyed the
@@ -598,7 +733,7 @@ sh "$ROOT/tests/gates/toolchain/build_refuses_compiler_overwrite.sh"
 # own history says that file sat stale for thirty-eight releases at a stretch.
 # ⚠ This gate does NOT stage into a live home — it drives the refusal paths with temp trees and
 # a redirected HOME, so it is safe in check.sh where funcgate-stage.sh itself is not.
-sh "$ROOT/tests/gates/toolchain/funcgate_refuses_live_home.sh"
+_chk_gate "$ROOT/tests/gates/toolchain/funcgate_refuses_live_home.sh"
 
 # v6.6.4: a RELEASED version's install slot is written from its TAG, never from a drifted
 # tree. `install.sh --refresh-only` (and through it `cyrius pulsar`), `cyrius lsp` and the
@@ -608,7 +743,7 @@ sh "$ROOT/tests/gates/toolchain/funcgate_refuses_live_home.sh"
 # commits before the tag. The guard refuses when tag exists ∧ tree drifted ∧ destination
 # live; `scripts/verify-store.sh` audits every tagged slot against its tag (+ `--restore`).
 # ⚠ Runs entirely in a mktemp mini-repo against a mktemp store — never the live ~/.cyrius.
-sh "$ROOT/tests/gates/toolchain/released_slot_written_from_tag.sh"
+_chk_gate "$ROOT/tests/gates/toolchain/released_slot_written_from_tag.sh"
 
 # v6.6.3: every TRACKED path must be checkoutable on Windows/macOS. A file named `c -l)|XX|` —
 # debris from a mis-quoted shell redirect — was committed, and the whole five-step release gate
@@ -618,7 +753,7 @@ sh "$ROOT/tests/gates/toolchain/released_slot_written_from_tag.sh"
 # failing" — a platform's entire coverage voided by a FILENAME, invisible to every gate we own
 # because they all inspect file CONTENT. Reads the INDEX, not the worktree: the index is what CI
 # checks out, so deleting the file locally does not clear this until the deletion is staged.
-sh "$ROOT/tests/gates/toolchain/tracked_paths_portable.sh"
+_chk_gate "$ROOT/tests/gates/toolchain/tracked_paths_portable.sh"
 
 # ⚠ ORDERING (v6.6.2): `scripts/agnos-crossbuild-gate.sh` is LAST on purpose, and that matters.
 # check.sh runs under `set -e`, so the first gate to exit non-zero aborts the whole script and
@@ -655,7 +790,7 @@ sh "$ROOT/tests/gates/toolchain/tracked_paths_portable.sh"
 # tarball, not a source gate. All three were run by hand at the v6.6.0 cut and pass; the agnos
 # gate is the one that both compiles cyrius source AND could regress from a language change,
 # which is exactly the class that belongs in the local gate.
-sh "$ROOT/scripts/agnos-crossbuild-gate.sh"
+_chk_gate "$ROOT/scripts/agnos-crossbuild-gate.sh"
 
 # ⛔ 6.6.5 — rsp was 8 bytes off 16-byte alignment at any call emitted INSIDE an expression.
 # cycc's expression codegen is a stack machine (`push rax` per pending value) and nothing
@@ -679,7 +814,7 @@ sh "$ROOT/scripts/agnos-crossbuild-gate.sh"
 # message. Two independently derived counts now have to agree with each other and clear 56:
 # the probe call sites grepped STATICALLY out of the driver source, and the `ROWS nnn` line
 # the driver prints at RUNTIME.
-sh "$ROOT/tests/gates/codegen/call_site_stack_alignment.sh"
+_chk_gate "$ROOT/tests/gates/codegen/call_site_stack_alignment.sh"
 
 # 6.6.6: past the int register ceiling the CALLEE must home each int parameter from its
 # int-class ordinal into its own frame slot, counting stack slots from the CALLER's int-class
@@ -688,7 +823,7 @@ sh "$ROOT/tests/gates/codegen/call_site_stack_alignment.sh"
 # silently, on every backend. A generated matrix (vector class x position x 5..9 ints, two
 # vectors, struct return) with digit-string expectations, on x86 + aarch64 (qemu) + cx (cxvm)
 # + Win64 (wine). Hardware legs: tests/tcyr/crossos/simd_param_int_stack_args.tcyr.
-sh "$ROOT/tests/gates/codegen/stack_param_homing_matrix.sh"
+_chk_gate "$ROOT/tests/gates/codegen/stack_param_homing_matrix.sh"
 
 # ⛔ 6.6.5 — a fn-local STRUCT LITERAL was a GLOBAL slot, and whether an aggregate local was
 # inline or a pointer was GUESSED from the neighbouring slot's name. The first made a literal
@@ -700,10 +835,10 @@ sh "$ROOT/tests/gates/codegen/stack_param_homing_matrix.sh"
 # 1024 MB memory constraint. The gate below carries the two-file and env-var axes the .tcyr
 # corpus cannot express, plus the aarch64/cx emulator legs; the hardware legs are
 # tests/tcyr/crossos/aggregate_storage_class.tcyr + hidden_temp_reentrancy.tcyr.
-sh "$ROOT/tests/gates/codegen/fn_local_storage_class.sh"
+_chk_gate "$ROOT/tests/gates/codegen/fn_local_storage_class.sh"
 
 # 6.6.5 — the CENSUS under it. The hidden-temporary defect was a HABIT, not one lowering: five
 # constructs each open-coded the same four lines to get a scratch word and each passed name
 # offset 0, which is the program's FIRST LEXED WORD. This pins the SHAPE at the source so the
 # sixth cannot slip in, with derived counts and an anti-vacuous floor on every axis.
-sh "$ROOT/tests/gates/codegen/hidden_temp_census.sh"
+_chk_gate "$ROOT/tests/gates/codegen/hidden_temp_census.sh"

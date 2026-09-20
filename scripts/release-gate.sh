@@ -136,9 +136,14 @@ sh scripts/check.sh > "$T/check.out" 2>&1 || rc=$?
 LINE=$(grep -E "passed, [0-9]+ failed" "$T/check.out" | tail -1)
 echo "  $LINE"
 echo "$LINE" | grep -q ", 0 failed" || { tail -8 "$T/check.out"; fail "check.sh has failures"; }
+# v6.6.6: check.sh now runs EVERY gate and prints its own end-of-run summary naming what
+# failed and what NEVER RAN (it used to abort at the first red row under `set -e`, so the
+# shell gates after the check binary silently did not execute). Show that block — it is the
+# actionable part, and "NOT RUN" is not a pass.
+sed -n '/check.sh summary/,$p' "$T/check.out" | sed 's/^/  /'
 if [ "$rc" != "0" ]; then
-    grep -E "^  FAIL|^  SKIP" "$T/check.out" | tail -8
-    fail "check.sh exited $rc — a shell gate after the check binary failed (its summary line does NOT cover those)"
+    grep -E "^  FAIL|^  SKIP|NOT RUN" "$T/check.out" | tail -12
+    fail "check.sh exited $rc — see its summary above (the binary's 'N passed, M failed' line does NOT cover the shell gates)"
 fi
 
 if [ "$QUICK" = "1" ]; then
