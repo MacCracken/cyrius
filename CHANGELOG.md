@@ -2586,9 +2586,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `_AGG_ASSIGN_TYPE_ERR` (`src/common/util.cyr`), which reports
   `cannot copy 'q' into a variable of a different struct/vector type: 'p'`. Struct ids and
   vector descriptors are both stored negative, so the one test covers a struct/struct, a
-  vector/vector (`f64v4 = f64v2` used to drop two lanes) and a struct/vector pair, and it
-  covers a **1-slot** struct, whose 8-byte store is byte-correct but binds the wrong field
-  names. ⚠ A source with **no** aggregate type still falls through — that is the deliberate
+  vector/vector and a struct/vector pair, and it covers a **1-slot** struct, whose 8-byte
+  store is byte-correct but binds the wrong field names. ⚠ The vector/vector line first read
+  "`f64v4 = f64v2` used to drop two lanes"; **that is wrong in both readings and bite 21's
+  review re-measured it.** The generic store copies ONE 8-byte word: an `f64v2` holding
+  `(41, 7)` assigned into an `f64v4` holding `(11, 12, 13, 14)` left `(41, 12, 13, 14)` — one
+  of the source's two lanes copied, **three of the destination's four left stale**. ⚠ A source with **no** aggregate type still falls through — that is the deliberate
   pointer-bind path (the C semantics of `P *b = a`, CHANGELOG [6.6.5]) — and a scalar source
   keeps its existing *warning* rather than becoming an error; both are pinned as acceptance
   rows so a later tightening cannot take them out quietly. Gated by
