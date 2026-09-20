@@ -1692,7 +1692,10 @@ fn PARSE_GVAR_REG(S): i64 {
     var cf_val = 0;
     var chk_lit = 0;    # v6.2.11: `= NUM ;` literal for the collision guardrail
     var chk_has = 0;
-    if (FINDVAR(S, noff) >= 0) { sit_shadow = 1; }
+    # 6.6.6: _findvar_core, not FINDVAR — "does this name already exist?" asked while
+    # REGISTERING this global is not a reference to the prior one, and running the cross-file
+    # `private` check here refused a file its own re-declaration. See _findvar_core.
+    if (_findvar_core(S, noff) >= 0) { sit_shadow = 1; }
     if (PEEKT(S) == 4) {
         STI(S, GTI(S) + 1);
         if (PEEKT(S) == 2) {

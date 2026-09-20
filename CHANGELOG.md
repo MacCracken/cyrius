@@ -8,6 +8,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **A file could not DECLARE a global whose name another file had made `private`.** (bite 19b.)
+  `lib/a.cyr` = `private` + `var LIMIT = 5;`; `lib/b.cyr` = `private` + `var B_CAP = LIMIT * 2;`
+  + its own `var LIMIT = 5;` -> `error: lib/b.cyr:3:11: 'LIMIT' is private to its file`, rc 1.
+  Column 11 of line 3 is b.cyr's OWN declaration, and b.cyr never mentions a.cyr's `LIMIT`.
+  **Root cause:** v6.5.0 put the cross-file `private` check inside `FINDVAR` deliberately —
+  every REFERENCE resolves through it, so one check covers them all — but two callers are not
+  references: `PARSE_GVAR_REG`'s `sit_shadow` probe and `CHKDUPVAL` both ask "does this name
+  already exist?" while REGISTERING a new global. **Fix:** `_findvar_core` is pure resolution,
+  `FINDVAR` is that plus the check (unchanged for every reference), and the two declaration-time
+  probes call the core (`src/frontend/parse_types.cyr`, `parse_decl.cyr`). Gate:
+  `tests/gates/frontend/private_does_not_block_own_declaration.sh` — 4 accepting rows, each
+  compared against a CONTROL in which the other file does not declare the name at all (so the
+  row proves b got ITS OWN value, not just that the compile succeeded), and **4 enforcement
+  rows** (a cross-file read, an `&addr`, a fn-body read, an assignment) that must still be
+  refused, because deleting the check would pass every accepting row. Three mutants. cycc
+  **1,315,280 -> 1,315,280 B** (no change).
+
 - **One function-like `#define` anywhere in a file put stripped `#ifdef` arms back into the
   build, and truncated the source at 1 MB.** (bite 19f.) The filed repro:
   `printf '#define M(a) (a)\ninclude "lib/assert.cyr"\nvar x = 1;\nsyscall(60, x);\n' | cycc`

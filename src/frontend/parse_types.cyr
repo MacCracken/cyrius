@@ -841,9 +841,28 @@ fn _gv_note_blockscoped(S, noff): i64 {
     return 0;
 }
 
-# Find variable by name offset, return LAST match index or -1.
-# Last-match semantics ensure each function's `var buf[N]` shadows earlier ones.
-fn FINDVAR(S, noff): i64 {
+# 6.6.6 bite 19b — RESOLUTION vs. a DECLARATION-TIME PROBE.
+#
+# FINDVAR is the one resolver, and v6.5.0 put the cross-file `private` check inside it on
+# purpose: every REFERENCE goes through it, so one check covers them all. But two callers are
+# not references at all — PARSE_GVAR_REG's `sit_shadow` probe and CHKDUPVAL both ask "does this
+# name already exist?" while REGISTERING a new global, and neither is reading the prior one.
+# Running the visibility check for them made a legal program fail:
+#
+#     lib/a.cyr:  private            lib/b.cyr:  private
+#                 var LIMIT = 5;                 var B_CAP = LIMIT * 2;
+#                                                var LIMIT = 5;
+#
+#     error: lib/b.cyr:3:11: 'LIMIT' is private to its file          (rc 1)
+#
+# b.cyr's own `var LIMIT = 5;` — the declaration, on its own line — was reported as an illegal
+# ACCESS to a.cyr's private `LIMIT`, which b.cyr never mentions. The probe found a's slot,
+# FINDVAR reported it, and the file that is allowed its own `LIMIT` could not declare one.
+#
+# So the lookup is split: `_findvar_core` is pure resolution and `FINDVAR` is that plus the
+# visibility check, exactly as before for every reference. Declaration-time probes call the
+# core. CHANGELOG [6.6.6]
+fn _findvar_core(S, noff): i64 {
     var vcnt = GVCNT(S);
     var vi = vcnt - 1;
     var hid = 0 - 1;   # 6.6.6: the last match inside the hidden range (see _fv_hidden)
@@ -862,26 +881,30 @@ fn FINDVAR(S, noff): i64 {
         if (STREQ(S, stored, noff) == 1) { if (GVDEAD(S, vi) == 0) { if (_fv_hidden(vi) == 1) {
             if (hid < 0) { hid = vi; }
         } else {
-            # v6.5.0 Phase 2b — the cross-file `private` check for GLOBAL vars lives
-            # HERE, inside the single resolver, rather than being wired at each call
-            # site. FINDVAR is pure lookup and every global reference goes through it,
-            # so one check covers them all — which is the lesson from the fn side,
-            # where the plan named 2 of at least 13 resolution paths and the tail-call
-            # path was silently unenforced until a gate caught it.
-            #
-            # Locals need no special case: frame locals are never stamped, so GVFI reads 0
-            # and this falls straight through. 6.6.5: a fn-local STRUCT LITERAL is now a frame
-            # object and never reaches this table at all, and a fn-local STATIC array (over the
-            # frame budget, or under CYRIUS_STACK_ARRAYS=0) is scoped like a local and marked
-            # dead when its block closes, so it is skipped above rather than stamped. Neither
-            # can shadow another file's global any more.
-            _vis_check_var(S, vi, noff);
             return vi;
         } } }
         vi = vi - 1;
     }
-    if (hid >= 0) { _vis_check_var(S, hid, noff); }
     return hid;
+}
+
+# The resolver every REFERENCE goes through.
+#
+# v6.5.0 Phase 2b — the cross-file `private` check for GLOBAL vars lives HERE, inside the
+# single resolver, rather than being wired at each call site. Every global reference goes
+# through it, so one check covers them all — which is the lesson from the fn side, where the
+# plan named 2 of at least 13 resolution paths and the tail-call path was silently unenforced
+# until a gate caught it.
+#
+# Locals need no special case: frame locals are never stamped, so GVFI reads 0 and the check
+# falls straight through. 6.6.5: a fn-local STRUCT LITERAL is now a frame object and never
+# reaches this table at all, and a fn-local STATIC array (over the frame budget, or under
+# CYRIUS_STACK_ARRAYS=0) is scoped like a local and marked dead when its block closes, so it is
+# skipped rather than stamped. Neither can shadow another file's global any more.
+fn FINDVAR(S, noff): i64 {
+    var vi = _findvar_core(S, noff);
+    if (vi >= 0) { _vis_check_var(S, vi, noff); }
+    return vi;
 }
 
 # Cross-file access to a file-private global. Same hard-error contract as the fn side
@@ -946,7 +969,10 @@ fn _vis_check_var(S, vi, noff): i64 {
 # of a chain is compared against the 2nd (it used to compare against 0 and stay
 # silent). CHANGELOG [6.6.6]
 fn CHKDUPVAL(S, noff, newval): i64 {
-    var pi = FINDVAR(S, noff);
+    # 6.6.6: _findvar_core, not FINDVAR — this is a DECLARATION-time probe of a name being
+    # registered, not a reference to the prior global, so it must not run the cross-file
+    # `private` check. See _findvar_core.
+    var pi = _findvar_core(S, noff);
     if (pi < 0) { return 0; }
     if (pi >= 1024) { return 0; }   # beyond the enum-const fold table; skip
     var pval = 0;

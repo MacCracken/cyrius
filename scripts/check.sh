@@ -261,6 +261,14 @@ sh "$ROOT/tests/gates/frontend/toplevel_block_var_scope.sh"
 # ran the pass, which is why it stood. Row C is a byte-for-byte binary differential.
 sh "$ROOT/tests/gates/frontend/macro_pass_preserves_ifdef_filtering.sh"
 
+# 6.6.6 bite 19b: a file may DECLARE a global whose name another file has made `private`.
+# v6.5.0 put the cross-file check inside FINDVAR so every REFERENCE is covered by one check,
+# but PARSE_GVAR_REG's sit_shadow probe and CHKDUPVAL are not references — they ask "does this
+# name exist?" while REGISTERING one — and the check turned that answer into an accusation
+# against a file's own declaration. The enforcement rows D-G are the point: deleting the check
+# would pass every accepting row.
+sh "$ROOT/tests/gates/frontend/private_does_not_block_own_declaration.sh"
+
 # 6.6.5: the `return f(args);` tail path must divert to PARSE_FNCALL for exactly the
 # arguments PARSE_FNCALL treats specially — no more. The `: Str` literal divert added here
 # was armed by a literal at ANY paren depth, so `return deep(n-1, str_from("x"))` lost its
