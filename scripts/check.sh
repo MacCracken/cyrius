@@ -291,6 +291,14 @@ sh "$ROOT/tests/gates/memory/gvar_toks_cap_guards_the_store.sh"
 # in dependency order AND run on the host, so cx is compared with a second implementation.
 sh "$ROOT/tests/gates/codegen/cx_forward_read_constant_global.sh"
 
+# 6.6.6 (review fix to bite 19f's .tcyr): the cross-OS lib-test runner graded tests/tcyr/crossos/
+# by EXIT CODE alone, and a process that runs no user code exits 0 — so "the compiler emitted a
+# binary that does nothing" and "every assertion passed" were one verdict. Measured on the 6.6.5
+# compiler, crossos/macro_expansion_with_include.tcyr compiled to a 43,512-byte binary that
+# printed nothing and exited 0: a PASS over the preprocessor defect it is named for. The runner
+# now requires the binary's own "N passed" line for any test whose source calls assert_summary.
+sh "$ROOT/tests/gates/toolchain/crossos_runner_rejects_a_silent_binary.sh"
+
 # 6.6.5: the `return f(args);` tail path must divert to PARSE_FNCALL for exactly the
 # arguments PARSE_FNCALL treats specially — no more. The `: Str` literal divert added here
 # was armed by a literal at ANY paren depth, so `return deep(n-1, str_from("x"))` lost its

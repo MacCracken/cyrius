@@ -62,8 +62,16 @@ var r6 = assert_eq(strlen(mei_s), 17, "a macro invocation inside a string litera
 var r7 = assert_eq(strlen("abcd"), 4, "the included stdlib (strlen, via assert.cyr) is intact");
 
 # ⚠ THE EXIT PATH IS PART OF THE TEST. The summary lands in a global that is SEEDED non-zero
-# and only overwritten by a statement, so a build that emits a binary but drops the top-level
-# program exits 92 rather than a silent, success-shaped 0.
+# and only overwritten by a statement, so a build that emits a binary but drops SOME of the
+# top-level program exits 92 rather than a silent, success-shaped 0.
+#
+# ⚠ AND THE SEED IS NOT ENOUGH WHEN THE WHOLE PROGRAM IS DROPPED — the seed is part of the text
+# that vanishes. Measured on a968ed07's cycc this file compiles rc 0 to a 43,512-byte binary
+# that prints nothing and exits 0, which a runner reading only the exit code scores as a PASS.
+# That hole is closed OUTSIDE the binary: scripts/cross-os-libtest-runner.sh now requires the
+# "N passed" line that assert_summary prints, for every test whose source calls it, so an empty
+# run cannot score a pass on ecb / ach / cass / pi. Pinned by
+# tests/gates/toolchain/crossos_runner_rejects_a_silent_binary.sh. CHANGELOG [6.6.6]
 var mei_rc = 92;
 mei_rc = assert_summary();
 syscall(60, mei_rc);

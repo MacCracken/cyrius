@@ -117,6 +117,28 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `tests/tcyr/crossos/macro_expansion_with_include.tcyr` is it (7 assertions). cycc
   **1,315,280 -> 1,315,280 B** (no change).
 
+- **The cross-OS lib-test runner scored a PASS for a binary that ran nothing.**
+  `scripts/cross-os-libtest-runner.sh` is the leg that executes `tests/tcyr/crossos/` on real
+  ecb / ach / cass / pi, and it graded by EXIT CODE alone — but a process that executes no user
+  code exits 0, so "the compiler emitted a binary that does nothing" and "every assertion
+  passed" were the same verdict. Measured on the 6.6.5 compiler,
+  `crossos/macro_expansion_with_include.tcyr` compiles rc 0 to a **43,512-byte binary that
+  prints nothing and exits 0** — a pass scored over the very preprocessor defect the file is
+  named for, because the macro pass had truncated the source and the whole top-level program
+  (assertions, summary, exit syscall and the file's own non-zero seed alike) was gone. No
+  in-file guard can catch that; the seed is part of the text that vanishes. **Fix:** the runner
+  captures the binary's stdout and, for any test whose SOURCE calls `assert_summary`, requires
+  the `N passed, M failed (T total)` line that `assert_summary` prints, with N >= 1. The
+  requirement is DERIVED from the test file, not kept in an allowlist that would rot on a
+  rename; measured over the corpus, 332 of 333 `.tcyr` call it and all 332 print a line with
+  N >= 1, and the one that does not is outside the crossos set. Gate:
+  `tests/gates/toolchain/crossos_runner_rejects_a_silent_binary.sh` (4 rows + a mutation row
+  that RUNS: it re-runs the silent-binary row against a scratch copy of the runner with the
+  check deleted and requires that copy to report the pass the real runner refuses). The whole
+  93-file crossos set was re-run through the changed runner locally — 93 passed, 0 failed —
+  and the two apparent failures seen first were a mis-staged bundle (`tests/fixtures`,
+  `tests/win` missing), identical under the old runner. Compiler unchanged.
+
 - **A `var` declared inside a TOP-LEVEL BLOCK leaked out of the block — and an inner
   declaration of an outer name OVERWROTE the outer global.** (bite 19a; the maintainer's
   language decision of 2026-09-19.) `var c = 1; var x = 0; x = 1; if (c == 1) { var t = 5; }

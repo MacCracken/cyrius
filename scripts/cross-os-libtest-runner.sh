@@ -11,6 +11,13 @@
 # guard below, so the loop ran ZERO tests and reported "__LIBTEST_SUMMARY__ 0 0" — which
 # the caller graded GREEN. The caller now also cross-checks this count against the number
 # it selected locally, so the two sides can no longer disagree silently.
+#
+# 6.6.6: A TEST PASSES WHEN ITS ASSERTIONS RAN, NOT WHEN THE PROCESS EXITED 0. Same family as
+# the v6.5.11 note above — a leg that cannot tell "nothing happened" from "everything passed".
+# A binary that executes no user code exits 0, and the 6.6.5 compiler produced exactly that for
+# tests/tcyr/crossos/macro_expansion_with_include.tcyr. So stdout is captured and a test whose
+# SOURCE calls assert_summary must produce its "N passed" line. See the block at the check
+# itself, and tests/gates/toolchain/crossos_runner_rejects_a_silent_binary.sh.
 CC_CMD="$1"; DO_SIGN="$2"; SUBDIR="$3"
 cd ~/_cyaud || exit 2
 
@@ -36,8 +43,10 @@ cd ~/_cyaud || exit 2
 # shells attach /dev/null when job control is off, some inherit), and the ssh channel is
 # not a sane input for a test either way.
 LT_TIMEOUT="${CYRIUS_LIBTEST_TIMEOUT:-90}"
+# stdout is CAPTURED, not discarded (6.6.6) — see the summary check below, which needs the
+# binary's own "N passed, M failed" line to tell a real run from a binary that ran nothing.
 run_bounded() {
-    "$1" </dev/null >/dev/null 2>&1 &
+    "$1" </dev/null >_ltout 2>&1 &
     _bp=$!
     _bn=0
     _blim=$((LT_TIMEOUT * 10))
@@ -73,6 +82,39 @@ for t in $(find "$ROOT" -name '*.tcyr' | sort); do
             ok=0; hung=$((hung + 1)); b="${b}(HANG@${LT_TIMEOUT}s)"
         elif [ "$rc" -ne 0 ]; then
             ok=0
+        fi
+        # ⛔ 6.6.6 — EXIT 0 FROM A BINARY THAT RAN NOTHING IS NOT A PASS.
+        #
+        # This loop graded by exit code alone, and a process that executes no user code at
+        # all exits 0. That is not hypothetical: measured on the 6.6.5 compiler,
+        # tests/tcyr/crossos/macro_expansion_with_include.tcyr compiled rc 0 to a 43,512-byte
+        # binary that printed NOTHING and exited 0 — a PASS scored over the exact preprocessor
+        # defect the file is named for. The macro pass had replaced the filtered source with
+        # its own unfiltered input and truncated it at the 1 MB helper window, so the whole
+        # top-level program (assertions, summary and exit syscall alike) was simply gone. No
+        # in-file trick can catch that: the file's own `var rc = 92;` seed is part of the text
+        # that vanished. The judgement has to come from OUTSIDE the binary.
+        #
+        # Every .tcyr ends in `assert_summary()`, which prints "N passed, M failed (T total)"
+        # to stdout. So the requirement is DERIVED from the test file rather than kept in an
+        # allowlist here: a file that calls assert_summary must produce that line with at least
+        # one assertion. Measured over the whole corpus at 6.6.6: 332 of 333 files call it and
+        # all 332 print a line with N >= 1, so the check is not selective in practice — the one
+        # exception (tests/tcyr/frontend/struct_sid_20_21_field.tcyr) opts itself out by not
+        # calling it, and is not in the crossos set.
+        #
+        # ⚠ N >= 1, not "N equals the assertion count": a test may legitimately assert inside a
+        # loop or behind a platform guard. The claim being enforced is "user code ran and
+        # reported", which is precisely what a dropped program cannot fake.
+        if [ "$ok" = "1" ] && grep -q 'assert_summary(' "$t" 2>/dev/null; then
+            _np=$(sed -n 's/^\([0-9][0-9]*\) passed,.*/\1/p' _ltout 2>/dev/null | tail -1)
+            if [ -z "$_np" ]; then
+                ok=0
+                b="${b}(exit 0 but the binary printed NO assert summary — it ran nothing;"
+                b="${b} see the 6.6.6 note in cross-os-libtest-runner.sh)"
+            elif [ "$_np" -lt 1 ]; then
+                ok=0; b="${b}(assert summary reports $_np assertions)"
+            fi
         fi
         # ⛔ 6.6.5 — ARGV-LENGTH SWEEP, for a test that asks for it with `@rerun-argv-parity`.
         #
