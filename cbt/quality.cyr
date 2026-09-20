@@ -252,6 +252,18 @@ fn cmd_coverage(full, min_pct, root_arg): i64 {
 # ================================================================
 # Native doctest: extract # >>> / # === patterns, compile, run
 # ================================================================
+# v6.6.6 (bite 26b) — write a doc example to its temp source, to completion. 0 = every
+# byte landed, -1 = it did not. See the call site for what a short write used to score.
+fn _dt_write_all(fd, buf, len): i64 {
+    var off = 0;
+    while (off < len) {
+        var w = syscall(1, fd, buf + off, len - off);
+        if (w <= 0) { return 0 - 1; }
+        off = off + w;
+    }
+    return 0;
+}
+
 fn cmd_doctest(arg): i64 {
     if (arg == 0) {
         println("Usage: cyrius doctest <file.cyr>");
@@ -338,9 +350,29 @@ fn cmd_doctest(arg): i64 {
                     # Write code to temp file, compile, run
                     var tmpf = _cbt_tmpfile("dt_src");
                     var fd = syscall(2, tmpf, 0x241, 0x1A4);
+                    # ⛔ v6.6.6 (bite 26b) — the same unchecked-temp-source shape as
+                    # `_materialize_source`, one verb over. `fd < 0` fell through with NO
+                    # else, so a doctest whose temp could not be created was counted in
+                    # `dt_total` and in neither `dt_pass` nor `dt_fail` — and the verdict
+                    # is `dt_fail > 0`, so `cyrius doctest` exited 0 with the example never
+                    # run. A short write was worse: the example was TRUNCATED and whatever
+                    # the prefix happened to compile to was scored against the expected
+                    # exit code. Both are failures now, by name. CHANGELOG [6.6.6].
+                    if (fd < 0) {
+                        _err_ctx("doctest: cannot create the example's temp source", tmpf);
+                        dt_fail = dt_fail + 1;
+                    }
+                    var dt_wrote = 0 - 1;
                     if (fd >= 0) {
-                        syscall(1, fd, code, code_len);
+                        dt_wrote = _dt_write_all(fd, code, code_len);
                         syscall(3, fd);
+                        if (dt_wrote != 0) {
+                            _err_ctx("doctest: could not write the example's temp source", tmpf);
+                            dt_fail = dt_fail + 1;
+                            sys_unlink(tmpf);
+                        }
+                    }
+                    if (dt_wrote == 0) {
                         var tmpbin = _cbt_tmpexe("dt_bin");
                         if (compile(tmpf, tmpbin) == 0) {
                             var ec = run_binary_timed(tmpbin, _run_timeout_ms(), 0);

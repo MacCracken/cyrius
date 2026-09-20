@@ -465,6 +465,54 @@ fn _parent_dir(path): i64 {
     return str_data(str_builder_build(sb));
 }
 
+# ⛔ v6.6.6 (bite 26b) — EVERY BYTE OF THE PREPROCESSED SOURCE IS CHECKED.
+#
+# `_materialize_source` builds the file cycc actually compiles: the `#@incdir`/`#@pkgver`
+# markers, the manifest's `include` lines, the `-D` defines, every `[build].modules` file
+# and then the entry source. Each of those was a bare `sys_write` / `syscall(1, …)` whose
+# result was DISCARDED, so a short write simply stopped short and the build carried on
+# compiling whatever HAD landed.
+#
+# MEASURED at 67ea9c17, a 4.8 MB source under RLIMIT_FSIZE (`ulimit -f 200`): the copy
+# stopped at the limit, which cut off the file's LAST line — `fn main()` — and
+# `cyrius build src/app.cyr out` printed `OK (4448 bytes)`, exited 0, and produced a
+# binary that returns 0 instead of 42. Not a truncated file the user can see: a
+# SUCCESSFUL build of a program they never wrote. Same class as bites 13/15/17.
+#
+# `_mat_err` is STICKY, so the first failure stops the copy and nothing downstream has to
+# re-test; the read side and every `open` are checked too, because a module that could not
+# be opened produced exactly the same silently-shortened translation unit. On any failure
+# the fn NAMES what went wrong, removes the partial temp and returns 0 — callers must
+# treat 0 as "do not compile". CHANGELOG [6.6.6].
+var _mat_err = 0;
+
+fn _mat_write(fd, buf, len): i64 {
+    if (_mat_err != 0) { return 0 - 1; }
+    var off = 0;
+    while (off < len) {
+        var w = sys_write(fd, buf + off, len - off);
+        if (w <= 0) { _mat_err = 1; return 0 - 1; }
+        off = off + w;
+    }
+    return 0;
+}
+
+fn _mat_write_cstr(fd, s): i64 { return _mat_write(fd, s, strlen(s)); }
+
+# Stream one open file into the temp. Returns 0, or -1 with `_mat_err` set — a read error
+# is a failure too: `while (n > 0)` treats -EIO exactly like EOF, which is the silent
+# short-copy this fn exists to stop.
+fn _mat_copy_fd(tfd, sfd): i64 {
+    var buf = alloc(32768);
+    var n = 1;
+    while (n > 0) {
+        n = syscall(0, sfd, buf, 32768);
+        if (n > 0) { if (_mat_write(tfd, buf, n) != 0) { return 0 - 1; } }
+    }
+    if (n < 0) { _mat_err = 1; return 0 - 1; }
+    return 0;
+}
+
 fn _materialize_source(source): i64 {
     # Build temp file if we have dep includes or defines to prepend.
     # v5.7.8: _skip_deps suppresses the manifest auto-prepend; defines
@@ -490,15 +538,25 @@ fn _materialize_source(source): i64 {
         # Unlink first so O_EXCL succeeds on re-runs with same PID
         sys_unlink(tmp);
         var tfd = sys_open(tmp, O_WRONLY | O_CREAT | O_EXCL, 0x180);
+        # v6.6.6 (bite 26b) — a temp that could not be created used to fall straight
+        # through to `return source`, i.e. compile the entry file with the manifest's
+        # includes, the `-D` defines and every `[build].modules` file SILENTLY DROPPED.
+        # That is the same wrong-translation-unit outcome as a short write, reached by a
+        # different door. CHANGELOG [6.6.6].
+        if (tfd < 0) {
+            _err_ctx("could not create the preprocessed source", tmp);
+            return 0;
+        }
+        _mat_err = 0;
         if (tfd >= 0) {
             # v6.5.7: `#@incdir` FIRST — cycc honours the marker only at byte 0, so
             # that the CLI's value is the one it reads and a marker further down the
             # file (what a hostile include would write) stays an ordinary comment.
             # Nothing may be emitted above this line.
             if (incdir != 0) {
-                sys_write(tfd, "#@incdir ", 9);
-                sys_write(tfd, incdir, strlen(incdir));
-                sys_write(tfd, "\n", 1);
+                _mat_write(tfd, "#@incdir ", 9);
+                _mat_write_cstr(tfd, incdir);
+                _mat_write(tfd, "\n", 1);
             }
             # v6.5.21 — `#@pkgver <version>` directly after `#@incdir`, surfacing
             # `[package].version` to source as `CYRIUS_PKG_VERSION`. cycc REPLACES
@@ -508,9 +566,9 @@ fn _materialize_source(source): i64 {
             # marker beats a wrong one.
             var _pkgver = _dep_read_cyml_package_version();
             if (_pkgver != 0) {
-                sys_write(tfd, "#@pkgver ", 9);
-                sys_write(tfd, _pkgver, strlen(_pkgver));
-                sys_write(tfd, "\n", 1);
+                _mat_write(tfd, "#@pkgver ", 9);
+                _mat_write_cstr(tfd, _pkgver);
+                _mat_write(tfd, "\n", 1);
             }
             # Prepend dep includes (v5.7.8: skipped under _skip_deps)
             if (_skip_deps == 0) {
@@ -518,9 +576,9 @@ fn _materialize_source(source): i64 {
                     var ii = 0;
                     while (ii < vec_len(_dep_includes)) {
                         var inc = vec_get(_dep_includes, ii);
-                        sys_write(tfd, "include \"", 9);
-                        sys_write(tfd, inc, strlen(inc));
-                        sys_write(tfd, "\"\n", 2);
+                        _mat_write(tfd, "include \"", 9);
+                        _mat_write_cstr(tfd, inc);
+                        _mat_write(tfd, "\"\n", 2);
                         ii = ii + 1;
                     }
                 }
@@ -530,9 +588,9 @@ fn _materialize_source(source): i64 {
                 var di = 0;
                 while (di < vec_len(_defines)) {
                     var def = vec_get(_defines, di);
-                    sys_write(tfd, "#define ", 8);
-                    sys_write(tfd, def, strlen(def));
-                    sys_write(tfd, "\n", 1);
+                    _mat_write(tfd, "#define ", 8);
+                    _mat_write_cstr(tfd, def);
+                    _mat_write(tfd, "\n", 1);
                     di = di + 1;
                 }
             }
@@ -542,15 +600,18 @@ fn _materialize_source(source): i64 {
                 while (mi < vec_len(_build_modules)) {
                     var mpath = vec_get(_build_modules, mi);
                     var mfd = sys_open(mpath, O_RDONLY, 0);
+                    # v6.6.6 (bite 26b) — a `[build].modules` entry that cannot be opened
+                    # was SKIPPED IN SILENCE, so a typo'd or unreadable module produced a
+                    # translation unit missing that whole file and the build failed (or
+                    # worse, succeeded) with nothing pointing at the manifest.
+                    if (mfd < 0) {
+                        _err_ctx("build module cannot be read (declared in [build].modules)", mpath);
+                        _mat_err = 1;
+                    }
                     if (mfd >= 0) {
-                        var mbuf = alloc(32768);
-                        var mn = 1;
-                        while (mn > 0) {
-                            mn = syscall(0, mfd, mbuf, 32768);
-                            if (mn > 0) { syscall(1, tfd, mbuf, mn); }
-                        }
+                        _mat_copy_fd(tfd, mfd);
                         sys_close(mfd);
-                        sys_write(tfd, "\n", 1);
+                        _mat_write(tfd, "\n", 1);
                     }
                     mi = mi + 1;
                 }
@@ -571,19 +632,31 @@ fn _materialize_source(source): i64 {
             # those splice in whole files of unknown length. A hand-maintained count would
             # be exactly the self-drifting-value shape that bit three separate places this
             # cycle.
-            sys_write(tfd, "#@srcline\n", 10);
+            _mat_write(tfd, "#@srcline\n", 10);
             # Append source file (stream copy for large files)
             var sfd2 = sys_open(source, O_RDONLY, 0);
+            # v6.6.6 (bite 26b) — an entry source that cannot be opened used to leave the
+            # temp holding the PREPENDS ONLY. compile()'s v6.5.7 existence guard covers the
+            # common cause (a path that matches nothing), but it is open-then-close: a file
+            # that vanishes or loses read permission between that check and this open lands
+            # here, and "a translation unit of pure stdlib, OK, exit 0" is exactly what that
+            # guard exists to stop.
+            if (sfd2 < 0) {
+                _err_ctx("could not read the entry source", source);
+                _mat_err = 1;
+            }
             if (sfd2 >= 0) {
-                var cbuf = alloc(32768);
-                var cn = 1;
-                while (cn > 0) {
-                    cn = syscall(0, sfd2, cbuf, 32768);
-                    if (cn > 0) { syscall(1, tfd, cbuf, cn); }
-                }
+                _mat_copy_fd(tfd, sfd2);
                 sys_close(sfd2);
             }
-            sys_close(tfd);
+            # A close failure is a write failure (delayed allocation, quota, NFS commit):
+            # the bytes are only durable once close returns 0.
+            if (sys_close(tfd) < 0) { _mat_err = 1; }
+            if (_mat_err != 0) {
+                _err_ctx("could not write the preprocessed source — refusing to compile a truncated file", tmp);
+                sys_unlink(tmp);
+                return 0;
+            }
             actual_source = tmp;
         }
     }
@@ -908,6 +981,9 @@ fn compile(source, output): i64 {
         sys_write(STDERR_FD, "\n", 1);
     }
     var actual_source = _materialize_source(source);
+    # v6.6.6 (bite 26b) — 0 means the preprocessed source is not what was asked for and the
+    # helper has already NAMED why. Never compile it. CHANGELOG [6.6.6].
+    if (actual_source == 0) { return 1; }
     # v6.5.19 — the preprocessed source is a TEMP, and nothing ever deleted it.
     # `_materialize_source` returns `source` unchanged when no prepend was needed and
     # a fresh `<tmpdir>/cpp_<pid>` when it was, so the pointer inequality below is the

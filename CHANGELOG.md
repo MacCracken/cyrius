@@ -2178,6 +2178,37 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   naming its own error and exiting non-zero. 4 mutants, each RED on exactly its own rows;
   the over-fix that always prints a bare `FAILED` is caught by row 2.
 
+- **`cyrius build` could compile a TRUNCATED preprocessed source and report `OK`** (bite 26b).
+  `_materialize_source` (`cbt/build.cyr`) builds the file cycc actually reads — the
+  `#@incdir` / `#@pkgver` markers, the manifest's `include` lines, the `-D` defines, every
+  `[build].modules` file, then the entry source — and every one of those writes was a bare
+  `sys_write` / `syscall(1, …)` whose result was **discarded**. Measured at `67ea9c17` on a
+  4.8 MB source under `RLIMIT_FSIZE` (`ulimit -f 200`, the full-disk recipe the sibling
+  write gates use): the copy stopped at the limit, which cut the file's **last** line —
+  `fn main()` — and the build printed `compile src/app.cyr -> out [x86_64] OK (4448 bytes)`,
+  exited **0**, and produced a binary returning **0** where the source says **42**. Not a
+  visibly truncated artifact: a successful build of a program nobody wrote. Two more doors
+  to the same wrong translation unit were open beside it — a temp that could not be
+  **created** fell straight through to "compile the entry file with the manifest includes,
+  the defines and every `[build].modules` file silently dropped", and a `[build].modules`
+  entry that could not be **opened** was skipped in silence (a typo'd module surfaced only
+  as `undefined function`, pointing at the call site rather than the manifest). Fixed with
+  a sticky checked writer (`_mat_write` loops to completion, `_mat_copy_fd` streams a file
+  and treats a read error as a failure rather than as EOF — `while (n > 0)` had read `-EIO`
+  exactly like end-of-file), every `open` and the final `close` checked, and any failure
+  **named**, the partial temp removed and `0` returned; both callers (`compile()` and
+  `cyrius capacity`) treat `0` as "do not compile". The same unchecked-temp-source shape
+  one verb over is fixed with it: `cyrius doctest` wrote each example with an unchecked
+  `syscall(1, fd, code, code_len)` and, when the temp could not be created at all, fell
+  through with **no else** — the example was counted in the total, scored neither pass nor
+  fail, and since the verdict is `dt_fail > 0` the verb exited **0** having never run it.
+  New gate `tests/gates/toolchain/build_temp_source_write_checked.sh` (4 axes, 6 mutants,
+  ledger in its header). Its fixture is deliberately sized so the size limit bites the
+  **source** and not the compiler's output — a limit that truncates both proves nothing
+  about which write was unchecked — and axis 3 requires the binary to return the *module's*
+  value, so it cannot pass against a build that ignored the manifest. cbt-only; `build/cycc`
+  unchanged.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**

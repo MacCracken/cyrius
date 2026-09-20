@@ -2168,6 +2168,10 @@ fn cmd_capacity(source, check_mode, json_mode): i64 {
     # stats lines and printed "ok (all caps under 85%)". See the placebo guard at
     # the bottom of this fn. CHANGELOG [6.4.73].
     var cap_source = _materialize_source(source);
+    # v6.6.6 (bite 26b) — same contract as compile()'s caller: 0 is "the preprocessed source
+    # is not what was asked for", already named. Measuring caps against a truncated file
+    # would report a stats block for a program nobody wrote. CHANGELOG [6.6.6].
+    if (cap_source == 0) { return 1; }
     var tmpout = _cbt_tmpfile("cap_out");
     var tmperr = _cbt_tmpfile("cap_err");
     # v6.6.6 — PE arm. `/bin/sh` does not exist on Windows and `sys_fork` is a -1 stub,
