@@ -19,6 +19,20 @@
 # a literal under CYRIUS_ARCH_AARCH64 is a NATIVE number by construction and is not judged
 # here. Numbers ≥ 0xF000 (the PE reroute band) are exempt too.
 #
+# ⚠ v6.6.6 (bite 24a) — WHAT THIS GATE DOES **NOT** CLAIM, written down because someone
+# already assumed it did. The question here is exactly "is this number routed on
+# ELF-aarch64". A number that IS routed here can still be the wrong syscall on another
+# secondary target, and a green run says nothing about that. `cbt/build.cyr` finalized
+# three builds with a raw `syscall(82, …)`; this gate passed it — correctly — because
+# ESYSXLAT carries an `82 → renameat(38)` row added at v6.0.68 for that very call site.
+# The defect there was that the result was discarded and the portable wrapper
+# (`file_rename`) already existed; that is a different question, pinned by
+# `tests/gates/toolchain/build_output_rename_checked.sh`. Re-running this scan with the
+# set derived from EMACHO_SYSXLAT's `_msx` rows instead reports **22** arch-neutral sites
+# unrouted on DARWIN (raw 228 clock_gettime in chrono/bench/hashseed/mabda/patra/sakshi/
+# tls_native_conn, raw 35, raw 79, raw 319) — a real second axis, NOT added here because
+# it is red on twenty sites this bite did not cause and must not silently fix.
+#
 # Anti-vacuous: the derived set must decode ≥ 40 rows, the scan must visit ≥ 500 files and
 # find ≥ 200 literal sites, or the run fails rather than reporting "all routed" over nothing.
 # MUTATION LEDGER:

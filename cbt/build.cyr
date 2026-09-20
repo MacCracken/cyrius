@@ -63,7 +63,17 @@ fn _emit_js(source, output): i64 {
     if (WIFEXITED(status) == 1) {
         if (WEXITSTATUS(status) == 0) {
             sys_unlink(output);
-            syscall(82, tmp_out, output);   # SYS_RENAME on Linux x86_64
+            # v6.6.6 (bite 24a) — `file_rename`, CHECKED. Was a raw `syscall(82, …)` with
+            # its result DISCARDED: `cyrius build --target=js t.ts out.js` where `out.js`
+            # already existed as a DIRECTORY printed `OK` and exited 0, left the .tmp.<pid>
+            # behind, and the chmod below landed on the DIRECTORY (0755 → 0644, i.e. no
+            # longer traversable). The PE arm above has checked its rename since bite 9;
+            # this arm had not. CHANGELOG [6.6.6].
+            if (file_rename(tmp_out, output) != 0) {
+                _err_ctx("emit-js: could not rename the temp output onto", output);
+                sys_unlink(tmp_out);
+                return 1;
+            }
             sys_chmod(output, 0x1A4);        # 0644 — JS is data, not executable
             return 0;
         }
@@ -178,7 +188,14 @@ fn _emit_cx(source, output): i64 {
     if (WIFEXITED(status) == 1) {
         if (WEXITSTATUS(status) == 0) {
             sys_unlink(output);
-            syscall(82, tmp_out, output);   # SYS_RENAME on Linux x86_64
+            # v6.6.6 (bite 24a) — `file_rename`, CHECKED; same defect and same fix as
+            # `_emit_js` above, and the PE arm of THIS fn already reads
+            # `if (file_rename(...) == 0)`. CHANGELOG [6.6.6].
+            if (file_rename(tmp_out, output) != 0) {
+                _err_ctx("emit-cx: could not rename the temp output onto", output);
+                sys_unlink(tmp_out);
+                return 1;
+            }
             sys_chmod(output, 0x1A4);        # 0644 — .cyx is data, not executable
             return 0;
         }
@@ -886,9 +903,11 @@ fn compile(source, output): i64 {
     # directory costs an inode; the 2.8 GB was the files.)
     var tmp_src = 0;
     if (actual_source != source) { tmp_src = actual_source; }
-    # v6.0.85 — Windows path. Win32 has no fork/dup2/execve, and SYS_RENAME(82)
-    # + getpid(39) are not PE reroutes, so the POSIX fork+atomic-rename block
-    # below can't run here. Spawn `cc < actual_source > output` via cmd.exe
+    # v6.0.85 — Windows path. Win32 has no fork/dup2/execve and getpid(39) is not a PE
+    # reroute, so the POSIX fork+atomic-rename block below can't run here. (This comment
+    # also named SYS_RENAME(82) until 6.6.6 — the rename half is portable now: that block
+    # calls `file_rename`, which IS routed on PE as MoveFileExW/0xF034.)
+    # Spawn `cc < actual_source > output` via cmd.exe
     # (CreateProcessW) and write directly to `output`. Dep/define prepends still
     # apply above (actual_source); a dep build needs a writable temp the Windows
     # path doesn't yet have — tracked for follow-up. See CHANGELOG [6.0.85].
@@ -1051,8 +1070,17 @@ fn compile(source, output): i64 {
             # is replaced atomically; on rename failure, neither is
             # touched. Both files live on the same FS so rename is
             # POSIX-atomic.
+            # v6.6.6 (bite 24a) — `file_rename`, CHECKED. Was a raw `syscall(82, …)`
+            # whose result was DISCARDED, so `cyrius build a.cyr some/existing/dir`
+            # printed `compile … OK` and exited 0 with NO binary written — the
+            # `_artifact_size` line below noticed (it fell back to a bare `OK`) but the
+            # verb still reported success. CHANGELOG [6.6.6].
             sys_unlink(output);
-            syscall(82, tmp_out, output);   # SYS_RENAME on Linux x86_64
+            if (file_rename(tmp_out, output) != 0) {
+                _err_ctx("could not rename the temp output onto", output);
+                sys_unlink(tmp_out);
+                return 1;
+            }
             sys_chmod(output, 0x1ED);
             if (_verbose == 1) {
                 # Report binary size

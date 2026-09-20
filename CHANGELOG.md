@@ -1991,6 +1991,36 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `printf | while`, whose subshell cannot answer for the caller, so every path read as excluded
   — which is why it now carries a corpus floor *and* a checked floor.
 
+- **`cyrius build` reported `OK` and exited 0 for a build that produced no artifact, because the
+  atomic rename at the end was a raw `syscall(82, …)` whose result was thrown away.** (bite 24a.)
+  Three sites in `cbt/build.cyr` — `_emit_js`, `_emit_cx` and `compile` — finalized their
+  tmp-then-rename with the x86-64 Linux `SYS_RENAME` number spelled out in arch-neutral CLI code
+  and discarded what it returned. Measured at `55d7819` on x86-64 Linux with the output path an
+  existing **directory**: `cyrius build --target=js t.ts out.js` printed `emit-js t.ts -> out.js
+  [js] OK` and exited **0**, left `out.js.tmp.<pid>` behind, and — because the `sys_chmod` ran
+  unconditionally after the rename that never happened — changed the *directory's* mode from
+  `drwxr-xr-x` to `drw-r--r--`, i.e. no longer traversable. `cyrius build a.cyr bin.d` likewise
+  printed `compile a.cyr -> bin.d [x86_64] OK` at exit 0 with no binary anywhere. Exit 0 with no
+  artifact is the worst available answer for a build tool: a script that checks `$?` proceeds, and
+  a CI step "succeeds" having produced nothing. The PE arm two lines above each site has read
+  `if (file_rename(...) == 0)` since bite 9 — only the POSIX arms were unchecked. **Fix:** all
+  three call `file_rename` (`lib/io.cyr`, the portable wrapper: `sys_rename` on Linux/macOS, the
+  4-arg length-carrying form on agnos, `MoveFileExW` on PE), **test** it, name the path that could
+  not be written, unlink the temp and return 1; the `chmod` now runs only on the success path.
+  ⚠ **Why the existing raw-literal gate passed this.**
+  `tests/gates/platform/raw_syscall_literals_routed.sh` *does* scan `cbt/` (widened to the whole
+  tree at 6.6.5) — it passed because its question is "is this number routed on ELF-aarch64", and
+  82 is: `ESYSXLAT` carries an `82 → renameat(38)` row with the `AT_FDCWD` arg-shift, added at
+  v6.0.68 **for this very call site**. That gate's claim is one correctly-scoped axis, so the new
+  gate is separate rather than a widening that would make the old one claim more than it measures.
+  New gate `tests/gates/toolchain/build_output_rename_checked.sh`: no `cbt/` site spells rename by
+  number (derived from *both* stdlib peers, comments stripped, with an anti-vacuous floor), every
+  `file_rename` call in `cbt/` consumes its result, and both verbs fail non-zero **by name** onto a
+  blocked path while still succeeding on a normal one — the expected outcome computed a different
+  way from what the CLI prints (the directory must still be a directory, keep its mode, and leave
+  no temp sibling). 4 mutants, all RED; the half-fix that swaps in `file_rename` and still discards
+  the result is green on the structural axis and caught by the runtime ones.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**
