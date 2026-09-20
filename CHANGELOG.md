@@ -2461,6 +2461,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `programs/*.cyr` and all 103 `lib/*.cyr` compile to BYTE-IDENTICAL binaries against the
   6.6.5 compiler.
 
+- **`tests/gates/frontend/lint_reports_unparseable.sh`'s axis-9 fixture was itself the defect
+  bite 16c closed** — `fn name_of(members): Str2 { … return i; … return 0; }` with
+  `struct Str2 { p; n; }` (16 B, the rax:rdx pair class) returns an INTEGER from a
+  struct-returning fn, which only ever compiled because the pair path accepted any expression.
+  Its "compiles once the sibling struct is in scope" premise row went red on the fixed compiler
+  and said so loudly, which is what a premise row is for. `Str2` now has ONE field: at 8 bytes
+  the struct comes back in rax alone, so `return <i64>;` is the documented "a struct as a plain
+  value is its first word" form and the fn is well-formed. The axis is unchanged — its cascade
+  comes from the unresolvable RETURN TYPE resyncing into the `for` header, and still measures
+  two syntax-class errors.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**

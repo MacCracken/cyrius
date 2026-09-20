@@ -336,7 +336,16 @@ echo "axis 9 — ⭐ a fn RETURN TYPE whose struct is declared in a SIBLING file
 # produces the return-type error ALONE, which is not in `_lint_msg_is_syntax` and so was
 # never refused: that fixture would make this axis pass against the broken build.
 # Copied from the real shape (agnosai/src/definitions/packaging.cyr:261-262).
-printf 'struct Str2 { p; n; }\n' > "$T/w/sib_ret.cyr"
+# ⚠ 6.6.6 — `Str2` HAS ONE FIELD, AND THAT IS LOAD-BEARING. It carried two (16 B), which puts
+# the fn in the rax:rdx PAIR return class — while the body `return i;` / `return 0;` hands back
+# an integer. That only ever "compiled" because the pair-return path accepted ANY expression and
+# silently left rdx unwritten, the defect bite 16c closed; with it closed, the premise row below
+# ("compiles once the sibling struct is in scope") went RED, correctly — the FIXTURE was wrong,
+# not the axis. At one field the struct is returned in rax alone, so `return <i64>;` is the
+# documented "a struct as a plain value is its first word" form and the fn is well-formed. The
+# cascade this axis needs is unaffected: it comes from the UNRESOLVABLE RETURN TYPE resyncing
+# into the `for` header, not from the struct's width (still 2 syntax-class errors, measured).
+printf 'struct Str2 { p; }\n' > "$T/w/sib_ret.cyr"
 printf 'fn name_of(members): Str2 {\n    for (var i = 0; i < 4; i = i + 1) {\n        return i;\n    }\n    return 0;\n}\nfn main() { return 0; }\nvar r = main();\n' > "$T/w/x_ret.cyr"
 # PREMISE — standalone it does not compile, but it is WELL-FORMED: the same bytes
 # compile once the sibling struct is concatenated in front.
