@@ -1580,6 +1580,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `#ifdef CYRIUS_TARGET_WIN` block *and* `test_scratch` to still be used for the other targets.
   Removing the guard, or giving the non-PE branch the fixed name, each redden it.
 
+- **The CVE-44 write-up stated a measurement the committed gate cannot make** (bite 17n, from
+  bite 17's review). It said "both planted link targets were clobbered, one with the public key,
+  one with the release tarball", and that axis 2 pre-plants "all six names … two as symlinks".
+  `release_verify_private_temp.sh` plants **two** names, of which **one** is a symlink, and its
+  own comment says the four version-independent names (`SHA256SUMS`, `.sig`,
+  `cyrius-release.pub`, `cyrius_tsum`) are deliberately *not* planted, because they are shared
+  with every process on the box and planting them would collide with a concurrent run.
+  Re-measured here: the 6.6.5 `ci.sh` against the gate clobbers **one** link target, with the
+  release tarball, and no public key is planted at all. The mechanism is unchanged and the fix
+  is unchanged; the evidence sentence now says what the repo carries, and the `cyrius-release.pub`
+  half is presented as **reasoned** (`printf > path` follows a symlink by the same mechanism)
+  rather than measured — which is what the gate's own comment already said.
+
 - **Five `lib/` modules called other modules' functions without including them, so a bare
   `include` compiled with `warning: undefined function` — and an undefined function is a
   `ud2`/SIGILL stub, not a link error** (bite 17g). `lib/fmt.cyr` called `strlen`/`memcpy`

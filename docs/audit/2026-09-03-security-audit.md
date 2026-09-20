@@ -266,12 +266,16 @@ file; it does not stop them **creating** a name that does not exist yet. Two con
 the first is not a race:
 
 1. **Deterministic — arbitrary file overwrite as the installing user.** `curl -o <path>` and
-   `printf … > <path>` both follow a symlink. A local user who creates `/tmp/cyrius-release.pub`
-   (or `/tmp/$TARBALL`) as a symlink to any file the installing user can write has that file
-   overwritten the next time CI installs. Measured against the 6.6.5 script in a hermetic
-   harness: both planted link targets were clobbered, one with the public key, one with the
-   release tarball. On a CI runner the installing user is very often the one whose
-   `~/.ssh/authorized_keys`, shell profile or job script matters.
+   `printf … > <path>` both follow a symlink. A local user who creates `/tmp/$TARBALL` (or
+   `/tmp/cyrius-release.pub`) as a symlink to any file the installing user can write has that
+   file overwritten the next time CI installs. **Measured** against the 6.6.5 script in the
+   hermetic harness of `release_verify_private_temp.sh`: `/tmp/$TARBALL` planted as a symlink
+   out of `/tmp`, and the link's target came back **clobbered with the downloaded tarball**. The
+   `cyrius-release.pub` half is **reasoned, not measured** — `printf … > /tmp/cyrius-release.pub`
+   follows a symlink by exactly the same mechanism — and the gate deliberately does not plant it:
+   that name has no version in it, so planting it would collide with any concurrent run on the
+   same box (the gate says so at the planting step). On a CI runner the installing user is very
+   often the one whose `~/.ssh/authorized_keys`, shell profile or job script matters.
 2. **A race — the signature check answers to the attacker.** The attacker owns the six files, so
    they can rewrite any of them at any moment, including between `printf … > /tmp/cyrius-release.pub`
    and `cyrsign verify … /tmp/cyrius-release.pub`, and between the verify and `tar xzf
@@ -290,8 +294,13 @@ scratch with it.)
 **Verified.** `tests/gates/toolchain/release_verify_private_temp.sh` — 4 axes, run hermetically
 with `curl`, `cyrsign` and the checksum tools stubbed on `PATH` over a fake release, so no
 network is touched and "which public key reached the verifier" is directly observable. Axis 2 is
-the exploit: all six names pre-planted, two as symlinks out of `/tmp`; the link targets must come
-back byte-for-byte and the genuine payload must install. Axis 1 is anti-vacuous (a well-formed
+the exploit: the two version-specific names pre-created, the tarball as a **symlink out of
+`/tmp`**; the link target must come back byte-for-byte, the planted files must be neither written
+nor removed, and the genuine payload must install. (The four version-INDEPENDENT names —
+`SHA256SUMS`, `.sig`, `cyrius-release.pub`, `cyrius_tsum` — are deliberately not planted: they are
+shared with every other process on the box, so planting them would make the gate collide with a
+concurrent run. Same defect, same mechanism, same fix; the static axis is what pins that the
+fixed installer touches none of them.) Axis 1 is anti-vacuous (a well-formed
 release installs and verifies against the pinned key), axis 3 pins the abort-never-fall-back
 rule, axis 4 is static over `scripts/ci.sh`. Mutation-measured: the 6.6.5 script verbatim reddens
 axes 2, 3 and 4. The tree-wide version of the static axis — no fixed `/tmp` name, and every
