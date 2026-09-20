@@ -42,13 +42,14 @@ cat cbt/cyrius.cyr   | "$WORK/cc_win" > "$WORK/$STAGE/bin/cyrius.exe"
 # and `cyrius api-surface` had no tool to spawn on a Windows install at all. Never
 # noticed because the tool spawn itself was a -1 stub (lib/syscalls_windows.cyr
 # sys_fork) until 6.6.5, so each of those verbs failed for a different reason first.
-# ⚠ `cyrius-init` is DELIBERATELY still absent: it does not cross-compile to PE at
-# all (`programs/cyrius-init.cyr:97,1007` reach unguarded `sys_readlink` / `sys_rename`,
-# which lib/syscalls_windows.cyr does not define — measured at 6.6.5, the compile
-# refuses with 2 reachable undefined fns). That is a Windows-stdlib gap, not an
-# argument-handling one; adding it here would package a 0-byte binary. Filed as
-# docs/development/issues/2026-09-18-cyrius-init-does-not-build-for-windows.md.
-for tool in cyrfmt cyrlint cyrdoc cyrsign cxvm cyaudit cyrius_api_surface; do
+# v6.6.6 — `cyrius-init` JOINS THE LIST. It had been absent because it did not
+# cross-compile to PE at all: `_self_path` had only a macOS and a /proc/self/exe arm, so
+# it reached an unguarded `sys_readlink`, plus `sys_rename`, neither defined in
+# lib/syscalls_windows.cyr — the compile refused with 2 reachable undefined fns and would
+# have packaged a 0-byte binary. Closed by the 0xF03A GetModuleFileNameW reroute + the
+# three Windows wrappers; `cyrius init` and `cyrius port` now exist on a Windows install.
+# See docs/development/issues/archived/2026-09-18-cyrius-init-does-not-build-for-windows.md.
+for tool in cyrfmt cyrlint cyrdoc cyrius-init cyrsign cxvm cyaudit cyrius_api_surface; do
     if [ -f "programs/${tool}.cyr" ]; then
         cat "programs/${tool}.cyr" | "$WORK/cc_win" > "$WORK/$STAGE/bin/${tool}.exe"
     fi
@@ -58,8 +59,8 @@ cat src/main_cx.cyr | "$WORK/cc_win" > "$WORK/$STAGE/bin/cycc_cx.exe"
 
 # Validate every binary is a real PE (MZ magic = 4d5a) — refuse to package an
 # empty / non-PE artifact (the "found by ports" guard).
-for b in cycc.exe cyrius.exe cyrfmt.exe cyrlint.exe cyrdoc.exe cyrsign.exe cxvm.exe cycc_cx.exe \
-         cyaudit.exe cyrius_api_surface.exe; do
+for b in cycc.exe cyrius.exe cyrfmt.exe cyrlint.exe cyrdoc.exe cyrius-init.exe cyrsign.exe \
+         cxvm.exe cycc_cx.exe cyaudit.exe cyrius_api_surface.exe; do
     f="$WORK/$STAGE/bin/$b"
     [ -f "$f" ] || continue
     magic=$(xxd -l2 -p "$f" 2>/dev/null)
@@ -69,6 +70,14 @@ done
 # Full stdlib + Windows-specific modules.
 sh scripts/release-lib.sh "$WORK/$STAGE/lib" >/dev/null
 cp lib/syscalls_windows.cyr lib/alloc_windows.cyr "$WORK/$STAGE/lib/"
+
+# v6.6.6: cyrius-init scaffolding templates, the half the binary is useless without.
+# cyrius-init.exe resolves them at <install-root>/programs/cyrius-init-templates from
+# its OWN module path (GetModuleFileNameW, reroute 0xF03A), exactly as the macOS
+# builders ship them for the F_GETPATH arm. Shipping the binary without these would
+# scaffold nothing but "error: missing template" lines.
+mkdir -p "$WORK/$STAGE/programs"
+cp -r programs/cyrius-init-templates "$WORK/$STAGE/programs/"
 
 # The native installer + metadata.
 cp scripts/install.ps1 "$WORK/$STAGE/" 2>/dev/null || true

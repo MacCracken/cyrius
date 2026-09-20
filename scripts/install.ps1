@@ -106,6 +106,16 @@ foreach ($d in @("$VerDir\bin", "$VerDir\lib", "$CyriusHome\bin", "$CyriusHome\l
 # Version-specific tree.
 Copy-Item "$Stage\bin\*" "$VerDir\bin\" -Force -Recurse
 Copy-Item "$Stage\lib\*" "$VerDir\lib\" -Force -Recurse
+# v6.6.6: programs\ (the cyrius-init scaffolding templates). cyrius-init.exe resolves
+# <its own dir>\..\programs\cyrius-init-templates, and bin\ here is a COPY at both
+# levels, so the tree has to exist beside BOTH bin directories -- versions\<v>\bin and
+# <home>\bin. install.sh does the same for the POSIX stores. Without this the binary
+# ships and runs and then reports "missing template" for every file it should write.
+if (Test-Path "$Stage\programs") {
+    New-Item -ItemType Directory -Force -Path "$VerDir\programs", "$CyriusHome\programs" | Out-Null
+    Copy-Item "$Stage\programs\*" "$VerDir\programs\" -Force -Recurse
+    Copy-Item "$VerDir\programs\*" "$CyriusHome\programs\" -Force -Recurse
+}
 # Active version: copy into <home>\bin + <home>\lib (no symlinks on Windows).
 Copy-Item "$VerDir\bin\*" "$CyriusHome\bin\" -Force -Recurse
 Copy-Item "$VerDir\lib\*" "$CyriusHome\lib\" -Force -Recurse

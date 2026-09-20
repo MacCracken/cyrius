@@ -1134,6 +1134,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   all **329** `.tcyr` and all **84** other `programs/*.cyr` build **byte-identically** to
   the pre-change compiler (the route adds a literal-number arm nothing else reaches).
 
+- **The Windows tarball shipped no scaffolder, and `install.ps1` would not have delivered
+  its templates either.** (bite 6c.) `build-windows-tarball.sh` now builds and validates
+  `cyrius-init.exe` and copies `programs/cyrius-init-templates`, which the macOS builders
+  have shipped since v6.0.60. ⚠ The second half was not in the filing's acceptance list
+  and is what would have made the first half useless: `install.ps1` copied only `bin\` and
+  `lib\`, so the templates stopped at the tarball and the binary would have shipped, run,
+  and then reported `missing template` for every file it should write — it now copies
+  `programs\` into both `versions\<v>\` and the active home, mirroring what install.sh
+  does for the POSIX stores. The `EXE_EXEMPT_cyrius_init` exemption in
+  `cli_args_never_dropped.sh` axis 15 is deleted. **Verified on cass (real Windows
+  10.0.26200.9457, not wine):** `--dry-run demo` and a real `demo` both rc=0 invoked by a
+  RELATIVE path from a foreign working directory, 0 `missing template`, 0 `scaffold
+  INCOMPLETE`, `{PROJ}` substituted and the rendered file valid UTF-8; `--__mode=port`
+  rc=0 with `rust-old/Cargo.toml` moved across (MoveFileExW) and the existing `.gitignore`
+  appended. Gated by `tests/gates/toolchain/cyrius_init_builds_for_pe.sh`, whose axis 2
+  derives its tool list from the tarball script itself — being in the packaging list can
+  no longer be mistaken for building — and whose axes 3-4 run the binary from a relative
+  path under wine, the one thing an argv0 fallback cannot pass.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**

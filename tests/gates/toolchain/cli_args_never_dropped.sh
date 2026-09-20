@@ -757,7 +757,9 @@ check "tool lookups in cbt/ that bypass _tool_path (the .exe arm)" 0 "$(printf '
 # …and every tool the CLI resolves that way is PACKAGED by the Windows tarball, or
 # exempted here with a reason. (cyaudit and cyrius_api_surface were missing, so
 # `cyrius vet/deny/api-surface` had no tool to spawn on a Windows install at all.)
-EXE_EXEMPT_cyrius_init='does not cross-compile to PE (unguarded sys_readlink/sys_rename) — issues/2026-09-18-cyrius-init-does-not-build-for-windows.md'
+# (EXE_EXEMPT_cyrius_init is GONE as of v6.6.6 — it cross-compiles to PE and the Windows
+#  tarball ships it plus its templates. tests/gates/toolchain/cyrius_init_builds_for_pe.sh
+#  is what keeps that true.)
 EXE_EXEMPT_cyrsign_efi='Linux-only helper by design (cbt/cyrius.cyr sign-efi comment: the execve stub returns -1 elsewhere)'
 EXE_EXEMPT_cycc_aarch64='the tarball ships no aarch64 cross-compiler; a Windows-install packaging scope line, not an argument defect'
 TOOLS=$(grep -ho '_tool_path(_tools_dir, "[^"]*")' cbt/*.cyr | sed 's/.*"\(.*\)")/\1/' | LC_ALL=C sort -u)

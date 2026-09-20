@@ -27,6 +27,11 @@
 # Axis 6 is the census that makes this gate cover the SHAPE rather than the two lines:
 # no `strstr(...) == 0` / `!= 0` anywhere in the shipped source. A prefix test is
 # `memeq(s, p, n)`; a presence test is `>= 0`; an absence test is `< 0`.
+# ⚠ It MASKS double-quoted string literals first. Its own registration line in
+# programs/checks/main.cyr QUOTES the defect it describes, and unmasked the census
+# reported that description as a live site — a confident false positive from a gate
+# reading its own docstring. Same masking the raw-syscall-literal gate needs, and for
+# the same reason: in-tree text that talks about code is not code.
 #
 # MUTATION LEDGER (6.6.6 bite 6a, run on this host against the pre-fix tree, both probes
 # restored at once — 11 checks RED, real tree 0 RED):
@@ -142,12 +147,16 @@ check "still exactly one /rust-old/target/ line" 1 "$(grep -c '^/rust-old/target
 
 # ── AXIS 6: the census — no strstr result compared against 0 for truth, anywhere.
 echo "axis 6 — census: no strstr(...) == 0 / != 0 in the shipped source:"
+# The sed pass deletes every "…" span (escapes honoured) BEFORE the census looks at the
+# line — see the header. Comment-only lines are dropped too.
 SITES=$(grep -rn 'strstr(' --include='*.cyr' --include='*.tcyr' --include='*.fcyr' --include='*.bcyr' \
     "$ROOT/lib" "$ROOT/src" "$ROOT/programs" "$ROOT/cbt" "$ROOT/tests" 2>/dev/null \
     | grep -v 'fn strstr' | grep -v ':[0-9]*:[[:space:]]*#' || true)
 NSITES=$(printf '%s\n' "$SITES" | grep -c . || true)
 check "strstr call sites found (anti-vacuous floor >= 6)" yes "$([ "$NSITES" -ge 6 ] && echo yes || echo no)"
-BAD=$(printf '%s\n' "$SITES" | grep -E 'strstr\(.*\)[^;]*(==|!=)[[:space:]]*0' || true)
+MASKED=$(printf '%s\n' "$SITES" | sed 's/"\(\\.\|[^"\\]\)*"//g')
+check "masking kept every site line (no line lost to the sed pass)" "$NSITES" "$(printf '%s\n' "$MASKED" | grep -c . || true)"
+BAD=$(printf '%s\n' "$MASKED" | grep -E 'strstr\(.*\)[^;]*(==|!=)[[:space:]]*0' || true)
 check "sites that compare a strstr INDEX against 0 for truth" 0 "$(printf '%s' "$BAD" | grep -c . || true)"
 [ -n "$BAD" ] && printf '%s\n' "$BAD" | sed 's/^/    /'
 [ -n "$BAD" ] && echo "    (presence is >= 0, absence is < 0; a prefix test is memeq(s, p, n))"
