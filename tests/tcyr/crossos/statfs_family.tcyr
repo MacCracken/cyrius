@@ -96,6 +96,19 @@ fn main(): i64 {
     #endif
     #endif
 
+    # ⚠ AND agnos ASSERTS SOMETHING TOO, because a guard that excludes a target without
+    # replacing the assertions is the vacuous shape this repo hunts: `assert_summary()` over
+    # ZERO assertions returns 0, so the block above alone would read green on agnos while
+    # testing nothing. agnos's `sys_statfs` keeps its own 3-arg (path, pathlen, buf) kernel
+    # shape — deliberately not unified, see lib/syscalls_x86_64_agnos.cyr — so the path case
+    # cannot be shared; the fd peer can be, and it declines honestly. Without that stub a
+    # CYRIUS_TARGET_AGNOS=1 build of this very file did not COMPILE. CHANGELOG [6.6.6]
+    #ifdef CYRIUS_TARGET_AGNOS
+    test_group("v6.6.6 — agnos declines fstatfs honestly (it has no fd-based statfs number)");
+    var abuf[STATFS_BUFSZ];
+    assert_eq(sys_fstatfs(1, &abuf), 0 - 38, "sys_fstatfs returns -ENOSYS on agnos");
+    #endif
+
     return assert_summary();
 }
 var ec = main();

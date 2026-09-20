@@ -49,6 +49,15 @@
 #   6. shadow `stat` with a BSD-shaped stub on PATH (the Mac case) -> axis D prints its
 #      no-oracle note, keeps its structural assertions, and the ok line stops claiming
 #      agreement with coreutils. A GNU `stat` that then fails to answer is still a FAIL.
+#   7. delete `fn sys_fstatfs` from the AGNOS peer (the shape this
+#      gate shipped with, review fix 11c)                      -> FAIL axis B twice: the WRAP
+#      row and the derived whole-family check, the second naming linux_common as the peer it
+#      fails to mirror
+#   8. delete `fn sys_fstatfs` from the PE peer                -> FAIL axis B the same two ways
+#      for lib/syscalls_windows.cyr, which proves the derived check is not agnos-specific
+#   9. rename all three wrappers in lib/syscalls_linux_common.cyr -> FAIL on the derived
+#      check's own floor ("only 0 statfs-family wrappers found … floor 3"), so a canonical
+#      peer that moves cannot silently leave the mirror check inspecting nothing
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
@@ -265,12 +274,38 @@ WRAP = [
     ('lib/syscalls_windows.cyr',      r'^fn sys_fstatfs\(fd, buf\)',    'the PE fd decline'),
     ('lib/syscalls_windows.cyr',      r'^fn statfs_bsize\(buf\)',       'the PE f_bsize accessor'),
     ('lib/syscalls_x86_64_agnos.cyr', r'^fn sys_statfs\(path, pathlen, buf\)', "agnos's own 3-arg shape"),
+    ('lib/syscalls_x86_64_agnos.cyr', r'^fn sys_fstatfs\(fd, buf\)',    "agnos's fd decline"),
     ('lib/syscalls_x86_64_agnos.cyr', r'^fn statfs_bsize\(buf\)',       "agnos's f_bsize accessor"),
 ]
 for rel, pat, what in WRAP:
     p = os.path.join(ROOT, rel)
     if not (os.path.exists(p) and re.search(pat, open(p, encoding='utf-8').read(), re.M)):
         bad.append(f"axis B: {rel} is missing {what} (/{pat}/)")
+
+# ⛔ AND THE PEER SET CHECKED WHOLE — the name list DERIVED from the canonical peer, not
+# hand-listed like WRAP above. A wrapper shipped on FOUR of the five targets hides in the
+# gap between two WRAP rows, which is exactly what happened here: `sys_fstatfs` landed in
+# linux_common (x86_64 / aarch64 / macOS) and on the PE peer, and the agnos peer got the
+# enum and the accessor but not the wrapper, so `CYRIUS_TARGET_AGNOS=1` on portable source
+# was a hard `refusing to emit binary with 1 reachable undefined function(s)` — a build
+# failure, not a degraded answer. Adding the missing WRAP row alone would leave the NEXT
+# name in the family depending on someone remembering to add a row, so the family is read
+# off lib/syscalls_linux_common.cyr and the two STANDALONE peers (Windows and agnos; every
+# other target includes linux_common) must mirror it, whatever each signature is.
+lc = open(os.path.join(ROOT, 'lib/syscalls_linux_common.cyr'), encoding='utf-8').read()
+FAMILY = sorted(set(re.findall(r'^fn ([a-z0-9_]*statfs[a-z0-9_]*)\(', lc, re.M)))
+if len(FAMILY) < 3:
+    bad.append(f"axis B: only {len(FAMILY)} statfs-family wrappers found in "
+               f"lib/syscalls_linux_common.cyr (floor 3) — the canonical peer moved and this "
+               f"check has nothing to mirror")
+else:
+    for rel in ('lib/syscalls_windows.cyr', 'lib/syscalls_x86_64_agnos.cyr'):
+        t = open(os.path.join(ROOT, rel), encoding='utf-8').read()
+        gap = [f for f in FAMILY if not re.search(rf'^fn {f}\(', t, re.M)]
+        if gap:
+            bad.append(f"axis B: {rel} is STANDALONE and defines no {', '.join(gap)}, which "
+                       f"lib/syscalls_linux_common.cyr does — portable source naming it "
+                       f"fails to COMPILE for that target rather than to answer")
 
 # Every peer publishes the offset enum, so cross-platform source names the fields
 # unconditionally — the half-fix trap syscalls_windows.cyr's Stat comment records.

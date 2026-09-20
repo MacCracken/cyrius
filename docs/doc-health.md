@@ -259,7 +259,9 @@ type: state
 > "AGNOS-ONLY … `sys_statfs` exists NOWHERE else in this repo" note was rewritten as HISTORY
 > rather than deleted: its reasoning was right and its own stated upgrade path was taken, so
 > the note is now a record of a trigger that fired. `docs/api-surface.snapshot` regenerated
-> (+7, now 5,233). In the sibling `vidya/` repo, one language field note was added
+> (+8, now 5,234 — the review fix added the agnos peer's missing `sys_fstatfs`, which had
+> shipped on four of the five peers and made a `CYRIUS_TARGET_AGNOS=1` build of portable
+> source a hard compile error). In the sibling `vidya/` repo, one language field note was added
 > (`routing_a_syscall_number_is_only_half_of_portability_the_struct_width_is_the_other_half`).
 > ⚖️ Same caveat as 6.6.5: that is the ONLY `vidya/` edit — the per-minor structural refresh
 > is a closeout item and was not run here.

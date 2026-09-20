@@ -2329,6 +2329,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   padding absorbed it. Verified on all four hosts: **pi 13/13, ecb 13/13, ach 13/13,
   cass 3/3** (Windows asserts the `-38` decline).
 
+- **`sys_fstatfs` shipped on four of the five syscall peers, so an agnos build of portable
+  source was a compile ERROR** (bite 11 review fix). The statfs work above gave
+  `lib/syscalls_x86_64_agnos.cyr` the `Statfs` offsets and `statfs_bsize` but not the fd
+  wrapper, and that peer is STANDALONE (it does not include `syscalls_linux_common.cyr`), so
+  `CYRIUS_TARGET_AGNOS=1` on a source calling `sys_fstatfs(fd, &buf)` answered `error:
+  refusing to emit binary with 1 reachable undefined function(s)` while the same source built
+  clean for Linux and for PE — the exact half-fix the PE declines in the same bite exist to
+  prevent. agnos has no fd-based statfs number, so the peer takes the `-38`/-ENOSYS stub shape
+  its v6.6.5 batch already uses, and — deliberately — **no `SYS_FSTATFS` constant**: Linux's
+  138 is absent from agnos's frozen contract entirely, so minting it would invite an undefined
+  kernel call and redden `agnos_abi_doc_parity` axis 2 ("the cyrius peer defines syscall
+  number(s) absent from the frozen contract"). The gate's hand-listed WRAP rows are what let a
+  4-of-5 gap hide between two rows, so it now also reads the statfs family OFF the canonical
+  peer and requires both standalone peers to mirror it, whatever each signature is (floor 3;
+  mutation-proven three more ways — ledger entries 7-9). And
+  `tests/tcyr/crossos/statfs_family.tcyr` gained the agnos arm it was missing: it guarded its
+  whole body with `#ifndef CYRIUS_TARGET_AGNOS`, and `assert_summary()` over ZERO assertions
+  returns 0, so an agnos run would have read green having asserted nothing.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**
