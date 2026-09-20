@@ -956,9 +956,14 @@ fn _vis_check_var(S, vi, noff): i64 {
 #     uninitialised 0x1EC000 slot, so a `var X = 0` prior is not compared (the
 #     dangerous SYS_*/ERR_* cases are enum or nonzero);
 #   - value-identical redefinitions are silent (intended);
-#   - a PRIOR at gvar index >= 1024 is invisible (inherits the enum-const-fold
-#     cap; cycc self-host registers ~773, fully under it — large consumer
-#     stacks like http+tls can exceed it);
+#   - an ENUM-const prior at gvar index >= 1024 is invisible, because the enum FOLD
+#     table itself stops there (PARSE_ENUM_DEF's `if (vcnt < 1024)`) — there is no
+#     recorded value to compare. ⚠ 6.6.6 bite 19c: this used to be a blanket
+#     `if (pi >= 1024) { return 0; }` over the WHOLE function, so a LITERAL-init prior
+#     was invisible past 1024 too, and the warning went silent in exactly the large
+#     programs that collide (measured: 1100 globals, then `var a = 5; var a = 7;`, no
+#     warning at all). gvar_initval is a GROWN table with no such cap, so the literal
+#     half is now compared at any index; GVECP's own bound keeps the enum half honest;
 #   - cx records only a REDECLARED constant in 0x1EC000 (its first literal
 #     takes the runtime-store path), so a two-link collision is not seen there.
 # 6.6.6: "last definition wins" is now what the compiler DOES, for every read —
@@ -974,7 +979,6 @@ fn CHKDUPVAL(S, noff, newval): i64 {
     # `private` check. See _findvar_core.
     var pi = _findvar_core(S, noff);
     if (pi < 0) { return 0; }
-    if (pi >= 1024) { return 0; }   # beyond the enum-const fold table; skip
     var pval = 0;
     var phas = 0;
     if (GVECP(S, pi) == 1) {          # out-of-band flag → prior is an enum const

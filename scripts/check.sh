@@ -269,6 +269,13 @@ sh "$ROOT/tests/gates/frontend/macro_pass_preserves_ifdef_filtering.sh"
 # would pass every accepting row.
 sh "$ROOT/tests/gates/frontend/private_does_not_block_own_declaration.sh"
 
+# 6.6.6 bite 19c: the duplicate-symbol warning went SILENT once a program had registered 1024
+# vars — CHKDUPVAL opened with a blanket `pi >= 1024` return, which is the ENUM fold table's
+# bound applied to both halves of the probe; gvar_initval is a grown table with no such cap.
+# The programs that collide are exactly the large ones. The SYS_* note went with it, so row D
+# asserts the note's lines too: a fix that restored only the warning would pass otherwise.
+sh "$ROOT/tests/gates/frontend/duplicate_symbol_warning_at_scale.sh"
+
 # 6.6.5: the `return f(args);` tail path must divert to PARSE_FNCALL for exactly the
 # arguments PARSE_FNCALL treats specially — no more. The `: Str` literal divert added here
 # was armed by a literal at ANY paren depth, so `return deep(n-1, str_from("x"))` lost its

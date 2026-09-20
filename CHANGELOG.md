@@ -8,6 +8,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **The duplicate-symbol warning went SILENT in a large program.** (bite 19c.) `var a = 5;
+  var a = 7;` warns; put 1100 globals ahead of it and nothing is reported at all — and the
+  `SYS_*` note that tells a consumer an overridden syscall number emits a DIFFERENT syscall on
+  aarch64 and macOS went with it. **Root cause:** `CHKDUPVAL` opened with a blanket
+  `if (pi >= 1024) { return 0; }`. That is the ENUM fold table's bound applied to BOTH halves
+  of the probe: `gvar_initval` (the literal-init prior) is a GROWN table that doubles with the
+  var count and never had a 1024 cap, and the enum half's own reader `GVECP` already returns 0
+  above 1024. The programs that collide are exactly the large ones that co-link several
+  modules — the case the warning was added for in v6.2.11. **Fix:** drop the blanket cap
+  (`src/frontend/parse_types.cyr`); each half is now bounded by its own table. The values were
+  always correct; only the diagnostic was lost. Gate:
+  `tests/gates/frontend/duplicate_symbol_warning_at_scale.sh` (6 rows, two mutants; warning
+  counts asserted EXACTLY so a cascade fails as loudly as a silence, every row's value checked
+  against a control, and row D asserts the `SYS_*` note's own lines so a fix that restored only
+  the warning would not pass). ⚠ Residual, stated rather than hidden: an enum constant
+  registered past var index 1024 is not constant-FOLDED at all (`PARSE_ENUM_DEF`'s
+  `if (vcnt < 1024)`), so it is still invisible to this probe — a different defect, not
+  addressed here. cycc **1,315,280 -> 1,315,280 B** (no change).
+
 - **A file could not DECLARE a global whose name another file had made `private`.** (bite 19b.)
   `lib/a.cyr` = `private` + `var LIMIT = 5;`; `lib/b.cyr` = `private` + `var B_CAP = LIMIT * 2;`
   + its own `var LIMIT = 5;` -> `error: lib/b.cyr:3:11: 'LIMIT' is private to its file`, rc 1.
