@@ -1289,7 +1289,17 @@ byte PREFIXES with no boundary, so those same lines did NOT compile — `#ioctl 
 the comment's second word. That was a lexer defect written up as if it were a language rule
 ("put a space after the `#`"); it is fixed, and the boundary is the rule.
 
-**Three names also end at `(`**: `#deprecated("…")` and `#pe_import(…)`, where the parenthesis
+**Preprocessor directive names end at a word boundary too (v6.6.6).** `#endif`, `#endplat`,
+`#host_only`, `#derive(…)` and `#@srcline` are matched with the same rule, so `#endifoo note`
+and `#host_onlyish note` are comments. Until 6.6.6 they were byte prefixes, and there the
+failure was **silent rather than a diagnostic**: `#endifoo note` inside a skipped `#ifdef`
+CLOSED the conditional, so the code that should have been skipped was compiled into the binary;
+`#derive(Serialize)x note` armed the derive machinery and changed the emitted bytes;
+`#host_onlyish note` in an included module refused every `--target=…-bare-metal-elf` build; and
+`#@srclinex 10` shifted every diagnostic in the file by one line. `#else` carried the rule from
+the start, which is why it was the only one that behaved.
+
+**Three attribute names also end at `(`**: `#deprecated("…")` and `#pe_import(…)`, where the parenthesis
 is part of the syntax, and `#assert(…)`, where it is NOT — the compiler rejects that form with
 `#assert: expected constant expression`, and it stays a loud error on purpose rather than
 becoming a silent comment, because a dropped compile-time assertion is worth more noise than a
