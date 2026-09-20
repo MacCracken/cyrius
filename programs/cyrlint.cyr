@@ -143,15 +143,28 @@ fn _lx_skip_char(buf, p, lim): i64 {
     return p + 1;
 }
 
+# 1 iff the byte at `q` ENDS an attribute name: whitespace, end of buffer, or `(`
+# (the `#deprecated(` / `#pe_import(` form). v6.6.6 gave the lexer this boundary —
+# before it, `#ioctl numbers` matched the `#io` PREFIX and the rest of the comment
+# was parsed as code. Mirrors LEXATTRBOUND in src/frontend/lex.cyr; the three
+# _*_attr_len readers must take the same boundary or they disagree with the
+# compiler about which `#` lines are comments. CHANGELOG [6.6.6]
+fn _lx_attr_bound(buf, q, lim): i64 {
+    if (q >= lim) { return 1; }
+    var b = load8(buf + q);
+    if (b == 32 || b == 9 || b == 10 || b == 13 || b == 40) { return 1; }
+    return 0;
+}
+
 # A `#` is NOT always a comment. The lexer (src/frontend/lex.cyr) turns ten byte
 # prefixes into attribute/statement TOKENS and keeps lexing the same line after them, so
 # `#naked fn isr() {` opens a real brace and `#inline fn g(): i64 {` a real fn body.
 # Reading them as comments drew 15 false "unmatched closing brace" on
 # tests/tcyr/codegen/naked_fn_attribute.tcyr, and the negative depth then blinded the
 # init-order rule to a real silent zero after them. Matched exactly as the lexer
-# matches — a byte prefix with NO word boundary (`#ioctl` is HASH_IO + `ctl`, a compile
-# error; filed as issues/2026-09-19-lexer-attribute-prefix-swallows-comments.md — when the
-# lexer takes a boundary, this and cyrfmt's _cf_attr_len follow it). Returns the token's
+# matches — including the WORD BOUNDARY the lexer took at v6.6.6 (before it `#ioctl` was
+# HASH_IO + `ctl`, so a comment whose first word merely started with an attribute name was
+# read as code; see _lx_attr_bound). Returns the token's
 # length, `#` included, or 0: the `#` starts a comment.
 # (`#include`/`#ifdef`/`#derive`/… are preprocessor LINES — comments to this scanner,
 # as before.) CHANGELOG [6.6.5].
@@ -160,24 +173,27 @@ fn _lx_attr_len(buf, p, lim): i64 {
     if (n < 3) { return 0; }
     var c1 = load8(buf + p + 1);
     if (c1 == 105) {
-        if (load8(buf + p + 2) == 111) { return 3; }                          # #io
-        if (n >= 7) { if (memeq(buf + p, "#inline", 7) == 1) { return 7; } }
+        if (load8(buf + p + 2) == 111) {                                      # #io
+            if (_lx_attr_bound(buf, p + 3, lim) == 1) { return 3; }
+            return 0;
+        }
+        if (n >= 7) { if (memeq(buf + p, "#inline", 7) == 1) { if (_lx_attr_bound(buf, p + 7, lim) == 1) { return 7; } } }
         return 0;
     }
     if (c1 == 97) {
-        if (n >= 7) { if (memeq(buf + p, "#assert", 7) == 1) { return 7; } }
-        if (n >= 6) { if (memeq(buf + p, "#alloc", 6) == 1) { return 6; } }
+        if (n >= 7) { if (memeq(buf + p, "#assert", 7) == 1) { if (_lx_attr_bound(buf, p + 7, lim) == 1) { return 7; } } }
+        if (n >= 6) { if (memeq(buf + p, "#alloc", 6) == 1) { if (_lx_attr_bound(buf, p + 6, lim) == 1) { return 6; } } }
         return 0;
     }
     if (c1 == 112) {
-        if (n >= 5) { if (memeq(buf + p, "#pure", 5) == 1) { return 5; } }
-        if (n >= 10) { if (memeq(buf + p, "#pe_import", 10) == 1) { return 10; } }
+        if (n >= 5) { if (memeq(buf + p, "#pure", 5) == 1) { if (_lx_attr_bound(buf, p + 5, lim) == 1) { return 5; } } }
+        if (n >= 10) { if (memeq(buf + p, "#pe_import", 10) == 1) { if (_lx_attr_bound(buf, p + 10, lim) == 1) { return 10; } } }
         return 0;
     }
-    if (n >= 6) { if (memeq(buf + p, "#naked", 6) == 1) { return 6; } }
-    if (n >= 9) { if (memeq(buf + p, "#regalloc", 9) == 1) { return 9; } }
-    if (n >= 9) { if (memeq(buf + p, "#must_use", 9) == 1) { return 9; } }
-    if (n >= 11) { if (memeq(buf + p, "#deprecated", 11) == 1) { return 11; } }
+    if (n >= 6) { if (memeq(buf + p, "#naked", 6) == 1) { if (_lx_attr_bound(buf, p + 6, lim) == 1) { return 6; } } }
+    if (n >= 9) { if (memeq(buf + p, "#regalloc", 9) == 1) { if (_lx_attr_bound(buf, p + 9, lim) == 1) { return 9; } } }
+    if (n >= 9) { if (memeq(buf + p, "#must_use", 9) == 1) { if (_lx_attr_bound(buf, p + 9, lim) == 1) { return 9; } } }
+    if (n >= 11) { if (memeq(buf + p, "#deprecated", 11) == 1) { if (_lx_attr_bound(buf, p + 11, lim) == 1) { return 11; } } }
     return 0;
 }
 

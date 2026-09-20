@@ -8,6 +8,32 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **A comment whose first word merely STARTED with an attribute name was parsed as code.**
+  (bite 5a; filed `2026-09-19-lexer-attribute-prefix-swallows-comments.md`.) The `#` branch of
+  `src/frontend/lex.cyr` compared a byte PREFIX for each of its ten attributes (`#assert`,
+  `#regalloc`, `#deprecated`, `#must_use`, `#pure`, `#io`, `#alloc`, `#naked`, `#inline`,
+  `#pe_import`) and, on a match, emitted the token and kept lexing the SAME line — with no check
+  that the name had ENDED. So `#ioctl numbers` lexed as `#io` + the identifier `ctl` and the rest
+  of the "comment" became code: `error: expected '=', got identifier 'numbers'`, a diagnostic
+  pointing at the comment's SECOND WORD rather than at the cause. Never silent (every measured
+  case is a compile error), but the set of words that break a comment was invisible: `#ioctl`,
+  `#allocator`, `#inlined`, `#assertion`, `#purely`, `#naked-eye`, `#iota` — and `#iota` failed on
+  the NEXT line. **Fix:** `LEXATTRBOUND` — an attribute name must be followed by whitespace, end of
+  input, or `(` (the `#deprecated(` / `#pe_import(` form); anything else means the `#` opens an
+  ordinary comment. Strictly more permissive: no program that compiled before could contain
+  `#io<ident-byte>`, because the tail was parsed as code and failed, so nothing that builds changes
+  meaning — measured as **0 of 330 `.tcyr` binaries changing a byte**. The three readers that
+  deliberately mirror the lexer take the same boundary in the same change: `_lx_attr_len`
+  (`programs/cyrlint.cyr`), `_cf_attr_len` (`programs/cyrfmt.cyr`) and `_doc_attr_len`
+  (`programs/cyrdoc.cyr`) — without it a tool and the compiler disagree about which `#` lines are
+  comments. Gate `tests/gates/frontend/lexer_attribute_word_boundary.sh` (22 axes, 6 mutations, each
+  RED): group A compiles the SPACED twin (`# ioctl numbers`) and requires a byte-identical binary,
+  so expected is computed by a different program; group B is the over-correction guard — the wrong
+  fix here is "make every `#` a comment" — and derives the attribute list from `lex.cyr`'s own
+  `token NNN = HASH_*` comments, cross-checked against the boundary call-site count, so a new
+  attribute without a boundary or without a row turns it RED. Cross-host coverage:
+  `tests/tcyr/crossos/attribute_word_boundary.tcyr`. cycc size unchanged at **1,310,856 B**.
+
 - **A value-form vector parameter next to six or more int-class parameters bound the later ints
   to the wrong slots — on every backend, and an x86 struct-returning fn with six or more
   parameters read its sixth from the return address.** (bite 1; filed 2026-09-17.) Silent: exit 0,

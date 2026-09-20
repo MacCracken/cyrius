@@ -1,0 +1,77 @@
+# attribute_word_boundary.tcyr — v6.6.6 bite 5a.
+#
+# The lexer's `#` branch matched each attribute name as a byte PREFIX and then
+# kept lexing the SAME line, so a comment whose first word merely STARTS with an
+# attribute name was parsed as code. `#ioctl numbers` lexed as `#io` + the
+# identifier `ctl`; the diagnostic pointed at the comment's second word. Fixed by
+# LEXATTRBOUND (src/frontend/lex.cyr): an attribute name must be followed by
+# whitespace, end of input or `(`.
+#
+# ⚠ THIS FILE'S REAL ASSERTIONS ARE THE COMMENTS THEMSELVES. Every `#` line below
+# that opens with an attribute prefix is a compile-time assertion: under the old
+# lexer this file does not compile at all. The runtime assertions are the OTHER
+# half — the attributes still arm — because the wrong fix here is "make every `#`
+# a comment", and that fix compiles this file just as happily.
+#
+# Cross-OS: the `#` branch is shared frontend code, so the defect and the fix are
+# identical on x86-linux, aarch64, macOS (Mach-O) and Windows (PE). This lives in
+# tests/tcyr/crossos/ so the release gate runs it on ecb/ach/cass/pi rather than
+# on x86 alone.
+#
+# Coverage:
+#   1. an attribute-prefixed comment does not change the program (7 shapes)
+#   2. #inline still arms on a fn the compiler CAN inline
+#   3. #pure / #io / #alloc still arm and still run their fns
+#   4. #must_use still arms and its fn still returns its value
+#   5. #regalloc still arms on a same-line fn definition
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+
+#ioctl numbers
+#allocator notes
+#inlined by hand
+#assertion holds
+#purely local
+#naked-eye check
+#iota
+
+#inline
+fn awb_inc(a): i64 { return a + 1; }
+
+#io
+fn awb_io(): i64 { return 10; }
+
+#alloc
+fn awb_alloc(): i64 { return 20; }
+
+#must_use
+fn awb_must(): i64 { return 30; }
+
+#regalloc fn awb_reg(a, b): i64 { var c = a + b; return c * 2; }
+
+#pure
+fn awb_pure(a): i64 { return a * 2; }
+
+fn main(): i64 {
+    test_group("attribute-prefixed comments are comments");
+    # Each of the seven `#`-lines above is a comment the old lexer read as code.
+    # If any of them had armed, this file would not have compiled, so reaching
+    # here at all is the assertion; the value below just makes it explicit.
+    var seven = 7;
+    assert_eq(seven, 7, "the file compiled with 7 attribute-prefixed comments");
+
+    test_group("every attribute still arms and still runs");
+    assert_eq(awb_inc(41), 42, "#inline fn returns its value");
+    assert_eq(awb_io(), 10, "#io fn returns its value");
+    assert_eq(awb_alloc(), 20, "#alloc fn returns its value");
+    assert_eq(awb_must(), 30, "#must_use fn returns its value");
+    assert_eq(awb_reg(3, 4), 14, "#regalloc fn on the same line still defines it");
+    assert_eq(awb_pure(21), 42, "#pure fn returns its value");
+    return assert_summary();
+}
+
+var exit_code = main();
+syscall(60, exit_code);

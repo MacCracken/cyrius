@@ -1,6 +1,6 @@
-# A comment that starts with an attribute name (`#ioctl …`, `#allocator …`) does not compile — OPEN
+# A comment that starts with an attribute name (`#ioctl …`, `#allocator …`) does not compile — FIXED
 
-**Status:** 🟡 **OPEN** — pre-existing (identical at 6.6.4); found while fixing 6.6.5 bite 9
+**Status:** ✅ **FIXED in 6.6.6 (bite 5)** — pre-existing (identical at 6.6.4); found while fixing 6.6.5 bite 9
 (review round 2), where cyrlint and cyrfmt were taught to read attribute tokens the way the
 lexer does.
 **Placement:** unpinned — 6.x line (lexer). Not parked to 7.x.
@@ -68,3 +68,37 @@ Bite 9 is the cyrlint fix (no `src/` change). This one is a lexer change in the 
 `#`-branch of the main lexer function — the seed compiler `cybs` fails SILENTLY on too many
 refs in one function — so it needs its own seed-derive, full self-host and cross-OS cycle, and
 a gate proving each attribute still arms on all targets while the prefixed comments compile.
+
+## Corrections to this filing
+
+Two places where the filing was wrong or incomplete, recorded because the fix had to
+depart from it:
+
+1. **The proposed boundary would not have satisfied the filing's own acceptance.** "Fix
+   direction" says *require a non-identifier byte (or end of input) after the attribute
+   name*. `-` is not an identifier byte, so under that rule `#naked-eye check` — row 6 of
+   the filing's own table, which the Acceptance section requires to COMPILE — would still
+   arm `#naked` and still fail with `unexpected '-'`. The boundary shipped is an
+   ALLOWLIST: whitespace, end of input, or `(` (the only byte that legitimately follows
+   `#deprecated` / `#pe_import`). That is what makes every row of the table compile. It is
+   still strictly more permissive than the old prefix match, for the reason the filing
+   gives.
+
+2. **The acceptance asked for the new coverage as a row in
+   `tests/gates/toolchain/cyrlint_cross_line.sh`.** It landed instead as a dedicated gate,
+   `tests/gates/frontend/lexer_attribute_word_boundary.sh`, which covers the compiler and
+   all three mirror readers (cyrlint, cyrfmt, cyrdoc) in one place — including the
+   over-correction axis that cyrlint must still read `#naked fn f() {` as an attribute.
+   Putting the compiler's boundary inside a cyrlint gate would have filed the lexer's
+   coverage under the linter's name.
+
+Also worth recording: the filing lists `#deprecated` as checked before `#must_use` "so
+`#deprecated` doesn't trigger the lexer prefix check for `#must_use`". That ordering was
+never load-bearing (`d` vs `m`), and with the boundary in place no attribute's prefix can
+reach another's, so ordering is now purely cosmetic.
+
+**Verification:** the filing's repro passes verbatim; all seven rows of its table compile
+and each produces a binary BYTE-IDENTICAL to the same program written with a space after
+the `#`. Self-host fixpoint + `seed-derive-cycc.sh` green; 0 of 330 pre-existing `.tcyr`
+binaries changed a byte. Gate: `tests/gates/frontend/lexer_attribute_word_boundary.sh`
+(22 axes, 6 mutations each RED). Cross-host: `tests/tcyr/crossos/attribute_word_boundary.tcyr`.

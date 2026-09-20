@@ -61,24 +61,37 @@ fn _doc_skip_sp(line, si, len): i64 {
     return si;
 }
 
+# 1 iff the byte at `line[q]` ENDS an attribute name: whitespace, end of line, or `(`
+# (the `#deprecated(` / `#pe_import(` form). v6.6.6 gave the lexer this boundary —
+# before it, `#ioctl numbers` matched the `#io` PREFIX and the rest of the comment
+# was parsed as code. Mirrors LEXATTRBOUND in src/frontend/lex.cyr; the three
+# _*_attr_len readers must take the same boundary or they disagree with the
+# compiler about which `#` lines are comments. CHANGELOG [6.6.6]
+fn _doc_attr_bound(line, q, len): i64 {
+    if (q >= len) { return 1; }
+    var b = load8(line + q);
+    if (b == 32 || b == 9 || b == 10 || b == 13 || b == 40) { return 1; }
+    return 0;
+}
+
 # Length of the `#`-attribute TOKEN at line[si] (`#inline`, `#naked`, …), or 0 when the `#`
-# opens a comment. Matched exactly as the lexer matches — a byte prefix with no word
-# boundary — and kept in step with programs/cyrlint.cyr _lx_attr_len and cyrfmt's
-# _cf_attr_len. CHANGELOG [6.6.5].
+# opens a comment. Matched exactly as the lexer matches — including the WORD BOUNDARY the
+# lexer took at v6.6.6 (see _doc_attr_bound) — and kept in step with programs/cyrlint.cyr
+# _lx_attr_len and cyrfmt's _cf_attr_len. CHANGELOG [6.6.5], [6.6.6].
 fn _doc_attr_len(line, si, len): i64 {
     var n = len - si;
     if (n < 3) { return 0; }
     var p = line + si;
-    if (memeq(p, "#io", 3) == 1) { return 3; }
-    if (n >= 5) { if (memeq(p, "#pure", 5) == 1) { return 5; } }
-    if (n >= 6) { if (memeq(p, "#alloc", 6) == 1) { return 6; } }
-    if (n >= 6) { if (memeq(p, "#naked", 6) == 1) { return 6; } }
-    if (n >= 7) { if (memeq(p, "#inline", 7) == 1) { return 7; } }
-    if (n >= 7) { if (memeq(p, "#assert", 7) == 1) { return 7; } }
-    if (n >= 9) { if (memeq(p, "#regalloc", 9) == 1) { return 9; } }
-    if (n >= 9) { if (memeq(p, "#must_use", 9) == 1) { return 9; } }
-    if (n >= 10) { if (memeq(p, "#pe_import", 10) == 1) { return 10; } }
-    if (n >= 11) { if (memeq(p, "#deprecated", 11) == 1) { return 11; } }
+    if (memeq(p, "#io", 3) == 1) { if (_doc_attr_bound(line, si + 3, len) == 1) { return 3; } }
+    if (n >= 5) { if (memeq(p, "#pure", 5) == 1) { if (_doc_attr_bound(line, si + 5, len) == 1) { return 5; } } }
+    if (n >= 6) { if (memeq(p, "#alloc", 6) == 1) { if (_doc_attr_bound(line, si + 6, len) == 1) { return 6; } } }
+    if (n >= 6) { if (memeq(p, "#naked", 6) == 1) { if (_doc_attr_bound(line, si + 6, len) == 1) { return 6; } } }
+    if (n >= 7) { if (memeq(p, "#inline", 7) == 1) { if (_doc_attr_bound(line, si + 7, len) == 1) { return 7; } } }
+    if (n >= 7) { if (memeq(p, "#assert", 7) == 1) { if (_doc_attr_bound(line, si + 7, len) == 1) { return 7; } } }
+    if (n >= 9) { if (memeq(p, "#regalloc", 9) == 1) { if (_doc_attr_bound(line, si + 9, len) == 1) { return 9; } } }
+    if (n >= 9) { if (memeq(p, "#must_use", 9) == 1) { if (_doc_attr_bound(line, si + 9, len) == 1) { return 9; } } }
+    if (n >= 10) { if (memeq(p, "#pe_import", 10) == 1) { if (_doc_attr_bound(line, si + 10, len) == 1) { return 10; } } }
+    if (n >= 11) { if (memeq(p, "#deprecated", 11) == 1) { if (_doc_attr_bound(line, si + 11, len) == 1) { return 11; } } }
     return 0;
 }
 

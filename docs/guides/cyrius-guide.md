@@ -1265,13 +1265,18 @@ that pulled it was refused. A `#host_only` really at column 0 still annotates th
 ⚠ **A `#` is not always a comment.** `#naked`, `#inline`, `#pure`, `#io`, `#alloc`,
 `#must_use`, `#regalloc`, `#deprecated`, `#assert` and `#pe_import` are attribute TOKENS, and
 the lexer keeps reading the line after them — so `#naked fn isr() {` opens a real brace.
-`cyrlint` and `cyrfmt` read them as the lexer does (v6.6.5; before that `#naked fn f() {` drew
-false `unmatched closing brace` warnings and `cyrius fmt` rewrote the fn body flush left). The
-lexer matches them as byte PREFIXES with no word boundary, so at 6.6.5 a comment such as
-`#ioctl numbers` or `#allocator notes` does not compile (`#io` / `#alloc` + an identifier).
-That is a lexer defect, not a language rule (filed:
-`docs/development/issues/2026-09-19-lexer-attribute-prefix-swallows-comments.md`); a space after
-the `#` sidesteps it until it is fixed, and the two tools will follow the lexer when it is.
+`cyrlint`, `cyrfmt` and `cyrdoc` read them as the lexer does (v6.6.5; before that
+`#naked fn f() {` drew false `unmatched closing brace` warnings and `cyrius fmt` rewrote the fn
+body flush left).
+
+An attribute name ENDS at a word boundary: the next byte must be whitespace, end of input, or
+`(` (the `#deprecated("…")` / `#pe_import(…)` form). Anything else and the `#` opens an ordinary
+comment, so `#ioctl numbers`, `#allocator notes`, `#assertion holds` and `#naked-eye check` are
+all comments and compile to the same bytes as `# ioctl numbers` does. ⚠ Until v6.6.6 the lexer
+matched these names as byte PREFIXES with no boundary, so those same lines did NOT compile —
+`#ioctl numbers` lexed as `#io` + the identifier `ctl` and reported `expected '=', got identifier
+'numbers'`, pointing at the comment's second word. That was a lexer defect written up as if it
+were a language rule ("put a space after the `#`"); it is fixed, and the boundary is the rule.
 
 ## Ref Directive
 

@@ -800,6 +800,32 @@ fn READFILE(path, dst, maxsz): i64 {
 # v5.5.38: preprocessor (PP_*) passes + predicates extracted.
 include "src/frontend/lex_pp.cyr"
 
+# WORD BOUNDARY after an attribute name in the `#` branch of LEX.
+#
+# WHY: every attribute test there (`#assert`, `#regalloc`, `#deprecated`,
+# `#must_use`, `#pure`, `#io`, `#alloc`, `#naked`, `#inline`, `#pe_import`)
+# compared a byte PREFIX and then kept lexing the SAME line, with no check that
+# the name actually ENDED. So a comment whose first word merely starts with an
+# attribute name was parsed as code: `#ioctl numbers` lexed as `#io` + the
+# identifier `ctl`, and the diagnostic pointed at the comment's second word.
+# The set of words that broke a comment was invisible to the author.
+#
+# Only whitespace, end of input, or `(` (the `#deprecated(` / `#pe_import(`
+# form) can legitimately follow an attribute name, so anything else means this
+# `#` opens an ordinary comment. Strictly more permissive: no program that
+# compiles today can contain `#io` followed by a non-boundary byte, because
+# today the tail is parsed as code and fails.
+# CHANGELOG [6.6.6]
+fn LEXATTRBOUND(S, q, bl): i64 {
+    if (q >= bl) { return 1; }
+    var b = load8(S + 0x459D000 + q);
+    if (b == 32) { return 1; }
+    if (b == 9) { return 1; }
+    if (b == 10) { return 1; }
+    if (b == 13) { return 1; }
+    if (b == 40) { return 1; }
+    return 0;
+}
 
 fn LEXHEX(S, p): i64 {
     var val = 0;
@@ -1447,6 +1473,7 @@ fn LEX(S): i64 {
                                 if (load8(S + 0x459D000 + p + 4) == 101) {
                                     if (load8(S + 0x459D000 + p + 5) == 114) {
                                         if (load8(S + 0x459D000 + p + 6) == 116) {
+                                          if (LEXATTRBOUND(S, p + 7, bl) == 1) {
                                             # Emit token 107 = HASH_ASSERT, skip "assert"
                                             ADDTOK(S, 107, 0);
                                             p = p + 7;
@@ -1457,6 +1484,7 @@ fn LEX(S): i64 {
                                                 else { break; }
                                             }
                                             continue;
+                                          }
                                         } } } } } } }
                 # Check for #regalloc (4.8.4-alpha1) — opt-in attribute
                 # on the next fn def. Codegen change lands in later alphas;
@@ -1472,6 +1500,7 @@ fn LEX(S): i64 {
                                         if (load8(S + 0x459D000 + p + 6) == 108) {
                                             if (load8(S + 0x459D000 + p + 7) == 111) {
                                                 if (load8(S + 0x459D000 + p + 8) == 99) {
+                                                  if (LEXATTRBOUND(S, p + 9, bl) == 1) {
                                                     ADDTOK(S, 109, 0);   # token 109 = HASH_REGALLOC
                                                     p = p + 9;
                                                     while (p < bl) {
@@ -1483,6 +1512,7 @@ fn LEX(S): i64 {
                                                         else { break; }
                                                     }
                                                     continue;
+                                                  }
                                                 } } } } } } } }
                 }
                 # v5.6.4: #deprecated("msg") — attribute on the next fn
@@ -1502,9 +1532,11 @@ fn LEX(S): i64 {
                                                 if (load8(S + 0x459D000 + p + 8) == 116) {
                                                     if (load8(S + 0x459D000 + p + 9) == 101) {
                                                         if (load8(S + 0x459D000 + p + 10) == 100) {
+                                                          if (LEXATTRBOUND(S, p + 11, bl) == 1) {
                                                             ADDTOK(S, 124, 0);   # token 124 = HASH_DEPRECATED
                                                             p = p + 11;
                                                             continue;
+                                                          }
                                                         } } } } } } } } } }
                 }
                 # v5.6.3: #must_use — attribute on the next fn def marking
@@ -1520,6 +1552,7 @@ fn LEX(S): i64 {
                                         if (load8(S + 0x459D000 + p + 6) == 117) {
                                             if (load8(S + 0x459D000 + p + 7) == 115) {
                                                 if (load8(S + 0x459D000 + p + 8) == 101) {
+                                                  if (LEXATTRBOUND(S, p + 9, bl) == 1) {
                                                     ADDTOK(S, 122, 0);   # token 122 = HASH_MUST_USE
                                                     p = p + 9;
                                                     while (p < bl) {
@@ -1531,6 +1564,7 @@ fn LEX(S): i64 {
                                                         else { break; }
                                                     }
                                                     continue;
+                                                  }
                                                 } } } } } } } }
                 }
                 # v5.8.20: #pure — fn-attribute marking the next fn def as
@@ -1541,6 +1575,7 @@ fn LEX(S): i64 {
                         if (load8(S + 0x459D000 + p + 2) == 117) {
                             if (load8(S + 0x459D000 + p + 3) == 114) {
                                 if (load8(S + 0x459D000 + p + 4) == 101) {
+                                  if (LEXATTRBOUND(S, p + 5, bl) == 1) {
                                     ADDTOK(S, 125, 0);   # token 125 = HASH_PURE
                                     p = p + 5;
                                     while (p < bl) {
@@ -1552,12 +1587,14 @@ fn LEX(S): i64 {
                                         else { break; }
                                     }
                                     continue;
+                                  }
                                 } } } } }
                 # v5.8.20: #io — fn-attribute marking a fn as performing I/O.
                 # bytes: 23 69 6F = "#io" (3 chars)
                 if (p + 2 < bl) {
                     if (load8(S + 0x459D000 + p + 1) == 105) {
                         if (load8(S + 0x459D000 + p + 2) == 111) {
+                          if (LEXATTRBOUND(S, p + 3, bl) == 1) {
                             ADDTOK(S, 126, 0);   # token 126 = HASH_IO
                             p = p + 3;
                             while (p < bl) {
@@ -1569,6 +1606,7 @@ fn LEX(S): i64 {
                                 else { break; }
                             }
                             continue;
+                          }
                         } } }
                 # v5.8.20: #alloc — fn-attribute marking a fn as allocating.
                 # bytes: 23 61 6C 6C 6F 63 = "#alloc" (6 chars)
@@ -1578,6 +1616,7 @@ fn LEX(S): i64 {
                             if (load8(S + 0x459D000 + p + 3) == 108) {
                                 if (load8(S + 0x459D000 + p + 4) == 111) {
                                     if (load8(S + 0x459D000 + p + 5) == 99) {
+                                      if (LEXATTRBOUND(S, p + 6, bl) == 1) {
                                         ADDTOK(S, 127, 0);   # token 127 = HASH_ALLOC
                                         p = p + 6;
                                         while (p < bl) {
@@ -1589,6 +1628,7 @@ fn LEX(S): i64 {
                                             else { break; }
                                         }
                                         continue;
+                                      }
                                     } } } } } }
                 # v6.2.27: #naked — fn-attribute marking an interrupt-handler /
                 # naked fn: the backend emits NO prologue/epilogue/frame, so the
@@ -1600,6 +1640,7 @@ fn LEX(S): i64 {
                             if (load8(S + 0x459D000 + p + 3) == 107) {
                                 if (load8(S + 0x459D000 + p + 4) == 101) {
                                     if (load8(S + 0x459D000 + p + 5) == 100) {
+                                      if (LEXATTRBOUND(S, p + 6, bl) == 1) {
                                         ADDTOK(S, 133, 0);   # token 133 = HASH_NAKED (128 is f64v_dot — collision fix, review P1)
                                         p = p + 6;
                                         while (p < bl) {
@@ -1611,6 +1652,7 @@ fn LEX(S): i64 {
                                             else { break; }
                                         }
                                         continue;
+                                      }
                                     } } } } } }
                 # v6.5.63: #inline — fn attribute requesting the next fn be admitted to the
                 # inline-replay path WITHOUT flipping general inlining on globally.
@@ -1635,6 +1677,7 @@ fn LEX(S): i64 {
                                 if (load8(S + 0x459D000 + p + 4) == 105) {
                                     if (load8(S + 0x459D000 + p + 5) == 110) {
                                         if (load8(S + 0x459D000 + p + 6) == 101) {
+                                          if (LEXATTRBOUND(S, p + 7, bl) == 1) {
                                             ADDTOK(S, 163, 0);   # token 163 = HASH_INLINE (150-162 are taken)
                                             p = p + 7;
                                             while (p < bl) {
@@ -1646,6 +1689,7 @@ fn LEX(S): i64 {
                                                 else { break; }
                                             }
                                             continue;
+                                          }
                                         } } } } } } }
                 # Check for #pe_import (v5.4.6) — PE32+ kernel32 symbol
                 # registration directive. Parser consumes (dll, symbol)
@@ -1662,6 +1706,7 @@ fn LEX(S): i64 {
                                             if (load8(S + 0x459D000 + p + 7) == 111) {
                                                 if (load8(S + 0x459D000 + p + 8) == 114) {
                                                     if (load8(S + 0x459D000 + p + 9) == 116) {
+                                                      if (LEXATTRBOUND(S, p + 10, bl) == 1) {
                                                         ADDTOK(S, 110, 0);   # token 110 = HASH_PE_IMPORT
                                                         p = p + 10;
                                                         while (p < bl) {
@@ -1673,6 +1718,7 @@ fn LEX(S): i64 {
                                                             else { break; }
                                                         }
                                                         continue;
+                                                      }
                                                     } } } } } } } } }
                 }
                 # Regular comment — skip to newline
