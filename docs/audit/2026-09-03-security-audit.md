@@ -324,8 +324,11 @@ Closed at the **consumer** instead of at every producer: `FM_BUILD` now requires
 **line start** (`FM_ATBOL`), the way `#@incdir` has required byte 0 since v6.5.7. A marker is a
 compiler-internal control line and only the compiler should be able to mint one. Measured before
 shipping by instrumenting `FM_BUILD` to report any marker not at a line start: **zero** across
-the compiler's own build (100+ includes) and all 330 `.tcyr` — `PP_FMARK` only ever writes at a
-position following a newline. cycc 1,310,920 B → 1,315,016 B (+4096, one page); 0 of 330 `.tcyr`
+the compiler's own build (100+ includes) and all 330 `.tcyr`. And argued, not only measured:
+all four `PP_FMARK` call sites emit at a line start, and `PP_REANCHOR` has *enforced* it since
+v6.5.19 — `# A marker must own its line.` followed by
+`if (op > 0) { if (load8(out + op - 1) != 10) { store8(out + op, 10); op = op + 1; } }`.
+⭐ The producer already required the rule at one site; the consumer never checked it. cycc 1,310,920 B → 1,315,016 B (+4096, one page); 0 of 330 `.tcyr`
 binaries changed a byte.
 
 ⚠ What remains: a marker forged at a line START inside a multi-line string literal. It needs two

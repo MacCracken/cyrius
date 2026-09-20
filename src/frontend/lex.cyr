@@ -32,10 +32,16 @@ var _tok_start = 0;
 # but a marker is a compiler-internal control line and only the compiler should be able
 # to mint one. `#@incdir` has required byte 0 since v6.5.7 for the same reason; this is
 # the same rule one notch weaker, and it closes the class at the CONSUMER instead of at
-# every producer. MEASURED before shipping: instrumenting FM_BUILD to report any marker
-# not at a line start found ZERO across the compiler's own build (100+ includes) and all
-# 330 `.tcyr` — PP_FMARK only ever writes a marker at `op` following a newline.
-# CHANGELOG [6.6.6]
+# every producer.
+#
+# SAFE FOR REAL MARKERS, measured AND argued. Measured: instrumenting FM_BUILD to report
+# any marker not at a line start found ZERO across the compiler's own build (100+ includes)
+# and all 330 `.tcyr`. Argued: all four PP_FMARK call sites emit at a line start, and
+# ⭐ PP_REANCHOR ALREADY SAID SO AND ENFORCED IT — `# A marker must own its line.` followed
+# by `if (op > 0) { if (load8(out + op - 1) != 10) { store8(out + op, 10); op = op + 1; } }`.
+# The producer has required this since v6.5.19; FM_BUILD simply never checked what
+# PP_FMARK already guarantees. (Same shape as ISELSE in lex_pp.cyr: an invariant written
+# down and enforced at one site while its siblings went without.) CHANGELOG [6.6.6]
 fn FM_ATBOL(buf, pos): i64 {
     if (pos == 0) { return 1; }
     if (load8(buf + pos - 1) == 10) { return 1; }
