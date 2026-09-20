@@ -233,10 +233,21 @@ if [ ! -x "$CHECK_BIN" ] || [ -z "$NEWEST_SRC" ] || [ "$NEWEST_SRC" -nt "$CHECK_
     mv -f "$CHECK_BIN.new" "$CHECK_BIN"
 fi
 
-# Run the cyrius gate suite. On a targeted run (a suite name was passed),
-# exec it directly — the bare-metal boot gate is a full-run-only capstone.
+# Run the cyrius gate suite. On a targeted run (a suite name was passed), run only the
+# driver — the bare-metal boot gate and the shell gates below are a full-run capstone.
+#
+# ⛔ v6.6.6: THIS WAS `exec "$CHECK_BIN" "$@"`, AND exec DOES NOT RUN THE EXIT TRAP. The
+# process is REPLACED, so `_chk_finish` — the only thing that removes the throwaway
+# CYRIUS_HOME staged ~90 lines above — never ran on this path at all. Every targeted
+# invocation left a 19 MB tree behind in $TMPDIR, for ever; four of them were sitting in
+# /tmp while this was written. The full-run path had always been fine, which is why it
+# survived the v6.6.4 staging work: the leak is invisible unless you pass a suite name.
+# exec's only virtue here was propagating the exit code, and an explicit `exit` does that
+# while still going through the trap. CHANGELOG [6.6.6]
 if [ $# -gt 0 ]; then
-    exec "$CHECK_BIN" "$@"
+    _CHK_TARGETED_RC=0
+    "$CHECK_BIN" "$@" || _CHK_TARGETED_RC=$?
+    exit "$_CHK_TARGETED_RC"
 fi
 
 # ⛔ v6.6.6: RECORD the driver's verdict, do NOT abort on it. `"$CHECK_BIN"` used to be a

@@ -1238,6 +1238,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `install.ps1`, axis 2b forbids scp'ing an unverifiable tarball to a real host, axis 3
   sweeps every scp-a-release-tarball site. Mutation-proven six ways.
 
+- **`sh scripts/check.sh <suite>` leaked a 19 MB staged CYRIUS_HOME on every invocation:
+  the targeted path ended in `exec`, which does not run the EXIT trap.** (bite 25b.)
+  Since v6.6.4 check.sh stages its own throwaway `CYRIUS_HOME`
+  (`mktemp -d "$TMPDIR/cyrius-check-home.XXXXXX"`, populated from the working tree) so the
+  suite never writes the live store, and removes it in `_chk_finish`, its EXIT/INT/TERM
+  trap. The targeted path finished with `exec "$CHECK_BIN" "$@"` — the process is
+  **replaced**, so `_chk_finish` never ran on that path at all and the staged tree survived
+  for ever. Four such trees, 19 MB each, were sitting in `/tmp` when this was written. The
+  full-run path had always been correct, which is exactly why this hid for two releases: the
+  leak needs a suite name. `exec`'s only virtue here was propagating the driver's exit code,
+  and an explicit `exit` does that while still going through the trap. Fix: run the driver,
+  capture its status, `exit` with it. Swept the whole tree for the shape — an awk census of
+  all 220 shell scripts under `scripts/`, `tests/gates/` and `bootstrap/` for `exec` in
+  command position (heredoc-, subshell- and redirection-aware), crossed with the 118 that
+  install a cleanup trap: check.sh was the only violation, and the two remaining top-level
+  `exec`s (`scripts/cyrius`, `scripts/differential-smoke.sh`) are thin shims with no
+  cleanup to skip. Gate: `tests/gates/toolchain/check_sh_targeted_path_cleans_up.sh`
+  (registered in `programs/checks/main.cyr`), anti-vacuous as a before/after pair — the stub
+  driver records that the home existed *while it ran*, so a check.sh that stopped staging
+  cannot pass by making the survivor count trivially zero. Mutation-proven five ways.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**
