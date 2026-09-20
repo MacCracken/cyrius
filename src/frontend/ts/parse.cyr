@@ -379,7 +379,7 @@ fn TS_CST_FLUSH(ts_base, base): i64 {
     var i = 0;
     while (i < n) {
         store64(ts_base + TS_AST_CHILDREN_OFF + (used + i) * 8,
-                load64(&_ts_cst + (base + i) * 8));
+          load64(&_ts_cst + (base + i) * 8));
         i = i + 1;
     }
     store64(ts_base + TS_AST_CHILDREN_OFF + (used + n) * 8, 0 - 1);
@@ -446,7 +446,7 @@ fn TS_PARSE_EXPECT(ts_base, kind): i64 {
     if (TS_PARSE_PEEK(ts_base) != kind) {
         store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_CODE, 3);
         store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_TOK_IDX,
-        load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX));
+          load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX));
         return 0 - 1;
     }
     TS_PARSE_CONSUME(ts_base);
@@ -607,8 +607,8 @@ fn TS_PARSE_ARGS(ts_base): i64 {
                 # Excludes LBRACE — `{` is a valid arg start (object literal).
                 var _trail = TS_PARSE_PEEK(ts_base);
                 if (_trail == TS_TOK_RPAREN || _trail == TS_TOK_RBRACE
-                || _trail == TS_TOK_RBRACKET
-                || _trail == TS_TOK_SEMI) {
+                  || _trail == TS_TOK_RBRACKET
+                  || _trail == TS_TOK_SEMI) {
                     done = 1;
                 }
             }
@@ -649,9 +649,9 @@ fn TS_PARSE_ARRAY_LITERAL(ts_base): i64 {
                 # trying to parse another item.
                 var _trail = TS_PARSE_PEEK(ts_base);
                 if (_trail == TS_TOK_RPAREN || _trail == TS_TOK_RBRACE
-                || _trail == TS_TOK_RBRACKET
-                || _trail == TS_TOK_SEMI || _trail == TS_TOK_GT
-                || _trail == TS_TOK_GT_GT || _trail == TS_TOK_GT_GT_GT) {
+                  || _trail == TS_TOK_RBRACKET
+                  || _trail == TS_TOK_SEMI || _trail == TS_TOK_GT
+                  || _trail == TS_TOK_GT_GT || _trail == TS_TOK_GT_GT_GT) {
                     done = 1;
                 }
             }
@@ -741,7 +741,7 @@ fn TS_PARSE_OBJECT_LITERAL(ts_base): i64 {
                 if (_kok == 0) {
                     store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_CODE, 4);
                     store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_TOK_IDX,
-                    load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX));
+                      load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX));
                     return 0 - 1;
                 }
                 TS_PARSE_CONSUME(ts_base);
@@ -795,9 +795,9 @@ fn TS_PARSE_OBJECT_LITERAL(ts_base): i64 {
                 # trying to parse another item.
                 var _trail = TS_PARSE_PEEK(ts_base);
                 if (_trail == TS_TOK_RPAREN || _trail == TS_TOK_RBRACE
-                || _trail == TS_TOK_RBRACKET
-                || _trail == TS_TOK_SEMI || _trail == TS_TOK_GT
-                || _trail == TS_TOK_GT_GT || _trail == TS_TOK_GT_GT_GT) {
+                  || _trail == TS_TOK_RBRACKET
+                  || _trail == TS_TOK_SEMI || _trail == TS_TOK_GT
+                  || _trail == TS_TOK_GT_GT || _trail == TS_TOK_GT_GT_GT) {
                     done = 1;
                 }
             }
@@ -924,7 +924,7 @@ fn TS_PARSE_JSX_CHILD(ts_base): i64 {
     if (t == TS_TOK_JSX_FRAGMENT_OPEN) { return TS_PARSE_JSX_ELEMENT(ts_base); }
     store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_CODE, 11);
     store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_TOK_IDX,
-    load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX));
+      load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX));
     return 0 - 1;
 }
 
@@ -940,7 +940,7 @@ fn TS_PARSE_JSX_CHILDREN(ts_base): i64 {
         elif (t == TS_TOK_EOF) {
             store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_CODE, 12);
             store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_TOK_IDX,
-            load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX));
+              load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX));
             return 0 - 1;
         } else {
             var c = TS_PARSE_JSX_CHILD(ts_base);
@@ -1006,7 +1006,7 @@ fn TS_PARSE_JSX_ATTRS(ts_base): i64 {
         } else {
             store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_CODE, 13);
             store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_TOK_IDX,
-            load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX));
+              load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX));
             return 0 - 1;
         }
     }
@@ -1031,7 +1031,7 @@ fn TS_PARSE_JSX_ELEMENT(ts_base): i64 {
     if (TS_PARSE_PEEK(ts_base) != TS_TOK_JSX_TAG_NAME) {
         store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_CODE, 14);
         store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_TOK_IDX,
-        load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX));
+          load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX));
         return 0 - 1;
     }
     var name_v = TS_PARSE_TOK_VAL(ts_base);
@@ -1124,16 +1124,16 @@ fn TS_PARSE_PRIMARY(ts_base): i64 {
     # We accept the same set that TS_IS_PRIMARY_CONTEXT accepts as
     # property-name-eligible.
     if (t == TS_TOK_IDENT
-    || t == TS_TOK_KW_FROM || t == TS_TOK_KW_AS
-    || t == TS_TOK_KW_OF   || t == TS_TOK_KW_GET
-    || t == TS_TOK_KW_SET  || t == TS_TOK_KW_TYPE
-    || t == TS_TOK_KW_OVERRIDE || t == TS_TOK_KW_DECLARE
-    || t == TS_TOK_KW_NAMESPACE || t == TS_TOK_KW_READONLY
-    || t == TS_TOK_KW_INFER || t == TS_TOK_KW_SATISFIES
-    || t == TS_TOK_KW_PUBLIC || t == TS_TOK_KW_PRIVATE
-    || t == TS_TOK_KW_PROTECTED || t == TS_TOK_KW_STATIC
-    || t == TS_TOK_KW_ABSTRACT || t == TS_TOK_KW_IMPLEMENTS
-    || t == TS_TOK_KW_ASSERTS) {
+      || t == TS_TOK_KW_FROM || t == TS_TOK_KW_AS
+      || t == TS_TOK_KW_OF   || t == TS_TOK_KW_GET
+      || t == TS_TOK_KW_SET  || t == TS_TOK_KW_TYPE
+      || t == TS_TOK_KW_OVERRIDE || t == TS_TOK_KW_DECLARE
+      || t == TS_TOK_KW_NAMESPACE || t == TS_TOK_KW_READONLY
+      || t == TS_TOK_KW_INFER || t == TS_TOK_KW_SATISFIES
+      || t == TS_TOK_KW_PUBLIC || t == TS_TOK_KW_PRIVATE
+      || t == TS_TOK_KW_PROTECTED || t == TS_TOK_KW_STATIC
+      || t == TS_TOK_KW_ABSTRACT || t == TS_TOK_KW_IMPLEMENTS
+      || t == TS_TOK_KW_ASSERTS) {
         # Bare-ident arrow:  x => body
         if (TS_PARSE_PEEK_AHEAD(ts_base, 1) == TS_TOK_ARROW) {
             return TS_PARSE_ARROW_SINGLE_IDENT(ts_base);
@@ -1278,7 +1278,7 @@ fn TS_PARSE_PRIMARY(ts_base): i64 {
     # Unexpected
     store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_CODE, 6);
     store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_TOK_IDX,
-    load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX));
+      load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX));
     return 0 - 1;
 }
 
@@ -1447,8 +1447,8 @@ fn TS_PARSE_CALL_MEMBER(ts_base): i64 {
                         depth = depth + 1;
                         TS_PARSE_CONSUME(ts_base);
                     } elif (lt == TS_TOK_GT || lt == TS_TOK_GT_GT
-                    || lt == TS_TOK_GT_GT_GT || lt == TS_TOK_GT_EQ
-                    || lt == TS_TOK_GT_GT_EQ || lt == TS_TOK_GT_GT_GT_EQ) {
+                      || lt == TS_TOK_GT_GT_GT || lt == TS_TOK_GT_EQ
+                      || lt == TS_TOK_GT_GT_EQ || lt == TS_TOK_GT_GT_GT_EQ) {
                         depth = depth - 1;
                         if (TS_PARSE_EXPECT_TYPE_GT(ts_base) < 0) { return 0 - 1; }
                     } else {
@@ -1550,8 +1550,8 @@ fn TS_PARSE_UNARY(ts_base): i64 {
         var nx = TS_PARSE_PEEK(ts_base);
         var bare = 0;
         if (nx == TS_TOK_SEMI || nx == TS_TOK_COMMA || nx == TS_TOK_RPAREN
-        || nx == TS_TOK_RBRACKET || nx == TS_TOK_RBRACE
-        || nx == TS_TOK_EOF) {
+          || nx == TS_TOK_RBRACKET || nx == TS_TOK_RBRACE
+          || nx == TS_TOK_EOF) {
             bare = 1;
         }
         if (bare == 1) {
@@ -1698,10 +1698,10 @@ fn TS_LOOKAHEAD_IS_ARROW(ts_base): i64 {
             var jt = TS_PEEKT(ts_base, j);
             if (jt == TS_TOK_EOF)     { return 0; }
             if (jt == TS_TOK_LPAREN || jt == TS_TOK_LBRACKET
-            || jt == TS_TOK_LT || jt == TS_TOK_LBRACE) {
+              || jt == TS_TOK_LT || jt == TS_TOK_LBRACE) {
                 depth2 = depth2 + 1;
             } elif (jt == TS_TOK_RPAREN || jt == TS_TOK_RBRACKET
-            || jt == TS_TOK_GT || jt == TS_TOK_RBRACE) {
+              || jt == TS_TOK_GT || jt == TS_TOK_RBRACE) {
                 depth2 = depth2 - 1;
                 if (depth2 < 0) { return 0; }
             } elif (depth2 == 0) {
@@ -1812,7 +1812,7 @@ fn TS_PARSE_ARROW_PARAMS(ts_base): i64 {
                 if (TS_IS_NAME_TOK(pname2) == 0) {
                     store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_CODE, 3);
                     store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_TOK_IDX,
-                    load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX));
+                      load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX));
                     return 0 - 1;
                 }
                 TS_PARSE_CONSUME(ts_base);
@@ -1845,9 +1845,9 @@ fn TS_PARSE_ARROW_PARAMS(ts_base): i64 {
             } else {
                 var _trail = TS_PARSE_PEEK(ts_base);
                 if (_trail == TS_TOK_RPAREN || _trail == TS_TOK_RBRACE
-                || _trail == TS_TOK_RBRACKET
-                || _trail == TS_TOK_SEMI || _trail == TS_TOK_GT
-                || _trail == TS_TOK_GT_GT || _trail == TS_TOK_GT_GT_GT) {
+                  || _trail == TS_TOK_RBRACKET
+                  || _trail == TS_TOK_SEMI || _trail == TS_TOK_GT
+                  || _trail == TS_TOK_GT_GT || _trail == TS_TOK_GT_GT_GT) {
                     done = 1;
                 }
             }
@@ -1946,7 +1946,7 @@ fn TS_PARSE_TYPE_REF(ts_base): i64 {
     if (TS_IS_NAME_TOK(head_t) == 0) {
         store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_CODE, 3);
         store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_TOK_IDX,
-        load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX));
+          load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX));
         return 0 - 1;
     }
     TS_PARSE_CONSUME(ts_base);
@@ -1956,7 +1956,7 @@ fn TS_PARSE_TYPE_REF(ts_base): i64 {
         if (TS_IS_NAME_TOK(seg_t) == 0) {
             store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_CODE, 3);
             store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_TOK_IDX,
-            load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX));
+              load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX));
             return 0 - 1;
         }
         TS_PARSE_CONSUME(ts_base);
@@ -1974,8 +1974,8 @@ fn TS_PARSE_TYPE_REF(ts_base): i64 {
         while (done_args == 0) {
             var pt = TS_PARSE_PEEK(ts_base);
             if (pt == TS_TOK_GT || pt == TS_TOK_GT_GT || pt == TS_TOK_GT_GT_GT
-            || pt == TS_TOK_GT_EQ || pt == TS_TOK_GT_GT_EQ
-            || pt == TS_TOK_GT_GT_GT_EQ) {
+              || pt == TS_TOK_GT_EQ || pt == TS_TOK_GT_GT_EQ
+              || pt == TS_TOK_GT_GT_GT_EQ) {
                 done_args = 1;
             } else {
                 if (first == 0) {
@@ -2013,8 +2013,8 @@ fn TS_PARSE_TYPE_OBJECT(ts_base): i64 {
         if (TS_PARSE_PEEK(ts_base) == TS_TOK_KW_READONLY) {
             TS_PARSE_CONSUME(ts_base);
         } elif ((TS_PARSE_PEEK(ts_base) == TS_TOK_PLUS
-        || TS_PARSE_PEEK(ts_base) == TS_TOK_MINUS)
-        && TS_PARSE_PEEK_AHEAD(ts_base, 1) == TS_TOK_KW_READONLY) {
+            || TS_PARSE_PEEK(ts_base) == TS_TOK_MINUS)
+          && TS_PARSE_PEEK_AHEAD(ts_base, 1) == TS_TOK_KW_READONLY) {
             TS_PARSE_CONSUME(ts_base);   # `+` / `-`
             TS_PARSE_CONSUME(ts_base);   # `readonly`
         }
@@ -2042,8 +2042,8 @@ fn TS_PARSE_TYPE_OBJECT(ts_base): i64 {
                 if (TS_PARSE_EXPECT(ts_base, TS_TOK_RBRACKET) < 0) { return 0 - 1; }
                 # Optional `?` / `+?` / `-?` between `]` and `:`.
                 if ((TS_PARSE_PEEK(ts_base) == TS_TOK_PLUS
-                || TS_PARSE_PEEK(ts_base) == TS_TOK_MINUS)
-                && TS_PARSE_PEEK_AHEAD(ts_base, 1) == TS_TOK_QUESTION) {
+                    || TS_PARSE_PEEK(ts_base) == TS_TOK_MINUS)
+                  && TS_PARSE_PEEK_AHEAD(ts_base, 1) == TS_TOK_QUESTION) {
                     TS_PARSE_CONSUME(ts_base);   # `+` / `-`
                     TS_PARSE_CONSUME(ts_base);   # `?`
                 } elif (TS_PARSE_PEEK(ts_base) == TS_TOK_QUESTION) {
@@ -2080,7 +2080,7 @@ fn TS_PARSE_TYPE_OBJECT(ts_base): i64 {
             if (TS_IS_NAME_TOK(pt) == 0 && pt != TS_TOK_STRING && pt != TS_TOK_INT) {
                 store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_CODE, 7);
                 store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_TOK_IDX,
-                load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX));
+                  load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX));
                 return 0 - 1;
             }
             TS_PARSE_CONSUME(ts_base);
@@ -2270,8 +2270,8 @@ fn TS_PARSE_TYPE_PRIMARY(ts_base): i64 {
         return nv;
     }
     if (t == TS_TOK_STRING || t == TS_TOK_INT || t == TS_TOK_FLOAT
-    || t == TS_TOK_KW_TRUE || t == TS_TOK_KW_FALSE
-    || t == TS_TOK_KW_NULL || t == TS_TOK_KW_UNDEFINED) {
+      || t == TS_TOK_KW_TRUE || t == TS_TOK_KW_FALSE
+      || t == TS_TOK_KW_NULL || t == TS_TOK_KW_UNDEFINED) {
         TS_PARSE_CONSUME(ts_base);
         var nl = TS_AST_PUSH(ts_base, TS_AST_TYPE_LITERAL, v);
         if (nl < 0) { return 0 - 1; }
@@ -2308,7 +2308,7 @@ fn TS_PARSE_TYPE_PRIMARY(ts_base): i64 {
                 if (tpl_t != TS_TOK_TEMPLATE_MID) {
                     store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_CODE, 9);
                     store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_TOK_IDX,
-                    load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX));
+                      load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX));
                     return 0 - 1;
                 }
                 TS_PARSE_CONSUME(ts_base);
@@ -2424,9 +2424,9 @@ fn TS_PARSE_TYPE_PRIMARY(ts_base): i64 {
             while (to_done == 0) {
                 var to_pt = TS_PARSE_PEEK(ts_base);
                 if (to_pt == TS_TOK_GT || to_pt == TS_TOK_GT_GT
-                || to_pt == TS_TOK_GT_GT_GT
-                || to_pt == TS_TOK_GT_EQ || to_pt == TS_TOK_GT_GT_EQ
-                || to_pt == TS_TOK_GT_GT_GT_EQ) {
+                  || to_pt == TS_TOK_GT_GT_GT
+                  || to_pt == TS_TOK_GT_EQ || to_pt == TS_TOK_GT_GT_EQ
+                  || to_pt == TS_TOK_GT_GT_GT_EQ) {
                     to_done = 1;
                 } else {
                     if (to_first == 0) {
@@ -2487,10 +2487,10 @@ fn TS_PARSE_TYPE_PRIMARY(ts_base): i64 {
         return np;
     }
     if (t == TS_TOK_IDENT
-    || t == TS_TOK_KW_FROM || t == TS_TOK_KW_AS
-    || t == TS_TOK_KW_OF   || t == TS_TOK_KW_GET
-    || t == TS_TOK_KW_SET  || t == TS_TOK_KW_TYPE
-    || t == TS_TOK_KW_ASSERTS) {
+      || t == TS_TOK_KW_FROM || t == TS_TOK_KW_AS
+      || t == TS_TOK_KW_OF   || t == TS_TOK_KW_GET
+      || t == TS_TOK_KW_SET  || t == TS_TOK_KW_TYPE
+      || t == TS_TOK_KW_ASSERTS) {
         return TS_PARSE_TYPE_REF(ts_base);
     }
     # v5.7.24: polymorphic `this`-type — needed for `asserts this is C`
@@ -2503,7 +2503,7 @@ fn TS_PARSE_TYPE_PRIMARY(ts_base): i64 {
     }
     store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_CODE, 9);
     store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_TOK_IDX,
-    load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX));
+      load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX));
     return 0 - 1;
 }
 
@@ -2612,8 +2612,8 @@ fn TS_PARSE_TYPE(ts_base): i64 {
         # consuming the next statement.
         var ahead = TS_PARSE_PEEK_AHEAD(ts_base, 1);
         if (TS_IS_NAME_TOK(ahead) == 1 || ahead == TS_TOK_LBRACE
-        || ahead == TS_TOK_LBRACKET || ahead == TS_TOK_LPAREN
-        || ahead == TS_TOK_STRING) {
+          || ahead == TS_TOK_LBRACKET || ahead == TS_TOK_LPAREN
+          || ahead == TS_TOK_STRING) {
             TS_PARSE_CONSUME(ts_base);   # `is`
             var pred_t = TS_PARSE_TYPE_UNION(ts_base);
             if (pred_t < 0) { return 0 - 1; }
@@ -2807,9 +2807,9 @@ fn TS_PARSE_BINDING_PATTERN(ts_base): i64 {
                     # trying to parse another item.
                     var _trail = TS_PARSE_PEEK(ts_base);
                     if (_trail == TS_TOK_RPAREN || _trail == TS_TOK_RBRACE
-                    || _trail == TS_TOK_RBRACKET
-                    || _trail == TS_TOK_SEMI || _trail == TS_TOK_GT
-                    || _trail == TS_TOK_GT_GT || _trail == TS_TOK_GT_GT_GT) {
+                      || _trail == TS_TOK_RBRACKET
+                      || _trail == TS_TOK_SEMI || _trail == TS_TOK_GT
+                      || _trail == TS_TOK_GT_GT || _trail == TS_TOK_GT_GT_GT) {
                         done = 1;
                     }
                 }
@@ -2939,9 +2939,9 @@ fn TS_PARSE_VAR_DECL(ts_base): i64 {
             # trying to parse another item.
             var _trail = TS_PARSE_PEEK(ts_base);
             if (_trail == TS_TOK_RPAREN || _trail == TS_TOK_RBRACE
-            || _trail == TS_TOK_RBRACKET
-            || _trail == TS_TOK_SEMI || _trail == TS_TOK_GT
-            || _trail == TS_TOK_GT_GT || _trail == TS_TOK_GT_GT_GT) {
+              || _trail == TS_TOK_RBRACKET
+              || _trail == TS_TOK_SEMI || _trail == TS_TOK_GT
+              || _trail == TS_TOK_GT_GT || _trail == TS_TOK_GT_GT_GT) {
                 done = 1;
             }
         }
@@ -3229,7 +3229,7 @@ fn TS_PARSE_SWITCH(ts_base): i64 {
             while (sgo == 1) {
                 var st = TS_PARSE_PEEK(ts_base);
                 if (st == TS_TOK_KW_CASE || st == TS_TOK_KW_DEFAULT
-                || st == TS_TOK_RBRACE || st == TS_TOK_EOF) {
+                  || st == TS_TOK_RBRACE || st == TS_TOK_EOF) {
                     sgo = 0;
                 } else {
                     var s = TS_PARSE_STMT(ts_base);
@@ -3276,8 +3276,8 @@ fn TS_PARSE_TYPE_PARAMS(ts_base): i64 {
     while (done == 0) {
         var pt = TS_PARSE_PEEK(ts_base);
         if (pt == TS_TOK_GT || pt == TS_TOK_GT_GT || pt == TS_TOK_GT_GT_GT
-        || pt == TS_TOK_GT_EQ || pt == TS_TOK_GT_GT_EQ
-        || pt == TS_TOK_GT_GT_GT_EQ) {
+          || pt == TS_TOK_GT_EQ || pt == TS_TOK_GT_GT_EQ
+          || pt == TS_TOK_GT_GT_GT_EQ) {
             done = 1;
         } else {
             var trailing_comma = 0;
@@ -3291,8 +3291,8 @@ fn TS_PARSE_TYPE_PARAMS(ts_base): i64 {
                 # app.tsx (and all `.tsx` generic arrows) fail to parse.
                 var pt2 = TS_PARSE_PEEK(ts_base);
                 if (pt2 == TS_TOK_GT || pt2 == TS_TOK_GT_GT || pt2 == TS_TOK_GT_GT_GT
-                || pt2 == TS_TOK_GT_EQ || pt2 == TS_TOK_GT_GT_EQ
-                || pt2 == TS_TOK_GT_GT_GT_EQ) {
+                  || pt2 == TS_TOK_GT_EQ || pt2 == TS_TOK_GT_GT_EQ
+                  || pt2 == TS_TOK_GT_GT_GT_EQ) {
                     trailing_comma = 1;
                 }
             }
@@ -3383,7 +3383,7 @@ fn TS_PARSE_DECL_FUNCTION(ts_base, name_required): i64 {
     } elif (name_required == 1) {
         store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_CODE, 4);
         store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_TOK_IDX,
-        load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX));
+          load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX));
         return 0 - 1;
     }
     var tp = TS_PARSE_TYPE_PARAMS(ts_base);
@@ -3507,7 +3507,7 @@ fn TS_PARSE_INTERFACE_MEMBER(ts_base): i64 {
     if (TS_IS_NAME_TOK(pt) == 0 && pt != TS_TOK_STRING && pt != TS_TOK_INT) {
         store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_CODE, 5);
         store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_TOK_IDX,
-        load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX));
+          load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX));
         return 0 - 1;
     }
     TS_PARSE_CONSUME(ts_base);
@@ -3716,7 +3716,7 @@ fn TS_PARSE_CLASS_MEMBER(ts_base): i64 {
     } elif (TS_IS_NAME_TOK(pt) == 0 && pt != TS_TOK_STRING && pt != TS_TOK_INT) {
         store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_CODE, 6);
         store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_TOK_IDX,
-        load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX));
+          load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX));
         return 0 - 1;
     } else {
         TS_PARSE_CONSUME(ts_base);
@@ -3906,7 +3906,7 @@ fn TS_PARSE_IMPORT_NAMED_LIST(ts_base): i64 {
         if (TS_IS_IMPORT_NAME_TOK(ti) == 0) {
             store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_CODE, 7);
             store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_TOK_IDX,
-            load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX));
+              load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX));
             return 0 - 1;
         }
         TS_PARSE_CONSUME(ts_base);
@@ -3918,7 +3918,7 @@ fn TS_PARSE_IMPORT_NAMED_LIST(ts_base): i64 {
             if (TS_IS_IMPORT_NAME_TOK(ta) == 0) {
                 store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_CODE, 7);
                 store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_TOK_IDX,
-                load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX));
+                  load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX));
                 return 0 - 1;
             }
             TS_PARSE_CONSUME(ts_base);
@@ -4238,7 +4238,7 @@ fn TS_PARSE_EXPORT(ts_base): i64 {
     } else {
         store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_CODE, 12);
         store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_TOK_IDX,
-        load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX));
+          load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX));
         return 0 - 1;
     }
     if (decl < 0) { return 0 - 1; }
@@ -4430,7 +4430,7 @@ fn TS_PARSE_DECL_DECLARE(ts_base): i64 {
     }
     store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_CODE, 13);
     store64(ts_base + TS_PARSE_STATE_OFF + TS_PS_ERR_TOK_IDX,
-    load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX));
+      load64(ts_base + TS_PARSE_STATE_OFF + TS_PS_TOK_IDX));
     return 0 - 1;
 }
 

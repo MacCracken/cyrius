@@ -1232,7 +1232,7 @@ fn _pe_pending_imp_add(S, name): i64 {
         syscall(SYS_EXIT, 1);
     }
     S64(&_pe_pending_imp_offs + _pe_pending_imp_count * 8,
-    _pe_pending_imp_pos);
+      _pe_pending_imp_pos);
     var i = 0;
     var c = load8(name);
     while (c != 0) {
@@ -1487,7 +1487,7 @@ fn _pe_layout(S): i64 {
             rl_shift = _pe_reloc_count;
             while (rl_shift > rl_k) {
                 S64(_pe_reloc_base + rl_shift * 8,
-                L64(_pe_reloc_base + (rl_shift - 1) * 8));
+                  L64(_pe_reloc_base + (rl_shift - 1) * 8));
                 rl_shift = rl_shift - 1;
             }
             S64(_pe_reloc_base + rl_k * 8, rl_coff);
@@ -1502,7 +1502,7 @@ fn _pe_layout(S): i64 {
             # same fail-closed behaviour without depending on that coincidence.
             if (_pe_reloc_count >= _PE_RELOC_CAP) {
                 syscall(SYS_WRITE, 2,
-                "error: PE base-relocation table full - raise _PE_RELOC_CAP in src/backend/pe/emit.cyr\n", 86);
+                  "error: PE base-relocation table full - raise _PE_RELOC_CAP in src/backend/pe/emit.cyr\n", 86);
                 syscall(SYS_EXIT, 1);
             }
         }

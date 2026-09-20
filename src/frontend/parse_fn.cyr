@@ -934,32 +934,32 @@ fn PARSE_RETURN(S): i64 {
         # body. See `_refuse_simd_return`. CHANGELOG [6.6.6]
         if (mr_is_tuple == 1) { _refuse_vector_tuple_return(S); }
         if (mr_is_tuple == 1) { if (mr_commas > 1) {
-            # --- arity 3 ---------------------------------------------------
-            # Push each value but the last, leave the last in rax, then unwind
-            # into the return registers back-to-front. Generalises the arity-2
-            # sequence below; nothing here is arity-2-specific.
-            if (mr_commas > 2) {
-                ERR_MSG(S, "multi-value return needs 2 or 3 types", 37);
-            }
-            STI(S, GTI(S) + 1);  # consume (
-            PCMPE(S);
-            EPUSHR(S);                                                          # push a
-            if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
-            PCMPE(S);
-            EPUSHR(S);                                                          # push b
-            if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
-            PCMPE(S);                                                           # rax = c
-            EMOVR3RAX(S);                                                       # ret3 = c
-            EPOPR(S);                                                           # rax = b
-            EMOVRDXRAX(S);                                                      # rdx = b
-            EPOPR(S);                                                           # rax = a
-            if (_cur_fn_ret_scalar == 0 - 9) { EMOVQ_X0_A(S); }
-            if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);  # consume )
-            if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1);    # consume ;
-            var rp3 = EJMP0(S);
-            vec_push(rp_vec, rp3);
-            return 0;
-        } }
+                # --- arity 3 ---------------------------------------------------
+                # Push each value but the last, leave the last in rax, then unwind
+                # into the return registers back-to-front. Generalises the arity-2
+                # sequence below; nothing here is arity-2-specific.
+                if (mr_commas > 2) {
+                    ERR_MSG(S, "multi-value return needs 2 or 3 types", 37);
+                }
+                STI(S, GTI(S) + 1);  # consume (
+                PCMPE(S);
+                EPUSHR(S);                                                          # push a
+                if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
+                PCMPE(S);
+                EPUSHR(S);                                                          # push b
+                if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
+                PCMPE(S);                                                           # rax = c
+                EMOVR3RAX(S);                                                       # ret3 = c
+                EPOPR(S);                                                           # rax = b
+                EMOVRDXRAX(S);                                                      # rdx = b
+                EPOPR(S);                                                           # rax = a
+                if (_cur_fn_ret_scalar == 0 - 9) { EMOVQ_X0_A(S); }
+                if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);  # consume )
+                if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1);    # consume ;
+                var rp3 = EJMP0(S);
+                vec_push(rp_vec, rp3);
+                return 0;
+            } }
         if (mr_is_tuple == 1) {
             # Multi-return: return (a, b) → same codegen as ret2(a, b)
             STI(S, GTI(S) + 1);  # consume (
@@ -1013,25 +1013,25 @@ fn PARSE_RETURN(S): i64 {
         var srn_lli = _return_struct_call(S);
         if (srn_lli < 0) { srn_lli = _return_struct_expr(S); }   # a method / operator (bite 14 review)
         if (srn_lli < 0) {
-        if (PEEKT(S) != 2) {
-            ERR_MSG(S, "struct-return fn: return must be a bare local identifier, or a call to a fn returning the same struct", 101);
-        }
-        var srn_noff = PEEKV(S);
-        if (TOKTYP(S, GTI(S) + 1) != 5) {
-            ERR_MSG(S, "struct-return fn: return must be a bare local identifier, or a call to a fn returning the same struct", 101);
-        }
-        srn_lli = FINDLOCAL(S, srn_noff);
-        if (srn_lli < 0) {
-            ERR_MSG(S, "struct-return: identifier is not a local", 40);
-        }
-        var srn_lt = GLTYPE(S, srn_lli);
-        if (srn_lt >= 0) {
-            ERR_MSG(S, "struct-return: identifier is not struct-typed", 45);
-        }
-        if ((0 - srn_lt) != _cur_fn_ret_sid) {
-            ERR_MSG(S, "struct-return: identifier type != fn ret_sid", 44);
-        }
-        STI(S, GTI(S) + 1);            # consume IDENT
+            if (PEEKT(S) != 2) {
+                ERR_MSG(S, "struct-return fn: return must be a bare local identifier, or a call to a fn returning the same struct", 101);
+            }
+            var srn_noff = PEEKV(S);
+            if (TOKTYP(S, GTI(S) + 1) != 5) {
+                ERR_MSG(S, "struct-return fn: return must be a bare local identifier, or a call to a fn returning the same struct", 101);
+            }
+            srn_lli = FINDLOCAL(S, srn_noff);
+            if (srn_lli < 0) {
+                ERR_MSG(S, "struct-return: identifier is not a local", 40);
+            }
+            var srn_lt = GLTYPE(S, srn_lli);
+            if (srn_lt >= 0) {
+                ERR_MSG(S, "struct-return: identifier is not struct-typed", 45);
+            }
+            if ((0 - srn_lt) != _cur_fn_ret_sid) {
+                ERR_MSG(S, "struct-return: identifier type != fn ret_sid", 44);
+            }
+            STI(S, GTI(S) + 1);            # consume IDENT
         }
         if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
         STI(S, GTI(S) + 1);            # consume ';'
@@ -1890,10 +1890,10 @@ fn _struct_call_emit(S, fi, noff, dst): i64 {
     var cls = _ret_agg_class(S, fi);
     var n0 = 0;
     if (cls == 2) { if (_AARCH64_BACKEND == 0) {
-        EFLADDR(S, dst);
-        EPUSHR(S);
-        n0 = 1;
-    } }
+            EFLADDR(S, dst);
+            EPUSHR(S);
+            n0 = 1;
+        } }
     var n = _owncall_args(S, fi, noff, n0);
     if (cls == 2) { if (_AARCH64_BACKEND == 1) { EFLADDR_X8(S, dst); } }
     var tgt = L64(_fnt_offsets + fi * 8);
@@ -2001,10 +2001,10 @@ fn _sc_pre(S, fi, noff, beg): i64 {
     if (cls == 1) { if (beg != _sc_want) { return 0 - 1; } }
     var t = _agg_temp(S, GFRS(S, fi));
     if (cls == 2) { if (_AARCH64_BACKEND == 0) {
-        EFLADDR(S, t);
-        EPUSHR(S);
-        _sc_n0 = 1;
-    } }
+            EFLADDR(S, t);
+            EPUSHR(S);
+            _sc_n0 = 1;
+        } }
     return t;
 }
 
@@ -2062,8 +2062,8 @@ fn _sc_var_receive(S, noff, pscale, ext, start): i64 {
         if (ext != 0) { return 0; }
     } elif (pscale != 0 - _sc_sid) {
         if (pscale < 0) { if (pscale > 0 - 2048) {
-            ERR_MSG(S, "fn return struct-id differs from declared var type", 50);
-        } }
+                ERR_MSG(S, "fn return struct-id differs from declared var type", 50);
+            } }
         return 0;
     }
     S64(S + 0x5D9D000 + t * 8, noff);
@@ -2773,177 +2773,177 @@ fn PARSE_FNCALL(S, noff): i64 {
         if (_is_simd_any(S, GFRS(S, fi)) == 1) { _pe_no_inline = 1; }
     }
     if (GFINL(S, fi) != 0) { if (GIDEP(S) < 3) { if (GINFN(S) == 1) { if (_pe_no_inline == 0) {
-                # INLINE PATH: replay function body tokens at call site
-                var pc = L64(_fnt_params + fi * 8);
-                var saved_flc = GFLC(S);
-                # Allocate fresh frame slots for callee params
-                # v6.5.52 — slot widths come from the callee's recorded param types.
-                var _ipt = GFIPT(S, fi);
-                var _t0 = _ipt_sltype(_ipt, 0);
-                var _t1 = _ipt_sltype(_ipt, 1);
-                var _w0 = _ipt_slots(S, _t0);
-                var _w1 = _ipt_slots(S, _t1);
-                var _ptot = 0;
-                if (pc >= 1) { _ptot = _w0; }
-                if (pc >= 2) { _ptot = _w0 + _w1; }
-                # NAMED slot = deepest of each param's group (anon fillers precede it).
-                var p0_slot = saved_flc + _w0 - 1;
-                var p1_slot = saved_flc + _w0 + _w1 - 1;
-                # v6.3.38 (A-broad) — RESERVE the param slots BEFORE evaluating args, so a
-                # nested inline call while evaluating arg1 uses frame slots ABOVE p0/p1
-                # instead of reusing saved_flc and clobbering the already-stored arg0.
-                # (v6.3.37 A3 only reserved frame SIZE via _flc_hwm; this reserves the slot
-                # INDICES too by bumping GFLC up-front.) Idempotent with the old post-loop
-                # SFLC(saved_flc+pc); the _flc_hwm high-water still feeds the frame patch.
-                SFLC(S, saved_flc + _ptot);
-                if (saved_flc + _ptot > _flc_hwm) { _flc_hwm = saved_flc + _ptot; }
-                # v6.5.52 — INVALIDATE the reserved slots BEFORE evaluating args. The slots are
-                # reserved here but not bound until after the arg loop, and arg evaluation does
-                # name lookups that scan every slot below GFLC — so an unwritten slot is read as
-                # a NAME OFFSET. Whatever the frame held previously is then handed to STREQ as a
-                # string pointer. MEASURED: `rsi = 0xffffffff` at the fault, i.e. a stale `0 - 1`
-                # anon marker dereferenced as a pointer.
-                # ⚠ The pre-v6.5.52 code had the same ordering and survived only because it
-                # reserved exactly `pc` slots and both were overwritten immediately; widening a
-                # param to 2 or 4 slots exposed the latent hole.
-                # v6.5.65 — a fresh replay owns a fresh set of param slots; drop any provenance
-                # left by an enclosing inline so a stale slot index cannot be re-matched.
-                _prov_reset();
-                var _prov_win = GCP(S);
-                var _pini = 0;
-                while (_pini < _ptot) {
-                    S64(S + 0x5D9D000 + (saved_flc + _pini) * 8, 0 - 1);
-                    SLDEP(S, saved_flc + _pini, 0);
-                    SLTYPE(S, saved_flc + _pini, 0);
-                    _pini = _pini + 1;
-                }
-                # Evaluate args and store to param slots
-                var iargc = 0;
-                # v6.3.9 (F-fns): positional generic inference — capture each arg's
-                # concrete type BEFORE PCMPE consumes it (default i64 = -8).
-                var _ginf0 = 0 - 8;
-                var _ginf1 = 0 - 8;
-                # v6.2.41 — capture call-site line for the arity warning below.
-                var _iar_line = GTLINE(S, GTI(S));
-                if (PEEKT(S) != 11) {
-                    var iago = 1;
-                    while (iago == 1) {
-                        # v6.5.52 — a SIMD param takes the local-copy path; PCMPE cannot
-                        # materialise a value-form vector (see _inl_simd_arg).
-                        var _sd = 0;
-                        if (iargc == 0) { if (_t0 != 0) { _inl_simd_arg(S, p0_slot, _w0, _t0); _sd = 1; } }
-                        if (iargc == 1) { if (_t1 != 0) { _inl_simd_arg(S, p1_slot, _w1, _t1); _sd = 1; } }
-                        if (_sd == 0) {
-                            if (iargc == 0) { _ginf0 = _infer_conc_at_cursor(S); }
-                            if (iargc == 1) { _ginf1 = _infer_conc_at_cursor(S); }
-                            PCMPE(S);
-                            if (iargc == 0) { _inl_store_arg(S, p0_slot, _w0); }
-                            if (iargc == 1) { _inl_store_arg(S, p1_slot, _w1); }
-                        }
-                        iargc = iargc + 1;
-                        if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
-                        else { iago = 0; }
+                    # INLINE PATH: replay function body tokens at call site
+                    var pc = L64(_fnt_params + fi * 8);
+                    var saved_flc = GFLC(S);
+                    # Allocate fresh frame slots for callee params
+                    # v6.5.52 — slot widths come from the callee's recorded param types.
+                    var _ipt = GFIPT(S, fi);
+                    var _t0 = _ipt_sltype(_ipt, 0);
+                    var _t1 = _ipt_sltype(_ipt, 1);
+                    var _w0 = _ipt_slots(S, _t0);
+                    var _w1 = _ipt_slots(S, _t1);
+                    var _ptot = 0;
+                    if (pc >= 1) { _ptot = _w0; }
+                    if (pc >= 2) { _ptot = _w0 + _w1; }
+                    # NAMED slot = deepest of each param's group (anon fillers precede it).
+                    var p0_slot = saved_flc + _w0 - 1;
+                    var p1_slot = saved_flc + _w0 + _w1 - 1;
+                    # v6.3.38 (A-broad) — RESERVE the param slots BEFORE evaluating args, so a
+                    # nested inline call while evaluating arg1 uses frame slots ABOVE p0/p1
+                    # instead of reusing saved_flc and clobbering the already-stored arg0.
+                    # (v6.3.37 A3 only reserved frame SIZE via _flc_hwm; this reserves the slot
+                    # INDICES too by bumping GFLC up-front.) Idempotent with the old post-loop
+                    # SFLC(saved_flc+pc); the _flc_hwm high-water still feeds the frame patch.
+                    SFLC(S, saved_flc + _ptot);
+                    if (saved_flc + _ptot > _flc_hwm) { _flc_hwm = saved_flc + _ptot; }
+                    # v6.5.52 — INVALIDATE the reserved slots BEFORE evaluating args. The slots are
+                    # reserved here but not bound until after the arg loop, and arg evaluation does
+                    # name lookups that scan every slot below GFLC — so an unwritten slot is read as
+                    # a NAME OFFSET. Whatever the frame held previously is then handed to STREQ as a
+                    # string pointer. MEASURED: `rsi = 0xffffffff` at the fault, i.e. a stale `0 - 1`
+                    # anon marker dereferenced as a pointer.
+                    # ⚠ The pre-v6.5.52 code had the same ordering and survived only because it
+                    # reserved exactly `pc` slots and both were overwritten immediately; widening a
+                    # param to 2 or 4 slots exposed the latent hole.
+                    # v6.5.65 — a fresh replay owns a fresh set of param slots; drop any provenance
+                    # left by an enclosing inline so a stale slot index cannot be re-matched.
+                    _prov_reset();
+                    var _prov_win = GCP(S);
+                    var _pini = 0;
+                    while (_pini < _ptot) {
+                        S64(S + 0x5D9D000 + (saved_flc + _pini) * 8, 0 - 1);
+                        SLDEP(S, saved_flc + _pini, 0);
+                        SLTYPE(S, saved_flc + _pini, 0);
+                        _pini = _pini + 1;
                     }
-                }
-                if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
-                STI(S, GTI(S) + 1);
-                # v6.2.41 — arity check on the INLINE-replay path. Inline
-                # candidates are small fixed-arity fns (≤2 param slots), so a
-                # 1-param helper called with extra args lands HERE, not on the
-                # normal path — the normal-path check alone would miss it.
-                _CHECK_ARITY(S, _iar_line, noff, fi, iargc, 0);
-                # Set local count past the param slots
-                SFLC(S, saved_flc + _ptot);
-                # v6.3.37 (A3) — record the transient inline param-slot high-water so
-                # the enclosing fn's frame reserves it (see _flc_hwm). Without this the
-                # param slot aliases a live runtime `push rax` and clobbers an operand.
-                if (saved_flc + _ptot > _flc_hwm) { _flc_hwm = saved_flc + _ptot; }
-                # Register callee param names as temporary locals (packed in fn_inline)
-                var inl_packed = GFINL(S, fi);
-                var pn0 = inl_packed & 0xFFFFFFFF;
-                var pn1 = (inl_packed >> 32) & 0xFFFFFFFF;
-                if (pc >= 1) { _inl_bind_param(S, saved_flc, _w0, p0_slot, pn0, _t0); }
-                if (pc >= 2) { _inl_bind_param(S, saved_flc + _w0, _w1, p1_slot, pn1, _t1); }
-                # Save state and replay body tokens
-                var saved_ti = GTI(S);
-                var saved_rpc = vec_len(rp_vec);
-                # v6.3.9 (F-fns): bind T->concrete for the body replay (the bite-4
-                # consults read it). Save the enclosing binding first so a generic
-                # body that itself inline-calls restores correctly. _bind_generic_call
-                # is a no-op for non-generic callees → default path is just the saves
-                # (4 reads, restored verbatim) → byte-identical.
-                var _gsv_n0 = _tp_n0; var _gsv_c0 = _tp_c0;
-                var _gsv_n1 = _tp_n1; var _gsv_c1 = _tp_c1;
-                _bind_generic_call(S, fi, _ginf0, _ginf1);
-                SIDEP(S, GIDEP(S) + 1);
-                # v6.5.52 — the replayed body is a NESTED SCOPE, so bump the scope depth for it.
-                # The duplicate-variable check is `GLDEP(existing) == GSDEP()`, i.e. same-scope,
-                # and the replay previously bumped only the INLINE depth. A callee body that
-                # declares `var r` therefore collided with a caller local of the same name —
-                # which every value-form SIMD wrapper triggers, since they are all
-                # `var r: <vec>; ...; return r;` and callers routinely name a result `r`.
-                # Shadowing is the correct semantics here: FINDLOCAL searches backward so the
-                # body's `r` wins inside the body, and the teardown clears it so the caller's
-                # `r` is visible again afterwards.
-                var _sdep_saved = GSDEP(S);
-                SSDEP(S, _sdep_saved + 1);
-                # v6.5.59 — carry the CALLEE's return class across the replay. The body is
-                # re-parsed inside the CALLER's function context, so `_cur_fn_ret_*` still
-                # described the caller and `return r;` emitted the caller's convention. A
-                # 128-bit vector survived that by luck (one XMM, moved by the default path); a
-                # 256-bit return is a PAIR and its second register was never moved — lanes 0-1
-                # correct, lanes 2-3 STALE, exit 0, no diagnostic.
-                # ⚠ Caught only because the probe asserted ALL FOUR LANES.
-                var _rs_saved = _cur_fn_ret_scalar;
-                var _cfrs = GFRS(S, fi);
-                if (_is_simd_any(S, _cfrs) == 1) { _cur_fn_ret_scalar = _cfrs; }
-                STI(S, GFBS(S, fi));
-                PARSE_PROG(S);
-                _cur_fn_ret_scalar = _rs_saved;
-                SSDEP(S, _sdep_saved);
-                # Patch return jumps from inlined body to here
-                var new_rpc = vec_len(rp_vec);
-                var ri = saved_rpc;
-                while (ri < new_rpc) {
-                    EPATCH(S, vec_get(rp_vec, ri));
-                    ri = ri + 1;
-                }
-                vec_truncate(rp_vec, saved_rpc);
-                SIDEP(S, GIDEP(S) - 1);
-                # v6.3.9 (F-fns): restore the enclosing generic binding.
-                _tp_n0 = _gsv_n0; _tp_c0 = _gsv_c0;
-                _tp_n1 = _gsv_n1; _tp_c1 = _gsv_c1;
-                # v6.5.66 — the whole body has now been emitted, so "was this param slot ever read?"
-                # is finally answerable. Any copy that was neither read nor written is dead: NOP it.
-                # ⭐ This is also what makes the chain register-resident — the copy's load was the
-                # xmm0 clobber between a link's result store and the next link's read of it, so
-                # removing it lets SLASE collapse that pair too.
-                _prov_harvest(_prov_win, GCP(S));
-                # Restore token index
-                STI(S, saved_ti);
-                # Invalidate the temporary locals the replay created.
-                # v6.5.52: this now covers the WHOLE replay window — the param slots (a wide
-                # param owns (nslots-1) anon fillers below its named slot) AND any locals the
-                # replayed BODY declared. Leaving the body's names registered makes a second
-                # inline of the same callee redeclare them: every value-form SIMD wrapper is
-                # `var r: <vec>; <op>(&r, &a, &b, n); return r;`, so `f32v4_add` used twice in
-                # one fn reported "duplicate variable" at lib/simd.cyr. GFLC is restored too so
-                # the slots are reusable; `_flc_hwm` keeps the peak for frame sizing.
-                var _body_flc = GFLC(S);
-                if (_body_flc > _flc_hwm) { _flc_hwm = _body_flc; }
-                var _inv = saved_flc;
-                while (_inv < _body_flc) {
-                    S64(S + 0x5D9D000 + _inv * 8, 0 - 1);
-                    SLTYPE(S, _inv, 0);
-                    _inv = _inv + 1;
-                }
-                # ⚠ GFLC is deliberately NOT restored. The inlined body's EMITTED CODE still
-                # addresses these frame slots at runtime, so handing them to a later local is a
-                # real aliasing bug — measured: restoring GFLC made simd_ints SIGSEGV at run
-                # time while compiling clean. Only the NAME registrations are cleared, which is
-                # what the duplicate-variable check reads; the slots stay spent.
-                return 0;
-            } } } }
+                    # Evaluate args and store to param slots
+                    var iargc = 0;
+                    # v6.3.9 (F-fns): positional generic inference — capture each arg's
+                    # concrete type BEFORE PCMPE consumes it (default i64 = -8).
+                    var _ginf0 = 0 - 8;
+                    var _ginf1 = 0 - 8;
+                    # v6.2.41 — capture call-site line for the arity warning below.
+                    var _iar_line = GTLINE(S, GTI(S));
+                    if (PEEKT(S) != 11) {
+                        var iago = 1;
+                        while (iago == 1) {
+                            # v6.5.52 — a SIMD param takes the local-copy path; PCMPE cannot
+                            # materialise a value-form vector (see _inl_simd_arg).
+                            var _sd = 0;
+                            if (iargc == 0) { if (_t0 != 0) { _inl_simd_arg(S, p0_slot, _w0, _t0); _sd = 1; } }
+                            if (iargc == 1) { if (_t1 != 0) { _inl_simd_arg(S, p1_slot, _w1, _t1); _sd = 1; } }
+                            if (_sd == 0) {
+                                if (iargc == 0) { _ginf0 = _infer_conc_at_cursor(S); }
+                                if (iargc == 1) { _ginf1 = _infer_conc_at_cursor(S); }
+                                PCMPE(S);
+                                if (iargc == 0) { _inl_store_arg(S, p0_slot, _w0); }
+                                if (iargc == 1) { _inl_store_arg(S, p1_slot, _w1); }
+                            }
+                            iargc = iargc + 1;
+                            if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
+                            else { iago = 0; }
+                        }
+                    }
+                    if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
+                    STI(S, GTI(S) + 1);
+                    # v6.2.41 — arity check on the INLINE-replay path. Inline
+                    # candidates are small fixed-arity fns (≤2 param slots), so a
+                    # 1-param helper called with extra args lands HERE, not on the
+                    # normal path — the normal-path check alone would miss it.
+                    _CHECK_ARITY(S, _iar_line, noff, fi, iargc, 0);
+                    # Set local count past the param slots
+                    SFLC(S, saved_flc + _ptot);
+                    # v6.3.37 (A3) — record the transient inline param-slot high-water so
+                    # the enclosing fn's frame reserves it (see _flc_hwm). Without this the
+                    # param slot aliases a live runtime `push rax` and clobbers an operand.
+                    if (saved_flc + _ptot > _flc_hwm) { _flc_hwm = saved_flc + _ptot; }
+                    # Register callee param names as temporary locals (packed in fn_inline)
+                    var inl_packed = GFINL(S, fi);
+                    var pn0 = inl_packed & 0xFFFFFFFF;
+                    var pn1 = (inl_packed >> 32) & 0xFFFFFFFF;
+                    if (pc >= 1) { _inl_bind_param(S, saved_flc, _w0, p0_slot, pn0, _t0); }
+                    if (pc >= 2) { _inl_bind_param(S, saved_flc + _w0, _w1, p1_slot, pn1, _t1); }
+                    # Save state and replay body tokens
+                    var saved_ti = GTI(S);
+                    var saved_rpc = vec_len(rp_vec);
+                    # v6.3.9 (F-fns): bind T->concrete for the body replay (the bite-4
+                    # consults read it). Save the enclosing binding first so a generic
+                    # body that itself inline-calls restores correctly. _bind_generic_call
+                    # is a no-op for non-generic callees → default path is just the saves
+                    # (4 reads, restored verbatim) → byte-identical.
+                    var _gsv_n0 = _tp_n0; var _gsv_c0 = _tp_c0;
+                    var _gsv_n1 = _tp_n1; var _gsv_c1 = _tp_c1;
+                    _bind_generic_call(S, fi, _ginf0, _ginf1);
+                    SIDEP(S, GIDEP(S) + 1);
+                    # v6.5.52 — the replayed body is a NESTED SCOPE, so bump the scope depth for it.
+                    # The duplicate-variable check is `GLDEP(existing) == GSDEP()`, i.e. same-scope,
+                    # and the replay previously bumped only the INLINE depth. A callee body that
+                    # declares `var r` therefore collided with a caller local of the same name —
+                    # which every value-form SIMD wrapper triggers, since they are all
+                    # `var r: <vec>; ...; return r;` and callers routinely name a result `r`.
+                    # Shadowing is the correct semantics here: FINDLOCAL searches backward so the
+                    # body's `r` wins inside the body, and the teardown clears it so the caller's
+                    # `r` is visible again afterwards.
+                    var _sdep_saved = GSDEP(S);
+                    SSDEP(S, _sdep_saved + 1);
+                    # v6.5.59 — carry the CALLEE's return class across the replay. The body is
+                    # re-parsed inside the CALLER's function context, so `_cur_fn_ret_*` still
+                    # described the caller and `return r;` emitted the caller's convention. A
+                    # 128-bit vector survived that by luck (one XMM, moved by the default path); a
+                    # 256-bit return is a PAIR and its second register was never moved — lanes 0-1
+                    # correct, lanes 2-3 STALE, exit 0, no diagnostic.
+                    # ⚠ Caught only because the probe asserted ALL FOUR LANES.
+                    var _rs_saved = _cur_fn_ret_scalar;
+                    var _cfrs = GFRS(S, fi);
+                    if (_is_simd_any(S, _cfrs) == 1) { _cur_fn_ret_scalar = _cfrs; }
+                    STI(S, GFBS(S, fi));
+                    PARSE_PROG(S);
+                    _cur_fn_ret_scalar = _rs_saved;
+                    SSDEP(S, _sdep_saved);
+                    # Patch return jumps from inlined body to here
+                    var new_rpc = vec_len(rp_vec);
+                    var ri = saved_rpc;
+                    while (ri < new_rpc) {
+                        EPATCH(S, vec_get(rp_vec, ri));
+                        ri = ri + 1;
+                    }
+                    vec_truncate(rp_vec, saved_rpc);
+                    SIDEP(S, GIDEP(S) - 1);
+                    # v6.3.9 (F-fns): restore the enclosing generic binding.
+                    _tp_n0 = _gsv_n0; _tp_c0 = _gsv_c0;
+                    _tp_n1 = _gsv_n1; _tp_c1 = _gsv_c1;
+                    # v6.5.66 — the whole body has now been emitted, so "was this param slot ever read?"
+                    # is finally answerable. Any copy that was neither read nor written is dead: NOP it.
+                    # ⭐ This is also what makes the chain register-resident — the copy's load was the
+                    # xmm0 clobber between a link's result store and the next link's read of it, so
+                    # removing it lets SLASE collapse that pair too.
+                    _prov_harvest(_prov_win, GCP(S));
+                    # Restore token index
+                    STI(S, saved_ti);
+                    # Invalidate the temporary locals the replay created.
+                    # v6.5.52: this now covers the WHOLE replay window — the param slots (a wide
+                    # param owns (nslots-1) anon fillers below its named slot) AND any locals the
+                    # replayed BODY declared. Leaving the body's names registered makes a second
+                    # inline of the same callee redeclare them: every value-form SIMD wrapper is
+                    # `var r: <vec>; <op>(&r, &a, &b, n); return r;`, so `f32v4_add` used twice in
+                    # one fn reported "duplicate variable" at lib/simd.cyr. GFLC is restored too so
+                    # the slots are reusable; `_flc_hwm` keeps the peak for frame sizing.
+                    var _body_flc = GFLC(S);
+                    if (_body_flc > _flc_hwm) { _flc_hwm = _body_flc; }
+                    var _inv = saved_flc;
+                    while (_inv < _body_flc) {
+                        S64(S + 0x5D9D000 + _inv * 8, 0 - 1);
+                        SLTYPE(S, _inv, 0);
+                        _inv = _inv + 1;
+                    }
+                    # ⚠ GFLC is deliberately NOT restored. The inlined body's EMITTED CODE still
+                    # addresses these frame slots at runtime, so handing them to a later local is a
+                    # real aliasing bug — measured: restoring GFLC made simd_ints SIGSEGV at run
+                    # time while compiling clean. Only the NAME registrations are cleared, which is
+                    # what the duplicate-variable check reads; the slots stay spent.
+                    return 0;
+                } } } }
     # NORMAL CALL PATH
     # Args pushed left-to-right: arg1 first (bottom), argN last (top).
     # ECALLPOPS pops top 6 into registers: rdi=argN-5, ..., r9=argN.
@@ -3035,61 +3035,61 @@ fn PARSE_FNCALL(S, noff): i64 {
             # and SIGSEGV'd where the identical free fn was a hard error. CHANGELOG [6.6.5]
             _check_int_lit_cstring_arg(S, fi, argc, noff);
             if (_TYPE_CHECK_ENABLED() == 1) { if (PEEKT(S) == 2) {
-                # v5.10.24 — Phase 2: gate the warning on cstring_mask
-                # being explicitly SET (param annotated `: cstring`)
-                # instead of str_mask being CLEARED (the old polarity
-                # caused the false-positive flood pinned at v5.10.5
-                # — every untyped-i64 param that legitimately takes
-                # a Str-as-pointer triggered a false warning). Now
-                # the warning only fires when the param is EXPLICITLY
-                # asking for cstring semantics.
-                var _tc_cmask = L64(_fnt_cstrmask + fi * 8);
-                if (_tc_cmask & (1 << argc)) {
-                    var _tc_arg_noff = PEEKV(S);
-                    var _tc_typ = 0;
-                    if (GINFN(S) == 1) {
-                        var _tc_lli = FINDLOCAL(S, _tc_arg_noff);
-                        if (_tc_lli >= 0) { _tc_typ = GLTYPE(S, _tc_lli); }
-                    }
-                    if (_tc_typ == 0) {
-                        var _tc_vi = FINDVAR(S, _tc_arg_noff);
-                        if (_tc_vi >= 0) { _tc_typ = GVTYPE(S, _tc_vi); }
-                    }
-                    var _tc_str_sid = _STR_SID(S);
-                    if (_tc_str_sid > 0) {
-                        if (_tc_typ == 0 - _tc_str_sid) {
-                            syscall(SYS_WRITE, 2, "warning:", 8);
-                            _err_head(S);
-                            syscall(SYS_WRITE, 2, ": passing Str-typed '", 21);
-                            PRSTR(S + 0xEC00000 + _tc_arg_noff);
-                            syscall(SYS_WRITE, 2, "' to '", 6);
-                            PRSTR(S + 0xEC00000 + noff);
-                            syscall(SYS_WRITE, 2, "' which expects a cstring\n  hint: use str_data(", 47);
-                            PRSTR(S + 0xEC00000 + _tc_arg_noff);
-                            syscall(SYS_WRITE, 2, ") for raw bytes, str_println(", 29);
-                            PRSTR(S + 0xEC00000 + _tc_arg_noff);
-                            syscall(SYS_WRITE, 2, ") for printing, or annotate the param `: Str`\n", 46);
+                    # v5.10.24 — Phase 2: gate the warning on cstring_mask
+                    # being explicitly SET (param annotated `: cstring`)
+                    # instead of str_mask being CLEARED (the old polarity
+                    # caused the false-positive flood pinned at v5.10.5
+                    # — every untyped-i64 param that legitimately takes
+                    # a Str-as-pointer triggered a false warning). Now
+                    # the warning only fires when the param is EXPLICITLY
+                    # asking for cstring semantics.
+                    var _tc_cmask = L64(_fnt_cstrmask + fi * 8);
+                    if (_tc_cmask & (1 << argc)) {
+                        var _tc_arg_noff = PEEKV(S);
+                        var _tc_typ = 0;
+                        if (GINFN(S) == 1) {
+                            var _tc_lli = FINDLOCAL(S, _tc_arg_noff);
+                            if (_tc_lli >= 0) { _tc_typ = GLTYPE(S, _tc_lli); }
+                        }
+                        if (_tc_typ == 0) {
+                            var _tc_vi = FINDVAR(S, _tc_arg_noff);
+                            if (_tc_vi >= 0) { _tc_typ = GVTYPE(S, _tc_vi); }
+                        }
+                        var _tc_str_sid = _STR_SID(S);
+                        if (_tc_str_sid > 0) {
+                            if (_tc_typ == 0 - _tc_str_sid) {
+                                syscall(SYS_WRITE, 2, "warning:", 8);
+                                _err_head(S);
+                                syscall(SYS_WRITE, 2, ": passing Str-typed '", 21);
+                                PRSTR(S + 0xEC00000 + _tc_arg_noff);
+                                syscall(SYS_WRITE, 2, "' to '", 6);
+                                PRSTR(S + 0xEC00000 + noff);
+                                syscall(SYS_WRITE, 2, "' which expects a cstring\n  hint: use str_data(", 47);
+                                PRSTR(S + 0xEC00000 + _tc_arg_noff);
+                                syscall(SYS_WRITE, 2, ") for raw bytes, str_println(", 29);
+                                PRSTR(S + 0xEC00000 + _tc_arg_noff);
+                                syscall(SYS_WRITE, 2, ") for printing, or annotate the param `: Str`\n", 46);
+                            }
                         }
                     }
-                }
-                # v5.10.24 — Result/Option/Tagged param checks.
-                # Caller passes a value typed differently than the
-                # param's annotation → warning. These three are all
-                # i64-shape at runtime (heap pointer to tagged
-                # union); the type system uses them for call-site
-                # SAFETY, not for codegen.
-                #
-                # Mismatch shapes that surface:
-                #   - Result-typed local passed to non-Result param
-                #     → warn (caller probably forgot to unwrap)
-                #   - Str-typed local passed to Result param
-                #     → warn (probably wrong arg)
-                # The check is conservative: only fires when the
-                # callee param IS explicitly typed AND the arg has
-                # a different explicit annotation. Untyped-i64 args
-                # to Result-typed params don't warn (could be
-                # `result_unwrap`-result-as-i64, valid pattern).
-            } }
+                    # v5.10.24 — Result/Option/Tagged param checks.
+                    # Caller passes a value typed differently than the
+                    # param's annotation → warning. These three are all
+                    # i64-shape at runtime (heap pointer to tagged
+                    # union); the type system uses them for call-site
+                    # SAFETY, not for codegen.
+                    #
+                    # Mismatch shapes that surface:
+                    #   - Result-typed local passed to non-Result param
+                    #     → warn (caller probably forgot to unwrap)
+                    #   - Str-typed local passed to Result param
+                    #     → warn (probably wrong arg)
+                    # The check is conservative: only fires when the
+                    # callee param IS explicitly typed AND the arg has
+                    # a different explicit annotation. Untyped-i64 args
+                    # to Result-typed params don't warn (could be
+                    # `result_unwrap`-result-as-i64, valid pattern).
+                } }
             # Auto-coercion: if this param is : Str and the arg is a string literal,
             # emit str_from(literal) instead of the raw cstr pointer.
             # 6.6.5: extracted to `_try_push_str_literal_arg`, shared with the method-call
@@ -3906,23 +3906,23 @@ fn _ra_frame_trim(S, fn_start, fi): i64 {
         while (p <= lim) {
             var hit = 0;
             if (_swtn == 0 || _sw_tbl_hits(S, _swtn, p) == 0) {
-            if (load8(cb + p) == rex) {
-                if (load8(cb + p + 2) == modrm) {
-                    if (load8(cb + p + 3) == disp) {
-                        var op = load8(cb + p + 1);
-                        if (op == 0x89) { hit = 1; }
-                        if (op == 0x8B) { hit = 1; }
-                        if (hit == 1) {
-                            var nc = L64(S + 0x1A2008);
-                            if (nc < 1024) {
-                                S64(S + 0x1A2010 + nc * 16, p);
-                                S64(S + 0x1A2010 + nc * 16 + 8, 4);
-                                S64(S + 0x1A2008, nc + 1);
+                if (load8(cb + p) == rex) {
+                    if (load8(cb + p + 2) == modrm) {
+                        if (load8(cb + p + 3) == disp) {
+                            var op = load8(cb + p + 1);
+                            if (op == 0x89) { hit = 1; }
+                            if (op == 0x8B) { hit = 1; }
+                            if (hit == 1) {
+                                var nc = L64(S + 0x1A2008);
+                                if (nc < 1024) {
+                                    S64(S + 0x1A2010 + nc * 16, p);
+                                    S64(S + 0x1A2010 + nc * 16 + 8, 4);
+                                    S64(S + 0x1A2008, nc + 1);
+                                }
                             }
                         }
                     }
                 }
-            }
             }
             if (hit == 1) { p = p + 4; } else { p = p + 1; }
         }
@@ -3953,34 +3953,34 @@ fn _classify_param_type(S, tnoff): i64 {
     var b7 = load8(S + 0xEC00000 + tnoff + 7);
     # cstring → 'c','s','t','r','i','n','g',0
     if (b0 == 99) { if (b1 == 115) { if (b2 == 116) { if (b3 == 114) {
-        if (b4 == 105) { if (b5 == 110) { if (b6 == 103) { if (b7 == 0) {
-            return 2;
-        } } } } } } } }
+                    if (b4 == 105) { if (b5 == 110) { if (b6 == 103) { if (b7 == 0) {
+                                    return 2;
+                                } } } } } } } }
     # Result → 'R','e','s','u','l','t',0
     if (b0 == 82) { if (b1 == 101) { if (b2 == 115) { if (b3 == 117) {
-        if (b4 == 108) { if (b5 == 116) { if (b6 == 0) {
-            return 3;
-        } } } } } } }
+                    if (b4 == 108) { if (b5 == 116) { if (b6 == 0) {
+                                return 3;
+                            } } } } } } }
     # Option → 'O','p','t','i','o','n',0
     if (b0 == 79) { if (b1 == 112) { if (b2 == 116) { if (b3 == 105) {
-        if (b4 == 111) { if (b5 == 110) { if (b6 == 0) {
-            return 4;
-        } } } } } } }
+                    if (b4 == 111) { if (b5 == 110) { if (b6 == 0) {
+                                return 4;
+                            } } } } } } }
     # Tagged → 'T','a','g','g','e','d',0
     if (b0 == 84) { if (b1 == 97) { if (b2 == 103) { if (b3 == 103) {
-        if (b4 == 101) { if (b5 == 100) { if (b6 == 0) {
-            return 5;
-        } } } } } } }
+                    if (b4 == 101) { if (b5 == 100) { if (b6 == 0) {
+                                return 5;
+                            } } } } } } }
     # f64v2 / f64v4 → 'f','6','4','v', '2'|'4', 0
     if (b0 == 102) { if (b1 == 54) { if (b2 == 52) { if (b3 == 118) {
-        if (b4 == 50) { if (b5 == 0) { return 6; } }
-        if (b4 == 52) { if (b5 == 0) { return 7; } }
-    } } } }
+                    if (b4 == 50) { if (b5 == 0) { return 6; } }
+                    if (b4 == 52) { if (b5 == 0) { return 7; } }
+                } } } }
     # f32v4 → 'f','3','2','v','4', 0 — 128-bit; class 8 reuses f64v2's XMM/2-slot ABI
     # (pt_simd_class 1) but tags the param SLTYPE -2121 for op-width dispatch.
     if (b0 == 102) { if (b1 == 51) { if (b2 == 50) { if (b3 == 118) {
-        if (b4 == 52) { if (b5 == 0) { return 8; } }
-    } } } }
+                    if (b4 == 52) { if (b5 == 0) { return 8; } }
+                } } } }
     # v6.4.7 (Phase 3b) — integer vector value-form params: return the NEGATIVE
     # descriptor sentinel (≤ -2048), distinct from the small positive codes 1-8.
     # The prescan + def-fold detect `c <= -2048` → 16-byte/1-XMM routing (mask 1),
@@ -4063,16 +4063,16 @@ fn _classify_return_type(S, rt_noff): i64 {
     }
     # Result → 'R','e','s','u','l','t',0
     if (b0 == 82) { if (b1 == 101) { if (b2 == 115) { if (b3 == 117) {
-        if (b4 == 108) { if (b5 == 116) { if (b6 == 0) { return 0 - 16; } } } } } } }
+                    if (b4 == 108) { if (b5 == 116) { if (b6 == 0) { return 0 - 16; } } } } } } }
     # Option → 'O','p','t','i','o','n',0
     if (b0 == 79) { if (b1 == 112) { if (b2 == 116) { if (b3 == 105) {
-        if (b4 == 111) { if (b5 == 110) { if (b6 == 0) { return 0 - 17; } } } } } } }
+                    if (b4 == 111) { if (b5 == 110) { if (b6 == 0) { return 0 - 17; } } } } } } }
     # Tagged → 'T','a','g','g','e','d',0
     if (b0 == 84) { if (b1 == 97) { if (b2 == 103) { if (b3 == 103) {
-        if (b4 == 101) { if (b5 == 100) { if (b6 == 0) { return 0 - 18; } } } } } } }
+                    if (b4 == 101) { if (b5 == 100) { if (b6 == 0) { return 0 - 18; } } } } } } }
     # cstring → 'c','s','t','r','i','n','g',0
     if (b0 == 99) { if (b1 == 115) { if (b2 == 116) { if (b3 == 114) {
-        if (b4 == 105) { if (b5 == 110) { if (b6 == 103) { if (b7 == 0) { return 0 - 19; } } } } } } } }
+                    if (b4 == 105) { if (b5 == 110) { if (b6 == 103) { if (b7 == 0) { return 0 - 19; } } } } } } } }
     # v6.4.55: scalar f64 → 'f','6','4',0 — returned in xmm0 (SysV/Win64, NOT retptr).
     # Sentinel -9: free (−1..−8 = int scalars, −16..−19 = Result/Option/Tagged/cstring,
     # the SIMD band is <= −2048). Distinct from f64v2/f64v4 below (byte 3 = 'v' = 118).
@@ -4081,17 +4081,17 @@ fn _classify_return_type(S, rt_noff): i64 {
     # -2093 (desc 45) / -2125 (desc 77): moved off the flat -20/-21 that collided with
     # struct-ids 20/21 (v6.4.14 struct-sid/SIMD-sentinel fix). Decoded by _vec_desc.
     if (b0 == 102) { if (b1 == 54) { if (b2 == 52) { if (b3 == 118) {
-        if (b4 == 50) { if (b5 == 0) { return 0 - 2093; } }
-        if (b4 == 52) { if (b5 == 0) { return 0 - 2125; } }
-    } } } }
+                    if (b4 == 50) { if (b5 == 0) { return 0 - 2093; } }
+                    if (b4 == 52) { if (b5 == 0) { return 0 - 2125; } }
+                } } } }
     # f32v4 → 'f','3','2','v','4', 0 — 128-bit descriptor sentinel -2121 (SIMD Phase 1)
     if (b0 == 102) { if (b1 == 51) { if (b2 == 50) { if (b3 == 118) {
-        if (b4 == 52) { if (b5 == 0) { return 0 - 2121; } }
-    } } } }
+                    if (b4 == 52) { if (b5 == 0) { return 0 - 2121; } }
+                } } } }
     # f32v8 → 'f','3','2','v','8', 0 — 256-bit descriptor sentinel -2153 (SIMD Phase 4)
     if (b0 == 102) { if (b1 == 51) { if (b2 == 50) { if (b3 == 118) {
-        if (b4 == 56) { if (b5 == 0) { return 0 - 2153; } }
-    } } } }
+                    if (b4 == 56) { if (b5 == 0) { return 0 - 2153; } }
+                } } } }
     # v6.4.6 (Phase 3a) — integer vector return/param types (128-bit sentinels).
     # 'i'=105 'u'=117 'v'=118. i32v4/u32v4 = i/u,'3','2','v','4'.
     if (b0 == 105) { if (b1 == 51) { if (b2 == 50) { if (b3 == 118) { if (b4 == 52) { if (b5 == 0) { return 0 - 2122; } } } } } }  # i32v4
@@ -4951,27 +4951,27 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     }
     var _dup_off = L64(_fnt_offsets + fi * 8);
     if (_dup_off >= 0) {
-            # v6.5.37: remember the loser's arity + file; the comparison happens once this
-            # definition's own parameter list has been counted (see _fnt_params store below).
-            _dup_prev_pc = L64(_fnt_params + fi * 8);
-            _dup_prev_fid = GFFI(S, fi);
-            # v6.5.19 (agnosai filing) — TWO fixes to this one warning:
-            #  * `_err_head_at(S, _defstart_ti)` instead of `_err_head(S)`. The cursor
-            #    has already consumed `fn` and the NAME by here, so the plain head put
-            #    the column on the `(` of the parameter list rather than on the
-            #    definition. `_defstart_ti` is the `fn` keyword itself.
-            #  * name the file the FIRST definition came from. GFFI still holds it —
-            #    SFFI for THIS definition is written further down, after `fi` resolves —
-            #    so the consumer gets both ends of the collision instead of having to
-            #    infer "which copy wins" from a single position, which is the wrong
-            #    inference the filing had to retract twice.
-            syscall(SYS_WRITE, 2, "warning:", 8);
-            _err_head_at(S, _defstart_ti);
-            syscall(SYS_WRITE, 2, ": duplicate fn '", 16);
-            PRSTR(S + 0xEC00000 + noff);
-            syscall(SYS_WRITE, 2, "' (last definition wins; first defined in ", 42);
-            _fm_print_fid(S, GFFI(S, fi));
-            syscall(SYS_WRITE, 2, ")\n", 2);
+        # v6.5.37: remember the loser's arity + file; the comparison happens once this
+        # definition's own parameter list has been counted (see _fnt_params store below).
+        _dup_prev_pc = L64(_fnt_params + fi * 8);
+        _dup_prev_fid = GFFI(S, fi);
+        # v6.5.19 (agnosai filing) — TWO fixes to this one warning:
+        #  * `_err_head_at(S, _defstart_ti)` instead of `_err_head(S)`. The cursor
+        #    has already consumed `fn` and the NAME by here, so the plain head put
+        #    the column on the `(` of the parameter list rather than on the
+        #    definition. `_defstart_ti` is the `fn` keyword itself.
+        #  * name the file the FIRST definition came from. GFFI still holds it —
+        #    SFFI for THIS definition is written further down, after `fi` resolves —
+        #    so the consumer gets both ends of the collision instead of having to
+        #    infer "which copy wins" from a single position, which is the wrong
+        #    inference the filing had to retract twice.
+        syscall(SYS_WRITE, 2, "warning:", 8);
+        _err_head_at(S, _defstart_ti);
+        syscall(SYS_WRITE, 2, ": duplicate fn '", 16);
+        PRSTR(S + 0xEC00000 + noff);
+        syscall(SYS_WRITE, 2, "' (last definition wins; first defined in ", 42);
+        _fm_print_fid(S, GFFI(S, fi));
+        syscall(SYS_WRITE, 2, ")\n", 2);
     }
     if (_gtp != 0) { SFTP(S, fi, _gtp); }   # v6.3.9 (F-fns): record this fn's <T> names
     if (_gtp != 0) { SFDS(S, fi, _defstart_ti + 1); }   # v6.3.10: def-start +1 (0 = unrecorded; token 0 is valid)
@@ -5616,9 +5616,9 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # tparam to a scalar → pt_sid stays 0, byte-identical). BASE + default never enter.
     var _b3_pl_bound = 0;
     if (_MONOMORPH_OK == 1) { if (_inst_conc0 != 0) { if (GFTP(S, fi) != 0) {
-        _bind_generic_call(S, fi, _inst_conc0, _inst_conc1);
-        _b3_pl_bound = 1;
-    } } }
+                _bind_generic_call(S, fi, _inst_conc0, _inst_conc1);
+                _b3_pl_bound = 1;
+            } } }
     if (PEEKT(S) != 11) {
         var pgo = 1;
         while (pgo == 1) {
@@ -5982,45 +5982,45 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
             _parse_multiret_sig(S, fi, 0);
             _cur_fn_ret_scalar = MULTIRET_SID;
         } else {
-        if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
-        var rt_noff = PEEKV(S);
-        # v6.3.5 CO-01 — classify the return type via the shared
-        # _classify_return_type so the pass-1 _prescan_fn_sig records the
-        # identical struct-return / scalar ABI. Positive = struct sid;
-        # negative = scalar/extended encoding; 0 = unrecognized.
-        var _rtc = _classify_return_type(S, rt_noff);
-        if (_rtc == 0) {
-            # v6.3.9 (F-fns): `: T` where T is a captured type-param is a valid
-            # GENERIC return. The base signature treats it as an i64-scalar return
-            # (-8); the concrete return is per-instantiation (the inline-replay body
-            # leaves the value in rax). Struct-typed generic returns (retptr ABI)
-            # ride the struct-interaction work (v6.3.10). Non-tparam unknowns error.
-            if (_is_tparam_of(S, fi, rt_noff) == 1) { _rtc = 0 - 8; }
-            # v6.5.19: `: T` where T is a struct declared in a SIBLING FILE is a
-            # RESOLUTION failure, and under --syntax-only it must not become an error at
-            # all. Measured on agnosai, which BUILDS GREEN yet had 3 of its files
-            # condemned by `cyrius lint`: this ERR_MSG sets _panic, _sync_skip then
-            # resyncs mid-declaration, and the desynced parse MANUFACTURES
-            # `expected ';', got '='` — which IS in the syntax class, so lint refused a
-            # module whose only sin was lacking its includes. Same shape as the struct
-            # FIELD sites fixed earlier this release, at the return-type site they
-            # missed; and the same cascade hazard `_syntax_only`'s comment documents.
-            # Treating it as an i64 scalar return keeps the token stream in sync, which
-            # is all the pre-pass needs. A real build is untouched — _syntax_only is 0.
-            elif (_syntax_only == 1) { _rtc = 0 - 8; }
-            else {
-                ERR_MSG(S, "fn return type must be struct or i8/i16/i32/i64/Result/Option/Tagged/cstring/f64/f64v2/f64v4", 92);
+            if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
+            var rt_noff = PEEKV(S);
+            # v6.3.5 CO-01 — classify the return type via the shared
+            # _classify_return_type so the pass-1 _prescan_fn_sig records the
+            # identical struct-return / scalar ABI. Positive = struct sid;
+            # negative = scalar/extended encoding; 0 = unrecognized.
+            var _rtc = _classify_return_type(S, rt_noff);
+            if (_rtc == 0) {
+                # v6.3.9 (F-fns): `: T` where T is a captured type-param is a valid
+                # GENERIC return. The base signature treats it as an i64-scalar return
+                # (-8); the concrete return is per-instantiation (the inline-replay body
+                # leaves the value in rax). Struct-typed generic returns (retptr ABI)
+                # ride the struct-interaction work (v6.3.10). Non-tparam unknowns error.
+                if (_is_tparam_of(S, fi, rt_noff) == 1) { _rtc = 0 - 8; }
+                # v6.5.19: `: T` where T is a struct declared in a SIBLING FILE is a
+                # RESOLUTION failure, and under --syntax-only it must not become an error at
+                # all. Measured on agnosai, which BUILDS GREEN yet had 3 of its files
+                # condemned by `cyrius lint`: this ERR_MSG sets _panic, _sync_skip then
+                # resyncs mid-declaration, and the desynced parse MANUFACTURES
+                # `expected ';', got '='` — which IS in the syntax class, so lint refused a
+                # module whose only sin was lacking its includes. Same shape as the struct
+                # FIELD sites fixed earlier this release, at the return-type site they
+                # missed; and the same cascade hazard `_syntax_only`'s comment documents.
+                # Treating it as an i64 scalar return keeps the token stream in sync, which
+                # is all the pre-pass needs. A real build is untouched — _syntax_only is 0.
+                elif (_syntax_only == 1) { _rtc = 0 - 8; }
+                else {
+                    ERR_MSG(S, "fn return type must be struct or i8/i16/i32/i64/Result/Option/Tagged/cstring/f64/f64v2/f64v4", 92);
+                }
             }
-        }
-        SFRS(S, fi, _rtc);
-        if (_rtc > 0) {
-            _cur_fn_ret_sid = _rtc;
-            STI(S, GTI(S) + 1);
-            SKIP_GENERICS(S);
-        } else {
-            _cur_fn_ret_scalar = _rtc;
-            STI(S, GTI(S) + 1);
-        }
+            SFRS(S, fi, _rtc);
+            if (_rtc > 0) {
+                _cur_fn_ret_sid = _rtc;
+                STI(S, GTI(S) + 1);
+                SKIP_GENERICS(S);
+            } else {
+                _cur_fn_ret_scalar = _rtc;
+                STI(S, GTI(S) + 1);
+            }
         }
     }
     # 6.6.6 — the Future carries one i64, so neither a by-value struct return nor a value-form
@@ -6553,33 +6553,33 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                     var ra_k = 0;
                     if (load8(_codebuf_base + ra_s) == 0x48) { ra_k = _ra_plain_slot_mov(ra_s); }
                     if (ra_k != 0) {
-                                # Decode disp32 → local idx. Only [rbp+neg]
-                                # slots are user locals; positive disps are
-                                # stack args above rbp and ignored.
-                                var ra_d = load32(_codebuf_base + ra_s + 3);
-                                # Sign-extend the 32-bit signed disp.
-                                if (ra_d >= 0x80000000) { ra_d = ra_d - 0x100000000; }
-                                if (ra_d < 0) {
-                                    # disp = -(idx+1+N)*8 - stash where N = _cur_fn_regalloc
-                                    # and stash = _cur_fn_ret_stash (retptr slot, bytes), so
-                                    # idx = (-ra_d - stash)/8 - 1 - N. v6.4.31: the `- stash`
-                                    # term was missing → on a retptr-returning fn (stash=8:
-                                    # >16B struct OR — since .31 — any SIMD return) every
-                                    # local's refs mapped one slot high, defeating the
-                                    # `iv_li = pc` param exclusion so a homed-not-stored param
-                                    # got a register with no init (garbage). No-op when stash=0.
-                                    var ra_idx = (0 - ra_d - _cur_fn_ret_stash) / 8 - 1 - _cur_fn_regalloc;
-                                    if (ra_idx >= pc) {
-                                        if (ra_idx < ra_flc) {
-                                            var ra_cur = load64(&ra_counts + ra_idx * 8);
-                                            store64(&ra_counts + ra_idx * 8, ra_cur + 1);
-                                            # v5.6.19 O4a: track first/last CP for this local.
-                                            if (load64(&ra_first + ra_idx * 8) == (0 - 1)) {
-                                                store64(&ra_first + ra_idx * 8, ra_s);
-                                            }
-                                            store64(&ra_last + ra_idx * 8, ra_s);
-                                        } }
-                                }
+                        # Decode disp32 → local idx. Only [rbp+neg]
+                        # slots are user locals; positive disps are
+                        # stack args above rbp and ignored.
+                        var ra_d = load32(_codebuf_base + ra_s + 3);
+                        # Sign-extend the 32-bit signed disp.
+                        if (ra_d >= 0x80000000) { ra_d = ra_d - 0x100000000; }
+                        if (ra_d < 0) {
+                            # disp = -(idx+1+N)*8 - stash where N = _cur_fn_regalloc
+                            # and stash = _cur_fn_ret_stash (retptr slot, bytes), so
+                            # idx = (-ra_d - stash)/8 - 1 - N. v6.4.31: the `- stash`
+                            # term was missing → on a retptr-returning fn (stash=8:
+                            # >16B struct OR — since .31 — any SIMD return) every
+                            # local's refs mapped one slot high, defeating the
+                            # `iv_li = pc` param exclusion so a homed-not-stored param
+                            # got a register with no init (garbage). No-op when stash=0.
+                            var ra_idx = (0 - ra_d - _cur_fn_ret_stash) / 8 - 1 - _cur_fn_regalloc;
+                            if (ra_idx >= pc) {
+                                if (ra_idx < ra_flc) {
+                                    var ra_cur = load64(&ra_counts + ra_idx * 8);
+                                    store64(&ra_counts + ra_idx * 8, ra_cur + 1);
+                                    # v5.6.19 O4a: track first/last CP for this local.
+                                    if (load64(&ra_first + ra_idx * 8) == (0 - 1)) {
+                                        store64(&ra_first + ra_idx * 8, ra_s);
+                                    }
+                                    store64(&ra_last + ra_idx * 8, ra_s);
+                                } }
+                        }
                     }
                     ra_s = ra_s + 1;
                 }
@@ -6986,42 +6986,42 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                         var op1 = 0;
                         if (load8(_codebuf_base + ra_p) == 0x48) { op1 = _ra_plain_slot_mov(ra_p); }
                         if (op1 != 0) {
-                                if (load32(_codebuf_base + ra_p + 3) == hot_disp32) {
-                                    if (op1 == 0x8B) {
-                                        # mov rax,[rbp+disp] → mov rax,REG; 4-byte NOP
-                                        store8(_codebuf_base + ra_p + 0, lb0);
-                                        store8(_codebuf_base + ra_p + 1, lb1);
-                                        store8(_codebuf_base + ra_p + 2, lb2);
-                                        store8(_codebuf_base + ra_p + 3, 0x0F);
-                                        store8(_codebuf_base + ra_p + 4, 0x1F);
-                                        store8(_codebuf_base + ra_p + 5, 0x40);
-                                        store8(_codebuf_base + ra_p + 6, 0x00);
-                                        # v5.6.27: record NOP run at ra_p+3, len 4
-                                        var _nrc_l = L64(S + 0x1A2008);
-                                        if (_nrc_l < 1024) {
-                                            S64(S + 0x1A2010 + _nrc_l * 16, ra_p + 3);
-                                            S64(S + 0x1A2010 + _nrc_l * 16 + 8, 4);
-                                            S64(S + 0x1A2008, _nrc_l + 1);
-                                        }
+                            if (load32(_codebuf_base + ra_p + 3) == hot_disp32) {
+                                if (op1 == 0x8B) {
+                                    # mov rax,[rbp+disp] → mov rax,REG; 4-byte NOP
+                                    store8(_codebuf_base + ra_p + 0, lb0);
+                                    store8(_codebuf_base + ra_p + 1, lb1);
+                                    store8(_codebuf_base + ra_p + 2, lb2);
+                                    store8(_codebuf_base + ra_p + 3, 0x0F);
+                                    store8(_codebuf_base + ra_p + 4, 0x1F);
+                                    store8(_codebuf_base + ra_p + 5, 0x40);
+                                    store8(_codebuf_base + ra_p + 6, 0x00);
+                                    # v5.6.27: record NOP run at ra_p+3, len 4
+                                    var _nrc_l = L64(S + 0x1A2008);
+                                    if (_nrc_l < 1024) {
+                                        S64(S + 0x1A2010 + _nrc_l * 16, ra_p + 3);
+                                        S64(S + 0x1A2010 + _nrc_l * 16 + 8, 4);
+                                        S64(S + 0x1A2008, _nrc_l + 1);
                                     }
-                                    if (op1 == 0x89) {
-                                        # mov [rbp+disp],rax → mov REG,rax; 4-byte NOP
-                                        store8(_codebuf_base + ra_p + 0, sb0);
-                                        store8(_codebuf_base + ra_p + 1, sb1);
-                                        store8(_codebuf_base + ra_p + 2, sb2);
-                                        store8(_codebuf_base + ra_p + 3, 0x0F);
-                                        store8(_codebuf_base + ra_p + 4, 0x1F);
-                                        store8(_codebuf_base + ra_p + 5, 0x40);
-                                        store8(_codebuf_base + ra_p + 6, 0x00);
-                                        # v5.6.27: record NOP run at ra_p+3, len 4
-                                        var _nrc_s = L64(S + 0x1A2008);
-                                        if (_nrc_s < 1024) {
-                                            S64(S + 0x1A2010 + _nrc_s * 16, ra_p + 3);
-                                            S64(S + 0x1A2010 + _nrc_s * 16 + 8, 4);
-                                            S64(S + 0x1A2008, _nrc_s + 1);
-                                        }
+                                }
+                                if (op1 == 0x89) {
+                                    # mov [rbp+disp],rax → mov REG,rax; 4-byte NOP
+                                    store8(_codebuf_base + ra_p + 0, sb0);
+                                    store8(_codebuf_base + ra_p + 1, sb1);
+                                    store8(_codebuf_base + ra_p + 2, sb2);
+                                    store8(_codebuf_base + ra_p + 3, 0x0F);
+                                    store8(_codebuf_base + ra_p + 4, 0x1F);
+                                    store8(_codebuf_base + ra_p + 5, 0x40);
+                                    store8(_codebuf_base + ra_p + 6, 0x00);
+                                    # v5.6.27: record NOP run at ra_p+3, len 4
+                                    var _nrc_s = L64(S + 0x1A2008);
+                                    if (_nrc_s < 1024) {
+                                        S64(S + 0x1A2010 + _nrc_s * 16, ra_p + 3);
+                                        S64(S + 0x1A2010 + _nrc_s * 16 + 8, 4);
+                                        S64(S + 0x1A2008, _nrc_s + 1);
                                     }
-                                } }
+                                }
+                            } }
                         ra_p = ra_p + 1;
                     }
                     ra_ai = ra_ai + 1;

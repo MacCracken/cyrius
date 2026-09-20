@@ -571,8 +571,8 @@ fn TS_EMIT_INT(ts_base, src, src_len, start): i64 {
     # Only valid for decimal integers (skip 0x/0o/0b).
     var is_float = 0;
     if (c0 != 48 || (p + 1 >= src_len) || (load8(src + p + 1) != 120 && load8(src + p + 1) != 88
-    && load8(src + p + 1) != 111 && load8(src + p + 1) != 79
-    && load8(src + p + 1) != 98 && load8(src + p + 1) != 66)) {
+        && load8(src + p + 1) != 111 && load8(src + p + 1) != 79
+        && load8(src + p + 1) != 98 && load8(src + p + 1) != 66)) {
         # Fractional part: `.\d+`
         if (end < src_len && load8(src + end) == 46) {
             if (end + 1 < src_len && TS_ISDIGIT(load8(src + end + 1)) == 1) {

@@ -135,20 +135,20 @@ fn ETLSSET_PE(S) { return 0; }       #  resolution)
 fn ESLEEP_PE(S) { return 0; }        # v6.0.65 Sleep reroute (x86-only real impl)
 fn ECMDTOARGV_PE(S) { return 0; }    # v6.0.69 §3 shell32!CommandLineToArgvW reroute
 fn ELOCALFREE_PE(S) { return 0; }    #  + kernel32!LocalFree (x86-only real impl;
-                                     #  aarch64 stubs for parse_expr.cyr symbol resolution)
+#  aarch64 stubs for parse_expr.cyr symbol resolution)
 fn ECREATEDXGI_PE(S) { return 0; }   # v6.0.70 §0 dxgi!CreateDXGIFactory1 (x86-only)
 fn EGETMODH_PE(S) { return 0; }      # v6.0.71 kernel32!GetModuleHandleA (x86-only)
 fn EGETPROC_PE(S) { return 0; }      # v6.0.71 kernel32!GetProcAddress (x86-only)
 fn EGETENV_PE(S) { return 0; }       # v6.0.85 kernel32!GetEnvironmentVariableA (x86-only)
 fn ECALLPTR_PE(S, n) { return 0; }       # v6.0.86 stack-callee PE callptr (x86-only;
-                                     # aarch64 callptr uses ECALLPOPS+ECALLIND directly)
+# aarch64 callptr uses ECALLPOPS+ECALLIND directly)
 fn EPE_SYSCALL_DYNAMIC(S, argc): i64 { return 0; }  # v6.1.16 runtime PE syscall
-                                     # dispatch for var-number syscalls (x86-only
-                                     # real impl; aarch64 stub for parse_expr.cyr
-                                     # symbol resolution — dead under _TARGET_PE==0)
+# dispatch for var-number syscalls (x86-only
+# real impl; aarch64 stub for parse_expr.cyr
+# symbol resolution — dead under _TARGET_PE==0)
 fn ENANOSLEEP_PE(S): i64 { return 0; }  # v6.1.17 nanosleep(35)→Sleep reroute
-                                     # (x86-only real impl; aarch64 stub for
-                                     # parse_expr.cyr symbol resolution)
+# (x86-only real impl; aarch64 stub for
+# parse_expr.cyr symbol resolution)
 fn EFINDFIRST_PE(S) { return 0; }    # v6.1.18 FindFirstFileW/FindNextFileW/
 fn EFINDNEXT_PE(S)  { return 0; }    # FindClose/GetFileAttributesW dir-listing
 fn EFINDCLOSE_PE(S) { return 0; }    # reroutes (x86-only real impl; aarch64

@@ -88,8 +88,13 @@ src/main|the seven per-target compiler forks, deliberately unformatted (CLAUDE.m
 
 # ── ratchets: prefix|ceiling|reason. Failing count must be <= ceiling AND the ceiling
 #    must not be stale (a count strictly below it means the ceiling was not lowered).
-RATCHET='src/|16|compiler internals — 6.6.6 bite 23c scoped to cbt/ + programs/; reformatting src/ conflicts with every in-flight compiler lane. Lower this as they are fixed.
-lib/|2|VENDORED folds (sigil, mabda). CLAUDE.md: fix the SOURCE repo and re-vendor — a fix applied to the fold evaporates at the next `cyrius deps`.'
+RATCHET='lib/|2|VENDORED folds (sigil, mabda). CLAUDE.md: fix the SOURCE repo and re-vendor — a fix applied to the fold evaporates at the next `cyrius deps`.'
+# The `src/|16` ratchet is GONE, not lowered: bite 23c could only scope itself to cbt/ and
+# programs/ while five compiler lanes were editing src/, so the 16 files it could not touch
+# were parked here. They were swept at the 6.6.6 integration, once the lanes had merged, and
+# the reformat was proved to change nothing: the compiler built from the reformatted tree is
+# BYTE-IDENTICAL to the one built before it. src/main*.cyr stay exempt (the forks are
+# deliberately unformatted, see the EXEMPT list). CHANGELOG [6.6.6]
 
 # ⚠ Both helpers loop over a WORD LIST, never `printf | while`: a `while` on the right of
 # a pipe runs in a SUBSHELL, so its `exit 0` / `break` cannot answer for the caller. The

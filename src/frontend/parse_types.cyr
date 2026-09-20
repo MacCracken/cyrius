@@ -438,12 +438,12 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
                         # data, and it propagates through `return` so a forwarding wrapper is
                         # flagged too.
                         if (is_stack_enum == 1) { if (ctor_arity == 1) {
-                            SFLG(S, cfi, GFLG(S, cfi) | 256);
-                            # v6.6.0 — a new pair-returning constructor exists, so the
-                            # forward-reference propagation in parse.cyr must run again: anything
-                            # it already decided was computed without knowing about this one.
-                            _pair_prescan_done = 0;
-                        } }
+                                SFLG(S, cfi, GFLG(S, cfi) | 256);
+                                # v6.6.0 — a new pair-returning constructor exists, so the
+                                # forward-reference propagation in parse.cyr must run again: anything
+                                # it already decided was computed without knowing about this one.
+                                _pair_prescan_done = 0;
+                            } }
                         S64(_fnt_offsets + cfi * 8, GCP(S));
                         # v6.2.41 — register the constructor's REAL arity (was a
                         # hardcoded 1 — a dead sentinel; _fnt_params' only reader
@@ -490,35 +490,35 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
                             EPATCHFRAME(S, ctor_frame, 16);
                             EFNEPI(S);
                         } else {
-                        EMOVI(S, 8 + ctor_arity * 8); EPUSHR(S);
-                        ECALLPOPS(S, 1);
-                        NPOS_GUARD(S, 8);
-                        var awnp = GNPOS(S);
-                        store8(S + 0xEC00000 + awnp, 97); store8(S + 0xEC00000 + awnp + 1, 108);
-                        store8(S + 0xEC00000 + awnp + 2, 108); store8(S + 0xEC00000 + awnp + 3, 111);
-                        store8(S + 0xEC00000 + awnp + 4, 99); store8(S + 0xEC00000 + awnp + 5, 0);
-                        SNPOS(S, awnp + 6);
-                        var afi = FINDFN(S, awnp);
-                        if (afi < 0) { afi = REGFN(S, awnp); }
-                        var afoff = L64(_fnt_offsets + afi * 8);
-                        if (afoff >= 0) { ECALLTO(S, afoff); } else { ECALLFIX(S, afi); }
-                        ECALLCLEAN(S, 1);
-                        # v5.8.21 bite: alloc-ptr lives in slot `arity`
-                        # (slots 0..arity-1 hold params). Tag at +0,
-                        # payloads at +8, +16, ... For arity=1 this
-                        # produces byte-identical output to the prior
-                        # hardcoded path: slot 1, EMOVI(8), one store.
-                        EFLSTORE(S, ctor_arity);
-                        EFLLOAD(S, ctor_arity); EPUSHR(S); EMOVI(S, val); EPOPC(S); ESTORE64(S);
-                        var ctor_si = 0;
-                        while (ctor_si < ctor_arity) {
-                            EFLLOAD(S, ctor_arity); EPUSHR(S); EMOVI(S, 8 + ctor_si * 8); EMOVCA(S); EPOPR(S); EADDR(S);
-                            EPUSHR(S); EFLLOAD(S, ctor_si); EPOPC(S); ESTORE64(S);
-                            ctor_si = ctor_si + 1;
-                        }
-                        EPATCHFRAME(S, ctor_frame, (ctor_arity + 1) * 16);
-                        EFLLOAD(S, ctor_arity);
-                        EFNEPI(S);
+                            EMOVI(S, 8 + ctor_arity * 8); EPUSHR(S);
+                            ECALLPOPS(S, 1);
+                            NPOS_GUARD(S, 8);
+                            var awnp = GNPOS(S);
+                            store8(S + 0xEC00000 + awnp, 97); store8(S + 0xEC00000 + awnp + 1, 108);
+                            store8(S + 0xEC00000 + awnp + 2, 108); store8(S + 0xEC00000 + awnp + 3, 111);
+                            store8(S + 0xEC00000 + awnp + 4, 99); store8(S + 0xEC00000 + awnp + 5, 0);
+                            SNPOS(S, awnp + 6);
+                            var afi = FINDFN(S, awnp);
+                            if (afi < 0) { afi = REGFN(S, awnp); }
+                            var afoff = L64(_fnt_offsets + afi * 8);
+                            if (afoff >= 0) { ECALLTO(S, afoff); } else { ECALLFIX(S, afi); }
+                            ECALLCLEAN(S, 1);
+                            # v5.8.21 bite: alloc-ptr lives in slot `arity`
+                            # (slots 0..arity-1 hold params). Tag at +0,
+                            # payloads at +8, +16, ... For arity=1 this
+                            # produces byte-identical output to the prior
+                            # hardcoded path: slot 1, EMOVI(8), one store.
+                            EFLSTORE(S, ctor_arity);
+                            EFLLOAD(S, ctor_arity); EPUSHR(S); EMOVI(S, val); EPOPC(S); ESTORE64(S);
+                            var ctor_si = 0;
+                            while (ctor_si < ctor_arity) {
+                                EFLLOAD(S, ctor_arity); EPUSHR(S); EMOVI(S, 8 + ctor_si * 8); EMOVCA(S); EPOPR(S); EADDR(S);
+                                EPUSHR(S); EFLLOAD(S, ctor_si); EPOPC(S); ESTORE64(S);
+                                ctor_si = ctor_si + 1;
+                            }
+                            EPATCHFRAME(S, ctor_frame, (ctor_arity + 1) * 16);
+                            EFLLOAD(S, ctor_arity);
+                            EFNEPI(S);
                         }
                     }
                 }
@@ -898,10 +898,10 @@ fn _findvar_core(S, noff): i64 {
         # still skipped) and measured ~4 % of the whole self-compile: this loop is the hottest
         # in the front end. CHANGELOG [6.6.5]
         if (STREQ(S, stored, noff) == 1) { if (GVDEAD(S, vi) == 0) { if (_fv_hidden(vi) == 1) {
-            if (hid < 0) { hid = vi; }
-        } else {
-            return vi;
-        } } }
+                    if (hid < 0) { hid = vi; }
+                } else {
+                    return vi;
+                } } }
         vi = vi - 1;
     }
     return hid;
@@ -1034,14 +1034,14 @@ fn CHKDUPVAL(S, noff, newval): i64 {
             # wrong on every target whose numbers differ, and the author of a cross-compiled
             # source cannot know which targets that will be.
             if (load8(S + 0xEC00000 + noff) == 83) {
-            if (load8(S + 0xEC00000 + noff + 1) == 89) {
-            if (load8(S + 0xEC00000 + noff + 2) == 83) {
-            if (load8(S + 0xEC00000 + noff + 3) == 95) {
-                syscall(SYS_WRITE, 2, "note: 'SYS_*' names a syscall number, and the stdlib's is ARCH-AWARE\n", 69);
-                syscall(SYS_WRITE, 2, "      overriding it emits a DIFFERENT syscall on every target whose native number differs\n", 90);
-                syscall(SYS_WRITE, 2, "      (aarch64, macOS) - the build succeeds and the wrong call is made silently.\n", 81);
-                syscall(SYS_WRITE, 2, "      Drop the local definition and include lib/syscalls.cyr instead.\n", 70);
-            } } } }
+                if (load8(S + 0xEC00000 + noff + 1) == 89) {
+                    if (load8(S + 0xEC00000 + noff + 2) == 83) {
+                        if (load8(S + 0xEC00000 + noff + 3) == 95) {
+                            syscall(SYS_WRITE, 2, "note: 'SYS_*' names a syscall number, and the stdlib's is ARCH-AWARE\n", 69);
+                            syscall(SYS_WRITE, 2, "      overriding it emits a DIFFERENT syscall on every target whose native number differs\n", 90);
+                            syscall(SYS_WRITE, 2, "      (aarch64, macOS) - the build succeeds and the wrong call is made silently.\n", 81);
+                            syscall(SYS_WRITE, 2, "      Drop the local definition and include lib/syscalls.cyr instead.\n", 70);
+                        } } } }
         }
     }
     return 0;

@@ -702,12 +702,12 @@ fn _pp_note_marker(tmp, dip, bl): i64 {
     var bp = qpos + 1;
     var bv = 0;
     if (bp < bl) { if (load8(tmp + bp) == 32) {
-        bp = bp + 1;
-        while (bp < bl && load8(tmp + bp) >= 48 && load8(tmp + bp) <= 57) {
-            bv = bv * 10 + (load8(tmp + bp) - 48);
             bp = bp + 1;
-        }
-    } }
+            while (bp < bl && load8(tmp + bp) >= 48 && load8(tmp + bp) <= 57) {
+                bv = bv * 10 + (load8(tmp + bp) - 48);
+                bp = bp + 1;
+            }
+        } }
     if (bv < 1) { bv = 1; }
     _pp_curfile_base = bv;
     while (bp < bl && load8(tmp + bp) != 10) { bp = bp + 1; }
@@ -1606,44 +1606,44 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
         _vqi = _vqi + 1;
     }
     if (_needi == 1) { if (_pp_vecdec_int_done == 0) {
-        op = op + PP_EMIT_STR(out, op, "fn _cy_vecdec_int(bp) {\nvar v = vec_new();\nvar p = 0;\n");
-        op = op + PP_EMIT_STR(out, op, "while (load8(bp + p) != 0 && load8(bp + p) != 91) { p = p + 1; }\n");
-        op = op + PP_EMIT_STR(out, op, "if (load8(bp + p) == 91) { p = p + 1;\nwhile (1 == 1) {\n");
-        op = op + PP_EMIT_STR(out, op, "while (load8(bp + p) == 32 || load8(bp + p) == 10 || load8(bp + p) == 13 || load8(bp + p) == 9 || load8(bp + p) == 44) { p = p + 1; }\n");
-        op = op + PP_EMIT_STR(out, op, "var c = load8(bp + p);\nif (c == 93 || c == 0) { break; }\n");
-        op = op + PP_EMIT_STR(out, op, "var es = p;\nvar neg = 0; if (c == 45) { neg = 1; p = p + 1; }\nvar iv = 0;\n");
-        op = op + PP_EMIT_STR(out, op, "while (load8(bp + p) >= 48 && load8(bp + p) <= 57) { iv = iv * 10 + load8(bp + p) - 48; p = p + 1; }\n");
-        # Forward-progress guard: a non-consumable byte (e.g. '.'/'+'/letter) that is
-        # neither ']'/NUL/ws/comma nor a digit/'-' would otherwise leave p unmoved and
-        # spin the outer loop forever (vec_push spam → allocator abort). If nothing was
-        # consumed, skip the byte + the push; malformed JSON degrades, never crashes.
-        op = op + PP_EMIT_STR(out, op, "if (p == es) { p = p + 1; } else { if (neg == 1) { iv = 0 - iv; } vec_push(v, iv); }\n}\n}\nreturn v;\n}\n");
-        _pp_vecdec_int_done = 1;
-    } }
+            op = op + PP_EMIT_STR(out, op, "fn _cy_vecdec_int(bp) {\nvar v = vec_new();\nvar p = 0;\n");
+            op = op + PP_EMIT_STR(out, op, "while (load8(bp + p) != 0 && load8(bp + p) != 91) { p = p + 1; }\n");
+            op = op + PP_EMIT_STR(out, op, "if (load8(bp + p) == 91) { p = p + 1;\nwhile (1 == 1) {\n");
+            op = op + PP_EMIT_STR(out, op, "while (load8(bp + p) == 32 || load8(bp + p) == 10 || load8(bp + p) == 13 || load8(bp + p) == 9 || load8(bp + p) == 44) { p = p + 1; }\n");
+            op = op + PP_EMIT_STR(out, op, "var c = load8(bp + p);\nif (c == 93 || c == 0) { break; }\n");
+            op = op + PP_EMIT_STR(out, op, "var es = p;\nvar neg = 0; if (c == 45) { neg = 1; p = p + 1; }\nvar iv = 0;\n");
+            op = op + PP_EMIT_STR(out, op, "while (load8(bp + p) >= 48 && load8(bp + p) <= 57) { iv = iv * 10 + load8(bp + p) - 48; p = p + 1; }\n");
+            # Forward-progress guard: a non-consumable byte (e.g. '.'/'+'/letter) that is
+            # neither ']'/NUL/ws/comma nor a digit/'-' would otherwise leave p unmoved and
+            # spin the outer loop forever (vec_push spam → allocator abort). If nothing was
+            # consumed, skip the byte + the push; malformed JSON degrades, never crashes.
+            op = op + PP_EMIT_STR(out, op, "if (p == es) { p = p + 1; } else { if (neg == 1) { iv = 0 - iv; } vec_push(v, iv); }\n}\n}\nreturn v;\n}\n");
+            _pp_vecdec_int_done = 1;
+        } }
     if (_needf == 1) { if (_pp_vecdec_f64_done == 0) {
-        op = op + PP_EMIT_STR(out, op, "fn _cy_vecdec_f64(bp) {\nvar v = vec_new();\nvar p = 0;\n");
-        op = op + PP_EMIT_STR(out, op, "while (load8(bp + p) != 0 && load8(bp + p) != 91) { p = p + 1; }\n");
-        op = op + PP_EMIT_STR(out, op, "if (load8(bp + p) == 91) { p = p + 1;\nwhile (1 == 1) {\n");
-        op = op + PP_EMIT_STR(out, op, "while (load8(bp + p) == 32 || load8(bp + p) == 10 || load8(bp + p) == 13 || load8(bp + p) == 9 || load8(bp + p) == 44) { p = p + 1; }\n");
-        op = op + PP_EMIT_STR(out, op, "var c = load8(bp + p);\nif (c == 93 || c == 0) { break; }\nvar vs = p;\n");
-        op = op + PP_EMIT_STR(out, op, "while (1 == 1) { var fc = load8(bp + p); if ((fc >= 48 && fc <= 57) || fc == 45 || fc == 43 || fc == 46 || fc == 101 || fc == 69) { p = p + 1; } else { break; } }\n");
-        # Forward-progress guard (mirrors _cy_vecdec_int): a byte outside [0-9-+.eE] and
-        # not ']'/NUL/ws/comma (e.g. the 'n' of `null`) captures zero token chars, so
-        # skip it + the push rather than spinning the outer loop → allocator abort.
-        op = op + PP_EMIT_STR(out, op, "if (p == vs) { p = p + 1; } else { vec_push(v, bayan_f64_from_json(bp + vs)); }\n}\n}\nreturn v;\n}\n");
-        _pp_vecdec_f64_done = 1;
-    } }
+            op = op + PP_EMIT_STR(out, op, "fn _cy_vecdec_f64(bp) {\nvar v = vec_new();\nvar p = 0;\n");
+            op = op + PP_EMIT_STR(out, op, "while (load8(bp + p) != 0 && load8(bp + p) != 91) { p = p + 1; }\n");
+            op = op + PP_EMIT_STR(out, op, "if (load8(bp + p) == 91) { p = p + 1;\nwhile (1 == 1) {\n");
+            op = op + PP_EMIT_STR(out, op, "while (load8(bp + p) == 32 || load8(bp + p) == 10 || load8(bp + p) == 13 || load8(bp + p) == 9 || load8(bp + p) == 44) { p = p + 1; }\n");
+            op = op + PP_EMIT_STR(out, op, "var c = load8(bp + p);\nif (c == 93 || c == 0) { break; }\nvar vs = p;\n");
+            op = op + PP_EMIT_STR(out, op, "while (1 == 1) { var fc = load8(bp + p); if ((fc >= 48 && fc <= 57) || fc == 45 || fc == 43 || fc == 46 || fc == 101 || fc == 69) { p = p + 1; } else { break; } }\n");
+            # Forward-progress guard (mirrors _cy_vecdec_int): a byte outside [0-9-+.eE] and
+            # not ']'/NUL/ws/comma (e.g. the 'n' of `null`) captures zero token chars, so
+            # skip it + the push rather than spinning the outer loop → allocator abort.
+            op = op + PP_EMIT_STR(out, op, "if (p == vs) { p = p + 1; } else { vec_push(v, bayan_f64_from_json(bp + vs)); }\n}\n}\nreturn v;\n}\n");
+            _pp_vecdec_f64_done = 1;
+        } }
     if (_needsk == 1) { if (_pp_skipval_done == 0) {
-        # v6.4.x R3 — shared JSON value-skip: from position p in bp, walk past ONE JSON
-        # value (string-aware + bracket-depth-aware) and stop AT the value's terminator —
-        # a depth-0 ',' / '}' / ']' or NUL — without consuming it (the caller's loop does).
-        # Used to skip a non-array value for a Vec<struct> field (BUG-1) and a non-object
-        # array element (R-3) so an embedded '}'/']' in a string can't derail the parse.
-        op = op + PP_EMIT_STR(out, op, "fn _cy_json_skipval(bp, p) {\nvar sk = 0;\nvar si = 0;\nwhile (1 == 1) {\nvar sc = load8(bp + p);\nif (sc == 0) { break; }\n");
-        op = op + PP_EMIT_STR(out, op, "if (si == 1) {\nif (sc == 92) { p = p + 1; if (load8(bp + p) != 0) { p = p + 1; } } else { if (sc == 34) { si = 0; } p = p + 1; }\n} else {\n");
-        op = op + PP_EMIT_STR(out, op, "if (sc == 34) { si = 1; p = p + 1; }\nelif (sc == 123 || sc == 91) { sk = sk + 1; p = p + 1; }\nelif (sc == 125 || sc == 93) { if (sk == 0) { break; } sk = sk - 1; p = p + 1; }\nelif (sc == 44) { if (sk == 0) { break; } p = p + 1; }\nelse { p = p + 1; }\n}\n}\nreturn p;\n}\n");
-        _pp_skipval_done = 1;
-    } }
+            # v6.4.x R3 — shared JSON value-skip: from position p in bp, walk past ONE JSON
+            # value (string-aware + bracket-depth-aware) and stop AT the value's terminator —
+            # a depth-0 ',' / '}' / ']' or NUL — without consuming it (the caller's loop does).
+            # Used to skip a non-array value for a Vec<struct> field (BUG-1) and a non-object
+            # array element (R-3) so an embedded '}'/']' in a string can't derail the parse.
+            op = op + PP_EMIT_STR(out, op, "fn _cy_json_skipval(bp, p) {\nvar sk = 0;\nvar si = 0;\nwhile (1 == 1) {\nvar sc = load8(bp + p);\nif (sc == 0) { break; }\n");
+            op = op + PP_EMIT_STR(out, op, "if (si == 1) {\nif (sc == 92) { p = p + 1; if (load8(bp + p) != 0) { p = p + 1; } } else { if (sc == 34) { si = 0; } p = p + 1; }\n} else {\n");
+            op = op + PP_EMIT_STR(out, op, "if (sc == 34) { si = 1; p = p + 1; }\nelif (sc == 123 || sc == 91) { sk = sk + 1; p = p + 1; }\nelif (sc == 125 || sc == 93) { if (sk == 0) { break; } sk = sk - 1; p = p + 1; }\nelif (sc == 44) { if (sk == 0) { break; } p = p + 1; }\nelse { p = p + 1; }\n}\n}\nreturn p;\n}\n");
+            _pp_skipval_done = 1;
+        } }
     # === Emit Name_to_json (2-arg composable form) ===
     # fn Name_to_json(ptr, sb) { ... writes to caller's sb ... }
     # v5.9.31 (agnosys 1.1.12 follow-up): renamed from
@@ -1798,63 +1798,63 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
                     op = op + PP_EMIT_INT(out, op, fi);
                     op = op + PP_EMIT_STR(out, op, "), sb);\n");
                 } else { if (_vk == 200) {
-                    op = op + PP_EMIT_STR(out, op, "store8(&_dfb + bayan_f64_to_json(vec_get(_vh");
-                    op = op + PP_EMIT_INT(out, op, fi);
-                    op = op + PP_EMIT_STR(out, op, ", _vi");
-                    op = op + PP_EMIT_INT(out, op, fi);
-                    op = op + PP_EMIT_STR(out, op, "), &_dfb), 0);\nstr_builder_add_cstr(sb, &_dfb);\n");
-                } else {
-                    op = op + PP_EMIT_STR(out, op, "str_builder_add_int(sb, vec_get(_vh");
-                    op = op + PP_EMIT_INT(out, op, fi);
-                    op = op + PP_EMIT_STR(out, op, ", _vi");
-                    op = op + PP_EMIT_INT(out, op, fi);
-                    op = op + PP_EMIT_STR(out, op, "));\n");
-                } }
+                        op = op + PP_EMIT_STR(out, op, "store8(&_dfb + bayan_f64_to_json(vec_get(_vh");
+                        op = op + PP_EMIT_INT(out, op, fi);
+                        op = op + PP_EMIT_STR(out, op, ", _vi");
+                        op = op + PP_EMIT_INT(out, op, fi);
+                        op = op + PP_EMIT_STR(out, op, "), &_dfb), 0);\nstr_builder_add_cstr(sb, &_dfb);\n");
+                    } else {
+                        op = op + PP_EMIT_STR(out, op, "str_builder_add_int(sb, vec_get(_vh");
+                        op = op + PP_EMIT_INT(out, op, fi);
+                        op = op + PP_EMIT_STR(out, op, ", _vi");
+                        op = op + PP_EMIT_INT(out, op, fi);
+                        op = op + PP_EMIT_STR(out, op, "));\n");
+                    } }
                 op = op + PP_EMIT_STR(out, op, "_vi");
                 op = op + PP_EMIT_INT(out, op, fi);
                 op = op + PP_EMIT_STR(out, op, " = _vi");
                 op = op + PP_EMIT_INT(out, op, fi);
                 op = op + PP_EMIT_STR(out, op, " + 1;\n}\n}\nstr_builder_add_cstr(sb, \"]\");\n");
             } else { if (is_f64 == 1) {
-                # v6.3.40 — f64: fmt_float_buf(bits, &_dfb, 6) writes the decimal text
-                # + returns its length; null-terminate + append as a bare JSON number.
-                op = op + PP_EMIT_STR(out, op, "store8(&_dfb + bayan_f64_to_json(load64(ptr + ");
-                op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
-                op = op + PP_EMIT_STR(out, op, "), &_dfb), 0);\nstr_builder_add_cstr(sb, &_dfb);\n");
-            } else { if (is_str == 1) {
-                # v5.10.8 — Str field: emit RFC 8259-compliant
-                # quoted JSON string via the `str_builder_add_json_str`
-                # helper (lib/str.cyr). Pre-v5.10.8 the emit was
-                # raw `str_builder_add_cstr(sb, "\""); ... bytes ...
-                # str_builder_add_cstr(sb, "\"");` which let `"`
-                # `\` and control chars in the source string pass
-                # through unescaped → invalid JSON. Closes the
-                # v5.10.7 agnosys agent follow-up "JSON escaping"
-                # finding (kernel audit text routinely contains
-                # `"` and embedded newlines).
-                op = op + PP_EMIT_STR(out, op, "str_builder_add_json_str(sb, load64(ptr + ");
-                op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
-                op = op + PP_EMIT_STR(out, op, "));\n");
-            } else { if (prim_load > 0) {
-                # Primitive integer field: bare JSON number via
-                # str_builder_add_int + width-correct load. Mirrors
-                # the untyped-scalar branch below (which uses load64
-                # for raw 8-byte slots) but width-aware for narrow
-                # types.
-                op = op + PP_EMIT_STR(out, op, "str_builder_add_int(sb, load");
-                op = op + PP_EMIT_INT(out, op, prim_load);
-                op = op + PP_EMIT_STR(out, op, "(ptr + ");
-                op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
-                op = op + PP_EMIT_STR(out, op, "));\n");
-            } else {
-                # Nested struct: use composable 2-arg form.
-                # v5.9.31: matched the renamed top-level fn
-                # (Name_to_json, no `_sb` suffix).
-                op = op + PP_EMIT_STR(out, op, S + 0x1FE000 + fi * 32);
-                op = op + PP_EMIT_STR(out, op, "_to_json(ptr + ");
-                op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
-                op = op + PP_EMIT_STR(out, op, ", sb);\n");
-            } } } }
+                    # v6.3.40 — f64: fmt_float_buf(bits, &_dfb, 6) writes the decimal text
+                    # + returns its length; null-terminate + append as a bare JSON number.
+                    op = op + PP_EMIT_STR(out, op, "store8(&_dfb + bayan_f64_to_json(load64(ptr + ");
+                    op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
+                    op = op + PP_EMIT_STR(out, op, "), &_dfb), 0);\nstr_builder_add_cstr(sb, &_dfb);\n");
+                } else { if (is_str == 1) {
+                        # v5.10.8 — Str field: emit RFC 8259-compliant
+                        # quoted JSON string via the `str_builder_add_json_str`
+                        # helper (lib/str.cyr). Pre-v5.10.8 the emit was
+                        # raw `str_builder_add_cstr(sb, "\""); ... bytes ...
+                        # str_builder_add_cstr(sb, "\"");` which let `"`
+                        # `\` and control chars in the source string pass
+                        # through unescaped → invalid JSON. Closes the
+                        # v5.10.7 agnosys agent follow-up "JSON escaping"
+                        # finding (kernel audit text routinely contains
+                        # `"` and embedded newlines).
+                        op = op + PP_EMIT_STR(out, op, "str_builder_add_json_str(sb, load64(ptr + ");
+                        op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
+                        op = op + PP_EMIT_STR(out, op, "));\n");
+                    } else { if (prim_load > 0) {
+                            # Primitive integer field: bare JSON number via
+                            # str_builder_add_int + width-correct load. Mirrors
+                            # the untyped-scalar branch below (which uses load64
+                            # for raw 8-byte slots) but width-aware for narrow
+                            # types.
+                            op = op + PP_EMIT_STR(out, op, "str_builder_add_int(sb, load");
+                            op = op + PP_EMIT_INT(out, op, prim_load);
+                            op = op + PP_EMIT_STR(out, op, "(ptr + ");
+                            op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
+                            op = op + PP_EMIT_STR(out, op, "));\n");
+                        } else {
+                            # Nested struct: use composable 2-arg form.
+                            # v5.9.31: matched the renamed top-level fn
+                            # (Name_to_json, no `_sb` suffix).
+                            op = op + PP_EMIT_STR(out, op, S + 0x1FE000 + fi * 32);
+                            op = op + PP_EMIT_STR(out, op, "_to_json(ptr + ");
+                            op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
+                            op = op + PP_EMIT_STR(out, op, ", sb);\n");
+                        } } } }
         } else {
             # Scalar field: emit as bare integer (valid JSON number)
             op = op + PP_EMIT_STR(out, op, "str_builder_add_int(sb, load64(ptr + ");
@@ -1957,56 +1957,56 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
                     op = op + PP_EMIT_STR(out, op, ", vec_new()); }\n");
                 }
             } else { if (fj_f64 == 1) {
-                op = op + PP_EMIT_STR(out, op, "if (v != 0) { store64(ptr + ");
-                op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
-                op = op + PP_EMIT_STR(out, op, ", bayan_f64_from_json(str_data(v))); }\n");
-            } else { if (fj_str == 1) {
-                # v6.3.24: `bayan_json_get(pairs, key)` returns the value **Str
-                # directly** (bayan_json_parse builds a vec of key→val pairs where
-                # each val is `str_new`'d), NOT a cstr and NOT a JTAG_STR value
-                # node. The old `str_from(v)` fed that Str pointer to a cstr ctor,
-                # storing a garbage Str → a Str field round-tripped to `"�"` (the
-                # working serialize half masked it). A Str field is an 8-byte Str
-                # ptr, so store `v` as-is (same borrow semantics the int path's
-                # str_to_int(v) already relies on). NOTE: the issue's speculated
-                # bayan_json_v_str / v_is_str fix is for the value-NODE API, which
-                # this pairs-based parser doesn't produce — v_is_str(v) would read
-                # a JTAG from a Str header and always fail, leaving the field 0 →
-                # a NULL Str crashes re-serialize.
-                # See issues/2026-07-01-derive-serialize-str-field-deserialize-broken.md.
-                op = op + PP_EMIT_STR(out, op, "if (v != 0) { store64(ptr + ");
-                op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
-                op = op + PP_EMIT_STR(out, op, ", v); }\n");
-            } else { if (fj_prim > 0) {
-                op = op + PP_EMIT_STR(out, op, "if (v != 0) { store");
-                op = op + PP_EMIT_INT(out, op, fj_prim);
-                op = op + PP_EMIT_STR(out, op, "(ptr + ");
-                op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
-                op = op + PP_EMIT_STR(out, op, ", str_to_int(v)); }\n");
-            } else {
-                op = op + PP_EMIT_STR(out, op, "if (v != 0) {\nvar np = ");
-                op = op + PP_EMIT_STR(out, op, S + 0x1FE000 + fi * 32);
-                op = op + PP_EMIT_STR(out, op, "_from_json(bayan_json_parse(v));\nmemcpy(ptr + ");
-                op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
-                op = op + PP_EMIT_STR(out, op, ", np, ");
-                var tsz = 8;
-                var di = 0;
-                while (di < _pp_derive_count) {
-                    var eq = 1;
-                    var ci = 0;
-                    while (eq == 1) {
-                        var a = load8(S + 0x1FE000 + fi * 32 + ci);
-                        var b = load8(_pp_derive_names + di * 32 + ci);
-                        if (a != b) { eq = 0; }
-                        if (a == 0) { break; }
-                        ci = ci + 1;
-                    }
-                    if (eq == 1) { tsz = load64(_pp_derive_sizes + di * 8); }
-                    di = di + 1;
-                }
-                op = op + PP_EMIT_INT(out, op, tsz);
-                op = op + PP_EMIT_STR(out, op, ");\n}\n");
-            } } } }
+                    op = op + PP_EMIT_STR(out, op, "if (v != 0) { store64(ptr + ");
+                    op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
+                    op = op + PP_EMIT_STR(out, op, ", bayan_f64_from_json(str_data(v))); }\n");
+                } else { if (fj_str == 1) {
+                        # v6.3.24: `bayan_json_get(pairs, key)` returns the value **Str
+                        # directly** (bayan_json_parse builds a vec of key→val pairs where
+                        # each val is `str_new`'d), NOT a cstr and NOT a JTAG_STR value
+                        # node. The old `str_from(v)` fed that Str pointer to a cstr ctor,
+                        # storing a garbage Str → a Str field round-tripped to `"�"` (the
+                        # working serialize half masked it). A Str field is an 8-byte Str
+                        # ptr, so store `v` as-is (same borrow semantics the int path's
+                        # str_to_int(v) already relies on). NOTE: the issue's speculated
+                        # bayan_json_v_str / v_is_str fix is for the value-NODE API, which
+                        # this pairs-based parser doesn't produce — v_is_str(v) would read
+                        # a JTAG from a Str header and always fail, leaving the field 0 →
+                        # a NULL Str crashes re-serialize.
+                        # See issues/2026-07-01-derive-serialize-str-field-deserialize-broken.md.
+                        op = op + PP_EMIT_STR(out, op, "if (v != 0) { store64(ptr + ");
+                        op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
+                        op = op + PP_EMIT_STR(out, op, ", v); }\n");
+                    } else { if (fj_prim > 0) {
+                            op = op + PP_EMIT_STR(out, op, "if (v != 0) { store");
+                            op = op + PP_EMIT_INT(out, op, fj_prim);
+                            op = op + PP_EMIT_STR(out, op, "(ptr + ");
+                            op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
+                            op = op + PP_EMIT_STR(out, op, ", str_to_int(v)); }\n");
+                        } else {
+                            op = op + PP_EMIT_STR(out, op, "if (v != 0) {\nvar np = ");
+                            op = op + PP_EMIT_STR(out, op, S + 0x1FE000 + fi * 32);
+                            op = op + PP_EMIT_STR(out, op, "_from_json(bayan_json_parse(v));\nmemcpy(ptr + ");
+                            op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
+                            op = op + PP_EMIT_STR(out, op, ", np, ");
+                            var tsz = 8;
+                            var di = 0;
+                            while (di < _pp_derive_count) {
+                                var eq = 1;
+                                var ci = 0;
+                                while (eq == 1) {
+                                    var a = load8(S + 0x1FE000 + fi * 32 + ci);
+                                    var b = load8(_pp_derive_names + di * 32 + ci);
+                                    if (a != b) { eq = 0; }
+                                    if (a == 0) { break; }
+                                    ci = ci + 1;
+                                }
+                                if (eq == 1) { tsz = load64(_pp_derive_sizes + di * 8); }
+                                di = di + 1;
+                            }
+                            op = op + PP_EMIT_INT(out, op, tsz);
+                            op = op + PP_EMIT_STR(out, op, ");\n}\n");
+                        } } } }
         } else {
             op = op + PP_EMIT_STR(out, op, "if (v != 0) { store64(ptr + ");
             op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
@@ -2189,74 +2189,74 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
                     op = op + PP_EMIT_STR(out, op, "(json + _p));\nwhile (load8(json + _p) != 93 && load8(json + _p) != 0) { _p = _p + 1; }\nif (load8(json + _p) == 93) { _p = _p + 1; }\n");
                 }
             } else { if (fjf == 1) {
-                # Capture the numeric token (digits/sign/./exponent) then f64_parse it.
-                op = op + PP_EMIT_STR(out, op, "_vs = _p;\nwhile (1 == 1) { var _fc = load8(json + _p); if ((_fc >= 48 && _fc <= 57) || _fc == 45 || _fc == 43 || _fc == 46 || _fc == 101 || _fc == 69) { _p = _p + 1; } else { break; } }\n");
-                op = op + PP_EMIT_STR(out, op, "store64(ptr + ");
-                op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
-                op = op + PP_EMIT_STR(out, op, ", bayan_f64_from_json(json + _vs));\n");
-            } else { if (fjs == 1) {
-                # String value: read until closing quote
-                # v6.4.x R3 (BUG-3) — escape-aware, un-escaping Str decode. The old scan
-                # `while (load8 != 34)` stopped at the FIRST quote — even an escaped \" —
-                # truncating the value and leaving escapes literal. Now: walk escape-aware
-                # to the real closing quote, un-escaping \n \t \r and \<c> → <c> (covers
-                # \" \\ \/), building the Str via str_builder_add_byte. Fi-suffixed temps so
-                # multiple Str fields don't redeclare. Fixes ALL #derive Str decode.
-                op = op + PP_EMIT_STR(out, op, "if (load8(json + _p) == 34) { _p = _p + 1;\nvar _sbld");
-                op = op + PP_EMIT_INT(out, op, fi);
-                op = op + PP_EMIT_STR(out, op, " = str_builder_new();\nwhile (load8(json + _p) != 34 && load8(json + _p) != 0) {\nvar _sch");
-                op = op + PP_EMIT_INT(out, op, fi);
-                op = op + PP_EMIT_STR(out, op, " = load8(json + _p);\nif (_sch");
-                op = op + PP_EMIT_INT(out, op, fi);
-                op = op + PP_EMIT_STR(out, op, " == 92) {\n_p = _p + 1;\nvar _esc");
-                op = op + PP_EMIT_INT(out, op, fi);
-                op = op + PP_EMIT_STR(out, op, " = load8(json + _p);\nif (_esc");
-                op = op + PP_EMIT_INT(out, op, fi);
-                op = op + PP_EMIT_STR(out, op, " != 0) {\nif (_esc");
-                op = op + PP_EMIT_INT(out, op, fi);
-                op = op + PP_EMIT_STR(out, op, " == 110) { str_builder_add_byte(_sbld");
-                op = op + PP_EMIT_INT(out, op, fi);
-                op = op + PP_EMIT_STR(out, op, ", 10); }\nelif (_esc");
-                op = op + PP_EMIT_INT(out, op, fi);
-                op = op + PP_EMIT_STR(out, op, " == 116) { str_builder_add_byte(_sbld");
-                op = op + PP_EMIT_INT(out, op, fi);
-                op = op + PP_EMIT_STR(out, op, ", 9); }\nelif (_esc");
-                op = op + PP_EMIT_INT(out, op, fi);
-                op = op + PP_EMIT_STR(out, op, " == 114) { str_builder_add_byte(_sbld");
-                op = op + PP_EMIT_INT(out, op, fi);
-                op = op + PP_EMIT_STR(out, op, ", 13); }\nelse { str_builder_add_byte(_sbld");
-                op = op + PP_EMIT_INT(out, op, fi);
-                op = op + PP_EMIT_STR(out, op, ", _esc");
-                op = op + PP_EMIT_INT(out, op, fi);
-                op = op + PP_EMIT_STR(out, op, "); }\n_p = _p + 1;\n}\n} else {\nstr_builder_add_byte(_sbld");
-                op = op + PP_EMIT_INT(out, op, fi);
-                op = op + PP_EMIT_STR(out, op, ", _sch");
-                op = op + PP_EMIT_INT(out, op, fi);
-                op = op + PP_EMIT_STR(out, op, ");\n_p = _p + 1;\n}\n}\nstore64(ptr + ");
-                op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
-                op = op + PP_EMIT_STR(out, op, ", str_builder_build(_sbld");
-                op = op + PP_EMIT_INT(out, op, fi);
-                op = op + PP_EMIT_STR(out, op, "));\nif (load8(json + _p) == 34) { _p = _p + 1; }\n}\n");
-            } else { if (fjp > 0) {
-                # Primitive integer: parse decimal + width-correct store.
-                op = op + PP_EMIT_STR(out, op, "_neg = 0; if (load8(json + _p) == 45) { _neg = 1; _p = _p + 1; }\n");
-                op = op + PP_EMIT_STR(out, op, "_iv = 0;\nwhile (load8(json + _p) >= 48 && load8(json + _p) <= 57) { _iv = _iv * 10 + load8(json + _p) - 48; _p = _p + 1; }\n");
-                op = op + PP_EMIT_STR(out, op, "if (_neg == 1) { _iv = 0 - _iv; }\n");
-                op = op + PP_EMIT_STR(out, op, "store");
-                op = op + PP_EMIT_INT(out, op, fjp);
-                op = op + PP_EMIT_STR(out, op, "(ptr + ");
-                op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
-                op = op + PP_EMIT_STR(out, op, ", _iv);\n");
-            } else {
-                # Nested struct: skip value (fall through to json_get path)
-                # v6.5.20 — an emitted `# nested struct` COMMENT LINE used to sit here and
-                # was deleted: the generated block is now flattened onto one expanded line,
-                # `#` starts a comment in cyrius, and it would have commented out every fn
-                # after it. This comment — in the compiler, not in the generated code —
-                # carries the same information. It was the ONLY `#`-bearing literal of the
-                # 178 audited PP_EMIT_STR string arguments.
-                op = op + PP_EMIT_STR(out, op, "while (load8(json + _p) != 44 && load8(json + _p) != 125 && load8(json + _p) != 0) { _p = _p + 1; }\n");
-            } } } }
+                    # Capture the numeric token (digits/sign/./exponent) then f64_parse it.
+                    op = op + PP_EMIT_STR(out, op, "_vs = _p;\nwhile (1 == 1) { var _fc = load8(json + _p); if ((_fc >= 48 && _fc <= 57) || _fc == 45 || _fc == 43 || _fc == 46 || _fc == 101 || _fc == 69) { _p = _p + 1; } else { break; } }\n");
+                    op = op + PP_EMIT_STR(out, op, "store64(ptr + ");
+                    op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
+                    op = op + PP_EMIT_STR(out, op, ", bayan_f64_from_json(json + _vs));\n");
+                } else { if (fjs == 1) {
+                        # String value: read until closing quote
+                        # v6.4.x R3 (BUG-3) — escape-aware, un-escaping Str decode. The old scan
+                        # `while (load8 != 34)` stopped at the FIRST quote — even an escaped \" —
+                        # truncating the value and leaving escapes literal. Now: walk escape-aware
+                        # to the real closing quote, un-escaping \n \t \r and \<c> → <c> (covers
+                        # \" \\ \/), building the Str via str_builder_add_byte. Fi-suffixed temps so
+                        # multiple Str fields don't redeclare. Fixes ALL #derive Str decode.
+                        op = op + PP_EMIT_STR(out, op, "if (load8(json + _p) == 34) { _p = _p + 1;\nvar _sbld");
+                        op = op + PP_EMIT_INT(out, op, fi);
+                        op = op + PP_EMIT_STR(out, op, " = str_builder_new();\nwhile (load8(json + _p) != 34 && load8(json + _p) != 0) {\nvar _sch");
+                        op = op + PP_EMIT_INT(out, op, fi);
+                        op = op + PP_EMIT_STR(out, op, " = load8(json + _p);\nif (_sch");
+                        op = op + PP_EMIT_INT(out, op, fi);
+                        op = op + PP_EMIT_STR(out, op, " == 92) {\n_p = _p + 1;\nvar _esc");
+                        op = op + PP_EMIT_INT(out, op, fi);
+                        op = op + PP_EMIT_STR(out, op, " = load8(json + _p);\nif (_esc");
+                        op = op + PP_EMIT_INT(out, op, fi);
+                        op = op + PP_EMIT_STR(out, op, " != 0) {\nif (_esc");
+                        op = op + PP_EMIT_INT(out, op, fi);
+                        op = op + PP_EMIT_STR(out, op, " == 110) { str_builder_add_byte(_sbld");
+                        op = op + PP_EMIT_INT(out, op, fi);
+                        op = op + PP_EMIT_STR(out, op, ", 10); }\nelif (_esc");
+                        op = op + PP_EMIT_INT(out, op, fi);
+                        op = op + PP_EMIT_STR(out, op, " == 116) { str_builder_add_byte(_sbld");
+                        op = op + PP_EMIT_INT(out, op, fi);
+                        op = op + PP_EMIT_STR(out, op, ", 9); }\nelif (_esc");
+                        op = op + PP_EMIT_INT(out, op, fi);
+                        op = op + PP_EMIT_STR(out, op, " == 114) { str_builder_add_byte(_sbld");
+                        op = op + PP_EMIT_INT(out, op, fi);
+                        op = op + PP_EMIT_STR(out, op, ", 13); }\nelse { str_builder_add_byte(_sbld");
+                        op = op + PP_EMIT_INT(out, op, fi);
+                        op = op + PP_EMIT_STR(out, op, ", _esc");
+                        op = op + PP_EMIT_INT(out, op, fi);
+                        op = op + PP_EMIT_STR(out, op, "); }\n_p = _p + 1;\n}\n} else {\nstr_builder_add_byte(_sbld");
+                        op = op + PP_EMIT_INT(out, op, fi);
+                        op = op + PP_EMIT_STR(out, op, ", _sch");
+                        op = op + PP_EMIT_INT(out, op, fi);
+                        op = op + PP_EMIT_STR(out, op, ");\n_p = _p + 1;\n}\n}\nstore64(ptr + ");
+                        op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
+                        op = op + PP_EMIT_STR(out, op, ", str_builder_build(_sbld");
+                        op = op + PP_EMIT_INT(out, op, fi);
+                        op = op + PP_EMIT_STR(out, op, "));\nif (load8(json + _p) == 34) { _p = _p + 1; }\n}\n");
+                    } else { if (fjp > 0) {
+                            # Primitive integer: parse decimal + width-correct store.
+                            op = op + PP_EMIT_STR(out, op, "_neg = 0; if (load8(json + _p) == 45) { _neg = 1; _p = _p + 1; }\n");
+                            op = op + PP_EMIT_STR(out, op, "_iv = 0;\nwhile (load8(json + _p) >= 48 && load8(json + _p) <= 57) { _iv = _iv * 10 + load8(json + _p) - 48; _p = _p + 1; }\n");
+                            op = op + PP_EMIT_STR(out, op, "if (_neg == 1) { _iv = 0 - _iv; }\n");
+                            op = op + PP_EMIT_STR(out, op, "store");
+                            op = op + PP_EMIT_INT(out, op, fjp);
+                            op = op + PP_EMIT_STR(out, op, "(ptr + ");
+                            op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
+                            op = op + PP_EMIT_STR(out, op, ", _iv);\n");
+                        } else {
+                            # Nested struct: skip value (fall through to json_get path)
+                            # v6.5.20 — an emitted `# nested struct` COMMENT LINE used to sit here and
+                            # was deleted: the generated block is now flattened onto one expanded line,
+                            # `#` starts a comment in cyrius, and it would have commented out every fn
+                            # after it. This comment — in the compiler, not in the generated code —
+                            # carries the same information. It was the ONLY `#`-bearing literal of the
+                            # 178 audited PP_EMIT_STR string arguments.
+                            op = op + PP_EMIT_STR(out, op, "while (load8(json + _p) != 44 && load8(json + _p) != 125 && load8(json + _p) != 0) { _p = _p + 1; }\n");
+                        } } } }
         } else {
             # Untyped scalar: parse decimal
             op = op + PP_EMIT_STR(out, op, "_neg = 0; if (load8(json + _p) == 45) { _neg = 1; _p = _p + 1; }\n");
@@ -2904,8 +2904,8 @@ fn PP_IFPLAT_MATCH(S, pos): i64 {
     # "aarch64" = 61 61 72 63 68 36 34 — 7 chars, must be followed by a terminator
     if (target_hash == 0) {
         if (load8(S + _SRCB + pos) == 97 && load8(S + _SRCB + pos + 1) == 97 && load8(S + _SRCB + pos + 2) == 114
-        && load8(S + _SRCB + pos + 3) == 99 && load8(S + _SRCB + pos + 4) == 104
-        && load8(S + _SRCB + pos + 5) == 54 && load8(S + _SRCB + pos + 6) == 52) {
+          && load8(S + _SRCB + pos + 3) == 99 && load8(S + _SRCB + pos + 4) == 104
+          && load8(S + _SRCB + pos + 5) == 54 && load8(S + _SRCB + pos + 6) == 52) {
             var nc = load8(S + _SRCB + pos + 7);
             if (nc == 32 || nc == 10 || nc == 13 || nc == 0) {
                 target_hash = PP_HASH_CSTR("CYRIUS_ARCH_AARCH64");
@@ -3544,17 +3544,17 @@ fn PP_MACRO_PASS(S): i64 {
         # v6.6.6 — an upper-case byte is not enough: it must START an identifier and
         # must not be inside a string literal. See PP_MACRO_START.
         if (PP_MACRO_START(S, ip, lst) == 1) {
-                var mmi = PP_FIND_MACRO(S, ip);
-                if (mmi >= 0) {
-                    # v6.6.6 — the `(` probe (was an inline loop here) plus the
-                    # same-line bound that keeps an invocation opened inside a `#`
-                    # comment from swallowing the code after it. See PP_MACRO_CALLABLE.
-                    if (PP_MACRO_CALLABLE(S, ip, bl, lst) == 1) {
-                        ip = PP_EXPAND(S, mmi, ip, bl, out, op);
-                        op = load64(S + 0x190700);
-                        expanded = 1;
-                    }
+            var mmi = PP_FIND_MACRO(S, ip);
+            if (mmi >= 0) {
+                # v6.6.6 — the `(` probe (was an inline loop here) plus the
+                # same-line bound that keeps an invocation opened inside a `#`
+                # comment from swallowing the code after it. See PP_MACRO_CALLABLE.
+                if (PP_MACRO_CALLABLE(S, ip, bl, lst) == 1) {
+                    ip = PP_EXPAND(S, mmi, ip, bl, out, op);
+                    op = load64(S + 0x190700);
+                    expanded = 1;
                 }
+            }
         }
         # ⚠ v6.6.6 — this block carried a 17-line comment headed "v6.5.21 — NEUTRALISE
         # a user-authored `#@file` marker", describing in detail a guard that WAS NEVER

@@ -651,15 +651,15 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
     # calls fncall4..7 at top level, stopped compiling.
     if (typ == 2) { if (_cur_fn_ix >= 0) { if (_IS_FNCALL_NAME(S, PEEKV(S)) == 1) {
                 if (TOKTYP(S, GTI(S) + 1) == 10) { if (FINDFN(S, PEEKV(S)) >= 0) {
-                            # v6.5.46: the digit in the name IS the promised arity — the same
-                            # byte `_IS_FNCALL_NAME` already validated as '0'..'8'.
-                            _fncall_expect = ((L64(S + 0xEC00000 + PEEKV(S)) >> 48) & 0xFF) - 48;
-                            STI(S, GTI(S) + 1);   # consume fncallN
-                            STI(S, GTI(S) + 1);   # consume '('
-                            PINDIRECT_CALL(S);
-                            return 0;
-                } }
-        } } }
+                        # v6.5.46: the digit in the name IS the promised arity — the same
+                        # byte `_IS_FNCALL_NAME` already validated as '0'..'8'.
+                        _fncall_expect = ((L64(S + 0xEC00000 + PEEKV(S)) >> 48) & 0xFF) - 48;
+                        STI(S, GTI(S) + 1);   # consume fncallN
+                        STI(S, GTI(S) + 1);   # consume '('
+                        PINDIRECT_CALL(S);
+                        return 0;
+                    } }
+            } } }
     if (typ == 1) {
         var val = PEEKV(S);
         STI(S, GTI(S) + 1);
@@ -876,9 +876,9 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                 # a few lines below). A multi-word value is passed BY ADDRESS, matching what
                 # `EMIT_OP_DISPATCH` already does for a >8 B global. CHANGELOG [6.6.5]
                 if (lt < 0) { if (lt > 0 - 2048) { if (_op_local_dispatches(S, li) == 1) {
-                    SESTYPE(S, 0 - lt);
-                    if (AGG_NSLOTS(S, lt) > 1) { SESVAR(S, 0 - 2 - li); }
-                } } }
+                            SESTYPE(S, 0 - lt);
+                            if (AGG_NSLOTS(S, lt) > 1) { SESVAR(S, 0 - 2 - li); }
+                        } } }
                 EFLLOAD(S, li);
                 return 0;
             }
@@ -1033,16 +1033,16 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         # "undefined variable 'buf'"), because this ladder went local → global → fn with no
         # rung for the env object. The captured words live at `env + woff*8`.
         if (_cl_capturing == 1) { if (_cl_env_lidx >= 0) {
-            var acap_esl = _cl_snap_find(S, anoff);
-            if (acap_esl >= 0) {
-                var acap_i = _cl_cap_find(acap_esl);
-                if (acap_i >= 0) {
-                    _CL_CAP_WORDS_RA(S, acap_i);
-                    SPSC(S, 1);
-                    return 0;
+                var acap_esl = _cl_snap_find(S, anoff);
+                if (acap_esl >= 0) {
+                    var acap_i = _cl_cap_find(acap_esl);
+                    if (acap_i >= 0) {
+                        _CL_CAP_WORDS_RA(S, acap_i);
+                        SPSC(S, 1);
+                        return 0;
+                    }
                 }
-            }
-        } }
+            } }
         # Global next.
         var aidx = FINDVAR(S, anoff);
         if (aidx >= 0) {
@@ -1142,8 +1142,8 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                     syscall(SYS_WRITE, 2, "warning: syscall ", 17);
                     PRNUM(sc_num);
                     syscall(SYS_WRITE, 2,
-                    " not routed by the Mach-O x86 translation (EMACHO_SYSXLAT); will SIGSYS on macOS. Add an _msx row or use a stdlib wrapper.\n",
-                    123);
+                      " not routed by the Mach-O x86 translation (EMACHO_SYSXLAT); will SIGSYS on macOS. Add an _msx row or use a stdlib wrapper.\n",
+                      123);
                 }
             }
         }
@@ -1162,8 +1162,8 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                     syscall(SYS_WRITE, 2, "warning: syscall ", 17);
                     PRNUM(sc_num);
                     syscall(SYS_WRITE, 2,
-                    " not routed by the Mach-O ARM translation (ESYSXLAT/__got); will fault on macOS. Add an ESYSXLAT entry or use a stdlib wrapper.\n",
-                    128);
+                      " not routed by the Mach-O ARM translation (ESYSXLAT/__got); will fault on macOS. Add an ESYSXLAT entry or use a stdlib wrapper.\n",
+                      128);
                 }
             }
         }
@@ -1954,8 +1954,8 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                 var _dynrc = EPE_SYSCALL_DYNAMIC(S, argc);
                 if (_dynrc == 2) {
                     syscall(SYS_WRITE, 2,
-                    "warning: syscall(<non-literal number>, ...) has no Windows-routable syscall of this arity on CYRIUS_TARGET_WIN=1 - emits -ENOSYS (-38). Harmless if the path is Linux-only (dead on Windows); else guard with #ifdef CYRIUS_TARGET_WIN or add a PE reroute.\n",
-                    252);
+                      "warning: syscall(<non-literal number>, ...) has no Windows-routable syscall of this arity on CYRIUS_TARGET_WIN=1 - emits -ENOSYS (-38). Harmless if the path is Linux-only (dead on Windows); else guard with #ifdef CYRIUS_TARGET_WIN or add a PE reroute.\n",
+                      252);
                 }
                 _cfo = 0;
                 return 0;
@@ -1973,8 +1973,8 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             # at the call site, or file an upstream issue for a
             # new PE reroute.
             syscall(SYS_WRITE, 2,
-            "warning: syscall(n, ...) on CYRIUS_TARGET_WIN=1 routes n=0,1,2,3,8,9,35,60,83,87,228 + 0xF001-0xF005 (process creation) + 0xF006 (cmdline) + 0xF007-0xF00A (threading) + 0xF00B-0xF00E (thread-local) + 0xF00F (sleep) + 0xF010-0xF011 (CommandLineToArgvW/LocalFree) + 0xF012 (CreateDXGIFactory1) + 0xF013-0xF015 (GetModuleHandleA/GetProcAddress/GetEnvironmentVariableA) + 0xF016-0xF019 (FindFirstFileW/FindNextFileW/FindClose/GetFileAttributesW) + 0xF01A (ProcessPrng CSPRNG) + 0xF01B (GetSystemTimeAsFileTime) + 0xF01C (GetCurrentProcessId) + 0xF01D (TerminateProcess) + 0xF01E (WSAStartup) + 0xF01F-0xF021 (IOCP: CreateIoCompletionPort/GetQueuedCompletionStatus/PostQueuedCompletionStatus) + 0xF022-0xF02C (ws2_32: WSASocketW/closesocket/WSAGetLastError/bind/getsockopt/WSAIoctl/connect/WSARecv/WSASend/getaddrinfo/freeaddrinfo) + 0xF02D-0xF032 (kernel32/ws2_32: RegisterWaitForSingleObject/CreateWaitableTimerW/SetWaitableTimer/UnregisterWaitEx/CancelIoEx/setsockopt) + 0xF033 (ws2_32: listen) + 0xF034 (kernel32: MoveFileExW) + 0xF035 (kernel32: DeleteFileW) + 0xF036-0xF037 (ws2_32: getpeername/getsockname) + 0xF038-0xF039 (kernel32: QueryPerformanceCounter/QueryPerformanceFrequency) + 0xF03A-0xF03B (kernel32: GetModuleFileNameW/RemoveDirectoryW) today; others return -38/-ENOSYS on Windows (v6.5.25; before that they CRASHED with STATUS_ILLEGAL_INSTRUCTION 0xC000001D).\n",
-            1375);
+              "warning: syscall(n, ...) on CYRIUS_TARGET_WIN=1 routes n=0,1,2,3,8,9,35,60,83,87,228 + 0xF001-0xF005 (process creation) + 0xF006 (cmdline) + 0xF007-0xF00A (threading) + 0xF00B-0xF00E (thread-local) + 0xF00F (sleep) + 0xF010-0xF011 (CommandLineToArgvW/LocalFree) + 0xF012 (CreateDXGIFactory1) + 0xF013-0xF015 (GetModuleHandleA/GetProcAddress/GetEnvironmentVariableA) + 0xF016-0xF019 (FindFirstFileW/FindNextFileW/FindClose/GetFileAttributesW) + 0xF01A (ProcessPrng CSPRNG) + 0xF01B (GetSystemTimeAsFileTime) + 0xF01C (GetCurrentProcessId) + 0xF01D (TerminateProcess) + 0xF01E (WSAStartup) + 0xF01F-0xF021 (IOCP: CreateIoCompletionPort/GetQueuedCompletionStatus/PostQueuedCompletionStatus) + 0xF022-0xF02C (ws2_32: WSASocketW/closesocket/WSAGetLastError/bind/getsockopt/WSAIoctl/connect/WSARecv/WSASend/getaddrinfo/freeaddrinfo) + 0xF02D-0xF032 (kernel32/ws2_32: RegisterWaitForSingleObject/CreateWaitableTimerW/SetWaitableTimer/UnregisterWaitEx/CancelIoEx/setsockopt) + 0xF033 (ws2_32: listen) + 0xF034 (kernel32: MoveFileExW) + 0xF035 (kernel32: DeleteFileW) + 0xF036-0xF037 (ws2_32: getpeername/getsockname) + 0xF038-0xF039 (kernel32: QueryPerformanceCounter/QueryPerformanceFrequency) + 0xF03A-0xF03B (kernel32: GetModuleFileNameW/RemoveDirectoryW) today; others return -38/-ENOSYS on Windows (v6.5.25; before that they CRASHED with STATUS_ILLEGAL_INSTRUCTION 0xC000001D).\n",
+              1375);
             # v6.5.25 — DEGRADE HONESTLY INSTEAD OF FALLING THROUGH TO `0F 05`.
             #
             # A LITERAL unrouted syscall number used to warn and then emit a raw Linux
@@ -3296,61 +3296,61 @@ fn PARSE_INTRIN(S, ptyp): i64 {
     # f64v256_ family dispatches from one place.
     # ⚠ Same multiple-of-4 requirement as its siblings — EMIT_F64V4_FMADD strides rsi by 4.
     if (ptyp == 158) {
-            STI(S, GTI(S) + 1);
-            if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
-            var vbf = GFLC(S);
-            _SIMD_RESERVE(S, vbf, 4);
-            PCMPE(S); _SIMD_STASH(S, vbf);
-            if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
-            PCMPE(S); _SIMD_STASH(S, vbf + 1);
-            if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
-            PCMPE(S); _SIMD_STASH(S, vbf + 2);
-            if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
-            PCMPE(S); _SIMD_STASH(S, vbf + 3);
-            if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
-            PCMPE(S);
-            _SIMD_RESERVE(S, vbf, 4);   # max, never a lowering assignment
-            EMIT_F64V4_FMADD(S, vbf);
-            if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
-            return 1;
+        STI(S, GTI(S) + 1);
+        if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
+        var vbf = GFLC(S);
+        _SIMD_RESERVE(S, vbf, 4);
+        PCMPE(S); _SIMD_STASH(S, vbf);
+        if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
+        PCMPE(S); _SIMD_STASH(S, vbf + 1);
+        if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
+        PCMPE(S); _SIMD_STASH(S, vbf + 2);
+        if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
+        PCMPE(S); _SIMD_STASH(S, vbf + 3);
+        if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
+        PCMPE(S);
+        _SIMD_RESERVE(S, vbf, 4);   # max, never a lowering assignment
+        EMIT_F64V4_FMADD(S, vbf);
+        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        return 1;
     }
 
     # v6.5.38 — f64v256_dot(a, b, n): THREE args and the only member of the family that
     # produces a value (f64 bits in rax), so no dst slot; mirrors f64v_dot (token 128).
     if (ptyp == 159) {
-            STI(S, GTI(S) + 1);
-            if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
-            var vbd = GFLC(S);
-            _SIMD_RESERVE(S, vbd, 2);
-            PCMPE(S); _SIMD_STASH(S, vbd);
-            if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
-            PCMPE(S); _SIMD_STASH(S, vbd + 1);
-            if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
-            PCMPE(S);
-            _SIMD_RESERVE(S, vbd, 2);   # max, never a lowering assignment
-            EMIT_F64V4_DOT(S, vbd);
-            if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
-            return 1;
+        STI(S, GTI(S) + 1);
+        if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
+        var vbd = GFLC(S);
+        _SIMD_RESERVE(S, vbd, 2);
+        PCMPE(S); _SIMD_STASH(S, vbd);
+        if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
+        PCMPE(S); _SIMD_STASH(S, vbd + 1);
+        if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
+        PCMPE(S);
+        _SIMD_RESERVE(S, vbd, 2);   # max, never a lowering assignment
+        EMIT_F64V4_DOT(S, vbd);
+        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        return 1;
     }
 
     # v6.5.38 — f64v256_scale(dst, a, s, n): four args, but arg 3 is a SCALAR f64 bit
     # pattern, not a pointer — EMIT_F64V4_SCALE broadcasts it with vbroadcastsd.
     if (ptyp == 160) {
-            STI(S, GTI(S) + 1);
-            if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
-            var vbs = GFLC(S);
-            _SIMD_RESERVE(S, vbs, 3);
-            PCMPE(S); _SIMD_STASH(S, vbs);
-            if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
-            PCMPE(S); _SIMD_STASH(S, vbs + 1);
-            if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
-            PCMPE(S); _SIMD_STASH(S, vbs + 2);
-            if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
-            PCMPE(S);
-            _SIMD_RESERVE(S, vbs, 3);   # max, never a lowering assignment
-            EMIT_F64V4_SCALE(S, vbs);
-            if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
-            return 1;
+        STI(S, GTI(S) + 1);
+        if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1);
+        var vbs = GFLC(S);
+        _SIMD_RESERVE(S, vbs, 3);
+        PCMPE(S); _SIMD_STASH(S, vbs);
+        if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
+        PCMPE(S); _SIMD_STASH(S, vbs + 1);
+        if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
+        PCMPE(S); _SIMD_STASH(S, vbs + 2);
+        if (PEEKT(S) != 31) { ERR_EXPECT(S, 31); } STI(S, GTI(S) + 1);
+        PCMPE(S);
+        _SIMD_RESERVE(S, vbs, 3);   # max, never a lowering assignment
+        EMIT_F64V4_SCALE(S, vbs);
+        if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1);
+        return 1;
     }
 
     # v6.5.38 — f64v256_abs(dst, a, n) / f64v256_sqrt(dst, a, n): three args, one shared
@@ -3446,33 +3446,33 @@ fn _PARSE_TERM_IMPL(S): i64 {
             _qpair_done = 1;
         }
         if (_qpair_done == 0) {
-        # Hidden temp slot to hold the Result ptr across the
-        # tag-check / unwrap branches (same idiom as PARSE_MATCH).
-        var qidx = _HTEMP(S);
-        _HTSTORE(S, qidx);                # save result_ptr
-        # Load tag and compare to 0 (Ok = 0, Err = 1)
-        _HTLOAD(S, qidx);                  # rax = result_ptr
-        ELOAD64(S);                       # rax = [rax] = tag
-        EPUSHR(S);
-        EMOVI(S, 0);
-        EMOVCA(S);                        # rcx = 0 (Ok)
-        EPOPR(S);                         # rax = tag
-        ECMPR(S);                         # cmp rax, rcx
-        var qjcc_ok = EJCC(S, 0x84);      # JE → skip Err branch if Ok
-        # Err path: rax = result_ptr, jmp to fn epilogue (RPC table)
-        _HTLOAD(S, qidx);
-        var qrp = EJMP0(S);
-        vec_push(rp_vec, qrp);
-        # Ok path landing: rax = [result_ptr + 8] (payload)
-        EPATCH(S, qjcc_ok);
-        _HTLOAD(S, qidx);                  # rax = result_ptr
-        EPUSHR(S);
-        EMOVI(S, 8);
-        EMOVCA(S);                        # rcx = 8
-        EPOPR(S);                         # rax = result_ptr
-        EADDR(S);                         # rax = result_ptr + 8
-        ELOAD64(S);                       # rax = [result_ptr + 8] = payload
-        _cfo = 0;                         # invalidate const-fold tracking
+            # Hidden temp slot to hold the Result ptr across the
+            # tag-check / unwrap branches (same idiom as PARSE_MATCH).
+            var qidx = _HTEMP(S);
+            _HTSTORE(S, qidx);                # save result_ptr
+            # Load tag and compare to 0 (Ok = 0, Err = 1)
+            _HTLOAD(S, qidx);                  # rax = result_ptr
+            ELOAD64(S);                       # rax = [rax] = tag
+            EPUSHR(S);
+            EMOVI(S, 0);
+            EMOVCA(S);                        # rcx = 0 (Ok)
+            EPOPR(S);                         # rax = tag
+            ECMPR(S);                         # cmp rax, rcx
+            var qjcc_ok = EJCC(S, 0x84);      # JE → skip Err branch if Ok
+            # Err path: rax = result_ptr, jmp to fn epilogue (RPC table)
+            _HTLOAD(S, qidx);
+            var qrp = EJMP0(S);
+            vec_push(rp_vec, qrp);
+            # Ok path landing: rax = [result_ptr + 8] (payload)
+            EPATCH(S, qjcc_ok);
+            _HTLOAD(S, qidx);                  # rax = result_ptr
+            EPUSHR(S);
+            EMOVI(S, 8);
+            EMOVCA(S);                        # rcx = 8
+            EPOPR(S);                         # rax = result_ptr
+            EADDR(S);                         # rax = result_ptr + 8
+            ELOAD64(S);                       # rax = [result_ptr + 8] = payload
+            _cfo = 0;                         # invalidate const-fold tracking
         }
     }
     var go = 1;

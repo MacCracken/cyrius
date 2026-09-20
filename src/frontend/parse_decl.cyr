@@ -1904,8 +1904,8 @@ fn PARSE_GVAR_REG(S): i64 {
     # value before the deferred-init replay and a forward read stops seeing 0. `sit_lit` stays
     # 0, so cx keeps the runtime store as well — it writes the same value. See _gv_cx_prestore.
     if (_TARGET_CX == 1) { if (cf_has == 1) { if (is_struct == 0) { if (sit_lit == 0) {
-        S64(_vgsi_base + gvi * 8, cf_val);
-    } } } }
+                    S64(_vgsi_base + gvi * 8, cf_val);
+                } } } }
     if (sit_lit == 1) {
         S64(_vgsi_base + gvi * 8, sit_val);
         SLVAR(S, gvi);
@@ -2165,21 +2165,21 @@ fn _try_struct_copy_init(S, noff, pscale): i64 {
         _sci_gsrc = _gs;
     }
     else {
-    # 6.6.6 — this bail USED to be the whole answer to a type mismatch, and it falls through
-    # to the scalar init, which stores the SOURCE'S ADDRESS into a slot the compiler has
-    # marked struct-typed: `var p: P3 = q;` for a `Q3 q` read back a stack address through
-    # `p.x`, silently. See `_AGG_ASSIGN_TYPE_ERR` (src/common/util.cyr). CHANGELOG [6.6.6]
-    if (GLTYPE(S, src_li) != pscale) {
-        _AGG_ASSIGN_TYPE_ERR(S, pscale, GLTYPE(S, src_li), noff, TOKVAL(S, ci_ti));
-        return 0;
-    }   # same struct sid as b
-    # ⛔ 6.6.5 — THE SOURCE MUST BE INLINE, OR THIS IS NOT A COPY AT ALL. This path had no
-    # layout check whatsoever: given a POINTER-mode `a` (`var a: P = mk();`) it copied a's slot
-    # plus the slots BELOW it — a's address, then a neighbouring local's value — into b, so
-    # `b.y` read 99 (the neighbour) where 22 was right. Same class as the v6.6.0 P0, on the
-    # declaration path. A pointer source now falls through to the scalar init, which binds b as
-    # a second pointer to the same struct — the C semantics of `P *b = a`. CHANGELOG [6.6.5]
-    if (GLAGG(S, src_li) == 0) { return 0; }
+        # 6.6.6 — this bail USED to be the whole answer to a type mismatch, and it falls through
+        # to the scalar init, which stores the SOURCE'S ADDRESS into a slot the compiler has
+        # marked struct-typed: `var p: P3 = q;` for a `Q3 q` read back a stack address through
+        # `p.x`, silently. See `_AGG_ASSIGN_TYPE_ERR` (src/common/util.cyr). CHANGELOG [6.6.6]
+        if (GLTYPE(S, src_li) != pscale) {
+            _AGG_ASSIGN_TYPE_ERR(S, pscale, GLTYPE(S, src_li), noff, TOKVAL(S, ci_ti));
+            return 0;
+        }   # same struct sid as b
+        # ⛔ 6.6.5 — THE SOURCE MUST BE INLINE, OR THIS IS NOT A COPY AT ALL. This path had no
+        # layout check whatsoever: given a POINTER-mode `a` (`var a: P = mk();`) it copied a's slot
+        # plus the slots BELOW it — a's address, then a neighbouring local's value — into b, so
+        # `b.y` read 99 (the neighbour) where 22 was right. Same class as the v6.6.0 P0, on the
+        # declaration path. A pointer source now falls through to the scalar init, which binds b as
+        # a second pointer to the same struct — the C semantics of `P *b = a`. CHANGELOG [6.6.5]
+        if (GLAGG(S, src_li) == 0) { return 0; }
     }
     # v6.5.57 — VECTORS TAKE THIS PATH TOO, and used to fall out of it. A `pscale` in the
     # descriptor band (<= -2048) is a vector, not a struct sid, so `STRUCTSZ` returned nothing
@@ -2229,12 +2229,12 @@ fn _try_struct_copy_init(S, noff, pscale): i64 {
         _agc_copy_bytes(S, named, 0 - 1, 0 - 1, _sci_gsrc, gnb);
     }
     else {
-    var i = 0;
-    while (i < nslots) {
-        EFLLOAD(S, src_li - i);
-        EFLSTORE(S, named - i);
-        i = i + 1;
-    }
+        var i = 0;
+        while (i < nslots) {
+            EFLLOAD(S, src_li - i);
+            EFLSTORE(S, named - i);
+            i = i + 1;
+        }
     }
     STI(S, GTI(S) + 1);   # consume '='
     STI(S, GTI(S) + 1);   # consume IDENT
@@ -2984,9 +2984,9 @@ fn PARSE_VAR(S): i64 {
             var _look_iscall = 0;
             if (TOKTYP(S, _look_ti + 1) == 10) { _look_iscall = 1; }
             if (_look_iscall == 0) { if (_MONOMORPH_OK == 1) { if (TOKTYP(S, _look_ti + 1) == 19) {
-                var _look_gfi0 = FINDFN(S, TOKVAL(S, _look_ti));
-                if (_look_gfi0 >= 0) { if (GFTP(S, _look_gfi0) != 0) { _look_iscall = 1; } }
-            } } }
+                        var _look_gfi0 = FINDFN(S, TOKVAL(S, _look_ti));
+                        if (_look_gfi0 >= 0) { if (GFTP(S, _look_gfi0) != 0) { _look_iscall = 1; } }
+                    } } }
             if (_look_iscall == 1) {
                 var _look_noff = TOKVAL(S, _look_ti);
                 var _look_fi = FINDFN(S, _look_noff);
@@ -3005,8 +3005,8 @@ fn PARSE_VAR(S): i64 {
                     # i64 case re-derives to the same base sid (no behavior change). Default
                     # (flag-off) byte-identical.
                     if (_MONOMORPH_OK == 1) { if (pscale < 0) {
-                        if (GFTP(S, _look_fi) != 0) { pscale = 0; }
-                    } }
+                            if (GFTP(S, _look_fi) != 0) { pscale = 0; }
+                        } }
                     # v6.3.16: inferred `var p = mk();` (no type annotation → pscale==0)
                     # from a struct-returning callee. Infer the local's struct type so
                     # the asv_try (>16B retptr) / asv_pair (9-16B rax:rdx) allocation
@@ -3096,12 +3096,12 @@ fn PARSE_VAR(S): i64 {
         # v6.3.37 (B1 half-B): skip a monomorph `<typeargs>` list between the fn-name
         # and `(` so `var p: Pair<i64> = mk<i64>(...)` reaches the retptr-receive path.
         if (_MONOMORPH_OK == 1) { if (PEEKT(S) == 19) {
-            STI(S, GTI(S) + 1);   # consume `<`
-            _ta_pending_gt = 0;
-            _parse_one_type_arg(S);
-            if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); _parse_one_type_arg(S); }
-            _consume_gt(S);
-        } }
+                STI(S, GTI(S) + 1);   # consume `<`
+                _ta_pending_gt = 0;
+                _parse_one_type_arg(S);
+                if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); _parse_one_type_arg(S); }
+                _consume_gt(S);
+            } }
         if (PEEKT(S) != 10) {
             ERR_MSG(S, "struct-valued assignment RHS must be a fn call", 46);
         }
@@ -3169,12 +3169,12 @@ fn PARSE_VAR(S): i64 {
         STI(S, GTI(S) + 1);                         # consume fn-name IDENT
         # v6.3.37 (B1 half-B): skip a monomorph `<typeargs>` list (see asv_try above).
         if (_MONOMORPH_OK == 1) { if (PEEKT(S) == 19) {
-            STI(S, GTI(S) + 1);   # consume `<`
-            _ta_pending_gt = 0;
-            _parse_one_type_arg(S);
-            if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); _parse_one_type_arg(S); }
-            _consume_gt(S);
-        } }
+                STI(S, GTI(S) + 1);   # consume `<`
+                _ta_pending_gt = 0;
+                _parse_one_type_arg(S);
+                if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); _parse_one_type_arg(S); }
+                _consume_gt(S);
+            } }
         if (PEEKT(S) != 10) {
             ERR_MSG(S, "struct-valued assignment RHS must be a fn call", 46);
         }
@@ -3268,25 +3268,25 @@ fn PARSE_VAR(S): i64 {
     # both are SET when `: Type` is parsed earlier in this fn).
     var _ti_inferred_sid = 0;
     if (pscale == 0) { if (scalar_type == 0) {
-        if (PEEKT(S) == 2) {
-            # v6.3.37 (B2): infer the local's struct type from BOTH a plain `IDENT (`
-            # and a monomorph generic `IDENT < ... > (` call — so `var b = mk<i32>(...)`
-            # types `b` as the struct (its GFRS return sid) and `b.x`/`b.w` parse.
-            var _ti_iscall = 0;
-            if (TOKTYP(S, GTI(S) + 1) == 10) { _ti_iscall = 1; }
-            if (_ti_iscall == 0) { if (_MONOMORPH_OK == 1) { if (TOKTYP(S, GTI(S) + 1) == 19) {
-                var _ti_gfi = FINDFN(S, PEEKV(S));
-                if (_ti_gfi >= 0) { if (GFTP(S, _ti_gfi) != 0) { _ti_iscall = 1; } }
-            } } }
-            if (_ti_iscall == 1) {
-                var _ti_noff = PEEKV(S);
-                var _ti_fi = FINDFN(S, _ti_noff);
-                if (_ti_fi >= 0) {
-                    _ti_inferred_sid = GFRS(S, _ti_fi);
+            if (PEEKT(S) == 2) {
+                # v6.3.37 (B2): infer the local's struct type from BOTH a plain `IDENT (`
+                # and a monomorph generic `IDENT < ... > (` call — so `var b = mk<i32>(...)`
+                # types `b` as the struct (its GFRS return sid) and `b.x`/`b.w` parse.
+                var _ti_iscall = 0;
+                if (TOKTYP(S, GTI(S) + 1) == 10) { _ti_iscall = 1; }
+                if (_ti_iscall == 0) { if (_MONOMORPH_OK == 1) { if (TOKTYP(S, GTI(S) + 1) == 19) {
+                            var _ti_gfi = FINDFN(S, PEEKV(S));
+                            if (_ti_gfi >= 0) { if (GFTP(S, _ti_gfi) != 0) { _ti_iscall = 1; } }
+                        } } }
+                if (_ti_iscall == 1) {
+                    var _ti_noff = PEEKV(S);
+                    var _ti_fi = FINDFN(S, _ti_noff);
+                    if (_ti_fi >= 0) {
+                        _ti_inferred_sid = GFRS(S, _ti_fi);
+                    }
                 }
             }
-        }
-    } }
+        } }
     # v6.5.17 — the v6.3.8/v6.3.36 CLOSURE_TYID SLTYPE stamp is GONE. A capturing
     # closure now identifies itself at RUNTIME (bit 63 of its value; see the callptr
     # lowering in parse_expr.cyr), so a `var` holding one needs no special type — and

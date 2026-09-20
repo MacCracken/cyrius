@@ -57,14 +57,14 @@ enum IROp {
     IR_LOAD_ADDR_G = 7;   # arg1 = var index → rax = &global
     IR_LOAD_STR    = 8;   # arg1 = string offset → rax
     IR_LOAD_ADDR_G_X1 = 9;  # arg1 = var index → RCX = &global (EVADDR_X1, x86).
-                            # v6.3.28: DISTINCT from IR_LOAD_ADDR_G (which is → RAX
-                            # via EVADDR). Both emit movabs $imm,reg but into
-                            # different registers; sharing one opcode made the
-                            # liveness model treat the rcx-writing movabs as a pure
-                            # RAX def, so ir_dce_capped eliminated it as "dead rax"
-                            # → NOP-fill → SIGILL on struct-init/#derive. This op is
-                            # in _ir_def_rcx_any (writes rcx) and in NO _pure set
-                            # (never DCE-eliminable). CYRIUS_IR=3 substrate fix.
+    # v6.3.28: DISTINCT from IR_LOAD_ADDR_G (which is → RAX
+    # via EVADDR). Both emit movabs $imm,reg but into
+    # different registers; sharing one opcode made the
+    # liveness model treat the rcx-writing movabs as a pure
+    # RAX def, so ir_dce_capped eliminated it as "dead rax"
+    # → NOP-fill → SIGILL on struct-init/#derive. This op is
+    # in _ir_def_rcx_any (writes rcx) and in NO _pure set
+    # (never DCE-eliminable). CYRIUS_IR=3 substrate fix.
 
     # -- Arithmetic --
     IR_ADD         = 10;  # rax = rcx + rax

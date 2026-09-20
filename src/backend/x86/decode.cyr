@@ -110,9 +110,9 @@ fn DECODE_LEN(buf, off): i64 {
         #   A2 CPUID    AA RSM
         # (A2 CPUID is distinct from A3 BT/ModR/M; AA RSM from AB BTS/ModR/M.)
         if (op2 == 0x05 || op2 == 0x07 || op2 == 0x08 || op2 == 0x09 ||
-            op2 == 0x0B || op2 == 0x30 || op2 == 0x31 || op2 == 0x32 ||
-            op2 == 0x33 || op2 == 0x34 || op2 == 0x35 || op2 == 0x77 ||
-            op2 == 0xA2 || op2 == 0xAA) {
+          op2 == 0x0B || op2 == 0x30 || op2 == 0x31 || op2 == 0x32 ||
+          op2 == 0x33 || op2 == 0x34 || op2 == 0x35 || op2 == 0x77 ||
+          op2 == 0xA2 || op2 == 0xAA) {
             return p - off;                    # 0F + op2 already consumed (2 bytes + prefixes)
         }
         # ModR/M-bearing forms carrying an imm8 AFTER the ModR/M (v6.5.68).
@@ -130,8 +130,8 @@ fn DECODE_LEN(buf, off): i64 {
         # loop-extension exists to prevent. CHANGELOG [6.5.68]
         var _imm8_after = 0;
         if (op2 == 0x70 || op2 == 0x71 || op2 == 0x72 || op2 == 0x73 ||
-            op2 == 0xA4 || op2 == 0xAC || op2 == 0xBA ||
-            op2 == 0xC2 || op2 == 0xC4 || op2 == 0xC5 || op2 == 0xC6) { _imm8_after = 1; }
+          op2 == 0xA4 || op2 == 0xAC || op2 == 0xBA ||
+          op2 == 0xC2 || op2 == 0xC4 || op2 == 0xC5 || op2 == 0xC6) { _imm8_after = 1; }
         # ModR/M-bearing forms
         var mr = load8(buf + p);
         p = p + 1;
@@ -160,12 +160,12 @@ fn DECODE_LEN(buf, off): i64 {
 
     # Two-byte sequences with no ModR/M — common Cyrius emissions:
     if (op == 0x05 || op == 0x0D || op == 0x15 || op == 0x1D ||
-    op == 0x25 || op == 0x2D || op == 0x35 || op == 0x3D) {
+      op == 0x25 || op == 0x2D || op == 0x35 || op == 0x3D) {
         # ADD/OR/.../CMP eax, imm32 (or rax, imm32 with REX.W)
         return p - off + 4;
     }
     if (op == 0x04 || op == 0x0C || op == 0x14 || op == 0x1C ||
-    op == 0x24 || op == 0x2C || op == 0x34 || op == 0x3C) {
+      op == 0x24 || op == 0x2C || op == 0x34 || op == 0x3C) {
         return p - off + 1;                    # AL, imm8 family
     }
 
@@ -189,9 +189,9 @@ fn DECODE_LEN(buf, off): i64 {
     var imm_after_modrm = 0;   # 0/1/2/4 bytes after ModR/M
 
     if ((op >= 0x00 && op <= 0x03) || (op >= 0x08 && op <= 0x0B) ||
-    (op >= 0x10 && op <= 0x13) || (op >= 0x18 && op <= 0x1B) ||
-    (op >= 0x20 && op <= 0x23) || (op >= 0x28 && op <= 0x2B) ||
-    (op >= 0x30 && op <= 0x33) || (op >= 0x38 && op <= 0x3B)) {
+      (op >= 0x10 && op <= 0x13) || (op >= 0x18 && op <= 0x1B) ||
+      (op >= 0x20 && op <= 0x23) || (op >= 0x28 && op <= 0x2B) ||
+      (op >= 0x30 && op <= 0x33) || (op >= 0x38 && op <= 0x3B)) {
         has_modrm = 1;
     }
     if (op == 0x84 || op == 0x85 || op == 0x86 || op == 0x87) { has_modrm = 1; }
@@ -245,7 +245,7 @@ fn DECODE_LEN(buf, off): i64 {
     }
     # 0xA4..0xA7 / 0xAA..0xAF — string ops (MOVS, CMPS, STOS, LODS, SCAS): no operands
     if (op == 0xA4 || op == 0xA5 || op == 0xA6 || op == 0xA7 ||
-    op == 0xAA || op == 0xAB || op == 0xAC || op == 0xAD || op == 0xAE || op == 0xAF) {
+      op == 0xAA || op == 0xAB || op == 0xAC || op == 0xAD || op == 0xAE || op == 0xAF) {
         return p - off;
     }
     # 0x6A — PUSH imm8;  0x68 — PUSH imm32
