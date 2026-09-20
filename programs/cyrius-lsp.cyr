@@ -1797,8 +1797,8 @@ fn _lsp_collect_locals(fb, ftotal): i64 {
     _lsp_local_count = 0;
     var p = 0;
     var sig_state = 0;     # 0=outside, 1=after fn, 2=after fn-name,
-                           # 3=expect param name, 4=after param name,
-                           # 5=type annotation
+    # 3=expect param name, 4=after param name,
+    # 5=type annotation
     var var_pending = 0;   # 1 = just saw `var`, next ident is local
     while (p < ftotal) {
         var c = load8(fb + p);

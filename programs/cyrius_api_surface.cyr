@@ -189,10 +189,10 @@ fn _scan_id(buf, pos, total): i64 {
 # "_to_json") — for Serialize-style emits with no field
 # component, pass `field_len == 0`.
 fn _push_synthesized(module_off, module_len,
-                     struct_off, struct_len,
-                     suffix_cstr,
-                     field_off, field_len,
-                     arity) {
+  struct_off, struct_len,
+  suffix_cstr,
+  field_off, field_len,
+  arity) {
     var sb = str_builder_new();
     var i = 0;
     while (i < struct_len) {
@@ -223,7 +223,7 @@ fn _push_synthesized(module_off, module_len,
 # (335 entries vs the awk-walker's 721; 386-entry delta = the
 # count of derive-emitted accessor pairs).
 fn _scan_derive_struct(filebuf, filelen, module_off, module_len,
-                       struct_pos, want_accessors, want_serialize) {
+  struct_pos, want_accessors, want_serialize) {
     var p = struct_pos + 7;   # skip "struct "
     while (p < filelen) {
         var c = load8(filebuf + p);
@@ -250,9 +250,9 @@ fn _scan_derive_struct(filebuf, filelen, module_off, module_len,
     # Mirrors PP_DERIVE_SERIALIZE in src/frontend/lex_pp.cyr.
     if (want_serialize == 1) {
         _push_synthesized(module_off, module_len, sn_off, sn_len,
-                          "_to_json",   0, 0, 1);
+          "_to_json",   0, 0, 1);
         _push_synthesized(module_off, module_len, sn_off, sn_len,
-                          "_from_json", 0, 0, 1);
+          "_from_json", 0, 0, 1);
     }
 
     # Walk fields until `}`. Each field is <name> or
@@ -277,11 +277,11 @@ fn _scan_derive_struct(filebuf, filelen, module_off, module_len,
                                     var fn_end = p;
                                     if (want_accessors == 1) {
                                         _push_synthesized(module_off, module_len,
-                                            sn_off, sn_len, "_",
-                                            filebuf + fn_start, fn_end - fn_start, 1);
+                                          sn_off, sn_len, "_",
+                                          filebuf + fn_start, fn_end - fn_start, 1);
                                         _push_synthesized(module_off, module_len,
-                                            sn_off, sn_len, "_set_",
-                                            filebuf + fn_start, fn_end - fn_start, 2);
+                                          sn_off, sn_len, "_set_",
+                                          filebuf + fn_start, fn_end - fn_start, 2);
                                     }
                                     # Skip until `;` or `}` (handles `<name>: <type>`).
                                     while (p < filelen) {
@@ -360,9 +360,9 @@ fn _scan_file(filebuf, filelen, module_off, module_len) {
                         # then continue the outer loop's depth-
                         # tracking scan from there.
                         var post = _scan_derive_struct(
-                            filebuf, filelen,
-                            module_off, module_len,
-                            p, pending_accessors, pending_serialize);
+                          filebuf, filelen,
+                          module_off, module_len,
+                          p, pending_accessors, pending_serialize);
                         pending_accessors = 0;
                         pending_serialize = 0;
                         pos = post;
@@ -455,7 +455,7 @@ fn _scan_file(filebuf, filelen, module_off, module_len) {
                                             }
                                         }
                                         _push_entry(module_off, module_len,
-                                        filebuf + np, name_end - np, arity);
+                                          filebuf + np, name_end - np, arity);
                                     }
                                 }
                             }
@@ -615,10 +615,10 @@ fn _diff_against_snapshot(snapshot_bytes) {
                 } elif (cmp < 0) {
                     if (removed_count == 0) {
                         # v5.8.44: was 66 — off-by-one included the cstring's
-                    # trailing \0 in the syscall length, producing a stray
-                    # null byte in the output that the shell flagged as
-                    # "ignored null byte in input" on command substitution.
-                    syscall(SYS_WRITE, 2, "BREAKING: public fn removed or signature changed since snapshot:\n", 65);
+                        # trailing \0 in the syscall length, producing a stray
+                        # null byte in the output that the shell flagged as
+                        # "ignored null byte in input" on command substitution.
+                        syscall(SYS_WRITE, 2, "BREAKING: public fn removed or signature changed since snapshot:\n", 65);
                     }
                     syscall(SYS_WRITE, 2, "  - ", 4);
                     syscall(SYS_WRITE, 2, SNAPSHOT_BUF + s_pos, s_len);

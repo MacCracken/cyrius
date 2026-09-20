@@ -1916,6 +1916,37 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   cbt_fork_sites_have_pe_arm.sh`'s wine row was updated for the shared wording and now also
   asserts the fork name. cbt-only — `build/cycc` is unchanged.
 
+- **Nothing ran the formatter over the tree, so "the tree is formatted" was a belief — 64 of
+  332 tracked non-`lib/` `.cyr` failed `cyrius fmt --check`.** (bite 23c.) The trigger was
+  `cbt/commands.cyr`, whose `if (_toml_section_at(mbuf, mlen, si) == 1) {` had a body that was
+  never indented; it was reported **twice inside this one release** before anyone fixed it.
+  **Fixed 11 files** — `cbt/commands.cyr`, `cbt/quality.cyr`, `programs/checks/platform_win_macho.cyr`,
+  `programs/checks/ts.cyr`, `programs/cyrius-lsp.cyr`, `programs/cyrius_api_surface.cyr`,
+  `programs/cyrld.cyr`, `programs/gen_syscall_xlat.cyr`, `programs/gen_unicode_data.cyr`,
+  `programs/ts_test_runner.cyr`, `tests/win/nanosleep_pe.cyr` — each proved logic-preserving by
+  recompiling to a **byte-identical** binary (the PE one through `CYRIUS_TARGET_WIN=1`).
+  **Not touched, each for a reason:** `archive/**` (24 — frozen historical seed/stage sources;
+  reformatting rewrites history), `bootstrap/cybs.cyr` (compiled by the 29 KB seed, and the
+  `seed → cybs → cycc` chain is byte-gated), the three `docs/development/issues/repros/*.cyr`
+  (**a filed repro is the spec, verbatim** — and one of them *is* the cyrfmt repro), the three
+  `tests/fixtures/lint_*/*.cyr` (the bad indentation **is** the input under test), and the seven
+  `src/main*.cyr` forks (deliberately unformatted per CLAUDE.md). **`src/` carries 16 further
+  unformatted files** (`backend/aarch64/emit`, `backend/pe/emit`, `backend/x86/{decode,emit,fixup}`,
+  `common/{ir,util}`, `frontend/{lex,lex_pp,parse,parse_decl,parse_expr,parse_fn,parse_types}`,
+  `frontend/ts/{lex,parse}`) — left for a release that is not running four concurrent compiler
+  lanes, since reformatting them conflicts with every one of them. `lib/` has **2**:
+  `lib/sigil.cyr` and `lib/mabda.cyr`, which are **vendored folds** and must be fixed upstream
+  and re-vendored, never in the fold. New gate
+  `tests/gates/toolchain/tracked_sources_canonically_formatted.sh` sweeps all 311 non-exempt
+  tracked `.cyr` and — the part that matters — **checks the exemptions for rot**: a hard
+  exclusion matching no tracked file fails, and a ratchet whose real count has dropped *below*
+  its ceiling fails too, because a ceiling nobody lowers silently re-opens the carve-out. Its
+  positive control proves `fmt --check` is live in both directions every run, since a sweep
+  running a broken checker calls every file clean and exits 0. 5 mutants, all RED. ⚠ The gate's
+  own first run reported `0 files were actually checked`: its exclusion helper was a
+  `printf | while`, whose subshell cannot answer for the caller, so every path read as excluded
+  — which is why it now carries a corpus floor *and* a checked floor.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**

@@ -214,6 +214,22 @@ type: state
 > carry their 2026-09-08 v6.6.1 figures. cycc is **1,315,040 B** as of this bite
 > (`docs/development/state.md` carries the live stamp); the 1,247,608 B anchor below is the
 > v6.6.1 one and has not been re-tallied here.
+> **Touched at 6.6.6 (bite 23, not a sweep):** `docs/guides/cyrius-guide.md` gained two
+> corrections, both of things it already said that were not behaviour. (1) The CLI verb list
+> had no `cyrius self` line at all, and nothing anywhere said which SOURCE `self` / `soak`
+> compile — they named `src/main.cyr`, the x86-64 **Linux** fork, on every host, which on
+> aarch64 and macOS COMPILES and yields a verdict about a compiler nobody ships. The verb is
+> listed now, with the host → fork mapping and the fact that a missing fork is refused by
+> name. (2) "`--emit-js` is **x86-Linux-only**" was documentation, not behaviour: elsewhere
+> the CLI forked a compiler that does not know the flag, and that compiler ignored it, read
+> its empty stdin and emitted a runnable binary which the CLI renamed over the `.js` and
+> called OK (measured on real pi: exit 0, a 65,888-byte aarch64 ELF). The note now records
+> what it does instead. ⚠ Neither is a new fact — both paragraphs describe the *intended*
+> behaviour the code did not have, which is the class this ledger exists for: a doc that is
+> right about intent and silent about what actually happens reads as verified. Both are now
+> pinned by gates (`toolchain/self_host_src_per_target.sh`,
+> `toolchain/emit_js_refused_off_x86_linux.sh`), so the doc and the behaviour move together.
+> No other tier was re-verified at 6.6.6 by this bite.
 
 ## At a glance — inventory (bucket counts last fully re-tallied 2026-06-04 at the v6.0.62 sweep; per-tier sections re-anchored to the 2026-06-12 v6.1.41 closeout doc-sync — the rollup counts here lag and are approximate)
 

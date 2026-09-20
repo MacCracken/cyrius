@@ -45,8 +45,8 @@ fn _agnos_emit_gate(): i64 {
         if (load8(buf + i) == 0xB8) {
             if (load8(buf + i + 1) == 0x3C) {
                 if (load8(buf + i + 2) == 0) { if (load8(buf + i + 3) == 0) { if (load8(buf + i + 4) == 0) {
-                    found_linux_exit = 1;
-                } } }
+                            found_linux_exit = 1;
+                        } } }
             }
         }
         i = i + 1;
@@ -92,8 +92,8 @@ fn _agnos_xsys_gate(): i64 {
         if (load8(buf + j) == 0xB8) {
             if (load8(buf + j + 1) == 0xD9) {
                 if (load8(buf + j + 2) == 0) { if (load8(buf + j + 3) == 0) { if (load8(buf + j + 4) == 0) {
-                    found_linux_getdents = 1;
-                } } }
+                            found_linux_getdents = 1;
+                        } } }
             }
         }
         j = j + 1;
@@ -414,7 +414,7 @@ fn _ts_corpus_gate(label, ext, threshold): i64 {
     vec_push(prunes, str_from("coverage"));
 
     var files = find_files_with_prunes(str_from(corpus_root),
-                                       str_from(ext), prunes);
+      str_from(ext), prunes);
     var total = vec_len(files);
 
     # For .ts we need to ALSO exclude .tsx (the .sh did this via

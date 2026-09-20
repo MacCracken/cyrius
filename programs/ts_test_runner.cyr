@@ -212,7 +212,7 @@ fn main(): i64 {
     syscall(1, 1, " files...\n", 10);
 
     var files = find_files_with_prunes(str_from(_walk_path),
-                                       str_from(_ext_str), prunes);
+      str_from(_ext_str), prunes);
     var total = vec_len(files);
     if (total == 0) {
         syscall(1, 1, "no fixtures found.\n", 19);

@@ -853,7 +853,7 @@ fn run_dce(): i64 {
             dead_count = dead_count + 1;
             dead_bytes = dead_bytes
             + (load64(&FN_MERGED_END + fj * 8)
-            - load64(&FN_MERGED_OFF + fj * 8));
+              - load64(&FN_MERGED_OFF + fj * 8));
         }
         fj = fj + 1;
     }
@@ -946,7 +946,7 @@ fn compact_text(): i64 {
             var p = 0;
             while (p < fsz) {
                 store8(NEW_TEXT + fn_new + p,
-                load8(buf + text_off + mod_start + p));
+                  load8(buf + text_off + mod_start + p));
                 p = p + 1;
             }
         }
@@ -1005,7 +1005,7 @@ fn remap_intra_module_calls(): i64 {
                                 var tstart = load64(&FN_MOD_OFF + fj * 8);
                                 var tend = load64(&FN_MOD_END + fj * 8);
                                 if (old_target_mod_off >= tstart
-                                && old_target_mod_off < tend) {
+                                  && old_target_mod_off < tend) {
                                     tgt_fi = fj;
                                     fj = FN_COUNT;
                                 }
@@ -1013,7 +1013,7 @@ fn remap_intra_module_calls(): i64 {
                             fj = fj + 1;
                         }
                         if (tgt_fi >= 0
-                        && load64(&FN_REACHED + tgt_fi * 8) == 1) {
+                          && load64(&FN_REACHED + tgt_fi * 8) == 1) {
                             var tmod_start = load64(&FN_MOD_OFF + tgt_fi * 8);
                             var new_tgt_off = load64(&FN_MERGED_OFF + tgt_fi * 8)
                             + (old_target_mod_off - tmod_start);

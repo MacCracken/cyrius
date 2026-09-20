@@ -260,7 +260,7 @@ fn _sort_records(arr, n, stride): i64 {
             var s2 = 0;
             while (s2 < stride) {
                 store64(arr + (j + 1) * rec_bytes + s2 * 8,
-                        load64(arr + j * rec_bytes + s2 * 8));
+                  load64(arr + j * rec_bytes + s2 * 8));
                 s2 = s2 + 1;
             }
             j = j - 1;
@@ -777,7 +777,7 @@ fn _sort_records_by_slot(arr, n, stride, key_slot): i64 {
             var s2 = 0;
             while (s2 < stride) {
                 store64(arr + (j + 1) * rec_bytes + s2 * 8,
-                        load64(arr + j * rec_bytes + s2 * 8));
+                  load64(arr + j * rec_bytes + s2 * 8));
                 s2 = s2 + 1;
             }
             j = j - 1;
@@ -1040,8 +1040,8 @@ fn _emit_compat_data_blob(compat_recs, n, out_blob, idx_recs): i64 {
         var ci = 0;
         while (ci < count) {
             bo = bo + _emit_hex_padded(out_blob, bo,
-                                       load64(compat_recs + i * 160 + 16 + ci * 8),
-                                       6);
+              load64(compat_recs + i * 160 + 16 + ci * 8),
+              6);
             ci = ci + 1;
         }
         i = i + 1;

@@ -3926,21 +3926,21 @@ fn cmd_distlib(profile): i64 {
         # Unguarded, a comment naming a section won the scan and the module list was read
         # from the comment's array — see _toml_section_at for the measured reproduction.
         if (_toml_section_at(mbuf, mlen, si) == 1) {
-        if (profile != 0) {
-            if (memeq(mbuf + si, profile_hdr, profile_hdr_len) == 1) {
-                matched = 1;
-                header_len = profile_hdr_len;
+            if (profile != 0) {
+                if (memeq(mbuf + si, profile_hdr, profile_hdr_len) == 1) {
+                    matched = 1;
+                    header_len = profile_hdr_len;
+                }
+            } else {
+                if (memeq(mbuf + si, "[build]", 7) == 1) {
+                    matched = 1;
+                    header_len = 7;
+                }
+                elif (memeq(mbuf + si, "[lib]", 5) == 1) {
+                    matched = 1;
+                    header_len = 5;
+                }
             }
-        } else {
-            if (memeq(mbuf + si, "[build]", 7) == 1) {
-                matched = 1;
-                header_len = 7;
-            }
-            elif (memeq(mbuf + si, "[lib]", 5) == 1) {
-                matched = 1;
-                header_len = 5;
-            }
-        }
         }
         if (matched == 1) {
             var bi = si + header_len;

@@ -498,11 +498,11 @@ fn cmd_header(arg): i64 {
                 }
                 # Skip type annotation if present
                 if (pi < pe) { if (load8(hbuf + pi) == 58) {
-                    while (pi < pe) {
-                        if (load8(hbuf + pi) == 44) { break; }
-                        pi = pi + 1;
-                    }
-                } }
+                        while (pi < pe) {
+                            if (load8(hbuf + pi) == 44) { break; }
+                            pi = pi + 1;
+                        }
+                    } }
                 if (pne > pns) {
                     if (first == 0) { sys_write(STDOUT_FD, ", ", 2); }
                     sys_write(STDOUT_FD, "cyr_val ", 8);

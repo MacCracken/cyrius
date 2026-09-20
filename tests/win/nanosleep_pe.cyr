@@ -15,8 +15,8 @@
 # be only 8 bytes and the tv_nsec write at +8 would spill into the next local.
 
 var g_nano = 35;   # module-level var → IDENT load, never constant-folds, so it
-                   # forces the EPE_SYSCALL_DYNAMIC (var-number) path, mirroring
-                   # sakshi's `var _SK_SYS_NANOSLEEP = 35;` arch-dispatch slot.
+# forces the EPE_SYSCALL_DYNAMIC (var-number) path, mirroring
+# sakshi's `var _SK_SYS_NANOSLEEP = 35;` arch-dispatch slot.
 
 fn main(): i64 {
     var ts[16];
