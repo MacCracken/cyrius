@@ -40,6 +40,18 @@ _cig_cleanup() {
 trap _cig_cleanup EXIT
 
 sh scripts/build-windows-tarball.sh "$T/windist" >/dev/null 2>&1
+# ── v6.6.6: SHIP THE CHECKSUM SIDECAR, THE WAY A REAL RELEASE DOES ──────────────────
+# install.ps1 has been fail-closed on the tarball hash since CVE-21 (v6.2.30): with no
+# -Sha256 and no "<tarball>.sha256" beside it, it throws "refusing to install unverified
+# tarball" BEFORE it extracts anything. This gate staged the tarball ALONE, so it was RED
+# on its own terms — every run died at the hash check, never reached the install, and the
+# thing it exists to prove (a Windows user's real install works) was never once tested.
+# The builder has always written the sidecar; only the staging dropped it. The guard below
+# makes "the builder stopped producing one" a loud local failure rather than a remote
+# refusal 3 MB of scp later. CHANGELOG [6.6.6]
+[ -f "$T/windist/${TB}.sha256" ] || {
+    echo "ERROR: build-windows-tarball.sh produced no ${TB}.sha256 — install.ps1 is fail-closed on the hash and will refuse this tarball"
+    exit 1; }
 printf 'fn main(): i64 { return 42; }' > "$T/tw.cyr"
 
 # Reachability — distinct exit 3 so the audit says "couldn't verify" (still blocks).
@@ -49,7 +61,7 @@ ssh -o ConnectTimeout=15 -o BatchMode=yes cass 'cmd /c "echo ok"' >/dev/null 2>&
 ssh -o ConnectTimeout=20 -o BatchMode=yes cass "cmd /c \"mkdir %USERPROFILE%\\$RD\"" >/dev/null 2>&1 \
     || { echo "UNREACHABLE: cass (could not create the staging dir)"; exit 3; }
 scp -q scripts/install.ps1 scripts/cass-install-gate.ps1 "$T/tw.cyr" \
-    "$T/windist/${TB}" "cass:$RD/" \
+    "$T/windist/${TB}" "$T/windist/${TB}.sha256" "cass:$RD/" \
     || { echo "UNREACHABLE: cass (scp failed)"; exit 3; }
 
 # The .ps1 exit code propagates back through ssh. Full Windows paths (the home

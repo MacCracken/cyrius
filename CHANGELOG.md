@@ -1214,6 +1214,30 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   printed; the tracked binary merely STALE → the existing (correct) size/`cmp` report,
   with no empty stderr block.
 
+- **The Windows install gate was RED on its own terms: it shipped the release tarball
+  without the `.sha256` sidecar `install.ps1` is fail-closed on.** (bite 25a.)
+  `scripts/cass-install-gate.sh` builds the real Windows tarball, ships it to cass and runs
+  the REAL `install.ps1` — the one pillar that proves a Windows user's install works. Since
+  CVE-21 (v6.2.30) `install.ps1` refuses a tarball it cannot hash: with no `-Sha256` and no
+  `<tarball>.sha256` beside it, it throws *"refusing to install unverified tarball"* before
+  extracting a byte. The gate `scp`'d the tarball alone, so every run spent 3 MB of scp and
+  then died at the hash check with `INSTALL FAIL (1)` — the install itself never executed
+  once. **The builder was never wrong**: `build-windows-tarball.sh` has always written the
+  sidecar next to the tarball (verified: it does, and the hash matches); only the staging
+  dropped it. Fix: the sidecar ships with the tarball, plus a local `[ -f … ]` guard so
+  "the builder stopped producing one" fails loudly here instead of as a remote refusal.
+  ⚠ **The same omission is silent one host over** — `cross-os-selfhost.sh`'s `ecb-install`
+  arm stages a macOS tarball for `install.sh`, whose explicit-local-tarball arm verifies the
+  hash only *if* a sidecar is present and proceeds if it is not, so that leg was skipping the
+  integrity check rather than failing; it ships the sidecar now too. Verified on real cass:
+  `checksum verified` → install → `cyrius build` → `OK`, exit 0. Gate:
+  `tests/gates/toolchain/install_gates_ship_the_checksum.sh` (registered in
+  `programs/checks/main.cyr`) — axis 1 runs the real builder and **re-hashes** the tarball,
+  axis 2 runs the real cass gate with `ssh`/`scp` shimmed and derives the expected filename
+  from the `-Tarball` argument the script itself passes plus the suffix read out of
+  `install.ps1`, axis 2b forbids scp'ing an unverifiable tarball to a real host, axis 3
+  sweeps every scp-a-release-tarball site. Mutation-proven six ways.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**

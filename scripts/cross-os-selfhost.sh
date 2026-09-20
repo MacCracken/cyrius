@@ -435,7 +435,13 @@ case "$HOST" in
     # installed over each other's sandboxed CYRIUS_HOME).
     _co_reap_stale ecb
     ssh $SSHO ecb "rm -rf ~/$RD && mkdir ~/$RD"
-    scp -q $SSHO scripts/install.sh scripts/funcgate-posix.sh "$CO_TMP"/_co_t.cyr "$CO_TMP/_co_dist/cyrius-$V-aarch64-macos.tar.gz" "ecb:~/$RD/"
+    # v6.6.6: the .sha256 sidecar ships too. install.sh's explicit-local-tarball arm only
+    # verifies the hash IF a sidecar sits beside the tarball, so staging the tarball alone
+    # SILENTLY SKIPPED the checksum leg of the install this gate exists to exercise — the
+    # same omission that left the cass gate outright RED, where install.ps1 is fail-closed.
+    # A packaging-rot guard that skips the integrity check is not running the real install.
+    # CHANGELOG [6.6.6]
+    scp -q $SSHO scripts/install.sh scripts/funcgate-posix.sh "$CO_TMP"/_co_t.cyr "$CO_TMP/_co_dist/cyrius-$V-aarch64-macos.tar.gz" "$CO_TMP/_co_dist/cyrius-$V-aarch64-macos.tar.gz.sha256" "ecb:~/$RD/"
     ssh $SSHO ecb "CYRIUS_VERSION=$V CYRIUS_HOME=\$HOME/$RD/ih CYRIUS_INSTALL_TARBALL=\$HOME/$RD/cyrius-$V-aarch64-macos.tar.gz sh \$HOME/$RD/install.sh >/dev/null 2>&1 && CYRIUS_HOME=\$HOME/$RD/ih \$HOME/$RD/ih/bin/cyrius build \$HOME/$RD/_co_t.cyr \$HOME/$RD/t.out >/dev/null 2>&1 && (r=0; \$HOME/$RD/t.out || r=\$?; [ \$r -eq 42 ])"
     # v6.0.63 FUNCTIONAL gate — the REAL consumer flow (init -> lib sync -> deps
     # -> build a vec-grown fib that allocates -> run/assert -> hash). Self-host +
