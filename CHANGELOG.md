@@ -2357,6 +2357,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   fails both legs, the `%s` version passes, and moving the stub's `%s` to 1024 fails again — so
   the fix did not simply silence the oracle (ledger entry 10).
 
+- **The same gate's ordering axis printed a contradictory `ok:` line beside its own `FAIL`**
+  (bite 11 review fix). The `ok: … routes statfs 137 -> 43 …, below the compat row that claims
+  43` line sat in the else-branch of the alias-band check and never consulted the failure list,
+  so with both statfs rows moved ABOVE the `accept 43→202` row it printed exactly that,
+  immediately before `FAIL: … row 16 (43->202) BELOW it matches that number`. The exit code was
+  right; the log asserted the opposite of the finding at the moment it mattered most. It is now
+  gated on a per-call mark, so any failure that axis can append — duplicate sources, wrong
+  ordering, the alias band — suppresses it, and the line names WHICH compat row it is below
+  (index 14 for statfs, 44 for fstatfs) or says nothing claims the number any more, which is
+  what the sibling `note:` had been contradicting too (ledger entries 11-12).
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**

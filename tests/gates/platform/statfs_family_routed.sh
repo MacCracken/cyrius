@@ -62,6 +62,13 @@
 #      (legal — ext2 fragments, UFS) -> the `%S` version this gate shipped with FAILs both legs
 #      ("f_bsize 4096, coreutils says 1024"), the `%s` version PASSes; and with the stub's `%s`
 #      itself moved to 1024 the `%s` version FAILs, so the fix did not just silence the oracle
+#  11. mutation 3 again, run against BOTH gate versions -> the shipped one printed "ok: …
+#      below the compat row that claims 43" immediately BEFORE its own "FAIL: … row 16
+#      (43->202) BELOW it"; this one prints the FAIL alone. Both exit 1 — the defect was the
+#      log contradicting itself, which is what a reader skimming for `ok:` acts on
+#  12. delete the `accept 43→202` compat row entirely -> the note fires AND the ok line now
+#      reads "with nothing above it claiming 43" instead of asserting a compat row that is
+#      gone; gate stays GREEN, because the borrow is then unforced but still correct
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
@@ -152,6 +159,14 @@ if len(rows) < 40:
 
 for call in ('statfs', 'fstatfs'):
     s, want = SRC[call], DST[call]
+    # ⚠ THE OK LINE BELOW IS GATED ON THIS MARK, which is the whole reason it is taken. It
+    # used to sit in the else-branch of the alias-band check alone and never consulted `bad`,
+    # so a row moved ABOVE the compat row it produces into printed "ok: … below the compat row
+    # that claims 43" immediately BEFORE its own "FAIL: … row 16 (43->202) BELOW it matches
+    # that number" — the log contradicting itself at the moment it matters most (the exit code
+    # was right; a reader skimming for `ok:` was not). A per-call mark makes every failure this
+    # loop can append — duplicate sources, wrong ordering, the alias band — suppress it.
+    n_before = len(bad)
     hits = [(idx, dst) for idx, (a, dst) in enumerate(rows) if a == s]
     if not hits:
         bad.append(f"axis A: the ELF-aarch64 chain has NO row for x86 {call} ({s}). "
@@ -183,9 +198,13 @@ for call in ('statfs', 'fstatfs'):
     if idx > first_alias:
         bad.append(f"axis A: the {call} row (index {idx}) sits INSIDE the >=1000 private "
                    f"alias band (starts at {first_alias}); the band must stay last")
-    else:
-        print(f"  ok: ELF-aarch64 routes {call} {s} -> {dst} at index {idx}, below the "
-              f"compat row that claims {dst} and above the alias band")
+    if len(bad) == n_before:
+        # Say which compat row it is below, or that none claims the number any more — the
+        # generic wording asserted a compat row existed even when the note above said it did not.
+        where = (f"below the compat row at index {above[-1]} that claims {dst}" if above
+                 else f"with nothing above it claiming {dst}")
+        print(f"  ok: ELF-aarch64 routes {call} {s} -> {dst} at index {idx}, {where} and "
+              f"outside the >=1000 alias band")
 
 # ── axis C: both Mach-O backends, by capability ────────────────────────────────────────
 # Darwin numbers are NOT derivable from the committed Linux tables, so they are pinned here
