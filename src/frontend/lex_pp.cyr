@@ -73,9 +73,12 @@ fn PP_SKIP_WS(S, pos, bl): i64 {
 }
 
 # v6.6.6 — THE preprocessor's lexical state machine. One copy, shared by all
-# three line-oriented passes (PP_PASS, PP_IFDEF_PASS, PP_REF_PASS); advance it
-# over every byte those passes copy and gate their beginning-of-line directive
-# detection on "not inside a string".
+# FOUR line-oriented passes (PP_PASS, PP_IFDEF_PASS, PP_REF_PASS and the
+# `#host_only` scanner PP_IS_HOST_ONLY); advance it over every byte those passes
+# read and gate their beginning-of-line directive detection on "not inside a
+# string". ⚠ The first cut of this fix said THREE and missed PP_IS_HOST_ONLY,
+# which is the same shape one file away — if you add another pass that decides
+# anything from a line's first byte, it belongs on this list.
 #
 # ⭐ WHY THE STRING STATE SURVIVES A NEWLINE. Each pass decides "is this line a
 # directive?" from the line's first non-space byte. Until 6.6.6 each carried its
@@ -440,13 +443,23 @@ var _pp_hostonly_name[128];    # the filename to name in the diagnostic (1024 B 
 # Bounded to the first 4096 bytes: this is a FILE-level annotation and belongs at the
 # top, and a bounded scan keeps it off the hot path. Requires column 0 so prose that
 # merely mentions the directive (this comment included) cannot trip it.
+#
+# v6.6.6 — ⚠ THE FOURTH line-oriented pass, and it had the same defect as the other
+# three: it tracked `bol` with no lexical state at all, so the column-0 rule above was
+# defeated by the one thing that can put an arbitrary byte at column 0 — a raw LF inside
+# a string literal. Any included file holding `var doc = "intro\n#host_only\nend";` was
+# recorded as host-only, and every `CYRIUS_KERNEL=1` build that pulled it was refused
+# with `bare-metal build includes host-only module`. The scan always starts at a file
+# boundary, so the state seeds at 0. See PP_LEXST. CHANGELOG [6.6.6]
 fn PP_IS_HOST_ONLY(buf, n): i64 {
     var lim = n;
     if (lim > 4096) { lim = 4096; }
     var i = 0;
     var bol = 1;
+    var lst = 0;
+    var in_string = 0;
     while (i < lim) {
-        if (bol == 1) {
+        if (bol == 1 && in_string == 0) {
             if (i + 10 <= lim) {
                 if (load8(buf + i) == 35) {              # '#'
                     if (load8(buf + i + 1) == 104) {      # 'h'
@@ -469,7 +482,10 @@ fn PP_IS_HOST_ONLY(buf, n): i64 {
                 }
             }
         }
-        if (load8(buf + i) == 10) { bol = 1; } else { bol = 0; }
+        var hc = load8(buf + i);
+        lst = PP_LEXST(lst, hc);
+        in_string = PP_LEXST_INSTR(lst);
+        if (hc == 10) { bol = 1; } else { bol = 0; }
         i = i + 1;
     }
     return 0;

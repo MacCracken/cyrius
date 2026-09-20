@@ -66,11 +66,12 @@ rule, and it needs its own seed-derive, self-host and cross-OS cycle.
 
 ## Resolution — 6.6.6 bite 4
 
-`src/frontend/lex_pp.cyr` gained `PP_LEXST`, one lexical state machine shared by all three
-line-oriented passes, whose string state CROSSES a newline. Each pass previously carried its own
-inlined copy and reset `in_string` at every newline; the reset's written justification was the
+`src/frontend/lex_pp.cyr` gained `PP_LEXST`, one lexical state machine shared by all FOUR
+line-oriented passes, whose string state CROSSES a newline. Three of them previously carried their
+own inlined copy and reset `in_string` at every newline; the reset's written justification was the
 premise *"cyrius source uses single-line strings (`\n` escape, not literal LF inside a string)"*,
-which is false about this repo's own source.
+which is false about this repo's own source. The fourth, `PP_IS_HOST_ONLY`, had no lexical state
+at all — see the correction below.
 
 The reset was only ever a blast-radius bound for a `"` the machine mis-read, so removing it meant
 turning both real sources of that into STATES: a `"` inside a `#` comment (already handled since
@@ -78,13 +79,13 @@ v5.9.34) and a `"` inside a char literal such as `var q = '"';`
 (`tests/fixtures/lint_lexical/escapes.cyr` — never handled, and the reason this was not a
 three-line deletion). `PP_REF_PASS`, which had no lexical state at all, got the same gate.
 
-Gates: `tests/gates/frontend/pp_directive_inside_multiline_string.sh` (8 axes, mutation-proven
-three ways, registered in `programs/checks/main.cyr`) and
+Gates: `tests/gates/frontend/pp_directive_inside_multiline_string.sh` (10 axes, mutation-proven
+four ways, registered in `programs/checks/main.cyr`) and
 `tests/tcyr/crossos/pp_directive_inside_multiline_string.tcyr` (9 assertions, in `crossos/` so
 the release gate executes it on real ecb / ach / cass / pi).
 
-Verification: the filing's repro prints `ab\n#ifdef NOPE\ncd\n#endif\nef`; all 328 `.tcyr` exit
-codes identical to the pre-fix compiler; `build/cycc` self-host fixpoint; `seed-derive-cycc.sh`
+Verification: the filing's repro prints `ab\n#ifdef NOPE\ncd\n#endif\nef`; all 328 pre-existing
+`.tcyr` exit codes identical to the pre-fix compiler; `build/cycc` self-host fixpoint; `seed-derive-cycc.sh`
 machine-derivable; all seven forks compile. cycc unchanged at 1,310,856 B.
 
 ## Corrections to this filing
@@ -100,9 +101,21 @@ machine-derivable; all seven forks compile. cycc unchanged at 1,310,856 B.
   string. The same is true of `#derive(...)`'s parenthesised form only by accident — `#derive(Serialize)`
   needs no quote and WAS damaged (it compiled to `error: #derive(...) applies to a struct or an enum`).
 - **"Affects: `src/frontend/lex_pp.cyr` — the line-oriented directive pass"** understates it:
-  there are THREE such passes (`PP_PASS`, `PP_IFDEF_PASS`, `PP_REF_PASS`), each with its own copy,
-  and `PP_IFDEF_PASS` is the one that sees directives inside INCLUDED files — so a fix to
+  there are FOUR such passes (`PP_PASS`, `PP_IFDEF_PASS`, `PP_REF_PASS`, `PP_IS_HOST_ONLY`), and
+  `PP_IFDEF_PASS` is the one that sees directives inside INCLUDED files — so a fix to
   `PP_PASS` alone would have left half the defect live. Gate axis 5 exists for exactly that.
+- **The first cut of the fix said THREE and missed `PP_IS_HOST_ONLY`** (found by review of bite 4,
+  fixed as bite 4b). That pass scans a freshly-read include's first 4096 bytes for a column-0
+  `#host_only`, with no lexical state at all — and its own comment gives the column-0 requirement
+  as the safeguard "so prose that merely mentions the directive cannot trip it". A raw LF inside a
+  string is precisely what defeats a column-0 rule, so an included file holding
+  `var doc = "intro` / `#host_only` / `end";` was recorded as host-only and every
+  `--target=<arch>-bare-metal-elf` build that pulled it died with
+  `error: bare-metal build includes host-only module`. Unlike every other shape in this filing
+  that one is LOUD, which is why the corpus never caught it. Gate axes 9 (the defect) and 10
+  (a real column-0 `#host_only` still annotates) pin it. **The lesson: when a line-oriented pass
+  is fixed, grep for the SHAPE (`bol` / first-byte-of-line) rather than the names already known —
+  the fourth instance was 2,300 lines up in the same file.**
 - **The fix direction's parenthetical "a char literal is single-line" is load-bearing, not an
   aside.** Without teaching the machine char literals, removing the newline reset converts
   `var q = '"';` from a one-line annoyance into a whole-file poisoning. Mutation M3 in the gate's

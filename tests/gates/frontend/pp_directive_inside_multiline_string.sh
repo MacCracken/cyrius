@@ -1,9 +1,10 @@
 #!/bin/sh
 # pp_directive_inside_multiline_string.sh — v6.6.6 bite 4.
 #
-# A cyrius string literal may hold a RAW newline. The preprocessor's three
-# line-oriented passes (PP_PASS, PP_IFDEF_PASS, PP_REF_PASS) decide "is this line
-# a directive?" from the line's first non-space byte, and until 6.6.6 each reset
+# A cyrius string literal may hold a RAW newline. The preprocessor's FOUR
+# line-oriented passes (PP_PASS, PP_IFDEF_PASS, PP_REF_PASS and the `#host_only`
+# scanner PP_IS_HOST_ONLY) decide "is this line a directive?" from the line's
+# first non-space byte, and until 6.6.6 each reset
 # its `in_string` flag at every newline "as a safety net", on the written premise
 # that "cyrius source uses single-line strings". That premise was false —
 # src/main.cyr and src/frontend/parse_expr.cyr both spell error messages with a
@@ -32,16 +33,23 @@
 #   6  #define/#ifdef/#ifndef OUTSIDE a string still select branches
 #   7  a `"` inside a # comment does not poison a later #ifdef (v5.9.34 guard)
 #   8  a char literal holding `"` does not poison a later #ifdef
+#   9  `#host_only` inside a multi-line string in an INCLUDED file is NOT an
+#      annotation — a CYRIUS_KERNEL=1 build of it compiles (PP_IS_HOST_ONLY, the
+#      fourth pass, which the first cut of this fix missed)
+#  10  over-correction guard for 9: a REAL column-0 `#host_only` in an included
+#      file is still recorded and still refuses the bare-metal build
 #
 # MUTATION LEDGER (2026-09-19, cycc 1,310,856 B). A scratch tree built with
 # `git archive HEAD src bootstrap lib`, the fixed lex_pp.cyr overlaid, and the
 # single line `if (c == 10) { bol = 1; } else { bol = 0; }` in PP_PASS and
 # PP_IFDEF_PASS re-armed to also reset the string state:
-#   mutated compiler → axes 1,2,3,5 FAIL (axis 1 prints ab\n\n\n\nef); 4,6,7,8 pass
+#   mutated compiler → axes 1,2,3,5 FAIL (axis 1 prints ab\n\n\n\nef); the rest pass
 #   PP_REF_PASS's `in_string` gate reverted → axis 4 FAILS (`cannot open #ref
 #     file: ;`); every other axis passes
 #   PP_LEXST's char-literal states (4/5) removed → axis 8 FAILS
-#   real tree → 8/8 green
+#   PP_IS_HOST_ONLY's `in_string == 0` gate reverted → axis 9 FAILS
+#     (`bare-metal build includes host-only module`); axis 10 still passes
+#   real tree → 10/10 green
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
@@ -190,6 +198,49 @@ check_exit 7 5 'a quote inside a # comment does not poison a later #ifdef' \
 # tests/fixtures/lint_lexical/escapes.cyr shows the shape is real source.
 check_exit 8 4 'a char literal holding a quote does not poison a later #ifdef' \
 "var q = '\\\"';\n#define ON 1\n#ifdef ON\nvar a = 4;\n#endif\n#ifndef ON\nvar a = 8;\n#endif\nsyscall(60, a);\n"
+
+# ── axes 9 and 10 — PP_IS_HOST_ONLY, the FOURTH line-oriented pass. It scans a
+# freshly-READ include for a column-0 `#host_only` and had no lexical state at
+# all, so the only thing that can put an arbitrary byte at column 0 — a raw LF
+# inside a string — defeated the column rule and made every bare-metal build that
+# pulled such a file fail. Axis 10 is the matching over-correction guard: the
+# annotation must still work when it is really at column 0.
+#
+# `want` here is derived from the DIAGNOSTIC's presence, not from the compiler's
+# exit status alone, and the two axes differ only in where the `#host_only` bytes
+# sit in the included file.
+check_hostonly() {
+    ax=$1; want=$2; desc=$3; incbody=$4
+    printf '%b' "$incbody" > "$D/hoinc$ax.cyr"
+    printf 'include "hoinc%s.cyr"\nsyscall(60, hf());\n' "$ax" > "$D/ho$ax.cyr"
+    rc=0
+    ( cd "$D" && cat "ho$ax.cyr" | CYRIUS_KERNEL=1 "$CC" > "ho$ax.bin" 2> "ho$ax.err" ) || rc=$?
+    got=no
+    if grep -q 'bare-metal build includes host-only module' "$D/ho$ax.err"; then got=yes; fi
+    if [ "$got" = no ] && [ "$rc" -ne 0 ]; then
+        printf '  FAIL: axis %s (%s) failed for an UNRELATED reason: %s\n' \
+            "$ax" "$desc" "$(grep -m1 error "$D/ho$ax.err" | cut -c1-90)"
+        fail=$((fail+1)); rm -f "$D/ho$ax.bin"; return 0
+    fi
+    if [ "$got" = no ] && [ ! -s "$D/ho$ax.bin" ]; then
+        printf '  FAIL: axis %s (%s) produced an EMPTY binary\n' "$ax" "$desc"
+        fail=$((fail+1)); return 0
+    fi
+    if [ "$got" = "$want" ]; then
+        printf '  ok: axis %s — %s (host-only refusal: %s)\n' "$ax" "$desc" "$got"
+        pass=$((pass+1))
+    else
+        printf '  FAIL: axis %s — %s: host-only refusal %s, want %s\n' "$ax" "$desc" "$got" "$want"
+        fail=$((fail+1))
+    fi
+    rm -f "$D/ho$ax.bin"
+}
+
+check_hostonly 9 no '#host_only inside a multi-line string is not an annotation' \
+'var doc = "intro\n#host_only\nend";\nfn hf(): i64 { return 7; }\n'
+
+check_hostonly 10 yes 'a real column-0 #host_only still refuses a bare-metal build' \
+'#host_only\nfn hf(): i64 { return 7; }\n'
 
 if [ "$fail" -gt 0 ]; then
     printf 'FAIL: pp-directive-inside-multiline-string — %s of %s axes failed\n' \

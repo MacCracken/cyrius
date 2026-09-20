@@ -1256,8 +1256,11 @@ begins with `#ifdef` / `#ifndef` / `#if` / `#else` / `#elif` / `#endif` / `#ifpl
 `#endplat` / `#define` / `#@file` / `#@srcline` / `#ref` is string DATA. Until 6.6.6 it was
 EXECUTED: the directive line and any false branch vanished from the string data, silently and
 with no diagnostic — `"ab` / `#ifdef NOPE` / `cd` / `#endif` / `ef"` compiled to the bytes
-`ab\n\n\n\nef`. The three line-oriented passes now share one state machine (`PP_LEXST`) whose
-string state crosses newlines, so a string literal means what it says wherever it starts.
+`ab\n\n\n\nef`. The four line-oriented passes now share one state machine (`PP_LEXST`) whose
+string state crosses newlines, so a string literal means what it says wherever it starts. The
+fourth is the `#host_only` scanner: an included file holding `var doc = "intro` / `#host_only` /
+`end";` used to be recorded as a host-only module, so every `--target=…-bare-metal-elf` build
+that pulled it was refused. A `#host_only` really at column 0 still annotates the file.
 
 ⚠ **A `#` is not always a comment.** `#naked`, `#inline`, `#pure`, `#io`, `#alloc`,
 `#must_use`, `#regalloc`, `#deprecated`, `#assert` and `#pe_import` are attribute TOKENS, and
