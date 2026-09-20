@@ -47,6 +47,13 @@
 # situation, on wine AND on real cass, so this row is what separates the fix from the
 # defect. SKIPs loudly without wine; wine is NOT hardware.
 #
+# ⭐ AXIS 6 — NO ARM BUILDS ITS COMMAND LINE IN A FIXED BUFFER (6.6.6 review). The first
+# cut of `_win_capacity_spawn` used a fixed 16 KiB allocation with unchecked appends — the
+# exact shape `_win_cmdline` had been changed away from one release earlier ("a fixed
+# buffer is a heap overwrite waiting for a large enough project"). The rule is therefore
+# DERIVED from the sources here rather than fixed once by hand, so the next builder cannot
+# be written that way either.
+#
 # REAL-HARDWARE LEDGER (cass, Windows 11, 2026-09-19, C:\cyrius-tests\bite9-probe,
 # removed afterwards). old = the CLI cross-built from this tree's parent commit,
 # new = from the fixed tree; cycc.exe / cycc_cx.exe / cxvm.exe cross-built from
@@ -80,6 +87,9 @@
 #   M3  `cap_rc = _win_capacity_spawn(...)` -> `cap_rc = 0;`  axes 2+3 RED (silent arm,
 #                                                             _win_capacity_spawn dead)
 #   M4  restore the 6.6.5 `cmd_self` (no PE arm at all)       axes 1+3+4 RED (4)
+#   — added with axes 5/6 at the 6.6.6 review, same recipe —
+#   M5  `_win_capacity_spawn` -> `var wbuf = alloc(16384);`   axis 6 RED alone (1: the
+#                                                             builder is reported FIXED)
 #   real tree -> all axes GREEN, 17 sites.
 #
 # ⚠ THE LEDGER FOUND TWO DEFECTS IN THIS GATE, both of which made a mutant read GREEN, and
@@ -380,6 +390,70 @@ else
     [ -d "$SOCK" ] && rm -rf "$SOCK"
 fi
 
+# ── AXIS 6 — ⭐ NO `cmd /s /c` COMMAND LINE IS BUILT IN A FIXED BUFFER. `_w_append_cstr`
+# does not bound-check, so a fixed allocation is a silent heap overwrite for a long enough
+# path. `_win_cmdline` was changed from that shape at 6.6.5 ("a fixed buffer is a heap
+# overwrite waiting for a large enough project") and 6.6.6's new `_win_capacity_spawn`
+# reintroduced it — which is why the rule is DERIVED from the sources here rather than
+# fixed once by hand. A builder is a fn that both ALLOCATES `wbuf` and appends to it.
+echo "axis 6 — ⭐ every UTF-16 command line is sized from its inputs:"
+cat > "$T/bld.awk" <<'AWK'
+function flush() {
+    if (builder == 1 && alloc != "") {
+        v = "sized"
+        # A size with no identifier in it is a compile-time constant: the defect.
+        if (alloc ~ /alloc\([0-9 +*()]*\)/) { v = "FIXED" }
+        # Otherwise it must be derived from the caller's own lengths, one way or another.
+        if (v != "FIXED" && alloc !~ /_w_cmdbuf\(/ && body !~ /strlen\(/ && body !~ /vec_len\(/) { v = "UNSIZED" }
+        printf "%s:%s %s | %s\n", FILENAME, fname, v, alloc
+    }
+    builder = 0; alloc = ""; body = ""
+}
+/^fn [A-Za-z_]/ { flush(); fname = $2; sub(/\(.*/, "", fname) }
+{ body = body " " $0 }
+/wbuf[ \t]*=[ \t]*alloc\(/ || /wbuf[ \t]*=[ \t]*_w_cmdbuf\(/ {
+    alloc = $0; sub(/^[ \t]*/, "", alloc)
+}
+/_w_append_cstr\(wbuf/ || /_w_append_arg\(wbuf/ { builder = 1 }
+/^}/ { flush() }
+END { flush() }
+AWK
+awk -f "$T/bld.awk" cbt/*.cyr lib/process_win.cyr > "$T/builders"
+NB=$(grep -c ':' "$T/builders" || true)
+check "the scan found the command-line builders (floor 8, found $NB)" yes \
+    "$([ "$NB" -ge 8 ] && echo yes || echo no)"
+if grep -Eq ' (FIXED|UNSIZED) ' "$T/builders"; then
+    echo "  builders whose buffer is not sized from their inputs:"
+    grep -E ' (FIXED|UNSIZED) ' "$T/builders" | sed 's/^/    /'
+fi
+check "no builder uses a fixed-size buffer" 0 "$(grep -c ' FIXED ' "$T/builders" || true)"
+check "no builder sizes from nothing at all" 0 "$(grep -c ' UNSIZED ' "$T/builders" || true)"
+# The detector's own control: one fixed builder and one sized builder in the same file.
+cat > "$T/self/d.cyr" <<'EOF'
+fn fixed_builder(a, b): i64 {
+    var wbuf = alloc(16384);
+    var o = 0;
+    o = _w_append_cstr(wbuf, o, a);
+    o = _w_append_cstr(wbuf, o, b);
+    return wbuf;
+}
+fn sized_builder(a, b): i64 {
+    var wbuf = _w_cmdbuf(strlen(a) + strlen(b));
+    if (wbuf == 0) { return 0; }
+    var o = 0;
+    o = _w_append_cstr(wbuf, o, a);
+    return wbuf;
+}
+fn not_a_builder(): i64 {
+    var wbuf = alloc(16384);
+    return wbuf;
+}
+EOF
+awk -f "$T/bld.awk" "$T/self/d.cyr" > "$T/bld.self"
+check "  ⭐ ANTI-VACUOUS: the detector flags a synthetic fixed builder" 1 \
+    "$(grep -c ' FIXED ' "$T/bld.self" || true)"
+check "  …clears the sized one" 1 "$(grep -c ' sized ' "$T/bld.self" || true)"
+check "  …and does not count a fn that never appends" 2 "$(grep -c ':' "$T/bld.self" || true)"
 echo ""
 if [ "$fails" = "0" ]; then
     echo "PASS: cbt-fork-sites-have-pe-arm — $NSITE fork sites, every one armed and named"

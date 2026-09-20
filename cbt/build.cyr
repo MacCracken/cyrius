@@ -757,7 +757,10 @@ var _cc_stderr_to = 0;
 # 4th parameter when that file is next touched. CHANGELOG [6.5.19].
 #ifdef CYRIUS_TARGET_WIN
 fn _win_compile_spawn_err(cc, source, output, errfile): i64 {
-    var wbuf = alloc(16384);
+    # v6.6.6 — sized from the four paths, not a fixed 16 KiB; `_w_cmdbuf` refuses by
+    # name past Windows' 32,767-character command line. See lib/process_win.cyr.
+    var wbuf = _w_cmdbuf(strlen(cc) + strlen(source) + strlen(output) + strlen(errfile));
+    if (wbuf == 0) { _err_ctx("compiler spawn", cc); return 1; }
     var o = 0;
     o = _w_append_cstr(wbuf, o, "cmd /s /c \"\"");
     o = _w_append_cstr(wbuf, o, cc);
@@ -1534,7 +1537,10 @@ fn _win_cmd_self(): i64 {
 # ⚠ NO SPACE before the `&`: `set X=1 & prog` sets X to "1 " (trailing space included),
 # which would be passed to cycc as the stats flag and silently not match.
 fn _win_capacity_spawn(cc, source, errfile): i64 {
-    var wbuf = alloc(16384);
+    # v6.6.6 — sized from the three paths, not a fixed 16 KiB; `_w_cmdbuf` refuses by
+    # name past Windows' 32,767-character command line. See lib/process_win.cyr.
+    var wbuf = _w_cmdbuf(strlen(cc) + strlen(source) + strlen(errfile));
+    if (wbuf == 0) { _err_ctx("capacity spawn", cc); return 0 - 1; }
     var o = 0;
     o = _w_append_cstr(wbuf, o, "cmd /s /c \"set CYRIUS_STATS=1& \"");
     o = _w_append_cstr(wbuf, o, cc);

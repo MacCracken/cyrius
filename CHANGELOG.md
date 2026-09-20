@@ -1744,6 +1744,26 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   prefix path is now bound before the trap is installed and the trap runs only when that
   directory exists.
 
+- **Four Windows command lines were built in a fixed 16 KiB buffer with unchecked appends —
+  one of them added by this release.** (bite 9e, from bite 9's review.) `_w_append_cstr`
+  (`lib/process_win.cyr`) stores until the source cstr's NUL and bound-checks nothing, so a
+  fixed allocation is a silent heap overwrite for a long enough set of paths. `_win_cmdline`
+  was changed away from exactly that shape at 6.6.5 ("a fixed buffer is a heap overwrite
+  waiting for a large enough project") and 6.6.6's new `_win_capacity_spawn` reintroduced it;
+  the three older ones — `_win_compile_spawn` and `exec_cmd` (`lib/process_win.cyr`) and
+  `_win_compile_spawn_err` (`cbt/build.cyr`) — had carried it since 6.0.85 / 6.2.34 / 6.5.19,
+  and this release made all of them reachable from new arms (`cyrius self`, `soak`,
+  `sys_system`). **Fix:** one helper, `_w_cmdbuf(nchars)`, sizes the allocation from the
+  caller's own lengths and **refuses by name** past Windows' own 32,767-character command-line
+  limit — past which CreateProcessW fails anyway — and all four builders go through it,
+  failing closed. Verified on a real PE binary under wine (not hardware): a 40,000-character
+  `exec_cmd` returns -1 with `error: command line exceeds the Windows 32767-character limit`,
+  while a short one still spawns and returns the child's code. Pinned by a new **axis 6** in
+  `tests/gates/platform/cbt_fork_sites_have_pe_arm.sh` that **derives** the builder list from
+  `cbt/*.cyr` + `lib/process_win.cyr` — a fn that both allocates `wbuf` and appends to it —
+  and fails any whose size is a compile-time constant, so the next one cannot be written that
+  way either. 1 mutation, RED.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**
