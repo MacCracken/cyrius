@@ -1,0 +1,160 @@
+# open() flag translation — the SAME POSIX semantics on every target, asserted on CONTENT.
+#
+# ⛔ 6.6.6. On Windows this file was red on every row that names O_TRUNC or O_APPEND, and it
+# was red SILENTLY: `open(p, O_WRONLY|O_CREAT|O_TRUNC)` returned a perfectly good handle and
+# then wrote over the head of the file, leaving the old tail behind. Writing "XYZ" over a
+# 17-byte file left 17 bytes, "XYZ3456789abcdef\n", and O_APPEND did the same thing instead
+# of appending. EOPEN_PE (src/backend/x86/emit.cyr) built CreateFileW's
+# dwCreationDisposition out of O_CREAT and O_EXCL alone and hardcoded dwDesiredAccess to
+# GENERIC_READ|GENERIC_WRITE, so every other bit of the flag word was dropped on the floor.
+# Data corruption for any Windows consumer that REWRITES a file — including the atomic
+# writers, which rewrite a temp and rename it.
+#
+# ⭐ THE ROW THAT COSTS THE MOST TO GET RIGHT is "append ignores an explicit seek". A
+# one-shot seek-to-end at open time passes every other row here and still loses data the
+# moment anything seeks, or a second writer appends between two of our writes. POSIX
+# O_APPEND is per-write, so the Win32 map has to be FILE_APPEND_DATA (dwDesiredAccess
+# without FILE_WRITE_DATA), which NT applies at EOF on every write. That row fails on a
+# seek-to-end implementation and passes on this one.
+#
+# THE ACCESS-MODE ROWS ("read from a write-only handle fails", "write to a read-only handle
+# fails") are the anti-vacuous axis for the other half of the fix: before 6.6.6 EVERY PE
+# open got GENERIC_READ|GENERIC_WRITE, so both of those SUCCEEDED on Windows while failing
+# on Linux with EBADF. They are the only rows that can tell a decoded access mode from a
+# generous constant.
+#
+# CWD-relative paths + xunlink, like atomic_write.tcyr: the cross-OS runner's CWD on cass is
+# C:\cyrius-tests and there is no /tmp there. Everything this creates is removed at the end.
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/assert.cyr"
+
+alloc_init();
+
+# The seed content every row starts from: 17 bytes, and deliberately NOT a prefix of what we
+# write over it, so a partial overwrite is visible as leftover tail rather than as a
+# plausible result.
+var SEED = "0123456789abcdef\n";
+
+# Write `SEED` to `p` from scratch. Uses file_write_all (open/write/close), not the flags
+# under test, so a broken O_TRUNC cannot fake a clean starting point.
+fn seed_file(p): i64 {
+    xunlink(p);
+    file_write_all(p, SEED, 17);
+    return 0;
+}
+
+# Read the whole file back into a fresh NUL-terminated buffer.
+fn slurp(p): i64 {
+    var b = alloc(128);
+    var n = file_read_all(p, b, 127);
+    if (n < 0) { n = 0; }
+    store8(b + n, 0);
+    return b;
+}
+
+fn fsize(p): i64 {
+    var b = alloc(128);
+    var n = file_read_all(p, b, 127);
+    return n;
+}
+
+test_group("O_TRUNC truncates (the 6.6.6 Windows data-corruption row)");
+var pt = "cyr_open_trunc.txt";
+seed_file(pt);
+var ft = file_open(pt, O_WRONLY | O_CREAT | O_TRUNC, 420);
+assert_neq(ft, 0 - 1, "O_WRONLY|O_CREAT|O_TRUNC opens");
+file_write(ft, "XYZ", 3);
+file_close(ft);
+assert_eq(fsize(pt), 3, "file is 3 bytes after a truncating rewrite");
+assert_eq(streq(slurp(pt), "XYZ"), 1, "content is exactly the new bytes, no old tail");
+
+test_group("O_CREAT without O_TRUNC does NOT truncate");
+var pn = "cyr_open_notrunc.txt";
+seed_file(pn);
+var fn2 = file_open(pn, O_WRONLY | O_CREAT, 420);
+assert_neq(fn2, 0 - 1, "O_WRONLY|O_CREAT opens");
+file_write(fn2, "XYZ", 3);
+file_close(fn2);
+assert_eq(fsize(pn), 17, "file keeps its length (OPEN_ALWAYS, not CREATE_ALWAYS)");
+assert_eq(streq(slurp(pn), "XYZ3456789abcdef\n"), 1, "head overwritten, tail intact");
+
+test_group("O_APPEND appends");
+var pa = "cyr_open_append.txt";
+seed_file(pa);
+var fa = file_open(pa, O_WRONLY | O_CREAT | O_APPEND, 420);
+assert_neq(fa, 0 - 1, "O_WRONLY|O_CREAT|O_APPEND opens");
+file_write(fa, "XYZ", 3);
+file_close(fa);
+assert_eq(fsize(pa), 20, "file grew by the 3 appended bytes");
+assert_eq(streq(slurp(pa), "0123456789abcdef\nXYZ"), 1, "the seed is intact and XYZ is at the end");
+
+test_group("⭐ O_APPEND is per-write: an explicit seek to 0 does not move the write");
+var ps = "cyr_open_append_seek.txt";
+seed_file(ps);
+var fs2 = file_open(ps, O_WRONLY | O_CREAT | O_APPEND, 420);
+assert_neq(fs2, 0 - 1, "append handle opens");
+xlseek(fs2, 0, 0);
+file_write(fs2, "QQ", 2);
+file_close(fs2);
+assert_eq(fsize(ps), 19, "the write landed at EOF despite the seek (19 = 17 + 2)");
+assert_eq(streq(slurp(ps), "0123456789abcdef\nQQ"), 1, "seed untouched at offset 0");
+
+test_group("O_TRUNC without O_CREAT refuses a missing file (TRUNCATE_EXISTING)");
+var pm = "cyr_open_missing.txt";
+xunlink(pm);
+var fm = file_open(pm, O_WRONLY | O_TRUNC, 420);
+assert_eq(fm < 0, 1, "opening a nonexistent path without O_CREAT fails");
+
+test_group("O_CREAT|O_EXCL still refuses an existing file (v6.4.58 lock)");
+var pe = "cyr_open_excl.txt";
+seed_file(pe);
+var fe = file_open(pe, O_WRONLY | O_CREAT | O_EXCL, 420);
+assert_eq(fe < 0, 1, "O_EXCL over an existing file fails");
+assert_eq(fsize(pe), 17, "and left the file alone");
+
+test_group("access mode is decoded, not assumed (anti-vacuous for dwDesiredAccess)");
+var pr = "cyr_open_access.txt";
+seed_file(pr);
+var fr = file_open(pr, O_RDONLY, 0);
+assert_neq(fr, 0 - 1, "O_RDONLY opens");
+var rb = alloc(32);
+var rn = file_read(fr, rb, 17);
+assert_eq(rn, 17, "a read-only handle reads");
+var wr = file_write(fr, "!", 1);
+assert_eq(wr <= 0, 1, "a read-only handle REFUSES a write");
+file_close(fr);
+assert_eq(fsize(pr), 17, "the refused write changed nothing");
+
+var pw = "cyr_open_wonly.txt";
+seed_file(pw);
+var fw = file_open(pw, O_WRONLY, 0);
+assert_neq(fw, 0 - 1, "O_WRONLY opens");
+var rb2 = alloc(32);
+var rn2 = file_read(fw, rb2, 4);
+assert_eq(rn2 <= 0, 1, "a write-only handle REFUSES a read");
+file_close(fw);
+
+var prw = "cyr_open_rdwr.txt";
+seed_file(prw);
+var frw = file_open(prw, O_RDWR, 0);
+assert_neq(frw, 0 - 1, "O_RDWR opens");
+var rb3 = alloc(32);
+assert_eq(file_read(frw, rb3, 17), 17, "an O_RDWR handle reads");
+assert_eq(file_write(frw, "!", 1), 1, "an O_RDWR handle writes");
+file_close(frw);
+assert_eq(fsize(prw), 18, "the O_RDWR write landed after the read cursor");
+
+xunlink(pt);
+xunlink(pn);
+xunlink(pa);
+xunlink(ps);
+xunlink(pm);
+xunlink(pe);
+xunlink(pr);
+xunlink(pw);
+xunlink(prw);
+
+var r = assert_summary();

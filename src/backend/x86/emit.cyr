@@ -2846,6 +2846,74 @@ fn EREMOVEDIRW_PE(S): i64 {
     EB(S, 0x5B);                                        # pop rbx
     EB(S, 0x48); EB(S, 0xFF); EB(S, 0xC8);              # dec rax
     EB(S, 0x48); EB(S, 0xC1); EB(S, 0xF8); EB(S, 0x3F); # sar rax, 63 (BOOL->0/-1)
+
+# 6.6.6 — decode the Linux open() flag word into CreateFileW's
+# (dwDesiredAccess, dwCreationDisposition) pair. Split out of EOPEN_PE so that
+# function does not grow past what cybs can compile (the bootstrap compiler
+# fails SILENTLY on too many refs in one fn), and so the mapping reads as a
+# table instead of hiding inside the frame arithmetic.
+#
+# Stack on entry (top→bottom): [mode] [flags] [path] [sc_nr]. Both scalars are
+# popped (Win32 has no mode_t); `path` is left for the caller. Results:
+# r9d = dwDesiredAccess, r10d = dwCreationDisposition. r9/r10/r11 are the
+# carriers because they survive the caller's inline UTF-16 widen loop, which
+# only touches rax/rcx/rsi/rdi.
+#
+# The map, POSIX → Win32:
+#   access   O_RDONLY(0) → GENERIC_READ   0x80000000
+#            O_WRONLY(1) → GENERIC_WRITE  0x40000000
+#            O_RDWR(2)   → both           0xC0000000
+#   O_APPEND (0x400) replaces the write bit with FILE_APPEND_DATA (4). That is
+#            a REAL append — NT places every write at EOF regardless of the file
+#            pointer, which is what POSIX O_APPEND means. A seek-to-end after
+#            open is NOT equivalent: any later seek, or a second writer, then
+#            overwrites.
+#   disposition  O_CREAT|O_EXCL  → CREATE_NEW (1)          [v6.4.58]
+#                O_CREAT|O_TRUNC → CREATE_ALWAYS (2)
+#                O_TRUNC alone   → TRUNCATE_EXISTING (5)
+#                O_CREAT alone   → OPEN_ALWAYS (4)
+#                neither         → OPEN_EXISTING (3)
+# CHANGELOG [6.6.6]
+fn _pe_open_flags(S): i64 {
+    EB(S, 0x58);                                        # pop rax (mode, no Win32 equivalent)
+    EB(S, 0x58);                                        # pop rax (flags)
+    EB(S, 0x89); EB(S, 0xC1);                           # mov ecx, eax (keep the flag word)
+
+    # ---- dwDesiredAccess → r9d ----
+    EB(S, 0x41); EB(S, 0xB9); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); EB(S, 0xC0); # mov r9d, 0xC0000000 (O_RDWR default)
+    EB(S, 0x89); EB(S, 0xC2);                           # mov edx, eax
+    EB(S, 0x83); EB(S, 0xE2); EB(S, 0x03);              # and edx, 3 (the access mode)
+    EB(S, 0x83); EB(S, 0xFA); EB(S, 0x00);              # cmp edx, 0 (O_RDONLY)
+    EB(S, 0x75); EB(S, 0x06);                           # jne +6
+    EB(S, 0x41); EB(S, 0xB9); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); EB(S, 0x80); # mov r9d, GENERIC_READ
+    EB(S, 0x83); EB(S, 0xFA); EB(S, 0x01);              # cmp edx, 1 (O_WRONLY)
+    EB(S, 0x75); EB(S, 0x06);                           # jne +6
+    EB(S, 0x41); EB(S, 0xB9); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); EB(S, 0x40); # mov r9d, GENERIC_WRITE
+    EB(S, 0xF7); EB(S, 0xC1); EB(S, 0x00); EB(S, 0x04); EB(S, 0x00); EB(S, 0x00); # test ecx, 0x400 (O_APPEND)
+    EB(S, 0x74); EB(S, 0x0B);                           # jz +11 (not an append open)
+    EB(S, 0x41); EB(S, 0x81); EB(S, 0xE1); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); EB(S, 0x80); # and r9d, GENERIC_READ (drop the write bit)
+    EB(S, 0x41); EB(S, 0x83); EB(S, 0xC9); EB(S, 0x04); # or r9d, 4 (FILE_APPEND_DATA)
+
+    # ---- dwCreationDisposition → r10d ----
+    EB(S, 0xC1); EB(S, 0xE8); EB(S, 0x06);              # shr eax, 6
+    EB(S, 0x83); EB(S, 0xE0); EB(S, 0x01);              # and eax, 1 (O_CREAT)
+    EB(S, 0x83); EB(S, 0xC0); EB(S, 0x03);              # add eax, 3 (3=OPEN_EXISTING / 4=OPEN_ALWAYS)
+    EB(S, 0xF7); EB(S, 0xC1); EB(S, 0x00); EB(S, 0x02); EB(S, 0x00); EB(S, 0x00); # test ecx, 0x200 (O_TRUNC)
+    EB(S, 0x74); EB(S, 0x11);                           # jz +17 (no O_TRUNC)
+    EB(S, 0x83); EB(S, 0xF8); EB(S, 0x04);              # cmp eax, 4 (O_CREAT was set?)
+    EB(S, 0x75); EB(S, 0x07);                           # jne +7
+    EB(S, 0xB8); EB(S, 0x02); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); # mov eax, 2 (CREATE_ALWAYS)
+    EB(S, 0xEB); EB(S, 0x05);                           # jmp +5
+    EB(S, 0xB8); EB(S, 0x05); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); # mov eax, 5 (TRUNCATE_EXISTING)
+    # v6.4.58: O_CREAT|O_EXCL wins over every other combination — CREATE_NEW
+    # fails with ERROR_FILE_EXISTS when the target is already there, which is
+    # what makes lib/io.cyr file_create_exclusive atomic on Windows
+    # (issue 2026-07-12-windows-atomic-write-residuals.md, A).
+    EB(S, 0x81); EB(S, 0xE1); EB(S, 0xC0); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); # and ecx, 0xC0 (O_CREAT|O_EXCL)
+    EB(S, 0x81); EB(S, 0xF9); EB(S, 0xC0); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); # cmp ecx, 0xC0
+    EB(S, 0x75); EB(S, 0x05);                           # jne +5 (skip the override)
+    EB(S, 0xB8); EB(S, 0x01); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); # mov eax, 1 (CREATE_NEW)
+    EB(S, 0x41); EB(S, 0x89); EB(S, 0xC2);              # mov r10d, eax
     return 0;
 }
 
@@ -2860,13 +2928,20 @@ fn EREMOVEDIRW_PE(S): i64 {
 #     ASCII bytes (copy each byte as a WCHAR). Non-ASCII paths
 #     will not round-trip correctly; proper UTF-8→UTF-16 is a
 #     v5.5.x+ refinement when Windows filesystem tests need it.
-#  2. `dwDesiredAccess` is hardcoded to GENERIC_READ|GENERIC_WRITE
-#     (0xC0000000) regardless of O_RDONLY / O_WRONLY / O_RDWR.
-#     Generous but lets a single reroute cover all three modes.
-#  3. `dwCreationDisposition` derives from the O_CREAT bit only:
-#     OPEN_EXISTING (3) if clear, OPEN_ALWAYS (4) if set. O_TRUNC
-#     / O_EXCL refinements are deferred — most downstream code
-#     opens existing or open-or-create, covered by this pair.
+#  2. `dwDesiredAccess` was hardcoded to GENERIC_READ|GENERIC_WRITE
+#     (0xC0000000) regardless of O_RDONLY / O_WRONLY / O_RDWR, and
+#  3. `dwCreationDisposition` derived from the O_CREAT bit only:
+#     OPEN_EXISTING (3) if clear, OPEN_ALWAYS (4) if set — with the
+#     v6.4.58 O_CREAT|O_EXCL → CREATE_NEW override bolted on.
+#     ⛔ BOTH ARE FIXED AT 6.6.6, because "deferred refinement" was the
+#     wrong description of what item 3 was: O_TRUNC silently did NOT
+#     truncate and O_APPEND silently did NOT append, so every Windows
+#     consumer that REWROTE a file kept the old tail
+#     (`open(p, O_WRONLY|O_CREAT|O_TRUNC)` + write "abc" over a 17-byte
+#     file left 17 bytes, "abc3456789abcdef\n"). Silent data corruption,
+#     not a missing feature — and it undercuts the atomic writers that
+#     rewrite-then-rename. `_pe_open_flags` below now derives BOTH words
+#     from the flags. CHANGELOG [6.6.6]
 #
 # Frame layout (0x250 = 592 B, plus an 8 B pad at odd expression depth):
 #   [rsp+0x000..0x01F]  shadow space (32 B, Win64 ABI)
@@ -2896,23 +2971,7 @@ fn EOPEN_PE(S): i64 {
     _pe_ensure_createf(S);
     var cf_idx = _pe_createf_get();
 
-    EB(S, 0x58);                                        # pop rax (mode, ignored)
-    EB(S, 0x58);                                        # pop rax (flags)
-    # Derive dwCreationDisposition into r10d. Base = 3 + ((flags >> 6) & 1):
-    # OPEN_EXISTING (3) if O_CREAT (0x40) clear, OPEN_ALWAYS (4) if set.
-    # v6.4.58: if BOTH O_CREAT (0x40) and O_EXCL (0x80) are set (mask 0xC0),
-    # override to CREATE_NEW (1) so the open fails with ERROR_FILE_EXISTS when
-    # the target already exists — makes lib/io.cyr file_create_exclusive atomic
-    # on Windows (issue 2026-07-12-windows-atomic-write-residuals.md, A).
-    EB(S, 0x89); EB(S, 0xC1);                           # mov ecx, eax (save flags)
-    EB(S, 0xC1); EB(S, 0xE8); EB(S, 0x06);              # shr eax, 6
-    EB(S, 0x83); EB(S, 0xE0); EB(S, 0x01);              # and eax, 1
-    EB(S, 0x83); EB(S, 0xC0); EB(S, 0x03);              # add eax, 3 (3=OPEN_EXISTING / 4=OPEN_ALWAYS)
-    EB(S, 0x81); EB(S, 0xE1); EB(S, 0xC0); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); # and ecx, 0xC0 (O_CREAT|O_EXCL)
-    EB(S, 0x81); EB(S, 0xF9); EB(S, 0xC0); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); # cmp ecx, 0xC0
-    EB(S, 0x75); EB(S, 0x05);                           # jne +5 (skip override)
-    EB(S, 0xB8); EB(S, 0x01); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); # mov eax, 1 (CREATE_NEW)
-    EB(S, 0x41); EB(S, 0x89); EB(S, 0xC2);              # mov r10d, eax
+    _pe_open_flags(S);                                  # pops mode+flags; r9d=access, r10d=disposition
     EB(S, 0x58);                                        # pop rax (path ptr)
     EB(S, 0x49); EB(S, 0x89); EB(S, 0xC3);              # mov r11, rax (stash path)
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
@@ -2940,7 +2999,7 @@ fn EOPEN_PE(S): i64 {
 
     # Set up CreateFileW args.
     EB(S, 0x48); EB(S, 0x8D); EB(S, 0x4C); EB(S, 0x24); EB(S, 0x38); # lea rcx, [rsp+0x38]
-    EB(S, 0xBA); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); EB(S, 0xC0); # mov edx, 0xC0000000 (GENERIC_READ|GENERIC_WRITE)
+    EB(S, 0x44); EB(S, 0x89); EB(S, 0xCA);                           # mov edx, r9d (dwDesiredAccess — 6.6.6, was a hardcoded 0xC0000000)
     EB(S, 0x41); EB(S, 0xB8); EB(S, 0x03); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); # mov r8d, 3 (FILE_SHARE_READ|WRITE)
     EB(S, 0x4D); EB(S, 0x31); EB(S, 0xC9);                           # xor r9, r9
     EB(S, 0x4C); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x20); # mov [rsp+0x20], r10 (dwCreationDisposition)

@@ -95,11 +95,21 @@ enum OFlags {
     O_EXCL = 128;       # 0200
     O_TRUNC = 512;      # 01000
     O_APPEND = 1024;    # 02000
-    # v6.6.4: defined so portable code compiles on PE. ⚠ NOT honoured: EOPEN_PE
-    # (src/backend/x86/emit.cyr) decodes only O_CREAT (0x40) and O_EXCL (0x80) — even
-    # O_TRUNC and the access mode are not decoded (GENERIC_READ|GENERIC_WRITE and
-    # FILE_ATTRIBUTE_NORMAL are hardcoded) — so these bits are ignored
-    # (FILE_FLAG_BACKUP_SEMANTICS / FILE_FLAG_OPEN_REPARSE_POINT are a follow-on port).
+    # ⛔ v6.6.6 — the note that stood here said O_TRUNC and the access mode "are not
+    # decoded", filed as a cosmetic gap alongside O_DIRECTORY/O_NOFOLLOW. It was not
+    # cosmetic: an undecoded O_TRUNC means `open(p, O_WRONLY|O_CREAT|O_TRUNC)` SUCCEEDS
+    # and then leaves the old tail of the file behind, and an undecoded O_APPEND
+    # overwrites from offset 0. Silent data loss on every Windows rewrite. EOPEN_PE now
+    # decodes the access mode, O_CREAT, O_EXCL, O_TRUNC and O_APPEND (`_pe_open_flags`,
+    # src/backend/x86/emit.cyr); pinned by tests/tcyr/crossos/open_flag_translation.tcyr
+    # on real cass. CHANGELOG [6.6.6]
+    #
+    # ⚠ STILL NOT HONOURED, and deliberately so — these two are dwFlagsAndAttributes bits
+    # whose Win32 near-equivalents do NOT mean what POSIX means, so mapping them is a
+    # semantic decision, not a port: FILE_FLAG_OPEN_REPARSE_POINT opens the symlink
+    # instead of REFUSING like O_NOFOLLOW does (lib/sigil.cyr's keyfile path relies on the
+    # refusal), and a Windows directory handle cannot be ReadFile'd the way O_DIRECTORY's
+    # caller expects. Defined so portable code still compiles.
     O_DIRECTORY = 65536;
     O_NOFOLLOW = 131072;
 }

@@ -2689,6 +2689,26 @@ Opening files routes to Windows' `CreateFileW`; reading/writing use the real
 `ReadFile`/`WriteFile` (via 0xF001/0xF002 PE reroutes and the POSIX syscall
 interface dispatching them). Paths are widened from UTF-8 to UTF-16LE at call time.
 
+The POSIX flag word is decoded into CreateFileW's `dwDesiredAccess` /
+`dwCreationDisposition` pair (v6.6.6 — before that only `O_CREAT` and `O_EXCL`
+were read, so `O_TRUNC` silently did not truncate and `O_APPEND` silently
+overwrote from offset 0):
+
+| flags | Win32 |
+|---|---|
+| `O_RDONLY` / `O_WRONLY` / `O_RDWR` | `GENERIC_READ` / `GENERIC_WRITE` / both |
+| `O_APPEND` | the write bit becomes `FILE_APPEND_DATA` — a real per-write append |
+| `O_CREAT｜O_EXCL` | `CREATE_NEW` (fails if the file exists) |
+| `O_CREAT｜O_TRUNC` | `CREATE_ALWAYS` |
+| `O_TRUNC` alone | `TRUNCATE_EXISTING` |
+| `O_CREAT` alone | `OPEN_ALWAYS` |
+| neither | `OPEN_EXISTING` |
+
+`O_DIRECTORY` and `O_NOFOLLOW` are still ignored on Windows, deliberately: the
+near-equivalent Win32 flags do not mean what POSIX means (`FILE_FLAG_OPEN_REPARSE_POINT`
+*opens* a symlink where `O_NOFOLLOW` *refuses*). Use `is_dir` / `dir_list` rather than
+an `O_DIRECTORY` open.
+
 **Directory Enumeration** (v6.1.18+)
 - `dir_list(path)` → `vec` of `Str` filenames
 - `is_dir(path)` → 1 (directory) or 0 (not found / file)

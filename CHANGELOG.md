@@ -211,6 +211,37 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   cycc **1,315,040 B (unchanged)**, fixpoint + seed-derive green, all 7 forks compile, 0 of 330
   `.tcyr` binaries changed a byte.
 
+- **On Windows, `O_TRUNC` did not truncate and `O_APPEND` did not append — silent data
+  corruption on every rewrite.** (bite 18a.) `EOPEN_PE` (`src/backend/x86/emit.cyr`) built
+  CreateFileW's `dwCreationDisposition` out of `O_CREAT` and `O_EXCL` alone and hardcoded
+  `dwDesiredAccess` to `GENERIC_READ|GENERIC_WRITE`, so every other bit of the flag word was
+  dropped. Measured on **real cass** (Win11) and under wine 11.17 on the 6.6.5 compiler: a
+  17-byte file reopened `O_WRONLY|O_CREAT|O_TRUNC` and written `"XYZ"` stayed **17 bytes**,
+  `"XYZ3456789abcdef\n"` — the open succeeded, the write succeeded, and the old tail survived.
+  `O_APPEND` did the same thing instead of appending. Identical source on Linux was correct, so
+  this was a Windows-only, silent, data-losing divergence that any consumer rewriting a file hit
+  — and it undercuts the atomic writers, whose whole job is rewrite-a-temp-then-rename.
+  **Fix:** a new `_pe_open_flags` derives both CreateFileW words from the flags — access
+  `O_RDONLY`/`O_WRONLY`/`O_RDWR` → `GENERIC_READ`/`GENERIC_WRITE`/both, with `O_APPEND`
+  replacing the write bit with `FILE_APPEND_DATA` (NT then writes at EOF on *every* write, which
+  is what POSIX `O_APPEND` means — a one-shot seek-to-end at open is not equivalent and loses
+  the race with any later seek or second writer); disposition `O_CREAT|O_EXCL` → `CREATE_NEW`
+  (the v6.4.58 exclusive-create behaviour, unchanged), `O_CREAT|O_TRUNC` → `CREATE_ALWAYS`,
+  `O_TRUNC` alone → `TRUNCATE_EXISTING`, `O_CREAT` alone → `OPEN_ALWAYS`, else `OPEN_EXISTING`.
+  Split into its own emit fn so `EOPEN_PE` does not grow past what cybs compiles. ⚠ The comment
+  in `lib/syscalls_windows.cyr` had recorded this as a cosmetic gap ("`O_TRUNC` and the access
+  mode are not decoded") next to `O_DIRECTORY`/`O_NOFOLLOW`; it was not cosmetic, and that note
+  is corrected. `O_DIRECTORY`/`O_NOFOLLOW` stay ignored **deliberately** — their Win32
+  near-equivalents do not mean what POSIX means (`FILE_FLAG_OPEN_REPARSE_POINT` *opens* a
+  symlink where `O_NOFOLLOW` *refuses*, and `lib/sigil.cyr`'s keyfile path depends on the
+  refusal), so mapping them is a semantics decision, not a port.
+  Coverage: `tests/tcyr/crossos/open_flag_translation.tcyr` (25 content-asserted rows,
+  **25/25 on real cass**, 16/9 red there on the 6.6.5 compiler) + gate
+  `tests/gates/platform/pe_open_flag_translation.sh` (POSIX oracle on the Linux kernel /
+  emitter shape via objdump / wine behaviour; three mutants built and run, ledger in the
+  header — including one the shape axis deliberately does NOT catch). cycc **1,315,040 B
+  (unchanged)**; 0 of 331 `.tcyr` binaries changed exit code against 6.6.5.
+
 - **A macro name matched in the MIDDLE of an identifier, and inside a STRING LITERAL — two more
   unbounded name matches in the preprocessor, both silent.** (bite 15b.) `PP_MACRO_PASS` decided
   "this is a macro invocation" from the bytes alone: any upper-case byte began a candidate name.
