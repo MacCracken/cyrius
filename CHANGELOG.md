@@ -2397,7 +2397,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   kernel tables against rows decoded out of the emitter's instruction words, and the runtime
   numbers against coreutils' own statfs (`stat -f`). Its aarch64 leg runs under `qemu-aarch64`
   and asserts `-strace` NAMES statfs rather than accept (emulation, not hardware — the crossos
-  tcyr on pi/ecb/ach/cass is). Mutation-proven five ways, ledger in the gate header.
+  tcyr on pi/ecb/ach/cass is). Mutation-proven **twelve** ways (six at first cut, six more in
+  the review fixes above), ledger in the gate header — DERIVE it from that ledger rather than
+  quoting this line.
 
 - `tests/tcyr/crossos/toplevel_block_closure.tcyr` (bite 3) — 15 assertions on a declaration zone
   made of block-bodied closures: the plain form, the zero-param `|| { .. }`, a body with a
