@@ -1544,6 +1544,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   with an `ln` stub on PATH, so it needs no root) and **axis 4b** (static) in
   `tests/gates/toolchain/cyriusly_use_switch_integrity.sh`. 4 mutations, each RED.
 
+- **`cyriusly use --global` printed "nothing was changed" in the one case where something was**
+  (bite 17l, from bite 17's review). 17b made the rollbacks conditional —
+  `if (old_bin != 0) { _relink_atomic(bin_link, old_bin); }` — and `_link_target_dup` returns 0
+  whenever the path is not already a symlink, which is the **fresh-install** case. So with no
+  pre-existing `~/.cyrius/bin`, the `bin` link the command had just created stayed, the `lib`
+  step or the `current` write then failed, and the error ended "— nothing was changed" over a
+  link pointing at the new version: false in exactly the state a user acts on. **Fix:**
+  `_undo_relink(link, old_target, new_target)` puts the link back — or, when there was nothing
+  there before, removes the one this command made (only while it is still ours; a concurrent
+  `cyriusly use` may own it now, and deleting someone else's switch would be a worse lie).
+  `_use_switch_err` takes what actually happened and says either "nothing was changed" or
+  "the switch is half-applied; re-run …". Pinned by a new **axis 6** in
+  `tests/gates/toolchain/cyriusly_use_switch_integrity.sh`, checking the message and the
+  filesystem it describes. ⚠ The first cut of that axis's static half grepped the source for
+  "half-applied" and read **GREEN with the whole message deleted** — a comment above
+  `_link_target_dup` contains the phrase; it now requires it inside a string on a code line.
+  That is this release's recurring shape (a check that can be satisfied by the wrong thing),
+  caught by mutating the check itself.
+
 - **Five `lib/` modules called other modules' functions without including them, so a bare
   `include` compiled with `warning: undefined function` — and an undefined function is a
   `ud2`/SIGILL stub, not a link error** (bite 17g). `lib/fmt.cyr` called `strlen`/`memcpy`

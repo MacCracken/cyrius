@@ -58,6 +58,11 @@
 #      directory (the one case `rm -rf` is still for), and a lib that cannot be linked (an `ln`
 #      stub on PATH, so the injection is deterministic and needs no root) with and without a
 #      previous `bin` — where the switch must fail AND leave the user exactly as they were.
+#   6. "nothing was changed" IS TRUE WHEN IT IS PRINTED (added by the bite-17 review). The
+#      rollbacks were `if (old_bin != 0) { ... }` and `_link_target_dup` returns 0 whenever the
+#      path is not already a symlink — the fresh-install case axis 3 exercises. So a failed
+#      switch on a fresh home kept the `bin` link it had just created and said "nothing was
+#      changed" over it. Both ends are checked: the message, and the filesystem it describes.
 #
 # MUTATION LEDGER (measured 6.6.6; each mutant is a COPY of programs/cyriusly.cyr in the
 # gate's scratch dir, compiled with the tree's build/cycc)
@@ -80,6 +85,17 @@
 #                                                           the tool says nothing was changed)
 #   j. axis-4 shell detector disabled                    -> axis 4 self-test FAIL (the 6.6.5
 #                                                           fixture is not reported)
+#   k. the conditional rollback back in _cmd_use_v2      -> axis 6 FAIL ("nothing was changed"
+#      (`if (old_bin != 0) { _relink_atomic(...); }`)       printed over a bin link it had just
+#                                                           created on a fresh home) + the two
+#                                                           static checks
+#   l. the half-applied arm removed (the message is      -> axis 6 FAIL. ⚠ The FIRST cut of that
+#      always "nothing was changed")                        check grepped the file for the phrase
+#                                                           plainly and read GREEN, because a
+#                                                           COMMENT above _link_target_dup says
+#                                                           "half-applied" — measured; it now
+#                                                           requires the phrase inside a string
+#                                                           on a code line
 # Real tree -> PASS.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -300,5 +316,41 @@ for impl in install cyriusly; do
 done
 [ "$x" = 0 ] && echo "  ok: axis 5: both shell twins (install.sh, scripts/cyriusly) switch fresh / over links / over a legacy directory, and on a lib that cannot be linked fail with bin rolled back (or removed, when there was none)"
 
+# ── axis 6: "nothing was changed" is TRUE when it is printed ──
+# The rollbacks are conditional — `if (old_bin != 0) { ... }` — and `_link_target_dup` returns 0
+# whenever the path is not an existing symlink, which is the FRESH-INSTALL case. So a failed
+# switch on a fresh home left the `bin` link this command had just created and said "nothing was
+# changed" over it: false in exactly the state a user acts on. The message now reports what the
+# tool actually did, and the fresh case takes the new link away again.
+# ⚠ The "half-applied" wording is reachable only when the UNDO itself fails (a concurrent
+# `cyriusly use` owning the link, or an unlink failure); no deterministic single-process run can
+# force that, for the same reason axis 4 is static — so it is pinned by the static check below
+# that both arms exist, not by a flaky race.
+x=0
+_home a6 || { echo "FAIL: cannot stage the axis-6 home"; exit 1; }
+mkdir -p "$D/a6/lib"; printf 'x\n' > "$D/a6/lib/keep"      # lib unswitchable
+rm -f "$D/a6/bin"                                           # and NO bin link yet
+rc=0; _run "$D/a6" "$D/a6.out" || rc=$?
+[ "$rc" -ne 0 ] || { fail "axis 6: a switch that could not finish exited 0"; x=1; }
+grep -q 'nothing was changed' "$D/a6.out" || { fail "axis 6: the error does not say what state the user is in:"; sed 's/^/      /' "$D/a6.out" | head -2; x=1; }
+[ "$(_points_at "$D/a6/bin")" = "ABSENT" ] || { fail "axis 6: it says 'nothing was changed' but left bin as $(_points_at "$D/a6/bin") on a home that had no bin"; x=1; }
+# the same claim over a home that DID have a bin link: rolled back, and the claim still true
+_home a6b || exit 1
+ln -sfn "$D/a6b/versions/1.0.0/bin" "$D/a6b/bin"
+mkdir -p "$D/a6b/lib"; printf 'x\n' > "$D/a6b/lib/keep"
+rc=0; _run "$D/a6b" "$D/a6b.out" || rc=$?
+[ "$rc" -ne 0 ] || { fail "axis 6: a half-switch over an existing bin exited 0"; x=1; }
+grep -q 'nothing was changed' "$D/a6b.out" || { fail "axis 6: the rolled-back switch does not report it"; x=1; }
+[ "$(_points_at "$D/a6b/bin")" = "1.0.0" ] || { fail "axis 6: bin is $(_points_at "$D/a6b/bin") after a switch that claims nothing changed"; x=1; }
+# STATIC: both arms of the claim exist, and the rollback goes through _undo_relink
+# ⚠ the phrase must be in a STRING on a code line: `half-applied` also appears in a comment
+# above `_link_target_dup`, and a first cut of this check grepped the file plainly and stayed
+# GREEN with the whole message removed (measured while mutating it).
+grep -qE '^[^#]*"[^"]*half-applied' programs/cyriusly.cyr || { fail "axis 6: there is no half-applied MESSAGE left (a comment mentioning the phrase is not one) — the tool can only claim 'nothing was changed'"; x=1; }
+grep -qE '^fn _undo_relink\(' programs/cyriusly.cyr || { fail "axis 6: _undo_relink is gone; the rollback is conditional again"; x=1; }
+[ "$(grep -cE '^[^#]*_undo_relink\(' programs/cyriusly.cyr)" -ge 4 ] || { fail "axis 6: $(grep -cE '^[^#]*_undo_relink\(' programs/cyriusly.cyr) _undo_relink references, expected its definition plus one per landed step"; x=1; }
+grep -qE '^[^#]*if \(old_bin != 0\) \{ _relink_atomic' programs/cyriusly.cyr && { fail "axis 6: a conditional rollback is back — a fresh install leaves the link it made"; x=1; }
+[ "$x" = 0 ] && echo "  ok: axis 6: a failed switch leaves the user exactly as they were (fresh: no bin at all; existing: rolled back) and only then says 'nothing was changed'"
+
 [ "$FAIL" = 0 ] || exit 1
-echo "PASS: cyriusly_use_switch_integrity (5 axes)"
+echo "PASS: cyriusly_use_switch_integrity (6 axes)"
