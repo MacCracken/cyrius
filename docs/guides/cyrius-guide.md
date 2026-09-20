@@ -1071,7 +1071,8 @@ cyrius distlib [profile]                 # bundle src/ modules into dist/{name}.
 cyrius distlib --all                     # regenerate the base bundle AND every [lib.X] profile (v6.5.8)
 cyrius distlib --check                   # verify bundles are current — compares BYTES, writes nothing (v6.5.8)
 cyrius coverage [--full] [--min <pct>]   # reference coverage of src/ (--min 0..100 gates CI)
-cyrius capacity [--check] <src>          # report compiler capacity / CI gate
+cyrius capacity [--check] [src]          # report compiler capacity / CI gate; no arg = THIS HOST's fork (v6.6.6)
+cyrius pulsar                            # x86-64 LINUX ONLY: rebuild cycc + cross bins + tools, then install
 cyrius lsp                               # build + install cyrius-lsp into ~/.cyrius/bin/
 ```
 
@@ -1084,6 +1085,22 @@ cyrius lsp                               # build + install cyrius-lsp into ~/.cy
 > `main_aarch64_macho.cyr` / `main_x86_macho.cyr` / `main_win.cyr` — and a missing fork is
 > refused by name rather than substituted. Pinned by
 > `tests/gates/toolchain/self_host_src_per_target.sh`. See CHANGELOG [6.6.6].
+>
+> ⚠ **`capacity` with no argument asks the same question** (v6.6.6). It used to default to
+> the bare literal `src/main.cyr`, so inside a cyrius checkout on ARM or macOS it metered a
+> compiler that host does not build and reported its table occupancy as the local one's —
+> and `capacity --check`'s whole job is to warn before a cap bites. It now takes the host's
+> fork first (`_capacity_default_src`, `cbt/build.cyr`) and falls back to `src/main.cyr` /
+> `src/lib.cyr`, which is what a *non*-cyrius project — no per-target fork — has. Pinned by
+> `tests/gates/toolchain/capacity_meters_host_fork.sh`.
+>
+> ⚠ **`pulsar` is an x86-64-Linux-HOST verb and now says so** (v6.6.6). It rebuilds the
+> *tracked* x86-64 Linux `build/cycc` from `src/main.cyr` and then the x86-hosted cross
+> compilers from it, so every stage execs an x86-64 Linux ELF. On ecb / ach / pi it used to
+> die on that exec with `error: cycc compile failed` — a message about the compiler for a
+> problem that is about the verb; it now refuses by name, before printing any progress, and
+> names the fork this host's compiler IS built from. Pinned by
+> `tests/gates/toolchain/pulsar_is_x86_linux_host_verb.sh`.
 
 **The argument rule (v6.6.5), for every verb.** Flags may appear in any position
 (`cyrius lint f.cyr --strict` == `cyrius lint --strict f.cyr`); a `-`-prefixed token the verb
