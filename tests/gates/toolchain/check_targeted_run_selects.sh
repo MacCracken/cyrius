@@ -7,10 +7,16 @@
 # argument to the check binary — bite 25b even gated that it was forwarded — and
 # programs/checks/main.cyr threw it away: it includes lib/args.cyr, never called
 # args_init(), and no line of it read argv(n). `grep -n 'args_init()' programs/checks/*.cyr`
-# returned nothing. So `sh scripts/check.sh nosuchsuitename` ran all 130 registered driver
-# rows plus 60 shell gates for thirteen minutes and reported on all of them; an unrecognised
-# name was not an error, it was a full run. check.sh's own comment at the call site ("On a
-# targeted run (a suite name was passed), run only the driver") described an intention.
+# returned nothing. So `sh scripts/check.sh nosuchsuitename` ran the driver's FULL nine-phase
+# run — 130 registered gate rows at 70e4c200 — for thirteen minutes and reported on all of
+# them; an unrecognised name was not an error, it was a full run. check.sh's own comment at
+# the call site ("On a targeted run (a suite name was passed), run only the driver")
+# described an intention. ⚠ Not "and the 60 shell gates too", which is what the first cut of
+# this header and the CHANGELOG bullet both said: the pre-fix targeted block was
+# `"$CHECK_BIN" "$@" || rc; exit rc`, so it exited BEFORE check.sh's own `_chk_gate` block
+# and those 60 never ran on a targeted invocation at all. DERIVE both counts
+# (`grep -cE '^_chk_gate' scripts/check.sh`, and the `_gate(…, "tests/gates/…")` literals in
+# programs/checks/*.cyr) rather than quoting this line.
 #
 # WHAT IS PINNED. Selection on BOTH halves of a run, because a run is the cyrius driver AND
 # the shell gates and covering one half silently means "all of the other":
@@ -20,11 +26,27 @@
 #           full run, proven from two cheap suites rather than by sitting through 13 minutes
 #   axis 4  a gate selector registered ONLY in programs/checks/*.cyr resolves and runs
 #           exactly that gate (the first cut of the fix read check.sh's own _chk_gate lines
-#           only and reported 132 of the 192 registered gates as "unknown")
+#           only, so every gate registered in the DRIVER — the large majority of the
+#           registry — answered "unknown")
 #   axis 5  a gate selector registered ONLY in scripts/check.sh resolves the same way
 #   axis 6  a bucket selector runs every gate in that bucket and nothing else, and the
 #           end-of-run summary scopes NOT RUN to the selection instead of the other ~190
 #   axis 7  a red gate in a targeted run still makes the run red
+#   axis 8  ⭐ EVERY selector `--list` advertises resolves — and resolves to ONE kind. The
+#           first cut of the fix refused a name two vocabularies claimed as "ambiguous", so
+#           `check.sh heapmap` (a driver suite `--list` prints, and the very selector the
+#           CHANGELOG measured at 25 ms against the 13-minute full run) exited 2 and could
+#           not be run at all, while `--list` advertised it under BOTH headings with no
+#           marker. Derived over all three vocabularies it was the ONLY collision — one
+#           advertised selector made unreachable to guard against a case that does not
+#           otherwise exist. Without this axis the next gate file named after a suite rots
+#           the same way in silence: axis 3 runs `$D/drv heapmap` DIRECTLY and never goes
+#           through check.sh's resolver.
+#   axis 9  the CENSUS for the root cause, over the whole tree and not just the one file:
+#           no entry program reads argv()/argc() without calling args_init(). The bite's
+#           own grep was scoped to programs/checks/*.cyr and missed
+#           programs/cyrius_type_audit.cyr, whose two documented flags (`--summary`,
+#           `--module=`) had therefore never once worked.
 #
 # INDEPENDENT DERIVATION. Axes 4-6 never read check.sh's "-> N of M" line: each fake gate
 # APPENDS ITS OWN NAME to a log when it runs, so the actual set comes from the filesystem,
@@ -39,7 +61,7 @@
 #   * the driver half of the registry (_chk_driver_gate_manifest) dropped from
 #     _chk_gate_registry -> 8 RED, ALL of them axes 4 and 6 for the zzdrv side; the zzsh
 #     side stays green. That is exactly the shape of the first cut of this fix, which read
-#     check.sh's own _chk_gate lines only and called the other 132 gates unknown.
+#     check.sh's own _chk_gate lines only and called every driver-registered gate unknown.
 #   * _CHK_MANIFEST left at the full registry on a targeted run -> 5 RED on axis 6 (the
 #     summary lists the whole rest of the registry as NOT RUN and the run exits 1 although
 #     every selected gate passed).
@@ -49,6 +71,29 @@
 #     instead of 9 names and had to be killed (rc 124), and `nosuchsuitename` likewise ran
 #     the audit. Axes 1, 2 and 3 all RED; the gate itself is not run against that driver
 #     because it would take over an hour to fail.
+# MUTATION PROOF for axes 8 and 9 (added by bite 27's review, same scratch-tree recipe):
+#   * the "ambiguous -> exit 2" refusal put back in _chk_resolve -> 1 RED on axis 8 ("1
+#     advertised name(s) do not resolve when typed bare"). That is the shipped defect the
+#     axis was added for.
+#   * the suite:/bucket:/gate: qualifier parsing removed -> 3 RED on axis 8: all 210
+#     advertised selectors unresolvable, all 210 mismatched, and the collision reachable by
+#     neither spelling.
+#   * the shadow marker dropped from _chk_annotate -> 1 RED ("'heapmap' is claimed by two
+#     vocabularies and --list does not mark it"); everything else stays green, so the marker
+#     and the resolution are proven independently.
+#   * args_init() removed from programs/cyrius_type_audit.cyr -> 1 RED on axis 9, naming
+#     that file. An invented probe (a new programs/*.cyr that includes lib/args.cyr and
+#     calls argc() with no args_init anywhere) reddens it the same way, so the axis is
+#     catching the SHAPE and not one path.
+#   * ⚠ ANTI-VACUOUS, and it caught a real hole in this axis: with the `fn argv|argc|
+#     args_init` definition lines NOT cut out of _c9_strip, the args_init-removed mutation
+#     above stayed GREEN — lib/args.cyr's own `fn args_init() {` counted as a call for every
+#     program that includes it, so every program looked initialised. Both numbers moved when
+#     it was fixed (20 argv readers -> 18). The floors (>= 50 entries, >= 5 files reading
+#     argv, >= 3 programs reaching argv through their closure) exist for the same reason.
+#   * programs/checks/main.cyr reverted with args_init removed -> axis 9 cannot be measured
+#     that way: axes 1-3 hang the gate for 13 minutes first (confirmed under `timeout 120`),
+#     which is why that mutation is recorded above and not repeated here.
 set -u
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -227,9 +272,149 @@ grep -q "gate buckets" "$W/out" || _fail "check.sh's error does not list the val
 LEFT=$(ls -d "$W"/tmp/cyrius-check-home.* 2>/dev/null | wc -l)
 [ "$LEFT" = "0" ] || _fail "$LEFT staged CYRIUS_HOME tree(s) left behind by a rejected selector"
 
+echo "axis 8: every selector --list advertises resolves, to exactly one kind"
+# The REAL vocabularies, in a scratch root, so nothing here can rebuild build/cyrius_check,
+# stage a home, or reap another lane's. check.sh derives its gate names by grepping
+# scripts/check.sh and programs/checks/*.cyr, so those two are all that has to be real —
+# the driver binary is the one this gate already compiled from the tree.
+R8="$D/r8"
+mkdir -p "$R8/scripts" "$R8/build" "$R8/programs/checks" "$R8/lib" "$R8/tmp"
+cp "$ROOT/scripts/check.sh" "$R8/scripts/check.sh"
+cp "$ROOT"/programs/checks/*.cyr "$R8/programs/checks/"
+cp VERSION "$R8/"
+: > "$R8/lib/placeholder.cyr"
+printf '#!/bin/sh\nexit 0\n' > "$R8/build/cycc"
+chmod +x "$R8/build/cycc"
+cp "$D/drv" "$R8/build/cyrius_check"
+touch -d '2038-01-01' "$R8/build/cyrius_check"
+_r8() { ( cd "$R8" && env -u CYRIUS_HOME TMPDIR="$R8/tmp" sh scripts/check.sh "$@" ); }
+
+_r8 --list > "$D/list" 2>"$D/list.err" || _fail "check.sh --list exited non-zero"
+# Qualify each advertised name with the heading it was printed under. That heading is the
+# CLAIM ("this is a driver suite"); --resolve is the behaviour. Comparing them is the point.
+awk '/^driver suites/{k="suite";next} /^gate buckets/{k="bucket";next} /^gates \(/{k="gate";next} /^  [^ ]/{ if(k!=""){print k":"$1} }' \
+    "$D/list" > "$D/qual"
+NQ=$(grep -c . "$D/qual" || true)
+# Floor: a --list that printed almost nothing would make this axis vacuously green. The
+# registry is ~200 gates plus 9 suites plus 9 buckets; 100 is a floor, not a count.
+[ "$NQ" -ge 100 ] || _fail "--list advertised only $NQ selector(s) — too few to be the real registry; axis 8 would be vacuous"
+RC8=0
+# shellcheck disable=SC2046  # the selectors are shell words by construction
+_r8 --resolve $(cat "$D/qual") > "$D/res" 2>"$D/res.err" || RC8=$?
+[ "$RC8" = "0" ] || _fail "$(grep -c '^UNRESOLVED' "$D/res" || true) selector(s) --list advertises do NOT resolve (rc $RC8)"
+NR=$(grep -c . "$D/res" || true)
+[ "$NR" = "$NQ" ] || _fail "--resolve answered for $NR of the $NQ advertised selectors"
+# Every answer must be the kind its heading claimed, and name the same thing.
+paste -d' ' "$D/qual" "$D/res" \
+    | awk '{ split($1, a, ":"); if (a[1] != $2 || a[2] != $3) print }' > "$D/mism"
+NM=$(grep -c . "$D/mism" || true)
+[ "$NM" = "0" ] || { _fail "$NM advertised selector(s) resolve to a different kind than the heading they are printed under"; head -3 "$D/mism" | sed 's/^/      /'; }
+# And the BARE name has to resolve too — that is the spelling a human types.
+sed 's/^[a-z]*://' "$D/qual" | sort -u > "$D/bare"
+RC8B=0
+# shellcheck disable=SC2046
+_r8 --resolve $(cat "$D/bare") > "$D/resb" 2>/dev/null || RC8B=$?
+[ "$RC8B" = "0" ] || _fail "$(grep -c '^UNRESOLVED' "$D/resb" || true) advertised name(s) do not resolve when typed bare — the refusal this axis exists for"
+# A name two vocabularies claim must be MARKED where it is advertised, and BOTH spellings
+# must work and disagree. Derived here by counting duplicates, never read out of check.sh.
+sed 's/^[a-z]*://' "$D/qual" | sort | uniq -d > "$D/dups"
+while read -r dn; do
+    [ -n "$dn" ] || continue
+    grep -q "^  $dn  *\[" "$D/list" || _fail "'$dn' is claimed by two vocabularies and --list does not mark it"
+    K1=$(_r8 --resolve "suite:$dn" 2>/dev/null | awk '{print $1}')
+    K2=$(_r8 --resolve "gate:$dn"  2>/dev/null | awk '{print $1}')
+    [ "$K1" = "suite" ] && [ "$K2" = "gate" ] || _fail "the collision '$dn' is not reachable as both suite:$dn ($K1) and gate:$dn ($K2)"
+done < "$D/dups"
+NDUP=$(grep -c . "$D/dups" || true)
+# A qualifier that names nothing in THAT vocabulary is an explicit request and must fail.
+RC8C=0
+_r8 "suite:$(head -1 "$D/bare")zzz" > "$D/badq" 2>&1 || RC8C=$?
+[ "$RC8C" = "2" ] || _fail "a qualified selector naming nothing exited $RC8C, expected 2"
+echo "  $NQ advertised selector(s) all resolve; $NDUP collision(s), each reachable both ways"
+
+echo "axis 9: no entry program reads argv()/argc() without calling args_init()"
+# The root cause, censused as a SHAPE. Per PROGRAM, not per file: cbt/build.cyr reads argv
+# and cbt/cyrius.cyr calls args_init, and that is correct — what must never happen is a
+# program whose whole include closure reads argv and never initialises it. Entry points are
+# DERIVED (every .cyr under programs/ and cbt/ that nothing includes), comments and string
+# literals are stripped first (the check driver's own regression suite talks ABOUT argc() in
+# its messages), and an include that cannot be resolved is a FAILURE, not a silent skip —
+# a resolver that quietly loses files reports zero offenders because it looked at nothing.
+#
+# ⛔ A DEFINITION IS NOT A CALL, and getting that wrong makes this axis VACUOUS. The first
+# cut matched `args_init(` anywhere, so lib/args.cyr's own `fn args_init() {` counted — and
+# since every program that reads argv includes lib/args.cyr, EVERY program looked
+# initialised and EVERY program looked like an argv reader. Measured: with the fix removed
+# from programs/cyrius_type_audit.cyr the axis still passed. So `fn`-headed lines for these
+# three names are cut before matching, and the mutation ledger records the re-measurement.
+_c9_strip() {
+    sed 's/#.*//' "$1" | sed 's/"[^"]*"//g' \
+        | grep -vE '^[[:space:]]*(pub[[:space:]]+|public[[:space:]]+|private[[:space:]]+)*fn[[:space:]]+(argv|argc|args_init)[[:space:]]*\('
+}
+find programs cbt -name '*.cyr' | LC_ALL=C sort > "$D/c9.all"
+find programs cbt lib src -name '*.cyr' -exec sed 's/#.*//' {} + \
+    | grep -oE 'include[[:space:]]+"[^"]+"' | sed 's/.*"\(.*\)"/\1/' | LC_ALL=C sort -u > "$D/c9.inc"
+LC_ALL=C comm -23 "$D/c9.all" "$D/c9.inc" > "$D/c9.entries"
+NE=$(grep -c . "$D/c9.entries" || true)
+[ "$NE" -ge 50 ] || _fail "the census found only $NE entry program(s) — too few to be programs/ + cbt/; axis 9 would be vacuous"
+# One pass over every source file: who reads argv, who calls args_init, and who includes
+# what (resolved once, here — not 86 times inside the closure walk below).
+: > "$D/c9.uses"; : > "$D/c9.init"; : > "$D/c9.edges"
+for f in $(find programs cbt lib src -name '*.cyr' | LC_ALL=C sort); do
+    _c9_strip "$f" > "$D/c9.s"
+    grep -qE '(^|[^_A-Za-z0-9])arg[vc][[:space:]]*\(' "$D/c9.s" && echo "$f" >> "$D/c9.uses"
+    grep -qE '(^|[^_A-Za-z0-9])args_init[[:space:]]*\(' "$D/c9.s" && echo "$f" >> "$D/c9.init"
+    _dir=$(dirname "$f")
+    sed 's/#.*//' "$f" | grep -oE 'include[[:space:]]+"[^"]+"' | sed 's/.*"\(.*\)"/\1/' \
+        | while read -r i; do
+            if   [ -f "$i" ];       then printf '%s %s\n' "$f" "$i"
+            elif [ -f "$_dir/$i" ]; then printf '%s %s\n' "$f" "$_dir/$i"
+            else printf '%s UNRESOLVED:%s\n' "$f" "$i"
+            fi
+          done >> "$D/c9.edges"
+done
+# `join` below needs both sides ordered the same way; C collation, field 1, no exceptions.
+LC_ALL=C sort -k1,1 "$D/c9.edges" > "$D/c9.edges.s"
+LC_ALL=C sort -u -o "$D/c9.uses" "$D/c9.uses"
+LC_ALL=C sort -u -o "$D/c9.init" "$D/c9.init"
+NUSES=$(grep -c . "$D/c9.uses" || true)
+[ "$NUSES" -ge 5 ] || _fail "only $NUSES file(s) in the tree read argv()/argc() — the scanner is blind, not the tree clean"
+C9_UNRES=0
+C9_ARGV=0
+C9_BAD=""
+for e in $(cat "$D/c9.entries"); do
+    printf '%s\n' "$e" > "$D/c9.cl"
+    while : ; do
+        _n=$(grep -c . "$D/c9.cl" || true)
+        join -j 1 -o 1.2 "$D/c9.edges.s" "$D/c9.cl" > "$D/c9.new" 2>/dev/null || : > "$D/c9.new"
+        LC_ALL=C sort -u "$D/c9.cl" "$D/c9.new" > "$D/c9.cl2"; mv "$D/c9.cl2" "$D/c9.cl"
+        [ "$(grep -c . "$D/c9.cl" || true)" = "$_n" ] && break
+    done
+    _u=$(grep -c '^UNRESOLVED:' "$D/c9.cl" || true)
+    if [ "$_u" != "0" ]; then
+        C9_UNRES=$((C9_UNRES + _u))
+        grep '^UNRESOLVED:' "$D/c9.cl" | sed "s|^|      $e -> |"
+    fi
+    grep -v '^UNRESOLVED:' "$D/c9.cl" | LC_ALL=C sort -u > "$D/c9.files"
+    if [ -n "$(LC_ALL=C comm -12 "$D/c9.files" "$D/c9.uses")" ]; then
+        C9_ARGV=$((C9_ARGV + 1))
+        [ -n "$(LC_ALL=C comm -12 "$D/c9.files" "$D/c9.init")" ] || C9_BAD="$C9_BAD $e"
+    fi
+done
+[ "$C9_UNRES" = "0" ] || _fail "$C9_UNRES include(s) could not be resolved — the census cannot claim to have looked at every file"
+[ "$C9_ARGV" -ge 3 ] || _fail "only $C9_ARGV program(s) were found to read argv at all; the closure walk is not working"
+if [ -n "$C9_BAD" ]; then
+    for b in $C9_BAD; do _fail "$b reads argv()/argc() and nothing in its include closure calls args_init() — every argument it is handed is discarded"; done
+fi
+if [ -z "$C9_BAD" ]; then
+    echo "  $NE entry program(s), $C9_ARGV of them read argv; all initialise it"
+else
+    echo "  $NE entry program(s), $C9_ARGV of them read argv; $(printf '%s' "$C9_BAD" | wc -w) do NOT initialise it"
+fi
+
 echo ""
 if [ "$FAILS" = "0" ]; then
-    echo "PASS: a targeted check run runs that suite ($NSUITE driver suites, $((EXP_DRV + EXP_SH)) fake gates across both registries)"
+    echo "PASS: a targeted check run runs that suite ($NSUITE driver suites, $((EXP_DRV + EXP_SH)) fake gates across both registries, $NQ advertised selectors all reachable, $NE entry programs censused)"
     exit 0
 fi
 echo "FAILED: $FAILS assertion(s)"

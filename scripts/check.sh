@@ -168,7 +168,25 @@ trap _chk_finish TERM
 #     home looks unowned is microseconds; `kill -0` is the liveness oracle, and a PID we
 #     cannot signal counts as ALIVE (the safe direction — we decline to delete).
 # Best-effort throughout: a reap that fails must never fail the run.
+#
+# ⛔ VALIDATE THE KNOB BEFORE USING IT — it is the age gate's only input and a bad value
+# turns the gate OFF, not up. As first written this was used raw in `[ "$_CHK_REAP_MINS"
+# -gt 0 ]`, so `CYRIUS_CHECK_REAP_MINS=4h` made that test ERROR (`[: 4h: integer expected`,
+# rc 2 → false), the `-mmin` filter was skipped, and EVERY unowned home became eligible
+# whatever its age — measured: a two-minute-old home was reaped. That is live on this box,
+# where lanes running a check.sh older than this change stage homes with no `.owner` at
+# all: one typo'd env var and a running lane's home is deleted. Same `*[!0-9]*` guard
+# `_chk_home_is_owned` already applies to the `.owner` PID, and it is LOUD — a knob that
+# silently did not mean what you typed is how this defect got written in the first place.
+# CHANGELOG [6.6.6]
 _CHK_REAP_MINS="${CYRIUS_CHECK_REAP_MINS:-240}"
+case "$_CHK_REAP_MINS" in
+    ''|*[!0-9]*)
+        printf "check: CYRIUS_CHECK_REAP_MINS='%s' is not a whole number of minutes — using 240\n" \
+            "$_CHK_REAP_MINS" >&2
+        _CHK_REAP_MINS=240
+        ;;
+esac
 _chk_home_is_owned() {
     [ -f "$1/.owner" ] || return 1
     _op=$(cat "$1/.owner" 2>/dev/null || true)
@@ -328,9 +346,24 @@ fi
 #   * a single shell gate, by basename.
 # A hand-written list of any of the three is the shape this release keeps finding rotted.
 #
-# An unknown selector exits 2 and PRINTS the valid ones; an ambiguous one (a name that is
-# both a suite and a bucket) exits 2 rather than picking. Neither stages a CYRIUS_HOME —
-# _chk_stage_home is called only once a selector has resolved.
+# An unknown selector exits 2 and PRINTS the valid ones. Neither it nor `--list` stages a
+# CYRIUS_HOME — _chk_stage_home is called only once a selector has resolved.
+#
+# ⛔ A NAME IN TWO VOCABULARIES RESOLVES; IT IS NOT REFUSED. This block's first cut called
+# such a name "ambiguous" and exited 2, and that made `sh scripts/check.sh heapmap`
+# — a driver suite `--list` itself advertises, and the one the CHANGELOG bullet quoted a
+# timing for — UNREACHABLE, because tests/gates/memory/heapmap.sh has the same basename.
+# (The 25 ms that bullet reported WAS the refusal; a real `check.sh heapmap` is ~1.2 s.) Derived over all three vocabularies it was the only collision, so the whole
+# "ambiguous" branch existed to reject exactly one advertised selector. A refusal that
+# hides a name the tool itself prints is not caution; it is the same shape as the rest of
+# this release's finds — the checker disagreeing with the thing it checks. So:
+#   * PRECEDENCE, stated once: suite > bucket > gate. An unqualified name always resolves.
+#   * QUALIFIED FORMS `suite:x` / `bucket:x` / `gate:x` reach the shadowed one, so nothing
+#     registered anywhere is unreachable by any spelling. A qualifier that names nothing in
+#     THAT vocabulary is an error — it is an explicit request, not a guess.
+#   * A shadowed name says so on stderr when it resolves, and `--list` marks it.
+# `check.sh --resolve <sel>…` answers what each selector resolves to and runs NOTHING, which
+# is what lets a gate assert that every name `--list` prints resolves. CHANGELOG [6.6.6]
 #
 # ⛔ The driver-suite path keeps bite 25b's property: the driver's exit status IS the
 # verdict and no summary is printed, because the shell-gate manifest is not part of that
@@ -351,15 +384,96 @@ _chk_driver_gate_manifest() {
 _chk_gate_registry() { { _chk_shell_manifest; _chk_driver_gate_manifest; } | sort -u; }
 _chk_shell_buckets() { _chk_gate_registry | sed 's|/[^/]*$||; s|^tests/gates/||' | sort -u; }
 _chk_shell_names()   { _chk_gate_registry | sed 's|.*/||; s|\.sh$||' | sort -u; }
+_chk_driver_suites() { "$CHECK_BIN" --list-suites 2>/dev/null; }
+# The three vocabularies, read once per process. Cached because the annotated `--list` and
+# `--resolve` ask about them a few hundred times and _chk_driver_suites is a process spawn.
+_chk_vocab() {
+    [ -n "${_CHK_V_READ:-}" ] && return 0
+    _CHK_V_SUITE=$(_chk_driver_suites)
+    _CHK_V_BUCKET=$(_chk_shell_buckets)
+    _CHK_V_GATE=$(_chk_shell_names)
+    # A name more than one vocabulary claims. Derived by counting duplicates across all
+    # three, so it cannot be a hand-kept list of known collisions (today: `heapmap`).
+    _CHK_V_SHADOWED=$(printf '%s\n%s\n%s\n' "$_CHK_V_SUITE" "$_CHK_V_BUCKET" "$_CHK_V_GATE" \
+        | grep -v '^$' | sort | uniq -d)
+    _CHK_V_READ=1
+}
+# Every kind a bare name belongs to, in PRECEDENCE order, one per line. The three readers
+# above are the only source; this function adds no vocabulary of its own.
+_chk_kinds_of() {
+    _chk_vocab
+    printf '%s\n' "$_CHK_V_SUITE"  | grep -qx -- "$1" && echo suite
+    printf '%s\n' "$_CHK_V_BUCKET" | grep -qx -- "$1" && echo bucket
+    printf '%s\n' "$_CHK_V_GATE"   | grep -qx -- "$1" && echo gate
+    return 0
+}
+# Mark a name that more than one vocabulary claims, so `--list` never advertises a selector
+# without saying which spelling reaches it.
+_chk_annotate() {
+    _chk_vocab
+    while read -r _n; do
+        [ -n "$_n" ] || continue
+        if printf '%s\n' "$_CHK_V_SHADOWED" | grep -qx -- "$_n"; then
+            _ak=$(_chk_kinds_of "$_n" | tr '\n' ' ' | sed 's/ *$//')
+            _aw=${_ak%% *}
+            printf '  %s   [claimed by %s — bare "%s" runs the %s; qualify (%s) for the rest]\n' \
+                "$_n" "$_ak" "$_n" "$_aw" \
+                "$(printf '%s\n' "$_ak" | tr ' ' '\n' | grep -v "^$_aw$" | grep -v '^$' | sed "s|\$|:$_n|" | tr '\n' ' ' | sed 's/ *$//')"
+        else
+            printf '  %s\n' "$_n"
+        fi
+    done
+    return 0
+}
 _chk_list_selectors() {
     echo "usage: sh scripts/check.sh [<selector>]   (no selector = the full run)"
+    echo "       a selector may be qualified: suite:<name>, bucket:<name>, gate:<name>"
+    echo "       sh scripts/check.sh --resolve <selector>...   says what each resolves to, runs nothing"
     echo ""
     echo "driver suites (programs/checks/main.cyr — runs that phase of the check binary):"
-    "$CHECK_BIN" --list-suites 2>/dev/null | sed 's/^/  /'
+    _chk_driver_suites | _chk_annotate
     echo "gate buckets (runs every registered gate in that bucket, from both registries):"
-    _chk_shell_buckets | sed 's/^/  /'
+    _chk_shell_buckets | _chk_annotate
     echo "gates (runs that one gate script):"
-    _chk_shell_names | sed 's/^/  /'
+    _chk_shell_names | _chk_annotate
+}
+
+# Resolve ONE selector. Sets _CHK_KIND (suite|bucket|gate) and _CHK_SEL (the bare name).
+# $2 = "quiet" to skip the shadow note (used by --resolve, which prints its own line).
+# Returns 2 and explains on stderr when nothing is registered by that name.
+_chk_resolve() {
+    _r_in=$1
+    _r_want=""
+    case "$_r_in" in
+        suite:*)  _r_want=suite;  _CHK_SEL=${_r_in#suite:}  ;;
+        bucket:*) _r_want=bucket; _CHK_SEL=${_r_in#bucket:} ;;
+        gate:*)   _r_want=gate;   _CHK_SEL=${_r_in#gate:}   ;;
+        *)        _CHK_SEL=$_r_in ;;
+    esac
+    _r_kinds=$(_chk_kinds_of "$_CHK_SEL")
+    if [ -n "$_r_want" ]; then
+        if ! printf '%s\n' "$_r_kinds" | grep -qx -- "$_r_want"; then
+            printf "error: no %s is registered under the name '%s'\n" "$_r_want" "$_CHK_SEL" >&2
+            _chk_list_selectors >&2
+            return 2
+        fi
+        _CHK_KIND=$_r_want
+        return 0
+    fi
+    if [ -z "$_r_kinds" ]; then
+        printf "error: unknown check selector '%s' — nothing registered by that name\n" "$_CHK_SEL" >&2
+        _chk_list_selectors >&2
+        return 2
+    fi
+    # First line = highest precedence (suite > bucket > gate), as _chk_kinds_of emits them.
+    _CHK_KIND=$(printf '%s\n' "$_r_kinds" | head -1)
+    _r_rest=$(printf '%s\n' "$_r_kinds" | tail -n +2 | tr '\n' ' ' | sed 's/ *$//')
+    if [ -n "$_r_rest" ] && [ "${2:-}" != "quiet" ]; then
+        printf "check: '%s' is registered as a %s and as a %s — running the %s; use %s to reach the rest\n" \
+            "$_CHK_SEL" "$_CHK_KIND" "$_r_rest" "$_CHK_KIND" \
+            "$(printf '%s\n' "$_r_rest" | tr ' ' '\n' | grep -v '^$' | sed "s|\$|:$_CHK_SEL|" | tr '\n' ' ' | sed 's/ *$//')" >&2
+    fi
+    return 0
 }
 
 if [ $# -gt 0 ]; then
@@ -368,28 +482,30 @@ if [ $# -gt 0 ]; then
             _chk_list_selectors
             exit 0
             ;;
+        --resolve)
+            shift
+            [ $# -gt 0 ] || { printf "error: --resolve needs at least one selector\n" >&2; exit 2; }
+            # Read the vocabularies HERE: _chk_kinds_of runs inside $( ), which inherits the
+            # cache but cannot fill it, so without this every selector re-spawns the driver.
+            _chk_vocab
+            _CHK_RES_RC=0
+            for _s in "$@"; do
+                if _chk_resolve "$_s" quiet; then
+                    printf '%s %s\n' "$_CHK_KIND" "$_CHK_SEL"
+                else
+                    printf 'UNRESOLVED %s\n' "$_s"
+                    _CHK_RES_RC=2
+                fi
+            done
+            exit "$_CHK_RES_RC"
+            ;;
     esac
     if [ $# -gt 1 ]; then
         printf "error: check.sh takes at most ONE selector (got %s: %s)\n" "$#" "$*" >&2
         _chk_list_selectors >&2
         exit 2
     fi
-    _CHK_SEL=$1
-    _CHK_KIND=""
-    if "$CHECK_BIN" --list-suites 2>/dev/null | grep -qx -- "$_CHK_SEL"; then _CHK_KIND="suite"; fi
-    if _chk_shell_buckets | grep -qx -- "$_CHK_SEL"; then _CHK_KIND="${_CHK_KIND:+$_CHK_KIND }bucket"; fi
-    if _chk_shell_names | grep -qx -- "$_CHK_SEL"; then _CHK_KIND="${_CHK_KIND:+$_CHK_KIND }gate"; fi
-    case "$_CHK_KIND" in
-        "")
-            printf "error: unknown check selector '%s' — nothing registered by that name\n" "$_CHK_SEL" >&2
-            _chk_list_selectors >&2
-            exit 2
-            ;;
-        *" "*)
-            printf "error: selector '%s' is ambiguous — it names a %s; rename one of them\n" "$_CHK_SEL" "$_CHK_KIND" >&2
-            exit 2
-            ;;
-    esac
+    _chk_resolve "$1" || exit 2
 
     _chk_stage_home
     if [ "$_CHK_KIND" = "suite" ]; then

@@ -1301,28 +1301,58 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   gated that it was forwarded) and the binary discarded it: `programs/checks/main.cyr`
   includes `lib/args.cyr`, never called `args_init()`, and no line of it read `argv(n)` —
   `grep -n 'args_init()' programs/checks/*.cyr` returned nothing. So
-  `sh scripts/check.sh nosuchsuitename` ran all 192 registered gates for ~13 minutes and
-  reported on all of them, while check.sh's own comment at the call site read "On a targeted
-  run (a suite name was passed), run only the driver". Selection now covers BOTH halves of a
+  `sh scripts/check.sh nosuchsuitename` ran the driver's FULL nine-phase run — 130 registered
+  gate rows at `70e4c200` — for ~13 minutes and reported on all of them, while check.sh's own
+  comment at the call site read "On a targeted run (a suite name was passed), run only the
+  driver". ⚠ *Corrected from the first cut of this bullet, which said "all 192 registered
+  gates":* the pre-fix targeted block was `"$CHECK_BIN" "$@" || rc; exit rc`, so it exited
+  **before** check.sh's own `_chk_gate` block and the 60 shell gates registered there never ran
+  on a targeted invocation at all. Derive both halves (`grep -cE '^_chk_gate' scripts/check.sh`;
+  the `_gate(…, "tests/gates/…")` literals in `programs/checks/*.cyr`) rather than quoting a
+  number. Selection now covers BOTH halves of a
   run, because covering one half silently means "all of the other": a **driver suite**
   (`selfhost`, `var-grow`, `fn-grow`, `idpool`, `heapmap`, `tcyr`, `regression`, `fmt`,
   `lint`), a **gate bucket** (`codegen`, `frontend`, …, plus `scripts`), or a **single gate**
-  by basename. `--list` prints all of them; an unknown selector exits 2 and lists them; an
-  ambiguous one exits 2 rather than guessing; and neither stages a `CYRIUS_HOME` any more
-  (`_chk_stage_home` is called only once a selector resolves). Every vocabulary is DERIVED
+  by basename. `--list` prints all of them; an unknown selector exits 2 and lists them; and
+  neither stages a `CYRIUS_HOME` any more (`_chk_stage_home` is called only once a selector
+  resolves). ⭐ **A name two vocabularies claim resolves — it is not refused.** The first cut
+  called such a name "ambiguous" and exited 2, which made `sh scripts/check.sh heapmap`
+  — a driver suite `--list` itself advertises — **unrunnable**, while `--list` printed it under
+  both headings with no marker. Derived over all three vocabularies `heapmap` is the *only*
+  collision (`tests/gates/memory/heapmap.sh`), so the whole refusal existed to reject exactly
+  one advertised selector: a checker disagreeing with the thing it checks, the shape this
+  release keeps finding. Now a bare name resolves by **precedence — suite > bucket > gate** and
+  says on stderr that it was shadowed, the **qualified forms** `suite:x` / `bucket:x` / `gate:x`
+  reach the other one (a qualifier naming nothing in *that* vocabulary is an error), `--list`
+  marks the collision, and `check.sh --resolve <sel>…` answers what each selector resolves to
+  while running nothing. Every vocabulary is DERIVED
   from the registrations, never written down twice: the driver answers `--list-suites` out of
   the same one-row-per-phase table `main()` walks, and the gate names come from BOTH
   registries — check.sh's `_chk_gate` lines and the `_gate(…, "tests/gates/…")` literals in
   `programs/checks/*.cyr`. ⭐ That second registry is the trap: the first cut read check.sh's
-  lines only and called 132 of the 192 registered gates unknown. Measured: `check.sh heapmap`
-  is 25 ms against a 13-minute full run. The targeted path keeps bite 25b's property (the
+  lines only and answered "unknown" for every gate registered in the driver — the large
+  majority of the registry. Measured against a ~13-minute full run: `check.sh heapmap` 1.2 s,
+  `check.sh fmt` 1.2 s, `check.sh idpool` 11.0 s (~1 s of each is staging the throwaway home),
+  `check.sh --list` 0.28 s, an unknown selector 0.29 s. ⚠ *The first cut of this bullet quoted
+  "`check.sh heapmap` is 25 ms" — that 25 ms was the **refusal** path described above, not a
+  run.* The targeted path keeps bite 25b's property (the
   driver's exit status is the verdict, via `exit`, never `exec`, so the EXIT trap still
   removes the staged home) and a targeted gate run narrows the NOT-RUN manifest to the
   selection. Gate: `tests/gates/toolchain/check_targeted_run_selects.sh` (registered in
-  `programs/checks/main.cyr`), 8 axes, mutation-proven four ways. Also fixed in passing:
+  `programs/checks/main.cyr`), 10 axes, mutation-proven eight ways — including the
+  anti-vacuous find that matters most: until `fn argv|argc|args_init` DEFINITION lines were
+  cut from the census scanner, `lib/args.cyr`'s own definitions counted as calls and axis 9
+  passed with the fix removed. Also fixed in passing:
   `tests/gates/toolchain/check_sh_targeted_path_cleans_up.sh` did not clear `CYRIUS_HOME`
   for its harness, and since check.sh EXPORTS the home it stages, that gate was GREEN
-  standalone and RED inside the full run it belongs to.
+  standalone and RED inside the full run it belongs to. ⭐ **And the same root cause one file
+  over:** `programs/cyrius_type_audit.cyr` also includes `lib/args.cyr`, reads `argv(i)` in
+  `main()` and never called `args_init()`, so `--summary` (its own header calls it "CI-friendly")
+  and `--module=NAME` had **never worked** — output was byte-identical with and without them.
+  Both now do. Censused tree-wide by the gate's axis 9: every entry program under `programs/`
+  and `cbt/` (derived — every `.cyr` nothing includes), walked through its whole include closure,
+  must call `args_init()` if anything in that closure reads `argv()`/`argc()`; `cyrius_type_audit`
+  was the last live instance.
 
 - **A SIGKILLed `check.sh` left its ~19 MB staged `CYRIUS_HOME` in `$TMPDIR` for ever**
   (bite 27b). The EXIT/INT/TERM trap removes this run's home and bite 25b fixed the one path
@@ -1333,12 +1363,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   at once and deleting a live run's home is worse than the leak. Every staged home carries
   `.owner` (the creating shell's PID, stamped as the first thing after `mktemp`), and a home
   is reclaimed only when it is older than `$CYRIUS_CHECK_REAP_MINS` (default 240 — a full run
-  is ~13 minutes) **and** that PID is gone; a PID we cannot signal counts as alive. Gate:
+  is ~13 minutes) **and** that PID is gone; a PID we cannot signal counts as alive. The
+  threshold is **validated before use** (`case … *[!0-9]*`, the same guard the `.owner` PID
+  already got) and a bad value complains and falls back to 240: as first written it went raw
+  into `[ "$n" -gt 0 ]`, so `CYRIUS_CHECK_REAP_MINS=4h` made that test *error* (`[: 4h: integer
+  expected`) and therefore skip the `-mmin` filter entirely — every unowned home eligible at any
+  age, measured on a two-minute-old one. A knob that silently means the opposite of what you
+  typed is how the defect above got written in the first place. Gate:
   `tests/gates/toolchain/check_stale_home_reaper.sh` (registered in
   `programs/checks/main.cyr`) — axis 4 starts a REAL second check.sh run, holds it open, and
   runs a reaper against its home with the age gate turned OFF, with axis 5 as the
-  anti-vacuous twin (the same home with `.owner` removed IS reaped). Mutation-proven four
-  ways; the stamp and the ownership guard are proven independently.
+  anti-vacuous twin (the same home with `.owner` removed IS reaped), and axis 6 pins the
+  threshold validation (a 2-minute-old home survives `CYRIUS_CHECK_REAP_MINS=4h`, a 5-hour-old
+  unowned one is still reaped, and the run says so). Mutation-proven five ways; the stamp, the
+  ownership guard and the validation are each proven independently.
 
 ### Changed
 

@@ -28,6 +28,13 @@
 #   5  anti-vacuous for axis 4: the same old home with `.owner` REMOVED is reaped under the
 #      same settings. Without this, axis 4 would also pass if the age gate had quietly
 #      stayed on and nothing was ever eligible.
+#   6  a NON-NUMERIC $CYRIUS_CHECK_REAP_MINS does not silently turn the age gate OFF. As
+#      first written the threshold went straight into `[ "$n" -gt 0 ]`, so `=4h` made that
+#      test error (`[: 4h: integer expected`, rc 2 -> false), the `-mmin` filter was skipped
+#      and EVERY unowned home became eligible at ANY age — measured, a two-minute-old home
+#      was reaped. That is live on a box where other lanes run an older check.sh and stage
+#      homes with no `.owner`: one typo and a running lane's home is deleted. The knob is
+#      validated and the complaint is loud.
 #
 # INDEPENDENT DERIVATION: every verdict is `[ -d "$home" ]` on the filesystem afterwards,
 # never check.sh's "reaped N" line. The live owner in axis 2 is a process this gate started
@@ -49,6 +56,10 @@
 #     and the guard are proven independently.
 #   * the age gate disabled (every unowned home eligible) -> 1 RED: axis 3, a home created
 #     seconds ago is destroyed.
+#   * (bite 27's review) the `case`/`*[!0-9]*` validation of $CYRIUS_CHECK_REAP_MINS removed
+#     -> 3 RED on axis 6: a 2-minute-old home is reaped, nothing in the output mentions the
+#     knob, and the raw `[: 4h: integer expected` leaks through. Axes 1-5 stay green, so the
+#     validation and the reap rule are proven independently.
 set -u
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -174,6 +185,18 @@ fi
 rm -f "$W/block"
 wait "$BG" 2>/dev/null || true
 [ -n "$BGHOME" ] && [ -d "$BGHOME" ] && _fail "the concurrent run finished and left its staged home behind"
+
+echo "axis 6: a non-numeric CYRIUS_CHECK_REAP_MINS does not disable the age gate"
+# Two unowned homes — one two minutes old, one five hours. A knob the script cannot parse
+# must fall back to the default threshold, NOT to "no threshold": the young one survives,
+# the old one is still reaped (otherwise a fallback of "never reap" would pass this too).
+H_YOUNG=$(_mkhome young "" 2)
+H_OLD=$(_mkhome oldish "" 300)
+_run 4h alpha
+[ -d "$H_YOUNG" ] || _fail "CYRIUS_CHECK_REAP_MINS=4h reaped a 2-minute-old home — a bad value turned the age gate OFF instead of failing"
+[ -d "$H_OLD" ] && _fail "CYRIUS_CHECK_REAP_MINS=4h left a 5-hour-old unowned home — the fallback is 'never reap', not the default threshold"
+grep -q "CYRIUS_CHECK_REAP_MINS" "$W/out" || _fail "a non-numeric CYRIUS_CHECK_REAP_MINS was ignored SILENTLY — nothing in the output mentions it"
+grep -qE "integer expected|not a valid identifier" "$W/out" && _fail "the raw shell error from an unvalidated threshold is still reaching the output"
 
 echo ""
 if [ "$FAILS" = "0" ]; then
