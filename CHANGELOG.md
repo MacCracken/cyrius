@@ -133,11 +133,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the existing `_var_dead` byte, given the distinct value **2** so the diagnostic can tell "left
   its block" from "compiler temporary". A later read, write or `&addr` now errors, names the
   variable and says where to declare it instead (`_gv_note_blockscoped`,
-  `src/frontend/parse_types.cyr`, wired into all three resolver paths). A survey of **12,604**
+  `src/frontend/parse_types.cyr`, wired into **all five** `undefined variable` sites —
+  `parse.cyr`'s assignment layer, `parse_expr.cyr`'s read and `&addr` ladders, and
+  `parse_decl.cyr`'s `.field` read and `.field =` write. ⚠ The first cut wired three and this
+  entry said "all three resolver paths": `tbv.a` and `tbv.a = 1` after the block got the bare
+  error with no note, while `tbv`, `tbv = 1` and `&tbv` got it. `src/common/util.cyr` has named
+  the count — "the five `undefined variable` sites" — since v6.5.19). A survey of **12,604**
   `.cyr`/`.tcyr`/`.bcyr`/`.fcyr` sources across `~/Repos` (vendored `lib/` excluded) found **no**
   file that reads a top-level block `var` after its block, so no consumer needs to change.
-  Gates: `tests/gates/frontend/toplevel_block_var_scope.sh` (12 host rows + 3 cx + 3
-  aarch64-under-qemu, five mutants, each row checked against a no-block CONTROL program) and
+  Gates: `tests/gates/frontend/toplevel_block_var_scope.sh` (16 host rows + 3 cx + 3
+  aarch64-under-qemu, six mutants, each runtime row checked against a no-block CONTROL program,
+  each refusal row against a name that was never a block var — one such negative control per
+  resolver SHAPE, so wiring the note unconditionally at a site fails the gate) and
   `tests/tcyr/crossos/toplevel_block_var_scope.tcyr` (RED on the 6.6.5 compiler: 2 where 1 is
   correct). Guide: *Global Initializers -> A top-level block scopes its `var`s*. cycc
   **1,315,040 -> 1,315,280 B** (+240).

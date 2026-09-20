@@ -36,12 +36,14 @@
 #   2. _gvs_pop marks from index 0, not from the mark   -> RED rows A E F (every earlier global
 #                                                         goes out of scope with the block)
 #   3. _gvs_push records BEFORE the depth bump          -> RED rows A E F G H J
-#   4. _gv_note_blockscoped made a no-op                -> RED rows B C D I J K (the note is the
-#                                                         user-visible half of the decision)
-#   5. _gvs_pop marks dead with 1, not 2                -> RED rows B C D I J K (a 1 is
+#   4. _gv_note_blockscoped made a no-op                -> RED rows B C D I J K L M (the note is
+#                                                         the user-visible half of the decision)
+#   5. _gvs_pop marks dead with 1, not 2                -> RED rows B C D I J K L M (a 1 is
 #                                                         indistinguishable from a compiler
 #                                                         temporary, so no note is printed)
-#   6. real tree                                        -> GREEN (12 host rows, 3 cx, 3 aarch64)
+#   6. the note dropped from the two parse_decl.cyr
+#      `.field` sites (the state 19a shipped in)        -> RED rows L M only
+#   7. real tree                                        -> GREEN (16 host rows, 3 cx, 3 aarch64)
 # ⚠ HONEST GAP, recorded rather than papered over: the `GINFN(S) != 1` guard inside _gvs_push
 #   has NO killing row. Dropping it (so a fn body's blocks record a mark too) leaves every row
 #   green, because a fn body registers nothing in the GLOBAL var table — its hidden temporaries
@@ -140,18 +142,33 @@ _refuse I 'var g = 0;\ng = 1;\nfor (var i = 0; i < 2; i = i + 1) { var tbv = 5; 
 _refuse J 'var g = 0;\ng = 1;\nif (g == 0) { var q = 1; } else { var tbv = 5; }\nsyscall(60, tbv);\n'
 # K — a `while` body
 _refuse K 'var g = 0;\ng = 1;\nwhile (g == 1) { var tbv = 5; g = 0; }\nsyscall(60, tbv);\n'
+# L/M — the `.field` READ and the `.field =` WRITE. THESE ARE THE ROWS THE FIRST CUT DID NOT
+#     HAVE, and their absence is why 19a shipped with the note wired into three of the FIVE
+#     `undefined variable` sites while the CHANGELOG said "all three resolver paths". The two
+#     struct-field paths (parse_decl.cyr) print the same error and were left bare, so
+#     `tbv.a` after the block told the reader nothing about why the name had vanished. Rows
+#     B/C/D/I/J/K all take the plain-identifier ladders; a gate that samples one shape of a
+#     reference cannot speak for the others.
+_refuse L 'var g = 0;\ng = 1;\nif (g == 1) { var tbv = 5; }\nsyscall(60, tbv.a);\n'
+_refuse M 'var g = 0;\ng = 1;\nif (g == 1) { var tbv = 5; }\ntbv.a = 1;\nsyscall(60, g);\n'
 
 # ── negative control for the diagnostic: a name that was NEVER a top-level block var keeps
 #    the plain error, with no note. A note on every miss would be noise, and would also pass
 #    rows B-K for the wrong reason.
-NROWS=$((NROWS + 1))
-printf '%b' 'var g = 0;\ng = 1;\nsyscall(60, nosuchname);\n' > "$WORK/n.cyr"
-set +e; "$CC" < "$WORK/n.cyr" > "$WORK/n.bin" 2> "$WORK/n.err"; nrc=$?; set -e
-[ "$nrc" = "1" ] || bad "row N: a plainly undefined name exited $nrc, want 1"
-grep -q "undefined variable 'nosuchname'" "$WORK/n.err" || bad "row N: the error does not name it"
-if grep -q "declared inside a top-level block" "$WORK/n.err"; then
-    bad "row N: the block-scope note fired for a name that was never a block var"
-fi
+#    One control per resolver SHAPE, so wiring the note unconditionally at a site fails here.
+_nctl() {
+    NROWS=$((NROWS + 1))
+    printf '%b' "$2" > "$WORK/n.cyr"
+    set +e; "$CC" < "$WORK/n.cyr" > "$WORK/n.bin" 2> "$WORK/n.err"; nrc=$?; set -e
+    [ "$nrc" = "1" ] || bad "row $1: a plainly undefined name exited $nrc, want 1"
+    grep -q "undefined variable 'nosuchname'" "$WORK/n.err" || bad "row $1: the error does not name it"
+    if grep -q "declared inside a top-level block" "$WORK/n.err"; then
+        bad "row $1: the block-scope note fired for a name that was never a block var"
+    fi
+}
+_nctl N 'var g = 0;\ng = 1;\nsyscall(60, nosuchname);\n'
+_nctl O 'var g = 0;\ng = 1;\nsyscall(60, nosuchname.a);\n'
+_nctl P 'var g = 0;\ng = 1;\nnosuchname.a = 1;\nsyscall(60, g);\n'
 
 # ── cx leg: the one target where a global's value is STORED at startup rather than baked
 #    into the file image. ⚠ THESE ROWS ARE REGRESSION GUARDS, NOT DETECTORS: measured at
@@ -225,7 +242,7 @@ else
 fi
 
 # Anti-vacuity: the row counter must have moved past the host rows this file spells out.
-HOSTROWS=$(grep -cE "^(_row|_refuse) [A-Z]" "$0")
+HOSTROWS=$(grep -cE "^(_row|_refuse|_nctl) [A-Z]" "$0")
 [ "$NROWS" -ge "$HOSTROWS" ] || bad "only $NROWS rows ran; this file spells $HOSTROWS host rows"
 
 if [ "$NFAIL" -gt 0 ]; then

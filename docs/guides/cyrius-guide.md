@@ -2200,6 +2200,9 @@ note: 't' was declared inside a top-level block and goes out of scope at its '}'
       declare it at top level, before the block, to use it after the block
 ```
 
+The note accompanies **every** form of the reference — a plain read, an assignment,
+`&t`, an index `t[0]`, and a struct-field read or write (`t.a`, `t.a = 1`).
+
 ⚠ **This is a deliberate language change, made by the maintainer on 2026-09-19.** Before
 6.6.6 a top-level block's `var` registered a *global*: the name stayed visible after the
 block, and an inner declaration of an outer name **overwrote the outer global** (measured
