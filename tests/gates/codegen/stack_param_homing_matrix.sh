@@ -570,10 +570,75 @@ if [ -s "$T/ac.out" ]; then
     [ "$pr_got" = "$pr_want" ] || { echo "  FAIL: [pair-return-ok/x86] legal shapes exit $pr_got, want $pr_want"; fail=1; }
 fi
 
+# 6.6.6 bite 16d — OPERATOR DISPATCH NEVER CHECKED THE OPERATOR FN'S ARITY. An operator always
+# passes exactly two operands, so `fn V2_add(a, b, c)` bound `c` to whatever was in the third
+# argument register and `a + b` compiled clean and computed with garbage (measured on 6.6.5: 12
+# for a `7 + 5` that should not have built at all). Every OTHER call position has had a hard
+# arity error since v6.5.1; this one was never wired to it. Both dispatchers are probed — the
+# scalar one and the struct-returning `_EMIT_OP_DISPATCH_AGG`, whose hidden retptr/X8 is NOT a
+# declared parameter and must not shift the expected count — in both directions (too many, too
+# few). Mutation: drop EITHER `_CHECK_ARITY` call in parse_expr.cyr -> RED on all three
+# compilers, "2 times, want 4" each (the probe's two too-many and two too-few cases split evenly
+# across the two dispatchers). Ledger: mutated tree RED, real tree GREEN (2026-09-19).
+cat > "$T/ro.cyr" <<'EOF'
+struct V2 { x; y; }
+struct W2 { x; y; }
+struct V3 { x; y; z; }
+struct W3 { x; y; z; }
+fn V2_add(a, b, c): i64 { return load64(a + 8) + load64(b + 8) + c; }
+fn W2_add(a): i64 { return load64(a + 8); }
+fn V3_add(a, b, c): V3 { var p: V3; p.x = load64(a) + load64(b) + c; p.y = 0; p.z = 0; return p; }
+fn W3_add(a): W3 { var p: W3; p.x = load64(a); p.y = 0; p.z = 0; return p; }
+fn main(): i64 {
+    var a: V2; a.x = 1; a.y = 7;
+    var b: V2; b.x = 2; b.y = 5;
+    var c: W2; c.x = 1; c.y = 7;
+    var d: W2; d.x = 2; d.y = 5;
+    var u: V3; u.x = 10; u.y = 0; u.z = 0;
+    var v: V3; v.x = 20; v.y = 0; v.z = 0;
+    var s: V3 = u + v;
+    var m: W3; m.x = 1; m.y = 0; m.z = 0;
+    var n: W3; n.x = 2; n.y = 0; n.z = 0;
+    var t: W3 = m + n;
+    return (a + b) + (c + d) + s.x + t.x;
+}
+var e = main();
+syscall(60, e);
+EOF
+refuse_all op-arity "$T/ro.cyr" "_add. expects" 4
+# ... and a CORRECT 2-parameter operator, scalar and struct-returning, must still build and
+# compute. 7 + 5 from the scalar dispatch, 10 + 20 from the struct one = 42, built here by shell
+# arithmetic from the same literals.
+cat > "$T/rook.cyr" <<'EOF'
+struct V2 { x; y; }
+struct V3 { x; y; z; }
+fn V2_add(a, b): i64 { return load64(a + 8) + load64(b + 8); }
+fn V3_add(a, b): V3 { var p: V3; p.x = load64(a) + load64(b); p.y = 0; p.z = 0; return p; }
+fn main(): i64 {
+    var a: V2; a.x = 1; a.y = 7;
+    var b: V2; b.x = 2; b.y = 5;
+    var u: V3; u.x = 10; u.y = 0; u.z = 0;
+    var v: V3; v.x = 20; v.y = 0; v.z = 0;
+    var s: V3 = u + v;
+    return (a + b) + s.x;
+}
+var e = main();
+syscall(60, e);
+EOF
+accept_on op-arity-ok/x86 "$CC" "$T/rook.cyr"
+accept_on op-arity-ok/aarch64 "$T/cc_a64" "$T/rook.cyr"
+accept_on op-arity-ok/win64 "$T/cc_win" "$T/rook.cyr"
+if "$CC" < "$T/rook.cyr" > "$T/rook.bin" 2>/dev/null; then
+    chmod +x "$T/rook.bin"
+    op_want=$(( (7 + 5) + (10 + 20) ))
+    op_got=0; "$T/rook.bin" > /dev/null 2>&1 || op_got=$?
+    [ "$op_got" = "$op_want" ] || { echo "  FAIL: [op-arity-ok/x86] a correct 2-parameter operator exits $op_got, want $op_want"; fail=1; }
+else echo "  FAIL: [op-arity-ok/x86] a correct 2-parameter operator was refused"; fail=1; fi
+
 # Floor: the x86 compiler always runs, so every probe above must have counted at least once.
 REFUSE_FLOOR=3
 if [ "$nrefuse" -lt "$REFUSE_FLOOR" ]; then echo "  FAIL: only $nrefuse refusal cases ran (floor $REFUSE_FLOOR)"; fail=1; fi
 echo "  ok:   refusals — $nrefuse compiler x probe cases named their diagnostic"
 
 if [ "$fail" != 0 ]; then echo "FAIL stack_param_homing_matrix"; exit 1; fi
-echo "PASS stack_param_homing_matrix: $(cat "$T/rows") generated rows ($ROWS_CX on cx) — 4 vector classes x 3 positions x 5..9 int args, 2 vectors + 7 ints, struct return x 5..9, vector args into struct-valued var receives, enum variants of 6..10 fields, struct-valued calls outside a var initializer, method calls and overloaded operators returning a struct — bind every argument on every leg that ran; $nrefuse refusal cases named, $naccept compilers accepted the legal 9-16 B return shapes"
+echo "PASS stack_param_homing_matrix: $(cat "$T/rows") generated rows ($ROWS_CX on cx) — 4 vector classes x 3 positions x 5..9 int args, 2 vectors + 7 ints, struct return x 5..9, vector args into struct-valued var receives, enum variants of 6..10 fields, struct-valued calls outside a var initializer, method calls and overloaded operators returning a struct — bind every argument on every leg that ran; $nrefuse refusal cases named, $naccept compilers accepted the legal 9-16 B return shapes and the correct-arity operators"

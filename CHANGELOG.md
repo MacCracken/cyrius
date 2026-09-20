@@ -2441,6 +2441,26 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   cycc 1,315,080 -> 1,315,248 B. All 330 pre-existing `.tcyr` and all 85 `programs/*.cyr`
   compile to BYTE-IDENTICAL binaries against the 6.6.5 compiler.
 
+- **Operator dispatch never checked the operator fn's arity, so an operator fn with the wrong
+  number of parameters computed with garbage.** (bite 16d; found by bite 14's review.) An
+  overloaded operator always passes exactly two operands, so
+  `struct V2{x;y;} fn V2_add(a, b, c): i64 {…}` bound `c` to whatever happened to be in the
+  third argument register: measured on 6.6.5, `var a: V2; a.y=7; var b: V2; b.y=5; return a + b;`
+  compiled clean and returned **12**. Every other call position — the normal call, the tail
+  call, the inline replay, the method call, the type-check path — has raised a hard arity error
+  since v6.5.1 (`_CHECK_ARITY`); operator dispatch was simply never wired to it, in either
+  direction (too many parameters or too few). **Fix:** both dispatchers
+  (`EMIT_OP_DISPATCH` and the struct-returning `_EMIT_OP_DISPATCH_AGG`,
+  `src/frontend/parse_expr.cyr`) now call `_CHECK_ARITY` with an expected count of exactly 2 —
+  the hidden retptr/X8 the struct-returning form adds is not a declared parameter and does not
+  shift it. The diagnostic points at the LHS's first token, not the cursor, which by that point
+  has walked past the whole expression. Gated by a new `op-arity` probe (4 refusals per
+  compiler, both dispatchers, both directions) plus a correct-arity acceptance probe in
+  `tests/gates/codegen/stack_param_homing_matrix.sh`; mutation-proven by removing either check
+  independently. cycc unchanged at 1,315,248 B. All 330 pre-existing `.tcyr`, all 85
+  `programs/*.cyr` and all 103 `lib/*.cyr` compile to BYTE-IDENTICAL binaries against the
+  6.6.5 compiler.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**

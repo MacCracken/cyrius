@@ -3700,6 +3700,13 @@ fn EMIT_OP_DISPATCH(S, stype, op_str, op_len, beg): i64 {
     var ofi = FINDFN(S, opnoff);
     if (ofi < 0) { ofi = REGFN(S, opnoff); }
     _vis_check(S, ofi, opnoff);   # v6.5.0: operator overloading is its own call path
+    # ⛔ 6.6.6 (bite 14 review) — OPERATOR DISPATCH NEVER CHECKED THE OPERATOR FN'S ARITY. An
+    # operator always passes exactly two operands, so `fn V2_add(a, b, c)` bound `c` to whatever
+    # happened to be in the third argument register: `a + b` compiled clean and computed with
+    # garbage. Every OTHER call position has had a hard arity error since v6.5.1 (`_CHECK_ARITY`)
+    # — this one was simply never wired to it. The line is the LHS's first token, not the cursor,
+    # which by here has walked past the whole expression. CHANGELOG [6.6.6]
+    _CHECK_ARITY(S, GTLINE(S, beg), opnoff, ofi, 2, 1);
     var ofoff = L64(_fnt_offsets + ofi * 8);
     if (ofoff >= 0) { ECALLTO(S, ofoff); }
     else { ECALLFIX(S, ofi); }
@@ -3743,6 +3750,9 @@ fn _EMIT_OP_DISPATCH_AGG(S, stype, op_str, op_len, beg): i64 {
     ECALLPOPS(S, n);
     _sc_x8(S, ofi, t);
     _vis_check(S, ofi, opnoff);
+    # 6.6.6 — same arity check as the scalar dispatch above. The retptr/X8 the struct-returning
+    # form adds is NOT a declared parameter, so the expected count is still exactly 2.
+    _CHECK_ARITY(S, GTLINE(S, beg), opnoff, ofi, 2, 1);
     var ofoff = L64(_fnt_offsets + ofi * 8);
     if (ofoff >= 0) { ECALLTO(S, ofoff); }
     else { ECALLFIX(S, ofi); }

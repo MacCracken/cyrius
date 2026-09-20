@@ -337,6 +337,12 @@ var c = |x| a + x;` dispatches `N_add` from v6.6.5, where before it silently add
 first word. Related: `var p: T = U { ... }` with `T != U` was silently accepted (`p` took U's
 layout under T's name) and is a hard error from v6.6.5.
 
+⚠ **An operator fn takes exactly two parameters**, and since v6.6.6 the compiler says so
+(`'V2_add' expects 3 arguments, got 2`). Before v6.6.6 operator dispatch was the one call
+position with no arity check, so `fn V2_add(a, b, c)` built clean and bound `c` to whatever was
+in the third argument register — `a + b` returned a number computed partly from garbage. A
+struct-returning operator is still two parameters: the hidden return pointer is not one of them.
+
 ## Strings
 
 ```
