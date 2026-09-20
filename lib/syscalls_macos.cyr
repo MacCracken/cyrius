@@ -146,6 +146,13 @@ enum SysNr {
     SYS_MEMFD_CREATE = 319;
     SYS_NANOSLEEP = 35;
     SYS_SCHED_YIELD = 24;
+    # v6.6.6 — the statfs pair. REAL on macOS, unlike the three above it: EMACHO_SYSXLAT
+    # routes 137→345 and 138→346 (Darwin statfs64/fstatfs64), live-probed on ach and ecb
+    # rather than transcribed. ⚠ The Darwin `struct statfs` is NOT the Linux one — different
+    # field order AND a 32-bit f_bsize — so read it through the STATFS_* offsets in
+    # lib/syscalls_linux_common.cyr, never a hardcoded Linux offset. CHANGELOG [6.6.6]
+    SYS_STATFS = 137;
+    SYS_FSTATFS = 138;
     # v6.1.3 — bare-name fs syscalls + POSIX *at() family (Linux numbers;
     # EMACHO_SYSXLAT maps the emitted ones to Darwin/BSD at emit time).
     SYS_LSTAT = 6;

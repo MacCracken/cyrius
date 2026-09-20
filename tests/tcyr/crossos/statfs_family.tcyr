@@ -1,0 +1,102 @@
+# statfs_family.tcyr — v6.6.6: `sys_statfs` / `sys_fstatfs` RUN on every target, and the
+# call that reaches the kernel is statfs, not something that merely fails plausibly.
+#
+# ⛔ WHY THIS FILE LIVES IN `crossos/`. It is the literal case CLAUDE.md's rule was written
+# for — "a wrapper that COMPILES on five targets is not a wrapper that RUNS" — and the
+# defect it pins had been live on ARM for four minors with every gate green:
+#
+#   ESYSXLAT's ELF-aarch64 arm has carried an x86-compat row `accept 43→202` since the
+#   v6.2.10 socket block, and aarch64-Linux's NATIVE statfs IS 43. A compat row matches a
+#   NUMBER and cannot tell a native one from the x86 one it is chasing, so a native-numbered
+#   `syscall(43, path, buf)` was reissued as **accept(2)**. Measured under `qemu-aarch64
+#   -strace` on the tree that shipped 6.6.5:
+#
+#       accept(6293449, 0x00007fb58354d220, [0]) = -1 errno=14 (Bad address)
+#
+#   yukti 2.3.11 declares exactly that number, so `filesystem_usage` answered "statfs
+#   failed: errno 14" on every ARM host from v6.2.10 until this release. statfs also had NO
+#   NAME in either Linux peer — which is why a consumer had to hardcode a number at all, and
+#   why the raw-literal diagnostic (whose table is derived from names declared in BOTH
+#   peers) could not see it.
+#
+# ⚠ EVERY ASSERTION BELOW IS ABOUT WHICH SYSCALL WAS ISSUED, never about whether a call
+# "succeeded". accept(2) on a bogus fd FAILS, and a test that accepts any error cannot tell
+# the two apart — that is exactly how this stayed invisible. So each case pins a value only
+# a real statfs produces: a power-of-two block size in a sane range, a non-empty block count,
+# free <= total, and — the strongest of them — the PATH call and the FD call agreeing, since
+# they are two different syscall numbers that must describe the same filesystem.
+#
+# ⚠ AND IT IS TARGET-GUARDED BY CAPABILITY, not by convenience. Windows has no statfs at all
+# (GetDiskFreeSpaceExW is a kernel32 import with three out-params and a wide path, a
+# different contract), so `sys_statfs` declines with -38 there and this file asserts THAT
+# rather than asserting a Linux fact on a PC. macOS genuinely has the call — Darwin
+# statfs64(345) / fstatfs64(346), live-probed on ecb and ach — so it runs for real there,
+# through the STATFS_* offsets, because the Darwin struct is a different shape entirely with
+# a 32-bit f_bsize. CHANGELOG [6.6.6]
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+fn main(): i64 {
+    alloc_init();
+
+    #ifdef CYRIUS_TARGET_WIN
+    test_group("v6.6.6 — statfs declines honestly on PE (Windows has no statfs)");
+    var wbuf[STATFS_BUFSZ];
+    assert_eq(sys_statfs("C:\\", &wbuf), 0 - 38, "sys_statfs returns -ENOSYS on Windows");
+    assert_eq(sys_fstatfs(1, &wbuf), 0 - 38, "sys_fstatfs returns -ENOSYS on Windows");
+    # The offsets exist so cross-platform source COMPILES for PE; nothing populates them.
+    assert_eq(statfs_bsize(&wbuf), 0, "statfs_bsize is 0 on PE (no buffer is ever filled)");
+    #endif
+
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_AGNOS
+    test_group("v6.6.6 — sys_statfs reaches statfs, not accept");
+
+    var buf[STATFS_BUFSZ];
+    var r = sys_statfs("/", &buf);
+    assert_eq(r, 0, "sys_statfs(\"/\") succeeds (accept(2) here returned -EFAULT)");
+
+    # f_bsize is a filesystem block size: a power of two, at least a sector, at most 1 MiB.
+    # No other syscall's output lands in that set by accident, and a zeroed buffer fails it.
+    var bs = statfs_bsize(&buf);
+    assert_gte(bs, 512, "f_bsize is at least 512");
+    assert_lte(bs, 1048576, "f_bsize is at most 1 MiB");
+    assert_eq(bs & (bs - 1), 0, "f_bsize is a power of two");
+
+    # A mounted filesystem has blocks, and free can never exceed total.
+    var blocks = load64(&buf + STATFS_BLOCKS);
+    var bfree = load64(&buf + STATFS_BFREE);
+    var bavail = load64(&buf + STATFS_BAVAIL);
+    assert_gt(blocks, 0, "f_blocks > 0 (the root filesystem is not empty)");
+    assert_lte(bfree, blocks, "f_bfree <= f_blocks");
+    assert_lte(bavail, bfree, "f_bavail <= f_bfree (reserved blocks are not available)");
+
+    # ⭐ THE DISCRIMINATING CASE. statfs and fstatfs are DIFFERENT syscall numbers — 43/44 on
+    # aarch64, 137/138 on x86_64, 345/346 on Darwin — routed by separate ESYSXLAT rows. Both
+    # describing the same filesystem is a fact no single wrong row can fake: the aarch64 bug
+    # this file exists for routed one of them to accept and the other to sendto.
+    var fd = sys_open("/", 0, 0);
+    assert_gte(fd, 0, "the root directory opens (so the fd case is really exercised)");
+    var fbuf[STATFS_BUFSZ];
+    assert_eq(sys_fstatfs(fd, &fbuf), 0, "sys_fstatfs on that descriptor succeeds");
+    sys_close(fd);
+    assert_eq(statfs_bsize(&fbuf), bs, "fstatfs and statfs agree on f_bsize");
+    assert_eq(load64(&fbuf + STATFS_BLOCKS), blocks, "fstatfs and statfs agree on f_blocks");
+
+    # A path that does not exist must FAIL. ⚠ Not asserting a specific errno: Linux returns
+    # -ENOENT while Darwin returns the errno POSITIVE with the carry flag set, so a signed
+    # comparison would be a Linux fact asserted on a Mac. What both share is "not 0" — and a
+    # wrong syscall that ignored its path argument would happily return 0 here.
+    assert_neq(sys_statfs("/cyr_no_such_mount_point_6_6_6", &buf), 0,
+               "statfs on a nonexistent path fails (the path argument is really read)");
+
+    # And fstatfs on a closed descriptor must fail for the same reason.
+    assert_neq(sys_fstatfs(0 - 1, &fbuf), 0, "fstatfs on a bad descriptor fails");
+    #endif
+    #endif
+
+    return assert_summary();
+}
+var ec = main();
+syscall(60, ec);

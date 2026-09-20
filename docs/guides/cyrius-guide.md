@@ -2983,7 +2983,8 @@ timerfd_gettime and raw 83 (`mkdir`) ran fdatasync. The build succeeded and prin
 The rules, in order:
 
 1. **Spell the `SYS_*` name from `lib/syscalls.cyr`.** Each peer defines it as the right
-   number for that target, and the wrapper (`sys_ftruncate`, `sys_sendmsg`, `sys_nanosleep`, …)
+   number for that target, and the wrapper (`sys_ftruncate`, `sys_sendmsg`, `sys_nanosleep`,
+   `sys_statfs`, …)
    also carries the macOS/Windows/agnos arm where the call does not exist. This is the answer
    for the six x86 numbers cyrius deliberately does NOT route, because aarch64's native
    meaning for each is a call somebody uses: **24** (`sched_yield` on x86, **dup3** on
@@ -3002,7 +3003,13 @@ The rules, in order:
    runs on the value in `x8` at run time, so `var n = 83; syscall(n, fd);` is rewritten
    exactly as a literal would be. ⚠ It also applies to a `SYS_*` you declare in your OWN
    `enum` — measured at v6.6.5, `lib/yukti.cyr` declares `SYS_STATFS = 43` under exactly this
-   guard and the `43 → 202` socket row makes every call `accept()`.
+   guard and the `43 → 202` socket row makes every call `accept()`. ⭐ v6.6.6 gave that call
+   the name it was missing: both Linux peers now declare `SYS_STATFS = 137` / `SYS_FSTATFS =
+   138` (the x86 numbers, per rule 2) with `ESYSXLAT` rows `137→43` and `138→44`, plus
+   `sys_statfs` / `sys_fstatfs` wrappers and Darwin routes `137→345` / `138→346`. A consumer
+   that deletes its own declaration and calls the wrapper is correct on every target; one
+   that keeps `SYS_STATFS = 43` under the aarch64 guard still runs `accept()`, and now gets
+   a `duplicate symbol 'SYS_STATFS' redefined with conflicting value` warning saying so.
    In-tree all three shapes — a `SYS_*` declaration, any identifier assigned a literal that is
    then a syscall's first argument, and a bare `syscall(<literal>)` — are enforced by
    `tests/gates/platform/aarch64_syscall_shadow.sh` (axes 2 and 3), across `src/`, `lib/`,
@@ -3015,6 +3022,16 @@ The rules, in order:
    `-EINVAL`. If your fd-shuffling loop leans on the self-dup, branch on `old == new`. It is
    still far better than the alternative — untranslated, aarch64 33 is `mknodat`, which would
    read your fds as `(path, mode)`.
+5. **Routing the number is only half of portability — the STRUCT the call fills is the other
+   half, and it differs in WIDTH as well as offset.** Read every field through the peer's own
+   offset enum (`STAT_*`, `STATFS_*`), never a number you counted on x86. Two live examples:
+   `st_mode` is at +24 on x86_64-Linux, +16 on aarch64-Linux and +4 on Darwin arm64; and
+   Darwin's `struct statfs` starts with a **32-bit** `f_bsize` immediately followed by
+   `f_iosize`, where Linux's is a full 8 bytes — so `load64(&buf + STATFS_BSIZE)` on macOS
+   returns `f_bsize | (f_iosize << 32)`, i.e. 4503599627374592 for a 4096-byte block on a
+   1 MiB-iosize volume, which then multiplies straight into a capacity figure. That is why
+   `statfs_bsize(buf)` exists: an accessor, not a convenience. When a peer publishes one, use
+   it instead of a raw `load64`.
 
 Same trap on the other side: `var SYS_FOO = <x86 number>` in your own source SHADOWS the
 stdlib's arch-aware definition (last definition wins), so it is right on x86 and wrong

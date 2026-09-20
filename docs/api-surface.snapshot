@@ -4465,6 +4465,7 @@ syscalls_linux_common::WEXITSTATUS/1
 syscalls_linux_common::WIFEXITED/1
 syscalls_linux_common::WIFSIGNALED/1
 syscalls_linux_common::WTERMSIG/1
+syscalls_linux_common::statfs_bsize/1
 syscalls_linux_common::sys_accept4/4
 syscalls_linux_common::sys_bind/3
 syscalls_linux_common::sys_chdir/1
@@ -4480,6 +4481,7 @@ syscalls_linux_common::sys_fchmod/2
 syscalls_linux_common::sys_fchmodat/4
 syscalls_linux_common::sys_fstat/2
 syscalls_linux_common::sys_fstatat/4
+syscalls_linux_common::sys_fstatfs/2
 syscalls_linux_common::sys_ftruncate/2
 syscalls_linux_common::sys_getdents64/3
 syscalls_linux_common::sys_getegid/0
@@ -4526,6 +4528,7 @@ syscalls_linux_common::sys_signalfd/3
 syscalls_linux_common::sys_sigprocmask/3
 syscalls_linux_common::sys_socket/3
 syscalls_linux_common::sys_socketpair/4
+syscalls_linux_common::sys_statfs/2
 syscalls_linux_common::sys_sync/0
 syscalls_linux_common::sys_timerfd_create/2
 syscalls_linux_common::sys_timerfd_settime/4
@@ -4567,6 +4570,7 @@ syscalls_windows::WEXITSTATUS/1
 syscalls_windows::WIFEXITED/1
 syscalls_windows::WIFSIGNALED/1
 syscalls_windows::WTERMSIG/1
+syscalls_windows::statfs_bsize/1
 syscalls_windows::sys_access/2
 syscalls_windows::sys_brk/1
 syscalls_windows::sys_chdir/1
@@ -4578,6 +4582,7 @@ syscalls_windows::sys_exit/1
 syscalls_windows::sys_exit_group/1
 syscalls_windows::sys_fchownat/5
 syscalls_windows::sys_fork/0
+syscalls_windows::sys_fstatfs/2
 syscalls_windows::sys_ftruncate/2
 syscalls_windows::sys_getpeername/3
 syscalls_windows::sys_getpid/0
@@ -4602,6 +4607,7 @@ syscalls_windows::sys_self_exe_w/2
 syscalls_windows::sys_sendmsg/3
 syscalls_windows::sys_sendto/6
 syscalls_windows::sys_socketpair/4
+syscalls_windows::sys_statfs/2
 syscalls_windows::sys_truncate/2
 syscalls_windows::sys_unlink/1
 syscalls_windows::sys_waitpid/3
@@ -4616,6 +4622,7 @@ syscalls_x86_64_agnos::proclist_rss_pages/1
 syscalls_x86_64_agnos::sigset_add/2
 syscalls_x86_64_agnos::sigset_has/2
 syscalls_x86_64_agnos::sigset_new/0
+syscalls_x86_64_agnos::statfs_bsize/1
 syscalls_x86_64_agnos::sys_access/2
 syscalls_x86_64_agnos::sys_blit/4
 syscalls_x86_64_agnos::sys_blk_close/1

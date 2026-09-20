@@ -1160,6 +1160,16 @@ fn EMACHO_SYSXLAT(S): i64 {
     _msx(S, 46,  0x200001C);  # sendmsg   46  → 28
     _msx(S, 44,  0x2000085);  # sendto    44  → 133
     _msx(S, 76,  0x20000C8);  # truncate  76  → 200
+    # v6.6.6: the statfs pair. lib/syscalls_macos.cyr declares SYS_STATFS/SYS_FSTATFS as the
+    # x86-Linux numbers (this peer's convention) and lib/syscalls_linux_common.cyr's new
+    # wrappers issue them; untranslated they reach Darwin unprefixed and SIGSYS the process,
+    # the v6.5.15 fchmod shape. Unlike the six above these targets are NOT bracketed by
+    # existing rows, so they were live-probed instead: on ach AND ecb, syscall(345,"/",buf) /
+    # syscall(346,fd,buf) return 0 and fill a buffer byte-identical to libc statfs()/fstatfs(),
+    # and <sys/syscall.h> says SYS_statfs64=345, SYS_fstatfs64=346. (Darwin's legacy 157 is a
+    # different, shifted struct — also probed, and deliberately not used.) CHANGELOG [6.6.6]
+    _msx(S, 137, 0x2000159);  # statfs    137 → 345 (statfs64)
+    _msx(S, 138, 0x200015A);  # fstatfs   138 → 346 (fstatfs64)
     _msx(S, 105, 0x2000017);  # setuid    105 → 23
     _msx(S, 106, 0x20000B5);  # setgid    106 → 181
     _msx(S, 112, 0x2000093);  # setsid    112 → 147

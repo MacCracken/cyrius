@@ -688,6 +688,65 @@ fn sys_truncate(path, length): i64 {
     return syscall(SYS_TRUNCATE, path, length);
 }
 
+# ── v6.6.6: statfs / fstatfs — filesystem capacity for a PATH or an open fd.
+#
+# ⛔ WHY THESE ARRIVE ONLY NOW, AND WHAT IT COST. statfs had no NAME in either Linux peer,
+# so the one consumer in the ecosystem (yukti's `filesystem_usage`) had to hardcode a raw
+# number per arch — and its aarch64 arm picked the NATIVE 43, which ESYSXLAT's x86-compat
+# `accept 43→202` row silently reissued as **accept(2)**. Traced under `qemu-aarch64
+# -strace`: `accept(6293449, 0x7f…, [0]) = -1 errno=14`, so every ARM host answered
+# "statfs failed: errno 14" from v6.2.10 to here. A nameless syscall is also structurally
+# invisible to the raw-literal diagnostic (its table is derived from names declared in BOTH
+# peers), so nothing warned. CHANGELOG [6.6.6]
+#
+# ⚠ THE BUFFER AND THE FIELD OFFSETS ARE PER-OS — read them through STATFS_*, never a
+# hardcoded Linux offset. Linux's struct statfs is 120 bytes with an 8-byte f_type first;
+# Darwin's struct statfs64 is 2168 bytes and starts with a **32-bit** f_bsize. Both layouts
+# were read off real hardware (pi + the x86 host; ecb + ach), not from a header quote.
+# STATFS_BUFSZ is the max of both, the same "one buffer contract" STAT_BUFSZ = 144 uses.
+#ifdef CYRIUS_TARGET_MACOS
+enum Statfs {
+    STATFS_BSIZE = 0;       # uint32 — use statfs_bsize(), NOT load64
+    STATFS_BLOCKS = 8;
+    STATFS_BFREE = 16;
+    STATFS_BAVAIL = 24;
+    STATFS_BUFSZ = 2176;    # sizeof(struct statfs64) = 2168, rounded to 8
+}
+#endif
+#ifndef CYRIUS_TARGET_MACOS
+enum Statfs {
+    STATFS_BSIZE = 8;       # f_type occupies 0..7 on Linux
+    STATFS_BLOCKS = 16;
+    STATFS_BFREE = 24;
+    STATFS_BAVAIL = 32;
+    STATFS_BUFSZ = 2176;    # Linux needs 120; the contract is the max of both peers
+}
+#endif
+
+# Filesystem statistics for a path. `buf` must be STATFS_BUFSZ bytes.
+fn sys_statfs(path, buf): i64 {
+    return syscall(SYS_STATFS, path, buf);
+}
+
+# Filesystem statistics for an already-open descriptor.
+fn sys_fstatfs(fd, buf): i64 {
+    return syscall(SYS_FSTATFS, fd, buf);
+}
+
+# f_bsize out of a filled statfs buffer, at the right WIDTH for this target.
+# ⚠ This is not a convenience — it is the trap. Darwin's f_bsize is uint32 with f_iosize
+# packed directly above it, so `load64(buf + STATFS_BSIZE)` on macOS returns
+# `f_bsize | (f_iosize << 32)` — 4503599627374592 for a 4096-byte block on a 1 MiB-iosize
+# volume, which then multiplies straight into a capacity figure. Linux's is a full 8 bytes.
+fn statfs_bsize(buf): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    return load32(buf + STATFS_BSIZE);
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
+    return load64(buf + STATFS_BSIZE);
+    #endif
+}
+
 # Create an anonymous in-memory file. `flags` accepts MFD_CLOEXEC (1) | MFD_ALLOW_SEALING (2).
 # ⚠ Darwin has NO memfd_create — the nearest thing is shm_open, a different API with a
 # name in a global namespace, not a bare fd. Declining with -78 (Darwin ENOSYS) keeps the

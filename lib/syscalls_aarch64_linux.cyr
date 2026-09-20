@@ -266,6 +266,18 @@ enum SysNr {
     # one it is chasing. Routed 76→45 / 77→46. CHANGELOG [6.6.5]
     SYS_TRUNCATE = 76;      # x86 truncate  → ESYSXLAT 76→45
     SYS_FTRUNCATE = 77;     # x86 ftruncate → ESYSXLAT 77→46
+    # ⚠ v6.6.6 — statfs/fstatfs take the X86 numbers too, NOT the native 43/44, and for
+    # exactly the reason above one level down: native 43 is consumed by the x86-compat
+    # accept row (43→202) and native 44 by sendto (44→206). A native-numbered
+    # `syscall(43, path, buf)` therefore ran **accept** — traced under qemu-aarch64 as
+    # `accept(…) = -1 errno=14`, which is what yukti's `filesystem_usage` has been
+    # reporting on every ARM host since v6.2.10 (lib/yukti.cyr:58 still declares 43; the
+    # fix has to land upstream in yukti, a vendored-fold edit would evaporate).
+    # Routed 137→43 / 138→44, appended below the accept/sendto rows they produce into.
+    # x86_64 and aarch64 share the 120-byte struct statfs and the (path|fd, buf) layout,
+    # so both rows are pure renumbers. CHANGELOG [6.6.6]
+    SYS_STATFS = 137;       # x86 statfs  → ESYSXLAT 137→43
+    SYS_FSTATFS = 138;      # x86 fstatfs → ESYSXLAT 138→44
 }
 
 # AT_FDCWD / AT_EMPTY_PATH / AT_REMOVEDIR (+ AT_SYMLINK_* / UTIME_*) are

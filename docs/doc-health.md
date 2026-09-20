@@ -246,6 +246,23 @@ type: state
 > `toolchain/pulsar_is_x86_linux_host_verb.sh`) so the doc and the behaviour move together.
 > One vidya entry was added (`field_notes/compiler/gotchas.cyml`, on a shape-detecting gate
 > judging the fn you inline into); no other tier was re-verified at 6.6.6 by this bite.
+> **Touched at 6.6.6 (bite 11, not a sweep):** `docs/guides/cyrius-guide.md`'s ESYSXLAT rule
+> list gained a **rule 5** and a correction to rule 3. Rule 3 had ended at the yukti
+> `SYS_STATFS = 43` finding; it now records that 6.6.6 gave the call the NAME it was missing
+> (both Linux peers declare 137/138 with rows 137→43 / 138→44, Darwin 345/346, `sys_statfs` /
+> `sys_fstatfs` wrappers) and that a consumer keeping its own aarch64 declaration still runs
+> `accept()` — and now gets a `duplicate symbol … redefined with conflicting value` warning.
+> Rule 5 is new ground for this section, which had only ever been about the syscall NUMBER:
+> the STRUCT the call fills differs in **width** as well as offset — Darwin's `f_bsize` is
+> uint32 with `f_iosize` packed above it, so `load64(buf + STATFS_BSIZE)` there returns
+> `f_bsize | (f_iosize << 32)`, measured on ecb. `lib/syscalls_x86_64_agnos.cyr`'s
+> "AGNOS-ONLY … `sys_statfs` exists NOWHERE else in this repo" note was rewritten as HISTORY
+> rather than deleted: its reasoning was right and its own stated upgrade path was taken, so
+> the note is now a record of a trigger that fired. `docs/api-surface.snapshot` regenerated
+> (+7, now 5,233). In the sibling `vidya/` repo, one language field note was added
+> (`routing_a_syscall_number_is_only_half_of_portability_the_struct_width_is_the_other_half`).
+> ⚖️ Same caveat as 6.6.5: that is the ONLY `vidya/` edit — the per-minor structural refresh
+> is a closeout item and was not run here.
 
 ## At a glance — inventory (bucket counts last fully re-tallied 2026-06-04 at the v6.0.62 sweep; per-tier sections re-anchored to the 2026-06-12 v6.1.41 closeout doc-sync — the rollup counts here lag and are approximate)
 

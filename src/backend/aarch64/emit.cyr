@@ -1110,6 +1110,19 @@ fn ESYSXLAT(S): i64 {
         _esx_arm(S, 206, 133);  # sendto    206→133
         _esx_arm(S, 77, 201);   # ftruncate 77→201
         _esx_arm(S, 76, 200);   # truncate  76→200
+        # v6.6.6: the statfs pair. arm64-macOS resolves the aarch64-LINUX peer, which now
+        # spells statfs/fstatfs with the x86 numbers 137/138 (native 43/44 are eaten by the
+        # accept/sendto compat rows on the ELF arm), so THESE are the numbers this backend
+        # sees. Unrouted they reach Darwin with a stale x16 and do something arbitrary.
+        # ⭐ The Darwin targets are the ONE pair here that is neither bracketed nor inherited,
+        # so they were LIVE-PROBED rather than transcribed: on ecb (arm64) and ach (Intel),
+        # `syscall(345, "/", buf)` and `syscall(346, fd, buf)` return 0 and fill a buffer
+        # byte-identical to libc statfs()/fstatfs() — and <sys/syscall.h> on both machines
+        # says SYS_statfs64 = 345, SYS_fstatfs64 = 346. Darwin's legacy statfs (157) is a
+        # DIFFERENT, shifted struct (also probed); 345/346 are the 64-bit-inode pair that
+        # modern `struct statfs` means. CHANGELOG [6.6.6]
+        _esx_arm(S, 137, 345);  # statfs    137→345 (statfs64)
+        _esx_arm(S, 138, 346);  # fstatfs   138→346 (fstatfs64)
         # Raw-x86 parity rows. The x86-macOS backend routes 46/44/45/47 (EMACHO_SYSXLAT)
         # and ELF-aarch64 now routes them too, so a consumer writing the x86 numbers works
         # on three of the four targets; these close the fourth. Pure renumbers — x86_64 and
@@ -1469,6 +1482,26 @@ fn ESYSXLAT(S): i64 {
     # 263 in this release precisely because native 35 now means x86 nanosleep above.
     # ⚠ MUST stay after the 35→101 row: it produces x8=35, which that row compares against.
     EW(S, 0xF1041D1F); EW(S, 0x54000041); EW(S, 0xD2800468);  # unlinkat  263→35
+
+    # ── v6.6.6: the statfs PAIR. aarch64-Linux's native statfs is 43 and fstatfs is 44, and
+    # BOTH are already x86-compat row SOURCES in this chain (accept 43→202, sendto 44→206) —
+    # the shadow class aarch64_syscall_shadow.sh exists for, one level down from the truncate
+    # pair above. So a native-numbered `syscall(43, path, buf)` was reissued as **accept**:
+    # measured on this tree under `qemu-aarch64 -strace`,
+    #     accept(6293449, 0x7f…, [0]) = -1 errno=14 (Bad address)
+    # yukti 2.3.11 declares exactly that number (lib/yukti.cyr:58 under #ifdef
+    # CYRIUS_ARCH_AARCH64), so `filesystem_usage` has answered "statfs failed: errno 14" on
+    # every ARM host since the socket block landed at v6.2.10 — and statfs had no NAME in
+    # either Linux peer, which is why a consumer had to hardcode a number at all.
+    # Both peers now spell the X86 numbers (137/138) and these rows renumber them: pure
+    # renumbers, since x86_64 and aarch64 agree on the (path|fd, buf) argument layout and on
+    # the 120-byte struct statfs (verified on pi and on the x86 host, byte-identical to libc).
+    # ⚠ ORDER IS LOAD-BEARING IN BOTH DIRECTIONS: these rows PRODUCE 43 and 44, which the
+    # accept and sendto rows compare against, so they must stay BELOW those two — the same
+    # trap the unlinkat 263→35 row above records. esysxlat_row_order.sh pins it, and they
+    # stay ABOVE the private-alias band, which must remain last. CHANGELOG [6.6.6]
+    EW(S, 0xF102251F); EW(S, 0x54000041); EW(S, 0xD2800568);  # statfs    137→43
+    EW(S, 0xF102291F); EW(S, 0x54000041); EW(S, 0xD2800588);  # fstatfs   138→44
 
     # v6.5.7: fchownat via the PRIVATE ALIAS 1054 → native 54. aarch64's real
     # fchownat number (54) is unreachable from source because the x86-compat shim

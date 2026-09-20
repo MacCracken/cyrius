@@ -860,20 +860,44 @@ fn sys_lstat(path, pathlen, statbuf): i64 { return syscall(SYS_LSTAT, path, path
 # ⚠ -1 is legitimate and must be passed through, not normalised: an unresolvable path is
 # refused deliberately (that refusal is the assertion catching an implementation that ignores
 # its path argument), and FAT/exFAT refuse rather than guess when a FAT or bitmap read fails.
-# ⚠ AGNOS-ONLY, AND THAT ASYMMETRY IS DELIBERATE RATHER THAN OVERLOOKED. `sys_fork` and
-# `sys_lstat` exist on the other peers already; `sys_statfs` exists NOWHERE else in this
-# repo, so a consumer that calls it builds on agnos and fails to LINK on linux / aarch64 /
-# macOS / PE. It is left that way on purpose: the filing asked for the agnos peer (crab's M6
-# VOLUMES panel targets agnos), no caller exists yet ecosystem-wide, and the alternative was
-# to invent statfs numbers for four more targets from memory. Guessing a syscall number is
-# precisely the defect class v6.5.36 and v6.5.37 spent two releases repairing — `sys_pause`
-# issuing flock, `sys_umount2` issuing getpid — so an honest gap beats a plausible wrong
-# number. A fail-closed -1 stub would be worse still on Linux and macOS, which genuinely
-# HAVE statfs: it would claim unsupported where support exists.
-# UPGRADE PATH when a cross-platform consumer appears: add the real numbers (verified against
-# each kernel's table, not from memory) to the peers that have the call, and a documented
-# fail-closed stub only where the OS truly lacks it — the shape `sys_fstat` above uses.
+# ⭐ v6.6.6 — THE UPGRADE PATH BELOW WAS TAKEN, so the "AGNOS-ONLY" note that stood here is
+# now HISTORY, not a current fact. It read: "`sys_statfs` exists NOWHERE else in this repo …
+# the alternative was to invent statfs numbers for four more targets from memory. Guessing a
+# syscall number is precisely the defect class v6.5.36 and v6.5.37 spent two releases
+# repairing … an honest gap beats a plausible wrong number." That reasoning was right, and
+# the cross-platform consumer it was waiting for turned up: yukti's `filesystem_usage`,
+# which had been hardcoding raw numbers all along and whose aarch64 arm was silently running
+# **accept(2)**. The numbers are now minted the way that note demanded — MEASURED, not
+# recalled: Linux 137/138 (x86_64) and 43/44 (aarch64) read off the host and off pi, Darwin
+# statfs64/fstatfs64 345/346 live-probed on ach and ecb against libc, and a documented
+# fail-closed -38 on Windows, which has no statfs at all.
+#
+# ⚠ THE AGNOS WRAPPER KEEPS ITS OWN SIGNATURE and a consumer must notice. agnos's #103 is
+# 3-arg `(path, pathlen, buf)` because the kernel takes an explicit path length; every other
+# peer's is 2-arg `(path, buf)` over a NUL-terminated path. Unifying them is an agnos kernel
+# ABI change, not a stdlib edit, so the divergence is recorded here rather than papered over
+# — guard the agnos call site with `#ifdef CYRIUS_TARGET_AGNOS`, as crab's VOLUMES panel does.
+# The RECORD, in contrast, is compatible enough to share accessor names: agnos's frozen
+# 32-byte layout is f_bsize@0 / f_blocks@8 / f_bfree@16 / f_bavail@24, all u64 — the same
+# four fields the `Statfs` enum below publishes on every peer. CHANGELOG [6.6.6]
 fn sys_statfs(path, pathlen, buf): i64 { return syscall(SYS_STATFS, path, pathlen, buf); }
+
+# Field offsets into the statfs record, on the `Stat` contract: every peer publishes this
+# enum so cross-platform source can name the fields unconditionally. agnos's own values are
+# the frozen 32-byte record documented above; STATFS_BUFSZ is the ecosystem-wide max (Darwin
+# needs 2168) so one `var buf[STATFS_BUFSZ]` compiles everywhere. agnos writes only the
+# first 32 bytes — the call has no length parameter, so a larger buffer is inert, not a risk.
+enum Statfs {
+    STATFS_BSIZE = 0;
+    STATFS_BLOCKS = 8;
+    STATFS_BFREE = 16;
+    STATFS_BAVAIL = 24;
+    STATFS_BUFSZ = 2176;
+}
+
+# f_bsize at the right width for this target — u64 on agnos (see the frozen record above).
+# The macOS peer's is uint32, which is why callers must go through this rather than load64.
+fn statfs_bsize(buf): i64 { return load64(buf + STATFS_BSIZE); }
 
 # ⭐ v6.5.37 — `fork`#96: a second process resuming at the caller's own fork site. Returns the
 # child's pid to the parent and 0 to the child, -1 on failure — the POSIX shape.

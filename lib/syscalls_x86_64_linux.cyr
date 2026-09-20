@@ -124,6 +124,14 @@ enum SysNr {
     SYS_MEMFD_CREATE = 319;
     SYS_NANOSLEEP = 35;
     SYS_SCHED_YIELD = 24;
+    # v6.6.6 — the statfs pair, nameless in BOTH Linux peers until now. That is why yukti
+    # hardcoded the numbers, and on aarch64 its native 43 was reissued as **accept** by the
+    # ESYSXLAT compat row (measured under qemu-aarch64: errno 14 from every
+    # `filesystem_usage` call on ARM since v6.2.10). Naming it here is half the fix; the
+    # aarch64 peer borrows THESE numbers and two new ESYSXLAT rows renumber them.
+    # CHANGELOG [6.6.6]
+    SYS_STATFS = 137;
+    SYS_FSTATFS = 138;
     # v6.6.5 — peer asymmetries closed. The aarch64 peer declared all four; this one used
     # raw literals below, so the correspondence table had no row and raw 294 on aarch64
     # (kexec_file_load) went undiagnosed.

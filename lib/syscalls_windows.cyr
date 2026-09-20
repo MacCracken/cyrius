@@ -65,6 +65,12 @@ enum SysNr {
     SYS_MEMFD_CREATE = 319;
     SYS_NANOSLEEP = 35;
     SYS_SCHED_YIELD = 24;
+    # v6.6.6 — the statfs pair, same "the constant exists so cross-platform source COMPILES"
+    # contract, and NOT rerouted: Windows has no statfs. GetDiskFreeSpaceExW answers the same
+    # question but is a kernel32 import with a different shape (three out-params, no struct,
+    # wide path), so a row would be a lie; the stubs below decline explicitly. CHANGELOG [6.6.6]
+    SYS_STATFS = 137;
+    SYS_FSTATFS = 138;
 }
 
 # File descriptors mirror Linux convention. GetStdHandle maps
@@ -313,6 +319,22 @@ enum Stat {
     STAT_BUFSZ = 144;
 }
 
+# v6.6.6 — the statfs offsets, on exactly the Stat contract argued above and for exactly the
+# same reason: every peer that can statfs publishes a `Statfs` enum — the three Linux/macOS
+# peers share one in lib/syscalls_linux_common.cyr and agnos has its own, and this peer is
+# STANDALONE (it includes neither), so it needs a copy — and yukti's
+# `filesystem_usage` writes `var buf[STATFS_BUFSZ]` then `load64(&buf + STATFS_BLOCKS)`
+# unconditionally. Without these names a PE build of yukti fails to COMPILE. `sys_statfs`
+# below declines with -38, so no byte at these offsets is ever populated on Windows — the
+# values mirror the Linux peer only to keep the buffer-size contract identical.
+enum Statfs {
+    STATFS_BSIZE = 8;
+    STATFS_BLOCKS = 16;
+    STATFS_BFREE = 24;
+    STATFS_BAVAIL = 32;
+    STATFS_BUFSZ = 2176;
+}
+
 # access(path, mode) — 0xF019 (61465) → kernel32!GetFileAttributesW, live since v6.1.18.
 # ⚠ THE REROUTE TAKES AN ALREADY-WIDE (UTF-16) PATH, which is the one non-obvious part; the
 # widen loop below is the same shape lib/io.cyr uses for its own CreateFileW calls.
@@ -360,6 +382,15 @@ fn sys_sendto(fd, buf, len, flags, dstaddr, dstaddrlen): i64 { return 0 - 38; }
 fn sys_ftruncate(fd, length): i64 { return 0 - 38; }
 # Set a file's length by path. Declines on Windows, same reason as sys_ftruncate.
 fn sys_truncate(path, length): i64 { return 0 - 38; }
+# Filesystem statistics by path. Declines on Windows: the nearest peer is GetDiskFreeSpaceExW,
+# a kernel32 import with three out-params and a wide path — a different contract, not a
+# renumber. Callers already bail on r < 0. v6.6.6.
+fn sys_statfs(path, buf): i64 { return 0 - 38; }
+# Filesystem statistics by descriptor. Declines on Windows, same reason as sys_statfs.
+fn sys_fstatfs(fd, buf): i64 { return 0 - 38; }
+# f_bsize accessor — present so cross-platform source compiles for PE. Never reached with a
+# populated buffer, because sys_statfs above always declines.
+fn statfs_bsize(buf): i64 { return 0; }
 # Create an anonymous in-memory file. Declines on Windows: the nearest object is a named
 # section (CreateFileMappingW), a different object model with no fd.
 fn sys_memfd_create(name, flags): i64 { return 0 - 38; }

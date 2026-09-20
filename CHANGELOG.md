@@ -2290,6 +2290,45 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   belong to a parallel lane, and that lane's `scripts/*.sh` sweep and this gate's
   `cbt/*.cyr` sweep are complementary halves of one claim, neither covering the other.
 
+- **There was no ESYSXLAT row for `statfs`, so an aarch64 consumer's `SYS_STATFS = 43` ran
+  `accept()`.** (bite 11; roadmap item, found while writing the 6.6.5 sibling notes.) Silent
+  since v6.2.10, on every ARM host. ESYSXLAT's ELF-aarch64 arm has carried the x86-compat row
+  `accept 43→202` since the socket block landed, and aarch64-Linux's NATIVE `statfs` **is** 43 —
+  a compat row matches a NUMBER and cannot tell a native one from the x86 one it is chasing,
+  which is the shadow class `aarch64_syscall_shadow.sh` exists for. Measured on HEAD under
+  `qemu-aarch64 -strace`: `syscall(43, "/", &buf)` traced as
+  `accept(6293449, 0x7fb58354d220, [0]) = -1 errno=14 (Bad address)`, so yukti 2.3.11's
+  `filesystem_usage` has answered `"statfs failed: errno 14"` on every ARM host for four minors.
+  ⛔ **The root cause is one level up from the missing row: `statfs` had no NAME in either Linux
+  peer**, which is why a consumer had to hardcode a number per arch at all — and a nameless
+  number is structurally invisible to the v6.5.51 raw-literal diagnostic, whose table is derived
+  from names declared in BOTH peers. The v6.5.37 agnos peer had written the upgrade path down
+  ("add the real numbers, verified against each kernel's table, not from memory, to the peers
+  that have the call") and it is now taken, with every number MEASURED rather than recalled:
+  Linux **137/138** (x86_64, read off the host) and **43/44** (aarch64, read off pi), Darwin
+  **statfs64 345 / fstatfs64 346** live-probed on ach AND ecb against libc (Darwin's legacy
+  `statfs(157)` fills a different, shifted struct — probed in the same run and deliberately not
+  used), and a documented `-38` decline on Windows, which has no statfs. **Fix:** both Linux
+  peers declare `SYS_STATFS = 137` / `SYS_FSTATFS = 138` — the x86 numbers, the documented
+  borrow-the-other-arch's-number pattern the aarch64 peer already uses for `SYS_TRUNCATE`,
+  because native 43 **and** 44 are both compat-row sources (44 is `sendto 44→206`) — with two
+  new ELF rows `137→43` / `138→44` appended **below** the accept and sendto rows they produce
+  into and **above** the ≥1000 alias band, plus `_esx_arm(137, 345)` / `_esx_arm(138, 346)` on
+  the arm64 Mach-O arm and `_msx(137, …)` / `_msx(138, …)` on the x86 one. `sys_statfs(path,
+  buf)`, `sys_fstatfs(fd, buf)` and a per-OS `Statfs` offset enum land in
+  `lib/syscalls_linux_common.cyr`; the Windows peer gets declining stubs and the offsets (so a
+  PE build of a consumer that names them still COMPILES, the same contract its `Stat` enum
+  carries); the agnos peer keeps its own 3-arg `(path, pathlen, buf)` kernel shape and gains the
+  offset enum. ⚠ **`statfs_bsize(buf)` is an accessor, not a convenience**: Darwin's `f_bsize`
+  is uint32 with `f_iosize` packed above it, so a plain `load64` there returns
+  `f_bsize | (f_iosize << 32)` — 4503599627374592 for a 4096-byte block on a 1 MiB-iosize
+  volume — which multiplies straight into a capacity figure. Only the **x86 Mach-O** arm is in
+  this binary (the ELF-aarch64 and Mach-O-arm rows live in the aarch64 fork), so cycc is
+  **1,310,856 B → 1,310,856 B** — unchanged, though not identical: `.text` grew 1,144,584 →
+  1,144,640 B (**+56**) for the two `_msx` call sites and the file's trailing alignment
+  padding absorbed it. Verified on all four hosts: **pi 13/13, ecb 13/13, ach 13/13,
+  cass 3/3** (Windows asserts the `-38` decline).
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**
@@ -2302,6 +2341,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   variable (unchanged).
 
 ### Added
+
+- `tests/tcyr/crossos/statfs_family.tcyr` + `tests/gates/platform/statfs_family_routed.sh`
+  (bite 11) — 13 assertions that pin WHICH syscall was issued rather than whether a call
+  "succeeded", which is the distinction that let the aarch64 defect hide: `accept(2)` on a
+  bogus fd fails too. `f_bsize` must be a power of two in [512, 1 MiB], `f_blocks > 0`,
+  `f_bavail <= f_bfree <= f_blocks`, a nonexistent path must FAIL (so the path argument is
+  really read), and — the discriminating case — `sys_statfs("/")` and `sys_fstatfs(fd)` must
+  agree on `f_bsize` and `f_blocks`, which are two DIFFERENT syscall numbers routed by two
+  separate rows (43/44 on aarch64, 137/138 on x86_64, 345/346 on Darwin), so no single wrong
+  row can fake it. Target-guarded by CAPABILITY: Windows asserts the honest `-38` decline
+  instead of a Linux fact. The gate is the static+behavioural complement — the four existing
+  syscall gates are all static and none of them RUNS the call, which is exactly CLAUDE.md's
+  "a wrapper that COMPILES on five targets is not a wrapper that RUNS" — and it derives every
+  expected value a different way from the actual: sources and destinations from the committed
+  kernel tables against rows decoded out of the emitter's instruction words, and the runtime
+  numbers against coreutils' own statfs (`stat -f`). Its aarch64 leg runs under `qemu-aarch64`
+  and asserts `-strace` NAMES statfs rather than accept (emulation, not hardware — the crossos
+  tcyr on pi/ecb/ach/cass is). Mutation-proven five ways, ledger in the gate header.
 
 - `tests/tcyr/crossos/toplevel_block_closure.tcyr` (bite 3) — 15 assertions on a declaration zone
   made of block-bodied closures: the plain form, the zero-param `|| { .. }`, a body with a
