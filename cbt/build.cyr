@@ -484,6 +484,20 @@ fn _parent_dir(path): i64 {
 # be opened produced exactly the same silently-shortened translation unit. On any failure
 # the fn NAMES what went wrong, removes the partial temp and returns 0 — callers must
 # treat 0 as "do not compile". CHANGELOG [6.6.6].
+#
+# ⛔ IT CARRIES A CAUSE, NOT A FLAG (bite 26 review) — `_MAT_ERR_WRITE` = a write, a read or
+# the close failed and NOTHING has been said yet; `_MAT_ERR_NAMED` = a specific `_err_ctx`
+# has ALREADY named this failure. The first cut had one value, so the module-open and
+# entry-open arms printed their precise line and then fell into the shared
+# "could not write the preprocessed source … <internal temp path>" verdict:
+#     error: build module cannot be read (declared in [build].modules): mod/absent.cyr
+#     error: could not write the preprocessed source …: /tmp/cyrius-2625663/cpp_2625663
+# Nothing failed to write; the module failed to OPEN, and the second line hands the user an
+# internal temp path as the cause. That is the exact "a second, vaguer verdict after a
+# precise one" shape bite 24 removed from `cyrius build`'s FAILED line — reintroduced one
+# frame down. One failure, one message. CHANGELOG [6.6.6].
+var _MAT_ERR_WRITE = 1;
+var _MAT_ERR_NAMED = 2;
 var _mat_err = 0;
 
 fn _mat_write(fd, buf, len): i64 {
@@ -491,7 +505,7 @@ fn _mat_write(fd, buf, len): i64 {
     var off = 0;
     while (off < len) {
         var w = sys_write(fd, buf + off, len - off);
-        if (w <= 0) { _mat_err = 1; return 0 - 1; }
+        if (w <= 0) { _mat_err = _MAT_ERR_WRITE; return 0 - 1; }
         off = off + w;
     }
     return 0;
@@ -509,7 +523,7 @@ fn _mat_copy_fd(tfd, sfd): i64 {
         n = syscall(0, sfd, buf, 32768);
         if (n > 0) { if (_mat_write(tfd, buf, n) != 0) { return 0 - 1; } }
     }
-    if (n < 0) { _mat_err = 1; return 0 - 1; }
+    if (n < 0) { _mat_err = _MAT_ERR_WRITE; return 0 - 1; }
     return 0;
 }
 
@@ -606,7 +620,7 @@ fn _materialize_source(source): i64 {
                         _mat_write(tfd, "\n", 1);
                     } else {
                         _err_ctx("build module cannot be read (declared in [build].modules)", mpath);
-                        _mat_err = 1;
+                        _mat_err = _MAT_ERR_NAMED;
                     }
                     mi = mi + 1;
                 }
@@ -641,13 +655,19 @@ fn _materialize_source(source): i64 {
                 sys_close(sfd2);
             } else {
                 _err_ctx("could not read the entry source", source);
-                _mat_err = 1;
+                _mat_err = _MAT_ERR_NAMED;
             }
             # A close failure is a write failure (delayed allocation, quota, NFS commit):
             # the bytes are only durable once close returns 0.
-            if (sys_close(tfd) < 0) { _mat_err = 1; }
-            if (_mat_err != 0) {
+            # ⚠ It must not DOWNGRADE an already-named cause to the generic one — see the
+            # `_MAT_ERR_NAMED` note above.
+            if (sys_close(tfd) < 0) { if (_mat_err == 0) { _mat_err = _MAT_ERR_WRITE; } }
+            # The generic verdict is for the failures nothing has spoken for yet. A named
+            # one has already said more than this line could. CHANGELOG [6.6.6].
+            if (_mat_err == _MAT_ERR_WRITE) {
                 _err_ctx("could not write the preprocessed source — refusing to compile a truncated file", tmp);
+            }
+            if (_mat_err != 0) {
                 sys_unlink(tmp);
                 return 0;
             }

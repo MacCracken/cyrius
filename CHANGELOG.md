@@ -2207,7 +2207,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   **source** and not the compiler's output — a limit that truncates both proves nothing
   about which write was unchecked — and axis 3 requires the binary to return the *module's*
   value, so it cannot pass against a build that ignored the manifest. cbt-only; `build/cycc`
-  unchanged.
+  unchanged. ⚠ **As first committed the new refusals printed a second, wrong-cause verdict
+  after the precise one** — the module-open and entry-open arms set the same one-valued
+  `_mat_err` as a short write, so a missing `[build].modules` entry reported
+  `error: build module cannot be read …: mod/absent.cyr` and then
+  `error: could not write the preprocessed source …: /tmp/cyrius-2625663/cpp_2625663`.
+  Nothing failed to write; the module failed to *open*, and the second line handed the user
+  an internal temp path as the cause — the exact "a second, vaguer verdict after a precise
+  one" shape bite 24 had just removed from `cyrius build`'s `FAILED (compiler exit N)` line,
+  reintroduced one frame down. `_mat_err` now carries a **cause** (`_MAT_ERR_WRITE` =
+  nothing has spoken for this yet, `_MAT_ERR_NAMED` = an `_err_ctx` already has) and the
+  generic verdict is emitted only for the first; a `close` failure no longer downgrades a
+  named cause. Pinned by axis 3, which requires **exactly one** `error:` line per failure
+  and re-reads axis 2's own capture for the write half (ledger row `g`).
 
 - **`tests/gates/toolchain/tool_writes_never_truncate.sh` axis 4 was RED, and is green
   honestly** (bite 26c). Two keys, each decided on its merits rather than by widening the

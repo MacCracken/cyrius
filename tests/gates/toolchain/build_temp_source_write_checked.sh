@@ -38,7 +38,10 @@
 #   3. `[build].modules` — with the module present the build succeeds AND the module's fn
 #      is really linked (the binary returns the module's value, so the axis cannot pass
 #      against a build that ignored the manifest); with the module missing, and with the
-#      module unreadable, the build exits non-zero and NAMES the module.
+#      module unreadable, the build exits non-zero and NAMES the module. Each of those
+#      failures prints EXACTLY ONE `error:` line, and the generic "could not write the
+#      preprocessed source" verdict appears only for a real write failure (axis 2's own
+#      capture is re-read for that half, so the two claims cannot drift apart).
 #   4. STATIC, over cbt/: nothing writes a temp SOURCE with an unchecked call any more.
 #      `sys_write(tfd, …)` / `syscall(1, tfd, …)` in cbt/build.cyr and the doctest's
 #      `syscall(1, fd, code, …)` in cbt/quality.cyr must be gone, the checked helpers must
@@ -68,6 +71,10 @@
 #   e. cbt/quality.cyr's doctest writer back to the bare        -> axis 4 FAIL (quality.cyr|code)
 #      `syscall(1, fd, code, code_len)`
 #   f. the axis-4 detector's forbidden-shape arm disabled       -> axis 4 self-test FAIL
+#   g. (bite 26 review) `_mat_err` back to one value — the      -> axis 3 FAIL (the missing- and
+#      module/entry-open arms setting `_MAT_ERR_WRITE`, so a       unreadable-module cases each
+#      named cause falls into the generic write verdict            print 2 `error:` lines, the
+#                                                                  second blaming a write)
 # Real tree -> PASS.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -144,12 +151,24 @@ rc=0; _run build app2.cyr outm > "$D/a3a.out" 2>&1 || rc=$?
 erc=0; [ -s "$D/p/outm" ] && { ( ulimit -c 0; exec "$D/p/outm" ) >/dev/null 2>&1 || erc=$?; }
 { [ "$rc" -eq 0 ] && [ "$erc" -eq 23 ]; } \
   || { fail "axis 3: with the module PRESENT the build did not link it (rc=$rc, binary exits $erc, expected 23):"; tail -3 "$D/a3a.out" | sed 's/^/      /'; a3=1; }
+# ONE failure, ONE verdict. A named cause must not be followed by the generic
+# "could not write the preprocessed source …: <internal temp path>" line — nothing failed
+# to write, the module failed to OPEN, and the second line hands the user a temp path as
+# the cause. (bite 26 review; the shape bite 24 removed from `cyrius build`'s FAILED line.)
+_nerr() { _n=$(grep -c '^error:' "$1" 2>/dev/null); echo "${_n:-0}"; }   # grep -c prints 0 and exits 1
+_one_verdict() {  # _one_verdict <outfile> <case>
+    n=$(_nerr "$1")
+    [ "$n" -eq 1 ] || { fail "axis 3: the $2 case printed $n 'error:' lines, expected exactly 1 — a second, vaguer verdict after a precise one:"; grep '^error:' "$1" | sed 's/^/      /'; a3=1; }
+    grep -q 'could not write the preprocessed source' "$1" \
+      && { fail "axis 3: the $2 case was ALSO blamed on a failed write of the preprocessed source — nothing failed to write"; a3=1; }
+}
 _manifest 'mod/absent.cyr'
 rm -f "$D/p/outm2"
 rc=0; _run build app2.cyr outm2 > "$D/a3b.out" 2>&1 || rc=$?
 [ "$rc" -ne 0 ] || { fail "axis 3: a MISSING [build].modules entry was silently dropped (rc 0)"; a3=1; }
 grep -q 'mod/absent.cyr' "$D/a3b.out" || { fail "axis 3: the failure does not name the module it could not read:"; sed 's/^/      /' "$D/a3b.out" | head -3; a3=1; }
 [ -e "$D/p/outm2" ] && { fail "axis 3: a binary was produced although a declared module was missing"; a3=1; }
+_one_verdict "$D/a3b.out" "missing-module"
 if [ "$(id -u)" = "0" ]; then
     echo "  note: axis 3: the unreadable-module case is skipped as root (mode bits do not bite)"
 else
@@ -160,9 +179,15 @@ else
     chmod 644 "$D/p/mod/m.cyr"
     [ "$rc" -ne 0 ] || { fail "axis 3: an UNREADABLE [build].modules entry was silently dropped (rc 0)"; a3=1; }
     grep -q 'mod/m.cyr' "$D/a3c.out" || { fail "axis 3: the unreadable module is not named:"; sed 's/^/      /' "$D/a3c.out" | head -3; a3=1; }
+    _one_verdict "$D/a3c.out" "unreadable-module"
 fi
+# …and the write failure axis 2 provokes is still SPOKEN FOR: exactly one verdict there
+# too, and it is the write one. Read from axis 2's own capture, so the two claims cannot
+# drift apart.
+n2=$(_nerr "$D/a2.out")
+[ "$n2" -eq 1 ] || { fail "axis 3: the short-write case printed $n2 'error:' lines, expected exactly 1:"; grep '^error:' "$D/a2.out" | sed 's/^/      /'; a3=1; }
 rm -f "$D/p/cyrius.cyml"
-[ "$a3" = 0 ] && echo "  ok: axis 3: [build].modules is linked when present (binary exits 23) and named when missing or unreadable"
+[ "$a3" = 0 ] && echo "  ok: axis 3: [build].modules is linked when present (binary exits 23) and named when missing or unreadable — each failure with exactly ONE verdict, and the generic write line only for a real write failure"
 
 # ── axis 4: STATIC — no unchecked write of a temp SOURCE left in cbt/ ────────
 # Forbidden: a write into the materialised temp (`sys_write(tfd, …)`,
