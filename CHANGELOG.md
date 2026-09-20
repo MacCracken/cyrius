@@ -1446,9 +1446,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   59 gates ran, no summary; fixed + red driver row → 59 of 59 ran, exit 1, the driver named;
   one gate red → named; one gate file deleted → MISSING; all green → ALL GREEN, exit 0; a gate
   that kills the runner mid-suite → `10 of 59 produced a result, 49 NOT RUN`, each listed.
-- **The check driver's children are bounded, and none of them outlives the runner** (bite 8c).
-  Every fork site in `lib/regression.cyr` (11) and `programs/checks/` (19 functions) was fork +
-  execve + BLOCKING `sys_waitpid(pid, &st, 0)` with no deadline and no death signal. So ONE
+- **The check driver's children are bounded, and none of them outlives the runner** (bite 8c
+  + its review fix). Every fork site in `lib/regression.cyr` (11), `programs/checks/`
+  (19 functions) **and `lib/process.cyr` (10)** was fork + execve + BLOCKING
+  `sys_waitpid(pid, &st, 0)` with no deadline and no death signal. So ONE
   spinning `.tcyr` hung `check.sh` itself — measured at ~5 minutes this release, with no output
   and no verdict — and killing the run REPARENTED the test to PID 1, where it kept burning a
   core. This is the v6.5.19 `cyrius test` incident one runner over: that runner was fixed and
@@ -1462,15 +1463,46 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   A deadline is reported as the module's documented `-2`, not as the 137 its own SIGKILL
   produces, and `_tcyr_compile_and_run` now prints `TIMEOUT: <file> did not finish and was
   killed` — before this, a hung test produced no result at all.
+  ⚠ **As first committed this bullet was not true as written, and the gate under it said it
+  was.** `programs/checks/main.cyr` also includes **lib/process.cyr**, whose 10 fork sites had
+  the identical shape and three of which are live driver paths (cyrfmt once per fixture,
+  cyrdoc over all of `lib/`, a `/bin/sh -c` qemu boot) — MEASURED: `exec_capture` on a spinner
+  was still blocked after 6 s with a 3 s deadline set, and SIGKILLing the runner left the child
+  at PPID=1. The census that was supposed to catch exactly this read a hand-written file list
+  (`lib/regression.cyr` + `programs/checks/*.cyr`) and reported "0 blocking waits, 31 == 31"
+  over it. All 10 sites now carry the same treatment: `_proc_child_guard` (PDEATHSIG,
+  unconditional) and `_proc_wait_deadline`. The deadline there is **opt-in and off by
+  default** — process.cyr is the general process module, and `lib/sigil.cyr` drives
+  `cryptsetup luksFormat` / `veritysetup format` and `cbt/deps.cyr` drives git through it, so a
+  default timeout would kill legitimate long work — and the check driver asks for one in
+  `main()` (`proc_set_timeout_ms(_regression_timeout_ms())`), which the gate now checks. With
+  no deadline set, every one of those verbs behaves exactly as it did before. The capturing
+  verbs also got the pipe half: `exec_capture` / `run_capture` drain the child's stdout
+  BEFORE they wait, so bounding the wait alone leaves them blocked in `sys_read` for ever;
+  they now poll with an IDLE deadline (no output and no exit for that long → stop reading,
+  and the bounded wait kills the child). `spawn()` is the one deliberate exemption — its whole
+  contract is that the child outlives the call — and it carries a `fork-guard-exempt` marker
+  the census counts, so the exemption is a line someone justified rather than a blind spot.
+  Verified: the two measured repros both fixed; the 10 `.tcyr` that include process.cyr pass;
+  the CLI (`cbt/cyrius.cyr`, which includes it) still cross-compiles to PE and Mach-O; and the
+  deadline + poll path works on aarch64 under qemu-user (NOT hardware — the cross-OS leg at
+  the release gate is).
 - `tests/gates/toolchain/check_driver_bounded.sh` (bite 8c, registered in `scripts/check.sh`) —
   drives the EXACT verb the check driver uses for every `.tcyr`
   (`regression_exec_capture_status`) through a compiled harness. Axis 0 anti-vacuous (an
   ordinary fixture still returns its own exit code, promptly); axis 1 a spinner is killed at
   the deadline and reported as a timeout, with an elapsed floor AND ceiling; **axis 1b** two
   children in sequence, sampling the live child count while the runner is still alive; axis 2
-  SIGKILL the runner and require the child to die with it; axis 3 a census (no blocking
-  deadline-free wait left outside `_regression_wait_deadline`, and `sys_fork()` sites ==
-  `_regression_child_guard(` calls, two independently derived counts). ⚠ **Axis 1b was added
+  SIGKILL the runner and require the child to die with it; **axis 2c** the same three
+  properties over the driver's OTHER fork module, `lib/process.cyr`, through `exec_vec` and
+  the `exec_capture` PIPE path; axis 3 a census (no blocking deadline-free wait left outside
+  a `*_wait_deadline` body, and `sys_fork()` sites == child-guard calls + declared
+  exemptions, two independently derived counts). ⚠ **Axis 3's file list is DERIVED from the
+  driver's own transitive `include` closure, because the hand-written one it shipped with was
+  a list of the files whose defect was already known** — lib/process.cyr sat outside it while
+  the census reported it clean. Measured both ways over the unfixed module: hand-written list
+  → 31 forks, 31 guards, 0 blocking waits, GREEN; derived list → 41 forks, 31 guards, 10
+  blocking waits, RED. ⚠ **Axis 1b was added
   after the first cut of the gate passed the mutation it exists to catch**: with PDEATHSIG in
   place, changing the deadline's `sys_kill(pid, 9)` to a no-op probe left every single-child
   axis GREEN, because the harness exits straight after and the kernel reaps the abandoned child

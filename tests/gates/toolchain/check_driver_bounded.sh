@@ -13,6 +13,18 @@
 # lib/regression.cyr had the same shape: 11 in the lib, 19 functions across
 # programs/checks/.
 #
+# ⚠ AND IN A SECOND MODULE THE FIRST CUT OF THIS GATE COULD NOT SEE. `programs/checks/main.cyr`
+# also includes **lib/process.cyr**, whose 10 fork sites had exactly the same shape, and
+# three of them are live driver paths (cyrfmt once per fixture, cyrdoc over all of `lib/`,
+# a `/bin/sh -c` qemu boot). The first cut of axis 3 hard-coded
+# `FILES="lib/regression.cyr programs/checks/*.cyr"`, so it read "0 blocking waits, 31 == 31"
+# over a tree where `exec_capture` on a spinner still blocked for ever and still orphaned its
+# child — MEASURED, at PPID=1. The census now DERIVES its file list from the driver's own
+# transitive `include` closure, so a fork site the driver can reach cannot sit outside it,
+# and axis 2c drives the process.cyr path for real. That module keeps its deadline OFF by
+# default (it is the general process module — sigil's cryptsetup and deps' git run through
+# it), so the driver asks for one in `main()`; axis 3 checks that it still does.
+#
 # ⭐ THIS IS THE SAME DEFECT `tests/gates/toolchain/test_runner_bounded.sh` HAS PINNED FOR
 # THE `cyrius test` RUNNER SINCE v6.5.19. That gate's header explains why the second half
 # is the one that matters: a SIGKILLed parent runs no cleanup, ever, so no parent-side
@@ -44,6 +56,26 @@
 #     and it is why axis 1b runs TWO children.
 #   * axis 3's census with the fix in place -> 0 blocking waits; with lib/regression.cyr
 #     reverted -> 11.
+#
+# MUTATION PROOF, second module (lib/process.cyr), added when the review found axis 3 green
+# over a tree where `exec_capture` still hung and still orphaned:
+#   * lib/process.cyr reverted to its pre-6.6.6 version -> the gate stops at the harness
+#     compile (`undefined function 'proc_set_timeout_ms'`) and says so. Honest, but early,
+#     so the three mutants below are the ones that actually exercise axis 2c.
+#   * `proc_set_timeout_ms` accepts the value and stores nothing -> axis 2c 4 rows RED, both
+#     paths hitting the 60 s backstop (rc 124); every other axis GREEN.
+#   * `sys_prctl(1, 9, …)` + the getppid re-check deleted from `_proc_child_guard`, deadline
+#     kept -> axis 2c's orphan row RED ALONE (`child NNN STILL ALIVE, reparented to PPID=1`).
+#   * the `fork-guard-exempt` marker deleted from `spawn()` -> axis 3 RED (41 vs 40). The
+#     exemption is a line someone wrote and justified, not a hole the census ignores.
+#   * `proc_set_timeout_ms(...)` deleted from programs/checks/main.cyr -> axis 3's last row
+#     RED: the module defaults to NO deadline, so the driver has to ask.
+#   * ⭐ THE ONE THAT JUSTIFIES DERIVING THE FILE LIST. The same census, over the same
+#     pre-6.6.6 lib/process.cyr, run both ways:
+#         hand-written list: 15 files, 31 forks, 31 guards,  0 blocking waits => GREEN
+#         derived list:      52 files, 41 forks, 31 guards, 10 blocking waits => RED
+#     The first cut of this gate shipped the first number, in the same release that measured
+#     the hang. A census is only as honest as the list it reads.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -127,6 +159,58 @@ if ! "$ROOT/build/cycc" < "$T/harness.cyr" > "$T/harness" 2> "$T/harness.err"; t
 fi
 [ -s "$T/harness" ] || { echo "FAIL: check_driver_bounded — the harness compiled to an EMPTY binary"; exit 1; }
 chmod +x "$T/harness"
+
+# ── the SECOND harness — lib/process.cyr ────────────────────────────────────────────
+# The driver reaches this module for cyrfmt / cyrdoc / qemu, and it is a DIFFERENT
+# implementation of the same shape: its own fork sites, its own wait, and a `sys_read` loop
+# on the child's pipe IN FRONT of that wait (which is why bounding the wait alone is not
+# enough — a child that holds the pipe and writes nothing never lets the deadline run).
+# `argv(2)` is the deadline in ms handed to `proc_set_timeout_ms`; a third argument selects
+# `exec_vec` (no pipe, reports the timeout as the module's -2) over `exec_capture` (pipe).
+cat > "$T/pharness.cyr" <<'PHARNESS'
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/io.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/args.cyr"
+include "lib/flags.cyr"
+include "lib/syscalls.cyr"
+include "lib/fs.cyr"
+include "lib/process.cyr"
+
+fn main(): i64 {
+    args_init();
+    var bin = argv(1);
+    if (bin == 0) { return 2; }
+    var msarg = argv(2);
+    var ms = 0;
+    if (msarg != 0) { ms = atoi(msarg); }
+    proc_set_timeout_ms(ms);
+    var mode = 0;
+    if (argc() > 3) { mode = 1; }
+    var a = vec_new();
+    vec_push(a, bin);
+    if (mode == 1) {
+        var rc = exec_vec(a);
+        if (rc == 0 - 2) { return 150; }
+        if (rc < 0) { return 151; }
+        return rc;
+    }
+    var buf = alloc(65536);
+    var n = exec_capture(a, buf, 65536);
+    if (n < 0) { return 151; }
+    return 3;
+}
+var r = main();
+syscall(60, r);
+PHARNESS
+if ! "$ROOT/build/cycc" < "$T/pharness.cyr" > "$T/pharness" 2> "$T/pharness.err"; then
+    echo "FAIL: check_driver_bounded — the process.cyr harness did not compile:"; cat "$T/pharness.err"; exit 1
+fi
+[ -s "$T/pharness" ] || { echo "FAIL: check_driver_bounded — the process.cyr harness compiled to an EMPTY binary"; exit 1; }
+chmod +x "$T/pharness"
 
 # ── AXIS 0 — ANTI-VACUOUS: an ordinary child still runs and still reports its own code.
 echo "axis 0 — ANTI-VACUOUS: a normal fixture runs, returns its real code, is not a timeout:"
@@ -262,20 +346,110 @@ else
 fi
 wait 2>/dev/null || true
 
-# ── AXIS 3 — THE CENSUS UNDER IT. The two behavioural axes above exercise ONE verb; the
-# defect was a HABIT shared by every fork site in the driver. So: no blocking
-# `sys_waitpid(pid, &x, 0)` may remain outside `_regression_wait_deadline`'s own body,
-# and — derived a different way — every `sys_fork()` site must be paired with a
-# `_regression_child_guard(` call. Two independently counted numbers that have to agree.
-echo "axis 3 — CENSUS: no fork site in the driver is unbounded or unguarded:"
-FILES="lib/regression.cyr $(find programs/checks -name '*.cyr' | LC_ALL=C sort | tr '\n' ' ')"
+# ── AXIS 2c — ⭐ THE SECOND MODULE. Everything above drives lib/regression.cyr. The driver
+# ALSO forks through lib/process.cyr, and that module was still unbounded and unguarded when
+# the first cut of this gate went green — so this axis exists because a census scoped by hand
+# reported 31 == 31 over a path that hung and orphaned. Three rows, the same three properties:
+# it still runs an ordinary child; a hung child is bounded (through the PIPE path, which
+# blocks BEFORE the wait, and through the no-pipe path, which reports the module's -2); and
+# SIGKILLing the runner does not leave the child behind.
+echo "axis 2c — ⭐ the driver's OTHER fork module (lib/process.cyr) is bounded and guarded:"
+rc=0
+timeout 60 "$T/pharness" "$T/fine" 2000 vec > "$T/p0.out" 2>&1 || rc=$?
+check "ANTI-VACUOUS: an ordinary child still returns its own exit code" 7 "$rc"
+t0=$(date +%s)
+rc=0
+timeout 60 "$T/pharness" "$T/spin" 2000 vec > "$T/p1.out" 2>&1 || rc=$?
+el=$(( $(date +%s) - t0 ))
+check "exec_vec reports the deadline as the module's TIMEOUT (-2)" 150 "$rc"
+check "and returned without the 60s backstop" "yes" "$([ "$rc" != 124 ] && echo yes || echo no)"
+t0=$(date +%s)
+rc=0
+timeout 60 "$T/pharness" "$T/spin" 2000 > "$T/p2.out" 2>&1 || rc=$?
+el=$(( $(date +%s) - t0 ))
+# ⚠ THE PIPE PATH IS THE ONE THAT WAS MEASURED HANGING. exec_capture drains the child's
+# stdout BEFORE it waits, so a deadline on the wait alone leaves it blocked in sys_read for
+# ever — which is exactly what `CYRIUS_CHECK_TIMEOUT=3 ph ./spin` did (still blocked at 6 s).
+check "exec_capture (the PIPE path) returns at all" 3 "$rc"
+check "and it was the deadline that ended it, not the backstop" "yes" \
+    "$([ "$el" -lt 30 ] && echo yes || echo no)"
+"$T/pharness" "$T/spin" 0 > "$T/p3.out" 2>&1 &
+prunner=$!
+pchild=""
+i=0
+while [ "$i" -lt 300 ]; do
+    pchild=$(ps -eo pid=,ppid= 2>/dev/null | awk -v r="$prunner" '$2==r {print $1}' | head -1)
+    [ -n "$pchild" ] && break
+    sleep 0.1
+    i=$((i + 1))
+done
+check "premise: it really did spawn a child (deadline 0 = the historical blocking wait)" "yes" \
+    "$([ -n "$pchild" ] && echo yes || echo no)"
+if [ -n "$pchild" ]; then
+    kill -9 "$prunner" 2>/dev/null
+    palive=yes
+    j=0
+    while [ "$j" -lt 100 ]; do
+        if ps -p "$pchild" > /dev/null 2>&1; then sleep 0.1; j=$((j + 1)); else palive=no; break; fi
+    done
+    check "the child dies with the runner (no PPID=1 orphan)" "no" "$palive"
+    if [ "$palive" = "yes" ]; then
+        echo "        child $pchild STILL ALIVE, reparented to PPID=$(ps -o ppid= -p "$pchild" 2>/dev/null | tr -d ' ')"
+        echo "        → PR_SET_PDEATHSIG is missing from _proc_child_guard (lib/process.cyr)."
+        kill -9 "$pchild" 2>/dev/null
+    fi
+else
+    kill -9 "$prunner" 2>/dev/null
+fi
+wait 2>/dev/null || true
+
+# ── AXIS 3 — THE CENSUS UNDER IT. The behavioural axes above exercise THREE verbs; the
+# defect was a HABIT shared by every fork site the driver can reach. So: no blocking
+# `sys_waitpid(pid, &x, 0)` may remain outside a `*_wait_deadline` body, and — derived a
+# different way — every `sys_fork()` site must be paired with a child-guard call. Two
+# independently counted numbers that have to agree.
+#
+# ⛔ THE FILE LIST IS DERIVED, NOT WRITTEN DOWN. Its first cut was
+# `FILES="lib/regression.cyr $(find programs/checks …)"`, which is a list of the files whose
+# defect was already known — so lib/process.cyr, which the driver includes and forks through
+# on three live paths, sat OUTSIDE the census while the census reported it clean. The list is
+# now the driver's own transitive `include` closure (from programs/checks/main.cyr) unioned
+# with programs/checks/*.cyr, so a module the driver pulls in is in the census by
+# construction. A `#ifdef`-guarded include is followed too: it is compiled on SOME host, and
+# an unbounded wait there is the same defect one platform over.
+echo "axis 3 — CENSUS: no fork site the driver can reach is unbounded or unguarded:"
+_include_closure() {
+    _cl_seen=""
+    _cl_todo="programs/checks/main.cyr"
+    while [ -n "$_cl_todo" ]; do
+        _cl_next=""
+        for _f in $_cl_todo; do
+            case " $_cl_seen " in *" $_f "*) continue ;; esac
+            _cl_seen="$_cl_seen $_f"
+            [ -f "$_f" ] || continue
+            _cl_next="$_cl_next $(sed -n 's/^ *include "\([A-Za-z0-9_/]*\.cyr\)".*/\1/p' "$_f" | tr '\n' ' ')"
+        done
+        _cl_todo="$_cl_next"
+    done
+    printf '%s\n' "$_cl_seen"
+}
+FILES=$( { _include_closure | tr ' ' '\n'; find programs/checks -name '*.cyr'; } \
+         | grep -v '^$' | LC_ALL=C sort -u | tr '\n' ' ')
 nfiles=$(echo $FILES | wc -w)
 check "premise: the census has files to read" "yes" \
-    "$([ "$nfiles" -ge 10 ] && echo yes || echo no)"
+    "$([ "$nfiles" -ge 30 ] && echo yes || echo no)"
+# Both fork-owning modules must be IN the derived list — a closure walk that silently
+# returned nothing would otherwise make every count below trivially agree at 0.
+for _m in lib/regression.cyr lib/process.cyr; do
+    check "premise: the derivation found $_m" "yes" \
+        "$(case " $FILES " in *" $_m "*) echo yes ;; *) echo no ;; esac)"
+done
 # Two exemptions, both narrow and both load-bearing — an unexempted census is a census
 # nobody can make green, and one that exempts by FILE would stop seeing new fork sites:
-#   * `_regression_wait_deadline`'s own body: its timeout_ms<=0 opt-out and its post-kill
-#     reap are blocking waits BY DESIGN, and they are the implementation of the fix.
+#   * a `*_wait_deadline` body (`_regression_wait_deadline`, `_proc_wait_deadline`): the
+#     timeout_ms<=0 opt-out and the post-kill reap are blocking waits BY DESIGN, and they
+#     are the implementation of the fix. Matched by SHAPE, not by name, so the module that
+#     gets this treatment next is covered without editing the gate.
 #   * a reap on the line after a `sys_kill(...)`: the child is already dead, so the wait
 #     cannot block. `regression_run_with_timeout` (which carries its own deadline) ends
 #     that way, and so does any future site written the same shape.
@@ -283,7 +457,7 @@ check "premise: the census has files to read" "yes" \
 # to explain it, and a census that reads prose reports its own documentation.
 blocking_lines=$(for f in $FILES; do
         awk -v F="$f" '
-            /^fn _regression_wait_deadline\(/,/^}/ { next }
+            /^fn _[a-z_]*_wait_deadline\(/,/^}/ { next }
             { line = $0; sub(/^[ \t]*#.*$/, "", line) }
             line ~ /sys_waitpid\([A-Za-z_][A-Za-z0-9_]*, &[A-Za-z_][A-Za-z0-9_]*, 0\)/ {
                 if (prev !~ /sys_kill\(/) print F ":" FNR ": " line
@@ -295,10 +469,26 @@ blocking=$(printf '%s\n' "$blocking_lines" | grep -c . || true)
 check "blocking, deadline-free waits left in the driver" 0 "$blocking"
 if [ "$blocking" != "0" ]; then printf '%s\n' "$blocking_lines" | sed 's/^/        /'; fi
 nfork=$(grep -h 'sys_fork()' $FILES | grep -c 'var ' || true)
-nguard=$(grep -h '_regression_child_guard(' $FILES | grep -vc '^fn ' || true)
+nguard=$(grep -hE '_(regression|proc)_child_guard\(' $FILES | grep -vc '^fn ' || true)
+# ONE exemption, by MARKER rather than by file, so it is a line someone has to write and
+# justify: `spawn()` in lib/process.cyr, whose entire contract is that the child OUTLIVES the
+# call (PDEATHSIG there would kill a consumer's daemon the moment the launcher exits). The
+# markers are printed, so adding one is visible in the gate output rather than in a diff.
+nexempt=$(grep -h 'fork-guard-exempt' $FILES | grep -c . || true)
 check "premise: the census actually found fork sites" "yes" \
-    "$([ "$nfork" -ge 25 ] && echo yes || echo no)"
-check "every fork site arms PR_SET_PDEATHSIG (fork sites == guard calls)" "$nfork" "$nguard"
+    "$([ "$nfork" -ge 35 ] && echo yes || echo no)"
+check "every fork site arms PR_SET_PDEATHSIG (fork sites - exemptions == guard calls)" \
+    "$nfork" "$((nguard + nexempt))"
+if [ "$nexempt" != "0" ]; then
+    echo "        $nexempt exemption(s), each with its reason in the source:"
+    grep -n 'fork-guard-exempt' $FILES | sed 's/^/          /'
+fi
+# And the driver has to ASK for the bound: lib/process.cyr defaults to no deadline (it is the
+# general process module), so without this call its children are unbounded however well the
+# module is written. Derived from the driver source, not from the module.
+nset=$(grep -c 'proc_set_timeout_ms(' programs/checks/main.cyr || true)
+check "the check driver sets lib/process.cyr's deadline (proc_set_timeout_ms in main.cyr)" \
+    "yes" "$([ "$nset" -ge 1 ] && echo yes || echo no)"
 
 echo ""
 if [ "$fails" = "0" ]; then

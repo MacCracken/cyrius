@@ -921,6 +921,14 @@ fn _run_regression_gates(): i64 {
 fn main(): i64 {
     alloc_init();
     _load_environ();
+    # v6.6.6: bound the children this driver spawns through lib/process.cyr (cyrfmt per
+    # fixture, cyrdoc over all of lib/, the qemu boot) with the SAME knob as the ones it
+    # spawns through lib/regression.cyr. process.cyr defaults to NO deadline on purpose —
+    # it is the general process module, and sigil's cryptsetup / deps' git run through it —
+    # so the embedder that wants a bound asks for one. This is that ask, and it is what
+    # makes "no child of the check driver runs for ever" true rather than aspirational.
+    # CHANGELOG [6.6.6]
+    proc_set_timeout_ms(_regression_timeout_ms());
     _setup_paths();
 
     println("=== Cyrius v2.0 Audit ===");
