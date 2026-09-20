@@ -8,6 +8,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **The `too many initialized globals` cap REPORTED and then stored anyway, writing past the
+  gvar_toks buffer.** (bite 19e.) `ERR_MSG` sets `_had_error` and returns — deliberately, so one
+  run surfaces every violation — and the three gvar_toks registration sites read the count,
+  called it at 4096, and then stored and bumped the count regardless. gvar_toks is 32768 B at
+  `0x729000`, i.e. exactly 4096 entries, so entry 4096 lands at `0x731000` and the run walks on
+  toward TS@`0x800000` (reached at entry 110,080). Measured: 4200 deferred globals print the
+  error once, exit 1, and write ~104 entries past the end. Same shape as bite 2f. **Fix:**
+  `_gv_tok_full` (`src/frontend/parse_decl.cyr`) reports and answers "full"; all three
+  registration sites — plain deferred init, byte-array literal, top-level destructure — now
+  store only inside `if (_gv_tok_full(S) == 0)`. Gate:
+  `tests/gates/memory/gvar_toks_cap_guards_the_store.sh`, three mutants. ⚠ Its detector is
+  STATIC and the gate says so: the bytes from `0x731000` to `0x800000` are documented free, so
+  a few hundred entries of overflow change nothing observable — the 6.6.5 compiler and the
+  fixed one produce byte-identical stderr, exit code and output at 4200 / 6000 / 10000 / 20000
+  deferred globals, within 5% of the same wall time, and at 70,000 BOTH exceed a 120 s timeout
+  (the compile is quadratic in the global count), so even that is not a discriminator. The
+  static axis derives the site count from the source, so a fourth registration site added
+  without the guard fails. cycc **1,315,280 -> 1,315,280 B** (no change).
+
 - **The duplicate-symbol warning went SILENT in a large program.** (bite 19c.) `var a = 5;
   var a = 7;` warns; put 1100 globals ahead of it and nothing is reported at all — and the
   `SYS_*` note that tells a consumer an overridden syscall number emits a DIFFERENT syscall on
