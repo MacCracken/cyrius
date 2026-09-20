@@ -1669,6 +1669,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   what pins the *partial* case (no portable unprivileged probe can force a read that fails after
   40 KB; it is the same branch). 5 mutations, each RED.
 
+- **Every `cyrius` run left an empty `/tmp/cyrius-<pid>` directory behind — 5,005 of them on the
+  maintainer's box.** (bite 9a.) `_cbt_tmpdir()` (`cbt/build.cyr`) has created a private
+  `<base>/cyrius-<pid>` on first use since **v6.4.81**, where it closed CVE-35/CVE-36 — which were
+  about the shared `/tmp` **namespace**, not about **lifetime** — and from that release through
+  6.6.5 nothing ever removed it. Measured at 6.6.5: **5,005** such directories, **398 of the 400
+  newest of them EMPTY**; the 2 non-empty ones held a `test_bin` from a killed runner. Every
+  `cyrius run` / `lint` / `test` / `build` (of a source in a subdirectory, i.e. every real project)
+  / `lsp` / `deps` added one, forever. **Fix:** `_cbt_tmpdir_cleanup()` removes it from the CLI's
+  single normal exit at the bottom of `cbt/cyrius.cyr`, and `_cbt_exit(code)` does the same for the
+  four parent-side `sys_exit` paths that can run after a temp directory exists
+  (`cbt/cyrius.cyr` ×3, `cbt/deps.cyr` ×1). **`rmdir`, deliberately never a recursive sweep:** it
+  fails on a non-empty directory, which is the right answer — `cyrius lsp` with no `CYRIUS_HOME`
+  prints that path and tells the user to copy the binary out of it, and a SIGKILLed `cyrius test`
+  leaves its `test_bin` for a post-mortem. ⚠ **Windows still leaks and that is said, not hidden:**
+  `xrmdir` (`lib/io.cyr`) degrades to `-1` on PE because no `RemoveDirectoryW` reroute is wired and
+  wiring one is a **compiler** change (`src/backend/pe/emit.cyr`), which this bite does not make.
+  Gated by `tests/gates/toolchain/cli_temp_dir_no_leak.sh` — whose axis 1 proves the premise by
+  occupying all 16 candidate names for the CLI's own pid and requiring the documented fail-closed
+  refusal, and whose axis 4 pins the rmdir-not-sweep contract with a file planted in the live
+  directory. 2 mutations, each RED.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**

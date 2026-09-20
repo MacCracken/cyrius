@@ -583,7 +583,7 @@ fn _dep_find_stdlib_dir(): i64 {
         sys_write(STDERR_FD, "\n  run: cyrius install ", 23);
         sys_write(STDERR_FD, pin, strlen(pin));
         sys_write(STDERR_FD, "\n", 1);
-        sys_exit(1);
+        _cbt_exit(1);   # sweeps the private temp dir — CHANGELOG [6.6.6]
     }
 
     # (c) legacy fallback — `~/.cyrius/lib` global symlink

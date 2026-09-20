@@ -662,6 +662,43 @@ fn _cbt_tmpexe(name): i64 {
     #endif
 }
 
+# v6.6.6 — remove the private temp directory on the way out.
+#
+# THE DEFECT. `_cbt_tmpdir()` creates `<base>/cyrius-<pid>` on first use (v6.4.81,
+# CVE-35/CVE-36) and NOTHING has ever removed it, so every `cyrius run` / `lint` /
+# `test` / `deps` / `lsp` left one EMPTY directory behind for good. Measured on the
+# maintainer's box at 6.6.5: 5,005 `/tmp/cyrius-<pid>` directories, 398 of the 400
+# newest of them empty.
+#
+# ⚠ rmdir ONLY — deliberately NOT a recursive sweep. rmdir fails on a non-empty
+# directory, and that is the correct outcome: `cyrius lsp` with no CYRIUS_HOME prints
+# this path and tells the user to copy the binary out of it, and a SIGKILLed
+# `cyrius test` leaves its `test_bin` for a post-mortem. Deleting either would turn a
+# cleanup into data loss. The 2 non-empty leftovers in that sample are exactly those.
+#
+# ⚠ WINDOWS STILL LEAKS. `xrmdir` (lib/io.cyr) degrades to -1 on PE: no
+# RemoveDirectoryW reroute is wired and wiring one is a COMPILER change (src/backend/
+# pe/emit.cyr), which this bite may not make. Said plainly rather than hidden — and it
+# is why `_cbt_tmpdir` puts a FILETIME nonce in the Windows name (see :582).
+# CHANGELOG [6.6.6].
+fn _cbt_tmpdir_cleanup(): i64 {
+    if (_cbt_tmpdir_p == 0) { return 0; }
+    var d = _cbt_tmpdir_p;
+    _cbt_tmpdir_p = 0;
+    return xrmdir(d);
+}
+
+# Exit the CLI, sweeping the private temp dir first. Every PARENT-side `sys_exit` in
+# cbt/ that can run after `_cbt_tmpdir()` has been called goes through here; main's
+# own return value is swept at the bottom of cbt/cyrius.cyr. (The `sys_exit`s inside
+# forked children never reach this — they are a different process — and the two in
+# `_cbt_tmpdir` itself run before any directory exists.) CHANGELOG [6.6.6].
+fn _cbt_exit(code): i64 {
+    _cbt_tmpdir_cleanup();
+    sys_exit(code);
+    return code;
+}
+
 # v6.5.19 — when non-zero, compile() sends the COMPILER's stderr to this path instead
 # of inheriting ours. Opt-in and reset by the caller; every existing call site leaves
 # it 0 and is unaffected. `cyrius lint`'s syntax pre-pass is the only user: it has to

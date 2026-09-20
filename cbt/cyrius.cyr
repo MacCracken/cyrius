@@ -185,7 +185,7 @@ fn _try_redirect_to_pinned(): i64 {
         if (streq(_verb, "update") == 1) { _writes = 1; }
         if (_writes == 1 && is_symlink(str_from("lib")) == 1) {
             _dep_refuse_symlinked_dest("lib");
-            sys_exit(1);
+            _cbt_exit(1);   # sweeps the private temp dir — CHANGELOG [6.6.6]
         }
     }
 
@@ -267,7 +267,7 @@ fn _try_redirect_to_pinned(): i64 {
         sys_write(STDERR_FD, "\n  run: cyrius install ", 23);
         sys_write(STDERR_FD, pin, strlen(pin));
         sys_write(STDERR_FD, "\n", 1);
-        sys_exit(1);
+        _cbt_exit(1);   # sweeps the private temp dir — CHANGELOG [6.6.6]
     }
 
     # Build new argv: [pinned_bin, original argv[1..]].
@@ -296,7 +296,7 @@ fn _try_redirect_to_pinned(): i64 {
     sys_execve(pinned_bin, nargv, nenvp);
     # execve only returns on failure.
     sys_write(STDERR_FD, "error: cyrius execve to pinned version failed\n", 46);
-    sys_exit(1);
+    _cbt_exit(1);   # sweeps the private temp dir — CHANGELOG [6.6.6]
     return 0;
 }
 
@@ -1095,6 +1095,13 @@ fn main(): i64 {
 }
 
 var exit_code = main();
+# v6.6.6 — the CLI's ONE normal exit path, and where the private temp directory
+# `_cbt_tmpdir()` created is removed. Every `main()` return flows through here; the
+# handful of parent-side `sys_exit`s that can run after a temp dir exists go through
+# `_cbt_exit` instead. Before this, every run that touched a temp left an empty
+# `/tmp/cyrius-<pid>` behind for ever (5,005 of them measured at 6.6.5).
+# CHANGELOG [6.6.6].
+_cbt_tmpdir_cleanup();
 # v6.0.9 — use SYS_EXIT constant (60 on x86_64, 93 on aarch64) so
 # the wrapper exits correctly on both arches. Raw syscall(60, ...)
 # called clock_gettime on aarch64 instead of exit, dropping the
