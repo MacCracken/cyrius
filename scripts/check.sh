@@ -253,6 +253,14 @@ sh "$ROOT/tests/gates/frontend/toplevel_decl_block_closure.sh"
 # variable, the note says where to declare it, and no binary is emitted.
 sh "$ROOT/tests/gates/frontend/toplevel_block_var_scope.sh"
 
+# 6.6.6 bite 19f: a function-like `#define` must not change the source every other pass
+# produced. PP_IFDEF_PASS does not copy its filtered output back to input_buf, and
+# PP_MACRO_PASS reads input_buf and writes preprocess_out — so merely HAVING one function-like
+# macro in scope put stripped `#ifdef` arms back into the build (an aarch64 `x0` in an x86
+# compile) and truncated the source at the 1 MB helper window. An object-like `#define` never
+# ran the pass, which is why it stood. Row C is a byte-for-byte binary differential.
+sh "$ROOT/tests/gates/frontend/macro_pass_preserves_ifdef_filtering.sh"
+
 # 6.6.5: the `return f(args);` tail path must divert to PARSE_FNCALL for exactly the
 # arguments PARSE_FNCALL treats specially — no more. The `: Str` literal divert added here
 # was armed by a literal at ANY paren depth, so `return deep(n-1, str_from("x"))` lost its

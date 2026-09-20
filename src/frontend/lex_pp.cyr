@@ -2587,6 +2587,36 @@ fn PP_MACRO_CALLABLE(S, ip, bl, lst): i64 {
     return ok;
 }
 
+# ⛔ 6.6.6 bite 19f — WHY PP_MACRO_PASS HAS TO RE-READ ITS INPUT.
+#
+# The preprocessor's buffers are TWO: the source buffer at `S+_SRCB` (input_buf, 24 MB) and
+# preprocess_out at `S+0x459D000` (24 MB). The documented contract for every pass is "write to
+# preprocess_out and copy BACK here" (see the heap map in src/main.cyr). PP_IFDEF_PASS does NOT
+# copy back — its header says so — and it leaves `S+_SRCB` holding its own INPUT, truncated to
+# the 1 MB helper window. PP_MACRO_PASS then reads `S+_SRCB` and writes preprocess_out.
+#
+# So merely HAVING one function-like `#define` anywhere in the source (`_pp_macro_count > 0` is
+# the pass's only entry condition) REPLACED the ifdef-filtered source with the unfiltered one:
+#
+#     #define M(a) (a)          <- never even used
+#     include "lib/alloc.cyr"
+#
+# put lib/atomic.cyr's `#ifdef CYRIUS_ARCH_AARCH64` arm back into an x86 build
+# (`error: lib/atomic.cyr:94:20: unexpected identifier 'x0'`), and with lib/assert.cyr it lost a
+# brace and reported `expected '}', got end of file` at a line number from the wrong buffer.
+# An OBJECT-like `#define` was fine — it never sets `_pp_macro_count` — which is why this stood
+# for as long as it did: the feature looked to work in every small test that had no `#ifdef`
+# below it, and the failure was content-dependent on the includes.
+#
+# Sync the source buffer from the previous pass's output before reading it. Gated by the
+# caller's `_pp_macro_count == 0` early return, so a program with no function-like macro pays
+# nothing. CHANGELOG [6.6.6]
+fn PP_SYNC_SRCB(S, bl): i64 {
+    var i = 0;
+    while (i < bl) { store8(S + _SRCB + i, load8(S + 0x459D000 + i)); i = i + 1; }
+    return 0;
+}
+
 # Find macro by name hash at input position, return index or -1
 fn PP_FIND_MACRO(S, ip): i64 {
     var h = PP_HASH_ID(S + _SRCB, ip);
@@ -3499,6 +3529,7 @@ fn PP_PASS(S): i64 {
 fn PP_MACRO_PASS(S): i64 {
     if (_pp_macro_count == 0) { return 0; }
     var bl = GBL(S);
+    PP_SYNC_SRCB(S, bl);   # 6.6.6: this pass's input is the PREVIOUS pass's output (see there)
     # Copy from 0x459D000 to S+0, save/restore state if large
     var out = S + 0x459D000;
     var op = 0;

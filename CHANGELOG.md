@@ -8,6 +8,31 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **One function-like `#define` anywhere in a file put stripped `#ifdef` arms back into the
+  build, and truncated the source at 1 MB.** (bite 19f.) The filed repro:
+  `printf '#define M(a) (a)\ninclude "lib/assert.cyr"\nvar x = 1;\nsyscall(60, x);\n' | cycc`
+  -> `error:4261:6: expected '}', got end of file`; with `lib/alloc.cyr` instead ->
+  `error:lib/atomic.cyr:94:20: unexpected identifier 'x0'` — `x0` is an **aarch64** register,
+  inside `#ifdef CYRIUS_ARCH_AARCH64`, in an **x86** build. The macro need never be used. An
+  OBJECT-like `#define` was fine, which is why this stood: the feature worked in every small
+  test that had no `#ifdef` below it. **Root cause is a buffer contract, not macro logic.** The
+  preprocessor has two buffers — input_buf at `S+_SRCB` and preprocess_out at `S+0x459D000` —
+  and the heap map's rule is *"passes write to preprocess_out and copy BACK here"*.
+  `PP_IFDEF_PASS` does not copy back; it leaves `S+_SRCB` holding its own INPUT, truncated to
+  the 1 MB helper window. `PP_MACRO_PASS` — whose only entry condition is
+  `_pp_macro_count > 0` — then reads `S+_SRCB` and writes preprocess_out, so running it at all
+  REPLACED the filtered source with the unfiltered one and threw away everything past 1 MB
+  (measured: a 1.4 MB include + one function-like `#define` -> `unexpected character (0x00)`).
+  **Fix:** `PP_SYNC_SRCB` (`src/frontend/lex_pp.cyr`), called once behind the existing
+  `_pp_macro_count == 0` early return, so a program with no function-like macro pays nothing.
+  Gate: `tests/gates/frontend/macro_pass_preserves_ifdef_filtering.sh` (7 rows, two mutants;
+  row C is a BYTE-FOR-BYTE binary differential — an unused macro may not change one byte of
+  output — and row F is the >1 MB half). **This also unblocked the `.tcyr` bite 15b could not
+  ship**: a `.tcyr` must `include "lib/assert.cyr"`, and beside a function-like `#define` that
+  did not build, so 15b's identifier-boundary and string-literal fixes had no cross-host test.
+  `tests/tcyr/crossos/macro_expansion_with_include.tcyr` is it (7 assertions). cycc
+  **1,315,280 -> 1,315,280 B** (no change).
+
 - **A `var` declared inside a TOP-LEVEL BLOCK leaked out of the block — and an inner
   declaration of an outer name OVERWROTE the outer global.** (bite 19a; the maintainer's
   language decision of 2026-09-19.) `var c = 1; var x = 0; x = 1; if (c == 1) { var t = 5; }

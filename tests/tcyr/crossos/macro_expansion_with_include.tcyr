@@ -1,0 +1,69 @@
+# macro_expansion_with_include.tcyr — a function-like `#define` beside an `include`
+# (6.6.6 bites 15b + 19f).
+#
+# WHY THIS TEST EXISTS AND WHY IT IS HERE. Bite 15b fixed two silent macro-expansion defects —
+# a macro name matched in the MIDDLE of an identifier, and a macro invocation expanded inside a
+# STRING LITERAL — but it could ship NO `.tcyr` for them, because a `.tcyr` must
+# `include "lib/assert.cyr"` and at 6.6.5 a function-like `#define` beside ANY include broke
+# the build outright. Bite 19f fixed that (PP_SYNC_SRCB: PP_MACRO_PASS read the PREVIOUS pass's
+# INPUT instead of its output, so having one function-like macro in scope undid `#ifdef`
+# filtering and truncated the source at 1 MB), which is what makes this test writable.
+#
+# It runs on the cross-host set because the preprocessor is shared but the `#ifdef` arms it
+# filters are PER TARGET: on aarch64 / Mach-O / PE the arms that survive are different ones,
+# and `lib/assert.cyr`'s own transitive includes carry them.
+#
+# ⚠ NO `fn` DEFINITIONS IN THIS FILE, ON PURPOSE. The identifier-boundary rows are written with
+# globals rather than functions because a `fn`'s braces can REBALANCE a mangled preprocessor
+# stream: measured against the 6.6.5 compiler, the same rows written as three `fn`s compiled
+# CLEAN and produced a binary that ran nothing — silent, exit 0, indistinguishable from success
+# to a runner that reads only the exit code.
+#
+# ⚠ WHAT THE 6.6.5 COMPILER DOES WITH THIS FILE, MEASURED, because "RED on the old compiler"
+# deserves a number rather than a claim. With its prose comments stripped, 6.6.5 exits 1 with
+# `error: lib/assert.cyr:120:36: undefined variable 'na'` and emits NO binary. With them
+# present it emits a binary that runs NOTHING: silent, exit 0. 6.6.5 ALSO mis-expands inside a
+# `#` comment (the defect bite 15d fixed), so the two mangling paths interact and the outcome
+# is content-length dependent — removing any ONE comment line does not flip it. Neither
+# outcome is a correct run, but only the first is RED to a runner that reads the exit code,
+# which is why the mutation-proven detector for 19f is the shell gate
+# tests/gates/frontend/macro_pass_preserves_ifdef_filtering.sh and this file is the cross-host
+# behavioural pin. CHANGELOG [6.6.6]
+#define MEI_ID(a) (a)
+#define MEI_WRAP(a) ((a) * 2)
+include "lib/assert.cyr"
+
+# Globals whose NAMES contain the macro name. Pre-15b `MEI_ID` matched in the MIDDLE of an
+# identifier, so `myMEI_ID` became `my((a))` — a program with both `myMEI_ID` and `my` bound
+# the wrong one, and the only sign was a duplicate warning naming a symbol nobody wrote twice.
+var myMEI_ID = 101;
+var my = 2;
+# ...and one whose name STARTS with the macro name: the right-hand boundary. PP_HASH_ID hashes
+# to the `(`, so this was never at risk — pinned anyway, so a future "fix" cannot break it.
+var MEI_IDX = 1001;
+
+var r1 = assert_eq(MEI_ID(5), 5, "a function-like macro expands beside an include");
+var r2 = assert_eq(MEI_WRAP(21), 42, "a macro body with its own parens expands correctly");
+
+var r3 = assert_eq(myMEI_ID, 101, "a macro name inside an identifier is NOT an invocation");
+var r4 = assert_eq(my, 2, "...and the shorter global of the same tail is still itself");
+var r5 = assert_eq(MEI_IDX, 1001, "a macro name that is a PREFIX of an identifier is not an invocation");
+
+# A string literal holding what looks like an invocation. Pre-15b the string's BYTES were
+# rewritten in place, so its length changed: the literal below measured 11 bytes, not 17.
+# ⚠ The invocation is deliberately NOT spelled out in this comment: bite 15d found that a
+# macro invocation opened in a COMMENT expanded too, so writing it here would exercise a
+# different defect and mask this row on an older compiler.
+var mei_s = "MEI_ID(5) literal";
+var r6 = assert_eq(strlen(mei_s), 17, "a macro invocation inside a string literal is left alone");
+
+# The include itself still works. `assert_summary` below is proof, but pin one of its
+# transitive symbols explicitly so a stripped include cannot pass by doing nothing.
+var r7 = assert_eq(strlen("abcd"), 4, "the included stdlib (strlen, via assert.cyr) is intact");
+
+# ⚠ THE EXIT PATH IS PART OF THE TEST. The summary lands in a global that is SEEDED non-zero
+# and only overwritten by a statement, so a build that emits a binary but drops the top-level
+# program exits 92 rather than a silent, success-shaped 0.
+var mei_rc = 92;
+mei_rc = assert_summary();
+syscall(60, mei_rc);
