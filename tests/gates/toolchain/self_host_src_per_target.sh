@@ -277,6 +277,13 @@ function flush() {
     n = split(body, L, "\n")
     for (i = 1; i <= n; i++) {
         l = L[i]
+        # v6.6.6: a `_gate("…")` REGISTRATION is prose, not code. Its description names the
+        # verbs and helpers this gate covers — `_self_host_src()` among them — so matching it
+        # made this axis flag programs/checks/main.cyr's _run_regression_gates for a call it
+        # never makes. Blank the description ONLY: blanking every string also hides the
+        # "/bin/sh" and "src/main*.cyr" literals the axes below genuinely read (measured —
+        # it turned cmd_self into a false FAIL). Same shape as the exec census in this release.
+        if (l ~ /_gate\(/) gsub(/"[^"]*"/, "\"\"", l)
         if (l ~ /_self_host_src\(\)/) asks = 1
         if (l ~ /_files_identical\(|_win_files_equal\(|_self_host_same\(|cmp -s/) verdict = 1
         if (l ~ /CC_PATH|build\/cycc/) ccpin = 1

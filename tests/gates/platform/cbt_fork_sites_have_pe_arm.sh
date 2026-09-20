@@ -406,9 +406,21 @@ else
     check "  …naming the PE fork it is built from" 1 "$(grep -c 'src/main_win.cyr' "$T/err" || true)"
     check "  …and names the reason (no --emit-js in the PE fork)" 1 "$(grep -c 'no --emit-js' "$T/err" || true)"
 
+    # ⭐ capacity WORKS on Windows as of 6.6.6, and this row was rewritten when it started
+    # to. It asserted the refusal — "capacity FAILS rather than reporting numbers it does
+    # not have", naming CYRIUS_STATS — which was the honest state when the PE spawn was
+    # armed but `_read_env` still read /proc/self/environ and returned 0 on PE. The env
+    # lookup was wired later in the same release (0xF015 GetEnvironmentVariableA), and the
+    # two halves compose: the verb now reports real numbers. Asserting the old refusal
+    # would pin a defect in place, so the row asserts the CAPABILITY instead, and reads a
+    # table name rather than exit 0 alone — a binary that printed nothing would also exit 0.
     wrun capacity p.cyr
-    check "wine: capacity FAILS rather than reporting numbers it does not have" 1 "$RC"
-    check "  …naming CYRIUS_STATS as the reason" 1 "$(grep -c 'cannot see CYRIUS_STATS' "$T/err" || true)"
+    check "⭐ wine: capacity REPORTS numbers (it refused, naming CYRIUS_STATS, until the PE env lookup landed)" 0 "$RC"
+    # The stats block is the COMPILER's, and cycc writes it to stderr (CYRIUS_STATS is a
+    # diagnostic, not output) — capacity relays it there too. Reading $T/out would pass over
+    # an empty run, which is the failure this row exists to tell apart from success.
+    check "  …a real stats table, not an empty success" 1 "$(grep -c 'fn_table:' "$T/err" || true)"
+    check "  …with the cap alongside the count" 1 "$(grep -cE 'fn_table: *[0-9]+ / [0-9]' "$T/err" || true)"
 
     # ⭐ THE NEGATIVE CONTROL. The 6.6.5 binary exits 0 here, printing only its header —
     # on wine and on real cass both.

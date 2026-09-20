@@ -75,8 +75,12 @@ fn fsize(p): i64 {
     return n;
 }
 
+# v6.6.6 INTEGRATION: every fixture goes through `test_scratch` (lib/assert.cyr), which
+# appends the pid. These were fixed cwd-relative names, and the check driver runs a .tcyr
+# with cwd = the REPO ROOT, so two runs raced and a killed run left them in the tree —
+# the shape tests/gates/toolchain/gates_never_write_tree.sh axis 8 forbids. CHANGELOG [6.6.6]
 test_group("O_TRUNC truncates (the 6.6.6 Windows data-corruption row)");
-var pt = "cyr_open_trunc.txt";
+var pt = test_scratch("cyr_open_trunc.txt");
 seed_file(pt);
 var ft = file_open(pt, O_WRONLY | O_CREAT | O_TRUNC, 420);
 assert_neq(ft, 0 - 1, "O_WRONLY|O_CREAT|O_TRUNC opens");
@@ -86,7 +90,7 @@ assert_eq(fsize(pt), 3, "file is 3 bytes after a truncating rewrite");
 assert_eq(streq(slurp(pt), "XYZ"), 1, "content is exactly the new bytes, no old tail");
 
 test_group("O_CREAT without O_TRUNC does NOT truncate");
-var pn = "cyr_open_notrunc.txt";
+var pn = test_scratch("cyr_open_notrunc.txt");
 seed_file(pn);
 var fn2 = file_open(pn, O_WRONLY | O_CREAT, 420);
 assert_neq(fn2, 0 - 1, "O_WRONLY|O_CREAT opens");
@@ -96,7 +100,7 @@ assert_eq(fsize(pn), 17, "file keeps its length (OPEN_ALWAYS, not CREATE_ALWAYS)
 assert_eq(streq(slurp(pn), "XYZ3456789abcdef\n"), 1, "head overwritten, tail intact");
 
 test_group("O_APPEND appends");
-var pa = "cyr_open_append.txt";
+var pa = test_scratch("cyr_open_append.txt");
 seed_file(pa);
 var fa = file_open(pa, O_WRONLY | O_CREAT | O_APPEND, 420);
 assert_neq(fa, 0 - 1, "O_WRONLY|O_CREAT|O_APPEND opens");
@@ -106,7 +110,7 @@ assert_eq(fsize(pa), 20, "file grew by the 3 appended bytes");
 assert_eq(streq(slurp(pa), "0123456789abcdef\nXYZ"), 1, "the seed is intact and XYZ is at the end");
 
 test_group("⭐ O_APPEND is per-write: an explicit seek to 0 does not move the write");
-var ps = "cyr_open_append_seek.txt";
+var ps = test_scratch("cyr_open_append_seek.txt");
 seed_file(ps);
 var fs2 = file_open(ps, O_WRONLY | O_CREAT | O_APPEND, 420);
 assert_neq(fs2, 0 - 1, "append handle opens");
@@ -125,7 +129,7 @@ test_group("⭐ O_TRUNC truncates even when the caller did not ask for write acc
 # decode — which chose the disposition without consulting the access word — passed every
 # local axis and returned -1 on Windows where Linux truncates. `_pe_open_flags` now forces
 # GENERIC_WRITE in when it selects TRUNCATE_EXISTING.
-var pro = "cyr_open_rdonly_trunc.txt";
+var pro = test_scratch("cyr_open_rdonly_trunc.txt");
 seed_file(pro);
 var fro = file_open(pro, O_RDONLY | O_TRUNC, 420);
 assert_neq(fro, 0 - 1, "O_RDONLY|O_TRUNC opens");
@@ -135,7 +139,7 @@ assert_eq(fsize(pro), 0, "and the file is 0 bytes (the truncation happened)");
 test_group("O_TRUNC|O_APPEND without O_CREAT — the same TRUNCATE_EXISTING access rule");
 # The append access bit (FILE_APPEND_DATA) is not GENERIC_WRITE either, so this combination
 # hit the identical -1 on cass before the access word was forced.
-var pta = "cyr_open_trunc_append.txt";
+var pta = test_scratch("cyr_open_trunc_append.txt");
 seed_file(pta);
 var fta = file_open(pta, O_WRONLY | O_TRUNC | O_APPEND, 420);
 assert_neq(fta, 0 - 1, "O_WRONLY|O_TRUNC|O_APPEND opens");
@@ -145,20 +149,20 @@ assert_eq(fsize(pta), 3, "truncated first, then the write landed at the new EOF"
 assert_eq(streq(slurp(pta), "XYZ"), 1, "no old tail survived");
 
 test_group("O_TRUNC without O_CREAT refuses a missing file (TRUNCATE_EXISTING)");
-var pm = "cyr_open_missing.txt";
+var pm = test_scratch("cyr_open_missing.txt");
 xunlink(pm);
 var fm = file_open(pm, O_WRONLY | O_TRUNC, 420);
 assert_eq(fm < 0, 1, "opening a nonexistent path without O_CREAT fails");
 
 test_group("O_CREAT|O_EXCL still refuses an existing file (v6.4.58 lock)");
-var pe = "cyr_open_excl.txt";
+var pe = test_scratch("cyr_open_excl.txt");
 seed_file(pe);
 var fe = file_open(pe, O_WRONLY | O_CREAT | O_EXCL, 420);
 assert_eq(fe < 0, 1, "O_EXCL over an existing file fails");
 assert_eq(fsize(pe), 17, "and left the file alone");
 
 test_group("access mode is decoded, not assumed (anti-vacuous for dwDesiredAccess)");
-var pr = "cyr_open_access.txt";
+var pr = test_scratch("cyr_open_access.txt");
 seed_file(pr);
 var fr = file_open(pr, O_RDONLY, 0);
 assert_neq(fr, 0 - 1, "O_RDONLY opens");
@@ -170,7 +174,7 @@ assert_eq(wr <= 0, 1, "a read-only handle REFUSES a write");
 file_close(fr);
 assert_eq(fsize(pr), 17, "the refused write changed nothing");
 
-var pw = "cyr_open_wonly.txt";
+var pw = test_scratch("cyr_open_wonly.txt");
 seed_file(pw);
 var fw = file_open(pw, O_WRONLY, 0);
 assert_neq(fw, 0 - 1, "O_WRONLY opens");
@@ -179,7 +183,7 @@ var rn2 = file_read(fw, rb2, 4);
 assert_eq(rn2 <= 0, 1, "a write-only handle REFUSES a read");
 file_close(fw);
 
-var prw = "cyr_open_rdwr.txt";
+var prw = test_scratch("cyr_open_rdwr.txt");
 seed_file(prw);
 var frw = file_open(prw, O_RDWR, 0);
 assert_neq(frw, 0 - 1, "O_RDWR opens");

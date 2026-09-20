@@ -2258,20 +2258,15 @@ fn cmd_capacity(source, check_mode, json_mode): i64 {
     sys_unlink(tmperr);
     if (errlen <= 0) {
         _err("no stats output from compiler");
-        # v6.6.6 — NAME the Windows reason. The spawn above is real now, so an empty
-        # capture here means the compiler ran and printed nothing: `CYRIUS_STATS` is read
-        # by `_read_env` (src/backend/common/runtime.cyr), which reads /proc/self/environ
-        # and returns 0 on PE, so the stats block is never emitted at all. That is a
-        # COMPILER-side gap (a GetEnvironmentVariableW lookup in the PE arm), not a spawn
-        # one; say so instead of leaving a bare "no stats". CHANGELOG [6.6.6].
-        #ifdef CYRIUS_TARGET_WIN
-        var cw1 = "  cycc.exe cannot see CYRIUS_STATS: _read_env reads /proc/self/environ,\n";
-        var cw2 = "  which does not exist on Windows, so no stats block is printed. Run\n";
-        var cw3 = "  `cyrius capacity` on a POSIX host until the PE env lookup is wired.\n";
-        sys_write(STDERR_FD, cw1, strlen(cw1));
-        sys_write(STDERR_FD, cw2, strlen(cw2));
-        sys_write(STDERR_FD, cw3, strlen(cw3));
-        #endif
+        # v6.6.6 — the Windows reason MOVED, so this says what is actually true now.
+        # It first read "cycc.exe cannot see CYRIUS_STATS: _read_env reads
+        # /proc/self/environ", which was right when it was written and stopped being
+        # right in the same release: the PE arm of `_read_env` was wired (0xF015
+        # GetEnvironmentVariableA), and with the PE spawn already armed, `cyrius
+        # capacity` REPORTS REAL NUMBERS on Windows — measured under wine. An empty
+        # capture here is therefore an ordinary "the compiler printed nothing", the
+        # same on every target, and a Windows-specific excuse for it would now be a
+        # lie. CHANGELOG [6.6.6].
         return 1;
     }
     store8(errbuf + errlen, 0);
