@@ -2846,6 +2846,8 @@ fn EREMOVEDIRW_PE(S): i64 {
     EB(S, 0x5B);                                        # pop rbx
     EB(S, 0x48); EB(S, 0xFF); EB(S, 0xC8);              # dec rax
     EB(S, 0x48); EB(S, 0xC1); EB(S, 0xF8); EB(S, 0x3F); # sar rax, 63 (BOOL->0/-1)
+    return 0;
+}
 
 # 6.6.6 — decode the Linux open() flag word into CreateFileW's
 # (dwDesiredAccess, dwCreationDisposition) pair. Split out of EOPEN_PE so that
