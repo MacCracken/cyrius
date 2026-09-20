@@ -1856,6 +1856,37 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and fails any whose size is a compile-time constant, so the next one cannot be written that
   way either. 1 mutation, RED.
 
+- **`cyrius self` self-hosted from the WRONG per-target fork on aarch64 and on both macOS
+  arches, so its verdict was about a compiler nobody ships.** (bite 23a; found by bite 9's
+  review, still reproducing at `5a583c1e`.) Bite 9 fixed this shape for Windows, where handing a
+  PE `cycc.exe` the Linux fork page-faults loudly. On POSIX it does something worse: `src/main.cyr`
+  is valid cyrius on every host, so it **compiles**, and what comes out is a host-native compiler
+  carrying the x86 backend. Measured on real hardware at `5a583c1e`: on **pi** step 1 produced an
+  aarch64 ELF that *emits x86*, step 2 therefore wrote an x86-64 ELF, and `cmp` compared two
+  architectures — `FAIL: cycc!=cycc` for a compiler that self-hosts byte-identical from its own
+  fork; on **ecb** step 1 warned `syscall 12 not routed by the Mach-O ARM translation` (brk, a
+  Linux-ism) and step 2 was `Killed: 9`, AMFI refusing an unsigned arm64 Mach-O — same FAIL.
+  **Fix:** `_self_host_src()` (`cbt/build.cyr`) now answers for all five hosts —
+  `src/main.cyr` / `main_aarch64_native.cyr` / `main_aarch64_macho.cyr` / `main_x86_macho.cyr` /
+  `main_win.cyr` — the mapping the platform tarball scripts and `cyrius pulsar` already use, and
+  `cmd_self`'s `/bin/sh` script asks it instead of naming `src/main.cyr` twice. `cmd_soak` already
+  asked, so it is fixed with it. A missing fork is now refused BY NAME rather than silently
+  substituted. ⚠ **Two further halves, without which the right fork still could not pass on macOS:**
+  the script `chmod +x`'d step 1's output but never signed it (AMFI kills an unsigned arm64
+  Mach-O), and signing it in place would have broken the comparison — `codesign` **rewrites** the
+  file it signs, measured on ecb as a 2,396-byte difference for a perfect fixpoint, the same
+  artifact behind the v6.0.44 "x86-macOS doesn't self-host" retraction. The script now signs a
+  **copy** and compares the pristine pair, the shape the ecb cross-OS leg already uses (`cp r1 r1r`),
+  with one script for every POSIX host so the arms cannot drift. It also removes its temps, which
+  the pre-6.6.6 script never did (two ~1.2 MB files in `/tmp` per run). **Verified on REAL ecb
+  (macOS arm64), ach (Intel Mac) and pi (aarch64 Linux):** `cyrius self` PASSes on each, leaves no
+  temp behind, and with that host's fork moved aside reports `self-host: the compiler source for
+  this target is missing: <that host's fork>` — never a fallback to `src/main.cyr`. New gate
+  `tests/gates/toolchain/self_host_src_per_target.sh` **evaluates** the real mapping (extracted fns,
+  compiled once per target macro set, run, string read back) rather than grepping it, and derives
+  the expected fork from the shipping recipes; 6 mutants, all RED, ledger in the gate header.
+  cbt-only — `build/cycc` is unchanged.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**

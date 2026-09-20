@@ -1064,6 +1064,7 @@ cyrius lint|fmt|doc a.cyr b.cyr          # 1..N files, every one processed (v6.6
 cyrius tests [dir]                       # recursively run every .tcyr under dir (default tests/)
 cyrius bench [path|dir]                  # discover + run *.bcyr (recursive; v6.5.7)
 cyrius fuzz [path|dir]                   # discover + run *.fcyr harnesses (recursive; v6.5.7)
+cyrius self                              # self-host check: compile THIS HOST's compiler fork twice, cmp (v6.6.6)
 cyrius soak [N]                          # N-iter built-in self-host + tests/scyr/*.scyr (v5.7.38)
 cyrius smoke                             # tests/smcyr/*.smcyr fail-fast (v5.7.38)
 cyrius distlib [profile]                 # bundle src/ modules into dist/{name}.cyr
@@ -1073,6 +1074,16 @@ cyrius coverage [--full] [--min <pct>]   # reference coverage of src/ (--min 0..
 cyrius capacity [--check] <src>          # report compiler capacity / CI gate
 cyrius lsp                               # build + install cyrius-lsp into ~/.cyrius/bin/
 ```
+
+> ⚠ **`self` and `soak` compile the fork that belongs to the host they run on** — not
+> `src/main.cyr`. That file is the x86-64 **Linux** fork; it is valid cyrius everywhere, so on
+> aarch64 or macOS it compiles into a host-native binary carrying the x86 backend, and the
+> self-host verdict is then about a compiler nobody ships (measured at 6.6.6: `FAIL: cycc!=cycc`
+> on pi for a compiler that self-hosts, `Killed: 9` on ecb). `_self_host_src()` (`cbt/build.cyr`)
+> owns the host → fork mapping — `main.cyr` / `main_aarch64_native.cyr` /
+> `main_aarch64_macho.cyr` / `main_x86_macho.cyr` / `main_win.cyr` — and a missing fork is
+> refused by name rather than substituted. Pinned by
+> `tests/gates/toolchain/self_host_src_per_target.sh`. See CHANGELOG [6.6.6].
 
 **The argument rule (v6.6.5), for every verb.** Flags may appear in any position
 (`cyrius lint f.cyr --strict` == `cyrius lint --strict f.cyr`); a `-`-prefixed token the verb

@@ -774,19 +774,49 @@ fn cmd_self(): i64 {
     #ifdef CYRIUS_TARGET_WIN
     return _win_cmd_self();
     #endif
+    # v6.6.6 — THE PER-TARGET FORK, on POSIX too. This script named `src/main.cyr`
+    # unconditionally, and on aarch64 / either macOS that fork compiles cleanly into a
+    # host-native compiler carrying the x86 backend — so the verb printed a verdict about
+    # a compiler nobody ships (measured: "FAIL: cycc!=cycc" on pi for a compiler that
+    # self-hosts, and `Killed: 9` on ecb). `_self_host_src()` (cbt/build.cyr) owns the
+    # mapping; `cmd_soak` asks the same question there. CHANGELOG [6.6.6].
+    var self_src = _self_host_src();
+    if (file_exists(self_src) == 0) {
+        _err_ctx("self-host: the compiler source for this target is missing", self_src);
+        return 1;
+    }
     var pid = sys_fork();
     if (pid == 0) {
         var argv[40];   # N BYTES per CLAUDE.md buffer contract: 4 ptrs need 32 B
         store64(&argv, "/bin/sh");
         store64(&argv + 8, "-c");
-        var script = alloc(512);
         var sb = str_builder_new();
-        str_builder_add_cstr(sb, "cycc=/tmp/cyr_cc5_$$;cc4=/tmp/cyr_cc4_$$;");
-        str_builder_add_cstr(sb, "cat src/main.cyr|");
+        str_builder_add_cstr(sb, "F=");
+        str_builder_add_cstr(sb, self_src);
+        str_builder_add_cstr(sb, ";cycc=/tmp/cyr_cc5_$$;ccr=/tmp/cyr_ccr_$$;cc4=/tmp/cyr_cc4_$$;rc=1;");
+        str_builder_add_cstr(sb, "cat $F|");
         str_builder_add_cstr(sb, _cc);
-        str_builder_add_cstr(sb, ">$cycc&&chmod +x $cycc&&cat src/main.cyr|$cycc>$cc4&&");
-        str_builder_add_cstr(sb, "cmp -s $cycc $cc4&&echo '  PASS: cycc==cycc byte-identical'||");
-        str_builder_add_cstr(sb, "(echo '  FAIL: cycc!=cycc';exit 1)");
+        # ⚠ THE COMPARISON MUST SEE TWO UNSIGNED OUTPUTS. Step 2 has to RUN step 1's
+        # output, and on Apple Silicon AMFI SIGKILLs an unsigned arm64 Mach-O — but
+        # `codesign` REWRITES the file it signs (LC_CODE_SIGNATURE), so signing $cycc in
+        # place and comparing it against $cc4 reports a 2,396-byte difference for a
+        # perfect fixpoint (measured on ecb; the same artifact behind the v6.0.44
+        # "x86-macOS doesn't self-host" retraction). Sign a COPY and compare the
+        # pristine pair — the shape the ecb cross-OS leg already uses (`cp r1 r1r`).
+        # One script for every POSIX host so the two arms cannot drift; on Linux the
+        # copy is the only cost and the compare is unchanged.
+        str_builder_add_cstr(sb, ">$cycc&&cp $cycc $ccr&&chmod +x $ccr&&");
+        #ifdef CYRIUS_TARGET_MACOS
+        # `||true`: on Intel macOS ad-hoc signing is refused and the unsigned binary runs
+        # anyway, so a codesign failure must not fail the self-host.
+        str_builder_add_cstr(sb, "(codesign -s - -f $ccr 2>/dev/null||true)&&");
+        #endif
+        str_builder_add_cstr(sb, "cat $F|$ccr>$cc4&&cmp -s $cycc $cc4&&rc=0;");
+        str_builder_add_cstr(sb, "if [ $rc -eq 0 ];then echo '  PASS: cycc==cycc byte-identical';");
+        str_builder_add_cstr(sb, "else echo '  FAIL: cycc!=cycc';fi;");
+        # The pre-6.6.6 script left both ~1.2 MB temps in /tmp on every run; this one
+        # adds a third, so it cleans up all of them.
+        str_builder_add_cstr(sb, "rm -f $cycc $ccr $cc4;exit $rc");
         var cmd = str_builder_build(sb);
         store64(&argv + 16, str_data(cmd));
         store64(&argv + 24, 0);

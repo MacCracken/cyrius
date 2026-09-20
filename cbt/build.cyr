@@ -1284,6 +1284,18 @@ fn run_binary_args(path, args): i64 {
     return run_binary_timed(path, 0, args);
 }
 
+# The macOS half, split out because the driver's preprocessor has no nested `#ifdef`
+# idiom — the same flat-per-target shape `lib/alloc.cyr` and `src/main_cx.cyr` use.
+# ⚠ NOT `src/main_aarch64.cyr`: that is the x86-HOSTED cross fork, which env-gates its
+# target on CYRIUS_MACHO_ARM. `main_aarch64_macho.cyr` is the one Apple Silicon ships
+# (scripts/build-macos-arm64-tarball.sh writes `bin/cycc` from it).
+fn _self_host_src_macos(): i64 {
+    #ifdef CYRIUS_ARCH_AARCH64
+    return "src/main_aarch64_macho.cyr";
+    #endif
+    return "src/main_x86_macho.cyr";
+}
+
 # v6.6.6 — THE COMPILER SOURCE A SELF-HOST LOOP MUST COMPILE ON *THIS* TARGET.
 #
 # `src/main.cyr` is the x86-64 LINUX fork. Handing a PE `cycc.exe` that fork compiles
@@ -1294,14 +1306,32 @@ fn run_binary_args(path, args): i64 {
 # for a source-selection bug — the same false verdict, one layer along, as the "git clone
 # failed" message this release removed. `cyrius self` (`_win_cmd_self`) and `cyrius soak`
 # both self-host, so both ask here rather than each hard-coding a path.
-# CHANGELOG [6.6.6].
+#
+# ⛔ PE WAS NOT THE ONLY WRONG ARM, and on POSIX the failure is WORSE than a fault.
+# `cyrius self` on native aarch64 and on either macOS still named `src/main.cyr`, and
+# that fork COMPILES on those hosts — it is valid cyrius — so nothing errors. What comes
+# out is a HOST-NATIVE compiler carrying the x86 backend, i.e. the wrong compiler, and
+# the verb then reports a verdict about it. Measured at 5a583c1e:
+#   pi   (aarch64 Linux): step 1 produced an aarch64 ELF that EMITS x86, so step 2's
+#        output was an x86-64 ELF and `cmp` compared two different architectures ->
+#        "FAIL: cycc!=cycc" for a compiler that self-hosts perfectly.
+#   ecb  (macOS arm64):   step 1 warned `syscall 12 not routed` (brk — a Linux-ism) and
+#        step 2 was `Killed: 9`, AMFI refusing an unsigned arm64 Mach-O -> same FAIL.
+# Both verdicts are about a compiler nobody ships. The mapping below is the one the
+# release gate and the platform tarball scripts already use, asked ONCE.
+# `tests/gates/toolchain/self_host_src_per_target.sh` fails if any host maps to a fork
+# that is not its own. CHANGELOG [6.6.6].
 fn _self_host_src(): i64 {
     #ifdef CYRIUS_TARGET_WIN
     return "src/main_win.cyr";
     #endif
-    #ifndef CYRIUS_TARGET_WIN
-    return "src/main.cyr";
+    #ifdef CYRIUS_TARGET_MACOS
+    return _self_host_src_macos();
     #endif
+    #ifdef CYRIUS_ARCH_AARCH64
+    return "src/main_aarch64_native.cyr";
+    #endif
+    return "src/main.cyr";
 }
 
 # v6.6.5 — Windows spawn for run_tool_vec. run_tool/run_tool_argvtail both use
