@@ -507,14 +507,26 @@ var _pp_hostonly_name[128];    # the filename to name in the diagnostic (1024 B 
 # WORD BOUNDARY after a `#`-directive NAME in this file's own scanners.
 #
 # WHY: the same defect LEXATTRBOUND fixed in the lexer's `#` branch (a byte PREFIX
-# match that never checked the name had ENDED) was present twice more in the
-# PREPROCESSOR — PP_IS_HOST_ONLY and the three ISDERIVE* probes — where it is worse,
-# because neither reports an error: `#host_onlyish note` silently marked a module
-# host-only and broke every `CYRIUS_KERNEL=1` build that included it, and
-# `#derive(Serialize)x note` silently ARMED the derive machinery and changed the
-# emitted binary. Only whitespace or end of buffer can follow these names (unlike an
-# attribute, neither takes a `(` after the name — `#derive`'s parenthesis is INSIDE
-# the name it matches, and stacked derives sit on consecutive LINES).
+# match that never checked the name had ENDED) was present SEVEN more times in the
+# PREPROCESSOR, where it is worse because none of them reports an error:
+#
+#   PP_IS_HOST_ONLY   `#host_onlyish note` marked the module host-only and refused
+#                     every `CYRIUS_KERNEL=1` build that included it
+#   ISDERIVE{,_DE,_ACC}  `#derive(Serialize)x note` ARMED the derive machinery and
+#                     changed the emitted binary — rc=0 either way
+#   ISENDIF           `#endifoo note` CLOSED a conditional, so code inside a skipped
+#                     `#ifdef` was compiled into the binary
+#   ISENDPLAT         the same, for `#ifplat`
+#   ISSRCLINE         `#@srclinex 10` shifted every diagnostic in the file by a line
+#
+# ⚠ ISELSE carried this rule INLINE from the start ("reject identifier continuation
+# so `#elseif` doesn't match"). A guard written by hand exactly once, with a comment
+# explaining why it is needed, is a defect report about its siblings — that comment
+# is how the other seven were found. Keep new `#`-name probes on this helper.
+#
+# Only whitespace or end of buffer can follow these names. No `(` case (unlike an
+# attribute): `#derive`'s parenthesis is INSIDE the name it matches, and stacked
+# derives sit on consecutive LINES.
 #
 # `n` is the buffer length, not the bounded scan window: a name ending exactly at the
 # window edge still has a real byte after it. CHANGELOG [6.6.6]
