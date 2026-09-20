@@ -1520,7 +1520,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   children in sequence, sampling the live child count while the runner is still alive; axis 2
   SIGKILL the runner and require the child to die with it; **axis 2c** the same three
   properties over the driver's OTHER fork module, `lib/process.cyr`, through `exec_vec` and
-  the `exec_capture` PIPE path; **axis 2d** a 1 MB source piped into a child that never
+  the `exec_capture` PIPE path (`proc_set_timeout_ms` / `proc_timeout_ms` are new public
+  verbs, with `regression_pipe_write_all` / `regression_pipe_read_all`; all four are in
+  `docs/api-surface.snapshot`); **axis 2d** a 1 MB source piped into a child that never
   drains it (with a child that DOES drain it as the anti-vacuous partner); axis 3 a census
   (no blocking deadline-free wait left outside a `*_wait_deadline` body; no `sys_read`/
   `sys_write` loop left inside a function that forks — scoped that way so a file read is not

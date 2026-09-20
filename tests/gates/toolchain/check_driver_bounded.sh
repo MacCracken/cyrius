@@ -1,5 +1,5 @@
 #!/bin/sh
-# tests/gates/toolchain/check_driver_bounded.sh — 6.6.6 (bite 8c)
+# tests/gates/toolchain/check_driver_bounded.sh — 6.6.6 (bite 8c + its review fixes)
 #
 # The CHECK DRIVER's children are bounded, and none of them outlives the runner.
 #
@@ -377,44 +377,6 @@ else
 fi
 wait 2>/dev/null || true
 
-# ── AXIS 2d — ⭐ THE PIPE, NOT ONLY THE WAIT. Every verb here reaches its bounded wait only
-# AFTER it has finished pumping the child's pipe, and those pumps were unbounded `while`
-# loops — so a child that holds its end open and never drains blocks the runner BEFORE the
-# deadline can run. Measured on the WRITE side, which is the one the driver actually hits:
-# the compiler pipes ~1 MB of src/main.cyr into a child, and 64 KB into a child that never
-# reads is enough to block for ever. The anti-vacuous partner is a fixture that DOES drain
-# stdin: bounding the pump must not truncate a working pipe.
-echo "axis 2d — ⭐ the pipe pump is bounded too, not just the wait:"
-# ~1 MB, comfortably past the 64 KB pipe buffer, built here rather than borrowed from the
-# tree so the axis does not depend on any particular file's size.
-: > "$T/big.src"
-i=0
-while [ "$i" -lt 64 ]; do
-    dd if=/dev/zero bs=16384 count=1 2>/dev/null | tr '\0' 'x' >> "$T/big.src"
-    i=$((i + 1))
-done
-bigsz=$(wc -c < "$T/big.src")
-check "premise: the source is bigger than a pipe buffer" "yes" \
-    "$([ "$bigsz" -gt 200000 ] && echo yes || echo no)"
-rc=0
-HARNESS_PIPE_SRC="$T/big.src" CYRIUS_CHECK_TIMEOUT=30 timeout 120 "$T/harness" "$T/drain" \
-    > "$T/w0.out" 2>&1 || rc=$?
-check "ANTI-VACUOUS: a child that DRAINS the pipe still gets it all and returns its code" 7 "$rc"
-t0=$(date +%s)
-rc=0
-HARNESS_PIPE_SRC="$T/big.src" CYRIUS_CHECK_TIMEOUT=3 timeout 60 "$T/harness" "$T/spin" \
-    > "$T/w1.out" 2>&1 || rc=$?
-el=$(( $(date +%s) - t0 ))
-check "a child that never drains the pipe no longer blocks the runner" "yes" \
-    "$([ "$rc" != 124 ] && echo yes || echo no)"
-check "and it ended within the deadlines, not the 60s backstop" "yes" \
-    "$([ "$el" -lt 30 ] && echo yes || echo no)"
-if [ "$rc" = 124 ]; then
-    echo "        the harness never returned: the write pump in regression_pipe_to_bin_capture"
-    echo "        is blocked in sys_write with the pipe full. regression_pipe_write_all's poll"
-    echo "        is what bounds it — the wait deadline is never reached from there."
-fi
-
 # ── AXIS 2c — ⭐ THE SECOND MODULE. Everything above drives lib/regression.cyr. The driver
 # ALSO forks through lib/process.cyr, and that module was still unbounded and unguarded when
 # the first cut of this gate went green — so this axis exists because a census scoped by hand
@@ -471,6 +433,44 @@ else
     kill -9 "$prunner" 2>/dev/null
 fi
 wait 2>/dev/null || true
+
+# ── AXIS 2d — ⭐ THE PIPE, NOT ONLY THE WAIT. Every verb here reaches its bounded wait only
+# AFTER it has finished pumping the child's pipe, and those pumps were unbounded `while`
+# loops — so a child that holds its end open and never drains blocks the runner BEFORE the
+# deadline can run. Measured on the WRITE side, which is the one the driver actually hits:
+# the compiler pipes ~1 MB of src/main.cyr into a child, and 64 KB into a child that never
+# reads is enough to block for ever. The anti-vacuous partner is a fixture that DOES drain
+# stdin: bounding the pump must not truncate a working pipe.
+echo "axis 2d — ⭐ the pipe pump is bounded too, not just the wait:"
+# ~1 MB, comfortably past the 64 KB pipe buffer, built here rather than borrowed from the
+# tree so the axis does not depend on any particular file's size.
+: > "$T/big.src"
+i=0
+while [ "$i" -lt 64 ]; do
+    dd if=/dev/zero bs=16384 count=1 2>/dev/null | tr '\0' 'x' >> "$T/big.src"
+    i=$((i + 1))
+done
+bigsz=$(wc -c < "$T/big.src")
+check "premise: the source is bigger than a pipe buffer" "yes" \
+    "$([ "$bigsz" -gt 200000 ] && echo yes || echo no)"
+rc=0
+HARNESS_PIPE_SRC="$T/big.src" CYRIUS_CHECK_TIMEOUT=30 timeout 120 "$T/harness" "$T/drain" \
+    > "$T/w0.out" 2>&1 || rc=$?
+check "ANTI-VACUOUS: a child that DRAINS the pipe still gets it all and returns its code" 7 "$rc"
+t0=$(date +%s)
+rc=0
+HARNESS_PIPE_SRC="$T/big.src" CYRIUS_CHECK_TIMEOUT=3 timeout 60 "$T/harness" "$T/spin" \
+    > "$T/w1.out" 2>&1 || rc=$?
+el=$(( $(date +%s) - t0 ))
+check "a child that never drains the pipe no longer blocks the runner" "yes" \
+    "$([ "$rc" != 124 ] && echo yes || echo no)"
+check "and it ended within the deadlines, not the 60s backstop" "yes" \
+    "$([ "$el" -lt 30 ] && echo yes || echo no)"
+if [ "$rc" = 124 ]; then
+    echo "        the harness never returned: the write pump in regression_pipe_to_bin_capture"
+    echo "        is blocked in sys_write with the pipe full. regression_pipe_write_all's poll"
+    echo "        is what bounds it — the wait deadline is never reached from there."
+fi
 
 # ── AXIS 3 — THE CENSUS UNDER IT. The behavioural axes above exercise THREE verbs; the
 # defect was a HABIT shared by every fork site the driver can reach. So: no blocking

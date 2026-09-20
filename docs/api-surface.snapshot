@@ -2315,6 +2315,8 @@ process::exec_vec/1
 process::exec_vec_str/1
 process::getpid/0
 process::getppid/0
+process::proc_set_timeout_ms/1
+process::proc_timeout_ms/0
 process::run/3
 process::run_capture/5
 process::spawn/3
@@ -2403,8 +2405,10 @@ regression::regression_exec_with_arg_capture/5
 regression::regression_exec_with_arg_capture_both/5
 regression::regression_file_contains_substr/2
 regression::regression_network_probe/3
+regression::regression_pipe_read_all/4
 regression::regression_pipe_to_bin/3
 regression::regression_pipe_to_bin_capture/4
+regression::regression_pipe_write_all/4
 regression::regression_print/1
 regression::regression_run_with_timeout/3
 regression::regression_scp_to/4
