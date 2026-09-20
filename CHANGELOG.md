@@ -2002,8 +2002,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `drwxr-xr-x` to `drw-r--r--`, i.e. no longer traversable. `cyrius build a.cyr bin.d` likewise
   printed `compile a.cyr -> bin.d [x86_64] OK` at exit 0 with no binary anywhere. Exit 0 with no
   artifact is the worst available answer for a build tool: a script that checks `$?` proceeds, and
-  a CI step "succeeds" having produced nothing. The PE arm two lines above each site has read
-  `if (file_rename(...) == 0)` since bite 9 — only the POSIX arms were unchecked. **Fix:** all
+  a CI step "succeeds" having produced nothing. ⚠ **This entry said "the PE arm two lines above
+  each site has read `if (file_rename(...) == 0)` since bite 9 — only the POSIX arms were
+  unchecked" until the bite's review; that was true of ONE of the three.** `_emit_cx`'s PE arm
+  is the one bite 9b gave a checked rename. `_emit_js`'s PE arm does not rename — it refuses
+  (`_win_emit_js_refuse`). And **`compile()`'s PE arm has no temp and no rename at all**: it
+  spawns `_win_compile_spawn(cc, actual_source, output)` straight onto `output`, so Windows
+  `cyrius build` is not tmp-then-rename atomic and a failed compile can still truncate a
+  previously-good binary there — a separate, pre-existing gap, filed rather than fixed here.
+  **Fix:** all
   three call `file_rename` (`lib/io.cyr`, the portable wrapper: `sys_rename` on Linux/macOS, the
   4-arg length-carrying form on agnos, `MoveFileExW` on PE), **test** it, name the path that could
   not be written, unlink the temp and return 1; the `chmod` now runs only on the success path.

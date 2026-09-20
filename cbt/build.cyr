@@ -67,8 +67,12 @@ fn _emit_js(source, output): i64 {
             # its result DISCARDED: `cyrius build --target=js t.ts out.js` where `out.js`
             # already existed as a DIRECTORY printed `OK` and exited 0, left the .tmp.<pid>
             # behind, and the chmod below landed on the DIRECTORY (0755 → 0644, i.e. no
-            # longer traversable). The PE arm above has checked its rename since bite 9;
-            # this arm had not. CHANGELOG [6.6.6].
+            # longer traversable). ⚠ This comment claimed "the PE arm above has checked its
+            # rename since bite 9" until bite 24's review; the PE arm above does not rename
+            # at all, it REFUSES (`_win_emit_js_refuse`). Exactly ONE PE arm in this file
+            # renames — `_emit_cx`'s, checked since bite 9b — and `compile()`'s writes
+            # straight to `output`, so Windows `cyrius build` is not tmp-then-rename atomic
+            # at all. CHANGELOG [6.6.6].
             if (file_rename(tmp_out, output) != 0) {
                 _err_ctx("emit-js: could not rename the temp output onto", output);
                 sys_unlink(tmp_out);
