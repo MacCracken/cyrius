@@ -18,8 +18,21 @@
 # hash *if* a sidecar is present and proceeds if it is not (that hook points at a file the
 # operator placed themselves). Staging the tarball alone therefore did not turn anything
 # red — it just skipped the integrity leg of the install the gate claims to be running. Same
-# root cause, opposite symptom, which is why this gate sweeps every scp site rather than
-# pinning the one that shouted.
+# root cause, opposite symptom, which is why axis 3 sweeps rather than pinning the one that
+# shouted.
+#
+# ⛔ WHAT AXIS 3 ENFORCES, EXACTLY: every scp-a-release-tarball site in `scripts/`. That is
+# TWO of the FOUR such sites in the tree, and the claim is written down narrowly because the
+# other two are the LIVE ones. `cbt/commands.cyr`'s `_cross_os_selfhost()` — what
+# `cyrius audit` actually runs — carries its own inline ecb and ach install pillars as shell
+# strings (the `ecb-install` mode of `cross-os-selfhost.sh` is reachable by hand and is
+# invoked by nothing in the repo, and there is no `ach-install` mode at all), and BOTH of
+# those strings stage a macOS tarball with no sidecar. So the Intel-Mac install pillar has
+# never verified a hash. They are not fixed here because `cbt/` belongs to another lane's
+# bite this release; they are carried below as a RATCHET, not a tolerated list: axis 3
+# requires the count of uncovered cbt sites to be exactly the 2 known ones and goes RED both
+# if a third appears AND if they are fixed — in which case its message is "fold cbt into the
+# enforced sweep and delete this carve-out". A carve-out that cannot outlive the defect.
 #
 # ANTI-VACUOUS: axis 0 proves the premise the whole gate rests on — that install.ps1 really
 # is fail-closed and really does look for `<tarball>.sha256` — and DERIVES the sidecar
@@ -41,6 +54,11 @@
 #     and axis 3 RED (1 of 2 scp-tarball sites ship no sidecar).
 #   * the sidecar dropped from cross-os-selfhost.sh's ecb-install scp -> axis 3 RED alone;
 #     axes 0/1/2 GREEN. That is the silent instance, and it is the reason axis 3 exists.
+#   * a sidecar ADDED to one of the two cbt strings -> axis 3 RED ("2 -> 1 ... fix the other
+#     and retire this carve-out"); added to BOTH -> axis 3 RED telling you to fold cbt into
+#     the enforced sweep. A third sidecar-less cbt scp site added -> axis 3 RED ("2 -> 3").
+#     The carve-out is a ratchet in both directions; it cannot outlive the defect.
+#   * the cbt scan's `.tar.gz` filter broken -> the >= 2 blindness floor RED.
 #   * `sha256sum "$STAGE.tar.gz" > "$STAGE.tar.gz.sha256"` removed from
 #     build-windows-tarball.sh -> axis 1 RED twice: no sidecar in the builder's out dir,
 #     AND the OUT_DIR rot-guard that covers the two macOS builders this gate does not run.
@@ -197,8 +215,8 @@ if grep -q '^scp ' "$D/calls.log"; then
     _fail "cass-install-gate.sh scp'd an unverifiable tarball to a real host instead of failing locally"
 fi
 
-# ── axis 3 — the SWEEP: every scp of a release tarball carries its sidecar ────────────
-echo "axis 3: every scp site that stages a release tarball stages its sidecar"
+# ── axis 3 — the SWEEP: every scp of a release tarball in scripts/ carries its sidecar ─
+echo "axis 3: every scp site in scripts/ that stages a release tarball stages its sidecar"
 SITES=0
 BAD=0
 for f in scripts/*.sh; do
@@ -221,12 +239,42 @@ if [ "$BAD" != "0" ]; then
     _fail "$BAD of $SITES scp-a-release-tarball site(s) ship no sidecar:"
     grep '^BAD ' "$D/sweep.log" | sed 's/^/    /'
 else
-    echo "  $SITES site(s), all shipping a$SUF sidecar"
+    echo "  $SITES scripts/ site(s), all shipping a$SUF sidecar"
+fi
+
+# ── axis 3b — the RATCHET over the two LIVE sites axis 3 does not enforce ─────────────
+# `cbt/commands.cyr`'s _cross_os_selfhost() inlines the ecb and ach install pillars as
+# shell strings, and both stage a macOS tarball with no sidecar — so `cyrius audit`'s
+# Intel-Mac pillar has never verified a hash. cbt/ is another lane's this release, so the
+# two are pinned here rather than fixed: a THIRD one reddens this, and so does FIXING them
+# (with the instruction to fold cbt into the sweep above and delete this block). A
+# carve-out that goes red when the defect is repaired cannot outlive it. CHANGELOG [6.6.6]
+echo "axis 3b: the cbt install pillars axis 3 does not cover have not multiplied"
+for f in cbt/*.cyr; do
+    sed -e 's/^[[:space:]]*#.*$//' "$f" | grep -nE '(^|[;&|"[:space:]])scp ' | while IFS= read -r line; do
+        case "$line" in *.tar.gz*) ;; *) continue ;; esac
+        case "$line" in
+            *"$SUF"*) echo "OK $f:${line%%:*}" ;;
+            *) echo "BAD $f:${line%%:*}" ;;
+        esac
+    done
+done > "$D/cbtsweep.log"
+CBT_SITES=$(grep -c . "$D/cbtsweep.log" || true)
+CBT_BAD=$(grep -c '^BAD ' "$D/cbtsweep.log" || true)
+if [ "$CBT_SITES" -lt 2 ]; then
+    _fail "the cbt scan found only $CBT_SITES tarball-staging site(s) (expected >= 2) — it is blind, so its verdict means nothing"
+elif [ "$CBT_BAD" = "0" ]; then
+    _fail "cbt's install pillars now ship their sidecars — DELETE axis 3b, fold cbt/*.cyr into axis 3's enforced sweep and raise its floor to $((SITES + CBT_SITES))"
+elif [ "$CBT_BAD" != "2" ]; then
+    _fail "cbt's uncovered tarball-staging sites moved 2 -> $CBT_BAD: either a new one was added (ship its sidecar) or one of the two was fixed (fix the other, then retire axis 3b):"
+    sed 's/^/    /' "$D/cbtsweep.log"
+else
+    echo "  known-open, NOT enforced: $CBT_BAD cbt/ site(s) stage a tarball with no$SUF (the ecb + ach install pillars)"
 fi
 
 echo ""
 if [ "$FAILS" = "0" ]; then
-    echo "PASS: install gates ship the checksum ($SITES scp sites, builder sidecar verified)"
+    echo "PASS: install gates ship the checksum ($SITES scripts/ scp sites enforced, $CBT_BAD cbt site(s) known-open, builder sidecar verified)"
     exit 0
 fi
 echo "FAILED: $FAILS assertion(s)"

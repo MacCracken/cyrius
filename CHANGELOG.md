@@ -1236,7 +1236,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   axis 2 runs the real cass gate with `ssh`/`scp` shimmed and derives the expected filename
   from the `-Tarball` argument the script itself passes plus the suffix read out of
   `install.ps1`, axis 2b forbids scp'ing an unverifiable tarball to a real host, axis 3
-  sweeps every scp-a-release-tarball site. Mutation-proven six ways.
+  sweeps every scp-a-release-tarball site **in `scripts/`**. Mutation-proven six ways.
+  ⛔ **Two of the four such sites in the tree are still open, and they are the live ones.**
+  `cbt/commands.cyr`'s `_cross_os_selfhost()` — what `cyrius audit` actually runs — inlines
+  the ecb and ach install pillars as its own shell strings (nothing invokes
+  `cross-os-selfhost.sh ecb-install`, and there is no `ach-install` mode at all), and both
+  stage a macOS tarball with no sidecar, so the **Intel-Mac install pillar has never
+  verified a hash**. They are not fixed in this bite because `cbt/` belongs to another
+  lane's bite this release. Rather than widen the claim over code it does not enforce, the
+  gate carries them as a **self-retiring ratchet** (axis 3b): the count of uncovered `cbt/`
+  sites must be exactly the two known ones — a third reddens it, and so does *fixing* them,
+  with the message "fold cbt into the enforced sweep and delete this carve-out". A
+  carve-out that goes red when the defect is repaired cannot outlive it, which is the only
+  form of "known-open" this project accepts.
 
 - **`sh scripts/check.sh <suite>` leaked a 19 MB staged CYRIUS_HOME on every invocation:
   the targeted path ended in `exec`, which does not run the EXIT trap.** (bite 25b.)
