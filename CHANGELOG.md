@@ -1187,6 +1187,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (mutation: adding the stub back reddens it); a real reparse-point implementation would
   be welcome and would update that line deliberately.
 
+- **The new Windows self-path arm wrote two bytes past its own buffer when the path did not
+  fit, and then used the truncated result.** (bite 6f, review fix on 6b.)
+  `GetModuleFileNameW` does not report the size it needed: on `ERROR_INSUFFICIENT_BUFFER`
+  it returns `cch` **itself** and leaves the path truncated. `_self_path_win` read that as
+  a length, so a path of 4096 WCHARs or more stored its NUL at offsets 8192/8193 of an
+  8192-byte allocation and then resolved the templates directory from a half path. A full
+  buffer is now a failure, not a length (`wn >= 4096` → refuse), and the UTF-16 → UTF-8
+  narrowing gets the same treatment: UTF-8 is never shorter than the UTF-16 unit count, so
+  `b - 1 < wn` can only mean `_args_w2u8` hit its own 4096-byte cap, and that is refused
+  too. 4096 WCHARs is the correct ceiling rather than a retry, because the destination
+  buffer is 4096 **bytes** — a longer path has nowhere to go. The OS contract the fix rests
+  on is pinned on real hardware by `tests/tcyr/crossos/win_self_exe_path.tcyr`, which
+  asserts `sys_self_exe_w(buf, 4)` returns exactly 4 for a path that cannot fit.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**

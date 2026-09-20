@@ -108,6 +108,12 @@ hardware verification).
   `argv(0)`, which is the half-fix the gate's axes 3-4 exist to catch. `lib/io.cyr`'s
   `xreadlink` is the portable façade for callers that want a degrade. Axis 5 now pins the
   absence.
+- **The self-path arm had its own bounds bug, also found in review.**
+  `GetModuleFileNameW` returns `cch` itself on `ERROR_INSUFFICIENT_BUFFER`, so a path of
+  4096 WCHARs or more made `_self_path_win` store its NUL two bytes past an 8192-byte
+  allocation and then use the truncated path. A full buffer is now a failure; so is a
+  narrowing that hits `_args_w2u8`'s cap. The OS contract is pinned on hardware by
+  `tests/tcyr/crossos/win_self_exe_path.tcyr`.
 - **The first cut shipped no `tests/tcyr/crossos/` companion**, so nothing the release
   gate runs on ecb/ach/cass/pi ever executed the new reroute — the wine axes are labelled
   "NOT hardware verification" and SKIP where wine is absent, and CI has no wine at all.
