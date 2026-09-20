@@ -792,8 +792,9 @@ many modules you declare.
   reason to build through `cyrius build` rather than piping by hand.
 - `#` opens a comment, so the marker is inert to older compilers, cybs and the cx/JS forks.
 - Honoured **once**, and it carries no filename, so unlike the `#@file` marker it cannot be
-  used to re-point a file span (the hole v6.5.21 closed for `private`). The worst a forged
-  `#@srcline` can do is misreport line numbers.
+  used to re-point a file span (the hole v6.5.21 began closing for `private` and v6.6.6
+  finished — see *Visibility*). The worst a forged `#@srcline` can do is misreport line
+  numbers.
 
 ### Kernel-mode module restriction — `#host_only` (v6.5.24)
 
@@ -865,6 +866,16 @@ error:main.cyr:12:9: 'helper' is private to lib/thing.cyr
   `nm` output or in `cyrius api-surface`. That is the point — the API surface a
   consumer sees becomes the API surface you declared.
 - `pub` is accepted as a synonym for `public` (it is the same lexer token).
+- **A source file cannot forge its own identity (v6.6.6, CVE-44).** Visibility is decided from
+  the preprocessor's `#@file` markers, and `FM_BUILD` accepts one at any offset, so a line
+  spelling `#@file "other.cyr" 1` used to make the code after it belong to `other.cyr` — which
+  is exactly a way to reach that file's private items. v6.5.21 closed that for the main source;
+  until v6.6.6 an **included file**, a **`#define` macro body** and a **`#derive` line's tail**
+  each still got through (measured: a forged include called a private fn and the program built
+  and ran). Such a line is now rewritten to an inert comment wherever source enters the
+  preprocessor, in every fork. ⚠ `#@file` inside a **string literal** is data and is left
+  alone. This is not a sandbox — whoever writes the forged line already controls the source
+  being compiled — but `private` is meant to be checkable, and now is.
 - **A private fn cannot be replaced by another file's same-named fn (v6.5.38).** Two files
   may each define a private `_helper`; each file's calls bind to its own, and neither can
   capture the other's. A public fn of the same name stays reachable from everywhere else:

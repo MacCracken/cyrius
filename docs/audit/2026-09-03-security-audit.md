@@ -2,8 +2,9 @@
 
 **Scope:** the untrusted-source-input surface. Previous full audit:
 `docs/audit/2026-07-27-security-audit.md` (CVE-32…CVE-36) at cycc 6.4.82.
-**Next free identifier after this document: CVE-44.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
-document are **withdrawn** but still consume their ids.)
+**Next free identifier after this document: CVE-45.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
+document are **withdrawn** but still consume their ids.) CVE-43 was consumed at 6.6.5 and
+**CVE-44 at 6.6.6**; both are appended below.
 ⚠ **This line read "next free: CVE-42" while CLAUDE.md read "the next CVE number is 43" and this document ran 39-41.**
 Two authorities, two answers, and nothing reconciled them. CLAUDE.md is the one every closeout reads, so **42 is
 retired unused** and CVE-43 is the entry appended below. Anything below 44 now collides.
@@ -237,3 +238,75 @@ reddens. Plus a read-only sweep of the live 138-checkout corpus with the final s
 refused, 0 bytes of any `.git` changed, and all 17,224 tracked files hashing raw-equal to
 their tag. The gate also runs against the aarch64 CLI under `qemu-aarch64` (65/65 — emulation,
 not hardware).
+
+---
+
+## CVE-44 — an INCLUDED file could forge `#@file` and defeat `private` visibility
+
+*Appended 2026-09-19 (cyrius 6.6.6, bite 5b). Not part of the 2026-09-03 sweep: recorded here
+because this is the live ledger and the id has to come from one place.*
+
+| | |
+|---|---|
+| **Severity** | **Medium** — `private` is a soundness property of the language, not a sandbox: a forger already controls the source being compiled. What it breaks is the ability to CHECK the property, which is what `private` exists for |
+| **Affected** | `src/frontend/lex_pp.cyr` — the two include `READFILE` sites (`PP_PASS`, `PP_IFDEF_PASS`), the `#define` macro-body store + `PP_EXPAND`, and `PP_COPY_TAIL`. Every fork. From v6.5.0 (when `private` began using the file map) through 6.6.5 |
+| **Vector** | any source the build pulls in — an included file, a macro body, a `#derive` line's tail |
+| **Fixed in** | 6.6.6 |
+
+### What it is
+
+`private` is enforced through the file map. The preprocessor mints `#@file "NAME" BASE` markers,
+`FM_BUILD` turns them into spans, and a reference to a private symbol from outside its span is
+refused. `FM_BUILD` scans the FINAL buffer for `#@file` at **any offset** — no byte-0 rule and no
+beginning-of-line rule, unlike `#@incdir` — so any bytes that reach the preprocessor's output can
+mint a span and claim to be another file.
+
+v6.5.21 recognised this and neutralised a user-authored marker **inside `PP_PASS`'s copy loop**.
+A guard shaped like one loop is only as wide as that loop, and there are four routes from source
+to `out`. Three were still open. All three were measured against `build/cycc` at 2420b1f8 — each
+one BUILT CLEANLY and ran, where the honest program is correctly refused:
+
+```sh
+# secret.cyr            attack.cyr                        main.cyr
+# private               #@file "secret.cyr" 1             include "secret.cyr"
+# fn SECRET_ADD(a, b)   var R = SECRET_ADD(20, 22);       include "attack.cyr"
+#   : i64 { … }         syscall(60, R);                   syscall(60, 7);
+cat main.cyr | ./build/cycc > m && chmod +x m && ./m ; echo $?   # → 42
+# without the forged first line of attack.cyr:
+# error:attack.cyr:1:20: 'SECRET_ADD' is private to its file
+```
+
+1. **An included file.** `READFILE` writes it **straight into `out`** in both passes — it never
+   passes the copy loop at all. This is the reported shape, above.
+2. **A `#define` macro body.** The `#define` line is consumed by the directive handler (so it
+   never reaches the loop either) and the stored body is written into `out` later by
+   `PP_EXPAND`. `#define FORGE(x) #@file "secret.cyr" 1` + `FORGE(0)` → exit 42.
+   ⚠ The pass that does this carried a **17-line comment describing a neutralisation it never
+   had** — a reader checking the route would have concluded it was covered.
+3. **A `#derive` line's tail.** `PP_COPY_TAIL` copies it verbatim:
+   `struct P { a: i64 } #@file "secret.cyr" 1` → exit 42.
+
+### Fix
+
+Neutralise at the **entry points** rather than in one copier. `PP_NEUT_PASS` rewrites the whole
+raw source once, before any pass reads it (covering the loop, macro bodies, derive tails and
+anything else derived from the source buffer), and each include's `READFILE` neutralises the
+bytes it just read. `PP_NEUT_FMARK` **overwrites the `@` with a space** instead of inserting a
+byte, so a region keeps its length and no column or line shifts; `# file "x" 1` is an ordinary
+comment and inert to `FM_BUILD`. Real markers are untouched — `PP_FMARK` writes them straight to
+`out`, never through a region the neutraliser sees. String literals are skipped via `PP_LEXST`,
+so a program whose **data** contains `#@file` keeps its bytes.
+
+The v6.5.21 inline guard is removed, not left alongside: two mechanisms for one invariant is how
+the first one came to be believed complete.
+
+### Verified
+
+`tests/gates/frontend/file_marker_forge_refused.sh` — 12 axes, 4 mutations each RED. Every forge
+axis is scored against a **twin that must build and run** (the same program against a
+non-private file, exit 42), so "it does not compile" cannot pass for a fix; axis 6 pins that
+program data holding `#@file` survives byte for byte; axis 7 pins that real markers still
+attribute a diagnostic to the included file and its own line, so the forge axes cannot pass
+vacuously by the file map simply not working; axis 8 derives the census of
+`READFILE`-into-`out` sites from the source. Self-host fixpoint + `seed-derive-cycc.sh` green;
+0 of 330 `.tcyr` binaries changed a byte.

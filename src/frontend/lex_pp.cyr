@@ -131,6 +131,62 @@ fn PP_LEXST_INSTR(st): i64 {
     return 0;
 }
 
+# ⛔ v6.6.6 (CVE-44) — NEUTRALISE a forged `#@file` marker in a region of bytes.
+#
+# FM_BUILD scans the FINAL buffer for `#@file` at ANY offset — no byte-0 rule and no
+# beginning-of-line rule, unlike `#@incdir`. So ANY source bytes that reach the
+# preprocessor's output can FORGE a file-map entry claiming their code came from
+# another file, which DEFEATS `private` file visibility.
+#
+# v6.5.21 closed that for the MAIN source by neutralising inside PP_PASS's copy loop.
+# That guard is only as wide as the loop, and bytes reach `out` by other routes: an
+# INCLUDED file is READFILE'd STRAIGHT INTO `out` (both passes), a `#define` macro body
+# is consumed by the directive handler and written out later by PP_EXPAND, and the
+# `#derive` handlers copy the struct and the line's tail through PP_COPY_TAIL. The
+# included-file route was live and complete: a file that opened with
+# `#@file "secret.cyr" 1` called a `private` fn belonging to secret.cyr, and the program
+# BUILT AND RAN (exit 42) where the same call without the forged line is correctly
+# refused with `'SECRET_ADD' is private to its file`.
+#
+# The `@` is OVERWRITTEN with a space rather than a byte being inserted, so the region
+# keeps its length and nothing shifts: `# file "x" 1` is an ordinary comment and is inert
+# to FM_BUILD's scan. Real markers are unaffected — PP_FMARK writes them straight to
+# `out`, never through a region this sees. String literals are skipped via PP_LEXST, so a
+# program whose DATA contains `#@file` keeps its bytes.
+#
+# Not a sandbox escape — a forger already controls the source being compiled — but
+# `private` is meant to be a checkable guarantee rather than a convention.
+# CHANGELOG [6.6.6]
+fn PP_NEUT_FMARK(base, n): i64 {
+    var i = 0;
+    var st = 0;
+    while (i < n) {
+        var c = load8(base + i);
+        if (c == 35) {
+            if (PP_LEXST_INSTR(st) == 0) {
+                if (i + 5 < n) {
+                    if (load8(base + i + 1) == 64 && load8(base + i + 2) == 102 && load8(base + i + 3) == 105 && load8(base + i + 4) == 108 && load8(base + i + 5) == 101) {
+                        store8(base + i + 1, 32);
+                    }
+                }
+            }
+        }
+        st = PP_LEXST(st, c);
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Neutralise forged markers across the WHOLE raw source, once, before any pass copies
+# or splices it. Doing it at the ENTRY POINT covers every route by which a source byte
+# reaches the output — the copy loop, a stored macro body, a `#derive` tail — instead of
+# needing one guard per emitter, which is exactly the shape that left three routes open
+# after v6.5.21. The other entry point is an include's READFILE; those two call sites
+# neutralise the bytes they just read. CHANGELOG [6.6.6]
+fn PP_NEUT_PASS(S): i64 {
+    return PP_NEUT_FMARK(S + _SRCB, GBL(S));
+}
+
 fn ISIFDEF(S, pos, bl): i64 {
     if (pos + 7 >= bl) { return 0; }
     # "#ifdef " = 23 69 66 64 65 66 20
@@ -3152,6 +3208,10 @@ fn PP_PASS(S): i64 {
                                 # still 0 during preprocessing (see the reporting site at
                                 # the end of PARSE_PROG in parse.cyr for why).
                                 if (PP_IS_HOST_ONLY(out + op, nr) == 1) { PP_NOTE_HOST_ONLY(fname); }
+                                # v6.6.6 (CVE-44) — an include is READFILE'd STRAIGHT into
+                                # `out`, so these bytes never pass the copy loop below and
+                                # could forge a `#@file` marker. See PP_NEUT_FMARK.
+                                PP_NEUT_FMARK(out + op, nr);
                                 op = op + nr;
                                 # v6.5.0 Phase 1 — RESUME marker. Without this the
                                 # enclosing file's remaining text inherits the INCLUDED
@@ -3196,36 +3256,15 @@ fn PP_PASS(S): i64 {
                 # overwrote it. Deleted rather than patched — RESUME markers cover every
                 # case it covered, and the issue's own note said to fold it into whatever
                 # landed rather than leave two mechanisms.
-                # v6.5.21 — NEUTRALISE a user-authored `#@file` marker.
-                #
-                # FM_BUILD scans the FINAL buffer for `#@file` at ANY offset — no
-                # byte-0 rule and no beginning-of-line rule, unlike `#@incdir`. So
-                # ordinary source could FORGE a file-map entry claiming its code came
-                # from another file, which DEFEATS `private` file visibility: a forged
-                # `#@file "hidden.cyr" 3` — even sitting as a trailing comment
-                # mid-line — turned a correct `'secret_fn' is private to its file`
-                # rejection into a clean build that ran the private fn.
-                #
-                # Done HERE rather than in the final PP_MACRO_PASS because this loop
-                # is the one that knows about string literals (`in_string`); the macro
-                # pass has no such state, so rewriting there would silently mangle a
-                # string that happens to contain `#@file`. PP_MACRO_PASS only copies,
-                # so neutralising the source once here is sufficient. Real markers are
-                # unaffected: PP_FMARK writes them straight to `out`, never through
-                # this copy of the input.
-                #
-                # `# @file` stays a comment and is inert to the scanner; the extra
-                # byte shifts columns only INSIDE a comment, where nothing is reported.
-                # Not a sandbox escape — a forger already controls the source being
-                # compiled — but `private` is meant to be a checkable guarantee.
-                var _ff = 0;
-                if (in_string == 0) { if (c == 35) { if (ip + 5 < bl) {
-                    if (load8(S + _SRCB + ip + 1) == 64 && load8(S + _SRCB + ip + 2) == 102 && load8(S + _SRCB + ip + 3) == 105 && load8(S + _SRCB + ip + 4) == 108 && load8(S + _SRCB + ip + 5) == 101) {
-                        _ff = 1;
-                    }
-                } } }
+                # v6.5.21 neutralised a forged `#@file` marker HERE, inline in this
+                # copy loop, by inserting a space after the `#`. v6.6.6 moved that to
+                # PP_NEUT_PASS, which rewrites the whole raw source ONCE before any pass
+                # runs: this loop is not the only route from source to `out` — a stored
+                # macro body and the `#derive` tail copies bypass it entirely, and so
+                # does an included file — so a guard shaped like the loop could only ever
+                # cover one of four routes. See PP_NEUT_FMARK for the measured escape.
+                # CHANGELOG [6.6.6]
                 store8(out + op, c); op = op + 1;
-                if (_ff == 1) { store8(out + op, 32); op = op + 1; }
             }
             # v6.5.19 — a SKIPPED body line still occupied a source line. Keep its
             # newline so the expanded stream stays 1:1 with the source; the rest of the
@@ -3302,23 +3341,15 @@ fn PP_MACRO_PASS(S): i64 {
                         } }
                 }
             } }
-        # v6.5.21 — NEUTRALISE a user-authored `#@file` marker.
-        #
-        # FM_BUILD scans the EXPANDED buffer for `#@file` at ANY offset — no byte-0
-        # rule and no beginning-of-line rule, unlike `#@incdir`. So ordinary source
-        # could FORGE a file-map entry claiming its code came from another file,
-        # which DEFEATS `private` file visibility: a forged
-        # `#@file "hidden.cyr" 3` — even sitting as a trailing comment mid-line —
-        # turned a correct `'secret_fn' is private to its file` rejection into a
-        # clean build that ran the private fn.
-        #
-        # Only PP_FMARK may mint these, and it writes to `out` directly rather than
-        # through this copy, so breaking the sequence here cannot damage a real
-        # marker. `# @file` remains a comment and is inert to the scanner; the extra
-        # byte only shifts columns INSIDE a comment, where nothing is reported.
-        # Not a sandbox escape — whoever forges it already controls the source being
-        # compiled — but it is a soundness hole in `private`, which is supposed to be
-        # a checkable guarantee rather than a convention.
+        # ⚠ v6.6.6 — this block carried a 17-line comment headed "v6.5.21 — NEUTRALISE
+        # a user-authored `#@file` marker", describing in detail a guard that WAS NEVER
+        # HERE: the copy below is a plain byte copy and always was. The real v6.5.21
+        # guard lived in PP_PASS, and a reader taking this comment at face value would
+        # conclude the macro-expansion route was covered when it was not — PP_EXPAND
+        # writes a stored `#define` body into `out` in this pass, and a body spelling
+        # `#@file "secret.cyr" 1` forged a marker through it. Neutralisation now happens
+        # at the two ENTRY points (PP_NEUT_PASS over the raw source, and each include's
+        # READFILE), which covers this pass without a guard in it. CHANGELOG [6.6.6]
         if (expanded == 0) {
             store8(out + op, c);
             op = op + 1;
@@ -3552,6 +3583,9 @@ fn PP_IFDEF_PASS(S): i64 {
                                         syscall(SYS_WRITE, 2, "\n", 1);
                                         syscall(SYS_EXIT, 1);
                                     }
+                                    # v6.6.6 (CVE-44) — same READFILE-into-`out` route as
+                                    # PP_PASS's include site. See PP_NEUT_FMARK.
+                                    PP_NEUT_FMARK(out + op, nr);
                                     op = op + nr;
                                     # v6.5.0 Phase 1 — RESUME marker (see PP_PASS). This
                                     # pass expands the NESTED includes, so the file being
@@ -3779,6 +3813,9 @@ fn PREPROCESS(S): i64 {
     PP_SCAN_INCDIR(S);
     # Pre-pass: expand #ref directives (TOML → var declarations)
     PP_REF_PASS(S);
+    # v6.6.6 (CVE-44) — after PP_REF_PASS (whose TOML expansion lands in the raw source
+    # buffer too) and before anything reads it. See PP_NEUT_FMARK.
+    PP_NEUT_PASS(S);
     PP_PASS(S);
     # Pass 2: evaluate #ifdef/#define in included content
     PP_IFDEF_PASS(S);

@@ -8,6 +8,35 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **An INCLUDED file could forge a `#@file` marker and defeat `private` visibility (CVE-44).**
+  (bite 5b.) `private` is enforced through the file map: the preprocessor mints
+  `#@file "NAME" BASE` markers, `FM_BUILD` turns them into spans, and a reference to a private
+  symbol from outside its span is refused. `FM_BUILD` scans the FINAL buffer for `#@file` at
+  **any offset** — no byte-0 rule and no beginning-of-line rule, unlike `#@incdir` — so any bytes
+  reaching the preprocessor's output can mint a span and claim to be another file. v6.5.21
+  recognised that and neutralised a user-authored marker **inside `PP_PASS`'s copy loop**; a guard
+  shaped like one loop is only as wide as that loop, and there are four routes from source to
+  `out`. **Three were still open, and all three were measured live** on 2420b1f8's compiler —
+  each built cleanly and ran (`exit 42`) where the honest program is refused with
+  `'SECRET_ADD' is private to its file`: (1) an **included file**, which `READFILE` writes
+  STRAIGHT into `out` in both passes and which therefore never meets the loop — the reported
+  shape; (2) a **`#define` macro body**, consumed by the directive handler and written out later
+  by `PP_EXPAND` — ⚠ in a pass carrying a 17-line comment that described a neutralisation it
+  **never had**; (3) a **`#derive` line's tail**, copied verbatim by `PP_COPY_TAIL`. **Fix:**
+  neutralise at the ENTRY POINTS instead of in one copier — `PP_NEUT_PASS` rewrites the whole raw
+  source once before any pass reads it, and each include's `READFILE` neutralises the bytes it
+  just read. `PP_NEUT_FMARK` **overwrites the `@` with a space** rather than inserting a byte, so
+  a region keeps its length and no column or line shifts, and it skips string literals via
+  `PP_LEXST` so a program whose DATA contains `#@file` keeps its bytes. The v6.5.21 inline guard
+  is removed rather than left alongside — two mechanisms for one invariant is how the first came
+  to be believed complete. Gate
+  `tests/gates/frontend/file_marker_forge_refused.sh` (12 axes, 4 mutations each RED): every
+  forge axis is scored against a **twin that must build and run**, so "it does not compile"
+  cannot pass for a fix; axis 7 pins that real markers still attribute a diagnostic to the
+  included file and its own line, so the forge axes cannot pass vacuously. Security entry
+  appended to `docs/audit/2026-09-03-security-audit.md`; **the next free CVE id is 45**. 0 of 330
+  `.tcyr` binaries changed a byte; cycc size unchanged at **1,310,856 B**.
+
 - **A comment whose first word merely STARTED with an attribute name was parsed as code.**
   (bite 5a; filed `2026-09-19-lexer-attribute-prefix-swallows-comments.md`.) The `#` branch of
   `src/frontend/lex.cyr` compared a byte PREFIX for each of its ten attributes (`#assert`,
