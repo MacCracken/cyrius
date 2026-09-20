@@ -192,7 +192,14 @@ CC="$ROOT/build/cycc"
 # effect at all, and the wrong conclusion was nearly drawn from it. Same failure family as the
 # swallowed compile error below: the suite must not be able to run against source it was not
 # built from.
-NEWEST_SRC="$(ls -t "$ROOT"/programs/checks/*.cyr "$ROOT"/lib/audit_walk.cyr 2>/dev/null | head -1)"
+# ⛔ v6.6.6: watch ALL of lib/, not a hand-listed subset. The line above named exactly one
+# included lib module (audit_walk.cyr) while the suite includes thirteen, so the same
+# stale-binary failure the note describes was still live for the other twelve — bite 8c
+# made lib/regression.cyr the substrate for every child the driver spawns and a change
+# there produced NO rebuild. A hand-maintained list of a derivable set is the shape this
+# release keeps finding wrong; `lib/*.cyr` is a superset that costs one extra ~1 s rebuild
+# and cannot rot. CHANGELOG [6.6.6]
+NEWEST_SRC="$(ls -t "$ROOT"/programs/checks/*.cyr "$ROOT"/lib/*.cyr 2>/dev/null | head -1)"
 # Rebuild if: no binary, the glob matched nothing (force a rebuild so the
 # build fails loudly rather than running a stale binary), or any suite file
 # is newer than the binary.
@@ -824,6 +831,15 @@ _chk_gate "$ROOT/tests/gates/codegen/call_site_stack_alignment.sh"
 # vectors, struct return) with digit-string expectations, on x86 + aarch64 (qemu) + cx (cxvm)
 # + Win64 (wine). Hardware legs: tests/tcyr/crossos/simd_param_int_stack_args.tcyr.
 _chk_gate "$ROOT/tests/gates/codegen/stack_param_homing_matrix.sh"
+
+# 6.6.6: the CHECK DRIVER's own children are bounded, and none outlives the runner. Every
+# fork site in programs/checks/ and lib/regression.cyr was fork + execve + BLOCKING waitpid
+# with no deadline and no death signal, so one spinning .tcyr hung check.sh itself (measured
+# ~5 min this release, no output, no verdict) and killing the run reparented the test to PID
+# 1 where it kept burning a core — the v6.5.19 `cyrius test` incident, one runner over. Axis
+# 1b is the one that matters and the first cut of the gate did NOT have it: with PDEATHSIG in
+# place, a deadline that ABANDONS instead of killing passes every single-child axis.
+_chk_gate "$ROOT/tests/gates/toolchain/check_driver_bounded.sh"
 
 # ⛔ 6.6.5 — a fn-local STRUCT LITERAL was a GLOBAL slot, and whether an aggregate local was
 # inline or a pointer was GUESSED from the neighbouring slot's name. The first made a literal

@@ -1927,6 +1927,8 @@ fn _efi_stdlib_fallback_gate(): i64 {
         _check(label, 1); return 1;
     }
 
+    var _rg_ppid_pid = sys_getpid();
+
     var pid = sys_fork();
     if (pid < 0) {
         sys_close(read_fd); sys_close(write_fd); sys_close(out_fd);
@@ -1948,6 +1950,8 @@ fn _efi_stdlib_fallback_gate(): i64 {
     store64(aug_envp + (ENVP_COUNT + 1) * 8, 0);
 
     if (pid == 0) {
+
+        _regression_child_guard(_rg_ppid_pid);
         sys_close(write_fd);
         sys_dup2(read_fd, 0); sys_close(read_fd);
         sys_dup2(out_fd, 1); sys_close(out_fd);
@@ -1975,7 +1979,7 @@ fn _efi_stdlib_fallback_gate(): i64 {
     sys_close(write_fd);
 
     var status_buf[1];
-    sys_waitpid(pid, &status_buf, 0);
+    _regression_wait_deadline(pid, &status_buf, _regression_timeout_ms());
     sys_unlink(src_path);
 
     var status = load32(&status_buf);

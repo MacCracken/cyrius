@@ -1433,6 +1433,39 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   59 gates ran, no summary; fixed + red driver row → 59 of 59 ran, exit 1, the driver named;
   one gate red → named; one gate file deleted → MISSING; all green → ALL GREEN, exit 0; a gate
   that kills the runner mid-suite → `10 of 59 produced a result, 49 NOT RUN`, each listed.
+- **The check driver's children are bounded, and none of them outlives the runner** (bite 8c).
+  Every fork site in `lib/regression.cyr` (11) and `programs/checks/` (19 functions) was fork +
+  execve + BLOCKING `sys_waitpid(pid, &st, 0)` with no deadline and no death signal. So ONE
+  spinning `.tcyr` hung `check.sh` itself — measured at ~5 minutes this release, with no output
+  and no verdict — and killing the run REPARENTED the test to PID 1, where it kept burning a
+  core. This is the v6.5.19 `cyrius test` incident one runner over: that runner was fixed and
+  gated then (`tests/gates/toolchain/test_runner_bounded.sh`), the check driver never was.
+  `_regression_wait_deadline` polls `waitpid(WNOHANG)` on a widening slice and SIGKILLs at the
+  deadline (a waitpid error kills too — a bare return there is the abandonment path v6.5.51
+  removed from `run_binary_timed`); `_regression_child_guard` sets `PR_SET_PDEATHSIG(SIGKILL)`
+  between fork and execve, with the getppid re-check for the parent-died-first race. Two knobs,
+  both in seconds: `CYRIUS_CHECK_TIMEOUT` (default 120 s) for children we compiled,
+  `CYRIUS_CHECK_LONG_TIMEOUT` (default 900 s) for ssh/scp and externally-driven gate scripts.
+  A deadline is reported as the module's documented `-2`, not as the 137 its own SIGKILL
+  produces, and `_tcyr_compile_and_run` now prints `TIMEOUT: <file> did not finish and was
+  killed` — before this, a hung test produced no result at all.
+- `tests/gates/toolchain/check_driver_bounded.sh` (bite 8c, registered in `scripts/check.sh`) —
+  drives the EXACT verb the check driver uses for every `.tcyr`
+  (`regression_exec_capture_status`) through a compiled harness. Axis 0 anti-vacuous (an
+  ordinary fixture still returns its own exit code, promptly); axis 1 a spinner is killed at
+  the deadline and reported as a timeout, with an elapsed floor AND ceiling; **axis 1b** two
+  children in sequence, sampling the live child count while the runner is still alive; axis 2
+  SIGKILL the runner and require the child to die with it; axis 3 a census (no blocking
+  deadline-free wait left outside `_regression_wait_deadline`, and `sys_fork()` sites ==
+  `_regression_child_guard(` calls, two independently derived counts). ⚠ **Axis 1b was added
+  after the first cut of the gate passed the mutation it exists to catch**: with PDEATHSIG in
+  place, changing the deadline's `sys_kill(pid, 9)` to a no-op probe left every single-child
+  axis GREEN, because the harness exits straight after and the kernel reaps the abandoned child
+  for it — the same vacuity `test_runner_bounded.sh` records for its own single-file arm. And
+  the first cut of axis 1b sampled `ppid == $!` of a backgrounded `timeout …`, i.e. the timeout
+  wrapper, so it counted exactly one child for ever. Mutation-proven four ways, ledger in the
+  gate header.
+
 ## [6.6.5] — 2026-09-19
 
 The 6.6.5 repair release — every open issue in docs/development/issues/, one bite each. All nine issues

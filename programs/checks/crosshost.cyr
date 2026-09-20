@@ -18,6 +18,8 @@ fn _ipc_session(bin_path, req_buf, req_len, out_buf, out_cap): i64 {
     var c2p_r = load32(&c2p);
     var c2p_w = load32(&c2p + 4);
 
+    var _rg_ppid_pid = sys_getpid();
+
     var pid = sys_fork();
     if (pid < 0) {
         sys_close(p2c_r); sys_close(p2c_w);
@@ -25,6 +27,8 @@ fn _ipc_session(bin_path, req_buf, req_len, out_buf, out_cap): i64 {
         return 0;
     }
     if (pid == 0) {
+
+        _regression_child_guard(_rg_ppid_pid);
         sys_close(p2c_w);
         sys_close(c2p_r);
         sys_dup2(p2c_r, 0);
@@ -64,7 +68,7 @@ fn _ipc_session(bin_path, req_buf, req_len, out_buf, out_cap): i64 {
     }
     sys_close(c2p_r);
     var stbuf[1];
-    sys_waitpid(pid, &stbuf, 0);
+    _regression_wait_deadline(pid, &stbuf, _regression_long_timeout_ms());
     return total;
 }
 
@@ -110,9 +114,11 @@ fn _tar_pipe_ssh(target, src_root, members, remote_dir): i64 {
     var wfd = load32(&fds + 4);
 
     # tar producer
+    var _rg_ppid_tar_pid = sys_getpid();
     var tar_pid = sys_fork();
     if (tar_pid < 0) { sys_close(rfd); sys_close(wfd); return 0 - 2; }
     if (tar_pid == 0) {
+        _regression_child_guard(_rg_ppid_tar_pid);
         sys_dup2(wfd, 1);
         sys_close(rfd);
         sys_close(wfd);
@@ -159,9 +165,11 @@ fn _tar_pipe_ssh(target, src_root, members, remote_dir): i64 {
     }
 
     # ssh consumer
+    var _rg_ppid_ssh_pid = sys_getpid();
     var ssh_pid = sys_fork();
     if (ssh_pid < 0) { sys_close(rfd); sys_close(wfd); return 0 - 2; }
     if (ssh_pid == 0) {
+        _regression_child_guard(_rg_ppid_ssh_pid);
         sys_dup2(rfd, 0);
         sys_close(rfd);
         sys_close(wfd);
@@ -184,8 +192,8 @@ fn _tar_pipe_ssh(target, src_root, members, remote_dir): i64 {
     sys_close(wfd);
     var s1[1];
     var s2[1];
-    sys_waitpid(tar_pid, &s1, 0);
-    sys_waitpid(ssh_pid, &s2, 0);
+    _regression_wait_deadline(tar_pid, &s1, _regression_long_timeout_ms());
+    _regression_wait_deadline(ssh_pid, &s2, _regression_long_timeout_ms());
     var st1 = load32(&s1);
     var st2 = load32(&s2);
     if (WIFEXITED(st1) != 1) { return 0 - 1; }

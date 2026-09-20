@@ -264,9 +264,11 @@ fn _read_source_for_grep(path, len_out): i64 {
 }
 
 fn _exec_in_dir(work_dir, bin_path, arg, out_path): i64 {
+    var _rg_ppid_pid = sys_getpid();
     var pid = sys_fork();
     if (pid < 0) { return 0 - 1; }
     if (pid == 0) {
+        _regression_child_guard(_rg_ppid_pid);
         var cd_rc = syscall(SYS_CHDIR, work_dir);
         if (cd_rc < 0) { sys_exit(126); }
         var out_fd = 0 - 1;
@@ -294,7 +296,7 @@ fn _exec_in_dir(work_dir, bin_path, arg, out_path): i64 {
         sys_exit(127);
     }
     var stbuf[1];
-    sys_waitpid(pid, &stbuf, 0);
+    _regression_wait_deadline(pid, &stbuf, _regression_timeout_ms());
     var status = load32(&stbuf);
     if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
     return 0 - 1;
@@ -315,9 +317,13 @@ fn _exec_in_dir3_env(work_dir, bin_path, arg1, arg2, arg3, env_extras_vec, out_p
     }
     store64(aug_envp + (ENVP_COUNT + n_extras) * 8, 0);
 
+    var _rg_ppid_pid = sys_getpid();
+
     var pid = sys_fork();
     if (pid < 0) { return 0 - 1; }
     if (pid == 0) {
+
+        _regression_child_guard(_rg_ppid_pid);
         var cd_rc = syscall(SYS_CHDIR, work_dir);
         if (cd_rc < 0) { sys_exit(126); }
         var out_fd = 0 - 1;
@@ -344,16 +350,18 @@ fn _exec_in_dir3_env(work_dir, bin_path, arg1, arg2, arg3, env_extras_vec, out_p
         sys_exit(127);
     }
     var stbuf[1];
-    sys_waitpid(pid, &stbuf, 0);
+    _regression_wait_deadline(pid, &stbuf, _regression_timeout_ms());
     var status = load32(&stbuf);
     if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
     return 0 - 1;
 }
 
 fn _exec_in_dir3(work_dir, bin_path, arg1, arg2, arg3, out_path): i64 {
+    var _rg_ppid_pid = sys_getpid();
     var pid = sys_fork();
     if (pid < 0) { return 0 - 1; }
     if (pid == 0) {
+        _regression_child_guard(_rg_ppid_pid);
         var cd_rc = syscall(SYS_CHDIR, work_dir);
         if (cd_rc < 0) { sys_exit(126); }
         var out_fd = 0 - 1;
@@ -380,7 +388,7 @@ fn _exec_in_dir3(work_dir, bin_path, arg1, arg2, arg3, out_path): i64 {
         sys_exit(127);
     }
     var stbuf[1];
-    sys_waitpid(pid, &stbuf, 0);
+    _regression_wait_deadline(pid, &stbuf, _regression_timeout_ms());
     var status = load32(&stbuf);
     if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
     return 0 - 1;

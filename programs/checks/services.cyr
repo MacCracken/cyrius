@@ -19,9 +19,13 @@ fn _link_objects_invoke(cyrld_path, out_path, obj_paths_vec): i64 {
     }
     store64(argv + (nobjs + 3) * 8, 0);
 
+    var _rg_ppid_pid = sys_getpid();
+
     var pid = sys_fork();
     if (pid < 0) { return 0 - 1; }
     if (pid == 0) {
+
+        _regression_child_guard(_rg_ppid_pid);
         var dn = sys_open("/dev/null", 1, 0);
         if (dn >= 0) { sys_dup2(dn, 1); sys_close(dn); }
         var envp[1];
@@ -30,7 +34,7 @@ fn _link_objects_invoke(cyrld_path, out_path, obj_paths_vec): i64 {
         sys_exit(127);
     }
     var stbuf[1];
-    sys_waitpid(pid, &stbuf, 0);
+    _regression_wait_deadline(pid, &stbuf, _regression_timeout_ms());
     var status = load32(&stbuf);
     if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
     return 0 - 1;

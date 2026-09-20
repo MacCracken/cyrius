@@ -372,6 +372,8 @@ fn _self_host_pipe(src_path, compiler_path, out_path): i64 {
     var read_fd = load32(&pipefd);
     var write_fd = load32(&pipefd + 4);
 
+    var _rg_ppid_pid = sys_getpid();
+
     var pid = sys_fork();
     if (pid < 0) {
         sys_close(read_fd);
@@ -380,6 +382,8 @@ fn _self_host_pipe(src_path, compiler_path, out_path): i64 {
         return 0 - 4;
     }
     if (pid == 0) {
+
+        _regression_child_guard(_rg_ppid_pid);
         sys_close(write_fd);
         sys_dup2(read_fd, 0);
         sys_close(read_fd);
@@ -405,7 +409,7 @@ fn _self_host_pipe(src_path, compiler_path, out_path): i64 {
     }
     sys_close(write_fd);
     var status_buf[1];
-    sys_waitpid(pid, &status_buf, 0);
+    _regression_wait_deadline(pid, &status_buf, _regression_timeout_ms());
     return load32(&status_buf);
 }
 
@@ -424,6 +428,8 @@ fn _compile_capture_stderr(src_path, compiler_path, stderr_path): i64 {
     var read_fd = load32(&pipefd);
     var write_fd = load32(&pipefd + 4);
 
+    var _rg_ppid_pid = sys_getpid();
+
     var pid = sys_fork();
     if (pid < 0) {
         sys_close(read_fd);
@@ -432,6 +438,8 @@ fn _compile_capture_stderr(src_path, compiler_path, stderr_path): i64 {
         return 0 - 4;
     }
     if (pid == 0) {
+
+        _regression_child_guard(_rg_ppid_pid);
         sys_close(write_fd);
         sys_dup2(read_fd, 0);
         sys_close(read_fd);
@@ -457,7 +465,7 @@ fn _compile_capture_stderr(src_path, compiler_path, stderr_path): i64 {
     }
     sys_close(write_fd);
     var status_buf[1];
-    sys_waitpid(pid, &status_buf, 0);
+    _regression_wait_deadline(pid, &status_buf, _regression_timeout_ms());
     return load32(&status_buf);
 }
 
@@ -571,6 +579,8 @@ fn _self_host_pipe_elf64k_base(src_path, compiler_path, out_path, base_env): i64
     var read_fd = load32(&pipefd);
     var write_fd = load32(&pipefd + 4);
 
+    var _rg_ppid_pid = sys_getpid();
+
     var pid = sys_fork();
     if (pid < 0) {
         sys_close(read_fd);
@@ -579,6 +589,8 @@ fn _self_host_pipe_elf64k_base(src_path, compiler_path, out_path, base_env): i64
         return 0 - 4;
     }
     if (pid == 0) {
+
+        _regression_child_guard(_rg_ppid_pid);
         sys_close(write_fd);
         sys_dup2(read_fd, 0);
         sys_close(read_fd);
@@ -611,7 +623,7 @@ fn _self_host_pipe_elf64k_base(src_path, compiler_path, out_path, base_env): i64
     }
     sys_close(write_fd);
     var status_buf[1];
-    sys_waitpid(pid, &status_buf, 0);
+    _regression_wait_deadline(pid, &status_buf, _regression_timeout_ms());
     return load32(&status_buf);
 }
 
@@ -630,6 +642,8 @@ fn _self_host_pipe_efi(src_path, compiler_path, out_path): i64 {
     var read_fd = load32(&pipefd);
     var write_fd = load32(&pipefd + 4);
 
+    var _rg_ppid_pid = sys_getpid();
+
     var pid = sys_fork();
     if (pid < 0) {
         sys_close(read_fd);
@@ -638,6 +652,8 @@ fn _self_host_pipe_efi(src_path, compiler_path, out_path): i64 {
         return 0 - 4;
     }
     if (pid == 0) {
+
+        _regression_child_guard(_rg_ppid_pid);
         sys_close(write_fd);
         sys_dup2(read_fd, 0);
         sys_close(read_fd);
@@ -664,7 +680,7 @@ fn _self_host_pipe_efi(src_path, compiler_path, out_path): i64 {
     }
     sys_close(write_fd);
     var status_buf[1];
-    sys_waitpid(pid, &status_buf, 0);
+    _regression_wait_deadline(pid, &status_buf, _regression_timeout_ms());
     return load32(&status_buf);
 }
 
@@ -700,9 +716,11 @@ fn _self_host_pipe_agnos(src_path, compiler_path, out_path): i64 {
     if (pr < 0) { sys_close(out_fd); return 0 - 3; }
     var read_fd = load32(&pipefd);
     var write_fd = load32(&pipefd + 4);
+    var _rg_ppid_pid = sys_getpid();
     var pid = sys_fork();
     if (pid < 0) { sys_close(read_fd); sys_close(write_fd); sys_close(out_fd); return 0 - 4; }
     if (pid == 0) {
+        _regression_child_guard(_rg_ppid_pid);
         sys_close(write_fd);
         sys_dup2(read_fd, 0);
         sys_close(read_fd);
@@ -729,7 +747,7 @@ fn _self_host_pipe_agnos(src_path, compiler_path, out_path): i64 {
     }
     sys_close(write_fd);
     var status_buf[1];
-    sys_waitpid(pid, &status_buf, 0);
+    _regression_wait_deadline(pid, &status_buf, _regression_timeout_ms());
     return load32(&status_buf);
 }
 
@@ -764,9 +782,11 @@ fn _self_host_pipe_win(src_path, compiler_path, out_path): i64 {
     if (pr < 0) { sys_close(out_fd); return 0 - 3; }
     var read_fd = load32(&pipefd);
     var write_fd = load32(&pipefd + 4);
+    var _rg_ppid_pid = sys_getpid();
     var pid = sys_fork();
     if (pid < 0) { sys_close(read_fd); sys_close(write_fd); sys_close(out_fd); return 0 - 4; }
     if (pid == 0) {
+        _regression_child_guard(_rg_ppid_pid);
         sys_close(write_fd);
         sys_dup2(read_fd, 0);
         sys_close(read_fd);
@@ -793,7 +813,7 @@ fn _self_host_pipe_win(src_path, compiler_path, out_path): i64 {
     }
     sys_close(write_fd);
     var status_buf[1];
-    sys_waitpid(pid, &status_buf, 0);
+    _regression_wait_deadline(pid, &status_buf, _regression_timeout_ms());
     return load32(&status_buf);
 }
 
@@ -838,12 +858,16 @@ fn _self_host_pipe_env(src_path, compiler_path, out_path, env_kv): i64 {
     store64(aug_envp + ENVP_COUNT * 8, env_kv);
     store64(aug_envp + (ENVP_COUNT + 1) * 8, 0);
 
+    var _rg_ppid_pid = sys_getpid();
+
     var pid = sys_fork();
     if (pid < 0) {
         sys_close(read_fd); sys_close(write_fd); sys_close(out_fd);
         return 0 - 4;
     }
     if (pid == 0) {
+
+        _regression_child_guard(_rg_ppid_pid);
         sys_close(write_fd);
         sys_dup2(read_fd, 0);
         sys_close(read_fd);
@@ -867,7 +891,7 @@ fn _self_host_pipe_env(src_path, compiler_path, out_path, env_kv): i64 {
     }
     sys_close(write_fd);
     var status_buf[1];
-    sys_waitpid(pid, &status_buf, 0);
+    _regression_wait_deadline(pid, &status_buf, _regression_timeout_ms());
     return load32(&status_buf);
 }
 
@@ -897,12 +921,16 @@ fn _self_host_pipe_env2(src_path, compiler_path, out_path, env_kv1, env_kv2): i6
     store64(aug_envp + (ENVP_COUNT + 1) * 8, env_kv2);
     store64(aug_envp + (ENVP_COUNT + 2) * 8, 0);
 
+    var _rg_ppid_pid = sys_getpid();
+
     var pid = sys_fork();
     if (pid < 0) {
         sys_close(read_fd); sys_close(write_fd); sys_close(out_fd);
         return 0 - 4;
     }
     if (pid == 0) {
+
+        _regression_child_guard(_rg_ppid_pid);
         sys_close(write_fd);
         sys_dup2(read_fd, 0);
         sys_close(read_fd);
@@ -926,7 +954,7 @@ fn _self_host_pipe_env2(src_path, compiler_path, out_path, env_kv1, env_kv2): i6
     }
     sys_close(write_fd);
     var status_buf2[1];
-    sys_waitpid(pid, &status_buf2, 0);
+    _regression_wait_deadline(pid, &status_buf2, _regression_timeout_ms());
     return load32(&status_buf2);
 }
 
@@ -1013,6 +1041,18 @@ fn _tcyr_compile_and_run(src_path): i64 {
     var out_buf = alloc(out_cap);
     var out_n = _exec_capture_clean(bin_path, out_buf, out_cap);
     sys_unlink(bin_path);
+
+    # ⛔ v6.6.6: SAY WHEN A TEST NEVER FINISHED. `_exec_capture_clean` is now deadlined
+    # (lib/regression.cyr), and -2 is the module's timeout code. Before the deadline this
+    # branch could not exist: a hung .tcyr hung check.sh itself, with no output and no
+    # verdict, until a human killed the run. A timeout is a RESULT and it is not the same
+    # result as a crash. CHANGELOG [6.6.6]
+    if (_last_exec_ec == 0 - 2) {
+        regression_print("\n  TIMEOUT: ");
+        regression_print(src_path);
+        regression_print(" did not finish and was killed (CYRIUS_CHECK_TIMEOUT, default 120s)\n");
+        return 1;
+    }
 
     # CO-02: a tcyr that crashed (signal) or exited nonzero WITHOUT printing
     # " failed" was recorded as PASS (parse_failed==0). Treat a nonzero exit as
