@@ -1201,6 +1201,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   on is pinned on real hardware by `tests/tcyr/crossos/win_self_exe_path.tcyr`, which
   asserts `sys_self_exe_w(buf, 4)` returns exactly 4 for a path that cannot fit.
 
+- **The release gate threw away the compiler diagnostics from its own failed builds.**
+  (bite 8 review fix on 8a.) All four compiles in `scripts/release-gate.sh` — the two
+  self-host fixpoint generations and the two that derive the tracked ARM compiler — ran
+  `> "$T/out" 2>/dev/null`, so a failing one printed a single verdict line
+  (`cycc could not cross-build src/main_aarch64.cyr`) and discarded the error that said
+  why. That is the swallowed-compile-error shape `check.sh`'s v6.5.40 note exists to
+  prevent, in the script an operator reaches for LAST, when something is already wrong.
+  Each now redirects to its own `.err` file and `fail` prints it under the verdict.
+  Proven in a scratch tree with a stub compiler, all four ways: step 1 fails → its
+  diagnostic is printed; the ARM cross-build fails → printed; the native build fails →
+  printed; the tracked binary merely STALE → the existing (correct) size/`cmp` report,
+  with no empty stderr block.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**

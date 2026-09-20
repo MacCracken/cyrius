@@ -34,10 +34,20 @@ QUICK=0
 [ "$1" = "--quick" ] && QUICK=1
 
 T=$(mktemp -d)
+# $2 (optional) is a file holding the failed command's stderr, printed with the verdict.
+# v6.6.6: every compile below used to send stderr to /dev/null, so a failing one printed
+# a one-line verdict and threw the compiler's own diagnostic away — the operator is then
+# told WHAT failed and nothing about WHY, which is the swallowed-compile-error shape
+# check.sh's v6.5.40 note exists to prevent. CHANGELOG [6.6.6]
 fail() {
     echo ""
     echo "================================================================"
     echo "RELEASE GATE: RED — $1"
+    if [ -n "${2:-}" ] && [ -s "$2" ]; then
+        echo "---------------- stderr from the failed command -----------------"
+        sed 's/^/  /' "$2"
+        echo "----------------------------------------------------------------"
+    fi
     echo "Do NOT version-bump / tag / hand off until this is GREEN."
     echo "================================================================"
     rm -rf "$T"
@@ -49,9 +59,9 @@ chmod +x bootstrap/asm build/cycc 2>/dev/null
 
 # 1. self-host fixpoint -------------------------------------------------------
 step "1/5" "self-host fixpoint (build/cycc reproduces itself byte-identical)"
-cat src/main.cyr | ./build/cycc > "$T/g1" 2>/dev/null || fail "cycc failed to compile src/main.cyr"
+cat src/main.cyr | ./build/cycc > "$T/g1" 2> "$T/g1.err" || fail "cycc failed to compile src/main.cyr" "$T/g1.err"
 chmod +x "$T/g1"
-cat src/main.cyr | "$T/g1" > "$T/g2" 2>/dev/null || fail "gen1 (cycc's self-build) crashed compiling src/main.cyr"
+cat src/main.cyr | "$T/g1" > "$T/g2" 2> "$T/g2.err" || fail "gen1 (cycc's self-build) crashed compiling src/main.cyr" "$T/g2.err"
 cmp -s "$T/g1" "$T/g2" || fail "self-host fixpoint broken (gen1 != gen2)"
 cmp -s "$T/g1" build/cycc || fail "build/cycc is NOT cycc(src) — rebuild build/cycc, it's stale or wrong"
 echo "  OK: byte-identical ($(wc -c < build/cycc) B)"
@@ -81,9 +91,9 @@ if [ "$QUICK" = "1" ]; then
 elif [ ! -f build/cycc-native-aarch64 ]; then
     fail "build/cycc-native-aarch64 is MISSING — it is tracked; restore it (git checkout build/cycc-native-aarch64) or regenerate it, see below"
 else
-    ./build/cycc < src/main_aarch64.cyr > "$T/xa64" 2>/dev/null || fail "cycc could not cross-build src/main_aarch64.cyr"
+    ./build/cycc < src/main_aarch64.cyr > "$T/xa64" 2> "$T/xa64.err" || fail "cycc could not cross-build src/main_aarch64.cyr" "$T/xa64.err"
     chmod +x "$T/xa64"
-    "$T/xa64" < src/main_aarch64_native.cyr > "$T/nat" 2>/dev/null || fail "the aarch64 cross-compiler could not build src/main_aarch64_native.cyr"
+    "$T/xa64" < src/main_aarch64_native.cyr > "$T/nat" 2> "$T/nat.err" || fail "the aarch64 cross-compiler could not build src/main_aarch64_native.cyr" "$T/nat.err"
     if ! cmp -s "$T/nat" build/cycc-native-aarch64; then
         _lsd=$(git log -1 --format=%ad --date=short -- build/cycc-native-aarch64 2>/dev/null)
         echo "  tracked:   $(wc -c < build/cycc-native-aarch64) B${_lsd:+  (last committed $_lsd)}"
