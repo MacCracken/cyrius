@@ -494,10 +494,86 @@ var u = bb.mp(6);
 syscall(60, u);
 EOF
 refuse_all toplevel-method-op "$T/rm.cyr" "returns a struct by value" 7
+# 6.6.6 bite 16c — A 9-16 BYTE STRUCT RETURN (rax:rdx) ACCEPTED ANY RETURN EXPRESSION. The pair
+# branch in PARSE_RETURN handled `return IDENT;` for a matching local and fell through to the
+# SCALAR path for everything else, so a call returning a DIFFERENT struct (`s2` returns a 24 B P3
+# through a retptr), a bare integer, a field, a string and a bare `return;` all compiled clean and
+# handed back rax plus an rdx that was never written. Its >16 B sibling has error'd on an
+# uncarryable shape since v5.5.36; this class never did. Each line below must name what it got.
+# ⚠ `return s2b(1);` (line 8) reaches this through the TAIL-CALL path, not the pair branch — a
+# `jmp` hands the callee's return convention straight back, so a pair-returning caller may only
+# tail-jump to a callee returning the SAME struct the same way. Without that guard the probe
+# refuses 4 of 5 and this row fails loudly rather than passing on a smaller count.
+# Mutation: drop the `_refuse_pair_return` call in PARSE_RETURN -> RED on all three compilers
+# ("COMPILED — it must be refused ... x5"). Ledger: mutated tree RED, real tree GREEN
+# (2026-09-19).
+cat > "$T/rp.cyr" <<'EOF'
+struct P2 { x; y; }
+struct P3 { x; y; z; }
+fn s2(a, b): P3 { var p: P3; p.x = a; p.y = b; p.z = 9; return p; }
+fn mk2(a, b): P2 { var p: P2; p.x = a; p.y = b; return p; }
+fn r_wrongstruct(): P2 { return s2(1, 2); }
+fn r_literal(): P2 { return 5; }
+fn r_field(): P2 { var p: P3; p.x = 1; p.y = 2; p.z = 3; return p.z; }
+fn r_scalarcall(): P2 { return s2b(1); }
+fn r_bare(): P2 { return; }
+fn s2b(a): i64 { return a; }
+fn main(): i64 { var a: P2 = mk2(1, 2); return a.x; }
+var e = main();
+syscall(60, e);
+EOF
+refuse_all pair-return "$T/rp.cyr" "is returned in two registers, so .return. takes a local" 5
+# ... and the shapes it CAN carry must still build on every compiler: a bare local, a call to a fn
+# returning the same struct in the same two registers, a method and an overloaded operator.
+# This is the anti-vacuous half — a refusal that swallowed the legal forms would pass the block
+# above. (Their VALUES are asserted on real hardware by tests/tcyr/crossos/pair_return_shapes.tcyr.)
+cat > "$T/rpok.cyr" <<'EOF'
+struct P2 { x; y; }
+impl Mk for P2 { fn mk(self, n): P2 { var p: P2; p.x = n; p.y = n + 1; return p; } }
+fn P2_add(l, r): P2 { var p: P2; p.x = load64(l) + load64(r); p.y = 0; return p; }
+fn mk2(a, b): P2 { var p: P2; p.x = a; p.y = b; return p; }
+fn r_local(a, b): P2 { var p: P2 = mk2(a, b); return p; }
+fn r_samecall(a, b): P2 { return mk2(a, b); }
+fn r_method(n): P2 { var b: P2; b.x = 0; b.y = 0; return b.mk(n); }
+fn r_operator(): P2 { var l: P2; l.x = 6; l.y = 0; var r: P2; r.x = 7; r.y = 0; return l + r; }
+fn main(): i64 {
+    var a: P2 = r_local(1, 2);
+    var b: P2 = r_samecall(3, 4);
+    var c: P2 = r_method(7);
+    var d: P2 = r_operator();
+    return a.y + b.y + c.y + d.x;
+}
+var e = main();
+syscall(60, e);
+EOF
+naccept=0
+accept_on() {   # accept_on <label> <compiler> <probe>
+    [ -s "$2" ] || return 0
+    if ! "$2" < "$3" > "$T/ac.out" 2> "$T/ac.err"; then
+        echo "  FAIL: [$1] the legal pair-return shapes were REFUSED:"; grep -m3 '^error' "$T/ac.err" | sed 's/^/      /'; fail=1; return
+    fi
+    [ -s "$T/ac.out" ] || { echo "  FAIL: [$1] legal pair-return probe produced an empty binary"; fail=1; return; }
+    naccept=$((naccept + 1))
+}
+accept_on pair-return-ok/x86 "$CC" "$T/rpok.cyr"
+accept_on pair-return-ok/aarch64 "$T/cc_a64" "$T/rpok.cyr"
+accept_on pair-return-ok/win64 "$T/cc_win" "$T/rpok.cyr"
+[ "$naccept" -ge 1 ] || { echo "  FAIL: no compiler accepted the legal pair-return shapes"; fail=1; }
+# x86 runs natively here, so its binary must also COMPUTE: 3 + 5 + 9 + 13 = 30, built below from
+# the same literals by shell arithmetic rather than copied from the probe.
+if [ -s "$T/ac.out" ]; then
+    # a.y and b.y are the SECOND literal of each mk2 call; c.y is the method's n+1; d.x is the
+    # operator's sum of the two first fields. Written out here, computed arithmetically there.
+    pr_want=$(( 2 + 4 + (7 + 1) + (6 + 7) ))
+    "$CC" < "$T/rpok.cyr" > "$T/rpok.bin" 2>/dev/null && chmod +x "$T/rpok.bin"
+    pr_got=0; "$T/rpok.bin" > /dev/null 2>&1 || pr_got=$?
+    [ "$pr_got" = "$pr_want" ] || { echo "  FAIL: [pair-return-ok/x86] legal shapes exit $pr_got, want $pr_want"; fail=1; }
+fi
+
 # Floor: the x86 compiler always runs, so every probe above must have counted at least once.
 REFUSE_FLOOR=3
 if [ "$nrefuse" -lt "$REFUSE_FLOOR" ]; then echo "  FAIL: only $nrefuse refusal cases ran (floor $REFUSE_FLOOR)"; fail=1; fi
 echo "  ok:   refusals — $nrefuse compiler x probe cases named their diagnostic"
 
 if [ "$fail" != 0 ]; then echo "FAIL stack_param_homing_matrix"; exit 1; fi
-echo "PASS stack_param_homing_matrix: $(cat "$T/rows") generated rows ($ROWS_CX on cx) — 4 vector classes x 3 positions x 5..9 int args, 2 vectors + 7 ints, struct return x 5..9, vector args into struct-valued var receives, enum variants of 6..10 fields, struct-valued calls outside a var initializer, method calls and overloaded operators returning a struct — bind every argument on every leg that ran; $nrefuse refusal cases named"
+echo "PASS stack_param_homing_matrix: $(cat "$T/rows") generated rows ($ROWS_CX on cx) — 4 vector classes x 3 positions x 5..9 int args, 2 vectors + 7 ints, struct return x 5..9, vector args into struct-valued var receives, enum variants of 6..10 fields, struct-valued calls outside a var initializer, method calls and overloaded operators returning a struct — bind every argument on every leg that ran; $nrefuse refusal cases named, $naccept compilers accepted the legal 9-16 B return shapes"

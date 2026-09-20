@@ -1,0 +1,86 @@
+# pair_return_shapes.tcyr — 6.6.6. A 9-16 BYTE STRUCT IS RETURNED IN TWO REGISTERS, AND EVERY
+# SHAPE THAT CAN CARRY IT CARRIES BOTH HALVES.
+#
+# ⛔ THE DEFECT. PARSE_RETURN's pair branch handled exactly one shape — `return IDENT;` where
+# IDENT is a local of the declared struct — and FELL THROUGH TO THE SCALAR PATH for everything
+# else. So a `: P2` fn returning a call to a fn that returns a DIFFERENT struct, or a bare
+# integer, or a field, compiled clean and handed back whatever the expression left in rax with
+# rdx never written at all. Its >16 B sibling has error'd on an uncarryable shape since v5.5.36;
+# this class never did. Since 6.6.6 the uncarryable shapes are a compile error naming what they
+# got (pinned by `tests/gates/codegen/stack_param_homing_matrix.sh`, which needs a compiler that
+# REFUSES and so cannot live here) — and the carryable ones are pinned HERE, on real hardware,
+# because a refusal that also swallowed the legal forms would pass that gate.
+#
+# The four legal shapes: a bare local; a call to a fn returning the same struct the same way
+# (a pure rax:rdx passthrough, and a tail call when nothing else blocks it); a method returning
+# it; an overloaded operator returning it.
+#
+# ⭐ EVERY ASSERTION READS BOTH HALVES. `.x` alone passes on a build that never writes rdx —
+# that is precisely how the defect survived — so each case is checked as `x * 100 + y`, with the
+# expected value written as the two literals side by side and computed in the probe
+# arithmetically from the fields.
+#
+# ⚠ THIS FILE DOES NOT REPRODUCE THE DEFECT, AND SAYING SO IS THE POINT. It passes on the
+# pre-6.6.6 compiler too: the four legal shapes happened to leave the right pair in rax:rdx
+# (the method and operator forms because bite 14's `_sc_post` had already landed the result in a
+# temp and stored the pair). What this file guards is the OTHER half of the bite — that the new
+# refusal did not swallow the shapes the ABI can carry. The defect itself is pinned by
+# `tests/gates/codegen/stack_param_homing_matrix.sh`, which needs a compiler that REFUSES.
+#
+# Mutations that redden this file (each applied to the 6.6.6 tree, rebuilt, measured
+# 2026-09-19). Both are OVER-WIDE refusals, and both show up as a COMPILE error, not a value:
+#   * `_pair_ret_expr_shape` never matching -> `from_method` and `from_operator` are refused
+#     ("got `b`" at line 50, "got `l`" at line 55) and the file does not build.
+#   * `_pair_ret_call_ok` returning 0 always -> `from_call` and `from_call_nested` are refused
+#     ("got `mk2`", "got `from_call`") and the file does not build.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/assert.cyr"
+
+struct P2 { x; y; }
+
+impl Mk for P2 {
+    fn mk(self, n): P2 { var p: P2; p.x = n; p.y = n + 1; return p; }
+}
+fn P2_add(l, r): P2 { var p: P2; p.x = load64(l) + load64(r); p.y = load64(l + 8) + load64(r + 8); return p; }
+
+fn mk2(a, b): P2 { var p: P2; p.x = a; p.y = b; return p; }
+
+# (1) the shape that always worked — the control for the other three.
+fn from_local(a, b): P2 { var p: P2 = mk2(a, b); return p; }
+# (2) a call to a fn returning the same struct in the same two registers.
+fn from_call(a, b): P2 { return mk2(a, b); }
+# (3) a method returning it.
+fn from_method(n): P2 { var b: P2; b.x = 0; b.y = 0; return b.mk(n); }
+# (4) an overloaded operator returning it.
+fn from_operator(): P2 {
+    var l: P2; l.x = 6; l.y = 1;
+    var r: P2; r.x = 7; r.y = 2;
+    return l + r;
+}
+# (5) the same passthrough one level deeper, so a single-frame accident cannot carry it.
+fn from_call_nested(a, b): P2 { return from_call(a, b); }
+
+fn both(p): i64 { return load64(p) * 100 + load64(p + 8); }
+
+fn drive_local() { var t: P2 = from_local(3, 4); return both(&t); }
+fn drive_call() { var t: P2 = from_call(3, 4); return both(&t); }
+fn drive_method() { var t: P2 = from_method(7); return both(&t); }
+fn drive_operator() { var t: P2 = from_operator(); return both(&t); }
+fn drive_nested() { var t: P2 = from_call_nested(5, 6); return both(&t); }
+
+alloc_init();
+
+test_group("a 9-16 byte struct return carries BOTH halves in every legal shape");
+assert_eq(drive_local(), 304, "return <local>");
+assert_eq(drive_call(), 304, "return <same-struct call>");
+assert_eq(drive_call(), drive_local(), "the call shape agrees with the local shape");
+assert_eq(drive_method(), 708, "return <method>");
+assert_eq(drive_operator(), 1303, "return <overloaded operator>");
+assert_eq(drive_nested(), 506, "return <call> forwarded one frame deeper");
+
+var r = assert_summary();

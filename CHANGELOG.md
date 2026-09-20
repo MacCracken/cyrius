@@ -2417,6 +2417,30 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   over-broad fix), mutation-proven three ways. cycc 1,310,952 -> 1,315,080 B. All 330
   pre-existing `.tcyr` exit identically to the 6.6.5 compiler.
 
+- **A fn returning a 9-16 byte struct accepted ANY return expression and handed back garbage.**
+  (bite 16c; found by bite 14's review.) A struct of 9-16 bytes comes back in **two** registers
+  (rax:rdx). PARSE_RETURN's pair branch handled exactly one shape — `return IDENT;` where IDENT
+  is a local of the declared struct — and **fell through to the scalar path** for everything
+  else, so rax got whatever the expression left there and rdx was never written. Measured on
+  6.6.5: `struct P2{x;y;} fn pr(): P2 { return s2(1,2); }` (where `s2` returns a 24 B `P3`
+  through a hidden retptr) and `fn p5(): P2 { return 5; }` both compiled clean. `return p.z;`
+  and a bare `return;` in such a fn likewise. Its >16 B sibling has error'd on a shape it cannot
+  carry since v5.5.36; this class never did. **Fix:** the pair branch now enumerates what the
+  ABI can carry — a local of that struct, a call to a fn returning it the same way (rax:rdx
+  passthrough), and a method or overloaded operator returning it (landed in a frame temp, then
+  the pair load) — and refuses anything else by name, printing what it got
+  (``a fn returning the 9-16 byte struct `P2` … — got `s2` ``). ⚠ The same question had to be
+  answered on the TAIL-CALL path, which takes `return f(..);` before the pair branch sees it: a
+  `jmp` hands the callee's return convention straight back to our caller, so a pair-returning
+  fn may only tail-jump to a callee returning the same struct the same way (`return s2b(1);`
+  used to jump into a scalar fn and leave rdx unwritten). `src/frontend/parse_fn.cyr`. Gated by
+  two new probes in `tests/gates/codegen/stack_param_homing_matrix.sh` — five refusals per
+  compiler across x86/aarch64/Win64, plus an acceptance probe proving the four legal shapes
+  still build (and, on x86, still compute) — and by
+  `tests/tcyr/crossos/pair_return_shapes.tcyr` on real hardware; mutation-proven three ways.
+  cycc 1,315,080 -> 1,315,248 B. All 330 pre-existing `.tcyr` and all 85 `programs/*.cyr`
+  compile to BYTE-IDENTICAL binaries against the 6.6.5 compiler.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**

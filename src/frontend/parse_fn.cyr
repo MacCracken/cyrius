@@ -675,6 +675,12 @@ fn PARSE_RETURN(S): i64 {
                         # refuses anything else instead of returning garbage. CHANGELOG [6.6.6]
                         if (_ret_agg_class(S, _tc_cfi) == 2) { tc_has_addr = 1; }
                         if (_cur_fn_ret_sid > 0) { if (_cur_fn_ret_stash > 0) { tc_has_addr = 1; } }
+                        # 6.6.6 — the same question for the rax:rdx PAIR class. A `jmp` hands the
+                        # callee's return convention straight back to OUR caller, so it is right
+                        # only when the callee returns THIS struct the same way. `return s2b(1);`
+                        # from a `: P2` fn tail-jumped into a scalar fn and left rdx unwritten —
+                        # the tail-call spelling of the shape `_refuse_pair_return` names.
+                        if (_cur_fn_ret_pair == 1) { if (_pair_ret_call_ok(S) == 0) { tc_has_addr = 1; } }
                         # v6.5.1 — a callee that has an overload-suffix sibling must go through
                         # PARSE_FNCALL, because that is the ONLY place the `_str`/`_int` dispatch
                         # lives. This tail path emits epilogue+jmp itself and never consults
@@ -1114,6 +1120,21 @@ fn PARSE_RETURN(S): i64 {
                 }
             }
         }
+        # 6.6.6 — EVERYTHING ELSE. A method / overloaded operator returning this same struct is
+        # landed in a frame temp and loaded as the pair; a call returning it in the same two
+        # registers passes straight through PCMPE; anything else cannot be carried and is
+        # refused by name instead of silently handing back rax plus an unwritten rdx.
+        # See `_refuse_pair_return`.
+        if (_pair_ret_expr_shape(S) == 1) {
+            var _pe_t = _return_struct_expr(S);
+            EFLLOAD_STRUCT_INT_PAIR(S, _pe_t);
+            if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
+            STI(S, GTI(S) + 1);     # consume ';'
+            var _pe_rp = EJMP0(S);
+            vec_push(rp_vec, _pe_rp);
+            return 0;
+        }
+        if (_pair_ret_call_ok(S) == 0) { _refuse_pair_return(S); }
     }
     # v5.10.28 — f64v2 multi-register pair return ABI.
     # When the current fn is annotated `: f64v2` (encoding -2093 in
@@ -2058,6 +2079,55 @@ fn _return_struct_expr(S): i64 {
     var t = _sc_whole(S, st);
     if (t >= 0) { if (_sc_sid == _cur_fn_ret_sid) { return t; } }
     ERR_MSG(S, "struct-return fn: return must be a bare local identifier, or a call to a fn returning the same struct", 101);
+    return 0;
+}
+
+# ⛔ 6.6.6 (bite 14 review) — A 9-16 BYTE STRUCT RETURN (rax:rdx) ACCEPTED ANY EXPRESSION. The
+# pair branch in PARSE_RETURN handled `return IDENT;` for a matching local and FELL THROUGH to
+# the scalar PCMPE path for everything else — so `fn pr(): P2 { return s2(1,2); }` (s2 returns a
+# 24 B P3 through a retptr) and `fn p5(): P2 { return 5; }` both compiled clean and handed back
+# garbage: rax held whatever the expression left there and rdx was never written at all. The
+# retptr sibling has always error'd on a shape it cannot carry; this class never did.
+# These three say what the pair ABI CAN carry. `_pair_ret_call_ok` is a call to a fn returning
+# the same struct in the same two registers (a pure rax:rdx passthrough — no copy needed);
+# `_pair_ret_expr_shape` is the method / overloaded-operator token shape, which `_sc_pre` /
+# `_sc_post` land in a frame temp for the pair load. Anything else is refused BY NAME.
+# CHANGELOG [6.6.6]
+fn _pair_ret_call_ok(S): i64 {
+    if (PEEKT(S) != 2) { return 0; }
+    if (TOKTYP(S, GTI(S) + 1) != 10) { return 0; }
+    var fi = FINDFN(S, PEEKV(S));
+    if (fi < 0) { return 0; }
+    if (GFRS(S, fi) != _cur_fn_ret_sid) { return 0; }
+    if (_ret_agg_class(S, fi) != 1) { return 0; }
+    return 1;
+}
+fn _pair_ret_expr_shape(S): i64 {
+    if (PEEKT(S) != 2) { return 0; }
+    var nx = TOKTYP(S, GTI(S) + 1);
+    if (nx == 41) {
+        if (TOKTYP(S, GTI(S) + 3) == 10) { return 1; }
+        return 0;
+    }
+    return _is_op_dispatch_tok(nx);
+}
+# Name what is actually there, so the diagnostic points at the construct and not just the fn.
+fn _pair_ret_offender(S): i64 {
+    if (PEEKT(S) == 2) { PRSTR(S + 0xEC00000 + PEEKV(S)); return 0; }
+    if (PEEKT(S) == 1) { PRNUM(PEEKV(S)); return 0; }
+    syscall(SYS_WRITE, 2, "this expression", 15);
+    return 0;
+}
+fn _refuse_pair_return(S): i64 {
+    if (_panic == 1) { return 0; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    _err_head(S);
+    syscall(SYS_WRITE, 2, ": a fn returning the 9-16 byte struct `", 39);
+    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (_cur_fn_ret_sid - 1) * 8));
+    syscall(SYS_WRITE, 2, "` is returned in two registers, so `return` takes a local of that struct or a call returning it — got `", 105);
+    _pair_ret_offender(S);
+    syscall(SYS_WRITE, 2, "`\n", 2);
+    _had_error = 1;
     return 0;
 }
 

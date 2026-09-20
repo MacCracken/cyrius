@@ -275,6 +275,13 @@ fn f(): i64 {
 }
 ```
 
+⚠ **A fn returning a 9-16 byte struct (two registers) can `return` only what those two registers
+can carry**: a local of that struct, a call to a fn returning the same struct, or a method or
+overloaded operator returning it. Anything else — a call returning a *different* struct, an
+integer, a field, a bare `return;` — is a compile error since v6.6.6 naming what it got. Before
+v6.6.6 every one of those compiled clean and handed back the first register plus a second that
+was never written. (The >16-byte form has error'd on an uncarryable shape since v5.5.36.)
+
 ⚠ **A by-value struct PARAMETER over 8 bytes is address-passed** — the parameter's slot holds
 the caller's address, which is why writing `q.z = 5` inside the callee is visible to the caller.
 Since v6.6.6 every path that copies or returns such a parameter goes through that address:
