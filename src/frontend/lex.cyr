@@ -20,6 +20,28 @@ var _fm_overflowed = 0;
 # The error emitters recover it via GTOFF() to derive the column + source-excerpt.
 var _tok_start = 0;
 
+# 1 iff `buf[pos]` sits at the START OF A LINE. CVE-44's consumer half: FM_BUILD
+# scanned for `#@file` at ANY offset, so a span could be minted by bytes that merely
+# CONTAINED the marker. Bite 5b closed the producer routes (PP_NEUT_FMARK neutralises
+# user bytes at both entry points) but deliberately skips STRING LITERALS, so a
+# program's own DATA could still mint one: `var q = "#@file ";` ends its literal with
+# the very quote the scan wants, and the "filename" then ran from there to the next
+# `"` in the file — a real span, with `;\nvar w = ` for a name, which showed up as the
+# filename in a diagnostic. It could not defeat `private` (a string's closing quote is
+# always followed by punctuation in valid cyrius, so the name is not attacker-chosen),
+# but a marker is a compiler-internal control line and only the compiler should be able
+# to mint one. `#@incdir` has required byte 0 since v6.5.7 for the same reason; this is
+# the same rule one notch weaker, and it closes the class at the CONSUMER instead of at
+# every producer. MEASURED before shipping: instrumenting FM_BUILD to report any marker
+# not at a line start found ZERO across the compiler's own build (100+ includes) and all
+# 330 `.tcyr` — PP_FMARK only ever writes a marker at `op` following a newline.
+# CHANGELOG [6.6.6]
+fn FM_ATBOL(buf, pos): i64 {
+    if (pos == 0) { return 1; }
+    if (load8(buf + pos - 1) == 10) { return 1; }
+    return 0;
+}
+
 fn FM_BUILD(S): i64 {
     _fm_count = 0;
     _fm_str_pos = 0;
@@ -30,7 +52,7 @@ fn FM_BUILD(S): i64 {
     var pos = 0;
     # First pass: find all markers and their start lines
     while (pos < bl) {
-        if (load8(buf + pos) == 35 && pos + 7 < bl) {
+        if (load8(buf + pos) == 35 && pos + 7 < bl && FM_ATBOL(buf, pos) == 1) {
             if (load8(buf + pos + 1) == 64 && load8(buf + pos + 2) == 102 && load8(buf + pos + 3) == 105 && load8(buf + pos + 4) == 108 && load8(buf + pos + 5) == 101 && load8(buf + pos + 6) == 32 && load8(buf + pos + 7) == 34) {
                 var fstart = pos + 8;
                 var fend = fstart;

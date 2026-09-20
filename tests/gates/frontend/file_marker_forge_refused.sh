@@ -46,6 +46,12 @@
 #      file and its own line number (the fix must not be "stop emitting markers")
 #   8  census: every READFILE-into-`out` include site is followed by a
 #      PP_NEUT_FMARK call, derived from src/frontend/lex_pp.cyr
+#   9  THE CONSUMER HALF (bite 5g): a string literal cannot mint a span. The
+#      neutraliser skips string literals on purpose, so `var q = "#@file ";`
+#      used to mint one whose "filename" ran from the closing quote to the next
+#      `"` — it appeared as the file name in a diagnostic. FM_BUILD now requires
+#      the marker at a LINE START, the way `#@incdir` requires byte 0.
+#   10 census: FM_BUILD's scan is gated on FM_ATBOL
 #
 # MUTATION LEDGER (2026-09-19, cycc 1,310,856 B, measured). Each mutation is
 # applied to the working tree, a compiler built from it with the good cycc, and
@@ -62,7 +68,15 @@
 #      program whose DATA holds `#@file`
 #   M4 PP_NEUT_FMARK's body short-circuited with `return 0;`
 #      → 4 FAIL / 8 ok: axes 1, 3, 4, 5 — every forge route reopens at once
-#   real tree → 12/12 green
+#   M5 FM_ATBOL replaced by `return 1;` (the pre-6.6.6 any-offset scan)
+#      → 1 FAIL: axis 9, whose diagnostic comes back naming `;\nvar w = `
+#   M6 FM_ATBOL replaced by `return 0;` (no marker is ever accepted)
+#      → 7 FAIL: 1, 2, 3, 4, 5, 7, 9 — WIDER than expected and worth recording:
+#        with no file map at all `private` stops being enforced anywhere, so axis
+#        2 (the anti-vacuous honest program) reports rc=0. That is what stops
+#        axis 9 passing vacuously — a file map that records nothing also records
+#        no forgery.
+#   real tree → 14/14 green
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
@@ -248,6 +262,45 @@ if [ "$nreads" = "$nguards" ] && [ "$nreads" -ge 2 ] && [ "$npass" -ge 1 ]; then
 else
     printf '  FAIL: axis 8 — census: %s include READFILE sites but %s guards, %s raw-source pass calls\n' \
         "$nreads" "$nguards" "$npass"
+    fail=$((fail+1))
+fi
+
+# ── axis 9 — THE CONSUMER HALF (v6.6.6 bite 5g). The producer-side neutraliser
+#    deliberately skips STRING LITERALS, so program DATA could still mint a span:
+#    `var q = "#@file ";` ends its literal with the very quote FM_BUILD's scan
+#    wants, and the "filename" then ran from there to the next `"` in the file. It
+#    never defeated `private` (the byte after a closing quote is punctuation in
+#    valid cyrius, so the name is not attacker-chosen), but the forged name DID
+#    appear as the filename in a diagnostic. FM_BUILD now requires the marker at a
+#    line start, as `#@incdir` requires byte 0.
+#    Expected is derived a different way: the line number comes from grep -n over
+#    the generated source, not from the compiler.
+printf 'include "secret.cyr"\nvar q = "#@file ";\nvar w = "secret.cyr";\nvar R = SECRET_ADD(20, 22);\nsyscall(60, R);\n' > "$D/9.cyr"
+want9=$(grep -n 'SECRET_ADD(20, 22)' "$D/9.cyr" | cut -d: -f1)
+rc=0; ( cd "$D" && "$CC" < "9.cyr" > "9.bin" 2> "9.err" ) || rc=$?
+if [ "$rc" -eq 0 ]; then
+    printf '  FAIL: axis 9 — a string literal minted a span and the program COMPILED\n'
+    fail=$((fail+1))
+elif grep -q "^error:<source>:$want9:" "$D/9.err"; then
+    printf '  ok: axis 9 — a string literal cannot mint a file-map span (diagnostic names <source>:%s)\n' "$want9"
+    pass=$((pass+1))
+else
+    printf '  FAIL: axis 9 — the diagnostic carries a FORGED file name: %s\n' \
+        "$(head -2 "$D/9.err" | tr '\n' ' ' | cut -c1-90)"
+    fail=$((fail+1))
+fi
+rm -f "$D/9.bin"
+
+# ── axis 10 — census for the consumer half: FM_BUILD's marker scan must be gated
+#    on FM_ATBOL. Counted from the source, a different way from axis 9's behaviour.
+nbol=$(grep -c 'FM_ATBOL(buf, pos) == 1' src/frontend/lex.cyr || true)
+nfmb=$(grep -c 'fn FM_ATBOL(buf, pos)' src/frontend/lex.cyr || true)
+if [ "$nbol" -ge 1 ] && [ "$nfmb" = 1 ]; then
+    printf '  ok: axis 10 — FM_BUILD gates its marker scan on FM_ATBOL (%s call site)\n' "$nbol"
+    pass=$((pass+1))
+else
+    printf '  FAIL: axis 10 — FM_ATBOL census: %s definitions, %s call sites in FM_BUILD\n' \
+        "$nfmb" "$nbol"
     fail=$((fail+1))
 fi
 

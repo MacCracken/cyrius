@@ -249,7 +249,7 @@ because this is the live ledger and the id has to come from one place.*
 | | |
 |---|---|
 | **Severity** | **Medium** — `private` is a soundness property of the language, not a sandbox: a forger already controls the source being compiled. What it breaks is the ability to CHECK the property, which is what `private` exists for |
-| **Affected** | `src/frontend/lex_pp.cyr` — the two include `READFILE` sites (`PP_PASS`, `PP_IFDEF_PASS`), the `#define` macro-body store + `PP_EXPAND`, and `PP_COPY_TAIL`. Every fork. From v6.5.0 (when `private` began using the file map) through 6.6.5 |
+| **Affected** | `src/frontend/lex_pp.cyr` — the two include `READFILE` sites (`PP_PASS`, `PP_IFDEF_PASS`), the `#define` macro-body store + `PP_EXPAND`, and `PP_COPY_TAIL`; and `FM_BUILD` in `src/frontend/lex.cyr`, the consumer that accepted a marker at any offset. Every fork. From v6.5.0 (when `private` began using the file map) through 6.6.5 |
 | **Vector** | any source the build pulls in — an included file, a macro body, a `#derive` line's tail |
 | **Fixed in** | 6.6.6 |
 
@@ -300,13 +300,50 @@ so a program whose **data** contains `#@file` keeps its bytes.
 The v6.5.21 inline guard is removed, not left alongside: two mechanisms for one invariant is how
 the first one came to be believed complete.
 
+### The consumer half, and the residual it left (bite 5g)
+
+The fix above is **producer-side**, and it deliberately skips string literals so that a program
+whose data contains `#@file` keeps its bytes. That leaves program DATA able to mint a span:
+
+```sh
+# secret.cyr is `private`; attack.cyr is the main source
+# include "secret.cyr"
+# var q = "#@file ";          <- the literal's CLOSING QUOTE is the one FM_BUILD wants
+# var w = "secret.cyr";
+# var R = SECRET_ADD(20, 22);
+# error:;\nvar w = :2:20: 'SECRET_ADD' is private to its file    <- the file name is FORGED
+```
+
+Measured identical at 2420b1f8 and after bite 5b, so it was a **residual, not a regression**. It
+could not defeat `private`: the byte after a string's closing quote is always punctuation in
+valid cyrius, so the "filename" is whatever text follows and is not attacker-chosen — the
+program is still refused, the forged name only shows up **in the diagnostic**. The `#ref` and
+`#define` routes to the same trick both die in `PP_LEXST`'s comment state.
+
+Closed at the **consumer** instead of at every producer: `FM_BUILD` now requires the marker at a
+**line start** (`FM_ATBOL`), the way `#@incdir` has required byte 0 since v6.5.7. A marker is a
+compiler-internal control line and only the compiler should be able to mint one. Measured before
+shipping by instrumenting `FM_BUILD` to report any marker not at a line start: **zero** across
+the compiler's own build (100+ includes) and all 330 `.tcyr` — `PP_FMARK` only ever writes at a
+position following a newline. cycc 1,310,920 B → 1,315,016 B (+4096, one page); 0 of 330 `.tcyr`
+binaries changed a byte.
+
+⚠ What remains: a marker forged at a line START inside a multi-line string literal. It needs two
+raw `"` bytes inside one literal to carry a filename, which closes the literal, so it cannot be
+written — but this is an argument from the grammar, not a check, and it is written down here
+rather than left implicit.
+
 ### Verified
 
-`tests/gates/frontend/file_marker_forge_refused.sh` — 12 axes, 4 mutations each RED. Every forge
+`tests/gates/frontend/file_marker_forge_refused.sh` — 14 axes, 6 mutations each RED. Every forge
 axis is scored against a **twin that must build and run** (the same program against a
 non-private file, exit 42), so "it does not compile" cannot pass for a fix; axis 6 pins that
 program data holding `#@file` survives byte for byte; axis 7 pins that real markers still
 attribute a diagnostic to the included file and its own line, so the forge axes cannot pass
 vacuously by the file map simply not working; axis 8 derives the census of
-`READFILE`-into-`out` sites from the source. Self-host fixpoint + `seed-derive-cycc.sh` green;
+`READFILE`-into-`out` sites from the source; axis 9 pins the consumer half (the string-literal
+span, whose diagnostic must name `<source>` at a line number derived by `grep -n` rather than
+from the compiler) and axis 10 its census. ⚠ Mutation M6 (`FM_ATBOL` → 0) is RED on **seven**
+axes, not one: with no file map at all `private` stops being enforced anywhere, which is what
+stops axis 9 passing vacuously. Self-host fixpoint + `seed-derive-cycc.sh` green;
 0 of 330 `.tcyr` binaries changed a byte.
