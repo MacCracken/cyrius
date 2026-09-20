@@ -13,6 +13,12 @@
 #   r = q;       -> copied the POINTER into r's field 0, silently. `r.z` was 0.
 #   return q;    -> from a >16 B fn, byte-copied the pointer word into the retptr buffer;
 #                   from a 9-16 B fn, loaded the ADDRESS as the rax:rdx pair. Both exit 0.
+#   q + w;       -> never dispatched `P3_add` AT ALL and silently ADDED THE TWO POINTERS
+#                   (6.6.6 bite 16 review; measured 104, 72 and 81 for 9 in three frames,
+#                   exit 0, while `var c: P3 = q + w` SIGSEGV'd). The dispatch gate keyed on
+#                   "inline local", and an address-passed parameter is not one.
+#   &q           -> the address of the WORD THAT HOLDS the pointer, so `load64(&q + 16)` read
+#                   0 where `q.z` reads 9 — `&q` and `q.z` addressed two different things.
 #
 # ⭐ EVERY EXPECTED VALUE IS DERIVED A DIFFERENT WAY FROM THE THING UNDER TEST. Each subject
 # that assigns to or from a parameter is paired with a CONTROL that reaches the same state
@@ -36,6 +42,17 @@
 #     -> ret_retptr_param 0 (want 9) and ret_pair_param 0 (want 4).
 #   * `_local_is_sptr_param` without its `_classify_param_type` exclusion -> the `str_` group
 #     goes red (str_param_rebind 2, want 1): a Str parameter starts deep-copying its header.
+#   * `_op_local_dispatches` reduced to `GLAGG == 1` (i.e. the pre-review compiler) -> 4 rows
+#     red with the POINTER SUM in place of 9 (the number moves with ASLR), then the binary
+#     SIGSEGVs in param_op_agg.
+#   * `_op_operand_local` reduced to a bare `EFLADDR` -> 7 red: param_op_scalar 0 (want 9),
+#     both mixed orders 5, the struct-returning pair a pointer (want 13).
+#   * the `&q` arm removed from the address-of path -> 3 red: param_amp_read 0 (want 9),
+#     param_amp_write 3 (want 77).
+#   * the `&` arm widened to `_local_struct_is_ptr` — EVERY pointer-mode local, which is what
+#     the review first proposed -> heaplocal_amp_is_slot SIGSEGVs. Widening the DISPATCH gate
+#     the same way does not even compile: a heap-mode struct local then demands an operator fn
+#     that does not exist. Both are the 6.6.5 rule this file must not undo.
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -56,6 +73,11 @@ fn mk2(a, b): P2 { var p: P2; p.x = a; p.y = b; return p; }
 
 fn Acc_mk(self, n): Acc { var t: Acc; t.a = n; t.b = n + 1; t.c = n + 2; return t; }
 fn Acc_add(l, r): Acc { var t: Acc; t.a = load64(l) + load64(r); t.b = 0; t.c = 0; return t; }
+
+# 6.6.6 bite 16 review — a SCALAR-returning operator over P3, plus a call counter so the
+# anti-vacuous row below can assert that a POINTER-MODE (heap) local does NOT dispatch.
+var G_p3_add_calls = 0;
+fn P3_add(l, r): i64 { G_p3_add_calls = G_p3_add_calls + 1; return load64(l + 16) + load64(r + 16); }
 
 # ------------------------------------------------- (1) the parameter as ASSIGNMENT TARGET --
 # SUBJECT: `q = r`, the filed repro. Before 6.6.6 this SIGSEGV'd.
@@ -109,6 +131,62 @@ fn writes_through(q: P3) { q.z = 77; return 0; }
 # A `Str` parameter (16 B by name, a heap handle by ABI) keeps POINTER-REBIND assignment.
 # `a = b` then clobbering a's length word must be visible through `b` — that is an alias.
 fn str_param_rebind(a: Str, b: Str) { a = b; store64(a + 8, 1); return str_len(b); }
+
+# ------------------------------- (5) a parameter as an OPERATOR OPERAND, and `&q` ----------
+# SUBJECT: `q + w`, both operands parameters; then one parameter and one inline local, in both
+# orders (only the LHS gates dispatch, so the two orders are different code paths); then the
+# STRUCT-RETURNING dispatcher, which SIGSEGV'd. Each control reaches the same number through
+# FIELD READS only.
+fn param_op_scalar(q: P3, w: P3) { return q + w; }
+fn param_op_scalar_ctl(q: P3, w: P3) { return q.z + w.z; }
+fn param_op_mixed_lhs(q: P3) { var w: P3 = mk3(1, 2, 5); return q + w; }
+fn param_op_mixed_lhs_ctl(q: P3) { var w: P3 = mk3(1, 2, 5); return q.z + w.z; }
+fn param_op_mixed_rhs(q: P3) { var w: P3 = mk3(1, 2, 5); return w + q; }
+fn param_op_agg(q: Acc, w: Acc) { var c: Acc = q + w; return c.a; }
+fn param_op_agg_ctl(q: Acc, w: Acc) { return q.a + w.a; }
+
+# SUBJECT: `&q` must address the CALLER's struct, for reading and for writing, exactly as
+# `q.z` does. Paired with the field form as the control.
+fn param_amp_read(q: P3) { return load64(&q + 16); }
+fn param_amp_read_ctl(q: P3) { return q.z; }
+fn param_amp_write(q: P3) { store64(&q + 16, 77); return 0; }
+
+# ANTI-VACUOUS for group 5: the 6.6.5 rule that a POINTER-MODE (heap-handle) local is NOT an
+# inline aggregate must survive. `p + r` on two heap-mode locals is POINTER ARITHMETIC and
+# must not dispatch (the call counter proves it), and `&p` on one is still the SLOT — so
+# `load64(&p)` is the heap pointer and `load64(load64(&p) + 16)` is the field. A fix keyed on
+# "pointer-mode struct local" instead of "address-passed parameter" reddens both.
+fn heaplocal_op_is_ptr_arith() {
+    var p: P3 = alloc(24); p.x = 1; p.y = 2; p.z = 4;
+    var r: P3 = alloc(24); r.x = 1; r.y = 2; r.z = 5;
+    var before = G_p3_add_calls;
+    var junk = p + r;
+    return G_p3_add_calls - before;
+}
+fn heaplocal_amp_is_slot() {
+    var p: P3 = alloc(24); p.x = 1; p.y = 2; p.z = 9;
+    return load64(load64(&p) + 16);
+}
+fn inline_local_amp_is_the_struct() { var p: P3 = mk3(1, 2, 9); return load64(&p + 16); }
+
+fn drive_param_op_scalar() { var s: P3 = mk3(1, 2, 4); var u: P3 = mk3(1, 2, 5); return param_op_scalar(s, u); }
+fn drive_param_op_scalar_ctl() { var s: P3 = mk3(1, 2, 4); var u: P3 = mk3(1, 2, 5); return param_op_scalar_ctl(s, u); }
+fn drive_param_op_mixed_lhs() { var s: P3 = mk3(1, 2, 4); return param_op_mixed_lhs(s); }
+fn drive_param_op_mixed_lhs_ctl() { var s: P3 = mk3(1, 2, 4); return param_op_mixed_lhs_ctl(s); }
+fn drive_param_op_mixed_rhs() { var s: P3 = mk3(1, 2, 4); return param_op_mixed_rhs(s); }
+fn drive_param_op_agg() {
+    var s: Acc; s.a = 6; s.b = 0; s.c = 0;
+    var u: Acc; u.a = 7; u.b = 0; u.c = 0;
+    return param_op_agg(s, u);
+}
+fn drive_param_op_agg_ctl() {
+    var s: Acc; s.a = 6; s.b = 0; s.c = 0;
+    var u: Acc; u.a = 7; u.b = 0; u.c = 0;
+    return param_op_agg_ctl(s, u);
+}
+fn drive_param_amp_read() { var s: P3 = mk3(1, 2, 9); return param_amp_read(s); }
+fn drive_param_amp_read_ctl() { var s: P3 = mk3(1, 2, 9); return param_amp_read_ctl(s); }
+fn drive_param_amp_write() { var s: P3 = mk3(1, 2, 3); var d = param_amp_write(s); return s.z; }
 
 fn drive_param_dst_local_src() { var s: P3 = mk3(1, 2, 3); return param_dst_local_src(s); }
 fn drive_param_dst_local_src_ctl() { var s: P3 = mk3(1, 2, 3); return param_dst_local_src_ctl(s); }
@@ -167,7 +245,22 @@ test_group("returning a by-value struct parameter");
 assert_eq(drive_ret_retptr_param(), 9, "return q; from a >16 B fn returns the struct");
 assert_eq(drive_ret_pair_param(), 4, "return q; from a 9-16 B fn returns both halves");
 
+test_group("a by-value struct parameter as an OPERATOR OPERAND, and &q");
+assert_eq(drive_param_op_scalar(), 9, "q + w dispatches P3_add with the two structs");
+assert_eq(drive_param_op_scalar(), drive_param_op_scalar_ctl(), "q + w matches the field-read sum");
+assert_eq(drive_param_op_mixed_lhs(), 9, "a parameter LHS with an inline-local RHS dispatches");
+assert_eq(drive_param_op_mixed_lhs(), drive_param_op_mixed_lhs_ctl(), "parameter + local matches the field-read sum");
+assert_eq(drive_param_op_mixed_rhs(), 9, "an inline-local LHS with a parameter RHS dispatches");
+assert_eq(drive_param_op_agg(), 13, "a struct-RETURNING operator over two parameters lands its result");
+assert_eq(drive_param_op_agg(), drive_param_op_agg_ctl(), "the struct-returning operator matches the field-read sum");
+assert_eq(drive_param_amp_read(), 9, "&q + 16 reads the caller's third field");
+assert_eq(drive_param_amp_read(), drive_param_amp_read_ctl(), "&q agrees with q.z");
+assert_eq(drive_param_amp_write(), 77, "a store through &q reaches the caller's struct");
+
 test_group("what this bite must NOT have changed");
+assert_eq(heaplocal_op_is_ptr_arith(), 0, "a heap-mode struct local still does POINTER arithmetic, no dispatch");
+assert_eq(heaplocal_amp_is_slot(), 9, "&p on a heap-mode struct local is still the SLOT");
+assert_eq(inline_local_amp_is_the_struct(), 9, "&p on an inline struct local is still the struct");
 assert_eq(drive_writes_through(), 77, "a write through a by-value struct parameter still reaches the caller");
 assert_eq(drive_str_local_rebind(), 1, "a = b between two Str LOCALS is still a pointer rebind");
 assert_eq(drive_str_param_rebind(), 1, "a = b between two Str PARAMETERS is still a pointer rebind");

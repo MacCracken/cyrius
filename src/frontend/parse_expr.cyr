@@ -875,7 +875,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                 # an address, where `+` is pointer arithmetic (the global half of this rule is
                 # a few lines below). A multi-word value is passed BY ADDRESS, matching what
                 # `EMIT_OP_DISPATCH` already does for a >8 B global. CHANGELOG [6.6.5]
-                if (lt < 0) { if (lt > 0 - 2048) { if (GLAGG(S, li) == 1) {
+                if (lt < 0) { if (lt > 0 - 2048) { if (_op_local_dispatches(S, li) == 1) {
                     SESTYPE(S, 0 - lt);
                     if (AGG_NSLOTS(S, lt) > 1) { SESVAR(S, 0 - 2 - li); }
                 } } }
@@ -993,6 +993,16 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         if (GINFN(S) == 1) {
             var ali = FINDLOCAL(S, anoff);
             if (ali >= 0) {
+                # ⛔ 6.6.6 (bite 16 review) — `&q` ON AN ADDRESS-PASSED BY-VALUE STRUCT PARAMETER
+                # IS THE STRUCT, NOT THE SLOT. `q` in `fn h(q: P3)` denotes the caller's struct
+                # (that is why `q.z` already reads the caller's field), but `&q` took the
+                # rbp-relative address of the word that HOLDS the pointer: `load64(&q + 16)`
+                # returned 0 on 6.6.5 and on the compiler 16b shipped, where the identical code
+                # on an inline local returns 9. So `&q` and `q.z` addressed two different things.
+                # The slot's CONTENT already IS the struct's address — load it. No `_fn_local_addr`
+                # here, deliberately: this frame's address does NOT escape (the pointer is the
+                # CALLER's), so a tail call in this fn stays legal. CHANGELOG [6.6.6]
+                if (_local_is_sptr_param(S, ali) == 1) { EFLLOAD(S, ali); SPSC(S, 1); return 0; }
                 var adisp = 0 - ((ali + 1) * 8);
                 # v4.9.1: shift past all reserved callee-saved slots
                 if (_cur_fn_regalloc > 0) { adisp = adisp - _cur_fn_regalloc * 8; }
@@ -3665,6 +3675,33 @@ fn BUILD_OP_NAME(S, stype, op_str, op_len): i64 {
     return onoff;
 }
 
+# ⛔ 6.6.6 (bite 16 review) — DOES A STRUCT-TYPED LOCAL IN LHS POSITION DISPATCH ITS OPERATOR?
+# The 6.6.5 rule (see the identifier-load site above) is "only an INLINE local dispatches — a
+# pointer-mode one holds an address, where `+` is pointer arithmetic", and that rule is still
+# right for `var p: P3 = alloc(24)` and for a `Str` handle. But an ADDRESS-PASSED BY-VALUE
+# PARAMETER is neither: `q` in `fn h(q: P3)` denotes the caller's STRUCT, which is why `q.z`
+# already reaches it. Keyed on `GLAGG == 1` alone, such a parameter set no expr-state type at
+# all, so `q + w` never dispatched and SILENTLY ADDED THE TWO POINTERS — measured at 6.6.5 and
+# on the compiler 16b shipped: 104 (and 72, 81 for other frames) where 9 is right, exit 0, no
+# diagnostic, while the identical expression on two inline LOCALS dispatched and gave 9, and
+# `var c: P3 = q + w` SIGSEGV'd. Same root cause as the rest of bite 16: the parameter slot
+# holds a pointer and every predicate keyed on inline-ness answers "not an aggregate".
+# CHANGELOG [6.6.6]
+fn _op_local_dispatches(S, li): i64 {
+    if (GLAGG(S, li) == 1) { return 1; }
+    return _local_is_sptr_param(S, li);
+}
+
+# 6.6.6 (bite 16 review) — the LOCAL arm of `_OP_OPERAND_ADDR`, split out so the two modes are
+# one decision. An inline local IS the struct, so its address is `&slot`; an address-passed
+# by-value parameter's slot HOLDS the struct's address, so the operand is the slot's CONTENT.
+# Passing `&slot` there handed the operator fn a pointer-to-pointer. CHANGELOG [6.6.6]
+fn _op_operand_local(S, li): i64 {
+    if (_local_is_sptr_param(S, li) == 1) { EFLLOAD(S, li); return 0; }
+    EFLADDR(S, li);
+    return 0;
+}
+
 # Emit operator dispatch: push lhs, parse rhs, call StructName_op(lhs, rhs)
 # 6.6.5 — the operand address for an overloaded operator. `svar >= 0` is a global slot;
 # `svar <= -2` is the LOCAL encoding `-2 - li` (the same one PARSE_FIELD_LOAD uses), added so
@@ -3676,7 +3713,7 @@ fn _OP_OPERAND_ADDR(S, svar): i64 {
     # address with no load — the same convention `_CL_CAP_BASE_RA` uses. CHANGELOG [6.6.5]
     if (svar <= 0 - 1000000) { _CL_CAP_WORDS_RA(S, 0 - 1000000 - svar); return 0; }
     if (svar >= 0) { EVADDR(S, svar); return 0; }
-    if (svar <= 0 - 2) { EFLADDR(S, 0 - 2 - svar); }
+    if (svar <= 0 - 2) { _op_operand_local(S, 0 - 2 - svar); }
     return 0;
 }
 

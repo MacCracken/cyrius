@@ -292,6 +292,18 @@ first field, and `return q;` returned the address as the value, silently. `Str` 
 `Option` / `Tagged`) are unaffected: they are heap handles passed by value, so `a = b` between
 two of them is still a rebind.
 
+Two more shapes joined that list later in v6.6.6. Such a parameter now **dispatches an
+overloaded operator** (`q + w`, in either operand position, for a scalar- or struct-returning
+operator fn) — before, only an *inline* local dispatched, so `q + w` silently ADDED THE TWO
+POINTERS and `var c: P3 = q + w` SIGSEGV'd. And **`&q` is the struct, not the slot**:
+`load64(&q + 16)` now reads the same word `q.z` reads, where before it read the frame word
+holding the pointer and returned 0. Both were silent, exit 0.
+
+⚠ This is a rule about PARAMETERS, not about pointer-mode locals in general. A struct local
+whose slot holds a heap handle (`var p: P3 = alloc(24);`) is unchanged and deliberately so:
+`p + r` there is POINTER ARITHMETIC and does not dispatch, and `&p` is the slot. Only a
+parameter denotes the caller's struct.
+
 ⚠ At TOP LEVEL there is no frame to hold the result, so a struct-valued call there
 (`mk(1);`, `var g: P3 = mk(1);`, `g = mk(1);`, `take(mk(1))` — and the method and operator
 forms alike) is a compile error naming the fn — call it inside a fn. An untyped

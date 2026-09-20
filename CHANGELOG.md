@@ -2489,6 +2489,33 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   vectors would not pass). cycc 1,315,248 -> 1,315,344 B. All 330 pre-existing `.tcyr` exit
   identically to the 6.6.5 compiler.
 
+- **A by-value struct PARAMETER as an operator operand never dispatched the operator at all —
+  `q + w` silently ADDED THE TWO POINTERS — and `&q` addressed the slot, not the struct.**
+  (bite 16f; found by bite 16's review.) Two more shapes of 16b's root cause: the parameter's
+  slot holds the caller's ADDRESS, and every predicate keyed on inline-ness answers "not an
+  aggregate". The operator dispatch gate (`GLAGG == 1`, the v6.6.5 rule "only an INLINE local
+  dispatches") therefore set no expr-state type for such a parameter, so `q + w` fell to
+  integer arithmetic on the two pointers — measured on 6.6.5 and on the compiler 16b shipped:
+  **104** (and 72, 81 in other frames) where 9 is right, exit 0, no diagnostic, while the
+  identical expression on two inline LOCALS dispatched and gave 9; `var c: P3 = q + w`
+  SIGSEGV'd. Separately `&q` took the rbp-relative address of the word HOLDING the pointer, so
+  `load64(&q + 16)` returned **0** where `q.z` returns 9 — `&q` and `q.z` addressed two
+  different things. **Fix:** `_op_local_dispatches` (the gate) and `_op_operand_local` (the
+  operand, which loads the slot instead of addressing it) plus the same test on the address-of
+  path, all keyed on `_local_is_sptr_param` — the PARAMETER predicate, **not**
+  `_local_struct_is_ptr`. That distinction is load-bearing: a heap-handle local
+  (`var p: P3 = alloc(24)`) is still pointer arithmetic and `&p` is still the slot, which is
+  the v6.6.5 rule and is now pinned. No `_fn_local_addr` on the new `&` arm — the pointer is
+  the CALLER's, so this frame does not escape and tail calls stay legal.
+  `src/frontend/parse_expr.cyr`. Gated by a new group in
+  `tests/tcyr/crossos/struct_param_byvalue_copy.tcyr` (31 assertions, up from 18): both
+  operand positions, mixed parameter/local in both orders, the struct-returning dispatcher,
+  `&q` read and write, each paired with a field-access control, plus three anti-vacuous rows
+  for the heap-mode local. Mutation-proven four ways. cycc 1,315,344 B (unchanged in size).
+  All 330 pre-existing `.tcyr` exit identically to the 6.6.5 compiler; all 85 `programs/*.cyr`
+  and all 103 `lib/*.cyr` compile to BYTE-IDENTICAL binaries; 2,002 sibling `*/src/*.cyr`
+  across 141 ecosystem repos show **0 compile-status differences**.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**
