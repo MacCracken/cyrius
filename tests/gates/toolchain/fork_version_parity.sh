@@ -71,7 +71,11 @@ for f in $FORKS; do
     fi
     # Reference is not enough — an `include` mentions the file. Require an
     # actual write of the string to fd 1.
-    if ! grep -q 'syscall(SYS_WRITE, 1, _VERSION_STR_' "$f"; then
+    # v6.6.6 INTEGRATION: the write may be the raw `syscall(SYS_WRITE, 1, …)` or the
+    # checked `_write_out_all(…)` helper the output-write bite added in the same release
+    # (a short write of the version string is an error too). Either is a write to fd 1;
+    # neither is a mere `include` mention, which is what this axis exists to reject.
+    if ! grep -qE '(syscall\(SYS_WRITE, 1, _VERSION_STR_|_write_out_all\(_VERSION_STR_)' "$f"; then
         echo "FAIL: static: $f has no _VERSION_STR_ write to fd 1 — \`cycc --version\` there"
         echo "      falls through to \"compile stdin\" and emits a BINARY on stdout"
         exit 1

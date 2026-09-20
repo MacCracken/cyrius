@@ -50,7 +50,7 @@ set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC="${CYCC:-$ROOT/build/cycc}"
 [ -x "$CC" ] || { echo "FAIL: toplevel_decl_block_closure: $CC missing"; exit 1; }
-WORK=$(mktemp -d)
+WORK=$(mktemp -d) && [ -d "$WORK" ] || { echo "FAIL: toplevel_decl_block_closure: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$WORK"' EXIT
 ulimit -c 0 2>/dev/null || true
 NFAIL=0

@@ -79,7 +79,7 @@ var _allow_undef = 0;   # v6.3.2: --allow-undef downgrades the default reachable
 #ifdef CYRIUS_TARGET_MACOS
 var _vflags = _ARGV_FLAGS_MACHO();
 if ((_vflags & 1) == 1) {
-    syscall(SYS_WRITE, 1, _VERSION_STR_CYCC, _VERSION_LEN_CYCC);
+    _write_out_all(_VERSION_STR_CYCC, _VERSION_LEN_CYCC);
     syscall(SYS_EXIT, 0);
 }
 if ((_vflags & 2) == 2) { _strict_mode = 1; }
