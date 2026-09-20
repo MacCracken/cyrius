@@ -527,7 +527,7 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
                 # Pass 1: register variant as global var
                 var vcnt = GVCNT(S);
                 # v6.2.11: flag a conflicting-value redefinition of this name
-                # (issue 2026-06-14) BEFORE registering it, so FINDVAR sees only
+                # (issue 2026-06-14) BEFORE registering it, so the lookup sees only
                 # prior defs. Pass-1-only (emit_code==0) → no double-warn.
                 CHKDUPVAL(S, vnoff, val);
                 S64(_varn_base + vcnt * 8, vnoff);
@@ -951,7 +951,8 @@ fn _vis_check_var(S, vi, noff): i64 {
 # warning — the owl/patra `TK_IDENT`-aliases-`TK_EOF` corruption. This mirrors
 # the duplicate-`fn` warning (parse_fn.cyr) for data symbols: called at the
 # enum-member + literal-`var` registration sites with the NEW name+value BEFORE
-# the new entry is written, so FINDVAR sees only PRIOR definitions. The prior's
+# the new entry is written, so the lookup sees only PRIOR definitions. (6.6.6: the
+# lookup is `_findvar_core`, not FINDVAR — see the note on the call below.) The prior's
 # compile-time value comes from the enum-const-fold table (0x1D8000, sign bit =
 # "is enum const") or, for a literal-init global, the static-init table
 # (0x1EC000). #ifdef platform variants never collide here — PREPROCESS strips
@@ -971,8 +972,13 @@ fn _vis_check_var(S, vi, noff): i64 {
 #     programs that collide (measured: 1100 globals, then `var a = 5; var a = 7;`, no
 #     warning at all). gvar_initval is a GROWN table with no such cap, so the literal
 #     half is now compared at any index; GVECP's own bound keeps the enum half honest;
-#   - cx records only a REDECLARED constant in 0x1EC000 (its first literal
-#     takes the runtime-store path), so a two-link collision is not seen there.
+#   - cx used to record only a REDECLARED constant in 0x1EC000 (its first literal
+#     took the runtime-store path), so a two-link collision was not seen there.
+#     ⚠ 6.6.6 bite 19d changed that: cx now records EVERY folded constant global,
+#     so a two-link collision IS reported on cx and its warnings agree with the
+#     host's. MEASURED with cx compilers built from the pre-19d tree and from this
+#     one: `var dupa = 5; var dupa = 7;` -> old cx silent, new cx and host both
+#     warn; a three-link chain -> old cx 1 warning, new cx and host 2.
 # 6.6.6: "last definition wins" is now what the compiler DOES, for every read —
 # a redeclaration shares the global's slot and a constant one is its value from
 # program start (see _gv_supersede, parse_decl.cyr). It used to be a second

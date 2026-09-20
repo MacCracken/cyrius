@@ -1793,7 +1793,7 @@ fn PARSE_GVAR_REG(S): i64 {
     STI(S, save_peek);  # restore
     # v6.2.11: flag a conflicting-value redefinition (issue 2026-06-14) when this
     # global has a `= NUM ;` literal AND shadows a prior def, BEFORE it's
-    # registered so FINDVAR sees only prior defs. Mirrors the enum-member site in
+    # registered so the lookup sees only prior defs. Mirrors the enum-member site in
     # parse_types.cyr. Gated on the shadow so the common non-colliding case skips
     # the scan; CHKDUPVAL itself is value-conflict-only (identical = silent).
     if (chk_has == 1 && sit_shadow == 1) { CHKDUPVAL(S, noff, chk_lit); }
