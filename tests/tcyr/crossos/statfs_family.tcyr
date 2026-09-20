@@ -89,7 +89,7 @@ fn main(): i64 {
     # comparison would be a Linux fact asserted on a Mac. What both share is "not 0" — and a
     # wrong syscall that ignored its path argument would happily return 0 here.
     assert_neq(sys_statfs("/cyr_no_such_mount_point_6_6_6", &buf), 0,
-               "statfs on a nonexistent path fails (the path argument is really read)");
+      "statfs on a nonexistent path fails (the path argument is really read)");
 
     # And fstatfs on a closed descriptor must fail for the same reason.
     assert_neq(sys_fstatfs(0 - 1, &fbuf), 0, "fstatfs on a bad descriptor fails");
