@@ -1744,6 +1744,36 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   prefix path is now bound before the trap is installed and the trap runs only when that
   directory exists.
 
+- **On Windows the CLI could report a self-host it never performed, and `cyrius soak` could
+  never perform one at all.** (bite 9f, from bite 9's review.) Three defects in the PE arms
+  this release added, all of the same shape — an arm that spawns correctly and then states a
+  verdict it did not earn:
+  (1) `cmd_soak`'s new arm self-hosted from **`src/main.cyr`, the LINUX fork**. Handing a PE
+  `cycc.exe` that source compiles fine and produces a PE built from Linux syscall numbers,
+  which page-faults the moment step 2 runs it (measured under wine: a 1,547,776-byte PE
+  compiles, running it gives rc 5 and `Unhandled page fault on write access ... at
+  0000000140001060`, leaving a 3,533-byte output) — so every iteration printed
+  `FAIL: self-host output differs`, blaming the self-host for a source-selection bug. The same
+  commit's `_win_cmd_self` documents exactly why that is wrong; the two now ask one helper,
+  `_self_host_src()`, and a missing per-target source is named ONCE instead of N times.
+  (2) that arm **threw the spawn's exit code away** — it called `_win_compile_spawn` for
+  effect — so a child that died still reached the byte compare and was reported as "output
+  differs"; and its `soak_spawned` guard was assigned 1 in both branches, so it could never
+  fire. The exit code is now the verdict, the compare runs only when step 2 actually ran, and
+  the dead guard is gone.
+  (3) `_win_files_equal` **returned 1 for two EMPTY files** (`na == nb == 0` fell into the
+  end-of-file branch with `same` still 1), so `cyrius self` could print
+  `PASS: cycc==cycc byte-identical` over two zero-byte outputs and soak could score the
+  iteration — and cass is exactly the host that produces zero-byte outputs, because Defender
+  quarantines an unsigned `.exe` mid-write. It now requires at least one byte to have been
+  compared, and treats a **read error** as a mismatch rather than as end-of-file
+  (`cmd_pulsar`'s POSIX comparison already carried that floor). Pinned by two new soak rows in
+  axis 4 and a new **axis 5** in `tests/gates/platform/cbt_fork_sites_have_pe_arm.sh`, which
+  EXTRACTS `_win_files_equal` from `cbt/build.cyr`, compiles it for the host and proves it on
+  five file pairs whose expected answers are computed a different way (`cmp` + a non-empty
+  test), with its own in-axis mutant control. POSIX soak behaviour is byte-identical. 3
+  mutations, each RED.
+
 - **Four Windows command lines were built in a fixed 16 KiB buffer with unchecked appends —
   one of them added by this release.** (bite 9e, from bite 9's review.) `_w_append_cstr`
   (`lib/process_win.cyr`) stores until the source cstr's NUL and bound-checks nothing, so a

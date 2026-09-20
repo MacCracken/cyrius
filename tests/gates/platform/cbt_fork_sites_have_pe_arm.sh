@@ -54,6 +54,19 @@
 # DERIVED from the sources here rather than fixed once by hand, so the next builder cannot
 # be written that way either.
 #
+# ⭐ AXIS 5 AND AXIS 4'S SOAK ROWS — AN ARM MUST NOT LIE ABOUT THE RESULT (6.6.6 review).
+# A fix that arms a fork and then reports a verdict it did not earn is the defect wearing
+# the fix's clothes, and the first cut did it twice:
+#   * `cmd_soak`'s new arm self-hosted from `src/main.cyr` — the LINUX fork — so step 2
+#     page-faulted and every iteration printed "self-host output differs", blaming the
+#     self-host for a source-selection bug; and it threw the spawn's exit code away, so
+#     the byte compare answered for a child that had died. Axis 4 pins both.
+#   * `_win_files_equal` returned 1 for two EMPTY files, so `cyrius self` could print
+#     "PASS: cycc==cycc byte-identical" over two zero-byte outputs — and cass is exactly
+#     the host that produces zero-byte outputs (Defender quarantines an unsigned .exe
+#     mid-write). Axis 5 compiles the REAL helper, extracted from cbt/build.cyr, for this
+#     host and proves it fails closed.
+#
 # REAL-HARDWARE LEDGER (cass, Windows 11, 2026-09-19, C:\cyrius-tests\bite9-probe,
 # removed afterwards). old = the CLI cross-built from this tree's parent commit,
 # new = from the fixed tree; cycc.exe / cycc_cx.exe / cxvm.exe cross-built from
@@ -90,6 +103,14 @@
 #   — added with axes 5/6 at the 6.6.6 review, same recipe —
 #   M5  `_win_capacity_spawn` -> `var wbuf = alloc(16384);`   axis 6 RED alone (1: the
 #                                                             builder is reported FIXED)
+#   M6  drop `_win_files_equal`'s `if (seen <= 0)` floor      axis 5 RED (2: empty vs
+#                                                             empty answers 1, and the
+#                                                             axis's own mutant control
+#                                                             sees no difference to make)
+#   M7  `soak_src = _self_host_src()` -> `"src/main.cyr"`     axis 4 RED (1: soak names
+#                                                             the Linux fork)
+#   M8  drop soak's `if (src2 != 0)` exit-code check          axis 4 RED (2: no "exited 3",
+#                                                             and "output differs" back)
 #   real tree -> all axes GREEN, 17 sites.
 #
 # ⚠ THE LEDGER FOUND TWO DEFECTS IN THIS GATE, both of which made a mutant read GREEN, and
@@ -382,6 +403,32 @@ else
     check "  …naming the missing per-target source" 1 \
         "$(grep -c 'Windows compiler source is missing' "$T/err" || true)"
 
+    # ⭐ SOAK NAMES THE PER-TARGET SOURCE TOO. The first cut of soak's PE arm compiled
+    # `src/main.cyr` — the LINUX fork — so step 2 ran a PE built from Linux syscall
+    # numbers, page-faulted, and every iteration printed "self-host output differs":
+    # a false verdict blaming the self-host for a source-selection bug. The staging
+    # `src/` holds main.cyr and NOT main_win.cyr, so a driver that still names the
+    # Linux fork says "src/main.cyr" here and one that asks `_self_host_src()` says
+    # "src/main_win.cyr". (The POSITIVE soak — a real PE self-host per iteration — is
+    # minutes of work and belongs in the cass ledger, not in check.sh.)
+    wrun soak 1
+    check "⭐ wine: soak with no src/main_win.cyr FAILS" 1 "$RC"
+    check "  …naming src/main_win.cyr, NOT the Linux fork" 1 \
+        "$(grep -c 'missing: src/main_win.cyr' "$T/err" || true)"
+    check "  …and never claims an iteration self-hosted" 0 \
+        "$(grep -c 'self-host output differs' "$T/out" || true)"
+
+    # ⭐ AND THE SPAWN'S EXIT CODE IS THE VERDICT. The first cut called
+    # `_win_compile_spawn` for effect and threw the code away, so a step-2 child that
+    # died still reached the byte compare and was reported as "output differs" — again
+    # naming the wrong cause. Stand-in source: a program that compiles fine and then
+    # exits 3 when step 2 RUNS it, so the only honest report is "exited 3".
+    W2="$T/w2"; mkdir -p "$W2/src"
+    printf 'fn main(): i64 { return 3; }\nvar r = main();\n' > "$W2/src/main_win.cyr"
+    ( cd "$W2" && WINEDEBUG=-all CYRIUS_HOME="$WH" timeout 900 wine "$WN/bin/cyrius.exe" soak 1 > "$T/out2" 2> "$T/err2" ) || true
+    check "⭐ wine: soak reports the step-2 EXIT CODE" 1 "$(grep -c 'step 2 exited 3' "$T/out2" || true)"
+    check "  …instead of blaming the byte compare" 0 "$(grep -c 'output differs' "$T/out2" || true)"
+
     ls -d "$WTU"/cyrius-* 2> /dev/null | LC_ALL=C sort > "$T/wt_after"
     for d in $(comm -13 "$T/wt_before" "$T/wt_after"); do rmdir "$d" 2> /dev/null || true; done
     SOCK="/tmp/.wine-$(id -u)/server-$(stat -c '%D' "$WINEPREFIX" 2> /dev/null)-$(printf '%x' "$(stat -c '%i' "$WINEPREFIX" 2> /dev/null || echo 0)")"
@@ -389,6 +436,75 @@ else
     wineserver -w > /dev/null 2>&1 || true
     [ -d "$SOCK" ] && rm -rf "$SOCK"
 fi
+
+# ── AXIS 5 — ⭐ THE ARM'S OWN VERDICT FAILS CLOSED. An arm that spawns correctly and then
+# reports a PASS over two empty files is the same green placebo one layer along, and cass
+# is exactly the host that produces empty outputs (Defender quarantines an unsigned .exe
+# mid-write). `_win_files_equal` is PE-only source, so it is EXTRACTED from cbt/build.cyr
+# and compiled for this host — the real text, not a copy that can drift.
+echo "axis 5 — ⭐ the PE byte-compare verdict fails closed:"
+awk '/^fn _win_files_equal\(/,/^}/' cbt/build.cyr > "$T/wfe.cyr"
+check "the helper was extracted from cbt/build.cyr" yes \
+    "$([ -s "$T/wfe.cyr" ] && grep -q 'sys_read' "$T/wfe.cyr" && echo yes || echo no)"
+D="$T/fe"; mkdir -p "$D"
+: > "$D/empty_a"; : > "$D/empty_b"
+head -c 100000 /dev/urandom > "$D/same_a"; cp "$D/same_a" "$D/same_b"
+cp "$D/same_a" "$D/diff"; printf 'X' | dd of="$D/diff" bs=1 seek=99999 conv=notrunc 2> /dev/null
+head -c 65536 "$D/same_a" > "$D/short"
+rm -f "$D/missing"
+mk_fe_probe() {   # $1 = helper source, $2 = output .cyr
+    {
+        echo 'include "lib/syscalls.cyr"'
+        echo 'include "lib/string.cyr"'
+        echo 'include "lib/alloc.cyr"'
+        echo 'include "lib/fmt.cyr"'
+        cat "$1"
+        cat <<EOF
+fn ans(a, b): i64 { fmt_int(_win_files_equal(a, b)); sys_write(1, "\n", 1); return 0; }
+fn main(): i64 {
+    alloc_init();
+    ans("$D/empty_a", "$D/empty_b");
+    ans("$D/same_a", "$D/same_b");
+    ans("$D/same_a", "$D/diff");
+    ans("$D/same_a", "$D/short");
+    ans("$D/same_a", "$D/missing");
+    return 0;
+}
+var e = main();
+syscall(60, e);
+EOF
+    } > "$2"
+}
+# The expectation is computed a DIFFERENT way: cmp(1) plus a non-empty test.
+expect_eq() { if [ -s "$1" ] && [ -s "$2" ] && cmp -s "$1" "$2"; then echo 1; else echo 0; fi; }
+run_fe() {   # $1 = helper source -> prints 5 lines, or "BUILD-FAILED"
+    mk_fe_probe "$1" "$T/fe_p.cyr"
+    if ! "$ROOT/build/cycc" < "$T/fe_p.cyr" > "$T/fe_p" 2> "$T/fe_p.err"; then
+        grep -E '^error' "$T/fe_p.err" | head -2 | sed 's/^/    /'
+        echo BUILD-FAILED; return
+    fi
+    [ -s "$T/fe_p" ] || { echo BUILD-FAILED; return; }
+    chmod +x "$T/fe_p"
+    ( ulimit -c 0; "$T/fe_p" ) 2> /dev/null
+}
+run_fe "$T/wfe.cyr" > "$T/fe.out"
+check "the extracted helper compiled and ran (5 answers)" 5 "$(grep -c . "$T/fe.out" || true)"
+i=1
+for pair in "empty_a empty_b" "same_a same_b" "same_a diff" "same_a short" "same_a missing"; do
+    set -- $pair
+    want=$(expect_eq "$D/$1" "$D/$2")
+    got=$(sed -n "${i}p" "$T/fe.out")
+    check "  $1 vs $2 -> $want" "$want" "${got:-none}"
+    i=$((i + 1))
+done
+# ⭐ THE AXIS'S OWN MUTATION CONTROL. Remove the byte floor from the EXTRACTED copy: the
+# empty/empty answer must flip to 1. If it does not, this axis is not testing anything.
+sed '/seen <= 0/d' "$T/wfe.cyr" > "$T/wfe_mut.cyr"
+check "  ⭐ ANTI-VACUOUS: the mutant differs from the real helper" yes \
+    "$(cmp -s "$T/wfe.cyr" "$T/wfe_mut.cyr" && echo no || echo yes)"
+run_fe "$T/wfe_mut.cyr" > "$T/fe_mut.out"
+check "  ⭐ ANTI-VACUOUS: without the floor, two EMPTY files read as identical" 1 \
+    "$(sed -n 1p "$T/fe_mut.out")"
 
 # ── AXIS 6 — ⭐ NO `cmd /s /c` COMMAND LINE IS BUILT IN A FIXED BUFFER. `_w_append_cstr`
 # does not bound-check, so a fixed allocation is a silent heap overwrite for a long enough
@@ -454,6 +570,7 @@ check "  ⭐ ANTI-VACUOUS: the detector flags a synthetic fixed builder" 1 \
     "$(grep -c ' FIXED ' "$T/bld.self" || true)"
 check "  …clears the sized one" 1 "$(grep -c ' sized ' "$T/bld.self" || true)"
 check "  …and does not count a fn that never appends" 2 "$(grep -c ':' "$T/bld.self" || true)"
+
 echo ""
 if [ "$fails" = "0" ]; then
     echo "PASS: cbt-fork-sites-have-pe-arm — $NSITE fork sites, every one armed and named"

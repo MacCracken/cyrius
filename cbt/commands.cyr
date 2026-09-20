@@ -2328,6 +2328,19 @@ fn cmd_soak(iters): i64 {
     var saved_skip_deps = _skip_deps;
     _skip_deps = 1;
 
+    # v6.6.6 — the PER-TARGET compiler source, asked once. The loop below used to name
+    # `src/main.cyr` unconditionally; on Windows that is the LINUX fork, so step 2 built
+    # a PE out of Linux syscall numbers and page-faulted, and every iteration then
+    # printed "FAIL: self-host output differs" — blaming the self-host for a source
+    # selection bug. Missing source: say so ONCE and stop, rather than N identical
+    # failures. See `_self_host_src` (cbt/build.cyr). CHANGELOG [6.6.6].
+    var soak_src = _self_host_src();
+    if (file_exists(soak_src) == 0) {
+        _err_ctx("soak: the compiler source for this target is missing", soak_src);
+        _skip_deps = saved_skip_deps;
+        return 1;
+    }
+
     var soak_pass = 0;
     var soak_fail = 0;
     var si = 0;
@@ -2347,22 +2360,29 @@ fn cmd_soak(iters): i64 {
         # unsuffixed path is looked up as `<path>.exe` and never found. CHANGELOG [6.6.6]
         var cc5_t = _cbt_tmpexe("soak_a");
         var cc4_t = _cbt_tmpfile("soak_b");
-        if (compile("src/main.cyr", cc5_t) != 0) { iter_ok = 0; }
+        if (compile(soak_src, cc5_t) != 0) { iter_ok = 0; }
         if (iter_ok == 1) {
             # Run cc5_t to compile itself.
             # v6.6.6 — PE arm. `sys_fork` is a -1 stub on Windows, so this child never
             # ran: cc4_t was never written, `_file_size` answered -1 for both, the sizes
             # therefore MATCHED, and every soak iteration scored a self-host PASS on
-            # Windows without compiling anything. CHANGELOG [6.6.6].
-            var soak_spawned = 0;
+            # Windows without compiling anything. ⚠ The spawn's EXIT CODE decides —
+            # the first cut of this arm called it for effect and dropped the code, so a
+            # child that page-faulted (rc 5) still reached the byte compare and was
+            # reported as "self-host output differs". CHANGELOG [6.6.6].
             #ifdef CYRIUS_TARGET_WIN
-            _win_compile_spawn(cc5_t, "src/main.cyr", cc4_t);
-            soak_spawned = 1;
+            var src2 = _win_compile_spawn(cc5_t, soak_src, cc4_t);
+            if (src2 != 0) {
+                sys_write(STDOUT_FD, "FAIL: self-host step 2 exited ", 30);
+                fmt_int(src2);
+                sys_write(STDOUT_FD, "\n", 1);
+                iter_ok = 0;
+            }
             #endif
             #ifndef CYRIUS_TARGET_WIN
             var pid2 = sys_fork();
             if (pid2 == 0) {
-                var sfd = sys_open("src/main.cyr", O_RDONLY, 0);
+                var sfd = sys_open(soak_src, O_RDONLY, 0);
                 sys_dup2(sfd, 0); sys_close(sfd);
                 var ofd = sys_open(cc4_t, O_WRONLY | O_CREAT | O_TRUNC, 0x1ED);
                 sys_dup2(ofd, 1); sys_close(ofd);
@@ -2374,9 +2394,7 @@ fn cmd_soak(iters): i64 {
             }
             var sb2[1];
             sys_waitpid(pid2, &sb2, 0);
-            soak_spawned = 1;
             #endif
-            if (soak_spawned == 0) { iter_ok = 0; }
 
             # Compare.
             # ⚠ v6.6.6 — THE COMPARISON WAS UNUSABLE ON WINDOWS TOO, and fixing only the
@@ -2386,20 +2404,24 @@ fn cmd_soak(iters): i64 {
             # PASS over two files that need not even exist. PE compares BYTES instead,
             # which is what "self-host" means anyway and fails closed when either file is
             # missing. CHANGELOG [6.6.6].
-            #ifdef CYRIUS_TARGET_WIN
-            if (_win_files_equal(cc5_t, cc4_t) == 0) {
-                sys_write(STDOUT_FD, "FAIL: self-host output differs\n", 31);
-                iter_ok = 0;
+            # ⚠ Only when step 2 actually ran. A failed spawn has already said why, and a
+            # second "output differs" on top of it names the wrong cause.
+            if (iter_ok == 1) {
+                #ifdef CYRIUS_TARGET_WIN
+                if (_win_files_equal(cc5_t, cc4_t) == 0) {
+                    sys_write(STDOUT_FD, "FAIL: self-host output differs\n", 31);
+                    iter_ok = 0;
+                }
+                #endif
+                #ifndef CYRIUS_TARGET_WIN
+                var sz1 = _file_size(cc5_t);
+                var sz2 = _file_size(cc4_t);
+                if (sz1 != sz2) {
+                    sys_write(STDOUT_FD, "FAIL: self-host size mismatch\n", 30);
+                    iter_ok = 0;
+                }
+                #endif
             }
-            #endif
-            #ifndef CYRIUS_TARGET_WIN
-            var sz1 = _file_size(cc5_t);
-            var sz2 = _file_size(cc4_t);
-            if (sz1 != sz2) {
-                sys_write(STDOUT_FD, "FAIL: self-host size mismatch\n", 30);
-                iter_ok = 0;
-            }
-            #endif
         }
         sys_unlink(cc5_t);
         sys_unlink(cc4_t);

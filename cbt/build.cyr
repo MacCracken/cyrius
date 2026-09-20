@@ -1268,6 +1268,26 @@ fn run_binary_args(path, args): i64 {
     return run_binary_timed(path, 0, args);
 }
 
+# v6.6.6 — THE COMPILER SOURCE A SELF-HOST LOOP MUST COMPILE ON *THIS* TARGET.
+#
+# `src/main.cyr` is the x86-64 LINUX fork. Handing a PE `cycc.exe` that fork compiles
+# fine — it is valid cyrius — and produces a PE built from LINUX syscall numbers, which
+# page-faults the moment the second step tries to RUN it ("Unhandled page fault on write
+# access ... at 0000000140001060", measured under wine). So a Windows self-host loop that
+# names `src/main.cyr` can never pass, and it blames the SELF-HOST ("output differs")
+# for a source-selection bug — the same false verdict, one layer along, as the "git clone
+# failed" message this release removed. `cyrius self` (`_win_cmd_self`) and `cyrius soak`
+# both self-host, so both ask here rather than each hard-coding a path.
+# CHANGELOG [6.6.6].
+fn _self_host_src(): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    return "src/main_win.cyr";
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    return "src/main.cyr";
+    #endif
+}
+
 # v6.6.5 — Windows spawn for run_tool_vec. run_tool/run_tool_argvtail both use
 # sys_fork/sys_waitpid, which are -1 STUBS on PE (lib/syscalls_windows.cyr): the fork
 # "succeeds" with -1, the parent waits on nothing and returns 1, so `cyrius lint` /
@@ -1465,6 +1485,16 @@ fn _win_system(cmd): i64 {
 # -38 for BOTH paths — so the size pre-check is inert on Windows by design and the
 # streaming compare below is what actually decides. Stated because a size check that
 # silently always passes is exactly the kind of green placebo this release is about.
+#
+# ⚠ TWO EMPTY FILES ARE NOT A MATCH, and a READ ERROR is not end-of-file. Both callers
+# compare COMPILERS, so "0 bytes == 0 bytes" is never the answer they want — and cass is
+# precisely the host that produces zero-byte outputs (Defender quarantines an unsigned
+# .exe mid-write; a spawn that never started leaves the redirect target empty). The first
+# cut fell into `na <= 0` with na == nb == 0 and returned 1, so `cyrius self` printed
+# "PASS: cycc==cycc byte-identical" over two empty files and `cyrius soak` scored the
+# iteration — the same green placebo this bite exists to remove. `cmd_pulsar`'s POSIX
+# comparison already carries this floor (`if (sz_a == sz_b) { if (sz_a > 0) ...`).
+# CHANGELOG [6.6.6].
 fn _win_files_equal(a, b): i64 {
     var fa = sys_open(a, O_RDONLY, 0);
     if (fa < 0) { return 0; }
@@ -1474,15 +1504,19 @@ fn _win_files_equal(a, b): i64 {
     var bb = alloc(65536);
     var same = 1;
     var go = 1;
+    var seen = 0;
     while (go == 1) {
         var na = sys_read(fa, ba, 65536);
         var nb = sys_read(fb, bb, 65536);
         if (na != nb) { same = 0; go = 0; }
-        elif (na <= 0) { go = 0; }
+        elif (na < 0) { same = 0; go = 0; }
+        elif (na == 0) { go = 0; }
         elif (memeq(ba, bb, na) == 0) { same = 0; go = 0; }
+        else { seen = seen + na; }
     }
     sys_close(fa);
     sys_close(fb);
+    if (seen <= 0) { return 0; }
     return same;
 }
 
@@ -1494,14 +1528,15 @@ fn _win_files_equal(a, b): i64 {
 # `_cbt_tmpexe`, because the SECOND spawn EXECUTES the first one's output and
 # CreateProcessW appends `.exe` to an extensionless program name.
 fn _win_cmd_self(): i64 {
-    # ⚠ src/main_win.cyr, NOT src/main.cyr — THE PER-TARGET SOURCE. The POSIX script
+    # ⚠ src/main_win.cyr, NOT src/main.cyr — THE PER-TARGET SOURCE; `_self_host_src()`
+    # (:1268) answers, and `cmd_soak` asks the same question there. The POSIX script
     # below names src/main.cyr because on x86-64 Linux that IS the right fork. Handing a
     # PE cycc.exe the Linux fork compiles fine and produces a PE built from Linux syscall
     # numbers, which page-faults the moment the second step tries to RUN it (measured
     # under wine: "Unhandled page fault on write access ... at 0000000140001060"). Same
     # rule the cross-OS legs already follow (cbt/commands.cyr's ecb sequence uses
     # src/main_aarch64_macho.cyr). CHANGELOG [6.6.6].
-    var self_src = "src/main_win.cyr";
+    var self_src = _self_host_src();
     if (file_exists(self_src) == 0) {
         _err_ctx("self-host: the Windows compiler source is missing", self_src);
         return 1;
