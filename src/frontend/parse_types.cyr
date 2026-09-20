@@ -578,7 +578,16 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
                 # holds its own value from program start. This store runs before every
                 # deferred initializer, so it overwrote that value (`enum E { K = 5; }
                 # var K = 7;` read 5 under "last definition wins"). CHANGELOG [6.6.6]
-                var idx = FINDVAR(S, vnoff);
+                #
+                # `_findvar_core`, not FINDVAR: this looks up the slot THIS enum member
+                # registered in pass 1 — it is the declaration's own second pass, not a
+                # reference the source spells — so the cross-file `private` check must not
+                # run. It did, and a `private` file whose `enum E { X = 2; }` shared a name
+                # with another `private` file's `var X = 5;` was refused at its OWN member
+                # line (`error: lib/a.cyr:2:24: 'X' is private to its file`, rc 1, no
+                # binary) even though neither file mentions the other's symbol. Fourth
+                # member of the same family as _findvar_core's three. CHANGELOG [6.6.6]
+                var idx = _findvar_core(S, vnoff);
                 if (idx >= 0) { if (GVENUMID(S, idx) != 0) { EMOVI(S, val); EVSTORE(S, idx); } }
             }
             val = val + 1;
@@ -844,10 +853,10 @@ fn _gv_note_blockscoped(S, noff): i64 {
 # 6.6.6 bite 19b — RESOLUTION vs. a DECLARATION-TIME PROBE.
 #
 # FINDVAR is the one resolver, and v6.5.0 put the cross-file `private` check inside it on
-# purpose: every REFERENCE goes through it, so one check covers them all. But THREE callers are
-# not references at all — PARSE_GVAR_REG's `sit_shadow` probe, CHKDUPVAL and CHK_ENUM_SHADOW all
-# ask "does this name already exist?" while REGISTERING a new global, and none is reading the
-# prior one. Running the visibility check for them made a legal program fail:
+# purpose: every REFERENCE goes through it, so one check covers them all. But FOUR callers are
+# not references at all — PARSE_GVAR_REG's `sit_shadow` probe, CHKDUPVAL, CHK_ENUM_SHADOW and
+# PARSE_ENUM_DEF's pass-2 value store all look a name up while REGISTERING it, and none is
+# reading a prior definition. Running the visibility check for them made a legal program fail:
 #
 #     lib/a.cyr:  private            lib/b.cyr:  private
 #                 var LIMIT = 5;                 var B_CAP = LIMIT * 2;
@@ -863,12 +872,15 @@ fn _gv_note_blockscoped(S, noff): i64 {
 # visibility check, exactly as before for every reference. Declaration-time probes call the
 # core.
 #
-# ⚠ THE FIRST CUT OF THIS FIX MOVED TWO OF THE THREE, and said in this comment and in the
-# CHANGELOG that there were two. CHK_ENUM_SHADOW is the one it missed, and it is the arm that
-# runs for every NON-int-literal initializer — so `var X = 2 + 3;` beside another file's
-# `private var X` stayed refused while `var X = 5;` was fixed. When you find a probe, grep for
-# the SHAPE (a FINDVAR call reached from a registration path) rather than counting the ones
-# already named. CHANGELOG [6.6.6]
+# ⚠ THE FIRST CUT OF THIS FIX MOVED TWO OF FOUR, and said in this comment and in the CHANGELOG
+# that there were two. CHK_ENUM_SHADOW is the arm that runs for every NON-int-literal
+# initializer — so `var X = 2 + 3;` beside another file's `private var X` stayed refused while
+# `var X = 5;` was fixed — and PARSE_ENUM_DEF's pass-2 value store is the fourth: it resolves
+# the slot the enum member itself registered in pass 1, and refused a `private` file at its own
+# `enum E { X = 2; }` line when another `private` file declared a `var X`. When you find a
+# probe, grep for the SHAPE (a FINDVAR call reached from a registration path) rather than
+# counting the ones already named — twice now the count in this comment has been the bug.
+# CHANGELOG [6.6.6]
 fn _findvar_core(S, noff): i64 {
     var vcnt = GVCNT(S);
     var vi = vcnt - 1;

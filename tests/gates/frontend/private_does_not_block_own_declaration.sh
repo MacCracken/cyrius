@@ -14,19 +14,23 @@
 #
 # THE ROOT CAUSE. v6.5.0 put the cross-file `private` check inside FINDVAR on purpose: every
 # REFERENCE resolves through it, so one check covers them all (the fn side had shipped with 2
-# of at least 13 paths wired). But THREE callers are not references — PARSE_GVAR_REG's
-# `sit_shadow` probe, CHKDUPVAL and CHK_ENUM_SHADOW all ask "does this name already exist?"
-# while REGISTERING a new global. Running the visibility check for a DECLARATION-time probe
-# turned the answer into an accusation. Fix: `_findvar_core` is pure resolution; `FINDVAR` is
-# that plus the check; declaration-time probes call the core (src/frontend/parse_types.cyr).
+# of at least 13 paths wired). But FOUR callers are not references — PARSE_GVAR_REG's
+# `sit_shadow` probe, CHKDUPVAL, CHK_ENUM_SHADOW and PARSE_ENUM_DEF's pass-2 value store all
+# look a name up while REGISTERING it. Running the visibility check for a DECLARATION-time
+# lookup turned the answer into an accusation. Fix: `_findvar_core` is pure resolution;
+# `FINDVAR` is that plus the check; declaration-time lookups call the core
+# (src/frontend/parse_types.cyr).
 #
-# ⚠ THE FIRST CUT OF THIS GATE MISSED THE THIRD PROBE, AND THE REASON IS IN ITS OWN ROW SET.
+# ⚠ THE FIRST CUT OF THIS GATE MISSED TWO OF THE FOUR, AND THE REASON IS IN ITS OWN ROW SET.
 # Every accepting row it shipped with declared the name with a `= NUM ;` literal, which is
 # exactly the `chk_has == 1` arm that reaches CHKDUPVAL. CHK_ENUM_SHADOW is the OTHER arm —
 # `chk_has == 0`, i.e. every initializer that is not an int literal — so an expression, a
 # string or a call init stayed REFUSED while the gate read green. Rows I/J/K are that arm: the
 # same declaration with `= 2 + 3`, `= "abcd"` and `= f()`. A row set that samples one arm of a
-# two-arm dispatch reports a verdict about the arm it did not run.
+# two-arm dispatch reports a verdict about the arm it did not run. Row L is the fourth lookup
+# and needed a different axis again: the other file declares the name as an ENUM CONSTANT, so
+# the refusal lands on THAT file's own member line and no row with a `var` on both sides can
+# reach it.
 #
 # ⚠ THE NEGATIVE HALF IS THE POINT OF THE GATE. A one-line "fix" here is to delete the check,
 # and every positive row would still pass. Rows D/E/F/G are the enforcement rows: a genuine
@@ -43,14 +47,21 @@
 #   1. the sit_shadow probe put back on FINDVAR      -> RED rows A B C H I J K
 #   2. CHKDUPVAL's probe put back on FINDVAR         -> RED rows A B C H
 #   3. CHK_ENUM_SHADOW's probe put back on FINDVAR   -> RED rows I J K
-#   4. _vis_check_var made a no-op (the "just delete
+#   4. PARSE_ENUM_DEF's pass-2 value store put back
+#      on FINDVAR                                    -> RED row L only
+#   5. _vis_check_var made a no-op (the "just delete
 #      the check" fix)                               -> RED rows D E F G
-#   5. real tree                                     -> GREEN (11 rows)
+#   6. real tree                                     -> GREEN (12 rows)
 # ⚠ Mutants 1 and 2 redden the SAME `= NUM ;` rows, measured — both probes fire on a literal
 #   declaration and either one alone reproduces the defect. That is why the fix had to move
 #   both, and why neither mutant is redundant: each proves its own probe is on the core.
 #   Mutant 1 additionally reddens I/J/K (sit_shadow runs for every initializer shape), and
 #   mutant 3 reddens ONLY I/J/K — which is the row set that did not exist when 19b shipped.
+#   Mutant 4 reddens ONLY L, for the same reason: the enum pass-2 store is reached from a
+#   DECLARATION in the other file, so no row that declares the name as a `var` on both sides
+#   can see it. THE COUNT IN THIS LEDGER HAS BEEN THE BUG TWICE — 19b said two lookups, the
+#   first review fix said three, and there are four. Grep the shape (a FINDVAR call reachable
+#   from a registration path), do not extend the list.
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -70,15 +81,16 @@ A_PRIV='private\nvar PDB_LIMIT = 5;\npublic fn pdb_a(): i64 { return 1; }\n'
 # resolved its OWN declaration rather than merely compiling.
 A_NONE='private\nvar PDB_OTHER = 99;\npublic fn pdb_a(): i64 { return 1; }\n'
 
-# _acc <id> <want> <b.cyr body> <main body>: compile with a.cyr declaring the name and with the
-# control a.cyr, and require the SAME value from both.
+# _acc <id> <want> <b.cyr body> <main body> [a.cyr body]: compile with a.cyr declaring the name
+# and with the control a.cyr, and require the SAME value from both. The 5th argument overrides
+# the declaring a.cyr (row L needs one that declares the name as an ENUM constant).
 _acc() {
     NROWS=$((NROWS + 1))
-    _id=$1; _want=$2; _b=$3; _m=$4
+    _id=$1; _want=$2; _b=$3; _m=$4; _a=${5:-$A_PRIV}
     printf '%b' "$_b" > "$WORK/p/lib/b.cyr"
     printf '%b' "$_m" > "$WORK/p/main.cyr"
     for _which in priv none; do
-        if [ "$_which" = priv ]; then printf '%b' "$A_PRIV" > "$WORK/p/lib/a.cyr"
+        if [ "$_which" = priv ]; then printf '%b' "$_a" > "$WORK/p/lib/a.cyr"
         else printf '%b' "$A_NONE" > "$WORK/p/lib/a.cyr"; fi
         rm -f "$WORK/o.bin"
         if ( cd "$WORK/p" && "$CC" < main.cyr > "$WORK/o.bin" 2> "$WORK/o.err" ) && [ -s "$WORK/o.bin" ]; then
@@ -130,6 +142,19 @@ _acc J 100 \
 _acc K 26 \
   'private\nfn pdb_src(): i64 { return 13; }\nvar PDB_LIMIT = pdb_src();\npublic fn pdb_cap(): i64 { return PDB_LIMIT * 2; }\n' \
   'include "lib/a.cyr"\ninclude "lib/b.cyr"\nvar r = pdb_cap();\nsyscall(60, r);\n'
+
+# L — THE FOURTH LOOKUP: the other file declares the name as an ENUM CONSTANT. PARSE_ENUM_DEF
+#     runs a SECOND pass over its members to store their values, and that pass resolves each
+#     member by name — its own declaration's second half, not a reference anything spells. It
+#     was on FINDVAR too, so a.cyr was refused AT ITS OWN `enum PA { PDB_LIMIT = 3; }` LINE
+#     (`error: lib/a.cyr:2:24: 'PDB_LIMIT' is private to its file`, rc 1, no binary) merely
+#     because b.cyr declared a var of that name. Neither file mentions the other's symbol.
+#     Measured: pre-fix compiler CCFAIL, fixed compiler 18 — and the control, where a.cyr does
+#     not declare the name at all, gives 18 on both.
+_acc L 18 \
+  'private\nvar PDB_LIMIT = 9;\npublic fn pdb_cap(): i64 { return PDB_LIMIT * 2; }\n' \
+  'include "lib/a.cyr"\ninclude "lib/b.cyr"\nvar r = pdb_cap();\nsyscall(60, r);\n' \
+  'private\nenum PA { PDB_LIMIT = 3; }\npublic fn pdb_a(): i64 { return 1; }\n'
 
 # ── the enforcement half: a genuine cross-file ACCESS is still refused ─────────────────
 _ref() {

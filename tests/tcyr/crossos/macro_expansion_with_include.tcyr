@@ -66,8 +66,18 @@ var r7 = assert_eq(strlen("abcd"), 4, "the included stdlib (strlen, via assert.c
 # top-level program exits 92 rather than a silent, success-shaped 0.
 #
 # ⚠ AND THE SEED IS NOT ENOUGH WHEN THE WHOLE PROGRAM IS DROPPED — the seed is part of the text
-# that vanishes. Measured on a968ed07's cycc this file compiles rc 0 to a 43,512-byte binary
-# that prints nothing and exits 0, which a runner reading only the exit code scores as a PASS.
+# that vanishes. Measured on a968ed07's cycc, the version of this file that first shipped
+# compiled rc 0 to a 43,512-byte binary that printed nothing and exited 0, which a runner
+# reading only the exit code scores as a PASS.
+#
+# ⚠ AND DO NOT READ THE CURRENT rc ON AN OLD COMPILER AS A GUARANTEE — MEASURED WHILE WRITING
+# THIS NOTE. Editing this comment block flipped a968ed07's outcome THREE times in a row —
+# rc 1 with an empty binary, then rc 0 with a 43,544-byte binary that runs nothing, then rc 1
+# again — with no change whatever to the code below. The 6.6.5 mangling is CONTENT-LENGTH
+# dependent, exactly as the paragraph above says, so which side of it this file lands on is an
+# accident of its byte count and changes when any line is edited, including a comment. Whatever
+# an old compiler does with this file today, do not build a claim on it. That is the whole
+# reason the defence lives in the runner and not in this file.
 # That hole is closed OUTSIDE the binary: scripts/cross-os-libtest-runner.sh now requires the
 # "N passed" line that assert_summary prints, for every test whose source calls it, so an empty
 # run cannot score a pass on ecb / ach / cass / pi. Pinned by
