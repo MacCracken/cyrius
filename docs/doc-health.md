@@ -163,7 +163,7 @@ type: state
 > although its paren form is not syntax. A second paragraph was added for the PREPROCESSOR
 > directive names (`#endif`, `#endplat`, `#host_only`, `#derive(…)`, `#@srcline`), where the
 > same missing boundary was SILENT: `#endifoo note` closed a conditional and the skipped code
-> was compiled in. `docs/audit/2026-09-03-security-audit.md`'s CVE-44 entry gained the residual
+> was compiled in. `docs/audit/2026-09-03-security-audit.md`'s CVE-45 entry gained the residual
 > it had not recorded (a string literal could still mint a file-map span) plus the consumer-side
 > fix and, explicitly, what remains as an argument from the grammar rather than a check.
 > `docs/development/issues/archived/2026-09-19-lexer-attribute-prefix-swallows-comments.md`'s

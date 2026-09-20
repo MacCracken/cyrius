@@ -27,7 +27,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   hosts as a compile-time assertion. cycc **1,315,016 B unchanged**; 0 of 330 `.tcyr` binaries
   changed a byte.
 
-- **CVE-44's consumer side: program DATA could still mint a file-map span.** (bite 5g, review
+- **CVE-45's consumer side: program DATA could still mint a file-map span.** (bite 5g, review
   round.) Bite 5b closed the producer routes, and `PP_NEUT_FMARK` skips string literals on
   purpose so a program whose data contains `#@file` keeps its bytes. That left `FM_BUILD`
   accepting `#@file` at **any offset**, so a literal could mint a span anyway:
@@ -46,7 +46,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `tests/gates/frontend/file_marker_forge_refused.sh` 12 → **14 axes / 6 mutations**; axis 9
   derives its expected line with `grep -n` rather than from the compiler, and ⚠ mutation M6
   (`FM_ATBOL` → 0) is RED on **seven** axes because a file map that records nothing enforces
-  nothing — which is what stops axis 9 passing vacuously. The CVE-44 entry in
+  nothing — which is what stops axis 9 passing vacuously. The CVE-45 entry in
   `docs/audit/2026-09-03-security-audit.md` records both the residual and what remains (a marker
   at a line start inside a multi-line literal needs two raw `"` bytes in one literal, which
   closes it — an argument from the grammar, now written down rather than implicit).
@@ -138,7 +138,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   gate registrations in `programs/checks/main.cyr`, which stopped the check driver compiling.
   cycc **1,310,856 B → 1,310,920 B (+64)**; 0 of 330 `.tcyr` binaries changed a byte.
 
-- **An INCLUDED file could forge a `#@file` marker and defeat `private` visibility (CVE-44).**
+- **An INCLUDED file could forge a `#@file` marker and defeat `private` visibility (CVE-45).**
   (bite 5b.) `private` is enforced through the file map: the preprocessor mints
   `#@file "NAME" BASE` markers, `FM_BUILD` turns them into spans, and a reference to a private
   symbol from outside its span is refused. `FM_BUILD` scans the FINAL buffer for `#@file` at

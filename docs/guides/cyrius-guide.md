@@ -866,7 +866,7 @@ error:main.cyr:12:9: 'helper' is private to lib/thing.cyr
   `nm` output or in `cyrius api-surface`. That is the point — the API surface a
   consumer sees becomes the API surface you declared.
 - `pub` is accepted as a synonym for `public` (it is the same lexer token).
-- **A source file cannot forge its own identity (v6.6.6, CVE-44).** Visibility is decided from
+- **A source file cannot forge its own identity (v6.6.6, CVE-45).** Visibility is decided from
   the preprocessor's `#@file` markers, and `FM_BUILD` accepts one at any offset, so a line
   spelling `#@file "other.cyr" 1` used to make the code after it belong to `other.cyr` — which
   is exactly a way to reach that file's private items. v6.5.21 closed that for the main source;

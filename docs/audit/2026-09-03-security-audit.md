@@ -2,12 +2,12 @@
 
 **Scope:** the untrusted-source-input surface. Previous full audit:
 `docs/audit/2026-07-27-security-audit.md` (CVE-32…CVE-36) at cycc 6.4.82.
-**Next free identifier after this document: CVE-45.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
+**Next free identifier after this document: CVE-46.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
 document are **withdrawn** but still consume their ids.) CVE-43 was consumed at 6.6.5 and
-**CVE-44 at 6.6.6**; both are appended below.
+**CVE-45 at 6.6.6** (and **CVE-44**, spent in the same release on the release installer's fixed `/tmp` staging); all three are appended below.
 ⚠ **This line read "next free: CVE-42" while CLAUDE.md read "the next CVE number is 43" and this document ran 39-41.**
 Two authorities, two answers, and nothing reconciled them. CLAUDE.md is the one every closeout reads, so **42 is
-retired unused** and CVE-43 is the entry appended below. Anything below 44 now collides.
+retired unused** and CVE-43 is the entry appended below. Anything below 46 now collides.
 
 Run as part of the band K closeout, as nine parallel audit dimensions over the v6.5.x minor with
 an adversarial verification pass over the highest-severity findings. Everything recorded here was
@@ -241,7 +241,7 @@ not hardware).
 
 ---
 
-## CVE-44 — an INCLUDED file could forge `#@file` and defeat `private` visibility
+## CVE-45 — an INCLUDED file could forge `#@file` and defeat `private` visibility
 
 *Appended 2026-09-19 (cyrius 6.6.6, bite 5b). Not part of the 2026-09-03 sweep: recorded here
 because this is the live ledger and the id has to come from one place.*

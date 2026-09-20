@@ -131,7 +131,7 @@ fn PP_LEXST_INSTR(st): i64 {
     return 0;
 }
 
-# ⛔ v6.6.6 (CVE-44) — NEUTRALISE a forged `#@file` marker in a region of bytes.
+# ⛔ v6.6.6 (CVE-45) — NEUTRALISE a forged `#@file` marker in a region of bytes.
 #
 # FM_BUILD scans the FINAL buffer for `#@file` at ANY offset — no byte-0 rule and no
 # beginning-of-line rule, unlike `#@incdir`. So ANY source bytes that reach the
@@ -3284,7 +3284,7 @@ fn PP_PASS(S): i64 {
                                 # still 0 during preprocessing (see the reporting site at
                                 # the end of PARSE_PROG in parse.cyr for why).
                                 if (PP_IS_HOST_ONLY(out + op, nr) == 1) { PP_NOTE_HOST_ONLY(fname); }
-                                # v6.6.6 (CVE-44) — an include is READFILE'd STRAIGHT into
+                                # v6.6.6 (CVE-45) — an include is READFILE'd STRAIGHT into
                                 # `out`, so these bytes never pass the copy loop below and
                                 # could forge a `#@file` marker. See PP_NEUT_FMARK.
                                 PP_NEUT_FMARK(out + op, nr);
@@ -3661,7 +3661,7 @@ fn PP_IFDEF_PASS(S): i64 {
                                         syscall(SYS_WRITE, 2, "\n", 1);
                                         syscall(SYS_EXIT, 1);
                                     }
-                                    # v6.6.6 (CVE-44) — same READFILE-into-`out` route as
+                                    # v6.6.6 (CVE-45) — same READFILE-into-`out` route as
                                     # PP_PASS's include site. See PP_NEUT_FMARK.
                                     PP_NEUT_FMARK(out + op, nr);
                                     op = op + nr;
@@ -3897,7 +3897,7 @@ fn PREPROCESS(S): i64 {
     PP_SCAN_INCDIR(S);
     # Pre-pass: expand #ref directives (TOML → var declarations)
     PP_REF_PASS(S);
-    # v6.6.6 (CVE-44) — after PP_REF_PASS (whose TOML expansion lands in the raw source
+    # v6.6.6 (CVE-45) — after PP_REF_PASS (whose TOML expansion lands in the raw source
     # buffer too) and before anything reads it. See PP_NEUT_FMARK.
     PP_NEUT_PASS(S);
     PP_PASS(S);

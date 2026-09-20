@@ -1,5 +1,5 @@
 #!/bin/sh
-# file_marker_forge_refused.sh — v6.6.6 bite 5b (CVE-44).
+# file_marker_forge_refused.sh — v6.6.6 bite 5b (CVE-45).
 #
 # `private` IS SUPPOSED TO BE A CHECKABLE GUARANTEE. It is enforced through the
 # file map: the preprocessor mints `#@file "NAME" BASE` markers, FM_BUILD turns

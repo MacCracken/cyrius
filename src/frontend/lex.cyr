@@ -20,7 +20,7 @@ var _fm_overflowed = 0;
 # The error emitters recover it via GTOFF() to derive the column + source-excerpt.
 var _tok_start = 0;
 
-# 1 iff `buf[pos]` sits at the START OF A LINE. CVE-44's consumer half: FM_BUILD
+# 1 iff `buf[pos]` sits at the START OF A LINE. CVE-45's consumer half: FM_BUILD
 # scanned for `#@file` at ANY offset, so a span could be minted by bytes that merely
 # CONTAINED the marker. Bite 5b closed the producer routes (PP_NEUT_FMARK neutralises
 # user bytes at both entry points) but deliberately skips STRING LITERALS, so a
