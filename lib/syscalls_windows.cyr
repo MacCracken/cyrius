@@ -124,6 +124,17 @@ enum OFlags {
     # instead of REFUSING like O_NOFOLLOW does (lib/sigil.cyr's keyfile path relies on the
     # refusal), and a Windows directory handle cannot be ReadFile'd the way O_DIRECTORY's
     # caller expects. Defined so portable code still compiles.
+    #
+    # ⛔ AND NAME WHAT THAT COSTS, now that O_EXCL IS honoured. `luks_write_keyfile`
+    # (lib/sigil.cyr:3857) opens `O_WRONLY|O_CREAT|O_TRUNC|O_EXCL|O_NOFOLLOW` and treats
+    # the refusal as its guarantee that it created the keyfile itself. On PE that becomes
+    # CreateFileW CREATE_NEW, which RESOLVES a final reparse point instead of refusing it:
+    # measured on real cass 2026-09-19 — CREATE_NEW over a dangling symlink SUCCEEDS and
+    # creates the symlink's TARGET, where the same flags on Linux fail (verified both ways
+    # with the same source). So on Windows an O_EXCL|O_NOFOLLOW create is NOT the Linux
+    # refusal: a pre-planted symlink at the keyfile path redirects the write. A Windows
+    # caller that needs the Linux guarantee must stat the path first (FILE_ATTRIBUTE_REPARSE_POINT)
+    # or open with FILE_FLAG_OPEN_REPARSE_POINT and check — neither is wired yet. CHANGELOG [6.6.6]
     O_DIRECTORY = 65536;
     O_NOFOLLOW = 131072;
 }

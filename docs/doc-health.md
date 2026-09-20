@@ -209,6 +209,22 @@ type: state
 > stale": the doc faithfully recorded a justification that had been reasoned about and was wrong
 > about the READ side of the operation, so re-reading the doc would never have caught it. Only
 > running the shape did.
+> **Touched at 6.6.6 (bite 18, not a sweep):** `docs/guides/cyrius-guide.md` gained a Windows
+> **open-flag table** (the POSIX flag word → CreateFileW's `dwDesiredAccess` /
+> `dwCreationDisposition` pair) and an **Environment / `getenv`** subsection, because both
+> halves of that page had been describing a compiler that ignored `O_TRUNC`/`O_APPEND` and
+> could not read its own environment variables. Both are documented with what they cost:
+> the table names the two residual divergences that come out of ONE Win32 rule
+> (`TRUNCATE_EXISTING` is refused without `GENERIC_WRITE`), and the env section carries the
+> `cmd.exe` trap (`set VAR=1 & prog` puts a trailing space IN THE VALUE, so a correctly fixed
+> `cycc.exe` reads exactly like the broken one). The review round added the
+> `O_EXCL|O_NOFOLLOW` residual — `CREATE_NEW` resolves a final reparse point instead of
+> refusing it, measured on real cass against the identical Linux source — to the guide and to
+> `lib/syscalls_windows.cyr`, since the flag table is what a consumer will read before
+> trusting sigil's keyfile pattern on Windows. ⚠ This entry exists because the bite's first
+> cut edited the guide and did NOT stamp this ledger; nothing in `scripts/`, `tests/` or
+> `programs/` enforces the stamp, so the only thing standing between a guide edit and silent
+> ledger drift is remembering — which is exactly the failure this file is for.
 >
 > ⚖️ **Not re-verified at 6.6.6:** the tier tables and the "At a glance" anchors below still
 > carry their 2026-09-08 v6.6.1 figures. cycc is **1,315,040 B** as of this bite

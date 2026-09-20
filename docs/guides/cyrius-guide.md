@@ -2718,6 +2718,14 @@ near-equivalent Win32 flags do not mean what POSIX means (`FILE_FLAG_OPEN_REPARS
 *opens* a symlink where `O_NOFOLLOW` *refuses*). Use `is_dir` / `dir_list` rather than
 an `O_DIRECTORY` open.
 
+> ⚠ **`O_EXCL|O_NOFOLLOW` is weaker on Windows than on Linux.** `CREATE_NEW` resolves a
+> final reparse point instead of refusing it — measured on real Windows: creating over a
+> dangling symlink succeeds and creates the symlink's *target*, where the identical flags
+> on Linux fail. Code that opens `O_CREAT|O_EXCL|O_NOFOLLOW` to guarantee it created the
+> file itself (sigil's LUKS keyfile path, for one) does not get that guarantee on PE; a
+> pre-planted symlink at the path redirects the write. Check the path's attributes first
+> if the guarantee matters.
+
 **Directory Enumeration** (v6.1.18+)
 - `dir_list(path)` → `vec` of `Str` filenames
 - `is_dir(path)` → 1 (directory) or 0 (not found / file)

@@ -283,7 +283,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   is corrected. `O_DIRECTORY`/`O_NOFOLLOW` stay ignored **deliberately** — their Win32
   near-equivalents do not mean what POSIX means (`FILE_FLAG_OPEN_REPARSE_POINT` *opens* a
   symlink where `O_NOFOLLOW` *refuses*, and `lib/sigil.cyr`'s keyfile path depends on the
-  refusal), so mapping them is a semantics decision, not a port.
+  refusal), so mapping them is a semantics decision, not a port. ⛔ **And what that costs is
+  now written down**, because honouring `O_EXCL` is what makes it matter: on PE the keyfile
+  pattern becomes `CREATE_NEW`, which **resolves a final reparse point instead of refusing
+  it** — measured on real cass, creating over a dangling symlink SUCCEEDS and creates the
+  symlink's *target*, where the identical flags on Linux fail. A Windows
+  `O_CREAT|O_EXCL|O_NOFOLLOW` create is therefore not the Linux refusal, and
+  `luks_write_keyfile` (`lib/sigil.cyr:3857`) gets a weaker guarantee there. Named in
+  `lib/syscalls_windows.cyr` and the guide; wiring a real check (stat for
+  `FILE_ATTRIBUTE_REPARSE_POINT`, or `FILE_FLAG_OPEN_REPARSE_POINT` + verify) is a semantics
+  decision left open, not a silent gap.
   Coverage: `tests/tcyr/crossos/open_flag_translation.tcyr` (**30** content-asserted rows,
   **30/30 on real cass**, 12 red there on the 6.6.5 compiler and 5 red on this bite's first
   cut) + gate `tests/gates/platform/pe_open_flag_translation.sh` (POSIX oracle on the Linux
