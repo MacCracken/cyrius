@@ -2222,6 +2222,32 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   dead-entry arm exists to force. Re-proven: restoring the dead entry turns axis 4 RED
   again (ledger row `o`).
 
+- **Neither macOS install pillar ever verified a checksum** (bite 26a). `_cross_os_selfhost()`
+  in `cbt/commands.cyr` carries the two install pillars inline — the ecb (Apple Silicon,
+  v6.0.38) and ach (Intel, v6.4.59) arms that build the real release tarball, `scp` it to
+  the Mac and run the **real** `scripts/install.sh` against it with
+  `CYRIUS_INSTALL_TARBALL=…`. Neither ever sent the `.sha256`. install.sh's local-tarball
+  hook verifies **fail-closed only if a sidecar sits beside the tarball** (the CVE-21
+  branch); with none it copies the file and installs it. So the two gates whose entire job
+  is "the published artifact installs on a real Mac" had never once verified that the
+  artifact arrived intact, and the **Intel-Mac pillar has verified a hash on no release
+  since it was added**. The tarball builders have always *written* the sidecar
+  (`sha256sum "$STAGE.tar.gz" > "$STAGE.tar.gz.sha256"`) — it was sitting in the output
+  directory and nothing copied it. Both arms now ship it, **and require it on the far
+  side**: the remote command starts with `[ -f …tar.gz.sha256 ]`, because an `scp` that
+  silently dropped the sidecar would otherwise put the pillar straight back on the
+  unverified path with everything still green. **Measured on real hardware, both Macs**
+  (`ecb` Darwin arm64, `ach` Darwin x86_64): intact + sidecar → `checksum verified (local
+  sidecar)`; one byte appended, sidecar present → rc 1, `checksum mismatch`, nothing
+  unpacked; the *same* tampered tarball with no sidecar → zero mentions of a checksum and
+  `binaries installed` **from the tampered file** before an unrelated failure. New gate
+  `tests/gates/toolchain/install_pillars_ship_the_checksum.sh` (4 axes, 6 mutants), whose
+  axis 3 runs the real install.sh over all three cases in a throwaway `HOME` +
+  `CYRIUS_HOME`. ⚠ `scripts/cross-os-selfhost.sh`'s `ecb-install` arm and
+  `scripts/cass-install-gate.sh` have the **same shape and are not fixed here** — they
+  belong to a parallel lane, and that lane's `scripts/*.sh` sweep and this gate's
+  `cbt/*.cyr` sweep are complementary halves of one claim, neither covering the other.
+
 ### Changed
 
 - **A declaration-zone redeclaration that changes a global's type or size is now an error**
