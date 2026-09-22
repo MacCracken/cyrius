@@ -1,0 +1,129 @@
+# 2026-09-21 -- lib/bench.cyr 6.6.5/6.6.6: the per-op MINIMUM is reported ABOVE the
+# per-op MEAN whenever a window is too short to "resolve" unless something slow
+# happens inside it -- so min/max are taken over the SLOW windows only.
+#
+# Self-proving: exit 0 when the instrument is consistent (min <= avg on a row
+# whose min it claims resolved), exit 1 when it reports a resolved min above the
+# mean. Compiles on 6.6.4 (exit 0 there: its min is over every window) and on
+# 6.6.5/6.6.6 (exit 1).
+#   cyrius build repro_bench_min_gt_avg.cyr /tmp/r && /tmp/r
+#
+# Mechanism (lib/bench.cyr 6.6.5+): `_bench_record` admits a window into min/max
+# only if `net >= _BENCH_RESOLVE * (clock read + tick)`; a shorter window still
+# counts toward the total and the mean. With `bench_run_batch` at a fixed batch
+# that nets LESS than that bar, a plain window can never resolve -- only a window
+# that contained something slow crosses the bar. The extremes are then the
+# extremes OF THE SLOW WINDOWS, `bench_min_resolved` answers 1, and the printed
+# `min=` is larger than the printed `avg`. `bench_run` has the same exposure one
+# notch weaker: it sizes each chunk from the previous chunk's per-op cost to land
+# exactly ON the bar, so a chunk that ran faster than its predecessor is excluded
+# and one that ran slower is kept.
+#
+# Observed on hisab's benchmark suite (80 rows, bench_run_batch 2000 x 200) under
+# 6.6.6 on an hpet box (floor 341 ns, tick 340 ns, bar 68 us): 24 of 320 rows,
+# every one a sub-40 ns op whose 2000-op window sits at ~30-60 us --
+# `vec3_add: 16ns avg (min=39ns max=43ns)`, `vec2_lerp: 22ns avg (min=35ns ...)`.
+# The SAME binary layout with the 6.6.4 bench.cyr compiled in: 0 of 320.
+#
+# This file makes the slow window deterministic instead of waiting for the OS to
+# supply one: every `_period`-th call does a spike of work sized to ~2x the bar,
+# and the batch is sized so a plain window nets ~1/4 of the bar. Exactly one
+# window in three carries a spike. Under 6.6.5+ only those windows resolve, so
+# min ~ 9x the plain per-op cost while the mean is ~3.7x it. The CONTROL sizes
+# the batch to ~4x the bar so every window resolves, and min <= avg holds there
+# -- which isolates the defect to windows below the bar, not to the resolution
+# rule as such.
+
+var _acc = 0;
+var _k = 0;
+var _n = 0;
+var _period = 1000000000;
+var _spike_iters = 0;
+
+fn op_plain() {
+    _acc = f64_add(_acc, f64_mul(f64_from(_k), f64_from(3)));
+    _k = _k + 1;
+    if (_k > 1000) { _k = 0; }
+    return 0;
+}
+
+fn op_spiky() {
+    op_plain();
+    _n = _n + 1;
+    if (_n >= _period) {
+        _n = 0;
+        var i = 0;
+        while (i < _spike_iters) { _acc = f64_add(_acc, f64_from(i)); i = i + 1; }
+    }
+    return 0;
+}
+
+fn check(label, b) {
+    var avg = bench_avg_ns(b);
+    var mn = bench_min_ns(b);
+    println(label);
+    println_int(avg);
+    println_int(mn);
+    if (mn > avg) {
+        println("  ^ avg_ns / min_ns -- MIN ABOVE MEAN");
+        return 1;
+    }
+    println("  ^ avg_ns / min_ns -- consistent");
+    return 0;
+}
+
+fn main() {
+    var floor = bench_clock_overhead_ns();
+    # the resolution bar is 100 x (clock read + tick); tick is not readable on
+    # 6.6.4, so estimate it as one more clock read (true on hpet boxes, generous
+    # on TSC boxes) and keep the plain window at a QUARTER of the estimate.
+    var bar = 100 * 2 * floor;
+    if (bar < 20000) { bar = 20000; }
+    # per-op cost of the plain op, from a window far above any bar
+    var p = bench_new("pilot");
+    bench_run_batch(p, &op_plain, 200000, 3);
+    var per_op = bench_avg_ns(p);
+    if (per_op < 1) { per_op = 1; }
+    # spike ~ 2 x bar: calibrate the loop
+    var t0 = now_ns();
+    var j = 0;
+    while (j < 200000) { _acc = f64_add(_acc, f64_from(j)); j = j + 1; }
+    var loop_ns = now_ns() - t0;
+    if (loop_ns < 1) { loop_ns = 1; }
+    _spike_iters = (2 * bar * 200000) / loop_ns;
+    var batch_lo = (bar / 4) / per_op;
+    if (batch_lo < 4) { batch_lo = 4; }
+    _period = 3 * batch_lo;
+    println("floor_ns, bar_est_ns, per_op_ns, batch_lo, spike_iters:");
+    println_int(floor); println_int(bar); println_int(per_op); println_int(batch_lo); println_int(_spike_iters);
+
+    var bad = 0;
+    var rep = 0;
+    while (rep < 3) {
+        _n = 0;
+        var b = bench_new("below_bar");
+        bench_run_batch(b, &op_spiky, batch_lo, 300);
+        bad = bad + check("window ~1/4 bar, spike in every 3rd window:", b);
+        rep = rep + 1;
+    }
+    # control: window ~4x bar, every window resolves
+    var batch_hi = (4 * bar) / per_op;
+    var ctl_bad = 0;
+    rep = 0;
+    while (rep < 3) {
+        _n = 0;
+        var c = bench_new("above_bar");
+        bench_run_batch(c, &op_spiky, batch_hi, 40);
+        ctl_bad = ctl_bad + check("CONTROL window ~4x bar:", c);
+        rep = rep + 1;
+    }
+    println("rows with min > avg: below-bar (of 3), control (of 3):");
+    println_int(bad);
+    println_int(ctl_bad);
+    if (bad > 0) { println("DEFECT: a resolved minimum above the mean"); return 1; }
+    println("OK: min <= avg on every row");
+    return 0;
+}
+
+var exit_code = main();
+sys_exit_group(exit_code);
