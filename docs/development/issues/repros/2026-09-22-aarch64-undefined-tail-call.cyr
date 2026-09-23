@@ -1,0 +1,10 @@
+# Repro: cycc_aarch64 does not refuse a reachable undefined TAIL call.
+#   cyrius build          this.cyr out  -> error: refusing to emit binary ... ; exit 1
+#   cyrius build --agnos  this.cyr out  -> same refusal; exit 1
+#   cyrius build --aarch64 this.cyr out -> no diagnostic, OK, exit 0; the binary SIGILLs
+# Change the body to `var x = no_such_fn(2); return x;` (non-tail) and --aarch64 refuses too.
+include "lib/syscalls.cyr"
+
+fn main(): i64 { return no_such_fn(2); }
+var r = main();
+sys_exit(r);

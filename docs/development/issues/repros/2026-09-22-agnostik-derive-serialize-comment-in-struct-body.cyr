@@ -1,0 +1,91 @@
+# 2026-09-22 -- #derive(Serialize): a `#` comment inside the struct body turns the
+# generated _to_json into garbage. The first field is emitted as `"#"`, and the
+# values are loaded at the wrong widths/offsets, i.e. past the end of the struct.
+#
+# Self-proving: exit 0 when every derived _to_json output below is correct and
+# round-trips, exit 1 otherwise. Measured on cycc 6.6.0, 6.6.2 and 6.6.6: exit 1.
+# First seen by agnostik on 5.10.14.
+#   cyrius build docs/development/issues/repros/2026-09-22-agnostik-derive-serialize-comment-in-struct-body.cyr /tmp/dsc && /tmp/dsc
+#
+# The control struct is the same shape with its comment moved ABOVE the
+# directive, which is the workaround agnostik has used since 5.10.14. It must
+# stay correct in both states, or the repro is measuring something else.
+
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/syscalls.cyr"
+include "lib/result.cyr"
+include "lib/io.cyr"
+include "lib/bayan.cyr"
+
+# control: comment above the directive
+#derive(Serialize)
+struct Good {
+    sql: i8; xss: i8; command: i8; path_traversal: i8; prompt_injection: i8;
+}
+
+# (a) agnostik's original shape: one comment line inside the body
+#derive(Serialize)
+struct Bad {
+    # any comment here breaks codegen
+    sql: i8; xss: i8; command: i8; path_traversal: i8; prompt_injection: i8;
+}
+
+# (b) comment right after `{`, (c) consecutive comment lines, (d) a comment
+# before a field, (e) a trailing comment after a field
+#derive(Serialize)
+struct Many { # after the brace
+    # first
+    # second, consecutive
+    a: i8;
+    # before a field
+    b: i8;  # trailing
+    c: i64;
+}
+
+var _fails = 0;
+
+fn _check(label, got, want) {
+    syscall(SYS_WRITE, 1, label, strlen(label));
+    if (str_eq_cstr(got, want) == 1) {
+        syscall(SYS_WRITE, 1, " ok   ", 6);
+    } else {
+        syscall(SYS_WRITE, 1, " FAIL ", 6);
+        _fails = _fails + 1;
+    }
+    syscall(SYS_WRITE, 1, str_data(got), str_len(got));
+    syscall(SYS_WRITE, 1, "\n", 1);
+    return 0;
+}
+
+fn _five(p) {
+    store8(p, 85); store8(p + 1, 10); store8(p + 2, 5); store8(p + 3, 0); store8(p + 4, 0);
+    return p;
+}
+
+fn main() {
+    var want5 = "{\"sql\":85,\"xss\":10,\"command\":5,\"path_traversal\":0,\"prompt_injection\":0}";
+
+    var g = _five(alloc(5));
+    var gsb = str_builder_new(); Good_to_json(g, gsb);
+    _check("control (comment above)", str_builder_build(gsb), want5);
+
+    var b = _five(alloc(5));
+    var bsb = str_builder_new(); Bad_to_json(b, bsb);
+    var bj = str_builder_build(bsb);
+    _check("(a) comment inside body ", bj, want5);
+    var b2 = Bad_from_json_str(str_data(bj));
+    if (load8(b2) != 85) { _fails = _fails + 1; println("(a) from_json_str does not round-trip"); }
+
+    var m = alloc(10);
+    store8(m, 7); store8(m + 1, 9); store64(m + 2, 123456789);
+    var msb = str_builder_new(); Many_to_json(m, msb);
+    _check("(b)-(e) comment shapes  ", str_builder_build(msb), "{\"a\":7,\"b\":9,\"c\":123456789}");
+
+    if (_fails == 0) { println("PASS: derived output is correct"); return 0; }
+    println("FAIL: #derive(Serialize) output corrupted by a comment in the struct body");
+    return 1;
+}

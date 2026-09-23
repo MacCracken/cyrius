@@ -1,0 +1,35 @@
+# Repro: a `defer` block does not run when the fn returns a value-form Result.
+# Build + run:  cyrius build this.cyr out && ./out
+# Expected:     3 3 3 3 3 3 3 3
+# Actual:       3 4 5 6 7 7 7 7   (6.6.0, 6.6.2, 6.6.4, 6.6.6 — x86_64)
+# g_pair's fd is never closed (fds climb); g_plain's defer runs (fd 7 reused).
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/tagged.cyr"
+include "lib/syscalls.cyr"
+include "lib/fmt.cyr"
+
+fn g_pair(p): i64 {                      # returns a Result pair
+    var fd = sys_open(p, O_RDONLY, 0);
+    if (fd < 0) { return Err(fd); }
+    defer { sys_close(fd); }
+    return Ok(fd);
+}
+
+fn g_plain(p): i64 {                     # returns a single value
+    var fd = sys_open(p, O_RDONLY, 0);
+    if (fd < 0) { return fd; }
+    defer { sys_close(fd); }
+    return fd;
+}
+
+fn main(): i64 {
+    var i = 0;
+    while (i < 4) { var t, v = g_pair("/etc/hostname"); fmt_int(v); sys_write(1, " ", 1); i = i + 1; }
+    i = 0;
+    while (i < 4) { var fd = g_plain("/etc/hostname"); fmt_int(fd); sys_write(1, " ", 1); i = i + 1; }
+    sys_write(1, "\n", 1);
+    return 0;
+}
+var rr = main();
+sys_exit(rr);
