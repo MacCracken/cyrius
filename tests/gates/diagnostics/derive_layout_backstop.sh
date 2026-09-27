@@ -33,7 +33,7 @@ set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
 [ -x "$CC" ] || { echo "FAIL: derive_layout_backstop: no compiler at $CC"; exit 1; }
-T=$(mktemp -d "${TMPDIR:-/tmp}/dlb.XXXXXX") || { echo "FAIL: derive_layout_backstop: mktemp -d failed"; exit 1; }
+T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: derive_layout_backstop: mktemp -d failed"; exit 1; }
 trap 'rm -rf "$T"' EXIT
 cd "$ROOT"
 fails=0

@@ -98,7 +98,7 @@ RAW=$(sed 's/#.*//' "$PP" | grep -E 'store8\(S \+ 0x1F[CE]000 \+' | grep -vE ', 
 # spaced type is its own row. CC defaults to the tree's build/cycc.
 CC=${CYCC:-"$ROOT/build/cycc"}
 [ -x "$CC" ] || fail "no compiler at $CC for the behavioural axis"
-T=$(mktemp -d "${TMPDIR:-/tmp}/ppsb.XXXXXX")
+T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL preprocessor_scratch_bounds: mktemp -d failed for the behavioural axis" >&2; exit 1; }
 trap 'rm -rf "$T"' EXIT
 L40=aaaaaaaaaabbbbbbbbbbccccccccccdddddddddd
 L31=aaaaaaaaaabbbbbbbbbbcccccccccc1
