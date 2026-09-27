@@ -46,6 +46,9 @@
 #      unprivileged way to force one (RLIMIT_FSIZE is writes; a pipe/FIFO gives EOF, not an
 #      error; a pty needs a second process). Both cases are the SAME branch, so the static axis
 #      is what pins the partial one: re-fold `n <= 0` and it reddens.
+#   6. (6.6.7) BOUNDED AND CHECKED. RUNTIME: /dev/zero under `ulimit -v` is 0 / len 0 (was a
+#      NULL write, rc 139) and -EFBIG under file_read_whole_max. STATIC: every allocation in the
+#      reader core `_io_read_whole` and in `_env_load` is tested against 0 before use.
 #
 # MUTATION LEDGER (measured 6.6.6; each mutant is a COPY of the source in the gate's scratch
 # dir, compiled with the tree's build/cycc)
@@ -68,6 +71,9 @@
 #      negative branch removed
 #   j. axis-5 static detector disabled                 -> axis 5 self-test FAIL (the pre-fix
 #                                                         body is not reported)
+#   k. (6.6.7) the growth alloc's 0 check removed      -> axis 6 FAIL (runtime rc 139; static)
+#   l. (6.6.7) _env_load's growth alloc check removed   -> axis 6 FAIL (static)
+#   m. (6.6.7) the -EFBIG one-byte probe removed        -> axis 6 FAIL (runtime rc 3)
 # Real tree -> PASS.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -332,5 +338,71 @@ nsites=$(awk '{ print $2 }' "$D/folds.n")
 [ "${nsites:-0}" -ge 5 ] || { fail "axis 5: only ${nsites:-0} read sites found in lib/io.cyr (floor 5) — the scan read nothing"; x=1; }
 [ "$x" = 0 ] && echo "  ok: axis 5: a path that cannot be read yields 0/len 0 (file_read_whole) and a negative (file_read_all), a readable one all $real_sz bytes, and all $nsites read loops in lib/io.cyr keep a negative read distinct from EOF"
 
+# ── axis 6 (6.6.7): the reader is BOUNDED and every allocation it makes is CHECKED ──
+# The growth alloc was unchecked and doubled with no ceiling: at 1 GiB it asked for
+# alloc(2^31 + 1) > ALLOC_MAX, got 0, and the memcpy wrote through NULL — ANY file of 1 GiB or
+# more SIGSEGV'd (measured: 2^30 - 1 bytes read, 2^30 exactly rc 139; after the fix 2^30 reads
+# whole in ~6 s — too heavy for this gate, so the clamp is pinned at small sizes by
+# tests/tcyr/crossos/file_read_whole_bounded.tcyr). RUNTIME here, the filed repro: /dev/zero
+# under `ulimit -v 400000` must come back 0 / len 0 (was rc 139, a NULL write), and under a
+# 1 MiB `file_read_whole_max` it is -EFBIG. STATIC: every `alloc(` / `alloc_via(` in the reader
+# core and in `_env_load` is tested against 0 on the next code line.
+mkdir -p "$D/a6"
+cat > "$D/a6/probe.cyr" <<'CYR'
+include "lib/io.cyr"
+fn main(): i64 {
+    # The bounded read FIRST: the unbounded one below exhausts the rlimit, and the bump heap
+    # never gives its abandoned buffers back.
+    var n = 0 - 99;
+    var b = file_read_whole_max("/dev/zero", 1048576, &n);
+    if (b != 0) { return 3; }
+    if (n != 0 - 27) { return 4; }
+    n = 0 - 99;
+    b = file_read_whole("/dev/zero", &n);
+    if (b != 0) { return 1; }
+    if (n != 0) { return 2; }
+    return 0;
+}
+var rc = main();
+syscall(60, rc);
+CYR
+_build "$D/a6/probe.cyr" "$D/a6/probe"
+prc=0; ( ulimit -c 0; ulimit -v 400000 2>/dev/null; "$D/a6/probe" ) || prc=$?
+x=0
+case "$prc" in
+    0) ;;
+    1|2) fail "axis 6: file_read_whole(\"/dev/zero\") under ulimit -v 400000 did not fail cleanly (rc $prc) — it must be 0 / len 0"; x=1 ;;
+    3|4) fail "axis 6: file_read_whole_max(\"/dev/zero\", 1 MiB) is not -EFBIG (rc $prc)"; x=1 ;;
+    *) fail "axis 6: the /dev/zero probe exited $prc (139 = the growth memcpy wrote through a refused alloc)"; x=1 ;;
+esac
+cat > "$D/allocs.awk" <<'AWK'
+/^fn (_io_read_whole|_env_load)\(/ { f = 1 }
+f && /^}/ { f = 0 }
+f { L[++n] = $0 }
+END {
+    for (i = 1; i <= n; i++) {
+        line = L[i]
+        if (line ~ /^[ \t]*#/) continue
+        if (!match(line, /var[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*=[ \t]*alloc(_via)?\(/)) continue
+        id = substr(line, RSTART, RLENGTH); sub(/^var[ \t]+/, "", id); sub(/[ \t]*=.*/, "", id)
+        sites++
+        ok = 0
+        for (j = i + 1; j <= n; j++) {
+            t = L[j]
+            if (t ~ /^[ \t]*#/ || t ~ /^[ \t]*$/) continue
+            if (t ~ ("if[ \t]*\\([ \t]*" id "[ \t]*==[ \t]*0[ \t]*\\)")) ok = 1
+            break
+        }
+        if (!ok) print "      unchecked: " line
+    }
+    print "SITES " sites > "/dev/stderr"
+}
+AWK
+unchk=$(awk -f "$D/allocs.awk" lib/io.cyr 2> "$D/allocs.n")
+asites=$(awk '{ print $2 }' "$D/allocs.n")
+[ -n "$unchk" ] && { fail "axis 6: an allocation in the file_read_whole core / _env_load is used without a 0 check:"; printf '%s\n' "$unchk"; x=1; }
+[ "${asites:-0}" -ge 5 ] || { fail "axis 6: only ${asites:-0} allocation sites found in _io_read_whole + _env_load (floor 5) — the scan read nothing"; x=1; }
+[ "$x" = 0 ] && echo "  ok: axis 6: /dev/zero is 0/len 0 under a memory limit and -EFBIG under a 1 MiB max; all $asites allocations in the reader core and _env_load are checked"
+
 [ "$FAIL" = 0 ] || exit 1
-echo "PASS: manifest_read_whole_file (5 axes)"
+echo "PASS: manifest_read_whole_file (6 axes)"

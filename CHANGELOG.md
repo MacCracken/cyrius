@@ -51,6 +51,29 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (include-alone on 5 targets, refill under exhaustion with an anti-vacuous exit, PE init abort
   under wine + a static half; five mutants, each RED). The lock-site count is unchanged.
 
+- **`file_read_whole` SIGSEGV'd on ANY file of 1 GiB or more, on every box, and never checked an
+  allocation.** (bite 8.) The growth alloc in `lib/io.cyr` was unchecked and doubled from 64 KiB
+  with no ceiling. When a file reached exactly 1 GiB the next grow asked for `alloc(2^31 + 1)`,
+  which is past `ALLOC_MAX`, so `alloc` returned 0 and the `memcpy` wrote through NULL — with
+  memory to spare, and even though the next read would have been EOF (measured with sparse files:
+  1,073,741,823 bytes read fine, 1,073,741,824 exactly rc 139). `/dev/zero` under `ulimit -v`
+  did the same sooner; an EMPTY file whose first alloc failed stored its NUL at address 0; and
+  every call cost 65,544 bytes of bump heap that is never reclaimed, even for a 2-byte file —
+  kybernet's PID 1 re-reads its config on every SIGHUP and shipped its own reader to avoid this.
+  **Fix:** one bounded core. Every allocation is checked (a failure is `-ENOMEM`, never a store
+  through 0); growth CLAMPS to `min(2 * cap, max)` instead of doubling past the ceiling; at
+  `cap == max` one more byte is read into a local to tell a file of exactly `max` bytes (success)
+  from a larger one (`-EFBIG`); the first buffer is 4 KiB. `file_read_whole(path, &n)` keeps its
+  contract — the whole file NUL-terminated, or 0 with `n = 0` on ANY failure — with a ceiling of
+  `ALLOC_MAX - 1`: a 1 GiB file now reads whole (~6 s), a file over 2 GiB returns 0 instead of
+  crashing. `_env_load` (behind `getenv`) checks both of its allocations too, and its failure
+  paths now really leave the cache unset so a later call retries — the 6.6.6 comment promised
+  that, but `_env_len = 0` had already been stored, which cached an EMPTY environment. Pinned by
+  `tests/tcyr/crossos/file_read_whole_bounded.tcyr` (36 assertions, green on ecb / ach / pi /
+  qemu-aarch64 / wine) and axis 6 of `tests/gates/toolchain/manifest_read_whole_file.sh`
+  (`/dev/zero` under `ulimit -v 400000` is 0 / len 0 — rc 139 before — plus a static check that
+  every allocation in the reader core and `_env_load` is tested against 0).
+
 ### Changed
 
 - **`cyrius fuzz --poison` says what it covers.** (bite 8, the overlap with proposal P6.) It
@@ -64,6 +87,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   alloc-side fill only (redzones and quarantine shipped in v6.5.29), that nothing read a
   switch (the `CYRIUS_POISON` compile-time predefine does), and that the parser has no
   `#else` / `#ifndef` (it has had both since v5.6.1). The seam itself stays proposal P6.
+
+### Added
+
+- **`file_read_whole_max(path, max, &n)`, `file_read_whole_a(a, path, max, &n)` and
+  `file_read_whole_into(rb, path, max)`** (`lib/io.cyr`, bite 8). The bounded forms of
+  `file_read_whole`. `_max` reads at most `max` bytes; `_a` draws its buffers from Allocator `a`
+  (an arena, or `fail_after_n_allocs(n)` in a test). Both return the NUL-terminated buffer, or 0
+  with `n` set to a NEGATIVE errno: **`-EFBIG` (-27) when the file is larger than `max`**,
+  `-ENOMEM` (-12) when a buffer could not be allocated, `-EINVAL` (-22) for a negative `max`, or
+  the open's / read's own errno. `_into` reads into a buffer the CALLER KEEPS — `rb` is a 16-byte
+  `{ ptr, cap }` pair (`ptr` holds `cap + 1` bytes); start it at `{ 0, 0 }` and the first call
+  allocates, a later read that fits allocates nothing, and a file that does not fit grows the
+  buffer (clamped to `max`) and writes the new pair back — so take the pointer from `rb` after
+  the call. It returns the byte count or the same negative errnos. This is the shape kybernet's
+  `src/lib/read_whole.cyr` stopgap had, so kybernet can retire it once it pins 6.6.7.
 
 ## [6.6.6] — 2026-09-20
 

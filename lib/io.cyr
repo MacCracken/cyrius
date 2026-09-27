@@ -551,7 +551,8 @@ fn file_write_all(path, buf, len): i64 {
 }
 
 # Read the WHOLE file into a fresh heap buffer, NUL-terminated. Returns the buffer and writes
-# the byte count through `len_out`; 0 when the file cannot be opened.
+# the byte count through `len_out`; on ANY failure returns 0 with `*len_out = 0` (use
+# `file_read_whole_max` / `_a` / `_into` below to learn WHY, or to bound the read).
 #
 # ⛔ WHY: `file_read_all(path, buf, CAP)` with a hand-picked CAP returns exactly CAP on a larger
 # file and says nothing — the caller cannot tell "the whole file" from "the first CAP bytes",
@@ -570,30 +571,109 @@ fn file_write_all(path, buf, len): i64 {
 # Measured: `file_read_whole("tests", &n)` on a DIRECTORY (open succeeds, read = -EISDIR)
 # returned a non-zero buffer with len 0 — "could not read" reported as "empty". A read error is
 # now the same answer as an open error: 0, len 0. CHANGELOG [6.6.6]
+#
+# ⛔ 6.6.7 — EVERY ALLOCATION IS CHECKED AND GROWTH CLAMPS TO A CEILING. The growth alloc was
+# unchecked and pure doubling from 64 KiB asked for alloc(2^31 + 1) the moment a file reached
+# 1 GiB — past ALLOC_MAX, so alloc returned 0 and the memcpy wrote through NULL: ANY regular file
+# of 1 GiB or more SIGSEGV'd the reader, on every box, with memory to spare (measured: 2^30 - 1
+# bytes read fine, 2^30 exactly rc 139). A file that never ends (/dev/zero) did the same sooner
+# under a memory limit, and an EMPTY file whose first alloc failed stored its NUL at address 0.
+# Now growth is `min(2 * cap, max)`, a file past `max` is -EFBIG rather than a crash, and the
+# first buffer is 4 KiB instead of 64 KiB (every call cost 64 KiB of never-reclaimed bump heap,
+# even for a 2-byte file — kybernet's PID 1 re-reads its config on every SIGHUP).
+# CHANGELOG [6.6.7]
 fn file_read_whole(path, len_out): i64 {
+    var buf = file_read_whole_max(path, ALLOC_MAX - 1, len_out);
+    if (buf == 0) { store64(len_out, 0); }
+    return buf;
+}
+
+# Read the whole file, but never more than `max` bytes. Returns the NUL-terminated buffer and
+# the byte count through `len_out`, or 0 with `*len_out` = a NEGATIVE errno: -EFBIG (-27) when
+# the file is larger than `max`, -ENOMEM (-12) when a buffer could not be allocated, -EINVAL
+# (-22) for a negative `max`, or the open's / read's own errno. CHANGELOG [6.6.7]
+fn file_read_whole_max(path, max, len_out): i64 {
+    return file_read_whole_a(default_alloc(), path, max, len_out);
+}
+
+# `file_read_whole_max` with the buffers drawn from Allocator `a` (the `_a` convention — an
+# arena, or `fail_after_n_allocs(n)` in a test). CHANGELOG [6.6.7]
+fn file_read_whole_a(a, path, max, len_out): i64 {
+    var rb[16];
+    store64(&rb, 0);
+    store64(&rb + 8, 0);
+    var n = _io_read_whole(a, &rb, path, max);
+    if (n < 0) { store64(len_out, n); return 0; }
+    store64(len_out, n);
+    return load64(&rb);
+}
+
+# Read the whole file into a buffer the CALLER KEEPS: `rb` is a 16-byte { ptr, cap } pair, where
+# `ptr` holds `cap + 1` bytes (room for the NUL). Start it at { 0, 0 } and the first call
+# allocates; a later read that fits reuses it and allocates NOTHING (a long-lived process
+# re-reading a config pays once). A file that does not fit grows the buffer — clamped to `max`
+# — and the new { ptr, cap } is written back into `rb`, so take the pointer from `rb` AFTER the
+# call. Returns the byte count (data NUL-terminated), or a negative errno: -EFBIG when the file
+# is larger than `max`, -ENOMEM, -EINVAL, or the open's / read's errno. CHANGELOG [6.6.7]
+fn file_read_whole_into(rb, path, max): i64 {
+    return _io_read_whole(default_alloc(), rb, path, max);
+}
+
+# Close `fd` and pass `err` through — the one exit every failure path below takes.
+fn _io_rw_fail(fd, err): i64 {
+    file_close(fd);
+    return err;
+}
+
+# The one bounded reader behind every file_read_whole* entry point. See file_read_whole_into
+# for the { ptr, cap } contract.
+# ⚠ AT cap == max IT READS ONE MORE BYTE into a local — that is the only way to tell a file of
+# EXACTLY `max` bytes (EOF: success) from a larger one (a byte arrives: -EFBIG) without ever
+# growing the buffer past the ceiling.
+fn _io_read_whole(a, rb, path, max): i64 {
+    if (max < 0) { return 0 - 22; }                       # -EINVAL
     var fd = file_open(path, 0, 0);
-    if (fd < 0) { store64(len_out, 0); return 0; }
-    var cap = 65536;
-    var buf = alloc(cap + 1);
+    if (fd < 0) { return fd; }
+    if (load64(rb) == 0) {
+        var c0 = 4096;
+        if (c0 > max) { c0 = max; }
+        var b0 = alloc_via(a, c0 + 1);
+        if (b0 == 0) { return _io_rw_fail(fd, 0 - 12); }  # -ENOMEM
+        store64(rb, b0);
+        store64(rb + 8, c0);
+    }
+    var buf = load64(rb);
+    var cap = load64(rb + 8);
+    if (cap > max) { cap = max; }
     var total = 0;
-    var go = 1;
-    while (go == 1) {
+    while (1 == 1) {
         if (total == cap) {
+            if (cap == max) {
+                var one[8];
+                var m = file_read(fd, &one, 1);
+                if (m < 0) { return _io_rw_fail(fd, m); }
+                if (m > 0) { return _io_rw_fail(fd, 0 - 27); }  # -EFBIG
+                break;
+            }
             var ncap = cap + cap;
-            var nb = alloc(ncap + 1);
+            if (ncap < 4096) { ncap = 4096; }             # a caller's { ptr, 0 } must still grow
+            if (ncap > max) { ncap = max; }
+            var nb = alloc_via(a, ncap + 1);
+            if (nb == 0) { return _io_rw_fail(fd, 0 - 12); }  # -ENOMEM
             memcpy(nb, buf, total);
             buf = nb;
             cap = ncap;
+            store64(rb, nb);
+            store64(rb + 8, ncap);
         }
         var n = file_read(fd, buf + total, cap - total);
-        if (n < 0) { file_close(fd); store64(len_out, 0); return 0; }
-        if (n == 0) { go = 0; }
-        else { total = total + n; }
+        if (n < 0) { return _io_rw_fail(fd, n); }
+        if (n == 0) { break; }
+        total = total + n;
     }
     file_close(fd);
     store8(buf + total, 0);
-    store64(len_out, total);
-    return buf;
+    return total;
 }
 
 # ── v6.4.57: portable crash-safe atomic write (thoth's model edit/create tools).
@@ -1028,7 +1108,7 @@ fn _env_load(): i64 {
     }
     if (mtot == 0) { return 0; }
     var mbuf = alloc(mtot);
-    if (mbuf == 0) { return 0; }
+    if (mbuf == 0) { _env_len = 0 - 1; return 0; }   # unset, so a later call retries (6.6.7)
     var mo = 0;
     mi = 0;
     me = load64(menvp);
@@ -1050,8 +1130,15 @@ fn _env_load(): i64 {
     if (fd < 0) { return 0; }
     # Grow-and-read to EOF. /proc files are not stat-sizeable, so the only honest
     # termination is a short read. Doubling keeps this O(log n) allocations.
+    # ⚠ 6.6.7: both allocations are CHECKED. They were not, so an alloc() returning 0 put the
+    # read (or the growth memcpy) through NULL — the same shape as file_read_whole's. A failure
+    # here, and a read error, leave the cache UNSET (`_env_len = -1`) so a later call retries.
+    # (The 6.6.6 comment below promised exactly that, but `_env_len = 0` had already been
+    # stored at the top, which CACHES an empty environment: every later getenv returned 0.)
+    # CHANGELOG [6.6.7]
     var cap = 16384;
     var buf = alloc(cap);
+    if (buf == 0) { file_close(fd); _env_len = 0 - 1; return 0; }
     var n = 0;
     var done = 0;
     while (done == 0) {
@@ -1060,13 +1147,14 @@ fn _env_load(): i64 {
         # forever — every later getenv answering from a block that stops mid-variable, with no
         # way to tell that from a genuinely short environ. Leave the cache unset instead, the
         # same answer an open failure gives, so a later call retries. CHANGELOG [6.6.6]
-        if (got < 0) { file_close(fd); return 0; }
+        if (got < 0) { file_close(fd); _env_len = 0 - 1; return 0; }
         if (got == 0) { done = 1; }
         else {
             n = n + got;
             if (n >= cap) {
                 var ncap = cap * 2;
                 var nb = alloc(ncap);
+                if (nb == 0) { file_close(fd); _env_len = 0 - 1; return 0; }
                 memcpy(nb, buf, n);
                 buf = nb;
                 cap = ncap;
