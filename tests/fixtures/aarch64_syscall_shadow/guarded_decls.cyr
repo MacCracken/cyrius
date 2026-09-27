@@ -1,0 +1,22 @@
+# guarded_decls.cyr — the committed corpus floor for tests/gates/platform/aarch64_syscall_shadow.sh
+# axis 2. NOT compiled by anything: the gate reads it through its ordinary tree walk and requires
+# the walk to report EXACTLY the four aarch64-guarded declarations below, and to judge exactly
+# one of them wrong.
+#
+# ⛔ WHY IT EXISTS. Axis 2's anti-vacuity used to rest on two live things: yukti 2.3.11's
+# aarch64 `enum YkSyscalls` (all 6 arch-guarded SYS_* declarations in the tree) and its
+# SYS_STATFS = 43 defect (the KNOWN re-derivation). yukti 2.3.12 deletes both — so a fold that
+# FIXES the bug would have left the axis with a corpus of zero and only a floor to say so. A
+# fixture never gets fixed upstream; it is the anti-vacuity anchor that outlives the defect.
+# CHANGELOG [6.6.7]
+#ifdef CYRIUS_ARCH_AARCH64
+enum ShadowFixtureIntended {
+    SYS_TRUNCATE = 76;      # the x86 number; ESYSXLAT 76 -> 45 = truncate: intended, not reported
+    SYS_FSYNC = 74;         # the x86 number; 74 -> 82 = fsync: intended, not reported
+    SYS_GETDENTS64 = 61;    # the aarch64 native number and no row rewrites it: not reported
+}
+enum ShadowFixtureShadowed { SYS_STATFS = 43; }   # native 43, but 43 -> 202 = accept: MUST be reported
+#endif
+#ifdef CYRIUS_ARCH_X86
+enum ShadowFixtureOffArch { SYS_PPOLL = 73; }     # not aarch64-guarded: must NOT be counted at all
+#endif

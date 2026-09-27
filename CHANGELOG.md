@@ -45,6 +45,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - **Downstream lockstep:** a repo that pins patra or sakshi as a git dep must move that tag with
     its 6.6.7 pin, or the git dep overlays and downgrades the fold — yukti and nein (`[deps.patra]`
     1.14.3 → 1.15.0); yukti, daimon and hisab (`[deps.sakshi]` 2.5.2 → 2.5.5).
+- **`aarch64_syscall_shadow.sh` axis 2 has a committed corpus floor.** Its anti-vacuity leaned on
+  live defects: all 6 arch-guarded `SYS_*` declarations in the tree were yukti 2.3.11's aarch64
+  enum, and its KNOWN re-derivation re-read yukti's `SYS_STATFS = 43`. yukti 2.3.12 deletes both,
+  so folding the FIX would have turned the gate red on its own floor (`found only 0 arch-guarded
+  SYS_* declarations`, measured on a 2.3.12 overlay). `tests/fixtures/aarch64_syscall_shadow/
+  guarded_decls.cyr` is now read by the same walk and judge as the real corpus and must come back
+  exactly — `SYS_TRUNCATE = 76`, `SYS_FSYNC = 74`, `SYS_GETDENTS64 = 61` passed, `SYS_STATFS = 43`
+  reported, an `#ifdef CYRIUS_ARCH_X86` declaration not counted — which replaces the `ndecl >= 3`
+  floor (outside the fixture the tree may legitimately hold none). Mutation-proven four ways:
+  fixture deleted, walk narrowed to nothing, judge disabled, and `#ifdef` negation dropped.
 
 ### Fixed
 
