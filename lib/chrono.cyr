@@ -34,6 +34,9 @@ var CLOCK_MONOTONIC = 1;
 # silent. Mirrors lib/syscalls_windows.cyr's sys_qpc_ns; the two are pinned to agree by
 # the same gate axis.
 var _chrono_qpf_hz = 0;
+#ifdef CYRIUS_TARGET_AGNOS
+var _chrono_agnos_ms40 = 0;   # 1 once #95 has answered < 0 — see clock_now_ns
+#endif
 fn _chrono_qpc_ns(): i64 {
     #ifdef CYRIUS_TARGET_WIN
     var c[16];
@@ -70,9 +73,26 @@ fn _chrono_qpc_ns(): i64 {
 #
 # v6.2.6 bound it to #40 and that was correct WHEN WRITTEN — #95 did not exist yet.
 # Resolution improves as a side effect: µs rather than the 10 ms tick.
+#
+# ⛔ #95 ANSWERS -1 WHEN TSC CALIBRATION WAS REFUSED, and that is PERMANENT for the boot (and
+# ALWAYS under mirshi, which does not emulate #95). Multiplying the sentinel gave -1000 ns and
+# clock_now_ms truncated it to exactly 0 — a clock that stood still, so every
+# `while (clock_now_ms() - t0 < N)` wait on such a boot spun forever. So: #95 first, and on
+# the first negative answer LATCH to #40 (since agnos 1.57.7 #40 rides the calibrated TSC and
+# on a refused boot it is ticks x10, degraded but advancing). The latch, not a per-call retry:
+# one ENOSYS line under mirshi instead of one per read, one syscall per read instead of two,
+# and it cannot jump BACKWARDS from ms-since-boot to µs-since-calibration on a TSC_SELFTEST
+# kernel where #95 can turn valid mid-run. An idempotent scalar every thread computes the
+# same way, like _chrono_qpf_hz above. ⚠ On agnos <= 1.57.6 a foreground program on a
+# refused boot has NO working clock at all (#40 is frozen at IF=0). CHANGELOG [6.6.7]
 fn clock_now_ns(): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
-    return sys_uptime_us() * 1000;
+    if (_chrono_agnos_ms40 == 0) {
+        var us = sys_uptime_us();
+        if (us >= 0) { return us * 1000; }
+        _chrono_agnos_ms40 = 1;
+    }
+    return sys_uptime_ms() * 1000000;
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
     var ts[16];

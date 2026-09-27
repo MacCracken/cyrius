@@ -48,8 +48,9 @@ assert_agnos_elf() {
 
 # 1. In-tree probe — exercises the agnos peer surface that's bitten us before:
 #    args (entry rsp capture), getenv (envp walk, v6.0.87), alloc, syscalls,
-#    plus chrono's monotonic-clock + sleep binding (#40/#41, v6.2.6 — guards
-#    the stale-stub regression that made every agnos timing/poll consumer
+#    plus chrono's monotonic-clock + sleep binding (#95 uptime_us with a latched
+#    #40 fallback when TSC calibration is refused — 6.6.7; #41 sleep, v6.2.6 —
+#    guards the stale-stub regression that made every agnos timing/poll consumer
 #    re-roll a direct-syscall workaround; issue 2026-06-14-chrono-agnos-...).
 cat > "$W/_agnos_gate.cyr" <<'CYR'
 include "lib/syscalls.cyr"
@@ -63,7 +64,7 @@ fn main(): i64 {
     if (h == 0) { return 1; }
     var n = argc();                   # entry init-rsp capture
     if (n < 1) { return 2; }
-    var t0 = clock_now_ms();          # uptime_ms #40 (monotonic, was fixed-0 pre-6.2.6)
+    var t0 = clock_now_ms();          # uptime_us #95, latched #40 fallback (6.6.7)
     sleep_ms(1);                       # sleep_ms #41 (real sleep, was no-op pre-6.2.6)
     var us = sys_uptime_ms();          # raw wrapper (#40)
     var sl = sys_sleep_ms(0);          # raw wrapper (#41); ms<=0 guarded in chrono

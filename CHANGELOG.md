@@ -6,6 +6,39 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.7] — 2026-09-27
 
+### Fixed
+
+- **agnos: `clock_now_ns` / `clock_now_ms` stood still whenever `uptime_us`#95 answered -1, and
+  `lib/bench.cyr`'s `now_ns` had the same shape.** (bite 7; filed by daimon.) #95 returns -1 —
+  deliberately never a plausible 0 — when the kernel refused TSC calibration, which is permanent
+  for that boot and is ALWAYS the case under mirshi (it answers #95 with ENOSYS). **Root cause:**
+  the 6.6.1 move from #40 to #95 dropped #40 entirely instead of keeping it as the fallback, so
+  `lib/chrono.cyr` multiplied the sentinel unchecked (`sys_uptime_us() * 1000` = -1000 ns) and
+  `clock_now_ms` truncated that to exactly **0** — the plausible zero the kernel set out to avoid.
+  6.6.5 copied the arm into `now_ns`. Every `while (clock_now_ms() - t0 < N)` wait spun forever
+  (measured under mirshi 1.11.2: 20,000 polls, clock frozen, 20,003 stderr lines); sandhi's
+  `total_ms` ceiling was silently never enforced. **Fix:** #95 first, and on the first negative
+  answer LATCH to #40 (`sys_uptime_ms`, since agnos 1.57.7 riding the calibrated TSC and on a
+  refused boot a degraded ticks x10 that still advances). Latched rather than per-call: one
+  mirshi ENOSYS line instead of one per read (163 vs 1 over the gate's two waits), one syscall
+  per read instead of two, and no backwards step on a TSC_SELFTEST kernel where #95 can turn
+  valid mid-run. The latch globals sit under `#ifdef CYRIUS_TARGET_AGNOS`, so every non-agnos
+  binary is byte-identical (checked on x86-linux, aarch64, PE and Mach-O). ⚠ On agnos <= 1.57.6
+  a foreground program on a refused boot still has no working clock — #40 is frozen at IF=0.
+  **Gate:** `tests/gates/platform/agnos_monotonic_clock_rdtsc.sh` axis 1 is now DERIVED: it
+  finds every #95 reader in `lib/*.cyr` (`sys_uptime_us()`, `syscall(95)`,
+  `syscall(SYS_UPTIME_US)`) and requires each to store the result, test it `< 0` / `>= 0`, and
+  read #40 (however spelled) only after that test — so chrono, bench, sakshi and the next copy
+  are pinned together, where the per-file axes let bench lag chrono by four releases. The old
+  axis 1 forbade #40 in `clock_now_ns` outright, which made the fix unwritable. clock_now_ns and
+  now_ns must latch. Axes 2 and 4 count `movl $0x5f/$0x28, %eax; syscall` pairs on a
+  `CYRIUS_DCE=1` build (a plain build emits every peer wrapper, so a deleted fallback still
+  showed a 0x28). New axis 5 runs a probe under mirshi when present: both clocks must advance
+  on a -1 #95 with at most 3 #95 calls in total, and it SKIPs by name if mirshi ever emulates
+  #95. Mutation-proven nine ways. A consumer sees: on agnos, clocks advance on every boot, and
+  under mirshi the per-read `ENOSYS agnos#95` stderr flood is gone. daimon's
+  `daimon_now_ms()` workaround stays harmless.
+
 ## [6.6.6] — 2026-09-20
 
 The 6.6.6 repair release — the 6.6.5 queue, and then what looking at it turned up. Every one of the six
