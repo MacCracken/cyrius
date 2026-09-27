@@ -2378,7 +2378,8 @@ primitive: `xopen`, `xunlink`, `xrmdir`, `xmkdir`, `xmkdir_p`, `xsymlink`, `xrea
 `sys_*` — agnos's syscalls carry an **explicit byte length** and reorder flags, so a
 Linux-shaped `sys_open(path, O_RDONLY, 0)` lands `O_RDONLY` in `namelen`: a silent ABI
 miscompile, no trap, that breaks every file op off Linux. Windows reroutes through kernel32
-(`DeleteFileW`, `MoveFileExW`, `RemoveDirectoryW` since v6.6.6, …) behind the same names. `cyrlint` flags a raw `sys_open`
+(`DeleteFileW`, `MoveFileExW`, `RemoveDirectoryW` since v6.6.6, `FlushFileBuffers` for `xfsync`
+since v6.6.7, …) behind the same names. `cyrlint` flags a raw `sys_open`
 with literal flags for exactly this reason and points at the wrappers.
 
 The set was **completed at v6.5.7** (`xmkdir`, `xmkdir_p`, `xsymlink`, `xreadlink`, `xlink`,
@@ -2738,6 +2739,25 @@ an `O_DIRECTORY` open.
 > file itself (sigil's LUKS keyfile path, for one) does not get that guarantee on PE; a
 > pre-planted symlink at the path redirects the write. Check the path's attributes first
 > if the guarantee matters.
+
+**Durability** (v6.6.7)
+
+`fsync` and `fdatasync` — `xfsync(fd)`, or a raw `syscall(74, fd)` / `syscall(75, fd)` — call
+`FlushFileBuffers` on Windows; there is one flush for data and metadata, so both numbers do the
+same thing. The route is for the **literal** numbers — an enum constant counts; a number held in a
+`var` gets the honest -38 (`-ENOSYS`), not a flush. A failure is -1. `file_rename` passes
+`MOVEFILE_WRITE_THROUGH`, so `file_write_atomic`'s write → flush → rename is durable as well as
+atomic.
+
+Before v6.6.7 `xfsync` returned 0 on Windows **without flushing, for any fd** (even one that did not
+exist), a raw 74/75 returned -38, and the rename was not write-through. Code that checked for
+durability on Windows was told it had it.
+
+> ⚠ One divergence from POSIX: Windows will not flush a handle opened **without write access**.
+> `xfsync` of an `O_RDONLY` fd is 0 on Linux and macOS and **-1 on Windows**. An `O_APPEND` handle
+> (whose Windows access is `FILE_APPEND_DATA`, not `GENERIC_WRITE`) is expected to flush — the NT
+> flush accepts either write right — and `tests/tcyr/crossos/fsync_flushes.tcyr` checks exactly
+> that, and the `O_RDONLY` refusal, on real Windows at every release.
 
 **Directory Enumeration** (v6.1.18+)
 - `dir_list(path)` → `vec` of `Str` filenames

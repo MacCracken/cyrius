@@ -1,7 +1,30 @@
-# `xfsync` on Windows returns 0 without flushing — a durability call that reports success — OPEN
+# `xfsync` on Windows returns 0 without flushing — a durability call that reports success — RESOLVED v6.6.7
 
-**Status:** 🟡 **OPEN**: read 2026-09-23 in this repo's `lib/io.cyr:383-395` (cyrius 6.6.6). Found by
-reading source; **not run on Windows**.
+**Status:** ✅ **RESOLVED v6.6.7** (bite 3) — option 1, wired as a route of the LINUX numbers rather
+than a new 0xF0xx id. See `CHANGELOG.md` [6.6.7]:
+
+- **The flush.** `syscall(74, fd)` / `syscall(75, fd)` (fsync / fdatasync, argc 2) on PE now call
+  `kernel32!FlushFileBuffers` (`EFLUSHFB_PE`, routed from `_PE_ROUTE_FLUSH` in
+  `src/frontend/parse_expr.cyr`; literal-only, on the 83 → CreateDirectoryW / 87 → DeleteFileW
+  precedent). A nonzero BOOL is 0, a failure -1. Routing the Linux numbers also repairs the
+  vendored patra 1.14.3 fold's raw `syscall(SYS_FDATASYNC, fd)`, which was a LOUD -38 on Windows
+  (so `wal_log_page` failed every page with `PATRA_ERR_IO`).
+- **`xfsync`'s PE arm** is `return syscall(74, fd);`. `xfsync(12345)` is now -1 on PE, as it is
+  -EBADF on Linux. One documented divergence: Windows refuses to flush an `O_RDONLY` handle
+  (Linux fsyncs it); the only such callers are best-effort directory syncs.
+- **The rationale was false too, and that is fixed in the same release.** `EMOVEFILEEX_PE` passed
+  `dwFlags = 1` (REPLACE_EXISTING) without `MOVEFILE_WRITE_THROUGH`, so `file_write_atomic` was
+  atomic but not durable on Windows. It now passes 9.
+
+Tests: `tests/tcyr/crossos/fsync_flushes.tcyr` (16 rows, every target; runs on real cass in the
+release gate's cross-OS leg) and `tests/gates/platform/pe_fsync_flushes.sh` (POSIX oracle, the PE
+emitter shape — the only guard on the write-through bit, since nothing can observe durability — and
+wine). ⚠ **Ordering for patra:** re-vendoring patra 1.15.0 (which routes Windows fdatasync through
+`xfsync`) is safe only WITH or AFTER this fix; before it, the fold's loud -38 would have become a
+silent 0. The ORIGINAL status line is kept below for the record.
+
+~~🟡 **OPEN**: read 2026-09-23 in this repo's `lib/io.cyr:383-395` (cyrius 6.6.6). Found by
+reading source; **not run on Windows**.~~
 **Placement:** **6.6.7 bite 3** — PE fsync/fdatasync really flush: Linux 74/75 route to FlushFileBuffers, and MoveFileExW gains MOVEFILE_WRITE_THROUGH. Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Discovered:** 2026-09-23 during patra's 1.15.0 cut, which routes patra's fdatasync through
 `xfsync` on the targets with no `sys_fdatasync` (agnos, Windows).

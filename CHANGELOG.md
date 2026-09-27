@@ -101,6 +101,44 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   scratch copy); none trips the backstop. It cannot catch a same-size mis-naming; it is a
   backstop, not the fix. Gate: `tests/gates/diagnostics/derive_layout_backstop.sh` (6 axes; the
   no-backstop, top-level, armed-after-stop and armed-on-redefinition mutants are each RED).
+- **`xfsync` returned 0 on Windows WITHOUT FLUSHING — for any argument, including a handle that
+  did not exist — and a raw `syscall(74, fd)` / `syscall(75, fd)` (fsync / fdatasync) returned -38
+  there.** (bite 3; filed from patra's 1.15.0 cut.) `xfsync(12345)` was 0 on PE and -EBADF on Linux,
+  so `file_write_atomic`, the CLI's atomic writer and every consumer that syncs for durability on
+  Windows was told it had durability it never got; the vendored patra 1.14.3 fold calls raw
+  `syscall(SYS_FDATASYNC, fd)`, so its `wal_log_page` failed every in-transaction page with
+  `PATRA_ERR_IO` on Windows (loudly). **Root cause:** the PE backend had no reroute for either
+  Linux number (they fell to the honest -38 fallthrough in `src/frontend/parse_expr.cyr`), and
+  `lib/io.cyr`'s Windows arm papered over it with `return 0` on the grounds that "MoveFileEx-after-
+  close is durable enough" — which was itself false (next bullet). **Fix:** literal 74 and 75 at
+  argc 2 route to a new `EFLUSHFB_PE` → `kernel32!FlushFileBuffers`, on the 83 → CreateDirectoryW
+  / 87 → DeleteFileW precedent (no 0xF0xx id consumed; its own `_PE_ROUTE_FLUSH` helper for cybs's
+  per-function limit; literal-only — an enum constant counts, a number in a `var` still gets -38).
+  fd 0/1/2 map to the std handles as in `read`/`write`, the call is made from an rbx-anchored
+  16-aligned frame, and the BOOL becomes 0/-1 through `cmp eax,1; sbb rax,rax`. `xfsync`'s PE arm
+  is `return syscall(74, fd);`. **What a consumer sees:** on Windows `xfsync` and raw fsync /
+  fdatasync now flush, and fail (-1) on a bad handle. One divergence from POSIX, documented in the
+  guide: Windows refuses to flush a handle opened without write access, so `xfsync` of an
+  `O_RDONLY` fd is -1 there (0 on Linux/macOS); `O_APPEND` handles flush. Because the Linux numbers
+  are routed, the patra fold's raw fdatasync works with no source change — and re-vendoring patra
+  1.15.0 (which routes Windows fdatasync through `xfsync`) is safe from this release on; before it,
+  that re-vendor would have turned the loud -38 into a silent 0.
+- **`file_rename` on Windows was atomic but not durable: `MoveFileExW` was called without
+  `MOVEFILE_WRITE_THROUGH`.** (bite 3.) `EMOVEFILEEX_PE` (`src/backend/x86/emit.cyr`, the 0xF034
+  reroute behind `file_rename` and `file_write_atomic`) passed `dwFlags = 1`
+  (`MOVEFILE_REPLACE_EXISTING`), so the call could return before the rename reached the disk, and
+  closing a handle does not flush NTFS data either. **Fix:** `dwFlags = 9` (`REPLACE_EXISTING |
+  WRITE_THROUGH`) — the Windows analogue of the directory fsync that makes POSIX's write → fsync →
+  rename durable. **What a consumer sees:** nothing but durability; the rename still replaces
+  atomically on the same volume. Tests for both bullets: `tests/tcyr/crossos/fsync_flushes.tcyr`
+  (16 rows on every target — raw 74/75 and `xfsync` on a bogus, a written, an `O_WRONLY|O_APPEND`
+  and an `O_RDWR|O_APPEND` fd, and the `O_RDONLY` divergence; 6 red on PE with the pre-fix compiler
+  and stdlib under wine) and `tests/gates/platform/pe_fsync_flushes.sh` (POSIX oracle, the PE
+  emitter shape — FlushFileBuffers imported, one flush tail per literal site, and `mov $0x9,%r8d`
+  after every MoveFileExW setup, which is the ONLY guard on the write-through bit because no run
+  on wine or on Windows can observe durability — and wine; five mutants each RED). ⚠ wine cannot
+  observe durability and cass was down for this bite: the real-Windows run of the .tcyr (including
+  the `O_APPEND` and `O_RDONLY` rows) is the release gate's cass leg.
 
 ## [6.6.6] — 2026-09-20
 

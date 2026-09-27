@@ -206,8 +206,8 @@ here. All take/return raw cstrings + POSIX-shaped `0` / negative-errno.
 | `xsymlink` | `xsymlink(target, linkpath) → 0/-errno` | v6.5.7 — symlink. **-1 on Windows** |
 | `xreadlink` | `xreadlink(path, buf, bufsize) → n/-errno` | v6.5.7 — read a symlink target. **NOT NUL-terminated** (readlink(2)'s contract). **-1 on Windows** |
 | `xlink` | `xlink(oldpath, newpath) → 0/-errno` | v6.5.7 — hard link. **-1 on Windows** |
-| `file_rename` | `file_rename(oldpath, newpath) → 0/-errno` | Rename/replace. Windows routes to `MoveFileExW(REPLACE_EXISTING)` |
-| `xfsync` | `xfsync(fd) → 0/-errno` | Flush to stable storage. agnos has no per-fd fsync → whole-fs `sync` (documented residual); Windows is a no-op |
+| `file_rename` | `file_rename(oldpath, newpath) → 0/-errno` | Rename/replace. Windows routes to `MoveFileExW(REPLACE_EXISTING｜WRITE_THROUGH)` — the rename is on disk when it returns (write-through since v6.6.7; before that the Windows rename was atomic but not durable) |
+| `xfsync` | `xfsync(fd) → 0/-errno` | Flush to stable storage. agnos has no per-fd fsync → whole-fs `sync` (documented residual). Windows routes to `FlushFileBuffers` (v6.6.7; **before that it returned 0 without flushing, for any fd**) and returns -1 on failure — including for an `O_RDONLY` handle, which Linux flushes and Windows refuses |
 | `xstat` | `xstat(path, buf) → 0/-errno` | stat into `buf`. **-1 on Windows.** Read fields via `STAT_MODE` etc. — the offsets differ per arch (st_mode @24 x86-Linux, @16 aarch64, @4 macOS-arm64) |
 | `xgetdents` | `xgetdents(fd, buf, n) → n/-errno` | Raw directory entries (caller parses the per-target record). **-1 on Windows** — use `dir_list` |
 | `xlseek` | `xlseek(fd, off, whence) → off/-errno` | Reposition (whence 0=SET / 1=CUR / 2=END) |

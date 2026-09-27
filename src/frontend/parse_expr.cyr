@@ -519,7 +519,9 @@ fn _PE_ROUTE_MODULEPATH(S, sc_num, argc): i64 {
 # define sys_fsync/sys_fdatasync the way every other peer does. Windows has one flush for
 # data + metadata, so both numbers make the same call. Its own function for the cybs
 # per-function reference limit (see _PE_ROUTE_PERFCOUNTER). Literal-only, like the pair
-# above: a non-literal number degrades to an honest -38 with a warning. CHANGELOG [6.6.7]
+# above (an enum constant IS a literal): a number held in a var reaches
+# EPE_SYSCALL_DYNAMIC's argc-2 switch, which carries 3/60/87 only, and gets an honest -38
+# — an error, never a false success. CHANGELOG [6.6.7]
 fn _PE_ROUTE_FLUSH(S, sc_num, argc): i64 {
     if (argc != 2) { return 0; }
     if (sc_num == 74) { EFLUSHFB_PE(S); return 1; }
