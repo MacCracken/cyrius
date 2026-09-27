@@ -216,10 +216,11 @@ _vb_step_changelog() {
 # unescaped, so it matched nothing, exited 0, and the stamp was hand-fixed after the 6.6.7
 # bump. Now any parenthetical is replaced (it describes the previous head) — but only one
 # with NO nested parentheses: `[^()]*` refuses `(… (x) …)` rather than cutting it at the
-# first `)` and leaving the tail behind as garbage. The rewrite is verified: exactly one NEW
-# stamp, no OLD stamp left. tests/gates/toolchain/version_bump_doc_anchors.sh runs this over
-# copies of the LIVE docs, so an unrewritable stamp goes red when it is written, not at the
-# bump. CHANGELOG [6.6.7]
+# first `)` and leaving the tail behind as garbage. Only a stamp at the START of its line is
+# rewritten; the verification is file-wide — exactly one NEW stamp, and no OLD stamp left
+# anywhere, so a mid-line quote of the old stamp is left untouched and reported.
+# tests/gates/toolchain/version_bump_doc_anchors.sh runs this over copies of the LIVE docs,
+# so an unrewritable stamp goes red when it is written, not at the bump. CHANGELOG [6.6.7]
 _vb_step_roadmap() {
     _f=docs/development/roadmap.md
     if [ ! -f "$_f" ]; then _vb_result "$_f" missing 0 "the file is missing"; return 0; fi
@@ -227,7 +228,7 @@ _vb_step_roadmap() {
     sed -E -i "s/^\*\*Current head: v${OLD_RE}\*\*[[:space:]]*\([^()]*\)/**Current head: v${NEW}** (${TODAY})/" "$_f" 2>/dev/null || true
     _n=$(grep -cE "^\*\*Current head: v${NEW_RE}\*\* \([^()]*\)" "$_f" || true)
     if grep -qE "\*\*Current head: v${OLD_RE}\*\*" "$_f"; then
-        _vb_result "$_f" "$_b" 0 "the \`**Current head: v$OLD**\` stamp is not at the start of a line followed by a \`(...)\` with no nested parentheses, so it could not be rewritten (doc-stamp gate will be RED)"
+        _vb_result "$_f" "$_b" 0 "a \`**Current head: v$OLD**\` stamp is still present — one that is not at the start of its line, or not followed by a \`(...)\` with no nested parentheses — so it was not rewritten (doc-stamp gate will be RED)"
     elif [ "$_n" = "1" ]; then
         _vb_result "$_f" "$_b" 1
     else

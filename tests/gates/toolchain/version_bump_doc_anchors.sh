@@ -19,10 +19,12 @@
 # accepts VERSION anywhere within 240 B of `Current head:`, so an unrewritable stamp read
 # fine until bump day.
 #
-# THE FIX. Every rewrite is `sed -E` with the old version's dots escaped; step 5 replaces any
-# parenthetical that has no nested parentheses; each step is VERIFIED (new anchor present,
-# old anchor gone, exactly one CHANGELOG header), named on stderr at the step, and the script
-# exits non-zero at the END; the summary reports what each file actually did. A
+# THE FIX. The rewrites that match the old version (CLAUDE.md, cyrius.cyml, the roadmap
+# stamp) are `sed -E` with its dots escaped and anchored (a line-start stamp; a whole
+# `- **Version**:` line); step 5 replaces any parenthetical that has no nested parentheses;
+# each step is VERIFIED (new anchor present, old anchor gone anywhere in the file, exactly one
+# CHANGELOG header), named on stderr at the step, and the script exits non-zero at the END;
+# the summary reports what each file actually did. A
 # `--docs-only <dir> <version>` mode runs only the document steps over copies, which is what
 # lets this gate forecast the next bump over the live docs without rebuilding or installing.
 #
@@ -34,18 +36,30 @@
 #      cannot rewrite — fix the anchor (e.g. keep `)` out of the stamp's parenthetical).
 #   B  fixture: the 6.6.6 annotated stamp rewrites; an in-flight `## [Unreleased] — …` header
 #      is RENAMED, not duplicated.
-#   C  fixture: dot-escaping — `v6x6x6` / `6x6x6` decoys beside the real 6.6.6 anchors are
-#      left untouched.
+#   C  fixture: dot-escaping and anchoring — `v6x6x6` / `6x6x6` decoys and `6.6.60` prefix
+#      decoys beside the real 6.6.6 anchors are left untouched, and the run is rc 0 (a
+#      `6.6.60` line is not an old anchor left behind).
 #   D  fixture: a stamp with NESTED parentheses is refused (rc≠0, roadmap.md named, the line
 #      byte-for-byte unchanged — not cut at the first `)`).
 #   E  fixture: each missing anchor (CLAUDE.md line, cyrius.cyml pin, CHANGELOG header,
 #      roadmap stamp) is rc≠0 and named on stderr; the OTHER files are still rewritten (the
 #      exit is at the END, not the first failure); the summary does not call the file updated.
-#   F  the FULL bump path (no --docs-only) in a scratch dir holding only docs: the summary
-#      lists cyrius.cyml, says build/cycc and the install snapshot were NOT refreshed (none
-#      exist there), and a failed anchor still exits non-zero after the build section ran.
+#   F  the FULL bump path (no --docs-only), run from a COPY of the script placed inside a
+#      scratch dir holding only docs, with HOME / CYRIUS_HOME pointed into the scratch dir and
+#      the seed gate skipped — so whether the script resolves its paths from its cwd or from
+#      $0, everything it could touch is scratch. F1: the summary lists cyrius.cyml, says
+#      build/cycc and the install snapshot were NOT refreshed (none exist there). F2: a failed
+#      anchor still exits non-zero after the build section ran. F3: the SAME-version path
+#      exits 0, says the document steps were SKIPPED, calls nothing updated, and leaves every
+#      doc byte-identical. Every run: nothing was written under the scratch HOME.
 #   G  the same-version path and a malformed version are refused by --docs-only, touching
 #      nothing; the tree's own docs are untouched by the whole gate.
+#   H  fixture: verification edges — H1 a mid-line QUOTE of the old stamp beside a valid
+#      line-start stamp: the quote is left untouched and the run is loud (rc≠0, roadmap.md
+#      named) because an old stamp is left in the file; H2 a CHANGELOG already holding TWO
+#      `## [6.6.7]` headers: rc≠0, CHANGELOG.md named; H3 a CLAUDE.md whose only line is
+#      `- **Version**: 6.6.60`: untouched, rc≠0; H4 a CHANGELOG already carrying `## [6.6.7]`:
+#      rc 0, reported `(already 6.6.7 — unchanged)`, byte-identical.
 #
 # MUTATIONS (each RED; run by hand when this gate was written)
 #   m1 step 5 back on the basic-regex date-only pattern                    A, B1
@@ -55,6 +69,12 @@
 #   m5 exit on the FIRST failed step instead of at the end                  E (others rewritten)
 #   m6 cyrius.cyml dropped from the steps' report                           A, F1
 #   m7 CLAUDE.md step unverified (`_vb_result … 1` regardless)              E(CLAUDE.md)
+#   m8 `^` dropped from step 5's sed                                        H1
+#   m9 step 5's "OLD stamp still present" branch never taken (`if false`)   H1
+#   m10 CHANGELOG count check `= 1` loosened to `-ge 1`                     H2
+#   m11 CLAUDE.md sed's `([[:space:]]*)$` end anchor dropped                C, H3
+#   m12 `(already $NEW — unchanged)` reported as `(updated)`                H4
+#   m13 same-version summary `(SKIPPED — …` reworded to `(updated — …`      F3
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 VB="$ROOT/scripts/version-bump.sh"
@@ -146,12 +166,20 @@ _fx "$T/c"
 printf '\n**Current head: v6x6x6** (decoy)\n' >> "$T/c/docs/development/roadmap.md"
 printf -- '- **Version**: 6x6x6\n' >> "$T/c/CLAUDE.md"
 printf 'cyrius = "6x6x6"\n' >> "$T/c/cyrius.cyml"
+printf '**Current head: v6.6.60** (prefix decoy)\n' >> "$T/c/docs/development/roadmap.md"
+printf -- '- **Version**: 6.6.60\n' >> "$T/c/CLAUDE.md"
+printf 'cyrius = "6.6.60"\n' >> "$T/c/cyrius.cyml"
 _run C "$T/c" 6.6.7
 _expect "C: rc $RC for the real anchors beside the decoys" '[ "$RC" = 0 ]'
 _expect "C: the \`v6x6x6\` roadmap decoy was rewritten — OLD's dots are not escaped" \
     'grep -qxF "**Current head: v6x6x6** (decoy)" "$T/c/docs/development/roadmap.md"'
 _expect "C: the \`6x6x6\` CLAUDE.md decoy was rewritten" 'grep -qxF -- "- **Version**: 6x6x6" "$T/c/CLAUDE.md"'
 _expect "C: the \`6x6x6\` cyrius.cyml decoy was rewritten" 'grep -qxF "cyrius = \"6x6x6\"" "$T/c/cyrius.cyml"'
+_expect "C: the \`v6.6.60\` roadmap prefix decoy was rewritten" \
+    'grep -qxF "**Current head: v6.6.60** (prefix decoy)" "$T/c/docs/development/roadmap.md"'
+_expect "C: the \`6.6.60\` CLAUDE.md prefix decoy was rewritten — the line is not anchored at its end" \
+    'grep -qxF -- "- **Version**: 6.6.60" "$T/c/CLAUDE.md"'
+_expect "C: the \`6.6.60\` cyrius.cyml prefix decoy was rewritten" 'grep -qxF "cyrius = \"6.6.60\"" "$T/c/cyrius.cyml"'
 
 # ---- D: nested parentheses are refused, not cut --------------------------------------------
 NESTED='**Current head: v6.6.6** (2026-09-20, slot open (tag pending)) — x'
@@ -183,20 +211,39 @@ for _c in "e1 CLAUDE.md" "e2 cyrius.cyml" "e3 CHANGELOG.md" "e4 docs/development
         'grep -q "^\*\*Current head: v6\.6\.7\*\*" "$T/$_cd/docs/development/roadmap.md"'
 done
 
-# ---- F: the full bump path, in a scratch dir that holds only docs -----------------------------
-# No src/, build/ or scripts/ exist there, so nothing is regenerated, rebuilt or installed:
-# every relative path the full path uses resolves inside $T/f*.
+# ---- F: the full bump path, from a copy of the script inside a docs-only scratch dir ----------
+# No src/, build/, scripts/install.sh or scripts/seed-derive-cycc.sh exist there, so nothing is
+# regenerated, rebuilt or installed. The script runs as <dir>/scripts/version-bump.sh with HOME
+# and CYRIUS_HOME inside $T and the seed gate skipped: if it ever resolves its repo from $0
+# instead of its cwd, it still resolves to the scratch dir, never to the tree or ~/.cyrius.
+H="$T/home"
+_full() { # <name> <dir> <version> — rc in $RC, stdout/stderr in $T/<name>.out/.err
+    mkdir -p "$2/scripts" "$H"
+    cp "$VB" "$2/scripts/version-bump.sh"
+    RC=0
+    (cd "$2" && HOME="$H" CYRIUS_HOME="$H/.cyrius" CYRIUS_SKIP_SEED_GATE=1 \
+        sh scripts/version-bump.sh "$3") > "$T/$1.out" 2> "$T/$1.err" || RC=$?
+}
+_docsum() { cat "$1/VERSION" "$1/CLAUDE.md" "$1/cyrius.cyml" "$1/CHANGELOG.md" "$1/docs/development/roadmap.md" | cksum; }
 _fx "$T/f1"
-RC=0; (cd "$T/f1" && sh "$VB" 6.6.7) > "$T/F1.out" 2> "$T/F1.err" || RC=$?
+_full F1 "$T/f1" 6.6.7
 _expect "F1: full path over a good fixture exited $RC: $(cat "$T/F1.err")" '[ "$RC" = 0 ]'
 _expect "F1: the summary does not list cyrius.cyml as updated" 'grep -qF "  cyrius.cyml  (updated)" "$T/F1.out"'
 _expect "F1: the summary claims build/cycc was rebuilt where none exists" 'grep -qF "build/cycc  (NOT rebuilt" "$T/F1.out"'
 _expect "F1: the summary claims an install refresh where install.sh is absent" 'grep -qF "install snapshot NOT refreshed" "$T/F1.out"'
 _expect "F1: the old \"Updated:\" list (unconditional) is still printed" '! grep -q "^Updated:" "$T/F1.out"'
 _fx "$T/f2" "$NESTED"
-RC=0; (cd "$T/f2" && sh "$VB" 6.6.7) > "$T/F2.out" 2> "$T/F2.err" || RC=$?
+_full F2 "$T/f2" 6.6.7
 _expect "F2: full path with an unrewritable stamp exited $RC, not non-zero" '[ "$RC" != 0 ]'
 _expect "F2: the failure exited before the build/install section ran" 'grep -q "^Build + install:" "$T/F2.out"'
+_fx "$T/f3"; F3_BEFORE=$(_docsum "$T/f3")
+_full F3 "$T/f3" 6.6.6
+_expect "F3: the same-version full path exited $RC: $(cat "$T/F3.err")" '[ "$RC" = 0 ]'
+_expect "F3: the same-version summary does not say the document steps were SKIPPED" \
+    'grep -qF "(SKIPPED — same-version path" "$T/F3.out"'
+_expect "F3: the same-version summary calls something updated" '! grep -qF "(updated" "$T/F3.out"'
+_expect "F3: the same-version path modified a doc" '[ "$(_docsum "$T/f3")" = "$F3_BEFORE" ]'
+_expect "F: a full-path run wrote under the scratch HOME — it reached for ~/.cyrius" '[ -z "$(ls -A "$H")" ]'
 
 # ---- G: refusals that touch nothing; the tree is untouched --------------------------------
 _fx "$T/g1"; G1_BEFORE=$(cat "$T/g1/VERSION" "$T/g1/CLAUDE.md" "$T/g1/CHANGELOG.md" | cksum)
@@ -207,14 +254,45 @@ _expect "G2: --docs-only accepted a malformed version (rc $RC)" '[ "$RC" != 0 ]'
 _expect "G: a refused run modified the fixture" '[ "$(cat "$T/g1/VERSION" "$T/g1/CLAUDE.md" "$T/g1/CHANGELOG.md" | cksum)" = "$G1_BEFORE" ]'
 _expect "G: the gate modified the TREE's docs" '[ "$(_tree_sum)" = "$TREE_BEFORE" ]'
 
+# ---- H: verification edges -----------------------------------------------------------------
+QUOTE='The 6.6.6 cut stamped it **Current head: v6.6.6** (2026-09-20) in prose.'
+_fx "$T/h1" '**Current head: v6.6.6** (2026-09-20)'
+printf '\n%s\n' "$QUOTE" >> "$T/h1/docs/development/roadmap.md"
+_run H1 "$T/h1" 6.6.7
+_expect "H1: a mid-line quote of the old stamp was rewritten — step 5 is not anchored at the line start" \
+    'grep -qxF "$QUOTE" "$T/h1/docs/development/roadmap.md"'
+_expect "H1: the line-start stamp beside the quote was not rewritten" \
+    'grep -qE "^\*\*Current head: v6\.6\.7\*\* \(${TODAY}\)" "$T/h1/docs/development/roadmap.md"'
+_expect "H1: an old stamp left in the file exited $RC, not non-zero" '[ "$RC" != 0 ]'
+_expect "H1: stderr does not name roadmap.md" 'grep -q "docs/development/roadmap.md NOT UPDATED" "$T/H1.err"'
+_fx "$T/h2"
+printf '# Changelog\n\n## [6.6.7] — a\n\n## [6.6.7] — b\n\n## [6.6.6] — 2026-09-20\n' > "$T/h2/CHANGELOG.md"
+_run H2 "$T/h2" 6.6.7
+_expect "H2: a CHANGELOG with two \`## [6.6.7]\` headers exited $RC, not non-zero" '[ "$RC" != 0 ]'
+_expect "H2: stderr does not name CHANGELOG.md" 'grep -qF "CHANGELOG.md NOT UPDATED" "$T/H2.err"'
+_fx "$T/h3"; printf '# X\n\n- **Version**: 6.6.60\n' > "$T/h3/CLAUDE.md"
+_run H3 "$T/h3" 6.6.7
+_expect "H3: \`- **Version**: 6.6.60\` was rewritten — 6.6.6 matched a prefix of it" \
+    'grep -qxF -- "- **Version**: 6.6.60" "$T/h3/CLAUDE.md"'
+_expect "H3: a CLAUDE.md with no exact 6.6.6 line exited $RC, not non-zero" '[ "$RC" != 0 ]'
+_expect "H3: stderr does not name CLAUDE.md" 'grep -qF "CLAUDE.md NOT UPDATED" "$T/H3.err"'
+_fx "$T/h4"
+printf '# Changelog\n\n## [6.6.7] — 2026-09-27\n\n- wip\n\n## [6.6.6] — 2026-09-20\n' > "$T/h4/CHANGELOG.md"
+H4_BEFORE=$(cksum < "$T/h4/CHANGELOG.md")
+_run H4 "$T/h4" 6.6.7
+_expect "H4: a CHANGELOG already carrying \`## [6.6.7]\` exited $RC: $(cat "$T/H4.err")" '[ "$RC" = 0 ]'
+_expect "H4: the report does not say CHANGELOG.md was already 6.6.7" \
+    'grep -qF "  CHANGELOG.md  (already 6.6.7 — unchanged)" "$T/H4.out"'
+_expect "H4: the CHANGELOG already at 6.6.7 was modified" '[ "$(cksum < "$T/h4/CHANGELOG.md")" = "$H4_BEFORE" ]'
+
 # anti-vacuous floor: every axis above contributes checks
-if [ "$CHECKS" -lt 50 ]; then
-    echo "  FAIL: only $CHECKS checks ran (floor 50) — the gate went vacuous"
+if [ "$CHECKS" -lt 75 ]; then
+    echo "  FAIL: only $CHECKS checks ran (floor 75) — the gate went vacuous"
     FAILS=$((FAILS + 1))
 fi
 if [ "$FAILS" -gt 0 ]; then
     echo "  FAIL: version_bump_doc_anchors — $FAILS of $CHECKS checks red"
     exit 1
 fi
-echo "  PASS: version_bump_doc_anchors — the next bump ($V -> $NEXT) rewrites every live anchor; $CHECKS checks (annotated stamp, dot-escaping, nested-paren refusal, loud missing anchors, honest summary, exit at the end)"
+echo "  PASS: version_bump_doc_anchors — the next bump ($V -> $NEXT) rewrites every live anchor; $CHECKS checks (annotated stamp, dot-escaping + anchoring, nested-paren refusal, loud missing anchors, verification edges, honest summary incl. same-version, exit at the end)"
 exit 0

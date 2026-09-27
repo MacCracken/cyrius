@@ -93,10 +93,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (CLAUDE.md) and 4 (CHANGELOG) ended in `|| true` with no check at all, and the summary
   printed VERSION, CLAUDE.md and CHANGELOG.md under "Updated:" unconditionally — on the
   same-version path too — while never listing `cyrius.cyml`, which step 3b does rewrite. Now
-  every document rewrite is `sed -E` with the dots escaped; the stamp's parenthetical is
+  the rewrites that match the old version (CLAUDE.md's `- **Version**:` line, cyrius.cyml's
+  self-pin, the roadmap stamp) are `sed -E` with its dots escaped and anchored — a whole line,
+  a stamp at the start of its line (the CHANGELOG step renames or inserts a header and never
+  matches the old version); the stamp's parenthetical is
   replaced by the bump date whatever it held, provided it has no nested parentheses (a nested
   one is refused rather than cut at its first `)`); each step is VERIFIED (the new anchor
-  present, the old one gone, exactly one `## [NEW]` header), a step that did not take effect is
+  present, the old one gone from the whole file — a mid-line quote of the old stamp is left
+  alone and reported — exactly one `## [NEW]` header), a step that did not take effect is
   named on stderr where it happens, and the script exits **non-zero at the end**, after the
   rebuild and the seed gate. The summary reports what each file actually did (`updated`,
   `already NEW`, `NOT UPDATED: <why>`), says whether `build/cycc` was rebuilt, and on the
@@ -128,8 +132,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   bump scratch copies of the LIVE docs to the next patch version, so an anchor the next bump
   cannot rewrite goes red when it is written, not on bump day; plus fixtures for the annotated
   stamp, the in-flight `## [Unreleased]` rename, dot-escaping, the nested-parenthesis refusal,
-  each missing anchor (loud, and the other files still rewritten) and the full path's honest
-  summary. 58 checks; seven mutations, each RED.
+  each missing anchor (loud, and the other files still rewritten), the verification edges (a
+  mid-line quote of the old stamp, a duplicated `## [NEW]` header, a `6.6.60` prefix line, a
+  file already at the new version) and the full path's honest summary, the same-version path
+  included. The full-path runs execute a copy of the script placed inside the scratch dir, with
+  `HOME`/`CYRIUS_HOME` pointed there and the seed gate skipped, so they cannot reach the tree or
+  `~/.cyrius` however the script resolves its paths. 78 checks; thirteen mutations, each RED.
 
 ## [6.6.6] — 2026-09-20
 
