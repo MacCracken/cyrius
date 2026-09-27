@@ -2309,6 +2309,7 @@ patra::wal_start/3
 patra::where_eval/4
 patra::where_validate_types/3
 process::exec_capture/3
+process::exec_capture_status/4
 process::exec_capture_str/3
 process::exec_cmd/1
 process::exec_env/2
@@ -2324,6 +2325,7 @@ process::run_capture/5
 process::spawn/3
 process::wait_pid/1
 process_agnos::exec_capture/3
+process_agnos::exec_capture_status/4
 process_agnos::exec_capture_str/3
 process_agnos::exec_cmd/1
 process_agnos::exec_env/2
@@ -2337,6 +2339,7 @@ process_agnos::run_capture/5
 process_agnos::spawn/3
 process_agnos::wait_pid/1
 process_win::exec_capture/3
+process_win::exec_capture_status/4
 process_win::exec_capture_str/3
 process_win::exec_cmd/1
 process_win::exec_env/2

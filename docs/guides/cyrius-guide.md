@@ -2650,6 +2650,7 @@ platform variant at compile time, so sources stay target-agnostic.
 - `spawn(cmd, arg1, arg2)` → `Result(handle)` — background process
 - `wait_pid(handle)` → `Result(exit_code)` — join spawned process
 - `exec_vec(args)`, `exec_capture(args, buf, buflen)`, `exec_env(args, env)` — vec-based forms
+- `exec_capture_status(args, buf, buflen, st)` — capture plus the child's exit code in `st[0]` (6.6.7)
 - `exec_vec_str(args)`, `exec_capture_str(args, buf, buflen)`, `exec_env_str(args, env)` — Str fat-pointer forms
 
 All reroute to `CreateProcessW` with UTF-16LE command lines. Command arguments

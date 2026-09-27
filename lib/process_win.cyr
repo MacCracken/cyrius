@@ -375,8 +375,14 @@ fn exec_vec(args): i64 {
     return _win_wait_close(&pi);
 }
 
-# Run command with cstr args vec and capture stdout. Returns bytes read.
-fn exec_capture(args, buf, buflen): i64 {
+# Run command with cstr args vec, capture stdout (+stderr — one pipe on Windows), and
+# report how it ended in `status_out`'s two i64 slots, as the POSIX verb does: [0] = the
+# GetExitCodeProcess code (an NTSTATUS such as 0xC0000005 for a crash — never 0), -1 when
+# nothing could be spawned; [1] = 0 (Win32 has no signals). Returns bytes read, -1 when
+# nothing ran. CHANGELOG [6.6.7]
+fn exec_capture_status(args, buf, buflen, status_out): i64 {
+    store64(status_out, 0 - 1);
+    store64(status_out + 8, 0);
     if (vec_len(args) < 1) { return 0 - 1; }
     var hWrite = 0;
     var hRead = _win_make_pipe(&hWrite);
@@ -388,8 +394,15 @@ fn exec_capture(args, buf, buflen): i64 {
     syscall(3, hWrite);
     var total = _win_drain(hRead, buf, buflen);
     syscall(3, hRead);
-    _win_wait_close(&pi);
+    store64(status_out, _win_wait_close(&pi));
     return total;
+}
+
+# Run command with cstr args vec and capture stdout. Returns bytes read; the exit code is
+# discarded (use exec_capture_status to observe it).
+fn exec_capture(args, buf, buflen): i64 {
+    var _st[16];
+    return exec_capture_status(args, buf, buflen, &_st);
 }
 
 # Run command with cstr args vec + cstr "KEY=VALUE" env vec.

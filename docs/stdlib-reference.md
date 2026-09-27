@@ -600,6 +600,8 @@ Process management with Result returns.
 | `run_capture` | `run_capture(cmd, a1, a2, buf, len) → Result(n)` | Capture stdout |
 | `spawn` | `spawn(cmd, a1, a2) → Result(pid)` | Background run |
 | `wait_pid` | `wait_pid(pid) → Result(exit)` | Wait for pid |
+| `exec_capture` | `exec_capture(args, buf, len) → n` | Capture stdout (cstr argv vec); the exit status is discarded |
+| `exec_capture_status` | `exec_capture_status(args, buf, len, st) → n` | Capture stdout AND report the end: `st[0]` = exit code / 128+sig / -2 deadline kill / -1 nothing ran, `st[1]` = 1 on a signal death (6.6.7). Use it whenever a failed run must not read as short output |
 
 ### fs.cyr
 
