@@ -2706,13 +2706,16 @@ fn EDELETEF_PE(S): i64 {
     return 0;
 }
 
-# v6.4.57: MoveFileExW(lpExistingFileName, lpNewFileName, MOVEFILE_REPLACE_EXISTING)
+# v6.4.57: MoveFileExW(lpExistingFileName, lpNewFileName, dwFlags)
 # — the Windows half of lib/io.cyr's portable file_rename (POSIX rename(2) / AGNOS
 # 4-arg sys_rename). syscall(0xF034, old, new): stack on entry (top->bottom):
 # [new] [old] [sc_nr=0xF034]. BOTH paths are widened inline UTF-8->UTF-16LE (ASCII
 # fast path, same widener as EOPEN_PE/ECREATEDIR_PE) into two 528-byte frame
-# buffers, then rcx=old_wide, rdx=new_wide, r8d=1 (MOVEFILE_REPLACE_EXISTING) and
-# kernel32!MoveFileExW is called. BOOL result -> 0 (success) / -1 (fail) via the
+# buffers, then rcx=old_wide, rdx=new_wide, r8d=9 and kernel32!MoveFileExW is called.
+# dwFlags = MOVEFILE_REPLACE_EXISTING (1) | MOVEFILE_WRITE_THROUGH (8): the call does
+# not return until the rename is on disk — the Windows analogue of the directory fsync
+# that makes a POSIX write-temp/fsync/rename durable. Without it file_write_atomic was
+# atomic but not durable on Windows (a crash could lose the rename). CHANGELOG [6.6.7] BOOL result -> 0 (success) / -1 (fail) via the
 # EDELETEF_PE dec+sar idiom. Frame (rbx-anchored + and rsp,-16, so alignment-
 # agnostic): 0x460 = 32 shadow + 528 old + 528 new + 32 slack, 16-aligned at CALL.
 fn EMOVEFILEEX_PE(S): i64 {
@@ -2760,10 +2763,10 @@ fn EMOVEFILEEX_PE(S): i64 {
     EB(S, 0xEB); EB(S, 0xE8);                           # jmp widen_new (-24)
     EB(S, 0x66); EB(S, 0xC7); EB(S, 0x04); EB(S, 0x4F); EB(S, 0x00); EB(S, 0x00); # new_done: NUL WCHAR
 
-    # args: rcx = old_wide, rdx = new_wide, r8d = MOVEFILE_REPLACE_EXISTING
+    # args: rcx = old_wide, rdx = new_wide, r8d = REPLACE_EXISTING | WRITE_THROUGH
     EB(S, 0x48); EB(S, 0x8D); EB(S, 0x4C); EB(S, 0x24); EB(S, 0x20); # lea rcx, [rsp+0x20]
     EB(S, 0x48); EB(S, 0x8D); EB(S, 0x94); EB(S, 0x24); EB(S, 0x30); EB(S, 0x02); EB(S, 0x00); EB(S, 0x00); # lea rdx, [rsp+0x230]
-    EB(S, 0x41); EB(S, 0xB8); EB(S, 0x01); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); # mov r8d, 1
+    EB(S, 0x41); EB(S, 0xB8); EB(S, 0x09); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); # mov r8d, 9
 
     EB(S, 0xFF); EB(S, 0x15);                           # call [rip+MoveFileExW]
     _pe_iat_fixup_add(S, GCP(S), mv_idx);

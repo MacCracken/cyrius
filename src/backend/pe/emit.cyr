@@ -556,7 +556,7 @@ fn _pe_flushfb_get(): i64 { return _pe_flushfb_idx; }
 # (syscall(0xF034, old, new) — lib/io.cyr file_rename). kernel32!MoveFileExW
 # (LPCWSTR lpExistingFileName->rcx, LPCWSTR lpNewFileName->rdx, DWORD dwFlags->r8)
 # with MOVEFILE_REPLACE_EXISTING (0x1) does the atomic same-volume replace that
-# rename(2) does on POSIX. Lazily registered on the first 0xF034 the parser sees
+# rename(2) does on POSIX; MOVEFILE_WRITE_THROUGH (0x8, since 6.6.7) makes it durable. Lazily registered on the first 0xF034 the parser sees
 # under _TARGET_PE==1. See issue 2026-07-12-thoth-portable-atomic-file-write.md.
 var _pe_movefileex_ready  = 0;
 var _pe_movefileex_idx    = 0;

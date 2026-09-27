@@ -1175,3 +1175,8 @@ _chk_gate "$ROOT/tests/gates/codegen/hidden_temp_census.sh"
 # the build (an `#assert sizeof` inside the first generated fn body — never at top level, where
 # it would end the declaration phase and reject every later struct/enum).
 _chk_gate "$ROOT/tests/gates/diagnostics/derive_layout_backstop.sh"
+
+# 6.6.7 bite 3 — fsync/fdatasync (74/75) FLUSH on PE (kernel32!FlushFileBuffers) and
+# MoveFileExW is write-through. POSIX oracle + emitter shape (the write-through bit's ONLY
+# guard — nothing can observe durability) + wine; hardware is the cass leg.
+_chk_gate "$ROOT/tests/gates/platform/pe_fsync_flushes.sh"
