@@ -89,9 +89,11 @@ var _cc_syntax_only = 0;
 # var must be added explicitly — same mechanism as --strict-pin).
 var _agnos_target = 0;
 # v6.5.29: `cyrius fuzz --poison` → inject CYRIUS_POISON=1 into cycc's envp so the harness is
-# compiled with the allocator's poison mode ON (redzones + fill + quarantine-on-free). Same
-# env-inject mechanism as --agnos/--win. ⛔ The mode has to arrive at COMPILE time, not run
-# time: `lib/freelist.cyr` depends on mmap + atomic only and must not read the environment,
+# compiled with lib/freelist.cyr's poison mode ON — fl_alloc/fl_free blocks ONLY (fill +
+# redzone + quarantine-on-free; alloc(), arenas and allocator seams are not instrumented, and a
+# redzone overwrite is counted by fl_poison_violations(), not trapped). Same env-inject
+# mechanism as --agnos/--win. ⛔ The mode has to arrive at COMPILE time, not run time:
+# `lib/freelist.cyr` depends on syscalls + mmap + atomic only and must not read the environment,
 # so `#ifdef CYRIUS_POISON` is how it learns. Filed by sit — `cyrius fuzz` could not observe
 # an out-of-bounds READ at all, because a read into mapped memory raises nothing.
 var _poison_mode = 0;
