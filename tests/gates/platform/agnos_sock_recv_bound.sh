@@ -10,7 +10,9 @@
 # (daimon's forwarded MCP calls answered 502) and ~7 s under mirshi's 1 ms pause — against a 30 s
 # deadline. Sibling shapes: the RTC deadline was sampled once at entry, so an entry read of 0 made
 # it "30" (already passed); a timeout returned 0, indistinguishable from EOF; and
-# sock_set_recv_timeout ignored its argument on agnos.
+# sock_set_recv_timeout ignored its argument on agnos. Axis 2 also pins the review fix: an RTC
+# that armed the deadline and then read 0 for good was treated as "a glitch" for ever, so the
+# wait never ended — a post-arm 0 now counts against the pause backstop like any unreadable read.
 #
 # Axes 1-4 run the peer against the scripted fake kernel (tests/fixtures/agnos_sctrace.cyr, a
 # PTRACE_SYSEMU tracer: nothing executes, every answer is scripted), which makes each clock tier
@@ -74,7 +76,7 @@ trace us
 check "sock_set_recv_timeout(fd, 2, 0) bounds the read at 2 s (9 clock reads)" "-11 9" "$(mark 1) $(count 95)"
 
 # ── axis 2 — tier 2 (#95 refused → the RTC): an entry 0 cannot poison the deadline ───────────
-echo "axis 2 — time_unix#46 tier: armed on the first non-zero read, spins ignored:"
+echo "axis 2 — time_unix#46 tier: armed on the first non-zero read, spins ignored while it reads:"
 probe ""
 trace rtc
 # #46 answers 0, 0, then 1002, 1003, …: armed at 1002, fires at >= 1002 + 30 + 1 = 1033 (k = 33)
@@ -82,6 +84,14 @@ check "a read with #95 refused waits for the RTC, then returns -11" "-11" "$(mar
 check "the RTC deadline is armed on the first NON-ZERO read (34 reads of #46)" "34" "$(count 46)"
 check "MAX_SPINS (5) is not consulted while the RTC times the wait (> 5 pauses)" "yes" \
     "$([ "$(count 14)" -gt 5 ] && echo yes || echo no)"
+probe ""
+trace rtcdie
+# #46: 0 (entry), 0, 1002, 1003, 1004 — armed at 1002 — then 0 for ever. The 0 reads after the
+# arm count against MAX_SPINS (5): spins 1 (k=1), then 2..6 at k=5..9 ⇒ -11 on the 10th read.
+# Pre-fix a post-arm 0 was "a glitch" and never counted, so the wait ran until the tracer's
+# MAX_CALLS stop and no marker was ever written.
+check "an RTC that arms the deadline and then reads 0 for ever still ends the wait (-11, 10 reads)" \
+    "-11 10" "$(mark 1) $(count 46)"
 
 # ── axis 3 — tier 3 (no clock at all): only here does the pause count bound the wait ─────────
 echo "axis 3 — no-clock tier: the pause-count backstop, and only there:"

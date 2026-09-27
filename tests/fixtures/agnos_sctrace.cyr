@@ -18,6 +18,8 @@
 #   us     — uptime_us#95 answers 250000 * call#, i.e. the clock advances 0.25 s per read.
 #   rtc    — #95 answers -1 (calibration refused); time_unix#46 answers 0 for its first two
 #            reads, then 1000 + call# (one second per read).
+#   rtcdie — like `rtc` for #46's first five reads (0, 0, 1002, 1003, 1004), then 0 for ever:
+#            an RTC that stops reading mid-wait, after it had armed the deadline.
 #   spin   — #95 answers -1 and #46 answers 0: no clock at all.
 #   eof    — sock_recv#49 answers -1 (the peer closed).
 #   send0  — like `us`, and sock_send#48 answers 0 (no ACK progress) every time.
@@ -84,6 +86,11 @@ fn _st_answer(mode, nr, k, a1, a3): i64 {
         if (_st_mode_is(mode, "rtc") == 1) {
             if (k < 2) { return 0; }
             return 1000 + k;
+        }
+        if (_st_mode_is(mode, "rtcdie") == 1) {
+            if (k < 2) { return 0; }
+            if (k < 5) { return 1000 + k; }
+            return 0;
         }
         return 0;
     }

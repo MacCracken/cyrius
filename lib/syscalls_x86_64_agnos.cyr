@@ -2110,17 +2110,18 @@ fn _agnos_sock_set_tmo(tbl, fd, us): i64 {
 
 # ── The socket deadline: ONE mechanism for the recv poll and the send-stall retry (v6.6.7).
 # A 32-byte state block at `dl`: +0 tier · +8 deadline · +16 spins · +24 whole seconds.
-# Three tiers, chosen at start and never mixed:
+# Three tiers; tier 1 is chosen at start and never mixed, tiers 2 and 3 share the RTC poll:
 #   1  uptime_us#95 reads (>= 0): a MONOTONIC µs deadline. The normal case on every agnos that
 #      calibrated its TSC — which is every one since 1.57.6 unless it was refused at boot.
 #   2  #95 refused (-1, permanent for the boot): the RTC, time_unix#46, in whole seconds. The
 #      deadline is armed on the FIRST NON-ZERO read, so an RTC that reads 0 at entry cannot
 #      poison it (it used to become "deadline = 30", i.e. already passed), and it fires only
 #      once ≥ the timeout has certainly elapsed (+1 s for the RTC's granularity).
-#   3  no clock at all (#95 refused and #46 still 0): count pauses against
-#      AGNOS_SOCK_RECV_MAX_SPINS — ONLY here. A pause is not a fixed duration on agnos 1.57.x
-#      (it yields to any READY process with no hlt), so a pause count measures load, not time,
-#      and must never cut short a wait a real clock is timing.
+#   3  no clock at all (#95 refused and #46 reading 0 — before it armed, or after it stopped
+#      reading mid-wait): count those 0 reads against AGNOS_SOCK_RECV_MAX_SPINS — ONLY those.
+#      A pause is not a fixed duration on agnos 1.57.x (it yields to any READY process with no
+#      hlt), so a pause count measures load, not time, and must never cut short a wait a
+#      reading clock is timing — but an RTC that armed and then went dark must still end.
 # ⚠ tier 1 duplicates chrono.cyr's #95-first choice on purpose: this peer is included BY the
 # stdlib and cannot include chrono.
 fn _agnos_dl_start(dl, tmo_us): i64 {
@@ -2151,7 +2152,8 @@ fn _agnos_dl_over(dl): i64 {
         if (now >= load64(dl + 8)) { return 1; }
         return 0;
     }
-    if (load64(dl + 8) != 0) { return 0; }  # the RTC is timing this wait; a 0 read is a glitch
+    # Unreadable NOW: count it, armed or not. An RTC that armed the deadline and then reads 0 for
+    # good must not leave the wait unbounded — only a clock that READS may overrule the spins.
     var spins = load64(dl + 16) + 1;
     store64(dl + 16, spins);
     if (spins > AGNOS_SOCK_RECV_MAX_SPINS) { return 1; }

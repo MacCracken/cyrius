@@ -168,8 +168,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   already passed), a timeout returned 0 like EOF, and on agnos `sock_set_recv_timeout` ignored its
   argument. **Fix:** one deadline for socket waits, in three tiers — `uptime_us`#95 when it reads
   (monotonic µs); the RTC, armed on its first non-zero read, when #95 is refused; the pause count
-  only when there is no clock at all. **What a consumer sees:** a timed-out socket read now returns
-  **-11 (EAGAIN)** — the Linux SO_RCVTIMEO answer — and EOF stays 0; `sock_set_recv_timeout` /
+  only while no clock reads (before the RTC arms, or if it stops reading mid-wait — an armed RTC
+  that went dark used to leave the wait unbounded, caught in review). **What a consumer sees:** a
+  timed-out socket read now returns **-11 (EAGAIN)** — the Linux SO_RCVTIMEO answer — and EOF stays 0; `sock_set_recv_timeout` /
   `sock_set_send_timeout` set a per-socket deadline on agnos (⚠ 0 restores the 30 s default rather
   than meaning "never"); `AGNOS_SOCK_RECV_TIMEOUT_S` / `AGNOS_SOCK_RECV_MAX_SPINS` keep their names
   (daimon's recv-bound workaround becomes a no-op). Gate: `tests/gates/platform/agnos_sock_recv_bound.sh`
