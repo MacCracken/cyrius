@@ -491,6 +491,14 @@ this section had carried it as "never built" for thirty releases.)*
   escalation shape, *"declared fixed, fourth occurrence in a path nobody enumerated"*. **Any new
   `PARSE_FNCALL`-resident transformation must be grepped against the tail path before it ships**
   — grep the SHAPE, not the operator.
+  **FIFTH occurrence (6.6.7 bite 2): `defer`.** The tail path skipped the EPILOGUE's obligation,
+  not PARSE_FNCALL's — every `return f(..);` in a fn with a `defer`/`secret var` jumped past the
+  defer walker (CVE-47). By then the arm carried fifteen bolted-on diverts, not four; they are one
+  predicate now (`_tc_must_divert`, parse_fn.cyr), so a new obligation is a new line THERE. And
+  the walker the divert lands on must keep the whole return convention:
+  **`EDEFER_SAVE`/`EDEFER_RESTORE` must preserve every return register of every return
+  convention on x86, aarch64 AND cx** (x86: rax, rdx, r8, xmm0, xmm1; aarch64: x0-x3, q0, q1;
+  cx: r0-r5) — a new return class that adds a register adds it there.
 - **A filing's target list is a report about what the reporter builds, not about the bug.** The
   v6.6.1 DCE issue said *"PE / `--win` target only"*; x86 Mach-O shared the code path and was
   crashing on real Intel-Mac hardware, unreported, because the reporter does not build that

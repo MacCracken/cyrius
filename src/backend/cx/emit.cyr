@@ -119,6 +119,18 @@ fn EPOPR(S): i64 {
     CX_EMIT(S, 129, 0, 0, 0);
     return 0;
 }
+# 6.6.7 — the defer walker's save: r0-r5, the whole return convention (r0; the r0-r3 f64v4
+# quad; the r4 pair / Ok-Err payload; the r5 arity-3 slot), not r0 alone. CHANGELOG [6.6.7]
+fn EDEFER_SAVE(S): i64 {
+    var r = 0;
+    while (r < 6) { CX_EMIT(S, 128, r, 0, 0); r = r + 1; }
+    return 0;
+}
+fn EDEFER_RESTORE(S): i64 {
+    var r = 5;
+    while (r >= 0) { CX_EMIT(S, 129, r, 0, 0); r = r - 1; }
+    return 0;
+}
 # pop rcx
 fn EPOPC(S): i64 {
     CX_EMIT(S, 129, 1, 0, 0);

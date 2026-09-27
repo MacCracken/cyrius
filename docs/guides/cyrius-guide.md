@@ -683,6 +683,27 @@ compile clean and do something silent instead):
   the body completes — not at each suspend. An `await` inside a defer body is refused there,
   because the suspend would abandon the walker mid-run.
 
+What a defer guarantees on the way out (v6.6.7):
+
+- **It runs on EVERY return path**, a tail-shaped `return f(x);` included — `return Ok(fd);`
+  and `return Err(e);` are exactly that shape. Before 6.6.7 such a return was compiled to a
+  jump straight into `f` and skipped every defer, and every `secret var` zeroise, in the
+  function.
+- **So a function with a `defer` or a `secret var` anywhere in its body never tail-calls.**
+  `return f(x);` is an ordinary call there. For a deep SELF-recursion that matters: each level
+  keeps its frame, so write the recursion as a loop, or move the `defer` into a small wrapper
+  that calls a defer-free recursive helper. (A defer inside a nested closure literal counts
+  for the enclosing function too — the scan is lexical.)
+- **The return value survives the defer body, whatever its shape**: an `Ok`/`Err` payload, a
+  `(a, b)` / `(a, b, c)` tuple, `ret2`, a two-word struct, an `f64`, an `f64v2`/`f64v4`. A
+  defer body is ordinary code and may call anything (a `sys_write`, a 6-argument helper, float
+  or vector math); before 6.6.7 only the first return register was kept, so such a call
+  zeroed an `Ok` payload.
+- **A function with a `defer`/`secret var` is never inlined** — not by `#inline` (which warns
+  `#inline ignored: body has a defer/secret block`) and not by the implicit inlining of small
+  generic and SIMD-parameter functions. Its defer runs at ITS return, once per call; before
+  6.6.7 an inlined body's defer ran at the CALLER's return.
+
 ## Math Builtins
 
 ```

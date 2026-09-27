@@ -785,6 +785,10 @@ var _defer_base = 0;
 var _loop_depth = 0;
 var _brk_depth = 0;
 var _in_defer = 0;
+# 6.6.7 — 1 when the fn being emitted has a `defer` / `secret var` anywhere in its body
+# (`_body_has_defer`, set at the body's `{`): its `return f(..);` must reach the walker, so it
+# never tail-calls (`_tc_frame_divert`). Per-fn: in the snapshot below.
+var _cur_fn_has_defer = 0;
 # 6.6.7 — a coroutine suspend exit returns 0 to the runtime WITHOUT completing the body, so it
 # must skip the defer walker; its jmp is recorded here (per suspend index) instead of rp_vec.
 var _coro_sjp[64];
@@ -860,7 +864,7 @@ fn _fnst_get_xp(S, b): i64 {
 # loop, the return-patch and defer ranges starting where the enclosing fn's end. The caller then
 # sets what is specific to it (`_cur_fn_ix`, captures, locals snapshot). Returns the snapshot.
 fn _fnst_save(S): i64 {
-    var b = alloc(304);
+    var b = alloc(312);
     store64(b, GLVAR(S));
     store64(b + 8, GINFN(S));
     store64(b + 16, GFLC(S));
@@ -872,6 +876,7 @@ fn _fnst_save(S): i64 {
     store64(b + 64, L64(S + 0x18F838));
     store64(b + 72, L64(S + 0x18F840));
     store64(b + 80, _in_defer);
+    store64(b + 304, _cur_fn_has_defer);
     _fnst_put_cg(b);
     _fnst_put_coro(b);
     _fnst_put_xp(S, b);
@@ -883,6 +888,7 @@ fn _fnst_save(S): i64 {
     _loop_depth = 0;
     _brk_depth = 0;
     _in_defer = 0;
+    _cur_fn_has_defer = 0;
     S64(S + 0x18F840, 0);
     return b;
 }
@@ -902,6 +908,7 @@ fn _fnst_restore(S, b): i64 {
     S64(S + 0x18F838, load64(b + 64));
     S64(S + 0x18F840, load64(b + 72));
     _in_defer = load64(b + 80);
+    _cur_fn_has_defer = load64(b + 304);
     _fnst_get_cg(b);
     _fnst_get_coro(b);
     _fnst_get_xp(S, b);
@@ -955,11 +962,15 @@ fn _rp_patch_here(S): i64 {
     }
     return 0;
 }
-# Run the reached defer blocks LIFO: save rax, check each flag, jmp to the block, which jmps back.
+# Run the reached defer blocks LIFO: save the return convention, check each flag, jmp to the
+# block, which jmps back. ⚠ EDEFER_SAVE/RESTORE (per backend) keep EVERY return register of
+# EVERY return convention — the pair, the arity-3 slot, the f64 / vector registers — because a
+# block is ordinary code and any call in it clobbers them; saving rax alone lost an `Ok`
+# payload to a `sys_write` in the block. CHANGELOG [6.6.7]
 fn _defer_emit_walk(S): i64 {
     var dc = L64(S + 0x1AC020);
     if (dc <= _defer_base) { return 0; }
-    EPUSHR(S);
+    EDEFER_SAVE(S);
     var di = dc - 1;
     while (di >= _defer_base) {
         EFLLOAD(S, L64(S + 0x1AC028 + di * 24 + 16));
@@ -970,7 +981,7 @@ fn _defer_emit_walk(S): i64 {
         EPATCH(S, dskip);
         di = di - 1;
     }
-    EPOPR(S);
+    EDEFER_RESTORE(S);
     return 0;
 }
 # 6.6.7 — a coroutine suspend exit (`await` inside a coroutine body, parse_expr.cyr): record the

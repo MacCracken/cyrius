@@ -310,6 +310,22 @@ fn withdefer(): i64 {
     return q;
 }
 fn okres() { return Ok(0); }
+# ⛔ 6.6.7 — a call INSIDE A DEFER BODY. The walker runs the blocks after the return value is in
+# place, and they were compiled at statement level (rsp ≡ 0): its save used to be one 8-byte
+# `push rax`, so every call in every block ran at rsp%16 == 8 — and the `withdefer` row above
+# probes only the BODY's call, so it was green by construction. A `?` inside an argument list
+# reaches the walker with its pending push still on the stack, which a fixed-size save cannot
+# absorb; the walker re-aligns (x86 EDEFER_SAVE). Each probe lands in a global that starts at
+# -1, so a block that never ran reads MISALIGNED. CHANGELOG [6.6.7]
+var DPROBE = 0 - 1;
+var DPROBE2 = 0 - 1;
+var DPROBE3 = 0 - 1;
+var DPROBE_CTL = 0 - 1;
+fn defer_body(): i64 { defer { DPROBE = align_probe(); } var q = 5; return q; }
+fn defer_body2(): i64 { defer { DPROBE2 = align_probe(); } defer { var z = 1; } var q = 5; return q; }
+fn errres() { return Err(5); }
+fn defer_body_q() { defer { DPROBE3 = align_probe(); } var r = snd(0, errres()?); return Ok(r); }
+fn defer_body_ctl(): i64 { defer { DPROBE_CTL = align_probe_8(); } var q = 5; return q; }
 # `?` re-emits both halves of the Result on the Err path (6.5.74), which is a push/pop pair
 # straddling the rest of the expression.
 fn qprobe() {
@@ -538,9 +554,20 @@ fn main(): i64 {
     while (wi < 2) { w = w + snd(0, align_probe()); wi = wi + 1; }
     a(w, "call at odd depth inside a `while` body");
 
+    var dv = defer_body();
+    a(DPROBE, "call inside a defer body (the walker's save area)");
+    dv = defer_body2();
+    a(DPROBE2, "call inside the first-registered of two defer bodies");
+    var dqt, dqv = defer_body_q();
+    a(DPROBE3, "call inside a defer body reached by `?` with a push pending");
+    if (ARCH_OK == 1) {
+        dv = defer_body_ctl();
+        assert_eq(DPROBE_CTL, 8, "defer-body probe reports 8 when misaligned (anti-vacuous)");
+    }
+
     assert_eq(BAD, 0, "every call site above was 16-byte aligned");
     # Floor re-derived by counting the `a(` rows above, not by reading the last run's NCHK.
-    assert_gte(NCHK, 64, "corpus floor: every alignment row ran");
+    assert_gte(NCHK, 67, "corpus floor: every alignment row ran");
 
     # --- VALUE rows: run on EVERY target including cx. These shapes returned WRONG
     #     VALUES on Win64 before 6.6.5 (a missing ECALLCLEAN leaked the 32 B shadow,

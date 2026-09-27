@@ -2381,6 +2381,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         # Parse body: { stmts } or single expression
         if (PEEKT(S) == 13) {
             STI(S, GTI(S) + 1);
+            _cur_fn_has_defer = _body_has_defer(S);   # 6.6.7: as PARSE_FN_DEF (0 from the snapshot otherwise)
             PARSE_PROG(S);
             if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
             STI(S, GTI(S) + 1);

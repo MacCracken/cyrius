@@ -2,13 +2,14 @@
 
 **Scope:** the untrusted-source-input surface. Previous full audit:
 `docs/audit/2026-07-27-security-audit.md` (CVE-32…CVE-36) at cycc 6.4.82.
-**Next free identifier after this document: CVE-47.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
+**Next free identifier after this document: CVE-48.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
 document are **withdrawn** but still consume their ids.) CVE-43 was consumed at 6.6.5,
 **CVE-44 and CVE-45 at 6.6.6** — the release installer's fixed `/tmp` staging, and a forged `#@file` from an included file —
-and **CVE-46 at 6.6.7** (a `secret var` inside a closure was never zeroised); all four are appended below.
+and **CVE-46 and CVE-47 at 6.6.7** (a `secret var` inside a closure was never zeroised; a `secret var` in a
+fn whose `return f(..)` was compiled as a tail call was never zeroised); all five are appended below.
 ⚠ **This line read "next free: CVE-42" while CLAUDE.md read "the next CVE number is 43" and this document ran 39-41.**
 Two authorities, two answers, and nothing reconciled them. CLAUDE.md is the one every closeout reads, so **42 is
-retired unused** and CVE-43 is the entry appended below. Anything below 47 now collides.
+retired unused** and CVE-43 is the entry appended below. Anything below 48 now collides.
 
 Run as part of the band K closeout, as nine parallel audit dimensions over the v6.5.x minor with
 an adversarial verification pass over the highest-severity findings. Everything recorded here was
@@ -499,3 +500,66 @@ returned, 0 after the fix). Mutation: dropping the closure's
 aarch64 (qemu and real pi), Mach-O arm64 (ecb), Mach-O x86_64 (ach), PE (wine) and cx (cxvm);
 cass (real Windows) was down at the time and is left to the release gate. Self-host fixpoint and
 `seed-derive-cycc.sh` green.
+
+## CVE-47 — a `secret var` was never zeroised when its fn returned through a tail call (`return f(..);`)
+
+*Appended 2026-09-27 (cyrius 6.6.7, bite 2). Not part of the 2026-09-03 sweep: recorded here
+because this is the live ledger and the id has to come from one place.*
+
+| | |
+|---|---|
+| **Severity** | **Medium (P2)** — the same guarantee as CVE-46 (key material does not outlive its scope), broken on the most common return spelling there is. Not attacker-triggered; silent |
+| **Affected** | `src/frontend/parse_fn.cyr` (PARSE_RETURN's tail-call arm), every target (x86/PE/Mach-O, aarch64, cx). Present at least since 5.11.69 (`build/cc5` reproduces it) through 6.6.6 |
+| **Vector** | any fn holding a `secret var` whose `return IDENT(args);` is compiled as a tail call — `return helper(x);`, `return Ok(v);` / `return Err(e);` (Ok/Err are ctor fns) — when nothing else in the fn forces the normal call path |
+| **Fixed in** | 6.6.7 |
+
+### What it is
+
+`secret var` registers its zeroise as a synthetic `defer`, run by the function epilogue's defer
+walker. PARSE_RETURN lowers `return IDENT(args);` to epilogue + `jmp` (ETAILJMP; a call plus an
+inline epilogue on cx), which never reaches the walker, and none of the tail arm's diverts asked
+whether the fn had a `defer`/`secret`. The one incidental shield — a fn that has taken a local's
+address (`_fn_local_addr`) is not tail-called — is lexical: it covers only returns parsed AFTER
+the first `&key`, and a static-storage secret (an array over the frame budget) never sets it.
+
+Measured on the 6.6.7 bite-1 compiler, x86_64 Linux (aarch64 under qemu: 65 bytes, same static
+result):
+
+```
+fn leak_tail(x): i64 {
+    secret var key[64];
+    var i = 0;
+    while (i < 3) {
+        if (i == 2) { return _value(); }   # parsed before the first &key: tail-called
+        memset(&key, 90, 64);
+        i = i + 1;
+    }
+    return 0;
+}
+# a 4 KB uninitialised local in the next call finds 66 bytes of 0x5A on the dead stack
+fn stat_tail(): i64 { secret var big[200000]; store64(&big, 0x5A5A5A5A); gbig = &big; return _value(); }
+# load64(gbig) after the return: 1515870810 (the pattern) — never cleared
+```
+
+The same skip dropped every ordinary `defer` on those returns (a lock never released, an fd never
+closed — `return Ok(fd);` is the shape agnodrm hit), and the walker, when it did run, preserved
+only the first return register, so any call in a defer or zeroise body could destroy an `Ok`
+payload or the second half of a pair (CHANGELOG [6.6.7]).
+
+### Fix
+
+A fn whose body contains `defer` or `secret` ANYWHERE (a whole-body prescan at its `{`,
+`_body_has_defer`, kept per-fn through the nested-fn snapshot) never tail-calls: its `return
+f(..);` takes the normal call path and reaches the walker. The tail arm's diverts are one
+predicate now (`_tc_must_divert`). The walker saves the whole return convention
+(`EDEFER_SAVE`/`EDEFER_RESTORE`, per backend), and a fn with a `defer`/`secret` is never
+inline-replayed into a caller.
+
+### Verified
+
+`tests/tcyr/crossos/defer_every_return_path.tcyr`: `stack secret zeroised on a tail return that
+precedes &key` (a dead-stack scan with an anti-vacuous twin — the same shape without `secret` must
+be found) and `static-storage secret zeroised on a tail return`. Mutation: disabling the prescan
+divert turns both RED (along with 13 defer rows). Green on x86_64 Linux, aarch64 (qemu and real
+pi), Mach-O arm64 (ecb), Mach-O x86_64 (ach), PE (wine) and cx (cxvm); cass (real Windows) was
+down and is left to the release gate. Self-host fixpoint and `seed-derive-cycc.sh` green.

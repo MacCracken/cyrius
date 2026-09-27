@@ -15,8 +15,9 @@
 # x86 and spins on aarch64 (rel 0 is a branch to itself), and the return landing / defer walker
 # are emitted per backend. A hang here is a FAIL (the runner's timeout).
 #
-# 6.6.7 bite 2: a defer in an inline-replay candidate (#inline, a small generic fn, a SIMD-param
-# fn) belongs to that fn, not to the caller the replay would have pasted it into.
+# 6.6.7 bite 2 (the second half of the file): a defer / secret runs on EVERY return path —
+# tail-shaped returns included — with the WHOLE return convention intact. See the section header
+# below and tests/gates/codegen/defer_every_return_path.sh (async, #inline warning, cx rows).
 include "lib/assert.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -24,6 +25,7 @@ include "lib/fmt.cyr"
 include "lib/str.cyr"
 include "lib/vec.cyr"
 include "lib/fnptr.cyr"
+include "lib/tagged.cyr"
 include "lib/simd.cyr"
 
 var cran = 0;
@@ -139,6 +141,147 @@ fn fall_off_end(): i64 {
 }
 
 
+# ═══ 6.6.7 bite 2 — a defer / secret runs on EVERY return path, with the return value intact ═══
+#
+# ⛔ `return IDENT(args);` was lowered to epilogue + jmp (a call + inline epilogue on cx), which
+# never reached the walker: every tail-shaped return skipped the fn's defers and left its
+# `secret var` un-zeroised (CVE-47) — `return Ok(fd);` included, since Ok/Err are ctor fns. And
+# the walker saved rax alone, so any call in a defer body destroyed the rest of the return
+# convention: the pair / Ok-Err payload (rdx / x2 / r4; x1 for an aarch64 16-byte struct), the
+# arity-3 slot, the f64 and vector registers. `clobber_all` below is written to hit ALL of them:
+# a 6-arg call, a 3-arg syscall, f64 arithmetic and f64v2 arithmetic.
+fn _clob6(a, b, c, d, e, f): i64 { return a + b + c + d + e + f; }
+fn _fmul3(a: f64): f64 { return a * 3.0; }
+fn _vclob(): i64 {
+    var q: f64v2 = f64v2_make(1, 2);
+    var w: f64v2 = f64v2_make(5, 6);
+    return f64v2_lo_ptr(&q) + f64v2_lo_ptr(&w);
+}
+fn clobber_all(): i64 {
+    var k = _clob6(1, 2, 3, 4, 5, 6);
+    sys_write(1, "", 0);
+    var x: f64 = f64_from(7);
+    var y: f64 = _fmul3(x);
+    k = k + _vclob() + f64_to(y);
+    cran = cran + 1;
+    return k;
+}
+fn _value(): i64 { return 42; }
+fn _plus(n): i64 { return n + 1; }
+fn _six(a, b, c, d, e, f): i64 { return a + f; }
+fn _seven(a, b, c, d, e, f, g): i64 { return a + g; }
+
+# --- tail-shaped returns (each paired with its local-first control) -----------------------
+fn t_zero(): i64 { defer { clobber_all(); } return _value(); }
+fn t_zero_ctl(): i64 { defer { clobber_all(); } var r = _value(); return r; }
+fn t_arg(): i64 { defer { clobber_all(); } return _plus(41); }
+fn t_nested(x): i64 { defer { clobber_all(); } if (x > 0) { return _plus(x); } return 0; }
+# The tail return lexically PRECEDES the defer, which registered on an earlier iteration: a
+# registered-so-far count reads 0 here, so the prescan has to cover the whole body.
+fn t_loop(n): i64 {
+    var i = 0;
+    while (i < n) {
+        if (i == 1) { return _plus(i); }
+        defer { clobber_all(); }
+        i = i + 1;
+    }
+    return 0;
+}
+fn t_six(): i64 { defer { clobber_all(); } return _six(1, 2, 3, 4, 5, 6); }
+fn t_seven(): i64 { defer { clobber_all(); } return _seven(1, 2, 3, 4, 5, 6, 7); }
+fn t_ok(x): i64 { defer { clobber_all(); } return Ok(x); }
+fn t_err(x): i64 { defer { clobber_all(); } return Err(x); }
+fn t_ok_ctl(x): i64 { defer { clobber_all(); } var t, v = Ok(x); return (t, v); }
+# A self-recursive tail call in a fn with a defer is a REAL call now (documented: such a fn
+# never tail-calls) — every level's block runs.
+fn t_selfrec(n): i64 { defer { cran = cran + 1; } if (n == 0) { return 0; } return t_selfrec(n - 1); }
+# Control: a defer registered AFTER the taken tail return never runs.
+fn t_unreached(x): i64 { if (x > 0) { return _plus(x); } defer { clobber_all(); } return 0; }
+struct P2 { x; y; }
+struct P3 { x; y; z; }
+fn mk2(a, b): P2 { var p: P2; p.x = a; p.y = b; defer { clobber_all(); } return p; }
+fn mk3(a, b, c): P3 { var p: P3; p.x = a; p.y = b; p.z = c; defer { clobber_all(); } return p; }
+# A same-struct pair-class tail call (the one struct tail call the tail arm keeps otherwise).
+fn mk2t(): P2 { defer { cran = cran + 100; } return mk2(5, 6); }
+fn t_closure(): i64 {
+    var f = |x| { defer { clobber_all(); } return _plus(x); };
+    return fncall1(f, 41) + 0;
+}
+fn gtail<T>(p: T): i64 { defer { clobber_all(); } return _plus(p.x); }
+# The prescan result is per-fn state: a closure literal and a FIRST instantiation are emitted
+# in the middle of this fn's body, and must hand it back (the per-fn snapshot) — else the tail
+# return after them reads the nested body's 0.
+fn t_after_closure(): i64 {
+    defer { clobber_all(); }
+    var f = |x| x + 1;
+    var k = fncall1(f, 40);
+    return _plus(k);
+}
+fn winst<T>(p: T): i64 { return p.x + 1; }
+fn t_after_instance(): i64 {
+    defer { clobber_all(); }
+    var p: Pt; p.x = 40; p.y = 0;
+    var k = winst<Pt>(p);
+    return _plus(k);
+}
+fn t_generic(): i64 { var p: Pt; p.x = 41; p.y = 0; var r = gtail<Pt>(p); return r; }
+
+# --- the walker keeps the WHOLE return convention -----------------------------------------
+fn w_tuple(): i64 { defer { clobber_all(); } return (7, 99); }
+fn w_tuple3(): i64 { defer { clobber_all(); } return (7, 99, 55); }
+fn _errv(x): i64 { return Err(x); }
+fn w_q(x): i64 { defer { clobber_all(); } var v = _errv(x)?; return Ok(v); }
+fn w_ret2(): i64 { defer { clobber_all(); } ret2(7, 99); }
+fn w_f64(): f64 { var a: f64 = f64_from(5); a = a / 2.0; defer { clobber_all(); } return a; }
+fn w_v2(): f64v2 { var v: f64v2 = f64v2_make(11, 22); defer { clobber_all(); } return v; }
+fn w_v4(): f64v4 { var v: f64v4 = f64v4_make(31, 32, 33, 34); defer { clobber_all(); } return v; }
+
+# --- secret var zeroised on a tail return -------------------------------------------------
+# The pattern comes from a global so the only copies in the dead frame are the ones the key
+# array itself held (plus at most a transient spill or two).
+var SEC_PAT = 0;
+fn _leak_secret(): i64 {
+    secret var key[64];
+    var i = 0;
+    while (i < 3) {
+        if (i == 2) { return _value(); }   # precedes the first `&key`: no &local shield
+        var j = 0;
+        while (j < 8) { store64(&key + j * 8, SEC_PAT); j = j + 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+# Anti-vacuous twin: the same shape WITHOUT `secret` — the scan must find its pattern, or the
+# scan is not looking at the dead frame and the secret row proves nothing.
+fn _leak_plain(): i64 {
+    var key[64];
+    var i = 0;
+    while (i < 3) {
+        if (i == 2) { return _value(); }
+        var j = 0;
+        while (j < 8) { store64(&key + j * 8, SEC_PAT); j = j + 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+fn _dead_scan(): i64 {
+    var buf[4096];
+    var n = 0;
+    var i = 0;
+    while (i < 512) { if (load64(&buf + i * 8) == SEC_PAT) { n = n + 1; } i = i + 1; }
+    return n;
+}
+fn secret_stack_row(): i64 { var r = _leak_secret(); return _dead_scan(); }
+fn plain_stack_row(): i64 { var r = _leak_plain(); return _dead_scan(); }
+var SEC_BIG = 0;
+fn _static_secret(): i64 {
+    secret var big[200000];    # over the frame budget: static storage
+    store64(&big, SEC_PAT);
+    store64(&big + 199992, SEC_PAT);
+    SEC_BIG = &big;
+    return _value();
+}
+
 # --- a defer in an inline-replay candidate runs at ITS OWN return, once per call ----------
 #inline
 fn inl_defer(a): i64 { defer { cran = cran + 1; } return a + 1; }
@@ -186,6 +329,56 @@ fn main(): i64 {
     var ff = fall_off_end();
     assert_eq(cran, 11, "a defer runs when the fn body falls off its end");
 
+
+    # ═══ 6.6.7 bite 2 ═══
+    SEC_PAT = 0x5EC0000 * 4096 + 0x7A11;
+    cran = 0; assert_eq(t_zero(), 42, "tail zero-arg: value"); assert_eq(cran, 1, "tail zero-arg: defer ran");
+    cran = 0; assert_eq(t_zero_ctl(), 42, "control: local-first value"); assert_eq(cran, 1, "control: local-first defer ran");
+    cran = 0; assert_eq(t_arg(), 42, "tail with arg: value"); assert_eq(cran, 1, "tail with arg: defer ran");
+    cran = 0; assert_eq(t_nested(3), 4, "tail in a nested if: value"); assert_eq(cran, 1, "tail in a nested if: defer ran");
+    cran = 0; assert_eq(t_loop(5), 2, "tail preceding the defer in a loop: value"); assert_eq(cran, 1, "tail preceding the defer in a loop: defer ran");
+    cran = 0; assert_eq(t_six(), 7, "6-arg tail: value"); assert_eq(cran, 1, "6-arg tail: defer ran");
+    cran = 0; assert_eq(t_seven(), 8, "7-arg (normal-call) control: value"); assert_eq(cran, 1, "7-arg control: defer ran");
+    cran = 0; var okt, okv = t_ok(99);
+    assert_eq(okt, 0, "return Ok(x): tag"); assert_eq(okv, 99, "return Ok(x): payload survives the defer body"); assert_eq(cran, 1, "return Ok(x): defer ran");
+    cran = 0; var ert, erv = t_err(77);
+    assert_eq(ert, 1, "return Err(x): tag"); assert_eq(erv, 77, "return Err(x): payload survives the defer body"); assert_eq(cran, 1, "return Err(x): defer ran");
+    cran = 0; var oct, ocv = t_ok_ctl(99);
+    assert_eq(ocv, 99, "control: Ok bound then returned — payload"); assert_eq(cran, 1, "control: Ok bound then returned — defer ran");
+    cran = 0; assert_eq(t_selfrec(3), 0, "self-recursive tail: value"); assert_eq(cran, 4, "self-recursive tail: every level's defer ran");
+    cran = 0; assert_eq(t_unreached(1), 2, "control: unreached defer — value"); assert_eq(cran, 0, "control: a defer registered after the taken return does not run");
+    cran = 0; var pa: P2 = mk2(7, 99);
+    assert_eq(pa.x, 7, "P2 struct return: x"); assert_eq(pa.y, 99, "P2 struct return: y survives the defer body");
+    cran = 0; var pb: P3 = mk3(7, 99, 55);
+    assert_eq(pb.y * 100 + pb.z, 9955, "P3 (retptr) struct return: fields");
+    cran = 0; var pt: P2 = mk2t();
+    assert_eq(pt.x * 100 + pt.y, 506, "same-struct pair tail call: value"); assert_eq(cran, 101, "same-struct pair tail call: both fns' defers ran");
+    cran = 0; assert_eq(t_closure(), 42, "tail call in a closure with a defer: value"); assert_eq(cran, 1, "tail call in a closure: its defer ran");
+    cran = 0; assert_eq(t_generic(), 42, "tail call in a generic instance with a defer: value"); assert_eq(cran, 1, "tail call in a generic instance: its defer ran");
+    cran = 0; assert_eq(t_after_closure(), 42, "tail return after a closure literal: value"); assert_eq(cran, 1, "tail return after a closure literal: defer ran");
+    cran = 0; assert_eq(t_after_instance(), 42, "tail return after a first f<T>() instantiation: value"); assert_eq(cran, 1, "tail return after a first f<T>() instantiation: defer ran");
+
+    cran = 0; var tu1, tu2 = w_tuple();
+    assert_eq(tu1 * 1000 + tu2, 7099, "return (a, b): both values survive the defer body");
+    cran = 0; var tv1, tv2, tv3 = w_tuple3();
+    assert_eq(tv2 * 100 + tv3, 9955, "return (a, b, c): second and third survive the defer body");
+    cran = 0; var qt, qv = w_q(77);
+    assert_eq(qt, 1, "`?` propagating Err: tag"); assert_eq(qv, 77, "`?` propagating Err: payload survives the defer body"); assert_eq(cran, 1, "`?` propagating Err: defer ran");
+    cran = 0; var rt, rv = w_ret2();
+    assert_eq(rt * 1000 + rv, 7099, "ret2(a, b): both values survive the defer body");
+    cran = 0; var fr: f64 = w_f64();
+    assert_eq(f64_to(fr * 10.0), 25, "f64 return survives the defer body");
+    cran = 0; var vr: f64v2 = w_v2();
+    assert_eq(f64v2_lo_ptr(&vr) * 100 + f64v2_hi_ptr(&vr), 1122, "f64v2 return survives the defer body");
+    cran = 0; var v4: f64v4 = w_v4();
+    assert_eq(f64v4_lane0_ptr(&v4) * 1000000 + f64v4_lane1_ptr(&v4) * 10000 + f64v4_lane2_ptr(&v4) * 100 + f64v4_lane3_ptr(&v4), 31323334, "f64v4 return survives the defer body");
+
+    var plain = plain_stack_row();
+    assert_eq(plain >= 8, 1, "anti-vacuous: the dead-stack scan sees a plain array's pattern");
+    var leaked = secret_stack_row();
+    assert_eq(leaked < 4, 1, "stack secret zeroised on a tail return that precedes &key");
+    var sv = _static_secret();
+    assert_eq(load64(SEC_BIG) + load64(SEC_BIG + 199992), 0, "static-storage secret zeroised on a tail return");
 
     cran = 0; assert_eq(inl_caller(), 12, "#inline fn with a defer: runs at its own return, once per call");
     cran = 0; assert_eq(gen_caller(), 1, "generic fn with a defer: runs before the caller's next statement");

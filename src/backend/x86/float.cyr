@@ -14,6 +14,50 @@ fn EUCOMISD(S): i64 { EB(S, 0x66); EB(S, 0x0F); EB(S, 0x2E); EB(S, 0xC1); return
 fn EXORPD_X1(S): i64 { EB(S, 0x66); EB(S, 0x0F); EB(S, 0x57); EB(S, 0xC9); return 0; }
 fn EMOVAPD_01(S): i64 { EB(S, 0x66); EB(S, 0x0F); EB(S, 0x28); EB(S, 0xC1); return 0; }
 
+# ⭐ 6.6.7 — THE DEFER WALKER'S SAVE AREA: the WHOLE return convention, not rax. The walker runs
+# every reached defer/secret block AFTER the return value is in place, and those blocks are
+# ordinary code: any call in one clobbers rdx (pair / Ok-Err payload / ret2), r8 (arity-3) and
+# xmm0/xmm1 (f64, and the f64v2/f64v4 xmm0:xmm1 pair). It saved rax alone (one `push`), so a
+# `sys_write` in a defer body zeroed an `Ok` payload. The blocks were compiled at statement
+# level, where rsp is 16-aligned — so the walker must run them there: the lone 8-byte push put
+# every call in them at rsp%16 == 8, and a `?` inside an argument list (`snd(0, f()?)`) reaches
+# the walker with its pending pushes still on the stack. So: re-align (`and rsp,-16`, the entry
+# rsp kept in r11 and then in the area), then a 64-byte area:
+#   [0] rax  [8] rdx  [16] r8  [24] entry rsp  [32] xmm0  [48] xmm1
+# Unconditional (never keyed on the return class); emitted only by fns that HAVE a defer, so
+# every other fn is byte-identical. rsp-relative (no `[rbp+disp32]` for the DSE/LASE byte passes
+# to match) and IR-opaque (IR_RAW_EMIT). r11 is scratch here: the return value is already in
+# place and a coroutine reloads its frame base into r11 on every access. CHANGELOG [6.6.7]
+fn _EBN(S, v, n): i64 {
+    var i = 0;
+    while (i < n) { EB(S, (v >> (i * 8)) & 0xFF); i = i + 1; }
+    return 0;
+}
+fn EDEFER_SAVE(S): i64 {
+    _IR_REC0(S, IR_RAW_EMIT);
+    _EBN(S, 0xE38949, 3);               # mov r11, rsp
+    _EBN(S, 0xF0E48348, 4);             # and rsp, -16
+    _EBN(S, 0x40EC8348, 4);             # sub rsp, 64
+    _EBN(S, 0x24048948, 4);             # mov [rsp], rax
+    _EBN(S, 0x0824548948, 5);           # mov [rsp+8], rdx
+    _EBN(S, 0x102444894C, 5);           # mov [rsp+16], r8
+    _EBN(S, 0x18245C894C, 5);           # mov [rsp+24], r11
+    _EBN(S, 0x2024447F0FF3, 6);         # movdqu [rsp+32], xmm0
+    _EBN(S, 0x30244C7F0FF3, 6);         # movdqu [rsp+48], xmm1
+    return 0;
+}
+fn EDEFER_RESTORE(S): i64 {
+    _IR_REC0(S, IR_RAW_EMIT);
+    _EBN(S, 0x30244C6F0FF3, 6);         # movdqu xmm1, [rsp+48]
+    _EBN(S, 0x2024446F0FF3, 6);         # movdqu xmm0, [rsp+32]
+    _EBN(S, 0x1024448B4C, 5);           # mov r8, [rsp+16]
+    _EBN(S, 0x0824548B48, 5);           # mov rdx, [rsp+8]
+    _EBN(S, 0x24048B48, 4);             # mov rax, [rsp]
+    _EBN(S, 0x1824648B48, 5);           # mov rsp, [rsp+24]
+    _flags_reflect_rax = 0;
+    return 0;
+}
+
 # x87 FPU: rax→stack→x87, compute, x87→stack→rax
 fn EX87PUSH(S): i64 {
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x10);

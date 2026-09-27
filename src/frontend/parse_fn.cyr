@@ -587,6 +587,98 @@ fn FINDLOCAL(S, noff): i64 {
 # PARSER — STATEMENT DISPATCH + FUNCTION SUPPORT
 # ================================================================
 
+# ⭐ 6.6.7 — THE TAIL ARM'S DIVERT LIST, IN ONE PLACE. `return IDENT(args);` is lowered to
+# epilogue + `jmp` (ETAILJMP; call + inline epilogue on cx), which reaches NOTHING the normal
+# return does: not the return landing, not the defer walker, not PARSE_FNCALL. Every obligation
+# PARSE_FNCALL or the epilogue carries therefore had to be re-discovered here, one silent wrong
+# value at a time, and bolted on as its own `tc_has_addr = 1` line — fifteen diverts by 6.6.7
+# (plus five checks copied into the emission itself: arity, #pure, #deprecated, SIMD_TC and the
+# Win64 argument ceiling), spread over two hundred lines, while the standing note and a code
+# comment each counted four. The diverts live in these four predicates now; a new obligation is
+# a new line HERE. 1 = take the normal
+# call path. ⚠ Every test is read-only (FINDFN, masks, token peeks) — order is free.
+# ⚠ Over-diverting is NOT free: it costs the tail call, and a self-recursive tail call that
+# loses it grows the stack (6.6.5 measured a correct program turned into rc 139). Each test is
+# the exact question of the thing it protects, never an approximation. CHANGELOG [6.6.7]
+fn _tc_must_divert(S, cfi, ti_after): i64 {
+    if (_tc_frame_divert(S) == 1) { return 1; }
+    if (_tc_callee_divert(S, cfi) == 1) { return 1; }
+    if (_tc_args_divert(S, cfi, ti_after) == 1) { return 1; }
+    return 0;
+}
+# What THIS fn must still do after the callee returns, or what its frame must outlive.
+fn _tc_frame_divert(S): i64 {
+    # 6.6.7 — a fn with a `defer` or `secret var` ANYWHERE in its body: the jmp skipped the walker,
+    # so the block never ran and a secret was never zeroised (CVE-47). The WHOLE body, prescanned
+    # at its `{` (`_body_has_defer`) — a registered-so-far count misses a loop whose tail return
+    # lexically precedes the defer. Such a fn never tail-calls; a deep self-recursion needs a loop.
+    if (_cur_fn_has_defer == 1) { return 1; }
+    # 6.6.7 — a tail call pushes nothing onto rp_vec, which is how _PARSE_DEFER refuses a
+    # `return` inside a defer body. (Subsumed by the line above; kept as the defer arm's own rule.)
+    if (_in_defer == 1) { return 1; }
+    # v6.5.14 — a pointer to a local laundered through a variable (`var p = &buf; return f(p);`):
+    # the epilogue frees the frame the callee reads. Set wherever this fn materialises `&local`.
+    if (_fn_local_addr == 1) { return 1; }
+    # 6.6.6 — a struct-returning CALLER copies into its own retptr, which a `jmp` cannot do.
+    if (_cur_fn_ret_sid > 0) { if (_cur_fn_ret_stash > 0) { return 1; } }
+    # 6.6.6 — the rax:rdx PAIR and the VECTOR classes: a `jmp` hands the callee's return
+    # convention straight to OUR caller, right only when the callee returns this same type the
+    # same way (`return s2b(1);` from a `: P2` fn left rdx unwritten). The normal path is where
+    # `_refuse_pair_return` / `_refuse_simd_return` see the shape.
+    if (_cur_fn_ret_pair == 1) { if (_pair_ret_call_ok(S) == 0) { return 1; } }
+    if (_cur_fn_returns_vector(S) == 1) { if (_simd_ret_call_ok(S) == 0) { return 1; } }
+    # v6.4.31 — a SIMD-returning fn on Win64 returns through a hidden retptr in RCX, which the tail
+    # path's argument marshalling overwrites (`return f32v4_make(...)` SIGSEGV'd).
+    if (_TARGET_PE == 1) {
+        if (_cur_fn_ret_stash > 0) {
+            if (_cur_fn_returns_vector(S) == 1) { return 1; }
+        }
+    }
+    return 0;
+}
+# What the CALLEE needs from PARSE_FNCALL that the tail path's plain argument loop never does.
+fn _tc_callee_divert(S, cfi): i64 {
+    # v6.5.17 — fncall0..8 are INDIRECT calls; `jmp fncallN` skipped the closure dispatch.
+    if (_IS_FNCALL_NAME(S, PEEKV(S)) == 1) { return 1; }
+    # 6.6.6 — a >16 B struct-returning callee writes through a retptr the tail path never passes.
+    if (_ret_agg_class(S, cfi) == 2) { return 1; }
+    if (cfi < 0) { return 0; }
+    # v6.3.36 — plain-struct params are ADDRESS-passed: pointers into the frame the jmp frees.
+    if (L64(_fnt_structmask + cfi * 8) != 0) { return 1; }
+    # v6.4.53 — value-form SIMD params travel in vector registers; the tail path loads only the
+    # integer ones (`return f32v4_add(v, v)` returned v).
+    if (L64(_fnt_simdmask + cfi * 8) != 0) { return 1; }
+    # v6.5.1 — an overload-suffix sibling: the `_str`/`_int` dispatch lives only in PARSE_FNCALL
+    # (`return println(myStr);` silently called the cstr base).
+    if (L64(_fnt_ovstr + cfi * 8) != 0) { return 1; }
+    if (L64(_fnt_ovint + cfi * 8) != 0) { return 1; }
+    return 0;
+}
+# What the ARGUMENT LIST needs. The scan runs to the call's matching `)`.
+fn _tc_args_divert(S, cfi, ti_after): i64 {
+    var has_lit = 0;
+    var depth = 1;
+    var i = ti_after + 1;
+    while (i < GTCNT(S)) {
+        var t = TOKTYP(S, i);
+        if (t == 10) { depth = depth + 1; }
+        if (t == 11) { depth = depth - 1; if (depth == 0) { break; } }
+        # v5.8.16 — `&local` spelled in the arg list: the callee reads the frame the jmp frees.
+        if (t == 27) { return 1; }
+        if (t == 1) { has_lit = 1; }
+        i = i + 1;
+    }
+    if (cfi < 0) { return 0; }
+    # v6.5.2 — an integer literal into a `: cstring` param is refused by PARSE_FNCALL only.
+    if (has_lit == 1) { if (L64(_fnt_cstrmask + cfi * 8) != 0) { return 1; } }
+    # 6.6.5 — a string literal into a `: Str` param is `str_from`-wrapped by PARSE_FNCALL only.
+    # `_tc_str_literal_arg` asks PARSE_FNCALL's exact question (the literal is that argument's
+    # FIRST token AND that argument's mask bit is set): looser forms were measured to cost a
+    # self-recursive tail call its TCO.
+    if (_tc_str_literal_arg(S, ti_after, cfi) == 1) { return 1; }
+    return 0;
+}
+
 # Parse return expr ;  (uses PCMPE so return a == b; works)
 # Tail call optimization: return fn(args); → epilogue + jmp fn
 fn PARSE_RETURN(S): i64 {
@@ -619,149 +711,6 @@ fn PARSE_RETURN(S): i64 {
                         var tc_scan = ti_after + 1;
                         var tc_depth = 1;
                         var tc_is_tail = 0;
-                        # v5.8.16 §8: skip TCO if any arg passes the address
-                        # of a fn-local. The tail-call epilogue deallocates
-                        # the current frame BEFORE jumping to the callee —
-                        # if the callee reads through `&local`, it sees
-                        # dead stack memory. Pre-§8 this was masked for
-                        # slice fn-locals because the slice's high half
-                        # coincidentally landed on saved rbp (often 0 from
-                        # the C runtime), so reads happened to return 0.
-                        # The §8 layout-flip moves the high half into a
-                        # real stack slot, and the dead-stack value is
-                        # arbitrary — surfaces immediately as a regression
-                        # in any `return helper(&local);` form.
-                        # Scan inside the call's argument list for `&`
-                        # (token type 27); if present, force normal call.
-                        var tc_has_addr = 0;
-                        # v6.5.14 — the §8 scan below is SYNTACTIC: it only sees `&`
-                        # spelled inside this call's own arg list. A pointer to a local
-                        # laundered through a variable reaches the callee with no `&` in
-                        # sight, and the tail-call epilogue frees the frame under it:
-                        #     var p = &buf;  ...  return f(p);      # silently reads dead stack
-                        #     return f(&buf);                       # guarded since v5.8.16
-                        # Same source semantics, opposite results — a silent wrong answer,
-                        # not a crash. `_fn_local_addr` is set wherever this fn materialises
-                        # `&<own local>` (parse_expr.cyr), so it covers every laundering
-                        # path (through vars, arithmetic, structs, globals). Fns that never
-                        # take a local's address keep the flag at 0 → byte-identical.
-                        # Found via sigil's RSA-PSS verify. See CHANGELOG [6.5.14].
-                        if (_fn_local_addr == 1) { tc_has_addr = 1; }
-                        # v6.3.36 (issue [5]) — a callee with plain-struct params
-                        # ADDRESS-passes those args (pointers into the CURRENT frame);
-                        # the tail-call epilogue frees that frame before the callee
-                        # runs, so force the normal (non-tail) path for such callees —
-                        # same frame-lifetime reasoning as the `&`-arg case below.
-                        var _tc_cfi = FINDFN(S, PEEKV(S));
-                        if (_tc_cfi >= 0) { if (L64(_fnt_structmask + _tc_cfi * 8) != 0) { tc_has_addr = 1; } }
-                        # v6.4.53 (issue 2026-07-08): a callee with value-form SIMD params
-                        # (f32v4/f64v2/f64v4/int-vec, the -2121/-2125 XMM/V-register ABI) takes
-                        # its args in vector regs, but the tail-call arg loop below marshals
-                        # them via the INTEGER convention (PCMPE→EPUSHR→ECALLPOPS into rdi/rsi),
-                        # never loading XMM/V. Distinct args survive by luck (the caller's
-                        # incoming xmm0/xmm1 pass through the jmp untouched); a DUPLICATED source
-                        # local leaves the 2nd vector reg stale → the callee reads garbage
-                        # (`return f32v4_add(v, v)` returned v, not 2v — x86 + aarch64; PE was
-                        # already diverted by the SIMD-RETURN guard below). Force the normal
-                        # PARSE_FNCALL path (which has the _fc_simd_table XMM second pass). ALL
-                        # targets — simdmask==0 for every SIMD-free callee, so non-SIMD tail
-                        # calls stay byte-identical. `_fnt_simdmask` is stored unconditionally.
-                        if (_tc_cfi >= 0) { if (L64(_fnt_simdmask + _tc_cfi * 8) != 0) { tc_has_addr = 1; } }
-                        # ⛔ 6.6.6 — a retptr callee needs a destination the tail path never passes
-                        # (it pops the user args into the int registers, so the callee wrote its
-                        # result through argument 1), and a struct-returning CALLER must copy into
-                        # its own retptr, which a `jmp` cannot do. Both go to the normal path: the
-                        # struct-return branch below copies a same-struct call through a temp, and
-                        # refuses anything else instead of returning garbage. CHANGELOG [6.6.6]
-                        if (_ret_agg_class(S, _tc_cfi) == 2) { tc_has_addr = 1; }
-                        if (_cur_fn_ret_sid > 0) { if (_cur_fn_ret_stash > 0) { tc_has_addr = 1; } }
-                        # 6.6.6 — the same question for the rax:rdx PAIR class. A `jmp` hands the
-                        # callee's return convention straight back to OUR caller, so it is right
-                        # only when the callee returns THIS struct the same way. `return s2b(1);`
-                        # from a `: P2` fn tail-jumped into a scalar fn and left rdx unwritten —
-                        # the tail-call spelling of the shape `_refuse_pair_return` names.
-                        if (_cur_fn_ret_pair == 1) { if (_pair_ret_call_ok(S) == 0) { tc_has_addr = 1; } }
-                        # 6.6.6 — and for the VECTOR return classes, for the same reason. A
-                        # `: f64v2` fn tail-jumping into a scalar `sc()` handed OUR caller
-                        # whatever `sc` left in one register and nothing in the other — the
-                        # tail-call spelling of the shape `_refuse_simd_return` names. Sending it
-                        # to the normal path is what lets that refusal see it. A callee declared
-                        # to return the same vector type keeps its `jmp` (its convention IS ours).
-                        if (_cur_fn_returns_vector(S) == 1) { if (_simd_ret_call_ok(S) == 0) { tc_has_addr = 1; } }
-                        # v6.5.1 — a callee that has an overload-suffix sibling must go through
-                        # PARSE_FNCALL, because that is the ONLY place the `_str`/`_int` dispatch
-                        # lives. This tail path emits epilogue+jmp itself and never consults
-                        # _fnt_ovstr/_fnt_ovint, so the two call positions DISAGREED:
-                        #   var r = println(myStr);   → correctly routed to println_str
-                        #   return println(myStr);    → silently called the cstr base
-                        # i.e. a `return` of an overloaded call ran the WRONG FUNCTION, with no
-                        # diagnostic, for as long as the tail path has existed. Force the normal
-                        # path — the same divert v6.4.53 used for value-form SIMD params and
-                        # v6.3.36 for plain-struct params. Callees with no sibling have 0 in both
-                        # tables, so every other tail call stays byte-identical.
-                        if (_tc_cfi >= 0) {
-                            if (L64(_fnt_ovstr + _tc_cfi * 8) != 0) { tc_has_addr = 1; }
-                            if (L64(_fnt_ovint + _tc_cfi * 8) != 0) { tc_has_addr = 1; }
-                        }
-                        # v6.5.2 — also note an integer LITERAL anywhere in the arg list.
-                        # The literal-to-`: cstring` error lives in PARSE_FNCALL, and this
-                        # tail path would skip it — the THIRD time this path has been found
-                        # missing something PARSE_FNCALL does (v6.3.36 plain-struct params,
-                        # v6.4.53 value-form SIMD params, v6.5.1 overload dispatch). Free:
-                        # the scan below already walks the same tokens looking for `&`.
-                        var tc_has_lit = 0;
-                        var tc_addrscan = ti_after + 1;
-                        while (tc_addrscan < GTCNT(S)) {
-                            if (TOKTYP(S, tc_addrscan) == 10) { tc_depth = tc_depth + 1; }
-                            if (TOKTYP(S, tc_addrscan) == 11) { tc_depth = tc_depth - 1; if (tc_depth == 0) { break; } }
-                            if (TOKTYP(S, tc_addrscan) == 27) { tc_has_addr = 1; }
-                            if (TOKTYP(S, tc_addrscan) == 1) { tc_has_lit = 1; }
-                            tc_addrscan = tc_addrscan + 1;
-                        }
-                        # Divert to PARSE_FNCALL only when the callee ACTUALLY annotates a
-                        # param `: cstring` and this call actually passes a literal. Narrow
-                        # on purpose: every other call to a cstring-taking fn keeps its TCO.
-                        if (_tc_cfi >= 0) {
-                            if (tc_has_lit == 1) {
-                                if (L64(_fnt_cstrmask + _tc_cfi * 8) != 0) { tc_has_addr = 1; }
-                            }
-                        }
-                        # ⛔ 6.6.5 — the FOURTH time this path has been found missing something
-                        # PARSE_FNCALL does, and it is the same shape as the three above: a
-                        # STRING LITERAL going into a param annotated `: Str` is wrapped in
-                        # `str_from(...)` by PARSE_FNCALL and by nothing else, so
-                        #   var r = f("abcde");   → 5
-                        #   return f("abcde");    → 0   (the callee got a raw cstr; str_len
-                        #                                read load64(cstr + 8), whatever that is)
-                        # Silent wrong value, both call positions in one program disagreeing.
-                        # Found by the new crossos row for the method-arg Str mask — the free-fn
-                        # control it compares against was itself wrong. Narrow like v6.5.2's:
-                        # only when the callee annotates SOME param `: Str` and this call
-                        # actually passes a literal, so every other tail call stays
-                        # byte-identical.
-                        #
-                        # ⛔ AND THE PREDICATE IS READ OFF THE HELPER WE DIVERT TO, not
-                        # approximated. The first cut armed this for a token-30 at ANY paren
-                        # depth, reasoning that "over-diverting only costs a tail call". It does
-                        # not: losing TCO on a SELF-RECURSIVE tail call turns bounded recursion
-                        # into unbounded stack growth. Measured — `return deep(n - 1,
-                        # str_from("abc"));`, whose literal is ALREADY wrapped by hand, ran to
-                        # completion on 6.6.4 and SIGSEGV'd (rc 139) at n = 200000 on that cut.
-                        # A correct program stopped working. The second cut restricted it to
-                        # paren depth 1, which was closer and still not the criterion: it
-                        # diverted `return f(load64(p), "lit")` where `f`'s `: Str` param is
-                        # argument 0 and the literal is argument 1 — the wrap would never fire,
-                        # so the divert bought nothing (measured: one real ecosystem source,
-                        # mneme's `_te_json_str` callers).
-                        # `_tc_str_literal_arg` asks PARSE_FNCALL's OWN question — is some
-                        # argument's FIRST token a string literal AND is that argument's
-                        # `_fnt_strmask` bit set — so it can neither over- nor under-cover.
-                        # CHANGELOG [6.6.5]
-                        if (_tc_cfi >= 0) {
-                            if (_tc_str_literal_arg(S, ti_after, _tc_cfi) == 1) { tc_has_addr = 1; }
-                        }
-                        # Reset tc_depth for the original tail-detect scan below.
-                        tc_depth = 1;
                         while (tc_scan < GTCNT(S)) {
                             if (TOKTYP(S, tc_scan) == 10) { tc_depth = tc_depth + 1; }
                             if (TOKTYP(S, tc_scan) == 11) { tc_depth = tc_depth - 1; if (tc_depth == 0) { break; } }
@@ -770,35 +719,11 @@ fn PARSE_RETURN(S): i64 {
                         if (tc_scan + 1 < GTCNT(S)) {
                             if (TOKTYP(S, tc_scan + 1) == 5) { tc_is_tail = 1; }
                         }
-                        if (tc_has_addr == 1) { tc_is_tail = 0; }
-                        # A tail call pushes nothing onto rp_vec, and rp_vec growth is how
-                        # _PARSE_DEFER refuses `return` in a defer body — so inside one, take
-                        # the normal path. CHANGELOG [6.6.7]
-                        if (_in_defer == 1) { tc_is_tail = 0; }
-                        # v6.4.31: a SIMD-returning fn on Win64 PE returns via a hidden
-                        # retptr in RCX; the tail-call path marshals the callee's user
-                        # args into RCX/RDX/... and jmps, clobbering that retptr so the
-                        # callee writes its 16/32-byte result to a garbage pointer
-                        # (`return f32v4_make(...)` in f32v4_splat SIGSEGV'd). Force the
-                        # normal path — the return-of-SIMD-call handler below allocates a
-                        # temp and byte-copies it into our retptr stash. No-op off-PE and
-                        # for register returns (ret_stash==0). See [[project_v6431_win64_valueform_simd]].
-                        if (_TARGET_PE == 1) {
-                            if (_cur_fn_ret_stash > 0) {
-                                if (_is_simd128(S, _cur_fn_ret_scalar) == 1 || _is_simd256(S, _cur_fn_ret_scalar) == 1) {
-                                    tc_is_tail = 0;
-                                }
-                            }
+                        # Every reason to take the normal call path instead is in ONE predicate (above
+                        # PARSE_RETURN). CHANGELOG [6.6.7]
+                        if (tc_is_tail == 1) {
+                            if (_tc_must_divert(S, FINDFN(S, PEEKV(S)), ti_after) == 1) { tc_is_tail = 0; }
                         }
-                        # v6.5.17: fncall0..fncall8 are lowered as INDIRECT calls (see
-                        # _IS_FNCALL_NAME / PINDIRECT_CALL in parse_expr.cyr), never as a
-                        # direct call to the lib fn — so they must not take this shortcut,
-                        # which emits `jmp fncallN` and skips the closure dispatch
-                        # entirely. `return fncall1(f, 1);` is verbatim the shape the
-                        # hisab filing reported, and it is the ONLY one of the four repro
-                        # programs that still segfaulted after the parse_expr lowering
-                        # landed: a tail call looks nothing like a factor.
-                        if (_IS_FNCALL_NAME(S, PEEKV(S)) == 1) { tc_is_tail = 0; }
                         if (tc_is_tail == 1) {
                             # Tail call: return fn(args); → evaluate args, epilogue, jmp fn
                             var tcnoff = PEEKV(S);
@@ -3353,6 +3278,25 @@ fn _body_has_await(S): i64 {
     }
     STI(S, _sv);
     return _found;
+}
+
+# 6.6.7 — does the fn body starting at the cursor (just past its `{`) contain a `defer` (106)
+# or a `secret var` (108) ANYWHERE? Decides that its `return f(..);` never tail-calls
+# (`_tc_frame_divert`). ⚠ Lexical over the whole brace range, so a defer inside a nested closure
+# literal counts too — that costs the enclosing fn its tail calls, never correctness.
+fn _body_has_defer(S): i64 {
+    var i = GTI(S);
+    var n = GTCNT(S);
+    var bd = 1;
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 12) { return 0; }                   # EOF guard
+        if (t == 13) { bd = bd + 1; }
+        if (t == 14) { bd = bd - 1; if (bd == 0) { return 0; } }
+        if (t == 106 || t == 108) { return 1; }
+        i = i + 1;
+    }
+    return 0;
 }
 
 fn _body_field_accesses_tparam(S, fi): i64 {
@@ -6050,6 +5994,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # Emit jmp placeholder for defer flag init (backpatched after body)
     var defer_init_jmp = EJMP0(S);
     var body_cp = GCP(S);
+    _cur_fn_has_defer = _body_has_defer(S);   # 6.6.7: its `return f(..)` never tail-calls
     # Record body start for inline replay (x86 only; v6.3.5 AR-01: also under the
     # opt-in CYRIUS_MONOMORPH gate so the replay substrate can be proven byte-correct
     # without re-enabling _INLINE_OK by default).

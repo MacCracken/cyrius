@@ -187,7 +187,14 @@ fi
 # drifting. ⚠ This row has already earned its place: it went red the moment the divert's
 # predicate was tightened from "depth-1 literal" to "first token of an argument whose strmask
 # bit is set", which is exactly the drift it exists to catch. ───────────────────────────────
-grep -q '_tc_str_literal_arg(S, ti_after, _tc_cfi)' src/frontend/parse_fn.cyr \
+# 6.6.7: the tail arm's diverts moved into ONE predicate, so the route is three links —
+# PARSE_RETURN asks _tc_must_divert, which asks _tc_args_divert, which asks _tc_str_literal_arg.
+# Each link is checked, so dropping any of them from the chain fails here.
+grep -q '_tc_must_divert(S, FINDFN(S, PEEKV(S)), ti_after)' src/frontend/parse_fn.cyr \
+  || { echo "  FAIL: tail_call_literal_divert [source_criterion]: the tail path no longer consults _tc_must_divert"; fail=1; }
+sed -n '/^fn _tc_must_divert/,/^}/p' src/frontend/parse_fn.cyr | grep -q '_tc_args_divert(S, cfi, ti_after)' \
+  || { echo "  FAIL: tail_call_literal_divert [source_criterion]: _tc_must_divert no longer asks _tc_args_divert"; fail=1; }
+sed -n '/^fn _tc_args_divert/,/^}/p' src/frontend/parse_fn.cyr | grep -q '_tc_str_literal_arg(S, ti_after, cfi)' \
   || { echo "  FAIL: tail_call_literal_divert [source_criterion]: the tail path no longer routes its \`: Str\` divert through _tc_str_literal_arg"; fail=1; }
 TCB=$(sed -n '/^fn _tc_str_literal_arg/,/^}/p' src/frontend/parse_fn.cyr)
 echo "$TCB" | grep -q 'if (t == 30)' \

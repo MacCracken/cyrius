@@ -1178,3 +1178,10 @@ _chk_gate "$ROOT/tests/gates/codegen/hidden_temp_census.sh"
 # refusals are compile-time and CYRIUS_ASYNC cannot be set from a .tcyr. The runtime nested-fn
 # rows are tests/tcyr/crossos/defer_every_return_path.tcyr.
 _chk_gate "$ROOT/tests/gates/diagnostics/defer_misuse_refused.sh"
+
+# 6.6.7 (bite 2): a defer / secret runs on EVERY return path (tail-shaped `return f(..)` and
+# `return Ok(x)` included) with the whole return convention intact, and never rides an inline
+# replay. The runtime rows are tests/tcyr/crossos/defer_every_return_path.tcyr; this gate adds
+# what a .tcyr cannot reach — async (CYRIUS_ASYNC), the #inline warning, the aarch64 (qemu) /
+# PE (wine) legs of that tcyr, and cx rows — every compiler built from source.
+_chk_gate "$ROOT/tests/gates/codegen/defer_every_return_path.sh"

@@ -57,6 +57,45 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   state-0 landing only (not on a resume), the walker is emitted in coroutine mode, and a suspend
   exit lands past the walker (`_coro_sjp`), so a defer runs exactly once, when the body completes
   — `0,0,1` over three forces where it was `0,0,0`.
+- **A `defer` / `secret var` was skipped by every tail-shaped `return f(..);` — `return Ok(fd);`
+  and `return Err(e);` included (CVE-47).** (bite 2.) **Root cause:** PARSE_RETURN lowers
+  `return IDENT(args);` to epilogue + `jmp` (ETAILJMP; call + inline epilogue on cx), which never
+  reaches the return landing or the defer walker, and none of its diverts asked whether the fn had
+  a `defer`/`secret`. Ok/Err are synthesized ctor fns, so the value-form Result return is exactly
+  that shape. Measured on x86, aarch64, PE and cx: a zero-arg, with-arg, nested-if, 6-arg,
+  `Ok`/`Err`, closure-body and generic-instance tail return all ran their defer **0** times (want
+  1); a self-recursive tail call ran **1** of 4; a loop whose tail return lexically PRECEDES the
+  `defer` (registered on an earlier iteration) ran 0. A `secret var key[64]` left **66 bytes** of
+  key on the dead stack (x86; 65 on aarch64) and a static-storage `secret var big[200000]` kept
+  its pattern (**1515870810**) after the return. `build/cc5` (5.11.69) has it too. **Fix:** a
+  whole-body prescan at the fn's `{` (`_body_has_defer`: tok 106/108, the closure body included;
+  per-fn through the nested-fn snapshot) — a fn with a `defer`/`secret` anywhere in its body never
+  tail-calls; its `return f(..);` is an ordinary call that lands on the walker. A registered-so-far
+  count would have missed the loop shape. **What a consumer sees:** defers and zeroises run; such a
+  fn loses its tail calls, so a DEEP self-recursion in a fn with a `defer` now grows the stack
+  (documented in the guide's Defer section: write it as a loop, or keep the defer in a wrapper).
+  sigil, agnodrm, agnostic, kavach, itihas, aegis and the agnosys bundle can re-adopt `defer` in
+  Result-returning fns. See CVE-47 in `docs/audit/2026-09-03-security-audit.md`.
+- **The defer walker kept only the FIRST return register, so a call in a defer body destroyed the
+  rest of the return value.** (bite 2.) **Root cause:** the walker wrapped the blocks in one
+  `EPUSHR`/`EPOPR` (rax / x0 / r0), but a block is ordinary code. With a defer body that makes a
+  5-arg call: `return (7, 99)` gave **7,3**; `return (7, 99, 55)` gave **3,5**; `return Ok(99)`
+  (diverted) **0,3**; `?` propagating `Err(77)` **1,3**; `ret2(7, 99)` **7,3**; a two-word struct
+  `return p` **7,3** — on x86, aarch64 and PE. A `sys_write(1, "", 0)` in the body zeroed an `Ok`
+  payload outright. An `f64` return with float work in the body gave **75** for 25 (x86/PE); an
+  `f64v2` return **5,6** for 11,22 (x86 and aarch64 q0/q1); on aarch64 a 16-byte struct's second
+  word (x1, the AAPCS64 pair) was lost as well. **Fix:** per-backend `EDEFER_SAVE` /
+  `EDEFER_RESTORE` keep the WHOLE return convention, unconditionally, in a 16-byte-multiple area —
+  x86 (ELF/PE/Mach-O): rax, rdx, r8, xmm0, xmm1 (IR-opaque, rsp-relative); aarch64: x0-x3, q0, q1;
+  cx: r0-r5. Emitted only by fns that have a defer: every other fn is byte-identical (444-file
+  corpus: the 27 files that differ all compile a `defer`/`secret`).
+- **Every call inside a defer body ran with rsp misaligned by 8 (x86 / PE / Mach-O).** (bite 2.)
+  The walker's lone 8-byte push put each block — compiled at statement level, where rsp is
+  16-aligned — at rsp%16 == 8; a `?` inside an argument list (`snd(0, f()?)`) reached the walker
+  with its pending push still on the stack as well. The existing `withdefer` alignment row probed
+  only the BODY's call, so it was green by construction. **Fix:** the x86 walker re-aligns (`and
+  rsp,-16`, the entry rsp kept in the save area) before its 64-byte area. aarch64 was never
+  affected (16-byte push slots).
 - **A `defer`/`secret` in an inline-replayed fn ran at the CALLER's return.** (bite 2.) The replay
   re-parses the callee body inside the caller, so its block registered on the caller's defer
   table: `#inline fn g(a) { defer {..} return a + 1; }` called twice ran nothing until the caller
@@ -93,6 +132,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   target back — without it that `break` was an unpatched chain link, a wild jump).
 - cycc **1,328,336 → 1,337,344 B** (+9,008) for the snapshot helpers, the shared epilogue and the
   new diagnostics.
+- **The tail-call arm's diverts are ONE predicate, `_tc_must_divert`** (bite 2;
+  `src/frontend/parse_fn.cyr`): fifteen obligations bolted on one silent wrong value at a time
+  (v5.8.16 `&local` … 6.6.7 `defer`), spread over ~200 lines while the standing note and a code
+  comment each counted four, now live in `_tc_frame_divert` / `_tc_callee_divert` /
+  `_tc_args_divert`. Byte-identical: the 444-file corpus and all seven compiler forks compile
+  identically with the refactor alone.
+- `tests/gates/codegen/tail_call_literal_divert_depth.sh`'s source criterion follows the `: Str`
+  divert into the new predicate (PARSE_RETURN → `_tc_must_divert` → `_tc_args_divert` →
+  `_tc_str_literal_arg`, each link checked) (bite 2).
+- cycc **1,337,344 → 1,337,408 B** for the prescan, the divert predicate and the save/restore
+  emitters (bite 2).
 
 ### Added
 
@@ -104,6 +154,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   return, an enclosing defer registered before `f<T>()`, and a defer on a body that falls off its
   end. Green on x86_64, aarch64 (qemu + pi), Mach-O arm64 (ecb), Mach-O x86_64 (ach), PE (wine)
   and cx; each fix mutation-proven RED.
+- `tests/tcyr/crossos/defer_every_return_path.tcyr` — +54 rows (bite 2): every tail shape
+  (zero-arg, with arg, nested if, tail-before-defer loop, 6/7-arg, `Ok`/`Err`, self-recursive,
+  closure body, generic instance, after a closure / first `f<T>()`, same-struct pair tail) with
+  local-first and unreached controls; every return convention through a defer body that makes a
+  6-arg call, a 3-arg syscall, f64 and f64v2 work (tuple-2/3, `?` Err, `ret2`, P2, P3, f64, f64v2,
+  f64v4); stack and static `secret var` zeroised on a tail return (dead-stack scan with an
+  anti-vacuous plain-array twin); `#inline` / generic / SIMD-param fns with a defer.
+- `tests/tcyr/crossos/call_site_stack_alignment.tcyr` — three defer-BODY probe rows (one defer,
+  two defers, the `?`-with-a-pending-push path) plus an anti-vacuous twin; floor 64 → 67.
+- `tests/gates/codegen/defer_every_return_path.sh` — builds every compiler from source: async
+  (non-coroutine) tail return with `CYRIUS_ASYNC=1` (host + aarch64), the `#inline` warning, the
+  crossos tcyr under qemu-aarch64 and wine, and a 15-row cx program (the tcyr's 16-byte struct
+  rows are refused on cx by name). Mutation ledger in its header. Green on x86_64, aarch64 (qemu +
+  pi), Mach-O arm64 (ecb), Mach-O x86_64 (ach, under four argv0 lengths), PE (wine) and cx; cass
+  (real Windows) was down — pending for the release gate.
 
 ## [6.6.6] — 2026-09-20
 
