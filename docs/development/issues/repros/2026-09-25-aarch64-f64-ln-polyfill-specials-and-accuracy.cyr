@@ -1,0 +1,129 @@
+# aarch64 f64_ln / f64_log2 / f64_exp: IEEE special values come back wrong, and
+# the finite error is 40-460x what the polyfills' own comments claim.
+#
+# Build and run from the cyrius repo root, on BOTH targets:
+#   cyrius build --aarch64 docs/development/issues/repros/2026-09-25-aarch64-f64-ln-polyfill-specials-and-accuracy.cyr /tmp/lnpf-a64
+#   qemu-aarch64 /tmp/lnpf-a64; echo "exit=$?"     # -> 15 while the defects are present, 0 when fixed
+#   cyrius build docs/development/issues/repros/2026-09-25-aarch64-f64-ln-polyfill-specials-and-accuracy.cyr /tmp/lnpf-x86
+#   /tmp/lnpf-x86; echo "exit=$?"                  # -> 0 today: the x87 path already gives every answer
+#
+# Exits with the number of wrong answers. Special values must match IEEE-754 / C
+# exactly. Finite rows must land within 1 ulp of the correctly rounded value,
+# computed off-line with Python's decimal module at 60 digits and rounded to
+# double through fractions.Fraction. That bar is met by x87 and by any
+# fdlibm-grade polyfill, so a fix does not have to be correctly rounded to pass.
+
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/fmt.cyr"
+include "lib/math.cyr"
+
+fn _say(s): i64 {
+    syscall(1, 1, s, strlen(s));
+    return 0;
+}
+
+# 0 = finite, 1 = +inf, 2 = -inf, 3 = NaN.
+fn _cls(b): i64 {
+    if (((b >> 52) & 0x7FF) == 0x7FF) {
+        if ((b & 0x000FFFFFFFFFFFFF) != 0) { return 3; }
+        if (((b >> 63) & 1) == 1) { return 2; }
+        return 1;
+    }
+    return 0;
+}
+
+fn _show(c): i64 {
+    if (c == 1) { _say("+inf"); return 0; }
+    if (c == 2) { _say("-inf"); return 0; }
+    if (c == 3) { _say("NaN"); return 0; }
+    _say("finite");
+    return 0;
+}
+
+# Monotonic integer order over finite doubles, so |a - b| counts ulps across 0.
+fn _ord(b): i64 {
+    if (((b >> 63) & 1) == 1) { return 0 - (b & 0x7FFFFFFFFFFFFFFF); }
+    return b;
+}
+
+fn _ulps(a, b): i64 {
+    var d = _ord(a) - _ord(b);
+    if (d < 0) { d = 0 - d; }
+    return d;
+}
+
+# A special-value row: the class must match exactly. Returns 1 when wrong.
+fn _special(name, got, want): i64 {
+    var g = _cls(got);
+    _say("  ");
+    _say(name);
+    _say("  got ");
+    _show(g);
+    if (g == 0) { _say(" 0x"); fmt_hex(got); }
+    _say("  want ");
+    _show(want);
+    if (g != want) { _say("   <-- WRONG\n"); return 1; }
+    _say("\n");
+    return 0;
+}
+
+# A finite row: within 1 ulp of the correctly rounded bits. Returns 1 when wrong.
+fn _finite(name, got, want): i64 {
+    var d = _ulps(got, want);
+    if (_cls(got) != 0) { d = 0x7FFFFFFFFFFFFFFF; }
+    _say("  ");
+    _say(name);
+    _say("  got 0x");
+    fmt_hex(got);
+    _say("  cr 0x");
+    fmt_hex(want);
+    _say("  ");
+    if (d == 0x7FFFFFFFFFFFFFFF) { _say("non-finite"); }
+    else { fmt_int(d); _say(" ulp"); }
+    if (d > 1) { _say("   <-- WRONG\n"); return 1; }
+    _say("\n");
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    var PINF = 0x7FF0000000000000;
+    var NINF = 0xFFF0000000000000;
+    var QNAN = 0x7FF8000000000000;
+    var bad = 0;
+
+    _say("=== IEEE-754 / C special values ===\n");
+    bad = bad + _special("ln(+0)          ", f64_ln(0), 2);
+    bad = bad + _special("ln(-1)          ", f64_ln(0xBFF0000000000000), 3);
+    bad = bad + _special("ln(-inf)        ", f64_ln(NINF), 3);
+    bad = bad + _special("ln(+inf)        ", f64_ln(PINF), 1);
+    bad = bad + _special("ln(NaN)         ", f64_ln(QNAN), 3);
+    bad = bad + _special("log2(+0)        ", f64_log2(0), 2);
+    bad = bad + _special("log2(+inf)      ", f64_log2(PINF), 1);
+    # Control, not a defect: -0 happens to come out right on aarch64 too.
+    bad = bad + _special("ln(-0)          ", f64_ln(0x8000000000000000), 2);
+
+    _say("\n=== subnormal inputs (no implicit leading 1) ===\n");
+    bad = bad + _finite("ln(2^-1074)     ", f64_ln(1), 0xC0874385446D71C3);
+    bad = bad + _finite("ln(2^-1060)     ", f64_ln(0x4000), 0xC086F5E359F105F9);
+
+    _say("\n=== finite accuracy: worst inputs from a 166k-point scan ===\n");
+    # ln at the m = sqrt(2) reduction boundary, where |u| = 3 - 2*sqrt(2) and the
+    # first omitted series term is ~207 ulp of the result.
+    bad = bad + _finite("ln(1.41421356..)", f64_ln(0x3FF6A09E667F3AAF), 0x3FD62E42FEFA36C8);
+    bad = bad + _finite("ln(0.70716108..)", f64_ln(0x3FE6A11048957910), 0xBFD62D00E5EEFBB5);
+    bad = bad + _finite("ln(1.40564497..)", f64_ln(0x3FF67D85951E2D60), 0x3FD5CAB0CB34722E);
+    bad = bad + _finite("log2(1.4284646.)", f64_log2(0x3FF6DAFDC8BEAA30), 0x3FE07680139F1255);
+    bad = bad + _finite("exp(543.774652.)", f64_exp(0x4080FE327CF14777), 0x70F6A49CCEACE863);
+    bad = bad + _finite("exp(0.34660808.)", f64_exp(0x3FD62ED3AE4309F0), 0x3FF6A0D18E166449);
+
+    _say("\nwrong answers: ");
+    fmt_int(bad);
+    _say("\n");
+    return bad;
+}
+
+var r = main();
+syscall(60, r);

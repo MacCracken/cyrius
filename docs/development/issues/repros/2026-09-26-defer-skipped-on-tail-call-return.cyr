@@ -1,0 +1,56 @@
+# Repro: a pending `defer` is skipped when the fn returns through a direct call
+# in tail position (`return f();`) — for ANY callee, including one that returns a
+# plain single i64. Not specific to value-form Result pairs
+# (compare 2026-09-22-defer-skipped-on-result-return.cyr).
+#
+# Build + run:  cyrius build this.cyr out && ./out
+# Expected:     1 1 1 1
+# Actual:       0 1 0 1   (6.6.6 — x86_64, CYRIUS_DCE=1, and --aarch64 under qemu)
+# Columns: tail_zero_arg, local_first, tail_with_arg, arithmetic_after_call.
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/syscalls.cyr"
+include "lib/fmt.cyr"
+
+var ran = 0;
+
+fn _mark(): i64 { ran = ran + 1; return 0; }
+fn _value(): i64 { return 42; }
+fn _plus(n): i64 { return n + 1; }
+
+# 1. zero-arg call in tail position: the defer is SKIPPED
+fn tail_zero_arg(): i64 {
+    defer { _mark(); }
+    return _value();
+}
+
+# 2. the same call, through a local: the defer RUNS
+fn local_first(): i64 {
+    defer { _mark(); }
+    var r = _value();
+    return r;
+}
+
+# 3. a call with an argument in tail position: SKIPPED
+fn tail_with_arg(): i64 {
+    defer { _mark(); }
+    return _plus(41);
+}
+
+# 4. the call is not the whole return expression: RUNS
+fn arithmetic_after_call(): i64 {
+    defer { _mark(); }
+    return _value() + 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    ran = 0; tail_zero_arg();          fmt_int(ran); sys_write(1, " ", 1);
+    ran = 0; local_first();            fmt_int(ran); sys_write(1, " ", 1);
+    ran = 0; tail_with_arg();          fmt_int(ran); sys_write(1, " ", 1);
+    ran = 0; arithmetic_after_call();  fmt_int(ran); sys_write(1, "\n", 1);
+    return 0;
+}
+
+var _rc = main();
+sys_exit_group(_rc);
