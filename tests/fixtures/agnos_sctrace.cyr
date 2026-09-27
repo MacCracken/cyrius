@@ -105,6 +105,9 @@ fn _st_answer(mode, nr, k, a1, a3): i64 {
     return 0;
 }
 
+# ⚠ x86_64-Linux ONLY: the ptrace/fork/execve/wait4/kill numbers below and the user_regs_struct
+# offsets are x86_64's, and agnos is an x86_64 target, so the tracer never needs another host.
+#ifdef CYRIUS_ARCH_X86
 fn main(): i64 {
     args_init();
     if (argc() < 3) {
@@ -165,6 +168,10 @@ fn main(): i64 {
     syscall(61, pid, &st, 0, 0);
     return 0;
 }
+#endif
+#ifndef CYRIUS_ARCH_X86
+fn main(): i64 { return 2; }
+#endif
 
 var r = main();
 syscall(60, r);

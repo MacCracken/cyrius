@@ -416,10 +416,10 @@ fn sys_chan_endow(fd): i64 {
     return syscall(SYS_CHAN_OP, CH_ENDOW, fd, 0, 0);
 }
 
+var CH_ENDOW_STDIO = 1000;   # #97 CH_ENDOW a4 sentinel — deliberately > any record length
 # PTY-mode endowment (agnos 1.57.6): the endpoint becomes the child's fds 0/1/2 — the child's
 # stdin/stdout/stderr ARE the channel, which is what a terminal emulator hands a shell. Same
 # return and refusals as sys_chan_endow. (puka hand-rolled this as a raw 5-arg syscall.)
-var CH_ENDOW_STDIO = 1000;   # #97 CH_ENDOW a4 sentinel — deliberately > any record length
 fn sys_chan_endow_stdio(fd): i64 {
     if (fd < 0) { return 0 - CH_E_BADFD; }
     return syscall(SYS_CHAN_OP, CH_ENDOW, fd, 0, CH_ENDOW_STDIO);
