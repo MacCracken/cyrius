@@ -2,8 +2,9 @@
 # generated _to_json into garbage. The first field is emitted as `"#"`, and the
 # values are loaded at the wrong widths/offsets, i.e. past the end of the struct.
 #
-# Self-proving: exit 0 when every derived _to_json output below is correct and
-# round-trips, exit 1 otherwise. Measured on cycc 6.6.0, 6.6.2 and 6.6.6: exit 1.
+# Self-proving: exit 0 when every derived _to_json output below is correct and the
+# correct JSON decodes field by field, exit 1 otherwise. Measured on cycc 6.6.0, 6.6.2
+# and 6.6.6: exit 1. Fixed at 6.6.7 (bite 5): exit 0.
 # First seen by agnostik on 5.10.14.
 #   cyrius build docs/development/issues/repros/2026-09-22-agnostik-derive-serialize-comment-in-struct-body.cyr /tmp/dsc && /tmp/dsc
 #
@@ -77,8 +78,14 @@ fn main() {
     var bsb = str_builder_new(); Bad_to_json(b, bsb);
     var bj = str_builder_build(bsb);
     _check("(a) comment inside body ", bj, want5);
-    var b2 = Bad_from_json_str(str_data(bj));
-    if (load8(b2) != 85) { _fails = _fails + 1; println("(a) from_json_str does not round-trip"); }
+    # Decode the CORRECT JSON, field by field. (This used to decode the corrupted OUTPUT and
+    # check only byte 0, which the corruption happened to preserve — a vacuous check.)
+    var b2 = Bad_from_json_str(want5);
+    var bi = 0;
+    while (bi < 5) {
+        if (load8(b2 + bi) != load8(b + bi)) { _fails = _fails + 1; println("(a) from_json_str of the correct JSON decodes a wrong field"); bi = 5; }
+        bi = bi + 1;
+    }
 
     var m = alloc(10);
     store8(m, 7); store8(m + 1, 9); store64(m + 2, 123456789);

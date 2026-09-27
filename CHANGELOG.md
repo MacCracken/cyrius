@@ -6,6 +6,47 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.7] — 2026-09-27
 
+### Fixed
+
+- **`#derive` built its field table from a byte scan of the struct / enum body, so an ordinary
+  comment, a space before `:`, a field with no `;`, or `,`-separated enum members gave the
+  generated code a DIFFERENT layout from the struct's — silently, including out-of-bounds
+  stores from accessors.** (bite 5; filed by agnostik, latent in argonaut's five
+  trailing-comment `Serialize` structs and their copies in kybernet.) A comment inside the body
+  made `Serialize` emit a field named `#` and load values from past the struct (`{"#":330325,…}`
+  where `{"sql":85,…}` was right); a trailing comment made `Deserialize` of CORRECT JSON leave the
+  next field 0; `x : i8; y : i8;` made the derive think `x` was an untyped 8-byte field, so
+  `P_set_y` did `store64(p + 8)` on a 2-byte struct and **overwrote the neighbouring allocation**
+  (measured 1234 → 9, rc 0); `enum E { RED = 0, GREEN = 1 }` serialized as `nullnull"RED"` and
+  `E_from_json_str("\"GREEN\"")` returned `Err`. Other shapes failed loudly but misleadingly
+  (`expected '(' got fn`, `undefined function i8_to_json`). **Root cause:**
+  `PP_PARSE_STRUCT_DEF` (`src/frontend/lex_pp.cyr`) began a field only right after a `{` or `;`
+  byte, counted brace depth on every `{`/`}` byte (comments and char literals included), and
+  stopped names and types at a stop set that lacked `#`, tab, CR, `,` and `=` — while
+  `PARSE_STRUCT_DEF` / `PARSE_ENUM_DEF` read tokens, take `;` as optional, and take `,` between
+  enum members. **Fix:** the body is now walked as the parser reads it (`PP_DERIVE_FIELDS`):
+  `#`-to-end-of-line comments and every blank are trivia, a field is `name [: Type[<Elem>]]
+  [(params)] [= value] [; | ,]` (the last two for enum members). A declaration HEADER the derive
+  cannot name is refused by name (`error: #derive: unexpected '<' in the declaration of Box` —
+  generic structs were never supported); a BODY shape the grammar does not have stops the walk and
+  is left to the parser, which reports it at its real line — the walk accepts a superset of what
+  the parser accepts, so a stop is always also a parse error. The struct copy threads `PP_LEXST`, so a `{` in a comment or in `LB = '{'` neither opens nor closes the
+  declaration. The same walk replaces the two other byte scans in that function: the declaration
+  NAME is read as an identifier (`enum E: stack` used to name the codec `E:_to_json`; a tab after
+  the name went into every generated fn name), and the lines between `#derive(...)` and the
+  declaration may now be blank or indented (both reported "the following declaration is
+  neither"). **What a consumer sees:** every shape above now produces the parser's layout; no
+  source change is needed, argonaut and kybernet only repin. Every in-tree `.tcyr` / `.bcyr` /
+  `.fcyr` / program compiles byte-identically (472 of 472; the one difference is the filed
+  repro, which now passes). Test: `tests/tcyr/derive/derive_body_shapes.tcyr` — 36 checks,
+  Serialize bytes, Deserialize of the CORRECT JSON field by field (the repro's own round-trip
+  check was vacuous and is replaced), accessors with a neighbour-allocation canary, and enum
+  codecs over `,` / newline / comment / char-literal / `: stack` shapes.
+  `tests/gates/frontend/preprocessor_scratch_bounds.sh` follows the capture bounds (CVE-41) into
+  the new walk — the field and type names now share one bounded appender — and gains a
+  behavioural axis: a 40-byte struct, field, type and spaced `Vec< … >` type name are each refused,
+  a 31-byte one still compiles.
+
 ## [6.6.6] — 2026-09-20
 
 The 6.6.6 repair release — the 6.6.5 queue, and then what looking at it turned up. Every one of the six

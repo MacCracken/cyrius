@@ -66,15 +66,58 @@ grep -q '0x190700  pp_expand_outpos' "$MAIN" \
 # the smaller limit governs, and reading only the scratch declaration is how 64 looked safe.
 # ⚠ The overflow is SILENT (71 bytes into a 32-byte stride renames the NEIGHBOURING field), so a
 # behavioural probe exits 0 pre-fix. This has to be a static check.
-DERIVE_GUARDS=$(grep -oE '\((sni|fni|tni) >= [0-9]+\)' "$PP" | grep -oE '[0-9]+' | sort -u)
+# ⚠ 6.6.7 — the field-name and type-name captures are no longer two inline loops (`fni`, `tni`):
+# the body walk (PP_DERIVE_FIELDS) appends BOTH through one bounded helper, PP_DPUT, whose guard
+# is on `_pp_dlen`. So the captures are now the struct name (`sni`) and that one helper, and the
+# property becomes: both guards agree, and the field / type slots are written from source ONLY
+# through the helper. CHANGELOG [6.6.7]
+DERIVE_GUARDS=$(grep -oE '\((sni|_pp_dlen) >= [0-9]+\)' "$PP" | grep -oE '[0-9]+' | sort -u)
 NG4=$(printf '%s\n' "$DERIVE_GUARDS" | grep -c .)
 [ "$NG4" -eq 1 ] \
-    || fail "the #derive name captures disagree on their bound ($(printf '%s' "$DERIVE_GUARDS" | tr '\n' ' ')) — three captures in one construct, and a disagreement means one of them is the hole"
-for v in sni fni tni; do
+    || fail "the #derive name captures disagree on their bound ($(printf '%s' "$DERIVE_GUARDS" | tr '\n' ' ')) — a disagreement means one of them is the hole"
+for v in sni _pp_dlen; do
     grep -qE "\($v >= [0-9]+\)" "$PP" \
         || fail "the #derive capture bounded by \`$v\` has no guard — it writes source text into a fixed-stride slot with no limit (CVE-41)"
 done
 [ "$DERIVE_GUARDS" -lt 32 ] \
     || fail "the #derive name guards are $DERIVE_GUARDS, but the names are copied at a 32-byte stride — the bound must leave room for the NUL"
+# The field-name and type-name slots are filled by the bounded appender, and by nothing else
+# from source: every other store into them writes a literal terminator.
+grep -q 'PP_DAPPEND_ID(base, p, end, S + 0x1FC000 + fc \* 32' "$PP" \
+    || fail "the #derive field-name capture no longer goes through PP_DAPPEND_ID / PP_DPUT — find its bound (CVE-41)"
+grep -q 'PP_DTYPE(base, p + 1, end, S + 0x1FE000 + fc \* 32)' "$PP" \
+    || fail "the #derive type-name capture no longer goes through PP_DTYPE / PP_DPUT — find its bound (CVE-41)"
+RAW=$(sed 's/#.*//' "$PP" | grep -E 'store8\(S \+ 0x1F[CE]000 \+' | grep -vE ', 0\);' || true)
+[ -z "$RAW" ] \
+    || fail "a store into the #derive field/type slots bypasses the bounded appender: $RAW"
 
-echo "PASS preprocessor_scratch_bounds (filename capture bounded at $GUARDS of $USABLE free bytes across 3 loops; #define body bounded on the accumulating position; all 3 #derive name captures bounded at $DERIVE_GUARDS; map declares both)"
+# ── axis 5 (6.6.7): the same bounds, BEHAVIOURALLY. Axis 4 reads the source, so a capture
+# that stops calling the bounded helper (or a helper that stops checking) can still read green
+# there; here a 40-byte struct name, field name and type name must each be REFUSED by name, and
+# a 31-byte one must still compile. The body walk skips trivia inside `Vec< ... >`, so the
+# spaced type is its own row. CC defaults to the tree's build/cycc.
+CC=${CYCC:-"$ROOT/build/cycc"}
+[ -x "$CC" ] || fail "no compiler at $CC for the behavioural axis"
+T=$(mktemp -d "${TMPDIR:-/tmp}/ppsb.XXXXXX")
+trap 'rm -rf "$T"' EXIT
+L40=aaaaaaaaaabbbbbbbbbbccccccccccdddddddddd
+L31=aaaaaaaaaabbbbbbbbbbcccccccccc1
+refused() {   # <label> <expected message fragment> <source>
+    printf '%s\nvar r = 0;\n' "$3" > "$T/p.cyr"
+    if "$CC" < "$T/p.cyr" > "$T/p.bin" 2> "$T/p.err"; then
+        fail "$1: compiled (rc 0) — the 40-byte capture was not refused"
+    fi
+    grep -q "$2" "$T/p.err" || fail "$1: refused, but not by the capture bound: $(head -1 "$T/p.err")"
+}
+refused "struct name" "struct name too long" "#derive(accessors)
+struct S$L40 { a; }"
+refused "field name" "field name too long" "#derive(accessors)
+struct P { f$L40; }"
+refused "type name" "type name too long" "#derive(accessors)
+struct P { a: T$L40; }"
+refused "spaced Vec type name" "type name too long" "#derive(accessors)
+struct P { a: Vec< T$L40 >; }"
+printf '#derive(accessors)\nstruct P { %s: i64; }\nvar r = 0;\n' "$L31" > "$T/ok.cyr"
+"$CC" < "$T/ok.cyr" > "$T/ok.bin" 2> "$T/ok.err" || fail "a 31-byte field name was refused — the bound is off by one: $(head -1 "$T/ok.err")"
+
+echo "PASS preprocessor_scratch_bounds (filename capture bounded at $GUARDS of $USABLE free bytes across 3 loops; #define body bounded on the accumulating position; the #derive struct-name capture and the field/type appender bounded at $DERIVE_GUARDS, and refused at 40 bytes in all four shapes; map declares both)"
