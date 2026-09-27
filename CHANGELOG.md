@@ -15,6 +15,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - **sandhi 1.9.17 → 1.10.0** — a toolchain move (pin 6.6.2 → 6.6.6). The only code difference is
     `SANDHI_VERSION`, so the default request header now reads `User-Agent: sandhi/1.10.0`; no
     surface change (826 fns, 196 top-level vars, identical).
+  - **sakshi 2.5.2 → 2.5.5** — ⚠ **absolute timestamps jump once.** 2.5.4 anchors the timeline to
+    the reference clock at calibration (MONOTONIC_RAW on Linux, QueryPerformanceCounter on Windows),
+    so timestamps from different processes are now comparable where they could differ by seconds,
+    and `sakshi_clock_recalibrate` never steps the clock backwards. On Windows the reference clock
+    moves from GetTickCount64 to QPC/QPF: PE timestamps and span durations had run ~1.6× fast. x86_64
+    calibration bias goes from -246 ppm to +2.7 ppm. 2.5.5: a calibration window stretched by a stall
+    is rejected instead of wrapping i64 and installing a garbage rate. On aarch64, init now makes one
+    `clock_gettime` call — a seccomp allowlist that assumed sakshi's init was syscall-free must allow it.
 
 ## [6.6.6] — 2026-09-20
 
