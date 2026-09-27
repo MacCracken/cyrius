@@ -45,14 +45,33 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   clean"; the generated-file skip was deliberately NOT widened to `GENERATED` headers — a file
   too large to lint is reported, not hidden. Empty `.cyr` files become lint errors, matching
   cyrlint's own verdict (none exist in `~/Repos` to depth 4). Gates:
-  `tests/gates/toolchain/audit_walk_fails_closed.sh` (40 checks — fake crashing, hanging,
+  `tests/gates/toolchain/audit_walk_fails_closed.sh` (47 checks — fake crashing, hanging,
   refusing, missing and lying linters and doc tools; the real cyrlint on a >1028 KB non-bundle
   file and an empty file; the driver's lint suite against a fake cyrlint, including one that
-  answers only the positive fixture; `cyrius audit` over the rekha shape; CI's step; seven
-  mutations, each RED) and `tests/tcyr/crossos/exec_capture_status.tcyr` (18 assertions, run
+  answers only the positive fixture; `cyrius audit` over the rekha shape; CI's step; ten
+  mutations, each RED) and `tests/tcyr/crossos/exec_capture_status.tcyr` (23 assertions, run
   on real pi / ecb / ach; 12 under wine — cass was down, so real Windows is pending the release
   gate).
 
+- **The capture and run verbs decoded a wait status that `waitpid` never wrote** (bite 9 review).
+  **Root cause:** `_proc_wait_deadline` (`lib/process.cyr`) and its twin
+  `_regression_wait_deadline` (`lib/regression.cyr`) ignored `waitpid`'s return in the untimed
+  path and reported "reaped", and in the timed path read a `waitpid` error as the DEADLINE. A
+  process that inherited `SIGCHLD = SIG_IGN` (it survives `execve`) has its children
+  auto-reaped by the kernel: `waitpid` blocks until the child exits, fails `ECHILD`, and leaves
+  the status buffer untouched — so `exec_capture_status` decoded a stack word. Measured: a
+  `/bin/false` child reported as `exit 0` (fail-OPEN, the one thing the verb exists to prevent),
+  and a tree `cyrius audit` run from such a parent failed every file as `the tool crashed,
+  signal 48`. **Fix:** both waits retry `EINTR` and return -1 when `waitpid` never reaped the
+  child; nothing decodes the buffer then. `exec_capture_status`,
+  `regression_exec_capture_status` and the new `regression_exec_with_arg_capture_both_status`
+  report -1 ("not observed" — an error to the walkers, never a guessed -2); `exec_vec`,
+  `exec_env`, `exec_vec_str`, `exec_env_str`, `exec_cmd`, `regression_exec_run` and
+  `regression_pipe_to_bin_capture` return -1; `run` / `wait_pid` return
+  `Err(PROC_ECHILD)` (new, 10). A deadline that fired and killed the child is still -2.
+  **What a consumer sees:** under an inherited `SIG_IGN` these verbs now say "unknown" instead of
+  a made-up exit code. Pinned by SIG_IGN rows in `tests/tcyr/crossos/exec_capture_status.tcyr`
+  (untimed and timed) and the new `tests/tcyr/platform/regression_wait_unobserved.tcyr`.
 ### Changed
 
 - **`scripts/lib/audit-walk.sh` deleted** (bite 9). The bash twin of `lib/audit_walk.cyr` had
@@ -64,8 +83,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- **`exec_capture_status`** (`lib/process.cyr`, all targets) and **`audit_print_errors`**
-  (`lib/audit_walk.cyr`) — see *Fixed* above. `docs/api-surface.snapshot` +4 entries.
+- **`exec_capture_status`** (`lib/process.cyr`, all targets), **`audit_print_errors`**
+  (`lib/audit_walk.cyr`), **`regression_exec_with_arg_capture_both_status`**
+  (`lib/regression.cyr`) and the **`PROC_ECHILD`** constant — see *Fixed* above.
+  `docs/api-surface.snapshot` +5 entries.
 
 ## [6.6.6] — 2026-09-20
 

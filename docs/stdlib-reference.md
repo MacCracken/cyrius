@@ -601,7 +601,7 @@ Process management with Result returns.
 | `spawn` | `spawn(cmd, a1, a2) → Result(pid)` | Background run |
 | `wait_pid` | `wait_pid(pid) → Result(exit)` | Wait for pid |
 | `exec_capture` | `exec_capture(args, buf, len) → n` | Capture stdout (cstr argv vec); the exit status is discarded |
-| `exec_capture_status` | `exec_capture_status(args, buf, len, st) → n` | Capture stdout AND report the end: `st[0]` = exit code / 128+sig / -2 deadline kill / -1 nothing ran, `st[1]` = 1 on a signal death (6.6.7). Use it whenever a failed run must not read as short output |
+| `exec_capture_status` | `exec_capture_status(args, buf, len, st) → n` | Capture stdout AND report the end: `st[0]` = exit code / 128+sig / -2 deadline kill / -1 nothing ran or the end was never observed (e.g. an inherited SIGCHLD = SIG_IGN), `st[1]` = 1 on a signal death (6.6.7). Use it whenever a failed run must not read as short output |
 
 ### fs.cyr
 
@@ -1751,6 +1751,7 @@ Testing-stdlib primitives: display formatting, buffer scanning, process executio
 | `regression_exec_run` | `regression_exec_run(bin_path, envp) → exit` | Run binary (no args), discard I/O; return exit code |
 | `regression_exec_with_arg_capture` | `regression_exec_with_arg_capture(bin_path, arg, buf, buflen, envp) → bytes` | Run binary with one arg, capture stdout |
 | `regression_exec_with_arg_capture_both` | `regression_exec_with_arg_capture_both(bin_path, arg, buf, buflen, envp) → bytes` | Run binary with arg, capture stdout+stderr |
+| `regression_exec_with_arg_capture_both_status` | `regression_exec_with_arg_capture_both_status(bin_path, arg, buf, buflen, envp, st) → bytes` | The same, and report how that ONE run ended: `st[0]` = exit / 128+sig / -2 deadline / -1 not observed, `st[1]` = 1 on a signal death (6.6.7). Count markers and judge the run from the same capture |
 | `regression_network_probe` | `regression_network_probe(addr_ipv4, port, timeout_ms) → 0/1` | TCP reachability probe (non-blocking connect + poll) |
 | `regression_ssh_target` | `regression_ssh_target(env_name, default_name) → name` | Resolve SSH target (env override or default) |
 | `regression_ssh_skip_check` | `regression_ssh_skip_check(target) → 0/1` | Test SSH reachability via ssh -o BatchMode |

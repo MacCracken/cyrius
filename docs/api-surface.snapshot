@@ -2409,6 +2409,7 @@ regression::regression_exec_in_dir3_env/8
 regression::regression_exec_run/2
 regression::regression_exec_with_arg_capture/5
 regression::regression_exec_with_arg_capture_both/5
+regression::regression_exec_with_arg_capture_both_status/6
 regression::regression_file_contains_substr/2
 regression::regression_network_probe/3
 regression::regression_pipe_read_all/4

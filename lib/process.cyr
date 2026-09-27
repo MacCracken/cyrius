@@ -82,6 +82,11 @@ var _PROC_DEADLINE_MS = 0;
 # apart uses `exec_capture_status`, which reports the exit code, the signal and the deadline.
 # CHANGELOG [6.6.7]
 var PROC_ETIMEDOUT = 110;
+# errno ECHILD. `run` / `wait_pid` report `Err(PROC_ECHILD)` when waitpid never reaped the
+# child (e.g. the process inherited SIGCHLD = SIG_IGN), so the exit status is UNKNOWN — not a
+# decoded stack word. The i64-shaped `exec_*` verbs report the same case as -1.
+# CHANGELOG [6.6.7]
+var PROC_ECHILD = 10;
 
 # Bound every child this module WAITS for to `ms` milliseconds; 0 = wait for ever (the
 # default, and the pre-6.6.6 behaviour). Returns the previous value, so a caller can set a
@@ -113,28 +118,38 @@ fn _proc_child_guard(ppid_before): i64 {
     return 0;
 }
 
-# Wait for `pid`, but not for ever. Returns 1 if the child was reaped normally, 0 if the
-# deadline (or a waitpid error) forced a SIGKILL; `stbuf` holds the status either way.
-# `timeout_ms <= 0` is the historical blocking wait. A waitpid error KILLS rather than
-# returning: a bare return there is an ABANDONMENT path, the very thing a deadline exists to
-# prevent — the correction cbt/build.cyr's `run_binary_timed` took at v6.5.51.
+# Wait for `pid`, but not for ever. Returns 1 if the child was reaped normally (`stbuf` holds
+# its status), 0 if the deadline forced a SIGKILL, and -1 if waitpid failed before either —
+# then `stbuf` was NEVER WRITTEN and must not be decoded. That is not hypothetical: a caller
+# that inherited SIGCHLD = SIG_IGN (it survives execve) has its children auto-reaped by the
+# kernel, so waitpid blocks until they exit and then fails ECHILD; decoding the untouched
+# stack word there reported a failed child as "exit 0". CHANGELOG [6.6.7]
+# `timeout_ms <= 0` is the historical blocking wait (EINTR retried). A waitpid error in the
+# timed loop still KILLS before returning: a bare return there is an ABANDONMENT path, the
+# very thing a deadline exists to prevent — the correction cbt/build.cyr's
+# `run_binary_timed` took at v6.5.51.
 # `syscall(7, 0, 0, slice)` is poll(NULL, 0, ms), i.e. a portable millisecond sleep (the
 # backend translates 7 to Darwin poll / aarch64 ppoll).
 fn _proc_wait_deadline(pid, stbuf, timeout_ms): i64 {
-    if (timeout_ms <= 0) { sys_waitpid(pid, stbuf, 0); return 1; }
+    if (timeout_ms <= 0) {
+        var bw = sys_waitpid(pid, stbuf, 0);
+        while (bw == 0 - 4) { bw = sys_waitpid(pid, stbuf, 0); }   # EINTR
+        if (bw == pid) { return 1; }
+        return 0 - 1;
+    }
     var waited = 0;
     var slice = 1;
     while (waited < timeout_ms) {
         var w = sys_waitpid(pid, stbuf, 1);
         if (w == pid) { return 1; }
-        if (w < 0) { sys_kill(pid, 9); sys_waitpid(pid, stbuf, 0); return 0; }
+        if (w < 0) { sys_kill(pid, 9); sys_waitpid(pid, stbuf, 0); return 0 - 1; }
         syscall(7, 0, 0, slice);
         waited = waited + slice;
         if (waited >= 50) { slice = 10; }
         if (waited >= 2000) { slice = 50; }
     }
-    sys_kill(pid, 9);
-    sys_waitpid(pid, stbuf, 0);
+    sys_kill(pid, 9);          # the deadline fired and WE killed it: 0 is the truth even
+    sys_waitpid(pid, stbuf, 0); # if an auto-reap leaves this reap nothing to collect
     return 0;
 }
 
@@ -211,6 +226,7 @@ fn run(cmd, arg1, arg2): Result {
     var status_buf[4];
     var reaped = _proc_wait_deadline(pid, &status_buf, proc_timeout_ms());
     if (reaped == 0) { return Err(PROC_ETIMEDOUT); }
+    if (reaped < 0) { return Err(PROC_ECHILD); }
     var status = load32(&status_buf);
     if (WIFEXITED(status) == 1) { return Ok(WEXITSTATUS(status)); }
     if (WIFSIGNALED(status) == 1) { return Ok(128 + WTERMSIG(status)); }
@@ -275,6 +291,7 @@ fn wait_pid(pid): Result {
     # gets that child KILLED here — which is the point of asking for one.
     var reaped = _proc_wait_deadline(pid, &status_buf, proc_timeout_ms());
     if (reaped == 0) { return Err(PROC_ETIMEDOUT); }
+    if (reaped < 0) { return Err(PROC_ECHILD); }
     var status = load32(&status_buf);
     if (WIFEXITED(status) == 1) { return Ok(WEXITSTATUS(status)); }
     if (WIFSIGNALED(status) == 1) { return Ok(128 + WTERMSIG(status)); }
@@ -353,6 +370,7 @@ fn exec_vec(args): i64 {
     # different report from "it died".
     var reaped = _proc_wait_deadline(pid, &stbuf, proc_timeout_ms());
     if (reaped == 0) { return 0 - 2; }
+    if (reaped < 0) { return 0 - 1; }
     var st = load32(&stbuf);
     if (WIFEXITED(st) == 1) { return WEXITSTATUS(st); }
     return 0 - 1;
@@ -360,14 +378,18 @@ fn exec_vec(args): i64 {
 
 # Decode a wait(2) status word into `status_out`'s two i64 slots (the shape
 # lib/regression.cyr's `regression_exec_capture_status` uses): [0] = exit code (0..255),
-# 128+sig on a signal death, -2 when `reaped` == 0 (the deadline killed it); [1] = 1 iff a
-# signal killed the child (a crash — `exit(139)` and SIGSEGV both read 139 in slot 0).
+# 128+sig on a signal death, -2 when `reaped` == 0 (the deadline killed it), -1 when
+# `reaped` < 0 (waitpid never reaped the child, so `st` is not a status and is NOT decoded);
+# [1] = 1 iff a signal killed the child (a crash — `exit(139)` and SIGSEGV both read 139 in
+# slot 0).
 fn _proc_store_status(status_out, reaped, st): i64 {
     var code = 0 - 1;
     var sig = 0;
-    if (WIFEXITED(st) == 1) { code = WEXITSTATUS(st); }
-    if (WIFSIGNALED(st) == 1) { code = 128 + WTERMSIG(st); sig = 1; }
-    if (reaped == 0) { code = 0 - 2; sig = 0; }
+    if (reaped == 1) {
+        if (WIFEXITED(st) == 1) { code = WEXITSTATUS(st); }
+        if (WIFSIGNALED(st) == 1) { code = 128 + WTERMSIG(st); sig = 1; }
+    }
+    if (reaped == 0) { code = 0 - 2; }
     store64(status_out, code);
     store64(status_out + 8, sig);
     return 0;
@@ -376,8 +398,9 @@ fn _proc_store_status(status_out, reaped, st): i64 {
 # Run command with cstr args vec, capture stdout, and REPORT HOW IT ENDED. Returns bytes
 # read (-1 when nothing could be spawned). `status_out` points to TWO i64 slots:
 #   [0] exit code 0..255 · 128+sig on a signal death · -2 deadline kill (proc_set_timeout_ms)
-#       · -1 nothing ran (empty argv, pipe or fork failure). A path execve cannot run is the
-#       child's own exit 127.
+#       · -1 nothing ran (empty argv, pipe or fork failure) OR the end was never observed
+#       (waitpid did not reap the child — e.g. an inherited SIGCHLD = SIG_IGN auto-reaped
+#       it). A path execve cannot run is the child's own exit 127.
 #   [1] 1 iff a signal killed the child, else 0.
 # Use this, not `exec_capture`, whenever "the tool failed" must not read as "the tool said
 # nothing" (see the ETIMEDOUT note above). Same argv shape as exec_capture (cstr).
@@ -419,8 +442,11 @@ fn exec_capture_status(args, buf, buflen, status_out): i64 {
     var cut = _proc_read_cut;
     sys_close(rfd);
     var stbuf[4];
+    store32(&stbuf, 0 - 1);   # never a stale stack word, even if a path below forgets
     var reaped = _proc_wait_deadline(pid, &stbuf, proc_timeout_ms());
-    if (cut == 1) { reaped = 0; }   # the reader gave up at the deadline: report THAT
+    # The reader gave up at the deadline: report THAT — unless waitpid never saw the child,
+    # which is "unknown" (-1), never a guessed -2.
+    if (cut == 1) { if (reaped == 1) { reaped = 0; } }
     _proc_store_status(status_out, reaped, load32(&stbuf));
     return total;
 }
@@ -470,6 +496,7 @@ fn exec_env(args, env): i64 {
     var stbuf[4];
     var reaped = _proc_wait_deadline(pid, &stbuf, proc_timeout_ms());
     if (reaped == 0) { return 0 - 2; }
+    if (reaped < 0) { return 0 - 1; }
     var st = load32(&stbuf);
     if (WIFEXITED(st) == 1) { return WEXITSTATUS(st); }
     return 0 - 1;
@@ -520,6 +547,7 @@ fn exec_vec_str(args): i64 {
     var stbuf[4];
     var reaped = _proc_wait_deadline(pid, &stbuf, proc_timeout_ms());
     if (reaped == 0) { return 0 - 2; }
+    if (reaped < 0) { return 0 - 1; }
     var st = load32(&stbuf);
     if (WIFEXITED(st) == 1) { return WEXITSTATUS(st); }
     return 0 - 1;
@@ -599,6 +627,7 @@ fn exec_env_str(args, env): i64 {
     var stbuf[4];
     var reaped = _proc_wait_deadline(pid, &stbuf, proc_timeout_ms());
     if (reaped == 0) { return 0 - 2; }
+    if (reaped < 0) { return 0 - 1; }
     var st = load32(&stbuf);
     if (WIFEXITED(st) == 1) { return WEXITSTATUS(st); }
     return 0 - 1;
@@ -674,6 +703,7 @@ fn exec_cmd(cmdline): i64 {
     var stbuf[4];
     var reaped = _proc_wait_deadline(pid, &stbuf, proc_timeout_ms());
     if (reaped == 0) { return 0 - 2; }
+    if (reaped < 0) { return 0 - 1; }
     var st = load32(&stbuf);
     if (WIFEXITED(st) == 1) { return WEXITSTATUS(st); }
     return 0 - 1;

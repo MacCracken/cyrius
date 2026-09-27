@@ -134,6 +134,28 @@ fn main(): i64 {
     proc_set_timeout_ms(prev);
     assert_eq(load64(st), 0 - 2, "a child cut off at the idle deadline reports -2");
     assert_eq(load64(st + 8), 0, "…not as the SIGPIPE the reader caused");
+
+    # An inherited SIGCHLD = SIG_IGN (it survives execve — `cyrius audit` run from such a
+    # parent gets it) makes the kernel auto-reap: waitpid blocks until the child exits, then
+    # fails ECHILD, and the status buffer is NEVER WRITTEN. Decoding it anyway read a stack
+    # word — "exit 0" for a failed child, or "signal 48". The truthful answer is -1 (unknown),
+    # or the real 73 on a kernel that still lets us reap; never 0, never a made-up signal.
+    # Untimed (how `cyrius audit` runs) AND timed (how the check driver runs). CHANGELOG [6.6.7]
+    signal_ignore(SIGCHLD);
+    var un = _run("say", buf, st);
+    var ucode = load64(st);
+    var usig = load64(st + 8);
+    prev = proc_set_timeout_ms(5000);
+    _run("say", buf, st);
+    proc_set_timeout_ms(prev);
+    var tcode = load64(st);
+    var tsig = load64(st + 8);
+    signal_default(SIGCHLD);
+    assert_eq(un, strlen(SAY), "SIGCHLD ignored: the capture itself still works");
+    assert_eq(ucode == 0 - 1 || ucode == 73, 1, "SIGCHLD ignored, untimed: -1 (unobserved) or the real 73");
+    assert_eq(usig, 0, "…and no invented signal death");
+    assert_eq(tcode == 0 - 1 || tcode == 73, 1, "SIGCHLD ignored, timed: -1, never a guessed -2 deadline");
+    assert_eq(tsig, 0, "…and no invented signal death");
     #endif
 
     var r = assert_summary();
