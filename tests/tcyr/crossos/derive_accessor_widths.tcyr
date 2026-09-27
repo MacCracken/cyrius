@@ -4,8 +4,11 @@
 # (sizeof 2) `P_set_y` stored bytes 1..8, into the NEXT allocation, and `P_set_x` overwrote
 # `y`; the getters returned neighbouring bytes as the value's high bits. The spaced-colon
 # shape (`x : i8`) is here too: until the same release the derive did not see its type at all
-# and put `y` at offset 8. In crossos/ because the widths are exercised by each target's own
-# load/store emitters. CHANGELOG [6.6.7]
+# and put `y` at offset 8. A narrow getter also SIGN-extends, the way `p.field` reads an
+# i8/i16/i32 (movsx): a plain loadW zero-extends, so a stored -1 in an i8 read back as 255
+# through `Narrow_a(p)` while `p.a` said -1 — the negative rows below pin that. In crossos/
+# because the widths and the shift pair are exercised by each target's own emitters.
+# CHANGELOG [6.6.7]
 include "lib/syscalls.cyr"
 include "lib/string.cyr"
 include "lib/alloc.cyr"
@@ -40,6 +43,24 @@ fn main() {
     assert_eq(load8(p + 15), 0x5A, "e at byte 15");
     assert_eq(load64(nb), 1234, "neighbour allocation untouched (0..7)");
     assert_eq(load64(nb + 8), 5678, "neighbour allocation untouched (8..15)");
+
+    # Negative values: the getter must agree with the typed field read, which sign-extends.
+    Narrow_set_a(p, 0 - 1);
+    Narrow_set_b(p, 0 - 2);
+    Narrow_set_c(p, 0 - 3);
+    Narrow_set_e(p, 0 - 128);
+    var q: Narrow = p;
+    assert_eq(Narrow_a(p), 0 - 1, "i8 getter sign-extends -1");
+    assert_eq(Narrow_b(p), 0 - 2, "i16 getter sign-extends -2");
+    assert_eq(Narrow_c(p), 0 - 3, "i32 getter sign-extends -3");
+    assert_eq(Narrow_e(p), 0 - 128, "i8 getter sign-extends the minimum");
+    assert_eq(Narrow_a(p), q.a, "i8 getter == p.a");
+    assert_eq(Narrow_b(p), q.b, "i16 getter == p.b");
+    assert_eq(Narrow_c(p), q.c, "i32 getter == p.c");
+    assert_eq(Narrow_d(p), 0x1122334455667788, "i64 untouched by the narrow setters");
+    Narrow_set_a(p, 0x7F);
+    assert_eq(Narrow_a(p), 0x7F, "i8 getter: the maximum stays positive");
+    assert_eq(load64(nb), 1234, "neighbour still untouched after the negative stores");
 
     # The filed shape: a 2-byte struct followed by an 8-byte allocation.
     assert_eq(sizeof(Spaced), 2, "Spaced is two bytes");

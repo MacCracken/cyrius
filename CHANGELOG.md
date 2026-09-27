@@ -61,13 +61,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `PP_DERIVE_ACCESSORS_BODY` emitted `load64` / `store64` unconditionally; `Serialize` and
   `Deserialize` had been width-correct since 5.9.36 and accessors were the one family left
   behind. **Fix:** the accessor uses the field's own width (`load8/16/32/64`, `store8/16/32/64`,
-  from the same exact-name match the offset table uses — `PP_DFIELD_BITS`). i64, untyped, `Str`,
-  `Vec`, `f64` and nested-struct fields are 8-byte slots and emit exactly what they did before;
-  every in-tree program compiles byte-identically except the new test above. **What a consumer
-  sees:** a narrow field's accessor now reads and writes only that field. Test:
-  `tests/tcyr/crossos/derive_accessor_widths.tcyr` (14 checks, run on each target's own
-  load/store emitters: every width set in reverse order so a too-wide store shows, plus the filed
-  2-byte shape with a neighbour canary; 7 of 14 fail before the fix).
+  from the same exact-name match the offset table uses — `PP_DFIELD_BITS`), and a narrow getter
+  **sign-extends** — `(loadW(p + off) << S) >>> S`, `S = 64 - W` — because the language reads an
+  `i8` / `i16` / `i32` field signed (`p.x` is `movsx`) and `loadW` zero-extends: a width-only fix
+  made `P_x(p)` return 255 where `p.x` said -1, and broke a negative round-trip
+  (`S_set_err(s, -3); S_err(s)`) that the old over-wide `load64`/`store64` pair had happened to
+  preserve. i64, untyped, `Str`, `Vec`, `f64` and nested-struct fields are 8-byte slots and emit
+  exactly what they did before; every in-tree program compiles byte-identically except the two
+  tests with narrow-field accessors, and the shift-pair getter still inlines. **What a consumer
+  sees:** a narrow field's accessor now reads and writes only that field, and its getter returns
+  the same signed value as `p.field`. Test: `tests/tcyr/crossos/derive_accessor_widths.tcyr`
+  (24 checks, run on each target's own load/store emitters: every width set in reverse order so a
+  too-wide store shows, the filed 2-byte shape with a neighbour canary, and negative values
+  checked against both `-N` and `p.field`; 7 fail on the zero-extending width-only emit).
 - **`#derive` now FAILS THE BUILD when its field table disagrees with the parser's struct
   layout, instead of generating accessors and codecs against the wrong offsets.** (bite 5, the
   backstop.) The derive computes offsets itself and every generated fn trusts them; the body walk

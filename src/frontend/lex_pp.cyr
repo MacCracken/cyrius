@@ -1317,7 +1317,12 @@ fn PP_DVALUE(base, p, end): i64 {
 # the parser also allows. `end` (stop) on any other byte.
 fn PP_DFIELD_TAIL(S, base, p, end, fc): i64 {
     p = PP_DTRIV(base, p, end);
-    if (p < end) { if (load8(base + p) == 58) { p = PP_DTYPE(base, p + 1, end, S + 0x1FE000 + fc * 32); p = PP_DTRIV(base, p, end); } }
+    if (p < end) {
+        if (load8(base + p) == 58) {
+            p = PP_DTYPE(base, p + 1, end, S + 0x1FE000 + fc * 32);
+            p = PP_DTRIV(base, p, end);
+        }
+    }
     # `= value` is enum-member syntax only; in a struct it stops the walk.
     # ⛔ A PAYLOAD variant (`Circle(r)`, `None()`) is REFUSED: the derived codec maps a value to
     # a member NAME by comparing against the member's constant, and a constructor has no such
@@ -1325,7 +1330,12 @@ fn PP_DFIELD_TAIL(S, base, p, end, fc): i64 {
     # the byte scan kept `Circle(r)` as the name, which failed to compile by accident; the walk
     # must not turn that into silence. CHANGELOG [6.6.7]
     if (_pp_decl_is_enum == 1) {
-        if (p < end) { if (load8(base + p) == 40) { PP_DERIVE_BAD(S, 40, " (a variant with a payload; the derived codec handles plain members only) in the body of ", 89); } }
+        if (p < end) {
+            if (load8(base + p) == 40) {
+                var pm = " (a variant with a payload; the derived codec handles plain members only) in the body of ";
+                PP_DERIVE_BAD(S, 40, pm, 89);
+            }
+        }
         if (p < end) { if (load8(base + p) == 61) { p = PP_DVALUE(base, p + 1, end); p = PP_DTRIV(base, p, end); } }
     }
     if (p >= end) { return p; }
@@ -1356,12 +1366,14 @@ fn PP_DERIVE_FIELDS(S, base, p, end): i64 {
         # Process struct (22 fields with `#derive(accessors)`) overflowed field_types →
         # wrong accessor offsets → CR3=0x2 page-fault on first kernel context switch.
         if (fc >= 256) {
-            syscall(SYS_WRITE, 2, "error: #derive struct field cap exceeded (max 256 — raise in lex_pp.cyr / S+0x1FC000 region)\n", 95);
+            var cm = "error: #derive struct field cap exceeded (max 256 — raise in lex_pp.cyr / S+0x1FC000 region)\n";
+            syscall(SYS_WRITE, 2, cm, 95);
             syscall(SYS_EXIT, 1);
         }
         # ⛔ v6.5.47 (CVE-41) — bounded at 31 bytes, into a 32-byte stride (PP_DPUT).
         _pp_dlen = 0;
-        p = PP_DAPPEND_ID(base, p, end, S + 0x1FC000 + fc * 32, "error: #derive field name too long (max 31 bytes)\n", 50);
+        var nm = "error: #derive field name too long (max 31 bytes)\n";
+        p = PP_DAPPEND_ID(base, p, end, S + 0x1FC000 + fc * 32, nm, 50);
         store8(S + 0x1FE000 + fc * 32, 0);
         p = PP_DFIELD_TAIL(S, base, p, end, fc);
         fc = fc + 1;
@@ -1566,7 +1578,9 @@ fn PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op): i64 {
     # The field table is built by a separate walk over the body, token by token — see
     # PP_DERIVE_FIELDS. An unterminated body collects nothing; the parser reports it.
     var fc = 0;
-    if (body_open >= 0) { if (body_close > body_open) { fc = PP_DERIVE_FIELDS(S, src_base, body_open + 1, body_close); } }
+    if (body_open >= 0) {
+        if (body_close > body_open) { fc = PP_DERIVE_FIELDS(S, src_base, body_open + 1, body_close); }
+    }
     ip = cp;
     # v6.5.20 — the closing-`}` line's tail (part 3 above). Its offset is HANDED OFF; the
     # entry-point handler flattens the generated bodies onto this same line, copies the
@@ -1644,7 +1658,13 @@ fn PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op): i64 {
     # older kavach copies vendored by mehman, stiva, aethersafha, agnosai and agnostic — so the
     # backstop must not be what turns it into a build failure.
     _pp_dchk_pending = 0;
-    if (_pp_decl_is_enum == 0) { if (fc > 0) { if (_pp_dfull == 1) { if (seen == 0) { _pp_dchk_pending = 1; _pp_dchk_size = cumul; } } } }
+    if (_pp_decl_is_enum == 0) {
+        if (fc > 0) {
+            if (_pp_dfull == 1) {
+                if (seen == 0) { _pp_dchk_pending = 1; _pp_dchk_size = cumul; }
+            }
+        }
+    }
     return ip;
 }
 
@@ -1687,7 +1707,8 @@ fn PP_DERIVE_EMIT_CHK(S, out, op): i64 {
     op = op + PP_EMIT_STR(out, op, S + 0x197020);
     op = op + PP_EMIT_STR(out, op, ") == ");
     op = op + PP_EMIT_INT(out, op, _pp_dchk_size);
-    op = op + PP_EMIT_STR(out, op, ", \"#derive: field offsets disagree with the struct layout (is a field typed with a struct that is not itself #derive'd?)\"; ");
+    op = op + PP_EMIT_STR(out, op, ", \"#derive: field offsets disagree with the struct layout");
+    op = op + PP_EMIT_STR(out, op, " (is a field typed with a struct that is not itself #derive'd?)\"; ");
     return op;
 }
 
@@ -2672,10 +2693,33 @@ fn PP_DFIELD_BITS(S, fi): i64 {
     return 64;
 }
 
+# 6.6.7 — the getter's value expression for a field of width `fbits` at `off`. A 64-bit field is
+# the plain `load64(p + off)`. A narrow field is loaded at its width and SIGN-extended —
+# `(loadW(p + off) << S) >>> S`, S = 64 - W (`>>>` is the arithmetic shift) — because the
+# language reads an i8/i16/i32 field signed (`p.x` is movsx), and loadW zero-extends: without
+# the shift pair a stored -1 in an i8 reads back as 255 through `P_x(p)` while `p.x` says -1.
+# CHANGELOG [6.6.7]
+fn PP_DGETTER_EXPR(out, op, fbits, off): i64 {
+    if (fbits < 64) { op = op + PP_EMIT_STR(out, op, "return (load"); }
+    if (fbits == 64) { op = op + PP_EMIT_STR(out, op, "return load"); }
+    op = op + PP_EMIT_INT(out, op, fbits);
+    op = op + PP_EMIT_STR(out, op, "(p + ");
+    op = op + PP_EMIT_INT(out, op, off);
+    op = op + PP_EMIT_STR(out, op, ")");
+    if (fbits < 64) {
+        op = op + PP_EMIT_STR(out, op, " << ");
+        op = op + PP_EMIT_INT(out, op, 64 - fbits);
+        op = op + PP_EMIT_STR(out, op, ") >>> ");
+        op = op + PP_EMIT_INT(out, op, 64 - fbits);
+    }
+    return op;
+}
+
 # Emit #derive(accessors) — generates Name_field(p) getters and Name_set_field(p, v) setters
 # Same struct parsing as PP_DERIVE_SERIALIZE. Generates, with W the field's width
 # (PP_DFIELD_BITS):
-#   fn Name_field(p) { return loadW(p + OFFSET); }
+#   fn Name_field(p) { return loadW(p + OFFSET); }     (W = 64)
+#   fn Name_field(p) { return (loadW(p + OFFSET) << S) >>> S; }   (W < 64, S = 64 - W: signed)
 #   fn Name_set_field(p, v) { storeW(p + OFFSET, v); return 0; }
 # ⛔ 6.6.7 — W was 64 for EVERY field, so on an `i8` / `i16` / `i32` field the setter wrote 8
 # bytes: `struct P { x: i8; y: i8; }` has sizeof 2, and `P_set_y` stored bytes 1..8 — into the
@@ -2710,11 +2754,8 @@ fn PP_DERIVE_ACCESSORS_BODY(S, out, op): i64 {
         var fbits = PP_DFIELD_BITS(S, fi);
         op = op + PP_EMIT_STR(out, op, "(p) { ");
         op = PP_DERIVE_EMIT_CHK(S, out, op);
-        op = op + PP_EMIT_STR(out, op, "return load");
-        op = op + PP_EMIT_INT(out, op, fbits);
-        op = op + PP_EMIT_STR(out, op, "(p + ");
-        op = op + PP_EMIT_INT(out, op, off);
-        op = op + PP_EMIT_STR(out, op, "); }\n");
+        op = PP_DGETTER_EXPR(out, op, fbits, off);
+        op = op + PP_EMIT_STR(out, op, "; }\n");
         # v6.5.71: record the GETTER for auto-inlining. The name is emitted in pieces and
         # never exists as one string, so it is hashed the same way — see `_pp_inl_hash3`.
         _pp_inl_add(_pp_inl_hash3(S + 0x197020, 0, S + 0x1FC000 + fi * 32));

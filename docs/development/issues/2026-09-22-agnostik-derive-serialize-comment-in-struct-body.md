@@ -1,4 +1,4 @@
-# `#derive(Serialize)`: a `#` comment inside the struct body makes `_to_json` emit a field named `#` and read past the struct — OPEN
+# `#derive(Serialize)`: a `#` comment inside the struct body makes `_to_json` emit a field named `#` and read past the struct — RESOLVED (v6.6.7)
 
 **Status:** ✅ **RESOLVED v6.6.7** (bite 5). Fixed in `src/frontend/lex_pp.cyr`, in three parts —
 see `CHANGELOG.md` [6.6.7]:
@@ -12,7 +12,7 @@ see `CHANGELOG.md` [6.6.7]:
   bytes) and now decodes the CORRECT JSON field by field.
 - **Accessor widths.** With the offsets right, `P_set_y` on `struct P { x : i8; y : i8; }` still
   did `store64(p + 1)` — accessors were `load64`/`store64` for every field. They now use the
-  field's width.
+  field's width, and a narrow getter sign-extends so it agrees with `p.field`.
 - **A layout backstop.** The first generated fn body asserts `sizeof(<Name>)` equals the derive's
   size, so any remaining disagreement (a field typed with a non-`#derive`d struct) fails the build.
 
