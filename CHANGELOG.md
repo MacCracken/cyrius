@@ -33,6 +33,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     first write of every explicit transaction returned `PATRA_ERR_IO` (its fdatasync got -ENOSYS);
     it now goes through `xfsync`, which this release routes to `FlushFileBuffers` on PE, so PE
     transactions are both accepted and durable.
+  - **niyama 1.0.11 → 1.0.12** — a toolchain move (pin 6.6.2 → 6.6.6); the bundle differs only in
+    its `# Version:` header.
 
 ## [6.6.6] — 2026-09-20
 
