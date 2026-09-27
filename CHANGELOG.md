@@ -35,6 +35,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     transactions are both accepted and durable.
   - **niyama 1.0.11 → 1.0.12** — a toolchain move (pin 6.6.2 → 6.6.6); the bundle differs only in
     its `# Version:` header.
+  - **bayan 1.5.6 → 1.5.7** — ⚠ **behaviour change: the f64 parser is correctly rounded** (reported
+    by prakash; about 2 in 10⁵ doubles decoded wrong). Some decoded values move by **1 ULP**; inputs in
+    [2⁻¹⁰⁷⁵, 2⁻¹⁰⁷⁴) now round up to the smallest subnormal (5e-324, was 0); the exact overflow tie
+    goes to +Inf (was DBL_MAX). A test that pinned the old value goes red by design (prakash's
+    `tests/hardening.tcyr:380` does). Folded from the TAG: bayan's post-tag worktree `dist/` is also
+    headed 1.5.7 but differs in eight comment lines, and `fold_table_matches_vendored.sh` reads only
+    the header, so a worktree copy would have passed every gate without being the release.
+  - **Downstream lockstep:** a repo that pins patra or sakshi as a git dep must move that tag with
+    its 6.6.7 pin, or the git dep overlays and downgrades the fold — yukti and nein (`[deps.patra]`
+    1.14.3 → 1.15.0); yukti, daimon and hisab (`[deps.sakshi]` 2.5.2 → 2.5.5).
 
 ## [6.6.6] — 2026-09-20
 
