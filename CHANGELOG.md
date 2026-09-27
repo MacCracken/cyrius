@@ -106,6 +106,130 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Rows: `tests/tcyr/crossos/defer_every_return_path.tcyr` (`#inline`, generic and SIMD-param
   callees — each RED with the exclusion removed).
 
+- **Windows: eleven linux_common wrappers had no PE peer**, so a PE program that merely REACHED a
+  path naming one was refused — `error: refusing to emit binary with 8 reachable undefined
+  function(s)` for a program touching yukti 2.3.12's optical / eject / netlink-monitor /
+  network-probe / mount / lstat paths. `lib/syscalls_windows.cyr` is a standalone peer (it does
+  not include `lib/syscalls_linux_common.cyr`), so every wrapper linux_common grows is undefined
+  on PE until the peer gets its own. It now declares `sys_ioctl`, `sys_socket`, `sys_bind`,
+  `sys_connect`, `sys_setsockopt`, `sys_recvfrom`, `sys_fstatat`, `sys_mount` and `sys_umount2`,
+  each returning **-38 (-ENOSYS)** — the v6.6.5 decline contract, so a caller's `if (r < 0)`
+  fires and nothing is emulated. It also declares **`sys_fsync` and `sys_fdatasync`**, which a
+  PE build naming them (patra's fdatasync path, any write-tmp + fsync + rename caller) was
+  refused for too; these are not declines — they issue the Linux numbers 74 / 75, the
+  `sys_mkdir`/`sys_unlink` shape, so the PE backend's `FlushFileBuffers` route decides, and an
+  unrouted literal returns -38. Either way a flush of a bogus descriptor is negative, never a
+  false 0. The socket four are deliberately not routed to the ws2_32 band:
+  that band returns a SOCKET handle closed with `closesocket` and reports errors through
+  `WSAGetLastError`, so a BSD-shaped fd peer is an fd↔SOCKET design, not a renumber. A consumer
+  sees a PE build that used to be refused now link, with those paths failing cleanly at run time.
+  `docs/api-surface.snapshot` +11. Pinned by `tests/tcyr/crossos/pe_decline_peers.tcyr` (runs on
+  cass in the cross-OS leg; without the peers it does not compile for PE — 9, then 2 more,
+  undefined, measured; with the flush peers stubbed to `return 0` its two flush rows go red).
+- **`lib/tls_native.cyr` compiled with undefined functions — trap stubs — on every target.** Its
+  hand-written include list stops at the leaves the folded sigil needed years ago; sigil's sidecar
+  also lists `sys`, `chrono` and `random`, and a bundle strips its own includes. So
+  `include "lib/tls_native.cyr"` alone reported `sys_uname`, `random_bytes`, `clock_epoch_secs`,
+  `clock_now_ms` and `sleep_ms` as undefined on x86-Linux and Mach-O (three of them on PE, two on
+  agnos) — every one a `ud2`/SIGILL at its first call, e.g. sigil's uname path and its CSPRNG
+  fallback. It now includes `lib/sys.cyr`, `lib/chrono.cyr` and `lib/random.cyr` before sigil and
+  compiles alone with no undefined function on x86-Linux, aarch64, agnos, PE, x86 Mach-O and arm64
+  Mach-O. A TLS consumer sees those calls work, and — with sigil 3.13.3 folded in this release — no
+  longer sees the `duplicate fn 'uname_release'` warning every sys+sigil program used to print.
+  `stdlib_modules_self_sufficient.sh` adds tls_native to its per-target axis and raises its
+  ratchet floor 26 → 27 (mutation: the old include list is red on all four targets).
+- **The hash seed blocked PID 1 until the kernel CRNG seeded, and on macOS its CSPRNG draw was
+  thrown away.** (bite 8.) `lib/hashseed.cyr` drew the per-process hash seed with
+  `getrandom(buf, 8, 0)` — BLOCKING on Linux until the CRNG is initialised. kybernet is PID 1 and
+  takes its first map op (inside argonaut's `argonaut_init_new`) before that on boards with no
+  hardware RNG: measured as PID 1 in a `trust_cpu=off` VM, **253–254 ms** of boot stalled on the
+  first `map_set`, ending 4 ms after `crng init done`. The seed only has to be "not a published
+  constant", which the draw's own comment says. The same line issued the RAW syscall on every
+  non-Windows target, skipping `sys_getrandom`'s Darwin `getentropy` 0 -> len normalisation, so
+  on macOS `nr == 8` never matched and the seed silently came from the microsecond-clock
+  fallback. **Fix:** the Linux arm draws `GRND_INSECURE` (4, never blocks, kernel >= 5.6) and
+  retries `GRND_NONBLOCK` (1) on the pre-5.6 `-EINVAL`; every other target calls
+  `sys_getrandom(.., 0)`. Same VM after the fix: 10 ms, no stall. A new `_hm_seed_src` records
+  where the seed came from (1 = OS RNG, 2 = time fallback). Pinned by
+  `tests/tcyr/crossos/hashseed_os_rng_source.tcyr` (the seed is the OS RNG's bytes — **RED on
+  real ecb and ach** with the old draw, 2 of 5 failing, green on both and on pi with the fix) and
+  a static axis 4 in `tests/gates/memory/hash_seed_flood_resistance.sh` (the Linux arm must
+  draw flags 4 and must not pass 0; no raw `syscall(SYS_GETRANDOM` — each mutation reddens it).
+  Consumers see no API change; kybernet's boot loses the stall with no source change.
+
+- **`fl_alloc` stored through a refused mapping instead of returning 0, so every consumer's
+  `== 0` guard was dead code.** (bite 8.) `lib/freelist.cyr`'s `_fl_mmap` returns the raw kernel
+  result — `-errno` on Linux/Darwin, 0 on agnos and PE — and both callers used it as a pointer:
+  the large (>4096) path wrote its header at `blk`, and the arena REFILL adopted it as the new
+  arena base. A refused mapping SIGSEGV'd at `0xfffffffffffffff4` (reproduced on x86 and on
+  aarch64 under qemu, large path with no ulimit, refill under `ulimit -v`). kybernet (PID 1)
+  reaches it through sigil's argon2 wrappers; sigil's policy reader's `fl_alloc(4097)` guard was
+  dead too (4097 takes the large path). **Fix:** `blk <= 0 -> return 0` before any store on the
+  large path; the refill maps into a local, returns 0 on `<= 0`, and assigns the arena globals
+  only after the check, so a failed refill leaves the old arena intact and a later call retries;
+  `fl_alloc` returns 0 when the refill did. Also: **`fl_alloc` / `fl_calloc` now refuse a size
+  `<= 0`** and return 0, as `alloc()` does — a negative request used to land in class 0 and get a
+  16-byte block (a consumer that called `fl_alloc(0)` and treated the result as non-null must
+  now special-case 0; the ranga/sit callers surveyed already do). `lib/freelist.cyr` now includes
+  `lib/syscalls.cyr`: `include "lib/freelist.cyr"` alone was a HARD compile error
+  (`undefined variable 'SYS_MMAP'`). **Windows sibling:** `lib/alloc_windows.cyr`'s `alloc_init`
+  adopted VirtualAlloc's 0 unchecked, so every later `alloc()` re-ran init and returned 0
+  silently; it now writes `alloc_init: mmap failed` and exits 1 like the Linux and macOS peers
+  (the PE compiler's bytes change; it self-hosts byte-identical under wine). Pinned by
+  `tests/tcyr/crossos/freelist_map_failure.tcyr` (11 assertions; green on ecb / ach / pi / wine,
+  the large-path mutant SIGSEGVs on all of them) and `tests/gates/memory/alloc_failure_returns_zero.sh`
+  (include-alone on 5 targets, refill under exhaustion with an anti-vacuous exit, PE init abort
+  under wine + a static half; five mutants, each RED). The lock-site count is unchanged.
+
+- **`file_read_whole` SIGSEGV'd on ANY file of 1 GiB or more, on every box, and never checked an
+  allocation.** (bite 8.) The growth alloc in `lib/io.cyr` was unchecked and doubled from 64 KiB
+  with no ceiling. When a file reached exactly 1 GiB the next grow asked for `alloc(2^31 + 1)`,
+  which is past `ALLOC_MAX`, so `alloc` returned 0 and the `memcpy` wrote through NULL — with
+  memory to spare, and even though the next read would have been EOF (measured with sparse files:
+  1,073,741,823 bytes read fine, 1,073,741,824 exactly rc 139). `/dev/zero` under `ulimit -v`
+  did the same sooner; an EMPTY file whose first alloc failed stored its NUL at address 0; and
+  every call cost 65,544 bytes of bump heap that is never reclaimed, even for a 2-byte file —
+  kybernet's PID 1 re-reads its config on every SIGHUP and shipped its own reader to avoid this.
+  **Fix:** one bounded core. Every allocation is checked (a failure is `-ENOMEM`, never a store
+  through 0); growth CLAMPS to `min(2 * cap, max)` instead of doubling past the ceiling; at
+  `cap == max` one more byte is read into a local to tell a file of exactly `max` bytes (success)
+  from a larger one (`-EFBIG`); the first buffer is 4 KiB. `file_read_whole(path, &n)` keeps its
+  contract — the whole file NUL-terminated, or 0 with `n = 0` on ANY failure — with a ceiling of
+  `ALLOC_MAX - 1`: a 1 GiB file now reads whole (~6 s), a file over 2 GiB returns 0 instead of
+  crashing. `_env_load` (behind `getenv`) checks both of its allocations too, and EVERY failure
+  on its `/proc` path — the open, either allocation, a read error — now leaves the cache unset so
+  a later call retries. The 6.6.6 comment promised that, but `_env_len = 0` had already been
+  stored, so each of those paths cached an EMPTY environment for the life of the process: a PID 1
+  that called `getenv` before `/proc` was mounted never saw its environment. Pinned by
+  `tests/tcyr/crossos/file_read_whole_bounded.tcyr` (36 assertions, green on ecb / ach / pi /
+  qemu-aarch64 / wine) and axis 6 of `tests/gates/toolchain/manifest_read_whole_file.sh`
+  (`/dev/zero` under `ulimit -v 400000` is 0 / len 0 — rc 139 before; a `getenv` whose open
+  failed under `ulimit -n 3` sees the variable once a descriptor is free; plus static checks that
+  every allocation in the reader core and `_env_load` is tested against 0 and that every `/proc`
+  failure path unsets the cache).
+
+- **`lib/hashmap_fast.cyr` and `lib/flags.cyr` stored through refused allocations.** (bite 8,
+  same class — an audit's output is fixes.) `_fhm_grow` allocated its three arrays unchecked,
+  `memset` the new metadata through 0 and installed the arrays over the live table; `fhm_new`
+  stored through its four allocations unchecked. `flags.cyr`'s positional-array and `FLAG_LIST`
+  growth (`_flags_push_positional`, `_flags_list_push`) copied the old array into an unchecked
+  `alloc`, and `flags_new` stored through its three. Every one was a SIGSEGV on refusal.
+  **Fix:** `_fhm_grow` allocates and checks all three arrays BEFORE touching the map, so a
+  refused grow leaves the old table live, and `fhm_set` returns -1 for it (0 otherwise, as
+  before); `fhm_new` returns 0. The flags growth returns the new **`FLAG_ERR_NOMEM` (6)**
+  (`flags_error_str`: "out of memory"), `flags_parse` fails with -1 and names the token it could
+  not keep, and a list is left unchanged; `flags_new` returns 0. Pinned by
+  `tests/tcyr/stdlib/hashmap_fast_grow_refused.tcyr` and new rows in
+  `tests/tcyr/crossos/flags.tcyr` (both force the refusal deterministically by planting a
+  capacity whose doubling is past `ALLOC_MAX`; both SIGSEGV with the 6.6.6 code; green on
+  ecb / ach / pi / wine; the hashmap file also refuses a grow PART-way, meta served and keys
+  refused), and axes 4 and 5 of `tests/gates/memory/alloc_failure_returns_zero.sh`: both
+  constructors over a heap exhausted under `ulimit -v`, then PER-CALL fault injection, which
+  refuses only the k-th allocation for each k across `fhm_new`, `flags_new`, `_fhm_grow` and the
+  `FLAG_LIST` first push. A size refusal is monotonic, so the first check to fire masks the ones
+  after it — with `fhm_new`'s keys or vals check deleted the size-based rows stayed green;
+  axis 5 goes red for each of the 12 checks deleted alone.
+
 ### Changed
 
 - **`defer`, `break` and `continue` in a position they cannot honour are now compile errors.**
@@ -143,6 +267,172 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `_tc_str_literal_arg`, each link checked) (bite 2).
 - cycc **1,337,344 → 1,337,408 B** for the prescan, the divert predicate and the save/restore
   emitters (bite 2).
+
+- **Stdlib fold — nine libs refolded at their releases**, each bundle copied byte-identical from
+  `git show <ref>:dist/<name>.cyr` (never from a worktree `dist/`, never patched in the fold): sandhi,
+  sakshi, patra, niyama and bayan from their tags; vani, mabda, yukti and sigil from the release
+  commit named in each bullet, which their tags must name (the integrator checks tag == commit).
+  Every one pins the released cyrius 6.6.6. `docs/api-surface.snapshot` moves only for sigil
+  (−1 +15, below); the in-tree tests and gates that include the folds pass unchanged.
+  - **sandhi 1.9.17 → 1.10.0** — a toolchain move (pin 6.6.2 → 6.6.6). The only code difference is
+    `SANDHI_VERSION`, so the default request header now reads `User-Agent: sandhi/1.10.0`; no
+    surface change (826 fns, 196 top-level vars, identical).
+  - **sakshi 2.5.2 → 2.5.5** — ⚠ **absolute timestamps jump once.** 2.5.4 anchors the timeline to
+    the reference clock at calibration (MONOTONIC_RAW on Linux, QueryPerformanceCounter on Windows),
+    so timestamps from different processes are now comparable where they could differ by seconds,
+    and `sakshi_clock_recalibrate` never steps the clock backwards. On Windows the reference clock
+    moves from GetTickCount64 to QPC/QPF: PE timestamps and span durations had run ~1.6× fast. x86_64
+    calibration bias goes from -246 ppm to +2.7 ppm. 2.5.5: a calibration window stretched by a stall
+    is rejected instead of wrapping i64 and installing a garbage rate. On aarch64, init now makes one
+    `clock_gettime` call — a seccomp allowlist that assumed sakshi's init was syscall-free must allow it.
+  - **patra 1.14.3 → 1.15.0** — no raw syscalls and no OS constants of its own (`enum Flock` and
+    `enum Sync` are gone; `LOCK_*`, `SYS_FLOCK` and `SYS_FDATASYNC` come from the stdlib peers). Its
+    `[deps] stdlib` gains **`chrono` and `random`**: a hand-written include list must add
+    `lib/chrono.cyr` and `lib/random.cyr` before `lib/patra.cyr`, and a DCE-off binary that includes
+    patra grows ~16 KB (probe 323,624 → 340,056 B). **macOS:** creating a database and truncating a
+    WAL failed, because the x86 open-flag numbers were passed to Darwin; the header DBID and WAL salts
+    never came from the CSPRNG, because Darwin `getentropy` returned 0 — both fixed. **Windows:** the
+    first write of every explicit transaction returned `PATRA_ERR_IO` (its fdatasync got -ENOSYS);
+    it now goes through `xfsync`, so transactions — ROLLBACK included — are no longer refused. ⚠
+    That is NOT crash safety: patra takes no `flock` on Windows, so recovery never runs on open and
+    the next BEGIN's `O_TRUNC` discards a crashed transaction's WAL — its writes stay applied. A
+    flush reaches the disk only where `xfsync`'s PE arm issues the `FlushFileBuffers` route; with a
+    `return 0` arm the commit reports success without flushing, as autocommit always did there.
+  - **niyama 1.0.11 → 1.0.12** — a toolchain move (pin 6.6.2 → 6.6.6); the bundle differs only in
+    its `# Version:` header.
+  - **bayan 1.5.6 → 1.5.7** — ⚠ **behaviour change: the f64 parser is correctly rounded** (reported
+    by prakash; about 2 in 10⁵ doubles decoded wrong). Some decoded values move by **1 ULP**; inputs in
+    [2⁻¹⁰⁷⁵, 2⁻¹⁰⁷⁴) now round up to the smallest subnormal (5e-324, was 0); the exact overflow tie
+    goes to +Inf (was DBL_MAX). A test that pinned the old value goes red by design (prakash's
+    `tests/hardening.tcyr:380` does). Folded from the TAG: bayan's post-tag worktree `dist/` is also
+    headed 1.5.7 but differs in eight comment lines, and `fold_table_matches_vendored.sh` reads only
+    the header, so a worktree copy would have passed every gate without being the release.
+  - **vani 1.2.5 → 1.2.7** (release commit `5cdd402`; the 1.2.7 tag names it) — ⚠ **behaviour
+    change: a busy PCM no longer hangs the open.** `audio_open_playback` / `audio_open_capture` slept
+    in the kernel until the holder let go (one PipeWire stream is enough on a one-subdevice PCM), so
+    a core-profile consumer could hang at startup; since 1.2.6 they open `O_NONBLOCK`, return the null
+    handle at once on `-EBUSY`, and clear the flag before the first PREPARE. **agnos:** every ALSA
+    ioctl goes through a private `_audio_ioctl` bridge that returns -ENOSYS there, so the agnos build
+    no longer compiles only because yukti ≤ 2.3.11 leaked a placeholder `SYS_IOCTL = 9001` into the
+    program (it would have issued agnos syscall 9001). **Windows:** a `CYRIUS_TARGET_WIN` refusal arm
+    returns the null handle instead of naming `SYS_FCNTL`, which the PE peer does not define — 1.2.6
+    is therefore never folded (it does not compile for PE; `pe_no_raw_syscall_bytes.sh` axis 4 goes
+    red on it). No public-surface change (109 fns).
+  - **mabda 4.1.4 → 4.1.5** (release commit `2a9f67c`; the 4.1.5 tag names it) — **agnos:** all 46
+    ioctl sites go through one private fail-closed bridge, `_mabda_ioctl`, which returns -ENOSYS
+    there; through 4.1.4 the agnos build compiled only with yukti ≤ 2.3.11 in scope, and every mabda
+    ioctl would have issued agnos syscall 9001. It now builds for agnos with no yukti at all (probe:
+    `folds_agnos_parity`'s preamble minus yukti, rc 0). **Profiler clock:** `clock_now_ns()` replaces
+    a raw `syscall(228, 1, …)` that was `clock_gettime` only on x86_64 Linux — so the profiler (and the
+    NVIDIA dispatch deadline) now reads the right clock on Mach-O, PE and agnos. ⚠ Its sidecar gains
+    **`chrono`** (18 leaves): a hand-written include list must add `lib/chrono.cyr` before
+    `lib/mabda.cyr`. No public-surface change.
+  - **yukti 2.3.11 → 2.3.13** (release commit `ff97eec`; the 2.3.13 tag names it) — ⚠ **two silent
+    defects leave the fold.** (1) **aarch64: `filesystem_usage` issued accept(2).** yukti declared
+    its own `SYS_STATFS = 43` under `#ifdef CYRIUS_ARCH_AARCH64` and ESYSXLAT rewrites 43 → 202
+    (accept), so every ARM host got "statfs failed: errno 14"; 2.3.12 routes every raw syscall
+    through a stdlib wrapper (`sys_statfs`, `sys_ioctl`, `sys_socket`, …, `sys_fstatat` for lstat)
+    and deletes `enum YkSyscalls`. On Darwin the same function wrote a 2,168-byte `statfs64` into a
+    120-byte buffer — SIGSEGV on real ach; it now sizes it with `STATFS_BUFSZ`. (2) **Mach-O: eight
+    stdlib names redeclared program-wide.** yukti's `O_NONBLOCK = 2048` and `SOL_SOCKET = 1` won by
+    last-definition, retroactively, so on Darwin every `O_NONBLOCK` in the program — the stdlib's
+    included — was `O_EXCL`, and net.cyr's `setsockopt` passed level 1 instead of 0xFFFF. 2.3.13
+    names `O_RDONLY`, `O_NONBLOCK`, `MS_RDONLY/NOSUID/NODEV/NOEXEC`, `SOCK_DGRAM` and `SOL_SOCKET`
+    `_YK_*`; the Mach-O `duplicate symbol` warnings go with them. ⚠ **What a consumer loses:** the
+    agnos placeholder band (`SYS_IOCTL = 9001` …) is gone — vani and mabda compiled for agnos only
+    by borrowing it and move off it in this same fold — and a PE or agnos program that took
+    `O_NONBLOCK` or `MS_*` from yukti must declare its own. ⚠ **On PE the loss is wider:** yukti
+    ≤ 2.3.11 declared `SYS_SOCKET`, `SYS_CONNECT`, `SYS_BIND`, `SYS_RECVFROM`, `SYS_SETSOCKOPT`,
+    `SYS_PPOLL` and `SYS_NEWFSTATAT` (with `SYS_STATFS`, which the peer does have) under
+    `CYRIUS_ARCH_X86`, which a PE build is, and the Windows peer defines none of those seven — so a
+    PE program that named them compiled only with yukti in scope.
+    sandhi ≤ 1.10.0 is one (its IPv6 open paths spell `SYS_SOCKET` / `SYS_CONNECT`): with 2.3.13 a
+    PE build of sandhi, and of yantra over it, is 4 `undefined variable` errors until sandhi
+    1.10.1 is folded (pinned by `pe_no_raw_syscall_bytes.sh` axis 6, below). Spell the
+    `sys_socket` / `sys_connect` / … wrappers instead; their PE peers decline with -38. No public fn
+    removed. Pinned by the new
+    `tests/tcyr/crossos/yukti_statfs_and_stdlib_constants.tcyr`: against 2.3.11 it fails on pi
+    (errno 14), exits 3 on ecb (O_NONBLOCK 2048, SOL_SOCKET 1, statfs) and SIGSEGVs on ach;
+    against 2.3.13 it passes on all three, on x86_64 and under wine.
+  - **sigil 3.12.18 → 3.13.3** (release commit `92a5042`; the 3.13.3 tag names it) — **a security
+    fold.** 3.13.0: none of the 8 `defer` cleanups ever ran (a `defer` is skipped on a value-form
+    Result return), so the LUKS keyfile was left in /tmp and fds leaked — all 8 are explicit now;
+    `sv_verify_boot_chain` failed OPEN and `keyring_validate_chain` never checked issuer signatures —
+    both fail closed; the ECDSA nonce-length timing leak, GHASH and software AES are constant-time
+    (GCM ~11× faster); ML-DSA-65's retry-kappa bug is fixed (OpenSSL-KAT identical). 3.13.1: per-call
+    X.509 digests (forged links under concurrency), a revoked trust entry can no longer be lifted to
+    Verified. ⚠ **Verification is STRICTER — a caller that relied on the old leniency now gets a
+    refusal:** `ed25519_verify` rejects small-order public keys and RFC 8032 non-canonical encodings,
+    `ed25519_sign` returns -1 on a mismatched secret key (sign is 1.84× slower — it re-derives
+    A = [a]B); `ecdsa_p256_verify_der` and the Authenticode digest variant accept only canonical DER
+    with the exact length; SGX/TDX quotes need exact lengths; `sv_load_trust_store` refuses group-
+    or world-writable files; `sign_data` returns 0 on refusal, `hash_file*` returns 0 on a read error,
+    and loaders refuse files over 64 MiB instead of truncating at 64 KiB. 3.13.3: ⚠ **`EAGAIN` is
+    now the platform's on macOS.** sigil's global `EAGAIN = 11` replaced Darwin's 35 program-wide
+    (last definition wins), so every `EAGAIN` test in a sigil-including Mach-O program — sigil's
+    capture drain included, which died on the first empty poll — compared against Linux's number;
+    the Mach-O `duplicate symbol 'EAGAIN'` warning goes with it (it stays 11 on PE and agnos, whose
+    peers declare none). **`uname_release` now comes only from `lib/sys.cyr`** — sigil's duplicate is
+    gone, and so is the `duplicate fn 'uname_release'` warning every sys + sigil program printed; the
+    bundle now carries `include "lib/sys.cyr"` itself. Snapshot: −`sigil::uname_release/1` (the same
+    fn lives on as `sys::uname_release/1`), +15 (`ae_reason`, `ae_set_reason`, `agnosys_write_all`,
+    `crl_load_bad_count`, `keyring_sign_issuance`, `kv_issuance_message_into`,
+    `kv_issuance_message_len`, `kv_issuer_sig`, `kv_issuer_sig_len`, `kv_set_issuer_sig`,
+    `pt384_scalarmul_secret`, `pt_scalarmul_secret`, three `tdx_quote_*_ptr`); 5,272 public fns.
+  - **Downstream lockstep:** a repo that pins patra or sakshi as a git dep must move that tag with
+    its 6.6.7 pin, or the git dep overlays and downgrades the fold — yukti and nein (`[deps.patra]`
+    1.14.3 → 1.15.0); yukti, daimon and hisab (`[deps.sakshi]` 2.5.2 → 2.5.5).
+- **`aarch64_syscall_shadow.sh` axis 2 has a committed corpus floor.** Its anti-vacuity leaned on
+  live defects: all 6 arch-guarded `SYS_*` declarations in the tree were yukti 2.3.11's aarch64
+  enum, and its KNOWN re-derivation re-read yukti's `SYS_STATFS = 43`. yukti 2.3.12 deletes both,
+  so folding the FIX would have turned the gate red on its own floor (`found only 0 arch-guarded
+  SYS_* declarations`, measured on a 2.3.12 overlay). `tests/fixtures/aarch64_syscall_shadow/
+  guarded_decls.cyr` is now read by the same walk and judge as the real corpus and must come back
+  exactly — `SYS_TRUNCATE = 76`, `SYS_FSYNC = 74`, `SYS_GETDENTS64 = 61` passed, `SYS_STATFS = 43`
+  reported, an `#ifdef CYRIUS_ARCH_X86` declaration not counted — which replaces the `ndecl >= 3`
+  floor (outside the fixture the tree may legitimately hold none). Mutation-proven four ways:
+  fixture deleted, walk narrowed to nothing, judge disabled, and `#ifdef` negation dropped.
+
+- **Two gates stop folds borrowing each other's constants.** Every hand-written PE and agnos
+  preamble put yukti ahead of sandhi, so sandhi's `SYS_SOCKET` / `SYS_CONNECT` resolved to yukti's
+  and the PE build read green; folding yukti 2.3.13 broke it with every gate still green.
+  `pe_no_raw_syscall_bytes.sh` **axis 6** builds sandhi, and sandhi + async + yantra, for PE against
+  the stdlib leaves plus sandhi's own fold deps (sakshi, sigil, bayan) — never yukti, and it refuses
+  a preamble that names yukti — and requires 0 raw `syscall` instructions. New
+  `tests/tcyr/crossos/sandhi_platform_eagain.tcyr` runs sandhi's read deadline and idle-accept paths
+  on every release-gate host against the kernel's own errno: sandhi ≤ 1.10.0 hard-codes
+  `_SANDHI_EAGAIN = 11`, so on macOS (EAGAIN 35) a read deadline came back as a broken connection
+  (`recv_all` = -1, not the timeout sentinel) and an idle listener's accept classified BACKOFF, so
+  a stop-enabled server with no traffic shut itself down. Measured on ecb and ach against 1.10.0:
+  5 of 10 checks fail; pi, qemu-aarch64 and x86_64 pass. Both go green only with sandhi 1.10.1
+  (platform EAGAIN and Darwin accept errnos; a `CYRIUS_TARGET_WIN` decline arm on the IPv6 open
+  paths) — measured with that patch built into a scratch bundle: 10/10 on ecb, ach, pi, x86_64 and
+  qemu-aarch64, and the PE build compiles and runs under wine.
+
+- **`cyrius fuzz --poison` says what it covers.** (bite 8, the overlap with proposal P6.) It
+  printed `poison mode: redzones + fill + quarantine-on-free ACTIVE`, which reads as
+  whole-program coverage. Only `lib/freelist.cyr` blocks are instrumented — memory from
+  `alloc()`, an arena or a consumer's own allocation seam (rekha's `sd_alloc`) is not — and a
+  redzone overwrite is COUNTED at `fl_free`, not trapped. It now prints
+  `poison mode: fl_alloc/fl_free blocks only (fill + redzone + quarantine-on-free)` and a second
+  line naming what is not covered and that a harness must assert `fl_poison_violations() == 0`.
+  The freelist's own poison comments were corrected with it: they still said the mode was
+  alloc-side fill only (redzones and quarantine shipped in v6.5.29), that nothing read a
+  switch (the `CYRIUS_POISON` compile-time predefine does), and that the parser has no
+  `#else` / `#ifndef` (it has had both since v5.6.1). The seam itself stays proposal P6.
+
+- **`SYSINFO_SIZE_FULL` (agnos) is 208, the whole `sysinfo`#35 struct — it was 200.** (bite 7.) The
+  old 200 tier keeps a name, **`SYSINFO_SIZE_BLK`**. ⚠ A consumer that passes `SYSINFO_SIZE_FULL` as
+  the length must size its buffer >= 208: the kernel writes the length it is asked for. The one
+  ecosystem user, chakshu (`src/snap_agnos.cyr`), already declares `var si[208]`. `lib/sys.cyr`'s
+  tier comment is corrected to "40 / 104 / 200 / 208".
+
+- **`scripts/lib/audit-walk.sh` deleted** (bite 9). The bash twin of `lib/audit_walk.cyr` had
+  no caller left — its consumer, the bash `scripts/cyrius` dispatcher, became a thin shim long
+  ago — but `install.sh` still copied `scripts/lib/*.sh` into `~/.cyrius/versions/<v>/bin/lib/`
+  and `scripts/shims/README.md` still listed it. Removed with both, the stale comments in
+  `scripts/check.sh` / `ci.yml` / `lib/audit_walk.cyr`, and the now-unmatched `bin/lib/`
+  exemption in `tests/gates/toolchain/install_atomic_over_running_binary.sh`.
 
 ### Added
 
@@ -373,8 +663,6 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   kernel) so, like every #43 return, it clears the caller's spawn arms. `sys_spawn_path` /
   `sys_execwait` pass env (0, 0), and `sys_chan_endow` / `sys_snd_write` pass a4 = 0, explicitly.
 
-### Added
-
 - **The agnos 1.57.6–1.57.9 peer surface** (bite 4; `lib/syscalls_x86_64_agnos.cyr`, values from
   agnos `kernel/core/syscall.cyr`): `SYS_SOCK_PEER = 106` + `sys_sock_peer`, `SYS_SPAWN_LIMITS = 107`
   + `sys_spawn_limits`, `SYS_SCHED_YIELD_TO = 108` + `sys_sched_yield_to` — with these agnos's own
@@ -394,290 +682,6 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   on a scripted fake kernel); every wrapper above also ran on agnos 1.57.10 in QEMU (-smp 1 and 4).
   The fail-closed agnos `sys_ioctl` stub named in the plan was NOT added: the sibling releases use
   private fail-closed bridges so they build on released 6.6.6.
-### Changed
-
-- **Stdlib fold — nine libs refolded at their releases**, each bundle copied byte-identical from
-  `git show <ref>:dist/<name>.cyr` (never from a worktree `dist/`, never patched in the fold): sandhi,
-  sakshi, patra, niyama and bayan from their tags; vani, mabda, yukti and sigil from the release
-  commit named in each bullet, which their tags must name (the integrator checks tag == commit).
-  Every one pins the released cyrius 6.6.6. `docs/api-surface.snapshot` moves only for sigil
-  (−1 +15, below); the in-tree tests and gates that include the folds pass unchanged.
-  - **sandhi 1.9.17 → 1.10.0** — a toolchain move (pin 6.6.2 → 6.6.6). The only code difference is
-    `SANDHI_VERSION`, so the default request header now reads `User-Agent: sandhi/1.10.0`; no
-    surface change (826 fns, 196 top-level vars, identical).
-  - **sakshi 2.5.2 → 2.5.5** — ⚠ **absolute timestamps jump once.** 2.5.4 anchors the timeline to
-    the reference clock at calibration (MONOTONIC_RAW on Linux, QueryPerformanceCounter on Windows),
-    so timestamps from different processes are now comparable where they could differ by seconds,
-    and `sakshi_clock_recalibrate` never steps the clock backwards. On Windows the reference clock
-    moves from GetTickCount64 to QPC/QPF: PE timestamps and span durations had run ~1.6× fast. x86_64
-    calibration bias goes from -246 ppm to +2.7 ppm. 2.5.5: a calibration window stretched by a stall
-    is rejected instead of wrapping i64 and installing a garbage rate. On aarch64, init now makes one
-    `clock_gettime` call — a seccomp allowlist that assumed sakshi's init was syscall-free must allow it.
-  - **patra 1.14.3 → 1.15.0** — no raw syscalls and no OS constants of its own (`enum Flock` and
-    `enum Sync` are gone; `LOCK_*`, `SYS_FLOCK` and `SYS_FDATASYNC` come from the stdlib peers). Its
-    `[deps] stdlib` gains **`chrono` and `random`**: a hand-written include list must add
-    `lib/chrono.cyr` and `lib/random.cyr` before `lib/patra.cyr`, and a DCE-off binary that includes
-    patra grows ~16 KB (probe 323,624 → 340,056 B). **macOS:** creating a database and truncating a
-    WAL failed, because the x86 open-flag numbers were passed to Darwin; the header DBID and WAL salts
-    never came from the CSPRNG, because Darwin `getentropy` returned 0 — both fixed. **Windows:** the
-    first write of every explicit transaction returned `PATRA_ERR_IO` (its fdatasync got -ENOSYS);
-    it now goes through `xfsync`, so transactions — ROLLBACK included — are no longer refused. ⚠
-    That is NOT crash safety: patra takes no `flock` on Windows, so recovery never runs on open and
-    the next BEGIN's `O_TRUNC` discards a crashed transaction's WAL — its writes stay applied. A
-    flush reaches the disk only where `xfsync`'s PE arm issues the `FlushFileBuffers` route; with a
-    `return 0` arm the commit reports success without flushing, as autocommit always did there.
-  - **niyama 1.0.11 → 1.0.12** — a toolchain move (pin 6.6.2 → 6.6.6); the bundle differs only in
-    its `# Version:` header.
-  - **bayan 1.5.6 → 1.5.7** — ⚠ **behaviour change: the f64 parser is correctly rounded** (reported
-    by prakash; about 2 in 10⁵ doubles decoded wrong). Some decoded values move by **1 ULP**; inputs in
-    [2⁻¹⁰⁷⁵, 2⁻¹⁰⁷⁴) now round up to the smallest subnormal (5e-324, was 0); the exact overflow tie
-    goes to +Inf (was DBL_MAX). A test that pinned the old value goes red by design (prakash's
-    `tests/hardening.tcyr:380` does). Folded from the TAG: bayan's post-tag worktree `dist/` is also
-    headed 1.5.7 but differs in eight comment lines, and `fold_table_matches_vendored.sh` reads only
-    the header, so a worktree copy would have passed every gate without being the release.
-  - **vani 1.2.5 → 1.2.7** (release commit `5cdd402`; the 1.2.7 tag names it) — ⚠ **behaviour
-    change: a busy PCM no longer hangs the open.** `audio_open_playback` / `audio_open_capture` slept
-    in the kernel until the holder let go (one PipeWire stream is enough on a one-subdevice PCM), so
-    a core-profile consumer could hang at startup; since 1.2.6 they open `O_NONBLOCK`, return the null
-    handle at once on `-EBUSY`, and clear the flag before the first PREPARE. **agnos:** every ALSA
-    ioctl goes through a private `_audio_ioctl` bridge that returns -ENOSYS there, so the agnos build
-    no longer compiles only because yukti ≤ 2.3.11 leaked a placeholder `SYS_IOCTL = 9001` into the
-    program (it would have issued agnos syscall 9001). **Windows:** a `CYRIUS_TARGET_WIN` refusal arm
-    returns the null handle instead of naming `SYS_FCNTL`, which the PE peer does not define — 1.2.6
-    is therefore never folded (it does not compile for PE; `pe_no_raw_syscall_bytes.sh` axis 4 goes
-    red on it). No public-surface change (109 fns).
-  - **mabda 4.1.4 → 4.1.5** (release commit `2a9f67c`; the 4.1.5 tag names it) — **agnos:** all 46
-    ioctl sites go through one private fail-closed bridge, `_mabda_ioctl`, which returns -ENOSYS
-    there; through 4.1.4 the agnos build compiled only with yukti ≤ 2.3.11 in scope, and every mabda
-    ioctl would have issued agnos syscall 9001. It now builds for agnos with no yukti at all (probe:
-    `folds_agnos_parity`'s preamble minus yukti, rc 0). **Profiler clock:** `clock_now_ns()` replaces
-    a raw `syscall(228, 1, …)` that was `clock_gettime` only on x86_64 Linux — so the profiler (and the
-    NVIDIA dispatch deadline) now reads the right clock on Mach-O, PE and agnos. ⚠ Its sidecar gains
-    **`chrono`** (18 leaves): a hand-written include list must add `lib/chrono.cyr` before
-    `lib/mabda.cyr`. No public-surface change.
-  - **yukti 2.3.11 → 2.3.13** (release commit `ff97eec`; the 2.3.13 tag names it) — ⚠ **two silent
-    defects leave the fold.** (1) **aarch64: `filesystem_usage` issued accept(2).** yukti declared
-    its own `SYS_STATFS = 43` under `#ifdef CYRIUS_ARCH_AARCH64` and ESYSXLAT rewrites 43 → 202
-    (accept), so every ARM host got "statfs failed: errno 14"; 2.3.12 routes every raw syscall
-    through a stdlib wrapper (`sys_statfs`, `sys_ioctl`, `sys_socket`, …, `sys_fstatat` for lstat)
-    and deletes `enum YkSyscalls`. On Darwin the same function wrote a 2,168-byte `statfs64` into a
-    120-byte buffer — SIGSEGV on real ach; it now sizes it with `STATFS_BUFSZ`. (2) **Mach-O: eight
-    stdlib names redeclared program-wide.** yukti's `O_NONBLOCK = 2048` and `SOL_SOCKET = 1` won by
-    last-definition, retroactively, so on Darwin every `O_NONBLOCK` in the program — the stdlib's
-    included — was `O_EXCL`, and net.cyr's `setsockopt` passed level 1 instead of 0xFFFF. 2.3.13
-    names `O_RDONLY`, `O_NONBLOCK`, `MS_RDONLY/NOSUID/NODEV/NOEXEC`, `SOCK_DGRAM` and `SOL_SOCKET`
-    `_YK_*`; the Mach-O `duplicate symbol` warnings go with them. ⚠ **What a consumer loses:** the
-    agnos placeholder band (`SYS_IOCTL = 9001` …) is gone — vani and mabda compiled for agnos only
-    by borrowing it and move off it in this same fold — and a PE or agnos program that took
-    `O_NONBLOCK` or `MS_*` from yukti must declare its own. ⚠ **On PE the loss is wider:** yukti
-    ≤ 2.3.11 declared `SYS_SOCKET`, `SYS_CONNECT`, `SYS_BIND`, `SYS_RECVFROM`, `SYS_SETSOCKOPT`,
-    `SYS_PPOLL` and `SYS_NEWFSTATAT` (with `SYS_STATFS`, which the peer does have) under
-    `CYRIUS_ARCH_X86`, which a PE build is, and the Windows peer defines none of those seven — so a
-    PE program that named them compiled only with yukti in scope.
-    sandhi ≤ 1.10.0 is one (its IPv6 open paths spell `SYS_SOCKET` / `SYS_CONNECT`): with 2.3.13 a
-    PE build of sandhi, and of yantra over it, is 4 `undefined variable` errors until sandhi
-    1.10.1 is folded (pinned by `pe_no_raw_syscall_bytes.sh` axis 6, below). Spell the
-    `sys_socket` / `sys_connect` / … wrappers instead; their PE peers decline with -38. No public fn
-    removed. Pinned by the new
-    `tests/tcyr/crossos/yukti_statfs_and_stdlib_constants.tcyr`: against 2.3.11 it fails on pi
-    (errno 14), exits 3 on ecb (O_NONBLOCK 2048, SOL_SOCKET 1, statfs) and SIGSEGVs on ach;
-    against 2.3.13 it passes on all three, on x86_64 and under wine.
-  - **sigil 3.12.18 → 3.13.3** (release commit `92a5042`; the 3.13.3 tag names it) — **a security
-    fold.** 3.13.0: none of the 8 `defer` cleanups ever ran (a `defer` is skipped on a value-form
-    Result return), so the LUKS keyfile was left in /tmp and fds leaked — all 8 are explicit now;
-    `sv_verify_boot_chain` failed OPEN and `keyring_validate_chain` never checked issuer signatures —
-    both fail closed; the ECDSA nonce-length timing leak, GHASH and software AES are constant-time
-    (GCM ~11× faster); ML-DSA-65's retry-kappa bug is fixed (OpenSSL-KAT identical). 3.13.1: per-call
-    X.509 digests (forged links under concurrency), a revoked trust entry can no longer be lifted to
-    Verified. ⚠ **Verification is STRICTER — a caller that relied on the old leniency now gets a
-    refusal:** `ed25519_verify` rejects small-order public keys and RFC 8032 non-canonical encodings,
-    `ed25519_sign` returns -1 on a mismatched secret key (sign is 1.84× slower — it re-derives
-    A = [a]B); `ecdsa_p256_verify_der` and the Authenticode digest variant accept only canonical DER
-    with the exact length; SGX/TDX quotes need exact lengths; `sv_load_trust_store` refuses group-
-    or world-writable files; `sign_data` returns 0 on refusal, `hash_file*` returns 0 on a read error,
-    and loaders refuse files over 64 MiB instead of truncating at 64 KiB. 3.13.3: ⚠ **`EAGAIN` is
-    now the platform's on macOS.** sigil's global `EAGAIN = 11` replaced Darwin's 35 program-wide
-    (last definition wins), so every `EAGAIN` test in a sigil-including Mach-O program — sigil's
-    capture drain included, which died on the first empty poll — compared against Linux's number;
-    the Mach-O `duplicate symbol 'EAGAIN'` warning goes with it (it stays 11 on PE and agnos, whose
-    peers declare none). **`uname_release` now comes only from `lib/sys.cyr`** — sigil's duplicate is
-    gone, and so is the `duplicate fn 'uname_release'` warning every sys + sigil program printed; the
-    bundle now carries `include "lib/sys.cyr"` itself. Snapshot: −`sigil::uname_release/1` (the same
-    fn lives on as `sys::uname_release/1`), +15 (`ae_reason`, `ae_set_reason`, `agnosys_write_all`,
-    `crl_load_bad_count`, `keyring_sign_issuance`, `kv_issuance_message_into`,
-    `kv_issuance_message_len`, `kv_issuer_sig`, `kv_issuer_sig_len`, `kv_set_issuer_sig`,
-    `pt384_scalarmul_secret`, `pt_scalarmul_secret`, three `tdx_quote_*_ptr`); 5,272 public fns.
-  - **Downstream lockstep:** a repo that pins patra or sakshi as a git dep must move that tag with
-    its 6.6.7 pin, or the git dep overlays and downgrades the fold — yukti and nein (`[deps.patra]`
-    1.14.3 → 1.15.0); yukti, daimon and hisab (`[deps.sakshi]` 2.5.2 → 2.5.5).
-- **`aarch64_syscall_shadow.sh` axis 2 has a committed corpus floor.** Its anti-vacuity leaned on
-  live defects: all 6 arch-guarded `SYS_*` declarations in the tree were yukti 2.3.11's aarch64
-  enum, and its KNOWN re-derivation re-read yukti's `SYS_STATFS = 43`. yukti 2.3.12 deletes both,
-  so folding the FIX would have turned the gate red on its own floor (`found only 0 arch-guarded
-  SYS_* declarations`, measured on a 2.3.12 overlay). `tests/fixtures/aarch64_syscall_shadow/
-  guarded_decls.cyr` is now read by the same walk and judge as the real corpus and must come back
-  exactly — `SYS_TRUNCATE = 76`, `SYS_FSYNC = 74`, `SYS_GETDENTS64 = 61` passed, `SYS_STATFS = 43`
-  reported, an `#ifdef CYRIUS_ARCH_X86` declaration not counted — which replaces the `ndecl >= 3`
-  floor (outside the fixture the tree may legitimately hold none). Mutation-proven four ways:
-  fixture deleted, walk narrowed to nothing, judge disabled, and `#ifdef` negation dropped.
-
-- **Two gates stop folds borrowing each other's constants.** Every hand-written PE and agnos
-  preamble put yukti ahead of sandhi, so sandhi's `SYS_SOCKET` / `SYS_CONNECT` resolved to yukti's
-  and the PE build read green; folding yukti 2.3.13 broke it with every gate still green.
-  `pe_no_raw_syscall_bytes.sh` **axis 6** builds sandhi, and sandhi + async + yantra, for PE against
-  the stdlib leaves plus sandhi's own fold deps (sakshi, sigil, bayan) — never yukti, and it refuses
-  a preamble that names yukti — and requires 0 raw `syscall` instructions. New
-  `tests/tcyr/crossos/sandhi_platform_eagain.tcyr` runs sandhi's read deadline and idle-accept paths
-  on every release-gate host against the kernel's own errno: sandhi ≤ 1.10.0 hard-codes
-  `_SANDHI_EAGAIN = 11`, so on macOS (EAGAIN 35) a read deadline came back as a broken connection
-  (`recv_all` = -1, not the timeout sentinel) and an idle listener's accept classified BACKOFF, so
-  a stop-enabled server with no traffic shut itself down. Measured on ecb and ach against 1.10.0:
-  5 of 10 checks fail; pi, qemu-aarch64 and x86_64 pass. Both go green only with sandhi 1.10.1
-  (platform EAGAIN and Darwin accept errnos; a `CYRIUS_TARGET_WIN` decline arm on the IPv6 open
-  paths) — measured with that patch built into a scratch bundle: 10/10 on ecb, ach, pi, x86_64 and
-  qemu-aarch64, and the PE build compiles and runs under wine.
-
-### Fixed
-
-- **Windows: eleven linux_common wrappers had no PE peer**, so a PE program that merely REACHED a
-  path naming one was refused — `error: refusing to emit binary with 8 reachable undefined
-  function(s)` for a program touching yukti 2.3.12's optical / eject / netlink-monitor /
-  network-probe / mount / lstat paths. `lib/syscalls_windows.cyr` is a standalone peer (it does
-  not include `lib/syscalls_linux_common.cyr`), so every wrapper linux_common grows is undefined
-  on PE until the peer gets its own. It now declares `sys_ioctl`, `sys_socket`, `sys_bind`,
-  `sys_connect`, `sys_setsockopt`, `sys_recvfrom`, `sys_fstatat`, `sys_mount` and `sys_umount2`,
-  each returning **-38 (-ENOSYS)** — the v6.6.5 decline contract, so a caller's `if (r < 0)`
-  fires and nothing is emulated. It also declares **`sys_fsync` and `sys_fdatasync`**, which a
-  PE build naming them (patra's fdatasync path, any write-tmp + fsync + rename caller) was
-  refused for too; these are not declines — they issue the Linux numbers 74 / 75, the
-  `sys_mkdir`/`sys_unlink` shape, so the PE backend's `FlushFileBuffers` route decides, and an
-  unrouted literal returns -38. Either way a flush of a bogus descriptor is negative, never a
-  false 0. The socket four are deliberately not routed to the ws2_32 band:
-  that band returns a SOCKET handle closed with `closesocket` and reports errors through
-  `WSAGetLastError`, so a BSD-shaped fd peer is an fd↔SOCKET design, not a renumber. A consumer
-  sees a PE build that used to be refused now link, with those paths failing cleanly at run time.
-  `docs/api-surface.snapshot` +11. Pinned by `tests/tcyr/crossos/pe_decline_peers.tcyr` (runs on
-  cass in the cross-OS leg; without the peers it does not compile for PE — 9, then 2 more,
-  undefined, measured; with the flush peers stubbed to `return 0` its two flush rows go red).
-- **`lib/tls_native.cyr` compiled with undefined functions — trap stubs — on every target.** Its
-  hand-written include list stops at the leaves the folded sigil needed years ago; sigil's sidecar
-  also lists `sys`, `chrono` and `random`, and a bundle strips its own includes. So
-  `include "lib/tls_native.cyr"` alone reported `sys_uname`, `random_bytes`, `clock_epoch_secs`,
-  `clock_now_ms` and `sleep_ms` as undefined on x86-Linux and Mach-O (three of them on PE, two on
-  agnos) — every one a `ud2`/SIGILL at its first call, e.g. sigil's uname path and its CSPRNG
-  fallback. It now includes `lib/sys.cyr`, `lib/chrono.cyr` and `lib/random.cyr` before sigil and
-  compiles alone with no undefined function on x86-Linux, aarch64, agnos, PE, x86 Mach-O and arm64
-  Mach-O. A TLS consumer sees those calls work, and — with sigil 3.13.3 folded in this release — no
-  longer sees the `duplicate fn 'uname_release'` warning every sys+sigil program used to print.
-  `stdlib_modules_self_sufficient.sh` adds tls_native to its per-target axis and raises its
-  ratchet floor 26 → 27 (mutation: the old include list is red on all four targets).
-- **The hash seed blocked PID 1 until the kernel CRNG seeded, and on macOS its CSPRNG draw was
-  thrown away.** (bite 8.) `lib/hashseed.cyr` drew the per-process hash seed with
-  `getrandom(buf, 8, 0)` — BLOCKING on Linux until the CRNG is initialised. kybernet is PID 1 and
-  takes its first map op (inside argonaut's `argonaut_init_new`) before that on boards with no
-  hardware RNG: measured as PID 1 in a `trust_cpu=off` VM, **253–254 ms** of boot stalled on the
-  first `map_set`, ending 4 ms after `crng init done`. The seed only has to be "not a published
-  constant", which the draw's own comment says. The same line issued the RAW syscall on every
-  non-Windows target, skipping `sys_getrandom`'s Darwin `getentropy` 0 -> len normalisation, so
-  on macOS `nr == 8` never matched and the seed silently came from the microsecond-clock
-  fallback. **Fix:** the Linux arm draws `GRND_INSECURE` (4, never blocks, kernel >= 5.6) and
-  retries `GRND_NONBLOCK` (1) on the pre-5.6 `-EINVAL`; every other target calls
-  `sys_getrandom(.., 0)`. Same VM after the fix: 10 ms, no stall. A new `_hm_seed_src` records
-  where the seed came from (1 = OS RNG, 2 = time fallback). Pinned by
-  `tests/tcyr/crossos/hashseed_os_rng_source.tcyr` (the seed is the OS RNG's bytes — **RED on
-  real ecb and ach** with the old draw, 2 of 5 failing, green on both and on pi with the fix) and
-  a static axis 4 in `tests/gates/memory/hash_seed_flood_resistance.sh` (the Linux arm must
-  draw flags 4 and must not pass 0; no raw `syscall(SYS_GETRANDOM` — each mutation reddens it).
-  Consumers see no API change; kybernet's boot loses the stall with no source change.
-
-- **`fl_alloc` stored through a refused mapping instead of returning 0, so every consumer's
-  `== 0` guard was dead code.** (bite 8.) `lib/freelist.cyr`'s `_fl_mmap` returns the raw kernel
-  result — `-errno` on Linux/Darwin, 0 on agnos and PE — and both callers used it as a pointer:
-  the large (>4096) path wrote its header at `blk`, and the arena REFILL adopted it as the new
-  arena base. A refused mapping SIGSEGV'd at `0xfffffffffffffff4` (reproduced on x86 and on
-  aarch64 under qemu, large path with no ulimit, refill under `ulimit -v`). kybernet (PID 1)
-  reaches it through sigil's argon2 wrappers; sigil's policy reader's `fl_alloc(4097)` guard was
-  dead too (4097 takes the large path). **Fix:** `blk <= 0 -> return 0` before any store on the
-  large path; the refill maps into a local, returns 0 on `<= 0`, and assigns the arena globals
-  only after the check, so a failed refill leaves the old arena intact and a later call retries;
-  `fl_alloc` returns 0 when the refill did. Also: **`fl_alloc` / `fl_calloc` now refuse a size
-  `<= 0`** and return 0, as `alloc()` does — a negative request used to land in class 0 and get a
-  16-byte block (a consumer that called `fl_alloc(0)` and treated the result as non-null must
-  now special-case 0; the ranga/sit callers surveyed already do). `lib/freelist.cyr` now includes
-  `lib/syscalls.cyr`: `include "lib/freelist.cyr"` alone was a HARD compile error
-  (`undefined variable 'SYS_MMAP'`). **Windows sibling:** `lib/alloc_windows.cyr`'s `alloc_init`
-  adopted VirtualAlloc's 0 unchecked, so every later `alloc()` re-ran init and returned 0
-  silently; it now writes `alloc_init: mmap failed` and exits 1 like the Linux and macOS peers
-  (the PE compiler's bytes change; it self-hosts byte-identical under wine). Pinned by
-  `tests/tcyr/crossos/freelist_map_failure.tcyr` (11 assertions; green on ecb / ach / pi / wine,
-  the large-path mutant SIGSEGVs on all of them) and `tests/gates/memory/alloc_failure_returns_zero.sh`
-  (include-alone on 5 targets, refill under exhaustion with an anti-vacuous exit, PE init abort
-  under wine + a static half; five mutants, each RED). The lock-site count is unchanged.
-
-- **`file_read_whole` SIGSEGV'd on ANY file of 1 GiB or more, on every box, and never checked an
-  allocation.** (bite 8.) The growth alloc in `lib/io.cyr` was unchecked and doubled from 64 KiB
-  with no ceiling. When a file reached exactly 1 GiB the next grow asked for `alloc(2^31 + 1)`,
-  which is past `ALLOC_MAX`, so `alloc` returned 0 and the `memcpy` wrote through NULL — with
-  memory to spare, and even though the next read would have been EOF (measured with sparse files:
-  1,073,741,823 bytes read fine, 1,073,741,824 exactly rc 139). `/dev/zero` under `ulimit -v`
-  did the same sooner; an EMPTY file whose first alloc failed stored its NUL at address 0; and
-  every call cost 65,544 bytes of bump heap that is never reclaimed, even for a 2-byte file —
-  kybernet's PID 1 re-reads its config on every SIGHUP and shipped its own reader to avoid this.
-  **Fix:** one bounded core. Every allocation is checked (a failure is `-ENOMEM`, never a store
-  through 0); growth CLAMPS to `min(2 * cap, max)` instead of doubling past the ceiling; at
-  `cap == max` one more byte is read into a local to tell a file of exactly `max` bytes (success)
-  from a larger one (`-EFBIG`); the first buffer is 4 KiB. `file_read_whole(path, &n)` keeps its
-  contract — the whole file NUL-terminated, or 0 with `n = 0` on ANY failure — with a ceiling of
-  `ALLOC_MAX - 1`: a 1 GiB file now reads whole (~6 s), a file over 2 GiB returns 0 instead of
-  crashing. `_env_load` (behind `getenv`) checks both of its allocations too, and EVERY failure
-  on its `/proc` path — the open, either allocation, a read error — now leaves the cache unset so
-  a later call retries. The 6.6.6 comment promised that, but `_env_len = 0` had already been
-  stored, so each of those paths cached an EMPTY environment for the life of the process: a PID 1
-  that called `getenv` before `/proc` was mounted never saw its environment. Pinned by
-  `tests/tcyr/crossos/file_read_whole_bounded.tcyr` (36 assertions, green on ecb / ach / pi /
-  qemu-aarch64 / wine) and axis 6 of `tests/gates/toolchain/manifest_read_whole_file.sh`
-  (`/dev/zero` under `ulimit -v 400000` is 0 / len 0 — rc 139 before; a `getenv` whose open
-  failed under `ulimit -n 3` sees the variable once a descriptor is free; plus static checks that
-  every allocation in the reader core and `_env_load` is tested against 0 and that every `/proc`
-  failure path unsets the cache).
-
-- **`lib/hashmap_fast.cyr` and `lib/flags.cyr` stored through refused allocations.** (bite 8,
-  same class — an audit's output is fixes.) `_fhm_grow` allocated its three arrays unchecked,
-  `memset` the new metadata through 0 and installed the arrays over the live table; `fhm_new`
-  stored through its four allocations unchecked. `flags.cyr`'s positional-array and `FLAG_LIST`
-  growth (`_flags_push_positional`, `_flags_list_push`) copied the old array into an unchecked
-  `alloc`, and `flags_new` stored through its three. Every one was a SIGSEGV on refusal.
-  **Fix:** `_fhm_grow` allocates and checks all three arrays BEFORE touching the map, so a
-  refused grow leaves the old table live, and `fhm_set` returns -1 for it (0 otherwise, as
-  before); `fhm_new` returns 0. The flags growth returns the new **`FLAG_ERR_NOMEM` (6)**
-  (`flags_error_str`: "out of memory"), `flags_parse` fails with -1 and names the token it could
-  not keep, and a list is left unchanged; `flags_new` returns 0. Pinned by
-  `tests/tcyr/stdlib/hashmap_fast_grow_refused.tcyr` and new rows in
-  `tests/tcyr/crossos/flags.tcyr` (both force the refusal deterministically by planting a
-  capacity whose doubling is past `ALLOC_MAX`; both SIGSEGV with the 6.6.6 code; green on
-  ecb / ach / pi / wine; the hashmap file also refuses a grow PART-way, meta served and keys
-  refused), and axes 4 and 5 of `tests/gates/memory/alloc_failure_returns_zero.sh`: both
-  constructors over a heap exhausted under `ulimit -v`, then PER-CALL fault injection, which
-  refuses only the k-th allocation for each k across `fhm_new`, `flags_new`, `_fhm_grow` and the
-  `FLAG_LIST` first push. A size refusal is monotonic, so the first check to fire masks the ones
-  after it — with `fhm_new`'s keys or vals check deleted the size-based rows stayed green;
-  axis 5 goes red for each of the 12 checks deleted alone.
-
-### Changed
-
-- **`cyrius fuzz --poison` says what it covers.** (bite 8, the overlap with proposal P6.) It
-  printed `poison mode: redzones + fill + quarantine-on-free ACTIVE`, which reads as
-  whole-program coverage. Only `lib/freelist.cyr` blocks are instrumented — memory from
-  `alloc()`, an arena or a consumer's own allocation seam (rekha's `sd_alloc`) is not — and a
-  redzone overwrite is COUNTED at `fl_free`, not trapped. It now prints
-  `poison mode: fl_alloc/fl_free blocks only (fill + redzone + quarantine-on-free)` and a second
-  line naming what is not covered and that a harness must assert `fl_poison_violations() == 0`.
-  The freelist's own poison comments were corrected with it: they still said the mode was
-  alloc-side fill only (redzones and quarantine shipped in v6.5.29), that nothing read a
-  switch (the `CYRIUS_POISON` compile-time predefine does), and that the parser has no
-  `#else` / `#ifndef` (it has had both since v5.6.1). The seam itself stays proposal P6.
-
-### Added
 
 - **`file_read_whole_max(path, max, &n)`, `file_read_whole_a(a, path, max, &n)` and
   `file_read_whole_into(rb, path, max)`** (`lib/io.cyr`, bite 8). The bounded forms of
@@ -742,16 +746,6 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   off-agnos -ENOSYS answer (ran on ecb, ach, pi, aarch64 qemu and PE/wine; cass pending) and, in
   its agnos build, -1 or a count >= 0 after dirtying the stack with a negative pattern — so a
   dropped pre-fill or an -ENOSYS answer fails there too (checked under mirshi).
-
-### Changed
-
-- **`SYSINFO_SIZE_FULL` (agnos) is 208, the whole `sysinfo`#35 struct — it was 200.** (bite 7.) The
-  old 200 tier keeps a name, **`SYSINFO_SIZE_BLK`**. ⚠ A consumer that passes `SYSINFO_SIZE_FULL` as
-  the length must size its buffer >= 208: the kernel writes the length it is asked for. The one
-  ecosystem user, chakshu (`src/snap_agnos.cyr`), already declares `var si[208]`. `lib/sys.cyr`'s
-  tier comment is corrected to "40 / 104 / 200 / 208".
-
-### Added
 
 - **`sys_sched_kicks()` and `SI_SCHED_KICKS` (+200) — agnos 1.57.9's reschedule-kick counter.**
   (bite 7.) Reads `sysinfo`#35 with `SYSINFO_SIZE_FULL` into a buffer sized by the same constant,
@@ -860,17 +854,6 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   beside the stamp, vidya's `language/` — instead of the retired `language.toml` and a CLAUDE.md
   binary size CLAUDE.md no longer carries. roadmap.md and state.md stop claiming
   `version-bump.sh` refreshes state.md; it never has.
-
-### Changed
-
-- **`scripts/lib/audit-walk.sh` deleted** (bite 9). The bash twin of `lib/audit_walk.cyr` had
-  no caller left — its consumer, the bash `scripts/cyrius` dispatcher, became a thin shim long
-  ago — but `install.sh` still copied `scripts/lib/*.sh` into `~/.cyrius/versions/<v>/bin/lib/`
-  and `scripts/shims/README.md` still listed it. Removed with both, the stale comments in
-  `scripts/check.sh` / `ci.yml` / `lib/audit_walk.cyr`, and the now-unmatched `bin/lib/`
-  exemption in `tests/gates/toolchain/install_atomic_over_running_binary.sh`.
-
-### Added
 
 - **`exec_capture_status`** (`lib/process.cyr`, all targets), **`audit_print_errors`**
   (`lib/audit_walk.cyr`), **`regression_exec_with_arg_capture_both_status`**
