@@ -43,6 +43,8 @@
 #      -> FAIL "did not report lib/yukti.cyr SYS_STATFS = 43, but a direct read still finds
 #      it". Before this the same mutation printed `PASS … axis 2: 0 declarations over 0
 #      files, 0 known / 0 new` and exited 0, taking the KNOWN LIVE DEFECT line with it.
+#      (Retired 6.6.7: yukti 2.3.13 is folded, the declaration is gone, and 11 below now
+#      proves the same mutation against the committed fixture.)
 #   6. restrict the walk to ("lib",) -> FAIL on the corpus floor (105 files < 400).
 #   7. axis 3 (review round 2): `GWL_NR_FTRUNCATE = 46` + `pn = 83;` under the guard, both
 #      used as a syscall's first argument -> FAIL naming both (46 -> 211 sendmsg,
@@ -52,6 +54,14 @@
 #      Proves src/ is now in the walk; before round 2 no gate read src/ for this at all.
 #   9. rename SYS_FACCESSAT on the x86 peer (as in 3) -> the FAIL text now reads "the x86
 #      peer does not declare this constant" instead of leaking a Python `None`.
+#  10. (6.6.7) delete tests/fixtures/aarch64_syscall_shadow/guarded_decls.cyr -> FAIL "the
+#      committed corpus floor is gone".
+#  11. (6.6.7) narrow the extension tuple to match nothing -> FAIL on the FIXTURE (the walk
+#      did not report it), independently of whether any live defect is still in the tree.
+#  12. (6.6.7) make judge() return None -> FAIL on the fixture's SYS_STATFS = 43 (after the
+#      synthetic control, which fails first; with the control bypassed the fixture still does).
+#  13. (6.6.7) drop the #ifdef tracking's negation (treat #ifdef CYRIUS_ARCH_X86 as live) ->
+#      FAIL: the fixture's off-arch SYS_PPOLL = 73 is counted.
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -171,14 +181,16 @@ if first_alias < last_compat:
 # ⛔ WHY THIS AXIS EXISTS. Everything above reads exactly two files, the stdlib peers. But
 # the shadow class is a property of an ARCH-GUARDED SYSCALL NUMBER, not of those two files,
 # and vendored stdlib folds declare their own. Found by review at 6.6.5:
-# `lib/yukti.cyr` line 58, inside `#ifdef CYRIUS_ARCH_AARCH64`, declares SYS_STATFS = 43 —
+# `lib/yukti.cyr` line 58 (yukti <= 2.3.11), inside `#ifdef CYRIUS_ARCH_AARCH64`, declared SYS_STATFS = 43 —
 # the correct aarch64 native number — and ESYSXLAT's ELF arm has carried `43 -> 202` (x86
 # accept) since the v6.2.10 socket block. Measured under `qemu-aarch64 -strace`:
 # `syscall(SYS_STATFS, "/", buf)` traced as `accept(6293618, 0x7f254c000000, [0]) = -1
-# errno=14`, so `yukti_filesystem_usage` returns "statfs failed: errno 14" on every ARM host.
+# errno=14`, so `yukti_filesystem_usage` returned "statfs failed: errno 14" on every ARM host.
 # Older than this release, and invisible to all four existing gates by construction:
 # raw_syscall_literals_routed.sh EXEMPTS arch-guarded literals (they are the supported
-# spelling), and the other three parse only the two peer files.
+# spelling), and the other three parse only the two peer files. Fixed at the SOURCE (yukti
+# 2.3.12 spells sys_statfs) and folded at 6.6.7 with 2.3.13; the run-time proof is
+# tests/tcyr/crossos/yukti_statfs_and_stdlib_constants.tcyr on pi.
 #
 # THE DISCRIMINATOR IS THE SAME ONE AS ABOVE, sourced differently: a guarded value that the
 # chain rewrites is correct only if the row's DESTINATION really is this call on aarch64 —
@@ -336,17 +348,30 @@ if sorted(n for n, _ in ctl_bad) != ["SYS_PPOLL", "SYS_STATFS"] or len(ctl) != 4
           "so a real collision below would go unreported.")
     sys.exit(1)
 
-# The one LIVE defect, named, with the fix. ⚠ This is NOT an allow-list: it is printed on
-# every run so it cannot go quiet, and the gate still fails on anything else. It leaves when
-# yukti ships the fix upstream and cyrius re-vendors — a fold-only edit here would evaporate
-# at the next `cyrius deps`.
-KNOWN = {("lib/yukti.cyr", "SYS_STATFS", 43):
-         "upstream ~/Repos/yukti: spell sys_statfs, or use the >= 1000 private alias band"}
+# LIVE defects in a VENDORED fold, named with the fix — {(rel, NAME, value): "upstream fix"}.
+# ⚠ This is NOT an allow-list: an entry is printed on every run so it cannot go quiet, the
+# gate still fails on anything else, and the re-derivation below fails if the walk stops
+# seeing it. An entry is only for a fold whose fix must land UPSTREAM (a fold-only edit
+# evaporates at the next `cyrius deps`), and it leaves when the fixed release is re-vendored.
+# EMPTY since 6.6.7: its one entry, lib/yukti.cyr SYS_STATFS = 43, left with the yukti 2.3.13
+# fold — and with it the walk's only live anchor, which the committed fixture replaces.
+KNOWN = {}
 
 PEERS = {"lib/syscalls_aarch64_linux.cyr", "lib/syscalls_x86_64_linux.cyr",
          "lib/syscalls_macos.cyr", "lib/syscalls_windows.cyr", "lib/syscalls_x86_64_agnos.cyr"}
 found, known_hits, nscanned, ndecl = [], [], 0, 0
 a3 = []
+# ══ the committed corpus floor (6.6.7) ═══════════════════════════════════════════════════
+# A fixture the walk must reach and must judge exactly as listed: three intended/native
+# declarations passed, one shadowed declaration reported, one off-arch declaration unseen.
+# It replaces the LIVE anchors axis 2 used to lean on (yukti 2.3.11's six guarded
+# declarations and its SYS_STATFS = 43), which yukti 2.3.12 deletes — a fix upstream must
+# not silently empty this axis. It is read by the SAME walk and judge as the real corpus, so
+# it proves the walk reaches tests/, the guard tracking, and the judge, end to end.
+FIX_REL = "tests/fixtures/aarch64_syscall_shadow/guarded_decls.cyr"
+FIX_EXPECT = sorted([("SYS_FSYNC", 74, False), ("SYS_GETDENTS64", 61, False),
+                     ("SYS_STATFS", 43, True), ("SYS_TRUNCATE", 76, False)])
+fix_seen = None
 # ⚠ `src` is in the walk since review round 2: the compiler's OWN source carried
 # `syscall(113, …)` under #ifdef CYRIUS_ARCH_AARCH64 (the aarch64-native clock_gettime) right
 # through the release that wrote the rule forbidding it. Latent — 113 is a row PRODUCT, not a
@@ -364,6 +389,10 @@ for sub in ("lib", "cbt", "programs", "tests", "benches", "fuzz", "src"):
             try:
                 text = open(os.path.join(dirpath, fn), encoding='utf-8', errors='replace').read()
             except OSError:
+                continue
+            if rel == FIX_REL:
+                fix_seen = [(name, val, judge(name, val) is not None)
+                            for name, val, _ln in guarded_decls(text)]
                 continue
             for name, val, lineno in guarded_decls(text):
                 ndecl += 1
@@ -386,11 +415,12 @@ for sub in ("lib", "cbt", "programs", "tests", "benches", "fuzz", "src"):
 # that live bug audible, out with it. Same vacuity shape this release fixed in
 # syscall_peer_kernel_agreement.sh (per-peer floors) and syscall_xlat_generated.sh (axes 9+10).
 #
-# The strong half is the KNOWN RE-DERIVATION, and it is computed a DIFFERENT WAY from the
-# walk: open each KNOWN file by its own path and regex it directly. If the declaration is
-# still in the file, the walk MUST have reported it. A broken walk therefore fails here
-# instead of going quiet, and when yukti ships the fix upstream and cyrius re-vendors, the
-# declaration disappears from the file and this check retires itself.
+# The KNOWN RE-DERIVATION is computed a DIFFERENT WAY from the walk: open each KNOWN file by
+# its own path and regex it directly. If the declaration is still in the file, the walk MUST
+# have reported it, so a broken walk fails here instead of going quiet; when the upstream fix
+# is re-vendored the declaration disappears and the entry retires. KNOWN is empty since the
+# 6.6.7 yukti fold, so today the anti-vacuity rests on the committed fixture checked next —
+# which, unlike a live defect, cannot be fixed out from under the gate.
 for (rel, name, val), _fix in sorted(KNOWN.items()):
     p = os.path.join(ROOT, rel)
     if not os.path.exists(p):
@@ -408,16 +438,29 @@ for (rel, name, val), _fix in sorted(KNOWN.items()):
         print(f"      read of the file does not find it — the scanner and the file disagree.")
         sys.exit(1)
 
+if not os.path.exists(os.path.join(ROOT, FIX_REL)):
+    print(f"FAIL: aarch64_syscall_shadow: {FIX_REL} is missing — the committed corpus floor is gone,")
+    print(f"      so axis 2 could walk a tree with no arch-guarded declaration and read green.")
+    sys.exit(1)
+if fix_seen is None:
+    print(f"FAIL: aarch64_syscall_shadow: axis 2's walk never reached {FIX_REL}, which exists.")
+    print(f"      The walk or the extension set moved; every 'clean' result below is vacuous.")
+    sys.exit(1)
+if sorted(fix_seen) != FIX_EXPECT:
+    print(f"FAIL: aarch64_syscall_shadow: axis 2 judged the fixture {FIX_REL} as")
+    print(f"      {sorted(fix_seen)}")
+    print(f"      expected (name, value, reported) = {FIX_EXPECT}. The #ifdef tracking or the")
+    print(f"      judge is broken on the REAL walk, so a real collision could go unreported.")
+    sys.exit(1)
+
 # Corpus floors. Not a tuned threshold — a tripwire for "this axis inspected nothing".
-# Measured at v6.6.5: 658 files, 6 arch-guarded SYS_* declarations. The tree only grows.
+# Measured at v6.6.5: 658 files, 6 arch-guarded SYS_* declarations (all of them yukti
+# 2.3.11's). Outside the fixture the tree may legitimately hold ZERO guarded declarations —
+# every one is a candidate defect, and yukti 2.3.12 removed the last — so there is no ndecl
+# floor any more: the fixture above is the floor, and it is exact rather than a count.
 if nscanned < 400:
     print(f"FAIL: aarch64_syscall_shadow: axis 2 walked only {nscanned} source files (floor 400; "
           f"658 at v6.6.5). The walk or the extension set moved and the axis is inspecting nothing.")
-    sys.exit(1)
-if ndecl < 3:
-    print(f"FAIL: aarch64_syscall_shadow: axis 2 found only {ndecl} arch-guarded SYS_* "
-          f"declarations over {nscanned} files (floor 3; 6 at v6.6.5). The #ifdef tracking "
-          f"stopped matching — a real collision would be invisible.")
     sys.exit(1)
 
 for rel, lineno, name, val, why in known_hits:
@@ -447,5 +490,6 @@ if a3:
 print(f"PASS: aarch64_syscall_shadow ({len(rows)} rows, {len(a64)} declarations, "
       f"0 shadowed, {len(intended)} intended x86-number renumbers, alias band last; "
       f"axis 2: {ndecl} arch-guarded declarations over {nscanned} files, "
-      f"{len(known_hits)} known / 0 new; axis 3: 0 nameless guarded numbers rewritten)")
+      f"{len(known_hits)} known / 0 new, fixture floor judged exactly ({len(FIX_EXPECT)} "
+      f"declarations, 1 reported); axis 3: 0 nameless guarded numbers rewritten)")
 PY

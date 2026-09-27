@@ -271,8 +271,9 @@ enum SysNr {
     # accept row (43→202) and native 44 by sendto (44→206). A native-numbered
     # `syscall(43, path, buf)` therefore ran **accept** — traced under qemu-aarch64 as
     # `accept(…) = -1 errno=14`, which is what yukti's `filesystem_usage` has been
-    # reporting on every ARM host since v6.2.10 (lib/yukti.cyr:58 still declares 43; the
-    # fix has to land upstream in yukti, a vendored-fold edit would evaporate).
+    # reporting on every ARM host since v6.2.10 (yukti <= 2.3.11 declared 43; fixed at the
+    # source in yukti 2.3.12, which spells sys_statfs, and folded at 6.6.7 with 2.3.13 —
+    # CHANGELOG [6.6.7]).
     # Routed 137→43 / 138→44, appended below the accept/sendto rows they produce into.
     # x86_64 and aarch64 share the 120-byte struct statfs and the (path|fd, buf) layout,
     # so both rows are pure renumbers. CHANGELOG [6.6.6]

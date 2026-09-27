@@ -1,0 +1,100 @@
+# The folded sandhi, run on every release-gate host: a socket deadline is reported as a
+# TIMEOUT, and an idle non-blocking listener is RETRY, with the TARGET's EAGAIN.
+#
+# ⛔ THE DEFECT (sandhi <= 1.10.0, bundled through 6.6.6 and the first 6.6.7 fold): sandhi
+# hard-coded its would-block sentinel as `_SANDHI_EAGAIN = 11`, Linux's value. Darwin's
+# EAGAIN is 35 (its 11 is EDEADLK), and sock_recv / sock_accept hand back the kernel's own
+# errno. So on macOS:
+#   - a read deadline came back from `sandhi_conn_recv` as -35, matched no sentinel, and
+#     `sandhi_conn_recv_all` reported -1: a broken connection (CONNECT), not SANDHI_ERR_TIMEOUT;
+#   - an idle non-blocking listener's accept errno (35) classified BACKOFF, not RETRY, so a
+#     stop-enabled server with no traffic walked to its give-up count and shut itself down.
+# Measured on ecb and ach against 1.10.0: recv = -35, recv_all = -1, accept action = 1
+# (BACKOFF). Linux, qemu-aarch64 and pi return 11 and were always right, which is why this
+# lives in crossos/: it can only go red on the macOS hosts.
+#
+# Windows: sandhi's timeout path rides the BSD socket calls the PE peer declines, so the row
+# there is only that the bundle BUILDS with no other fold in scope (it did not: see
+# tests/gates/platform/pe_no_raw_syscall_bytes.sh axis 6). CHANGELOG [6.6.7]
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/result.cyr"
+include "lib/str.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/hashmap.cyr"
+include "lib/io.cyr"
+include "lib/fs.cyr"
+include "lib/fnptr.cyr"
+include "lib/tagged.cyr"
+include "lib/mmap.cyr"
+include "lib/net.cyr"
+include "lib/ws.cyr"
+include "lib/math.cyr"
+include "lib/chrono.cyr"
+include "lib/random.cyr"
+include "lib/thread.cyr"
+include "lib/thread_local.cyr"
+include "lib/process.cyr"
+include "lib/dynlib.cyr"
+include "lib/fdlopen.cyr"
+include "lib/tls.cyr"
+include "lib/sakshi.cyr"
+include "lib/sigil.cyr"
+include "lib/bayan.cyr"
+include "lib/sandhi.cyr"
+include "lib/async.cyr"
+include "lib/assert.cyr"
+
+#ifdef CYRIUS_TARGET_WIN
+test_group("Windows: sandhi builds with no borrowed fold constants");
+assert_eq(sandhi_conn_recv(0, 0, 0), 0 - 1, "a null conn is refused, not dereferenced");
+#endif
+
+#ifndef CYRIUS_TARGET_WIN
+fn _eg_listener(port): i64 {
+    var lt, lfd = tcp_socket();
+    if (is_err_result(lt) == 1) { return 0 - 1; }
+    sock_reuse(lfd);
+    if (is_err_result(sock_bind(lfd, 0x0100007F, port)) == 1) { sock_close(lfd); return 0 - 1; }
+    if (is_err_result(sock_listen(lfd, 4)) == 1) { sock_close(lfd); return 0 - 1; }
+    return lfd;
+}
+
+test_group("a read deadline is a TIMEOUT, not a broken connection");
+var lfd = _eg_listener(39631);
+assert_gt(lfd, 0 - 1, "loopback listener is up");
+if (lfd >= 0) {
+    # Plain conn, 300 ms read deadline. The listener never accepts or sends, so every recv
+    # below can only end by SO_RCVTIMEO firing.
+    var conn = sandhi_conn_open_timed(0x0100007F, 39631, 0, 0, 300, 0);
+    assert_neq(conn, 0, "sandhi_conn_open_timed connects");
+    if (conn != 0) {
+        var buf = alloc(128);
+        var kt, ke = sock_recv(sandhi_conn_fd(conn), buf, 64);
+        assert_eq(is_err_result(kt), 1, "raw recv on a silent peer errs");
+        assert_eq(ke, _SANDHI_EAGAIN, "_SANDHI_EAGAIN is this kernel's would-block errno (Darwin 35)");
+        assert_eq(sandhi_conn_recv(conn, buf, 64), 0 - _SANDHI_EAGAIN,
+          "sandhi_conn_recv surfaces -_SANDHI_EAGAIN");
+        assert_eq(sandhi_conn_recv_all(conn, buf, 64), 0 - _SANDHI_EAGAIN,
+          "sandhi_conn_recv_all classifies it as a timeout (-1 = broken conn)");
+        sandhi_conn_close(conn);
+    }
+    sock_close(lfd);
+}
+
+test_group("an idle non-blocking listener is RETRY, never backed off");
+var afd = _eg_listener(39632);
+assert_gt(afd, 0 - 1, "loopback listener is up");
+if (afd >= 0) {
+    sock_set_nonblocking(afd);
+    var at, ae = sock_accept(afd);
+    assert_eq(is_err_result(at), 1, "accept with nothing queued errs");
+    assert_eq(ae, _SANDHI_EAGAIN, "the errno is _SANDHI_EAGAIN");
+    assert_eq(_sandhi_accept_action(ae), SANDHI_ACCEPT_RETRY, "classified RETRY (1 = BACKOFF)");
+    sock_close(afd);
+}
+#endif
+
+var r = assert_summary();

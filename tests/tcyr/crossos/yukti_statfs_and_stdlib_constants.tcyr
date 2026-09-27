@@ -1,0 +1,76 @@
+# The folded yukti, run on every release-gate host: its filesystem_usage reaches statfs,
+# and including it leaves the stdlib's per-target constants alone.
+#
+# ⛔ TWO DEFECTS THE FOLD CARRIED, both silent (yukti 2.3.11, bundled through 6.6.6):
+#
+# 1. aarch64: `filesystem_usage` issued accept(2). yukti declared its own
+#    `SYS_STATFS = 43` under `#ifdef CYRIUS_ARCH_AARCH64` — the right NATIVE number — and
+#    ESYSXLAT's ELF-aarch64 arm rewrites 43 -> 202 (the x86 accept row), so the call ran as
+#    `accept(...) = -1 errno=14` under qemu-aarch64 -strace and every ARM host got
+#    "statfs failed: errno 14". 2.3.12 spells sys_statfs.
+# 2. Mach-O: yukti's `enum EjectConst { O_RDONLY = 0; O_NONBLOCK = 2048; }`. An enum
+#    member is a program-wide global and a conflicting redefinition wins RETROACTIVELY —
+#    code compiled before yukti reads the later value too — so on Darwin, where 2048 is
+#    O_EXCL, every `O_NONBLOCK` in the program (the stdlib's included) became O_EXCL. Its
+#    `SOL_SOCKET = 1` did the same to net.cyr's Darwin 0xFFFF. 2.3.13 names them `_YK_*`.
+#
+# Neither is visible on x86_64 Linux, where yukti's numbers and the stdlib's agree — which is
+# why this lives in crossos/: it goes red on pi (defect 1) and on ecb / ach (defect 2), the
+# only places either defect exists. On Windows sys_statfs declines, so the row there is that
+# the call FAILS CLEANLY rather than faulting.
+#
+# ⚠ net.cyr is included BEFORE yukti on purpose: that is the order in which yukti's old
+# `SOL_SOCKET = 1` overwrote net's value. CHANGELOG [6.6.7]
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/hashmap.cyr"
+include "lib/io.cyr"
+include "lib/fs.cyr"
+include "lib/tagged.cyr"
+include "lib/process.cyr"
+include "lib/fnptr.cyr"
+include "lib/chrono.cyr"
+include "lib/args.cyr"
+include "lib/freelist.cyr"
+include "lib/atomic.cyr"
+include "lib/sync.cyr"
+include "lib/thread_local.cyr"
+include "lib/random.cyr"
+include "lib/net.cyr"
+include "lib/sakshi.cyr"
+include "lib/patra.cyr"
+include "lib/yukti.cyr"
+include "lib/assert.cyr"
+
+test_group("filesystem_usage reaches statfs");
+var t, v = filesystem_usage(".");
+#ifdef CYRIUS_TARGET_WIN
+# The PE peer's sys_statfs declines with -ENOSYS: an Err, never a fault or a fake size.
+assert_eq(t, 1, "Windows: filesystem_usage is an Err (sys_statfs declines)");
+#endif
+#ifndef CYRIUS_TARGET_WIN
+assert_eq(t, 0, "filesystem_usage(\".\") is Ok (statfs ran; errno 14 = accept on aarch64)");
+if (t == 0) {
+    assert_gt(load64(v), 0, "total bytes > 0");
+    assert_lte(load64(v + 8), load64(v), "used <= total");
+    assert_lte(load64(v + 16), load64(v), "available <= total");
+    assert_lte(load64(v + 24), 10000, "usage x100 <= 100%");
+}
+#endif
+
+test_group("including yukti keeps the stdlib's per-target constants");
+#ifdef CYRIUS_TARGET_MACOS
+assert_eq(O_NONBLOCK, 4, "Darwin O_NONBLOCK is 4 (2048 is O_EXCL)");
+assert_eq(SOL_SOCKET, 65535, "Darwin SOL_SOCKET is 0xFFFF");
+#endif
+#ifdef CYRIUS_TARGET_LINUX
+assert_eq(O_NONBLOCK, 2048, "Linux O_NONBLOCK is 2048");
+assert_eq(SOL_SOCKET, 1, "Linux SOL_SOCKET is 1");
+#endif
+assert_eq(O_RDONLY, 0, "O_RDONLY is 0");
+
+var r = assert_summary();

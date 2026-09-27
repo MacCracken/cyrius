@@ -1,0 +1,86 @@
+# pe_decline_peers.tcyr — v6.6.7: the nine linux_common wrappers a cross-platform consumer
+# names on Windows-dead paths EXIST on PE and decline with -ENOSYS there — and the two flush
+# wrappers (sys_fsync / sys_fdatasync) EXIST on PE and never report a bogus flush as success.
+#
+# ⛔ WHY. lib/syscalls_windows.cyr is a STANDALONE peer — it does not include
+# lib/syscalls_linux_common.cyr — so every wrapper linux_common grows is undefined on PE until
+# the peer gets its own. yukti 2.3.12 routed its raw `syscall(SYS_*)` sites through
+# sys_ioctl / sys_socket / sys_bind / sys_connect / sys_setsockopt / sys_recvfrom /
+# sys_fstatat and already called sys_mount / sys_umount2, so a PE program that merely
+# REACHED its optical / eject / netlink / network-probe / mount / lstat paths was refused:
+#
+#     error: refusing to emit binary with 8 reachable undefined function(s)
+#
+# The PE half below is the fix's own assertion: each wrapper is callable and returns -38, the
+# value a caller's `if (r < 0)` treats as failure. Without the peers this file does not
+# COMPILE for PE — which is how the cross-OS leg (cass) sees the regression.
+#
+# sys_fsync / sys_fdatasync are different: the PE peer ISSUES the Linux numbers 74 / 75 and
+# lets the backend decide (kernel32!FlushFileBuffers once the 6.6.7 route is in, -38 for an
+# unrouted literal before it). So the assertion is the one that holds either way — a flush of
+# a descriptor that does not exist is NEGATIVE, never the 0 that would tell patra's WAL a page
+# is durable. patra, and every write-tmp + fsync + rename caller, names these.
+#
+# ⚠ The other targets assert too, because a file whose only assertions sit behind
+# `#ifdef CYRIUS_TARGET_WIN` would score 0 of 0 — green — everywhere else. There each wrapper
+# is the real syscall, and every case pins something only a real call produces: a real socket
+# fd that CLOSES successfully (a positive errno from Darwin would not), and fstatat answering
+# "/" but refusing a path that does not exist (a wrong call that ignores its path would not).
+# mount / umount2 are exercised on PE only: on Darwin the Linux numbers have no route.
+# agnos is not part of this corpus's targets and defines none of these names (its sys_mount
+# is a 0-arity stub). CHANGELOG [6.6.7]
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+fn main(): i64 {
+    alloc_init();
+
+    #ifdef CYRIUS_TARGET_WIN
+    test_group("v6.6.7 — PE decline peers for the linux_common wrappers");
+    var buf[STAT_BUFSZ];
+    var sa[16];
+    assert_eq(sys_ioctl(1, 0x5309, 0), 0 - 38, "sys_ioctl returns -ENOSYS on Windows");
+    assert_eq(sys_socket(2, 2, 0), 0 - 38, "sys_socket returns -ENOSYS on Windows");
+    assert_eq(sys_bind(3, &sa, 16), 0 - 38, "sys_bind returns -ENOSYS on Windows");
+    assert_eq(sys_connect(3, &sa, 16), 0 - 38, "sys_connect returns -ENOSYS on Windows");
+    assert_eq(sys_setsockopt(3, 1, 2, &sa, 4), 0 - 38, "sys_setsockopt returns -ENOSYS on Windows");
+    assert_eq(sys_recvfrom(3, &buf, 16, 0, 0, 0), 0 - 38, "sys_recvfrom returns -ENOSYS on Windows");
+    assert_eq(sys_fstatat(AT_FDCWD, "C:\\", &buf, AT_SYMLINK_NOFOLLOW), 0 - 38,
+      "sys_fstatat returns -ENOSYS on Windows");
+    assert_eq(sys_mount("none", "C:\\mnt", "tmpfs", 0, 0), 0 - 38, "sys_mount returns -ENOSYS on Windows");
+    assert_eq(sys_umount2("C:\\mnt", 0), 0 - 38, "sys_umount2 returns -ENOSYS on Windows");
+    assert_lt(sys_fsync(12345), 0, "sys_fsync of a bogus descriptor fails on Windows");
+    assert_lt(sys_fdatasync(12345), 0, "sys_fdatasync of a bogus descriptor fails on Windows");
+    #endif
+
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_AGNOS
+    test_group("v6.6.7 — the same wrappers are the real syscalls off Windows");
+    var sbuf[STAT_BUFSZ];
+    assert_eq(sys_fstatat(AT_FDCWD, "/", &sbuf, AT_SYMLINK_NOFOLLOW), 0, "fstatat(AT_FDCWD, \"/\") succeeds");
+    assert_neq(sys_fstatat(AT_FDCWD, "/cyr_no_such_path_6_6_7", &sbuf, 0), 0,
+      "fstatat on a nonexistent path fails (the path argument is really read)");
+    var fd = sys_socket(2, 2, 0);
+    assert_gt(fd, 2, "socket(AF_INET, SOCK_DGRAM) returns a new descriptor");
+    assert_eq(sys_close(fd), 0, "and that descriptor closes (it was a real socket fd)");
+    var sa2[16];
+    assert_neq(sys_connect(0 - 1, &sa2, 16), 0, "connect on a bad descriptor fails");
+    assert_neq(sys_bind(0 - 1, &sa2, 16), 0, "bind on a bad descriptor fails");
+    assert_neq(sys_setsockopt(0 - 1, 1, 2, &sa2, 4), 0, "setsockopt on a bad descriptor fails");
+    assert_neq(sys_recvfrom(0 - 1, &sbuf, 16, 0, 0, 0), 0, "recvfrom on a bad descriptor fails");
+    assert_neq(sys_ioctl(0 - 1, 0x5309, 0), 0, "ioctl on a bad descriptor fails");
+    assert_lt(sys_fsync(12345), 0, "fsync of a bogus descriptor fails");
+    assert_lt(sys_fdatasync(12345), 0, "fdatasync of a bogus descriptor fails");
+    var dfd = sys_open("/", O_RDONLY, 0);
+    assert_gte(dfd, 0, "open(\"/\", O_RDONLY) for the flush probe");
+    assert_eq(sys_fsync(dfd), 0, "fsync of a real descriptor succeeds (it was a real call)");
+    assert_eq(sys_fdatasync(dfd), 0, "fdatasync of a real descriptor succeeds");
+    sys_close(dfd);
+    #endif
+    #endif
+
+    return assert_summary();
+}
+var ec = main();
+syscall(60, ec);

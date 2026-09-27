@@ -126,7 +126,7 @@ enum OFlags {
     # caller expects. Defined so portable code still compiles.
     #
     # ⛔ AND NAME WHAT THAT COSTS, now that O_EXCL IS honoured. `luks_write_keyfile`
-    # (lib/sigil.cyr:3857) opens `O_WRONLY|O_CREAT|O_TRUNC|O_EXCL|O_NOFOLLOW` and treats
+    # (lib/sigil.cyr:4179) opens `O_WRONLY|O_CREAT|O_TRUNC|O_EXCL|O_NOFOLLOW` and treats
     # the refusal as its guarantee that it created the keyfile itself. On PE that becomes
     # CreateFileW CREATE_NEW, which RESOLVES a final reparse point instead of refusing it:
     # measured on real cass 2026-09-19 — CREATE_NEW over a dangling symlink SUCCEEDS and
@@ -435,6 +435,47 @@ fn sys_nanosleep(req, rem): i64 { return syscall(SYS_NANOSLEEP, req, rem); }
 # Yield the remainder of this thread's timeslice. Declines on Windows: the peer is
 # SwitchToThread/Sleep(0), a kernel32 import this backend does not reroute.
 fn sys_sched_yield(): i64 { return 0 - 38; }
+
+# ── PE peers for the linux_common wrappers a cross-platform consumer names on paths that
+# are dead on Windows (yukti's optical / eject / netlink-monitor / network-probe / mount /
+# TOCTOU-lstat paths since 2.3.12). Without them a PE build that merely REACHES such a
+# path is refused: `refusing to emit binary with N reachable undefined function(s)`.
+# Same contract as the block above: each declines with -38/-ENOSYS, so the caller's
+# `if (r < 0)` fires; none emulates. ⚠ The socket four are NOT a missing reroute: the
+# ws2_32 band (0xF022…) returns a SOCKET handle that must be closed with closesocket and
+# reports errors through WSAGetLastError, so a BSD-shaped fd peer is an fd↔SOCKET
+# namespace design, not a renumber (the sys_socketpair note above). CHANGELOG [6.6.7]
+# Device control. Declines: Windows has no ioctl (DeviceIoControl takes a HANDLE and
+# Windows control codes, not Linux device requests).
+fn sys_ioctl(fd, request, argp): i64 { return 0 - 38; }
+# Create a BSD socket fd. Declines (see the block header).
+fn sys_socket(domain, type, protocol): i64 { return 0 - 38; }
+# Bind a socket fd. Declines (see the block header).
+fn sys_bind(fd, sockaddr, addrlen): i64 { return 0 - 38; }
+# Connect a socket fd. Declines (see the block header).
+fn sys_connect(fd, sockaddr, addrlen): i64 { return 0 - 38; }
+# Set a socket option on a socket fd. Declines (see the block header).
+fn sys_setsockopt(fd, level, optname, val, vallen): i64 { return 0 - 38; }
+# Receive a datagram with its source address. Declines (see the block header).
+fn sys_recvfrom(fd, buf, len, flags, srcaddr, srcaddrlen): i64 { return 0 - 38; }
+# stat relative to a directory fd. Declines: Windows has no at-family calls and no
+# struct stat; GetFileAttributesExW is a different record.
+fn sys_fstatat(dirfd, path, buf, flags): i64 { return 0 - 38; }
+# Mount a filesystem. Declines: Windows mounts volumes through the mount manager, not a
+# syscall with a filesystem type and flags.
+fn sys_mount(source, target, fstype, flags, data): i64 { return 0 - 38; }
+# Unmount a filesystem. Declines, same reason as sys_mount.
+fn sys_umount2(target, flags): i64 { return 0 - 38; }
+# Flush a file (data + metadata) to storage. NOT a decline like the block above: it issues
+# the LINUX number 74 — the sys_mkdir/sys_unlink 83/87 shape — so the PE backend owns the
+# meaning. With the 6.6.7 route, 74/75 at argc 2 go to kernel32!FlushFileBuffers (0 /
+# negative); without it the unrouted literal returns -38/-ENOSYS. Either way a bogus fd reads
+# < 0 and no caller is told a flush happened that did not. Consumers (patra's fdatasync sites,
+# the write-tmp + fsync + rename pattern) name these, so without them a PE build is refused.
+fn sys_fsync(fd): i64 { return syscall(74, fd); }
+# Flush file data only. Windows has no data-only flush, so the route is the same
+# FlushFileBuffers as sys_fsync — stronger than asked, never weaker. CHANGELOG [6.6.7]
+fn sys_fdatasync(fd): i64 { return syscall(75, fd); }
 
 # v6.4.66 — getpeername / getsockname now route to ws2_32 (was a fail-closed -ENOSYS
 # stub v6.4.64→.65). The PE syscall router maps 0xF036 → ws2_32!getpeername and

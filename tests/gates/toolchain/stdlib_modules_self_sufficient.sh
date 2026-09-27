@@ -47,6 +47,10 @@
 #   e. lib/io.cyr's agnos args_agnos include   -> axis 1 FAIL on the AGNOS target only
 #      removed                                   ('_agnos_getenv') — the per-target half
 #   f. axis-1 warning check inverted           -> axis 3 self-test FAIL
+#   g. (6.6.7) lib/tls_native.cyr's sys /     -> axis 1 FAIL on all 4 targets ('random_bytes' +
+#      chrono / random includes removed          'clock_epoch_secs' everywhere, 'sys_uname' off
+#                                                 agnos, 'clock_now_ms' + 'sleep_ms' on linux and
+#                                                 macho) and axis 4 FAIL (26 of 104, floor 27)
 # Real tree -> PASS.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -58,7 +62,10 @@ CC="$ROOT/build/cycc"
 [ -x "$CC" ] || { echo "FAIL: build/cycc missing"; exit 1; }
 
 # The modules this bite made self-sufficient. Each must stay so on every target.
-SELFSUF="lib/alloc.cyr lib/fmt.cyr lib/vec.cyr lib/string.cyr lib/io.cyr"
+# 6.6.7 adds lib/tls_native.cyr: the folded sigil needs sys, chrono and random, and a bundle
+# strips its own includes, so tls_native (its only in-tree hand list) now supplies them.
+# CHANGELOG [6.6.7]
+SELFSUF="lib/alloc.cyr lib/fmt.cyr lib/vec.cyr lib/string.cyr lib/io.cyr lib/tls_native.cyr"
 # Per-target env, as the build scripts spell it. "" is x86_64-linux.
 TARGETS="linux:  agnos:CYRIUS_TARGET_AGNOS=1 pe:CYRIUS_TARGET_WIN=1 macho:CYRIUS_MACHO=1"
 
@@ -91,7 +98,7 @@ for m in $SELFSUF; do
         esac
     done
 done
-[ "$n1" -ge 20 ] || { fail "axis 1: only $n1 module/target pairs checked (5 modules x 4 targets expected)"; x=1; }
+[ "$n1" -ge 24 ] || { fail "axis 1: only $n1 module/target pairs checked (6 modules x 4 targets expected)"; x=1; }
 [ "$x" = 0 ] && echo "  ok: axis 1: $n1 module/target pairs — every module in SELFSUF includes alone with no undefined function"
 
 # ── axis 2: ANTI-VACUOUS — the definitions are real, not just quiet ──
@@ -137,13 +144,14 @@ esac
 [ "$x" = 0 ] && echo "  ok: axis 3: the check reports an undefined function in a fixture module (axis 1 is not vacuous)"
 
 # ── axis 4: RATCHET over the whole stdlib ──
-# ⚠ THE FLOOR IS NOT A TARGET. At this commit 26 of the 103 lib/*.cyr compile alone with no
-# undefined function; 46 still do not, and 31 cannot be included alone at all (per-target peers
-# like lib/alloc_windows.cyr, which exist to be dispatched INTO by their parent). The rest is a
-# real gap and is filed rather than fixed here — this bite's scope was fmt/vec/string/io. The
+# ⚠ THE FLOOR IS NOT A TARGET. The count is measured, not declared — the gate prints it below
+# ("N of M"); at 6.6.7 it is 27 of the 104 lib/*.cyr. The rest either still leave a function
+# undefined or cannot be included alone at all (per-target peers like lib/alloc_windows.cyr,
+# which exist to be dispatched INTO by their parent); that gap is filed, not fixed here. The
 # ratchet is what stops the number sliding back while the rest is brought up: RAISE it whenever
 # a module is fixed, never lower it.
-FLOOR=26
+# 6.6.7: 26 -> 27 (lib/tls_native.cyr).
+FLOOR=27
 nok=0; ntot=0
 for m in lib/*.cyr; do
     ntot=$((ntot + 1))
