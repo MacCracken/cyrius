@@ -1118,7 +1118,12 @@ fn PP_COPY_TAIL(src_base, ip, bl, out, op): i64 {
 var _pp_dndir = 0;
 var _pp_dlen = 0;
 var _pp_dbadc = 0;
-# 1 iff a PP_DERIVE_FIELDS helper stopped the walk on a shape the parser will reject.
+# The layout backstop's armed flag and size — see PP_DERIVE_EMIT_CHK.
+var _pp_dchk_pending = 0;
+var _pp_dchk_size = 0;
+# 1 iff the last PP_DERIVE_FIELDS walk reached the closing `}` (0: it stopped on a shape the
+# parser will reject, so the backstop is not armed — the parser's error is the one to read).
+var _pp_dfull = 0;
 var _pp_dstop = 0;
 
 # 1 iff `c` is a space or a tab.
@@ -1353,6 +1358,7 @@ fn PP_DFIELD_TAIL(S, base, p, end, fc): i64 {
 # program. CHANGELOG [6.6.7]
 fn PP_DERIVE_FIELDS(S, base, p, end): i64 {
     var fc = 0;
+    _pp_dfull = 0;
     _pp_dstop = 0;
     p = PP_DTRIV(base, p, end);
     while (p < end) {
@@ -1372,6 +1378,9 @@ fn PP_DERIVE_FIELDS(S, base, p, end): i64 {
         fc = fc + 1;
         p = PP_DTRIV(base, p, end);
     }
+    # A stop inside the last field's tail returns exactly `end` too; only a tail that ended
+    # on its own counts as a full walk.
+    if (_pp_dstop == 0) { _pp_dfull = 1; }
     return fc;
 }
 
@@ -1628,6 +1637,7 @@ fn PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op): i64 {
         _pp_derive_sizes = alloc(512 * 8);
         _pp_derive_names = alloc(512 * 32);
     }
+    var seen = PP_DERIVE_SEEN(S);
     var dsi = _pp_derive_count;
     var ri = 0;
     while (load8(S + 0x197020 + ri) != 0) { store8(_pp_derive_names + dsi * 32 + ri, load8(S + 0x197020 + ri)); ri = ri + 1; }
@@ -1637,9 +1647,60 @@ fn PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op): i64 {
     store64(S + 0x197008, op);
     store64(S + 0x197010, fc);
     store64(S + 0x197018, cumul);
+    # Arm the layout backstop (PP_DERIVE_EMIT_CHK) for a struct with fields — unless an
+    # earlier `#derive` already declared this NAME. A second `struct X` is a redefinition: the
+    # parser keeps the FIRST layout (`sizeof(X)` is the first one's), so the check would judge
+    # this declaration against a different struct. That duplicate is a defect of its own, but
+    # it builds today (with `duplicate fn` warnings for the accessors) and it is live in the
+    # older kavach copies vendored by mehman, stiva, aethersafha, agnosai and agnostic — so the
+    # backstop must not be what turns it into a build failure.
+    _pp_dchk_pending = 0;
+    if (_pp_decl_is_enum == 0) { if (fc > 0) { if (_pp_dfull == 1) { if (seen == 0) { _pp_dchk_pending = 1; _pp_dchk_size = cumul; } } } }
     return ip;
 }
 
+# ⛔ 6.6.7 — THE LAYOUT BACKSTOP. The derive computes field offsets itself (above) and the
+# parser computes the struct's real layout; if the two ever disagree, every accessor and codec
+# reads and writes the wrong bytes with no diagnostic — which is exactly what the byte-scan body
+# walk did for years. This emits `#assert sizeof(<Name>) == <derive's size>` into the FIRST
+# generated fn body, so any remaining disagreement fails the build instead. It is what makes the
+# still-unsupported case LOUD: a field typed with a struct that is not itself `#derive`d is sized
+# 8 here (the derive cannot see non-derived struct sizes) but its real size by the parser.
+# ⚠ It cannot catch a same-size mis-naming (a wrong key at the right width); it is a backstop,
+# not the fix — PP_DERIVE_FIELDS is.
+# ⚠ Why INSIDE a fn body and not after the struct: a top-level `#assert` is a statement, and
+# the first top-level statement ends the declaration phase — every `struct` / `enum` after it
+# is then rejected (`unexpected struct`). Inside a body it is evaluated by PARSE_STMT and emits
+# no code; an inlined accessor re-evaluates it at each call site, also emitting nothing. The
+# message is ONE fixed string so the string table carries it once per program.
+# CHANGELOG [6.6.7]
+# 1 iff the name at S+0x197020 was already registered by an earlier `#derive` this run.
+fn PP_DERIVE_SEEN(S): i64 {
+    var di = 0;
+    while (di < _pp_derive_count) {
+        var ci = 0;
+        var eq = 1;
+        while (eq == 1) {
+            var a = load8(S + 0x197020 + ci);
+            if (a != load8(_pp_derive_names + di * 32 + ci)) { eq = 0; }
+            elif (a == 0) { return 1; }
+            ci = ci + 1;
+        }
+        di = di + 1;
+    }
+    return 0;
+}
+
+fn PP_DERIVE_EMIT_CHK(S, out, op): i64 {
+    if (_pp_dchk_pending == 0) { return op; }
+    _pp_dchk_pending = 0;
+    op = op + PP_EMIT_STR(out, op, "#assert sizeof(");
+    op = op + PP_EMIT_STR(out, op, S + 0x197020);
+    op = op + PP_EMIT_STR(out, op, ") == ");
+    op = op + PP_EMIT_INT(out, op, _pp_dchk_size);
+    op = op + PP_EMIT_STR(out, op, ", \"#derive: field offsets disagree with the struct layout (is a field typed with a struct that is not itself #derive'd?)\"; ");
+    return op;
+}
 
 # v6.4.x Pin 2 R2 — classify the element type of a `#derive` field whose type
 # string (a 32-byte cstring at `t`) is `Vec<T>`. Returns:
@@ -1893,6 +1954,7 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
     op = op + PP_EMIT_STR(out, op, "fn ");
     op = op + PP_EMIT_STR(out, op, S + 0x197020);
     op = op + PP_EMIT_STR(out, op, "_to_json(ptr, sb) {\n");
+    op = PP_DERIVE_EMIT_CHK(S, out, op);
     # v6.3.40 — pre-scan for any f64 field; if present, declare a shared 80-byte
     # format scratch the per-field f64 branch fills via fmt_float_buf (lib/fmt.cyr,
     # always in scope for a derive consumer). Only emitted when needed → structs with
@@ -2657,7 +2719,9 @@ fn PP_DERIVE_ACCESSORS_BODY(S, out, op): i64 {
         store8(out + op, 95); op = op + 1;
         op = op + PP_EMIT_STR(out, op, S + 0x1FC000 + fi * 32);
         var fbits = PP_DFIELD_BITS(S, fi);
-        op = op + PP_EMIT_STR(out, op, "(p) { return load");
+        op = op + PP_EMIT_STR(out, op, "(p) { ");
+        op = PP_DERIVE_EMIT_CHK(S, out, op);
+        op = op + PP_EMIT_STR(out, op, "return load");
         op = op + PP_EMIT_INT(out, op, fbits);
         op = op + PP_EMIT_STR(out, op, "(p + ");
         op = op + PP_EMIT_INT(out, op, off);

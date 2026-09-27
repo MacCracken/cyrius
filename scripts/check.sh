@@ -1170,3 +1170,8 @@ _chk_gate "$ROOT/tests/gates/codegen/fn_local_storage_class.sh"
 # offset 0, which is the program's FIRST LEXED WORD. This pins the SHAPE at the source so the
 # sixth cannot slip in, with derived counts and an anti-vacuous floor on every axis.
 _chk_gate "$ROOT/tests/gates/codegen/hidden_temp_census.sh"
+
+# 6.6.7 bite 5 — a `#derive` whose field table disagrees with the parser's struct layout fails
+# the build (an `#assert sizeof` inside the first generated fn body — never at top level, where
+# it would end the declaration phase and reject every later struct/enum).
+_chk_gate "$ROOT/tests/gates/diagnostics/derive_layout_backstop.sh"

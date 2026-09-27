@@ -38,7 +38,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   neither"). **What a consumer sees:** every shape above now produces the parser's layout; no
   source change is needed, argonaut and kybernet only repin. Every in-tree `.tcyr` / `.bcyr` /
   `.fcyr` / program compiles byte-identically (472 of 472; the one difference is the filed
-  repro, which now passes). Test: `tests/tcyr/derive/derive_body_shapes.tcyr` — 36 checks,
+  repro, which now passes), and across `~/Repos` all 539 files that carry a `#derive` —
+  vendored copies included — PREPROCESS to identical text except `argonaut/src/types.cyr` and
+  kybernet's vendored copy of it, where the five `"#"` keys become the real field names. Test: `tests/tcyr/derive/derive_body_shapes.tcyr` — 36 checks,
   Serialize bytes, Deserialize of the CORRECT JSON field by field (the repro's own round-trip
   check was vacuous and is replaced), accessors with a neighbour-allocation canary, and enum
   codecs over `,` / newline / comment / char-literal / `: stack` shapes.
@@ -62,6 +64,33 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `tests/tcyr/crossos/derive_accessor_widths.tcyr` (14 checks, run on each target's own
   load/store emitters: every width set in reverse order so a too-wide store shows, plus the filed
   2-byte shape with a neighbour canary; 7 of 14 fail before the fix).
+- **`#derive` now FAILS THE BUILD when its field table disagrees with the parser's struct
+  layout, instead of generating accessors and codecs against the wrong offsets.** (bite 5, the
+  backstop.) The derive computes offsets itself and every generated fn trusts them; the body walk
+  above removes the known disagreements, and this makes any remaining one loud. The one still
+  reachable: a field typed with a struct that is not itself `#derive`d — the derive cannot see its
+  size and uses 8, the parser uses the real size, so `Outer_y` read the wrong word with rc 0
+  (measured 55 where 77 was stored). It is now `error:<file>:<line>: #assert failed: #derive: field
+  offsets disagree with the struct layout (is a field typed with a struct that is not itself
+  #derive'd?)` at the derived struct's line; deriving the inner struct fixes it. **How:** the
+  first generated fn body carries `#assert sizeof(<Name>) == <derive's size>`. ⚠ Not after the
+  struct: a top-level `#assert` is a statement, and the first top-level statement ends the
+  declaration phase, so every struct or enum after a derived struct would have been rejected
+  (`unexpected struct`) — the obvious placement breaks any file with two derives. Inside a body
+  it emits no code (an inlined accessor re-evaluates it per call site, also emitting nothing): a
+  build of every in-tree program with the message removed is byte-identical to the build without
+  the check (475 of 475), and with it the 44 programs that use `#derive` differ only by the one
+  interned message string (+120 bytes). It is not armed when the body walk stopped on a shape the
+  parser rejects, so a malformed body reports the parser's error alone, and not for a struct NAME
+  an earlier `#derive` already declared: a second `struct X` is a redefinition, the parser keeps
+  the FIRST layout, and judging the second against it would turn a build that works today into a
+  failure — the older kavach copies vendored by mehman, stiva, aethersafha, agnosai and agnostic
+  declare `struct SpawnedProcess` twice (measured: stiva's build failed on the first cut of this
+  backstop). Real `cyrius build`s of the 93 ecosystem repos that use `#derive` give the same
+  result with the old and the new compiler (80 build, 13 fail identically on path deps outside a
+  scratch copy); none trips the backstop. It cannot catch a same-size mis-naming; it is a
+  backstop, not the fix. Gate: `tests/gates/diagnostics/derive_layout_backstop.sh` (6 axes; the
+  no-backstop, top-level, armed-after-stop and armed-on-redefinition mutants are each RED).
 
 ## [6.6.6] — 2026-09-20
 
