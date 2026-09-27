@@ -2198,6 +2198,41 @@ fn EQPF_PE(S): i64 {
     return _pe_srw_call_1arg(S, _pe_qpf_get());
 }
 
+# v6.6.7: syscall(74, fd) / syscall(75, fd) — Linux fsync / fdatasync — →
+# kernel32!FlushFileBuffers(HANDLE). Stack on entry (top→bottom): [fd] [sc_nr].
+# Windows has one flush for both (data + metadata), so fdatasync is the same call.
+# fd 0/1/2 map to the std handles through `_pe_fd_to_handle_rcx`, exactly as
+# EWRITE_PE/EREAD_PE do, so a flush of a redirected stdout reaches the file the writes
+# went to. The helper's GetStdHandle call is made from INSIDE the aligned frame, so it
+# gets the same 16-byte alignment and shadow space as the flush itself.
+#
+# BOOL → 0 / -1 is `cmp eax,1; sbb rax,rax`, not the older dec+sar idiom: it reads only
+# eax, so an unzeroed upper half of rax cannot leak into the result, and any non-zero
+# TRUE maps to 0 rather than to a positive number. An invalid handle, or one opened
+# without write access (O_RDONLY — Linux fsyncs those), comes back -1.
+# CHANGELOG [6.6.7].
+fn EFLUSHFB_PE(S): i64 {
+    _pe_ensure_stdio(S);
+    _pe_ensure_flushfb(S);
+    var gsh_idx = _pe_stdio_getstd_get();
+    var fb_idx = _pe_flushfb_get();
+    EB(S, 0x58);                                        # pop rax (fd)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
+    EB(S, 0x53);                                        # push rbx
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);              # mov rbx, rsp
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0); # and rsp, -16
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x20); # sub rsp, 0x20 (shadow)
+    _pe_fd_to_handle_rcx(S, gsh_idx);                   # rcx = HANDLE (std or direct)
+    EB(S, 0xFF); EB(S, 0x15);                           # call [rip+FlushFileBuffers]
+    _pe_iat_fixup_add(S, GCP(S), fb_idx);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);              # mov rsp, rbx
+    EB(S, 0x5B);                                        # pop rbx
+    EB(S, 0x83); EB(S, 0xF8); EB(S, 0x01);              # cmp eax, 1 (CF iff FALSE)
+    EB(S, 0x48); EB(S, 0x19); EB(S, 0xC0);              # sbb rax, rax (FALSE → -1, TRUE → 0)
+    return 0;
+}
+
 # v6.6.6: syscall(0xF03A, wbuf, cch) → kernel32!GetModuleFileNameW(NULL, wbuf, cch) —
 # the Windows source for "the full path of THIS executable", the thing
 # readlink("/proc/self/exe") answers on Linux and fcntl(F_GETPATH) on macOS. Stack on

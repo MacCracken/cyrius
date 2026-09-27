@@ -1,0 +1,36 @@
+# fsync / fdatasync really flush on every target — and a flush of nothing is an error.
+#
+# Windows has no fsync syscall. Until 6.6.7 the literal Linux numbers 74 (fsync) and 75
+# (fdatasync) had no PE reroute and degraded to -38, so a raw `syscall(SYS_FDATASYNC, fd)`
+# (the vendored patra fold's WAL path) failed on every call. 6.6.7 routes both to
+# kernel32!FlushFileBuffers. The rows that prove the call is REAL are the bogus-descriptor
+# rows: a no-op or a -38 stub cannot tell 12345 from an open file, a real flush can.
+# (wine cannot observe durability; the real-hardware run is cass at the release gate.)
+# Every fixture name goes through `test_scratch` (cwd-relative + PID), as atomic_write does.
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/assert.cyr"
+
+alloc_init();
+
+var path = test_scratch("cyrius_fsync_flushes.txt");
+xunlink(path);
+var fd = file_open(path, O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
+assert(fd >= 0, "scratch file opened for write");
+assert_eq(file_write(fd, "durable\n", 8), 8, "wrote 8 bytes");
+
+#ifdef CYRIUS_TARGET_WIN
+test_group("PE: literal fsync(74) / fdatasync(75) reach FlushFileBuffers");
+assert(syscall(74, 12345) < 0, "fsync(74) of a handle that does not exist fails (was -38)");
+assert(syscall(75, 12345) < 0, "fdatasync(75) of a handle that does not exist fails (was -38)");
+assert_eq(syscall(74, fd), 0, "fsync(74) of a written handle flushes (was -38)");
+assert_eq(syscall(75, fd), 0, "fdatasync(75) of a written handle flushes (was -38)");
+# Nested in an expression at odd depth — the reroute realigns its own frame.
+assert_eq(1 + syscall(74, fd) * 2, 1, "fsync(74) inside an expression");
+#endif
+
+file_close(fd);
+xunlink(path);
+var r = assert_summary();
