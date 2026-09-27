@@ -23,6 +23,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     calibration bias goes from -246 ppm to +2.7 ppm. 2.5.5: a calibration window stretched by a stall
     is rejected instead of wrapping i64 and installing a garbage rate. On aarch64, init now makes one
     `clock_gettime` call — a seccomp allowlist that assumed sakshi's init was syscall-free must allow it.
+  - **patra 1.14.3 → 1.15.0** — no raw syscalls and no OS constants of its own (`enum Flock` and
+    `enum Sync` are gone; `LOCK_*`, `SYS_FLOCK` and `SYS_FDATASYNC` come from the stdlib peers). Its
+    `[deps] stdlib` gains **`chrono` and `random`**: a hand-written include list must add
+    `lib/chrono.cyr` and `lib/random.cyr` before `lib/patra.cyr`, and a DCE-off binary that includes
+    patra grows ~16 KB (probe 323,624 → 340,056 B). **macOS:** creating a database and truncating a
+    WAL failed, because the x86 open-flag numbers were passed to Darwin; the header DBID and WAL salts
+    never came from the CSPRNG, because Darwin `getentropy` returned 0 — both fixed. **Windows:** the
+    first write of every explicit transaction returned `PATRA_ERR_IO` (its fdatasync got -ENOSYS);
+    it now goes through `xfsync`, which this release routes to `FlushFileBuffers` on PE, so PE
+    transactions are both accepted and durable.
 
 ## [6.6.6] — 2026-09-20
 
