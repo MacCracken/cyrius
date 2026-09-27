@@ -144,10 +144,10 @@ esac
 [ "$x" = 0 ] && echo "  ok: axis 3: the check reports an undefined function in a fixture module (axis 1 is not vacuous)"
 
 # ── axis 4: RATCHET over the whole stdlib ──
-# ⚠ THE FLOOR IS NOT A TARGET. At this commit 26 of the 103 lib/*.cyr compile alone with no
-# undefined function; 46 still do not, and 31 cannot be included alone at all (per-target peers
-# like lib/alloc_windows.cyr, which exist to be dispatched INTO by their parent). The rest is a
-# real gap and is filed rather than fixed here — this bite's scope was fmt/vec/string/io. The
+# ⚠ THE FLOOR IS NOT A TARGET. The count is measured, not declared — the gate prints it below
+# ("N of M"); at 6.6.7 it is 27 of the 104 lib/*.cyr. The rest either still leave a function
+# undefined or cannot be included alone at all (per-target peers like lib/alloc_windows.cyr,
+# which exist to be dispatched INTO by their parent); that gap is filed, not fixed here. The
 # ratchet is what stops the number sliding back while the rest is brought up: RAISE it whenever
 # a module is fixed, never lower it.
 # 6.6.7: 26 -> 27 (lib/tls_native.cyr).

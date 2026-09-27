@@ -4583,9 +4583,11 @@ syscalls_windows::sys_execve/3
 syscalls_windows::sys_exit/1
 syscalls_windows::sys_exit_group/1
 syscalls_windows::sys_fchownat/5
+syscalls_windows::sys_fdatasync/1
 syscalls_windows::sys_fork/0
 syscalls_windows::sys_fstatat/4
 syscalls_windows::sys_fstatfs/2
+syscalls_windows::sys_fsync/1
 syscalls_windows::sys_ftruncate/2
 syscalls_windows::sys_getpeername/3
 syscalls_windows::sys_getpid/0

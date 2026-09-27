@@ -466,6 +466,16 @@ fn sys_fstatat(dirfd, path, buf, flags): i64 { return 0 - 38; }
 fn sys_mount(source, target, fstype, flags, data): i64 { return 0 - 38; }
 # Unmount a filesystem. Declines, same reason as sys_mount.
 fn sys_umount2(target, flags): i64 { return 0 - 38; }
+# Flush a file (data + metadata) to storage. NOT a decline like the block above: it issues
+# the LINUX number 74 — the sys_mkdir/sys_unlink 83/87 shape — so the PE backend owns the
+# meaning. With the 6.6.7 route, 74/75 at argc 2 go to kernel32!FlushFileBuffers (0 /
+# negative); without it the unrouted literal returns -38/-ENOSYS. Either way a bogus fd reads
+# < 0 and no caller is told a flush happened that did not. Consumers (patra's fdatasync sites,
+# the write-tmp + fsync + rename pattern) name these, so without them a PE build is refused.
+fn sys_fsync(fd): i64 { return syscall(74, fd); }
+# Flush file data only. Windows has no data-only flush, so the route is the same
+# FlushFileBuffers as sys_fsync — stronger than asked, never weaker. CHANGELOG [6.6.7]
+fn sys_fdatasync(fd): i64 { return syscall(75, fd); }
 
 # v6.4.66 — getpeername / getsockname now route to ws2_32 (was a fail-closed -ENOSYS
 # stub v6.4.64→.65). The PE syscall router maps 0xF036 → ws2_32!getpeername and

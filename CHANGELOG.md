@@ -31,8 +31,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     WAL failed, because the x86 open-flag numbers were passed to Darwin; the header DBID and WAL salts
     never came from the CSPRNG, because Darwin `getentropy` returned 0 — both fixed. **Windows:** the
     first write of every explicit transaction returned `PATRA_ERR_IO` (its fdatasync got -ENOSYS);
-    it now goes through `xfsync`, which this release routes to `FlushFileBuffers` on PE, so PE
-    transactions are both accepted and durable.
+    it now goes through `xfsync`, so transactions — ROLLBACK included — are no longer refused. ⚠
+    That is NOT crash safety: patra takes no `flock` on Windows, so recovery never runs on open and
+    the next BEGIN's `O_TRUNC` discards a crashed transaction's WAL — its writes stay applied. A
+    flush reaches the disk only where `xfsync`'s PE arm issues the `FlushFileBuffers` route; with a
+    `return 0` arm the commit reports success without flushing, as autocommit always did there.
   - **niyama 1.0.11 → 1.0.12** — a toolchain move (pin 6.6.2 → 6.6.6); the bundle differs only in
     its `# Version:` header.
   - **bayan 1.5.6 → 1.5.7** — ⚠ **behaviour change: the f64 parser is correctly rounded** (reported
@@ -58,7 +61,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- **Windows: nine linux_common wrappers had no PE peer**, so a PE program that merely REACHED a
+- **Windows: eleven linux_common wrappers had no PE peer**, so a PE program that merely REACHED a
   path naming one was refused — `error: refusing to emit binary with 8 reachable undefined
   function(s)` for a program touching yukti 2.3.12's optical / eject / netlink-monitor /
   network-probe / mount / lstat paths. `lib/syscalls_windows.cyr` is a standalone peer (it does
@@ -66,12 +69,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   on PE until the peer gets its own. It now declares `sys_ioctl`, `sys_socket`, `sys_bind`,
   `sys_connect`, `sys_setsockopt`, `sys_recvfrom`, `sys_fstatat`, `sys_mount` and `sys_umount2`,
   each returning **-38 (-ENOSYS)** — the v6.6.5 decline contract, so a caller's `if (r < 0)`
-  fires and nothing is emulated. The socket four are deliberately not routed to the ws2_32 band:
+  fires and nothing is emulated. It also declares **`sys_fsync` and `sys_fdatasync`**, which a
+  PE build naming them (patra's fdatasync path, any write-tmp + fsync + rename caller) was
+  refused for too; these are not declines — they issue the Linux numbers 74 / 75, the
+  `sys_mkdir`/`sys_unlink` shape, so the PE backend's `FlushFileBuffers` route decides, and an
+  unrouted literal returns -38. Either way a flush of a bogus descriptor is negative, never a
+  false 0. The socket four are deliberately not routed to the ws2_32 band:
   that band returns a SOCKET handle closed with `closesocket` and reports errors through
   `WSAGetLastError`, so a BSD-shaped fd peer is an fd↔SOCKET design, not a renumber. A consumer
   sees a PE build that used to be refused now link, with those paths failing cleanly at run time.
-  `docs/api-surface.snapshot` +9. Pinned by `tests/tcyr/crossos/pe_decline_peers.tcyr` (runs on
-  cass in the cross-OS leg; without the peers it does not compile for PE — 9 undefined, measured).
+  `docs/api-surface.snapshot` +11. Pinned by `tests/tcyr/crossos/pe_decline_peers.tcyr` (runs on
+  cass in the cross-OS leg; without the peers it does not compile for PE — 9, then 2 more,
+  undefined, measured; with the flush peers stubbed to `return 0` its two flush rows go red).
 - **`lib/tls_native.cyr` compiled with undefined functions — trap stubs — on every target.** Its
   hand-written include list stops at the leaves the folded sigil needed years ago; sigil's sidecar
   also lists `sys`, `chrono` and `random`, and a bundle strips its own includes. So
