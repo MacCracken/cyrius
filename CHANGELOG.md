@@ -65,6 +65,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     NVIDIA dispatch deadline) now reads the right clock on Mach-O, PE and agnos. ⚠ Its sidecar gains
     **`chrono`** (18 leaves): a hand-written include list must add `lib/chrono.cyr` before
     `lib/mabda.cyr`. No public-surface change.
+  - **yukti 2.3.11 → 2.3.13** (release commit `ff97eec`; the 2.3.13 tag names it) — ⚠ **two silent
+    defects leave the fold.** (1) **aarch64: `filesystem_usage` issued accept(2).** yukti declared
+    its own `SYS_STATFS = 43` under `#ifdef CYRIUS_ARCH_AARCH64` and ESYSXLAT rewrites 43 → 202
+    (accept), so every ARM host got "statfs failed: errno 14"; 2.3.12 routes every raw syscall
+    through a stdlib wrapper (`sys_statfs`, `sys_ioctl`, `sys_socket`, …, `sys_fstatat` for lstat)
+    and deletes `enum YkSyscalls`. On Darwin the same function wrote a 2,168-byte `statfs64` into a
+    120-byte buffer — SIGSEGV on real ach; it now sizes it with `STATFS_BUFSZ`. (2) **Mach-O: eight
+    stdlib names redeclared program-wide.** yukti's `O_NONBLOCK = 2048` and `SOL_SOCKET = 1` won by
+    last-definition, retroactively, so on Darwin every `O_NONBLOCK` in the program — the stdlib's
+    included — was `O_EXCL`, and net.cyr's `setsockopt` passed level 1 instead of 0xFFFF. 2.3.13
+    names `O_RDONLY`, `O_NONBLOCK`, `MS_RDONLY/NOSUID/NODEV/NOEXEC`, `SOCK_DGRAM` and `SOL_SOCKET`
+    `_YK_*`; the Mach-O `duplicate symbol` warnings go with them. ⚠ **What a consumer loses:** the
+    agnos placeholder band (`SYS_IOCTL = 9001` …) is gone — vani and mabda compiled for agnos only
+    by borrowing it and move off it in this same fold — and a PE or agnos program that took
+    `O_NONBLOCK` or `MS_*` from yukti must declare its own. No public fn removed. Pinned by the new
+    `tests/tcyr/crossos/yukti_statfs_and_stdlib_constants.tcyr`: against 2.3.11 it fails on pi
+    (errno 14), exits 3 on ecb (O_NONBLOCK 2048, SOL_SOCKET 1, statfs) and SIGSEGVs on ach;
+    against 2.3.13 it passes on all three, on x86_64 and under wine.
   - **Downstream lockstep:** a repo that pins patra or sakshi as a git dep must move that tag with
     its 6.6.7 pin, or the git dep overlays and downgrades the fold — yukti and nein (`[deps.patra]`
     1.14.3 → 1.15.0); yukti, daimon and hisab (`[deps.sakshi]` 2.5.2 → 2.5.5).
