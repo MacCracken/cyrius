@@ -43,6 +43,8 @@
 #      -> FAIL "did not report lib/yukti.cyr SYS_STATFS = 43, but a direct read still finds
 #      it". Before this the same mutation printed `PASS … axis 2: 0 declarations over 0
 #      files, 0 known / 0 new` and exited 0, taking the KNOWN LIVE DEFECT line with it.
+#      (Retired 6.6.7: yukti 2.3.13 is folded, the declaration is gone, and 11 below now
+#      proves the same mutation against the committed fixture.)
 #   6. restrict the walk to ("lib",) -> FAIL on the corpus floor (105 files < 400).
 #   7. axis 3 (review round 2): `GWL_NR_FTRUNCATE = 46` + `pn = 83;` under the guard, both
 #      used as a syscall's first argument -> FAIL naming both (46 -> 211 sendmsg,
@@ -186,7 +188,9 @@ if first_alias < last_compat:
 # errno=14`, so `yukti_filesystem_usage` returns "statfs failed: errno 14" on every ARM host.
 # Older than this release, and invisible to all four existing gates by construction:
 # raw_syscall_literals_routed.sh EXEMPTS arch-guarded literals (they are the supported
-# spelling), and the other three parse only the two peer files.
+# spelling), and the other three parse only the two peer files. Fixed at the SOURCE (yukti
+# 2.3.12 spells sys_statfs) and folded at 6.6.7 with 2.3.13; the run-time proof is
+# tests/tcyr/crossos/yukti_statfs_and_stdlib_constants.tcyr on pi.
 #
 # THE DISCRIMINATOR IS THE SAME ONE AS ABOVE, sourced differently: a guarded value that the
 # chain rewrites is correct only if the row's DESTINATION really is this call on aarch64 —
@@ -344,12 +348,14 @@ if sorted(n for n, _ in ctl_bad) != ["SYS_PPOLL", "SYS_STATFS"] or len(ctl) != 4
           "so a real collision below would go unreported.")
     sys.exit(1)
 
-# The one LIVE defect, named, with the fix. ⚠ This is NOT an allow-list: it is printed on
-# every run so it cannot go quiet, and the gate still fails on anything else. It leaves when
-# yukti ships the fix upstream and cyrius re-vendors — a fold-only edit here would evaporate
-# at the next `cyrius deps`.
-KNOWN = {("lib/yukti.cyr", "SYS_STATFS", 43):
-         "upstream ~/Repos/yukti: spell sys_statfs, or use the >= 1000 private alias band"}
+# LIVE defects in a VENDORED fold, named with the fix — {(rel, NAME, value): "upstream fix"}.
+# ⚠ This is NOT an allow-list: an entry is printed on every run so it cannot go quiet, the
+# gate still fails on anything else, and the re-derivation below fails if the walk stops
+# seeing it. An entry is only for a fold whose fix must land UPSTREAM (a fold-only edit
+# evaporates at the next `cyrius deps`), and it leaves when the fixed release is re-vendored.
+# EMPTY since 6.6.7: its one entry, lib/yukti.cyr SYS_STATFS = 43, left with the yukti 2.3.13
+# fold — and with it the walk's only live anchor, which the committed fixture replaces.
+KNOWN = {}
 
 PEERS = {"lib/syscalls_aarch64_linux.cyr", "lib/syscalls_x86_64_linux.cyr",
          "lib/syscalls_macos.cyr", "lib/syscalls_windows.cyr", "lib/syscalls_x86_64_agnos.cyr"}
@@ -409,11 +415,12 @@ for sub in ("lib", "cbt", "programs", "tests", "benches", "fuzz", "src"):
 # that live bug audible, out with it. Same vacuity shape this release fixed in
 # syscall_peer_kernel_agreement.sh (per-peer floors) and syscall_xlat_generated.sh (axes 9+10).
 #
-# The strong half is the KNOWN RE-DERIVATION, and it is computed a DIFFERENT WAY from the
-# walk: open each KNOWN file by its own path and regex it directly. If the declaration is
-# still in the file, the walk MUST have reported it. A broken walk therefore fails here
-# instead of going quiet, and when yukti ships the fix upstream and cyrius re-vendors, the
-# declaration disappears from the file and this check retires itself.
+# The KNOWN RE-DERIVATION is computed a DIFFERENT WAY from the walk: open each KNOWN file by
+# its own path and regex it directly. If the declaration is still in the file, the walk MUST
+# have reported it, so a broken walk fails here instead of going quiet; when the upstream fix
+# is re-vendored the declaration disappears and the entry retires. KNOWN is empty since the
+# 6.6.7 yukti fold, so today the anti-vacuity rests on the committed fixture checked next —
+# which, unlike a live defect, cannot be fixed out from under the gate.
 for (rel, name, val), _fix in sorted(KNOWN.items()):
     p = os.path.join(ROOT, rel)
     if not os.path.exists(p):
