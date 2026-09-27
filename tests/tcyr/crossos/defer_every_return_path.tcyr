@@ -1,0 +1,179 @@
+# defer_every_return_path.tcyr — 6.6.7 bite 1: a fn body emitted INSIDE another fn's body (a
+# closure literal, the first `f<T>(..)` instantiation) owns its own returns, defers and per-fn
+# state, and the enclosing fn keeps its own.
+#
+# ⛔ The nested emitters saved the return-patch vector by LENGTH, then truncated it to 0 and
+# pushed over it, so an enclosing `return` placed BEFORE a closure or a first generic call
+# kept rel32 = 0: it FELL THROUGH on x86/PE (outer(1) gave 2, want 5) and HUNG on aarch64.
+# The defer table was never isolated: a closure's `defer` zeroed an ENCLOSING slot (outer(1,2,3,4)
+# gave 1204, want 1234) and never ran at the closure's return; a `secret var` in a closure was
+# never zeroised; an instantiation dropped every defer the enclosing fn had registered. An
+# instantiation also left the instance's compaction tables behind, and the enclosing fn's
+# NOP-run compaction then rewrote the enclosing bytes (SIGSEGV).
+#
+# ⚠ CROSS-HOST because the failure was target-shaped: the same unpatched jmp falls through on
+# x86 and spins on aarch64 (rel 0 is a branch to itself), and the return landing / defer walker
+# are emitted per backend. A hang here is a FAIL (the runner's timeout).
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/fnptr.cyr"
+
+var cran = 0;
+struct Pt { x; y; }
+fn wrap<T>(p: T): i64 { return p.x + p.y; }
+fn wrap2<T>(p: T): i64 { return p.x * p.y; }
+fn wrap3<T>(p: T): i64 { return p.x - p.y; }
+# A generic whose instance the register picker rewrites (a loop over locals), so the instance
+# records NOP runs of its own.
+fn wsum<T>(p: T): i64 {
+    var a = p.x; var b = p.y; var i = 0; var s = 0;
+    while (i < 10) { s = s + a * b + i; a = a + 1; i = i + 1; }
+    return s;
+}
+
+# --- early return BEFORE a nested fn body -------------------------------------------------
+fn early_expr_closure(x): i64 {
+    if (x == 1) { return 5; }
+    var f = |y| y + 1;
+    return fncall1(f, x) + 0;
+}
+fn early_block_closure(x): i64 {
+    if (x == 1) { return 5; }
+    var f = |y| { if (y > 100) { return 0; } return y + 1; };
+    return fncall1(f, x) + 0;
+}
+# The same shape with an enclosing defer: the early return must land at the ENCLOSING fn's
+# walker. (Without the defer, a return misrouted into the closure's own epilogue still leaves
+# through an identical `leave; ret` and reads as correct — this row is what tells them apart.)
+fn early_closure_with_defer(x): i64 {
+    defer { cran = cran + 1; }
+    if (x == 1) { return 5; }
+    var f = |y| y + 1;
+    return fncall1(f, x) + 0;
+}
+fn early_generic(a): i64 {
+    if (a == 1) { return 5; }
+    var p: Pt; p.x = 3; p.y = 4;
+    var r = wrap<Pt>(p);
+    return r;
+}
+
+# --- the v6.5.14 laundered &local tail call must stay a real call after an instantiation --
+fn smash(a, b, c, d): i64 { var z1 = 111; var z2 = 222; var z3 = 333; var z4 = 444; return z1 + z2 + z3 + z4 + a; }
+fn reader(p): i64 { var junk = smash(1, 2, 3, 4); return load64(p); }
+fn laundered(): i64 {
+    var buf = 0;
+    buf = 4242;
+    var p = &buf;
+    var q: Pt; q.x = 1; q.y = 2;
+    var r = wrap2<Pt>(q);
+    return reader(p);
+}
+
+# --- the instance's compaction tables must not drive the enclosing fn's compaction --------
+fn loops_around_instance(n): i64 {
+    var acc = 0; var j = 0;
+    while (j < n) { acc = acc + j * 3; j = j + 1; }
+    var p: Pt; p.x = 3; p.y = 4;
+    var r = wsum<Pt>(p);
+    var k = 0;
+    while (k < n) { if (k > 2) { acc = acc + 1; } else { acc = acc + 2; } k = k + 1; }
+    return r + acc;
+}
+
+# --- defer inside a closure belongs to the CLOSURE ----------------------------------------
+fn closure_defer_owner(a, b, c, d): i64 {
+    var k = 9;
+    var f = |x| { var y = x * 2; defer { cran = cran + 1; } return y + 1; };
+    var r = fncall1(f, 10);
+    if (r != 21) { return 0 - r; }
+    if (cran != 1) { return 0 - 1000 - cran; }   # ran exactly once, at the CLOSURE's return
+    return a * 1000 + b * 100 + c * 10 + d + k * 0;
+}
+fn closure_defer_not_enclosing(a, b): i64 {
+    var f = |x| { defer { cran = cran + 10; } return x; };
+    b = 1;
+    return a * 10 + b;   # the enclosing epilogue must not run the closure's block
+}
+fn closure_defer_expr_tail(): i64 {
+    # a closure whose body FALLS THROUGH to its end (no `return`) still runs its defer
+    var f = |x| { defer { cran = cran + 100; } cran = cran + x; };
+    var r = fncall1(f, 7);
+    return cran;
+}
+
+# --- secret inside a closure is zeroised at the CLOSURE's return --------------------------
+fn secret_in_closure(): i64 {
+    var f = |x| {
+        secret var key[32];
+        store64(&key, x);
+        store64(&key + 8, x + 1);
+        return &key;
+    };
+    var kp = fncall1(f, 0x5EC12E7);
+    # The buffer is static storage (a static-fallback secret array), so it is still addressable
+    # here; the zeroise must already have run.
+    return load64(kp) + load64(kp + 8);
+}
+
+# --- an instantiation must not DROP the enclosing fn's defers ----------------------------
+fn defer_before_instance(a): i64 {
+    defer { cran = cran + 1; }
+    var p: Pt; p.x = 3; p.y = 4;
+    var r = wrap3<Pt>(p);
+    return r + a;
+}
+
+# --- a fn body with a defer that FALLS OFF its end ran into the zeroing trampoline and looped
+fn fall_off_end(): i64 {
+    defer { cran = cran + 1; }
+    cran = cran + 10;
+}
+
+fn main(): i64 {
+    alloc_init();
+
+    assert_eq(early_expr_closure(1), 5, "early return before an expression closure lands");
+    assert_eq(early_expr_closure(7), 8, "control: the expression closure still runs");
+    assert_eq(early_block_closure(1), 5, "early return before a block closure (with its own returns) lands");
+    assert_eq(early_block_closure(7), 8, "control: the block closure still runs");
+    cran = 0;
+    assert_eq(early_closure_with_defer(1), 5, "early return before a closure, enclosing defer: value");
+    assert_eq(cran, 1, "early return before a closure runs the ENCLOSING fn's defer");
+    cran = 0;
+    assert_eq(early_closure_with_defer(7), 8, "control: closure path with an enclosing defer");
+    assert_eq(cran, 1, "control: the enclosing defer runs once on the closure path");
+    assert_eq(early_generic(1), 5, "early return before the first f<T>() instantiation lands");
+    assert_eq(early_generic(0), 7, "control: the instance still runs");
+
+    assert_eq(laundered(), 4242, "laundered &local tail call after an instantiation stays a real call");
+
+    assert_eq(loops_around_instance(5), 383, "instance compaction tables do not rewrite the enclosing fn");
+
+    cran = 0;
+    assert_eq(closure_defer_owner(1, 2, 3, 4), 1234, "closure defer: enclosing params untouched, ran once at the closure's return");
+    cran = 0;
+    assert_eq(closure_defer_not_enclosing(4, 7), 41, "closure defer: enclosing value");
+    assert_eq(cran, 0, "closure defer: the enclosing epilogue did not run the closure's block");
+    cran = 0;
+    assert_eq(closure_defer_expr_tail(), 107, "closure defer runs when the closure body falls through");
+
+    assert_eq(secret_in_closure(), 0, "secret var in a closure is zeroised at the closure's return");
+
+    cran = 0;
+    assert_eq(defer_before_instance(10), 9, "value with a defer registered before f<T>()");
+    assert_eq(cran, 1, "an enclosing defer registered before the first f<T>() still runs");
+
+    cran = 0;
+    var ff = fall_off_end();
+    assert_eq(cran, 11, "a defer runs when the fn body falls off its end");
+
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);

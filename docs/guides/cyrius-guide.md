@@ -657,6 +657,11 @@ fn example() {
 }
 ```
 
+- **A defer inside a closure belongs to the closure** — it runs when the closure returns, not
+  when the enclosing function does (the same for `secret var`, whose zeroise is a defer).
+  (v6.6.7; before, a closure's defer was registered on the ENCLOSING function.)
+- **A body that falls off its end** (no `return`) runs its defers too (v6.6.7; before, it looped).
+
 ## Math Builtins
 
 ```

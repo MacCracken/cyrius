@@ -3450,6 +3450,49 @@ fn _jt_merge(S, buf): i64 {
     return 0;
 }
 
+# 6.6.7 — the per-fn COMPACTION tables (jump sources, NOP runs, switch tables, the fixup and
+# whole-program watermarks). A generic instance re-enters PARSE_FN_DEF, which zeroes all of
+# them for itself and leaves ITS values behind: its NOP runs (already harvested from its own
+# range) then drove the ENCLOSING fn's compaction over the enclosing fn's bytes — a generic
+# call in a fn whose instance the register picker touched SIGSEGV'd. Copy the counts and the
+# live entries out before the instance and back after it. (The enclosing fn records no NOP
+# run of its own afterwards — `_cur_fn_has_closure` skips its picker and frame-trim — so its
+# tables only have to be what they were.) CHANGELOG [6.6.7]
+fn _tab_copy(dst, src, n): i64 {
+    var i = 0;
+    while (i < n) { store64(dst + i * 8, load64(src + i * 8)); i = i + 1; }
+    return 0;
+}
+fn _tab_cap(n, cap): i64 {
+    if (n > cap) { return cap; }
+    return n;
+}
+fn _fnst_tab_save(S): i64 {
+    var b = alloc(48 + 1024 * 8 + 1024 * 16 + 256 * 16);
+    store64(b, L64(S + 0x1A0000));
+    store64(b + 8, L64(S + 0x1A2008));
+    store64(b + 16, L64(S + 0x1AC800));
+    store64(b + 24, L64(S + 0x1A6010));
+    store64(b + 32, _wp_fn_js0);
+    store64(b + 40, _wp_fn_sw0);
+    _tab_copy(b + 48, S + 0x1A0008, _tab_cap(load64(b), 1024));
+    _tab_copy(b + 48 + 8192, S + 0x1A2010, _tab_cap(load64(b + 8), 1024) * 2);
+    _tab_copy(b + 48 + 8192 + 16384, S + 0x1AC808, _tab_cap(load64(b + 16), 256) * 2);
+    return b;
+}
+fn _fnst_tab_restore(S, b): i64 {
+    S64(S + 0x1A0000, load64(b));
+    S64(S + 0x1A2008, load64(b + 8));
+    S64(S + 0x1AC800, load64(b + 16));
+    S64(S + 0x1A6010, load64(b + 24));
+    _wp_fn_js0 = load64(b + 32);
+    _wp_fn_sw0 = load64(b + 40);
+    _tab_copy(S + 0x1A0008, b + 48, _tab_cap(load64(b), 1024));
+    _tab_copy(S + 0x1A2010, b + 48 + 8192, _tab_cap(load64(b + 8), 1024) * 2);
+    _tab_copy(S + 0x1AC808, b + 48 + 8192 + 16384, _tab_cap(load64(b + 16), 256) * 2);
+    return 0;
+}
+
 # v6.3.10 (instantiate-once): emit a deduped, monomorphized instance of generic fn
 # `base_fi` for concrete-type token `conc0` (and `conc1`). Mints `base$ty`; FINDFN is
 # the dedup index (hit → return the existing fi). On a miss, emits the specialized
@@ -3479,20 +3522,14 @@ fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
     if (defstart == 0) { return 0 - 2; }            # 0 = no recorded def-start
     defstart = defstart - 1;                        # stored +1 (token index 0 is valid)
     # --- save the ENCLOSING fn's state (the fn currently being emitted) ---
-    var sv_lv = GLVAR(S);
-    var sv_infn = GINFN(S);
+    # 6.6.7 — ALL of it, through the shared snapshot (parse.cyr `_fnst_save`) plus the
+    # compaction tables. The hand-kept list here saved rp_vec by LENGTH while the nested
+    # PARSE_FN_DEF truncated it to 0 (an early `return` before the first `f<T>()` fell
+    # through on x86/PE and hung on aarch64), and it omitted the defer table (an enclosing
+    # `defer` registered before the call was DROPPED) and `_fn_local_addr` (re-opening the
+    # v6.5.14 dead-stack tail call through a laundered `&local`). CHANGELOG [6.6.7]
     var sv_flc = GFLC(S);
-    var sv_rpc = vec_len(rp_vec);
-    var sv_sdep = GSDEP(S);
     var sv_ti = GTI(S);
-    var sv_regalloc = _cur_fn_regalloc;
-    var sv_stash = _cur_fn_ret_stash;
-    var sv_rsid = _cur_fn_ret_sid;
-    var sv_rscal = _cur_fn_ret_scalar;
-    var sv_naked = _cur_fn_naked;
-    var sv_ix = _cur_fn_ix;
-    var sv_psl = _cur_fn_pslots;   # 6.6.6
-    var sv_tppmask = _cur_fn_tp_pmask;   # v6.3.39 (B3): restore across the nested re-emit
     var sv_n0 = _tp_n0; var sv_c0 = _tp_c0; var sv_n1 = _tp_n1; var sv_c1 = _tp_c1;
     var locsnap = _cl_save_locals(S, sv_flc);
     # --- jump over the instance, then re-invoke PARSE_FN_DEF on the BASE's verbatim
@@ -3501,6 +3538,8 @@ fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
     # to the concretes — full fidelity (params, struct args, masks) for free. ---
     var jmp = EJMP0(S);
     var jt_snap = _jt_snapshot(S);   # v6.3.35: save enclosing fn's jump targets (PARSE_FN_DEF resets them)
+    var tab = _fnst_tab_save(S);
+    var st = _fnst_save(S);
     STI(S, defstart);
     _inst_name = mangled;
     _inst_base_fi = base_fi;
@@ -3511,22 +3550,11 @@ fn _instantiate_generic_fn(S, base_fi, conc0, conc1): i64 {
     _inst_base_fi = 0 - 1;
     _inst_conc0 = 0;
     _inst_conc1 = 0;
+    # --- restore the enclosing fn's state ---
+    _fnst_restore(S, st);
+    _fnst_tab_restore(S, tab);
     _jt_merge(S, jt_snap);           # v6.3.35: restore enclosing targets (alongside the instance's)
     EPATCH(S, jmp);
-    # --- restore the enclosing fn's state ---
-    SLVAR(S, sv_lv);
-    SINFN(S, sv_infn);
-    SFLC(S, sv_flc);
-    vec_truncate(rp_vec, sv_rpc);
-    SSDEP(S, sv_sdep);
-    _cur_fn_regalloc = sv_regalloc;
-    _cur_fn_ret_stash = sv_stash;
-    _cur_fn_ret_sid = sv_rsid;
-    _cur_fn_ret_scalar = sv_rscal;
-    _cur_fn_naked = sv_naked;
-    _cur_fn_ix = sv_ix;
-    _cur_fn_pslots = sv_psl;   # 6.6.6
-    _cur_fn_tp_pmask = sv_tppmask;   # v6.3.39 (B3)
     # The instance is emitted INLINE in the enclosing fn's code range (jumped over),
     # so mark the enclosing fn to skip its regalloc byte-scan post-pass (it would
     # rewrite + corrupt the instance) — same guard closures use.
@@ -4587,35 +4615,11 @@ fn _async_emit_constructor(S, noff_f, fi_impl, pc): i64 {
     SFAS(S, fi_f, 1);
     S64(_fnt_params + fi_f * 8, pc);
     # --- save enclosing (top-level) state; the constructor is its own fn ---
-    var sv_lv = GLVAR(S);
-    var sv_infn = GINFN(S);
-    var sv_flc = GFLC(S);
-    var sv_rpc = vec_len(rp_vec);
-    var sv_sdep = GSDEP(S);
-    var sv_regalloc = _cur_fn_regalloc;
-    var sv_stash = _cur_fn_ret_stash;
-    var sv_sid = _cur_fn_ret_sid;
-    var sv_scalar = _cur_fn_ret_scalar;
-    var sv_naked = _cur_fn_naked;
-    var sv_ix = _cur_fn_ix;
-    # 6.6.6 (bite 16 review) — the constructor is its OWN fn, so it owns no parameter span.
-    # This was correct only by LINE ORDER: `_PARSE_FN_DEF_IMPL`'s teardown zeroes
-    # `_cur_fn_pslots` four lines before it emits the constructor. `parse.cyr`'s comment
-    # claimed a save/restore that did not exist — and a line-order dependency documented as a
-    # save/restore is the kind of invariant the next edit silently breaks, with no test to
-    # catch it (the constructor would inherit the BODY's parameter span). Now it really is a
-    # save/restore, matching `sv_ix` beside it. CHANGELOG [6.6.6]
-    var sv_psl = _cur_fn_pslots;
-    _cur_fn_pslots = 0;
-    SINFN(S, 1);
-    SFLC(S, 0);
-    vec_truncate(rp_vec, 0);
-    SSDEP(S, 0);
-    _cur_fn_regalloc = 0;
-    _cur_fn_ret_stash = 0;
-    _cur_fn_ret_sid = 0;
-    _cur_fn_ret_scalar = 0;
-    _cur_fn_naked = 0;
+    # 6.6.7 — through the shared per-fn snapshot (parse.cyr `_fnst_save`), which zeroes the
+    # parameter span, regalloc, ret class and the rest, and gives the constructor its own
+    # return-patch and defer ranges. (6.6.6 had to add `_cur_fn_pslots` here by hand after the
+    # list drifted; the shared snapshot is what stops the next one drifting.) CHANGELOG [6.6.7]
+    var st = _fnst_save(S);
     _cur_fn_ix = fi_f;
     var jmp = EJMP0(S);
     S64(_fnt_offsets + fi_f * 8, GCP(S));
@@ -4729,18 +4733,7 @@ fn _async_emit_constructor(S, noff_f, fi_impl, pc): i64 {
     SFNE(S, fi_f, GCP(S));
     EPATCH(S, jmp);
     # --- restore enclosing state ---
-    SINFN(S, sv_infn);
-    SFLC(S, sv_flc);
-    vec_truncate(rp_vec, sv_rpc);
-    SSDEP(S, sv_sdep);
-    SLVAR(S, sv_lv);
-    _cur_fn_regalloc = sv_regalloc;
-    _cur_fn_ret_stash = sv_stash;
-    _cur_fn_ret_sid = sv_sid;
-    _cur_fn_ret_scalar = sv_scalar;
-    _cur_fn_naked = sv_naked;
-    _cur_fn_ix = sv_ix;
-    _cur_fn_pslots = sv_psl;   # 6.6.6 — see the save above
+    _fnst_restore(S, st);
     return 0;
 }
 
@@ -5498,8 +5491,10 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # (S + 0x18DA20, cap 256) to rp_vec. Per-fn reset is now
     # vec_truncate(rp_vec, 0); same semantic, bounded memory under the
     # bump allocator (proposal Option A reuse pattern).
-    vec_truncate(rp_vec, 0);
-    S64(S + 0x1AC020, 0);  # defer_count = 0
+    # 6.6.7 — NOT index 0: a generic instance is emitted while its enclosing fn is still open,
+    # and that fn's pending returns / registered defers live below these bases (0 at top level).
+    vec_truncate(rp_vec, _rp_base);
+    S64(S + 0x1AC020, _defer_base);  # defer_count = this fn's base
     S64(S + 0x19E000, 0);  # jump_target_count = 0
     S64(S + 0x1A0000, 0);  # v5.6.27: jump_src_cnt = 0 (per-fn compaction)
     S64(S + 0x1A2008, 0);  # v5.6.27: nop_run_cnt = 0
@@ -6256,57 +6251,12 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
         }
     }
     STI(S, GTI(S) + 1);
-    var dc = L64(S + 0x1AC020);
-    # Backpatch defer flag init: emit zeroing code, then jmp to body
-    if (dc > 0) {
-        # Emit zeroing trampoline at current CP (after body, before epilogue)
-        EPATCH(S, defer_init_jmp);  # patch initial jmp → here (zeroing code)
-        var dzi = 0;
-        while (dzi < dc) {
-            var dzflag = L64(S + 0x1AC028 + dzi * 24 + 16);
-            EMOVI(S, 0);
-            EFLSTORE(S, dzflag);
-            dzi = dzi + 1;
-        }
-        EJMP(S, body_cp);  # jmp back to body start
-    } else {
-        # No defers — patch jmp to land at body_cp
-        # Temporarily set CP to body_cp so EPATCH computes the right offset
-        var saved_cp = GCP(S);
-        SCP(S, body_cp);
-        EPATCH(S, defer_init_jmp);
-        SCP(S, saved_cp);
-    }
-    var rpc = vec_len(rp_vec);
-    # Patch return jumps to land here
-    var ri = 0;
-    while (ri < rpc) {
-        EPATCH(S, vec_get(rp_vec, ri));
-        ri = ri + 1;
-    }
-    # Execute deferred blocks LIFO: save rax, check flag, jmp→block, restore rax
-    if (dc > 0) {
-        EPUSHR(S);  # save return value
-        var di = dc - 1;
-        while (di >= 0) {
-            var bstart = L64(S + 0x1AC028 + di * 24);
-            var bend = L64(S + 0x1AC028 + di * 24 + 8);
-            var dflag = L64(S + 0x1AC028 + di * 24 + 16);
-            # Check flag: load flag, test rax==0, je skip
-            EFLLOAD(S, dflag);
-            ETESTAZ(S);
-            # je skip (0F 84 rel32) — skip this defer if flag==0
-            var dskip = EJCC(S, 0x84);
-            # Jump to the deferred block
-            EJMP(S, bstart);
-            # Patch the block's end-jmp to return here (current CP)
-            EPATCH(S, bend);
-            # Patch skip to land here
-            EPATCH(S, dskip);
-            di = di - 1;
-        }
-        EPOPR(S);  # restore return value
-    }
+    # Defer flag init (zeroing trampoline), return landing, LIFO defer walk — the shared
+    # epilogue authority (parse.cyr `_defer_emit_init` / `_rp_patch_here` / `_defer_emit_walk`),
+    # over THIS fn's ranges [_defer_base, count) and [_rp_base, len). CHANGELOG [6.6.7]
+    _defer_emit_init(S, defer_init_jmp, body_cp);
+    _rp_patch_here(S);
+    _defer_emit_walk(S);
     # v4.9.1: restore callee-saved registers (reverse order of save).
     # v5.11.35 path-A: dispatch lives in <backend>/emit.cyr.
     # v6.2.27: #naked emits NO regalloc restore + NO epilogue — the ISR body

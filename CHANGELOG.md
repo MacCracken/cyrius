@@ -6,6 +6,66 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.7] — 2026-09-27
 
+### Fixed
+
+- **A fn body emitted INSIDE another fn's body — a closure literal, the first `f<T>(..)`
+  instantiation, the async constructor — now owns its own returns, defers and per-fn state, and
+  the enclosing fn keeps its own.** (bite 1.) **Root cause:** the three nested emitters each saved
+  a hand-kept subset of the per-fn globals, and each subset had drifted. The return-patch vector
+  was saved by LENGTH, then truncated to 0 and pushed over, so an enclosing `return` placed
+  BEFORE the closure or the first generic call kept rel32 = 0: `if (x == 1) { return 5; } var f
+  = |y| y + 1; ...` gave **2** for 5 on x86 and PE (the jmp fell through) and **hung** on aarch64
+  (a branch to itself). The defer table was not saved at all (see the next two entries), and
+  `_fn_local_addr` was reset by the instance, re-opening the v6.5.14 dead-stack tail call through
+  a laundered `&local` (`return reader(p)` read **140736825154800** for 4242). A mid-fn instance
+  also left ITS compaction tables (jump sources, NOP runs, switch tables, fixup watermark) behind,
+  and when the register picker had touched the instance the ENCLOSING fn's compaction then
+  rewrote the enclosing fn's bytes with the instance's NOP runs: a generic call in a fn with
+  loops around it **SIGSEGV'd**. A closure inside a coroutine `async fn` inherited the coroutine
+  mode, so its body was addressed through the coroutine's heap frame (**206** for 106). **Fix:**
+  one snapshot, `_fnst_save` / `_fnst_restore` (`src/frontend/parse.cyr`), covers every per-fn
+  global — locals/scope, `_fn_local_addr`, the frame high-water, regalloc / ret class / naked /
+  pslots / tparam mask / pure, the loop context, the coroutine mode — and the nested fn owns only
+  the ranges it appends: `_rp_base` / `_defer_base` mark where its return patches and defer
+  entries start, and PARSE_FN_DEF truncates to / patches from them instead of index 0. The
+  instance additionally copies the compaction tables out and back (`_fnst_tab_save`). All three
+  emitters use it, so the next per-fn global cannot drift out of one of them. Consumers see
+  correct code where they saw a fall-through, a hang or a crash; no source change.
+- **A `defer` inside a closure ran in the ENCLOSING frame; a `secret var` inside a closure was
+  never zeroised (CVE-46).** (bite 1.) The closure path had no defer machinery of its own — no
+  flag-zeroing trampoline and no walker — so its `defer`/`secret` entries were appended to the
+  enclosing fn's table: the closure's return never ran them, the enclosing trampoline wrote 0
+  into the enclosing slot at the closure's flag index (`fn outer(a, b, c, d)` returned **1204**
+  for 1234 — `c` zeroed), and the enclosing epilogue ran the closure's block whenever that slot
+  happened to be non-zero (**cran=10** for 0). A closure's secret key survived both the closure's
+  and the enclosing fn's return. **Fix:** the epilogue's defer machinery is now ONE authority
+  shared by PARSE_FN_DEF and the closure path (`_defer_emit_init`, `_rp_patch_here`,
+  `_defer_emit_walk`), walking [`_defer_base`, count). See the CVE-46 entry in
+  `docs/audit/2026-09-03-security-audit.md`.
+- **A generic instantiation DROPPED the enclosing fn's defers.** (bite 1.)
+  `defer { cran = cran + 1; } ... var r = wrap<Pt>(p); return r;` returned the right value and
+  never ran the defer (cran **0**, want 1), on x86 and aarch64: the instance re-entered
+  PARSE_FN_DEF, which zeroed the defer table. Fixed by the same `_defer_base`.
+- **A fn whose body registered a `defer` and then fell off its end (no `return`) looped
+  forever.** (bite 1.) The body's fall-through ran straight into the flag-zeroing trampoline,
+  which jumped back to the body start. Every expression-bodied closure falls through, so the
+  closure half of this bite needed it fixed; the shared `_defer_emit_init` now routes the
+  fall-through round the trampoline to the return landing, for fns and closures alike.
+### Changed
+
+- cycc **1,328,336 → 1,332,448 B** (+4,112) for the snapshot helpers and the shared epilogue.
+
+### Added
+
+- `tests/tcyr/crossos/defer_every_return_path.tcyr` — 20 rows: early return before an
+  expression closure, a block closure and a first `f<T>()` (value, and the enclosing defer on
+  that path), the laundered `&local` tail call after an instance, the instance-compaction crash,
+  closure `defer` ownership (runs once at the closure's return, enclosing params untouched, not
+  run by the enclosing epilogue, runs on fall-through), `secret var` zeroised at the closure's
+  return, an enclosing defer registered before `f<T>()`, and a defer on a body that falls off its
+  end. Green on x86_64, aarch64 (qemu + pi), Mach-O arm64 (ecb), Mach-O x86_64 (ach), PE (wine)
+  and cx; each fix mutation-proven RED.
+
 ## [6.6.6] — 2026-09-20
 
 The 6.6.6 repair release — the 6.6.5 queue, and then what looking at it turned up. Every one of the six

@@ -762,6 +762,193 @@ var _ra_auto_count = 0;
 # hosts. See CHANGELOG [5.11.62].
 var _cur_fn_ix = 0 - 1;
 
+# ⭐ 6.6.7 — PER-FN STATE ISOLATION for the three emitters that emit a fn body WHILE another
+# fn is still being emitted: a closure literal, a first generic instantiation `f<T>(..)`, and
+# the async constructor. Each used to save its own hand-picked subset of the per-fn globals,
+# and each subset had drifted. The return-patch vector was saved by LENGTH, truncated to 0 and
+# pushed over, so an early `return` before a closure or a first `f<T>()` kept rel32 = 0 and fell
+# through (x86/PE) or hung (aarch64); the defer table was not saved at all, so a closure's
+# `defer`/`secret` landed on the ENCLOSING fn (zeroing an enclosing slot, never running at the
+# closure's return) and an instantiation DROPPED the enclosing fn's defers; `_fn_local_addr`,
+# the loop context and the coroutine mode leaked as well. ONE snapshot now covers
+# every per-fn global, and the nested fn owns only the range it appends:
+#   _rp_base    — first rp_vec index owned by the fn being emitted (0 at top level)
+#   _defer_base — first defer-table entry owned by the fn being emitted (0 at top level)
+# PARSE_FN_DEF truncates to / patches from these instead of index 0. CHANGELOG [6.6.7]
+var _rp_base = 0;
+var _defer_base = 0;
+
+fn _fnst_put_cg(b): i64 {
+    store64(b + 88, _fn_local_addr);    _fn_local_addr = 0;
+    store64(b + 96, _flc_hwm);          _flc_hwm = 0;
+    store64(b + 104, _cur_fn_regalloc); _cur_fn_regalloc = 0;
+    store64(b + 112, _cur_fn_ret_stash); _cur_fn_ret_stash = 0;
+    store64(b + 120, _cur_fn_ret_sid);  _cur_fn_ret_sid = 0;
+    store64(b + 128, _cur_fn_ret_scalar); _cur_fn_ret_scalar = 0;
+    store64(b + 136, _cur_fn_ret_pair); _cur_fn_ret_pair = 0;
+    store64(b + 144, _cur_fn_naked);    _cur_fn_naked = 0;
+    store64(b + 152, _cur_fn_ix);
+    store64(b + 160, _cur_fn_pslots);   _cur_fn_pslots = 0;
+    store64(b + 168, _cur_fn_tp_pmask); _cur_fn_tp_pmask = 0;
+    store64(b + 176, _cur_fn_is_pure);  _cur_fn_is_pure = 0;
+    return 0;
+}
+fn _fnst_get_cg(b): i64 {
+    _fn_local_addr = load64(b + 88);
+    _flc_hwm = load64(b + 96);
+    _cur_fn_regalloc = load64(b + 104);
+    _cur_fn_ret_stash = load64(b + 112);
+    _cur_fn_ret_sid = load64(b + 120);
+    _cur_fn_ret_scalar = load64(b + 128);
+    _cur_fn_ret_pair = load64(b + 136);
+    _cur_fn_naked = load64(b + 144);
+    _cur_fn_ix = load64(b + 152);
+    _cur_fn_pslots = load64(b + 160);
+    _cur_fn_tp_pmask = load64(b + 168);
+    _cur_fn_is_pure = load64(b + 176);
+    return 0;
+}
+# The coroutine mode: a closure inside an `async fn` body is NOT a coroutine, and with the mode
+# leaked its locals were addressed through the enclosing coroutine's heap frame (SIGSEGV).
+fn _fnst_put_coro(b): i64 {
+    store64(b + 184, _cur_fn_coro);     _cur_fn_coro = 0;
+    store64(b + 192, _coro_base);
+    store64(b + 200, _coro_lo);
+    store64(b + 208, _coro_nsusp);
+    store64(b + 216, _coro_top_jmp);
+    store64(b + 224, _coro_entry_cp);
+    return 0;
+}
+fn _fnst_get_coro(b): i64 {
+    _cur_fn_coro = load64(b + 184);
+    _coro_base = load64(b + 192);
+    _coro_lo = load64(b + 200);
+    _coro_nsusp = load64(b + 208);
+    _coro_top_jmp = load64(b + 216);
+    _coro_entry_cp = load64(b + 224);
+    return 0;
+}
+# The pending `&&` false-exit patches (count + 8 entries) belong to the enclosing statement's
+# condition; a nested body re-runs ECOND/PATCHXP, which zero the count. Carried across for
+# completeness — no miscompile through this path was measured (a closure literal in a
+# condition did not reach it in the probes that were tried).
+fn _fnst_put_xp(S, b): i64 {
+    store64(b + 232, GXPC(S));
+    var i = 0;
+    while (i < 8) { store64(b + 240 + i * 8, L64(S + 0x18F848 + i * 8)); i = i + 1; }
+    SXPC(S, 0);
+    return 0;
+}
+fn _fnst_get_xp(S, b): i64 {
+    SXPC(S, load64(b + 232));
+    var i = 0;
+    while (i < 8) { S64(S + 0x18F848 + i * 8, load64(b + 240 + i * 8)); i = i + 1; }
+    return 0;
+}
+# Save EVERY per-fn global into a snapshot and enter a fresh fn: in-fn, no locals, scope 0, no
+# loop, the return-patch and defer ranges starting where the enclosing fn's end. The caller then
+# sets what is specific to it (`_cur_fn_ix`, captures, locals snapshot). Returns the snapshot.
+fn _fnst_save(S): i64 {
+    var b = alloc(304);
+    store64(b, GLVAR(S));
+    store64(b + 8, GINFN(S));
+    store64(b + 16, GFLC(S));
+    store64(b + 24, GSDEP(S));
+    store64(b + 32, _rp_base);
+    store64(b + 40, _defer_base);
+    store64(b + 64, L64(S + 0x18F838));
+    store64(b + 72, L64(S + 0x18F840));
+    _fnst_put_cg(b);
+    _fnst_put_coro(b);
+    _fnst_put_xp(S, b);
+    SINFN(S, 1);
+    SFLC(S, 0);
+    SSDEP(S, 0);
+    _rp_base = vec_len(rp_vec);
+    _defer_base = L64(S + 0x1AC020);
+    S64(S + 0x18F840, 0);
+    return b;
+}
+# Leave the nested fn: drop its return patches and defer entries (both already emitted and
+# patched by it), then put every enclosing global back.
+fn _fnst_restore(S, b): i64 {
+    vec_truncate(rp_vec, _rp_base);
+    S64(S + 0x1AC020, _defer_base);
+    SLVAR(S, load64(b));
+    SINFN(S, load64(b + 8));
+    SFLC(S, load64(b + 16));
+    SSDEP(S, load64(b + 24));
+    _rp_base = load64(b + 32);
+    _defer_base = load64(b + 40);
+    S64(S + 0x18F838, load64(b + 64));
+    S64(S + 0x18F840, load64(b + 72));
+    _fnst_get_cg(b);
+    _fnst_get_coro(b);
+    _fnst_get_xp(S, b);
+    return 0;
+}
+
+# 6.6.7 — the fn EPILOGUE's defer machinery, shared by PARSE_FN_DEF and the closure path so
+# there is ONE authority (the closure path had none: no zeroing trampoline and no walker, which
+# is why a closure's defer ran in the enclosing frame). All three walk [_defer_base, count).
+fn _defer_zero_flags(S): i64 {
+    var dc = L64(S + 0x1AC020);
+    var i = _defer_base;
+    while (i < dc) {
+        EMOVI(S, 0);
+        EFLSTORE(S, L64(S + 0x1AC028 + i * 24 + 16));
+        i = i + 1;
+    }
+    return 0;
+}
+# Resolve the fn-entry `jmp` (emitted just before the body) — to a flag-zeroing trampoline that
+# returns to `body_cp` when this fn registered defers, else to `body_cp` itself. The body's
+# FALL-THROUGH end is routed round the trampoline to the return landing: without that jmp a body
+# that ended without `return` ran into the trampoline and re-entered the body forever (and every
+# expression-bodied closure falls through).
+fn _defer_emit_init(S, init_jmp, body_cp): i64 {
+    var dc = L64(S + 0x1AC020);
+    if (dc > _defer_base) {
+        vec_push(rp_vec, EJMP0(S));
+        EPATCH(S, init_jmp);
+        _defer_zero_flags(S);
+        EJMP(S, body_cp);
+        return 0;
+    }
+    var saved_cp = GCP(S);
+    SCP(S, body_cp);
+    EPATCH(S, init_jmp);
+    SCP(S, saved_cp);
+    return 0;
+}
+# Land every return jmp this fn recorded ([_rp_base, len)) at the current position.
+fn _rp_patch_here(S): i64 {
+    var n = vec_len(rp_vec);
+    var i = _rp_base;
+    while (i < n) {
+        EPATCH(S, vec_get(rp_vec, i));
+        i = i + 1;
+    }
+    return 0;
+}
+# Run the reached defer blocks LIFO: save rax, check each flag, jmp to the block, which jmps back.
+fn _defer_emit_walk(S): i64 {
+    var dc = L64(S + 0x1AC020);
+    if (dc <= _defer_base) { return 0; }
+    EPUSHR(S);
+    var di = dc - 1;
+    while (di >= _defer_base) {
+        EFLLOAD(S, L64(S + 0x1AC028 + di * 24 + 16));
+        ETESTAZ(S);
+        var dskip = EJCC(S, 0x84);                  # je skip — flag 0: never reached
+        EJMP(S, L64(S + 0x1AC028 + di * 24));        # run the block ...
+        EPATCH(S, L64(S + 0x1AC028 + di * 24 + 8));  # ... whose end-jmp returns here
+        EPATCH(S, dskip);
+        di = di - 1;
+    }
+    EPOPR(S);
+    return 0;
+}
 # v6.3.11 (G) — async/await. `_IS_FN_KW` lets the top-level dispatch in every
 # driver fork route a leading `async` (token 134) to the same fn path as `fn`
 # (token 32) without 7×2 bespoke branches: the dispatch checks `_IS_FN_KW(S)==1`

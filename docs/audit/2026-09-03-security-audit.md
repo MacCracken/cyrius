@@ -2,12 +2,13 @@
 
 **Scope:** the untrusted-source-input surface. Previous full audit:
 `docs/audit/2026-07-27-security-audit.md` (CVE-32…CVE-36) at cycc 6.4.82.
-**Next free identifier after this document: CVE-46.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
-document are **withdrawn** but still consume their ids.) CVE-43 was consumed at 6.6.5 and
-**CVE-44 and CVE-45 at 6.6.6** — the release installer's fixed `/tmp` staging, and a forged `#@file` from an included file; all three are appended below.
+**Next free identifier after this document: CVE-47.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
+document are **withdrawn** but still consume their ids.) CVE-43 was consumed at 6.6.5,
+**CVE-44 and CVE-45 at 6.6.6** — the release installer's fixed `/tmp` staging, and a forged `#@file` from an included file —
+and **CVE-46 at 6.6.7** (a `secret var` inside a closure was never zeroised); all four are appended below.
 ⚠ **This line read "next free: CVE-42" while CLAUDE.md read "the next CVE number is 43" and this document ran 39-41.**
 Two authorities, two answers, and nothing reconciled them. CLAUDE.md is the one every closeout reads, so **42 is
-retired unused** and CVE-43 is the entry appended below. Anything below 46 now collides.
+retired unused** and CVE-43 is the entry appended below. Anything below 47 now collides.
 
 Run as part of the band K closeout, as nine parallel audit dimensions over the v6.5.x minor with
 an adversarial verification pass over the highest-severity findings. Everything recorded here was
@@ -431,3 +432,70 @@ from the compiler) and axis 10 its census. ⚠ Mutation M6 (`FM_ATBOL` → 0) is
 axes, not one: with no file map at all `private` stops being enforced anywhere, which is what
 stops axis 9 passing vacuously. Self-host fixpoint + `seed-derive-cycc.sh` green;
 0 of 330 `.tcyr` binaries changed a byte.
+
+---
+
+## CVE-46 — a `secret var` (and any `defer`) inside a closure body was registered on the ENCLOSING fn: the closure's key material was never zeroised
+
+*Appended 2026-09-27 (cyrius 6.6.7, bite 1). Not part of the 2026-09-03 sweep: recorded here
+because this is the live ledger and the id has to come from one place.*
+
+| | |
+|---|---|
+| **Severity** | **Medium (P2)** — `secret` is the language's only guarantee that key material does not outlive its scope, and consumers (sigil, sakshi) rely on it for exactly that. Not attacker-triggered: the defect is in code the program's own author wrote, and what it breaks is the guarantee, silently |
+| **Affected** | `src/frontend/parse_expr.cyr` (the closure emitter) and `src/frontend/parse_fn.cyr` (`_instantiate_generic_fn`, `_async_emit_constructor`, PARSE_FN_DEF's epilogue). Every target (x86/PE/Mach-O, aarch64, cx). From v6.3.7 (closures) through 6.6.6 |
+| **Vector** | `secret var buf[N];` or `defer { … }` written inside a closure literal (`\|x\| { secret var key[32]; … }`); any fn that registers a `defer`/`secret` and then makes its first explicit `f<T>(..)` call |
+| **Fixed in** | 6.6.7 |
+
+### What it is
+
+`secret var` is implemented as a synthetic `defer` whose block zeroes the buffer, run by the
+function epilogue's defer walker. The per-fn defer table was reset only by PARSE_FN_DEF and walked
+only at its epilogue. A closure body is a function emitted INSIDE another function's body, and
+the closure emitter neither isolated nor walked that table, so a closure's `secret`/`defer`
+entry was appended to the ENCLOSING fn's table:
+
+- the closure's own return never zeroised the buffer;
+- the enclosing fn's epilogue tested the entry's reached-flag at the closure's slot index in
+  the ENCLOSING frame (a different variable), so it usually skipped the block — and when that
+  slot happened to be non-zero it ran the closure's block in the wrong frame;
+- the flag's `= 0` initialisation, emitted by the enclosing trampoline, wrote 0 into that
+  enclosing slot: `fn outer(a, b, c, d)` holding a closure with a `defer` returned 1204 for 1234,
+  because parameter `c` was zeroed.
+
+Measured on 6.6.6 (`build/cycc` at the 6.6.7 open), x86_64 Linux:
+
+```
+fn caller(): i64 {
+    var f = |x| { secret var key2[32]; store64(&key2, x); return &key2; };
+    return fncall1(f, 77);
+}
+# after caller() has RETURNED, load64(result) is still 77 — the key was never cleared
+```
+
+A generic instantiation went the other way: `_instantiate_generic_fn` re-enters PARSE_FN_DEF,
+which zeroed the table, so every `defer`/`secret` the enclosing fn had registered before its
+first `f<T>(..)` call was DROPPED — never run on any return path.
+
+### Fix
+
+The three nested-fn emitters (closure, generic instance, async constructor) now go through one
+per-fn state snapshot (`_fnst_save` / `_fnst_restore`, `src/frontend/parse.cyr`). The nested fn
+owns only the defer entries and return patches it appends — `_defer_base` / `_rp_base` mark where
+they start — and PARSE_FN_DEF and the closure path share one epilogue authority
+(`_defer_emit_init`, `_rp_patch_here`, `_defer_emit_walk`), so a closure now zeroes its own flags
+at entry, lands its own returns, and runs its own `secret`/`defer` blocks before it returns. The
+same snapshot fixed the rest of the drifted per-fn state (the return patches lost by an early
+`return` before a closure — CHANGELOG [6.6.7]).
+
+### Verified
+
+`tests/tcyr/crossos/defer_every_return_path.tcyr` — the `secret var in a closure is zeroised at
+the closure's return` row reads the (static-fallback) buffer after the closure returned and wants
+0 (on the pre-fix compiler the file never reaches that row — an earlier row SIGSEGVs — so the
+defect itself was measured with the standalone probe above: 77 still readable after `caller()`
+returned, 0 after the fix). Mutation: dropping the closure's
+`_defer_emit_walk` call turns that row and both closure-defer rows RED. Green on x86_64 Linux,
+aarch64 (qemu and real pi), Mach-O arm64 (ecb), Mach-O x86_64 (ach), PE (wine) and cx (cxvm);
+cass (real Windows) was down at the time and is left to the release gate. Self-host fixpoint and
+`seed-derive-cycc.sh` green.
