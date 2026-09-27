@@ -188,5 +188,24 @@ else
     echo "  ok axis 5: a struct derive with no call site compiles clean"
 fi
 
+# --- axis 6 (6.6.7): an enum with a PAYLOAD variant is rejected loudly, not miscoded ---
+# The name codec compares a value against each member's constant; a constructor variant has no
+# such constant. Once the 6.6.7 body walk read `Circle(r)` as the name `Circle`, the codec
+# compiled clean and wrote `null` for every Circle — the byte scan before it had kept
+# `Circle(r)` and failed to compile only by accident. Both a payload and a nullary `None()`.
+for body in 'enum shape_e { Circle(r); Sq(s); }' 'enum opt_e { None(); Some(v); }'; do
+    printf 'include "lib/syscalls.cyr"\n#derive(Serialize)\n%s\nsyscall(60, 0);\n' "$body" > "$T"
+    build
+    if [ "$rc" -eq 0 ]; then
+        echo "  FAIL axis 6: #derive(Serialize) on '$body' compiled rc=0 — a payload variant is silently miscoded"
+        fail=1
+    elif grep -q "payload" "$E"; then
+        echo "  ok axis 6: a payload enum derive is refused and says why ($body)"
+    else
+        echo "  FAIL axis 6: rejected, but not for the payload: $(head -c 160 "$E")"
+        fail=1
+    fi
+done
+
 [ "$fail" -eq 0 ] || { echo "FAIL: derive-declaration-kinds"; exit 1; }
-echo "PASS: derive-declaration-kinds — struct and enum derives generate codecs; anything else is rejected loudly"
+echo "PASS: derive-declaration-kinds — struct and enum derives generate codecs; a payload enum and anything else is rejected loudly"

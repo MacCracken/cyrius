@@ -1,6 +1,27 @@
-# `#derive(Serialize)`: a `#` comment inside the struct body makes `_to_json` emit a field named `#` and read past the struct — OPEN
+# `#derive(Serialize)`: a `#` comment inside the struct body makes `_to_json` emit a field named `#` and read past the struct — RESOLVED (v6.6.7)
 
-**Status:** 🟡 **OPEN** — silent wrong output on every version tested (5.10.14 → 6.6.6). agnostik
+**Status:** ✅ **RESOLVED v6.6.7** (bite 5). Fixed in `src/frontend/lex_pp.cyr`, in three parts —
+see `CHANGELOG.md` [6.6.7]:
+
+- **The body walk.** `#derive` now reads a struct / enum body as the parser does
+  (`PP_DERIVE_FIELDS`): comments, every blank, spaced or tabbed `:`, `;`-less fields,
+  `,`/newline-separated enum members, char-literal values and `Vec< T >` all give the parser's
+  layout. The same walk replaced the declaration-name read (`enum E: stack`, a tab after the
+  name) and the directive-to-declaration skip (blank / indented lines). The filed repro exits 0;
+  its round-trip check was vacuous (the corrupted output happened to decode back to the same
+  bytes) and now decodes the CORRECT JSON field by field.
+- **Accessor widths.** With the offsets right, `P_set_y` on `struct P { x : i8; y : i8; }` still
+  did `store64(p + 1)` — accessors were `load64`/`store64` for every field. They now use the
+  field's width, and a narrow getter sign-extends so it agrees with `p.field`.
+- **A layout backstop.** The first generated fn body asserts `sizeof(<Name>)` equals the derive's
+  size, so any remaining disagreement (a field typed with a non-`#derive`d struct) fails the build.
+
+Tests: `tests/tcyr/derive/derive_body_shapes.tcyr`, `tests/tcyr/crossos/derive_accessor_widths.tcyr`,
+`tests/gates/diagnostics/derive_layout_backstop.sh`. No consumer source change is needed:
+argonaut and kybernet (whose five trailing-comment `Serialize` structs were the live instances)
+only repin. The ORIGINAL status line is kept below for the record.
+
+~~🟡 **OPEN** — silent wrong output on every version tested (5.10.14 → 6.6.6).~~ agnostik
 has worked around it since 5.10.14 but recorded it only in its own repo, so it was never filed
 here until now.
 **Placement:** **6.6.7 bite 5** — #derive walks the struct/enum body token by token (fixes field-table corruption and out-of-bounds accessor writes). Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).

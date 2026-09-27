@@ -1,0 +1,80 @@
+# derive_accessor_widths.tcyr — 6.6.7 bite 5: `#derive(accessors)` loads and stores a field at
+# the field's OWN width. Until 6.6.7 every generated accessor was `load64` / `store64`, so on
+# an `i8` / `i16` / `i32` field the setter wrote 8 bytes: in `struct P { x: i8; y: i8; }`
+# (sizeof 2) `P_set_y` stored bytes 1..8, into the NEXT allocation, and `P_set_x` overwrote
+# `y`; the getters returned neighbouring bytes as the value's high bits. The spaced-colon
+# shape (`x : i8`) is here too: until the same release the derive did not see its type at all
+# and put `y` at offset 8. A narrow getter also SIGN-extends, the way `p.field` reads an
+# i8/i16/i32 (movsx): a plain loadW zero-extends, so a stored -1 in an i8 read back as 255
+# through `Narrow_a(p)` while `p.a` said -1 — the negative rows below pin that. In crossos/
+# because the widths and the shift pair are exercised by each target's own emitters.
+# CHANGELOG [6.6.7]
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/fmt.cyr"
+include "lib/assert.cyr"
+
+#derive(accessors)
+struct Narrow { a: i8; b: i16; c: i32; d: i64; e: i8; }
+
+#derive(accessors)
+struct Spaced {
+    x : i8;
+    y : i8;
+}
+
+fn main() {
+    assert_eq(sizeof(Narrow), 16, "Narrow is 1+2+4+8+1 bytes");
+    var p = alloc(sizeof(Narrow));
+    var nb = alloc(16);
+    store64(nb, 1234); store64(nb + 8, 5678);
+    # Set in REVERSE order, so a too-wide store of an earlier field would clobber a later one.
+    Narrow_set_e(p, 0x5A);
+    Narrow_set_d(p, 0x1122334455667788);
+    Narrow_set_c(p, 0x0BADF00D);
+    Narrow_set_b(p, 0x7ACE);
+    Narrow_set_a(p, 0x42);
+    assert_eq(Narrow_a(p), 0x42, "i8 getter: exactly the byte");
+    assert_eq(Narrow_b(p), 0x7ACE, "i16 getter: exactly the halfword");
+    assert_eq(Narrow_c(p), 0x0BADF00D, "i32 getter: exactly the word");
+    assert_eq(Narrow_d(p), 0x1122334455667788, "i64 getter");
+    assert_eq(Narrow_e(p), 0x5A, "last i8 getter");
+    assert_eq(load8(p + 15), 0x5A, "e at byte 15");
+    assert_eq(load64(nb), 1234, "neighbour allocation untouched (0..7)");
+    assert_eq(load64(nb + 8), 5678, "neighbour allocation untouched (8..15)");
+
+    # Negative values: the getter must agree with the typed field read, which sign-extends.
+    Narrow_set_a(p, 0 - 1);
+    Narrow_set_b(p, 0 - 2);
+    Narrow_set_c(p, 0 - 3);
+    Narrow_set_e(p, 0 - 128);
+    var q: Narrow = p;
+    assert_eq(Narrow_a(p), 0 - 1, "i8 getter sign-extends -1");
+    assert_eq(Narrow_b(p), 0 - 2, "i16 getter sign-extends -2");
+    assert_eq(Narrow_c(p), 0 - 3, "i32 getter sign-extends -3");
+    assert_eq(Narrow_e(p), 0 - 128, "i8 getter sign-extends the minimum");
+    assert_eq(Narrow_a(p), q.a, "i8 getter == p.a");
+    assert_eq(Narrow_b(p), q.b, "i16 getter == p.b");
+    assert_eq(Narrow_c(p), q.c, "i32 getter == p.c");
+    assert_eq(Narrow_d(p), 0x1122334455667788, "i64 untouched by the narrow setters");
+    Narrow_set_a(p, 0x7F);
+    assert_eq(Narrow_a(p), 0x7F, "i8 getter: the maximum stays positive");
+    assert_eq(load64(nb), 1234, "neighbour still untouched after the negative stores");
+
+    # The filed shape: a 2-byte struct followed by an 8-byte allocation.
+    assert_eq(sizeof(Spaced), 2, "Spaced is two bytes");
+    var s = alloc(sizeof(Spaced));
+    var sn = alloc(8);
+    store64(sn, 1234);
+    Spaced_set_y(s, 9);
+    Spaced_set_x(s, 5);
+    assert_eq(load8(s), 5, "x at byte 0");
+    assert_eq(load8(s + 1), 9, "y at byte 1, not clobbered by x's setter");
+    assert_eq(Spaced_y(s), 9, "y getter");
+    assert_eq(load64(sn), 1234, "neighbour of the 2-byte struct untouched");
+    return 0;
+}
+
+main();
+var r = assert_summary();

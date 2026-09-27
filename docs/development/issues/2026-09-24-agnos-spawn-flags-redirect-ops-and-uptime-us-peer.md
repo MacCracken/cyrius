@@ -1,10 +1,11 @@
-# agnos 1.57.6: `spawn_path`#43 flags and error codes, `exec_redirect`#62 ops, `CH_ENDOW` disarm — constants + wrappers for the agnos peer; and `uptime_us`#95's −1 is now permanent — OPEN
+# agnos 1.57.6: `spawn_path`#43 flags and error codes, `exec_redirect`#62 ops, `CH_ENDOW` disarm — constants + wrappers for the agnos peer; and `uptime_us`#95's −1 is now permanent — RESOLVED v6.6.7
 
-**Status:** 🟡 **OPEN**: the agnos kernel ships these in 1.57.6; `lib/syscalls_x86_64_agnos.cyr` has no
+**Status:** ✅ **RESOLVED v6.6.7** (bite 4) — `AgnosSpawnFlag` / `AgnosSpawnErr` / `AgnosRedirOp`, `sys_spawn_argv`, `sys_exec_redirect_add` / `_clear`, `sys_chan_endow_stdio` / `sys_chan_endow_disarm`, the len / src / fd<0 misroute guards, and the #95 "-1 is permanent" note landed in `lib/syscalls_x86_64_agnos.cyr`; run on agnos 1.57.10 in QEMU. The `lib/bench.cyr` -1 check and the sakshi `src/clock.cyr:152` sentence were NOT part of this bite (clock lane / sakshi upstream). See `CHANGELOG.md` [6.6.7]. It stays in the open dir for the slot-close archive pass.
+**Original status:** 🟡 OPEN: the agnos kernel ships these in 1.57.6; `lib/syscalls_x86_64_agnos.cyr` has no
 names for them yet. No new syscall NUMBER is involved (every item rides an existing number), so agnos's
 `syscall ABI (kernel/doc/cyrius agree)` gate stays green (`kernel 105 · abi-doc 105 · cyrius 105`) —
 this is a surface ask, not a gate blocker.
-**Placement:** **6.6.7 bite 4** — agnos 1.57.6–1.57.9 peer surface; the a4=r10 class (cycc zeroes r10 on short agnos syscalls); monotonic socket-recv deadline; loopback listen class (CVE-47). Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
+**Placement:** **6.6.7 bite 4** — agnos 1.57.6–1.57.9 peer surface; the a4=r10 class (cycc zeroes r10 on short agnos syscalls); monotonic socket-recv deadline; loopback listen class (CVE-48). Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Filed:** 2026-09-24, by agnos. agnos minted the ABI; cyrius owns the peer.
 **Severity:** Medium: nothing breaks, but the features daimon asked agnos for (argv with spaces, a
 reason for a failed spawn, stdout + stderr capture, a clean child fd table) are reachable today only by

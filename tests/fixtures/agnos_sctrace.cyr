@@ -1,0 +1,184 @@
+# agnos_sctrace.cyr — a scripted FAKE agnos kernel for gates (v6.6.7).
+#
+# Runs an agnos-target static ELF as a Linux child under PTRACE_SYSEMU: every syscall the
+# child makes is STOPPED before the host kernel sees it, logged with its a1..a4 registers,
+# and answered by this program — nothing the child asks for is executed. It exists because
+# the agnos peer's defects are in the ARGUMENTS it hands the kernel (r10 left undefined,
+# flag bits smuggled in through an oversized length, a -1 fd that means "disarm") and in how
+# it reacts to kernel ANSWERS (a clock that is refused, a recv that never has data) — both
+# invisible to a compile check, and neither reachable without an agnos kernel. A scripted
+# answer table makes them deterministic.
+#
+# usage: agnos_sctrace <agnos-elf> <mode>
+# stdout, one line per syscall: `sc <nr> <a1> <a2> <a3> <a4>` (decimal; a4 = r10), then
+# `exit <code>` — or `limit` after MAX_CALLS stops, or `signal <n>` if the child faults.
+#
+# Modes (the answer table; every number not listed answers 0):
+#   plain  — nothing else.
+#   us     — uptime_us#95 answers 250000 * call#, i.e. the clock advances 0.25 s per read.
+#   rtc    — #95 answers -1 (calibration refused); time_unix#46 answers 0 for its first two
+#            reads, then 1000 + call# (one second per read).
+#   rtcdie — like `rtc` for #46's first five reads (0, 0, 1002, 1003, 1004), then 0 for ever:
+#            an RTC that stops reading mid-wait, after it had armed the deadline.
+#   spin   — #95 answers -1 and #46 answers 0: no clock at all.
+#   eof    — sock_recv#49 answers -1 (the peer closed).
+#   send0  — like `us`, and sock_send#48 answers 0 (no ACK progress) every time.
+#   send3  — like `us`, and #48 answers min(3, len) bytes per call.
+#   oldnet — sock_listen#56 answers -1 for any a1 above 65535 (a pre-1.57.7 kernel: no classes).
+# In every mode sock_recv#49 answers 0 (WOULD_BLOCK) unless the mode says otherwise,
+# sock_connect#47 / sock_listen#56 answer id 0, sock_peer#106 answers 127.0.0.1:8080 packed
+# ((0x7F000001 << 16) | 8080) and net_config#61 field 0 (net_ip) answers 10.0.2.15.
+
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/args.cyr"
+include "lib/fmt.cyr"
+
+var MAX_CALLS = 200000;
+
+fn _st_num(v): i64 {
+    var b[32];
+    var l = fmt_int_buf(v, &b);
+    syscall(1, 1, &b, l);
+    return 0;
+}
+
+fn _st_line(tag, a, b, c, d, e): i64 {
+    syscall(1, 1, tag, strlen(tag));
+    syscall(1, 1, " ", 1);
+    _st_num(a);
+    syscall(1, 1, " ", 1);
+    _st_num(b);
+    syscall(1, 1, " ", 1);
+    _st_num(c);
+    syscall(1, 1, " ", 1);
+    _st_num(d);
+    syscall(1, 1, " ", 1);
+    _st_num(e);
+    syscall(1, 1, "\n", 1);
+    return 0;
+}
+
+fn _st_mode_is(mode, want): i64 {
+    if (streq(mode, want) == 1) { return 1; }
+    return 0;
+}
+
+# The answer table. `k` counts calls of this number so far (0-based); `a1`/`a3` are its args.
+fn _st_answer(mode, nr, k, a1, a3): i64 {
+    if (nr == 106) { return (0x7F000001 << 16) | 8080; }
+    if (nr == 61) {
+        if (a1 == 0) { return 0x0A00020F; }
+        return 0;
+    }
+    var clk = 0;
+    if (_st_mode_is(mode, "us") == 1) { clk = 1; }
+    if (_st_mode_is(mode, "send0") == 1) { clk = 1; }
+    if (_st_mode_is(mode, "send3") == 1) { clk = 1; }
+    if (nr == 95) {
+        if (clk == 1) { return 250000 * (k + 1); }
+        if (_st_mode_is(mode, "plain") == 1) { return 0; }
+        if (_st_mode_is(mode, "eof") == 1) { return 0; }
+        return 0 - 1;
+    }
+    if (nr == 46) {
+        if (_st_mode_is(mode, "rtc") == 1) {
+            if (k < 2) { return 0; }
+            return 1000 + k;
+        }
+        if (_st_mode_is(mode, "rtcdie") == 1) {
+            if (k < 2) { return 0; }
+            if (k < 5) { return 1000 + k; }
+            return 0;
+        }
+        return 0;
+    }
+    if (nr == 49) {
+        if (_st_mode_is(mode, "eof") == 1) { return 0 - 1; }
+        return 0;
+    }
+    if (nr == 56) {
+        if (_st_mode_is(mode, "oldnet") == 1) { if (a1 > 65535) { return 0 - 1; } }
+        return 0;
+    }
+    if (nr == 48) {
+        if (_st_mode_is(mode, "send3") == 1) {
+            if (a3 < 3) { return a3; }
+            return 3;
+        }
+        return 0;
+    }
+    return 0;
+}
+
+# ⚠ x86_64-Linux ONLY: the ptrace/fork/execve/wait4/kill numbers below and the user_regs_struct
+# offsets are x86_64's, and agnos is an x86_64 target, so the tracer never needs another host.
+#ifdef CYRIUS_ARCH_X86
+fn main(): i64 {
+    args_init();
+    if (argc() < 3) {
+        syscall(1, 2, "usage: agnos_sctrace <agnos-elf> <mode>\n", 40);
+        return 2;
+    }
+    var path = argv(1);
+    var mode = argv(2);
+    var counts[1024];                     # 128 x i64 per-number call counts
+    var i = 0;
+    while (i < 128) { store64(&counts + i * 8, 0); i = i + 1; }
+    var pid = syscall(57);
+    if (pid == 0) {
+        syscall(101, 0, 0, 0, 0);          # PTRACE_TRACEME
+        var av[16];
+        store64(&av, path);
+        store64(&av + 8, 0);
+        var ev[8];
+        store64(&ev, 0);
+        syscall(59, path, &av, &ev);        # execve — stops with SIGTRAP
+        syscall(60, 127);
+    }
+    var st = 0;
+    syscall(61, pid, &st, 0, 0);
+    var regs[216];                        # struct user_regs_struct
+    var n = 0;
+    while (n < MAX_CALLS) {
+        syscall(101, 31, pid, 0, 0);        # PTRACE_SYSEMU: stop at the next syscall entry
+        syscall(61, pid, &st, 0, 0);
+        if ((st & 0x7F) == 0) {             # exited without an agnos exit#0
+            _st_line("gone", (st >> 8) & 0xFF, 0, 0, 0, 0);
+            return 0;
+        }
+        var sig = (st >> 8) & 0xFF;
+        if (sig != 5) {                     # not SIGTRAP: the child faulted
+            _st_line("signal", sig, 0, 0, 0, 0);
+            syscall(62, pid, 9);
+            return 0;
+        }
+        syscall(101, 12, pid, 0, &regs);    # PTRACE_GETREGS
+        var nr = load64(&regs + 120);       # orig_rax
+        _st_line("sc", nr, load64(&regs + 112), load64(&regs + 104), load64(&regs + 96),
+          load64(&regs + 56));                # rdi rsi rdx r10
+        if (nr == 0) {
+            _st_line("exit", load64(&regs + 112), 0, 0, 0, 0);
+            syscall(62, pid, 9);
+            syscall(61, pid, &st, 0, 0);
+            return 0;
+        }
+        var k = 0;
+        if (nr >= 0) { if (nr < 128) { k = load64(&counts + nr * 8); store64(&counts + nr * 8, k + 1); } }
+        store64(&regs + 80, _st_answer(mode, nr, k, load64(&regs + 112), load64(&regs + 96)));
+        syscall(101, 13, pid, 0, &regs);    # PTRACE_SETREGS
+        n = n + 1;
+    }
+    _st_line("limit", n, 0, 0, 0, 0);
+    syscall(62, pid, 9);
+    syscall(61, pid, &st, 0, 0);
+    return 0;
+}
+#endif
+#ifndef CYRIUS_ARCH_X86
+fn main(): i64 { return 2; }
+#endif
+
+var r = main();
+syscall(60, r);

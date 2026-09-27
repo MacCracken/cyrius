@@ -1185,3 +1185,29 @@ _chk_gate "$ROOT/tests/gates/diagnostics/defer_misuse_refused.sh"
 # what a .tcyr cannot reach — async (CYRIUS_ASYNC), the #inline warning, the aarch64 (qemu) /
 # PE (wine) legs of that tcyr, and cx rows — every compiler built from source.
 _chk_gate "$ROOT/tests/gates/codegen/defer_every_return_path.sh"
+
+# 6.6.7 bite 5 — a `#derive` whose field table disagrees with the parser's struct layout fails
+# the build (an `#assert sizeof` inside the first generated fn body — never at top level, where
+# it would end the declaration phase and reject every later struct/enum).
+_chk_gate "$ROOT/tests/gates/diagnostics/derive_layout_backstop.sh"
+
+# 6.6.7 bite 3 — fsync/fdatasync (74/75) FLUSH on PE (kernel32!FlushFileBuffers) and
+# MoveFileExW is write-through. POSIX oracle + emitter shape (the write-through bit's ONLY
+# guard — nothing can observe durability) + wine; hardware is the cass leg.
+_chk_gate "$ROOT/tests/gates/platform/pe_fsync_flushes.sh"
+
+# 6.6.7 bite 4 — every agnos syscall site hands the kernel a defined a4 (r10): its own 4th arg
+# or an explicit zero. agnos read#5/write#1 block only when a4 == 0; an undefined r10 made one
+# println block or drop bytes by call history. Disassembly class check + agnos-only proof.
+_chk_gate "$ROOT/tests/gates/platform/agnos_syscall_a4_defined.sh"
+
+# 6.6.7 bite 4 — the agnos peer RUN against a scripted fake kernel (PTRACE_SYSEMU,
+# tests/fixtures/agnos_sctrace.cyr): the registers each wrapper hands the kernel — a4 defined,
+# spawn/redirect/endow argument packing and guards, the wait/kill/peer surface, the loopback
+# listen class.
+_chk_gate "$ROOT/tests/gates/platform/agnos_peer_fake_kernel.sh"
+
+# 6.6.7 bite 4 — an agnos socket read waits for its deadline on a REAL clock (#95, then the RTC
+# armed on its first non-zero read, then — only with no clock — the pause count) and a timeout
+# is -11, not EOF; a stalled send is retried. Fake-kernel tiers + a live mirshi TCP exchange.
+_chk_gate "$ROOT/tests/gates/platform/agnos_sock_recv_bound.sh"

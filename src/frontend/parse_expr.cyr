@@ -511,6 +511,24 @@ fn _PE_ROUTE_MODULEPATH(S, sc_num, argc): i64 {
     return 0;
 }
 
+# v6.6.7 — Linux fsync (74) / fdatasync (75), argc == 2 → kernel32!FlushFileBuffers
+# (EFLUSHFB_PE). The LINUX numbers are routed, not a new 0xF0xx id — the precedent of
+# 83 → CreateDirectoryW and 87 → DeleteFileW — so every caller that already spells
+# `syscall(SYS_FSYNC/SYS_FDATASYNC, fd)` (the vendored patra fold's raw fdatasync, which
+# was a loud -38 on Windows) flushes with no source change, and the Windows peer can
+# define sys_fsync/sys_fdatasync the way every other peer does. Windows has one flush for
+# data + metadata, so both numbers make the same call. Its own function for the cybs
+# per-function reference limit (see _PE_ROUTE_PERFCOUNTER). Literal-only, like the pair
+# above (an enum constant IS a literal): a number held in a var reaches
+# EPE_SYSCALL_DYNAMIC's argc-2 switch, which carries 3/60/87 only, and gets an honest -38
+# — an error, never a false success. CHANGELOG [6.6.7]
+fn _PE_ROUTE_FLUSH(S, sc_num, argc): i64 {
+    if (argc != 2) { return 0; }
+    if (sc_num == 74) { EFLUSHFB_PE(S); return 1; }
+    if (sc_num == 75) { EFLUSHFB_PE(S); return 1; }
+    return 0;
+}
+
 # v6.5.19 (CVE-40): the bottom expression tier, and the last of the five chokepoints.
 # Unary `-` recurses HERE, not in PARSE_TERM — `- - - … 1` compiled fine at 1024 with the
 # PEXPR and PARSE_TERM bounds in place and still SIGSEGV'd at 16384, because a unary
@@ -1650,7 +1668,8 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             # v6.4.57: 0xF034 MoveFileExW(old, new) (2-arg → argc 3) — the Windows
             # half of lib/io.cyr's portable file_rename / file_write_atomic. Widens
             # both UTF-8 paths to UTF-16 and calls kernel32!MoveFileExW with
-            # MOVEFILE_REPLACE_EXISTING (the flags dword is baked into the emitter,
+            # MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH (the write-through
+            # bit since 6.6.7; the flags dword is baked into the emitter,
             # so file_rename passes only the two paths). See issue
             # 2026-07-12-thoth-portable-atomic-file-write.md.
             if (sc_num == 61492) {
@@ -1936,6 +1955,12 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                 _cfo = 0;
                 return 0;
             }
+            # v6.6.7: fsync (74) / fdatasync (75) → FlushFileBuffers. Same helper-fn
+            # treatment, same cybs reason.
+            if (_PE_ROUTE_FLUSH(S, sc_num, argc) == 1) {
+                _cfo = 0;
+                return 0;
+            }
             # v6.1.16: non-literal (var) syscall number. The `sc_num ==`
             # cases above only fire for a constant-folded first arg; a
             # number held in a `var` (the portable arch-dispatch idiom)
@@ -1965,7 +1990,8 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             # at runtime on Windows with STATUS_ILLEGAL_INSTRUCTION
             # (0xC000001D). Routed numbers (v5.11.22, +v6.0.51, +v6.0.54):
             # 0=read, 1=write, 2=open, 3=close, 8=lseek, 9=mmap,
-            # 60=exit, 83=mkdir, 87=unlink, 228=clock_gettime, and
+            # 60=exit, 74/75=fsync/fdatasync (v6.6.7), 83=mkdir,
+            # 87=unlink, 228=clock_gettime, and
             # 0xF001-0xF005 = Win32 process creation (Wait/GetExit/
             # SetHandle/CreatePipe/CreateProcessW; see process_win.cyr),
             # 0xF006 = GetCommandLineW (args.cyr; see args_win.cyr).
@@ -1973,8 +1999,8 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             # at the call site, or file an upstream issue for a
             # new PE reroute.
             syscall(SYS_WRITE, 2,
-              "warning: syscall(n, ...) on CYRIUS_TARGET_WIN=1 routes n=0,1,2,3,8,9,35,60,83,87,228 + 0xF001-0xF005 (process creation) + 0xF006 (cmdline) + 0xF007-0xF00A (threading) + 0xF00B-0xF00E (thread-local) + 0xF00F (sleep) + 0xF010-0xF011 (CommandLineToArgvW/LocalFree) + 0xF012 (CreateDXGIFactory1) + 0xF013-0xF015 (GetModuleHandleA/GetProcAddress/GetEnvironmentVariableA) + 0xF016-0xF019 (FindFirstFileW/FindNextFileW/FindClose/GetFileAttributesW) + 0xF01A (ProcessPrng CSPRNG) + 0xF01B (GetSystemTimeAsFileTime) + 0xF01C (GetCurrentProcessId) + 0xF01D (TerminateProcess) + 0xF01E (WSAStartup) + 0xF01F-0xF021 (IOCP: CreateIoCompletionPort/GetQueuedCompletionStatus/PostQueuedCompletionStatus) + 0xF022-0xF02C (ws2_32: WSASocketW/closesocket/WSAGetLastError/bind/getsockopt/WSAIoctl/connect/WSARecv/WSASend/getaddrinfo/freeaddrinfo) + 0xF02D-0xF032 (kernel32/ws2_32: RegisterWaitForSingleObject/CreateWaitableTimerW/SetWaitableTimer/UnregisterWaitEx/CancelIoEx/setsockopt) + 0xF033 (ws2_32: listen) + 0xF034 (kernel32: MoveFileExW) + 0xF035 (kernel32: DeleteFileW) + 0xF036-0xF037 (ws2_32: getpeername/getsockname) + 0xF038-0xF039 (kernel32: QueryPerformanceCounter/QueryPerformanceFrequency) + 0xF03A-0xF03B (kernel32: GetModuleFileNameW/RemoveDirectoryW) today; others return -38/-ENOSYS on Windows (v6.5.25; before that they CRASHED with STATUS_ILLEGAL_INSTRUCTION 0xC000001D).\n",
-              1375);
+              "warning: syscall(n, ...) on CYRIUS_TARGET_WIN=1 routes n=0,1,2,3,8,9,35,60,74,75,83,87,228 + 0xF001-0xF005 (process creation) + 0xF006 (cmdline) + 0xF007-0xF00A (threading) + 0xF00B-0xF00E (thread-local) + 0xF00F (sleep) + 0xF010-0xF011 (CommandLineToArgvW/LocalFree) + 0xF012 (CreateDXGIFactory1) + 0xF013-0xF015 (GetModuleHandleA/GetProcAddress/GetEnvironmentVariableA) + 0xF016-0xF019 (FindFirstFileW/FindNextFileW/FindClose/GetFileAttributesW) + 0xF01A (ProcessPrng CSPRNG) + 0xF01B (GetSystemTimeAsFileTime) + 0xF01C (GetCurrentProcessId) + 0xF01D (TerminateProcess) + 0xF01E (WSAStartup) + 0xF01F-0xF021 (IOCP: CreateIoCompletionPort/GetQueuedCompletionStatus/PostQueuedCompletionStatus) + 0xF022-0xF02C (ws2_32: WSASocketW/closesocket/WSAGetLastError/bind/getsockopt/WSAIoctl/connect/WSARecv/WSASend/getaddrinfo/freeaddrinfo) + 0xF02D-0xF032 (kernel32/ws2_32: RegisterWaitForSingleObject/CreateWaitableTimerW/SetWaitableTimer/UnregisterWaitEx/CancelIoEx/setsockopt) + 0xF033 (ws2_32: listen) + 0xF034 (kernel32: MoveFileExW) + 0xF035 (kernel32: DeleteFileW) + 0xF036-0xF037 (ws2_32: getpeername/getsockname) + 0xF038-0xF039 (kernel32: QueryPerformanceCounter/QueryPerformanceFrequency) + 0xF03A-0xF03B (kernel32: GetModuleFileNameW/RemoveDirectoryW) today; others return -38/-ENOSYS on Windows (v6.5.25; before that they CRASHED with STATUS_ILLEGAL_INSTRUCTION 0xC000001D).\n",
+              1381);
             # v6.5.25 — DEGRADE HONESTLY INSTEAD OF FALLING THROUGH TO `0F 05`.
             #
             # A LITERAL unrouted syscall number used to warn and then emit a raw Linux

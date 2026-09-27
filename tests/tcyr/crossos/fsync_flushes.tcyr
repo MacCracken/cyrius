@@ -1,0 +1,69 @@
+# fsync / fdatasync really flush on every target — and a flush of nothing is an error.
+#
+# Windows has no fsync syscall. Until 6.6.7 the literal Linux numbers 74 (fsync) and 75
+# (fdatasync) had no PE reroute and degraded to -38, so a raw `syscall(SYS_FDATASYNC, fd)`
+# (the vendored patra fold's WAL path) failed on every call. 6.6.7 routes both to
+# kernel32!FlushFileBuffers. The rows that prove the call is REAL are the bogus-descriptor
+# rows: a no-op or a -38 stub cannot tell 12345 from an open file, a real flush can.
+# (wine cannot observe durability; the real-hardware run is cass at the release gate.)
+#
+# The raw 74/75 rows run on EVERY target, not only PE: the x86 numbers are what the stdlib
+# peers spell, and ESYSXLAT (aarch64 → 82/83) and EMACHO_SYSXLAT (Darwin → 95/187)
+# renumber them. So every row executes exactly once everywhere, which is what lets
+# tests/gates/platform/pe_fsync_flushes.sh use a static assertion count as its oracle.
+# Every fixture name goes through `test_scratch` (cwd-relative + PID), as atomic_write does.
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/assert.cyr"
+
+alloc_init();
+
+var path = test_scratch("cyrius_fsync_flushes.txt");
+xunlink(path);
+var fd = file_open(path, O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
+assert_eq(fd >= 0, 1, "scratch file opened for write");
+assert_eq(file_write(fd, "durable\n", 8), 8, "wrote 8 bytes");
+
+test_group("literal fsync(74) / fdatasync(75): a real flush, not a stub");
+assert_eq(syscall(74, 12345) < 0, 1, "fsync(74) of a descriptor that does not exist fails (PE: was -38)");
+assert_eq(syscall(75, 12345) < 0, 1, "fdatasync(75) of a descriptor that does not exist fails (PE: was -38)");
+assert_eq(syscall(74, fd), 0, "fsync(74) of a written descriptor flushes (PE: was -38)");
+assert_eq(syscall(75, fd), 0, "fdatasync(75) of a written descriptor flushes (PE: was -38)");
+# Nested in an expression at odd depth — the PE reroute realigns its own frame.
+assert_eq(1 + syscall(74, fd) * 2, 1, "fsync(74) inside an expression");
+
+test_group("xfsync: the portable wrapper flushes, and fails on nothing");
+# PE: xfsync returned 0 without flushing until 6.6.7 — for ANY argument. This is the row
+# that was red on Windows: a no-op cannot tell 12345 from an open file.
+assert_eq(xfsync(12345) < 0, 1, "xfsync of a descriptor that does not exist fails (PE: was 0)");
+assert_eq(xfsync(fd), 0, "xfsync of a written descriptor flushes");
+file_close(fd);
+
+# O_APPEND handles: on PE the write bit is FILE_APPEND_DATA, not GENERIC_WRITE (see
+# _pe_open_flags). O_RDWR|O_APPEND is patra's WAL shape — it must flush.
+var afd = file_open(path, O_WRONLY | O_APPEND, 0);
+assert_eq(afd >= 0, 1, "reopened O_WRONLY|O_APPEND");
+assert_eq(file_write(afd, "more\n", 5), 5, "appended 5 bytes");
+assert_eq(xfsync(afd), 0, "xfsync of an O_WRONLY|O_APPEND descriptor flushes");
+file_close(afd);
+var wafd = file_open(path, O_RDWR | O_APPEND, 0);
+assert_eq(wafd >= 0, 1, "reopened O_RDWR|O_APPEND (patra's WAL open)");
+assert_eq(syscall(75, wafd), 0, "fdatasync(75) of an O_RDWR|O_APPEND descriptor flushes");
+file_close(wafd);
+
+# O_RDONLY: the ONE documented divergence. POSIX fsyncs a read-only descriptor; Windows'
+# FlushFileBuffers needs write access and refuses it. The only callers that fsync a
+# read-only descriptor are best-effort directory syncs, which ignore the result.
+var ro_refused = 0;
+#ifdef CYRIUS_TARGET_WIN
+ro_refused = 1;
+#endif
+var rfd = file_open(path, O_RDONLY, 0);
+assert_eq(rfd >= 0, 1, "reopened O_RDONLY");
+assert_eq(xfsync(rfd) < 0, ro_refused, "xfsync of an O_RDONLY descriptor: POSIX flushes, Windows refuses");
+file_close(rfd);
+
+xunlink(path);
+var r = assert_summary();

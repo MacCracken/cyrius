@@ -597,6 +597,19 @@ struct Config { host: Str; port; timeout; }
 #            Config_port(p), Config_set_port(p, v), etc.
 ```
 
+An accessor reads and writes at the field's own width: an `i8` / `i16` / `i32` field gets
+`load8/16/32` and `store8/16/32`, everything else (untyped, `i64`, `Str`, `Vec<T>`, `f64`, a
+nested `#derive`d struct) an 8-byte slot (v6.6.7; before that every accessor was `load64` /
+`store64`, so a narrow field's setter wrote into its neighbours). A narrow getter
+**sign-extends**, exactly as `p.field` reads an `i8` / `i16` / `i32`: after `P_set_x(p, -1)` on
+an `i8` field, both `P_x(p)` and `p.x` are `-1` (a bare `load8` would give 255). Every `#derive`
+reads the body the way the parser does — comments, blank lines, `a : T` spacing, `;`-less fields
+and `,`-separated enum members are all fine — and the build FAILS if its field offsets disagree
+with the struct's real layout, which today means a field typed with a struct that is not itself
+`#derive`d: derive the inner struct too. The one exception is a struct NAME declared twice: the
+parser keeps the first layout, the check is not armed for the second, and that redefinition is a
+defect of its own (tracked separately).
+
 ## Derive Serialize on an enum (v6.5.31)
 
 `#derive(Serialize)` and `#derive(Deserialize)` work on an **enum** as well as a struct, and
@@ -2412,7 +2425,8 @@ primitive: `xopen`, `xunlink`, `xrmdir`, `xmkdir`, `xmkdir_p`, `xsymlink`, `xrea
 `sys_*` — agnos's syscalls carry an **explicit byte length** and reorder flags, so a
 Linux-shaped `sys_open(path, O_RDONLY, 0)` lands `O_RDONLY` in `namelen`: a silent ABI
 miscompile, no trap, that breaks every file op off Linux. Windows reroutes through kernel32
-(`DeleteFileW`, `MoveFileExW`, `RemoveDirectoryW` since v6.6.6, …) behind the same names. `cyrlint` flags a raw `sys_open`
+(`DeleteFileW`, `MoveFileExW`, `RemoveDirectoryW` since v6.6.6, `FlushFileBuffers` for `xfsync`
+since v6.6.7, …) behind the same names. `cyrlint` flags a raw `sys_open`
 with literal flags for exactly this reason and points at the wrappers.
 
 The set was **completed at v6.5.7** (`xmkdir`, `xmkdir_p`, `xsymlink`, `xreadlink`, `xlink`,
@@ -2772,6 +2786,25 @@ an `O_DIRECTORY` open.
 > file itself (sigil's LUKS keyfile path, for one) does not get that guarantee on PE; a
 > pre-planted symlink at the path redirects the write. Check the path's attributes first
 > if the guarantee matters.
+
+**Durability** (v6.6.7)
+
+`fsync` and `fdatasync` — `xfsync(fd)`, or a raw `syscall(74, fd)` / `syscall(75, fd)` — call
+`FlushFileBuffers` on Windows; there is one flush for data and metadata, so both numbers do the
+same thing. The route is for the **literal** numbers — an enum constant counts; a number held in a
+`var` gets the honest -38 (`-ENOSYS`), not a flush. A failure is -1. `file_rename` passes
+`MOVEFILE_WRITE_THROUGH`, so `file_write_atomic`'s write → flush → rename is durable as well as
+atomic.
+
+Before v6.6.7 `xfsync` returned 0 on Windows **without flushing, for any fd** (even one that did not
+exist), a raw 74/75 returned -38, and the rename was not write-through. Code that checked for
+durability on Windows was told it had it.
+
+> ⚠ One divergence from POSIX: Windows will not flush a handle opened **without write access**.
+> `xfsync` of an `O_RDONLY` fd is 0 on Linux and macOS and **-1 on Windows**. An `O_APPEND` handle
+> (whose Windows access is `FILE_APPEND_DATA`, not `GENERIC_WRITE`) is expected to flush — the NT
+> flush accepts either write right — and `tests/tcyr/crossos/fsync_flushes.tcyr` checks exactly
+> that, and the `O_RDONLY` refusal, on real Windows at every release.
 
 **Directory Enumeration** (v6.1.18+)
 - `dir_list(path)` → `vec` of `Str` filenames
@@ -3215,7 +3248,7 @@ everywhere else. cycc warns on a conflicting `SYS_*` redefinition.
 ### Capabilities and Limitations
 
 **Works on agnos**:
-- Syscall wrappers (all of #0–#95, plus #97)
+- Syscall wrappers (all of #0–#104 and #106–#108; #105 was withdrawn)
 - Heap allocation (bump, 2 MB chunks)
 - File I/O (read, write, open, close, stat, getdents/readdir)
 - Process spawn and wait (in-memory ELF, or from disk via `sys_spawn_path`)
@@ -3232,7 +3265,14 @@ everywhere else. cycc warns on a conflicting `SYS_*` redefinition.
   `AGNOS_CHAN=<fd>` in the `sys_spawn_path_env` blob. ⚠ The `sys_chan_` prefix is deliberate:
   bare `chan_send`/`chan_recv`/`chan_close` are already the in-process MPSC thread channel, and
   cyrius resolves duplicate fns last-definition-wins.
-- Pipes, epoll, signalfd, timerfd (the event loop primitives)
+- Pipes, epoll, signalfd, timerfd (the event loop primitives). ⭐ v6.6.7: `sys_read` / `sys_write`
+  (and every short raw `syscall`, which cycc now emits with a4 = 0) BLOCK on an empty / full pipe
+  or channel on agnos 1.57.8+ — the kernel reads a4 = r10 as O_NONBLOCK, and it used to be left
+  undefined; `sys_read_nb` / `sys_write_nb` are the non-blocking forms
+- Blocking waits and a real wait status (v6.6.7, agnos 1.57.7): `sys_waitpid_block`, W* per ABI §4.9
+- Socket reads bounded by a real clock: a timeout is -11 (EAGAIN), per-socket via
+  `sock_set_recv_timeout`; a server bound to 127.0.0.1 listens on loopback only (CVE-48 —
+  it refuses to start on agnos < 1.57.7 rather than listen on the network)
 - Signals (sigprocmask, kill, pause)
 - Filesystem (mkdir, rmdir, unlink, rename, link on ext2)
 - Networking (sockets, UDP, ICMP; #47–#61)
@@ -3240,8 +3280,9 @@ everywhere else. cycc warns on a conflicting `SYS_*` redefinition.
 - SIMD, function pointers, inline asm (same as Linux/macOS)
 
 **Does NOT work on agnos** (either absent from the surface or stubbed):
-- Process **arguments** to spawned programs (`sys_spawn` is elf_addr, elf_size only; the
-  from-disk `sys_spawn_path` takes a path and, since v6.5.9, an env blob — but still no argv)
+- Process **arguments** to an in-memory `sys_spawn` (elf_addr, elf_size only). From disk,
+  `sys_spawn_argv` (v6.6.7, agnos 1.57.6) passes a real argv — arguments may contain spaces —
+  where the line-form `sys_spawn_path` splits on spaces
 - stdout/stderr redirection (`sys_dup` is a stub returning `fd` unchanged; pipe → spawn → wait
   works, but output goes to the terminal, not a buffer; `run_capture` returns 0 bytes)
 - `getppid` (no getppid in the surface; returns 0)
@@ -3250,7 +3291,7 @@ everywhere else. cycc warns on a conflicting `SYS_*` redefinition.
 - Thread-local storage (not modeled in agnos ring-3)
 - Dynamic linking (`dlopen`, auxv machinery), only static binaries
 
-The agnos syscall surface is **append-only, currently #0–#95 + #97 at agnos 1.56.x**. The
+The agnos syscall surface is **append-only, currently #0–#104 + #106–#108 at agnos 1.57.9 (#105 withdrawn)**. The
 re-freeze rule (§5) names the agnos **kernel dispatch** — `agnos/kernel/core/syscall.cyr` —
 as canonical: any number / signature / struct-layout change there must land in this guide and
 `lib/syscalls_x86_64_agnos.cyr` in the same change. `agnos/docs/development/agnos-userland-abi.md`

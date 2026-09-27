@@ -172,6 +172,228 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   r0/r4/r5 alone is RED on exactly those two). Mutation ledger in its header. Green on x86_64, aarch64 (qemu +
   pi), Mach-O arm64 (ecb), Mach-O x86_64 (ach, under four argv0 lengths), PE (wine) and cx; cass
   (real Windows) was down — pending for the release gate.
+- **`#derive` built its field table from a byte scan of the struct / enum body, so an ordinary
+  comment, a space before `:`, a field with no `;`, or `,`-separated enum members gave the
+  generated code a DIFFERENT layout from the struct's — silently, including out-of-bounds
+  stores from accessors.** (bite 5; filed by agnostik, latent in argonaut's five
+  trailing-comment `Serialize` structs and their copies in kybernet.) A comment inside the body
+  made `Serialize` emit a field named `#` and load values from past the struct (`{"#":330325,…}`
+  where `{"sql":85,…}` was right); a trailing comment made `Deserialize` of CORRECT JSON leave the
+  next field 0; `x : i8; y : i8;` made the derive think `x` was an untyped 8-byte field, so
+  `P_set_y` did `store64(p + 8)` on a 2-byte struct and **overwrote the neighbouring allocation**
+  (measured 1234 → 9, rc 0); `enum E { RED = 0, GREEN = 1 }` serialized as `nullnull"RED"` and
+  `E_from_json_str("\"GREEN\"")` returned `Err`. Other shapes failed loudly but misleadingly
+  (`expected '(' got fn`, `undefined function i8_to_json`). **Root cause:**
+  `PP_PARSE_STRUCT_DEF` (`src/frontend/lex_pp.cyr`) began a field only right after a `{` or `;`
+  byte, counted brace depth on every `{`/`}` byte (comments and char literals included), and
+  stopped names and types at a stop set that lacked `#`, tab, CR, `,` and `=` — while
+  `PARSE_STRUCT_DEF` / `PARSE_ENUM_DEF` read tokens, take `;` as optional, and take `,` between
+  enum members. **Fix:** the body is now walked as the parser reads it (`PP_DERIVE_FIELDS`):
+  `#`-to-end-of-line comments and every blank are trivia, a field is `name [: Type[<Elem>]]
+  [= value] [; | ,]` (the value for enum members). An enum member with a PAYLOAD (`Circle(r)`,
+  `None()`) is refused by name — the name codec compares against member constants, which a
+  constructor does not have; the byte scan had failed on it only by accident (`undefined variable`
+  in generated code), and reading the name correctly would otherwise have made it compile and write
+  `null`. A declaration HEADER the derive
+  cannot name is refused by name (`error: #derive: unexpected '<' in the declaration of Box` —
+  generic structs were never supported); a BODY shape the grammar does not have stops the walk and
+  is left to the parser, which reports it at its real line — the walk accepts a superset of what
+  the parser accepts, so a stop is always also a parse error. The struct copy threads `PP_LEXST`, so a `{` in a comment or in `LB = '{'` neither opens nor closes the
+  declaration. The same walk replaces the two other byte scans in that function: the declaration
+  NAME is read as an identifier (`enum E: stack` used to name the codec `E:_to_json`; a tab after
+  the name went into every generated fn name), and the lines between `#derive(...)` and the
+  declaration may now be blank or indented (both reported "the following declaration is
+  neither"). **What a consumer sees:** every shape above now produces the parser's layout; no
+  source change is needed, argonaut and kybernet only repin. Every in-tree `.tcyr` / `.bcyr` /
+  `.fcyr` / program compiles byte-identically (472 of 472; the one difference is the filed
+  repro, which now passes), and across `~/Repos` all 539 files that carry a `#derive` —
+  vendored copies included — PREPROCESS to identical text except `argonaut/src/types.cyr` and
+  kybernet's vendored copy of it, where the five `"#"` keys become the real field names. Test: `tests/tcyr/derive/derive_body_shapes.tcyr` — 36 checks,
+  Serialize bytes, Deserialize of the CORRECT JSON field by field (the repro's own round-trip
+  check was vacuous and is replaced), accessors with a neighbour-allocation canary, and enum
+  codecs over `,` / newline / comment / char-literal / `: stack` shapes.
+  `tests/gates/frontend/preprocessor_scratch_bounds.sh` follows the capture bounds (CVE-41) into
+  the new walk — the field and type names now share one bounded appender — and gains a
+  behavioural axis: a 40-byte struct, field, type and spaced `Vec< … >` type name are each refused,
+  a 31-byte one still compiles.
+- **`#derive(accessors)` loaded and stored EVERY field as 8 bytes, so on an `i8` / `i16` / `i32`
+  field the setter wrote past the field — and past the struct.** (bite 5, the second half of the
+  filed accessor corruption: with the body walk fixed, `x : i8; y : i8;` put `y` at the right
+  offset 1, and `P_set_y` then did `store64(p + 1)` on the 2-byte struct — the neighbouring
+  allocation still went 1234 → 1024, rc 0.) `P_set_x` likewise overwrote `y`, and every narrow
+  getter returned the neighbouring bytes as the value's high bits. **Root cause:**
+  `PP_DERIVE_ACCESSORS_BODY` emitted `load64` / `store64` unconditionally; `Serialize` and
+  `Deserialize` had been width-correct since 5.9.36 and accessors were the one family left
+  behind. **Fix:** the accessor uses the field's own width (`load8/16/32/64`, `store8/16/32/64`,
+  from the same exact-name match the offset table uses — `PP_DFIELD_BITS`), and a narrow getter
+  **sign-extends** — `(loadW(p + off) << S) >>> S`, `S = 64 - W` — because the language reads an
+  `i8` / `i16` / `i32` field signed (`p.x` is `movsx`) and `loadW` zero-extends: a width-only fix
+  made `P_x(p)` return 255 where `p.x` said -1, and broke a negative round-trip
+  (`S_set_err(s, -3); S_err(s)`) that the old over-wide `load64`/`store64` pair had happened to
+  preserve. i64, untyped, `Str`, `Vec`, `f64` and nested-struct fields are 8-byte slots and emit
+  exactly what they did before; every in-tree program compiles byte-identically except the two
+  tests with narrow-field accessors, and the shift-pair getter still inlines. **What a consumer
+  sees:** a narrow field's accessor now reads and writes only that field, and its getter returns
+  the same signed value as `p.field`. Test: `tests/tcyr/crossos/derive_accessor_widths.tcyr`
+  (24 checks, run on each target's own load/store emitters: every width set in reverse order so a
+  too-wide store shows, the filed 2-byte shape with a neighbour canary, and negative values
+  checked against both `-N` and `p.field`; 7 fail on the zero-extending width-only emit).
+- **`#derive` now FAILS THE BUILD when its field table disagrees with the parser's struct
+  layout, instead of generating accessors and codecs against the wrong offsets.** (bite 5, the
+  backstop.) The derive computes offsets itself and every generated fn trusts them; the body walk
+  above removes the known disagreements, and this makes any remaining one loud. The one still
+  reachable: a field typed with a struct that is not itself `#derive`d — the derive cannot see its
+  size and uses 8, the parser uses the real size, so `Outer_y` read the wrong word with rc 0
+  (measured 55 where 77 was stored). It is now `error:<file>:<line>: #assert failed: #derive: field
+  offsets disagree with the struct layout (is a field typed with a struct that is not itself
+  #derive'd?)` at the derived struct's line; deriving the inner struct fixes it. **How:** the
+  first generated fn body carries `#assert sizeof(<Name>) == <derive's size>`. ⚠ Not after the
+  struct: a top-level `#assert` is a statement, and the first top-level statement ends the
+  declaration phase, so every struct or enum after a derived struct would have been rejected
+  (`unexpected struct`) — the obvious placement breaks any file with two derives. Inside a body
+  it emits no code (an inlined accessor re-evaluates it per call site, also emitting nothing): a
+  build of every in-tree program with the message removed is byte-identical to the build without
+  the check (475 of 475), and with it the 44 programs that use `#derive` differ only by the one
+  interned message string (+120 bytes). It is not armed when the body walk stopped on a shape the
+  parser rejects, so a malformed body reports the parser's error alone, and not for a struct NAME
+  an earlier `#derive` already declared: a second `struct X` is a redefinition, the parser keeps
+  the FIRST layout, and judging the second against it would turn a build that works today into a
+  failure — the older kavach copies vendored by mehman, stiva, aethersafha, agnosai and agnostic
+  declare `struct SpawnedProcess` twice (measured: stiva's build failed on the first cut of this
+  backstop). Real `cyrius build`s of the 93 ecosystem repos that use `#derive` give the same
+  result with the old and the new compiler (80 build, 13 fail identically on path deps outside a
+  scratch copy); none trips the backstop. It cannot catch a same-size mis-naming; it is a
+  backstop, not the fix. Gate: `tests/gates/diagnostics/derive_layout_backstop.sh` (6 axes; the
+  no-backstop, top-level, armed-after-stop and armed-on-redefinition mutants are each RED).
+- **`xfsync` returned 0 on Windows WITHOUT FLUSHING — for any argument, including a handle that
+  did not exist — and a raw `syscall(74, fd)` / `syscall(75, fd)` (fsync / fdatasync) returned -38
+  there.** (bite 3; filed from patra's 1.15.0 cut.) `xfsync(12345)` was 0 on PE and -EBADF on Linux,
+  so `file_write_atomic`, the CLI's atomic writer and every consumer that syncs for durability on
+  Windows was told it had durability it never got; the vendored patra 1.14.3 fold calls raw
+  `syscall(SYS_FDATASYNC, fd)`, so its `wal_log_page` failed every in-transaction page with
+  `PATRA_ERR_IO` on Windows (loudly). **Root cause:** the PE backend had no reroute for either
+  Linux number (they fell to the honest -38 fallthrough in `src/frontend/parse_expr.cyr`), and
+  `lib/io.cyr`'s Windows arm papered over it with `return 0` on the grounds that "MoveFileEx-after-
+  close is durable enough" — which was itself false (next bullet). **Fix:** literal 74 and 75 at
+  argc 2 route to a new `EFLUSHFB_PE` → `kernel32!FlushFileBuffers`, on the 83 → CreateDirectoryW
+  / 87 → DeleteFileW precedent (no 0xF0xx id consumed; its own `_PE_ROUTE_FLUSH` helper for cybs's
+  per-function limit; literal-only — an enum constant counts, a number in a `var` still gets -38).
+  fd 0/1/2 map to the std handles as in `read`/`write`, the call is made from an rbx-anchored
+  16-aligned frame, and the BOOL becomes 0/-1 through `cmp eax,1; sbb rax,rax`. `xfsync`'s PE arm
+  is `return syscall(74, fd);`. **What a consumer sees:** on Windows `xfsync` and raw fsync /
+  fdatasync now flush, and fail (-1) on a bad handle. One divergence from POSIX, documented in the
+  guide: Windows refuses to flush a handle opened without write access, so `xfsync` of an
+  `O_RDONLY` fd is -1 there (0 on Linux/macOS); `O_APPEND` handles flush. Because the Linux numbers
+  are routed, the patra fold's raw fdatasync works with no source change — and re-vendoring patra
+  1.15.0 (which routes Windows fdatasync through `xfsync`) is safe from this release on; before it,
+  that re-vendor would have turned the loud -38 into a silent 0.
+- **`file_rename` on Windows was atomic but not durable: `MoveFileExW` was called without
+  `MOVEFILE_WRITE_THROUGH`.** (bite 3.) `EMOVEFILEEX_PE` (`src/backend/x86/emit.cyr`, the 0xF034
+  reroute behind `file_rename` and `file_write_atomic`) passed `dwFlags = 1`
+  (`MOVEFILE_REPLACE_EXISTING`), so the call could return before the rename reached the disk, and
+  closing a handle does not flush NTFS data either. **Fix:** `dwFlags = 9` (`REPLACE_EXISTING |
+  WRITE_THROUGH`) — the Windows analogue of the directory fsync that makes POSIX's write → fsync →
+  rename durable. **What a consumer sees:** nothing but durability; the rename still replaces
+  atomically on the same volume. Tests for both bullets: `tests/tcyr/crossos/fsync_flushes.tcyr`
+  (16 rows on every target — raw 74/75 and `xfsync` on a bogus, a written, an `O_WRONLY|O_APPEND`
+  and an `O_RDWR|O_APPEND` fd, and the `O_RDONLY` divergence; 6 red on PE with the pre-fix compiler
+  and stdlib under wine) and `tests/gates/platform/pe_fsync_flushes.sh` (POSIX oracle, the PE
+  emitter shape — FlushFileBuffers imported, one flush tail per literal site, and `mov $0x9,%r8d`
+  after every MoveFileExW setup, which is the ONLY guard on the write-through bit because no run
+  on wine or on Windows can observe durability — and wine; five mutants each RED). ⚠ wine cannot
+  observe durability and cass was down for this bite: the real-Windows run of the .tcyr (including
+  the `O_APPEND` and `O_RDONLY` rows) is the release gate's cass leg.
+- **On agnos, every syscall site passing fewer than four arguments handed the kernel an UNDEFINED
+  a4 (r10), so whether a read or a write blocked depended on what ran before it.** (bite 4.) The
+  agnos kernel reads a4 = r10 on every entry, and since 1.57.8 / 1.57.9 `read`#5 blocks on an empty
+  pipe or channel, and `write`#1 on a full pipe, **only when a4 == 0** (a4 != 0 is O_NONBLOCK).
+  **Root cause:** `ESCPOPS` (`src/backend/x86/emit.cyr`) wrote r10 only for a site with 4+
+  arguments, so a shorter one delivered the user CR3 the SYSRET stub leaves there (never 0 →
+  non-blocking) or the last argument of the latest 7+-argument cyrius call (the SysV stack-arg
+  shuttle → possibly 0 → blocking). The ~128 raw 3-arg `syscall(1, …)` print sites in portable lib
+  (`println`, `str_println`, fmt, assert, flags, the panics) were out of reach of any wrapper fix.
+  **Fix:** under `_TARGET_AGNOS`, `ESCPOPS` emits `xor r10d, r10d` before `syscall` when the site
+  passes fewer than 4 arguments; 4-arg sites keep their own `pop r10`. **What a consumer sees:** on
+  agnos, `println` and every short raw syscall now get the documented default (a4 = 0 — blocking);
+  a producer in an agnsh pipeline no longer silently loses lines when the 4080-byte ring fills.
+  Linux / Mach-O / PE output is byte-identical. Measured on a real agnos 1.57.10 kernel in QEMU:
+  after a 7-arg call leaves r10 = 5 / 1, a pipe read returned **-2** and a 6000-byte raw write
+  **4080** with the pre-fix compiler, and **blocked, 2** / **6000** with this one. Gates:
+  `tests/gates/platform/agnos_syscall_a4_defined.sh` (every agnos `syscall` in a disassembled probe
+  has a popped or zeroed r10; 122 of 138 undefined pre-fix) and `agnos_peer_fake_kernel.sh` axis 1
+  (the registers at runtime, under the new PTRACE_SYSEMU fake kernel
+  `tests/fixtures/agnos_sctrace.cyr`: r10 = 5 pre-fix, 0 now).
+- **agnos socket reads gave up in about a second and reported it as EOF.** (bite 4; filed by daimon:
+  forwarded MCP calls answered 502.) `_agnos_sock_recv_block` bounded its poll of the non-blocking
+  `sock_recv`#49 with a 6000-pause backstop that ran whether or not the RTC read, sized on the
+  belief that a pause is one ~10 ms hlt — but on agnos 1.57.x a pause first yields to any READY
+  process with no hlt, so 6000 pauses took ~1 s on a busy guest (~7 s under mirshi) against a 30 s
+  deadline. The RTC deadline was also sampled once at entry (an entry read of 0 made it "30",
+  already passed), a timeout returned 0 like EOF, and on agnos `sock_set_recv_timeout` ignored its
+  argument. **Fix:** one deadline for socket waits, in three tiers — `uptime_us`#95 when it reads
+  (monotonic µs); the RTC, armed on its first non-zero read, when #95 is refused; the pause count
+  only while no clock reads (before the RTC arms, or if it stops reading mid-wait — an armed RTC
+  that went dark used to leave the wait unbounded, caught in review). **What a consumer sees:** a
+  timed-out socket read now returns **-11 (EAGAIN)** — the Linux SO_RCVTIMEO answer — and EOF stays 0; `sock_set_recv_timeout` /
+  `sock_set_send_timeout` set a per-socket deadline on agnos (⚠ 0 restores the 30 s default rather
+  than meaning "never"); `AGNOS_SOCK_RECV_TIMEOUT_S` / `AGNOS_SOCK_RECV_MAX_SPINS` keep their names
+  (daimon's recv-bound workaround becomes a no-op). Gate: `tests/gates/platform/agnos_sock_recv_bound.sh`
+  (each tier on the fake kernel, plus a real TCP exchange under mirshi against a Linux cyrius peer
+  on an ephemeral port — 5 bytes after 2 s, where the pre-fix peer returned 0; 12 of 12 assertions
+  red against the pre-fix peer). QEMU: a 1 s per-socket timeout returned -11 at ~1.15 s.
+- **A stalled agnos TCP send tore the connection down.** (bite 4.) Since agnos 1.57.7
+  `sock_send`#48 returns the committed count — possibly **0** — after ~8 s with no ACK progress,
+  and the peer's `sys_write` socket route handed that 0 straight back; tls_native's
+  `_tn_sock_write_all` treats `w <= 0` as `TLS_ERR_IO`. **Fix:** the route re-sends the remainder
+  after a short count and retries a 0 under the same deadline (re-armed whenever bytes move), then
+  returns the partial count or -1.
+- **agnos wait statuses read wrong: `WIFEXITED` was always 1 and `WEXITSTATUS` the identity, so a
+  SIGKILLed child reported "exited 265".** (bite 4.) agnos 1.57.7 made `waitpid`#4 / `execwait`#37
+  return a real status (exit `code & 0xFF`, fault `128 + vector`, signal `0x100 | sig`). The W*
+  helpers now follow ABI §4.9; `sys_waitpid`'s comment no longer promises a bare exit code. Verified
+  on QEMU: a killed child is 265 → signaled, signal 9; `exit(7)` → exited, 7.
+- **Security (CVE-48): on agnos, a server bound to 127.0.0.1 listened on the network.** (bite 4.)
+  `net.cyr`'s agnos `sock_bind` dropped the address (the v6.2.22 adapter: "addr is ignored") and
+  every listen went out as `sock_listen`#56 class 0 — before 1.57.7 the NIC, since 1.57.7 the NIC
+  **and** loopback. daimon's unauthenticated control API binds 127.0.0.1. **Fix:** the bind address
+  selects the class — 127/8 → `SOCK_LISTEN_LOOPBACK` (`port | 0x100000000`), 0.0.0.0 or this host's
+  address → ANY, any other address → `Err(99)` (never widened), a port outside 1..65535 →
+  `Err(22)`; per-slot class tables cleared by `sys_close`; `getsockname` reports the bind address.
+  ⚠ **What a consumer sees: daimon's default 127.0.0.1 serve now REFUSES to start on agnos < 1.57.7**
+  (the flagged #56 is refused there — fail closed, no probe) instead of exposing its API. QEMU
+  (1.57.10): a dial to 127.0.0.1 is accepted, a dial to the host's own address on the same port is
+  refused — while a 0.0.0.0 listener accepts that same dial, and the pre-fix build's 127.0.0.1
+  listener did too. Full write-up: `docs/audit/2026-09-03-security-audit.md` § CVE-48.
+- **agnos peer argument misroutes.** (bite 4.) Three wrappers passed values the kernel decodes into
+  a DIFFERENT operation, silently: `sys_spawn_path` / `sys_spawn_path_env` with a length above
+  0xFFFF set `spawn_path`#43's flag bits (a 0x10005 became a 5-byte `SPAWN_F_ARGV` spawn), an
+  `exec_redirect` src of 0x100+ became a `REDIR_ADD` / `REDIR_CLEAR` op, and `sys_chan_endow(-1)`
+  disarmed the pending endowment and returned 0 — "the child will hold fd 0". Each is now refused;
+  a refused spawn still goes through the kernel (reserved bit 18 → -`SPAWN_E_ARGS`, or -1 on an older
+  kernel) so, like every #43 return, it clears the caller's spawn arms. `sys_spawn_path` /
+  `sys_execwait` pass env (0, 0), and `sys_chan_endow` / `sys_snd_write` pass a4 = 0, explicitly.
+
+### Added
+
+- **The agnos 1.57.6–1.57.9 peer surface** (bite 4; `lib/syscalls_x86_64_agnos.cyr`, values from
+  agnos `kernel/core/syscall.cyr`): `SYS_SOCK_PEER = 106` + `sys_sock_peer`, `SYS_SPAWN_LIMITS = 107`
+  + `sys_spawn_limits`, `SYS_SCHED_YIELD_TO = 108` + `sys_sched_yield_to` — with these agnos's own
+  `syscall-abi-check.sh` reports kernel 108 · abi-doc 108 · cyrius 108 in agreement; `sys_read_nb` /
+  `sys_write_nb` (a4 = 1) and `AGNOS_PIPE_BUF`; `sys_spawn_argv` (a real argv, arguments may contain
+  spaces; `SPAWN_F_CLEANFD`), the `AgnosSpawnFlag` / `AgnosSpawnErr` (`SPAWN_E_OTHER`..`SPAWN_E_LIMIT`)
+  / `AgnosRedirOp` enums and `SPAWN_LINE_MAX` / `SPAWN_ARGV_MAX` / `SPAWN_ARGC_MAX`;
+  `sys_exec_redirect_add` / `sys_exec_redirect_clear`; `sys_chan_endow_stdio` (`CH_ENDOW_STDIO`,
+  PTY mode) / `sys_chan_endow_disarm`; `sys_waitpid_block` (refuses pid < 0, which would be the
+  reaping wait-any POLL, and pid > 15) / `sys_waitpid_any_block`; `sys_kill_tree`
+  (`AGNOS_KILL_TREE`); `sys_getpeername` / `sys_getsockname` on agnos (sockaddr_in via #106);
+  `SIGXCPU`, `FLOCK_E_TABLE_FULL`, `AgnosProcState` (`PROCLIST_READY`..`PROCLIST_ZOMBIE`),
+  `SOCK_LISTEN_LOOPBACK`. ~20 wrapper and enum comments now say what 1.57.6–1.57.9 do (#4, #16,
+  #37, #40, #41, #44 — a quiet local yield again; the withdrawn 1.57.8 "kick" is not repeated —
+  #48, #52, #59 blocking locks, #95 -1 permanent, #99 states 4-7, #14 pause is not a fixed
+  duration). Gate: `tests/gates/platform/agnos_peer_fake_kernel.sh` (4 axes, the exact registers
+  on a scripted fake kernel); every wrapper above also ran on agnos 1.57.10 in QEMU (-smp 1 and 4).
+  The fail-closed agnos `sys_ioctl` stub named in the plan was NOT added: the sibling releases use
+  private fail-closed bridges so they build on released 6.6.6.
 
 ## [6.6.6] — 2026-09-20
 

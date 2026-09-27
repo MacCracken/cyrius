@@ -351,8 +351,9 @@ fn xlink(oldpath, newpath): i64 {
 # sys_rename(old,new) (the backend ESYSXLAT handles aarch64 82→renameat 38+AT_FDCWD
 # and macho 82→BSD 128); AGNOS is length-carrying 4-arg sys_rename(old,ol,new,nl);
 # Windows has no POSIX rename — route to a MoveFileExW(old,new,
-# MOVEFILE_REPLACE_EXISTING) reroute (syscall 0xF034; backend/x86/emit.cyr
-# EMOVEFILEEX_PE). Returns 0 on success / negative errno (POSIX/AGNOS) or -1
+# MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) reroute (syscall 0xF034;
+# backend/x86/emit.cyr EMOVEFILEEX_PE; write-through since 6.6.7, so the rename is
+# on disk when it returns). Returns 0 on success / negative errno (POSIX/AGNOS) or -1
 # (Windows BOOL fail). See issue 2026-07-12-thoth-portable-atomic-file-write.md.
 fn file_rename(oldpath, newpath): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
@@ -363,7 +364,7 @@ fn file_rename(oldpath, newpath): i64 {
     return sys_rename(oldpath, ol, newpath, nl);
     #endif
     #ifdef CYRIUS_TARGET_WIN
-    return syscall(0xF034, oldpath, newpath);   # kernel32!MoveFileExW (REPLACE_EXISTING)
+    return syscall(0xF034, oldpath, newpath);   # kernel32!MoveFileExW (REPLACE_EXISTING|WRITE_THROUGH)
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
     #ifndef CYRIUS_TARGET_WIN
@@ -376,16 +377,18 @@ fn file_rename(oldpath, newpath): i64 {
 # Linux x86/aarch64 + macOS use sys_fsync (x86 #74; the backend renumbers to
 # aarch64 82 / Darwin BSD 95). AGNOS has no per-fd fsync in its AO_* syscall set,
 # so a whole-system sys_sync() is the best available approximation (documented
-# residual — coarser than fsync but honestly durable). Windows is a no-op: the
-# MoveFileExW replace after a closed handle is durable enough for the atomic-write
-# use, and there is no cheap portable FlushFileBuffers reroute wired (documented
-# choice). Returns 0 / negative errno.
+# residual — coarser than fsync but honestly durable). Windows flushes through
+# kernel32!FlushFileBuffers: the backend reroutes the literal Linux fsync number (74)
+# there, and a failure (a bad handle, or one opened without write access — Linux
+# fsyncs an O_RDONLY fd, Windows refuses it) is -1. Until 6.6.7 this arm returned 0
+# without flushing anything — even for a handle that did not exist. Returns 0 /
+# negative errno. CHANGELOG [6.6.7]
 fn xfsync(fd): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
     return sys_sync();          # no per-fd fsync on agnos — whole-fs sync (residual)
     #endif
     #ifdef CYRIUS_TARGET_WIN
-    return 0;                   # MoveFileEx-after-close is durable enough (documented)
+    return syscall(74, fd);     # → FlushFileBuffers (literal: the reroute is literal-only)
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
     #ifndef CYRIUS_TARGET_WIN

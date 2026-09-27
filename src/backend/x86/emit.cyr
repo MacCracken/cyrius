@@ -750,9 +750,14 @@ fn ESCPOPS(S, n): i64 {
     if (n >= 3) { EPOPRSI(S); }
     if (n >= 2) { EPOPRDI(S); }
     if (n >= 1) { EPOPR(S); }
+    if (n < 5) { if (_TARGET_AGNOS == 1) { E3(S, 0xD23145); } }   # xor r10d, r10d
     ESYSCALL(S);
     return 0;
 }
+# ⚠ agnos reads a4 = r10 on EVERY syscall (read#5 / write#1 block only when a4 == 0), and a
+# site passing < 4 args never wrote it: r10 held the SYSRET stub's user CR3 or the last arg
+# of the latest 7+-arg call, so one println blocked or dropped bytes by call history. The
+# zero is agnos-only; every other target's output is unchanged. CHANGELOG [6.6.7]
 
 # Output-target flags (_TARGET_MACHO / _TARGET_PE / _TARGET_AGNOS /
 # _TARGET_ELF64_KERNEL / _TARGET_EFI_APPLICATION / _TARGET_CX) moved to
@@ -2198,6 +2203,41 @@ fn EQPF_PE(S): i64 {
     return _pe_srw_call_1arg(S, _pe_qpf_get());
 }
 
+# v6.6.7: syscall(74, fd) / syscall(75, fd) — Linux fsync / fdatasync — →
+# kernel32!FlushFileBuffers(HANDLE). Stack on entry (top→bottom): [fd] [sc_nr].
+# Windows has one flush for both (data + metadata), so fdatasync is the same call.
+# fd 0/1/2 map to the std handles through `_pe_fd_to_handle_rcx`, exactly as
+# EWRITE_PE/EREAD_PE do, so a flush of a redirected stdout reaches the file the writes
+# went to. The helper's GetStdHandle call is made from INSIDE the aligned frame, so it
+# gets the same 16-byte alignment and shadow space as the flush itself.
+#
+# BOOL → 0 / -1 is `cmp eax,1; sbb rax,rax`, not the older dec+sar idiom: it reads only
+# eax, so an unzeroed upper half of rax cannot leak into the result, and any non-zero
+# TRUE maps to 0 rather than to a positive number. An invalid handle, or one opened
+# without write access (O_RDONLY — Linux fsyncs those), comes back -1.
+# CHANGELOG [6.6.7].
+fn EFLUSHFB_PE(S): i64 {
+    _pe_ensure_stdio(S);
+    _pe_ensure_flushfb(S);
+    var gsh_idx = _pe_stdio_getstd_get();
+    var fb_idx = _pe_flushfb_get();
+    EB(S, 0x58);                                        # pop rax (fd)
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
+    EB(S, 0x53);                                        # push rbx
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);              # mov rbx, rsp
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0); # and rsp, -16
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEC); EB(S, 0x20); # sub rsp, 0x20 (shadow)
+    _pe_fd_to_handle_rcx(S, gsh_idx);                   # rcx = HANDLE (std or direct)
+    EB(S, 0xFF); EB(S, 0x15);                           # call [rip+FlushFileBuffers]
+    _pe_iat_fixup_add(S, GCP(S), fb_idx);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);              # mov rsp, rbx
+    EB(S, 0x5B);                                        # pop rbx
+    EB(S, 0x83); EB(S, 0xF8); EB(S, 0x01);              # cmp eax, 1 (CF iff FALSE)
+    EB(S, 0x48); EB(S, 0x19); EB(S, 0xC0);              # sbb rax, rax (FALSE → -1, TRUE → 0)
+    return 0;
+}
+
 # v6.6.6: syscall(0xF03A, wbuf, cch) → kernel32!GetModuleFileNameW(NULL, wbuf, cch) —
 # the Windows source for "the full path of THIS executable", the thing
 # readlink("/proc/self/exe") answers on Linux and fcntl(F_GETPATH) on macOS. Stack on
@@ -2671,15 +2711,19 @@ fn EDELETEF_PE(S): i64 {
     return 0;
 }
 
-# v6.4.57: MoveFileExW(lpExistingFileName, lpNewFileName, MOVEFILE_REPLACE_EXISTING)
+# v6.4.57: MoveFileExW(lpExistingFileName, lpNewFileName, dwFlags)
 # — the Windows half of lib/io.cyr's portable file_rename (POSIX rename(2) / AGNOS
 # 4-arg sys_rename). syscall(0xF034, old, new): stack on entry (top->bottom):
 # [new] [old] [sc_nr=0xF034]. BOTH paths are widened inline UTF-8->UTF-16LE (ASCII
 # fast path, same widener as EOPEN_PE/ECREATEDIR_PE) into two 528-byte frame
-# buffers, then rcx=old_wide, rdx=new_wide, r8d=1 (MOVEFILE_REPLACE_EXISTING) and
-# kernel32!MoveFileExW is called. BOOL result -> 0 (success) / -1 (fail) via the
-# EDELETEF_PE dec+sar idiom. Frame (rbx-anchored + and rsp,-16, so alignment-
-# agnostic): 0x460 = 32 shadow + 528 old + 528 new + 32 slack, 16-aligned at CALL.
+# buffers, then rcx=old_wide, rdx=new_wide, r8d=9 and kernel32!MoveFileExW is called.
+# dwFlags = MOVEFILE_REPLACE_EXISTING (1) | MOVEFILE_WRITE_THROUGH (8): the call does
+# not return until the rename is on disk — the Windows analogue of the directory fsync
+# that makes a POSIX write-temp/fsync/rename durable. Without it file_write_atomic was
+# atomic but not durable on Windows (a crash could lose the rename). BOOL result ->
+# 0 (success) / -1 (fail) via the EDELETEF_PE dec+sar idiom. Frame (rbx-anchored +
+# and rsp,-16, so alignment-agnostic): 0x460 = 32 shadow + 528 old + 528 new + 32
+# slack, 16-aligned at CALL. CHANGELOG [6.6.7]
 fn EMOVEFILEEX_PE(S): i64 {
     _pe_ensure_movefileex(S);
     var mv_idx = _pe_movefileex_get();
@@ -2725,10 +2769,10 @@ fn EMOVEFILEEX_PE(S): i64 {
     EB(S, 0xEB); EB(S, 0xE8);                           # jmp widen_new (-24)
     EB(S, 0x66); EB(S, 0xC7); EB(S, 0x04); EB(S, 0x4F); EB(S, 0x00); EB(S, 0x00); # new_done: NUL WCHAR
 
-    # args: rcx = old_wide, rdx = new_wide, r8d = MOVEFILE_REPLACE_EXISTING
+    # args: rcx = old_wide, rdx = new_wide, r8d = REPLACE_EXISTING | WRITE_THROUGH
     EB(S, 0x48); EB(S, 0x8D); EB(S, 0x4C); EB(S, 0x24); EB(S, 0x20); # lea rcx, [rsp+0x20]
     EB(S, 0x48); EB(S, 0x8D); EB(S, 0x94); EB(S, 0x24); EB(S, 0x30); EB(S, 0x02); EB(S, 0x00); EB(S, 0x00); # lea rdx, [rsp+0x230]
-    EB(S, 0x41); EB(S, 0xB8); EB(S, 0x01); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); # mov r8d, 1
+    EB(S, 0x41); EB(S, 0xB8); EB(S, 0x09); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); # mov r8d, 9
 
     EB(S, 0xFF); EB(S, 0x15);                           # call [rip+MoveFileExW]
     _pe_iat_fixup_add(S, GCP(S), mv_idx);

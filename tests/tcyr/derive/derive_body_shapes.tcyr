@@ -1,0 +1,224 @@
+# derive_body_shapes.tcyr — 6.6.7 bite 5: #derive reads a struct / enum body the way the
+# parser does. Every shape below is VALID cyrius that PARSE_STRUCT_DEF / PARSE_ENUM_DEF accept,
+# and every one of them used to give the derive a different field table than the parser gave the
+# struct — silently, for Serialize, Deserialize and (with out-of-bounds stores) accessors.
+#
+# Filed: docs/development/issues/2026-09-22-agnostik-derive-serialize-comment-in-struct-body.md
+# (agnostik; latent in argonaut's 5 trailing-comment Serialize structs). Root cause: the body
+# was scanned byte by byte — a field began only after a `{` / `;` byte and `#`, tab, CR, `,`,
+# `=` were in no stop set. Fix: PP_DERIVE_FIELDS in src/frontend/lex_pp.cyr. CHANGELOG [6.6.7]
+#
+# ⚠ The tabs, the K&R brace and the unusual spacing below ARE the inputs under test — do not
+# `cyrius fmt` them away.
+#
+# Each check decodes or encodes the CORRECT value field by field. (The filed repro's round-trip
+# check was vacuous: the corrupted encoder's output happened to decode back to the same bytes.)
+
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/alloc.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/result.cyr"
+include "lib/io.cyr"
+include "lib/bayan.cyr"
+include "lib/assert.cyr"
+
+fn json_of_sb(sb) {
+    var s = str_builder_build(sb);
+    return str_data(s);
+}
+
+fn cstr_is(got, want, name) {
+    var ok = 0;
+    if (strlen(got) == strlen(want)) { if (memeq(got, want, strlen(want)) == 1) { ok = 1; } }
+    if (ok == 0) {
+        syscall(SYS_WRITE, 2, "   got: ", 8); syscall(SYS_WRITE, 2, got, strlen(got));
+        syscall(SYS_WRITE, 2, "\n  want: ", 9); syscall(SYS_WRITE, 2, want, strlen(want));
+        syscall(SYS_WRITE, 2, "\n", 1);
+    }
+    assert_eq(ok, 1, name);
+    return 0;
+}
+
+# --- a comment line inside the body (agnostik's shape) ---
+#derive(Serialize)
+struct CmtLine {
+    # any comment here
+    a: i8; b: i8; c: i8;
+}
+
+# --- trailing comments, argonaut's shape; `;` `{` `}` inside comments ---
+#derive(Serialize)
+struct CmtTrail { # after the brace; { opens nothing
+    a: i64;  # trailing; with a semicolon
+    b: i64;  # closes } nothing
+    # consecutive
+    # comment lines
+    c: i8;
+}
+
+# --- whitespace around `:` (the accessor OOB shape) ---
+#derive(Serialize)
+struct ColSp {
+    a  : i8; b :i8; c: i8;
+}
+
+# --- tabs before and after `:`, and between name and `{` ---
+#derive(Serialize)
+struct TabSp	{
+    a	: i8;
+    b:	i16;
+}
+
+# --- fields with no `;`, and a K&R brace on its own line ---
+#derive(Serialize)
+struct NoSemi
+{
+    a: i8
+    b: i32
+    c: i64
+}
+
+# --- a blank line and an indented stacked directive before the struct ---
+#derive(Serialize)
+
+    #derive(accessors)
+struct Blank { a; b; }
+
+# --- `Vec< i64 >` with trivia inside the angle brackets ---
+#derive(Serialize)
+struct VecSp { n: i64; xs: Vec< i64 >; m: i64; }
+
+# --- accessors on the spaced-colon shape: the table used to put `big` at offset 24 of an
+#     11-byte struct, so Acc_set_big stored into the NEXT allocation ---
+#derive(accessors)
+struct Acc {
+    f1 : i8; f2 : i8; f3 : i8;  # three bytes
+    big : i64;
+}
+
+# --- accessors with an in-body comment (used to fail with a misleading parse error) ---
+#derive(accessors)
+struct AccCmt {
+    # a comment
+    x: i64;  # trailing
+    y: i64;
+}
+
+# --- enums: `,` separators, newline separators, comments, char literal, `: stack` ---
+#derive(Serialize)
+enum EComma { RED = 0, GREEN = 1, BLUE = 2 }
+
+#derive(Serialize)
+enum ENl {
+    N_A = 10
+    N_B = 11
+    N_C = 12
+}
+
+#derive(Serialize)
+enum ECmt {
+    # a comment line
+    C_A = 20;  # trailing
+    C_B = 21;  # closes } nothing
+    C_C = 22;
+}
+
+#derive(Serialize)
+enum EChar { LB = '{'; RB = '}'; NEG = -3; }
+
+#derive(Serialize)
+enum EStack: stack { S_A = 30; S_B = 31; }
+
+fn main() {
+    # CmtLine: Serialize bytes + Deserialize of the correct JSON, field by field.
+    var cl = alloc(3); store8(cl, 85); store8(cl + 1, 10); store8(cl + 2, 5);
+    var sb = str_builder_new(); CmtLine_to_json(cl, sb);
+    cstr_is(json_of_sb(sb), "{\"a\":85,\"b\":10,\"c\":5}", "comment line: Serialize");
+    var cl2 = CmtLine_from_json_str("{\"a\":85,\"b\":10,\"c\":5}");
+    assert_eq(load8(cl2), 85, "comment line: Deserialize a");
+    assert_eq(load8(cl2 + 1), 10, "comment line: Deserialize b");
+    assert_eq(load8(cl2 + 2), 5, "comment line: Deserialize c");
+
+    var ct = alloc(17); store64(ct, 1000); store64(ct + 8, 30000); store8(ct + 16, 7);
+    sb = str_builder_new(); CmtTrail_to_json(ct, sb);
+    cstr_is(json_of_sb(sb), "{\"a\":1000,\"b\":30000,\"c\":7}", "trailing comments: Serialize");
+    var ct2 = CmtTrail_from_json_str("{\"a\":1000,\"b\":30000,\"c\":7}");
+    assert_eq(load64(ct2), 1000, "trailing comments: Deserialize a");
+    assert_eq(load64(ct2 + 8), 30000, "trailing comments: Deserialize b");
+    assert_eq(load8(ct2 + 16), 7, "trailing comments: Deserialize c");
+    assert_eq(sizeof(CmtTrail), 17, "trailing comments: parser size");
+
+    var cs = alloc(3); store8(cs, 7); store8(cs + 1, 9); store8(cs + 2, 11);
+    sb = str_builder_new(); ColSp_to_json(cs, sb);
+    cstr_is(json_of_sb(sb), "{\"a\":7,\"b\":9,\"c\":11}", "spaced colon: Serialize");
+    var cs2 = ColSp_from_json_str("{\"a\":7,\"b\":9,\"c\":11}");
+    assert_eq(load8(cs2 + 1), 9, "spaced colon: Deserialize b");
+    assert_eq(load8(cs2 + 2), 11, "spaced colon: Deserialize c");
+
+    var ts = alloc(3); store8(ts, 7); store16(ts + 1, 300);
+    sb = str_builder_new(); TabSp_to_json(ts, sb);
+    cstr_is(json_of_sb(sb), "{\"a\":7,\"b\":300}", "tabs: Serialize");
+    var ts2 = TabSp_from_json_str("{\"a\":7,\"b\":300}");
+    assert_eq(load16(ts2 + 1), 300, "tabs: Deserialize b");
+
+    var ns = alloc(13); store8(ns, 7); store32(ns + 1, 70000); store64(ns + 5, 1234);
+    sb = str_builder_new(); NoSemi_to_json(ns, sb);
+    cstr_is(json_of_sb(sb), "{\"a\":7,\"b\":70000,\"c\":1234}", "no semicolons: Serialize");
+    var ns2 = NoSemi_from_json_str("{\"a\":7,\"b\":70000,\"c\":1234}");
+    assert_eq(load32(ns2 + 1), 70000, "no semicolons: Deserialize b");
+    assert_eq(load64(ns2 + 5), 1234, "no semicolons: Deserialize c");
+
+    var bl = alloc(16); Blank_set_a(bl, 4); Blank_set_b(bl, 6);
+    sb = str_builder_new(); Blank_to_json(bl, sb);
+    cstr_is(json_of_sb(sb), "{\"a\":4,\"b\":6}", "blank line + indented stacked derive");
+
+    var vs = alloc(24); store64(vs, 1); var v = vec_new(); vec_push(v, 5); store64(vs + 8, v); store64(vs + 16, 3);
+    sb = str_builder_new(); VecSp_to_json(vs, sb);
+    cstr_is(json_of_sb(sb), "{\"n\":1,\"xs\":[5],\"m\":3}", "Vec< i64 >: Serialize");
+
+    # Acc: the neighbour canary. `nb` is allocated right after `a`; nothing Acc_set_big does
+    # may touch it.
+    assert_eq(sizeof(Acc), 11, "spaced colon: parser size");
+    var a = alloc(sizeof(Acc));
+    var nb = alloc(16);
+    store64(nb, 1234); store64(nb + 8, 5678);
+    Acc_set_big(a, 987654321);
+    assert_eq(load64(a + 3), 987654321, "accessors: big lands at the parser's offset");
+    assert_eq(Acc_big(a), 987654321, "accessors: big reads back");
+    assert_eq(load64(nb), 1234, "accessors: neighbour allocation untouched (0..7)");
+    assert_eq(load64(nb + 8), 5678, "accessors: neighbour allocation untouched (8..15)");
+
+    var ac = alloc(16); AccCmt_set_x(ac, 41); AccCmt_set_y(ac, 42);
+    assert_eq(load64(ac + 8), 42, "accessors with comments: y at offset 8");
+    assert_eq(AccCmt_x(ac), 41, "accessors with comments: x reads back");
+
+    sb = str_builder_new(); EComma_to_json(GREEN, sb); EComma_to_json(BLUE, sb); EComma_to_json(RED, sb);
+    cstr_is(json_of_sb(sb), "\"GREEN\"\"BLUE\"\"RED\"", "enum commas: Serialize");
+    var et, ev = EComma_from_json_str("\"BLUE\"");
+    assert_eq(is_ok(et), 1, "enum commas: Deserialize is Ok");
+    assert_eq(result_unwrap(et, ev), BLUE, "enum commas: Deserialize value");
+
+    sb = str_builder_new(); ENl_to_json(N_B, sb); ENl_to_json(N_C, sb);
+    cstr_is(json_of_sb(sb), "\"N_B\"\"N_C\"", "enum newlines: Serialize");
+    var nt, nv = ENl_from_json_str("\"N_C\"");
+    assert_eq(result_unwrap(nt, nv), N_C, "enum newlines: Deserialize");
+
+    sb = str_builder_new(); ECmt_to_json(C_A, sb); ECmt_to_json(C_B, sb); ECmt_to_json(C_C, sb);
+    cstr_is(json_of_sb(sb), "\"C_A\"\"C_B\"\"C_C\"", "enum comments: Serialize");
+    var mt, mv = ECmt_from_json_str("\"C_B\"");
+    assert_eq(result_unwrap(mt, mv), C_B, "enum comments: Deserialize");
+
+    assert_eq(LB, 123, "char-literal enum value is the brace byte");
+    sb = str_builder_new(); EChar_to_json(RB, sb); EChar_to_json(NEG, sb);
+    cstr_is(json_of_sb(sb), "\"RB\"\"NEG\"", "enum char literals: Serialize");
+
+    sb = str_builder_new(); EStack_to_json(S_B, sb);
+    cstr_is(json_of_sb(sb), "\"S_B\"", "enum : stack: Serialize");
+    return 0;
+}
+
+main();
+var r = assert_summary();
