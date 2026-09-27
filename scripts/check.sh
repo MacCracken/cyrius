@@ -1185,3 +1185,9 @@ _chk_gate "$ROOT/tests/gates/platform/pe_fsync_flushes.sh"
 # or an explicit zero. agnos read#5/write#1 block only when a4 == 0; an undefined r10 made one
 # println block or drop bytes by call history. Disassembly class check + agnos-only proof.
 _chk_gate "$ROOT/tests/gates/platform/agnos_syscall_a4_defined.sh"
+
+# 6.6.7 bite 4 — the agnos peer RUN against a scripted fake kernel (PTRACE_SYSEMU,
+# tests/fixtures/agnos_sctrace.cyr): the registers each wrapper hands the kernel — a4 defined,
+# spawn/redirect/endow argument packing and guards, the wait/kill/peer surface, the socket
+# deadline tiers, the loopback listen class.
+_chk_gate "$ROOT/tests/gates/platform/agnos_peer_fake_kernel.sh"

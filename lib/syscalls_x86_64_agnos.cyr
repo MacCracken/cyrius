@@ -53,11 +53,13 @@
 # ================================================================
 enum SysNrAgnos {
     SYS_EXIT = 0;                  # exit(code) — no return
-    SYS_WRITE = 1;                 # write(fd, buf, len, nb=a4) → bytes / 0 (NB, full pipe) / -1; a4==0 BLOCKS on a full pipe (1.57.9)
+    SYS_WRITE = 1;                 # write(fd, buf, len, nb=a4) → bytes / 0 (NB: full pipe) / -1
+    #   a4 == 0 BLOCKS on a full pipe (agnos 1.57.9) — see sys_write.
     SYS_GETPID = 2;                # getpid() → pid
     SYS_SPAWN = 3;                 # spawn(elf_addr, elf_size) → pid / -1 (in-memory ELF)
     SYS_WAITPID = 4;               # waitpid(pid) → exit_code / -1
-    SYS_READ = 5;                  # read(fd, buf, len, nb=a4) → bytes / 0 EOF / -1 / -2 WOULD_BLOCK (NB) / -3 partial kbd line; a4==0 BLOCKS (pipe/chan 1.57.8, kbd 1.57.7)
+    SYS_READ = 5;                  # read(fd, buf, len, nb=a4) → bytes / 0 EOF / -1 / -2 (NB: none yet)
+    #   a4 == 0 BLOCKS: fd-0 keyboard (1.57.7), pipe/channel (1.57.8); -3 = NB partial kbd line.
     SYS_CLOSE = 6;                 # close(fd) → 0 / -1
     SYS_OPEN = 7;                  # open(name, namelen[, flags]) → fd / -1; flags (a3) land 1.41.2
     SYS_DUP = 8;                   # dup(fd) → fd (stub: returns fd)
@@ -66,7 +68,8 @@ enum SysNrAgnos {
     SYS_MOUNT = 11;                # mount() → 0 (stub)
     SYS_SYNC = 12;                 # sync() → 0
     SYS_REBOOT = 13;               # reboot(magic1,magic2,cmd,arg) → power_sys (1.55.25+)
-    SYS_PAUSE = 14;                # pause() → 0; yields to a READY process (NO hlt) else parks one interrupt — NOT a fixed duration
+    SYS_PAUSE = 14;                # pause() → 0; yields to a READY process (no hlt), else parks
+    #   one interrupt — NOT a fixed duration (see sys_pause).
     SYS_GETUID = 15;               # getuid() → 0 (stub, always root)
     SYS_KILL = 16;                 # kill(pid, sig) → 0 / -1
     SYS_SIGPROCMASK = 17;          # sigprocmask(how, set_ptr, oldset_ptr) → 0 / -1
@@ -387,8 +390,30 @@ fn sys_chan_close(fd): i64 {
 # status — see CH_ENDOW above. The parent must then announce it to the child itself, e.g.
 # `AGNOS_CHAN=<returned fd>` in the env blob passed to `sys_spawn_path_env`; the child reads
 # it out of its environment and never searches for a channel it was not given.
+# ⚠ a4 = 0 is passed explicitly: the kernel selects PTY mode on a4 == CH_ENDOW_STDIO, so a
+# stale r10 (the last argument of a 7+-arg call) could endow as the child's stdio.
+# ⛔ A NEGATIVE fd IS REFUSED HERE: since agnos 1.57.6 CH_ENDOW(-1) means DISARM and returns 0 —
+# which a caller passing a failed-open -1 would read as "the child will hold fd 0". The disarm
+# has its own name below. CHANGELOG [6.6.7]
 fn sys_chan_endow(fd): i64 {
-    return syscall(SYS_CHAN_OP, CH_ENDOW, fd);
+    if (fd < 0) { return 0 - CH_E_BADFD; }
+    return syscall(SYS_CHAN_OP, CH_ENDOW, fd, 0, 0);
+}
+
+# PTY-mode endowment (agnos 1.57.6): the endpoint becomes the child's fds 0/1/2 — the child's
+# stdin/stdout/stderr ARE the channel, which is what a terminal emulator hands a shell. Same
+# return and refusals as sys_chan_endow. (puka hand-rolled this as a raw 5-arg syscall.)
+var CH_ENDOW_STDIO = 1000;   # #97 CH_ENDOW a4 sentinel — deliberately > any record length
+fn sys_chan_endow_stdio(fd): i64 {
+    if (fd < 0) { return 0 - CH_E_BADFD; }
+    return syscall(SYS_CHAN_OP, CH_ENDOW, fd, 0, CH_ENDOW_STDIO);
+}
+
+# Drop the caller's pending endowment (and its PTY flag) → 0 (agnos 1.57.6). Call it on an error
+# path between arming and spawning; #43/#37 clear it themselves on every return. A pre-1.57.6
+# kernel answers -CH_E_BADFD. CHANGELOG [6.6.7]
+fn sys_chan_endow_disarm(): i64 {
+    return syscall(SYS_CHAN_OP, CH_ENDOW, 0 - 1, 0, 0);
 }
 
 # ── GPU recovery arms (agnos 3D arc RUNG 5) ────────────────────
@@ -512,11 +537,40 @@ enum SysNrAgnosProc {
     SYS_FBINFO = 38;        # fbinfo(buf, len) → bytes/-1; write the 24-byte framebuffer geometry struct
     SYS_BLIT = 39;          # blit(src, w, h, dstxy) → 0/-1; copy a w×h 32bpp block to the framebuffer (a4=r10)
     SYS_KBSCAN = 42;        # kbscan(buf, max) → count/-1; NON-blocking raw-scancode drain for ring-3
-    SYS_SPAWN_PATH = 43;    # spawn_path(path, len) → pid/-1; NON-blocking from-disk spawn (returns now)
+    SYS_SPAWN_PATH = 43;    # spawn_path(path|argv, len|flags, env, envlen) → pid / -SPAWN_E_* (1.57.6); NON-blocking
     SYS_SCHED_YIELD = 44;   # sched_yield() → 0; a QUIET local yield, no cross-CPU kick (1.57.9; entry stub)
-    SYS_EXEC_REDIRECT = 62; # exec_redirect(src_fd, dst_fd) → 0/-1; arm a one-shot fd redirect before exec
+    SYS_EXEC_REDIRECT = 62; # exec_redirect(src | op<<8, dst) → 0/-1; op 0 / REDIR_ADD / REDIR_CLEAR
     SYS_SCHED_YIELD_TO = 108; # sched_yield_to(pid) → 0 / -1; DIRECTED yield + one kick to pid's parked CPU (1.57.9)
 }
+
+# ── spawn_path#43 flags + failure codes, exec_redirect#62 ops (agnos 1.57.6, ABI §4.8) ──
+# ⚠ ARGUMENT VALUES, NOT SYSCALL NUMBERS — agnos 1.57.6 encoded all of this in the arguments
+# of numbers that already existed (#43 a2 bits 16-17, #62 a1 bits 8+, #97 CH_ENDOW fd -1), so
+# no number-parity gate went red and the peer went two kernel cuts without them. Values mirror
+# kernel/core/syscall.cyr:122-146, the canonical source.
+enum AgnosSpawnFlag {
+    SPAWN_F_ARGV    = 0x10000;   # #43 a2 bit 16: a1 is `argv0\0argv1\0…argvN\0` (args may hold spaces)
+    SPAWN_F_CLEANFD = 0x20000;   # #43 a2 bit 17: child fds = 0/1/2 + armed redirect srcs + the endowment
+}
+# #43 returns pid >= 0 or one of these NEGATED (the CH_E_* convention). Every consumer that
+# tests `pid < 0` keeps working. ⚠ execwait#37 FOLDS all of them to -1 (its success value is
+# the child's wait status); spawn#3 returns -1.
+enum AgnosSpawnErr {
+    SPAWN_E_OTHER  = 1;   # reserved — -1 still means "anything else"
+    SPAWN_E_NOPROC = 2;   # the 16-slot process table is full: back off and retry once a child is reaped
+    SPAWN_E_NOMEM  = 3;   # out of pages, or a CLEANFD child got no private fd table (back-pressure)
+    SPAWN_E_NOENT  = 4;   # missing, not a regular file, unreadable, or no ext2 root
+    SPAWN_E_NOEXEC = 5;   # not an ELF64 this kernel loads
+    SPAWN_E_ARGS   = 6;   # bad len/flags, path range, argv blob, > 16 entries, or (flagged) a bad env blob
+    SPAWN_E_LIMIT  = 7;   # 1.57.7: the image exceeds the spawn_limits#107 memory cap — retrying never helps
+}
+enum AgnosRedirOp {
+    REDIR_ADD   = 0x100;   # #62 a1 = REDIR_ADD | src: add a pair, or re-point an armed src (max 4)
+    REDIR_CLEAR = 0x200;   # #62 a1 = exactly REDIR_CLEAR: empty the caller's redirect set
+}
+var SPAWN_LINE_MAX = 127;    # #43 line form (flags == 0) and #37: payload bytes
+var SPAWN_ARGV_MAX = 1024;   # #43 SPAWN_F_ARGV blob: total bytes, NULs included (min 2)
+var SPAWN_ARGC_MAX = 16;     # entries / tokens, both forms — MORE IS REFUSED (-SPAWN_E_ARGS), never dropped
 
 # ================================================================
 # Signals — agnos kernel uses POSIX/Linux numbering (SIGCHLD=17 is
@@ -1367,8 +1421,40 @@ fn sys_blit(src, w, h, dstxy): i64 { return syscall(SYS_BLIT, src, w, h, dstxy);
 # Non-blocking drain of raw keyboard scancodes into `buf` (`max` cap); returns the count.
 fn sys_kbscan(buf, max): i64 { return syscall(SYS_KBSCAN, buf, max); }
 
-# Non-blocking from-disk spawn of `path`; scheduled, returns its pid immediately.
-fn sys_spawn_path(path, len): i64 { return syscall(SYS_SPAWN_PATH, path, len); }
+# Non-blocking from-disk spawn of the LINE `path` ("PATH arg arg", split on spaces, ≤
+# SPAWN_LINE_MAX bytes, ≤ 16 tokens); scheduled, returns its pid immediately, or -SPAWN_E_*
+# (agnos 1.57.6; -1 before). env = (0, 0) explicitly — the line form's env is fallback-only, so
+# a 2-arg call's leftover rdx/r10 was an undetectable coin flip.
+# ⛔ `len` IS RANGE-CHECKED HERE: the kernel decodes a2 as len (bits 0-15) | flags, so a len
+# of 0x10005 would SILENTLY become a 5-byte SPAWN_F_ARGV spawn. Every #43 return clears the
+# caller's spawn arms, so a refusal still goes THROUGH the kernel (_agnos_spawn_refuse).
+fn sys_spawn_path(path, len): i64 {
+    if (len < 0) { return _agnos_spawn_refuse(); }
+    if (len > SPAWN_LINE_MAX) { return _agnos_spawn_refuse(); }
+    return syscall(SYS_SPAWN_PATH, path, len, 0, 0);
+}
+
+# Refuse a spawn the peer has already judged malformed, the way the kernel would: a2 with the
+# reserved bit 18 set is -SPAWN_E_ARGS on agnos 1.57.6+ (and -1 on any older kernel, whose
+# `len > 127` check it trips) — AND, like every #43 return, it clears the caller's redirect /
+# endowment / limits arms, so a peer-side refusal leaks nothing into the NEXT child.
+fn _agnos_spawn_refuse(): i64 { return syscall(SYS_SPAWN_PATH, 0, 0x40000, 0, 0); }
+
+# ⭐ spawn with a REAL ARGV (agnos 1.57.6, `SPAWN_F_ARGV`): `blob` is `argv0\0argv1\0…argvN\0`
+# — argv[0] is the path, 1..16 entries, 2..SPAWN_ARGV_MAX bytes NULs included, the last byte a
+# NUL — so arguments may contain spaces or be empty, which the line form cannot express.
+# `env`/`envlen` is the KEY=VALUE\0 blob (0, 0 = the default env); with any flag set a bad blob
+# is REFUSED (-6), not silently replaced. `flags` is 0 or SPAWN_F_CLEANFD (the child's fd table
+# is then 0/1/2 + the armed #62 redirect srcs + the endowment, nothing else).
+# Returns pid >= 0 or -SPAWN_E_*; a pre-1.57.6 kernel answers -1.
+# ⛔ `len` and `flags` are checked here because the kernel packs them into ONE register: an
+# oversized len bleeds into the flag bits and silently arms CLEANFD. CHANGELOG [6.6.7]
+fn sys_spawn_argv(blob, len, env, envlen, flags): i64 {
+    if (len < 2) { return _agnos_spawn_refuse(); }
+    if (len > SPAWN_ARGV_MAX) { return _agnos_spawn_refuse(); }
+    if (flags != 0) { if (flags != SPAWN_F_CLEANFD) { return _agnos_spawn_refuse(); } }
+    return syscall(SYS_SPAWN_PATH, blob, len | SPAWN_F_ARGV | flags, env, envlen);
+}
 
 # v6.5.9: `#43` with a per-process ENV BLOB — the two arguments the 2-arg wrapper above
 # never reached. The kernel has accepted them since 1.44.19 (`a3` = blob ptr, `a4` = len,
@@ -1384,7 +1470,10 @@ fn sys_spawn_path(path, len): i64 { return syscall(SYS_SPAWN_PATH, path, len); }
 # environment and no AGNOS_CHAN — which is the argument FOR a named wrapper rather than a
 # raw 4-arg `syscall()`: this ecosystem has a confirmed history of raw arity mistakes
 # compiling clean and mis-dispatching (jalwa's `poll`(7)→`open` per frame, `read`(0)→`exit`).
+# ⛔ Same `len` range check as sys_spawn_path (a len above 0xFFFF would set flag bits).
 fn sys_spawn_path_env(path, len, env, envlen): i64 {
+    if (len < 0) { return _agnos_spawn_refuse(); }
+    if (len > SPAWN_LINE_MAX) { return _agnos_spawn_refuse(); }
     return syscall(SYS_SPAWN_PATH, path, len, env, envlen);
 }
 
@@ -1406,9 +1495,38 @@ fn sys_sched_yield(): i64 { return syscall(SYS_SCHED_YIELD); }
 # kernel and -1 before (an unknown number). CHANGELOG [6.6.7]
 fn sys_sched_yield_to(pid): i64 { return syscall(SYS_SCHED_YIELD_TO, pid); }
 
-# Arm a one-shot fd redirect (`src_fd`→`dst_fd`) consumed by the next execwait/spawn —
-# capture a child's stdout/stderr.
-fn sys_exec_redirect(src_fd, dst_fd): i64 { return syscall(SYS_EXEC_REDIRECT, src_fd, dst_fd); }
+# Arm a one-shot fd redirect for the caller's NEXT child (#43 or #37, not #3): the child's
+# `src_fd` routes to `dst_fd`'s backend — capture a child's stdout/stderr. This is op 0, which
+# REPLACES the caller's whole redirect set with this one pair; sys_exec_redirect_add adds more.
+# Both fds are CHILD fd numbers in [0, 32). Every #43/#37 return clears the set (agnos 1.57.6).
+# ⛔ `src_fd` IS RANGE-CHECKED HERE: the kernel reads a1 as src | op << 8, so a src of 0x100+
+# would SILENTLY become a REDIR_ADD or REDIR_CLEAR op. CHANGELOG [6.6.7]
+fn sys_exec_redirect(src_fd, dst_fd): i64 {
+    if (_agnos_redir_fds_ok(src_fd, dst_fd) == 0) { return 0 - 1; }
+    return syscall(SYS_EXEC_REDIRECT, src_fd, dst_fd);
+}
+
+# Add a redirect pair to the caller's set, or re-point an already-armed `src_fd` (agnos 1.57.6,
+# at most 4 pairs). Pairs apply IN ARM ORDER against the child's current table, so
+# `sys_exec_redirect(1, w)` then `sys_exec_redirect_add(2, 1)` is shell `2>&1`. Returns 0, or -1
+# (bad fd, set full, src is the fd the armed endowment lands on, or a pre-1.57.6 kernel).
+fn sys_exec_redirect_add(src_fd, dst_fd): i64 {
+    if (_agnos_redir_fds_ok(src_fd, dst_fd) == 0) { return 0 - 1; }
+    return syscall(SYS_EXEC_REDIRECT, REDIR_ADD | src_fd, dst_fd);
+}
+
+# Empty the caller's redirect set → 0 (agnos 1.57.6; -1 before). For an error path between
+# arming and spawning — #43/#37 clear it themselves on every return.
+fn sys_exec_redirect_clear(): i64 { return syscall(SYS_EXEC_REDIRECT, REDIR_CLEAR, 0); }
+
+# 1 if both redirect fds are child fd numbers the kernel accepts ([0, 32)), else 0.
+fn _agnos_redir_fds_ok(src_fd, dst_fd): i64 {
+    if (src_fd < 0) { return 0; }
+    if (src_fd >= 32) { return 0; }
+    if (dst_fd < 0) { return 0; }
+    if (dst_fd >= 32) { return 0; }
+    return 1;
+}
 
 # Map `length` bytes (anonymous, zero-filled, 2 MB-granular). Returns
 # the base vaddr, or 0 on failure. lib/alloc.cyr's agnos heap builds on this.
