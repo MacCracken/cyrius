@@ -57,6 +57,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   state-0 landing only (not on a resume), the walker is emitted in coroutine mode, and a suspend
   exit lands past the walker (`_coro_sjp`), so a defer runs exactly once, when the body completes
   — `0,0,1` over three forces where it was `0,0,0`.
+- **A `defer`/`secret` in an inline-replayed fn ran at the CALLER's return.** (bite 2.) The replay
+  re-parses the callee body inside the caller, so its block registered on the caller's defer
+  table: `#inline fn g(a) { defer {..} return a + 1; }` called twice ran nothing until the caller
+  returned, then twice (**0** for 12). NOT opt-in — every small generic fn (implicit monomorph
+  inlining) and every SIMD-param fn is a replay candidate, and both measured the same. **Fix:** tok
+  106/108 exclude a body from inline replay; an explicit `#inline` says so (`#inline ignored:
+  body has a defer/secret block`); generic / SIMD-param fns silently fall back to a real call.
+  Rows: `tests/tcyr/crossos/defer_every_return_path.tcyr` (`#inline`, generic and SIMD-param
+  callees — each RED with the exclusion removed).
 
 ### Changed
 

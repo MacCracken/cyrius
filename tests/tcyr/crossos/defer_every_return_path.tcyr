@@ -14,6 +14,9 @@
 # ⚠ CROSS-HOST because the failure was target-shaped: the same unpatched jmp falls through on
 # x86 and spins on aarch64 (rel 0 is a branch to itself), and the return landing / defer walker
 # are emitted per backend. A hang here is a FAIL (the runner's timeout).
+#
+# 6.6.7 bite 2: a defer in an inline-replay candidate (#inline, a small generic fn, a SIMD-param
+# fn) belongs to that fn, not to the caller the replay would have pasted it into.
 include "lib/assert.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -21,6 +24,7 @@ include "lib/fmt.cyr"
 include "lib/str.cyr"
 include "lib/vec.cyr"
 include "lib/fnptr.cyr"
+include "lib/simd.cyr"
 
 var cran = 0;
 struct Pt { x; y; }
@@ -134,6 +138,16 @@ fn fall_off_end(): i64 {
     cran = cran + 10;
 }
 
+
+# --- a defer in an inline-replay candidate runs at ITS OWN return, once per call ----------
+#inline
+fn inl_defer(a): i64 { defer { cran = cran + 1; } return a + 1; }
+fn gen_defer<T>(a: T): i64 { defer { cran = cran + 1; } return a + 1; }
+fn simd_defer(v: f64v2): i64 { defer { cran = cran + 1; } return 3; }
+fn inl_caller(): i64 { var r = inl_defer(5); var s1 = cran; var r2 = inl_defer(6); var s2 = cran; return s1 * 10 + s2; }
+fn gen_caller(): i64 { var r = gen_defer(5); return cran; }
+fn simd_caller(): i64 { var q: f64v2 = f64v2_make(1, 2); var r = simd_defer(q); return cran; }
+
 fn main(): i64 {
     alloc_init();
 
@@ -171,6 +185,11 @@ fn main(): i64 {
     cran = 0;
     var ff = fall_off_end();
     assert_eq(cran, 11, "a defer runs when the fn body falls off its end");
+
+
+    cran = 0; assert_eq(inl_caller(), 12, "#inline fn with a defer: runs at its own return, once per call");
+    cran = 0; assert_eq(gen_caller(), 1, "generic fn with a defer: runs before the caller's next statement");
+    cran = 0; assert_eq(simd_caller(), 1, "SIMD-param fn with a defer: runs before the caller's next statement");
 
     var r = assert_summary();
     return r;

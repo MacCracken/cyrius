@@ -6218,6 +6218,14 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                 if (st == 15) { can_inline = 0; if (_inl_why == 0) { _inl_why = 4; } }
                 if (st == 16) { can_inline = 0; if (_inl_why == 0) { _inl_why = 4; } }
                 if (st == 55) { can_inline = 0; if (_inl_why == 0) { _inl_why = 4; } }
+                # 6.6.7 — a `defer` / `secret var` belongs to the fn that REGISTERS it, and the
+                # replay re-parses this body inside the CALLER, so the block would join the
+                # caller's defer table and run at the CALLER's return (measured: `g(5); seen =
+                # cran;` read 0, the block ran twice at the caller's end). Not opt-in: every small
+                # generic fn and SIMD-param fn is a candidate. It also has to stay out because
+                # the caller's `_body_has_defer` prescan cannot see a replayed block, so the
+                # caller could still tail-call past it. CHANGELOG [6.6.7]
+                if (st == 106 || st == 108) { can_inline = 0; if (_inl_why == 0) { _inl_why = 5; } }
                 # v6.5.52 — a body `var` decl is allowed for SIMD-param fns. The value-form
                 # wrappers all declare a scratch (`var r: f32v4; f32v_add(&r,&a,&b,4); return r;`),
                 # so the blanket exclusion kept out exactly the fns this arc needs. Body locals
@@ -6255,6 +6263,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                 if (_inl_why == 2) { WARN(S, "#inline ignored: body exceeds 32 tokens", 39); }
                 if (_inl_why == 3) { WARN(S, "#inline ignored: struct/aggregate parameter", 43); }
                 if (_inl_why == 4) { WARN(S, "#inline ignored: body has control flow or a var declaration", 59); }
+                if (_inl_why == 5) { WARN(S, "#inline ignored: body has a defer/secret block", 46); }
             }
         }
     }
