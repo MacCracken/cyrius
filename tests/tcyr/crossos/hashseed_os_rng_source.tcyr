@@ -1,0 +1,34 @@
+# hashseed_os_rng_source.tcyr — 6.6.7. THE HASH SEED IS DRAWN FROM THE OS RNG ON EVERY HOST.
+#
+# ⛔ TWO DEFECTS IN ONE LINE (lib/hashseed.cyr's draw, 6.5.39 -> 6.6.6):
+#   (1) Linux passed getrandom flags 0 — BLOCKING until the kernel CRNG seeds. PID 1 (kybernet)
+#       takes its first map op before that on RNG-less boards: a measured ~250 ms stall.
+#   (2) Every non-Windows target issued the RAW syscall, which misses sys_getrandom's Darwin
+#       getentropy 0 -> len normalisation. On macOS `nr == 8` never matched, the CSPRNG bytes
+#       were discarded, and the seed came from the microsecond-clock fallback instead.
+#
+# ⭐ WHY THIS LIVES IN crossos/: defect (2) is invisible on Linux. The seed is still non-zero
+# and still varies per process on macOS (the time mix does both), so the flood gate's axis 3
+# stayed green there. Only asking WHERE the seed came from separates the two — so this asserts
+# `_hm_seed_src == 1` (OS RNG), and it is RED on ecb/ach at 6.6.6.
+#
+# The blocking half (1) is pinned statically by tests/gates/memory/hash_seed_flood_resistance.sh
+# axis 4 (a starved-CRNG boot needs a VM, not a unit test).
+include "lib/assert.cyr"
+include "lib/syscalls.cyr"
+include "lib/hashseed.cyr"
+
+fn main(): i64 {
+    assert_eq(_hm_seed_src, 0, "no seed drawn before first use");
+    var s = _hm_seed_get();
+    assert(s != 0, "the seed is never the 'not drawn' sentinel");
+    assert_eq(_hm_seed_src, 1, "the seed came from the OS RNG, not the time fallback");
+    assert_eq(_hm_seed_get(), s, "the seed is drawn once and stable for the process");
+    # The seed IS the OS RNG bytes. On the pre-fix macOS path getentropy DID fill the buffer
+    # but returned 0, so the seed was the clock mix and these two differed.
+    assert_eq(load64(&_hm_seed_buf), s, "the seed is the bytes the OS RNG wrote");
+    var rc = assert_summary();
+    return rc;
+}
+var ec = main();
+syscall(60, ec);

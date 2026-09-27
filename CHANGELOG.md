@@ -6,6 +6,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.7] — 2026-09-27
 
+### Fixed
+
+- **The hash seed blocked PID 1 until the kernel CRNG seeded, and on macOS its CSPRNG draw was
+  thrown away.** (bite 8.) `lib/hashseed.cyr` drew the per-process hash seed with
+  `getrandom(buf, 8, 0)` — BLOCKING on Linux until the CRNG is initialised. kybernet is PID 1 and
+  takes its first map op (inside argonaut's `argonaut_init_new`) before that on boards with no
+  hardware RNG: measured as PID 1 in a `trust_cpu=off` VM, **253–254 ms** of boot stalled on the
+  first `map_set`, ending 4 ms after `crng init done`. The seed only has to be "not a published
+  constant", which the draw's own comment says. The same line issued the RAW syscall on every
+  non-Windows target, skipping `sys_getrandom`'s Darwin `getentropy` 0 -> len normalisation, so
+  on macOS `nr == 8` never matched and the seed silently came from the microsecond-clock
+  fallback. **Fix:** the Linux arm draws `GRND_INSECURE` (4, never blocks, kernel >= 5.6) and
+  retries `GRND_NONBLOCK` (1) on the pre-5.6 `-EINVAL`; every other target calls
+  `sys_getrandom(.., 0)`. Same VM after the fix: 10 ms, no stall. A new `_hm_seed_src` records
+  where the seed came from (1 = OS RNG, 2 = time fallback). Pinned by
+  `tests/tcyr/crossos/hashseed_os_rng_source.tcyr` (the seed is the OS RNG's bytes — **RED on
+  real ecb and ach** with the old draw, 2 of 5 failing, green on both and on pi with the fix) and
+  a static axis 4 in `tests/gates/memory/hash_seed_flood_resistance.sh` (the Linux arm must
+  draw flags 4 and must not pass 0; no raw `syscall(SYS_GETRANDOM` — each mutation reddens it).
+  Consumers see no API change; kybernet's boot loses the stall with no source change.
+
 ## [6.6.6] — 2026-09-20
 
 The 6.6.6 repair release — the 6.6.5 queue, and then what looking at it turned up. Every one of the six

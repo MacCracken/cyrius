@@ -23,6 +23,8 @@
 # so all 2^13 = 8192 selections share one low-16 hash and land in ONE bucket at every
 # capacity <= 2^16. That "compute once, reuse forever" property IS the vulnerability.
 #
+# Axis 4 (6.6.7) pins the DRAW itself: non-blocking on Linux, never the raw syscall.
+#
 # ⛔ AXIS 2 IS THE ANTI-VACUOUS HALF AND IT CANNOT BE SKIPPED. The probe recomputes each key
 # through its own verbatim UNSEEDED FNV-1a and asserts that set still collapses to exactly 1
 # bucket. Without it, a fixture that quietly stopped being a collision set — a typo in the
@@ -162,4 +164,23 @@ SEED1=$(echo "$R1" | awk '{print $3}'); SEED2=$(echo "$R2" | awk '{print $3}')
 [ "$SEED1" != "$SEED2" ] \
     || fail "axis 3: two runs of the same binary drew the SAME seed ($SEED1) — the seed is not varying per process, so an offline-precomputed collision set still floods every process"
 
-echo "PASS: hash_seed_flood_resistance (attack set: 1 bucket unseeded -> $LIB1 / $LIB2 seeded across two processes; seeds differ)"
+# ── axis 4 (6.6.7): the Linux draw NEVER BLOCKS, and no target issues the RAW syscall ──
+# getrandom(.., 0) blocks until the kernel CRNG seeds, and PID 1 (kybernet) takes its first map
+# op before that on RNG-less boards — a measured ~250 ms boot stall. The seed only has to be
+# "not a published constant", so the Linux arm draws GRND_INSECURE (4) with a GRND_NONBLOCK (1)
+# retry. And the raw `syscall(SYS_GETRANDOM, ..)` skips sys_getrandom's Darwin getentropy
+# 0 -> len normalisation, which silently demoted the macOS seed to the clock fallback (that half
+# is pinned at runtime on the real Macs by tests/tcyr/crossos/hashseed_os_rng_source.tcyr).
+# A starved-CRNG boot needs a VM, so this axis is static: it reads the Linux arm of the draw.
+HS="$ROOT/lib/hashseed.cyr"
+CODE=$(grep -v '^[[:space:]]*#[[:space:]]' "$HS" | grep -v '^[[:space:]]*#$')
+echo "$CODE" | grep -q 'syscall(SYS_GETRANDOM' \
+    && fail "axis 4: lib/hashseed.cyr issues the RAW getrandom syscall — it must go through sys_getrandom, or Darwin's getentropy 0 -> len normalisation is skipped and the macOS seed falls back to the clock"
+LARM=$(awk '/^[[:space:]]*#ifdef CYRIUS_TARGET_LINUX/{f=1;next} f&&/^[[:space:]]*#(else|endif)/{exit} f' "$HS" | grep -v '^[[:space:]]*#')
+[ -n "$LARM" ] || fail "axis 4: lib/hashseed.cyr has no CYRIUS_TARGET_LINUX arm for the seed draw — Linux would take the blocking flags-0 draw"
+echo "$LARM" | grep -q 'sys_getrandom(&_hm_seed_buf, 8, 4)' \
+    || fail "axis 4: the Linux seed draw does not use GRND_INSECURE (flags 4) — a blocking draw stalls PID 1 until the CRNG seeds"
+echo "$LARM" | grep -q 'sys_getrandom([^)]*, 0)' \
+    && fail "axis 4: the Linux arm of the seed draw passes getrandom flags 0 (BLOCKING) — PID 1 stalls until the kernel CRNG seeds"
+
+echo "PASS: hash_seed_flood_resistance (attack set: 1 bucket unseeded -> $LIB1 / $LIB2 seeded across two processes; seeds differ; Linux draw non-blocking)"
