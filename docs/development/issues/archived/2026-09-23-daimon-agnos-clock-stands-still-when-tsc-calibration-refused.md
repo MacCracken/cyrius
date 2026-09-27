@@ -1,7 +1,8 @@
-# agnos: `clock_now_ns` / `clock_now_ms` stand still for the whole boot when the kernel refuses its TSC calibration — OPEN
+# agnos: `clock_now_ns` / `clock_now_ms` stand still for the whole boot when the kernel refuses its TSC calibration — FIXED
 
-**Status:** 🟡 **OPEN**: `lib/chrono.cyr` has no fallback for `uptime_us`#95's documented failure
-answer.
+**Status:** ✅ **FIXED in 6.6.7 (bite 7)** — reproduced at 6.6.7 HEAD under mirshi 1.11.2 before
+the fix (`clock_now_ms t0=0`, `STUCK polls=5001`); `lib/bench.cyr`'s `now_ns` had the same shape and
+is fixed with it.
 **Placement:** **6.6.7 bite 7** — agnos runtime contracts: the clock falls back (latched) when TSC calibration is refused; sysinfo#35 gets the 208-byte fourth tier (check.sh is red locally today). Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Discovered:** 2026-09-23 during daimon 2.4.1, running daimon's AGNOS guest test with QEMU held to
 25% of a CPU (to see how it would fare on a slow CI runner).
@@ -71,3 +72,21 @@ should not be final.)
 daimon 2.4.1: `daimon_now_ms()` in `src/syscalls.cyr` reads `#95`. Once `#95` answers -1, it reads
 `#40` for the rest of the run. Every deadline in daimon goes through it, and daimon's guest programs
 use the same fallback.
+
+## Resolution (6.6.7, bite 7)
+
+`clock_now_ns` (lib/chrono.cyr) and `now_ns` (lib/bench.cyr) read #95 first and, on the first
+negative answer, LATCH to #40 for the rest of the run — the daimon `daimon_now_ms()` shape, each file
+with its own `#ifdef CYRIUS_TARGET_AGNOS` flag so non-agnos binaries are byte-identical. Latched
+rather than the per-call form proposed above: under mirshi every #95 call writes an ENOSYS line to
+stderr (163 lines vs 1 over the gate's two waits), a refused boot costs one syscall per read instead
+of two, and a TSC_SELFTEST kernel whose #95 turns valid mid-run cannot step the clock backwards from
+ms-since-boot to µs-since-calibration. The chrono comment records the case left over: on agnos
+<= 1.57.6 a foreground program on a refused boot has no working clock.
+
+`tests/gates/platform/agnos_monotonic_clock_rdtsc.sh` axis 1 is now derived over every #95 reader in
+`lib/*.cyr` (store, test `< 0`/`>= 0`, #40 only after the test, however spelled; chrono and bench
+must latch), axes 2/4 count reached `movl $0x5f/$0x28; syscall` pairs on a DCE build, and axis 5 runs
+the repro under mirshi (both clocks advance, at most 3 #95 calls) and SKIPs by name if mirshi ever
+emulates #95. The trigger's source fix — mirshi emulating #95 from CLOCK_MONOTONIC — is a sibling
+follow-up in mirshi, not here.

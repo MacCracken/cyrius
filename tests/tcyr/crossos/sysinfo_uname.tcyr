@@ -137,6 +137,36 @@ var stm = system_total_memory();
 assert_eq(stm, tm, "system_total_memory() agrees with sysinfo_total_memory()");
 #endif
 
+# 6.6.7: sys_sched_kicks reads agnos sysinfo#35's 1.57.9 `sched_kicks` field. Off agnos it is
+# honestly not wired — Linux's /proc/interrupts RES row counts kicks RECEIVED per CPU, a
+# different number — and this is where every other target proves it COMPILES and answers
+# -ENOSYS rather than a fabricated count. This file also builds for agnos, where the answer
+# is the kernel's: -1 (agnos < 1.57.9, or mirshi, which writes only the 40-byte base — the
+# pre-filled slot comes back untouched) or a count >= 0. Never -ENOSYS, never other residue.
+# (The buffer/length/pre-fill shape is pinned by tests/gates/platform/agnos_sysinfo_tail_parity.sh.)
+test_group("sched_kicks");
+#ifdef CYRIUS_TARGET_AGNOS
+# Leave a NEGATIVE, non-(-1) pattern where sys_sched_kicks' buffer will sit, so a reader that
+# dropped its -1 pre-fill returns residue this arm rejects (a positive pattern would pass as a count).
+fn sched_kicks_dirty_stack(): i64 {
+    var d[512];
+    var i = 0;
+    while (i < 512) { store64(&d + i, 0xA5A5A5A5A5A5A5A5); i = i + 8; }
+    return load64(&d + 256);
+}
+sched_kicks_dirty_stack();
+#endif
+var kicks = sys_sched_kicks();
+#ifndef CYRIUS_TARGET_AGNOS
+assert_eq(kicks, 0 - 38, "sys_sched_kicks() is -ENOSYS off agnos");
+#endif
+#ifdef CYRIUS_TARGET_AGNOS
+var kicks_ok = 0;
+if (kicks == 0 - 1) { kicks_ok = 1; }
+if (kicks >= 0) { kicks_ok = 1; }
+assert_eq(kicks_ok, 1, "sys_sched_kicks() is -1 (agnos < 1.57.9) or a count on agnos");
+#endif
+
 test_group("is_root");
 var ir = is_root();
 var ir_ok = (ir < 2);

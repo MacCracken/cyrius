@@ -185,6 +185,9 @@ fn _bench_qpc_ns(): i64 {
     return 0;
 }
 
+#ifdef CYRIUS_TARGET_AGNOS
+var _bench_agnos_ms40 = 0;   # 1 once #95 has answered < 0 — see now_ns
+#endif
 # Get monotonic nanoseconds
 fn now_ns(): i64 {
     if (_bench_clock_fp != 0) { return fncall0(_bench_clock_fp); }
@@ -194,7 +197,19 @@ fn now_ns(): i64 {
     # raw `movl $0xe4,%eax; syscall` (llvm-objdump verified) into a kernel that does not
     # define it, so the timespec read back was undefined. chrono.cyr was moved to #95
     # (sys_uptime_us, rdtsc-derived and interrupt-free) at 6.6.1 and this file was not.
-    return sys_uptime_us() * 1000;
+    #
+    # ⛔ 6.6.7: and #95 answers -1 when TSC calibration was refused (always, under mirshi),
+    # which this arm multiplied into a clock that stood still at -1000 ns. Same LATCHED #95 →
+    # #40 fallback as lib/chrono.cyr's clock_now_ns, with its own latch so this file stays
+    # self-sufficient; see the note there for why a latch and not a per-call retry. The two
+    # are pinned together by tests/gates/platform/agnos_monotonic_clock_rdtsc.sh axis 1,
+    # which derives every #95 reader in lib/. CHANGELOG [6.6.7]
+    if (_bench_agnos_ms40 == 0) {
+        var us = sys_uptime_us();
+        if (us >= 0) { return us * 1000; }
+        _bench_agnos_ms40 = 1;
+    }
+    return sys_uptime_ms() * 1000000;
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
     #ifdef CYRIUS_TARGET_MACOS
