@@ -227,9 +227,7 @@ fn PARSE_WHILE(S): i64 {
     STI(S, GTI(S) + 1);
     if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
     STI(S, GTI(S) + 1);
-    SCOPE_PUSH(S);
-    PARSE_PROG(S);
-    SCOPE_POP(S);
+    _loop_body(S, 1);   # 6.6.7: counts the loop for break/continue
     if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
     STI(S, GTI(S) + 1);
     EJMP(S, loop_top);
@@ -364,9 +362,7 @@ fn PARSE_FOR(S): i64 {
                 EFLSTORE(S, fiitem);
                 # Body
                 if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); } STI(S, GTI(S) + 1);
-                SCOPE_PUSH(S);
-                PARSE_PROG(S);
-                SCOPE_POP(S);
+                _loop_body(S, 1);   # 6.6.7: counts the loop for break/continue
                 if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); } STI(S, GTI(S) + 1);
                 # Patch continue to here (before step)
                 var ficfwn = L64(S + 0x18F898) - 1;
@@ -429,9 +425,7 @@ fn PARSE_FOR(S): i64 {
             var ficond = EJCC(S, 0x8D);
             # Body
             if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); } STI(S, GTI(S) + 1);
-            SCOPE_PUSH(S);
-            PARSE_PROG(S);
-            SCOPE_POP(S);
+            _loop_body(S, 1);   # 6.6.7: counts the loop for break/continue
             if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); } STI(S, GTI(S) + 1);
             # Patch all continues to here (before step)
             var ficfwn = L64(S + 0x18F898) - 1;
@@ -504,7 +498,7 @@ fn PARSE_FOR(S): i64 {
     STI(S, GTI(S) + 1);
     if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
     STI(S, GTI(S) + 1);
-    PARSE_PROG(S);
+    _loop_body(S, 0);   # 6.6.7: counts the loop (the for's scope is already open)
     if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
     STI(S, GTI(S) + 1);
     # Patch continue forward jump to here (step expression)

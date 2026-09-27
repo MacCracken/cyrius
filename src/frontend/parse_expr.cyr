@@ -2195,8 +2195,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             EPOPC(S);
             ESTORE64(S);                          # C[state] = _sk
             EMOVI(S, 0);                          # a suspended task returns 0
-            var _srp = EJMP0(S);                  # jump to the shared epilogue
-            vec_push(rp_vec, _srp);
+            _coro_suspend_jmp(S, _sk);            # jump to the fn end, past the defer walker (6.6.7)
             S64(&_coro_rcp + _sk * 8, GCP(S));    # the resume label for state _sk
             _coro_nsusp = _sk;
             return 0;

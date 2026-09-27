@@ -6165,13 +6165,17 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
             EPATCH(S, _dp);
             _dk = _dk + 1;
         }
+        # 6.6.7 — state 0 (first entry) zeroes the defer flags, which live in the heap frame and
+        # so could not be zeroed at fn entry (SELF is homed only after it), and must NOT be
+        # re-zeroed on a resume or a defer registered before an await would be forgotten.
+        _defer_zero_flags(S);
         EJMP(S, _coro_entry_cp);              # state 0 -> the top of the real body
         # Hand the frame size to the constructor, which is emitted AFTER this body and so
         # already knows how big the coroutine frame has to be — the one piece of luck in the
         # whole layout, and the reason no second pass is needed.
         _coro_was = 1;
         _coro_flc = GFLC(S);
-        _cur_fn_coro = 0;
+        # 6.6.7: `_cur_fn_coro` stays 1 until the defer walker is emitted (see the epilogue).
     }
     if (_gen_base == 1) { _tp_clear(S); }
     if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
@@ -6257,6 +6261,15 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     _defer_emit_init(S, defer_init_jmp, body_cp);
     _rp_patch_here(S);
     _defer_emit_walk(S);
+    # 6.6.7 — a coroutine's suspend exits return 0 to the runtime WITHOUT completing the body,
+    # so they land HERE, past the walker: a defer runs once, when the body really returns.
+    # The coroutine mode was held on through the walker so its flag loads use the heap frame
+    # the body's flag stores wrote (clearing it before the walker is why coroutine defers never
+    # ran: the set went to [r11+off], the test to [rbp-disp]). CHANGELOG [6.6.7]
+    if (_cur_fn_coro == 1) {
+        _coro_land_suspends(S);
+        _cur_fn_coro = 0;
+    }
     # v4.9.1: restore callee-saved registers (reverse order of save).
     # v5.11.35 path-A: dispatch lives in <backend>/emit.cyr.
     # v6.2.27: #naked emits NO regalloc restore + NO epilogue — the ISR body

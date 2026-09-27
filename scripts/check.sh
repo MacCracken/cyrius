@@ -1170,3 +1170,11 @@ _chk_gate "$ROOT/tests/gates/codegen/fn_local_storage_class.sh"
 # offset 0, which is the program's FIRST LEXED WORD. This pins the SHAPE at the source so the
 # sixth cannot slip in, with derived counts and an anti-vacuous floor on every axis.
 _chk_gate "$ROOT/tests/gates/codegen/hidden_temp_census.sh"
+
+# 6.6.7 (bite 1): `defer` / `break` / `continue` in a position they cannot honour are refused
+# with a named diagnostic and no binary (top-level defer, return/`?`/break/continue out of a
+# defer body, break/continue with nothing to leave in the same fn — incl. from a closure), and
+# `defer` in a coroutine `async fn` runs exactly once, at completion. Shell gate because the
+# refusals are compile-time and CYRIUS_ASYNC cannot be set from a .tcyr. The runtime nested-fn
+# rows are tests/tcyr/crossos/defer_every_return_path.tcyr.
+_chk_gate "$ROOT/tests/gates/diagnostics/defer_misuse_refused.sh"

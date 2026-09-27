@@ -148,6 +148,12 @@ for (var i = 0; i < 10; i = i + 1) { ... }
 #   between is transparent to it — `continue` inside a case skips to the loop's next
 #   iteration, it does not fall out of the switch.
 # continue works correctly in all loop types (v1.11.1 bug #13 fix)
+# Both must have something to leave IN THE SAME FUNCTION (v6.6.7): a `break` with no
+#   enclosing loop/switch/match, or a `continue` with no enclosing loop, is a compile
+#   error ("break outside a loop or switch" / "continue outside a loop") — including one
+#   inside a closure body whose only loop is the ENCLOSING fn's. Before v6.6.7 both
+#   compiled clean: `break` became a wild jump and `continue` jumped to the loop top of
+#   whichever fn last had a loop.
 while (1 == 1) {
     if (done == 1) { break; }
     if (skip == 1) { continue; }
@@ -657,10 +663,24 @@ fn example() {
 }
 ```
 
+Where a `defer` may appear, and what its body may do (v6.6.7 — each rule below used to
+compile clean and do something silent instead):
+
+- **Only inside a function** — including a closure body or an `async fn`. At top level it is
+  refused (`defer only allowed inside a function`), like `secret var` and `stack var`: there
+  is no frame for its reached-flag and no epilogue to run the block. (It used to compile and
+  SIGSEGV on x86/aarch64, or never run on cx.)
+- **A defer body cannot leave its function.** It runs FROM the function's return path, so
+  `return`, `?` and `ret2` inside it are refused (`return inside a defer body …`), and so is a
+  `break`/`continue` that would jump out of it into the loop the `defer` sits in (`break
+  cannot leave a defer body`). A loop or switch OPENED inside the defer body is fine.
 - **A defer inside a closure belongs to the closure** — it runs when the closure returns, not
   when the enclosing function does (the same for `secret var`, whose zeroise is a defer).
   (v6.6.7; before, a closure's defer was registered on the ENCLOSING function.)
 - **A body that falls off its end** (no `return`) runs its defers too (v6.6.7; before, it looped).
+- **In a coroutine `async fn`** (one that `await`s mid-body) a defer runs exactly once, when
+  the body completes — not at each suspend. An `await` inside a defer body is refused there,
+  because the suspend would abandon the walker mid-run.
 
 ## Math Builtins
 

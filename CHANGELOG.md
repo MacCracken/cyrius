@@ -51,9 +51,33 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   which jumped back to the body start. Every expression-bodied closure falls through, so the
   closure half of this bite needed it fixed; the shared `_defer_emit_init` now routes the
   fall-through round the trampoline to the return landing, for fns and closures alike.
+- **`defer` in a coroutine `async fn` never ran.** (bite 1.) The flag was SET in the heap frame
+  (`_cur_fn_coro` was still 1) and TESTED on the stack frame (it was cleared before the epilogue),
+  and the zeroing trampoline ran before SELF was homed. Now SUPPORTED: the flags are zeroed at the
+  state-0 landing only (not on a resume), the walker is emitted in coroutine mode, and a suspend
+  exit lands past the walker (`_coro_sjp`), so a defer runs exactly once, when the body completes
+  — `0,0,1` over three forces where it was `0,0,0`.
+
 ### Changed
 
-- cycc **1,328,336 → 1,332,448 B** (+4,112) for the snapshot helpers and the shared epilogue.
+- **`defer`, `break` and `continue` in a position they cannot honour are now compile errors.**
+  (bite 1.) Each of these compiled clean before and did something silent:
+  - top-level `defer { }` → `defer only allowed inside a function` (its flag was written through
+    rbp = 0: SIGSEGV on x86/aarch64; on cx the block never ran). Same rule as `secret`/`stack`.
+  - `return`, `?` or `ret2` inside a defer body → `return inside a defer body (a defer block
+    cannot leave its function)` (it re-entered the walker and re-ran the block — 50 times in the
+    probe);
+  - `break`/`continue` leaving a defer body → `break cannot leave a defer body` / `continue
+    cannot leave a defer body` (it jumped back into the loop — 20 times);
+  - `break` with no loop/switch/match, or `continue` with no loop, IN THE SAME FN → `break
+    outside a loop or switch` / `continue outside a loop`. A stray `continue` used to jump to the
+    stale loop top of whichever fn last had a loop (SIGSEGV); a `break` or `continue` inside a
+    closure used to target the ENCLOSING fn's loop.
+  - `await` inside a coroutine's defer body → `await cannot suspend inside a defer body`.
+  A loop or switch OPENED inside a defer body is unaffected. Gate:
+  `tests/gates/diagnostics/defer_misuse_refused.sh` (21 rows; 14 RED against the pre-fix source).
+- cycc **1,328,336 → 1,337,344 B** (+9,008) for the snapshot helpers, the shared epilogue and the
+  new diagnostics.
 
 ### Added
 

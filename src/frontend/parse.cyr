@@ -777,6 +777,17 @@ var _cur_fn_ix = 0 - 1;
 # PARSE_FN_DEF truncates to / patches from these instead of index 0. CHANGELOG [6.6.7]
 var _rp_base = 0;
 var _defer_base = 0;
+# 6.6.7 — how many loops (`_loop_depth`) and break targets (`_brk_depth` = loops + switch +
+# match) enclose the current statement IN THE CURRENT FN. A `break`/`continue` with none used to
+# compile clean: `break` stayed an unpatched chain link, `continue` jumped to the stale loop top
+# of whatever fn last had a loop (SIGSEGV). Zeroed for every nested fn body and for a defer body,
+# so neither can jump out of its own frame. `_in_defer` only picks the diagnostic.
+var _loop_depth = 0;
+var _brk_depth = 0;
+var _in_defer = 0;
+# 6.6.7 — a coroutine suspend exit returns 0 to the runtime WITHOUT completing the body, so it
+# must skip the defer walker; its jmp is recorded here (per suspend index) instead of rp_vec.
+var _coro_sjp[64];
 
 fn _fnst_put_cg(b): i64 {
     store64(b + 88, _fn_local_addr);    _fn_local_addr = 0;
@@ -856,8 +867,11 @@ fn _fnst_save(S): i64 {
     store64(b + 24, GSDEP(S));
     store64(b + 32, _rp_base);
     store64(b + 40, _defer_base);
+    store64(b + 48, _loop_depth);
+    store64(b + 56, _brk_depth);
     store64(b + 64, L64(S + 0x18F838));
     store64(b + 72, L64(S + 0x18F840));
+    store64(b + 80, _in_defer);
     _fnst_put_cg(b);
     _fnst_put_coro(b);
     _fnst_put_xp(S, b);
@@ -866,6 +880,9 @@ fn _fnst_save(S): i64 {
     SSDEP(S, 0);
     _rp_base = vec_len(rp_vec);
     _defer_base = L64(S + 0x1AC020);
+    _loop_depth = 0;
+    _brk_depth = 0;
+    _in_defer = 0;
     S64(S + 0x18F840, 0);
     return b;
 }
@@ -880,8 +897,11 @@ fn _fnst_restore(S, b): i64 {
     SSDEP(S, load64(b + 24));
     _rp_base = load64(b + 32);
     _defer_base = load64(b + 40);
+    _loop_depth = load64(b + 48);
+    _brk_depth = load64(b + 56);
     S64(S + 0x18F838, load64(b + 64));
     S64(S + 0x18F840, load64(b + 72));
+    _in_defer = load64(b + 80);
     _fnst_get_cg(b);
     _fnst_get_coro(b);
     _fnst_get_xp(S, b);
@@ -905,15 +925,19 @@ fn _defer_zero_flags(S): i64 {
 # returns to `body_cp` when this fn registered defers, else to `body_cp` itself. The body's
 # FALL-THROUGH end is routed round the trampoline to the return landing: without that jmp a body
 # that ended without `return` ran into the trampoline and re-entered the body forever (and every
-# expression-bodied closure falls through).
+# expression-bodied closure falls through). A coroutine zeroes its flags at the state-0 landing
+# instead (see the dispatch in PARSE_FN_DEF), because its flags live in the heap frame, which is
+# not reachable yet at fn entry — and must not be re-zeroed on each resume.
 fn _defer_emit_init(S, init_jmp, body_cp): i64 {
     var dc = L64(S + 0x1AC020);
     if (dc > _defer_base) {
         vec_push(rp_vec, EJMP0(S));
-        EPATCH(S, init_jmp);
-        _defer_zero_flags(S);
-        EJMP(S, body_cp);
-        return 0;
+        if (_cur_fn_coro == 0) {
+            EPATCH(S, init_jmp);
+            _defer_zero_flags(S);
+            EJMP(S, body_cp);
+            return 0;
+        }
     }
     var saved_cp = GCP(S);
     SCP(S, body_cp);
@@ -949,6 +973,36 @@ fn _defer_emit_walk(S): i64 {
     EPOPR(S);
     return 0;
 }
+# 6.6.7 — a coroutine suspend exit (`await` inside a coroutine body, parse_expr.cyr): record the
+# `jmp` to the fn end per suspend index, not in rp_vec, so it bypasses the defer walker. An
+# `await` inside a DEFER body is refused: the walker is mid-run with rax pushed on a stack frame
+# that the suspend destroys.
+fn _coro_suspend_jmp(S, sk): i64 {
+    if (_in_defer == 1) { ERR_MSG(S, "await cannot suspend inside a defer body", 40); }
+    var j = EJMP0(S);
+    if (sk < 64) { store64(&_coro_sjp + sk * 8, j); }   # past 63 the caller has already errored
+    return 0;
+}
+fn _coro_land_suspends(S): i64 {
+    var k = 1;
+    while (k <= _coro_nsusp && k < 64) {
+        EPATCH(S, load64(&_coro_sjp + k * 8));
+        k = k + 1;
+    }
+    return 0;
+}
+# A loop body: one more loop and one more break target for the statements inside it.
+fn _loop_body(S, scoped): i64 {
+    _loop_depth = _loop_depth + 1;
+    _brk_depth = _brk_depth + 1;
+    if (scoped == 1) { SCOPE_PUSH(S); }
+    PARSE_PROG(S);
+    if (scoped == 1) { SCOPE_POP(S); }
+    _loop_depth = _loop_depth - 1;
+    _brk_depth = _brk_depth - 1;
+    return 0;
+}
+
 # v6.3.11 (G) — async/await. `_IS_FN_KW` lets the top-level dispatch in every
 # driver fork route a leading `async` (token 134) to the same fn path as `fn`
 # (token 32) without 7×2 bespoke branches: the dispatch checks `_IS_FN_KW(S)==1`
@@ -1290,6 +1344,7 @@ fn _brk_chain_end(S, saved_brk): i64 {
         bp = _nb;
     }
     S64(S + 0x18F840, saved_brk);
+    _brk_depth = _brk_depth - 1;   # 6.6.7 — paired with the switch/match entry
     return 0;
 }
 
@@ -1444,6 +1499,7 @@ fn PARSE_SWITCH(S): i64 {
     # NOT captured — it must still continue the enclosing loop.
     var saved_brk = L64(S + 0x18F840);
     S64(S + 0x18F840, 0);
+    _brk_depth = _brk_depth + 1;   # 6.6.7 — a `break` target (see _brk_chain_end)
     if (use_table == 1) {
         # === JUMP TABLE PATH ===
         # v5.11.39 path-A: dispatch sequence + reserved zero table
@@ -1610,6 +1666,7 @@ fn PARSE_MATCH(S): i64 {
     # enclosing loop or left an unpatched wild jump. CHANGELOG [6.5.20]
     var saved_brk = L64(S + 0x18F840);
     S64(S + 0x18F840, 0);
+    _brk_depth = _brk_depth + 1;   # 6.6.7 — a `break` target (see _brk_chain_end)
     var ends: i64[256];   # v6.2.1: 256 match-arm jump-end slots (was [256]=32 slots → OOB at >32 arms)
     var ec = 0;
     # v5.8.22 bite #2 — exhaustive-match coverage tracking. When the
@@ -2048,6 +2105,115 @@ fn _try_aggregate_copy_assign(S, noff): i64 {
     return 1;
 }
 
+# break; — forward jump to after the loop/switch/match (linked list through codebuf).
+# 6.6.7: refused when nothing in THIS fn encloses it (`_brk_depth` counts loops + switch +
+# match). An unowned break was never patched: its rel32 kept the chain link, a wild jump.
+fn _PARSE_BREAK(S): i64 {
+    STI(S, GTI(S) + 1);
+    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
+    STI(S, GTI(S) + 1);
+    if (_brk_depth == 0) {
+        if (_in_defer == 1) { ERR_MSG(S, "break cannot leave a defer body", 31); return 0; }
+        ERR_MSG(S, "break outside a loop or switch", 30);
+        return 0;
+    }
+    var prev_brk = L64(S + 0x18F840);
+    var brk_off = EJMP0(S);
+    # Store prev break offset in this jmp's rel32 field (chain link)
+    var brk_addr = _codebuf_base + brk_off;
+    S64(brk_addr, (L64(brk_addr) >> 32 << 32) | (prev_brk & 0xFFFFFFFF));
+    S64(S + 0x18F840, brk_off);
+    return 0;
+}
+# continue; — jump to loop top (or forward to the step of a C-style for).
+# 6.6.7: refused with no loop in THIS fn — it used to jump to the stale loop top of whatever
+# fn last had a loop (SIGSEGV), or into the enclosing fn's loop from a closure.
+fn _PARSE_CONTINUE(S): i64 {
+    STI(S, GTI(S) + 1);
+    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
+    STI(S, GTI(S) + 1);
+    if (_loop_depth == 0) {
+        if (_in_defer == 1) { ERR_MSG(S, "continue cannot leave a defer body", 34); return 0; }
+        ERR_MSG(S, "continue outside a loop", 23);
+        return 0;
+    }
+    var cfw = L64(S + 0x18F898);
+    if (cfw > 0) {
+        # For-loop: forward patch to step (array of patches)
+        var ci = cfw - 1;
+        if (ci >= 8) {
+            ERR_MSG(S, "too many continue statements in loop (max 8)", 44);
+        }
+        S64(S + 0x18F8A0 + ci * 8, EJMP0(S));
+        S64(S + 0x18F898, cfw + 1);
+    } else {
+        # While/for-in: direct jump to loop top
+        EJMP(S, L64(S + 0x18F838));
+    }
+    return 0;
+}
+# defer { body } — execute body at function return (LIFO)
+# Each defer gets a runtime flag (hidden local) set to 1 when reached.
+# At epilogue, flag is checked before running the block — unreached defers are skipped.
+# 6.6.7 — CONTEXT RULES. Top level is refused (no frame for the flag — it was written through
+# rbp = 0 and SIGSEGV'd — and no epilogue to run the block), like `secret`/`stack` var. The
+# body runs FROM the epilogue walker, so it may not leave: a `return`/`?`/`ret2` inside it
+# (seen as rp_vec growth) re-entered the walker and re-ran the block, and a `break`/`continue`
+# jumped back into the loop it was registered in; both are refused. A loop OPENED inside the
+# body is fine — `_loop_body` counts it. CHANGELOG [6.6.7]
+fn _PARSE_DEFER(S): i64 {
+    if (GINFN(S) != 1) {
+        ERR_MSG(S, "defer only allowed inside a function", 36);
+    }
+    STI(S, GTI(S) + 1);
+    if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
+    # Allocate hidden local for defer flag (initialized to 0 in prologue)
+    var dflag = GFLC(S);
+    S64(S + 0x5D9D000 + dflag * 8, 0 - 1);   # 6.6.5: anonymous — name 0 is the first lexed word
+    SLDEP(S, dflag, GSDEP(S));
+    SLTYPE(S, dflag, 0);
+    SFLC(S, dflag + 1);
+    # Emit: flag = 1 (set when defer statement is reached)
+    EMOVI(S, 1);
+    EFLSTORE(S, dflag);
+    # Emit jmp-over (skip deferred block during normal execution)
+    var djmp = EJMP0(S);
+    # Record block start (current CP after jmp-over)
+    var dstart = GCP(S);
+    # Parse deferred block body — with no loop and no break target of its own
+    STI(S, GTI(S) + 1);
+    var sv_ld = _loop_depth;
+    var sv_bd = _brk_depth;
+    var sv_id = _in_defer;
+    var rp0 = vec_len(rp_vec);
+    _loop_depth = 0;
+    _brk_depth = 0;
+    _in_defer = 1;
+    PARSE_PROG(S);
+    _loop_depth = sv_ld;
+    _brk_depth = sv_bd;
+    _in_defer = sv_id;
+    if (vec_len(rp_vec) != rp0) {
+        ERR_MSG(S, "return inside a defer body (a defer block cannot leave its function)", 68);
+    }
+    if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
+    STI(S, GTI(S) + 1);
+    # Emit jmp placeholder (patched to next defer block or epilogue)
+    var dend = EJMP0(S);
+    # Store {block_start, end_jmp, flag_local} triple (24 bytes per entry)
+    var dci = L64(S + 0x1AC020);
+    if (dci >= 64) {
+        syscall(SYS_WRITE, 2, "error: too many defer blocks (max 64)\n", 38);
+        syscall(SYS_EXIT, 1);
+    }
+    S64(S + 0x1AC028 + dci * 24, dstart);
+    S64(S + 0x1AC028 + dci * 24 + 8, dend);
+    S64(S + 0x1AC028 + dci * 24 + 16, dflag);
+    S64(S + 0x1AC020, dci + 1);
+    # Patch jmp-over to land here (after the deferred block)
+    EPATCH(S, djmp);
+    return 0;
+}
 fn PARSE_STMT(S): i64 {
     var before = GTI(S);
     # v6.5.19 (CVE-40): this wrapper is already the one place every statement descent
@@ -2346,79 +2512,10 @@ fn _PARSE_STMT_IMPL(S): i64 {
     if (typ == 57) { PARSE_SWITCH(S); return 0; }
     if (typ == 75) { PARSE_MATCH(S); return 0; }
     if (typ == 33) { PARSE_RETURN(S); return 0; }
-    # break; — forward jump to after loop (linked list through codebuf)
-    if (typ == 51) {
-        STI(S, GTI(S) + 1);
-        if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-        STI(S, GTI(S) + 1);
-        var prev_brk = L64(S + 0x18F840);
-        var brk_off = EJMP0(S);
-        # Store prev break offset in this jmp's rel32 field (chain link)
-        var brk_addr = _codebuf_base + brk_off;
-        S64(brk_addr, (L64(brk_addr) >> 32 << 32) | (prev_brk & 0xFFFFFFFF));
-        S64(S + 0x18F840, brk_off);
-        return 0;
-    }
-    # defer { body } — execute body at function return (LIFO)
-    # Each defer gets a runtime flag (hidden local) set to 1 when reached.
-    # At epilogue, flag is checked before running the block — unreached defers are skipped.
-    if (typ == 106) {
-        STI(S, GTI(S) + 1);
-        if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
-        # Allocate hidden local for defer flag (initialized to 0 in prologue)
-        var dflag = GFLC(S);
-        S64(S + 0x5D9D000 + dflag * 8, 0 - 1);   # 6.6.5: anonymous — name 0 is the first lexed word
-        SLDEP(S, dflag, GSDEP(S));
-        SLTYPE(S, dflag, 0);
-        SFLC(S, dflag + 1);
-        # Emit: flag = 1 (set when defer statement is reached)
-        EMOVI(S, 1);
-        EFLSTORE(S, dflag);
-        # Emit jmp-over (skip deferred block during normal execution)
-        var djmp = EJMP0(S);
-        # Record block start (current CP after jmp-over)
-        var dstart = GCP(S);
-        # Parse deferred block body
-        STI(S, GTI(S) + 1);
-        PARSE_PROG(S);
-        if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
-        STI(S, GTI(S) + 1);
-        # Emit jmp placeholder (patched to next defer block or epilogue)
-        var dend = EJMP0(S);
-        # Store {block_start, end_jmp, flag_local} triple (24 bytes per entry)
-        var dci = L64(S + 0x1AC020);
-        if (dci >= 64) {
-            syscall(SYS_WRITE, 2, "error: too many defer blocks (max 64)\n", 38);
-            syscall(SYS_EXIT, 1);
-        }
-        S64(S + 0x1AC028 + dci * 24, dstart);
-        S64(S + 0x1AC028 + dci * 24 + 8, dend);
-        S64(S + 0x1AC028 + dci * 24 + 16, dflag);
-        S64(S + 0x1AC020, dci + 1);
-        # Patch jmp-over to land here (after the deferred block)
-        EPATCH(S, djmp);
-        return 0;
-    }
-    # continue; — jump to loop top (or step for C-style for)
-    if (typ == 52) {
-        STI(S, GTI(S) + 1);
-        if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
-        STI(S, GTI(S) + 1);
-        var cfw = L64(S + 0x18F898);
-        if (cfw > 0) {
-            # For-loop: forward patch to step (array of patches)
-            var ci = cfw - 1;
-            if (ci >= 8) {
-                ERR_MSG(S, "too many continue statements in loop (max 8)", 44);
-            }
-            S64(S + 0x18F8A0 + ci * 8, EJMP0(S));
-            S64(S + 0x18F898, cfw + 1);
-        } else {
-            # While/for-in: direct jump to loop top
-            EJMP(S, L64(S + 0x18F838));
-        }
-        return 0;
-    }
+    # break; / defer { } / continue; — see _PARSE_BREAK / _PARSE_DEFER / _PARSE_CONTINUE.
+    if (typ == 51) { _PARSE_BREAK(S); return 0; }
+    if (typ == 106) { _PARSE_DEFER(S); return 0; }
+    if (typ == 52) { _PARSE_CONTINUE(S); return 0; }
     # asm { ... } — raw bytes or mnemonic instructions
     if (typ == 48) {
         STI(S, GTI(S) + 1);
