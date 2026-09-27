@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN**: reproduced 2026-09-23 with cycc 6.6.6 on x86_64 and aarch64 (the probe below):
 the warning fires, and the program's results are correct on both.
-**Placement:** unpinned — 6.6.x-line backlog (never 7.x).
+**Placement:** **6.6.9 bite 3** — Diagnostic exits: no rc 139 after a reported error on aarch64/cx; nullary `: stack` variant returns are not flagged as dropped tags. Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Discovered:** 2026-09-22 during kybernet 1.7.0. kybernet 1.6.20, built with 6.6.2, had shipped with the
 warning on its PID-1 signal path, unexplained.
 **Severity:** Low: a misleading diagnostic. It suggests a change (`return Err(x);`) that is wrong for an

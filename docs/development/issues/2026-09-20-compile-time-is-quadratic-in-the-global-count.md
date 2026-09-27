@@ -2,7 +2,7 @@
 
 **Status:** 🟡 open — measured during 6.6.6 (bite 19's review); identical on 6.6.5, so not a
 regression from this release.
-**Placement:** unpinned — 6.x line. A perf defect, not a correctness one.
+**Placement:** **6.6.9 bite 1** — The global var table scales linearly: FNV name index, full-byte lexer hash, gvar_toks 4096 cap lifted. Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Discovered:** 2026-09-20
 
 ## Measured

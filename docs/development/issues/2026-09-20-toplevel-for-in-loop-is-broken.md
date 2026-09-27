@@ -2,7 +2,7 @@
 
 **Status:** 🟡 open — found during 6.6.6 (bite 19's review, probing top-level block scoping);
 reproduces identically on 6.6.5 and on the 6.6.6 tree.
-**Placement:** unpinned — 6.x line, the next repair batch.
+**Placement:** **6.6.8 bite 1** — Top-level for-in binds a live global; enum constants fold past var index 1024. Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Discovered:** 2026-09-20
 
 ## Repro A — the loop variable is not visible in its own body

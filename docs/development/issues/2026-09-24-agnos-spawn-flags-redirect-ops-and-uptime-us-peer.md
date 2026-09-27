@@ -4,7 +4,7 @@
 names for them yet. No new syscall NUMBER is involved (every item rides an existing number), so agnos's
 `syscall ABI (kernel/doc/cyrius agree)` gate stays green (`kernel 105 · abi-doc 105 · cyrius 105`) —
 this is a surface ask, not a gate blocker.
-**Placement:** unpinned — 6.6.x-line backlog.
+**Placement:** **6.6.7 bite 4** — agnos 1.57.6–1.57.9 peer surface; the a4=r10 class (cycc zeroes r10 on short agnos syscalls); monotonic socket-recv deadline; loopback listen class (CVE-47). Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Filed:** 2026-09-24, by agnos. agnos minted the ABI; cyrius owns the peer.
 **Severity:** Medium: nothing breaks, but the features daimon asked agnos for (argv with spaces, a
 reason for a failed spawn, stdout + stderr capture, a clean child fd table) are reachable today only by

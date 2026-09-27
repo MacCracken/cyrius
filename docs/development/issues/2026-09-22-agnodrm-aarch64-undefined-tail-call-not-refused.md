@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — a cross-arch gap in the v6.3.2 fix of
 `archived/2026-06-25-undefined-fn-reachable-call-hard-error.md`, which made a reachable undefined
 call a hard error by default.
-**Placement:** unpinned — 6.6.x-line backlog.
+**Placement:** **6.6.9 bite 2** — One top-level attribute dispatcher for all 7 forks; undefined-prepass parity; aarch64 refuses undefined tail calls (ftype 4); the large-static-data warning on every backend. Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Discovered:** 2026-09-22, during agnodrm's 1.6.2 harness work. A fuzz harness missing an include
 built clean on `--aarch64` but warned on x86_64; the tail-call shape was then isolated.
 **Severity:** Medium — a hard failure on x86_64 / agnos ships silently on aarch64 as a crashing binary.

@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN**: `lib/chrono.cyr` has no fallback for `uptime_us`#95's documented failure
 answer.
-**Placement:** unpinned — 6.6.x-line backlog.
+**Placement:** **6.6.7 bite 7** — agnos runtime contracts: the clock falls back (latched) when TSC calibration is refused; sysinfo#35 gets the 208-byte fourth tier (check.sh is red locally today). Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Discovered:** 2026-09-23 during daimon 2.4.1, running daimon's AGNOS guest test with QEMU held to
 25% of a CPU (to see how it would fare on a slow CI runner).
 **Severity:** Medium: a hard failure (every deadline loop spins forever) with a known workaround.

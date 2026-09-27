@@ -4,7 +4,7 @@
 path (`~/.cyrius/lib/freelist.cyr:404-406`) runs `store64(blk, 0)` on the `_fl_mmap` return with no
 check, and `_fl_arena_alloc` (`:234-236`) adopts the return as its arena base the same way. The large
 path was reproduced the same day (below).
-**Placement:** unpinned — 6.6.x-line backlog (never 7.x).
+**Placement:** **6.6.7 bite 8** — kybernet PID-1 stdlib and same-class unchecked allocs: non-blocking hash seed; checked fl_alloc mappings; bounded, checked file_read_whole; checked hashmap_fast and flags growth. Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Discovered:** 2026-08-25 during kybernet 1.5.9, reading sigil's Argon2 wrappers. Reproduced
 2026-09-23 during kybernet 1.7.8.
 **Severity:** Medium: a crash where the API promises an error value, with a known workaround.

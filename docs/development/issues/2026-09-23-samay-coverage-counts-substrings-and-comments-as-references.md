@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — Verified 2026-09-23 against the 6.6.6 release binary and at HEAD
 `52fabac5`: the match loop at `cbt/quality.cyr:180-181` is identical in both, and the
 reproduction below passes `--min 100` with one of three functions referenced.
-**Placement:** unpinned — 6.x-line backlog (tooling; never 7.x).
+**Placement:** **6.6.8 bite 9** — cyrius coverage and header tell the truth: whole-identifier match over a non-code-blanked corpus, every public spelling, the file-private rule, no nested lib/ prune, whole-file reads. Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Discovered:** 2026-09-23 during samay 1.1.5, while auditing whether samay's `rust-old/`
 could be deleted.
 **Severity:** Medium — a CI gate reports green for functions that no test references. A

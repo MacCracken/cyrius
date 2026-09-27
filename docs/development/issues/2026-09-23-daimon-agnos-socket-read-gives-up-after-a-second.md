@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN**: the backstop documented as being "for when the RTC is unreadable" is applied
 whether the RTC reads or not, and it counts pauses, which do not take a fixed time on agnos.
-**Placement:** unpinned — 6.6.x-line backlog.
+**Placement:** **6.6.7 bite 4** — agnos 1.57.6–1.57.9 peer surface; the a4=r10 class (cycc zeroes r10 on short agnos syscalls); monotonic socket-recv deadline; loopback listen class (CVE-47). Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Discovered:** 2026-09-23 during daimon 2.4.2. daimon's AGNOS guest test failed in CI on a forwarded
 MCP call, and in one of three local runs. Timing 6000 pauses in the guest then made the cause
 measurable (below).

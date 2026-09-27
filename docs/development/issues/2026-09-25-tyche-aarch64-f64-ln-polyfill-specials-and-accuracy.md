@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN**: reproduced 2026-09-25 against cyrius HEAD `52fabac5`, whose `lib/math.cyr`
 is byte-identical to the 6.6.6 snapshot, with the installed 6.6.6 compiler. The repro exits **15** on
 aarch64 (qemu-aarch64 11.1.1) and **0** on x86_64.
-**Placement:** unpinned — 6.x-line backlog (`lib/math.cyr` polyfills + their gate). Never 7.x.
+**Placement:** **6.6.8 bite 5** — exp/ln family correct on every target: fdlibm ln/log2/exp/exp2 with IEEE specials and range guards; PE x87 precision control; ganita pow Annex F. Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Discovered:** 2026-09-25 during tyche's 1.0.3 toolchain bump. A golden-stream dump of tyche's
 `rng_normal` differed between x86_64 and aarch64 on 220 of 1,952 lines, identically under 6.6.2 and
 6.6.6. The divergence traced to `f64_ln`, and a scan of the polyfill turned up the rest.

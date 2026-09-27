@@ -1,7 +1,7 @@
 # Stdlib has no `sys_fcntl` wrapper, so every consumer that sets `O_NONBLOCK` hand-rolls a raw `syscall(SYS_FCNTL, …)` — OPEN
 
 **Status:** 🟡 **OPEN** — stdlib surface recommendation, filed by sigil at its 3.13.0 raw-syscall sweep.
-**Placement:** unpinned — 6.6.x-line backlog.
+**Placement:** **6.6.8 bite 3** — Names and rows for aarch64-unreachable syscalls (unshare/chroot/pivot_root, capget/capset, process_vm_*, mknodat); stdlib sys_fcntl / fd_set_nonblocking / fd_restore_flags. Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Discovered:** 2026-09-23, moving every raw `syscall(...)` in sigil onto stdlib helpers. One site has
 no helper to move to.
 **Severity:** Low — no wrong code in the stdlib. The cost is in consumers: a hand-rolled `fcntl` is a

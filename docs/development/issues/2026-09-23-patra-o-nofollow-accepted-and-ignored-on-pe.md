@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN**: from this repo's own CHANGELOG [6.6.6] (the PE `open` flag-translation entry)
 and `lib/syscalls_windows.cyr:139` (`O_NOFOLLOW = 131072`). Found by reading; **not run on
 Windows**. The measurement quoted below is cyrius's own, on real `cass`.
-**Placement:** unpinned — `_pe_open_flags` (`src/backend/x86/emit.cyr`) or the PE `file_open` path.
+**Placement:** **6.6.9 bite 5** — POSIX PE open semantics: CREATE_NEW never follows a reparse point; is_symlink works on Windows; O_NOFOLLOW refuses name surrogates; O_DIRECTORY = BACKUP_SEMANTICS + -ENOTDIR; file_create_exclusive's agnos arm is atomic. Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Discovered:** 2026-09-23 during patra's 1.15.0 cut.
 **Severity:** Medium–High on Windows: a flag callers pass for safety is silently not applied. It is
 security-relevant wherever an attacker can create a name in the target directory.

@@ -1,7 +1,7 @@
 # cycc_aarch64 never prints the `#deprecated` call-site warning — OPEN
 
 **Status:** 🟡 **OPEN** — filed by agnodrm at 1.6.2, its first use of `#deprecated`.
-**Placement:** unpinned — 6.6.x-line backlog.
+**Placement:** **6.6.9 bite 2** — One top-level attribute dispatcher for all 7 forks; undefined-prepass parity; aarch64 refuses undefined tail calls (ftype 4); the large-static-data warning on every backend. Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Discovered:** 2026-09-22, while verifying agnodrm's `#deprecated` adoption on every target.
 **Severity:** Low — no wrong code; the build and the binary are correct. But a consumer whose only
 lane is aarch64 never learns that an API it calls is going away.

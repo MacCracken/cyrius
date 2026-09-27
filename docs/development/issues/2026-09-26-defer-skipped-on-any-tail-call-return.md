@@ -2,6 +2,7 @@
 
 **Status:** 🟡 **OPEN** — filed by agnostic while designing its 0.1.4 store lock. Consumer-side
 workaround in place (agnostic uses no `defer`); the compiler defect is untouched.
+**Placement:** **6.6.7 bite 2** — defer and secret run on every return path: tail-call divert, whole return-convention save (EDEFER_SAVE/RESTORE), inline exclusion, CVE-46. Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Related:** [`2026-09-22-agnodrm-defer-skipped-on-value-form-result-return.md`](2026-09-22-agnodrm-defer-skipped-on-value-form-result-return.md).
 That issue attributes the skip to value-form pair returns and states that a `defer` "runs when its fn
 returns a single value". **The single-value case is only safe when the return expression is not a

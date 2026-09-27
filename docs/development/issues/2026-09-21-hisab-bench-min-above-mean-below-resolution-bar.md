@@ -4,9 +4,7 @@
 answer hisab records (hisab's CSV keeps `avg`, which is unaffected: median +0.00% between the 6.6.4
 and 6.6.6 instruments on the same compiler), but the `min=`/`max=` fields the same rows print are
 now taken over a biased subset and the row says nothing about it.
-**Placement:** unpinned — 6.6.x line, the next `lib/bench.cyr` bite. Companion to the 6.6.5
-resolution-rule repair (`archived/2026-09-16-mabda-lib-bench-min-minus-mean-floor.md`), which this
-is the residue of.
+**Placement:** **6.6.9 bite 6** — lib/bench.cyr: min/max admitted by op count, remainder absorbed, min ≤ avg. Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Discovered:** 2026-09-21, hisab's benchmark suite under 6.6.6: `vec3_add: 16ns avg (min=39ns
 max=43ns)` — a minimum 2.4× the mean of the same sample.
 **Severity:** Medium — a printed statistic that cannot be what it says it is (a minimum above a

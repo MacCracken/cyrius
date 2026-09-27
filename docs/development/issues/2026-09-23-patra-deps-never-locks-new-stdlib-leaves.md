@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN**: reproduced 2026-09-23 with the installed 6.6.6, in a scratch project (below)
 and in patra's tree.
-**Placement:** unpinned — `cbt/deps.cyr`.
+**Placement:** **6.6.9 bite 9** — cyrius deps integrity: [build].modules honoured without [deps]; every vendored leaf locked (first lock written); --verify fails on unlocked files; capture failures are named instead of called tampering; TMPDIR honoured. Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Discovered:** 2026-09-23 during patra's 1.15.0 cut, which added `chrono` and `random` to
 `[deps] stdlib`. `cyrius deps` vendored both into `lib/`, left `cyrius.lock` at 29 of 31 entries, and
 `cyrius deps --verify` reported `29 verified, 0 failed`. `cyrius deps --relock` wrote all 31.

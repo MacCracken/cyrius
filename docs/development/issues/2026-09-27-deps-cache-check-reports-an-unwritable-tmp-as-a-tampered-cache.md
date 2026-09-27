@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — reproduced 2026-09-27 on 6.6.6 (the reproduction below, run verbatim), and read in
 source at HEAD `d5697d73`.
-**Placement:** unpinned — 6.x-line backlog (cli).
+**Placement:** **6.6.9 bite 9** — cyrius deps integrity: [build].modules honoured without [deps]; every vendored leaf locked (first lock written); --verify fails on unlocked files; capture failures are named instead of called tampering; TMPDIR honoured. Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Discovered:** 2026-09-27, aethersafha 0.16.27 development: every `cyrius build` / `test` / `deps` refused all
 ten deps as tampered for a few minutes, then passed again with nothing changed. The machine's `/tmp` is a
 tmpfs mounted `usrquota`, and the user was at quota; the cyrius LSP failed at the same moment with

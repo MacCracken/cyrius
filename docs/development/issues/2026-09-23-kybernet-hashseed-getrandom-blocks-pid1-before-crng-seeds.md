@@ -4,7 +4,7 @@
 (`~/.cyrius/lib/hashseed.cyr:61`) still calls `syscall(SYS_GETRANDOM, &_hm_seed_buf, 8, 0)` (`:68`),
 and flags 0 blocks until the CRNG is initialised. Re-measured the same day in kybernet 1.7.8's aarch64
 boot gate (numbers below).
-**Placement:** unpinned — 6.6.x-line backlog (never 7.x).
+**Placement:** **6.6.7 bite 8** — kybernet PID-1 stdlib and same-class unchecked allocs: non-blocking hash seed; checked fl_alloc mappings; bounded, checked file_read_whole; checked hashmap_fast and flags growth. Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Discovered:** 2026-09-22 during kybernet 1.7.2, when its aarch64 boot gate started booting with the
 device-tree RNG seed turned off.
 **Severity:** Medium: a silent stall of more than 2× in a boot path, with nothing the consumer can do

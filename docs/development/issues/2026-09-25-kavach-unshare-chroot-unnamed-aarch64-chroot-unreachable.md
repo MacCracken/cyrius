@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN** — stdlib surface gap plus one `ESYSXLAT` interaction; filed by kavach at its
 3.12.8 ABI repairs.
-**Placement:** unpinned — 6.6.x-line backlog.
+**Placement:** **6.6.8 bite 3** — Names and rows for aarch64-unreachable syscalls (unshare/chroot/pivot_root, capget/capset, process_vm_*, mknodat); stdlib sys_fcntl / fd_set_nonblocking / fd_restore_flags. Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Discovered:** 2026-09-25, reading kavach's aarch64 build against the 6.6.6 syscall tables, then
 measuring under `qemu-aarch64 -strace`.
 **Severity:** Medium. Nothing in the stdlib is wrong, but two first-party consumers need these calls

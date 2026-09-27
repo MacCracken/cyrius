@@ -2,6 +2,7 @@
 
 **Status:** 🟡 **OPEN**: agnos 1.57.9 ships these; `lib/syscalls_x86_64_agnos.cyr` has no name for #108 yet. agnos's `syscall ABI`
 gate is red for #106 / #107 / #108 until the peer lands (kernel 108 · abi-doc 108 · cyrius 105).
+**Placement:** **6.6.7 bite 4** — agnos 1.57.6–1.57.9 peer surface; the a4=r10 class (cycc zeroes r10 on short agnos syscalls); monotonic socket-recv deadline; loopback listen class (CVE-47). Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Filed:** 2026-09-26, by agnos. agnos minted the ABI; cyrius owns the peer. Normative text: agnos
 `docs/development/agnos-userland-abi.md` rows 1, 5, 44, 108.
 **Supersedes part of:** `2026-09-25-agnos-read-blocks-on-pipes-and-channels-and-the-44-kick.md` — the "#44 kick" it describes was

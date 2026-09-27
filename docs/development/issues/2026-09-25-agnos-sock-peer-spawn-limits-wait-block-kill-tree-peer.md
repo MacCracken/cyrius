@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN**: the agnos kernel ships these in 1.57.7; `lib/syscalls_x86_64_agnos.cyr` has no names for
 them yet. **Two new syscall NUMBERS** (`#106`, `#107`), so agnos's `syscall ABI (kernel/doc/cyrius agree)` gate is
 red by design until this peer lands (the 1.56.55 precedent): it names `#106` and `#107` as absent from cyrius.
-**Placement:** unpinned — 6.6.x-line backlog.
+**Placement:** **6.6.7 bite 4** — agnos 1.57.6–1.57.9 peer surface; the a4=r10 class (cycc zeroes r10 on short agnos syscalls); monotonic socket-recv deadline; loopback listen class (CVE-47). Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Filed:** 2026-09-25, by agnos. agnos minted the ABI; cyrius owns the peer.
 **Severity:** Medium. Nothing breaks for an existing caller except where noted under "consumer code"; the features
 daimon asked agnos for (a loopback-only server, the peer address, per-agent caps, stop/pause/resume, a blocking wait)

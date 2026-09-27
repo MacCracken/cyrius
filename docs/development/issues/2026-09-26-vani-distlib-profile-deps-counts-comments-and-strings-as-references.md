@@ -4,7 +4,7 @@
 below, run verbatim), and in source at HEAD `d5697d73`: `_distlib_bundle_refs`
 (`cbt/commands.cyr:3718`) scans the bundle as raw text and skips neither `#` comments nor string
 literals.
-**Placement:** unpinned — 6.x-line backlog (tooling; never 7.x).
+**Placement:** **6.6.9 bite 8** — distlib: the profile prune ignores comments and strings; the verify unit splices named-dep modules and fails loudly; cbt _file_size works on PE. Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Discovered:** 2026-09-26 during vani's busy-PCM open fix, when comment text added to
 `src/alsa.cyr` — vani's whole `core` profile — grew `dist/vani-core.deps` from 3 leaves to 8.
 **Severity:** Low — it over-reports, the safe direction: nothing fails to build. But a profile's

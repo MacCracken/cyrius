@@ -2,7 +2,7 @@
 
 **Status:** 🟡 **OPEN**: read 2026-09-23 in this repo's `lib/io.cyr:383-395` (cyrius 6.6.6). Found by
 reading source; **not run on Windows**.
-**Placement:** unpinned — `lib/io.cyr`, and a PE reroute if the flush is wired.
+**Placement:** **6.6.7 bite 3** — PE fsync/fdatasync really flush: Linux 74/75 route to FlushFileBuffers, and MoveFileExW gains MOVEFILE_WRITE_THROUGH. Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Discovered:** 2026-09-23 during patra's 1.15.0 cut, which routes patra's fdatasync through
 `xfsync` on the targets with no `sys_fdatasync` (agnos, Windows).
 **Severity:** High for a consumer that syncs for durability on Windows. The call never fails, so the

@@ -1,7 +1,7 @@
 # `cyrius api-surface` records a derived `<S>_to_json` at arity 1 (it takes `(ptr, sb)`) and never lists `<S>_from_json_str` — OPEN
 
 **Status:** 🟡 **OPEN** — tooling defect; it makes a derive migration read as a BREAKING API change.
-**Placement:** unpinned — 6.6.x-line backlog.
+**Placement:** **6.6.8 bite 10** — Tool scanners agree with the compiler: api-surface mirrors derive and sees `pub fn` and multi-line signatures; cyrlint decides ownership by identity and anchors the is_err include; cyaudit reads column-0 includes, whole files and `..` components. Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Discovered:** 2026-09-22, while evaluating a `#derive(Serialize)` migration of agnodrm's
 hand-rolled serializers.
 **Severity:** Low — a misleading snapshot. Consumers whose CI gates on `api-surface` see a false

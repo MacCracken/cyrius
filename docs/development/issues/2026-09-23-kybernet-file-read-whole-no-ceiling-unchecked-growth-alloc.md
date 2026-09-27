@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN**: verified 2026-09-23 against the installed 6.6.6 snapshot
 (`~/.cyrius/lib/io.cyr:573`): `nb = alloc(ncap + 1)` is followed by `memcpy(nb, buf, total)` with no
 check, and the read loop ends only at EOF or a read error.
-**Placement:** unpinned — 6.6.x-line backlog (never 7.x).
+**Placement:** **6.6.7 bite 8** — kybernet PID-1 stdlib and same-class unchecked allocs: non-blocking hash seed; checked fl_alloc mappings; bounded, checked file_read_whole; checked hashmap_fast and flags growth. Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Discovered:** 2026-09-23 during kybernet 1.7.8, which set out to adopt `file_read_whole` to retire
 kybernet's fixed 16 KiB `config.json` read.
 **Severity:** Medium: a crash with a known workaround. In kybernet the caller is PID 1, where a crash

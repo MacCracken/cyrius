@@ -3,7 +3,7 @@
 **Status:** 🟡 **OPEN** — silent wrong output on every version tested (5.10.14 → 6.6.6). agnostik
 has worked around it since 5.10.14 but recorded it only in its own repo, so it was never filed
 here until now.
-**Placement:** unpinned — 6.6.x-line backlog (derive codegen; per the placement rule, not 7.x).
+**Placement:** **6.6.7 bite 5** — #derive walks the struct/enum body token by token (fixes field-table corruption and out-of-bounds accessor writes). Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Discovered:** 2026-05-10 during agnostik v1.1.1 (sub-byte field widths). Re-verified 2026-09-22
 on cycc 6.6.0, 6.6.2 and 6.6.6 during agnostik's 1.6.4 issue review.
 **Severity:** Critical, per this directory's guide ("silent data corruption"). There is no warning.

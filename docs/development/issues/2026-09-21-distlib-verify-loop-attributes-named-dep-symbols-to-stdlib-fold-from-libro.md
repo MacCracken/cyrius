@@ -1,7 +1,7 @@
 # `cyrius distlib`'s verify loop attributes a named dep's symbols to the stdlib fold, and records the fold's leaves as the consumer's — OPEN
 
 **Status:** 🟡 **OPEN** — over-reports one leaf on libro; the sidecar still resolves, so no consumer is blocked.
-**Placement:** unpinned — 6.x-line backlog (distlib sidecar family; see the 2026-08-07 and 2026-09-11 archived filings).
+**Placement:** **6.6.9 bite 8** — distlib: the profile prune ignores comments and strings; the verify unit splices named-dep modules and fails loudly; cbt _file_size works on PE. Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Discovered:** 2026-09-21 during libro's 2.10.2 bump to cyrius 6.6.6 / sigil 3.12.18 / patra 1.14.3
 **Severity:** Low
 **Affects:** the mechanism since 6.5.37 (the compile-verified sidecar); first visible at 6.6.6, whose sigil 3.12.18 fold is the first monolith to need a leaf the thin surface does not. libro's sidecar at 6.6.2 (sigil 3.12.17 fold) was clean for the same source.
