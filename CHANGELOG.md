@@ -62,6 +62,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   sees a PE build that used to be refused now link, with those paths failing cleanly at run time.
   `docs/api-surface.snapshot` +9. Pinned by `tests/tcyr/crossos/pe_decline_peers.tcyr` (runs on
   cass in the cross-OS leg; without the peers it does not compile for PE — 9 undefined, measured).
+- **`lib/tls_native.cyr` compiled with undefined functions — trap stubs — on every target.** Its
+  hand-written include list stops at the leaves the folded sigil needed years ago; sigil's sidecar
+  also lists `sys`, `chrono` and `random`, and a bundle strips its own includes. So
+  `include "lib/tls_native.cyr"` alone reported `sys_uname`, `random_bytes`, `clock_epoch_secs`,
+  `clock_now_ms` and `sleep_ms` as undefined on x86-Linux and Mach-O (three of them on PE, two on
+  agnos) — every one a `ud2`/SIGILL at its first call, e.g. sigil's uname path and its CSPRNG
+  fallback. It now includes `lib/sys.cyr`, `lib/chrono.cyr` and `lib/random.cyr` before sigil and
+  compiles alone with no undefined function on x86-Linux, aarch64, agnos, PE, x86 Mach-O and arm64
+  Mach-O. A TLS consumer sees those calls work; until sigil 3.13.x is folded it also sees the
+  harmless `duplicate fn 'uname_release'` warning that every sys+sigil program already printed.
+  `stdlib_modules_self_sufficient.sh` adds tls_native to its per-target axis and raises its
+  ratchet floor 26 → 27 (mutation: the old include list is red on all four targets).
 
 ## [6.6.6] — 2026-09-20
 
