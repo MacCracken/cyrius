@@ -151,14 +151,14 @@ fn _cc5_contamination_gate(): i64 {
 # that crashed, timed out or refused the file (rc 1, `file too large to lint`) produced no
 # markers and scored PASS. A count is evidence only from a run that exited 0 AND printed its
 # "<n> warnings" trailer; the verdict is lib/audit_walk.cyr's, so the gates and the walkers
-# cannot disagree about what "finished" means. CHANGELOG [6.6.7]
+# cannot disagree about what "finished" means. The count and the verdict come from ONE run
+# (stdout + stderr merged, the trailer still its last line): verifying one run and counting
+# a second let a second run that died before its markers pass the "absent" rows.
+# CHANGELOG [6.6.7]
 fn _cyrlint_count_marker(file_path, marker, buf, buflen): i64 {
-    var args = vec_new();
-    vec_push(args, CYRLINT_PATH);
-    vec_push(args, file_path);
     var st[16];
-    var sn = exec_capture_status(args, buf, buflen, &st);
-    var bad = _aw_run_verdict(str_from(file_path), &st, _aw_parse_lint_warnings(buf, sn), 0);
+    var n = _exec_with_arg_capture_both_status(CYRLINT_PATH, file_path, buf, buflen, &st);
+    var bad = _aw_run_verdict(str_from(file_path), &st, _aw_parse_lint_warnings(buf, n), 0);
     if (bad != 0) {
         _p("    ");
         _p(ANSI_RED);
@@ -169,7 +169,6 @@ fn _cyrlint_count_marker(file_path, marker, buf, buflen): i64 {
         println("");
         return 0 - 1;
     }
-    var n = _exec_with_arg_capture_both(CYRLINT_PATH, file_path, buf, buflen);
     return _count_substr_buf(buf, n, marker);
 }
 

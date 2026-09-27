@@ -72,6 +72,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   **What a consumer sees:** under an inherited `SIG_IGN` these verbs now say "unknown" instead of
   a made-up exit code. Pinned by SIG_IGN rows in `tests/tcyr/crossos/exec_capture_status.tcyr`
   (untimed and timed) and the new `tests/tcyr/platform/regression_wait_unobserved.tcyr`.
+- **The check driver's cyrlint fixture gates verified one cyrlint run and counted markers in a
+  second, unchecked one** (bite 9 review). `_cyrlint_count_marker` passed the run through the
+  walker's verdict, then re-ran cyrlint through the status-discarding
+  `regression_exec_with_arg_capture_both` and counted there — a second run that crashed or was
+  cut at the deadline before its markers scored 0 and the "marker ABSENT" rows passed (and every
+  fixture ran cyrlint twice). It now counts from the run it verified, through the new
+  `regression_exec_with_arg_capture_both_status` (stdout + stderr merged; the trailer is still
+  the last line). `audit_walk_fails_closed.sh` grows to 47 checks: B6 (a cyrdoc that exits 0
+  with no summary line), D5 (a cyrlint whose first run of a negative fixture reports a false
+  positive and whose later runs die), E2 (`cyrius audit` with a crashing cyrdoc names the file
+  under docs and never prints `ok: docs complete`), and three more mutations in its ledger, each
+  RED.
+
 ### Changed
 
 - **`scripts/lib/audit-walk.sh` deleted** (bite 9). The bash twin of `lib/audit_walk.cyr` had

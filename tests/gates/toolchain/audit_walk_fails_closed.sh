@@ -28,16 +28,20 @@
 #      deadline · refusal (rc 1, no trailer) · missing tool · rc≠0 with a trailer · rc 0 with
 #      no trailer. Every failure: ERRORS=1, TOTAL=0, the note names the file.
 #   B  walker × fake cyrdoc: control (exit = the undocumented count) · crash · hang · refusal
-#      · missing tool · an exit status that disagrees with the trailer.
+#      · missing tool · an exit status that disagrees with the trailer · rc 0 with no trailer.
 #   C  walker × THIS tree's real cyrlint/cyrdoc: a >1028 KB non-bundle file and an EMPTY .cyr
 #      are both ERRORS (cyrlint's own rc-1 refusals); a trailing-whitespace file still counts
 #      1 warning and a clean one 0 (over-correction guard); cyrdoc counts an undocumented fn.
 #   D  the check DRIVER's `lint` suite in a scratch root whose build/cyrlint is a fake: every
 #      one of its three rows goes RED, for a killed-after-"0 warnings" fake and a refusing
 #      fake; the init-order row goes RED for a fake that answers only its positive fixture
-#      and dies on the three negative ones; the same root with the real cyrlint is GREEN.
+#      and dies on the three negative ones; the same root with the real cyrlint is GREEN; and
+#      the init-order row goes RED for a fake whose EVERY OTHER run reports a false positive
+#      and whose runs in between die — the count must come from the run that was verified.
 #   E  `cyrius audit` over the rekha shape: rc≠0, the file named, no "ok: lint clean"; a
-#      clean project still reads "ok: lint clean" / "ok: docs complete" with rc 0.
+#      clean project still reads "ok: lint clean" / "ok: docs complete" with rc 0; the same
+#      clean project with a crashing cyrdoc: rc≠0, the file named under docs, no
+#      "ok: docs complete".
 #   F  CI's lint step runs that suite (`cyrius_check lint`) and parses no trailer itself.
 #
 # MUTATIONS (each RED; run by hand when this gate was written)
@@ -48,6 +52,9 @@
 #   m5 `cyrius audit` ignores AW_LINT_ERRORS                                         E1
 #   m6 exec_capture_status stores "exited 0" whatever happened                       A,B
 #   m7 ci.yml's lint step restored to its inline `tail -1 … || echo 0` loop             F
+#   m8 _aw_parse_undoc returns 0, not -1, when there is no summary line                  B6
+#   m9 `cyrius audit` ignores AW_DOC_ERRORS (no FAIL block, "ok: docs complete" on it)   E2
+#   m10 _cyrlint_count_marker verifies one run and counts a second, unchecked one        D5
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -175,6 +182,10 @@ walk doc "$T/does_not_exist" "$D" 0
 check "B4 a MISSING cyrdoc is an error" "TOTAL=0 ERRORS=1" "$(counts)"
 walk doc "$T/d_lie" "$D" 0
 check "B5 an exit that disagrees with the trailer is an error" "TOTAL=0 ERRORS=1" "$(counts)"
+fake d_silent 'exit 0'
+walk doc "$T/d_silent" "$D" 0
+check "B6 rc 0 with no summary line (a wrong binary at the cyrdoc path) is an error" "TOTAL=0 ERRORS=1" "$(counts)"
+check "   …named" yes "$(named "$D/x.cyr" "no summary line")"
 
 # ── C — the REAL tools, built from this tree ─────────────────────────────────────────
 build_one "$ROOT/programs/cyrlint.cyr" "$T/cyrlint"
@@ -236,6 +247,23 @@ fake k_sel 'case "$1" in
 esac'
 drive "$T/k_sel"
 check "D3 a cyrlint that dies on every file but the positive fixture: '${ROW2%%(*}' is RED" yes "$(row FAIL "$ROW2")"
+# The string-literal NEGATIVE fixture: its FIRST run reports the marker (a false positive,
+# finished cleanly — rc 0 and its trailer); every later run dies before printing anything.
+# Every other file is answered correctly (the positive fixture's 3 markers; "0 warnings"
+# elsewhere — lib/math.cyr and lib/string.cyr are also walked by the `lint (stdlib)` row, so
+# a per-run behaviour on them would be decided by row order, not by the code under test).
+# Run once, the false positive is counted and the row is RED. Verified once and COUNTED
+# FROM A SECOND RUN, it passes verification on its first run and is counted on its second —
+# 0 markers, and the row passed.
+fake k_flaky 'case "$1" in
+*forward_refs.cyr) echo "=== cyrlint: $1 ==="; for i in 1 2 3; do echo "  warn line $i: global var init refs x" >&2; done; echo "3 warnings" ;;
+*string_literal_safe.cyr)
+   if [ ! -e "'"$T"'/flaky.once" ]; then : > "'"$T"'/flaky.once"; echo "  warn line 1: global var init refs x" >&2; echo "1 warnings"; exit 0; fi
+   kill -KILL $$ ;;
+*) echo "=== cyrlint: $1 ==="; echo "0 warnings" ;;
+esac'
+drive "$T/k_flaky"
+check "D5 the marker count comes from the VERIFIED run: '${ROW2%%(*}' is RED" yes "$(row FAIL "$ROW2")"
 drive "$T/cyrlint"
 check "D4 positive control: the real cyrlint, same root — GREEN" "0" "$DRC"
 check "   …all three rows PASS" "yes yes yes" "$(row PASS "$ROW1") $(row PASS "$ROW2") $(row PASS "$ROW3")"
@@ -260,6 +288,18 @@ audit "$P"
 check "E1 rekha shape: cyrius audit exits non-zero" yes "$([ "$ARC" -ne 0 ] && [ "$ARC" -ne 124 ] && echo yes || echo no)"
 check "   …and never says 'ok: lint clean'" no "$(grep -qF 'ok: lint clean' "$T/a.out" && echo yes || echo no)"
 check "   …and names the file it did not lint" yes "$(grep -qF 'src/face_data.cyr: ' "$T/a.out" && echo yes || echo no)"
+rm -f "$P/src/face_data.cyr"
+cp "$B/cyrdoc" "$T/cyrdoc.real"
+printf '#!/bin/sh
+echo "3 documented, 0 undocumented (3 total)"
+kill -SEGV $$
+' > "$B/cyrdoc"; chmod +x "$B/cyrdoc"
+audit "$P"
+cp "$T/cyrdoc.real" "$B/cyrdoc"
+check "E2 a crashing cyrdoc: cyrius audit exits non-zero" yes "$([ "$ARC" -ne 0 ] && [ "$ARC" -ne 124 ] && echo yes || echo no)"
+check "   …and never says 'ok: docs complete'" no "$(grep -qF 'ok: docs complete' "$T/a.out" && echo yes || echo no)"
+check "   …and names the file under the docs section" yes "$(awk '/── docs ──/ { on = 1 } /── tests ──/ { on = 0 } on' "$T/a.out" | grep -qF 'src/main.cyr: ' && echo yes || echo no)"
+check "   …while lint of the same project is still clean" yes "$(grep -qF 'ok: lint clean' "$T/a.out" && echo yes || echo no)"
 
 # ── F — CI's lint step is the driver's suite, not an inline re-implementation ─────────
 # Read the step's own `run:` block (from its `- name:` line to the next one).
