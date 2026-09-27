@@ -269,14 +269,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   emitters (bite 2).
 
 - **Stdlib fold — nine libs refolded at their releases**, each bundle copied byte-identical from
-  `git show <ref>:dist/<name>.cyr` (never from a worktree `dist/`, never patched in the fold): sandhi,
-  sakshi, patra, niyama and bayan from their tags; vani, mabda, yukti and sigil from the release
+  `git show <ref>:dist/<name>.cyr` (never from a worktree `dist/`, never patched in the fold): sakshi,
+  patra, niyama and bayan from their tags; sandhi, vani, mabda, yukti and sigil from the release
   commit named in each bullet, which their tags must name (the integrator checks tag == commit).
   Every one pins the released cyrius 6.6.6. `docs/api-surface.snapshot` moves only for sigil
   (−1 +15, below); the in-tree tests and gates that include the folds pass unchanged.
-  - **sandhi 1.9.17 → 1.10.0** — a toolchain move (pin 6.6.2 → 6.6.6). The only code difference is
-    `SANDHI_VERSION`, so the default request header now reads `User-Agent: sandhi/1.10.0`; no
-    surface change (826 fns, 196 top-level vars, identical).
+  - **sandhi 1.9.17 → 1.10.1** (release commit `f93d035`) — 1.10.0 was a toolchain move (pin 6.6.2 →
+    6.6.6) with no code change. **1.10.1 was cut during this fold** because folding sigil 3.13.3 and
+    yukti 2.3.13 stopped them supplying names sandhi had been borrowing: `_SANDHI_EAGAIN` is now per
+    target (35 on Darwin — a macOS read deadline had been reported as a broken connection, and an
+    idle stop-enabled listener backed off until it quit), the accept classifier's errno table carries
+    the four Darwin values, and the IPv6 open paths call `sys_socket` / `sys_connect` with a
+    `CYRIUS_TARGET_WIN` decline arm (the client falls back to IPv4 on Windows, as on AGNOS). The
+    default request header reads `User-Agent: sandhi/1.10.1`. No public surface change.
   - **sakshi 2.5.2 → 2.5.5** — ⚠ **absolute timestamps jump once.** 2.5.4 anchors the timeline to
     the reference clock at calibration (MONOTONIC_RAW on Linux, QueryPerformanceCounter on Windows),
     so timestamps from different processes are now comparable where they could differ by seconds,
@@ -346,9 +351,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     `SYS_PPOLL` and `SYS_NEWFSTATAT` (with `SYS_STATFS`, which the peer does have) under
     `CYRIUS_ARCH_X86`, which a PE build is, and the Windows peer defines none of those seven — so a
     PE program that named them compiled only with yukti in scope.
-    sandhi ≤ 1.10.0 is one (its IPv6 open paths spell `SYS_SOCKET` / `SYS_CONNECT`): with 2.3.13 a
-    PE build of sandhi, and of yantra over it, is 4 `undefined variable` errors until sandhi
-    1.10.1 is folded (pinned by `pe_no_raw_syscall_bytes.sh` axis 6, below). Spell the
+    sandhi ≤ 1.10.0 was one (its IPv6 open paths spelled `SYS_SOCKET` / `SYS_CONNECT`), which is
+    why sandhi 1.10.1 is folded in the same release (pinned by `pe_no_raw_syscall_bytes.sh` axis 6,
+    below). Spell the
     `sys_socket` / `sys_connect` / … wrappers instead; their PE peers decline with -38. No public fn
     removed. Pinned by the new
     `tests/tcyr/crossos/yukti_statfs_and_stdlib_constants.tcyr`: against 2.3.11 it fails on pi
@@ -404,10 +409,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `_SANDHI_EAGAIN = 11`, so on macOS (EAGAIN 35) a read deadline came back as a broken connection
   (`recv_all` = -1, not the timeout sentinel) and an idle listener's accept classified BACKOFF, so
   a stop-enabled server with no traffic shut itself down. Measured on ecb and ach against 1.10.0:
-  5 of 10 checks fail; pi, qemu-aarch64 and x86_64 pass. Both go green only with sandhi 1.10.1
-  (platform EAGAIN and Darwin accept errnos; a `CYRIUS_TARGET_WIN` decline arm on the IPv6 open
-  paths) — measured with that patch built into a scratch bundle: 10/10 on ecb, ach, pi, x86_64 and
-  qemu-aarch64, and the PE build compiles and runs under wine.
+  5 of 10 checks fail; pi, qemu-aarch64 and x86_64 pass. Both are green with the folded sandhi
+  1.10.1 (platform EAGAIN and Darwin accept errnos; a `CYRIUS_TARGET_WIN` decline arm on the IPv6
+  open paths).
 
 - **`cyrius fuzz --poison` says what it covers.** (bite 8, the overlap with proposal P6.) It
   printed `poison mode: redzones + fill + quarantine-on-free ACTIVE`, which reads as
