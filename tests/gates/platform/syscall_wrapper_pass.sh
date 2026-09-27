@@ -225,7 +225,7 @@ done
 # The rule cuts both ways and the gate must too: on agnos an unknown `num` falls THROUGH
 # the dispatch chain and the caller reads the fall-through value as DATA, so minting early
 # is worse than not minting; but leaving a shipped arm unminted strands the feature.
-echo "axis 5 — agnos numbers track their kernel arms (#97 minted, #96 not):"
+echo "axis 5 — agnos numbers track their kernel arms, and a4 is passed where the arm reads it:"
 # #97 chan_op — kernel arm shipped in agnos 1.56.40, so the constant and its five op
 # wrappers must be present.
 check "SYS_CHAN_OP = 97 minted" 1 \
@@ -348,6 +348,31 @@ for w in sys_net_icmp_tx sys_net_icmp_rx sys_net_icmp_replies_sent sys_net_icmp_
     n_cnt=$(( n_cnt + $(grep -c "^fn ${w}(): i64" lib/syscalls_x86_64_agnos.cyr || true) ))
 done
 check "all four sys_net_icmp_* counter readers present (net_config 4..7)" 4 "$n_cnt"
+
+# v6.6.7 — agnos 1.57.8/1.57.9: read#5 and write#1 read a4 = r10 as O_NONBLOCK (0 = block).
+# The kernel reads it UNCONDITIONALLY, so a wrapper passing three arguments delivered a stale
+# r10 and blocked or not by call history. The wrappers now pass it explicitly (the compiler
+# also zeroes r10 at every short agnos site — tests/gates/platform/agnos_syscall_a4_defined.sh
+# — so these rows pin the documented intent, not the only line of defence).
+aw() { awk "/^fn $1\\(/,/^}/" lib/syscalls_x86_64_agnos.cyr | sed 's/#.*//'; }
+check "sys_read's file arm passes a4 = 0 (blocking)" 1 \
+    "$(aw sys_read | grep -c 'syscall(SYS_READ, fd, buf, count, 0)' || true)"
+check "sys_write's file arm passes a4 = 0 (blocking)" 1 \
+    "$(aw sys_write | grep -c 'syscall(SYS_WRITE, fd, buf, count, 0)' || true)"
+check "sys_read_nb passes a4 = 1 (O_NONBLOCK)" 1 \
+    "$(aw sys_read_nb | grep -c 'syscall(SYS_READ, fd, buf, count, 1)' || true)"
+check "sys_write_nb passes a4 = 1 (O_NONBLOCK)" 1 \
+    "$(aw sys_write_nb | grep -c 'syscall(SYS_WRITE, fd, buf, count, 1)' || true)"
+check "sys_snd_write passes a4 = 0 (#66 bit 0 = NB)" 1 \
+    "$(aw sys_snd_write | grep -c 'syscall(SYS_SND_WRITE, slot, buf, frames, 0)' || true)"
+check "sys_execwait passes env (0, 0) (#37 a3/a4)" 1 \
+    "$(aw sys_execwait | grep -c 'syscall(SYS_EXECWAIT, path, pathlen, 0, 0)' || true)"
+# #108 sched_yield_to — agnos 1.57.9 minted it; agnos's own ABI gate
+# (scripts/check/syscall-abi-check.sh) compares the NAME too, so the spelling is load-bearing.
+check "SYS_SCHED_YIELD_TO = 108 present (agnos 1.57.9)" 1 \
+    "$(grep -cE 'SYS_SCHED_YIELD_TO[[:space:]]*=[[:space:]]*108;' lib/syscalls_x86_64_agnos.cyr || true)"
+check "sys_sched_yield_to(pid) wrapper present" 1 \
+    "$(grep -c '^fn sys_sched_yield_to(pid): i64' lib/syscalls_x86_64_agnos.cyr || true)"
 
 
 # ── AXIS 6: cross-target. This is the axis a host-only test cannot replace.

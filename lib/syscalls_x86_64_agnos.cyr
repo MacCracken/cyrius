@@ -53,11 +53,11 @@
 # ================================================================
 enum SysNrAgnos {
     SYS_EXIT = 0;                  # exit(code) — no return
-    SYS_WRITE = 1;                 # write(fd, buf, len) → bytes / -1
+    SYS_WRITE = 1;                 # write(fd, buf, len, nb=a4) → bytes / 0 (NB, full pipe) / -1; a4==0 BLOCKS on a full pipe (1.57.9)
     SYS_GETPID = 2;                # getpid() → pid
     SYS_SPAWN = 3;                 # spawn(elf_addr, elf_size) → pid / -1 (in-memory ELF)
     SYS_WAITPID = 4;               # waitpid(pid) → exit_code / -1
-    SYS_READ = 5;                  # read(fd, buf, len) → bytes / -1; fd 0 = blocking kbd stdin (1.41.1)
+    SYS_READ = 5;                  # read(fd, buf, len, nb=a4) → bytes / 0 EOF / -1 / -2 WOULD_BLOCK (NB) / -3 partial kbd line; a4==0 BLOCKS (pipe/chan 1.57.8, kbd 1.57.7)
     SYS_CLOSE = 6;                 # close(fd) → 0 / -1
     SYS_OPEN = 7;                  # open(name, namelen[, flags]) → fd / -1; flags (a3) land 1.41.2
     SYS_DUP = 8;                   # dup(fd) → fd (stub: returns fd)
@@ -66,7 +66,7 @@ enum SysNrAgnos {
     SYS_MOUNT = 11;                # mount() → 0 (stub)
     SYS_SYNC = 12;                 # sync() → 0
     SYS_REBOOT = 13;               # reboot(magic1,magic2,cmd,arg) → power_sys (1.55.25+)
-    SYS_PAUSE = 14;                # pause() → 0 (one hlt)
+    SYS_PAUSE = 14;                # pause() → 0; yields to a READY process (NO hlt) else parks one interrupt — NOT a fixed duration
     SYS_GETUID = 15;               # getuid() → 0 (stub, always root)
     SYS_KILL = 16;                 # kill(pid, sig) → 0 / -1
     SYS_SIGPROCMASK = 17;          # sigprocmask(how, set_ptr, oldset_ptr) → 0 / -1
@@ -77,7 +77,7 @@ enum SysNrAgnos {
     SYS_TIMERFD_CREATE = 22;       # timerfd_create() → fd / -1
     SYS_TIMERFD_SETTIME = 23;      # timerfd_settime(fd, flags, val_ptr) → 0 / -1
     SYS_UMOUNT = 24;               # umount() → 0 (stub)
-    SYS_PIPE = 25;                 # pipe(fds_ptr) → 0 / -1 (writes 2×u64 at fds_ptr)
+    SYS_PIPE = 25;                 # pipe(fds_ptr) → 0 / -1 (writes 2×u64 at fds_ptr); ring 4080 B, PIPE_BUF 512
     SYS_WRITE_BOOT_CHECKPOINT = 26;# write_boot_checkpoint(byte) → 0 (diagnostic)
     SYS_MMAP = 27;                 # mmap(length) → base_vaddr / 0; anonymous, zero-filled, 2 MB-granular
     SYS_MUNMAP = 28;               # munmap(addr, length) → 0 / -1
@@ -369,7 +369,9 @@ fn sys_chan_send(fd, buf, len): i64 {
 }
 
 # Receive one record. Returns its length, or -CH_E_WOULDBLOCK / -CH_E_PEERGONE, both
-# of which are RESULTS to handle rather than errors to abort on.
+# of which are RESULTS to handle rather than errors to abort on. NON-blocking; to WAIT for a
+# record, sys_read the endpoint instead — since agnos 1.57.8 that blocks (a4 = 0) until data
+# arrives or the peer closes (→ 0).
 fn sys_chan_recv(fd, buf, cap): i64 {
     return syscall(SYS_CHAN_OP, CH_RECV, fd, buf, cap);
 }
@@ -511,8 +513,9 @@ enum SysNrAgnosProc {
     SYS_BLIT = 39;          # blit(src, w, h, dstxy) → 0/-1; copy a w×h 32bpp block to the framebuffer (a4=r10)
     SYS_KBSCAN = 42;        # kbscan(buf, max) → count/-1; NON-blocking raw-scancode drain for ring-3
     SYS_SPAWN_PATH = 43;    # spawn_path(path, len) → pid/-1; NON-blocking from-disk spawn (returns now)
-    SYS_SCHED_YIELD = 44;   # sched_yield() → 0; cooperative yield (in the SYSCALL entry stub)
+    SYS_SCHED_YIELD = 44;   # sched_yield() → 0; a QUIET local yield, no cross-CPU kick (1.57.9; entry stub)
     SYS_EXEC_REDIRECT = 62; # exec_redirect(src_fd, dst_fd) → 0/-1; arm a one-shot fd redirect before exec
+    SYS_SCHED_YIELD_TO = 108; # sched_yield_to(pid) → 0 / -1; DIRECTED yield + one kick to pid's parked CPU (1.57.9)
 }
 
 # ================================================================
@@ -652,27 +655,59 @@ var AT_REMOVEDIR = 512;          # 0x200
 # bytes written, or -1. Same shape as Linux → portable. v6.2.3: a TAGGED
 # socket fd routes to sock_send(#48) over its conn_id (the TLS/HTTP write
 # path is byte-identical across targets — it just hands us a tagged fd).
+# ⭐ a4 = 0 IS PASSED EXPLICITLY (agnos 1.57.9): on a pipe a full ring then BLOCKS until a
+# reader makes room and the call returns `count` (a ≤ AGNOS_PIPE_BUF write lands whole); with
+# no reader left it returns the partial count, or -1 — agnos has no SIGPIPE. A 3-arg call
+# used to hand the kernel whatever r10 held, so the same write blocked or returned 0 by call
+# history. sys_write_nb is the O_NONBLOCK form. CHANGELOG [6.6.7]
 fn sys_write(fd, buf, count): i64 {
     if (_agnos_is_sock_fd(fd) == 1) {
         var c = _agnos_fd_conn(fd);
         if (c < 0) { return 0 - 1; }
         return syscall(SYS_SOCK_SEND, c, buf, count);
     }
-    return syscall(SYS_WRITE, fd, buf, count);
+    return syscall(SYS_WRITE, fd, buf, count, 0);
 }
 
-# Read up to `count` bytes from `fd` into `buf`. fd 0 = blocking
-# keyboard stdin (1.41.1). Returns bytes read, or -1. v6.2.3: a TAGGED
-# socket fd routes to the blocking sock_recv poll (#49 is non-blocking;
-# _agnos_sock_recv_block translates WOULD_BLOCK/EOF to the Linux
-# blocking-read sense callers expect).
+# O_NONBLOCK write (a4 = 1, agnos 1.57.9): what fits, 0 when nothing does — a write of
+# ≤ AGNOS_PIPE_BUF bytes that does not fit WHOLE also returns 0 — and -1 with no reader.
+# ⚠ 0 is NOT an error here and NOT POSIX's EAGAIN: retry later. Untagged fds only — a tagged
+# socket fd returns -1 (sock_send#48 has no non-blocking form).
+fn sys_write_nb(fd, buf, count): i64 {
+    if (_agnos_is_sock_fd(fd) == 1) { return 0 - 1; }
+    return syscall(SYS_WRITE, fd, buf, count, 1);
+}
+
+# agnos's pipe atomicity bound (ABI row 1): a write of ≤ 512 bytes lands whole or not at all,
+# never interleaved with another writer's. POSIX's _POSIX_PIPE_BUF, NOT Linux's 4096 — the
+# ring is 4080 bytes.
+var AGNOS_PIPE_BUF = 512;
+
+# Read up to `count` bytes from `fd` into `buf`. Returns bytes read, 0 at EOF, or -1.
+# v6.2.3: a TAGGED socket fd routes to the blocking sock_recv poll (#49 is non-blocking;
+# _agnos_sock_recv_block translates it to the Linux blocking-read sense callers expect).
+# ⭐ a4 = 0 IS PASSED EXPLICITLY, and that is what makes this a BLOCKING read: fd 0 (the
+# keyboard) waits for a whole line (1.57.7), and an empty pipe or channel endpoint with a live
+# writer/peer waits for data or EOF (1.57.8). The kernel reads a4 = r10 unconditionally; a
+# 3-arg call used to deliver the user CR3 (→ -2, non-blocking) or the last argument of the
+# latest 7+-arg call (→ 0, blocking), so whether this blocked depended on call history.
+# ⚠ On a kernel older than 1.57.8 an empty pipe/channel still answers -2 (WOULD_BLOCK) —
+# a reader must treat -2 as "nothing yet", never as EOF or a fatal error. CHANGELOG [6.6.7]
 fn sys_read(fd, buf, count): i64 {
     if (_agnos_is_sock_fd(fd) == 1) {
         var c = _agnos_fd_conn(fd);
         if (c < 0) { return 0 - 1; }
         return _agnos_sock_recv_block(c, buf, count);
     }
-    return syscall(SYS_READ, fd, buf, count);
+    return syscall(SYS_READ, fd, buf, count, 0);
+}
+
+# O_NONBLOCK read (a4 = 1): bytes, 0 (EOF), -2 (WOULD_BLOCK — nothing yet, the writer is
+# still open), -3 (fd 0: a partial keyboard line is pending), or -1. Untagged fds only — a
+# tagged socket fd returns sock_recv#49's raw non-blocking answer through sys_sock_recv.
+fn sys_read_nb(fd, buf, count): i64 {
+    if (_agnos_is_sock_fd(fd) == 1) { return 0 - 1; }
+    return syscall(SYS_READ, fd, buf, count, 1);
 }
 
 # Close `fd`. Returns 0, or -1. v6.2.3: a TAGGED socket fd closes its
@@ -777,7 +812,10 @@ fn sigset_has(set, signum): i64 {
 # Send signal `sig` to process `pid` (pid 0 protected; self/child only).
 fn sys_kill(pid, sig): i64 { return syscall(SYS_KILL, pid, sig); }
 
-# Wait for a signal (one hlt). Returns 0.
+# Give up the CPU briefly. Returns 0. ⚠ NOT A FIXED DURATION: on agnos 1.57.x it first
+# switches to any READY process and returns when rescheduled — no hlt at all — and only parks
+# for one interrupt when nothing else is READY. A loop that counts pauses to bound time is
+# bounded by how busy the machine is, not by the clock (see _agnos_sock_recv_block).
 fn sys_pause(): i64 { return syscall(SYS_PAUSE); }
 
 # Return the current uid (stub: always 0 / root).
@@ -1295,7 +1333,9 @@ fn sys_snd_open(): i64 { return syscall(SYS_SND_OPEN); }
 # snd_config(slot, rate, fmt) — rate MUST=48000, fmt=(bits<<8)|ch MUST=0x1002 → 0 / -1.
 fn sys_snd_config(slot, rate, fmt): i64 { return syscall(SYS_SND_CONFIG, slot, rate, fmt); }
 # snd_write(slot, buf, frames) — blocking; S16 stereo, frames*4 bytes → frames / -1.
-fn sys_snd_write(slot, buf, frames): i64 { return syscall(SYS_SND_WRITE, slot, buf, frames); }
+# a4 = 0 explicitly: #66 reads a4 bit 0 as O_NONBLOCK, and a 3-arg call handed it a stale r10
+# (an ODD leftover last argument of a 7+-arg call made this silently non-blocking). CHANGELOG [6.6.7]
+fn sys_snd_write(slot, buf, frames): i64 { return syscall(SYS_SND_WRITE, slot, buf, frames, 0); }
 # snd_write non-blocking — a4=r10 bit0=O_NONBLOCK (5-arg, like sys_symlink); may return 0=WOULD_BLOCK.
 fn sys_snd_write_nb(slot, buf, frames): i64 { return syscall(SYS_SND_WRITE, slot, buf, frames, 1); }
 # snd_close(slot) — release the slot → 0 / -1.
@@ -1312,8 +1352,11 @@ fn sys_snd_avail(slot): i64 { return syscall(SYS_SND_AVAIL, slot); }
 # Copy the unified klug log ring (oldest→newest, dmesg tail) into `buf` (`len` cap).
 fn sys_klug(buf, len): i64 { return syscall(SYS_KLUG, buf, len); }
 
-# Load a static ELF64 at `path` and run it to completion in ring 3; returns its exit code.
-fn sys_execwait(path, pathlen): i64 { return syscall(SYS_EXECWAIT, path, pathlen); }
+# Load a static ELF64 at `path` and run it to completion; the caller BLOCKS (agnos 1.57.7) and
+# gets the child's WAIT STATUS (decode with WIFEXITED/WEXITSTATUS below), or -1 on any launch
+# failure. env = (0, 0) explicitly: #37 takes an env blob in a3/a4 and treats garbage as
+# "default env", so a 2-arg call's leftover rdx/r10 was an undetected coin flip. CHANGELOG [6.6.7]
+fn sys_execwait(path, pathlen): i64 { return syscall(SYS_EXECWAIT, path, pathlen, 0, 0); }
 
 # Write the 24-byte framebuffer geometry struct into `buf` (`len` cap).
 fn sys_fbinfo(buf, len): i64 { return syscall(SYS_FBINFO, buf, len); }
@@ -1345,8 +1388,23 @@ fn sys_spawn_path_env(path, len, env, envlen): i64 {
     return syscall(SYS_SPAWN_PATH, path, len, env, envlen);
 }
 
-# Cooperative yield to the scheduler.
+# Cooperative yield: switch to a READY process, else park the CPU for one interrupt. Since agnos
+# 1.57.9 it is a QUIET, LOCAL yield again — it sends no cross-CPU kick (1.57.8's undirected kick
+# was withdrawn: any two #44 loops woke each other ~10k times a second). A #44 poll loop is
+# the wrong tool: wait with a blocking sys_read (a4 = 0) or sys_waitpid_block instead, and use
+# sys_sched_yield_to for two processes that genuinely spin on EACH OTHER.
 fn sys_sched_yield(): i64 { return syscall(SYS_SCHED_YIELD); }
+
+# sched_yield_to(pid) — #108, agnos 1.57.9. A DIRECTED yield: does what #44 does, but hands the
+# CPU to `pid` when it is READY here, and when the caller parks sends ONE reschedule IPI toward
+# the CPU where `pid` is parked in a yield — so a pair spinning on each other alternates at IPI
+# speed instead of one interrupt period per round. `pid` must be self, an epoch-valid direct
+# CHILD or the caller's direct PARENT (both sides of a pair name each other). Returns 0, or -1
+# (bad / dead / unrelated pid — returned AFTER the same yield, so a loop naming a dead peer does
+# not spin a core). ⚠ A #108 pair costs ~10k IPIs/s by request; a blocking read is still the
+# cure for a pair that polls. Probe: `sys_sched_yield_to(sys_getpid())` is 0 on a 1.57.9+
+# kernel and -1 before (an unknown number). CHANGELOG [6.6.7]
+fn sys_sched_yield_to(pid): i64 { return syscall(SYS_SCHED_YIELD_TO, pid); }
 
 # Arm a one-shot fd redirect (`src_fd`→`dst_fd`) consumed by the next execwait/spawn —
 # capture a child's stdout/stderr.
