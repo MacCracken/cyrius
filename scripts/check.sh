@@ -19,13 +19,9 @@
 # `_gate(…, "tests/gates/…")` literals in programs/checks/*.cyr), never written down twice.
 # CHANGELOG [6.6.6]
 #
-# scripts/lib/audit-walk.sh stays bash for the v5.9.x window — it
-# is still consumed by the bash scripts/cyrius dispatcher, queued
-# for cyrius conversion at v5.9.5 alongside that dispatcher. The
-# fmt/lint walk logic was simultaneously ported into
-# lib/audit_walk.cyr (cyrius stdlib module) for the check program's
-# use; once scripts/cyrius converts, both audit-walk.sh and this
-# bridge can retire together.
+# The fmt/lint walkers live in lib/audit_walk.cyr only (the driver's fmt + lint suites and
+# `cyrius audit` share them). Their bash twin scripts/lib/audit-walk.sh had no caller left
+# and was deleted at 6.6.7.
 
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

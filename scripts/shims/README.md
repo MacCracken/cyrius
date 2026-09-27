@@ -10,7 +10,7 @@ The files in this directory are invoked by the `cyrius` CLI dispatcher (`cbt/cyr
 
 The user-facing scripts that have **no** cyrius CLI wrapper stay flat in `scripts/`:
 
-- `bench-history.sh`, `build-cc5-verify.sh`, `check.sh` (already a thin shim to `build/cyrius_check`), `ci.sh`, `cyrius`, `cyrius-prompt-info`, `cyrius-watch.sh`, `cyriusly`, `install.sh`, `mac-diagnose.sh`, `mac-selfhost.sh`, `release-lib.sh`, `version-bump.sh`, `lib/audit-walk.sh`.
+- `bench-history.sh`, `build-cc5-verify.sh`, `check.sh` (already a thin shim to `build/cyrius_check`), `ci.sh`, `cyrius`, `cyrius-prompt-info`, `cyrius-watch.sh`, `cyriusly`, `install.sh`, `mac-diagnose.sh`, `mac-selfhost.sh`, `release-lib.sh`, `version-bump.sh`.
 
 ## Retirement
 
