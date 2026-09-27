@@ -3201,7 +3201,7 @@ everywhere else. cycc warns on a conflicting `SYS_*` redefinition.
 ### Capabilities and Limitations
 
 **Works on agnos**:
-- Syscall wrappers (all of #0–#95, plus #97)
+- Syscall wrappers (all of #0–#104 and #106–#108; #105 was withdrawn)
 - Heap allocation (bump, 2 MB chunks)
 - File I/O (read, write, open, close, stat, getdents/readdir)
 - Process spawn and wait (in-memory ELF, or from disk via `sys_spawn_path`)
@@ -3218,7 +3218,14 @@ everywhere else. cycc warns on a conflicting `SYS_*` redefinition.
   `AGNOS_CHAN=<fd>` in the `sys_spawn_path_env` blob. ⚠ The `sys_chan_` prefix is deliberate:
   bare `chan_send`/`chan_recv`/`chan_close` are already the in-process MPSC thread channel, and
   cyrius resolves duplicate fns last-definition-wins.
-- Pipes, epoll, signalfd, timerfd (the event loop primitives)
+- Pipes, epoll, signalfd, timerfd (the event loop primitives). ⭐ v6.6.7: `sys_read` / `sys_write`
+  (and every short raw `syscall`, which cycc now emits with a4 = 0) BLOCK on an empty / full pipe
+  or channel on agnos 1.57.8+ — the kernel reads a4 = r10 as O_NONBLOCK, and it used to be left
+  undefined; `sys_read_nb` / `sys_write_nb` are the non-blocking forms
+- Blocking waits and a real wait status (v6.6.7, agnos 1.57.7): `sys_waitpid_block`, W* per ABI §4.9
+- Socket reads bounded by a real clock: a timeout is -11 (EAGAIN), per-socket via
+  `sock_set_recv_timeout`; a server bound to 127.0.0.1 listens on loopback only (CVE-47 —
+  it refuses to start on agnos < 1.57.7 rather than listen on the network)
 - Signals (sigprocmask, kill, pause)
 - Filesystem (mkdir, rmdir, unlink, rename, link on ext2)
 - Networking (sockets, UDP, ICMP; #47–#61)
@@ -3226,8 +3233,9 @@ everywhere else. cycc warns on a conflicting `SYS_*` redefinition.
 - SIMD, function pointers, inline asm (same as Linux/macOS)
 
 **Does NOT work on agnos** (either absent from the surface or stubbed):
-- Process **arguments** to spawned programs (`sys_spawn` is elf_addr, elf_size only; the
-  from-disk `sys_spawn_path` takes a path and, since v6.5.9, an env blob — but still no argv)
+- Process **arguments** to an in-memory `sys_spawn` (elf_addr, elf_size only). From disk,
+  `sys_spawn_argv` (v6.6.7, agnos 1.57.6) passes a real argv — arguments may contain spaces —
+  where the line-form `sys_spawn_path` splits on spaces
 - stdout/stderr redirection (`sys_dup` is a stub returning `fd` unchanged; pipe → spawn → wait
   works, but output goes to the terminal, not a buffer; `run_capture` returns 0 bytes)
 - `getppid` (no getppid in the surface; returns 0)
@@ -3236,7 +3244,7 @@ everywhere else. cycc warns on a conflicting `SYS_*` redefinition.
 - Thread-local storage (not modeled in agnos ring-3)
 - Dynamic linking (`dlopen`, auxv machinery), only static binaries
 
-The agnos syscall surface is **append-only, currently #0–#95 + #97 at agnos 1.56.x**. The
+The agnos syscall surface is **append-only, currently #0–#104 + #106–#108 at agnos 1.57.9 (#105 withdrawn)**. The
 re-freeze rule (§5) names the agnos **kernel dispatch** — `agnos/kernel/core/syscall.cyr` —
 as canonical: any number / signature / struct-layout change there must land in this guide and
 `lib/syscalls_x86_64_agnos.cyr` in the same change. `agnos/docs/development/agnos-userland-abi.md`

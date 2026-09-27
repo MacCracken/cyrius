@@ -139,6 +139,95 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   on wine or on Windows can observe durability — and wine; five mutants each RED). ⚠ wine cannot
   observe durability and cass was down for this bite: the real-Windows run of the .tcyr (including
   the `O_APPEND` and `O_RDONLY` rows) is the release gate's cass leg.
+- **On agnos, every syscall site passing fewer than four arguments handed the kernel an UNDEFINED
+  a4 (r10), so whether a read or a write blocked depended on what ran before it.** (bite 4.) The
+  agnos kernel reads a4 = r10 on every entry, and since 1.57.8 / 1.57.9 `read`#5 blocks on an empty
+  pipe or channel, and `write`#1 on a full pipe, **only when a4 == 0** (a4 != 0 is O_NONBLOCK).
+  **Root cause:** `ESCPOPS` (`src/backend/x86/emit.cyr`) wrote r10 only for a site with 4+
+  arguments, so a shorter one delivered the user CR3 the SYSRET stub leaves there (never 0 →
+  non-blocking) or the last argument of the latest 7+-argument cyrius call (the SysV stack-arg
+  shuttle → possibly 0 → blocking). The ~128 raw 3-arg `syscall(1, …)` print sites in portable lib
+  (`println`, `str_println`, fmt, assert, flags, the panics) were out of reach of any wrapper fix.
+  **Fix:** under `_TARGET_AGNOS`, `ESCPOPS` emits `xor r10d, r10d` before `syscall` when the site
+  passes fewer than 4 arguments; 4-arg sites keep their own `pop r10`. **What a consumer sees:** on
+  agnos, `println` and every short raw syscall now get the documented default (a4 = 0 — blocking);
+  a producer in an agnsh pipeline no longer silently loses lines when the 4080-byte ring fills.
+  Linux / Mach-O / PE output is byte-identical. Measured on a real agnos 1.57.10 kernel in QEMU:
+  after a 7-arg call leaves r10 = 5 / 1, a pipe read returned **-2** and a 6000-byte raw write
+  **4080** with the pre-fix compiler, and **blocked, 2** / **6000** with this one. Gates:
+  `tests/gates/platform/agnos_syscall_a4_defined.sh` (every agnos `syscall` in a disassembled probe
+  has a popped or zeroed r10; 122 of 138 undefined pre-fix) and `agnos_peer_fake_kernel.sh` axis 1
+  (the registers at runtime, under the new PTRACE_SYSEMU fake kernel
+  `tests/fixtures/agnos_sctrace.cyr`: r10 = 5 pre-fix, 0 now).
+- **agnos socket reads gave up in about a second and reported it as EOF.** (bite 4; filed by daimon:
+  forwarded MCP calls answered 502.) `_agnos_sock_recv_block` bounded its poll of the non-blocking
+  `sock_recv`#49 with a 6000-pause backstop that ran whether or not the RTC read, sized on the
+  belief that a pause is one ~10 ms hlt — but on agnos 1.57.x a pause first yields to any READY
+  process with no hlt, so 6000 pauses took ~1 s on a busy guest (~7 s under mirshi) against a 30 s
+  deadline. The RTC deadline was also sampled once at entry (an entry read of 0 made it "30",
+  already passed), a timeout returned 0 like EOF, and on agnos `sock_set_recv_timeout` ignored its
+  argument. **Fix:** one deadline for socket waits, in three tiers — `uptime_us`#95 when it reads
+  (monotonic µs); the RTC, armed on its first non-zero read, when #95 is refused; the pause count
+  only when there is no clock at all. **What a consumer sees:** a timed-out socket read now returns
+  **-11 (EAGAIN)** — the Linux SO_RCVTIMEO answer — and EOF stays 0; `sock_set_recv_timeout` /
+  `sock_set_send_timeout` set a per-socket deadline on agnos (⚠ 0 restores the 30 s default rather
+  than meaning "never"); `AGNOS_SOCK_RECV_TIMEOUT_S` / `AGNOS_SOCK_RECV_MAX_SPINS` keep their names
+  (daimon's recv-bound workaround becomes a no-op). Gate: `tests/gates/platform/agnos_sock_recv_bound.sh`
+  (each tier on the fake kernel, plus a real TCP exchange under mirshi against a Linux cyrius peer
+  on an ephemeral port — 5 bytes after 2 s, where the pre-fix peer returned 0; 12 of 12 assertions
+  red against the pre-fix peer). QEMU: a 1 s per-socket timeout returned -11 at ~1.15 s.
+- **A stalled agnos TCP send tore the connection down.** (bite 4.) Since agnos 1.57.7
+  `sock_send`#48 returns the committed count — possibly **0** — after ~8 s with no ACK progress,
+  and the peer's `sys_write` socket route handed that 0 straight back; tls_native's
+  `_tn_sock_write_all` treats `w <= 0` as `TLS_ERR_IO`. **Fix:** the route re-sends the remainder
+  after a short count and retries a 0 under the same deadline (re-armed whenever bytes move), then
+  returns the partial count or -1.
+- **agnos wait statuses read wrong: `WIFEXITED` was always 1 and `WEXITSTATUS` the identity, so a
+  SIGKILLed child reported "exited 265".** (bite 4.) agnos 1.57.7 made `waitpid`#4 / `execwait`#37
+  return a real status (exit `code & 0xFF`, fault `128 + vector`, signal `0x100 | sig`). The W*
+  helpers now follow ABI §4.9; `sys_waitpid`'s comment no longer promises a bare exit code. Verified
+  on QEMU: a killed child is 265 → signaled, signal 9; `exit(7)` → exited, 7.
+- **Security (CVE-47): on agnos, a server bound to 127.0.0.1 listened on the network.** (bite 4.)
+  `net.cyr`'s agnos `sock_bind` dropped the address (the v6.2.22 adapter: "addr is ignored") and
+  every listen went out as `sock_listen`#56 class 0 — before 1.57.7 the NIC, since 1.57.7 the NIC
+  **and** loopback. daimon's unauthenticated control API binds 127.0.0.1. **Fix:** the bind address
+  selects the class — 127/8 → `SOCK_LISTEN_LOOPBACK` (`port | 0x100000000`), 0.0.0.0 or this host's
+  address → ANY, any other address → `Err(99)` (never widened), a port outside 1..65535 →
+  `Err(22)`; per-slot class tables cleared by `sys_close`; `getsockname` reports the bind address.
+  ⚠ **What a consumer sees: daimon's default 127.0.0.1 serve now REFUSES to start on agnos < 1.57.7**
+  (the flagged #56 is refused there — fail closed, no probe) instead of exposing its API. QEMU
+  (1.57.10): a dial to 127.0.0.1 is accepted, a dial to the host's own address on the same port is
+  refused. Full write-up: `docs/audit/2026-09-03-security-audit.md` § CVE-47.
+- **agnos peer argument misroutes.** (bite 4.) Three wrappers passed values the kernel decodes into
+  a DIFFERENT operation, silently: `sys_spawn_path` / `sys_spawn_path_env` with a length above
+  0xFFFF set `spawn_path`#43's flag bits (a 0x10005 became a 5-byte `SPAWN_F_ARGV` spawn), an
+  `exec_redirect` src of 0x100+ became a `REDIR_ADD` / `REDIR_CLEAR` op, and `sys_chan_endow(-1)`
+  disarmed the pending endowment and returned 0 — "the child will hold fd 0". Each is now refused;
+  a refused spawn still goes through the kernel (reserved bit 18 → -`SPAWN_E_ARGS`, or -1 on an older
+  kernel) so, like every #43 return, it clears the caller's spawn arms. `sys_spawn_path` /
+  `sys_execwait` pass env (0, 0), and `sys_chan_endow` / `sys_snd_write` pass a4 = 0, explicitly.
+
+### Added
+
+- **The agnos 1.57.6–1.57.9 peer surface** (bite 4; `lib/syscalls_x86_64_agnos.cyr`, values from
+  agnos `kernel/core/syscall.cyr`): `SYS_SOCK_PEER = 106` + `sys_sock_peer`, `SYS_SPAWN_LIMITS = 107`
+  + `sys_spawn_limits`, `SYS_SCHED_YIELD_TO = 108` + `sys_sched_yield_to` — with these agnos's own
+  `syscall-abi-check.sh` reports kernel 108 · abi-doc 108 · cyrius 108 in agreement; `sys_read_nb` /
+  `sys_write_nb` (a4 = 1) and `AGNOS_PIPE_BUF`; `sys_spawn_argv` (a real argv, arguments may contain
+  spaces; `SPAWN_F_CLEANFD`), the `AgnosSpawnFlag` / `AgnosSpawnErr` (`SPAWN_E_OTHER`..`SPAWN_E_LIMIT`)
+  / `AgnosRedirOp` enums and `SPAWN_LINE_MAX` / `SPAWN_ARGV_MAX` / `SPAWN_ARGC_MAX`;
+  `sys_exec_redirect_add` / `sys_exec_redirect_clear`; `sys_chan_endow_stdio` (`CH_ENDOW_STDIO`,
+  PTY mode) / `sys_chan_endow_disarm`; `sys_waitpid_block` (refuses pid < 0, which would be the
+  reaping wait-any POLL, and pid > 15) / `sys_waitpid_any_block`; `sys_kill_tree`
+  (`AGNOS_KILL_TREE`); `sys_getpeername` / `sys_getsockname` on agnos (sockaddr_in via #106);
+  `SIGXCPU`, `FLOCK_E_TABLE_FULL`, `AgnosProcState` (`PROCLIST_READY`..`PROCLIST_ZOMBIE`),
+  `SOCK_LISTEN_LOOPBACK`. ~20 wrapper and enum comments now say what 1.57.6–1.57.9 do (#4, #16,
+  #37, #40, #41, #44 — a quiet local yield again; the withdrawn 1.57.8 "kick" is not repeated —
+  #48, #52, #59 blocking locks, #95 -1 permanent, #99 states 4-7, #14 pause is not a fixed
+  duration). Gate: `tests/gates/platform/agnos_peer_fake_kernel.sh` (4 axes, the exact registers
+  on a scripted fake kernel); every wrapper above also ran on agnos 1.57.10 in QEMU (-smp 1 and 4).
+  The fail-closed agnos `sys_ioctl` stub named in the plan was NOT added: the sibling releases use
+  private fail-closed bridges so they build on released 6.6.6.
 
 ## [6.6.6] — 2026-09-20
 

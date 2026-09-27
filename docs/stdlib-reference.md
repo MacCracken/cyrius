@@ -721,13 +721,20 @@ one fn so the `#ifdef`-blind static checker sees a single definition):
 | `signal_ignore` | `signal_ignore(signum) → 0/-errno` | Set the disposition to `SIG_IGN` |
 | `signal_default` | `signal_default(signum) → 0/-errno` | v6.5.7 — set it back to `SIG_DFL`. **Not optional alongside `signal_ignore`**: `SIG_IGN` is *inherited across `execve`* (a handler is reset, an ignore is not), so a process that ignores a signal then fork+execve's a child hands that child a disposition its own code never chose. Call it in the child between fork and execve |
 
-**agnos-only additions (`lib/syscalls_x86_64_agnos.cyr`, v6.5.9)** — the agnos
+**agnos-only additions (`lib/syscalls_x86_64_agnos.cyr`, v6.5.9 / v6.6.7)** — the agnos
 peer is standalone, so these exist on no other target:
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `sys_chan_endow` | `sys_chan_endow(fd) → child_fd / -CH_E_*` | Arm a channel endpoint for placement into the next `sys_spawn_path*` child. ⚠ The return is an **fd**, not a status — the parent must announce it to the child itself (canonically `AGNOS_CHAN=<fd>` in the env blob) |
 | `sys_spawn_path_env` | `sys_spawn_path_env(path, len, env, envlen) → pid` | `sys_spawn_path` (non-blocking from-disk spawn, returns the pid immediately) with a per-process env blob (packed `KEY=VALUE\0…`, ≤1024 B, ≤16 entries). ⛔ The kernel treats a mis-shaped `env`/`envlen` as *fall back to the default environment*, **never** as an error — a bad call degrades silently, which is why this is a named wrapper rather than a raw 4-arg `syscall()` |
+| `sys_spawn_argv` | `sys_spawn_argv(blob, len, env, envlen, flags) → pid / -SPAWN_E_*` | v6.6.7 (agnos 1.57.6) — spawn with a REAL argv: `blob` is `argv0\0argv1\0…` (argv[0] is the path; arguments may contain spaces), `flags` 0 or `SPAWN_F_CLEANFD` (the child gets only 0/1/2 + redirects + the endowment). ⛔ len/flags are range-checked here: #43 packs them into one register, so an oversized len would silently set flag bits |
+| `sys_exec_redirect_add` / `_clear` | `(src, dst) → 0/-1` · `() → 0` | v6.6.7 — add a pair to (or empty) the caller's one-shot redirect set; `sys_exec_redirect(1, w)` + `sys_exec_redirect_add(2, 1)` is `2>&1`. src/dst are refused outside [0, 32) (a src of 0x100+ would become an op) |
+| `sys_chan_endow_stdio` / `sys_chan_endow_disarm` | `(fd) → child_fd` · `() → 0` | v6.6.7 — PTY-mode endowment (the channel becomes the child's 0/1/2) and the explicit disarm. `sys_chan_endow(-1)` is now REFUSED (-5) instead of silently disarming |
+| `sys_waitpid_block` / `sys_waitpid_any_block` | `(pid) → status` · `() → status` | v6.6.7 (1.57.7 `WAIT_BLOCK`) — block in the kernel until the child exits. pid < 0 and > 15 are refused: `0x100 \| -1` is the NON-blocking wait-any poll, which reaps whichever child exited. Decode with `WIFEXITED`/`WEXITSTATUS`/`WIFSIGNALED`/`WTERMSIG` (ABI §4.9; SIGKILL = 265) |
+| `sys_kill_tree` · `sys_spawn_limits` · `sys_sock_peer` · `sys_sched_yield_to` | | v6.6.7 — `kill`#16 with `KILL_TREE`; #107 one-shot caps for the next child (`(0, 0)` probes AND disarms); #106 the packed remote address of a conn; #108 the directed yield |
+| `sys_read_nb` / `sys_write_nb` | `(fd, buf, n)` | v6.6.7 — the O_NONBLOCK forms (a4 = 1): read → -2 "nothing yet", write → 0 when a full pipe takes nothing. `sys_read` / `sys_write` pass a4 = 0 and BLOCK on pipes and channels (agnos 1.57.8 / 1.57.9) |
+| `sys_getpeername` / `sys_getsockname` | `(fd, addr, addrlen) → 0/-1/-38` | v6.6.7 — the portable pair on agnos, via #106 (peer) and the bind stash (local; a client conn has no local port on agnos → -38) |
 
 ## Identity & Authentication
 

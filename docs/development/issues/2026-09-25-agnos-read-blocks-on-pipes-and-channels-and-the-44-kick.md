@@ -1,6 +1,7 @@
-# agnos 1.57.8: `read`#5 now BLOCKS on an empty pipe or channel endpoint when a4 == 0, and `sys_read` passes a4 by accident — comment and semantic updates for the agnos peer — OPEN
+# agnos 1.57.8: `read`#5 now BLOCKS on an empty pipe or channel endpoint when a4 == 0, and `sys_read` passes a4 by accident — comment and semantic updates for the agnos peer — RESOLVED v6.6.7
 
-**Status:** 🟡 **OPEN**. The agnos kernel ships this in 1.57.8. It adds **no new syscall number or constant**, so the
+**Status:** ✅ **RESOLVED v6.6.7** (bite 4) — `sys_read` / `sys_write` pass a4 = 0, `sys_read_nb` / `sys_write_nb` pass 1, and cycc now zeroes r10 at every short agnos syscall site (the class, including the 7+-arg residue). QEMU: a pipe read after a 7-arg call left r10 = 5 now blocks and returns 2 (was -2). See `CHANGELOG.md` [6.6.7]. It stays in the open dir for the slot-close archive pass.
+**Original status:** 🟡 OPEN:. The agnos kernel ships this in 1.57.8. It adds **no new syscall number or constant**, so the
 agnos `syscall ABI` gate is unaffected (it is still red only for `#106`/`#107`, the 1.57.7 filing). The asks below
 are one semantic fix in `sys_read` and some comment updates.
 **Placement:** **6.6.7 bite 4** — agnos 1.57.6–1.57.9 peer surface; the a4=r10 class (cycc zeroes r10 on short agnos syscalls); monotonic socket-recv deadline; loopback listen class (CVE-47). Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).

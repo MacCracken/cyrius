@@ -1,6 +1,7 @@
-# agnos 1.57.9: `sched_yield_to`#108 (new), `sched_yield`#44 is quiet again, pipe writes block — constants, a wrapper, comments — OPEN
+# agnos 1.57.9: `sched_yield_to`#108 (new), `sched_yield`#44 is quiet again, pipe writes block — constants, a wrapper, comments — RESOLVED v6.6.7
 
-**Status:** 🟡 **OPEN**: agnos 1.57.9 ships these; `lib/syscalls_x86_64_agnos.cyr` has no name for #108 yet. agnos's `syscall ABI`
+**Status:** ✅ **RESOLVED v6.6.7** (bite 4) — `SYS_SCHED_YIELD_TO = 108` + `sys_sched_yield_to`, the #44 text (a quiet local yield), `AGNOS_PIPE_BUF`, and the a4 class closed in the compiler (option (a): `ESCPOPS` zeroes r10 under `_TARGET_AGNOS`). agnos's own ABI check against this tree: kernel 108 · abi-doc 108 · cyrius 108. See `CHANGELOG.md` [6.6.7]. It stays in the open dir for the slot-close archive pass.
+**Original status:** 🟡 OPEN: agnos 1.57.9 ships these; `lib/syscalls_x86_64_agnos.cyr` has no name for #108 yet. agnos's `syscall ABI`
 gate is red for #106 / #107 / #108 until the peer lands (kernel 108 · abi-doc 108 · cyrius 105).
 **Placement:** **6.6.7 bite 4** — agnos 1.57.6–1.57.9 peer surface; the a4=r10 class (cycc zeroes r10 on short agnos syscalls); monotonic socket-recv deadline; loopback listen class (CVE-47). Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Filed:** 2026-09-26, by agnos. agnos minted the ABI; cyrius owns the peer. Normative text: agnos

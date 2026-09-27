@@ -4634,6 +4634,8 @@ syscalls_x86_64_agnos::sys_blk_write/4
 syscalls_x86_64_agnos::sys_chan_caps/2
 syscalls_x86_64_agnos::sys_chan_close/1
 syscalls_x86_64_agnos::sys_chan_endow/1
+syscalls_x86_64_agnos::sys_chan_endow_disarm/0
+syscalls_x86_64_agnos::sys_chan_endow_stdio/1
 syscalls_x86_64_agnos::sys_chan_mint/1
 syscalls_x86_64_agnos::sys_chan_recv/3
 syscalls_x86_64_agnos::sys_chan_send/3
@@ -4645,6 +4647,8 @@ syscalls_x86_64_agnos::sys_epoll_create/0
 syscalls_x86_64_agnos::sys_epoll_ctl/3
 syscalls_x86_64_agnos::sys_epoll_wait/3
 syscalls_x86_64_agnos::sys_exec_redirect/2
+syscalls_x86_64_agnos::sys_exec_redirect_add/2
+syscalls_x86_64_agnos::sys_exec_redirect_clear/0
 syscalls_x86_64_agnos::sys_execwait/2
 syscalls_x86_64_agnos::sys_exit/1
 syscalls_x86_64_agnos::sys_exit_group/1
@@ -4657,8 +4661,10 @@ syscalls_x86_64_agnos::sys_fstatfs/2
 syscalls_x86_64_agnos::sys_ftruncate/2
 syscalls_x86_64_agnos::sys_getdents/3
 syscalls_x86_64_agnos::sys_geteuid/0
+syscalls_x86_64_agnos::sys_getpeername/3
 syscalls_x86_64_agnos::sys_getpid/0
 syscalls_x86_64_agnos::sys_getrandom/3
+syscalls_x86_64_agnos::sys_getsockname/3
 syscalls_x86_64_agnos::sys_getuid/0
 syscalls_x86_64_agnos::sys_gpu_blit_bb/3
 syscalls_x86_64_agnos::sys_gpu_blit_shm/3
@@ -4676,6 +4682,7 @@ syscalls_x86_64_agnos::sys_icmp_echo/1
 syscalls_x86_64_agnos::sys_icmp_echo_ex/2
 syscalls_x86_64_agnos::sys_kbscan/2
 syscalls_x86_64_agnos::sys_kill/2
+syscalls_x86_64_agnos::sys_kill_tree/2
 syscalls_x86_64_agnos::sys_klug/2
 syscalls_x86_64_agnos::sys_link/4
 syscalls_x86_64_agnos::sys_lseek/3
@@ -4706,6 +4713,7 @@ syscalls_x86_64_agnos::sys_pipe/1
 syscalls_x86_64_agnos::sys_proclist/2
 syscalls_x86_64_agnos::sys_ptrscan/2
 syscalls_x86_64_agnos::sys_read/3
+syscalls_x86_64_agnos::sys_read_nb/3
 syscalls_x86_64_agnos::sys_readdir/3
 syscalls_x86_64_agnos::sys_readdir_at/4
 syscalls_x86_64_agnos::sys_readlink/4
@@ -4713,6 +4721,7 @@ syscalls_x86_64_agnos::sys_reboot/4
 syscalls_x86_64_agnos::sys_rename/4
 syscalls_x86_64_agnos::sys_rmdir/2
 syscalls_x86_64_agnos::sys_sched_yield/0
+syscalls_x86_64_agnos::sys_sched_yield_to/1
 syscalls_x86_64_agnos::sys_sendmsg/3
 syscalls_x86_64_agnos::sys_sendto/6
 syscalls_x86_64_agnos::sys_shm_create/1
@@ -4734,9 +4743,12 @@ syscalls_x86_64_agnos::sys_sock_accept/1
 syscalls_x86_64_agnos::sys_sock_close/1
 syscalls_x86_64_agnos::sys_sock_connect/3
 syscalls_x86_64_agnos::sys_sock_listen/1
+syscalls_x86_64_agnos::sys_sock_peer/1
 syscalls_x86_64_agnos::sys_sock_recv/3
 syscalls_x86_64_agnos::sys_sock_send/3
 syscalls_x86_64_agnos::sys_spawn/2
+syscalls_x86_64_agnos::sys_spawn_argv/5
+syscalls_x86_64_agnos::sys_spawn_limits/2
 syscalls_x86_64_agnos::sys_spawn_path/2
 syscalls_x86_64_agnos::sys_spawn_path_env/4
 syscalls_x86_64_agnos::sys_stat/3
@@ -4756,8 +4768,11 @@ syscalls_x86_64_agnos::sys_unlink/2
 syscalls_x86_64_agnos::sys_uptime_ms/0
 syscalls_x86_64_agnos::sys_uptime_us/0
 syscalls_x86_64_agnos::sys_waitpid/1
+syscalls_x86_64_agnos::sys_waitpid_any_block/0
+syscalls_x86_64_agnos::sys_waitpid_block/1
 syscalls_x86_64_agnos::sys_winsize/0
 syscalls_x86_64_agnos::sys_write/3
+syscalls_x86_64_agnos::sys_write_nb/3
 syscalls_x86_64_linux::epoll_event_new/2
 syscalls_x86_64_linux::err_code/1
 syscalls_x86_64_linux::is_err/1
