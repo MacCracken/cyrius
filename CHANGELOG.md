@@ -45,6 +45,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     `tests/hardening.tcyr:380` does). Folded from the TAG: bayan's post-tag worktree `dist/` is also
     headed 1.5.7 but differs in eight comment lines, and `fold_table_matches_vendored.sh` reads only
     the header, so a worktree copy would have passed every gate without being the release.
+  - **vani 1.2.5 → 1.2.7** (release commit `5cdd402`; the 1.2.7 tag names it) — ⚠ **behaviour
+    change: a busy PCM no longer hangs the open.** `audio_open_playback` / `audio_open_capture` slept
+    in the kernel until the holder let go (one PipeWire stream is enough on a one-subdevice PCM), so
+    a core-profile consumer could hang at startup; since 1.2.6 they open `O_NONBLOCK`, return the null
+    handle at once on `-EBUSY`, and clear the flag before the first PREPARE. **agnos:** every ALSA
+    ioctl goes through a private `_audio_ioctl` bridge that returns -ENOSYS there, so the agnos build
+    no longer compiles only because yukti ≤ 2.3.11 leaked a placeholder `SYS_IOCTL = 9001` into the
+    program (it would have issued agnos syscall 9001). **Windows:** a `CYRIUS_TARGET_WIN` refusal arm
+    returns the null handle instead of naming `SYS_FCNTL`, which the PE peer does not define — 1.2.6
+    is therefore never folded (it does not compile for PE; `pe_no_raw_syscall_bytes.sh` axis 4 goes
+    red on it). No public-surface change (109 fns).
   - **Downstream lockstep:** a repo that pins patra or sakshi as a git dep must move that tag with
     its 6.6.7 pin, or the git dep overlays and downgrades the fold — yukti and nein (`[deps.patra]`
     1.14.3 → 1.15.0); yukti, daimon and hisab (`[deps.sakshi]` 2.5.2 → 2.5.5).
