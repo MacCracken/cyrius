@@ -750,9 +750,14 @@ fn ESCPOPS(S, n): i64 {
     if (n >= 3) { EPOPRSI(S); }
     if (n >= 2) { EPOPRDI(S); }
     if (n >= 1) { EPOPR(S); }
+    if (n < 5) { if (_TARGET_AGNOS == 1) { E3(S, 0xD23145); } }   # xor r10d, r10d
     ESYSCALL(S);
     return 0;
 }
+# ⚠ agnos reads a4 = r10 on EVERY syscall (read#5 / write#1 block only when a4 == 0), and a
+# site passing < 4 args never wrote it: r10 held the SYSRET stub's user CR3 or the last arg
+# of the latest 7+-arg call, so one println blocked or dropped bytes by call history. The
+# zero is agnos-only; every other target's output is unchanged. CHANGELOG [6.6.7]
 
 # Output-target flags (_TARGET_MACHO / _TARGET_PE / _TARGET_AGNOS /
 # _TARGET_ELF64_KERNEL / _TARGET_EFI_APPLICATION / _TARGET_CX) moved to

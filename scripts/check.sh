@@ -1180,3 +1180,8 @@ _chk_gate "$ROOT/tests/gates/diagnostics/derive_layout_backstop.sh"
 # MoveFileExW is write-through. POSIX oracle + emitter shape (the write-through bit's ONLY
 # guard — nothing can observe durability) + wine; hardware is the cass leg.
 _chk_gate "$ROOT/tests/gates/platform/pe_fsync_flushes.sh"
+
+# 6.6.7 bite 4 — every agnos syscall site hands the kernel a defined a4 (r10): its own 4th arg
+# or an explicit zero. agnos read#5/write#1 block only when a4 == 0; an undefined r10 made one
+# println block or drop bytes by call history. Disassembly class check + agnos-only proof.
+_chk_gate "$ROOT/tests/gates/platform/agnos_syscall_a4_defined.sh"
