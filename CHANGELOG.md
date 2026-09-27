@@ -4,6 +4,8 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.6.7] — 2026-09-27
+
 ## [6.6.6] — 2026-09-20
 
 The 6.6.6 repair release — the 6.6.5 queue, and then what looking at it turned up. Every one of the six
