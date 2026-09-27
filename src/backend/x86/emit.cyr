@@ -2715,9 +2715,10 @@ fn EDELETEF_PE(S): i64 {
 # dwFlags = MOVEFILE_REPLACE_EXISTING (1) | MOVEFILE_WRITE_THROUGH (8): the call does
 # not return until the rename is on disk — the Windows analogue of the directory fsync
 # that makes a POSIX write-temp/fsync/rename durable. Without it file_write_atomic was
-# atomic but not durable on Windows (a crash could lose the rename). CHANGELOG [6.6.7] BOOL result -> 0 (success) / -1 (fail) via the
-# EDELETEF_PE dec+sar idiom. Frame (rbx-anchored + and rsp,-16, so alignment-
-# agnostic): 0x460 = 32 shadow + 528 old + 528 new + 32 slack, 16-aligned at CALL.
+# atomic but not durable on Windows (a crash could lose the rename). BOOL result ->
+# 0 (success) / -1 (fail) via the EDELETEF_PE dec+sar idiom. Frame (rbx-anchored +
+# and rsp,-16, so alignment-agnostic): 0x460 = 32 shadow + 528 old + 528 new + 32
+# slack, 16-aligned at CALL. CHANGELOG [6.6.7]
 fn EMOVEFILEEX_PE(S): i64 {
     _pe_ensure_movefileex(S);
     var mv_idx = _pe_movefileex_get();

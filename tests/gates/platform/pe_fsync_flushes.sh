@@ -20,7 +20,14 @@
 #   axis 2  EMITTER SHAPE (always, needs objdump). The PE build of that .tcyr must (a) import
 #           kernel32!FlushFileBuffers (read from the import directory, not a strings scan),
 #           (b) carry at least one `cmp $0x1,%eax; sbb %rax,%rax` flush tail per literal
-#           74/75 site in the .tcyr, and (c) load `mov $0x9,%r8d` after EVERY MoveFileExW
+#           74/75 site in the .tcyr, PLUS one per direct `syscall(74|75, fd)` in xfsync's
+#           CYRIUS_TARGET_WIN arm in lib/io.cyr (the .tcyr always calls xfsync, so that site
+#           is always compiled in), PLUS one per fsync/fdatasync site in
+#           lib/syscalls_windows.cyr (lib/assert.cyr pulls the Windows peer into the PE
+#           build, so a peer sys_fsync would otherwise pad the count and hide an xfsync
+#           revert). xfsync's arm must also call SOME flush (a direct syscall, or the peer's
+#           sys_fsync/sys_fdatasync) — an arm with none fails axis 2 by name, with no wine,
+#           which is what CI has. And (c) load `mov $0x9,%r8d` after EVERY MoveFileExW
 #           argument setup (`lea 0x230(%rsp),%rdx`), at least once. (c) is the ONLY guard on
 #           the write-through bit anywhere: no run on wine or on real Windows can observe
 #           durability, so the flag's presence in the bytes is what there is to check.
@@ -38,16 +45,19 @@
 #   mutant                                                   axis 1  axis 2   axis 3 (wine)
 #   the pre-bite compiler + stdlib (a full revert)           PASS    FAIL     FAIL (6 rows red)
 #   drop the _PE_ROUTE_FLUSH call site (74/75 → -38 again)   PASS    FAIL     FAIL (6 rows red)
-#   xfsync's PE arm back to `return 0;`                      PASS    PASS     FAIL (2 rows red:
+#   xfsync's PE arm back to `return 0;`                      PASS    FAIL     FAIL (2 rows red:
 #                                                                              xfsync(12345),
 #                                                                              O_RDONLY)
 #   MoveFileExW r8d back to 1 (no WRITE_THROUGH)             PASS    FAIL     PASS <-- the
 #                                                                              reason axis 2(c)
 #                                                                              exists
 #   BOOL tail back to dec+sar                                PASS    FAIL     PASS
-#
-# ⚠ Read the xfsync row: only axis 3 sees it. On a box without wine a stdlib-only revert of the
-# xfsync arm passes here, and the cass leg of the release gate is what catches it.
+#   the Windows peer gains sys_fsync/sys_fdatasync (control) PASS    PASS     PASS (9 tails)
+#   peer as above + xfsync delegates to sys_fsync (control)  PASS    PASS     PASS (8 tails)
+#   peer as above + xfsync's PE arm `return 0;`              PASS    FAIL     FAIL
+# The xfsync rows and the controls were also run with wine hidden from PATH (what CI has): the
+# two xfsync mutants are still red on axis 2 alone. The controls are the fold lane's expected
+# peer change — they must stay green.
 #
 # Nothing is written inside the tree: the .tcyr creates CWD-relative files, so both runs happen
 # inside a mktemp -d that is removed on exit.
@@ -110,19 +120,33 @@ elif ! command -v objdump > /dev/null 2>&1; then
 else
     objdump -x "$D/ff.exe" 2>/dev/null | sed -n '/DLL Name/,$p' > "$D/imp"
     objdump -dw "$D/ff.exe" > "$D/dis" 2>/dev/null
+    # xfsync's PE arm (lib/io.cyr, `fn xfsync` ... its `#ifdef CYRIUS_TARGET_WIN` block): it must
+    # flush — either a direct `syscall(74|75, fd)` (counted into the tail floor below) or a call to
+    # the Windows peer's sys_fsync/sys_fdatasync (whose own site is counted in npeer).
+    xf_arm() {
+        awk '/^fn xfsync\(/ {f=1} f && /^}/ {f=0} f && /#ifdef CYRIUS_TARGET_WIN/ {w=1; next}
+             f && w && /#endif/ {w=0} f && w && !/^[[:space:]]*#/ {print}' "$ROOT/lib/io.cyr"
+    }
+    nxf=$(xf_arm | grep -oE 'syscall\(7[45],' | wc -l | tr -d ' ')
+    xfany=$(xf_arm | grep -cE 'syscall\((7[45]|SYS_F(DATA)?SYNC),|sys_f(data)?sync\(')
+    npeer=$(grep -v '^[[:space:]]*#' "$ROOT/lib/syscalls_windows.cyr" | grep -oE 'syscall\((7[45]|SYS_F(DATA)?SYNC),' | wc -l | tr -d ' ')
+    need=$((nsites + nxf + npeer))
     ncf=$(grep -c 'CreateFileW' "$D/imp")
     nfb=$(grep -c 'FlushFileBuffers' "$D/imp")
     ntail=$(awk '/cmp[[:space:]]+\$0x1,%eax/ {p=1; next} p && /sbb[[:space:]]+%rax,%rax/ {n++} {p=0} END {print n+0}' "$D/dis")
     nmv=$(grep -cE 'lea[[:space:]]+0x230\(%rsp\),%rdx' "$D/dis")
     nwt=$(awk '/lea[[:space:]]+0x230\(%rsp\),%rdx/ {p=1; next} p && /mov[[:space:]]+\$0x9,%r8d/ {n++} {p=0} END {print n+0}' "$D/dis")
-    if [ "$ncf" -lt 1 ]; then
+    if [ "$xfany" -lt 1 ]; then
+        echo "  FAIL axis 2 (xfsync): lib/io.cyr's xfsync has no fsync/fdatasync call in its CYRIUS_TARGET_WIN arm — it does not flush on Windows"
+        fail=1
+    elif [ "$ncf" -lt 1 ]; then
         echo "  FAIL axis 2 (anti-vacuous): the import directory could not be read (CreateFileW is missing too)"
         fail=1
     elif [ "$nfb" -lt 1 ]; then
         echo "  FAIL axis 2: the PE build does not import FlushFileBuffers — fsync/fdatasync are not routed"
         fail=1
-    elif [ "$ntail" -lt "$nsites" ]; then
-        echo "  FAIL axis 2: $ntail flush tail(s) (cmp \$1,eax; sbb rax,rax) for $nsites literal 74/75 site(s)"
+    elif [ "$ntail" -lt "$need" ]; then
+        echo "  FAIL axis 2: $ntail flush tail(s) (cmp \$1,eax; sbb rax,rax) for $need site(s) ($nsites literal 74/75 in the .tcyr + $nxf in xfsync + $npeer in the Windows peer)"
         fail=1
     elif [ "$nmv" -lt 1 ]; then
         echo "  FAIL axis 2 (anti-vacuous): no MoveFileExW argument setup in the PE build — file_rename is gone"
@@ -131,7 +155,7 @@ else
         echo "  FAIL axis 2: $nmv MoveFileExW call(s) but $nwt pass dwFlags = 9 — MOVEFILE_WRITE_THROUGH is missing (the rename is not durable, and nothing else can see that)"
         fail=1
     else
-        echo "  ok axis 2: FlushFileBuffers imported, $ntail flush tail(s) for $nsites site(s), $nwt of $nmv MoveFileExW call(s) write-through"
+        echo "  ok axis 2: FlushFileBuffers imported, $ntail flush tail(s) for $need site(s), $nwt of $nmv MoveFileExW call(s) write-through"
     fi
 fi
 
