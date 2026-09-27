@@ -126,7 +126,7 @@ enum OFlags {
     # caller expects. Defined so portable code still compiles.
     #
     # ⛔ AND NAME WHAT THAT COSTS, now that O_EXCL IS honoured. `luks_write_keyfile`
-    # (lib/sigil.cyr:3857) opens `O_WRONLY|O_CREAT|O_TRUNC|O_EXCL|O_NOFOLLOW` and treats
+    # (lib/sigil.cyr:4179) opens `O_WRONLY|O_CREAT|O_TRUNC|O_EXCL|O_NOFOLLOW` and treats
     # the refusal as its guarantee that it created the keyfile itself. On PE that becomes
     # CreateFileW CREATE_NEW, which RESOLVES a final reparse point instead of refusing it:
     # measured on real cass 2026-09-19 — CREATE_NEW over a dangling symlink SUCCEEDS and

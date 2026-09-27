@@ -8,10 +8,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- **Stdlib fold — refolded at their released tags**, each bundle copied byte-identical from
-  `git show <tag>:dist/<name>.cyr` (never from a worktree `dist/`, never patched in the fold). Every
-  one pins the released cyrius 6.6.6. `docs/api-surface.snapshot` is unchanged by them (5,247 public
-  fns, exact match); the in-tree tests and gates that include them pass unchanged.
+- **Stdlib fold — nine libs refolded at their releases**, each bundle copied byte-identical from
+  `git show <ref>:dist/<name>.cyr` (never from a worktree `dist/`, never patched in the fold): sandhi,
+  sakshi, patra, niyama and bayan from their tags; vani, mabda, yukti and sigil from the release
+  commit named in each bullet, which their tags must name (the integrator checks tag == commit).
+  Every one pins the released cyrius 6.6.6. `docs/api-surface.snapshot` moves only for sigil
+  (−1 +15, below); the in-tree tests and gates that include the folds pass unchanged.
   - **sandhi 1.9.17 → 1.10.0** — a toolchain move (pin 6.6.2 → 6.6.6). The only code difference is
     `SANDHI_VERSION`, so the default request header now reads `User-Agent: sandhi/1.10.0`; no
     surface change (826 fns, 196 top-level vars, identical).
@@ -83,6 +85,31 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     `tests/tcyr/crossos/yukti_statfs_and_stdlib_constants.tcyr`: against 2.3.11 it fails on pi
     (errno 14), exits 3 on ecb (O_NONBLOCK 2048, SOL_SOCKET 1, statfs) and SIGSEGVs on ach;
     against 2.3.13 it passes on all three, on x86_64 and under wine.
+  - **sigil 3.12.18 → 3.13.3** (release commit `92a5042`; the 3.13.3 tag names it) — **a security
+    fold.** 3.13.0: none of the 8 `defer` cleanups ever ran (a `defer` is skipped on a value-form
+    Result return), so the LUKS keyfile was left in /tmp and fds leaked — all 8 are explicit now;
+    `sv_verify_boot_chain` failed OPEN and `keyring_validate_chain` never checked issuer signatures —
+    both fail closed; the ECDSA nonce-length timing leak, GHASH and software AES are constant-time
+    (GCM ~11× faster); ML-DSA-65's retry-kappa bug is fixed (OpenSSL-KAT identical). 3.13.1: per-call
+    X.509 digests (forged links under concurrency), a revoked trust entry can no longer be lifted to
+    Verified. ⚠ **Verification is STRICTER — a caller that relied on the old leniency now gets a
+    refusal:** `ed25519_verify` rejects small-order public keys and RFC 8032 non-canonical encodings,
+    `ed25519_sign` returns -1 on a mismatched secret key (sign is 1.84× slower — it re-derives
+    A = [a]B); `ecdsa_p256_verify_der` and the Authenticode digest variant accept only canonical DER
+    with the exact length; SGX/TDX quotes need exact lengths; `sv_load_trust_store` refuses group-
+    or world-writable files; `sign_data` returns 0 on refusal, `hash_file*` returns 0 on a read error,
+    and loaders refuse files over 64 MiB instead of truncating at 64 KiB. 3.13.3: ⚠ **`EAGAIN` is
+    now the platform's on macOS.** sigil's global `EAGAIN = 11` replaced Darwin's 35 program-wide
+    (last definition wins), so every `EAGAIN` test in a sigil-including Mach-O program — sigil's
+    capture drain included, which died on the first empty poll — compared against Linux's number;
+    the Mach-O `duplicate symbol 'EAGAIN'` warning goes with it (it stays 11 on PE and agnos, whose
+    peers declare none). **`uname_release` now comes only from `lib/sys.cyr`** — sigil's duplicate is
+    gone, and so is the `duplicate fn 'uname_release'` warning every sys + sigil program printed; the
+    bundle now carries `include "lib/sys.cyr"` itself. Snapshot: −`sigil::uname_release/1` (the same
+    fn lives on as `sys::uname_release/1`), +15 (`ae_reason`, `ae_set_reason`, `agnosys_write_all`,
+    `crl_load_bad_count`, `keyring_sign_issuance`, `kv_issuance_message_into`,
+    `kv_issuance_message_len`, `kv_issuer_sig`, `kv_issuer_sig_len`, `kv_set_issuer_sig`,
+    `pt384_scalarmul_secret`, `pt_scalarmul_secret`, three `tdx_quote_*_ptr`); 5,272 public fns.
   - **Downstream lockstep:** a repo that pins patra or sakshi as a git dep must move that tag with
     its 6.6.7 pin, or the git dep overlays and downgrades the fold — yukti and nein (`[deps.patra]`
     1.14.3 → 1.15.0); yukti, daimon and hisab (`[deps.sakshi]` 2.5.2 → 2.5.5).
@@ -127,8 +154,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   agnos) — every one a `ud2`/SIGILL at its first call, e.g. sigil's uname path and its CSPRNG
   fallback. It now includes `lib/sys.cyr`, `lib/chrono.cyr` and `lib/random.cyr` before sigil and
   compiles alone with no undefined function on x86-Linux, aarch64, agnos, PE, x86 Mach-O and arm64
-  Mach-O. A TLS consumer sees those calls work; until sigil 3.13.x is folded it also sees the
-  harmless `duplicate fn 'uname_release'` warning that every sys+sigil program already printed.
+  Mach-O. A TLS consumer sees those calls work, and — with sigil 3.13.3 folded in this release — no
+  longer sees the `duplicate fn 'uname_release'` warning every sys+sigil program used to print.
   `stdlib_modules_self_sufficient.sh` adds tls_native to its per-target axis and raises its
   ratchet floor 26 → 27 (mutation: the old include list is red on all four targets).
 
