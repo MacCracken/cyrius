@@ -2608,10 +2608,29 @@ fn ISDERIVE_ACC(S, pos, bl): i64 {
     return 1;
 }
 
+# 6.6.7 — the access width of field `fi`: 8 / 16 / 32 for an `i8` / `i16` / `i32` field, else
+# 64 (i64, untyped, Str, Vec, f64, nested struct — all 8-byte slots). Same exact-name match as
+# the offset table in PP_PARSE_STRUCT_DEF and Serialize's `prim_load`. CHANGELOG [6.6.7]
+fn PP_DFIELD_BITS(S, fi): i64 {
+    var t = S + 0x1FE000 + fi * 32;
+    if (load8(t) != 105) { return 64; }
+    var b1 = load8(t + 1);
+    if (b1 == 56) { if (load8(t + 2) == 0) { return 8; } }
+    if (b1 == 49) { if (load8(t + 2) == 54) { if (load8(t + 3) == 0) { return 16; } } }
+    if (b1 == 51) { if (load8(t + 2) == 50) { if (load8(t + 3) == 0) { return 32; } } }
+    return 64;
+}
+
 # Emit #derive(accessors) — generates Name_field(p) getters and Name_set_field(p, v) setters
-# Same struct parsing as PP_DERIVE_SERIALIZE. Generates:
-#   fn Name_field(p) { return load64(p + OFFSET); }
-#   fn Name_set_field(p, v) { store64(p + OFFSET, v); return 0; }
+# Same struct parsing as PP_DERIVE_SERIALIZE. Generates, with W the field's width
+# (PP_DFIELD_BITS):
+#   fn Name_field(p) { return loadW(p + OFFSET); }
+#   fn Name_set_field(p, v) { storeW(p + OFFSET, v); return 0; }
+# ⛔ 6.6.7 — W was 64 for EVERY field, so on an `i8` / `i16` / `i32` field the setter wrote 8
+# bytes: `struct P { x: i8; y: i8; }` has sizeof 2, and `P_set_y` stored bytes 1..8 — into the
+# next allocation (measured 1234 -> 1024 in a neighbour, rc 0) — while `P_set_x` overwrote `y`,
+# and the getters returned the neighbouring bytes as the value's high bits. Serialize and
+# Deserialize were already width-correct; accessors were the one family left behind.
 # v5.10.14 — accessors body emit, factored out for cross-call
 # from stacked-derive entry points. Reads metadata at S+0x197020
 # (struct name) / S+0x1FC000 (field names) / S+0x200000 (offsets)
@@ -2637,7 +2656,10 @@ fn PP_DERIVE_ACCESSORS_BODY(S, out, op): i64 {
         op = op + PP_EMIT_STR(out, op, S + 0x197020);
         store8(out + op, 95); op = op + 1;
         op = op + PP_EMIT_STR(out, op, S + 0x1FC000 + fi * 32);
-        op = op + PP_EMIT_STR(out, op, "(p) { return load64(p + ");
+        var fbits = PP_DFIELD_BITS(S, fi);
+        op = op + PP_EMIT_STR(out, op, "(p) { return load");
+        op = op + PP_EMIT_INT(out, op, fbits);
+        op = op + PP_EMIT_STR(out, op, "(p + ");
         op = op + PP_EMIT_INT(out, op, off);
         op = op + PP_EMIT_STR(out, op, "); }\n");
         # v6.5.71: record the GETTER for auto-inlining. The name is emitted in pieces and
@@ -2648,7 +2670,9 @@ fn PP_DERIVE_ACCESSORS_BODY(S, out, op): i64 {
         op = op + PP_EMIT_STR(out, op, S + 0x197020);
         op = op + PP_EMIT_STR(out, op, "_set_");
         op = op + PP_EMIT_STR(out, op, S + 0x1FC000 + fi * 32);
-        op = op + PP_EMIT_STR(out, op, "(p, v) { store64(p + ");
+        op = op + PP_EMIT_STR(out, op, "(p, v) { store");
+        op = op + PP_EMIT_INT(out, op, fbits);
+        op = op + PP_EMIT_STR(out, op, "(p + ");
         op = op + PP_EMIT_INT(out, op, off);
         op = op + PP_EMIT_STR(out, op, ", v); return 0; }\n");
         _pp_inl_add(_pp_inl_hash3(S + 0x197020, "set_", S + 0x1FC000 + fi * 32));

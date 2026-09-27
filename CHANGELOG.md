@@ -46,6 +46,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the new walk — the field and type names now share one bounded appender — and gains a
   behavioural axis: a 40-byte struct, field, type and spaced `Vec< … >` type name are each refused,
   a 31-byte one still compiles.
+- **`#derive(accessors)` loaded and stored EVERY field as 8 bytes, so on an `i8` / `i16` / `i32`
+  field the setter wrote past the field — and past the struct.** (bite 5, the second half of the
+  filed accessor corruption: with the body walk fixed, `x : i8; y : i8;` put `y` at the right
+  offset 1, and `P_set_y` then did `store64(p + 1)` on the 2-byte struct — the neighbouring
+  allocation still went 1234 → 1024, rc 0.) `P_set_x` likewise overwrote `y`, and every narrow
+  getter returned the neighbouring bytes as the value's high bits. **Root cause:**
+  `PP_DERIVE_ACCESSORS_BODY` emitted `load64` / `store64` unconditionally; `Serialize` and
+  `Deserialize` had been width-correct since 5.9.36 and accessors were the one family left
+  behind. **Fix:** the accessor uses the field's own width (`load8/16/32/64`, `store8/16/32/64`,
+  from the same exact-name match the offset table uses — `PP_DFIELD_BITS`). i64, untyped, `Str`,
+  `Vec`, `f64` and nested-struct fields are 8-byte slots and emit exactly what they did before;
+  every in-tree program compiles byte-identically except the new test above. **What a consumer
+  sees:** a narrow field's accessor now reads and writes only that field. Test:
+  `tests/tcyr/crossos/derive_accessor_widths.tcyr` (14 checks, run on each target's own
+  load/store emitters: every width set in reverse order so a too-wide store shows, plus the filed
+  2-byte shape with a neighbour canary; 7 of 14 fail before the fix).
 
 ## [6.6.6] — 2026-09-20
 
