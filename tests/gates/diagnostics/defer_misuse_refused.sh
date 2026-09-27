@@ -8,7 +8,9 @@
 #   top-level `defer {}`          its reached-flag is a fn frame slot, written through rbp = 0
 #                                 (x86 and aarch64 SIGSEGV, exit 139); cx ran nothing (exit 3)
 #   `return` inside a defer body  re-entered the epilogue walker, which re-ran the block (50x,
-#                                 bounded only by the probe's own counter)
+#                                 bounded only by the probe's own counter); a TAIL-CALL
+#                                 `return g(x);` jmp'd out, replacing the value and skipping
+#                                 every earlier-registered defer
 #   `break` inside a defer body   jumped back into the loop the defer was registered in (20x)
 #   `break` with no loop/switch   an unpatched chain link — a wild jump
 #   `continue` with no loop       jumped to the stale loop top of the LAST fn that had a loop
@@ -26,11 +28,12 @@ T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: defer_misuse_refused: mktemp -d f
 CC="$R/build/cycc"
 [ -x "$CC" ] || { echo "FAIL defer_misuse_refused: no build/cycc"; exit 1; }
 # Build stage1 FROM SOURCE so a source revert turns this gate RED instead of being masked by a
-# stale build/cycc.
+# stale build/cycc. cd FIRST: src/main.cyr's includes resolve from the CWD, so built from
+# anywhere else stage1 would be compiled from THAT directory's src/.
+cd "$R"
 "$CC" < "$R/src/main.cyr" > "$T/stage1" 2>"$T/e1" || {
   echo "FAIL defer_misuse_refused: stage1 build failed"; sed -n 1,3p "$T/e1"; exit 1; }
 chmod +x "$T/stage1"
-cd "$R"
 fail=0
 pass=0
 
@@ -75,6 +78,21 @@ var z = f();
 syscall(60, c);
 EOF
 refuse "\`?\` inside a defer body" "return inside a defer body"
+# `return CALL(...)` is a TAIL CALL (a jmp, no rp_vec entry) — it slipped past the rp_vec-growth
+# check: the callee's value replaced f's and every earlier-registered defer was skipped (exit
+# 33 = z 8, c 1 — the `c + 10` defer never ran).
+printf 'var c = 0;\nfn g(x): i64 { return x + 7; }\nfn f(): i64 { defer { c = c + 10; } defer { c = c + 1; return g(c); } return 1; }\nvar z = f();\nsyscall(60, z * 100 + c);\n' > "$T/r.cyr"
+refuse "tail-call return inside a defer body" "return inside a defer body"
+cat > "$T/r.cyr" <<'EOF2'
+include "lib/tagged.cyr"
+var c = 0;
+fn f(): Result { defer { c = c + 1; if (c < 50) { return Err(3); } } return Ok(1); }
+var z = f();
+syscall(60, c);
+EOF2
+refuse "\`return Err(..)\` inside a defer body" "return inside a defer body"
+printf 'var c = 0;\nfn g(x): i64 { return x + 7; }\nfn f(): i64 { return g(1); }\nvar z = f();\nsyscall(60, z);\n' > "$T/r.cyr"
+runs "control: a tail call outside any defer body" 8
 printf 'var c = 0;\nfn h(): i64 { var i = 0; while (i < 3) { defer { c = c + 1; if (c < 20) { break; } } i = i + 1; } return 1; }\nvar z = h();\nsyscall(60, c);\n' > "$T/r.cyr"
 refuse "break out of a defer body into its loop" "break cannot leave a defer body"
 printf 'var c = 0;\nfn h(): i64 { var i = 0; while (i < 3) { i = i + 1; defer { c = c + 1; if (c < 20) { continue; } } } return 1; }\nvar z = h();\nsyscall(60, c);\n' > "$T/r.cyr"
@@ -91,6 +109,14 @@ printf 'var hits = 0;\nfn a(n): i64 { var i = 0; while (i < n) { hits = hits + 1
 refuse "continue with no enclosing loop (after another fn's loop)" "continue outside a loop"
 printf 'var i = 0;\nbreak;\nsyscall(60, i);\n' > "$T/r.cyr"
 refuse "top-level break with no loop" "break outside a loop or switch"
+# The switch/match exit must give its break target BACK: without that, a `break` AFTER a
+# completed switch compiled to an unpatched chain link (a wild jump).
+printf 'fn f(x): i64 { var r = 0; switch (x) { case 1: r = 7; break; default: r = 9; } if (r > 0) { break; } return r; }\nsyscall(60, f(1));\n' > "$T/r.cyr"
+refuse "break after a completed switch, no loop" "break outside a loop or switch"
+printf 'fn f(x): i64 { var r = 0; match (x) { 1 => { r = 7; } _ => { r = 9; } } if (r > 0) { break; } return r; }\nsyscall(60, f(1));\n' > "$T/r.cyr"
+refuse "break after a completed match, no loop" "break outside a loop or switch"
+printf 'fn f(x): i64 { var r = 0; match (x) { 1 => { r = 7; } _ => { r = 9; } } if (r > 0) { continue; } return r; }\nsyscall(60, f(1));\n' > "$T/r.cyr"
+refuse "continue after a completed match, no loop" "continue outside a loop"
 cat > "$T/r.cyr" <<'EOF'
 include "lib/alloc.cyr"
 include "lib/fnptr.cyr"

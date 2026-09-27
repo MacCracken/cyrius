@@ -671,7 +671,8 @@ compile clean and do something silent instead):
   is no frame for its reached-flag and no epilogue to run the block. (It used to compile and
   SIGSEGV on x86/aarch64, or never run on cx.)
 - **A defer body cannot leave its function.** It runs FROM the function's return path, so
-  `return`, `?` and `ret2` inside it are refused (`return inside a defer body …`), and so is a
+  `return` (any form, a tail call `return g(x);` included), `?` and `ret2` inside it are
+  refused (`return inside a defer body …`), and so is a
   `break`/`continue` that would jump out of it into the loop the `defer` sits in (`break
   cannot leave a defer body`). A loop or switch OPENED inside the defer body is fine.
 - **A defer inside a closure belongs to the closure** — it runs when the closure returns, not

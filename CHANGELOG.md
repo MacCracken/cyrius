@@ -64,9 +64,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (bite 1.) Each of these compiled clean before and did something silent:
   - top-level `defer { }` → `defer only allowed inside a function` (its flag was written through
     rbp = 0: SIGSEGV on x86/aarch64; on cx the block never ran). Same rule as `secret`/`stack`.
-  - `return`, `?` or `ret2` inside a defer body → `return inside a defer body (a defer block
-    cannot leave its function)` (it re-entered the walker and re-ran the block — 50 times in the
-    probe);
+  - `return` (in every form, including the tail-call `return g(x);` and `return Err(e);`), `?`
+    or `ret2` inside a defer body → `return inside a defer body (a defer block cannot leave its
+    function)` (it re-entered the walker and re-ran the block — 50 times in the probe; the
+    tail-call form instead jmp'd out, replacing the fn's value and skipping every
+    earlier-registered defer). A tail call is a jmp and pushes no return patch, so it slipped
+    past the refusal until the tail-call path was switched off inside a defer body;
   - `break`/`continue` leaving a defer body → `break cannot leave a defer body` / `continue
     cannot leave a defer body` (it jumped back into the loop — 20 times);
   - `break` with no loop/switch/match, or `continue` with no loop, IN THE SAME FN → `break
@@ -75,7 +78,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     closure used to target the ENCLOSING fn's loop.
   - `await` inside a coroutine's defer body → `await cannot suspend inside a defer body`.
   A loop or switch OPENED inside a defer body is unaffected. Gate:
-  `tests/gates/diagnostics/defer_misuse_refused.sh` (21 rows; 14 RED against the pre-fix source).
+  `tests/gates/diagnostics/defer_misuse_refused.sh` (27 rows; 19 RED against the pre-fix source).
+  Among them: the tail-call and `return Err(..)` forms, and a `break`/`continue` AFTER a
+  completed switch/match in a fn with no loop (pins the switch/match exit giving its break
+  target back — without it that `break` was an unpatched chain link, a wild jump).
 - cycc **1,328,336 → 1,337,344 B** (+9,008) for the snapshot helpers, the shared epilogue and the
   new diagnostics.
 
