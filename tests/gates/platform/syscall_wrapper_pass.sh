@@ -380,6 +380,12 @@ check "SYS_SOCK_PEER = 106 present (agnos 1.57.7)" 1 \
     "$(grep -cE 'SYS_SOCK_PEER[[:space:]]*=[[:space:]]*106;' lib/syscalls_x86_64_agnos.cyr || true)"
 check "SYS_SPAWN_LIMITS = 107 present (agnos 1.57.7)" 1 \
     "$(grep -cE 'SYS_SPAWN_LIMITS[[:space:]]*=[[:space:]]*107;' lib/syscalls_x86_64_agnos.cyr || true)"
+# CVE-47 (v6.6.7): a LOOPBACK listen class lives in a per-slot table, so sys_close must clear
+# it with the port — a recycled slot must not inherit a stale class (the v6.2.22 recycled-slot
+# rule the port already follows). The class derivation itself is RUN by
+# tests/gates/platform/agnos_peer_fake_kernel.sh axis 4.
+check "sys_close clears the listen class and bind address of a recycled slot" 2 \
+    "$(aw sys_close | grep -cE 'store64\(&_agnos_listen_(cls|ip) \+ slot \* 8, 0\)' || true)"
 
 
 # ── AXIS 6: cross-target. This is the axis a host-only test cannot replace.

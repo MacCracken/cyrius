@@ -431,3 +431,54 @@ from the compiler) and axis 10 its census. ⚠ Mutation M6 (`FM_ATBOL` → 0) is
 axes, not one: with no file map at all `private` stops being enforced anywhere, which is what
 stops axis 9 passing vacuously. Self-host fixpoint + `seed-derive-cycc.sh` green;
 0 of 330 `.tcyr` binaries changed a byte.
+
+## CVE-47 — on agnos, a server bound to 127.0.0.1 listened on the network
+
+*Appended 2026-09-27 (cyrius 6.6.7, bite 4), found by the 6.6.7 batch audit of the agnos peer.
+Not part of the 2026-09-03 sweep: recorded here because this is the live ledger and the id has
+to come from one place.*
+
+| | |
+|---|---|
+| **Severity** | **High** — remote exposure of services that chose loopback as their access control; silent (no diagnostic, and the host build of the same program is correct) |
+| **Affected** | `lib/net.cyr` `sock_bind` (agnos arm) + `lib/syscalls_x86_64_agnos.cyr` `_agnos_listen_start`, since the agnos server adapter landed at v6.2.22, through cyrius 6.6.6 |
+| **Fixed** | 6.6.7 |
+
+**Vector.** agnos has no BSD `bind()`: `sock_listen`#56 merges bind and listen and takes a port.
+The v6.2.22 adapter therefore made `sock_bind(fd, addr, port)` stash the port and **drop the
+address** — its comment said so ("addr is ignored"). A server written the portable way,
+`sock_bind(fd, INADDR_LOOPBACK(), port)`, meaning *local clients only*, got a listener on the
+NIC: before agnos 1.57.7 the kernel had no address classes at all, and from 1.57.7 the class-0
+form it was sent is ANY (the NIC address **and** 127/8). Nothing reported the widening, and a
+Linux build of the same source binds loopback correctly, so no host test could see it. The
+consumer that matters is daimon, whose default control API is unauthenticated and bound to
+127.0.0.1 — daimon's own `src/server.cyr` notes that on agnos "sock_bind ignores the address",
+and it had fixed exactly this widening on the host side in 2.3.0.
+
+**Fix.** agnos 1.57.7 added the class the adapter needed: `#56` a1 = `port | class << 32`,
+class 1 = LOOPBACK (admits only SYNs addressed to 127/8, which the wire drops, so they can only
+originate on this host). `sock_bind` now derives the class from the address
+(`_agnos_listen_class`): 127/8 → `SOCK_LISTEN_LOOPBACK`; 0.0.0.0 or this host's `net_ip` →
+class 0; **any other address → `Err(99)` (EADDRNOTAVAIL), never widened**. The port is range-
+checked (1..65535, else `Err(22)`) because it shares the register with the class bits. The class
+and bind address live in per-slot tables that `sys_close` clears with the port, so a recycled
+slot inherits neither; `getsockname` reports the real bind address.
+
+**Fails closed, with no probe.** A kernel older than 1.57.7 refuses any `#56` value above 65535
+(`if (arg1 > 65535) return -1`, verified in `git show 1.57.6:kernel/core/syscall.cyr` and
+`v1.46.8`), so a loopback `sock_listen` there returns `Err` and the server **does not start**.
+⚠ Consumer-visible: **daimon's default 127.0.0.1 serve now refuses to start on agnos < 1.57.7**
+instead of exposing its API. A probe was rejected on purpose — the filing suggested
+`spawn_limits#107(0, 0)`, which would also disarm a pending spawn-limits arm.
+
+**Verified.** `tests/gates/platform/agnos_peer_fake_kernel.sh` axis 4 runs `net.cyr` on a
+PTRACE_SYSEMU fake kernel and reads `#56`'s register: 127.0.0.1 → `8080 | 0x100000000`,
+0.0.0.0 and `net_ip` → class 0, a foreign address and port 70000 refused, `getsockname` =
+127.0.0.1:8080, and — with the kernel scripted as pre-1.57.7 — the loopback `sock_listen`
+fails. Mutation: restoring the address-dropping `sock_bind` turns five assertions red.
+`syscall_wrapper_pass.sh` axis 5 pins the `sys_close` clear. **On a real agnos 1.57.10 kernel
+in QEMU** (`-smp 1` and `-smp 4`): a 127.0.0.1:9000 bind + listen succeeds, `getsockname` reports
+127.0.0.1:9000, a forked client's dial to 127.0.0.1 is accepted and `getpeername` reads 127.x,
+**a dial to the host's own `net_ip` on that port is refused**, and a bind to an address the host
+lacks is `Err(99)`. The pre-1.57.7 fail-closed arm is proven on the fake kernel only (no older
+kernel was booted).

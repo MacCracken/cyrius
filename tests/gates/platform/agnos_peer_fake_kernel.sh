@@ -191,6 +191,56 @@ check "sys_getsockname on a client conn is -38 (agnos reports no local port)" "-
 check "sys_getpeername on a non-socket fd is -1" "-1" "$(mark 66)"
 check "SIGXCPU = 24, FLOCK_E_TABLE_FULL = 2, PROCLIST_ZOMBIE = 7" "24207" "$(mark 67)"
 
+# ── axis 4 — CVE-47: the bind ADDRESS picks the #56 listen class ─────────────────────────────
+echo "axis 4 — sock_bind's address becomes the #56 listen class (CVE-47, agnos 1.57.7):"
+cat > "$T/a4.cyr" <<'EOF'
+include "lib/alloc.cyr"
+include "lib/tagged.cyr"
+include "lib/net.cyr"
+var f1_t, f1 = tcp_socket();
+syscall(999, 70, 0);
+sock_bind(f1, INADDR_LOOPBACK(), 8080);
+sock_listen(f1, 4);
+var f2_t, f2 = tcp_socket();
+syscall(999, 71, 0);
+sock_bind(f2, INADDR_ANY(), 8081);
+sock_listen(f2, 4);
+var f3_t, f3 = tcp_socket();
+syscall(999, 72, 0);
+sock_bind(f3, 0x0F02000A, 8082);
+sock_listen(f3, 4);
+var f4_t, f4 = tcp_socket();
+var b4_t, b4 = sock_bind(f4, 0x6302000A, 8083);
+syscall(999, 73, is_err_result(b4_t) * 1000 + b4);
+var b5_t, b5 = sock_bind(f4, INADDR_LOOPBACK(), 70000);
+syscall(999, 74, is_err_result(b5_t) * 1000 + b5);
+var sa[16];
+var al[8];
+store64(&al, 16);
+syscall(999, 75, sys_getsockname(f1, &sa, &al));
+syscall(999, 76, load64(&sa));
+sys_close(f1);
+var f5_t, f5 = tcp_socket();
+syscall(999, 77, f5 - f1);
+var l5_t, l5 = sock_listen(f5, 4);
+syscall(999, 78, is_err_result(l5_t));
+var f6_t, f6 = tcp_socket();
+sock_bind(f6, INADDR_LOOPBACK(), 8084);
+var l6_t, l6 = sock_listen(f6, 4);
+syscall(999, 79, is_err_result(l6_t));
+sys_exit(0);
+EOF
+run "$T/a4.cyr" plain
+check "bind 127.0.0.1 → #56(8080 | SOCK_LISTEN_LOOPBACK): loopback only" "4294975376" "$(after 70 56 | awk '{ print $1 }')"
+check "bind 0.0.0.0 → #56(8081): class 0 (ANY)" "8081" "$(after 71 56 | awk '{ print $1 }')"
+check "bind this host's net_ip (10.0.2.15) → #56(8082): class 0" "8082" "$(after 72 56 | awk '{ print $1 }')"
+check "bind an address this host lacks (10.0.2.99) → Err(99), never widened" "1099" "$(mark 73)"
+check "bind port 70000 → Err(22) (it would bleed into the class bits)" "1022" "$(mark 74)"
+check "getsockname on the loopback listener reports 127.0.0.1:8080" "0 72058141916725250" "$(mark 75) $(mark 76)"
+check "a recycled slot (closed loopback listener) inherits no port and no class" "0 1" "$(mark 77) $(mark 78)"
+run "$T/a4.cyr" oldnet
+check "on a pre-1.57.7 kernel (flagged #56 → -1) a loopback server FAILS CLOSED" "1" "$(mark 79)"
+
 echo ""
 if [ "$fails" = "0" ]; then
     echo "PASS: agnos_peer_fake_kernel — the agnos peer hands the kernel exactly the registers it decodes"

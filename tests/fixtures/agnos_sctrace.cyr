@@ -22,6 +22,7 @@
 #   eof    — sock_recv#49 answers -1 (the peer closed).
 #   send0  — like `us`, and sock_send#48 answers 0 (no ACK progress) every time.
 #   send3  — like `us`, and #48 answers min(3, len) bytes per call.
+#   oldnet — sock_listen#56 answers -1 for any a1 above 65535 (a pre-1.57.7 kernel: no classes).
 # In every mode sock_recv#49 answers 0 (WOULD_BLOCK) unless the mode says otherwise,
 # sock_connect#47 / sock_listen#56 answer id 0, sock_peer#106 answers 127.0.0.1:8080 packed
 # ((0x7F000001 << 16) | 8080) and net_config#61 field 0 (net_ip) answers 10.0.2.15.
@@ -88,6 +89,10 @@ fn _st_answer(mode, nr, k, a1, a3): i64 {
     }
     if (nr == 49) {
         if (_st_mode_is(mode, "eof") == 1) { return 0 - 1; }
+        return 0;
+    }
+    if (nr == 56) {
+        if (_st_mode_is(mode, "oldnet") == 1) { if (a1 > 65535) { return 0 - 1; } }
         return 0;
     }
     if (nr == 48) {

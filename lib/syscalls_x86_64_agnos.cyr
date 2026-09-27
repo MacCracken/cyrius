@@ -528,7 +528,8 @@ enum SysNrAgnosNet {
     SYS_UDP_UNBIND = 54;   # udp_unbind(listener_id) → 0 / -1
     SYS_ICMP_ECHO = 55;    # icmp_echo(dst_ip) → RTT ms (≥0) / -1; BLOCKS ~3s (fixed kernel bound)
     SYS_ICMP_ECHO_EX = 100; # icmp_echo_ex(dst_ip, timeout_ms) → RTT ms (≥0) / -1 (agnos 1.56.48)
-    SYS_SOCK_LISTEN = 56;  # sock_listen(port) → listen_id 0..7 / -1; merges bind+listen, non-blocking (1.45.5)
+    SYS_SOCK_LISTEN = 56;  # sock_listen(port | class<<32) → listen_id 0..7 / -1; merges bind+listen,
+    #   non-blocking (1.45.5); class 0 = ANY, 1 = LOOPBACK (SOCK_LISTEN_LOOPBACK, agnos 1.57.7)
     SYS_SOCK_ACCEPT = 57;  # sock_accept(listen_id) → conn_id / -1 (WOULD_BLOCK / bad id); non-blocking (1.45.5)
     # net_config(field) → packed IPv4 (0..3) / counter (4..11) / -1 bad field.
     #   0=ip 1=netmask 2=gateway 3=dns_server                      (agnos 1.45.16)
@@ -656,6 +657,10 @@ var _agnos_conn_ready = 0;
 # See 2026-06-18-agnos-server-socket-peer.md.
 var _agnos_listen_tbl: i64[8];
 var _agnos_listen_port: i64[8];
+# v6.6.7: the bind ADDRESS, which the adapter used to drop. Per slot: the listen class OR'd into
+# #56 (0 = ANY, SOCK_LISTEN_LOOPBACK) and the ip4()-form bind address getsockname reports.
+var _agnos_listen_cls: i64[8];
+var _agnos_listen_ip: i64[8];
 # Socket wait bounds (v6.6.7): the default recv / send-stall deadline, and the pause-count
 # backstop used ONLY when the machine has no readable clock at all (#95 refused AND #46 reading
 # 0). Both names are consumer API — daimon assigns AGNOS_SOCK_RECV_MAX_SPINS — so they stay.
@@ -808,6 +813,8 @@ fn sys_close(fd): i64 {
         var v = load64(&_agnos_conn_tbl + slot * 8);      # conn_id+1, -1, or 0
         store64(&_agnos_listen_tbl + slot * 8, 0);
         store64(&_agnos_listen_port + slot * 8, 0);
+        store64(&_agnos_listen_cls + slot * 8, 0);       # v6.6.7: a recycled slot must not
+        store64(&_agnos_listen_ip + slot * 8, 0);        # inherit a LOOPBACK class either
         store64(&_agnos_conn_tbl + slot * 8, 0);
         store64(&_agnos_sock_rcvto_us + slot * 8, 0);    # v6.6.7: per-socket deadlines
         store64(&_agnos_sock_sndto_us + slot * 8, 0);
@@ -1744,7 +1751,7 @@ fn sys_getsockname(fd, addr, addrlen): i64 {
     var slot = fd & 7;
     var port = load64(&_agnos_listen_port + slot * 8);
     if (port <= 0) { return 0 - 38; }
-    return _agnos_put_sockaddr(addr, addrlen, sys_net_ip(), port);
+    return _agnos_put_sockaddr(addr, addrlen, load64(&_agnos_listen_ip + slot * 8), port);
 }
 
 # Store a sockaddr_in for ip4()-form `ip` / host-order `port` at `addr`, truncated to the i32
@@ -1775,8 +1782,16 @@ fn _agnos_put_sockaddr(addr, addrlen, ip, port): i64 {
 # net.cyr's sock_bind/listen/accept compose these via the listen↔fd adapter
 # below. See 2026-06-18-agnos-server-socket-peer.md.
 # sock_listen(port): merge bind+listen on a local TCP port → listen_id 0..7,
-# or -1 (port already bound / kernel conn table full).
+# or -1 (port already bound / kernel conn table full). This raw form is class 0 = ANY: since agnos
+# 1.57.7 that admits net_ip AND 127/8. Pass `port | SOCK_LISTEN_LOOPBACK` for a loopback-only
+# listener (net.cyr's sock_bind derives it from the bind address); a pre-1.57.7 kernel refuses
+# any flagged value (-1) — it fails CLOSED.
 fn sys_sock_listen(port): i64 { return syscall(SYS_SOCK_LISTEN, port); }
+
+# #56 listen class, a1 bits 32-39 (agnos 1.57.7). LOOPBACK admits only SYNs addressed to 127/8 —
+# which can only originate on this host, because the wire drops 127/8 — the bind(127.0.0.1)
+# equivalent. Class 0 (ANY) is the NIC address AND 127/8.
+var SOCK_LISTEN_LOOPBACK = 0x100000000;
 # sock_accept(listen_id): drive net_poll then tcp_accept → the next ESTABLISHED
 # conn_id 0..7 (a normal conn for #48/#49/#50), or -1 (none pending = WOULD_BLOCK
 # / bad listen_id).
@@ -1906,6 +1921,8 @@ fn _agnos_conn_init(): i64 {
         store64(&_agnos_conn_tbl + i * 8, 0);
         store64(&_agnos_listen_tbl + i * 8, 0);   # v6.2.22: server-socket tables
         store64(&_agnos_listen_port + i * 8, 0);
+        store64(&_agnos_listen_cls + i * 8, 0);
+        store64(&_agnos_listen_ip + i * 8, 0);
         store64(&_agnos_sock_rcvto_us + i * 8, 0);
         store64(&_agnos_sock_sndto_us + i * 8, 0);
         i = i + 1;
@@ -1960,11 +1977,36 @@ fn _agnos_fd_conn(fd): i64 {
 # space the client adapter uses.
 
 # sock_bind: stash the local port so sock_listen can issue #56 with it (the
-# kernel merges bind+listen, so bind itself does no syscall). Returns 0.
+# kernel merges bind+listen, so bind itself does no syscall). Returns 0. The class-0 (ANY) form,
+# kept for existing callers; net.cyr's sock_bind uses _agnos_listen_stash.
 fn _agnos_listen_stash_port(fd, port): i64 {
+    return _agnos_listen_stash(fd, port, 0, 0);
+}
+
+# The #56 listen class for a bind to `ip` (the kernel ip4() form), or -1 when agnos cannot bind
+# that address: 127/8 → SOCK_LISTEN_LOOPBACK; 0.0.0.0 or this host's net_ip → 0 (ANY);
+# anything else → -1 (an address this host does not have — refused, never widened).
+# ⛔ CVE-47 (v6.6.7): the adapter used to IGNORE the bind address and always listen class 0, so
+# `sock_bind(fd, INADDR_LOOPBACK(), p)` — a server meaning "local clients only", daimon's
+# unauthenticated control API among them — was reachable from the NETWORK, with no diagnostic.
+fn _agnos_listen_class(ip): i64 {
+    if (((ip >> 24) & 0xFF) == 127) { return SOCK_LISTEN_LOOPBACK; }
+    if (ip == 0) { return 0; }
+    if (ip == sys_net_ip()) { return 0; }
+    return 0 - 1;
+}
+
+# Stash a bind for sock_listen: `port` (1..65535), the listen class and the bind address.
+# Returns 0, or -1 for a port outside 1..65535 — refused HERE because #56 packs the class into
+# the same register, so an oversized port would bleed into the class bits.
+fn _agnos_listen_stash(fd, port, cls, ip): i64 {
+    if (port < 1) { return 0 - 1; }
+    if (port > 65535) { return 0 - 1; }
     _agnos_conn_init();
     var slot = fd & 7;
     store64(&_agnos_listen_port + slot * 8, port);
+    store64(&_agnos_listen_cls + slot * 8, cls);
+    store64(&_agnos_listen_ip + slot * 8, ip);
     return 0;
 }
 
@@ -1972,11 +2014,15 @@ fn _agnos_listen_stash_port(fd, port): i64 {
 # in the slot's listen table (marking it a LISTEN socket). Returns 0, or -1
 # (port in use / kernel conn table full). The conn_tbl slot stays -1 so the
 # listen fd never routes a read/write to #48/#49.
+# v6.6.7: #56 carries the bind's class (port | class << 32). A LOOPBACK listen on a pre-1.57.7
+# kernel is refused (-1) — it FAILS CLOSED rather than listening on the network. An unbound
+# socket (no stashed port) is refused here instead of asking the kernel for port 0.
 fn _agnos_listen_start(fd): i64 {
     _agnos_conn_init();
     var slot = fd & 7;
     var port = load64(&_agnos_listen_port + slot * 8);
-    var lid = syscall(SYS_SOCK_LISTEN, port);
+    if (port <= 0) { return 0 - 1; }
+    var lid = syscall(SYS_SOCK_LISTEN, port | load64(&_agnos_listen_cls + slot * 8));
     if (lid < 0) { return 0 - 1; }
     store64(&_agnos_listen_tbl + slot * 8, lid + 1);
     return 0;
