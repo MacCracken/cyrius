@@ -3224,7 +3224,7 @@ everywhere else. cycc warns on a conflicting `SYS_*` redefinition.
   undefined; `sys_read_nb` / `sys_write_nb` are the non-blocking forms
 - Blocking waits and a real wait status (v6.6.7, agnos 1.57.7): `sys_waitpid_block`, W* per ABI §4.9
 - Socket reads bounded by a real clock: a timeout is -11 (EAGAIN), per-socket via
-  `sock_set_recv_timeout`; a server bound to 127.0.0.1 listens on loopback only (CVE-47 —
+  `sock_set_recv_timeout`; a server bound to 127.0.0.1 listens on loopback only (CVE-48 —
   it refuses to start on agnos < 1.57.7 rather than listen on the network)
 - Signals (sigprocmask, kill, pause)
 - Filesystem (mkdir, rmdir, unlink, rename, link on ext2)

@@ -188,7 +188,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   return a real status (exit `code & 0xFF`, fault `128 + vector`, signal `0x100 | sig`). The W*
   helpers now follow ABI §4.9; `sys_waitpid`'s comment no longer promises a bare exit code. Verified
   on QEMU: a killed child is 265 → signaled, signal 9; `exit(7)` → exited, 7.
-- **Security (CVE-47): on agnos, a server bound to 127.0.0.1 listened on the network.** (bite 4.)
+- **Security (CVE-48): on agnos, a server bound to 127.0.0.1 listened on the network.** (bite 4.)
   `net.cyr`'s agnos `sock_bind` dropped the address (the v6.2.22 adapter: "addr is ignored") and
   every listen went out as `sock_listen`#56 class 0 — before 1.57.7 the NIC, since 1.57.7 the NIC
   **and** loopback. daimon's unauthenticated control API binds 127.0.0.1. **Fix:** the bind address
@@ -198,7 +198,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   ⚠ **What a consumer sees: daimon's default 127.0.0.1 serve now REFUSES to start on agnos < 1.57.7**
   (the flagged #56 is refused there — fail closed, no probe) instead of exposing its API. QEMU
   (1.57.10): a dial to 127.0.0.1 is accepted, a dial to the host's own address on the same port is
-  refused. Full write-up: `docs/audit/2026-09-03-security-audit.md` § CVE-47.
+  refused — while a 0.0.0.0 listener accepts that same dial, and the pre-fix build's 127.0.0.1
+  listener did too. Full write-up: `docs/audit/2026-09-03-security-audit.md` § CVE-48.
 - **agnos peer argument misroutes.** (bite 4.) Three wrappers passed values the kernel decodes into
   a DIFFERENT operation, silently: `sys_spawn_path` / `sys_spawn_path_env` with a length above
   0xFFFF set `spawn_path`#43's flag bits (a 0x10005 became a 5-byte `SPAWN_F_ARGV` spawn), an

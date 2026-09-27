@@ -191,8 +191,8 @@ check "sys_getsockname on a client conn is -38 (agnos reports no local port)" "-
 check "sys_getpeername on a non-socket fd is -1" "-1" "$(mark 66)"
 check "SIGXCPU = 24, FLOCK_E_TABLE_FULL = 2, PROCLIST_ZOMBIE = 7" "24207" "$(mark 67)"
 
-# ── axis 4 — CVE-47: the bind ADDRESS picks the #56 listen class ─────────────────────────────
-echo "axis 4 — sock_bind's address becomes the #56 listen class (CVE-47, agnos 1.57.7):"
+# ── axis 4 — CVE-48: the bind ADDRESS picks the #56 listen class ─────────────────────────────
+echo "axis 4 — sock_bind's address becomes the #56 listen class (CVE-48, agnos 1.57.7):"
 cat > "$T/a4.cyr" <<'EOF'
 include "lib/alloc.cyr"
 include "lib/tagged.cyr"

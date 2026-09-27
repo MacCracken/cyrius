@@ -305,7 +305,7 @@ fn sock_bind(fd, addr, port) : Result {
     # AND the address class for sock_listen to issue with. 127/8 → a LOOPBACK-only
     # listener; 0.0.0.0 or this host's address → ANY; any other address → Err(99)
     # (EADDRNOTAVAIL — this host does not have it). A bad port → Err(22) (EINVAL).
-    # ⛔ CVE-47 (v6.6.7): `addr` used to be IGNORED, so a 127.0.0.1 server listened
+    # ⛔ CVE-48 (v6.6.7): `addr` used to be IGNORED, so a 127.0.0.1 server listened
     # on the network. On an agnos kernel older than 1.57.7 the loopback class is
     # refused at sock_listen — the server does not start, which is the safe answer.
     var ip = _agnos_bswap32(addr);
@@ -330,7 +330,7 @@ fn sock_listen(fd, backlog) : Result {
     # advisory on AGNOS — the kernel's 8-conn-slot table caps it. v6.2.22.
     var r = _agnos_listen_start(fd);
     # port in use / kernel conn table full / unbound — or a LOOPBACK bind on an agnos
-    # older than 1.57.7, which has no address classes: refused, never widened (CVE-47).
+    # older than 1.57.7, which has no address classes: refused, never widened (CVE-48).
     if (r < 0) { return Err(1); }
     return Ok(0);
     #endif

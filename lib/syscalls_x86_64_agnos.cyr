@@ -1986,7 +1986,7 @@ fn _agnos_listen_stash_port(fd, port): i64 {
 # The #56 listen class for a bind to `ip` (the kernel ip4() form), or -1 when agnos cannot bind
 # that address: 127/8 → SOCK_LISTEN_LOOPBACK; 0.0.0.0 or this host's net_ip → 0 (ANY);
 # anything else → -1 (an address this host does not have — refused, never widened).
-# ⛔ CVE-47 (v6.6.7): the adapter used to IGNORE the bind address and always listen class 0, so
+# ⛔ CVE-48 (v6.6.7): the adapter used to IGNORE the bind address and always listen class 0, so
 # `sock_bind(fd, INADDR_LOOPBACK(), p)` — a server meaning "local clients only", daimon's
 # unauthenticated control API among them — was reachable from the NETWORK, with no diagnostic.
 fn _agnos_listen_class(ip): i64 {

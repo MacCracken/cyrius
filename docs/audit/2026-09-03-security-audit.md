@@ -2,12 +2,15 @@
 
 **Scope:** the untrusted-source-input surface. Previous full audit:
 `docs/audit/2026-07-27-security-audit.md` (CVE-32…CVE-36) at cycc 6.4.82.
-**Next free identifier after this document: CVE-46.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
-document are **withdrawn** but still consume their ids.) CVE-43 was consumed at 6.6.5 and
-**CVE-44 and CVE-45 at 6.6.6** — the release installer's fixed `/tmp` staging, and a forged `#@file` from an included file; all three are appended below.
+**Next free identifier after this document: CVE-49.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
+document are **withdrawn** but still consume their ids.) CVE-43 was consumed at 6.6.5,
+**CVE-44 and CVE-45 at 6.6.6** — the release installer's fixed `/tmp` staging, and a forged `#@file` from an included file —
+and **CVE-46, CVE-47 and CVE-48 at 6.6.7** (a `secret var` inside a closure was never zeroised; a `secret var` in a
+fn whose `return f(..)` was compiled as a tail call was never zeroised; on agnos a server bound to 127.0.0.1
+listened on the network); all six are appended below.
 ⚠ **This line read "next free: CVE-42" while CLAUDE.md read "the next CVE number is 43" and this document ran 39-41.**
 Two authorities, two answers, and nothing reconciled them. CLAUDE.md is the one every closeout reads, so **42 is
-retired unused** and CVE-43 is the entry appended below. Anything below 46 now collides.
+retired unused** and CVE-43 is the entry appended below. Anything below 49 now collides.
 
 Run as part of the band K closeout, as nine parallel audit dimensions over the v6.5.x minor with
 an adversarial verification pass over the highest-severity findings. Everything recorded here was
@@ -432,11 +435,12 @@ axes, not one: with no file map at all `private` stops being enforced anywhere, 
 stops axis 9 passing vacuously. Self-host fixpoint + `seed-derive-cycc.sh` green;
 0 of 330 `.tcyr` binaries changed a byte.
 
-## CVE-47 — on agnos, a server bound to 127.0.0.1 listened on the network
+## CVE-48 — on agnos, a server bound to 127.0.0.1 listened on the network
 
 *Appended 2026-09-27 (cyrius 6.6.7, bite 4), found by the 6.6.7 batch audit of the agnos peer.
 Not part of the 2026-09-03 sweep: recorded here because this is the live ledger and the id has
-to come from one place.*
+to come from one place. Drafted as CVE-47 and renumbered before release: 6.6.7 bite 2 spent
+CVE-47 first.*
 
 | | |
 |---|---|
@@ -480,5 +484,10 @@ fails. Mutation: restoring the address-dropping `sock_bind` turns five assertion
 in QEMU** (`-smp 1` and `-smp 4`): a 127.0.0.1:9000 bind + listen succeeds, `getsockname` reports
 127.0.0.1:9000, a forked client's dial to 127.0.0.1 is accepted and `getpeername` reads 127.x,
 **a dial to the host's own `net_ip` on that port is refused**, and a bind to an address the host
-lacks is `Err(99)`. The pre-1.57.7 fail-closed arm is proven on the fake kernel only (no older
+lacks is `Err(99)`. The `net_ip` dial is only evidence with its controls, so the probe carries
+both: it dials `_agnos_bswap32(net_ip)` (`sys_net_ip()` is the ip4() form and `sock_connect`
+byte-swaps its address — the first probe dialled the raw value, i.e. a foreign address, and its
+"refused" proved nothing; caught in review), a 0.0.0.0 (class 0) listener on the same guest
+ACCEPTS that same dial, and the same probe built against the pre-fix `net.cyr` has the 127.0.0.1
+listener accept it too — the vulnerability reproduced on the real kernel, then closed. The pre-1.57.7 fail-closed arm is proven on the fake kernel only (no older
 kernel was booted).

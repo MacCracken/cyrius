@@ -4,7 +4,7 @@
 **Original status:** 🟡 OPEN:. The agnos kernel ships this in 1.57.8. It adds **no new syscall number or constant**, so the
 agnos `syscall ABI` gate is unaffected (it is still red only for `#106`/`#107`, the 1.57.7 filing). The asks below
 are one semantic fix in `sys_read` and some comment updates.
-**Placement:** **6.6.7 bite 4** — agnos 1.57.6–1.57.9 peer surface; the a4=r10 class (cycc zeroes r10 on short agnos syscalls); monotonic socket-recv deadline; loopback listen class (CVE-47). Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
+**Placement:** **6.6.7 bite 4** — agnos 1.57.6–1.57.9 peer surface; the a4=r10 class (cycc zeroes r10 on short agnos syscalls); monotonic socket-recv deadline; loopback listen class (CVE-48). Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Filed:** 2026-09-25, by agnos. agnos owns the ABI; cyrius owns the peer.
 **Severity:** Medium. `sys_read` on a pipe or channel fd is non-deterministic on agnos 1.57.8 until the
 `sys_read` change lands.
