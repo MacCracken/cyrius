@@ -137,6 +137,14 @@ var stm = system_total_memory();
 assert_eq(stm, tm, "system_total_memory() agrees with sysinfo_total_memory()");
 #endif
 
+# 6.6.7: sys_sched_kicks reads agnos sysinfo#35's 1.57.9 `sched_kicks` field. Off agnos it is
+# honestly not wired — Linux's /proc/interrupts RES row counts kicks RECEIVED per CPU, a
+# different number — and this is where every other target proves it COMPILES and answers
+# -ENOSYS rather than a fabricated count. (The agnos arm is pinned by
+# tests/gates/platform/agnos_sysinfo_tail_parity.sh, under mirshi.)
+test_group("sched_kicks");
+assert_eq(sys_sched_kicks(), 0 - 38, "sys_sched_kicks() is -ENOSYS off agnos");
+
 test_group("is_root");
 var ir = is_root();
 var ir_ok = (ir < 2);

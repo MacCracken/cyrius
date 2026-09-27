@@ -39,6 +39,39 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   under mirshi the per-read `ENOSYS agnos#95` stderr flood is gone. daimon's
   `daimon_now_ms()` workaround stays harmless.
 
+- **check.sh was RED on any box with `~/Repos/agnos` >= 1.57.9: `agnos_sysinfo_tail_parity` could
+  not express `sysinfo`#35's fourth tier.** (bite 7.) agnos 1.57.9 appended `sched_kicks` at +200,
+  growing #35 to **208 bytes**, and §4.4 now reads "the length tiers are 40 / 104 / 200 / 208".
+  **Root cause:** the gate's regex hard-coded three numbers, extracted "40 / 104 / 200", and then
+  asserted `SYSINFO_SIZE_FULL` == tier 3 (200) AND == the struct size (208) — no `lib/sys.cyr` edit
+  could satisfy both, so release-gate step 3 was red on this box while CI (which SKIPs without the
+  sibling) stayed green. **Fix:** the gate parses EVERY tier — first == `SYSINFO_SIZE`, second ==
+  `SYSINFO_SIZE_CPU`, last == `SYSINFO_SIZE_FULL` == the §4.4 size, each middle tier must have a
+  named `SYSINFO_SIZE_*` constant, `SI_SCHED_KICKS` must equal the `sched_kicks` row, the floor is
+  `>= 3` tiers, and the enum is read header-to-brace instead of through a `grep -A6` window that
+  would drop the next constant. New axes pin `sys_sched_kicks` (buffer sized by and length equal to
+  `SYSINFO_SIZE_FULL`, the -1 pre-fill) and, under mirshi, run it against a kernel that leaves +200
+  unwritten: -1, not stack residue (exit 7 without the pre-fill, measured). Mutation-proven eleven
+  ways, lib side and contract side. `tests/tcyr/crossos/sysinfo_uname.tcyr` asserts the
+  off-agnos -ENOSYS answer (ran on ecb, ach, pi, aarch64 qemu and PE/wine; cass pending).
+
+### Changed
+
+- **`SYSINFO_SIZE_FULL` (agnos) is 208, the whole `sysinfo`#35 struct — it was 200.** (bite 7.) The
+  old 200 tier keeps a name, **`SYSINFO_SIZE_BLK`**. ⚠ A consumer that passes `SYSINFO_SIZE_FULL` as
+  the length must size its buffer >= 208: the kernel writes the length it is asked for. The one
+  ecosystem user, chakshu (`src/snap_agnos.cyr`), already declares `var si[208]`. `lib/sys.cyr`'s
+  tier comment is corrected to "40 / 104 / 200 / 208".
+
+### Added
+
+- **`sys_sched_kicks()` and `SI_SCHED_KICKS` (+200) — agnos 1.57.9's reschedule-kick counter.**
+  (bite 7.) Reads `sysinfo`#35 with `SYSINFO_SIZE_FULL` into a buffer sized by the same constant,
+  and returns the count, **-1** when the kernel did not report it (agnos < 1.57.9 accepts the length
+  and leaves +200 unwritten, so the slot is pre-filled), or -errno. Off agnos it is -ENOSYS: Linux's
+  nearest figure, the `/proc/interrupts` RES row, counts kicks received per CPU — a different
+  number.
+
 ## [6.6.6] — 2026-09-20
 
 The 6.6.6 repair release — the 6.6.5 queue, and then what looking at it turned up. Every one of the six
