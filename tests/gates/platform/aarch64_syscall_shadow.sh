@@ -181,11 +181,11 @@ if first_alias < last_compat:
 # ⛔ WHY THIS AXIS EXISTS. Everything above reads exactly two files, the stdlib peers. But
 # the shadow class is a property of an ARCH-GUARDED SYSCALL NUMBER, not of those two files,
 # and vendored stdlib folds declare their own. Found by review at 6.6.5:
-# `lib/yukti.cyr` line 58, inside `#ifdef CYRIUS_ARCH_AARCH64`, declares SYS_STATFS = 43 —
+# `lib/yukti.cyr` line 58 (yukti <= 2.3.11), inside `#ifdef CYRIUS_ARCH_AARCH64`, declared SYS_STATFS = 43 —
 # the correct aarch64 native number — and ESYSXLAT's ELF arm has carried `43 -> 202` (x86
 # accept) since the v6.2.10 socket block. Measured under `qemu-aarch64 -strace`:
 # `syscall(SYS_STATFS, "/", buf)` traced as `accept(6293618, 0x7f254c000000, [0]) = -1
-# errno=14`, so `yukti_filesystem_usage` returns "statfs failed: errno 14" on every ARM host.
+# errno=14`, so `yukti_filesystem_usage` returned "statfs failed: errno 14" on every ARM host.
 # Older than this release, and invisible to all four existing gates by construction:
 # raw_syscall_literals_routed.sh EXEMPTS arch-guarded literals (they are the supported
 # spelling), and the other three parse only the two peer files. Fixed at the SOURCE (yukti

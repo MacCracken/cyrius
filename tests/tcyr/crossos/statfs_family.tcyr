@@ -13,8 +13,9 @@
 #
 #       accept(6293449, 0x00007fb58354d220, [0]) = -1 errno=14 (Bad address)
 #
-#   yukti 2.3.11 declares exactly that number, so `filesystem_usage` answered "statfs
-#   failed: errno 14" on every ARM host from v6.2.10 until this release. statfs also had NO
+#   yukti 2.3.11 declared exactly that number, so `filesystem_usage` answered "statfs
+#   failed: errno 14" on every ARM host from v6.2.10 until the 6.6.7 fold of yukti 2.3.13
+#   (this file's peer names and rows shipped at 6.6.6; CHANGELOG [6.6.7]). statfs also had NO
 #   NAME in either Linux peer — which is why a consumer had to hardcode a number at all, and
 #   why the raw-literal diagnostic (whose table is derived from names declared in BOTH
 #   peers) could not see it.
