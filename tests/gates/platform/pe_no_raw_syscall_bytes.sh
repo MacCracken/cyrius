@@ -87,13 +87,15 @@ fi
 if grep -qE '^[[:space:]]*SYS_IOCTL[[:space:]]*=' lib/syscalls_windows.cyr; then
     echo "  ok axis 3: lib/syscalls_windows.cyr defines SYS_IOCTL"
 else
-    echo "  FAIL axis 3: lib/syscalls_windows.cyr has no SYS_IOCTL — a PE build of lib/yukti.cyr is a hard compile error again"
+    echo "  FAIL axis 3: lib/syscalls_windows.cyr has no SYS_IOCTL — a PE build of any consumer that names it (vani's and mabda's agnos ioctl arms spell sys_ioctl; out-of-tree code may still spell SYS_IOCTL) is a hard compile error again"
     fail=1
 fi
 
 # --- axis 4: the folds that CAN build for PE must keep building, with no raw 0F 05 ---
-# yukti is the one SYS_IOCTL blocked; vani reaches ioctl through it (so it must follow
-# yukti, which is the include order `cyrius distlib` emits); patra is an unrelated control.
+# yukti is the fold SYS_IOCTL once blocked (it spells private `_YK_*` names since 2.3.13,
+# CHANGELOG [6.6.7]); vani follows yukti because vani's audio API calls yukti's, the order
+# `cyrius distlib` emits (vani reaches ioctl through its OWN `_audio_ioctl`, not yukti);
+# patra is an unrelated control.
 #
 # ⚠ v6.5.30 — `patra` now leads the yukti specs. yukti 2.3.8 references `PATRA_OK`, and it has
 # declared `[deps.patra]` in its manifest all along, so a consumer resolving through
@@ -124,6 +126,41 @@ for spec in "patra yukti" "patra yukti vani" "patra"; do
     fi
 done
 
+# --- axis 6: sandhi (and yantra over it) must build for PE WITHOUT yukti in scope ---
+# 6.6.7: sandhi's IPv6 open paths spelled `syscall(SYS_SOCKET, ...)` / `SYS_CONNECT`, names
+# the Windows peer has never defined. PE builds of sandhi only compiled because yukti
+# <= 2.3.12 declared both as top-level globals, and every hand-written preamble here and in
+# folds_agnos_parity puts yukti ahead of sandhi. yukti 2.3.13 stopped declaring them and
+# sandhi broke on PE (4 `undefined variable` errors) with every gate green. So this axis
+# builds sandhi against the stdlib leaves plus its OWN fold deps (sakshi, sigil, bayan)
+# and nothing else: a fold that borrows another fold's constant fails here.
+# CHANGELOG [6.6.7].
+SANDHI_PRE="syscalls string alloc result str fmt vec hashmap io fs fnptr tagged mmap net ws math chrono random thread thread_local process dynlib fdlopen tls sakshi sigil bayan"
+for spec in "sandhi" "sandhi async yantra"; do
+    {
+        for m in $SANDHI_PRE $spec; do printf 'include "lib/%s.cyr"\n' "$m"; done
+        printf 'fn main(): i64 { return 0; }\nvar ec = main();\nsyscall(60, ec);\n'
+    } > "$T"
+    if grep -q 'lib/yukti.cyr' "$T"; then
+        echo "  FAIL axis 6: the preamble includes yukti — the axis would be vacuous"; fail=1; continue
+    fi
+    CYRIUS_TARGET_WIN=1 "$CC" < "$T" > "$B" 2>"$E" || true
+    label=$(echo "$spec" | tr ' ' '+')
+    if [ ! -s "$B" ]; then
+        echo "  FAIL axis 6 [$label]: does not build for PE without yukti in scope"
+        grep -m4 "^error" "$E" | sed 's/^/      /'
+        fail=1
+    else
+        n=$(raw_syscalls "$B")
+        if [ "$n" != "0" ]; then
+            echo "  FAIL axis 6 [$label]: PE binary carries $n raw syscall instruction(s)"
+            fail=1
+        else
+            echo "  ok axis 6 [$label]: builds for PE with no other fold in scope, 0 raw syscall instructions"
+        fi
+    fi
+done
+
 # --- axis 5: the three new Windows raw-floor wrappers must exist ---
 # Each was a band-D (.25) item whose 0xF0xx reroute was already live; only the wrapper
 # was missing, which made the name a hard compile error for PE.
@@ -137,4 +174,4 @@ for fn in sys_getpid sys_access sys_socketpair; do
 done
 
 [ "$fail" -eq 0 ] || { echo "FAIL: pe-no-raw-syscall-bytes"; exit 1; }
-echo "PASS: pe-no-raw-syscall-bytes — unrouted literals degrade to -ENOSYS, no 0F 05 reaches a PE binary, and the folds SYS_IOCTL blocked now build"
+echo "PASS: pe-no-raw-syscall-bytes — unrouted literals degrade to -ENOSYS, no 0F 05 reaches a PE binary, the folds SYS_IOCTL blocked build, and sandhi/yantra build with no borrowed fold constants"

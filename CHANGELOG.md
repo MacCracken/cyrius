@@ -81,7 +81,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     `_YK_*`; the Mach-O `duplicate symbol` warnings go with them. ⚠ **What a consumer loses:** the
     agnos placeholder band (`SYS_IOCTL = 9001` …) is gone — vani and mabda compiled for agnos only
     by borrowing it and move off it in this same fold — and a PE or agnos program that took
-    `O_NONBLOCK` or `MS_*` from yukti must declare its own. No public fn removed. Pinned by the new
+    `O_NONBLOCK` or `MS_*` from yukti must declare its own. ⚠ **On PE the loss is wider:** yukti
+    ≤ 2.3.11 declared `SYS_SOCKET`, `SYS_CONNECT`, `SYS_BIND`, `SYS_RECVFROM`, `SYS_SETSOCKOPT`,
+    `SYS_PPOLL` and `SYS_NEWFSTATAT` (with `SYS_STATFS`, which the peer does have) under
+    `CYRIUS_ARCH_X86`, which a PE build is, and the Windows peer defines none of those seven — so a
+    PE program that named them compiled only with yukti in scope.
+    sandhi ≤ 1.10.0 is one (its IPv6 open paths spell `SYS_SOCKET` / `SYS_CONNECT`): with 2.3.13 a
+    PE build of sandhi, and of yantra over it, is 4 `undefined variable` errors until sandhi
+    1.10.1 is folded (pinned by `pe_no_raw_syscall_bytes.sh` axis 6, below). Spell the
+    `sys_socket` / `sys_connect` / … wrappers instead; their PE peers decline with -38. No public fn
+    removed. Pinned by the new
     `tests/tcyr/crossos/yukti_statfs_and_stdlib_constants.tcyr`: against 2.3.11 it fails on pi
     (errno 14), exits 3 on ecb (O_NONBLOCK 2048, SOL_SOCKET 1, statfs) and SIGSEGVs on ach;
     against 2.3.13 it passes on all three, on x86_64 and under wine.
@@ -123,6 +132,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   reported, an `#ifdef CYRIUS_ARCH_X86` declaration not counted — which replaces the `ndecl >= 3`
   floor (outside the fixture the tree may legitimately hold none). Mutation-proven four ways:
   fixture deleted, walk narrowed to nothing, judge disabled, and `#ifdef` negation dropped.
+
+- **Two gates stop folds borrowing each other's constants.** Every hand-written PE and agnos
+  preamble put yukti ahead of sandhi, so sandhi's `SYS_SOCKET` / `SYS_CONNECT` resolved to yukti's
+  and the PE build read green; folding yukti 2.3.13 broke it with every gate still green.
+  `pe_no_raw_syscall_bytes.sh` **axis 6** builds sandhi, and sandhi + async + yantra, for PE against
+  the stdlib leaves plus sandhi's own fold deps (sakshi, sigil, bayan) — never yukti, and it refuses
+  a preamble that names yukti — and requires 0 raw `syscall` instructions. New
+  `tests/tcyr/crossos/sandhi_platform_eagain.tcyr` runs sandhi's read deadline and idle-accept paths
+  on every release-gate host against the kernel's own errno: sandhi ≤ 1.10.0 hard-codes
+  `_SANDHI_EAGAIN = 11`, so on macOS (EAGAIN 35) a read deadline came back as a broken connection
+  (`recv_all` = -1, not the timeout sentinel) and an idle listener's accept classified BACKOFF, so
+  a stop-enabled server with no traffic shut itself down. Measured on ecb and ach against 1.10.0:
+  5 of 10 checks fail; pi, qemu-aarch64 and x86_64 pass. Both go green only with sandhi 1.10.1
+  (platform EAGAIN and Darwin accept errnos; a `CYRIUS_TARGET_WIN` decline arm on the IPv6 open
+  paths) — measured with that patch built into a scratch bundle: 10/10 on ecb, ach, pi, x86_64 and
+  qemu-aarch64, and the PE build compiles and runs under wine.
 
 ### Fixed
 
