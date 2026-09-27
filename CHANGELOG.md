@@ -84,6 +84,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   positive and whose later runs die), E2 (`cyrius audit` with a crashing cyrdoc names the file
   under docs and never prints `ok: docs complete`), and three more mutations in its ledger, each
   RED.
+- **`version-bump.sh` reported success over a roadmap stamp it had not rewritten** (bite 10).
+  Step 5 matched `**Current head: vOLD** (…)` with a basic-regex pattern whose parenthetical
+  could hold only a date, and the old version's dots were unescaped. The stamp is annotated by
+  hand — at 6.6.6 it read `(2026-09-20, bump commit; tag pending)` — so the 6.6.7 bump matched
+  nothing, exited 0 and the stamp was fixed by hand; today's stamp `(2026-09-27, slot open; …)`
+  defeated the 6.6.8 bump the same way (measured on a copy: rc 0, no `v6.6.8` stamp). Steps 3
+  (CLAUDE.md) and 4 (CHANGELOG) ended in `|| true` with no check at all, and the summary
+  printed VERSION, CLAUDE.md and CHANGELOG.md under "Updated:" unconditionally — on the
+  same-version path too — while never listing `cyrius.cyml`, which step 3b does rewrite. Now
+  every document rewrite is `sed -E` with the dots escaped; the stamp's parenthetical is
+  replaced by the bump date whatever it held, provided it has no nested parentheses (a nested
+  one is refused rather than cut at its first `)`); each step is VERIFIED (the new anchor
+  present, the old one gone, exactly one `## [NEW]` header), a step that did not take effect is
+  named on stderr where it happens, and the script exits **non-zero at the end**, after the
+  rebuild and the seed gate. The summary reports what each file actually did (`updated`,
+  `already NEW`, `NOT UPDATED: <why>`), says whether `build/cycc` was rebuilt, and on the
+  same-version path says the document steps were skipped. The footer names the manual rows
+  that are really left — state.md's Version and `| **cycc** |` rows, the roadmap figures
+  beside the stamp, vidya's `language/` — instead of the retired `language.toml` and a CLAUDE.md
+  binary size CLAUDE.md no longer carries. roadmap.md and state.md stop claiming
+  `version-bump.sh` refreshes state.md; it never has.
 
 ### Changed
 
@@ -100,6 +121,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (`lib/audit_walk.cyr`), **`regression_exec_with_arg_capture_both_status`**
   (`lib/regression.cyr`) and the **`PROC_ECHILD`** constant — see *Fixed* above.
   `docs/api-surface.snapshot` +5 entries.
+- **`sh scripts/version-bump.sh --docs-only <dir> <version>`** (bite 10) — runs only the
+  document steps (VERSION, CLAUDE.md, cyrius.cyml, CHANGELOG.md, the roadmap stamp) over copies
+  under `<dir>`, verified, with no regenerate, rebuild, install or seed gate; refuses the same
+  version and a malformed one. **`tests/gates/toolchain/version_bump_doc_anchors.sh`** uses it to
+  bump scratch copies of the LIVE docs to the next patch version, so an anchor the next bump
+  cannot rewrite goes red when it is written, not on bump day; plus fixtures for the annotated
+  stamp, the in-flight `## [Unreleased]` rename, dot-escaping, the nested-parenthesis refusal,
+  each missing anchor (loud, and the other files still rewritten) and the full path's honest
+  summary. 58 checks; seven mutations, each RED.
 
 ## [6.6.6] — 2026-09-20
 

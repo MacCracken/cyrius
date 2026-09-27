@@ -1173,3 +1173,10 @@ _chk_gate "$ROOT/tests/gates/codegen/hidden_temp_census.sh"
 # the walkers against fake and real tools, the driver's lint suite against a fake cyrlint, and
 # `cyrius audit` over the rekha shape; each fix is mutation-proven in the gate header.
 _chk_gate "$ROOT/tests/gates/toolchain/audit_walk_fails_closed.sh"
+
+# 6.6.7 (bite 10) — the NEXT version-bump can rewrite every document anchor in the live tree.
+# Step 5's stamp sed admitted only a date in the parenthetical, so the hand-annotated stamp
+# matched nothing and the bump exited 0 (twice: 6.6.7, and — measured — 6.6.8); steps 3/4
+# were unverified and the "Updated:" list was unconditional. Runs `version-bump.sh
+# --docs-only` over scratch copies of the live docs plus fixtures; mutation-proven in the header.
+_chk_gate "$ROOT/tests/gates/toolchain/version_bump_doc_anchors.sh"
