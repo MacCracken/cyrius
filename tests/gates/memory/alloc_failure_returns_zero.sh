@@ -39,6 +39,8 @@
 #   * the 6.6.6 hashmap_fast.cyr                          -> axis 4 FAIL (rc 139)
 #   * flags_new's three checks removed                    -> axis 4 FAIL (rc 139)
 set -u
+# Every expected-non-zero status is captured as `rc=0; ... || rc=$?`, so the gate reports the
+# same verdict under `bash -eo pipefail` as under sh (a bare `( ... ); rc=$?` trips -e first).
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 CC="$ROOT/build/cycc"
@@ -97,7 +99,7 @@ syscall(60, ec);
 EOF
 "$CC" < "$W/refill.cyr" > "$W/refill" 2> "$W/refill.err" || fail "axis 2: the refill probe did not compile"
 chmod +x "$W/refill" 2>/dev/null
-out=$( ulimit -c 0; ulimit -v 600000 2>/dev/null; "$W/refill" 2>&1 ); rc=$?
+rc=0; out=$( ulimit -c 0; ulimit -v 600000 2>/dev/null; "$W/refill" 2>&1 ) || rc=$?
 case "$rc" in
     0) [ "$out" = "returned" ] || fail "axis 2: probe exited 0 but printed '$out'" ;;
     4) fail "axis 2 (anti-vacuous): no fl_alloc was refused under ulimit -v 600000 — the exhaustion did not bite, so this axis tested nothing" ;;
@@ -131,7 +133,7 @@ if ! command -v wine >/dev/null 2>&1; then
     echo "  SKIP: axis 3 (PE alloc_init abort) — wine not installed; axis 3s still checked"
 else
     CYRIUS_TARGET_WIN=1 "$CC" < "$W/winit.cyr" > "$W/winit.exe" 2>/dev/null || fail "axis 3: the PE probe did not compile"
-    ( cd "$W" && WINEDEBUG=-all timeout 120 wine ./winit.exe > wo.txt 2> we.txt ); wrc=$?
+    wrc=0; ( cd "$W" && WINEDEBUG=-all timeout 120 wine ./winit.exe > wo.txt 2> we.txt ) || wrc=$?
     if [ "$wrc" -ne 1 ]; then
         fail "axis 3: PE alloc_init with a refused VirtualAlloc exited $wrc, expected 1 (7 = it RETURNED with a 0 heap base, the silent pre-6.6.7 behaviour)"
     elif ! tr -d '\r' < "$W/we.txt" | grep -q 'alloc_init: mmap failed'; then
@@ -169,7 +171,7 @@ syscall(60, ec);
 EOF
 "$CC" < "$W/ctor.cyr" > "$W/ctor" 2> "$W/ctor.err" || fail "axis 4: the constructor probe did not compile"
 chmod +x "$W/ctor" 2>/dev/null
-out=$( ulimit -c 0; ulimit -v 600000 2>/dev/null; "$W/ctor" 2>&1 ); rc=$?
+rc=0; out=$( ulimit -c 0; ulimit -v 600000 2>/dev/null; "$W/ctor" 2>&1 ) || rc=$?
 case "$rc" in
     0) [ "$out" = "returned" ] || fail "axis 4: probe exited 0 but printed '$out'" ;;
     4) fail "axis 4 (anti-vacuous): alloc still succeeded after the drain — the heap was not exhausted, so this axis tested nothing" ;;
