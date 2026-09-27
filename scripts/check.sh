@@ -1188,6 +1188,11 @@ _chk_gate "$ROOT/tests/gates/platform/agnos_syscall_a4_defined.sh"
 
 # 6.6.7 bite 4 — the agnos peer RUN against a scripted fake kernel (PTRACE_SYSEMU,
 # tests/fixtures/agnos_sctrace.cyr): the registers each wrapper hands the kernel — a4 defined,
-# spawn/redirect/endow argument packing and guards, the wait/kill/peer surface, the socket
-# deadline tiers, the loopback listen class.
+# spawn/redirect/endow argument packing and guards, the wait/kill/peer surface, the loopback
+# listen class.
 _chk_gate "$ROOT/tests/gates/platform/agnos_peer_fake_kernel.sh"
+
+# 6.6.7 bite 4 — an agnos socket read waits for its deadline on a REAL clock (#95, then the RTC
+# armed on its first non-zero read, then — only with no clock — the pause count) and a timeout
+# is -11, not EOF; a stalled send is retried. Fake-kernel tiers + a live mirshi TCP exchange.
+_chk_gate "$ROOT/tests/gates/platform/agnos_sock_recv_bound.sh"

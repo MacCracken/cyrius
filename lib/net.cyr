@@ -240,9 +240,12 @@ fn sock_reuse(fd): i64 {
 fn sock_set_recv_timeout(fd, secs, usecs): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
     # AGNOS has no SO_RCVTIMEO (and NSYS_SETSOCKOPT=54 mis-dispatches to agnos
-    # #54=SYS_UDP_UNBIND). The recv deadline is enforced by the syscall peer's
-    # _agnos_sock_recv_block poll instead; no-op here. v6.2.7.
-    return 0;
+    # #54=SYS_UDP_UNBIND). The syscall peer's _agnos_sock_recv_block enforces the
+    # deadline, so record it there, per socket: a timed-out read returns -11 (EAGAIN)
+    # like SO_RCVTIMEO. ⚠ secs = usecs = 0 restores the peer's 30 s default rather
+    # than meaning "never" as on Linux — an agnos socket read is always bounded.
+    # (This was a no-op that ignored `secs` until v6.6.7.) CHANGELOG [6.6.7]
+    return _agnos_sock_set_tmo(&_agnos_sock_rcvto_us, fd, secs * 1000000 + usecs);
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
     # Linux struct timeval is {tv_sec, tv_usec} — both i64 on 64-bit
@@ -270,9 +273,13 @@ fn sock_set_recv_timeout(fd, secs, usecs): i64 {
 # worker inside write(). Same struct timeval layout / per-target dispatch.
 fn sock_set_send_timeout(fd, secs, usecs): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
-    # AGNOS has no SO_SNDTIMEO (NSYS_SETSOCKOPT=54 mis-dispatches). The send
-    # deadline is enforced by the syscall peer's poll path; no-op here. v6.2.7.
-    return 0;
+    # AGNOS has no SO_SNDTIMEO (NSYS_SETSOCKOPT=54 mis-dispatches). The syscall
+    # peer's sys_write socket route bounds a STALL with it: sock_send#48 returns 0
+    # after ~8 s with no ACK progress, and _agnos_sock_send_all retries until this
+    # deadline, then returns the partial count (or -1). secs = usecs = 0 restores the
+    # 30 s default. (This comment used to claim a "poll path" that did not exist and
+    # the call ignored `secs`, until v6.6.7.) CHANGELOG [6.6.7]
+    return _agnos_sock_set_tmo(&_agnos_sock_sndto_us, fd, secs * 1000000 + usecs);
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
     var tv = alloc(16);

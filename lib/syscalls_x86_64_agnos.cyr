@@ -656,10 +656,15 @@ var _agnos_conn_ready = 0;
 # See 2026-06-18-agnos-server-socket-peer.md.
 var _agnos_listen_tbl: i64[8];
 var _agnos_listen_port: i64[8];
-# recv-poll bounds: a wall-clock deadline (#46) plus a hlt-count
-# backstop for when the RTC is unreadable (time_unix → 0).
+# Socket wait bounds (v6.6.7): the default recv / send-stall deadline, and the pause-count
+# backstop used ONLY when the machine has no readable clock at all (#95 refused AND #46 reading
+# 0). Both names are consumer API — daimon assigns AGNOS_SOCK_RECV_MAX_SPINS — so they stay.
+# Per-socket overrides live in the two µs tables below (0 = this default), written by net.cyr's
+# sock_set_recv_timeout / sock_set_send_timeout and cleared by sys_close. CHANGELOG [6.6.7]
 var AGNOS_SOCK_RECV_TIMEOUT_S = 30;
 var AGNOS_SOCK_RECV_MAX_SPINS = 6000;
+var _agnos_sock_rcvto_us: i64[8];
+var _agnos_sock_sndto_us: i64[8];
 
 # ================================================================
 # Wrappers — mirror the consumer sys_* surface with agnos numbers.
@@ -735,11 +740,14 @@ var AT_REMOVEDIR = 512;          # 0x200
 # no reader left it returns the partial count, or -1 — agnos has no SIGPIPE. A 3-arg call
 # used to hand the kernel whatever r10 held, so the same write blocked or returned 0 by call
 # history. sys_write_nb is the O_NONBLOCK form. CHANGELOG [6.6.7]
+# A TAGGED socket fd goes through _agnos_sock_send_all: sock_send#48 answers a committed count of
+# 0 after ~8 s with no ACK progress (agnos 1.57.7), which means "no progress so far", not an error — it is
+# retried under the socket's send deadline. CHANGELOG [6.6.7]
 fn sys_write(fd, buf, count): i64 {
     if (_agnos_is_sock_fd(fd) == 1) {
         var c = _agnos_fd_conn(fd);
         if (c < 0) { return 0 - 1; }
-        return syscall(SYS_SOCK_SEND, c, buf, count);
+        return _agnos_sock_send_all(c, buf, count, _agnos_sock_tmo(&_agnos_sock_sndto_us, fd));
     }
     return syscall(SYS_WRITE, fd, buf, count, 0);
 }
@@ -772,7 +780,7 @@ fn sys_read(fd, buf, count): i64 {
     if (_agnos_is_sock_fd(fd) == 1) {
         var c = _agnos_fd_conn(fd);
         if (c < 0) { return 0 - 1; }
-        return _agnos_sock_recv_block(c, buf, count);
+        return _agnos_sock_recv_block(c, buf, count, _agnos_sock_tmo(&_agnos_sock_rcvto_us, fd));
     }
     return syscall(SYS_READ, fd, buf, count, 0);
 }
@@ -801,6 +809,8 @@ fn sys_close(fd): i64 {
         store64(&_agnos_listen_tbl + slot * 8, 0);
         store64(&_agnos_listen_port + slot * 8, 0);
         store64(&_agnos_conn_tbl + slot * 8, 0);
+        store64(&_agnos_sock_rcvto_us + slot * 8, 0);    # v6.6.7: per-socket deadlines
+        store64(&_agnos_sock_sndto_us + slot * 8, 0);
         if (lv > 0) { return syscall(SYS_SOCK_CLOSE, lv - 1); }   # LISTEN: reaps children (1.45.6)
         if (v > 0) { return syscall(SYS_SOCK_CLOSE, v - 1); }     # client/accepted conn: FIN
         return 0;
@@ -1896,6 +1906,8 @@ fn _agnos_conn_init(): i64 {
         store64(&_agnos_conn_tbl + i * 8, 0);
         store64(&_agnos_listen_tbl + i * 8, 0);   # v6.2.22: server-socket tables
         store64(&_agnos_listen_port + i * 8, 0);
+        store64(&_agnos_sock_rcvto_us + i * 8, 0);
+        store64(&_agnos_sock_sndto_us + i * 8, 0);
         i = i + 1;
     }
     _agnos_conn_ready = 1;
@@ -1984,22 +1996,119 @@ fn _agnos_fd_listen(fd): i64 {
 # NON-BLOCKING (0 = WOULD_BLOCK, -1 = EOF/closed); cyrius callers
 # (tls_native _tn_sock_read_full, http) expect the Linux blocking-read
 # sense (>0 = bytes, 0 = EOF, <0 = err). Poll #49 until data or close,
-# yielding via pause(#14) between polls, bounded by a wall-clock
-# deadline (#46) with a hlt-count backstop if the RTC is unreadable.
-fn _agnos_sock_recv_block(conn_id, buf, n): i64 {
-    var deadline = sys_time_unix() + AGNOS_SOCK_RECV_TIMEOUT_S;
-    var spins = 0;
+# yielding via pause(#14) between polls, bounded by the socket's deadline
+# (`tmo_us`, see _agnos_dl_start). Returns bytes, 0 at EOF, or -11 (EAGAIN,
+# the Linux SO_RCVTIMEO answer) when the deadline passes with no data.
+# ⛔ v6.6.7 — A TIMEOUT USED TO RETURN 0, i.e. EOF, and it came FAR too early: the pause-count
+# backstop ran whether or not the RTC read, and on agnos 1.57.x a pause yields to any READY
+# process with no hlt, so 6000 pauses took ~1 s on a busy guest (daimon's forwarded MCP calls
+# answered 502) — and an entry RTC read of 0 made the deadline 30 and fired it at once.
+# CHANGELOG [6.6.7]
+fn _agnos_sock_recv_block(conn_id, buf, n, tmo_us): i64 {
+    var dl[32];
+    _agnos_dl_start(&dl, tmo_us);
     while (1 == 1) {
         var r = syscall(SYS_SOCK_RECV, conn_id, buf, n);
         if (r > 0) { return r; }            # data drained
         if (r < 0) { return 0; }            # EOF / closed → Linux 0=EOF
         # r == 0: WOULD_BLOCK — wait + retry under the deadline.
-        var now = sys_time_unix();
-        if (now != 0) { if (now >= deadline) { return 0; } }
-        spins = spins + 1;
-        if (spins > AGNOS_SOCK_RECV_MAX_SPINS) { return 0; }
+        if (_agnos_dl_over(&dl) == 1) { return 0 - 11; }
         sys_pause();
     }
+    return 0 - 11;
+}
+
+# Send all `n` bytes over a conn (the sys_write socket route). sock_send#48 blocks the caller
+# and returns the COMMITTED count — possibly 0 after ~8 s with no ACK progress (agnos 1.57.7) —
+# so a short count is retried from where it stopped, and a 0 is retried until the deadline
+# (`tmo_us`, re-armed whenever bytes move: it bounds a STALL, not the whole transfer). Returns
+# `n`, the partial count at the deadline or when the conn dies, or -1 if nothing was sent.
+# ⚠ Before v6.6.7 the 0 went straight back to the caller, and tls_native's _tn_sock_write_all
+# aborts on `w <= 0`, so a live connection that merely stalled for 8 s was torn down.
+fn _agnos_sock_send_all(conn_id, buf, n, tmo_us): i64 {
+    var dl[32];
+    _agnos_dl_start(&dl, tmo_us);
+    var sent = 0;
+    while (sent < n) {
+        var r = syscall(SYS_SOCK_SEND, conn_id, buf + sent, n - sent);
+        if (r < 0) { break; }               # conn gone / not ours
+        if (r > 0) {
+            sent = sent + r;
+            _agnos_dl_start(&dl, tmo_us);   # progress: the stall bound starts again
+        } else {
+            if (_agnos_dl_over(&dl) == 1) { break; }
+        }
+    }
+    if (sent > 0) { return sent; }
+    if (n <= 0) { return 0; }
+    return 0 - 1;
+}
+
+# The per-socket timeout (µs) for tagged `fd` from `tbl`, or the AGNOS_SOCK_RECV_TIMEOUT_S default.
+fn _agnos_sock_tmo(tbl, fd): i64 {
+    _agnos_conn_init();
+    var t = load64(tbl + (fd & 7) * 8);
+    if (t > 0) { return t; }
+    return AGNOS_SOCK_RECV_TIMEOUT_S * 1000000;
+}
+
+# Record a per-socket timeout of `us` µs (0 = back to the default) in `tbl` for tagged `fd`.
+# Returns 0, or -1 for a non-socket fd or a negative timeout. Called by net.cyr.
+fn _agnos_sock_set_tmo(tbl, fd, us): i64 {
+    if (_agnos_is_sock_fd(fd) == 0) { return 0 - 1; }
+    if (us < 0) { return 0 - 1; }
+    _agnos_conn_init();
+    store64(tbl + (fd & 7) * 8, us);
+    return 0;
+}
+
+# ── The socket deadline: ONE mechanism for the recv poll and the send-stall retry (v6.6.7).
+# A 32-byte state block at `dl`: +0 tier · +8 deadline · +16 spins · +24 whole seconds.
+# Three tiers, chosen at start and never mixed:
+#   1  uptime_us#95 reads (>= 0): a MONOTONIC µs deadline. The normal case on every agnos that
+#      calibrated its TSC — which is every one since 1.57.6 unless it was refused at boot.
+#   2  #95 refused (-1, permanent for the boot): the RTC, time_unix#46, in whole seconds. The
+#      deadline is armed on the FIRST NON-ZERO read, so an RTC that reads 0 at entry cannot
+#      poison it (it used to become "deadline = 30", i.e. already passed), and it fires only
+#      once ≥ the timeout has certainly elapsed (+1 s for the RTC's granularity).
+#   3  no clock at all (#95 refused and #46 still 0): count pauses against
+#      AGNOS_SOCK_RECV_MAX_SPINS — ONLY here. A pause is not a fixed duration on agnos 1.57.x
+#      (it yields to any READY process with no hlt), so a pause count measures load, not time,
+#      and must never cut short a wait a real clock is timing.
+# ⚠ tier 1 duplicates chrono.cyr's #95-first choice on purpose: this peer is included BY the
+# stdlib and cannot include chrono.
+fn _agnos_dl_start(dl, tmo_us): i64 {
+    store64(dl + 16, 0);
+    store64(dl + 24, (tmo_us + 999999) / 1000000);
+    var t0 = syscall(SYS_UPTIME_US);
+    if (t0 >= 0) {
+        store64(dl, 1);
+        store64(dl + 8, t0 + tmo_us);
+        return 0;
+    }
+    store64(dl, 2);
+    store64(dl + 8, 0);
+    var r = sys_time_unix();
+    if (r != 0) { store64(dl + 8, r + load64(dl + 24) + 1); }
+    return 0;
+}
+
+# 1 once the deadline in `dl` has passed, else 0. Each call is one poll of the clock.
+fn _agnos_dl_over(dl): i64 {
+    if (load64(dl) == 1) {
+        if (syscall(SYS_UPTIME_US) >= load64(dl + 8)) { return 1; }
+        return 0;
+    }
+    var now = sys_time_unix();
+    if (now != 0) {
+        if (load64(dl + 8) == 0) { store64(dl + 8, now + load64(dl + 24) + 1); }
+        if (now >= load64(dl + 8)) { return 1; }
+        return 0;
+    }
+    if (load64(dl + 8) != 0) { return 0; }  # the RTC is timing this wait; a 0 read is a glitch
+    var spins = load64(dl + 16) + 1;
+    store64(dl + 16, spins);
+    if (spins > AGNOS_SOCK_RECV_MAX_SPINS) { return 1; }
     return 0;
 }
 
