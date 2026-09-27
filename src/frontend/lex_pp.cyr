@@ -1292,22 +1292,6 @@ fn PP_DTYPE(base, p, end, dst): i64 {
     return q + 1;
 }
 
-# An enum variant's constructor parameter list: skip from `(` to its matching `)`.
-fn PP_DPARENS(base, p, end): i64 {
-    var d = 0;
-    while (p < end) {
-        var c = load8(base + p);
-        if (c == 35) { p = PP_SKIPLINE(base, p, end); }
-        else {
-            if (c == 40) { d = d + 1; }
-            if (c == 41) { d = d - 1; if (d == 0) { return p + 1; } }
-            p = p + 1;
-        }
-    }
-    _pp_dstop = 1;
-    return end;
-}
-
 # An enum member's value, after its `=`: an optional `-`, then a number or a char literal
 # (`'x'` / `'\n'`) — what PARSE_ENUM_DEF accepts. `end` (stop) on anything else.
 fn PP_DVALUE(base, p, end): i64 {
@@ -1328,15 +1312,20 @@ fn PP_DVALUE(base, p, end): i64 {
     return p;
 }
 
-# Everything after a field's (or member's) name: `: Type`, and for an enum member `(params)`
-# and `= value`, each optional, then at most one `;` or `,`. The next field may follow with no separator, which
+# Everything after a field's (or member's) name: `: Type`, and for an enum member `= value`,
+# each optional, then at most one `;` or `,`. The next field may follow with no separator, which
 # the parser also allows. `end` (stop) on any other byte.
 fn PP_DFIELD_TAIL(S, base, p, end, fc): i64 {
     p = PP_DTRIV(base, p, end);
     if (p < end) { if (load8(base + p) == 58) { p = PP_DTYPE(base, p + 1, end, S + 0x1FE000 + fc * 32); p = PP_DTRIV(base, p, end); } }
-    # `(params)` and `= value` are enum-member syntax only; in a struct they stop the walk.
+    # `= value` is enum-member syntax only; in a struct it stops the walk.
+    # ⛔ A PAYLOAD variant (`Circle(r)`, `None()`) is REFUSED: the derived codec maps a value to
+    # a member NAME by comparing against the member's constant, and a constructor has no such
+    # constant — `v == Circle` compiled clean and wrote `null` for every Circle. Before 6.6.7
+    # the byte scan kept `Circle(r)` as the name, which failed to compile by accident; the walk
+    # must not turn that into silence. CHANGELOG [6.6.7]
     if (_pp_decl_is_enum == 1) {
-        if (p < end) { if (load8(base + p) == 40) { p = PP_DPARENS(base, p, end); p = PP_DTRIV(base, p, end); } }
+        if (p < end) { if (load8(base + p) == 40) { PP_DERIVE_BAD(S, 40, " (a variant with a payload; the derived codec handles plain members only) in the body of ", 89); } }
         if (p < end) { if (load8(base + p) == 61) { p = PP_DVALUE(base, p + 1, end); p = PP_DTRIV(base, p, end); } }
     }
     if (p >= end) { return p; }

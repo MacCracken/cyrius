@@ -26,7 +26,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `PARSE_STRUCT_DEF` / `PARSE_ENUM_DEF` read tokens, take `;` as optional, and take `,` between
   enum members. **Fix:** the body is now walked as the parser reads it (`PP_DERIVE_FIELDS`):
   `#`-to-end-of-line comments and every blank are trivia, a field is `name [: Type[<Elem>]]
-  [(params)] [= value] [; | ,]` (the last two for enum members). A declaration HEADER the derive
+  [= value] [; | ,]` (the value for enum members). An enum member with a PAYLOAD (`Circle(r)`,
+  `None()`) is refused by name — the name codec compares against member constants, which a
+  constructor does not have; the byte scan had failed on it only by accident (`undefined variable`
+  in generated code), and reading the name correctly would otherwise have made it compile and write
+  `null`. A declaration HEADER the derive
   cannot name is refused by name (`error: #derive: unexpected '<' in the declaration of Box` —
   generic structs were never supported); a BODY shape the grammar does not have stops the walk and
   is left to the parser, which reports it at its real line — the walk accepts a superset of what
