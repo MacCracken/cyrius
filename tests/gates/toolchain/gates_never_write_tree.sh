@@ -132,13 +132,15 @@
 #                                                         verify-store unchecked mktemp)
 #   x2. the axis-7 allowlist entry made stale         -> axis 7 FAIL, and cross-os-selfhost.sh's
 #                                                         own fixed names are then reported
-#   x3. axis 7 (bite 17j), each of the 3 scripts      -> axis 7 FAIL, one per script (cyrius-repl
+#   x3. axis 7 (bite 17j), each of the 2 scripts      -> axis 7 FAIL, one per script (cyrius-repl
 #      BELOW scripts/ restored to its pre-fix body       /tmp/cyrius_repl_$$ at 3 lines;
-#                                                        audit-walk /tmp/aw_fmt_$$ at 3;
 #                                                        bench_capacity_overhead unchecked
-#                                                        mktemp + /tmp/bench_cap_$$_*)
+#                                                        mktemp + /tmp/bench_cap_$$_*). The
+#                                                        third, scripts/lib/audit-walk.sh
+#                                                        (/tmp/aw_fmt_$$), was DELETED at
+#                                                        6.6.7 — that leg is historical.
 #   x4. the sweep back to `find scripts -maxdepth 1`  -> axis 7 reads GREEN on 26 files with all
-#      with those 3 pre-fix bodies live                  THREE offenders live — the gap the bite
+#      with those pre-fix bodies live (2 since 6.6.7)    offenders live — the gap the bite
 #                                                        17 review found, and why the sweep is
 #                                                        by shape (scripts/**, benches/**) now
 #   y. axis 8 (bite 17h), each of 5 tests restored    -> axis 8 FAIL, one per file (atomic_write
@@ -761,8 +763,10 @@ fi
 # axis reuses them verbatim rather than writing a second pair that could drift.
 #
 # ⚠ AND IT SWEEPS BY SHAPE, NOT BY DIRECTORY LEVEL (bite 17 review). The first cut was
-# `find scripts -maxdepth 1`, so the two scripts that live one level down kept the very defect
-# this axis exists to catch — and both are INSTALLED into `~/.cyrius/versions/<v>/bin`:
+# `find scripts -maxdepth 1`, so the two scripts that lived one level down kept the very defect
+# this axis exists to catch — and both were INSTALLED into `~/.cyrius/versions/<v>/bin`
+# (audit-walk.sh no longer exists: it was dead code, deleted at 6.6.7 with its install.sh
+# copy — CHANGELOG [6.6.7]; cyrius-repl.sh remains):
 #   * scripts/shims/cyrius-repl.sh COMPILED each entered expression to "/tmp/cyrius_repl_$$",
 #     chmod'd it +x and RAN it. That is install.sh's /tmp/cc5_verify shape exactly, and the
 #     CVE-44 neighbour class: pre-create the name (the redirect follows a symlink) or swap the
