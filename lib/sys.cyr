@@ -408,7 +408,12 @@ fn sysinfo_blk_write(buf, tag): i64 {
 # kicks RECEIVED per CPU, which is a different number. CHANGELOG [6.6.7]
 fn sys_sched_kicks(): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
-    var buf[SYSINFO_SIZE_FULL];   # sized BY the length it passes: the kernel writes that many
+    # == SYSINFO_SIZE_FULL, the length passed below: the kernel writes that many. Spelled as a
+    # LITERAL on purpose — an enum constant past var index 1024 is not constant-folded (fixed at
+    # 6.6.8 bite 1), and a program with the folded stdlibs in scope reaches that index before this
+    # line, so the enum spelling failed every agnos build of every fold. agnos_sysinfo_tail_parity
+    # pins FULL at 208. CHANGELOG [6.6.7]
+    var buf[208];
     store64(&buf + SI_SCHED_KICKS, 0 - 1);
     var r = sys_sysinfo_n(&buf, SYSINFO_SIZE_FULL);
     if (r < 0) { return r; }

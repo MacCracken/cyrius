@@ -123,7 +123,10 @@ done
 # measured, the fallback-removal mutation passed an immediate count — and a bare `$0x28` also
 # matches the constant 40 loaded for any other purpose. DCE NOPs the unreached wrappers, so
 # what is left is what the clock actually reaches.
-_nsys() { awk -v imm="$1" 'p ~ ("movl[ \t]+[$]" imm ", %eax") && $0 ~ /[ \t]syscall/ { c++ } { p = $0 } END { print c + 0 }' "$2"; }
+# ⚠ An agnos syscall site with fewer than 4 args carries `xorl %r10d, %r10d` between the number
+# and the `syscall` (6.6.7 bite 4: agnos read#5/write#1 decode a4, so r10 must be defined), so
+# that one instruction is skipped when remembering the previous line — nothing else is.
+_nsys() { awk -v imm="$1" 'p ~ ("movl[ \t]+[$]" imm ", %eax") && $0 ~ /[ \t]syscall/ { c++ } $0 !~ /xorl[ \t]+%r10d, %r10d/ { p = $0 } END { print c + 0 }' "$2"; }
 cat > "$T/c.cyr" <<'EOF'
 include "lib/syscalls.cyr"
 include "lib/chrono.cyr"

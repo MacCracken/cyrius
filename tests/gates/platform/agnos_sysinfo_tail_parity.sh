@@ -111,8 +111,11 @@ grep -A4 'fn sys_sysinfo_n(out, len)' "$SYS" | grep -q 'syscall(SYS_SYSINFO, out
 # reads back -1 rather than stack residue.
 KF=$(awk '/^fn sys_sched_kicks\(\)/,/^}/' "$SYS" | sed 's/#.*//')
 [ -n "$KF" ] || fail "sys_sched_kicks is missing — the sched_kicks field has no reader"
-printf '%s\n' "$KF" | grep -q 'var buf\[SYSINFO_SIZE_FULL\]' \
-    || fail "sys_sched_kicks does not size its buffer by SYSINFO_SIZE_FULL — the kernel writes the full length it is asked for"
+# The buffer may be spelled as the constant OR as the literal equal to its declared value: an enum
+# constant past var index 1024 is not constant-folded until 6.6.8 bite 1, so lib/sys.cyr spells it
+# as a literal — and this row is what keeps that literal equal to FULL.
+printf '%s\n' "$KF" | grep -qE "var buf\\[(SYSINFO_SIZE_FULL|$FULL)\\]" \
+    || fail "sys_sched_kicks does not size its buffer by SYSINFO_SIZE_FULL (= $FULL) — the kernel writes the full length it is asked for"
 printf '%s\n' "$KF" | grep -q 'sys_sysinfo_n(&buf, SYSINFO_SIZE_FULL)' \
     || fail "sys_sched_kicks does not ask sys_sysinfo_n for SYSINFO_SIZE_FULL — a shorter length leaves +$KICKB unwritten"
 printf '%s\n' "$KF" | grep -q 'store64(&buf + SI_SCHED_KICKS, 0 - 1)' \

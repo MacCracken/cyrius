@@ -2143,8 +2143,16 @@ fn _agnos_dl_start(dl, tmo_us): i64 {
 # 1 once the deadline in `dl` has passed, else 0. Each call is one poll of the clock.
 fn _agnos_dl_over(dl): i64 {
     if (load64(dl) == 1) {
-        if (syscall(SYS_UPTIME_US) >= load64(dl + 8)) { return 1; }
-        return 0;
+        # #95 answered at _agnos_dl_start, but it answers -1 whenever calibration is refused, and
+        # an unchecked -1 is below every deadline: a wait that never ends. Drop to tier 2 (the RTC
+        # re-arms the full timeout from its first read) rather than trust it. CHANGELOG [6.6.7]
+        var t = syscall(SYS_UPTIME_US);
+        if (t >= 0) {
+            if (t >= load64(dl + 8)) { return 1; }
+            return 0;
+        }
+        store64(dl, 2);
+        store64(dl + 8, 0);
     }
     var now = sys_time_unix();
     if (now != 0) {
