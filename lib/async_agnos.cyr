@@ -240,8 +240,8 @@ fn async_resolve(rt, ns_addr, ns_port, host): i64 {
 }
 
 # Sleep for `ms` milliseconds. AGNOS has a real sleep primitive (#41,
-# sys_sleep_ms — halts until the 100 Hz tick), so this is a faithful sleep,
-# not a stub. Guard ms<=0 (sys_sleep_ms caps at 1 h on the kernel side).
+# sys_sleep_ms — since agnos 1.57.7 it blocks only the caller in a kernel wait),
+# so this is a faithful sleep, not a stub. Guard ms<=0 (the kernel caps at 1 h).
 fn async_sleep_ms(ms): i64 {
     if (ms <= 0) { return 0; }
     sys_sleep_ms(ms);

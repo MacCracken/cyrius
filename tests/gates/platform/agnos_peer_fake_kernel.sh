@@ -131,6 +131,66 @@ check "sys_chan_endow_stdio(3) passes a4 = CH_ENDOW_STDIO" "5 3 0 1000" "$(after
 check "sys_chan_endow_disarm is CH_ENDOW(-1)" "5 -1 0 0" "$(after 33 97)"
 check "SPAWN_E_OTHER..SPAWN_E_LIMIT are 1..7 (kernel syscall.cyr:137-146)" "1234567" "$(mark 40)"
 
+# ── axis 3 — the 1.57.7 wait / kill / limits / peer-address surface ──────────────────────────
+echo "axis 3 — waitpid WAIT_BLOCK, KILL_TREE, spawn_limits, W* and getpeername (agnos 1.57.7):"
+cat > "$T/a3.cyr" <<'EOF'
+include "lib/alloc.cyr"
+include "lib/tagged.cyr"
+include "lib/net.cyr"
+syscall(999, 50, sys_waitpid_block(0 - 1));
+syscall(999, 51, sys_waitpid_block(255));
+syscall(999, 52, 0);
+sys_waitpid_block(3);
+syscall(999, 53, 0);
+sys_waitpid_any_block();
+syscall(999, 54, 0);
+sys_kill_tree(5, 9);
+syscall(999, 55, sys_kill_tree(5, 0x109));
+syscall(999, 56, 0);
+sys_spawn_limits(512, 1000);
+syscall(999, 57, WIFEXITED(265) * 1000 + WIFSIGNALED(265) * 100 + WTERMSIG(265));
+syscall(999, 58, WIFEXITED(0x2A) * 1000 + WIFSIGNALED(0x2A) * 100 + WEXITSTATUS(0x12A));
+syscall(999, 59, WIFSIGNALED(280) * 100 + WTERMSIG(280));
+var fd_t, fd = tcp_socket();
+sock_connect(fd, INADDR_LOOPBACK(), 8080);
+var sa[16];
+var alen[8];
+store64(&alen, 16);
+syscall(999, 60, 0);
+syscall(999, 61, sys_getpeername(fd, &sa, &alen));
+syscall(999, 62, load64(&sa));
+syscall(999, 63, load64(&alen));
+var sb[16];
+store64(&sb, 0);
+store64(&sb + 8, 0);
+store64(&alen, 4);
+sys_getpeername(fd, &sb, &alen);
+syscall(999, 64, load64(&sb));
+syscall(999, 65, sys_getsockname(fd, &sa, &alen));
+syscall(999, 66, sys_getpeername(1, &sa, &alen));
+syscall(999, 67, SIGXCPU * 1000 + FLOCK_E_TABLE_FULL * 100 + PROCLIST_ZOMBIE);
+sys_exit(0);
+EOF
+run "$T/a3.cyr" plain
+check "sys_waitpid_block(-1) is refused — 0x100|-1 is the reaping wait-any POLL" "-1 0" "$(mark 50) $(between 50 4)"
+check "sys_waitpid_block(255) is refused — it would become 0x1FF (any child)" "-1" "$(mark 51)"
+check "sys_waitpid_block(3) is #4(0x103)" "259" "$(after 52 4 | awk '{ print $1 }')"
+check "sys_waitpid_any_block is #4(0x1FF)" "511" "$(after 53 4 | awk '{ print $1 }')"
+check "sys_kill_tree(5, 9) is #16(5, 0x109)" "5 265" "$(after 54 16 | cut -d' ' -f1-2)"
+check "sys_kill_tree with a sig above 63 is refused" "-1" "$(mark 55)"
+check "sys_spawn_limits(512, 1000) is #107(512, 1000)" "512 1000" "$(after 56 107 | cut -d' ' -f1-2)"
+check "W*(265): not exited, signaled, sig 9 (SIGKILL)" "109" "$(mark 57)"
+check "W*(0x2A): exited; WEXITSTATUS(0x12A) = 0x2A" "1042" "$(mark 58)"
+check "W*(280): signaled by SIGXCPU (24)" "124" "$(mark 59)"
+check "sys_getpeername asks #106 for the fd's conn and succeeds" "0 0" "$(after 60 106 | awk '{ print $1 }') $(mark 61)"
+# 02 00 | 1f 90 | 7f 00 00 01 read as a little-endian u64
+check "sys_getpeername writes sockaddr_in {AF_INET, 8080 BE, 127.0.0.1 BE}" "72058141916725250" "$(mark 62)"
+check "sys_getpeername sets *addrlen = 16" "16" "$(mark 63)"
+check "a 4-byte capacity gets 4 bytes, never 16 (POSIX truncation)" "2417950722" "$(mark 64)"
+check "sys_getsockname on a client conn is -38 (agnos reports no local port)" "-38" "$(mark 65)"
+check "sys_getpeername on a non-socket fd is -1" "-1" "$(mark 66)"
+check "SIGXCPU = 24, FLOCK_E_TABLE_FULL = 2, PROCLIST_ZOMBIE = 7" "24207" "$(mark 67)"
+
 echo ""
 if [ "$fails" = "0" ]; then
     echo "PASS: agnos_peer_fake_kernel — the agnos peer hands the kernel exactly the registers it decodes"

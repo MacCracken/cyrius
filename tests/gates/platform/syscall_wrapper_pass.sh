@@ -373,6 +373,13 @@ check "SYS_SCHED_YIELD_TO = 108 present (agnos 1.57.9)" 1 \
     "$(grep -cE 'SYS_SCHED_YIELD_TO[[:space:]]*=[[:space:]]*108;' lib/syscalls_x86_64_agnos.cyr || true)"
 check "sys_sched_yield_to(pid) wrapper present" 1 \
     "$(grep -c '^fn sys_sched_yield_to(pid): i64' lib/syscalls_x86_64_agnos.cyr || true)"
+# #106 sock_peer / #107 spawn_limits — agnos 1.57.7. Same load-bearing spelling (agnos's gate
+# compares `name[4:].lower()` against its contract). Behaviour is pinned by
+# tests/gates/platform/agnos_peer_fake_kernel.sh axis 3.
+check "SYS_SOCK_PEER = 106 present (agnos 1.57.7)" 1 \
+    "$(grep -cE 'SYS_SOCK_PEER[[:space:]]*=[[:space:]]*106;' lib/syscalls_x86_64_agnos.cyr || true)"
+check "SYS_SPAWN_LIMITS = 107 present (agnos 1.57.7)" 1 \
+    "$(grep -cE 'SYS_SPAWN_LIMITS[[:space:]]*=[[:space:]]*107;' lib/syscalls_x86_64_agnos.cyr || true)"
 
 
 # ── AXIS 6: cross-target. This is the axis a host-only test cannot replace.

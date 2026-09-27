@@ -22,8 +22,9 @@
 #   eof    — sock_recv#49 answers -1 (the peer closed).
 #   send0  — like `us`, and sock_send#48 answers 0 (no ACK progress) every time.
 #   send3  — like `us`, and #48 answers 3 bytes per call.
-# In every mode sock_recv#49 answers 0 (WOULD_BLOCK) unless the mode says otherwise, and
-# sock_connect#47 / sock_listen#56 answer id 0.
+# In every mode sock_recv#49 answers 0 (WOULD_BLOCK) unless the mode says otherwise,
+# sock_connect#47 / sock_listen#56 answer id 0, sock_peer#106 answers 127.0.0.1:8080 packed
+# ((0x7F000001 << 16) | 8080) and net_config#61 field 0 (net_ip) answers 10.0.2.15.
 
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
@@ -61,8 +62,13 @@ fn _st_mode_is(mode, want): i64 {
     return 0;
 }
 
-# The answer table. `k` counts calls of this number so far (0-based).
-fn _st_answer(mode, nr, k): i64 {
+# The answer table. `k` counts calls of this number so far (0-based); `a1` is its first arg.
+fn _st_answer(mode, nr, k, a1): i64 {
+    if (nr == 106) { return (0x7F000001 << 16) | 8080; }
+    if (nr == 61) {
+        if (a1 == 0) { return 0x0A00020F; }
+        return 0;
+    }
     var clk = 0;
     if (_st_mode_is(mode, "us") == 1) { clk = 1; }
     if (_st_mode_is(mode, "send0") == 1) { clk = 1; }
@@ -142,7 +148,7 @@ fn main(): i64 {
         }
         var k = 0;
         if (nr >= 0) { if (nr < 128) { k = load64(&counts + nr * 8); store64(&counts + nr * 8, k + 1); } }
-        store64(&regs + 80, _st_answer(mode, nr, k));   # rax
+        store64(&regs + 80, _st_answer(mode, nr, k, load64(&regs + 112)));   # rax
         syscall(101, 13, pid, 0, &regs);    # PTRACE_SETREGS
         n = n + 1;
     }
