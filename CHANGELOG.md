@@ -46,6 +46,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     its 6.6.7 pin, or the git dep overlays and downgrades the fold — yukti and nein (`[deps.patra]`
     1.14.3 → 1.15.0); yukti, daimon and hisab (`[deps.sakshi]` 2.5.2 → 2.5.5).
 
+### Fixed
+
+- **Windows: nine linux_common wrappers had no PE peer**, so a PE program that merely REACHED a
+  path naming one was refused — `error: refusing to emit binary with 8 reachable undefined
+  function(s)` for a program touching yukti 2.3.12's optical / eject / netlink-monitor /
+  network-probe / mount / lstat paths. `lib/syscalls_windows.cyr` is a standalone peer (it does
+  not include `lib/syscalls_linux_common.cyr`), so every wrapper linux_common grows is undefined
+  on PE until the peer gets its own. It now declares `sys_ioctl`, `sys_socket`, `sys_bind`,
+  `sys_connect`, `sys_setsockopt`, `sys_recvfrom`, `sys_fstatat`, `sys_mount` and `sys_umount2`,
+  each returning **-38 (-ENOSYS)** — the v6.6.5 decline contract, so a caller's `if (r < 0)`
+  fires and nothing is emulated. The socket four are deliberately not routed to the ws2_32 band:
+  that band returns a SOCKET handle closed with `closesocket` and reports errors through
+  `WSAGetLastError`, so a BSD-shaped fd peer is an fd↔SOCKET design, not a renumber. A consumer
+  sees a PE build that used to be refused now link, with those paths failing cleanly at run time.
+  `docs/api-surface.snapshot` +9. Pinned by `tests/tcyr/crossos/pe_decline_peers.tcyr` (runs on
+  cass in the cross-OS leg; without the peers it does not compile for PE — 9 undefined, measured).
+
 ## [6.6.6] — 2026-09-20
 
 The 6.6.6 repair release — the 6.6.5 queue, and then what looking at it turned up. Every one of the six

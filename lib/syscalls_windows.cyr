@@ -436,6 +436,37 @@ fn sys_nanosleep(req, rem): i64 { return syscall(SYS_NANOSLEEP, req, rem); }
 # SwitchToThread/Sleep(0), a kernel32 import this backend does not reroute.
 fn sys_sched_yield(): i64 { return 0 - 38; }
 
+# ── PE peers for the linux_common wrappers a cross-platform consumer names on paths that
+# are dead on Windows (yukti's optical / eject / netlink-monitor / network-probe / mount /
+# TOCTOU-lstat paths since 2.3.12). Without them a PE build that merely REACHES such a
+# path is refused: `refusing to emit binary with N reachable undefined function(s)`.
+# Same contract as the block above: each declines with -38/-ENOSYS, so the caller's
+# `if (r < 0)` fires; none emulates. ⚠ The socket four are NOT a missing reroute: the
+# ws2_32 band (0xF022…) returns a SOCKET handle that must be closed with closesocket and
+# reports errors through WSAGetLastError, so a BSD-shaped fd peer is an fd↔SOCKET
+# namespace design, not a renumber (the sys_socketpair note above). CHANGELOG [6.6.7]
+# Device control. Declines: Windows has no ioctl (DeviceIoControl takes a HANDLE and
+# Windows control codes, not Linux device requests).
+fn sys_ioctl(fd, request, argp): i64 { return 0 - 38; }
+# Create a BSD socket fd. Declines (see the block header).
+fn sys_socket(domain, type, protocol): i64 { return 0 - 38; }
+# Bind a socket fd. Declines (see the block header).
+fn sys_bind(fd, sockaddr, addrlen): i64 { return 0 - 38; }
+# Connect a socket fd. Declines (see the block header).
+fn sys_connect(fd, sockaddr, addrlen): i64 { return 0 - 38; }
+# Set a socket option on a socket fd. Declines (see the block header).
+fn sys_setsockopt(fd, level, optname, val, vallen): i64 { return 0 - 38; }
+# Receive a datagram with its source address. Declines (see the block header).
+fn sys_recvfrom(fd, buf, len, flags, srcaddr, srcaddrlen): i64 { return 0 - 38; }
+# stat relative to a directory fd. Declines: Windows has no at-family calls and no
+# struct stat; GetFileAttributesExW is a different record.
+fn sys_fstatat(dirfd, path, buf, flags): i64 { return 0 - 38; }
+# Mount a filesystem. Declines: Windows mounts volumes through the mount manager, not a
+# syscall with a filesystem type and flags.
+fn sys_mount(source, target, fstype, flags, data): i64 { return 0 - 38; }
+# Unmount a filesystem. Declines, same reason as sys_mount.
+fn sys_umount2(target, flags): i64 { return 0 - 38; }
+
 # v6.4.66 — getpeername / getsockname now route to ws2_32 (was a fail-closed -ENOSYS
 # stub v6.4.64→.65). The PE syscall router maps 0xF036 → ws2_32!getpeername and
 # 0xF037 → ws2_32!getsockname (src/backend/x86/emit.cyr EGETPEERNAME_PE / EGETSOCKNAME_PE),
