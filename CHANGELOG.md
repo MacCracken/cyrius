@@ -6,6 +6,67 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.7] — 2026-09-27
 
+### Fixed
+
+- **`cyrius audit`, the check driver's lint suite and CI's lint step scored a cyrlint / cyrdoc
+  that crashed, hung, refused the file or did not exist as ZERO findings.** (bite 9.) Live in
+  the ecosystem: rekha's `fonts/face_data.cyr` is 1.65 MB, cyrlint refuses it (`file too large
+  to lint (>1028KB)`, rc 1, no trailer), and its header says `GENERATED` but not the walker's
+  `AUTO-GE` skip marker — so it was neither skipped nor linted, and `cyrius audit` printed
+  `ok: lint clean`. **Root cause:** `lib/audit_walk.cyr` ran each tool through `exec_capture`,
+  which returns a byte count and throws the exit status away, and took the summary trailer
+  (`<n> warnings`, `X documented, Y undocumented (Z total)`) as its only signal — and a
+  MISSING trailer parsed as 0. An EMPTY `.cyr` (cyrlint: `cannot read file`, rc 1) read clean
+  the same way. The same shape sat in two more places: the driver's `_cyrlint_large_file_gate`
+  and `_lint_init_order_gate` count a warning marker that must be ABSENT over a capture that
+  also discarded the status, so a crashing or refusing cyrlint PASSED them; and CI's lint step
+  was `cyrlint "$f" | tail -1 | grep -oP '^\d+' || echo 0`, where under Actions' pipefail any
+  non-zero cyrlint took the `echo 0` branch as well. **Fix:** a new
+  **`exec_capture_status(args, buf, buflen, status_out)`** in `lib/process.cyr` (POSIX,
+  Windows and agnos) captures stdout and reports how the child ended — `status_out[0]` = exit
+  code, 128+sig on a signal death, -2 when the deadline killed it (including a child the idle
+  deadline cut off mid-output, which then dies of the SIGPIPE the reader caused — measured on
+  real ach as "crashed, signal 13" before that case was mapped), -1 when nothing ran;
+  `status_out[1]` = 1 on a signal death. `exec_capture` now delegates to it and keeps its
+  byte-count contract. The walkers count a file as checked only when the run exited on its
+  own with the status its trailer implies (0 for cyrlint; the clamped undocumented count for
+  `cyrdoc --check`) AND printed that trailer; anything else lands in the new
+  **`AW_LINT_ERRORS` / `AW_LINT_ERROR_FILES`** and **`AW_DOC_ERRORS` / `AW_DOC_ERROR_FILES`**
+  as a `path: reason` note, printed by the new `audit_print_errors`. `cyrius audit` prints
+  `FAIL: cyrlint did not finish on these files (NOT linted):` with the list and exits 1; the
+  driver's `lint (stdlib)` row fails and names them; the two fixture gates require exit 0 and
+  the trailer before trusting an absent-marker count, and moved from the `regression` suite
+  into `lint` so they can be run alone. CI's lint step now RUNS that suite
+  (`./build/cyrius_check lint`) instead of re-implementing it. The false comment in
+  `lib/process.cyr` that said a caller could tell a timeout from short output "by checking the
+  output, which is what every in-tree caller already does" is corrected — both walkers did
+  exactly that, and it was the bug. **What a consumer sees:** `cyrius audit` in a repo with a
+  file cyrlint refuses (rekha today) now FAILS, naming the file, where it printed "ok: lint
+  clean"; the generated-file skip was deliberately NOT widened to `GENERATED` headers — a file
+  too large to lint is reported, not hidden. Empty `.cyr` files become lint errors, matching
+  cyrlint's own verdict (none exist in `~/Repos` to depth 4). Gates:
+  `tests/gates/toolchain/audit_walk_fails_closed.sh` (40 checks — fake crashing, hanging,
+  refusing, missing and lying linters and doc tools; the real cyrlint on a >1028 KB non-bundle
+  file and an empty file; the driver's lint suite against a fake cyrlint, including one that
+  answers only the positive fixture; `cyrius audit` over the rekha shape; CI's step; seven
+  mutations, each RED) and `tests/tcyr/crossos/exec_capture_status.tcyr` (18 assertions, run
+  on real pi / ecb / ach; 12 under wine — cass was down, so real Windows is pending the release
+  gate).
+
+### Changed
+
+- **`scripts/lib/audit-walk.sh` deleted** (bite 9). The bash twin of `lib/audit_walk.cyr` had
+  no caller left — its consumer, the bash `scripts/cyrius` dispatcher, became a thin shim long
+  ago — but `install.sh` still copied `scripts/lib/*.sh` into `~/.cyrius/versions/<v>/bin/lib/`
+  and `scripts/shims/README.md` still listed it. Removed with both, the stale comments in
+  `scripts/check.sh` / `ci.yml` / `lib/audit_walk.cyr`, and the now-unmatched `bin/lib/`
+  exemption in `tests/gates/toolchain/install_atomic_over_running_binary.sh`.
+
+### Added
+
+- **`exec_capture_status`** (`lib/process.cyr`, all targets) and **`audit_print_errors`**
+  (`lib/audit_walk.cyr`) — see *Fixed* above. `docs/api-surface.snapshot` +4 entries.
+
 ## [6.6.6] — 2026-09-20
 
 The 6.6.6 repair release — the 6.6.5 queue, and then what looking at it turned up. Every one of the six

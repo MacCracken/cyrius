@@ -1722,12 +1722,14 @@ Table-driven test framework helpers. Include once to pull in lib/assert.cyr + li
 
 ### audit_walk.cyr
 
-Internal tooling: shared format/lint walkers for cyrius audit + check. Skips symlinks and distlib bundles when traversing .cyr files.
+Internal tooling: shared format/lint/doc walkers for cyrius audit + check. Skips symlinks, distlib bundles and AUTO-GENERATED files when traversing .cyr files. The lint and doc walkers FAIL CLOSED (6.6.7): a file the tool did not finish on — crash, deadline kill, refusal, missing tool, no summary line — is counted in AW_LINT_ERRORS / AW_DOC_ERRORS with a `path: reason` note, never as zero findings.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `audit_fmt_walk` | `audit_fmt_walk(cyrfmt_path, dirs_vec)` | Run cyrfmt on every .cyr file; sets AW_FMT_FAIL, AW_FMT_SKIPPED, AW_FMT_FAIL_FILES |
-| `audit_lint_walk` | `audit_lint_walk(cyrlint_path, dirs_vec)` | Run cyrlint on every .cyr file; sums warnings into AW_LINT_TOTAL, AW_LINT_SKIPPED |
+| `audit_lint_walk` | `audit_lint_walk(cyrlint_path, dirs_vec)` | Run cyrlint on every .cyr file; sums warnings into AW_LINT_TOTAL, AW_LINT_SKIPPED; unfinished runs into AW_LINT_ERRORS / AW_LINT_ERROR_FILES |
+| `audit_doc_walk` | `audit_doc_walk(cyrdoc_path, dirs_vec)` | Run `cyrdoc --check` on every .cyr file; AW_DOC_TOTAL, AW_DOC_SKIPPED, AW_DOC_ERRORS / AW_DOC_ERROR_FILES |
+| `audit_print_errors` | `audit_print_errors(notes_vec)` | Print an AW_*_ERROR_FILES list, one `path: reason` per line, capped at 20 |
 | `str_starts_with_buf` | `str_starts_with_buf(buf, n, prefix) → 0/1` | Check if first n bytes of buf start with cstring prefix |
 
 ### regression.cyr

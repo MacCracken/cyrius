@@ -1166,3 +1166,10 @@ _chk_gate "$ROOT/tests/gates/codegen/fn_local_storage_class.sh"
 # offset 0, which is the program's FIRST LEXED WORD. This pins the SHAPE at the source so the
 # sixth cannot slip in, with derived counts and an anti-vacuous floor on every axis.
 _chk_gate "$ROOT/tests/gates/codegen/hidden_temp_census.sh"
+
+# 6.6.7 (bite 9) — the lint and doc walkers FAIL CLOSED. A cyrlint/cyrdoc that crashed, hung,
+# refused the file or did not exist scored "0 findings" in `cyrius audit`, the driver's lint
+# suite and CI (live in rekha: a 1.65 MB file cyrlint refuses read "ok: lint clean"). Drives
+# the walkers against fake and real tools, the driver's lint suite against a fake cyrlint, and
+# `cyrius audit` over the rekha shape; each fix is mutation-proven in the gate header.
+_chk_gate "$ROOT/tests/gates/toolchain/audit_walk_fails_closed.sh"

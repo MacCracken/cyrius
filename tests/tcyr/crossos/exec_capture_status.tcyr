@@ -1,0 +1,143 @@
+# exec_capture_status.tcyr — CROSS-HOST: lib/process.cyr's `exec_capture_status` must
+# capture a child's stdout AND report how the child ended, on every target the CLI ships
+# for. Runs on ecb (macOS arm64) + ach (Intel Mac) + cass (Windows PE) + pi (aarch64)
+# through the release gate's cross-OS leg, which selects this DIRECTORY.
+#
+# ⛔ WHY (6.6.7). The audit walkers (lib/audit_walk.cyr — `cyrius audit`, the check driver's
+# lint suite) ran cyrlint / cyrdoc through `exec_capture`, which returns a byte count and
+# throws the exit status away, so a tool that crashed, refused the file or never ran read as
+# a CLEAN file. They now judge each run by `exec_capture_status`, which has THREE
+# implementations (POSIX fork/pipe/waitpid, Windows CreateProcessW + GetExitCodeProcess,
+# agnos sys_spawn). A verb that compiles on five targets is not a verb that runs on them —
+# this file is the part that runs.
+#
+# THE MECHANISM (tool_spawn_roundtrip.tcyr's): the test spawns ITSELF, so there is no fixture
+# to ship. With no arguments it is the PARENT; with one it is a CHILD whose mode is that
+# argument. Exit codes are deliberately not 0/1/127/255, so "the child ran and said so"
+# cannot be confused with "nothing ran".
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/syscalls.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/args.cyr"
+include "lib/tagged.cyr"
+include "lib/fs.cyr"
+include "lib/process.cyr"
+include "lib/audit_walk.cyr"
+
+var SAY = "cyrius-capture-status\n";
+
+fn _child(mode): i64 {
+    if (streq(mode, "say") == 1) {
+        sys_write(1, SAY, strlen(SAY));
+        return 73;
+    }
+    # The cyrlint shape: per-line warnings on STDERR, the "<n> warnings" trailer LAST on
+    # stdout. On Windows the capture pipe carries both streams, so this also pins that the
+    # trailer is still the last line there.
+    if (streq(mode, "lint") == 1) {
+        var w = "  warn line 3: trailing whitespace\n";
+        sys_write(2, w, strlen(w));
+        var t = "1 warnings\n";
+        sys_write(1, t, strlen(t));
+        return 0;
+    }
+    if (streq(mode, "kill") == 1) {
+        #ifndef CYRIUS_TARGET_WIN
+        sys_kill(sys_getpid(), 9);
+        #endif
+        return 29;
+    }
+    # Silent past the parent's idle deadline, then writes — to a pipe the parent has
+    # already closed, so this child dies of SIGPIPE, a death the READER caused.
+    if (streq(mode, "late") == 1) {
+        syscall(7, 0, 0, 700);
+        sys_write(1, SAY, strlen(SAY));
+        return 37;
+    }
+    if (streq(mode, "hang") == 1) {
+        # Bounded even if the deadline never fires: 30 × 1 s, then a code the parent rejects.
+        var i = 0;
+        while (i < 30) { syscall(7, 0, 0, 1000); i = i + 1; }
+        return 31;
+    }
+    return 11;
+}
+
+fn _run(tok, buf, st): i64 {
+    var av = vec_new();
+    vec_push(av, argv(0));
+    vec_push(av, tok);
+    return exec_capture_status(av, buf, 4096, st);
+}
+
+fn main(): i64 {
+    alloc_init();
+    args_init();
+    if (argc() > 1) { return _child(argv(1)); }
+
+    test_group("exec_capture_status: captures stdout AND reports the exit");
+    var buf = alloc(4096);
+    var st = alloc(16);
+
+    var n = _run("say", buf, st);
+    assert_eq(n, strlen(SAY), "the child's stdout was captured, byte count");
+    assert_eq(memeq(buf, SAY, strlen(SAY)), 1, "…and its bytes");
+    assert_eq(load64(st), 73, "the child's exit code came back");
+    assert_eq(load64(st + 8), 0, "a normal exit is not reported as a signal");
+
+    # The byte-count contract of exec_capture is unchanged (it now delegates here).
+    var av = vec_new();
+    vec_push(av, argv(0));
+    vec_push(av, "say");
+    assert_eq(exec_capture(av, buf, 4096), strlen(SAY), "exec_capture still returns the bytes");
+
+    test_group("the audit walker's verdict over a real capture");
+    var ln = _run("lint", buf, st);
+    var w = _aw_parse_lint_warnings(buf, ln);
+    assert_eq(w, 1, "the '<n> warnings' trailer is the LAST line of the capture");
+    assert_eq(_aw_run_verdict(str_from("x.cyr"), st, w, 0), 0, "a finished run is trusted");
+
+    test_group("a child that did not finish is never a clean result");
+    var mn = exec_capture_status(vec_new(), buf, 4096, st);
+    assert_eq(mn, 0 - 1, "an empty argv runs nothing: -1");
+    assert_eq(load64(st), 0 - 1, "…and says so in the status");
+
+    var miss = vec_new();
+    vec_push(miss, "/nonexistent/cyrius-no-such-tool");
+    var mb = exec_capture_status(miss, buf, 4096, st);
+    assert_eq(mb <= 0, 1, "a missing tool captures nothing");
+    assert_eq(load64(st) != 0, 1, "…and does NOT report exit 0");
+    assert_eq(_aw_run_verdict(str_from("x.cyr"), st, _aw_parse_lint_warnings(buf, mb), 0) != 0, 1,
+      "…so the walker's verdict is an error");
+
+    #ifndef CYRIUS_TARGET_WIN
+    _run("kill", buf, st);
+    assert_eq(load64(st), 137, "a SIGKILLed child reports 128+9");
+    assert_eq(load64(st + 8), 1, "…flagged as a signal death");
+
+    var prev = proc_set_timeout_ms(400);
+    _run("hang", buf, st);
+    proc_set_timeout_ms(prev);
+    assert_eq(load64(st), 0 - 2, "a child killed at the deadline reports -2");
+    assert_eq(load64(st + 8), 0, "…not as a crash");
+
+    # The idle deadline cut the READ at 400 ms; the child's write at 700 ms then hits a
+    # closed pipe. That is the deadline, not a crash (measured on real ach before this row
+    # existed: a slow tool read as "crashed, signal 13").
+    prev = proc_set_timeout_ms(400);
+    _run("late", buf, st);
+    proc_set_timeout_ms(prev);
+    assert_eq(load64(st), 0 - 2, "a child cut off at the idle deadline reports -2");
+    assert_eq(load64(st + 8), 0, "…not as the SIGPIPE the reader caused");
+    #endif
+
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);

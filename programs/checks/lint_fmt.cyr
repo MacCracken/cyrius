@@ -145,7 +145,30 @@ fn _cc5_contamination_gate(): i64 {
     return hits;
 }
 
+# Count `marker` in cyrlint's combined output for `file_path` — or return -1, having said
+# why, when cyrlint did not FINISH on it. ⛔ 6.6.7: this counted over a capture that threw
+# the exit status away, and the gates below mostly assert a marker is ABSENT, so a cyrlint
+# that crashed, timed out or refused the file (rc 1, `file too large to lint`) produced no
+# markers and scored PASS. A count is evidence only from a run that exited 0 AND printed its
+# "<n> warnings" trailer; the verdict is lib/audit_walk.cyr's, so the gates and the walkers
+# cannot disagree about what "finished" means. CHANGELOG [6.6.7]
 fn _cyrlint_count_marker(file_path, marker, buf, buflen): i64 {
+    var args = vec_new();
+    vec_push(args, CYRLINT_PATH);
+    vec_push(args, file_path);
+    var st[16];
+    var sn = exec_capture_status(args, buf, buflen, &st);
+    var bad = _aw_run_verdict(str_from(file_path), &st, _aw_parse_lint_warnings(buf, sn), 0);
+    if (bad != 0) {
+        _p("    ");
+        _p(ANSI_RED);
+        _p("case-FAIL");
+        _p(ANSI_RESET);
+        _p(": cyrlint did not finish — ");
+        sys_write(1, str_data(bad), str_len(bad));
+        println("");
+        return 0 - 1;
+    }
     var n = _exec_with_arg_capture_both(CYRLINT_PATH, file_path, buf, buflen);
     return _count_substr_buf(buf, n, marker);
 }
@@ -215,7 +238,9 @@ fn _cyrlint_large_file_gate(): i64 {
     sys_unlink(src_path);
 
     var fail = 0;
-    if (unclosed != 0) {
+    if (unclosed < 0 || trailing_ws < 0) {
+        fail = fail + 1;   # _cyrlint_count_marker already said which run and why
+    } elif (unclosed != 0) {
         _p("    ");
         _p(ANSI_RED);
         _p("case-FAIL");
@@ -227,7 +252,7 @@ fn _cyrlint_large_file_gate(): i64 {
         println(" 'unclosed braces' warning(s) — historic bug regression");
         fail = fail + 1;
     }
-    if (trailing_ws != 0) {
+    if (unclosed >= 0 && trailing_ws > 0) {
         _p("    ");
         _p(ANSI_RED);
         _p("case-FAIL");
@@ -273,7 +298,8 @@ fn _lint_init_order_gate(): i64 {
 
     var bad_fixture = _root_path("tests/fixtures/lint_init_order/forward_refs.cyr");
     var bad_count = _cyrlint_count_marker(bad_fixture, marker, buf, cap);
-    if (bad_count < 3) {
+    if (bad_count < 0) { fail = fail + 1; }
+    elif (bad_count < 3) {
         _p("    ");
         _p(ANSI_RED);
         _p("case-FAIL");
@@ -286,7 +312,8 @@ fn _lint_init_order_gate(): i64 {
 
     var math_path = _root_path("lib/math.cyr");
     var math_count = _cyrlint_count_marker(math_path, marker, buf, cap);
-    if (math_count != 0) {
+    if (math_count < 0) { fail = fail + 1; }
+    elif (math_count != 0) {
         _p("    ");
         _p(ANSI_RED);
         _p("case-FAIL");
@@ -299,7 +326,8 @@ fn _lint_init_order_gate(): i64 {
 
     var str_path = _root_path("lib/string.cyr");
     var str_count = _cyrlint_count_marker(str_path, marker, buf, cap);
-    if (str_count != 0) {
+    if (str_count < 0) { fail = fail + 1; }
+    elif (str_count != 0) {
         _p("    ");
         _p(ANSI_RED);
         _p("case-FAIL");
@@ -312,7 +340,8 @@ fn _lint_init_order_gate(): i64 {
 
     var strlit_fixture = _root_path("tests/fixtures/lint_init_order/string_literal_safe.cyr");
     var strlit_count = _cyrlint_count_marker(strlit_fixture, marker, buf, cap);
-    if (strlit_count != 0) {
+    if (strlit_count < 0) { fail = fail + 1; }
+    elif (strlit_count != 0) {
         _p("    ");
         _p(ANSI_RED);
         _p("case-FAIL");
@@ -687,6 +716,14 @@ fn _lint_gate(): i64 {
         _p("  ");
         print_num(AW_LINT_TOTAL);
         println(" warnings");
+        fail = 1;
+    }
+    # 6.6.7 — a file cyrlint did not FINISH on is a failure, named, never "0 warnings".
+    if (AW_LINT_ERRORS > 0) {
+        _p("  ");
+        print_num(AW_LINT_ERRORS);
+        println(" file(s) cyrlint did not finish on:");
+        audit_print_errors(AW_LINT_ERROR_FILES);
         fail = 1;
     }
     _check("lint (stdlib)", fail);
