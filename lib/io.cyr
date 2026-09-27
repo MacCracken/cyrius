@@ -377,16 +377,18 @@ fn file_rename(oldpath, newpath): i64 {
 # Linux x86/aarch64 + macOS use sys_fsync (x86 #74; the backend renumbers to
 # aarch64 82 / Darwin BSD 95). AGNOS has no per-fd fsync in its AO_* syscall set,
 # so a whole-system sys_sync() is the best available approximation (documented
-# residual — coarser than fsync but honestly durable). Windows is a no-op: the
-# MoveFileExW replace after a closed handle is durable enough for the atomic-write
-# use, and there is no cheap portable FlushFileBuffers reroute wired (documented
-# choice). Returns 0 / negative errno.
+# residual — coarser than fsync but honestly durable). Windows flushes through
+# kernel32!FlushFileBuffers: the backend reroutes the literal Linux fsync number (74)
+# there, and a failure (a bad handle, or one opened without write access — Linux
+# fsyncs an O_RDONLY fd, Windows refuses it) is -1. Until 6.6.7 this arm returned 0
+# without flushing anything — even for a handle that did not exist. Returns 0 /
+# negative errno. CHANGELOG [6.6.7]
 fn xfsync(fd): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
     return sys_sync();          # no per-fd fsync on agnos — whole-fs sync (residual)
     #endif
     #ifdef CYRIUS_TARGET_WIN
-    return 0;                   # MoveFileEx-after-close is durable enough (documented)
+    return syscall(74, fd);     # → FlushFileBuffers (literal: the reroute is literal-only)
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
     #ifndef CYRIUS_TARGET_WIN

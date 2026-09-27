@@ -31,17 +31,23 @@
 # comments stripped; every row runs exactly once on every target) and must be ≥ FLOOR, so
 # deleting rows fails this gate instead of shrinking it.
 #
-# ROW FLOOR: 7 assertions (measured 2026-09-27 at 6.6.7).
+# ROW FLOOR: 16 assertions (measured 2026-09-27 at 6.6.7).
 #
 # MUTATION LEDGER — built and run 2026-09-27 at 6.6.7, x86_64 Linux + wine 11.17. Each mutant
 # is a one-edit scratch tree rebuilt with build/cycc, with a copy of this gate in it.
 #   mutant                                                   axis 1  axis 2   axis 3 (wine)
-#   the pre-bite compiler + stdlib (a full revert)           PASS    FAIL     FAIL (3 rows red)
-#   drop the _PE_ROUTE_FLUSH call site (74/75 → -38 again)   PASS    FAIL     FAIL (3 rows red)
+#   the pre-bite compiler + stdlib (a full revert)           PASS    FAIL     FAIL (6 rows red)
+#   drop the _PE_ROUTE_FLUSH call site (74/75 → -38 again)   PASS    FAIL     FAIL (6 rows red)
+#   xfsync's PE arm back to `return 0;`                      PASS    PASS     FAIL (2 rows red:
+#                                                                              xfsync(12345),
+#                                                                              O_RDONLY)
 #   MoveFileExW r8d back to 1 (no WRITE_THROUGH)             PASS    FAIL     PASS <-- the
 #                                                                              reason axis 2(c)
 #                                                                              exists
 #   BOOL tail back to dec+sar                                PASS    FAIL     PASS
+#
+# ⚠ Read the xfsync row: only axis 3 sees it. On a box without wine a stdlib-only revert of the
+# xfsync arm passes here, and the cass leg of the release gate is what catches it.
 #
 # Nothing is written inside the tree: the .tcyr creates CWD-relative files, so both runs happen
 # inside a mktemp -d that is removed on exit.
@@ -49,7 +55,7 @@
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC="$ROOT/build/cycc"
 SRC="$ROOT/tests/tcyr/crossos/fsync_flushes.tcyr"
-FLOOR=7
+FLOOR=16
 
 [ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 0; }
 [ -f "$SRC" ] || { echo "  FAIL: $SRC is missing — the cross-OS companion for this gate is gone"; exit 1; }

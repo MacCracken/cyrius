@@ -34,6 +34,36 @@ assert_eq(syscall(75, fd), 0, "fdatasync(75) of a written descriptor flushes (PE
 # Nested in an expression at odd depth — the PE reroute realigns its own frame.
 assert_eq(1 + syscall(74, fd) * 2, 1, "fsync(74) inside an expression");
 
+test_group("xfsync: the portable wrapper flushes, and fails on nothing");
+# PE: xfsync returned 0 without flushing until 6.6.7 — for ANY argument. This is the row
+# that was red on Windows: a no-op cannot tell 12345 from an open file.
+assert_eq(xfsync(12345) < 0, 1, "xfsync of a descriptor that does not exist fails (PE: was 0)");
+assert_eq(xfsync(fd), 0, "xfsync of a written descriptor flushes");
 file_close(fd);
+
+# O_APPEND handles: on PE the write bit is FILE_APPEND_DATA, not GENERIC_WRITE (see
+# _pe_open_flags). O_RDWR|O_APPEND is patra's WAL shape — it must flush.
+var afd = file_open(path, O_WRONLY | O_APPEND, 0);
+assert_eq(afd >= 0, 1, "reopened O_WRONLY|O_APPEND");
+assert_eq(file_write(afd, "more\n", 5), 5, "appended 5 bytes");
+assert_eq(xfsync(afd), 0, "xfsync of an O_WRONLY|O_APPEND descriptor flushes");
+file_close(afd);
+var wafd = file_open(path, O_RDWR | O_APPEND, 0);
+assert_eq(wafd >= 0, 1, "reopened O_RDWR|O_APPEND (patra's WAL open)");
+assert_eq(syscall(75, wafd), 0, "fdatasync(75) of an O_RDWR|O_APPEND descriptor flushes");
+file_close(wafd);
+
+# O_RDONLY: the ONE documented divergence. POSIX fsyncs a read-only descriptor; Windows'
+# FlushFileBuffers needs write access and refuses it. The only callers that fsync a
+# read-only descriptor are best-effort directory syncs, which ignore the result.
+var ro_refused = 0;
+#ifdef CYRIUS_TARGET_WIN
+ro_refused = 1;
+#endif
+var rfd = file_open(path, O_RDONLY, 0);
+assert_eq(rfd >= 0, 1, "reopened O_RDONLY");
+assert_eq(xfsync(rfd) < 0, ro_refused, "xfsync of an O_RDONLY descriptor: POSIX flushes, Windows refuses");
+file_close(rfd);
+
 xunlink(path);
 var r = assert_summary();
