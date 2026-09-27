@@ -475,18 +475,6 @@ fn regression_run_with_timeout(bin_path, timeout_ms, envp): i64 {
 
 # ── Process: exec + capture ───────────────
 
-# Run `bin_path` (no args), capture stdout into `buf[0..buflen)`,
-# discard stderr. Returns bytes captured (>= 0) or 0 on
-# fork/open failure. envp threaded through.
-# v6.1.35 (CO-02): the exit-status-aware core. `status_out` points to TWO i64
-# slots: [0] = exit code (stdlib convention: 0..127 normal, 128+sig on signal,
-# -1 on fork/open/exec failure), [1] = 1 if the child was killed by a signal
-# (a crash), else 0. The split lets a caller distinguish a normal nonzero exit
-# (an output-only fixture returning its last value, e.g. 152) from a crash —
-# a single 128+sig code can't (exit(152) aliases signal 24). This closes
-# CO-02: the check.sh tcyr gate waited but never read status, so a tcyr that
-# crashed before its summary, or exited nonzero after "0 failed", was recorded
-# as PASS. `regression_exec_capture` keeps its bytes-only public contract below.
 # Decode a `_regression_wait_deadline` outcome into `status_out`'s two slots: [0] exit code
 # · 128+sig · -2 the DEADLINE (v6.6.6: not the 137 its own SIGKILL produces — "it never
 # finished" is not "it crashed") · -1 not observed (6.6.7: waitpid never reaped the child, so
@@ -504,6 +492,20 @@ fn _regression_store_status(status_out, reaped, st): i64 {
     return 0;
 }
 
+# Run `bin_path` (no args), capture stdout into `buf[0..buflen)`,
+# discard stderr. Returns bytes captured (>= 0) or 0 on
+# fork/open failure. envp threaded through.
+# v6.1.35 (CO-02): the exit-status-aware core. `status_out` points to TWO i64
+# slots: [0] = exit code (stdlib convention: 0..127 normal, 128+sig on signal,
+# -1 on fork/open/exec failure), [1] = 1 if the child was killed by a signal
+# (a crash), else 0. The split lets a caller distinguish a normal nonzero exit
+# (an output-only fixture returning its last value, e.g. 152) from a crash —
+# a single 128+sig code can't (exit(152) aliases signal 24). This closes
+# CO-02: the check.sh tcyr gate waited but never read status, so a tcyr that
+# crashed before its summary, or exited nonzero after "0 failed", was recorded
+# as PASS. `regression_exec_capture` keeps its bytes-only public contract below.
+# [0] is also -2 when the deadline killed the child and -1 when its end was never observed
+# (`_regression_store_status`; 6.6.7).
 fn regression_exec_capture_status(bin_path, buf, buflen, envp, status_out): i64 {
     var out_path = _regression_tmp_path("audit_xc_");
     var out_fd = sys_open(out_path, 577, 420);
