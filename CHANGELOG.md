@@ -51,6 +51,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (include-alone on 5 targets, refill under exhaustion with an anti-vacuous exit, PE init abort
   under wine + a static half; five mutants, each RED). The lock-site count is unchanged.
 
+### Changed
+
+- **`cyrius fuzz --poison` says what it covers.** (bite 8, the overlap with proposal P6.) It
+  printed `poison mode: redzones + fill + quarantine-on-free ACTIVE`, which reads as
+  whole-program coverage. Only `lib/freelist.cyr` blocks are instrumented — memory from
+  `alloc()`, an arena or a consumer's own allocation seam (rekha's `sd_alloc`) is not — and a
+  redzone overwrite is COUNTED at `fl_free`, not trapped. It now prints
+  `poison mode: fl_alloc/fl_free blocks only (fill + redzone + quarantine-on-free)` and a second
+  line naming what is not covered and that a harness must assert `fl_poison_violations() == 0`.
+  The freelist's own poison comments were corrected with it: they still said the mode was
+  alloc-side fill only (redzones and quarantine shipped in v6.5.29), that nothing read a
+  switch (the `CYRIUS_POISON` compile-time predefine does), and that the parser has no
+  `#else` / `#ifndef` (it has had both since v5.6.1). The seam itself stays proposal P6.
+
 ## [6.6.6] — 2026-09-20
 
 The 6.6.6 repair release — the 6.6.5 queue, and then what looking at it turned up. Every one of the six
