@@ -26,6 +26,8 @@
 #      `alloc_init: mmap failed` (wine; SKIPs, named, without it — wine is not hardware).
 #   3s. STATIC half of 3, which runs everywhere: alloc_windows.cyr's alloc_init checks the
 #      mapping (`<= 0`) before adopting it.
+#   4. `fhm_new` (lib/hashmap_fast.cyr) and `flags_new` (lib/flags.cyr) return 0 over an
+#      exhausted heap (Linux, `ulimit -v`; anti-vacuous: the probe proves alloc is refusing).
 #
 # MUTATION LEDGER (6.6.7, each built as a scratch lib/ copy)
 #   * the 6.6.6 freelist                                  -> axis 1 FAIL (SYS_MMAP undefined)
@@ -34,6 +36,8 @@
 #   * fl_alloc's `blk == 0` after the refill removed      -> axis 2 FAIL (rc 139)
 #   * the 6.6.6 alloc_windows.cyr                         -> axis 3 FAIL (rc 7: init returned)
 #                                                            and axis 3s FAIL
+#   * the 6.6.6 hashmap_fast.cyr                          -> axis 4 FAIL (rc 139)
+#   * flags_new's three checks removed                    -> axis 4 FAIL (rc 139)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -135,5 +139,43 @@ else
     fi
 fi
 
+# ── axis 4: constructors over an EXHAUSTED heap return 0 (Linux, `ulimit -v`) ──────────
+# fhm_new and flags_new stored through their allocations unchecked. The probe exhausts the
+# address space, then drains the bump heap's current chunk (alloc until 0) so the next alloc
+# genuinely has nowhere to go. Their GROWTH halves are pinned deterministically on every host
+# by tests/tcyr/stdlib/hashmap_fast_grow_refused.tcyr and tests/tcyr/crossos/flags.tcyr.
+cat > "$W/ctor.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/vec.cyr"
+include "lib/hashmap_fast.cyr"
+include "lib/flags.cyr"
+
+fn main(): i64 {
+    alloc_init();
+    while (syscall(SYS_MMAP, 0, 1048576, 3, 0x22, 0 - 1, 0) > 0) { }
+    while (syscall(SYS_MMAP, 0, 4096, 3, 0x22, 0 - 1, 0) > 0) { }
+    while (alloc(4096) != 0) { }
+    while (alloc(8) != 0) { }
+    if (alloc(8) != 0) { return 4; }          # anti-vacuous: the heap really is exhausted
+    if (fhm_new() != 0) { return 5; }
+    if (flags_new() != 0) { return 6; }
+    syscall(1, 1, "returned\n", 9);
+    return 0;
+}
+var ec = main();
+syscall(60, ec);
+EOF
+"$CC" < "$W/ctor.cyr" > "$W/ctor" 2> "$W/ctor.err" || fail "axis 4: the constructor probe did not compile"
+chmod +x "$W/ctor" 2>/dev/null
+out=$( ulimit -c 0; ulimit -v 600000 2>/dev/null; "$W/ctor" 2>&1 ); rc=$?
+case "$rc" in
+    0) [ "$out" = "returned" ] || fail "axis 4: probe exited 0 but printed '$out'" ;;
+    4) fail "axis 4 (anti-vacuous): alloc still succeeded after the drain — the heap was not exhausted, so this axis tested nothing" ;;
+    5|6) fail "axis 4: a constructor returned non-zero over an exhausted heap (rc $rc: 5 = fhm_new, 6 = flags_new)" ;;
+    *) fail "axis 4: a constructor over an exhausted heap exited $rc (139 = it stored through a refused allocation)" ;;
+esac
+
 [ "$FAIL" = 0 ] || exit 1
-echo "PASS: alloc_failure_returns_zero (freelist.cyr includes alone on 5 targets; refused arena refills return 0 and the allocator recovers; PE alloc_init aborts loudly)"
+echo "PASS: alloc_failure_returns_zero (freelist.cyr includes alone on 5 targets; refused arena refills return 0 and the allocator recovers; PE alloc_init aborts loudly; fhm_new/flags_new return 0 over an exhausted heap)"

@@ -74,6 +74,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (`/dev/zero` under `ulimit -v 400000` is 0 / len 0 — rc 139 before — plus a static check that
   every allocation in the reader core and `_env_load` is tested against 0).
 
+- **`lib/hashmap_fast.cyr` and `lib/flags.cyr` stored through refused allocations.** (bite 8,
+  same class — an audit's output is fixes.) `_fhm_grow` allocated its three arrays unchecked,
+  `memset` the new metadata through 0 and installed the arrays over the live table; `fhm_new`
+  stored through its four allocations unchecked. `flags.cyr`'s positional-array and `FLAG_LIST`
+  growth (`_flags_push_positional`, `_flags_list_push`) copied the old array into an unchecked
+  `alloc`, and `flags_new` stored through its three. Every one was a SIGSEGV on refusal.
+  **Fix:** `_fhm_grow` allocates and checks all three arrays BEFORE touching the map, so a
+  refused grow leaves the old table live, and `fhm_set` returns -1 for it (0 otherwise, as
+  before); `fhm_new` returns 0. The flags growth returns the new **`FLAG_ERR_NOMEM` (6)**
+  (`flags_error_str`: "out of memory"), `flags_parse` fails with -1 and names the token it could
+  not keep, and a list is left unchanged; `flags_new` returns 0. Pinned by
+  `tests/tcyr/stdlib/hashmap_fast_grow_refused.tcyr` and new rows in
+  `tests/tcyr/crossos/flags.tcyr` (both force the refusal deterministically by planting a
+  capacity whose doubling is past `ALLOC_MAX`; both SIGSEGV with the 6.6.6 code; green on
+  ecb / ach / pi / wine), and axis 4 of `tests/gates/memory/alloc_failure_returns_zero.sh`
+  (both constructors over a heap exhausted under `ulimit -v`).
+
 ### Changed
 
 - **`cyrius fuzz --poison` says what it covers.** (bite 8, the overlap with proposal P6.) It
