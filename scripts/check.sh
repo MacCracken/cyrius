@@ -1170,3 +1170,8 @@ _chk_gate "$ROOT/tests/gates/codegen/fn_local_storage_class.sh"
 # offset 0, which is the program's FIRST LEXED WORD. This pins the SHAPE at the source so the
 # sixth cannot slip in, with derived counts and an anti-vacuous floor on every axis.
 _chk_gate "$ROOT/tests/gates/codegen/hidden_temp_census.sh"
+
+# 6.6.7 — a REFUSED MAPPING is 0 from fl_alloc (never a store through -ENOMEM), and PE
+# alloc_init aborts loudly on a refused VirtualAlloc like its Linux/macOS peers. Axis 2 is the
+# arena refill under `ulimit -v`, which the crossos .tcyr cannot reach portably.
+_chk_gate "$ROOT/tests/gates/memory/alloc_failure_returns_zero.sh"

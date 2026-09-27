@@ -27,6 +27,30 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   draw flags 4 and must not pass 0; no raw `syscall(SYS_GETRANDOM` — each mutation reddens it).
   Consumers see no API change; kybernet's boot loses the stall with no source change.
 
+- **`fl_alloc` stored through a refused mapping instead of returning 0, so every consumer's
+  `== 0` guard was dead code.** (bite 8.) `lib/freelist.cyr`'s `_fl_mmap` returns the raw kernel
+  result — `-errno` on Linux/Darwin, 0 on agnos and PE — and both callers used it as a pointer:
+  the large (>4096) path wrote its header at `blk`, and the arena REFILL adopted it as the new
+  arena base. A refused mapping SIGSEGV'd at `0xfffffffffffffff4` (reproduced on x86 and on
+  aarch64 under qemu, large path with no ulimit, refill under `ulimit -v`). kybernet (PID 1)
+  reaches it through sigil's argon2 wrappers; sigil's policy reader's `fl_alloc(4097)` guard was
+  dead too (4097 takes the large path). **Fix:** `blk <= 0 -> return 0` before any store on the
+  large path; the refill maps into a local, returns 0 on `<= 0`, and assigns the arena globals
+  only after the check, so a failed refill leaves the old arena intact and a later call retries;
+  `fl_alloc` returns 0 when the refill did. Also: **`fl_alloc` / `fl_calloc` now refuse a size
+  `<= 0`** and return 0, as `alloc()` does — a negative request used to land in class 0 and get a
+  16-byte block (a consumer that called `fl_alloc(0)` and treated the result as non-null must
+  now special-case 0; the ranga/sit callers surveyed already do). `lib/freelist.cyr` now includes
+  `lib/syscalls.cyr`: `include "lib/freelist.cyr"` alone was a HARD compile error
+  (`undefined variable 'SYS_MMAP'`). **Windows sibling:** `lib/alloc_windows.cyr`'s `alloc_init`
+  adopted VirtualAlloc's 0 unchecked, so every later `alloc()` re-ran init and returned 0
+  silently; it now writes `alloc_init: mmap failed` and exits 1 like the Linux and macOS peers
+  (the PE compiler's bytes change; it self-hosts byte-identical under wine). Pinned by
+  `tests/tcyr/crossos/freelist_map_failure.tcyr` (11 assertions; green on ecb / ach / pi / wine,
+  the large-path mutant SIGSEGVs on all of them) and `tests/gates/memory/alloc_failure_returns_zero.sh`
+  (include-alone on 5 targets, refill under exhaustion with an anti-vacuous exit, PE init abort
+  under wine + a static half; five mutants, each RED). The lock-site count is unchanged.
+
 ## [6.6.6] — 2026-09-20
 
 The 6.6.6 repair release — the 6.6.5 queue, and then what looking at it turned up. Every one of the six
