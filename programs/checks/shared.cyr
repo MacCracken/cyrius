@@ -181,8 +181,8 @@ fn _count_substr_buf(buf, n, needle): i64 {
     return regression_count_substr(buf, n, needle);
 }
 
-fn _exec_with_arg_capture_both(bin_path, arg, buf, buflen): i64 {
-    return regression_exec_with_arg_capture_both(bin_path, arg, buf, buflen, EMPTY_ENVP);
+fn _exec_with_arg_capture_both_status(bin_path, arg, buf, buflen, status_out): i64 {
+    return regression_exec_with_arg_capture_both_status(bin_path, arg, buf, buflen, EMPTY_ENVP, status_out);
 }
 
 fn _network_probe_check(addr_ipv4, port, timeout_ms): i64 {

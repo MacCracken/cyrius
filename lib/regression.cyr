@@ -249,19 +249,28 @@ fn _regression_die_with_parent(): i64 {
     return 0;
 }
 
-# Wait for `pid`, but not for ever. Returns 1 if the child was reaped normally, 0 if the
-# deadline (or a waitpid error) forced a SIGKILL; `stbuf` holds the status either way.
-# A waitpid error KILLS rather than returning: a bare return there is an ABANDONMENT path,
-# the very thing a deadline exists to prevent — the correction cbt/build.cyr's
-# `run_binary_timed` took at v6.5.51 after it was measured leaking children under load.
+# Wait for `pid`, but not for ever. Returns 1 if the child was reaped normally (`stbuf` holds
+# its status), 0 if the deadline forced a SIGKILL, and -1 if waitpid failed before either —
+# then `stbuf` was NEVER WRITTEN and must not be decoded (a parent that inherited
+# SIGCHLD = SIG_IGN has its children auto-reaped, and waitpid fails ECHILD). The twin of
+# lib/process.cyr's `_proc_wait_deadline`. CHANGELOG [6.6.7]
+# A waitpid error in the timed loop still KILLS before returning: a bare return there is an
+# ABANDONMENT path, the very thing a deadline exists to prevent — the correction
+# cbt/build.cyr's `run_binary_timed` took at v6.5.51 after it was measured leaking children
+# under load.
 fn _regression_wait_deadline(pid, stbuf, timeout_ms): i64 {
-    if (timeout_ms <= 0) { sys_waitpid(pid, stbuf, 0); return 1; }
+    if (timeout_ms <= 0) {
+        var bw = sys_waitpid(pid, stbuf, 0);
+        while (bw == 0 - 4) { bw = sys_waitpid(pid, stbuf, 0); }   # EINTR
+        if (bw == pid) { return 1; }
+        return 0 - 1;
+    }
     var waited = 0;
     var slice = 1;
     while (waited < timeout_ms) {
         var w = sys_waitpid(pid, stbuf, 1);
         if (w == pid) { return 1; }
-        if (w < 0) { sys_kill(pid, 9); sys_waitpid(pid, stbuf, 0); return 0; }
+        if (w < 0) { sys_kill(pid, 9); sys_waitpid(pid, stbuf, 0); return 0 - 1; }
         syscall(7, 0, 0, slice);
         waited = waited + slice;
         if (waited >= 50) { slice = 10; }
@@ -403,6 +412,7 @@ fn regression_pipe_to_bin_capture(bin_path, src_path, out_path, envp): i64 {
     # test never finished".
     var reaped = _regression_wait_deadline(pid, &stbuf, _regression_timeout_ms());
     if (reaped == 0) { return 0 - 2; }
+    if (reaped < 0) { return 0 - 1; }   # never observed: no status to decode
     var status = load32(&stbuf);
     if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
     if (WIFSIGNALED(status) == 1) { return 128 + WTERMSIG(status); }
@@ -465,6 +475,23 @@ fn regression_run_with_timeout(bin_path, timeout_ms, envp): i64 {
 
 # ── Process: exec + capture ───────────────
 
+# Decode a `_regression_wait_deadline` outcome into `status_out`'s two slots: [0] exit code
+# · 128+sig · -2 the DEADLINE (v6.6.6: not the 137 its own SIGKILL produces — "it never
+# finished" is not "it crashed") · -1 not observed (6.6.7: waitpid never reaped the child, so
+# `st` is not a status and is NOT decoded); [1] = 1 iff a signal killed it. CHANGELOG [6.6.7]
+fn _regression_store_status(status_out, reaped, st): i64 {
+    var code = 0 - 1;
+    var sig = 0;
+    if (reaped == 1) {
+        if (WIFEXITED(st) == 1) { code = WEXITSTATUS(st); }
+        if (WIFSIGNALED(st) == 1) { code = 128 + WTERMSIG(st); sig = 1; }
+    }
+    if (reaped == 0) { code = 0 - 2; }
+    store64(status_out, code);
+    store64(status_out + 8, sig);
+    return 0;
+}
+
 # Run `bin_path` (no args), capture stdout into `buf[0..buflen)`,
 # discard stderr. Returns bytes captured (>= 0) or 0 on
 # fork/open failure. envp threaded through.
@@ -477,6 +504,8 @@ fn regression_run_with_timeout(bin_path, timeout_ms, envp): i64 {
 # CO-02: the check.sh tcyr gate waited but never read status, so a tcyr that
 # crashed before its summary, or exited nonzero after "0 failed", was recorded
 # as PASS. `regression_exec_capture` keeps its bytes-only public contract below.
+# [0] is also -2 when the deadline killed the child and -1 when its end was never observed
+# (`_regression_store_status`; 6.6.7).
 fn regression_exec_capture_status(bin_path, buf, buflen, envp, status_out): i64 {
     var out_path = _regression_tmp_path("audit_xc_");
     var out_fd = sys_open(out_path, 577, 420);
@@ -505,16 +534,7 @@ fn regression_exec_capture_status(bin_path, buf, buflen, envp, status_out): i64 
     sys_close(out_fd);
     var stbuf[4];
     var reaped = _regression_wait_deadline(pid, &stbuf, _regression_timeout_ms());
-    var status = load32(&stbuf);
-    var code = 0 - 1;
-    var sig = 0;
-    if (WIFEXITED(status) == 1) { code = WEXITSTATUS(status); }
-    if (WIFSIGNALED(status) == 1) { code = 128 + WTERMSIG(status); sig = 1; }
-    # v6.6.6: the DEADLINE, reported as the module's -2, not as the 137 its own SIGKILL
-    # produces. A caller must be able to say "it never finished" rather than "it crashed".
-    if (reaped == 0) { code = 0 - 2; sig = 0; }
-    store64(status_out, code);
-    store64(status_out + 8, sig);
+    _regression_store_status(status_out, reaped, load32(&stbuf));
     var total = file_read_all(out_path, buf, buflen);
     sys_unlink(out_path);
     if (total < 0) { return 0; }
@@ -556,6 +576,7 @@ fn regression_exec_run(bin_path, envp): i64 {
     # test never finished".
     var reaped = _regression_wait_deadline(pid, &stbuf, _regression_timeout_ms());
     if (reaped == 0) { return 0 - 2; }
+    if (reaped < 0) { return 0 - 1; }   # never observed: no status to decode
     var status = load32(&stbuf);
     if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
     if (WIFSIGNALED(status) == 1) { return 128 + WTERMSIG(status); }
@@ -598,8 +619,22 @@ fn regression_exec_with_arg_capture(bin_path, arg, buf, buflen, envp): i64 {
 # Variant of `regression_exec_with_arg_capture` that captures
 # BOTH stdout and stderr into the same buffer. Used when the
 # tool emits diagnostics to stderr but the gate wants to scan
-# them (e.g. cyrlint warnings).
+# them (e.g. cyrlint warnings). The exit status is DISCARDED — a gate that
+# counts markers in the output uses the `_status` form, so the count and the
+# "it finished" verdict come from the SAME run.
 fn regression_exec_with_arg_capture_both(bin_path, arg, buf, buflen, envp): i64 {
+    var st[16];
+    return regression_exec_with_arg_capture_both_status(bin_path, arg, buf, buflen, envp, &st);
+}
+
+# `regression_exec_with_arg_capture_both` that also REPORTS HOW THE CHILD ENDED, in
+# `status_out`'s two slots (`_regression_store_status`; -1 also when nothing could be
+# spawned). ⛔ 6.6.7: the check driver's cyrlint fixture gates verified one run and counted
+# markers in a SECOND, unchecked one — a second run that crashed or was cut at the deadline
+# produced no markers, and the "marker ABSENT" rows passed on it. CHANGELOG [6.6.7]
+fn regression_exec_with_arg_capture_both_status(bin_path, arg, buf, buflen, envp, status_out): i64 {
+    store64(status_out, 0 - 1);
+    store64(status_out + 8, 0);
     var out_path = _regression_tmp_path("audit_xa_");
     var out_fd = sys_open(out_path, 577, 420);
     if (out_fd < 0) { return 0; }
@@ -622,7 +657,8 @@ fn regression_exec_with_arg_capture_both(bin_path, arg, buf, buflen, envp): i64 
     }
     sys_close(out_fd);
     var stbuf[4];
-    _regression_wait_deadline(pid, &stbuf, _regression_timeout_ms());
+    var reaped = _regression_wait_deadline(pid, &stbuf, _regression_timeout_ms());
+    _regression_store_status(status_out, reaped, load32(&stbuf));
     var total = file_read_all(out_path, buf, buflen);
     sys_unlink(out_path);
     if (total < 0) { return 0; }

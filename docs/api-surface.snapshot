@@ -189,6 +189,7 @@ atomic::atomic_store/2
 audit_walk::audit_doc_walk/2
 audit_walk::audit_fmt_walk/2
 audit_walk::audit_lint_walk/2
+audit_walk::audit_print_errors/1
 audit_walk::str_starts_with_buf/3
 bayan::base64_decode/2
 bayan::base64_encode/2
@@ -2312,6 +2313,7 @@ patra::wal_start/3
 patra::where_eval/4
 patra::where_validate_types/3
 process::exec_capture/3
+process::exec_capture_status/4
 process::exec_capture_str/3
 process::exec_cmd/1
 process::exec_env/2
@@ -2327,6 +2329,7 @@ process::run_capture/5
 process::spawn/3
 process::wait_pid/1
 process_agnos::exec_capture/3
+process_agnos::exec_capture_status/4
 process_agnos::exec_capture_str/3
 process_agnos::exec_cmd/1
 process_agnos::exec_env/2
@@ -2340,6 +2343,7 @@ process_agnos::run_capture/5
 process_agnos::spawn/3
 process_agnos::wait_pid/1
 process_win::exec_capture/3
+process_win::exec_capture_status/4
 process_win::exec_capture_str/3
 process_win::exec_cmd/1
 process_win::exec_env/2
@@ -2408,6 +2412,7 @@ regression::regression_exec_in_dir3_env/8
 regression::regression_exec_run/2
 regression::regression_exec_with_arg_capture/5
 regression::regression_exec_with_arg_capture_both/5
+regression::regression_exec_with_arg_capture_both_status/6
 regression::regression_file_contains_substr/2
 regression::regression_network_probe/3
 regression::regression_pipe_read_all/4

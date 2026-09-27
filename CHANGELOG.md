@@ -759,6 +759,136 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and leaves +200 unwritten, so the slot is pre-filled), or -errno. Off agnos it is -ENOSYS: Linux's
   nearest figure, the `/proc/interrupts` RES row, counts kicks received per CPU — a different
   number.
+- **`cyrius audit`, the check driver's lint suite and CI's lint step scored a cyrlint / cyrdoc
+  that crashed, hung, refused the file or did not exist as ZERO findings.** (bite 9.) Live in
+  the ecosystem: rekha's `fonts/face_data.cyr` is 1.65 MB, cyrlint refuses it (`file too large
+  to lint (>1028KB)`, rc 1, no trailer), and its header says `GENERATED` but not the walker's
+  `AUTO-GE` skip marker — so it was neither skipped nor linted, and `cyrius audit` printed
+  `ok: lint clean`. **Root cause:** `lib/audit_walk.cyr` ran each tool through `exec_capture`,
+  which returns a byte count and throws the exit status away, and took the summary trailer
+  (`<n> warnings`, `X documented, Y undocumented (Z total)`) as its only signal — and a
+  MISSING trailer parsed as 0. An EMPTY `.cyr` (cyrlint: `cannot read file`, rc 1) read clean
+  the same way. The same shape sat in two more places: the driver's `_cyrlint_large_file_gate`
+  and `_lint_init_order_gate` count a warning marker that must be ABSENT over a capture that
+  also discarded the status, so a crashing or refusing cyrlint PASSED them; and CI's lint step
+  was `cyrlint "$f" | tail -1 | grep -oP '^\d+' || echo 0`, where under Actions' pipefail any
+  non-zero cyrlint took the `echo 0` branch as well. **Fix:** a new
+  **`exec_capture_status(args, buf, buflen, status_out)`** in `lib/process.cyr` (POSIX,
+  Windows and agnos) captures stdout and reports how the child ended — `status_out[0]` = exit
+  code, 128+sig on a signal death, -2 when the deadline killed it (including a child the idle
+  deadline cut off mid-output, which then dies of the SIGPIPE the reader caused — measured on
+  real ach as "crashed, signal 13" before that case was mapped), -1 when nothing ran;
+  `status_out[1]` = 1 on a signal death. `exec_capture` now delegates to it and keeps its
+  byte-count contract. The walkers count a file as checked only when the run exited on its
+  own with the status its trailer implies (0 for cyrlint; the clamped undocumented count for
+  `cyrdoc --check`) AND printed that trailer; anything else lands in the new
+  **`AW_LINT_ERRORS` / `AW_LINT_ERROR_FILES`** and **`AW_DOC_ERRORS` / `AW_DOC_ERROR_FILES`**
+  as a `path: reason` note, printed by the new `audit_print_errors`. `cyrius audit` prints
+  `FAIL: cyrlint did not finish on these files (NOT linted):` with the list and exits 1; the
+  driver's `lint (stdlib)` row fails and names them; the two fixture gates require exit 0 and
+  the trailer before trusting an absent-marker count, and moved from the `regression` suite
+  into `lint` so they can be run alone. CI's lint step now RUNS that suite
+  (`./build/cyrius_check lint`) instead of re-implementing it. The false comment in
+  `lib/process.cyr` that said a caller could tell a timeout from short output "by checking the
+  output, which is what every in-tree caller already does" is corrected — both walkers did
+  exactly that, and it was the bug. **What a consumer sees:** `cyrius audit` in a repo with a
+  file cyrlint refuses (rekha today) now FAILS, naming the file, where it printed "ok: lint
+  clean"; the generated-file skip was deliberately NOT widened to `GENERATED` headers — a file
+  too large to lint is reported, not hidden. Empty `.cyr` files become lint errors, matching
+  cyrlint's own verdict (none exist in `~/Repos` to depth 4). Gates:
+  `tests/gates/toolchain/audit_walk_fails_closed.sh` (47 checks — fake crashing, hanging,
+  refusing, missing and lying linters and doc tools; the real cyrlint on a >1028 KB non-bundle
+  file and an empty file; the driver's lint suite against a fake cyrlint, including one that
+  answers only the positive fixture; `cyrius audit` over the rekha shape; CI's step; ten
+  mutations, each RED) and `tests/tcyr/crossos/exec_capture_status.tcyr` (23 assertions, run
+  on real pi / ecb / ach; 12 under wine — cass was down, so real Windows is pending the release
+  gate).
+
+- **The capture and run verbs decoded a wait status that `waitpid` never wrote** (bite 9 review).
+  **Root cause:** `_proc_wait_deadline` (`lib/process.cyr`) and its twin
+  `_regression_wait_deadline` (`lib/regression.cyr`) ignored `waitpid`'s return in the untimed
+  path and reported "reaped", and in the timed path read a `waitpid` error as the DEADLINE. A
+  process that inherited `SIGCHLD = SIG_IGN` (it survives `execve`) has its children
+  auto-reaped by the kernel: `waitpid` blocks until the child exits, fails `ECHILD`, and leaves
+  the status buffer untouched — so `exec_capture_status` decoded a stack word. Measured: a
+  `/bin/false` child reported as `exit 0` (fail-OPEN, the one thing the verb exists to prevent),
+  and a tree `cyrius audit` run from such a parent failed every file as `the tool crashed,
+  signal 48`. **Fix:** both waits retry `EINTR` and return -1 when `waitpid` never reaped the
+  child; nothing decodes the buffer then. `exec_capture_status`,
+  `regression_exec_capture_status` and the new `regression_exec_with_arg_capture_both_status`
+  report -1 ("not observed" — an error to the walkers, never a guessed -2); `exec_vec`,
+  `exec_env`, `exec_vec_str`, `exec_env_str`, `exec_cmd`, `regression_exec_run` and
+  `regression_pipe_to_bin_capture` return -1; `run` / `wait_pid` return
+  `Err(PROC_ECHILD)` (new, 10). A deadline that fired and killed the child is still -2.
+  **What a consumer sees:** under an inherited `SIG_IGN` these verbs now say "unknown" instead of
+  a made-up exit code. Pinned by SIG_IGN rows in `tests/tcyr/crossos/exec_capture_status.tcyr`
+  (untimed and timed) and the new `tests/tcyr/platform/regression_wait_unobserved.tcyr`.
+- **The check driver's cyrlint fixture gates verified one cyrlint run and counted markers in a
+  second, unchecked one** (bite 9 review). `_cyrlint_count_marker` passed the run through the
+  walker's verdict, then re-ran cyrlint through the status-discarding
+  `regression_exec_with_arg_capture_both` and counted there — a second run that crashed or was
+  cut at the deadline before its markers scored 0 and the "marker ABSENT" rows passed (and every
+  fixture ran cyrlint twice). It now counts from the run it verified, through the new
+  `regression_exec_with_arg_capture_both_status` (stdout + stderr merged; the trailer is still
+  the last line). `audit_walk_fails_closed.sh` grows to 47 checks: B6 (a cyrdoc that exits 0
+  with no summary line), D5 (a cyrlint whose first run of a negative fixture reports a false
+  positive and whose later runs die), E2 (`cyrius audit` with a crashing cyrdoc names the file
+  under docs and never prints `ok: docs complete`), and three more mutations in its ledger, each
+  RED.
+- **`version-bump.sh` reported success over a roadmap stamp it had not rewritten** (bite 10).
+  Step 5 matched `**Current head: vOLD** (…)` with a basic-regex pattern whose parenthetical
+  could hold only a date, and the old version's dots were unescaped. The stamp is annotated by
+  hand — at 6.6.6 it read `(2026-09-20, bump commit; tag pending)` — so the 6.6.7 bump matched
+  nothing, exited 0 and the stamp was fixed by hand; today's stamp `(2026-09-27, slot open; …)`
+  defeated the 6.6.8 bump the same way (measured on a copy: rc 0, no `v6.6.8` stamp). Steps 3
+  (CLAUDE.md) and 4 (CHANGELOG) ended in `|| true` with no check at all, and the summary
+  printed VERSION, CLAUDE.md and CHANGELOG.md under "Updated:" unconditionally — on the
+  same-version path too — while never listing `cyrius.cyml`, which step 3b does rewrite. Now
+  the rewrites that match the old version (CLAUDE.md's `- **Version**:` line, cyrius.cyml's
+  self-pin, the roadmap stamp) are `sed -E` with its dots escaped and anchored — a whole line,
+  a stamp at the start of its line (the CHANGELOG step renames or inserts a header and never
+  matches the old version); the stamp's parenthetical is
+  replaced by the bump date whatever it held, provided it has no nested parentheses (a nested
+  one is refused rather than cut at its first `)`); each step is VERIFIED (the new anchor
+  present, the old one gone from the whole file — a mid-line quote of the old stamp is left
+  alone and reported — exactly one `## [NEW]` header), a step that did not take effect is
+  named on stderr where it happens, and the script exits **non-zero at the end**, after the
+  rebuild and the seed gate. The summary reports what each file actually did (`updated`,
+  `already NEW`, `NOT UPDATED: <why>`), says whether `build/cycc` was rebuilt, and on the
+  same-version path says the document steps were skipped. The footer names the manual rows
+  that are really left — state.md's Version and `| **cycc** |` rows, the roadmap figures
+  beside the stamp, vidya's `language/` — instead of the retired `language.toml` and a CLAUDE.md
+  binary size CLAUDE.md no longer carries. roadmap.md and state.md stop claiming
+  `version-bump.sh` refreshes state.md; it never has.
+
+### Changed
+
+- **`scripts/lib/audit-walk.sh` deleted** (bite 9). The bash twin of `lib/audit_walk.cyr` had
+  no caller left — its consumer, the bash `scripts/cyrius` dispatcher, became a thin shim long
+  ago — but `install.sh` still copied `scripts/lib/*.sh` into `~/.cyrius/versions/<v>/bin/lib/`
+  and `scripts/shims/README.md` still listed it. Removed with both, the stale comments in
+  `scripts/check.sh` / `ci.yml` / `lib/audit_walk.cyr`, and the now-unmatched `bin/lib/`
+  exemption in `tests/gates/toolchain/install_atomic_over_running_binary.sh`.
+
+### Added
+
+- **`exec_capture_status`** (`lib/process.cyr`, all targets), **`audit_print_errors`**
+  (`lib/audit_walk.cyr`), **`regression_exec_with_arg_capture_both_status`**
+  (`lib/regression.cyr`) and the **`PROC_ECHILD`** constant — see *Fixed* above.
+  `docs/api-surface.snapshot` +5 entries.
+- **`sh scripts/version-bump.sh --docs-only <dir> <version>`** (bite 10) — runs only the
+  document steps (VERSION, CLAUDE.md, cyrius.cyml, CHANGELOG.md, the roadmap stamp) over copies
+  under `<dir>`, verified, with no regenerate, rebuild, install or seed gate; refuses the same
+  version and a malformed one. **`tests/gates/toolchain/version_bump_doc_anchors.sh`** uses it to
+  bump scratch copies of the LIVE docs to the next patch version, so an anchor the next bump
+  cannot rewrite goes red when it is written, not on bump day; plus fixtures for the annotated
+  stamp, the in-flight `## [Unreleased]` rename, dot-escaping, the nested-parenthesis refusal,
+  each missing anchor (loud, and the other files still rewritten), the verification edges (a
+  mid-line quote of the old stamp, a duplicated `## [NEW]` header, a `6.6.60` prefix line, a
+  file already at the new version) and the full path's honest summary, the same-version path
+  included. The full-path runs execute a copy of the script placed inside the scratch dir, with
+  `HOME`/`CYRIUS_HOME` pointed there and the seed gate skipped, so they cannot reach the tree or
+  `~/.cyrius` however the script resolves its paths. 78 checks; thirteen mutations, each RED.
 
 ## [6.6.6] — 2026-09-20
 

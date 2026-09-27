@@ -19,13 +19,9 @@
 # `_gate(…, "tests/gates/…")` literals in programs/checks/*.cyr), never written down twice.
 # CHANGELOG [6.6.6]
 #
-# scripts/lib/audit-walk.sh stays bash for the v5.9.x window — it
-# is still consumed by the bash scripts/cyrius dispatcher, queued
-# for cyrius conversion at v5.9.5 alongside that dispatcher. The
-# fmt/lint walk logic was simultaneously ported into
-# lib/audit_walk.cyr (cyrius stdlib module) for the check program's
-# use; once scripts/cyrius converts, both audit-walk.sh and this
-# bridge can retire together.
+# The fmt/lint walkers live in lib/audit_walk.cyr only (the driver's fmt + lint suites and
+# `cyrius audit` share them). Their bash twin scripts/lib/audit-walk.sh had no caller left
+# and was deleted at 6.6.7.
 
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -1216,3 +1212,17 @@ _chk_gate "$ROOT/tests/gates/platform/agnos_sock_recv_bound.sh"
 # alloc_init aborts loudly on a refused VirtualAlloc like its Linux/macOS peers. Axis 2 is the
 # arena refill under `ulimit -v`, which the crossos .tcyr cannot reach portably.
 _chk_gate "$ROOT/tests/gates/memory/alloc_failure_returns_zero.sh"
+
+# 6.6.7 (bite 9) — the lint and doc walkers FAIL CLOSED. A cyrlint/cyrdoc that crashed, hung,
+# refused the file or did not exist scored "0 findings" in `cyrius audit`, the driver's lint
+# suite and CI (live in rekha: a 1.65 MB file cyrlint refuses read "ok: lint clean"). Drives
+# the walkers against fake and real tools, the driver's lint suite against a fake cyrlint, and
+# `cyrius audit` over the rekha shape; each fix is mutation-proven in the gate header.
+_chk_gate "$ROOT/tests/gates/toolchain/audit_walk_fails_closed.sh"
+
+# 6.6.7 (bite 10) — the NEXT version-bump can rewrite every document anchor in the live tree.
+# Step 5's stamp sed admitted only a date in the parenthetical, so the hand-annotated stamp
+# matched nothing and the bump exited 0 (twice: 6.6.7, and — measured — 6.6.8); steps 3/4
+# were unverified and the "Updated:" list was unconditional. Runs `version-bump.sh
+# --docs-only` over scratch copies of the live docs plus fixtures; mutation-proven in the header.
+_chk_gate "$ROOT/tests/gates/toolchain/version_bump_doc_anchors.sh"

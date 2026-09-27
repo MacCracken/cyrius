@@ -27,7 +27,8 @@ unscheduled 6.x backlog. Whole-cycle framing plus v6.7.x/v6.8.x live in
   unpin conditions (128-bit div-mod, Phase 3-full varargs, effect tracking, HKTs/GATs).
 - [cycle-discipline.md](cycle-discipline.md) — durable operating principles **and the runnable
   closeout checklist + per-closeout ledger**.
-- [state.md](state.md) — volatile current state. Refreshed every release by `version-bump.sh`.
+- [state.md](state.md) — volatile current state. Refreshed **by hand** every release —
+  `version-bump.sh` never touches it (its closing summary names the rows to update).
 - [completed-phases.md](completed-phases.md) — historical per-release / per-minor narrative.
   **Closed-minor narrative belongs there, not here.**
 - [`CHANGELOG.md`](../../CHANGELOG.md) — per-patch source of truth. When this file and the
@@ -43,8 +44,10 @@ seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi (at 6.6.6) · sel
 `tests/gates/<bucket>/` · **30 open issues** · **6 open proposals**.
 
 > ⚠ **Every figure above was DERIVED on the day, not carried** (re-derived 2026-09-27 at the 6.6.7 open).
-> `version-bump.sh` rewrites the version token and nothing else — **the numbers beside it are yours to
-> re-derive.** Re-derive gates with `find tests/gates -name '*.sh' | wc -l`; never increment.
+> `version-bump.sh` rewrites the version token, replaces the `(…)` after it with the bump date, and
+> nothing else — **the numbers beside it are yours to re-derive.** Keep the stamp at the start of its
+> line and its parenthetical free of nested `(`/`)`, or the bump refuses to rewrite it (and
+> `tests/gates/toolchain/version_bump_doc_anchors.sh` goes red the day it is written). Re-derive gates with `find tests/gates -name '*.sh' | wc -l`; never increment.
 
 **v6.6.0 opened this minor** with its one breaking change: `Result` / `Option` / `Either` are the **value
 form** (construction allocates zero bytes), shipped WITH the ecosystem. **v6.6.1–v6.6.6** were the repair

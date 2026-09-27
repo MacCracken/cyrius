@@ -1,0 +1,112 @@
+# regression_wait_unobserved.tcyr — lib/regression.cyr's status-reporting verbs never decode
+# a wait status that waitpid did not write, and the marker-counting capture reports its own
+# run's status.
+#
+# ⛔ WHY (6.6.7). `_regression_wait_deadline` ignored waitpid's return in its untimed path and
+# returned "reaped", and read a waitpid error in its timed path as the DEADLINE. A parent
+# that inherited SIGCHLD = SIG_IGN (it survives execve) has its children auto-reaped by the
+# kernel: waitpid blocks until they exit and then fails ECHILD, the status buffer is never
+# written, and the verbs decoded an uninitialised stack word — "exit 0" for a failed child is
+# the fail-open case. The truthful answer is -1 (not observed), or the real code where the
+# kernel still lets us reap. Twin of tests/tcyr/crossos/exec_capture_status.tcyr's rows for
+# lib/process.cyr.
+#
+# The check driver's cyrlint fixture gates also verified one cyrlint run and counted markers
+# in a SECOND, unchecked one; `regression_exec_with_arg_capture_both_status` is the one-run
+# verb they now use, and its merged capture must still end with stdout's trailer.
+#
+# Self-spawning: argv(1) = "say", or CY_RWU_CHILD in the environment for the no-arg verbs.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/syscalls.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/args.cyr"
+include "lib/tagged.cyr"
+include "lib/fs.cyr"
+include "lib/net.cyr"
+include "lib/regression.cyr"
+
+var OUT = "3 warnings\n";
+var ERR = "  warn line 1: global var init refs x\n";
+
+fn _say(): i64 {
+    sys_write(2, ERR, strlen(ERR));
+    sys_write(1, OUT, strlen(OUT));
+    return 73;
+}
+
+fn _ok_or_unobserved(code): i64 {
+    if (code == 0 - 1) { return 1; }
+    if (code == 73) { return 1; }
+    return 0;
+}
+
+# The SIG_IGN rows. Called in-process (the timed path — the driver's default deadline) and
+# again in a sub-run whose environment carries CYRIUS_CHECK_TIMEOUT=0 (the untimed path —
+# `_regression_timeout_ms` reads the process environment, so it cannot be flipped in-process).
+fn _sigign_rows(tag, buf, st, envp, noenv): i64 {
+    test_group(tag);
+    signal_ignore(SIGCHLD);
+    regression_exec_with_arg_capture_both_status(argv(0), "say", buf, 4096, noenv, st);
+    var c1 = load64(st);
+    var s1 = load64(st + 8);
+    regression_exec_capture_status(argv(0), buf, 4096, envp, st);
+    var c2 = load64(st);
+    var s2 = load64(st + 8);
+    var c3 = regression_exec_run(argv(0), envp);
+    signal_default(SIGCHLD);
+    assert_eq(_ok_or_unobserved(c1), 1, "capture_both_status: -1 or the real 73");
+    assert_eq(s1, 0, "…no invented signal death");
+    assert_eq(_ok_or_unobserved(c2), 1, "capture_status: -1 or the real 73");
+    assert_eq(s2, 0, "…no invented signal death");
+    assert_eq(_ok_or_unobserved(c3), 1, "exec_run: -1 or the real 73, never -2");
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    args_init();
+    if (argc() > 1) { return _say(); }
+    if (getenv("CY_RWU_CHILD") != 0) { return _say(); }
+
+    var buf = alloc(4096);
+    var st = alloc(16);
+    var envp = alloc(16);
+    store64(envp, "CY_RWU_CHILD=1");
+    store64(envp + 8, 0);
+    var noenv = alloc(8);
+    store64(noenv, 0);
+
+    if (getenv("CY_RWU_SUB") != 0) {
+        _sigign_rows("SIGCHLD = SIG_IGN, untimed (CYRIUS_CHECK_TIMEOUT=0)", buf, st, envp, noenv);
+        return assert_summary();
+    }
+
+    test_group("capture_both_status: one run, both streams, its own status");
+    var n = regression_exec_with_arg_capture_both_status(argv(0), "say", buf, 4096, noenv, st);
+    assert_eq(load64(st), 73, "the child's exit code came back");
+    assert_eq(load64(st + 8), 0, "…not flagged as a signal death");
+    assert_eq(n, strlen(OUT) + strlen(ERR), "both streams were captured");
+    assert_eq(memeq(buf + n - strlen(OUT), OUT, strlen(OUT)), 1, "stdout's trailer is still the LAST line");
+    assert_eq(regression_exec_with_arg_capture_both(argv(0), "say", buf, 4096, noenv), n,
+      "the status-discarding form still returns the same bytes");
+
+    _sigign_rows("SIGCHLD = SIG_IGN, timed (the driver's default deadline)", buf, st, envp, noenv);
+
+    test_group("the untimed sub-run");
+    var senv = alloc(24);
+    store64(senv, "CYRIUS_CHECK_TIMEOUT=0");
+    store64(senv + 8, "CY_RWU_SUB=1");
+    store64(senv + 16, 0);
+    assert_eq(regression_exec_run(argv(0), senv), 0, "the untimed SIG_IGN rows all passed");
+
+    var r = assert_summary();
+    return r;
+}
+
+var ec = main();
+syscall(60, ec);

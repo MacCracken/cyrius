@@ -1,11 +1,42 @@
 #!/bin/sh
 # Version bump script — single source of truth for all version references
-# Usage: ./scripts/version-bump.sh 1.9.0
+#
+# Usage:
+#   sh scripts/version-bump.sh <version>
+#       Bump THIS tree: VERSION, the document anchors (CLAUDE.md, cyrius.cyml, CHANGELOG.md,
+#       the roadmap `Current head:` stamp), src/version_str.cyr, rebuild build/cycc, refresh
+#       the install snapshot, run the seed-derive gate.
+#   sh scripts/version-bump.sh --docs-only <dir> <version>
+#       Rewrite ONLY the document anchors of the copies under <dir> (same relative paths:
+#       VERSION, CLAUDE.md, cyrius.cyml, CHANGELOG.md, docs/development/roadmap.md) and
+#       verify each one. Nothing is regenerated, rebuilt or installed. This is how
+#       tests/gates/toolchain/version_bump_doc_anchors.sh forecasts the NEXT bump over
+#       scratch copies of the live docs. CHANGELOG [6.6.7]
+#
+# Every document step is VERIFIED after it runs. A step that did not take effect is named
+# on stderr where it happens, and the script exits non-zero at the END (after the rebuild
+# and the seed gate), so a bump never reports success over an anchor it failed to rewrite.
 
 set -e
 
-if [ -z "$1" ]; then
+DOCS_ONLY=0
+if [ "${1:-}" = "--docs-only" ]; then
+    if [ -z "${2:-}" ] || [ -z "${3:-}" ]; then
+        echo "Usage: $0 --docs-only <dir> <version>" >&2
+        exit 2
+    fi
+    if [ ! -d "$2" ]; then
+        echo "error: --docs-only: '$2' is not a directory" >&2
+        exit 2
+    fi
+    cd "$2"
+    DOCS_ONLY=1
+    shift 2
+fi
+
+if [ -z "${1:-}" ]; then
     echo "Usage: $0 <version>"
+    echo "       $0 --docs-only <dir> <version>"
     echo "Current: $(cat VERSION)"
     exit 1
 fi
@@ -13,12 +44,31 @@ fi
 NEW="$1"
 OLD=$(cat VERSION | tr -d '[:space:]')
 
+# Both versions are spliced into sed patterns and replacements below. Only [0-9A-Za-z.-]
+# is accepted (5.6.29-1 hotfix suffixes included), so the one regex metacharacter a version
+# can carry is `.` — escaped in *_RE, or `6.6.7` would also match `6x6x7`. CHANGELOG [6.6.7]
+for _v in "$NEW" "$OLD"; do
+    case "$_v" in
+        ''|*[!0-9A-Za-z.-]*|[!0-9]*)
+            echo "error: '$_v' is not a version (expected e.g. 6.6.8 or 5.6.29-1)" >&2
+            exit 2 ;;
+    esac
+done
+OLD_RE=$(printf '%s' "$OLD" | sed 's/\./\\./g')
+NEW_RE=$(printf '%s' "$NEW" | sed 's/\./\\./g')
+TODAY=$(date +%Y-%m-%d)
+
+if [ "$DOCS_ONLY" = "1" ] && [ "$NEW" = "$OLD" ]; then
+    echo "error: --docs-only: '$NEW' is already the VERSION in $(pwd) — nothing to rewrite" >&2
+    exit 2
+fi
+
 # Regenerate src/version_str.cyr unconditionally — including same-version
 # invocations. This file is the single source of truth for the cycc/cycc_win/
 # cycc_aarch64 `--version` strings; if it drifts vs `VERSION`, `cycc
 # --version` reports stale data. Same-version `version-bump.sh "$(cat
 # VERSION)"` is the documented "regenerate without bumping" path.
-if [ -f src/main.cyr ]; then
+if [ "$DOCS_ONLY" = "0" ] && [ -f src/main.cyr ]; then
     # v6.0.0: renamed CC5 → CYCC variables + binary names.
     # Byte-length calcs: "cycc " (5) + ver + "\n" (1) = ver + 6, etc.
     LEN_CYCC=$((${#NEW} + 6))            # "cycc " + version + "\n"
@@ -55,113 +105,170 @@ var _VERSION_TOOLCHAIN       = "$NEW";
 EOF
 fi
 
-# v6.5.3 — the same-version path must NOT exit here.
-#
-# It used to `exit 0` right after regenerating src/version_str.cyr. That is exactly
-# half the job: version_str.cyr is only a SOURCE file, and every binary built from it
-# — the seven src/main*.cyr forks and the cbt/cyrius.cyr CLI wrapper — kept whatever
-# version string it was last compiled with. Result observed at 6.5.2:
-#
-#     $ cyrius --version
-#     cyrius 6.5.1
-#     manifest-pin: 6.5.2 (drift — wrapper is 6.5.1)
-#
-# i.e. the wrapper's own drift detector firing on drift this script caused. This is the
-# SAME papercut v5.11.58 fixed for the version-CHANGE path (it added the touch loop
-# below); the same-version path was left exiting before ever reaching it.
-#
-# It also silently falsified CLAUDE.md's snapshot-ping-pong remedy, which tells you to
-# run `version-bump.sh "$(cat VERSION)"` "which re-runs install.sh --refresh-only" —
-# it never got there, so the documented fix for a `lib/` edit reverting under you did
-# nothing.
-#
-# So: only the steps that genuinely require a version CHANGE are skipped (the VERSION
-# file and the four doc/CHANGELOG rewrites, all of which are no-ops or actively wrong
-# when NEW == OLD). Everything from the force-rebuild onward runs unconditionally,
-# because "regenerate the version string" without "rebuild its consumers" is not a
-# meaningful operation.
-if [ "$NEW" = "$OLD" ]; then
-    echo "Already at $OLD — regenerating src/version_str.cyr and REBUILDING its consumers"
-else
+# --- document-step bookkeeping (v6.6.7) --------------------------------------------------
+# Each step reports through _vb_result, which (a) names a step that did not take effect on
+# stderr AT THE STEP, (b) counts it in _VB_FAIL for the non-zero exit at the END, and (c)
+# records what actually happened for the summary. The summary used to print VERSION,
+# CLAUDE.md and CHANGELOG.md under "Updated:" unconditionally — on the same-version path
+# too — and never listed cyrius.cyml, which step 3b does rewrite. CHANGELOG [6.6.7]
+_VB_FAIL=0
+_VB_DOCS=""
+_vb_sum() { if [ -f "$1" ]; then cksum < "$1"; else echo missing; fi; }
+_vb_line() { _VB_DOCS="$_VB_DOCS
+  $1"; }
+# _vb_result <file> <cksum-before> <took-effect 1|0> [reason]
+_vb_result() {
+    if [ "$3" = "1" ]; then
+        if [ "$(_vb_sum "$1")" = "$2" ]; then
+            _vb_line "$1  (already $NEW — unchanged)"
+        else
+            _vb_line "$1  (updated)"
+        fi
+    else
+        echo "  version-bump: $1 NOT UPDATED — $4" >&2
+        _vb_line "$1  <-- NOT UPDATED: $4 — fix by hand"
+        _VB_FAIL=$((_VB_FAIL + 1))
+    fi
+}
 
 # 1. VERSION file (source of truth)
-echo "$NEW" > VERSION
+_vb_step_version() {
+    _b=$(_vb_sum VERSION)
+    if printf '%s\n' "$NEW" > VERSION && [ "$(tr -d '[:space:]' < VERSION)" = "$NEW" ]; then
+        _vb_result VERSION "$_b" 1
+    else
+        _vb_result VERSION "$_b" 0 "could not write $NEW into it"
+    fi
+}
 
 # 2. (retired v6.5.4) install.sh no longer carries a hardcoded fallback version.
-# It reads the VERSION file (install.sh:36) or resolves the latest tag from the
-# GitHub API / raw VERSION (install.sh:448-455), so there is no constant to
-# rewrite. The old `s/VERSION="$OLD"/VERSION="$NEW"/` matched nothing for an
-# unknown number of releases while the summary below still printed
-# "scripts/install.sh" under "Updated:" — a step that silently does nothing and
-# then reports success is worse than no step. Removed rather than repaired.
+# It reads the VERSION file or resolves the latest tag, so there is no constant to rewrite.
+# The old `s/VERSION="$OLD"/VERSION="$NEW"/` matched nothing for an unknown number of
+# releases while the summary still printed "scripts/install.sh" under "Updated:" — a step
+# that silently does nothing and then reports success is worse than no step.
 
-# 3. CLAUDE.md
-sed -i "s/- \*\*Version\*\*: $OLD/- **Version**: $NEW/" CLAUDE.md 2>/dev/null || true
+# 3. CLAUDE.md's `- **Version**:` line. Anchored to the whole line (`6.6.7` must not match
+# `6.6.70`), OLD's dots escaped, and verified: the NEW line present, no OLD line left.
+_vb_step_claude() {
+    _f=CLAUDE.md
+    if [ ! -f "$_f" ]; then _vb_result "$_f" missing 0 "the file is missing"; return 0; fi
+    _b=$(_vb_sum "$_f")
+    sed -E -i "s/^- \*\*Version\*\*: ${OLD_RE}([[:space:]]*)\$/- **Version**: ${NEW}\1/" "$_f" 2>/dev/null || true
+    if grep -qE "^- \*\*Version\*\*: ${NEW_RE}[[:space:]]*\$" "$_f" \
+       && ! grep -qE "^- \*\*Version\*\*: ${OLD_RE}[[:space:]]*\$" "$_f"; then
+        _vb_result "$_f" "$_b" 1
+    else
+        _vb_result "$_f" "$_b" 0 "no line reading exactly \`- **Version**: $OLD\` was rewritten"
+    fi
+}
 
 # 3b. cyrius.cyml's OWN [package].cyrius pin (added v6.6.3).
 #
 # This file was never maintained here and drifted: at the 6.6.3 cut it still read 6.6.1
-# while VERSION was 6.6.2. That is not cosmetic — every `cyrius` invocation in this repo
-# then emits "cyrius.cyml pins 6.6.1 but cycc is 6.6.2 — toolchain drift", and
-# tests/gates/frontend/pkgver_visible_in_includes.sh asserts on exact diagnostic output,
-# so the stale pin was FAILING A GATE. The same rot the fold-table gate exists to prevent,
-# one file over: nothing checked it, so it silently fell behind.
-#
-# Verified rather than assumed: this is the repo's own self-pin, not a dependency version.
-if [ -f cyrius.cyml ]; then
-    sed -i "s/^cyrius = \"$OLD\"/cyrius = \"$NEW\"/" cyrius.cyml 2>/dev/null || true
-    if ! grep -q "^cyrius = \"$NEW\"" cyrius.cyml 2>/dev/null; then
-        echo "  WARNING: cyrius.cyml self-pin is not $NEW — check it by hand" >&2
-    fi
-fi
-
-# 4. CHANGELOG.md — add unreleased section if not present
-#
-# v5.8.49 hardening: anchor on `^## \[Unreleased\]$` (start-of-line
-# through end-of-line) instead of bare `## \[Unreleased\]`. The
-# previous loose pattern matched ANY line containing the substring
-# — including narrative body text in the CHANGELOG that quotes
-# `## [Unreleased]` (e.g. the v5.8.48 entry's anchor-restoration
-# section). At the v5.8.49 bump that loose pattern fired 4 times,
-# inserting 3 spurious version headers inside the v5.8.48 body
-# before being cleaned up by hand. Anchored pattern matches ONLY
-# the literal Unreleased header line.
-# v6.5.28: the anchor was `^## \[Unreleased\]$` — an EXACT match, no trailing text. But the
-# working convention in this file is `## [Unreleased] — \`.NN\` in flight`, so the anchor never
-# matched and this whole block was a silent no-op (`|| true` swallowed it) for every release
-# that used the suffix. The header was then hand-corrected at each cut, which is why it looked
-# like it worked. Now: RENAME the in-flight header in place when one exists (that is what a cut
-# actually means), and fall back to inserting a fresh section when it does not.
-if ! grep -q "## \[$NEW\]" CHANGELOG.md 2>/dev/null; then
-    if grep -qE "^## \[Unreleased\]" CHANGELOG.md 2>/dev/null; then
-        # Promote the in-flight section to the released version. Anchored to the start of the
-        # line and applied ONCE (0,/re/) so narrative body text quoting the header cannot match.
-        sed -i "0,/^## \[Unreleased\].*$/s||## [$NEW] — $(date +%Y-%m-%d)|" CHANGELOG.md 2>/dev/null || true
+# while VERSION was 6.6.2, so every `cyrius` invocation in this repo warned of toolchain
+# drift and tests/gates/frontend/pkgver_visible_in_includes.sh (which asserts on exact
+# diagnostic output) FAILED. It is the repo's own self-pin, not a dependency version.
+_vb_step_cyml() {
+    _f=cyrius.cyml
+    if [ ! -f "$_f" ]; then _vb_result "$_f" missing 0 "the file is missing"; return 0; fi
+    _b=$(_vb_sum "$_f")
+    sed -E -i "s/^cyrius = \"${OLD_RE}\"/cyrius = \"${NEW}\"/" "$_f" 2>/dev/null || true
+    if grep -qE "^cyrius = \"${NEW_RE}\"" "$_f" && ! grep -qE "^cyrius = \"${OLD_RE}\"" "$_f"; then
+        _vb_result "$_f" "$_b" 1
     else
-        # No in-flight section: insert a fresh one BEFORE the newest existing version header.
-        # (`1,/^$/a` was tried here and double-inserts — that range spans two lines and `a`
-        # appends after each of them.) `0,/re/` bounds it to the FIRST match.
-        sed -i "0,/^## \[[0-9]/s||## [$NEW] — $(date +%Y-%m-%d)\n\n&|" CHANGELOG.md 2>/dev/null || true
+        _vb_result "$_f" "$_b" 0 "its self-pin is not \`cyrius = \"$NEW\"\` (expected to rewrite \`cyrius = \"$OLD\"\`)"
     fi
-fi
+}
+
+# 4. CHANGELOG.md — the `## [NEW]` section header.
+#
+# v5.8.49: anchored at the start of the line — the loose pattern matched narrative body text
+# quoting `## [Unreleased]` and inserted 3 spurious headers. v6.5.28: the in-flight header is
+# `## [Unreleased] — \`.NN\` in flight`, which an exact `^...$` anchor never matched, so the
+# block was a silent no-op for every release that used the suffix. Now: RENAME the in-flight
+# header in place when one exists (that is what a cut means), else insert a fresh section
+# before the newest version header (`0,/re/` bounds both to the FIRST match — `1,/^$/a`
+# double-inserted). Verified: exactly ONE `## [NEW]` header afterwards.
+_vb_step_changelog() {
+    _f=CHANGELOG.md
+    if [ ! -f "$_f" ]; then _vb_result "$_f" missing 0 "the file is missing"; return 0; fi
+    _b=$(_vb_sum "$_f")
+    if ! grep -qE "^## \[${NEW_RE}\]" "$_f"; then
+        if grep -qE "^## \[Unreleased\]" "$_f"; then
+            sed -i "0,/^## \[Unreleased\].*$/s||## [$NEW] — $TODAY|" "$_f" 2>/dev/null || true
+        else
+            sed -i "0,/^## \[[0-9]/s||## [$NEW] — $TODAY\n\n&|" "$_f" 2>/dev/null || true
+        fi
+    fi
+    _n=$(grep -cE "^## \[${NEW_RE}\]" "$_f" || true)
+    if [ "$_n" = "1" ]; then
+        _vb_result "$_f" "$_b" 1
+    else
+        _vb_result "$_f" "$_b" 0 "it has $_n \`## [$NEW]\` section headers, not 1 (no \`## [Unreleased]\` or \`## [<version>]\` header to anchor on?)"
+    fi
+}
 
 # 5. Roadmap `Current head:` stamp — the anchor `_doc_stamp_currency_gate` keys on.
 #
-# v6.5.4: the old pattern was `> **vOLD.**`, which has not existed in roadmap.md
-# for a long time; the real line is `**Current head: vX.Y.Z** (YYYY-MM-DD) — ...`.
-# So this silently matched nothing every release while the summary reported the
-# file as Updated, and the doc-stamp gate then went RED right after a "successful"
-# bump (the gate requires the stamp to equal VERSION). Now anchored on the live
-# format, and VERIFIED rather than assumed: if the stamp does not end up matching
-# NEW, say so loudly instead of printing "Updated".
-sed -i "s/\*\*Current head: v$OLD\*\*[[:space:]]*([0-9-]*)/**Current head: v$NEW** ($(date +%Y-%m-%d))/" docs/development/roadmap.md 2>/dev/null || true
-if grep -q "\*\*Current head: v$NEW\*\*" docs/development/roadmap.md 2>/dev/null; then
-    ROADMAP_STAMP="docs/development/roadmap.md"
+# The live stamp is `**Current head: vX.Y.Z** (<parenthetical>) — <figures>`, and people
+# ANNOTATE the parenthetical by hand: at 6.6.6 it read `(2026-09-20, bump commit; tag
+# pending)`. The pattern used to admit only a date (`([0-9-]*)`, basic regex) with OLD's dots
+# unescaped, so it matched nothing, exited 0, and the stamp was hand-fixed after the 6.6.7
+# bump. Now any parenthetical is replaced (it describes the previous head) — but only one
+# with NO nested parentheses: `[^()]*` refuses `(… (x) …)` rather than cutting it at the
+# first `)` and leaving the tail behind as garbage. Only a stamp at the START of its line is
+# rewritten; the verification is file-wide — exactly one NEW stamp, and no OLD stamp left
+# anywhere, so a mid-line quote of the old stamp is left untouched and reported.
+# tests/gates/toolchain/version_bump_doc_anchors.sh runs this over copies of the LIVE docs,
+# so an unrewritable stamp goes red when it is written, not at the bump. CHANGELOG [6.6.7]
+_vb_step_roadmap() {
+    _f=docs/development/roadmap.md
+    if [ ! -f "$_f" ]; then _vb_result "$_f" missing 0 "the file is missing"; return 0; fi
+    _b=$(_vb_sum "$_f")
+    sed -E -i "s/^\*\*Current head: v${OLD_RE}\*\*[[:space:]]*\([^()]*\)/**Current head: v${NEW}** (${TODAY})/" "$_f" 2>/dev/null || true
+    _n=$(grep -cE "^\*\*Current head: v${NEW_RE}\*\* \([^()]*\)" "$_f" || true)
+    if grep -qE "\*\*Current head: v${OLD_RE}\*\*" "$_f"; then
+        _vb_result "$_f" "$_b" 0 "a \`**Current head: v$OLD**\` stamp is still present — one that is not at the start of its line, or not followed by a \`(...)\` with no nested parentheses — so it was not rewritten (doc-stamp gate will be RED)"
+    elif [ "$_n" = "1" ]; then
+        _vb_result "$_f" "$_b" 1
+    else
+        _vb_result "$_f" "$_b" 0 "found $_n \`**Current head: v$NEW** (...)\` stamps, not 1, and no \`**Current head: v$OLD**\` stamp to rewrite (doc-stamp gate will be RED)"
+    fi
+}
+
+# v6.5.3 — the same-version path must NOT exit here.
+#
+# It used to `exit 0` right after regenerating src/version_str.cyr, so every binary built from
+# it — the seven src/main*.cyr forks and the cbt/cyrius.cyr CLI wrapper — kept a stale version
+# string (at 6.5.2 the wrapper's own drift detector fired on drift this script caused). Only
+# the steps that genuinely require a version CHANGE are skipped (the VERSION file and the
+# document anchors); everything from the force-rebuild onward runs for both paths, because
+# "regenerate the version string" without "rebuild its consumers" is not a meaningful
+# operation.
+if [ "$NEW" = "$OLD" ]; then
+    echo "Already at $OLD — regenerating src/version_str.cyr and REBUILDING its consumers"
+    _VB_DOCS="
+  (SKIPPED — same-version path: VERSION, CLAUDE.md, cyrius.cyml, CHANGELOG.md and
+   docs/development/roadmap.md are left as they are)"
 else
-    ROADMAP_STAMP="docs/development/roadmap.md  <-- NOT UPDATED, fix by hand (doc-stamp gate will be RED)"
+    _vb_step_version
+    _vb_step_claude
+    _vb_step_cyml
+    _vb_step_changelog
+    _vb_step_roadmap
 fi
 
-fi   # end version-CHANGE-only steps (1-5); everything below runs for both paths
+if [ "$DOCS_ONLY" = "1" ]; then
+    echo "$OLD -> $NEW (--docs-only, in $(pwd))"
+    echo ""
+    echo "Document anchors:$_VB_DOCS"
+    if [ "$_VB_FAIL" -gt 0 ]; then
+        echo "" >&2
+        echo "version-bump: $_VB_FAIL document step(s) did NOT take effect (named above)" >&2
+        exit 1
+    fi
+    exit 0
+fi
 
 # v5.11.58: force-rebuild binaries whose version_str.cyr dep
 # install.sh::_rebuild_stale can't see. The `-nt source` check
@@ -184,6 +291,7 @@ for _f in src/main.cyr src/main_aarch64.cyr src/main_win.cyr \
           src/main_aarch64_macho.cyr cbt/cyrius.cyr; do
     [ -f "$_f" ] && touch "$_f"
 done
+_VB_CYCC="build/cycc  (NOT rebuilt — there is no executable build/cycc)"
 if [ -x build/cycc ]; then
     # v6.6.6: CHECKED private temps, not /tmp/cycc-rebuild.err + /tmp/_vb_seed.out — fixed names
     # in a world-writable directory, carrying the diagnostics that decide whether a release is
@@ -194,7 +302,9 @@ if [ -x build/cycc ]; then
         mv build/cycc.new build/cycc
         chmod +x build/cycc
         echo "  > cycc rebuilt for $NEW"
+        _VB_CYCC="build/cycc  (rebuilt for $NEW)"
     else
+        _VB_CYCC="build/cycc  (NOT rebuilt — the rebuild failed, see above; it still reports the old version)"
         echo "  ! cycc rebuild failed (non-fatal):" >&2
         sed 's/^/    /' "$_vb_d/cycc-rebuild.err" >&2
         rm -f build/cycc.new
@@ -209,7 +319,7 @@ fi
 # re-copies build/ + scripts/ named in cyrius.cyml [release] + lib/.
 # Skipped silently if install.sh is missing (shouldn't happen in a
 # normal cyrius checkout).
-_SNAP_RESULT="(install snapshot refreshed)"
+_SNAP_RESULT="(install snapshot NOT refreshed — scripts/install.sh is missing or not executable)"
 if [ -x scripts/install.sh ]; then
     # v6.5.3: do NOT swallow stderr. This suppression is why an ETXTBSY `cp` failure
     # that stranded all 17 installed binaries went unseen across multiple releases.
@@ -232,6 +342,8 @@ fi
 # just-rebuilt build/cycc is still machine-derivable from the 29KB seed. Set
 # CYRIUS_SKIP_SEED_GATE=1 only for a KNOWN doc/lib-only bump (src/ untouched).
 # See: scripts/release-gate.sh, feedback_seed_derive_mandatory_cybs_limits.
+_VB_SEED="seed-derive  (NOT run — scripts/seed-derive-cycc.sh is missing)"
+[ "${CYRIUS_SKIP_SEED_GATE:-0}" = "1" ] && _VB_SEED="seed-derive  (SKIPPED — CYRIUS_SKIP_SEED_GATE=1)"
 if [ "${CYRIUS_SKIP_SEED_GATE:-0}" != "1" ] && [ -x scripts/seed-derive-cycc.sh -o -f scripts/seed-derive-cycc.sh ]; then
     echo "  > seed-derive gate (seed -> cybs -> cycc)..."
     if [ -z "${_vb_d:-}" ]; then
@@ -240,6 +352,7 @@ if [ "${CYRIUS_SKIP_SEED_GATE:-0}" != "1" ] && [ -x scripts/seed-derive-cycc.sh 
     fi
     if sh scripts/seed-derive-cycc.sh > "$_vb_d/seed.out" 2>&1 && grep -q "machine-derivable from the" "$_vb_d/seed.out"; then
         echo "  > seed-derive OK (build/cycc is machine-derivable from the seed)"
+        _VB_SEED="seed-derive  (OK — build/cycc is machine-derivable from the seed)"
     else
         tail -6 "$_vb_d/seed.out" >&2
         echo "" >&2
@@ -256,14 +369,26 @@ fi
 
 echo "$OLD -> $NEW"
 echo ""
-echo "Updated:"
-echo "  VERSION"
-echo "  CLAUDE.md"
-echo "  CHANGELOG.md"
-echo "  ${ROADMAP_STAMP:-docs/development/roadmap.md (unchanged — same-version path)}"
-echo "  ~/.cyrius/versions/$NEW/ $_SNAP_RESULT"
+echo "Document anchors:$_VB_DOCS"
 echo ""
-echo "Still manual:"
-echo "  - CHANGELOG.md entries (add Fixed/Changed/Added sections)"
-echo "  - vidya version references (language.toml)"
-echo "  - Compiler binary size in CLAUDE.md if changed"
+echo "Build + install:"
+[ -f src/main.cyr ] && echo "  src/version_str.cyr  (regenerated for $NEW)"
+echo "  $_VB_CYCC"
+echo "  ~/.cyrius/versions/$NEW/ $_SNAP_RESULT"
+echo "  $_VB_SEED"
+echo ""
+echo "Still manual (version-bump does not touch these):"
+echo "  - CHANGELOG.md entries under ## [$NEW] (Fixed / Changed / Added)"
+echo "  - docs/development/state.md: the Version row, and the \`| **cycc** |\` row's byte count"
+echo "    (the check driver's doc-stamp row compares it with build/cycc)"
+echo "  - docs/development/roadmap.md: the figures beside the \`Current head:\` stamp (sizes,"
+echo "    counts, bench) — re-derive them; only the version token and date were rewritten"
+echo "  - vidya version references (vidya/content/cyrius/language/, types.cyml)"
+
+# The END: a document step that did not take effect fails the bump — AFTER the rebuild and
+# the seed gate have run, so one hand-fixable anchor does not strand a half-built tree.
+if [ "$_VB_FAIL" -gt 0 ]; then
+    echo "" >&2
+    echo "version-bump: $_VB_FAIL document step(s) did NOT take effect (named above) — fix them by hand before tagging $NEW" >&2
+    exit 1
+fi

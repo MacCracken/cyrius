@@ -600,6 +600,8 @@ Process management with Result returns.
 | `run_capture` | `run_capture(cmd, a1, a2, buf, len) → Result(n)` | Capture stdout |
 | `spawn` | `spawn(cmd, a1, a2) → Result(pid)` | Background run |
 | `wait_pid` | `wait_pid(pid) → Result(exit)` | Wait for pid |
+| `exec_capture` | `exec_capture(args, buf, len) → n` | Capture stdout (cstr argv vec); the exit status is discarded |
+| `exec_capture_status` | `exec_capture_status(args, buf, len, st) → n` | Capture stdout AND report the end: `st[0]` = exit code / 128+sig / -2 deadline kill / -1 nothing ran or the end was never observed (e.g. an inherited SIGCHLD = SIG_IGN), `st[1]` = 1 on a signal death (6.6.7). Use it whenever a failed run must not read as short output |
 
 ### fs.cyr
 
@@ -1727,12 +1729,14 @@ Table-driven test framework helpers. Include once to pull in lib/assert.cyr + li
 
 ### audit_walk.cyr
 
-Internal tooling: shared format/lint walkers for cyrius audit + check. Skips symlinks and distlib bundles when traversing .cyr files.
+Internal tooling: shared format/lint/doc walkers for cyrius audit + check. Skips symlinks, distlib bundles and AUTO-GENERATED files when traversing .cyr files. The lint and doc walkers FAIL CLOSED (6.6.7): a file the tool did not finish on — crash, deadline kill, refusal, missing tool, no summary line — is counted in AW_LINT_ERRORS / AW_DOC_ERRORS with a `path: reason` note, never as zero findings.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `audit_fmt_walk` | `audit_fmt_walk(cyrfmt_path, dirs_vec)` | Run cyrfmt on every .cyr file; sets AW_FMT_FAIL, AW_FMT_SKIPPED, AW_FMT_FAIL_FILES |
-| `audit_lint_walk` | `audit_lint_walk(cyrlint_path, dirs_vec)` | Run cyrlint on every .cyr file; sums warnings into AW_LINT_TOTAL, AW_LINT_SKIPPED |
+| `audit_lint_walk` | `audit_lint_walk(cyrlint_path, dirs_vec)` | Run cyrlint on every .cyr file; sums warnings into AW_LINT_TOTAL, AW_LINT_SKIPPED; unfinished runs into AW_LINT_ERRORS / AW_LINT_ERROR_FILES |
+| `audit_doc_walk` | `audit_doc_walk(cyrdoc_path, dirs_vec)` | Run `cyrdoc --check` on every .cyr file; AW_DOC_TOTAL, AW_DOC_SKIPPED, AW_DOC_ERRORS / AW_DOC_ERROR_FILES |
+| `audit_print_errors` | `audit_print_errors(notes_vec)` | Print an AW_*_ERROR_FILES list, one `path: reason` per line, capped at 20 |
 | `str_starts_with_buf` | `str_starts_with_buf(buf, n, prefix) → 0/1` | Check if first n bytes of buf start with cstring prefix |
 
 ### regression.cyr
@@ -1754,6 +1758,7 @@ Testing-stdlib primitives: display formatting, buffer scanning, process executio
 | `regression_exec_run` | `regression_exec_run(bin_path, envp) → exit` | Run binary (no args), discard I/O; return exit code |
 | `regression_exec_with_arg_capture` | `regression_exec_with_arg_capture(bin_path, arg, buf, buflen, envp) → bytes` | Run binary with one arg, capture stdout |
 | `regression_exec_with_arg_capture_both` | `regression_exec_with_arg_capture_both(bin_path, arg, buf, buflen, envp) → bytes` | Run binary with arg, capture stdout+stderr |
+| `regression_exec_with_arg_capture_both_status` | `regression_exec_with_arg_capture_both_status(bin_path, arg, buf, buflen, envp, st) → bytes` | The same, and report how that ONE run ended: `st[0]` = exit / 128+sig / -2 deadline / -1 not observed, `st[1]` = 1 on a signal death (6.6.7). Count markers and judge the run from the same capture |
 | `regression_network_probe` | `regression_network_probe(addr_ipv4, port, timeout_ms) → 0/1` | TCP reachability probe (non-blocking connect + poll) |
 | `regression_ssh_target` | `regression_ssh_target(env_name, default_name) → name` | Resolve SSH target (env override or default) |
 | `regression_ssh_skip_check` | `regression_ssh_skip_check(target) → 0/1` | Test SSH reachability via ssh -o BatchMode |

@@ -2116,14 +2116,27 @@ fn _audit_sweep(): i64 {
     if (file_exists(cyrlint) == 1) {
         audit_lint_walk(cyrlint, dirs);
         if (AW_LINT_TOTAL > 0) { sys_write(STDOUT_FD, "  ", 2); print_num(AW_LINT_TOTAL); println(" lint warnings"); rc = 1; }
-        else { println("  ok: lint clean"); }
+        # ⛔ 6.6.7 — "clean" only when EVERY file was actually linted. A file cyrlint refused
+        # (too large, empty), crashed on or never ran for used to add 0 and print
+        # "ok: lint clean" — live in rekha over a 1.65 MB file cyrlint never read.
+        if (AW_LINT_ERRORS > 0) {
+            println("  FAIL: cyrlint did not finish on these files (NOT linted):");
+            audit_print_errors(AW_LINT_ERROR_FILES);
+            rc = 1;
+        }
+        if (AW_LINT_TOTAL == 0 && AW_LINT_ERRORS == 0) { println("  ok: lint clean"); }
     } else { println("  skip: cyrlint not built"); }
 
     _status("── docs ──");
     if (file_exists(cyrdoc) == 1) {
         audit_doc_walk(cyrdoc, dirs);
         if (AW_DOC_TOTAL > 0) { sys_write(STDOUT_FD, "  ", 2); print_num(AW_DOC_TOTAL); println(" undocumented public fns"); rc = 1; }
-        else { println("  ok: docs complete"); }
+        if (AW_DOC_ERRORS > 0) {
+            println("  FAIL: cyrdoc did not finish on these files (NOT checked):");
+            audit_print_errors(AW_DOC_ERROR_FILES);
+            rc = 1;
+        }
+        if (AW_DOC_TOTAL == 0 && AW_DOC_ERRORS == 0) { println("  ok: docs complete"); }
     } else { println("  skip: cyrdoc not built"); }
 
     _status("── tests ──");

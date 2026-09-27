@@ -65,13 +65,15 @@ cmp -s "$T/bin/victim" /bin/true || {
   echo "FAIL install_atomic_over_running_binary axis1: target was not actually replaced"; exit 1; }
 
 # ── axis 2 — no install path may `cp` an executable into the version bin dir ─────────────────
-# Data files (dlopen-helper.c) and the lib/ subdir copy are exempt: neither is ever executed.
+# Data files (dlopen-helper.c) are exempt: never executed. (The `bin/lib/` exemption that stood
+# here covered the copy of scripts/lib/*.sh, deleted with that dir at 6.6.7 — an exemption that
+# matches nothing would only excuse a future line.)
 # ⚠ The exemption list is EXACT on purpose. A first cut excluded any line mentioning `$_eb`,
 # to allow the tarball path's `cp -r "$_eb"` directory branch — and that same exclusion then
 # excused a plain `cp "$_eb"` file copy, so the mutation test PASSED against a reintroduced bug.
 # Exempt the recursive DIRECTORY copy specifically, never the variable.
 BAD=$(grep -nE 'cp .*versions/\$VERSION/bin' "$R/scripts/install.sh" \
-      | grep -vE 'dlopen-helper\.c|bin/lib/|cp -r "\$_eb"' || true)
+      | grep -vE 'dlopen-helper\.c|cp -r "\$_eb"' || true)
 if [ -n "$BAD" ]; then
   echo "FAIL install_atomic_over_running_binary axis2: an install path copies an executable in"
   echo "  place instead of using _install_file (temp + atomic rename). ETXTBSY will strand it:"

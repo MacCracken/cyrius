@@ -945,12 +945,6 @@ if [ "$installed" -eq 0 ]; then
         fi
     done
 
-    # Shared audit helpers (sourced by the cyrius dispatcher)
-    if [ -d scripts/lib ]; then
-        mkdir -p "$CYRIUS_HOME/versions/$VERSION/bin/lib"
-        cp scripts/lib/*.sh "$CYRIUS_HOME/versions/$VERSION/bin/lib/" 2>/dev/null || true
-    fi
-
     # Copy stdlib
     if [ -d lib ]; then
         cp -r lib "$CYRIUS_HOME/versions/$VERSION/"

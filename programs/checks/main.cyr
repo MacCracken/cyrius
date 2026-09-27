@@ -872,14 +872,6 @@ fn _run_regression_gates(): i64 {
     _aarch64_f64_polyfill_gate();
     println("");
 
-    _section("cyrlint global-init-order");
-    _lint_init_order_gate();
-    println("");
-
-    _section("cyrlint large-file");
-    _cyrlint_large_file_gate();
-    println("");
-
     _build_api_surface_if_missing();
     _section("cyrius api-surface");
     _api_surface_gate();
@@ -968,7 +960,23 @@ fn _suite_row(idx, run): i64 {
     if (idx == 5) { if (run == 1) { _testsuite_gate(); } return "tcyr"; }
     if (idx == 6) { if (run == 1) { _run_regression_gates(); } return "regression"; }
     if (idx == 7) { if (run == 1) { _format_gate(); } return "fmt"; }
-    if (idx == 8) { if (run == 1) { _lint_gate(); } return "lint"; }
+    if (idx == 8) { if (run == 1) { _lint_suite(); } return "lint"; }
+    return 0;
+}
+
+# The `lint` suite: the stdlib walk plus the two fixture gates that run cyrlint. The fixture
+# gates lived in `regression` until 6.6.7, where they could not be run on their own — and
+# being runnable alone, against a fake cyrlint, is how tests/gates/toolchain/
+# audit_walk_fails_closed.sh proves all three FAIL when cyrlint does not finish. It is also
+# what CI's lint step runs. CHANGELOG [6.6.7]
+fn _lint_suite(): i64 {
+    _lint_gate();
+    _section("cyrlint global-init-order");
+    _lint_init_order_gate();
+    println("");
+    _section("cyrlint large-file");
+    _cyrlint_large_file_gate();
+    println("");
     return 0;
 }
 
