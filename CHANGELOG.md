@@ -66,13 +66,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   from a larger one (`-EFBIG`); the first buffer is 4 KiB. `file_read_whole(path, &n)` keeps its
   contract — the whole file NUL-terminated, or 0 with `n = 0` on ANY failure — with a ceiling of
   `ALLOC_MAX - 1`: a 1 GiB file now reads whole (~6 s), a file over 2 GiB returns 0 instead of
-  crashing. `_env_load` (behind `getenv`) checks both of its allocations too, and its failure
-  paths now really leave the cache unset so a later call retries — the 6.6.6 comment promised
-  that, but `_env_len = 0` had already been stored, which cached an EMPTY environment. Pinned by
+  crashing. `_env_load` (behind `getenv`) checks both of its allocations too, and EVERY failure
+  on its `/proc` path — the open, either allocation, a read error — now leaves the cache unset so
+  a later call retries. The 6.6.6 comment promised that, but `_env_len = 0` had already been
+  stored, so each of those paths cached an EMPTY environment for the life of the process: a PID 1
+  that called `getenv` before `/proc` was mounted never saw its environment. Pinned by
   `tests/tcyr/crossos/file_read_whole_bounded.tcyr` (36 assertions, green on ecb / ach / pi /
   qemu-aarch64 / wine) and axis 6 of `tests/gates/toolchain/manifest_read_whole_file.sh`
-  (`/dev/zero` under `ulimit -v 400000` is 0 / len 0 — rc 139 before — plus a static check that
-  every allocation in the reader core and `_env_load` is tested against 0).
+  (`/dev/zero` under `ulimit -v 400000` is 0 / len 0 — rc 139 before; a `getenv` whose open
+  failed under `ulimit -n 3` sees the variable once a descriptor is free; plus static checks that
+  every allocation in the reader core and `_env_load` is tested against 0 and that every `/proc`
+  failure path unsets the cache).
 
 - **`lib/hashmap_fast.cyr` and `lib/flags.cyr` stored through refused allocations.** (bite 8,
   same class — an audit's output is fixes.) `_fhm_grow` allocated its three arrays unchecked,

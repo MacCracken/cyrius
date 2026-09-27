@@ -74,6 +74,7 @@
 #   k. (6.6.7) the growth alloc's 0 check removed      -> axis 6 FAIL (runtime rc 139; static)
 #   l. (6.6.7) _env_load's growth alloc check removed   -> axis 6 FAIL (static)
 #   m. (6.6.7) the -EFBIG one-byte probe removed        -> axis 6 FAIL (runtime rc 3)
+#   n. (6.6.7) _env_load's open failure caches 0 again  -> axis 6 FAIL (runtime rc 2; static)
 # Real tree -> PASS.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -402,7 +403,39 @@ unchk=$(awk -f "$D/allocs.awk" lib/io.cyr 2> "$D/allocs.n")
 asites=$(awk '{ print $2 }' "$D/allocs.n")
 [ -n "$unchk" ] && { fail "axis 6: an allocation in the file_read_whole core / _env_load is used without a 0 check:"; printf '%s\n' "$unchk"; x=1; }
 [ "${asites:-0}" -ge 5 ] || { fail "axis 6: only ${asites:-0} allocation sites found in _io_read_whole + _env_load (floor 5) — the scan read nothing"; x=1; }
-[ "$x" = 0 ] && echo "  ok: axis 6: /dev/zero is 0/len 0 under a memory limit and -EFBIG under a 1 MiB max; all $asites allocations in the reader core and _env_load are checked"
+# _env_load's /proc half: EVERY failure leaves the cache unset (-1) so a later getenv retries.
+# RUNTIME: `ulimit -n 3` leaves no free descriptor, so the first getenv's open of
+# /proc/self/environ fails (anti-vacuous: that getenv must miss, rc 1 otherwise); closing
+# stdin frees fd 0, and the retry must now SEE the variable. With the open failure cached as
+# an empty environment (6.6.6 .. the first 6.6.7 cut) the second getenv also misses: rc 2.
+cat > "$D/a6/envp.cyr" <<'CYR'
+include "lib/io.cyr"
+fn main(): i64 {
+    if (getenv("CYFI_PROBE_ENV") != 0) { return 1; }
+    file_close(0);
+    var v = getenv("CYFI_PROBE_ENV");
+    if (v == 0) { return 2; }
+    if (streq(v, "yes") == 0) { return 3; }
+    return 0;
+}
+var rc = main();
+syscall(60, rc);
+CYR
+_build "$D/a6/envp.cyr" "$D/a6/envp"
+erc=0; ( ulimit -c 0; ulimit -n 3 && CYFI_PROBE_ENV=yes exec "$D/a6/envp" ) < /dev/null || erc=$?
+case "$erc" in
+    0) ;;
+    1) fail "axis 6 (anti-vacuous): getenv saw the variable under \`ulimit -n 3\` — the /proc/self/environ open did not fail, so the retry half tested nothing"; x=1 ;;
+    2) fail "axis 6: a FAILED /proc/self/environ open was cached as an empty environment — getenv still misses after a descriptor is free"; x=1 ;;
+    *) fail "axis 6: the getenv retry probe exited $erc"; x=1 ;;
+esac
+# STATIC: from the /proc open to the cache store, every `return 0` also sets `_env_len = 0 - 1`.
+cached=$(awk '/^fn _env_load\(/ { f = 1 } f && /^}/ { f = 0 }
+    f && /file_open\("\/proc\/self\/environ"/ { p = 1 }
+    p && /_env_blk = buf;/ { p = 0 }
+    p && /return 0;/ && !/_env_len = 0 - 1;/ { print "      " $0 }' lib/io.cyr)
+[ -n "$cached" ] && { fail "axis 6: an _env_load /proc failure path returns without unsetting the cache (it caches an empty environment):"; printf '%s\n' "$cached"; x=1; }
+[ "$x" = 0 ] && echo "  ok: axis 6: /dev/zero is 0/len 0 under a memory limit and -EFBIG under a 1 MiB max; all $asites allocations in the reader core and _env_load are checked; a failed /proc/self/environ open is retried, not cached"
 
 [ "$FAIL" = 0 ] || exit 1
 echo "PASS: manifest_read_whole_file (6 axes)"

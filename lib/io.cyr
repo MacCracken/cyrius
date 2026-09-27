@@ -1126,16 +1126,17 @@ fn _env_load(): i64 {
     _env_len = mo;
     return 0;
     #endif
+    # ⚠ 6.6.7: EVERY failure on the /proc path — the open, either allocation, a read error —
+    # leaves the cache UNSET (`_env_len = -1`) so a later call retries. `_env_len = 0` is
+    # stored at the top, so a bare `return 0` here CACHES an empty environment for the life of
+    # the process: a PID 1 that asks before /proc is mounted would never see its env. Only a
+    # genuinely empty or unavailable environment (the macOS arm above) may cache 0. The two
+    # allocations were also unchecked, so a refused alloc() put the read (or the growth
+    # memcpy) through NULL — the same shape as file_read_whole's. CHANGELOG [6.6.7]
     var fd = file_open("/proc/self/environ", 0, 0);
-    if (fd < 0) { return 0; }
+    if (fd < 0) { _env_len = 0 - 1; return 0; }
     # Grow-and-read to EOF. /proc files are not stat-sizeable, so the only honest
     # termination is a short read. Doubling keeps this O(log n) allocations.
-    # ⚠ 6.6.7: both allocations are CHECKED. They were not, so an alloc() returning 0 put the
-    # read (or the growth memcpy) through NULL — the same shape as file_read_whole's. A failure
-    # here, and a read error, leave the cache UNSET (`_env_len = -1`) so a later call retries.
-    # (The 6.6.6 comment below promised exactly that, but `_env_len = 0` had already been
-    # stored at the top, which CACHES an empty environment: every later getenv returned 0.)
-    # CHANGELOG [6.6.7]
     var cap = 16384;
     var buf = alloc(cap);
     if (buf == 0) { file_close(fd); _env_len = 0 - 1; return 0; }
