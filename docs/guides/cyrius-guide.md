@@ -591,6 +591,15 @@ struct Config { host: Str; port; timeout; }
 #            Config_port(p), Config_set_port(p, v), etc.
 ```
 
+An accessor reads and writes at the field's own width: an `i8` / `i16` / `i32` field gets
+`load8/16/32` and `store8/16/32`, everything else (untyped, `i64`, `Str`, `Vec<T>`, `f64`, a
+nested `#derive`d struct) an 8-byte slot (v6.6.7; before that every accessor was `load64` /
+`store64`, so a narrow field's setter wrote into its neighbours). Every `#derive` reads the body
+the way the parser does — comments, blank lines, `a : T` spacing, `;`-less fields and
+`,`-separated enum members are all fine — and the build FAILS if its field offsets ever disagree
+with the struct's real layout, which today means a field typed with a struct that is not itself
+`#derive`d: derive the inner struct too.
+
 ## Derive Serialize on an enum (v6.5.31)
 
 `#derive(Serialize)` and `#derive(Deserialize)` work on an **enum** as well as a struct, and
