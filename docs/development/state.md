@@ -1,7 +1,8 @@
 # Cyrius — Current State
 
 > Refreshed every release. This file is **state** (volatile) — a SNAPSHOT of where the
-> project is right now, bumped via `version-bump.sh`. It deliberately holds **no
+> project is right now, refreshed **by hand** at every release (`version-bump.sh` does not touch this
+> file; its closing summary names the rows to update). It deliberately holds **no
 > per-release narrative** (canonical in [`CHANGELOG.md`](../../CHANGELOG.md)) and **no
 > backlog** (the full pin sequence + length map is in [`roadmap.md`](roadmap.md); parked /
 > v7+ items in [`roadmap-future.md`](roadmap-future.md)). CLAUDE.md holds the durable
