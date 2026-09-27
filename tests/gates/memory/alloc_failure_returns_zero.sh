@@ -28,6 +28,11 @@
 #      mapping (`<= 0`) before adopting it.
 #   4. `fhm_new` (lib/hashmap_fast.cyr) and `flags_new` (lib/flags.cyr) return 0 over an
 #      exhausted heap (Linux, `ulimit -v`; anti-vacuous: the probe proves alloc is refusing).
+#   5. EVERY allocation check in fhm_new (4), flags_new (3), _fhm_grow (3) and the FLAG_LIST
+#      first push (2), ONE AT A TIME: per-call fault injection refuses only the k-th alloc, for
+#      each k over the site's whole count. Axes 2/4 refuse by size, which is monotonic, so the
+#      first check to fire masks the rest — with fhm_new's keys OR vals check removed they still
+#      passed. Anti-vacuous both ways: the k-th call must be reached, and k = count + 1 succeeds.
 #
 # MUTATION LEDGER (6.6.7, each built as a scratch lib/ copy)
 #   * the 6.6.6 freelist                                  -> axis 1 FAIL (SYS_MMAP undefined)
@@ -38,6 +43,11 @@
 #                                                            and axis 3s FAIL
 #   * the 6.6.6 hashmap_fast.cyr                          -> axis 4 FAIL (rc 139)
 #   * flags_new's three checks removed                    -> axis 4 FAIL (rc 139)
+#   * ANY ONE of the 12 checks below removed ALONE         -> axis 5 FAIL (axis 4 and the tcyrs
+#     stay green for most of them — that masking is why axis 5 exists):
+#       fhm_new m / meta, _fhm_grow new_meta / new_keys / new_vals,
+#       flags_new h / entries, _flags_list_push nblk / arr  -> rc 139
+#       fhm_new keys / vals, flags_new positional           -> rc 1 (returned an object)
 set -u
 # Every expected-non-zero status is captured as `rc=0; ... || rc=$?`, so the gate reports the
 # same verdict under `bash -eo pipefail` as under sh (a bare `( ... ); rc=$?` trips -e first).
@@ -179,5 +189,166 @@ case "$rc" in
     *) fail "axis 4: a constructor over an exhausted heap exited $rc (139 = it stored through a refused allocation)" ;;
 esac
 
+# ── axis 5: EVERY allocation check, ONE AT A TIME (per-call fault injection, Linux) ────
+# Axes 2/4 and the tcyr rows refuse by SIZE (address-space exhaustion, a planted capacity past
+# ALLOC_MAX). A size refusal is MONOTONIC — once one request fails, every later request as large
+# fails too — so the first check to fire hides the ones after it: fhm_new's keys and vals are
+# the same size, and with either check removed the other still returns 0. Only refusing the Nth
+# call ALONE separates them. This axis compiles the probe against a copy of lib/ whose `alloc`
+# is wrapped: armed with k, the k-th alloc from now returns 0 and every other call is served.
+# Each constructor / grow runs once per k over its whole allocation count and must, for every
+# k, fail cleanly (0 / -1 / FLAG_ERR_NOMEM) with the object unchanged, must actually have
+# reached the k-th call (anti-vacuous), and must SUCCEED at k = count + 1 (so the count is
+# exact, and an allocation added later is covered by the same loop). The wrapper is derived
+# from the live lib/alloc.cyr by renaming its Linux `fn alloc`, so it cannot drift from it.
+FI="$W/fi"
+mkdir -p "$FI"
+cp -R "$ROOT/lib" "$FI/lib"
+if [ "$(grep -c '^fn alloc(size): i64 {$' "$ROOT/lib/alloc.cyr")" != "1" ]; then
+    fail "axis 5: lib/alloc.cyr no longer has exactly one 'fn alloc(size): i64 {' to wrap — update the fault-injection harness"
+else
+    sed 's/^fn alloc(size): i64 {$/fn _fi_real_alloc(size): i64 {/' "$ROOT/lib/alloc.cyr" > "$FI/lib/alloc.cyr"
+    cat >> "$FI/lib/alloc.cyr" <<'CYR'
+
+# ── gate-only fault injection (tests/gates/memory/alloc_failure_returns_zero.sh axis 5) ──
+var _fi_at = 0;      # armed: the _fi_at-th alloc from now returns 0; 0 = disarmed
+var _fi_seen = 0;
+fn alloc(size): i64 {
+    if (_fi_at > 0) {
+        _fi_seen = _fi_seen + 1;
+        if (_fi_seen == _fi_at) { _fi_at = 0; return 0; }
+    }
+    return _fi_real_alloc(size);
+}
+fn _fi_arm(k): i64 { _fi_at = k; _fi_seen = 0; return 0; }
+CYR
+    cat > "$FI/fi.cyr" <<'CYR'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/vec.cyr"
+include "lib/hashmap_fast.cyr"
+include "lib/flags.cyr"
+
+# Report "<site> k=<k>: <what>" on stderr and exit 1 (an 8-bit status cannot carry the site).
+fn _bad(site, k, what): i64 {
+    _fi_at = 0;
+    var d = alloc(8);
+    store8(d, 48 + k);
+    syscall(1, 2, site, strlen(site));
+    syscall(1, 2, " k=", 3);
+    syscall(1, 2, d, 1);
+    syscall(1, 2, ": ", 2);
+    syscall(1, 2, what, strlen(what));
+    syscall(1, 2, "\n", 1);
+    return 1;
+}
+
+fn _key(i): i64 {
+    var k = alloc(8);
+    store8(k, 97 + (i % 26));
+    store8(k + 1, 65 + (i / 26));
+    store8(k + 2, 0);
+    return k;
+}
+
+fn main(): i64 {
+    alloc_init();
+    # fhm_new: m, meta, keys, vals
+    var k = 1;
+    while (k <= 5) {
+        _fi_arm(k);
+        var m = fhm_new();
+        if (k <= 4) {
+            if (m != 0) { return _bad("fhm_new", k, "returned a map although that allocation was refused"); }
+            if (_fi_at != 0) { return _bad("fhm_new", k, "never reached the k-th allocation"); }
+        } else { if (m == 0) { return _bad("fhm_new", k, "failed with every allocation served (count is no longer 4)"); } }
+        k = k + 1;
+    }
+    # flags_new: h, entries, positional
+    k = 1;
+    while (k <= 4) {
+        _fi_arm(k);
+        var h = flags_new();
+        if (k <= 3) {
+            if (h != 0) { return _bad("flags_new", k, "returned a context although that allocation was refused"); }
+            if (_fi_at != 0) { return _bad("flags_new", k, "never reached the k-th allocation"); }
+        } else { if (h == 0) { return _bad("flags_new", k, "failed with every allocation served (count is no longer 3)"); } }
+        k = k + 1;
+    }
+    # _fhm_grow (behind fhm_set): new_meta, new_keys, new_vals. 14 keys fill a 16-slot table to
+    # the 87.5% trigger, so the 15th set grows.
+    _fi_at = 0;
+    var keys = alloc(15 * 8);
+    var i = 0;
+    while (i < 15) { store64(keys + i * 8, _key(i)); i = i + 1; }
+    k = 1;
+    while (k <= 4) {
+        _fi_at = 0;
+        var gm = fhm_new();
+        if (gm == 0) { return _bad("_fhm_grow", k, "setup: fhm_new failed"); }
+        i = 0;
+        while (i < 14) { fhm_set(gm, load64(keys + i * 8), i + 100); i = i + 1; }
+        if (fhm_cap(gm) != 16) { return _bad("_fhm_grow", k, "setup: 14 keys did not stay in a 16-slot table"); }
+        var meta0 = load64(gm);
+        _fi_arm(k);
+        var r = fhm_set(gm, load64(keys + 14 * 8), 114);
+        if (k <= 3) {
+            if (r != 0 - 1) { return _bad("_fhm_grow", k, "fhm_set did not return -1 for a refused grow"); }
+            if (_fi_at != 0) { return _bad("_fhm_grow", k, "never reached the k-th allocation"); }
+            if (load64(gm) != meta0) { return _bad("_fhm_grow", k, "the live table was replaced"); }
+            if (fhm_cap(gm) != 16) { return _bad("_fhm_grow", k, "the capacity changed"); }
+            if (fhm_count(gm) != 14) { return _bad("_fhm_grow", k, "the count changed"); }
+            i = 0;
+            while (i < 14) {
+                if (fhm_get(gm, load64(keys + i * 8)) != i + 100) { return _bad("_fhm_grow", k, "a held key no longer maps to its value"); }
+                i = i + 1;
+            }
+        } else {
+            _fi_at = 0;
+            if (r != 0) { return _bad("_fhm_grow", k, "the grow failed with every allocation served (count is no longer 3)"); }
+            if (fhm_cap(gm) != 32) { return _bad("_fhm_grow", k, "the table did not grow to 32"); }
+        }
+        k = k + 1;
+    }
+    # FLAG_LIST first push (_flags_list_push): the {ptr,cap,count} block, then its array
+    k = 1;
+    while (k <= 3) {
+        _fi_at = 0;
+        var fh = flags_new();
+        if (fh == 0) { return _bad("_flags_list_push", k, "setup: flags_new failed"); }
+        var li = flags_add_list(fh, 68, "define", "define");
+        var ep = _flags_entry(fh, li);
+        _fi_arm(k);
+        var lr = _flags_list_push(ep, "A");
+        if (k <= 2) {
+            if (lr != FLAG_ERR_NOMEM) { return _bad("_flags_list_push", k, "not FLAG_ERR_NOMEM for a refused allocation"); }
+            if (_fi_at != 0) { return _bad("_flags_list_push", k, "never reached the k-th allocation"); }
+            if (load64(ep + 24) != 0) { return _bad("_flags_list_push", k, "a half-built list was installed"); }
+        } else {
+            _fi_at = 0;
+            if (lr != FLAG_ERR_NONE) { return _bad("_flags_list_push", k, "failed with every allocation served (count is no longer 2)"); }
+            if (flags_list_count(fh, li) != 1) { return _bad("_flags_list_push", k, "the value was not kept"); }
+        }
+        k = k + 1;
+    }
+    syscall(1, 1, "returned\n", 9);
+    return 0;
+}
+var ec = main();
+syscall(60, ec);
+CYR
+    ( cd "$FI" && "$CC" < fi.cyr > fi 2> fi.err ) || fail "axis 5: the fault-injection probe did not compile: $(grep -m2 -i 'error' "$FI/fi.err")"
+    if grep -q '^warning: undefined function' "$FI/fi.err"; then
+        fail "axis 5: the fault-injection probe has undefined functions: $(grep -m2 '^warning: undefined' "$FI/fi.err")"
+    fi
+    chmod +x "$FI/fi" 2>/dev/null
+    rc=0; out=$( ulimit -c 0; "$FI/fi" 2> "$FI/fi.stderr" ) || rc=$?
+    if [ "$rc" -ne 0 ] || [ "$out" != "returned" ]; then
+        why=""; [ "$rc" = 139 ] && why=" (SIGSEGV: a store through the refused allocation)"
+        fail "axis 5: per-call fault injection exited $rc$why: $(head -1 "$FI/fi.stderr")"
+    fi
+fi
+
 [ "$FAIL" = 0 ] || exit 1
-echo "PASS: alloc_failure_returns_zero (freelist.cyr includes alone on 5 targets; refused arena refills return 0 and the allocator recovers; PE alloc_init aborts loudly; fhm_new/flags_new return 0 over an exhausted heap)"
+echo "PASS: alloc_failure_returns_zero (freelist.cyr includes alone on 5 targets; refused arena refills return 0 and the allocator recovers; PE alloc_init aborts loudly; fhm_new/flags_new return 0 over an exhausted heap; every allocation check in fhm_new / flags_new / _fhm_grow / _flags_list_push holds when ITS call alone is refused)"

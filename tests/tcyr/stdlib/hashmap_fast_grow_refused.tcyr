@@ -49,6 +49,19 @@ fn main(): i64 {
     store64(m + 24, real_cap);
     store64(m + 32, real_cnt);
 
+    # the PARTIAL refusal: cap 2^28 -> new_cap 2^29. meta alloc(512 MiB) is served (it is under
+    # ALLOC_MAX and only reserves address space) and keys alloc(4 GiB) is refused — the realistic
+    # shape, where the first array succeeds and a later, larger one does not. (Every check alone
+    # is pinned by per-call fault injection: tests/gates/memory/alloc_failure_returns_zero.sh
+    # axis 5.)
+    store64(m + 24, 1 << 28);
+    store64(m + 32, 1 << 28);
+    assert_eq(fhm_set(m, "overflow-key", 7), 0 - 1, "a partly-refused grow: fhm_set returns -1");
+    assert_eq(load64(m), real_meta, "a partly-refused grow: the live table was not replaced");
+    assert_eq(load64(m + 24), 1 << 28, "a partly-refused grow: the header was not rewritten");
+    store64(m + 24, real_cap);
+    store64(m + 32, real_cnt);
+
     # and the map still answers every key it held
     var ok = 1;
     i = 0;

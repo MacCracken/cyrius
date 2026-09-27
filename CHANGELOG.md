@@ -92,8 +92,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `tests/tcyr/stdlib/hashmap_fast_grow_refused.tcyr` and new rows in
   `tests/tcyr/crossos/flags.tcyr` (both force the refusal deterministically by planting a
   capacity whose doubling is past `ALLOC_MAX`; both SIGSEGV with the 6.6.6 code; green on
-  ecb / ach / pi / wine), and axis 4 of `tests/gates/memory/alloc_failure_returns_zero.sh`
-  (both constructors over a heap exhausted under `ulimit -v`).
+  ecb / ach / pi / wine; the hashmap file also refuses a grow PART-way, meta served and keys
+  refused), and axes 4 and 5 of `tests/gates/memory/alloc_failure_returns_zero.sh`: both
+  constructors over a heap exhausted under `ulimit -v`, then PER-CALL fault injection, which
+  refuses only the k-th allocation for each k across `fhm_new`, `flags_new`, `_fhm_grow` and the
+  `FLAG_LIST` first push. A size refusal is monotonic, so the first check to fire masks the ones
+  after it — with `fhm_new`'s keys or vals check deleted the size-based rows stayed green;
+  axis 5 goes red for each of the 12 checks deleted alone.
 
 ### Changed
 
