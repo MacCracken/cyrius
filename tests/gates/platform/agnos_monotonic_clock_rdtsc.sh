@@ -9,7 +9,7 @@
 # clock_now_ms truncated it) and every `while (clock_now_ms() - t0 < N)` wait spun forever —
 # daimon's repro. The old axis 1 FORBADE #40 in clock_now_ns outright, which made the correct
 # fallback impossible to write, and it pinned each file separately, which is how bench lagged
-# chrono by four releases. Axis 1 is now DERIVED: it finds every #95 reader in lib/*.cyr and
+# chrono by four releases. Axis 1 is now DERIVED: it finds every #95 reader in lib/ (recursively) and
 # requires each to test the result `< 0` / `>= 0`, with any #40 read strictly after that test.
 # A new copy (a socket deadline, a third clock) is pinned the moment it is written.
 #
@@ -43,9 +43,13 @@ R=$(cd "$(dirname "$0")/../../.." && pwd)
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: agnos_monotonic_clock_rdtsc: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$T"' EXIT
 CC="$R/build/cycc"
 [ -x "$CC" ] || { echo "FAIL agnos_monotonic_clock_rdtsc: no build/cycc"; exit 1; }
+# Every probe below does `include "lib/..."`, which resolves against the CWD — so the gate runs
+# FROM ITS OWN TREE. Run from elsewhere, axis 1 read $R/lib while axes 2/4/5 compiled whatever
+# lib/ the caller's CWD held, and the gate judged two different trees at once. CHANGELOG [6.6.7]
+cd "$R" || { echo "FAIL agnos_monotonic_clock_rdtsc: cannot cd to the tree root $R"; exit 1; }
 
 # ── axis 1 — DERIVED: every #95 reader in lib/ checks the -1 sentinel before using it ──────
-# For each fn in lib/*.cyr (comments stripped) that reads #95 — `sys_uptime_us()`,
+# For each fn in every lib/**/*.cyr (comments stripped; subdirs included) that reads #95 — `sys_uptime_us()`,
 # `syscall(95)` or `syscall(SYS_UPTIME_US)` — other than the wrapper itself:
 #   (a) the result must land in a variable (`[var] X = <read>;`), never feed arithmetic directly;
 #   (b) that variable must be tested `X < 0` or `X >= 0` later in the same fn;
@@ -94,7 +98,7 @@ fn != "" {
     if (t ~ /^}/ || (n == 1 && t ~ /}[ \t]*$/)) flush()
 }
 END { flush() }
-' "$R"/lib/*.cyr | sed "s|$R/||")
+' $(find "$R/lib" -name '*.cyr' -type f | LC_ALL=C sort) | sed "s|$R/||")
 BAD1=$(printf '%s\n' "$A1" | grep '^BAD ' || true)
 [ -z "$BAD1" ] || {
   echo "FAIL agnos_monotonic_clock_rdtsc axis1: a #95 (uptime_us) reader does not handle the -1 sentinel:"
@@ -260,7 +264,10 @@ EOF
     echo "FAIL agnos_monotonic_clock_rdtsc axis5: CYRIUS_TARGET_AGNOS build of the runtime probe failed"
     grep -E '^error' "$T/rt.cerr" | head -3 | sed 's/^/    /'; exit 1; }
   chmod +x "$T/rt.out"
-  ( cd "$T" && "$MIRSHI" ./rt.out > "$T/rt.so" 2> "$T/rt.se" ); rc=$?
+  # `rc=0; (...) || rc=$?`, never `(...); rc=$?` — under `bash -e` a nonzero probe exit aborts
+  # the gate SILENTLY before the case below, so the named SKIP (10) and FAILs (3/4) never print.
+  rc=0
+  ( cd "$T" && "$MIRSHI" ./rt.out > "$T/rt.so" 2> "$T/rt.se" ) || rc=$?
   case "$rc" in
     0)
       NE=$(grep -c '#95' "$T/rt.se" || true)

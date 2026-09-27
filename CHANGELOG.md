@@ -26,7 +26,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   binary is byte-identical (checked on x86-linux, aarch64, PE and Mach-O). ⚠ On agnos <= 1.57.6
   a foreground program on a refused boot still has no working clock — #40 is frozen at IF=0.
   **Gate:** `tests/gates/platform/agnos_monotonic_clock_rdtsc.sh` axis 1 is now DERIVED: it
-  finds every #95 reader in `lib/*.cyr` (`sys_uptime_us()`, `syscall(95)`,
+  finds every #95 reader in `lib/`, subdirectories included (`sys_uptime_us()`, `syscall(95)`,
   `syscall(SYS_UPTIME_US)`) and requires each to store the result, test it `< 0` / `>= 0`, and
   read #40 (however spelled) only after that test — so chrono, bench, sakshi and the next copy
   are pinned together, where the per-file axes let bench lag chrono by four releases. The old
@@ -35,7 +35,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `CYRIUS_DCE=1` build (a plain build emits every peer wrapper, so a deleted fallback still
   showed a 0x28). New axis 5 runs a probe under mirshi when present: both clocks must advance
   on a -1 #95 with at most 3 #95 calls in total, and it SKIPs by name if mirshi ever emulates
-  #95. Mutation-proven nine ways. A consumer sees: on agnos, clocks advance on every boot, and
+  #95. Every axis compiles from the gate's own tree (it `cd`s to its root; run from another
+  directory it used to read one tree's `lib/` for axis 1 and compile another's for axes 2/4/5), and
+  axis 5 captures the probe exit as `rc=0; (...) || rc=$?`, so under `bash -e` the named SKIP and
+  FAIL paths print instead of aborting silently. Mutation-proven nine ways. A consumer sees: on agnos, clocks advance on every boot, and
   under mirshi the per-read `ENOSYS agnos#95` stderr flood is gone. daimon's
   `daimon_now_ms()` workaround stays harmless.
 
@@ -53,7 +56,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `SYSINFO_SIZE_FULL`, the -1 pre-fill) and, under mirshi, run it against a kernel that leaves +200
   unwritten: -1, not stack residue (exit 7 without the pre-fill, measured). Mutation-proven eleven
   ways, lib side and contract side. `tests/tcyr/crossos/sysinfo_uname.tcyr` asserts the
-  off-agnos -ENOSYS answer (ran on ecb, ach, pi, aarch64 qemu and PE/wine; cass pending).
+  off-agnos -ENOSYS answer (ran on ecb, ach, pi, aarch64 qemu and PE/wine; cass pending) and, in
+  its agnos build, -1 or a count >= 0 after dirtying the stack with a negative pattern — so a
+  dropped pre-fill or an -ENOSYS answer fails there too (checked under mirshi).
 
 ### Changed
 
