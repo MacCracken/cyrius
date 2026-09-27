@@ -56,6 +56,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     returns the null handle instead of naming `SYS_FCNTL`, which the PE peer does not define — 1.2.6
     is therefore never folded (it does not compile for PE; `pe_no_raw_syscall_bytes.sh` axis 4 goes
     red on it). No public-surface change (109 fns).
+  - **mabda 4.1.4 → 4.1.5** (release commit `2a9f67c`; the 4.1.5 tag names it) — **agnos:** all 46
+    ioctl sites go through one private fail-closed bridge, `_mabda_ioctl`, which returns -ENOSYS
+    there; through 4.1.4 the agnos build compiled only with yukti ≤ 2.3.11 in scope, and every mabda
+    ioctl would have issued agnos syscall 9001. It now builds for agnos with no yukti at all (probe:
+    `folds_agnos_parity`'s preamble minus yukti, rc 0). **Profiler clock:** `clock_now_ns()` replaces
+    a raw `syscall(228, 1, …)` that was `clock_gettime` only on x86_64 Linux — so the profiler (and the
+    NVIDIA dispatch deadline) now reads the right clock on Mach-O, PE and agnos. ⚠ Its sidecar gains
+    **`chrono`** (18 leaves): a hand-written include list must add `lib/chrono.cyr` before
+    `lib/mabda.cyr`. No public-surface change.
   - **Downstream lockstep:** a repo that pins patra or sakshi as a git dep must move that tag with
     its 6.6.7 pin, or the git dep overlays and downgrades the fold — yukti and nein (`[deps.patra]`
     1.14.3 → 1.15.0); yukti, daimon and hisab (`[deps.sakshi]` 2.5.2 → 2.5.5).
