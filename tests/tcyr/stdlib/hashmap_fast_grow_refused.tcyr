@@ -1,0 +1,78 @@
+# hashmap_fast_grow_refused.tcyr — 6.6.7. A REFUSED GROW LEAVES THE MAP INTACT AND fhm_set
+# SAYS SO (-1), instead of memset-ing a new table through address 0.
+#
+# ⛔ THE DEFECT (audit, 6.6.7 bite 8 — same class as file_read_whole / fl_alloc): `_fhm_grow`
+# allocated three arrays unchecked and immediately `memset(new_meta, 0, new_cap)`, then
+# installed them over the live table; `fhm_new` stored through its four allocations unchecked.
+# A refused allocation was a SIGSEGV, never a return code.
+#
+# The refusal is forced DETERMINISTICALLY: the map's documented header layout (+24 cap, +32
+# count) is planted with a capacity whose doubling is past ALLOC_MAX, so alloc() returns 0 on
+# every target with no memory pressure. The real header is restored afterwards and the map
+# must still answer every key it held — the "unchanged" half. With the 6.6.6 grow this file
+# SIGSEGVs at the planted fhm_set.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/vec.cyr"
+include "lib/hashmap_fast.cyr"
+include "lib/assert.cyr"
+
+fn main(): i64 {
+    alloc_init();
+    var m = fhm_new();
+    assert(m != 0, "fhm_new returns a map");
+    # ordinary growth still works: 16 -> 32 -> 64 over 40 keys
+    var keys = alloc(40 * 8);
+    var i = 0;
+    while (i < 40) {
+        var k = alloc(8);
+        store8(k, 97 + (i % 26));
+        store8(k + 1, 65 + (i / 26));
+        store8(k + 2, 0);
+        store64(keys + i * 8, k);
+        assert_eq(fhm_set(m, k, i + 100), 0, "fhm_set during ordinary growth returns 0");
+        i = i + 1;
+    }
+    assert_eq(fhm_count(m), 40, "40 keys held");
+    assert(fhm_cap(m) >= 64, "the table grew");
+
+    # plant an impossible doubling: cap 2^31 -> grow asks alloc(2^32) > ALLOC_MAX
+    var real_cap = load64(m + 24);
+    var real_cnt = load64(m + 32);
+    var real_meta = load64(m);
+    store64(m + 24, 1 << 31);
+    store64(m + 32, 1 << 31);
+    assert_eq(fhm_set(m, "overflow-key", 7), 0 - 1, "a refused grow: fhm_set returns -1");
+    assert_eq(load64(m), real_meta, "a refused grow: the live table was not replaced");
+    assert_eq(load64(m + 24), 1 << 31, "a refused grow: the header was not rewritten");
+    store64(m + 24, real_cap);
+    store64(m + 32, real_cnt);
+
+    # the PARTIAL refusal: cap 2^28 -> new_cap 2^29. meta alloc(512 MiB) is served (it is under
+    # ALLOC_MAX and only reserves address space) and keys alloc(4 GiB) is refused — the realistic
+    # shape, where the first array succeeds and a later, larger one does not. (Every check alone
+    # is pinned by per-call fault injection: tests/gates/memory/alloc_failure_returns_zero.sh
+    # axis 5.)
+    store64(m + 24, 1 << 28);
+    store64(m + 32, 1 << 28);
+    assert_eq(fhm_set(m, "overflow-key", 7), 0 - 1, "a partly-refused grow: fhm_set returns -1");
+    assert_eq(load64(m), real_meta, "a partly-refused grow: the live table was not replaced");
+    assert_eq(load64(m + 24), 1 << 28, "a partly-refused grow: the header was not rewritten");
+    store64(m + 24, real_cap);
+    store64(m + 32, real_cnt);
+
+    # and the map still answers every key it held
+    var ok = 1;
+    i = 0;
+    while (i < 40) {
+        if (fhm_get(m, load64(keys + i * 8)) != i + 100) { ok = 0; }
+        i = i + 1;
+    }
+    assert_eq(ok, 1, "after the refused grow every key still maps to its value");
+    assert_eq(fhm_has(m, "overflow-key"), 0, "the refused key was not half-inserted");
+    var rc = assert_summary();
+    return rc;
+}
+var ec = main();
+syscall(60, ec);

@@ -1122,6 +1122,9 @@ io::file_read_all/3
 io::file_read_all_r/3
 io::file_read_r/3
 io::file_read_whole/2
+io::file_read_whole_a/4
+io::file_read_whole_into/3
+io::file_read_whole_max/3
 io::file_rename/2
 io::file_replace_atomic/3
 io::file_trylock/1

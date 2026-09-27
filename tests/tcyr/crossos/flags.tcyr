@@ -29,6 +29,11 @@
 #  15. FLAG_LIST keeps every occurrence, in order.
 #  16. flags_error_arg NAMES the offending token.
 #  17. stop-at-first-positional mode.
+#  19. (6.6.7) a REFUSED growth alloc is FLAG_ERR_NOMEM and a failed parse, for both the
+#      positional array and a FLAG_LIST — not a store through 0. The refusal is forced
+#      deterministically by planting a capacity whose doubling exceeds ALLOC_MAX (the
+#      documented context/list layout), so alloc() returns 0 on every target. With the
+#      6.6.6 unchecked growth both cases SIGSEGV.
 #  18. flags_print_help — rewritten in 6.6.5 and, until the round-2 review, called
 #      by NOTHING in the tree. Runs on every target; its output is captured and
 #      checked on Linux (see the case for why only there).
@@ -330,6 +335,33 @@ fn test_print_help() {
     #endif
 }
 
+fn test_growth_refused_is_nomem() {
+    test_group("a refused growth alloc is FLAG_ERR_NOMEM, not a store through 0");
+    var fs = flags_new();
+    assert(fs != 0, "flags_new returns a context");
+    var f_b = flags_add_bool(fs, 0, "on", 0, "");
+    # positional array: count == cap, and cap * 2 * 8 bytes is past ALLOC_MAX
+    store64(fs + 32, 1 << 30);
+    store64(fs + 40, 1 << 30);
+    var argv = _argv(2, "prog", "file.txt", 0, 0, 0, 0, 0, 0);
+    assert_eq(flags_parse(fs, 2, argv), 0 - 1, "positional grow refused: parse fails");
+    assert_eq(flags_error(fs), FLAG_ERR_NOMEM, "positional grow refused: FLAG_ERR_NOMEM");
+    assert_eq(streq(flags_error_arg(fs), "file.txt"), 1, "names the token it could not keep");
+    assert_eq(streq(flags_error_str(FLAG_ERR_NOMEM), "out of memory"), 1, "and says why");
+    # FLAG_LIST: one real value first, then plant the same impossible doubling
+    var fl = flags_new();
+    var f_d = flags_add_list(fl, 68, "define", "define");
+    var a1 = _argv(3, "prog", "-D", "A", 0, 0, 0, 0, 0);
+    assert_eq(flags_parse(fl, 3, a1), 0, "list: first value parses");
+    var blk = load64(load64(fl) + f_d * 48 + 24);
+    store64(blk + 8, 1 << 30);
+    store64(blk + 16, 1 << 30);
+    var a2 = _argv(3, "prog", "-D", "B", 0, 0, 0, 0, 0);
+    assert_eq(flags_parse(fl, 3, a2), 0 - 1, "list grow refused: parse fails");
+    assert_eq(flags_error(fl), FLAG_ERR_NOMEM, "list grow refused: FLAG_ERR_NOMEM");
+    assert_eq(load64(blk + 8), 1 << 30, "list grow refused: the list is unchanged");
+}
+
 fn main() {
     alloc_init();
     test_bool_long_and_short();
@@ -349,6 +381,7 @@ fn main() {
     test_error_arg_names_the_token();
     test_stop_at_positional();
     test_print_help();
+    test_growth_refused_is_nomem();
     return assert_summary();
 }
 

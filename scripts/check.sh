@@ -1211,3 +1211,8 @@ _chk_gate "$ROOT/tests/gates/platform/agnos_peer_fake_kernel.sh"
 # armed on its first non-zero read, then — only with no clock — the pause count) and a timeout
 # is -11, not EOF; a stalled send is retried. Fake-kernel tiers + a live mirshi TCP exchange.
 _chk_gate "$ROOT/tests/gates/platform/agnos_sock_recv_bound.sh"
+
+# 6.6.7 — a REFUSED MAPPING is 0 from fl_alloc (never a store through -ENOMEM), and PE
+# alloc_init aborts loudly on a refused VirtualAlloc like its Linux/macOS peers. Axis 2 is the
+# arena refill under `ulimit -v`, which the crossos .tcyr cannot reach portably.
+_chk_gate "$ROOT/tests/gates/memory/alloc_failure_returns_zero.sh"

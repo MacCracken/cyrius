@@ -1,0 +1,55 @@
+# freelist_map_failure.tcyr — 6.6.7. A REFUSED MAPPING IS 0 FROM fl_alloc, NEVER A FAULT.
+#
+# ⛔ THE DEFECT (kybernet, 2026-09-23). `_fl_mmap` returns the raw kernel result — -errno on
+# Linux/Darwin, 0 on agnos and PE — and both of its callers stored through it unchecked: the
+# large (>4096) path wrote the block header at `blk`, and the arena refill adopted the result
+# as its base. A refused mapping therefore SIGSEGV'd at 0xfffffffffffffff4 (-12 = -ENOMEM
+# plus the header offset) instead of returning 0, and every consumer's `if (p == 0)` guard —
+# sigil's argon2 wrappers, its policy reader's fl_alloc(4097) — was dead code.
+#
+# `include "lib/freelist.cyr"` comes first: since 6.6.7 the module includes the syscall peer
+# it uses. (Included truly ALONE it was a hard compile error before — `undefined variable
+# 'SYS_MMAP'`; that is pinned on five targets by the gate named below, because here the later
+# assert.cyr include would supply the enum anyway.)
+#
+# 1<<62 bytes exceeds every host's address space, so the kernel refuses it with no ulimit
+# (Linux/Darwin -ENOMEM, Windows VirtualAlloc NULL) — portable, and deterministic. The arena
+# REFILL path needs address-space exhaustion, which is Linux-only (RLIMIT_AS); it is pinned by
+# tests/gates/memory/alloc_failure_returns_zero.sh.
+#
+# Mutations (6.6.7, x86 + aarch64/qemu): drop the large-path `<= 0` check -> SIGSEGV (rc 139)
+# at the first row; drop the size <= 0 refusal -> the 0 and negative rows FAIL (a 16-byte
+# block handed back); the 6.6.6 freelist whole -> SIGSEGV (rc 139).
+include "lib/freelist.cyr"
+include "lib/assert.cyr"
+
+fn main(): i64 {
+    var huge = 1 << 62;
+    assert_eq(fl_alloc(huge), 0, "fl_alloc(1<<62): refused mapping returns 0");
+    assert_eq(fl_calloc(huge), 0, "fl_calloc(1<<62): refused mapping returns 0");
+    # One byte past the 4096 class is the large path — the route sigil's fl_alloc(4097)
+    # takes. The check must not refuse a mapping the kernel GRANTED.
+    var p = fl_alloc(4097);
+    assert(p != 0, "fl_alloc(4097) (large path) succeeds");
+    store8(p + 4096, 7);
+    assert_eq(load8(p + 4096), 7, "the large block's last byte is writable");
+    fl_free(p);
+    assert_eq(fl_alloc(0), 0, "fl_alloc(0) is refused, as alloc(0) is");
+    assert_eq(fl_alloc(0 - 8), 0, "a negative size is refused, not handed a 16-byte block");
+    assert_eq(fl_calloc(0), 0, "fl_calloc(0) is refused");
+    # The allocator still works after the refusals (no state was consumed or corrupted).
+    var q = fl_alloc(24);
+    assert(q != 0, "a small allocation after the refusals succeeds");
+    store64(q + 16, 42);
+    assert_eq(load64(q + 16), 42, "and is usable");
+    fl_free(q);
+    # Poison mode classifies size + redzone; the refusal must still come first.
+    fl_poison_enable();
+    assert_eq(fl_alloc(huge), 0, "poison mode: a refused mapping is still 0, not a fault");
+    assert_eq(fl_alloc(0), 0, "poison mode: size 0 is still refused");
+    fl_poison_disable();
+    var rc = assert_summary();
+    return rc;
+}
+var ec = main();
+syscall(60, ec);

@@ -571,6 +571,126 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   longer sees the `duplicate fn 'uname_release'` warning every sys+sigil program used to print.
   `stdlib_modules_self_sufficient.sh` adds tls_native to its per-target axis and raises its
   ratchet floor 26 → 27 (mutation: the old include list is red on all four targets).
+- **The hash seed blocked PID 1 until the kernel CRNG seeded, and on macOS its CSPRNG draw was
+  thrown away.** (bite 8.) `lib/hashseed.cyr` drew the per-process hash seed with
+  `getrandom(buf, 8, 0)` — BLOCKING on Linux until the CRNG is initialised. kybernet is PID 1 and
+  takes its first map op (inside argonaut's `argonaut_init_new`) before that on boards with no
+  hardware RNG: measured as PID 1 in a `trust_cpu=off` VM, **253–254 ms** of boot stalled on the
+  first `map_set`, ending 4 ms after `crng init done`. The seed only has to be "not a published
+  constant", which the draw's own comment says. The same line issued the RAW syscall on every
+  non-Windows target, skipping `sys_getrandom`'s Darwin `getentropy` 0 -> len normalisation, so
+  on macOS `nr == 8` never matched and the seed silently came from the microsecond-clock
+  fallback. **Fix:** the Linux arm draws `GRND_INSECURE` (4, never blocks, kernel >= 5.6) and
+  retries `GRND_NONBLOCK` (1) on the pre-5.6 `-EINVAL`; every other target calls
+  `sys_getrandom(.., 0)`. Same VM after the fix: 10 ms, no stall. A new `_hm_seed_src` records
+  where the seed came from (1 = OS RNG, 2 = time fallback). Pinned by
+  `tests/tcyr/crossos/hashseed_os_rng_source.tcyr` (the seed is the OS RNG's bytes — **RED on
+  real ecb and ach** with the old draw, 2 of 5 failing, green on both and on pi with the fix) and
+  a static axis 4 in `tests/gates/memory/hash_seed_flood_resistance.sh` (the Linux arm must
+  draw flags 4 and must not pass 0; no raw `syscall(SYS_GETRANDOM` — each mutation reddens it).
+  Consumers see no API change; kybernet's boot loses the stall with no source change.
+
+- **`fl_alloc` stored through a refused mapping instead of returning 0, so every consumer's
+  `== 0` guard was dead code.** (bite 8.) `lib/freelist.cyr`'s `_fl_mmap` returns the raw kernel
+  result — `-errno` on Linux/Darwin, 0 on agnos and PE — and both callers used it as a pointer:
+  the large (>4096) path wrote its header at `blk`, and the arena REFILL adopted it as the new
+  arena base. A refused mapping SIGSEGV'd at `0xfffffffffffffff4` (reproduced on x86 and on
+  aarch64 under qemu, large path with no ulimit, refill under `ulimit -v`). kybernet (PID 1)
+  reaches it through sigil's argon2 wrappers; sigil's policy reader's `fl_alloc(4097)` guard was
+  dead too (4097 takes the large path). **Fix:** `blk <= 0 -> return 0` before any store on the
+  large path; the refill maps into a local, returns 0 on `<= 0`, and assigns the arena globals
+  only after the check, so a failed refill leaves the old arena intact and a later call retries;
+  `fl_alloc` returns 0 when the refill did. Also: **`fl_alloc` / `fl_calloc` now refuse a size
+  `<= 0`** and return 0, as `alloc()` does — a negative request used to land in class 0 and get a
+  16-byte block (a consumer that called `fl_alloc(0)` and treated the result as non-null must
+  now special-case 0; the ranga/sit callers surveyed already do). `lib/freelist.cyr` now includes
+  `lib/syscalls.cyr`: `include "lib/freelist.cyr"` alone was a HARD compile error
+  (`undefined variable 'SYS_MMAP'`). **Windows sibling:** `lib/alloc_windows.cyr`'s `alloc_init`
+  adopted VirtualAlloc's 0 unchecked, so every later `alloc()` re-ran init and returned 0
+  silently; it now writes `alloc_init: mmap failed` and exits 1 like the Linux and macOS peers
+  (the PE compiler's bytes change; it self-hosts byte-identical under wine). Pinned by
+  `tests/tcyr/crossos/freelist_map_failure.tcyr` (11 assertions; green on ecb / ach / pi / wine,
+  the large-path mutant SIGSEGVs on all of them) and `tests/gates/memory/alloc_failure_returns_zero.sh`
+  (include-alone on 5 targets, refill under exhaustion with an anti-vacuous exit, PE init abort
+  under wine + a static half; five mutants, each RED). The lock-site count is unchanged.
+
+- **`file_read_whole` SIGSEGV'd on ANY file of 1 GiB or more, on every box, and never checked an
+  allocation.** (bite 8.) The growth alloc in `lib/io.cyr` was unchecked and doubled from 64 KiB
+  with no ceiling. When a file reached exactly 1 GiB the next grow asked for `alloc(2^31 + 1)`,
+  which is past `ALLOC_MAX`, so `alloc` returned 0 and the `memcpy` wrote through NULL — with
+  memory to spare, and even though the next read would have been EOF (measured with sparse files:
+  1,073,741,823 bytes read fine, 1,073,741,824 exactly rc 139). `/dev/zero` under `ulimit -v`
+  did the same sooner; an EMPTY file whose first alloc failed stored its NUL at address 0; and
+  every call cost 65,544 bytes of bump heap that is never reclaimed, even for a 2-byte file —
+  kybernet's PID 1 re-reads its config on every SIGHUP and shipped its own reader to avoid this.
+  **Fix:** one bounded core. Every allocation is checked (a failure is `-ENOMEM`, never a store
+  through 0); growth CLAMPS to `min(2 * cap, max)` instead of doubling past the ceiling; at
+  `cap == max` one more byte is read into a local to tell a file of exactly `max` bytes (success)
+  from a larger one (`-EFBIG`); the first buffer is 4 KiB. `file_read_whole(path, &n)` keeps its
+  contract — the whole file NUL-terminated, or 0 with `n = 0` on ANY failure — with a ceiling of
+  `ALLOC_MAX - 1`: a 1 GiB file now reads whole (~6 s), a file over 2 GiB returns 0 instead of
+  crashing. `_env_load` (behind `getenv`) checks both of its allocations too, and EVERY failure
+  on its `/proc` path — the open, either allocation, a read error — now leaves the cache unset so
+  a later call retries. The 6.6.6 comment promised that, but `_env_len = 0` had already been
+  stored, so each of those paths cached an EMPTY environment for the life of the process: a PID 1
+  that called `getenv` before `/proc` was mounted never saw its environment. Pinned by
+  `tests/tcyr/crossos/file_read_whole_bounded.tcyr` (36 assertions, green on ecb / ach / pi /
+  qemu-aarch64 / wine) and axis 6 of `tests/gates/toolchain/manifest_read_whole_file.sh`
+  (`/dev/zero` under `ulimit -v 400000` is 0 / len 0 — rc 139 before; a `getenv` whose open
+  failed under `ulimit -n 3` sees the variable once a descriptor is free; plus static checks that
+  every allocation in the reader core and `_env_load` is tested against 0 and that every `/proc`
+  failure path unsets the cache).
+
+- **`lib/hashmap_fast.cyr` and `lib/flags.cyr` stored through refused allocations.** (bite 8,
+  same class — an audit's output is fixes.) `_fhm_grow` allocated its three arrays unchecked,
+  `memset` the new metadata through 0 and installed the arrays over the live table; `fhm_new`
+  stored through its four allocations unchecked. `flags.cyr`'s positional-array and `FLAG_LIST`
+  growth (`_flags_push_positional`, `_flags_list_push`) copied the old array into an unchecked
+  `alloc`, and `flags_new` stored through its three. Every one was a SIGSEGV on refusal.
+  **Fix:** `_fhm_grow` allocates and checks all three arrays BEFORE touching the map, so a
+  refused grow leaves the old table live, and `fhm_set` returns -1 for it (0 otherwise, as
+  before); `fhm_new` returns 0. The flags growth returns the new **`FLAG_ERR_NOMEM` (6)**
+  (`flags_error_str`: "out of memory"), `flags_parse` fails with -1 and names the token it could
+  not keep, and a list is left unchanged; `flags_new` returns 0. Pinned by
+  `tests/tcyr/stdlib/hashmap_fast_grow_refused.tcyr` and new rows in
+  `tests/tcyr/crossos/flags.tcyr` (both force the refusal deterministically by planting a
+  capacity whose doubling is past `ALLOC_MAX`; both SIGSEGV with the 6.6.6 code; green on
+  ecb / ach / pi / wine; the hashmap file also refuses a grow PART-way, meta served and keys
+  refused), and axes 4 and 5 of `tests/gates/memory/alloc_failure_returns_zero.sh`: both
+  constructors over a heap exhausted under `ulimit -v`, then PER-CALL fault injection, which
+  refuses only the k-th allocation for each k across `fhm_new`, `flags_new`, `_fhm_grow` and the
+  `FLAG_LIST` first push. A size refusal is monotonic, so the first check to fire masks the ones
+  after it — with `fhm_new`'s keys or vals check deleted the size-based rows stayed green;
+  axis 5 goes red for each of the 12 checks deleted alone.
+
+### Changed
+
+- **`cyrius fuzz --poison` says what it covers.** (bite 8, the overlap with proposal P6.) It
+  printed `poison mode: redzones + fill + quarantine-on-free ACTIVE`, which reads as
+  whole-program coverage. Only `lib/freelist.cyr` blocks are instrumented — memory from
+  `alloc()`, an arena or a consumer's own allocation seam (rekha's `sd_alloc`) is not — and a
+  redzone overwrite is COUNTED at `fl_free`, not trapped. It now prints
+  `poison mode: fl_alloc/fl_free blocks only (fill + redzone + quarantine-on-free)` and a second
+  line naming what is not covered and that a harness must assert `fl_poison_violations() == 0`.
+  The freelist's own poison comments were corrected with it: they still said the mode was
+  alloc-side fill only (redzones and quarantine shipped in v6.5.29), that nothing read a
+  switch (the `CYRIUS_POISON` compile-time predefine does), and that the parser has no
+  `#else` / `#ifndef` (it has had both since v5.6.1). The seam itself stays proposal P6.
+
+### Added
+
+- **`file_read_whole_max(path, max, &n)`, `file_read_whole_a(a, path, max, &n)` and
+  `file_read_whole_into(rb, path, max)`** (`lib/io.cyr`, bite 8). The bounded forms of
+  `file_read_whole`. `_max` reads at most `max` bytes; `_a` draws its buffers from Allocator `a`
+  (an arena, or `fail_after_n_allocs(n)` in a test). Both return the NUL-terminated buffer, or 0
+  with `n` set to a NEGATIVE errno: **`-EFBIG` (-27) when the file is larger than `max`**,
+  `-ENOMEM` (-12) when a buffer could not be allocated, `-EINVAL` (-22) for a negative `max`, or
+  the open's / read's own errno. `_into` reads into a buffer the CALLER KEEPS — `rb` is a 16-byte
+  `{ ptr, cap }` pair (`ptr` holds `cap + 1` bytes); start it at `{ 0, 0 }` and the first call
+  allocates, a later read that fits allocates nothing, and a file that does not fit grows the
+  buffer (clamped to `max`) and writes the new pair back — so take the pointer from `rb` after
+  the call. It returns the byte count or the same negative errnos. This is the shape kybernet's
+  `src/lib/read_whole.cyr` stopgap had, so kybernet can retire it once it pins 6.6.7.
 
 ## [6.6.6] — 2026-09-20
 

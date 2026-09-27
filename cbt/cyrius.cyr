@@ -950,7 +950,13 @@ fn main(): i64 {
         # v6.5.29: `--poison` turns on the allocator poison mode for every harness in
         # this run. `cyrius fuzz f --poisn` used to run with poison SILENTLY OFF.
         if (_cli_operands_ok("fuzz", 0, 1) == 0) { return 1; }
-        if (_poison_mode == 1) { println("poison mode: redzones + fill + quarantine-on-free ACTIVE"); }
+        # 6.6.7: say what is covered. The old "redzones + fill + quarantine-on-free ACTIVE" read
+        # as whole-program coverage; only lib/freelist.cyr blocks are instrumented, and a redzone
+        # overwrite is COUNTED, not trapped. CHANGELOG [6.6.7]
+        if (_poison_mode == 1) {
+            println("poison mode: fl_alloc/fl_free blocks only (fill + redzone + quarantine-on-free)");
+            println("  NOT covered: alloc(), arenas, custom allocator seams; redzone overwrites are counted — assert fl_poison_violations() == 0");
+        }
         return cmd_fuzz(_cli_pos_at(0));
     }
 
