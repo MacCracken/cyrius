@@ -134,7 +134,7 @@ fake() {   # $1 name, $2 body → an executable fake tool
 # ── A — lint walker × fake cyrlint ────────────────────────────────────────────────────
 fake l_ok      'echo "=== cyrlint: $1 ==="; echo "5 warnings"'
 fake l_segv    'echo "0 warnings"; kill -SEGV $$'
-fake l_hang    'echo "0 warnings"; exec sleep 30'
+fake l_hang    'echo "0 warnings"; kill -STOP $$'
 fake l_refuse  'echo "cyrlint: file too large to lint (>1028KB)"; exit 1'
 fake l_rc3     'echo "0 warnings"; exit 3'
 fake l_notrail 'echo "=== cyrlint: $1 ==="; echo "all good"'
@@ -160,7 +160,7 @@ check "A6 rc 0 with no '<n> warnings' last line is an error" "TOTAL=0 ERRORS=1" 
 # ── B — doc walker × fake cyrdoc ──────────────────────────────────────────────────────
 fake d_ok     'echo "2 documented, 1 undocumented (3 total)"; exit 1'
 fake d_segv   'echo "3 documented, 0 undocumented (3 total)"; kill -SEGV $$'
-fake d_hang   'echo "3 documented, 0 undocumented (3 total)"; exec sleep 30'
+fake d_hang   'echo "3 documented, 0 undocumented (3 total)"; kill -STOP $$'
 fake d_refuse 'echo "cyrdoc: cannot read file: $2" >&2; exit 1'
 fake d_lie    'echo "2 documented, 1 undocumented (3 total)"; exit 0'
 walk doc "$T/d_ok" "$D" 0
