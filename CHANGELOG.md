@@ -165,8 +165,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   two defers, the `?`-with-a-pending-push path) plus an anti-vacuous twin; floor 64 → 67.
 - `tests/gates/codegen/defer_every_return_path.sh` — builds every compiler from source: async
   (non-coroutine) tail return with `CYRIUS_ASYNC=1` (host + aarch64), the `#inline` warning, the
-  crossos tcyr under qemu-aarch64 and wine, and a 15-row cx program (the tcyr's 16-byte struct
-  rows are refused on cx by name). Mutation ledger in its header. Green on x86_64, aarch64 (qemu +
+  crossos tcyr under qemu-aarch64 and wine, and a 22-row cx program (the tcyr's 16-byte struct
+  rows are refused on cx by name) whose defer body clobbers r0-r5 with a 6-arg call plus f64v2
+  work — tail shapes, tuple-2/3, `ret2`, a `?` Err, a `return Ok(x)` tail, and f64v2 / f64v4
+  returns, the last being the only rows that see r1-r3 of the cx save (a cx walker saving
+  r0/r4/r5 alone is RED on exactly those two). Mutation ledger in its header. Green on x86_64, aarch64 (qemu +
   pi), Mach-O arm64 (ecb), Mach-O x86_64 (ach, under four argv0 lengths), PE (wine) and cx; cass
   (real Windows) was down — pending for the release gate.
 

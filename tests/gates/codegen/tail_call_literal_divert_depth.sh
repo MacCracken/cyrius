@@ -33,15 +33,19 @@
 # Every expected value is computed by the shell a different way from the compiler's (a string
 # length from `wc -c`, a recursion depth from arithmetic), never typed in beside the source.
 #
-# MUTATION LEDGER — each mutant BUILT as a full cycc from mutated source and RUN:
-#   D1 record token 30 at ANY depth (the pre-review-round-3 code: drop `if (tc_depth == 1)`)
-#        -> row tco_wrapped red: SIGSEGV 139 under the pinned stack. Rows divert_value and
-#           divert_tail stay GREEN, which is exactly why the value rows alone were not enough.
-#   D2 delete the `_fnt_strmask` divert block entirely (the 6.6.4 code)
-#        -> rows divert_tail and both_positions red (tail position returns 0 for 5); row
-#           tco_wrapped stays green. D1 and D2 redden DISJOINT rows — the gate needs both.
-#   D3 arm the divert unconditionally (`tc_has_addr = 1` whenever `_tc_cfi >= 0`)
-#        -> row tco_plain red: a tail call with NO literal anywhere loses TCO too.
+# MUTATION LEDGER — each mutant BUILT as a full cycc from mutated source and RUN (re-measured
+# at 6.6.7 against the `_tc_must_divert` -> `_tc_args_divert` -> `_tc_str_literal_arg` chain):
+#   D1 `_tc_str_literal_arg` answers for a literal at ANY paren depth (its `depth == 0` /
+#      first-token test bypassed — the shape of the 6.6.5 pre-review-round-3 code)
+#        -> row tco_wrapped red: SIGSEGV 139 under the pinned stack. Rows divert_tail and
+#           divert_position stay GREEN, which is exactly why the value rows alone were not enough.
+#   D2 the `_tc_str_literal_arg` line deleted from `_tc_args_divert` (the 6.6.4 behaviour)
+#        -> rows divert_tail, both_positions, divert_position (tail position returns 0 for 3)
+#           and source_criterion red; row tco_wrapped stays green. D1 and D2 redden DISJOINT
+#           value rows — the gate needs both.
+#   D3 `_tc_args_divert` returns 1 whenever cfi >= 0 (the divert armed unconditionally)
+#        -> rows tco_plain, tco_wrapped and tco_wrong_position red: a tail call with NO
+#           literal anywhere loses TCO too.
 set -u
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 cd "$ROOT"

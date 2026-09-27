@@ -19,17 +19,22 @@
 #   a64    the crossos tcyr + the async row under qemu-aarch64 (qemu is not hardware)
 #   pe     the crossos tcyr under wine, when installed (wine is not Windows)
 #   cx     its own program below: the tcyr's 16-byte struct rows do not compile on cx (the
-#          int-class pair-return ABI is refused there by name), so the cx leg carries the
-#          tail / pair / arity-3 / `?` / ret2 rows by hand
+#          int-class pair-return ABI is refused there by name), so the cx leg carries 22 rows
+#          by hand — tail calls (zero-arg / arg / preceding the defer / self-recursive / pair),
+#          the local-first control, `return (a, b)` / `(a, b, c)` / ret2, an f64v2 and an
+#          f64v4 return (the r0..r3 quad), a `?` Err propagation and a `return Ok(x)` tail;
+#          the defer body's clobber is a 6-arg call plus f64v2 work, so every register of the
+#          cx convention (r0-r5) is overwritten unless the walker saves it
 # Every compiler is built FROM SOURCE (stage1 = build/cycc < src/main.cyr), so a source revert
 # turns this gate RED instead of being masked by a stale build/cycc.
 #
 # MUTATION LEDGER (6.6.7, each a one-edit scratch src built by build/cycc; tcyr counts are
 # x86 — aarch64 matches unless noted):
 #   the prescan divert disabled                        -> tcyr 15 RED; async RED (host + a64);
-#                                                         pe RED; cx 5 rows RED
+#                                                         pe RED; cx 6 rows RED
 #   the walker back to a rax-only push/pop             -> tcyr 12 RED (a64 11); the alignment
-#                                                         tcyr 2 RED (x86); cx 4 rows RED
+#                                                         tcyr 2 RED (x86); cx 8 rows RED
+#   the cx walker saving r0/r4/r5 only (r1-r3 dropped) -> cx 2 rows RED (f64v2, f64v4)
 #   the prescan not restored by the nested-fn snapshot -> tcyr 2 RED (after a closure / f<T>())
 #   the closure body not prescanned                    -> tcyr 1 RED
 #   the inline 106/108 exclusion removed               -> tcyr 3 RED; the warning row RED
@@ -122,15 +127,23 @@ else echo "  SKIP: pe leg — wine not installed"; fi
 
 # ---- cx ------------------------------------------------------------------------------------
 cat > "$T/cx.cyr" <<'EOF'
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/tagged.cyr"
+include "lib/simd.cyr"
 var cran = 0;
 var nfail = 0;
 fn chk(got, want, label): i64 {
     if (got != want) { syscall(1, 1, label, strlen(label)); syscall(1, 1, "\n", 1); nfail = nfail + 1; }
     return 0;
 }
-fn strlen(s): i64 { var n = 0; while (load8(s + n) != 0) { n = n + 1; } return n; }
 fn _clob6(a, b, c, d, e, f): i64 { return a + b + c + d + e + f; }
-fn clob(): i64 { var k = _clob6(1, 2, 3, 4, 5, 6); cran = cran + 1; return k; }
+# The defer body's clobber: a 6-arg call (r0-r5) AND f64v2 work, so every register of the
+# cx return convention — r0 scalar, r0:r1 pair / Ok-Err, r0:r1:r2 arity-3, r0..r3 the f64v4
+# quad — is overwritten unless EDEFER_SAVE/RESTORE carries it.
+fn _vclob(): i64 { var q: f64v2 = f64v2_make(1, 2); var w: f64v2 = f64v2_make(5, 6); return f64v2_lo_ptr(&q) + f64v2_lo_ptr(&w); }
+fn clob(): i64 { var k = _clob6(1, 2, 3, 4, 5, 6); k = k + _vclob(); cran = cran + 1; return k; }
 fn _value(): i64 { return 42; }
 fn _plus(n): i64 { return n + 1; }
 fn t_zero(): i64 { defer { clob(); } return _value(); }
@@ -143,6 +156,11 @@ fn w_tuple3(): i64 { defer { clob(); } return (7, 99, 55); }
 fn w_ret2(): i64 { defer { clob(); } ret2(7, 99); }
 fn _two(): i64 { return (7, 99); }
 fn t_pair(): i64 { defer { clob(); } return _two(); }
+fn w_v2(): f64v2 { var v: f64v2 = f64v2_make(11, 22); defer { clob(); } return v; }
+fn w_v4(): f64v4 { var v: f64v4 = f64v4_make(31, 32, 33, 34); defer { clob(); } return v; }
+fn _errv(x): i64 { return Err(x); }
+fn w_q(x): i64 { defer { clob(); } var v = _errv(x)?; return Ok(v); }
+fn t_ok(x): i64 { defer { clob(); } return Ok(x); }
 fn main(): i64 {
     cran = 0; chk(t_zero(), 42, "cx tail zero-arg: value"); chk(cran, 1, "cx tail zero-arg: defer ran");
     cran = 0; chk(t_arg(), 42, "cx tail with arg: value"); chk(cran, 1, "cx tail with arg: defer ran");
@@ -153,6 +171,12 @@ fn main(): i64 {
     cran = 0; var c, d, e = w_tuple3(); chk(d * 100 + e, 9955, "cx return (a, b, c) survives the defer body");
     cran = 0; var f, g = w_ret2(); chk(f * 1000 + g, 7099, "cx ret2 survives the defer body");
     cran = 0; var h, i = t_pair(); chk(h * 1000 + i, 7099, "cx pair tail call: value"); chk(cran, 1, "cx pair tail call: defer ran");
+    cran = 0; var vr: f64v2 = w_v2(); chk(f64v2_lo_ptr(&vr) * 100 + f64v2_hi_ptr(&vr), 1122, "cx f64v2 return survives the defer body");
+    var v4: f64v4 = w_v4();
+    chk(f64v4_lane0_ptr(&v4) * 1000000 + f64v4_lane1_ptr(&v4) * 10000 + f64v4_lane2_ptr(&v4) * 100 + f64v4_lane3_ptr(&v4), 31323334, "cx f64v4 return (r0..r3) survives the defer body");
+    chk(cran, 2, "cx vector returns: both defers ran");
+    cran = 0; var qt, qv = w_q(77); chk(qt * 1000 + qv, 1077, "cx `?` Err propagation: tag + payload survive the defer body"); chk(cran, 1, "cx `?` Err propagation: defer ran");
+    cran = 0; var ot, ov = t_ok(99); chk(ot * 1000 + ov, 99, "cx return Ok(x) tail: tag + payload survive the defer body"); chk(cran, 1, "cx return Ok(x) tail: defer ran");
     return nfail;
 }
 var rr = main();
@@ -163,7 +187,7 @@ if "$T/stage1" < "$R/src/main_cx.cyr" > "$T/cc_cx" 2>/dev/null && [ -s "$T/cc_cx
   chmod +x "$T/cc_cx" "$T/cxvm"
   if "$T/cc_cx" < "$T/cx.cyr" > "$T/cx.cyx" 2>"$T/cx.err" && [ -s "$T/cx.cyx" ]; then
     timeout 60 "$T/cxvm" < "$T/cx.cyx" > "$T/cx.out" 2>&1; r=$?
-    [ "$r" -eq 0 ] && ok "cx: 15 tail / pair / arity-3 / ret2 rows" || { bad "cx: $r rows failed"; sed 's/^/        /' "$T/cx.out" | head -8; }
+    [ "$r" -eq 0 ] && ok "cx: 22 tail / pair / arity-3 / ret2 / f64v2 / f64v4 / ?-Err / Ok rows" || { bad "cx: $r rows failed"; sed 's/^/        /' "$T/cx.out" | head -8; }
   else bad "cx: the cx program did not compile"; sed -n 1,3p "$T/cx.err"; fi
 else bad "cx: could not build src/main_cx.cyr / programs/cxvm.cyr"; fi
 
