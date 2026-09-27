@@ -6,6 +6,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.7] — 2026-09-27
 
+### Changed
+
+- **Stdlib fold — refolded at their released tags**, each bundle copied byte-identical from
+  `git show <tag>:dist/<name>.cyr` (never from a worktree `dist/`, never patched in the fold). Every
+  one pins the released cyrius 6.6.6. `docs/api-surface.snapshot` is unchanged by them (5,247 public
+  fns, exact match); the in-tree tests and gates that include them pass unchanged.
+  - **sandhi 1.9.17 → 1.10.0** — a toolchain move (pin 6.6.2 → 6.6.6). The only code difference is
+    `SANDHI_VERSION`, so the default request header now reads `User-Agent: sandhi/1.10.0`; no
+    surface change (826 fns, 196 top-level vars, identical).
+
 ## [6.6.6] — 2026-09-20
 
 The 6.6.6 repair release — the 6.6.5 queue, and then what looking at it turned up. Every one of the six

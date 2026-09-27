@@ -48,7 +48,7 @@ git entries (see Live deps below).
 
 | Lib | Folded at | Source tag | Domain |
 |-----|-----------|------------|--------|
-| `lib/sandhi.cyr` | v5.7.0 (refold v6.6.3) | sandhi 1.9.17 | HTTP/2 + JSON-RPC + service discovery + TLS policy. @1.9.14 adds `sandhi_client_set_resolver` — a consumer resolve hook, filed by bote 3.3.7, which had a tested SSRF classifier it could only apply to IP-literal hosts because `sandhi_http_get` resolves internally. Purely additive: no signature changes, no behaviour change without a hook installed. |
+| `lib/sandhi.cyr` | v5.7.0 (refold v6.6.7) | sandhi 1.10.0 | HTTP/2 + JSON-RPC + service discovery + TLS policy. @1.10.0 is a toolchain move (pin 6.6.6) with no code change beyond `SANDHI_VERSION` — the default `User-Agent` now reads `sandhi/1.10.0`; its `.deps` sidecar lists `sys` because the folded sigil calls `sys_uname`. @1.9.14 adds `sandhi_client_set_resolver` — a consumer resolve hook, filed by bote 3.3.7, which had a tested SSRF classifier it could only apply to IP-literal hosts because `sandhi_http_get` resolves internally. Purely additive: no signature changes, no behaviour change without a hook installed. |
 | `lib/vani.cyr` | v5.8.0 (refold v6.6.3) | vani 1.2.5 | Audio (ALSA PCM + ring buffer + mixer) |
 | `lib/sakshi.cyr` | v5.8.65 (refold v6.6.3) | sakshi 2.5.2 | Tracing (`_sk_fmt_int` half of the `i64::MIN` formatter class, fixed upstream @2.4.8) |
 | `lib/patra.cyr` | v5.8.65 (refold v6.6.4) | patra 1.14.3 | Storage (thread-local slots allocator-managed @1.12.12; @1.13.0 dropped its `[deps.sakshi]` 2.4.2 pin — a folded module pinning a sakshi 8 patches behind the one this snapshot ships, silently downgrading `lib/sakshi.cyr` for every transitive consumer. Code is byte-unchanged bar whitespace) |
