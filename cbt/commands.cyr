@@ -830,20 +830,18 @@ fn cmd_check(source, with_deps): i64 {
 }
 
 fn cmd_self(): i64 {
-    # Delegate to inline self-hosting check script
-    # (keeps fixup table small — full inline version needs too many relocations)
     _status("=== Self-Hosting Check ===");
-    # v6.6.6 — PE arm. The /bin/sh script below uses `cat`, `chmod` and `cmp`, none of
-    # which is a Windows command, and the fork that would have run it is a -1 stub
-    # (lib/syscalls_windows.cyr) whose wait decoded an uninitialised status slot — so on
-    # Windows `cyrius self` reported a verdict about a self-host that never happened.
-    # `_win_cmd_self` reproduces the SAME contract natively (two CreateProcessW
-    # redirects + a byte compare) rather than refusing, because cycc genuinely does
-    # self-host on cass and this verb is how a user checks it. CHANGELOG [6.6.6].
+    # v6.6.6 — PE arm. The fork that the POSIX arm used to run a /bin/sh script through is
+    # a -1 stub on Windows (lib/syscalls_windows.cyr) whose wait decoded an uninitialised
+    # status slot — so on Windows `cyrius self` reported a verdict about a self-host that
+    # never happened. `_win_cmd_self` reproduces the SAME contract natively (two
+    # CreateProcessW redirects + a byte compare) rather than refusing, because cycc
+    # genuinely does self-host on cass and this verb is how a user checks it.
+    # CHANGELOG [6.6.6].
     #ifdef CYRIUS_TARGET_WIN
     return _win_cmd_self();
     #endif
-    # v6.6.6 — THE PER-TARGET FORK, on POSIX too. This script named `src/main.cyr`
+    # v6.6.6 — THE PER-TARGET FORK, on POSIX too. The old script named `src/main.cyr`
     # unconditionally, and on aarch64 / either macOS that fork compiles cleanly into a
     # host-native compiler carrying the x86 backend — so the verb printed a verdict about
     # a compiler nobody ships (measured: "FAIL: cycc!=cycc" on pi for a compiler that
@@ -854,49 +852,67 @@ fn cmd_self(): i64 {
         _err_ctx("self-host: the compiler source for this target is missing", self_src);
         return 1;
     }
-    var pid = sys_fork();
-    if (pid == 0) {
-        var argv[40];   # N BYTES per CLAUDE.md buffer contract: 4 ptrs need 32 B
-        store64(&argv, "/bin/sh");
-        store64(&argv + 8, "-c");
-        var sb = str_builder_new();
-        str_builder_add_cstr(sb, "F=");
-        str_builder_add_cstr(sb, self_src);
-        str_builder_add_cstr(sb, ";cycc=/tmp/cyr_cc5_$$;ccr=/tmp/cyr_ccr_$$;cc4=/tmp/cyr_cc4_$$;rc=1;");
-        str_builder_add_cstr(sb, "cat $F|");
-        str_builder_add_cstr(sb, _cc);
-        # ⚠ THE COMPARISON MUST SEE TWO UNSIGNED OUTPUTS. Step 2 has to RUN step 1's
-        # output, and on Apple Silicon AMFI SIGKILLs an unsigned arm64 Mach-O — but
-        # `codesign` REWRITES the file it signs (LC_CODE_SIGNATURE), so signing $cycc in
-        # place and comparing it against $cc4 reports a 2,396-byte difference for a
-        # perfect fixpoint (measured on ecb; the same artifact behind the v6.0.44
-        # "x86-macOS doesn't self-host" retraction). Sign a COPY and compare the
-        # pristine pair — the shape the ecb cross-OS leg already uses (`cp r1 r1r`).
-        # One script for every POSIX host so the two arms cannot drift; on Linux the
-        # copy is the only cost and the compare is unchanged.
-        str_builder_add_cstr(sb, ">$cycc&&cp $cycc $ccr&&chmod +x $ccr&&");
-        #ifdef CYRIUS_TARGET_MACOS
-        # `||true`: on Intel macOS ad-hoc signing is refused and the unsigned binary runs
-        # anyway, so a codesign failure must not fail the self-host.
-        str_builder_add_cstr(sb, "(codesign -s - -f $ccr 2>/dev/null||true)&&");
-        #endif
-        str_builder_add_cstr(sb, "cat $F|$ccr>$cc4&&cmp -s $cycc $cc4&&rc=0;");
-        str_builder_add_cstr(sb, "if [ $rc -eq 0 ];then echo '  PASS: cycc==cycc byte-identical';");
-        str_builder_add_cstr(sb, "else echo '  FAIL: cycc!=cycc';fi;");
-        # The pre-6.6.6 script left both ~1.2 MB temps in /tmp on every run; this one
-        # adds a third, so it cleans up all of them.
-        str_builder_add_cstr(sb, "rm -f $cycc $ccr $cc4;exit $rc");
-        var cmd = str_builder_build(sb);
-        store64(&argv + 16, str_data(cmd));
-        store64(&argv + 24, 0);
-        sys_execve("/bin/sh", &argv, _envp);
-        sys_exit(127);
+    if (_cc == 0) {
+        _err("self-host: cycc not found. Install Cyrius or set CYRIUS_HOME.");
+        return 1;
     }
-    var status_buf[1];
-    sys_waitpid(pid, &status_buf, 0);
-    var status = load32(&status_buf);
-    if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
+    if (file_exists(_cc) == 0) {
+        _err_ctx("self-host: compiler not found", _cc);
+        return 1;
+    }
+    # ⛔ 6.6.9 bite 10 (CVE-49) — NATIVE, IN THE PRIVATE TEMP DIR. The POSIX arm used to
+    # fork `/bin/sh -c` over a script that staged all three compilers at PREDICTABLE SHARED
+    # names — `/tmp/cyr_cc5_$$`, `/tmp/cyr_ccr_$$`, `/tmp/cyr_cc4_$$` — writing them with `>`
+    # and `cp` (no O_EXCL, following a pre-planted symlink) and then EXECUTING `$ccr`. That
+    # is the CVE-35/CVE-36 class the 0700 exclusive-mkdir directory closed everywhere else
+    # at v6.4.81; this verb predated it and was never moved. Linux's protected_symlinks /
+    # protected_regular blunt it; macOS has no equivalent. Now the two steps and the
+    # verdict go through the SAME helpers `cmd_soak` uses — `_self_host_step` (raw pipe,
+    # never `compile()`'s prepend; signs a COPY on macOS so the compared pair stays
+    # pristine) and `_self_host_same` (a byte compare with a non-empty floor) — over
+    # `_cbt_tmpexe` / `_cbt_tmpfile` names, and every path removes what it staged.
+    # `tests/gates/toolchain/cbt_no_shared_tmp_paths.sh` fails on a `/tmp/` path in any cbt
+    # string literal. CHANGELOG [6.6.9]
+    var t1 = _cbt_tmpexe("self_a");
+    var t2 = _cbt_tmpfile("self_b");
+    var s1 = _self_host_step(_cc, self_src, t1);
+    if (s1 != 0) {
+        _self_step_failed(1, s1, self_src);
+        sys_unlink(t1);
+        return 1;
+    }
+    var s2 = _self_host_step(t1, self_src, t2);
+    if (s2 != 0) {
+        _self_step_failed(2, s2, self_src);
+        sys_unlink(t1);
+        sys_unlink(t2);
+        return 1;
+    }
+    var same = _self_host_same(t1, t2);
+    sys_unlink(t1);
+    sys_unlink(t2);
+    if (same == 1) {
+        println("  PASS: cycc==cycc byte-identical");
+        return 0;
+    }
+    println("  FAIL: cycc!=cycc");
     return 1;
+}
+
+# `cyrius self`'s named step failure: which step, its status, and the source. A step that
+# already named its own failure (`_self_host_step_macos`'s stage refusal returns -1 after
+# `_err_ctx`) is not given a second, vaguer line. CHANGELOG [6.6.9]
+fn _self_step_failed(step, rc, src): i64 {
+    if (rc < 0) { return 0; }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "self-host step ");
+    str_builder_add_int(sb, step);
+    if (step == 1) { str_builder_add_cstr(sb, " (the installed compiler) exited "); }
+    else { str_builder_add_cstr(sb, " (the freshly built compiler) exited "); }
+    str_builder_add_int(sb, rc);
+    str_builder_add_cstr(sb, " compiling");
+    _err_ctx(str_data(str_builder_build(sb)), src);
+    return 0;
 }
 
 # v6.2.40: parse `[deps].stdlib = [...]` from the cwd's cyrius.cyml,

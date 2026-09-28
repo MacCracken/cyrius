@@ -200,6 +200,36 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `build_log_informative.sh` row 6 (missing file → one `error:` line naming it; rejected source →
   the compiler's status; nothing of check's verdict on stdout; test's row); the 6.6.8 CLI fails
   seven of its ten assertions and the over-fix (never say anything) fails the rejected-source rows.
+- **CVE-49: `cyrius self` no longer stages and executes compilers at predictable shared `/tmp`
+  names, and a failed macOS self-host stage no longer leaks.** (bite 10; audit + a 6.6.6 review
+  find.) **Root cause:** `cmd_self`'s POSIX arm forked `/bin/sh -c` over a script that wrote step
+  1's compiler to `/tmp/cyr_cc5_$$`, copied it to `/tmp/cyr_ccr_$$` and EXECUTED that copy —
+  predictable names, no O_EXCL, a pre-planted symlink followed. Another local user who creates
+  the names first can clobber a file the invoker can write, or swap the binary between the `cp`
+  and the exec (the CVE-35/CVE-36 class; Linux's protected_symlinks/protected_regular blunt it,
+  macOS has nothing). The same script scored a **0-byte compiler as PASS**, rc 0 (`/bin/sh` runs
+  an empty executable as an empty script; `cmp` of two empty files is equal) — measured with the
+  6.6.8 CLI on x86-64 Linux, pi, ecb and ach. Separately `_self_host_step_macos` returned before
+  unlinking its staged copy when `_copy_binary` failed, and `_copy_binary` left its partial or
+  empty dst — so a 0-byte or unreadable `cc` (or ENOSPC mid-copy) left `selfhost_signed` and,
+  since the exit sweep is rmdir-only, the whole `cyrius-<pid>` dir (reproduced on ecb and ach).
+  **Fix:** the POSIX arm is native — `_self_host_step` twice and `_self_host_same`, the helpers
+  `cmd_soak` already used, over `_cbt_tmpexe`/`_cbt_tmpfile` names in the private 0700 dir —
+  and removes what it staged on every path; a failed step is named (`error: self-host step 1
+  (the installed compiler) exited 127 compiling: src/main.cyr`) instead of folding into
+  `FAIL: cycc!=cycc`, and a missing compiler is named up front. `_copy_binary` removes dst on any
+  failure; `_self_host_step_macos` unlinks its copy on every return and names a failed chmod
+  (a failed ad-hoc sign stays non-fatal: Intel macOS refuses it and runs the binary anyway).
+  Entry appended to `docs/audit/2026-09-03-security-audit.md`; the next CVE id is 50. Gate:
+  `cbt_no_shared_tmp_paths.sh` — no `/tmp/` in any cbt string literal (a comment- and
+  char-literal-aware scanner with a self-test and a 2000-literal floor), `cyrius self` over a
+  stub compiler (PASS with step 2 run from the private dir; step-1, step-2, mismatch and 0-byte
+  failures named, non-zero, nothing left under `$TMPDIR`), the extracted `_copy_binary` run on an
+  empty and an unreadable source, and a static every-return-unlinks check on the macOS step. The
+  6.6.8 `cmd_self` fails axes 1-5 and 3b; each of three one-line mutants fails its own axis.
+  `cbt_fork_sites_have_pe_arm.sh`'s fork-site floor drops 16 → 15 (the script's fork is gone).
+  **Verified on real hardware** with this tree's CLI and compiler: `cyrius self` PASSes on ecb,
+  ach and pi with nothing left behind, and the 0-byte compiler is refused on all three.
 
 ### Downstream
 

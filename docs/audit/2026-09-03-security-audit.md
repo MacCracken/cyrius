@@ -2,15 +2,16 @@
 
 **Scope:** the untrusted-source-input surface. Previous full audit:
 `docs/audit/2026-07-27-security-audit.md` (CVE-32…CVE-36) at cycc 6.4.82.
-**Next free identifier after this document: CVE-49.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
+**Next free identifier after this document: CVE-50.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
 document are **withdrawn** but still consume their ids.) CVE-43 was consumed at 6.6.5,
 **CVE-44 and CVE-45 at 6.6.6** — the release installer's fixed `/tmp` staging, and a forged `#@file` from an included file —
 and **CVE-46, CVE-47 and CVE-48 at 6.6.7** (a `secret var` inside a closure was never zeroised; a `secret var` in a
 fn whose `return f(..)` was compiled as a tail call was never zeroised; on agnos a server bound to 127.0.0.1
-listened on the network); all six are appended below.
+listened on the network), and **CVE-49 at 6.6.9** (`cyrius self` staged and executed compilers at
+predictable shared `/tmp` names); all seven are appended below.
 ⚠ **This line read "next free: CVE-42" while CLAUDE.md read "the next CVE number is 43" and this document ran 39-41.**
 Two authorities, two answers, and nothing reconciled them. CLAUDE.md is the one every closeout reads, so **42 is
-retired unused** and CVE-43 is the entry appended below. Anything below 49 now collides.
+retired unused** and CVE-43 is the entry appended below. Anything below 50 now collides.
 
 Run as part of the band K closeout, as nine parallel audit dimensions over the v6.5.x minor with
 an adversarial verification pass over the highest-severity findings. Everything recorded here was
@@ -658,3 +659,63 @@ Gate: `tests/gates/toolchain/deps_cache_capture_failure_named.sh` (the filing's 
 TMPDIR routing and a missing/unwritable TMPDIR, the hasher out of inodes and full, lint, a
 failing `update-index`, and static checks that the capture is opened before the fork and the
 verdict judged before the cleanup), mutation-proven per mechanism.
+
+---
+
+## CVE-49 — `cyrius self` staged and EXECUTED compilers at predictable shared `/tmp` names
+
+*Appended 2026-09-28 (cyrius 6.6.9, bite 10), found by the 6.6.6 review of the self-host verbs
+(the adjacency of `cmd_soak`'s move onto `_self_host_step`). Not part of the 2026-09-03 sweep:
+recorded here because this is the live ledger and the id has to come from one place.*
+
+| | |
+|---|---|
+| **Severity** | **Medium (P2)** — local; another user on the same host can make `cyrius self` run their code as the invoking user, or clobber a file the invoking user can write. Silent |
+| **Affected** | `cbt/commands.cyr` `cmd_self`, POSIX arm (Linux, macOS arm64/x86, aarch64 Linux), from before the v6.4.81 private temp dir through cyrius 6.6.8. The PE arm (`_win_cmd_self`, 6.6.6) was never affected |
+| **Fixed** | 6.6.9 |
+| **Class** | CVE-35/CVE-36 (predictable shared-`/tmp` names for staged-and-executed binaries — the reason the private temp dir exists); cf. CVE-44 (the installer's fixed `/tmp` staging of signature inputs, a different threat) |
+
+**Vector.** `cmd_self` forked `/bin/sh -c` over a script that began
+`cycc=/tmp/cyr_cc5_$$;ccr=/tmp/cyr_ccr_$$;cc4=/tmp/cyr_cc4_$$`, wrote step 1's compiler with
+`>$cycc`, copied it with `cp $cycc $ccr`, and then **executed `$ccr`** (`cat $F|$ccr>$cc4`).
+`$$` is the shell's PID, which is predictable, and none of the three writes is exclusive. So a
+local user who creates those names first decides what happens: a symlink at `/tmp/cyr_cc5_<pid>`
+makes the redirect overwrite any file the victim can write with a compiler binary; a regular
+file they own at `/tmp/cyr_ccr_<pid>` (mode 0666) is truncated and written by `cp` but stays
+THEIRS, so they can rewrite it between the copy and the exec and the victim runs their program.
+v6.4.81 (CVE-35/CVE-36) had moved every other cbt temp into `_cbt_tmpdir()`'s 0700
+exclusive-mkdir directory; this verb predated it and was never migrated. On Linux the
+`fs.protected_symlinks=1` / `fs.protected_regular=1` defaults blunt both halves; **macOS has no
+equivalent** — and `/tmp` there is shared by every local user — which is where the verb is most
+often run (ecb, ach). `grep` over cbt/ confirmed it was the only fixed `/tmp/<name>` left in a
+cbt string.
+
+**Also found while fixing it (same script, no separate id).** The script scored a **0-byte
+compiler as a PASS**, rc 0: `/bin/sh` runs an empty executable as an empty SCRIPT (exit 0, no
+output), so both steps "succeeded" and `cmp` of two empty files is equal. Measured with the
+6.6.8 CLI on x86-64 Linux, pi and ach — a green self-host verdict for no compiler at all.
+
+**Fix.** The POSIX arm is native: `_self_host_step(_cc, src, t1)`, `_self_host_step(t1, src,
+t2)`, `_self_host_same(t1, t2)` — the helpers `cmd_soak` already used — over `_cbt_tmpexe` /
+`_cbt_tmpfile` names inside the private directory, removing what it staged on every path. The
+step runs the compiler RAW (no `compile()` prepend), signs a COPY on macOS, and refuses an
+empty output; `_self_host_same` has a non-empty floor, so a 0-byte compiler is now
+`error: self-host step 1 (the installed compiler) exited 127` on Linux and `could not stage a
+signable copy` on macOS. A failed step is named with its status and source instead of folding
+into `FAIL: cycc!=cycc`. Packed with the same bite's temp-hygiene fix to the helper it now
+shares: `_copy_binary` removes its dst when it fails, and `_self_host_step_macos` removes its
+staged copy on every return — before, a failed stage (a 0-byte or unreadable `cc`, ENOSPC
+mid-copy) left `selfhost_signed` behind and, because the exit sweep is rmdir-only, the whole
+`cyrius-<pid>` directory with it (reproduced on ecb and ach with the 6.6.8 CLI; gone with the
+fix).
+
+**Verified.** `tests/gates/toolchain/cbt_no_shared_tmp_paths.sh`: no string literal in any
+cbt/*.cyr names a `/tmp/` path (a lexer-faithful scanner — comments and char literals skipped —
+with a self-test and a 2000-literal floor); `cyrius self` over a stub compiler that writes
+itself PASSes with step 2 run from under `$TMPDIR/cyrius-<pid>/`, and each failure shape
+(step 1, step 2, differing outputs, a 0-byte compiler) is named, non-zero, and leaves `$TMPDIR`
+empty; the real `_copy_binary`, extracted and run, leaves no dst for an empty or unreadable
+source. The 6.6.8 `cmd_self` fails axes 1-5 and 3b. **On real hardware** with this tree's CLI
+and a compiler built from this tree: `cyrius self` PASSes on ecb (macOS arm64), ach (Intel
+macOS) and pi (aarch64 Linux) with nothing left under the temp base, and the 0-byte compiler is
+refused on all three where the 6.6.8 CLI printed PASS.

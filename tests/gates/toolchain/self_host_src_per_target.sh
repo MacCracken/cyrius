@@ -53,7 +53,9 @@
 #       ("decides on _file_size()" — and see the discovery-predicate note below: the
 #        FIRST cut of axis 6 met this mutant with its corpus floor instead)
 #   M7. cmd_soak step 2 calls `_pulsar_raw_compile` directly (runs it UNSIGNED) -> axis 7 RED
-#   M7b. cmd_self's /bin/sh script loses its `codesign`                         -> axis 7 RED
+#   M7b. (retired 6.6.9: `cmd_self` no longer hands its steps to /bin/sh — both go through
+#        `_self_host_step`, so M7's shape covers it; the /bin/sh arm below stays for any
+#        future loop that shells out)
 #   M8. `_self_host_gate` pointed at src/main_aarch64_native.cyr (not build/cycc's fork)
 #                                                                                -> axis 6 RED
 #   M9. `CC_PATH = _root_path("build/cyrius")` (shape (b)'s premise broken)     -> axis 6 RED
@@ -364,8 +366,8 @@ done < "$D/loops"
 # THE SIGNING TEST IS "EVERY RUN GOES THROUGH `_self_host_step`", not "the word codesign
 # appears somewhere in the body": mutant M7 moved ONE of soak's two steps back to a direct
 # `_pulsar_raw_compile` and a per-body flag still read as signed, because the OTHER step
-# was fine. `cmd_self` hands the whole two-step to `/bin/sh`, so its script is checked for
-# `codesign` instead. `_win_*` loops are exempt from the signing half only: PE has no
+# was fine. A loop that hands its steps to `/bin/sh` is checked for `codesign` in its
+# script instead (`cmd_self` did until 6.6.9, CVE-49; it is native now). `_win_*` loops are exempt from the signing half only: PE has no
 # codesign and its spawn helper IS `_win_compile_spawn`.
 echo "axis 7 — ⭐ host-compiler loops sign what they run and compare bytes:"
 NHOST=0

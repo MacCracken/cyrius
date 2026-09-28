@@ -1440,3 +1440,9 @@ _chk_gate "$ROOT/tests/gates/toolchain/deps_cache_capture_failure_named.sh"
 # stdlib leaf is locked, a stdlib-only project gets its first lock (deps AND build), an empty
 # lock is present-but-empty, and `deps --verify` fails a file with no lock line, by name.
 _chk_gate "$ROOT/tests/gates/toolchain/deps_lock_new_leaf_locked.sh"
+
+# 6.6.9 (bite 10, CVE-49) — no cbt string literal names a shared /tmp/ path, and `cyrius self`
+# stages both compilers in the private 0700 temp dir (the /bin/sh script at /tmp/cyr_*_$$ is
+# gone), names a failed step, refuses a 0-byte compiler (the script scored it PASS), and leaves
+# nothing behind; `_copy_binary` leaves no dst when it fails (the macOS stage leak).
+_chk_gate "$ROOT/tests/gates/toolchain/cbt_no_shared_tmp_paths.sh"
