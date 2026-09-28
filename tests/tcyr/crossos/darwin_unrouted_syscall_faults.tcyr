@@ -48,6 +48,21 @@ fn main(): i64 {
     assert(r2 != pid2, "a literal unrouted number does NOT re-run the previous call");
     assert_eq(r2, 0 - 78, "a literal unrouted number returns -ENOSYS (-78)");
 
+    # The stdlib must not be the thing that faults. arm64-macOS resolves the aarch64-LINUX peer,
+    # whose pause / epoll_wait / inotify issued numbers Darwin has no row for (1073, raw 232,
+    # 26/27/28) — a stale x16 before the fix, a SIGSYS after it — so they decline instead, as
+    # the x86-macOS peer's sys_pause has since 6.6.5. Asserted with SIGSYS still ignored, so a
+    # wrapper that regressed to issuing its number shows up as a FAIL here, not a dead process.
+    test_group("Darwin: the peer declines what Darwin does not have (-ENOSYS, no syscall)");
+    assert_eq(sys_pause(), 0 - 78, "sys_pause() == -78 (Darwin has no pause; would block on Linux)");
+    #ifdef CYRIUS_ARCH_AARCH64
+    var evs[64];
+    assert_eq(sys_epoll_wait(0, &evs, 1, 0), 0 - 78, "sys_epoll_wait() == -78 (no epoll on Darwin)");
+    assert_eq(sys_inotify_init(), 0 - 78, "sys_inotify_init() == -78");
+    assert_eq(sys_inotify_add_watch(0, ".", 2), 0 - 78, "sys_inotify_add_watch() == -78");
+    assert_eq(sys_inotify_rm_watch(0, 1), 0 - 78, "sys_inotify_rm_watch() == -78");
+    #endif
+
     test_group("Darwin: by default an unrouted syscall kills the process with SIGSYS");
     assert_eq(signal_default(12), 0, "signal_default(SIGSYS) == 0");
     var child = sys_fork();

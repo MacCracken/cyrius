@@ -172,6 +172,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   forked child dies of SIGSYS) — 6 of 11 RED on ecb and 2 of 11 RED on ach with 6.6.7, 11/11 on
   both with this change.
 
+- **The stdlib stops issuing syscall numbers Darwin cannot route.** (bite 2; the "Mach-O builds
+  that pull in sigil or yukti warn `not routed`" report from the 6.6.7 review.) Every arm64-macOS
+  build that included `lib/syscalls.cyr` warned on 1073, 232, 26, 27 and 28, and every x86-macOS
+  build that reached `lib/thread_local.cyr` or `lib/dynlib.cyr` (cyrsign, via sigil) on 158 —
+  each a live stale-x16 call or SIGSYS if reached. **Fix:** arm64-macOS resolves the
+  aarch64-LINUX peer, whose `sys_pause` (ppoll alias 1073), `sys_epoll_wait` (raw 232) and
+  `sys_inotify_init` / `_add_watch` / `_rm_watch` (26/27/28) now decline with -ENOSYS under
+  `#ifdef CYRIUS_TARGET_MACOS` without compiling the number — the x86-macOS peer's `sys_pause`
+  has since 6.6.5. The raw 232 was invisible to both route gates (macho_route_parity reads only
+  `syscall(SYS_*` names; raw_syscall_literals_routed skips the peers by name).
+  `dynlib_bootstrap_tls` declines on x86-macOS (Darwin has no arch_prctl, and no ld-linux to
+  bootstrap), and `thread_local`'s `_tlocal_install` keeps its x86 arch_prctl arm out of a macOS
+  build (never called there; -ENOSYS if it ever is). `crossos/fdlopen_dynlib_decline.tcyr`'s x86
+  non-Linux arm read "nothing to assert (fdlopen/dynlib decline on macOS/PE already)" and asserted
+  `1 == 1` while the decline did not exist — on ach the call was a SIGSYS kill (rc 140 without
+  the fix); it now asserts `dynlib_bootstrap_tls() == 0`. `darwin_unrouted_syscall_faults.tcyr`
+  gains the peer-decline group (16/16 on ecb, 12/12 on ach).
+
 ## [6.6.7] — 2026-09-27
 
 The first of three SMALL releases that the post-6.6.6 issue track is split into (roadmap.md, *The 6.6.7

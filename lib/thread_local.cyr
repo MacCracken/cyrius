@@ -250,9 +250,19 @@ fn thread_local_alloc(): i64 {
 # aarch64: msr TPIDR_EL0, tls
 # Returns 0 on success, non-zero on failure (x86 only; aarch64 never
 # fails at EL0).
+# v6.6.8: never called on macOS (thread_local_init returns before it; the slots live in a
+# process-global array there), but the x86 arm still COMPILED there, and Darwin has no
+# arch_prctl — every x86-macOS build that included this file warned "syscall 158 not routed".
+# Declined with -ENOSYS rather than guarded to nothing, so a future caller gets an error and
+# not a fall-off-the-end 0 that reads as success. CHANGELOG [6.6.8]
 fn _tlocal_install(tls): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    return 0 - 78;
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
     #ifdef CYRIUS_ARCH_X86
     return syscall(158, 0x1002, tls);
+    #endif
     #endif
     #ifdef CYRIUS_ARCH_AARCH64
     asm {

@@ -748,8 +748,16 @@ fn sys_pipe(fds): i64 {
 # aarch64 has no bare `pause` syscall; emulate via ppoll with NULL
 # fds and NULL timeout — equivalent to pause(2) semantics
 # (block until a signal handler interrupts it).
+# v6.6.8 — arm64-macOS (which resolves THIS peer) declines with -ENOSYS, the x86-macOS peer's
+# answer since 6.6.5: Darwin has no pause(2) and ppoll is unrouted there (SYS_PPOLL's note in
+# macho_route_parity.sh says why a bare poll renumber would be wrong). Before ESYSXLAT's
+# chain-head default this issued a stale x16; after it, a SIGSYS. CHANGELOG [6.6.8]
 fn sys_pause(): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    return 0 - 78;
+    #else
     return syscall(SYS_PPOLL, 0, 0, 0, 0, 0);
+    #endif
 }
 
 # sys_setsid / sys_waitpid / WIFEXITED / WEXITSTATUS / WIFSIGNALED /
@@ -804,8 +812,16 @@ fn epoll_event_new(events, data): i64 {
 # gates only run on x86; caught on real pi hardware). Issue the x86 epoll_wait number
 # (232) instead; ESYSXLAT arg-extends it to epoll_pwait(...,NULL sigmask,0). The x86
 # sibling issues 232 natively, so the wrapper surface matches. See CHANGELOG [6.4.42].
+# v6.6.8: -ENOSYS on arm64-macOS — Darwin has no epoll (kqueue is a different API, see
+# sys_kqueue below), and the raw 232 reached Darwin unrouted. It was invisible to both route
+# gates: macho_route_parity reads only `syscall(SYS_*` names and raw_syscall_literals_routed
+# excludes the peers by name. CHANGELOG [6.6.8]
 fn sys_epoll_wait(epfd, events, maxevents, timeout): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    return 0 - 78;
+    #else
     return syscall(232, epfd, events, maxevents, timeout);
+    #endif
 }
 
 # sys_timerfd_create moved to lib/syscalls_linux_common.cyr at v5.11.20.
@@ -852,12 +868,35 @@ enum InotifyEvent {
     IN_CLOSE_WRITE = 8;
 }
 
+# v6.6.8: all three decline with -ENOSYS on arm64-macOS, which resolves this peer — Darwin
+# has no inotify (file events are kqueue/FSEvents), so 26/27/28 reached it unrouted, a stale
+# x16 before ESYSXLAT's chain-head default and a SIGSYS after it. CHANGELOG [6.6.8]
+# One definition each with the arms INSIDE, not two definitions under #ifdef/#else — the
+# #ifdef-blind static tools would read the pair as a duplicate (signal_ignore's note).
 # Initialise an inotify instance and return its fd.
-fn sys_inotify_init(): i64 { return syscall(SYS_INOTIFY_INIT1, 0); }
+fn sys_inotify_init(): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    return 0 - 78;
+    #else
+    return syscall(SYS_INOTIFY_INIT1, 0);
+    #endif
+}
 # Add a watch on a path for inotify events
-fn sys_inotify_add_watch(fd, path, mask): i64 { return syscall(SYS_INOTIFY_ADD_WATCH, fd, path, mask); }
+fn sys_inotify_add_watch(fd, path, mask): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    return 0 - 78;
+    #else
+    return syscall(SYS_INOTIFY_ADD_WATCH, fd, path, mask);
+    #endif
+}
 # Remove an inotify watch
-fn sys_inotify_rm_watch(fd, wd): i64 { return syscall(SYS_INOTIFY_RM_WATCH, fd, wd); }
+fn sys_inotify_rm_watch(fd, wd): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    return 0 - 78;
+    #else
+    return syscall(SYS_INOTIFY_RM_WATCH, fd, wd);
+    #endif
+}
 
 # v5.7.35 (drm/luks/security) + v5.11.18 (kybernet socket family) —
 # sys_getdents64 / sys_getrandom / sys_landlock_create_ruleset /

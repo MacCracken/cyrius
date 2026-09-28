@@ -120,8 +120,12 @@ fn main(): i64 {
     xunlink(so2);
     #endif
     #ifndef CYRIUS_TARGET_LINUX
-    test_group("x86 non-Linux: nothing to assert (fdlopen/dynlib decline on macOS/PE already)");
-    assert_eq(1, 1, "skipped");
+    # v6.6.8: this arm used to read "nothing to assert (fdlopen/dynlib decline on macOS/PE
+    # already)" and assert 1 == 1 — while dynlib_bootstrap_tls did NOT decline on x86-macOS:
+    # it issued arch_prctl (158), which Darwin does not route, so on ach it was a SIGSYS kill.
+    # A check that repeats the claim it should test shares the defect. CHANGELOG [6.6.8]
+    test_group("x86 non-Linux: the TLS bootstrap declines (returns 0, issues no arch_prctl)");
+    assert_eq(dynlib_bootstrap_tls(), 0, "dynlib_bootstrap_tls() == 0 (x86 macOS / PE / agnos)");
     #endif
     #endif
     return assert_summary();
