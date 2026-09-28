@@ -1,9 +1,6 @@
-# `cyrius distlib <profile>` keeps a stdlib leaf in `.deps` when one of its names appears only in a comment or a string — OPEN
+# `cyrius distlib <profile>` keeps a stdlib leaf in `.deps` when one of its names appears only in a comment or a string — RESOLVED
 
-**Status:** 🟡 **OPEN** — Verified 2026-09-26 on 6.6.2 (vani's pin) and 6.6.6 (the reproduction
-below, run verbatim), and in source at HEAD `d5697d73`: `_distlib_bundle_refs`
-(`cbt/commands.cyr:3718`) scans the bundle as raw text and skips neither `#` comments nor string
-literals.
+**Status:** ✅ **RESOLVED v6.6.9** (bite 8) — the profile prune blanks the bundle's comments, strings and char literals (the shared `_src_blank_noncode`) and reads a kept `include "lib/<leaf>.cyr"` line as a reference; the repro prints `syscalls alloc` for all three forms. Residual, documented: a parameter or local that reuses a stdlib top-level name still keeps that leaf (names, not resolutions). Gate: `tests/gates/toolchain/distlib_profile_sidecar.sh` axes 8-10.
 **Placement:** **6.6.9 bite 8** — distlib: the profile prune ignores comments and strings; the verify unit splices named-dep modules and fails loudly; cbt _file_size works on PE. Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Discovered:** 2026-09-26 during vani's busy-PCM open fix, when comment text added to
 `src/alsa.cyr` — vani's whole `core` profile — grew `dist/vani-core.deps` from 3 leaves to 8.

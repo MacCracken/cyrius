@@ -130,5 +130,34 @@ OUT=$( cd "$D" && "$CY" build -v src/main.cyr build/v 2>&1 )
 r "$(echo "$OUT" | grep -c 'x86_64\] \[verbose\]')"        0 "-v header does not collide with the verbose trace"
 r "$(echo "$OUT" | grep -c '^\[verbose\] compiler:')"      1 "-v still emits its trace"
 
+# 6 — 6.6.9 bite 10: `run`, `check` and `test` say a compile failure ONCE, through the
+# same two questions as `build` (`_compile_fail_verdict`, cbt/build.cyr). Before it:
+#   run nothere.cyr   -> `error: no such file` THEN a vaguer `error: compile failed`
+#   check nothere.cyr -> `error: no such file` THEN `error: nothere.cyr` (and that line
+#                        was split: `error: ` on stderr, the NAME on stdout)
+#   test nothere.tcyr -> `error: no such file` THEN `FAIL: nothere.tcyr (compile error)`,
+#                        a missing file called a compile error
+# The missing-file rows count `error:` lines (exactly one — the named cause), and the
+# rejected-source rows require the compiler's status, so the over-fix (say nothing on
+# every failure) is as RED as the original.
+for v in run check; do
+  OUT=$( cd "$D" && "$CY" $v nothere.cyr 2>&1 ); RCV=$?
+  r "$(echo "$OUT" | grep -c '^error:')"                  1 "$v of a missing file prints ONE error line"
+  r "$(echo "$OUT" | grep -c 'error: no such file: nothere.cyr')" 1 "…and that line names the cause"
+  if [ "$RCV" = 0 ]; then echo "FAIL: $v of a missing file exited 0"; FAIL=1; fi
+  OUT=$( cd "$D" && "$CY" $v src/bad.cyr 2>&1 ); RCV=$?
+  r "$(echo "$OUT" | grep -c '(compiler exit [0-9]*)')"   1 "$v of a rejected source names the compiler's exit status once"
+  if [ "$RCV" = 0 ]; then echo "FAIL: $v of a rejected source exited 0"; FAIL=1; fi
+done
+OUT=$( cd "$D" && "$CY" check src/bad.cyr 2>/dev/null )
+r "$(echo "$OUT" | grep -c 'bad.cyr')"                    0 "check's error verdict is whole on stderr (no name leaks to stdout)"
+OUT=$( cd "$D" && "$CY" test nothere.tcyr 2>&1 ); RCV=$?
+r "$(echo "$OUT" | grep -c 'compile error')"              0 "test does not call a MISSING file a compile error"
+r "$(echo "$OUT" | grep -c 'FAIL: nothere.tcyr')"         1 "…but still prints the file's FAIL row"
+if [ "$RCV" = 0 ]; then echo "FAIL: test of a missing file exited 0"; FAIL=1; fi
+cp "$D/src/bad.cyr" "$D/bad.tcyr"
+OUT=$( cd "$D" && "$CY" test bad.tcyr 2>&1 )
+r "$(echo "$OUT" | grep -c 'FAIL: bad.tcyr: compile error (compiler exit [0-9]*)')" 1 "test of a rejected source is a compile error WITH the compiler's status"
+
 if [ "$FAIL" != 0 ]; then echo "FAIL: cyrius build's log is not informative"; exit 1; fi
-echo "PASS build_log_informative (build reports size, failure status, and path provenance)"
+echo "PASS build_log_informative (build reports size, failure status, and path provenance; run/check/test say a compile failure once)"

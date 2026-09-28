@@ -254,13 +254,19 @@ fn _cli_wants_help(): i64 {
 fn _cli_help_extra(verb): i64 {
     if (streq(verb, "deps") == 1) {
         println("");
-        println("Resolve [deps.NAME] entries from cyrius.cyml into lib/. Each dep is");
-        println("git-cloned into ~/.cyrius/deps/<name>/<tag>/ and symlinked into lib/.");
-        println("  --verify    verify cyrius.lock matches the working lib/.");
+        println("Resolve [deps] stdlib leaves and [deps.NAME] entries from cyrius.cyml into");
+        println("lib/. Each named dep is git-cloned into ~/.cyrius/deps/<name>/<tag>/ and its");
+        println("modules are COPIED into lib/ (a symlinked lib/ is refused). cyrius.lock is");
+        println("written whenever lib/ gains a file it does not cover — including the first");
+        println("lock of a stdlib-only project and a newly declared stdlib leaf.");
+        println("  --verify    verify cyrius.lock matches the working lib/: every locked hash,");
+        println("              and every .cyr under lib/ has a line (an unlocked file FAILS).");
         println("  --lock      re-hash lib/ into cyrius.lock, keeping the commit pins.");
         println("  --no-lock   suppress the cyrius.lock write for this run.");
-        println("  --relock    accept a stdlib leaf whose pinned snapshot changed under an");
-        println("              UNCHANGED [package].cyrius pin (otherwise refused, v6.6.4).");
+        println("  --relock    resolve, then re-lock ALL of lib/: accepts a stdlib leaf whose");
+        println("              pinned snapshot changed under an UNCHANGED [package].cyrius pin");
+        println("              (otherwise refused, v6.6.4), and locks any file --verify");
+        println("              reports as not in cyrius.lock.");
         println("  --dry-run   list the [deps.NAME] entries that WOULD resolve; write nothing.");
         println("Related: cyrius update    re-resolve to latest tags.");
     }

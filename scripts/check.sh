@@ -1468,3 +1468,25 @@ _chk_gate "$ROOT/tests/gates/platform/pe_open_posix_semantics.sh"
 # 6.6.9 (bite 5) — agnos file_create_exclusive is one atomic AO_EXCL create (was a file_exists
 # pre-check + plain create), a refusal classified -EEXIST by lstat#102.
 _chk_gate "$ROOT/tests/gates/platform/agnos_create_exclusive_atomic.sh"
+
+# 6.6.9 (bite 8) — the Windows CLI: `_file_size` is open + lseek, not a raw stat (-38 on PE, so
+# distlib's verify was inert and `distlib --check` always STALE), and cyrius.exe finds the tools
+# in its own bin/ (GetModuleFileNameW, not a '/'-only argv(0) scan). Wine axes SKIP without wine.
+_chk_gate "$ROOT/tests/gates/toolchain/cli_pe_file_size_and_sibling_tools.sh"
+
+# 6.6.9 (bite 9) — a temp dir the CLI cannot write is named as that: the dep-cache check says
+# "could NOT be verified" (reason 10) instead of calling a healthy cache tampered, the hasher
+# names its capture, lint's pre-pass refuses instead of passing an unparsable file; an absolute
+# $TMPDIR is the temp base. Namespace axes SKIP without unprivileged userns.
+_chk_gate "$ROOT/tests/gates/toolchain/deps_cache_capture_failure_named.sh"
+
+# 6.6.9 (bite 9) — cyrius.lock covers every .cyr `cyrius deps` leaves in lib/: a newly declared
+# stdlib leaf is locked, a stdlib-only project gets its first lock (deps AND build), an empty
+# lock is present-but-empty, and `deps --verify` fails a file with no lock line, by name.
+_chk_gate "$ROOT/tests/gates/toolchain/deps_lock_new_leaf_locked.sh"
+
+# 6.6.9 (bite 10, CVE-49) — no cbt string literal names a shared /tmp/ path, and `cyrius self`
+# stages both compilers in the private 0700 temp dir (the /bin/sh script at /tmp/cyr_*_$$ is
+# gone), names a failed step, refuses a 0-byte compiler (the script scored it PASS), and leaves
+# nothing behind; `_copy_binary` leaves no dst when it fails (the macOS stage leak).
+_chk_gate "$ROOT/tests/gates/toolchain/cbt_no_shared_tmp_paths.sh"

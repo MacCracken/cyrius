@@ -72,23 +72,32 @@ fn _dep_dest_is_linked(dst): i64 {
     return 0;
 }
 
+# Byte size of the regular file at `path`, or -1 when it cannot be opened or read.
+#
+# ⛔ open + lseek(SEEK_END), NEVER stat. This was a raw `syscall(4, …)` (x86-Linux stat) with a
+# per-target st_size offset (48 on Linux, 72 in Darwin's legacy struct — CHANGELOG [6.0.41]).
+# Syscall 4 has no PE reroute, so on the Windows CLI every one of its call sites got -38 — among
+# them `cyrius distlib`'s verify loop, which sized every file it splices with it and therefore
+# compiled an EMPTY entry and reported "nothing undefined" over every sidecar. SYS_LSEEK is routed
+# on every target (SetFilePointerEx on PE), and `file_open` carries the agnos bridge, so one body
+# serves all of them and no stat struct offset can be wrong. Same shape as build.cyr's
+# `_artifact_size`.
+# ⚠ A DIRECTORY opens and seeks on Linux (ext4 answers its hash EOF, not a byte count), so a
+# positive size is confirmed by reading one byte: a directory's read fails (EISDIR) and answers
+# -1, which is what every caller — "size it, then read that many bytes" — needs.
+# CHANGELOG [6.6.9]
 fn _file_size(path): i64 {
-    var stat_buf[144];
-    var r = syscall(4, path, &stat_buf);
-    if (r != 0) { return 0 - 1; }
-    # st_size offset differs by platform. Linux struct stat puts it at
-    # byte 48. The raw Darwin stat syscall (SYS_stat 188) fills the LEGACY
-    # 32-bit-inode struct stat — st_size lands at byte 72 (NOT the SDK
-    # INODE64 layout's 96; the libc wrapper, not the raw syscall, produces
-    # that). Reading the wrong offset on Darwin returned garbage / 0, which
-    # truncated the stdlib include-scan read → transitive deps silently
-    # dropped on macOS (io copied without its syscalls/result chain).
-    # Verified by dumping the struct on ecb (size@72). See CHANGELOG [6.0.41].
-    #ifdef CYRIUS_TARGET_MACOS
-    return load64(&stat_buf + 72);
-    #else
-    return load64(&stat_buf + 48);
-    #endif
+    var fd = file_open(path, 0, 0);
+    if (fd < 0) { return 0 - 1; }
+    var n = xlseek(fd, 0, 2);
+    if (n > 0) {
+        var probe[8];
+        if (xlseek(fd, 0, 0) != 0) { n = 0 - 1; }
+        elif (file_read(fd, &probe, 1) != 1) { n = 0 - 1; }
+    }
+    file_close(fd);
+    if (n < 0) { return 0 - 1; }
+    return n;
 }
 
 # Resolve a (possibly relative) path to absolute using getcwd(2).
@@ -878,6 +887,12 @@ fn _dep_copy_stdlib_recursive(stdlib_dir, mod_name, is_top): i64 {
     var cr = 0;
     if (_dep_lock_guard_stdlib_leaf(src, dst_full) == 0) {
         cr = _dep_copy_file(src, dst_full);
+        # 6.6.9: a vendored leaf the lock has no line for — a new leaf, or no lock at all —
+        # makes cmd_deps write the lock. A new leaf has no locked hash to disagree with, so
+        # the 6.6.4 moved-snapshot refusal above is not in play. CHANGELOG [6.6.9]
+        if (cr != 1 && _dep_lock_active == 1 && _lock_file_hash_lookup(dst_full) == 0) {
+            _dep_lock_new_leaf = 1;
+        }
     }
     if (cr == 1) { return 1; }
     if (is_top == 1) { vec_push(_dep_includes, dst_full); }
@@ -1143,6 +1158,43 @@ fn _parse_toml_str_array(buf, len, pos): i64 {
     return result;
 }
 
+# The `modules = [...]` array of the section whose header body starts at `body` (the byte
+# after `[build]` / `[lib]` / `[lib.<profile>]`), or 0 when the section has no such key.
+# Key-boundary + comment aware and indented-key capable (CHANGELOG [6.0.36]): `modules`
+# counts only as the first non-space token of a non-comment line, followed by space, tab
+# or `=`; the scan stops at the next `[section]` header. ONE parser for `_auto_deps` and
+# `cyrius distlib` — they were copies. CHANGELOG [6.6.9].
+fn _toml_section_modules(buf, n, body): i64 {
+    var bi = body;
+    while (bi < n) {
+        if (load8(buf + bi) == 91 && load8(buf + bi + 1) != 91) { return 0; }
+        var ls = bi;
+        while (ls < n && (load8(buf + ls) == 32 || load8(buf + ls) == 9)) { ls = ls + 1; }
+        if (ls < n && load8(buf + ls) != 35 && memeq(buf + ls, "modules", 7) == 1) {
+            var after = load8(buf + ls + 7);
+            if (after == 32 || after == 9 || after == 61) {
+                return _parse_toml_str_array(buf, n, ls);
+            }
+        }
+        while (bi < n && load8(buf + bi) != 10) { bi = bi + 1; }
+        bi = bi + 1;
+    }
+    return 0;
+}
+
+# `[build].modules` of a manifest buffer, or 0 when there is no `[build]` section or it
+# carries no `modules` key. CHANGELOG [6.6.9].
+fn _build_section_modules(buf, n): i64 {
+    var i = 0;
+    while (i < n) {
+        if (memeq(buf + i, "[build]", 7) == 1 && _toml_section_at(buf, n, i) == 1) {
+            return _toml_section_modules(buf, n, i + 7);
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
 # v6.3.1 (dependency-model arc, lever 2): split a comma-separated CLI value
 # ("gpu,win-shell") into a vec<cstr> of feature names. Empty segments are
 # dropped, so a trailing/leading comma is tolerated. Used by the cyrius.cyr
@@ -1174,11 +1226,24 @@ fn _split_csv(s): i64 {
 # `_dep_stdlib_seen`. FAIL-LOUD: a leaf that doesn't resolve returns the error
 # count. Shared by the `requires` key (.46) and the `.deps` sidecar (.47).
 # Caller must have inited `_dep_stdlib_seen` + resolved a non-0 `stdlib_dir`.
+# Record a stdlib leaf pulled on behalf of a named dep (see _dep_nd_leaves), once.
+fn _dep_note_nd_leaf(leaf): i64 {
+    if (_dep_nd_leaves == 0) { return 0; }
+    var i = 0;
+    while (i < vec_len(_dep_nd_leaves)) {
+        if (streq(vec_get(_dep_nd_leaves, i), leaf) == 1) { return 0; }
+        i = i + 1;
+    }
+    vec_push(_dep_nd_leaves, leaf);
+    return 0;
+}
+
 fn _dep_pull_leaves(stdlib_dir, dep_name, leaves): i64 {
     var errs = 0;
     var i = 0;
     while (i < vec_len(leaves)) {
         var leaf = vec_get(leaves, i);
+        _dep_note_nd_leaf(leaf);
         var r = _dep_copy_stdlib_recursive(stdlib_dir, leaf, 1);
         if (r == 1) {
             # v6.5.24 — SAY WHICH CONDITION ACTUALLY HELD. This printed
@@ -1606,6 +1671,7 @@ fn _dep_pull_submodule(dep_src, pkg, submod, stdlib_dir, seen): i64 {
                 if (_dep_reject_unsafe_name(d + 4) == 1) {   # CVE-32: index-controlled leaf name
                     errs = errs + 1;
                 } elif (stdlib_dir != 0) {
+                    _dep_note_nd_leaf(d + 4);
                     if (_dep_copy_stdlib_recursive(stdlib_dir, d + 4, 1) == 1) { errs = errs + 1; }
                 }
             } else {
@@ -1642,6 +1708,7 @@ fn _dep_pull_submodule(dep_src, pkg, submod, stdlib_dir, seen): i64 {
     var cr = _dep_copy_file(src, dst_full);
     if (cr == 0 || cr == 2) {
         vec_push(_dep_includes, dst_full);
+        vec_push(_dep_nd_modules, dst_full);   # 6.6.9: a named dep's module (distlib verify)
     } elif (cr == 1) {
         sys_write(STDERR_FD, "error: modular sub-module ", 26);
         sys_write(STDERR_FD, pkg, strlen(pkg));
@@ -2068,12 +2135,12 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                     _ew(dep_name);
                     _ew("': its cached checkout was NOT verified — git cannot be run on this\n");
                     _ew("         platform (no fork), so the cached bytes are vendored as they are.\n");
-                } elif (_git_has_repo(clone_dir) == 1) { _head = _git_head_sha(clone_dir); }
+                } elif (_git_has_repo(clone_dir) == 1) { _git_cap_errno = 0; _head = _git_head_sha(clone_dir); }
                 if (_gx == 0) {
                     dep_path = clone_dir;   # unchanged from above: vendor the cache as found
                 } elif (_head == 0) {
                     if (is_dir(str_from(clone_dir)) == 1) {
-                        _git_cache_refuse(dep_name, dep_tag, clone_dir, 1);
+                        _git_cache_refuse(dep_name, dep_tag, clone_dir, _git_cap_judge(1));
                         dep_pin_ok = 0;
                         errors = errors + 1;
                     }
@@ -2258,6 +2325,9 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                             # ⚠ Deliberately NO `vec_push(_dep_includes, dst)`: Phase 1
                             # already pushed this exact path when it copied the snapshot, and
                             # a second push would emit the include twice.
+                            # 6.6.9: it IS this dep's module in scope, so distlib's verify
+                            # splices it (the leaf of the same name is then skipped there).
+                            vec_push(_dep_nd_modules, dst);
                             dep_had_success = 1;
                             mi = mi + 1;
                             continue;
@@ -2267,6 +2337,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                     var cr2 = _dep_copy_file(src, dst);
                     if (cr2 == 0 || cr2 == 2) {
                         vec_push(_dep_includes, dst);
+                        vec_push(_dep_nd_modules, dst);   # 6.6.9: a named dep's module (distlib verify)
                         dep_had_success = 1;
                         if (cr2 == 0) {
                             if (_verbose == 1) {
@@ -2374,6 +2445,8 @@ fn cmd_deps(): i64 {
     var copied = 0;
     var errors = 0;
     _dep_includes = vec_new();
+    _dep_nd_modules = vec_new();     # 6.6.9: named-dep modules, for distlib's verify unit
+    _dep_nd_leaves = vec_new();      # 6.6.9: stdlib leaves pulled for named deps (same)
     # v5.7.14: per-cmd_deps state. visited names = closest-wins de-dup.
     # queue = abs dirs of resolved deps whose own cyrius.cyml needs walking.
     _dep_visited = vec_new();
@@ -2533,9 +2606,20 @@ fn cmd_deps(): i64 {
                 if (_dep_lock_has_trailer == 0) { _stamp_legacy = 1; }
                 if (_dep_lock_pin_same == 0) { _stamp_legacy = 1; }
             }
-            if (copied > 0 || _dep_relock == 1 || _stamp_legacy == 1) {
-                # v6.6.6: a lock that could not be written is an error, not a dropped rc.
-                if (cmd_deps_lock() != 0) { errors = errors + 1; }
+            # ...and (6.6.9) a vendored leaf the lock does not cover: a stdlib leaf newly
+            # declared under an unchanged pin, or the FIRST lock of a stdlib-only project.
+            # Both used to be left out — the leaf sat in lib/ unlocked and `--verify` passed
+            # over it even tampered — restoring the v5.7.8 intent stated above.
+            var _must = 0;
+            if (copied > 0 || _dep_relock == 1 || _stamp_legacy == 1) { _must = 1; }
+            if (_must == 1 || _dep_lock_new_leaf == 1) {
+                # v6.6.6: a lock that could not be written is an error, not a dropped rc —
+                # except (6.6.9) a hash failure on a write owed ONLY to a new leaf, which is a
+                # named warning (_dep_lock_soft; cmd_deps_lock returns 2 for it).
+                _dep_lock_soft = 1 - _must;
+                var _lr = cmd_deps_lock();
+                _dep_lock_soft = 0;
+                if (_lr == 1 || (_lr != 0 && _must == 1)) { errors = errors + 1; }
             }
         }
     }
@@ -2577,51 +2661,13 @@ fn _auto_deps(): i64 {
         if (memeq(buf + i, "[deps.", 6) == 1 && _toml_section_at(buf, n, i) == 1) { has_deps = 1; break; }
         i = i + 1;
     }
+    # `[build].modules` is read BEFORE the `[deps]` early return: a manifest with modules and
+    # no `[deps]` section had them silently ignored, and the build failed with "undefined
+    # function" pointing nowhere near the manifest (the v6.4.63 shape of _check_lib_freshness).
+    # The modules are prepended before the entry point. CHANGELOG [6.6.9].
+    _build_modules = _build_section_modules(buf, n);
     if (has_deps == 0) { return 0; }
     var dr = cmd_deps();
-
-    # Also read [build] modules if present — for multi-module projects
-    # that declare concatenation order in the manifest instead of using
-    # include directives. The modules are prepended before the entry point.
-    i = 0;
-    while (i < n) {
-        if (memeq(buf + i, "[build]", 7) == 1 && _toml_section_at(buf, n, i) == 1) {
-            # Scan within [build] section for the `modules` key. Key-
-            # boundary + comment aware (mirrors the `stdlib` guard above,
-            # v5.5.26): match `modules` only as the first non-space token
-            # on a non-comment line and only when followed by space/tab/`=`.
-            # The old raw line-start `memeq` both false-matched `modules`
-            # inside `[build]` comments (auto-prepending every `[lib]`
-            # module → input_buf overflow, blaming the wrong file) and
-            # missed indented `  modules = [...]` keys. See CHANGELOG [6.0.36].
-            var bi = i + 7;
-            while (bi < n) {
-                if (load8(buf + bi) == 91 && load8(buf + bi + 1) != 91) {
-                    # Hit next section
-                    break;
-                }
-                # First non-space char on this line.
-                var ls = bi;
-                while (ls < n && (load8(buf + ls) == 32 || load8(buf + ls) == 9)) {
-                    ls = ls + 1;
-                }
-                # Skip comment lines; require the `modules` key followed by
-                # a key separator (space / tab / `=`).
-                if (ls < n && load8(buf + ls) != 35 && memeq(buf + ls, "modules", 7) == 1) {
-                    var after = load8(buf + ls + 7);
-                    if (after == 32 || after == 9 || after == 61) {
-                        _build_modules = _parse_toml_str_array(buf, n, ls);
-                        break;
-                    }
-                }
-                while (bi < n && load8(buf + bi) != 10) { bi = bi + 1; }
-                bi = bi + 1;
-            }
-            break;
-        }
-        i = i + 1;
-    }
-
     return dr;
 }
 
@@ -2828,6 +2874,17 @@ fn cmd_update(): i64 {
 #   sha256hex  lib/name.cyr
 # Generated by cyrius deps, verified by cyrius deps --verify
 
+# ⛔ 6.6.9 bite 9 — WHY a hash failed, because the callers used to guess. The child used to
+# open its capture itself and, when that open failed (EDQUOT, ENOSPC, no inodes), ran the
+# hasher with the PARENT's stdout: the digest went to the terminal, the capture read back
+# empty, and the caller printed "sha256sum missing?" — a false diagnosis of a full temp dir.
+# The capture is now opened by the PARENT before the fork; a failure there never runs the
+# tool and is reported as what it is. CHANGELOG [6.6.9].
+var _sha_tool = 0;    # 0 not probed · 1 sha256sum · 2 shasum -a 256 -b · -1 neither on PATH
+var _sha_fail = 0;    # why the last _sha256sum_file returned 0 (see _sha_fail_why)
+var _sha_errno = 0;   # the errno behind _sha_fail 3 / 4
+var _sha_rc = 0;      # the hasher's exit status behind _sha_fail 2
+
 fn _sha256sum_file(path): i64 {
     # v6.0.85 — Windows has no /bin/sh or sha256sum; certutil is the built-in.
     # `certutil -hashfile <path> SHA256` prints 3 lines: a header, the 64-char
@@ -2842,6 +2899,8 @@ fn _sha256sum_file(path): i64 {
     vec_push(cargs, "SHA256");
     var cbuf = alloc(512);
     var cn = exec_capture(cargs, cbuf, 511);
+    _sha_fail = 2;
+    _sha_rc = 0;
     if (cn <= 0) { return 0; }
     store8(cbuf + cn, 0);
     # Skip the header line (to the first newline), then any \r/space.
@@ -2853,46 +2912,127 @@ fn _sha256sum_file(path): i64 {
         else { break; }
     }
     if (cp + 64 > cn) { return 0; }
+    _sha_fail = 0;
     var whash = alloc(65);
     var wk = 0;
     while (wk < 64) { store8(whash + wk, load8(cbuf + cp + wk)); wk = wk + 1; }
     store8(whash + 64, 0);
     return whash;
     #endif
-    # CVE-14 (v6.1.33): exec sha256sum via ARGV — `path` is a DISTINCT argv
-    # element, never concatenated into a `/bin/sh -c` string, so a lockfile path
-    # or a resolved-dep filename containing shell metacharacters can't run
-    # commands. This sink is reached by `cmd_deps_lock`, which auto-runs on every
-    # `cyrius deps`/`build` (it hashes `dir_list` filenames), so the prior shell
-    # string was the broad CVE-01-class hole the deep-dive flagged. `/usr/bin/env`
-    # does the PATH lookup for sha256sum with the real environ. (Windows already
-    # uses the safe `exec_capture` argv path above.)
+    # CVE-14 (v6.1.33): exec the hasher via ARGV — `path` is a DISTINCT argv element, never
+    # concatenated into a `/bin/sh -c` string, so a lockfile path or a resolved-dep filename
+    # containing shell metacharacters can't run commands. `/usr/bin/env` does the PATH lookup.
     var tmpf = _cbt_tmpfile("sha_out");
+    if (_sha_tool == 0) {
+        # First call: sha256sum, else shasum (macOS 13 has no sha256sum — measured on ach;
+        # it has /usr/bin/shasum). Memoised, so the probe runs once per process.
+        # A probe that never RAN the tool (pr < 0: no capture, no fork) proves nothing about
+        # which tool exists — un-memoise it, or a transient full temp dir on the first hash
+        # pins sha256sum for the whole process and every later hash on macOS 13 reads 127 as
+        # "neither on PATH". CHANGELOG [6.6.9]
+        _sha_tool = 1;
+        var pr = _sha_run(tmpf, path);
+        if (pr == 127) { _sha_tool = 2; pr = _sha_run(tmpf, path); }
+        if (pr == 127) { _sha_tool = 0 - 1; }
+        if (pr < 0) { _sha_tool = 0; }
+        return _sha_finish(tmpf, pr);
+    }
+    if (_sha_tool < 0) { _sha_fail = 1; return 0; }
+    return _sha_finish(tmpf, _sha_run(tmpf, path));
+}
+
+# Run the chosen hasher on `path` with stdout in `tmpf`. Returns its exit status (127 = not
+# on PATH), -2 when the capture cannot be created (errno in _sha_errno; nothing is run), or
+# -3 (-1 on PE, which has no fork) when the child could not be started or was killed.
+fn _sha_run(tmpf, path): i64 {
+    # PE: unreachable (`_sha256sum_file`'s certutil arm returns first), and `sys_fork` is a -1
+    # stub there — refuse at the source as "could not be started", never a silent nothing.
+    #ifdef CYRIUS_TARGET_WIN
+    return 0 - 1;
+    #endif
+    var cfd = sys_open(tmpf, O_WRONLY | O_CREAT | O_TRUNC, 0x180);
+    if (cfd < 0) { _sha_errno = 0 - cfd; return 0 - 2; }
+    var tool = _sha_tool;
     var pid = sys_fork();
+    if (pid < 0) { sys_close(cfd); _sha_errno = 0 - pid; return 0 - 3; }
     if (pid == 0) {
-        var ofd = sys_open(tmpf, O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
-        sys_dup2(ofd, 1);
-        sys_close(ofd);
-        var argv[40];   # N BYTES per CLAUDE.md buffer contract: 4 ptrs need 32 B
+        sys_dup2(cfd, 1);
+        sys_close(cfd);
+        # stderr quiet: a missing tool is probed, and the caller names the file itself
+        var nfd = sys_open("/dev/null", O_WRONLY, 0);
+        if (nfd >= 0) { sys_dup2(nfd, 2); sys_close(nfd); }
+        var argv[64];   # N BYTES: up to 6 ptrs + NUL
         store64(&argv, "env");
-        store64(&argv + 8, "sha256sum");
-        store64(&argv + 16, path);
-        store64(&argv + 24, 0);
+        if (tool == 2) {
+            store64(&argv + 8, "shasum");
+            store64(&argv + 16, "-a");
+            store64(&argv + 24, "256");
+            store64(&argv + 32, "-b");
+            store64(&argv + 40, path);
+            store64(&argv + 48, 0);
+        } else {
+            store64(&argv + 8, "sha256sum");
+            store64(&argv + 16, path);
+            store64(&argv + 24, 0);
+        }
         sys_execve("/usr/bin/env", &argv, _envp);
         sys_exit(127);
     }
-    var sb[1];
-    sys_waitpid(pid, &sb, 0);
+    sys_close(cfd);
+    var wst[8];
+    store64(&wst, 0);
+    if (sys_waitpid(pid, &wst, 0) < 0) { return 0 - 3; }
+    var st = load64(&wst);
+    if ((st & 127) != 0) { return 0 - 3; }
+    return (st >> 8) & 255;
+}
+
+# The digest from a `_sha_run` result, or 0 with `_sha_fail` saying why.
+fn _sha_finish(tmpf, rc): i64 {
+    _sha_fail = 0;
+    if (rc == 0 - 2) { _sha_fail = 3; return 0; }
+    if (rc < 0) { sys_unlink(tmpf); _sha_fail = 4; return 0; }   # -3 / -1: not started
     var buf = alloc(128);
     var n = file_read_all(tmpf, buf, 127);
+    # No digest: ask the temp dir while the capture still holds its space. A hasher whose
+    # WRITE to the capture failed (EDQUOT on a usrquota tmpfs, ENOSPC) exits 1 exactly like
+    # one that could not read its input, and "could not read it" blamed the dependency file.
+    # CHANGELOG [6.6.9]
+    if (rc != 127 && (rc != 0 || n < 64)) {
+        var pe = _cbt_tmp_probe();
+        if (pe != 0) { sys_unlink(tmpf); _sha_errno = pe; _sha_fail = 3; return 0; }
+    }
     sys_unlink(tmpf);
-    if (n <= 0) { return 0; }
-    # Extract just the hex hash (first 64 chars)
-    if (n < 64) { return 0; }
+    if (rc == 127) { _sha_fail = 1; return 0; }
+    if (rc != 0) { _sha_rc = rc; _sha_fail = 2; return 0; }
+    if (n < 64) { _sha_rc = 0; _sha_fail = 2; return 0; }
+    var k = 0;
+    while (k < 64) {
+        var c = load8(buf + k);
+        if ((c < 48 || c > 57) && (c < 97 || c > 102)) { _sha_rc = 0; _sha_fail = 2; return 0; }
+        k = k + 1;
+    }
     var hash = alloc(65);
     memcpy(hash, buf, 64);
     store8(hash + 64, 0);
     return hash;
+}
+
+# Print why the last `_sha256sum_file` returned 0, to stderr, no newline.
+fn _sha_fail_why(): i64 {
+    if (_sha_fail == 3) {
+        _ew("could not write the hash capture under ");
+        _ew(_cbt_tmpdir());
+        _ew(" (errno ");
+        fmt_int_fd(STDERR_FD, _sha_errno);
+        _ew(") — the temp dir is full or unwritable; no digest was captured. Set TMPDIR to an absolute path elsewhere to route around it");
+        return 0;
+    }
+    if (_sha_fail == 1) { _ew("neither sha256sum nor shasum is on PATH"); return 0; }
+    if (_sha_fail == 4) { _ew("the hasher could not be started"); return 0; }
+    _ew("the hasher could not read it");
+    if (_sha_rc != 0) { _ew(" (exit "); fmt_int_fd(STDERR_FD, _sha_rc); _ew(")"); }
+    return 0;
 }
 
 # CVE-21 (v6.2.30) — cstr equality (length-checked memeq).
@@ -3023,8 +3163,8 @@ var _git_fmode_dir = 0;
 # x86-Linux, **16** on aarch64-Linux and **4** on macOS-arm64's stat64, and reading the
 # wrong one returns st_uid — a quiet wrong answer on exactly the targets the host suite
 # cannot see. `lib/io.cyr`'s `is_dir` carries the same warning after that bug shipped once.
-# (`_file_size` above predates the wrapper and reads byte 48, which happens to be st_size
-# on both Linux ABIs.) On Windows `xstat` is -1, so the probe declines — as it should:
+# (`_file_size` above needs no stat offset at all since 6.6.9: open + lseek(SEEK_END).)
+# On Windows `xstat` is -1, so the probe declines — as it should:
 # the git flow is POSIX-only there anyway.
 fn _file_mode(path): i64 {
     var st[144];
@@ -3109,6 +3249,16 @@ var _git_in_path = 0;
 # Per-process capture of the last git child's stderr, so a refusal can quote git's own
 # hint (the dubious-ownership / safe.directory paragraph is the one users need).
 var _git_err_path = 0;
+# ⛔ 6.6.9 bite 9 — "the check could not write its temp files" is its OWN verdict (reason 10).
+# `_git_run`'s child used to open the stdout capture itself and, when that failed (EDQUOT,
+# ENOSPC, no inodes), ran git with the PARENT's stdout: the answer went to the terminal (the
+# bare sha aethersafha saw), the capture read back empty, and `_git_rev` returned 0 —
+# identical to "the tag does not resolve" — so a healthy cache was refused as TAMPERED with
+# `rm -rf` advice, for every dep at once, for as long as the quota lasted. The capture is now
+# opened by the PARENT; a failure records its errno here and git is never run uncaptured.
+# CHANGELOG [6.6.9]
+var _git_cap_errno = 0;
+var _git_cap_want = 0;   # bytes the judge's probe must fit (see _git_cache_verify)
 
 fn _git_errfile(): i64 {
     if (_git_err_path == 0) { _git_err_path = _cbt_tmpfile("git_err"); }
@@ -3172,8 +3322,15 @@ fn _git_run(clone_dir, idx, a1, a2, a3, a4, outf, pol): i64 {
     var ixe = 0;
     if (idx != 0) { ixe = _cat2("GIT_INDEX_FILE=", idx); }
     var errf = _git_errfile();
+    # The stdout capture is opened HERE, before the fork: a capture that cannot be created
+    # returns -2 with the errno recorded, and git is not run. CHANGELOG [6.6.9]
+    var cfd = 0 - 1;
+    if (outf != 0) {
+        cfd = sys_open(outf, O_WRONLY | O_CREAT | O_TRUNC, 0x180);
+        if (cfd < 0) { _git_cap_errno = 0 - cfd; return 0 - 2; }
+    }
     var pid = sys_fork();
-    if (pid < 0) { return 0 - 1; }
+    if (pid < 0) { if (cfd >= 0) { sys_close(cfd); } return 0 - 1; }
     if (pid == 0) {
         # `--stdin-paths` is the only reader (see `_git_raw_check`); a global rather than a
         # 9th parameter because every other call site would have to carry a 0 for it, and
@@ -3183,9 +3340,8 @@ fn _git_run(clone_dir, idx, a1, a2, a3, a4, outf, pol): i64 {
             if (ifd >= 0) { sys_dup2(ifd, 0); sys_close(ifd); }
             else { sys_exit(127); }
         }
-        var ofd = 0 - 1;
-        if (outf != 0) { ofd = sys_open(outf, O_WRONLY | O_CREAT | O_TRUNC, 0x180); }
-        else { ofd = sys_open("/dev/null", O_WRONLY, 0); }
+        var ofd = cfd;
+        if (outf == 0) { ofd = sys_open("/dev/null", O_WRONLY, 0); }
         if (ofd >= 0) { sys_dup2(ofd, 1); sys_close(ofd); }
         var efd = sys_open(errf, O_WRONLY | O_CREAT | O_TRUNC, 0x180);
         if (efd < 0) { efd = sys_open("/dev/null", O_WRONLY, 0); }
@@ -3215,6 +3371,7 @@ fn _git_run(clone_dir, idx, a1, a2, a3, a4, outf, pol): i64 {
         sys_execve("/usr/bin/env", &argv, _envp);
         sys_exit(127);
     }
+    if (cfd >= 0) { sys_close(cfd); }
     var wst[8];
     store64(&wst, 0);
     if (sys_waitpid(pid, &wst, 0) < 0) { return 0 - 1; }
@@ -3337,9 +3494,12 @@ fn _git_cfg_hazard(clone_dir, outf): i64 {
     # clone never writes it; 0 of the 138 live checkouts have one.
     var ap = _cat2(clone_dir, "/.git/info/attributes");
     if (file_exists(ap) == 1) { _git_bad_cfg = ap; return 7; }
-    if (_git_run(clone_dir, 0, "config", "--local", "--name-only", "--list", outf, 0) > 1) {
-        return 3;                      # 1 = nothing listed; >1 is git failing, not "clean"
-    }
+    # 1 = nothing listed; anything else non-zero is git failing, not "clean" — including a
+    # NEGATIVE status (not run, or a capture that could not be created): since 6.6.9 the
+    # capture is created by the parent before the fork, so an empty one no longer means git
+    # ran. `> 1` let those through to the size check. CHANGELOG [6.6.9]
+    var lr = _git_run(clone_dir, 0, "config", "--local", "--name-only", "--list", outf, 0);
+    if (lr != 0 && lr != 1) { return 3; }
     var sz = _file_size(outf);
     if (sz < 0) { return 3; }
     if (sz == 0) { return 0; }
@@ -3560,7 +3720,13 @@ fn _git_raw_check(clone_dir, idx, lb, sz, outf): i64 {
     var pl = _cbt_tmpfile("dep_verify_paths");
     var ps = str_builder_build(sb);
     var pn = str_len(ps);
-    if (file_write_all(pl, str_data(ps), pn) != pn) { sys_unlink(pl); return 3; }
+    var pw = file_write_all(pl, str_data(ps), pn);
+    if (pw != pn) {
+        sys_unlink(pl);
+        _git_cap_errno = 28;                      # a short write reads as ENOSPC
+        if (pw < 0) { _git_cap_errno = 0 - pw; }
+        return 3;
+    }
     _git_in_path = pl;
     var hr = _git_run(clone_dir, idx, "hash-object", "--no-filters", "--stdin-paths", 0, outf, 0);
     _git_in_path = 0;
@@ -3610,25 +3776,79 @@ fn _git_raw_check(clone_dir, idx, lb, sz, outf): i64 {
 # nothing here can tell that from the real tag (measured). What catches THAT is the
 # `cyrius.lock` commit pin, which is trust-on-first-use: honest on the first resolve, held
 # against every later one. Offline, that is the bound. CHANGELOG [6.6.5].
+# The verify's temps (idx, outf) are created and removed HERE, and the verdict is judged
+# while they still exist: the raw check returns without cleaning up, so a temp dir that was
+# nearly full when git needed it is still nearly full when `_git_cap_judge` asks.
+# CHANGELOG [6.6.9]
 fn _git_cache_verify(clone_dir, tag_or_0, head, want_url): i64 {
-    if (_git_has_repo(clone_dir) == 0) { return 1; }
+    _git_cap_errno = 0;
     var idx = _cbt_tmpfile("dep_verify_index");
     var outf = _cbt_tmpfile("dep_verify_out");
     _git_verify_cleanup(idx, outf);
+    # The probe must be as big as what git was writing: the private index (and its
+    # index.lock) is the size of the cache's own — a 400-file dep's is ~40 KB, and a probe
+    # smaller than that passed while read-tree / update-index had failed. CHANGELOG [6.6.9]
+    _git_cap_want = _git_index_size(clone_dir) + 4096;
+    var r = _git_cap_judge(_git_cache_verify_raw(clone_dir, tag_or_0, head, want_url, idx, outf));
+    _git_cap_want = 0;
+    _git_verify_cleanup(idx, outf);
+    return r;
+}
+
+# Size of the cache's own `.git/index`, or 0 when unknown — never following a symlink and
+# never blocking on a FIFO (the cache is untrusted). It only sizes the judge's probe; git
+# itself never reads this file (every verify runs on a private GIT_INDEX_FILE). CHANGELOG [6.6.9]
+fn _git_index_size(clone_dir): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    return 0;
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    var ip = _cat2(clone_dir, "/.git/index");
+    if (is_symlink(str_from(ip)) == 1) { return 0; }
+    var fd = sys_open(ip, O_RDONLY | O_NONBLOCK, 0);
+    if (fd < 0) { return 0; }
+    var n = xlseek(fd, 0, 2);
+    sys_close(fd);
+    if (n < 0) { return 0; }
+    return n;
+    #endif
+}
+
+# Record the temp dir's errno (if it refuses a fresh file now) unless one is already known.
+fn _git_cap_note(): i64 {
+    if (_git_cap_errno == 0) { _git_cap_errno = _cbt_tmp_probe_n(_git_cap_want); }
+    return 0;
+}
+
+# A refusal `r` stands only when every capture it read was really written. When one could
+# not be (recorded by `_git_run`), or the private temp dir refuses a fresh file now (probed
+# with the check's own temps still in place), the verdict is reason 10 — still a refusal
+# (fail closed), but named as what it is, with no tamper accusation and no `rm -rf` advice.
+# Asked only on a refusal, so a clean resolve pays nothing. CHANGELOG [6.6.9]
+fn _git_cap_judge(r): i64 {
+    if (r == 0) { return 0; }
+    _git_cap_note();
+    if (_git_cap_errno != 0) { return 10; }
+    return r;
+}
+
+# Every return leaves idx/outf in place for the caller's judge + cleanup.
+fn _git_cache_verify_raw(clone_dir, tag_or_0, head, want_url, idx, outf): i64 {
+    if (_git_has_repo(clone_dir) == 0) { return 1; }
     # FIRST, before anything reads the working tree: a filter driver declared in the cache's
     # own config would already have run by then, and would have decided the answer.
     var cfr = _git_cfg_hazard(clone_dir, outf);
-    if (cfr != 0) { _git_verify_cleanup(idx, outf); return cfr; }
+    if (cfr != 0) { return cfr; }
     var our = _git_origin_mismatch(clone_dir, want_url, outf);
-    if (our != 0) { _git_verify_cleanup(idx, outf); return our; }
+    if (our != 0) { return our; }
     if (tag_or_0 != 0) {
         var tr = _cat2(_cat2("refs/tags/", tag_or_0), "^{commit}");
         var tc = _git_rev(clone_dir, tr);
         if (tc == 0) {
             tc = _git_rev(clone_dir, _cat2(_cat2("refs/remotes/origin/", tag_or_0), "^{commit}"));
         }
-        if (tc == 0) { _git_verify_cleanup(idx, outf); return 2; }
-        if (_cstr_eq(tc, head) == 0) { _git_verify_cleanup(idx, outf); return 2; }
+        if (tc == 0) { return 2; }
+        if (_cstr_eq(tc, head) == 0) { return 2; }
     }
     # fsck FIRST: read-tree does NOT verify that an object hashes to the name it is
     # stored under, so a forged subtree spliced in under the original tree's name is
@@ -3643,21 +3863,17 @@ fn _git_cache_verify(clone_dir, tag_or_0, head, want_url): i64 {
     # and exits 128 — that must never brick every resolve on that git, so fall back to the
     # unmodified fsck (which only restores the old, stricter behaviour).
     if (fr == 128) { fr = _git_run(clone_dir, idx, "fsck", "--no-dangling", "--no-progress", 0, 0, 0); }
-    if (fr != 0) {
-        _git_verify_cleanup(idx, outf);
-        return 3;
-    }
-    if (_git_run(clone_dir, idx, "read-tree", "HEAD", 0, 0, 0, 0) != 0) {
-        _git_verify_cleanup(idx, outf);
-        return 3;
-    }
+    if (fr != 0) { return 3; }
+    if (_git_run(clone_dir, idx, "read-tree", "HEAD", 0, 0, 0, 0) != 0) { return 3; }
     # A fresh index holds no stat data, so this HASHES every file rather than trusting a
-    # cached mtime. Its exit status is deliberately ignored — a non-zero here only means
-    # "something differs", which diff-files reports precisely.
-    _git_run(clone_dir, idx, "update-index", "-q", "--refresh", 0, 0, 0);
+    # cached mtime. 0 or 1 only mean "something may differ", which diff-files reports
+    # precisely. ANYTHING ELSE is git failing — 128 is "cannot create index.lock" in a full
+    # temp dir — and must not fall through: diff-files on an index with no stat data then
+    # exits 1 and a healthy cache read as reason 4, tampered. CHANGELOG [6.6.9]
+    var urr = _git_run(clone_dir, idx, "update-index", "-q", "--refresh", 0, 0, 0);
+    if (urr != 0 && urr != 1) { return 3; }
     var dfr = _git_run(clone_dir, idx, "diff-files", "--quiet", 0, 0, 0, 0);
     if (dfr != 0) {
-        _git_verify_cleanup(idx, outf);
         # 1 = a real difference; anything else (or -1) is git failing, not the tree differing.
         if (dfr == 1) { return 4; }
         return 3;
@@ -3665,32 +3881,22 @@ fn _git_cache_verify(clone_dir, tag_or_0, head, want_url): i64 {
     # No --exclude-standard: a file the tag does not carry is a refusal even when
     # .gitignore or .git/info/exclude hides it. A module planted at a declared-but-absent
     # path, or at the lib/<basename> fallback, was vendored through exactly this gap.
-    if (_git_run(clone_dir, idx, "ls-files", "-o", "-z", 0, outf, 0) != 0) {
-        _git_verify_cleanup(idx, outf);
-        return 3;
-    }
+    if (_git_run(clone_dir, idx, "ls-files", "-o", "-z", 0, outf, 0) != 0) { return 3; }
     var osz = _file_size(outf);
-    if (osz < 0) { _git_verify_cleanup(idx, outf); return 3; }   # no capture = git failed, not "clean"
-    if (osz != 0) {
-        _git_verify_cleanup(idx, outf);
-        return 5;
-    }
-    if (_git_run(clone_dir, idx, "ls-files", "-s", "-z", 0, outf, 0) != 0) {
-        _git_verify_cleanup(idx, outf);
-        return 3;
-    }
+    if (osz < 0) { return 3; }   # no capture = git failed, not "clean"
+    if (osz != 0) { return 5; }
+    if (_git_run(clone_dir, idx, "ls-files", "-s", "-z", 0, outf, 0) != 0) { return 3; }
     var sz = _file_size(outf);
-    if (sz < 0) { _git_verify_cleanup(idx, outf); return 3; }
+    if (sz < 0) { return 3; }
     var lb = alloc(sz + 1);
     var ln = file_read_all(outf, lb, sz);
-    if (ln != sz) { _git_verify_cleanup(idx, outf); return 3; }
+    if (ln != sz) { return 3; }
     store8(lb + sz, 0);
     var gl = _git_gitlink_scan(clone_dir, lb, sz);
-    if (gl != 0) { _git_verify_cleanup(idx, outf); return gl; }
+    if (gl != 0) { return gl; }
     # LAST, and on the same `ls-files -s` rows: diff-files has already agreed, so anything
     # this finds is a difference an attribute conversion was hiding. CHANGELOG [6.6.5].
     var rr = _git_raw_check(clone_dir, idx, lb, sz, outf);
-    _git_verify_cleanup(idx, outf);
     if (rr == 0) { _git_err_clear(); }
     return rr;
 }
@@ -3705,6 +3911,7 @@ fn _git_cache_reason(r): i64 {
     if (r == 7) { return "its .git carries configuration that rewrites or redirects what git compares"; }
     if (r == 8) { return "its origin remote is not the URL this dep declares (a different repo's checkout)"; }
     if (r == 9) { return "a tracked file's bytes are not the tag's, and a content conversion was hiding it"; }
+    if (r == 10) { return "the check could not write its temp files, so the cache was NOT judged"; }
     return "it is not readable as a git checkout";
 }
 
@@ -3712,6 +3919,7 @@ fn _git_cache_reason(r): i64 {
 # that works OFFLINE. Through 6.6.4 the only message named no path and advised deleting
 # the clone — which forces a network re-clone, so an offline box could not recover.
 fn _git_cache_refuse(dep_name, tag_or_0, clone_dir, r): i64 {
+    if (r == 10) { return _git_cache_unjudged(dep_name, tag_or_0, clone_dir); }
     var rev = "HEAD";
     if (tag_or_0 != 0) { rev = _cat2("refs/tags/", tag_or_0); }
     _ew("error: cached checkout for dep '");
@@ -3772,6 +3980,29 @@ fn _git_cache_refuse(dep_name, tag_or_0, clone_dir, r): i64 {
     _ew("\n  or: rm -rf ");
     _ew(clone_dir);
     _ew("   (re-clones from the remote on the next resolve).\n");
+    _git_err_clear();
+    return 0;
+}
+
+# Reason 10: the verify could not write its temp files. Refused all the same (nothing is
+# vendored from a cache nobody checked), but it names the temp dir and its errno and says
+# the cache was not judged — no tamper accusation, no restore recipe, no `rm -rf`: the
+# cache is most likely healthy and deleting it forces a network re-clone. CHANGELOG [6.6.9]
+fn _git_cache_unjudged(dep_name, tag_or_0, clone_dir): i64 {
+    _ew("error: cached checkout for dep '");
+    _ew(dep_name);
+    _ew("' tag '");
+    if (tag_or_0 != 0) { _ew(tag_or_0); } else { _ew("(untagged)"); }
+    _ew("' could NOT be verified — refusing to vendor it unchecked: ");
+    _ew(_git_cache_reason(10));
+    _ew(".\n  temp dir: ");
+    _ew(_cbt_tmpdir());
+    _ew(" (errno ");
+    fmt_int_fd(STDERR_FD, _git_cap_errno);
+    _ew(" — full, at quota, or out of inodes)\n  cache: ");
+    _ew(clone_dir);
+    _ew("  (not judged; do NOT delete it)\n");
+    _ew("  fix: free space under that temp dir, or set TMPDIR to an absolute path elsewhere, and re-run.\n");
     _git_err_clear();
     return 0;
 }
@@ -3862,7 +4093,10 @@ fn _dep_lock_load(): i64 {
     _dep_lock_pin_same = 0;
     _dep_lock_refused = 0;
     _dep_lock_has_trailer = 0;
+    _dep_lock_new_leaf = 0;
+    _dep_lock_active = 0;
     if (_dep_is_cyrius_source_repo() == 1) { return 0; }
+    _dep_lock_active = 1;
     if (file_exists("cyrius.lock") == 0) { return 0; }
     var cap = _file_size("cyrius.lock") + 1;   # whole file: the pin trailer is the LAST line
     if (cap <= 1) { return 0; }
@@ -3895,8 +4129,11 @@ fn _dep_lock_load(): i64 {
 # loaded buffer (64 bytes, not NUL-terminated).
 fn _lock_file_hash_lookup(path): i64 {
     if (_dep_lock_buf == 0) { return 0; }
-    var lbuf = _dep_lock_buf;
-    var ln = _dep_lock_len;
+    return _lock_buf_hash_lookup(_dep_lock_buf, _dep_lock_len, path);
+}
+
+# The same lookup over any lock text (`deps --verify` reads its own copy). CHANGELOG [6.6.9]
+fn _lock_buf_hash_lookup(lbuf, ln, path): i64 {
     var plen = strlen(path);
     var pos = 0;
     while (pos < ln) {
@@ -3942,10 +4179,13 @@ fn _dep_lock_guard_stdlib_leaf(src, dst): i64 {
         # guard that goes silent when its tool is absent shares its defect with the thing it
         # checks (bite-5 review: no sha256sum on PATH → the moved leaf was vendored and the
         # lock rewritten with ZERO hash lines, exit 0).
+        # 6.6.9: the reason is the hasher's own (_sha_fail_why), not a guess — a full temp
+        # dir used to read as "sha256sum missing?". CHANGELOG [6.6.9]
         sys_write(STDERR_FD, "error: ", 7);
         sys_write(STDERR_FD, dst, strlen(dst));
-        var mh = ": cannot hash the pinned snapshot (sha256sum missing?) — refusing to vendor or re-lock this leaf\n";
-        sys_write(STDERR_FD, mh, strlen(mh));
+        _ew(": cannot hash the pinned snapshot (");
+        _sha_fail_why();
+        _ew(") — refusing to vendor or re-lock this leaf\n");
         _dep_lock_refused = _dep_lock_refused + 1;
         return 3;
     }
@@ -4041,15 +4281,31 @@ fn _dep_is_cyrius_source_repo(): i64 {
 # cmd_deps_lock so the old cyrius.lock is left exactly as it was. CHANGELOG [6.6.6]
 var _dep_lock_unhashable = 0;         # how many .cyr files _sha256sum_file could not hash
 var _dep_lock_unhashable_first = 0;   # the first such path, for the error
+var _dep_lock_unhashable_why = 0;     # its _sha_fail/_sha_errno/_sha_rc, restored for the error (6.6.9)
 
 # Report the unhashable files and why the lock was not written.
 fn _dep_lock_unhashable_err(): i64 {
-    sys_write(STDERR_FD, "error: cannot hash ", 19);
+    if (_dep_lock_soft == 1) { _ew("warning: cyrius.lock NOT written — "); }
+    else { _ew("error: "); }
+    sys_write(STDERR_FD, "cannot hash ", 12);
     sys_write(STDERR_FD, _dep_lock_unhashable_first, strlen(_dep_lock_unhashable_first));
     if (_dep_lock_unhashable > 1) {
         sys_write(STDERR_FD, " (and ", 6);
         fmt_int_fd(STDERR_FD, _dep_lock_unhashable - 1);
         sys_write(STDERR_FD, " more)", 6);
+    }
+    # 6.6.9: say WHY (the first failure's reason) — a full temp dir is not an unreadable file.
+    if (_dep_lock_unhashable_why != 0) {
+        _sha_fail = load64(_dep_lock_unhashable_why);
+        _sha_errno = load64(_dep_lock_unhashable_why + 8);
+        _sha_rc = load64(_dep_lock_unhashable_why + 16);
+        _ew(": ");
+        _sha_fail_why();
+    }
+    if (_dep_lock_soft == 1) {
+        _ew(".\n  The lock is left as it was; `cyrius deps --verify` reports the files it does not cover.\n");
+        _ew("  Run `cyrius deps --relock` once the hasher works.\n");
+        return 2;
     }
     sys_write(STDERR_FD, " — cyrius.lock would not cover it; left as it was\n", 52);
     return 1;
@@ -4066,43 +4322,25 @@ fn _dep_lock_unhashable_err(): i64 {
 # of them, and the lock came out empty ecosystem-wide.
 fn _deps_lock_dir(dir, lock_h): i64 {
     var count = 0;
-    var entries = dir_list(str_from(dir));
-    # v6.6.3 — SORT. `dir_list` returns readdir order, which is stable on one machine
-    # and DIFFERENT on another, so the lock came out as the same hashes in a different
-    # SEQUENCE. Every consumer CI that gates the lock byte-for-byte
-    # (`git diff --exit-code -- cyrius.lock`) then failed for any lock committed
-    # elsewhere — i.e. always. Measured on agnostic 2026-09-12: the gate reported
-    # "98 insertions(+), 98 deletions(-)" while an order-insensitive compare of the
-    # very same two files was EMPTY — identical hashes for all 117 entries. The
-    # failure message ("does not match a clean resolution at this pin") reads as
-    # dependency drift, so it sends the reader hunting stale pins that are not stale;
-    # it cost most of a day across two repos before the diff was printed on a runner.
-    # Same one-line remedy as line ~830 (v6.5.37, A8) — that release fixed the module
-    # walker and missed this one. See issues/2026-09-12-cyrius-lock-unstable-order.md.
-    #
-    # The commit-pin lines above need no sort: they are appended in manifest
-    # declaration order, which is already machine-independent (confirmed — they were
-    # unchanged CONTEXT lines in that same diff, only the hash lines moved).
-    if (entries != 0) { vec_sort_by(entries, &_dep_name_cmp); }
+    # 6.6.9: the file list comes from `_deps_lock_files`, the ONE walker `deps --verify` also
+    # uses to find lib/ files the lock does not cover — so the writer and the checker cannot
+    # disagree about what "every .cyr under lib/" means. CHANGELOG [6.6.9]
+    var files = _deps_lock_files(dir);
     var li = 0;
-    while (li < vec_len(entries)) {
-        var name = str_data(vec_get(entries, li));
-        var nlen = str_len(vec_get(entries, li));
+    while (li < vec_len(files)) {
+        var path = vec_get(files, li);
         li = li + 1;
-        if (nlen == 0) { continue; }
-        if (load8(name) == 46) { continue; }   # skip ".", "..", dotfiles
-        var path = make_path(dir, name);
-        if (is_dir(str_from(path)) == 1) {
-            count = count + _deps_lock_dir(path, lock_h);
-            continue;
-        }
-        if (nlen < 5) { continue; }
-        if (memeq(name + nlen - 4, ".cyr", 4) == 0) { continue; }
         var hash = _sha256sum_file(path);
         if (hash == 0) {
             # v6.6.6: RECORDED, not skipped — cmd_deps_lock aborts on it. CHANGELOG [6.6.6]
             _dep_lock_unhashable = _dep_lock_unhashable + 1;
-            if (_dep_lock_unhashable_first == 0) { _dep_lock_unhashable_first = path; }
+            if (_dep_lock_unhashable_first == 0) {
+                _dep_lock_unhashable_first = path;
+                _dep_lock_unhashable_why = alloc(24);
+                store64(_dep_lock_unhashable_why, _sha_fail);
+                store64(_dep_lock_unhashable_why + 8, _sha_errno);
+                store64(_dep_lock_unhashable_why + 16, _sha_rc);
+            }
             continue;
         }
         _aw_write(lock_h, hash, 64);
@@ -4112,6 +4350,46 @@ fn _deps_lock_dir(dir, lock_h): i64 {
         count = count + 1;
     }
     return count;
+}
+
+# Every `.cyr` under `dir`, recursively, as "dir/…/name.cyr" paths in a vec — the set
+# cyrius.lock must cover. Recurses into subdirs (e.g. `lib/unicode/`) so nested stdlib
+# modules resolved by `cyrius deps` (v5.8.49 subdir-nested paths) are locked too — a flat
+# scan silently omitted them. Dotfiles are skipped.
+#
+# v6.6.3 — SORTED. `dir_list` returns readdir order, which is stable on one machine and
+# DIFFERENT on another, so the lock came out as the same hashes in a different SEQUENCE and
+# every consumer CI that gates the lock byte-for-byte (`git diff --exit-code -- cyrius.lock`)
+# failed for any lock committed elsewhere (agnostic 2026-09-12: "98 insertions(+), 98
+# deletions(-)" over identical hashes). See issues/archived/2026-09-12-cyrius-lock-unstable-order.md.
+# The commit-pin lines need no sort: they are appended in manifest declaration order.
+fn _deps_lock_files(dir): i64 {
+    var out = vec_new();
+    _deps_lock_files_into(dir, out);
+    return out;
+}
+
+fn _deps_lock_files_into(dir, out): i64 {
+    var entries = dir_list(str_from(dir));
+    if (entries == 0) { return 0; }
+    vec_sort_by(entries, &_dep_name_cmp);
+    var li = 0;
+    while (li < vec_len(entries)) {
+        var name = str_data(vec_get(entries, li));
+        var nlen = str_len(vec_get(entries, li));
+        li = li + 1;
+        if (nlen == 0) { continue; }
+        if (load8(name) == 46) { continue; }   # skip ".", "..", dotfiles
+        var path = make_path(dir, name);
+        if (is_dir(str_from(path)) == 1) {
+            _deps_lock_files_into(path, out);
+            continue;
+        }
+        if (nlen < 5) { continue; }
+        if (memeq(name + nlen - 4, ".cyr", 4) == 0) { continue; }
+        vec_push(out, path);
+    }
+    return 0;
 }
 
 fn cmd_deps_lock(): i64 {
@@ -4207,14 +4485,25 @@ fn cmd_deps_verify(): i64 {
     # prepended by cmd_deps_lock ate into that budget. Match _lock_commit_lookup.
     # v6.6.4: the WHOLE file — a lock past 64 KB silently stopped verifying at the cut, and
     # the `cyrius\t<pin>` trailer is the last line.
+    # 6.6.9: the cyrius source repo writes no lock (cmd_deps_lock skips it; its tracked
+    # cyrius.lock is empty), so there is nothing here for the lib/ walk below to hold its
+    # authored stdlib against — say so instead of failing every file.
+    if (_dep_is_cyrius_source_repo() == 1) {
+        _err("cyrius.lock is not kept in the cyrius source repo (lib/ is authored stdlib, not resolved deps) — nothing to verify");
+        return 1;
+    }
     var _vcap = _file_size("cyrius.lock") + 1;
     if (_vcap < 65536) { _vcap = 65536; }
     var buf = alloc(_vcap);
     var n = file_read_all("cyrius.lock", buf, _vcap - 1);
-    if (n <= 0) {
+    if (n < 0 || file_exists("cyrius.lock") == 0) {
         _err("no cyrius.lock found — run cyrius deps first");
         return 1;
     }
+    # 6.6.9: an EMPTY lock is present-but-empty (cyrius-bb tracks a 0-byte one over 53 lib/
+    # files), not "missing" — it verifies nothing, and the lib/ walk below names every file
+    # it leaves uncovered. CHANGELOG [6.6.9]
+    if (n == 0) { println("cyrius.lock is empty — it records no file"); }
     store8(buf + n, 0);
 
     var pass = 0;
@@ -4250,7 +4539,9 @@ fn cmd_deps_verify(): i64 {
         if (actual_hash == 0) {
             sys_write(STDERR_FD, "  FAIL: ", 8);
             sys_write(STDERR_FD, path, plen);
-            sys_write(STDERR_FD, " (cannot hash)\n", 15);
+            _ew(" (cannot hash: ");
+            _sha_fail_why();
+            _ew(")\n");
             fail = fail + 1;
         } elif (memeq(actual_hash, expected_hash, 64) == 1) {
             pass = pass + 1;
@@ -4262,6 +4553,24 @@ fn cmd_deps_verify(): i64 {
         }
 
         pos = path_end + 1;
+    }
+
+    # ⛔ 6.6.9 bite 9 — AND every .cyr under lib/ must HAVE a line. The loop above checks
+    # the lines the lock contains, so a file with no line had nothing to fail: patra's two
+    # newly declared leaves verified "29 verified, 0 failed" over 31 files — tampered, too.
+    # Walked with `_deps_lock_files`, the SAME walker cmd_deps_lock writes from, so the
+    # checker cannot drift from the writer (a check that shares its subject's blind spot
+    # reads green). CHANGELOG [6.6.9]
+    var files = _deps_lock_files("lib");
+    var fi = 0;
+    while (fi < vec_len(files)) {
+        var fp = vec_get(files, fi);
+        fi = fi + 1;
+        if (_lock_buf_hash_lookup(buf, n, fp) != 0) { continue; }
+        sys_write(STDERR_FD, "  FAIL: ", 8);
+        sys_write(STDERR_FD, fp, strlen(fp));
+        _ew(" (not in cyrius.lock — run cyrius deps --relock to lock it)\n");
+        fail = fail + 1;
     }
 
     fmt_int(pass);

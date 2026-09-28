@@ -246,8 +246,12 @@ NFILE=$(cut -d: -f1 "$T/sites" | sort -u | wc -l)
 # self-host step moved into `_self_host_step` -> `_pulsar_raw_compile`, which already has
 # an armed site of its own. The PE behaviour this gate pins is unchanged — axis 4's wine
 # rows still exercise soak's refusal and its step-2 exit code, now through that helper.
+# ⚠ LOWERED AGAIN 16 -> 15 at 6.6.9 bite 10 (CVE-49): `cmd_self`'s POSIX fork of `/bin/sh`
+# (the script that staged compilers at `/tmp/cyr_*_$$`) was DELETED; its steps now go through
+# `_self_host_step` -> `_pulsar_raw_compile`, the armed site soak already uses. commands.cyr
+# keeps 1. Its PE arm (`_win_cmd_self`) is unchanged and axis 4's wine rows still run it.
 # Lower this number only when a site is REMOVED, never to make a red gate green.
-check "the scan finds at least the 16 known sites (found $NSITE)" yes "$([ "$NSITE" -ge 16 ] && echo yes || echo no)"
+check "the scan finds at least the 15 known sites (found $NSITE)" yes "$([ "$NSITE" -ge 15 ] && echo yes || echo no)"
 check "…across at least 4 cbt/ files (found $NFILE)" yes "$([ "$NFILE" -ge 4 ] && echo yes || echo no)"
 grep 'pe=UNARMED' "$T/sites" > "$T/unarmed" || true
 if [ -s "$T/unarmed" ]; then

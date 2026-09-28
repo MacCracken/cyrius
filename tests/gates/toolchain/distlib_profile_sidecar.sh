@@ -71,6 +71,31 @@ EOF
 cat > src/c.cyr <<'EOF'
 fn c_three(): i64 { return 3; }
 EOF
+# 6.6.9 (vani filing) — ONLY CODE IS A REFERENCE. Each of these names `heavy_do` (or its leaf)
+# in a different way, and only two of them are code:
+#   d.cyr  — `heavy_do` in a `#` comment AND in a string literal: NOT a reference;
+#   e.cyr  — a char literal '"' BEFORE a real call: a blanker that took strings before chars
+#            would read '"' as a string opening and blank the call after it — so the call must
+#            still keep `heavy` (anti-vacuous for d.cyr: blanking everything passes it);
+#   f.cyr  — an `include "lib/heavy.cyr"` line and no call: the bundle KEEPS that line, so a
+#            consumer's build must resolve it — a reference even though the path is a string.
+cat > src/d.cyr <<'EOF'
+# Wraps heavy_do() — safe to call heavy_do twice.
+fn d_four(): i64 {
+    var msg = "heavy_do";
+    return 4;
+}
+EOF
+cat > src/e.cyr <<'EOF'
+fn e_five(c): i64 {
+    if (c == '"') { return heavy_do(5); }
+    return 5;
+}
+EOF
+cat > src/f.cyr <<'EOF'
+include "lib/heavy.cyr"
+fn f_six(): i64 { return 6; }
+EOF
 cat > src/lib.cyr <<'EOF'
 include "src/a.cyr"
 include "src/b.cyr"
@@ -92,6 +117,15 @@ modules = ["src/a.cyr"]
 
 [lib.bare]
 modules = ["src/c.cyr"]
+
+[lib.words]
+modules = ["src/d.cyr"]
+
+[lib.chr]
+modules = ["src/e.cyr"]
+
+[lib.inc]
+modules = ["src/f.cyr"]
 EOF
 
 # The fake leaves must live where [deps].stdlib resolves them (CYRIUS_HOME/lib) AND where
@@ -101,6 +135,9 @@ cp lib/dispatch.cyr lib/dispatch_impl.cyr lib/plainleaf.cyr lib/heavy.cyr "$W/ho
 "$CLI" distlib      > "$W/base.log"  2>&1 || true
 "$CLI" distlib small > "$W/prof.log" 2>&1 || true
 "$CLI" distlib bare  > "$W/bare.log" 2>&1 || true
+"$CLI" distlib words > "$W/words.log" 2>&1 || true
+"$CLI" distlib chr   > "$W/chr.log" 2>&1 || true
+"$CLI" distlib inc   > "$W/inc.log" 2>&1 || true
 
 # PREMISE ROW — if the bundles did not build, every axis below is vacuous.
 if [ ! -f dist/pf.cyr ] || [ ! -f dist/pf-small.cyr ]; then
@@ -176,6 +213,34 @@ case " $B " in
         *) echo "  FAIL axis 6: base sidecar lost 'plainleaf' [$B]"; fail=1 ;;
     esac ;;
     *) echo "  FAIL axis 6: base sidecar lost 'dispatch' [$B]"; fail=1 ;;
+esac
+
+# --- axes 8-10 (6.6.9): comments and strings are not references; code and includes are ---
+# Premise for all three: each profile bundle was built (with no bundle there is no sidecar,
+# and "heavy absent" would then pass axis 8 vacuously).
+for pr in words chr inc; do
+    if [ ! -f "dist/pf-$pr.cyr" ] || [ ! -f "dist/pf-$pr.deps" ]; then
+        echo "  FAIL premise: dist/pf-$pr.cyr/.deps not written"; sed -n '1,4p' "$W/$pr.log" | sed 's/^/    /'; fail=1
+    fi
+done
+WD=$(leaves dist/pf-words.deps); CH=$(leaves dist/pf-chr.deps); IN=$(leaves dist/pf-inc.deps)
+case " $WD " in
+    *" heavy "*) echo "  FAIL axis 8: 'heavy' kept in [$WD] though pf-words names heavy_do only in a comment and a string — the prune is matching raw text (vani: a comment edit took dist/vani-core.deps from 3 leaves to 8)"; fail=1 ;;
+    *) echo "  ok axis 8: a comment- or string-only mention keeps no leaf [$WD]" ;;
+esac
+# ⚠ The PRUNE must keep it, not the compile-verified loop: the loop re-adds a leaf whose symbol
+# is undefined, so "heavy is in the sidecar" alone passes even when the blanker ate the call
+# (measured: a blanker with no char-literal arm passed that weaker form). `re-added` in the log
+# is the loop repairing the prune.
+case " $CH " in
+    *" heavy "*) if grep -q 're-added' "$W/chr.log"; then
+            echo "  FAIL axis 9 (anti-vacuous for 8): 'heavy' was dropped by the prune and only re-added by the verify loop — a char literal was read as a string opening and blanked the call after it"; fail=1
+        else echo "  ok axis 9: a real call after a char literal keeps 'heavy' at the prune"; fi ;;
+    *) echo "  FAIL axis 9 (anti-vacuous for 8): 'heavy' missing from [$CH] — e_five() calls heavy_do"; fail=1 ;;
+esac
+case " $IN " in
+    *" heavy "*) echo "  ok axis 10: an explicit include of lib/heavy.cyr keeps 'heavy'" ;;
+    *) echo "  FAIL axis 10: 'heavy' missing from [$IN] — the bundle keeps its include of lib/heavy.cyr, so a consumer following this sidecar cannot resolve it"; fail=1 ;;
 esac
 
 [ "$fail" -eq 0 ] || { echo "FAIL: distlib-profile-sidecar"; exit 1; }

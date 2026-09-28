@@ -1,8 +1,7 @@
-# `cyrius deps` reports an unwritable `/tmp` as a TAMPERED dep cache, and advises deleting it — OPEN
+# `cyrius deps` reports an unwritable `/tmp` as a TAMPERED dep cache, and advises deleting it — RESOLVED 6.6.9
 
-**Status:** 🟡 **OPEN** — reproduced 2026-09-27 on 6.6.6 (the reproduction below, run verbatim), and read in
-source at HEAD `d5697d73`.
-**Placement:** **6.6.9 bite 9** — cyrius deps integrity: [build].modules honoured without [deps]; every vendored leaf locked (first lock written); --verify fails on unlocked files; capture failures are named instead of called tampering; TMPDIR honoured. Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
+**Status:** ✅ **RESOLVED v6.6.9** (bite 9) — every capture is opened by the parent before the fork; a cache refusal reached while a capture could not be written is reason 10 (names the temp dir + errno, no tamper accusation, no `rm -rf`); the hasher and the lint pre-pass report it the same way; an absolute `$TMPDIR` is the temp base. Gate `tests/gates/toolchain/deps_cache_capture_failure_named.sh`. (Filed: reproduced 2026-09-27 on 6.6.6, read in source at HEAD `d5697d73`.)
+**Placement:** **6.6.9 bite 9** — cyrius deps integrity: [build].modules honoured without [deps]; every vendored leaf locked (first lock written); --verify fails on unlocked files; capture failures are named instead of called tampering; TMPDIR honoured. Pinned 2026-09-27 in [roadmap.md](../../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Discovered:** 2026-09-27, aethersafha 0.16.27 development: every `cyrius build` / `test` / `deps` refused all
 ten deps as tampered for a few minutes, then passed again with nothing changed. The machine's `/tmp` is a
 tmpfs mounted `usrquota`, and the user was at quota; the cyrius LSP failed at the same moment with

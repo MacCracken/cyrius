@@ -13,10 +13,13 @@
 # whose snapshot hash differs from the locked one under the same pin is refused by name.
 # `cyrius deps --relock` is the explicit accept; a pin bump re-locks silently.
 #
-# ⛔ FIXTURE SHAPE IS LOAD-BEARING (bite-4 review): a stdlib-ONLY consumer writes no lock by
-# default (`copied == 0`), so a stdlib-only fixture cannot reproduce the filed symptom and
-# A1's "lock untouched" would pass VACUOUSLY on the old resolver. Every axis that must see
-# the silent RE-LOCK carries a local `file://` git dep (no network) so `build` writes the lock.
+# ⛔ FIXTURE SHAPE IS LOAD-BEARING (bite-4 review): at 6.6.4 a stdlib-ONLY consumer wrote no
+# lock by default (`copied == 0`), so a stdlib-only fixture could not reproduce the filed
+# symptom and A1's "lock untouched" would have passed VACUOUSLY on the old resolver. Since
+# 6.6.9 a stdlib-only project gets a FIRST lock (every vendored leaf is locked), but that is
+# a first write, not the RE-LOCK under an unchanged pin this gate is about — so every axis
+# that must see the silent re-lock still carries a local `file://` git dep (no network),
+# which makes `build` rewrite an EXISTING lock on every run, as the old resolver did.
 #
 # Two more defects the review found ride along: bare `cyrius deps --lock` re-hashed lib/ with
 # `_dep_commit_lines == 0` and DROPPED every CVE-21 commit pin (A6); a CRLF checkout of the

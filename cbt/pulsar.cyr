@@ -7,15 +7,30 @@
 # v6.6.4: a RAW compile — `cc < src > out` via fork/execve, no `#@incdir`/`#@pkgver`
 # prepend, no wrapper — the recipe the tag build, install.sh and the release gate use. The
 # output is written to a sibling temp and renamed in (never in place: `build/cycc_aarch64`
-# may be the compiler a sibling gate is executing). Returns the child's exit status.
+# may be the compiler a sibling gate is executing). Returns the child's exit status, or 1
+# for a failure that has no status of its own — and `_raw_last_how` says which it was.
+#
+# 6.6.9 bite 10 (review) — WHY a non-zero return, recorded, because the return alone
+# cannot say. A child killed by a signal, a child that exited 0 but wrote nothing, and a
+# rename that failed all came back as a flat 1, and `cyrius self` quoted it as
+# "exited 1" — a status the compiler never returned (measured: a SIGSEGV stub and an
+# exit-0-no-output stub both read "exited 1"). That is the fabricated-status class 6.6.6
+# bite 24 removed from `cyrius build` (`_cc_last_exit`). `_raw_fail_describe` renders it.
+#   0 = the child exited with the returned status   1 = it did not exit normally
+#   2 = it exited 0 and wrote nothing               3 = its output could not be moved in
+# CHANGELOG [6.6.9]
+var _raw_last_how = 0;
+var _raw_last_sig = 0;
 fn _pulsar_raw_compile(cc, src, out): i64 {
+    _raw_last_how = 0;
+    _raw_last_sig = 0;
     var tmp_sb = str_builder_new();
     str_builder_add_cstr(tmp_sb, out);
     str_builder_add_cstr(tmp_sb, ".pulsar.new");
     var tmp = str_data(str_builder_build(tmp_sb));
     # v6.6.6 — PE arm. `sys_fork` is a -1 stub on Windows, so the parent decoded an
     # uninitialised status slot: whenever that read as WIFEXITED/0 the rename below moved
-    # a temp that was never written, or `_file_size` (a raw stat, also unrouted on PE)
+    # a temp that was never written, or `_file_size` (a raw stat until 6.6.9, unrouted on PE)
     # answered -1 and the guard caught it — either way `cyrius pulsar` reported a rebuild
     # it had not done. `_win_compile_spawn` is exactly this redirect. CHANGELOG [6.6.6].
     var prc = 0;
@@ -23,7 +38,7 @@ fn _pulsar_raw_compile(cc, src, out): i64 {
     prc = _win_compile_spawn(cc, src, tmp);
     if (prc != 0) { xunlink(tmp); return prc; }
     sys_chmod(tmp, 0x1ED);
-    if (file_rename(tmp, out) != 0) { xunlink(tmp); return 1; }
+    if (file_rename(tmp, out) != 0) { xunlink(tmp); _raw_last_how = 3; return 1; }
     return 0;
     #endif
     var pid = sys_fork();
@@ -45,10 +60,41 @@ fn _pulsar_raw_compile(cc, src, out): i64 {
     var st = load32(&sb);
     var rc = 1;
     if (WIFEXITED(st) == 1) { rc = WEXITSTATUS(st); }
+    else { _raw_last_how = 1; _raw_last_sig = WTERMSIG(st); }
     if (rc != 0) { sys_unlink(tmp); return rc; }
-    if (_file_size(tmp) <= 0) { sys_unlink(tmp); return 1; }
+    if (_file_size(tmp) <= 0) { sys_unlink(tmp); _raw_last_how = 2; return 1; }
     sys_chmod(tmp, 0x1ED);
-    if (file_rename(tmp, out) != 0) { sys_unlink(tmp); return 1; }
+    if (file_rename(tmp, out) != 0) { sys_unlink(tmp); _raw_last_how = 3; return 1; }
+    return 0;
+}
+
+# Record "the status is a real exit code" — for a caller that ran the child some other way
+# (`_win_cmd_self` spawns directly). CHANGELOG [6.6.9]
+fn _raw_how_exited(): i64 {
+    _raw_last_how = 0;
+    _raw_last_sig = 0;
+    return 0;
+}
+
+# The last `_pulsar_raw_compile` failure (status `rc`) in words, appended to `sb`: what the
+# child actually did, never a status it did not return. CHANGELOG [6.6.9]
+fn _raw_fail_describe(sb, rc): i64 {
+    if (_raw_last_how == 1) {
+        if (_raw_last_sig > 0) {
+            str_builder_add_cstr(sb, "was killed by signal ");
+            str_builder_add_int(sb, _raw_last_sig);
+            return 0;
+        }
+        str_builder_add_cstr(sb, "did not exit normally");
+        return 0;
+    }
+    if (_raw_last_how == 2) { str_builder_add_cstr(sb, "exited 0 but wrote no output"); return 0; }
+    if (_raw_last_how == 3) {
+        str_builder_add_cstr(sb, "exited 0 but its output could not be moved into place");
+        return 0;
+    }
+    str_builder_add_cstr(sb, "exited ");
+    str_builder_add_int(sb, rc);
     return 0;
 }
 

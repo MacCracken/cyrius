@@ -42,6 +42,11 @@
 #     0, 3 and 4 stay green. Restored -> all green, CLI byte-identical.
 #   This is a SEMANTIC mutation: it removes the cleanup, not a message.
 set -u
+# The CLI's temp base, derived exactly as cbt/build.cyr::_cbt_tmpbase derives it (6.6.9 bite
+# 9): an ABSOLUTE $TMPDIR with trailing slashes dropped, else /tmp. A fixed /tmp here would
+# count nothing under a set TMPDIR and read GREEN over directories it never looked at.
+case "${TMPDIR:-}" in /*) CTB=$(printf '%s' "$TMPDIR" | sed 's:/*$::'); [ -n "$CTB" ] || CTB=/ ;; *) CTB=/tmp ;; esac
+export CTB
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 CYRIUS="$ROOT/build/cyrius"
@@ -89,7 +94,7 @@ new_temps() {
     _p=$(cat "$1" 2>/dev/null || true)
     [ -n "$_p" ] || { echo "no-pid"; return; }
     n=0
-    for d in /tmp/cyrius-"$_p" /tmp/cyrius-"$_p"-*; do
+    for d in "$CTB"/cyrius-"$_p" "$CTB"/cyrius-"$_p"-*; do
         [ -d "$d" ] || continue
         c=$(ls "$d" 2>/dev/null | grep -c '^cpp_' || true)
         n=$((n + c))
@@ -118,7 +123,7 @@ echo "axis 4 — ⭐ ANTI-VACUOUS: the counting method can see a planted temp:"
 # (the probe lives in the CLI's own /tmp/cyrius-* namespace — that is what is being counted —
 # under a name no CLI process can take: pids are numeric)
 echo "gateprobe-$$" > "$T/p4"
-probe_dir="/tmp/cyrius-gateprobe-$$"
+probe_dir="$CTB/cyrius-gateprobe-$$"
 mkdir -p "$probe_dir" && : > "$probe_dir/cpp_probe"
 check "a planted cpp_ temp is counted" 1 "$(new_temps "$T/p4")"
 rm -rf "$probe_dir"

@@ -1,8 +1,7 @@
-# `cyrius deps` never locks a newly declared stdlib leaf, and `--verify` passes over it tampered — OPEN
+# `cyrius deps` never locks a newly declared stdlib leaf, and `--verify` passes over it tampered — RESOLVED 6.6.9
 
-**Status:** 🟡 **OPEN**: reproduced 2026-09-23 with the installed 6.6.6, in a scratch project (below)
-and in patra's tree.
-**Placement:** **6.6.9 bite 9** — cyrius deps integrity: [build].modules honoured without [deps]; every vendored leaf locked (first lock written); --verify fails on unlocked files; capture failures are named instead of called tampering; TMPDIR honoured. Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
+**Status:** ✅ **RESOLVED v6.6.9** (bite 9) — a vendored leaf the lock has no line for (a new leaf, or any leaf with no lock) triggers the lock write, so a stdlib-only project gets its first lock; `--verify` walks lib/ through the lock writer's own walker and fails an unlocked file by name; an empty lock is present-but-empty; the help says what --relock does. Gate `tests/gates/toolchain/deps_lock_new_leaf_locked.sh`. (Filed: reproduced 2026-09-23 with the installed 6.6.6, in a scratch project and in patra's tree.)
+**Placement:** **6.6.9 bite 9** — cyrius deps integrity: [build].modules honoured without [deps]; every vendored leaf locked (first lock written); --verify fails on unlocked files; capture failures are named instead of called tampering; TMPDIR honoured. Pinned 2026-09-27 in [roadmap.md](../../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Discovered:** 2026-09-23 during patra's 1.15.0 cut, which added `chrono` and `random` to
 `[deps] stdlib`. `cyrius deps` vendored both into `lib/`, left `cyrius.lock` at 29 of 31 entries, and
 `cyrius deps --verify` reported `29 verified, 0 failed`. `cyrius deps --relock` wrote all 31.

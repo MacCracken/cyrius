@@ -32,6 +32,15 @@ var _dry_run = 0;
 var _lib_sync_full = 0;   # v6.2.40: `cyrius lib sync --full` opt-in (whole snapshot)
 var _check_lib_sync = 0;  # v6.4.63: `--check-lib-sync` — stale ./lib/ is an ERROR (CI gate)
 var _dep_includes = 0;
+# 6.6.9: vec<cstr> of the NAMED-DEP module files `cyrius deps` placed in lib/ (a subset of
+# _dep_includes — the stdlib-leaf pushes are not in it). `cyrius distlib`'s verify splices them,
+# so a symbol the bundle takes from a named dep is defined, as it is in a consumer's build.
+var _dep_nd_modules = 0;
+# 6.6.9: vec<cstr> of the stdlib leaves `cyrius deps` pulled ON BEHALF OF named deps (their
+# `.deps` sidecars, `requires` keys and modular `lib:` entries). In a consumer's build they are in
+# scope through the named dep, so distlib's verify splices them WITHOUT recording them — else a
+# named dep's own needs are written into the bundle's sidecar.
+var _dep_nd_leaves = 0;
 # v5.7.14: transitive dep resolution state.
 # _dep_visited: vec<cstr> of dep names already resolved (closest-wins skip).
 # _dep_queue:   vec<cstr> of absolute manifest dirs whose own [deps.X]
@@ -62,6 +71,17 @@ var _dep_lock_len = 0;
 var _dep_lock_pin_same = 0;   # 1 iff the lock's `cyrius\t<pin>` line equals this run's pin
 var _dep_lock_refused = 0;    # leaves the guard refused this run; folded into `errors`
 var _dep_lock_has_trailer = 0;   # 1 iff the loaded lock carried a `cyrius\t<pin>` line (else it is re-written once to gain one)
+# 6.6.9 bite 9: 1 iff this resolve vendored a lib/ file the loaded lock has NO line for — a
+# newly declared stdlib leaf, or any leaf when there is no lock yet (a stdlib-only project's
+# FIRST lock). Either way the lock would not cover lib/, so it is written. Only set outside
+# the cyrius source repo (`_dep_lock_active`), which never writes a lock.
+var _dep_lock_new_leaf = 0;
+var _dep_lock_active = 0;
+# 6.6.9: 1 while cmd_deps writes a lock ONLY because of `_dep_lock_new_leaf`. A lock that cannot
+# be HASHED then is a named warning, not a failed resolve: before 6.6.9 no lock was attempted
+# at all in that case, and a host with no working hasher (wine has no certutil) must not
+# lose every stdlib-only build to it. `deps --verify` still names each uncovered file.
+var _dep_lock_soft = 0;
 # v5.11.58: --strict-pin flag — when 1, compile() augments the
 # child's envp with CYRIUS_STRICT_PIN=1 so cycc's pin-drift check
 # (added v5.11.57) exits non-zero on mismatch instead of warning.
@@ -306,8 +326,19 @@ var ARCH_AARCH64 = 1;
 # ⚠ v6.5.37 made this STRICTLY WORSE rather than adjacent: it fixed `_try_redirect_to_pinned`
 # so the pin redirect now fires for essentially every consumer, which means consumers reliably
 # got the pinned WRAPPER and the CURRENT COMPILER — the mismatch became the default path.
+#
+# ⛔ WINDOWS: THE EXE'S OWN PATH, NOT argv(0), AND BOTH SEPARATORS. argv(0) there is whatever
+# the parent wrote — `C:\cyrius\bin\cyrius.exe`, or `Z:\…\bin\cyrius.exe` under wine, or a bare
+# `cyrius` found on PATH — and the scan below looked for '/' only, so on every Windows spelling
+# this answered 0: the wrapper never saw its own bin/ and fell through to `%CYRIUS_HOME%\bin`
+# (measured under wine: `bin/cyrius.exe audit` printed "skip: cyrlint not built" with
+# cyrlint.exe beside it). GetModuleFileNameW is always the absolute path of this .exe; it is
+# normalised to '/' (Win32 accepts it, and make_path joins with '/'). CHANGELOG [6.6.9]
 fn _wrapper_dir(): i64 {
     var a0 = argv(0);
+    #ifdef CYRIUS_TARGET_WIN
+    a0 = _wrapper_exe_win(a0);
+    #endif
     if (a0 == 0) { return 0; }
     var last = 0 - 1;
     var i = 0;
@@ -326,6 +357,51 @@ fn _wrapper_dir(): i64 {
     }
     return str_data(str_builder_build(sb));
 }
+
+# The NUL-terminated UTF-16 string `wbuf` of `wn` code units as a fresh UTF-8 cstr, or 0.
+# ⚠ SIZED FROM `wn`, NOT A FIXED BUFFER: `_args_w2u8` silently DROPS any code point that does
+# not fit, and one UTF-16 unit is up to 3 UTF-8 bytes (a surrogate pair's 4 span 2 units), so
+# a fixed 4096 truncated a long non-ASCII path — 2000 CJK units need 6000 bytes — and no
+# length check can see it afterwards. `+ 6`: w2u8 writes a code point only while 5 bytes
+# remain. Host-testable; exercised by tests/gates/toolchain/cli_pe_file_size_and_sibling_tools.sh.
+# CHANGELOG [6.6.9]
+fn _wrapper_w2u8(wbuf, wn): i64 {
+    if (wn <= 0) { return 0; }
+    var cap = wn * 3 + 6;
+    var ubuf = alloc(cap);
+    var b = _args_w2u8(wbuf, ubuf, cap);
+    if (b <= 1) { return 0; }
+    return ubuf;
+}
+
+#ifdef CYRIUS_TARGET_WIN
+# This .exe's absolute path with '\' rewritten to '/', from GetModuleFileNameW; `a0` (argv(0),
+# likewise normalised) when that fails. 0 only when both are absent. A full buffer is a
+# failure, not a length (GetModuleFileNameW truncates silently — see cyrius-init's
+# `_self_path_win`). CHANGELOG [6.6.9]
+fn _wrapper_exe_win(a0): i64 {
+    var p = 0;
+    var wbuf = alloc(8192);
+    var wn = sys_self_exe_w(wbuf, 4096);
+    if (wn > 0 && wn < 4096) {
+        store8(wbuf + wn * 2, 0);
+        store8(wbuf + wn * 2 + 1, 0);
+        p = _wrapper_w2u8(wbuf, wn);
+    }
+    if (p == 0) {
+        if (a0 == 0) { return 0; }
+        var al = strlen(a0);
+        p = alloc(al + 1);
+        memcpy(p, a0, al + 1);
+    }
+    var i = 0;
+    while (load8(p + i) != 0) {
+        if (load8(p + i) == 92) { store8(p + i, 47); }
+        i = i + 1;
+    }
+    return p;
+}
+#endif
 
 fn make_path(dir, name): i64 {
     var sb = str_builder_new();
@@ -571,6 +647,42 @@ fn _cbt_env_int(name, dflt): i64 {
     }
     if (di == 0) { return dflt; }
     return acc;
+}
+
+# 6.6.9 — the portable reach once more, returning the STRING value (a fresh copy) or 0 when
+# NAME is unset or empty. POSIX only (Linux /proc/self/environ, macOS entry-stack envp);
+# the Windows callers read their variables through `_win_getenv_into`. `_cbt_tmpbase`
+# needs it for $TMPDIR. CHANGELOG [6.6.9]
+fn _cbt_env_str(name): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    return 0;
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    var eb = alloc(65536);
+    var en = file_read_all("/proc/self/environ", eb, 65535);
+    #ifdef CYRIUS_TARGET_MACOS
+    en = _macho_fill_environ(eb, 65536);
+    #endif
+    if (en <= 0) { return 0; }
+    store8(eb + en, 0);
+    var nl = strlen(name);
+    var ei = 0;
+    while (ei < en) {
+        if (memeq(eb + ei, name, nl) == 1 && load8(eb + ei + nl) == 61) {
+            var v = eb + ei + nl + 1;
+            if (load8(v) == 0) { return 0; }
+            var vl = strlen(v);
+            var out = alloc(vl + 1);
+            memcpy(out, v, vl + 1);
+            return out;
+        }
+        while (ei < en) {
+            if (load8(eb + ei) == 0) { ei = ei + 1; break; }
+            ei = ei + 1;
+        }
+    }
+    return 0;
+    #endif
 }
 
 fn find_tools(): i64 {

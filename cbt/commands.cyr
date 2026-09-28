@@ -241,18 +241,11 @@ fn cmd_build(source, output): i64 {
         # more, the diagnostic is the message); otherwise `_cc_last_exit` is the child's
         # real status, and -1 means it never exited normally, which is not a status to
         # quote. CHANGELOG [6.6.6].
-        if (_err_count != pre_err) { println("FAILED"); }
-        else {
-            if (_cc_last_exit < 0) { println("FAILED (the compiler did not exit normally)"); }
-            else {
-                sys_write(STDOUT_FD, "FAILED (compiler exit ", 22);
-                fmt_int(_cc_last_exit);
-                sys_write(STDOUT_FD, ")\n", 2);
-            }
-            if (_verbose == 0) {
-                sys_write(STDERR_FD, "  the compiler's diagnostics are above; re-run with -v for the resolved compiler, source and include set\n", 105);
-            }
-        }
+        # 6.6.9 bite 10 — both questions now live in `_compile_fail_verdict`
+        # (cbt/build.cyr), shared with run / check / test. A failure cbt named still
+        # closes the header with a bare `FAILED`. CHANGELOG [6.6.9]
+        if (_compile_fail_verdict(pre_err, STDOUT_FD, "FAILED") == 1) { println("FAILED"); }
+        else { _compile_fail_hint(); }
     }
     return r;
 }
@@ -291,9 +284,14 @@ fn cmd_run(source, args): i64 {
         return 0;
     }
     var tmpbin = _cbt_tmpexe("run");
+    # 6.6.9 bite 10 — ONE verdict. This was an unconditional `_err("compile failed")`, a
+    # second, vaguer line after cbt or the compiler had already named the cause
+    # (`error: no such file: x.cyr` / `error: compile failed`). See
+    # `_compile_fail_verdict` (cbt/build.cyr). CHANGELOG [6.6.9]
+    var pre_err = _err_count;
     var r = compile(source, tmpbin);
     if (r != 0) {
-        _err("compile failed");
+        if (_compile_fail_verdict(pre_err, STDERR_FD, "error: compile failed") == 0) { _compile_fail_hint(); }
         sys_unlink(tmpbin);
         return 1;
     }
@@ -319,11 +317,18 @@ fn cmd_test(source): i64 {
     }
     _total = _total + 1;
     var tmpbin = _cbt_tmpexe("test_bin");
+    var pre_err = _err_count;
     var r = compile(source, tmpbin);
     if (r != 0) {
+        # 6.6.9 bite 10 — the row stays (it is the suite's tally line and names the file),
+        # but it no longer calls a failure cbt NAMED — a missing file, an unwritable temp —
+        # a "compile error". See `_compile_fail_verdict` (cbt/build.cyr). CHANGELOG [6.6.9]
         sys_write(STDERR_FD, "  FAIL: ", 8);
         sys_write(STDERR_FD, source, strlen(source));
-        sys_write(STDERR_FD, " (compile error)\n", 17);
+        if (_compile_fail_verdict(pre_err, STDERR_FD, ": compile error") == 1) {
+            var tnc = " (not compiled; see the error above)\n";
+            sys_write(STDERR_FD, tnc, strlen(tnc));
+        }
         _fail = _fail + 1;
         sys_unlink(tmpbin);
         return 1;
@@ -613,9 +618,12 @@ fn _bench_summary(passed, failed): i64 {
 # Returns 0 on success, 1 on compile error, or the binary's exit code.
 fn _bench_run_one(path): i64 {
     var tmpbin = _cbt_tmpexe("bench");
+    var pre_err = _err_count;
     var r = compile(path, tmpbin);
     if (r != 0) {
-        sys_write(STDERR_FD, "FAIL: compile error\n", 20);
+        # 6.6.9 bite 10 — a failure cbt named is not relabelled a compile error; see
+        # `_compile_fail_verdict` (cbt/build.cyr). CHANGELOG [6.6.9]
+        _compile_fail_verdict(pre_err, STDERR_FD, "FAIL: compile error");
         sys_unlink(tmpbin);
         return 1;
     }
@@ -801,6 +809,7 @@ fn cmd_check(source, with_deps): i64 {
     str_builder_add_cstr(ck_sb, _cbt_tmpfile("check_"));
     str_builder_add_int(ck_sb, ck_pid);
     var ck_out = str_data(str_builder_build(ck_sb));
+    var pre_err = _err_count;
     var r = compile(actual, ck_out);
     sys_unlink(ck_out);
     _skip_deps = 0;
@@ -808,27 +817,31 @@ fn cmd_check(source, with_deps): i64 {
         sys_write(STDOUT_FD, "ok: ", 4);
         println(source);
     } else {
-        sys_write(STDERR_FD, "error: ", 7);
-        println(source);
+        # 6.6.9 bite 10 — ONE verdict, whole on stderr. This printed `error: ` to stderr
+        # and the NAME to stdout (a split line), and printed it after a failure cbt had
+        # already named (`error: no such file: x.cyr` / `error: x.cyr`). See
+        # `_compile_fail_verdict` (cbt/build.cyr). CHANGELOG [6.6.9]
+        var ckh = str_builder_new();
+        str_builder_add_cstr(ckh, "error: ");
+        str_builder_add_cstr(ckh, source);
+        _compile_fail_verdict(pre_err, STDERR_FD, str_data(str_builder_build(ckh)));
     }
     return r;
 }
 
 fn cmd_self(): i64 {
-    # Delegate to inline self-hosting check script
-    # (keeps fixup table small — full inline version needs too many relocations)
     _status("=== Self-Hosting Check ===");
-    # v6.6.6 — PE arm. The /bin/sh script below uses `cat`, `chmod` and `cmp`, none of
-    # which is a Windows command, and the fork that would have run it is a -1 stub
-    # (lib/syscalls_windows.cyr) whose wait decoded an uninitialised status slot — so on
-    # Windows `cyrius self` reported a verdict about a self-host that never happened.
-    # `_win_cmd_self` reproduces the SAME contract natively (two CreateProcessW
-    # redirects + a byte compare) rather than refusing, because cycc genuinely does
-    # self-host on cass and this verb is how a user checks it. CHANGELOG [6.6.6].
+    # v6.6.6 — PE arm. The fork that the POSIX arm used to run a /bin/sh script through is
+    # a -1 stub on Windows (lib/syscalls_windows.cyr) whose wait decoded an uninitialised
+    # status slot — so on Windows `cyrius self` reported a verdict about a self-host that
+    # never happened. `_win_cmd_self` reproduces the SAME contract natively (two
+    # CreateProcessW redirects + a byte compare) rather than refusing, because cycc
+    # genuinely does self-host on cass and this verb is how a user checks it.
+    # CHANGELOG [6.6.6].
     #ifdef CYRIUS_TARGET_WIN
     return _win_cmd_self();
     #endif
-    # v6.6.6 — THE PER-TARGET FORK, on POSIX too. This script named `src/main.cyr`
+    # v6.6.6 — THE PER-TARGET FORK, on POSIX too. The old script named `src/main.cyr`
     # unconditionally, and on aarch64 / either macOS that fork compiles cleanly into a
     # host-native compiler carrying the x86 backend — so the verb printed a verdict about
     # a compiler nobody ships (measured: "FAIL: cycc!=cycc" on pi for a compiler that
@@ -839,49 +852,75 @@ fn cmd_self(): i64 {
         _err_ctx("self-host: the compiler source for this target is missing", self_src);
         return 1;
     }
-    var pid = sys_fork();
-    if (pid == 0) {
-        var argv[40];   # N BYTES per CLAUDE.md buffer contract: 4 ptrs need 32 B
-        store64(&argv, "/bin/sh");
-        store64(&argv + 8, "-c");
-        var sb = str_builder_new();
-        str_builder_add_cstr(sb, "F=");
-        str_builder_add_cstr(sb, self_src);
-        str_builder_add_cstr(sb, ";cycc=/tmp/cyr_cc5_$$;ccr=/tmp/cyr_ccr_$$;cc4=/tmp/cyr_cc4_$$;rc=1;");
-        str_builder_add_cstr(sb, "cat $F|");
-        str_builder_add_cstr(sb, _cc);
-        # ⚠ THE COMPARISON MUST SEE TWO UNSIGNED OUTPUTS. Step 2 has to RUN step 1's
-        # output, and on Apple Silicon AMFI SIGKILLs an unsigned arm64 Mach-O — but
-        # `codesign` REWRITES the file it signs (LC_CODE_SIGNATURE), so signing $cycc in
-        # place and comparing it against $cc4 reports a 2,396-byte difference for a
-        # perfect fixpoint (measured on ecb; the same artifact behind the v6.0.44
-        # "x86-macOS doesn't self-host" retraction). Sign a COPY and compare the
-        # pristine pair — the shape the ecb cross-OS leg already uses (`cp r1 r1r`).
-        # One script for every POSIX host so the two arms cannot drift; on Linux the
-        # copy is the only cost and the compare is unchanged.
-        str_builder_add_cstr(sb, ">$cycc&&cp $cycc $ccr&&chmod +x $ccr&&");
-        #ifdef CYRIUS_TARGET_MACOS
-        # `||true`: on Intel macOS ad-hoc signing is refused and the unsigned binary runs
-        # anyway, so a codesign failure must not fail the self-host.
-        str_builder_add_cstr(sb, "(codesign -s - -f $ccr 2>/dev/null||true)&&");
-        #endif
-        str_builder_add_cstr(sb, "cat $F|$ccr>$cc4&&cmp -s $cycc $cc4&&rc=0;");
-        str_builder_add_cstr(sb, "if [ $rc -eq 0 ];then echo '  PASS: cycc==cycc byte-identical';");
-        str_builder_add_cstr(sb, "else echo '  FAIL: cycc!=cycc';fi;");
-        # The pre-6.6.6 script left both ~1.2 MB temps in /tmp on every run; this one
-        # adds a third, so it cleans up all of them.
-        str_builder_add_cstr(sb, "rm -f $cycc $ccr $cc4;exit $rc");
-        var cmd = str_builder_build(sb);
-        store64(&argv + 16, str_data(cmd));
-        store64(&argv + 24, 0);
-        sys_execve("/bin/sh", &argv, _envp);
-        sys_exit(127);
+    if (_cc == 0) {
+        _err("self-host: cycc not found. Install Cyrius or set CYRIUS_HOME.");
+        return 1;
     }
-    var status_buf[1];
-    sys_waitpid(pid, &status_buf, 0);
-    var status = load32(&status_buf);
-    if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
+    if (file_exists(_cc) == 0) {
+        _err_ctx("self-host: compiler not found", _cc);
+        return 1;
+    }
+    # ⛔ 6.6.9 bite 10 (CVE-49) — NATIVE, IN THE PRIVATE TEMP DIR. The POSIX arm used to
+    # fork `/bin/sh -c` over a script that staged all three compilers at PREDICTABLE SHARED
+    # names — `/tmp/cyr_cc5_$$`, `/tmp/cyr_ccr_$$`, `/tmp/cyr_cc4_$$` — writing them with `>`
+    # and `cp` (no O_EXCL, following a pre-planted symlink) and then EXECUTING `$ccr`. That
+    # is the CVE-35/CVE-36 class the 0700 exclusive-mkdir directory closed everywhere else
+    # at v6.4.81; this verb predated it and was never moved. Linux's protected_symlinks /
+    # protected_regular blunt it; macOS has no equivalent. Now the two steps and the
+    # verdict go through the SAME helpers `cmd_soak` uses — `_self_host_step` (raw pipe,
+    # never `compile()`'s prepend; signs a COPY on macOS so the compared pair stays
+    # pristine) and `_self_host_same` (a byte compare with a non-empty floor) — over
+    # `_cbt_tmpexe` / `_cbt_tmpfile` names, and every path removes what it staged.
+    # `tests/gates/toolchain/cbt_no_shared_tmp_paths.sh` fails on a `/tmp/` path in any cbt
+    # string literal. CHANGELOG [6.6.9]
+    var t1 = _cbt_tmpexe("self_a");
+    var t2 = _cbt_tmpfile("self_b");
+    var s1 = _self_host_step(_cc, self_src, t1);
+    if (s1 != 0) {
+        _self_step_failed(1, s1, self_src, _cc);
+        sys_unlink(t1);
+        return 1;
+    }
+    var s2 = _self_host_step(t1, self_src, t2);
+    if (s2 != 0) {
+        _self_step_failed(2, s2, self_src, 0);
+        sys_unlink(t1);
+        sys_unlink(t2);
+        return 1;
+    }
+    var same = _self_host_same(t1, t2);
+    sys_unlink(t1);
+    sys_unlink(t2);
+    if (same == 1) {
+        println("  PASS: cycc==cycc byte-identical");
+        return 0;
+    }
+    println("  FAIL: cycc!=cycc");
     return 1;
+}
+
+# `cyrius self`'s named step failure: which step, WHICH compiler, what it did, and the
+# source. A step that already named its own failure (`_self_host_step_macos`'s stage
+# refusal returns -1 after `_err_ctx`) is not given a second, vaguer line.
+# ⚠ Step 1's compiler is NAMED, not described: it is `_cc`, which in this repo is
+# `./build/cycc` and elsewhere may be a sibling of the wrapper — calling it "the installed
+# compiler" sent the user to the wrong binary. `cc` = 0 means step 1's own output. What it
+# DID comes from `_raw_fail_describe` (cbt/pulsar.cyr): a signal or an empty output is said
+# as such, never quoted as "exited 1". CHANGELOG [6.6.9]
+fn _self_step_failed(step, rc, src, cc): i64 {
+    if (rc < 0) { return 0; }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "self-host step ");
+    str_builder_add_int(sb, step);
+    str_builder_add_cstr(sb, " (");
+    if (cc != 0) { str_builder_add_cstr(sb, cc); }
+    else { str_builder_add_cstr(sb, "the compiler step 1 built"); }
+    str_builder_add_cstr(sb, ", compiling ");
+    str_builder_add_cstr(sb, src);
+    str_builder_add_cstr(sb, ") ");
+    _raw_fail_describe(sb, rc);
+    _err(str_data(str_builder_build(sb)));
+    return 0;
 }
 
 # v6.2.40: parse `[deps].stdlib = [...]` from the cwd's cyrius.cyml,
@@ -1655,6 +1694,18 @@ fn _lint_forward_diag(buf, n): i64 {
     return 0;
 }
 
+# The syntax pre-pass could not use the CLI's temp dir (errno `en`): an error by name, and
+# the caller counts the file as NOT linted (rc 1). CHANGELOG [6.6.9]
+fn _lint_prepass_tmp_fail(file, en): i64 {
+    _err_ctx("lint could not run its syntax pre-pass (the compiler's diagnostics could not be captured)", file);
+    _ew("  temp dir: ");
+    _ew(_cbt_tmpdir());
+    _ew(" (errno ");
+    fmt_int_fd(STDERR_FD, en);
+    _ew(") — free space there, or set TMPDIR to an absolute path elsewhere.\n");
+    return 1;
+}
+
 # 0 = parses (or we could not tell) -> run the line checks exactly as before.
 # 1 = a syntax error was reported -> the caller must not pretend to have linted.
 fn _lint_syntax_prepass(file): i64 {
@@ -1664,6 +1715,13 @@ fn _lint_syntax_prepass(file): i64 {
     if (file_exists(cc) == 0) { return 0; }
     var errf = _cbt_tmpfile("lint_err");
     var outf = _cbt_tmpfile("lint_out");
+    # 6.6.9: the diagnostics capture is created HERE, not only in compile()'s child — whose
+    # open "fails open" onto our stderr, so under a starved temp dir the compiler's errors
+    # went to the terminal, the capture read back empty and the file linted clean (rc 0).
+    # A capture that cannot be created is a failure by name. CHANGELOG [6.6.9]
+    var efd0 = sys_open(errf, O_WRONLY | O_CREAT | O_TRUNC, 0x180);
+    if (efd0 < 0) { return _lint_prepass_tmp_fail(file, 0 - efd0); }
+    sys_close(efd0);
     var sv_skip = _skip_deps;
     var sv_undef = _cc_allow_undef;
     var sv_syn = _cc_syntax_only;
@@ -1681,12 +1739,28 @@ fn _lint_syntax_prepass(file): i64 {
     _cc_syntax_only = sv_syn;
     _cc_allow_undef = sv_undef;
     _skip_deps = sv_skip;
-    sys_unlink(outf);
-    if (cr == 0) { sys_unlink(errf); return 0; }
+    if (cr == 0) { sys_unlink(outf); sys_unlink(errf); return 0; }
     var buf = alloc(65536);
     var n = file_read_all(errf, buf, 65535);
+    if (n <= 0) {
+        # probed with both temps still in place, so the answer is about the dir as the
+        # compiler found it (unlinking first freed the very inode it lacked)
+        var pe = _cbt_tmp_probe();
+        sys_unlink(outf);
+        sys_unlink(errf);
+        # ⛔ 6.6.9 bite 9 — the compiler FAILED and said nothing we could read. That was
+        # "lint as before", i.e. a verdict: under a starved temp dir `compile()` could not
+        # write its capture, so a file that does not parse linted `0 warnings`, rc 0. A full
+        # temp dir now fails BY NAME; otherwise the pass says it could not tell, then lints.
+        # CHANGELOG [6.6.9]
+        if (pe != 0) { return _lint_prepass_tmp_fail(file, pe); }
+        _ew("warning: ");
+        _ew(file);
+        _ew(": the syntax pre-pass could not tell whether it parses (the compiler failed with no diagnostic); linting anyway\n");
+        return 0;
+    }
+    sys_unlink(outf);
     sys_unlink(errf);
-    if (n <= 0) { return 0; }                        # no capture (or none possible) -> lint
     store8(buf + n, 0);
     if (_lint_capture_has_syntax(buf, n) == 0) { return 0; }   # resolution error -> lint
     _err_ctx("does not parse, so lint checks were NOT run", file);
@@ -2520,7 +2594,7 @@ fn cmd_soak(iters): i64 {
         #     "FAIL: self-host size mismatch" (1,315,048 vs 1,315,032 B);
         #   * step 2 ran cc5_t UNSIGNED, and Apple Silicon's AMFI SIGKILLs an unsigned
         #     arm64 Mach-O, so on ecb the step could never complete at all;
-        #   * the comparison was on SIZE — and on PE `_file_size` answers -38 for every
+        #   * the comparison was on SIZE — and on PE `_file_size` answered -38 (until 6.6.9) for every
         #     path, so `-1 != -1` scored a PASS over files that need not exist.
         # The PE spawn arm moved into `_pulsar_raw_compile` with the rest of the step;
         # its exit code is still the verdict ("step 2 exited N"). CHANGELOG [6.6.6].
@@ -2925,130 +2999,504 @@ fn _distlib_leaf_is_stdlib(leaf): i64 {
 # fixup stage only), so the loop must read both and must not treat a non-zero exit as fatal
 # until the fixpoint says nothing more can be added. hisab's `F64_ONE` — the ordinary way to
 # write 1.0 in a language with no float literals — is exactly this shape.
+#
+# ⭐ 6.6.9 — THE UNIT IS WHAT A CONSUMER'S BUILD HAS IN SCOPE: the leaves, the leaves the named
+# deps bring, the NAMED DEPS' own modules, then the bundle. It used to be the leaves and the
+# bundle only, so every symbol the bundle takes from a named dep read as undefined,
+# `_distlib_leaf_defining` credited it to the first stdlib file declaring that name — for libro's
+# thin sigil surface, the sigil MONOLITH — and the next round recorded the monolith's own needs
+# (`sys`) as libro's. `cyrius deps` records the module paths and the leaves it pulled for named
+# deps (`_dep_nd_modules` / `_dep_nd_leaves`, cbt/deps.cyr): the modules enter the unit, and a
+# named dep's own need is kept out of the sidecar (see the classification in the loop); a leaf
+# that IS a named dep (libro's umbrella includes `lib/patra.cyr`) is the consumer's pinned
+# module, not the stdlib snapshot's fold; and no named dep is ever an owner.
+#
+# ⛔ AND IT FAILS LOUD. compile()'s status was discarded, so any failure that printed no
+# `undefined` line — the compiler missing, a missing include, an entry that could not be written
+# — found zero names and returned "fixpoint": the sidecar was published UNVERIFIED and said
+# nothing. A negative return is now that verdict, and cmd_distlib refuses to write the sidecar.
+
 # Append a file's bytes to `sb`, followed by a newline so a file with no trailing newline
-# cannot weld its last line onto the next file's first.
+# cannot weld its last line onto the next file's first. Returns 0, or -1 when the file cannot
+# be read. Read WHOLE: sizing the read with `_file_size` made it answer "empty" on the Windows
+# CLI (-38) and the verify compiled nothing. CHANGELOG [6.6.9]
 fn _distlib_splice_file(sb, path): i64 {
-    var sz = _file_size(path);
-    if (sz <= 0) { return 0; }
-    var b = alloc(sz + 2);
-    var got = file_read_all(path, b, sz);
-    if (got <= 0) { return 0; }
-    store8(b + got, 10);
-    store8(b + got + 1, 0);
-    str_builder_add_cstr(sb, b);
+    var n = 0;
+    var b = file_read_whole(path, &n);
+    if (b == 0) { return 0 - 1; }
+    if (n > 0) {
+        str_builder_add_cstr(sb, b);
+        str_builder_add_cstr(sb, "\n");
+    }
     return 0;
 }
 
+# 1 iff the cstr vec `v` (0 = empty) holds `name`.
+fn _distlib_vec_has(v, name): i64 {
+    if (v == 0) { return 0; }
+    var i = 0;
+    while (i < vec_len(v)) {
+        if (streq(vec_get(v, i), name) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# ⭐ THE UNIT IS BUILT FROM INCLUDES (6.6.9). Splicing leaf TEXT defeated include-once: a spliced
+# leaf arrived AGAIN whenever anything in the unit (the bundle, another leaf, a named dep's
+# module) carried `include "lib/<it>.cyr"`. Every fn became a `duplicate fn` warning, and every
+# `#define` was spent twice from cycc's 16-entry table: majra's `backends` profile (the sigil
+# fold's seven `#define LINUX`, pulled in again through tls_native) overflowed it — hidden while
+# compile()'s status was discarded, loud the moment it was not. So the unit is an entry file of
+# `include "lib/<leaf>.cyr"` lines plus the bundle's text, and include-once admits each file
+# exactly once. cycc resolves an include against the CWD first — the project's ./lib, as in its
+# own build — and only then against the entry's directory (`#@incdir`, lex.cyr READFILE), so the
+# entry lives in `dist/.dlverify-<pid>/` beside a copy of the PINNED snapshot's lib/: a leaf the
+# project has not vendored (the one the loop just re-added) resolves there, from the pin.
+# (Under the project, because CVE-16 refuses absolute includes and cycc an absolute `#@incdir`.)
+# ⚠ A consequence, stated: a need of a recorded leaf that a named dep's module already brings
+# by its own include (bote-core's leaf bayan uses file_open; libro's bundle includes io) is met
+# in the unit and not recorded — as it is met in every consumer's build, through that dep.
+var _dl_mirror_files = 0;   # vec of cstr: every file the mirror holds (removed by _distlib_mirror_drop)
+var _dl_mirror_dirs = 0;    # vec of cstr: its directories, parents first
+
+# Copy `src` to `dst` whole. 0, or -1 (read or write failed).
+fn _distlib_copy_whole(src, dst): i64 {
+    var n = 0;
+    var b = file_read_whole(src, &n);
+    if (b == 0) { return 0 - 1; }
+    if (file_write_all(dst, b, n) != n) { return 0 - 1; }
+    vec_push(_dl_mirror_files, dst);
+    return 0;
+}
+
+# `a` + "/" + `b`.
+fn _distlib_join(a, b): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, a);
+    str_builder_add_cstr(sb, "/");
+    str_builder_add_cstr(sb, b);
+    return str_data(str_builder_build(sb));
+}
+
+# Make directory `d` (it must not exist) and remember it for the drop. 0, or -1.
+fn _distlib_mirror_mkdir(d): i64 {
+    if (sys_mkdir(d, 448) != 0) { return 0 - 1; }   # 0700
+    vec_push(_dl_mirror_dirs, d);
+    return 0;
+}
+
+# Copy every `.cyr` of directory `from` into `to` (created); one level of subdirectories (the
+# stdlib's family leaves) likewise. 0, or -1.
+fn _distlib_mirror_copy_dir(from, to, depth): i64 {
+    if (_distlib_mirror_mkdir(to) != 0) { return 0 - 1; }
+    var ents = dir_list(str_from(from));
+    if (ents == 0) { return 0; }
+    var i = 0;
+    while (i < vec_len(ents)) {
+        var e = str_data(vec_get(ents, i));
+        i = i + 1;
+        var el = strlen(e);
+        if (el == 0 || load8(e) == 46) { continue; }          # '.', '..', dotfiles
+        var fp = _distlib_join(from, e);
+        var tp = _distlib_join(to, e);
+        if (el > 4 && memeq(e + el - 4, ".cyr", 4) == 1) {
+            if (_distlib_copy_whole(fp, tp) != 0) { return 0 - 1; }
+        } elif (depth == 0 && is_dir(str_from(fp)) == 1) {
+            if (_distlib_mirror_copy_dir(fp, tp, 1) != 0) { return 0 - 1; }
+        }
+    }
+    return 0;
+}
+
+# Copy snapshot `root` to `dist/.dlverify-<pid>/lib/` (the unit's `#@incdir` fallback). Returns
+# the directory, or 0 after naming the failure.
+fn _distlib_mirror_make(root): i64 {
+    _dl_mirror_files = vec_new();
+    _dl_mirror_dirs = vec_new();
+    var msb = str_builder_new();
+    str_builder_add_cstr(msb, "dist/.dlverify-");
+    str_builder_add_int(msb, sys_getpid());
+    var m = str_data(str_builder_build(msb));
+    if (_distlib_mirror_mkdir(m) != 0) {
+        _err_ctx("distlib: sidecar verify cannot create its scratch directory (a stale one? remove it)", m);
+        return 0;
+    }
+    if (_distlib_mirror_copy_dir(root, _distlib_join(m, "lib"), 0) != 0) {
+        _err_ctx("distlib: sidecar verify cannot mirror the stdlib snapshot", root);
+        _distlib_mirror_drop();
+        return 0;
+    }
+    return m;
+}
+
+# Remove everything _distlib_mirror_make created: files, then directories deepest first.
+fn _distlib_mirror_drop(): i64 {
+    if (_dl_mirror_files == 0) { return 0; }
+    var i = 0;
+    while (i < vec_len(_dl_mirror_files)) { xunlink(vec_get(_dl_mirror_files, i)); i = i + 1; }
+    var d = vec_len(_dl_mirror_dirs);
+    while (d > 0) { d = d - 1; xrmdir(vec_get(_dl_mirror_dirs, d)); }
+    _dl_mirror_files = 0;
+    _dl_mirror_dirs = 0;
+    return 0;
+}
+
+# Append the include line(s) for stdlib leaf `lf` to the unit: `include "lib/<lf>.cyr"`, or
+# one line per `.cyr` of the family directory `lib/<lf>/` in name order. A leaf that is
+# neither (not in the snapshot) adds nothing.
+fn _distlib_unit_leaf(esb, m, lf): i64 {
+    var lib = _distlib_join(m, "lib");
+    var lbase = _distlib_join(lib, lf);
+    var fsb = str_builder_new();
+    str_builder_add_cstr(fsb, lbase);
+    str_builder_add_cstr(fsb, ".cyr");
+    if (file_exists(str_data(str_builder_build(fsb))) == 1) {
+        str_builder_add_cstr(esb, "include \"lib/");
+        str_builder_add_cstr(esb, lf);
+        str_builder_add_cstr(esb, ".cyr\"\n");
+        return 0;
+    }
+    if (is_dir(str_from(lbase)) == 0) { return 0; }
+    var fents = dir_list(str_from(lbase));
+    if (fents == 0) { return 0; }
+    vec_sort_by(fents, &_dep_name_cmp);   # v6.5.37 (A8): deterministic family order
+    var fi = 0;
+    while (fi < vec_len(fents)) {
+        var fe = str_data(vec_get(fents, fi));
+        fi = fi + 1;
+        var fel = strlen(fe);
+        if (fel > 4 && memeq(fe + fel - 4, ".cyr", 4) == 1) {
+            str_builder_add_cstr(esb, "include \"lib/");
+            str_builder_add_cstr(esb, lf);
+            str_builder_add_cstr(esb, "/");
+            str_builder_add_cstr(esb, fe);
+            str_builder_add_cstr(esb, "\"\n");
+        }
+    }
+    return 0;
+}
+
+# A set of identifier hashes (FNV-1a, 64-bit): { table, cap (power of 2), count, saturated }.
+# A collision can only make a name look PRESENT, which records its leaf — the safe direction;
+# so does saturation (more distinct identifiers than half the table).
+fn _dl_ids_new(textlen): i64 {
+    var cap = 4096;
+    while (cap < textlen / 4) { cap = cap * 2; }
+    var set = alloc(32);
+    var t = alloc(cap * 8);
+    memset(t, 0, cap * 8);
+    store64(set, t);
+    store64(set + 8, cap);
+    store64(set + 16, 0);
+    store64(set + 24, 0);
+    return set;
+}
+
+fn _dl_ids_hash(p, n): i64 {
+    var h = 0 - 3750763034362895579;           # FNV-1a offset basis (0xcbf29ce484222325)
+    var i = 0;
+    while (i < n) {
+        h = h ^ load8(p + i);
+        h = h * 1099511628211;
+        i = i + 1;
+    }
+    return h | 1;
+}
+
+# 1 iff the slot for hash `h` is found (add == 0) / was added or found (add == 1).
+fn _dl_ids_probe(set, h, add): i64 {
+    var t = load64(set);
+    var mask = load64(set + 8) - 1;
+    var i = h & mask;
+    while (1 == 1) {
+        var v = load64(t + i * 8);
+        if (v == h) { return 1; }
+        if (v == 0) {
+            if (add == 0) { return 0; }
+            if (load64(set + 16) * 2 >= load64(set + 8)) { store64(set + 24, 1); return 1; }
+            store64(t + i * 8, h);
+            store64(set + 16, load64(set + 16) + 1);
+            return 1;
+        }
+        i = (i + 1) & mask;
+    }
+    return 0;
+}
+
+fn _dl_ids_has(set, name): i64 {
+    if (load64(set + 24) == 1) { return 1; }
+    return _dl_ids_probe(set, _dl_ids_hash(name, strlen(name)), 0);
+}
+
+# Add every identifier of buf[0, n) — after blanking its comments, strings and char literals
+# IN PLACE (the caller's buffer is a private copy).
+fn _dl_ids_add_text(set, buf, n): i64 {
+    _src_blank_noncode(buf, n);
+    var p = 0;
+    while (p < n) {
+        if (_src_ident_char(load8(buf + p)) == 1) {
+            var e = p;
+            while (e < n && _src_ident_char(load8(buf + e)) == 1) { e = e + 1; }
+            _dl_ids_probe(set, _dl_ids_hash(buf + p, e - p), 1);
+            p = e;
+        } else { p = p + 1; }
+    }
+    return 0;
+}
+
+# The identifiers that are OURS: the bundle, each recorded leaf in the mirror `m` (flat file or
+# family directory), and each leaf's private peers — the `include "lib/<leaf>_…"` files a
+# dispatcher such as syscalls.cyr brings (its per-arch peer is where `alloc` is used).
+fn _distlib_own_ids(leaves, named_deps, out_path, m): i64 {
+    var paths = vec_new();
+    vec_push(paths, out_path);
+    var lib = _distlib_join(m, "lib");
+    var i = 0;
+    while (i < vec_len(leaves)) {
+        var lf = vec_get(leaves, i);
+        i = i + 1;
+        if (_distlib_vec_has(named_deps, lf) == 1) { continue; }
+        var fsb = str_builder_new();
+        str_builder_add_cstr(fsb, _distlib_join(lib, lf));
+        str_builder_add_cstr(fsb, ".cyr");
+        var flat = str_data(str_builder_build(fsb));
+        if (file_exists(flat) == 1) {
+            vec_push(paths, flat);
+            _distlib_own_peers(paths, lib, lf, flat);
+        } else {
+            var fam = _distlib_join(lib, lf);
+            if (is_dir(str_from(fam)) == 1) {
+                var fents = dir_list(str_from(fam));
+                var fi = 0;
+                while (fents != 0 && fi < vec_len(fents)) {
+                    vec_push(paths, _distlib_join(fam, str_data(vec_get(fents, fi))));
+                    fi = fi + 1;
+                }
+            }
+        }
+    }
+    var total = 0;
+    var k = 0;
+    while (k < vec_len(paths)) {
+        var sz = _file_size(vec_get(paths, k));
+        if (sz > 0) { total = total + sz; }
+        k = k + 1;
+    }
+    var set = _dl_ids_new(total);
+    k = 0;
+    while (k < vec_len(paths)) {
+        var n = 0;
+        var b = file_read_whole(vec_get(paths, k), &n);
+        if (b != 0 && n > 0) { _dl_ids_add_text(set, b, n); }
+        k = k + 1;
+    }
+    return set;
+}
+
+# Push onto `paths` the private peers `leaf` includes (`include "lib/<leaf>_…"`).
+fn _distlib_own_peers(paths, lib, leaf, path): i64 {
+    var n = 0;
+    var b = file_read_whole(path, &n);
+    if (b == 0) { return 0; }
+    var ll = strlen(leaf);
+    var p = 0;
+    while (p < n) {
+        var ls = _src_skip_ws(b, p, n);
+        var le = ls;
+        while (le < n && load8(b + le) != 10) { le = le + 1; }
+        if (le - ls > 13 + ll && memeq(b + ls, "include \"lib/", 13) == 1) {
+            if (memeq(b + ls + 13, leaf, ll) == 1 && load8(b + ls + 13 + ll) == 95) {
+                var ne = ls + 13;
+                while (ne < le && load8(b + ne) != 34) { ne = ne + 1; }
+                var nl = ne - (ls + 13);
+                var rel = alloc(nl + 1);
+                memcpy(rel, b + ls + 13, nl);
+                store8(rel + nl, 0);
+                vec_push(paths, _distlib_join(lib, rel));
+            }
+        }
+        p = le + 1;
+    }
+    return 0;
+}
+
+# Echo to stderr the lines of a captured compiler stream that contain `error` (at most 8).
+fn _distlib_show_errors(buf, n): i64 {
+    var shown = 0;
+    var p = 0;
+    while (p < n && shown < 8) {
+        var e = p;
+        while (e < n && load8(buf + e) != 10) { e = e + 1; }
+        var q = p;
+        var hit = 0;
+        while (q + 5 <= e && hit == 0) {
+            if (memeq(buf + q, "error", 5) == 1) { hit = 1; }
+            q = q + 1;
+        }
+        if (hit == 1) {
+            sys_write(STDERR_FD, "  ", 2);
+            sys_write(STDERR_FD, buf + p, e - p);
+            sys_write(STDERR_FD, "\n", 1);
+            shown = shown + 1;
+        }
+        p = e + 1;
+    }
+    return shown;
+}
+
+# Name why the verify could not run, and answer -1. `what` is a cstr; `path` may be 0.
+fn _distlib_verify_fail(what, path): i64 {
+    if (path != 0) { _err_ctx(what, path); } else { _err(what); }
+    return 0 - 1;
+}
+
 # The fixpoint loop itself. Returns the number of leaves RE-ADDED (0 = the inferred set was
-# already sufficient, which is the answer we want and cannot get any other way).
-fn _distlib_verify_leaves(leaves, out_path): i64 {
+# already sufficient, which is the answer we want and cannot get any other way), or -1 when
+# the unit could not be built or compiled — the sidecar is then NOT verified and must not be
+# published as if it were. `named_deps` is the manifest's `[deps.<name>]` set (a cstr vec).
+fn _distlib_verify_leaves(leaves, out_path, named_deps): i64 {
     var root = _distlib_stdlib_root();
     if (root == 0) { return 0; }          # no snapshot: nothing to verify against, keep as-is
+    var m = _distlib_mirror_make(root);
+    if (m == 0) { return 0 - 1; }
+    var r = _distlib_verify_rounds(leaves, out_path, named_deps, root, m);
+    _distlib_mirror_drop();
+    return r;
+}
+
+fn _distlib_verify_rounds(leaves, out_path, named_deps, root, m): i64 {
     var added_total = 0;
+    var scope = vec_new();                # in the unit, not recorded (see below)
     var round = 0;
     while (round < 6) {                   # a fixpoint in practice converges in 1-2
         round = round + 1;
-        # ⛔ CONCATENATE, DO NOT `include`. An entry built from `include "<abs path>"` is
+        # ⛔ NEVER AN ABSOLUTE `include`. An entry built from `include "<abs path>"` is
         # rejected outright — "absolute include path rejected ... set
         # CYRIUS_ALLOW_ABSOLUTE_INCLUDES=1 to permit" — which is the CVE-16 hardening and
         # must not be weakened for a convenience check. Measured: the first cut of this loop
         # captured 227 bytes of stderr that were entirely those rejections, so it saw zero
-        # undefined symbols and silently re-added nothing while looking like it worked.
-        # Splicing the sources into ONE buffer sidesteps include resolution completely.
-        #
-        # ⚠ Concatenation order is the leaf order, which is NOT topological. A global
-        # declared in a leaf spliced AFTER its use reads as `undefined variable` even though
-        # the leaf is present. That is an ordering artifact, not a missing leaf — and it is
-        # handled for free by the `dup` test below: an owner already in the set is never
-        # re-added, so the loop reaches its fixpoint instead of thrashing. The signal we act
-        # on is only ever a symbol whose owner is ABSENT.
+        # undefined symbols and silently re-added nothing while looking like it worked. The
+        # includes below are RELATIVE: ./lib first, the snapshot mirror as the fallback.
         var esb = str_builder_new();
         var li = 0;
         while (li < vec_len(leaves)) {
             var lf = vec_get(leaves, li);
             li = li + 1;
-            var fsb = str_builder_new();
-            str_builder_add_cstr(fsb, root);
-            str_builder_add_cstr(fsb, "/");
-            str_builder_add_cstr(fsb, lf);
-            var lbase = str_data(str_builder_build(fsb));
-            var csb = str_builder_new();
-            str_builder_add_cstr(csb, lbase);
-            str_builder_add_cstr(csb, ".cyr");
-            var lflat = str_data(str_builder_build(csb));
-            if (file_exists(lflat) == 1) {
-                _distlib_splice_file(esb, lflat);
-            } elif (is_dir(str_from(lbase)) == 1) {
-                var fents = dir_list(str_from(lbase));
-                if (fents != 0) { vec_sort_by(fents, &_dep_name_cmp); }   # v6.5.37 (A8): deterministic family order
-                if (fents != 0) {
-                    var fi = 0;
-                    while (fi < vec_len(fents)) {
-                        var fe = str_data(vec_get(fents, fi));
-                        fi = fi + 1;
-                        var fel = strlen(fe);
-                        if (fel > 4 && memeq(fe + fel - 4, ".cyr", 4) == 1) {
-                            var msb = str_builder_new();
-                            str_builder_add_cstr(msb, lbase);
-                            str_builder_add_cstr(msb, "/");
-                            str_builder_add_cstr(msb, fe);
-                            _distlib_splice_file(esb, str_data(str_builder_build(msb)));
-                        }
-                    }
-                }
+            # A leaf that is a NAMED DEP is the consumer's pinned module, included below.
+            if (_distlib_vec_has(named_deps, lf) == 1) { continue; }
+            _distlib_unit_leaf(esb, m, lf);
+        }
+        # Leaves taken in only because a named dep's own leaf list brings them (see the
+        # classification below): in the unit, never recorded.
+        var si = 0;
+        while (si < vec_len(scope)) {
+            _distlib_unit_leaf(esb, m, vec_get(scope, si));
+            si = si + 1;
+        }
+        if (_dep_nd_modules != 0) {
+            var mi = 0;
+            while (mi < vec_len(_dep_nd_modules)) {
+                str_builder_add_cstr(esb, "include \"");
+                str_builder_add_cstr(esb, vec_get(_dep_nd_modules, mi));
+                str_builder_add_cstr(esb, "\"\n");
+                mi = mi + 1;
             }
         }
-        _distlib_splice_file(esb, out_path);
-        var entry = _cbt_tmpfile("dlverify");
+        if (_distlib_splice_file(esb, out_path) != 0) {
+            return _distlib_verify_fail("distlib: sidecar verify cannot read the bundle", out_path);
+        }
+        var entry = _distlib_join(m, "entry.cyr");
         var vout = _cbt_tmpfile("dlverifyout");
         var verr = _cbt_tmpfile("dlverifyerr");
         var esrc = str_data(str_builder_build(esb));
-        if (file_write_all(entry, esrc, strlen(esrc)) < 0) { return added_total; }
+        if (file_write_all(entry, esrc, strlen(esrc)) < 0) {
+            xunlink(entry);
+            return _distlib_verify_fail("distlib: sidecar verify cannot write its compile unit", entry);
+        }
         # ⚠ _skip_deps = 1 is load-bearing: auto-prepend would put the whole declared stdlib
         # in scope and the compile would succeed no matter how wrong the sidecar is. The
-        # entry must contain EXACTLY the leaves under test.
+        # entry must contain EXACTLY the leaves under test. (compile() still prepends the
+        # `#@incdir` of the entry's directory, the mirror: a leaf ./lib lacks resolves there.)
         var sv_skip = _skip_deps;
         var sv_err = _cc_stderr_to;
         _skip_deps = 1;
         _cc_allow_undef = 1;
         _cc_stderr_to = verr;
-        compile(entry, vout);
+        var crc = compile(entry, vout);
         _cc_allow_undef = 0;
         _cc_stderr_to = sv_err;
         _skip_deps = sv_skip;
         xunlink(entry);
-        sys_unlink(vout);
-        var esz = _file_size(verr);
-        if (esz <= 0) { sys_unlink(verr); return added_total; }
-        var ebuf = alloc(esz + 1);
-        var eread = file_read_all(verr, ebuf, esz);
-        sys_unlink(verr);
-        if (eread <= 0) { return added_total; }
-        store8(ebuf + eread, 0);
+        xunlink(vout);
+        var elen = 0;
+        var ebuf = file_read_whole(verr, &elen);
+        xunlink(verr);
         var names = vec_new();
-        _distlib_collect_undefined(ebuf, eread, names);
-        if (vec_len(names) == 0) { return added_total; }
+        if (ebuf != 0 && elen > 0) { _distlib_collect_undefined(ebuf, elen, names); }
+        if (vec_len(names) == 0) {
+            if (crc == 0) { return added_total; }
+            # Failed, and not for a missing symbol: say what the compiler said — its `error`
+            # lines, not the first screenful of warnings.
+            if (ebuf != 0 && elen > 0) { _distlib_show_errors(ebuf, elen); }
+            return _distlib_verify_fail("distlib: sidecar verify: the bundle with its leaves does not compile, and no symbol is missing — sidecar NOT written", out_path);
+        }
+        # ⚖️ WHOSE NEED IS IT? The named deps' modules are in the unit, so their own undefined
+        # symbols surface here too — recorded, they copy every named dep's leaves into this
+        # bundle's sidecar (agnosai's `guard` profile gained 12: tls, async, dynlib, …). A
+        # symbol goes to `scope` (in the unit from the next round, NOT recorded) only when BOTH
+        # hold: a named dep's own leaf list already brings its owner (`_dep_nd_leaves`, so a
+        # consumer has it in scope through that dep), and nothing of OURS — the bundle or a
+        # recorded leaf, comments and strings blanked — names it. Anything else is recorded,
+        # as before: the safe direction. (Pre-splicing the named deps' leaves instead dropped
+        # `alloc` from rosnet's `gpu` sidecar, whose leaf mabda needs it, because tyche
+        # happened to bring it.)
+        #
+        # ⚠ THE SCOPE NEVER OUTRANKS "OURS" — not by order, not by round. (1) A symbol whose
+        # owner is ALREADY in the scope is still checked against what is ours: the named deps'
+        # modules sit before the bundle in the unit, so a dep's `helperlib_do` is classified
+        # first and the bundle's own `helperlib_two` then found helperlib "already handled" —
+        # and from the next round it was defined, so it never surfaced again. (2) A round that
+        # RECORDS a leaf drops the scope: every entry in it was decided without that leaf
+        # counted as ours, and a leaf's need the scope already satisfies can never surface.
+        # The next round re-decides it with the leaf included. CHANGELOG [6.6.9]
+        var own = 0;
         var added_here = 0;
+        var recorded_here = 0;
         var ni = 0;
         while (ni < vec_len(names)) {
             var nm = vec_get(names, ni);
             ni = ni + 1;
-            var owner = _distlib_leaf_defining(root, nm);
-            if (owner == 0) { continue; }   # not a stdlib symbol — the consumer's problem
-            owner = _distlib_resolve_dispatcher(root, owner);
-            var dup = 0;
-            var di = 0;
-            while (di < vec_len(leaves)) {
-                if (streq(vec_get(leaves, di), owner) == 1) { dup = 1; }
-                di = di + 1;
+            var raw = _distlib_leaf_defining(root, nm);
+            if (raw == 0) { continue; }     # not a stdlib symbol — the consumer's problem
+            var owner = _distlib_resolve_dispatcher(root, raw);
+            # Never a named dep: its symbols belong to the consumer's pinned module.
+            if (_distlib_vec_has(named_deps, owner) == 1) { continue; }
+            if (_distlib_vec_has(leaves, owner) == 1) { continue; }
+            # A named dep's leaf list may name the PEER itself (`hd_impl`), not the
+            # dispatcher the owner resolves to (`hd`): either one counts.
+            var brought = 0;
+            if (_distlib_vec_has(_dep_nd_leaves, owner) == 1) { brought = owner; }
+            elif (_distlib_vec_has(_dep_nd_leaves, raw) == 1) { brought = raw; }
+            var scoped = _distlib_vec_has(scope, owner);
+            if (scoped == 0 && brought != 0) { scoped = _distlib_vec_has(scope, brought); }
+            if (scoped == 1 || brought != 0) {
+                if (own == 0) { own = _distlib_own_ids(leaves, named_deps, out_path, m); }
+                if (_dl_ids_has(own, nm) == 0) {
+                    if (scoped == 0) {
+                        vec_push(scope, brought);
+                        added_here = added_here + 1;
+                    }
+                    continue;
+                }
             }
-            if (dup == 0) {
-                vec_push(leaves, owner);
-                added_here = added_here + 1;
-                added_total = added_total + 1;
-            }
+            vec_push(leaves, owner);
+            added_here = added_here + 1;
+            recorded_here = recorded_here + 1;
+            added_total = added_total + 1;
         }
         if (added_here == 0) { return added_total; }   # fixpoint: nothing new to add
+        if (recorded_here > 0) { scope = vec_new(); }   # (2) above
     }
     return added_total;
 }
@@ -3102,12 +3550,10 @@ fn _distlib_resolve_dispatcher(root, leaf): i64 {
             str_builder_add_cstr(dsb, ".cyr");
             var dpath = str_data(str_builder_build(dsb));
             if (file_exists(dpath) == 1) {
-                var dsz = _file_size(dpath);
-                if (dsz > 0) {
-                    var db = alloc(dsz + 1);
-                    var dg = file_read_all(dpath, db, dsz);
+                var dg = 0;
+                var db = file_read_whole(dpath, &dg);   # 6.6.9: whole, not _file_size-sized
+                if (db != 0) {
                     if (dg > 0) {
-                        store8(db + dg, 0);
                         var want = str_builder_new();
                         str_builder_add_cstr(want, "include \"lib/");
                         str_builder_add_cstr(want, leaf);
@@ -3177,12 +3623,11 @@ fn _distlib_snap_cache(root): i64 {
         str_builder_add_cstr(fsb, "/");
         str_builder_add_cstr(fsb, ed);
         var fp = str_data(str_builder_build(fsb));
-        var fsz = _file_size(fp);
-        if (fsz <= 0) { continue; }
-        var fb = alloc(fsz + 1);
-        var got = file_read_all(fp, fb, fsz);
-        if (got <= 0) { continue; }
-        store8(fb + got, 0);
+        # 6.6.9: read WHOLE. Sized by `_file_size`, every file read as empty on the Windows
+        # CLI (-38), so no symbol had an owner and the verify loop was inert there.
+        var got = 0;
+        var fb = file_read_whole(fp, &got);
+        if (fb == 0 || got <= 0) { continue; }
         vec_push(_dl_snap_names, e);
         vec_push(_dl_snap_bufs, fb);
         vec_push(_dl_snap_lens, got);
@@ -3329,12 +3774,9 @@ fn _distlib_capture_lib_leaf(leaves, line, ll): i64 {
 # only the folded modules yields an INCOMPLETE sidecar. No-op if absent.
 fn _distlib_scan_umbrella(leaves, path): i64 {
     if (file_exists(path) == 0) { return 0; }
-    var usz = _file_size(path);
-    if (usz <= 0) { return 0; }
-    var ubuf = alloc(usz + 1);
-    var un = file_read_all(path, ubuf, usz);
-    if (un <= 0) { return 0; }
-    store8(ubuf + un, 0);
+    var un = 0;
+    var ubuf = file_read_whole(path, &un);    # 6.6.9: whole, not _file_size-sized (-38 on PE)
+    if (ubuf == 0 || un <= 0) { return 0; }
     var upos = 0;
     while (upos < un) {
         var uls = upos;
@@ -3768,10 +4210,11 @@ fn _distlib_leaf_referenced_d(leaf, bundle, blen, depth): i64 {
         path = str_data(str_builder_build(gsb));
         if (file_exists(path) == 0) { return 1; }
     }
-    var lbuf = alloc(1048576);
-    var llen = file_read_all(path, lbuf, 1048575);
-    if (llen <= 0) { return 1; }
-    store8(lbuf + llen, 0);
+    # Read WHOLE (6.6.9): the 1 MiB cap cut mabda.cyr (1,368,705 B) and sigil.cyr off mid-file,
+    # so a declaration past the cap could not keep its leaf.
+    var llen = 0;
+    var lbuf = file_read_whole(path, &llen);
+    if (lbuf == 0 || llen <= 0) { return 1; }
     # v6.5.29 — a leaf that is a DISPATCHER defines almost nothing itself. `lib/syscalls.cyr`
     # is 8 KB of `#ifdef` + `include` with TWO top-level definitions; every `sys_*` wrapper
     # lives in a per-arch peer it includes. Scanning only this file therefore found no
@@ -3917,19 +4360,54 @@ fn _distlib_union_declared_stdlib(leaves, mbuf, mlen): i64 {
     return added;
 }
 
+#
+# ⛔ 6.6.9 — ONLY CODE IS A REFERENCE. The bundle was matched as raw text, so a stdlib name in a
+# `#` comment or a string literal kept its leaf: "Safe to run twice" kept `process` (`fn run`),
+# and with it `vec`, `str` and `fmt` through the verify loop — vani's `core` sidecar went from 3
+# leaves to 8 on a comment edit. The bundle's non-code bytes are blanked once, length-preserving,
+# with the shared lexer-faithful blanker (cbt/core.cyr `_src_blank_noncode`: char literals before
+# strings, attribute tokens and `#define`/`#if` bodies kept as code). No cyrius construct resolves
+# a fn/var named in a string — `#pe_import`/`#deprecated`/`#derive` strings are foreign symbols,
+# messages and paths — and the compile-verified loop is the backstop in any case.
+# ⚠ An `include "lib/<leaf>.cyr"` line IS a reference even though its path is a string: the
+# bundle keeps those lines (v6.2.48), and in a consumer's build that include must resolve. The
+# raw scan only honoured it by accident (when the leaf declared a fn named like its file); it
+# is now read explicitly, before blanking.
+# ⚠ Residual, by design: the matcher sees NAMES, not resolutions, so a parameter or local that
+# reuses a stdlib top-level name (`fn f(run)`) still keeps that name's leaf — the safe direction.
 fn _distlib_prune_profile_leaves(leaves, bundle_path): i64 {
     if (file_exists(bundle_path) == 0) { return leaves; }
-    var bb = alloc(4194304);
-    var bl = file_read_all(bundle_path, bb, 4194303);
-    if (bl <= 0) { return leaves; }
+    var bl = 0;
+    var bb = file_read_whole(bundle_path, &bl);
+    if (bb == 0 || bl <= 0) { return leaves; }
+    var incl = vec_new();
+    _distlib_scan_lib_includes(incl, bb, bl);
+    _src_blank_noncode(bb, bl);
     var kept = vec_new();
     var i = 0;
     while (i < vec_len(leaves)) {
         var lf = vec_get(leaves, i);
-        if (_distlib_leaf_referenced(lf, bb, bl) == 1) { vec_push(kept, lf); }
+        if (_distlib_vec_has(incl, lf) == 1) { vec_push(kept, lf); }
+        elif (_distlib_leaf_referenced(lf, bb, bl) == 1) { vec_push(kept, lf); }
         i = i + 1;
     }
     return kept;
+}
+
+# Collect into `out` the leaf of every `include "lib/<leaf>.cyr"` line in buf[0, n) — the line's
+# first token, after indentation. Same capture rules as the module scan (`_distlib_capture_lib_leaf`).
+fn _distlib_scan_lib_includes(out, buf, n): i64 {
+    var p = 0;
+    while (p < n) {
+        var ls = _src_skip_ws(buf, p, n);
+        var le = ls;
+        while (le < n && load8(buf + le) != 10) { le = le + 1; }
+        if (le - ls >= 8 && memeq(buf + ls, "include ", 8) == 1) {
+            _distlib_capture_lib_leaf(out, buf + ls, le - ls);
+        }
+        p = le + 1;
+    }
+    return 0;
 }
 
 fn cmd_distlib(profile): i64 {
@@ -4029,26 +4507,9 @@ fn cmd_distlib(profile): i64 {
             }
         }
         if (matched == 1) {
-            var bi = si + header_len;
-            while (bi < mlen) {
-                if (load8(mbuf + bi) == 91 && load8(mbuf + bi + 1) != 91) { break; }
-                # First non-space token; skip comments; require a key
-                # boundary after `modules` (space/tab/`=`). Boundary/
-                # comment-aware + indented-key capable — see CHANGELOG [6.0.36].
-                var ls = bi;
-                while (ls < mlen && (load8(mbuf + ls) == 32 || load8(mbuf + ls) == 9)) {
-                    ls = ls + 1;
-                }
-                if (ls < mlen && load8(mbuf + ls) != 35 && memeq(mbuf + ls, "modules", 7) == 1) {
-                    var after = load8(mbuf + ls + 7);
-                    if (after == 32 || after == 9 || after == 61) {
-                        modules = _parse_toml_str_array(mbuf, mlen, ls);
-                        break;
-                    }
-                }
-                while (bi < mlen && load8(mbuf + bi) != 10) { bi = bi + 1; }
-                bi = bi + 1;
-            }
+            # The shared section-modules parser (cbt/deps.cyr) — `_auto_deps` reads
+            # `[build].modules` through the same one. CHANGELOG [6.6.9].
+            modules = _toml_section_modules(mbuf, mlen, si + header_len);
             if (modules != 0) { break; }
         }
         si = si + 1;
@@ -4310,7 +4771,13 @@ fn cmd_distlib(profile): i64 {
     # invitation to inherit the wrong answer. The base path keeps the `> 0` guard so a
     # package with genuinely no leaves does not gain a stray file.
     # v6.5.37 (A3) — verify the leaf set against the artifact before publishing it.
-    var _verified_added = _distlib_verify_leaves(req_leaves, out_path);
+    var _verified_added = _distlib_verify_leaves(req_leaves, out_path, named_deps);
+    # 6.6.9: a verify that could not run is not a verified sidecar — keep the previous one
+    # (and, under --check, the temp bundle goes with it).
+    if (_verified_added < 0) {
+        if (_distlib_check == 1) { xunlink(out_path); }
+        return 1;
+    }
     if (_verified_added > 0) {
         sys_write(STDOUT_FD, "  sidecar: re-added ", 20);
         fmt_int(_verified_added);

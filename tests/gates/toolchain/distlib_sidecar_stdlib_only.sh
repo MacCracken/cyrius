@@ -68,6 +68,12 @@ EOF
 # first cut. It must still be rejected, because it is not in the snapshot.
 mkdir -p "$WORK/proj/lib"
 echo 'fn notastdlibleaf_fn(): i64 { return 0; }' > "$WORK/proj/lib/notastdlibleaf.cyr"
+# 6.6.9: the sidecar's verify now COMPILES the bundle for real and refuses a unit that fails
+# for any reason but a missing symbol. `include "lib/unicode.cyr"` resolves nowhere — the
+# family is a DIRECTORY — and this fixture passed only because the verify used to fail open
+# on exactly that. A project-local shim gives the include a file; the capture still has to
+# recognise `unicode` as the stdlib family (axis 3).
+[ -n "$FAMILY" ] && echo "# shim: the $FAMILY family is a directory in the stdlib" > "$WORK/proj/lib/$FAMILY.cyr"
 
 ( cd "$WORK/proj" && "$CYRIUS" distlib >/dev/null 2>&1 ) || true
 DEPS="$WORK/proj/dist/probe.deps"

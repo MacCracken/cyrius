@@ -726,6 +726,7 @@ fn _materialize_source(source): i64 {
 # load-bearing — it is kept because a SIGKILLed run still leaves one and the cost is a
 # few characters of path. CHANGELOG [6.6.5], [6.6.6].
 var _cbt_tmpdir_p = 0;
+var _cbt_tmpbase_env = 0;   # 1 when the base came from $TMPDIR (named in the mkdir failure)
 
 #ifdef CYRIUS_TARGET_WIN
 var _cbt_tmpbase_buf[64];    # 512 bytes (a top-level array is N x 8)
@@ -738,8 +739,57 @@ fn _cbt_tmpbase(): i64 {
     return t;
     #endif
     #ifndef CYRIUS_TARGET_WIN
+    # ⛔ 6.6.9 bite 9 — $TMPDIR, when it is an ABSOLUTE path. This returned the literal
+    # "/tmp" on every POSIX target, so a user whose /tmp was full or at quota (aethersafha:
+    # a usrquota tmpfs) had no way to route the CLI around it. A relative value is ignored
+    # (it would resolve against whatever directory a command runs in); trailing slashes are
+    # dropped (macOS sets `/var/folders/…/T/`). The private 0700 exclusive-mkdir directory
+    # below is unchanged (CVE-35/CVE-36). CHANGELOG [6.6.9]
+    var t = _cbt_env_str("TMPDIR");
+    if (t != 0) {
+        if (load8(t) == 47) {
+            var tl = strlen(t);
+            while (tl > 1 && load8(t + tl - 1) == 47) { tl = tl - 1; store8(t + tl, 0); }
+            _cbt_tmpbase_env = 1;
+            return t;
+        }
+    }
     return "/tmp";
     #endif
+}
+
+# 0 when the CLI's private temp dir accepts a new 64 KB file right now, else the errno that
+# refused it (28 = ENOSPC also stands for a short write). Asked on a NEGATIVE answer — a
+# failed capture, a hasher that did not print a digest, a verdict against a check — and
+# asked while the temps that answer used are STILL IN PLACE: the first cut probed after the
+# verify's cleanup had freed the very blocks/inodes git was short of, so a NEARLY full temp
+# dir (4-8 KB free, 5 inodes) passed the probe and the tamper verdict stood. 64 KB rather
+# than 4: git's own writes (index.lock is the size of the index) can need more than one
+# page (the dep verify asks `_cbt_tmp_probe_n` for its index's size), and the error in doubt goes the fail-closed way — "could not be verified, free the
+# temp dir" — never a false tamper accusation with `rm -rf` advice. CHANGELOG [6.6.9]
+fn _cbt_tmp_probe(): i64 { return _cbt_tmp_probe_n(65536); }
+
+# As `_cbt_tmp_probe`, for a caller that knows git's write was bigger: at least `want` bytes
+# (floor 64 KB — a caller with no size passes 0 — ceiling 64 MB), written in 64 KB pieces
+# and removed at once.
+fn _cbt_tmp_probe_n(want): i64 {
+    if (want < 65536) { want = 65536; }
+    if (want > 67108864) { want = 67108864; }
+    var p = _cbt_tmpfile("wprobe");
+    var fd = sys_open(p, O_WRONLY | O_CREAT | O_TRUNC, 0x180);
+    if (fd < 0) { return 0 - fd; }
+    var b = alloc(65536);
+    var done = 0;
+    var e = 0;
+    while (done < want && e == 0) {
+        var w = sys_write(fd, b, 65536);
+        if (w < 0) { e = 0 - w; }
+        elif (w != 65536) { e = 28; }
+        done = done + 65536;
+    }
+    sys_close(fd);
+    sys_unlink(p);
+    return e;
 }
 
 # Windows only: milliseconds from GetSystemTimeAsFileTime (0xF01B), mod 1e9. -1
@@ -792,10 +842,22 @@ fn _cbt_tmpdir(): i64 {
             str_builder_add_int(sb, attempt);
         }
         var d = str_data(str_builder_build(sb));
-        if (sys_mkdir(d, 448) == 0) {       # 0700
+        var mr = sys_mkdir(d, 448);         # 0700
+        if (mr == 0) {
             _cbt_tmpdir_p = d;
             return d;
         }
+        # Only EEXIST is a TAKEN candidate. Anything else (a $TMPDIR that does not exist or
+        # is not writable) fails the same way 16 times, and the "candidates were taken"
+        # advice sent the user hunting stale dirs that were never there. PE keeps the loop:
+        # its mkdir reroute reports no errno. CHANGELOG [6.6.9]
+        #ifndef CYRIUS_TARGET_WIN
+        if (mr != 0 - 17) {
+            _progress_close();
+            _cbt_tmpbase_fail(base, 0 - mr);
+            sys_exit(1);
+        }
+        #endif
         attempt = attempt + 1;
     }
     # v6.6.6 (bite 24 review) — see the branch above. REACHABLE on POSIX, not just PE:
@@ -809,6 +871,27 @@ fn _cbt_tmpdir(): i64 {
     println("  16 candidates were taken; remove stale cyrius-* dirs there and retry.");
     println("  cyrius will NOT fall back to a shared temp name (CVE-35/CVE-36).");
     sys_exit(1);
+    return 0;
+}
+
+# The temp base itself refused the private directory (errno `e`, not EEXIST): name the base,
+# the errno, and whether it came from $TMPDIR. The caller closes the progress line first and
+# exits fail-closed (from inside `_cbt_tmpdir`, where nothing has been created yet).
+# CHANGELOG [6.6.9]
+fn _cbt_tmpbase_fail(base, e): i64 {
+    sys_write(STDOUT_FD, "error: cannot create a private temp directory under ", 52);
+    sys_write(STDOUT_FD, base, strlen(base));
+    sys_write(STDOUT_FD, " (errno ", 8);
+    fmt_int_fd(STDOUT_FD, e);
+    println(", fail-closed)");
+    if (_cbt_tmpbase_env == 1) {
+        sys_write(STDOUT_FD, "  TMPDIR=", 9);
+        sys_write(STDOUT_FD, base, strlen(base));
+        println(" does not exist or is not writable; point TMPDIR at a writable directory, or unset it.");
+    } else {
+        println("  the temp base does not exist or is not writable; set TMPDIR to an absolute, writable path.");
+    }
+    println("  cyrius will NOT fall back to a shared temp name (CVE-35/CVE-36).");
     return 0;
 }
 
@@ -945,6 +1028,41 @@ fn _artifact_size(path): i64 {
 # calling it the child's status. Recorded here rather than returned so the contract every
 # other `compile()` caller tests (`== 0` / `!= 0`) is unchanged. CHANGELOG [6.6.6].
 var _cc_last_exit = 0 - 1;
+
+# 6.6.9 bite 10 — THE ONE COMPILE-FAILURE VERDICT, for every verb that compiles and then
+# has to say why it stopped. Two questions, asked in order, never re-asked per caller:
+#   1. did cbt NAME this failure itself (`_err_count` moved since `pre_err`)? Then the
+#      named diagnostic IS the verdict; return 1 and write nothing.
+#   2. otherwise the compiler rejected the source: write `<head> (compiler exit N)` to
+#      `fd`, or `<head> (the compiler did not exit normally)` when `_cc_last_exit` < 0,
+#      and return 0.
+# ⚠ Bite 24 of 6.6.6 answered both questions in `cmd_build` ALONE. `run`, `check` and
+# `test` kept their own lines, so `cyrius run nothere.cyr` printed `error: no such file`
+# and THEN a vaguer `error: compile failed`, and `cyrius test nothere.tcyr` called a
+# missing file a "compile error". One owner, so the four verbs cannot drift again.
+# CHANGELOG [6.6.9]
+fn _compile_fail_verdict(pre_err, fd, head): i64 {
+    if (_err_count != pre_err) { return 1; }
+    sys_write(fd, head, strlen(head));
+    if (_cc_last_exit < 0) {
+        var m1 = " (the compiler did not exit normally)\n";
+        sys_write(fd, m1, strlen(m1));
+        return 0;
+    }
+    var m2 = " (compiler exit ";
+    sys_write(fd, m2, strlen(m2));
+    fmt_int_fd(fd, _cc_last_exit);
+    sys_write(fd, ")\n", 2);
+    return 0;
+}
+
+# The pointer that follows a compiler-rejection verdict on a verb a user runs by hand.
+fn _compile_fail_hint(): i64 {
+    if (_verbose == 0) {
+        sys_write(STDERR_FD, "  the compiler's diagnostics are above; re-run with -v for the resolved compiler, source and include set\n", 105);
+    }
+    return 0;
+}
 
 fn compile(source, output): i64 {
     _cc_last_exit = 0 - 1;
@@ -1212,11 +1330,11 @@ fn compile(source, output): i64 {
             }
             sys_chmod(output, 0x1ED);
             if (_verbose == 1) {
-                # Report binary size
-                var stat_buf[144];
-                var sr = syscall(4, output, &stat_buf);
-                if (sr == 0) {
-                    var fsize = load64(&stat_buf + 48);
+                # Report binary size. 6.6.9: `_artifact_size`, not a raw `syscall(4)` stat
+                # read at the x86-Linux st_size offset (48) — wrong on macOS (72) and no
+                # stat at all where 4 is not routed.
+                var fsize = _artifact_size(output);
+                if (fsize >= 0) {
                     sys_write(STDERR_FD, "[verbose] binary: ", 18);
                     var szbuf[24];
                     var szlen = fmt_int_buf(fsize, &szbuf);
@@ -1541,8 +1659,9 @@ fn _capacity_default_src(): i64 {
 # it signs (LC_CODE_SIGNATURE, +2,396 B measured on ecb), so signing step 1's output IN
 # PLACE makes a perfect fixpoint compare as DIFFERENT — the artifact behind the v6.0.44
 # "x86-macOS doesn't self-host" retraction. Signing a COPY leaves the pristine pair for
-# the comparison; this is the native twin of the `cp $cycc $ccr` + `codesign $ccr` in
-# `cmd_self`'s /bin/sh script. CHANGELOG [6.6.6].
+# the comparison. `cmd_self` and `cmd_soak` both step through here (`cmd_self`'s old
+# /bin/sh script, which did the same at shared `/tmp` names, is gone: CVE-49, 6.6.9).
+# CHANGELOG [6.6.6].
 fn _self_host_step(cc, src, out): i64 {
     #ifdef CYRIUS_TARGET_MACOS
     return _self_host_step_macos(cc, src, out);
@@ -1552,10 +1671,26 @@ fn _self_host_step(cc, src, out): i64 {
 
 # The macOS half, split out because the driver's preprocessor has no nested `#ifdef`
 # idiom — the same flat-per-target shape `_self_host_src_macos` uses.
+# ⛔ 6.6.9 bite 10 — EVERY exit removes `ccr`. The copy-failure branch returned before the
+# unlink, and `_copy_binary` left its partial or empty dst behind, so a failed stage (ENOSPC
+# mid-copy, a 0-byte `cc`) leaked `selfhost_signed` — and with it the whole private temp dir,
+# whose exit sweep is rmdir-only (`_cbt_tmpdir_cleanup`). `_copy_binary` now removes its own
+# dst on failure; the unlink here is belt-and-braces for a future helper that does not. A
+# chmod that fails is named rather than surfacing as a spawn error. `_macho_codesign`'s
+# result is deliberately NOT a verdict: Intel macOS refuses ad-hoc signing and runs the
+# unsigned binary anyway (ach), so a failed sign must not fail the step. CHANGELOG [6.6.9]
 fn _self_host_step_macos(cc, src, out): i64 {
     var ccr = _cbt_tmpexe("selfhost_signed");
-    if (_copy_binary(cc, ccr) != 0) { _err_ctx("self-host: could not stage a signable copy of", cc); return 0 - 1; }
-    sys_chmod(ccr, 0x1ED);
+    if (_copy_binary(cc, ccr) != 0) {
+        sys_unlink(ccr);
+        _err_ctx("self-host: could not stage a signable copy of", cc);
+        return 0 - 1;
+    }
+    if (sys_chmod(ccr, 0x1ED) != 0) {
+        sys_unlink(ccr);
+        _err_ctx("self-host: could not make the staged copy executable", ccr);
+        return 0 - 1;
+    }
     _macho_codesign(ccr);
     var rc = _pulsar_raw_compile(ccr, src, out);
     sys_unlink(ccr);
@@ -1572,7 +1707,8 @@ fn _self_host_step_macos(cc, src, out): i64 {
 # exact host it was added for: measured on ecb, "refusing to vendor into a SYMLINKED
 # directory: /tmp" and `FAIL: self-host step 1 exited -1`. The guard is right for
 # vendoring and wrong here — staging a compiler under `<tmpdir>/` is not vendoring.
-# Fails CLOSED on a short write and on an empty source. CHANGELOG [6.6.6].
+# Fails CLOSED on a short write and on an empty source, and removes dst when it does
+# (6.6.9). CHANGELOG [6.6.6].
 var _copy_bin_buf = 0;
 fn _copy_binary(src, dst): i64 {
     if (_copy_bin_buf == 0) { _copy_bin_buf = alloc(65536); }
@@ -1593,6 +1729,10 @@ fn _copy_binary(src, dst): i64 {
     sys_close(sfd);
     sys_close(dfd);
     if (total <= 0) { rc = 1; }
+    # 6.6.9 bite 10 — a failed copy leaves NOTHING: dst was created above, and a partial or
+    # empty file left in the private temp dir blocks its rmdir-only exit sweep, leaking the
+    # directory too. CHANGELOG [6.6.9]
+    if (rc != 0) { sys_unlink(dst); }
     return rc;
 }
 
@@ -1604,7 +1744,7 @@ fn _copy_binary(src, dst): i64 {
 # the SAME length (measured at 6.6.3, on the pulsar path this same rule was written for).
 # `_files_identical` alone answers 1 for two 0-byte files, which is exactly what a spawn
 # that never started leaves behind, so it needs the non-empty floor `cmd_pulsar` carries
-# inline. On PE `_file_size` is a raw stat with no reroute and answers -38 for every path,
+# inline. On PE `_file_size` was a raw stat with no reroute (until 6.6.9) and answered -38,
 # so the size test read `-1 != -1` — false — and every iteration scored a PASS over files
 # that need not exist; `_win_files_equal` is the PE arm and has that floor built in.
 # CHANGELOG [6.6.6].
@@ -1849,10 +1989,8 @@ fn _win_system(cmd): i64 {
 # Byte-compare two files without reading either whole into memory (PE-only helper).
 # Used by the Windows
 # arm of `cyrius self`, where the two candidates are ~1.2 MB compilers.
-# ⚠ `_file_size` is a raw `syscall(4)` (stat), which is NOT a PE reroute and answers
-# -38 for BOTH paths — so the size pre-check is inert on Windows by design and the
-# streaming compare below is what actually decides. Stated because a size check that
-# silently always passes is exactly the kind of green placebo this release is about.
+# The streaming compare is the whole verdict — there is no size pre-check (`_file_size`
+# answered -38 for every path on PE until 6.6.9, which is why none was ever relied on here).
 #
 # ⚠ TWO EMPTY FILES ARE NOT A MATCH, and a READ ERROR is not end-of-file. Both callers
 # compare COMPILERS, so "0 bytes == 0 bytes" is never the answer they want — and cass is
@@ -1897,8 +2035,7 @@ fn _win_files_equal(a, b): i64 {
 # CreateProcessW appends `.exe` to an extensionless program name.
 fn _win_cmd_self(): i64 {
     # ⚠ src/main_win.cyr, NOT src/main.cyr — THE PER-TARGET SOURCE; `_self_host_src()`
-    # (:1268) answers, and `cmd_soak` asks the same question there. The POSIX script
-    # below names src/main.cyr because on x86-64 Linux that IS the right fork. Handing a
+    # answers, and `cmd_self`'s POSIX arm and `cmd_soak` ask the same question. Handing a
     # PE cycc.exe the Linux fork compiles fine and produces a PE built from Linux syscall
     # numbers, which page-faults the moment the second step tries to RUN it (measured
     # under wine: "Unhandled page fault on write access ... at 0000000140001060"). Same
@@ -1911,13 +2048,21 @@ fn _win_cmd_self(): i64 {
     }
     var t1 = _cbt_tmpexe("self_a");
     var t2 = _cbt_tmpexe("self_b");
-    if (_win_compile_spawn(_cc, self_src, t1) != 0) {
-        _err_ctx("self-host: the installed compiler could not compile", self_src);
+    # 6.6.9 bite 10 (review) — the SAME named step failure as the POSIX arm (which compiler,
+    # its exit code, the source) rather than "the installed compiler", which `_cc` need not
+    # be. `_win_compile_spawn` returns the child's exit code, so the status is described as
+    # an exit (`_raw_how_exited`, cbt/pulsar.cyr — a fn, because that global is declared in a
+    # file included after this one). CHANGELOG [6.6.9]
+    _raw_how_exited();
+    var w1 = _win_compile_spawn(_cc, self_src, t1);
+    if (w1 != 0) {
+        _self_step_failed(1, w1, self_src, _cc);
         xunlink(t1);
         return 1;
     }
-    if (_win_compile_spawn(t1, self_src, t2) != 0) {
-        _err_ctx("self-host: the freshly built compiler could not compile", self_src);
+    var w2 = _win_compile_spawn(t1, self_src, t2);
+    if (w2 != 0) {
+        _self_step_failed(2, w2, self_src, 0);
         xunlink(t1);
         xunlink(t2);
         return 1;

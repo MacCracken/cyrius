@@ -74,10 +74,11 @@ mkdir -p "$P/src"
 printf 'fn main(): i64 { return 0; }\n' > "$P/src/main.cyr"
 
 # Two steps on purpose. `deps` RESOLVES (populates lib/); `deps --lock` WRITES the
-# lock. A stdlib-only project emits no lock by default ("No lockfile by default",
-# first-party-standards.md), and `--lock` on its own would hash an empty lib/ and
-# "pass" on zero entries — which is exactly the vacuous shape the entry-count guard
-# below exists to refuse.
+# lock. Since 6.6.9 that first `deps` already writes a first lock for a stdlib-only
+# project (every vendored leaf is locked), but the explicit `--lock` keeps this gate
+# about the WRITER's order rather than about when a lock is due — and `--lock` on its
+# own, before any resolve, would hash an empty lib/ and "pass" on zero entries, which
+# is exactly the vacuous shape the entry-count guard below exists to refuse.
 ( cd "$P" && "$WORK/cyrius" deps ) >"$WORK/deps.log" 2>&1 \
     || { sed 's/^/    /' "$WORK/deps.log"; fail "cyrius deps failed to resolve"; }
 ( cd "$P" && "$WORK/cyrius" deps --lock ) >>"$WORK/deps.log" 2>&1 \

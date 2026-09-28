@@ -51,6 +51,11 @@
 #     and 3 stay green, which is the point: axis 4 is the only one that sees it.
 #   * real tree, unmutated -> all axes GREEN.
 set -u
+# The CLI's temp base, derived exactly as cbt/build.cyr::_cbt_tmpbase derives it (6.6.9 bite
+# 9): an ABSOLUTE $TMPDIR with trailing slashes dropped, else /tmp. A fixed /tmp here would
+# count nothing under a set TMPDIR and read GREEN over directories it never looked at.
+case "${TMPDIR:-}" in /*) CTB=$(printf '%s' "$TMPDIR" | sed 's:/*$::'); [ -n "$CTB" ] || CTB=/ ;; *) CTB=/tmp ;; esac
+export CTB
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 CYRIUS="$ROOT/build/cyrius"
@@ -92,7 +97,7 @@ printf 'include "helper.cyr"\nfn main(): i64 { return helper_val(); }\nvar r = m
 printf 'include "helper.cyr"\nfn main(): i64 { return @@@; }\n' > "$T/proj/src/bad.cyr"
 
 # ── The counter. The temp dir is `/tmp/cyrius-<pid>` with up to 15 `-N` retries
-# (cbt/build.cyr::_cbt_tmpdir — no TMPDIR support, deliberately, per CVE-35/36), so it
+# under the base below ($CTB — an absolute $TMPDIR since 6.6.9, else /tmp; cbt/build.cyr::_cbt_tmpdir), so it
 # is addressed by the CLI's OWN pid. `run_cli` records that pid in a file and `exec`s,
 # which keeps it. Counting by pid rather than by "directories that appeared" is what
 # makes this safe to run beside another check.sh on the same box.
@@ -102,20 +107,20 @@ dirs_for() {
     _p=$(cat "$1" 2>/dev/null || true)
     [ -n "$_p" ] || { echo "no-pid"; return; }
     n=0
-    for d in "/tmp/cyrius-$_p" "/tmp/cyrius-$_p"-*; do
+    for d in "$CTB/cyrius-$_p" "$CTB/cyrius-$_p"-*; do
         [ -d "$d" ] && n=$((n + 1))
     done
     echo "$n"
 }
 # Belt and braces: whatever this gate's own runs leave, it removes.
-sweep_for() { _p=$(cat "$1" 2>/dev/null || true); [ -n "$_p" ] && rm -rf "/tmp/cyrius-$_p" "/tmp/cyrius-$_p"-* 2>/dev/null; return 0; }
+sweep_for() { _p=$(cat "$1" 2>/dev/null || true); [ -n "$_p" ] && rm -rf "$CTB/cyrius-$_p" "$CTB/cyrius-$_p"-* 2>/dev/null; return 0; }
 
 # ── AXIS 0 — ⭐ ANTI-VACUOUS: the counting method can see a directory at all.
 echo "axis 0 — ⭐ ANTI-VACUOUS: the counter sees a planted temp directory:"
 echo "gateprobe-$$" > "$T/p0"
-mkdir -p "/tmp/cyrius-gateprobe-$$"
+mkdir -p "$CTB/cyrius-gateprobe-$$"
 check "a planted temp dir is counted" 1 "$(dirs_for "$T/p0")"
-rmdir "/tmp/cyrius-gateprobe-$$" 2>/dev/null
+rmdir "$CTB/cyrius-gateprobe-$$" 2>/dev/null
 check "…and 0 once it is gone" 0 "$(dirs_for "$T/p0")"
 
 # ── AXIS 1 — ⭐ PREMISE: these verbs really do create a private temp directory.
@@ -128,7 +133,7 @@ occupy_run() {
     timeout 300 sh -c '
         echo $$ > "$0"
         for s in "" -1 -2 -3 -4 -5 -6 -7 -8 -9 -10 -11 -12 -13 -14 -15; do
-            mkdir -p "/tmp/cyrius-$$$s" || exit 90
+            mkdir -p "$CTB/cyrius-$$$s" || exit 90
         done
         shift
         exec "$@"' "$_pf" x "$@" > "$_out" 2>&1
@@ -190,7 +195,7 @@ w=0
 while [ "$w" -lt 600 ]; do
     p=$(cat "$T/p4" 2>/dev/null || true)
     if [ -n "$p" ]; then
-        for d in "/tmp/cyrius-$p" "/tmp/cyrius-$p"-*; do
+        for d in "$CTB/cyrius-$p" "$CTB/cyrius-$p"-*; do
             if [ -d "$d" ]; then planted="$d"; break; fi
         done
     fi

@@ -69,6 +69,11 @@
 #   * make `_cbt_env_int` return its default for a well-formed value -> axis 1 RED
 #     (the 5 s override stops applying and the elapsed check hits the ceiling).
 set -u
+# The CLI's temp base, derived exactly as cbt/build.cyr::_cbt_tmpbase derives it (6.6.9 bite
+# 9): an ABSOLUTE $TMPDIR with trailing slashes dropped, else /tmp. A fixed /tmp here would
+# count nothing under a set TMPDIR and read GREEN over directories it never looked at.
+case "${TMPDIR:-}" in /*) CTB=$(printf '%s' "$TMPDIR" | sed 's:/*$::'); [ -n "$CTB" ] || CTB=/ ;; *) CTB=/tmp ;; esac
+export CTB
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 CY="$ROOT/build/cyrius"
@@ -398,7 +403,7 @@ printf 'fn main() { return 0; }\nvar r = main();\n' > "$T/pj/src/main.cyr"
 ( cd "$T/pj" && timeout 300 sh -c '
     echo $$ > "$0"
     for s in "" -1 -2 -3 -4 -5 -6 -7 -8 -9 -10 -11 -12 -13 -14 -15; do
-        mkdir -p "/tmp/cyrius-$$$s" || exit 90
+        mkdir -p "$CTB/cyrius-$$$s" || exit 90
     done
     shift
     exec "$@"' "$T/pj.sq.pid" x "$CY" build src/main.cyr "$T/pj/sqout" > "$T/pj.sq.out" 2>&1 ) || true
@@ -407,7 +412,7 @@ check "premise: 'cyrius build' allocates a private temp dir (16-candidate squeez
 sqpid=$(cat "$T/pj.sq.pid" 2> /dev/null || true)
 if [ -n "$sqpid" ]; then
     for s in "" -1 -2 -3 -4 -5 -6 -7 -8 -9 -10 -11 -12 -13 -14 -15; do
-        rmdir "/tmp/cyrius-$sqpid$s" 2> /dev/null || true
+        rmdir "$CTB/cyrius-$sqpid$s" 2> /dev/null || true
     done
 fi
 
@@ -422,7 +427,7 @@ leftover=0
 survivors=0
 bpid=$(cat "$T/pj.pid" 2> /dev/null || true)
 if [ -n "$bpid" ]; then
-    for d in /tmp/cyrius-"$bpid" /tmp/cyrius-"$bpid"-*; do
+    for d in "$CTB"/cyrius-"$bpid" "$CTB"/cyrius-"$bpid"-*; do
         if [ -d "$d" ]; then
             survivors=$((survivors + 1))
             n=$(ls -A "$d" 2>/dev/null | grep -c '^cpp_' || true)

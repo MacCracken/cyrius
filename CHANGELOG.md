@@ -700,6 +700,282 @@ a native cx compiler also exits 1 on the slice / await / async triggers.
   any project's include closure, so no definition can newly collide ("last definition wins"
   rebinds earlier call sites retroactively — checked for fns, top-level vars and enum
   members).
+- **`cyrius distlib <profile>`: a stdlib name in a comment or a string no longer keeps its leaf.**
+  (bite 8; issue `2026-09-26-vani-distlib-profile-deps-counts-comments-and-strings-as-references`,
+  archived.) **Root cause:** `_distlib_prune_profile_leaves` handed the raw bundle to an
+  identifier-boundary matcher, so "Safe to run twice" in a `#` comment — or `return "run";` — kept
+  `process` (`fn run`), and the verify loop then added `vec`/`str`/`fmt` for it: vani's `core`
+  sidecar went from 3 leaves to 8 on a comment edit, with the drift gate green throughout. **Fix:**
+  the bundle's non-code bytes are blanked once with 6.6.8's lexer-faithful `_src_blank_noncode`
+  (char literals before strings, attribute tokens and `#define`/`#if` bodies kept as code). An
+  `include "lib/<leaf>.cyr"` line the bundle keeps is now read explicitly as a reference (before
+  blanking): a consumer's build must resolve it, and the raw scan only honoured it when the leaf
+  happened to declare a fn named like its file. Bundle and leaf reads are whole-file
+  (`file_read_whole`) — the 1 MiB leaf cap cut `mabda.cyr` (1,368,705 B) and `sigil.cyr` short, the
+  bundle cap was 4 MiB. The filed repro now prints `syscalls alloc` for the comment, the reworded
+  comment and the string forms alike. ⚠ **Residual, documented:** the matcher sees names, not
+  resolutions, so a parameter or local that reuses a stdlib top-level name (`fn f(run)`) still keeps
+  that leaf — the safe direction. Gate: `distlib_profile_sidecar.sh` axes 8-10 (comment/string-only
+  mention keeps nothing; a real call after a `'"'` char literal is kept BY THE PRUNE, not repaired by
+  the verify loop; an explicit include keeps its leaf). Mutation-proven: the 6.6.8 CLI fails 8 and 10,
+  a blanker without its char-literal arm fails 9.
+- **`cyrius distlib`'s verify unit is what a consumer's build has in scope, and it fails loud.**
+  (bite 8; issue `2026-09-21-distlib-verify-loop-attributes-named-dep-symbols-to-stdlib-fold-from-libro`,
+  archived.) **Root cause:** the compile-verified sidecar (6.5.37) spliced the stdlib leaves and the
+  bundle only. Every symbol libro takes from its THIN sigil named dep read as undefined,
+  `_distlib_leaf_defining` credited it to the first stdlib file declaring it — the sigil monolith —
+  and the next round recorded the monolith's own need (`sys_uname` → `sys`) as libro's: 28 leaves
+  for a bundle that needs 27. And `compile()`'s status was discarded, so any failure that printed no
+  `undefined` line (compiler missing, an include that resolves nowhere, a `#define` table overflow,
+  an unwritable unit) found zero names and returned "fixpoint" — the sidecar went out unverified,
+  silently. **Fix:** `cyrius deps` records the named-dep module files it places in `lib/` and the
+  stdlib leaves it pulls on their behalf (`_dep_nd_modules` / `_dep_nd_leaves`, cbt/deps.cyr). The
+  modules enter the unit; a leaf that IS a named dep is the consumer's pinned module rather than the
+  stdlib fold; no named dep is ever an owner; and a symbol is kept out of the sidecar as a named
+  dep's own need only when that dep's leaf list brings its owner AND nothing of ours (the bundle, a
+  recorded leaf or its private peers; comments and strings blanked) names it — anything else is
+  recorded, the safe direction. That test is never skipped for a leaf already in the unit-only
+  scope (the modules precede the bundle, so a dep's `helperlib_do` reached the scope first and the
+  bundle's own `helperlib_two` was then waved through — and never surfaced again), and a round that
+  records a leaf drops the scope, so each entry is re-decided with that leaf counted as ours (a
+  re-added leaf's need that the scope already met could not surface either). The unit is now built
+  from INCLUDES (an entry in
+  `dist/.dlverify-<pid>/` beside a copy of the pinned snapshot, which resolves any leaf the project
+  has not vendored — cycc tries the CWD's `./lib` first, the entry's directory last — removed
+  afterwards): the old text splice defeated include-once — a spliced leaf arrived again through any
+  `include "lib/<it>.cyr"` — which doubled every `#define` and overflowed cycc's 16-entry table
+  (sigil's fold, seven `#define LINUX`). That had silently
+  truncated sigil's own profile sidecars: `sigil-mldsa`, `-ed25519`, `-x509` and `-authenticode`
+  now gain `syscalls`/`fmt`/`result`, and a clean-room compile of each from exactly its sidecar
+  leaves has no undefined symbol (6.6.8's `sigil-aes` had two). A unit that cannot be built or
+  compiled for any reason but a missing symbol is now an error (`… does not compile, and no symbol
+  is missing — sidecar NOT written`, its `error` lines echoed, exit 1, the previous sidecar left as
+  it was). libro at c95f296 under a throwaway home: 27 leaves, no `sys`. Gate:
+  `distlib_sidecar_verified.sh` axes 5-12, hermetic (PATH named deps, so no `<home>/deps` is
+  touched): the module splice, the named-dep leaf skip, the owner guard, fail-loud, a named dep's
+  own need (either spelling, peer or dispatcher), OUR use of such a leaf, a recorded leaf's peer's
+  need, our use of a DIFFERENT symbol of a leaf the dep reached first (10d), a re-added leaf's need
+  that an earlier round scoped (10e), each-file-once and the mirror's removal are each
+  mutation-proven on their own axis; axis 8
+  is the anti-vacuous "a bundle that really calls the helper still gets it re-added". ⚠ Stated
+  residual: a need of a recorded leaf that a named dep's module already meets through its own
+  `include` is met in the unit and not recorded — as it is in every consumer's build, through that
+  dep (bote's `core` profile no longer lists `io`, which its leaf bayan uses and libro includes).
+  `distlib_sidecar_stdlib_only.sh`'s fixture included `lib/unicode.cyr` — a family that is a
+  directory — and passed only because the verify failed open on it; it now gives the include a shim.
+- **The Windows CLI sizes files: `_file_size` is open + lseek(SEEK_END), not a raw stat.** (bite 8;
+  audit.) **Root cause:** cbt's `_file_size` was `syscall(4, …)` — x86-Linux stat, with no PE
+  reroute — so `cyrius.exe` got -38 at every call site. User-visible on real Windows (cass):
+  `distlib`'s verify spliced nothing and published the inferred sidecar ("math" never re-added for an
+  undeclared `F64_ONE`), and `distlib --check` byte-compares through `_distlib_files_same`, which
+  bailed on the negative size — every bundle read as STALE, always. **Fix:** one portable body
+  (`file_open` + `xlseek(SEEK_END)`, a one-byte read to refuse a directory), and the distlib reads
+  moved to `file_read_whole`. `cyrius build -v`'s binary size, the last raw `syscall(4)` in cbt/,
+  reads the same way (`_artifact_size`) — it read the x86-Linux st_size offset on macOS too.
+  Verified on cass, ecb, ach and pi (distlib + `--check` + `deps`).
+- **`cyrius.exe` finds the tools in its own `bin/`.** (bite 8; placed from the 6.6.7 reviews.)
+  **Root cause:** `_wrapper_dir` scanned argv(0) for `/` only; on Windows argv(0) is
+  `C:\…\bin\cyrius.exe` (under wine `Z:\…`) or a bare name off PATH, so the v6.5.42 sibling lookup
+  never fired and `cyrius lint` with an empty or foreign `CYRIUS_HOME` said `tool not found:
+  <home>/bin/cyrlint` beside a working cyrlint.exe. **Fix:** on PE the wrapper's own path comes
+  from GetModuleFileNameW (`sys_self_exe_w`, a full buffer refused as truncated), normalised to `/`;
+  argv(0), normalised the same way, is the fallback. Its UTF-8 copy (`_wrapper_w2u8`) is sized from
+  the path's length, `3 × units + 6`: `_args_w2u8` silently drops a code point that does not fit, so
+  a fixed 4096-byte buffer truncated a long non-ASCII path and no length check could tell. Verified
+  on cass: by full path and by bare name off PATH. ⚠ An install dir with a non-ASCII name still
+  falls back to `CYRIUS_HOME` on every CLI (6.6.8 included), because the PE open reroute widens a
+  path byte by byte (ASCII only, 260 units) — a compiler-side limit, not this lookup's. Gate:
+  `cli_pe_file_size_and_sibling_tools.sh` (axes 0 — no raw stat in cbt/ — and 0b — a host probe of
+  `_wrapper_w2u8`: 2000 CJK units come back as 6000 bytes, a surrogate pair as 4 — run without wine;
+  axes 1-3 under wine), mutation-proven per mechanism.
+- **`[build].modules` is honoured in a manifest with no `[deps]` section.** (bite 9; found by the
+  6.6.6 bite 26b review.) **Root cause:** `_auto_deps` returned on "no `[deps]` section" before it
+  read `[build].modules`, the only writer of `_build_modules`, so the key was ignored in silence and
+  the build failed with `undefined function helper` — nothing named the manifest. The CLI's own gate
+  carried a `[deps]\nstdlib = []` crutch around it. **Fix:** the key is read before the early return
+  (`cmd_deps` stays gated on `[deps]`), through ONE parser shared with `cyrius distlib`
+  (`_toml_section_modules` / `_build_section_modules`, cbt/deps.cyr), which had its own copy. No
+  ecosystem manifest uses `[build].modules` today (0 of 126). Gate:
+  `build_temp_source_write_checked.sh` axis 3 drops the crutch and links the module with and without
+  `[deps]`; the old early-return order fails it (rc 1, `undefined function`).
+- **A temp dir the CLI cannot write is reported as that — not as a tampered dep cache, a missing
+  `sha256sum`, or a clean lint — and an absolute `$TMPDIR` routes around it.** (bite 9; issue
+  `2026-09-27-deps-cache-check-reports-an-unwritable-tmp-as-a-tampered-cache`, archived.)
+  **Root cause:** `_git_run` and `_sha256sum_file` opened their stdout capture in the CHILD and,
+  when that failed (EDQUOT, ENOSPC, no inodes), ran git / the hasher with the parent's stdout. The
+  answer went to the terminal (the bare sha aethersafha saw), the capture read back empty, and
+  `_git_rev` returned 0 — the value for "the tag does not resolve". aethersafha's `/tmp` is a
+  usrquota tmpfs: at quota, every `build`/`test`/`deps` refused all ten deps as **tampered**
+  ("HEAD is not the tag's commit", and at 2 inodes "its .git is missing") and advised
+  `rm -rf` on a healthy cache. The hasher read the same condition as "sha256sum missing?", and
+  `cyrius lint`'s syntax pre-pass FAILED OPEN on it — a file that does not parse linted
+  `0 warnings`, rc 0. `_cbt_tmpbase` returned the literal `/tmp`, so TMPDIR could not help.
+  **Fix:** every capture is opened by the PARENT before the fork (`_git_run`, the new `_sha_run`;
+  the lint pre-pass pre-creates its diagnostics file). A cache refusal reached while a capture
+  could not be written, or while the private temp dir refuses a fresh file as big as git's
+  write (`_cbt_tmp_probe_n`: 64 KB, or the dep's own index size — a 1500-file dep's is ~150 KB),
+  asked while the verify's own temps are STILL IN PLACE, is **reason 10** — still a refusal, but it names the temp dir and the errno,
+  says the cache was NOT judged, and prints no restore recipe and no `rm -rf`. The hasher says
+  why it failed (`_sha_fail_why`: the capture, no hasher on PATH, or the file), and the lint
+  pre-pass refuses by name. An **absolute** `$TMPDIR` is the temp base (`_cbt_env_str`; trailing
+  slashes dropped, a relative value ignored); the private 0700 exclusive-mkdir directory is
+  unchanged (CVE-35/36). Also: the hasher falls back to `shasum -a 256 -b` when `sha256sum` is
+  not on PATH — **macOS 13 has no `sha256sum`** (measured on ach), so `deps --lock`/`--verify`
+  could never hash there; `_git_cfg_hazard` now fails closed on a NEGATIVE git status too (`> 1`
+  let "not run" through to a size check that, with the capture now pre-created, would read
+  "clean"). **Review round (the NEARLY-full temp dir):** the first cut still called a healthy
+  cache tampered with 4-8 KB or 5 inodes left — exactly a usrquota tmpfs at its limit — because
+  the probe ran after the verify's cleanup had freed the room git lacked (now judged BEFORE the
+  cleanup: `_git_cache_verify_raw` leaves its temps to the wrapper), and because a failed
+  `update-index --refresh` (128, no room for `index.lock`) fell through to `diff-files`, which
+  read the stat-less index as reason 4 (now reason 3 → judged). The hasher asks the temp dir
+  too when the tool exits non-zero or prints no digest, so a capture that opened but could not
+  be WRITTEN (EDQUOT/ENOSPC) no longer reads "the hasher could not read it (exit 1)", blaming
+  the dependency file. A `$TMPDIR` that does not exist or cannot be written stops at once with
+  the base, the errno and "TMPDIR=… does not exist or is not writable" — only EEXIST is a taken
+  candidate, so "16 candidates were taken; remove stale cyrius-* dirs" no longer covers it (PE
+  keeps the loop; its mkdir reroute reports no errno). A tool probe that never ran the tool
+  (`pr < 0`) no longer memoises sha256sum for the rest of the process. ⚠ **macOS moves every CLI temp** from `/tmp` to the per-user `/var/folders/…/T`.
+  The leak gates that counted `/tmp/cyrius-*` (`cli_temp_dir_no_leak`, `test_runner_bounded`,
+  `build_temp_no_leak`, `deps_git_cache_verified`) derive the same base, so a set TMPDIR cannot
+  turn them silently green; `cli_progress_line_not_spliced` axis 10 unsets it (it squeezes
+  `/tmp`). Hardening note (no CVE — every site failed closed) in
+  `docs/audit/2026-09-03-security-audit.md`. Gate: `deps_cache_capture_failure_named.sh` — the
+  filing's `unshare` + `nr_inodes` recipe swept 2-8 plus a 64 KB tmpfs at 0/4/8/12 KB free and a
+  1500-file dep on a 1 MB tmpfs at 0-320 KB free, TMPDIR routing (a missing or unwritable one
+  named with its errno), the hasher with /tmp out of inodes AND full, lint, the shasum fallback,
+  a failing `update-index` (a git wrapper), and static before-the-fork / judge-before-cleanup
+  checks; the slot-open tree fails every axis but the anti-vacuous 0, the bite's first cut
+  fails axes 1, 1b, 3, 5, 8 and 9, and each of the fifteen mutants in its ledger fails its own
+  axis.
+- **`cyrius deps` locks every file it vendors, writes a stdlib-only project's first lock, and
+  `--verify` fails on a file the lock does not cover.** (bite 9; issue
+  `2026-09-23-patra-deps-never-locks-new-stdlib-leaves`, archived.) **Root cause:** cmd_deps wrote
+  the lock on `copied > 0` — a count of NAMED git/path deps — or on `--relock` / a legacy or moved
+  pin stamp, and that stamp needs an existing lock. Stdlib leaves never counted, so (1) a leaf
+  newly declared under an unchanged pin was vendored and never locked (patra 1.15.0: 29 lines over
+  31 files; `cyrius build` did not lock it either), (2) a stdlib-only project never got a lock
+  from `deps` or `build` (41 ecosystem repos have none), and (3) `--verify` walked only the lines
+  the lock HAS, so the unlocked file verified clean even tampered (`15 verified, 0 failed`). A
+  0-byte lock read as "no cyrius.lock found". **Fix:** a vendored leaf the loaded lock has no line
+  for — a new leaf, or every leaf when there is no lock — triggers the lock write (the 6.6.4
+  moved-snapshot refusal is untouched: a new leaf has no hash to disagree with; a no-change
+  resolve still writes nothing). `--verify` walks `lib/` through `_deps_lock_files`, the SAME
+  walker `cmd_deps_lock` now writes from, and fails each uncovered `.cyr` by name; an empty lock
+  is present-but-empty; in the cyrius source repo (which keeps no lock) it says so instead of
+  failing every authored file. This restores the v5.7.8 "write cyrius.lock by default after every
+  successful resolve" intent. `cyrius deps --help` no longer says deps are "symlinked into lib/"
+  (copied since v5.11.8; a symlinked lib/ is refused since v6.5.37) and says `--relock` locks what
+  `--verify` reports; the top-level `cyrius help` line lists `--relock`/`--lock`/`--dry-run`. Gate:
+  `deps_lock_new_leaf_locked.sh` — the filing's repro verbatim (first lock, new leaf locked,
+  tamper caught), an unlocked nested file failing `--verify`, the empty lock, `cyrius build`
+  writing the first lock, anti-churn, one-walker static, help; the pre-fix tree fails axes 1-7
+  and five one-line mutants each fail their own. ⚠ A lock write owed ONLY to a new leaf (in
+  practice: a stdlib-only project's first lock) that cannot HASH is a named warning —
+  `warning: cyrius.lock NOT written — cannot hash …: <why>` — and deps/build succeed: no lock was
+  attempted there before 6.6.9, and a host with no working hasher (wine has no certutil) must not
+  lose every stdlib-only build to the new write. The explicit `deps --lock` and every pre-6.6.9
+  write trigger still fail hard, and once a lock exists the 6.6.4 guard still refuses to vendor a
+  leaf it cannot hash (axis 8).
+- **`cyrius run`, `check` and `test` say a compile failure once.** (bite 10; found by the 6.6.6
+  bite-24 review.) **Root cause:** bite 24 gave `cyrius build` its two-question verdict (did cbt
+  already NAME this failure? otherwise quote the compiler's real exit) and nothing else. `cmd_run`
+  printed an unconditional `error: compile failed` after cbt or the compiler had named the cause
+  (`cyrius run nothere.cyr` → `error: no such file` then `error: compile failed`); `cmd_check`
+  followed a named failure with `error: nothere.cyr` — `error: ` on stderr and the NAME on stdout,
+  a split line; `cmd_test` called a MISSING file a `(compile error)`; `cyrius bench` printed
+  `FAIL: compile error` for either. **Fix:** one owner, `_compile_fail_verdict(pre_err, fd, head)`
+  (cbt/build.cyr), used by build, run, check, test and bench: a failure cbt named gets nothing
+  more (`test` keeps its tally row, now `(not compiled; see the error above)`), a compiler
+  rejection gets `<head> (compiler exit N)` — or `(the compiler did not exit normally)` — once,
+  and `run` shares build's `-v` pointer. `check`'s verdict is whole on stderr. Gate:
+  `build_log_informative.sh` row 6 (missing file → one `error:` line naming it; rejected source →
+  the compiler's status; nothing of check's verdict on stdout; test's row); the 6.6.8 CLI fails
+  seven of its ten assertions and the over-fix (never say anything) fails the rejected-source rows.
+- **CVE-49: `cyrius self` no longer stages and executes compilers at predictable shared `/tmp`
+  names, and a failed macOS self-host stage no longer leaks.** (bite 10; audit + a 6.6.6 review
+  find.) **Root cause:** `cmd_self`'s POSIX arm forked `/bin/sh -c` over a script that wrote step
+  1's compiler to `/tmp/cyr_cc5_$$`, copied it to `/tmp/cyr_ccr_$$` and EXECUTED that copy —
+  predictable names, no O_EXCL, a pre-planted symlink followed. Another local user who creates
+  the names first can clobber a file the invoker can write, or swap the binary between the `cp`
+  and the exec (the CVE-35/CVE-36 class; Linux's protected_symlinks/protected_regular blunt it,
+  macOS has nothing). The same script scored a **0-byte compiler as PASS**, rc 0 (`/bin/sh` runs
+  an empty executable as an empty script; `cmp` of two empty files is equal) — measured with the
+  6.6.8 CLI on x86-64 Linux, pi, ecb and ach. Separately `_self_host_step_macos` returned before
+  unlinking its staged copy when `_copy_binary` failed, and `_copy_binary` left its partial or
+  empty dst — so a 0-byte or unreadable `cc` (or ENOSPC mid-copy) left `selfhost_signed` and,
+  since the exit sweep is rmdir-only, the whole `cyrius-<pid>` dir (reproduced on ecb and ach).
+  **Fix:** the POSIX arm is native — `_self_host_step` twice and `_self_host_same`, the helpers
+  `cmd_soak` already used, over `_cbt_tmpexe`/`_cbt_tmpfile` names in the private 0700 dir —
+  and removes what it staged on every path; a failed step is named — which step, the compiler
+  BY PATH (step 1's is `_cc`, `./build/cycc` in this repo, not necessarily "the installed
+  compiler"), the source, and what the compiler actually did (`error: self-host step 1
+  (./build/cycc, compiling src/main.cyr) exited 42`, `… was killed by signal 11`, `… exited 0
+  but wrote no output`) — instead of folding into `FAIL: cycc!=cycc`, and a missing compiler is
+  named up front. `_pulsar_raw_compile` now records WHY it returned non-zero
+  (`_raw_last_how`, rendered by `_raw_fail_describe`): it returned a flat 1 for a signal death,
+  an exit-0-with-no-output and a failed rename, and the first cut of this message quoted that
+  as "exited 1" — a status the compiler never returned (the class 6.6.6 bite 24 removed from
+  `cyrius build`). The PE arm (`_win_cmd_self`) names its step failures the same way. `_copy_binary` removes dst on any
+  failure; `_self_host_step_macos` unlinks its copy on every return and names a failed chmod
+  (a failed ad-hoc sign stays non-fatal: Intel macOS refuses it and runs the binary anyway).
+  Entry appended to `docs/audit/2026-09-03-security-audit.md`; the next CVE id is 50. Gate:
+  `cbt_no_shared_tmp_paths.sh` — no `/tmp/` in any cbt string literal (a comment- and
+  char-literal-aware scanner with a self-test and a 2000-literal floor), `cyrius self` over a
+  stub compiler (PASS with step 2 run from the private dir; step-1, step-2, mismatch and 0-byte
+  failures named, non-zero, nothing left under `$TMPDIR`; a SIGSEGV'd step-1 compiler reads
+  `was killed by signal 11` and an empty output reads `exited 0 but wrote no output`, each with
+  the compiler's path), the extracted `_copy_binary` run on an empty and an unreadable source,
+  and a static every-return-unlinks check on the macOS step. The 6.6.8 `cmd_self` fails axes
+  1-5 and 3b; the flat-1 first cut fails 3, 3c, 3d and 4; each of five one-line mutants fails
+  its own axis.
+  `cbt_fork_sites_have_pe_arm.sh`'s fork-site floor drops 16 → 15 (the script's fork is gone).
+  **Verified on real hardware** with this tree's CLI and compiler: `cyrius self` PASSes on ecb,
+  ach and pi with nothing left behind, and the 0-byte compiler is refused on all three (the
+  6.6.8 CLI PASSed it, rc 0, on each). Stub compilers that exit 42, die of SIGSEGV and exit 0
+  with no output are each reported as such, with the compiler's path, on ecb, ach and pi; on
+  cass the PE arm names a stub that exits 42 by path and still PASSes the real self-host.
+
+### Downstream
+
+- **`cyrius run` / `check` / `test` failure lines changed (bite 10).** A compile failure the CLI
+  names itself (a missing file, an unwritable temp) is no longer followed by a second verdict; a
+  compiler rejection reads `error: compile failed (compiler exit N)` (run), `error: <file>
+  (compiler exit N)` (check — now wholly on **stderr**; its name used to go to stdout) and
+  `FAIL: <file>: compile error (compiler exit N)` (test). A script that grepped `(compile error)`
+  or read check's failing file name from stdout must follow. `cyrius self` names a failed step
+  (`error: self-host step N (<compiler>, compiling <src>) exited R` — or `was killed by signal
+  S` / `exited 0 but wrote no output`) instead of printing `FAIL: cycc!=cycc` for a step that
+  never produced a compiler; on Windows this replaces `self-host: the installed compiler could
+  not compile: <src>`.
+- **Stdlib-only projects gain a `cyrius.lock` on their next `cyrius deps` / `cyrius build`**
+  (41 repos under `~/Repos` have none today) — commit it. **itihas** (`lib/boxed.cyr` unlocked,
+  no pin trailer) and **cyrius-bb** (a tracked 0-byte `cyrius.lock` over 53 `lib/` files) fail
+  `cyrius deps --verify` until they run `cyrius deps --relock` once (their next plain
+  `cyrius deps` also rewrites both locks). Any consumer whose lock misses a vendored leaf is in
+  the same position — that is the point of the change.
+- **`TMPDIR`**: an absolute `$TMPDIR` now moves the CLI's private temp dir (macOS sets one per
+  user, so every macOS CLI temp moves off `/tmp`). A full or quota-limited temp dir now reads
+  `could NOT be verified … temp dir: … (errno N)` instead of "refusing tampered cache" — do not
+  delete the cache; free the space or point TMPDIR elsewhere. A stale inherited `TMPDIR` naming
+  a directory that is gone now fails every verb with `TMPDIR=… does not exist or is not
+  writable` — fix or unset it.
+- **vani** can narrow ADR 002 (`docs/architecture/002-distlib-deps-counts-comment-words.md`):
+  comments and strings no longer count, so the remaining rule is "no stdlib top-level fn/var name as
+  a profile module's parameter or local".
+- **libro** regenerating with a 6.6.9 toolchain drops `sys` from `dist/libro.deps` (27 leaves).
+- **Sidecars move on the next `cyrius distlib`.** Measured across the 74 `[lib]` repos under
+  ~/Repos (each at HEAD, a throwaway home, old vs new CLI): 50 of 131 sidecars change — leaves kept
+  only by a comment or string drop (sandhi, sankoch, ranga, bayan, …), named deps' own needs drop
+  (mehman −16, nein-mcp −12, the `sys` of libro/kavach/nein/t-ron/agnosai), and needs the silently
+  failing verify had truncated appear (sigil's `mldsa`/`ed25519`/`x509`/`authenticode` gain
+  `syscalls`/`fmt`/`result`; bote gains `sys` for its `sigil` leaf). `distlib --check` in CI will
+  report them STALE until regenerated.
+- ⚠ **Two repos' `distlib` now REFUSES the sidecar** (the verify unit does not compile, which the
+  old loop read as success): **stiva** — its bundle and its named dep kavach both declare `struct
+  AuditEntry`, with different fields, and stiva's `#derive(accessors)` #assert fires; **dhvani** —
+  its named dep naad's module fails `: stack` return binding under the current compiler. Both are
+  real in a consumer's build of those bundles; each needs its own fix.
 
 ## [6.6.8] — 2026-09-28
 

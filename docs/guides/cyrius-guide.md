@@ -1352,10 +1352,15 @@ modules = ["src/types.cyr", "src/error.cyr"]
 Named deps are namespaced: `lib/{depname}_{basename}`. Stdlib is unprefixed.
 Includes are auto-prepended by the build tool — source files only need project includes.
 
-**`cyrius.lock` is a contract, not a cache (v6.6.4).** When a project has a git dep the
-resolver writes `cyrius.lock`: one `commit	…` line per git dep (a repointed tag is refused
-against it), one `<sha256>  lib/<file>` line per vendored file (sorted), and a `cyrius	<pin>`
-trailer naming the stdlib pin. On every resolve — including the implicit one `cyrius build`
+**`cyrius.lock` is a contract, not a cache (v6.6.4).** The resolver writes `cyrius.lock`:
+one `commit	…` line per git dep (a repointed tag is refused against it), one
+`<sha256>  lib/<file>` line per vendored file (sorted), and a `cyrius	<pin>` trailer naming
+the stdlib pin. It is written whenever `lib/` gains a file the lock does not cover — since
+6.6.9 that includes the **first** lock of a stdlib-only project and a stdlib leaf newly added
+to `[deps] stdlib` (both used to be left out), so commit it. `cyrius deps --verify` checks
+every locked hash **and** that every `.cyr` under `lib/` has a line: an unlocked file fails by
+name (`not in cyrius.lock — run cyrius deps --relock`), and an empty lock is reported as
+empty, not missing. On every resolve — including the implicit one `cyrius build`
 runs — a stdlib leaf whose bytes in `~/.cyrius/versions/<pin>/lib` disagree with the locked
 hash **under an unchanged `[package].cyrius`** is refused by name, with both hashes, and
 neither `lib/` nor the lock is written:
@@ -1426,6 +1431,25 @@ resolves: those are not integrity failures, and reading them as such would make 
 dependency unresolvable for ever. Cost is a full `git fsck` plus two tree hashes — about
 50-200 ms per dep on a warm cache, measured on real ones (585 files: 48 ms; 274 files with a
 larger object store: 195 ms).
+
+**A temp dir the check cannot write is not a verdict (v6.6.9).** The verify writes its
+captures into the CLI's private temp dir. When that dir is full, at quota or out of inodes, the
+dep is still refused — nothing unchecked is vendored — but the message says so and tells you
+not to delete the cache:
+
+```
+error: cached checkout for dep 'foo' tag '1.0.0' could NOT be verified — refusing to vendor it
+unchecked: the check could not write its temp files, so the cache was NOT judged.
+  temp dir: /tmp/cyrius-4242 (errno 122 — full, at quota, or out of inodes)
+  cache: /home/you/.cyrius/deps/foo/1.0.0  (not judged; do NOT delete it)
+  fix: free space under that temp dir, or set TMPDIR to an absolute path elsewhere, and re-run.
+```
+
+(Through 6.6.8 this read as "refusing tampered cache … rm -rf", for every dep at once.) The CLI's
+temp base is an **absolute** `$TMPDIR` when one is set, else `/tmp` (`%TEMP%` on Windows); a
+relative `TMPDIR` is ignored, and one that does not exist or cannot be written is an error
+that names it (`TMPDIR=… does not exist or is not writable`). The hashes behind `cyrius.lock`
+come from `sha256sum`, or `shasum -a 256` where there is no `sha256sum` (macOS 13), or `certutil` on Windows.
 
 ⚠ **Native Windows is out of scope for all of this**, as the git-dep flow always has been:
 `sys_fork` does not exist there, so no git command can run. A pre-populated cache resolves with
