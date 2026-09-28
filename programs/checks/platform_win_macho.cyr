@@ -87,10 +87,12 @@ fn _check_macho_magic_fail(b0, b1, b2, b3): i64 {
 # that exact window: pipe cbt/cyrius.cyr through each cross target and assert a
 # valid, correctly-formatted binary. One unguarded host-only syscall in any
 # CLI-reachable lib turns this red here, not in a downstream Windows CI run.
+# Returns 0 = ok, 1 = failed, -1 = the cross-compiler is not built (a SKIPPED case — the row
+# reports it as a SKIP rather than a PASS; CHANGELOG [6.6.9]).
 fn _cli_cross_check(env_kv, cc_path, m0, m1, tname): i64 {
     if (file_exists(cc_path) != 1) {
         _p("    skip "); _p(tname); println(": compiler not built");
-        return 0;
+        return 0 - 1;
     }
     var src = _root_path("cbt/cyrius.cyr");
     var out = _tmp_path("audit_cli_cross_");
@@ -128,14 +130,26 @@ fn _cli_cross_check(env_kv, cc_path, m0, m1, tname): i64 {
 fn _cli_cross_compile_gate(): i64 {
     var label = "CLI (cbt/cyrius.cyr) cross-compiles clean: PE / Mach-O / aarch64 (v6.2.29 — the .25-class gate)";
     if (file_exists(CC_PATH) != 1) {
-        _p("  skip: build/cycc not built"); println("");
-        _check(label, 0);
+        _skip(label, "build/cycc not built");
         return 0;
     }
+    var r_pe = _cli_cross_check("CYRIUS_TARGET_WIN=1", CC_PATH, 0x4D, 0x5A, "PE");      # MZ
+    var r_mo = _cli_cross_check("CYRIUS_MACHO=1", CC_PATH, 0xCF, 0xFA, "Mach-O");        # CF FA ED FE
+    var r_a6 = _cli_cross_check(0, _root_path("build/cycc_aarch64"), 0x7F, 0x45, "aarch64-ELF");   # 7F 'E'
     var fail = 0;
-    fail = fail + _cli_cross_check("CYRIUS_TARGET_WIN=1", CC_PATH, 0x4D, 0x5A, "PE");      # MZ
-    fail = fail + _cli_cross_check("CYRIUS_MACHO=1", CC_PATH, 0xCF, 0xFA, "Mach-O");        # CF FA ED FE
-    fail = fail + _cli_cross_check(0, _root_path("build/cycc_aarch64"), 0x7F, 0x45, "aarch64-ELF");   # 7F 'E'
+    var skipped = 0;
+    if (r_pe > 0) { fail = fail + 1; }
+    if (r_mo > 0) { fail = fail + 1; }
+    if (r_a6 > 0) { fail = fail + 1; }
+    if (r_pe < 0) { skipped = skipped + 1; }
+    if (r_mo < 0) { skipped = skipped + 1; }
+    if (r_a6 < 0) { skipped = skipped + 1; }
+    # 6.6.9: a target whose cross-compiler is missing was not checked — a green row over it
+    # would claim all three. A real failure still wins over the skip. CHANGELOG [6.6.9]
+    if (fail == 0 && skipped > 0) {
+        _skip(label, "a cross-compiler is not built (see the skip line above) — that target was not checked");
+        return 0;
+    }
     _check(label, fail);
     return 0;
 }
@@ -225,18 +239,12 @@ fn _win_process_gate(): i64 {
 fn _macho_exit_gate(): i64 {
     var label = "Mach-O arm64 syscall(60,42) → exit 42 on ecb (pin v5.6.33)";
     if (file_exists(CC_AARCH64_PATH) != 1) {
-        _p("  skip: ");
-        _p(CC_AARCH64_PATH);
-        println(" not built (cross-compiler required)");
-        _check(label, 0);
+        _skip(label, _cat2(CC_AARCH64_PATH, " not built (cross-compiler required)"));
         return 0;
     }
     var target = _ssh_target("SSH_TARGET_MACOS", "ecb");
     if (_ssh_skip_check(target) != 1) {
-        _p("  skip: ");
-        _p(target);
-        println(" unreachable (no macOS arm64 runner available)");
-        _check(label, 0);
+        _skip(label, _cat2(target, " unreachable (no macOS arm64 runner available)"));
         return 0;
     }
 
@@ -397,18 +405,12 @@ fn _macho_exit_gate(): i64 {
 fn _macho_derive_serialize_gate(): i64 {
     var label = "Mach-O arm64 #derive(Serialize) end-to-end on ecb (pin v5.9.39)";
     if (file_exists(CC_AARCH64_PATH) != 1) {
-        _p("  skip: ");
-        _p(CC_AARCH64_PATH);
-        println(" not built (cross-compiler required)");
-        _check(label, 0);
+        _skip(label, _cat2(CC_AARCH64_PATH, " not built (cross-compiler required)"));
         return 0;
     }
     var target = _ssh_target("SSH_TARGET_MACOS", "ecb");
     if (_ssh_skip_check(target) != 1) {
-        _p("  skip: ");
-        _p(target);
-        println(" unreachable (no macOS arm64 runner available)");
-        _check(label, 0);
+        _skip(label, _cat2(target, " unreachable (no macOS arm64 runner available)"));
         return 0;
     }
 
@@ -491,18 +493,12 @@ fn _pe_exit_gate(): i64 {
         }
     }
     if (file_exists(cc_pe) != 1) {
-        _p("  skip: ");
-        _p(cc_pe);
-        println(" not present (Linux→PE cross-compiler not built)");
-        _check(label, 0);
+        _skip(label, _cat2(cc_pe, " not present (Linux→PE cross-compiler not built)"));
         return 0;
     }
     var target = _ssh_target("SSH_TARGET_WIN", "cass");
     if (_ssh_skip_check(target) != 1) {
-        _p("  skip: ");
-        _p(target);
-        println(" unreachable (no Windows runner available)");
-        _check(label, 0);
+        _skip(label, _cat2(target, " unreachable (no Windows runner available)"));
         return 0;
     }
 
@@ -721,18 +717,12 @@ fn _pe_path_apis_gate(): i64 {
         }
     }
     if (file_exists(cc_pe) != 1) {
-        _p("  skip: ");
-        _p(cc_pe);
-        println(" not present");
-        _check(label, 0);
+        _skip(label, _cat2(cc_pe, " not present"));
         return 0;
     }
     var target = _ssh_target("SSH_TARGET_WIN", "cass");
     if (_ssh_skip_check(target) != 1) {
-        _p("  skip: ");
-        _p(target);
-        println(" unreachable (no Windows runner available)");
-        _check(label, 0);
+        _skip(label, _cat2(target, " unreachable (no Windows runner available)"));
         return 0;
     }
 

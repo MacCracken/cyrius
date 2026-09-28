@@ -1424,3 +1424,8 @@ _chk_gate "$ROOT/tests/gates/toolchain/api_surface_derive_matches_emitter.sh"
 # 6.6.8 (bite 8) — every gate under tests/gates/ is registered EXACTLY ONCE and runs through
 # `_chk_gate` or the driver; ten 6.6.6 gates were bare `sh` lines no selector could reach.
 _chk_gate "$ROOT/tests/gates/toolchain/check_gate_census.sh"
+
+# 6.6.9 (bite 11) — a check-driver row that did not run its check (missing tool, host or
+# fixture) prints SKIP and is tallied as a SKIP, never as a PASS; CYRIUS_CHECK_NO_SKIP=1 (what
+# CI's delegated steps run under) makes every SKIP a FAIL. 86 rows used to score it as a pass.
+_chk_gate "$ROOT/tests/gates/toolchain/check_driver_skip_is_not_pass.sh"

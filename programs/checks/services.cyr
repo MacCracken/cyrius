@@ -47,9 +47,7 @@ fn _compile_to_obj(src_path, obj_path): i64 {
 fn _linker_gate(): i64 {
     var cyrld = _root_path("build/cyrld");
     if (file_exists(cyrld) != 1) {
-        _p("  skip: build/cyrld not present");
-        println("");
-        _check("cyrld cross-module link", 0);
+        _skip("cyrld cross-module link", "build/cyrld not present");
         return 0;
     }
     var fa = _root_path("tests/fixtures/linker/a.cyr");
@@ -160,9 +158,7 @@ fn _fuzz_harness_gate(): i64 {
     var label = "cyrius fuzz: all fuzz/*.fcyr harnesses compile + pass (v6.2.29 VR-02)";
     var cyrius_bin = _root_path("build/cyrius");
     if (file_exists(cyrius_bin) != 1) {
-        _p("  skip: build/cyrius not built");
-        println("");
-        _check(label, 0);
+        _skip(label, "build/cyrius not built");
         return 0;
     }
     var fail = 0;
@@ -186,9 +182,7 @@ fn _smoke_discovery_gate(): i64 {
     var label = "cyrius smoke discovers .smcyr + fail-fast bailout (v5.7.38)";
     var cyrius_bin = _root_path("build/cyrius");
     if (file_exists(cyrius_bin) != 1) {
-        _p("  skip: build/cyrius not built");
-        println("");
-        _check(label, 0);
+        _skip(label, "build/cyrius not built");
         return 0;
     }
     var fail = 0;
@@ -304,9 +298,7 @@ fn _distlib_large_module_gate(): i64 {
     var label = "cyrius distlib bundles >64KB modules without truncation (mabda-surfaced; v5.7.36)";
     var cyrius_bin = _root_path("build/cyrius");
     if (file_exists(cyrius_bin) != 1) {
-        _p("  skip: build/cyrius not built");
-        println("");
-        _check(label, 0);
+        _skip(label, "build/cyrius not built");
         return 0;
     }
 
@@ -657,16 +649,11 @@ fn _lsp_check_substr(out_buf, n, needle, fail_msg): i64 {
 
 fn _stdlib_doc_coverage_gate(): i64 {
     if (CYRDOC_PATH == 0) {
-        _p("  skip: cyrdoc not built (cat programs/cyrdoc.cyr | build/cycc > build/cyrdoc)");
-        println("");
-        _check("every public fn in lib/*.cyr has a leading doc comment (cyrdoc --check; pinned post-v5.7.20)", 0);
+        _skip("every public fn in lib/*.cyr has a leading doc comment (cyrdoc --check; pinned post-v5.7.20)", "cyrdoc not built (cat programs/cyrdoc.cyr | build/cycc > build/cyrdoc)");
         return 0;
     }
     if (file_exists(CYRDOC_PATH) != 1) {
-        _p("  skip: cyrdoc not built (");
-        _p(CYRDOC_PATH);
-        println(" missing)");
-        _check("every public fn in lib/*.cyr has a leading doc comment (cyrdoc --check; pinned post-v5.7.20)", 0);
+        _skip("every public fn in lib/*.cyr has a leading doc comment (cyrdoc --check; pinned post-v5.7.20)", _cat2(_cat2("cyrdoc not built (", CYRDOC_PATH), " missing)"));
         return 0;
     }
     var lib_dir = str_from(_root_path("lib"));
@@ -739,10 +726,7 @@ fn _stdlib_doc_coverage_gate(): i64 {
 fn _shared_dlopen_gate(): i64 {
     var label = "shared; + dlopen round-trip";
     if (file_exists(CC_PATH) != 1) {
-        _p("  skip: ");
-        _p(CC_PATH);
-        println(" not present");
-        _check(label, 0);
+        _skip(label, _cat2(CC_PATH, " not present"));
         return 0;
     }
 
@@ -827,8 +811,7 @@ fn _shared_dlopen_gate(): i64 {
 fn _pie_exec_gate(): i64 {
     var label = "--pie ET_DYN executable runs (ASLR)";
     if (file_exists(CC_PATH) != 1) {
-        _p("  skip: "); _p(CC_PATH); println(" not present");
-        _check(label, 0);
+        _skip(label, _cat2(CC_PATH, " not present"));
         return 0;
     }
     # Compile the PIE smoke fixture with CYRIUS_PIE=1 (the env form of --pie,
@@ -876,8 +859,7 @@ fn _pie_exec_gate(): i64 {
 fn _kernel_pie_struct_gate(): i64 {
     var label = "kernel --pie emits position-independent ET_DYN (p_vaddr=0)";
     if (file_exists(CC_PATH) != 1) {
-        _p("  skip: "); _p(CC_PATH); println(" not present");
-        _check(label, 0);
+        _skip(label, _cat2(CC_PATH, " not present"));
         return 0;
     }
     # STRUCTURAL ONLY: a slid-base kernel BOOT is consumer-gated on an AGNOS
@@ -1112,7 +1094,7 @@ fn _lint_macho_buf(buf, fsz): i64 {
 fn _binary_structural_lint_gate(): i64 {
     var label = "pure-cyrius binary structural lint — ELF + PE + Mach-O (cross-emit) header/section bounds + entry-in-text (VR-04)";
     var src = _root_path("programs/collatz.cyr");
-    if (file_exists(src) != 1) { _check(label, 0); return 0; }
+    if (file_exists(src) != 1) { _skip(label, _cat2(src, " missing")); return 0; }
     var out = _tmp_path("audit_binlint_");
     if (_self_host_pipe(src, CC_PATH, out) != 0) {
         sys_unlink(out);
@@ -1175,17 +1157,12 @@ fn _binary_structural_lint_gate(): i64 {
 fn _tls_live_gate(): i64 {
     var label = "libssl via fdlopen: full TLS round-trip on 1.1.1.1:443 (pin v5.6.37)";
     if (file_exists(CC_PATH) != 1) {
-        _p("  skip: ");
-        _p(CC_PATH);
-        println(" not present");
-        _check(label, 0);
+        _skip(label, _cat2(CC_PATH, " not present"));
         return 0;
     }
     var home = getenv("HOME");
     if (home == 0) {
-        _p("  skip: HOME unset");
-        println("");
-        _check(label, 0);
+        _skip(label, "HOME unset");
         return 0;
     }
     var dlh_sb = str_builder_new();
@@ -1193,16 +1170,12 @@ fn _tls_live_gate(): i64 {
     str_builder_add_cstr(dlh_sb, "/.cyrius/dlopen-helper");
     var dlopen_helper = str_data(str_builder_build(dlh_sb));
     if (file_exists(dlopen_helper) != 1) {
-        _p("  skip: ");
-        _p(dlopen_helper);
-        println(" missing — run scripts/install.sh");
-        _check(label, 0);
+        _skip(label, _cat2(dlopen_helper, " missing — run scripts/install.sh"));
         return 0;
     }
     var ip_111 = 1 | (1 << 8) | (1 << 16) | (1 << 24);
     if (_network_probe_check(ip_111, 443, 3000) != 1) {
-        println("  skip: 1.1.1.1:443 unreachable (no network)");
-        _check(label, 0);
+        _skip(label, "1.1.1.1:443 unreachable (no network)");
         return 0;
     }
 
@@ -1270,10 +1243,7 @@ fn _sit_status_gate(): i64 {
     var sit_bin = str_data(str_builder_build(sit_bin_sb));
 
     if (file_exists(sit_bin) != 1) {
-        _p("  skip: ");
-        _p(sit_bin);
-        println(" not built");
-        _check(label, 0);
+        _skip(label, _cat2(sit_bin, " not built"));
         return 0;
     }
 
@@ -1413,17 +1383,12 @@ fn _install_shim_symlink_gate(): i64 {
     var label = "install.sh --refresh-only re-links ~/.cyrius/bin to current version (v5.7.22; H3)";
     var install_sh = _root_path("scripts/install.sh");
     if (file_exists(install_sh) != 1) {
-        _p("  skip: ");
-        _p(install_sh);
-        println(" not present");
-        _check(label, 0);
+        _skip(label, _cat2(install_sh, " not present"));
         return 0;
     }
     var version_path = _root_path("VERSION");
     if (file_exists(version_path) != 1) {
-        _p("  skip: VERSION missing (refresh-only needs a repo context)");
-        println("");
-        _check(label, 0);
+        _skip(label, "VERSION missing (refresh-only needs a repo context)");
         return 0;
     }
 
@@ -1641,17 +1606,11 @@ fn _api_surface_gate(): i64 {
     var tool = _root_path("build/cyrius_api_surface");
     var snapshot = _root_path("docs/api-surface.snapshot");
     if (file_exists(tool) != 1) {
-        _p("  skip: ");
-        _p(tool);
-        println(" not built");
-        _check(label, 0);
+        _skip(label, _cat2(tool, " not built"));
         return 0;
     }
     if (file_exists(snapshot) != 1) {
-        _p("  skip: ");
-        _p(snapshot);
-        println(" missing — run 'cyrius api-surface --update' first");
-        _check(label, 0);
+        _skip(label, _cat2(snapshot, " missing — run 'cyrius api-surface --update' first"));
         return 0;
     }
 

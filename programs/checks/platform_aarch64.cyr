@@ -9,10 +9,7 @@
 fn _aarch64_codebuf_cap_gate(): i64 {
     var emit_path = _root_path("src/backend/aarch64/emit.cyr");
     if (file_exists(emit_path) != 1) {
-        _p("  skip: ");
-        _p(emit_path);
-        println(" missing");
-        _check("aarch64 EB codebuf is growable, matches x86 (v6.2.0)", 0);
+        _skip("aarch64 EB codebuf is growable, matches x86 (v6.2.0)", _cat2(emit_path, " missing"));
         return 0;
     }
     # v6.2.0 Phase 0: codebuf is GROWABLE — EB calls _codebuf_grow instead of a
@@ -60,18 +57,12 @@ fn _aarch64_codebuf_cap_gate(): i64 {
 fn _aarch64_syscalls_gate(): i64 {
     var label = "aarch64 syscall stdlib + post-clone trampoline (via ssh pi)";
     if (file_exists(CC_AARCH64_PATH) != 1) {
-        _p("  skip: ");
-        _p(CC_AARCH64_PATH);
-        println(" not built (cross-compiler required)");
-        _check(label, 0);
+        _skip(label, _cat2(CC_AARCH64_PATH, " not built (cross-compiler required)"));
         return 0;
     }
     var target = _ssh_target("SSH_TARGET", "pi");
     if (_ssh_skip_check(target) != 1) {
-        _p("  skip: ");
-        _p(target);
-        println(" unreachable via ssh");
-        _check(label, 0);
+        _skip(label, _cat2(target, " unreachable via ssh"));
         return 0;
     }
 
@@ -167,18 +158,12 @@ fn _aarch64_syscalls_gate(): i64 {
 fn _aarch64_struct_byval_gate(): i64 {
     var label = "aarch64 struct-by-value round-trip (Phase 2b X8 / LDRB-STRB; via ssh pi)";
     if (file_exists(CC_AARCH64_PATH) != 1) {
-        _p("  skip: ");
-        _p(CC_AARCH64_PATH);
-        println(" not built (cross-compiler required)");
-        _check(label, 0);
+        _skip(label, _cat2(CC_AARCH64_PATH, " not built (cross-compiler required)"));
         return 0;
     }
     var target = _ssh_target("SSH_TARGET", "pi");
     if (_ssh_skip_check(target) != 1) {
-        _p("  skip: ");
-        _p(target);
-        println(" unreachable via ssh");
-        _check(label, 0);
+        _skip(label, _cat2(target, " unreachable via ssh"));
         return 0;
     }
 
@@ -258,18 +243,12 @@ fn _aarch64_struct_byval_gate(): i64 {
 fn _aarch64_sub_byte_field_load_gate(): i64 {
     var label = "aarch64 sub-byte struct field load via dot syntax (v5.9.27; agnosys 1.1.9; via ssh pi)";
     if (file_exists(CC_AARCH64_PATH) != 1) {
-        _p("  skip: ");
-        _p(CC_AARCH64_PATH);
-        println(" not built (cross-compiler required)");
-        _check(label, 0);
+        _skip(label, _cat2(CC_AARCH64_PATH, " not built (cross-compiler required)"));
         return 0;
     }
     var target = _ssh_target("SSH_TARGET", "pi");
     if (_ssh_skip_check(target) != 1) {
-        _p("  skip: ");
-        _p(target);
-        println(" unreachable via ssh");
-        _check(label, 0);
+        _skip(label, _cat2(target, " unreachable via ssh"));
         return 0;
     }
 
@@ -352,18 +331,12 @@ fn _aarch64_sub_byte_field_load_gate(): i64 {
 fn _aarch64_native_selfhost_gate(): i64 {
     var label = "native cycc self-hosts byte-identical on Pi (pin v5.6.32)";
     if (file_exists(CC_PATH) != 1) {
-        _p("  skip: ");
-        _p(CC_PATH);
-        println(" not present");
-        _check(label, 0);
+        _skip(label, _cat2(CC_PATH, " not present"));
         return 0;
     }
     var target = _ssh_target("SSH_TARGET", "pi");
     if (_ssh_skip_check(target) != 1) {
-        _p("  skip: ");
-        _p(target);
-        println(" unreachable via ssh (no aarch64 runner available)");
-        _check(label, 0);
+        _skip(label, _cat2(target, " unreachable via ssh (no aarch64 runner available)"));
         return 0;
     }
 
@@ -374,10 +347,7 @@ fn _aarch64_native_selfhost_gate(): i64 {
     # ALSO emits aarch64 code.)
     var arch_cc_x86 = _root_path("build/cycc_aarch64");
     if (file_exists(arch_cc_x86) != 1) {
-        _p("  skip: ");
-        _p(arch_cc_x86);
-        println(" not built (cross-compiler required)");
-        _check(label, 0);
+        _skip(label, _cat2(arch_cc_x86, " not built (cross-compiler required)"));
         return 0;
     }
     var native_src = _root_path("src/main_aarch64_native.cyr");
@@ -478,18 +448,12 @@ fn _aarch64_native_selfhost_gate(): i64 {
 fn _aarch64_f64_basic_gate(): i64 {
     var label = "aarch64 f64 add/sub/mul/div/sqrt/neg/floor/ceil/round + int↔f64 bit-exact on Pi (v5.7.30)";
     if (file_exists(CC_AARCH64_PATH) != 1) {
-        _p("  skip: ");
-        _p(CC_AARCH64_PATH);
-        println(" not built (cross-compiler required)");
-        _check(label, 0);
+        _skip(label, _cat2(CC_AARCH64_PATH, " not built (cross-compiler required)"));
         return 0;
     }
     var target = _ssh_target("SSH_TARGET", "pi");
     if (_ssh_skip_check(target) != 1) {
-        _p("  skip: ");
-        _p(target);
-        println(" unreachable via ssh");
-        _check(label, 0);
+        _skip(label, _cat2(target, " unreachable via ssh"));
         return 0;
     }
 
@@ -574,18 +538,12 @@ fn _aarch64_f64_basic_gate(): i64 {
 fn _aarch64_f64_polyfill_gate(): i64 {
     var label = "aarch64 f64_exp / f64_ln / f64_log2 / f64_exp2 polyfills within 1 ulp + IEEE specials on Pi (6.6.8)";
     if (file_exists(CC_AARCH64_PATH) != 1) {
-        _p("  skip: ");
-        _p(CC_AARCH64_PATH);
-        println(" not built (cross-compiler required)");
-        _check(label, 0);
+        _skip(label, _cat2(CC_AARCH64_PATH, " not built (cross-compiler required)"));
         return 0;
     }
     var target = _ssh_target("SSH_TARGET", "pi");
     if (_ssh_skip_check(target) != 1) {
-        _p("  skip: ");
-        _p(target);
-        println(" unreachable via ssh");
-        _check(label, 0);
+        _skip(label, _cat2(target, " unreachable via ssh"));
         return 0;
     }
 

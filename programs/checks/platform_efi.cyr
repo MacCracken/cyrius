@@ -1444,29 +1444,23 @@ fn _efi_ovmf_smoke_gate(): i64 {
     # environment, same pattern as the macho cross-build gate which
     # skips when codesign is absent).
     if (file_exists("/usr/bin/qemu-system-x86_64") != 1) {
-        _p("  "); _p(ANSI_RESET); _p("SKIP"); _p(ANSI_RESET);
-        println(": qemu-system-x86_64 not installed — runtime smoke skipped");
-        _check(label, 0);
+        _skip(label, "qemu-system-x86_64 not installed — runtime smoke skipped");
         return 0;
     }
     if (file_exists("/usr/bin/parted") != 1) {
-        _p("  SKIP: parted not installed — runtime smoke skipped\n");
-        _check(label, 0);
+        _skip(label, "parted not installed — runtime smoke skipped");
         return 0;
     }
     if (file_exists("/usr/bin/mformat") != 1) {
-        _p("  SKIP: mtools (mformat) not installed — runtime smoke skipped\n");
-        _check(label, 0);
+        _skip(label, "mtools (mformat) not installed — runtime smoke skipped");
         return 0;
     }
     if (file_exists("/usr/share/edk2-ovmf/x64/OVMF_CODE.4m.fd") != 1) {
-        _p("  SKIP: OVMF_CODE.4m.fd not at /usr/share/edk2-ovmf/x64/ — runtime smoke skipped\n");
-        _check(label, 0);
+        _skip(label, "OVMF_CODE.4m.fd not at /usr/share/edk2-ovmf/x64/ — runtime smoke skipped");
         return 0;
     }
     if (file_exists("/usr/share/edk2-ovmf/x64/OVMF_VARS.4m.fd") != 1) {
-        _p("  SKIP: OVMF_VARS.4m.fd not at /usr/share/edk2-ovmf/x64/ — runtime smoke skipped\n");
-        _check(label, 0);
+        _skip(label, "OVMF_VARS.4m.fd not at /usr/share/edk2-ovmf/x64/ — runtime smoke skipped");
         return 0;
     }
 
@@ -1554,8 +1548,7 @@ fn _efi_ovmf_fn_exit_gate(): i64 {
     var label = "UEFI image that EXITS FROM INSIDE A fn returns to firmware (6.6.5; lib/alloc.cyr + lib/bounds.cyr abort this way)";
 
     if (_efi_ovmf_tools_ready() != 1) {
-        _p("  SKIP: qemu/parted/mtools/OVMF not all present — fn-exit runtime route skipped\n");
-        _check(label, 0);
+        _skip(label, "qemu/parted/mtools/OVMF not all present — fn-exit runtime route skipped");
         return 0;
     }
 
@@ -1612,8 +1605,7 @@ fn _efi_trampoline_rex_gate(): i64 {
     var label = "efi_main trampoline REX prefix encoding (v5.11.53; save=49, restore=4C)";
 
     if (file_exists("/usr/bin/qemu-system-x86_64") != 1) {
-        _p("  SKIP: qemu tooling not present (gate is paired with OVMF smoke ecosystem)\n");
-        _check(label, 0);
+        _skip(label, "qemu tooling not present (gate is paired with OVMF smoke ecosystem)");
         return 0;
     }
 

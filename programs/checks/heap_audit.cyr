@@ -574,10 +574,7 @@ fn _struct_cap_gate(): i64 {
 fn _match_coverage_dce_gate(): i64 {
     var label = "match exhaustiveness check fires for DCE-dead fns regardless of fn name (v5.9.24; agnosys 1.1.5)";
     if (file_exists(CC_PATH) != 1) {
-        _p("  skip: ");
-        _p(CC_PATH);
-        println(" not present");
-        _check(label, 0);
+        _skip(label, _cat2(CC_PATH, " not present"));
         return 0;
     }
 
@@ -637,10 +634,7 @@ fn _capacity_gate(): i64 {
     var label = "cyrius capacity (default / --check / --json / fnc>2048)";
     var cyrius_shim = _root_path("scripts/cyrius");
     if (file_exists(cyrius_shim) != 1) {
-        _p("  skip: ");
-        _p(cyrius_shim);
-        println(" not present");
-        _check(label, 0);
+        _skip(label, _cat2(cyrius_shim, " not present"));
         return 0;
     }
 

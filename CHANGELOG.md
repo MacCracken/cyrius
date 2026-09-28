@@ -6,6 +6,28 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.9] — 2026-09-28
 
+### Fixed
+
+- **A check-driver row that did not run its check says SKIP, is counted as a SKIP, and is a
+  failure under `CYRIUS_CHECK_NO_SKIP=1`.** (bite 11; audit: driver SKIP rows scored PASS.)
+  **Root cause:** 86 rows in programs/checks/*.cyr answered "the tool / host / fixture I need is
+  missing" (no build/cyrld, no build/cyrius, no cross-compiler, no ssh host, no qemu/OVMF, …)
+  with `_check(label, 0)`: a `skip:` note, then a green `PASS:` line and +1 on the passed count,
+  so `cyrius_check linker` with no build/cyrld printed `1 passed, 0 failed` and exited 0 — a run
+  that exercised nothing read like one that exercised everything. It also blocked delegating
+  CI's hand-copied gates to the driver: the inline CI step failed on a missing tool, the driver
+  row passed on it. **Fix:** `_skip(label, why)` prints `SKIP: <row> — <why>` and the final
+  tally reads `P passed, F failed, S skipped (T total)` (the `passed, F failed` and `(T total)`
+  shapes release-gate.sh and the targeted-run gate read are unchanged). `CYRIUS_CHECK_NO_SKIP=1`
+  scores every SKIP as a FAIL naming the missing prerequisite; any value but `1`/`0`/empty is
+  refused with exit 2, so a typo cannot silently mean "off". The CLI cross-compile row's
+  per-target "compiler not built" sub-skip, and the binary-lint row's silent pass when
+  programs/collatz.cyr is missing, are SKIPs too. `_check` was split into `_row_timed_out` +
+  `_tally` so a deadline kill during a skip's probe is still a TIMEOUT failure. Gate:
+  `tests/gates/toolchain/check_driver_skip_is_not_pass.sh` (new) — runtime axes on a scratch
+  root, a strict-mode positive control, and a ratchet-0 structural scan for the old shape
+  (86 `_skip` sites; five mutants RED).
+
 ### Added
 
 - **Four check-driver rows are selectable by name: `object-init`, `linker`, `shared-dlopen`,

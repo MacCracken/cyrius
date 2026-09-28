@@ -39,15 +39,11 @@ fn _cyrfmt_idempotent_subcase(case_label, fixture_path): i64 {
 
 fn _cyrfmt_comment_braces_gate(): i64 {
     if (CYRFMT_PATH == 0) {
-        _p("  skip: cyrfmt not built");
-        println("");
-        _check("cyrfmt skips {/} inside # comments + string literals (v5.7.22; agnos issue)", 0);
+        _skip("cyrfmt skips {/} inside # comments + string literals (v5.7.22; agnos issue)", "cyrfmt not built");
         return 0;
     }
     if (file_exists(CYRFMT_PATH) != 1) {
-        _p("  skip: cyrfmt not built");
-        println("");
-        _check("cyrfmt skips {/} inside # comments + string literals (v5.7.22; agnos issue)", 0);
+        _skip("cyrfmt skips {/} inside # comments + string literals (v5.7.22; agnos issue)", "cyrfmt not built");
         return 0;
     }
     var fail = 0;
@@ -174,15 +170,11 @@ fn _cyrlint_count_marker(file_path, marker, buf, buflen): i64 {
 
 fn _cyrlint_large_file_gate(): i64 {
     if (CYRLINT_PATH == 0) {
-        _p("  skip: cyrlint not built");
-        println("");
-        _check("cyrlint clean on 7K-line synthetic (mabda 2026-04-28 repro shape; v5.8.41 floor)", 0);
+        _skip("cyrlint clean on 7K-line synthetic (mabda 2026-04-28 repro shape; v5.8.41 floor)", "cyrlint not built");
         return 0;
     }
     if (file_exists(CYRLINT_PATH) != 1) {
-        _p("  skip: cyrlint not built");
-        println("");
-        _check("cyrlint clean on 7K-line synthetic (mabda 2026-04-28 repro shape; v5.8.41 floor)", 0);
+        _skip("cyrlint clean on 7K-line synthetic (mabda 2026-04-28 repro shape; v5.8.41 floor)", "cyrlint not built");
         return 0;
     }
 
@@ -279,15 +271,11 @@ fn _cyrlint_large_file_gate(): i64 {
 
 fn _lint_init_order_gate(): i64 {
     if (CYRLINT_PATH == 0) {
-        _p("  skip: cyrlint not built");
-        println("");
-        _check("cyrlint flags forward-ref var inits (v5.7.32; mabda-surfaced)", 0);
+        _skip("cyrlint flags forward-ref var inits (v5.7.32; mabda-surfaced)", "cyrlint not built");
         return 0;
     }
     if (file_exists(CYRLINT_PATH) != 1) {
-        _p("  skip: cyrlint not built");
-        println("");
-        _check("cyrlint flags forward-ref var inits (v5.7.32; mabda-surfaced)", 0);
+        _skip("cyrlint flags forward-ref var inits (v5.7.32; mabda-surfaced)", "cyrlint not built");
         return 0;
     }
     var fail = 0;
@@ -744,10 +732,7 @@ fn _cyrfmt_write_gate(): i64 {
     var label = "cyrfmt --write / -w in-place rewrite + idempotent mtime";
     var cyrfmt_bin = _root_path("build/cyrfmt");
     if (file_exists(cyrfmt_bin) != 1) {
-        _p("  skip: ");
-        _p(cyrfmt_bin);
-        println(" not present");
-        _check(label, 0);
+        _skip(label, _cat2(cyrfmt_bin, " not present"));
         return 0;
     }
 
