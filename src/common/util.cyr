@@ -912,6 +912,9 @@ var _tp_n0 = 0;
 var _tp_c0 = 0;
 var _tp_n1 = 0;
 var _tp_c1 = 0;
+# 6.6.8: 1 iff a type-arg of the explicit-type-arg call being parsed was a bound type
+# parameter (`inner<T>` forwarded from a generic body) — see _type_arg_leaf / _call_forwarded_base.
+var _ta_fwd = 0;
 fn _tp_clear(S): i64 { _tp_n0 = 0; _tp_c0 = 0; _tp_n1 = 0; _tp_c1 = 0; return 0; }
 fn _tp_bind(S, slot, noff, conc): i64 {
     if (slot == 0) { _tp_n0 = noff; _tp_c0 = conc; }

@@ -84,6 +84,26 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   works and is the documented form. No ecosystem source has either shape (679 files with a
   `#derive` scanned). Gate `tests/gates/frontend/derive_directive_refused.sh` (8 rows,
   mutation-proven; 4 RED on 6.6.7).
+- **A generic that forwards its type parameter to another generic (`inner<T>(p)` inside `fn
+  outer<T>`) calls the instance for the bound type; a type argument naming no type is an
+  error.** (bite 1b; found by the 6.6.7 bite 1 review.) **Root cause:** `_parse_one_type_arg`
+  classified a type argument as a TYPE NAME only. `T` is none, so it came back 0 — which the
+  instantiation machinery reads as "unbound", i.e. the BASE emission: a callee that uses `T` as
+  a struct became the `rax = 0` dead stub and `outer<Pt>(p)` returned **2 where 16 is right**,
+  rc 0, no diagnostic; with a callee small enough to inline, the same shape was instead a compile
+  error ("no struct type in scope for 'p'") raised from outer's own i64 base emission, which
+  nothing calls. The same 0 let `id<Nope>(4)` — or a variable in type-argument position —
+  compile clean and run the i64 base (exit 5). **Fix:** `_type_arg_leaf` (parse_fn.cyr) resolves
+  a bound type parameter to its binding first (`T` -> `Pt` in the `outer<Pt>` instance, -> i64 in
+  outer's base) and refuses a name that is neither a bound parameter nor a type (`unknown type
+  'Nope' as a type argument ...`). In the base emission a forwarded all-i64 call is a plain call
+  to the callee's base, never an inline replay (`_call_forwarded_base`): replaying a struct-using
+  body against an i64 argument there is what raised the spurious error, and the base call is what
+  `outer<i64>` means either way. `tests/fixtures/monomorph/monomorph_repairs.cyr` (which forwards
+  `inner<T>`) now compiles to different bytes — it no longer mints a duplicate `inner` instance —
+  with the same result. Pinned by `tests/tcyr/crossos/generic_forward_tparam.tcyr` (8/8 on ecb,
+  ach, cass and pi, and under qemu-aarch64 and wine; 6.6.7 does not compile it) and gate
+  `tests/gates/frontend/generic_type_arg_unknown_refused.sh` (5 rows, mutation-proven).
 
 ## [6.6.7] — 2026-09-27
 

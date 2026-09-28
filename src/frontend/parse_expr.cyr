@@ -710,6 +710,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                         if (LOOKAHEAD_IS_TYPE_ARG_CALL(S) == 1) {
                             STI(S, GTI(S) + 1);                 # consume `<`
                             _ta_pending_gt = 0;
+                            _ta_fwd = 0;
                             # v6.3.33: parse conc0 [, conc1] via _parse_one_type_arg (nested
                             # type-args instantiate → their instance sid; `>>` tail handled).
                             var _ta_conc = _parse_one_type_arg(S);
@@ -721,7 +722,8 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                             if (_ta_conc != 0 - 8) { _ta_do = 1; }
                             if (_ta_conc1 != 0 && _ta_conc1 != 0 - 8) { _ta_do = 1; }
                             if (_ta_do == 0) {
-                                PARSE_FNCALL(S, noff);          # all-i64: call the base
+                                if (_ta_fwd == 1) { _call_forwarded_base(S, noff, _eta_fi); }
+                                else { PARSE_FNCALL(S, noff); }   # all-i64: call the base
                             } else {
                                 # non-i64: monomorphize on demand + call the specialized fn.
                                 var _spec = _instantiate_generic_fn(S, _eta_fi, _ta_conc, _ta_conc1);

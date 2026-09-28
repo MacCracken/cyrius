@@ -1237,3 +1237,8 @@ _chk_gate "$ROOT/tests/gates/frontend/toplevel_for_in.sh"
 # line and it) is refused by name: the derive's walk read it as a comment and counted the fields
 # of every branch, while the parser compiled one. Mutation-proven in the header.
 _chk_gate "$ROOT/tests/gates/frontend/derive_directive_refused.sh"
+
+# 6.6.8 (bite 1b) — a forwarded type parameter (`inner<T>(p)` in a generic body) resolves to its
+# binding; it read as "no type" and silently hit the i64 base (outer<Pt> returned 2, want 16). A
+# type-arg naming no type is refused by name. Mutation-proven in the header.
+_chk_gate "$ROOT/tests/gates/frontend/generic_type_arg_unknown_refused.sh"

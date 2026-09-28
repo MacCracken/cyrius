@@ -3582,12 +3582,45 @@ fn _reject_special_type_arg(S, c): i64 {
     return 0;
 }
 
+# ⛔ 6.6.8 — A TYPE-ARG NAMING THE ENCLOSING GENERIC'S OWN TYPE PARAMETER. `inner<T>(p)` inside
+# `fn outer<T>` classified `T` as a TYPE NAME, found none, and got 0 — "unbound" — so the
+# instance was minted with `_inst_conc0 == 0`, which PARSE_FN_DEF reads as the BASE emission:
+# a field-accessing body became the `rax = 0` dead stub and `outer<Pt>(p)` returned 2 where 16
+# was right, with no diagnostic. A bound type parameter resolves to its binding (T -> Pt in the
+# `outer<Pt>` instance, T -> i64 in outer's own base); a name that is neither a bound parameter
+# nor a type is an error — 0 is never a type. CHANGELOG [6.6.8]
+fn _type_arg_leaf(S, noff): i64 {
+    var _c0 = 0;
+    if (_tp_c0 != 0) { _c0 = _tp_resolve(S, noff); }
+    if (_c0 != 0) { _ta_fwd = 1; }
+    if (_c0 == 0) { _c0 = _classify_return_type(S, noff); }
+    if (_c0 == 0) {
+        ERR_IDENT(S, "unknown type ", noff, " as a type argument (not a struct, a scalar, or a type parameter in scope)", 0 - 1);
+        return 0 - 8;
+    }
+    _reject_special_type_arg(S, _c0);
+    return _c0;
+}
+
+# The all-i64 call of a FORWARDED type parameter (`inner<T>(p)` where T is bound to i64) in the
+# generic's own body: a plain call to the callee's base, never an inline replay. At inline depth
+# 0 with T bound to i64 this is the BASE emission, which is compiled whether or not anything
+# calls it — and replaying a callee that uses T as a struct (`p.y`) against an i64 `p` there was
+# a hard error in a program that never asks for `outer<i64>`. The base call is what
+# `outer<i64>` means either way. CHANGELOG [6.6.8]
+fn _call_forwarded_base(S, noff, fi): i64 {
+    var sv = GFINL(S, fi);
+    if (GIDEP(S) == 0) { SFINL(S, fi, 0); }
+    PARSE_FNCALL(S, noff);
+    SFINL(S, fi, sv);
+    return 0;
+}
+
 fn _parse_one_type_arg(S): i64 {
     var noff = PEEKV(S);
     STI(S, GTI(S) + 1);                              # consume the type-arg name
     if (PEEKT(S) != 19) {                            # no `<` → plain scalar / struct
-        var _c0 = _classify_return_type(S, noff);
-        _reject_special_type_arg(S, _c0);
+        var _c0 = _type_arg_leaf(S, noff);
         return _c0;
     }
     var base_sid = FINDSTRUCT(S, noff);

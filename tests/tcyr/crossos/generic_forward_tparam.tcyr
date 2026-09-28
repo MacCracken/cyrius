@@ -1,0 +1,62 @@
+# generic_forward_tparam.tcyr — 6.6.8 bite 1b: a generic that FORWARDS its own type parameter
+# to another generic (`inner<T>(p)` inside `fn outer<T>`) calls the instance for the bound type.
+#
+# ⛔ `T` in a type-argument list was classified as a TYPE NAME, found none, and came back 0 —
+# "unbound" — so the callee was instantiated with `_inst_conc0 == 0`, which PARSE_FN_DEF reads as
+# the BASE emission. A callee that uses T as a struct (`p.y`) is emitted there as the `rax = 0`
+# dead stub, so `outer<Pt>(p)` returned 2 where 16 is right — rc 0, no diagnostic. With a body
+# small enough to inline, the same shape was instead a compile error ("no struct type in scope
+# for 'p'") raised from outer's own base emission, which nothing calls.
+#
+# ⚠ CROSS-HOST because the instance is a by-value struct-param fn emitted inline (jumped over) in
+# the enclosing body by each backend; the fix is in the front end, the code it selects is not.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+
+struct Pt { x; y; }
+
+# The filed shape: a loop in the callee, so it is never inlined (the old dead-stub path).
+fn inner_loop<T>(p: T): i64 { var s = 0; var i = 0; while (i < 4) { s = s + p.y; i = i + 1; } return s + p.x; }
+fn outer_loop<T>(p: T): i64 { var r = inner_loop<T>(p); return r + 2; }
+
+# The inlinable callee (the old compile error from outer's base emission).
+fn inner_flat<T>(p: T): i64 { return p.y * 4 + p.x; }
+fn outer_flat<T>(p: T): i64 { var r = inner_flat<T>(p); return r + 2; }
+fn outer_flat_ret<T>(p: T): i64 { return inner_flat<T>(p) + 2; }
+
+# Two levels of forwarding.
+fn gx<T>(p: T): i64 { return p.x; }
+fn mid<T>(p: T): i64 { return gx<T>(p) + 100; }
+fn top<T>(p: T): i64 { return mid<T>(p) + 1000; }
+
+# Scalar forwarding: T = i64 calls the base, T = i32 an instance; two parameters forwarded.
+fn id1<T>(v: T): i64 { return v + 1; }
+fn fwd<T>(v: T): i64 { return id1<T>(v) * 2; }
+fn sum2<A, B>(a: A, b: B): i64 { return a + b; }
+fn fwd2<A, B>(a: A, b: B): i64 { return sum2<A, B>(a, b) + 1; }
+
+fn run_structs(a): i64 {
+    var p: Pt; p.x = a; p.y = 3;
+    assert_eq(outer_loop<Pt>(p), 16, "forwarded T -> a looping struct generic (was 2: the dead stub)");
+    assert_eq(outer_flat<Pt>(p), 16, "forwarded T -> an inlinable struct generic (was a compile error)");
+    assert_eq(outer_flat_ret<Pt>(p), 16, "forwarded T in a return expression");
+    var q: Pt; q.x = 7; q.y = 9;
+    assert_eq(top<Pt>(q), 1107, "two levels of forwarding");
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    run_structs(2);
+    assert_eq(fwd<i64>(4), 10, "forwarded T = i64 calls the base");
+    assert_eq(fwd<i32>(5), 12, "forwarded T = i32 calls the instance");
+    assert_eq(fwd(20), 42, "inferred call of a forwarding generic");
+    assert_eq(fwd2<i64, i32>(3, 4), 8, "two forwarded type parameters");
+    return 0;
+}
+var _m = main();
+var r = assert_summary();

@@ -2165,7 +2165,12 @@ The type parameter `T` may appear in parameter types (`x: T`), the return type
 the concrete type is **inferred** positionally from the arguments.
 
 Type arguments may be **inferred** from the call (`add(1, 2)`) or written
-**explicitly** (`add<i64>(x)`, `add<i32>(x)`).
+**explicitly** (`add<i64>(x)`, `add<i32>(x)`). Inside a generic body a type
+parameter may be **forwarded** — `fn outer<T>(p: T) { return inner<T>(p); }` calls
+`inner`'s instance for whatever `T` is bound to (v6.6.8; before that `T` read as
+"no type" and the call silently hit the i64 base, returning 0 for a struct `T`). A
+type argument that names no struct, no scalar and no type parameter in scope is a
+compile error naming it.
 
 **Monomorphization.** Cyrius is i64-everywhere (ADR-002), so a generic
 definition's base *is* its i64 instantiation: the body is emitted once with
