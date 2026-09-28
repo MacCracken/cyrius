@@ -1708,6 +1708,15 @@ return f();              # ✓ forwarding the pair onward
 The requirement follows the value through `return`, so forwarding it out of a wrapper and
 binding it one-wide there is caught too.
 
+**Every path of a pair-returning fn returns a variant.** In a fn that returns `Ok(x)` /
+`Some(v)` on one path, a `return rv;`, `return 0;` or `return wrapper();` on another hands the
+caller that value AS ITS TAG and a stale payload, so it is warned (*"returns a `: stack` pair on
+another path but a SINGLE value here"*, v6.6.0). Any constructor of the enum is a whole value,
+including a **nullary** one: `return None();` (or `return None;`) beside `return Some(v);` is
+correct and silent (v6.6.9; it used to warn and suggest `Err`). A fn that deliberately returns a
+raw status on one path, such as vani's `vani_drain`, still sees the warning, so read the callers
+before acting on it.
+
 ⚠ **A COLLECTION of Results is two parallel slots, not one.** `store64(&arr + i * 8, f())` was
 the shape that silently half-stored, and it is how every array of Results was written. Store the
 tag and the payload separately (or use a struct).

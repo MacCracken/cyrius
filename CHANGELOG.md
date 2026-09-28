@@ -163,6 +163,93 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   over-budget fn-local on all six output shapes, a small-statics control, the cx-heap
   control, byte-count parity x86 = aarch64); mutants RED.
 
+- **A "requires lib/<x>.cyr" or "async is gated" error exits 1 on aarch64 and cx; it used to
+  SIGSEGV (rc 139) right after the correct diagnostic.** (bite 3; audit, and the aarch64
+  `f64_atan` find placed from the 6.6.8 reviews.) Triggers: the seven aarch64 f64 polyfills
+  (`f64_sin/cos/exp2/atan/exp/ln/log2` without `lib/math.cyr`), a slice subscript without
+  `lib/slice.cyr`, `await` or `async fn` without `CYRIUS_ASYNC=1`, `await` without
+  `lib/async.cyr`, and `async fn` without `lib/alloc.cyr`. All were rc 139 on `cycc_aarch64`
+  (and on the native aarch64 compiler, measured under qemu and on pi), and slice/await/async
+  were 139 on `cycc_cx`. x86 and PE exited 1. **Root cause:** ERR_MSG reports and CONTINUES
+  (v6.4.62), and eleven callers passed the failed lookup's -1 on to ECALLFIX anyway. ECALLFIX
+  stored `(2 << 56) | -1`, which is -1, and that reads back as fixup type 0xFF with an index
+  near 2^56. The aarch64 FIXUP and the cx fixup walk run BEFORE the `_had_error` early-out.
+  They decoded the entry as a variable fixup, and the `vi < idx` loop ran off `_vars_base`.
+  6.6.4 had fixed one site of this shape (the capturing-closure alloc); the other eleven were
+  missed. **Fix, three layers, each sufficient alone (mutation-checked):**
+  - aarch64 `FIXUP` returns at entry, and `main_cx.cyr` exits before its fixup walk, once an
+    error has been reported. The output is discarded anyway. cx's undefined-call report still
+    runs, since it skips type 0xFF.
+  - `ECALLFIX` refuses a negative index on x86, aarch64 and cx. If no error was reported yet,
+    it reports an internal error.
+  - Each site stops after its message. The seven polyfills return. The slice subscript skips
+    the call but keeps the push depth balanced. A refused `await` parses its operand and
+    returns, instead of adding a second, misleading "needs lib/async.cyr". A refused
+    `async fn` compiles as a plain fn, instead of adding "needs lib/alloc.cyr". The async
+    constructor refuses before emitting code, and still gives `f` an offset so its callers do
+    not add a false "reachable undefined function".
+  The stale aarch64 comment calling sin/cos/exp2/atan "hard-errors, no polyfill yet" is
+  corrected. Measured over 495 corpus files per compiler: output byte-identical on x86,
+  aarch64, PE and cx. On a failed aarch64 or cx compile, the trailing `note: N unreachable
+  fns` line and the cx capacity advisory are no longer printed. New gate
+  `tests/gates/diagnostics/missing_helper_error_exits_1.sh` (34 rows, compilers built from
+  source). It checks every trigger on each backend it applies to: rc exactly 1 with exactly
+  one error line. It adds helpers-present rows that must build, plus structural rows for the
+  two generic backstops. Mutants: all layers reverted gives 24 rows RED (rc 139); per-site
+  returns reverted gives the second-error rows RED; either generic layer alone keeps rc 1,
+  and its structural row goes RED when removed.
+- **`return None();` beside `return Some(v);` is no longer reported as a dropped tag.**
+  (bite 3; issue `2026-09-23-kybernet-mixed-return-diagnostic-misfires-on-nullary-none`,
+  archived.) The mixed-return warning fired on every nullary `: stack` variant (`None()`, any
+  user `Nope();`) and told the author to `return Err(x);`, which is wrong for an Option. The
+  code was correct. kybernet 1.6.20 shipped with the warning on its PID-1 signal path, and
+  agnodrm's audit fails a build on that text. **Root cause:** `_warn_mixed_pair_returns`
+  (parse.cyr) counted `return IDENT(...)` as a variant only when the callee had fn flag 256
+  (pair-returning). A nullary constructor returns its tag alone, so it never gets 256.
+  **Fix:** nullary stack-variant constructors get **fn flag 512** (parse_types.cyr).
+  `_ret_is_variant` treats `return <nullary>()` and a bare `return <nullary>;` (the same tag
+  in the same register) as whole variants. Wrappers, locals and raw integers still warn,
+  because those are the dropped-tag class. The hint no longer prescribes `Err` alone: it reads
+  "Return a variant of the same enum on this path: `Err(x)` for a Result, `None()` for an
+  Option." The `fn_flags` map in `src/main.cyr` documented bits 0–2 only; it now lists bits
+  0–9. Measured over 495 files: output byte-identical. The only in-tree warnings are the three
+  documented vani raw-status sites, unchanged apart from the hint. New gate
+  `tests/gates/frontend/stack_enum_mixed_return_warning.sh` (23 rows on x86 and aarch64). It
+  covers:
+  - the filed repro, which also runs to its three expected lines;
+  - None on either path, bare `None`, and a user nullary variant declared before and after
+    the fn, all silent;
+  - Ok/Err silent;
+  - a forwarded payload, `return 0;`, a wrapper and a local, all still warned.
+  With the fix reverted, 12 rows are RED.
+- **A second `struct X` / `union X` with a different layout warns.** (bite 3; placed from the
+  bite-5 review.) REGSTRUCT appended and FINDSTRUCT returned the first match, so the second
+  definition was registered and never read: sizeof and every field offset came from the
+  first, silently. Two `#derive(accessors)` structs `SP` of 5 and 3 fields built rc 0 with
+  sizeof(SP) = 40. The shape is live in the older kavach that mehman, stiva, aethersafha,
+  agnosai and agnostic vendor (two `struct SpawnedProcess`). Now `warning: struct 'SP'
+  redefined with a different layout — the FIRST definition is the one used`, pointing at the
+  second definition. It fires when the kind, field count, any field name or any field type
+  differs. An identical redefinition stays silent. It is a warning so those builds keep
+  compiling.
+- **An enum constant declared after a zero-valued or computed global of the same name warns.**
+  (bite 3; placed from the bite-6 review.) The filed pair (yukti's enum `PCI_VENDOR_AMD =
+  0x1022` against mabda's `var PCI_VENDOR_AMD = 0x1002`) already warned: re-measured, both
+  orders print CHKDUPVAL's "redefined with conflicting value" on every fork. The real hole was
+  next to it. CHK_ENUM_SHADOW refuses a var declared after an enum constant, and CHKDUPVAL
+  compares two literals. Neither covered a global whose value is **0 or computed**
+  (`var A = 0;`, `var A = f();`, `var A = "s";`, where nothing is recorded in the static-init
+  table) followed by an enum member `A`. Every later use folded to the constant, including
+  in the variable's own module, and the build succeeded silently (`var A = f();` then
+  `enum { A = 4130 }` read 4130 everywhere). **Fix:** `CHK_ENUM_OVER_VAR` (parse_types.cyr)
+  runs next to CHKDUPVAL at enum-member registration and warns `duplicate symbol 'A' is an
+  enum constant here and a global variable before it`. A zero constant over such a var is
+  not compared. New gate `tests/gates/frontend/redefinition_layout_and_enum_over_var.sh`
+  (27 rows on x86 and aarch64: four re-laid-out shapes warned, identical and distinct
+  silent, three enum-over-var shapes warned, zero/zero, enum/enum and the literal case keep
+  their existing behaviour). With the fix reverted, 15 rows are RED. Neither new warning
+  fires anywhere in the 495-file corpus.
+
 **Bench (bite 1):** self_compile **−19 %** — same-box A/B, three rounds of best-of-5: 6.6.8's
 compiler 1,049 ms, this tree's 841 ms (box under lane load; the gvar phase 503 → 299 ms). cycc
 **1,359,272 → 1,359,328 B** (+56; `.text` 1,188,224 → 1,191,152, +2,928).
@@ -173,6 +260,14 @@ Self-host verified byte-identical on real pi (cross AND native aarch64 sources),
 Mach-O), ach (x86 Mach-O) and cass (PE), each also running the attribute, tail-call,
 dead-first, pre-pass, `#assert` and large-static fixtures; the wrapped-`#assert` fixtures
 (build, run 42; a false one refused) re-run on all four hosts after the review fix.
+
+**Size (bite 3):** cycc **1,359,400 → 1,363,920 B** (+4,520; `.text` 1,191,256 → 1,193,544,
++2,288 — the new diagnostics and their strings; `.text` crossing a 4 KiB boundary moves
+`.rodata` a page, which is the rest of the file growth). Self-host verified byte-identical on
+real pi (cross and native aarch64), ecb (arm64 Mach-O), ach (x86 Mach-O) and cass (PE), each
+also running the missing-helper matrix (rc 1, one error), the mixed-return fixtures (the
+filed repro silent and printing its three lines) and both redefinition warnings; on pi and ecb
+a native cx compiler also exits 1 on the slice / await / async triggers.
 
 ### Downstream
 
@@ -188,6 +283,16 @@ dead-first, pre-pass, `#assert` and large-static fixtures; the wrapped-`#assert`
   `undefined function` (agnodrm's audit) will see them.
 - **`#deprecated` / `#must_use` / `#pure` warnings appear on aarch64, Mach-O, PE and cx builds**
   for attributes placed before the first statement; a bare `#deprecated` is an error.
+- **A missing-`lib/` or gated-async error now exits 1 on aarch64 and cx builds** (it was 139).
+  Scripts that treated a crash as "not a compile error" see an ordinary failed build.
+- **`return None();` (any nullary `: stack` variant) no longer warns.** kybernet, daimon
+  (`memory_store_get`) and phylax (`scan_result_highest_severity`) can return `Some(v)` / `None()`
+  without the dropped-tag warning, and agnodrm-style audits that fail on "the tag is dropped"
+  stop failing on it. The hint text changed; "the tag is dropped" is kept.
+- **New warnings: `struct 'X' redefined with a different layout` and `duplicate symbol 'X' is
+  an enum constant here and a global variable before it`.** The first fires in any repo still
+  vendoring the older kavach with two `struct SpawnedProcess` (mehman, stiva, aethersafha,
+  agnosai, agnostic); re-vendor kavach. Both are warnings, and no build changes rc.
 
 ## [6.6.8] — 2026-09-28
 

@@ -1,8 +1,7 @@
-# The "returns a `: stack` pair on another path but a SINGLE value here" warning fires on a legal `Some(v)` / `None()` function — OPEN
+# The "returns a `: stack` pair on another path but a SINGLE value here" warning fires on a legal `Some(v)` / `None()` function
 
-**Status:** 🟡 **OPEN**: reproduced 2026-09-23 with cycc 6.6.6 on x86_64 and aarch64 (the probe below):
-the warning fires, and the program's results are correct on both.
-**Placement:** **6.6.9 bite 3** — Diagnostic exits: no rc 139 after a reported error on aarch64/cx; nullary `: stack` variant returns are not flagged as dropped tags. Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
+**Status:** ✅ **RESOLVED v6.6.9** (bite 3) — nullary `: stack` variant constructors get fn flag 512 and `return None();` / `return None;` count as whole variants in the mixed-return check; the hint names `None()` for an Option; gated by `tests/gates/frontend/stack_enum_mixed_return_warning.sh`.
+**Placement:** **6.6.9 bite 3** — Diagnostic exits: no rc 139 after a reported error on aarch64/cx; nullary `: stack` variant returns are not flagged as dropped tags. Pinned 2026-09-27 in [roadmap.md](../../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Discovered:** 2026-09-22 during kybernet 1.7.0. kybernet 1.6.20, built with 6.6.2, had shipped with the
 warning on its PID-1 signal path, unexplained.
 **Severity:** Low: a misleading diagnostic. It suggests a change (`return Err(x);`) that is wrong for an
