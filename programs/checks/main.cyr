@@ -67,6 +67,12 @@ var CC_AARCH64_PATH = 0; # build/cycc_aarch64 cross-compiler (cstring)
 var G_PASS = 0;
 var G_FAIL = 0;
 var G_TOTAL = 0;
+# 6.6.8: rows during which a child was ended at a DEADLINE — reported as TIMEOUT rows and
+# counted as failures (see `_check`).
+var G_TIMEOUT = 0;
+var _G_SEEN_RKILLS = 0;     # regression_deadline_kills() as of the previous row
+var _G_SEEN_PKILLS = 0;     # proc_deadline_kills() as of the previous row
+var _G_ROW_GATE_TIMEOUT = 0; # set by `_gate` when its supervisor reported the deadline (124)
 
 # Cached environment pointer-array, built once at startup from
 # /proc/self/environ. Child processes inherit this env via execve.
@@ -130,7 +136,47 @@ fn _p(cstr): i64 {
     return 0;
 }
 
+# ⛔ 6.6.8 — A ROW DURING WHICH A CHILD WAS KILLED AT A DEADLINE SAYS SO, AND IS NOT A PASS.
+# The deadline's verdict travelled only through return values that 27 of the 30 wait sites
+# never read, so a timed-out child showed up as a crash-like 137, as a plain FAIL, or — at
+# three output-comparison sites and the lint rows — as a PASS. lib/regression.cyr and
+# lib/process.cyr now COUNT every deadline kill where it happens; a row during which either
+# count moved (or whose shell gate's supervisor exited 124) prints a TIMEOUT line naming the
+# setting, is scored as a failure, and is tallied in the final line.
 fn _check(name, exit_code): i64 {
+    var rk = regression_deadline_kills();
+    var pk = proc_deadline_kills();
+    var timed = 0;
+    if (rk != _G_SEEN_RKILLS || pk != _G_SEEN_PKILLS || _G_ROW_GATE_TIMEOUT == 1) { timed = 1; }
+    if (timed == 1) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("TIMEOUT");
+        _p(ANSI_RESET);
+        _p(": ");
+        _p(name);
+        _p(" — a child was killed at the deadline (");
+        var knob_ms = _regression_timeout_ms();
+        var knob = "CYRIUS_CHECK_TIMEOUT";
+        if (_G_ROW_GATE_TIMEOUT == 1) {
+            knob_ms = _regression_long_timeout_ms();
+            knob = "CYRIUS_CHECK_LONG_TIMEOUT";
+        } else {
+            if (rk != _G_SEEN_RKILLS && regression_last_deadline_ms() == _regression_long_timeout_ms()) {
+                knob_ms = _regression_long_timeout_ms();
+                knob = "CYRIUS_CHECK_LONG_TIMEOUT";
+            }
+        }
+        _p(knob);
+        _p("=");
+        print_num(knob_ms / 1000);
+        println("s)");
+        G_TIMEOUT = G_TIMEOUT + 1;
+        if (exit_code == 0) { exit_code = 1; }
+    }
+    _G_SEEN_RKILLS = rk;
+    _G_SEEN_PKILLS = pk;
+    _G_ROW_GATE_TIMEOUT = 0;
     G_TOTAL = G_TOTAL + 1;
     _p("  ");
     if (exit_code == 0) {
@@ -263,6 +309,7 @@ fn _gate_run(script_abs): i64 {
 fn _gate(name, script_rel): i64 {
     var script_abs = _root_path(script_rel);
     var rc = _gate_run(script_abs);
+    if (rc == 124) { _G_ROW_GATE_TIMEOUT = 1; }
     _check(name, rc);
     return rc;
 }
@@ -1107,7 +1154,18 @@ fn main(): i64 {
             # in this mode's first cut).
             var gabs = gp;
             if (load8(gp) != 47) { gabs = _root_path(gp); }
-            _check(gp, _gate_run(gabs));
+            var grc = _gate_run(gabs);
+            if (grc == 124) { _G_ROW_GATE_TIMEOUT = 1; }
+            _check(gp, grc);
+            regression_terminate_children(_RG_GRACE_MS);
+            return G_FAIL;
+        }
+        # `--output-row <name>`: one output-comparison row (`_expected_output_gate`) over
+        # tests/fixtures/<name>.cyr + .expected under the root — how a gate proves a fixture
+        # that prints the right bytes and then hangs is not a pass. CHANGELOG [6.6.8]
+        if (streq(argv(sel_idx), "--output-row") == 1) {
+            var ob = argv(sel_idx + 1);
+            _expected_output_gate(ob, ob, ob);
             regression_terminate_children(_RG_GRACE_MS);
             return G_FAIL;
         }
@@ -1153,8 +1211,18 @@ fn main(): i64 {
     print_num(G_FAIL);
     _p(" failed (");
     print_num(G_TOTAL);
-    println(" total)");
+    _p(" total)");
+    if (G_TIMEOUT > 0) {
+        _p(", ");
+        print_num(G_TIMEOUT);
+        _p(" of the failures TIMEOUT (a child killed at a deadline)");
+    }
+    println("");
 
+    # 6.6.8: the exit status is the failure count, CLAMPED to 123 — an exit status is one
+    # byte, so 256 failures used to exit 0 (a green run), and 124 and up collide with the
+    # supervisor's deadline code and the shell's 126/127/128+n. CHANGELOG [6.6.8]
+    if (G_FAIL > 123) { return 123; }
     return G_FAIL;
 }
 

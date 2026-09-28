@@ -188,26 +188,77 @@ fn regression_file_contains_substr(path, substr): i64 {
 # three orders of magnitude above a .tcyr and well over an order above the slowest compile
 # in the suite, so it can only fire on something genuinely stuck. Set it to 0 to disable
 # the deadline (then a hang is a hang again — which is what this exists to stop).
+#
+# ⛔ 6.6.8 — DIGITS ONLY, AND A BAD VALUE IS LOUD. This was `atoi`, which reads a digit
+# PREFIX: `2m` meant 2 s, `1.5` meant 1 s, and `abc`, '' and ` 120` (a leading space) all
+# meant 0 — which DISABLES the deadline — so a typo in the one knob that bounds the run
+# silently took the bound away. A value that is not a plain whole number of seconds now
+# falls back to the default with one stderr line naming the variable (once per process),
+# the rule check.sh already applies to CYRIUS_CHECK_REAP_MINS. CHANGELOG [6.6.8]
+var _regression_warned_short = 0;
+var _regression_warned_long = 0;
+
+# Seconds from env `name` as ms, or -1 when the value is unset / not digits-only (with the
+# loud line, once, when it is SET but malformed; `warned` is the once-flag's address).
+fn _regression_env_secs(name, warned): i64 {
+    var v = getenv(name);
+    if (v == 0) { return 0 - 1; }
+    var n = strlen(v);
+    var ok = 1;
+    if (n == 0 || n > 9) { ok = 0; }
+    var i = 0;
+    var s = 0;
+    while (i < n && ok == 1) {
+        var c = load8(v + i);
+        if (c < 48 || c > 57) { ok = 0; }
+        else { s = s * 10 + (c - 48); }
+        i = i + 1;
+    }
+    if (ok == 1) { return s * 1000; }
+    if (load64(warned) == 0) {
+        store64(warned, 1);
+        var e1 = "regression: ";
+        sys_write(2, e1, strlen(e1));
+        sys_write(2, name, strlen(name));
+        var e2 = "='";
+        sys_write(2, e2, strlen(e2));
+        sys_write(2, v, n);
+        var e3 = "' is not a whole number of seconds — IGNORED, the default deadline stays in force\n";
+        sys_write(2, e3, strlen(e3));
+    }
+    return 0 - 1;
+}
+
 fn _regression_timeout_ms(): i64 {
-    var v = getenv("CYRIUS_CHECK_TIMEOUT");
-    if (v == 0) { return 120000; }
-    var s = atoi(v);
-    if (s < 0) { return 120000; }
-    return s * 1000;
+    var ms = _regression_env_secs("CYRIUS_CHECK_TIMEOUT", &_regression_warned_short);
+    if (ms < 0) { return 120000; }
+    return ms;
 }
 
 # The LONG bound, for children whose runtime is not this process's business: ssh/scp
 # (network, minutes for a Windows self-host) and externally-driven gate scripts. BOUNDED
 # is the property, not "fast"; 900 s is the bound, and the whole of check.sh runs in ~13
 # minutes, so nothing legitimate is near it. `CYRIUS_CHECK_LONG_TIMEOUT` overrides, in
-# seconds.
+# seconds, digits only (see above).
 fn _regression_long_timeout_ms(): i64 {
-    var v = getenv("CYRIUS_CHECK_LONG_TIMEOUT");
-    if (v == 0) { return 900000; }
-    var s = atoi(v);
-    if (s < 0) { return 900000; }
-    return s * 1000;
+    var ms = _regression_env_secs("CYRIUS_CHECK_LONG_TIMEOUT", &_regression_warned_long);
+    if (ms < 0) { return 900000; }
+    return ms;
 }
+
+# ⛔ 6.6.8 — A DEADLINE KILL IS COUNTED WHERE IT HAPPENS, so a caller that drops the verb's
+# return value still cannot report the row as an ordinary FAIL or, worse, as a PASS. The
+# deadline's verdict used to travel ONLY through the return value, and 27 of the 30 calls in
+# the check driver never read it: a compile cut at the deadline read as "exit 137", a lint
+# child as "0 warnings". The driver compares this count before and after each row.
+var _regression_deadline_kills = 0;
+var _regression_last_deadline = 0;
+
+# How many children this process has ended at a deadline, ever.
+fn regression_deadline_kills(): i64 { return _regression_deadline_kills; }
+
+# The bound (ms) that fired for the most recent of them; 0 if none has.
+fn regression_last_deadline_ms(): i64 { return _regression_last_deadline; }
 
 # Called in the CHILD, between fork and execve. PR_SET_PDEATHSIG = 1, SIGKILL = 9; it
 # survives execve for a non-setuid binary, so the exec'd program inherits it. Linux only —
@@ -562,6 +613,8 @@ fn _regression_wait_deadline(pid, stbuf, timeout_ms): i64 {
         if (waited >= 50) { slice = 10; }
         if (waited >= 2000) { slice = 50; }
     }
+    _regression_deadline_kills = _regression_deadline_kills + 1;
+    _regression_last_deadline = timeout_ms;
     _regression_kill_tree(pid, stbuf);   # 6.6.8: the whole tree, TERM -> grace -> KILL
     return 0;
 }
@@ -754,6 +807,8 @@ fn regression_run_with_timeout(bin_path, timeout_ms, envp): i64 {
         syscall(7, 0, 0, 100);          # poll(NULL,0,100ms) — portable 100ms sleep
         elapsed = elapsed + 100;        # (was nanosleep 35; faults off Linux). v6.0.65
     }
+    _regression_deadline_kills = _regression_deadline_kills + 1;
+    _regression_last_deadline = timeout_ms;
     _regression_kill_tree(pid, &stbuf);
     return 0 - 2;
 }
@@ -869,8 +924,22 @@ fn regression_exec_run(bin_path, envp): i64 {
 }
 
 # Run `bin_path arg`, capture stdout into `buf[0..buflen)`,
-# discard stderr. Returns bytes captured or 0 on failure.
+# discard stderr. Returns bytes captured or 0 on failure. The exit status is
+# DISCARDED — use `regression_exec_with_arg_capture_status` when "the tool
+# failed" must not read as "the tool printed less".
 fn regression_exec_with_arg_capture(bin_path, arg, buf, buflen, envp): i64 {
+    var st[16];
+    return regression_exec_with_arg_capture_status(bin_path, arg, buf, buflen, envp, &st);
+}
+
+# `regression_exec_with_arg_capture` that also REPORTS HOW THE CHILD ENDED, in `status_out`'s
+# two slots (`_regression_store_status`: exit code · 128+sig · -2 the deadline · -1 nothing
+# ran or the end was never observed; [1] = 1 iff a signal killed it). ⛔ 6.6.8: the plain verb
+# threw the status away, so `_args_init_4kb_gate` accepted a child that printed its answer
+# and then hung or crashed. CHANGELOG [6.6.8]
+fn regression_exec_with_arg_capture_status(bin_path, arg, buf, buflen, envp, status_out): i64 {
+    store64(status_out, 0 - 1);
+    store64(status_out + 8, 0);
     var out_path = _regression_tmp_path("audit_xa_");
     var out_fd = sys_open(out_path, 577, 420);
     if (out_fd < 0) { return 0; }
@@ -894,7 +963,8 @@ fn regression_exec_with_arg_capture(bin_path, arg, buf, buflen, envp): i64 {
     }
     sys_close(out_fd);
     var stbuf[4];
-    _regression_wait_deadline(pid, &stbuf, _regression_timeout_ms());
+    var reaped = _regression_wait_deadline(pid, &stbuf, _regression_timeout_ms());
+    _regression_store_status(status_out, reaped, load32(&stbuf));
     var total = file_read_all(out_path, buf, buflen);
     sys_unlink(out_path);
     if (total < 0) { return 0; }

@@ -88,6 +88,16 @@ var PROC_ETIMEDOUT = 110;
 # CHANGELOG [6.6.7]
 var PROC_ECHILD = 10;
 
+# ⛔ 6.6.8 — A DEADLINE KILL IS COUNTED WHERE IT HAPPENS. The byte-count capturing verbs
+# (`exec_capture`, `exec_capture_str`, `run_capture`) cannot carry a status, so a child ended
+# at the deadline looked exactly like one that printed less. This count lets an embedder ask
+# "did a deadline fire?" around any call without changing a single return contract (sigil's
+# cryptsetup and deps' git use this module). It counts every child `_proc_wait_deadline`
+# ended AND every capture the idle deadline cut short. CHANGELOG [6.6.8]
+var _proc_deadline_kills = 0;
+
+fn proc_deadline_kills(): i64 { return _proc_deadline_kills; }
+
 # Bound every child this module WAITS for to `ms` milliseconds; 0 = wait for ever (the
 # default, and the pre-6.6.6 behaviour). Returns the previous value, so a caller can set a
 # short bound around one call and put the old one back. POSIX only: process_win.cyr /
@@ -295,6 +305,7 @@ fn _proc_wait_deadline(pid, stbuf, timeout_ms): i64 {
         if (waited >= 50) { slice = 10; }
         if (waited >= 2000) { slice = 50; }
     }
+    _proc_deadline_kills = _proc_deadline_kills + 1;
     _proc_kill_tree(pid, stbuf);   # the deadline fired and WE ended it (6.6.8: its whole tree,
     return 0;                      # TERM -> grace -> KILL): 0 is the truth even if an auto-reap
                                    # leaves nothing to collect
@@ -317,8 +328,9 @@ fn _proc_poll_in(fd, timeout_ms): i64 {
 # break `cbt/deps.cyr`'s git and sigil's cryptsetup; a child that produces nothing and does
 # not exit is the hang this exists to stop. The total is bounded regardless because the loop
 # also stops at `buflen`. `timeout_ms <= 0` is the historical unbounded drain.
-# Set by `_proc_read_pipe`: 1 when it stopped because the idle deadline expired (or poll
-# failed), 0 when it reached EOF or filled the buffer. After a cut the child is abandoned
+# Set by `_proc_read_pipe`: 1 when it stopped because the idle deadline expired, 2 when poll
+# failed (6.6.8: EINTR is retried, and an error is no longer reported as the deadline), 0 when
+# it reached EOF or filled the buffer. After a cut the child is abandoned
 # mid-output — it is then killed at the wait deadline, or dies of SIGPIPE on its next write,
 # and either way the capture is incomplete. `exec_capture_status` reports that as the
 # deadline (-2), not as the SIGPIPE "crash" the reader itself caused. CHANGELOG [6.6.7]
@@ -330,9 +342,14 @@ fn _proc_read_pipe(fd, buf, buflen, timeout_ms): i64 {
     _proc_read_cut = 0;
     while (rgo == 1) {
         if (timeout_ms > 0) {
-            # <= 0 covers BOTH the timeout and a poll error (EINTR included): in either case
-            # we stop reading, and the caller's bounded wait deals with the child.
-            if (_proc_poll_in(fd, timeout_ms) <= 0) { rgo = 0; _proc_read_cut = 1; }
+            # 0 = the idle deadline expired: a CUT (reported as the deadline). A poll ERROR is
+            # not a deadline — 6.6.8: EINTR is retried (a signal handler in the embedder must
+            # not read as "the tool hung"), and any other error stops the read as a failure
+            # (`_proc_read_cut` = 2, reported as -1), not as a timeout it was not.
+            var pr = _proc_poll_in(fd, timeout_ms);
+            while (pr == 0 - 4) { pr = _proc_poll_in(fd, timeout_ms); }
+            if (pr == 0) { rgo = 0; _proc_read_cut = 1; }
+            if (pr < 0) { rgo = 0; _proc_read_cut = 2; }
         }
         if (rgo == 1) {
             var n = sys_read(fd, buf + total, buflen - total);
@@ -407,9 +424,11 @@ fn run_capture(cmd, arg1, arg2, buf, buflen): Result {
     }
     sys_close(write_fd);
     var total = _proc_read_pipe(read_fd, buf, buflen, proc_timeout_ms());
+    var cut = _proc_read_cut;
     sys_close(read_fd);
     var status_buf[4];
-    _proc_wait_deadline(pid, &status_buf, proc_timeout_ms());
+    var reaped = _proc_wait_deadline(pid, &status_buf, proc_timeout_ms());
+    if (cut == 1 && reaped == 1) { _proc_deadline_kills = _proc_deadline_kills + 1; }
     return Ok(total);
 }
 
@@ -592,8 +611,12 @@ fn exec_capture_status(args, buf, buflen, status_out): i64 {
     store32(&stbuf, 0 - 1);   # never a stale stack word, even if a path below forgets
     var reaped = _proc_wait_deadline(pid, &stbuf, proc_timeout_ms());
     # The reader gave up at the deadline: report THAT — unless waitpid never saw the child,
-    # which is "unknown" (-1), never a guessed -2.
-    if (cut == 1) { if (reaped == 1) { reaped = 0; } }
+    # which is "unknown" (-1), never a guessed -2. A poll error (cut 2) is a failure to read
+    # the child's output, reported as -1, never as the deadline. CHANGELOG [6.6.8]
+    if (cut == 1) {
+        if (reaped == 1) { reaped = 0; _proc_deadline_kills = _proc_deadline_kills + 1; }
+    }
+    if (cut == 2) { if (reaped == 1) { reaped = 0 - 1; } }
     _proc_store_status(status_out, reaped, load32(&stbuf));
     return total;
 }
@@ -734,9 +757,11 @@ fn exec_capture_str(args, buf, buflen): i64 {
     }
     sys_close(wfd);
     var total = _proc_read_pipe(rfd, buf, buflen, proc_timeout_ms());
+    var cut = _proc_read_cut;
     sys_close(rfd);
     var stbuf[4];
-    _proc_wait_deadline(pid, &stbuf, proc_timeout_ms());
+    var reaped = _proc_wait_deadline(pid, &stbuf, proc_timeout_ms());
+    if (cut == 1 && reaped == 1) { _proc_deadline_kills = _proc_deadline_kills + 1; }
     return total;
 }
 

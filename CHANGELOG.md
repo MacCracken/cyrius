@@ -59,6 +59,33 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and an anti-vacuous foreground mutant that must leak), mutation-proven against no subreaper,
   no grace and the foreground `sh`; and `tests/tcyr/crossos/process_deadline_term_first.tcyr`
   (run on pi, ecb and ach).
+- **A child killed at a deadline is REPORTED as one — never as an ordinary FAIL, and never as a
+  PASS — and the deadline knobs can no longer be typo'd off.** (bite 8.) **Root cause:** the
+  deadline's verdict travelled only through return values that 27 of the 30 wait sites in the
+  check driver never read, so a timed-out child showed up as a crash-like 137 (`FAIL (compile)`
+  for a .tcyr compile), as a plain FAIL, or as a PASS: three output-comparison sites
+  (`_expected_output_gate`, two in codegen_regress.cyr) checked only the crash flag, which the
+  deadline path leaves 0 (the code is -2), so a fixture that printed the right bytes and then hung
+  passed; `regression_exec_with_arg_capture` discarded the status, so `_args_init_4kb_gate`
+  accepted a child that printed `2` and then hung or crashed. And `CYRIUS_CHECK_TIMEOUT` /
+  `CYRIUS_CHECK_LONG_TIMEOUT` were read with atoi: `2m` meant 2 s, and `abc`, '' and ` 120` meant
+  0 — which DISABLES the deadline. **Fix:** lib/regression.cyr and lib/process.cyr COUNT every
+  deadline kill where it happens (`regression_deadline_kills()`, `regression_last_deadline_ms()`,
+  `proc_deadline_kills()` — process.cyr's return contracts unchanged); the driver's `_check`
+  prints `TIMEOUT: <row> — a child was killed at the deadline (CYRIUS_CHECK_TIMEOUT=Ns)` (or
+  `…LONG_TIMEOUT…` for a gate whose supervisor exited 124) for any row during which a count moved,
+  scores the row a failure, and tallies it in the final line; `_self_host_pipe` /
+  `_compile_capture_stderr` return -2 on a deadline kill (the .tcyr row reads `TIMEOUT (compile)`;
+  "output not creatable" moved to -5); the three sig-only sites fail through `_exec_unfinished()`
+  and say why; new `regression_exec_with_arg_capture_status`; both knobs are digits-only — anything
+  else keeps the default with one stderr line naming the variable (said once by check.sh, which
+  then drops it; 0 stays the documented "no deadline"). check.sh records a gate's 124 as a
+  `^^ TIMEOUT` line and a `timeouts:` count in the summary. The driver's exit status is clamped to
+  123 (256 failures used to exit 0). Also: lib/process.cyr's idle-read cut no longer calls a
+  `poll()` error a deadline — EINTR is retried, and any other error reports -1. Gated by
+  `check_driver_bounded.sh` axis 4 (4a a spinning .tcyr, 4b a print-then-hang output fixture with
+  an exiting control, 4c six malformed knob values, 4d a hung lint child, 4e a static census of
+  sig-only checks — each mutation-proven) and `check_driver_dies_with_check_sh.sh` axis 6b.
 
 ## [6.6.7] — 2026-09-27
 

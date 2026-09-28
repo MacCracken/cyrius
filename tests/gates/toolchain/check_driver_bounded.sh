@@ -91,6 +91,20 @@
 #     write" reads correct and is not, and the gate is what said so.
 #   * the pump census over the base tree -> 15 hits (3 lib/process.cyr, 1 lib/regression.cyr,
 #     2 crosshost, 1 platform_efi, 8 selfhost); over this tree -> 0.
+# 6.6.8 — AXIS 4, DEADLINE TRUTH. A deadline kill now SAYS it was one: 4a a spinning .tcyr
+# gives a TIMEOUT row naming CYRIUS_CHECK_TIMEOUT and the final line counts it; 4b an output
+# fixture that prints the right bytes and then hangs is RED and says "killed at the deadline"
+# (with a control that EXITS 152 and still passes); 4c `2m`, `abc`, '', ` 120`, `-3`, `1.5`
+# keep the defaults and say so once per variable (0 stays "no deadline"); 4d a lint child
+# killed at the deadline is not scored clean.
+# MUTATION PROOF (6.6.8, made and reverted in the lane worktree one at a time):
+#   * _check's counter comparison removed (rows never become TIMEOUT) -> 4a rows 1 and 3, 4d
+#     row 2 RED.
+#   * selfhost.cyr's output-row check put back to `_last_exec_sig != 0` -> 4b row 2 RED (the
+#     row is still RED through the counter; the site's own message is what is lost).
+#   * `_regression_env_secs` put back to atoi -> 4c RED for every malformed value.
+#   * codegen_regress.cyr's `_derive_serialize…` output check put back to
+#     `_last_exec_sig != 0` -> 4e RED, naming the line.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -587,6 +601,114 @@ fi
 nset=$(grep -c 'proc_set_timeout_ms(' programs/checks/main.cyr || true)
 check "the check driver sets lib/process.cyr's deadline (proc_set_timeout_ms in main.cyr)" \
     "yes" "$([ "$nset" -ge 1 ] && echo yes || echo no)"
+
+# ── axis 4 — 6.6.8: A DEADLINE KILL IS REPORTED AS ONE ─────────────────────────────────
+# The deadline's verdict used to travel only through return values most callers dropped: a
+# .tcyr COMPILE cut at the deadline read `FAIL (compile)`, three output-comparison sites that
+# checked only the crash flag scored a print-then-hang fixture PASS, and the knobs were read
+# with atoi (`2m` = 2 s; `abc`, '' and ` 120` = 0 = NO deadline). Every assertion below runs
+# the REAL driver (built from the tree) or the REAL lib parser.
+echo "axis 4 — deadline kills are REPORTED, and the deadline knobs cannot be typo'd off:"
+if ! "$ROOT/build/cycc" < programs/checks/main.cyr > "$T/drv" 2> "$T/drv.err"; then
+    echo "  FAIL: the check driver did not compile"; sed 's/^/    /' "$T/drv.err"; fails=$((fails + 1))
+fi
+chmod +x "$T/drv"
+strip_ansi() { sed 's/\x1b\[[0-9;]*m//g'; }
+
+# 4a: a spinning .tcyr under CYRIUS_CHECK_TIMEOUT=1 -> a TIMEOUT row naming the setting, the
+# row RED, and the final line counting it.
+R4="$T/r4"; mkdir -p "$R4/build" "$R4/tests/tcyr/zz"
+ln -s "$ROOT/build/cycc" "$R4/build/cycc"
+ln -s "$ROOT/lib" "$R4/lib"
+cp "$T/spin.cyr" "$R4/tests/tcyr/zz/spin.tcyr"
+( cd "$R4" && CYRIUS_CHECK_TIMEOUT=1 timeout 60 "$T/drv" tcyr ) > "$T/a4a.out" 2>&1
+strip_ansi < "$T/a4a.out" > "$T/a4a.txt"
+check "4a a spinning .tcyr prints a TIMEOUT row naming CYRIUS_CHECK_TIMEOUT=1s" "yes" \
+    "$(grep -q '^  TIMEOUT: test suite (1 files) — a child was killed at the deadline (CYRIUS_CHECK_TIMEOUT=1s)$' "$T/a4a.txt" && echo yes || echo no)"
+check "   …the row is RED" "yes" "$(grep -q '^  FAIL: test suite (1 files)$' "$T/a4a.txt" && echo yes || echo no)"
+check "   …and the final line counts it" "yes" "$(grep -q 'of the failures TIMEOUT' "$T/a4a.txt" && echo yes || echo no)"
+
+# 4b: an output-comparison fixture that prints the EXPECTED bytes and then hangs is not a pass
+# (selfhost.cyr's `_expected_output_gate` checked only the crash flag, which a deadline kill
+# leaves at 0). The inner line must say what happened — that message comes only from the
+# site's own check, so it is proven independently of the row-level TIMEOUT counter.
+R4B="$T/r4b"; mkdir -p "$R4B/build" "$R4B/tests/fixtures"
+ln -s "$ROOT/build/cycc" "$R4B/build/cycc"
+ln -s "$ROOT/lib" "$R4B/lib"
+printf 'fn main(): i64 { var w = syscall(1, 1, "exact-bytes\\n", 12); var i = 0; while (1 == 1) { i = i + 1; } return i; }\nvar r = main();\nsyscall(60, r);\n' > "$R4B/tests/fixtures/zz_hang.cyr"
+printf 'exact-bytes\n' > "$R4B/tests/fixtures/zz_hang.expected"
+printf 'fn main(): i64 { var w = syscall(1, 1, "exact-bytes\\n", 12); return 152; }\nvar r = main();\nsyscall(60, r);\n' > "$R4B/tests/fixtures/zz_ok.cyr"
+printf 'exact-bytes\n' > "$R4B/tests/fixtures/zz_ok.expected"
+( cd "$R4B" && CYRIUS_CHECK_TIMEOUT=1 timeout 60 "$T/drv" --output-row zz_hang ) > "$T/a4b.out" 2>&1
+strip_ansi < "$T/a4b.out" > "$T/a4b.txt"
+check "4b a print-then-hang output fixture is RED" "yes" "$(grep -q '^  FAIL: zz_hang$' "$T/a4b.txt" && echo yes || echo no)"
+check "   …and says the child was killed at the deadline (not a crash, not a pass)" "yes" \
+    "$(grep -q 'zz_hang — killed at the deadline (CYRIUS_CHECK_TIMEOUT)' "$T/a4b.txt" && echo yes || echo no)"
+( cd "$R4B" && CYRIUS_CHECK_TIMEOUT=10 timeout 60 "$T/drv" --output-row zz_ok ) > "$T/a4b2.out" 2>&1
+check "   …control: the same bytes from a fixture that EXITS (152) still pass" "yes" \
+    "$(strip_ansi < "$T/a4b2.out" | grep -q '^  PASS: zz_ok$' && echo yes || echo no)"
+
+# 4c: the knobs are digits only; anything else is refused LOUDLY (once) and the default stays.
+cat > "$T/knob.cyr" <<'KNOB'
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/io.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/syscalls.cyr"
+include "lib/net.cyr"
+include "lib/regression.cyr"
+fn main(): i64 {
+    alloc_init();
+    var a = _regression_timeout_ms();
+    var b = _regression_timeout_ms();
+    var c = _regression_long_timeout_ms();
+    print_num(a); print(" ", 1); print_num(b); print(" ", 1); print_num(c); print("\n", 1);
+    return 0;
+}
+var r = main();
+syscall(60, r);
+KNOB
+"$ROOT/build/cycc" < "$T/knob.cyr" > "$T/knob" 2>/dev/null; chmod +x "$T/knob"
+for v in 2m abc '' ' 120' -3 1.5; do
+    OUT=$(CYRIUS_CHECK_TIMEOUT="$v" CYRIUS_CHECK_LONG_TIMEOUT="$v" "$T/knob" 2> "$T/knob.err")
+    check "4c CYRIUS_CHECK_*TIMEOUT='$v' keeps the defaults (never 0 = no deadline)" "120000 120000 900000" "$OUT"
+    check "   …and says so, once per variable, naming it" "1 1" \
+        "$(grep -c "CYRIUS_CHECK_TIMEOUT='" "$T/knob.err") $(grep -c "CYRIUS_CHECK_LONG_TIMEOUT='" "$T/knob.err")"
+done
+check "4c a plain number is taken (7 -> 7000 ms)" "7000 7000 7000" \
+    "$(CYRIUS_CHECK_TIMEOUT=7 CYRIUS_CHECK_LONG_TIMEOUT=7 "$T/knob" 2>/dev/null)"
+check "4c 0 still means 'no deadline', as documented" "0 0 0" \
+    "$(CYRIUS_CHECK_TIMEOUT=0 CYRIUS_CHECK_LONG_TIMEOUT=0 "$T/knob" 2>/dev/null)"
+
+# 4d: a lint child killed at the deadline is not scored clean. A scratch root with ONE lib file
+# and a cyrlint that never answers; the stdlib row must be RED with a TIMEOUT line.
+R4D="$T/r4d"; mkdir -p "$R4D/build" "$R4D/lib"
+ln -s "$ROOT/build/cycc" "$R4D/build/cycc"
+ln -s "$ROOT/tests" "$R4D/tests"
+printf '# one\nfn one(): i64 { return 1; }\n' > "$R4D/lib/one.cyr"
+printf '#!/bin/sh\nexec sleep 30\n' > "$R4D/build/cyrlint"; chmod +x "$R4D/build/cyrlint"
+( cd "$R4D" && HOME="$T/nohome" CYRIUS_CHECK_TIMEOUT=1 timeout 120 "$T/drv" lint ) > "$T/a4d.out" 2>&1
+strip_ansi < "$T/a4d.out" > "$T/a4d.txt"
+check "4d a cyrlint killed at the deadline: 'lint (stdlib)' is RED" "yes" "$(grep -q '^  FAIL: lint (stdlib)' "$T/a4d.txt" && echo yes || echo no)"
+check "   …with a TIMEOUT row naming CYRIUS_CHECK_TIMEOUT=1s" "yes" \
+    "$(grep -q '^  TIMEOUT: lint (stdlib).*(CYRIUS_CHECK_TIMEOUT=1s)$' "$T/a4d.txt" && echo yes || echo no)"
+check "   …and no row of the suite reads PASS" "0" "$(grep -c '^  PASS: ' "$T/a4d.txt")"
+
+# 4e: the SHAPE, statically — no site in the driver decides a child's run on the crash flag
+# alone (`_last_exec_sig`): the deadline path leaves it 0 (the code is -2, the flag 0). Every
+# condition that reads it must also read `_last_exec_ec`, or go through `_exec_unfinished()`.
+# The three sites 6.6.8 fixed (selfhost.cyr's output row, codegen_regress.cyr x2) were this.
+# (The helper's own early-returns in shared.cyr — `if (_last_exec_sig != 0) { return …` — are
+# the one place it is read alone, by construction.)
+grep -nE 'if \(.*_last_exec_sig' programs/checks/*.cyr | grep -v '_last_exec_ec' \
+    | grep -vE '^programs/checks/shared\.cyr:[0-9]+:    if \(_last_exec_sig != 0\) \{ return ' > "$T/sigonly" || true
+check "4e no driver site tests the crash flag without the exit code (deadline -2 reads as sig 0)" "0" \
+    "$(grep -c . "$T/sigonly" || true)"
+[ -s "$T/sigonly" ] && sed 's/^/        /' "$T/sigonly"
+check "   …premise: the helper that does it right exists and is used" "yes" \
+    "$([ "$(grep -c '_exec_unfinished() == 1' programs/checks/*.cyr | awk -F: '{s+=$2} END {print s}')" -ge 3 ] && echo yes || echo no)"
 
 echo ""
 if [ "$fails" = "0" ]; then

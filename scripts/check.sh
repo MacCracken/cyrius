@@ -107,6 +107,15 @@ MISSING $_gn"
     if [ "$_grc" = 0 ]; then
         _CHK_RESULTS="$_CHK_RESULTS
 PASS $_gn"
+    elif [ "$_grc" = 124 ]; then
+        # 124 from --run-gate is its deadline and nothing else (a gate's own 124 is reported
+        # as 1 — programs/checks/run_gate.cyr). A timeout is a failure, and says it was one.
+        # CHANGELOG [6.6.8]
+        echo "  ^^ TIMEOUT (killed at the CYRIUS_CHECK_LONG_TIMEOUT deadline): $_gn"
+        _CHK_RESULTS="$_CHK_RESULTS
+FAIL $_gn"
+        _CHK_FAILS=$((_CHK_FAILS + 1))
+        _CHK_TIMEOUTS=$((_CHK_TIMEOUTS + 1))
     else
         echo "  ^^ FAILED (exit $_grc): $_gn"
         _CHK_RESULTS="$_CHK_RESULTS
@@ -118,6 +127,7 @@ FAIL $_gn"
 
 _CHK_DONE=0
 _CHK_SIGNAL=""
+_CHK_TIMEOUTS=0
 _chk_finish() {
     _xrc=$?
     # INT/TERM handlers `exit`, which re-enters via the EXIT trap in some shells.
@@ -154,6 +164,9 @@ _chk_finish() {
     _res_n=$(printf '%s\n' "$_CHK_RESULTS" | grep -cE '^(PASS|FAIL|MISSING) (tests/gates|scripts)/' || true)
     printf '  shell gates: %s of %s produced a result, %s NOT RUN\n' "$_res_n" "$_total" "$_nnot"
     printf '  failures:    %s (the check binary counts as one row here)\n' "$_CHK_FAILS"
+    if [ "$_CHK_TIMEOUTS" != "0" ]; then
+        printf '  timeouts:    %s of those failures were a gate killed at its deadline (CYRIUS_CHECK_LONG_TIMEOUT) — see the TIMEOUT lines\n' "$_CHK_TIMEOUTS"
+    fi
     if [ "$((_res_n + _nnot))" != "$_total" ]; then
         printf '  ⚠ BOOKKEEPING: %s + %s != %s — this summary cannot be trusted\n' \
             "$_res_n" "$_nnot" "$_total"
@@ -233,6 +246,22 @@ case "$_CHK_REAP_MINS" in
         _CHK_REAP_MINS=240
         ;;
 esac
+# ⛔ 6.6.8: the two DEADLINE knobs, checked once here the same way. The binary read them with
+# atoi, so `2m` meant 2 s and `abc`, '' or ` 120` meant 0 — which DISABLES the deadline. The
+# binary now refuses a non-digit value itself (lib/regression.cyr), but every child it spawns
+# would say so again; here it is said once and the variable is dropped, so every child uses
+# the default. 0 stays valid: it is the documented "no deadline". CHANGELOG [6.6.8]
+for _kv in CYRIUS_CHECK_TIMEOUT CYRIUS_CHECK_LONG_TIMEOUT; do
+    eval "_kval=\${$_kv-__unset__}"
+    case "$_kval" in
+        __unset__) ;;
+        ''|*[!0-9]*)
+            printf "check: %s='%s' is not a whole number of seconds — IGNORED, the default deadline stays in force\n" \
+                "$_kv" "$_kval" >&2
+            unset "$_kv"
+            ;;
+    esac
+done
 _chk_home_is_owned() {
     [ -f "$1/.owner" ] || return 1
     _op=$(cat "$1/.owner" 2>/dev/null || true)

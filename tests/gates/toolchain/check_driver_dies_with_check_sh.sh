@@ -33,7 +33,9 @@
 #            and its EXIT trap removed its mktemp dir
 #   axis 5   the same for a DRIVER-run gate (the real driver's `--gate-row`, i.e. `_gate`)
 #   axis 6   a deadline kill takes the grandchildren, says TIMEOUT naming the gate and the
-#            setting, exits 124, and the EXIT trap still removes the mktemp dir
+#            setting, exits 124, and the EXIT trap still removes the mktemp dir; 6b the same
+#            through check.sh is a `^^ TIMEOUT` line and a counted failure in the summary, and
+#            a malformed knob (` 2`) is refused once by check.sh instead of meaning "no deadline"
 #   axis 7   SIGTERM of check.sh returns within a few seconds while a gate is sleeping
 #   axis 8   `kill -- -PGID` still reaches a grandchild (no setsid anywhere)
 #   axis 9   a gate that EXITS leaving a background process behind leaves nothing running
@@ -341,6 +343,24 @@ NS=$(_survivors | grep -c . || true)
 [ "$NS" = "0" ] || _fail "axis 6: $NS grandchild(ren) survived the deadline"
 [ "$(_scratch_gone "$M6")" = "gone" ] || _fail "axis 6: the EXIT trap did not run on a deadline kill — mktemp dir left"
 _kill_survivors
+
+echo "axis 6b: through check.sh, the deadline is a TIMEOUT line and a counted failure"
+R6="$T/r6"; _mk_chkroot "$R6" "$ROOT/scripts/check.sh"
+RC6B=0
+( cd "$R6" && env -u CYRIUS_HOME HOME="$R6/home" TMPDIR="$R6/tmp" CYRIUS_CHECK_LONG_TIMEOUT=2 \
+    sh scripts/check.sh zzsleeper ) > "$R6/out" 2>&1 || RC6B=$?
+[ "$RC6B" = "1" ] || _fail "axis 6b: a check.sh run whose gate timed out exited $RC6B, expected 1"
+grep -q '\^\^ TIMEOUT (killed at the CYRIUS_CHECK_LONG_TIMEOUT deadline): tests/gates/zzsup/zzsleeper.sh' "$R6/out" \
+    || _fail "axis 6b: no '^^ TIMEOUT' line naming the gate"
+grep -q 'timeouts:    1 of those failures' "$R6/out" || _fail "axis 6b: the summary does not count the timeout"
+NS=$(_survivors | grep -c . || true)
+[ "$NS" = "0" ] || _fail "axis 6b: $NS process(es) survived the deadline"
+_kill_survivors
+# A malformed knob is said ONCE, by check.sh, and dropped — never silently a 0 (no deadline).
+( cd "$R6" && env -u CYRIUS_HOME HOME="$R6/home" TMPDIR="$R6/tmp" CYRIUS_CHECK_LONG_TIMEOUT=' 2' \
+    sh scripts/check.sh --resolve zzsleeper ) > "$R6/knob.out" 2>&1
+[ "$(grep -c "CYRIUS_CHECK_LONG_TIMEOUT=' 2' is not a whole number" "$R6/knob.out")" = "1" ] \
+    || _fail "axis 6b: check.sh did not refuse CYRIUS_CHECK_LONG_TIMEOUT=' 2' exactly once"
 
 echo "axis 7: SIGTERM of check.sh returns within seconds while a gate sleeps"
 R7="$T/r7"; _mk_chkroot "$R7" "$ROOT/scripts/check.sh"
