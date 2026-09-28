@@ -912,6 +912,10 @@ _chk_gate "$ROOT/tests/gates/codegen/dce_data_vaddr_frozen.sh"
 # compiler and requires the outputs to DIFFER — byte-identical output IS the proof of inertness,
 # and needs no disassembler, so it can never degrade into a skip. Mutation-proven on four
 # separate reverts (guard drop, arm drop, flag-consumer break, cx pass-2 revert).
+# 6.6.9 (bite 2): it read GREEN while six forks armed none of #must_use/#deprecated/#pure/#io/
+# #alloc before the first statement. Now: one dispatcher (_tl_directive) structurally, and the
+# four warnings measured in BOTH positions on every runnable fork, plus #assert, bare
+# #deprecated and cx #naked rows.
 _chk_gate "$ROOT/tests/gates/frontend/directive_fork_parity.sh"
 
 # v6.5.64: a fixed-lane vector op on three &local operands must emit the DIRECT form (two rbp

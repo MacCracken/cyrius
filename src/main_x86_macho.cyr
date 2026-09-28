@@ -275,26 +275,10 @@ while (scan == 1) {
             else { if (PEEKT(S) == 40) { PARSE_STRUCT_DEF(S); }
                 else { if (PEEKT(S) == 101) { PARSE_UNION_DEF(S); }
                     else { if (PEEKT(S) == 3) { PARSE_GVAR_REG(S); }
-                        # v6.2.2: pass-1 must consume fn-attribute annotation tokens
-                        # 109 #regalloc / 122 #must_use / 124 #deprecated / 125 #pure /
-                        # 126 #io / 127 #alloc — mirrors main.cyr:1150-1165. Without these,
-                        # an annotated fn (bayan's `#pure fn bayan_u128_eq`) fell into
-                        # `else { scan = 0; }`, ending pass-1 early and leaving bayan's
-                        # `TomlError` enum unregistered → `error: unexpected enum` on
-                        # x86 macOS (this fork is separate from main.cyr). Pass 2 arms flags.
-                        else { if (PEEKT(S) == 109) { STI(S, GTI(S) + 1); }
-                            else { if (PEEKT(S) == 122) { STI(S, GTI(S) + 1); }
-                                else { if (PEEKT(S) == 124) {
-                                        STI(S, GTI(S) + 1);
-                                        if (PEEKT(S) == 10) {
-                                            STI(S, GTI(S) + 1);
-                                            if (PEEKT(S) == 30) { STI(S, GTI(S) + 1); }
-                                            if (PEEKT(S) == 11) { STI(S, GTI(S) + 1); }
-                                        }
-                                    }
-                                    else { if (PEEKT(S) == 125) { STI(S, GTI(S) + 1); }
-                                        else { if (PEEKT(S) == 126) { STI(S, GTI(S) + 1); }
-                                            else { if (PEEKT(S) == 127 || PEEKT(S) == 133 || PEEKT(S) == 163) { STI(S, GTI(S) + 1); }   # v6.2.27: +128 #naked (consume-and-ignore)
+                        # 6.6.9: every top-level directive (#regalloc #must_use #deprecated #pure #io #alloc
+                        # #naked #inline #assert) goes through ONE dispatcher shared by all seven forks and
+                        # PARSE_PROG. Pass 1 consumes; pass 2 arms. See _tl_directive (parse_fn.cyr).
+                        else { if (_tl_directive(S, 0) == 1) { }
                         else { if (_IS_FN_KW(S) == 1) {
                                 # v6.3.5 CO-01 — pass-1 fn-signature prescan (see _prescan_fn_sig in parse_fn.cyr).
                                 _prescan_fn_sig(S);
@@ -311,7 +295,7 @@ while (scan == 1) {
                                             if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
                                         }
                                         else { if (PEEKT(S) == 77) { _prescan_impl(S); }
-                                            else { scan = 0; } } } } } } } } } } } } } } } } }
+                                            else { scan = 0; } } } } } } } } } } } }
 }
 
 # 6.6.5 — pass 1 stops at the first top-level statement, but PARSE_PROG keeps defining
@@ -367,25 +351,11 @@ while (topgo == 1) {
                                 STI(S, GTI(S) + 1);
                                 if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
                             }
-                            # v6.2.2: consume fn-attribute annotation tokens 109/122/124/
-                            # 125/126/127 in pass-2 (this x86-macho fork implements only the
-                            # regalloc hint, not pure/io/alloc — so skip these tokens).
-                            # Without it, a top-level `#pure` ended pass-2 early and the
-                            # trailing enum tripped `unexpected enum`. Mirror of the other
-                            # forks' pass-2 fix.
-                            else { if (PEEKT(S) == 109) { STI(S, GTI(S) + 1); }
-                                else { if (PEEKT(S) == 122) { STI(S, GTI(S) + 1); }
-                                    else { if (PEEKT(S) == 124) {
-                                            STI(S, GTI(S) + 1);
-                                            if (PEEKT(S) == 10) {
-                                                STI(S, GTI(S) + 1);
-                                                if (PEEKT(S) == 30) { STI(S, GTI(S) + 1); }
-                                                if (PEEKT(S) == 11) { STI(S, GTI(S) + 1); }
-                                            }
-                                        }
-                                        else { if (PEEKT(S) == 125) { STI(S, GTI(S) + 1); }
-                                            else { if (PEEKT(S) == 126) { STI(S, GTI(S) + 1); }
-                                                else { if (PEEKT(S) == 127 || PEEKT(S) == 133 || PEEKT(S) == 163) { if (PEEKT(S) == 133) { _naked_pending = 1; } if (PEEKT(S) == 163) { _inline_pending = 1; } STI(S, GTI(S) + 1); }   # v6.5.16: ARM #naked (was consume-and-ignore since v6.2.27 — a SILENT MISCOMPILE)
+                            # 6.6.9: ONE dispatcher arms every fn attribute and evaluates #assert — the same call
+                            # as main.cyr. This region used to consume #must_use/#deprecated/#pure/#io/#alloc and arm
+                            # nothing, on a misreading of CO-03 (which gates OPTIMISATIONS, not diagnostics), so their
+                            # warnings never fired here for an attribute before the first statement. See _tl_directive.
+                            else { if (_tl_directive(S, 1) == 1) { }
                             else { if (_IS_FN_KW(S) == 1) {
                                     # v6.5.17 — EVERY fn body is PARSED, reachable or not. The
                                     # parse-time "skip an unreferenced fn's body" stub that used to
@@ -401,7 +371,7 @@ while (topgo == 1) {
                                     }
                                     else { if (PEEKT(S) == 77) { PARSE_IMPL(S); }
                                         else { if (PEEKT(S) == 78) { STI(S, GTI(S) + 1); if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); } }
-                                            else { topgo = 0; } } } } } } } } } } } } } } } } }
+                                            else { topgo = 0; } } } } } } } } } } } }
 }
 
 # Reset module

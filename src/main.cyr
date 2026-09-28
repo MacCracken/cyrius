@@ -1434,38 +1434,10 @@ while (scan == 1) {
             else { if (PEEKT(S) == 40) { PARSE_STRUCT_DEF(S); }
                 else { if (PEEKT(S) == 101) { PARSE_UNION_DEF(S); }
                     else { if (PEEKT(S) == 3) { PARSE_GVAR_REG(S); }
-                        # v4.8.4-alpha1: #regalloc — consume silently in pass 1. Pass 1
-                        # doesn't REGFN, so there's no metadata slot to attach to here;
-                        # pass 2 re-reads the same token stream and arms the pending flag
-                        # then. (v4.8.4-alpha4 kept the pass-1 consume unchanged so a
-                        # stale flag can't leak from pass 1 into pass 2.)
-                        # v5.8.21: same shape for #must_use (122), #deprecated (124),
-                        # #pure (125), #io (126), #alloc (127). Pre-fix, an annotated
-                        # fn at the start of any stdlib file (e.g. `#io fn sys_write`)
-                        # caused the pass-1 scanner to fall into the catchall else and
-                        # terminate, leaving subsequent enum / fn defs unregistered for
-                        # pass 2. Surfaced when the v5.8.20 annotation-ramp bite
-                        # marked sys_open/close/read/write `#io` and check.sh dropped
-                        # to 48/64 — every test file including syscalls hit
-                        # "unexpected enum" at lib/syscalls_x86_64_linux.cyr:555.
-                        # All five tokens consume silently here; pass 2 arms the
-                        # pending flags via parse.cyr's directive dispatcher.
-                        else { if (PEEKT(S) == 109) { STI(S, GTI(S) + 1); }
-                            else { if (PEEKT(S) == 122) { STI(S, GTI(S) + 1); }
-                                else { if (PEEKT(S) == 124) {
-                                        # #deprecated has a (STR) message arg in pass 2;
-                                        # in pass 1 we still need to consume the parens
-                                        # and the string literal so they don't dangle.
-                                        STI(S, GTI(S) + 1);
-                                        if (PEEKT(S) == 10) {
-                                            STI(S, GTI(S) + 1);
-                                            if (PEEKT(S) == 30) { STI(S, GTI(S) + 1); }
-                                            if (PEEKT(S) == 11) { STI(S, GTI(S) + 1); }
-                                        }
-                                    }
-                                    else { if (PEEKT(S) == 125) { STI(S, GTI(S) + 1); }
-                                        else { if (PEEKT(S) == 126) { STI(S, GTI(S) + 1); }
-                                            else { if (PEEKT(S) == 127 || PEEKT(S) == 133 || PEEKT(S) == 163) { STI(S, GTI(S) + 1); }
+                        # 6.6.9: every top-level directive (#regalloc #must_use #deprecated #pure #io
+                        # #alloc #naked #inline #assert) goes through ONE dispatcher, shared by all
+                        # seven forks and PARSE_PROG. Pass 1 consumes; pass 2 arms. See _tl_directive.
+                        else { if (_tl_directive(S, 0) == 1) { }
                             else { if (_IS_FN_KW(S) == 1) {
                                     # v6.3.5 CO-01 — prescan the fn signature:
                                     # register the fn + record its ABI metadata
@@ -1496,16 +1468,7 @@ while (scan == 1) {
                                                     if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
                                                 }
                                                 else { if (PEEKT(S) == 77) { _prescan_impl(S); }
-                                                    else { if (PEEKT(S) == 107) {
-                                                            # #assert — skip in pass 1, evaluated in pass 2 via PARSE_STMT
-                                                            var _as_ln = GTLINE(S, GTI(S));
-                                                            while (PEEKT(S) != 5 && PEEKT(S) != 12) {
-                                                                if (GTLINE(S, GTI(S)) != _as_ln) { break; }
-                                                                STI(S, GTI(S) + 1);
-                                                            }
-                                                            if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
-                                                        }
-                                                        else { scan = 0; } } } } } } } } } } } } } } } } } } }
+                                                    else { scan = 0; } } } } } } } } } } } } }
 }
 
 # 6.6.5 — pass 1 stops at the first top-level statement, but PARSE_PROG keeps defining
@@ -1665,37 +1628,10 @@ while (topgo == 1) {
                                 STI(S, GTI(S) + 1);
                                 if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
                             }
-                            # v4.8.4-alpha4: #regalloc — arm the pending flag so the next `fn`
-                            # definition picks it up in REGFN. PARSE_FN_DEF transfers the flag
-                            # to fn_regalloc[fi] and clears _regalloc_pending. The DCE stub
-                            # path below also clears the flag (dead fns don't need tracking).
-                            #
-                            # v5.8.21: same shape for the v5.6.x + v5.8.20 fn-attribute
-                            # tokens. Pre-fix, an annotated fn at top of any stdlib file
-                            # (e.g. `#io fn sys_write`) had no Pass-2 handler, so the
-                            # directive token sat unconsumed and the parser hit `enum`
-                            # at line 555 (or wherever the next decl was) in the WRONG
-                            # context — surfaced as "unexpected enum" with a misleading
-                            # line number. All five tokens arm the corresponding pending
-                            # flag in parse.cyr; PARSE_FN_DEF transfers them at the next
-                            # fn definition.
-                            else { if (PEEKT(S) == 109) { _regalloc_pending = 1; STI(S, GTI(S) + 1); }
-                                else { if (PEEKT(S) == 122) { _must_use_pending = 1; STI(S, GTI(S) + 1); }
-                                    else { if (PEEKT(S) == 124) {
-                                            STI(S, GTI(S) + 1);
-                                            if (PEEKT(S) == 10) {
-                                                STI(S, GTI(S) + 1);
-                                                if (PEEKT(S) == 30) {
-                                                    _deprecated_msg_pending = PEEKV(S);
-                                                    _deprecated_pending = 1;
-                                                    STI(S, GTI(S) + 1);
-                                                }
-                                                if (PEEKT(S) == 11) { STI(S, GTI(S) + 1); }
-                                            }
-                                        }
-                                        else { if (PEEKT(S) == 125) { _pure_pending = 1; STI(S, GTI(S) + 1); }
-                                            else { if (PEEKT(S) == 126) { _io_pending = 1; STI(S, GTI(S) + 1); }
-                                                else { if (PEEKT(S) == 127 || PEEKT(S) == 133 || PEEKT(S) == 163) { if (PEEKT(S) == 133) { _naked_pending = 1; } else { if (PEEKT(S) == 163) { _inline_pending = 1; } else { _alloc_pending = 1; } } STI(S, GTI(S) + 1); }
+                            # 6.6.9: ONE dispatcher arms every fn attribute (and evaluates #assert) — the same
+                            # call in all seven forks and in PARSE_PROG, so an attribute armed here on x86 is armed
+                            # everywhere. PARSE_FN_DEF transfers the pending flags onto the next fn. See _tl_directive.
+                            else { if (_tl_directive(S, 1) == 1) { }
                                 else { if (_IS_FN_KW(S) == 1) {
                                         # v6.5.17 — EVERY fn body is PARSED, reachable or not.
                                         # A parse-time "skip the body of an unreferenced fn" pass used
@@ -1727,7 +1663,7 @@ while (topgo == 1) {
                                         else { if (PEEKT(S) == 77) { PARSE_IMPL(S); }
                                             else { if (PEEKT(S) == 78) { STI(S, GTI(S) + 1); if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); } }
                                                 else { if (PEEKT(S) == 79) { STI(S, GTI(S) + 1); if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); } }
-                                                    else { topgo = 0; } } } } } } } } } } } } } } } } } }
+                                                    else { topgo = 0; } } } } } } } } } } } } }
 }
 
 # Reset module

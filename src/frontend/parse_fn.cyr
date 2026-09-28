@@ -4360,6 +4360,101 @@ fn _warn_undefined_prepass(S): i64 {
     return 0;
 }
 
+# 6.6.9 — THE top-level directive dispatcher. Every fork's pass-1 scan calls it with
+# arm=0 (consume only), every fork's pass-2 dispatch and PARSE_PROG call it with arm=1
+# (arm the pending flag PARSE_FN_DEF transfers onto the next fn). Returns 1 when the
+# token at the cursor was a directive it handled, 0 otherwise.
+#
+# WHY ONE FN: each of the seven src/main*.cyr forks used to carry its own copy of this
+# chain in both passes, plus PARSE_PROG's copy — fifteen copies. Only main.cyr's pass 2
+# armed #must_use/#deprecated/#pure/#io/#alloc, so on the other six forks an attribute
+# placed before the first top-level statement (where every library puts them) was
+# consumed and IGNORED: no warning, rc 0. The same drift made #naked and #inline inert on
+# four targets at 6.6.3, and left #assert out of five forks' pass 1 and every pass 2, so a
+# top-level `#assert` ended the declaration phase and the next struct was refused.
+# A new directive goes HERE, once. CHANGELOG [6.6.9]
+fn _tl_directive(S, arm): i64 {
+    var t = PEEKT(S);
+    if (t == 107) { _tl_assert(S, arm); return 1; }
+    if (t == 124) { _tl_deprecated(S, arm); return 1; }
+    if (_tl_flag_tok(t) == 0) { return 0; }
+    if (arm == 1) { _tl_arm(t); }
+    STI(S, GTI(S) + 1);
+    return 1;
+}
+
+# The one-token fn attributes: #regalloc #must_use #pure #io #alloc #naked #inline.
+fn _tl_flag_tok(t): i64 {
+    if (t == 109 || t == 122 || t == 125 || t == 126) { return 1; }
+    if (t == 127 || t == 133 || t == 163) { return 1; }
+    return 0;
+}
+
+# Arm the pending flag for a one-token fn attribute. #regalloc is armed on every fork:
+# PARSE_FN_DEF's SFRA gate (`_AARCH64_BACKEND == 0`) and the picker's own cx gate keep it
+# inert where the x86 picker does not exist — the same arming PARSE_PROG always did.
+# ⚠ #naked is NOT armed on cx, in either position: a bytecode VM has no machine return
+# address to leave unframed, so a naked body falls straight through into the next fn.
+# lib/fdlopen.cyr's dl_setjmp/dl_longjmp rely on that (their cx arm is ordinary code with
+# a framed `return 0`). PARSE_PROG used to arm it on cx after the first statement.
+fn _tl_arm(t): i64 {
+    if (t == 133) { if (_TARGET_CX == 0) { _naked_pending = 1; } return 0; }
+    if (t == 109) { _regalloc_pending = 1; }
+    if (t == 122) { _must_use_pending = 1; }
+    if (t == 125) { _pure_pending = 1; }
+    if (t == 126) { _io_pending = 1; }
+    if (t == 127) { _alloc_pending = 1; }
+    if (t == 163) { _inline_pending = 1; }
+    return 0;
+}
+
+# #deprecated("msg"). The message is REQUIRED (the v5.6.4 design): arm=1 refuses a bare
+# `#deprecated` by name wherever it sits — it used to be a silent no-op before the first
+# statement and a hard error after it. On the error the cursor stays put, so the `fn`
+# that follows is still parsed. Pass 1 (arm=0) only consumes; pass 2 reports.
+fn _tl_deprecated(S, arm): i64 {
+    STI(S, GTI(S) + 1);
+    if (arm == 0) {
+        if (PEEKT(S) == 10) {
+            STI(S, GTI(S) + 1);
+            if (PEEKT(S) == 30) { STI(S, GTI(S) + 1); }
+            if (PEEKT(S) == 11) { STI(S, GTI(S) + 1); }
+        }
+        return 0;
+    }
+    if (PEEKT(S) != 10) {
+        # Report at the directive, not at the `fn` after it, and name the fix. The cursor is
+        # already on a clean token, so clear the panic latch instead of letting the next
+        # fn body's first statement resync over real code.
+        STI(S, GTI(S) - 1);
+        ERR_MSG(S, "#deprecated needs a message string: #deprecated(<why, and what to use instead>)", 79);
+        _panic = 0;
+        STI(S, GTI(S) + 1);
+        return 0;
+    }
+    STI(S, GTI(S) + 1);
+    if (PEEKT(S) != 30) { ERR_EXPECT(S, 30); return 0; }
+    _deprecated_msg_pending = PEEKV(S);
+    STI(S, GTI(S) + 1);
+    if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); return 0; }
+    STI(S, GTI(S) + 1);
+    _deprecated_pending = 1;
+    return 0;
+}
+
+# #assert — pass 1 skips the line; arm=1 evaluates it through PARSE_STMT, which emits no
+# code for it, so it stays a declaration-phase directive instead of the first statement.
+fn _tl_assert(S, arm): i64 {
+    if (arm == 1) { PARSE_STMT(S); return 0; }
+    var ln = GTLINE(S, GTI(S));
+    while (PEEKT(S) != 5 && PEEKT(S) != 12) {
+        if (GTLINE(S, GTI(S)) != ln) { break; }
+        STI(S, GTI(S) + 1);
+    }
+    if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
+    return 0;
+}
+
 # 6.6.5 — intern `mod_name` ONCE. Writes the candidate at GNPOS WITHOUT committing; if an
 # fn of exactly that name is already registered (pass 1 minted it), reuse THAT entry's
 # string and leave the pool untouched, otherwise commit. mmod == 0 → noff unchanged, so

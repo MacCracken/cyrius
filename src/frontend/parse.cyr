@@ -3033,78 +3033,26 @@ fn PARSE_PROG(S): i64 {
         var typ = PEEKT(S);
         if (typ == 12) { go = 0; }
         else { if (typ == 14) { go = 0; }
-            else { if (typ == 109) {
-                    # v4.8.4-beta1: #regalloc directive inside top-level init
-                    # body (e.g. `alloc_init(); #regalloc fn foo() {...}` in a
-                    # .tcyr harness). Arm the pending flag exactly like the
-                    # pass-2 declaration dispatcher — the next PARSE_FN_DEF
-                    # picks it up.
-                    _regalloc_pending = 1;
-                    STI(S, GTI(S) + 1);
+            else { if (_tl_directive(S, 1) == 1) {
+                    # 6.6.9: the SAME dispatcher every fork's pass 2 calls, so an attribute written
+                    # after the first top-level statement behaves exactly like one written before it.
+                    # (This was a 15th copy; bare `#deprecated` errored here and was a silent no-op
+                    # there.) `#assert` also lands here and is evaluated via PARSE_STMT. See _tl_directive.
                 }
-                else { if (typ == 122) {
-                        # v5.6.3: #must_use — arm the pending flag; the next
-                        # PARSE_FN_DEF consumes it into fn_flags[fi] bit 0.
-                        _must_use_pending = 1;
-                        STI(S, GTI(S) + 1);
+                else { if (typ == 32) {
+                        # fn definition inside top-level code (relaxed ordering)
+                        # Emit jmp over fn body, compile fn, patch jmp
+                        # v6.6.4: this loop never parses `public` (a `public` after
+                        # top-level code is a syntax error), so any armed marker here
+                        # is STALE — pass 2's `var` skip re-arms it at `public var` and
+                        # nothing on this path consumed it, re-exposing the first
+                        # relaxed-ordering fn in a private file.
+                        _pub_pending = 0;
+                        var fn_skip = EJMP0(S);
+                        PARSE_FN_DEF(S);
+                        EPATCH(S, fn_skip);
                     }
-                    else { if (typ == 124) {
-                            # v5.6.4: #deprecated("msg") — arm pending flag + capture
-                            # the message string for PARSE_FN_DEF. Syntax mirrors
-                            # #pe_import: paren, single string literal, close paren.
-                            # Unlike #must_use the message is REQUIRED (the diagnostic
-                            # is expected to carry a reason / replacement pointer).
-                            STI(S, GTI(S) + 1);
-                            if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
-                            STI(S, GTI(S) + 1);
-                            if (PEEKT(S) != 30) { ERR_EXPECT(S, 30); }
-                            _deprecated_msg_pending = PEEKV(S);
-                            STI(S, GTI(S) + 1);
-                            if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
-                            STI(S, GTI(S) + 1);
-                            _deprecated_pending = 1;
-                        }
-                        else { if (typ == 125) {
-                                # v5.8.20: #pure — arm pending flag for next fn.
-                                _pure_pending = 1;
-                                STI(S, GTI(S) + 1);
-                            }
-                            else { if (typ == 126) {
-                                    # v5.8.20: #io — arm pending flag for next fn.
-                                    _io_pending = 1;
-                                    STI(S, GTI(S) + 1);
-                                }
-                                else { if (typ == 127) {
-                                        # v5.8.20: #alloc — arm pending flag for next fn.
-                                        _alloc_pending = 1;
-                                        STI(S, GTI(S) + 1);
-                                    }
-                                    else { if (typ == 163) {
-                                            # v6.5.63: #inline (token 163) — arm pending; PARSE_FN_DEF admits the
-                                            # next fn to the inline-replay path, and WARNS if it cannot.
-                                            _inline_pending = 1;
-                                            STI(S, GTI(S) + 1);
-                                        }
-                                        else { if (typ == 133) {
-                                                # v6.2.27: #naked (token 133; 128 is f64v_dot) — arm pending; PARSE_FN_DEF
-                                                # skips prologue/epilogue/frame for the next fn.
-                                                _naked_pending = 1;
-                                                STI(S, GTI(S) + 1);
-                                            }
-                                            else { if (typ == 32) {
-                                                    # fn definition inside top-level code (relaxed ordering)
-                                                    # Emit jmp over fn body, compile fn, patch jmp
-                                                    # v6.6.4: this loop never parses `public` (a `public` after
-                                                    # top-level code is a syntax error), so any armed marker here
-                                                    # is STALE — pass 2's `var` skip re-arms it at `public var` and
-                                                    # nothing on this path consumed it, re-exposing the first
-                                                    # relaxed-ordering fn in a private file.
-                                                    _pub_pending = 0;
-                                                    var fn_skip = EJMP0(S);
-                                                    PARSE_FN_DEF(S);
-                                                    EPATCH(S, fn_skip);
-                                                }
-                                                else { PARSE_STMT(S); } } } } } } } } } } }
+                    else { PARSE_STMT(S); } } } }
     }
     # v6.5.24 — bare-metal forbidden-module check (bare-metal deliverable #4), reported
     # HERE rather than at the include site. The preprocessor records which host-only
