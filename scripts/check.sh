@@ -1448,3 +1448,7 @@ _chk_gate "$ROOT/tests/gates/diagnostics/large_static_data_every_backend.sh"
 # aarch64 (7 f64 polyfills, slice, await, async fn) and cx (slice, await, async fn) used to
 # SIGSEGV (rc 139) right after the diagnostic, decoding the -1 fn index as a var fixup.
 _chk_gate "$ROOT/tests/gates/diagnostics/missing_helper_error_exits_1.sh"
+
+# 6.6.9 (bite 3) — `return None();` (any nullary `: stack` variant) beside `return Some(v);` is
+# a whole variant, not a dropped tag: no mixed-return warning. The dropped-tag shapes still warn.
+_chk_gate "$ROOT/tests/gates/frontend/stack_enum_mixed_return_warning.sh"

@@ -273,18 +273,27 @@
 #                                        float-dup when an arg is f64;
 #                                        callee-side save-area prologue +
 #                                        va_arg stdlib is Phase 3-full.
-#   0x17A000  (FREED v6.4.75 — was fn_flags; now _fnflg_base, alloc'd max-sized)
-#                                        (v5.6.3). bit0 = #must_use (warn
-#                                        when return is dropped at
-#                                        expression-statement level); bit1
-#                                        reserved for future @unsafe-fn;
-#                                        bit2 = #deprecated (v5.6.4 — warn
-#                                        at every call site, message in
-#                                        fn_deprecated_msg below).
-#                                        Set by PARSE_FN_DEF consuming
-#                                        pending flags from preceding lexer
-#                                        tokens (122 = HASH_MUST_USE, 124 =
-#                                        HASH_DEPRECATED).
+#   0x17A000  (FREED v6.4.75 — was fn_flags; now _fnflg_base, alloc'd max-sized,
+#                                        one 64-bit word per fn; GFLG/SFLG in util.cyr)
+#                                        fn_flags bits (6.6.9: this map listed only 0-2):
+#                                        bit0 (1)   #must_use — warn when the result
+#                                                   is dropped at statement level (v5.6.3)
+#                                        bit1 (2)   reserved (future @unsafe-fn)
+#                                        bit2 (4)   #deprecated — warn at every call,
+#                                                   message in fn_deprecated_msg (v5.6.4)
+#                                        bit3 (8)   #pure   \ v5.8.20; PARSE_FN_DEF
+#                                        bit4 (16)  #io      > moves the pending
+#                                        bit5 (32)  #alloc  /  directive onto the fn
+#                                        bit6 (64)  private (v6.5.0 visibility)
+#                                        bit7 (128) a same-name fn exists in another
+#                                                   file (scoped lookup, parse_fn.cyr)
+#                                        bit8 (256) returns a `: stack` pair (tag +
+#                                                   payload) — set on 1-field stack
+#                                                   variant ctors and propagated
+#                                                   through `return` (v6.5.67)
+#                                        bit9 (512) NULLARY stack-variant ctor: returns
+#                                                   the tag alone, a whole variant
+#                                                   value (6.6.9, parse_types.cyr)
 #   0x1EC000 gvar_initval  [65536]       8192 × 8B — per-gvar static-init
 #                                        literal value (v5.11.64). Written
 #                                        by PARSE_GVAR_REG when RHS matches

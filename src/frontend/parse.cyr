@@ -236,6 +236,26 @@ fn _pair_prescan(S): i64 {
 # defects); in vani it was not.
 var _mixed_warned = 0;
 
+# Is the `return IDENT …` at token `t` a whole variant value (returns 0 = not plain) or a
+# single value (1 = plain)? A variant value is a call of a pair constructor (fn flag 256),
+# a call of a NULLARY stack-variant constructor (flag 512 — the tag IS the whole value),
+# or a nullary variant named bare (`return None;` — the same tag, the same rax). Anything
+# else — a wrapper, a local, a raw integer — is the dropped-tag class and stays plain.
+# 6.6.9: the nullary cases used to be plain, so `return None();` beside `return Some(v);`
+# was reported as a dropped tag and told to `return Err(x);`. CHANGELOG [6.6.9]
+fn _ret_is_variant(S, t): i64 {
+    var rf = FINDFN(S, TOKVAL(S, t));
+    if (rf < 0) { return 1; }
+    var fl = GFLG(S, rf);
+    var nt = TOKTYP(S, t + 1);
+    if (nt == 10) {
+        if ((fl & 256) != 0) { return 0; }
+        if ((fl & 512) != 0) { return 0; }
+    }
+    if (nt == 5) { if ((fl & 512) != 0) { return 0; } }
+    return 1;
+}
+
 fn _warn_mixed_pair_returns(S): i64 {
     if (_mixed_warned == 1) { return 0; }
     _mixed_warned = 1;
@@ -291,19 +311,14 @@ fn _warn_mixed_pair_returns(S): i64 {
                                                 var plain = 1;
                                                 if (TOKTYP(S, k + 1) == 5) { plain = 0; }
                                                 if (TOKTYP(S, k + 1) == 2) {
-                                                    if (TOKTYP(S, k + 2) == 10) {
-                                                        var rf2 = FINDFN(S, TOKVAL(S, k + 1));
-                                                        if (rf2 >= 0) {
-                                                            if ((GFLG(S, rf2) & 256) != 0) { plain = 0; }
-                                                        }
-                                                    }
+                                                    plain = _ret_is_variant(S, k + 1);
                                                 }
                                                 if (plain == 1) {
                                                     syscall(SYS_WRITE, 2, "warning:", 8);
                                                     _err_head_at(S, k);
                                                     syscall(SYS_WRITE, 2, ": `", 3);
                                                     PRSTR(S + 0xEC00000 + TOKVAL(S, i + 1));
-                                                    syscall(SYS_WRITE, 2, "` returns a `: stack` pair on another path but a SINGLE value here — the tag is dropped, so the caller reads this error as its TAG. Did you mean `return Err(x);`?\n", 165);
+                                                    syscall(SYS_WRITE, 2, "` returns a `: stack` pair on another path but a SINGLE value here — the tag is dropped, so the caller reads this value as its TAG. Return a variant of the same enum on this path: `Err(x)` for a Result, `None()` for an Option.\n", 229);
                                                     go = 0;
                                                 }
                                             }

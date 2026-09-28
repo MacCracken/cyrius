@@ -444,6 +444,12 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
                                 # it already decided was computed without knowing about this one.
                                 _pair_prescan_done = 0;
                             } }
+                        # 6.6.9 — a NULLARY stack variant (fn flag 512). It returns the tag alone,
+                        # which is the whole value, so `return None();` in a fn that returns
+                        # `Some(v)` elsewhere is a legal return — but the mixed-return warning
+                        # (parse.cyr) could only see flag 256 and called it a dropped tag.
+                        # CHANGELOG [6.6.9]
+                        if (is_stack_enum == 1) { if (ctor_arity == 0) { SFLG(S, cfi, GFLG(S, cfi) | 512); } }
                         S64(_fnt_offsets + cfi * 8, GCP(S));
                         # v6.2.41 — register the constructor's REAL arity (was a
                         # hardcoded 1 — a dead sentinel; _fnt_params' only reader
