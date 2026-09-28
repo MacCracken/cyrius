@@ -146,6 +146,7 @@ eight comment lines and would pass every gate, because `fold_table_matches_vendo
 | # | Bite | Items | Lane | src | Size |
 |---|---|---|---|---|---|
 | 1 | Top-level `for-in` binds a live global; enum constants fold past var index 1024 | [top-level for-in is broken](issues/2026-09-20-toplevel-for-in-loop-is-broken.md) · tail: the 1024 enum-fold cap (it also silently drops compile-time syscall reroutes on BOTH macOS targets; and it forced 6.6.7's `sys_sched_kicks` to size its buffer as a literal `208` — put back `var buf[SYSINFO_SIZE_FULL]` when this lands) | S1-route | ✔ commits `build/cycc` | M |
+| 1b | Nested-emitter + derive follow-ups from the 6.6.7 reviews | generic type-param forwarding returns 0; fn-pointer call inside a coroutine SIGSEGVs; forcing a completed coroutine re-runs it; derived Serialize zero-extends negative narrow fields; `#ifdef` inside a derived struct body (see *Placed here* below) | S1-route | ✔ | M |
 | 2 | arm64-macOS: an unrouted syscall faults instead of re-running a stale `x16`; the Darwin raw-literal axis made true; the Mach-O route query argc-aware | audit: stale-`x16` reissue (the class has shipped 8 times) · tail: 22 arch-neutral raw literals unrouted on Darwin · audit: Mach-O route query blind to argc | S1-route | ✔ | L |
 | 3 | Names + rows for aarch64-unreachable syscalls (`unshare`/`chroot`/`pivot_root`, `capget`/`capset`, `process_vm_*`, `mknodat`); stdlib `sys_fcntl` / `fd_set_nonblocking` / `fd_restore_flags` | [kavach: unshare/chroot unnamed, aarch64 chroot unreachable](issues/2026-09-25-kavach-unshare-chroot-unnamed-aarch64-chroot-unreachable.md) · [sigil: sys_fcntl wrapper](issues/2026-09-23-sigil-sys-fcntl-wrapper.md) · the first tier of the *nine syscall families* backlog | S1-route | ✔ | L |
 | 4 | IEEE float negation and conversion | audit: unary minus negates the BIT PATTERN (`-1.0` → `-4.0`, `-0.0` → `+0`); x86 `f64_neg` of `+0`; `f64_to` diverges across targets | S2-rt | ✔ source only | M |
@@ -160,6 +161,32 @@ Lanes: S1-route owns `aarch64/emit.cyr` ESYSXLAT and all five `lib/syscalls_*` p
 `lib/math.cyr`, `lib/ganita.cyr`, `lib/alloc.cyr`, `lib/atomic.cyr`, `programs/cxvm.cyr`; L-gates owns
 `scripts/check.sh`, `programs/checks/*.cyr`, `lib/regression.cyr`, `lib/process.cyr`. Merge S1 → S2 →
 L-agnos, L-cbt, L-tools → L-gates. No CVE.
+
+**Placed here from the 6.6.7 reviews** (found outside their bite; each rides the bite that owns its class):
+
+- **bite 1b (new, S1-route, src) — nested-emitter follow-ups:** a generic that forwards its type
+  parameter to another generic (`inner<T>(p)` inside a generic body) silently returns 0; `fncall1` /
+  a fn-pointer call inside a coroutine `async fn` SIGSEGVs; forcing a COMPLETED coroutine resumes it
+  from its last suspend, so its body and defers run again; `#derive(Serialize)` writes negative
+  i8/i16/i32 fields zero-extended (JSON does not round-trip); an `#ifdef`/`#endif` inside a derived
+  struct body reads as a comment to the derive walk.
+- **bite 2** — Mach-O unrouted-syscall warnings in builds that pull in sigil or yukti.
+- **bite 3** — `ws_server` / `http` ignore `sock_send`'s count (a short send is lost); the
+  `src/backend/aarch64/emit.cyr` ~1492 comment still cites yukti 2.3.11.
+- **bite 6** — cxvm's register file is 256 B but fp (r253) / sp (r254) are written at +2024/+2032,
+  inside guest memory; `call_site_stack_alignment.tcyr` does not compile on cx although its header
+  says its value rows run everywhere; six more unchecked allocs in `lib/io.cyr`; `fhm_set` silently
+  drops an insert when the table is saturated with tombstones.
+- **bite 7** — accepted agnos connections do not inherit the listener's per-socket timeouts;
+  `async_agnos`'s `async_timeout` comment says AGNOS has no fork.
+- **bite 8** — `cyrius audit` sets no child deadline (a hung cyrlint/cyrdoc hangs it); the fmt
+  walker ignores cyrfmt's exit status; Windows `exec_capture_status` can report exit 0 when
+  WaitForSingleObject/GetExitCodeProcess fail; the POSIX idle-deadline cut also fires on a `poll()`
+  error; the doc-stamp row accepts VERSION anywhere within 240 B of `Current head:`;
+  `install_atomic_over_running_binary.sh` exits 143 under `bash -eo pipefail` while printing PASS;
+  `derive_non_struct_rejected.sh` hard-codes `CC`; `crossos/fs_dirlist.tcyr` depends on the cwd;
+  `folds_agnos_parity`'s preamble puts every fold in scope for every fold, which hides cross-fold
+  borrowing (the exact way sandhi borrowed yukti's `SYS_SOCKET`); `version-bump.sh` is GNU-sed-only.
 
 ### 6.6.9 — remaining correctness and polish
 
@@ -181,6 +208,31 @@ Lanes: S1-front owns the parser files and all seven `src/main*.cyr`; S2-x86 owns
 `lib/syscalls_windows.cyr`, `lib/io.cyr`, `lib/fs.cyr` and reroute ids `0xF03D`–`0xF03F`; L-cbt owns every
 `cbt/*.cyr`; L-ci owns `ci.yml`, `scripts/check.sh`, `programs/checks/*.cyr`. Merge S1 → S2 → L-stdlib →
 L-cbt → L-ci. Expected self_compile gain from bite 1: roughly 19 %.
+
+**Placed here from the 6.6.7 reviews:**
+
+- **bite 2** — a top-level `#assert` ends the declaration phase (every later struct/enum is refused).
+- **bite 3** — a duplicate struct definition is accepted silently and the first layout wins; an
+  enum member and a top-level var of the same name with different values raise no duplicate warning
+  (yukti and mabda both declare `PCI_VENDOR_AMD`, differently).
+- **bite 5** — on PE a var-held syscall number at argc 2 gets -38 with no compile-time warning.
+- **bite 7** — `lib/tls.cyr` and `lib/syscalls.cyr` do not compile alone; three bayan-including
+  `.tcyr` compile with undefined `file_*`/`sock_*` (trap stubs).
+- **bite 8** — `cyrius.exe` under wine does not find tools in its own `bin/`.
+- **Not placed — a design call:** calling an undefined function is only a warning. Making it an error
+  changes every consumer build; asked when 6.6.9 bite 2 opens, with the default of keeping it a
+  warning outside tail position.
+
+### Sibling follow-ups found at the 6.6.7 fold (each is that repo's next patch release)
+
+- **sigil** — its other Linux-valued errno constants are wrong on Darwin (3.13.3 fixed EAGAIN only).
+- **vani** — `vani_drain` / `vani_drop` / `vani_state` mix a `: stack` Result with a single-value return.
+- **vani + mabda** — both define a private-in-spirit `_sk_emit_err`, a duplicate fn when both are in scope.
+- **yukti / mabda** — both declare `PCI_VENDOR_AMD` with different values.
+- **patra** — its raw getrandom sites (bundle `:1085`, `:1111`) skip the Darwin `0 → len` normalisation.
+- **sandhi** — its full test suite never runs on macOS (the EAGAIN defect lived there unseen).
+- **sakshi** — stale clock comments in its source repo.
+- **mirshi** — does not emulate agnos `#95` and writes only the 40-byte `sysinfo` base struct.
 
 ### Not placed in 6.6.7–6.6.9
 
