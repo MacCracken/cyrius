@@ -116,6 +116,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   [r11+disp32]` for a coroutine-frame slot. Verified on ach (x86_64 Mach-O) and cass (PE) as well
   as the host; gate `tests/gates/frontend/coroutine_fnptr_and_completion.sh` rows A-C
   (mutation-proven, all RED on 6.6.7).
+- **Forcing a coroutine that has already completed returns its value again and runs nothing.**
+  (bite 1b; found by the 6.6.7 bite 1 review.) **Root cause:** the body's real return never wrote
+  the coroutine's state word, so a force after completion re-entered at the LAST suspend: the
+  tail ran again, with its `defer`s, and a loop kept counting past its own exit — a three-await
+  loop forced ten times returned `0 0 0 3 4 5 6 7 8 9`, and its defer ran on every extra force.
+  **Fix:** at the real return, after the defer walker, the coroutine stamps `C[state] = DONE`
+  (-1) and keeps the value in a word past its frame (the constructor sizes the object 8 bytes
+  larger); the resume dispatch answers a DONE entry with that value and leaves through the
+  suspend exit (`_coro_done_check` / `_coro_mark_done`, parse.cyr). A plain `async fn` with no
+  mid-body `await` is not a coroutine and keeps its documented re-run-per-force behaviour.
+  Gate `tests/gates/frontend/coroutine_fnptr_and_completion.sh` rows D-E (mutation-proven, RED
+  on 6.6.7); the same probes pass on ach, cass (the
+  completion bug was live on PE too) and under wine.
 
 ## [6.6.7] — 2026-09-27
 

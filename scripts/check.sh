@@ -1244,5 +1244,6 @@ _chk_gate "$ROOT/tests/gates/frontend/derive_directive_refused.sh"
 _chk_gate "$ROOT/tests/gates/frontend/generic_type_arg_unknown_refused.sh"
 
 # 6.6.8 (bite 1b) — inside a coroutine `async fn`: fncallN / callptr / a closure call through the
-# HEAP-frame slot (ECALLIND called the stack slot: SIGSEGV). Mutation-proven in the header.
+# HEAP-frame slot (ECALLIND called the stack slot: SIGSEGV), and a completed coroutine answers a
+# later force with its value instead of resuming its last suspend. Mutation-proven in the header.
 _chk_gate "$ROOT/tests/gates/frontend/coroutine_fnptr_and_completion.sh"

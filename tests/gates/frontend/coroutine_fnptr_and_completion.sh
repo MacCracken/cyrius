@@ -1,11 +1,18 @@
 #!/bin/sh
 # coroutine_fnptr_and_completion.sh — 6.6.8 bite 1b: inside an `async fn` coroutine body an
-# indirect call (fncallN / callptr / a closure) calls the right code.
+# indirect call (fncallN / callptr / a closure) calls the right code, and forcing a coroutine that
+# has already COMPLETED returns its value again without running any of its body or defers.
 #
 # ⛔ WHY (fn pointer). PINDIRECT_CALL spills the callee to a fresh local and calls through it with
 # ECALLIND. In a coroutine that local lives in the HEAP frame — EFLSTORE wrote it to [r11+off] —
 # but ECALLIND always emitted `call [rbp+disp]`, so it called whatever the stack held there:
 # `var f = &tri; fncall1(f, 10)` between two awaits SIGSEGV'd (exit 139) while `tri(10)` was fine.
+#
+# ⛔ WHY (completion). The body's real return never wrote the coroutine's state word, so a force
+# after completion re-entered at the LAST suspend: the tail ran again, with its defers, and a
+# loop kept counting past its own exit (forces 5..10 of a three-await loop returned 4..9, and the
+# defer ran on each). Completion now stamps DONE and keeps the value; the dispatch answers a DONE
+# entry with it and runs nothing.
 #
 # ⚠ `async`/`await` are gated behind CYRIUS_ASYNC=1, which is why this is a SHELL gate and not a
 # `.tcyr` (the tcyr runner cannot set an env var). x86 family only, like the transform itself.
@@ -13,8 +20,12 @@
 #   A  fncall1(&fn, 10) between two awaits            -> 132 (was SIGSEGV)
 #   B  a fn pointer taken BEFORE an await, called after with fncall2, and callptr -> 1030
 #   C  a capturing closure called inside the coroutine  -> 150
+#   D  a straight-line body forced 6 times              -> 3 x 0, then 327 x 3; body tail ran ONCE
+#   E  a three-await loop with a defer, forced 10 times -> 3 x 0, then 3 x 7; defer ran ONCE
 #
-# Mutations: remove the coroutine branch of ECALLIND -> A, B, C RED (139).
+# Mutations: remove the coroutine branch of ECALLIND -> A, B, C RED (139). Remove
+# `_coro_mark_done` -> D, E RED (the tail and the defer re-run). Remove `_coro_done_check` ->
+# D, E RED.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -113,5 +124,56 @@ syscall(60, 0);
 EOF
 run c 150 "C: a capturing closure called inside the coroutine"
 
+cat > "$T/d.cyr" <<EOF
+$PRE
+var g_tail = 0;
+async fn steps(C): i64 {
+    var x = 7;
+    var s1 = await nopark();
+    x = x + 20;
+    var s2 = await nopark();
+    x = x + 300;
+    var s3 = await nopark();
+    g_tail = g_tail + 1;
+    return x;
+}
+fn main(): i64 {
+    alloc_init();
+    var C = steps(0);
+    var n = 0;
+    while (n < 6) { fmt_int(future_force(C)); syscall(1, 1, " ", 1); n = n + 1; }
+    fmt_int(g_tail);
+    return 0;
+}
+var e = main();
+syscall(60, 0);
+EOF
+run d '0 0 0 327 327 327 1' "D: a completed coroutine answers with its value; the tail ran once"
+
+cat > "$T/e.cyr" <<EOF
+$PRE
+var cran = 0;
+async fn steps(C): i64 {
+    var i = 0;
+    while (i < 3) {
+        defer { cran = cran + 1; }
+        var s = await nopark();
+        i = i + 1;
+    }
+    return i + 4;
+}
+fn main(): i64 {
+    alloc_init();
+    var C = steps(0);
+    var n = 0;
+    while (n < 10) { fmt_int(future_force(C)); syscall(1, 1, " ", 1); n = n + 1; }
+    fmt_int(cran);
+    return 0;
+}
+var e = main();
+syscall(60, 0);
+EOF
+run e '0 0 0 7 7 7 7 7 7 7 1' "E: a finished loop coroutine does not resume; its defer ran once"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: coroutine_fnptr_and_completion — $fails axis(es) red"; exit 1; fi
-echo "PASS: coroutine_fnptr_and_completion — fncallN / callptr / closure calls inside a coroutine reach their callee (A-C)"
+echo "PASS: coroutine_fnptr_and_completion — fncallN / callptr / closure calls inside a coroutine reach their callee (A-C); a completed coroutine answers with its value and runs nothing again (D-E)"

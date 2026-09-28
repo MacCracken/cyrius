@@ -994,7 +994,50 @@ fn _coro_suspend_jmp(S, sk): i64 {
     if (sk < 64) { store64(&_coro_sjp + sk * 8, j); }   # past 63 the caller has already errored
     return 0;
 }
+# ⛔ 6.6.8 — A COMPLETED COROUTINE IS DONE. Completion never wrote the state word, so forcing a
+# finished future re-entered at its LAST suspend: the tail of the body ran again, with its
+# defers, and a loop kept counting past its own exit (forces 5..10 of a 3-await loop returned
+# 4..9). The body's real return now stamps C[state] = DONE (-1) and keeps its value in a word
+# past the frame (`_CORO_LOCAL_OFF + _coro_flc * 8`, which the constructor sizes for); the
+# dispatch answers a DONE entry with that value and leaves through the suspend exit, so no
+# statement and no defer runs twice. CHANGELOG [6.6.8]
+fn _coro_res_off(): i64 { return _CORO_LOCAL_OFF + _coro_flc * 8; }
+# The first link of the resume dispatch (`_coro_flc` is already final: every local exists).
+fn _coro_done_check(S): i64 {
+    EFLLOAD(S, _coro_base);
+    EADDRA_IMM(S, _CORO_STATE_OFF);
+    ELOAD64(S);                       # rax = C[state]
+    EPUSHR(S);
+    EMOVI(S, 0 - 1);
+    EPOPC(S);
+    ECMPR(S);
+    var skip = EJCC(S, 0x85);         # jne -> the resume chain
+    EFLLOAD(S, _coro_base);
+    EADDRA_IMM(S, _coro_res_off());
+    ELOAD64(S);                       # rax = the completion value
+    store64(&_coro_sjp, EJMP0(S));    # -> the suspend exit (slot 0 is no suspend index)
+    EPATCH(S, skip);
+    return 0;
+}
+# At the real return, after the defer walker: rax is the completion value.
+fn _coro_mark_done(S): i64 {
+    EPUSHR(S);
+    EFLLOAD(S, _coro_base);
+    EADDRA_IMM(S, _CORO_STATE_OFF);
+    EPUSHR(S);
+    EMOVI(S, 0 - 1);
+    EPOPC(S);
+    ESTORE64(S);                      # C[state] = DONE
+    EFLLOAD(S, _coro_base);
+    EADDRA_IMM(S, _coro_res_off());
+    EPUSHR(S);
+    EPOPC(S);
+    EPOPR(S);
+    ESTORE64(S);                      # C[res] = rax
+    return 0;
+}
 fn _coro_land_suspends(S): i64 {
+    EPATCH(S, load64(&_coro_sjp));    # the DONE exit from _coro_done_check
     var k = 1;
     while (k <= _coro_nsusp && k < 64) {
         EPATCH(S, load64(&_coro_sjp + k * 8));

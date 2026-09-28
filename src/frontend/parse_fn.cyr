@@ -4632,7 +4632,7 @@ fn _async_emit_constructor(S, noff_f, fi_impl, pc): i64 {
     # state word at +24 and locals from +32, and the pre-v6.5.69 object is (2+pc)*8 = 24
     # bytes for a 1-parameter fn — the state write alone lands one word past the allocation.
     var _obj_bytes = (2 + pc) * 8;
-    if (_coro_was == 1) { _obj_bytes = _CORO_LOCAL_OFF + _coro_flc * 8; }
+    if (_coro_was == 1) { _obj_bytes = _coro_res_off() + 8; }   # 6.6.8: + the completion word
     # obj = alloc(_obj_bytes)
     EMOVI(S, _obj_bytes);
     EPUSHR(S);
@@ -6133,6 +6133,8 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # chain is what that parser itself falls back to and it needs no new machinery.
     if (_cur_fn_coro == 1) {
         EPATCH(S, _coro_top_jmp);
+        _coro_flc = GFLC(S);
+        _coro_done_check(S);
         var _dk = 1;
         while (_dk <= _coro_nsusp) {
             EFLLOAD(S, _coro_base);           # rax = C  (slot < _coro_lo: the stack path)
@@ -6155,8 +6157,8 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
         # Hand the frame size to the constructor, which is emitted AFTER this body and so
         # already knows how big the coroutine frame has to be — the one piece of luck in the
         # whole layout, and the reason no second pass is needed.
+        # (`_coro_flc` was taken at the top of this dispatch, before `_coro_done_check`.)
         _coro_was = 1;
-        _coro_flc = GFLC(S);
         # 6.6.7: `_cur_fn_coro` stays 1 until the defer walker is emitted (see the epilogue).
     }
     if (_gen_base == 1) { _tp_clear(S); }
@@ -6258,6 +6260,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # the body's flag stores wrote (clearing it before the walker is why coroutine defers never
     # ran: the set went to [r11+off], the test to [rbp-disp]). CHANGELOG [6.6.7]
     if (_cur_fn_coro == 1) {
+        _coro_mark_done(S);
         _coro_land_suspends(S);
         _cur_fn_coro = 0;
     }

@@ -2251,7 +2251,10 @@ async — stays byte-identical). Enable via the env var or `cyrius build` flags.
 **Status & limits (v6.3.11).** `async fn` (0–6 params) + `await` build and force
 first-class, spawnable Futures over the existing runtime — same cooperative
 semantics, sugarier surface. A Future re-runs its body on each `await`
-(force-once memoization is a follow-on). True stackless coroutines that *suspend
+(force-once memoization is a follow-on). A **coroutine** `async fn` — one that
+`await`s mid-body (v6.5.69) — is different: once its body has returned, forcing it
+again returns the same value and runs nothing, neither body nor `defer` (v6.6.8;
+before that it resumed from its last suspend and re-ran the tail). True stackless coroutines that *suspend
 and resume mid-body across an `await`* (a poll-driven state machine, without
 bundling the whole call) are a planned follow-on requiring a poll-based runtime;
 the current model is deferred-then-forced, which matches the run-to-completion

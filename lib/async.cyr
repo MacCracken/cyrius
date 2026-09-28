@@ -1171,7 +1171,9 @@ fn async_write_unlock(lk): i64 {
 # awaited (or spawned + run) — matching the cooperative runtime above, where a
 # Future is exactly a task with its arguments bundled in. v1 re-runs the body on
 # each force; force-once memoization (cache the result + a done flag) is a follow-on
-# (CHANGELOG [6.3.11]). Requires lib/fnptr.cyr (already a hard requirement of this
+# (CHANGELOG [6.3.11]). A COROUTINE async fn (one that awaits mid-body) is the exception:
+# its body stamps DONE when it returns, and a later force answers with the same value and
+# runs nothing (CHANGELOG [6.6.8]). Requires lib/fnptr.cyr (already a hard requirement of this
 # file — async_run dispatches tasks via fncall1).
 fn future_force(fut): i64 {
     if (fut == 0) { return 0; }
