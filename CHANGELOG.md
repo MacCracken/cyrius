@@ -755,6 +755,82 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Unchanged or fine: samay 79/79 (can drop its CI re-scan), agnosai 1577/1590 (99%), ghurni
   136/185 (73%, floor 65). Newly measured: hisab 1/1 → 642/644 (its CLAUDE.md "640/644" now
   matches the tool), nein 1/1 → 255/394, hoosh 14/465 → 84/764, kriya 6/87 → 72/304.
+- **`cyrius vet` / `cyrius deny` (cyaudit) see exactly the includes the compiler sees — all of
+  them, and nothing else — and judge a path by its components.** (bite 10.) **Root cause:**
+  `scan_includes` read a fixed 262,144 bytes and substring-searched them for `include "` at any
+  offset. So a COMMENT naming a removed include (`# Old: include "lib/gone.cyr"`) made `vet`
+  print `MISSING` and exit 1, and `# see include "../shared/x.cyr"` made `deny` report a
+  traversal; and, silently, a real include past byte 262,144 was invisible to both (`no
+  dependencies` / `0 deps, 0 violations`, rc 0 — ~41 ecosystem CI pipelines run `vet`, 10 run
+  `deny`). The trust test (`lib/`, `src/`, … prefixes) and the traversal test (a LEADING `..`)
+  were prefix tests, so `lib/../../etc/x.cyr` was trusted by `vet` and passed `deny`, and a path
+  that exists but cannot be read (a directory) read as "no dependencies". **Fix:** the
+  compiler's rule — an include is a directive only in column 0 (`ISINCLUDE`) and outside a string
+  literal (a copy of `PP_LEXST`), and it consumes its line; the file is read whole
+  (`file_read_whole`); `..` is refused as any component split on `/` and `\`, an absolute path is
+  `/x`, `\x` or `C:`; an unreadable file is an error. Gate
+  `tests/gates/toolchain/cyaudit_include_directives.sh` asks the COMPILER what an include is (a
+  commented / in-string include of a missing file compiles, the same text in column 0 does not);
+  8 mutations each RED, and the 6.6.7 cyaudit fails 12 of its 26 checks.
+- **`cyrius api-surface` lists exactly the public fns the compiler emits — the `#derive` families by
+  name, arity and visibility, every `pub fn`, and signatures that wrap across lines.** (bite 10;
+  [agnodrm: api-surface derive(Serialize) arity](docs/development/issues/archived/2026-09-22-agnodrm-api-surface-derive-serialize-arity.md).)
+  **Root cause:** `programs/cyrius_api_surface.cyr` re-implemented the derive emission by hand and
+  nothing checked it against `src/frontend/lex_pp.cyr`, so it had drifted on every axis: `_to_json`
+  listed at arity 1 (the emitter has taken `(ptr, sb)` since v5.9.31), `_from_json_str` never
+  listed, `#derive(Deserialize)` not recognised (stacked above `#derive(accessors)` it dropped the
+  codecs), `public struct` / `pub struct` and `enum` targets ignored, the field list a
+  skip-to-the-next-`;` scan, and file-private visibility ignored — in a `private` file it listed a
+  plain struct's fns the compiler makes private and omitted a `public struct`'s. agnodrm's
+  hand-roll → `#derive(Serialize)` migration read as `BREAKING … _to_json/2 removed`. The same
+  scanner never stepped over `pub` (322 `pub fn`s in `lib/yukti.cyr` invisible) and required a
+  signature's `)` on the `fn` line (37 wrapped signatures in this tree's `lib/` invisible — and so
+  invisible to `removed_symbol_census.sh`, which is keyed on this snapshot). **Fix:** the derive
+  surface mirrors the emitter rule by rule — the ENTRY directive picks the families as
+  `PP_DERIVE_SERIALIZE` / `_DESER` / `_ACCESSORS` do, the body is walked with the 6.6.7
+  `PP_DERIVE_FIELDS` grammar (trivia, `: Type`, `Vec<T>`, enum `= value`, optional `;`/`,`), the
+  body's `}` is found with the `PP_LEXST` state, and a non-`public` declaration in a `private`
+  file contributes nothing; `pub` is stepped over like `public`; arity counts depth-1 commas across
+  lines with `#` comments skipped. New gate `tests/gates/toolchain/api_surface_derive_matches_emitter.sh`
+  uses the COMPILER as the oracle: a fixture of every derive kind × {plain, public, pub,
+  private-file, enum, `: stack`, stacked both ways, gaps, no separators, tabs, comments and braces
+  in the body} is compiled with `CYRIUS_DCE_VERBOSE=1`; every listed fn must be emitted, every
+  emitted-but-unlisted fn must be refused as `private to its file`, and one program calling every
+  listed fn at its listed arity from another file must compile clean. 13 mutations, each RED; the
+  6.6.7 tool fails 5 of its 12 checks. `docs/api-surface.snapshot` gains 360 entries (yukti's
+  `pub fn`s, the wrapped signatures, `sigil::ima_status_from_json_str/1`) and
+  `sigil::ima_status_to_json` moves from `/1` to `/2`.
+  ⚠ **Consumers that gate on `cyrius api-surface` run `cyrius api-surface --update` once after
+  moving to 6.6.8** (agnostik: 7 derived `_to_json/1` entries become `/2`, plus the added
+  `_from_json_str`); no source change is needed.
+  ⚠ Mirrored as the compiler does it TODAY: `#derive(accessors)` above `#derive(Deserialize)`
+  emits no codecs (the reverse order does) — reported separately; the gate turns red if the two
+  ever differ.
+- **cyrlint's error-enum rule decides "is this sakshi?" by what the file IS, not by how its path
+  is spelled.** (bite 10; [sakshi: err-enum lint owner matched by path spelling](docs/development/issues/archived/2026-09-23-sakshi-err-enum-lint-owner-matched-by-path-spelling.md).)
+  **Root cause:** `_lint_path_is_err_owner` substring-matched `sakshi` against the path exactly
+  as the caller typed it — neither necessary nor sufficient. sakshi's own CI running `cyrlint
+  src/error.cyr` got **17** "reserved for the sakshi base logger" notes on its own canonical set
+  (0 as `$PWD/src/error.cyr`), and any leaf under a directory whose name contains `sakshi`
+  (a checkout dir, a CI workspace, `src/sakshi_glue.cyr`, `~/.cyrius/deps/sakshi/…`) was exempt —
+  harmless while the rule is a note, but the planned note → `warn` flip would have failed
+  sakshi's own lint gate first. **Fix** (the filing's option 1, the default): the owner is a
+  file whose basename is exactly `sakshi.cyr` (a vendored `lib/sakshi.cyr`, `dist/sakshi.cyr`) or
+  whose NEAREST `cyrius.cyml` — walked up as `<dir>/../` with no getcwd, bounded — declares
+  `[package] name = "sakshi"`; `/` and `\` both separate. The archived proposal's header, which
+  still read "FILED for review … No decisions committed", now records the shipped decision.
+- **cyrlint's `is_err` pre-pass counts only include DIRECTIVES.** (bite 10.) It armed the
+  "ambiguous is_err" warning when `include "lib/syscalls.cyr"` and `include "lib/tagged.cyr"`
+  appeared ANYWHERE in the file, so a comment (`# no longer: include "lib/tagged.cyr"`), an
+  indented line or a raw line of a multi-line string drew a false warning on every `is_err(`.
+  Now column 0, outside a string, the directive's line consumed — the compiler's rule
+  (`ISINCLUDE` / `PP_LEXST`), the same one `cyrius vet` now uses.
+- `tests/gates/toolchain/cyrlint_cross_line.sh` gains axis 9b (the owner, every case run
+  RELATIVE and ABSOLUTE — the gate had only ever passed absolute paths, so it could not see the
+  relative-path direction), axis 9c (the is_err fixtures `is_err_anchor.cyr` / `is_err_clash.cyr`),
+  and checks the write of its 1.3 MB `doc_huge` fixture: a failed write (a full RAM-backed
+  `/tmp`) surfaced only as "premise: doc_huge … got [no]", which read like a cyrdoc defect.
+  10 new mutations, each RED; the 6.6.7 cyrlint fails 10 of 161.
 
 ## [6.6.7] — 2026-09-27
 

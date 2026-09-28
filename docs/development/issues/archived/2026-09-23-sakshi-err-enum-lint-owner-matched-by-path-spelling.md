@@ -1,8 +1,6 @@
-# cyrlint: the error-enum namespace rule decides "is this sakshi?" from how the path is spelled — it notes sakshi's own `src/error.cyr`, and exempts any leaf whose path happens to contain "sakshi" — OPEN
+# cyrlint: the error-enum namespace rule decides "is this sakshi?" from how the path is spelled — it notes sakshi's own `src/error.cyr`, and exempts any leaf whose path happens to contain "sakshi" — RESOLVED v6.6.8
 
-**Status:** 🟡 **OPEN**: `_lint_path_is_err_owner` substring-matches `"sakshi"` against the path
-exactly as the caller typed it, so the rule's verdict on a file changes with how the path is spelled
-(relative vs absolute, the names of its parent directories), not with what the file is.
+**Status:** ✅ **RESOLVED v6.6.8** (bite 10) — the owner is a file named exactly `sakshi.cyr` or one whose nearest `cyrius.cyml` declares `[package] name = "sakshi"` (option 1); both separators; gated relative AND absolute in `cyrlint_cross_line.sh` axis 9b, and checked with backslash paths on cass.
 **Placement:** **6.6.8 bite 10** — Tool scanners agree with the compiler: api-surface mirrors derive and sees `pub fn` and multi-line signatures; cyrlint decides ownership by identity and anchors the is_err include; cyaudit reads column-0 includes, whole files and `..` components. Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order). It must still land **before or with** the planned note → `warn` flip of `lint_error_enum_namespace` (CHANGELOG `[6.4.51]`); harmless until then.
 **Discovered:** 2026-09-23 during sakshi's 2.5.3 bump to 6.6.6, while checking whether sakshi's
 `ERR_*` ownership issue (Option B) could close.

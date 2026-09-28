@@ -695,15 +695,75 @@ fn lint_deferrals(buf, total): i64 {
 # during the ecosystem migration window; it flips to a hard `warn` once the leaves
 # (sankoch/yukti/…) rename their members. Owner = sakshi, matched by path
 # (cyrius-side config — proposal option 1b). Ref:
-# docs/development/proposals/2026-07-11-error-enum-namespace-lint-gate.md
+# docs/development/proposals/archived/2026-07-11-error-enum-namespace-lint-gate.md
+#
+# ⛔ 6.6.8 — OWNERSHIP IS DECIDED BY WHAT THE FILE IS, NOT BY HOW ITS PATH IS SPELLED. The
+# owner test was "the path, as the caller typed it, contains `sakshi`": neither necessary
+# (sakshi's own CI runs `cyrlint src/error.cyr` and got 17 notes on its own canonical set,
+# while `$PWD/src/error.cyr` got 0) nor sufficient (any file under a directory whose name
+# contains `sakshi` was exempt). A file is now the owner iff its BASENAME is exactly
+# `sakshi.cyr` (the vendored lib/sakshi.cyr, this repo's stdlib copy, sakshi's dist/) OR the
+# NEAREST cyrius.cyml above it declares `[package] name = "sakshi"`. Both `/` and `\` split
+# the path; the walk up is `<dir>/../` (no getcwd), bounded. CHANGELOG [6.6.8]
 var _err_enum_notes = 0;
+
+# 1 iff the manifest at `mpath` has `name = "sakshi"` in its `[package]` table.
+fn _lint_cyml_is_sakshi(mpath): i64 {
+    var lr[1];
+    var m = file_read_whole_max(mpath, 1048576, &lr);
+    if (m == 0) { return 0; }
+    var n = load64(&lr);
+    var p = 0;
+    var in_pkg = 0;
+    while (p < n) {
+        var e = _find_eol(m, p, n);
+        var q = p;
+        while (q < e) { if (_dp_ws(load8(m + q)) == 0) { break; } q = q + 1; }
+        if (q < e) {
+            var c = load8(m + q);
+            if (c == 91) {                                          # `[` — a table header
+                in_pkg = 0;
+                if (e - q >= 9) { if (memeq(m + q, "[package]", 9) == 1) { in_pkg = 1; } }
+            } elif (in_pkg == 1 && e - q >= 4) {
+                if (memeq(m + q, "name", 4) == 1) {
+                    var r = q + 4;
+                    while (r < e) { if (_dp_ws(load8(m + r)) == 0) { break; } r = r + 1; }
+                    if (r < e && load8(m + r) == 61) {             # `=`
+                        r = r + 1;
+                        while (r < e) { if (_dp_ws(load8(m + r)) == 0) { break; } r = r + 1; }
+                        if (r + 8 <= e) { if (memeq(m + r, "\"sakshi\"", 8) == 1) { return 1; } }
+                        return 0;
+                    }
+                }
+            }
+        }
+        p = e + 1;
+    }
+    return 0;
+}
+
 fn _lint_path_is_err_owner(path): i64 {
-    # bare `ERR_*` is owned by sakshi — a path containing "sakshi" IS the owner file
     var pl = strlen(path);
+    var bs = 0;
     var i = 0;
-    while (i + 6 <= pl) {
-        if (memeq(path + i, "sakshi", 6) == 1) { return 1; }
+    while (i < pl) {
+        var c = load8(path + i);
+        if (c == 47 || c == 92) { bs = i + 1; }
         i += 1;
+    }
+    if (pl - bs == 10) { if (memeq(path + bs, "sakshi.cyr", 10) == 1) { return 1; } }
+    # The nearest manifest decides: `<dir>/cyrius.cyml`, then `<dir>/../cyrius.cyml`, …
+    var cand = alloc(bs + 3 * 64 + 16);
+    memcpy(cand, path, bs);
+    var cl = bs;
+    var up = 0;
+    while (up < 64) {
+        memcpy(cand + cl, "cyrius.cyml", 11);
+        store8(cand + cl + 11, 0);
+        if (file_exists(cand) == 1) { return _lint_cyml_is_sakshi(cand); }
+        memcpy(cand + cl, "../", 3);
+        cl = cl + 3;
+        up += 1;
     }
     return 0;
 }
@@ -1063,13 +1123,35 @@ fn lint_file(buf, total): i64 {
     # are always > 0. If both modules are included, every `is_err(` call is
     # potentially wrong. Pre-scan for the combination and remember it so the
     # main loop can warn per call site.
+    # 6.6.8 — only a real include DIRECTIVE counts: column 0, outside a string literal,
+    # as the compiler reads it (ISINCLUDE / PP_LEXST). The scan matched the text at ANY
+    # offset, so a comment (`# no longer: include "lib/tagged.cyr"`) or a string armed the
+    # rule and every `is_err(` in the file drew a false warning. CHANGELOG [6.6.8]
     var has_syscalls = 0;
     var has_tagged = 0;
     var px = 0;
+    var bol = 1;
     while (px < total) {
-        if (memeq(buf + px, "include \"lib/syscalls.cyr\"", 26) == 1) { has_syscalls = 1; }
-        if (memeq(buf + px, "include \"lib/tagged.cyr\"", 24) == 1) { has_tagged = 1; }
-        px += 1;
+        var inc_line = 0;
+        if (bol == 1 && px + 9 <= total) { if (memeq(buf + px, "include \"", 9) == 1) { inc_line = 1; } }
+        if (inc_line == 1) {
+            # A directive consumes its whole line (a quote after the path opens nothing).
+            if (px + 26 <= total) {
+                if (memeq(buf + px, "include \"lib/syscalls.cyr\"", 26) == 1) { has_syscalls = 1; }
+            }
+            if (px + 24 <= total) {
+                if (memeq(buf + px, "include \"lib/tagged.cyr\"", 24) == 1) { has_tagged = 1; }
+            }
+            px = _find_eol(buf, px, total);
+            bol = 0;
+        }
+        elif (load8(buf + px) == 10) { bol = 1; px += 1; }
+        else {
+            bol = 0;
+            var pq = _lx_skip(buf, px, total);
+            if (pq == px) { pq = px + 1; }
+            px = pq;
+        }
     }
     var is_err_clash = 0;
     if (has_syscalls == 1 && has_tagged == 1) { is_err_clash = 1; }

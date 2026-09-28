@@ -1304,3 +1304,15 @@ _chk_gate "$ROOT/tests/gates/platform/agnos_process_peer_parity.sh"
 # `private` rule, and it read a fixed 64 KiB (every fn past the cut silently dropped, rc=0).
 # Spellings, the private rule and a >64 KiB file; mutation-proven in the gate header.
 _chk_gate "$ROOT/tests/gates/toolchain/header_spellings_and_size.sh"
+
+# 6.6.8 (bite 10) — `cyrius vet` / `deny` (cyaudit) see exactly the compiler's includes: column 0,
+# outside a string, the WHOLE file (a fixed 256 KB read hid a later include from both, rc 0), and
+# a path judged by COMPONENT (`lib/../../x` was trusted by vet and passed deny). The compiler is
+# the oracle for what an include is; mutation-proven in the header.
+_chk_gate "$ROOT/tests/gates/toolchain/cyaudit_include_directives.sh"
+
+# 6.6.8 (bite 10) — `cyrius api-surface` lists exactly what the COMPILER emits: the `#derive`
+# families by name, arity (`_to_json` is `(ptr, sb)`) and visibility (a `private` file), plus
+# `pub fn` and wrapped signatures. The oracle is the compiler's own emission, both ways (every
+# listed fn is callable at its arity from another file; every omitted one is private).
+_chk_gate "$ROOT/tests/gates/toolchain/api_surface_derive_matches_emitter.sh"
