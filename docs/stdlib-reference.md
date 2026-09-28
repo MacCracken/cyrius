@@ -1399,8 +1399,8 @@ SIMD-accelerated hash table with Swiss-table-inspired design (metadata + separat
 | `fhm_get` | `fhm_get(m, key) → i64` | Get value by key, returns 0 if not found |
 | `fhm_get_or` | `fhm_get_or(m, key, default_val) → i64` | Get value with default fallback |
 | `fhm_has` | `fhm_has(m, key) → 0/1` | Check if key exists |
-| `fhm_set` | `fhm_set(m, key, val)` | Set key-value pair (grows at 87.5% load) |
-| `fhm_delete` | `fhm_delete(m, key) → 0/1` | Delete key, returns 1 if found |
+| `fhm_set` | `fhm_set(m, key, val) → 0/-1` | Set key-value pair. Rehashes when live entries + tombstones reach 87.5% (doubling only when the live load is past 43.75%); a new key reuses the first tombstone on its path. -1 only when a needed grow's allocation is refused (map unchanged) |
+| `fhm_delete` | `fhm_delete(m, key) → 0/1` | Delete key, returns 1 if found (leaves a tombstone only in a full group) |
 | `fhm_keys` | `fhm_keys(m) → vec` | Get all keys as vec |
 | `fhm_values` | `fhm_values(m) → vec` | Get all values as vec |
 | `fhm_clear` | `fhm_clear(m)` | Clear all entries |

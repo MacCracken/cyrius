@@ -162,6 +162,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   REALTIME and MONOTONIC timespecs filled, this file on cxvm, and the seed/clock fixtures on an
   aarch64 cxvm under qemu and a PE cxvm under wine — the legs where the host's raw syscalls do
   not keep the contract). Rows 1–6 were run by hand on pi, ecb, ach and cass: green on all four.
+- **`fhm_set` (lib/hashmap_fast.cyr) no longer drops an insert once deletes have filled the table
+  with tombstones.** (bite 6; found reading the code in 6.6.7.) **Root cause:** the rehash
+  trigger counted only live entries while `fhm_delete` leaves a tombstone in every slot it frees,
+  and an insert only took an EMPTY slot — so after delete/insert churn at a steady size no group
+  had one, the probe fell out of its loop and `fhm_set` returned 0, success, without inserting;
+  every lookup of a missing key walked the whole table. Measured on the 6.6.7 map: 464 of 480
+  inserts in a steady-size churn lost. **Fix:** the trigger counts tombstones too (header +40)
+  and doubles only when the live load is past 43.75%, otherwise rehashing in place, which drops
+  them; a new key reuses the first tombstone on its probe path; a delete in a group that still
+  has an empty slot goes back to EMPTY; the fall-through is -1, never a silent 0. Gated by
+  `tests/tcyr/stdlib/hashmap_fast_tombstones.tcyr` (new; the 6.6.7 map fails 10 of 20, and a
+  live-only trigger fails the counter-balance row).
 
 ### Added
 
