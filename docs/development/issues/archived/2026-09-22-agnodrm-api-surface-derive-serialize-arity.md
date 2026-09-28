@@ -1,4 +1,4 @@
-# `cyrius api-surface` records a derived `<S>_to_json` at arity 1 (it takes `(ptr, sb)`) and never lists `<S>_from_json_str` — OPEN
+# `cyrius api-surface` records a derived `<S>_to_json` at arity 1 (it takes `(ptr, sb)`) and never lists `<S>_from_json_str` — RESOLVED v6.6.8
 
 **Status:** ✅ **RESOLVED v6.6.8** (bite 10) — api-surface mirrors the compiler's `#derive` emitter (`_to_json/2`, `_from_json/1`, `_from_json_str/1`, Deserialize, enum and `public`/`pub` targets, the 6.6.7 body grammar, file-private visibility) and now also sees `pub fn` and wrapped signatures; the filed repro lists `probe_pt_to_json/2` and `probe_pt_from_json_str/1`. Gated against the compiler's own emission by `tests/gates/toolchain/api_surface_derive_matches_emitter.sh`.
 **Placement:** **6.6.8 bite 10** — Tool scanners agree with the compiler: api-surface mirrors derive and sees `pub fn` and multi-line signatures; cyrlint decides ownership by identity and anchors the is_err include; cyaudit reads column-0 includes, whole files and `..` components. Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
