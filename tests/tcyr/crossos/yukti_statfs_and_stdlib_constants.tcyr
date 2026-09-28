@@ -21,6 +21,7 @@
 #
 # ⚠ net.cyr is included BEFORE yukti on purpose: that is the order in which yukti's old
 # `SOL_SOCKET = 1` overwrote net's value. CHANGELOG [6.6.7]
+# 6.6.8 folds yukti 2.3.14: `_yk_ppoll` declines on macOS (last group). CHANGELOG [6.6.8]
 include "lib/syscalls.cyr"
 include "lib/string.cyr"
 include "lib/alloc.cyr"
@@ -72,5 +73,20 @@ assert_eq(O_NONBLOCK, 2048, "Linux O_NONBLOCK is 2048");
 assert_eq(SOL_SOCKET, 1, "Linux SOL_SOCKET is 1");
 #endif
 assert_eq(O_RDONLY, 0, "O_RDONLY is 0");
+
+# 6.6.8 — yukti 2.3.14's ppoll bridge DECLINES on macOS. Darwin has no ppoll and neither Mach-O
+# backend routes 271 / 1073, so this was the one "syscall N not routed" warning a build of this
+# file printed on each Mac, and a reached call was a SIGSYS on ach (a stale-x16 re-run on ecb
+# before 6.6.8). darwin_syscall_literals_routed.sh axis 2 pins the warning; this pins the answer.
+test_group("yukti's ppoll bridge per target");
+#ifdef CYRIUS_TARGET_MACOS
+assert_eq(_yk_ppoll(0, 0, 0), 0 - 78, "macOS: _yk_ppoll declines with -ENOSYS (no syscall issued)");
+#endif
+#ifdef CYRIUS_TARGET_LINUX
+var yts[16];
+store64(&yts, 0);
+store64(&yts + 8, 0);
+assert_eq(_yk_ppoll(0, 0, &yts), 0, "Linux: a zero-fd, zero-timeout ppoll returns 0");
+#endif
 
 var r = assert_summary();

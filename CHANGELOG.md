@@ -220,6 +220,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   print no `not routed`: 79 / 17 without the fix) and by macho_route_parity.sh, whose issued-name
   scan now reads `cbt/ programs/ tests/` too.
 
+### Changed
+
+- **Stdlib fold — yukti 2.3.14** (bite 2), `lib/yukti.cyr` copied byte-identical from yukti
+  commit **`bcc8cb0`** (`git show bcc8cb0:dist/yukti.cyr`; ⛔ tag yukti 2.3.14 at that commit
+  before the cyrius 6.6.8 tag). `_yk_ppoll` declines on macOS with -ENOSYS: Darwin has no ppoll
+  and neither Mach-O backend routes yukti's number for it (271 on x86_64, 1073 on arm64), so every
+  Mach-O build including yukti warned `not routed` and a reached call was a SIGSYS on Intel (a
+  silent re-run of the previous syscall on Apple Silicon before this release). yukti's toolchain
+  pin moves to 6.6.7 with the tags that release bundles (sakshi 2.5.5, patra 1.15.0); its suite
+  is 804/804 on x86_64 and under qemu-aarch64, and its full CI step set passes under 6.6.7.
+  `crossos/yukti_statfs_and_stdlib_constants.tcyr` gains a ppoll group (macOS: -78 with no
+  syscall; Linux: a zero-fd, zero-timeout ppoll returns 0) — 9/9 on x86_64, qemu-aarch64, ecb
+  and ach, 2/2 under wine.
+
 ## [6.6.7] — 2026-09-27
 
 The first of three SMALL releases that the post-6.6.6 issue track is split into (roadmap.md, *The 6.6.7
