@@ -92,7 +92,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - **C io/fs/process** — `process` (before its per-target peers), `dynlib`, `fdlopen`,
     `grp`, `pwd`, `shadow`, `audit_walk`, `regression`. (`fs.cyr`'s own lines are bite 5's,
     which owns that file this release.)
-  - **D concurrency** — `sync`, `thread`, `thread_local`, `async`.
+  - **D concurrency** — `sync`, `thread`, `thread_local`, `async`. Making `thread_local`
+    compile alone for cx exposed that it did nothing there: neither `CYRIUS_ARCH_*` is
+    defined on cx, so `_tlocal_install` had no arm at all (it returned the leftover return
+    register — `cx_tcyr_runs.sh`'s empty-body axis reddened) and get/set read 0 / dropped the
+    value. cx is a single-threaded VM, so its TLS is now the process-global fallback array
+    (init 1, set/get round-trip, pinned by two new cxvm rows in that gate) and
+    `_tlocal_install` declines with -ENOSYS like the macOS arm.
   - **E net/tls** — `net` → syscalls, alloc, string, result; `tls` → `fdlopen` (its header
     told callers to include it first "because the 1 MB preprocessor cap is tight" — the cap is
     24 MB, and a caller that skipped it got four fdlopen ud2 stubs: every libssl call a SIGILL,
@@ -134,6 +140,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   lists. Its ledger holds 20 mutations; the twelve new ones (and three of 6.6.6's) were
   re-measured red against it on a simulated merge that is otherwise GREEN. New `tests/tcyr/crossos/pam_fail_closed.tcyr`
   (includes only `lib/pam.cyr` + `lib/assert.cyr`) asserts the fail-closed arm on every host.
+  `tests/gates/codegen/simd_param_inline_reach.sh` counted `callq` over its WHOLE fixture
+  binary against a constant, and the fixture includes `lib/syscalls.cyr` — so the new alloc
+  include moved it 16 → 71 and turned it red; worse, at the slot's open it already measured 16
+  with its fix and 22 without, both under its bound of 31, i.e. it could no longer see the
+  defect it names. Axis 1 now subtracts a same-includes control: 2 with the fix, 8 with the
+  pre-v6.5.58 predicate rebuilt from this tree, bound 4.
   **Survey:** across the 127 `~/Repos` projects with a stdlib seed, no module newly enters
   any project's include closure, so no definition can newly collide ("last definition wins"
   rebinds earlier call sites retroactively — checked for fns, top-level vars and enum
