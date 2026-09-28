@@ -3229,7 +3229,7 @@ fn _distlib_leaf_defining(root, name): i64 {
                     while (ns < got && load8(fb + ns) == 32) { ns = ns + 1; }
                     if (ns + nlen <= got && memeq(fb + ns, name, nlen) == 1) {
                         var after = load8(fb + ns + nlen);
-                        if (_distlib_ident_char(after) == 0) { hit = 1; p = got; }
+                        if (_src_ident_char(after) == 0) { hit = 1; p = got; }
                     }
                 }
             }
@@ -3719,28 +3719,8 @@ fn _distlib_modular_emit(pkg_name, modules, mbuf, mlen): i64 {
 # `[lib.<profile>]` subset: a `sha`-only profile was getting the entire crypto suite's
 # deps (bayan / keccak / mldsa-adjacent / thread / process …). Prune req_leaves to
 # only the leaves the profile's bundle actually references. (Full-bundle path unchanged.)
-fn _distlib_ident_char(c): i64 {
-    if (c >= 97 && c <= 122) { return 1; }   # a-z
-    if (c >= 65 && c <= 90)  { return 1; }   # A-Z
-    if (c >= 48 && c <= 57)  { return 1; }   # 0-9
-    if (c == 95) { return 1; }               # _
-    return 0;
-}
-
-# Does `bundle` reference the token `name` (nlen) as a whole identifier?
-fn _distlib_bundle_refs(bundle, blen, name, nlen): i64 {
-    if (nlen <= 0) { return 0; }
-    var i = 0;
-    while (i + nlen <= blen) {
-        if (memeq(bundle + i, name, nlen) == 1) {
-            var lok = 0;
-            if (i == 0) { lok = 1; } elif (_distlib_ident_char(load8(bundle + i - 1)) == 0) { lok = 1; }
-            if (lok == 1 && _distlib_ident_char(load8(bundle + i + nlen)) == 0) { return 1; }
-        }
-        i = i + 1;
-    }
-    return 0;
-}
+# (`_distlib_ident_char` / `_distlib_bundle_refs` moved to cbt/core.cyr as
+# `_src_ident_char` / `_src_refs_ident`, shared with cyrius coverage. CHANGELOG [6.6.8])
 
 # Return 1 if `bundle` references any symbol DEFINED in leaf lib/<leaf>.cyr —
 # a top-level `fn NAME(` or a `var NAME`. Conservative: on any read failure or
@@ -3828,9 +3808,9 @@ fn _distlib_leaf_referenced_d(leaf, bundle, blen, depth): i64 {
                 var ns = p + kw;
                 while (ns < llen && load8(lbuf + ns) == 32) { ns = ns + 1; }
                 var ne = ns;
-                while (ne < llen && _distlib_ident_char(load8(lbuf + ne)) == 1) { ne = ne + 1; }
+                while (ne < llen && _src_ident_char(load8(lbuf + ne)) == 1) { ne = ne + 1; }
                 if (ne > ns) {
-                    if (_distlib_bundle_refs(bundle, blen, lbuf + ns, ne - ns) == 1) { return 1; }
+                    if (_src_refs_ident(bundle, blen, lbuf + ns, ne - ns) == 1) { return 1; }
                 }
             }
         }
