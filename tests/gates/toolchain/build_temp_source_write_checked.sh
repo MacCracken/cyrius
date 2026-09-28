@@ -39,7 +39,8 @@
 #      file on disk, and the binary's own exit code.
 #   3. `[build].modules` — with the module present the build succeeds AND the module's fn
 #      is really linked (the binary returns the module's value, so the axis cannot pass
-#      against a build that ignored the manifest); with the module missing, and with the
+#      against a build that ignored the manifest), both in a manifest with NO `[deps]`
+#      section (6.6.9 bite 9: it used to be ignored there) and in one with; with the module missing, and with the
 #      module unreadable, the build exits non-zero and NAMES the module. Each of those
 #      failures prints EXACTLY ONE `error:` line, and the generic "could not write the
 #      preprocessed source" verdict appears only for a real write failure (axis 2's own
@@ -81,6 +82,8 @@
 #      COMMAND spelling (`HOME=… CYRIUS_HOME=… && trap …`),        the child different
 #      which sets shell variables, not the exec's environment      environments: CYRIUS_HOME
 #                                                                  reaches only _run)
+#   i. (6.6.9 bite 9) `_auto_deps` reading `[build].modules`  -> axis 3 FAIL (no-[deps] case:
+#      only after its `has_deps == 0` early return again           rc 1, `undefined function`)
 # Real tree -> PASS.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -160,9 +163,13 @@ fi
 [ "$a2" = 0 ] && echo "  ok: axis 2: under RLIMIT_FSIZE (200 blocks) the build exits $rc, names the preprocessed source, and leaves no binary"
 
 # ── axis 3: [build].modules — present and linked / missing / unreadable ──────
-# `[build].modules` is only read when the manifest also carries a [deps] section, so the
-# fixture stages a stdlib under the throwaway CYRIUS_HOME (branch (c) of
-# _dep_find_stdlib_dir: $CYRIUS_HOME/lib).
+# ⛔ 6.6.9 bite 9: this fixture used to carry a `[deps]\nstdlib = []` crutch, because
+# `_auto_deps` returned on "no [deps] section" BEFORE it read `[build].modules` — the key
+# was silently ignored and the build failed with `undefined function` naming nothing in
+# the manifest. The crutch is gone: the manifest here has NO [deps] section, which is the
+# shape that was broken. The [deps]-bearing shape is kept as a second present-and-linked
+# case (3a'), with a stdlib staged under the throwaway CYRIUS_HOME (branch (c) of
+# _dep_find_stdlib_dir: $CYRIUS_HOME/lib) so its `cyrius deps` resolves.
 a3=0
 mkdir -p "$D/home/.cyrius/lib"
 cp lib/*.cyr "$D/home/.cyrius/lib/" 2>/dev/null
@@ -170,12 +177,21 @@ cp lib/*.cyr "$D/home/.cyrius/lib/" 2>/dev/null
 mkdir -p "$D/p/mod"
 printf 'fn bite26_from_module(): i64 { return 23; }\n' > "$D/p/mod/m.cyr"
 printf 'fn main(): i64 { return bite26_from_module(); }\n' > "$D/p/app2.cyr"
-_manifest() { printf '[package]\nname = "p"\nversion = "0.1.0"\n\n[deps]\nstdlib = []\n\n[build]\nmodules = ["%s"]\n' "$1" > "$D/p/cyrius.cyml"; }
+_manifest() { printf '[package]\nname = "p"\nversion = "0.1.0"\n\n[build]\nmodules = ["%s"]\n' "$1" > "$D/p/cyrius.cyml"; }
+_manifest_deps() { printf '[package]\nname = "p"\nversion = "0.1.0"\n\n[deps]\nstdlib = []\n\n[build]\nmodules = ["%s"]\n' "$1" > "$D/p/cyrius.cyml"; }
 _manifest 'mod/m.cyr'
+grep -q '^\[deps' "$D/p/cyrius.cyml" && { echo "FAIL: axis 3: the no-[deps] fixture carries a [deps] section"; exit 1; }
 rc=0; _run build app2.cyr outm > "$D/a3a.out" 2>&1 || rc=$?
 erc=0; [ -s "$D/p/outm" ] && { ( ulimit -c 0; exec "$D/p/outm" ) >/dev/null 2>&1 || erc=$?; }
 { [ "$rc" -eq 0 ] && [ "$erc" -eq 23 ]; } \
-  || { fail "axis 3: with the module PRESENT the build did not link it (rc=$rc, binary exits $erc, expected 23):"; tail -3 "$D/a3a.out" | sed 's/^/      /'; a3=1; }
+  || { fail "axis 3: with NO [deps] section and the module PRESENT the build did not link it (rc=$rc, binary exits $erc, expected 23) — [build].modules ignored without [deps]:"; tail -3 "$D/a3a.out" | sed 's/^/      /'; a3=1; }
+_manifest_deps 'mod/m.cyr'
+rm -f "$D/p/outm"
+rc=0; _run build app2.cyr outm > "$D/a3d.out" 2>&1 || rc=$?
+erc=0; [ -s "$D/p/outm" ] && { ( ulimit -c 0; exec "$D/p/outm" ) >/dev/null 2>&1 || erc=$?; }
+{ [ "$rc" -eq 0 ] && [ "$erc" -eq 23 ]; } \
+  || { fail "axis 3: WITH a [deps] section and the module PRESENT the build did not link it (rc=$rc, binary exits $erc, expected 23):"; tail -3 "$D/a3d.out" | sed 's/^/      /'; a3=1; }
+rm -f "$D/p/cyrius.lock"
 # ONE failure, ONE verdict. A named cause must not be followed by the generic
 # "could not write the preprocessed source …: <internal temp path>" line — nothing failed
 # to write, the module failed to OPEN, and the second line hands the user a temp path as
@@ -212,7 +228,7 @@ fi
 n2=$(_nerr "$D/a2.out")
 [ "$n2" -eq 1 ] || { fail "axis 3: the short-write case printed $n2 'error:' lines, expected exactly 1:"; grep '^error:' "$D/a2.out" | sed 's/^/      /'; a3=1; }
 rm -f "$D/p/cyrius.cyml"
-[ "$a3" = 0 ] && echo "  ok: axis 3: [build].modules is linked when present (binary exits 23) and named when missing or unreadable — each failure with exactly ONE verdict, and the generic write line only for a real write failure"
+[ "$a3" = 0 ] && echo "  ok: axis 3: [build].modules is linked when present, with and without a [deps] section (binary exits 23) and named when missing or unreadable — each failure with exactly ONE verdict, and the generic write line only for a real write failure"
 
 # ── axis 4: STATIC — no unchecked write of a temp SOURCE left in cbt/ ────────
 # Forbidden: a write into the materialised temp (`sys_write(tfd, …)`,

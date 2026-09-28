@@ -4433,26 +4433,9 @@ fn cmd_distlib(profile): i64 {
             }
         }
         if (matched == 1) {
-            var bi = si + header_len;
-            while (bi < mlen) {
-                if (load8(mbuf + bi) == 91 && load8(mbuf + bi + 1) != 91) { break; }
-                # First non-space token; skip comments; require a key
-                # boundary after `modules` (space/tab/`=`). Boundary/
-                # comment-aware + indented-key capable — see CHANGELOG [6.0.36].
-                var ls = bi;
-                while (ls < mlen && (load8(mbuf + ls) == 32 || load8(mbuf + ls) == 9)) {
-                    ls = ls + 1;
-                }
-                if (ls < mlen && load8(mbuf + ls) != 35 && memeq(mbuf + ls, "modules", 7) == 1) {
-                    var after = load8(mbuf + ls + 7);
-                    if (after == 32 || after == 9 || after == 61) {
-                        modules = _parse_toml_str_array(mbuf, mlen, ls);
-                        break;
-                    }
-                }
-                while (bi < mlen && load8(mbuf + bi) != 10) { bi = bi + 1; }
-                bi = bi + 1;
-            }
+            # The shared section-modules parser (cbt/deps.cyr) — `_auto_deps` reads
+            # `[build].modules` through the same one. CHANGELOG [6.6.9].
+            modules = _toml_section_modules(mbuf, mlen, si + header_len);
             if (modules != 0) { break; }
         }
         si = si + 1;

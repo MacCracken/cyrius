@@ -96,6 +96,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `cli_pe_file_size_and_sibling_tools.sh` (axes 0 — no raw stat in cbt/ — and 0b — a host probe of
   `_wrapper_w2u8`: 2000 CJK units come back as 6000 bytes, a surrogate pair as 4 — run without wine;
   axes 1-3 under wine), mutation-proven per mechanism.
+- **`[build].modules` is honoured in a manifest with no `[deps]` section.** (bite 9; found by the
+  6.6.6 bite 26b review.) **Root cause:** `_auto_deps` returned on "no `[deps]` section" before it
+  read `[build].modules`, the only writer of `_build_modules`, so the key was ignored in silence and
+  the build failed with `undefined function helper` — nothing named the manifest. The CLI's own gate
+  carried a `[deps]\nstdlib = []` crutch around it. **Fix:** the key is read before the early return
+  (`cmd_deps` stays gated on `[deps]`), through ONE parser shared with `cyrius distlib`
+  (`_toml_section_modules` / `_build_section_modules`, cbt/deps.cyr), which had its own copy. No
+  ecosystem manifest uses `[build].modules` today (0 of 126). Gate:
+  `build_temp_source_write_checked.sh` axis 3 drops the crutch and links the module with and without
+  `[deps]`; the old early-return order fails it (rc 1, `undefined function`).
 
 ### Downstream
 
