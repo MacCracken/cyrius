@@ -4,6 +4,8 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.6.8] — 2026-09-27
+
 ## [6.6.7] — 2026-09-27
 
 The first of three SMALL releases that the post-6.6.6 issue track is split into (roadmap.md, *The 6.6.7
