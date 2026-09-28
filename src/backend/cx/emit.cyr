@@ -1489,7 +1489,6 @@ fn EMIT_IVEC_DP8(S, vbase): i64 {
 }
 fn EUCOMISD(S): i64 { return 0; }
 fn EXORPD_X1(S): i64 { return 0; }
-fn EMOVAPD_01(S): i64 { return 0; }
 fn EF64SQRT(S): i64 { return 0; }
 fn EF64FLOOR(S): i64 { return 0; }
 fn EF64CEIL(S): i64 { return 0; }

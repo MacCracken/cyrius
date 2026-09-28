@@ -12,7 +12,6 @@ fn EI2F(S): i64 { EB(S, 0xF2); EB(S, 0x48); EB(S, 0x0F); EB(S, 0x2A); EB(S, 0xC0
 fn EF2I(S): i64 { EB(S, 0xF2); EB(S, 0x48); EB(S, 0x0F); EB(S, 0x2C); EB(S, 0xC0); return 0; }
 fn EUCOMISD(S): i64 { EB(S, 0x66); EB(S, 0x0F); EB(S, 0x2E); EB(S, 0xC1); return 0; }
 fn EXORPD_X1(S): i64 { EB(S, 0x66); EB(S, 0x0F); EB(S, 0x57); EB(S, 0xC9); return 0; }
-fn EMOVAPD_01(S): i64 { EB(S, 0x66); EB(S, 0x0F); EB(S, 0x28); EB(S, 0xC1); return 0; }
 
 # ⭐ 6.6.7 — THE DEFER WALKER'S SAVE AREA: the WHOLE return convention, not rax. The walker runs
 # every reached defer/secret block AFTER the return value is in place, and those blocks are

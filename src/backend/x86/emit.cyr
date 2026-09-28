@@ -3311,21 +3311,21 @@ fn ELOAD_LOCAL_ADDR(S, adisp): i64 {
 }
 
 # v5.11.37 path-A named ops — Class C refactor (f64 unary ops).
-# x86 uses SSE2 (subsd) for f64_neg and x87 (fsin/fcos/fyl2x/etc.)
+# x86 uses a sign-bit flip (btc) for f64_neg and x87 (fsin/fcos/fyl2x/etc.)
 # for transcendentals. aarch64 has native fneg but errors / dispatches
 # to lib/math.cyr polyfills for transcendentals. cx has no f64
 # opcodes in this slot (real CYX f64 ops = future work). Closes
 # Class C of docs/audit/2026-04-27-cx-direct-emit-inventory.md.
 
-# EF64_NEG — `-x` for f64. x86 SSE: subsd xmm1, xmm0 with
-# xmm1 zeroed (XORPD), result moves back through xmm0 → rax.
+# EF64_NEG — `-x` for f64: IEEE negation is a SIGN-BIT FLIP, `btc rax, 63`, the same
+# operation aarch64 FNEG and the cx `fneg` opcode perform. It was `0.0 - x` (xorpd +
+# subsd), which is NOT negation: 0.0 - (+0) is +0, so f64_neg(0) never produced -0, and a
+# NaN came back with its sign unchanged — x86 and aarch64 disagreed bit-for-bit on both.
+# Works on the bits in rax; xmm0 is not an output (a `: f64` return moves rax itself).
+# CHANGELOG [6.6.8]
 fn EF64_NEG(S): i64 {
-    EMOVQ_X0_A(S);
-    EXORPD_X1(S);
     _IR_REC0(S, IR_RAW_EMIT);
-    EB(S, 0xF2); EB(S, 0x0F); EB(S, 0x5C); EB(S, 0xC8);  # subsd xmm1, xmm0
-    EMOVAPD_01(S);
-    EMOVQ_A_X0(S);
+    EB(S, 0x48); EB(S, 0x0F); EB(S, 0xBA); EB(S, 0xF8); EB(S, 0x3F);   # btc rax, 63
     return 0;
 }
 
