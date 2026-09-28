@@ -61,7 +61,7 @@ fn _seccomp_filtered(): i64 {
     sys_close(fd);
     if (n <= 0) { return 0; }
     store8(&buf + n, 0);
-    if (strstr(&buf, "Seccomp:\t2") != 0 - 1) { return 1; }
+    if (strstr(&buf, "Seccomp:\t2") >= 0) { return 1; }
     return 0;
 }
 
