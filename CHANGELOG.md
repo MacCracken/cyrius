@@ -139,9 +139,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`derive_non_struct_rejected.sh` honours `$CYCC`.** (bite 8, placed from the 6.6.7 reviews.)
   It hard-coded `CC="$ROOT/build/cycc"`, so it could not be pointed at a candidate compiler
   without overwriting build/cycc. ⚠ The review called that an outlier among "sibling gates" that
-  honour `${CYCC:-…}`; derived, it is the norm — 75 gates hard-code the path and 18 honour the
-  variable — so `check_gate_census.sh` axis 7 now holds a RATCHET at the 74 that remain: a new
+  honour `${CYCC:-…}`; derived, it is the norm — 75 gates hard-coded the path and 17 honoured
+  the variable — so `check_gate_census.sh` axis 7 now holds a RATCHET at the 74 that remain: a new
   gate writes `CC=${CYCC:-"$ROOT/build/cycc"}`, and the ceiling only goes down.
+- **`tests/tcyr/crossos/fs_dirlist.tcyr` builds its own fixture.** (bite 8, placed from the 6.6.7
+  reviews.) It read `tests/win` and `VERSION` relative to the working directory, so from any
+  directory but the repo root (or a runner bundle that happens to carry both) a correct fs layer
+  failed `is_dir on a directory` (and `dir_list` of an empty cwd found nothing). It now creates a
+  per-pid directory and a file inside it, checks `is_dir` on each, requires `dir_list` to find the
+  file BY NAME, and removes both. Run from a subdirectory on real pi, ecb, ach and cass: 9/9, no
+  fixture left behind (the old file: 3/5 from an empty directory).
 
 ## [6.6.7] — 2026-09-27
 
