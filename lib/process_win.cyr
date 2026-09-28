@@ -216,6 +216,7 @@ fn proc_set_timeout_ms(ms): i64 {
     return prev;
 }
 
+# The deadline in force, in ms (0 = none).
 fn proc_timeout_ms(): i64 { return _PROC_DEADLINE_MS; }
 
 # How many children this process has ended at a deadline, ever.

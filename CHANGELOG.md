@@ -57,7 +57,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `tests/gates/toolchain/check_driver_dies_with_check_sh.sh` axes 4-10 (SIGKILLed check.sh,
   SIGKILLed driver parent, deadline, SIGTERM within 4 s, process-group kill, a gate's leftover,
   and an anti-vacuous foreground mutant that must leak), mutation-proven against no subreaper,
-  no grace and the foreground `sh`; and `tests/tcyr/crossos/process_deadline_term_first.tcyr`
+  no grace and the foreground `sh`; and `tests/tcyr/crossos/process_deadline_tree.tcyr`
   (run on pi, ecb and ach).
 - **A child killed at a deadline is REPORTED as one — never as an ordinary FAIL, and never as a
   PASS — and the deadline knobs can no longer be typo'd off.** (bite 8.) **Root cause:** the
@@ -165,6 +165,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   against the old shared preamble and against vani's row without yukti.
   `pe_reloc_cap_full_stdlib.sh`, which extracted that preamble, now extracts `LEAVES` and appends
   the same four folds — its preamble is byte-identical to before.
+- *(this bite's own work, found by the lane's full `check.sh` run)* the process-tree sweeps treat
+  a ZOMBIE as ended: `kill(p, 0)` succeeds on one, so under the check driver — a subreaper that
+  adopts orphans and reaps them only at exit — a descendant that had honoured its SIGTERM still
+  read "alive" and every deadline waited out its full grace period (`_proc_zombie` /
+  `_regression_proc_zombie` read `/proc/<p>/stat`). `process_deadline_tree.tcyr` (renamed from
+  `…_term_first`, whose label overflowed the suite's column) and
+  `regression_file_contains_whole_file.tcyr` name their fixtures with `test_scratch` (per-pid,
+  cwd-relative) instead of a `/tmp` prefix, and the new lib accessors carry doc comments.
 
 ## [6.6.7] — 2026-09-27
 

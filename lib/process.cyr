@@ -96,6 +96,7 @@ var PROC_ECHILD = 10;
 # ended AND every capture the idle deadline cut short. CHANGELOG [6.6.8]
 var _proc_deadline_kills = 0;
 
+# How many children this process has ended at a deadline, ever (see above).
 fn proc_deadline_kills(): i64 { return _proc_deadline_kills; }
 
 # Bound every child this module WAITS for to `ms` milliseconds; 0 = wait for ever (the
@@ -220,6 +221,29 @@ fn _proc_tree_collect(root): i64 {
     #endif
 }
 
+# 1 when `p` is a ZOMBIE: `kill(p, 0)` succeeds on one, so a process that honoured its
+# SIGTERM but was adopted by an ANCESTOR subreaper read "alive" and the grace period was waited
+# out in full. The twin of lib/regression.cyr's `_regression_proc_zombie`. Linux only.
+# CHANGELOG [6.6.8]
+fn _proc_zombie(p): i64 {
+    #ifdef CYRIUS_TARGET_LINUX
+    var path[48];
+    var e = _proc_put_str(_proc_put_dec(_proc_put_str(&path, "/proc/"), p), "/stat");
+    store8(e, 0);
+    var b[512];
+    var fd = sys_open(&path, 0, 0);
+    if (fd < 0) { return 0; }
+    var n = sys_read(fd, &b, 511);
+    sys_close(fd);
+    var i = n - 1;
+    while (i > 0 && load8(&b + i) != 41) { i = i - 1; }   # the LAST ')' ends comm
+    if (i <= 0 || i + 2 >= n) { return 0; }
+    var st = load8(&b + i + 2);
+    if (st == 90 || st == 88) { return 1; }                # 'Z' / 'X'
+    #endif
+    return 0;
+}
+
 # Walk the first `n` snapshot entries: reap each that is OUR zombie, blank each that is gone
 # (so a later SIGKILL cannot reach a recycled pid), and with `sig` == 15 give each live one
 # that has not had it yet its ONE SIGTERM (stored negated once sent); `sig` == 9 SIGKILLs every
@@ -235,7 +259,7 @@ fn _proc_tree_sweep(n, sig): i64 {
         if (p > 0) {
             if (sig == 9) { sys_kill(p, 9); }
             sys_waitpid(p, &st, 1);
-            if (sys_kill(p, 0) == 0) {
+            if (sys_kill(p, 0) == 0 && _proc_zombie(p) == 0) {
                 live = live + 1;
                 if (sig == 15 && e > 0) { sys_kill(p, 15); store64(_proc_tree + i * 8, 0 - p); }
             } else {

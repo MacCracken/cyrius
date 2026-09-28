@@ -1,4 +1,4 @@
-# process_deadline_term_first.tcyr — CROSS-HOST: when lib/process.cyr's deadline
+# process_deadline_tree.tcyr — CROSS-HOST: when lib/process.cyr's deadline
 # (`proc_set_timeout_ms`) ends a child, it asks first (SIGTERM, a grace period, then SIGKILL),
 # and on Linux it ends the child's whole tree. Runs on ecb (macOS arm64) + ach (Intel Mac) +
 # pi (aarch64) through the release gate's cross-OS leg; on Windows and agnos there is no
@@ -22,12 +22,10 @@ include "lib/tagged.cyr"
 include "lib/chrono.cyr"
 include "lib/process.cyr"
 
+# A per-process, cwd-relative fixture name (test_scratch: "<base>.<pid>") — never a fixed
+# /tmp name two concurrent runs would share.
 fn _path(tag): i64 {
-    var sb = str_builder_new();
-    str_builder_add_cstr(sb, "/tmp/cyrius_pdt_");
-    str_builder_add_int(sb, sys_getpid());
-    str_builder_add_cstr(sb, tag);
-    return str_data(str_builder_build(sb));
+    return test_scratch(tag);
 }
 
 fn _read_pid(path): i64 {
@@ -49,8 +47,8 @@ fn main(): i64 {
     test_group("a deadline asks first: SIGTERM, grace, then SIGKILL");
     #ifndef CYRIUS_TARGET_WIN
     #ifndef CYRIUS_TARGET_AGNOS
-    var flag = _path("_trap");
-    var bgp = _path("_bg");
+    var flag = _path("cyrius_pdt_trap");
+    var bgp = _path("cyrius_pdt_bg");
     sys_unlink(flag);
     sys_unlink(bgp);
     # A shell that cleans up on TERM, waiting (interruptibly) on a background child whose pid
@@ -77,7 +75,9 @@ fn main(): i64 {
     var gone = 0;
     var k = 0;
     while (k < 50 && gone == 0) {
-        if (sys_kill(bg, 0) != 0) { gone = 1; }
+        # A zombie has ENDED: when an ancestor subreaper (the check driver) adopted the
+        # orphan, it stays a zombie until that ancestor reaps it, and kill(p, 0) still succeeds.
+        if (sys_kill(bg, 0) != 0 || _proc_zombie(bg) == 1) { gone = 1; }
         else { syscall(7, 0, 0, 20); }
         k = k + 1;
     }

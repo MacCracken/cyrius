@@ -18,12 +18,9 @@ include "lib/str.cyr"
 include "lib/net.cyr"
 include "lib/regression.cyr"
 
+# A per-process, cwd-relative fixture name (test_scratch: "<base>.<pid>").
 fn _path(tag): i64 {
-    var sb = str_builder_new();
-    str_builder_add_cstr(sb, "/tmp/cyrius_rfc_");
-    str_builder_add_int(sb, sys_getpid());
-    str_builder_add_cstr(sb, tag);
-    return str_data(str_builder_build(sb));
+    return test_scratch(tag);
 }
 
 # `n` filler bytes (`fill`), then `tail`, written to `path`.
@@ -40,15 +37,15 @@ fn _write(path, n, fill, tail): i64 {
 fn main(): i64 {
     alloc_init();
     test_group("regression_file_contains_substr reads the whole file");
-    var p = _path("_big");
+    var p = _path("cyrius_rfc_big");
     assert_eq(_write(p, 600000, 97, "NEEDLE-6-6-8\n"), 600013, "a 600 KB fixture was written");
     assert_eq(regression_file_contains_substr(p, "NEEDLE-6-6-8"), 1,
       "a needle past the old 524,288-byte cap is found");
     assert_eq(regression_file_contains_substr(p, "NEEDLE-6-6-9"), 0, "…and an absent one is not");
-    var q = _path("_nul");
+    var q = _path("cyrius_rfc_nul");
     assert_eq(_write(q, 64, 0, "AFTER-THE-NUL\n"), 78, "a fixture whose bytes start with NULs");
     assert_eq(regression_file_contains_substr(q, "AFTER-THE-NUL"), 1, "a needle after a NUL byte is found");
-    assert_eq(regression_file_contains_substr(_path("_missing"), "x"), 0, "a missing file is 0, not a crash");
+    assert_eq(regression_file_contains_substr(_path("cyrius_rfc_missing"), "x"), 0, "a missing file is 0, not a crash");
     sys_unlink(p);
     sys_unlink(q);
     var r = assert_summary();

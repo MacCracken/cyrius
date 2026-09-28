@@ -250,7 +250,7 @@ _mk_sleeper() {  # $1 = file, $2 = marker dir, $3 = "exit" to exit leaving a bg 
     {
         echo '#!/bin/sh'
         echo "M=\"$2\""
-        echo 'X=$(mktemp -d "$M/scratch.XXXXXX") || exit 9'
+        echo 'X="$M/scratch.$$"; mkdir "$X" || exit 9'
         echo 'trap '"'"'rm -rf "$X"'"'"' EXIT'
         echo 'echo "$X" > "$M/scratch.path"'
         echo "sleep 471.$TAG &"
