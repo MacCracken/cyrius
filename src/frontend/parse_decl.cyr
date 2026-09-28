@@ -1381,17 +1381,19 @@ fn _gv_owner(S, ti): i64 {
 # The live, plain global below index `below` that a top-level redeclaration of `noff` must
 # reuse, or -1. An enum constant has no storage to share (CHK_ENUM_SHADOW / CHKDUPVAL own
 # that case), and a prior with a different visibility owner is a different global.
+# 6.6.9: walks only the slots of this name, through the name index (_fvh_head, parse_types.cyr)
+# — it used to STREQ every global below `below`, the second of the two O(N) walks each
+# registration paid. CHANGELOG [6.6.9]
 fn _gv_prior(S, noff, below, owner): i64 {
-    var vi = below - 1;
-    while (vi >= 0) {
-        if (STREQ(S, L64(_varn_base + vi * 8), noff) == 1) {
-            if (GVDEAD(S, vi) == 0) {
+    var e = _fvh_head(S, noff);
+    while (e != 0) {
+        var vi = e - 1;
+        if (vi < below) { if (GVDEAD(S, vi) == 0) {
                 if (GVENUMID(S, vi) != 0) { return 0 - 1; }
                 if (GVFI(S, vi) != owner) { return 0 - 1; }
                 return vi;
-            }
-        }
-        vi = vi - 1;
+            } }
+        e = _fvh_next(vi);
     }
     return 0 - 1;
 }

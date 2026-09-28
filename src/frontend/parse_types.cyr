@@ -893,28 +893,127 @@ fn _gv_note_loopvar(S): i64 {
 # probe, grep for the SHAPE (a FINDVAR call reached from a registration path) rather than
 # counting the ones already named — twice now the count in this comment has been the bug.
 # CHANGELOG [6.6.6]
+#
+# 6.6.9 — THE GLOBAL VAR TABLE HAS A NAME INDEX. `_findvar_core` and `_gv_prior`
+# (parse_decl.cyr) used to walk EVERY registered global with STREQ, and every new top-level
+# global or enum member triggers two of those walks (the sit_shadow probe + `_gv_fold`, or
+# CHKDUPVAL + the enum pass-2 lookup), so N registrations cost O(N²): 20,000 constant
+# globals took ~4.9 s, 99 % of it in this phase. Now a name maps to the HIGHEST slot of that
+# name and `_fvh_prev[vi]` links each slot to the next lower slot of the same name, so a
+# lookup visits only the slots that share the name, highest first — the order the old
+# reverse walk tested them in, so every result is the one it returned.
+#
+# The index syncs LAZILY for [_fvh_upto, GVCNT). That is sound because every writer of
+# `_varn_base` writes the name at an index >= GVCNT BEFORE bumping the count, and nothing
+# renames a slot below the count (a registration folded away by `_gv_fold` is never counted,
+# and the next one at that index overwrites its name first). A slot not yet counted is not
+# visible to either walk, which is also what the old loops did. `_HTEMP` slots carry name
+# offset 0 and all chain under the first lexed word, dead — the same cost as before for
+# that one name, and skipped exactly as before. No heap/brk layout change: both tables are
+# alloc'd. CHANGELOG [6.6.9]
+#
+# A name map: open addressing, 16-byte entries (name offset, value), value 0 = empty. The
+# handle is a 3-word block: table, mask (slots - 1), slots in use. Doubles at half full.
+fn _nm_alloc(m, slots): i64 {
+    store64(m, alloc(slots * 16));
+    store64(m + 8, slots - 1);
+    store64(m + 16, 0);
+    return 0;
+}
+fn _nm_new(slots): i64 {
+    var m = alloc(24);
+    _nm_alloc(m, slots);
+    return m;
+}
+# The entry for `noff`: the matching one, or the empty slot it would go in.
+fn _nm_probe(S, m, noff): i64 {
+    var tab = load64(m);
+    var mask = load64(m + 8);
+    var s = FNV1A_NOFF(S, noff) & mask;
+    while (load64(tab + s * 16 + 8) != 0) {
+        if (STREQ(S, load64(tab + s * 16), noff) == 1) { return tab + s * 16; }
+        s = (s + 1) & mask;
+    }
+    return tab + s * 16;
+}
+fn _nm_get(S, m, noff): i64 { return load64(_nm_probe(S, m, noff) + 8); }
+fn _nm_put(S, m, noff, val): i64 {
+    var a = _nm_probe(S, m, noff);
+    if (load64(a + 8) == 0) {
+        store64(a, noff);
+        store64(m + 16, load64(m + 16) + 1);
+    }
+    store64(a + 8, val);
+    if (load64(m + 16) * 2 > load64(m + 8)) { _nm_grow(S, m); }
+    return 0;
+}
+fn _nm_grow(S, m): i64 {
+    var old = load64(m);
+    var n = load64(m + 8) + 1;
+    _nm_alloc(m, n * 2);
+    var i = 0;
+    while (i < n) {
+        if (load64(old + i * 16 + 8) != 0) { _nm_put(S, m, load64(old + i * 16), load64(old + i * 16 + 8)); }
+        i = i + 1;
+    }
+    return 0;
+}
+
+var _fvh_m = 0;      # name -> highest slot of that name + 1
+var _fvh_prev = 0;   # per slot: the next lower slot of the same name + 1 (0 = none)
+var _fvh_pcap = 0;
+var _fvh_upto = 0;   # slots [0, _fvh_upto) are indexed
+fn _fvh_prev_grow(n): i64 {
+    var nc = 4096;
+    while (nc < n) { nc = nc * 2; }
+    var np = alloc(nc * 8);
+    var i = 0;
+    while (i < _fvh_pcap) { store64(np + i * 8, load64(_fvh_prev + i * 8)); i = i + 1; }
+    _fvh_prev = np;
+    _fvh_pcap = nc;
+    return 0;
+}
+fn _fvh_add(S, vi): i64 {
+    var noff = L64(_varn_base + vi * 8);
+    store64(_fvh_prev + vi * 8, _nm_get(S, _fvh_m, noff));
+    _nm_put(S, _fvh_m, noff, vi + 1);
+    return 0;
+}
+fn _fvh_sync(S): i64 {
+    var n = GVCNT(S);
+    if (_fvh_upto >= n) { return 0; }
+    if (_fvh_m == 0) { _fvh_m = _nm_new(4096); }
+    if (n > _fvh_pcap) { _fvh_prev_grow(n * 2); }
+    while (_fvh_upto < n) {
+        _fvh_add(S, _fvh_upto);
+        _fvh_upto = _fvh_upto + 1;
+    }
+    return 0;
+}
+# The highest counted slot named `noff`, + 1 (0 = none). Walk down with _fvh_next.
+fn _fvh_head(S, noff): i64 {
+    _fvh_sync(S);
+    if (_fvh_m == 0) { return 0; }
+    return _nm_get(S, _fvh_m, noff);
+}
+fn _fvh_next(vi): i64 { return load64(_fvh_prev + vi * 8); }
+
 fn _findvar_core(S, noff): i64 {
-    var vcnt = GVCNT(S);
-    var vi = vcnt - 1;
+    var e = _fvh_head(S, noff);
     var hid = 0 - 1;   # 6.6.6: the last match inside the hidden range (see _fv_hidden)
-    while (vi >= 0) {
-        var stored = L64(_varn_base + vi * 8);
+    while (e != 0) {
+        var vi = e - 1;
         # 6.6.5: a compiler-generated global temporary (top-level `switch` / `match` / `?` /
         # `for ... in`) is registered with NAME OFFSET 0, which is the FIRST LEXED WORD of the
-        # program — so this loop RETURNED those slots for that identifier and `&setup` changed
+        # program — so this lookup RETURNED those slots for that identifier and `&setup` changed
         # meaning after an intervening `switch`. They are marked dead at registration and
         # skipped here; inside a fn they are anonymous frame slots and never reach this table.
-        # ⚠ ORDER MATTERS FOR SPEED, NOT FOR MEANING. `GVDEAD` is a call plus a load on EVERY
-        # candidate; `STREQ` fails on the first byte for almost all of them. Testing the name
-        # first and the dead flag only on a match is identical semantically (a dead slot is
-        # still skipped) and measured ~4 % of the whole self-compile: this loop is the hottest
-        # in the front end. CHANGELOG [6.6.5]
-        if (STREQ(S, stored, noff) == 1) { if (GVDEAD(S, vi) == 0) { if (_fv_hidden(vi) == 1) {
-                    if (hid < 0) { hid = vi; }
-                } else {
-                    return vi;
-                } } }
-        vi = vi - 1;
+        if (GVDEAD(S, vi) == 0) { if (_fv_hidden(vi) == 1) {
+                if (hid < 0) { hid = vi; }
+            } else {
+                return vi;
+            } }
+        e = _fvh_next(vi);
     }
     return hid;
 }
