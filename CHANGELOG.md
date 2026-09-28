@@ -6,6 +6,34 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.9] — 2026-09-28
 
+### Fixed
+
+- **`f64_sin` / `f64_cos` / `f64_atan` on aarch64 are within 1 ulp for every argument, with the
+  IEEE special values.** (bite 4; audit: aarch64 sin/cos/atan polyfill accuracy.) aarch64 lowers
+  these builtins to `lib/math.cyr`'s polyfills. **Root cause:** below 8192 the reduction was
+  `r = x − k·π/2` with a ONE-word π/2, an absolute error of about k·6e-17 that becomes millions of
+  ulp near every multiple of π/2 (random 2 < |x| < 8192: up to ~2.6e6 ulp; `sin(π)` = -0, and
+  `sin(-0)` = +0); above it a two-word 2/π (~107 bits) failed past ~2^50 and `f64_to(k)` then
+  saturated, so the Taylor kernels ran on a huge `r` — `|sin| > 1` from 2^55, `sin(1e19)` =
+  5.3e30, `sin(1e300)` = +inf, `sin(DBL_MAX)` = NaN; the kernels took no tail word; and atan was an
+  11-term Taylor series, `atan(1)` 26 ulp off, 52 ulp worst on [-4, 4]. Silently. **Fix:** ports of
+  FreeBSD msun (fdlibm 5.3) `e_rem_pio2.c` + `k_rem_pio2.c`, `k_sin.c` / `k_cos.c` and `s_atan.c`,
+  from f64 add/sub/mul/div and integer bit operations only. Below 2^20·π/2 the reduction is
+  Cody-Waite with π/2 in three 33-bit words, each later word applied only when the first cancels
+  enough bits; above it `__kernel_rem_pio2` multiplies by as many 24-bit chunks of 2/π (the
+  66-entry `ipio2` table, regenerated from π and checked against fdlibm's) as the cancellation
+  needs, exact up to `DBL_MAX`. The kernels take the reduced argument as head + tail; tiny
+  arguments come back unchanged, so -0 and subnormals keep their bits; quadrant signs are
+  sign-bit flips. atan folds onto the breakpoints {0.5, 1, 1.5, ∞} with hi + lo `atan(c)` words, so
+  `atan(±1)` is exactly the double nearest ±π/4. Against a correctly rounded reference (Python
+  decimal, π to 1,400 digits; 243,842 arguments over every binade from 2^-40 to DBL_MAX, near
+  k·π/2 for k to 2^21, and the specials) every result of all three is within 1 ulp, with the
+  **same bits** on x86 (called directly), wine, pi, ecb, ach and cass. Gated by
+  `tests/tcyr/crossos/exp2_atan_bigtrig.tcyr` (atan: `atan(±1)` bit-exact, specials, 17 finite
+  rows ≤ 1 ulp with the bits pinned, and a 2,128-argument sweep whose hash was pinned after every
+  result was checked within 1 ulp; large-argument sin/cos rows from 10^4 to 2^80 moved from a 1e-9
+  absolute bar to 1 ulp — the 6.6.8 `math.cyr` fails 12 of them on x86).
+
 ## [6.6.8] — 2026-09-28
 
 The second of the three small batch releases (roadmap.md, *The 6.6.7 → 6.6.9 batch*): the platform
