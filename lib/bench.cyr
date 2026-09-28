@@ -1,6 +1,7 @@
 # bench.cyr — benchmarking framework for Cyrius
 # Usage: include "lib/bench.cyr"
-# Requires: string.cyr, fmt.cyr, alloc.cyr, fnptr.cyr, agnosys/syscalls.cyr
+# Includes its own definers (6.6.9): syscalls.cyr (the clocks; agnos uptime), alloc.cyr,
+# string.cyr, fmt.cyr, vec.cyr, fnptr.cyr.
 #
 # ⚠ THE TIMER FLOOR IS MEASURED, NOT DECLARED (v6.5.19). `bench_clock_overhead_ns()`
 # calibrates one clock read at first use and every path below subtracts it. Read it
@@ -160,6 +161,15 @@
 #   bench_report(b);
 #
 # See CHANGELOG [6.5.19] and [6.6.5], docs/development/benchmark-regimes.md.
+
+# 6.6.9: the header used to list these for the caller (one of them a retired agnosys path); a
+# bare include compiled with eleven undefined functions (fifteen on agnos). CHANGELOG [6.6.9]
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/fnptr.cyr"
 
 # clock_gettime clock-id. NOTE: the syscall NUMBER 228 MUST be a literal at each
 # call site below — never a `var`. The macOS __got reroute and Windows IAT reroute

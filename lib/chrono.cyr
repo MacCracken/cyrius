@@ -1,12 +1,18 @@
 # chrono.cyr — time and duration utilities
 # Usage: include "lib/chrono.cyr"
-# Requires: syscalls.cyr (for clock_gettime)
+# Includes its own definers (6.6.9): syscalls.cyr (clock_gettime; the agnos uptime/sleep
+# wrappers), alloc.cyr + string.cyr (the formatters), atomic.cyr (the init fence).
 # v6.5.39: atomic.cyr, for the aarch64 release fence on the lazy-init publish below.
 # ⚠ MEASURED ZERO COST: alloc.cyr already pulls atomic.cyr and includes are once-only, so
 # adding this changed NOTHING — A/B on tests/tcyr/stdlib/chrono.tcyr is byte-identical on
 # x86-linux, PE and the bare-metal kernel fixture. The proposal listed the include cost as
 # part of the decision; it is not.
 include "lib/atomic.cyr"
+# 6.6.9: the syscall peer (sys_uptime_us / sys_time_unix / sys_sleep_ms on agnos), alloc and
+# string were all called and none included. CHANGELOG [6.6.9]
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
 
 var CLOCK_REALTIME = 0;
 var CLOCK_MONOTONIC = 1;

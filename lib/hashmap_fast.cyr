@@ -1,6 +1,6 @@
 # hashmap_fast.cyr — SIMD-accelerated hash table (Swiss table inspired)
 # Usage: include "lib/hashmap_fast.cyr"
-# Requires: alloc.cyr, string.cyr, fnptr.cyr
+# Includes its own definers: alloc.cyr, string.cyr, vec.cyr, fnptr.cyr, hashseed.cyr.
 #
 # **Status (v5.8.62 audit): experimental, zero consumers.** Not in
 # cyrius.cyml's `[deps].stdlib` auto-prepend, not included by any
@@ -21,6 +21,10 @@
 
 include "lib/fnptr.cyr"
 include "lib/hashseed.cyr"   # v6.5.39: shared seed — do NOT re-copy the hash here
+# 6.6.9: memset / streq / vec_* were called and not included. CHANGELOG [6.6.9]
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/vec.cyr"
 
 # FNV-1a hash for null-terminated string (same as hashmap.cyr)
 # v6.5.39: seeded + finalized, like its twin. ⚠ This was a VERBATIM second copy of the
