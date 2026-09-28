@@ -726,6 +726,7 @@ fn _materialize_source(source): i64 {
 # load-bearing — it is kept because a SIGKILLed run still leaves one and the cost is a
 # few characters of path. CHANGELOG [6.6.5], [6.6.6].
 var _cbt_tmpdir_p = 0;
+var _cbt_tmpbase_env = 0;   # 1 when the base came from $TMPDIR (named in the mkdir failure)
 
 #ifdef CYRIUS_TARGET_WIN
 var _cbt_tmpbase_buf[64];    # 512 bytes (a top-level array is N x 8)
@@ -749,6 +750,7 @@ fn _cbt_tmpbase(): i64 {
         if (load8(t) == 47) {
             var tl = strlen(t);
             while (tl > 1 && load8(t + tl - 1) == 47) { tl = tl - 1; store8(t + tl, 0); }
+            _cbt_tmpbase_env = 1;
             return t;
         }
     }
@@ -756,21 +758,38 @@ fn _cbt_tmpbase(): i64 {
     #endif
 }
 
-# 0 when the CLI's private temp dir accepts a new 4 KB file right now, else the errno that
-# refused it (28 = ENOSPC also stands for a short write). Asked AFTER a capture came back
-# empty or a verdict went against a check, so "the temp dir is full" is reported as that
-# instead of as the negative answer the empty capture looked like. CHANGELOG [6.6.9]
-fn _cbt_tmp_probe(): i64 {
+# 0 when the CLI's private temp dir accepts a new 64 KB file right now, else the errno that
+# refused it (28 = ENOSPC also stands for a short write). Asked on a NEGATIVE answer — a
+# failed capture, a hasher that did not print a digest, a verdict against a check — and
+# asked while the temps that answer used are STILL IN PLACE: the first cut probed after the
+# verify's cleanup had freed the very blocks/inodes git was short of, so a NEARLY full temp
+# dir (4-8 KB free, 5 inodes) passed the probe and the tamper verdict stood. 64 KB rather
+# than 4: git's own writes (index.lock is the size of the index) can need more than one
+# page (the dep verify asks `_cbt_tmp_probe_n` for its index's size), and the error in doubt goes the fail-closed way — "could not be verified, free the
+# temp dir" — never a false tamper accusation with `rm -rf` advice. CHANGELOG [6.6.9]
+fn _cbt_tmp_probe(): i64 { return _cbt_tmp_probe_n(65536); }
+
+# As `_cbt_tmp_probe`, for a caller that knows git's write was bigger: at least `want` bytes
+# (floor 64 KB — a caller with no size passes 0 — ceiling 64 MB), written in 64 KB pieces
+# and removed at once.
+fn _cbt_tmp_probe_n(want): i64 {
+    if (want < 65536) { want = 65536; }
+    if (want > 67108864) { want = 67108864; }
     var p = _cbt_tmpfile("wprobe");
     var fd = sys_open(p, O_WRONLY | O_CREAT | O_TRUNC, 0x180);
     if (fd < 0) { return 0 - fd; }
-    var b = alloc(4096);
-    var w = sys_write(fd, b, 4096);
+    var b = alloc(65536);
+    var done = 0;
+    var e = 0;
+    while (done < want && e == 0) {
+        var w = sys_write(fd, b, 65536);
+        if (w < 0) { e = 0 - w; }
+        elif (w != 65536) { e = 28; }
+        done = done + 65536;
+    }
     sys_close(fd);
     sys_unlink(p);
-    if (w < 0) { return 0 - w; }
-    if (w != 4096) { return 28; }
-    return 0;
+    return e;
 }
 
 # Windows only: milliseconds from GetSystemTimeAsFileTime (0xF01B), mod 1e9. -1
@@ -823,10 +842,22 @@ fn _cbt_tmpdir(): i64 {
             str_builder_add_int(sb, attempt);
         }
         var d = str_data(str_builder_build(sb));
-        if (sys_mkdir(d, 448) == 0) {       # 0700
+        var mr = sys_mkdir(d, 448);         # 0700
+        if (mr == 0) {
             _cbt_tmpdir_p = d;
             return d;
         }
+        # Only EEXIST is a TAKEN candidate. Anything else (a $TMPDIR that does not exist or
+        # is not writable) fails the same way 16 times, and the "candidates were taken"
+        # advice sent the user hunting stale dirs that were never there. PE keeps the loop:
+        # its mkdir reroute reports no errno. CHANGELOG [6.6.9]
+        #ifndef CYRIUS_TARGET_WIN
+        if (mr != 0 - 17) {
+            _progress_close();
+            _cbt_tmpbase_fail(base, 0 - mr);
+            sys_exit(1);
+        }
+        #endif
         attempt = attempt + 1;
     }
     # v6.6.6 (bite 24 review) — see the branch above. REACHABLE on POSIX, not just PE:
@@ -840,6 +871,27 @@ fn _cbt_tmpdir(): i64 {
     println("  16 candidates were taken; remove stale cyrius-* dirs there and retry.");
     println("  cyrius will NOT fall back to a shared temp name (CVE-35/CVE-36).");
     sys_exit(1);
+    return 0;
+}
+
+# The temp base itself refused the private directory (errno `e`, not EEXIST): name the base,
+# the errno, and whether it came from $TMPDIR. The caller closes the progress line first and
+# exits fail-closed (from inside `_cbt_tmpdir`, where nothing has been created yet).
+# CHANGELOG [6.6.9]
+fn _cbt_tmpbase_fail(base, e): i64 {
+    sys_write(STDOUT_FD, "error: cannot create a private temp directory under ", 52);
+    sys_write(STDOUT_FD, base, strlen(base));
+    sys_write(STDOUT_FD, " (errno ", 8);
+    fmt_int_fd(STDOUT_FD, e);
+    println(", fail-closed)");
+    if (_cbt_tmpbase_env == 1) {
+        sys_write(STDOUT_FD, "  TMPDIR=", 9);
+        sys_write(STDOUT_FD, base, strlen(base));
+        println(" does not exist or is not writable; point TMPDIR at a writable directory, or unset it.");
+    } else {
+        println("  the temp base does not exist or is not writable; set TMPDIR to an absolute, writable path.");
+    }
+    println("  cyrius will NOT fall back to a shared temp name (CVE-35/CVE-36).");
     return 0;
 }
 

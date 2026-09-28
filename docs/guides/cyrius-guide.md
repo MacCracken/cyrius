@@ -1427,8 +1427,9 @@ unchecked: the check could not write its temp files, so the cache was NOT judged
 
 (Through 6.6.8 this read as "refusing tampered cache … rm -rf", for every dep at once.) The CLI's
 temp base is an **absolute** `$TMPDIR` when one is set, else `/tmp` (`%TEMP%` on Windows); a
-relative `TMPDIR` is ignored. The hashes behind `cyrius.lock` come from `sha256sum`, or
-`shasum -a 256` where there is no `sha256sum` (macOS 13), or `certutil` on Windows.
+relative `TMPDIR` is ignored, and one that does not exist or cannot be written is an error
+that names it (`TMPDIR=… does not exist or is not writable`). The hashes behind `cyrius.lock`
+come from `sha256sum`, or `shasum -a 256` where there is no `sha256sum` (macOS 13), or `certutil` on Windows.
 
 ⚠ **Native Windows is out of scope for all of this**, as the git-dep flow always has been:
 `sys_fork` does not exist there, so no git command can run. A pre-populated cache resolves with

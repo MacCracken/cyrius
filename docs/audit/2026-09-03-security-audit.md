@@ -633,19 +633,28 @@ read "my capture came back empty" as an answer, so the refusal named the wrong c
   `/tmp` the CVE-43 cache check then refused every healthy git dep as **tampered** with `rm -rf`
   advice (reasons 1, 2, 3, 8 all reachable), and the hasher read as "sha256sum missing?". The
   capture is now opened by the PARENT before the fork; a refusal reached while a capture could
-  not be written — or while the private temp dir refuses a fresh 4 KB file — is **reason 10**
-  (still a refusal), which names the temp dir and errno and prints no restore recipe.
+  not be written — or while the private temp dir refuses a fresh file as big as git's write
+  (64 KB, or the dep's own index size), asked BEFORE the verify removes its own temps — is
+  **reason 10** (still a refusal), which names the temp dir and errno and prints no restore
+  recipe. (Review round: probing AFTER the cleanup, and reading a failed `update-index
+  --refresh` through `diff-files`, still called a NEARLY full temp dir — 4-8 KB or 5 inodes
+  left — tampered; both closed.) The hasher asks the same question when it prints no digest, so
+  a capture that opened but could not be written no longer blames the dependency file.
 - **`cyrius lint`'s syntax pre-pass** FAILED OPEN on the same condition — a file that does not
   parse linted `0 warnings`, rc 0. It now refuses by name.
 - **`_cbt_tmpbase`** returned the literal `/tmp` on every POSIX target, so a user could not route
   the CLI off a full `/tmp`. An **absolute** `$TMPDIR` is now the base (trailing slashes dropped;
   a relative value is ignored, since it would resolve against whatever directory a verb runs in).
   The private-directory discipline of CVE-35/CVE-36 is unchanged: an EXCLUSIVE 0700 `mkdir`, 16
-  candidates, fail closed, never a shared name. On macOS this moves every CLI temp from `/tmp`
+  candidates, fail closed, never a shared name — except that a failure other than EEXIST (a
+  `TMPDIR` that is gone or unwritable) now stops at once and names the base and errno instead of
+  burning the 16 candidates and blaming stale directories. On macOS this moves every CLI temp from `/tmp`
   to the per-user `/var/folders/…/T` — a 0700 per-user directory, which narrows the shared
   namespace further. The leak gates that counted `/tmp/cyrius-*` derive the same base, so a set
   `TMPDIR` cannot make them read green over directories they never looked at.
 
 Gate: `tests/gates/toolchain/deps_cache_capture_failure_named.sh` (the filing's `unshare` +
-`nr_inodes` recipe at 4/3/2, TMPDIR routing, the hasher, lint, and a static check that the
-capture is opened before the fork), mutation-proven per mechanism.
+`nr_inodes` recipe swept 2-8, a 64 KB tmpfs at 0-12 KB free, a 1500-file dep at 0-320 KB free,
+TMPDIR routing and a missing/unwritable TMPDIR, the hasher out of inodes and full, lint, a
+failing `update-index`, and static checks that the capture is opened before the fork and the
+verdict judged before the cleanup), mutation-proven per mechanism.

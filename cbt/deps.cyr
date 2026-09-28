@@ -2926,10 +2926,15 @@ fn _sha256sum_file(path): i64 {
     if (_sha_tool == 0) {
         # First call: sha256sum, else shasum (macOS 13 has no sha256sum — measured on ach;
         # it has /usr/bin/shasum). Memoised, so the probe runs once per process.
+        # A probe that never RAN the tool (pr < 0: no capture, no fork) proves nothing about
+        # which tool exists — un-memoise it, or a transient full temp dir on the first hash
+        # pins sha256sum for the whole process and every later hash on macOS 13 reads 127 as
+        # "neither on PATH". CHANGELOG [6.6.9]
         _sha_tool = 1;
         var pr = _sha_run(tmpf, path);
         if (pr == 127) { _sha_tool = 2; pr = _sha_run(tmpf, path); }
         if (pr == 127) { _sha_tool = 0 - 1; }
+        if (pr < 0) { _sha_tool = 0; }
         return _sha_finish(tmpf, pr);
     }
     if (_sha_tool < 0) { _sha_fail = 1; return 0; }
@@ -2989,6 +2994,14 @@ fn _sha_finish(tmpf, rc): i64 {
     if (rc < 0) { sys_unlink(tmpf); _sha_fail = 4; return 0; }   # -3 / -1: not started
     var buf = alloc(128);
     var n = file_read_all(tmpf, buf, 127);
+    # No digest: ask the temp dir while the capture still holds its space. A hasher whose
+    # WRITE to the capture failed (EDQUOT on a usrquota tmpfs, ENOSPC) exits 1 exactly like
+    # one that could not read its input, and "could not read it" blamed the dependency file.
+    # CHANGELOG [6.6.9]
+    if (rc != 127 && (rc != 0 || n < 64)) {
+        var pe = _cbt_tmp_probe();
+        if (pe != 0) { sys_unlink(tmpf); _sha_errno = pe; _sha_fail = 3; return 0; }
+    }
     sys_unlink(tmpf);
     if (rc == 127) { _sha_fail = 1; return 0; }
     if (rc != 0) { _sha_rc = rc; _sha_fail = 2; return 0; }
@@ -3012,7 +3025,7 @@ fn _sha_fail_why(): i64 {
         _ew(_cbt_tmpdir());
         _ew(" (errno ");
         fmt_int_fd(STDERR_FD, _sha_errno);
-        _ew(") — the temp dir is full or unwritable; nothing was hashed. Set TMPDIR to an absolute path elsewhere to route around it");
+        _ew(") — the temp dir is full or unwritable; no digest was captured. Set TMPDIR to an absolute path elsewhere to route around it");
         return 0;
     }
     if (_sha_fail == 1) { _ew("neither sha256sum nor shasum is on PATH"); return 0; }
@@ -3245,6 +3258,7 @@ var _git_err_path = 0;
 # opened by the PARENT; a failure records its errno here and git is never run uncaptured.
 # CHANGELOG [6.6.9]
 var _git_cap_errno = 0;
+var _git_cap_want = 0;   # bytes the judge's probe must fit (see _git_cache_verify)
 
 fn _git_errfile(): i64 {
     if (_git_err_path == 0) { _git_err_path = _cbt_tmpfile("git_err"); }
@@ -3762,42 +3776,79 @@ fn _git_raw_check(clone_dir, idx, lb, sz, outf): i64 {
 # nothing here can tell that from the real tag (measured). What catches THAT is the
 # `cyrius.lock` commit pin, which is trust-on-first-use: honest on the first resolve, held
 # against every later one. Offline, that is the bound. CHANGELOG [6.6.5].
+# The verify's temps (idx, outf) are created and removed HERE, and the verdict is judged
+# while they still exist: the raw check returns without cleaning up, so a temp dir that was
+# nearly full when git needed it is still nearly full when `_git_cap_judge` asks.
+# CHANGELOG [6.6.9]
 fn _git_cache_verify(clone_dir, tag_or_0, head, want_url): i64 {
     _git_cap_errno = 0;
-    return _git_cap_judge(_git_cache_verify_raw(clone_dir, tag_or_0, head, want_url));
+    var idx = _cbt_tmpfile("dep_verify_index");
+    var outf = _cbt_tmpfile("dep_verify_out");
+    _git_verify_cleanup(idx, outf);
+    # The probe must be as big as what git was writing: the private index (and its
+    # index.lock) is the size of the cache's own — a 400-file dep's is ~40 KB, and a probe
+    # smaller than that passed while read-tree / update-index had failed. CHANGELOG [6.6.9]
+    _git_cap_want = _git_index_size(clone_dir) + 4096;
+    var r = _git_cap_judge(_git_cache_verify_raw(clone_dir, tag_or_0, head, want_url, idx, outf));
+    _git_cap_want = 0;
+    _git_verify_cleanup(idx, outf);
+    return r;
+}
+
+# Size of the cache's own `.git/index`, or 0 when unknown — never following a symlink and
+# never blocking on a FIFO (the cache is untrusted). It only sizes the judge's probe; git
+# itself never reads this file (every verify runs on a private GIT_INDEX_FILE). CHANGELOG [6.6.9]
+fn _git_index_size(clone_dir): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    return 0;
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    var ip = _cat2(clone_dir, "/.git/index");
+    if (is_symlink(str_from(ip)) == 1) { return 0; }
+    var fd = sys_open(ip, O_RDONLY | O_NONBLOCK, 0);
+    if (fd < 0) { return 0; }
+    var n = xlseek(fd, 0, 2);
+    sys_close(fd);
+    if (n < 0) { return 0; }
+    return n;
+    #endif
+}
+
+# Record the temp dir's errno (if it refuses a fresh file now) unless one is already known.
+fn _git_cap_note(): i64 {
+    if (_git_cap_errno == 0) { _git_cap_errno = _cbt_tmp_probe_n(_git_cap_want); }
+    return 0;
 }
 
 # A refusal `r` stands only when every capture it read was really written. When one could
-# not be (recorded by `_git_run`), or the private temp dir refuses a fresh 4 KB file now, the
-# verdict is reason 10 — still a refusal (fail closed), but named as what it is, with no
-# tamper accusation and no `rm -rf` advice. Asked only on a refusal, so a clean resolve pays
-# nothing. CHANGELOG [6.6.9]
+# not be (recorded by `_git_run`), or the private temp dir refuses a fresh file now (probed
+# with the check's own temps still in place), the verdict is reason 10 — still a refusal
+# (fail closed), but named as what it is, with no tamper accusation and no `rm -rf` advice.
+# Asked only on a refusal, so a clean resolve pays nothing. CHANGELOG [6.6.9]
 fn _git_cap_judge(r): i64 {
     if (r == 0) { return 0; }
-    if (_git_cap_errno == 0) { _git_cap_errno = _cbt_tmp_probe(); }
+    _git_cap_note();
     if (_git_cap_errno != 0) { return 10; }
     return r;
 }
 
-fn _git_cache_verify_raw(clone_dir, tag_or_0, head, want_url): i64 {
+# Every return leaves idx/outf in place for the caller's judge + cleanup.
+fn _git_cache_verify_raw(clone_dir, tag_or_0, head, want_url, idx, outf): i64 {
     if (_git_has_repo(clone_dir) == 0) { return 1; }
-    var idx = _cbt_tmpfile("dep_verify_index");
-    var outf = _cbt_tmpfile("dep_verify_out");
-    _git_verify_cleanup(idx, outf);
     # FIRST, before anything reads the working tree: a filter driver declared in the cache's
     # own config would already have run by then, and would have decided the answer.
     var cfr = _git_cfg_hazard(clone_dir, outf);
-    if (cfr != 0) { _git_verify_cleanup(idx, outf); return cfr; }
+    if (cfr != 0) { return cfr; }
     var our = _git_origin_mismatch(clone_dir, want_url, outf);
-    if (our != 0) { _git_verify_cleanup(idx, outf); return our; }
+    if (our != 0) { return our; }
     if (tag_or_0 != 0) {
         var tr = _cat2(_cat2("refs/tags/", tag_or_0), "^{commit}");
         var tc = _git_rev(clone_dir, tr);
         if (tc == 0) {
             tc = _git_rev(clone_dir, _cat2(_cat2("refs/remotes/origin/", tag_or_0), "^{commit}"));
         }
-        if (tc == 0) { _git_verify_cleanup(idx, outf); return 2; }
-        if (_cstr_eq(tc, head) == 0) { _git_verify_cleanup(idx, outf); return 2; }
+        if (tc == 0) { return 2; }
+        if (_cstr_eq(tc, head) == 0) { return 2; }
     }
     # fsck FIRST: read-tree does NOT verify that an object hashes to the name it is
     # stored under, so a forged subtree spliced in under the original tree's name is
@@ -3812,21 +3863,17 @@ fn _git_cache_verify_raw(clone_dir, tag_or_0, head, want_url): i64 {
     # and exits 128 — that must never brick every resolve on that git, so fall back to the
     # unmodified fsck (which only restores the old, stricter behaviour).
     if (fr == 128) { fr = _git_run(clone_dir, idx, "fsck", "--no-dangling", "--no-progress", 0, 0, 0); }
-    if (fr != 0) {
-        _git_verify_cleanup(idx, outf);
-        return 3;
-    }
-    if (_git_run(clone_dir, idx, "read-tree", "HEAD", 0, 0, 0, 0) != 0) {
-        _git_verify_cleanup(idx, outf);
-        return 3;
-    }
+    if (fr != 0) { return 3; }
+    if (_git_run(clone_dir, idx, "read-tree", "HEAD", 0, 0, 0, 0) != 0) { return 3; }
     # A fresh index holds no stat data, so this HASHES every file rather than trusting a
-    # cached mtime. Its exit status is deliberately ignored — a non-zero here only means
-    # "something differs", which diff-files reports precisely.
-    _git_run(clone_dir, idx, "update-index", "-q", "--refresh", 0, 0, 0);
+    # cached mtime. 0 or 1 only mean "something may differ", which diff-files reports
+    # precisely. ANYTHING ELSE is git failing — 128 is "cannot create index.lock" in a full
+    # temp dir — and must not fall through: diff-files on an index with no stat data then
+    # exits 1 and a healthy cache read as reason 4, tampered. CHANGELOG [6.6.9]
+    var urr = _git_run(clone_dir, idx, "update-index", "-q", "--refresh", 0, 0, 0);
+    if (urr != 0 && urr != 1) { return 3; }
     var dfr = _git_run(clone_dir, idx, "diff-files", "--quiet", 0, 0, 0, 0);
     if (dfr != 0) {
-        _git_verify_cleanup(idx, outf);
         # 1 = a real difference; anything else (or -1) is git failing, not the tree differing.
         if (dfr == 1) { return 4; }
         return 3;
@@ -3834,32 +3881,22 @@ fn _git_cache_verify_raw(clone_dir, tag_or_0, head, want_url): i64 {
     # No --exclude-standard: a file the tag does not carry is a refusal even when
     # .gitignore or .git/info/exclude hides it. A module planted at a declared-but-absent
     # path, or at the lib/<basename> fallback, was vendored through exactly this gap.
-    if (_git_run(clone_dir, idx, "ls-files", "-o", "-z", 0, outf, 0) != 0) {
-        _git_verify_cleanup(idx, outf);
-        return 3;
-    }
+    if (_git_run(clone_dir, idx, "ls-files", "-o", "-z", 0, outf, 0) != 0) { return 3; }
     var osz = _file_size(outf);
-    if (osz < 0) { _git_verify_cleanup(idx, outf); return 3; }   # no capture = git failed, not "clean"
-    if (osz != 0) {
-        _git_verify_cleanup(idx, outf);
-        return 5;
-    }
-    if (_git_run(clone_dir, idx, "ls-files", "-s", "-z", 0, outf, 0) != 0) {
-        _git_verify_cleanup(idx, outf);
-        return 3;
-    }
+    if (osz < 0) { return 3; }   # no capture = git failed, not "clean"
+    if (osz != 0) { return 5; }
+    if (_git_run(clone_dir, idx, "ls-files", "-s", "-z", 0, outf, 0) != 0) { return 3; }
     var sz = _file_size(outf);
-    if (sz < 0) { _git_verify_cleanup(idx, outf); return 3; }
+    if (sz < 0) { return 3; }
     var lb = alloc(sz + 1);
     var ln = file_read_all(outf, lb, sz);
-    if (ln != sz) { _git_verify_cleanup(idx, outf); return 3; }
+    if (ln != sz) { return 3; }
     store8(lb + sz, 0);
     var gl = _git_gitlink_scan(clone_dir, lb, sz);
-    if (gl != 0) { _git_verify_cleanup(idx, outf); return gl; }
+    if (gl != 0) { return gl; }
     # LAST, and on the same `ls-files -s` rows: diff-files has already agreed, so anything
     # this finds is a difference an attribute conversion was hiding. CHANGELOG [6.6.5].
     var rr = _git_raw_check(clone_dir, idx, lb, sz, outf);
-    _git_verify_cleanup(idx, outf);
     if (rr == 0) { _git_err_clear(); }
     return rr;
 }

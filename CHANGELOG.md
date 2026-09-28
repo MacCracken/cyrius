@@ -120,8 +120,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `0 warnings`, rc 0. `_cbt_tmpbase` returned the literal `/tmp`, so TMPDIR could not help.
   **Fix:** every capture is opened by the PARENT before the fork (`_git_run`, the new `_sha_run`;
   the lint pre-pass pre-creates its diagnostics file). A cache refusal reached while a capture
-  could not be written, or while the private temp dir refuses a fresh 4 KB file
-  (`_cbt_tmp_probe`), is **reason 10** — still a refusal, but it names the temp dir and the errno,
+  could not be written, or while the private temp dir refuses a fresh file as big as git's
+  write (`_cbt_tmp_probe_n`: 64 KB, or the dep's own index size — a 1500-file dep's is ~150 KB),
+  asked while the verify's own temps are STILL IN PLACE, is **reason 10** — still a refusal, but it names the temp dir and the errno,
   says the cache was NOT judged, and prints no restore recipe and no `rm -rf`. The hasher says
   why it failed (`_sha_fail_why`: the capture, no hasher on PATH, or the file), and the lint
   pre-pass refuses by name. An **absolute** `$TMPDIR` is the temp base (`_cbt_env_str`; trailing
@@ -130,15 +131,31 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   not on PATH — **macOS 13 has no `sha256sum`** (measured on ach), so `deps --lock`/`--verify`
   could never hash there; `_git_cfg_hazard` now fails closed on a NEGATIVE git status too (`> 1`
   let "not run" through to a size check that, with the capture now pre-created, would read
-  "clean"). ⚠ **macOS moves every CLI temp** from `/tmp` to the per-user `/var/folders/…/T`.
+  "clean"). **Review round (the NEARLY-full temp dir):** the first cut still called a healthy
+  cache tampered with 4-8 KB or 5 inodes left — exactly a usrquota tmpfs at its limit — because
+  the probe ran after the verify's cleanup had freed the room git lacked (now judged BEFORE the
+  cleanup: `_git_cache_verify_raw` leaves its temps to the wrapper), and because a failed
+  `update-index --refresh` (128, no room for `index.lock`) fell through to `diff-files`, which
+  read the stat-less index as reason 4 (now reason 3 → judged). The hasher asks the temp dir
+  too when the tool exits non-zero or prints no digest, so a capture that opened but could not
+  be WRITTEN (EDQUOT/ENOSPC) no longer reads "the hasher could not read it (exit 1)", blaming
+  the dependency file. A `$TMPDIR` that does not exist or cannot be written stops at once with
+  the base, the errno and "TMPDIR=… does not exist or is not writable" — only EEXIST is a taken
+  candidate, so "16 candidates were taken; remove stale cyrius-* dirs" no longer covers it (PE
+  keeps the loop; its mkdir reroute reports no errno). A tool probe that never ran the tool
+  (`pr < 0`) no longer memoises sha256sum for the rest of the process. ⚠ **macOS moves every CLI temp** from `/tmp` to the per-user `/var/folders/…/T`.
   The leak gates that counted `/tmp/cyrius-*` (`cli_temp_dir_no_leak`, `test_runner_bounded`,
   `build_temp_no_leak`, `deps_git_cache_verified`) derive the same base, so a set TMPDIR cannot
   turn them silently green; `cli_progress_line_not_spliced` axis 10 unsets it (it squeezes
   `/tmp`). Hardening note (no CVE — every site failed closed) in
   `docs/audit/2026-09-03-security-audit.md`. Gate: `deps_cache_capture_failure_named.sh` — the
-  filing's `unshare` + `nr_inodes` 4/3/2 recipe, TMPDIR routing, the hasher, lint, the shasum
-  fallback, and a static before-the-fork check; the pre-fix tree fails axes 1-7, and each of seven
-  one-line mutants fails its own axis.
+  filing's `unshare` + `nr_inodes` recipe swept 2-8 plus a 64 KB tmpfs at 0/4/8/12 KB free and a
+  1500-file dep on a 1 MB tmpfs at 0-320 KB free, TMPDIR routing (a missing or unwritable one
+  named with its errno), the hasher with /tmp out of inodes AND full, lint, the shasum fallback,
+  a failing `update-index` (a git wrapper), and static before-the-fork / judge-before-cleanup
+  checks; the slot-open tree fails every axis but the anti-vacuous 0, the bite's first cut
+  fails axes 1, 1b, 3, 5, 8 and 9, and each of the fifteen mutants in its ledger fails its own
+  axis.
 - **`cyrius deps` locks every file it vendors, writes a stdlib-only project's first lock, and
   `--verify` fails on a file the lock does not cover.** (bite 9; issue
   `2026-09-23-patra-deps-never-locks-new-stdlib-leaves`, archived.) **Root cause:** cmd_deps wrote
@@ -160,8 +177,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `--verify` reports; the top-level `cyrius help` line lists `--relock`/`--lock`/`--dry-run`. Gate:
   `deps_lock_new_leaf_locked.sh` — the filing's repro verbatim (first lock, new leaf locked,
   tamper caught), an unlocked nested file failing `--verify`, the empty lock, `cyrius build`
-  writing the first lock, anti-churn, one-walker static, help; the pre-fix tree fails every axis
-  and four one-line mutants each fail their own. ⚠ A lock write owed ONLY to a new leaf (in
+  writing the first lock, anti-churn, one-walker static, help; the pre-fix tree fails axes 1-7
+  and five one-line mutants each fail their own. ⚠ A lock write owed ONLY to a new leaf (in
   practice: a stdlib-only project's first lock) that cannot HASH is a named warning —
   `warning: cyrius.lock NOT written — cannot hash …: <why>` — and deps/build succeed: no lock was
   attempted there before 6.6.9, and a host with no working hasher (wine has no certutil) must not
@@ -180,7 +197,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`TMPDIR`**: an absolute `$TMPDIR` now moves the CLI's private temp dir (macOS sets one per
   user, so every macOS CLI temp moves off `/tmp`). A full or quota-limited temp dir now reads
   `could NOT be verified … temp dir: … (errno N)` instead of "refusing tampered cache" — do not
-  delete the cache; free the space or point TMPDIR elsewhere.
+  delete the cache; free the space or point TMPDIR elsewhere. A stale inherited `TMPDIR` naming
+  a directory that is gone now fails every verb with `TMPDIR=… does not exist or is not
+  writable` — fix or unset it.
 - **vani** can narrow ADR 002 (`docs/architecture/002-distlib-deps-counts-comment-words.md`):
   comments and strings no longer count, so the remaining rule is "no stdlib top-level fn/var name as
   a profile module's parameter or local".
