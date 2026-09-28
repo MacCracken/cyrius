@@ -683,14 +683,19 @@ fn _format_gate(): i64 {
     var dirs = vec_new();
     vec_push(dirs, str_from(_root_path("lib")));
     audit_fmt_walk(CYRFMT_PATH, dirs);
-    _check("format (stdlib)", AW_FMT_FAIL);
+    # 6.6.8: a file cyrfmt did not finish on is not a formatted file.
+    if (AW_FMT_ERRORS > 0) {
+        println("  cyrfmt did not finish on these files (NOT checked):");
+        audit_print_errors(AW_FMT_ERROR_FILES);
+    }
+    _check("format (stdlib)", AW_FMT_FAIL + AW_FMT_ERRORS);
     if (AW_FMT_SKIPPED > 0) {
         _p("    (");
         print_num(AW_FMT_SKIPPED);
         println(" dep files skipped)");
     }
     println("");
-    return AW_FMT_FAIL;
+    return AW_FMT_FAIL + AW_FMT_ERRORS;
 }
 
 fn _lint_gate(): i64 {

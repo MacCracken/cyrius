@@ -2074,9 +2074,25 @@ fn _audit_sweep(): i64 {
     var cyrlint = _tool_path(_tools_dir, "cyrlint");
     var cyrdoc = _tool_path(_tools_dir, "cyrdoc");
 
+    # ⛔ 6.6.8 — THE WALKERS ARE BOUNDED. The fmt/lint/doc walkers report a tool killed at the
+    # deadline as an error (6.6.7), but nothing here ever SET one — lib/process.cyr defaults to
+    # no deadline — so a hung cyrfmt/cyrlint/cyrdoc hung `cyrius audit` for ever. Same knob and
+    # default as the other batch verbs (`CYRIUS_TEST_TIMEOUT`, seconds, 300 by default, 0 = no
+    # deadline), per tool run; put back before the tests stage, which bounds its own children.
+    # Windows has the deadline too since 6.6.8 (lib/process_win.cyr); agnos's process peer does
+    # not define it. CHANGELOG [6.6.8]
+    #ifndef CYRIUS_TARGET_AGNOS
+    var _aud_prev_dl = proc_set_timeout_ms(_run_timeout_ms());
+    #endif
     _status("── fmt ──");
     if (file_exists(cyrfmt) == 1) {
         audit_fmt_walk(cyrfmt, dirs);
+        # 6.6.8: a file cyrfmt did not FINISH on is not formatted (lib/audit_walk.cyr).
+        if (AW_FMT_ERRORS > 0) {
+            println("  FAIL: cyrfmt did not finish on these files (NOT checked):");
+            audit_print_errors(AW_FMT_ERROR_FILES);
+            rc = 1;
+        }
         if (AW_FMT_FAIL > 0) {
             # `cyrius fmt <file>...` rewrites in place (the default mode). This printed
             # `cyrius fmt -w`, which the v6.6.5 classifier refuses — `-w` is cyrfmt's
@@ -2109,7 +2125,7 @@ fn _audit_sweep(): i64 {
             }
             rc = 1;
         }
-        else { println("  ok: format clean"); }
+        elif (AW_FMT_ERRORS == 0) { println("  ok: format clean"); }
     } else { println("  skip: cyrfmt not built"); }
 
     _status("── lint ──");
@@ -2138,6 +2154,10 @@ fn _audit_sweep(): i64 {
         }
         if (AW_DOC_TOTAL == 0 && AW_DOC_ERRORS == 0) { println("  ok: docs complete"); }
     } else { println("  skip: cyrdoc not built"); }
+
+    #ifndef CYRIUS_TARGET_AGNOS
+    proc_set_timeout_ms(_aud_prev_dl);
+    #endif
 
     _status("── tests ──");
     var tdir = "tests/tcyr";

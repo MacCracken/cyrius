@@ -1,0 +1,261 @@
+# run_gate.cyr — `cyrius_check --run-gate <script> [args]`, and the supervisor the check driver
+# runs itself under. CHANGELOG [6.6.8]
+#
+# ⛔ THE DEFECT. Every shell gate ran as a plain child: scripts/check.sh as a foreground
+# `sh "$_g"`, the driver through a fork + /bin/sh with a PR_SET_PDEATHSIG(SIGKILL) on that
+# ONE process. Measured on the 6.6.7 tree:
+#   * a SIGKILLed check.sh left the gate's sh at PPID=1 with both of its `sleep`s alive —
+#     no death signal on check.sh's side at all, and no deadline for the 70 gates it ran;
+#   * a SIGKILLed driver took the gate's sh with it (PDEATHSIG) but NOT the gate's own
+#     children — PDEATHSIG is cleared on fork — and a deadline kill did the same (it
+#     signalled the pid only);
+#   * every kill was SIGKILL, which runs no cleanup: a gate's `trap 'rm -rf "$T"' EXIT` left
+#     its mktemp dir in RAM-backed /tmp on every killed run (TERM: 0 left, KILL: 1);
+#   * `kill <check.sh pid>` did NOTHING until the current gate returned — POSIX defers a trap
+#     until the foreground command finishes, and when the driver was that command, that was
+#     the rest of a ~13-minute run.
+#
+# THE SHAPE. One supervisor process between the caller and the program it runs:
+#   * PR_SET_CHILD_SUBREAPER — any descendant orphaned below it is reparented HERE, not to
+#     init, so it can still be found and ended;
+#   * it stays in the caller's PROCESS GROUP (no setsid). Ctrl-C, `timeout sh check.sh` (which
+#     signals its whole group) and `kill -- -PGID` keep reaching every process of the run; a
+#     setsid'd gate would escape all three, and if its supervisor were then SIGKILLed the new
+#     session's processes would be unreachable by anything — the same leak one level down;
+#   * TERM, INT and HUP are BLOCKED and read through a signalfd, as is CHLD, so one poll loop
+#     sees the child ending, a forwarded signal and the deadline alike;
+#   * PR_SET_PDEATHSIG(SIGTERM) on itself (with the getppid re-check), so a caller that dies
+#     any way at all — SIGKILL included — still triggers the same orderly end;
+#   * the child gets PDEATHSIG(SIGTERM) too, the caller's signal mask back, and SIGINT/SIGQUIT
+#     reset to default (a shell starts a `&` job with both IGNORED, and an ignore survives
+#     execve — the gate would otherwise be deaf to Ctrl-C);
+#   * ending is ALWAYS regression_terminate_children: TERM to the whole tree, `_RG_GRACE_MS`
+#     for EXIT traps, then KILL and reap. On a deadline it prints a TIMEOUT line naming the
+#     gate and the setting and exits 124; on a signal it exits 128+sig; when the child ends on
+#     its own anything it left running is ended the same way and named on stderr;
+#   * ⛔ a signal that did NOT come from the caller is taken as GROUP-delivered, and the child
+#     is then left `_RG_GRACE_MS` to end BY ITSELF before it is sent anything (an orphan
+#     adopted meanwhile still gets its one TERM at once). Ctrl-C (sender
+#     pid 0, the kernel), `timeout sh check.sh` and `kill -- -PGID` signal the whole process
+#     group, so the gate's shell already has that signal and is running its EXIT trap; the
+#     first cut TERMed it again at once, and bash dies mid-trap on a second TERM — measured,
+#     a group TERM cut the trap 12 of 12 times and a Ctrl-C 8 of 15 (6.6.7: 0 of 27). A
+#     signal from the CALLER (check.sh's or the driver's forward, or its death's PDEATHSIG)
+#     reached this process alone, so the child is TERMed at once, as before. A third party's
+#     `kill <this pid>` is indistinguishable from a group signal here and costs the grace
+#     period in latency, never a trap. CHANGELOG [6.6.8]
+
+var _RG_GRACE_MS = 5000;
+
+# sigset bit for signal n is 1 << (n - 1): HUP(1) INT(2) TERM(15) CHLD(17).
+fn _rg_sigmask(): i64 {
+    return (1 << 0) | (1 << 1) | (1 << 14) | (1 << 16);
+}
+
+fn _rg_now_ms(): i64 {
+    var ts[16];
+    syscall(228, 1, &ts);   # clock_gettime(CLOCK_MONOTONIC)
+    return load64(&ts) * 1000 + load64(&ts + 8) / 1000000;
+}
+
+fn _rg_err(s): i64 {
+    sys_write(2, s, strlen(s));
+    return 0;
+}
+
+fn _rg_out_num(fd, v): i64 {
+    var b[32];
+    var e = _regression_put_dec(&b, v);
+    sys_write(fd, &b, e - &b);
+    return 0;
+}
+
+# Give the direct `child` up to `ms` to end BY ITSELF, reaping every child as it ends. The
+# child is never signalled here; an orphan ADOPTED meanwhile gets its one SIGTERM as it
+# appears (a `&` job starts with SIGINT ignored, so after a Ctrl-C a gate's background
+# `sleep` outlives the gate and would otherwise hold the whole grace period — measured, 5 s).
+# < 0 once none is left (ECHILD), 0 if some are still running.
+fn _rg_let_children_end(ms, child): i64 {
+    _regression_tree_init();
+    if (_regression_termed == 0) { _regression_termed = alloc(_REGRESSION_TREE_CAP * 8); }
+    store64(_regression_termed, child);                     # listed as signalled: spared
+    _regression_termed_n = 1;
+    var waited = 0;
+    var left = _regression_reap_ended();
+    while (left >= 0 && waited < ms) {
+        _regression_term_children_once();
+        syscall(7, 0, 0, 10);
+        waited = waited + 10;
+        left = _regression_reap_ended();
+    }
+    return left;
+}
+
+# Run `path` with `argvp` / `envp` under the supervisor. `deadline_ms` <= 0 is no deadline;
+# `label` names the run in the TIMEOUT and leftover lines; `knob` names the setting that
+# bounds it. Returns the exit status to use.
+fn _rg_supervise(path, argvp, envp, deadline_ms, label, knob): i64 {
+    #ifdef CYRIUS_TARGET_LINUX
+    var mask[8];
+    store64(&mask, _rg_sigmask());
+    var oldmask[8];
+    store64(&oldmask, 0);
+    sys_sigprocmask(0, &mask, &oldmask);                    # SIG_BLOCK
+    var sfd = sys_signalfd(0 - 1, &mask, 0x80800);          # SFD_CLOEXEC | SFD_NONBLOCK
+    if (sfd < 0) {
+        _rg_err("cyrius_check --run-gate: signalfd failed — cannot supervise\n");
+        return 125;
+    }
+    sys_prctl(36, 1, 0, 0, 0);                              # PR_SET_CHILD_SUBREAPER
+    var ppid0 = sys_getppid();
+    sys_prctl(1, 15, 0, 0, 0);                              # PR_SET_PDEATHSIG = SIGTERM
+    if (sys_getppid() != ppid0) { return 143; }             # the caller is already gone
+    var me = sys_getpid();
+    var pid = sys_fork();
+    if (pid < 0) {
+        _rg_err("cyrius_check --run-gate: fork failed\n");
+        return 125;
+    }
+    if (pid == 0) {
+        # The census guard first (PDEATHSIG + the getppid re-check), then re-armed as SIGTERM:
+        # there is no instant at which the child has no death signal, and the one it keeps
+        # lets the program run its EXIT trap.
+        _regression_child_guard(me);
+        sys_prctl(1, 15, 0, 0, 0);
+        signal_default(2);
+        signal_default(3);
+        sys_close(sfd);
+        sys_sigprocmask(2, &oldmask, 0);                    # SIG_SETMASK: the caller's mask
+        sys_execve(path, argvp, envp);
+        _rg_err("cyrius_check --run-gate: cannot exec ");
+        _rg_err(path);
+        _rg_err("\n");
+        sys_exit(127);
+    }
+    var t0 = _rg_now_ms();
+    var status = 0;
+    var done = 0;
+    var gotsig = 0;
+    var timed = 0;
+    var grp = 0;
+    var si[128];
+    var st[8];
+    while (done == 0 && gotsig == 0 && timed == 0) {
+        var wait_ms = 0 - 1;
+        if (deadline_ms > 0) {
+            wait_ms = deadline_ms - (_rg_now_ms() - t0);
+            if (wait_ms <= 0) { timed = 1; wait_ms = 0; }
+        }
+        if (timed == 0) { _regression_poll_fd(sfd, 1, wait_ms); }
+        var r = sys_read(sfd, &si, 128);
+        while (r == 128) {
+            var signo = load32(&si);
+            if (signo != 17) {
+                if (gotsig == 0) { gotsig = signo; }
+                if (load32(&si + 12) != ppid0) { grp = 1; }     # ssi_pid: not the caller
+            }
+            r = sys_read(sfd, &si, 128);
+        }
+        var w = sys_waitpid(0 - 1, &st, 1);
+        while (w > 0) {
+            if (w == pid) { status = load32(&st); done = 1; }
+            w = sys_waitpid(0 - 1, &st, 1);
+        }
+    }
+    # A group-delivered signal already reached the child: let its EXIT trap finish before
+    # anything here sends it a second one (see the header).
+    if (gotsig != 0 && grp == 1) { _rg_let_children_end(_RG_GRACE_MS, pid); }
+    if (timed == 1 && done == 0) {
+        regression_terminate_children(_RG_GRACE_MS);
+        _p("  TIMEOUT: ");
+        _p(label);
+        _p(" — killed at the deadline (");
+        _p(knob);
+        _p("=");
+        _rg_out_num(1, deadline_ms / 1000);
+        _p("s) with its whole process tree: TERM, ");
+        _rg_out_num(1, _RG_GRACE_MS / 1000);
+        _p(" s for EXIT traps, then KILL\n");
+        return 124;
+    }
+    if (gotsig != 0 && done == 0) {
+        regression_terminate_children(_RG_GRACE_MS);
+        return 128 + gotsig;
+    }
+    var left = regression_terminate_children(_RG_GRACE_MS);
+    if (left > 0) {
+        _rg_err("cyrius_check --run-gate: ");
+        _rg_err(label);
+        _rg_err(" left ");
+        _rg_out_num(2, left);
+        _rg_err(" process(es) running when it ended — ended them (TERM, grace, KILL)\n");
+    }
+    if (WIFSIGNALED(status) == 1) { return 128 + WTERMSIG(status); }
+    var code = WEXITSTATUS(status);
+    # 124 from this supervisor means ITS deadline and nothing else, so a program's own exit 124
+    # is reported as 1 (and said so) rather than as a timeout it was not — with or without a
+    # deadline set: check.sh and the driver read 124 as TIMEOUT unconditionally, so under
+    # CYRIUS_CHECK_LONG_TIMEOUT=0 a gate's own 124 used to be reported as a deadline that did
+    # not exist. The only `return 124` is the timed branch above. CHANGELOG [6.6.8]
+    if (code == 124) {
+        _rg_err("cyrius_check --run-gate: ");
+        _rg_err(label);
+        _rg_err(" exited 124 on its own — reported as 1, because 124 here means the deadline\n");
+        return 1;
+    }
+    return code;
+    #endif
+    #ifndef CYRIUS_TARGET_LINUX
+    var me2 = sys_getpid();
+    var pid2 = sys_fork();
+    if (pid2 < 0) { return 125; }
+    if (pid2 == 0) { _regression_child_guard(me2); sys_execve(path, argvp, envp); sys_exit(127); }
+    var st2[8];
+    var reaped = _regression_wait_deadline(pid2, &st2, deadline_ms);
+    if (reaped == 0) { return 124; }
+    if (reaped < 0) { return 125; }
+    if (WIFSIGNALED(load32(&st2)) == 1) { return 128 + WTERMSIG(load32(&st2)); }
+    if (WEXITSTATUS(load32(&st2)) == 124) { return 1; }    # 124 is the deadline's alone
+    return WEXITSTATUS(load32(&st2));
+    #endif
+}
+
+# `cyrius_check --run-gate <script> [args]`: /bin/sh <script> [args] under the supervisor,
+# bounded by CYRIUS_CHECK_LONG_TIMEOUT. argv(1) is "--run-gate".
+fn _run_gate_main(): i64 {
+    var n = argc();
+    if (n < 3) {
+        _rg_err("usage: cyrius_check --run-gate <script> [args...]\n");
+        return 2;
+    }
+    var av = alloc((n + 1) * 8);
+    store64(av, "/bin/sh");
+    var i = 2;
+    var j = 1;
+    while (i < n) {
+        store64(av + j * 8, argv(i));
+        i = i + 1;
+        j = j + 1;
+    }
+    store64(av + j * 8, 0);
+    return _rg_supervise("/bin/sh", av, ENVP_ARR, _regression_long_timeout_ms(), argv(2),
+      "CYRIUS_CHECK_LONG_TIMEOUT");
+}
+
+# The driver supervising ITSELF: re-exec this binary as `<exe> --supervised [args]` under the
+# supervisor with no deadline (the driver bounds its own children). This is what makes a
+# SIGTERM to the driver — forwarded by check.sh, or from `kill` — end the whole run's tree in
+# order, and what catches the grandchildren of any child it spawns if the driver itself dies.
+fn _rg_supervise_self(): i64 {
+    var n = argc();
+    var av = alloc((n + 2) * 8);
+    store64(av, argv(0));
+    store64(av + 8, "--supervised");
+    var i = 1;
+    while (i < n) {
+        store64(av + (i + 1) * 8, argv(i));
+        i = i + 1;
+    }
+    store64(av + (n + 1) * 8, 0);
+    return _rg_supervise("/proc/self/exe", av, ENVP_ARR, 0, "the check driver", "none");
+}

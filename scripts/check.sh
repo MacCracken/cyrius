@@ -61,6 +61,34 @@ _chk_shell_manifest() {
 # targeted shell-gate run narrows it, so the summary does not report the rest as NOT RUN.
 _CHK_MANIFEST=$(_chk_shell_manifest)
 
+# ⛔ 6.6.8 — EVERY CHILD RUNS AS `& wait`, UNDER THE SUPERVISOR, AND A SIGNAL IS FORWARDED.
+# A gate used to run as a foreground `sh "$_g"` and the driver as a foreground `"$CHECK_BIN"`.
+# Three measured defects came with that:
+#   * POSIX runs a trap only after the FOREGROUND command returns, so `kill <this pid>` did
+#     nothing until the current gate finished — and when the driver was that command, until
+#     the whole ~13-minute driver run finished. `wait` is interruptible; a foreground child
+#     is not. So each child runs in the background and is waited for, and the INT/TERM/HUP
+#     traps below forward SIGTERM to it (TERM, not the signal received: a `&` job starts with
+#     SIGINT ignored, and that ignore is inherited) and wait for it before the summary.
+#   * a SIGKILLed check.sh left the gate's sh at PPID=1 with its children alive, and no gate
+#     run here had any deadline. Each gate now runs under `cyrius_check --run-gate`
+#     (programs/checks/run_gate.cyr): a subreaper in THIS process group (no setsid, so
+#     Ctrl-C, `timeout sh check.sh` and `kill -- -PGID` keep reaching everything) with
+#     PDEATHSIG, the CYRIUS_CHECK_LONG_TIMEOUT deadline, and TERM -> grace -> KILL of the
+#     gate's whole tree so its EXIT trap still removes its mktemp dir.
+#   * the driver supervises itself the same way (it re-execs under the supervisor), so a
+#     forwarded TERM ends ITS tree in order too. CHANGELOG [6.6.8]
+_CHK_CHILD=""
+_CHK_RC=0
+_chk_run_bg() {
+    "$@" &
+    _CHK_CHILD=$!
+    _CHK_RC=0
+    wait "$_CHK_CHILD" || _CHK_RC=$?
+    _CHK_CHILD=""
+    return 0
+}
+
 # Run one shell gate. ALWAYS returns 0 — `set -e` must not turn a red gate into an abort;
 # the tally is the verdict.
 _chk_gate() {
@@ -74,11 +102,20 @@ MISSING $_gn"
         _CHK_FAILS=$((_CHK_FAILS + 1))
         return 0
     fi
-    _grc=0
-    sh "$_g" "$@" || _grc=$?
+    _chk_run_bg "$CHECK_BIN" --run-gate "$_g" "$@"
+    _grc=$_CHK_RC
     if [ "$_grc" = 0 ]; then
         _CHK_RESULTS="$_CHK_RESULTS
 PASS $_gn"
+    elif [ "$_grc" = 124 ]; then
+        # 124 from --run-gate is its deadline and nothing else (a gate's own 124 is reported
+        # as 1 — programs/checks/run_gate.cyr). A timeout is a failure, and says it was one.
+        # CHANGELOG [6.6.8]
+        echo "  ^^ TIMEOUT (killed at the CYRIUS_CHECK_LONG_TIMEOUT deadline): $_gn"
+        _CHK_RESULTS="$_CHK_RESULTS
+FAIL $_gn"
+        _CHK_FAILS=$((_CHK_FAILS + 1))
+        _CHK_TIMEOUTS=$((_CHK_TIMEOUTS + 1))
     else
         echo "  ^^ FAILED (exit $_grc): $_gn"
         _CHK_RESULTS="$_CHK_RESULTS
@@ -89,11 +126,18 @@ FAIL $_gn"
 }
 
 _CHK_DONE=0
+_CHK_SIGNAL=""
+_CHK_TIMEOUTS=0
 _chk_finish() {
     _xrc=$?
     # INT/TERM handlers `exit`, which re-enters via the EXIT trap in some shells.
     if [ "$_CHK_DONE" = "1" ]; then exit "$_xrc"; fi
     _CHK_DONE=1
+    case "$_CHK_SIGNAL" in
+        INT)  _xrc=130 ;;
+        TERM) _xrc=143 ;;
+        HUP)  _xrc=129 ;;
+    esac
     if [ -n "$_CHK_STAGED_DIR" ]; then rm -rf "$_CHK_STAGED_DIR"; fi
     if [ "$_CHK_STARTED" != "1" ]; then exit "$_xrc"; fi
 
@@ -120,6 +164,9 @@ _chk_finish() {
     _res_n=$(printf '%s\n' "$_CHK_RESULTS" | grep -cE '^(PASS|FAIL|MISSING) (tests/gates|scripts)/' || true)
     printf '  shell gates: %s of %s produced a result, %s NOT RUN\n' "$_res_n" "$_total" "$_nnot"
     printf '  failures:    %s (the check binary counts as one row here)\n' "$_CHK_FAILS"
+    if [ "$_CHK_TIMEOUTS" != "0" ]; then
+        printf '  timeouts:    %s of those failures were a gate killed at its deadline (CYRIUS_CHECK_LONG_TIMEOUT) — see the TIMEOUT lines\n' "$_CHK_TIMEOUTS"
+    fi
     if [ "$((_res_n + _nnot))" != "$_total" ]; then
         printf '  ⚠ BOOKKEEPING: %s + %s != %s — this summary cannot be trusted\n' \
             "$_res_n" "$_nnot" "$_total"
@@ -132,6 +179,11 @@ _chk_finish() {
         echo "  NOT RUN — these did NOT execute and are NOT passes:"
         for _m in $_notrun; do echo "    $_m"; done
     fi
+    if [ -n "$_CHK_SIGNAL" ]; then
+        echo "  INTERRUPTED by SIG$_CHK_SIGNAL — the running child was sent SIGTERM and waited for"
+        echo "────────────────────────────────────────────────────────────────────"
+        exit "$_xrc"
+    fi
     if [ "$_CHK_FAILS" = "0" ] && [ "$_nnot" = "0" ]; then
         echo "  ALL GREEN"
         echo "────────────────────────────────────────────────────────────────────"
@@ -142,9 +194,20 @@ _chk_finish() {
 }
 # INT/TERM as well as EXIT: interrupting a long run is exactly when you most need to be
 # told which gates never executed, and dash does not run an EXIT trap on an untrapped INT.
+# 6.6.8: the signal is FORWARDED (as SIGTERM) to the child being waited for, and that child
+# is waited for, before the summary — see _chk_run_bg.
+_chk_on_signal() {
+    _CHK_SIGNAL=$1
+    if [ -n "$_CHK_CHILD" ]; then
+        kill -TERM "$_CHK_CHILD" 2>/dev/null || true
+        wait "$_CHK_CHILD" 2>/dev/null || true
+    fi
+    _chk_finish
+}
 trap _chk_finish EXIT
-trap _chk_finish INT
-trap _chk_finish TERM
+trap '_chk_on_signal INT' INT
+trap '_chk_on_signal TERM' TERM
+trap '_chk_on_signal HUP' HUP
 
 # ── v6.6.6 (bite 27b): REAP THE STAGED HOMES A KILLED RUN LEFT BEHIND ────────────────
 #
@@ -183,6 +246,24 @@ case "$_CHK_REAP_MINS" in
         _CHK_REAP_MINS=240
         ;;
 esac
+# ⛔ 6.6.8: the two DEADLINE knobs, checked once here the same way. The binary read them with
+# atoi, so `2m` meant 2 s and `abc`, '' or ` 120` meant 0 — which DISABLES the deadline. The
+# binary now refuses a non-digit value itself (lib/regression.cyr), but every child it spawns
+# would say so again; here it is said once and the variable is dropped, so every child uses
+# the default. 0 stays valid: it is the documented "no deadline". At most 9 digits, the
+# binary's own limit — a longer value passed here and was then refused by every child, once
+# each, which is the repetition this block exists to stop. CHANGELOG [6.6.8]
+for _kv in CYRIUS_CHECK_TIMEOUT CYRIUS_CHECK_LONG_TIMEOUT; do
+    eval "_kval=\${$_kv-__unset__}"
+    case "$_kval" in
+        __unset__) ;;
+        ''|*[!0-9]*|??????????*)
+            printf "check: %s='%s' is not a whole number of seconds (digits only, at most 9) — IGNORED, the default deadline stays in force\n" \
+                "$_kv" "$_kval" >&2
+            unset "$_kv"
+            ;;
+    esac
+done
 _chk_home_is_owned() {
     [ -f "$1/.owner" ] || return 1
     _op=$(cat "$1/.owner" 2>/dev/null || true)
@@ -366,18 +447,33 @@ fi
 # run. It goes through `exit`, never `exec`, so the EXIT trap still removes the staged home
 # (that was 25b's bug: `exec` replaces the process and runs no trap).
 # CHANGELOG [6.6.6]
-# ⚠ A full run drives its shell gates from TWO registries and a selector has to see both,
-# or "run that gate" works for 60 of the 192 and reports the other 132 as unknown. The
-# other one is `_gate(<name>, "tests/gates/…")` inside programs/checks/*.cyr — 132 rows
-# the check binary runs as part of its `regression` phase. Both are read back out of the
-# CALLS, so neither can drift from what actually runs. (Cross-checked when this was
-# written: the union is exactly the 189 files under tests/gates/ plus the 3 scripts/*.sh
-# gates — nothing registered twice, nothing registered and missing, nothing orphaned.
-# DERIVE these numbers, never quote this line.)
+# ⚠ A full run drives its shell gates from TWO registries and a selector has to see both.
+# The other one is `_gate(<name>, "<path>")` inside programs/checks/*.cyr — the rows the check
+# binary runs as part of its `regression` phase. Both are read back out of the CALLS, so
+# neither can drift from what actually runs.
+# ⛔ 6.6.8: the claim that stood here — "the union is exactly the files under tests/gates/,
+# nothing registered twice, nothing orphaned" — was FALSE the day it was next true: ten gates
+# added at 6.6.6 were called as bare `sh "$ROOT/…"` lines, which this reader does not see, so
+# they aborted the run on failure and no selector could reach them (`check.sh frontend` ran 33
+# of the 39 frontend gates and could report ALL GREEN). And the driver reader took only
+# `"tests/gates/…"` literals, so the driver's `scripts/differential-smoke.sh` row was
+# unreachable too. The union is now a CHECKED property, not a sentence:
+# tests/gates/toolchain/check_gate_census.sh reads `--registry` (this reader, duplicates kept)
+# and fails on an unregistered gate, a gate registered twice, a registration with no file, a
+# driver `_gate(` call whose path is not a literal, and any line here that runs a gate outside
+# `_chk_gate`. CHANGELOG [6.6.8]
 _chk_driver_gate_manifest() {
-    grep -ohE '"tests/gates/[A-Za-z0-9_./-]+\.sh"' "$ROOT"/programs/checks/*.cyr | tr -d '"'
+    # Only the PATH literal that ends a `_gate(` call — a script named anywhere else in the
+    # driver (e.g. `scripts/install.sh`) is not a registration, and neither is a commented-out
+    # call.
+    grep -hE '(^|[^A-Za-z0-9_])_gate\(' "$ROOT"/programs/checks/*.cyr | grep -vE '^[[:space:]]*#' \
+        | grep -oE '"(tests/gates|scripts)/[A-Za-z0-9_./-]+\.sh"\);' | sed 's/");$//; s/^"//'
 }
-_chk_gate_registry() { { _chk_shell_manifest; _chk_driver_gate_manifest; } | sort -u; }
+# Every registration, ONE LINE PER CALL — duplicates kept, so a gate registered twice is
+# visible (`--registry` prints this; the census gate counts it). Everything else reads the
+# de-duplicated set.
+_chk_gate_registry_raw() { _chk_shell_manifest; _chk_driver_gate_manifest; }
+_chk_gate_registry() { _chk_gate_registry_raw | sort -u; }
 _chk_shell_buckets() { _chk_gate_registry | sed 's|/[^/]*$||; s|^tests/gates/||' | sort -u; }
 _chk_shell_names()   { _chk_gate_registry | sed 's|.*/||; s|\.sh$||' | sort -u; }
 _chk_driver_suites() { "$CHECK_BIN" --list-suites 2>/dev/null; }
@@ -425,6 +521,7 @@ _chk_list_selectors() {
     echo "usage: sh scripts/check.sh [<selector>]   (no selector = the full run)"
     echo "       a selector may be qualified: suite:<name>, bucket:<name>, gate:<name>"
     echo "       sh scripts/check.sh --resolve <selector>...   says what each resolves to, runs nothing"
+    echo "       sh scripts/check.sh --registry   prints every gate registration (one per call), runs nothing"
     echo ""
     echo "driver suites (programs/checks/main.cyr — runs that phase of the check binary):"
     _chk_driver_suites | _chk_annotate
@@ -478,6 +575,14 @@ if [ $# -gt 0 ]; then
             _chk_list_selectors
             exit 0
             ;;
+        --registry)
+            # Every gate registration, one line per CALL (duplicates kept), from the SAME
+            # readers the selectors and NOT RUN use. Runs nothing, stages nothing. The census
+            # gate reads this, so it can never check a different set than the one that runs.
+            # CHANGELOG [6.6.8]
+            _chk_gate_registry_raw
+            exit 0
+            ;;
         --resolve)
             shift
             [ $# -gt 0 ] || { printf "error: --resolve needs at least one selector\n" >&2; exit 2; }
@@ -505,9 +610,8 @@ if [ $# -gt 0 ]; then
 
     _chk_stage_home
     if [ "$_CHK_KIND" = "suite" ]; then
-        _CHK_TARGETED_RC=0
-        "$CHECK_BIN" "$_CHK_SEL" || _CHK_TARGETED_RC=$?
-        exit "$_CHK_TARGETED_RC"
+        _chk_run_bg "$CHECK_BIN" "$_CHK_SEL"
+        exit "$_CHK_RC"
     fi
     # A bucket or a single gate. Narrow the manifest FIRST so the end-of-run summary
     # reports on exactly what was selected instead of calling the other ~128 NOT RUN.
@@ -534,8 +638,8 @@ _chk_stage_home
 # header. The shell gates cover things the binary cannot, and a red doc stamp is no reason to
 # stop looking at them.
 _CHK_STARTED=1
-_CHK_DRIVER_RC=0
-"$CHECK_BIN" || _CHK_DRIVER_RC=$?
+_chk_run_bg "$CHECK_BIN"
+_CHK_DRIVER_RC=$_CHK_RC
 if [ "$_CHK_DRIVER_RC" = "0" ]; then
     _CHK_RESULTS="$_CHK_RESULTS
 PASS $_CHK_DRIVER"
@@ -675,7 +779,7 @@ _chk_gate "$ROOT/tests/gates/frontend/global_redeclaration_one_definition.sh"
 # are checked against CONTROL programs whose declarations take the (always-correct) PARSE_PROG
 # path instead, with cx / aarch64-qemu / PE-wine legs and a static 7-fork parity axis, because
 # the pass-2 skip is copied into every `src/main*.cyr`.
-sh "$ROOT/tests/gates/frontend/toplevel_decl_block_closure.sh"
+_chk_gate "$ROOT/tests/gates/frontend/toplevel_decl_block_closure.sh"
 
 # 6.6.6 bite 19a: a `var` declared inside a TOP-LEVEL block is scoped to that block, like one
 # in a fn body. It used to register a GLOBAL — and the global var table had no scope mechanism
@@ -683,7 +787,7 @@ sh "$ROOT/tests/gates/frontend/toplevel_decl_block_closure.sh"
 # shape inside a fn is `undefined variable 't'`. One spelling, two scoping rules. Rows are
 # checked against no-block CONTROL programs; the refusal rows assert the error names the
 # variable, the note says where to declare it, and no binary is emitted.
-sh "$ROOT/tests/gates/frontend/toplevel_block_var_scope.sh"
+_chk_gate "$ROOT/tests/gates/frontend/toplevel_block_var_scope.sh"
 
 # 6.6.6 bite 19f: a function-like `#define` must not change the source every other pass
 # produced. PP_IFDEF_PASS does not copy its filtered output back to input_buf, and
@@ -691,7 +795,7 @@ sh "$ROOT/tests/gates/frontend/toplevel_block_var_scope.sh"
 # macro in scope put stripped `#ifdef` arms back into the build (an aarch64 `x0` in an x86
 # compile) and truncated the source at the 1 MB helper window. An object-like `#define` never
 # ran the pass, which is why it stood. Row C is a byte-for-byte binary differential.
-sh "$ROOT/tests/gates/frontend/macro_pass_preserves_ifdef_filtering.sh"
+_chk_gate "$ROOT/tests/gates/frontend/macro_pass_preserves_ifdef_filtering.sh"
 
 # 6.6.6 bite 19b: a file may DECLARE a global whose name another file has made `private`.
 # v6.5.0 put the cross-file check inside FINDVAR so every REFERENCE is covered by one check,
@@ -699,14 +803,14 @@ sh "$ROOT/tests/gates/frontend/macro_pass_preserves_ifdef_filtering.sh"
 # name exist?" while REGISTERING one — and the check turned that answer into an accusation
 # against a file's own declaration. The enforcement rows D-G are the point: deleting the check
 # would pass every accepting row.
-sh "$ROOT/tests/gates/frontend/private_does_not_block_own_declaration.sh"
+_chk_gate "$ROOT/tests/gates/frontend/private_does_not_block_own_declaration.sh"
 
 # 6.6.6 bite 19c: the duplicate-symbol warning went SILENT once a program had registered 1024
 # vars — CHKDUPVAL opened with a blanket `pi >= 1024` return, which is the ENUM fold table's
 # bound applied to both halves of the probe; gvar_initval is a grown table with no such cap.
 # The programs that collide are exactly the large ones. The SYS_* note went with it, so row D
 # asserts the note's lines too: a fix that restored only the warning would pass otherwise.
-sh "$ROOT/tests/gates/frontend/duplicate_symbol_warning_at_scale.sh"
+_chk_gate "$ROOT/tests/gates/frontend/duplicate_symbol_warning_at_scale.sh"
 
 # 6.6.6 bite 19e: ERR_MSG REPORTS and returns — the three gvar_toks registration sites called
 # it at the cap and then stored anyway, writing past the 4096-entry buffer at 0x729000 and
@@ -714,14 +818,14 @@ sh "$ROOT/tests/gates/frontend/duplicate_symbol_warning_at_scale.sh"
 # buffer are documented free, so a few hundred entries of overflow change nothing observable —
 # measured identical at 4200/6000/10000/20000 globals on both compilers); the behavioural axes
 # pin the diagnostic, the refusal for all three registration shapes, and the 4096 boundary.
-sh "$ROOT/tests/gates/memory/gvar_toks_cap_guards_the_store.sh"
+_chk_gate "$ROOT/tests/gates/memory/gvar_toks_cap_guards_the_store.sh"
 
 # 6.6.6 bite 19d: a global initializer that READS a constant declared below it got 0 on cx and
 # the right value on every other target. cx opts out of the static-init path (its globals live
 # in cxvm memory zeroed at startup), which left the deferred replay — in declaration order —
 # as the only thing that gives a global its value. Rows are checked against controls declared
 # in dependency order AND run on the host, so cx is compared with a second implementation.
-sh "$ROOT/tests/gates/codegen/cx_forward_read_constant_global.sh"
+_chk_gate "$ROOT/tests/gates/codegen/cx_forward_read_constant_global.sh"
 
 # 6.6.6 (review fix to bite 19f's .tcyr): the cross-OS lib-test runner graded tests/tcyr/crossos/
 # by EXIT CODE alone, and a process that runs no user code exits 0 — so "the compiler emitted a
@@ -729,7 +833,7 @@ sh "$ROOT/tests/gates/codegen/cx_forward_read_constant_global.sh"
 # compiler, crossos/macro_expansion_with_include.tcyr compiled to a 43,512-byte binary that
 # printed nothing and exited 0: a PASS over the preprocessor defect it is named for. The runner
 # now requires the binary's own "N passed" line for any test whose source calls assert_summary.
-sh "$ROOT/tests/gates/toolchain/crossos_runner_rejects_a_silent_binary.sh"
+_chk_gate "$ROOT/tests/gates/toolchain/crossos_runner_rejects_a_silent_binary.sh"
 # 6.6.6: copying between two DIFFERENT struct (or vector) types is an error, not an 8-byte
 # store. Both copy paths answered a type mismatch with `return 0`, which falls through to the
 # generic scalar store: `p = q` between a P3 and a Q3 copied ONE word of three and left the
@@ -737,7 +841,7 @@ sh "$ROOT/tests/gates/toolchain/crossos_runner_rejects_a_silent_binary.sh"
 # a stack address) — both silent, exit 0. The LITERAL form has been a hard error since 6.6.5.
 # Acceptance rows are checked against field-by-field CONTROL programs, and the pointer-bind and
 # scalar-source paths are pinned so a future tightening cannot quietly take them out.
-sh "$ROOT/tests/gates/frontend/struct_copy_type_checked.sh"
+_chk_gate "$ROOT/tests/gates/frontend/struct_copy_type_checked.sh"
 
 # 6.6.6: a vector-returning fn `return`s only what the vector return ABI can carry. PARSE_RETURN
 # handled exactly `return IDENT;` for a local of the matching class and fell through to the
@@ -747,7 +851,7 @@ sh "$ROOT/tests/gates/frontend/struct_copy_type_checked.sh"
 # same shape as bite 16c's 9-16 byte struct pair, one type class over. Two sites: the tail-call
 # path takes `return f(..);` before the vector branch sees it. Legs: host, cx, qemu-aarch64,
 # wine-PE (emulation is NOT hardware — the ecb/ach/cass/pi gate is).
-sh "$ROOT/tests/gates/codegen/simd_return_shapes.sh"
+_chk_gate "$ROOT/tests/gates/codegen/simd_return_shapes.sh"
 
 # 6.6.5: the `return f(args);` tail path must divert to PARSE_FNCALL for exactly the
 # arguments PARSE_FNCALL treats specially — no more. The `: Str` literal divert added here
@@ -1316,3 +1420,7 @@ _chk_gate "$ROOT/tests/gates/toolchain/cyaudit_include_directives.sh"
 # `pub fn` and wrapped signatures. The oracle is the compiler's own emission, both ways (every
 # listed fn is callable at its arity from another file; every omitted one is private).
 _chk_gate "$ROOT/tests/gates/toolchain/api_surface_derive_matches_emitter.sh"
+
+# 6.6.8 (bite 8) — every gate under tests/gates/ is registered EXACTLY ONCE and runs through
+# `_chk_gate` or the driver; ten 6.6.6 gates were bare `sh` lines no selector could reach.
+_chk_gate "$ROOT/tests/gates/toolchain/check_gate_census.sh"

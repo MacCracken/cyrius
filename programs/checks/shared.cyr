@@ -17,6 +17,24 @@ fn _exec_capture_clean(bin_path, buf, buflen): i64 {
     return n;
 }
 
+# 6.6.8: 1 when the most recent `_exec_capture_clean` child did NOT finish on its own — a
+# signal killed it, the deadline did (`_last_exec_ec` -2), or its end was never observed
+# (-1). Output-comparison gates must fail on all three: "the bytes matched" says nothing about
+# a child that then hung or crashed. A normal nonzero exit is NOT unfinished (output-only
+# fixtures return their last value). CHANGELOG [6.6.8]
+fn _exec_unfinished(): i64 {
+    if (_last_exec_sig != 0) { return 1; }
+    if (_last_exec_ec < 0) { return 1; }
+    return 0;
+}
+
+fn _exec_unfinished_why(): i64 {
+    if (_last_exec_ec == 0 - 2) { return "killed at the deadline (CYRIUS_CHECK_TIMEOUT)"; }
+    if (_last_exec_sig != 0) { return "crashed (signal)"; }
+    if (_last_exec_ec < 0) { return "never ran, or its end was never observed"; }
+    return "finished";
+}
+
 fn _file_contains_substr(path, substr): i64 {
     return regression_file_contains_substr(path, substr);
 }
@@ -103,8 +121,14 @@ fn _parse_dec_at(buf, n, off, end_out): i64 {
     return v;
 }
 
+# 6.6.8: the status goes to `_last_exec_ec` / `_last_exec_sig` like `_exec_capture_clean`'s,
+# so a caller can ask `_exec_unfinished()` — the plain lib verb threw it away.
 fn _exec_with_arg_capture(bin_path, arg, buf, buflen): i64 {
-    return regression_exec_with_arg_capture(bin_path, arg, buf, buflen, EMPTY_ENVP);
+    var _st[16];
+    var n = regression_exec_with_arg_capture_status(bin_path, arg, buf, buflen, EMPTY_ENVP, &_st);
+    _last_exec_ec = load64(&_st);
+    _last_exec_sig = load64(&_st + 8);
+    return n;
 }
 
 fn _gen_struct_decls_source(path, n): i64 {

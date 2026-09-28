@@ -67,6 +67,12 @@ var CC_AARCH64_PATH = 0; # build/cycc_aarch64 cross-compiler (cstring)
 var G_PASS = 0;
 var G_FAIL = 0;
 var G_TOTAL = 0;
+# 6.6.8: rows during which a child was ended at a DEADLINE — reported as TIMEOUT rows and
+# counted as failures (see `_check`).
+var G_TIMEOUT = 0;
+var _G_SEEN_RKILLS = 0;     # regression_deadline_kills() as of the previous row
+var _G_SEEN_PKILLS = 0;     # proc_deadline_kills() as of the previous row
+var _G_ROW_GATE_TIMEOUT = 0; # set by `_gate` when its supervisor reported the deadline (124)
 
 # Cached environment pointer-array, built once at startup from
 # /proc/self/environ. Child processes inherit this env via execve.
@@ -122,6 +128,7 @@ include "programs/checks/lint_fmt.cyr"
 include "programs/checks/heap_audit.cyr"
 include "programs/checks/services.cyr"
 include "programs/checks/codegen_regress.cyr"
+include "programs/checks/run_gate.cyr"
 
 # --- dispatcher + driver (verbatim from the monolith) ---
 fn _p(cstr): i64 {
@@ -129,7 +136,47 @@ fn _p(cstr): i64 {
     return 0;
 }
 
+# ⛔ 6.6.8 — A ROW DURING WHICH A CHILD WAS KILLED AT A DEADLINE SAYS SO, AND IS NOT A PASS.
+# The deadline's verdict travelled only through return values that 27 of the 30 wait sites
+# never read, so a timed-out child showed up as a crash-like 137, as a plain FAIL, or — at
+# three output-comparison sites and the lint rows — as a PASS. lib/regression.cyr and
+# lib/process.cyr now COUNT every deadline kill where it happens; a row during which either
+# count moved (or whose shell gate's supervisor exited 124) prints a TIMEOUT line naming the
+# setting, is scored as a failure, and is tallied in the final line.
 fn _check(name, exit_code): i64 {
+    var rk = regression_deadline_kills();
+    var pk = proc_deadline_kills();
+    var timed = 0;
+    if (rk != _G_SEEN_RKILLS || pk != _G_SEEN_PKILLS || _G_ROW_GATE_TIMEOUT == 1) { timed = 1; }
+    if (timed == 1) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("TIMEOUT");
+        _p(ANSI_RESET);
+        _p(": ");
+        _p(name);
+        _p(" — a child was killed at the deadline (");
+        var knob_ms = _regression_timeout_ms();
+        var knob = "CYRIUS_CHECK_TIMEOUT";
+        if (_G_ROW_GATE_TIMEOUT == 1) {
+            knob_ms = _regression_long_timeout_ms();
+            knob = "CYRIUS_CHECK_LONG_TIMEOUT";
+        } else {
+            if (rk != _G_SEEN_RKILLS && regression_last_deadline_ms() == _regression_long_timeout_ms()) {
+                knob_ms = _regression_long_timeout_ms();
+                knob = "CYRIUS_CHECK_LONG_TIMEOUT";
+            }
+        }
+        _p(knob);
+        _p("=");
+        print_num(knob_ms / 1000);
+        println("s)");
+        G_TIMEOUT = G_TIMEOUT + 1;
+        if (exit_code == 0) { exit_code = 1; }
+    }
+    _G_SEEN_RKILLS = rk;
+    _G_SEEN_PKILLS = pk;
+    _G_ROW_GATE_TIMEOUT = 0;
     G_TOTAL = G_TOTAL + 1;
     _p("  ");
     if (exit_code == 0) {
@@ -227,21 +274,32 @@ fn _load_environ(): i64 {
     return count;
 }
 
+# 6.6.8: a driver-registered gate runs under the SAME supervisor as a check.sh one
+# (`<this binary> --run-gate <script>`, programs/checks/run_gate.cyr): its whole process tree
+# ends with it, a deadline ends that tree TERM -> grace -> KILL and says TIMEOUT, and a
+# signal to the driver reaches every descendant. The supervisor owns the LONG deadline; this
+# wait is only a backstop above it (deadline + two grace periods + 10 s), so the supervisor's
+# own TIMEOUT line is what fires. 124 is that TIMEOUT and nothing else (run_gate.cyr maps a
+# gate's own 124 to 1). CHANGELOG [6.6.8]
 fn _gate_run(script_abs): i64 {
     var _rg_ppid_pid = sys_getpid();
     var pid = sys_fork();
     if (pid < 0) { return 1; }
     if (pid == 0) {
         _regression_child_guard(_rg_ppid_pid);
-        var argv[40];   # N BYTES (CLAUDE.md buffer contract): 3 ptrs need 24 B
-        store64(&argv,     "/bin/sh");
-        store64(&argv + 8, script_abs);
-        store64(&argv + 16, 0);
-        sys_execve("/bin/sh", &argv, ENVP_ARR);
+        var argv[40];   # N BYTES (CLAUDE.md buffer contract): 4 ptrs need 32 B
+        store64(&argv,      "cyrius_check");
+        store64(&argv + 8,  "--run-gate");
+        store64(&argv + 16, script_abs);
+        store64(&argv + 24, 0);
+        sys_execve("/proc/self/exe", &argv, ENVP_ARR);
         sys_exit(127);
     }
     var status_buf[1];
-    _regression_wait_deadline(pid, &status_buf, _regression_long_timeout_ms());
+    var bound = _regression_long_timeout_ms();
+    if (bound > 0) { bound = bound + 2 * _RG_GRACE_MS + 10000; }
+    var reaped = _regression_wait_deadline(pid, &status_buf, bound);
+    if (reaped != 1) { return 1; }
     var status = load32(&status_buf);
     if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
     if (WIFSIGNALED(status) == 1) { return 128 + WTERMSIG(status); }
@@ -251,6 +309,7 @@ fn _gate_run(script_abs): i64 {
 fn _gate(name, script_rel): i64 {
     var script_abs = _root_path(script_rel);
     var rc = _gate_run(script_abs);
+    if (rc == 124) { _G_ROW_GATE_TIMEOUT = 1; }
     _check(name, rc);
     return rc;
 }
@@ -388,9 +447,11 @@ fn _run_regression_gates(): i64 {
     # SIGSEGV. ⚠ This gate was WRITTEN at .19 and left registered NOWHERE; the file
     # existed so the shell-gate count rose while the gate never once ran under check.sh
     # — the same green-placebo shape `toolchain/test_runner_bounded.sh` hit earlier in
-    # this very release. Derive the orphan set, never eyeball it:
-    #   comm -23 <(find tests/gates -name '*.sh' | sort) \
-    #            <(grep -ho 'tests/gates/[a-z-]*/[a-z0-9_]*\.sh' programs/checks/*.cyr scripts/check.sh | sort -u)
+    # this very release. The orphan set is now CHECKED, not derived by hand:
+    # tests/gates/toolchain/check_gate_census.sh. ⚠ The grep recipe that stood here counted
+    # ANY `tests/gates/…` literal as a registration, so it certified the ten bare `sh` lines
+    # 6.6.6 added to check.sh as registered — it shared the defect it was checking for.
+    # CHANGELOG [6.6.8]
     _gate("recursive descent is depth-bounded on every tier: over-deep input exits 1 with a located diagnostic naming the bound, never a signal (CVE-39, v6.5.19)", "tests/gates/diagnostics/recursion_depth_bounded.sh");
     println("");
 
@@ -1046,6 +1107,30 @@ fn main(): i64 {
     _regression_die_with_parent();
     alloc_init();
     _load_environ();
+    # v6.6.6 (bite 27a): the argv this binary had always been handed and had never read.
+    args_init();
+
+    # 6.6.8: the supervisor modes (programs/checks/run_gate.cyr). `--run-gate` runs one shell
+    # gate; with no `--supervised` marker the driver re-executes ITSELF under the supervisor,
+    # so a signal to it — or its death — ends the whole run's process tree in order. Only the
+    # read-only `--list-suites` skips that. CHANGELOG [6.6.8]
+    var sel_idx = 1;
+    if (argc() > 1) {
+        if (streq(argv(1), "--run-gate") == 1) { return _run_gate_main(); }
+        if (streq(argv(1), "--supervised") == 1) { sel_idx = 2; }
+    }
+    if (sel_idx == 1) {
+        var lone = 0;
+        if (argc() > 1) { if (streq(argv(1), "--list-suites") == 1) { lone = 1; } }
+        if (lone == 0) { return _rg_supervise_self(); }
+    }
+    # The driver proper is a child SUBREAPER too: a child it spawns that leaves an orphan
+    # (a .tcyr that forks, a compiler's helper) reparents HERE, where the deadline's tree kill
+    # and the sweep on the way out can still reach it. CHANGELOG [6.6.8]
+    #ifdef CYRIUS_TARGET_LINUX
+    sys_prctl(36, 1, 0, 0, 0);
+    #endif
+
     # v6.6.6: bound the children this driver spawns through lib/process.cyr (cyrfmt per
     # fixture, cyrdoc over all of lib/, the qemu boot) with the SAME knob as the ones it
     # spawns through lib/regression.cyr. process.cyr defaults to NO deadline on purpose —
@@ -1054,13 +1139,49 @@ fn main(): i64 {
     # makes "no child of the check driver runs for ever" true rather than aspirational.
     # CHANGELOG [6.6.6]
     proc_set_timeout_ms(_regression_timeout_ms());
-    # v6.6.6 (bite 27a): the argv this binary had always been handed and had never read.
-    args_init();
     _setup_paths();
 
+    # `--gate-row <script>`: run ONE shell gate exactly as a driver row runs it (`_gate` ->
+    # `_gate_run` -> the supervisor) and print its row. What lets a gate prove the driver's
+    # own path — a SIGKILLed run leaves nothing of that gate behind — on the real binary.
+    # A relative path is taken from the root, as the registered rows spell theirs.
+    # CHANGELOG [6.6.8]
+    # `--doc-stamp-row`: the doc-stamp currency row alone, over the root — how a gate proves
+    # the roadmap stamp is read by its exact token. CHANGELOG [6.6.8]
+    if (argc() > sel_idx) {
+        if (streq(argv(sel_idx), "--doc-stamp-row") == 1) {
+            _doc_stamp_currency_gate();
+            return G_FAIL;
+        }
+    }
+    if (argc() > sel_idx + 1) {
+        if (streq(argv(sel_idx), "--gate-row") == 1) {
+            var gp = argv(sel_idx + 1);
+            # _gate_run + _check, never the registering call: each of THOSE carries a literal
+            # path (tests/gates/toolchain/check_gate_census.sh axis 3 caught a computed one here
+            # in this mode's first cut).
+            var gabs = gp;
+            if (load8(gp) != 47) { gabs = _root_path(gp); }
+            var grc = _gate_run(gabs);
+            if (grc == 124) { _G_ROW_GATE_TIMEOUT = 1; }
+            _check(gp, grc);
+            regression_terminate_children(_RG_GRACE_MS);
+            return G_FAIL;
+        }
+        # `--output-row <name>`: one output-comparison row (`_expected_output_gate`) over
+        # tests/fixtures/<name>.cyr + .expected under the root — how a gate proves a fixture
+        # that prints the right bytes and then hangs is not a pass. CHANGELOG [6.6.8]
+        if (streq(argv(sel_idx), "--output-row") == 1) {
+            var ob = argv(sel_idx + 1);
+            _expected_output_gate(ob, ob, ob);
+            regression_terminate_children(_RG_GRACE_MS);
+            return G_FAIL;
+        }
+    }
+
     var only = 0 - 1;
-    if (argc() > 1) {
-        var sel = argv(1);
+    if (argc() > sel_idx) {
+        var sel = argv(sel_idx);
         if (streq(sel, "--list-suites") == 1) {
             _suite_list();
             return 0;
@@ -1084,14 +1205,32 @@ fn main(): i64 {
     }
 
     _run_tmp_cleanup();
+    # 6.6.8: nothing a row started outlives the run. Orphans reparented to this subreaper are
+    # ended (TERM, grace, KILL) and counted, never left for init.
+    var leftover = regression_terminate_children(_RG_GRACE_MS);
+    if (leftover > 0) {
+        _p("  note: ");
+        print_num(leftover);
+        println(" process(es) a row left running were ended at exit");
+    }
     println("════════════════════════");
     print_num(G_PASS);
     _p(" passed, ");
     print_num(G_FAIL);
     _p(" failed (");
     print_num(G_TOTAL);
-    println(" total)");
+    _p(" total)");
+    if (G_TIMEOUT > 0) {
+        _p(", ");
+        print_num(G_TIMEOUT);
+        _p(" of the failures TIMEOUT (a child killed at a deadline)");
+    }
+    println("");
 
+    # 6.6.8: the exit status is the failure count, CLAMPED to 123 — an exit status is one
+    # byte, so 256 failures used to exit 0 (a green run), and 124 and up collide with the
+    # supervisor's deadline code and the shell's 126/127/128+n. CHANGELOG [6.6.8]
+    if (G_FAIL > 123) { return 123; }
     return G_FAIL;
 }
 

@@ -1,7 +1,14 @@
 # fs_dirlist.tcyr — VR-01: the directory-listing layer (lib/fs.cyr → fs_win.cyr
 # FindFirstFileW/GetFileAttributesW on cass; getdents64 on Linux; getdirentries on
 # ecb). Before v6.1.18 dir_list/is_dir were silent no-ops on Windows. Runs on
-# Linux + cass + ecb; paths (VERSION, tests/win) exist in the LIBTEST bundle CWD.
+# Linux + cass + ecb + ach + pi.
+#
+# ⛔ 6.6.8 — THE FIXTURE IS ITS OWN. This read `tests/win` and `VERSION` relative to the
+# working directory, so it passed only when run from the repo root (or a runner bundle that
+# happens to carry both): from anywhere else `is_dir on a directory` failed (4/5) on a
+# correct fs layer — a verdict about the cwd, not the code. It now creates a directory and a
+# file of its own (per-pid names, in the cwd), checks those, and removes them.
+# CHANGELOG [6.6.8]
 include "lib/assert.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -9,20 +16,50 @@ include "lib/str.cyr"
 include "lib/vec.cyr"
 include "lib/fmt.cyr"
 include "lib/syscalls.cyr"
+include "lib/io.cyr"
 include "lib/fs.cyr"
+
+# "<stem><pid><tail>", NUL-terminated.
+fn _name(stem, tail): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, stem);
+    str_builder_add_int(sb, sys_getpid());
+    str_builder_add_cstr(sb, tail);
+    return str_data(str_builder_build(sb));
+}
 
 fn main(): i64 {
     alloc_init();
+    var dir = _name("cyrius_fsdl_", "");
+    var file = _name("cyrius_fsdl_", "/member.txt");
+    var leaf = "member.txt";
+    assert_eq(xmkdir(dir, 493), 0, "premise: the fixture directory was created");
+    assert_eq(file_write_all(file, "x\n", 2), 2, "premise: a file was created inside it");
+
     test_group("is_dir distinguishes directory / file / missing");
-    assert_eq(is_dir(str_from("tests/win")), 1, "is_dir on a directory returns 1");
-    assert_eq(is_dir(str_from("VERSION")), 0, "is_dir on a regular file returns 0");
+    assert_eq(is_dir(str_from(dir)), 1, "is_dir on a directory returns 1");
+    assert_eq(is_dir(str_from(file)), 0, "is_dir on a regular file returns 0");
     assert_eq(is_dir(str_from("no_such_dir_xyz")), 0, "is_dir on a missing path returns 0");
 
-    test_group("dir_list enumerates the CWD");
-    var v = dir_list(str_from("."));
+    test_group("dir_list enumerates a directory");
+    var v = dir_list(str_from(dir));
     assert_neq(v, 0, "dir_list returned a vec");
-    assert_eq(vec_len(v) > 0, 1, "dir_list found at least one entry in the CWD");
+    var found = 0;
+    var i = 0;
+    while (v != 0 && i < vec_len(v)) {
+        var e = vec_get(v, i);
+        if (str_len(e) == strlen(leaf)) {
+            if (memeq(str_data(e), leaf, strlen(leaf)) == 1) { found = 1; }
+        }
+        i = i + 1;
+    }
+    assert_eq(found, 1, "dir_list found the file created in it, by name");
+    var c = dir_list(str_from("."));
+    assert_eq(c != 0 && vec_len(c) > 0, 1, "dir_list found at least one entry in the CWD");
 
+    xunlink(file);
+    xrmdir(dir);
+    assert_eq(is_dir(str_from(dir)), 0, "the fixture was removed");
     var rc = assert_summary();
     return rc;
 }

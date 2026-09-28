@@ -19,6 +19,26 @@
 
 set -e
 
+# ⛔ 6.6.8 — GNU sed, or a NAMED refusal before anything is written. The document steps use
+# three GNU-only sed features: `-i` with no suffix argument, `-E -i`, and the `0,/re/` address
+# range (plus `\n` in a replacement). BSD sed — the one on macOS (ecb, ach) — fails on each,
+# some of them after earlier steps have already rewritten their files, i.e. half a bump. So:
+# use GNU sed as `sed`, else GNU sed installed as `gsed` (Homebrew's gnu-sed), else refuse here,
+# having touched nothing. CHANGELOG [6.6.8]
+_VB_SED=""
+if sed --version 2>/dev/null | grep -q 'GNU sed'; then
+    _VB_SED=sed
+elif command -v gsed > /dev/null 2>&1 && gsed --version 2>/dev/null | grep -q 'GNU sed'; then
+    _VB_SED=gsed
+fi
+if [ -z "$_VB_SED" ]; then
+    echo "error: version-bump.sh needs GNU sed (it uses sed -i, sed -E -i and 0,/re/ address ranges); this sed is not GNU sed and no GNU 'gsed' is on PATH — install GNU sed (macOS: brew install gnu-sed) — nothing was changed" >&2
+    exit 2
+fi
+if [ "$_VB_SED" = "gsed" ]; then
+    sed() { command gsed "$@"; }
+fi
+
 DOCS_ONLY=0
 if [ "${1:-}" = "--docs-only" ]; then
     if [ -z "${2:-}" ] || [ -z "${3:-}" ]; then

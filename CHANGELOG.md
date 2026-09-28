@@ -831,6 +831,196 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and checks the write of its 1.3 MB `doc_huge` fixture: a failed write (a full RAM-backed
   `/tmp`) surfaced only as "premise: doc_huge … got [no]", which read like a cyrdoc defect.
   10 new mutations, each RED; the 6.6.7 cyrlint fails 10 of 161.
+- **Every shell gate runs through `_chk_gate` and is registered exactly once — and that is now a
+  gate, not a comment.** (bite 8.) **Root cause:** ten gates added by 6.6.6's later lanes were
+  called as bare `sh "$ROOT/tests/gates/…"` lines under `set -e`, and check.sh's registry reader
+  matches only `^_chk_gate`. A failing bare gate therefore ABORTED the run: every gate below it
+  reported NOT RUN, the FAILED list omitted the culprit, and the summary said `failures: 0`. The
+  bucket selectors build their manifest from the same reader, so `check.sh frontend` ran 33 of the
+  39 frontend gates (codegen 37/39, memory 11/12, toolchain 80/81) and could print ALL GREEN. The
+  driver-side reader took only `"tests/gates/…"` literals, so the driver row running
+  `scripts/differential-smoke.sh` was unreachable by any selector too. And the tree's one
+  documented orphan check (a grep recipe in `programs/checks/main.cyr`) counted ANY literal as a
+  registration — it reported 0 orphans over the ten. **Fix:** the ten lines go through
+  `_chk_gate`; the driver reader takes the path literal that ends each `_gate(` call (tests/gates
+  and scripts); `check.sh --registry` prints every registration from those readers with
+  duplicates kept; the false "the union is exactly…" comment and the blind recipe are replaced by
+  `tests/gates/toolchain/check_gate_census.sh`, which fails on an unregistered gate, a double
+  registration, a registration with no file, a driver `_gate(` whose path the reader cannot see,
+  and any check.sh line that runs a gate outside `_chk_gate` — and proves itself RED on four
+  mutants of the registry before it can read green.
+- **Nothing a check run starts outlives it, a killed gate still cleans up, and `kill <check.sh>`
+  works at once.** (bite 8.) **Root cause, four measured shapes:** check.sh ran each of its 70
+  gates as a foreground `sh "$_g"` — no death signal and no deadline — so a SIGKILLed check.sh
+  left the gate's sh at PPID=1 with its children alive; the driver armed PR_SET_PDEATHSIG on
+  the gate's `/bin/sh` only, and it is cleared on fork, so the gate's own children survived a
+  killed driver and a deadline kill alike (`_regression_wait_deadline` and lib/process.cyr's
+  `_proc_wait_deadline` signalled the pid only); every kill was SIGKILL, which runs no cleanup,
+  so a killed gate's `trap 'rm -rf "$T"' EXIT` never removed its mktemp dir from RAM-backed
+  /tmp (TERM: 0 left behind, KILL: 1); and POSIX runs a trap only after the foreground command
+  returns, so `kill <check.sh>` waited for the current gate — or the whole ~13-minute driver
+  run. **Fix:** `cyrius_check --run-gate <script>` (new `programs/checks/run_gate.cyr`) runs a
+  gate under a supervisor that is a child SUBREAPER in the caller's own process group (no
+  setsid — Ctrl-C, `timeout sh check.sh` and `kill -- -PGID` keep reaching everything), arms
+  PDEATHSIG(SIGTERM) on itself and the gate, reads TERM/INT/HUP/CHLD through a signalfd,
+  bounds the gate by `CYRIUS_CHECK_LONG_TIMEOUT` (exit 124 and a `TIMEOUT: <gate>
+  (CYRIUS_CHECK_LONG_TIMEOUT=Ns)` line), and ends the gate's tree with ONE SIGTERM per process
+  (each orphan as it is adopted), a 5 s grace for EXIT traps, then SIGKILL — and names anything
+  a gate that exited left running. Both registries use it: check.sh's `_chk_gate` and the
+  driver's `_gate_run`. The driver re-execs itself under the same supervisor and is a subreaper
+  too, sweeping leftovers at exit; `--gate-row <script>` runs one gate exactly as a driver row.
+  check.sh runs every child as `& wait` and forwards SIGTERM on INT/TERM/HUP (the summary says
+  `INTERRUPTED by SIG…`, exit 128+n). The deadline kills in lib/regression.cyr
+  (`_regression_kill_tree`, also used by `regression_run_with_timeout`) and lib/process.cyr
+  (`_proc_kill_tree`) end the child's tree the same way (Linux walks
+  `/proc/<pid>/task/*/children`; elsewhere the child alone, still TERM first). ⚠ One SIGTERM
+  per process is load-bearing: the first cut sprayed every descendant, and a nested supervisor's
+  second SIGTERM killed a gate's shell mid-EXIT-trap (bash dies on it). New public
+  `regression_terminate_children(grace_ms)`. Gated by
+  `tests/gates/toolchain/check_driver_dies_with_check_sh.sh` axes 4-10 (SIGKILLed check.sh,
+  SIGKILLed driver parent, deadline, SIGTERM within 4 s, process-group kill, a gate's leftover,
+  and an anti-vacuous foreground mutant that must leak), mutation-proven against no subreaper,
+  no grace and the foreground `sh`; and `tests/tcyr/crossos/process_deadline_tree.tcyr`
+  (run on pi, ecb and ach).
+- **A child killed at a deadline is REPORTED as one — never as an ordinary FAIL, and never as a
+  PASS — and the deadline knobs can no longer be typo'd off.** (bite 8.) **Root cause:** the
+  deadline's verdict travelled only through return values that 27 of the 30 wait sites in the
+  check driver never read, so a timed-out child showed up as a crash-like 137 (`FAIL (compile)`
+  for a .tcyr compile), as a plain FAIL, or as a PASS: three output-comparison sites
+  (`_expected_output_gate`, two in codegen_regress.cyr) checked only the crash flag, which the
+  deadline path leaves 0 (the code is -2), so a fixture that printed the right bytes and then hung
+  passed; `regression_exec_with_arg_capture` discarded the status, so `_args_init_4kb_gate`
+  accepted a child that printed `2` and then hung or crashed. And `CYRIUS_CHECK_TIMEOUT` /
+  `CYRIUS_CHECK_LONG_TIMEOUT` were read with atoi: `2m` meant 2 s, and `abc`, '' and ` 120` meant
+  0 — which DISABLES the deadline. **Fix:** lib/regression.cyr and lib/process.cyr COUNT every
+  deadline kill where it happens (`regression_deadline_kills()`, `regression_last_deadline_ms()`,
+  `proc_deadline_kills()` — process.cyr's return contracts unchanged); the driver's `_check`
+  prints `TIMEOUT: <row> — a child was killed at the deadline (CYRIUS_CHECK_TIMEOUT=Ns)` (or
+  `…LONG_TIMEOUT…` for a gate whose supervisor exited 124) for any row during which a count moved,
+  scores the row a failure, and tallies it in the final line; `_self_host_pipe` /
+  `_compile_capture_stderr` return -2 on a deadline kill (the .tcyr row reads `TIMEOUT (compile)`;
+  "output not creatable" moved to -5); the three sig-only sites fail through `_exec_unfinished()`
+  and say why; new `regression_exec_with_arg_capture_status`; both knobs are digits-only — anything
+  else keeps the default with one stderr line naming the variable (said once by check.sh, which
+  then drops it; 0 stays the documented "no deadline"). check.sh records a gate's 124 as a
+  `^^ TIMEOUT` line and a `timeouts:` count in the summary. The driver's exit status is clamped to
+  123 (256 failures used to exit 0). Also: lib/process.cyr's idle-read cut no longer calls a
+  `poll()` error a deadline — EINTR is retried, and any other error reports -1. Gated by
+  `check_driver_bounded.sh` axis 4 (4a a spinning .tcyr, 4b a print-then-hang output fixture with
+  an exiting control, 4c seven malformed knob values, 4d a hung lint child, 4e a static census of
+  sig-only checks — each mutation-proven) and `check_driver_dies_with_check_sh.sh` axis 6b.
+- **A GROUP signal no longer cuts a gate's EXIT trap short, and the supervisor's other edges
+  now keep their stated contracts.** (bite 8, review fixes.) **Root cause:** the supervisor
+  answered every INT/TERM/HUP with its own SIGTERM to the gate at once. Ctrl-C, `timeout sh
+  check.sh` and `kill -- -PGID` signal the whole process group, so the gate's shell already had
+  that signal and was running its EXIT trap when the second SIGTERM arrived, and bash dies
+  mid-trap on it. Measured on the first cut: a group SIGTERM cut the trap 12 of 12 times and a
+  Ctrl-C 8 of 15, leaving mktemp dirs behind (6.6.7: 0 of 27). Three smaller defects came with
+  it. check.sh accepted a deadline knob of 10+ digits that every child then refused again, once
+  each. Off Linux, `regression_terminate_children` polled until the caller's children ended by
+  themselves and signalled none of them, although its contract says it returns at once. And
+  under `CYRIUS_CHECK_LONG_TIMEOUT=0` a gate's own `exit 124` passed through as a TIMEOUT for a
+  deadline that did not exist. **Fix:** a signal whose sender is not the supervisor's caller is
+  taken as group-delivered. The gate then gets the 5 s grace to end by itself before it is sent
+  anything, and an orphan adopted in that window still gets its one TERM at once (a `&` job
+  ignores SIGINT, so after a Ctrl-C it would otherwise hold the grace period). A signal from the
+  caller (check.sh's or the driver's forward, or its death) still TERMs the gate at once. A third
+  party's `kill <supervisor pid>` cannot be told apart from a group signal, so it waits the grace
+  period before the gate is TERMed. check.sh applies the binary's 9-digit limit. The lib's
+  message says what it accepts. Off Linux, `regression_terminate_children` reaps what has already
+  ended and returns 0. A gate's own 124 is always reported as 1. Gated by
+  `check_driver_dies_with_check_sh.sh` axis 11 (group SIGTERM and group SIGINT, trap's LAST
+  command must run, within 4 s) and axis 12 (own 124 under a deadline and under none, directly
+  and through check.sh), `check_driver_bounded.sh` 4c (a 10-digit value, check.sh-side) and new
+  `tests/tcyr/crossos/regression_terminate_children.tcyr` (green on pi, ecb and ach; the old lib
+  is red on ecb and ach). Each fix is mutation-proven.
+- **`regression_file_contains_substr` searches the whole file.** (bite 8.) It read a fixed
+  512 KiB and `strstr`-ed the buffer, so a needle past byte 524,288 — or after the first NUL
+  byte — was reported absent: a "marker present" row failed for a reason unrelated to the
+  marker, and a "marker absent" row passed over it. It now reads with `file_read_whole` and scans
+  by length. Pinned by `tests/tcyr/platform/regression_file_contains_whole_file.tcyr` (red on the
+  old read: 2 rows).
+- **`cyrius audit` bounds the tools it runs, the fmt walker fails closed, and Windows waits no
+  longer read a failure as "exit 0".** (bite 8, placed from the 6.6.7 reviews.) **Root causes:**
+  the walkers report a tool killed at the deadline as an error (6.6.7), but `cyrius audit` never
+  set one — lib/process.cyr defaults to none — so a hung cyrlint/cyrdoc hung the audit for ever;
+  `audit_fmt_walk` compared cyrfmt's stdout with the file and dropped the exit status, so a cyrfmt
+  that crashed with no output on an EMPTY .cyr read 0 == 0 bytes, formatted, and a refusal was
+  reported as "needs reformatting"; and on Windows `proc_set_timeout_ms` did not exist, every
+  wait was INFINITE, and `_win_wait_close` / `_win_wait_timeout` ignored what
+  WaitForSingleObject and GetExitCodeProcess returned — a failed GetExitCodeProcess read as
+  exit 0 (fail-open), a WAIT_FAILED as STILL_ACTIVE (259). **Fix:** the audit sets the walkers'
+  deadline from `CYRIUS_TEST_TIMEOUT` (the batch verbs' knob, 300 s default) and restores it
+  before the tests stage; `audit_fmt_walk` runs `exec_capture_status` and records a run that did
+  not exit 0 on its own as `AW_FMT_ERRORS` / `AW_FMT_ERROR_FILES` (named, with the reason) —
+  `cyrius audit` and the driver's `format (stdlib)` row fail on it; lib/process_win.cyr gains the
+  POSIX deadline contract (`proc_set_timeout_ms`, `proc_timeout_ms`, `proc_deadline_kills`): a
+  bounded WaitForSingleObject + TerminateProcess for the plain verbs (-2; `run` / `wait_pid`
+  `Err(110)`) and a watchdog THREAD for the capturing ones, whose drain blocks until the child
+  exits; a wait or exit-code read that failed is -1 (`Err(10)`), never 0. Gated by
+  `audit_walk_fails_closed.sh` section G (a crashing, hanging and refusing fake cyrfmt; a hung
+  cyrlint under `cyrius audit` with `CYRIUS_TEST_TIMEOUT=1`; a crashing cyrfmt under the audit —
+  mutation-proven) and new Windows rows in `tests/tcyr/crossos/exec_capture_status.tcyr`
+  (green on real cass and under wine; red there with the watchdog disabled).
+- **The driver's doc-stamp row reads the roadmap stamp by its exact token.** (bite 8, placed
+  from the 6.6.7 reviews.) `_doc_stamp_currency_gate` accepted VERSION anywhere within 240 B of
+  `Current head:`, so a stamp still naming the OLD head read as current whenever its
+  parenthetical mentioned the new version (`**Current head: v6.6.7** (…; the v6.6.8 slot is
+  open)`), and a mid-line quote counted too. It now wants `**Current head: v<VERSION>**` at the
+  start of a line — the token `version-bump.sh` writes and verifies — over the whole file. New
+  `cyrius_check --doc-stamp-row` runs that row alone; `version_bump_doc_anchors.sh` axis I runs it
+  on an exact stamp, the old-head-with-new-version shape, a mid-line quote, and the roadmap the
+  next bump writes (red on the old reader: I2, I3).
+- **`version-bump.sh` refuses a non-GNU sed up front, and uses `gsed` when that is the GNU
+  one.** (bite 8, placed from the 6.6.7 reviews.) The document steps use `sed -i` with no suffix,
+  `sed -E -i` and `0,/re/` address ranges — GNU-only; BSD sed (macOS: ecb, ach) fails on each,
+  some after earlier steps have rewritten their files, i.e. half a bump. The script now probes
+  for GNU sed, falls back to a GNU `gsed` (Homebrew's gnu-sed), and otherwise exits 2 naming the
+  requirement before writing anything (measured on real ecb and ach: rc 2, VERSION untouched).
+  `version_bump_doc_anchors.sh` axis J: a BSD-style fake `sed` first on PATH is refused with
+  nothing written; beside a GNU `gsed` the bump runs on gsed (red with the probe removed).
+- **`install_atomic_over_running_binary.sh` exits 0 under `bash -eo pipefail`.** (bite 8, placed
+  from the 6.6.7 reviews.) Its EXIT trap `wait`ed on the victim process it had just killed; that
+  returns 143, and under `-e` a failing command in the EXIT trap became the script's exit status —
+  the gate printed PASS and exited 143. Every cleanup command is now `|| true`, and a new axis 4
+  re-runs the gate under `bash -eo pipefail` and requires rc 0 (red without the fix: 143).
+- **`derive_non_struct_rejected.sh` honours `$CYCC`.** (bite 8, placed from the 6.6.7 reviews.)
+  It hard-coded `CC="$ROOT/build/cycc"`, so it could not be pointed at a candidate compiler
+  without overwriting build/cycc. ⚠ The review called that an outlier among "sibling gates" that
+  honour `${CYCC:-…}`; derived, it is the norm — 75 gates hard-coded the path and 17 honoured
+  the variable — so `check_gate_census.sh` axis 7 now holds a RATCHET at the 74 that remain: a new
+  gate writes `CC=${CYCC:-"$ROOT/build/cycc"}`, and the ceiling only goes down.
+- **`tests/tcyr/crossos/fs_dirlist.tcyr` builds its own fixture.** (bite 8, placed from the 6.6.7
+  reviews.) It read `tests/win` and `VERSION` relative to the working directory, so from any
+  directory but the repo root (or a runner bundle that happens to carry both) a correct fs layer
+  failed `is_dir on a directory` (and `dir_list` of an empty cwd found nothing). It now creates a
+  per-pid directory and a file inside it, checks `is_dir` on each, requires `dir_list` to find the
+  file BY NAME, and removes both. Run from a subdirectory on real pi, ecb, ach and cass: 9/9, no
+  fixture left behind (the old file: 3/5 from an empty directory).
+- **`folds_agnos_parity.sh` builds each fold against the stdlib leaves plus its OWN declared fold
+  deps — so cross-fold borrowing is a failure, not a green.** (bite 8, placed from the 6.6.7
+  reviews.) One preamble put sakshi, sigil, patra and yukti ahead of EVERY fold, so a fold could
+  compile only because an undeclared fold was in scope — exactly how mabda and vani built for
+  agnos on yukti's placeholder `SYS_IOCTL = 9001`, and how sandhi borrowed yukti's `SYS_SOCKET`
+  on PE, while the gate read green. Now the shared block is `LEAVES` only; the fold set is derived
+  from docs/ecosystem.md's fold table; each fold's declared fold deps (the fold names in its
+  sibling's `cyrius.cyml` `stdlib = [...]` / `[deps.*]`) are a table in the gate, checked against
+  the sibling manifest whenever that checkout is at the folded version, and each probe adds the
+  transitive closure in dependency order; any symbol reported undefined (on Linux or agnos — an
+  undefined FUNCTION is only a warning and a trap stub) that an UNDECLARED fold defines is a FAIL
+  naming the borrow. niyama is checked for the first time (it gained its unicode leaves): 12/12.
+  An anti-vacuous row requires yukti-without-patra to be reported as borrowing; mutation-proven
+  against the old shared preamble and against vani's row without yukti.
+  `pe_reloc_cap_full_stdlib.sh`, which extracted that preamble, now extracts `LEAVES` and appends
+  the same four folds — its preamble is byte-identical to before.
+- *(this bite's own work, found by the lane's full `check.sh` run)* the process-tree sweeps treat
+  a ZOMBIE as ended: `kill(p, 0)` succeeds on one, so under the check driver — a subreaper that
+  adopts orphans and reaps them only at exit — a descendant that had honoured its SIGTERM still
+  read "alive" and every deadline waited out its full grace period (`_proc_zombie` /
+  `_regression_proc_zombie` read `/proc/<p>/stat`). `process_deadline_tree.tcyr` (renamed from
+  `…_term_first`, whose label overflowed the suite's column) and
+  `regression_file_contains_whole_file.tcyr` name their fixtures with `test_scratch` (per-pid,
+  cwd-relative) instead of a `/tmp` prefix, and the new lib accessors carry doc comments.
 
 ## [6.6.7] — 2026-09-27
 

@@ -323,14 +323,21 @@ fn _args_init_4kb_gate(): i64 {
     # Parse leading int from captured stdout. Fixture prints
     # `<argc>\n` only.
     var got = _aw_parse_leading_int(out_buf, out_n);
-    if (got != 2) {
+    # 6.6.8: and the child must have FINISHED — exit 0 (the fixture's `syscall(60, 0)`). The
+    # capture used to drop the status, so a child that printed `2` and then hung (killed at
+    # the deadline) or crashed passed this row.
+    if (got != 2 || _last_exec_ec != 0 || _last_exec_sig != 0) {
         _p("  ");
         _p(ANSI_RED);
         _p("FAIL");
         _p(ANSI_RESET);
         _p(": argc()==");
         print_num(got);
-        _p(" with 8 KB arg (expected 2; pre-v5.9.5 cap returned 1, captured ");
+        _p(" with 8 KB arg, child ");
+        _p(_exec_unfinished_why());
+        _p(" exit ");
+        print_num(_last_exec_ec);
+        _p(" (expected 2 and exit 0; pre-v5.9.5 cap returned 1, captured ");
         print_num(out_n);
         println(" bytes)");
         _check("args_init reads >4 KB cmdline; argc()==2 with 8 KB arg (cyim BUG-001)", 1);
@@ -408,7 +415,7 @@ fn _derive_serialize_primitive_gate(): i64 {
 
     var expected = "{\"x\":11,\"y\":22,\"z\":33}";
     var elen = strlen(expected);
-    if (n < elen || _last_exec_sig != 0) {   # CO-02: also fail on crash (signal)
+    if (n < elen || _exec_unfinished() == 1) {   # CO-02 + 6.6.8: a crash, a deadline kill or an unobserved end
         _p("  ");
         _p(ANSI_RED);
         _p("FAIL");
@@ -492,7 +499,7 @@ fn _inline_asm_discard_gate(): i64 {
         var buf = alloc(cap);
         var n = _exec_capture_clean(bin, buf, cap);
         sys_unlink(bin);
-        if (n != 16 || _last_exec_sig != 0) {   # CO-02: also fail on crash (signal)
+        if (n != 16 || _exec_unfinished() == 1) {   # CO-02 + 6.6.8: a crash, a deadline kill or an unobserved end
             _p("    ");
             _p(ANSI_RED);
             _p("FAIL");

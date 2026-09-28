@@ -1,0 +1,55 @@
+# regression_file_contains_whole_file.tcyr — lib/regression.cyr's
+# `regression_file_contains_substr` searches the WHOLE file, and a NUL byte does not end it.
+#
+# ⛔ WHY (6.6.8). It read a fixed 512 KiB (524,288 bytes) and then `strstr`-ed that buffer, so
+# a needle past byte 524,288 was reported ABSENT and one after the first NUL byte was never
+# seen. The check driver greps generated outputs with it; a file that grows past the cap makes
+# a "marker is present" row fail for a reason unrelated to the marker, and a "marker is
+# absent" row pass over it. It now reads with `file_read_whole` and scans by length.
+# CHANGELOG [6.6.8]
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/syscalls.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/net.cyr"
+include "lib/regression.cyr"
+
+# A per-process, cwd-relative fixture name (test_scratch: "<base>.<pid>").
+fn _path(tag): i64 {
+    return test_scratch(tag);
+}
+
+# `n` filler bytes (`fill`), then `tail`, written to `path`.
+fn _write(path, n, fill, tail): i64 {
+    var tl = strlen(tail);
+    var buf = alloc(n + tl);
+    var i = 0;
+    while (i < n) { store8(buf + i, fill); i = i + 1; }
+    i = 0;
+    while (i < tl) { store8(buf + n + i, load8(tail + i)); i = i + 1; }
+    return file_write_all(path, buf, n + tl);
+}
+
+fn main(): i64 {
+    alloc_init();
+    test_group("regression_file_contains_substr reads the whole file");
+    var p = _path("cyrius_rfc_big");
+    assert_eq(_write(p, 600000, 97, "NEEDLE-6-6-8\n"), 600013, "a 600 KB fixture was written");
+    assert_eq(regression_file_contains_substr(p, "NEEDLE-6-6-8"), 1,
+      "a needle past the old 524,288-byte cap is found");
+    assert_eq(regression_file_contains_substr(p, "NEEDLE-6-6-9"), 0, "…and an absent one is not");
+    var q = _path("cyrius_rfc_nul");
+    assert_eq(_write(q, 64, 0, "AFTER-THE-NUL\n"), 78, "a fixture whose bytes start with NULs");
+    assert_eq(regression_file_contains_substr(q, "AFTER-THE-NUL"), 1, "a needle after a NUL byte is found");
+    assert_eq(regression_file_contains_substr(_path("cyrius_rfc_missing"), "x"), 0, "a missing file is 0, not a crash");
+    sys_unlink(p);
+    sys_unlink(q);
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);
