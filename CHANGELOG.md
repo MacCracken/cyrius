@@ -46,6 +46,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `sys_sock_close` drop the mark, so an outbound conn that reuses the id never inherits it. On
   agnos-qemu a 1 s listener timeout ends an accepted read in ~1 s (the control: 30,003 ms). Gate:
   `tests/gates/platform/agnos_accept_timeout_inherit.sh`.
+- **`lib/regression_agnos.cyr` defines every verb `lib/regression.cyr` defines.** (bite 7.)
+  `regression_exec_with_arg_capture_both_status` (6.6.7) and the two pipe pumps
+  `regression_pipe_write_all` / `regression_pipe_read_all` (6.6.6) had no agnos peer, so an agnos
+  build that called one did not compile. The pumps are real on agnos (O_NONBLOCK read/write with an
+  idle deadline on the socket adapter's #95-first clock; a pre-1.57.8 `-2` is retried, never EOF)
+  and were run on agnos-qemu; the status verb fails closed like its siblings. The other spawn verbs
+  there still fail closed — porting them onto the new spawn is not in this release. The module header no longer claims
+  agnos has no redirect or stdin/stdout control. Gate: `tests/gates/platform/agnos_process_peer_parity.sh`
+  (derives both verb lists from the source, name and arity, for process and regression).
 
 ## [6.6.7] — 2026-09-27
 

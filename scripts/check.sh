@@ -1235,3 +1235,7 @@ _chk_gate "$ROOT/tests/gates/platform/agnos_process_spawn.sh"
 # 6.6.8 bite 7 — an accepted agnos socket inherits its listener's recv/send timeouts (Linux
 # semantics), and an outbound conn that reuses the conn_id does not.
 _chk_gate "$ROOT/tests/gates/platform/agnos_accept_timeout_inherit.sh"
+
+# 6.6.8 bite 7 — the agnos peers of process.cyr and regression.cyr define every host verb at the
+# same arity (derived from the #ifndef CYRIUS_TARGET_AGNOS regions, not a hand list).
+_chk_gate "$ROOT/tests/gates/platform/agnos_process_peer_parity.sh"
