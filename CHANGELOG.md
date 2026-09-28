@@ -37,6 +37,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   kernel (every spawn refused — the child is over #3's 16 KB cap). Gate: `tests/gates/platform/agnos_process_spawn.sh` (the fake kernel
   in `tests/fixtures/agnos_sctrace.cyr` gains `proc*` modes that answer the spawn/pipe/wait
   numbers and dump each #43 argv blob).
+- **An accepted agnos socket inherits its listener's recv/send timeouts.** (bite 7.) On Linux the
+  kernel copies SO_RCVTIMEO/SO_SNDTIMEO into the accepted socket; on agnos `sock_accept` wrapped the
+  conn in a fresh fd slot whose timeouts `sys_close` had cleared, so it waited the 30 s default
+  whatever the listener said (every in-ecosystem server set it on the accepted fd, so nothing broke —
+  a server ported from Linux would have). `sys_sock_accept` now marks the conn_id with the listen
+  slot it came from and `_agnos_sock_bind` copies that slot's timeouts; `sys_sock_connect` and
+  `sys_sock_close` drop the mark, so an outbound conn that reuses the id never inherits it. On
+  agnos-qemu a 1 s listener timeout ends an accepted read in ~1 s (the control: 30,003 ms). Gate:
+  `tests/gates/platform/agnos_accept_timeout_inherit.sh`.
 
 ## [6.6.7] — 2026-09-27
 

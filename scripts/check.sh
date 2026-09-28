@@ -1231,3 +1231,7 @@ _chk_gate "$ROOT/tests/gates/toolchain/version_bump_doc_anchors.sh"
 # SPAWN_F_ARGV|CLEANFD and the exact argv blob, WAIT_BLOCK (and its pre-1.57.7 poll fallback), a
 # capture that reads to EOF BEFORE it reaps, refusals before any syscall, no spawn#3 / 8 MB alloc.
 _chk_gate "$ROOT/tests/gates/platform/agnos_process_spawn.sh"
+
+# 6.6.8 bite 7 — an accepted agnos socket inherits its listener's recv/send timeouts (Linux
+# semantics), and an outbound conn that reuses the conn_id does not.
+_chk_gate "$ROOT/tests/gates/platform/agnos_accept_timeout_inherit.sh"
