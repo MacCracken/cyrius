@@ -3742,6 +3742,17 @@ fn ECLNORM(S, idx): i64 {
 fn ECALLIND(S, idx): i64 {
     _prov_read(idx);
     if (_IR_REC1(S, IR_CALL_INDIRECT, idx) == 1) { return 0; }
+    # ⛔ 6.6.8 — a coroutine's slot lives in the heap frame: PINDIRECT_CALL's EFLSTORE put the
+    # callee at [r11+off], and the rbp form here called whatever the stack held there — every
+    # fncallN / callptr in an `async fn` body SIGSEGV'd. r11 is scratch at a call (caller-saved,
+    # not an argument register). CHANGELOG [6.6.8]
+    if (_ECORO_SLOT(S, idx) == 1) {
+        _ECORO_BASE_R11(S);
+        E3(S, 0x93FF41);          # call [r11 + disp32]
+        EDISP32(S, _ECORO_OFF(S, idx));
+        _flags_reflect_rax = 0;
+        return 0;
+    }
     var disp = 0 - ((idx + 1) * 8);
     if (_cur_fn_regalloc > 0) { disp = disp - _cur_fn_regalloc * 8; }
     if (_cur_fn_ret_stash > 0) { disp = disp - _cur_fn_ret_stash; }

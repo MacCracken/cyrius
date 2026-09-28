@@ -104,6 +104,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   with the same result. Pinned by `tests/tcyr/crossos/generic_forward_tparam.tcyr` (8/8 on ecb,
   ach, cass and pi, and under qemu-aarch64 and wine; 6.6.7 does not compile it) and gate
   `tests/gates/frontend/generic_type_arg_unknown_refused.sh` (5 rows, mutation-proven).
+- **An indirect call — `fncallN`, `callptr`, a closure — inside a coroutine `async fn` calls its
+  callee instead of crashing.** (bite 1b; found by the 6.6.7 bite 1 implementer.) **Root
+  cause:** PINDIRECT_CALL spills the callee to a fresh local and calls through it with ECALLIND.
+  In a coroutine that local lives in the heap frame — EFLSTORE wrote it to `[r11+off]` — but
+  ECALLIND always emitted `call [rbp+disp]`, the stack slot, so it called whatever the stack held:
+  `var f = &tri; fncall1(f, 10)` between two awaits exited **139** on x86_64 Linux and Mach-O,
+  while `tri(10)` in the same body was fine. It was the one frame-slot emitter the 6.5.69/6.6.5
+  coroutine work had not taught the heap frame. PE was unaffected (it pushes the callee through
+  EFLLOAD, which was already coroutine-aware). **Fix:** ECALLIND (x86/emit.cyr) emits `call
+  [r11+disp32]` for a coroutine-frame slot. Verified on ach (x86_64 Mach-O) and cass (PE) as well
+  as the host; gate `tests/gates/frontend/coroutine_fnptr_and_completion.sh` rows A-C
+  (mutation-proven, all RED on 6.6.7).
 
 ## [6.6.7] — 2026-09-27
 
