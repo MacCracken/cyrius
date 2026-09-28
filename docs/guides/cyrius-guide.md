@@ -1412,6 +1412,24 @@ dependency unresolvable for ever. Cost is a full `git fsck` plus two tree hashes
 50-200 ms per dep on a warm cache, measured on real ones (585 files: 48 ms; 274 files with a
 larger object store: 195 ms).
 
+**A temp dir the check cannot write is not a verdict (v6.6.9).** The verify writes its
+captures into the CLI's private temp dir. When that dir is full, at quota or out of inodes, the
+dep is still refused — nothing unchecked is vendored — but the message says so and tells you
+not to delete the cache:
+
+```
+error: cached checkout for dep 'foo' tag '1.0.0' could NOT be verified — refusing to vendor it
+unchecked: the check could not write its temp files, so the cache was NOT judged.
+  temp dir: /tmp/cyrius-4242 (errno 122 — full, at quota, or out of inodes)
+  cache: /home/you/.cyrius/deps/foo/1.0.0  (not judged; do NOT delete it)
+  fix: free space under that temp dir, or set TMPDIR to an absolute path elsewhere, and re-run.
+```
+
+(Through 6.6.8 this read as "refusing tampered cache … rm -rf", for every dep at once.) The CLI's
+temp base is an **absolute** `$TMPDIR` when one is set, else `/tmp` (`%TEMP%` on Windows); a
+relative `TMPDIR` is ignored. The hashes behind `cyrius.lock` come from `sha256sum`, or
+`shasum -a 256` where there is no `sha256sum` (macOS 13), or `certutil` on Windows.
+
 ⚠ **Native Windows is out of scope for all of this**, as the git-dep flow always has been:
 `sys_fork` does not exist there, so no git command can run. A pre-populated cache resolves with
 a one-line warning that it was NOT verified, rather than failing with a reason that would be

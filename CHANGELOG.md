@@ -171,6 +171,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `cyrius deps --verify` until they run `cyrius deps --relock` once (their next plain
   `cyrius deps` also rewrites both locks). Any consumer whose lock misses a vendored leaf is in
   the same position — that is the point of the change.
+- **`TMPDIR`**: an absolute `$TMPDIR` now moves the CLI's private temp dir (macOS sets one per
+  user, so every macOS CLI temp moves off `/tmp`). A full or quota-limited temp dir now reads
+  `could NOT be verified … temp dir: … (errno N)` instead of "refusing tampered cache" — do not
+  delete the cache; free the space or point TMPDIR elsewhere.
 - **vani** can narrow ADR 002 (`docs/architecture/002-distlib-deps-counts-comment-words.md`):
   comments and strings no longer count, so the remaining rule is "no stdlib top-level fn/var name as
   a profile module's parameter or local".
