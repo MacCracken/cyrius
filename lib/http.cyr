@@ -208,7 +208,12 @@ fn http_get(url): i64 {
     # short write (SO_SNDTIMEO, a signal) sent half a request and then waited for a response to
     # it. A failed or short send is now HTTP_ERROR. CHANGELOG [6.6.8]
     var qlen = strlen(req);
-    if (sock_send_all(fd, req, qlen) != qlen) { sys_close(fd); var serr = alloc(24); store64(serr, HTTP_ERROR); return serr; }
+    if (sock_send_all(fd, req, qlen) != qlen) {
+        sys_close(fd);
+        var serr = alloc(24);
+        store64(serr, HTTP_ERROR);
+        return serr;
+    }
     # Read response — sock_recv returns Result; payload(Ok) is bytes
     # read, Err short-circuits the loop.
     var rbuf = alloc(65536);
