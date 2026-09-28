@@ -1,0 +1,5 @@
+# is_err pre-pass: BOTH includes are real column-0 directives, so the plain call warns. A
+# directive swallows its whole line, so the stray quote after the first opens no string.
+include "lib/syscalls.cyr" trailing "quote
+include "lib/tagged.cyr"
+fn ie_b(r): i64 { return is_err(r); }

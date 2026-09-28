@@ -1,0 +1,9 @@
+# is_err pre-pass: only a COLUMN-0 include directive OUTSIDE a string counts (6.6.8). None of
+# the three tagged.cyr mentions below arms the rule: a comment, an indented line (not a
+# directive), and a line that begins inside a multi-line string (its quote closes the string).
+# no longer: include "lib/tagged.cyr"
+include "lib/syscalls.cyr"
+    include "lib/tagged.cyr"
+var ie_doc = "usage:
+include "lib/tagged.cyr" ";
+fn ie_a(r): i64 { return is_err(r); }

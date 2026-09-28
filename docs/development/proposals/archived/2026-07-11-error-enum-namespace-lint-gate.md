@@ -1,10 +1,19 @@
 # Error-enum namespace lint gate — base-owned bare `ERR_*`, leaves must prefix
 
-**Status:** **FILED for review (2026-07-11). No decisions committed.** A grounded
-design exploration of an *enforcement* mechanism; the levers in "Open decisions"
-are chosen at review, not here. cyrius already **detects** the underlying
-collision (see Substrate) — this is about turning detection into an enforceable,
-attributable gate.
+**Status:** ✅ **DECIDED + SHIPPED** — option **1b** (cyrius-side owner config) landed as a
+note-level cyrlint rule in **v6.4.51** (CHANGELOG `[6.4.51]`, `lint_error_enum_namespace`).
+**v6.6.8** replaced its owner test — "the typed path contains `sakshi`", which noted sakshi's own
+`src/error.cyr` and exempted any file under a `sakshi`-named directory — with the file's
+identity: basename exactly `sakshi.cyr`, or the nearest `cyrius.cyml` declaring
+`[package] name = "sakshi"` (CHANGELOG `[6.6.8]`; issue
+`issues/archived/2026-09-23-sakshi-err-enum-lint-owner-matched-by-path-spelling.md`). The
+note → `warn` flip is still pending the leaves' renames. *(This header read "FILED for review …
+No decisions committed" for two months after the rule shipped.)*
+
+*Original status (2026-07-11):* FILED for review. A grounded design exploration of an
+*enforcement* mechanism; the levers in "Open decisions" were chosen at review. cyrius already
+**detects** the underlying collision (see Substrate) — this is about turning detection into an
+enforceable, attributable gate.
 
 **User lean (2026-07-11 — a lean, NOT a commitment):** sakshi, as the ecosystem's
 **base logger** (the foundation include every AGNOS Cyrius project pulls in), owns

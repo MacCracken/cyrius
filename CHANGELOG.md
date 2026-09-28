@@ -25,6 +25,29 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `tests/gates/toolchain/cyaudit_include_directives.sh` asks the COMPILER what an include is (a
   commented / in-string include of a missing file compiles, the same text in column 0 does not);
   8 mutations each RED, and the 6.6.7 cyaudit fails 12 of its 26 checks.
+- **cyrlint's error-enum rule decides "is this sakshi?" by what the file IS, not by how its path
+  is spelled.** (bite 10; [sakshi: err-enum lint owner matched by path spelling](docs/development/issues/archived/2026-09-23-sakshi-err-enum-lint-owner-matched-by-path-spelling.md).)
+  **Root cause:** `_lint_path_is_err_owner` substring-matched `sakshi` against the path exactly
+  as the caller typed it — neither necessary nor sufficient. sakshi's own CI running `cyrlint
+  src/error.cyr` got **17** "reserved for the sakshi base logger" notes on its own canonical set
+  (0 as `$PWD/src/error.cyr`), and any leaf under a directory whose name contains `sakshi`
+  (a checkout dir, a CI workspace, `src/sakshi_glue.cyr`, `~/.cyrius/deps/sakshi/…`) was exempt —
+  harmless while the rule is a note, but the planned note → `warn` flip would have failed
+  sakshi's own lint gate first. **Fix** (the filing's option 1, the default): the owner is a
+  file whose basename is exactly `sakshi.cyr` (a vendored `lib/sakshi.cyr`, `dist/sakshi.cyr`) or
+  whose NEAREST `cyrius.cyml` — walked up as `<dir>/../` with no getcwd, bounded — declares
+  `[package] name = "sakshi"`; `/` and `\` both separate. The archived proposal's header, which
+  still read "FILED for review … No decisions committed", now records the shipped decision.
+- **cyrlint's `is_err` pre-pass counts only include DIRECTIVES.** (bite 10.) It armed the
+  "ambiguous is_err" warning when `include "lib/syscalls.cyr"` and `include "lib/tagged.cyr"`
+  appeared ANYWHERE in the file, so a comment (`# no longer: include "lib/tagged.cyr"`), an
+  indented line or a raw line of a multi-line string drew a false warning on every `is_err(`.
+  Now column 0, outside a string, the directive's line consumed — the compiler's rule
+  (`ISINCLUDE` / `PP_LEXST`), the same one `cyrius vet` now uses.
+- `tests/gates/toolchain/cyrlint_cross_line.sh` gains axis 9b (the owner, every case run
+  RELATIVE and ABSOLUTE — the gate had only ever passed absolute paths, so it could not see the
+  relative-path direction) and axis 9c (the is_err fixtures `is_err_anchor.cyr` /
+  `is_err_clash.cyr`). 9 new mutations, each RED; the 6.6.7 cyrlint fails 10 of 160.
 
 ## [6.6.7] — 2026-09-27
 

@@ -127,6 +127,17 @@
 #   mFB cyrfmt: the indent loop keeps spinning past the cap (>10 s)               6+6
 #   mFC cyrfmt: stdout mode writes a truncated result instead of refusing         2+0
 #   mRP harness: a fixture PROGRAM that never exits — RED in 13 s, not a hang     1+1
+# 6.6.8 (bite 10) — axes 9b/9c (each mutant GREEN→RED, 160 checks):
+#   C1  the 6.6.7 owner test (the typed path contains "sakshi")                   9+0
+#   C2  `\` not a path separator for the basename                                2+0
+#   C3  basename ENDS in sakshi.cyr (not exact)                                   2+0
+#   C4  a manifest that is not sakshi does not stop the walk (not the NEAREST)    2+0
+#   C5  `name` read from any table, not only [package]                            2+0
+#   C6  name matched as a prefix ("sakshi-x" is sakshi)                           2+0
+#   C7  is_err pre-pass: no column-0 anchor                                       1+0
+#   C8  is_err pre-pass: no string state (a line inside a string is column 0)     1+0
+#   C9  is_err pre-pass: the directive's line not consumed (a stray quote)        1+0
+#   (the whole 6.6.7 cyrlint: 10+0)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -442,6 +453,54 @@ check "getdents notes (wrapped, single-line, 'syscall (', '(' on the next line, 
 run_prog "$LX/enum_members.cyr"
 check "runtime: enum_members is valid cyrius (the ;, bare and payload forms parse)" 16 "$RUN_RC"
 check "every bare ERR_* member noted, per member" "2 2 4 4 9 18 18 19 19 20" "$(nl_of "$LX/enum_members.cyr" 'bare ERR_')"
+LDIR="$LX"; check "  …the same notes when the path is RELATIVE (6.6.8: the owner test read the path's spelling)" "2 2 4 4 9 18 18 19 19 20" "$(nl_of enum_members.cyr 'bare ERR_')"; LDIR=""
+
+echo "axis 9b — the ERR_* owner is WHAT the file is (6.6.8), never how its path is spelled"
+# The owner is a file named exactly sakshi.cyr, or one whose NEAREST cyrius.cyml declares
+# [package] name = "sakshi". Every case runs RELATIVE (from inside the tree) and ABSOLUTE:
+# the substring rule this replaces gave sakshi's own `src/error.cyr` 17 notes relative and 0
+# absolute, and exempted any file under a directory whose name contains "sakshi".
+O="$T/own"
+mkdir -p "$O/pkg/src" "$O/sakshi-named/leaf" "$O/consumer/lib" "$O/consumer/src" "$O/near" "$O/tbl" "$O/pkg/sub"
+errenum='enum ErrCode {\n    ERR_A = 1;\n    ERR_B = 2;\n}\n'
+printf '[package]\nname = "sakshi"\nversion = "1.0.0"\n' > "$O/pkg/cyrius.cyml"
+printf "$errenum" > "$O/pkg/src/error.cyr"
+printf '[package]\nname = "leafy"\n' > "$O/sakshi-named/cyrius.cyml"
+printf 'enum LeafErr {\n    ERR_TIMEOUT = 9;\n}\n' > "$O/sakshi-named/leaf/leaf.cyr"
+printf '[package]\nname = "consumer"\n' > "$O/consumer/cyrius.cyml"
+printf "$errenum" > "$O/consumer/lib/sakshi.cyr"
+printf "$errenum" > "$O/consumer/src/sakshi_glue.cyr"
+printf "$errenum" > "$O/consumer/lib/notsakshi.cyr"
+printf "$errenum" > "$O/consumer/win\\sakshi.cyr"
+printf '[package]\nname = "sakshi-x"\n' > "$O/near/cyrius.cyml"
+printf "$errenum" > "$O/near/e.cyr"
+printf '# name = "sakshi"\n[deps]\nname = "sakshi"\n[package]\nname = "app"\n' > "$O/tbl/cyrius.cyml"
+printf "$errenum" > "$O/tbl/e.cyr"
+printf '[package]\nname = "leaf2"\n' > "$O/pkg/sub/cyrius.cyml"
+printf "$errenum" > "$O/pkg/sub/x.cyr"
+check "  (premise: a file named with a backslash exists, for the \\ separator)" yes "$([ -f "$O/consumer/win\\sakshi.cyr" ] && echo yes || echo no)"
+nerr() {   # $1 dir to run in, $2 path as typed → the count of ERR_* notes
+    LDIR="$1"; lint_run "$2" || { LDIR=""; echo "$LHARD"; return; }; LDIR=""
+    grep -c 'bare ERR_' "$T/le"
+}
+owner_row() {   # $1 label, $2 expected notes, $3 dir, $4 relative path
+    check "$1 — relative" "$2" "$(nerr "$3" "$4")"
+    check "$1 — absolute" "$2" "$(nerr "$ROOT" "$3/$4")"
+}
+owner_row "sakshi's own src/error.cyr (nearest manifest names sakshi) is the owner: 0 notes (was 2 relative)" 0 "$O/pkg" src/error.cyr
+owner_row "  …spelled from inside src/" 0 "$O/pkg/src" error.cyr
+owner_row "a leaf under a directory NAMED sakshi-named is not the owner: noted (was 0 absolute)" 1 "$O/sakshi-named/leaf" leaf.cyr
+owner_row "a consumer's vendored lib/sakshi.cyr (basename) is the owner" 0 "$O/consumer" lib/sakshi.cyr
+owner_row "  …and a backslash separates the basename too" 0 "$O/consumer" 'win\sakshi.cyr'
+owner_row "a consumer's src/sakshi_glue.cyr is not (was exempt: its name contains sakshi)" 2 "$O/consumer" src/sakshi_glue.cyr
+owner_row "  …nor lib/notsakshi.cyr (the basename is EXACT)" 2 "$O/consumer" lib/notsakshi.cyr
+owner_row "a package named sakshi-x is not sakshi (exact name)" 2 "$O/near" e.cyr
+owner_row "name = \"sakshi\" outside [package] (a comment, a [deps] key) does not count" 2 "$O/tbl" e.cyr
+owner_row "the NEAREST manifest decides (a leaf package nested inside sakshi's tree)" 2 "$O/pkg/sub" x.cyr
+
+echo "axis 9c — the is_err pre-pass sees only include DIRECTIVES (6.6.8)"
+check "a commented, an indented and an in-string include of tagged.cyr do not arm the rule (was 1 warning)" "" "$(lint_run "$LX/is_err_anchor.cyr" || echo "$LHARD"; grep 'ambiguous is_err' "$T/le" | sed -n 's/^  warn line \([0-9]*\):.*/\1/p' | paste -sd' ' -)"
+check "two column-0 includes do (anti-vacuous; a stray quote on the directive line is swallowed)" "5" "$(lint_run "$LX/is_err_clash.cyr" || echo "$LHARD"; grep 'ambiguous is_err' "$T/le" | sed -n 's/^  warn line \([0-9]*\):.*/\1/p' | paste -sd' ' -)"
 
 echo "axis 10 — linearity on hostile 1 MB inputs (the uncached form took 27 s)"
 awk 'BEGIN { ORS = ""; print "#"; for (i = 0; i < 120000; i++) print " not yet"; print " CHANGELOG\n# a later bite\n" }' > "$T/big_tracked.cyr"
