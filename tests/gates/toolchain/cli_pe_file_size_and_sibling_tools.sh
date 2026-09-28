@@ -17,6 +17,8 @@
 # THE AXES.
 #   axis 0  (always) no raw `syscall(4,` in cbt/ — the stat number with no PE reroute. Runs
 #           where CI runs (no wine), so a revert of bug 1 is red there too.
+#   axis 0b (always) the exe path's UTF-16 -> UTF-8 buffer is sized from its length, so a long
+#           non-ASCII path is not silently truncated (a host probe of `_wrapper_w2u8`).
 #   axis 1  (wine) distlib's verify re-adds `math` for an undeclared F64_ONE under cyrius.exe.
 #   axis 2  (wine) `distlib --check` right after `distlib` reports the bundle current.
 #   axis 3  (wine) `cyrius.exe lint` with an EMPTY CYRIUS_HOME finds cyrlint.exe beside it.
@@ -26,7 +28,7 @@
 # MUTATION LEDGER (2026-09-28, 6.6.9, wine): the 6.6.8 cbt/ (a full revert) FAILS axes 0-3;
 # `_file_size` alone back to syscall(4) FAILS 0 and 2 (axis 1 stays green: the verify's own
 # reads moved to file_read_whole, so they no longer depend on it); `_wrapper_dir` without the
-# Windows arm FAILS 3 only.
+# Windows arm FAILS 3 only. `_wrapper_w2u8` back to a fixed 4096-byte buffer FAILS 0b (rc 2).
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -42,6 +44,53 @@ if [ -n "$RAW" ]; then
 else
     echo "  ok axis 0: no raw stat syscall in cbt/"
 fi
+
+# ── axis 0b: the exe path's UTF-8 buffer is sized from its length ─────────────────────────
+# `_wrapper_exe_win` converted GetModuleFileNameW's answer into a FIXED 4096-byte buffer, and
+# `_args_w2u8` silently drops a code point that does not fit — so a long non-ASCII install path
+# came back truncated (a wrong sibling dir) and its `b - 1 >= wn` check could not tell. The
+# conversion is the host-testable `_wrapper_w2u8`: 2000 CJK units must come back as 6000 bytes,
+# and a surrogate pair as its 4-byte form.
+[ -x "$CC" ] || { echo "SKIP: $CC missing"; exit 0; }
+P0=$(mktemp -d) && [ -d "$P0" ] || { echo "FAIL: cli_pe_file_size_and_sibling_tools: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
+sed -n '/^include "lib\//p; /^include "src\/version_str.cyr"/p' "$ROOT/cbt/cyrius.cyr" > "$P0/p.cyr"
+cat >> "$P0/p.cyr" <<'EOF0'
+include "cbt/core.cyr"
+fn w2u8_probe(): i64 {
+    var n = 2000;
+    var w = alloc(n * 2 + 8);
+    var i = 0;
+    while (i < n) { store8(w + i * 2, 0x2D); store8(w + i * 2 + 1, 0x4E); i = i + 1; }  # U+4E2D
+    store8(w + n * 2, 0); store8(w + n * 2 + 1, 0);
+    var u = _wrapper_w2u8(w, n);
+    if (u == 0) { return 1; }
+    if (strlen(u) != n * 3) { return 2; }
+    if (load8(u + n * 3 - 3) != 0xE4 || load8(u + n * 3 - 1) != 0xAD) { return 3; }
+    # U+1F600 as a surrogate pair (2 units, 4 bytes), then 'a'
+    var s = alloc(16);
+    store8(s, 0x3D); store8(s + 1, 0xD8); store8(s + 2, 0x00); store8(s + 3, 0xDE);
+    store8(s + 4, 0x61); store8(s + 5, 0); store8(s + 6, 0); store8(s + 7, 0);
+    var v = _wrapper_w2u8(s, 3);
+    if (v == 0 || strlen(v) != 5) { return 4; }
+    if (load8(v) != 0xF0 || load8(v + 4) != 0x61) { return 5; }
+    return 0;
+}
+var _w2u8_rc = w2u8_probe();
+syscall(60, _w2u8_rc);
+EOF0
+if ( cd "$ROOT" && "$CC" < "$P0/p.cyr" > "$P0/p" 2>"$P0/p.err" ) && chmod +x "$P0/p"; then
+    set +e; "$P0/p"; prc=$?; set -e
+    if [ "$prc" -eq 0 ]; then
+        echo "  ok axis 0b: 2000 CJK units -> 6000 UTF-8 bytes, a surrogate pair -> 4"
+    else
+        echo "  FAIL axis 0b: _wrapper_w2u8 probe exited $prc (1 none, 2 truncated, 3 wrong bytes, 4/5 surrogate)"
+        fail=1
+    fi
+else
+    echo "  FAIL axis 0b: the _wrapper_w2u8 probe did not compile: $(grep -i error "$P0/p.err" | head -2)"
+    fail=1
+fi
+rm -rf "$P0"
 
 command -v wine >/dev/null 2>&1 || {
     [ "$fail" -eq 0 ] || { echo "FAIL: cli_pe_file_size_and_sibling_tools"; exit 1; }

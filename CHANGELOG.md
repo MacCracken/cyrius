@@ -42,7 +42,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   stdlib fold; no named dep is ever an owner; and a symbol is kept out of the sidecar as a named
   dep's own need only when that dep's leaf list brings its owner AND nothing of ours (the bundle, a
   recorded leaf or its private peers; comments and strings blanked) names it — anything else is
-  recorded, the safe direction. The unit is now built from INCLUDES (an entry in
+  recorded, the safe direction. That test is never skipped for a leaf already in the unit-only
+  scope (the modules precede the bundle, so a dep's `helperlib_do` reached the scope first and the
+  bundle's own `helperlib_two` was then waved through — and never surfaced again), and a round that
+  records a leaf drops the scope, so each entry is re-decided with that leaf counted as ours (a
+  re-added leaf's need that the scope already met could not surface either). The unit is now built
+  from INCLUDES (an entry in
   `dist/.dlverify-<pid>/` beside a copy of the pinned snapshot, which resolves any leaf the project
   has not vendored — cycc tries the CWD's `./lib` first, the entry's directory last — removed
   afterwards): the old text splice defeated include-once — a spliced leaf arrived again through any
@@ -57,7 +62,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `distlib_sidecar_verified.sh` axes 5-12, hermetic (PATH named deps, so no `<home>/deps` is
   touched): the module splice, the named-dep leaf skip, the owner guard, fail-loud, a named dep's
   own need (either spelling, peer or dispatcher), OUR use of such a leaf, a recorded leaf's peer's
-  need, each-file-once and the mirror's removal are each mutation-proven on their own axis; axis 8
+  need, our use of a DIFFERENT symbol of a leaf the dep reached first (10d), a re-added leaf's need
+  that an earlier round scoped (10e), each-file-once and the mirror's removal are each
+  mutation-proven on their own axis; axis 8
   is the anti-vacuous "a bundle that really calls the helper still gets it re-added". ⚠ Stated
   residual: a need of a recorded leaf that a named dep's module already meets through its own
   `include` is met in the unit and not recorded — as it is in every consumer's build, through that
@@ -80,9 +87,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   never fired and `cyrius lint` with an empty or foreign `CYRIUS_HOME` said `tool not found:
   <home>/bin/cyrlint` beside a working cyrlint.exe. **Fix:** on PE the wrapper's own path comes
   from GetModuleFileNameW (`sys_self_exe_w`, a full buffer refused as truncated), normalised to `/`;
-  argv(0), normalised the same way, is the fallback. Verified on cass: by full path and by bare name
-  off PATH. Gate: `cli_pe_file_size_and_sibling_tools.sh` (axis 0 — no raw stat in cbt/ — runs
-  without wine; axes 1-3 under wine), mutation-proven per mechanism.
+  argv(0), normalised the same way, is the fallback. Its UTF-8 copy (`_wrapper_w2u8`) is sized from
+  the path's length, `3 × units + 6`: `_args_w2u8` silently drops a code point that does not fit, so
+  a fixed 4096-byte buffer truncated a long non-ASCII path and no length check could tell. Verified
+  on cass: by full path and by bare name off PATH. ⚠ An install dir with a non-ASCII name still
+  falls back to `CYRIUS_HOME` on every CLI (6.6.8 included), because the PE open reroute widens a
+  path byte by byte (ASCII only, 260 units) — a compiler-side limit, not this lookup's. Gate:
+  `cli_pe_file_size_and_sibling_tools.sh` (axes 0 — no raw stat in cbt/ — and 0b — a host probe of
+  `_wrapper_w2u8`: 2000 CJK units come back as 6000 bytes, a surrogate pair as 4 — run without wine;
+  axes 1-3 under wine), mutation-proven per mechanism.
 
 ### Downstream
 

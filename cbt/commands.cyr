@@ -3377,8 +3377,18 @@ fn _distlib_verify_rounds(leaves, out_path, named_deps, root, m): i64 {
         # as before: the safe direction. (Pre-splicing the named deps' leaves instead dropped
         # `alloc` from rosnet's `gpu` sidecar, whose leaf mabda needs it, because tyche
         # happened to bring it.)
+        #
+        # ⚠ THE SCOPE NEVER OUTRANKS "OURS" — not by order, not by round. (1) A symbol whose
+        # owner is ALREADY in the scope is still checked against what is ours: the named deps'
+        # modules sit before the bundle in the unit, so a dep's `helperlib_do` is classified
+        # first and the bundle's own `helperlib_two` then found helperlib "already handled" —
+        # and from the next round it was defined, so it never surfaced again. (2) A round that
+        # RECORDS a leaf drops the scope: every entry in it was decided without that leaf
+        # counted as ours, and a leaf's need the scope already satisfies can never surface.
+        # The next round re-decides it with the leaf included. CHANGELOG [6.6.9]
         var own = 0;
         var added_here = 0;
+        var recorded_here = 0;
         var ni = 0;
         while (ni < vec_len(names)) {
             var nm = vec_get(names, ni);
@@ -3389,26 +3399,30 @@ fn _distlib_verify_rounds(leaves, out_path, named_deps, root, m): i64 {
             # Never a named dep: its symbols belong to the consumer's pinned module.
             if (_distlib_vec_has(named_deps, owner) == 1) { continue; }
             if (_distlib_vec_has(leaves, owner) == 1) { continue; }
-            if (_distlib_vec_has(scope, owner) == 1) { continue; }
             # A named dep's leaf list may name the PEER itself (`hd_impl`), not the
             # dispatcher the owner resolves to (`hd`): either one counts.
             var brought = 0;
             if (_distlib_vec_has(_dep_nd_leaves, owner) == 1) { brought = owner; }
             elif (_distlib_vec_has(_dep_nd_leaves, raw) == 1) { brought = raw; }
-            if (brought != 0 && _distlib_vec_has(scope, brought) == 1) { continue; }
-            if (brought != 0) {
+            var scoped = _distlib_vec_has(scope, owner);
+            if (scoped == 0 && brought != 0) { scoped = _distlib_vec_has(scope, brought); }
+            if (scoped == 1 || brought != 0) {
                 if (own == 0) { own = _distlib_own_ids(leaves, named_deps, out_path, m); }
                 if (_dl_ids_has(own, nm) == 0) {
-                    vec_push(scope, brought);
-                    added_here = added_here + 1;
+                    if (scoped == 0) {
+                        vec_push(scope, brought);
+                        added_here = added_here + 1;
+                    }
                     continue;
                 }
             }
             vec_push(leaves, owner);
             added_here = added_here + 1;
+            recorded_here = recorded_here + 1;
             added_total = added_total + 1;
         }
         if (added_here == 0) { return added_total; }   # fixpoint: nothing new to add
+        if (recorded_here > 0) { scope = vec_new(); }   # (2) above
     }
     return added_total;
 }

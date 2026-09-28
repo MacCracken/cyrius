@@ -347,6 +347,22 @@ fn _wrapper_dir(): i64 {
     return str_data(str_builder_build(sb));
 }
 
+# The NUL-terminated UTF-16 string `wbuf` of `wn` code units as a fresh UTF-8 cstr, or 0.
+# ⚠ SIZED FROM `wn`, NOT A FIXED BUFFER: `_args_w2u8` silently DROPS any code point that does
+# not fit, and one UTF-16 unit is up to 3 UTF-8 bytes (a surrogate pair's 4 span 2 units), so
+# a fixed 4096 truncated a long non-ASCII path — 2000 CJK units need 6000 bytes — and no
+# length check can see it afterwards. `+ 6`: w2u8 writes a code point only while 5 bytes
+# remain. Host-testable; exercised by tests/gates/toolchain/cli_pe_file_size_and_sibling_tools.sh.
+# CHANGELOG [6.6.9]
+fn _wrapper_w2u8(wbuf, wn): i64 {
+    if (wn <= 0) { return 0; }
+    var cap = wn * 3 + 6;
+    var ubuf = alloc(cap);
+    var b = _args_w2u8(wbuf, ubuf, cap);
+    if (b <= 1) { return 0; }
+    return ubuf;
+}
+
 #ifdef CYRIUS_TARGET_WIN
 # This .exe's absolute path with '\' rewritten to '/', from GetModuleFileNameW; `a0` (argv(0),
 # likewise normalised) when that fails. 0 only when both are absent. A full buffer is a
@@ -359,9 +375,7 @@ fn _wrapper_exe_win(a0): i64 {
     if (wn > 0 && wn < 4096) {
         store8(wbuf + wn * 2, 0);
         store8(wbuf + wn * 2 + 1, 0);
-        var ubuf = alloc(4096);
-        var b = _args_w2u8(wbuf, ubuf, 4096);
-        if (b > 1 && b - 1 >= wn) { p = ubuf; }
+        p = _wrapper_w2u8(wbuf, wn);
     }
     if (p == 0) {
         if (a0 == 0) { return 0; }

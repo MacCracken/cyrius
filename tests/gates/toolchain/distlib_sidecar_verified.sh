@@ -125,7 +125,7 @@ mkdir -p "$NH/versions/$VER" "$NH/bin" "$WORK/foldsrc/dist"
 cp -R "$ROOT/lib" "$NH/versions/$VER/lib"
 CC=${CYCC:-"$ROOT/build/cycc"}
 cp "$CC" "$NH/bin/cycc"; chmod +x "$NH/bin/cycc"
-printf 'fn helperlib_do(x): i64 { return x; }\n' > "$NH/versions/$VER/lib/helperlib.cyr"
+printf 'fn helperlib_do(x): i64 { return x; }\nfn helperlib_two(x): i64 { return x + 2; }\n' > "$NH/versions/$VER/lib/helperlib.cyr"
 printf 'fn fold_sign(x): i64 { return helperlib_do(x); }\nfn fold_extra(x): i64 { return helperlib_do(x) + 1; }\n' > "$NH/versions/$VER/lib/fold.cyr"
 printf 'fn thin_sign(x): i64 { return helperlib_do(x) + 2; }\n' > "$NH/versions/$VER/lib/bigfold.cyr"
 printf '[package]\nname = "fold"\nversion = "1.0.0"\ncyrius = "%s"\n' "$VER" > "$WORK/foldsrc/cyrius.cyml"
@@ -270,9 +270,33 @@ O10C=$(run_nd "$P10C" || true)
 grep -qx 'pd' "$P10C/dist/np.deps" 2>/dev/null || fail "axis 10c premise: 'pd' not in [$(nd_leaves "$P10C")]: $(echo "$O10C" | grep -i error | head -2)"
 grep -qx 'helperlib' "$P10C/dist/np.deps" || fail "axis 10c: [$(nd_leaves "$P10C")] — pd's peer pd_impl calls helperlib_do; a recorded leaf's need was left to fold2"
 
+# axis 10d: WHOSE NEED does not depend on the ORDER of the diagnostics. fold2's module calls
+# helperlib_do and the bundle calls helperlib_TWO — a different symbol of the same leaf. The
+# modules sit before the bundle in the unit, so fold2's name is classified first and helperlib
+# goes to the unit-only scope; the bundle's own name, checked against that scope BEFORE it was
+# checked against what is ours, was skipped — and from the next round helperlib is in the unit,
+# so the bundle's use never surfaced again and helperlib was never recorded.
+P10D=$(mknd p10d 'fn np_n(x): i64 { return fold2_do(x) + helperlib_two(x); }' 'include "src/np.cyr"')
+printf '\n[deps.fold2]\npath = "../fold2src"\nmodules = ["dist/fold2.cyr"]\n' >> "$P10D/cyrius.cyml"
+O10D=$(run_nd "$P10D" || true)
+[ -f "$P10D/dist/np.deps" ] || fail "axis 10d: no sidecar written: $(echo "$O10D" | head -3)"
+grep -qx 'helperlib' "$P10D/dist/np.deps" || fail "axis 10d: [$(nd_leaves "$P10D")] — np_n calls helperlib_two itself; it was hidden behind fold2's helperlib_do, which the unit reported first"
+
+# axis 10e: nor on the ROUND. rr is a leaf the bundle uses but neither declares nor includes, so
+# it is only recorded in round 1 — the round that also put helperlib in the scope for fold2.
+# rr calls helperlib_do; from round 2 helperlib was in the unit, so rr's need never surfaced
+# and a RECORDED leaf's need was left to fold2. A round that records a leaf re-decides the
+# scope with that leaf counted as ours.
+printf 'fn rr_do(x): i64 { return helperlib_do(x) + 7; }\n' > "$NH/versions/$VER/lib/rr.cyr"
+P10E=$(mknd p10e 'fn np_p(x): i64 { return fold2_do(x) + rr_do(x); }' 'include "src/np.cyr"')
+printf '\n[deps.fold2]\npath = "../fold2src"\nmodules = ["dist/fold2.cyr"]\n' >> "$P10E/cyrius.cyml"
+O10E=$(run_nd "$P10E" || true)
+grep -qx 'rr' "$P10E/dist/np.deps" 2>/dev/null || fail "axis 10e premise: 'rr' not re-added in [$(nd_leaves "$P10E")]: $(echo "$O10E" | head -3)"
+grep -qx 'helperlib' "$P10E/dist/np.deps" || fail "axis 10e: [$(nd_leaves "$P10E")] — the re-added leaf rr calls helperlib_do; its need was hidden by the scope an earlier round gave fold2"
+
 # axis 12: the verify's scratch mirror (dist/.dlverify-<pid>) never outlives the run — on the
 # success path or on the fail-loud one.
-for d in "$P5" "$P6" "$P9" "$P10" "$P10B" "$P10C" "$P11"; do
+for d in "$P5" "$P6" "$P9" "$P10" "$P10B" "$P10C" "$P10D" "$P10E" "$P11"; do
     if ls -a "$d/dist" 2>/dev/null | grep -q '^\.dlverify-'; then
         fail "axis 12: $d/dist still holds the verify's scratch mirror"
     fi
