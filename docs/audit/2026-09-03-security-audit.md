@@ -654,13 +654,17 @@ chunk writes past the chunk's mapping — a SIGSEGV, or corruption of whatever m
 **Fix.** The builder computes the request's length first — method + 1 + path + 17 + host + 23 +
 the NUL — and returns 0 when it exceeds `_HTTP_REQ_CAP` (2048, the old buffer's size, so no
 request that used to fit is refused); otherwise it allocates exactly that length. All three
-callers check for 0 before opening a socket: `http_get` / `http_get_a` return status
-`HTTP_ERROR`, `http_get_r` returns `Err(HttpBadUrl)`.
+callers go through `_http_prepare`, which builds the request first and returns before any lookup
+or socket when the builder refuses it: `http_get` / `http_get_a` return status `HTTP_ERROR`,
+`http_get_r` returns `Err(HttpBadUrl)`. (The first cut resolved the host before checking, in two
+of the three callers, so an over-long URL still read `/etc/hosts` + `/etc/resolv.conf` and sent a
+DNS datagram for its host; the review caught it under `qemu-x86_64 -strace`.)
 
 **Verified.** `tests/tcyr/crossos/http_connect_by_name.tcyr`, group *CVE-50*: a 4000-byte path
 is refused **and the next allocation holds none of its bytes**; an over-long Host is refused; a
 request of exactly 2048 bytes with its NUL builds (2047 long) and one byte more is refused; all
-three `http_get*` return their error for the long URL. Mutation: restoring the unchecked builder
+three `http_get*` return their error for a long URL whose host only DNS could answer, and
+`_http_prepare` leaves its address slot untouched on the refusal (no lookup ran). Mutation: restoring the unchecked builder
 turns five rows red, including the next-allocation row. Green on x86_64 Linux, the agnosticos
 CI container, aarch64 (qemu and real pi), Mach-O arm64 (ecb), Mach-O x86_64 (ach) and PE (wine
 and real cass).

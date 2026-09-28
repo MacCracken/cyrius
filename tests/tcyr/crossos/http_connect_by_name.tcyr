@@ -155,7 +155,10 @@ fn _cb_serve_one(lfd, seen): i64 {
 }
 
 # Reap `pid`, SIGKILLing it first when `kill` is set. Returns its exit status, or -1.
+# ⛔ Only a real child (pid > 0) is ever signalled: a failed fork's pid is -errno, and
+# kill(-1, SIGKILL) signals EVERY process this user can reach — as root in CI, the container.
 fn _cb_reap(pid, kill): i64 {
+    if (pid <= 0) { return 0 - 1; }
     if (kill == 1) { sys_kill(pid, 9); }
     var st[8];
     store64(&st, 0);
@@ -178,6 +181,11 @@ fn _cb_http_group(): i64 {
     sock_set_recv_timeout(lfd, 10, 0);
     var pid = sys_fork();
     if (pid == 0) { _cb_http_child(port); }
+    if (pid < 0) {
+        assert(0 == 1, "fork (EAGAIN / ENOMEM / a seccomp denial)");
+        sock_close(lfd);
+        return 0;
+    }
     var seen = alloc(2048);
     var ok = 0;
     var k = 0;
@@ -219,6 +227,11 @@ fn _cb_dns_group(): i64 {
     sock_set_recv_timeout(ufd, 10, 0);
     var pid = sys_fork();
     if (pid == 0) { _cb_dns_child(port); }
+    if (pid < 0) {
+        assert(0 == 1, "fork (EAGAIN / ENOMEM / a seccomp denial)");
+        sock_close(ufd);
+        return 0;
+    }
     var q = alloc(512);
     var r = alloc(512);
     var src = alloc(32);
@@ -409,10 +422,22 @@ fn main(): i64 {
     store8(edge + 2002, 66);
     store8(edge + 2003, 0);
     assert_eq(_http_build_request("GET", "h", edge), 0, "one byte more is refused");
+    # The refusal comes BEFORE the lookup. _http_prepare writes the address slot only after a
+    # lookup ran, so a sentinel left there proves none did (http_get / _a used to resolve first,
+    # reading /etc/hosts + /etc/resolv.conf and sending a DNS query for a URL they then refused).
+    # `localhost` resolves with no I/O, so the control rows are exact on every host.
+    var slot = alloc(16);
+    store64(slot + 8, 0x5A5A);
+    assert_eq(_http_prepare("localhost", longp, slot), 1, "_http_prepare: an over-long request is 1");
+    assert_eq(load64(slot + 8), 0x5A5A, "…and no lookup ran (the address slot is untouched)");
+    assert_eq(_http_prepare("localhost", "/p", slot), 0, "control: a short request by name is 0");
+    assert_eq(load64(slot + 8), INADDR_LOOPBACK(), "…and was resolved (127.0.0.1)");
+    assert(load64(slot) != 0, "…with its request stored");
+    # By NAME: a host that only DNS could answer, refused before any lookup.
     var url = alloc(4200);
-    var ue = _cb_cat(url, "http://127.0.0.1:1");
+    var ue = _cb_cat(url, "http://refused-by-length.invalid");
     _cb_cat(ue, longp);
-    assert_eq(load64(http_get(url)), HTTP_ERROR, "http_get: HTTP_ERROR, before any socket");
+    assert_eq(load64(http_get(url)), HTTP_ERROR, "http_get: HTTP_ERROR, before any lookup");
     var bt, bv = http_get_r(url);
     assert_eq(is_err_result(bt), 1, "http_get_r: Err");
     assert_eq(bv, HttpBadUrl, "…HttpBadUrl");

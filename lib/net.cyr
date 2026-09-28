@@ -953,8 +953,10 @@ fn _net_conf_scan(path, want): i64 {
 }
 
 # A 16-bit DNS transaction id from the kernel CSPRNG — a guessable id is what lets an off-path
-# attacker forge the answer (the Kaminsky class). /dev/urandom if getrandom fails; the stack
-# address (ASLR entropy) only as the last resort.
+# attacker forge the answer (the Kaminsky class). /dev/urandom if getrandom fails; -1 when
+# neither yields 2 bytes, and the caller fails the lookup.
+# ⛔ NEVER add a weak fallback (clock, stack address, pid): a predictable TXID is worse than a
+# failed lookup, which is exactly what CVE-19 closed. CHANGELOG [6.6.9]
 fn _net_dns_id(): i64 {
     var b[8];
     store64(&b, 0);
@@ -965,7 +967,7 @@ fn _net_dns_id(): i64 {
         file_close(fd);
         if (n == 2) { return load16(&b); }
     }
-    return (&b >> 4) & 0xFFFF;
+    return 0 - 1;
 }
 
 # Write an A/IN query for `host` with transaction id `id` into `q` (at least 272 bytes).
@@ -1065,13 +1067,16 @@ fn _net_dns_answer(r, n, q, qlen): i64 {
 
 # Resolve `host` by ONE DNS A query over UDP to the nameserver `ns` (packed, network byte
 # order) at `port`. Returns the first A address of the reply, or -1: a name DNS cannot carry,
-# no socket, NXDOMAIN / no A record, or no reply (two sends, 2 s each). Datagrams that are not
-# the reply to this query are ignored, and the socket is connected so only `ns` is heard.
+# no entropy for the query id, no socket, NXDOMAIN / no A record, or no reply (two sends, 2 s
+# each). Datagrams that are not the reply to this query are ignored, and the socket is
+# connected so only `ns` is heard.
 # No heap: the query and reply buffers are on the stack (512 B — no EDNS is offered).
 fn net_dns_query_ipv4(host, ns, port): i64 {
     var q[512];
     var r[512];
-    var qlen = _net_dns_build(&q, _net_dns_id(), host);
+    var id = _net_dns_id();
+    if (id < 0) { return 0 - 1; }
+    var qlen = _net_dns_build(&q, id, host);
     if (qlen < 0) { return 0 - 1; }
     var ft, fd = udp_socket();
     if (is_err_result(ft) == 1) { return 0 - 1; }

@@ -15,8 +15,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   an unroutable address. No `http_*` call has been able to reach any host, by name or by
   literal, and `lib/net.cyr` had no resolver to call (the bite's own plan said it had one; it
   did not — sandhi carries its own). **Fix:** `net.cyr` gains `net_resolve_ipv4` (below) and all
-  three callers resolve before opening a socket; an unresolvable host is `HTTP_ERROR` /
-  `Err(HttpNetErr)` with no socket opened. The Host header still carries the name. `http.cyr` now
+  three callers resolve before connecting; an unresolvable host is `HTTP_ERROR` /
+  `Err(HttpNetErr)` with no TCP connection made (the lookup itself may send a UDP DNS query). The
+  three callers share one `_http_prepare`, which builds the request FIRST and resolves only a
+  request it kept. The Host header still carries the name. `http.cyr` now
   includes `net.cyr` itself — it called six of its fns and included none, so `include
   "lib/http.cyr"` alone compiled with `undefined function` warnings and a trapping `http_get`.
   Pinned by `tests/tcyr/crossos/http_connect_by_name.tcyr`: a forked child runs all three calls
@@ -30,9 +32,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   under threads that allocation can be another thread's live object, and at a chunk end the write
   leaves the mapping). The length is now computed first; a request over `_HTTP_REQ_CAP` (2048, the
   old buffer's size — nothing that fitted is refused) returns 0, which `http_get` / `http_get_a`
-  report as `HTTP_ERROR` and `http_get_r` as `Err(HttpBadUrl)`, before any socket. Rows: the
-  4000-byte path refused and the next allocation clean, an over-long Host refused, exactly 2048
-  bytes accepted and one more refused, all three `http_get*` erroring; mutation turns five red.
+  report as `HTTP_ERROR` and `http_get_r` as `Err(HttpBadUrl)` before any lookup or socket (the
+  first cut of this fix had `http_get` / `http_get_a` resolve first, so an over-long URL still
+  read `/etc/hosts` + `/etc/resolv.conf` and sent a DNS query for its host before it was refused;
+  `_http_prepare` now owns the order). Rows: the 4000-byte path refused and the next allocation
+  clean, an over-long Host refused, exactly 2048 bytes accepted and one more refused, the refusal
+  leaving `_http_prepare`'s address slot untouched (no lookup ran), all three `http_get*` erroring
+  for a URL whose host only DNS could answer; mutation turns five red.
 
 ### Added
 
@@ -44,7 +50,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   sent to DNS); the IPv4 entries of `/etc/hosts` (streamed in 1 KiB reads, so a blocklist-sized
   file costs no heap; CRLF tolerated; comments honoured); then one A query to the first IPv4
   `nameserver` in `/etc/resolv.conf`, 127.0.0.1 when there is none (glibc's default). The DNS query
-  uses a `getrandom` transaction id, a connected UDP socket, 2 s × 2 sends, stack buffers only, and
+  uses a `getrandom` transaction id (then `/dev/urandom`; with neither the lookup FAILS — no
+  clock / stack-address fallback, the CVE-19 rule), a connected UDP socket, 2 s × 2 sends, stack buffers only, and
   ignores any datagram that is not the reply to THIS query (wrong id, not a response, a different
   question) — so a forged or stray datagram cannot end the lookup; CNAME chains and compression
   pointers are skipped with every read bounded. IPv4 only, no `search` domains — `lib/sandhi.cyr`

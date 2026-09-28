@@ -133,6 +133,24 @@ fn _http_build_request(method, host, path): i64 {
     return buf;
 }
 
+# Build the request for `host path` and resolve `host`, IN THAT ORDER: the request is stored at
+# slot[0] and the address at slot[8]. Returns 0, 1 for a request over _HTTP_REQ_CAP (CVE-50), or
+# 2 for a host that does not resolve. slot[8] is written only after a lookup ran, so it is left
+# as the caller set it on 1.
+# ⛔ WHY THE ORDER: the refusal must cost nothing. Resolving first made an over-long URL read
+# /etc/hosts and /etc/resolv.conf and send a DNS datagram for its host before it was refused —
+# the three callers each open-coded build + resolve and two of them resolved first. One helper
+# now owns the order. CHANGELOG [6.6.9]
+fn _http_prepare(host, path, slot): i64 {
+    var req = _http_build_request("GET", host, path);
+    if (req == 0) { return 1; }
+    store64(slot, req);
+    var addr = net_resolve_ipv4(host);
+    store64(slot + 8, addr);
+    if (addr == 0 - 1) { return 2; }
+    return 0;
+}
+
 # v5.8.36 — Allocator-as-first-arg variant of _http_parse_response.
 # Allocates the 32-byte response struct via `a`. Returns 0 on OOM.
 fn _http_parse_response_a(a, buf, len): i64 {
@@ -214,18 +232,19 @@ fn http_get(url): i64 {
     var host = load64(parsed);
     var port = load64(parsed + 8);
     var path = load64(parsed + 16);
-    # v6.6.9: an over-long request (CVE-50) and a host that does not resolve are errors BEFORE
-    # a socket exists. sock_connect wants a packed address; it used to get the host STRING
-    # pointer, so no http_* call reached any host. CHANGELOG [6.6.9]
-    var req = _http_build_request("GET", host, path);
-    var addr = net_resolve_ipv4(host);
-    if (req == 0 || addr == 0 - 1) {
+    # v6.6.9: an over-long request (CVE-50) is refused before any lookup, and a host that does
+    # not resolve before any TCP socket. sock_connect wants a packed address; it used to get the
+    # host STRING pointer, so no http_* call reached any host. CHANGELOG [6.6.9]
+    var slot = alloc(16);
+    if (_http_prepare(host, path, slot) != 0) {
         var unr = alloc(24);
         store64(unr, HTTP_ERROR);
         store64(unr + 8, 0);
         store64(unr + 16, 0);
         return unr;
     }
+    var req = load64(slot);
+    var addr = load64(slot + 8);
     # v5.8.31 bug fix — net.cyr fns return Result (heap ptr), not raw
     # int. Pre-fix: `var fd = tcp_socket(); if (fd < 0)` never fired
     # (fd is a positive heap ptr) and subsequent syscalls received
@@ -277,10 +296,12 @@ fn http_get_r(url) : Result {
     var host = load64(parsed);
     var port = load64(parsed + 8);
     var path = load64(parsed + 16);
-    var req = _http_build_request("GET", host, path);
-    if (req == 0) { return Err(HttpBadUrl); }                 # v6.6.9: over-long (CVE-50)
-    var addr = net_resolve_ipv4(host);
-    if (addr == 0 - 1) { return Err(HttpNetErr); }            # v6.6.9: does not resolve
+    var slot = alloc(16);
+    var prep = _http_prepare(host, path, slot);
+    if (prep == 1) { return Err(HttpBadUrl); }                # v6.6.9: over-long (CVE-50)
+    if (prep != 0) { return Err(HttpNetErr); }                # v6.6.9: does not resolve
+    var req = load64(slot);
+    var addr = load64(slot + 8);
     var fd_r_tag, fd_r = tcp_socket();
     if (is_err_result(fd_r_tag) == 1) { return Err(HttpNetErr); }
     var fd = fd_r;
@@ -334,9 +355,8 @@ fn http_get_a(a, url): i64 {
     var host = load64(parsed);
     var port = load64(parsed + 8);
     var path = load64(parsed + 16);
-    var req = _http_build_request("GET", host, path);
-    var addr = net_resolve_ipv4(host);
-    if (req == 0 || addr == 0 - 1) {                          # v6.6.9: CVE-50 / unresolved
+    var slot = alloc(16);
+    if (_http_prepare(host, path, slot) != 0) {               # v6.6.9: CVE-50 / unresolved
         var unr = alloc_via(a, 24);
         if (unr == 0) { return 0; }
         store64(unr, HTTP_ERROR);
@@ -344,6 +364,8 @@ fn http_get_a(a, url): i64 {
         store64(unr + 16, 0);
         return unr;
     }
+    var req = load64(slot);
+    var addr = load64(slot + 8);
     var fd_r_tag, fd_r = tcp_socket();
     if (is_err_result(fd_r_tag) == 1) {
         var err = alloc_via(a, 24);
