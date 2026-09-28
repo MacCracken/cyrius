@@ -60,6 +60,10 @@
 #      `## [6.6.7]` headers: rc≠0, CHANGELOG.md named; H3 a CLAUDE.md whose only line is
 #      `- **Version**: 6.6.60`: untouched, rc≠0; H4 a CHANGELOG already carrying `## [6.6.7]`:
 #      rc 0, reported `(already 6.6.7 — unchanged)`, byte-identical.
+#   I  (6.6.8) the stamp's READER — the check driver's doc-stamp row, run for real — wants
+#      `**Current head: v<VERSION>**` at the start of a line: an exact stamp passes (I1), the
+#      OLD head with the new version in its parenthetical fails (I2), a mid-line quote does
+#      not count (I3), and the roadmap the next bump WRITES (axis A) reads current (I4).
 #
 # MUTATIONS (each RED; run by hand when this gate was written)
 #   m1 step 5 back on the basic-regex date-only pattern                    A, B1
@@ -75,6 +79,7 @@
 #   m11 CLAUDE.md sed's `([[:space:]]*)$` end anchor dropped                C, H3
 #   m12 `(already $NEW — unchanged)` reported as `(updated)`                H4
 #   m13 same-version summary `(SKIPPED — …` reworded to `(updated — …`      F3
+#   m14 (6.6.8) the doc-stamp row back on `_stamp_near(…, "Current head:", …, 240, …)`  I2, I3
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 VB="$ROOT/scripts/version-bump.sh"
@@ -284,6 +289,43 @@ _expect "H4: a CHANGELOG already carrying \`## [6.6.7]\` exited $RC: $(cat "$T/H
 _expect "H4: the report does not say CHANGELOG.md was already 6.6.7" \
     'grep -qF "  CHANGELOG.md  (already 6.6.7 — unchanged)" "$T/H4.out"'
 _expect "H4: the CHANGELOG already at 6.6.7 was modified" '[ "$(cksum < "$T/h4/CHANGELOG.md")" = "$H4_BEFORE" ]'
+
+# ---- I: 6.6.8 — the stamp's READER wants the exact token the writer writes -------------
+# The driver's doc-stamp row accepted VERSION anywhere within 240 B of `Current head:`, so a
+# stamp still naming the OLD head read as current when its parenthetical mentioned the new
+# version. It now wants `**Current head: v<VERSION>**` at the start of a line. Runs the REAL
+# row (`cyrius_check --doc-stamp-row`, built from the tree) over scratch roots.
+DRV="$T/drv"
+# Compiled FROM the root: `include "lib/…"` resolves against the compiler's cwd.
+if ! ( cd "$ROOT" && "$ROOT/build/cycc" < programs/checks/main.cyr ) > "$DRV" 2> "$T/drv.err"; then
+    _bad "I: the check driver did not compile"
+else
+    chmod +x "$DRV"
+    _ir() {  # $1 dir, $2 VERSION, $3 roadmap file to use → IRC, $T/I.out
+        mkdir -p "$1/build" "$1/docs/development"
+        printf '%s\n' "$2" > "$1/VERSION"
+        head -c 1234 /dev/zero > "$1/build/cycc"
+        printf '| **cycc** | 1,234 B |\n' > "$1/docs/development/state.md"
+        printf '# Changelog\n\n## [%s] — x\n' "$2" > "$1/CHANGELOG.md"
+        cp "$3" "$1/docs/development/roadmap.md"
+        IRC=0
+        ( cd "$1" && "$DRV" --doc-stamp-row ) > "$T/I.out" 2>&1 || IRC=$?
+    }
+    printf '# Roadmap\n\n**Current head: v6.6.8** (2026-09-27) — figures\n' > "$T/i1.md"
+    _ir "$T/i1" 6.6.8 "$T/i1.md"
+    _expect "I1: an exact line-start stamp for VERSION reads current (rc $IRC)" '[ "$IRC" = 0 ]'
+    printf '# Roadmap\n\n**Current head: v6.6.7** (2026-09-27; the v6.6.8 slot is open) — figures\n' > "$T/i2.md"
+    _ir "$T/i2" 6.6.8 "$T/i2.md"
+    _expect "I2: a stamp naming the OLD head read as current because its parenthetical mentions VERSION" '[ "$IRC" != 0 ]'
+    _expect "I2: the row does not say which token it wanted" 'grep -qF "no line starts with \`**Current head: v6.6.8**\`" "$T/I.out"'
+    printf '# Roadmap\n\n**Current head: v6.6.7** (2026-09-27)\n\nA quote: **Current head: v6.6.8** is next.\n' > "$T/i3.md"
+    _ir "$T/i3" 6.6.8 "$T/i3.md"
+    _expect "I3: a MID-LINE quote of the new token passed for the stamp" '[ "$IRC" != 0 ]'
+    if [ -f "$L/docs/development/roadmap.md" ]; then
+        _ir "$T/i4" "$NEXT" "$L/docs/development/roadmap.md"
+        _expect "I4: the roadmap the next bump WRITES (axis A) is not read as current by the row (rc $IRC)" '[ "$IRC" = 0 ]'
+    fi
+fi
 
 # anti-vacuous floor: every axis above contributes checks
 if [ "$CHECKS" -lt 75 ]; then

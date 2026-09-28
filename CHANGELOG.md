@@ -114,6 +114,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   cyrlint under `cyrius audit` with `CYRIUS_TEST_TIMEOUT=1`; a crashing cyrfmt under the audit —
   mutation-proven) and new Windows rows in `tests/tcyr/crossos/exec_capture_status.tcyr`
   (green on real cass and under wine; red there with the watchdog disabled).
+- **The driver's doc-stamp row reads the roadmap stamp by its exact token.** (bite 8, placed
+  from the 6.6.7 reviews.) `_doc_stamp_currency_gate` accepted VERSION anywhere within 240 B of
+  `Current head:`, so a stamp still naming the OLD head read as current whenever its
+  parenthetical mentioned the new version (`**Current head: v6.6.7** (…; the v6.6.8 slot is
+  open)`), and a mid-line quote counted too. It now wants `**Current head: v<VERSION>**` at the
+  start of a line — the token `version-bump.sh` writes and verifies — over the whole file. New
+  `cyrius_check --doc-stamp-row` runs that row alone; `version_bump_doc_anchors.sh` axis I runs it
+  on an exact stamp, the old-head-with-new-version shape, a mid-line quote, and the roadmap the
+  next bump writes (red on the old reader: I2, I3).
 
 ## [6.6.7] — 2026-09-27
 

@@ -1146,6 +1146,14 @@ fn main(): i64 {
     # own path — a SIGKILLed run leaves nothing of that gate behind — on the real binary.
     # A relative path is taken from the root, as the registered rows spell theirs.
     # CHANGELOG [6.6.8]
+    # `--doc-stamp-row`: the doc-stamp currency row alone, over the root — how a gate proves
+    # the roadmap stamp is read by its exact token. CHANGELOG [6.6.8]
+    if (argc() > sel_idx) {
+        if (streq(argv(sel_idx), "--doc-stamp-row") == 1) {
+            _doc_stamp_currency_gate();
+            return G_FAIL;
+        }
+    }
     if (argc() > sel_idx + 1) {
         if (streq(argv(sel_idx), "--gate-row") == 1) {
             var gp = argv(sel_idx + 1);

@@ -352,6 +352,38 @@ fn _stamp_near(path, marker, mlen, want, want_n, win, what): i64 {
     return 1;
 }
 
+# roadmap.md must carry `**Current head: v<VERSION>**` at the START of a line (the whole file is
+# read — no window, no cap). 0 when it does, else 1 with the reason printed. CHANGELOG [6.6.8]
+fn _stamp_head_exact(path, vbuf, vn): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "**Current head: v");
+    str_builder_add_cstr(sb, vbuf);
+    str_builder_add_cstr(sb, "**");
+    var tok = str_builder_build(sb);
+    var t = str_data(tok);
+    var tl = str_len(tok);
+    var lenb[8];
+    var buf = file_read_whole(path, &lenb);
+    var n = load64(&lenb);
+    if (buf == 0 || n <= 0) {
+        _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+        _p(": doc-stamp — cannot read "); println(path);
+        return 1;
+    }
+    var at = 0;
+    while (at + tl <= n) {
+        if (at == 0 || load8(buf + at - 1) == 10) {
+            if (memeq(buf + at, t, tl) == 1) { return 0; }
+        }
+        at = at + 1;
+    }
+    _p("  "); _p(ANSI_RED); _p("FAIL"); _p(ANSI_RESET);
+    _p(": doc-stamp — "); _p(path);
+    _p(": no line starts with `"); _p(t);
+    println("` — roadmap.md's `Current head:` stamp is behind VERSION (stale stamp)");
+    return 1;
+}
+
 # `path` must contain `want` anywhere.
 fn _stamp_any(path, want, want_n, what): i64 {
     var dcap = 524288;
@@ -413,8 +445,12 @@ fn _doc_stamp_currency_gate(): i64 {
     # A. state.md's `**cycc**` row stamps the live binary's byte count.
     fail = fail + _stamp_near(_root_path("docs/development/state.md"), "| **cycc** |", 12, want_size, want_size_n, 240, "state.md cycc row does not cite the live build/cycc size");
 
-    # B. roadmap.md's `Current head:` line names the current VERSION.
-    fail = fail + _stamp_near(_root_path("docs/development/roadmap.md"), "Current head:", 13, vbuf, vn, 240, "roadmap.md `Current head:` is behind VERSION");
+    # B. roadmap.md's stamp is EXACTLY `**Current head: v<VERSION>**` at the start of a line.
+    # ⛔ 6.6.8: this read "VERSION anywhere within 240 B of `Current head:`", so a stamp that
+    # still named the OLD head but mentioned the new version in its parenthetical — `**Current
+    # head: v6.6.7** (…; v6.6.8 slot open)` — read as current. It is now the token
+    # version-bump.sh writes and verifies (scripts/version-bump.sh step 5). CHANGELOG [6.6.8]
+    fail = fail + _stamp_head_exact(_root_path("docs/development/roadmap.md"), vbuf, vn);
 
     # C. the CHANGELOG has a section for the version being shipped.
     fail = fail + _stamp_any(_root_path("CHANGELOG.md"), clmark, m, "no CHANGELOG section for the current VERSION");
