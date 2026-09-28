@@ -32,8 +32,8 @@
 #   * delete ONE `_HTEMP` call from PARSE_SWITCH (parse.cyr:1223)        -> axis 3 FAILs,
 #     naming `PARSE_SWITCH want 1 got 0` and the total 11 -> 10. (Re-measured this round;
 #     the same mutant left the previous floor-of-9 form GREEN.)
-#   * delete one of PARSE_FOR's three                                    -> axis 3 FAILs on
-#     `PARSE_FOR want 3 got 2`.
+#   * delete one of PARSE_FOR's four                                     -> axis 3 FAILs on
+#     `PARSE_FOR want 4 got 3`.
 #   * re-add a `S64(_varn_base + vc * 8, noff);` inside a NEW helper fn  -> axis 5 names the
 #     fn and the total (the shape the bite actually repaired: a real NAME, registered in a fn).
 #   * write axis 1's shape without spaces, `S64(_varn_base + zz*8, 0);`  -> axis 1 names it.
@@ -96,10 +96,12 @@ fi
 # attributed by walking `fn <name>` headers, i.e. computed from the source's own structure and
 # not from the number this file would like to see.
 #   PARSE_SWITCH 1 | PARSE_MATCH 1 | _PARSE_STMT_IMPL 3 (`?` as a statement, pair + scalar)
-#   _PARSE_TERM_IMPL 3 (`?` in an expression) | PARSE_FOR 3 (collection, length, range end)
+#   _PARSE_TERM_IMPL 3 (`?` in an expression) | PARSE_FOR 4 (collection, length, range end,
+#   and 6.6.8: the collection loop's hidden INDEX at top level — it was a frame slot there too,
+#   into a frame top-level code does not have; inside a fn it stays a frame slot)
 #   _gv_target 1 (6.6.6: the dead sink a superseded global initializer stores into; the
 #   replay runs at top level, so it is always the dead-global arm)
-HT_SPEC="PARSE_SWITCH:1 PARSE_MATCH:1 _PARSE_STMT_IMPL:3 _PARSE_TERM_IMPL:3 PARSE_FOR:3 _gv_target:1"
+HT_SPEC="PARSE_SWITCH:1 PARSE_MATCH:1 _PARSE_STMT_IMPL:3 _PARSE_TERM_IMPL:3 PARSE_FOR:4 _gv_target:1"
 ht_attr=$(for f in $(find src/frontend src/common src/backend -name '*.cyr'); do
     awk '/^fn /{fn=$2; sub(/\(.*/,"",fn)} /_HTEMP\(S\)/{ if ($0 !~ /fn _HTEMP/) print fn }' "$f"
 done | sort | uniq -c | awk '{print $2":"$1}')
@@ -136,12 +138,16 @@ fi
 # 6.6.6: `_gv_reg8` is the pass-1 destructure's per-name registration (moved out of
 # PARSE_GVAR_REG, which was 4 and is now 1) — declaration zone only, never inside a fn.
 #
+# 6.6.8: `_HTNAMED` (parse.cyr) is a `for x in ...` loop variable. Its global arm runs only with
+# GINFN != 1 (top level — inside a fn it is a frame slot), and the loop's SCOPE_POP takes the
+# name out of scope (tests/gates/frontend/toplevel_for_in.sh pins both).
+#
 # The ONE arm that legitimately runs inside a fn is PARSE_ARRAY's static-array fallback (an
 # array over the per-fn frame budget, or any array under CYRIUS_STACK_ARRAYS=0). It is safe
 # because `_fs_push` (parse.cyr) scopes the NAME to the block — that scoping is what
 # `tests/gates/codegen/fn_local_storage_class.sh` axes 2/3/4/9 assert behaviourally, which is
 # the other, non-textual half of this axis.
-VN_SPEC="PARSE_VAR:4 PARSE_GVAR_REG:1 _gv_reg8:1 PARSE_STRUCT_INIT:1 PARSE_GVAR_ARR:1 PARSE_ENUM_DEF:1 PARSE_ARRAY:1 _HTEMP:1"
+VN_SPEC="PARSE_VAR:4 PARSE_GVAR_REG:1 _gv_reg8:1 PARSE_STRUCT_INIT:1 PARSE_GVAR_ARR:1 PARSE_ENUM_DEF:1 PARSE_ARRAY:1 _HTEMP:1 _HTNAMED:1"
 vn_attr=$(for f in $(find src/frontend src/common src/backend -name '*.cyr'); do
     awk '/^fn /{fn=$2; sub(/\(.*/,"",fn)} /S64\(_varn_base/{print fn}' "$f"
 done | sort | uniq -c | awk '{print $2":"$1}')
