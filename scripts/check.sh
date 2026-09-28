@@ -1231,3 +1231,8 @@ _chk_gate "$ROOT/tests/gates/toolchain/version_bump_doc_anchors.sh"
 # _FLT_TYPE_WARN): `0 - 1.5` was integer arithmetic on 1.5's bits (-3.0), silently. WARN only,
 # the ADR-002 posture of kind 1; no false positive on unary minus, f64/f64 or int/int.
 _chk_gate "$ROOT/tests/gates/diagnostics/f64_int_mix_warn.sh"
+
+# 6.6.8 (bite 6) — the Linux heap comes up on a board smaller than its 256 MB first chunk: the
+# grain-sized chunk is MAP_NORESERVE and a refusal falls back to 16 MB chunks (as PID 1 in a
+# -m 256M VM it panicked). Row 4, the starved-VM PID-1 boot, is opt-in: CYRIUS_ALLOC_VM=1.
+_chk_gate "$ROOT/tests/gates/memory/alloc_first_chunk_small_board.sh"

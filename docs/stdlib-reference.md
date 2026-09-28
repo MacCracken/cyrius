@@ -20,7 +20,7 @@ Memory and string operations on null-terminated C strings.
 
 ### alloc.cyr
 
-Bump allocator over anonymous-mmap chunks (v6.1.19; was `brk`-backed — switched so glibc's `brk` arena can't collide with the fdlopen/libssl bridge). `alloc_init()` is idempotent (v6.1.23). Call it before any allocation.
+Bump allocator over anonymous-mmap chunks (v6.1.19; was `brk`-backed — switched so glibc's `brk` arena can't collide with the fdlopen/libssl bridge). `alloc_init()` is idempotent (v6.1.23). Call it before any allocation. On Linux the chunk grain is 256 MB of lazily-committed address space, mapped `MAP_NORESERVE`; if the kernel still refuses it (strict overcommit, an `RLIMIT_AS`, a board smaller than the grain) the heap drops to 16 MB chunks and grows from there (v6.6.8 — before that a sub-256 MB board failed `alloc_init`, a kernel panic as PID 1).
 
 | Function | Signature | Description |
 |----------|-----------|-------------|

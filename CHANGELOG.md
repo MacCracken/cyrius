@@ -101,6 +101,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the exp/ln polyfills above. `tests/tcyr/crossos/f64_pow_domain.tcyr` gains 15 bit-exact Annex F
   rows and five rows past the integral path (the 1.2.6 fold fails 13 on x86, the 6.6.7
   `math.cyr` 5 on aarch64).
+- **Linux: the heap comes up on a board smaller than its 256 MB first chunk — PID 1 no longer
+  panics there.** (bite 6.) **Root cause:** `lib/alloc.cyr`'s Linux arm reserves its first chunk
+  as one 256 MB anonymous mmap. The reservation is virtual, but a plain anonymous mapping is
+  still charged against the default overcommit heuristic, which refuses a single mapping larger
+  than RAM + swap; `alloc_init` then printed `alloc_init: mmap failed` and exited 1 — as PID 1,
+  `Kernel panic - not syncing: Attempted to kill init!` (measured: a `qemu-system-x86_64 -m 256M`
+  VM panics, `-m 512M` boots). The compiler itself allocates through the same arm. **Fix:** a
+  grain-sized chunk is mapped `MAP_NORESERVE` (0x4000, the same on x86_64 and aarch64); a chunk
+  sized to a larger REQUEST keeps normal accounting, so an impossible request still comes back 0
+  from `alloc()` instead of OOM-killing later. A refusal that survives NORESERVE (strict
+  overcommit ignores it, `RLIMIT_AS` counts every mapping) drops the grain to 16 MB for that
+  chunk and every later one; a refused big request does not. Gated by
+  `tests/gates/memory/alloc_first_chunk_small_board.sh`: the first chunk carries `VmFlags nr`,
+  the heap comes up and grows under a 195 MB `ulimit -v`, a refused 400 MB request keeps the
+  256 MB grain, and — opt-in, `CYRIUS_ALLOC_VM=1` — the starved-VM PID-1 boot itself (`-m 256M`,
+  `random.trust_cpu=off`; recipe in the header). On the 6.6.8 heap `-m 256M`, `-m 160M` and
+  `-m 96M` all boot; on pi the same probes give `nr`, the 16 MB fallback and the kept grain.
 
 ### Added
 
