@@ -1,9 +1,7 @@
-# cycc_aarch64 does not refuse a reachable undefined **tail** call — it emits a SIGILL binary with no diagnostic — OPEN
+# cycc_aarch64 does not refuse a reachable undefined **tail** call — it emits a SIGILL binary with no diagnostic
 
-**Status:** 🟡 **OPEN** — a cross-arch gap in the v6.3.2 fix of
-`archived/2026-06-25-undefined-fn-reachable-call-hard-error.md`, which made a reachable undefined
-call a hard error by default.
-**Placement:** **6.6.9 bite 2** — One top-level attribute dispatcher for all 7 forks; undefined-prepass parity; aarch64 refuses undefined tail calls (ftype 4); the large-static-data warning on every backend. Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
+**Status:** ✅ **RESOLVED v6.6.9** (bite 2) — aarch64 counts fixup type 4 (the tail call) in its reachable-undefined check and the four aarch64/Mach-O forks run the pre-pass; gated by `undefined_tail_call_refused.sh`.
+**Placement:** **6.6.9 bite 2** — One top-level attribute dispatcher for all 7 forks; undefined-prepass parity; aarch64 refuses undefined tail calls (ftype 4); the large-static-data warning on every backend. Pinned 2026-09-27 in [roadmap.md](../../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Discovered:** 2026-09-22, during agnodrm's 1.6.2 harness work. A fuzz harness missing an include
 built clean on `--aarch64` but warned on x86_64; the tail-call shape was then isolated.
 **Severity:** Medium — a hard failure on x86_64 / agnos ships silently on aarch64 as a crashing binary.
@@ -18,7 +16,7 @@ tail call** (`return undefined_fn(...)`). Then the aarch64 build prints nothing,
 
 ## Reproduction
 
-[`repros/2026-09-22-aarch64-undefined-tail-call.cyr`](repros/2026-09-22-aarch64-undefined-tail-call.cyr):
+[`repros/2026-09-22-aarch64-undefined-tail-call.cyr`](../repros/2026-09-22-aarch64-undefined-tail-call.cyr):
 
 ```cyr
 include "lib/syscalls.cyr"

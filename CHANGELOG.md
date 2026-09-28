@@ -77,9 +77,107 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   catches `bucket = klen` (re-run: 5.4x, RED). The gate now honours `$CYCC`
   (`check_gate_census.sh` ceiling 74 → 73).
 
+- **`#deprecated`, `#must_use` and `#pure`→`#io`/`#alloc` warn on every target — six of the
+  seven compiler forks consumed them before the first top-level statement and armed nothing.**
+  (bite 2; issue `2026-09-22-agnodrm-aarch64-deprecated-warning-never-fires`, archived.)
+  **Root cause:** each per-target fork (`src/main*.cyr`) carried its own copy of the top-level
+  directive dispatch in BOTH passes, plus PARSE_PROG's copy — fifteen copies. Only
+  `main.cyr`'s pass 2 armed `_must_use_pending` / `_deprecated_pending` / `_pure_pending` /
+  `_io_pending` / `_alloc_pending`; aarch64, aarch64-native, arm64 Mach-O, x86 Mach-O, PE and
+  cx consumed the tokens and armed nothing, on a misreading of CO-03 (which gates optimisation
+  passes, not diagnostics). So every attribute a LIBRARY writes — before its first statement —
+  was silent there, while the same attribute after a statement (PARSE_PROG) warned: behaviour
+  depended on position. **Fix:** ONE dispatcher, `_tl_directive(S, arm)` (parse_fn.cyr), called
+  by every fork's pass 1 (consume) and pass 2 (arm) and by PARSE_PROG — the fifteen chains are
+  gone. It arms all eight fn attributes uniformly: `#regalloc` is inert where the x86 picker
+  does not exist (the SFRA gate), and on x86 Mach-O its arming was measured on real ach — stock
+  vs new x86-Mach-O compiler over 495 corpus files, **0 byte and 0 rc differences**. `#naked`
+  stays INERT on cx in both positions (a bytecode VM has no return address to leave unframed;
+  `lib/fdlopen.cyr`'s cx arm relies on it) — PARSE_PROG used to arm it there after the first
+  statement. A bare `#deprecated` (no message — the v5.6.4 design makes it REQUIRED) was a
+  silent no-op before the first statement and `expected '(', got fn` after it; it is now
+  refused BY NAME in both (`#deprecated needs a message string`), with zero uses under
+  `~/Repos`. Measured, 495 files per compiler: output byte-identical on x86, aarch64, PE and
+  cx; the new stderr is exactly x86's attribute warnings. **The gate built for this class read
+  GREEN on it:** `directive_fork_parity.sh` (6.6.3) paired only `#naked` with `#inline`. It now
+  checks STRUCTURE (no fork and no PARSE_PROG tests a directive token or arms a flag itself;
+  one `_tl_directive` call per pass per fork) and BEHAVIOUR on the four runnable forks — the
+  four warnings in BOTH positions, an attribute-free control silent, `#assert`, bare
+  `#deprecated` and cx `#naked` rows — and honours `$CYCC`. Six mutants RED (an arm dropped for
+  aarch64 only, a fork consuming in pass 2, a re-grown per-fork branch, `#assert` dropped,
+  `#naked` armed on cx, bare `#deprecated` accepted).
+- **A top-level `#assert` no longer ends the declaration phase.** (bite 2; placed from the
+  6.6.7 bite-5 review.) No fork's pass 2 handled token 107, and five forks' pass 1 did not
+  either, so `struct Q {…}` / `#assert sizeof(Q) == 2, "sz";` / `struct R {…}` stopped at the
+  `#assert` and failed `unexpected struct` on every target. **Fix:** the same dispatcher —
+  pass 1 skips the line, pass 2 evaluates it through PARSE_STMT (which emits no code for it).
+  A false `#assert` still fails the build.
+- **aarch64 refuses a reachable undefined TAIL call — it built rc 0 and died SIGILL.** (bite 2;
+  issue `2026-09-22-agnodrm-aarch64-undefined-tail-call-not-refused`, archived.) **Root
+  cause:** aarch64 records `return nosuchfn(x);` as fixup type 4 (`B rel26`, patched to
+  `UDF #0` for an undefined target), and the reachable-undefined check in
+  `aarch64/fixup.cyr` examined types 2 and 3 only — no warning, no v6.3.2 refusal, and a
+  binary that trapped at the first call (qemu rc 132). x86's tail calls are type 2 (its type 4
+  is the PE IAT), so x86 refused. **Fix:** type 4 is counted; the v6.5.72 `coff < 0` skip is
+  mirrored (inert today — this backend's DCE only NOP-fills). The filed repro now refuses
+  with x86's exact text on aarch64 ELF, arm64 Mach-O (real ecb) and native aarch64 (real pi).
+- **A reachable undefined call is refused even when an unreachable fn called it first.**
+  (bite 2; found while fixing the above.) **Root cause:** the check marked a fn "reported"
+  (offset −2) on the SKIP path too, so a reference from an unreachable fn that came first in
+  the fixup table hid every later REACHABLE call of the same fn: `fn dead() { return
+  nope(1); }` above `main` calling `nope(2)` built rc 0 on x86, aarch64 and PE. **Fix:** mark
+  only what was reported (x86/fixup.cyr and aarch64/fixup.cyr). One in-tree test relied on the
+  hole — `tests/tcyr/memory/alloc_serdes.tcyr` calls `http_get_a`, whose connect path is
+  reachable and whose net layer `lib/http.cyr` does not include; it now includes
+  `lib/net.cyr`.
+- **The aarch64 and Mach-O forks print the pre-pass "undefined function" warning.** (bite 2;
+  audit.) The 6.6.5 extraction of `_warn_undefined_prepass` wired it into `main`, `main_win`
+  and `main_cx` only; `main_aarch64`, `main_aarch64_native`, `main_aarch64_macho` and
+  `main_x86_macho` never called it, so an undefined call in code DCE judges unreachable warned
+  on x86 and was silent on aarch64 — and the reachable form printed only the suffixed
+  `(call site may be unreachable)` line there. Per-file warning counts over the corpus now
+  match x86's. New gate `tests/gates/diagnostics/undefined_tail_call_refused.sh`: tail,
+  non-tail and dead-first refused on x86 / aarch64 / PE / cx (cx has its own wording), the
+  pre-pass line on all four, `--allow-undef` still emits, an undefined tail call in an
+  UNREACHABLE fn still builds, every fork calls the pre-pass before PARSE_PROG, and the binary
+  the old aarch64 build emitted traps under qemu. Three mutants RED (type 4 dropped, the
+  skip-path mark restored, the aarch64 pre-pass removed).
+- **The "large static data" advisory prints on every backend that writes an executable.**
+  (bite 2; audit.) It lived inline in x86 `EMITELF_USER`, so 160 KB of statics warned on
+  x86_64 ELF and was silent on PE, x86 Mach-O, aarch64 ELF, arm64 Mach-O and cx. **Fix:** one
+  emitter, `_warn_large_static` (parse_fn.cyr), called from x86 `EMITELF_USER`, x86 `EMITELF`'s
+  Mach-O/PE dispatch, aarch64 `EMITELF` (both formats) and `main_cx.cyr`. The dead-static hint
+  stays x86-only (only its FIXUP computes it). On cx, `lib/alloc_cx.cyr`'s 128 KB
+  `_cx_heap_buf` is left out — it IS alloc()'s heap, and counting it would advise "consider
+  alloc()" to every cx program that allocates. New gate
+  `tests/gates/diagnostics/large_static_data_every_backend.sh` (20 rows: globals and an
+  over-budget fn-local on all six output shapes, a small-statics control, the cx-heap
+  control, byte-count parity x86 = aarch64); mutants RED.
+
 **Bench (bite 1):** self_compile **−19 %** — same-box A/B, three rounds of best-of-5: 6.6.8's
 compiler 1,049 ms, this tree's 841 ms (box under lane load; the gvar phase 503 → 299 ms). cycc
 **1,359,272 → 1,359,328 B** (+56; `.text` 1,188,224 → 1,191,152, +2,928).
+
+**Size (bite 2):** cycc **1,359,328 → 1,359,400 B** (+72; `.text` 1,191,152 → 1,190,680, −472 —
+fifteen dispatch chains became one fn; the new diagnostic strings account for the file growth).
+Self-host verified byte-identical on real pi (cross AND native aarch64 sources), ecb (arm64
+Mach-O), ach (x86 Mach-O) and cass (PE), each also running the attribute, tail-call,
+dead-first, pre-pass, `#assert` and large-static fixtures.
+
+### Downstream
+
+- **An aarch64 build that hides a reachable undefined TAIL call now FAILS** (it used to build
+  green and SIGILL at run time), and so does any build where an unreachable fn's call to an
+  undefined fn used to mask a reachable one — on x86 and PE too. Both are the v6.3.2 contract
+  finally enforced; `--allow-undef` still downgrades. A consumer whose aarch64-only
+  (`#ifdef CYRIUS_ARCH_AARCH64`) code carries such a call sees a red build for the first time.
+- **aarch64 / Mach-O builds print the same `warning: undefined function '…'` lines as x86.**
+  Expect new ones on aarch64 wherever x86 already printed them — e.g. a program that includes
+  `lib/syscalls.cyr` without `lib/alloc.cyr` gets `undefined function 'alloc'` (the stdlib
+  self-sufficiency sweep, bite 7, removes that one). Scripts that grep aarch64 logs for
+  `undefined function` (agnodrm's audit) will see them.
+- **`#deprecated` / `#must_use` / `#pure` warnings appear on aarch64, Mach-O, PE and cx builds**
+  for attributes placed before the first statement; a bare `#deprecated` is an error.
 
 ## [6.6.8] — 2026-09-28
 

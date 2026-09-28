@@ -1191,7 +1191,12 @@ fn sha1_init() { ... }
 `#must_use` warns only when the result is dropped at expression-statement
 level (`fn();`); assignment, `return fn();`, and arg-passing use sites are
 unaffected. `#deprecated("reason")` requires a string argument and warns
-at every call site (unlike `#must_use`'s discard-only).
+at every call site (unlike `#must_use`'s discard-only); a bare `#deprecated`
+is refused by name. These attributes (and `#pure`/`#io`/`#alloc`) warn the
+same way on every target and whether they sit before or after the first
+top-level statement — before 6.6.9 only x86_64 honoured them ahead of it.
+A top-level `#assert` is a declaration-phase directive: structs, enums and
+fns may follow it.
 
 ## Project Structure
 
