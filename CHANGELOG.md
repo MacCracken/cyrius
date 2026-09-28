@@ -60,6 +60,76 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `sin(1e19)`, `cos(DBL_MAX)` run correctly rounded (ELF natively, PE under wine) — the 6.6.8
   compiler fails 8 of its rows.
 
+- **`open()` on Windows gives `O_NOFOLLOW`, `O_DIRECTORY` and `O_CREAT|O_EXCL` their POSIX
+  meaning.** (bite 5; [patra: O_NOFOLLOW accepted and ignored on PE](docs/development/issues/archived/2026-09-23-patra-o-nofollow-accepted-and-ignored-on-pe.md),
+  the roadmap's `O_DIRECTORY`/`O_NOFOLLOW` tail.) **Root cause:** `EOPEN_PE` passed CreateFileW a
+  FIXED `dwFlagsAndAttributes` of `0x80` and `_pe_open_flags` never read `0x20000` or `0x10000`,
+  while CreateFileW resolves a final reparse point for EVERY disposition. Measured on real cass
+  with the 6.6.8 compiler: `O_CREAT|O_EXCL` over a DANGLING symlink created the link's TARGET
+  (with or without `O_NOFOLLOW` — so `file_create_exclusive`, sigil's `luks_write_keyfile`, the
+  CLI's temp creates and thoth's capture file all had it), `file_open(link, O_WRONLY|O_TRUNC|
+  O_NOFOLLOW)` returned a handle and truncated the file the link named (patra's row N2),
+  `O_DIRECTORY` refused a directory (-1) and opened a FILE, and `file_create_exclusive` on an
+  existing file answered -1, not -17. Silently. **Fix:** a split `_pe_open_attr_flags` derives the
+  attribute word (it peeks the flag word before `_pe_open_flags` pops it, carries it in `r8d`):
+  `FILE_FLAG_OPEN_REPARSE_POINT` for `O_NOFOLLOW` and for `CREATE_NEW` — which never opens an
+  existing object, so the flag cannot make it open a link, only stop it following one (race-free,
+  no check) — and `FILE_FLAG_BACKUP_SEMANTICS` for `O_DIRECTORY` ONLY (set always it would let
+  `O_WRONLY` open a directory; a plain `open()` of a directory stays -1 on Windows, fail-closed,
+  and is pinned). The Windows peer's `sys_open` then asks the OPENED handle —
+  `GetFileInformationByHandleEx(FileAttributeTagInfo)`, new reroute `0xF03D` — so there is no
+  check-then-open window: a NAME-SURROGATE reparse point (symlink, junction) is closed and refused
+  with -40 (-ENOTDIR, -20, together with `O_DIRECTORY`, which is what Linux AND Darwin answer —
+  measured on both); any other reparse point (a cloud placeholder, dedup) is reopened normally, the
+  default taken; a non-directory under `O_DIRECTORY` is -20 and a directory opened for writing,
+  `O_CREAT` or `O_TRUNC` is -21 (the check open is read-only, so a mistaken `O_DIRECTORY|O_TRUNC`
+  cannot truncate the file on its way to -20). An `O_NOFOLLOW|O_TRUNC` open is made WITHOUT the
+  truncation and the verified handle is truncated afterwards (`SetEndOfFile`, `0xF03F`; an
+  `O_RDONLY` or `O_APPEND` handle, which lacks `FILE_WRITE_DATA`, truncates through a second
+  verified `O_WRONLY|O_NOFOLLOW` handle), so neither a link's target nor the link object is
+  clobbered by a refusal — and `O_WRONLY|O_TRUNC|O_APPEND|O_NOFOLLOW` keeps its real append, which
+  the plain `TRUNCATE_EXISTING` path trades away. A refused `CREATE_NEW` is classified -17 by
+  `file_create_exclusive` (GetFileAttributesW does not follow a final link). A raw
+  `syscall(2, p, O_NOFOLLOW, 0)` still never follows, but hands back the link's own handle: the
+  refusals live in `sys_open`, which every stdlib open goes through. Verified on real cass (41/41,
+  and the 6.6.8 build of the same test fails 21), ecb, ach, pi and x86_64 Linux (40/40 each) and
+  wine; the `FILE_READ_ATTRIBUTES` the handle query needs is present on `O_WRONLY` and `O_APPEND`
+  handles (CreateFileW adds it — measured). Gated by `tests/tcyr/crossos/open_flags_per_target.tcyr`
+  (rewritten: every row runs on every target — the symlink rows too, because the fixtures are made
+  by `CreateSymbolicLinkW`, whose links wine does see) and `tests/gates/platform/pe_open_posix_semantics.sh`
+  (new: POSIX oracle, emitter shape — base word, two reparse arms and one backup arm per open site,
+  the handle query imported — and wine; seven mutants measured, each red).
+- **`is_symlink` works on Windows.** (bite 5.) Its PE arm returned 0 for everything, which failed
+  OPEN twice: `dir_walk` descended every junction and directory symlink, and the CLI's
+  symlinked-lib write refusal (`_dep_dest_is_linked`, the v6.5.37 rule) could not see a link at
+  all. It now reads `FILE_ATTRIBUTE_REPARSE_POINT` (GetFileAttributesW, which does not follow a
+  final link, so a dangling one answers) and the reparse TAG (FindFirstFileW's `dwReserved0`): a
+  name surrogate is 1, a placeholder or dedup file is 0. The path is widened bounded by `str_len`
+  (a `Str` need not be NUL-terminated).
+- **`file_create_exclusive` is atomic on agnos.** (bite 5; audit: the agnos pre-check is not
+  atomic.) Its agnos arm was `file_exists` then a plain `AO_CREAT` open — a check-then-create, and
+  a name that existed as a DIRECTORY or a DANGLING symlink was not "existing" to it (both came back
+  -1, measured on agnos-qemu 1.57.10). agnos has had `AO_EXCL` since kernel 1.56.56 and `file_open`
+  has mapped `O_EXCL` to it since 6.6.4, so the arm is now the same single `O_CREAT|O_EXCL` open as
+  everywhere else; agnos answers every refusal with a bare -1, so a refused create is classified
+  with `lstat#102` (no final-link follow): the name exists → -17. (`readlink` cannot stand in —
+  agnos refuses a buffer shorter than the target instead of truncating; measured.) agnos-qemu
+  1.57.10, `-smp 1` and `-smp 4`: 10/10 (new file, existing file untouched, directory, dangling and
+  live links, a missing parent stays -1); the 6.6.8 arm scores 8. Gated by
+  `tests/gates/platform/agnos_create_exclusive_atomic.sh` (new: the call's exact syscall shape
+  under the fake kernel — one `open#7` with `AO_WRONLY|AO_CREAT|AO_EXCL`, then `lstat#102` only on
+  a refusal; `tests/fixtures/agnos_sctrace.cyr` gains `exclref` / `exclnone` modes).
+- **A `var`-held fsync / fdatasync number flushes on Windows.** (bite 5, from the 6.6.8 bite 3
+  review.) The runtime switch a non-literal syscall number goes through on PE
+  (`EPE_SYSCALL_DYNAMIC`) carried close / unlink / exit at argc 2 but not the 74 / 75 the literal
+  route has flushed since 6.6.7, so `var n = 74; syscall(n, fd)` returned -38 — and with NO
+  compile-time warning, because that warning fires only for an arity with no routable member at
+  all (the value is known only at run time); `_PE_ROUTE_PERFCOUNTER`'s comment and the guide both
+  claimed it warned. The arity-2 arm moved into its own function (`_pe_dyn_arity2`, clear of the
+  cybs per-function limit) and routes 74 / 75 to `FlushFileBuffers`; the comments now say what
+  happens. Gated by two new `fsync_flushes.tcyr` rows (every target; -38 on PE before) and the
+  gate's floor (16 → 18).
+
 ### Changed
 
 - **`f64_sin` / `f64_cos` need `include "lib/math.cyr"` on x86 too** (they always did on
@@ -69,6 +139,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   lets a phase accumulator grow unbounded pays that; wrapping the phase keeps the fast path.
   (bite 4.)
 
+- **`xsymlink` / `sys_symlink`, `sys_ftruncate` and `sys_truncate` are real on Windows** (they
+  returned -1 / -38). (bite 5.) Three new PE reroutes, `0xF03D` `GetFileInformationByHandleEx`,
+  `0xF03E` `CreateSymbolicLinkW` and `0xF03F` `SetEndOfFile` (imports in `src/backend/pe/emit.cyr`,
+  emitters in `src/backend/x86/emit.cyr` on the rbx-anchored aligned callers, return-0 stubs in the
+  aarch64 and cx forks, routed through `_PE_ROUTE_FILEHANDLE` — reached from `_PE_ROUTE_FLUSH` so
+  the inline chain in `_PARSE_FACTOR_IMPL` gains no reference). `sys_symlink` makes a directory
+  link when the target, resolved as the link will resolve it, is a directory; it asks for
+  `SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE` and retries without it, and without Developer
+  Mode a non-elevated process gets -1 — a Windows policy. `sys_ftruncate` seeks, sets the end and
+  puts the caller's file pointer back (growing zero-fills; a negative length is -22). The
+  `0xF03D`–`0xF03F` ids are literal-only, like every `0xF0xx` id. `syscall_shm_fd_passing.tcyr`'s
+  PE arm now sizes a real file where it asserted the decline.
+
 ### Downstream
 
 - **sin / cos callers:** every ecosystem repo calling `f64_sin` / `f64_cos` (abaco, agnosai,
@@ -76,6 +159,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   ranga, sankhya, shravan, svara) already includes `lib/math.cyr`, so the new x86 requirement
   breaks none; their x86 builds change bits (now correct) and aarch64 ones become correct past
   small arguments. (bite 4.)
+- **Windows open semantics** (bite 5): patra — the only live Windows consumer of `O_NOFOLLOW`
+  (`_pt_file_create`, `_pt_file_open`, `wal_start`, `wal_recover`, `jsonl_open`) — now gets the
+  refusal it documented as missing (its roadmap *Platforms* note and `SECURITY.md` can drop the
+  `O_NOFOLLOW is not enforced` caveat at its next cut). sigil's `luks_write_keyfile` comment
+  (`src/luks.cyr:383-385`) and thoth's `src/exec.cyr:155` / `:194-197` ("a pre-planted name fails
+  it" — false for a dangling symlink on Windows until now) are doc-only follow-ups there. An
+  `O_NOFOLLOW` open of a symlink or junction on Windows that used to SUCCEED now returns -40: that
+  is the flag's meaning; the 22 repos that pass it were surveyed and only patra, sankoch, sigil and
+  thoth have Windows code (thoth's PE lane does not build today; sigil's LUKS path has no Windows
+  use). cbt's own `cbt/deps.cyr:57-58` / `cbt/cyrius.cyr:154,172` comments ("`is_symlink` is 0 on
+  Windows") are handed to the cbt lane.
 
 ## [6.6.8] — 2026-09-28
 

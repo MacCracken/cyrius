@@ -2887,25 +2887,46 @@ gives `EBADF`), and `O_TRUNC|O_APPEND` *without* `O_CREAT` writes at the file po
 rather than at EOF (with `O_CREAT` the disposition is `CREATE_ALWAYS`, which needs no
 extra access, so the real append survives).
 
-`O_DIRECTORY` and `O_NOFOLLOW` are still ignored on Windows, deliberately: the
-near-equivalent Win32 flags do not mean what POSIX means (`FILE_FLAG_OPEN_REPARSE_POINT`
-*opens* a symlink where `O_NOFOLLOW` *refuses*). Use `is_dir` / `dir_list` rather than
-an `O_DIRECTORY` open.
+`O_NOFOLLOW`, `O_DIRECTORY` and `O_CREAT|O_EXCL` have their POSIX meaning on Windows since
+v6.6.9 — asserted by the same `tests/tcyr/crossos/open_flags_per_target.tcyr` rows on real
+Windows, Linux, macOS and aarch64:
 
-> ⚠ **`O_EXCL|O_NOFOLLOW` is weaker on Windows than on Linux.** `CREATE_NEW` resolves a
-> final reparse point instead of refusing it — measured on real Windows: creating over a
-> dangling symlink succeeds and creates the symlink's *target*, where the identical flags
-> on Linux fail. Code that opens `O_CREAT|O_EXCL|O_NOFOLLOW` to guarantee it created the
-> file itself (sigil's LUKS keyfile path, for one) does not get that guarantee on PE; a
-> pre-planted symlink at the path redirects the write. Check the path's attributes first
-> if the guarantee matters.
+| Flags | Linux | Windows (v6.6.9) |
+|---|---|---|
+| `O_CREAT\|O_EXCL` on a name that exists — even a **dangling** symlink | -17 | refused (`file_open` -1, `file_create_exclusive` -17); the link's target is never created |
+| `O_NOFOLLOW` on a symlink or junction | -40 (-62 macOS) | -40; the target is never opened or truncated |
+| `O_NOFOLLOW` on any other reparse point (cloud placeholder, dedup) | — | opens the file normally |
+| `O_DIRECTORY` on a directory / a file | fd / -20 | handle / -20 |
+| `O_DIRECTORY` with write access, `O_CREAT` or `O_TRUNC`, on a directory | -21 | -21 |
+| `O_DIRECTORY\|O_NOFOLLOW` on a link to a directory | -20 | -20 (macOS too — the unfollowed link is not a directory) |
+
+How: CreateFileW resolves a final reparse point for **every** disposition, so the attribute
+word carries `FILE_FLAG_OPEN_REPARSE_POINT` for `O_NOFOLLOW` and for `CREATE_NEW` (which never
+opens an existing object, so the flag only stops it following one), and
+`FILE_FLAG_BACKUP_SEMANTICS` for `O_DIRECTORY`. `sys_open` then asks the **opened handle**
+(`GetFileInformationByHandleEx`) what it is — no check-then-open window — and an
+`O_NOFOLLOW|O_TRUNC` open is truncated only after that check. The refusals live in `sys_open`,
+which every stdlib open goes through; a raw `syscall(2, p, O_NOFOLLOW, 0)` still never follows
+a link, but hands back the link's own handle instead of -40.
+
+⚠ One divergence remains, fail-closed: a plain `open()` of a directory (no `O_DIRECTORY`) is -1
+on Windows, where Linux returns a read fd. `FILE_FLAG_BACKUP_SEMANTICS` is set **only** for
+`O_DIRECTORY` — set always, it would let `O_WRONLY` open a directory.
+
+Before v6.6.9 all three flags were accepted and ignored: `O_CREAT|O_EXCL` over a dangling
+symlink **created the symlink's target** (with or without `O_NOFOLLOW` — sigil's keyfile,
+`file_create_exclusive`, the CLI's temp creates), `O_NOFOLLOW|O_TRUNC` on a link truncated the
+file it named, and `O_DIRECTORY` refused a directory while opening a file. `is_symlink` was 0 for
+everything, so `dir_walk` descended junctions. `xsymlink` (`CreateSymbolicLinkW`, needing
+Developer Mode or an elevated process), `sys_ftruncate` and `sys_truncate` (`SetEndOfFile`) are
+real on Windows since the same release.
 
 **Durability** (v6.6.7)
 
 `fsync` and `fdatasync` — `xfsync(fd)`, or a raw `syscall(74, fd)` / `syscall(75, fd)` — call
 `FlushFileBuffers` on Windows; there is one flush for data and metadata, so both numbers do the
-same thing. The route is for the **literal** numbers — an enum constant counts; a number held in a
-`var` gets the honest -38 (`-ENOSYS`), not a flush. A failure is -1. `file_rename` passes
+same thing. A number held in a `var` flushes too since v6.6.9 (before it, the runtime switch a
+`var` number goes through did not carry 74/75 and returned -38 with no warning). A failure is -1. `file_rename` passes
 `MOVEFILE_WRITE_THROUGH`, so `file_write_atomic`'s write → flush → rename is durable as well as
 atomic.
 
@@ -2961,9 +2982,14 @@ the syscall arity (number of arguments) and compares against a routing table:
 
 - **Arity 4** (read, write, open, seek): if syscall == 0 → read, == 1 → write, == 2 → open, == 8 → seek
 - **Arity 3** (mkdir, getticks, nanosleep): if syscall == 83 → mkdir, == 228 → getticks, == 35 → nanosleep
-- **Arity 2** (close, unlink, exit): if syscall == 3 → close, == 87 → unlink, == 60 → exit
+- **Arity 2** (close, unlink, fsync, exit): if syscall == 3 → close, == 87 → unlink, == 74/75 → fsync/fdatasync (v6.6.9), == 60 → exit
 - **Arity 5** (getdents64, unsupported): returns -38 (-ENOSYS) — directory listing uses the arity-3 `FindFirstFileW` etc. instead
 - **Unknown arity**: returns -38
+
+⚠ A number held in a `var` is known only at run time, so the compiler warns about it only for an
+arity with **no** routable member. At an arity that has members, a number outside them returns
+-38 with no compile-time diagnostic — which is why the runtime switch and the literal routes
+must carry the same Linux numbers.
 
 Each routable pair emits the kernel32 call inline. Unknown syscalls return -38
 (ENOSYS), matching POSIX semantics, so a path that is genuinely dead on Windows can

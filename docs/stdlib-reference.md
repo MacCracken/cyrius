@@ -203,7 +203,7 @@ here. All take/return raw cstrings + POSIX-shaped `0` / negative-errno.
 | `xrmdir` | `xrmdir(path) → 0/-errno` | Remove an empty directory. Windows routes to `RemoveDirectoryW` (v6.6.6; **-1 before that**) |
 | `xmkdir` | `xmkdir(path, mode) → 0/-errno` | v6.5.7 — create a directory. Windows **does** route here |
 | `xmkdir_p` | `xmkdir_p(path, mode) → 0/-1` | v6.5.7 — `mkdir -p`. Existing directory is success; tries the full path first, walks parents only on failure; paths >1023 bytes return -1 rather than truncating |
-| `xsymlink` | `xsymlink(target, linkpath) → 0/-errno` | v6.5.7 — symlink. **-1 on Windows** |
+| `xsymlink` | `xsymlink(target, linkpath) → 0/-errno` | v6.5.7 — symlink. Windows routes to `CreateSymbolicLinkW` since v6.6.9 (a directory target gets a directory link); it needs Developer Mode or an elevated process, else -1 (**-1 always before 6.6.9**) |
 | `xreadlink` | `xreadlink(path, buf, bufsize) → n/-errno` | v6.5.7 — read a symlink target. **NOT NUL-terminated** (readlink(2)'s contract). **-1 on Windows** |
 | `xlink` | `xlink(oldpath, newpath) → 0/-errno` | v6.5.7 — hard link. **-1 on Windows** |
 | `file_rename` | `file_rename(oldpath, newpath) → 0/-errno` | Rename/replace. Windows routes to `MoveFileExW(REPLACE_EXISTING\|WRITE_THROUGH)` — the rename is on disk when it returns (write-through since v6.6.7; before that the Windows rename was atomic but not durable) |
@@ -218,7 +218,7 @@ here. All take/return raw cstrings + POSIX-shaped `0` / negative-errno.
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `file_write_atomic` | `file_write_atomic(path, buf, len) → 0/-errno` | Write a unique sibling temp → fsync → close → rename over `path`. On any failure the temp is unlinked and `path` is left intact |
-| `file_create_exclusive` | `file_create_exclusive(path, mode) → fd/-17` | No-clobber create. Kernel-atomic on Linux/macOS (`O_CREAT\|O_EXCL`) and Windows (`CREATE_NEW`); **agnos degrades to a non-atomic `file_exists` pre-check** |
+| `file_create_exclusive` | `file_create_exclusive(path, mode) → fd/-17` | No-clobber create, kernel-atomic on every target: `O_CREAT\|O_EXCL` on Linux/macOS, `CREATE_NEW` + `FILE_FLAG_OPEN_REPARSE_POINT` on Windows, `AO_CREAT\|AO_EXCL` on agnos (v6.6.9 — it was a non-atomic `file_exists` pre-check there). A name that exists as a file, a directory or a symlink — **even a dangling one** — is -17 everywhere (before 6.6.9 Windows followed a dangling link and created its target) |
 | `file_lock` / `file_unlock` | `(fd) → 0/-errno` | Exclusive lock / release (blocking on Linux+macOS; agnos flock is **non-blocking** — a contended `LOCK_EX` returns -1) |
 | `file_trylock` | `file_trylock(fd) → 0/-1` | Non-blocking exclusive lock |
 | `file_lock_shared` | `file_lock_shared(fd) → 0/-errno` | Shared (read) lock |
@@ -616,6 +616,7 @@ Filesystem: paths, directories, tree walking.
 | `dir_walk` | `dir_walk(path, results)` | Recursive walk |
 | `find_files` | `find_files(path, ext) → vec` | Find by extension |
 | `is_dir` | `is_dir(path) → 0/1` | Check if directory |
+| `is_symlink` | `is_symlink(path) → 0/1` | Is `path` itself a symlink (not followed; a dangling link is 1)? `dir_walk` lists a linked directory but never descends it. On Windows (v6.6.9; **0 for everything before**) a symlink or junction is 1 — a name-surrogate reparse point — and a cloud placeholder or dedup file is 0 |
 
 ### net.cyr
 
