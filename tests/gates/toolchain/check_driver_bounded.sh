@@ -94,8 +94,9 @@
 # 6.6.8 — AXIS 4, DEADLINE TRUTH. A deadline kill now SAYS it was one: 4a a spinning .tcyr
 # gives a TIMEOUT row naming CYRIUS_CHECK_TIMEOUT and the final line counts it; 4b an output
 # fixture that prints the right bytes and then hangs is RED and says "killed at the deadline"
-# (with a control that EXITS 152 and still passes); 4c `2m`, `abc`, '', ` 120`, `-3`, `1.5`
-# keep the defaults and say so once per variable (0 stays "no deadline"); 4d a lint child
+# (with a control that EXITS 152 and still passes); 4c `2m`, `abc`, '', ` 120`, `-3`, `1.5`,
+# `1234567890` keep the defaults and say so once per variable (0 stays "no deadline"), and
+# check.sh refuses the 10-digit value itself rather than passing it on; 4d a lint child
 # killed at the deadline is not scored clean.
 # MUTATION PROOF (6.6.8, made and reverted in the lane worktree one at a time):
 #   * _check's counter comparison removed (rows never become TIMEOUT) -> 4a rows 1 and 3, 4d
@@ -103,6 +104,8 @@
 #   * selfhost.cyr's output-row check put back to `_last_exec_sig != 0` -> 4b row 2 RED (the
 #     row is still RED through the counter; the site's own message is what is lost).
 #   * `_regression_env_secs` put back to atoi -> 4c RED for every malformed value.
+#   * check.sh's knob pattern without the `??????????*` arm -> 4c RED on 1234567890 (it
+#     passed the value on, and every child refused it again).
 #   * codegen_regress.cyr's `_derive_serialize…` output check put back to
 #     `_last_exec_sig != 0` -> 4e RED, naming the line.
 set -u
@@ -671,12 +674,23 @@ var r = main();
 syscall(60, r);
 KNOB
 "$ROOT/build/cycc" < "$T/knob.cyr" > "$T/knob" 2>/dev/null; chmod +x "$T/knob"
-for v in 2m abc '' ' 120' -3 1.5; do
+for v in 2m abc '' ' 120' -3 1.5 1234567890; do
     OUT=$(CYRIUS_CHECK_TIMEOUT="$v" CYRIUS_CHECK_LONG_TIMEOUT="$v" "$T/knob" 2> "$T/knob.err")
     check "4c CYRIUS_CHECK_*TIMEOUT='$v' keeps the defaults (never 0 = no deadline)" "120000 120000 900000" "$OUT"
     check "   …and says so, once per variable, naming it" "1 1" \
         "$(grep -c "CYRIUS_CHECK_TIMEOUT='" "$T/knob.err") $(grep -c "CYRIUS_CHECK_LONG_TIMEOUT='" "$T/knob.err")"
 done
+# check.sh reads the same two knobs first and must apply the SAME rule, including the 9-digit
+# limit: a value it passes on is refused again by every child, once each — the repetition its
+# once-and-drop block exists to stop. ` 2` is the control that check.sh already refused.
+for v in 1234567890 ' 2'; do
+    check "4c check.sh refuses CYRIUS_CHECK_TIMEOUT='$v' itself, exactly once" "1" \
+        "$(CYRIUS_CHECK_TIMEOUT="$v" sh "$ROOT/scripts/check.sh" --resolve toolchain 2>&1 >/dev/null \
+            | grep -c "^check: CYRIUS_CHECK_TIMEOUT='$v' is not a whole number of seconds")"
+done
+check "4c …and a 9-digit value is taken, silently" "0" \
+    "$(CYRIUS_CHECK_TIMEOUT=123456789 sh "$ROOT/scripts/check.sh" --resolve toolchain 2>&1 >/dev/null \
+        | grep -c 'is not a whole number')"
 check "4c a plain number is taken (7 -> 7000 ms)" "7000 7000 7000" \
     "$(CYRIUS_CHECK_TIMEOUT=7 CYRIUS_CHECK_LONG_TIMEOUT=7 "$T/knob" 2>/dev/null)"
 check "4c 0 still means 'no deadline', as documented" "0 0 0" \

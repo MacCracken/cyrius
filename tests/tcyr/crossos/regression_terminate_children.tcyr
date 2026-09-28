@@ -1,0 +1,64 @@
+# regression_terminate_children.tcyr — CROSS-HOST: lib/regression.cyr's
+# `regression_terminate_children(grace_ms)` does what its contract says on EVERY target. Runs
+# on ecb (macOS arm64) + ach (Intel Mac) + pi (aarch64) through the release gate's cross-OS
+# leg; on Windows and agnos there is no fork and the file only reports its summary.
+#
+# ⛔ WHY (6.6.8). The verb ends every descendant of the caller on Linux — it walks /proc. Its
+# comment promised that elsewhere it "reaps and returns 0", but the two wait loops ran on
+# every target, and off Linux their kill step (a /proc walk) found nothing: with one live
+# child the call waited out the whole `grace_ms` and then 300 more 10 ms rounds, killing
+# nothing — grace + 3 s of dead time in a public stdlib verb. Off Linux it now reaps what has
+# already ended, signals nothing and returns 0 at once. CHANGELOG [6.6.8]
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/syscalls.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/tagged.cyr"
+include "lib/chrono.cyr"
+include "lib/net.cyr"
+include "lib/regression.cyr"
+
+fn main(): i64 {
+    alloc_init();
+    test_group("regression_terminate_children keeps its contract on this target");
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_AGNOS
+    # A live child that ends BY ITSELF (exit 7) after ~1.5 s, unless it is signalled first.
+    var pid = sys_fork();
+    if (pid == 0) {
+        syscall(7, 0, 0, 1500);
+        sys_exit(7);
+    }
+    assert_eq(pid > 0, 1, "fork");
+    var t0 = clock_now_ms();
+    var n = regression_terminate_children(3000);
+    var el = clock_now_ms() - t0;
+    # Linux: the child is SIGTERMed and gone at once. Elsewhere: nothing is signalled and the
+    # call returns at once. Either way it is never held for the child's lifetime — the old
+    # off-Linux shape polled until the child ended BY ITSELF (measured on ecb/ach: ~1.6 s
+    # here, then reaped it, so the caller never saw its status; up to grace + 3 s in general).
+    assert_eq(el < 1000, 1, "it returned without waiting out the grace period");
+    var st[8];
+    store64(&st, 0);
+    #ifdef CYRIUS_TARGET_LINUX
+    assert_eq(n, 1, "Linux: it counted the one live descendant");
+    assert_eq(sys_waitpid(pid, &st, 1) < 0, 1, "Linux: the child was ended and reaped");
+    #endif
+    #ifndef CYRIUS_TARGET_LINUX
+    assert_eq(n, 0, "off Linux: it returns 0");
+    var w = sys_waitpid(pid, &st, 0);
+    assert_eq(w, pid, "off Linux: the child was left alone, still ours to reap");
+    assert_eq(WIFEXITED(load32(&st)), 1, "off Linux: …it exited by itself, it was not signalled");
+    assert_eq(WEXITSTATUS(load32(&st)), 7, "off Linux: …with its own status");
+    #endif
+    #endif
+    #endif
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);

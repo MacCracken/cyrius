@@ -250,13 +250,15 @@ esac
 # atoi, so `2m` meant 2 s and `abc`, '' or ` 120` meant 0 — which DISABLES the deadline. The
 # binary now refuses a non-digit value itself (lib/regression.cyr), but every child it spawns
 # would say so again; here it is said once and the variable is dropped, so every child uses
-# the default. 0 stays valid: it is the documented "no deadline". CHANGELOG [6.6.8]
+# the default. 0 stays valid: it is the documented "no deadline". At most 9 digits, the
+# binary's own limit — a longer value passed here and was then refused by every child, once
+# each, which is the repetition this block exists to stop. CHANGELOG [6.6.8]
 for _kv in CYRIUS_CHECK_TIMEOUT CYRIUS_CHECK_LONG_TIMEOUT; do
     eval "_kval=\${$_kv-__unset__}"
     case "$_kval" in
         __unset__) ;;
-        ''|*[!0-9]*)
-            printf "check: %s='%s' is not a whole number of seconds — IGNORED, the default deadline stays in force\n" \
+        ''|*[!0-9]*|??????????*)
+            printf "check: %s='%s' is not a whole number of seconds (digits only, at most 9) — IGNORED, the default deadline stays in force\n" \
                 "$_kv" "$_kval" >&2
             unset "$_kv"
             ;;

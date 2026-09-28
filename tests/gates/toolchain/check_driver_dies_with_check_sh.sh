@@ -42,6 +42,11 @@
 #            (the subreaper is what can still see that orphan)
 #   axis 10  ANTI-VACUOUS: the same SIGKILL against a check.sh whose `_chk_gate` is put back
 #            to the pre-6.6.8 foreground `sh "$_g"` DOES leak — the harness can see a leak
+#   axis 11  a GROUP SIGTERM (`kill -- -PGID`, `timeout`) and a group SIGINT (Ctrl-C) let the
+#            gate's EXIT trap run to its LAST command: the supervisor does not answer a
+#            signal the gate already has with a second SIGTERM mid-trap
+#   axis 12  a gate's own `exit 124` is reported as 1 — never as a TIMEOUT — both with a
+#            deadline and under CYRIUS_CHECK_LONG_TIMEOUT=0, directly and through check.sh
 # MUTATION PROOF (6.6.8, each edit made and reverted in the lane worktree, one at a time):
 #   * `sys_prctl(36, …)` (the subreaper) removed from run_gate.cyr -> axes 4, 5, 6, 7 and 9
 #     RED: a supervisor signals each process once, from directly above it, and adopts the
@@ -52,6 +57,13 @@
 #   * `_chk_gate` put back to a foreground `sh "$_g"` -> axes 4 and 7 RED (7 measured at 315 s
 #     before it was bounded: the SIGTERM waited for the gate's own sleep); axis 10 is that
 #     same mutation, run on purpose and required to leak.
+#   * `_rg_let_children_end` dropped from the signal path (every signal TERMs the child at
+#     once, the first cut) -> axis 11 RED on both TERM and INT: the trap's last command
+#     never ran.
+#   * `_regression_term_children_once` dropped from `_rg_let_children_end` (adopted orphans
+#     spared too) -> axis 11 (INT) RED on the 4 s bound: the gate's `sleep &` ignores SIGINT.
+#   * the 124 remap put back behind `deadline_ms > 0` -> axis 12 RED on LONG_TIMEOUT=0,
+#     directly and through check.sh.
 # ⚠ ONE SIGTERM PER PROCESS. The first cut of the supervisor signalled every descendant at
 # once; axis 5 went RED on it — a nested supervisor (driver -> --run-gate) sent the gate's
 # shell a SECOND SIGTERM while its EXIT trap ran, and bash dies mid-trap on that.
@@ -251,7 +263,13 @@ _mk_sleeper() {  # $1 = file, $2 = marker dir, $3 = "exit" to exit leaving a bg 
         echo '#!/bin/sh'
         echo "M=\"$2\""
         echo 'X="$M/scratch.$$"; mkdir "$X" || exit 9'
-        echo 'trap '"'"'rm -rf "$X"'"'"' EXIT'
+        if [ "${3:-}" = "trap2" ]; then
+            # A trap with WORK after its first command, and a marker only its LAST command
+            # writes: a shell killed partway through its EXIT trap leaves no marker.
+            echo 'trap '"'"'rm -rf "$X"; sleep 0.2; echo done > "$M/trap.done"'"'"' EXIT'
+        else
+            echo 'trap '"'"'rm -rf "$X"'"'"' EXIT'
+        fi
         echo 'echo "$X" > "$M/scratch.path"'
         echo "sleep 471.$TAG &"
         echo 'echo "$!" > "$M/bg.pid"'
@@ -274,7 +292,7 @@ _scratch_gone() {  # $1 = marker dir -> "gone" / "left"
 }
 # A scratch root that runs the REAL check.sh over a one-gate fake registry, with the tree's
 # own driver as the supervisor.
-_mk_chkroot() {  # $1 = root, $2 = check.sh to use
+_mk_chkroot() {  # $1 = root, $2 = check.sh to use, $3 = sleeper mode (optional)
     mkdir -p "$1/scripts" "$1/build" "$1/programs/checks" "$1/lib" "$1/tmp" "$1/home" \
              "$1/tests/gates/zzsup" "$1/m"
     cp "$2" "$1/scripts/check.sh"
@@ -286,7 +304,7 @@ _mk_chkroot() {  # $1 = root, $2 = check.sh to use
     chmod +x "$1/build/cycc" "$1/scripts/install.sh"
     cp "$RUN_BIN" "$1/build/cyrius_check"
     touch -d '2038-01-01' "$1/build/cyrius_check"
-    _mk_sleeper "$1/tests/gates/zzsup/zzsleeper.sh" "$1/m"
+    _mk_sleeper "$1/tests/gates/zzsup/zzsleeper.sh" "$1/m" "${3:-}"
     printf '_chk_gate "$ROOT/tests/gates/zzsup/zzsleeper.sh"\n' >> "$1/scripts/check.sh"
 }
 # Start the scratch check.sh on the sleeper; sets CHK (its pid) once the gate is running.
@@ -438,6 +456,68 @@ else
     _fail "axis 10: the sleeper gate never started under the mutant"
 fi
 _kill_survivors
+
+# Axis 11 — a GROUP signal lets the gate's EXIT trap FINISH. Ctrl-C, `timeout sh check.sh`
+# and `kill -- -PGID` reach the gate's shell directly; the supervisor used to answer the
+# same signal with its own SIGTERM at once, and bash dies mid-trap on the second one.
+echo "axis 11: a group SIGTERM / SIGINT lets the gate's EXIT trap run to its LAST command"
+if command -v setsid > /dev/null 2>&1; then
+    for _sig in TERM INT; do
+        R11="$T/r11$_sig"; _mk_chkroot "$R11" "$ROOT/scripts/check.sh" trap2
+        rm -f "$R11/m/bg.pid" "$R11/m/trap.done"
+        # INT back to DEFAULT for the run: a `&` job starts with SIGINT ignored, and Ctrl-C
+        # at a terminal reaches a foreground run that has it at default.
+        _dflt=""
+        if [ "$_sig" = INT ]; then
+            if env --default-signal=INT true > /dev/null 2>&1; then _dflt="--default-signal=INT"
+            else echo "  SKIP (INT half): env(1) has no --default-signal on this host"; continue; fi
+        fi
+        ( cd "$R11" && exec setsid env $_dflt -u CYRIUS_HOME HOME="$R11/home" TMPDIR="$R11/tmp" \
+            sh scripts/check.sh zzsleeper ) > "$R11/out" 2>&1 &
+        C11=$!
+        if _wait_file "$R11/m/bg.pid"; then
+            sleep 0.3
+            kill "-$_sig" -- "-$C11" 2>/dev/null
+            _k=0
+            while kill -0 "$C11" 2>/dev/null && [ "$_k" -lt 150 ]; do sleep 0.1; _k=$((_k + 1)); done
+            kill -9 "$C11" 2>/dev/null
+            wait "$C11" 2>/dev/null
+            sleep 0.5
+            [ -s "$R11/m/trap.done" ] || _fail "axis 11 ($_sig): the gate's EXIT trap was cut short — its last command never ran (a second SIGTERM arrived mid-trap)"
+            [ "$(_scratch_gone "$R11/m")" = "gone" ] || _fail "axis 11 ($_sig): the gate's mktemp dir was left behind"
+            NS=$(_survivors | grep -c . || true)
+            [ "$NS" = "0" ] || _fail "axis 11 ($_sig): $NS process(es) survived a group SIG$_sig"
+            # Promptly, too: after a Ctrl-C the gate's `sleep &` (a `&` job starts with SIGINT
+            # ignored) is adopted still running, and sparing it as well as the gate held the
+            # whole grace period (measured: 5 s).
+            [ "$_k" -le 40 ] || _fail "axis 11 ($_sig): check.sh took more than 4 s to end on a group SIG$_sig — an adopted orphan waited out the grace period"
+        else
+            _fail "axis 11 ($_sig): the sleeper gate never started"
+        fi
+        _kill_survivors
+    done
+else
+    echo "  SKIP: no setsid(1) on this host"
+fi
+
+# Axis 12 — 124 is the supervisor's deadline and NOTHING else, with or without a deadline
+# set. Under CYRIUS_CHECK_LONG_TIMEOUT=0 a gate's own `exit 124` used to pass straight
+# through, and check.sh (and the driver's _gate) reported a deadline that did not exist.
+echo "axis 12: a gate's own exit 124 is reported as 1, never as a TIMEOUT — deadline or not"
+printf '#!/bin/sh\nexit 124\n' > "$T/g12.sh"
+for _lt in 0 30; do
+    RC12=0
+    CYRIUS_CHECK_LONG_TIMEOUT=$_lt "$RUN_BIN" --run-gate "$T/g12.sh" > "$T/g12.out" 2>&1 || RC12=$?
+    [ "$RC12" = "1" ] || _fail "axis 12 (LONG_TIMEOUT=$_lt): a gate's own exit 124 came back as $RC12, expected 1"
+    grep -q "exited 124 on its own" "$T/g12.out" || _fail "axis 12 (LONG_TIMEOUT=$_lt): the remap is not said"
+done
+R12="$T/r12"; _mk_chkroot "$R12" "$ROOT/scripts/check.sh"
+printf '#!/bin/sh\nexit 124\n' > "$R12/tests/gates/zzsup/zzsleeper.sh"
+( cd "$R12" && env -u CYRIUS_HOME HOME="$R12/home" TMPDIR="$R12/tmp" CYRIUS_CHECK_LONG_TIMEOUT=0 \
+    sh scripts/check.sh zzsleeper ) > "$R12/out" 2>&1
+grep -q 'TIMEOUT' "$R12/out" && _fail "axis 12: check.sh reported a TIMEOUT under CYRIUS_CHECK_LONG_TIMEOUT=0 (no deadline exists)"
+grep -q '\^\^ FAILED (exit 1): tests/gates/zzsup/zzsleeper.sh' "$R12/out" \
+    || _fail "axis 12: check.sh did not record the gate as an ordinary failure (exit 1)"
 fi
 
 echo ""

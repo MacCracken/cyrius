@@ -32,7 +32,18 @@
 #   * ending is ALWAYS regression_terminate_children: TERM to the whole tree, `_RG_GRACE_MS`
 #     for EXIT traps, then KILL and reap. On a deadline it prints a TIMEOUT line naming the
 #     gate and the setting and exits 124; on a signal it exits 128+sig; when the child ends on
-#     its own anything it left running is ended the same way and named on stderr.
+#     its own anything it left running is ended the same way and named on stderr;
+#   * ⛔ a signal that did NOT come from the caller is taken as GROUP-delivered, and the child
+#     is then left `_RG_GRACE_MS` to end BY ITSELF before it is sent anything (an orphan
+#     adopted meanwhile still gets its one TERM at once). Ctrl-C (sender
+#     pid 0, the kernel), `timeout sh check.sh` and `kill -- -PGID` signal the whole process
+#     group, so the gate's shell already has that signal and is running its EXIT trap; the
+#     first cut TERMed it again at once, and bash dies mid-trap on a second TERM — measured,
+#     a group TERM cut the trap 12 of 12 times and a Ctrl-C 8 of 15 (6.6.7: 0 of 27). A
+#     signal from the CALLER (check.sh's or the driver's forward, or its death's PDEATHSIG)
+#     reached this process alone, so the child is TERMed at once, as before. A third party's
+#     `kill <this pid>` is indistinguishable from a group signal here and costs the grace
+#     period in latency, never a trap. CHANGELOG [6.6.8]
 
 var _RG_GRACE_MS = 5000;
 
@@ -57,6 +68,27 @@ fn _rg_out_num(fd, v): i64 {
     var e = _regression_put_dec(&b, v);
     sys_write(fd, &b, e - &b);
     return 0;
+}
+
+# Give the direct `child` up to `ms` to end BY ITSELF, reaping every child as it ends. The
+# child is never signalled here; an orphan ADOPTED meanwhile gets its one SIGTERM as it
+# appears (a `&` job starts with SIGINT ignored, so after a Ctrl-C a gate's background
+# `sleep` outlives the gate and would otherwise hold the whole grace period — measured, 5 s).
+# < 0 once none is left (ECHILD), 0 if some are still running.
+fn _rg_let_children_end(ms, child): i64 {
+    _regression_tree_init();
+    if (_regression_termed == 0) { _regression_termed = alloc(_REGRESSION_TREE_CAP * 8); }
+    store64(_regression_termed, child);                     # listed as signalled: spared
+    _regression_termed_n = 1;
+    var waited = 0;
+    var left = _regression_reap_ended();
+    while (left >= 0 && waited < ms) {
+        _regression_term_children_once();
+        syscall(7, 0, 0, 10);
+        waited = waited + 10;
+        left = _regression_reap_ended();
+    }
+    return left;
 }
 
 # Run `path` with `argvp` / `envp` under the supervisor. `deadline_ms` <= 0 is no deadline;
@@ -105,6 +137,7 @@ fn _rg_supervise(path, argvp, envp, deadline_ms, label, knob): i64 {
     var done = 0;
     var gotsig = 0;
     var timed = 0;
+    var grp = 0;
     var si[128];
     var st[8];
     while (done == 0 && gotsig == 0 && timed == 0) {
@@ -117,7 +150,10 @@ fn _rg_supervise(path, argvp, envp, deadline_ms, label, knob): i64 {
         var r = sys_read(sfd, &si, 128);
         while (r == 128) {
             var signo = load32(&si);
-            if (signo != 17 && gotsig == 0) { gotsig = signo; }
+            if (signo != 17) {
+                if (gotsig == 0) { gotsig = signo; }
+                if (load32(&si + 12) != ppid0) { grp = 1; }     # ssi_pid: not the caller
+            }
             r = sys_read(sfd, &si, 128);
         }
         var w = sys_waitpid(0 - 1, &st, 1);
@@ -126,6 +162,9 @@ fn _rg_supervise(path, argvp, envp, deadline_ms, label, knob): i64 {
             w = sys_waitpid(0 - 1, &st, 1);
         }
     }
+    # A group-delivered signal already reached the child: let its EXIT trap finish before
+    # anything here sends it a second one (see the header).
+    if (gotsig != 0 && grp == 1) { _rg_let_children_end(_RG_GRACE_MS, pid); }
     if (timed == 1 && done == 0) {
         regression_terminate_children(_RG_GRACE_MS);
         _p("  TIMEOUT: ");
@@ -153,9 +192,12 @@ fn _rg_supervise(path, argvp, envp, deadline_ms, label, knob): i64 {
     }
     if (WIFSIGNALED(status) == 1) { return 128 + WTERMSIG(status); }
     var code = WEXITSTATUS(status);
-    # 124 from a DEADLINE-bounded run means this supervisor's deadline and nothing else, so a
-    # program's own exit 124 is reported as 1 (and said so) rather than as a timeout it was not.
-    if (code == 124 && deadline_ms > 0) {
+    # 124 from this supervisor means ITS deadline and nothing else, so a program's own exit 124
+    # is reported as 1 (and said so) rather than as a timeout it was not — with or without a
+    # deadline set: check.sh and the driver read 124 as TIMEOUT unconditionally, so under
+    # CYRIUS_CHECK_LONG_TIMEOUT=0 a gate's own 124 used to be reported as a deadline that did
+    # not exist. The only `return 124` is the timed branch above. CHANGELOG [6.6.8]
+    if (code == 124) {
         _rg_err("cyrius_check --run-gate: ");
         _rg_err(label);
         _rg_err(" exited 124 on its own — reported as 1, because 124 here means the deadline\n");
@@ -173,6 +215,7 @@ fn _rg_supervise(path, argvp, envp, deadline_ms, label, knob): i64 {
     if (reaped == 0) { return 124; }
     if (reaped < 0) { return 125; }
     if (WIFSIGNALED(load32(&st2)) == 1) { return 128 + WTERMSIG(load32(&st2)); }
+    if (WEXITSTATUS(load32(&st2)) == 124) { return 1; }    # 124 is the deadline's alone
     return WEXITSTATUS(load32(&st2));
     #endif
 }

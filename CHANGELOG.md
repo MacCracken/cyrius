@@ -84,8 +84,33 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   123 (256 failures used to exit 0). Also: lib/process.cyr's idle-read cut no longer calls a
   `poll()` error a deadline — EINTR is retried, and any other error reports -1. Gated by
   `check_driver_bounded.sh` axis 4 (4a a spinning .tcyr, 4b a print-then-hang output fixture with
-  an exiting control, 4c six malformed knob values, 4d a hung lint child, 4e a static census of
+  an exiting control, 4c seven malformed knob values, 4d a hung lint child, 4e a static census of
   sig-only checks — each mutation-proven) and `check_driver_dies_with_check_sh.sh` axis 6b.
+- **A GROUP signal no longer cuts a gate's EXIT trap short, and the supervisor's other edges
+  now keep their stated contracts.** (bite 8, review fixes.) **Root cause:** the supervisor
+  answered every INT/TERM/HUP with its own SIGTERM to the gate at once. Ctrl-C, `timeout sh
+  check.sh` and `kill -- -PGID` signal the whole process group, so the gate's shell already had
+  that signal and was running its EXIT trap when the second SIGTERM arrived, and bash dies
+  mid-trap on it. Measured on the first cut: a group SIGTERM cut the trap 12 of 12 times and a
+  Ctrl-C 8 of 15, leaving mktemp dirs behind (6.6.7: 0 of 27). Three smaller defects came with
+  it. check.sh accepted a deadline knob of 10+ digits that every child then refused again, once
+  each. Off Linux, `regression_terminate_children` polled until the caller's children ended by
+  themselves and signalled none of them, although its contract says it returns at once. And
+  under `CYRIUS_CHECK_LONG_TIMEOUT=0` a gate's own `exit 124` passed through as a TIMEOUT for a
+  deadline that did not exist. **Fix:** a signal whose sender is not the supervisor's caller is
+  taken as group-delivered. The gate then gets the 5 s grace to end by itself before it is sent
+  anything, and an orphan adopted in that window still gets its one TERM at once (a `&` job
+  ignores SIGINT, so after a Ctrl-C it would otherwise hold the grace period). A signal from the
+  caller (check.sh's or the driver's forward, or its death) still TERMs the gate at once. A third
+  party's `kill <supervisor pid>` cannot be told apart from a group signal, so it waits the grace
+  period before the gate is TERMed. check.sh applies the binary's 9-digit limit. The lib's
+  message says what it accepts. Off Linux, `regression_terminate_children` reaps what has already
+  ended and returns 0. A gate's own 124 is always reported as 1. Gated by
+  `check_driver_dies_with_check_sh.sh` axis 11 (group SIGTERM and group SIGINT, trap's LAST
+  command must run, within 4 s) and axis 12 (own 124 under a deadline and under none, directly
+  and through check.sh), `check_driver_bounded.sh` 4c (a 10-digit value, check.sh-side) and new
+  `tests/tcyr/crossos/regression_terminate_children.tcyr` (green on pi, ecb and ach; the old lib
+  is red on ecb and ach). Each fix is mutation-proven.
 - **`regression_file_contains_substr` searches the whole file.** (bite 8.) It read a fixed
   512 KiB and `strstr`-ed the buffer, so a needle past byte 524,288 — or after the first NUL
   byte — was reported absent: a "marker present" row failed for a reason unrelated to the

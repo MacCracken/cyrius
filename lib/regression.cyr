@@ -233,8 +233,10 @@ fn _regression_env_secs(name, warned): i64 {
         var e2 = "='";
         sys_write(2, e2, strlen(e2));
         sys_write(2, v, n);
-        var e3 = "' is not a whole number of seconds — IGNORED, the default deadline stays in force\n";
+        var e3 = "' is not a whole number of seconds (digits only, at most 9) — ";
         sys_write(2, e3, strlen(e3));
+        var e4 = "IGNORED, the default deadline stays in force\n";
+        sys_write(2, e4, strlen(e4));
     }
     return 0 - 1;
 }
@@ -596,9 +598,16 @@ fn _regression_term_children_once(): i64 {
 # PR_SET_CHILD_SUBREAPER — or orphans go to init instead); EXIT traps get up to `grace_ms`;
 # then the whole remaining tree is SIGKILLed and reaped. Returns how many descendants were
 # running when it started (0: nothing to do). The check driver calls it on its way out and
-# `cyrius_check --run-gate` when its gate ends. Linux only; elsewhere it reaps and returns 0.
-# CHANGELOG [6.6.8]
+# `cyrius_check --run-gate` when its gate ends. Linux only (it walks /proc); elsewhere it
+# reaps the children that have ALREADY ended, signals nothing and returns 0 at once — the
+# loops below are Linux-only because off Linux they would kill nothing and only wait out
+# `grace_ms` plus 3 s. CHANGELOG [6.6.8]
 fn regression_terminate_children(grace_ms): i64 {
+    #ifndef CYRIUS_TARGET_LINUX
+    _regression_reap_ended();
+    return 0;
+    #endif
+    #ifdef CYRIUS_TARGET_LINUX
     var me = sys_getpid();
     var n = _regression_tree_collect(me);
     _regression_termed_n = 0;
@@ -618,6 +627,7 @@ fn regression_terminate_children(grace_ms): i64 {
         left = _regression_reap_ended();
     }
     return n;
+    #endif
 }
 
 # Wait for `pid`, but not for ever. Returns 1 if the child was reaped normally (`stbuf` holds
