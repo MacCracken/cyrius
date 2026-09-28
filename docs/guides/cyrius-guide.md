@@ -1199,7 +1199,7 @@ cyrius smoke                             # tests/smcyr/*.smcyr fail-fast (v5.7.3
 cyrius distlib [profile]                 # bundle src/ modules into dist/{name}.cyr
 cyrius distlib --all                     # regenerate the base bundle AND every [lib.X] profile (v6.5.8)
 cyrius distlib --check                   # verify bundles are current — compares BYTES, writes nothing (v6.5.8)
-cyrius coverage [--full] [--min <pct>]   # reference coverage of src/ (--min 0..100 gates CI)
+cyrius coverage [--full] [--min <pct>]   # reference coverage of src/ (--min 0..100 gates CI; -v or a failed --min names the misses, 6.6.8)
 cyrius capacity [--check] [src]          # report compiler capacity / CI gate; no arg = THIS HOST's fork (v6.6.6)
 cyrius pulsar                            # x86-64 LINUX ONLY: rebuild cycc + cross bins + tools, then install
 cyrius lsp                               # build + install cyrius-lsp into ~/.cyrius/bin/
