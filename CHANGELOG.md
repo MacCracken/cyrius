@@ -46,6 +46,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   coverage: a test local or parameter that shares a fn's name still counts. Gate:
   `tests/gates/toolchain/coverage_corpus_and_failopen.sh` axes 7-13 (9 mutations, each RED).
 
+- **`cyrius header` emits a prototype for every public fn and reads the whole file.** (bite 9.) It
+  matched only a column-0 `pub fn ` — its own comment said "pub fn or fn" — so a bare `fn` (public
+  in an ordinary file) and `public fn` never got a prototype, it ignored the `private` rule, and it
+  read a fixed 64 KiB: an 81,752-byte file lost every fn past the cut, rc=0. It now uses the shared
+  public-surface rule and `file_read_whole`. The verb had NO gate anywhere, while the coverage
+  gate's header claimed the two scanners "already handled both spellings";
+  `tests/gates/toolchain/header_spellings_and_size.sh` is its first (5 mutations, each RED).
+
+- **`cyrius doctest` reads the whole file.** (bite 9.) The same fixed 64 KiB read: an example past
+  the cut was neither run nor counted, so a FAILING example there read `1 passed, 0 failed`, rc=0.
+  Pinned by `header_spellings_and_size.sh` axis H5.
+
 ### Downstream
 
 - ⚠ **`cyrius coverage` reads LOWER at the next pin bump for three gated consumers** (bite 9 — the

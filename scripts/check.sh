@@ -1226,3 +1226,9 @@ _chk_gate "$ROOT/tests/gates/toolchain/audit_walk_fails_closed.sh"
 # were unverified and the "Updated:" list was unconditional. Runs `version-bump.sh
 # --docs-only` over scratch copies of the live docs plus fixtures; mutation-proven in the header.
 _chk_gate "$ROOT/tests/gates/toolchain/version_bump_doc_anchors.sh"
+
+# 6.6.8 (bite 9) — `cyrius header` had NO gate. It matched only a column-0 `pub fn `, so a bare
+# `fn` and `public fn` (the same token) never got a prototype, it ignored the file-scope
+# `private` rule, and it read a fixed 64 KiB (every fn past the cut silently dropped, rc=0).
+# Spellings, the private rule and a >64 KiB file; mutation-proven in the gate header.
+_chk_gate "$ROOT/tests/gates/toolchain/header_spellings_and_size.sh"
