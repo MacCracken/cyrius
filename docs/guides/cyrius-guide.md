@@ -2330,29 +2330,25 @@ var global_var = 42;             # Visible to functions above
 var r = get_value();             # r = 42
 ```
 
-**Initialized-globals cap (per compilation unit).** A top-level `var` whose
-initializer is anything other than a bare positive integer literal — a call
-(`var t = alloc(1024);`), an identifier, or an expression — is a *deferred
-initializer*: its RHS runs once, before `main`, and it consumes one slot in the
-compiler's `gvar_toks` table. That table holds **4096** slots (raised from 1024
-at v6.3.41; see the heap-map note in `src/main.cyr`). Exceeding it is a hard
-error, not a silent failure:
+**Deferred initializers — no count cap (6.6.9).** A top-level `var` is baked into
+the image when its initializer folds to a **nonzero** integer constant (`var x = 42;`,
+`var m = 1 << 4;`, `var n = -1;`). Every other top-level `var` — a call
+(`var t = alloc(1024);`), an identifier or other non-constant expression, `= 0`, a
+string literal, a byte-array literal `var b[4] = { … };`, a top-level destructure
+`var a, b = f();` — is a *deferred initializer*: its right-hand side runs once at
+startup, in declaration order. (`= 0` is deferred only
+because the static path reserves 0 for "no value"; the store is redundant and harmless.)
+An uninitialized top-level `var x;` is an error — write `var x = 0;`.
 
-```
-error:<file>:<line>:<col>: too many initialized globals (max 4096)
-```
+Until 6.6.8 deferred initializers were capped at **4096 per compilation unit**
+(`too many initialized globals (max 4096)`), and this section documented the counting
+rule wrongly: `= -1` never counted, while `= 0` and string literals did. Since 6.6.9
+there is no cap; the table grows. Enum members (`enum E { A = 0; B = 1; }`) are
+const-folded at parse time and never were deferred. The limit that remains is the var
+table itself — 1,048,576 globals, enum members and top-level arrays together.
 
-What does **not** count against the 4096:
-
-- **Bare integer-literal initializers** (`var x = 42;`) — these take a
-  static-init fast path (baked into the image), not the deferred table.
-- **Enum members** (`enum E { A = 0; B = 1; }`) — const-folded at parse time.
-  For a large family of compile-time constants, prefer an `enum` over many
-  `var … = <literal>;` decls.
-
-The cap is per *compilation unit* (the whole preprocessed source, including all
-`include`d libraries), so vendoring several dist bundles into one program sums
-their deferred globals — that is what the 4096 ceiling is sized for.
+Compile time is linear in the number of globals (6.6.9): 20,000 globals compile in a
+fraction of a second, where they took about five seconds before.
 
 **Declaring a global twice (6.6.6).** Before the first top-level statement — where
 modules declare their globals — a name declared twice is **one global, and the last
@@ -2703,9 +2699,9 @@ offsets past the params.
 
 - `for` loop step must be simple assignment (`i = i + 1`)
 - Exit codes truncated to 0-255 (Linux limitation)
-- Max 4096 global vars with *non-literal* initializers per compilation unit
-  (raised from 1024 at v6.3.41; integer-literal inits and enum members are free
-  — see **Global Initializers** for the counting rule)
+- At most 1,048,576 globals, enum members and top-level arrays per compilation unit
+  (the var table). The separate 4096 cap on deferred initializers is gone since 6.6.9
+  — see **Global Initializers**
 - **67** builtin/intrinsic names plus the statement keywords are reserved and cannot be used
   as identifiers — `TOKNAME_BUILTIN` in `src/common/util.cyr` is the list; see the
   reserved-word note under **Functions**. (This bullet used to name four of them, which is

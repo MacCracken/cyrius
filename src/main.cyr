@@ -89,9 +89,12 @@
 #                                         CVE-31 cap 128→1024, relocated from 0x19A108 into the freed
 #                                         0x71A000 band (the .27 output_buf gap, below TS@0x800000)
 #   0x721000  file_map_str  [32768]       filename string scratch (v6.1.35: relocated from 0x19D000[4096])
-#   0x729000  gvar_toks     [32768]       4096 deferred global var inits (v6.3.41: relocated+grown
+#   0x729000  gvar_toks     [32768]       first 4096 deferred global var inits (v6.3.41: relocated+grown
 #                                         from 0x198000[8192]=1024 into this reclaimed .27 output_buf
-#                                         gap, below TS@0x800000; the count gvar_cnt stays at 0x19A000)
+#                                         gap, below TS@0x800000; the count gvar_cnt stays at 0x19A000).
+#                                         v6.6.9: holds only the FIRST 4096 — the 4097th moves the table
+#                                         to alloc'd storage, doubling (_gvt/_gv_defer, parse_decl.cyr);
+#                                         the "too many initialized globals (max 4096)" cap is gone.
 #   (0x19A100/0x19A108/0x19D000/0x198000 now FREE — 0x198000 reclaimed by the v6.3.41 gvar_toks move,
 #    the rest by the v6.1.35 file_map move)
 #

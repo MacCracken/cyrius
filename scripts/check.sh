@@ -812,13 +812,12 @@ _chk_gate "$ROOT/tests/gates/frontend/private_does_not_block_own_declaration.sh"
 # asserts the note's lines too: a fix that restored only the warning would pass otherwise.
 _chk_gate "$ROOT/tests/gates/frontend/duplicate_symbol_warning_at_scale.sh"
 
-# 6.6.6 bite 19e: ERR_MSG REPORTS and returns — the three gvar_toks registration sites called
-# it at the cap and then stored anyway, writing past the 4096-entry buffer at 0x729000 and
-# walking toward TS@0x800000. Same shape as bite 2f. The detector is STATIC (the bytes past the
-# buffer are documented free, so a few hundred entries of overflow change nothing observable —
-# measured identical at 4200/6000/10000/20000 globals on both compilers); the behavioural axes
-# pin the diagnostic, the refusal for all three registration shapes, and the 4096 boundary.
-_chk_gate "$ROOT/tests/gates/memory/gvar_toks_cap_guards_the_store.sh"
+# 6.6.9 bite 1: gvar_toks (the deferred-initializer table) GROWS past its 4096-entry region
+# instead of refusing "too many initialized globals" — the 6.6.6 bite-19e cap gate became this
+# acceptance gate: every registration shape past 4096 compiles and runs, a constant
+# redeclaration past 4096 still supersedes, a kernel replay past 4096 stores into the
+# declaration-zone slot, and (statically) every store goes through the one growing path.
+_chk_gate "$ROOT/tests/gates/memory/gvar_toks_grows_past_4096.sh"
 
 # 6.6.6 bite 19d: a global initializer that READS a constant declared below it got 0 on cx and
 # the right value on every other target. cx opts out of the static-init path (its globals live

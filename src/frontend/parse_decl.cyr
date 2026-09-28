@@ -1193,12 +1193,7 @@ fn PARSE_GVAR_ARR(S, noff, sti, ew): i64 {
         # Register for deferred emit. EMIT_GVAR_INITS replays from sti;
         # the replay path detects the `[N] = { ... };` shape and emits
         # store8 calls per byte.
-        if (_gv_tok_full(S) == 0) {   # 6.6.6: the store used to run past the cap error
-            var gc = L64(S + 0x19A000);
-            S64(S + 0x729000 + gc * 8, sti);
-            _gv_ent_set(gc, vc + 1);   # 6.6.6: the slot this entry declared
-            S64(S + 0x19A000, gc + 1);
-        }
+        _gv_defer(S, sti, vc + 1);   # 6.6.6: vc + 1 = the slot this entry declared
     }
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
     STI(S, GTI(S) + 1);
@@ -1465,29 +1460,62 @@ fn _gv_reg8(S, noff, ty, ti): i64 {
 # discarded sink (_gv_target). A computed redeclaration runs in declaration order like every
 # deferred initializer. The flag lives above the 40-bit token index in the gvar_toks entry:
 # bit 40+k = target k of that entry (k = 1, 2 for a destructure's later names).
+#
+# 6.6.9: the entries naming `noff` come from a per-name list built at registration
+# (_gvx_note), not from a scan of every deferred entry. The scan was O(entries) per constant
+# redeclaration, bounded only by the 4096-entry cap this release lifted — past it, a unit of
+# redeclared constants would have been the next quadratic shape. The list records the same
+# names the scan compared (target 0 always; targets 1 and 2 only behind a `,`), so the same
+# bits get set. CHANGELOG [6.6.9]
 fn _gv_supersede(S, noff): i64 {
-    var gc = L64(S + 0x19A000);
-    var gi = 0;
-    while (gi < gc) {
-        var raw = L64(S + 0x729000 + gi * 8);
-        var hit = _gv_entry_hit(S, _gv_tok(raw), noff);
-        if (hit != 0) { S64(S + 0x729000 + gi * 8, raw | (hit << 40)); }
-        gi = gi + 1;
+    if (_gvx_m == 0) { return 0; }
+    var e = _nm_get(S, _gvx_m, noff);
+    while (e != 0) {
+        var v = load64(_gvx_rec + (e - 1) * 8);
+        var a = _gvt(S) + (v >> 2) * 8;
+        S64(a, L64(a) | ((1 << (v & 3)) << 40));
+        e = load64(_gvx_nxt + (e - 1) * 8);
     }
     return 0;
 }
 
-# Which targets of the deferred entry at `sti` (the `var` token) name `noff`, as a bit mask.
-fn _gv_entry_hit(S, sti, noff): i64 {
-    var m = 0;
-    if (STREQ(S, TOKVAL(S, sti + 1), noff) == 1) { m = 1; }
-    if (TOKTYP(S, sti + 2) == 31) {
-        if (STREQ(S, TOKVAL(S, sti + 3), noff) == 1) { m = m | 2; }
-        if (TOKTYP(S, sti + 4) == 31) {
-            if (STREQ(S, TOKVAL(S, sti + 5), noff) == 1) { m = m | 4; }
-        }
+# The per-name list of deferred-entry targets: name -> newest record + 1 (a name map, see
+# _nm_new in parse_types.cyr); record r = entry * 4 + target, chained through _gvx_nxt.
+var _gvx_m = 0;
+var _gvx_rec = 0;
+var _gvx_nxt = 0;
+var _gvx_n = 0;
+var _gvx_cap = 0;
+fn _gvx_grow(): i64 {
+    if (_gvx_cap == 0) {
+        _gvx_m = _nm_new(4096);
+        _gvx_cap = 4096;
+        _gvx_rec = alloc(4096 * 8);
+        _gvx_nxt = alloc(4096 * 8);
+        return 0;
     }
-    return m;
+    _gvx_rec = _grow_one(_gvx_rec, _gvx_cap);
+    _gvx_nxt = _grow_one(_gvx_nxt, _gvx_cap);
+    _gvx_cap = _gvx_cap * 2;
+    return 0;
+}
+fn _gvx_rec1(S, gi, k, noff): i64 {
+    if (_gvx_n >= _gvx_cap) { _gvx_grow(); }
+    var r = _gvx_n;
+    store64(_gvx_rec + r * 8, gi * 4 + k);
+    store64(_gvx_nxt + r * 8, _nm_get(S, _gvx_m, noff));
+    _nm_put(S, _gvx_m, noff, r + 1);
+    _gvx_n = r + 1;
+    return 0;
+}
+# Record the names deferred entry `gi` (at `sti`, the `var` token) assigns.
+fn _gvx_note(S, gi, sti): i64 {
+    _gvx_rec1(S, gi, 0, TOKVAL(S, sti + 1));
+    if (TOKTYP(S, sti + 2) == 31) {
+        _gvx_rec1(S, gi, 1, TOKVAL(S, sti + 3));
+        if (TOKTYP(S, sti + 4) == 31) { _gvx_rec1(S, gi, 2, TOKVAL(S, sti + 5)); }
+    }
+    return 0;
 }
 
 fn _gv_tok(raw): i64 { return raw & ((1 << 40) - 1); }
@@ -1520,18 +1548,19 @@ fn _gv_slvar(S, idx): i64 {
 # land on a LATER declaration of it (a kernel build replays after the top-level program has
 # registered its own globals). Packed as slot+1 in 21-bit fields, target k at bit 21*k
 # (0 = unrecorded -> FINDVAR). Parallel to gvar_toks, allocated on first use.
+# 6.6.9: grown with gvar_toks (2x by alloc + copy), no longer fixed at 4096 entries. A slot
+# field is 21 bits and the var table's hard cap is 2^20 slots, so slot+1 always fits.
 var _gv_ent_base = 0;
-# Past the 4096-entry cap the caller reports the error but does not stop, so an entry beyond
-# it is neither recorded nor read back (the buffer has 4096 slots; the build has failed).
+var _gv_ent_cap = 0;
 fn _gv_ent_set(gc, packed): i64 {
-    if (gc >= 4096) { return 0; }
-    if (_gv_ent_base == 0) { _gv_ent_base = alloc(4096 * 8); }
+    if (_gv_ent_base == 0) { _gv_ent_base = alloc(4096 * 8); _gv_ent_cap = 4096; }
+    if (gc >= _gv_ent_cap) { _gv_ent_base = _grow_one(_gv_ent_base, _gv_ent_cap); _gv_ent_cap = _gv_ent_cap * 2; }
     store64(_gv_ent_base + gc * 8, packed);
     return 0;
 }
 fn _gv_ent_slot(S, gi, k, noff): i64 {
     var w = 0;
-    if (_gv_ent_base != 0) { if (gi < 4096) { w = (load64(_gv_ent_base + gi * 8) >> (21 * k)) & 0x1FFFFF; } }
+    if (gi < _gv_ent_cap) { w = (load64(_gv_ent_base + gi * 8) >> (21 * k)) & 0x1FFFFF; }
     if (w == 0) { return FINDVAR(S, noff); }
     return w - 1;
 }
@@ -1581,21 +1610,33 @@ fn _gv_cx_prestore(S): i64 {
     return 0;
 }
 
-# 6.6.6 bite 19e — THE CAP ERROR REPORTS, IT DOES NOT EXIT.
-#
-# `ERR_MSG` sets `_had_error` and returns (so one run surfaces every violation). The three
-# gvar_toks registration sites read the count, called ERR_MSG when it had reached 4096, and
-# then STORED ANYWAY — and bumped the count, so the next declaration stored one slot further
-# out. gvar_toks is 32768 B at 0x729000, i.e. exactly 4096 entries, so entry 4096 lands on the
-# next region and every later one walks toward TS@0x800000. Measured: 4300 deferred globals
-# print the error once, exit 1, and write ~200 entries past the buffer. Same shape as bite 2f.
-#
-# Returns 1 when the table is full (the error has been reported and the caller must NOT store),
-# 0 when there is room. CHANGELOG [6.6.6]
-fn _gv_tok_full(S): i64 {
-    if (L64(S + 0x19A000) < 4096) { return 0; }
-    ERR_MSG(S, "too many initialized globals (max 4096)", 39);
-    return 1;
+# 6.6.9 — gvar_toks, the deferred-initializer table, GROWS. It was the last fixed table of the
+# var family: 4096 entries at 0x729000, refused past that with "too many initialized globals
+# (max 4096)". The message was wrong about what it counted — every global that does not take
+# the static-init path registers here, which is not only a computed initializer but also a
+# bare `var x;`, `var x = 0;` and a string literal (static init takes a NONZERO constant only,
+# because gvar_initval uses 0 as "no value") — and the cap stood between the filed 20,000-
+# global repro and passing. The region at 0x729000 is still the first 4096 entries (no layout
+# change); the 4097th moves the table to alloc'd storage and it doubles from there, the
+# _grow_one shape. (6.6.6's "the cap error stores anyway" defect has no cap left to overrun.)
+# CHANGELOG [6.6.9]
+var _gvt_base = 0;
+var _gvt_cap = 0;
+fn _gvt(S): i64 {
+    if (_gvt_base == 0) { _gvt_base = S + 0x729000; _gvt_cap = 4096; }
+    return _gvt_base;
+}
+# Register a deferred initializer: `sti` is its `var` token, `packed` the slot(s) it declares
+# (see _gv_ent_set). Every registration site goes through here.
+fn _gv_defer(S, sti, packed): i64 {
+    var gc = L64(S + 0x19A000);
+    var b = _gvt(S);
+    if (gc >= _gvt_cap) { b = _grow_one(b, _gvt_cap); _gvt_base = b; _gvt_cap = _gvt_cap * 2; }
+    S64(b + gc * 8, sti);
+    _gv_ent_set(gc, packed);
+    _gvx_note(S, gc, sti);
+    S64(S + 0x19A000, gc + 1);
+    return 0;
 }
 
 # Skip ONE top-level `var` declaration: consume through the `;` that ENDS it, which is the
@@ -1663,12 +1704,7 @@ fn PARSE_GVAR_REG(S): i64 {
             _pub_pending = _dg_pub;
             dgs3 = _gv_reg8(S, dg3, 0, sti);
         }
-        if (_gv_tok_full(S) == 0) {   # 6.6.6: the store used to run past the cap error
-            var dgg = L64(S + 0x19A000);
-            S64(S + 0x729000 + dgg * 8, sti);
-            _gv_ent_set(dgg, (dgs1 + 1) | ((dgs2 + 1) << 21) | ((dgs3 + 1) << 42));
-            S64(S + 0x19A000, dgg + 1);
-        }
+        _gv_defer(S, sti, (dgs1 + 1) | ((dgs2 + 1) << 21) | ((dgs3 + 1) << 42));
         _skip_gvar_decl(S);   # 6.6.6: through the `;` outside every `{ }` (see there)
         return 0;
     }
@@ -1913,12 +1949,7 @@ fn PARSE_GVAR_REG(S): i64 {
         SLVAR(S, gvi);
     } else {
         # Save token index for deferred init
-        if (_gv_tok_full(S) == 0) {   # 6.6.6: the store used to run past the cap error
-            var gc = L64(S + 0x19A000);
-            S64(S + 0x729000 + gc * 8, sti);
-            _gv_ent_set(gc, gvi + 1);   # 6.6.6: the slot this entry declared
-            S64(S + 0x19A000, gc + 1);
-        }
+        _gv_defer(S, sti, gvi + 1);   # 6.6.6: gvi + 1 = the slot this entry declared
     }
     _skip_gvar_decl(S);   # 6.6.6: through the `;` outside every `{ }` (see there)
     return 0;
@@ -1932,7 +1963,7 @@ fn EMIT_GVAR_INITS(S): i64 {
     var gi = 0;
     while (gi < gc) {
         # 6.6.6: bits 40+ flag a target a later constant declaration superseded (_gv_supersede).
-        var graw = L64(S + 0x729000 + gi * 8);
+        var graw = L64(_gvt(S) + gi * 8);
         var gsup = _gv_sup(graw);
         var sti = _gv_tok(graw);
         STI(S, sti);
