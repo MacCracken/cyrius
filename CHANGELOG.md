@@ -233,6 +233,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Downstream
 
+- **`cyrius run` / `check` / `test` failure lines changed (bite 10).** A compile failure the CLI
+  names itself (a missing file, an unwritable temp) is no longer followed by a second verdict; a
+  compiler rejection reads `error: compile failed (compiler exit N)` (run), `error: <file>
+  (compiler exit N)` (check — now wholly on **stderr**; its name used to go to stdout) and
+  `FAIL: <file>: compile error (compiler exit N)` (test). A script that grepped `(compile error)`
+  or read check's failing file name from stdout must follow. `cyrius self` names a failed step
+  (`error: self-host step N (…) exited R compiling: <src>`) instead of printing `FAIL: cycc!=cycc`
+  for a step that never produced a compiler.
 - **Stdlib-only projects gain a `cyrius.lock` on their next `cyrius deps` / `cyrius build`**
   (41 repos under `~/Repos` have none today) — commit it. **itihas** (`lib/boxed.cyr` unlocked,
   no pin trailer) and **cyrius-bb** (a tracked 0-byte `cyrius.lock` over 53 `lib/` files) fail

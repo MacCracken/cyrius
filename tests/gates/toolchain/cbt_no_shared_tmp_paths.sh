@@ -77,13 +77,15 @@ cat > "$D/lits.awk" <<'AWK'
 }
 AWK
 
-# 0 — self-test.
-cat > "$D/probe.cyr" <<'EOF'
-        str_builder_add_cstr(sb, ";cycc=/tmp/cyr_cc5_$$;ccr=/tmp/cyr_ccr_$$;cc4=/tmp/cyr_cc4_$$;rc=1;");
-    if (c == '"') { x = "/tmp/after_char_lit"; }
-    # It printed "/tmp/cyrius-lsp" — a comment
-    return "/tmp";
-    var y = "a#b"; var z = "/tmp/after_hash_in_string";
+# 0 — self-test. The probe spells the shared root as @T@ and is expanded at run time, so this
+# gate carries no fixed shared-temp path of its own (gates_never_write_tree.sh axis 5).
+TMPROOT=/tmp
+sed "s|@T@|$TMPROOT|g" > "$D/probe.cyr" <<'EOF'
+        str_builder_add_cstr(sb, ";cycc=@T@/cyr_cc5_$$;ccr=@T@/cyr_ccr_$$;cc4=@T@/cyr_cc4_$$;rc=1;");
+    if (c == '"') { x = "@T@/after_char_lit"; }
+    # It printed "@T@/cyrius-lsp" — a comment
+    return "@T@";
+    var y = "a#b"; var z = "@T@/after_hash_in_string";
 EOF
 # Match the LITERAL column only: $D itself usually sits under /tmp.
 PROBE=$(awk -f "$D/lits.awk" "$D/probe.cyr" | awk -F'\t' '$2 ~ /\/tmp\//' | grep -c .)
@@ -168,7 +170,7 @@ if [ ! -s "$D/bin/cycc" ]; then bad "the stub compiler did not build — axes 2-
     "$D/t/cyrius-"*) ok "step 2 ran the staged compiler from the private dir ($STEP2)" ;;
     *) bad "step 2 did not run from the private temp dir under \$TMPDIR (ran: '${STEP2:-nothing}')" ;;
   esac
-  grep -q '/tmp/cyr_' "$D/log" 2>/dev/null && bad "a compiler ran from a shared /tmp/cyr_* name"
+  grep -q "$TMPROOT/cyr_" "$D/log" 2>/dev/null && bad "a compiler ran from a shared \$TMPROOT/cyr_* name"
   tmp_empty "pass"
 fi
 
