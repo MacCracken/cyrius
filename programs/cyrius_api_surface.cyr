@@ -12,8 +12,11 @@
 # Direct usage:
 #   cyrius_api_surface [--update] [--snapshot=PATH]
 #
-# What counts as "public": any `fn NAME(args)` not prefixed with
-# `_`. Conventions:
+# What counts as "public": any `fn NAME(args)` (also `pub fn` / `public fn`,
+# and a parameter list that wraps across lines) not prefixed with `_`, plus
+# the fns a `#derive(...)` emits (see _scan_derive_decl). In a file that
+# opens with a top-level `private`, only `public` / `pub` items count.
+# Conventions:
 #   - `_*` underscore prefix = private by convention; excluded
 #   - struct types, enums, top-level vars: NOT tracked here
 #     (separate concern; could be added later if a consumer
@@ -210,105 +213,244 @@ fn _push_synthesized(module_off, module_len,
     return 0;
 }
 
-# v5.9.9: scan a `struct <name> { <fields> }` definition starting
-# at `start_pos` (where `struct ` keyword begins, AFTER any
-# whitespace already trimmed by the caller). For each field,
-# emit synthesized accessor fn entries based on the pending
-# derive flags. Returns the position past the closing `}`.
-#
-# Pre-v5.9.9 the api-surface scanner walked `^fn name(...)`
-# declarations only — `#derive(accessors)` and
-# `#derive(Serialize)` emit public callable fns at compile time
-# that this scanner never saw. agnosys 1.0.11 surfaced the gap
-# (335 entries vs the awk-walker's 721; 386-entry delta = the
-# count of derive-emitted accessor pairs).
-fn _scan_derive_struct(filebuf, filelen, module_off, module_len,
-  struct_pos, want_accessors, want_serialize) {
-    var p = struct_pos + 7;   # skip "struct "
-    while (p < filelen) {
-        var c = load8(filebuf + p);
-        if (c != 32) { if (c != 9) { break; } }
-        p = p + 1;
-    }
-    var name_start = p;
-    while (p < filelen) {
-        if (_is_idcont(load8(filebuf + p)) == 0) { break; }
-        p = p + 1;
-    }
-    var name_end = p;
-    var sn_off = filebuf + name_start;
-    var sn_len = name_end - name_start;
+# ---------------------------------------------------------------------------------------
+# 6.6.8 — THE `#derive` SURFACE MIRRORS THE COMPILER'S EMITTER (src/frontend/lex_pp.cyr).
+# This used to be a hand-kept approximation that had drifted on every axis: `_to_json` at
+# arity 1 (the emitter has taken `(ptr, sb)` since v5.9.31), no `_from_json_str`,
+# `#derive(Deserialize)` not recognised at all (and, stacked above `#derive(accessors)`,
+# silently dropping the codecs), `public struct` / `pub struct` and `enum` targets
+# unrecognised, the field list a "skip to the next `;`" scan (a no-`;` body collapsed to one
+# field), and file-private visibility ignored — so in a `private` file it LISTED the plain
+# struct's fns the compiler makes private and OMITTED a `public struct`'s. Every rule below
+# names the compiler function it copies; tests/gates/toolchain/api_surface_derive_matches_emitter.sh
+# checks the result against what the compiler actually emits (names, arity, visibility).
+# CHANGELOG [6.6.8]
+# ---------------------------------------------------------------------------------------
 
-    while (p < filelen) {
-        if (load8(filebuf + p) == 123) { break; }   # '{'
-        p = p + 1;
-    }
-    if (p >= filelen) { return p; }
-    p = p + 1;   # past '{'
+var _asf_file_private = 0;   # v6.5.0: this file opened with a top-level `private`
+var _asf_saw_public = 0;     # v6.5.0: a `public` moniker is pending on the next fn
 
-    # Serialize-derived: <name>_to_json/1 + <name>_from_json/1.
-    # Mirrors PP_DERIVE_SERIALIZE in src/frontend/lex_pp.cyr.
-    if (want_serialize == 1) {
-        _push_synthesized(module_off, module_len, sn_off, sn_len,
-          "_to_json",   0, 0, 1);
-        _push_synthesized(module_off, module_len, sn_off, sn_len,
-          "_from_json", 0, 0, 1);
-    }
+var _asf_stop = 0;   # the body walk stopped on a shape the grammar does not have
 
-    # Walk fields until `}`. Each field is <name> or
-    # <name>: <type>; whitespace and `# comment` lines skipped.
-    while (p < filelen) {
-        var c2 = load8(filebuf + p);
-        if (c2 == 32) { p = p + 1; }
-        else { if (c2 == 9)  { p = p + 1; }
-            else { if (c2 == 10) { p = p + 1; }
-                else { if (c2 == 13) { p = p + 1; }
-                    else { if (c2 == 35) {           # '#' — skip to EOL
-                            while (p < filelen) {
-                                if (load8(filebuf + p) == 10) { break; }
-                                p = p + 1;
-                            }
-                        }
-                        else { if (c2 == 125) { p = p + 1; return p; }   # '}'
-                            else {
-                                if (_is_idstart(c2) == 1) {
-                                    var fn_start = p;
-                                    p = _scan_id(filebuf, p, filelen);
-                                    var fn_end = p;
-                                    if (want_accessors == 1) {
-                                        _push_synthesized(module_off, module_len,
-                                          sn_off, sn_len, "_",
-                                          filebuf + fn_start, fn_end - fn_start, 1);
-                                        _push_synthesized(module_off, module_len,
-                                          sn_off, sn_len, "_set_",
-                                          filebuf + fn_start, fn_end - fn_start, 2);
-                                    }
-                                    # Skip until `;` or `}` (handles `<name>: <type>`).
-                                    while (p < filelen) {
-                                        var c3 = load8(filebuf + p);
-                                        if (c3 == 59) { p = p + 1; break; }
-                                        if (c3 == 125) { break; }
-                                        p = p + 1;
-                                    }
-                                } else {
-                                    p = p + 1;
-                                }
-                            }
-                        } } } } }
+# 1 iff `c` is a space or a tab (PP_DBLANK).
+fn _asf_blank(c): i64 {
+    if (c == 32 || c == 9) { return 1; }
+    return 0;
+}
+
+# Skip trivia in [p, end): blanks, CR, LF and a `#` comment to its line end (PP_DTRIV).
+fn _asf_triv(b, p, end): i64 {
+    while (p < end) {
+        var c = load8(b + p);
+        if (c == 35) {
+            while (p < end) { if (load8(b + p) == 10) { break; } p = p + 1; }
+        }
+        elif (_asf_blank(c) == 1 || c == 10 || c == 13) { p = p + 1; }
+        else { return p; }
     }
     return p;
 }
 
-var _asf_file_private = 0;   # v6.5.0: this file opened with a top-level `private`
-var _asf_saw_public = 0;     # v6.5.0: a `public` moniker is pending on the next fn
+# Past the identifier at p.
+fn _asf_ident(b, p, end): i64 {
+    while (p < end) { if (_is_idcont(load8(b + p)) == 0) { return p; } p = p + 1; }
+    return p;
+}
+
+# A field type after `:` — ident, optionally `<` ident `>` (PP_DTYPE).
+fn _asf_type(b, p, end): i64 {
+    p = _asf_triv(b, p, end);
+    if (p >= end) { _asf_stop = 1; return end; }
+    if (_is_idstart(load8(b + p)) == 0) { _asf_stop = 1; return end; }
+    p = _asf_ident(b, p, end);
+    var q = _asf_triv(b, p, end);
+    if (q >= end) { return p; }
+    if (load8(b + q) != 60) { return p; }
+    q = _asf_triv(b, q + 1, end);
+    if (q >= end) { _asf_stop = 1; return end; }
+    if (_is_idstart(load8(b + q)) == 0) { _asf_stop = 1; return end; }
+    q = _asf_triv(b, _asf_ident(b, q, end), end);
+    if (q >= end) { _asf_stop = 1; return end; }
+    if (load8(b + q) != 62) { _asf_stop = 1; return end; }
+    return q + 1;
+}
+
+# An enum member's value after `=` — optional `-`, then a number / identifier or a char
+# literal (PP_DVALUE).
+fn _asf_value(b, p, end): i64 {
+    p = _asf_triv(b, p, end);
+    if (p < end) { if (load8(b + p) == 45) { p = _asf_triv(b, p + 1, end); } }
+    if (p >= end) { _asf_stop = 1; return end; }
+    if (load8(b + p) == 39) {
+        p = p + 1;
+        if (p < end) { if (load8(b + p) == 92) { p = p + 1; } }
+        p = p + 1;
+        if (p >= end) { _asf_stop = 1; return end; }
+        if (load8(b + p) != 39) { _asf_stop = 1; return end; }
+        return p + 1;
+    }
+    var q = _asf_ident(b, p, end);
+    if (q == p) { _asf_stop = 1; return end; }
+    return q;
+}
+
+# Everything after a field's name: `: Type`, for an enum member `= value`, then at most one
+# `;` or `,` (PP_DFIELD_TAIL). An enum payload `(` is refused by the compiler: stop.
+fn _asf_tail(b, p, end, is_enum): i64 {
+    p = _asf_triv(b, p, end);
+    if (p < end) { if (load8(b + p) == 58) { p = _asf_triv(b, _asf_type(b, p + 1, end), end); } }
+    if (is_enum == 1 && p < end) {
+        if (load8(b + p) == 40) { _asf_stop = 1; return end; }
+        if (load8(b + p) == 61) { p = _asf_triv(b, _asf_value(b, p + 1, end), end); }
+    }
+    if (p >= end) { return p; }
+    var c = load8(b + p);
+    if (c == 59 || c == 44) { return p + 1; }
+    if (_is_idstart(c) == 0) { _asf_stop = 1; return end; }
+    return p;
+}
+
+# The lexical state after byte `c` in state `st` — PP_LEXST: 0 code, 1 string, 2 after `\` in
+# a string, 3 `#` comment, 4 char literal, 5 after `\` in a char literal.
+fn _asf_lexst(st, c): i64 {
+    if (st == 2) { return 1; }
+    if (st == 5) { if (c == 10) { return 0; } return 4; }
+    if (st == 1) { if (c == 92) { return 2; } if (c == 34) { return 0; } return 1; }
+    if (st == 3) { if (c == 10) { return 0; } return 3; }
+    if (st == 4) { if (c == 92) { return 5; } if (c == 10 || c == 39) { return 0; } return 4; }
+    if (c == 35) { return 3; }
+    if (c == 34) { return 1; }
+    if (c == 39) { return 4; }
+    return 0;
+}
+
+# The `}` closing the body whose `{` is at `open` — braces in comments and char literals do
+# not count (PP_PARSE_STRUCT_DEF's copy loop). -1 when unterminated.
+fn _asf_body_close(b, open, n): i64 {
+    var depth = 0;
+    var st = 0;
+    var p = open;
+    while (p < n) {
+        var c = load8(b + p);
+        if (st == 0) {
+            if (c == 123) { depth = depth + 1; }
+            if (c == 125) { depth = depth - 1; if (depth == 0) { return p; } }
+        }
+        st = _asf_lexst(st, c);
+        p = p + 1;
+    }
+    return 0 - 1;
+}
+
+# 1 iff `lit` (length k) sits at p followed by a blank.
+fn _asf_kw(b, p, n, lit, k): i64 {
+    if (p + k >= n) { return 0; }
+    if (memeq(b + p, lit, k) == 0) { return 0; }
+    return _asf_blank(load8(b + p + k));
+}
+
+# The declaration a `#derive` block sits on, at `p` (its first byte). `first` is the ENTRY
+# directive (the first `#derive` line: 1 Serialize, 2 Deserialize, 4 accessors) and
+# `stacked` the OR of the ones below it. Returns the position after the body's `}`, or -1
+# when the declaration is not one the compiler accepts (it refuses the build).
+#
+# Which families are emitted is the ENTRY handler's rule (PP_DERIVE_SERIALIZE / _DESER /
+# _ACCESSORS): the codecs for a Serialize or Deserialize entry, or an accessors entry with
+# Serialize stacked; the accessors for an accessors entry, or any entry with accessors
+# stacked. ⚠ An accessors entry IGNORES a stacked Deserialize — `#derive(accessors)` above
+# `#derive(Deserialize)` emits no codecs, while the reverse order does. That is the
+# compiler's behaviour today and this mirrors it; the gate goes red when the two differ.
+fn _scan_derive_decl(b, n, module_off, module_len, p, first, stacked) {
+    var is_public = 0;
+    if (_asf_kw(b, p, n, "public", 6) == 1) { is_public = 1; p = _asf_triv(b, p + 7, n); }
+    elif (_asf_kw(b, p, n, "pub", 3) == 1) { is_public = 1; p = _asf_triv(b, p + 4, n); }
+    var is_enum = 0;
+    if (_asf_kw(b, p, n, "struct", 6) == 1) { p = p + 7; }
+    elif (_asf_kw(b, p, n, "enum", 4) == 1) { p = p + 5; is_enum = 1; }
+    else { return 0 - 1; }
+    p = _asf_triv(b, p, n);
+    var name = p;
+    p = _asf_ident(b, p, n);
+    var nlen = p - name;
+    if (nlen == 0) { return 0 - 1; }
+    # PP_DERIVE_HEADER: an enum's optional `: stack`, then the `{`.
+    p = _asf_triv(b, p, n);
+    if (is_enum == 1 && p < n) {
+        if (load8(b + p) == 58) { p = _asf_triv(b, _asf_ident(b, _asf_triv(b, p + 1, n), n), n); }
+    }
+    if (p >= n) { return 0 - 1; }
+    if (load8(b + p) != 123) { return 0 - 1; }
+    var close = _asf_body_close(b, p, n);
+    if (close < 0) { return 0 - 1; }
+    # In a `private` file only a `public` declaration's generated fns are public (the
+    # emitters prefix `public ` exactly when `_pp_decl_public` is set).
+    if (_asf_file_private == 1 && is_public == 0) { return close + 1; }
+    var codecs = 0;
+    if (first == 1 || first == 2) { codecs = 1; }
+    if (first == 4 && (stacked & 1) != 0) { codecs = 1; }
+    var acc = 0;
+    if (first == 4 || (stacked & 4) != 0) { acc = 1; }
+    if (codecs == 1) {
+        # PP_DERIVE_SERIALIZE_BODY: `_to_json(ptr, sb)`, `_from_json(pairs)`,
+        # `_from_json_str(json)`; an enum (PP_DERIVE_ENUM_BODY) has no pairs form.
+        _push_synthesized(module_off, module_len, b + name, nlen, "_to_json", 0, 0, 2);
+        if (is_enum == 0) { _push_synthesized(module_off, module_len, b + name, nlen, "_from_json", 0, 0, 1); }
+        _push_synthesized(module_off, module_len, b + name, nlen, "_from_json_str", 0, 0, 1);
+    }
+    if (acc == 1) {
+        # PP_DERIVE_FIELDS: identifiers and trivia, token by token; a shape it does not know
+        # stops the walk (the parser then rejects the build).
+        _asf_stop = 0;
+        var q = _asf_triv(b, p + 1, close);
+        while (q < close && _asf_stop == 0) {
+            if (_is_idstart(load8(b + q)) == 0) { break; }
+            var fe = _asf_ident(b, q, close);
+            _push_synthesized(module_off, module_len, b + name, nlen, "_", b + q, fe - q, 1);
+            _push_synthesized(module_off, module_len, b + name, nlen, "_set_", b + q, fe - q, 2);
+            q = _asf_triv(b, _asf_tail(b, fe, close, is_enum), close);
+        }
+    }
+    return close + 1;
+}
+
+# The arity of the parameter list opening at `paren` — commas at depth 1, `#` comments
+# skipped — which may run across LINES. -1 when it never closes.
+# 6.6.8 — the scan used to require the `)` on the `fn` line, so every wrapped signature
+# (37 in this tree's own lib/, e.g. sandhi_h2_request_send) was silently NOT public surface,
+# and removed_symbol_census.sh, keyed on this snapshot, could not see them. CHANGELOG [6.6.8]
+fn _asf_arity(b, paren, n): i64 {
+    var p = paren + 1;
+    var depth = 1;
+    var commas = 0;
+    var has_arg = 0;
+    while (p < n) {
+        var c = load8(b + p);
+        if (c == 35) {
+            while (p < n) { if (load8(b + p) == 10) { break; } p = p + 1; }
+        } else {
+            if (c == 40 || c == 91) { depth = depth + 1; }
+            if (c == 41 || c == 93) {
+                depth = depth - 1;
+                if (depth == 0) {
+                    if (has_arg == 0) { return 0; }
+                    return commas + 1;
+                }
+            }
+            if (c == 44 && depth == 1) { commas = commas + 1; }
+            if (_asf_blank(c) == 0 && c != 10 && c != 13) { has_arg = 1; }
+            p = p + 1;
+        }
+    }
+    return 0 - 1;
+}
 
 fn _scan_file(filebuf, filelen, module_off, module_len) {
     _asf_file_private = 0;
     _asf_saw_public = 0;
     var pos = 0;
     var depth = 0;
-    var pending_accessors = 0;
-    var pending_serialize = 0;
+    var d_first = 0;     # the pending `#derive` block's ENTRY directive (1/2/4), 0 = none
+    var d_stacked = 0;   # the directives stacked below it
     while (pos < filelen) {
         var line_start = pos;
         var eol = pos;
@@ -319,72 +461,45 @@ fn _scan_file(filebuf, filelen, module_off, module_len) {
         var p = line_start;
         while (p < eol) {
             var c = load8(filebuf + p);
-            if (c != 32) { if (c != 9) { break; } }
+            if (c != 32) { if (c != 9) { if (c != 13) { break; } } }
             p = p + 1;
         }
         if (depth == 0) {
-            # v5.9.9: `#derive(accessors)` / `#derive(Serialize)`
-            # detection. Sets pending flag(s); the next struct
-            # decl consumes them and emits synthesized accessors.
-            # Comment / blank lines between the derive line and
-            # the struct line are tolerated; any other non-derive
-            # line resets the pending flags.
-            # v6.6.6 — the name must END at the `)` (_api_derive_bound),
-            # the same word boundary ISDERIVE took in the compiler. Without
-            # it `#derive(accessors)x note` — a COMMENT — armed the pending
-            # flag here and this surface listed accessors no build emits.
-            # CHANGELOG [6.6.6]
-            if (eol - p >= 18) {
-                if (memeq(filebuf + p, "#derive(accessors)", 18) == 1) {
-                    if (_api_derive_bound(filebuf, p + 18, eol) == 1) {
-                        pending_accessors = 1;
-                        pos = eol + 1;
-                        continue;
-                    }
-                }
-            }
+            # A `#derive(...)` line (ISDERIVE / ISDERIVE_DE / ISDERIVE_ACC, at the first
+            # non-blank, with the v6.6.6 word boundary — see _api_derive_bound). The FIRST one
+            # is the entry; the rest are stacked flags (PP_DERIVE_SKIPDIRS / PP_DERIVE_FLAG).
+            var dflag = 0;
             if (eol - p >= 18) {
                 if (memeq(filebuf + p, "#derive(Serialize)", 18) == 1) {
-                    if (_api_derive_bound(filebuf, p + 18, eol) == 1) {
-                        pending_serialize = 1;
-                        pos = eol + 1;
-                        continue;
-                    }
+                    if (_api_derive_bound(filebuf, p + 18, eol) == 1) { dflag = 1; }
+                }
+                if (memeq(filebuf + p, "#derive(accessors)", 18) == 1) {
+                    if (_api_derive_bound(filebuf, p + 18, eol) == 1) { dflag = 4; }
                 }
             }
-            if (pending_accessors == 1 || pending_serialize == 1) {
-                if (p + 7 <= eol) {
-                    if (memeq(filebuf + p, "struct ", 7) == 1) {
-                        # Consume the struct + emit synthesized
-                        # accessor fns. Update pos to past `}`,
-                        # then continue the outer loop's depth-
-                        # tracking scan from there.
-                        var post = _scan_derive_struct(
-                          filebuf, filelen,
-                          module_off, module_len,
-                          p, pending_accessors, pending_serialize);
-                        pending_accessors = 0;
-                        pending_serialize = 0;
-                        pos = post;
-                        # The struct's own `{...}` was consumed by
-                        # _scan_derive_struct; depth tracking is
-                        # already balanced (we walked the same
-                        # bytes the depth tracker would have).
-                        continue;
-                    }
+            if (eol - p >= 20) {
+                if (memeq(filebuf + p, "#derive(Deserialize)", 20) == 1) {
+                    if (_api_derive_bound(filebuf, p + 20, eol) == 1) { dflag = 2; }
                 }
-                # Comment / blank line — keep pending flags.
-                if (p == eol) {
-                    pos = eol + 1;
+            }
+            if (dflag != 0) {
+                if (d_first == 0) { d_first = dflag; } else { d_stacked = d_stacked | dflag; }
+                pos = eol + 1;
+                continue;
+            }
+            if (d_first != 0) {
+                # Blank and `#` lines between the directives and the declaration are skipped.
+                if (p == eol) { pos = eol + 1; continue; }
+                if (load8(filebuf + p) == 35) { pos = eol + 1; continue; }
+                var post = _scan_derive_decl(filebuf, filelen, module_off, module_len,
+                  p, d_first, d_stacked);
+                d_first = 0;
+                d_stacked = 0;
+                if (post >= 0) {
+                    # The declaration's own braces were consumed here; resume after its `}`.
+                    pos = post;
                     continue;
                 }
-                if (load8(filebuf + p) == 35) {   # '#' comment
-                    pos = eol + 1;
-                    continue;
-                }
-                # Anything else resets the pending flags.
-                pending_accessors = 0;
-                pending_serialize = 0;
             }
             if (p + 3 <= eol) {
                 # v6.5.0 — the snapshot is now VISIBILITY-DERIVED, not convention-
@@ -396,9 +511,19 @@ fn _scan_file(filebuf, filelen, module_off, module_len) {
                 # Without this the tool reads `public fn foo()` as no longer matching
                 # `^fn `, i.e. as a REMOVED public fn — it reported 9 false BREAKING
                 # removals the moment lib/regex.cyr adopted the feature.
-                if (memeq(filebuf + p, "public ", 7) == 1) { p = p + 7; _asf_saw_public = 1; }
-                if (memeq(filebuf + p, "private", 7) == 1) {
-                    if (eol - p <= 8) { _asf_file_private = 1; }
+                # 6.6.8 — `pub` is the same token (73) and was not stepped over, so every
+                # `pub fn` was invisible (322 in lib/yukti.cyr). CHANGELOG [6.6.8]
+                if (_asf_kw(filebuf, p, eol + 1, "public", 6) == 1) {
+                    p = p + 7; _asf_saw_public = 1;
+                    while (p < eol) { if (_asf_blank(load8(filebuf + p)) == 0) { break; } p = p + 1; }
+                } elif (_asf_kw(filebuf, p, eol + 1, "pub", 3) == 1) {
+                    p = p + 4; _asf_saw_public = 1;
+                    while (p < eol) { if (_asf_blank(load8(filebuf + p)) == 0) { break; } p = p + 1; }
+                }
+                if (p + 7 <= eol) {
+                    if (memeq(filebuf + p, "private", 7) == 1) {
+                        if (eol - p <= 8) { _asf_file_private = 1; }
+                    }
                 }
                 # In a private-by-default file, a fn WITHOUT the `public` moniker is
                 # not API surface. Suppress it by nudging `p` so the `fn ` match below
@@ -409,13 +534,11 @@ fn _scan_file(filebuf, filelen, module_off, module_len) {
                 # `depth == 0` guard. That is exactly what happened on the first cut —
                 # lib/regex.cyr emitted only its first public fn and the tool reported
                 # the other 8 as BREAKING removals.
-                if (_asf_file_private == 1) {
-                    if (_asf_saw_public == 0) {
-                        if (memeq(filebuf + p, "fn ", 3) == 1) { p = p + 1; }
-                    }
-                }
+                var is_fn = 0;
+                if (p + 3 <= eol) { if (memeq(filebuf + p, "fn ", 3) == 1) { is_fn = 1; } }
+                if (_asf_file_private == 1 && _asf_saw_public == 0) { is_fn = 0; }
                 _asf_saw_public = 0;
-                if (memeq(filebuf + p, "fn ", 3) == 1) {
+                if (is_fn == 1) {
                     var np = p + 3;
                     while (np < eol) {
                         var c2 = load8(filebuf + np);
@@ -432,28 +555,8 @@ fn _scan_file(filebuf, filelen, module_off, module_len) {
                                     paren = paren + 1;
                                 }
                                 if (paren < eol) {
-                                    var rparen = paren + 1;
-                                    while (rparen < eol) {
-                                        if (load8(filebuf + rparen) == 41) { break; }
-                                        rparen = rparen + 1;
-                                    }
-                                    if (rparen < eol) {
-                                        var arity = 0;
-                                        var has_arg = 0;
-                                        var ai = paren + 1;
-                                        while (ai < rparen) {
-                                            var c3 = load8(filebuf + ai);
-                                            if (c3 != 32) { if (c3 != 9) { has_arg = 1; ai = rparen; } }
-                                            ai = ai + 1;
-                                        }
-                                        if (has_arg == 1) {
-                                            arity = 1;
-                                            var ci = paren + 1;
-                                            while (ci < rparen) {
-                                                if (load8(filebuf + ci) == 44) { arity = arity + 1; }
-                                                ci = ci + 1;
-                                            }
-                                        }
+                                    var arity = _asf_arity(filebuf, paren, filelen);
+                                    if (arity >= 0) {
                                         _push_entry(module_off, module_len,
                                           filebuf + np, name_end - np, arity);
                                     }

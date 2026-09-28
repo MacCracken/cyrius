@@ -25,6 +25,40 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `tests/gates/toolchain/cyaudit_include_directives.sh` asks the COMPILER what an include is (a
   commented / in-string include of a missing file compiles, the same text in column 0 does not);
   8 mutations each RED, and the 6.6.7 cyaudit fails 12 of its 26 checks.
+- **`cyrius api-surface` lists exactly the public fns the compiler emits — the `#derive` families by
+  name, arity and visibility, every `pub fn`, and signatures that wrap across lines.** (bite 10;
+  [agnodrm: api-surface derive(Serialize) arity](docs/development/issues/archived/2026-09-22-agnodrm-api-surface-derive-serialize-arity.md).)
+  **Root cause:** `programs/cyrius_api_surface.cyr` re-implemented the derive emission by hand and
+  nothing checked it against `src/frontend/lex_pp.cyr`, so it had drifted on every axis: `_to_json`
+  listed at arity 1 (the emitter has taken `(ptr, sb)` since v5.9.31), `_from_json_str` never
+  listed, `#derive(Deserialize)` not recognised (stacked above `#derive(accessors)` it dropped the
+  codecs), `public struct` / `pub struct` and `enum` targets ignored, the field list a
+  skip-to-the-next-`;` scan, and file-private visibility ignored — in a `private` file it listed a
+  plain struct's fns the compiler makes private and omitted a `public struct`'s. agnodrm's
+  hand-roll → `#derive(Serialize)` migration read as `BREAKING … _to_json/2 removed`. The same
+  scanner never stepped over `pub` (322 `pub fn`s in `lib/yukti.cyr` invisible) and required a
+  signature's `)` on the `fn` line (37 wrapped signatures in this tree's `lib/` invisible — and so
+  invisible to `removed_symbol_census.sh`, which is keyed on this snapshot). **Fix:** the derive
+  surface mirrors the emitter rule by rule — the ENTRY directive picks the families as
+  `PP_DERIVE_SERIALIZE` / `_DESER` / `_ACCESSORS` do, the body is walked with the 6.6.7
+  `PP_DERIVE_FIELDS` grammar (trivia, `: Type`, `Vec<T>`, enum `= value`, optional `;`/`,`), the
+  body's `}` is found with the `PP_LEXST` state, and a non-`public` declaration in a `private`
+  file contributes nothing; `pub` is stepped over like `public`; arity counts depth-1 commas across
+  lines with `#` comments skipped. New gate `tests/gates/toolchain/api_surface_derive_matches_emitter.sh`
+  uses the COMPILER as the oracle: a fixture of every derive kind × {plain, public, pub,
+  private-file, enum, `: stack`, stacked both ways, gaps, no separators, tabs, comments and braces
+  in the body} is compiled with `CYRIUS_DCE_VERBOSE=1`; every listed fn must be emitted, every
+  emitted-but-unlisted fn must be refused as `private to its file`, and one program calling every
+  listed fn at its listed arity from another file must compile clean. 13 mutations, each RED; the
+  6.6.7 tool fails 5 of its 12 checks. `docs/api-surface.snapshot` gains 360 entries (yukti's
+  `pub fn`s, the wrapped signatures, `sigil::ima_status_from_json_str/1`) and
+  `sigil::ima_status_to_json` moves from `/1` to `/2`.
+  ⚠ **Consumers that gate on `cyrius api-surface` run `cyrius api-surface --update` once after
+  moving to 6.6.8** (agnostik: 7 derived `_to_json/1` entries become `/2`, plus the added
+  `_from_json_str`); no source change is needed.
+  ⚠ Mirrored as the compiler does it TODAY: `#derive(accessors)` above `#derive(Deserialize)`
+  emits no codecs (the reverse order does) — reported separately; the gate turns red if the two
+  ever differ.
 - **cyrlint's error-enum rule decides "is this sakshi?" by what the file IS, not by how its path
   is spelled.** (bite 10; [sakshi: err-enum lint owner matched by path spelling](docs/development/issues/archived/2026-09-23-sakshi-err-enum-lint-owner-matched-by-path-spelling.md).)
   **Root cause:** `_lint_path_is_err_owner` substring-matched `sakshi` against the path exactly

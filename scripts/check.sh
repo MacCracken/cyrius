@@ -1232,3 +1232,9 @@ _chk_gate "$ROOT/tests/gates/toolchain/version_bump_doc_anchors.sh"
 # a path judged by COMPONENT (`lib/../../x` was trusted by vet and passed deny). The compiler is
 # the oracle for what an include is; mutation-proven in the header.
 _chk_gate "$ROOT/tests/gates/toolchain/cyaudit_include_directives.sh"
+
+# 6.6.8 (bite 10) — `cyrius api-surface` lists exactly what the COMPILER emits: the `#derive`
+# families by name, arity (`_to_json` is `(ptr, sb)`) and visibility (a `private` file), plus
+# `pub fn` and wrapped signatures. The oracle is the compiler's own emission, both ways (every
+# listed fn is callable at its arity from another file; every omitted one is private).
+_chk_gate "$ROOT/tests/gates/toolchain/api_surface_derive_matches_emitter.sh"
