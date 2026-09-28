@@ -71,8 +71,9 @@ fn _f64_exp_polyfill(x): i64 {
     # reasons — patching only the subtraction would still be wrong.
     #   1. The reduction computes `x - round(x*log2e)*ln2`, i.e. inf - inf = NaN, and every
     #      Horner term downstream inherits it.
-    #   2. The 2^n bit-pack reads `f64_to(inf)`, which SATURATES to i64::MIN, so
-    #      `(n_int + 1023) << 52` is not an exponent at all.
+    #   2. The 2^n bit-pack reads `f64_to(inf)`, which SATURATES (INT64_MAX for +inf,
+    #      INT64_MIN for -inf — the same on every target since 6.6.8; x86 used to give
+    #      INT64_MIN for both), so `(n_int + 1023) << 52` is not an exponent at all.
     # C and IEEE-754: exp(+inf) = +inf, exp(-inf) = +0. NaN needs no guard — it propagates
     # correctly through the reduction on its own. Filed 2026-09-08 from ganita's P(-1) audit,
     # where sinh(+inf)/cosh(±inf) came back NaN and the consumer could not tell whose bug it

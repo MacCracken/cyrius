@@ -9,7 +9,28 @@ fn EF64SUB(S): i64 { EB(S, 0xF2); EB(S, 0x0F); EB(S, 0x5C); EB(S, 0xC1); return 
 fn EF64MUL(S): i64 { EB(S, 0xF2); EB(S, 0x0F); EB(S, 0x59); EB(S, 0xC1); return 0; }
 fn EF64DIV(S): i64 { EB(S, 0xF2); EB(S, 0x0F); EB(S, 0x5E); EB(S, 0xC1); return 0; }
 fn EI2F(S): i64 { EB(S, 0xF2); EB(S, 0x48); EB(S, 0x0F); EB(S, 0x2A); EB(S, 0xC0); return 0; }
-fn EF2I(S): i64 { EB(S, 0xF2); EB(S, 0x48); EB(S, 0x0F); EB(S, 0x2C); EB(S, 0xC0); return 0; }
+# EF2I — f64 (xmm0) → i64 (rax), truncating, with aarch64 FCVTZS's out-of-range rule:
+# NaN → 0, x ≥ 2^63 → INT64_MAX, x < -2^63 → INT64_MIN. Bare `cvttsd2si` returns the
+# "integer indefinite" 0x8000000000000000 for ALL THREE, so f64_to(NaN) and f64_to(+inf)
+# were INT64_MIN on x86 and 0 / INT64_MAX on aarch64 — and the math polyfills' quadrant
+# (`f64_to(k) & 3`) and 2^n exponent pack inherited whichever the target gave. The fixup is
+# branchless (no jump for a byte pass to mis-patch) and clobbers only rcx, xmm1 and flags:
+#   ucomisd xmm0, 0 → seta cl (x > 0, ordered) ; NaN (PF) takes rcx = 0 ;
+#   rax -= (x > 0) & sign(rax) — only a POSITIVE overflow is both, and MIN - 1 is MAX.
+# CHANGELOG [6.6.8]
+fn EF2I(S): i64 {
+    _EBN(S, 0xC02C0F48F2, 5);           # cvttsd2si rax, xmm0
+    EXORPD_X1(S);                       # xorpd xmm1, xmm1
+    EUCOMISD(S);                        # ucomisd xmm0, xmm1
+    _EBN(S, 0xC1970F, 3);               # seta cl
+    _EBN(S, 0xC9B60F, 3);               # movzx ecx, cl
+    _EBN(S, 0xC14A0F48, 4);             # cmovp rax, rcx     (NaN → 0)
+    _EBN(S, 0x3FE1C148, 4);             # shl rcx, 63
+    _EBN(S, 0xC12148, 3);               # and rcx, rax
+    _EBN(S, 0x3FE9C148, 4);             # shr rcx, 63
+    _EBN(S, 0xC82948, 3);               # sub rax, rcx       (MIN - 1 = MAX)
+    return 0;
+}
 fn EUCOMISD(S): i64 { EB(S, 0x66); EB(S, 0x0F); EB(S, 0x2E); EB(S, 0xC1); return 0; }
 fn EXORPD_X1(S): i64 { EB(S, 0x66); EB(S, 0x0F); EB(S, 0x57); EB(S, 0xC9); return 0; }
 

@@ -5,7 +5,7 @@
 # ⛔ WHY THIS EXISTS. Both implementations range-reduce by SUBTRACTING a multiple of the argument
 # from itself — `x - round(x*log2e)*ln2` — which for ±inf is `inf - inf`, i.e. NaN, and every
 # term downstream inherits it. There is a SECOND, independent break in the same function: the
-# `2^n` bit-pack reads `f64_to(inf)`, which SATURATES to i64::MIN, so `(n + 1023) << 52` is not
+# `2^n` bit-pack reads `f64_to(inf)`, which SATURATES (i64::MAX for +inf; x86 gave i64::MIN before 6.6.8), so `(n + 1023) << 52` is not
 # an exponent at all. Any fix has to guard BEFORE the reduction, not patch the subtraction.
 #
 # ⚠ IT WAS BROKEN ON BOTH PATHS, WHICH IS WHY THE GATE TESTS BOTH. The aarch64 polyfills
