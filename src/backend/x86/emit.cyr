@@ -3411,16 +3411,46 @@ fn _EF64_EXPINF_GUARD(S): i64 {
     return (g_d1 << 32) | g_d2;
 }
 
+# PE only: run the x87 exp/exp2 sequence at 64-bit precision control.
+# ⛔ Windows x64 starts every thread with the x87 control word at 0x27F — precision
+# control 53-bit — where Linux and macOS use 0x37F (64-bit). FMUL/FADD/FSUB round
+# to the PC width, so under 53 bits the `fldl2e; fmulp` product x·log2e lost the
+# ~log2|n| bits the reduction needs and f64_exp came back up to ~350 ulp off on
+# Windows alone (exp(426.27) and exp(709.77)). The control word is nonvolatile in
+# the Win64 ABI, so it is saved and restored around the sequence rather than set
+# once at entry — a DLL's own x87 code keeps the 53-bit mode it was promised.
+# Uses the free upper 8 bytes of EX87PUSH's 16-byte slot: [rsp+8] holds the saved
+# word, [rsp+10] the raised one; rax is dead once the value is on the x87 stack.
+#     fnstcw [rsp+8] ; movzx eax, word [rsp+8] ; or eax, 0x300 ; mov [rsp+10], ax ; fldcw [rsp+10]
+# CHANGELOG [6.6.8].
+fn _EX87_PC64(S): i64 {
+    if (_TARGET_PE != 1) { return 0; }
+    EB(S, 0xD9); EB(S, 0x7C); EB(S, 0x24); EB(S, 0x08);
+    EB(S, 0x0F); EB(S, 0xB7); EB(S, 0x44); EB(S, 0x24); EB(S, 0x08);
+    EB(S, 0x0D); EB(S, 0x00); EB(S, 0x03); EB(S, 0x00); EB(S, 0x00);
+    EB(S, 0x66); EB(S, 0x89); EB(S, 0x44); EB(S, 0x24); EB(S, 0x0A);
+    EB(S, 0xD9); EB(S, 0x6C); EB(S, 0x24); EB(S, 0x0A);
+    return 0;
+}
+# fldcw [rsp+8] — put back the caller's control word (PE only; see _EX87_PC64).
+fn _EX87_PC_RESTORE(S): i64 {
+    if (_TARGET_PE != 1) { return 0; }
+    EB(S, 0xD9); EB(S, 0x6C); EB(S, 0x24); EB(S, 0x08);
+    return 0;
+}
+
 # EF64_EXP — x87 fldl2e; fmulp; fld st0; frndint; fsub st1,st0;
 # fxch; f2xm1; fld1; faddp; fscale; fstp st1 (22 bytes), behind the v6.6.1 +/-inf guard.
 fn EF64_EXP(S): i64 {
     var _xg = _EF64_EXPINF_GUARD(S);
     EX87PUSH(S);
     _IR_REC0(S, IR_RAW_EMIT);
+    _EX87_PC64(S);
     EB(S, 0xD9); EB(S, 0xEA); EB(S, 0xDE); EB(S, 0xC9); EB(S, 0xD9); EB(S, 0xC0);
     EB(S, 0xD9); EB(S, 0xFC); EB(S, 0xDC); EB(S, 0xE9); EB(S, 0xD9); EB(S, 0xC9);
     EB(S, 0xD9); EB(S, 0xF0); EB(S, 0xD9); EB(S, 0xE8); EB(S, 0xDE); EB(S, 0xC1);
     EB(S, 0xD9); EB(S, 0xFD); EB(S, 0xDD); EB(S, 0xD9);
+    _EX87_PC_RESTORE(S);
     EX87POP(S);
     EPATCH(S, (_xg >> 32) & 0xFFFFFFFF);
     EPATCH(S, _xg & 0xFFFFFFFF);
@@ -3451,9 +3481,11 @@ fn EF64_EXP2(S): i64 {
     var _x2g = _EF64_EXPINF_GUARD(S);   # exp2 has the SAME limits as exp
     EX87PUSH(S);
     _IR_REC0(S, IR_RAW_EMIT);
+    _EX87_PC64(S);                      # the `faddp` rounds to PC width too
     EB(S, 0xD9); EB(S, 0xC0); EB(S, 0xD9); EB(S, 0xFC); EB(S, 0xDC); EB(S, 0xE9);
     EB(S, 0xD9); EB(S, 0xC9); EB(S, 0xD9); EB(S, 0xF0); EB(S, 0xD9); EB(S, 0xE8);
     EB(S, 0xDE); EB(S, 0xC1); EB(S, 0xD9); EB(S, 0xFD); EB(S, 0xDD); EB(S, 0xD9);
+    _EX87_PC_RESTORE(S);
     EX87POP(S);
     EPATCH(S, (_x2g >> 32) & 0xFFFFFFFF);
     EPATCH(S, _x2g & 0xFFFFFFFF);

@@ -1,0 +1,264 @@
+# f64_log_exp_polyfill.tcyr — v6.6.8: the exp / ln / log2 / exp2 family is right on every target.
+#
+# ⛔ THE DEFECT (tyche, filed 2026-09-25; issues/archived/2026-09-25-tyche-aarch64-f64-ln-polyfill-
+# specials-and-accuracy.md). On aarch64 these builtins lower to lib/math.cyr's polyfills, which
+# were Taylor series with no special-value handling in ln and no range check on the 2^n pack in
+# exp/exp2. ln of every negative number other than -2^k came back a large POSITIVE finite value
+# (ln(-1.5) = +4.27e9), ln(+0) was -709, log2(+inf) was exactly 1024.0, exp(1000) was negative,
+# exp(-1e19) was 1.0, and finite results were up to 2,313 ulp off. Silently: nothing looked wrong.
+#
+# ⛔ AND ON WINDOWS, x87 WAS NOT RIGHT EITHER. Win64 starts threads at 53-bit x87 precision
+# control, so the native `fldl2e; fmulp` product lost bits and f64_exp was ~350 ulp off on PE
+# alone — exp(426.27...) and exp(709.77...) below. Those two rows are green on cass only because
+# EF64_EXP/EXP2 now raise precision control around the sequence (CHANGELOG [6.6.8]).
+#
+# The promise this file pins, on every target:
+#   * IEEE-754 / C special values, compared by CLASS (a NaN's sign and payload are not promised);
+#   * finite results within 1 ulp of the correctly rounded value — both the builtin (x87 on x86,
+#     the polyfill on aarch64) and the polyfill called directly;
+#   * the polyfills themselves give the SAME BITS on every target (pure f64 add/sub/mul/div and
+#     integer ops), so the pinned-bits column below must match on ecb, ach, cass and pi too.
+#     The builtins make no such promise: x87 and the polyfill may pick different last bits.
+# References: Python decimal at 70 digits, rounded to double (correctly rounded).
+# ⚠ In crossos/ so it runs on the real hosts: aarch64 is where the polyfill IS the builtin, and
+# Windows is where x87 precision control differs.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/fmt.cyr"
+include "lib/math.cyr"
+include "lib/assert.cyr"
+
+var PINF = 0x7FF0000000000000;
+var NINF = 0xFFF0000000000000;
+
+# 0 = finite, 1 = +inf, 2 = -inf, 3 = NaN.
+fn cls(b): i64 {
+    if (((b >> 52) & 0x7FF) == 0x7FF) {
+        if ((b & 0x000FFFFFFFFFFFFF) != 0) { return 3; }
+        if (((b >> 63) & 1) == 1) { return 2; }
+        return 1;
+    }
+    return 0;
+}
+var C_FIN = 0;
+var C_PINF = 1;
+var C_NINF = 2;
+var C_NAN = 3;
+
+# Monotonic integer order over finite doubles, so |a - b| counts ulps across zero.
+fn ordb(b): i64 {
+    if (((b >> 63) & 1) == 1) { return 0 - (b & 0x7FFFFFFFFFFFFFFF); }
+    return b;
+}
+fn ulps(a, b): i64 {
+    var d = ordb(a) - ordb(b);
+    if (d < 0) { d = 0 - d; }
+    return d;
+}
+fn ok1(got, want): i64 {
+    if (cls(got) != 0) { return 0; }
+    if (ulps(got, want) > 1) { return 0; }
+    return 1;
+}
+
+# The x87 control word, read with fnstcw (0 on aarch64, which has no x87). f64_exp/f64_exp2 raise precision control
+# on PE and must put the caller's word BACK: it is nonvolatile in the Win64 ABI. On Linux and
+# macOS the word is 0x37F before and after anyway; on Windows it is 0x27F, and a missing
+# restore would leave it 0x37F. #naked on its own line (the byte-based fmt/lint tools skip `#`).
+#naked
+fn fpcw_probe(): i64 {
+    #ifdef CYRIUS_ARCH_X86
+    asm {
+        0x48; 0x83; 0xEC; 0x08;         # sub rsp, 8
+        0xD9; 0x3C; 0x24;               # fnstcw [rsp]
+        0x0F; 0xB7; 0x04; 0x24;         # movzx eax, word [rsp]
+        0x48; 0x83; 0xC4; 0x08;         # add rsp, 8
+        0xC3;                            # ret
+    }
+    #endif
+    #ifdef CYRIUS_ARCH_AARCH64
+    asm {
+        0x00; 0x00; 0x80; 0xD2;         # mov x0, #0
+        0xC0; 0x03; 0x5F; 0xD6;         # ret
+    }
+    #endif
+}
+
+fn builtin(op, x): i64 {
+    if (op == 1) { return f64_exp(x); }
+    if (op == 2) { return f64_ln(x); }
+    if (op == 3) { return f64_log2(x); }
+    return f64_exp2(x);
+}
+fn poly(op, x): i64 {
+    if (op == 1) { return _f64_exp_polyfill(x); }
+    if (op == 2) { return _f64_ln_polyfill(x); }
+    if (op == 3) { return _f64_log2_polyfill(x); }
+    return _f64_exp2_polyfill(x);
+}
+
+# A finite row: builtin and polyfill within 1 ulp of cr; the polyfill exactly `pin`.
+fn finite(op, x, cr, pin, name): i64 {
+    assert(ok1(builtin(op, x), cr) == 1, name);
+    assert(ok1(poly(op, x), cr) == 1, name);
+    assert_eq(poly(op, x), pin, name);
+    return 0;
+}
+# A special row: the class must match on both paths; when `bits` is not -1 the exact bits too
+# (used for +0, which a class compare cannot tell from a tiny finite, and for exact results).
+fn special(op, x, c, bits, name): i64 {
+    var b = builtin(op, x);
+    var p = poly(op, x);
+    assert_eq(cls(b), c, name);
+    assert_eq(cls(p), c, name);
+    if (bits != 0 - 1) {
+        assert_eq(b, bits, name);
+        assert_eq(p, bits, name);
+    }
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+
+    # FIRST, before any other exp call: one missing restore anywhere earlier would already have
+    # raised the word, and cw0 would read the damage instead of the process default.
+    test_group("f64_exp / f64_exp2 leave the x87 control word as they found it");
+    var cw0 = fpcw_probe();
+    var sink = f64_exp(0x407AA4588AE533D4);
+    var cw1 = fpcw_probe();
+    sink = f64_exp2(0x400A666666666666);
+    var cw2 = fpcw_probe();
+    assert_eq(cw1, cw0, "control word unchanged across f64_exp");
+    assert_eq(cw2, cw0, "control word unchanged across f64_exp2");
+
+    test_group("ln / log2 special values (every negative is NaN, not only -1 and -inf)");
+    var op = 2;
+    while (op <= 3) {
+        special(op, 0, C_NINF, NINF, "log(+0) = -inf");
+        special(op, 0x8000000000000000, C_NINF, NINF, "log(-0) = -inf");
+        special(op, 0xBFF0000000000000, C_NAN, 0 - 1, "log(-1) = NaN");
+        special(op, 0xBFF8000000000000, C_NAN, 0 - 1, "log(-1.5) = NaN (was +4.27e9)");
+        special(op, 0xBFE6666666666666, C_NAN, 0 - 1, "log(-0.7) = NaN (was +6.0e10)");
+        special(op, 0x81A56E1FC2F8F359, C_NAN, 0 - 1, "log(-1e-300) = NaN (was +5.1e11)");
+        special(op, 0xFE37E43C8800759C, C_NAN, 0 - 1, "log(-1e300) = NaN");
+        special(op, 0x8000000000000001, C_NAN, 0 - 1, "log(-min subnormal) = NaN");
+        special(op, NINF, C_NAN, 0 - 1, "log(-inf) = NaN");
+        special(op, PINF, C_PINF, PINF, "log(+inf) = +inf (log2 was 1024.0)");
+        special(op, 0x7FF8000000000000, C_NAN, 0 - 1, "log(NaN) = NaN");
+        special(op, 0xFFF8000000000000, C_NAN, 0 - 1, "log(-NaN) = NaN (was +4.27e9)");
+        special(op, 0x7FF0000000000001, C_NAN, 0 - 1, "log(sNaN) = NaN (was 709.78)");
+        special(op, 0x3FF0000000000000, C_FIN, 0, "log(1) = +0 exactly");
+        op = op + 1;
+    }
+    special(3, 0x4020000000000000, C_FIN, 0x4008000000000000, "log2(8) = 3 exactly (was 2.9999999999999996)");
+
+    test_group("exp special values and range guards (checked on x, before x*log2e)");
+    special(1, PINF, C_PINF, PINF, "exp(+inf) = +inf");
+    special(1, NINF, C_FIN, 0, "exp(-inf) = +0");
+    special(1, 0x7FF8000000000000, C_NAN, 0 - 1, "exp(NaN) = NaN");
+    special(1, 0x7FF0000000000001, C_NAN, 0 - 1, "exp(sNaN) = NaN");
+    special(1, 0, C_FIN, 0x3FF0000000000000, "exp(+0) = 1");
+    special(1, 0x8000000000000000, C_FIN, 0x3FF0000000000000, "exp(-0) = 1");
+    special(1, 0x43E158E460913D00, C_PINF, PINF, "exp(1e19) = +inf");
+    special(1, 0xC3E158E460913D00, C_FIN, 0, "exp(-1e19) = +0 (was 1.0)");
+    special(1, 0x7FEFFFFFFFFFFFFF, C_PINF, PINF, "exp(DBL_MAX) = +inf");
+    special(1, 0xFFEFFFFFFFFFFFFF, C_FIN, 0, "exp(-DBL_MAX) = +0 (was +inf)");
+    special(1, 0x408F400000000000, C_PINF, PINF, "exp(1000) = +inf (was negative)");
+    special(1, 0x4086380000000000, C_PINF, PINF, "exp(711) = +inf (was a negative subnormal)");
+    special(1, 0x40863C0000000000, C_PINF, PINF, "exp(711.5) = +inf");
+    special(1, 0x40862E42FEFA39F0, C_PINF, PINF, "exp(just above 709.782712893384) = +inf");
+    special(1, 0x412E848000000000, C_PINF, PINF, "exp(1e6) = +inf (was +2.5e193)");
+    special(1, 0xC089000000000000, C_FIN, 0, "exp(-800) = +0 (was -1.2e269)");
+    special(1, 0xC08F400000000000, C_FIN, 0, "exp(-1000) = +0");
+    special(1, 0xC096300000000000, C_FIN, 0, "exp(-1420) = +0 (was -0.65)");
+    special(1, 0xC0A7700000000000, C_FIN, 0, "exp(-3000) = +0 (was +1e-69)");
+    special(1, 0xC087491EB851EB85, C_FIN, 0, "exp(-745.14) = +0 (below the underflow threshold)");
+
+    test_group("exp2 special values and range guards");
+    special(4, PINF, C_PINF, PINF, "exp2(+inf) = +inf");
+    special(4, NINF, C_FIN, 0, "exp2(-inf) = +0");
+    special(4, 0x7FF8000000000000, C_NAN, 0 - 1, "exp2(NaN) = NaN");
+    special(4, 0, C_FIN, 0x3FF0000000000000, "exp2(0) = 1");
+    special(4, 0x409F400000000000, C_PINF, PINF, "exp2(2000) = +inf (was -2^-48)");
+    special(4, 0xC09F400000000000, C_FIN, 0, "exp2(-2000) = +0");
+    special(4, 0x7FEFFFFFFFFFFFFF, C_PINF, PINF, "exp2(DBL_MAX) = +inf (was 0.5)");
+    special(4, 0xFFEFFFFFFFFFFFFF, C_FIN, 0, "exp2(-DBL_MAX) = +0 (was 1.0)");
+    special(4, 0x4202A05F20000000, C_PINF, PINF, "exp2(1e10) = +inf");
+    special(4, 0xC202A05F20000000, C_FIN, 0, "exp2(-1e10) = +0 (was -inf)");
+    special(4, 0x4090000000000000, C_PINF, PINF, "exp2(1024) = +inf");
+    special(4, 0xC090CC0000000000, C_FIN, 0, "exp2(-1075) = +0 (the tie rounds to even)");
+    special(4, 0xC090D00000000000, C_FIN, 0, "exp2(-1076) = +0");
+
+    test_group("finite rows: <= 1 ulp from correctly rounded, polyfill bits pinned");
+    finite(1, 0x3FF0000000000000, 0x4005BF0A8B145769, 0x4005BF0A8B14576A, "exp(1.0)");
+    finite(1, 0xBFF0000000000000, 0x3FD78B56362CEF38, 0x3FD78B56362CEF38, "exp(-1.0)");
+    finite(1, 0x3FE113404EA4A8C1, 0x3FFB47EC74F67462, 0x3FFB47EC74F67462, "exp(0.5336)");
+    finite(1, 0x407AA4588AE533D4, 0x665F8EECE25A00EA, 0x665F8EECE25A00EA, "exp(426.27161683590134)");
+    finite(1, 0x40862E31D797043A, 0x7FEFBBABCF002754, 0x7FEFBBABCF002754, "exp(709.7743369863667)");
+    finite(1, 0x4080FE327CF14777, 0x70F6A49CCEACE863, 0x70F6A49CCEACE862, "exp(543.7746523714003)");
+    finite(1, 0x3FD62ED3AE4309F0, 0x3FF6A0D18E166449, 0x3FF6A0D18E166449, "exp(0.3466080858017042)");
+    finite(1, 0xC087200000000000, 0x0000000000000055, 0x0000000000000055, "exp(-740.0)");
+    finite(1, 0xC087480000000000, 0x0000000000000001, 0x0000000000000001, "exp(-745.0)");
+    finite(1, 0x4085E00000000000, 0x7F0D945DF4F8EC8E, 0x7F0D945DF4F8EC8E, "exp(700.0)");
+    finite(1, 0xC085E00000000000, 0x00D14F2B0FB9307F, 0x00D14F2B0FB9307F, "exp(-700.0)");
+    finite(1, 0x3DDB7CDFD9D7BDBB, 0x3FF000000006DF38, 0x3FF000000006DF38, "exp(1e-10)");
+    finite(1, 0x40862E42FEFA39EE, 0x7FEFFFFFFFFFFB2A, 0x7FEFFFFFFFFFFB2A, "exp(709.7827128933839)");
+    finite(1, 0xC086240000000000, 0x000E6CF6D08897AC, 0x000E6CF6D08897AC, "exp(-708.5)");
+    finite(1, 0x400E000000000000, 0x404542B2D0A266E7, 0x404542B2D0A266E7, "exp(3.75)");
+    finite(2, 0x3FF6A09E667F3AAF, 0x3FD62E42FEFA36C8, 0x3FD62E42FEFA36C8, "ln(1.4142135623730316)");
+    finite(2, 0x3FE6A11048957910, 0xBFD62D00E5EEFBB5, 0xBFD62D00E5EEFBB5, "ln(0.7071610849050405)");
+    finite(2, 0x3FF67D85951E2D60, 0x3FD5CAB0CB34722E, 0x3FD5CAB0CB34722E, "ln(1.4056449723164732)");
+    finite(2, 0x0000000000000001, 0xC0874385446D71C3, 0xC0874385446D71C3, "ln(5e-324)");
+    finite(2, 0x0000000000004000, 0xC086F5E359F105F9, 0xC086F5E359F105F9, "ln(8.095e-320)");
+    finite(2, 0x4024000000000000, 0x40026BB1BBB55516, 0x40026BB1BBB55516, "ln(10.0)");
+    finite(2, 0x3FB999999999999A, 0xC0026BB1BBB55515, 0xC0026BB1BBB55515, "ln(0.1)");
+    finite(2, 0x7E37E43C8800759C, 0x4085963447F87FB5, 0x4085963447F87FB5, "ln(1e+300)");
+    finite(2, 0x7FEFFFFFFFFFFFFF, 0x40862E42FEFA39EF, 0x40862E42FEFA39EF, "ln(1.7976931348623157e+308)");
+    finite(2, 0x3FF000001AD7F29B, 0x3E7AD7F2847B6492, 0x3E7AD7F2847B6492, "ln(1.0000001)");
+    finite(2, 0x4005BF0A8B145769, 0x3FF0000000000000, 0x3FF0000000000000, "ln(2.718281828459045)");
+    finite(2, 0x3FEFFFFFCA501ACB, 0xBE7AD7F2B1049B9F, 0xBE7AD7F2B1049B9F, "ln(0.9999999)");
+    finite(3, 0x3FF6DAFDC8BEAA30, 0x3FE07680139F1255, 0x3FE07680139F1255, "log2(1.4284646836846484)");
+    finite(3, 0x4024000000000000, 0x400A934F0979A371, 0x400A934F0979A371, "log2(10.0)");
+    finite(3, 0x3FB999999999999A, 0xC00A934F0979A371, 0xC00A934F0979A371, "log2(0.1)");
+    finite(3, 0x4008000000000000, 0x3FF95C01A39FBD68, 0x3FF95C01A39FBD68, "log2(3.0)");
+    finite(3, 0x000012688B70E62B, 0xC0901730DABCA5F6, 0xC0901730DABCA5F6, "log2(1e-310)");
+    finite(3, 0x7FEFFFFFFFFFFFFF, 0x4090000000000000, 0x4090000000000000, "log2(1.7976931348623157e+308)");
+    finite(3, 0x3FF000001AD7F29B, 0x3E835D0FEA5FCCB7, 0x3E835D0FEA5FCCB7, "log2(1.0000001)");
+    finite(3, 0x3FE6A09E667F3BCD, 0xBFDFFFFFFFFFFFFE, 0xBFDFFFFFFFFFFFFE, "log2(0.7071067811865476)");
+    finite(4, 0x3FE0000000000000, 0x3FF6A09E667F3BCD, 0x3FF6A09E667F3BCC, "exp2(0.5)");
+    finite(4, 0xBFE0000000000000, 0x3FE6A09E667F3BCD, 0x3FE6A09E667F3BCC, "exp2(-0.5)");
+    finite(4, 0x408FFC0000000000, 0x7FE6A09E667F3BCD, 0x7FE6A09E667F3BCC, "exp2(1023.5)");
+    finite(4, 0x408FFFEB851EB852, 0x7FEFC769E9B9C396, 0x7FEFC769E9B9C396, "exp2(1023.99)");
+    finite(4, 0xC08FF40000000000, 0x000B504F333F9DE6, 0x000B504F333F9DE6, "exp2(-1022.5)");
+    finite(4, 0xC090B90000000000, 0x000000000000000D, 0x000000000000000D, "exp2(-1070.25)");
+    finite(4, 0x400A666666666666, 0x4023B2C47BFF8328, 0x4023B2C47BFF8328, "exp2(3.3)");
+    finite(4, 0x3FB999999999999A, 0x3FF125FBEE250664, 0x3FF125FBEE250664, "exp2(0.1)");
+    finite(4, 0xBEE4F8B588E368F1, 0x3FEFFFF176B51217, 0x3FEFFFF176B51217, "exp2(-1e-05)");
+    finite(4, 0x40592CCCCCCCCCCD, 0x4639FDF8BCCE534C, 0x4639FDF8BCCE534C, "exp2(100.7)");
+
+    test_group("log2(2^k) == k and exp2(k) == 2^k exactly, every k");
+    var bad_l2 = 0;
+    var bad_e2 = 0;
+    var k = 0 - 1074;
+    while (k <= 1023) {
+        var v = 0;
+        if (k < 0 - 1022) { v = 1 << (k + 1074); } else { v = (k + 1023) << 52; }
+        var kf = f64_from(k);
+        if (f64_log2(v) != kf) { bad_l2 = bad_l2 + 1; }
+        if (_f64_log2_polyfill(v) != kf) { bad_l2 = bad_l2 + 1; }
+        if (f64_exp2(kf) != v) { bad_e2 = bad_e2 + 1; }
+        if (_f64_exp2_polyfill(kf) != v) { bad_e2 = bad_e2 + 1; }
+        k = k + 1;
+    }
+    assert_eq(bad_l2, 0, "log2(2^k) == k for every k in [-1074, 1023] (was 620 inexact)");
+    assert_eq(bad_e2, 0, "exp2(k) == 2^k for every k in [-1074, 1023]");
+
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);
