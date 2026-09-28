@@ -1226,3 +1226,8 @@ _chk_gate "$ROOT/tests/gates/toolchain/audit_walk_fails_closed.sh"
 # were unverified and the "Updated:" list was unconditional. Runs `version-bump.sh
 # --docs-only` over scratch copies of the live docs plus fixtures; mutation-proven in the header.
 _chk_gate "$ROOT/tests/gates/toolchain/version_bump_doc_anchors.sh"
+
+# 6.6.8 (bite 4) — an INT-left `+ - * /` with an f64 right operand WARNS (kind 2 of
+# _FLT_TYPE_WARN): `0 - 1.5` was integer arithmetic on 1.5's bits (-3.0), silently. WARN only,
+# the ADR-002 posture of kind 1; no false positive on unary minus, f64/f64 or int/int.
+_chk_gate "$ROOT/tests/gates/diagnostics/f64_int_mix_warn.sh"

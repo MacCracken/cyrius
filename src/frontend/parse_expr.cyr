@@ -3551,6 +3551,7 @@ fn _PARSE_TERM_IMPL(S): i64 {
                     else { PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); EIMUL(S); _cfo = 0; }
                 }
             }
+            if (mulst <= 0) { _INT_F64_MIX(S); }
         }
         else { if (typ == 9) {
                 var divst = GESTYPE(S);
@@ -3572,6 +3573,7 @@ fn _PARSE_TERM_IMPL(S): i64 {
                         } else { ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; } }
                     else { ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; }
                 }
+                if (divst <= 0) { _INT_F64_MIX(S); }
             }
             else { if (typ == 34) {
                     STI(S, GTI(S) + 1); ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; EMOVDR(S); _cfo = 0;
@@ -3911,6 +3913,7 @@ fn _PEXPR_IMPL(S): i64 {
                     else { ESPILL(S); SPSC(S, 0); PARSE_TERM(S); EPTR_SCALE(S, ps); EMOVCA(S); EUNSPILL(S); EADDR(S); SPSC(S, ps); _cfo = 0; }
                 } else { ESPILL(S); SPSC(S, 0); PARSE_TERM(S); EPTR_SCALE(S, ps); EMOVCA(S); EUNSPILL(S); EADDR(S); SPSC(S, ps); _cfo = 0; }
             }
+            if (addst <= 0) { _INT_F64_MIX(S); }
         }
         else { if (typ == 7) {
                 var subst = GESTYPE(S);
@@ -3938,6 +3941,7 @@ fn _PEXPR_IMPL(S): i64 {
                         else { EPUSHR(S); SPSC(S, 0); PARSE_TERM(S); EPTR_SCALE(S, ps); EMOVCA(S); EPOPR(S); ESUBR(S); SPSC(S, ps); _cfo = 0; }
                     } else { EPUSHR(S); SPSC(S, 0); PARSE_TERM(S); EPTR_SCALE(S, ps); EMOVCA(S); EPOPR(S); ESUBR(S); SPSC(S, ps); _cfo = 0; }
                 }
+                if (subst <= 0) { _INT_F64_MIX(S); }
             }
             # v5.6.2: +| / +? / -| / -? — saturating / checked add/sub.
             # Compiles to a call into lib/overflow.cyr. No constant-fold
@@ -4071,9 +4075,21 @@ fn _FLT_TYPE_WARN(S, kind): i64 {
     _err_head(S);
     if (kind == 0) {
         syscall(SYS_WRITE, 2, ": comparison mixes f64 and integer operands\n", 44);
+    } elif (kind == 2) {
+        syscall(SYS_WRITE, 2, ": integer arithmetic with an f64 right operand\n", 47);
     } else {
         syscall(SYS_WRITE, 2, ": f64 arithmetic with a non-f64 right operand\n", 46);
     }
+    return 0;
+}
+
+# kind 2 (6.6.8) — the mirror of kind 1: an INT-left `+ - * /` whose right operand is f64
+# (`0 - 1.5`, `2 * x`) is integer arithmetic on the float's bits, silently (`0 - 1.5` is
+# -3.0). WARN only, the same ADR-002 posture as kind 1: the result type is left as it was.
+# Called after the int arm has parsed its right operand; a folded literal RHS never set
+# the type, so it cannot fire. CHANGELOG [6.6.8]
+fn _INT_F64_MIX(S): i64 {
+    if (GESTYPE(S) == F64_TYID) { _FLT_TYPE_WARN(S, 2); }
     return 0;
 }
 
