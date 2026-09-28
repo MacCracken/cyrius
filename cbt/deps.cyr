@@ -887,6 +887,12 @@ fn _dep_copy_stdlib_recursive(stdlib_dir, mod_name, is_top): i64 {
     var cr = 0;
     if (_dep_lock_guard_stdlib_leaf(src, dst_full) == 0) {
         cr = _dep_copy_file(src, dst_full);
+        # 6.6.9: a vendored leaf the lock has no line for — a new leaf, or no lock at all —
+        # makes cmd_deps write the lock. A new leaf has no locked hash to disagree with, so
+        # the 6.6.4 moved-snapshot refusal above is not in play. CHANGELOG [6.6.9]
+        if (cr != 1 && _dep_lock_active == 1 && _lock_file_hash_lookup(dst_full) == 0) {
+            _dep_lock_new_leaf = 1;
+        }
     }
     if (cr == 1) { return 1; }
     if (is_top == 1) { vec_push(_dep_includes, dst_full); }
@@ -2600,7 +2606,11 @@ fn cmd_deps(): i64 {
                 if (_dep_lock_has_trailer == 0) { _stamp_legacy = 1; }
                 if (_dep_lock_pin_same == 0) { _stamp_legacy = 1; }
             }
-            if (copied > 0 || _dep_relock == 1 || _stamp_legacy == 1) {
+            # ...and (6.6.9) a vendored leaf the lock does not cover: a stdlib leaf newly
+            # declared under an unchanged pin, or the FIRST lock of a stdlib-only project.
+            # Both used to be left out — the leaf sat in lib/ unlocked and `--verify` passed
+            # over it even tampered — restoring the v5.7.8 intent stated above.
+            if (copied > 0 || _dep_relock == 1 || _stamp_legacy == 1 || _dep_lock_new_leaf == 1) {
                 # v6.6.6: a lock that could not be written is an error, not a dropped rc.
                 if (cmd_deps_lock() != 0) { errors = errors + 1; }
             }
@@ -4034,7 +4044,10 @@ fn _dep_lock_load(): i64 {
     _dep_lock_pin_same = 0;
     _dep_lock_refused = 0;
     _dep_lock_has_trailer = 0;
+    _dep_lock_new_leaf = 0;
+    _dep_lock_active = 0;
     if (_dep_is_cyrius_source_repo() == 1) { return 0; }
+    _dep_lock_active = 1;
     if (file_exists("cyrius.lock") == 0) { return 0; }
     var cap = _file_size("cyrius.lock") + 1;   # whole file: the pin trailer is the LAST line
     if (cap <= 1) { return 0; }
@@ -4067,8 +4080,11 @@ fn _dep_lock_load(): i64 {
 # loaded buffer (64 bytes, not NUL-terminated).
 fn _lock_file_hash_lookup(path): i64 {
     if (_dep_lock_buf == 0) { return 0; }
-    var lbuf = _dep_lock_buf;
-    var ln = _dep_lock_len;
+    return _lock_buf_hash_lookup(_dep_lock_buf, _dep_lock_len, path);
+}
+
+# The same lookup over any lock text (`deps --verify` reads its own copy). CHANGELOG [6.6.9]
+fn _lock_buf_hash_lookup(lbuf, ln, path): i64 {
     var plen = strlen(path);
     var pos = 0;
     while (pos < ln) {
@@ -4250,38 +4266,14 @@ fn _dep_lock_unhashable_err(): i64 {
 # of them, and the lock came out empty ecosystem-wide.
 fn _deps_lock_dir(dir, lock_h): i64 {
     var count = 0;
-    var entries = dir_list(str_from(dir));
-    # v6.6.3 — SORT. `dir_list` returns readdir order, which is stable on one machine
-    # and DIFFERENT on another, so the lock came out as the same hashes in a different
-    # SEQUENCE. Every consumer CI that gates the lock byte-for-byte
-    # (`git diff --exit-code -- cyrius.lock`) then failed for any lock committed
-    # elsewhere — i.e. always. Measured on agnostic 2026-09-12: the gate reported
-    # "98 insertions(+), 98 deletions(-)" while an order-insensitive compare of the
-    # very same two files was EMPTY — identical hashes for all 117 entries. The
-    # failure message ("does not match a clean resolution at this pin") reads as
-    # dependency drift, so it sends the reader hunting stale pins that are not stale;
-    # it cost most of a day across two repos before the diff was printed on a runner.
-    # Same one-line remedy as line ~830 (v6.5.37, A8) — that release fixed the module
-    # walker and missed this one. See issues/2026-09-12-cyrius-lock-unstable-order.md.
-    #
-    # The commit-pin lines above need no sort: they are appended in manifest
-    # declaration order, which is already machine-independent (confirmed — they were
-    # unchanged CONTEXT lines in that same diff, only the hash lines moved).
-    if (entries != 0) { vec_sort_by(entries, &_dep_name_cmp); }
+    # 6.6.9: the file list comes from `_deps_lock_files`, the ONE walker `deps --verify` also
+    # uses to find lib/ files the lock does not cover — so the writer and the checker cannot
+    # disagree about what "every .cyr under lib/" means. CHANGELOG [6.6.9]
+    var files = _deps_lock_files(dir);
     var li = 0;
-    while (li < vec_len(entries)) {
-        var name = str_data(vec_get(entries, li));
-        var nlen = str_len(vec_get(entries, li));
+    while (li < vec_len(files)) {
+        var path = vec_get(files, li);
         li = li + 1;
-        if (nlen == 0) { continue; }
-        if (load8(name) == 46) { continue; }   # skip ".", "..", dotfiles
-        var path = make_path(dir, name);
-        if (is_dir(str_from(path)) == 1) {
-            count = count + _deps_lock_dir(path, lock_h);
-            continue;
-        }
-        if (nlen < 5) { continue; }
-        if (memeq(name + nlen - 4, ".cyr", 4) == 0) { continue; }
         var hash = _sha256sum_file(path);
         if (hash == 0) {
             # v6.6.6: RECORDED, not skipped — cmd_deps_lock aborts on it. CHANGELOG [6.6.6]
@@ -4302,6 +4294,46 @@ fn _deps_lock_dir(dir, lock_h): i64 {
         count = count + 1;
     }
     return count;
+}
+
+# Every `.cyr` under `dir`, recursively, as "dir/…/name.cyr" paths in a vec — the set
+# cyrius.lock must cover. Recurses into subdirs (e.g. `lib/unicode/`) so nested stdlib
+# modules resolved by `cyrius deps` (v5.8.49 subdir-nested paths) are locked too — a flat
+# scan silently omitted them. Dotfiles are skipped.
+#
+# v6.6.3 — SORTED. `dir_list` returns readdir order, which is stable on one machine and
+# DIFFERENT on another, so the lock came out as the same hashes in a different SEQUENCE and
+# every consumer CI that gates the lock byte-for-byte (`git diff --exit-code -- cyrius.lock`)
+# failed for any lock committed elsewhere (agnostic 2026-09-12: "98 insertions(+), 98
+# deletions(-)" over identical hashes). See issues/archived/2026-09-12-cyrius-lock-unstable-order.md.
+# The commit-pin lines need no sort: they are appended in manifest declaration order.
+fn _deps_lock_files(dir): i64 {
+    var out = vec_new();
+    _deps_lock_files_into(dir, out);
+    return out;
+}
+
+fn _deps_lock_files_into(dir, out): i64 {
+    var entries = dir_list(str_from(dir));
+    if (entries == 0) { return 0; }
+    vec_sort_by(entries, &_dep_name_cmp);
+    var li = 0;
+    while (li < vec_len(entries)) {
+        var name = str_data(vec_get(entries, li));
+        var nlen = str_len(vec_get(entries, li));
+        li = li + 1;
+        if (nlen == 0) { continue; }
+        if (load8(name) == 46) { continue; }   # skip ".", "..", dotfiles
+        var path = make_path(dir, name);
+        if (is_dir(str_from(path)) == 1) {
+            _deps_lock_files_into(path, out);
+            continue;
+        }
+        if (nlen < 5) { continue; }
+        if (memeq(name + nlen - 4, ".cyr", 4) == 0) { continue; }
+        vec_push(out, path);
+    }
+    return 0;
 }
 
 fn cmd_deps_lock(): i64 {
@@ -4397,14 +4429,25 @@ fn cmd_deps_verify(): i64 {
     # prepended by cmd_deps_lock ate into that budget. Match _lock_commit_lookup.
     # v6.6.4: the WHOLE file — a lock past 64 KB silently stopped verifying at the cut, and
     # the `cyrius\t<pin>` trailer is the last line.
+    # 6.6.9: the cyrius source repo writes no lock (cmd_deps_lock skips it; its tracked
+    # cyrius.lock is empty), so there is nothing here for the lib/ walk below to hold its
+    # authored stdlib against — say so instead of failing every file.
+    if (_dep_is_cyrius_source_repo() == 1) {
+        _err("cyrius.lock is not kept in the cyrius source repo (lib/ is authored stdlib, not resolved deps) — nothing to verify");
+        return 1;
+    }
     var _vcap = _file_size("cyrius.lock") + 1;
     if (_vcap < 65536) { _vcap = 65536; }
     var buf = alloc(_vcap);
     var n = file_read_all("cyrius.lock", buf, _vcap - 1);
-    if (n <= 0) {
+    if (n < 0 || file_exists("cyrius.lock") == 0) {
         _err("no cyrius.lock found — run cyrius deps first");
         return 1;
     }
+    # 6.6.9: an EMPTY lock is present-but-empty (cyrius-bb tracks a 0-byte one over 53 lib/
+    # files), not "missing" — it verifies nothing, and the lib/ walk below names every file
+    # it leaves uncovered. CHANGELOG [6.6.9]
+    if (n == 0) { println("cyrius.lock is empty — it records no file"); }
     store8(buf + n, 0);
 
     var pass = 0;
@@ -4454,6 +4497,24 @@ fn cmd_deps_verify(): i64 {
         }
 
         pos = path_end + 1;
+    }
+
+    # ⛔ 6.6.9 bite 9 — AND every .cyr under lib/ must HAVE a line. The loop above checks
+    # the lines the lock contains, so a file with no line had nothing to fail: patra's two
+    # newly declared leaves verified "29 verified, 0 failed" over 31 files — tampered, too.
+    # Walked with `_deps_lock_files`, the SAME walker cmd_deps_lock writes from, so the
+    # checker cannot drift from the writer (a check that shares its subject's blind spot
+    # reads green). CHANGELOG [6.6.9]
+    var files = _deps_lock_files("lib");
+    var fi = 0;
+    while (fi < vec_len(files)) {
+        var fp = vec_get(files, fi);
+        fi = fi + 1;
+        if (_lock_buf_hash_lookup(buf, n, fp) != 0) { continue; }
+        sys_write(STDERR_FD, "  FAIL: ", 8);
+        sys_write(STDERR_FD, fp, strlen(fp));
+        _ew(" (not in cyrius.lock — run cyrius deps --relock to lock it)\n");
+        fail = fail + 1;
     }
 
     fmt_int(pass);

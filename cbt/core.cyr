@@ -71,6 +71,12 @@ var _dep_lock_len = 0;
 var _dep_lock_pin_same = 0;   # 1 iff the lock's `cyrius\t<pin>` line equals this run's pin
 var _dep_lock_refused = 0;    # leaves the guard refused this run; folded into `errors`
 var _dep_lock_has_trailer = 0;   # 1 iff the loaded lock carried a `cyrius\t<pin>` line (else it is re-written once to gain one)
+# 6.6.9 bite 9: 1 iff this resolve vendored a lib/ file the loaded lock has NO line for — a
+# newly declared stdlib leaf, or any leaf when there is no lock yet (a stdlib-only project's
+# FIRST lock). Either way the lock would not cover lib/, so it is written. Only set outside
+# the cyrius source repo (`_dep_lock_active`), which never writes a lock.
+var _dep_lock_new_leaf = 0;
+var _dep_lock_active = 0;
 # v5.11.58: --strict-pin flag — when 1, compile() augments the
 # child's envp with CYRIUS_STRICT_PIN=1 so cycc's pin-drift check
 # (added v5.11.57) exits non-zero on mismatch instead of warning.

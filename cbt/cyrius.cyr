@@ -63,7 +63,7 @@ fn usage(): i64 {
     println("");
     println("Project:");
     println("  init [--lib|--agent|--cmtools|--dry-run] <name | .>   scaffold a new project");
-    println("  deps [--no-lock|--verify]       resolve [deps.NAME] from cyrius.cyml into lib/");
+    println("  deps [--verify|--lock|--relock|--no-lock|--dry-run]   resolve [deps] into lib/ + cyrius.lock");
     println("  update                          re-resolve all deps to latest tags");
     println("  package                         create .ark distributable");
     println("  port [--dry-run] <rust-project> scaffold from a Rust project (→ rust-old/)");

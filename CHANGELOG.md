@@ -139,9 +139,38 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   filing's `unshare` + `nr_inodes` 4/3/2 recipe, TMPDIR routing, the hasher, lint, the shasum
   fallback, and a static before-the-fork check; the pre-fix tree fails axes 1-7, and each of seven
   one-line mutants fails its own axis.
+- **`cyrius deps` locks every file it vendors, writes a stdlib-only project's first lock, and
+  `--verify` fails on a file the lock does not cover.** (bite 9; issue
+  `2026-09-23-patra-deps-never-locks-new-stdlib-leaves`, archived.) **Root cause:** cmd_deps wrote
+  the lock on `copied > 0` — a count of NAMED git/path deps — or on `--relock` / a legacy or moved
+  pin stamp, and that stamp needs an existing lock. Stdlib leaves never counted, so (1) a leaf
+  newly declared under an unchanged pin was vendored and never locked (patra 1.15.0: 29 lines over
+  31 files; `cyrius build` did not lock it either), (2) a stdlib-only project never got a lock
+  from `deps` or `build` (41 ecosystem repos have none), and (3) `--verify` walked only the lines
+  the lock HAS, so the unlocked file verified clean even tampered (`15 verified, 0 failed`). A
+  0-byte lock read as "no cyrius.lock found". **Fix:** a vendored leaf the loaded lock has no line
+  for — a new leaf, or every leaf when there is no lock — triggers the lock write (the 6.6.4
+  moved-snapshot refusal is untouched: a new leaf has no hash to disagree with; a no-change
+  resolve still writes nothing). `--verify` walks `lib/` through `_deps_lock_files`, the SAME
+  walker `cmd_deps_lock` now writes from, and fails each uncovered `.cyr` by name; an empty lock
+  is present-but-empty; in the cyrius source repo (which keeps no lock) it says so instead of
+  failing every authored file. This restores the v5.7.8 "write cyrius.lock by default after every
+  successful resolve" intent. `cyrius deps --help` no longer says deps are "symlinked into lib/"
+  (copied since v5.11.8; a symlinked lib/ is refused since v6.5.37) and says `--relock` locks what
+  `--verify` reports; the top-level `cyrius help` line lists `--relock`/`--lock`/`--dry-run`. Gate:
+  `deps_lock_new_leaf_locked.sh` — the filing's repro verbatim (first lock, new leaf locked,
+  tamper caught), an unlocked nested file failing `--verify`, the empty lock, `cyrius build`
+  writing the first lock, anti-churn, one-walker static, help; the pre-fix tree fails every axis
+  and four one-line mutants each fail their own.
 
 ### Downstream
 
+- **Stdlib-only projects gain a `cyrius.lock` on their next `cyrius deps` / `cyrius build`**
+  (41 repos under `~/Repos` have none today) — commit it. **itihas** (`lib/boxed.cyr` unlocked,
+  no pin trailer) and **cyrius-bb** (a tracked 0-byte `cyrius.lock` over 53 `lib/` files) fail
+  `cyrius deps --verify` until they run `cyrius deps --relock` once (their next plain
+  `cyrius deps` also rewrites both locks). Any consumer whose lock misses a vendored leaf is in
+  the same position — that is the point of the change.
 - **vani** can narrow ADR 002 (`docs/architecture/002-distlib-deps-counts-comment-words.md`):
   comments and strings no longer count, so the remaining rule is "no stdlib top-level fn/var name as
   a profile module's parameter or local".

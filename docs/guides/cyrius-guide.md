@@ -1332,10 +1332,15 @@ modules = ["src/types.cyr", "src/error.cyr"]
 Named deps are namespaced: `lib/{depname}_{basename}`. Stdlib is unprefixed.
 Includes are auto-prepended by the build tool — source files only need project includes.
 
-**`cyrius.lock` is a contract, not a cache (v6.6.4).** When a project has a git dep the
-resolver writes `cyrius.lock`: one `commit	…` line per git dep (a repointed tag is refused
-against it), one `<sha256>  lib/<file>` line per vendored file (sorted), and a `cyrius	<pin>`
-trailer naming the stdlib pin. On every resolve — including the implicit one `cyrius build`
+**`cyrius.lock` is a contract, not a cache (v6.6.4).** The resolver writes `cyrius.lock`:
+one `commit	…` line per git dep (a repointed tag is refused against it), one
+`<sha256>  lib/<file>` line per vendored file (sorted), and a `cyrius	<pin>` trailer naming
+the stdlib pin. It is written whenever `lib/` gains a file the lock does not cover — since
+6.6.9 that includes the **first** lock of a stdlib-only project and a stdlib leaf newly added
+to `[deps] stdlib` (both used to be left out), so commit it. `cyrius deps --verify` checks
+every locked hash **and** that every `.cyr` under `lib/` has a line: an unlocked file fails by
+name (`not in cyrius.lock — run cyrius deps --relock`), and an empty lock is reported as
+empty, not missing. On every resolve — including the implicit one `cyrius build`
 runs — a stdlib leaf whose bytes in `~/.cyrius/versions/<pin>/lib` disagree with the locked
 hash **under an unchanged `[package].cyrius`** is refused by name, with both hashes, and
 neither `lib/` nor the lock is written:

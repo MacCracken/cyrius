@@ -1435,3 +1435,8 @@ _chk_gate "$ROOT/tests/gates/toolchain/cli_pe_file_size_and_sibling_tools.sh"
 # names its capture, lint's pre-pass refuses instead of passing an unparsable file; an absolute
 # $TMPDIR is the temp base. Namespace axes SKIP without unprivileged userns.
 _chk_gate "$ROOT/tests/gates/toolchain/deps_cache_capture_failure_named.sh"
+
+# 6.6.9 (bite 9) — cyrius.lock covers every .cyr `cyrius deps` leaves in lib/: a newly declared
+# stdlib leaf is locked, a stdlib-only project gets its first lock (deps AND build), an empty
+# lock is present-but-empty, and `deps --verify` fails a file with no lock line, by name.
+_chk_gate "$ROOT/tests/gates/toolchain/deps_lock_new_leaf_locked.sh"
