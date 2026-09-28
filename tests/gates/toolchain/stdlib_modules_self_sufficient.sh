@@ -1,16 +1,17 @@
 #!/bin/sh
-# stdlib_modules_self_sufficient.sh — v6.6.6 bite 17g. A `lib/` module that calls another
-# module's functions INCLUDES that module. `include "lib/<m>.cyr"` on its own compiles clean.
+# stdlib_modules_self_sufficient.sh — v6.6.6 bite 17g; per-target tiers, peers and families
+# 6.6.9 bite 7. A `lib/` module that calls another module's functions INCLUDES that module:
+# `include "lib/<m>.cyr"` on its own compiles clean, on every target.
 #
-# ⛔ THE DEFECT. `lib/fmt.cyr` called `strlen`/`memcpy` (lib/string.cyr) and `vec_get`
-# (lib/vec.cyr) while including NOTHING; `lib/vec.cyr` called `alloc` and included only
-# lib/fnptr.cyr; `lib/string.cyr`'s `strdup`/`strndup` called `alloc`; `lib/io.cyr` called
-# `alloc`, `strlen`, `memcpy`, `fmt_int` and `fmt_int_buf`, and on agnos `_agnos_getenv` as a
-# bare forward reference. Each file WROTE THE REQUIREMENT DOWN FOR THE CALLER instead — "Requires:
-# include lib/string.cyr for strlen", "include lib/alloc.cyr THEN include lib/vec.cyr" — and
-# fmt's line did not even name lib/vec.cyr. Measured on 6.6.5: `include "lib/fmt.cyr"` +
-# `fmt_int(1)` compiled at exit 0 with `warning: undefined function 'strlen'` / `'vec_get'`,
-# and `include "lib/io.cyr"` alone produced FIVE such warnings on every target.
+# ⛔ THE DEFECT. Modules wrote their requirements down FOR THE CALLER — `# Requires:` lines
+# ("Requires: include lib/string.cyr for strlen", protobuf's "include BEFORE this file",
+# sync's "include atomic.cyr, alloc.cyr, then sync.cyr") — instead of including the definers.
+# `cyrius build`'s [deps].stdlib prepend hid it from project consumers, and every hand-written
+# include list (in-tree tcyr, sibling repos) was exposed. 6.6.6 fixed fmt, vec, string, io and
+# alloc (fmt called strlen / vec_get while including NOTHING); at the 6.6.7 triage 41
+# first-party modules plus 2 in lib/unicode/ still did not compile alone; 6.6.9 bite 7 fixed
+# them per module family (A foundation, B text/collections + unicode, C io/fs/process,
+# D concurrency, E net/tls).
 #
 # ⚠ AN UNDEFINED FUNCTION IS NOT A MISSING SYMBOL — IT IS A TRAP. cycc emits a `ud2`/SIGILL
 # stub for it and carries on, so the program links, runs, and dies at the first call with no
@@ -18,91 +19,311 @@
 # definers — self-sufficient modules") is written about constants; it is about HELPERS too, and
 # a constant only gives you a wrong number while a function gives you a signal.
 #
-# AXES
-#   1. Each module in SELFSUF compiles ALONE with ZERO `warning: undefined function`, on
-#      x86-Linux, agnos, PE and Mach-O — a module that is self-sufficient on one target and not
-#      on another is the shape that put `_agnos_getenv` in the agnos arm only.
-#   2. ANTI-VACUOUS: a probe that CALLS into each of those modules builds and RUNS to the right
-#      answer, so the includes are carrying real definitions rather than silencing a warning.
-#   3. SELF-TEST: a fixture module that calls a function nothing defines MUST be reported by the
-#      same check, or axis 1 is measuring nothing.
-#   4. RATCHET over the whole of lib/: the number of modules that compile alone with no
-#      undefined function may not fall below the floor measured here. The stdlib is not all the
-#      way there yet (see the floor's comment), and a ratchet is what stops it sliding back
-#      while the rest is brought up.
+# ⚠ WHAT 6.6.6'S VERSION OF THIS GATE COULD NOT SEE, and 6.6.9 fixed: it scanned x86-Linux only,
+# with a flat `lib/*.cyr` glob (lib/unicode/ never scanned), and ONE floor over a mixed
+# population — public modules, the per-target peers that exist to be dispatched INTO by their
+# parent, and vendored fold bundles whose includes are stripped by contract. Its axis-4 comment
+# called those peers "the rest", and the roadmap's "46 ... + 31 cannot be included alone"
+# mislabelled the same categories. On aarch64 it measured nothing at all: the aarch64 forks did
+# not run the undefined-function prepass (6.6.9 bite 2), so every module read "OK".
 #
-# MUTATION LEDGER (measured 6.6.6, each by editing a COPY of the module in the scratch dir)
-#   a. lib/fmt.cyr's two includes removed      -> axes 1 (4 targets) and 4 FAIL ('strlen',
-#                                                 'vec_get', and the ratchet count drops)
-#   b. lib/vec.cyr's alloc include removed     -> axes 1 and 4 FAIL ('alloc', 'alloc_via',
-#                                                 'default_alloc')
-#   b2. lib/alloc.cyr's syscalls include removed-> axes 1 and 4 FAIL ('sys_mmap'). It reddens on
-#                                                 EVERY target, and it is the one this gate
-#                                                 found that the bite had not: every real
-#                                                 consumer includes lib/syscalls.cyr first, so
-#                                                 it was invisible until a module was compiled
-#                                                 alone.
+# POPULATION (derived here, every run — nothing below is a hand-kept module list except PENDING):
+#   fold      a distlib bundle (`# Generated by: cyrius distlib` / `# Bundled distribution of`).
+#             Its includes are stripped by contract; counted in the raw ratchet only.
+#   peer      FROM THE INCLUDE GRAPH: lib/<R>_<x>.cyr where lib/<R>.cyr exists, a file of R's
+#             family (R itself or another R_* file) includes it, and it does NOT document itself
+#             as directly includable (`# Usage: include "lib/<R>_<x>.cyr"`). alloc_windows,
+#             syscalls_linux_common and tls_native_conn are peers; thread_local, tls_native and
+#             hashmap_fast declare their own Usage line and are public. A peer is checked
+#             THROUGH its root, which axis 1 compiles on every target, so each peer is compiled
+#             on the target whose arm pulls it in.
+#   public    everything else, lib/unicode/ included — the FIRST-PARTY TIER.
+#   PENDING   first-party modules that cannot be self-sufficient until the fold bundles they
+#             call are raw-includable (roadmap, "Fold bundles that are raw-includable"): log
+#             (sakshi_*), ws (bayan's base64_encode) and ws_server (sandhi_server_find_header,
+#             base64_encode). Including the fold does not fix them — `ws` + lib/bayan.cyr still
+#             leaves 45 undefined functions, because a bundle needs its sidecar leaves — and
+#             mirroring a fold's sidecar into a first-party file is the rot that item removes.
+#
+# AXES
+#   0. SELF-TEST, per target compiler: a fixture calling a function nothing defines MUST be
+#      reported, or every "OK" below is blindness. This is what reddens on an aarch64 compiler
+#      without 6.6.9 bite 2's undefined prepass (stock 6.6.8 cycc_aarch64 reported 90 of 111
+#      modules "OK").
+#   1. FIRST-PARTY TIER, strict: every public module outside PENDING compiles alone with ZERO
+#      undefined functions (and no compile error) on x86-Linux, agnos, PE, Mach-O and aarch64.
+#   2. PENDING tier: each named module exists, is public, and still fails on x86-Linux — when one
+#      stops failing, move it out of PENDING so axis 1 holds it.
+#   3. PEERS via their parents: >= 25 peers classified from the include graph, and every peer's
+#      root is a first-party module in axis 1 (not PENDING, not a fold).
+#   4. RATCHET per target over the WHOLE population (folds and peers included, since a fold
+#      re-vendor or a peer edit can move them): linux, agnos, PE, Mach-O, cx, aarch64. The cx
+#      backend emits every fn and hard-errors on an undefined call, and it cannot compile
+#      tls / tls_native (codebuf overflow) or thread (sync.cyr has no cx arm), so cx is held
+#      by its floor, not by axis 1.
+#   5. ANTI-VACUOUS, per family: a probe that includes only that family's modules calls THROUGH
+#      the includes this bite added and runs to a known answer — so the includes carry real
+#      definitions rather than silencing warnings. Plus 6.6.6's io.cyr probe.
+#   6. The hand-written include lists a review found short (three bayan-including tcyr and
+#      bench_mulmod lacked io.cyr's file_*; alloc_serdes lacked net.cyr) compile with zero
+#      undefined functions.
+#
+# MUTATION LEDGER (6.6.6, each by editing a COPY or reverting in a scratch tree)
+#   a. lib/fmt.cyr's two includes removed      -> axes 1 and 4 FAIL ('strlen', 'vec_get')
+#   b. lib/vec.cyr's alloc include removed     -> axes 1 and 4 FAIL ('alloc', 'alloc_via')
+#   b2. lib/alloc.cyr's syscalls include removed-> axes 1 and 4 FAIL ('sys_mmap', agnos)
 #   c. lib/string.cyr's alloc include removed  -> axes 1 and 4 FAIL ('alloc')
-#   d. lib/io.cyr's fmt/string includes removed-> axis 1 FAIL on all 4 targets (5 warnings)
+#   d. lib/io.cyr's fmt/string includes removed-> axis 1 FAIL on every target
 #   e. lib/io.cyr's agnos args_agnos include   -> axis 1 FAIL on the AGNOS target only
-#      removed                                   ('_agnos_getenv') — the per-target half
-#   f. axis-1 warning check inverted           -> axis 3 self-test FAIL
-#   g. (6.6.7) lib/tls_native.cyr's sys /     -> axis 1 FAIL on all 4 targets ('random_bytes' +
-#      chrono / random includes removed          'clock_epoch_secs' everywhere, 'sys_uname' off
-#                                                 agnos, 'clock_now_ms' + 'sleep_ms' on linux and
-#                                                 macho) and axis 4 FAIL (26 of 104, floor 27)
-# Real tree -> PASS.
+#   f. the undefined-function detector blinded (its grep never matches) -> axis 0 FAIL on all
+#      six targets (6.6.9 re-measure; 6.6.6 inverted the check, same result)
+#   g. (6.6.7) lib/tls_native.cyr's sys / chrono / random includes removed -> axes 1 and 4 FAIL
+# MUTATION LEDGER (6.6.9 bite 7, each measured against this file)
+#   h. lib/syscalls.cyr's trailing alloc include removed -> axis 1 FAIL on linux, agnos and
+#      aarch64 (syscalls, sys, random, hashseed, freelist: 'alloc'); axis 4 on those and cx
+#   i. lib/result.cyr's fmt include removed    -> axis 1 FAIL on every target ('fmt_int')
+#   j. lib/pam.cyr's Linux-only guard removed  -> axis 1 FAIL on agnos (hard error: sys_dup2,
+#      sys_execve, sys_waitpid's arity); on PE only until this release's sys_pipe stub
+#   k. lib/args.cyr's agnos-arm includes removed-> axis 1 FAIL on the AGNOS target only
+#   l. lib/str.cyr's four includes removed     -> axes 1 (6 modules x 5 targets) and 4 FAIL
+#   m. lib/process.cyr's includes removed      -> axis 1 FAIL ('SYS_GETPPID' hard error)
+#   n. lib/sync.cyr's includes removed         -> axis 1 FAIL on all 5 targets (sync; a hard
+#      'SYS_FUTEX' error on linux and aarch64; thread survives — it includes them itself)
+#   o. lib/tls.cyr's fdlopen include removed   -> axis 1 FAIL ('fdlopen_dlopen' ...)
+#   p. lib/unicode/casefold.cyr's includes removed -> axis 1 FAIL (the lib/unicode recursion)
+#   q. lib/thread_local.cyr's Usage line removed -> it reclassifies as a peer of thread and the
+#      first-party floor FAILS (67 < 68): the Usage line IS the declaration, and losing it must
+#      not quietly drop a module out of axis 1
+#   r. tests/tcyr/derive/derive_str_deserialize.tcyr's io include removed -> axis 6 FAIL
+#      (bayan's file_* x8). alloc_serdes' net include is belt-and-braces once http.cyr includes
+#      net.cyr itself (bite 12) — removing it no longer reddens anything, by design
+#   s. aarch64 compiler without the undefined prepass (stock 6.6.8) -> axis 0 FAIL
+# Real tree (with 6.6.9 bites 2, 5 and 12 merged) -> PASS.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
 D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: stdlib_modules_self_sufficient: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$D"' EXIT
+ulimit -c 0 2>/dev/null
 FAIL=0
 fail() { echo "FAIL: $*"; FAIL=1; }
-CC="$ROOT/build/cycc"
-[ -x "$CC" ] || { echo "FAIL: build/cycc missing"; exit 1; }
+CC=${CYCC:-"$ROOT/build/cycc"}
+[ -x "$CC" ] || { echo "FAIL: $CC missing"; exit 1; }
 
-# The modules this bite made self-sufficient. Each must stay so on every target.
-# 6.6.7 adds lib/tls_native.cyr: the folded sigil needs sys, chrono and random, and a bundle
-# strips its own includes, so tls_native (its only in-tree hand list) now supplies them.
-# CHANGELOG [6.6.7]
-SELFSUF="lib/alloc.cyr lib/fmt.cyr lib/vec.cyr lib/string.cyr lib/io.cyr lib/tls_native.cyr"
-# Per-target env, as the build scripts spell it. "" is x86_64-linux.
-TARGETS="linux:  agnos:CYRIUS_TARGET_AGNOS=1 pe:CYRIUS_TARGET_WIN=1 macho:CYRIUS_MACHO=1"
+# The two cross compilers are built from THIS tree (~0.6 s each), so the gate measures the
+# tree's own aarch64 / cx drivers rather than whatever sits in build/. CYCC_AARCH64 / CYCC_CX
+# point it at a candidate instead.
+A64CC=${CYCC_AARCH64:-}
+if [ -z "$A64CC" ]; then
+    "$CC" < src/main_aarch64.cyr > "$D/cycc_aarch64" 2> "$D/a64.err" && chmod +x "$D/cycc_aarch64" \
+        || { echo "FAIL: cannot build the aarch64 compiler from src/main_aarch64.cyr"; tail -3 "$D/a64.err"; exit 1; }
+    A64CC="$D/cycc_aarch64"
+fi
+CXCC=${CYCC_CX:-}
+if [ -z "$CXCC" ]; then
+    "$CC" < src/main_cx.cyr > "$D/cycc_cx" 2> "$D/cx.err" && chmod +x "$D/cycc_cx" \
+        || { echo "FAIL: cannot build the cx compiler from src/main_cx.cyr"; tail -3 "$D/cx.err"; exit 1; }
+    CXCC="$D/cycc_cx"
+fi
 
-# _undef <module> <env> — the undefined functions cycc reports for a bare include of <module>
-_undef() {
-    printf 'include "%s";\nfn _ssm(): i64 { return 0; }\nvar _ssr = _ssm();\nsyscall(60, _ssr);\n' "$1" > "$D/ss.cyr"
-    # --allow-undef: cycc REFUSES to emit a binary with a reachable undefined function, and the
-    # refusal is what this gate wants to READ rather than trip over — the flag downgrades it to
-    # the warnings, so a module with three gaps reports all three instead of one exit code.
-    if [ -n "$2" ]; then env "$2" "$CC" --allow-undef < "$D/ss.cyr" > "$D/ss.bin" 2> "$D/ss.err"
-    else "$CC" --allow-undef < "$D/ss.cyr" > "$D/ss.bin" 2> "$D/ss.err"; fi
+TARGETS="linux agnos pe macho cx aarch64"
+STRICT_TARGETS="linux agnos pe macho aarch64"
+# PENDING: see the header. Each entry is a first-party module whose remaining undefined calls
+# are into a fold bundle that is not raw-includable.
+PENDING="log ws ws_server"
+
+# _compile <target> <in.cyr> <out> <err> — compile for <target> from the CURRENT directory.
+# --allow-undef: cycc REFUSES to emit a binary with a reachable undefined function, and the
+# refusal is what this gate wants to READ rather than trip over — the flag downgrades it to
+# the warnings, so a module with three gaps reports all three instead of one exit code.
+_compile() {
+    case "$1" in
+        linux)   "$CC" --allow-undef < "$2" > "$3" 2> "$4" ;;
+        agnos)   CYRIUS_TARGET_AGNOS=1 "$CC" --allow-undef < "$2" > "$3" 2> "$4" ;;
+        pe)      CYRIUS_TARGET_WIN=1 "$CC" --allow-undef < "$2" > "$3" 2> "$4" ;;
+        macho)   CYRIUS_MACHO=1 "$CC" --allow-undef < "$2" > "$3" 2> "$4" ;;
+        cx)      "$CXCC" --allow-undef < "$2" > "$3" 2> "$4" ;;
+        aarch64) "$A64CC" --allow-undef < "$2" > "$3" 2> "$4" ;;
+    esac
+}
+# _status <target> <include-path> <workdir> — prints "OK", "UNDEF <names>" or "CERR <names>".
+_status() {
+    printf 'include "%s";\nfn _ssm(): i64 { return 0; }\nvar _ssr = _ssm();\nsyscall(60, _ssr);\n' "$2" > "$3/ss.cyr"
+    _compile "$1" "$3/ss.cyr" "$3/ss.bin" "$3/ss.err"
     rc=$?
-    if [ "$rc" -ne 0 ]; then printf 'COMPILE-ERROR\n'; return; fi
-    grep '^warning: undefined function' "$D/ss.err" | grep -v 'call site may be unreachable' \
-        | sed "s/^warning: undefined function //" | tr -d "'" | tr '\n' ' '
+    u=$(grep '^warning: undefined function' "$3/ss.err" | grep -v 'call site may be unreachable' \
+        | sed "s/^warning: undefined function //" | tr -d "'" | tr '\n' ' ')
+    if [ "$rc" -ne 0 ]; then
+        # the cx backend reports its undefined calls in the error line itself
+        cxu=$(grep 'undefined function(s) called' "$3/ss.err" | sed 's/.*called (cx backend)://' | tr '\n' ' ')
+        printf 'CERR %s%s\n' "$u" "$cxu"
+    elif [ -n "$u" ]; then printf 'UNDEF %s\n' "$u"
+    else printf 'OK\n'; fi
 }
 
-# ── axis 1: every listed module compiles alone, clean, on every target ──
+# ── axis 0: SELF-TEST — every target compiler can see an undefined function ──
+# The fixture goes under a scratch cwd, not $ROOT: cycc rejects an ABSOLUTE include path
+# (CYRIUS_ALLOW_ABSOLUTE_INCLUDES), so the include has to be relative to where cycc runs.
+mkdir -p "$D/fx"
+printf 'fn _fx_caller(): i64 { return _no_such_function_anywhere(1); }\n' > "$D/fx/broken.cyr"
+x=0
+for t in $TARGETS; do
+    s=$(cd "$D" && _status "$t" "fx/broken.cyr" "$D")
+    case "$s" in
+        *_no_such_function_anywhere*) : ;;
+        *) x=1
+           if [ "$t" = aarch64 ]; then
+               fail "axis 0 self-test [aarch64]: the aarch64 compiler did not report a call to an undefined function (got '$s') — it lacks the undefined-function prepass (6.6.9 bite 2), so every aarch64 'OK' below is blindness"
+           else
+               fail "axis 0 self-test [$t]: a call to an undefined function was reported as '$s' — this target's checks cannot see what they look for"
+           fi ;;
+    esac
+done
+[ "$x" = 0 ] && echo "  ok: axis 0: all 6 target compilers report an undefined function in a fixture module"
+
+# ── classification, from the files and the include graph ──
+find lib -name '*.cyr' | sort > "$D/files"
+: > "$D/stems"
+while read -r f; do s=${f#lib/}; echo "${s%.cyr}" >> "$D/stems"; done < "$D/files"
+# edges: "<includer-stem> <included-stem>", real include lines only (not comments)
+grep -H '^[[:space:]]*include "lib/[^"]*\.cyr"' $(cat "$D/files") \
+    | sed 's|^lib/\([^:]*\)\.cyr:[[:space:]]*include "lib/\([^"]*\)\.cyr".*|\1 \2|' > "$D/edges"
+: > "$D/class"
+while read -r s; do
+    f="lib/$s.cyr"
+    if head -40 "$f" | grep -q 'Generated by: cyrius distlib\|Bundled distribution of'; then
+        echo "$s fold -" >> "$D/class"; continue
+    fi
+    # root: the longest top-level stem R with "$s" = "R_<x>"
+    root=-
+    case "$s" in
+        */*) : ;;
+        *) for r in $(grep -v / "$D/stems"); do
+               case "$s" in
+                   "${r}_"*) if [ "$root" = - ] || [ ${#r} -gt ${#root} ]; then root=$r; fi ;;
+               esac
+           done ;;
+    esac
+    cls=public
+    if [ "$root" != - ] && ! grep -qE "^#.*[Uu]sage:.*include \"lib/$s\\.cyr\"" "$f"; then
+        # included by R itself or by another file of R's family?
+        if awk -v m="$s" -v r="$root" '$2 == m && ($1 == r || index($1, r "_") == 1) { f = 1 } END { exit f ? 0 : 1 }' "$D/edges"; then
+            cls=peer
+        fi
+    fi
+    [ "$cls" = peer ] && echo "$s peer $root" >> "$D/class" || echo "$s public -" >> "$D/class"
+done < "$D/stems"
+NTOT=$(wc -l < "$D/class" | tr -d ' ')
+NFOLD=$(grep -c ' fold ' "$D/class")
+NPEER=$(grep -c ' peer ' "$D/class")
+NPUB=$(grep -c ' public ' "$D/class")
+[ "$NTOT" -ge 105 ] || fail "classification: only $NTOT lib modules found (floor 105, lib/unicode included) — the scan read nothing"
+[ "$NFOLD" -ge 10 ] || fail "classification: only $NFOLD fold bundles recognised (12 at 6.6.9) — the distlib marker changed?"
+# The first-party tier may not SHRINK: a module that stops declaring its own Usage line (or
+# gains a same-family includer) turns into a peer and silently leaves axis 1. 68 at 6.6.9 —
+# raise it when a public module is added, never lower it without moving one out on purpose.
+PUB_FLOOR=68
+[ "$NPUB" -ge "$PUB_FLOOR" ] || fail "classification: $NPUB first-party modules, below the $PUB_FLOOR floor — a public module was reclassified as a peer (lost its '# Usage: include \"lib/<m>.cyr\"' line?) or deleted"
+echo "  classified: $NTOT lib modules = $NPUB public (first-party) + $NPEER peers + $NFOLD folds"
+
+# ── the scan: every module on every target, one background job per target ──
+for t in $TARGETS; do
+    mkdir -p "$D/w_$t"
+    (
+        while read -r s; do
+            printf '%s %s\n' "$s" "$(_status "$t" "lib/$s.cyr" "$D/w_$t")"
+        done < "$D/stems" > "$D/scan_$t"
+    ) &
+done
+wait
+for t in $TARGETS; do
+    n=$(wc -l < "$D/scan_$t" | tr -d ' ')
+    [ "$n" = "$NTOT" ] || fail "scan [$t]: $n results for $NTOT modules — the per-target scan did not finish"
+done
+
+# ── axis 1: the first-party tier, strict, on every host target ──
 x=0; n1=0
-for m in $SELFSUF; do
-    [ -f "$m" ] || { fail "axis 1: $m does not exist — renamed? update SELFSUF"; x=1; continue; }
-    for te in $TARGETS; do
-        tname=${te%%:*}; tenv=${te#*:}
+for t in $STRICT_TARGETS; do
+    for s in $(awk '$2 == "public" { print $1 }' "$D/class"); do
+        case " $PENDING " in *" $s "*) continue ;; esac
         n1=$((n1 + 1))
-        u=$(_undef "$m" "$tenv")
-        case "$u" in
-            "") : ;;
-            COMPILE-ERROR*) fail "axis 1: $m does not compile alone for $tname"; sed 's/^/      /' "$D/ss.err" | head -3; x=1 ;;
-            *) fail "axis 1: $m calls undefined function(s) for $tname: $u — include the module that defines them (an undefined fn is a ud2/SIGILL stub, not a link error)"; x=1 ;;
+        st=$(awk -v m="$s" '$1 == m { $1 = ""; sub(/^ /, ""); print; exit }' "$D/scan_$t")
+        case "$st" in
+            OK) : ;;
+            CERR*) fail "axis 1 [$t]: lib/$s.cyr does not compile alone${st#CERR}"; x=1 ;;
+            *) fail "axis 1 [$t]: lib/$s.cyr calls undefined function(s): ${st#UNDEF } — include the module that defines them (an undefined fn is a ud2/SIGILL stub, not a link error)"; x=1 ;;
         esac
     done
 done
-[ "$n1" -ge 24 ] || { fail "axis 1: only $n1 module/target pairs checked (6 modules x 4 targets expected)"; x=1; }
-[ "$x" = 0 ] && echo "  ok: axis 1: $n1 module/target pairs — every module in SELFSUF includes alone with no undefined function"
+[ "$n1" -ge 300 ] || fail "axis 1: only $n1 module/target pairs checked (>= 60 first-party modules x 5 targets expected)"
+[ "$x" = 0 ] && echo "  ok: axis 1: $n1 module/target pairs — every first-party module outside PENDING includes alone with no undefined function on linux, agnos, PE, Mach-O and aarch64"
 
-# ── axis 2: ANTI-VACUOUS — the definitions are real, not just quiet ──
-cat > "$D/use.cyr" <<'CYR'
+# ── axis 2: the PENDING tier stays honest ──
+x=0
+for s in $PENDING; do
+    c=$(awk -v m="$s" '$1 == m { print $2 }' "$D/class")
+    case "$c" in
+        public) : ;;
+        "") fail "axis 2: PENDING names lib/$s.cyr, which does not exist — drop it"; x=1; continue ;;
+        *) fail "axis 2: PENDING names lib/$s.cyr, which classifies as a $c, not a first-party module"; x=1; continue ;;
+    esac
+    st=$(awk -v m="$s" '$1 == m { print $2; exit }' "$D/scan_linux")
+    [ "$st" = OK ] && { fail "axis 2: lib/$s.cyr now includes alone cleanly — move it OUT of PENDING so axis 1 holds it"; x=1; }
+done
+[ "$x" = 0 ] && echo "  ok: axis 2: PENDING ($PENDING) — each is first-party and still waits on a raw-includable fold bundle"
+
+# ── axis 3: peers are checked through their parents ──
+x=0
+[ "$NPEER" -ge 25 ] || { fail "axis 3: only $NPEER peers derived from the include graph (31 at 6.6.9) — the classification is not reading the graph"; x=1; }
+for p in $(awk '$2 == "peer" { print $1 ":" $3 }' "$D/class"); do
+    s=${p%%:*}; r=${p#*:}
+    rc_=$(awk -v m="$r" '$1 == m { print $2 }' "$D/class")
+    case " $PENDING " in *" $r "*) rc_=pending ;; esac
+    [ "$rc_" = public ] || { fail "axis 3: peer lib/$s.cyr's root lib/$r.cyr is $rc_, so nothing checks the peer — a peer is held through a first-party root"; x=1; }
+done
+[ "$x" = 0 ] && echo "  ok: axis 3: $NPEER peers, each held by a first-party root that axis 1 compiles on every target ($(awk '$2 == "peer" { printf "%s ", $1 }' "$D/class" | cut -c1-90)...)"
+
+# ── axis 4: RATCHET per target over the whole population ──
+# ⚠ A FLOOR IS NOT A TARGET. It is measured, not declared — the gate prints the count ("N of
+# M") — and it only goes UP: raise it whenever a module is fixed, never lower it. Measured on
+# the 6.6.9 bite-7 lane (fs, http and PE's regression still open there, and the aarch64 count
+# taken with a prepass-enabled compiler): linux 71, agnos 71, PE 70, Mach-O 72, cx 66,
+# aarch64 70 of 111. Measured on a simulated merge (fs.cyr's includes from bite 5, http.cyr
+# from bite 12, PE's sys_pipe stub): linux 73, agnos 73, PE 73, Mach-O 74, cx 68, aarch64 72 —
+# raise them to those on the merged tree. 6.6.7's single x86 floor was 27 of 104.
+FLOORS="linux:71 agnos:71 pe:70 macho:72 cx:66 aarch64:70"
+x=0; summary=""
+for tf in $FLOORS; do
+    t=${tf%%:*}; fl=${tf#*:}
+    nok=$(awk '$2 == "OK"' "$D/scan_$t" | wc -l | tr -d ' ')
+    summary="$summary $t $nok/$NTOT (floor $fl);"
+    if [ "$nok" -lt "$fl" ]; then
+        fail "axis 4 [$t]: $nok of $NTOT lib modules include alone with no undefined function — below the $fl floor. A module became LESS self-sufficient; do not lower the floor."; x=1
+    fi
+done
+[ "$x" = 0 ] && echo "  ok: axis 4:$summary"
+
+# ── axis 5: ANTI-VACUOUS — the includes carry definitions, family by family ──
+# Each probe includes ONLY the modules named in its comment and calls THROUGH the includes
+# this bite added; the exit code is a bit per call that returned the right answer.
+_run_probe() {   # <name> <expected-exit> <expected-stdout or -> ; source on stdin
+    cat > "$D/p_$1.cyr"
+    "$CC" < "$D/p_$1.cyr" > "$D/p_$1" 2> "$D/p_$1.err"; brc=$?
+    if [ "$brc" -ne 0 ]; then fail "axis 5 [$1]: the probe does not build:"; tail -4 "$D/p_$1.err" | sed 's/^/      /'; return; fi
+    if grep -q '^warning: undefined function' "$D/p_$1.err"; then
+        fail "axis 5 [$1]: the probe compiled with undefined functions: $(grep '^warning: undefined function' "$D/p_$1.err" | tr '\n' ' ')"; return
+    fi
+    chmod +x "$D/p_$1" 2>/dev/null
+    ( cd "$D" && "./p_$1" > "p_$1.out" 2>&1 < /dev/null ); prc=$?
+    if [ "$prc" -ne "$2" ]; then
+        fail "axis 5 [$1]: the probe exited $prc, expected $2 (one bit per call through a new include) — the includes are silencing warnings, not supplying definitions"; return
+    fi
+    if [ "$3" != - ] && [ "$(cat "$D/p_$1.out")" != "$3" ]; then
+        fail "axis 5 [$1]: the probe printed '$(cat "$D/p_$1.out")', expected '$3'"; return
+    fi
+    echo "  ok: axis 5 [$1]: exits $2"
+}
+# 6.6.6: only lib/io.cyr — vec, string and fmt through it
+_run_probe io 42 0 <<'CYR'
 include "lib/io.cyr";
 fn main(): i64 {
     alloc_init();
@@ -116,57 +337,157 @@ fn main(): i64 {
 var r = main();
 syscall(60, r);
 CYR
-"$CC" < "$D/use.cyr" > "$D/use" 2> "$D/use.err"; brc=$?
-x=0
-[ "$brc" -eq 0 ] || { fail "axis 2: the cross-module probe does not build:"; tail -4 "$D/use.err" | sed 's/^/      /'; x=1; }
-[ -z "$(grep '^warning: undefined function' "$D/use.err")" ] || { fail "axis 2: the probe compiled with undefined functions"; x=1; }
-chmod +x "$D/use" 2>/dev/null
-( ulimit -c 0; "$D/use" > "$D/use.out" 2>&1 ); rc=$?
-[ "$rc" -eq 42 ] || { fail "axis 2: the cross-module probe returned $rc, expected 42 (40 from vec_get + 2 from strlen) — the includes are silencing warnings, not supplying definitions"; x=1; }
-[ "$(cat "$D/use.out")" = "0" ] || { fail "axis 2: fmt_int(0) printed '$(cat "$D/use.out")'"; x=1; }
-[ "$x" = 0 ] && echo "  ok: axis 2: a probe that only includes lib/io.cyr calls into vec, string and fmt and returns 42"
+# A foundation: result (fmt), random (syscalls), cffi (alloc), keccak / bounds / slice (string)
+_run_probe A-foundation 31 'Ok(5)' <<'CYR'
+include "lib/result.cyr";
+include "lib/random.cyr";
+include "lib/cffi.cyr";
+include "lib/keccak.cyr";
+include "lib/bounds.cyr";
+include "lib/slice.cyr";
+fn main(): i64 {
+    alloc_init();
+    var s = 0;
+    var rb[32];
+    if (random_bytes(&rb, 32) == 32) { s = s + 1; }                    # sys_getrandom
+    var l = cffi_struct_new();                                         # alloc
+    cffi_field(l, CFFI_U32);
+    cffi_field(l, CFFI_PTR);
+    if (cffi_offset(l, 1) == 8 && cffi_sizeof(l) == 16) { s = s + 2; }
+    var out[16];
+    shake128(0, 0, &out, 16);                                          # memset; SHAKE128("") = 7f 9c ...
+    if (load8(&out) == 0x7f && load8(&out + 1) == 0x9c) { s = s + 4; }
+    var a[16];
+    var b[16];
+    store64(&a, 0x1122334455667788);
+    store64(&a + 8, 42);
+    checked_memcpy(&b, 16, &a, 16, 16);                                # memcpy
+    if (load64(&b + 8) == 42) { s = s + 8; }
+    var sa: [u8] = 0;
+    var sb: [u8] = 0;
+    slice_set(&sa, &a, 16);
+    slice_set(&sb, &b, 16);
+    if (slice_eq_bytes(&sa, &sb) == 1) { s = s + 16; }                 # memeq
+    result_print(Ok, 5);                                               # fmt_int -> "Ok(5)"
+    return s;
+}
+var r = main();
+syscall(60, r);
+CYR
+# B text/collections + unicode: str (vec), hashmap, regex, chrono, protobuf, callback, casefold
+_run_probe B-text-collections 127 - <<'CYR'
+include "lib/str.cyr";
+include "lib/hashmap.cyr";
+include "lib/regex.cyr";
+include "lib/chrono.cyr";
+include "lib/protobuf.cyr";
+include "lib/callback.cyr";
+include "lib/unicode/casefold.cyr";
+fn _pb_dbl(x): i64 { return x * 2; }
+fn main(): i64 {
+    alloc_init();
+    var s = 0;
+    var parts = str_split(str_from("a,bb,ccc"), 44);                   # vec_new_a / vec_push_a
+    if (vec_len(parts) == 3) { s = s + 1; }
+    var m = map_new();
+    map_set(m, "k", 7);
+    if (map_get(m, "k") == 7) { s = s + 2; }
+    var re = regex_compile("a+b");
+    if (regex_match(re, "aaab") == 1) { s = s + 4; }
+    if (clock_now_ns() > 0) { s = s + 8; }
+    var sb = str_builder_new();
+    pb_write_varint(sb, 300);                                          # 300 = 0xAC 0x02
+    var bs = str_builder_build(sb);
+    if (str_len(bs) == 2) { s = s + 16; }
+    var up = str_upper_unicode(str_from("abc"));                       # str_new / alloc
+    if (str_eq(up, str_from("ABC")) == 1) { s = s + 32; }
+    var v = vec_new();
+    vec_push(v, 3);
+    var w = vec_map(v, &_pb_dbl);                                      # callback: vec_* + fncall1
+    if (vec_get(w, 0) == 6) { s = s + 64; }
+    return s;
+}
+var r = main();
+syscall(60, r);
+CYR
+# C io/fs/process: process (syscall peer + result), pwd (io's file_read_all), regression
+_run_probe C-io-process 7 - <<'CYR'
+include "lib/process.cyr";
+include "lib/pwd.cyr";
+include "lib/regression.cyr";
+include "lib/dynlib.cyr";
+fn main(): i64 {
+    alloc_init();
+    var s = 0;
+    var buf[64];
+    var t, n = run_capture("/bin/echo", "hi", 0, &buf, 64);
+    if (is_ok(t) == 1 && n >= 2 && load8(&buf) == 104) { s = s + 1; }
+    var rec[64];
+    var sbuf[512];
+    if (pwd_getpwuid(0, &rec, &sbuf, 512) == 1 && streq(pwd_name(&rec), "root") == 1) { s = s + 2; }
+    if (regression_file_contains_substr("/etc/passwd", "root") == 1) { s = s + 4; }
+    return s;
+}
+var r = main();
+syscall(60, r);
+CYR
+# D concurrency: thread (sync's mutex, the syscall peer, mmap), thread_local, async
+_run_probe D-concurrency 15 - <<'CYR'
+include "lib/thread.cyr";
+include "lib/thread_local.cyr";
+include "lib/async.cyr";
+var _pd_cell = 0;
+fn _pd_body(arg): i64 { _pd_cell = arg; return 0; }
+fn main(): i64 {
+    alloc_init();
+    var s = 0;
+    var m = mutex_new();
+    mutex_lock(m);
+    mutex_unlock(m);
+    if (m != 0) { s = s + 1; }
+    var t = thread_create(&_pd_body, 9);
+    thread_join(t);
+    if (_pd_cell == 9) { s = s + 2; }
+    thread_local_init();
+    var slot = thread_local_alloc();
+    thread_local_set(slot, 77);
+    if (thread_local_get(slot) == 77) { s = s + 4; }
+    var tok = cancel_token_new();
+    cancel_token_signal(tok);
+    if (cancel_token_check(tok) == 1) { s = s + 8; }
+    return s;
+}
+var r = main();
+syscall(60, r);
+CYR
+# E net/tls: net (syscall peer + result), tls (fdlopen, tls_native)
+_run_probe E-net-tls 7 - <<'CYR'
+include "lib/net.cyr";
+include "lib/tls.cyr";
+fn main(): i64 {
+    alloc_init();
+    var s = 0;
+    var t, fd = tcp_socket();
+    if (is_ok(t) == 1 && fd >= 0) { s = s + 1; }
+    if (sock_close(fd) == 0) { s = s + 2; }
+    if (tls_set_backend(TLS_BACKEND_NATIVE) == 0) { s = s + 4; }
+    return s;
+}
+var r = main();
+syscall(60, r);
+CYR
 
-# ── axis 3: SELF-TEST — the check can see an undefined function ──
-# The fixture goes under a scratch cwd, not $D: cycc rejects an ABSOLUTE include path
-# (CYRIUS_ALLOW_ABSOLUTE_INCLUDES), so the include has to be relative to where cycc runs.
-mkdir -p "$D/fx"
-printf 'fn _fx_caller(): i64 { return _no_such_function_anywhere(1); }\n' > "$D/fx/broken.cyr"
-x=0
-u=$( cd "$D" && CC="$CC" D="$D" sh -c '
-    printf '"'"'include "fx/broken.cyr";\nfn _ssm(): i64 { return 0; }\nvar _ssr = _ssm();\nsyscall(60, _ssr);\n'"'"' > ss3.cyr
-    "$CC" --allow-undef < ss3.cyr > /dev/null 2> ss3.err
-    grep "^warning: undefined function" ss3.err | grep -v "call site may be unreachable" | sed "s/^warning: undefined function //" | tr -d "\047" | tr "\n" " "
-' )
-case "$u" in
-    *_no_such_function_anywhere*) : ;;
-    *) fail "axis 3 self-test: a call to an undefined function was reported as '$u' — axis 1 cannot see what it is looking for"; x=1 ;;
-esac
-[ "$x" = 0 ] && echo "  ok: axis 3: the check reports an undefined function in a fixture module (axis 1 is not vacuous)"
-
-# ── axis 4: RATCHET over the whole stdlib ──
-# ⚠ THE FLOOR IS NOT A TARGET. The count is measured, not declared — the gate prints it below
-# ("N of M"); at 6.6.7 it is 27 of the 104 lib/*.cyr. The rest either still leave a function
-# undefined or cannot be included alone at all (per-target peers like lib/alloc_windows.cyr,
-# which exist to be dispatched INTO by their parent); that gap is filed, not fixed here. The
-# ratchet is what stops the number sliding back while the rest is brought up: RAISE it whenever
-# a module is fixed, never lower it.
-# 6.6.7: 26 -> 27 (lib/tls_native.cyr).
-FLOOR=27
-nok=0; ntot=0
-for m in lib/*.cyr; do
-    ntot=$((ntot + 1))
-    u=$(_undef "$m" "")
-    case "$u" in
-        "") nok=$((nok + 1)) ;;
-        *) : ;;
-    esac
+# ── axis 6: the corpus hand lists a review found short ──
+x=0; n6=0
+for f in tests/tcyr/derive/derive_str_deserialize.tcyr tests/tcyr/formats/ws_server_handshake.tcyr \
+         tests/tcyr/memory/alloc_serdes.tcyr benches/bench_mulmod.bcyr; do
+    [ -f "$f" ] || { fail "axis 6: $f does not exist — renamed? update this list"; x=1; continue; }
+    n6=$((n6 + 1))
+    "$CC" < "$f" > "$D/c6.bin" 2> "$D/c6.err" || { fail "axis 6: $f does not compile"; x=1; continue; }
+    u=$(grep '^warning: undefined function' "$D/c6.err" | sed "s/^warning: undefined function //" | tr -d "'" | tr '\n' ' ')
+    [ -z "$u" ] || { fail "axis 6: $f compiles with undefined function(s): $u — its hand-written include list is missing their definer (a bundle's sidecar leaf)"; x=1; }
 done
-[ "$ntot" -ge 90 ] || { fail "axis 4: only $ntot lib/*.cyr scanned (floor 90) — the scan read nothing"; FAIL=1; }
-if [ "$nok" -lt "$FLOOR" ]; then
-    fail "axis 4: $nok of $ntot lib modules include alone with no undefined function — below the $FLOOR floor. A module became LESS self-sufficient; do not lower the floor."
-else
-    echo "  ok: axis 4: $nok of $ntot lib/*.cyr include alone with no undefined function (floor $FLOOR)"
-fi
+[ "$x" = 0 ] && echo "  ok: axis 6: $n6 hand-written include lists compile with no undefined function"
 
 [ "$FAIL" = 0 ] || exit 1
-echo "PASS: stdlib_modules_self_sufficient (4 axes)"
+echo "PASS: stdlib_modules_self_sufficient (7 axes)"

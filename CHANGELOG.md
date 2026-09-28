@@ -63,6 +63,82 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   re-derived, legs (9)-(12) are new, and the mutants re-anchor on the new rule — 23, all
   killed (`BTF_MUT_LOG=1` prints which leg killed each).
 
+- **Stdlib self-sufficiency: every first-party `lib/` module includes what it calls — on
+  x86-Linux, agnos, PE, Mach-O and aarch64.** (bite 7; the roadmap tail item, plus three
+  review finds placed into it.) **Root cause:** modules wrote their requirements down FOR THE
+  CALLER in `# Requires:` comments (protobuf's said "include BEFORE this file"; net's and
+  bench's named a retired `agnosys/syscalls.cyr`) instead of including their definers.
+  `cyrius build`'s `[deps].stdlib` prepend hid it from project consumers, and every
+  hand-written include list was exposed: `include "lib/<m>.cyr"` alone compiled with
+  undefined functions — each a ud2/SIGILL stub the program dies on at its first call — or
+  was a HARD error (`process`: `SYS_GETPPID`, `sync`/`thread`: `SYS_FUTEX`, `async`:
+  `SYS_EPOLL_CREATE1`, `dynlib`: `PROT_READ`, `audit_walk`: `O_RDONLY`, `regression`:
+  `SYS_WRITE`; on agnos `net`, `process` and `pam`). At this slot's open 50 of the 104
+  top-level modules warned and 27 did not compile alone on x86-Linux, and `lib/unicode/` was
+  never scanned. **Fix, per module family, each complete:**
+  - **A foundation** — `syscalls.cyr` includes `alloc.cyr` LAST, after the peers (their
+    sigset/epoll/timer helpers call `alloc`), so a syscalls-then-alloc program lays out as
+    before and agnos' alloc ↔ syscalls cycle is broken by include-once; `result` → fmt
+    (which alone cleans `hashseed`, `sys`, `tagged`); `random` → syscalls; `cffi` → alloc;
+    `slice`, `keccak` → string; `bounds` → fmt + string; `args.cyr`'s agnos arm includes
+    alloc + string before `args_agnos` (the one module clean on Linux and not on agnos);
+    `pam.cyr`'s fork/pipe/dup2/execve/waitpid body is **Linux-only** — every other target
+    fails CLOSED (`PAM_AUTH_HELPER_MISSING`, `pam_unix_available() == 0`), never a guessed
+    success; on agnos it had been a hard error (`sys_waitpid` arity, no `sys_dup2` /
+    `sys_execve`).
+  - **B text/collections + unicode** — `str`, `chrono`, `callback`, `hashmap`,
+    `hashmap_fast`, `regex`, `protobuf`, `trait`, `bench`, `unicode/casefold`,
+    `unicode/normalize`.
+  - **C io/fs/process** — `process` (before its per-target peers), `dynlib`, `fdlopen`,
+    `grp`, `pwd`, `shadow`, `audit_walk`, `regression`. (`fs.cyr`'s own lines are bite 5's,
+    which owns that file this release.)
+  - **D concurrency** — `sync`, `thread`, `thread_local`, `async`.
+  - **E net/tls** — `net` → syscalls, alloc, string, result; `tls` → `fdlopen` (its header
+    told callers to include it first "because the 1 MB preprocessor cap is tight" — the cap is
+    24 MB, and a caller that skipped it got four fdlopen ud2 stubs: every libssl call a SIGILL,
+    on all four targets). `http.cyr`'s net include is bite 12's.
+
+  Stale `Requires:` lines in `flags`, `boxed`, `mmap` and `tls_native` now say what the file
+  does; `ws.cyr` / `ws_server.cyr` no longer name the retired `base64.cyr` /
+  `http_server.cyr`. **Placed from the 6.6.7/6.6.8 reviews:** `lib/tls.cyr` and
+  `lib/syscalls.cyr` compile alone (above); `derive_str_deserialize.tcyr`,
+  `ws_server_handshake.tcyr` and `benches/bench_mulmod.bcyr` include `lib/io.cyr` before
+  `lib/bayan.cyr` (bayan's `file_*` were 8 ud2 stubs — a bundle strips its own includes, so
+  the consumer supplies its sidecar leaf), and `alloc_serdes.tcyr` includes `lib/net.cyr`
+  before `lib/http.cyr` (4 stubs). **Result (lane, before bites 5 and 12 merge):** linux 71,
+  agnos 71, PE 70, Mach-O 72, cx 66, aarch64 70 of 111 modules compile alone clean
+  (6.6.7: 26–29 of 104 on x86; stock aarch64 reported 90 "OK" by not looking); on a
+  simulated merge 73 / 73 / 73 / 74 / 68 / 72, with every first-party module clean on every
+  host target except the PENDING three. **Byte-identity:** `cycc` from all seven
+  `src/main*.cyr` drivers and the `cyrius` CLI (x86, PE, Mach-O, aarch64) are unchanged —
+  the compiler includes only `alloc.cyr` and `vec.cyr`. 84 in-tree binaries (61 `.tcyr`,
+  benches, fuzz, probes) change layout; every runnable one exits identically with identical
+  output, and the corpus's undefined-function lines drop from 18 files to 3
+  (`struct_name_param_collision` — `#derive(Serialize)`-generated calls into bayan;
+  `sandbox_syscalls` — `fs.cyr`, clears with bite 5; `programs/vidya.cyr`, a fixture with no
+  includes of its own). **Not fixed here:** `log`, `ws` and `ws_server` call fold bundles that
+  are not raw-includable (sakshi, bayan, sandhi — `ws` + `lib/bayan.cyr` still leaves 45
+  undefined functions, because a bundle needs its sidecar); they are the gate's named
+  PENDING tier, waiting on the raw-includable fold-bundles backlog item.
+  `tests/gates/toolchain/stdlib_modules_self_sufficient.sh` is rebuilt around it: axis 0
+  self-tests all SIX target compilers (x86 linux/agnos/PE/Mach-O, cx, and an aarch64 compiler
+  built from the tree — red without bite 2's undefined prepass, which is the point); the
+  population is classified every run from the files and the include graph (fold = distlib
+  marker; peer = `lib/<R>_<x>.cyr` included from R's family and not declaring its own
+  `Usage:` line — 31 peers; 68 first-party; 12 folds), axis 1 holds every first-party module
+  outside PENDING clean on linux, agnos, PE, Mach-O and aarch64, axis 2 keeps PENDING honest
+  (a pending module that compiles clean must be promoted), axis 3 checks each peer through a
+  first-party root, axis 4 is a per-target ratchet over the whole population (cx held here —
+  `tls`/`tls_native` overflow its codebuf and `thread` has no cx mutex), axis 5 runs one
+  call-through probe per family (A–E) plus 6.6.6's io probe, axis 6 pins the four hand
+  lists. Its ledger holds 20 mutations; the twelve new ones (and three of 6.6.6's) were
+  re-measured red against it on a simulated merge that is otherwise GREEN. New `tests/tcyr/crossos/pam_fail_closed.tcyr`
+  (includes only `lib/pam.cyr` + `lib/assert.cyr`) asserts the fail-closed arm on every host.
+  **Survey:** across the 127 `~/Repos` projects with a stdlib seed, no module newly enters
+  any project's include closure, so no definition can newly collide ("last definition wins"
+  rebinds earlier call sites retroactively — checked for fns, top-level vars and enum
+  members).
+
 ## [6.6.8] — 2026-09-28
 
 The second of the three small batch releases (roadmap.md, *The 6.6.7 → 6.6.9 batch*): the platform
