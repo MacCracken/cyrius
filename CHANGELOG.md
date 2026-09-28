@@ -149,6 +149,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   per-pid directory and a file inside it, checks `is_dir` on each, requires `dir_list` to find the
   file BY NAME, and removes both. Run from a subdirectory on real pi, ecb, ach and cass: 9/9, no
   fixture left behind (the old file: 3/5 from an empty directory).
+- **`folds_agnos_parity.sh` builds each fold against the stdlib leaves plus its OWN declared fold
+  deps — so cross-fold borrowing is a failure, not a green.** (bite 8, placed from the 6.6.7
+  reviews.) One preamble put sakshi, sigil, patra and yukti ahead of EVERY fold, so a fold could
+  compile only because an undeclared fold was in scope — exactly how mabda and vani built for
+  agnos on yukti's placeholder `SYS_IOCTL = 9001`, and how sandhi borrowed yukti's `SYS_SOCKET`
+  on PE, while the gate read green. Now the shared block is `LEAVES` only; the fold set is derived
+  from docs/ecosystem.md's fold table; each fold's declared fold deps (the fold names in its
+  sibling's `cyrius.cyml` `stdlib = [...]` / `[deps.*]`) are a table in the gate, checked against
+  the sibling manifest whenever that checkout is at the folded version, and each probe adds the
+  transitive closure in dependency order; any symbol reported undefined (on Linux or agnos — an
+  undefined FUNCTION is only a warning and a trap stub) that an UNDECLARED fold defines is a FAIL
+  naming the borrow. niyama is checked for the first time (it gained its unicode leaves): 12/12.
+  An anti-vacuous row requires yukti-without-patra to be reported as borrowing; mutation-proven
+  against the old shared preamble and against vani's row without yukti.
+  `pe_reloc_cap_full_stdlib.sh`, which extracted that preamble, now extracts `LEAVES` and appends
+  the same four folds — its preamble is byte-identical to before.
 
 ## [6.6.7] — 2026-09-27
 

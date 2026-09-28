@@ -40,8 +40,12 @@ fail=0
 # declared dependencies yields undefined ORDINARY stdlib names (alloc, memcpy, file_open,
 # map_new, fncall1..6), which read exactly like missing Windows-peer wrappers and were once
 # recorded as such. Use the real preamble or the result is meaningless.
-sed -n "/^PREAMBLE='/,/^include \"lib\/yukti.cyr\"'/p" "$G" \
-  | sed "s/^PREAMBLE='//; s/'\$//" > "$D/pre.txt"
+# 6.6.8: that gate's shared block is now the stdlib LEAVES only (each of its probes adds the
+# fold's own declared deps), so the four folds this full-stdlib build always carried are
+# appended here, in the same order, to keep the reloc load this gate was measured at.
+sed -n "/^LEAVES='/,/^include \"lib\/tls.cyr\"'/p" "$G" \
+  | sed "s/^LEAVES='//; s/'\$//" > "$D/pre.txt"
+printf 'include "lib/sakshi.cyr"\ninclude "lib/sigil.cyr"\ninclude "lib/patra.cyr"\ninclude "lib/yukti.cyr"\n' >> "$D/pre.txt"
 printf 'include "lib/random.cyr"\n' >> "$D/pre.txt"
 
 npre=$(grep -c '^include' "$D/pre.txt" || true)
