@@ -379,60 +379,133 @@ fn test_scripted_calibration_waits_for_stability() {
 # max=27-60 ns). 6.6.5-6.6.8 kept them out by their own short DURATION — the per-window
 # selection hisab filed — and left the truncated tail in the mean as a separate, cheaper
 # window. v6.6.9: a chunk is eligible iff `_bench_chunk_for` sized it for 4 × the bar; the
-# pilot and geometric-growth chunks never are; the remainder is ABSORBED into the last
-# chunk. 1,000 ns clock and tick, so err = 2,000 ns, the bar 200,000 ns, and a chunk sized
-# from an exact 3 ns reading is 4 × 200,000 / 3 + 1 = 266,667 ops.
+# pilot and geometric-growth chunks are HELD and booked together with the next sized chunk
+# (their raw time, ops and clock pairs summed), and the remainder is ABSORBED into the last
+# chunk. 1,000 ns clock and tick, so err = 2,000 ns and the bar 200,000 ns. A chunk booked
+# with p pairs is sized for p × err: from an exact 3 ns reading, 4 × 200,000 × p / 3 + 1
+# ops — 266,667 for p = 1, 533,334 for p = 2, 800,001 for p = 3.
 fn test_scripted_bench_run_pilot_cannot_set_extremes() {
     test_group("scripted: bench_run's pilot and growth chunks cannot set min/max; the tail is absorbed");
     # (e1) A CHEAP pilot: its closing read is scripted to cost 0, so it nets -952 ns — 0 ps,
-    # which sizes nothing, so the next chunk grows ×16 to 256 (not eligible). The 256-op
-    # chunk reads 3 ns exactly and sizes 266,667; the next reading sizes 266,667 again,
-    # which would leave a 10-op tail, so it ABSORBS it: 16 | 256 | 266,667 | 266,677.
-    #   mean = (48 + 1,768 + 801,001 + 801,031 - 4 × 1,000) / 533,616 = 2,998.12 -> 2,998 ps
-    # The pilot's saved read puts the mean 2 ps UNDER the min: the documented bench_run
-    # tolerance (min <= avg holds to within the ineligible windows' weight), closed form.
+    # which sizes nothing, so the next chunk grows ×16 to 256 (held too). The 256-op chunk
+    # reads 3 ns exactly and sizes 800,001 (three pairs); then 266,667 twice, the second
+    # absorbing a 10-op remainder. Four windows booked, six clock pairs:
+    #   (16 + 256 + 800,001 | 3 pairs) | 266,667 | 266,667 | 266,677
+    # The first carries the cheap pilot: (48 + 1,768 + 2,401,003 - 3,000) / 800,273 = 2,998 ps.
+    #   mean = (2,402,819 + 801,001 × 2 + 801,031 - 6,000) / 1,600,284 -> 2,999 ps
+    # So the cheap pilot pulls the MIN down with the mean, instead of pulling the mean under
+    # a min that cannot see it (the first cut of 6.6.9: mean 2 ps under min).
     _sc_reset(1000);
     _sc_op_ns = 3;
     var b = bench_new("scripted_pilot_cheap");
     _sc_queue2(1000, 0);
-    bench_run(b, &_sc_op, 533616);
-    assert_eq(bench_iterations(b), 533616, "fp is called exactly n times whatever the chunking does");
-    assert_eq(bench_windows(b), 4, "16 | 256 | 266,667 | 266,677: the 10-op remainder is ABSORBED, not a fifth window");
-    assert_eq(bench_windows_eligible(b), 2, "the two SIZED chunks are eligible; the pilot and the grown chunk are not");
-    assert_eq(bench_min_resolved(b), 1, "266,667 ops at the mean clear 100 x err");
-    assert_eq(bench_min_ps(b), 3000, "min is the op, not the 0-ps pilot");
+    bench_run(b, &_sc_op, 1600284);
+    assert_eq(bench_iterations(b), 1600284, "fp is called exactly n times whatever the chunking does");
+    assert_eq(bench_windows(b), 6, "six clock pairs: pilot, 256, 800,001, 266,667, 266,667, 266,677 (the 10-op remainder ABSORBED)");
+    assert_eq(bench_windows_eligible(b), 6, "every pair is inside an eligible window: the pilot and grown chunk ride with the first sized one");
+    assert_eq(bench_min_resolved(b), 1, "266,667 ops per pair at the mean clear 100 x err");
+    assert_eq(bench_min_ps(b), 2998, "min is the window that carries the cheap pilot");
     assert_eq(bench_max_ps(b), 3000, "max is the op");
-    assert_eq(bench_avg_ps(b), 2998, "the mean carries the cheap pilot: 2 ps under min, the bench_run tolerance");
+    assert_eq(bench_avg_ps(b), 2999, "the mean lies between them");
+    var ordered = 0;
+    if (bench_min_ps(b) <= bench_avg_ps(b) && bench_avg_ps(b) <= bench_max_ps(b)) { ordered = 1; }
+    assert_eq(ordered, 1, "min <= avg <= max on a bench_run row, exactly");
     # (e2) A COLD pilot, WITHIN the margin: its closing read costs 1,048, so it reads 6 ns
-    # per op — twice the op — and sizes 133,334 ops, i.e. 2 × the bar instead of 4. That is
-    # what `_BENCH_MARGIN` is for: the chunk is eligible and still clears the bar at the
-    # mean. 16 | 133,334 | 266,667 | 266,677.
-    #   mean = (1,096 + 401,002 + 801,001 + 801,031 - 4,000) / 666,694 = 3,000.07 -> 3,000 ps
+    # per op — twice the op — and sizes 266,667 ops for two pairs, i.e. 2 × the bar per pair
+    # instead of 4. That is what `_BENCH_MARGIN` is for: the row still resolves.
+    #   (16 + 266,667 | 2 pairs) | 266,667 | 266,667
     _sc_reset(1000);
     var c = bench_new("scripted_pilot_cold");
     _sc_queue2(1000, 1048);
-    bench_run(c, &_sc_op, 666694);
-    assert_eq(bench_windows(c), 4, "16 | 133,334 | 266,667 | 266,677");
-    assert_eq(bench_windows_eligible(c), 3, "every sized chunk is eligible, including the one sized from the cold pilot");
+    bench_run(c, &_sc_op, 800017);
+    assert_eq(bench_windows(c), 4, "four clock pairs");
+    assert_eq(bench_windows_eligible(c), 4, "all of them inside eligible windows");
     assert_eq(bench_min_resolved(c), 1, "a pilot 2x slow is inside the 4x margin: the row resolves");
-    assert_eq(bench_min_ps(c), 3000, "min is the op");
+    assert_eq(bench_min_ps(c), 3000, "min is the op (the cold pilot adds 0.12 ps to its window)");
     assert_eq(bench_max_ps(c), 3000, "max is the op, not the cold pilot");
-    assert_eq(bench_avg_ps(c), 3000, "the cold pilot is in the mean only (0.07 ps of it)");
+    assert_eq(bench_avg_ps(c), 3000, "and so is the mean");
     # (e3) A COLD pilot BEYOND the margin: closing read 5,000, so it reads 253 ns per op and
-    # sizes a 3,163-op chunk — 9.5 us, far under the bar. That chunk is eligible (its size
-    # was chosen before it ran; nothing about its duration decides it), so the row's
-    # smallest eligible window at the mean cost is under the bar and the row reports the
-    # MEAN: the safe direction. It never produces a wrong extreme. 16 | 3,163 | 266,667 |
-    # 266,677; mean = (5,048 + 10,489 + 801,001 + 801,031 - 4,000) / 536,523 = 3,007 ps.
+    # sizes a 6,325-op chunk for two pairs — 3,170 ops per pair, 9.5 us, far under the bar.
+    # That chunk is eligible (its size was chosen before it ran; nothing about its duration
+    # decides it), so the row's smallest eligible window per pair at the mean cost is under
+    # the bar and the row reports the MEAN: the safe direction, never a wrong extreme.
+    #   (16 + 6,325 | 2 pairs) | 530,182;  mean -> 3,007 ps.
     _sc_reset(1000);
     var d = bench_new("scripted_pilot_frozen");
     _sc_queue2(1000, 5000);
     bench_run(d, &_sc_op, 536523);
-    assert_eq(bench_windows(d), 4, "16 | 3,163 | 266,667 | 266,677");
+    assert_eq(bench_windows(d), 3, "three clock pairs");
     assert_eq(bench_windows_eligible(d), 3, "the under-bar chunk is eligible too");
     assert_eq(bench_min_resolved(d), 0, "so the row does not resolve");
     assert_eq(bench_min_ps(d), 3007, "and min reports the mean");
     assert_eq(bench_max_ps(d), 3007, "and so does max");
+}
+
+# (l) THE SMALL-n bench_run ROW (review of the first cut of 6.6.9, 2026-09-28). A 2 us op,
+# n = 300: the pilot plus ONE chunk that absorbs everything. With the pilot a separate
+# window in the mean, the pilot's clock error lands in the mean and never in the min: a
+# pilot whose closing read is cheap put the mean 3,334 ps under a min of 2,000,000 — and
+# live, at n = 200 of a 2 us op here, 139 of 200 rows PRINTED min above avg. The bound was
+# err/n per op, not "a few picoseconds". Now the pilot rides in the chunk's window:
+#   (16 + 284 | 2 pairs): (32,000 + 569,000 - 2,000) / 300 = 1,996,666 ps = min = max = avg.
+# 150 ops per pair × 1.997 us = 299.5 us >= the 200 us bar: resolved. At n = 200 it is
+# 100 × 1.995 us = 199.5 us, UNDER the bar, so that row reports the mean instead.
+fn test_scripted_small_n_bench_run_min_not_above_mean() {
+    test_group("scripted: a small-n bench_run row cannot print min above the mean (pilot error)");
+    _sc_reset(1000);
+    _sc_op_ns = 2000;
+    var b = bench_new("scripted_small_n");
+    _sc_queue2(1000, 0);
+    bench_run(b, &_sc_op, 300);
+    assert_eq(bench_windows(b), 2, "the pilot and one absorbing chunk");
+    assert_eq(bench_windows_eligible(b), 2, "booked as ONE eligible window of two pairs");
+    assert_eq(bench_avg_ps(b), 1996666, "mean = (32,000 + 569,000 - 2,000) / 300");
+    assert_eq(bench_min_resolved(b), 1, "150 ops per pair at the mean clear the bar");
+    assert_eq(bench_min_ps(b), 1996666, "min is that window — the first cut read 2,000,000, above the mean");
+    assert_eq(bench_max_ps(b), 1996666, "and so is max");
+    var c = bench_new("scripted_small_n_200");
+    _sc_reset(1000);
+    _sc_queue2(1000, 0);
+    bench_run(c, &_sc_op, 200);
+    assert_eq(bench_avg_ps(c), 1995000, "mean = (32,000 + 369,000 - 2,000) / 200");
+    assert_eq(bench_min_resolved(c), 0, "100 ops per pair at the mean is 199.5 us, under the bar");
+    assert_eq(bench_min_ps(c), 1995000, "so min reports the mean");
+    # A pilot-only row: held, then booked ineligible at the end — nothing covers its ops.
+    var d = bench_new("scripted_pilot_only");
+    _sc_reset(1000);
+    bench_run(d, &_sc_op, 16);
+    assert_eq(bench_windows(d), 1, "one window");
+    assert_eq(bench_windows_eligible(d), 0, "and it is not eligible");
+    assert_eq(bench_min_resolved(d), 0, "so the row does not resolve");
+}
+
+# (m) A ROW THAT ENDS HOLDING A GROWTH CHUNK DOES NOT RESOLVE. The op costs 3 ns for the
+# first 533,350 calls, 0 for the next 266,667 and 10 ns after that. The sized 266,667-op
+# chunk reads 0 ps, so the last chunk is grown, held, and booked INELIGIBLE at the end:
+#   (16 + 533,334 | 2 pairs) | 266,667 (0 ps) | 266,667 held, ineligible
+# Its 2.67 ms are in the mean (3,999 ps) and in no extreme. Resolving on the eligible pairs
+# alone would print `min 0 max 3,000` under a 3,999 mean; the row reports the mean instead.
+var _sc_ph_calls = 0;
+fn _sc_phase_op(): i64 {
+    if (_sc_ph_calls < 533350) {
+        _sc_t = _sc_t + 3;
+    } else {
+        if (_sc_ph_calls >= 800017) { _sc_t = _sc_t + 10; }
+    }
+    _sc_ph_calls = _sc_ph_calls + 1;
+    return 0;
+}
+fn test_scripted_trailing_held_chunk_does_not_resolve() {
+    test_group("scripted: a bench_run row ending on a held growth chunk reports the mean");
+    _sc_reset(1000);
+    _sc_ph_calls = 0;
+    var b = bench_new("scripted_trailing_held");
+    bench_run(b, &_sc_phase_op, 1066684);
+    assert_eq(bench_windows(b), 4, "four clock pairs");
+    assert_eq(bench_windows_eligible(b), 3, "the held last chunk is outside every eligible window");
+    assert_eq(bench_avg_ps(b), 3999, "its cost is in the mean");
+    assert_eq(bench_min_resolved(b), 0, "so the row does not resolve");
+    assert_eq(bench_max_ps(b), 3999, "and max reports the mean — resolving would print max 3,000 under it");
 }
 
 # (f) A 15 ms COUNTER — cass, modelled. The floor genuinely calibrates to 0 there (1,024
@@ -583,17 +656,19 @@ fn test_scripted_bench_run_reads_the_clock_per_window() {
     _sc_reads = 0;
     bench_run(b, &_sc_op, 100000);
     # Closed form. err = floor + tick = 2,000 ns; the bar is 100 × err = 200,000 ns and
-    # `bench_run` sizes for 4× it (v6.6.9): at 3 ns per op, 266,667 iterations — more than
-    # the 99,984 left after the 16-op pilot, so the rest is ONE absorbed chunk. TWO windows,
-    # FOUR reads, for 100,000 iterations. One clock pair per iteration is 200,000 reads.
+    # `bench_run` sizes for 4× it per clock pair (v6.6.9): the chunk after the held pilot is
+    # booked with it, two pairs, so at 3 ns per op it wants 533,334 iterations — more than
+    # the 99,984 left, so the rest is ONE absorbed chunk. TWO windows, FOUR reads, for
+    # 100,000 iterations. One clock pair per iteration is 200,000 reads.
     # (Through 6.6.8: a 66,667 chunk sized ON the bar plus a 33,317 tail — 3 windows.)
     assert_eq(bench_iterations(b), 100000, "fp is called exactly n times whatever the chunking does");
     assert_eq(bench_windows(b), 2, "two windows: the pilot and one chunk that absorbs the rest");
     assert_eq(_sc_reads, 4, "FOUR clock reads for 100,000 iterations (per-iteration timing spends 200,000)");
-    # That chunk is eligible (sized from the pilot's 3 ns reading) and 99,984 ops at the
-    # mean is 300 us, over the 200 us bar, so the row resolves.
-    assert_eq(bench_windows_eligible(b), 1, "the one sized chunk is eligible; the pilot is not");
-    assert_eq(bench_min_resolved(b), 1, "99,984 ops at 3 ns clears the 200us bar");
+    # That chunk is eligible (sized from the pilot's 3 ns reading) and carries the pilot, so
+    # both pairs are eligible — but 100,000 ops over 2 pairs is 50,000 per pair, 150 us at
+    # the mean, under the 200 us bar: the row reports the mean.
+    assert_eq(bench_windows_eligible(b), 2, "both pairs: the pilot rides in the sized chunk's window");
+    assert_eq(bench_min_resolved(b), 0, "50,000 ops per pair at 3 ns is 150us, under the 200us bar");
     assert_eq(bench_min_ps(b), 3000, "and the sized chunk still reports the 3ns op");
     # POSITIVE CONTROL FOR THE COUNTER ITSELF. 100 hand-driven one-op windows — the exact
     # shape `bench_run` would have if the chunking were reverted — must cost exactly 2
@@ -610,6 +685,7 @@ fn test_scripted_bench_run_reads_the_clock_per_window() {
     }
     assert_eq(_sc_reads, 200, "the counter counts: 100 one-op windows cost exactly 2 reads each (anti-vacuous)");
     assert_eq(bench_windows(c), 100, "and one window each");
+    assert_eq(bench_windows_eligible(c), 100, "and every bench_stop window is eligible — the caller chose its size");
     # THE COARSE-COUNTER BRANCH, MODELLED — this is what says the live axis below is safe
     # to run on cass, which could not be reached in this slot. A 15 ms counter calibrates
     # a 0 floor, so `_bench_chunk_for` is sized by the TICK and the pilot's window
@@ -732,6 +808,17 @@ fn test_the_live_clock_is_restored() {
 # Sub-floor: a couple of nanoseconds on every host.
 fn _btf_tiny(): i64 {
     _btf_sink = _btf_sink + 1;
+    return 0;
+}
+
+# A fixed ~1-2 us of work on the gate hosts: comparable to one clock read, so a small-n
+# `bench_run` row is a pilot plus one or two chunks and the pilot's clock error matters.
+fn _btf_small(): i64 {
+    var i = 0;
+    while (i < 2000) {
+        _btf_sink = _btf_sink + i;
+        i = i + 1;
+    }
     return 0;
 }
 
@@ -1399,6 +1486,25 @@ fn test_live_batch_row_min_never_exceeds_the_mean() {
     ordered = 0;
     if (bench_min_ps(c) <= bench_avg_ps(c)) { ordered = 1; }
     assert_eq(ordered, 1, "min_ps <= avg_ps on a bench_stop row, exactly");
+    # SMALL-n bench_run rows (review of the first cut, 2026-09-28): a ~1-2 us op at n = 200
+    # and n = 1,000 — the pilot plus one or two chunks. With the pilot a separate window in
+    # the mean, 139 of 200 rows at n = 200 PRINTED min above avg on the hpet box. Now the
+    # pilot rides in the first sized window, so the property is exact on every host.
+    var inv = 0;
+    var rows = 0;
+    var r = 0;
+    while (r < 40) {
+        var nn = 200;
+        if (r >= 20) { nn = 1000; }
+        var d = bench_new("live_small_n");
+        bench_run(d, &_btf_small, nn);
+        if (bench_min_ps(d) > bench_avg_ps(d)) { inv = inv + 1; }
+        if (bench_min_ns(d) > bench_avg_ns(d)) { inv = inv + 1; }
+        rows = rows + 1;
+        r = r + 1;
+    }
+    assert_eq(rows, 40, "40 small-n bench_run rows ran (anti-vacuous)");
+    assert_eq(inv, 0, "no small-n bench_run row reports min above its mean, in ps or as printed");
 }
 
 fn main() {
@@ -1412,6 +1518,8 @@ fn main() {
     test_scripted_dead_clock_is_unmeasurable_and_recovers();
     test_scripted_bench_run_reads_the_clock_per_window();
     test_scripted_spiked_windows_do_not_become_the_minimum();
+    test_scripted_small_n_bench_run_min_not_above_mean();
+    test_scripted_trailing_held_chunk_does_not_resolve();
     test_scripted_straddling_windows_resolve_as_a_row();
     test_the_live_clock_is_restored();
     test_reported_floor_matches_an_independent_measurement();

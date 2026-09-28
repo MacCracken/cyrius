@@ -1,6 +1,6 @@
 # `lib/bench.cyr` 6.6.5+: a window below the resolution bar resolves only when something slow happens in it, so `min`/`max` are the extremes of the SLOW windows and the printed `min` sits ABOVE the `avg` — RESOLVED v6.6.9
 
-**Status:** ✅ **RESOLVED v6.6.9** (bite 6) — min/max are decided for the ROW by op count (`min_k × mean` against the bar), never per window by its own duration; `bench_run` sizes for 4× the bar, its pilot and growth chunks are ineligible and its tail is absorbed. Originally filed by hisab at its 6.6.4 → 6.6.6 bump (3.2.1). Not a regression in any
+**Status:** ✅ **RESOLVED v6.6.9** (bite 6) — min/max are decided for the ROW by op count (`min_k × mean` against the bar), never per window by its own duration; `bench_run` sizes for 4× the bar per clock pair, books its pilot and growth chunks together with the next sized chunk (so `min <= avg` is exact on every row) and absorbs its tail. Originally filed by hisab at its 6.6.4 → 6.6.6 bump (3.2.1). Not a regression in any
 answer hisab records (hisab's CSV keeps `avg`, which is unaffected: median +0.00% between the 6.6.4
 and 6.6.6 instruments on the same compiler), but the `min=`/`max=` fields the same rows print are
 now taken over a biased subset and the row says nothing about it.

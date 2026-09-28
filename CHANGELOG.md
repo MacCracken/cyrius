@@ -26,27 +26,42 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `bench_batch_*` and `bench_stop` window is eligible; in `bench_run` a chunk is eligible iff
   `_bench_chunk_for` sized it, never the 16-op pilot or a geometric-growth chunk; chunks are
   sized for **4×** the bar (`_BENCH_MARGIN`), and the remainder is absorbed into the last
-  chunk instead of running as a separate tail window. **The invariant is `min <= avg`:**
-  exact to the picosecond on batch, `bench_batch_*` and `bench_stop` rows; on `bench_run`
-  rows within the pilot's weight (2 ps in the closed-form leg, 16 ps worst across 80 live
-  rows here) — `min <= avg <= max` is deliberately NOT promised there. A stricter reading
-  of the planned rule — eligible only when sized from a window that itself resolved — was
-  measured and rejected: 61 of those 80 rows unresolved against 10, and a variant that
-  shrank its ineligible sizing chunk put `hashmap/has` at 86 ns avg under a 97 ns min. The
+  chunk instead of running as a separate tail window. `bench_run`'s pilot and growth chunks
+  are HELD and booked together with the next sized chunk, as one eligible window of their
+  summed ops, raw time and clock pairs (one floor netted per pair); that chunk is sized for
+  4× the bar per pair, `min_k` counts ops per clock pair, and a row resolves only when every
+  pair is inside an eligible window (one that ends holding a growth chunk books it
+  ineligible and reports the mean). **The invariant is `min <= avg`, exact to the
+  picosecond on every row, `bench_run` included**; `avg <= max` is exact until a
+  re-measured lower floor raises the mean (≤ ~1 %). The first cut left the pilot as a
+  separate window in the mean and documented "a few picoseconds" of tolerance; review
+  measured the real bound, ~err/n per op — at `n = 200` of a 2 µs op on the hpet box 139 of
+  200 rows PRINTED min above avg (79 under 6.6.8) — and the fold replaced it: 0 of 200 at
+  n = 200, 1,000 and 5,000. Short rows (≲ 2× the bar in total) now report the mean: 24 of
+  80 rows of bench_vec + bench_str + bench_hashmap over 5 runs here, against 11 under the
+  first cut, every one under ~2× the bar in total. A stricter reading of the planned rule —
+  eligible only when sized from a window that itself resolved — was measured and rejected
+  (61 of those 80 rows unresolved). The
   `[per op in ps: ...]` line now also says `E of W windows eligible`; new public accessor
   `bench_windows_eligible(b)`. `avg` is unchanged; min/max are **regime 6** in
   `docs/development/benchmark-regimes.md`. The hisab repro exits 0 on this box and on real
   ecb, ach, pi and cass (3/3 each; it exits 1 here against the 6.6.8 library). Pinned by
   `tests/tcyr/crossos/bench_timer_floor.tcyr` legs (e) (re-derived: cheap pilot, cold pilot
   inside the margin, cold pilot beyond it — the safe direction, the row reports the mean),
-  (i) (re-derived counts), (j) (hisab's spike-every-third-window shape, closed form) and (k)
-  (windows straddling the bar), plus a live `min <= avg` tripwire — 124/124 here, under
-  qemu-aarch64, wine and the AGNOS container, and on ecb (125), ach, pi and cass; 21 of them
-  fail against the 6.6.8 `lib/bench.cyr`. `tests/gates/toolchain/bench_timer_floor_measured.sh`
+  (i) (re-derived counts), (j) (hisab's spike-every-third-window shape, closed form), (k)
+  (windows straddling the bar), (l) (a small-n `bench_run` row: n = 300 resolves with min =
+  avg, n = 200 does not resolve, a pilot-only row), (m) (a row ending on a held growth
+  chunk), `bench_stop` eligibility, plus live `min <= avg` tripwires on batch, `bench_stop`
+  and 40 small-n `bench_run` rows — 145/145 here, under qemu-aarch64, wine and the AGNOS
+  container, and on ecb (146, with its macOS-arm tick assertion), ach, pi and cass, 3/3 runs
+  each; 16 of them fail against the first cut of this fix, and against the 6.6.8 library the
+  file does not build (it uses the new accessor).
+  `tests/gates/toolchain/bench_timer_floor_measured.sh`
   pinned the defective rule (axis B required the per-window test inside `_bench_record`);
-  axis B now forbids it and requires the decision in `bench_min_resolved` from `min_k`,
-  probe legs (6) and (7) are re-derived, legs (9)/(10) are new, and the mutants re-anchor on
-  the new rule — 17, all killed (`BTF_MUT_LOG=1` prints which leg killed each).
+  axis B now forbids it and requires the decision in `bench_min_resolved` from `min_k` and
+  from every pair being eligible, and the fold in `bench_run`; probe legs (6) and (7) are
+  re-derived, legs (9)-(12) are new, and the mutants re-anchor on the new rule — 23, all
+  killed (`BTF_MUT_LOG=1` prints which leg killed each).
 
 ## [6.6.8] — 2026-09-28
 

@@ -17,7 +17,7 @@ Created v6.5.19, from the agnosai filing
 | 3 | 2026-06-16 → 2026-08-11 | Per-iteration clock pair again, but the box lost its TSC to the clocksource watchdog and fell back to HPET, so the floor rose to ~1,320–1,720 ns. **57 of 79 micro rows sit within 20 % of that floor**: they are measurements of the clock, not of the code. |
 | 4 | v6.5.19 onward | `bench_run` sizes its own batches and every path subtracts the **measured** timer floor. Micro rows are the code. Every report prints the floor it measured. |
 | 5 | v6.6.5 onward | Per-op figures are kept in **picoseconds** and rounded half up, the floor is netted at **read time** rather than per window, a window claims a `min`/`max` only if the clock's error is ≤1 % of it, and the floor is **re-measured** at the first report. `min=0ns` for real work is gone; so is the per-window clamp that biased means upward. |
-| 6 | v6.6.9 onward | Whether a row reports a `min`/`max` is decided for the **row**, by op count: its smallest eligible window at the row's mean cost must clear 100 × the clock error. No window is admitted on its own duration any more; `bench_run` sizes for 4× the bar, never lets its pilot or growth chunks set an extreme, and absorbs its tail. **Averages are unchanged**; min/max move, and `min <= avg` now holds on every batch row. |
+| 6 | v6.6.9 onward | Whether a row reports a `min`/`max` is decided for the **row**, by op count: every op must be in an eligible window, and the smallest eligible window per clock pair, at the row's mean cost, must clear 100 × the clock error. No window is admitted on its own duration any more; `bench_run` sizes for 4× the bar, books its pilot and growth chunks together with the sized chunk after them, and absorbs its tail. **Averages are unchanged**; min/max move, and `min <= avg` now holds on every row. |
 
 ## What is and is not salvageable
 
@@ -116,10 +116,13 @@ What moves between regime 5 and regime 6:
   `bench_min_resolved(b)` is 0. In regime 5 some of them printed a `min` above the mean.
 - **Rows whose windows straddle the bar** now resolve or not as a whole, and when they do,
   `min` comes from every window rather than from the slower ones — it moves DOWN.
-- **`bench_run` rows** are sized for 4× the bar, so each chunk is 4× longer and a row spends
-  fewer windows; the tail is absorbed, and the 16-op pilot and geometric-growth chunks never
-  set an extreme. Their mean can still sit a few picoseconds outside `[min, max]` — the
-  pilot is in it — which is the documented tolerance.
+- **`bench_run` rows** are sized for 4× the bar per clock pair, so each chunk is 4× longer
+  and a row spends fewer windows; the tail is absorbed, and the 16-op pilot and
+  geometric-growth chunks are booked together with the first sized chunk rather than as
+  windows of their own. A short row — about `n × per_op` under twice the bar — now prints
+  `min = max = avg` where regime 5 could print a min above the mean: the pilot's clock error
+  is ~err/n per op, which at `n = 200` of a 2 µs op on the hpet box inverted 139 rows in 200
+  under the first cut of this fix.
 - **The supplementary `[per op in ps: ...]` line** now also says `E of W windows eligible`.
 - **`compiler/*` and `size/*` rows are unaffected**, as in every regime.
 

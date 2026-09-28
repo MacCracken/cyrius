@@ -71,11 +71,14 @@
 # flag) and requires the decision in `bench_min_resolved` (min_k × mean vs the bar);
 # probe legs (6) and (7) are re-derived for `bench_run`'s eligibility and absorbed
 # remainder; legs (9) (the filed spike shape) and (10) (windows straddling the bar) are
-# new; and the mutants re-anchor on the new rule, seventeen in all.
+# new; and the mutants re-anchor on the new rule. The review of that first cut added legs
+# (11) (a small-n bench_run row: the pilot booked with the chunk after it) and (12) (a row
+# ending on a held growth chunk), leg 9's max and leg 1's bench_stop eligibility — twenty-
+# three mutants in all.
 #
 # ── MUTATION LEDGER, 6.6.9 (all proven RED 2026-09-28 by this gate's own run_mut, which
 #    fails loudly on a survivor, plus the axis-B statements against hand-edited copies):
-#   admission_by_own_duration (the 6.6.5 rule restored)  → probe rc 31 (leg 9)
+#   admission_by_own_duration (the 6.6.5 rule restored)  → probe rc 33 (leg 1's windows drop out)
 #   row_resolves_on_any_window (6.6.5 bench_min_resolved) → probe rc 21
 #   min_k_not_tracked                                    → probe rc 21
 #   pilot_eligible                                       → probe rc 29
@@ -85,6 +88,16 @@
 #   no_margin (chunks sized ON the bar)                  → probe rc 29
 #   the 6.6.5 duration test put back in _bench_record    → "_bench_record decides admission by the window's OWN duration"
 #   bench_min_resolved without min_k                     → "no longer decides from min_k"
+# ── and from the review of the first cut (it passed with the first two below, and the
+#    third IS the first cut: a pilot booked as its own window, "a few ps" that was err/n):
+#   max_on_any_window (6.6.5 bench_max_ps predicate)     → probe rc 31 (leg 9's max)
+#   stop_ineligible (bench_stop books elig 0)            → probe rc 33
+#   pilot_not_folded (the first cut of 6.6.9)            → probe rc 29 (and leg 11)
+#   trailing_held_resolves                               → probe rc 35
+#   sizing_ignores_held_pairs                            → probe rc 29
+#   min_k_ignores_pairs                                  → probe rc 34
+#   the every-pair-eligible test dropped from bench_min_resolved → "no longer requires every clock pair"
+#   bench_run booking the held chunks apart again        → "no longer books its held pilot / growth chunks TOGETHER"
 set -u
 cd "$(dirname "$0")/../../.." || exit 2
 ROOT=$(pwd)
@@ -192,12 +205,18 @@ echo "  derived: $nwin window-closing timing paths, all booking through _bench_r
 # typical window is under the bar it admitted only the windows something slow had landed
 # in (hisab 2026-09-21: min printed ABOVE the mean). This axis used to REQUIRE that test
 # there; it now forbids it.
-grep -q '^fn _bench_record(b, raw, k, elig)' "$F" || fail "_bench_record no longer takes the eligibility flag — whether a window may claim an extreme must be decided by the CALLER that sized it, before it ran"
+grep -q '^fn _bench_record(b, raw, k, pairs, elig)' "$F" || fail "_bench_record no longer takes the clock-pair count and the eligibility flag — whether a window may claim an extreme must be decided by the CALLER that sized it, before it ran, and a window booked from several clock pairs must net one floor per pair"
 scan "$F" _bench_record | grep -qE '_BENCH_RESOLVE|_bench_err_ns\(\)|_bench_resolves\(' \
     && fail "_bench_record decides admission by the window's OWN duration again — on a row of sub-bar windows that selects the perturbed ones and prints min above the mean (hisab 2026-09-21, the 6.6.5-6.6.8 rule)"
 scan "$F" bench_min_resolved | grep -q '_BENCH_RESOLVE' || fail "bench_min_resolved no longer applies the resolution rule — a row too short to resolve reports per-op extremes again (the 2026-09-16 defect)"
 scan "$F" bench_min_resolved | grep -q '_bench_err_ns()' || fail "bench_min_resolved's bar no longer uses the clock error (floor PLUS tick)"
-scan "$F" bench_min_resolved | grep -q 'load64(b + 64)' || fail "bench_min_resolved no longer decides from min_k (the smallest eligible op count) — the decision is not by op count any more"
+scan "$F" bench_min_resolved | grep -q 'load64(b + 64)' || fail "bench_min_resolved no longer decides from min_k (the smallest eligible op count per clock pair) — the decision is not by op count any more"
+# ⛔ v6.6.9 review: an op in the mean that no eligible window covers is what let a bench_run
+# pilot put the mean under the min (139 of 200 rows PRINTED min > avg at n = 200 of a 2 us
+# op). A row resolves only when EVERY clock pair of it is inside an eligible window, and
+# bench_run books its held pilot / growth chunks together with the next sized chunk.
+scan "$F" bench_min_resolved | grep -q 'load64(b + 56) != load64(b + 48)' || fail "bench_min_resolved no longer requires every clock pair of the row to lie in an eligible window — ops in the mean that no extreme covers can put the mean under the min again"
+scan "$F" bench_run | grep -q '_bench_record(b, raw + hraw, chunk + hk, 1 + hp, 1)' || fail "bench_run no longer books its held pilot / growth chunks TOGETHER with the next sized chunk — a separate pilot window in the mean is the err/n inversion the first cut of 6.6.9 shipped"
 scan "$F" _bench_chunk_for | grep -q '_BENCH_MARGIN' || fail "_bench_chunk_for no longer sizes for a MARGIN over the bar — chunks land ON it and half fall under"
 grep -q 'bench_clock_overhead_ns() + _bench_clock_tick' "$F" || fail "_bench_err_ns is no longer floor + tick — floor-only error sizes for 0 on a coarse counter (cass)"
 # v6.6.5 review: 0 IS still reachable, in exactly one case — an op at or under one clock
@@ -314,13 +333,13 @@ fi
 mkdir -p "$TMP/mut/lib" || exit 2
 cp lib/*.cyr "$TMP/mut/lib/" || exit 2
 awk '
-/^fn _bench_chunk_for\(per_ps, err\): i64 \{$/ { print; print "    return 1;"; skip = 1; next }
+/^fn _bench_chunk_for\(per_ps, err, pairs\): i64 \{$/ { print; print "    return 1;"; skip = 1; next }
 skip == 1 && /^\}$/ { print; skip = 0; next }
 skip == 1 { next }
 { print }
 ' lib/bench.cyr > "$TMP/mut/lib/bench.cyr"
 if cmp -s lib/bench.cyr "$TMP/mut/lib/bench.cyr"; then
-    fail "the chunk-1 mutation is a no-op — _bench_chunk_for's signature changed (v6.6.5 made it (per_ps, err)), so axis D2 proves nothing and axis D could be vacuous again without anyone noticing"
+    fail "the chunk-1 mutation is a no-op — _bench_chunk_for's signature changed (v6.6.9 made it (per_ps, err, pairs)), so axis D2 proves nothing and axis D could be vacuous again without anyone noticing"
 fi
 grep -q '^    return 1;$' "$TMP/mut/lib/bench.cyr" || fail "the chunk-1 mutant does not contain the forced return — the awk no longer matches lib/bench.cyr"
 cp "$TMP/probe.cyr" "$TMP/mut/probe.cyr"
@@ -400,6 +419,16 @@ fn _sc_spike_op(): i64 {
     if (_sp_calls >= _sp_every) { _sp_calls = 0; _sc_t = _sc_t + _sp_ns; }
     return 0;
 }
+var _ph_calls = 0;
+fn _sc_phase_op(): i64 {
+    if (_ph_calls < 533350) {
+        _sc_t = _sc_t + 3;
+    } else {
+        if (_ph_calls >= 800017) { _sc_t = _sc_t + 10; }
+    }
+    _ph_calls = _ph_calls + 1;
+    return 0;
+}
 fn _sc_window(b, op, c): i64 {
     bench_start(b);
     _sc_advance(op);
@@ -423,6 +452,8 @@ fn main(): i64 {
     }
     if (bench_min_ps(b) != 250000) { return 21; }
     if (bench_avg_ps(b) != 250000) { return 22; }
+    #     Every bench_stop window is eligible: the caller chose its size (one op).
+    if (bench_windows_eligible(b) != 100) { return 33; }
     # (2) 1000-op windows of 250.5ns: these resolve, and the arithmetic is sub-ns.
     _sc_reset(1000);
     var c = bench_new("r");
@@ -469,32 +500,35 @@ fn main(): i64 {
     _bench_clock_ns = 0 - 1;
     if (bench_clock_overhead_ns() != 733) { return 27; }
     _sc_switch_at = 0;
-    # (6) bench_run's eligibility and absorbed remainder (v6.6.9). err 2,000 ns, bar
-    #     200,000 ns, MARGIN 4 → a sized chunk of the 3 ns op is 800,000/3 + 1 = 266,667.
-    #     Cheap pilot (closing read 0): 16 | 256 (grown off 0 ps, ineligible) | 266,667 |
-    #     266,677 (absorbing a 10-op remainder). Two eligible windows; mean
-    #     (1,603,848 - 4,000) / 533,616 = 2,998 ps — 2 ps under min, the pilot's weight.
+    # (6) bench_run's eligibility, held pilot and absorbed remainder (v6.6.9). err 2,000
+    #     ns, bar 200,000 ns, MARGIN 4, and a chunk booked with p clock pairs is sized for
+    #     p x err: 800,000 x p / 3 + 1 ops of the 3 ns op. Cheap pilot (closing read 0):
+    #     0 ps, so it is HELD and the next chunk grows to 256 (held too); that reads 3 ns
+    #     and sizes 800,001 for three pairs. Booked: (16+256+800,001 | 3 pairs) | 266,667 |
+    #     266,667 | 266,677 (absorbing 10). The first window carries the cheap pilot:
+    #     (48 + 1,768 + 2,401,003 - 3,000) / 800,273 = 2,998 ps = min; max 3,000; mean
+    #     (2,402,819 + 2 x 801,001 + 801,031 - 6,000) / 1,600,284 = 2,999 ps, between them.
     _sc_reset(1000);
     _op_ns = 3;
     var e = bench_new("p");
     _sc_queue2(1000, 0);
-    bench_run(e, &_sc_op, 533616);
-    if (bench_iterations(e) != 533616) { return 29; }
-    if (bench_windows(e) != 4) { return 29; }
-    if (bench_windows_eligible(e) != 2) { return 29; }
+    bench_run(e, &_sc_op, 1600284);
+    if (bench_iterations(e) != 1600284) { return 29; }
+    if (bench_windows(e) != 6) { return 29; }
+    if (bench_windows_eligible(e) != 6) { return 29; }
     if (bench_min_resolved(e) != 1) { return 29; }
-    if (bench_min_ps(e) != 3000) { return 29; }
+    if (bench_min_ps(e) != 2998) { return 29; }
     if (bench_max_ps(e) != 3000) { return 29; }
-    if (bench_avg_ps(e) != 2998) { return 29; }
+    if (bench_avg_ps(e) != 2999) { return 29; }
     #     Cold pilot, inside the margin (closing read 1,048): it reads 6 ns/op and sizes
-    #     133,334 ops — 2x the bar, not 4x. Eligible, and still clears the bar at the mean:
-    #     16 | 133,334 | 266,667 | 266,677, three eligible, min = max = 3,000.
+    #     266,667 ops for two pairs — 2x the bar per pair, not 4x. Still resolves:
+    #     (16+266,667 | 2) | 266,667 | 266,667, min = max = avg = 3,000.
     _sc_reset(1000);
     var e2 = bench_new("q");
     _sc_queue2(1000, 1048);
-    bench_run(e2, &_sc_op, 666694);
+    bench_run(e2, &_sc_op, 800017);
     if (bench_windows(e2) != 4) { return 29; }
-    if (bench_windows_eligible(e2) != 3) { return 29; }
+    if (bench_windows_eligible(e2) != 4) { return 29; }
     if (bench_min_resolved(e2) != 1) { return 29; }
     if (bench_min_ps(e2) != 3000) { return 29; }
     if (bench_avg_ps(e2) != 3000) { return 29; }
@@ -552,6 +586,7 @@ fn main(): i64 {
     if (bench_min_resolved(s9) != 0) { return 31; }
     if (bench_min_ps(s9) != 18333) { return 31; }
     if (bench_min_ps(s9) > bench_avg_ps(s9)) { return 31; }
+    if (bench_max_ps(s9) != 18333) { return 31; }
     # (10) THE RESOLVED MIRROR: 1,000-op windows of 0.9 and 1.3 x the bar. The row
     #     resolves (1,000 x 220 ns = 220 us) and min comes from the 0.9 windows — the
     #     6.6.5 rule dropped them and read 260,000 ps, above the 220,000 mean.
@@ -567,6 +602,43 @@ fn main(): i64 {
     if (bench_min_ps(s10) != 180000) { return 32; }
     if (bench_max_ps(s10) != 260000) { return 32; }
     if (bench_avg_ps(s10) != 220000) { return 32; }
+    # (11) A SMALL-n bench_run ROW (review of the first cut of 6.6.9). A 2 us op, n = 300,
+    #     cheap pilot: the pilot plus one absorbing chunk. Kept as separate windows, the
+    #     pilot's clock error sat in the mean and never in the min — mean 1,996,666 under a
+    #     min of 2,000,000 (live: 139 of 200 rows PRINTED min > avg at n = 200 here). Now
+    #     one window of two pairs: (32,000 + 569,000 - 2,000) / 300 = 1,996,666 = min =
+    #     max = avg; 150 ops per pair x 1.997 us clears the bar. At n = 200 it is 100 per
+    #     pair, 199.5 us, UNDER the bar: that row reports the mean.
+    _sc_reset(1000);
+    _op_ns = 2000;
+    var s11 = bench_new("n");
+    _sc_queue2(1000, 0);
+    bench_run(s11, &_sc_op, 300);
+    if (bench_windows(s11) != 2) { return 34; }
+    if (bench_windows_eligible(s11) != 2) { return 34; }
+    if (bench_min_resolved(s11) != 1) { return 34; }
+    if (bench_avg_ps(s11) != 1996666) { return 34; }
+    if (bench_min_ps(s11) != 1996666) { return 34; }
+    _sc_reset(1000);
+    var s11b = bench_new("o");
+    _sc_queue2(1000, 0);
+    bench_run(s11b, &_sc_op, 200);
+    if (bench_min_resolved(s11b) != 0) { return 34; }
+    if (bench_min_ps(s11b) != 1995000) { return 34; }
+    # (12) A ROW ENDING ON A HELD GROWTH CHUNK DOES NOT RESOLVE. The op costs 3 ns for
+    #     533,350 calls, 0 for 266,667, then 10 ns. The 0-ps sized chunk sends the last
+    #     chunk down the growth path; it is held and booked ineligible at the end:
+    #     (16+533,334 | 2) | 266,667 (0 ps) | 266,667 held. Its 2.67 ms are in the 3,999 ps
+    #     mean and in no extreme; resolving would print max 3,000 under that mean.
+    _sc_reset(1000);
+    _ph_calls = 0;
+    var s12 = bench_new("h");
+    bench_run(s12, &_sc_phase_op, 1066684);
+    if (bench_windows(s12) != 4) { return 35; }
+    if (bench_windows_eligible(s12) != 3) { return 35; }
+    if (bench_avg_ps(s12) != 3999) { return 35; }
+    if (bench_min_resolved(s12) != 0) { return 35; }
+    if (bench_max_ps(s12) != 3999) { return 35; }
     _bench_clock_fp = 0;
     return 0;
 }
@@ -588,14 +660,17 @@ case "$src" in
   26) fail "scripted: a HIGHER re-measured floor was ADOPTED — over-subtraction is exactly what makes rows read 0" ;;
   27) fail "scripted: calibration stopped at one round, so a slow moment becomes the whole process's floor" ;;
   28) fail "scripted: on a 15ms counter the windows are not sized by the tick — floor-only sizing is back, which is what made cass thrash between 1 and 4096 iterations per window" ;;
-  29) fail "scripted: bench_run's eligibility or chunking is wrong — the pilot, a growth chunk or a chunk sized from an unresolved window set min/max (what made bench_run(noop, 1e5) report min=0 in 91 of 200 runs), the remainder was not absorbed, or chunks are not sized for 4x the bar" ;;
+  29) fail "scripted: bench_run's eligibility or chunking is wrong — the pilot or a growth chunk set min/max on its own (what made bench_run(noop, 1e5) report min=0 in 91 of 200 runs) or was not booked with the next sized chunk, the remainder was not absorbed, or chunks are not sized for 4x the bar per clock pair" ;;
   31) fail "scripted: a fixed batch whose plain windows are under the bar, with a spike in every third window, reports a per-op min other than the mean — the extremes are being taken over the PERTURBED windows (hisab 2026-09-21: min printed above avg)" ;;
   32) fail "scripted: a batch row whose windows straddle the bar (0.9 / 1.3) does not resolve with min from the short windows — admission is being decided per window by its own duration again" ;;
+  33) fail "scripted: bench_stop windows are not eligible — a one-op-per-window row can never report an extreme, however long its op" ;;
+  34) fail "scripted: a small-n bench_run row (pilot + one chunk) reports a min other than its mean, or resolves at 100 ops per clock pair — the pilot is a separate window in the mean again, or min_k is not counted per clock pair (review of the first cut of 6.6.9: 139 of 200 rows printed min > avg)" ;;
+  35) fail "scripted: a bench_run row that ENDS holding an ineligible growth chunk resolved — ops in the mean that no eligible window covers put max under the mean" ;;
   30) fail "scripted: the sub-floor case is wrong — either an op at or under one clock read is no longer reported as 0-with-bench_sub_floor()==1, or a 250ns op on the same clock is being flagged sub-floor (0 is legitimate ONLY there, and it must be named)" ;;
   *)  cat "$TMP/sc.out"; fail "scripted-clock probe exited $src" ;;
 esac
 
-# Seventeen mutants, applied to COPIES of lib/bench.cyr. Each must be a real edit (cmp) and
+# Twenty-three mutants, applied to COPIES of lib/bench.cyr. Each must be a real edit (cmp) and
 # each must turn the probe RED. The gate re-proves its own sensitivity on every run —
 # axis D was demonstrably vacuous for the defect it shipped with, so "this axis can still
 # see it" is not something to take on trust.
@@ -642,7 +717,7 @@ run_mut() {
 # filed defect itself.
 run_mut admission_by_own_duration \
     '    if (elig == 1) {' \
-    '    if (elig == 1 && net >= _BENCH_RESOLVE * _bench_err_ns()) {'
+    '    if (elig == 1 && raw - pairs * fl >= _BENCH_RESOLVE * _bench_err_ns()) {'
 run_mut per_window_clamp_in_total \
     '    store64(b + 16, load64(b + 16) + raw);' \
     '    var rr = raw;\n    if (rr < fl) { rr = fl; }\n    store64(b + 16, load64(b + 16) + rr);'
@@ -679,7 +754,7 @@ run_mut row_resolves_on_any_window \
     '    if (bench_avg_ps(b) >= need) { return 1; }' \
     '    return 1;'
 run_mut min_k_not_tracked \
-    '        if (k < load64(b + 64)) { store64(b + 64, k); }' \
+    '        if (kp < load64(b + 64)) { store64(b + 64, kp); }' \
     '        # min_k no longer tracked'
 run_mut pilot_eligible \
     '    var elig = 0;' \
@@ -694,9 +769,29 @@ run_mut tail_not_absorbed \
     '        if (n - done - nxt < nxt) { nxt = n - done; }' \
     '        if (nxt > n - done) { nxt = n - done; }'
 run_mut no_margin \
-    '    var want = (err * _BENCH_RESOLVE * _BENCH_MARGIN * 1000) / per_ps + 1;' \
-    '    var want = (err * _BENCH_RESOLVE * 1000) / per_ps + 1;'
-[ "$nmut" -eq 17 ] || fail "only $nmut of 17 mutants ran"
+    '    var want = (err * pairs * _BENCH_RESOLVE * _BENCH_MARGIN * 1000) / per_ps + 1;' \
+    '    var want = (err * pairs * _BENCH_RESOLVE * 1000) / per_ps + 1;'
+# (18-23) v6.6.9 review: the pieces the first rewrite of this gate did not kill, and the
+# held-pilot fold that replaced the first cut's "pilot tolerance".
+run_mut max_on_any_window \
+    '    if (bench_min_resolved(b) == 1) { return load64(b + 40); }' \
+    '    if (load64(b + 56) > 0) { return load64(b + 40); }'
+run_mut stop_ineligible \
+    '    _bench_record(b, raw, 1, 1, 1);' \
+    '    _bench_record(b, raw, 1, 1, 0);'
+run_mut pilot_not_folded \
+    '            _bench_record(b, raw + hraw, chunk + hk, 1 + hp, 1);' \
+    '            if (hp > 0) { _bench_record(b, hraw, hk, hp, 0); }\n            _bench_record(b, raw, chunk, 1, 1);'
+run_mut trailing_held_resolves \
+    '    if (load64(b + 56) != load64(b + 48)) { return 0; }' \
+    '    # every-pair-eligible check removed'
+run_mut sizing_ignores_held_pairs \
+    '        var nxt = _bench_chunk_for(ps, _bench_err_ns(), 1 + hp);' \
+    '        var nxt = _bench_chunk_for(ps, _bench_err_ns(), 1);'
+run_mut min_k_ignores_pairs \
+    '        var kp = k / pairs;' \
+    '        var kp = k;'
+[ "$nmut" -eq 23 ] || fail "only $nmut of 23 mutants ran"
 
 # ── D4. a CONSUMER's grammar, copied verbatim, not this file's own ───
 # ⭐ The row shape is an ecosystem contract: goonj, hisab, mabda, chitra, vani, libro and
@@ -810,5 +905,5 @@ EOS
         fail "the ELF build of the $mod-only consumer failed (rc $lrc)"; }
 done
 
-echo "PASS: bench timer floor is measured (no hardcoded per-call constant, 6 timing paths book through one accounting site, bench_run self-sizes and PROVES it by cost, resolution rule decided per ROW by op count, proved by a scripted clock with $nmut/17 mutants killed, $nrows row(s) parse under goonj's own ROW_RE, report stays out of bench-history, chunk-1 mutant rejected with rc=$mrc, chrono-only and bench-only consumers both cross-build for PE)"
+echo "PASS: bench timer floor is measured (no hardcoded per-call constant, 6 timing paths book through one accounting site, bench_run self-sizes and PROVES it by cost, resolution rule decided per ROW by op count per clock pair, proved by a scripted clock with $nmut/23 mutants killed, $nrows row(s) parse under goonj's own ROW_RE, report stays out of bench-history, chunk-1 mutant rejected with rc=$mrc, chrono-only and bench-only consumers both cross-build for PE)"
 exit 0
