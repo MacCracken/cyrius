@@ -1,9 +1,6 @@
 # `fl_alloc` stores through an unchecked `_fl_mmap` return: a refused mapping faults at address -12 instead of returning 0 — OPEN
 
-**Status:** 🟡 **OPEN**: verified 2026-09-23 against the installed 6.6.6 snapshot. `fl_alloc`'s large
-path (`~/.cyrius/lib/freelist.cyr:404-406`) runs `store64(blk, 0)` on the `_fl_mmap` return with no
-check, and `_fl_arena_alloc` (`:234-236`) adopts the return as its arena base the same way. The large
-path was reproduced the same day (below).
+**Status:** ✅ **RESOLVED v6.6.7** (bite 8) — `fl_alloc` checks its large-path and refill mappings and returns 0 on refusal. The filed 1 GiB repro under `ulimit -v 600000` now prints `returned` / `p == 0` and exits 0 (was 139, fault at -12).
 **Placement:** **6.6.7 bite 8** — kybernet PID-1 stdlib and same-class unchecked allocs: non-blocking hash seed; checked fl_alloc mappings; bounded, checked file_read_whole; checked hashmap_fast and flags growth. Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Discovered:** 2026-08-25 during kybernet 1.5.9, reading sigil's Argon2 wrappers. Reproduced
 2026-09-23 during kybernet 1.7.8.

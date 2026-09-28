@@ -1,7 +1,6 @@
 # `defer` does not run when a fn returns a value-form `Result` / `Option` pair — OPEN
 
-**Status:** 🟡 **OPEN** — filed by agnodrm at its 1.6.2 cut. Consumer-side workaround shipped (no
-`defer` in any Result-returning fn); the compiler defect is untouched.
+**Status:** ✅ **RESOLVED v6.6.7** (bite 2) — a `defer` and every `secret var` zeroise run on every return path; a fn with a defer/secret never tail-calls, and the whole return convention (Ok/Err payload included) is saved around the defer walk. The filed repro prints `3 3 3 3 3 3 3 3` on x86_64, x86_64 `CYRIUS_DCE=1` and aarch64 (qemu). Pinned by `tests/tcyr/crossos/defer_every_return_path.tcyr` and `tests/gates/codegen/defer_every_return_path.sh`. CVE-47.
 **Placement:** **6.6.7 bite 2** — defer and secret run on every return path: tail-call divert, whole return-convention save (EDEFER_SAVE/RESTORE), inline exclusion, CVE-46. Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Discovered:** 2026-09-22, during agnodrm's raw-syscall → stdlib-helper sweep. Before/after syscall
 traces (native `gdb catch syscall`, `qemu-aarch64 -strace`) showed no `close()` for fds the code

@@ -1,9 +1,6 @@
 # `lib/hashseed.cyr` blocks on `getrandom(…, 0)` until the kernel CRNG is seeded: PID 1 waits ~0.9 s on a board with no entropy source — OPEN
 
-**Status:** 🟡 **OPEN**: verified 2026-09-23 against the installed 6.6.6 snapshot: `_hm_seed_get`
-(`~/.cyrius/lib/hashseed.cyr:61`) still calls `syscall(SYS_GETRANDOM, &_hm_seed_buf, 8, 0)` (`:68`),
-and flags 0 blocks until the CRNG is initialised. Re-measured the same day in kybernet 1.7.8's aarch64
-boot gate (numbers below).
+**Status:** ✅ **RESOLVED v6.6.7** (bite 8) — `_hm_seed_get` draws with `GRND_INSECURE` (4) on Linux, retrying with `GRND_NONBLOCK` (1) on a pre-5.6 `-EINVAL`, and goes through `sys_getrandom` on every other target (which also fixes the macOS getentropy 0 → len discard). Traced: `getrandom(buf, 8, 4) = 8`.
 **Placement:** **6.6.7 bite 8** — kybernet PID-1 stdlib and same-class unchecked allocs: non-blocking hash seed; checked fl_alloc mappings; bounded, checked file_read_whole; checked hashmap_fast and flags growth. Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Discovered:** 2026-09-22 during kybernet 1.7.2, when its aarch64 boot gate started booting with the
 device-tree RNG seed turned off.

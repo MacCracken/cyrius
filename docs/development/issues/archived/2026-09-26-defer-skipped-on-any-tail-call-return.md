@@ -1,7 +1,6 @@
 # `defer` is skipped by ANY `return f(...)` in tail position — not only value-form pairs — OPEN
 
-**Status:** 🟡 **OPEN** — filed by agnostic while designing its 0.1.4 store lock. Consumer-side
-workaround in place (agnostic uses no `defer`); the compiler defect is untouched.
+**Status:** ✅ **RESOLVED v6.6.7** (bite 2) — same fix as the agnodrm filing: any tail-shaped `return f(..)` in a fn with a defer/secret is now an ordinary call, so the defer runs. The filed repro prints `1 1 1 1` on x86_64, x86_64 `CYRIUS_DCE=1` and aarch64 (qemu). `lock(); defer { unlock(); }` is safe to re-adopt.
 **Placement:** **6.6.7 bite 2** — defer and secret run on every return path: tail-call divert, whole return-convention save (EDEFER_SAVE/RESTORE), inline exclusion, CVE-46. Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Related:** [`2026-09-22-agnodrm-defer-skipped-on-value-form-result-return.md`](2026-09-22-agnodrm-defer-skipped-on-value-form-result-return.md).
 That issue attributes the skip to value-form pair returns and states that a `defer` "runs when its fn

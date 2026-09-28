@@ -6,6 +6,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.7] — 2026-09-27
 
+The first of three SMALL releases that the post-6.6.6 issue track is split into (roadmap.md, *The 6.6.7
+→ 6.6.9 batch*): 30 filed issues, the 6.6.6 tail and ~40 same-class defects the premise-check found,
+batched 10 / 11 / 11 bites and shipped strictly one release at a time. 6.6.7 takes the silent wrong code
+and the baseOS layer: `defer` and `secret` on every return path, the `#derive` body walker (Critical),
+PE `fsync` that flushes, the agnos 1.57.6–1.57.9 peers, the kybernet PID-1 stdlib, fail-closed lint
+walkers — and the stdlib fold of nine libs, five of which needed a sibling patch release first. Ten bites
+in six worktree lanes; 12 filed issues fixed (each filed repro re-run on the merged tree). **CVE-46,
+CVE-47, CVE-48.**
+
+**Bench:** cycc **1,328,336 → 1,346,088 B** (+17,752, +1.3 %; `.text` 1,179,392). self_compile reads
+**957 ms** against 6.6.6's recorded 869 ms (+10.1 %), but the same-box A/B says otherwise: the 6.6.6
+compiler compiling this tree measures **~947 ms** today and the 6.6.7 compiler **~958 ms** (+1.1 %, three
+rounds each) — the rest is the box, not the code, and every phase moved alike (preprocess and lex, which
+6.6.7 barely touched, rose as much as the rest).
+
 ### Fixed
 
 - **A fn body emitted INSIDE another fn's body — a closure literal, the first `f<T>(..)`

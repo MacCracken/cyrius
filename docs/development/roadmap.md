@@ -38,10 +38,10 @@ unscheduled 6.x backlog. Whole-cycle framing plus v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.6.7** (2026-09-27, slot open; 6.6.6 tagged at `d6791469`) — cycc **1,328,336 B** (`.text` **1,163,064**) ·
-seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi (at 6.6.6) · self_compile **869 ms** (6.6.6 bench) ·
-**340** `.tcyr` (**99** in `crossos/`) · **104** `lib/*.cyr` · **226** shell gates under
-`tests/gates/<bucket>/` · **30 open issues** · **6 open proposals**.
+**Current head: v6.6.7** (2026-09-27, closed, awaiting the tag; 6.6.6 tagged at `d6791469`) — cycc **1,346,088 B** (`.text` **1,179,392**) ·
+seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/pi (cass down at the close) · self_compile **869 ms** (6.6.6 bench) ·
+**353** `.tcyr` (**109** in `crossos/`) · **104** `lib/*.cyr` · **236** shell gates under
+`tests/gates/<bucket>/` · **17 open issues** · **6 open proposals**.
 
 > ⚠ **Every figure above was DERIVED on the day, not carried** (re-derived 2026-09-27 at the 6.6.7 open).
 > `version-bump.sh` rewrites the version token, replaces the `(…)` after it with the bump date, and
@@ -94,52 +94,26 @@ found already shipped or wholly a sibling's (see *Not placed*).
   bite bumps the CLAUDE.md counter in the same commit. *(This line first planned CVE-46 for bite 2;
   bite 1's audit finding spent it first, so every later id moved up one.)*
 
-### 6.6.7 — silent wrong code, the baseOS layer, and the stdlib fold
+### 6.6.7 — CLOSED 2026-09-27 (awaiting the tag)
 
-| # | Bite | Items | Lane | src | Size |
-|---|---|---|---|---|---|
-| 1 | Per-fn state isolation for nested fn emitters (closure, generic instance, async ctor) + defer context rules | audit: nested-fn emission loses the enclosing fn's return patches and per-fn state; defer inside a closure registers on the enclosing fn; defer misuse not refused; top-level defer frame slot — **CVE-46** | A-defer | ✔ commits `build/cycc` | L |
-| 2 | `defer` and `secret` run on EVERY return path | [defer skipped on any tail-call return](issues/2026-09-26-defer-skipped-on-any-tail-call-return.md) · [defer skipped on value-form Result return](issues/2026-09-22-agnodrm-defer-skipped-on-value-form-result-return.md) · audit: the defer walker clobbers FP/vector returns and misaligns its calls; defer in an `#inline` fn hoisted into the caller; `secret` zeroise skipped on a tail return — **CVE-47** | A-defer | ✔ | L |
-| 3 | PE `fsync`/`fdatasync` really flush (FlushFileBuffers) + `MOVEFILE_WRITE_THROUGH` | [patra: xfsync reports success on PE without flushing](issues/2026-09-23-patra-xfsync-reports-success-on-pe-without-flushing.md) | B-platform | ✔ source only | M |
-| 4 | agnos 1.57.6–1.57.9 peer surface; `r10` zeroed on short agnos syscalls; monotonic socket-recv deadline; loopback listen class | the four `agnos-*` filings ([spawn flags](issues/2026-09-24-agnos-spawn-flags-redirect-ops-and-uptime-us-peer.md), [read blocks](issues/2026-09-25-agnos-read-blocks-on-pipes-and-channels-and-the-44-kick.md), [sock peer / spawn limits](issues/2026-09-25-agnos-sock-peer-spawn-limits-wait-block-kill-tree-peer.md), [sched_yield_to](issues/2026-09-26-agnos-sched-yield-to-108-and-pipe-write-blocking-peer.md)) · [daimon: socket read gives up after a second](issues/2026-09-23-daimon-agnos-socket-read-gives-up-after-a-second.md) · audit: a loopback bind listens on the NIC — **CVE-48** | B-platform | ✔ source only | L |
-| 5 | `#derive` walks the struct/enum body token by token | [agnostik: derive(Serialize) comment in struct body](issues/2026-09-22-agnostik-derive-serialize-comment-in-struct-body.md) (**Critical**: silent field-table corruption + out-of-bounds accessor writes) | B-platform (first) | ✔ source only | M |
-| 6 | **The stdlib fold** — sandhi 1.10.0, sakshi 2.5.5, patra 1.15.0, niyama 1.0.12, bayan 1.5.7, plus the four sibling patch releases below | fold · audit: vendored yukti's aarch64 statfs is stale; yukti's `EjectConst` redefines `O_NONBLOCK` program-wide | L-fold | — | L |
-| 7 | agnos runtime contracts: the clock falls back (latched) when TSC calibration is refused; `sysinfo` #35 gets its 208-byte tier | [daimon: clock stands still when TSC calibration is refused](issues/2026-09-23-daimon-agnos-clock-stands-still-when-tsc-calibration-refused.md) · audit: `agnos_sysinfo_tail_parity.sh` is **RED locally today** (agnos 1.57.10 declares 208 bytes; lib/sys.cyr stops at 200) | L-agnos-rt | — | M |
-| 8 | kybernet PID-1 stdlib + the same unchecked-alloc class | [hashseed getrandom blocks PID 1](issues/2026-09-23-kybernet-hashseed-getrandom-blocks-pid1-before-crng-seeds.md) · [fl_alloc unchecked mmap](issues/2026-09-23-kybernet-fl-alloc-unchecked-fl-mmap-faults-at-minus-12.md) · [file_read_whole unbounded growth](issues/2026-09-23-kybernet-file-read-whole-no-ceiling-unchecked-growth-alloc.md) · audit: `hashmap_fast` and `flags` grow without checking the alloc | L-pid1 | — | M |
-| 9 | Lint/doc walkers fail CLOSED on a crashed, hung, refusing or missing tool | audit: `cyrius audit`, check.sh and CI read a refusing cyrlint as clean (rekha's `face_data.cyr`) | L-gates | — | M |
-| 10 | Release bookkeeping: `version-bump.sh` anchors verified and loud; state.md | tail: the roadmap-stamp sed that silently matched nothing at this bump | L-gates (last) | — | S |
+All ten bites shipped as planned, in six worktree lanes merged into main; detail is in
+`CHANGELOG.md` [6.6.7]. The twelve filed issues it fixed are archived (the daimon clock one by
+its bite); each filed repro was re-run on the merged tree. It spent **three** CVE ids, not two:
+**CVE-46** (a closure's `secret var` was never zeroised — bite 1), **CVE-47** (a `secret var`
+skipped on a tail return — bite 2), **CVE-48** (on agnos a 127.0.0.1 server listened on the
+network — bite 4); 6.6.9's planned CVE is therefore **CVE-49**.
 
-**Lanes and file ownership.** A-defer: `parse_fn.cyr`, `parse.cyr`, `parse_ctrl.cyr`, the closure/await
-region of `parse_expr.cyr`, the new `EDEFER_SAVE/RESTORE` in the x86/aarch64/cx emitters. B-platform (5 → 3
-→ 4): `lex_pp.cyr`, the PE route helpers in `parse_expr.cyr`, `EFLUSHFB_PE` / the MoveFileEx immediate /
-the `ESCPOPS` agnos arm in `x86/emit.cyr`, `pe/emit.cyr`, and **sole owner of
-`lib/syscalls_x86_64_agnos.cyr`**. L-fold: the fold files, **`lib/syscalls_windows.cyr`**, `lib/tls_native.cyr`,
-**`docs/ecosystem.md`**, `aarch64_syscall_shadow.sh`. L-agnos-rt: `chrono.cyr`, `bench.cyr`, `sys.cyr`,
-the agnos clock/sysinfo gates. L-pid1: `hashseed`, `freelist`, `alloc_windows`, `hashmap_fast`, `flags`,
-and **sole owner of `lib/io.cyr`** (it takes bite 3's xfsync PE arm and bite 4's agnos comment rows after
-B merges). L-gates: **sole owner of `scripts/check.sh`, `programs/checks/*.cyr`, `ci.yml`, `install.sh`,
-`version-bump.sh`, `state.md`**; it applies every other lane's gate registration. Merge order: A → B →
-L-fold, L-pid1, L-agnos-rt → L-gates.
+⚠ **The merge again found what no lane could** (the 6.6.6 lesson, repeated): each lane's
+`check.sh` was green, and the merged tree went red three ways — bite 7 sized an array by an enum
+that the fold lane's larger bundles pushed past var index 1024 (6.6.8 bite 1's cap), bite 7's
+new derived clock axis caught bite 4's unchecked #95 read, and bite 7's gate expected a
+`syscall` adjacent to its number where bite 4 now zeroes `r10` in between.
 
-**⛔ Sibling patch releases that gate the fold (bite 6).** Each pins the RELEASED cyrius 6.6.6 and must be
-TAGGED before the fold lane merges; the fold copies each bundle byte-identical from the tag's `dist/`.
-
-- **vani 1.2.7** — repin 6.6.2 → 6.6.6; a `CYRIUS_TARGET_WIN` arm in `_audio_open_pcm` (1.2.6 reintroduced
-  an unguarded `SYS_FCNTL` and does not compile for PE — it turns `pe_no_raw_syscall_bytes.sh` red); the
-  aarch64 `mkfifo` test becomes a counted SKIP until 6.6.8 bite 3 names `mknodat` (the raw `syscall(33)` is
-  rewritten to `dup3` by the 6.6.5 ESYSXLAT row); agnos `ioctl` through a private fail-closed bridge.
-- **sigil 3.13.3** — per-target `EAGAIN` (its global `EAGAIN = 11` overrides Darwin's 35 program-wide, the
-  same class as yukti's `EjectConst`); `sysinfo` includes `lib/sys.cyr`. 3.13.2 is NOT folded in its place.
-- **yukti 2.3.13** — private names for `EjectConst`'s `O_RDONLY`/`O_NONBLOCK`; carries 2.3.12's aarch64
-  statfs fix. (2.3.12 alone deletes the fake agnos `SYS_IOCTL = 9001` that mabda and vani were silently
-  borrowing — `folds_agnos_parity.sh` passed only because it shared that defect.)
-- **mabda 4.1.5** — agnos `ioctl` through a private fail-closed bridge; its profiler reads `clock_now_ns`.
-- sandhi 1.10.1 **only if** its `_SANDHI_EAGAIN = 11` recv sentinel misbehaves on ecb/ach once sigil stops
-  forcing 11.
-
-Fold from the TAG: `git show <tag>:dist/<name>.cyr` — bayan's post-tag worktree `dist/` differs from 1.5.7 in
-eight comment lines and would pass every gate, because `fold_table_matches_vendored.sh` reads only the
-`# Version:` header.
+**⛔ Sibling releases the fold took, by commit — tag each at that commit BEFORE the cyrius 6.6.7
+tag:** sandhi **1.10.1** `f93d035` (cut during the fold: macOS EAGAIN is 35, and PE had been
+borrowing yukti's `SYS_SOCKET`), vani **1.2.7** `5cdd402`, sigil **3.13.3** `92a5042`, yukti
+**2.3.13** `ff97eec`, mabda **4.1.5** `2a9f67c`. sakshi 2.5.5, patra 1.15.0, niyama 1.0.12 and
+bayan 1.5.7 were folded from their existing tags.
 
 ### 6.6.8 — the platform silent-defect sweep
 

@@ -1,8 +1,6 @@
 # `file_read_whole` has no size ceiling and does not check its growth `alloc()`: a file that does not end is a write through NULL — OPEN
 
-**Status:** 🟡 **OPEN**: verified 2026-09-23 against the installed 6.6.6 snapshot
-(`~/.cyrius/lib/io.cyr:573`): `nb = alloc(ncap + 1)` is followed by `memcpy(nb, buf, total)` with no
-check, and the read loop ends only at EOF or a read error.
+**Status:** ✅ **RESOLVED v6.6.7** (bite 8) — `file_read_whole` checks every allocation and clamps its growth; `file_read_whole_max` / `_a` / `_into` added (a too-big file returns 0 with `*len_out = -EFBIG`). The filed `/dev/zero` repro under `ulimit -v 2000000` now prints `returned` and exits 0 (was 139).
 **Placement:** **6.6.7 bite 8** — kybernet PID-1 stdlib and same-class unchecked allocs: non-blocking hash seed; checked fl_alloc mappings; bounded, checked file_read_whole; checked hashmap_fast and flags growth. Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Discovered:** 2026-09-23 during kybernet 1.7.8, which set out to adopt `file_read_whole` to retire
 kybernet's fixed 16 KiB `config.json` read.
