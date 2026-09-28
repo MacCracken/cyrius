@@ -55,6 +55,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   there still fail closed — porting them onto the new spawn is not in this release. The module header no longer claims
   agnos has no redirect or stdin/stdout control. Gate: `tests/gates/platform/agnos_process_peer_parity.sh`
   (derives both verb lists from the source, name and arity, for process and regression).
+- **`lib/async_agnos.cyr` no longer says agnos has no fork.** (bite 7.) fork#96 has existed since agnos
+  1.56.55; `async_timeout` runs its body inline and ignores `ms` because the port was never done, and
+  the comment now says that.
 
 ## [6.6.7] — 2026-09-27
 
