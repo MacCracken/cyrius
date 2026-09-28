@@ -1,7 +1,6 @@
-# Stdlib names neither `unshare(2)` nor `chroot(2)`, and on aarch64 `chroot` cannot be reached through `syscall()` — OPEN
+# Stdlib names neither `unshare(2)` nor `chroot(2)`, and on aarch64 `chroot` cannot be reached through `syscall()` — RESOLVED
 
-**Status:** 🟡 **OPEN** — stdlib surface gap plus one `ESYSXLAT` interaction; filed by kavach at its
-3.12.8 ABI repairs.
+**Status:** ✅ **RESOLVED v6.6.8** (bite 3) — `SYS_UNSHARE`/`SYS_CHROOT`/`SYS_PIVOT_ROOT` (+ capget/capset, process_vm_*, mknodat) named in every peer with `sys_*` wrappers and ELF-aarch64 rows `272→97`, `161→51`, `155→41`; `AUDIT_ARCH_NATIVE` per peer; the verbatim repro now straces `chroot`/`unshare`.
 **Placement:** **6.6.8 bite 3** — Names and rows for aarch64-unreachable syscalls (unshare/chroot/pivot_root, capget/capset, process_vm_*, mknodat); stdlib sys_fcntl / fd_set_nonblocking / fd_restore_flags. Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Discovered:** 2026-09-25, reading kavach's aarch64 build against the 6.6.6 syscall tables, then
 measuring under `qemu-aarch64 -strace`.

@@ -3272,6 +3272,13 @@ The rules, in order:
    that deletes its own declaration and calls the wrapper is correct on every target; one
    that keeps `SYS_STATFS = 43` under the aarch64 guard still runs `accept()`, and now gets
    a `duplicate symbol 'SYS_STATFS' redefined with conflicting value` warning saying so.
+   ⭐ v6.6.8 did the same for eight more: `SYS_UNSHARE` 272, `SYS_CHROOT` 161,
+   `SYS_PIVOT_ROOT` 155, `SYS_CAPGET` 125, `SYS_CAPSET` 126, `SYS_PROCESS_VM_READV` /
+   `_WRITEV` 310 / 311 and `SYS_MKNODAT` 259, each with a `sys_*` wrapper (Darwin -78, PE and
+   agnos -38) and a row to the aarch64 call. Before it, the native chroot (51) and pivot_root
+   (41) were unreachable behind the socket compat rows, and the x86 numbers ran sethostname,
+   getpgid, kcmp and the scheduler priority queries. The seccomp arch tag is
+   `AUDIT_ARCH_NATIVE` in the Linux (and x86-macOS) peers.
    In-tree all three shapes — a `SYS_*` declaration, any identifier assigned a literal that is
    then a syscall's first argument, and a bare `syscall(<literal>)` — are enforced by
    `tests/gates/platform/aarch64_syscall_shadow.sh` (axes 2 and 3), across `src/`, `lib/`,
@@ -3309,6 +3316,18 @@ The rules, in order:
    **1700** (pthread_create, arm64-macOS) the number plus 4. Any other arity is reported by
    name (`syscall 228 not routed at this arity`). Portable code calls `clock_now_ns()` /
    `sleep_ms()` / `thread_create()` instead.
+7. **Set O_NONBLOCK with `fd_set_nonblocking(fd)` / `fd_restore_flags(fd, saved)`, and every
+   other fcntl with `sys_fcntl(fd, cmd, arg)` (v6.6.8) — never a raw `syscall(SYS_FCNTL, …)`
+   and never `fl | 2048`.** 2048 is Linux's O_NONBLOCK and Darwin's O_EXCL, which F_SETFL
+   ignores, so the fd silently stays blocking on macOS. The wrapper's bit is PRIVATE and
+   per-target for a reason worth knowing: enum constants are global and the LAST definition
+   wins retroactively, program-wide, so one included module that declares its own
+   `O_NONBLOCK = 2048` (yukti <= 2.3.12 did) changes the public name for every user in a macOS
+   build. PE and agnos have no fcntl; the three decline with -38 there. `lib/net.cyr`'s
+   `sock_set_nonblocking` is the same call under a socket name. A socket that must deliver a
+   whole buffer uses `sock_send_all(fd, buf, len)`, which completes or reports a short write
+   (`len` or -errno) — a bare `sock_send` / `sys_write` can return fewer bytes under
+   SO_SNDTIMEO or a signal.
 
 Same trap on the other side: `var SYS_FOO = <x86 number>` in your own source SHADOWS the
 stdlib's arch-aware definition (last definition wins), so it is right on x86 and wrong

@@ -354,6 +354,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   route 228 → clock stays dead there; HELD" comment, stale since v6.5.16's `EMACHO_CLOCK_X86`, is
   corrected (its `lib/bench.cyr` twin was fixed at 6.6.5).
 
+- **Docs + API surface for bite 3.** `docs/guides/cyrius-guide.md`'s raw-syscall rules: rule 3
+  records the eight newly named calls (and `AUDIT_ARCH_NATIVE`), and a new rule 7 says to set
+  O_NONBLOCK with `fd_set_nonblocking` / `fd_restore_flags` and everything else with `sys_fcntl`
+  — never `fl | 2048` — why the wrapper's bit is private (a module's own `O_NONBLOCK` rewrites the
+  public name program-wide), and that a whole-buffer socket write is `sock_send_all`.
+  `docs/api-surface.snapshot` gains 34 entries (`sock_send_all`; the eleven new
+  `syscalls_linux_common` fns and their PE / agnos peers). The kavach and sigil issues are
+  archived.
+
 ### Added
 
 - **A Darwin axis for the syscall gates: `tests/gates/platform/darwin_syscall_literals_routed.sh`
