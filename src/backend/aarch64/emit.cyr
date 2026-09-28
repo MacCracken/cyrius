@@ -3029,7 +3029,7 @@ fn ESETCC(S, op): i64 {
 # output is bit-pattern in x0.
 
 # v5.7.30: x86-named no-ops kept for parser-shared codepaths. The
-# EMOVQ_*/EUCOMISD/EXORPD_X1/EMOVAPD_01/EX87PUSH/EX87POP helpers are
+# EMOVQ_*/EUCOMISD/EXORPD_X1/EX87PUSH/EX87POP helpers are
 # x86 bit-cast / x87-stack-mgmt helpers the aarch64 path doesn't
 # need — fmov d, x and fmov x, d are inlined directly into EMIT_
 # F64_BINOP / EMIT_F64_CMP / etc. The stubs preserve the parser API.
@@ -3038,7 +3038,6 @@ fn EMOVQ_X1_C(S): i64 { return 0; }
 fn EMOVQ_A_X0(S): i64 { return 0; }
 fn EUCOMISD(S): i64 { return 0; }
 fn EXORPD_X1(S): i64 { return 0; }
-fn EMOVAPD_01(S): i64 { return 0; }
 fn EX87PUSH(S): i64 { return 0; }
 fn EX87POP(S): i64 { return 0; }
 

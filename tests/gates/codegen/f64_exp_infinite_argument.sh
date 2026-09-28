@@ -5,7 +5,7 @@
 # ⛔ WHY THIS EXISTS. Both implementations range-reduce by SUBTRACTING a multiple of the argument
 # from itself — `x - round(x*log2e)*ln2` — which for ±inf is `inf - inf`, i.e. NaN, and every
 # term downstream inherits it. There is a SECOND, independent break in the same function: the
-# `2^n` bit-pack reads `f64_to(inf)`, which SATURATES to i64::MIN, so `(n + 1023) << 52` is not
+# `2^n` bit-pack reads `f64_to(inf)`, which SATURATES (i64::MAX for +inf; x86 gave i64::MIN before 6.6.8), so `(n + 1023) << 52` is not
 # an exponent at all. Any fix has to guard BEFORE the reduction, not patch the subtraction.
 #
 # ⚠ IT WAS BROKEN ON BOTH PATHS, WHICH IS WHY THE GATE TESTS BOTH. The aarch64 polyfills
@@ -73,23 +73,48 @@ EOF
 
 # ── axis 3 — ANTI-VACUOUS: the finite range and the NaN path are unchanged ───────────────────
 # exp(1) must still be e, exp2(10) must still be 1024, the overflow/underflow extremes must
-# still saturate, and NaN must still propagate (it needs no guard and must not acquire one).
+# still saturate, and NaN must still propagate. Every row runs on BOTH paths: until 6.6.8 the
+# extremes were asserted on the native op only, while the aarch64 polyfill turned exp(710) into
+# a NEGATIVE number and exp(-800) into -1.2e269 — the 2^n pack had no range check (CHANGELOG
+# [6.6.8]). NaN is compared by CLASS: its sign and payload are not promised.
 run "finite range, extremes and NaN unchanged" 42 <<EOF
 ${PRE}var NAN_ = 0x7FF8000000000000;
+fn isnan(v): i64 {
+    if ((v & 0x7FF0000000000000) != 0x7FF0000000000000) { return 0; }
+    if ((v & 0x000FFFFFFFFFFFFF) == 0) { return 0; }                # inf, not NaN
+    return 1;
+}
+# Within 1 ulp of e: the promise is <= 1 ulp, and fdlibm's exp(1) is e + 1 ulp.
+fn near_e(v): i64 {
+    var d = v - 0x4005BF0A8B145769;
+    if (d < 0) { d = 0 - d; }
+    if (d > 1) { return 0; }
+    return 1;
+}
 fn main(): i64 {
-    if (f64_exp(F64_ONE) != 0x4005BF0A8B145769) { return 1; }      # e, bit-exact
-    if (f64_exp2(f64_from(10)) != 0x4090000000000000) { return 2; } # 1024.0
-    if (f64_exp(f64_from(710)) != INF) { return 3; }                # overflows to +inf
-    if (f64_exp(f64_from(0 - 800)) != 0) { return 4; }              # underflows to 0
-    var n = f64_exp(NAN_);
-    if ((n & 0x7FF0000000000000) != 0x7FF0000000000000) { return 5; }
-    if ((n & 0x000FFFFFFFFFFFFF) == 0) { return 6; }                # still a NaN, not inf
-    if (_f64_exp_polyfill(F64_ONE) == 0) { return 7; }              # polyfill finite path alive
+    if (near_e(f64_exp(F64_ONE)) != 1) { return 1; }
+    if (near_e(_f64_exp_polyfill(F64_ONE)) != 1) { return 2; }
+    if (f64_exp2(f64_from(10)) != 0x4090000000000000) { return 3; }            # 1024.0
+    if (_f64_exp2_polyfill(f64_from(10)) != 0x4090000000000000) { return 4; }
+    if (f64_exp(f64_from(710)) != INF) { return 5; }                           # overflows to +inf
+    if (_f64_exp_polyfill(f64_from(710)) != INF) { return 6; }
+    if (f64_exp(f64_from(0 - 800)) != 0) { return 7; }                         # underflows to +0
+    if (_f64_exp_polyfill(f64_from(0 - 800)) != 0) { return 8; }
+    if (_f64_exp_polyfill(0xC3E158E460913D00) != 0) { return 9; }              # exp(-1e19): was 1.0
+    if (_f64_exp_polyfill(0xFFEFFFFFFFFFFFFF) != 0) { return 10; }             # exp(-DBL_MAX): was +inf
+    if (_f64_exp_polyfill(0x412E848000000000) != INF) { return 11; }           # exp(1e6): was 2.5e193
+    if (_f64_exp2_polyfill(0x409F400000000000) != INF) { return 12; }          # exp2(2000): was -2^-48
+    if (_f64_exp2_polyfill(0xFFEFFFFFFFFFFFFF) != 0) { return 13; }            # exp2(-DBL_MAX): was 1.0
+    if (_f64_exp2_polyfill(0x7FEFFFFFFFFFFFFF) != INF) { return 14; }          # exp2(DBL_MAX): was 0.5
+    if (isnan(f64_exp(NAN_)) != 1) { return 15; }
+    if (isnan(_f64_exp_polyfill(NAN_)) != 1) { return 16; }
+    if (isnan(f64_exp2(NAN_)) != 1) { return 17; }
+    if (isnan(_f64_exp2_polyfill(NAN_)) != 1) { return 18; }
     return 42;
 }
 var e = main();
 syscall(60, e & 0xFF, 0,0,0,0);
 EOF
 
-echo 'PASS f64_exp_infinite_argument: exp/exp2 give +inf and +0 at +/-inf on BOTH the native x87 path and the aarch64 polyfill · the finite range, the overflow/underflow extremes and NaN propagation are unchanged'
+echo 'PASS f64_exp_infinite_argument: exp/exp2 give +inf and +0 at +/-inf on BOTH the native x87 path and the aarch64 polyfill · the finite range, the overflow/underflow extremes (native and polyfill) and NaN propagation hold'
 exit 0

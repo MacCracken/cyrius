@@ -45,6 +45,23 @@ Octal uses digits `0`–`7`; a `8` or `9` ends the literal. (There is no
 `0b` binary literal form.) A decimal literal with a fractional part
 (`3.14`) is lexed as an `f64` float.
 
+Unary minus flips the **sign bit** of a float the compiler can see is a float: a float
+literal, a value typed `f64` / `f32`, or a direct call to a float-returning builtin
+(`-f64_sqrt(v)`, `-f64_exp(v)`, `-f32_from(v)`, …). So `-1.5` is -1.5, `-0.0` is negative
+zero and `-x` negates an `f64` exactly (6.6.8; before it, `-1.0` evaluated to -4.0 and
+`-0.0` to +0, silently). It does NOT cover an **untyped** variable or a struct field holding
+float bits, or a parenthesised operand whose own type is untyped (`-(f64_exp(u))` with
+`u` untyped, `-(a + b)` over untyped vars) — those are `i64` as far as the compiler
+knows, and `-v` is integer negation of the bits. Negate them with `f64_neg(v)`.
+
+⚠ Binary operators are typed by their LEFT operand. `0 - 1.5` is an INTEGER subtraction
+of 1.5's bit pattern (it is -3.0), and `2 * x` with `x: f64` multiplies x's bits. Write
+the left operand as a float — `0.0 - x`, `2.0 * x`, or just `-x`. Both directions warn:
+an f64 left with a non-f64 right (`f64 arithmetic with a non-f64 right operand`) and,
+since 6.6.8, an integer left with an f64 right (`integer arithmetic with an f64 right
+operand`). They are warnings, not errors (ADR-002: the untyped `i64`-boxed float idiom
+stays legal); `CYRIUS_TYPE_CHECK=0` silences them.
+
 ## Variables
 
 ```
@@ -736,8 +753,35 @@ What a defer guarantees on the way out (v6.6.7):
 
 ```
 var angle = f64_atan(x);         # Arctangent (f64)
+var n = f64_to(x);               # f64 → i64, truncating toward zero
+var m = f64_neg(x);              # sign-bit flip: f64_neg(+0) is -0, NaN keeps its payload
 # See lib/math.cyr for additional math functions
 ```
+
+`f64_to` gives the same integer on every target (6.6.8): a NaN converts to 0, a value at
+or above 2^63 (including +inf) to `0x7FFFFFFFFFFFFFFF`, and one below -2^63 (including
+-inf) to `0x8000000000000000` — aarch64 FCVTZS's rule. x86 used to return
+`0x8000000000000000` for all three.
+
+`f64_exp`, `f64_ln`, `f64_log2` and `f64_exp2` (6.6.8) promise the same things on every
+target: a finite result within **1 ulp** of the correctly rounded value, and the IEEE-754 /
+C special values — `ln`/`log2` of ±0 is -inf, of **any** negative number is NaN, of +inf is
++inf; `exp`/`exp2` overflow to +inf and underflow through the subnormals to +0; NaN in gives
+NaN out (its sign and payload are not promised). `log2(2^k)` is exactly `k`. On aarch64 they
+call `lib/math.cyr`'s `_f64_*_polyfill` fns (fdlibm ports), so include `lib/math.cyr` there.
+
+What is NOT promised is the same **bits** on every target. x86 runs x87 instructions and
+aarch64 runs the polyfill; both are within 1 ulp, but they can land on different sides of a
+rounding boundary. When a program needs identical output everywhere (a golden file, a seeded
+simulation), call `_f64_exp_polyfill` / `_f64_ln_polyfill` / `_f64_log2_polyfill` /
+`_f64_exp2_polyfill` directly: they use only f64 add/sub/mul/div and integer bit operations,
+so they give the same bits on every target, and `tests/tcyr/crossos/f64_log_exp_polyfill.tcyr`
+pins them. Despite the `_` prefix these four are supported entry points (listed in
+`docs/stdlib-reference.md`, *math.cyr*); the sin / cos / atan polyfills stay private.
+(Before 6.6.8 the aarch64 polyfills returned finite values for ln of 0, of +inf and of most
+negatives — `ln(-1.5)` was +4.27e9 — wrapped `exp(1000)` to a negative number,
+and were up to 2,300 ulp off; and on Windows the x87 `f64_exp` ran at 53-bit precision and
+was up to 350 ulp off.)
 
 ## SIMD Vectors
 

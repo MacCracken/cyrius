@@ -435,6 +435,202 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `fd_set_nonblocking` takes its bit from `_fd_o_nonblock()` (the literals 4 / 2048) and never
   names the public `O_NONBLOCK`. Axis C: PE and agnos decline all three with -38. Axis D runs
   `crossos/fd_nonblocking.tcyr` on the host and under qemu-aarch64. Four mutations, all RED. <1 s.
+- **Unary minus on a float negates it: `-1.0` is -1.0 (it was -4.0), `-0.0` is negative zero
+  (it was +0), and `-x` on an `f64`/`f32` value flips its sign bit — every target.** (bite 4.)
+  **Root cause:** the unary-minus arm of `PARSE_FACTOR` (src/frontend/parse_expr.cyr) always
+  emitted integer `0 - rax`, whatever the operand's type, so it subtracted the IEEE bit pattern
+  as an integer: `-1.5` was -3.0, `-0.5` -8.0, `2.0 * -1.0` -8.0, `fn negf(x: f64): f64 {
+  return -x; }` of 1.0 was -4.0. Identical on x86, aarch64, PE and cx; no diagnostic. The
+  ecosystem had written it down as rules (dhvani's *"negative float constants go through
+  f64_neg"*, ganita's *"-0 cannot be produced"*, faq.md's *"no negative literals — use `(0 -
+  N)`"*, which for a float is the next bug down). **Fix:** the operand's type is read after it
+  is parsed; an `F64_TYID` operand (a float literal is one) drops the pushed 0 and takes
+  `EF64_NEG`, an `F32_TYID` operand XORs bit 31, and the integer path is byte-identical. A
+  float-returning BUILTIN (`-f64_exp(u)`, `-f64_sqrt(u)`, `-f32_from(u)`, …) is recognised by
+  its token before the operand is parsed, because those builtins carry their ARGUMENT's type
+  and the i64-boxed idiom leaves it untyped — `-f64_exp(0)` was still -4.0 and `-f64_sin(0)`
+  +0 until that arm (`_NEG_INTRIN_KIND`). An UNTYPED variable or struct field holding float
+  bits is still an `i64` to the compiler — `f64_neg(v)` is the spelling there (documented).
+  Gated by `tests/tcyr/crossos/f64_negation.tcyr` (40 bit-exact rows, -0 checked through
+  `1/x`; the 6.6.7 compiler fails 20 of the first 29, and removing the builtin arm fails 7).
+- **x86: `if (v)` right after a float negation tests `v`.** (bite 4.) `EF64_NEG`'s `btc` does
+  not set ZF, but the emitter left `_flags_reflect_rax` claiming the flags described rax, so a
+  bare-boolean branch skipped its `test rax, rax` and read the ZF of whatever ran before the
+  negation: `var z = -0.0; if (z)` was not taken, and `f64_neg` of -0 after an `or` was. ELF,
+  PE and x86 Mach-O (one emitter). The emitter now clears the flag; three branch rows in
+  `f64_negation.tcyr` fail without it.
+- **x86 `f64_neg` is a sign-bit flip (`btc rax, 63`), as aarch64 FNEG and cx `fneg` are.**
+  (bite 4.) It computed `0.0 - x` with `subsd`, which is not negation: `f64_neg(+0)` was +0 and
+  a NaN kept its sign, so x86 (ELF, PE, Mach-O — one emitter) disagreed with aarch64 bit for
+  bit. cxvm's `fneg` opcode is the host's `f64_neg`, so cx programs run on an x86 host inherited
+  it; rebuilding cxvm picks the fix up. 5 bytes instead of 22.
+- **`f64_to` gives the same integer on every target: NaN → 0, ≥ 2^63 → `INT64_MAX`, < -2^63 →
+  `INT64_MIN` (aarch64 FCVTZS's rule).** (bite 4.) x86 lowered it to a bare `cvttsd2si`, which
+  returns the "integer indefinite" `0x8000000000000000` for NaN and for overflow in BOTH
+  directions — `f64_to(NaN)` was INT64_MIN on x86 and 0 on aarch64, `f64_to(+inf)` INT64_MIN
+  and INT64_MAX. The sin/cos polyfills' quadrant (`f64_to(k) & 3`) and the exp/exp2 `2^n`
+  exponent pack inherited whichever the target gave. `EF2I` (src/backend/x86/float.cyr) now
+  follows the convert with a branchless fixup (`ucomisd` against 0, `seta`, `cmovp` for NaN,
+  and `MIN - 1 = MAX` for a positive overflow; clobbers rcx/xmm1 only). cx's `f2i` is the
+  host's `f64_to`, so it follows. Gated by `tests/tcyr/crossos/f64_to_saturation.tcyr` (24
+  rows; the 6.6.7 compiler fails 8 on x86).
+- **`f64_exp` / `f64_ln` / `f64_log2` / `f64_exp2` are right on aarch64: IEEE-754 special values,
+  no exponent wrap, and within 1 ulp.** (bite 5; filed by tyche,
+  `issues/archived/2026-09-25-tyche-aarch64-f64-ln-polyfill-specials-and-accuracy.md`.) aarch64
+  lowers these builtins to `lib/math.cyr`'s polyfills, which were Taylor series with no
+  special-value handling in ln and no range check on the `2^n` pack in exp/exp2. **Root cause:**
+  `_f64_ln_polyfill` split every input as if it were a positive normal double, so `ln(+0)` was
+  -709, `ln(+inf)` 709.78, `ln(NaN)` 710, a subnormal lost its value, and **every negative number
+  except -2^k and -inf came back a large POSITIVE finite value** (`ln(-1.5)` = +4.27e9, `ln(-0.7)`
+  = +6.0e10 — the kept sign bit put `u = (m-1)/(m+1)` in (3, ∞)); `log2` was `ln(x)·log2e`
+  (`log2(+inf)` exactly 1024.0, `log2(8)` = 2.9999999999999996, and on x86 its `f64_ln` was the
+  native x87 op); exp/exp2 packed `(n + 1023) << 52` unchecked, so `exp(1000)` was negative,
+  `exp(-740)` negative, `exp(711)` a negative subnormal, and a saturated `f64_to` or an overflowed
+  `x·log2e` turned huge arguments into plausible answers (`exp(-1e19)` = 1.0, `exp(-DBL_MAX)` =
+  +inf, `exp2(DBL_MAX)` = 0.5). Finite results were up to 213 ulp (ln) and 2,313 ulp (exp) off.
+  Silently, on every aarch64 target. **Fix:** ports of fdlibm 5.3 `e_exp.c` / `e_log.c` and
+  FreeBSD msun `e_log2.c` + `k_log.h`, from f64 add/sub/mul/div and integer bit operations only:
+  ln/log2 guard on the bit pattern first (NaN → NaN, ±0 → -inf, ANY negative → NaN, +inf →
+  +inf, a subnormal scaled by 2^54); log2 is `k + log(m)/ln2` in extra precision, so `log2(2^k)`
+  is exactly `k`; exp tests `x` against 709.78 / -745.13 BEFORE forming `x·log2e`, reduces with a
+  Cody–Waite two-word ln2, and scales a subnormal result in two steps so the last multiply rounds
+  it; exp2 range-checks `x` and runs the exp kernel on a Dekker double-double `f·ln2`. Against a
+  correctly rounded reference (446k rows) every class is within 1 ulp, and the polyfills give the
+  **same bits** on x86 (called directly), pi, ecb, ach and cass. **Not promised: the same bits
+  from the BUILTIN across targets** (x87 on x86, the port on aarch64 — both within 1 ulp, not
+  always the same ulp); call the `_f64_*_polyfill` fns directly for that. Gated by
+  `tests/tcyr/crossos/f64_log_exp_polyfill.tcyr` (new, 341 rows: specials by class on both
+  paths, ≤ 1-ulp finite rows with the polyfill bits pinned, `log2(2^k)` / `exp2(k)` exact for
+  every k; the 6.6.7 `math.cyr` fails 104 on x86 and 211 on aarch64); the Pi fixture
+  `tests/fixtures/aarch64_f64/polyfill_ops.cyr` now demands ≤ 1 ulp plus special rows (it
+  allowed 1,024–8,192 ulp); `f64_exp_infinite_argument.sh` axis 3 runs its extremes on the
+  polyfills directly; `exp2_atan_bigtrig.tcyr` and `math.tcyr` tighten their exp2 / log2 rows.
+- **Windows: `f64_exp` / `f64_exp2` are within 1 ulp (they were up to ~350 ulp off).** (bite 5.)
+  **Root cause:** Win64 starts every thread with the x87 control word at 0x27F — 53-bit
+  precision control — where Linux and macOS use 0x37F, and nothing in the PE entry changes it.
+  `EF64_EXP`'s `fldl2e; fmulp` product `x·log2e` rounds to that width, so the reduction lost
+  about log2|n| bits: `exp(426.27161683590134)` 350 ulp and `exp(709.7743369863667)` 348 ulp off,
+  on real cass only. **Fix:** under `_TARGET_PE`, `EF64_EXP` / `EF64_EXP2` save the control word
+  (`fnstcw` into the free half of the x87 scratch slot), raise precision control to 64-bit, run
+  the sequence and restore the saved word (`_EX87_PC64` / `_EX87_PC_RESTORE`, src/backend/x86/
+  emit.cyr, 27 bytes per site). Local rather than a process-wide `fldcw` at entry: the control
+  word is nonvolatile in the Win64 ABI, so a DLL's own x87 code keeps its 53-bit mode. ELF and
+  Mach-O output is byte-identical. On real cass the 6.6.7 compiler fails 7 exp rows of
+  `f64_log_exp_polyfill.tcyr`; its two control-word rows (read with `fnstcw` before and after)
+  fail if the restore is dropped.
+- **`f64_pow` / `ganita_f64_pow` follow the C99 Annex F table.** (bite 5; ganita **1.2.7**, commits
+  `cbdaf6c` + `3c15403` — the second corrects a stale INFINITY-policy comment — refolded
+  byte-identical from `3c15403`.) It returned NaN for every infinite base or exponent that
+  missed ganita's integral fast path (`pow(2, +inf)`, `pow(+inf, 0.5)`, `pow(0.5, +inf)`, …), and
+  its NaN check ran ahead of `pow(1, y) = 1`, so `pow(1, NaN)` and `pow(±1, ±inf)` were NaN too; a
+  zero base dropped its sign. Upstream now answers the whole table before the `exp(y·ln x)`
+  path. On aarch64 `pow(2, 1100)` was **-1.5e-285** and `pow(2, 0.5)` 1,007 ulp off, inherited from
+  the exp/ln polyfills above. `tests/tcyr/crossos/f64_pow_domain.tcyr` gains 15 bit-exact Annex F
+  rows and five rows past the integral path (the 1.2.6 fold fails 13 on x86, the 6.6.7
+  `math.cyr` 5 on aarch64).
+- **Linux: the heap comes up on a board smaller than its 256 MB first chunk — PID 1 no longer
+  panics there.** (bite 6.) **Root cause:** `lib/alloc.cyr`'s Linux arm reserves its first chunk
+  as one 256 MB anonymous mmap. The reservation is virtual, but a plain anonymous mapping is
+  still charged against the default overcommit heuristic, which refuses a single mapping larger
+  than RAM + swap; `alloc_init` then printed `alloc_init: mmap failed` and exited 1 — as PID 1,
+  `Kernel panic - not syncing: Attempted to kill init!` (measured: a `qemu-system-x86_64 -m 256M`
+  VM panics, `-m 512M` boots). The compiler itself allocates through the same arm. **Fix:** a
+  grain-sized chunk is mapped `MAP_NORESERVE` (0x4000, the same on x86_64 and aarch64); a chunk
+  sized to a larger REQUEST keeps normal accounting, so an impossible request still comes back 0
+  from `alloc()` instead of OOM-killing later. A refusal that survives NORESERVE (strict
+  overcommit ignores it, `RLIMIT_AS` counts every mapping) drops the grain to 16 MB for that
+  chunk and every later one; a refused big request does not. Gated by
+  `tests/gates/memory/alloc_first_chunk_small_board.sh`: the first chunk carries `VmFlags nr`,
+  the heap comes up and grows under a 195 MB `ulimit -v`, a refused 400 MB request keeps the
+  256 MB grain, and — opt-in, `CYRIUS_ALLOC_VM=1` — the starved-VM PID-1 boot itself (`-m 256M`,
+  `random.trust_cpu=off`; recipe in the header). On the 6.6.8 heap `-m 256M`, `-m 160M` and
+  `-m 96M` all boot; on pi the same probes give `nr`, the 16 MB fallback and the kept grain.
+- **`lib/io.cyr`: six allocations stored through unchecked — a refused allocation is now a return
+  code, not a store to address 0.** (bite 6; the class 6.6.7 bite 8 closed in `file_read_whole`
+  / `_env_load`.) `_io_tmp_name` (→ `file_write_atomic` returns -ENOMEM, `path` untouched),
+  `_io_link_join` and both `_io_replace_target` buffers (→ `file_replace_atomic` returns -ENOMEM,
+  the target untouched) and `getenv`'s value copy (→ 0, a miss) now check; the Windows
+  `_xdir_exists` widen buffer is a stack buffer (it was `alloc(1024)` — on real cass `xmkdir_p`
+  of an existing directory faulted with the allocator refusing). Gated by
+  `tests/tcyr/crossos/io_refused_alloc.tcyr` (new; `ALLOC_MAX = 0` refuses every allocation on
+  every allocator arm; green on x86, pi, ecb, ach and cass; the 6.6.7 `io.cyr` SIGSEGVs on
+  Linux and faults on cass) and `tests/gates/memory/io_alloc_refused_per_call.sh` (new;
+  per-call fault injection reaches the SECOND and THIRD checks on each path, which a size
+  refusal cannot; each check removed alone turns it red).
+- **cx: `atomic_cas` / `atomic_fetch_add` work, so the hash seed is published — every cx process
+  hashed with the same seed.** (bite 6.) **Root cause, three layers:** `lib/atomic.cyr`'s bodies
+  are inline asm under `CYRIUS_ARCH_X86` / `CYRIUS_ARCH_AARCH64`, cx predefines neither, so both
+  compiled to EMPTY bodies — every CAS reported failure and swapped nothing, and
+  `lib/hashseed.cyr` returned its unpublished `_hm_seed`, 0, on every call (any `while
+  (atomic_cas(...) == 0)` lock would have spun forever). Under that, cxvm translated guest
+  pointers only for read/write/open: `getrandom(318)` handed the host a raw guest offset and got
+  EFAULT, and so did the clock fallback `clock_gettime(228)`, so the seed was a constant computed
+  from `-EFAULT`. And translating was not enough on real hardware: 318 is unassigned on
+  aarch64-Linux (pi: ENOSYS), Windows has no getrandom syscall, and neither macOS route of 228
+  fills a timespec (ecb: rc 0, `tv_sec` 0). **Fix:** a plain single-threaded `CYRIUS_TARGET_CX`
+  arm for both atomics (inactive in the compiler's own compile); cxvm translates the pointer
+  argument of 318 and 228 and serves both through the HOST's stdlib — `sys_getrandom` (ProcessPrng
+  on Windows, getentropy on macOS) and `lib/chrono.cyr`, filling the guest's timespec in the
+  Linux shape the .cyx ABI promises. `programs/cxvm.cyr` now includes `lib/syscalls.cyr` and
+  `lib/chrono.cyr` (the x86-Linux cxvm grows from 29,656 to 64,336 bytes).
+- **cxvm's register file holds all 256 registers — fp and sp no longer alias guest memory.**
+  (bite 6; found in 6.6.7 triage.) It was `alloc(256)`, sized for r0–r31, while a register
+  operand is a full byte and the cx backend keeps fp/sp in r253/r254 — so they lived inside the
+  next allocation, `_cx_mem`, at guest offsets ~1768/1776: every call rewrote guest data there
+  and a guest store there rewrote the stack pointer. Whether a cx row passed tracked CODE SIZE
+  (one unrelated fn flipped the 6.6.7 triage probe). Now 2,048 bytes.
+- **`call_site_stack_alignment.tcyr` compiles and runs on cx, as its header said it did.**
+  (bite 6.) One row, the x87 `f64_exp` guard, has no cx lowering, and the whole file failed to
+  compile for cx (`this float op is not yet supported on the cx bytecode target`); the row is
+  counted instead of compiled on cx, and the file's value rows now pass on cxvm. All four cx
+  items are gated by `tests/gates/toolchain/cx_runtime_foundations.sh` (new; seven rows: a guest
+  array across offsets 1768–1784 survives a recursion, atomic semantics on cx and natively,
+  `crossos/hashseed_os_rng_source.tcyr` on cxvm, three runs → three distinct non-zero seeds,
+  REALTIME and MONOTONIC timespecs filled, this file on cxvm, and the seed/clock fixtures on an
+  aarch64 cxvm under qemu and a PE cxvm under wine — the legs where the host's raw syscalls do
+  not keep the contract). Rows 1–6 were run by hand on pi, ecb, ach and cass: green on all four.
+- **`fhm_set` (lib/hashmap_fast.cyr) no longer drops an insert once deletes have filled the table
+  with tombstones.** (bite 6; found reading the code in 6.6.7.) **Root cause:** the rehash
+  trigger counted only live entries while `fhm_delete` leaves a tombstone in every slot it frees,
+  and an insert only took an EMPTY slot — so after delete/insert churn at a steady size no group
+  had one, the probe fell out of its loop and `fhm_set` returned 0, success, without inserting;
+  every lookup of a missing key walked the whole table. Measured on the 6.6.7 map: 464 of 480
+  inserts in a steady-size churn lost. **Fix:** the trigger counts tombstones too (header +40)
+  and doubles only when the live load is past 43.75%, otherwise rehashing in place, which drops
+  them; a new key reuses the first tombstone on its probe path; a delete in a group that still
+  has an empty slot goes back to EMPTY; the fall-through is -1, never a silent 0. Gated by
+  `tests/tcyr/stdlib/hashmap_fast_tombstones.tcyr` (new; the 6.6.7 map fails 10 of 20, and a
+  live-only trigger fails the counter-balance row).
+
+### Added
+
+- **Warning: an INTEGER-left `+ - * /` with an `f64` right operand** — `integer arithmetic
+  with an f64 right operand`. (bite 4.) Operators are typed by their left operand, so `0 -
+  1.5` is an integer subtraction of 1.5's bits (-3.0), `2 * x` with `x: f64` multiplies the
+  bits (+inf for 1.5), all silently; v6.4.56's kind-1 warning covered only the f64-LEFT
+  mirror. WARN, not an error or a promotion — the ADR-002 posture kind 1 took (the untyped
+  i64-boxed float idiom stays legal); `CYRIUS_TYPE_CHECK=0` silences it. The tree itself
+  raises none. Gated by `tests/gates/diagnostics/f64_int_mix_warn.sh` (four ops warn once,
+  no false positive on unary minus / f64-f64 / int-int, kind 1 intact, the switch works).
+
+### Changed
+
+- **docs:** `faq.md` known-limitation 7 no longer prescribes `(0 - N)` (for a float it IS the
+  bug); `cyrius-guide.md` documents float unary minus, the left-operand typing rule with both
+  warnings, and `f64_to`'s NaN/overflow results. The x86-only `EMOVAPD_01` helper and its
+  aarch64/cx stubs are gone (the old `f64_neg` was their only caller).
+- **docs (bite 5):** `cyrius-guide.md` *Math Builtins* states the exp/ln family's contract
+  (≤ 1 ulp, IEEE specials, `log2(2^k)` exact, no cross-target bit identity for the builtins, the
+  polyfills as the bit-identical spelling); `faq.md` known-limitation 10 says the same in one
+  line. `docs/stdlib-reference.md` *math.cyr* now agrees: it called all the polyfills
+  "private", so the guide promised names the reference disowned. `_f64_exp_polyfill` /
+  `_f64_exp2_polyfill` / `_f64_ln_polyfill` / `_f64_log2_polyfill` are listed as supported
+  entry points with their contract (the api-surface snapshot skips `_` names, so
+  `f64_log_exp_polyfill.tcyr`, which calls all four, is what pins them); sin / cos / atan's
+  polyfills stay private. `lib/math.cyr`'s header no longer lists sinh/cosh/tanh/pow/hypot/fibonacci/binomial
+  (ganita has them), and its accuracy comments ("< 5 ulp", "same behavior as the x87 path")
+  are replaced by the measured contract. The Pi gate's label drops "bit-accurate", which the
+  polyfills never were. **ganita 1.2.7** moves its pin 6.6.4 → 6.6.7 (docs/ecosystem.md row).
 
 ## [6.6.7] — 2026-09-27
 

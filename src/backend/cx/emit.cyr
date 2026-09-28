@@ -4,10 +4,13 @@
 # Emits register-based bytecode instead of x86 machine code.
 # Same interface as x86/emit.cyr so the shared frontend works unchanged.
 #
-# Bytecode uses virtual registers r0-r31. The emitter maps:
+# A register operand is a full byte, so the bytecode has r0-r255. The emitter maps:
 #   rax → r0 (accumulator, expression results)
 #   rcx → r1 (secondary, right-hand operand)
 #   stack push/pop → r16-r31 (spill registers, managed via _cx_spill_idx)
+#   fp → r253, sp → r254
+# ⚠ cxvm's register file must therefore hold all 256 (2048 bytes). It held 32 until 6.6.8,
+# which put fp/sp inside guest memory. CHANGELOG [6.6.8]
 #
 # Each instruction is 4 bytes: [opcode][ra][rb][rc] (little-endian in output)
 
@@ -892,7 +895,7 @@ fn ESTOREPARM(S, pidx, lidx, pc): i64 {
 }
 
 # v5.9.40 — Phase 2c #3: 7+-arg stack-param store.
-# cxvm has 32 registers; ECALLPOPS already pops all n args into
+# cxvm has 256 registers; ECALLPOPS already pops all n args into
 # r3..r(3+n-1) regardless of how many. Native backends store
 # args 7+ from caller stack (Win64 shadow space / SysV stack);
 # cx mirrors ESTOREPARM's r-to-frame pattern but uses the disp
@@ -1489,7 +1492,6 @@ fn EMIT_IVEC_DP8(S, vbase): i64 {
 }
 fn EUCOMISD(S): i64 { return 0; }
 fn EXORPD_X1(S): i64 { return 0; }
-fn EMOVAPD_01(S): i64 { return 0; }
 fn EF64SQRT(S): i64 { return 0; }
 fn EF64FLOOR(S): i64 { return 0; }
 fn EF64CEIL(S): i64 { return 0; }

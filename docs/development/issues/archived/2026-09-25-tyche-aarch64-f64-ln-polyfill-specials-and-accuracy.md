@@ -1,16 +1,16 @@
-# aarch64 `f64_ln` / `f64_log2` return finite values for 0, ±inf, NaN and subnormals, and the ln/exp polyfills miss their stated accuracy by 40–460× — OPEN
+# aarch64 `f64_ln` / `f64_log2` return finite values for 0, ±inf, NaN and subnormals, and the ln/exp polyfills miss their stated accuracy by 40–460× — RESOLVED v6.6.8
 
-**Status:** 🟡 **OPEN**: reproduced 2026-09-25 against cyrius HEAD `52fabac5`, whose `lib/math.cyr`
+**Status:** ✅ **RESOLVED v6.6.8** (bite 5) — fdlibm/FreeBSD ports of exp/ln/log2/exp2 with IEEE specials and range guards (≤ 1 ulp, the filed repro exits 0 on qemu-aarch64 and x86_64), PE x87 precision control, ganita 1.2.7 Annex F pow. Filed 2026-09-25 as 🟡 OPEN: reproduced against cyrius HEAD `52fabac5`, whose `lib/math.cyr`
 is byte-identical to the 6.6.6 snapshot, with the installed 6.6.6 compiler. The repro exits **15** on
 aarch64 (qemu-aarch64 11.1.1) and **0** on x86_64.
-**Placement:** **6.6.8 bite 5** — exp/ln family correct on every target: fdlibm ln/log2/exp/exp2 with IEEE specials and range guards; PE x87 precision control; ganita pow Annex F. Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
+**Placement:** **6.6.8 bite 5** — exp/ln family correct on every target: fdlibm ln/log2/exp/exp2 with IEEE specials and range guards; PE x87 precision control; ganita pow Annex F. Pinned 2026-09-27 in [roadmap.md](../../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Discovered:** 2026-09-25 during tyche's 1.0.3 toolchain bump. A golden-stream dump of tyche's
 `rng_normal` differed between x86_64 and aarch64 on 220 of 1,952 lines, identically under 6.6.2 and
 6.6.6. The divergence traced to `f64_ln`, and a scan of the polyfill turned up the rest.
 **Severity:** Medium. On aarch64, a stdlib math builtin silently returns wrong answers: finite values
 for inputs whose IEEE-754 / C results are −inf, +inf or NaN, and finite results off by up to 2,313 ulp.
 This is the same class and severity as the archived
-[`2026-09-08-f64-exp-nan-for-infinite-argument.md`](archived/2026-09-08-f64-exp-nan-for-infinite-argument.md),
+[`2026-09-08-f64-exp-nan-for-infinite-argument.md`](2026-09-08-f64-exp-nan-for-infinite-argument.md),
 which was verified on x86_64 only. x86_64 is not affected.
 **Affects:** every aarch64 build that reaches `EF64_LN` / `EF64_LOG2` / `EF64_EXP`. The ln and exp
 polyfills date from v5.7.31 and log2 from v5.8.4. Measured on 6.6.6; the special-value half follows
@@ -66,7 +66,7 @@ determinism: about a third of normal draws differ in their low bits between the 
 
 ## Reproduction
 
-[`repros/2026-09-25-aarch64-f64-ln-polyfill-specials-and-accuracy.cyr`](repros/2026-09-25-aarch64-f64-ln-polyfill-specials-and-accuracy.cyr).
+[`repros/2026-09-25-aarch64-f64-ln-polyfill-specials-and-accuracy.cyr`](../repros/2026-09-25-aarch64-f64-ln-polyfill-specials-and-accuracy.cyr).
 It exits with the number of wrong answers. Special values must match exactly; finite rows must land
 within 1 ulp of the correctly rounded value, a bar that both x87 and any fdlibm-grade fix clear.
 

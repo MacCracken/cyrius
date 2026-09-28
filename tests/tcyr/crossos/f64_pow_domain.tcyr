@@ -66,6 +66,46 @@ fn main(): i64 {
     assert_eq(pow_i(two, f64_from(10)), 1024, "pow(2, 10) == 1024 (positive path intact)");
     assert_eq(pow_i(f64_from(3), two), 9, "pow(3, 2) == 9");
 
+    # C99 Annex F special values (ganita 1.2.7, refolded at cyrius 6.6.8). Before it, every
+    # infinite base or exponent that missed ganita's integral fast path returned NaN, and
+    # pow(1, NaN) lost to the NaN check. Bit-exact: a zero's sign is part of the answer.
+    test_group("f64_pow: C99 Annex F special values (ganita 1.2.7)");
+    var PINF = 0x7FF0000000000000;
+    var NINF = 0xFFF0000000000000;
+    var NZ   = 0x8000000000000000;
+    var NAN_ = 0x7FF8000000000000;
+    var half = 0x3FE0000000000000;
+    var nhalf = 0xBFE0000000000000;
+    assert_eq(f64_pow(F64_ONE, NAN_), F64_ONE, "pow(1, NaN) = 1 (was NaN)");
+    assert_eq(f64_pow(F64_ONE, PINF), F64_ONE, "pow(1, +inf) = 1 (was NaN)");
+    assert_eq(f64_pow(0xBFF0000000000000, PINF), F64_ONE, "pow(-1, +inf) = 1 (was NaN)");
+    assert_eq(f64_pow(0xBFF0000000000000, NINF), F64_ONE, "pow(-1, -inf) = 1");
+    assert_eq(f64_pow(PINF, half), PINF, "pow(+inf, 0.5) = +inf (was NaN)");
+    assert_eq(f64_pow(NINF, half), PINF, "pow(-inf, 0.5) = +inf (was NaN)");
+    assert_eq(f64_pow(PINF, nhalf), 0, "pow(+inf, -0.5) = +0 (was NaN)");
+    assert_eq(f64_pow(NINF, f64_from(0 - 3)), NZ, "pow(-inf, -3) = -0");
+    assert_eq(f64_pow(two, PINF), PINF, "pow(2, +inf) = +inf (was NaN)");
+    assert_eq(f64_pow(half, PINF), 0, "pow(0.5, +inf) = +0 (was NaN)");
+    assert_eq(f64_pow(two, NINF), 0, "pow(2, -inf) = +0 (was NaN)");
+    assert_eq(f64_pow(half, NINF), PINF, "pow(0.5, -inf) = +inf");
+    assert_eq(f64_pow(NZ, f64_from(3)), NZ, "pow(-0, 3) = -0");
+    assert_eq(f64_pow(NZ, f64_from(0 - 3)), NINF, "pow(-0, -3) = -inf");
+    assert_eq(is_nan(f64_pow(two, NAN_)), 1, "pow(2, NaN) = NaN");
+
+    # Past ganita's integral path (|y| > 1024) pow is exp(y·ln x), so these rows are the
+    # toolchain's exp. On aarch64 the 6.6.7 polyfill wrapped the 2^n exponent pack into the
+    # sign bit: pow(2, 1100) was -1.5e-285 and pow(2, -1100) was -2^948 (CHANGELOG [6.6.8]).
+    test_group("f64_pow past the integral path: overflow and underflow, never a wrap");
+    assert_eq(f64_pow(two, f64_from(1100)), PINF, "pow(2, 1100) = +inf (aarch64 was -1.5e-285)");
+    assert_eq(f64_pow(two, f64_from(0 - 1100)), 0, "pow(2, -1100) = +0 (aarch64 was -2^948)");
+    assert_eq(f64_pow(half, 0xC091320000000000), PINF, "pow(0.5, -1100.5) = +inf (aarch64 was negative)");
+    assert_eq(f64_pow(neg2, f64_from(1025)), NINF, "pow(-2, 1025) = -inf");
+    # pow(2, 0.5) through exp/ln: aarch64 was 1,007 ulp off. Within 1 ulp of sqrt(2) now.
+    var p2h = f64_pow(two, half);
+    var d = p2h - 0x3FF6A09E667F3BCD;
+    if (d < 0) { d = 0 - d; }
+    assert(d <= 1, "pow(2, 0.5) within 1 ulp of sqrt(2) (aarch64 was 1,007 ulp)");
+
     var r = assert_summary();
     return r;
 }

@@ -4,7 +4,7 @@
 # Register-based VM. 32-bit fixed-width instructions.
 # Encoding: [opcode:8][a:8][b:8][c:8] (little-endian in file)
 #
-# Registers: r0-r31 (64-bit), r0 = accumulator
+# Registers: r0-r255 (64-bit), r0 = accumulator, r253 = fp, r254 = sp
 # Memory: 64KB data segment
 #
 # OPCODES:
@@ -66,11 +66,20 @@
 #   0xFF = movhh  ra, imm16       ra = ra | (imm16 << 32)  (for building 48/64-bit constants)
 
 include "lib/string.cyr"
+include "lib/syscalls.cyr"   # v6.6.8: sys_getrandom, per host peer (see _cx_host_getrandom)
+include "lib/chrono.cyr"     # v6.6.8: the host clocks (see _cx_host_clock_gettime)
 
 # VM state — heap-allocated to avoid code buffer overflow
 include "lib/alloc.cyr"
 
-var _cx_regs = 0;        # r0-r31 (32 × 8 = 256 bytes)
+# The register file is 256 × 8 = 2048 bytes: a register operand is a full byte
+# (r0..r255) and the backend's fp/sp are r253/r254. It was alloc(256) sized for
+# r0-r31, so fp/sp (+2024/+2032) lived INSIDE the next allocation, _cx_mem, at
+# guest offsets ~1768/1776 — every call rewrote guest data there, and a guest
+# store there rewrote the stack pointer. Pass/fail tracked code size.
+# CHANGELOG [6.6.8]
+var _CX_REGS_BYTES = 2048;
+var _cx_regs = 0;        # r0-r255 (256 × 8 = 2048 bytes)
 var _cx_mem = 0;          # 64KB data segment (stack grows down from top)
 var _cx_dstack = 0;       # 1024 data stack entries (saved fp, expression spills)
 var _cx_dsp = 0;
@@ -88,12 +97,39 @@ var _cx_code = 0;       # set after loading .cyx file
 
 fn cx_init(): i64 {
     alloc_init();
-    _cx_regs = alloc(256);            # 32 registers × 8
+    _cx_regs = alloc(_CX_REGS_BYTES); # 256 registers × 8
     _cx_mem = alloc(_CX_MEM_SIZE);    # data segment (see _CX_MEM_SIZE note)
     _cx_dstack = alloc(8192);         # 1024 entries × 8
     _cx_cstack = alloc(8192);         # 1024 entries × 8
-    memset(_cx_regs, 0, 256);
+    memset(_cx_regs, 0, _CX_REGS_BYTES);
     memset(_cx_mem, 0, _CX_MEM_SIZE);
+    return 0;
+}
+
+# getrandom(buf, len, flags) for the guest, on whatever host cxvm runs on — through the
+# HOST's own stdlib wrapper, never the guest's number: 318 is x86-Linux's getrandom, but it
+# is unassigned on aarch64-Linux (278) and ESYSXLAT does not renumber it (measured on pi:
+# ENOSYS, so the guest fell back to the clock), Windows has no getrandom syscall at all
+# (ProcessPrng), and Darwin's getentropy returns 0 for success. sys_getrandom is written per
+# peer for exactly that. CHANGELOG [6.6.8]
+fn _cx_host_getrandom(buf, len, flags): i64 {
+    return sys_getrandom(buf, len, flags);
+}
+
+# clock_gettime(clk, ts) for the guest, with the LINUX contract the .cyx ABI promises (fill
+# `ts` = {sec, nsec}, return 0) on every host. The host's own syscall(228) does not keep that
+# contract: arm64-macOS routes it to _clock_gettime_nsec_np and x86-macOS composes it from
+# gettimeofday — both RETURN nanoseconds and leave the timespec untouched (measured on ecb:
+# rc 0, tv_sec 0) — and Windows routes it to GetTickCount64, milliseconds since boot. So read
+# the host clock through lib/chrono.cyr, which is written per host, and fill the timespec
+# here. clk 0 (CLOCK_REALTIME) is wall time; every other id is the monotonic clock.
+# CHANGELOG [6.6.8]
+fn _cx_host_clock_gettime(clk, ts): i64 {
+    if (ts == 0) { return 0 - 14; }   # -EFAULT, as Linux answers a null timespec
+    var ns = 0;
+    if (clk == 0) { ns = clock_epoch_ns(); } else { ns = clock_now_ns(); }
+    store64(ts, ns / 1000000000);
+    store64(ts + 8, ns % 1000000000);
     return 0;
 }
 
@@ -305,11 +341,18 @@ fn cx_run(code, code_len): i64 {
             # CHANGELOG [6.4.20]: open fixed s3 (=flags) instead of s2 (=path) —
             # every guest open() corrupted flags and passed a raw offset as path
             # (EFAULT on all hosts). Other pointer-taking syscalls (nanosleep 35,
-            # clock_gettime 228, pipe 22, stat) need their own entry when a
-            # consumer .cyx uses them — out of the minimal I/O set below.
+            # pipe 22, stat) need their own entry when a consumer .cyx uses them.
+            #   getrandom(318)     = (buf, len, flags)  → buf is arg0 = s2
+            #   clock_gettime(228) = (clk, ts)          → ts  is arg1 = s3
+            # v6.6.8: both passed a raw guest offset, so the host answered EFAULT —
+            # lib/hashseed.cyr is the stdlib's only caller of either on cx, and
+            # its OS-RNG draw AND its clock fallback both failed, leaving every
+            # cx process on the same published seed. CHANGELOG [6.6.8]
             if (sn == 0) { if (s3 > 0) { s3 = _cx_mem + s3; } }
             elif (sn == 1) { if (s3 > 0) { s3 = _cx_mem + s3; } }
             elif (sn == 2) { if (s2 > 0) { s2 = _cx_mem + s2; } }
+            elif (sn == 318) { if (s2 > 0) { s2 = _cx_mem + s2; } }
+            elif (sn == 228) { if (s3 > 0) { s3 = _cx_mem + s3; } }
             # --- arity-correct dispatch: issue the syscall with the guest's REAL
             # Linux arg-count so the PE arity-bucket router (EPE_SYSCALL_DYNAMIC:
             # argc4→read/write/open/lseek, argc2→close/exit) matches. cxvm's old
@@ -321,7 +364,12 @@ fn cx_run(code, code_len): i64 {
             # honest -ENOSYS on PE (the compile-time warning is expected). 6-arg
             # syscalls (mmap) aren't supported — cxvm captures only r2..r6.
             # CHANGELOG [6.4.20].
-            if (sn == 0 || sn == 1 || sn == 2 || sn == 8) { result = syscall(sn, s2, s3, s4); }
+            # getrandom and clock_gettime are served by the host's stdlib (see
+            # _cx_host_getrandom / _cx_host_clock_gettime) — the host's raw syscall does
+            # not keep the guest's Linux contract on every host (v6.6.8).
+            if (sn == 318) { result = _cx_host_getrandom(s2, s3, s4); }
+            elif (sn == 0 || sn == 1 || sn == 2 || sn == 8) { result = syscall(sn, s2, s3, s4); }
+            elif (sn == 228) { result = _cx_host_clock_gettime(s2, s3); }
             elif (sn == 3 || sn == 60) { result = syscall(sn, s2); }
             else { result = syscall(sn, s2, s3, s4, s5, s6); }
             cx_reg_set(0, result);

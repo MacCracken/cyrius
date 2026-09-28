@@ -87,34 +87,18 @@ assert_eq(ganita_binomial(20, 10), 184756, "C(20,10)");
 test_group("f64 log2 (v5.8.4 phylax #1 unblock)");
 assert_eq(f64_to(f64_log2(f64_from(1))), 0, "log2(1) = 0");
 assert_eq(f64_to(f64_log2(f64_from(2))), 1, "log2(2) = 1");
-# v6.2.29: round before truncating — on aarch64 f64_log2 dispatches to the
-# ln(x)/ln(2) polyfill (2.999… for log2(8)) where x86 uses exact x87 fyl2x; these
-# only ever ran green because fyl2x is exact. f64_round makes them arch-independent
-# (the native-dispatch analogue of the polyfill assertions below). Surfaced by the
-# VR-01 full-tcyr-on-arm64 gate.
-assert_eq(f64_to(f64_round(f64_log2(f64_from(8)))), 3, "log2(8) = 3");
-assert_eq(f64_to(f64_round(f64_log2(f64_from(1024)))), 10, "log2(1024) = 10");
-assert_eq(f64_to(f64_round(f64_log2(f64_from(65536)))), 16, "log2(65536) = 16");
+# log2 of a power of two is EXACT on both paths since 6.6.8: the polyfill computes
+# k + log(m)/ln2 directly (FreeBSD e_log2.c) instead of ln(x)·log2e, which rounded
+# log2(8) to 2.9999999999999996. The f64_round these rows used to need (v6.2.29) was
+# covering for that, so they compare bit patterns now (CHANGELOG [6.6.8]).
+assert_eq(f64_log2(f64_from(8)), f64_from(3), "log2(8) = 3 exactly");
+assert_eq(f64_log2(f64_from(1024)), f64_from(10), "log2(1024) = 10 exactly");
+assert_eq(f64_log2(f64_from(65536)), f64_from(16), "log2(65536) = 16 exactly");
 
-# Direct polyfill — exercises the v5.8.4 math regardless of arch.
-# log2(8) = ln(8) * (1/ln(2)) = 2.079... * 1.4427... ≈ 3.0. Two-step
-# FP (ln then mul) costs precision vs native fyl2x's x87-internal
-# 80-bit path, so polyfill output is 2.9999... → f64_to truncates
-# to 2. Round before truncating so the comparison reflects the
-# nearest-integer log2, not the truncation artifact.
-assert_eq(f64_to(f64_round(_f64_log2_polyfill(f64_from(8)))), 3, "polyfill log2(8) ~ 3");
-assert_eq(f64_to(f64_round(_f64_log2_polyfill(f64_from(1024)))), 10, "polyfill log2(1024) ~ 10");
-assert_eq(f64_to(f64_round(_f64_log2_polyfill(f64_from(65536)))), 16, "polyfill log2(65536) ~ 16");
-
-# Polyfill within ulp budget of native. Compute |native_bits - polyfill_bits|
-# treating the f64 representations as raw integers; for results near a
-# clean integer boundary the bit-diff = ulp count. Budget: 4096 ulp
-# (matches the v5.7.31 polyfill regression's exp(ln(2)) round-trip
-# tolerance — generous; typical polyfill drift is <16 ulp).
-var native_8  = f64_log2(f64_from(8));
-var poly_8    = _f64_log2_polyfill(f64_from(8));
-var diff_8    = native_8 - poly_8;
-if (diff_8 < 0) { diff_8 = 0 - diff_8; }
-assert(diff_8 < 4096, "polyfill log2(8) within 4096 ulp of native");
+# Direct polyfill — the aarch64 code, on every arch.
+assert_eq(_f64_log2_polyfill(f64_from(8)), f64_from(3), "polyfill log2(8) = 3 exactly");
+assert_eq(_f64_log2_polyfill(f64_from(1024)), f64_from(10), "polyfill log2(1024) = 10 exactly");
+assert_eq(_f64_log2_polyfill(f64_from(65536)), f64_from(16), "polyfill log2(65536) = 16 exactly");
+assert_eq(_f64_log2_polyfill(f64_from(8)), f64_log2(f64_from(8)), "polyfill log2(8) == native");
 
 var r = assert_summary();

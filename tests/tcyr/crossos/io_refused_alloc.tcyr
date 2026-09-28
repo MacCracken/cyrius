@@ -1,0 +1,90 @@
+# io_refused_alloc.tcyr — 6.6.8. A REFUSED ALLOCATION INSIDE lib/io.cyr IS A RETURN CODE,
+# NEVER A STORE THROUGH ADDRESS 0.
+#
+# ⛔ THE DEFECT (6.6.7 review; the same class 6.6.7 bite 8 closed in file_read_whole /
+# _env_load). Six allocations in lib/io.cyr were used on the next line unchecked:
+#   _xdir_exists (Windows) `alloc(1024)`, widened the path into it   -> now a stack buffer
+#   _io_tmp_name           `alloc(plen + 48)`, then memcpy            -> 0 -> file_write_atomic -12
+#   _io_link_join          `alloc(cut + tn + 1)`, then memcpy         -> 0 -> -12
+#   _io_replace_target     `alloc(4097)` / `alloc(n + 1)`, then used  -> -12
+#   getenv                 `alloc(vlen + 1)`, then memcpy             -> 0 (a miss)
+#
+# HOW THE REFUSAL IS FORCED: `ALLOC_MAX = 0` makes every alloc() return 0 on EVERY target's
+# allocator arm (Linux, macOS, Windows, agnos and cx all test `size > ALLOC_MAX` first), with
+# no memory pressure; it is restored straight after each call. That is a SIZE refusal, which
+# refuses every allocation at once — so it pins the FIRST check on each path. The later checks
+# (_io_link_join, the absolute-link copy) are pinned ONE AT A TIME by per-call fault injection
+# in tests/gates/memory/io_alloc_refused_per_call.sh.
+#
+# WHY crossos/: the Windows `_xdir_exists` arm is the only one of the six that is not Linux
+# code, and only a real Windows run reaches it — measured on cass with the 6.6.7 io.cyr, the
+# xmkdir_p row faults (a store16 through 0). On Linux that row is green either way.
+#
+# Mutation (x86_64 Linux, the 6.6.7 lib/io.cyr): SIGSEGV at the file_write_atomic row.
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/assert.cyr"
+
+var _saved_max = 0;
+fn refuse(): i64 { _saved_max = ALLOC_MAX; ALLOC_MAX = 0; return 0; }
+fn serve(): i64 { ALLOC_MAX = _saved_max; return 0; }
+
+fn main(): i64 {
+    alloc_init();
+
+    test_group("the refusal is real (anti-vacuous)");
+    refuse();
+    var probe = alloc(8);
+    serve();
+    assert_eq(probe, 0, "ALLOC_MAX = 0 refuses alloc() on this target");
+
+    test_group("xmkdir_p on an existing directory");
+    var dir = test_scratch("cyrius_io_oom_dir");
+    assert_eq(xmkdir_p(dir, 0x1ED), 0, "setup: the directory exists");
+    refuse();
+    var mk = xmkdir_p(dir, 0x1ED);
+    serve();
+    assert_eq(mk, 0, "an existing directory is still success with the allocator refusing");
+
+    test_group("file_write_atomic");
+    var path = test_scratch("cyrius_io_oom.txt");
+    xunlink(path);
+    refuse();
+    var wr = file_write_atomic(path, "never", 5);
+    serve();
+    assert_eq(wr, 0 - 12, "a refused temp-name allocation is -ENOMEM");
+    assert_eq(file_exists(path), 0, "and nothing was created");
+    assert_eq(file_write_atomic(path, "kept", 4), 0, "setup: the file exists with 4 bytes");
+
+    test_group("file_replace_atomic");
+    refuse();
+    var rp = file_replace_atomic(path, "clobbered", 9);
+    serve();
+    assert_eq(rp, 0 - 12, "a refused link-buffer allocation is -ENOMEM");
+    var rb = alloc(32);
+    var nr = file_read_all(path, rb, 31);
+    assert_eq(nr, 4, "the file still holds its 4 bytes");
+
+    test_group("getenv");
+    # The check.sh suite runner execs with an explicit envp carrying only CYRIUS_TEST_ENV=1
+    # (PATH is unset there); `cyrius test` and the cross-host runner go through a shell, so
+    # PATH is set. Use whichever is present — the getenv_environment.tcyr rule.
+    var name = "CYRIUS_TEST_ENV";
+    if (getenv(name) == 0) { name = "PATH"; }
+    var p0 = getenv(name);
+    assert(p0 != 0, "setup: a known variable is set and getenv loads the environment");
+    refuse();
+    var p1 = getenv(name);
+    serve();
+    assert_eq(p1, 0, "a refused value copy is a miss, not a store to 0");
+    assert(getenv(name) != 0, "and the next served call finds it again");
+
+    xunlink(path);
+    xrmdir(dir);
+    var rc = assert_summary();
+    return rc;
+}
+var ec = main();
+syscall(60, ec);

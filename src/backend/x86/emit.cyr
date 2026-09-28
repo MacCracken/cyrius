@@ -3330,21 +3330,24 @@ fn ELOAD_LOCAL_ADDR(S, adisp): i64 {
 }
 
 # v5.11.37 path-A named ops — Class C refactor (f64 unary ops).
-# x86 uses SSE2 (subsd) for f64_neg and x87 (fsin/fcos/fyl2x/etc.)
+# x86 uses a sign-bit flip (btc) for f64_neg and x87 (fsin/fcos/fyl2x/etc.)
 # for transcendentals. aarch64 has native fneg but errors / dispatches
 # to lib/math.cyr polyfills for transcendentals. cx has no f64
 # opcodes in this slot (real CYX f64 ops = future work). Closes
 # Class C of docs/audit/2026-04-27-cx-direct-emit-inventory.md.
 
-# EF64_NEG — `-x` for f64. x86 SSE: subsd xmm1, xmm0 with
-# xmm1 zeroed (XORPD), result moves back through xmm0 → rax.
+# EF64_NEG — `-x` for f64: IEEE negation is a SIGN-BIT FLIP, `btc rax, 63`, the same
+# operation aarch64 FNEG and the cx `fneg` opcode perform. It was `0.0 - x` (xorpd +
+# subsd), which is NOT negation: 0.0 - (+0) is +0, so f64_neg(0) never produced -0, and a
+# NaN came back with its sign unchanged — x86 and aarch64 disagreed bit-for-bit on both.
+# Works on the bits in rax; xmm0 is not an output (a `: f64` return moves rax itself).
+# BTC leaves ZF UNDEFINED/unchanged, so the flags no longer describe rax: clear
+# _flags_reflect_rax or a following `if (x)` skips its `test` and branches on the ZF of
+# whatever preceded the negation (`-0.0` read as false). CHANGELOG [6.6.8]
 fn EF64_NEG(S): i64 {
-    EMOVQ_X0_A(S);
-    EXORPD_X1(S);
     _IR_REC0(S, IR_RAW_EMIT);
-    EB(S, 0xF2); EB(S, 0x0F); EB(S, 0x5C); EB(S, 0xC8);  # subsd xmm1, xmm0
-    EMOVAPD_01(S);
-    EMOVQ_A_X0(S);
+    EB(S, 0x48); EB(S, 0x0F); EB(S, 0xBA); EB(S, 0xF8); EB(S, 0x3F);   # btc rax, 63
+    _flags_reflect_rax = 0;
     return 0;
 }
 
@@ -3427,16 +3430,46 @@ fn _EF64_EXPINF_GUARD(S): i64 {
     return (g_d1 << 32) | g_d2;
 }
 
+# PE only: run the x87 exp/exp2 sequence at 64-bit precision control.
+# ⛔ Windows x64 starts every thread with the x87 control word at 0x27F — precision
+# control 53-bit — where Linux and macOS use 0x37F (64-bit). FMUL/FADD/FSUB round
+# to the PC width, so under 53 bits the `fldl2e; fmulp` product x·log2e lost the
+# ~log2|n| bits the reduction needs and f64_exp came back up to ~350 ulp off on
+# Windows alone (exp(426.27) and exp(709.77)). The control word is nonvolatile in
+# the Win64 ABI, so it is saved and restored around the sequence rather than set
+# once at entry — a DLL's own x87 code keeps the 53-bit mode it was promised.
+# Uses the free upper 8 bytes of EX87PUSH's 16-byte slot: [rsp+8] holds the saved
+# word, [rsp+10] the raised one; rax is dead once the value is on the x87 stack.
+#     fnstcw [rsp+8] ; movzx eax, word [rsp+8] ; or eax, 0x300 ; mov [rsp+10], ax ; fldcw [rsp+10]
+# CHANGELOG [6.6.8].
+fn _EX87_PC64(S): i64 {
+    if (_TARGET_PE != 1) { return 0; }
+    EB(S, 0xD9); EB(S, 0x7C); EB(S, 0x24); EB(S, 0x08);
+    EB(S, 0x0F); EB(S, 0xB7); EB(S, 0x44); EB(S, 0x24); EB(S, 0x08);
+    EB(S, 0x0D); EB(S, 0x00); EB(S, 0x03); EB(S, 0x00); EB(S, 0x00);
+    EB(S, 0x66); EB(S, 0x89); EB(S, 0x44); EB(S, 0x24); EB(S, 0x0A);
+    EB(S, 0xD9); EB(S, 0x6C); EB(S, 0x24); EB(S, 0x0A);
+    return 0;
+}
+# fldcw [rsp+8] — put back the caller's control word (PE only; see _EX87_PC64).
+fn _EX87_PC_RESTORE(S): i64 {
+    if (_TARGET_PE != 1) { return 0; }
+    EB(S, 0xD9); EB(S, 0x6C); EB(S, 0x24); EB(S, 0x08);
+    return 0;
+}
+
 # EF64_EXP — x87 fldl2e; fmulp; fld st0; frndint; fsub st1,st0;
 # fxch; f2xm1; fld1; faddp; fscale; fstp st1 (22 bytes), behind the v6.6.1 +/-inf guard.
 fn EF64_EXP(S): i64 {
     var _xg = _EF64_EXPINF_GUARD(S);
     EX87PUSH(S);
     _IR_REC0(S, IR_RAW_EMIT);
+    _EX87_PC64(S);
     EB(S, 0xD9); EB(S, 0xEA); EB(S, 0xDE); EB(S, 0xC9); EB(S, 0xD9); EB(S, 0xC0);
     EB(S, 0xD9); EB(S, 0xFC); EB(S, 0xDC); EB(S, 0xE9); EB(S, 0xD9); EB(S, 0xC9);
     EB(S, 0xD9); EB(S, 0xF0); EB(S, 0xD9); EB(S, 0xE8); EB(S, 0xDE); EB(S, 0xC1);
     EB(S, 0xD9); EB(S, 0xFD); EB(S, 0xDD); EB(S, 0xD9);
+    _EX87_PC_RESTORE(S);
     EX87POP(S);
     EPATCH(S, (_xg >> 32) & 0xFFFFFFFF);
     EPATCH(S, _xg & 0xFFFFFFFF);
@@ -3467,9 +3500,11 @@ fn EF64_EXP2(S): i64 {
     var _x2g = _EF64_EXPINF_GUARD(S);   # exp2 has the SAME limits as exp
     EX87PUSH(S);
     _IR_REC0(S, IR_RAW_EMIT);
+    _EX87_PC64(S);                      # the `faddp` rounds to PC width too
     EB(S, 0xD9); EB(S, 0xC0); EB(S, 0xD9); EB(S, 0xFC); EB(S, 0xDC); EB(S, 0xE9);
     EB(S, 0xD9); EB(S, 0xC9); EB(S, 0xD9); EB(S, 0xF0); EB(S, 0xD9); EB(S, 0xE8);
     EB(S, 0xDE); EB(S, 0xC1); EB(S, 0xD9); EB(S, 0xFD); EB(S, 0xDD); EB(S, 0xD9);
+    _EX87_PC_RESTORE(S);
     EX87POP(S);
     EPATCH(S, (_x2g >> 32) & 0xFFFFFFFF);
     EPATCH(S, _x2g & 0xFFFFFFFF);

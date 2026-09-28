@@ -1266,3 +1266,22 @@ _chk_gate "$ROOT/tests/gates/platform/ns_caps_family_routed.sh"
 # did — cannot change it); no in-tree code hand-rolls either; PE / agnos decline with -38; the
 # crossos test runs on the host and under qemu-aarch64. Mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/platform/fcntl_wrapper_only.sh"
+
+# 6.6.8 (bite 4) — an INT-left `+ - * /` with an f64 right operand WARNS (kind 2 of
+# _FLT_TYPE_WARN): `0 - 1.5` was integer arithmetic on 1.5's bits (-3.0), silently. WARN only,
+# the ADR-002 posture of kind 1; no false positive on unary minus, f64/f64 or int/int.
+_chk_gate "$ROOT/tests/gates/diagnostics/f64_int_mix_warn.sh"
+
+# 6.6.8 (bite 6) — the Linux heap comes up on a board smaller than its 256 MB first chunk: the
+# grain-sized chunk is MAP_NORESERVE and a refusal falls back to 16 MB chunks (as PID 1 in a
+# -m 256M VM it panicked). Row 4, the starved-VM PID-1 boot, is opt-in: CYRIUS_ALLOC_VM=1.
+_chk_gate "$ROOT/tests/gates/memory/alloc_first_chunk_small_board.sh"
+
+# 6.6.8 (bite 6) — every allocation check lib/io.cyr gained holds when ITS call alone is
+# refused (per-call fault injection): file_write_atomic / file_replace_atomic / getenv.
+_chk_gate "$ROOT/tests/gates/memory/io_alloc_refused_per_call.sh"
+
+# 6.6.8 (bite 6) — cx runtime foundations: cxvm's register file holds fp/sp, atomic_cas /
+# fetch_add work on cx, the hash seed is published / OS-drawn / varies, clock_gettime is
+# translated, and call_site_stack_alignment.tcyr runs on cx.
+_chk_gate "$ROOT/tests/gates/toolchain/cx_runtime_foundations.sh"

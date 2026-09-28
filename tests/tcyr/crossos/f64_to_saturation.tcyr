@@ -1,0 +1,58 @@
+# f64_to_saturation.tcyr — 6.6.8: `f64_to` gives the SAME integer on every target, including
+# for NaN and out-of-range values.
+#
+# ⛔ THE DEFECT. x86 lowered `f64_to` to a bare `cvttsd2si`, which returns the "integer
+# indefinite" 0x8000000000000000 for NaN AND for every out-of-range value in either direction.
+# aarch64 FCVTZS gives NaN → 0 and saturates (+big → INT64_MAX, -big → INT64_MIN). So
+# `f64_to(NaN)` was INT64_MIN on x86 and 0 on aarch64, and `f64_to(+inf)` INT64_MIN vs
+# INT64_MAX — and the math polyfills' sin/cos quadrant (`f64_to(k) & 3`) and exp/exp2 2^n
+# exponent pack inherited whichever the target gave. x86 now applies FCVTZS's rule; the cx VM
+# runs `f2i` through the host's f64_to, so it follows.
+#
+# In crossos/ because the rule is three backends' emitters and has to agree on real hardware.
+include "lib/assert.cyr"
+include "lib/syscalls.cyr"
+
+fn main(): i64 {
+    var MAXI = 0x7FFFFFFFFFFFFFFF;
+    var MINI = 0x8000000000000000;
+
+    test_group("f64_to: NaN is 0");
+    assert_eq(f64_to(0x7FF8000000000000), 0, "f64_to(qNaN) = 0 (x86 gave INT64_MIN)");
+    assert_eq(f64_to(0xFFF8000000000000), 0, "f64_to(-qNaN) = 0");
+    assert_eq(f64_to(0x7FF0000000000001), 0, "f64_to(sNaN payload 1) = 0");
+    var z: f64 = 0.0;
+    assert_eq(f64_to(f64_div(z, z)), 0, "f64_to(0/0) = 0");
+
+    test_group("f64_to: out of range saturates");
+    assert_eq(f64_to(0x7FF0000000000000), MAXI, "f64_to(+inf) = INT64_MAX (x86 gave INT64_MIN)");
+    assert_eq(f64_to(0xFFF0000000000000), MINI, "f64_to(-inf) = INT64_MIN");
+    assert_eq(f64_to(0x7E37E43C8800759C), MAXI, "f64_to(1e300) = INT64_MAX");
+    assert_eq(f64_to(0xFE37E43C8800759C), MINI, "f64_to(-1e300) = INT64_MIN");
+    assert_eq(f64_to(0x43E0000000000000), MAXI, "f64_to(2^63) = INT64_MAX (first value out of range)");
+    assert_eq(f64_to(0xC3E0000000000001), MINI, "f64_to(-2^63 - 2048) = INT64_MIN");
+
+    test_group("f64_to: in range is unchanged (truncation toward zero)");
+    assert_eq(f64_to(0xC3E0000000000000), MINI, "f64_to(-2^63) = INT64_MIN exactly (a real value, not overflow)");
+    assert_eq(f64_to(0x43DFFFFFFFFFFFFF), 0x7FFFFFFFFFFFFC00, "largest double below 2^63 converts exactly");
+    assert_eq(f64_to(0xC3DFFFFFFFFFFFFF), 0 - 0x7FFFFFFFFFFFFC00, "its negative converts exactly");
+    assert_eq(f64_to(0x43D0000000000000), 0x4000000000000000, "f64_to(2^62) = 2^62");
+    var p37: f64 = 3.7;
+    var n37: f64 = 0.0 - 3.7;
+    assert_eq(f64_to(p37), 3, "f64_to(3.7) = 3");
+    assert_eq(f64_to(n37), 0 - 3, "f64_to(-3.7) = -3");
+    assert_eq(f64_to(0x3FE0000000000000), 0, "f64_to(0.5) = 0");
+    assert_eq(f64_to(0), 0, "f64_to(+0) = 0");
+    assert_eq(f64_to(0x8000000000000000), 0, "f64_to(-0) = 0");
+    assert_eq(f64_to(0x0000000000000001), 0, "f64_to(min subnormal) = 0");
+    assert_eq(f64_to(f64_from(123456789)), 123456789, "f64_to(f64_from(n)) round-trips");
+    assert_eq(f64_to(f64_from(0 - 42)), 0 - 42, "f64_to(f64_from(-42)) round-trips");
+
+    test_group("f64_to feeds bit arithmetic the same way everywhere");
+    # The sin/cos polyfills take the quadrant as `f64_to(k) & 3`; exp/exp2 pack `n + 1023`.
+    assert_eq(f64_to(0x7FF0000000000000) & 3, 3, "quadrant of a saturated +inf k is 3 on every target");
+    assert_eq(f64_to(0x7FF8000000000000) & 3, 0, "quadrant of a NaN k is 0 on every target");
+    return assert_summary();
+}
+var rc = main();
+syscall(60, rc);

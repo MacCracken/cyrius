@@ -1,0 +1,165 @@
+# hashmap_fast_tombstones.tcyr — 6.6.8. DELETE/INSERT CHURN NEVER DROPS AN INSERT.
+#
+# ⛔ THE DEFECT (6.6.7 review, lib/hashmap_fast.cyr): fhm_delete leaves a 255 tombstone in
+# every slot it frees, the rehash trigger counted only LIVE entries (count*8 >= cap*7), and an
+# insert only ever took an EMPTY slot. After enough churn at a steady size every group held
+# only live entries and tombstones; fhm_set walked the whole table, fell out of its probe loop
+# and returned 0 — SUCCESS — without inserting. The map silently lost the key, and every
+# get/has on a missing key scanned the whole table.
+#
+# Measured with the 6.6.7 map: the churn loop below loses 464 of its 480 inserts, the
+# sliding window 595 of 600, and the delete/re-set loop every key (count 0 where 14 are held)
+# — 10 passed, 10 failed.
+#
+# Rows: every insert is readable at once; the live count is exact; the header's live and
+# tombstone counters (+32 / +40) match the metadata bytes and an EMPTY slot always remains (a
+# live-only trigger fails exactly this); the table does NOT grow without bound under
+# steady-size churn (the same-capacity rehash drops tombstones instead of doubling); a
+# sliding window near the load limit produces real tombstones and loses nothing; deleting and
+# re-setting the SAME key reuses its space; and clear zeroes the tombstone counter.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/vec.cyr"
+include "lib/hashmap_fast.cyr"
+include "lib/assert.cyr"
+
+# A distinct NUL-terminated 3-byte key per integer 0..(26*26-1).
+fn _k(i): i64 {
+    var k = alloc(8);
+    store8(k, 97 + (i % 26));
+    store8(k + 1, 97 + ((i / 26) % 26));
+    store8(k + 2, 0);
+    return k;
+}
+
+# Scan the metadata bytes: returns 1 when the header's live count (+32) and tombstone count
+# (+40) both equal what the table actually holds AND at least one slot is still EMPTY (so an
+# absent-key probe terminates before walking the whole table).
+fn _fhm_books_balance(m): i64 {
+    var meta = load64(m);
+    var cap = fhm_cap(m);
+    var live = 0;
+    var tombs = 0;
+    var empty = 0;
+    var i = 0;
+    while (i < cap) {
+        var b = load8(meta + i);
+        if (b == 0) { empty = empty + 1; }
+        elif (b == 255) { tombs = tombs + 1; }
+        else { live = live + 1; }
+        i = i + 1;
+    }
+    if (live != fhm_count(m)) { return 0; }
+    if (tombs != load64(m + 40)) { return 0; }
+    if (empty == 0) { return 0; }
+    return 1;
+}
+
+fn main(): i64 {
+    alloc_init();
+    # A FIXED seed, so the bucket layout — and therefore which groups fill — is the same on
+    # every run. lib/hashseed.cyr returns a non-zero `_hm_seed` as already drawn.
+    _hm_seed = 0x5DEECE66D;
+    test_group("delete/insert churn at a steady size");
+    var m = fhm_new();
+    assert(m != 0, "fhm_new returns a map");
+    var lost = 0;
+    var bad_set = 0;
+    var round = 0;
+    var next = 0;
+    var books = 1;
+    var live = alloc(12 * 8);
+    while (round < 40) {
+        var i = 0;
+        while (i < 12) {
+            var k = _k(next);
+            next = next + 1;
+            if (fhm_set(m, k, next) != 0) { bad_set = bad_set + 1; }
+            if (fhm_get(m, k) != next) { lost = lost + 1; }
+            store64(live + i * 8, k);
+            i = i + 1;
+        }
+        if (_fhm_books_balance(m) == 0) { books = 0; }
+        # delete in a scattered order so some groups keep live entries past a delete
+        i = 0;
+        while (i < 12) { fhm_delete(m, load64(live + ((i * 5) % 12) * 8)); i = i + 1; }
+        if (_fhm_books_balance(m) == 0) { books = 0; }
+        round = round + 1;
+    }
+    assert_eq(lost, 0, "every inserted key is readable immediately (none dropped)");
+    assert_eq(bad_set, 0, "every fhm_set reported success");
+    assert_eq(books, 1, "live/tombstone counters match the table, and an empty slot remains");
+    assert_eq(fhm_count(m), 0, "the live count is exact after the churn");
+    assert(fhm_cap(m) <= 32, "steady-size churn does not grow the table without bound");
+    assert_eq(fhm_has(m, "zz"), 0, "a lookup for an absent key still terminates with 0");
+
+    test_group("sliding-window churn near the load limit (full groups, real tombstones)");
+    # 27 live keys in a 32-slot table (two 16-slot groups, just under the 28-slot trigger), so
+    # at least one group is FULL and its deletes must leave tombstones. Replace the oldest key
+    # with a fresh one 600 times. ANTI-VACUOUS: the row asserts tombstones really appeared —
+    # otherwise delete-to-EMPTY could carry the whole run and pin nothing about the counters.
+    var w = fhm_new();
+    var win = alloc(27 * 8);
+    var wn = 0;
+    while (wn < 27) { var k0 = _k(wn); store64(win + wn * 8, k0); fhm_set(w, k0, wn); wn = wn + 1; }
+    var wlost = 0;
+    var wbooks = 1;
+    var maxt = 0;
+    var step = 0;
+    while (step < 600) {
+        var slot = step % 27;
+        fhm_delete(w, load64(win + slot * 8));
+        if (load64(w + 40) > maxt) { maxt = load64(w + 40); }
+        var nk2 = _k(27 + step);
+        if (fhm_set(w, nk2, step) != 0) { wlost = wlost + 1; }
+        if (fhm_get(w, nk2) != step) { wlost = wlost + 1; }
+        store64(win + slot * 8, nk2);
+        if (_fhm_books_balance(w) == 0) { wbooks = 0; }
+        step = step + 1;
+    }
+    assert_eq(wlost, 0, "no insert dropped across 600 replacements");
+    assert_eq(fhm_count(w), 27, "27 keys held after the churn");
+    assert_eq(wbooks, 1, "counters balance after every replacement");
+    assert(maxt > 0, "the workload produced real tombstones (anti-vacuous)");
+    assert(fhm_cap(w) <= 64, "the window's table stays bounded");
+
+    test_group("a deleted key set again is found, once");
+    var m2 = fhm_new();
+    var j = 0;
+    while (j < 14) { fhm_set(m2, _k(j), j); j = j + 1; }
+    var cap0 = fhm_cap(m2);
+    var t = 0;
+    var missed = 0;
+    while (t < 200) {
+        var kk = _k(t % 14);
+        if (fhm_delete(m2, kk) != 1) { missed = missed + 1; }
+        fhm_set(m2, kk, t + 1000);
+        t = t + 1;
+    }
+    assert_eq(missed, 0, "every delete found the key set just before it");
+    assert_eq(_fhm_books_balance(m2), 1, "counters balance after the delete/re-set loop");
+    assert_eq(fhm_count(m2), 14, "14 keys held after 200 delete/re-set cycles");
+    assert_eq(fhm_cap(m2), cap0, "re-setting a deleted key reuses space, the table did not grow");
+    var ok = 1;
+    j = 0;
+    while (j < 14) {
+        # the last value written for key j is the largest t with t % 14 == j
+        var want = 196 + j + 1000;          # t = 196..199 for j = 0..3
+        if (j >= 4) { want = 182 + j + 1000; }
+        if (fhm_get(m2, _k(j)) != want) { ok = 0; }
+        j = j + 1;
+    }
+    assert_eq(ok, 1, "every key maps to its latest value");
+    var nk = vec_len(fhm_keys(m2));
+    assert_eq(nk, 14, "fhm_keys lists each key exactly once");
+
+    test_group("fhm_clear resets the tombstone count");
+    fhm_clear(m2);
+    assert_eq(fhm_count(m2), 0, "clear empties the map");
+    assert_eq(load64(m2 + 40), 0, "clear zeroes the tombstone count");
+    var rc = assert_summary();
+    return rc;
+}
+var ec = main();
+syscall(60, ec);

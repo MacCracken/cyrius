@@ -620,6 +620,40 @@ fn PARSE_FACTOR(S): i64 {
     return _rc;
 }
 
+# Unary minus on an f32 value (bits in the low 32 of rax, the pushed 0 still on the stack):
+# flip bit 31. Composed from the generic emitters so every backend has it. CHANGELOG [6.6.8]
+fn _NEG_F32(S): i64 {
+    EPOPC(S);
+    EPUSHR(S);
+    EMOVI(S, 0x80000000);
+    EMOVCA(S);
+    EPOPR(S);
+    EXORR(S);
+    return 0;
+}
+
+# _NEG_INTRIN_KIND — 1 when token `t` is a builtin whose RESULT is a scalar f64, 2 when it is
+# a scalar f32 bit pattern, else 0. Unary minus reads it BEFORE parsing its operand: those
+# builtins inherit their ARGUMENT's estype (the i64-boxed idiom leaves it 0), so GESTYPE
+# alone negated `-f64_exp(u)` as an integer (-4.0 for -1.0). The compiler knows these calls
+# return a float, whatever the argument was typed. f64_to/eq/lt/gt return integers and are
+# absent. Kept a flat compare chain: cybs compiles this file. CHANGELOG [6.6.8]
+fn _NEG_INTRIN_KIND(t): i64 {
+    if (t >= 62) { if (t <= 66) { return 1; } }     # f64_add/sub/mul/div, f64_from
+    if (t == 71) { return 1; }                       # f64_neg
+    if (t >= 80) { if (t <= 88) { return 1; } }     # f64_abs..f64_exp2
+    if (t == 92) { return 1; }                       # f64_round
+    if (t == 99) { return 1; }                       # f64_atan
+    if (t == 128) { return 1; }                      # f64v_dot
+    if (t == 132) { return 1; }                      # f32_to
+    if (t == 136) { return 1; }                      # f64_sqrt
+    if (t == 159) { return 1; }                      # f64v256_dot
+    if (t == 131) { return 2; }                      # f32_from
+    if (t == 142) { return 2; }                      # f32v_dot
+    if (t == 151) { return 2; }                      # f32v8_dot
+    return 0;
+}
+
 fn _PARSE_FACTOR_IMPL(S): i64 {
     var typ = PEEKT(S);
     SPSC(S, 0);
@@ -645,10 +679,24 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             STI(S, GTI(S) + 1);
             return 0;
         }
-        # General: parse factor, emit 0-rax via push/sub
+        # General: parse factor, emit 0-rax via push/sub.
+        # ⛔ A FLOAT operand (a float literal, an f64/f32-typed value) is negated by flipping
+        # its SIGN BIT, never by integer `0 - bits`: that computed `-1.0` as -4.0, `-0.0` as
+        # +0 and `-x` on an f64 likewise, on every target. The operand's type is known only
+        # after it is parsed, so the integer prologue is shared and a float operand discards
+        # its pushed 0 (EF64_NEG is exact for every value, -0.0 and NaN included). CHANGELOG [6.6.8]
+        # A float-returning BUILTIN is recognised by its token, read before the operand is
+        # consumed (its estype is its argument's — see _NEG_INTRIN_KIND); its estype is left
+        # as the builtin set it.
+        var _ngk = _NEG_INTRIN_KIND(PEEKT(S));
         EMOVI(S, 0);
         EPUSHR(S);
         PARSE_FACTOR(S);
+        if (_ngk == 1) { EPOPC(S); EF64_NEG(S); _cfo = 0; return 0; }
+        if (_ngk == 2) { _NEG_F32(S); _cfo = 0; return 0; }
+        var _ngt = GESTYPE(S);
+        if (_ngt == F64_TYID) { EPOPC(S); EF64_NEG(S); _cfo = 0; return 0; }
+        if (_ngt == F32_TYID) { _NEG_F32(S); SESTYPE(S, F32_TYID); _cfo = 0; return 0; }
         EMOVCA(S);
         EPOPR(S);
         ESUBR(S);
@@ -3567,6 +3615,7 @@ fn _PARSE_TERM_IMPL(S): i64 {
                     else { PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); EIMUL(S); _cfo = 0; }
                 }
             }
+            if (mulst <= 0) { _INT_F64_MIX(S); }
         }
         else { if (typ == 9) {
                 var divst = GESTYPE(S);
@@ -3588,6 +3637,7 @@ fn _PARSE_TERM_IMPL(S): i64 {
                         } else { ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; } }
                     else { ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; }
                 }
+                if (divst <= 0) { _INT_F64_MIX(S); }
             }
             else { if (typ == 34) {
                     STI(S, GTI(S) + 1); ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; EMOVDR(S); _cfo = 0;
@@ -3927,6 +3977,7 @@ fn _PEXPR_IMPL(S): i64 {
                     else { ESPILL(S); SPSC(S, 0); PARSE_TERM(S); EPTR_SCALE(S, ps); EMOVCA(S); EUNSPILL(S); EADDR(S); SPSC(S, ps); _cfo = 0; }
                 } else { ESPILL(S); SPSC(S, 0); PARSE_TERM(S); EPTR_SCALE(S, ps); EMOVCA(S); EUNSPILL(S); EADDR(S); SPSC(S, ps); _cfo = 0; }
             }
+            if (addst <= 0) { _INT_F64_MIX(S); }
         }
         else { if (typ == 7) {
                 var subst = GESTYPE(S);
@@ -3954,6 +4005,7 @@ fn _PEXPR_IMPL(S): i64 {
                         else { EPUSHR(S); SPSC(S, 0); PARSE_TERM(S); EPTR_SCALE(S, ps); EMOVCA(S); EPOPR(S); ESUBR(S); SPSC(S, ps); _cfo = 0; }
                     } else { EPUSHR(S); SPSC(S, 0); PARSE_TERM(S); EPTR_SCALE(S, ps); EMOVCA(S); EPOPR(S); ESUBR(S); SPSC(S, ps); _cfo = 0; }
                 }
+                if (subst <= 0) { _INT_F64_MIX(S); }
             }
             # v5.6.2: +| / +? / -| / -? — saturating / checked add/sub.
             # Compiles to a call into lib/overflow.cyr. No constant-fold
@@ -4087,9 +4139,21 @@ fn _FLT_TYPE_WARN(S, kind): i64 {
     _err_head(S);
     if (kind == 0) {
         syscall(SYS_WRITE, 2, ": comparison mixes f64 and integer operands\n", 44);
+    } elif (kind == 2) {
+        syscall(SYS_WRITE, 2, ": integer arithmetic with an f64 right operand\n", 47);
     } else {
         syscall(SYS_WRITE, 2, ": f64 arithmetic with a non-f64 right operand\n", 46);
     }
+    return 0;
+}
+
+# kind 2 (6.6.8) — the mirror of kind 1: an INT-left `+ - * /` whose right operand is f64
+# (`0 - 1.5`, `2 * x`) is integer arithmetic on the float's bits, silently (`0 - 1.5` is
+# -3.0). WARN only, the same ADR-002 posture as kind 1: the result type is left as it was.
+# Called after the int arm has parsed its right operand; a folded literal RHS never set
+# the type, so it cannot fire. CHANGELOG [6.6.8]
+fn _INT_F64_MIX(S): i64 {
+    if (GESTYPE(S) == F64_TYID) { _FLT_TYPE_WARN(S, 2); }
     return 0;
 }
 
