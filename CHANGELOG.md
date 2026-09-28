@@ -185,6 +185,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   lose every stdlib-only build to the new write. The explicit `deps --lock` and every pre-6.6.9
   write trigger still fail hard, and once a lock exists the 6.6.4 guard still refuses to vendor a
   leaf it cannot hash (axis 8).
+- **`cyrius run`, `check` and `test` say a compile failure once.** (bite 10; found by the 6.6.6
+  bite-24 review.) **Root cause:** bite 24 gave `cyrius build` its two-question verdict (did cbt
+  already NAME this failure? otherwise quote the compiler's real exit) and nothing else. `cmd_run`
+  printed an unconditional `error: compile failed` after cbt or the compiler had named the cause
+  (`cyrius run nothere.cyr` → `error: no such file` then `error: compile failed`); `cmd_check`
+  followed a named failure with `error: nothere.cyr` — `error: ` on stderr and the NAME on stdout,
+  a split line; `cmd_test` called a MISSING file a `(compile error)`; `cyrius bench` printed
+  `FAIL: compile error` for either. **Fix:** one owner, `_compile_fail_verdict(pre_err, fd, head)`
+  (cbt/build.cyr), used by build, run, check, test and bench: a failure cbt named gets nothing
+  more (`test` keeps its tally row, now `(not compiled; see the error above)`), a compiler
+  rejection gets `<head> (compiler exit N)` — or `(the compiler did not exit normally)` — once,
+  and `run` shares build's `-v` pointer. `check`'s verdict is whole on stderr. Gate:
+  `build_log_informative.sh` row 6 (missing file → one `error:` line naming it; rejected source →
+  the compiler's status; nothing of check's verdict on stdout; test's row); the 6.6.8 CLI fails
+  seven of its ten assertions and the over-fix (never say anything) fails the rejected-source rows.
 
 ### Downstream
 

@@ -1029,6 +1029,41 @@ fn _artifact_size(path): i64 {
 # other `compile()` caller tests (`== 0` / `!= 0`) is unchanged. CHANGELOG [6.6.6].
 var _cc_last_exit = 0 - 1;
 
+# 6.6.9 bite 10 — THE ONE COMPILE-FAILURE VERDICT, for every verb that compiles and then
+# has to say why it stopped. Two questions, asked in order, never re-asked per caller:
+#   1. did cbt NAME this failure itself (`_err_count` moved since `pre_err`)? Then the
+#      named diagnostic IS the verdict; return 1 and write nothing.
+#   2. otherwise the compiler rejected the source: write `<head> (compiler exit N)` to
+#      `fd`, or `<head> (the compiler did not exit normally)` when `_cc_last_exit` < 0,
+#      and return 0.
+# ⚠ Bite 24 of 6.6.6 answered both questions in `cmd_build` ALONE. `run`, `check` and
+# `test` kept their own lines, so `cyrius run nothere.cyr` printed `error: no such file`
+# and THEN a vaguer `error: compile failed`, and `cyrius test nothere.tcyr` called a
+# missing file a "compile error". One owner, so the four verbs cannot drift again.
+# CHANGELOG [6.6.9]
+fn _compile_fail_verdict(pre_err, fd, head): i64 {
+    if (_err_count != pre_err) { return 1; }
+    sys_write(fd, head, strlen(head));
+    if (_cc_last_exit < 0) {
+        var m1 = " (the compiler did not exit normally)\n";
+        sys_write(fd, m1, strlen(m1));
+        return 0;
+    }
+    var m2 = " (compiler exit ";
+    sys_write(fd, m2, strlen(m2));
+    fmt_int_fd(fd, _cc_last_exit);
+    sys_write(fd, ")\n", 2);
+    return 0;
+}
+
+# The pointer that follows a compiler-rejection verdict on a verb a user runs by hand.
+fn _compile_fail_hint(): i64 {
+    if (_verbose == 0) {
+        sys_write(STDERR_FD, "  the compiler's diagnostics are above; re-run with -v for the resolved compiler, source and include set\n", 105);
+    }
+    return 0;
+}
+
 fn compile(source, output): i64 {
     _cc_last_exit = 0 - 1;
     var cc = current_cc();

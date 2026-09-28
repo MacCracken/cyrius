@@ -241,18 +241,11 @@ fn cmd_build(source, output): i64 {
         # more, the diagnostic is the message); otherwise `_cc_last_exit` is the child's
         # real status, and -1 means it never exited normally, which is not a status to
         # quote. CHANGELOG [6.6.6].
-        if (_err_count != pre_err) { println("FAILED"); }
-        else {
-            if (_cc_last_exit < 0) { println("FAILED (the compiler did not exit normally)"); }
-            else {
-                sys_write(STDOUT_FD, "FAILED (compiler exit ", 22);
-                fmt_int(_cc_last_exit);
-                sys_write(STDOUT_FD, ")\n", 2);
-            }
-            if (_verbose == 0) {
-                sys_write(STDERR_FD, "  the compiler's diagnostics are above; re-run with -v for the resolved compiler, source and include set\n", 105);
-            }
-        }
+        # 6.6.9 bite 10 — both questions now live in `_compile_fail_verdict`
+        # (cbt/build.cyr), shared with run / check / test. A failure cbt named still
+        # closes the header with a bare `FAILED`. CHANGELOG [6.6.9]
+        if (_compile_fail_verdict(pre_err, STDOUT_FD, "FAILED") == 1) { println("FAILED"); }
+        else { _compile_fail_hint(); }
     }
     return r;
 }
@@ -291,9 +284,14 @@ fn cmd_run(source, args): i64 {
         return 0;
     }
     var tmpbin = _cbt_tmpexe("run");
+    # 6.6.9 bite 10 — ONE verdict. This was an unconditional `_err("compile failed")`, a
+    # second, vaguer line after cbt or the compiler had already named the cause
+    # (`error: no such file: x.cyr` / `error: compile failed`). See
+    # `_compile_fail_verdict` (cbt/build.cyr). CHANGELOG [6.6.9]
+    var pre_err = _err_count;
     var r = compile(source, tmpbin);
     if (r != 0) {
-        _err("compile failed");
+        if (_compile_fail_verdict(pre_err, STDERR_FD, "error: compile failed") == 0) { _compile_fail_hint(); }
         sys_unlink(tmpbin);
         return 1;
     }
@@ -319,11 +317,18 @@ fn cmd_test(source): i64 {
     }
     _total = _total + 1;
     var tmpbin = _cbt_tmpexe("test_bin");
+    var pre_err = _err_count;
     var r = compile(source, tmpbin);
     if (r != 0) {
+        # 6.6.9 bite 10 — the row stays (it is the suite's tally line and names the file),
+        # but it no longer calls a failure cbt NAMED — a missing file, an unwritable temp —
+        # a "compile error". See `_compile_fail_verdict` (cbt/build.cyr). CHANGELOG [6.6.9]
         sys_write(STDERR_FD, "  FAIL: ", 8);
         sys_write(STDERR_FD, source, strlen(source));
-        sys_write(STDERR_FD, " (compile error)\n", 17);
+        if (_compile_fail_verdict(pre_err, STDERR_FD, ": compile error") == 1) {
+            var tnc = " (not compiled; see the error above)\n";
+            sys_write(STDERR_FD, tnc, strlen(tnc));
+        }
         _fail = _fail + 1;
         sys_unlink(tmpbin);
         return 1;
@@ -613,9 +618,12 @@ fn _bench_summary(passed, failed): i64 {
 # Returns 0 on success, 1 on compile error, or the binary's exit code.
 fn _bench_run_one(path): i64 {
     var tmpbin = _cbt_tmpexe("bench");
+    var pre_err = _err_count;
     var r = compile(path, tmpbin);
     if (r != 0) {
-        sys_write(STDERR_FD, "FAIL: compile error\n", 20);
+        # 6.6.9 bite 10 — a failure cbt named is not relabelled a compile error; see
+        # `_compile_fail_verdict` (cbt/build.cyr). CHANGELOG [6.6.9]
+        _compile_fail_verdict(pre_err, STDERR_FD, "FAIL: compile error");
         sys_unlink(tmpbin);
         return 1;
     }
@@ -801,6 +809,7 @@ fn cmd_check(source, with_deps): i64 {
     str_builder_add_cstr(ck_sb, _cbt_tmpfile("check_"));
     str_builder_add_int(ck_sb, ck_pid);
     var ck_out = str_data(str_builder_build(ck_sb));
+    var pre_err = _err_count;
     var r = compile(actual, ck_out);
     sys_unlink(ck_out);
     _skip_deps = 0;
@@ -808,8 +817,14 @@ fn cmd_check(source, with_deps): i64 {
         sys_write(STDOUT_FD, "ok: ", 4);
         println(source);
     } else {
-        sys_write(STDERR_FD, "error: ", 7);
-        println(source);
+        # 6.6.9 bite 10 — ONE verdict, whole on stderr. This printed `error: ` to stderr
+        # and the NAME to stdout (a split line), and printed it after a failure cbt had
+        # already named (`error: no such file: x.cyr` / `error: x.cyr`). See
+        # `_compile_fail_verdict` (cbt/build.cyr). CHANGELOG [6.6.9]
+        var ckh = str_builder_new();
+        str_builder_add_cstr(ckh, "error: ");
+        str_builder_add_cstr(ckh, source);
+        _compile_fail_verdict(pre_err, STDERR_FD, str_data(str_builder_build(ckh)));
     }
     return r;
 }
