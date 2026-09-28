@@ -53,7 +53,7 @@ fn PARSE_ARRAY(S, noff, ew): i64 {
         if (PEEKT(S) == 2) {
             var as_noff = PEEKV(S);
             var as_idx = FINDVAR(S, as_noff);
-            if (as_idx >= 0 && as_idx < 1024) {
+            if (as_idx >= 0) {   # 6.6.8: no 1024 cap (util.cyr GVECP)
                 if (GVECP(S, as_idx) == 1) {
                     asz = L64(_vecv_base + as_idx * 8);
                     # v6.5.32 — a NEGATIVE enum constant is now spellable, so reject it as a
@@ -1106,7 +1106,7 @@ fn PARSE_GVAR_ARR(S, noff, sti, ew): i64 {
         if (PEEKT(S) == 2) {
             var gas_noff = PEEKV(S);
             var gas_idx = FINDVAR(S, gas_noff);
-            if (gas_idx >= 0 && gas_idx < 1024) {
+            if (gas_idx >= 0) {   # 6.6.8: no 1024 cap (util.cyr GVECP)
                 if (GVECP(S, gas_idx) == 1) {
                     sz_raw = L64(_vecv_base + gas_idx * 8);
                     # v6.5.32 — a NEGATIVE enum constant is now spellable, so reject it as a

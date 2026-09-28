@@ -29,6 +29,30 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `defer` stays refused by name (6.6.7). Gate `tests/gates/frontend/toplevel_for_in.sh` (27 rows:
   host + qemu-aarch64 + wine, mutation-proven) and `tests/tcyr/crossos/toplevel_for_in.tcyr`
   (ecb/ach/cass/pi). The C-style `for (var i = ...)` was never affected.
+- **An enum constant registered past var index 1024 is a compile-time constant again — array
+  sizes, the duplicate-symbol warning and, on both macOS targets, the compile-time syscall
+  reroutes.** (bite 1.) **Root cause:** v6.5.36 moved enum-constant presence out of band into
+  `_vecp_base`, sized `alloc(1024*8)` "to match the fold table's own cap" — but the value table
+  `_vecv_base` had been a grown var-family table since v6.3.0, so the bound was a stale copy of
+  a cap the storage no longer had, replicated at the writer (PARSE_ENUM_DEF) and every reader.
+  Past index 1024 the constant was not folded, and three things depended on the fold: `var
+  buf[ENUM]` was refused with "array size identifier must be an enum constant" (top level and
+  in a fn); CHKDUPVAL's enum probe went silent, so a conflicting redefinition got **no**
+  warning; and on arm64 **and** x86_64 Mach-O `syscall(ENUM, ...)` lost its compile-time
+  reroute — measured on ecb and ach at 6.6.7, `enum { CLK = 228; }` past the cap issued a raw
+  228 to XNU and died with **SIGSYS (140)**, no diagnostic. PE and aarch64 Linux translate at
+  run time and were unaffected. A program reaches the index easily: syscalls + alloc + str +
+  fmt + vec + sigil is ~984 vars and cycc itself is at 994, and 6.6.7 had to spell
+  `lib/sys.cyr`'s `sys_sched_kicks` buffer as the literal 208 to build for agnos at all.
+  **Fix:** the presence flag is a BYTE map sized to the var table's hard cap (1048576, the
+  `_var_dead` precedent, lazily mapped); the writer and the four reader guards drop the 1024
+  bound; `GVECP` stays the one accessor. `sys_sched_kicks` is back on `var
+  buf[SYSINFO_SIZE_FULL]` (folds_agnos_parity: RED 9 of 11 folds on the capped compiler,
+  GREEN now). Consumer builds past 1024 vars may now fold late enums they did not before — a
+  code-size change, and the correct reroutes/warnings. Pinned by
+  `tests/tcyr/crossos/enum_fold_past_1024.tcyr` (enum-sized global and local arrays, a folded
+  value, and `syscall(<enum 228>)` against the literal — ecb/ach/cass/pi) and rows G/H of
+  `tests/gates/frontend/duplicate_symbol_warning_at_scale.sh` (0 warnings on 6.6.7).
 
 ## [6.6.7] — 2026-09-27
 

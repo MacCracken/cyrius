@@ -18,12 +18,13 @@
 # THE REAL TABLE SIZES, which is what the cap should have been derived from:
 #   - gvar_initval (`_vgsi_base`, the literal-init prior) is a GROWN table — it doubles with
 #     the var count, and the hard ceiling is 1048576. It never had a 1024 cap.
-#   - enum_const_val / the enum-presence flag stop at 1024 because the enum FOLD itself does
-#     (PARSE_ENUM_DEF's `if (vcnt < 1024)`), and GVECP already returns 0 above it.
-# So the blanket cap was the ENUM table's bound applied to BOTH halves. Removing it makes the
-# literal half work at any index; the enum half is unchanged and still bounded by its own
-# reader. (An enum constant registered past index 1024 is not FOLDED at all — a separate
-# defect, not this one, and not addressed here.)
+#   - enum_const_val is a GROWN table too; only the enum-PRESENCE flag stopped at 1024, and
+#     that bound was itself a stale copy (PARSE_ENUM_DEF's `if (vcnt < 1024)`, GVECP's
+#     `vi >= 1024`).
+# So the blanket cap was the ENUM flag's bound applied to BOTH halves. 6.6.6 removed it for the
+# literal half. 6.6.8 (bite 1) sized the presence flag to the var table, so an enum constant
+# registered past index 1024 FOLDS again, and an enum prior there warns: rows G and H, which
+# were SILENT through 6.6.7.
 #
 # EXPECTED VALUES are computed a DIFFERENT WAY from the actual: every warning row also runs the
 # program and checks the VALUE against a control that spells the winning definition once, so a
@@ -38,6 +39,8 @@
 #   1. the blanket `if (pi >= 1024) { return 0; }` restored -> RED rows A D F
 #   2. CHKDUPVAL made a no-op entirely                      -> RED rows A B D E F
 #   3. real tree                                            -> GREEN (6 rows)
+# 6.6.8 bite 1 added rows G/H: on the 6.6.7 compiler (the 1024 presence cap) BOTH are RED
+# (0 warnings where 1 is right); on the real tree GREEN (8 rows).
 # Rows B/C/E are guards, not detectors: they were already correct at 6.6.5 (B and E because the
 # prior sits at a LOW index, C because silence is what a same-value redeclaration means).
 set -eu
@@ -115,6 +118,14 @@ _row E 1 1 7 dsw_KK 'var dsw_b = dsw_KK;\nvar dsw_KK = 7;\nsyscall(60, dsw_b);\n
 # F — a three-link chain at scale: the 2nd and 3rd links each report, and the last wins.
 _row F 1 2 4 dsw_a 'var dsw_a = 1;\nvar dsw_a = 2;\nvar dsw_a = 4;\nsyscall(60, dsw_a);\n' \
                    'var dsw_a = 4;\nsyscall(60, dsw_a);\n'
+# G — an ENUM prior PAST the old 1024 cap, redefined by another enum with a different value.
+#     SILENT through 6.6.7: the prior's presence flag was never written past 1024, so CHKDUPVAL's
+#     enum probe saw "not a constant". The last definition wins.
+_row G 1 1 6 dsw_DUPX 'enum DswG1 { dsw_DUPX = 5; }\nenum DswG2 { dsw_DUPX = 6; }\nsyscall(60, dsw_DUPX);\n' \
+                      'enum DswG2 { dsw_DUPX = 6; }\nsyscall(60, dsw_DUPX);\n'
+# H — an ENUM prior past 1024 shadowed by a literal `var` (row E's shape, at a HIGH index).
+_row H 1 1 7 dsw_HH 'enum DswH { dsw_HH = 5; }\nvar dsw_HH = 7;\nsyscall(60, dsw_HH);\n' \
+                    'var dsw_HH = 7;\nsyscall(60, dsw_HH);\n'
 
 # D — the `SYS_*` note at scale. A consumer's own `var SYS_FOO = <x86 number>` agrees on x86
 #     and WINS everywhere else, so the emitted svc issues a different, valid syscall. The note

@@ -1,0 +1,122 @@
+# enum_fold_past_1024.tcyr — an enum constant registered past var index 1024 is a compile-time
+# constant like any other (6.6.8 bite 1).
+#
+# THE DEFECT (measured at 6.6.7). The enum-presence flag (util.cyr GVECP/SVECP) was a 1024-slot
+# table, a stale copy of a cap the value table had not had since v6.3.0, so a constant whose var
+# index was >= 1024 was NOT folded. Three consequences, all but the first silent:
+#   * `var buf[ENUM]` was refused ("array size identifier must be an enum constant"), top level
+#     and in a fn alike;
+#   * the duplicate-symbol warning went quiet (tests/gates/frontend/duplicate_symbol_warning_at_scale.sh);
+#   * on BOTH Mach-O targets `syscall(ENUM, ...)` lost its COMPILE-TIME reroute: 228 is
+#     rerouted to libSystem's clock on arm64 macOS and composed from gettimeofday on x86 macOS,
+#     and past 1024 the raw number went to the XNU kernel instead — a different syscall.
+#     PE and aarch64-Linux translate at run time too, so they never showed it.
+# Reached by real programs: the folded stdlibs put a program past index 1024 (syscalls + alloc +
+# str + fmt + vec + sigil is ~984 vars; + patra is ~1400), and 6.6.7 had to spell lib/sys.cyr's
+# `sys_sched_kicks` buffer as a literal to build for agnos at all.
+#
+# WHY A CROSS-HOST TEST: the syscall rows are what ecb and ach need to PROVE — a 228 through an
+# enum declared past the cap must behave exactly like the literal 228 on that host.
+# RED on 6.6.7: the array-size lines do not compile, on every target. CHANGELOG [6.6.8]
+include "lib/assert.cyr"
+
+# Declared BEFORE the filler: a low var index, the control for the syscall rows.
+enum EfLo { EF_CLK_LO = 228; }
+
+# The filler: 1100 enum members, so everything declared after it sits past var index 1024.
+enum EfFill {
+    ef_f0; ef_f1; ef_f2; ef_f3; ef_f4; ef_f5; ef_f6; ef_f7; ef_f8; ef_f9; ef_f10; ef_f11; ef_f12; ef_f13; ef_f14; ef_f15; ef_f16; ef_f17; ef_f18; ef_f19;
+    ef_f20; ef_f21; ef_f22; ef_f23; ef_f24; ef_f25; ef_f26; ef_f27; ef_f28; ef_f29; ef_f30; ef_f31; ef_f32; ef_f33; ef_f34; ef_f35; ef_f36; ef_f37; ef_f38; ef_f39;
+    ef_f40; ef_f41; ef_f42; ef_f43; ef_f44; ef_f45; ef_f46; ef_f47; ef_f48; ef_f49; ef_f50; ef_f51; ef_f52; ef_f53; ef_f54; ef_f55; ef_f56; ef_f57; ef_f58; ef_f59;
+    ef_f60; ef_f61; ef_f62; ef_f63; ef_f64; ef_f65; ef_f66; ef_f67; ef_f68; ef_f69; ef_f70; ef_f71; ef_f72; ef_f73; ef_f74; ef_f75; ef_f76; ef_f77; ef_f78; ef_f79;
+    ef_f80; ef_f81; ef_f82; ef_f83; ef_f84; ef_f85; ef_f86; ef_f87; ef_f88; ef_f89; ef_f90; ef_f91; ef_f92; ef_f93; ef_f94; ef_f95; ef_f96; ef_f97; ef_f98; ef_f99;
+    ef_f100; ef_f101; ef_f102; ef_f103; ef_f104; ef_f105; ef_f106; ef_f107; ef_f108; ef_f109; ef_f110; ef_f111; ef_f112; ef_f113; ef_f114; ef_f115; ef_f116; ef_f117; ef_f118; ef_f119;
+    ef_f120; ef_f121; ef_f122; ef_f123; ef_f124; ef_f125; ef_f126; ef_f127; ef_f128; ef_f129; ef_f130; ef_f131; ef_f132; ef_f133; ef_f134; ef_f135; ef_f136; ef_f137; ef_f138; ef_f139;
+    ef_f140; ef_f141; ef_f142; ef_f143; ef_f144; ef_f145; ef_f146; ef_f147; ef_f148; ef_f149; ef_f150; ef_f151; ef_f152; ef_f153; ef_f154; ef_f155; ef_f156; ef_f157; ef_f158; ef_f159;
+    ef_f160; ef_f161; ef_f162; ef_f163; ef_f164; ef_f165; ef_f166; ef_f167; ef_f168; ef_f169; ef_f170; ef_f171; ef_f172; ef_f173; ef_f174; ef_f175; ef_f176; ef_f177; ef_f178; ef_f179;
+    ef_f180; ef_f181; ef_f182; ef_f183; ef_f184; ef_f185; ef_f186; ef_f187; ef_f188; ef_f189; ef_f190; ef_f191; ef_f192; ef_f193; ef_f194; ef_f195; ef_f196; ef_f197; ef_f198; ef_f199;
+    ef_f200; ef_f201; ef_f202; ef_f203; ef_f204; ef_f205; ef_f206; ef_f207; ef_f208; ef_f209; ef_f210; ef_f211; ef_f212; ef_f213; ef_f214; ef_f215; ef_f216; ef_f217; ef_f218; ef_f219;
+    ef_f220; ef_f221; ef_f222; ef_f223; ef_f224; ef_f225; ef_f226; ef_f227; ef_f228; ef_f229; ef_f230; ef_f231; ef_f232; ef_f233; ef_f234; ef_f235; ef_f236; ef_f237; ef_f238; ef_f239;
+    ef_f240; ef_f241; ef_f242; ef_f243; ef_f244; ef_f245; ef_f246; ef_f247; ef_f248; ef_f249; ef_f250; ef_f251; ef_f252; ef_f253; ef_f254; ef_f255; ef_f256; ef_f257; ef_f258; ef_f259;
+    ef_f260; ef_f261; ef_f262; ef_f263; ef_f264; ef_f265; ef_f266; ef_f267; ef_f268; ef_f269; ef_f270; ef_f271; ef_f272; ef_f273; ef_f274; ef_f275; ef_f276; ef_f277; ef_f278; ef_f279;
+    ef_f280; ef_f281; ef_f282; ef_f283; ef_f284; ef_f285; ef_f286; ef_f287; ef_f288; ef_f289; ef_f290; ef_f291; ef_f292; ef_f293; ef_f294; ef_f295; ef_f296; ef_f297; ef_f298; ef_f299;
+    ef_f300; ef_f301; ef_f302; ef_f303; ef_f304; ef_f305; ef_f306; ef_f307; ef_f308; ef_f309; ef_f310; ef_f311; ef_f312; ef_f313; ef_f314; ef_f315; ef_f316; ef_f317; ef_f318; ef_f319;
+    ef_f320; ef_f321; ef_f322; ef_f323; ef_f324; ef_f325; ef_f326; ef_f327; ef_f328; ef_f329; ef_f330; ef_f331; ef_f332; ef_f333; ef_f334; ef_f335; ef_f336; ef_f337; ef_f338; ef_f339;
+    ef_f340; ef_f341; ef_f342; ef_f343; ef_f344; ef_f345; ef_f346; ef_f347; ef_f348; ef_f349; ef_f350; ef_f351; ef_f352; ef_f353; ef_f354; ef_f355; ef_f356; ef_f357; ef_f358; ef_f359;
+    ef_f360; ef_f361; ef_f362; ef_f363; ef_f364; ef_f365; ef_f366; ef_f367; ef_f368; ef_f369; ef_f370; ef_f371; ef_f372; ef_f373; ef_f374; ef_f375; ef_f376; ef_f377; ef_f378; ef_f379;
+    ef_f380; ef_f381; ef_f382; ef_f383; ef_f384; ef_f385; ef_f386; ef_f387; ef_f388; ef_f389; ef_f390; ef_f391; ef_f392; ef_f393; ef_f394; ef_f395; ef_f396; ef_f397; ef_f398; ef_f399;
+    ef_f400; ef_f401; ef_f402; ef_f403; ef_f404; ef_f405; ef_f406; ef_f407; ef_f408; ef_f409; ef_f410; ef_f411; ef_f412; ef_f413; ef_f414; ef_f415; ef_f416; ef_f417; ef_f418; ef_f419;
+    ef_f420; ef_f421; ef_f422; ef_f423; ef_f424; ef_f425; ef_f426; ef_f427; ef_f428; ef_f429; ef_f430; ef_f431; ef_f432; ef_f433; ef_f434; ef_f435; ef_f436; ef_f437; ef_f438; ef_f439;
+    ef_f440; ef_f441; ef_f442; ef_f443; ef_f444; ef_f445; ef_f446; ef_f447; ef_f448; ef_f449; ef_f450; ef_f451; ef_f452; ef_f453; ef_f454; ef_f455; ef_f456; ef_f457; ef_f458; ef_f459;
+    ef_f460; ef_f461; ef_f462; ef_f463; ef_f464; ef_f465; ef_f466; ef_f467; ef_f468; ef_f469; ef_f470; ef_f471; ef_f472; ef_f473; ef_f474; ef_f475; ef_f476; ef_f477; ef_f478; ef_f479;
+    ef_f480; ef_f481; ef_f482; ef_f483; ef_f484; ef_f485; ef_f486; ef_f487; ef_f488; ef_f489; ef_f490; ef_f491; ef_f492; ef_f493; ef_f494; ef_f495; ef_f496; ef_f497; ef_f498; ef_f499;
+    ef_f500; ef_f501; ef_f502; ef_f503; ef_f504; ef_f505; ef_f506; ef_f507; ef_f508; ef_f509; ef_f510; ef_f511; ef_f512; ef_f513; ef_f514; ef_f515; ef_f516; ef_f517; ef_f518; ef_f519;
+    ef_f520; ef_f521; ef_f522; ef_f523; ef_f524; ef_f525; ef_f526; ef_f527; ef_f528; ef_f529; ef_f530; ef_f531; ef_f532; ef_f533; ef_f534; ef_f535; ef_f536; ef_f537; ef_f538; ef_f539;
+    ef_f540; ef_f541; ef_f542; ef_f543; ef_f544; ef_f545; ef_f546; ef_f547; ef_f548; ef_f549; ef_f550; ef_f551; ef_f552; ef_f553; ef_f554; ef_f555; ef_f556; ef_f557; ef_f558; ef_f559;
+    ef_f560; ef_f561; ef_f562; ef_f563; ef_f564; ef_f565; ef_f566; ef_f567; ef_f568; ef_f569; ef_f570; ef_f571; ef_f572; ef_f573; ef_f574; ef_f575; ef_f576; ef_f577; ef_f578; ef_f579;
+    ef_f580; ef_f581; ef_f582; ef_f583; ef_f584; ef_f585; ef_f586; ef_f587; ef_f588; ef_f589; ef_f590; ef_f591; ef_f592; ef_f593; ef_f594; ef_f595; ef_f596; ef_f597; ef_f598; ef_f599;
+    ef_f600; ef_f601; ef_f602; ef_f603; ef_f604; ef_f605; ef_f606; ef_f607; ef_f608; ef_f609; ef_f610; ef_f611; ef_f612; ef_f613; ef_f614; ef_f615; ef_f616; ef_f617; ef_f618; ef_f619;
+    ef_f620; ef_f621; ef_f622; ef_f623; ef_f624; ef_f625; ef_f626; ef_f627; ef_f628; ef_f629; ef_f630; ef_f631; ef_f632; ef_f633; ef_f634; ef_f635; ef_f636; ef_f637; ef_f638; ef_f639;
+    ef_f640; ef_f641; ef_f642; ef_f643; ef_f644; ef_f645; ef_f646; ef_f647; ef_f648; ef_f649; ef_f650; ef_f651; ef_f652; ef_f653; ef_f654; ef_f655; ef_f656; ef_f657; ef_f658; ef_f659;
+    ef_f660; ef_f661; ef_f662; ef_f663; ef_f664; ef_f665; ef_f666; ef_f667; ef_f668; ef_f669; ef_f670; ef_f671; ef_f672; ef_f673; ef_f674; ef_f675; ef_f676; ef_f677; ef_f678; ef_f679;
+    ef_f680; ef_f681; ef_f682; ef_f683; ef_f684; ef_f685; ef_f686; ef_f687; ef_f688; ef_f689; ef_f690; ef_f691; ef_f692; ef_f693; ef_f694; ef_f695; ef_f696; ef_f697; ef_f698; ef_f699;
+    ef_f700; ef_f701; ef_f702; ef_f703; ef_f704; ef_f705; ef_f706; ef_f707; ef_f708; ef_f709; ef_f710; ef_f711; ef_f712; ef_f713; ef_f714; ef_f715; ef_f716; ef_f717; ef_f718; ef_f719;
+    ef_f720; ef_f721; ef_f722; ef_f723; ef_f724; ef_f725; ef_f726; ef_f727; ef_f728; ef_f729; ef_f730; ef_f731; ef_f732; ef_f733; ef_f734; ef_f735; ef_f736; ef_f737; ef_f738; ef_f739;
+    ef_f740; ef_f741; ef_f742; ef_f743; ef_f744; ef_f745; ef_f746; ef_f747; ef_f748; ef_f749; ef_f750; ef_f751; ef_f752; ef_f753; ef_f754; ef_f755; ef_f756; ef_f757; ef_f758; ef_f759;
+    ef_f760; ef_f761; ef_f762; ef_f763; ef_f764; ef_f765; ef_f766; ef_f767; ef_f768; ef_f769; ef_f770; ef_f771; ef_f772; ef_f773; ef_f774; ef_f775; ef_f776; ef_f777; ef_f778; ef_f779;
+    ef_f780; ef_f781; ef_f782; ef_f783; ef_f784; ef_f785; ef_f786; ef_f787; ef_f788; ef_f789; ef_f790; ef_f791; ef_f792; ef_f793; ef_f794; ef_f795; ef_f796; ef_f797; ef_f798; ef_f799;
+    ef_f800; ef_f801; ef_f802; ef_f803; ef_f804; ef_f805; ef_f806; ef_f807; ef_f808; ef_f809; ef_f810; ef_f811; ef_f812; ef_f813; ef_f814; ef_f815; ef_f816; ef_f817; ef_f818; ef_f819;
+    ef_f820; ef_f821; ef_f822; ef_f823; ef_f824; ef_f825; ef_f826; ef_f827; ef_f828; ef_f829; ef_f830; ef_f831; ef_f832; ef_f833; ef_f834; ef_f835; ef_f836; ef_f837; ef_f838; ef_f839;
+    ef_f840; ef_f841; ef_f842; ef_f843; ef_f844; ef_f845; ef_f846; ef_f847; ef_f848; ef_f849; ef_f850; ef_f851; ef_f852; ef_f853; ef_f854; ef_f855; ef_f856; ef_f857; ef_f858; ef_f859;
+    ef_f860; ef_f861; ef_f862; ef_f863; ef_f864; ef_f865; ef_f866; ef_f867; ef_f868; ef_f869; ef_f870; ef_f871; ef_f872; ef_f873; ef_f874; ef_f875; ef_f876; ef_f877; ef_f878; ef_f879;
+    ef_f880; ef_f881; ef_f882; ef_f883; ef_f884; ef_f885; ef_f886; ef_f887; ef_f888; ef_f889; ef_f890; ef_f891; ef_f892; ef_f893; ef_f894; ef_f895; ef_f896; ef_f897; ef_f898; ef_f899;
+    ef_f900; ef_f901; ef_f902; ef_f903; ef_f904; ef_f905; ef_f906; ef_f907; ef_f908; ef_f909; ef_f910; ef_f911; ef_f912; ef_f913; ef_f914; ef_f915; ef_f916; ef_f917; ef_f918; ef_f919;
+    ef_f920; ef_f921; ef_f922; ef_f923; ef_f924; ef_f925; ef_f926; ef_f927; ef_f928; ef_f929; ef_f930; ef_f931; ef_f932; ef_f933; ef_f934; ef_f935; ef_f936; ef_f937; ef_f938; ef_f939;
+    ef_f940; ef_f941; ef_f942; ef_f943; ef_f944; ef_f945; ef_f946; ef_f947; ef_f948; ef_f949; ef_f950; ef_f951; ef_f952; ef_f953; ef_f954; ef_f955; ef_f956; ef_f957; ef_f958; ef_f959;
+    ef_f960; ef_f961; ef_f962; ef_f963; ef_f964; ef_f965; ef_f966; ef_f967; ef_f968; ef_f969; ef_f970; ef_f971; ef_f972; ef_f973; ef_f974; ef_f975; ef_f976; ef_f977; ef_f978; ef_f979;
+    ef_f980; ef_f981; ef_f982; ef_f983; ef_f984; ef_f985; ef_f986; ef_f987; ef_f988; ef_f989; ef_f990; ef_f991; ef_f992; ef_f993; ef_f994; ef_f995; ef_f996; ef_f997; ef_f998; ef_f999;
+    ef_f1000; ef_f1001; ef_f1002; ef_f1003; ef_f1004; ef_f1005; ef_f1006; ef_f1007; ef_f1008; ef_f1009; ef_f1010; ef_f1011; ef_f1012; ef_f1013; ef_f1014; ef_f1015; ef_f1016; ef_f1017; ef_f1018; ef_f1019;
+    ef_f1020; ef_f1021; ef_f1022; ef_f1023; ef_f1024; ef_f1025; ef_f1026; ef_f1027; ef_f1028; ef_f1029; ef_f1030; ef_f1031; ef_f1032; ef_f1033; ef_f1034; ef_f1035; ef_f1036; ef_f1037; ef_f1038; ef_f1039;
+    ef_f1040; ef_f1041; ef_f1042; ef_f1043; ef_f1044; ef_f1045; ef_f1046; ef_f1047; ef_f1048; ef_f1049; ef_f1050; ef_f1051; ef_f1052; ef_f1053; ef_f1054; ef_f1055; ef_f1056; ef_f1057; ef_f1058; ef_f1059;
+    ef_f1060; ef_f1061; ef_f1062; ef_f1063; ef_f1064; ef_f1065; ef_f1066; ef_f1067; ef_f1068; ef_f1069; ef_f1070; ef_f1071; ef_f1072; ef_f1073; ef_f1074; ef_f1075; ef_f1076; ef_f1077; ef_f1078; ef_f1079;
+    ef_f1080; ef_f1081; ef_f1082; ef_f1083; ef_f1084; ef_f1085; ef_f1086; ef_f1087; ef_f1088; ef_f1089; ef_f1090; ef_f1091; ef_f1092; ef_f1093; ef_f1094; ef_f1095; ef_f1096; ef_f1097; ef_f1098; ef_f1099;
+}
+
+# Declared AFTER the filler — past the old cap.
+enum EfHi { EF_GSZ = 3; EF_LSZ = 24; EF_VAL = 19; EF_CLK = 228; }
+
+var ef_gbuf[EF_GSZ];                 # top-level: EF_GSZ i64 slots
+
+fn ef_local_sized(): i64 {
+    var lb[EF_LSZ];                  # in a fn: EF_LSZ bytes
+    store8(&lb + 23, 7);
+    return load8(&lb + 23);
+}
+
+store64(&ef_gbuf + 16, 41);
+var r1 = assert_eq(load64(&ef_gbuf + 16), 41, "a top-level array sized by an enum past index 1024");
+var r2 = assert_eq(ef_local_sized(), 7, "a fn-local array sized by an enum past index 1024");
+var r3 = assert_eq(EF_VAL + 3, 22, "an enum constant past index 1024 has its value");
+
+# syscall(228): the literal is the control. On Linux the call returns 0 and fills the timespec;
+# on macOS (both archs) the reroute returns nanoseconds in the return register. Whatever the
+# host's shape is, the enum spellings must match the literal's. Clock 0 (CLOCK_REALTIME) because
+# it is the one id every host agrees on: 1 is MONOTONIC on Linux and not a clock at all to
+# macOS's clock_gettime_nsec_np, which returns 0 for it (measured on ecb). Before 6.6.8 the
+# enum-past-1024 spelling was a raw `svc`/`syscall` 228 on XNU — SIGSYS, exit 140, on ecb AND ach.
+var ef_ts[2];
+var ef_lit = syscall(228, 0, &ef_ts);
+var ef_lo = syscall(EF_CLK_LO, 0, &ef_ts);
+var ef_hi = syscall(EF_CLK, 0, &ef_ts);
+var r4 = assert(ef_lit >= 0, "syscall(228) succeeds on this host (the control)");
+var r5 = assert(ef_hi >= 0, "syscall(<enum 228 past index 1024>) succeeds");
+if (ef_lit == 0) {
+    var r6 = assert_eq(ef_hi, 0, "enum-past-1024 228 has the literal's return shape (0)");
+    var r7 = assert_eq(ef_lo, 0, "enum-below-1024 228 has the literal's return shape (0)");
+    var r8 = assert(load64(&ef_ts) > 0, "the timespec was filled");
+} else {
+    var r9 = assert(ef_lo > 0, "enum-below-1024 228 returns the clock like the literal");
+    var r10 = assert(ef_hi > 0, "enum-past-1024 228 returns the clock like the literal");
+}
+
+var r = assert_summary();

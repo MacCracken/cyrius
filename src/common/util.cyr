@@ -55,18 +55,23 @@ var _vecv_base = 0;    # 0x1D8000 enum_const_val
 # this table holds the presence flag. Lazily allocated on first write with the `_fnt_tparams`
 # precedent, so there is NO new heap region, NO fork edit and NO change to the cybs-fragile
 # `_grow_g*` chain (adding an 8th link to that chain DESYNCED cybs once already — see
-# `_vsgn_base`'s note below). 1024 slots, matching the fold table's own cap, which every reader
-# and the single writer already guard on.
+# `_vsgn_base`'s note below). A BYTE map sized to the var table's hard cap (1048576, the
+# `_var_dead` precedent — lazily mapped, so ~free), indexed like every other var-family table.
+# ⚠ It used to be 1024 slots "matching the fold table's own cap" — but the value table
+# `_vecv_base` had been a GROWN table since v6.3.0, so that cap was a stale copy of one the
+# storage no longer had, replicated at the writer and every reader. An enum constant registered
+# past var index 1024 silently did not fold: `var buf[ENUM]` was refused, the duplicate-symbol
+# warning went quiet, and on BOTH Mach-O targets `syscall(ENUM, ...)` lost its compile-time
+# reroute and issued the raw Linux number. CHANGELOG [6.6.8]
 var _vecp_base = 0;    # per-var "this slot holds a folded enum constant" (1 = yes)
 fn GVECP(S, vi): i64 {
     if (_vecp_base == 0) { return 0; }
     if (vi < 0) { return 0; }
-    if (vi >= 1024) { return 0; }
-    return L64(_vecp_base + vi * 8);
+    return load8(_vecp_base + vi);
 }
 fn SVECP(S, vi, v): i64 {
-    if (_vecp_base == 0) { _vecp_base = alloc(1024 * 8); }
-    S64(_vecp_base + vi * 8, v);
+    if (_vecp_base == 0) { _vecp_base = alloc(1048576); }
+    store8(_vecp_base + vi, v);
     return 0;
 }
 var _vgsi_base = 0;    # 0x1EC000 gvar_initval

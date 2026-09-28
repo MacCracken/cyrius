@@ -790,10 +790,10 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                     # as an enum constant (marker bit 63 set in the
                     # 0x1D8000 table), fold to EMOVI and mark _cfo=1 so
                     # callers like the syscall sc_num dispatch can read
-                    # the compile-time value. Falls through to EVLOAD if
-                    # the idx is out of the 1024-slot cap.
+                    # the compile-time value. (6.6.8: at any var index —
+                    # the old 1024-slot cap is gone, see util.cyr GVECP.)
                     STI(S, GTI(S) + 1);
-                    if (vi < 1024) {
+                    if (vi >= 0) {
                         if (GVECP(S, vi) == 1) {
                             var _evq = L64(_vecv_base + vi * 8);
                             _cfp = GCP(S);
@@ -970,9 +970,9 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         # EMOVI with _cfo=1 so the syscall-reroute dispatch (and any
         # other _cfv-driven optimization) can see the value at parse
         # time. Enum registration writes the marker at 0x1D8000; any
-        # gvar whose slot has bit 63 set is a fold candidate. Same
-        # 1024-slot cap as the qualified path.
-        if (idx < 1024) {
+        # gvar whose slot has bit 63 set is a fold candidate. (6.6.8:
+        # at any var index — the 1024-slot cap is gone, see util.cyr GVECP.)
+        if (idx >= 0) {
             if (GVECP(S, idx) == 1) {
                 var _ev = L64(_vecv_base + idx * 8);
                 _cfp = GCP(S);
