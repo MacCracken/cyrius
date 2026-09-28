@@ -565,6 +565,28 @@ fn _NEG_F32(S): i64 {
     return 0;
 }
 
+# _NEG_INTRIN_KIND — 1 when token `t` is a builtin whose RESULT is a scalar f64, 2 when it is
+# a scalar f32 bit pattern, else 0. Unary minus reads it BEFORE parsing its operand: those
+# builtins inherit their ARGUMENT's estype (the i64-boxed idiom leaves it 0), so GESTYPE
+# alone negated `-f64_exp(u)` as an integer (-4.0 for -1.0). The compiler knows these calls
+# return a float, whatever the argument was typed. f64_to/eq/lt/gt return integers and are
+# absent. Kept a flat compare chain: cybs compiles this file. CHANGELOG [6.6.8]
+fn _NEG_INTRIN_KIND(t): i64 {
+    if (t >= 62) { if (t <= 66) { return 1; } }     # f64_add/sub/mul/div, f64_from
+    if (t == 71) { return 1; }                       # f64_neg
+    if (t >= 80) { if (t <= 88) { return 1; } }     # f64_abs..f64_exp2
+    if (t == 92) { return 1; }                       # f64_round
+    if (t == 99) { return 1; }                       # f64_atan
+    if (t == 128) { return 1; }                      # f64v_dot
+    if (t == 132) { return 1; }                      # f32_to
+    if (t == 136) { return 1; }                      # f64_sqrt
+    if (t == 159) { return 1; }                      # f64v256_dot
+    if (t == 131) { return 2; }                      # f32_from
+    if (t == 142) { return 2; }                      # f32v_dot
+    if (t == 151) { return 2; }                      # f32v8_dot
+    return 0;
+}
+
 fn _PARSE_FACTOR_IMPL(S): i64 {
     var typ = PEEKT(S);
     SPSC(S, 0);
@@ -596,9 +618,15 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         # +0 and `-x` on an f64 likewise, on every target. The operand's type is known only
         # after it is parsed, so the integer prologue is shared and a float operand discards
         # its pushed 0 (EF64_NEG is exact for every value, -0.0 and NaN included). CHANGELOG [6.6.8]
+        # A float-returning BUILTIN is recognised by its token, read before the operand is
+        # consumed (its estype is its argument's — see _NEG_INTRIN_KIND); its estype is left
+        # as the builtin set it.
+        var _ngk = _NEG_INTRIN_KIND(PEEKT(S));
         EMOVI(S, 0);
         EPUSHR(S);
         PARSE_FACTOR(S);
+        if (_ngk == 1) { EPOPC(S); EF64_NEG(S); _cfo = 0; return 0; }
+        if (_ngk == 2) { _NEG_F32(S); _cfo = 0; return 0; }
         var _ngt = GESTYPE(S);
         if (_ngt == F64_TYID) { EPOPC(S); EF64_NEG(S); _cfo = 0; return 0; }
         if (_ngt == F32_TYID) { _NEG_F32(S); SESTYPE(S, F32_TYID); _cfo = 0; return 0; }

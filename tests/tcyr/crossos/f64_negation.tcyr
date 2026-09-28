@@ -16,6 +16,11 @@
 # aarch64 FNEG, and the cx `fneg` opcode (cxvm runs it through the host's f64_neg).
 include "lib/assert.cyr"
 include "lib/syscalls.cyr"
+# aarch64 lowers f64_sin/f64_exp to lib/math.cyr polyfills; the cx target has no
+# transcendental ops, so the include (and the rows that need it) are compiled off there.
+#ifndef CYRIUS_TARGET_CX
+include "lib/math.cyr"
+#endif
 
 var G_NEG: f64 = -2.5;          # top-level initializer: the runtime-init path, not a local
 
@@ -23,6 +28,19 @@ fn negf(x: f64): f64 { return -x; }
 fn negf_untyped_ret(x: f64) { return -x; }
 # Untyped params: the XOR is on plain i64 bits, whatever the caller's operands were typed.
 fn bits_xor(a, b) { return a ^ b; }
+
+# A bare `if (v)` straight after a negation. x86 skips the `test rax, rax` when the flags
+# already describe rax, and `btc` does NOT set ZF — so the branch read the ZF of whatever
+# ran before the negation. Each shape is kept as written: the store-forwarded var is what
+# lets the branch follow the negation directly.
+fn branch_neg_zero_lit() { var taken = 0; var z = -0.0; if (z) { taken = 1; } return taken; }
+fn branch_f64_neg_zero() { var taken = 0; var q = f64_neg(0); if (q) { taken = 1; } return taken; }
+fn branch_f64_neg_to_zero() {
+    var taken = 0; var one = 1; var zero = 0;
+    var q = f64_neg((one << 63) | zero);   # the `or` leaves ZF=0; q is +0
+    if (q) { taken = 1; }
+    return taken;
+}
 
 fn main(): i64 {
     test_group("unary minus on float literals");
@@ -66,6 +84,29 @@ fn main(): i64 {
     var nan: f64 = f64_div(zero, zero);
     var nn: f64 = -nan;
     assert_eq(bits_xor(nn, nan), 0x8000000000000000, "-NaN differs from NaN in the sign bit only");
+
+    test_group("unary minus on a float-returning builtin (untyped argument)");
+    # The builtins inherit their ARGUMENT's type, and the i64-boxed idiom leaves it untyped,
+    # so the operand's type said "integer" and these were integer negations of the bits.
+    var u2 = 0x4000000000000000;      # 2.0, untyped
+    var u15 = 0x3FF8000000000000;     # 1.5, untyped: 0 - 0x4000.. happens to BE -2.0's
+                                      # bits, so a 2.0 result cannot tell the two apart
+    # Off on cx: it rejects f64_sin/f64_exp, and its f64_sqrt is still an identity stub.
+#ifndef CYRIUS_TARGET_CX
+    assert_eq(-f64_exp(0), 0xBFF0000000000000, "-f64_exp(0) is -1.0 (was -4.0)");
+    assert_eq(-f64_sin(0), 0x8000000000000000, "-f64_sin(0) is -0 (was +0)");
+    assert_eq(-f64_sqrt(u2), 0xBFF6A09E667F3BCD, "-f64_sqrt(untyped 2.0) is -sqrt(2)");
+#endif
+    assert_eq(-f64_add(u2, u2), 0xC010000000000000, "-f64_add(untyped) is -4.0");
+    assert_eq(-f64_abs(u15), 0xBFF8000000000000, "-f64_abs(untyped 1.5) is -1.5");
+    assert_eq(-f64_neg(u15), 0x3FF8000000000000, "-f64_neg(x) is x");
+    assert_eq(-f32_from(u2), 0xC0000000, "-f32_from(untyped 2.0) is -2.0f (bit 31)");
+    assert_eq(-f32_to(0x3FC00000), 0xBFF8000000000000, "-f32_to(1.5f) is -1.5");
+
+    test_group("a branch on a negated value tests the value");
+    assert_eq(branch_neg_zero_lit(), 1, "if (-0.0) is taken: -0 is nonzero bits");
+    assert_eq(branch_f64_neg_zero(), 1, "if (f64_neg(0)) is taken");
+    assert_eq(branch_f64_neg_to_zero(), 0, "if (f64_neg(-0)) is not taken: the result is 0");
 
     test_group("f64_neg is a sign-bit flip");
     assert_eq(f64_neg(0), 0x8000000000000000, "f64_neg(+0) is -0 (x86 gave +0)");

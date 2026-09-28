@@ -18,10 +18,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   f64_neg"*, ganita's *"-0 cannot be produced"*, faq.md's *"no negative literals — use `(0 -
   N)`"*, which for a float is the next bug down). **Fix:** the operand's type is read after it
   is parsed; an `F64_TYID` operand (a float literal is one) drops the pushed 0 and takes
-  `EF64_NEG`, an `F32_TYID` operand XORs bit 31, and the integer path is byte-identical. An
-  UNTYPED variable holding float bits is still an `i64` to the compiler — `f64_neg(v)` is the
-  spelling there (documented). Gated by `tests/tcyr/crossos/f64_negation.tcyr` (29 bit-exact
-  rows, -0 checked through `1/x`; the 6.6.7 compiler fails 20).
+  `EF64_NEG`, an `F32_TYID` operand XORs bit 31, and the integer path is byte-identical. A
+  float-returning BUILTIN (`-f64_exp(u)`, `-f64_sqrt(u)`, `-f32_from(u)`, …) is recognised by
+  its token before the operand is parsed, because those builtins carry their ARGUMENT's type
+  and the i64-boxed idiom leaves it untyped — `-f64_exp(0)` was still -4.0 and `-f64_sin(0)`
+  +0 until that arm (`_NEG_INTRIN_KIND`). An UNTYPED variable or struct field holding float
+  bits is still an `i64` to the compiler — `f64_neg(v)` is the spelling there (documented).
+  Gated by `tests/tcyr/crossos/f64_negation.tcyr` (40 bit-exact rows, -0 checked through
+  `1/x`; the 6.6.7 compiler fails 20 of the first 29, and removing the builtin arm fails 7).
+- **x86: `if (v)` right after a float negation tests `v`.** (bite 4.) `EF64_NEG`'s `btc` does
+  not set ZF, but the emitter left `_flags_reflect_rax` claiming the flags described rax, so a
+  bare-boolean branch skipped its `test rax, rax` and read the ZF of whatever ran before the
+  negation: `var z = -0.0; if (z)` was not taken, and `f64_neg` of -0 after an `or` was. ELF,
+  PE and x86 Mach-O (one emitter). The emitter now clears the flag; three branch rows in
+  `f64_negation.tcyr` fail without it.
 - **x86 `f64_neg` is a sign-bit flip (`btc rax, 63`), as aarch64 FNEG and cx `fneg` are.**
   (bite 4.) It computed `0.0 - x` with `subsd`, which is not negation: `f64_neg(+0)` was +0 and
   a NaN kept its sign, so x86 (ELF, PE, Mach-O — one emitter) disagreed with aarch64 bit for

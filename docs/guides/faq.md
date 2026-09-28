@@ -88,7 +88,7 @@ String literals are null-terminated, but if you're building strings manually, ma
 4. Max 4096 global vars with non-literal initializers per compilation unit (raised from 1024 at v6.3.41); integer-literal inits and enum members don't count (use enums for constants)
 5. Fixup entries: growable since v6.2.0, 64M-entry ceiling (was a fixed 1M cap — `cyrius capacity --check` to monitor headroom)
 6. Functions per compilation: growable since v6.2.0, 32,768 ceiling (was a fixed 8192 cap)
-7. Negative literals work (`-5`, `-1.5`, `-x`). For a FLOAT, never write `0 - N`: an operator is typed by its LEFT operand, so `0 - 1.5` is integer arithmetic on 1.5's bits (it is -3.0 — warned since 6.6.8). Write `-1.5`, `-x` or `0.0 - x`. (This entry used to say "no negative literals — use `(0 - N)`", which was the float trap written down as advice; float unary minus itself was broken until 6.6.8, where `-1.0` was -4.0.)
+7. Negative literals work (`-5`, `-1.5`, `-x`). For a FLOAT, never write `0 - N`: an operator is typed by its LEFT operand, so `0 - 1.5` is integer arithmetic on 1.5's bits (it is -3.0 — warned since 6.6.8). Write `-1.5`, `-x` or `0.0 - x` — with `x` typed `f64`; on an UNTYPED var or struct field holding float bits, `-x` is integer negation too, so write `f64_neg(x)`. (This entry used to say "no negative literals — use `(0 - N)`", which was the float trap written down as advice; float unary minus itself was broken until 6.6.8, where `-1.0` was -4.0.)
 8. `default`, `match`, `in` are keywords — don't use as variable names
 9. Block closures (`|x| { ... }`) capture enclosing locals by value (since v6.3.8), but only work inside functions, not at global scope
 

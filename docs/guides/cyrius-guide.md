@@ -45,11 +45,14 @@ Octal uses digits `0`–`7`; a `8` or `9` ends the literal. (There is no
 `0b` binary literal form.) A decimal literal with a fractional part
 (`3.14`) is lexed as an `f64` float.
 
-Unary minus works on every literal and value. On a float — a float literal, or a value
-typed `f64` / `f32` — it flips the **sign bit**, so `-1.5` is -1.5, `-0.0` is negative
+Unary minus flips the **sign bit** of a float the compiler can see is a float: a float
+literal, a value typed `f64` / `f32`, or a direct call to a float-returning builtin
+(`-f64_sqrt(v)`, `-f64_exp(v)`, `-f32_from(v)`, …). So `-1.5` is -1.5, `-0.0` is negative
 zero and `-x` negates an `f64` exactly (6.6.8; before it, `-1.0` evaluated to -4.0 and
-`-0.0` to +0, silently). An **untyped** variable holding float bits is an `i64` as far as
-the compiler knows, so negate that with `f64_neg(v)`.
+`-0.0` to +0, silently). It does NOT cover an **untyped** variable or a struct field holding
+float bits, or a parenthesised operand whose own type is untyped (`-(f64_exp(u))` with
+`u` untyped, `-(a + b)` over untyped vars) — those are `i64` as far as the compiler
+knows, and `-v` is integer negation of the bits. Negate them with `f64_neg(v)`.
 
 ⚠ Binary operators are typed by their LEFT operand. `0 - 1.5` is an INTEGER subtraction
 of 1.5's bit pattern (it is -3.0), and `2 * x` with `x: f64` multiplies x's bits. Write

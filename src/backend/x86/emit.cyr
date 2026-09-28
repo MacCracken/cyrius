@@ -3322,10 +3322,13 @@ fn ELOAD_LOCAL_ADDR(S, adisp): i64 {
 # subsd), which is NOT negation: 0.0 - (+0) is +0, so f64_neg(0) never produced -0, and a
 # NaN came back with its sign unchanged — x86 and aarch64 disagreed bit-for-bit on both.
 # Works on the bits in rax; xmm0 is not an output (a `: f64` return moves rax itself).
-# CHANGELOG [6.6.8]
+# BTC leaves ZF UNDEFINED/unchanged, so the flags no longer describe rax: clear
+# _flags_reflect_rax or a following `if (x)` skips its `test` and branches on the ZF of
+# whatever preceded the negation (`-0.0` read as false). CHANGELOG [6.6.8]
 fn EF64_NEG(S): i64 {
     _IR_REC0(S, IR_RAW_EMIT);
     EB(S, 0x48); EB(S, 0x0F); EB(S, 0xBA); EB(S, 0xF8); EB(S, 0x3F);   # btc rax, 63
+    _flags_reflect_rax = 0;
     return 0;
 }
 
