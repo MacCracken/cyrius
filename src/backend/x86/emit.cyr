@@ -3028,6 +3028,29 @@ fn _pe_open_flags(S): i64 {
     return 0;
 }
 
+# 6.6.9 — derive CreateFileW's dwFlagsAndAttributes from the Linux open() flag word, into
+# r8d. EOPEN_PE passed a FIXED 0x80 (FILE_ATTRIBUTE_NORMAL) before this, and CreateFileW
+# resolves a final reparse point for EVERY disposition, so plain O_CREAT|O_EXCL over a
+# DANGLING symlink created the link's target (measured on real cass, CHANGELOG [6.6.6]).
+# Split out of `_pe_open_flags` for the cybs per-function limit, and it runs FIRST: it only
+# PEEKS the flag word at [rsp+8] (stack top→bottom: [mode] [flags] [path] [sc_nr]) before
+# `_pe_open_flags` pops it. r8 survives `_pe_open_flags` (rax/rcx/rdx/r9/r10) and the widen
+# loop (rax/rcx/rsi/rdi); EOPEN_PE stores it at [rsp+0x28] before it reuses r8d for dwShareMode.
+#   base                    FILE_ATTRIBUTE_NORMAL          0x00000080
+#   O_CREAT|O_EXCL (0xC0)   | FILE_FLAG_OPEN_REPARSE_POINT 0x00200000 — CREATE_NEW never opens
+#                           an existing object, so the flag cannot make it open a link; it only
+#                           stops the create from following one. Race-free, no check.
+# CHANGELOG [6.6.9]
+fn _pe_open_attr_flags(S): i64 {
+    EB(S, 0x48); EB(S, 0x8B); EB(S, 0x44); EB(S, 0x24); EB(S, 0x08); # mov rax, [rsp+8] (flags, peeked)
+    EB(S, 0x41); EB(S, 0xB8); EB(S, 0x80); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); # mov r8d, 0x80 (FILE_ATTRIBUTE_NORMAL)
+    EB(S, 0x25); EB(S, 0xC0); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); # and eax, 0xC0 (O_CREAT|O_EXCL)
+    EB(S, 0x3D); EB(S, 0xC0); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); # cmp eax, 0xC0
+    EB(S, 0x75); EB(S, 0x07);                           # jne +7 (not CREATE_NEW)
+    EB(S, 0x41); EB(S, 0x81); EB(S, 0xC8); EB(S, 0x00); EB(S, 0x00); EB(S, 0x20); EB(S, 0x00); # or r8d, FILE_FLAG_OPEN_REPARSE_POINT
+    return 0;
+}
+
 # emit Win64 open: `syscall(2, path, flags, mode)` →
 # CreateFileW(lpFileName, dwDesiredAccess, dwShareMode,
 #             lpSecurityAttributes, dwCreationDisposition,
@@ -3057,7 +3080,7 @@ fn _pe_open_flags(S): i64 {
 # Frame layout (0x250 = 592 B, plus an 8 B pad at odd expression depth):
 #   [rsp+0x000..0x01F]  shadow space (32 B, Win64 ABI)
 #   [rsp+0x020]         dwCreationDisposition stack arg (8 B)
-#   [rsp+0x028]         dwFlagsAndAttributes stack arg (8 B)
+#   [rsp+0x028]         dwFlagsAndAttributes stack arg (8 B; from `_pe_open_attr_flags`, 6.6.9)
 #   [rsp+0x030]         hTemplateFile stack arg (8 B, = 0)
 #   [rsp+0x038..0x247]  widened UTF-16 path buffer (528 B ≈ 264 WCHARs)
 #   [rsp+0x248..0x24F]  8 B tail pad
@@ -3082,6 +3105,7 @@ fn EOPEN_PE(S): i64 {
     _pe_ensure_createf(S);
     var cf_idx = _pe_createf_get();
 
+    _pe_open_attr_flags(S);                             # peeks flags; r8d=dwFlagsAndAttributes (6.6.9)
     _pe_open_flags(S);                                  # pops mode+flags; r9d=access, r10d=disposition
     EB(S, 0x58);                                        # pop rax (path ptr)
     EB(S, 0x49); EB(S, 0x89); EB(S, 0xC3);              # mov r11, rax (stash path)
@@ -3111,11 +3135,10 @@ fn EOPEN_PE(S): i64 {
     # Set up CreateFileW args.
     EB(S, 0x48); EB(S, 0x8D); EB(S, 0x4C); EB(S, 0x24); EB(S, 0x38); # lea rcx, [rsp+0x38]
     EB(S, 0x44); EB(S, 0x89); EB(S, 0xCA);                           # mov edx, r9d (dwDesiredAccess — 6.6.6, was a hardcoded 0xC0000000)
+    EB(S, 0x4C); EB(S, 0x89); EB(S, 0x44); EB(S, 0x24); EB(S, 0x28); # mov [rsp+0x28], r8 (dwFlagsAndAttributes — 6.6.9, was a fixed 0x80)
     EB(S, 0x41); EB(S, 0xB8); EB(S, 0x03); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); # mov r8d, 3 (FILE_SHARE_READ|WRITE)
     EB(S, 0x4D); EB(S, 0x31); EB(S, 0xC9);                           # xor r9, r9
     EB(S, 0x4C); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x20); # mov [rsp+0x20], r10 (dwCreationDisposition)
-    EB(S, 0x48); EB(S, 0xC7); EB(S, 0x44); EB(S, 0x24); EB(S, 0x28); # mov qword [rsp+0x28], 0x80 (FILE_ATTRIBUTE_NORMAL)
-    EB(S, 0x80); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00);
     EB(S, 0x48); EB(S, 0xC7); EB(S, 0x44); EB(S, 0x24); EB(S, 0x30); # mov qword [rsp+0x30], 0 (hTemplateFile)
     EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00);
 

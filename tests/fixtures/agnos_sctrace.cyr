@@ -25,6 +25,10 @@
 #   send0  — like `us`, and sock_send#48 answers 0 (no ACK progress) every time.
 #   send3  — like `us`, and #48 answers min(3, len) bytes per call.
 #   oldnet — sock_listen#56 answers -1 for any a1 above 65535 (a pre-1.57.7 kernel: no classes).
+#   exclref  — open#7 answers -1 and lstat#102 answers 0: an AO_EXCL create refused because the
+#              name exists (agnos answers every refusal with a bare -1). (v6.6.9)
+#   exclnone — open#7 and lstat#102 both answer -1: refused, and the name does NOT exist (a
+#              missing parent directory). (v6.6.9)
 # The proc* modes drive lib/process_agnos.cyr (v6.6.8). In all of them pipe#25 writes the fds 3
 # (read) and 4 (write) into the child's buffer, exec_redirect#62 answers 0, spawn_path#43 answers
 # pid 2, read#5 on fd 3 answers 5 bytes once and then 0 (EOF), and waitpid#4 answers status 7 to
@@ -116,6 +120,15 @@ fn _st_answer(mode, nr, k, a1, a3): i64 {
     }
     if (nr == 56) {
         if (_st_mode_is(mode, "oldnet") == 1) { if (a1 > 65535) { return 0 - 1; } }
+        return 0;
+    }
+    if (nr == 7) {
+        if (_st_mode_is(mode, "exclref") == 1) { return 0 - 1; }
+        if (_st_mode_is(mode, "exclnone") == 1) { return 0 - 1; }
+        return 0;
+    }
+    if (nr == 102) {
+        if (_st_mode_is(mode, "exclnone") == 1) { return 0 - 1; }
         return 0;
     }
     if (_st_is_proc(mode) == 1) { return _st_proc_answer(mode, nr, k, a1, a3); }

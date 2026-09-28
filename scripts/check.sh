@@ -1428,3 +1428,7 @@ _chk_gate "$ROOT/tests/gates/toolchain/check_gate_census.sh"
 # 6.6.9 (bite 4) — x86 f64_sin / f64_cos (ELF, PE, x86 Mach-O) call lib/math.cyr's fdlibm polyfill,
 # not x87 fsin / fcos (66-bit π: sin(π) 1.6e11 ulp off, |x| >= 2^63 returned unchanged).
 _chk_gate "$ROOT/tests/gates/codegen/x86_trig_calls_polyfill.sh"
+
+# 6.6.9 (bite 5) — agnos file_create_exclusive is one atomic AO_EXCL create (was a file_exists
+# pre-check + plain create), a refusal classified -EEXIST by lstat#102.
+_chk_gate "$ROOT/tests/gates/platform/agnos_create_exclusive_atomic.sh"
