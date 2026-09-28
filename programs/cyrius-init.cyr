@@ -266,10 +266,26 @@ fn _read_trimmed_line(path): i64 {
 fn _cwd_path(): i64 {
     var p = getenv("PWD");
     if (p != 0) { if (strlen(p) > 0) { return p; } }
+    #ifdef CYRIUS_TARGET_MACOS
+    # v6.6.8: Darwin has NO getcwd syscall — SYS_GETCWD (79 on x86-macOS, 17 on arm64) was
+    # unrouted on both Macs: a SIGSYS kill on Intel, a stale-x16 call on Apple Silicon, reached
+    # whenever $PWD was unset or empty. Derive it from the "." fd instead: fcntl(F_GETPATH = 50)
+    # writes the absolute path (MAXPATHLEN 1024 fits the buffer) and returns 0 — the form
+    # cbt/deps.cyr's _abs_path has used on both Macs since 6.0.41. CHANGELOG [6.6.8]
+    var mbuf = alloc(4096);
+    var dfd = sys_open(".", 0, 0);
+    if (dfd >= 0) {
+        var fr = syscall(SYS_FCNTL, dfd, 50, mbuf);
+        sys_close(dfd);
+        if (fr == 0) { if (load8(mbuf) == 47) { return mbuf; } }
+    }
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
     #ifndef CYRIUS_TARGET_WIN
     var buf = alloc(4096);
     var n = syscall(SYS_GETCWD, buf, 4096);
     if (n > 0) { return buf; }
+    #endif
     #endif
     return ".";
 }

@@ -207,6 +207,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `tests/gates/platform/darwin_syscall_literals_routed.sh` (`syscall(228, id)` must warn and
   `syscall(228, id, &ts)` must not, on both backends — RED with the check reverted).
 
+- **`cyrius init .` on macOS with `$PWD` unset no longer dies (or runs a stray syscall).**
+  (bite 2.) **Root cause:** `programs/cyrius-init.cyr`'s `_cwd_path` fell back to
+  `syscall(SYS_GETCWD, …)`, and Darwin has no getcwd syscall — 79 was unrouted on x86-macOS
+  (SIGSYS) and 17 on arm64-macOS (a stale-x16 call before this release, SIGSYS after). A NAMED
+  constant, so no literal scan saw it, and macho_route_parity read `lib/` only. Measured with
+  `env -i`: the 6.6.7-source binary printed nothing and died on both ecb and ach. **Fix:** a
+  `#ifdef CYRIUS_TARGET_MACOS` arm derives the path from the "." fd with `fcntl(F_GETPATH = 50)`
+  — the form `cbt/deps.cyr`'s `_abs_path` has used on both Macs since 6.0.41 — and the getcwd
+  arm compiles only off macOS; the in-place dry run now names the real directory on both Macs.
+  Pinned by `darwin_syscall_literals_routed.sh` axis 2 (a Mach-O build of `cyrius-init.cyr` must
+  print no `not routed`: 79 / 17 without the fix) and by macho_route_parity.sh, whose issued-name
+  scan now reads `cbt/ programs/ tests/` too.
+
 ## [6.6.7] — 2026-09-27
 
 The first of three SMALL releases that the post-6.6.6 issue track is split into (roadmap.md, *The 6.6.7
