@@ -363,6 +363,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `syscalls_linux_common` fns and their PE / agnos peers). The kavach and sigil issues are
   archived.
 
+- **`tests/gates/frontend/derive_accessors_inlined.sh` counts the accessor calls against a
+  baseline, not the whole binary.** (bite 3.) Axis 1 required "<= 5 callq" in a probe that links
+  every function `lib/syscalls.cyr` defines, so the count was really a census of stdlib calls:
+  it went RED when `fd_set_nonblocking` (three calls) landed, with the accessors still inlined
+  (6 callq, all in the stdlib). It now builds a control with the same includes and struct and no
+  accessor calls and requires the DIFFERENCE to be <= 1 (inlined 0, out of line 4); with
+  `_pp_inl_add` stubbed it reads 4 over the baseline and fails.
+
 ### Added
 
 - **A Darwin axis for the syscall gates: `tests/gates/platform/darwin_syscall_literals_routed.sh`

@@ -13,7 +13,7 @@
 # (Same fact as v6.4.81's "`#` is a COMMENT so `#include` probes are inert".)
 #
 # ⚠ MUTATION-PROVEN: with `_pp_inl_add` stubbed to a no-op, axis 1's call count does not drop
-# (7 callq, not 3) while every answer stays correct — which is exactly why axis 1 asserts the
+# (4 callq over the baseline, not 0 — "7, not 3" when this counted the whole binary) while every answer stays correct — which is exactly why axis 1 asserts the
 # CALL COUNT and not just the value. An inlining change is invisible to a result assertion.
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -46,9 +46,21 @@ EOF
 "$T/stage1" < "$T/a1.cyr" > "$T/a1" 2>/dev/null || { echo "FAIL derive_accessors_inlined axis1: probe did not compile"; exit 1; }
 chmod +x "$T/a1"; "$T/a1"; got=$?
 [ "$got" -eq 120 ] || { echo "FAIL derive_accessors_inlined axis1: probe gave $got, expected 120 — inlining changed the ANSWER"; exit 1; }
+# ⚠ COUNTED AGAINST A BASELINE, not as an absolute. The probe links every function lib/syscalls.cyr
+# defines, so its total callq count moves whenever a stdlib wrapper gains or loses a call: this
+# gate shipped as "<= 5 in the whole binary" and went RED at 6.6.8 bite 3 when fd_set_nonblocking
+# (three calls) landed in lib/syscalls_linux_common.cyr — with the accessors still inlined. The
+# control below has the same includes and struct and a main that makes no accessor calls, so the
+# DIFFERENCE is main's accessor calls alone: 0 inlined, 4 out of line. CHANGELOG [6.6.8]
+printf '%s\n' 'include "lib/syscalls.cyr"' 'struct P { a; b; }' 'fn main(): i64 {' \
+  '    var p: P;' '    syscall(60, 0);' '    return 0;' '}' 'var e = main();' > "$T/a0.cyr"
+"$T/stage1" < "$T/a0.cyr" > "$T/a0" 2>/dev/null || { echo "FAIL derive_accessors_inlined axis1: the baseline did not compile"; exit 1; }
+[ -s "$T/a0" ] || { echo "FAIL derive_accessors_inlined axis1: the baseline binary is empty"; exit 1; }
+NB=$(llvm-objdump -d "$T/a0" 2>/dev/null | grep -c callq)
 NC=$(llvm-objdump -d "$T/a1" 2>/dev/null | grep -c callq)
-[ "$NC" -le 5 ] || {
-  echo "FAIL derive_accessors_inlined axis1: $NC callq in the probe (inlined is 3, out-of-line is 7)."
+[ $((NC - NB)) -le 1 ] || {
+  echo "FAIL derive_accessors_inlined axis1: the probe has $((NC - NB)) callq more than its baseline"
+  echo "  ($NC vs $NB; inlined is 0 more, out-of-line is 4 more)."
   echo "  The accessors are not reaching the inline-replay path. A value assertion cannot see this,"
   echo "  which is why this row counts CALLS."
   exit 1; }
@@ -105,5 +117,5 @@ PC=$(llvm-objdump -d "$T/a3" 2>/dev/null | grep -c callq)
   echo "  must fire only for names the preprocessor generated."
   exit 1; }
 
-echo "PASS derive_accessors_inlined: generated accessors inlined ($NC callq vs 7 out-of-line) · stacked #derive still fires · a plain fn of the same shape stays out of line"
+echo "PASS derive_accessors_inlined: generated accessors inlined ($((NC - NB)) callq over the baseline; out-of-line is 4) · stacked #derive still fires · a plain fn of the same shape stays out of line"
 exit 0
