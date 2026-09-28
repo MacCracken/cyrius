@@ -1,0 +1,105 @@
+# process_deadline_term_first.tcyr — CROSS-HOST: when lib/process.cyr's deadline
+# (`proc_set_timeout_ms`) ends a child, it asks first (SIGTERM, a grace period, then SIGKILL),
+# and on Linux it ends the child's whole tree. Runs on ecb (macOS arm64) + ach (Intel Mac) +
+# pi (aarch64) through the release gate's cross-OS leg; on Windows and agnos there is no
+# POSIX deadline to test and the file only reports its summary.
+#
+# ⛔ WHY (6.6.8). The deadline killed the child alone, with SIGKILL. SIGKILL runs no cleanup,
+# so a `/bin/sh -c` child's trap never removed what it made (the check driver's OVMF boot
+# leaves a 64 MB disk image that way), and PR_SET_PDEATHSIG is cleared on fork, so the
+# shell's own children were reparented to init and kept running. `_proc_kill_tree` now sends
+# the child SIGTERM, gives it `_PROC_GRACE_MS`, sends ONE SIGTERM to each descendant it left,
+# and only then SIGKILLs what remains. CHANGELOG [6.6.8]
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/syscalls.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/tagged.cyr"
+include "lib/chrono.cyr"
+include "lib/process.cyr"
+
+fn _path(tag): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "/tmp/cyrius_pdt_");
+    str_builder_add_int(sb, sys_getpid());
+    str_builder_add_cstr(sb, tag);
+    return str_data(str_builder_build(sb));
+}
+
+fn _read_pid(path): i64 {
+    var b[32];
+    var n = file_read_all(path, &b, 31);
+    if (n <= 0) { return 0; }
+    var v = 0;
+    var i = 0;
+    while (i < n) {
+        var c = load8(&b + i);
+        if (c >= 48 && c <= 57) { v = v * 10 + c - 48; }
+        i = i + 1;
+    }
+    return v;
+}
+
+fn main(): i64 {
+    alloc_init();
+    test_group("a deadline asks first: SIGTERM, grace, then SIGKILL");
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_AGNOS
+    var flag = _path("_trap");
+    var bgp = _path("_bg");
+    sys_unlink(flag);
+    sys_unlink(bgp);
+    # A shell that cleans up on TERM, waiting (interruptibly) on a background child whose pid
+    # it records. `wait` is interruptible in every POSIX sh, so the trap runs at once.
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "trap 'echo t > ");
+    str_builder_add_cstr(sb, flag);
+    str_builder_add_cstr(sb, "; exit 3' TERM; sleep 30 & echo $! > ");
+    str_builder_add_cstr(sb, bgp);
+    str_builder_add_cstr(sb, "; wait");
+    var cmd = str_data(str_builder_build(sb));
+    var prev = proc_set_timeout_ms(600);
+    var t0 = clock_now_ms();
+    var rc = exec_cmd(cmd);
+    var el = clock_now_ms() - t0;
+    proc_set_timeout_ms(prev);
+    assert_eq(rc, 0 - 2, "a child ended at the deadline reports -2");
+    assert_eq(file_exists(flag), 1, "its TERM trap ran — the deadline sent SIGTERM, not SIGKILL");
+    assert_eq(el < 5000, 1, "…and it was not held for the grace period once it had gone");
+    var bg = _read_pid(bgp);
+    assert_eq(bg > 0, 1, "the shell's background child was recorded");
+    #ifdef CYRIUS_TARGET_LINUX
+    # Linux walks /proc: the orphan the shell left got its own SIGTERM within the grace.
+    var gone = 0;
+    var k = 0;
+    while (k < 50 && gone == 0) {
+        if (sys_kill(bg, 0) != 0) { gone = 1; }
+        else { syscall(7, 0, 0, 20); }
+        k = k + 1;
+    }
+    assert_eq(gone, 1, "the child's own child was ended too (the whole tree, Linux)");
+    #endif
+    if (bg > 0) { sys_kill(bg, 9); }
+    sys_unlink(flag);
+    sys_unlink(bgp);
+
+    test_group("a child that ignores SIGTERM is still ended, after the grace period");
+    prev = proc_set_timeout_ms(300);
+    t0 = clock_now_ms();
+    var rc2 = exec_cmd("trap '' TERM; sleep 30");
+    var el2 = clock_now_ms() - t0;
+    proc_set_timeout_ms(prev);
+    assert_eq(rc2, 0 - 2, "it still reports -2");
+    assert_eq(el2 >= 4000, 1, "it was given the grace period before SIGKILL");
+    assert_eq(el2 < 20000, 1, "…and then SIGKILLed, not waited for");
+    #endif
+    #endif
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);

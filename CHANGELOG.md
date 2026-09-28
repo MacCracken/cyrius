@@ -26,6 +26,39 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   registration, a registration with no file, a driver `_gate(` whose path the reader cannot see,
   and any check.sh line that runs a gate outside `_chk_gate` — and proves itself RED on four
   mutants of the registry before it can read green.
+- **Nothing a check run starts outlives it, a killed gate still cleans up, and `kill <check.sh>`
+  works at once.** (bite 8.) **Root cause, four measured shapes:** check.sh ran each of its 70
+  gates as a foreground `sh "$_g"` — no death signal and no deadline — so a SIGKILLed check.sh
+  left the gate's sh at PPID=1 with its children alive; the driver armed PR_SET_PDEATHSIG on
+  the gate's `/bin/sh` only, and it is cleared on fork, so the gate's own children survived a
+  killed driver and a deadline kill alike (`_regression_wait_deadline` and lib/process.cyr's
+  `_proc_wait_deadline` signalled the pid only); every kill was SIGKILL, which runs no cleanup,
+  so a killed gate's `trap 'rm -rf "$T"' EXIT` never removed its mktemp dir from RAM-backed
+  /tmp (TERM: 0 left behind, KILL: 1); and POSIX runs a trap only after the foreground command
+  returns, so `kill <check.sh>` waited for the current gate — or the whole ~13-minute driver
+  run. **Fix:** `cyrius_check --run-gate <script>` (new `programs/checks/run_gate.cyr`) runs a
+  gate under a supervisor that is a child SUBREAPER in the caller's own process group (no
+  setsid — Ctrl-C, `timeout sh check.sh` and `kill -- -PGID` keep reaching everything), arms
+  PDEATHSIG(SIGTERM) on itself and the gate, reads TERM/INT/HUP/CHLD through a signalfd,
+  bounds the gate by `CYRIUS_CHECK_LONG_TIMEOUT` (exit 124 and a `TIMEOUT: <gate>
+  (CYRIUS_CHECK_LONG_TIMEOUT=Ns)` line), and ends the gate's tree with ONE SIGTERM per process
+  (each orphan as it is adopted), a 5 s grace for EXIT traps, then SIGKILL — and names anything
+  a gate that exited left running. Both registries use it: check.sh's `_chk_gate` and the
+  driver's `_gate_run`. The driver re-execs itself under the same supervisor and is a subreaper
+  too, sweeping leftovers at exit; `--gate-row <script>` runs one gate exactly as a driver row.
+  check.sh runs every child as `& wait` and forwards SIGTERM on INT/TERM/HUP (the summary says
+  `INTERRUPTED by SIG…`, exit 128+n). The deadline kills in lib/regression.cyr
+  (`_regression_kill_tree`, also used by `regression_run_with_timeout`) and lib/process.cyr
+  (`_proc_kill_tree`) end the child's tree the same way (Linux walks
+  `/proc/<pid>/task/*/children`; elsewhere the child alone, still TERM first). ⚠ One SIGTERM
+  per process is load-bearing: the first cut sprayed every descendant, and a nested supervisor's
+  second SIGTERM killed a gate's shell mid-EXIT-trap (bash dies on it). New public
+  `regression_terminate_children(grace_ms)`. Gated by
+  `tests/gates/toolchain/check_driver_dies_with_check_sh.sh` axes 4-10 (SIGKILLed check.sh,
+  SIGKILLed driver parent, deadline, SIGTERM within 4 s, process-group kill, a gate's leftover,
+  and an anti-vacuous foreground mutant that must leak), mutation-proven against no subreaper,
+  no grace and the foreground `sh`; and `tests/tcyr/crossos/process_deadline_term_first.tcyr`
+  (run on pi, ecb and ach).
 
 ## [6.6.7] — 2026-09-27
 

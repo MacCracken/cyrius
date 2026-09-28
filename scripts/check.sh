@@ -61,6 +61,34 @@ _chk_shell_manifest() {
 # targeted shell-gate run narrows it, so the summary does not report the rest as NOT RUN.
 _CHK_MANIFEST=$(_chk_shell_manifest)
 
+# ⛔ 6.6.8 — EVERY CHILD RUNS AS `& wait`, UNDER THE SUPERVISOR, AND A SIGNAL IS FORWARDED.
+# A gate used to run as a foreground `sh "$_g"` and the driver as a foreground `"$CHECK_BIN"`.
+# Three measured defects came with that:
+#   * POSIX runs a trap only after the FOREGROUND command returns, so `kill <this pid>` did
+#     nothing until the current gate finished — and when the driver was that command, until
+#     the whole ~13-minute driver run finished. `wait` is interruptible; a foreground child
+#     is not. So each child runs in the background and is waited for, and the INT/TERM/HUP
+#     traps below forward SIGTERM to it (TERM, not the signal received: a `&` job starts with
+#     SIGINT ignored, and that ignore is inherited) and wait for it before the summary.
+#   * a SIGKILLed check.sh left the gate's sh at PPID=1 with its children alive, and no gate
+#     run here had any deadline. Each gate now runs under `cyrius_check --run-gate`
+#     (programs/checks/run_gate.cyr): a subreaper in THIS process group (no setsid, so
+#     Ctrl-C, `timeout sh check.sh` and `kill -- -PGID` keep reaching everything) with
+#     PDEATHSIG, the CYRIUS_CHECK_LONG_TIMEOUT deadline, and TERM -> grace -> KILL of the
+#     gate's whole tree so its EXIT trap still removes its mktemp dir.
+#   * the driver supervises itself the same way (it re-execs under the supervisor), so a
+#     forwarded TERM ends ITS tree in order too. CHANGELOG [6.6.8]
+_CHK_CHILD=""
+_CHK_RC=0
+_chk_run_bg() {
+    "$@" &
+    _CHK_CHILD=$!
+    _CHK_RC=0
+    wait "$_CHK_CHILD" || _CHK_RC=$?
+    _CHK_CHILD=""
+    return 0
+}
+
 # Run one shell gate. ALWAYS returns 0 — `set -e` must not turn a red gate into an abort;
 # the tally is the verdict.
 _chk_gate() {
@@ -74,8 +102,8 @@ MISSING $_gn"
         _CHK_FAILS=$((_CHK_FAILS + 1))
         return 0
     fi
-    _grc=0
-    sh "$_g" "$@" || _grc=$?
+    _chk_run_bg "$CHECK_BIN" --run-gate "$_g" "$@"
+    _grc=$_CHK_RC
     if [ "$_grc" = 0 ]; then
         _CHK_RESULTS="$_CHK_RESULTS
 PASS $_gn"
@@ -89,11 +117,17 @@ FAIL $_gn"
 }
 
 _CHK_DONE=0
+_CHK_SIGNAL=""
 _chk_finish() {
     _xrc=$?
     # INT/TERM handlers `exit`, which re-enters via the EXIT trap in some shells.
     if [ "$_CHK_DONE" = "1" ]; then exit "$_xrc"; fi
     _CHK_DONE=1
+    case "$_CHK_SIGNAL" in
+        INT)  _xrc=130 ;;
+        TERM) _xrc=143 ;;
+        HUP)  _xrc=129 ;;
+    esac
     if [ -n "$_CHK_STAGED_DIR" ]; then rm -rf "$_CHK_STAGED_DIR"; fi
     if [ "$_CHK_STARTED" != "1" ]; then exit "$_xrc"; fi
 
@@ -132,6 +166,11 @@ _chk_finish() {
         echo "  NOT RUN — these did NOT execute and are NOT passes:"
         for _m in $_notrun; do echo "    $_m"; done
     fi
+    if [ -n "$_CHK_SIGNAL" ]; then
+        echo "  INTERRUPTED by SIG$_CHK_SIGNAL — the running child was sent SIGTERM and waited for"
+        echo "────────────────────────────────────────────────────────────────────"
+        exit "$_xrc"
+    fi
     if [ "$_CHK_FAILS" = "0" ] && [ "$_nnot" = "0" ]; then
         echo "  ALL GREEN"
         echo "────────────────────────────────────────────────────────────────────"
@@ -142,9 +181,20 @@ _chk_finish() {
 }
 # INT/TERM as well as EXIT: interrupting a long run is exactly when you most need to be
 # told which gates never executed, and dash does not run an EXIT trap on an untrapped INT.
+# 6.6.8: the signal is FORWARDED (as SIGTERM) to the child being waited for, and that child
+# is waited for, before the summary — see _chk_run_bg.
+_chk_on_signal() {
+    _CHK_SIGNAL=$1
+    if [ -n "$_CHK_CHILD" ]; then
+        kill -TERM "$_CHK_CHILD" 2>/dev/null || true
+        wait "$_CHK_CHILD" 2>/dev/null || true
+    fi
+    _chk_finish
+}
 trap _chk_finish EXIT
-trap _chk_finish INT
-trap _chk_finish TERM
+trap '_chk_on_signal INT' INT
+trap '_chk_on_signal TERM' TERM
+trap '_chk_on_signal HUP' HUP
 
 # ── v6.6.6 (bite 27b): REAP THE STAGED HOMES A KILLED RUN LEFT BEHIND ────────────────
 #
@@ -383,8 +433,9 @@ fi
 # `_chk_gate`. CHANGELOG [6.6.8]
 _chk_driver_gate_manifest() {
     # Only the PATH literal that ends a `_gate(` call — a script named anywhere else in the
-    # driver (e.g. `scripts/install.sh`) is not a registration.
-    grep -hE '(^|[^A-Za-z0-9_])_gate\(' "$ROOT"/programs/checks/*.cyr \
+    # driver (e.g. `scripts/install.sh`) is not a registration, and neither is a commented-out
+    # call.
+    grep -hE '(^|[^A-Za-z0-9_])_gate\(' "$ROOT"/programs/checks/*.cyr | grep -vE '^[[:space:]]*#' \
         | grep -oE '"(tests/gates|scripts)/[A-Za-z0-9_./-]+\.sh"\);' | sed 's/");$//; s/^"//'
 }
 # Every registration, ONE LINE PER CALL — duplicates kept, so a gate registered twice is
@@ -528,9 +579,8 @@ if [ $# -gt 0 ]; then
 
     _chk_stage_home
     if [ "$_CHK_KIND" = "suite" ]; then
-        _CHK_TARGETED_RC=0
-        "$CHECK_BIN" "$_CHK_SEL" || _CHK_TARGETED_RC=$?
-        exit "$_CHK_TARGETED_RC"
+        _chk_run_bg "$CHECK_BIN" "$_CHK_SEL"
+        exit "$_CHK_RC"
     fi
     # A bucket or a single gate. Narrow the manifest FIRST so the end-of-run summary
     # reports on exactly what was selected instead of calling the other ~128 NOT RUN.
@@ -557,8 +607,8 @@ _chk_stage_home
 # header. The shell gates cover things the binary cannot, and a red doc stamp is no reason to
 # stop looking at them.
 _CHK_STARTED=1
-_CHK_DRIVER_RC=0
-"$CHECK_BIN" || _CHK_DRIVER_RC=$?
+_chk_run_bg "$CHECK_BIN"
+_CHK_DRIVER_RC=$_CHK_RC
 if [ "$_CHK_DRIVER_RC" = "0" ]; then
     _CHK_RESULTS="$_CHK_RESULTS
 PASS $_CHK_DRIVER"

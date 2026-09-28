@@ -99,7 +99,7 @@ _census() {  # $1 = scratch root, $2 = tag for scratch files
     # axis 3: every driver `_gate(` call is one the reader saw. Call sites counted from the
     # source, independently of the reader's own regex.
     _calls=$(grep -hE '(^|[^A-Za-z0-9_])_gate\(' "$_R"/programs/checks/*.cyr \
-        | grep -cvE '^[[:space:]]*fn[[:space:]]+_gate\(' || true)
+        | grep -vE '^[[:space:]]*#' | grep -cvE '^[[:space:]]*fn[[:space:]]+_gate\(' || true)
     _shreg=$(grep -cE '^_chk_gate "\$ROOT/' "$_R/scripts/check.sh" || true)
     _total=$(grep -c . "$D/$_t.reg" || true)
     _drv=$((_total - _shreg))
@@ -138,7 +138,7 @@ RC=$?
 echo "  $NDISK gate file(s), $NREG registration(s)"
 
 echo "axis 5: every driver-registered gate resolves as a selector"
-grep -hE '(^|[^A-Za-z0-9_])_gate\(' programs/checks/*.cyr \
+grep -hE '(^|[^A-Za-z0-9_])_gate\(' programs/checks/*.cyr | grep -vE '^[[:space:]]*#' \
     | grep -oE '"(tests/gates|scripts)/[A-Za-z0-9_./-]+\.sh"\);' \
     | sed 's|.*/||; s|\.sh");$||' | LC_ALL=C sort -u > "$D/dnames"
 ND=$(grep -c . "$D/dnames" || true)

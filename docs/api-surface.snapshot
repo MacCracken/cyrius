@@ -2427,6 +2427,7 @@ regression::regression_ssh_remote_exec_capture/4
 regression::regression_ssh_remote_exit/3
 regression::regression_ssh_skip_check/1
 regression::regression_ssh_target/2
+regression::regression_terminate_children/1
 regression_agnos::regression_codesign_remote/3
 regression_agnos::regression_exec_capture/4
 regression_agnos::regression_exec_capture_status/5

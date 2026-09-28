@@ -180,9 +180,13 @@ printf '#!/bin/sh\nexit 0\n' > "$W/root/build/cycc"
 chmod +x "$W/root/build/cycc"
 printf '#!/bin/sh\nmkdir -p "$CYRIUS_HOME/bin"\nexit 0\n' > "$W/root/scripts/install.sh"
 chmod +x "$W/root/scripts/install.sh"
+# 6.6.8: check.sh runs every gate as `cyrius_check --run-gate <script>` (the supervisor in
+# programs/checks/run_gate.cyr), so the stub answers that form by running the script — only
+# the bare invocation is "the driver".
 cat > "$W/root/build/cyrius_check" <<STUB
 #!/bin/sh
 if [ "\$1" = "--list-suites" ]; then printf 'alpha\nbeta\n'; exit 0; fi
+if [ "\$1" = "--run-gate" ]; then shift; exec sh "\$@"; fi
 echo "DRIVER \$*" >> "$W/ran.log"
 exit 0
 STUB
