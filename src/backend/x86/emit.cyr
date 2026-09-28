@@ -2584,6 +2584,30 @@ fn _pe_dyn_exit(S): i64 {
     return 0;
 }
 
+# The arity-2 arm of `EPE_SYSCALL_DYNAMIC`, in its own function so that one does not grow
+# toward the cybs per-function reference limit (the bootstrap compiler fails SILENTLY past
+# it). Routes close(3), unlink(87), exit(60) and — since 6.6.9 — fsync(74) / fdatasync(75),
+# the same Linux numbers the LITERAL path routes at argc 2 (`_PE_ROUTE_FLUSH`). Before
+# 6.6.9 a `var n = 74; syscall(n, fd)` got -38 here while `syscall(74, fd)` flushed, and no
+# warning was printed: a number held in a var is only known at RUN time, so the compiler
+# warns only for an arity with NO routable member (`EPE_SYSCALL_DYNAMIC` → 2). At an arity
+# that has members, an unmatched number is an honest -38 with no compile-time diagnostic —
+# which is why the literal and var paths must route the same set. CHANGELOG [6.6.9]
+fn _pe_dyn_arity2(S, disp): i64 {
+    _pe_dyn_load(S, disp);
+    var r0 = _pe_dyn_cmp(S, 3);  ECLOSE_PE(S);   var f0 = EJMP0(S); EPATCH(S, r0);
+    var r1 = _pe_dyn_cmp(S, 87); EDELETEF_PE(S); var f1 = EJMP0(S); EPATCH(S, r1);
+    var r3 = _pe_dyn_cmp(S, 74); EFLUSHFB_PE(S); var f3 = EJMP0(S); EPATCH(S, r3);
+    var r4 = _pe_dyn_cmp(S, 75); EFLUSHFB_PE(S); var f4 = EJMP0(S); EPATCH(S, r4);
+    # exit(60): mirror the literal path (pop code, drop sc_nr, ExitProcess).
+    # EEXIT ends in int3 and never returns, so its jmp-done is dead but kept
+    # for uniform structure.
+    var r2 = _pe_dyn_cmp(S, 60); _pe_dyn_exit(S); var f2 = EJMP0(S); EPATCH(S, r2);
+    _pe_dyn_nomatch(S, 2);
+    EPATCH(S, f0); EPATCH(S, f1); EPATCH(S, f3); EPATCH(S, f4); EPATCH(S, f2);
+    return 0;
+}
+
 # Emit the runtime switch. Returns 1 if argc is routable on PE (cmp/jne over the
 # routable syscalls of this arity; unknown number → -38). Returns 2 if NO
 # routable syscall has this arity — emits an honest -38/-ENOSYS no-op
@@ -2612,15 +2636,7 @@ fn EPE_SYSCALL_DYNAMIC(S, argc): i64 {
         return 1;
     }
     if (argc == 2) {
-        _pe_dyn_load(S, disp);
-        var r0 = _pe_dyn_cmp(S, 3);  ECLOSE_PE(S);   var f0 = EJMP0(S); EPATCH(S, r0);
-        var r1 = _pe_dyn_cmp(S, 87); EDELETEF_PE(S); var f1 = EJMP0(S); EPATCH(S, r1);
-        # exit(60): mirror the literal path (pop code, drop sc_nr, ExitProcess).
-        # EEXIT ends in int3 and never returns, so its jmp-done is dead but kept
-        # for uniform structure.
-        var r2 = _pe_dyn_cmp(S, 60); _pe_dyn_exit(S); var f2 = EJMP0(S); EPATCH(S, r2);
-        _pe_dyn_nomatch(S, argc);
-        EPATCH(S, f0); EPATCH(S, f1); EPATCH(S, f2);
+        _pe_dyn_arity2(S, disp);
         return 1;
     }
     if (argc == 7) {

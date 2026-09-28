@@ -487,9 +487,10 @@ fn PINDIRECT_CALL(S): i64 {
 # The var-number switch (`EPE_SYSCALL_DYNAMIC`) is deliberately NOT extended for these:
 # every caller spells the number as a literal (lib/syscalls_windows.cyr's `sys_qpc`/
 # `sys_qpf`, and lib/chrono.cyr's `_chrono_qpc_ns` / lib/bench.cyr's `_bench_qpc_ns`,
-# which spell them raw to stay self-sufficient), a non-literal number degrades to an
-# honest -38/-ENOSYS with a warning since v6.1.17, and the argc==2 arm of that function
-# is itself near the same cybs limit.
+# which spell them raw to stay self-sufficient), and a non-literal number degrades to an
+# honest -38/-ENOSYS. ⚠ WITHOUT a compile-time warning at argc 2: the var-number warning
+# fires only for an arity with NO routable member, and argc 2 has several (the value is
+# known only at run time). Corrected 6.6.9; the claim that stood here said it warned.
 fn _PE_ROUTE_PERFCOUNTER(S, sc_num, argc): i64 {
     if (argc != 2) { return 0; }
     if (sc_num == 61496) { EQPC_PE(S); return 1; }
@@ -585,10 +586,10 @@ fn _PE_ROUTE_MODULEPATH(S, sc_num, argc): i64 {
 # was a loud -38 on Windows) flushes with no source change, and the Windows peer can
 # define sys_fsync/sys_fdatasync the way every other peer does. Windows has one flush for
 # data + metadata, so both numbers make the same call. Its own function for the cybs
-# per-function reference limit (see _PE_ROUTE_PERFCOUNTER). Literal-only, like the pair
-# above (an enum constant IS a literal): a number held in a var reaches
-# EPE_SYSCALL_DYNAMIC's argc-2 switch, which carries 3/60/87 only, and gets an honest -38
-# — an error, never a false success. CHANGELOG [6.6.7]
+# per-function reference limit (see _PE_ROUTE_PERFCOUNTER). A number held in a var reaches
+# EPE_SYSCALL_DYNAMIC's argc-2 switch (`_pe_dyn_arity2`), which routes 74/75 the same way
+# since 6.6.9 — before that it carried 3/60/87 only, so `var n = 74; syscall(n, fd)` got
+# -38 with no warning while the literal flushed. CHANGELOG [6.6.7], [6.6.9]
 fn _PE_ROUTE_FLUSH(S, sc_num, argc): i64 {
     if (argc == 2) {
         if (sc_num == 74) { EFLUSHFB_PE(S); return 1; }

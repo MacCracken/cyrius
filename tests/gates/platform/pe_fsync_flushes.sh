@@ -38,7 +38,8 @@
 # comments stripped; every row runs exactly once on every target) and must be ≥ FLOOR, so
 # deleting rows fails this gate instead of shrinking it.
 #
-# ROW FLOOR: 16 assertions (measured 2026-09-27 at 6.6.7).
+# ROW FLOOR: 18 assertions (16 measured 2026-09-27 at 6.6.7; +2 at 6.6.9 for the var-held
+# 74/75 rows — the runtime switch on PE did not route them).
 #
 # MUTATION LEDGER — built and run 2026-09-27 at 6.6.7, x86_64 Linux + wine 11.17. Each mutant
 # is a one-edit scratch tree rebuilt with build/cycc, with a copy of this gate in it.
@@ -65,7 +66,7 @@
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC="$ROOT/build/cycc"
 SRC="$ROOT/tests/tcyr/crossos/fsync_flushes.tcyr"
-FLOOR=16
+FLOOR=18
 
 [ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 0; }
 [ -f "$SRC" ] || { echo "  FAIL: $SRC is missing — the cross-OS companion for this gate is gone"; exit 1; }

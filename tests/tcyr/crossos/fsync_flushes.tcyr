@@ -34,6 +34,16 @@ assert_eq(syscall(75, fd), 0, "fdatasync(75) of a written descriptor flushes (PE
 # Nested in an expression at odd depth — the PE reroute realigns its own frame.
 assert_eq(1 + syscall(74, fd) * 2, 1, "fsync(74) inside an expression");
 
+# A number held in a VAR is only known at run time, so on PE it goes through the runtime
+# switch (EPE_SYSCALL_DYNAMIC) instead of the literal route. Until 6.6.9 that switch carried
+# close/unlink/exit only at argc 2: a var-held 74/75 got -38, and the compiler printed NO
+# warning (it warns only for an arity with no routable member at all). CHANGELOG [6.6.9]
+test_group("var-held fsync / fdatasync numbers flush too");
+var nr_fsync = 74;
+var nr_fdatasync = 75;
+assert_eq(syscall(nr_fsync, fd), 0, "var-held fsync(74) flushes (PE: was -38, silently)");
+assert_eq(syscall(nr_fdatasync, fd), 0, "var-held fdatasync(75) flushes (PE: was -38, silently)");
+
 test_group("xfsync: the portable wrapper flushes, and fails on nothing");
 # PE: xfsync returned 0 without flushing until 6.6.7 — for ANY argument. This is the row
 # that was red on Windows: a no-op cannot tell 12345 from an open file.
