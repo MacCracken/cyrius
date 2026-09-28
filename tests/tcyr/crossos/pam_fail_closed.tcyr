@@ -1,0 +1,42 @@
+# pam_fail_closed.tcyr — 6.6.9: lib/pam.cyr compiles ALONE on every target and fails CLOSED
+# wherever Linux-PAM does not exist.
+#
+# lib/pam.cyr's fork/pipe/dup2/execve/waitpid body is written against the Linux wrappers:
+# on agnos it was a hard compile error (sys_waitpid takes one argument, no sys_dup2 /
+# sys_execve) and on PE sys_pipe did not exist. The body is now Linux-only, and every other
+# target answers PAM_AUTH_HELPER_MISSING (pam_unix_available() == 0) — never a success it
+# could not check. This file includes ONLY lib/pam.cyr and lib/assert.cyr, so it is also the
+# per-host proof that pam.cyr brings its own definers (result.cyr -> fmt.cyr among them).
+#
+# On Linux the helper is not run: invoking unix_chkpwd for a made-up user would log an
+# authentication failure on the box every time the suite runs. When the helper is absent
+# (e.g. a minimal container) the missing-helper answer is asserted there too.
+# CHANGELOG [6.6.9]
+include "lib/pam.cyr"
+include "lib/assert.cyr"
+
+fn main(): i64 {
+    alloc_init();
+    test_group("pam fails closed where Linux-PAM does not exist");
+    var avail = pam_unix_available();
+    assert_eq(avail == 0 || avail == 1, 1, "pam_unix_available() answers 0 or 1");
+    #ifndef CYRIUS_TARGET_LINUX
+    assert_eq(avail, 0, "no unix_chkpwd off Linux: pam_unix_available() == 0");
+    assert_eq(pam_unix_authenticate("cy-no-such-user", "x"), PAM_AUTH_HELPER_MISSING,
+      "off Linux, pam_unix_authenticate answers PAM_AUTH_HELPER_MISSING");
+    var t, v = pam_unix_authenticate_r("cy-no-such-user", "x");
+    assert_eq(is_err_result(t), 1, "the Result form is an Err off Linux");
+    assert_eq(v, PamHelperMissing, "... and the Err is PamHelperMissing");
+    #endif
+    #ifdef CYRIUS_TARGET_LINUX
+    if (avail == 0) {
+        assert_eq(pam_unix_authenticate("cy-no-such-user", "x"), PAM_AUTH_HELPER_MISSING,
+          "no helper on this Linux host: PAM_AUTH_HELPER_MISSING");
+    } else {
+        assert_eq(1, 1, "unix_chkpwd present on this Linux host (not run — see the header)");
+    }
+    #endif
+    return assert_summary();
+}
+var r = main();
+syscall(60, r);

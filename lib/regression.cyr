@@ -2,10 +2,9 @@
 # `programs/checks/` at v5.9.42.
 #
 # Usage: include "lib/regression.cyr"
-# Requires: string.cyr, syscalls.cyr (host arch variant),
-#           io.cyr, alloc.cyr, str.cyr, fmt.cyr,
-#           net.cyr (v5.10.11 — `regression_network_probe`
-#           composes on `net_connect_nb`).
+# Includes its own definers (6.6.9): syscalls.cyr, alloc.cyr, string.cyr, io.cyr, vec.cyr,
+# str.cyr, result.cyr, net.cyr (v5.10.11 — `regression_network_probe` composes on
+# `net_connect_nb`).
 #
 # What this module provides — ~22 reusable primitives that
 # accumulated through cyrius's v5.9.6 → v5.9.41 dispatcher
@@ -64,6 +63,17 @@
 #   - Functions returning exit codes use the stdlib convention:
 #     0..127 normal exit; 128+sig on signal; -1 on
 #     fork/exec/syscall failure; -2 specifically for timeout.
+
+# 6.6.9: the header's definers were a "Requires:" list for the caller; a bare include was a
+# hard error (`undefined variable 'SYS_WRITE'`) plus ~35 undefined functions. CHANGELOG [6.6.9]
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/io.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/result.cyr"
+include "lib/net.cyr"
 
 # v6.2.7: AGNOS has no fork/dup2/execve/chdir/wait4 — the POSIX fork+exec model
 # the process/SSH verbs below use can't map onto agnos's in-memory-ELF SYS_SPAWN.

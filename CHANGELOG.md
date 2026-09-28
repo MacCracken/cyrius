@@ -546,6 +546,160 @@ a native cx compiler also exits 1 on the slice / await / async triggers.
   fails as a bad URL instead of overflowing (CVE-50). Resolution is IPv4-only with no `search`
   domains: a host that only has an AAAA record, or a short name that relies on a search suffix,
   does not resolve here — use `lib/sandhi.cyr` for those.
+- **`lib/bench.cyr`: a row's per-op `min`/`max` are decided for the ROW, by op count — a
+  minimum can no longer print above the mean.** (bite 6; issue
+  `2026-09-21-hisab-bench-min-above-mean-below-resolution-bar`, archived.) **Root cause:**
+  6.6.5's resolution rule admitted each window into min/max on its OWN net
+  (`net >= 100 × (floor + tick)`). When a row's typical window sits under that bar, the only
+  windows that cross it are the ones something slow landed in, so min and max were the
+  extremes of the PERTURBED windows and `bench_min_resolved` answered 1 as soon as one did:
+  hisab's `vec3_add: 16ns avg (min=39ns max=43ns)`, 24 of 320 rows of its suite. `bench_run`
+  was exposed the same way one notch weaker — `_bench_chunk_for` sized each chunk to land
+  exactly ON the bar, so a chunk that ran faster than its predecessor was dropped — and its
+  truncated tail and pilot sat in the mean as cheaper windows that could claim nothing
+  (1-ps `min > avg` rows with two windows and no coin flip at all). **Fix:** `_bench_record`
+  takes an eligibility flag decided by the CALLER before the window runs, and an eligible
+  window feeds min/max and `min_k` (the smallest eligible op count) unconditionally; the row
+  resolves at read time iff `min_k × avg_ps >= 100 × err × 1000`. Every `bench_run_batch*`,
+  `bench_batch_*` and `bench_stop` window is eligible; in `bench_run` a chunk is eligible iff
+  `_bench_chunk_for` sized it, never the 16-op pilot or a geometric-growth chunk; chunks are
+  sized for **4×** the bar (`_BENCH_MARGIN`), and the remainder is absorbed into the last
+  chunk instead of running as a separate tail window. `bench_run`'s pilot and growth chunks
+  are HELD and booked together with the next sized chunk, as one eligible window of their
+  summed ops, raw time and clock pairs (one floor netted per pair); that chunk is sized for
+  4× the bar per pair, `min_k` counts ops per clock pair, and a row resolves only when every
+  pair is inside an eligible window (one that ends holding a growth chunk books it
+  ineligible and reports the mean). **The invariant is `min <= avg`, exact to the
+  picosecond on every row, `bench_run` included**; `avg <= max` is exact until a
+  re-measured lower floor raises the mean (≤ ~1 %). The first cut left the pilot as a
+  separate window in the mean and documented "a few picoseconds" of tolerance; review
+  measured the real bound, ~err/n per op — at `n = 200` of a 2 µs op on the hpet box 139 of
+  200 rows PRINTED min above avg (79 under 6.6.8) — and the fold replaced it: 0 of 200 at
+  n = 200, 1,000 and 5,000. Short rows (≲ 2× the bar in total) now report the mean: 24 of
+  80 rows of bench_vec + bench_str + bench_hashmap over 5 runs here, against 11 under the
+  first cut, every one under ~2× the bar in total. A stricter reading of the planned rule —
+  eligible only when sized from a window that itself resolved — was measured and rejected
+  (61 of those 80 rows unresolved). The
+  `[per op in ps: ...]` line now also says `E of W windows eligible`; new public accessor
+  `bench_windows_eligible(b)`. `avg` is unchanged; min/max are **regime 6** in
+  `docs/development/benchmark-regimes.md`. The hisab repro exits 0 on this box and on real
+  ecb, ach, pi and cass (3/3 each; it exits 1 here against the 6.6.8 library). Pinned by
+  `tests/tcyr/crossos/bench_timer_floor.tcyr` legs (e) (re-derived: cheap pilot, cold pilot
+  inside the margin, cold pilot beyond it — the safe direction, the row reports the mean),
+  (i) (re-derived counts), (j) (hisab's spike-every-third-window shape, closed form), (k)
+  (windows straddling the bar), (l) (a small-n `bench_run` row: n = 300 resolves with min =
+  avg, n = 200 does not resolve, a pilot-only row), (m) (a row ending on a held growth
+  chunk), `bench_stop` eligibility, plus live `min <= avg` tripwires on batch, `bench_stop`
+  and 40 small-n `bench_run` rows — 145/145 here, under qemu-aarch64, wine and the AGNOS
+  container, and on ecb (146, with its macOS-arm tick assertion), ach, pi and cass, 3/3 runs
+  each; 16 of them fail against the first cut of this fix, and against the 6.6.8 library the
+  file does not build (it uses the new accessor).
+  `tests/gates/toolchain/bench_timer_floor_measured.sh`
+  pinned the defective rule (axis B required the per-window test inside `_bench_record`);
+  axis B now forbids it and requires the decision in `bench_min_resolved` from `min_k` and
+  from every pair being eligible, and the fold in `bench_run`; probe legs (6) and (7) are
+  re-derived, legs (9)-(12) are new, and the mutants re-anchor on the new rule — 23, all
+  killed (`BTF_MUT_LOG=1` prints which leg killed each).
+
+- **Stdlib self-sufficiency: every first-party `lib/` module includes what it calls — on
+  x86-Linux, agnos, PE, Mach-O and aarch64.** (bite 7; the roadmap tail item, plus three
+  review finds placed into it.) **Root cause:** modules wrote their requirements down FOR THE
+  CALLER in `# Requires:` comments (protobuf's said "include BEFORE this file"; net's and
+  bench's named a retired `agnosys/syscalls.cyr`) instead of including their definers.
+  `cyrius build`'s `[deps].stdlib` prepend hid it from project consumers, and every
+  hand-written include list was exposed: `include "lib/<m>.cyr"` alone compiled with
+  undefined functions — each a ud2/SIGILL stub the program dies on at its first call — or
+  was a HARD error (`process`: `SYS_GETPPID`, `sync`/`thread`: `SYS_FUTEX`, `async`:
+  `SYS_EPOLL_CREATE1`, `dynlib`: `PROT_READ`, `audit_walk`: `O_RDONLY`, `regression`:
+  `SYS_WRITE`; on agnos `net`, `process` and `pam`). At this slot's open 50 of the 104
+  top-level modules warned and 27 did not compile alone on x86-Linux, and `lib/unicode/` was
+  never scanned. **Fix, per module family, each complete:**
+  - **A foundation** — `syscalls.cyr` includes `alloc.cyr` LAST, after the peers (their
+    sigset/epoll/timer helpers call `alloc`), so a syscalls-then-alloc program lays out as
+    before and agnos' alloc ↔ syscalls cycle is broken by include-once; `result` → fmt
+    (which alone cleans `hashseed`, `sys`, `tagged`); `random` → syscalls; `cffi` → alloc;
+    `slice`, `keccak` → string; `bounds` → fmt + string; `args.cyr`'s agnos arm includes
+    alloc + string before `args_agnos` (the one module clean on Linux and not on agnos);
+    `pam.cyr`'s fork/pipe/dup2/execve/waitpid body is **Linux-only** — every other target
+    fails CLOSED (`PAM_AUTH_HELPER_MISSING`, `pam_unix_available() == 0`), never a guessed
+    success; on agnos it had been a hard error (`sys_waitpid` arity, no `sys_dup2` /
+    `sys_execve`).
+  - **B text/collections + unicode** — `str`, `chrono`, `callback`, `hashmap`,
+    `hashmap_fast`, `regex`, `protobuf`, `trait`, `bench`, `unicode/casefold`,
+    `unicode/normalize`.
+  - **C io/fs/process** — `process` (before its per-target peers), `dynlib`, `fdlopen`,
+    `grp`, `pwd`, `shadow`, `audit_walk`, `regression`. `fs.cyr` → syscalls, alloc, string,
+    str, vec, and PE gains a fail-closed `sys_pipe` (-1; the name was UNDEFINED on PE, so
+    `regression.cyr`'s capture path was a ud2 trap there) — these two hunks sit in files
+    another lane owns this release and merge with this bite, pinned by the new
+    `tests/tcyr/crossos/sys_pipe_every_target.tcyr`.
+  - **D concurrency** — `sync`, `thread`, `thread_local`, `async`. Making `thread_local`
+    compile alone for cx exposed that it did nothing there: neither `CYRIUS_ARCH_*` is
+    defined on cx, so `_tlocal_install` had no arm at all (it returned the leftover return
+    register — `cx_tcyr_runs.sh`'s empty-body axis reddened) and get/set read 0 / dropped the
+    value. cx is a single-threaded VM, so its TLS is now the process-global fallback array
+    (init 1, set/get round-trip, pinned by two new cxvm rows in that gate) and
+    `_tlocal_install` declines with -ENOSYS like the macOS arm.
+  - **E net/tls** — `net` → syscalls, alloc, string, result; `tls` → `fdlopen` (its header
+    told callers to include it first "because the 1 MB preprocessor cap is tight" — the cap is
+    24 MB, and a caller that skipped it got four fdlopen ud2 stubs: every libssl call a SIGILL,
+    on all four targets). `http.cyr`'s net include is bite 12's.
+
+  Stale `Requires:` lines in `flags`, `boxed`, `mmap` and `tls_native` now say what the file
+  does — `mmap.cyr`'s claim that its `MAP_*` enum "expects syscalls.cyr FIRST" had been false
+  since v6.5.15 (every syscall peer's `MmapConst` carries the same per-platform value) and
+  now mattered, since `dynlib`, `fdlopen` and `thread` include `mmap.cyr` themselves; the
+  new `tests/tcyr/crossos/mmap_include_order.tcyr` pins the reverse order (mmap first, the
+  PEER decides) that `mmap_anon_flag.tcyr` never exercised. `docs/stdlib-reference.md`'s
+  per-module "Requires …" lines (the same contract-for-the-caller) became "Includes: …"
+  lists read from the files, under one stated contract; `ct.cyr`'s claimed alloc need was
+  false outright; `ws.cyr` / `ws_server.cyr` no longer name the retired `base64.cyr` /
+  `http_server.cyr`. **Placed from the 6.6.7/6.6.8 reviews:** `lib/tls.cyr` and
+  `lib/syscalls.cyr` compile alone (above); `derive_str_deserialize.tcyr`,
+  `ws_server_handshake.tcyr` and `benches/bench_mulmod.bcyr` include `lib/io.cyr` before
+  `lib/bayan.cyr` (bayan's `file_*` were 8 ud2 stubs — a bundle strips its own includes, so
+  the consumer supplies its sidecar leaf), and `alloc_serdes.tcyr` includes `lib/net.cyr`
+  before `lib/http.cyr` (4 stubs). **Result (lane, before the `fs.cyr` / `sys_pipe` hunks and bite 12 merge):** linux 71,
+  agnos 71, PE 70, Mach-O 72, cx 66, aarch64 70 of 111 modules compile alone clean
+  (6.6.7: 26–29 of 104 on x86; stock aarch64 reported 90 "OK" by not looking); on a
+  simulated merge 73 / 73 / 73 / 74 / 68 / 72, with every first-party module clean on every
+  host target except the PENDING three. **Byte-identity:** `cycc` from all seven
+  `src/main*.cyr` drivers and the `cyrius` CLI (x86, PE, Mach-O, aarch64) are unchanged —
+  the compiler includes only `alloc.cyr` and `vec.cyr`. 84 in-tree binaries (61 `.tcyr`,
+  benches, fuzz, probes) change layout; every runnable one exits identically with identical
+  output, and the corpus's undefined-function lines drop from 18 files to 3
+  (`struct_name_param_collision` — `#derive(Serialize)`-generated calls into bayan;
+  `sandbox_syscalls` — `fs.cyr`, clears with its includes above; `programs/vidya.cyr`, a fixture with no
+  includes of its own). **Not fixed here:** `log`, `ws` and `ws_server` call fold bundles that
+  are not raw-includable (sakshi, bayan, sandhi — `ws` + `lib/bayan.cyr` still leaves 45
+  undefined functions, because a bundle needs its sidecar); they are the gate's named
+  PENDING tier, waiting on the raw-includable fold-bundles backlog item.
+  `tests/gates/toolchain/stdlib_modules_self_sufficient.sh` is rebuilt around it: axis 0
+  self-tests all SIX target compilers (x86 linux/agnos/PE/Mach-O, cx, and an aarch64 compiler
+  built from the tree — red without bite 2's undefined prepass, which is the point); the
+  population is classified every run from the files and the include graph (fold = distlib
+  marker; peer = `lib/<R>_<x>.cyr` included from R's family and not declaring its own
+  `Usage:` line — 31 peers; 68 first-party; 12 folds), axis 1 holds every first-party module
+  outside PENDING clean on linux, agnos, PE, Mach-O and aarch64, axis 2 keeps PENDING honest
+  (a pending module that compiles clean must be promoted), axis 3 checks each peer through a
+  first-party root, axis 4 is a per-target ratchet over the whole population, its floors set
+  to the MERGED counts (73 / 73 / 73 / 74 / 68 / 72 — the gate holds the release, not a lane)
+  (cx held here —
+  `tls`/`tls_native` overflow its codebuf and `thread` has no cx mutex), axis 5 runs one
+  call-through probe per family (A–E) plus 6.6.6's io probe, axis 6 pins the four hand
+  lists. Its ledger holds 20 mutations; the twelve new ones (and three of 6.6.6's) were
+  re-measured red against it on a simulated merge that is otherwise GREEN. New `tests/tcyr/crossos/pam_fail_closed.tcyr`
+  (includes only `lib/pam.cyr` + `lib/assert.cyr`) asserts the fail-closed arm on every host.
+  `tests/gates/codegen/simd_param_inline_reach.sh` counted `callq` over its WHOLE fixture
+  binary against a constant, and the fixture includes `lib/syscalls.cyr` — so the new alloc
+  include moved it 16 → 71 and turned it red; worse, at the slot's open it already measured 16
+  with its fix and 22 without, both under its bound of 31, i.e. it could no longer see the
+  defect it names. Axis 1 now subtracts a same-includes control: 2 with the fix, 8 with the
+  pre-v6.5.58 predicate rebuilt from this tree, bound 4.
+  **Survey:** across the 127 `~/Repos` projects with a stdlib seed, no module newly enters
+  any project's include closure, so no definition can newly collide ("last definition wins"
+  rebinds earlier call sites retroactively — checked for fns, top-level vars and enum
+  members).
 
 ## [6.6.8] — 2026-09-28
 

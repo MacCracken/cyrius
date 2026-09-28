@@ -1,6 +1,11 @@
 # ws.cyr — WebSocket protocol (RFC 6455)
 # Usage: include "lib/ws.cyr"
-# Requires: net.cyr, string.cyr, alloc.cyr, base64.cyr, syscalls.cyr
+# Requires (NOT self-sufficient yet — the PENDING tier of
+# tests/gates/toolchain/stdlib_modules_self_sufficient.sh): net.cyr, string.cyr, alloc.cyr,
+# syscalls.cyr, and base64_encode from lib/bayan.cyr (base64.cyr was folded into bayan). bayan
+# is a distlib bundle that strips its own includes, so including it here does not make this
+# file compile alone; that waits on raw-includable fold bundles (roadmap, "Fold bundles that
+# are raw-includable").
 #
 # Client-side WebSocket over existing TCP connections.
 # Handles framing, masking, ping/pong, close handshake.

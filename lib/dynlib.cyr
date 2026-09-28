@@ -1,7 +1,13 @@
 # dynlib.cyr — pure Cyrius dynamic library loader (ELF .so)
 # Usage: include "lib/dynlib.cyr"
-# Requires: string.cyr, syscalls.cyr, mmap.cyr
+# Includes its own definers: string.cyr, alloc.cyr, mmap.cyr, fnptr.cyr, result.cyr.
 
+# 6.6.9: the loader maps segments with cyr_mmap / cyr_munmap and PROT_* (mmap.cyr) and copies
+# with the string.cyr helpers; mmap.cyr was listed for the caller instead of included, so a
+# bare include was a hard error (`undefined variable 'PROT_READ'`). CHANGELOG [6.6.9]
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/mmap.cyr"
 include "lib/fnptr.cyr"
 # v5.8.31: Result-returning *_r variants (dynlib_open_r,
 # dynlib_sym_r) for typed error returns.

@@ -14,7 +14,7 @@
 # buffers handed back are the same Linux-shaped ones, so every accessor in this
 # file works unchanged there. Windows (GetVersionEx / GlobalMemoryStatusEx) is
 # still unwired and returns -ENOSYS rather than mis-issuing a Linux number.
-# Requires: lib/syscalls.cyr. See CHANGELOG [6.1.28], [6.5.16].
+# Includes its own definer, lib/syscalls.cyr. See CHANGELOG [6.1.28], [6.5.16].
 
 include "lib/syscalls.cyr"
 

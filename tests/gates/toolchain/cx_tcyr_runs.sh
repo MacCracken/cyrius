@@ -194,6 +194,7 @@ cat > "$T/arms.cyr" <<'ARMS'
 include "lib/assert.cyr";
 include "lib/syscalls.cyr";
 include "lib/sys.cyr";
+include "lib/thread_local.cyr";
 var u[400];
 var si[208];
 assert_eq(signal_ignore(SIGPIPE), 0, "signal_ignore is a no-op on cx");
@@ -203,6 +204,12 @@ assert_eq(sys_uname(&u), 0 - 38, "uname is ENOSYS on cx");
 assert_eq(sys_sysinfo(&si), 0 - 38, "sysinfo is ENOSYS on cx");
 assert_eq(sys_gettid(), 0 - 38, "gettid is ENOSYS on cx");
 assert_eq(is_root(), 0, "is_root answers not-root on cx");
+# 6.6.9: thread_local on cx is the process-global fallback (a single-threaded VM has no thread
+# pointer); before it, _tlocal_install had no cx arm and get/set read 0 / dropped the value.
+assert_eq(thread_local_init(), 1, "thread_local_init succeeds on cx");
+var _tl_slot = thread_local_alloc();
+thread_local_set(_tl_slot, 77);
+assert_eq(thread_local_get(_tl_slot), 77, "thread_local set/get round-trips on cx");
 var r = assert_summary();
 ARMS
 arms_want=$(grep -c '^assert_eq' "$T/arms.cyr")

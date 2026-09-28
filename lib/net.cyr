@@ -12,7 +12,17 @@
 # platform-branched (#ifdef CYRIUS_TARGET_MACOS). Verified on arm64 macOS (ecb)
 # v6.0.59 — see 2026-06-04-macos-net-socket-syscalls-unported.md.
 # Usage: include "lib/net.cyr"
-# Requires: agnosys/syscalls.cyr, alloc.cyr, tagged.cyr
+# Includes its own definers (6.6.9): syscalls.cyr, alloc.cyr, string.cyr, result.cyr, and io.cyr
+# for the resolver.
+
+# 6.6.9: the line above used to be a Requires list for the caller (naming a retired agnosys
+# path), and a bare include compiled with ~11 undefined functions — sys_read/sys_write, alloc,
+# memset, Ok/Err/ok_via/err_via — and was a hard error on agnos, whose socket wrappers live in
+# the syscall peer. CHANGELOG [6.6.9]
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/result.cyr"
 # The resolver (net_resolve_ipv4) reads /etc/hosts and /etc/resolv.conf through lib/io.cyr's
 # file_open — the agnos-ABI-bridged open. Include-once, so an existing caller pays nothing.
 # CHANGELOG [6.6.9]
