@@ -47,6 +47,59 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and `MIN - 1 = MAX` for a positive overflow; clobbers rcx/xmm1 only). cx's `f2i` is the
   host's `f64_to`, so it follows. Gated by `tests/tcyr/crossos/f64_to_saturation.tcyr` (24
   rows; the 6.6.7 compiler fails 8 on x86).
+- **`f64_exp` / `f64_ln` / `f64_log2` / `f64_exp2` are right on aarch64: IEEE-754 special values,
+  no exponent wrap, and within 1 ulp.** (bite 5; filed by tyche,
+  `issues/archived/2026-09-25-tyche-aarch64-f64-ln-polyfill-specials-and-accuracy.md`.) aarch64
+  lowers these builtins to `lib/math.cyr`'s polyfills, which were Taylor series with no
+  special-value handling in ln and no range check on the `2^n` pack in exp/exp2. **Root cause:**
+  `_f64_ln_polyfill` split every input as if it were a positive normal double, so `ln(+0)` was
+  -709, `ln(+inf)` 709.78, `ln(NaN)` 710, a subnormal lost its value, and **every negative number
+  except -2^k and -inf came back a large POSITIVE finite value** (`ln(-1.5)` = +4.27e9, `ln(-0.7)`
+  = +6.0e10 — the kept sign bit put `u = (m-1)/(m+1)` in (3, ∞)); `log2` was `ln(x)·log2e`
+  (`log2(+inf)` exactly 1024.0, `log2(8)` = 2.9999999999999996, and on x86 its `f64_ln` was the
+  native x87 op); exp/exp2 packed `(n + 1023) << 52` unchecked, so `exp(1000)` was negative,
+  `exp(-740)` negative, `exp(711)` a negative subnormal, and a saturated `f64_to` or an overflowed
+  `x·log2e` turned huge arguments into plausible answers (`exp(-1e19)` = 1.0, `exp(-DBL_MAX)` =
+  +inf, `exp2(DBL_MAX)` = 0.5). Finite results were up to 213 ulp (ln) and 2,313 ulp (exp) off.
+  Silently, on every aarch64 target. **Fix:** ports of fdlibm 5.3 `e_exp.c` / `e_log.c` and
+  FreeBSD msun `e_log2.c` + `k_log.h`, from f64 add/sub/mul/div and integer bit operations only:
+  ln/log2 guard on the bit pattern first (NaN → NaN, ±0 → -inf, ANY negative → NaN, +inf →
+  +inf, a subnormal scaled by 2^54); log2 is `k + log(m)/ln2` in extra precision, so `log2(2^k)`
+  is exactly `k`; exp tests `x` against 709.78 / -745.13 BEFORE forming `x·log2e`, reduces with a
+  Cody–Waite two-word ln2, and scales a subnormal result in two steps so the last multiply rounds
+  it; exp2 range-checks `x` and runs the exp kernel on a Dekker double-double `f·ln2`. Against a
+  correctly rounded reference (446k rows) every class is within 1 ulp, and the polyfills give the
+  **same bits** on x86 (called directly), pi, ecb, ach and cass. **Not promised: the same bits
+  from the BUILTIN across targets** (x87 on x86, the port on aarch64 — both within 1 ulp, not
+  always the same ulp); call the `_f64_*_polyfill` fns directly for that. Gated by
+  `tests/tcyr/crossos/f64_log_exp_polyfill.tcyr` (new, 341 rows: specials by class on both
+  paths, ≤ 1-ulp finite rows with the polyfill bits pinned, `log2(2^k)` / `exp2(k)` exact for
+  every k; the 6.6.7 `math.cyr` fails 104 on x86 and 211 on aarch64); the Pi fixture
+  `tests/fixtures/aarch64_f64/polyfill_ops.cyr` now demands ≤ 1 ulp plus special rows (it
+  allowed 1,024–8,192 ulp); `f64_exp_infinite_argument.sh` axis 3 runs its extremes on the
+  polyfills directly; `exp2_atan_bigtrig.tcyr` and `math.tcyr` tighten their exp2 / log2 rows.
+- **Windows: `f64_exp` / `f64_exp2` are within 1 ulp (they were up to ~350 ulp off).** (bite 5.)
+  **Root cause:** Win64 starts every thread with the x87 control word at 0x27F — 53-bit
+  precision control — where Linux and macOS use 0x37F, and nothing in the PE entry changes it.
+  `EF64_EXP`'s `fldl2e; fmulp` product `x·log2e` rounds to that width, so the reduction lost
+  about log2|n| bits: `exp(426.27161683590134)` 350 ulp and `exp(709.7743369863667)` 348 ulp off,
+  on real cass only. **Fix:** under `_TARGET_PE`, `EF64_EXP` / `EF64_EXP2` save the control word
+  (`fnstcw` into the free half of the x87 scratch slot), raise precision control to 64-bit, run
+  the sequence and restore the saved word (`_EX87_PC64` / `_EX87_PC_RESTORE`, src/backend/x86/
+  emit.cyr, 27 bytes per site). Local rather than a process-wide `fldcw` at entry: the control
+  word is nonvolatile in the Win64 ABI, so a DLL's own x87 code keeps its 53-bit mode. ELF and
+  Mach-O output is byte-identical. On real cass the 6.6.7 compiler fails 7 exp rows of
+  `f64_log_exp_polyfill.tcyr`; its two control-word rows (read with `fnstcw` before and after)
+  fail if the restore is dropped.
+- **`f64_pow` / `ganita_f64_pow` follow the C99 Annex F table.** (bite 5; ganita **1.2.7**, commit
+  `cbdaf6c`, refolded byte-identical.) It returned NaN for every infinite base or exponent that
+  missed ganita's integral fast path (`pow(2, +inf)`, `pow(+inf, 0.5)`, `pow(0.5, +inf)`, …), and
+  its NaN check ran ahead of `pow(1, y) = 1`, so `pow(1, NaN)` and `pow(±1, ±inf)` were NaN too; a
+  zero base dropped its sign. Upstream now answers the whole table before the `exp(y·ln x)`
+  path. On aarch64 `pow(2, 1100)` was **-1.5e-285** and `pow(2, 0.5)` 1,007 ulp off, inherited from
+  the exp/ln polyfills above. `tests/tcyr/crossos/f64_pow_domain.tcyr` gains 15 bit-exact Annex F
+  rows and five rows past the integral path (the 1.2.6 fold fails 13 on x86, the 6.6.7
+  `math.cyr` 5 on aarch64).
 
 ### Added
 
@@ -65,6 +118,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   bug); `cyrius-guide.md` documents float unary minus, the left-operand typing rule with both
   warnings, and `f64_to`'s NaN/overflow results. The x86-only `EMOVAPD_01` helper and its
   aarch64/cx stubs are gone (the old `f64_neg` was their only caller).
+- **docs (bite 5):** `cyrius-guide.md` *Math Builtins* states the exp/ln family's contract
+  (≤ 1 ulp, IEEE specials, `log2(2^k)` exact, no cross-target bit identity for the builtins, the
+  polyfills as the bit-identical spelling); `faq.md` known-limitation 10 says the same in one
+  line. `lib/math.cyr`'s header no longer lists sinh/cosh/tanh/pow/hypot/fibonacci/binomial
+  (ganita has them), and its accuracy comments ("< 5 ulp", "same behavior as the x87 path")
+  are replaced by the measured contract. The Pi gate's label drops "bit-accurate", which the
+  polyfills never were. **ganita 1.2.7** moves its pin 6.6.4 → 6.6.7 (docs/ecosystem.md row).
 
 ## [6.6.7] — 2026-09-27
 

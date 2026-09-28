@@ -748,6 +748,24 @@ or above 2^63 (including +inf) to `0x7FFFFFFFFFFFFFFF`, and one below -2^63 (inc
 -inf) to `0x8000000000000000` — aarch64 FCVTZS's rule. x86 used to return
 `0x8000000000000000` for all three.
 
+`f64_exp`, `f64_ln`, `f64_log2` and `f64_exp2` (6.6.8) promise the same things on every
+target: a finite result within **1 ulp** of the correctly rounded value, and the IEEE-754 /
+C special values — `ln`/`log2` of ±0 is -inf, of **any** negative number is NaN, of +inf is
++inf; `exp`/`exp2` overflow to +inf and underflow through the subnormals to +0; NaN in gives
+NaN out (its sign and payload are not promised). `log2(2^k)` is exactly `k`. On aarch64 they
+call `lib/math.cyr`'s `_f64_*_polyfill` fns (fdlibm ports), so include `lib/math.cyr` there.
+
+What is NOT promised is the same **bits** on every target. x86 runs x87 instructions and
+aarch64 runs the polyfill; both are within 1 ulp, but they can land on different sides of a
+rounding boundary. When a program needs identical output everywhere (a golden file, a seeded
+simulation), call `_f64_exp_polyfill` / `_f64_ln_polyfill` / `_f64_log2_polyfill` /
+`_f64_exp2_polyfill` directly: they use only f64 add/sub/mul/div and integer bit operations,
+so they give the same bits on every target, and `tests/tcyr/crossos/f64_log_exp_polyfill.tcyr`
+pins them. (Before 6.6.8 the aarch64 polyfills returned finite values for ln of 0, of +inf
+and of most negatives — `ln(-1.5)` was +4.27e9 — wrapped `exp(1000)` to a negative number,
+and were up to 2,300 ulp off; and on Windows the x87 `f64_exp` ran at 53-bit precision and
+was up to 350 ulp off.)
+
 ## SIMD Vectors
 
 Cyrius exposes fixed-width SIMD vectors as first-class types for math /
