@@ -1,38 +1,53 @@
-# open_flags_per_target.tcyr — v6.6.4: O_NOFOLLOW and O_DIRECTORY are stdlib symbols with
-# the RIGHT VALUE on every target, and file_open honours them.
+# open_flags_per_target.tcyr — O_NOFOLLOW, O_DIRECTORY and O_CREAT|O_EXCL mean what POSIX says
+# on EVERY target, Windows included.
 #
-# THE DEFECT (issue 2026-09-12, traced on aarch64 at 6.6.3). Syscall NUMBERS at least have
-# ESYSXLAT; open FLAG VALUES had nothing, and the stdlib defined no O_NOFOLLOW /
-# O_DIRECTORY at all, so consumers hardcoded the x86_64 numbers. On arm64 (whose fcntl.h overrides the generic set)
-# the pairs SWAP: x86 O_NOFOLLOW (0x20000) is O_LARGEFILE there and x86 O_DIRECTORY
-# (0x10000) is O_DIRECT. patra's WAL open — `O_RDWR|O_CREAT|O_TRUNC|O_NOFOLLOW`, the
-# O_NOFOLLOW put there precisely to stop a symlink clobber — FOLLOWED the symlink on
-# aarch64 and truncated its target (measured: "hi" → 0 bytes); its directory fsync opened
-# with O_DIRECT and got EINVAL. Darwin's values differ again (0x100 / 0x100000).
+# THE 6.6.4 DEFECT (issue 2026-09-12, traced on aarch64 at 6.6.3). Syscall NUMBERS at least have
+# ESYSXLAT; open FLAG VALUES had nothing, and the stdlib defined no O_NOFOLLOW / O_DIRECTORY at
+# all, so consumers hardcoded the x86_64 numbers. On arm64 (whose fcntl.h overrides the generic
+# set) the pairs SWAP: x86 O_NOFOLLOW (0x20000) is O_LARGEFILE there and x86 O_DIRECTORY
+# (0x10000) is O_DIRECT. patra's WAL open — `O_RDWR|O_CREAT|O_TRUNC|O_NOFOLLOW` — FOLLOWED the
+# symlink on aarch64 and truncated its target (measured: "hi" → 0 bytes). Each peer now owns its
+# values (x86_64 0x20000/0x10000; arm64 0x8000/0x4000; Darwin 0x100/0x100000).
 #
-# Each peer now owns its values (x86_64 = the asm-generic set: 0x20000/0x10000; arm64
-# overrides it: 0x8000/0x4000; Darwin: 0x100/0x100000; PE: defined but NOT honoured —
-# EOPEN_PE decodes only O_CREAT/O_EXCL, a documented follow-on). Asserts the EXACT errno
-# (-ELOOP: 40 Linux / 62 Darwin; -ENOTDIR 20) so a value the kernel rejects for a different
-# reason (EINVAL) cannot pass. Mutation: swap the aarch64 values back to the x86 ones and
-# the symlink opens and its target is truncated (4 of 6 red).
+# ⛔ THE 6.6.9 DEFECT — WINDOWS. The PE peer defined both names and EOPEN_PE ignored them: it
+# passed a FIXED dwFlagsAndAttributes of 0x80, and CreateFileW resolves a final reparse point for
+# every disposition. So on Windows `file_open(link, O_WRONLY|O_TRUNC|O_NOFOLLOW)` truncated the
+# link's TARGET, `O_CREAT|O_EXCL` over a DANGLING link created the target (with or without
+# O_NOFOLLOW — file_create_exclusive, sigil's keyfile, the cbt temp creates), a directory could
+# not be opened with O_DIRECTORY at all while a FILE opened fine, and `is_symlink` answered 0 for
+# everything. Measured on real cass before the fix: every row in the symlink groups below except
+# the plain-file ones was red (the fixture itself could not be made: xsymlink was -1). The
+# symlink rows are NOT wine-blind here, because the fixtures are made by CreateSymbolicLinkW,
+# whose links wine does see — it is Unix-made links wine hides.
+#
+# Asserts the EXACT errno (-ELOOP: 40 Linux and Windows / 62 Darwin; -ENOTDIR 20; -EISDIR 21;
+# -EEXIST 17) so a value refused for a different reason (EINVAL, a bare -1) cannot pass.
 include "lib/syscalls.cyr"
+include "lib/string.cyr"
 include "lib/alloc.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
 include "lib/io.cyr"
+include "lib/fs.cyr"
+include "lib/tagged.cyr"
+include "lib/process.cyr"
 include "lib/assert.cyr"
 
-# v6.6.6: a PER-PROCESS scratch name. This test used fixed /tmp names, shared by every concurrent
-# run of the suite (two check.sh at once), so one run deleted or rewrote another's file
-# mid-assert. The pid is taken once, so a forked child names the same files. CHANGELOG [6.6.6]
+# v6.6.6: a PER-PROCESS scratch name (fixed names were shared by concurrent runs). Windows has no
+# /tmp — the cross-OS runner's cwd there is C:\cyrius-tests — so the PE name is cwd-relative.
 var _scratch_pid = 0;
-fn _scratch(name, suffix): i64 {   # "/tmp/<name>.<pid><suffix>", NUL-terminated
+fn _scratch(name, suffix): i64 {   # "/tmp/<name>.<pid><suffix>" ("<name>.<pid><suffix>" on PE)
     if (_scratch_pid == 0) { _scratch_pid = sys_getpid(); }
     var nl = strlen(name);
     var sl = strlen(suffix);
     var p = alloc(nl + sl + 32);
+    var o = 0;
+    #ifndef CYRIUS_TARGET_WIN
     memcpy(p, "/tmp/", 5);
-    memcpy(p + 5, name, nl);
-    var o = 5 + nl;
+    o = 5;
+    #endif
+    memcpy(p + o, name, nl);
+    o = o + nl;
     store8(p + o, 46);
     o = o + 1;
     var d[24];
@@ -54,52 +69,233 @@ fn _scratch(name, suffix): i64 {   # "/tmp/<name>.<pid><suffix>", NUL-terminated
     return p;
 }
 
+# The size of `p` through a plain open + seek-to-end (xstat has no Windows arm). -1 if absent.
+fn _fsize(p): i64 {
+    var h = file_open(p, O_RDONLY, 0);
+    if (h < 0) { return 0 - 1; }
+    var n = sys_lseek(h, 0, 2);
+    sys_close(h);
+    return n;
+}
+
+# (Re)create `p` holding the 17-byte seed, through flags that are not under test.
+fn _seed(p): i64 {
+    xunlink(p);
+    var h = file_open(p, O_WRONLY | O_CREAT | O_TRUNC, 420);
+    if (h < 0) { return 0 - 1; }
+    sys_write(h, "0123456789abcdef\n", 17);
+    sys_close(h);
+    return 0;
+}
+
+# -ELOOP on this target.
+fn _eloop(): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    return 0 - 62;
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
+    return 0 - 40;
+    #endif
+}
+
 fn main(): i64 {
     alloc_init();
-    #ifndef CYRIUS_TARGET_WIN
-    test_group("O_NOFOLLOW: a symlinked path is refused, its target untouched");
     var tgt = _scratch("cyr_oflag_target", "");
     var lnk = _scratch("cyr_oflag_link", "");
+    var dng = _scratch("cyr_oflag_dangling", "");
+    var absent = _scratch("cyr_oflag_absent", "");
+    var reg = _scratch("cyr_oflag_regular", "");
+    var dir = _scratch("cyr_oflag_dir", "");
+    var dln = _scratch("cyr_oflag_dirlink", "");
     xunlink(lnk);
+    xunlink(dng);
+    xunlink(absent);
+    xrmdir(dln);
+    xunlink(dln);
+    xrmdir(dir);
+
+    test_group("O_NOFOLLOW: a symlinked path is refused, its target untouched");
+    xunlink(tgt);
     var wfd = file_open(tgt, O_WRONLY | O_CREAT | O_TRUNC, 420);
     assert_eq(wfd >= 0, 1, "create the target");
     sys_write(wfd, "hi", 2);
     sys_close(wfd);
-    xsymlink(tgt, lnk);
+    # On Windows a link needs Developer Mode or an elevated process; the release-gate host and
+    # CI's runner are both elevated, so a failure here is a real failure, not a skip.
+    assert_eq(xsymlink(tgt, lnk), 0, "xsymlink makes the fixture (on Windows: CreateSymbolicLinkW)");
+    assert_eq(is_symlink(str_from(lnk)), 1, "is_symlink(link) is 1 (was 0 for everything on Windows)");
+    assert_eq(is_symlink(str_from(tgt)), 0, "is_symlink(regular file) is 0");
+    # dir_walk asks is_symlink for every entry. The first 6.6.9 Windows arm bump-allocated the
+    # widened path and a WIN32_FIND_DATAW on every call and never gave them back.
+    var ls = str_from(lnk);
+    var u0 = alloc_used();
+    var k = 0;
+    while (k < 64) {
+        is_symlink(ls);
+        k = k + 1;
+    }
+    assert_eq(alloc_used() - u0, 0, "64 is_symlink calls allocate nothing (Windows leaked ~600 B + 2x the path each)");
     var nf = file_open(lnk, O_RDWR | O_TRUNC | O_NOFOLLOW, 0);
-    # the exact errno, per target: ELOOP is 40 on Linux and 62 on Darwin. `< 0` alone would
-    # also pass on a value the kernel rejects for a DIFFERENT reason (an unknown flag bit is
-    # EINVAL on Darwin), which is the very confusion the per-target values exist to end.
-    #ifdef CYRIUS_TARGET_MACOS
-    assert_eq(nf, 0 - 62, "file_open(symlink, O_RDWR|O_TRUNC|O_NOFOLLOW) is -ELOOP (62 on Darwin)");
-    #endif
-    #ifndef CYRIUS_TARGET_MACOS
-    assert_eq(nf, 0 - 40, "file_open(symlink, O_RDWR|O_TRUNC|O_NOFOLLOW) is -ELOOP (40 on Linux)");
-    #endif
+    assert_eq(nf, _eloop(), "file_open(symlink, O_RDWR|O_TRUNC|O_NOFOLLOW) is -ELOOP (62 on Darwin)");
     if (nf >= 0) { sys_close(nf); }
-    var st[144];
-    sys_stat(tgt, &st);
-    assert_eq(load64(&st + STAT_SIZE), 2, "the target still holds its 2 bytes — NOT truncated through the link");
+    assert_eq(_fsize(tgt), 2, "the target still holds its 2 bytes — NOT truncated through the link");
+    # patra's reproduction (issue 2026-09-23), row N2: O_WRONLY|O_TRUNC — truncated the target on PE.
+    var n2 = file_open(lnk, O_WRONLY | O_TRUNC | O_NOFOLLOW, 0);
+    assert_eq(n2, _eloop(), "file_open(symlink, O_WRONLY|O_TRUNC|O_NOFOLLOW) is -ELOOP");
+    if (n2 >= 0) { sys_close(n2); }
+    assert_eq(_fsize(tgt), 2, "…and the target is still 2 bytes");
+    var n1 = file_open(lnk, O_RDONLY | O_NOFOLLOW, 0);
+    assert_eq(n1, _eloop(), "file_open(symlink, O_RDONLY|O_NOFOLLOW) is -ELOOP");
+    if (n1 >= 0) { sys_close(n1); }
+    var nc = file_open(lnk, O_WRONLY | O_CREAT | O_NOFOLLOW, 420);
+    assert_eq(nc, _eloop(), "file_open(symlink, O_WRONLY|O_CREAT|O_NOFOLLOW) is -ELOOP");
+    if (nc >= 0) { sys_close(nc); }
+    var lf = file_open(lnk, O_RDONLY, 0);
+    assert_eq(lf >= 0, 1, "WITHOUT O_NOFOLLOW the link is followed and opens");
+    if (lf >= 0) { sys_close(lf); }
     var rf = file_open(tgt, O_RDONLY | O_NOFOLLOW, 0);
     assert_eq(rf >= 0, 1, "O_NOFOLLOW on a REGULAR path still opens");
     if (rf >= 0) { sys_close(rf); }
-    xunlink(lnk);
-    xunlink(tgt);
 
-    test_group("O_DIRECTORY: a directory opens, a file does not");
-    var dfd = file_open("/tmp", O_RDONLY | O_DIRECTORY, 0);
-    assert_eq(dfd >= 0, 1, "file_open(/tmp, O_DIRECTORY) >= 0 (was: EINVAL on aarch64 — the value meant O_DIRECT)");
+    # On Windows O_NOFOLLOW|O_TRUNC opens WITHOUT the truncation and truncates the verified
+    # handle afterwards — these rows are what keep that path truncating, on every access shape.
+    test_group("O_NOFOLLOW|O_TRUNC on a regular file still truncates (every access mode)");
+    _seed(reg);
+    var t1 = file_open(reg, O_WRONLY | O_TRUNC | O_NOFOLLOW, 0);
+    assert_eq(t1 >= 0, 1, "O_WRONLY|O_TRUNC|O_NOFOLLOW opens a regular file");
+    if (t1 >= 0) { sys_write(t1, "XYZ", 3); sys_close(t1); }
+    assert_eq(_fsize(reg), 3, "…and it was truncated before the 3-byte write");
+    _seed(reg);
+    var t2 = file_open(reg, O_WRONLY | O_TRUNC | O_APPEND | O_NOFOLLOW, 0);
+    assert_eq(t2 >= 0, 1, "O_WRONLY|O_TRUNC|O_APPEND|O_NOFOLLOW opens");
+    if (t2 >= 0) {
+        sys_write(t2, "XY", 2);
+        sys_lseek(t2, 0, 0);
+        sys_write(t2, "Z", 1);
+        sys_close(t2);
+    }
+    assert_eq(_fsize(reg), 3, "…truncated, and the write after a seek to 0 still APPENDED (3 bytes, not 2)");
+    _seed(reg);
+    var t3 = file_open(reg, O_RDONLY | O_TRUNC | O_NOFOLLOW, 0);
+    assert_eq(t3 >= 0, 1, "O_RDONLY|O_TRUNC|O_NOFOLLOW opens");
+    if (t3 >= 0) { sys_close(t3); }
+    assert_eq(_fsize(reg), 0, "…and truncates (Linux and Darwin do, for O_RDONLY too)");
+    _seed(reg);
+    var t4 = file_open(reg, O_RDWR | O_CREAT | O_TRUNC | O_NOFOLLOW, 420);
+    assert_eq(t4 >= 0, 1, "O_RDWR|O_CREAT|O_TRUNC|O_NOFOLLOW (patra's WAL open) opens");
+    if (t4 >= 0) { sys_close(t4); }
+    assert_eq(_fsize(reg), 0, "…and truncates");
+
+    test_group("O_CREAT|O_EXCL never follows a final symlink, even a dangling one");
+    assert_eq(xsymlink(absent, dng), 0, "a DANGLING symlink fixture");
+    assert_eq(is_symlink(str_from(dng)), 1, "is_symlink(dangling link) is 1");
+    var e1 = file_open(dng, O_WRONLY | O_CREAT | O_EXCL, 420);
+    #ifdef CYRIUS_TARGET_WIN
+    assert_eq(e1, 0 - 1, "O_CREAT|O_EXCL over a dangling link is refused (a bare -1 from CreateFileW)");
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    assert_eq(e1, 0 - 17, "O_CREAT|O_EXCL over a dangling link is -EEXIST");
+    #endif
+    if (e1 >= 0) { sys_close(e1); }
+    assert_eq(_fsize(absent), 0 - 1, "…and the link's target was NOT created (it was, on Windows)");
+    var e2 = file_create_exclusive(dng, 420);
+    assert_eq(e2, 0 - 17, "file_create_exclusive over a dangling link is -EEXIST on every target");
+    if (e2 >= 0) { sys_close(e2); }
+    assert_eq(_fsize(absent), 0 - 1, "…and still no target");
+    # sigil's luks_write_keyfile flag set.
+    var e3 = file_open(dng, O_WRONLY | O_CREAT | O_TRUNC | O_EXCL | O_NOFOLLOW, 384);
+    assert_eq(e3 < 0, 1, "O_WRONLY|O_CREAT|O_TRUNC|O_EXCL|O_NOFOLLOW over a dangling link is refused");
+    if (e3 >= 0) { sys_close(e3); }
+    assert_eq(_fsize(absent), 0 - 1, "…and still no target");
+    var e4 = file_create_exclusive(tgt, 420);
+    assert_eq(e4, 0 - 17, "file_create_exclusive over an existing FILE is -EEXIST on every target");
+    if (e4 >= 0) { sys_close(e4); }
+    assert_eq(_fsize(tgt), 2, "…and the file is untouched");
+
+    test_group("O_DIRECTORY: a directory opens, anything else does not");
+    assert_eq(xmkdir(dir, 493), 0, "make the directory fixture");
+    var dfd = file_open(dir, O_RDONLY | O_DIRECTORY, 0);
+    assert_eq(dfd >= 0, 1, "file_open(dir, O_DIRECTORY) >= 0 (was: EINVAL on aarch64, -1 on Windows)");
     if (dfd >= 0) { sys_close(dfd); }
-    var ffd = file_open("/etc/passwd", O_RDONLY | O_DIRECTORY, 0);
-    # (20 on Linux and Darwin; the 6.6.3 aarch64 value meant O_DIRECT and got EINVAL)
-    assert_eq(ffd, 0 - ENOTDIR, "file_open(/etc/passwd, O_DIRECTORY) is exactly -ENOTDIR");
+    var ffd = file_open(tgt, O_RDONLY | O_DIRECTORY, 0);
+    assert_eq(ffd, 0 - 20, "file_open(file, O_DIRECTORY) is exactly -ENOTDIR (was a FILE handle on Windows)");
     if (ffd >= 0) { sys_close(ffd); }
+    var wdf = file_open(dir, O_WRONLY | O_DIRECTORY, 0);
+    assert_eq(wdf, 0 - 21, "file_open(dir, O_WRONLY|O_DIRECTORY) is exactly -EISDIR");
+    if (wdf >= 0) { sys_close(wdf); }
+    var tdf = file_open(tgt, O_RDONLY | O_DIRECTORY | O_TRUNC, 0);
+    assert_eq(tdf, 0 - 20, "file_open(file, O_DIRECTORY|O_TRUNC) is -ENOTDIR…");
+    if (tdf >= 0) { sys_close(tdf); }
+    assert_eq(_fsize(tgt), 2, "…and did NOT truncate the file on the way");
+    assert_eq(xsymlink(dir, dln), 0, "a symlink to the directory");
+    assert_eq(is_symlink(str_from(dln)), 1, "is_symlink(link to a dir) is 1 — dir_walk will not descend it");
+    var dl1 = file_open(dln, O_RDONLY | O_DIRECTORY, 0);
+    assert_eq(dl1 >= 0, 1, "O_DIRECTORY through a link to a directory opens");
+    if (dl1 >= 0) { sys_close(dl1); }
+    # Not -ELOOP: the unfollowed link is not a directory, and Linux and Darwin both check that
+    # first (measured on each). Windows answers the same.
+    var dl2 = file_open(dln, O_RDONLY | O_DIRECTORY | O_NOFOLLOW, 0);
+    assert_eq(dl2, 0 - 20, "O_DIRECTORY|O_NOFOLLOW on a link to a directory is -ENOTDIR (the link is not a dir)");
+    if (dl2 >= 0) { sys_close(dl2); }
+    # WITHOUT O_DIRECTORY the link to a directory is -ELOOP, like a link to a file. On Windows it
+    # is a DIRECTORY object, which CreateFileW refuses outright without BACKUP_SEMANTICS — the
+    # first 6.6.9 cut handed that refusal back as a bare -1; sys_open now asks the name why.
+    var dl3 = file_open(dln, O_RDONLY | O_NOFOLLOW, 0);
+    assert_eq(dl3, _eloop(), "O_RDONLY|O_NOFOLLOW on a link to a directory is -ELOOP (was -1 on Windows)");
+    if (dl3 >= 0) { sys_close(dl3); }
+    var dl4 = file_open(dln, O_WRONLY | O_TRUNC | O_NOFOLLOW, 0);
+    assert_eq(dl4, _eloop(), "O_WRONLY|O_TRUNC|O_NOFOLLOW on a link to a directory is -ELOOP");
+    if (dl4 >= 0) { sys_close(dl4); }
+    var wd = file_open(dir, O_WRONLY | O_NOFOLLOW, 0);
+    assert_eq(wd, 0 - 21, "O_WRONLY|O_NOFOLLOW on a real directory is -EISDIR (was -1 on Windows)");
+    if (wd >= 0) { sys_close(wd); }
+    #ifdef CYRIUS_TARGET_WIN
+    # A JUNCTION (tag 0xA0000003) is the other name surrogate, and the one an unprivileged
+    # Windows user can make; it is a directory object like the directory symlink above.
+    # `mklink /J` needs no privilege; wine's cmd implements it and reports the same tag.
+    var jnc = _scratch("cyr_oflag_junction", "");
+    xrmdir(jnc);
+    var mk = vec_new();
+    vec_push(mk, "cmd");
+    vec_push(mk, "/c");
+    vec_push(mk, "mklink");
+    vec_push(mk, "/J");
+    vec_push(mk, jnc);
+    vec_push(mk, dir);
+    vec_push(mk, ">nul");
+    assert_eq(exec_vec(mk), 0, "Windows: `mklink /J` makes the junction fixture");
+    assert_eq(is_symlink(str_from(jnc)), 1, "Windows: is_symlink(junction) is 1");
+    var j1 = file_open(jnc, O_RDONLY | O_NOFOLLOW, 0);
+    assert_eq(j1, 0 - 40, "Windows: O_RDONLY|O_NOFOLLOW on a junction is -ELOOP (was -1)");
+    if (j1 >= 0) { sys_close(j1); }
+    var j2 = file_open(jnc, O_RDWR | O_CREAT | O_TRUNC | O_NOFOLLOW, 420);
+    assert_eq(j2, 0 - 40, "Windows: O_RDWR|O_CREAT|O_TRUNC|O_NOFOLLOW on a junction is -ELOOP");
+    if (j2 >= 0) { sys_close(j2); }
+    var j3 = file_open(jnc, O_RDONLY | O_DIRECTORY | O_NOFOLLOW, 0);
+    assert_eq(j3, 0 - 20, "Windows: O_DIRECTORY|O_NOFOLLOW on a junction is -ENOTDIR, as for a dir symlink");
+    if (j3 >= 0) { sys_close(j3); }
+    var j4 = file_open(jnc, O_RDONLY | O_DIRECTORY, 0);
+    assert_eq(j4 >= 0, 1, "Windows: O_DIRECTORY through a junction opens");
+    if (j4 >= 0) { sys_close(j4); }
+    xrmdir(jnc);
     #endif
     #ifdef CYRIUS_TARGET_WIN
-    test_group("PE: the symbols exist (values not honoured by EOPEN_PE — documented)");
-    assert_eq(O_NOFOLLOW != 0, 1, "O_NOFOLLOW defined");
-    assert_eq(O_DIRECTORY != 0, 1, "O_DIRECTORY defined");
+    # The one documented divergence: CreateFileW opens a directory only with
+    # FILE_FLAG_BACKUP_SEMANTICS, which is set for O_DIRECTORY ONLY — set always, it would let
+    # O_WRONLY open a directory. So a plain open of a directory stays refused on Windows (Linux
+    # hands back a read fd). Fail-closed, and pinned so BACKUP_SEMANTICS never goes unconditional.
+    var pd = file_open(dir, O_RDONLY, 0);
+    assert_eq(pd, 0 - 1, "Windows: a plain O_RDONLY open of a directory stays refused");
+    if (pd >= 0) { sys_close(pd); }
     #endif
+
+    xrmdir(dln);
+    xunlink(dln);
+    xrmdir(dir);
+    xunlink(lnk);
+    xunlink(dng);
+    xunlink(reg);
+    xunlink(tgt);
     return assert_summary();
 }
 var ec = main();

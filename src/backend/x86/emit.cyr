@@ -2257,6 +2257,35 @@ fn EFLUSHFB_PE(S): i64 {
     return 0;
 }
 
+# 6.6.9 — the file-handle reroutes behind POSIX open semantics on PE (lib/syscalls_windows.cyr
+# sys_open / sys_symlink / sys_ftruncate). All three go through the rbx-anchored aligned
+# callers, so they are correct at any expression depth. The raw Win32 result comes back,
+# ZERO-EXTENDED from what the callee defines: a BOOL is a DWORD (`mov eax, eax` drops an
+# undefined upper half so `!= 0` cannot read garbage as TRUE), and CreateSymbolicLinkW
+# returns a BOOLEAN — ONE byte — so only `al` is defined there. The peer folds each to the
+# POSIX contract. CHANGELOG [6.6.9]
+#   syscall(0xF03D, h, class, buf, size) → GetFileInformationByHandleEx (argc 5)
+#   syscall(0xF03E, wlink, wtarget, flags) → CreateSymbolicLinkW (argc 4; wide paths)
+#   syscall(0xF03F, h) → SetEndOfFile (argc 2)
+fn EGETFINFO_PE(S): i64 {
+    _pe_ensure_getfinfo(S);
+    _pe_call_4arg_aligned(S, _pe_getfinfo_get());
+    EB(S, 0x89); EB(S, 0xC0);                           # mov eax, eax (BOOL → zero-extended)
+    return 0;
+}
+fn ESYMLINKW_PE(S): i64 {
+    _pe_ensure_symlinkw(S);
+    _pe_call_3arg_aligned(S, _pe_symlinkw_get());
+    EB(S, 0x0F); EB(S, 0xB6); EB(S, 0xC0);              # movzx eax, al (BOOLEAN is one byte)
+    return 0;
+}
+fn ESETEOF_PE(S): i64 {
+    _pe_ensure_seteof(S);
+    _pe_srw_call_1arg(S, _pe_seteof_get());
+    EB(S, 0x89); EB(S, 0xC0);                           # mov eax, eax (BOOL → zero-extended)
+    return 0;
+}
+
 # v6.6.6: syscall(0xF03A, wbuf, cch) → kernel32!GetModuleFileNameW(NULL, wbuf, cch) —
 # the Windows source for "the full path of THIS executable", the thing
 # readlink("/proc/self/exe") answers on Linux and fcntl(F_GETPATH) on macOS. Stack on
@@ -2555,6 +2584,30 @@ fn _pe_dyn_exit(S): i64 {
     return 0;
 }
 
+# The arity-2 arm of `EPE_SYSCALL_DYNAMIC`, in its own function so that one does not grow
+# toward the cybs per-function reference limit (the bootstrap compiler fails SILENTLY past
+# it). Routes close(3), unlink(87), exit(60) and — since 6.6.9 — fsync(74) / fdatasync(75),
+# the same Linux numbers the LITERAL path routes at argc 2 (`_PE_ROUTE_FLUSH`). Before
+# 6.6.9 a `var n = 74; syscall(n, fd)` got -38 here while `syscall(74, fd)` flushed, and no
+# warning was printed: a number held in a var is only known at RUN time, so the compiler
+# warns only for an arity with NO routable member (`EPE_SYSCALL_DYNAMIC` → 2). At an arity
+# that has members, an unmatched number is an honest -38 with no compile-time diagnostic —
+# which is why the literal and var paths must route the same set. CHANGELOG [6.6.9]
+fn _pe_dyn_arity2(S, disp): i64 {
+    _pe_dyn_load(S, disp);
+    var r0 = _pe_dyn_cmp(S, 3);  ECLOSE_PE(S);   var f0 = EJMP0(S); EPATCH(S, r0);
+    var r1 = _pe_dyn_cmp(S, 87); EDELETEF_PE(S); var f1 = EJMP0(S); EPATCH(S, r1);
+    var r3 = _pe_dyn_cmp(S, 74); EFLUSHFB_PE(S); var f3 = EJMP0(S); EPATCH(S, r3);
+    var r4 = _pe_dyn_cmp(S, 75); EFLUSHFB_PE(S); var f4 = EJMP0(S); EPATCH(S, r4);
+    # exit(60): mirror the literal path (pop code, drop sc_nr, ExitProcess).
+    # EEXIT ends in int3 and never returns, so its jmp-done is dead but kept
+    # for uniform structure.
+    var r2 = _pe_dyn_cmp(S, 60); _pe_dyn_exit(S); var f2 = EJMP0(S); EPATCH(S, r2);
+    _pe_dyn_nomatch(S, 2);
+    EPATCH(S, f0); EPATCH(S, f1); EPATCH(S, f3); EPATCH(S, f4); EPATCH(S, f2);
+    return 0;
+}
+
 # Emit the runtime switch. Returns 1 if argc is routable on PE (cmp/jne over the
 # routable syscalls of this arity; unknown number → -38). Returns 2 if NO
 # routable syscall has this arity — emits an honest -38/-ENOSYS no-op
@@ -2583,15 +2636,7 @@ fn EPE_SYSCALL_DYNAMIC(S, argc): i64 {
         return 1;
     }
     if (argc == 2) {
-        _pe_dyn_load(S, disp);
-        var r0 = _pe_dyn_cmp(S, 3);  ECLOSE_PE(S);   var f0 = EJMP0(S); EPATCH(S, r0);
-        var r1 = _pe_dyn_cmp(S, 87); EDELETEF_PE(S); var f1 = EJMP0(S); EPATCH(S, r1);
-        # exit(60): mirror the literal path (pop code, drop sc_nr, ExitProcess).
-        # EEXIT ends in int3 and never returns, so its jmp-done is dead but kept
-        # for uniform structure.
-        var r2 = _pe_dyn_cmp(S, 60); _pe_dyn_exit(S); var f2 = EJMP0(S); EPATCH(S, r2);
-        _pe_dyn_nomatch(S, argc);
-        EPATCH(S, f0); EPATCH(S, f1); EPATCH(S, f2);
+        _pe_dyn_arity2(S, disp);
         return 1;
     }
     if (argc == 7) {
@@ -2999,6 +3044,40 @@ fn _pe_open_flags(S): i64 {
     return 0;
 }
 
+# 6.6.9 — derive CreateFileW's dwFlagsAndAttributes from the Linux open() flag word, into
+# r8d. EOPEN_PE passed a FIXED 0x80 (FILE_ATTRIBUTE_NORMAL) before this, so O_NOFOLLOW and
+# O_DIRECTORY were accepted and ignored — and CreateFileW resolves a final reparse point for
+# EVERY disposition, so plain O_CREAT|O_EXCL over a DANGLING symlink created the link's
+# target (measured on real cass, CHANGELOG [6.6.6]). Split out of `_pe_open_flags` for the
+# cybs per-function limit, and it runs FIRST: it only PEEKS the flag word at [rsp+8] (stack
+# top→bottom: [mode] [flags] [path] [sc_nr]) before `_pe_open_flags` pops it. r8 survives
+# `_pe_open_flags` (rax/rcx/rdx/r9/r10) and the widen loop (rax/rcx/rsi/rdi); EOPEN_PE
+# stores it at [rsp+0x28] before it reuses r8d for dwShareMode.
+#   base                    FILE_ATTRIBUTE_NORMAL          0x00000080
+#   O_NOFOLLOW (0x20000)    | FILE_FLAG_OPEN_REPARSE_POINT 0x00200000
+#   O_DIRECTORY (0x10000)   | FILE_FLAG_BACKUP_SEMANTICS   0x02000000 (only way to open a dir)
+#   O_CREAT|O_EXCL (0xC0)   | FILE_FLAG_OPEN_REPARSE_POINT — CREATE_NEW never opens an
+#                           existing object, so the flag cannot make it open a link; it only
+#                           stops the create from following one. Race-free, no check.
+# BACKUP_SEMANTICS is NEVER set without O_DIRECTORY (it would let O_WRONLY open a directory).
+# The -ELOOP / -ENOTDIR answers come from lib/syscalls_windows.cyr's sys_open, which asks the
+# opened handle (0xF03D). CHANGELOG [6.6.9]
+fn _pe_open_attr_flags(S): i64 {
+    EB(S, 0x48); EB(S, 0x8B); EB(S, 0x44); EB(S, 0x24); EB(S, 0x08); # mov rax, [rsp+8] (flags, peeked)
+    EB(S, 0x41); EB(S, 0xB8); EB(S, 0x80); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); # mov r8d, 0x80 (FILE_ATTRIBUTE_NORMAL)
+    EB(S, 0xA9); EB(S, 0x00); EB(S, 0x00); EB(S, 0x02); EB(S, 0x00); # test eax, 0x20000 (O_NOFOLLOW)
+    EB(S, 0x74); EB(S, 0x07);                           # jz +7
+    EB(S, 0x41); EB(S, 0x81); EB(S, 0xC8); EB(S, 0x00); EB(S, 0x00); EB(S, 0x20); EB(S, 0x00); # or r8d, FILE_FLAG_OPEN_REPARSE_POINT
+    EB(S, 0xA9); EB(S, 0x00); EB(S, 0x00); EB(S, 0x01); EB(S, 0x00); # test eax, 0x10000 (O_DIRECTORY)
+    EB(S, 0x74); EB(S, 0x07);                           # jz +7
+    EB(S, 0x41); EB(S, 0x81); EB(S, 0xC8); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); EB(S, 0x02); # or r8d, FILE_FLAG_BACKUP_SEMANTICS
+    EB(S, 0x25); EB(S, 0xC0); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); # and eax, 0xC0 (O_CREAT|O_EXCL)
+    EB(S, 0x3D); EB(S, 0xC0); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); # cmp eax, 0xC0
+    EB(S, 0x75); EB(S, 0x07);                           # jne +7 (not CREATE_NEW)
+    EB(S, 0x41); EB(S, 0x81); EB(S, 0xC8); EB(S, 0x00); EB(S, 0x00); EB(S, 0x20); EB(S, 0x00); # or r8d, FILE_FLAG_OPEN_REPARSE_POINT
+    return 0;
+}
+
 # emit Win64 open: `syscall(2, path, flags, mode)` →
 # CreateFileW(lpFileName, dwDesiredAccess, dwShareMode,
 #             lpSecurityAttributes, dwCreationDisposition,
@@ -3028,7 +3107,7 @@ fn _pe_open_flags(S): i64 {
 # Frame layout (0x250 = 592 B, plus an 8 B pad at odd expression depth):
 #   [rsp+0x000..0x01F]  shadow space (32 B, Win64 ABI)
 #   [rsp+0x020]         dwCreationDisposition stack arg (8 B)
-#   [rsp+0x028]         dwFlagsAndAttributes stack arg (8 B)
+#   [rsp+0x028]         dwFlagsAndAttributes stack arg (8 B; from `_pe_open_attr_flags`, 6.6.9)
 #   [rsp+0x030]         hTemplateFile stack arg (8 B, = 0)
 #   [rsp+0x038..0x247]  widened UTF-16 path buffer (528 B ≈ 264 WCHARs)
 #   [rsp+0x248..0x24F]  8 B tail pad
@@ -3053,6 +3132,7 @@ fn EOPEN_PE(S): i64 {
     _pe_ensure_createf(S);
     var cf_idx = _pe_createf_get();
 
+    _pe_open_attr_flags(S);                             # peeks flags; r8d=dwFlagsAndAttributes (6.6.9)
     _pe_open_flags(S);                                  # pops mode+flags; r9d=access, r10d=disposition
     EB(S, 0x58);                                        # pop rax (path ptr)
     EB(S, 0x49); EB(S, 0x89); EB(S, 0xC3);              # mov r11, rax (stash path)
@@ -3082,11 +3162,10 @@ fn EOPEN_PE(S): i64 {
     # Set up CreateFileW args.
     EB(S, 0x48); EB(S, 0x8D); EB(S, 0x4C); EB(S, 0x24); EB(S, 0x38); # lea rcx, [rsp+0x38]
     EB(S, 0x44); EB(S, 0x89); EB(S, 0xCA);                           # mov edx, r9d (dwDesiredAccess — 6.6.6, was a hardcoded 0xC0000000)
+    EB(S, 0x4C); EB(S, 0x89); EB(S, 0x44); EB(S, 0x24); EB(S, 0x28); # mov [rsp+0x28], r8 (dwFlagsAndAttributes — 6.6.9, was a fixed 0x80)
     EB(S, 0x41); EB(S, 0xB8); EB(S, 0x03); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); # mov r8d, 3 (FILE_SHARE_READ|WRITE)
     EB(S, 0x4D); EB(S, 0x31); EB(S, 0xC9);                           # xor r9, r9
     EB(S, 0x4C); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x20); # mov [rsp+0x20], r10 (dwCreationDisposition)
-    EB(S, 0x48); EB(S, 0xC7); EB(S, 0x44); EB(S, 0x24); EB(S, 0x28); # mov qword [rsp+0x28], 0x80 (FILE_ATTRIBUTE_NORMAL)
-    EB(S, 0x80); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00);
     EB(S, 0x48); EB(S, 0xC7); EB(S, 0x44); EB(S, 0x24); EB(S, 0x30); # mov qword [rsp+0x30], 0 (hTemplateFile)
     EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00);
 
@@ -3330,8 +3409,8 @@ fn ELOAD_LOCAL_ADDR(S, adisp): i64 {
 }
 
 # v5.11.37 path-A named ops — Class C refactor (f64 unary ops).
-# x86 uses a sign-bit flip (btc) for f64_neg and x87 (fsin/fcos/fyl2x/etc.)
-# for transcendentals. aarch64 has native fneg but errors / dispatches
+# x86 uses a sign-bit flip (btc) for f64_neg and x87 (fyl2x/f2xm1/fpatan) for
+# transcendentals, except sin/cos, which call lib/math.cyr (6.6.9). aarch64 has native fneg but errors / dispatches
 # to lib/math.cyr polyfills for transcendentals. cx has no f64
 # opcodes in this slot (real CYX f64 ops = future work). Closes
 # Class C of docs/audit/2026-04-27-cx-direct-emit-inventory.md.
@@ -3351,21 +3430,36 @@ fn EF64_NEG(S): i64 {
     return 0;
 }
 
-# EF64_SIN — x87 fsin (D9 FE).
+# EF64_SIN / EF64_COS — a call to lib/math.cyr's `_f64_sin_polyfill` / `_f64_cos_polyfill`,
+# the same route aarch64 takes. NOT x87 fsin / fcos: those reduce with a 66-bit π, so
+# sin(π) was 1.6e11 ulp off and error grew from 2^10 up, and for |x| ≥ 2^63 they set C2
+# and leave the argument UNCHANGED (sin(1e19) = 1e19). Precision control does not reach
+# them, so PE and x86 Mach-O were the same. The software route is < 1 ulp everywhere and
+# gives the same bits on every target, at a speed cost. ERR_MSG reports and continues,
+# so a missing include returns before ECALLFIX sees the -1 index. CHANGELOG [6.6.9]
 fn EF64_SIN(S): i64 {
-    EX87PUSH(S);
-    _IR_REC0(S, IR_RAW_EMIT);
-    EB(S, 0xD9); EB(S, 0xFE);
-    EX87POP(S);
+    var pf = _FINDFN_CSTR(S, "_f64_sin_polyfill", 17);
+    if (pf < 0) {
+        ERR_MSG(S, "f64_sin requires include \"lib/math.cyr\" (provides _f64_sin_polyfill)", 68);
+        return 0;
+    }
+    EPUSHR(S);
+    ECALLPOPS(S, 1);
+    ECALLFIX(S, pf);
+    ECALLCLEAN(S, 1);
     return 0;
 }
 
-# EF64_COS — x87 fcos (D9 FF).
 fn EF64_COS(S): i64 {
-    EX87PUSH(S);
-    _IR_REC0(S, IR_RAW_EMIT);
-    EB(S, 0xD9); EB(S, 0xFF);
-    EX87POP(S);
+    var pf = _FINDFN_CSTR(S, "_f64_cos_polyfill", 17);
+    if (pf < 0) {
+        ERR_MSG(S, "f64_cos requires include \"lib/math.cyr\" (provides _f64_cos_polyfill)", 68);
+        return 0;
+    }
+    EPUSHR(S);
+    ECALLPOPS(S, 1);
+    ECALLFIX(S, pf);
+    ECALLCLEAN(S, 1);
     return 0;
 }
 

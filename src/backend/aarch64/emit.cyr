@@ -175,6 +175,12 @@ fn EGETMODFILENAME_PE(S) { return 0; }
 # v6.6.7: EFLUSHFB_PE (kernel32!FlushFileBuffers — Linux fsync/fdatasync, 74/75 on PE)
 # — same x86/PE-only cohort, same stub reason. See CHANGELOG [6.6.7].
 fn EFLUSHFB_PE(S) { return 0; }
+# 6.6.9: EGETFINFO_PE / ESYMLINKW_PE / ESETEOF_PE (kernel32 GetFileInformationByHandleEx /
+# CreateSymbolicLinkW / SetEndOfFile, reroutes 0xF03D-0xF03F — POSIX open semantics on PE)
+# — same x86/PE-only cohort, same stub reason. See CHANGELOG [6.6.9].
+fn EGETFINFO_PE(S) { return 0; }
+fn ESYMLINKW_PE(S) { return 0; }
+fn ESETEOF_PE(S) { return 0; }
 # v6.0.54: close the .23 stub gap. ECREATEDIR_PE (mkdir/83) +
 # EDELETEF_PE (unlink/87) shipped x86-only at v5.11.22-23 and never
 # got aarch64 stubs — they fired "undefined function" warnings on

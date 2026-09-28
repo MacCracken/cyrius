@@ -203,7 +203,7 @@ here. All take/return raw cstrings + POSIX-shaped `0` / negative-errno.
 | `xrmdir` | `xrmdir(path) → 0/-errno` | Remove an empty directory. Windows routes to `RemoveDirectoryW` (v6.6.6; **-1 before that**) |
 | `xmkdir` | `xmkdir(path, mode) → 0/-errno` | v6.5.7 — create a directory. Windows **does** route here |
 | `xmkdir_p` | `xmkdir_p(path, mode) → 0/-1` | v6.5.7 — `mkdir -p`. Existing directory is success; tries the full path first, walks parents only on failure; paths >1023 bytes return -1 rather than truncating |
-| `xsymlink` | `xsymlink(target, linkpath) → 0/-errno` | v6.5.7 — symlink. **-1 on Windows** |
+| `xsymlink` | `xsymlink(target, linkpath) → 0/-errno` | v6.5.7 — symlink. Windows routes to `CreateSymbolicLinkW` since v6.6.9 (a directory target gets a directory link); it needs Developer Mode or an elevated process, else -1 (**-1 always before 6.6.9**) |
 | `xreadlink` | `xreadlink(path, buf, bufsize) → n/-errno` | v6.5.7 — read a symlink target. **NOT NUL-terminated** (readlink(2)'s contract). **-1 on Windows** |
 | `xlink` | `xlink(oldpath, newpath) → 0/-errno` | v6.5.7 — hard link. **-1 on Windows** |
 | `file_rename` | `file_rename(oldpath, newpath) → 0/-errno` | Rename/replace. Windows routes to `MoveFileExW(REPLACE_EXISTING\|WRITE_THROUGH)` — the rename is on disk when it returns (write-through since v6.6.7; before that the Windows rename was atomic but not durable) |
@@ -218,7 +218,7 @@ here. All take/return raw cstrings + POSIX-shaped `0` / negative-errno.
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `file_write_atomic` | `file_write_atomic(path, buf, len) → 0/-errno` | Write a unique sibling temp → fsync → close → rename over `path`. On any failure the temp is unlinked and `path` is left intact |
-| `file_create_exclusive` | `file_create_exclusive(path, mode) → fd/-17` | No-clobber create. Kernel-atomic on Linux/macOS (`O_CREAT\|O_EXCL`) and Windows (`CREATE_NEW`); **agnos degrades to a non-atomic `file_exists` pre-check** |
+| `file_create_exclusive` | `file_create_exclusive(path, mode) → fd/-17` | No-clobber create, kernel-atomic on every target: `O_CREAT\|O_EXCL` on Linux/macOS, `CREATE_NEW` + `FILE_FLAG_OPEN_REPARSE_POINT` on Windows, `AO_CREAT\|AO_EXCL` on agnos (v6.6.9 — it was a non-atomic `file_exists` pre-check there). A name that exists as a file, a directory or a symlink — **even a dangling one** — is -17 everywhere (before 6.6.9 Windows followed a dangling link and created its target) |
 | `file_lock` / `file_unlock` | `(fd) → 0/-errno` | Exclusive lock / release (blocking on Linux+macOS; agnos flock is **non-blocking** — a contended `LOCK_EX` returns -1) |
 | `file_trylock` | `file_trylock(fd) → 0/-1` | Non-blocking exclusive lock |
 | `file_lock_shared` | `file_lock_shared(fd) → 0/-errno` | Shared (read) lock |
@@ -616,6 +616,7 @@ Filesystem: paths, directories, tree walking.
 | `dir_walk` | `dir_walk(path, results)` | Recursive walk |
 | `find_files` | `find_files(path, ext) → vec` | Find by extension |
 | `is_dir` | `is_dir(path) → 0/1` | Check if directory |
+| `is_symlink` | `is_symlink(path) → 0/1` | Is `path` itself a symlink (not followed; a dangling link is 1)? `dir_walk` lists a linked directory but never descends it. On Windows (v6.6.9; **0 for everything before**) a symlink or junction is 1 — a name-surrogate reparse point — and a cloud placeholder or dedup file is 0 |
 
 ### net.cyr
 
@@ -987,18 +988,19 @@ ops, integer gcd+lcm, the `f64`-builtin polyfills, and f64 parsing. All values
 are f64 **bit patterns** carried in i64.
 
 The polyfills are what the `f64_exp` / `f64_ln` / `f64_log2` / `f64_exp2` /
-`f64_sin` / `f64_cos` / `f64_atan` builtins call on aarch64. Four of them — the
-exp/ln family, fdlibm ports since 6.6.8 — are **supported public entry points**
-for one purpose: they use only f64 add/sub/mul/div and integer bit operations, so
-they return the **same bits on every target**, where the builtins are only
-promised to be within 1 ulp (x86 and Windows run x87, aarch64 the polyfill). Call
-them directly when output must match across targets (a golden file, a seeded
-simulation). The `_` prefix is historical; the names are pinned by
-`tests/tcyr/crossos/f64_log_exp_polyfill.tcyr`, which calls all four and checks
-their bits. The sin / cos / atan polyfills (`_f64_sin_polyfill`,
-`_f64_cos_polyfill`, `_f64_atan_polyfill` and the `_f64_sin_core` /
-`_f64_cos_core` kernels) remain **private**: they carry no ≤1-ulp promise yet,
-and may change bits or names.
+`f64_atan` builtins call on aarch64, and what `f64_sin` / `f64_cos` call on
+**every** target (6.6.9 — x86 no longer emits x87 `fsin`/`fcos`, so those two
+builtins need `include "lib/math.cyr"` everywhere). All seven are fdlibm ports
+with a ≤1-ulp bound and IEEE special values, and are **supported public entry
+points** for one purpose: they use only f64 add/sub/mul/div and integer bit
+operations, so they return the **same bits on every target**, where the exp/ln
+family and `f64_atan` builtins are only promised to be within 1 ulp (x86 and
+Windows run x87, aarch64 the polyfill). Call them directly when output must
+match across targets (a golden file, a seeded simulation). The `_` prefix is
+historical; the names are pinned by `tests/tcyr/crossos/f64_log_exp_polyfill.tcyr`,
+`trig_polyfill.tcyr` and `exp2_atan_bigtrig.tcyr`, which call them and check their
+bits. (Their internal helpers — `_f64_rem_pio2`, `_f64_k_sin`, `_f64_k_cos` and
+the `_f64_trig_*` fns — remain private.)
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
@@ -1019,11 +1021,15 @@ and may change bits or names.
 | `_f64_exp2_polyfill` | `_f64_exp2_polyfill(x) → i64` | 2^x — ≤1 ulp, `exp2(k) == 2^k` exactly for integral k, IEEE specials, **same bits on every target** (6.6.8) |
 | `_f64_ln_polyfill` | `_f64_ln_polyfill(x) → i64` | ln x — ≤1 ulp; ±0→-inf, any negative→NaN, +inf→+inf; **same bits on every target** (6.6.8) |
 | `_f64_log2_polyfill` | `_f64_log2_polyfill(x) → i64` | log2 x — ≤1 ulp, `log2(2^k) == k` exactly; specials as ln; **same bits on every target** (6.6.8) |
+| `_f64_sin_polyfill` | `_f64_sin_polyfill(x) → i64` | sin x — ≤1 ulp for every finite x (Payne-Hanek reduction up to DBL_MAX); ±0 kept, ±inf/NaN→NaN; the `f64_sin` builtin on every target; **same bits on every target** (a NaN's sign aside) (6.6.9) |
+| `_f64_cos_polyfill` | `_f64_cos_polyfill(x) → i64` | cos x — ≤1 ulp for every finite x; ±inf/NaN→NaN; the `f64_cos` builtin on every target; **same bits on every target** (a NaN's sign aside) (6.6.9) |
+| `_f64_atan_polyfill` | `_f64_atan_polyfill(x) → i64` | atan x — ≤1 ulp; `atan(±1)` exactly ±π/4, ±inf→±π/2, ±0 kept; **same bits on every target** (6.6.9) |
 
 Constants include `F64_ONE` / `F64_TWO` / `F64_HALF` / `F64_PI` (+ `PI_2`,
 `PI_4`, `PI_6`, `2_PI`) / `F64_TAU` / `F64_E` / `F64_LN2` / `F64_LN10` /
 `F64_LOG2E` / `F64_SQRT2` / `F64_FRAC_1_SQRT2`, plus the Dekker
-double-double reduction constants used by the large-argument trig path.
+double-double constants (`F64_DD_SPLIT`, `F64_2PI_*`, `F64_PI2_*`,
+`F64_TRIG_BIG`) of the pre-6.6.9 trig reduction, kept as public constants.
 
 > ⛔ **Carved out — no longer in `lib/math.cyr`.** The transcendental,
 > hyperbolic, power and combinatorial fns moved into `lib/ganita.cyr` at

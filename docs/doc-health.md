@@ -107,6 +107,18 @@ type: state
 >   worth writing down: a checker that round-trips literals through `unicode_escape` reports 23
 >   false positives, all off by 3, one per em dash.
 >
+> **Touched at 6.6.9 (bite 5, not a sweep):** `docs/guides/cyrius-guide.md`'s PE `open` section
+> said `O_DIRECTORY` and `O_NOFOLLOW` "are still ignored on Windows, deliberately" and blamed the
+> dangling-link follow on `O_EXCL|O_NOFOLLOW` — when plain `O_CREAT|O_EXCL` followed it too. Both
+> flags now have their POSIX meaning there, and the section is a table of what each target answers,
+> every row asserted by `open_flags_per_target.tcyr` on real cass/ecb/ach/pi. Its Durability note
+> said a var-held 74/75 "gets the honest -38" (true, and the defect: the runtime switch did not carry
+> them); its arity table now lists them. `docs/stdlib-reference.md`: `xsymlink` is no longer -1 on
+> Windows, `file_create_exclusive` is no longer non-atomic on agnos, and `is_symlink` has a row.
+> ⚠ Same pattern as 6.6.6 bite 9h: the degrade was load-bearing in a source comment
+> (`lib/syscalls_windows.cyr` OFlags), a test's PE arm (`syscall_shm_fd_passing.tcyr` asserted that
+> `sys_ftruncate` DECLINES) and a sibling comment (`cbt/deps.cyr`, handed to the cbt lane).
+>
 > **Touched at 6.6.5 (bite 8, not a sweep):** the CLI-argument rewrite corrected FOUR doc
 > claims that had never been true. `docs/guides/cyrius-guide.md` (6.6.4 line 1136) said a bare `cyrius lint`
 > lints all of the stdlib — measured on 6.6.4 it printed usage and exited 1 — and line 2724

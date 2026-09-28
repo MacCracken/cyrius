@@ -4713,6 +4713,7 @@ syscalls_windows::sys_setsockopt/5
 syscalls_windows::sys_socket/3
 syscalls_windows::sys_socketpair/4
 syscalls_windows::sys_statfs/2
+syscalls_windows::sys_symlink/2
 syscalls_windows::sys_truncate/2
 syscalls_windows::sys_umount2/2
 syscalls_windows::sys_unlink/1

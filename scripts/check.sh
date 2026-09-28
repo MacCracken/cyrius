@@ -1456,3 +1456,15 @@ _chk_gate "$ROOT/tests/gates/frontend/stack_enum_mixed_return_warning.sh"
 # 6.6.9 (bite 3) — a second struct/union with a different layout (the first silently won) and
 # an enum constant over a zero/computed global of the same name are warned, not silent.
 _chk_gate "$ROOT/tests/gates/frontend/redefinition_layout_and_enum_over_var.sh"
+
+# 6.6.9 (bite 4) — x86 f64_sin / f64_cos (ELF, PE, x86 Mach-O) call lib/math.cyr's fdlibm polyfill,
+# not x87 fsin / fcos (66-bit π: sin(π) 1.6e11 ulp off, |x| >= 2^63 returned unchanged).
+_chk_gate "$ROOT/tests/gates/codegen/x86_trig_calls_polyfill.sh"
+
+# 6.6.9 (bite 5) — O_NOFOLLOW / O_DIRECTORY / O_CREAT|O_EXCL mean on PE what they mean on Linux
+# (CreateFileW resolved a final reparse point for EVERY disposition: O_EXCL over a dangling link
+# created its target, O_NOFOLLOW|O_TRUNC truncated a link's target, O_DIRECTORY opened files).
+_chk_gate "$ROOT/tests/gates/platform/pe_open_posix_semantics.sh"
+# 6.6.9 (bite 5) — agnos file_create_exclusive is one atomic AO_EXCL create (was a file_exists
+# pre-check + plain create), a refusal classified -EEXIST by lstat#102.
+_chk_gate "$ROOT/tests/gates/platform/agnos_create_exclusive_atomic.sh"

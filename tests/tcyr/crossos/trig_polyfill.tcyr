@@ -1,49 +1,190 @@
-# trig_polyfill.tcyr — VR-01: f64_sin / f64_cos on aarch64 (ecb macOS-arm64 +
-# pi) route through lib/math.cyr's _f64_sin_polyfill / _f64_cos_polyfill (v6.4.16,
-# attn11 trig unblock — issues/2026-07-07-aarch64-no-trig-polyfill.md); x86 (Linux +
-# cass) keeps native x87 fsin/fcos. Validates known angles, the polyfill directly
-# (exercises the aarch64 path on every arch), and the sin²+cos²=1 identity across
-# all four quadrants + negatives. Pre-v6.4.16 this hard-errored on aarch64.
-include "lib/assert.cyr"
+# trig_polyfill.tcyr — f64_sin / f64_cos are right on every target (6.6.9).
+#
+# ⛔ THE DEFECTS. aarch64 lowered these builtins to Taylor-series polyfills that reduced the
+# argument with a ONE-word π/2 below 8192 — up to ~2.6e6 ulp off for 2 < |x| < 8192, sin(π)
+# = -0 — and a two-word 2/π above it, which failed past ~2^50: |sin| > 1, then +inf or NaN
+# (sin(1e300) = +inf, sin(DBL_MAX) = NaN). x86 (Linux, PE, x86 Mach-O) emitted bare x87
+# fsin / fcos, which reduce with a 66-bit π: sin(π) was 1.6e11 ulp off, error grew from 2^10
+# up, and |x| ≥ 2^63 came back UNCHANGED (sin(1e19) = 1e19). All of it silently.
+#
+# The promise this file pins, on every target (lib/math.cyr, CHANGELOG [6.6.9]):
+#   * finite results within 1 ulp of the correctly rounded value, for EVERY finite x;
+#   * sin(±0) = ±0, tiny x kept exactly, sin/cos(±inf) and NaN give NaN (a NaN's sign is
+#     not promised — x86 and aarch64 differ there);
+#   * the builtin IS the polyfill on every target now, so both give the SAME BITS, and the
+#     pinned bits below must match on ecb, ach, cass and pi too.
+# References: Python decimal, π to 1400 digits, rounded to double (correctly rounded).
+# ⚠ In crossos/ so it runs on the real hosts: aarch64 and x86 took different paths before.
+include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
 include "lib/fmt.cyr"
 include "lib/math.cyr"
+include "lib/assert.cyr"
 
-alloc_init();
+var PINF = 0x7FF0000000000000;
+var NINF = 0xFFF0000000000000;
 
-var eps = f64_div(f64_from(1), f64_from(1000000000));   # 1e-9
-
-fn near(a, b) {
-    return f64_lt(f64_abs(f64_sub(a, b)), eps);
+fn is_nan(b): i64 {
+    if (((b >> 52) & 0x7FF) != 0x7FF) { return 0; }
+    if ((b & 0x000FFFFFFFFFFFFF) == 0) { return 0; }
+    return 1;
+}
+# Monotonic integer order over finite doubles, so |a - b| counts ulps across zero.
+fn ordb(b): i64 {
+    if (((b >> 63) & 1) == 1) { return 0 - (b & 0x7FFFFFFFFFFFFFFF); }
+    return b;
+}
+fn ulps(a, b): i64 {
+    var d = ordb(a) - ordb(b);
+    if (d < 0) { d = 0 - d; }
+    return d;
+}
+fn ok1(got, want): i64 {
+    if (((got >> 52) & 0x7FF) == 0x7FF) { return 0; }
+    if (ulps(got, want) > 1) { return 0; }
+    return 1;
 }
 
-test_group("f64_sin/f64_cos known angles (arch-dispatched builtin)");
-assert(near(f64_sin(f64_from(0)), f64_from(0)) == 1, "sin 0 = 0");
-assert(near(f64_cos(f64_from(0)), f64_from(1)) == 1, "cos 0 = 1");
-assert(near(f64_sin(F64_PI_2), f64_from(1)) == 1, "sin pi/2 = 1");
-assert(near(f64_cos(F64_PI_2), f64_from(0)) == 1, "cos pi/2 = 0");
-assert(near(f64_sin(F64_PI), f64_from(0)) == 1, "sin pi = 0");
-assert(near(f64_cos(F64_PI), f64_neg(f64_from(1))) == 1, "cos pi = -1");
-assert(near(f64_sin(f64_div(F64_PI, f64_from(6))), F64_HALF) == 1, "sin pi/6 = 0.5");
-assert(near(f64_cos(f64_div(F64_PI, f64_from(3))), F64_HALF) == 1, "cos pi/3 = 0.5");
-
-test_group("_f64_*_polyfill direct (the aarch64 path, exercised on every arch)");
-assert(near(_f64_sin_polyfill(F64_PI_2), f64_from(1)) == 1, "polyfill sin pi/2 = 1");
-assert(near(_f64_cos_polyfill(F64_PI), f64_neg(f64_from(1))) == 1, "polyfill cos pi = -1");
-assert(near(_f64_sin_polyfill(f64_div(F64_PI, f64_from(6))), F64_HALF) == 1, "polyfill sin pi/6 = 0.5");
-
-test_group("sin^2 + cos^2 = 1 across quadrants + negatives");
-var one = f64_from(1);
-var t = f64_neg(f64_from(5));
-var i = 0;
-while (i < 20) {
-    var s = f64_sin(t);
-    var c = f64_cos(t);
-    var id = f64_add(f64_mul(s, s), f64_mul(c, c));
-    assert(near(id, one) == 1, "sin^2+cos^2=1");
-    t = f64_add(t, F64_HALF);
-    i = i + 1;
+# One finite row: the builtin and the polyfill within 1 ulp of cr, the polyfill exactly `pin`,
+# the builtin the same bits as the polyfill.
+fn row(x, scr, spin, ccr, cpin, name): i64 {
+    assert(ok1(f64_sin(x), scr) == 1, name);
+    assert(ok1(_f64_sin_polyfill(x), scr) == 1, name);
+    assert_eq(_f64_sin_polyfill(x), spin, name);
+    assert_eq(f64_sin(x), spin, name);
+    assert(ok1(f64_cos(x), ccr) == 1, name);
+    assert(ok1(_f64_cos_polyfill(x), ccr) == 1, name);
+    assert_eq(_f64_cos_polyfill(x), cpin, name);
+    assert_eq(f64_cos(x), cpin, name);
+    return 0;
 }
 
-var r = assert_summary();
+# 64-bit FNV-1a over whole result words.
+fn fnv(h, v): i64 { return (h ^ v) * 0x100000001B3; }
+
+fn main(): i64 {
+    alloc_init();
+
+    test_group("special values");
+    assert_eq(f64_sin(0), 0, "sin(+0) = +0");
+    assert_eq(f64_sin(0x8000000000000000), 0x8000000000000000, "sin(-0) = -0 (was +0 on aarch64)");
+    assert_eq(_f64_sin_polyfill(0x8000000000000000), 0x8000000000000000, "polyfill sin(-0) = -0");
+    assert_eq(f64_cos(0), F64_ONE, "cos(+0) = 1");
+    assert_eq(f64_cos(0x8000000000000000), F64_ONE, "cos(-0) = 1");
+    assert_eq(is_nan(f64_sin(PINF)), 1, "sin(+inf) = NaN");
+    assert_eq(is_nan(f64_sin(NINF)), 1, "sin(-inf) = NaN");
+    assert_eq(is_nan(f64_cos(PINF)), 1, "cos(+inf) = NaN");
+    assert_eq(is_nan(f64_cos(NINF)), 1, "cos(-inf) = NaN");
+    assert_eq(is_nan(f64_sin(0x7FF8000000000000)), 1, "sin(NaN) = NaN");
+    assert_eq(is_nan(f64_cos(0xFFF8000000000000)), 1, "cos(-NaN) = NaN");
+    assert_eq(is_nan(_f64_sin_polyfill(PINF)), 1, "polyfill sin(+inf) = NaN");
+    assert_eq(is_nan(_f64_cos_polyfill(0x7FF0000000000001)), 1, "polyfill cos(sNaN) = NaN");
+
+    test_group("bit-exact: sin(pi), cos(pi/2), the multiples of pi/2");
+    assert_eq(f64_sin(F64_PI), 0x3CA1A62633145C07, "sin(pi) = 1.2246467991473532e-16 (x87 1.6e11 ulp off, aarch64 -0)");
+    assert_eq(f64_sin(0xC00921FB54442D18), 0xBCA1A62633145C07, "sin(-pi)");
+    assert_eq(f64_cos(F64_PI_2), 0x3C91A62633145C07, "cos(pi/2) = 6.123233995736766e-17");
+    assert_eq(f64_sin(F64_PI_2), F64_ONE, "sin(pi/2) = 1");
+    assert_eq(f64_cos(F64_PI), 0xBFF0000000000000, "cos(pi) = -1");
+    assert_eq(f64_sin(F64_TAU), 0xBCB1A62633145C07, "sin(2pi)");
+    assert_eq(f64_sin(0x3FE0C152382D7365), 0x3FDFFFFFFFFFFFFF, "sin(pi/6) rounds just below 0.5");
+
+    test_group("finite rows: <= 1 ulp from correctly rounded, bits pinned");
+    row(0x3FE0000000000000, 0x3FDEAEE8744B05F0, 0x3FDEAEE8744B05F0, 0x3FEC1528065B7D50, 0x3FEC1528065B7D50, "0.5");
+    row(0x3FF0000000000000, 0x3FEAED548F090CEE, 0x3FEAED548F090CEE, 0x3FE14A280FB5068C, 0x3FE14A280FB5068C, "1.0");
+    row(0x4000000000000000, 0x3FED18F6EAD1B446, 0x3FED18F6EAD1B446, 0xBFDAA22657537205, 0xBFDAA22657537205, "2.0");
+    row(0x4008000000000000, 0x3FC210386DB6D55B, 0x3FC210386DB6D55B, 0xBFEFAE04BE85E5D2, 0xBFEFAE04BE85E5D2, "3.0");
+    row(0x4024000000000000, 0xBFE1689EF5F34F52, 0xBFE1689EF5F34F52, 0xBFEAD9AC890C6B1F, 0xBFEAD9AC890C6B1F, "10.0");
+    row(0x4059000000000000, 0xBFE03425B78C4DB8, 0xBFE03425B78C4DB8, 0x3FEB981DBF665FDF, 0x3FEB981DBF665FDF, "100.0");
+    row(0xC01E000000000000, 0xBFEE041886FCAE30, 0xBFEE041886FCAE30, 0x3FD62F45E66F5C2F, 0x3FD62F45E66F5C2F, "-7.5");
+    row(0x3FE921FB54442D18, 0x3FE6A09E667F3BCC, 0x3FE6A09E667F3BCC, 0x3FE6A09E667F3BCD, 0x3FE6A09E667F3BCD, "pi/4");
+    row(0x4012D97C7F3321D2, 0xBFF0000000000000, 0xBFF0000000000000, 0xBCAA79394C9E8A0A, 0xBCAA79394C9E8A0A, "3pi/2");
+    row(0x4076300000000000,
+      0xBEFF9BD0307D1DE3, 0xBEFF9BD0307D1DE3, 0xBFEFFFFFFFC18E4C, 0xBFEFFFFFFFC18E4C, "355 (a near-multiple of pi)");
+    row(0x3DDB7CDFD9D7BDBB, 0x3DDB7CDFD9D7BDBB, 0x3DDB7CDFD9D7BDBB, F64_ONE, F64_ONE, "1e-10");
+    row(0x0000000000000001, 0x0000000000000001, 0x0000000000000001, F64_ONE, F64_ONE, "min subnormal");
+    row(0x40C0000000000000, 0xBFEE98F87098C8E4, 0xBFEE98F87098C8E4, 0x3FD2BD43D0EB2C92, 0x3FD2BD43D0EB2C92, "8192");
+    row(0x40F86A0000000000, 0x3FA24DAA9C527E96, 0x3FA24DAA9C527E96, 0xBFEFFAC3841B3DA7, 0xBFEFFAC3841B3DA7, "1e5");
+
+    test_group("near k*pi/2: the reduction cancels, the tail must survive");
+    row(0x4025FDBBE9BBA775,
+      0xBFF0000000000000, 0xBFF0000000000000, 0xBCBEE2C2D963A10C, 0xBCBEE2C2D963A10C, "fl(7pi/2)");
+    row(0x4063A28C59D5433B, 0x3CD1B19140C0C0D5, 0x3CD1B19140C0C0D5, F64_ONE, F64_ONE, "fl(100pi/2)");
+    row(0x40988B2F704A940A, 0x3D32C3BEB21E1E21, 0x3D32C3BEB21E1E21, F64_ONE, F64_ONE, "fl(1000pi/2)");
+    row(0x40B921FB54442D18, 0xBD51A62633145C07, 0xBD51A62633145C07, F64_ONE, F64_ONE, "fl(4096pi/2)");
+    row(0x40C9213244698AF7,
+      0xBFF0000000000000, 0xBFF0000000000000, 0x3D5114CDFC3A7938, 0x3D5114CDFC3A7938, "fl(8191pi/2)");
+    row(0x40C921FB54442D18, 0xBD61A62633145C07, 0xBD61A62633145C07, F64_ONE, F64_ONE, "fl(8192pi/2)");
+    row(0x413921FB54442D18,
+      0xBDD1A62633145C07, 0xBDD1A62633145C07, F64_ONE, F64_ONE, "fl(2^20 pi/2), the Cody-Waite limit");
+    row(0x414921FC1D5407BA, F64_ONE, F64_ONE, 0x3DEA0056C0458DA0, 0x3DEA0056C0458DA0, "fl((2^21+1)pi/2)");
+    row(0x41D921FB54442D18,
+      0xBE71A62633145C03, 0xBE71A62633145C03, 0x3FEFFFFFFFFFFFED, 0x3FEFFFFFFFFFFFED, "fl(2^30 pi/2)");
+    # 6381956970095103·2^797: of all doubles, the one closest to a multiple of π/2.
+    row(0x7506AC5B262CA1FF,
+      F64_ONE, F64_ONE, 0xBC214AE72E6BA22F, 0xBC214AE72E6BA22F, "6381956970095103*2^797");
+
+    test_group("huge arguments: 2^50 .. DBL_MAX (x87 returned x itself from 2^63 up)");
+    row(0x4310000000000000, 0x3FDFC4F5E3AAEDDB, 0x3FDFC4F5E3AAEDDB, 0x3FEBC7711009E00B, 0x3FEBC7711009E00B, "2^50");
+    row(0x4341C37937E08000, 0x3FE8F334432EBBA5, 0x3FE8F334432EBBA5, 0xBFE40991E398DBFC, 0xBFE40991E398DBFC, "1e16");
+    row(0x43B0000000000000, 0xBFEA94ADAB06665C, 0xBFEA94ADAB06665C, 0xBFE1D146047D6947, 0xBFE1D146047D6947, "2^60");
+    row(0x43E0000000000000,
+      0x3FEFFF6DFD42DC54, 0x3FEFFF6DFD42DC54, 0x3F882AA375B3C33E, 0x3F882AA375B3C33E, "2^63 (x87: 2^63)");
+    row(0x43E158E460913D00,
+      0xBFEDAA805F702A5C, 0xBFEDAA805F702A5C, 0xBFD7FE7240949636, 0xBFD7FE7240949636, "1e19 (x87: 1e19)");
+    row(0x4450000000000000, 0xBFEFF115EDFEC132, 0xBFEFF115EDFEC132, 0x3FAEE19681C47DC1, 0x3FAEE19681C47DC1, "2^70");
+    row(0x4480F0CF064DD592, 0xBFEB453AB76BF397, 0xBFEB453AB76BF397, 0x3FE0BE2CEF01C8F4, 0x3FE0BE2CEF01C8F4, "1e22");
+    row(0x44F0000000000000, 0xBFEB7727FA80CA37, 0xBFEB7727FA80CA37, 0x3FE06BC5DFAE2DA3, 0x3FE06BC5DFAE2DA4, "2^80");
+    row(0x7E37E43C8800759C,
+      0xBFEA2C16B010E385, 0xBFEA2C16B010E385, 0xBFE2699022ADC4C1, 0xBFE2699022ADC4C1, "1e300 (aarch64: +inf)");
+    row(0x7FEFFFFFFFFFFFFF,
+      0x3F7452FC98B34E97, 0x3F7452FC98B34E97, 0xBFEFFFE62ECFAB75, 0xBFEFFFE62ECFAB75, "DBL_MAX (aarch64: NaN)");
+    row(0xFFEFFFFFFFFFFFFF, 0xBF7452FC98B34E97, 0xBF7452FC98B34E97, 0xBFEFFFE62ECFAB75, 0xBFEFFFE62ECFAB75, "-DBL_MAX");
+
+    # 6,224 arguments: two per binade from 2^-40 to 2^1023 with random mantissa and sign
+    # (xorshift64), then fl(k·fl(π/2)) and fl(1021k·fl(π/2)) for k = 1..2048, which crosses the
+    # Cody-Waite / Payne-Hanek boundary. When these hashes were pinned, every one of the 12,448
+    # results was checked within 1 ulp of the correctly rounded value (Python decimal) — so a
+    # target that computes any different bit fails here, and one that matches is < 1 ulp.
+    test_group("sweep: 6,224 arguments, bits identical on every target");
+    var s = 0x9E3779B97F4A7C15;
+    var hs = 0xCBF29CE484222325;
+    var hc = 0xCBF29CE484222325;
+    var diff = 0;
+    var x = 0;
+    var i = 0;
+    var e = 0;
+    while (i < 2128) {
+        s = s ^ (s << 13);
+        s = s ^ (s >> 7);
+        s = s ^ (s << 17);
+        e = (i % 1064) - 40;
+        x = ((e + 1023) << 52) | (s & 0x000FFFFFFFFFFFFF) | (s & 0x8000000000000000);
+        hs = fnv(hs, _f64_sin_polyfill(x));
+        hc = fnv(hc, _f64_cos_polyfill(x));
+        if (f64_sin(x) != _f64_sin_polyfill(x)) { diff = diff + 1; }
+        if (f64_cos(x) != _f64_cos_polyfill(x)) { diff = diff + 1; }
+        i = i + 1;
+    }
+    var k = 1;
+    while (k <= 2048) {
+        x = f64_mul(f64_from(k), F64_PI_2);
+        hs = fnv(hs, _f64_sin_polyfill(x));
+        hc = fnv(hc, _f64_cos_polyfill(x));
+        if (f64_sin(x) != _f64_sin_polyfill(x)) { diff = diff + 1; }
+        x = f64_mul(f64_from(k * 1021), F64_PI_2);
+        hs = fnv(hs, _f64_sin_polyfill(x));
+        hc = fnv(hc, _f64_cos_polyfill(x));
+        if (f64_cos(x) != _f64_cos_polyfill(x)) { diff = diff + 1; }
+        k = k + 1;
+    }
+    assert_eq(hs, 0xF004C0EAC845CD34, "sin sweep hash (every result within 1 ulp when pinned)");
+    assert_eq(hc, 0xFBD87FA3EF27D0CB, "cos sweep hash (every result within 1 ulp when pinned)");
+    assert_eq(diff, 0, "the builtin is the polyfill, bit for bit");
+
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);

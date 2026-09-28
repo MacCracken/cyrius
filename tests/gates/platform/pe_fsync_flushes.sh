@@ -31,6 +31,13 @@
 #           argument setup (`lea 0x230(%rsp),%rdx`), at least once. (c) is the ONLY guard on
 #           the write-through bit anywhere: no run on wine or on real Windows can observe
 #           durability, so the flag's presence in the bytes is what there is to check.
+#           (d) 6.6.9 — a VAR-HELD 74/75 reaches EPE_SYSCALL_DYNAMIC's argc-2 runtime switch
+#           (`_pe_dyn_arity2`), not the literal route. Every such switch (keyed on its unlink
+#           candidate, `48 3d 57 00 00 00` = cmp $0x57,%rax) must carry a 74 and a 75
+#           candidate (`48 3d 4a…` / `48 3d 4b…`), each followed by a flush tail before the
+#           next candidate. (b) counts tails with `>=`, so the switch's own arms only ever ADD
+#           tails there — dropping them left (b) green ("9 tails for 9 sites" against 15), and
+#           only wine saw it. (d) is what guards them without wine.
 #   axis 3  BEHAVIOUR under wine (SKIPs without it; wine is NOT hardware — the cass leg of the
 #           release gate runs the same .tcyr). Same row count as the POSIX oracle.
 #
@@ -38,7 +45,8 @@
 # comments stripped; every row runs exactly once on every target) and must be ≥ FLOOR, so
 # deleting rows fails this gate instead of shrinking it.
 #
-# ROW FLOOR: 16 assertions (measured 2026-09-27 at 6.6.7).
+# ROW FLOOR: 18 assertions (16 measured 2026-09-27 at 6.6.7; +2 at 6.6.9 for the var-held
+# 74/75 rows — the runtime switch on PE did not route them).
 #
 # MUTATION LEDGER — built and run 2026-09-27 at 6.6.7, x86_64 Linux + wine 11.17. Each mutant
 # is a one-edit scratch tree rebuilt with build/cycc, with a copy of this gate in it.
@@ -55,6 +63,11 @@
 #   the Windows peer gains sys_fsync/sys_fdatasync (control) PASS    PASS     PASS (9 tails)
 #   peer as above + xfsync delegates to sys_fsync (control)  PASS    PASS     PASS (8 tails)
 #   peer as above + xfsync's PE arm `return 0;`              PASS    FAIL     FAIL
+# Added 2026-09-28 at 6.6.9 (same method, wine 11.17):
+#   _pe_dyn_arity2 loses its 74/75 arms (var-held → -38)     PASS    FAIL(d)  FAIL (2 rows red:
+#                                                                              var-held 74/75)
+#     — before (d) existed this mutant read axis 2 PASS ("9 flush tail(s) for 9 site(s)").
+#   _pe_dyn_arity2's 74 arm emits EDELETEF_PE, not a flush  PASS    FAIL(d)  FAIL
 # The xfsync rows and the controls were also run with wine hidden from PATH (what CI has): the
 # two xfsync mutants are still red on axis 2 alone. The controls are the fold lane's expected
 # peer change — they must stay green.
@@ -65,7 +78,7 @@
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC="$ROOT/build/cycc"
 SRC="$ROOT/tests/tcyr/crossos/fsync_flushes.tcyr"
-FLOOR=16
+FLOOR=18
 
 [ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 0; }
 [ -f "$SRC" ] || { echo "  FAIL: $SRC is missing — the cross-OS companion for this gate is gone"; exit 1; }
@@ -136,6 +149,19 @@ else
     ntail=$(awk '/cmp[[:space:]]+\$0x1,%eax/ {p=1; next} p && /sbb[[:space:]]+%rax,%rax/ {n++} {p=0} END {print n+0}' "$D/dis")
     nmv=$(grep -cE 'lea[[:space:]]+0x230\(%rsp\),%rdx' "$D/dis")
     nwt=$(awk '/lea[[:space:]]+0x230\(%rsp\),%rdx/ {p=1; next} p && /mov[[:space:]]+\$0x9,%r8d/ {n++} {p=0} END {print n+0}' "$D/dis")
+    # (d): "<switches> <74 candidates> <75 candidates> <74 arms that flush> <75 arms that flush>"
+    dyn=$(awk '
+        /48 3d 57 00 00 00[[:space:]]+cmp/ {sw++; cur=0; p=0; next}
+        /48 3d 4a 00 00 00[[:space:]]+cmp/ {d74++; cur=74; p=0; next}
+        /48 3d 4b 00 00 00[[:space:]]+cmp/ {d75++; cur=75; p=0; next}
+        /[[:space:]]48 3d [0-9a-f][0-9a-f] [0-9a-f][0-9a-f] [0-9a-f][0-9a-f] [0-9a-f][0-9a-f][[:space:]]+cmp/ {cur=0; p=0; next}
+        /cmp[[:space:]]+\$0x1,%eax/ {p=1; next}
+        p && /sbb[[:space:]]+%rax,%rax/ { if (cur == 74) t74++; if (cur == 75) t75++; cur = 0 }
+        {p=0}
+        END {print sw+0, d74+0, d75+0, t74+0, t75+0}' "$D/dis")
+    set -- $dyn
+    nsw=$1; nd74=$2; nd75=$3; nt74=$4; nt75=$5
+    nvar=$(grep -v '^[[:space:]]*#' "$SRC" | grep -cE 'syscall\([a-z_][a-z_0-9]*,')
     if [ "$xfany" -lt 1 ]; then
         echo "  FAIL axis 2 (xfsync): lib/io.cyr's xfsync has no fsync/fdatasync call in its CYRIUS_TARGET_WIN arm — it does not flush on Windows"
         fail=1
@@ -154,8 +180,14 @@ else
     elif [ "$nwt" != "$nmv" ]; then
         echo "  FAIL axis 2: $nmv MoveFileExW call(s) but $nwt pass dwFlags = 9 — MOVEFILE_WRITE_THROUGH is missing (the rename is not durable, and nothing else can see that)"
         fail=1
+    elif [ "$nvar" -lt 1 ] || [ "$nsw" -lt 1 ]; then
+        echo "  FAIL axis 2(d) (anti-vacuous): $nvar var-held syscall site(s) in the .tcyr, $nsw argc-2 runtime switch(es) in the PE build — the var-held rows are gone or no longer reach the switch"
+        fail=1
+    elif [ "$nd74" != "$nsw" ] || [ "$nd75" != "$nsw" ] || [ "$nt74" != "$nsw" ] || [ "$nt75" != "$nsw" ]; then
+        echo "  FAIL axis 2(d): $nsw argc-2 runtime switch(es), but $nd74/$nd75 carry a 74/75 candidate and $nt74/$nt75 of those arms flush — a var-held fsync/fdatasync gets -38 (or the wrong call) on Windows"
+        fail=1
     else
-        echo "  ok axis 2: FlushFileBuffers imported, $ntail flush tail(s) for $need site(s), $nwt of $nmv MoveFileExW call(s) write-through"
+        echo "  ok axis 2: FlushFileBuffers imported, $ntail flush tail(s) for $need site(s), $nwt of $nmv MoveFileExW call(s) write-through, $nsw runtime switch(es) route 74 and 75 to a flush"
     fi
 fi
 
