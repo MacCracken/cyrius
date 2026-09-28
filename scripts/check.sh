@@ -1226,3 +1226,8 @@ _chk_gate "$ROOT/tests/gates/toolchain/audit_walk_fails_closed.sh"
 # were unverified and the "Updated:" list was unconditional. Runs `version-bump.sh
 # --docs-only` over scratch copies of the live docs plus fixtures; mutation-proven in the header.
 _chk_gate "$ROOT/tests/gates/toolchain/version_bump_doc_anchors.sh"
+
+# 6.6.8 bite 7 — lib/process_agnos.cyr against the fake kernel's proc* modes: spawn_path#43 with
+# SPAWN_F_ARGV|CLEANFD and the exact argv blob, WAIT_BLOCK (and its pre-1.57.7 poll fallback), a
+# capture that reads to EOF BEFORE it reaps, refusals before any syscall, no spawn#3 / 8 MB alloc.
+_chk_gate "$ROOT/tests/gates/platform/agnos_process_spawn.sh"

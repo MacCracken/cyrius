@@ -6,6 +6,38 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.8] — 2026-09-27
 
+### Fixed
+
+- **`lib/process_agnos.cyr` rewritten: a child is spawned from disk with its real argv and a clean
+  fd table, the verbs WAIT for it to exit, and the capture verbs capture.** (bite 7.) **Root
+  cause:** the module (v6.0.56) was written against agnos's frozen 0–33 surface and never
+  revisited. It read the whole ELF into an `alloc(8 MB)` it never freed (**8 MB leaked per spawn**)
+  and handed it to spawn#3, which refuses any image over **16 KB** (kernel 1.44.10) — a DCE'd
+  `println` hello is 15 KB, so nearly every real program, agnsh included, got -1. It then called
+  waitpid#4 ONCE, and #4 without the 0x100 bit is a POLL that answers **-2** while the child lives
+  (1.44.9): `run` returned Err(1) before the child finished, `wait_pid` Err(2), and every `exec_*`
+  reported -2 as the child's exit code. No argument reached the child ("args not passable") and
+  no capture variant captured ("sys_dup is a stub") — both stale since agnos 1.57.6. **Fix:** all
+  eleven verbs (plus `exec_capture_status`, same names and arities) now build a NUL-separated argv
+  blob on the stack — refused up front past 1024 bytes or 16 entries, never truncated; an env vec
+  becomes a `KEY=VALUE` blob — and spawn with `sys_spawn_argv(…, SPAWN_F_CLEANFD)`; they wait with
+  `sys_waitpid_block` and decode the §4.9 status (exit → code, signal → 128 + sig; the `exec_*`
+  verbs keep the POSIX `-1` for a signal death). A -1 from WAIT_BLOCK on a pid we just spawned can
+  only mean a pre-1.57.7 kernel, so it falls back to polling #4 — there is deliberately no #108
+  probe, which would misread 1.57.7/1.57.8. Capture is pipe → `sys_exec_redirect(1, w)` → spawn →
+  close `w` → **read to EOF** → reap: the ring is 4080 B and a full-ring write blocks (1.57.9), so
+  reaping first deadlocks; an arm that never reached a spawn is cleared. `exec_cmd` splits the line
+  into argv (agnos has no shell). `wait_pid` on a pid that is not ours is `Err(PROC_ECHILD)` (now
+  defined on agnos). Kernel floor 1.57.6, documented in the header. Verified on **agnos-qemu**
+  (kernel 1.57.10, `-smp 1` and `-smp 4`, a 115 KB child seeded as `/bin/pchild`): 41/41 checks —
+  a 10,000-byte capture through the 4080 B ring with every child write accepted, a 100-byte buffer
+  against 20,000 bytes of output that still reaps, `run` → Ok(137) for a SIGKILLed child and
+  Ok(142) for a #PF, an env blob reaching the child, CLEANFD dropping a parent fd, `wait_pid`
+  blocking 300 ms, and 64 sequential runs; the 6.6.7 control build scored 5 of 32 on the same
+  kernel (every spawn refused — the child is over #3's 16 KB cap). Gate: `tests/gates/platform/agnos_process_spawn.sh` (the fake kernel
+  in `tests/fixtures/agnos_sctrace.cyr` gains `proc*` modes that answer the spawn/pipe/wait
+  numbers and dump each #43 argv blob).
+
 ## [6.6.7] — 2026-09-27
 
 The first of three SMALL releases that the post-6.6.6 issue track is split into (roadmap.md, *The 6.6.7
