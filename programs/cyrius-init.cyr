@@ -144,7 +144,7 @@ fn _self_path(argv0): i64 {
     # macОS has no /proc/self/exe; resolve via open(argv0)+fcntl(F_GETPATH=50).
     var afd = sys_open(argv0, 0, 0);
     if (afd >= 0) {
-        var gr = syscall(72, afd, 50, buf);
+        var gr = sys_fcntl(afd, 50, buf);                  # F_GETPATH (v6.6.8: the wrapper)
         sys_close(afd);
         if (gr >= 0) { n = strlen(buf); }
     }
@@ -275,7 +275,7 @@ fn _cwd_path(): i64 {
     var mbuf = alloc(4096);
     var dfd = sys_open(".", 0, 0);
     if (dfd >= 0) {
-        var fr = syscall(SYS_FCNTL, dfd, 50, mbuf);
+        var fr = sys_fcntl(dfd, 50, mbuf);                 # F_GETPATH
         sys_close(dfd);
         if (fr == 0) { if (load8(mbuf) == 47) { return mbuf; } }
     }

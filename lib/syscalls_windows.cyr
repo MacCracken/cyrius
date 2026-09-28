@@ -467,6 +467,30 @@ fn sys_process_vm_readv(pid, local_iov, liovcnt, remote_iov, riovcnt, flags): i6
 fn sys_process_vm_writev(pid, local_iov, liovcnt, remote_iov, riovcnt, flags): i64 { return 0 - 38; }
 # Create a filesystem node (FIFO / device). Declines: Windows named pipes live in \\.\pipe\.
 fn sys_mknodat(dirfd, path, mode, dev): i64 { return 0 - 38; }
+# ── v6.6.8: PE peers for the fcntl surface in lib/syscalls_linux_common.cyr. Windows has no
+# fcntl (non-blocking I/O is ioctlsocket(FIONBIO) on a SOCKET, or OVERLAPPED on a HANDLE —
+# different object models, not a renumber), so all three decline with -38/-ENOSYS. A caller
+# that relies on a non-blocking read learns it cannot have one, which a silent `return 0`
+# would hide. ⚠ None of them may NAME O_NONBLOCK: this peer declares none, and an undefined
+# variable is a hard compile error for every PE consumer. The F_* names exist so portable
+# source compiles. CHANGELOG [6.6.8]
+enum FcntlCmd {
+    F_DUPFD = 0;
+    F_GETFD = 1;
+    F_SETFD = 2;
+    F_GETFL = 3;
+    F_SETFL = 4;
+}
+# The one F_SETFD descriptor flag.
+enum FdFlag {
+    FD_CLOEXEC = 1;
+}
+# fcntl(2). Declines on Windows.
+fn sys_fcntl(fd, cmd, arg): i64 { return 0 - 38; }
+# Make an fd non-blocking. Declines on Windows (no fcntl status flags).
+fn fd_set_nonblocking(fd): i64 { return 0 - 38; }
+# Restore saved fd status flags. Declines on Windows.
+fn fd_restore_flags(fd, saved): i64 { return 0 - 38; }
 
 # ── PE peers for the linux_common wrappers a cross-platform consumer names on paths that
 # are dead on Windows (yukti's optical / eject / netlink-monitor / network-probe / mount /

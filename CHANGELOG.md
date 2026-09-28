@@ -270,6 +270,43 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   it moves its pin), vani (drop the aarch64 FIFO skip: `sys_mknodat(AT_FDCWD, p, 4096 | 0600,
   0)`), mirshi (`sys_process_vm_*`).
 
+- **The stdlib has `sys_fcntl`, `fd_set_nonblocking` and `fd_restore_flags`, and nothing in the
+  tree hand-rolls fcntl any more.** (bite 3; [sigil: sys_fcntl wrapper](docs/development/issues/archived/2026-09-23-sigil-sys-fcntl-wrapper.md).)
+  **Root cause:** there was no fcntl wrapper, so every O_NONBLOCK user wrote
+  `syscall(SYS_FCNTL, fd, 4, fl | …)` and re-derived the flag at the call site — about 15 sites
+  in-tree and 21 in the ecosystem, several with Linux's 2048, which on Darwin is **O_EXCL** and
+  is ignored by F_SETFL, so the fd stayed blocking on macOS (the vendored sigil drain, daimon,
+  cyim-lsp, cyrius-doom). The only exported toggle was `net.cyr`'s socket-named
+  `sock_set_nonblocking`, which also ignored the F_SETFL result. And the public name is not a cure
+  by itself: enum constants are global and the last definition wins retroactively, so yukti <=
+  2.3.12's `enum EjectConst { O_NONBLOCK = 2048; }` made every O_NONBLOCK in a macOS program
+  O_EXCL. **Fix:** `lib/syscalls_linux_common.cyr` gains `sys_fcntl(fd, cmd, arg)`,
+  `fd_set_nonblocking(fd)` (returns the saved flags, or -errno when F_GETFL **or** F_SETFL fails)
+  and `fd_restore_flags(fd, saved)`, plus `F_DUPFD` / `F_GETFD` / `F_SETFD` / `F_GETFL` /
+  `F_SETFL` / `FD_CLOEXEC`. The O_NONBLOCK bit comes from a PRIVATE per-target literal (Darwin 4,
+  Linux 2048), so no fold can poison it. The PE and agnos peers decline all three with -38 (agnos
+  deliberately not `sock_set_nonblocking`'s `return 0`: a drain that needs a non-blocking read
+  must learn it cannot have one). Migrated: `net.cyr`'s `net_connect_sa_nb` and
+  `sock_set_nonblocking` / `sock_clear_nonblocking` (the literal 72 and `net.cyr`'s own
+  `_NET_O_NONBLOCK` copy are gone; a failed F_SETFL now fails the bounded connect instead of
+  running it blocking), `async.cyr`'s reactor connect (a failed F_SETFL closes the socket and fails
+  the task), accept `FD_CLOEXEC` and `async_read` (which used to write a failed F_GETFL's -errno
+  back as the status flags), the Darwin `sys_accept4` composition (a failed flag write now closes
+  the accepted fd and returns the error rather than handing back a blocking or inheritable fd),
+  `cbt/deps.cyr`'s and `programs/cyrius-init.cyr`'s Darwin `F_GETPATH` calls, and
+  `tests/tcyr/platform/net_v6_connect.tcyr`. Pinned by `tests/tcyr/crossos/fd_nonblocking.tcyr`
+  (new): it redefines the public `O_NONBLOCK` to the OTHER platform's value — the yukti shape — and
+  requires `fd_set_nonblocking` to set this target's real bit (read back with F_GETFL), an empty
+  non-blocking pipe read to return -EAGAIN (11 Linux, 35 Darwin), the restore to put the flags
+  back, errors on a closed fd to be negative, and `sys_accept4(…, SOCK_NONBLOCK | SOCK_CLOEXEC)`
+  to leave both flags on the accepted fd. 26/26 on x86_64, qemu-aarch64, pi, ecb and ach; 8/8 on
+  cass (-38). RED on x86_64 with the wrapper spelled over the public `O_NONBLOCK`, and RED on ecb
+  and ach with the Darwin accept4 composition putting back `fl | 2048`. The Darwin `F_GETPATH`
+  arm of `cyrius-init` was re-run on both Macs (`env -i … --dry-run .` names the directory).
+  **Consumers:** sigil (its capture drain moves to `fd_set_nonblocking` when it pins 6.6.8; the
+  EAGAIN half is already fixed in 3.13.3), vani (`_audio_open_pcm`), daimon, cyim-lsp,
+  cyrius-doom, argonaut (`ag_sys_fcntl`), kybernet, agnosai, majra.
+
 ### Changed
 
 - **Stdlib fold — yukti 2.3.14** (bite 2), `lib/yukti.cyr` copied byte-identical from yukti
@@ -333,6 +370,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `process_vm_*`, which is why the axis reads the call name rather than the result). Seven
   mutations, all RED (ledger in the header). `macho_route_parity.sh` allow-lists the eight with a
   reason each. <1 s.
+
+- **`tests/gates/platform/fcntl_wrapper_only.sh` (new).** (bite 3.) Axis A: no
+  `syscall(SYS_FCNTL|72|25, …)` in `lib/ cbt/ programs/ tests/tcyr/` outside `sys_fcntl` (579
+  files; the sigil and vani folds exempt by name with a reason — theirs to migrate). Axis B:
+  `fd_set_nonblocking` takes its bit from `_fd_o_nonblock()` (the literals 4 / 2048) and never
+  names the public `O_NONBLOCK`. Axis C: PE and agnos decline all three with -38. Axis D runs
+  `crossos/fd_nonblocking.tcyr` on the host and under qemu-aarch64. Four mutations, all RED. <1 s.
 
 ## [6.6.7] — 2026-09-27
 

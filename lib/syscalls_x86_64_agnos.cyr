@@ -748,6 +748,28 @@ fn sys_process_vm_writev(pid, local_iov, liovcnt, remote_iov, riovcnt, flags): i
 # Create a filesystem node (FIFO / device). agnos has no device nodes or FIFOs.
 fn sys_mknodat(dirfd, path, mode, dev): i64 { return 0 - 38; }
 
+# ── v6.6.8: agnos peers for the fcntl surface. agnos has no fcntl and no per-fd status
+# flags, so all three decline with -38/-ENOSYS — NOT sock_set_nonblocking's `return 0`,
+# because a pipe drain that needs a non-blocking read must learn it cannot have one. No
+# SYS_FCNTL is minted (the block above says why). CHANGELOG [6.6.8]
+enum FcntlCmd {
+    F_DUPFD = 0;
+    F_GETFD = 1;
+    F_SETFD = 2;
+    F_GETFL = 3;
+    F_SETFL = 4;
+}
+# The one F_SETFD descriptor flag.
+enum FdFlag {
+    FD_CLOEXEC = 1;
+}
+# fcntl(2). agnos has no fcntl.
+fn sys_fcntl(fd, cmd, arg): i64 { return 0 - 38; }
+# Make an fd non-blocking. agnos has no fd status flags.
+fn fd_set_nonblocking(fd): i64 { return 0 - 38; }
+# Restore saved fd status flags. agnos has no fd status flags.
+fn fd_restore_flags(fd, saved): i64 { return 0 - 38; }
+
 # at-family constants. The Linux values, defined here so the PORTABLE surface is
 # complete: this peer is STANDALONE (it does not include syscalls_linux_common.cyr,
 # where these live for the Linux/macOS peers), so without them a consumer calling

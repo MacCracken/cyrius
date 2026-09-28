@@ -1,0 +1,158 @@
+# fd_nonblocking.tcyr — v6.6.8: sys_fcntl / fd_set_nonblocking / fd_restore_flags set THIS
+# target's O_NONBLOCK on any fd, and nothing a program declares can change which bit that is.
+#
+# ⛔ WHY. The stdlib had no fcntl wrapper, so every consumer that wanted a non-blocking fd
+# wrote `syscall(SYS_FCNTL, fd, 4, fl | 2048)` — Linux's O_NONBLOCK. On Darwin 2048 is
+# O_EXCL, which F_SETFL ignores, so the fd stayed BLOCKING: sigil's bounded subprocess drain
+# could sit in read(2) past the deadline it exists to enforce. And the fix could not simply
+# be "use the public O_NONBLOCK name": enum constants are global and the LAST definition
+# wins retroactively, program-wide, so yukti <= 2.3.12's `enum EjectConst { O_NONBLOCK =
+# 2048; }` turned every O_NONBLOCK in a macOS program into O_EXCL — code compiled before it
+# included. The wrapper therefore keeps its own private per-target bit.
+#
+# ⭐ THE POISON BELOW IS DELIBERATE. It re-creates the yukti shape in this program: the public
+# O_NONBLOCK is redefined to the OTHER platform's value — 2048 (Darwin's O_EXCL) on both Macs,
+# as yukti did, and 4 on Linux, so the same mistake is visible on the x86_64 suite and under
+# qemu too. The compiler warns "conflicting value"; that warning is the point.
+# fd_set_nonblocking must STILL set this target's real bit. A wrapper spelled over the public
+# O_NONBLOCK fails the F_GETFL assertion on every target. The empty-pipe read is only
+# attempted once the bit is confirmed, so the broken wrapper fails instead of hanging.
+#
+# ⚠ EVERY ASSERTION IS ABOUT THE FLAG THE KERNEL HOLDS (read back with F_GETFL) or the
+# -EAGAIN only a non-blocking read of an empty pipe produces — never about a wrapper's own
+# return value alone. CHANGELOG [6.6.8]
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/syscalls.cyr"
+include "lib/assert.cyr"
+
+#ifdef CYRIUS_TARGET_MACOS
+enum PoisonedLikeYukti {
+    O_NONBLOCK = 2048;
+}
+#endif
+#ifndef CYRIUS_TARGET_MACOS
+enum PoisonedLikeYukti {
+    O_NONBLOCK = 4;
+}
+#endif
+
+# The bit and the errno the KERNEL uses here, spelled as literals so this test does not
+# share the thing it checks with the code under test.
+fn _want_nb(): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    return 4;
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
+    return 2048;
+    #endif
+}
+fn _want_eagain(): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    return 35;
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
+    return 11;
+    #endif
+}
+
+fn main(): i64 {
+    alloc_init();
+
+    test_group("v6.6.8 — the fcntl command names are the POSIX values on every target");
+    assert_eq(F_GETFD, 1, "F_GETFD = 1");
+    assert_eq(F_SETFD, 2, "F_SETFD = 2");
+    assert_eq(F_GETFL, 3, "F_GETFL = 3");
+    assert_eq(F_SETFL, 4, "F_SETFL = 4");
+    assert_eq(FD_CLOEXEC, 1, "FD_CLOEXEC = 1");
+
+    #ifdef CYRIUS_TARGET_WIN
+    test_group("v6.6.8 — PE declines the fcntl surface with -38 (Windows has no fcntl)");
+    assert_eq(sys_fcntl(0, F_GETFL, 0), 0 - 38, "sys_fcntl declines on Windows");
+    assert_eq(fd_set_nonblocking(0), 0 - 38, "fd_set_nonblocking declines on Windows");
+    assert_eq(fd_restore_flags(0, 0), 0 - 38, "fd_restore_flags declines on Windows");
+    #endif
+
+    #ifdef CYRIUS_TARGET_AGNOS
+    test_group("v6.6.8 — agnos declines the fcntl surface with -38 (no fd status flags)");
+    assert_eq(sys_fcntl(0, F_GETFL, 0), 0 - 38, "sys_fcntl declines on agnos");
+    assert_eq(fd_set_nonblocking(0), 0 - 38, "fd_set_nonblocking declines on agnos");
+    assert_eq(fd_restore_flags(0, 0), 0 - 38, "fd_restore_flags declines on agnos");
+    #endif
+
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_AGNOS
+    test_group("v6.6.8 — fd_set_nonblocking sets THIS target's bit on a pipe");
+    var fds[8];
+    assert_eq(sys_pipe(&fds), 0, "pipe created");
+    var rfd = load32(&fds);
+    var wfd = load32(&fds + 4);
+    var before = sys_fcntl(rfd, F_GETFL, 0);
+    assert_gte(before, 0, "F_GETFL reads the read end's flags");
+    assert_eq(before & _want_nb(), 0, "a fresh pipe is blocking");
+
+    var saved = fd_set_nonblocking(rfd);
+    assert_eq(saved, before, "fd_set_nonblocking returns the flags it found");
+    var now = sys_fcntl(rfd, F_GETFL, 0);
+    assert_eq(now & _want_nb(), _want_nb(),
+      "the kernel holds O_NONBLOCK (Darwin 4 / Linux 2048), despite the program-wide poison");
+
+    var b[8];
+    if ((now & _want_nb()) != 0) {
+        assert_eq(sys_read(rfd, &b, 1), 0 - _want_eagain(),
+          "reading the empty pipe returns -EAGAIN at once (11 Linux, 35 Darwin)");
+    }
+
+    test_group("v6.6.8 — fd_restore_flags puts the saved flags back");
+    assert_eq(fd_restore_flags(rfd, saved), 0, "fd_restore_flags returns 0");
+    assert_eq(sys_fcntl(rfd, F_GETFL, 0), before, "the read end is blocking again");
+    assert_eq(sys_write(wfd, "x", 1), 1, "one byte written");
+    assert_eq(sys_read(rfd, &b, 1), 1, "the blocking read returns it");
+
+    # sys_accept4's SOCK_NONBLOCK / SOCK_CLOEXEC. On Linux that is accept4 itself; Darwin has no
+    # accept4, so the wrapper composes it from accept + these fcntl wrappers — and since 6.6.8 a
+    # failed flag write closes the fd and returns the error instead of handing back a blocking one.
+    test_group("v6.6.8 — sys_accept4 applies SOCK_NONBLOCK and SOCK_CLOEXEC (composed on Darwin)");
+    var lfd = sys_socket(2, 1, 0);                  # AF_INET, SOCK_STREAM
+    assert_gte(lfd, 0, "listener socket");
+    var sa[16];
+    store64(&sa, 0);
+    store64(&sa + 8, 0);
+    #ifdef CYRIUS_TARGET_MACOS
+    store8(&sa, 16);                                # sin_len (BSD)
+    store8(&sa + 1, 2);                             # sin_family AF_INET
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
+    store16(&sa, 2);                                # sin_family AF_INET
+    #endif
+    store32(&sa + 4, 0x0100007F);                   # 127.0.0.1, port 0 (ephemeral)
+    assert_eq(sys_bind(lfd, &sa, 16), 0, "bind 127.0.0.1:0");
+    assert_eq(sys_listen(lfd, 4), 0, "listen");
+    var slen[8];
+    store64(&slen, 16);
+    assert_eq(sys_getsockname(lfd, &sa, &slen), 0, "getsockname reads the ephemeral port back");
+    var cfd = sys_socket(2, 1, 0);
+    assert_eq(sys_connect(cfd, &sa, 16), 0, "connect to the listener");
+    var afd = sys_accept4(lfd, 0, 0, 2048 | 524288);   # SOCK_NONBLOCK | SOCK_CLOEXEC (Linux values)
+    assert_gte(afd, 0, "accept4 returns the connection");
+    assert_eq(sys_fcntl(afd, F_GETFL, 0) & _want_nb(), _want_nb(),
+      "SOCK_NONBLOCK: the accepted fd holds this target's O_NONBLOCK");
+    assert_eq(sys_fcntl(afd, F_GETFD, 0) & FD_CLOEXEC, FD_CLOEXEC,
+      "SOCK_CLOEXEC: the accepted fd is close-on-exec");
+    sys_close(afd);
+    sys_close(cfd);
+    sys_close(lfd);
+
+    test_group("v6.6.8 — errors are reported, not swallowed");
+    sys_close(rfd);
+    sys_close(wfd);
+    assert_lt(fd_set_nonblocking(rfd), 0, "fd_set_nonblocking on a closed fd is negative");
+    assert_lt(sys_fcntl(rfd, F_GETFL, 0), 0, "sys_fcntl on a closed fd is negative");
+    assert_lt(fd_restore_flags(rfd, 0), 0, "fd_restore_flags on a closed fd is negative");
+    #endif
+    #endif
+
+    return assert_summary();
+}
+var ec = main();
+syscall(60, ec);

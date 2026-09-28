@@ -37,10 +37,10 @@ fn main(): i64 {
     assert(s >= 0, "v6 socket created");
     var saved = sock_set_nonblocking(s);
     assert(saved >= 0, "sock_set_nonblocking returns saved flags >= 0");
-    var now = syscall(72, s, 3, 0);             # F_GETFL
-    assert_eq(now & _NET_O_NONBLOCK, _NET_O_NONBLOCK, "O_NONBLOCK is set after sock_set_nonblocking");
+    var now = sys_fcntl(s, F_GETFL, 0);
+    assert_eq(now & _fd_o_nonblock(), _fd_o_nonblock(), "O_NONBLOCK is set after sock_set_nonblocking");
     sock_clear_nonblocking(s, saved);
-    assert_eq(syscall(72, s, 3, 0), saved, "sock_clear_nonblocking restores the saved flags");
+    assert_eq(sys_fcntl(s, F_GETFL, 0), saved, "sock_clear_nonblocking restores the saved flags");
     sys_close(s);
 
     # The connect-loopback below uses getsockname + bind/listen/accept directly

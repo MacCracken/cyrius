@@ -1260,3 +1260,9 @@ _chk_gate "$ROOT/tests/gates/platform/darwin_syscall_literals_routed.sh"
 # spells reaches the kernel as that call (qemu-aarch64 -strace axis; decoded ESYSXLAT rows
 # judged against the committed kernel tables). Mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/platform/ns_caps_family_routed.sh"
+
+# 6.6.8 (bite 3) — fcntl goes through sys_fcntl and O_NONBLOCK through fd_set_nonblocking, whose
+# bit is private and per-target (a fold that redefines the public O_NONBLOCK — yukti's EjectConst
+# did — cannot change it); no in-tree code hand-rolls either; PE / agnos decline with -38; the
+# crossos test runs on the host and under qemu-aarch64. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/platform/fcntl_wrapper_only.sh"

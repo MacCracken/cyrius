@@ -105,13 +105,13 @@ fn _abs_path(src): i64 {
     #ifdef CYRIUS_TARGET_MACOS
     # Darwin has NO getcwd syscall (slot 326 is unused → SIGSYS). Derive
     # the cwd from the "." fd via fcntl(F_GETPATH): open(".") then
-    # fcntl(fd, F_GETPATH=50, buf) writes the absolute path, returns 0/-1.
-    # x86 syscall nums (ESYSXLAT renumbers): open 2→5, fcntl 72→92,
-    # close 3→6. See CHANGELOG [6.0.41].
-    var fd = syscall(2, ".", 0, 0);
+    # fcntl(fd, F_GETPATH=50, buf) writes the absolute path, returns 0/-errno.
+    # See CHANGELOG [6.0.41]; v6.6.8 spells it through the stdlib wrappers
+    # instead of raw 2/72/3.
+    var fd = sys_open(".", 0, 0);
     if (fd < 0) { return src; }
-    var fr = syscall(72, fd, 50, &cwd);
-    syscall(3, fd);
+    var fr = sys_fcntl(fd, 50, &cwd);
+    sys_close(fd);
     if (fr != 0) { return src; }
     while (load8(&cwd + cwd_len) != 0) { cwd_len = cwd_len + 1; }
     #else
