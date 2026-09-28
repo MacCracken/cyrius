@@ -6,6 +6,56 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.8] — 2026-09-27
 
+### Fixed
+
+- **Unary minus on a float negates it: `-1.0` is -1.0 (it was -4.0), `-0.0` is negative zero
+  (it was +0), and `-x` on an `f64`/`f32` value flips its sign bit — every target.** (bite 4.)
+  **Root cause:** the unary-minus arm of `PARSE_FACTOR` (src/frontend/parse_expr.cyr) always
+  emitted integer `0 - rax`, whatever the operand's type, so it subtracted the IEEE bit pattern
+  as an integer: `-1.5` was -3.0, `-0.5` -8.0, `2.0 * -1.0` -8.0, `fn negf(x: f64): f64 {
+  return -x; }` of 1.0 was -4.0. Identical on x86, aarch64, PE and cx; no diagnostic. The
+  ecosystem had written it down as rules (dhvani's *"negative float constants go through
+  f64_neg"*, ganita's *"-0 cannot be produced"*, faq.md's *"no negative literals — use `(0 -
+  N)`"*, which for a float is the next bug down). **Fix:** the operand's type is read after it
+  is parsed; an `F64_TYID` operand (a float literal is one) drops the pushed 0 and takes
+  `EF64_NEG`, an `F32_TYID` operand XORs bit 31, and the integer path is byte-identical. An
+  UNTYPED variable holding float bits is still an `i64` to the compiler — `f64_neg(v)` is the
+  spelling there (documented). Gated by `tests/tcyr/crossos/f64_negation.tcyr` (29 bit-exact
+  rows, -0 checked through `1/x`; the 6.6.7 compiler fails 20).
+- **x86 `f64_neg` is a sign-bit flip (`btc rax, 63`), as aarch64 FNEG and cx `fneg` are.**
+  (bite 4.) It computed `0.0 - x` with `subsd`, which is not negation: `f64_neg(+0)` was +0 and
+  a NaN kept its sign, so x86 (ELF, PE, Mach-O — one emitter) disagreed with aarch64 bit for
+  bit. cxvm's `fneg` opcode is the host's `f64_neg`, so cx programs run on an x86 host inherited
+  it; rebuilding cxvm picks the fix up. 5 bytes instead of 22.
+- **`f64_to` gives the same integer on every target: NaN → 0, ≥ 2^63 → `INT64_MAX`, < -2^63 →
+  `INT64_MIN` (aarch64 FCVTZS's rule).** (bite 4.) x86 lowered it to a bare `cvttsd2si`, which
+  returns the "integer indefinite" `0x8000000000000000` for NaN and for overflow in BOTH
+  directions — `f64_to(NaN)` was INT64_MIN on x86 and 0 on aarch64, `f64_to(+inf)` INT64_MIN
+  and INT64_MAX. The sin/cos polyfills' quadrant (`f64_to(k) & 3`) and the exp/exp2 `2^n`
+  exponent pack inherited whichever the target gave. `EF2I` (src/backend/x86/float.cyr) now
+  follows the convert with a branchless fixup (`ucomisd` against 0, `seta`, `cmovp` for NaN,
+  and `MIN - 1 = MAX` for a positive overflow; clobbers rcx/xmm1 only). cx's `f2i` is the
+  host's `f64_to`, so it follows. Gated by `tests/tcyr/crossos/f64_to_saturation.tcyr` (24
+  rows; the 6.6.7 compiler fails 8 on x86).
+
+### Added
+
+- **Warning: an INTEGER-left `+ - * /` with an `f64` right operand** — `integer arithmetic
+  with an f64 right operand`. (bite 4.) Operators are typed by their left operand, so `0 -
+  1.5` is an integer subtraction of 1.5's bits (-3.0), `2 * x` with `x: f64` multiplies the
+  bits (+inf for 1.5), all silently; v6.4.56's kind-1 warning covered only the f64-LEFT
+  mirror. WARN, not an error or a promotion — the ADR-002 posture kind 1 took (the untyped
+  i64-boxed float idiom stays legal); `CYRIUS_TYPE_CHECK=0` silences it. The tree itself
+  raises none. Gated by `tests/gates/diagnostics/f64_int_mix_warn.sh` (four ops warn once,
+  no false positive on unary minus / f64-f64 / int-int, kind 1 intact, the switch works).
+
+### Changed
+
+- **docs:** `faq.md` known-limitation 7 no longer prescribes `(0 - N)` (for a float it IS the
+  bug); `cyrius-guide.md` documents float unary minus, the left-operand typing rule with both
+  warnings, and `f64_to`'s NaN/overflow results. The x86-only `EMOVAPD_01` helper and its
+  aarch64/cx stubs are gone (the old `f64_neg` was their only caller).
+
 ## [6.6.7] — 2026-09-27
 
 The first of three SMALL releases that the post-6.6.6 issue track is split into (roadmap.md, *The 6.6.7

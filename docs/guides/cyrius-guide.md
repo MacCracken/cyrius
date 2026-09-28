@@ -45,6 +45,20 @@ Octal uses digits `0`–`7`; a `8` or `9` ends the literal. (There is no
 `0b` binary literal form.) A decimal literal with a fractional part
 (`3.14`) is lexed as an `f64` float.
 
+Unary minus works on every literal and value. On a float — a float literal, or a value
+typed `f64` / `f32` — it flips the **sign bit**, so `-1.5` is -1.5, `-0.0` is negative
+zero and `-x` negates an `f64` exactly (6.6.8; before it, `-1.0` evaluated to -4.0 and
+`-0.0` to +0, silently). An **untyped** variable holding float bits is an `i64` as far as
+the compiler knows, so negate that with `f64_neg(v)`.
+
+⚠ Binary operators are typed by their LEFT operand. `0 - 1.5` is an INTEGER subtraction
+of 1.5's bit pattern (it is -3.0), and `2 * x` with `x: f64` multiplies x's bits. Write
+the left operand as a float — `0.0 - x`, `2.0 * x`, or just `-x`. Both directions warn:
+an f64 left with a non-f64 right (`f64 arithmetic with a non-f64 right operand`) and,
+since 6.6.8, an integer left with an f64 right (`integer arithmetic with an f64 right
+operand`). They are warnings, not errors (ADR-002: the untyped `i64`-boxed float idiom
+stays legal); `CYRIUS_TYPE_CHECK=0` silences them.
+
 ## Variables
 
 ```
@@ -721,8 +735,15 @@ What a defer guarantees on the way out (v6.6.7):
 
 ```
 var angle = f64_atan(x);         # Arctangent (f64)
+var n = f64_to(x);               # f64 → i64, truncating toward zero
+var m = f64_neg(x);              # sign-bit flip: f64_neg(+0) is -0, NaN keeps its payload
 # See lib/math.cyr for additional math functions
 ```
+
+`f64_to` gives the same integer on every target (6.6.8): a NaN converts to 0, a value at
+or above 2^63 (including +inf) to `0x7FFFFFFFFFFFFFFF`, and one below -2^63 (including
+-inf) to `0x8000000000000000` — aarch64 FCVTZS's rule. x86 used to return
+`0x8000000000000000` for all three.
 
 ## SIMD Vectors
 
