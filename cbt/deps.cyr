@@ -2931,8 +2931,13 @@ fn _sha256sum_file(path): i64 {
 
 # Run the chosen hasher on `path` with stdout in `tmpf`. Returns its exit status (127 = not
 # on PATH), -2 when the capture cannot be created (errno in _sha_errno; nothing is run), or
-# -3 when the child could not be started or was killed.
+# -3 (-1 on PE, which has no fork) when the child could not be started or was killed.
 fn _sha_run(tmpf, path): i64 {
+    # PE: unreachable (`_sha256sum_file`'s certutil arm returns first), and `sys_fork` is a -1
+    # stub there — refuse at the source as "could not be started", never a silent nothing.
+    #ifdef CYRIUS_TARGET_WIN
+    return 0 - 1;
+    #endif
     var cfd = sys_open(tmpf, O_WRONLY | O_CREAT | O_TRUNC, 0x180);
     if (cfd < 0) { _sha_errno = 0 - cfd; return 0 - 2; }
     var tool = _sha_tool;
@@ -2974,7 +2979,7 @@ fn _sha_run(tmpf, path): i64 {
 fn _sha_finish(tmpf, rc): i64 {
     _sha_fail = 0;
     if (rc == 0 - 2) { _sha_fail = 3; return 0; }
-    if (rc == 0 - 3) { sys_unlink(tmpf); _sha_fail = 4; return 0; }
+    if (rc < 0) { sys_unlink(tmpf); _sha_fail = 4; return 0; }   # -3 / -1: not started
     var buf = alloc(128);
     var n = file_read_all(tmpf, buf, 127);
     sys_unlink(tmpf);

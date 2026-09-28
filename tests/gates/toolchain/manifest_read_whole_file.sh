@@ -200,7 +200,7 @@ programs/checks/platform_efi.cyr|_efi_ovmf_fn_exit_gate|efi_bin|the gate reads t
 cbt/commands.cyr|_lint_syntax_prepass|errf|a child compiler'"'"'s stderr capture in the private temp dir
 cbt/commands.cyr|cmd_capacity|tmperr|a child compiler'"'"'s stderr capture in the private temp dir
 cbt/commands.cyr|cmd_distlib|dl_errf|a child compiler'"'"'s stderr capture in the private temp dir
-cbt/deps.cyr|_sha256sum_file|tmpf|a capture of sha256sum'"'"'s stdout (one 64-char line)
+cbt/deps.cyr|_sha_finish|tmpf|a capture of the hasher'"'"'s stdout (one 64-char line; 6.6.9 moved the read out of _sha256sum_file)
 cbt/deps.cyr|_git_rev|tmpf|a capture of git rev-parse'"'"'s stdout (one 40-char line)'
 x=0
 found=""
