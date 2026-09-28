@@ -1,0 +1,165 @@
+# ns_rootfs_syscalls.tcyr — v6.6.8: sys_unshare / sys_chroot / sys_pivot_root /
+# sys_capget / sys_capset / sys_process_vm_readv / sys_process_vm_writev / sys_mknodat reach
+# THE CALL THEIR NAME CLAIMS on every target that has it, and decline honestly elsewhere.
+#
+# ⛔ WHY THIS FILE LIVES IN `crossos/`. None of these calls had a name in either Linux peer,
+# so consumers wrote numbers — and on ELF-aarch64 every number they could write ran a
+# different call, with a clean build and no diagnostic. Measured on the 6.6.7 tree under
+# `qemu-aarch64 -strace`:
+#
+#     161 (x86 chroot)          → sethostname(...) = -1 EPERM
+#     272 (x86 unshare)         → kcmp(...)        = -1 ESRCH
+#     155 (x86 pivot_root)      → getpgid(...)     = -1 ESRCH
+#     125 / 126 (capget/capset) → sched_get_priority_max / _min  (shakti's cap drop: a no-op)
+#     310 / 311 / 259           → Unknown syscall  (ENOSYS)
+#
+# and the aarch64-NATIVE spellings of chroot (51) and pivot_root (41) never reached the
+# kernel as themselves: the x86-compat rows getsockname 51→204 and socket 41→198 claim them.
+# mknodat's native 33 is the dup2 33→dup3 row source, which is why vani's aarch64 FIFO tests
+# got -9 (EBADF from dup3) and had to be skipped.
+#
+# ⚠ EVERY ASSERTION PINS A VALUE ONLY THE RIGHT CALL PRODUCES, unprivileged, never a bare
+# "it failed" — each wrong call above FAILS too, so a test that accepts any error cannot tell
+# them apart (the statfs_family.tcyr lesson):
+#   * unshare(0) is a valid no-op → 0.            kcmp answers -ESRCH.
+#   * chroot(missing) resolves the path first → -ENOENT for every caller.  sethostname: EPERM.
+#   * pivot_root(missing, missing) → -EPERM unprivileged, -ENOENT with CAP_SYS_ADMIN.
+#                                                  getpgid answers -ESRCH.
+#   * capget(bad version, NULL) → 0 AND rewrites hdr.version to 0x20080522.  The scheduler
+#     calls answer -EINVAL and write nothing.
+#   * capset(current caps) → 0.                   sched_get_priority_min: -EINVAL.
+#   * process_vm_readv/writev on this process copy the bytes.   ENOSYS copies none.
+#   * mknodat(S_IFIFO) creates a node that stat reports as a FIFO.  dup3 answers -EBADF.
+# CHANGELOG [6.6.8]
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/syscalls.cyr"
+include "lib/assert.cyr"
+
+fn _check_audit_arch(): i64 {
+    #ifdef CYRIUS_ARCH_X86
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_AGNOS
+    assert_eq(AUDIT_ARCH_NATIVE, 0xC000003E, "AUDIT_ARCH_NATIVE is AUDIT_ARCH_X86_64");
+    #endif
+    #endif
+    #endif
+    #ifdef CYRIUS_ARCH_AARCH64
+    assert_eq(AUDIT_ARCH_NATIVE, 0xC00000B7, "AUDIT_ARCH_NATIVE is AUDIT_ARCH_AARCH64");
+    #endif
+    return 0;
+}
+
+# The eight wrappers on a target that has none of these calls: each returns `want`.
+fn _check_declines(want, label): i64 {
+    var hdr[8];
+    var buf[32];
+    assert_eq(sys_unshare(0), want, label);
+    assert_eq(sys_chroot("/cyr_no_such_root"), want, label);
+    assert_eq(sys_pivot_root("/cyr_nx_a", "/cyr_nx_b"), want, label);
+    assert_eq(sys_capget(&hdr, 0), want, label);
+    assert_eq(sys_capset(&hdr, &buf), want, label);
+    assert_eq(sys_process_vm_readv(1, &buf, 1, &buf, 1, 0), want, label);
+    assert_eq(sys_process_vm_writev(1, &buf, 1, &buf, 1, 0), want, label);
+    assert_eq(sys_mknodat(0 - 100, "cyr_no_node", 4480, 0), want, label);
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    _check_audit_arch();
+
+    #ifdef CYRIUS_TARGET_MACOS
+    test_group("v6.6.8 — Darwin declines all eight with -78 (ENOSYS) and never emits the number");
+    _check_declines(0 - 78, "declines with -78 on macOS");
+    #endif
+
+    #ifdef CYRIUS_TARGET_WIN
+    test_group("v6.6.8 — PE declines all eight with -38 (ENOSYS)");
+    _check_declines(0 - 38, "declines with -38 on Windows");
+    #endif
+
+    #ifdef CYRIUS_TARGET_AGNOS
+    test_group("v6.6.8 — agnos declines all eight with -38 (ENOSYS)");
+    _check_declines(0 - 38, "declines with -38 on agnos");
+    #endif
+
+    #ifndef CYRIUS_TARGET_MACOS
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_AGNOS
+    test_group("v6.6.8 — unshare / chroot / pivot_root reach the kernel as themselves");
+    assert_eq(sys_unshare(0), 0, "unshare(0) is a no-op success (kcmp answered -ESRCH)");
+    assert_eq(sys_chroot("/cyr_no_such_root_6_6_8"), 0 - 2,
+      "chroot(missing path) is -ENOENT (sethostname answered -EPERM)");
+    var pr = sys_pivot_root("/cyr_no_such_new_root", "/cyr_no_such_put_old");
+    var pr_ok = 0;
+    if (pr == 0 - 1) { pr_ok = 1; }     # EPERM: no CAP_SYS_ADMIN (checked before the paths)
+    if (pr == 0 - 2) { pr_ok = 1; }     # ENOENT: privileged, and the paths do not exist
+    assert_eq(pr_ok, 1, "pivot_root(missing) is -EPERM or -ENOENT (getpgid answered -ESRCH)");
+
+    test_group("v6.6.8 — capget / capset reach the capability calls");
+    var hdr[8];
+    store32(&hdr, 0);                   # a version the kernel does not know
+    store32(&hdr + 4, 0);               # pid 0 = self
+    assert_eq(sys_capget(&hdr, 0), 0, "capget(bad version, NULL) probes and returns 0");
+    assert_eq(load32(&hdr), 0x20080522,
+      "capget wrote _LINUX_CAPABILITY_VERSION_3 into hdr.version (nothing else writes it)");
+    var data[24];
+    var z = 0;
+    while (z < 24) { store8(&data + z, 0); z = z + 1; }
+    store32(&hdr, 0x20080522);
+    store32(&hdr + 4, 0);
+    assert_eq(sys_capget(&hdr, &data), 0, "capget(v3, self) reads this thread's capability sets");
+    store32(&hdr, 0);
+    store32(&hdr + 4, 0);
+    assert_eq(sys_capget(&hdr, &data), 0 - 22, "capget(bad version, data) is -EINVAL");
+    store32(&hdr, 0x20080522);
+    store32(&hdr + 4, 0);
+    var cur[24];
+    assert_eq(sys_capget(&hdr, &cur), 0, "capget reads the sets to write back");
+    assert_eq(sys_capset(&hdr, &cur), 0,
+      "capset(the current sets) is allowed and returns 0 (sched_get_priority_min: -EINVAL)");
+
+    test_group("v6.6.8 — process_vm_readv / writev copy memory on this process");
+    var src[16];
+    store64(&src, 0x0123456789ABCDEF);
+    store64(&src + 8, 0x7EDCBA9876543210);
+    var dst[16];
+    store64(&dst, 0);
+    store64(&dst + 8, 0);
+    var liov[16];
+    var riov[16];
+    store64(&liov, &dst);
+    store64(&liov + 8, 16);
+    store64(&riov, &src);
+    store64(&riov + 8, 16);
+    var me = sys_getpid();
+    assert_eq(sys_process_vm_readv(me, &liov, 1, &riov, 1, 0), 16, "process_vm_readv copied 16 bytes");
+    assert_eq(load64(&dst), 0x0123456789ABCDEF, "process_vm_readv: first word arrived");
+    assert_eq(load64(&dst + 8), 0x7EDCBA9876543210, "process_vm_readv: second word arrived");
+    var dst2[16];
+    store64(&dst2, 0);
+    store64(&dst2 + 8, 0);
+    store64(&liov, &src);               # local = source, remote = destination
+    store64(&riov, &dst2);
+    assert_eq(sys_process_vm_writev(me, &liov, 1, &riov, 1, 0), 16, "process_vm_writev copied 16 bytes");
+    assert_eq(load64(&dst2 + 8), 0x7EDCBA9876543210, "process_vm_writev: the bytes landed");
+
+    test_group("v6.6.8 — mknodat makes a FIFO (vani's named-FIFO tests, skipped on aarch64)");
+    var fifo = test_scratch("cyr_mknodat_fifo");
+    sys_unlinkat(AT_FDCWD, fifo, 0);    # a killed earlier run cannot poison this one (pid-named)
+    assert_eq(sys_mknodat(AT_FDCWD, fifo, 4096 | 384, 0), 0,
+      "mknodat(AT_FDCWD, S_IFIFO|0600) succeeds (native 33 ran dup3: -EBADF)");
+    var st[STAT_BUFSZ];
+    assert_eq(sys_stat(fifo, &st), 0, "the node exists");
+    assert_eq(load32(&st + STAT_MODE) & 61440, 4096, "stat reports it as a FIFO (S_IFIFO)");
+    assert_eq(sys_unlinkat(AT_FDCWD, fifo, 0), 0, "the FIFO unlinks");
+    #endif
+    #endif
+    #endif
+
+    return assert_summary();
+}
+var ec = main();
+syscall(60, ec);

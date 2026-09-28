@@ -87,6 +87,14 @@ allow_reason() {
     SYS_MOUNT|SYS_UMOUNT2|SYS_REBOOT)
                       echo "both|admin syscalls with incompatible Darwin ABIs, unreachable from the macOS builds. NOTE the arm peer's SYS_UMOUNT2=39 collides with the x86-getpid row 39->20, so it LOOKS routed" ;;
     SYS_PRCTL)        echo "both|prctl is Linux-only; Darwin has no equivalent syscall" ;;
+    SYS_UNSHARE|SYS_PIVOT_ROOT)
+                      echo "both|namespaces and mount-tree pivots are Linux-only; Darwin has no peer. sys_unshare / sys_pivot_root decline with -78 under #ifdef CYRIUS_TARGET_MACOS, so no macOS build emits 272/155 (v6.6.8)" ;;
+    SYS_CAPGET|SYS_CAPSET)
+                      echo "both|Linux capability sets have no Darwin syscall (Darwin has no POSIX.1e capabilities). sys_capget / sys_capset decline with -78 on macOS (v6.6.8)" ;;
+    SYS_PROCESS_VM_READV|SYS_PROCESS_VM_WRITEV)
+                      echo "both|Darwin's cross-process copy is mach_vm_read/write on a task port, a Mach trap with a different object model, not a renumber. The wrappers decline with -78 on macOS (v6.6.8)" ;;
+    SYS_CHROOT)       echo "both|Darwin has chroot(61), but no consumer needs it on macOS and it is not offered: sys_chroot declines with -78 there, so 161 is never emitted. A route is one _esx_arm row + one _msx row when a consumer asks (v6.6.8)" ;;
+    SYS_MKNODAT)      echo "both|Darwin has no mknodat; its mknod(14)/mkfifo(132) take no dirfd, so a row would drop an argument silently. sys_mknodat declines with -78 on macOS (v6.6.8)" ;;
     SYS_GETCWD)       echo "both|Darwin has no getcwd syscall (slot 326 is unused). The only issuer, programs/cyrius-init.cyr _cwd_path, takes an open(\".\") + fcntl(F_GETPATH) arm under #ifdef CYRIUS_TARGET_MACOS (as cbt/deps.cyr _abs_path has since 6.0.41), so neither Mac emits 79/17 — proven by compiling it in darwin_syscall_literals_routed.sh axis 2. Until 6.6.8 it did emit them: invisible here while this scan read lib/ only (v6.6.8)" ;;
     SYS_UNAME)        echo "both|Darwin has no uname(2); lib/sys.cyr reads the same fields via sysctl (routed as the private alias 1202->202)" ;;
     SYS_SYSINFO)      echo "arm|Darwin has no sysinfo(2); lib/sys.cyr derives it from sysctl + gettimeofday (1202/1116, both routed)" ;;

@@ -1254,3 +1254,9 @@ _chk_gate "$ROOT/tests/gates/frontend/coroutine_fnptr_and_completion.sh"
 # warnings. An unrouted arm64-macOS number used to re-run the previous syscall silently; the
 # class shipped eight times. Controls + mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/platform/darwin_syscall_literals_routed.sh"
+
+# 6.6.8 (bite 3) — unshare / chroot / pivot_root / capget / capset / process_vm_* / mknodat are
+# named in every peer, wrapped on every target, and on ELF-aarch64 the x86 number each peer
+# spells reaches the kernel as that call (qemu-aarch64 -strace axis; decoded ESYSXLAT rows
+# judged against the committed kernel tables). Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/platform/ns_caps_family_routed.sh"

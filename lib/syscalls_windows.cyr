@@ -71,6 +71,17 @@ enum SysNr {
     # wide path), so a row would be a lie; the stubs below decline explicitly. CHANGELOG [6.6.6]
     SYS_STATFS = 137;
     SYS_FSTATFS = 138;
+    # v6.6.8 — namespaces, root, capabilities, cross-process memory, mknodat: the same
+    # "the constant exists so cross-platform source COMPILES" contract, NOT rerouted — Windows
+    # has none of these as a syscall. The stubs below decline explicitly. CHANGELOG [6.6.8]
+    SYS_UNSHARE = 272;
+    SYS_CHROOT = 161;
+    SYS_PIVOT_ROOT = 155;
+    SYS_CAPGET = 125;
+    SYS_CAPSET = 126;
+    SYS_PROCESS_VM_READV = 310;
+    SYS_PROCESS_VM_WRITEV = 311;
+    SYS_MKNODAT = 259;
 }
 
 # File descriptors mirror Linux convention. GetStdHandle maps
@@ -435,6 +446,27 @@ fn sys_nanosleep(req, rem): i64 { return syscall(SYS_NANOSLEEP, req, rem); }
 # Yield the remainder of this thread's timeslice. Declines on Windows: the peer is
 # SwitchToThread/Sleep(0), a kernel32 import this backend does not reroute.
 fn sys_sched_yield(): i64 { return 0 - 38; }
+# ── v6.6.8: PE peers for the namespace / root / capability / cross-process-memory / mknodat
+# wrappers in lib/syscalls_linux_common.cyr. Windows has none of these as a syscall (job
+# objects, AppContainers, token privileges and ReadProcessMemory are different object
+# models, not renumbers), so each declines with -38/-ENOSYS; the caller's `r < 0` fires.
+# Present so a portable consumer (kavach, takumi, shakti) BUILDS for PE. CHANGELOG [6.6.8]
+# Enter new namespaces. Declines: Windows has no namespaces.
+fn sys_unshare(flags): i64 { return 0 - 38; }
+# Change the root directory. Declines: Windows has no chroot.
+fn sys_chroot(path): i64 { return 0 - 38; }
+# Swap the root mount. Declines: Windows has no mount tree to pivot.
+fn sys_pivot_root(new_root, put_old): i64 { return 0 - 38; }
+# Read capability sets. Declines: Windows privileges live on an access token.
+fn sys_capget(hdr, data): i64 { return 0 - 38; }
+# Set capability sets. Declines, same reason as sys_capget.
+fn sys_capset(hdr, data): i64 { return 0 - 38; }
+# Read another process's memory. Declines: ReadProcessMemory takes a process HANDLE.
+fn sys_process_vm_readv(pid, local_iov, liovcnt, remote_iov, riovcnt, flags): i64 { return 0 - 38; }
+# Write another process's memory. Declines, same reason as sys_process_vm_readv.
+fn sys_process_vm_writev(pid, local_iov, liovcnt, remote_iov, riovcnt, flags): i64 { return 0 - 38; }
+# Create a filesystem node (FIFO / device). Declines: Windows named pipes live in \\.\pipe\.
+fn sys_mknodat(dirfd, path, mode, dev): i64 { return 0 - 38; }
 
 # ── PE peers for the linux_common wrappers a cross-platform consumer names on paths that
 # are dead on Windows (yukti's optical / eject / netlink-monitor / network-probe / mount /

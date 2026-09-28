@@ -220,6 +220,56 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   print no `not routed`: 79 / 17 without the fix) and by macho_route_parity.sh, whose issued-name
   scan now reads `cbt/ programs/ tests/` too.
 
+- **`unshare`, `chroot`, `pivot_root`, `capget`, `capset`, `process_vm_readv` / `_writev` and
+  `mknodat` have stdlib names and wrappers, and on ELF-aarch64 they reach the kernel as
+  themselves.** (bite 3; [kavach: unshare/chroot unnamed, aarch64 chroot unreachable](docs/development/issues/archived/2026-09-25-kavach-unshare-chroot-unnamed-aarch64-chroot-unreachable.md),
+  plus the first tier of the roadmap's *nine syscall families*.) **Root cause:** none of the
+  eight had a name in either Linux peer, so consumers wrote numbers — and on aarch64 every number
+  they could write ran a different call, silently. Measured on 6.6.7 under `qemu-aarch64
+  -strace`: raw x86 161 (chroot) ran **sethostname**, 272 (unshare) **kcmp**, 155 (pivot_root)
+  **getpgid**, 125 / 126 (capget / capset) **sched_get_priority_max / _min**, and 310 / 311 / 259
+  were ENOSYS; the aarch64-native chroot 51 and pivot_root 41 were unreachable at all behind the
+  x86-compat rows `getsockname 51→204` / `socket 41→198`, and native mknodat 33 is the `dup2
+  33→dup3` row source (vani's aarch64 FIFO tests got -9 and were skipped). A nameless number is
+  invisible to the raw-literal diagnostic, whose table is derived from names declared in BOTH
+  peers, so nothing warned. **Fix:** the x86_64-Linux, aarch64-Linux, macOS and Windows peers
+  declare `SYS_UNSHARE = 272`, `SYS_CHROOT = 161`, `SYS_PIVOT_ROOT = 155`, `SYS_CAPGET = 125`,
+  `SYS_CAPSET = 126`, `SYS_PROCESS_VM_READV = 310`, `SYS_PROCESS_VM_WRITEV = 311`,
+  `SYS_MKNODAT = 259` (the x86 numbers; the agnos peer mints none, by its own rule); eight
+  ESYSXLAT rows renumber them on ELF-aarch64 (`272→97`, `161→51`, `155→41`, `125→90`, `126→91`,
+  `310→270`, `311→271`, `259→33`), appended below the compat rows they produce into and above the
+  private-alias band. `lib/syscalls_linux_common.cyr` gains `sys_unshare(flags)`,
+  `sys_chroot(path)`, `sys_pivot_root(new_root, put_old)`, `sys_capget(hdr, data)`,
+  `sys_capset(hdr, data)`, `sys_process_vm_readv` / `_writev(pid, liov, liovcnt, riov, riovcnt,
+  flags)` and `sys_mknodat(dirfd, path, mode, dev)`, each declining with -78 on macOS (Darwin has
+  none of them; its chroot is not offered — no consumer needs it there); the PE and agnos peers
+  carry -38 stubs. The x86_64 / aarch64 / macOS peers also name `AUDIT_ARCH_NATIVE`
+  (`0xC000003E` / `0xC00000B7`), the value every seccomp filter must check first. ⚠ **The trade,
+  recorded at the rows:** native aarch64 kcmp (272), sethostname (161), getpgid (155) and
+  sched_get_priority_max / _min (125 / 126) are no longer reachable through a raw number; a future
+  wrapper for one of them spells its x86 number with a row below these. ⚠ **Consumers that
+  declare these names with a different value** (the agnosys folds' aarch64 `SYS_UNSHARE = 97`,
+  kybernet's native `SYS_CAPGET/SYS_CAPSET = 90/91`) now get a `conflicting value` warning; the
+  last definition wins program-wide and either value reaches the right call. Pinned by
+  `tests/tcyr/crossos/ns_rootfs_syscalls.tcyr` (new; every assertion is a value only the right
+  call produces, unprivileged: `unshare(0) == 0`, `chroot(missing) == -ENOENT`, `pivot_root` is
+  -EPERM or -ENOENT, a NULL-data `capget` rewrites `hdr.version` to `0x20080522`, `capset` of the
+  current sets returns 0, `process_vm_readv` / `_writev` copy this process's bytes, `mknodat`
+  makes a node `stat` reports as a FIFO; Darwin -78 and PE / agnos -38 for all eight): 19/19 on
+  pi, 9/9 on ecb and ach, 8/8 on cass, 19/19 on x86_64; 17 of 19 RED under qemu-aarch64 without
+  the rows (with them qemu passes all but the five `process_vm_*` rows — qemu-user implements
+  neither call). **Consumers to move (handoff):** kavach (drop
+  `src/sys_security_syscalls.cyr`'s constants and the aarch64 refusals in
+  `security_create_namespace` / `_spawn_enter_rootfs`; `AUDIT_ARCH_NATIVE` replaces
+  `security_seccomp_native_arch`), takumi (**urgent, independent of this release**: its aarch64
+  sleep is raw 73, which is flock since 6.2.29, and its step loop counts iterations rather than
+  time, so the one-hour ceiling collapses to ~20 ms and every aarch64 build step is SIGKILLed as a
+  timeout — use `sleep_ms` / `sys_nanosleep` and `clock_now_ms()`; then `SANDBOX_SYS_UNSHARE` →
+  `sys_unshare`), shakti (drop the unguarded `var SYS_CAPGET = 125; var SYS_CAPSET = 126;`,
+  `src/caps.cyr:15-16`, and call the wrappers — its capability drop is a no-op on aarch64 until
+  it moves its pin), vani (drop the aarch64 FIFO skip: `sys_mknodat(AT_FDCWD, p, 4096 | 0600,
+  0)`), mirshi (`sys_process_vm_*`).
+
 ### Changed
 
 - **Stdlib fold — yukti 2.3.14** (bite 2), `lib/yukti.cyr` copied byte-identical from yukti
@@ -270,6 +320,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   tests/`** (it is what first sees `SYS_GETCWD`; allow-listed with the reason, the compile gate
   proving the claim), and its header, `SYS_PAUSE` / `SYS_PPOLL` reasons and
   `raw_syscall_literals_routed.sh`'s "22" paragraph are corrected.
+
+- **`tests/gates/platform/ns_caps_family_routed.sh` (new).** (bite 3.) Axis A decodes the
+  ELF-aarch64 ESYSXLAT rows and judges each of the eight against the committed kernel tables
+  (`tests/data/syscalls/*.tbl`): one row per x86 number, landing on the aarch64 number for that
+  NAME, below every row that compares against its product, above the alias band. Axis B: the
+  four named peers spell the x86 numbers (never the aarch64 native one), the agnos peer mints
+  none, `AUDIT_ARCH_NATIVE` is right. Axis C: every wrapper, the family DERIVED from
+  `linux_common`, has a Darwin -78 arm there and a -38 stub on PE and agnos. Axis D builds the
+  aarch64 cross compiler from the tree and runs a probe under `qemu-aarch64 -strace`, which must
+  name all eight calls and none of the calls they used to become (qemu implements no
+  `process_vm_*`, which is why the axis reads the call name rather than the result). Seven
+  mutations, all RED (ledger in the header). `macho_route_parity.sh` allow-lists the eight with a
+  reason each. <1 s.
 
 ## [6.6.7] — 2026-09-27
 

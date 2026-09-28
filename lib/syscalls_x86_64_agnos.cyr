@@ -726,6 +726,28 @@ fn sys_truncate(path, length): i64 { return 0 - 38; }
 # Create an anonymous in-memory file. agnos has no memfd; shared memory is sys_mmap.
 fn sys_memfd_create(name, flags): i64 { return 0 - 38; }
 
+# ── v6.6.8: agnos peers for the namespace / root / capability / cross-process-memory /
+# mknodat wrappers. ⛔ Same rule as the block above — NO `SYS_*` Linux constant is minted
+# for any of them, because a Linux number here would issue whatever agnos call owns it.
+# agnos has no namespaces, chroot, pivot_root, capability sets, cross-process copy or
+# device nodes, so each is an explicit -38/-ENOSYS stub. CHANGELOG [6.6.8]
+# Enter new namespaces. agnos has no namespaces.
+fn sys_unshare(flags): i64 { return 0 - 38; }
+# Change the root directory. agnos has no chroot.
+fn sys_chroot(path): i64 { return 0 - 38; }
+# Swap the root mount. agnos has no pivot_root.
+fn sys_pivot_root(new_root, put_old): i64 { return 0 - 38; }
+# Read capability sets. agnos has no capability sets.
+fn sys_capget(hdr, data): i64 { return 0 - 38; }
+# Set capability sets. agnos has no capability sets.
+fn sys_capset(hdr, data): i64 { return 0 - 38; }
+# Read another process's memory. agnos has no cross-process copy.
+fn sys_process_vm_readv(pid, local_iov, liovcnt, remote_iov, riovcnt, flags): i64 { return 0 - 38; }
+# Write another process's memory. agnos has no cross-process copy.
+fn sys_process_vm_writev(pid, local_iov, liovcnt, remote_iov, riovcnt, flags): i64 { return 0 - 38; }
+# Create a filesystem node (FIFO / device). agnos has no device nodes or FIFOs.
+fn sys_mknodat(dirfd, path, mode, dev): i64 { return 0 - 38; }
+
 # at-family constants. The Linux values, defined here so the PORTABLE surface is
 # complete: this peer is STANDALONE (it does not include syscalls_linux_common.cyr,
 # where these live for the Linux/macOS peers), so without them a consumer calling

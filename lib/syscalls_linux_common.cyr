@@ -460,6 +460,113 @@ fn sys_umount2(target, flags): i64 {
     #endif
 }
 
+# ================================================================
+# Namespaces, root, capabilities, cross-process memory (v6.6.8)
+# ================================================================
+# ⛔ WHY THESE EXIST. None of these calls had a name in either Linux peer, so kavach, takumi,
+# shakti and mirshi each wrote a number — and on aarch64 every number they could write ran a
+# DIFFERENT call, silently: x86 161 (chroot) was sethostname, 272 (unshare) kcmp, 155
+# (pivot_root) getpgid, 125/126 (capget/capset) sched_get_priority_max/min; the native 51/41
+# were unreachable behind the socket compat rows. Both peers now spell the x86 numbers and
+# ESYSXLAT renumbers them (src/backend/aarch64/emit.cyr).
+# ⚠ Darwin has none of these (its chroot is not offered: no consumer needs it on macOS), so
+# each declines with -78 (Darwin ENOSYS) and the number never reaches the Mach-O emit — the
+# sys_memfd_create shape. The PE and agnos peers carry -38 stubs. CHANGELOG [6.6.8]
+
+# Move this process into new namespaces. `flags` is CLONE_NEW* (CLONE_NEWNS 0x20000,
+# CLONE_NEWUSER 0x10000000, CLONE_NEWPID 0x20000000, CLONE_NEWNET 0x40000000, ...).
+# `sys_unshare(0)` is a valid no-op that returns 0.
+fn sys_unshare(flags): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    return 0 - 78;
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
+    return syscall(SYS_UNSHARE, flags);
+    #endif
+}
+
+# Change the root directory to `path` (a NUL-terminated cstr). Needs CAP_SYS_CHROOT; the
+# path is resolved first, so a missing path is -ENOENT for every caller.
+fn sys_chroot(path): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    return 0 - 78;
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
+    return syscall(SYS_CHROOT, path);
+    #endif
+}
+
+# Make `new_root` the root mount and move the old root to `put_old`. Needs CAP_SYS_ADMIN in
+# the mount namespace's user namespace (unprivileged: -EPERM before any path is read).
+fn sys_pivot_root(new_root, put_old): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    return 0 - 78;
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
+    return syscall(SYS_PIVOT_ROOT, new_root, put_old);
+    #endif
+}
+
+# Read a thread's capability sets. `hdr` is struct __user_cap_header_struct {u32 version;
+# i32 pid} (version 0x20080522 = _LINUX_CAPABILITY_VERSION_3, pid 0 = self); `data` is two
+# struct __user_cap_data_struct {u32 effective, permitted, inheritable} (24 bytes), or 0 to
+# PROBE: a bad version with data 0 returns 0 and writes the kernel's preferred version into
+# hdr.version.
+fn sys_capget(hdr, data): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    return 0 - 78;
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
+    return syscall(SYS_CAPGET, hdr, data);
+    #endif
+}
+
+# Set the calling thread's capability sets (same `hdr` / `data` layout as sys_capget).
+fn sys_capset(hdr, data): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    return 0 - 78;
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
+    return syscall(SYS_CAPSET, hdr, data);
+    #endif
+}
+
+# Copy from another process's memory: `local_iov`/`remote_iov` are arrays of struct iovec
+# {void *base; u64 len}. Returns the byte count copied or -errno. `flags` must be 0.
+fn sys_process_vm_readv(pid, local_iov, liovcnt, remote_iov, riovcnt, flags): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    return 0 - 78;
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
+    return syscall(SYS_PROCESS_VM_READV, pid, local_iov, liovcnt, remote_iov, riovcnt, flags);
+    #endif
+}
+
+# Copy into another process's memory (same shape as sys_process_vm_readv).
+fn sys_process_vm_writev(pid, local_iov, liovcnt, remote_iov, riovcnt, flags): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    return 0 - 78;
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
+    return syscall(SYS_PROCESS_VM_WRITEV, pid, local_iov, liovcnt, remote_iov, riovcnt, flags);
+    #endif
+}
+
+# Create a filesystem node relative to `dirfd` (AT_FDCWD for the cwd). `mode` carries the
+# type bits: S_IFIFO 0o010000 (4096) makes a FIFO — `sys_mknodat(AT_FDCWD, p, 4096 | 0600,
+# 0)` is mkfifo(3); S_IFREG/S_IFCHR/S_IFBLK the rest (devices need CAP_MKNOD). `dev` is the
+# device number, 0 otherwise.
+# ⚠ Darwin declines (-78): no Mach-O row exists for it, and a composed arm (over mknod or
+# mkfifo) waits for a consumer that needs one there.
+fn sys_mknodat(dirfd, path, mode, dev): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    return 0 - 78;
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
+    return syscall(SYS_MKNODAT, dirfd, path, mode, dev);
+    #endif
+}
+
 # Flush all filesystem buffers to disk. Returns 0 (always).
 fn sys_sync(): i64 {
     syscall(SYS_SYNC);

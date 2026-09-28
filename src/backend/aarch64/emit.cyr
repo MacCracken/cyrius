@@ -1545,6 +1545,34 @@ fn ESYSXLAT(S): i64 {
     EW(S, 0xF102251F); EW(S, 0x54000041); EW(S, 0xD2800568);  # statfs    137→43
     EW(S, 0xF102291F); EW(S, 0x54000041); EW(S, 0xD2800588);  # fstatfs   138→44
 
+    # ── v6.6.8: namespaces, root, capabilities, cross-process memory, mknodat — calls with
+    # NO NAME in either Linux peer until this release, so consumers wrote numbers and every
+    # number they could write was wrong here. Measured under `qemu-aarch64 -strace` on the
+    # 6.6.7 tree: raw x86 161 (chroot) ran **sethostname**, 272 (unshare) ran **kcmp**, 155
+    # (pivot_root) ran **getpgid**, 125/126 (capget/capset) ran **sched_get_priority_max/min**
+    # (shakti's capability drop, silently a no-op on ARM), and 310/311/259 were ENOSYS. The
+    # aarch64-native spellings were no better: chroot 51 and pivot_root 41 are x86-compat row
+    # SOURCES above (getsockname 51→204, socket 41→198), so they were unreachable at all.
+    # The peers now spell the X86 numbers and these rows renumber them — pure renumbers, the
+    # argument layouts are identical on both ABIs. CHANGELOG [6.6.8]
+    # ⚠ ORDER IS LOAD-BEARING: 161→51 must stay BELOW getsockname 51→204, 155→41 below socket
+    # 41→198 and 259→33 below dup2 33→dup3 — each produces the number that row compares
+    # against. No row below compares against 97/90/91/270/271, and no row above produces any
+    # of these sources. esysxlat_row_order.sh pins it; they stay ABOVE the private-alias band.
+    # ⚠ THE TRADE, recorded: native aarch64 kcmp (272), sethostname (161), getpgid (155) and
+    # sched_get_priority_max/min (125/126) are no longer reachable through a raw number. A
+    # future stdlib wrapper for any of them spells its X86 number (170/121/312/146/147) with a
+    # row below these. 310/311/259 are unassigned on aarch64, so those three cost nothing.
+    # Words assembled with aarch64-linux-gnu-as and disassembled back.
+    EW(S, 0xF104411F); EW(S, 0x54000041); EW(S, 0xD2800C28);  # unshare          272→97
+    EW(S, 0xF102851F); EW(S, 0x54000041); EW(S, 0xD2800668);  # chroot           161→51  (BELOW 51→204)
+    EW(S, 0xF1026D1F); EW(S, 0x54000041); EW(S, 0xD2800528);  # pivot_root       155→41  (BELOW 41→198)
+    EW(S, 0xF101F51F); EW(S, 0x54000041); EW(S, 0xD2800B48);  # capget           125→90
+    EW(S, 0xF101F91F); EW(S, 0x54000041); EW(S, 0xD2800B68);  # capset           126→91
+    EW(S, 0xF104D91F); EW(S, 0x54000041); EW(S, 0xD28021C8);  # process_vm_readv  310→270
+    EW(S, 0xF104DD1F); EW(S, 0x54000041); EW(S, 0xD28021E8);  # process_vm_writev 311→271
+    EW(S, 0xF1040D1F); EW(S, 0x54000041); EW(S, 0xD2800428);  # mknodat          259→33  (BELOW 33→dup3)
+
     # v6.5.7: fchownat via the PRIVATE ALIAS 1054 → native 54. aarch64's real
     # fchownat number (54) is unreachable from source because the x86-compat shim
     # above rewrites 54→208 (setsockopt) — load-bearing for 51 ecosystem repos — and
