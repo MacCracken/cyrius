@@ -29,6 +29,8 @@
 #           on a registration line, and nothing `sh`/`bash`/`.`-runs a $ROOT script except the
 #           staging call to scripts/install.sh
 #   axis 5  every driver-registered path resolves as a selector (`--resolve gate:<name>`)
+#   axis 7  a ratchet: the gates that hard-code `CC="$ROOT/build/cycc"` (and so cannot be pointed
+#           at a candidate compiler via $CYCC) do not grow past their ceiling
 #   axis 6  ANTI-VACUOUS: the census is run against four mutants of the registry and must go
 #           red on each — one `_chk_gate` turned back into a bare `sh` (axes 1 + 4), a gate
 #           registered twice (axis 1), a registration of a missing file (axis 2), and a driver
@@ -177,6 +179,23 @@ M="$D/m4"; _mkroot "$M"
 printf 'fn _zz_census_probe(p): i64 {\n    _gate("census probe", p);\n    return 0;\n}\n' >> "$M/programs/checks/main.cyr"
 _census "$M" m4 > "$D/m4.out"; RCM=$?
 grep -q "axis 3: " "$D/m4.out" || _fail "mutant 6d: a _gate( call with a non-literal path was not caught (census found $RCM)"
+
+echo "axis 7: gates that ignore \$CYCC do not grow (ratchet)"
+# A gate that hard-codes `CC="$ROOT/build/cycc"` cannot be pointed at a CANDIDATE compiler
+# without overwriting build/cycc; `CC=${CYCC:-"$ROOT/build/cycc"}` can. 6.6.8 converted
+# diagnostics/derive_non_struct_rejected.sh (placed from the 6.6.7 reviews) and set this
+# ceiling at what remained. LOWER it as gates are converted; never raise it — a new gate
+# writes the CYCC form. Derived, printed, and floor-checked so a blind grep cannot pass.
+CYCC_CEIL=74
+NHARD=$(grep -lE '^CC="?\$ROOT/build/cycc"?$' tests/gates/*/*.sh | grep -c . || true)
+NSOFT=$(grep -lE 'CYCC:-' tests/gates/*/*.sh | grep -c . || true)
+[ "$NSOFT" -ge 10 ] || _fail "only $NSOFT gate(s) honour \$CYCC — the ratchet's reader is blind"
+if [ "$NHARD" -gt "$CYCC_CEIL" ]; then
+    _fail "$NHARD gates hard-code CC=\"\$ROOT/build/cycc\" (ceiling $CYCC_CEIL) — write CC=\${CYCC:-\"\$ROOT/build/cycc\"}"
+    grep -lE '^CC="?\$ROOT/build/cycc"?$' tests/gates/*/*.sh | sed 's/^/      /' | tail -5
+fi
+[ "$NHARD" -lt "$CYCC_CEIL" ] && echo "  note: $NHARD < ceiling $CYCC_CEIL — lower CYCC_CEIL in this gate to $NHARD"
+echo "  $NHARD hard-coded (ceiling $CYCC_CEIL), $NSOFT honour \$CYCC"
 
 if [ "$FAILS" -ne 0 ]; then
     echo "check_gate_census: $FAILS FAILURE(S)"

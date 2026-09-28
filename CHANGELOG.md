@@ -136,6 +136,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   returns 143, and under `-e` a failing command in the EXIT trap became the script's exit status —
   the gate printed PASS and exited 143. Every cleanup command is now `|| true`, and a new axis 4
   re-runs the gate under `bash -eo pipefail` and requires rc 0 (red without the fix: 143).
+- **`derive_non_struct_rejected.sh` honours `$CYCC`.** (bite 8, placed from the 6.6.7 reviews.)
+  It hard-coded `CC="$ROOT/build/cycc"`, so it could not be pointed at a candidate compiler
+  without overwriting build/cycc. ⚠ The review called that an outlier among "sibling gates" that
+  honour `${CYCC:-…}`; derived, it is the norm — 75 gates hard-code the path and 18 honour the
+  variable — so `check_gate_census.sh` axis 7 now holds a RATCHET at the 74 that remain: a new
+  gate writes `CC=${CYCC:-"$ROOT/build/cycc"}`, and the ceiling only goes down.
 
 ## [6.6.7] — 2026-09-27
 
