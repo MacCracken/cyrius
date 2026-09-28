@@ -4700,6 +4700,7 @@ syscalls_windows::sys_mount/5
 syscalls_windows::sys_munmap/2
 syscalls_windows::sys_nanosleep/2
 syscalls_windows::sys_open/3
+syscalls_windows::sys_pipe/1
 syscalls_windows::sys_pivot_root/2
 syscalls_windows::sys_process_vm_readv/6
 syscalls_windows::sys_process_vm_writev/6

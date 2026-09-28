@@ -274,6 +274,91 @@ also running the missing-helper matrix (rc 1, one error), the mixed-return fixtu
 filed repro silent and printing its three lines) and both redefinition warnings; on pi and ecb
 a native cx compiler also exits 1 on the slice / await / async triggers.
 
+### Changed
+
+- **`f64_sin` / `f64_cos` need `include "lib/math.cyr"` on x86 too** (they always did on
+  aarch64), and they cost differently: on this box 10^7 calls over [0, 100] take 42 ns each
+  against x87's 47, and 39 against 45 over [0, 2π]; above 2^20·π/2 (≈ 1.6e6) the Payne-Hanek
+  reduction takes ~540 ns against x87's 52 — where x87 was up to ~10^6 ulp off. DSP code that
+  lets a phase accumulator grow unbounded pays that; wrapping the phase keeps the fast path.
+  (bite 4.)
+
+- **`xsymlink` / `sys_symlink`, `sys_ftruncate` and `sys_truncate` are real on Windows** (they
+  returned -1 / -38). (bite 5.) Three new PE reroutes, `0xF03D` `GetFileInformationByHandleEx`,
+  `0xF03E` `CreateSymbolicLinkW` and `0xF03F` `SetEndOfFile` (imports in `src/backend/pe/emit.cyr`,
+  emitters in `src/backend/x86/emit.cyr` on the rbx-anchored aligned callers, return-0 stubs in the
+  aarch64 and cx forks, routed through `_PE_ROUTE_FILEHANDLE` — reached from `_PE_ROUTE_FLUSH` so
+  the inline chain in `_PARSE_FACTOR_IMPL` gains no reference). `sys_symlink` makes a directory
+  link when the target, resolved as the link will resolve it, is a directory; it asks for
+  `SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE` and retries without it, and without Developer
+  Mode a non-elevated process gets -1 — a Windows policy. `sys_ftruncate` seeks, sets the end and
+  puts the caller's file pointer back (growing zero-fills; a negative length is -22). ⚠ It is -1
+  on an `O_APPEND` descriptor, where Linux succeeds: the PE open of `O_APPEND` grants
+  `FILE_APPEND_DATA` without `FILE_WRITE_DATA`, which `SetEndOfFile` needs — truncate by path
+  (`sys_truncate`) or open without `O_APPEND`. The
+  `0xF03D`–`0xF03F` ids are literal-only, like every `0xF0xx` id. `syscall_shm_fd_passing.tcyr`'s
+  PE arm now sizes a real file where it asserted the decline.
+
+- **CI runs the check driver's gates instead of hand-copied twins of them** (bite 11; tail: CI
+  inlines its own copies of local gates). **Root cause:** v5.9.3 / .17 / .22 moved the
+  object-init, linker, shared-object and capacity shell regressions into programs/checks/, and
+  ci.yml kept a second shell copy of each "so the job stays granular" — plus an inline copy of
+  the fmt walk — while never running the driver at all. Nothing tied a copy to its source: when
+  6.6.6 moved the dlopen fixture's working directory, only the driver moved and CI exited 11
+  while check.sh was green, and CI's flat `for f in lib/*.cyr` fmt loop had fallen behind the
+  recursive walker (it never saw lib/unicode/). **Fix:** the `check` and `test` jobs build
+  `build/cyrius_check` exactly as check.sh does, and the Format, Lint and four Regression steps
+  are each one line — `CYRIUS_CHECK_NO_SKIP=1 ./build/cyrius_check <row>` (`fmt`, `lint`,
+  `object-init`, `linker`, `shared-dlopen`, `capacity`). The no-skip mode is load-bearing: the
+  inline copies failed on a missing tool, and a driver row reports SKIP there (see *Fixed*).
+  The capacity step no longer copies build/cycc into `$HOME/.cyrius/bin` (measured: unneeded). The
+  `.tcyr` loops stay DELIBERATELY INDEPENDENT of the driver (CO-02 was caught because the two
+  differed; the step now documents the two remaining differences — full environment vs
+  `CYRIUS_TEST_ENV=1` only, no deadline vs 120 s) and share only the corpus floor, which was
+  written down FOUR times (the driver, and the ubuntu, AGNOS and native-arm64 loops) and now
+  lives once, in `tests/tcyr/CORPUS_FLOOR` line 1, read by all four. Verified CI-faithfully in a
+  fresh copy of the tree with an empty `$HOME` and no cyrius on `PATH`, every changed step under
+  `bash -eo pipefail` (the .tcyr loop 371/371), and the floor read inside the agnosticos
+  container; ⚠ the proof proper is the first GitHub Actions run after the push. Gate:
+  `tests/gates/toolchain/ci_steps_delegate_to_driver.sh` (new) — ratchet 0 on workflow `run:`
+  lines that reference tests/fixtures/ or invoke a delegated row's tool outside the driver, the
+  delegated set == {fmt, lint} + the driver's selectable-only rows (each run in no-skip mode,
+  after a build in the same job), one corpus floor, and every CI SELF-HOST step self-hosting the
+  same per-target fork scripts/cross-os-selfhost.sh uses for that host (ecb/ach/cass/pi). Nine
+  mutants RED, including the old inline dlopen step restored.
+
+### Added
+
+- **`lib/net.cyr`: `net_parse_ipv4(s)`, `net_resolve_ipv4(host)`, `net_dns_query_ipv4(host, ns,
+  port)`** (bite 12). All return the packed network-byte-order address `sock_connect` takes, or -1
+  (255.255.255.255 packs to `0xFFFFFFFF`, not -1). `net_parse_ipv4` is a strict dotted quad — a
+  leading zero is refused rather than read as octal (inet_aton) or decimal (everyone else).
+  `net_resolve_ipv4`: the literal; `localhost` / `*.localhost` → 127.0.0.1 always (RFC 6761, never
+  sent to DNS); the IPv4 entries of `/etc/hosts` (streamed in 1 KiB reads, so a blocklist-sized
+  file costs no heap; CRLF tolerated; comments honoured); then one A query to the first IPv4
+  `nameserver` in `/etc/resolv.conf`, 127.0.0.1 when there is none (glibc's default). The DNS query
+  uses a `getrandom` transaction id (then `/dev/urandom`; with neither the lookup FAILS — no
+  clock / stack-address fallback, the CVE-19 rule), a connected UDP socket, 2 s × 2 sends, stack buffers only, and
+  ignores any datagram that is not the reply to THIS query (wrong id, not a response, a different
+  question) — so a forged or stray datagram cannot end the lookup; CNAME chains and compression
+  pointers are skipped with every read bounded. IPv4 only, no `search` domains — `lib/sandhi.cyr`
+  remains the full client. agnos has no BSD UDP socket, so there only the first three steps can
+  succeed. `net.cyr` now includes `lib/io.cyr` for the file reads (include-once). The test file
+  above runs `net_dns_query_ipv4` against a fake nameserver that sends a FORGED reply (wrong id,
+  6.6.6.6) before the real CNAME + compressed A (10.1.2.3), then an NXDOMAIN; mutation (no id
+  check) takes the forged answer and fails four rows. Green on x86_64 Linux, the agnosticos CI
+  container (as root, under its seccomp profile), qemu-aarch64 and real pi, ecb, ach; the
+  target-neutral groups on wine and real cass.
+
+- **Four check-driver rows are selectable by name: `object-init`, `linker`, `shared-dlopen`,
+  `capacity`** (bite 11). Each is ONE row the `regression` phase already ran; it is now also a
+  suite of its own (`./build/cyrius_check linker`, `sh scripts/check.sh linker`), so CI's granular
+  steps can run the driver's implementation instead of a hand-copied shell twin. Both callers go
+  through the same `_row_*` fn, so there is one definition of each. The suite table gained a
+  third question (`_suite_row(i, 2)`: "is this row part of the FULL run?") and the four answer
+  no, so a full run does not execute them twice; `--list-selectable-only` prints them. Also
+  `--tcyr-floor`: the `.tcyr` corpus floor as the driver reads it (see *Changed*).
+
 ### Downstream
 
 - **An aarch64 build that hides a reachable undefined TAIL call now FAILS** (it used to build
@@ -438,33 +523,6 @@ a native cx compiler also exits 1 on the slice / await / async triggers.
   against 15) and only wine saw the regression; (d) is red for that mutant, and for an arm that
   calls something other than `FlushFileBuffers`, without wine.
 
-### Changed
-
-- **`f64_sin` / `f64_cos` need `include "lib/math.cyr"` on x86 too** (they always did on
-  aarch64), and they cost differently: on this box 10^7 calls over [0, 100] take 42 ns each
-  against x87's 47, and 39 against 45 over [0, 2π]; above 2^20·π/2 (≈ 1.6e6) the Payne-Hanek
-  reduction takes ~540 ns against x87's 52 — where x87 was up to ~10^6 ulp off. DSP code that
-  lets a phase accumulator grow unbounded pays that; wrapping the phase keeps the fast path.
-  (bite 4.)
-
-- **`xsymlink` / `sys_symlink`, `sys_ftruncate` and `sys_truncate` are real on Windows** (they
-  returned -1 / -38). (bite 5.) Three new PE reroutes, `0xF03D` `GetFileInformationByHandleEx`,
-  `0xF03E` `CreateSymbolicLinkW` and `0xF03F` `SetEndOfFile` (imports in `src/backend/pe/emit.cyr`,
-  emitters in `src/backend/x86/emit.cyr` on the rbx-anchored aligned callers, return-0 stubs in the
-  aarch64 and cx forks, routed through `_PE_ROUTE_FILEHANDLE` — reached from `_PE_ROUTE_FLUSH` so
-  the inline chain in `_PARSE_FACTOR_IMPL` gains no reference). `sys_symlink` makes a directory
-  link when the target, resolved as the link will resolve it, is a directory; it asks for
-  `SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE` and retries without it, and without Developer
-  Mode a non-elevated process gets -1 — a Windows policy. `sys_ftruncate` seeks, sets the end and
-  puts the caller's file pointer back (growing zero-fills; a negative length is -22). ⚠ It is -1
-  on an `O_APPEND` descriptor, where Linux succeeds: the PE open of `O_APPEND` grants
-  `FILE_APPEND_DATA` without `FILE_WRITE_DATA`, which `SetEndOfFile` needs — truncate by path
-  (`sys_truncate`) or open without `O_APPEND`. The
-  `0xF03D`–`0xF03F` ids are literal-only, like every `0xF0xx` id. `syscall_shm_fd_passing.tcyr`'s
-  PE arm now sizes a real file where it asserted the decline.
-
-### Downstream
-
 - **sin / cos callers:** every ecosystem repo calling `f64_sin` / `f64_cos` (abaco, agnosai,
   attn11, dhvani, ganita, garjan, ghurni, goonj, hisab, jalwa, naad, nidhi, prajna, prakash, prani,
   ranga, sankhya, shravan, svara) already includes `lib/math.cyr`, so the new x86 requirement
@@ -512,31 +570,6 @@ a native cx compiler also exits 1 on the slice / await / async triggers.
   clean, an over-long Host refused, exactly 2048 bytes accepted and one more refused, the refusal
   leaving `_http_prepare`'s address slot untouched (no lookup ran), all three `http_get*` erroring
   for a URL whose host only DNS could answer; mutation turns five red.
-
-### Added
-
-- **`lib/net.cyr`: `net_parse_ipv4(s)`, `net_resolve_ipv4(host)`, `net_dns_query_ipv4(host, ns,
-  port)`** (bite 12). All return the packed network-byte-order address `sock_connect` takes, or -1
-  (255.255.255.255 packs to `0xFFFFFFFF`, not -1). `net_parse_ipv4` is a strict dotted quad — a
-  leading zero is refused rather than read as octal (inet_aton) or decimal (everyone else).
-  `net_resolve_ipv4`: the literal; `localhost` / `*.localhost` → 127.0.0.1 always (RFC 6761, never
-  sent to DNS); the IPv4 entries of `/etc/hosts` (streamed in 1 KiB reads, so a blocklist-sized
-  file costs no heap; CRLF tolerated; comments honoured); then one A query to the first IPv4
-  `nameserver` in `/etc/resolv.conf`, 127.0.0.1 when there is none (glibc's default). The DNS query
-  uses a `getrandom` transaction id (then `/dev/urandom`; with neither the lookup FAILS — no
-  clock / stack-address fallback, the CVE-19 rule), a connected UDP socket, 2 s × 2 sends, stack buffers only, and
-  ignores any datagram that is not the reply to THIS query (wrong id, not a response, a different
-  question) — so a forged or stray datagram cannot end the lookup; CNAME chains and compression
-  pointers are skipped with every read bounded. IPv4 only, no `search` domains — `lib/sandhi.cyr`
-  remains the full client. agnos has no BSD UDP socket, so there only the first three steps can
-  succeed. `net.cyr` now includes `lib/io.cyr` for the file reads (include-once). The test file
-  above runs `net_dns_query_ipv4` against a fake nameserver that sends a FORGED reply (wrong id,
-  6.6.6.6) before the real CNAME + compressed A (10.1.2.3), then an NXDOMAIN; mutation (no id
-  check) takes the forged answer and fails four rows. Green on x86_64 Linux, the agnosticos CI
-  container (as root, under its seccomp profile), qemu-aarch64 and real pi, ecb, ach; the
-  target-neutral groups on wine and real cass.
-
-### Downstream
 
 - **`lib/http.cyr` callers — phylax (`src/cli.cyr` `cmd_rules_fetch`) and abaco (`src/ai.cyr`
   `CurrencyCache_fetch`) — start actually connecting at 6.6.9.** Before it, `http_get` could not
@@ -936,8 +969,6 @@ a native cx compiler also exits 1 on the slice / await / async triggers.
   with no output are each reported as such, with the compiler's path, on ecb, ach and pi; on
   cass the PE arm names a stub that exits 42 by path and still PASSes the real self-host.
 
-### Downstream
-
 - **`cyrius run` / `check` / `test` failure lines changed (bite 10).** A compile failure the CLI
   names itself (a missing file, an unwritable temp) is no longer followed by a second verdict; a
   compiler rejection reads `error: compile failed (compiler exit N)` (run), `error: <file>
@@ -995,47 +1026,6 @@ a native cx compiler also exits 1 on the slice / await / async triggers.
   `tests/gates/toolchain/check_driver_skip_is_not_pass.sh` (new) — runtime axes on a scratch
   root, a strict-mode positive control, and a ratchet-0 structural scan for the old shape
   (86 `_skip` sites; five mutants RED).
-
-### Changed
-
-- **CI runs the check driver's gates instead of hand-copied twins of them** (bite 11; tail: CI
-  inlines its own copies of local gates). **Root cause:** v5.9.3 / .17 / .22 moved the
-  object-init, linker, shared-object and capacity shell regressions into programs/checks/, and
-  ci.yml kept a second shell copy of each "so the job stays granular" — plus an inline copy of
-  the fmt walk — while never running the driver at all. Nothing tied a copy to its source: when
-  6.6.6 moved the dlopen fixture's working directory, only the driver moved and CI exited 11
-  while check.sh was green, and CI's flat `for f in lib/*.cyr` fmt loop had fallen behind the
-  recursive walker (it never saw lib/unicode/). **Fix:** the `check` and `test` jobs build
-  `build/cyrius_check` exactly as check.sh does, and the Format, Lint and four Regression steps
-  are each one line — `CYRIUS_CHECK_NO_SKIP=1 ./build/cyrius_check <row>` (`fmt`, `lint`,
-  `object-init`, `linker`, `shared-dlopen`, `capacity`). The no-skip mode is load-bearing: the
-  inline copies failed on a missing tool, and a driver row reports SKIP there (see *Fixed*).
-  The capacity step no longer copies build/cycc into `$HOME/.cyrius/bin` (measured: unneeded). The
-  `.tcyr` loops stay DELIBERATELY INDEPENDENT of the driver (CO-02 was caught because the two
-  differed; the step now documents the two remaining differences — full environment vs
-  `CYRIUS_TEST_ENV=1` only, no deadline vs 120 s) and share only the corpus floor, which was
-  written down FOUR times (the driver, and the ubuntu, AGNOS and native-arm64 loops) and now
-  lives once, in `tests/tcyr/CORPUS_FLOOR` line 1, read by all four. Verified CI-faithfully in a
-  fresh copy of the tree with an empty `$HOME` and no cyrius on `PATH`, every changed step under
-  `bash -eo pipefail` (the .tcyr loop 371/371), and the floor read inside the agnosticos
-  container; ⚠ the proof proper is the first GitHub Actions run after the push. Gate:
-  `tests/gates/toolchain/ci_steps_delegate_to_driver.sh` (new) — ratchet 0 on workflow `run:`
-  lines that reference tests/fixtures/ or invoke a delegated row's tool outside the driver, the
-  delegated set == {fmt, lint} + the driver's selectable-only rows (each run in no-skip mode,
-  after a build in the same job), one corpus floor, and every CI SELF-HOST step self-hosting the
-  same per-target fork scripts/cross-os-selfhost.sh uses for that host (ecb/ach/cass/pi). Nine
-  mutants RED, including the old inline dlopen step restored.
-
-### Added
-
-- **Four check-driver rows are selectable by name: `object-init`, `linker`, `shared-dlopen`,
-  `capacity`** (bite 11). Each is ONE row the `regression` phase already ran; it is now also a
-  suite of its own (`./build/cyrius_check linker`, `sh scripts/check.sh linker`), so CI's granular
-  steps can run the driver's implementation instead of a hand-copied shell twin. Both callers go
-  through the same `_row_*` fn, so there is one definition of each. The suite table gained a
-  third question (`_suite_row(i, 2)`: "is this row part of the FULL run?") and the four answer
-  no, so a full run does not execute them twice; `--list-selectable-only` prints them. Also
-  `--tcyr-floor`: the `.tcyr` corpus floor as the driver reads it (see *Changed*).
 
 ## [6.6.8] — 2026-09-28
 
