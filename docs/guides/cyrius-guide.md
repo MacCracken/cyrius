@@ -3294,6 +3294,21 @@ The rules, in order:
    1 MiB-iosize volume, which then multiplies straight into a capacity figure. That is why
    `statfs_bsize(buf)` exists: an accessor, not a convenience. When a peer publishes one, use
    it instead of a raw `load64`.
+6. **On macOS an unrouted number FAILS — it never runs something else.** Both Mach-O backends
+   renumber Linux syscalls to Darwin's (`EMACHO_SYSXLAT` on x86_64, `ESYSXLAT`'s Mach-O arm on
+   arm64), and since 6.6.8 a number no row handles kills the process with **SIGSYS** on both
+   Macs, or returns **-ENOSYS (-78)** if SIGSYS is ignored. Before 6.6.8 arm64-macOS left
+   Darwin's syscall register holding its previous value, so an unrouted call silently re-ran
+   the PREVIOUS syscall with the new arguments and returned a plausible answer. cycc reports
+   every such number at compile time — `warning: syscall N not routed by the Mach-O …
+   translation` — and in this repo `tests/gates/platform/darwin_syscall_literals_routed.sh`
+   fails on one. Three numbers are rerouted at PARSE time rather than by a table row, and
+   only at one arity: **228** (the clock; ns in the return register, the buffer argument
+   unspecified — x86-macOS happens to fill a timeval, arm64-macOS never touches it; PE
+   returns ms) and **35** (nanosleep, x86-macOS) need the number plus exactly 2 arguments,
+   **1700** (pthread_create, arm64-macOS) the number plus 4. Any other arity is reported by
+   name (`syscall 228 not routed at this arity`). Portable code calls `clock_now_ns()` /
+   `sleep_ms()` / `thread_create()` instead.
 
 Same trap on the other side: `var SYS_FOO = <x86 number>` in your own source SHADOWS the
 stdlib's arch-aware definition (last definition wins), so it is right on x86 and wrong

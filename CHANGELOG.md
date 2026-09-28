@@ -234,6 +234,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   syscall; Linux: a zero-fd, zero-timeout ppoll returns 0) — 9/9 on x86_64, qemu-aarch64, ecb
   and ach, 2/2 under wine.
 
+- **Docs: the raw-syscall rules gain rule 6, "on macOS an unrouted number FAILS"** (bite 2;
+  `docs/guides/cyrius-guide.md`): both Macs SIGSYS (or -ENOSYS with SIGSYS ignored) since 6.6.8,
+  arm64-macOS silently re-ran the previous syscall before it, and the three parse-time reroutes
+  and the arity each needs (228 and 35 at the number plus 2, 1700 at plus 4). The raw-228
+  contract is written down as the default this release takes — **"returns the value; the buffer
+  is unspecified"** (ns in the return register on both Macs, ms on PE; x86-macOS happens to fill a
+  timeval, arm64-macOS and PE never touch the buffer) — and `lib/chrono.cyr`'s "x86-macOS does not
+  route 228 → clock stays dead there; HELD" comment, stale since v6.5.16's `EMACHO_CLOCK_X86`, is
+  corrected (its `lib/bench.cyr` twin was fixed at 6.6.5).
+
 ### Added
 
 - **A Darwin axis for the syscall gates: `tests/gates/platform/darwin_syscall_literals_routed.sh`
