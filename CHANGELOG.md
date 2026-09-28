@@ -631,6 +631,61 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (ganita has them), and its accuracy comments ("< 5 ulp", "same behavior as the x87 path")
   are replaced by the measured contract. The Pi gate's label drops "bit-accurate", which the
   polyfills never were. **ganita 1.2.7** moves its pin 6.6.4 → 6.6.7 (docs/ecosystem.md row).
+- **`lib/process_agnos.cyr` rewritten: a child is spawned from disk with its real argv and a clean
+  fd table, the verbs WAIT for it to exit, and the capture verbs capture.** (bite 7.) **Root
+  cause:** the module (v6.0.56) was written against agnos's frozen 0–33 surface and never
+  revisited. It read the whole ELF into an `alloc(8 MB)` it never freed (**8 MB leaked per spawn**)
+  and handed it to spawn#3, which refuses any image over **16 KB** (kernel 1.44.10) — a DCE'd
+  `println` hello is 15 KB, so nearly every real program, agnsh included, got -1. It then called
+  waitpid#4 ONCE, and #4 without the 0x100 bit is a POLL that answers **-2** while the child lives
+  (1.44.9): `run` returned Err(1) before the child finished, `wait_pid` Err(2), and every `exec_*`
+  reported -2 as the child's exit code. No argument reached the child ("args not passable") and
+  no capture variant captured ("sys_dup is a stub") — both stale since agnos 1.57.6. **Fix:** all
+  eleven verbs (plus `exec_capture_status`, same names and arities) now build a NUL-separated argv
+  blob on the stack — refused up front past 1024 bytes or 16 entries, never truncated; an env vec
+  becomes a `KEY=VALUE` blob — and spawn with `sys_spawn_argv(…, SPAWN_F_CLEANFD)`; they wait with
+  `sys_waitpid_block` and decode the §4.9 status (exit → code, signal → 128 + sig; the `exec_*`
+  verbs keep the POSIX `-1` for a signal death). A -1 from WAIT_BLOCK on a pid we just spawned can
+  only mean a pre-1.57.7 kernel, so it falls back to polling #4 — there is deliberately no #108
+  probe, which would misread 1.57.7/1.57.8. Capture is pipe → `sys_exec_redirect(1, w)` → spawn →
+  close `w` → **read to EOF** → reap: the ring is 4080 B and a full-ring write blocks (1.57.9), so
+  reaping first deadlocks. **A refused call still makes ONE #43** — the peer's
+  `_agnos_spawn_refuse` (a2 = 0x40000, answered -SPAWN_E_ARGS) — for an argv/env the builder
+  refused, a failed pipe, or a refused #62 arm alike: every #43 return clears the caller's spawn
+  arms, so a redirect or endowment armed for a call this module refused would otherwise reach the
+  caller's NEXT child (review of this bite; reproduced on agnos-qemu, where a refused 17-entry
+  `exec_vec` let the next child write into the caller's armed pipe). `exec_cmd` splits the line
+  into argv (agnos has no shell). `wait_pid` on a pid that is not ours is `Err(PROC_ECHILD)` (now
+  defined on agnos). Kernel floor 1.57.6, documented in the header. Verified on **agnos-qemu**
+  (kernel 1.57.10, `-smp 1` and `-smp 4`, a 115 KB child seeded as `/bin/pchild`): 41/41 checks —
+  a 10,000-byte capture through the 4080 B ring with every child write accepted, a 100-byte buffer
+  against 20,000 bytes of output that still reaps, `run` → Ok(137) for a SIGKILLed child and
+  Ok(142) for a #PF, an env blob reaching the child, CLEANFD dropping a parent fd, `wait_pid`
+  blocking 300 ms, and 64 sequential runs; the 6.6.7 control build scored 5 of 32 on the same
+  kernel (every spawn refused — the child is over #3's 16 KB cap). Gate: `tests/gates/platform/agnos_process_spawn.sh` (the fake kernel
+  in `tests/fixtures/agnos_sctrace.cyr` gains `proc*` modes that answer the spawn/pipe/wait
+  numbers and dump each #43 argv blob).
+- **An accepted agnos socket inherits its listener's recv/send timeouts.** (bite 7.) On Linux the
+  kernel copies SO_RCVTIMEO/SO_SNDTIMEO into the accepted socket; on agnos `sock_accept` wrapped the
+  conn in a fresh fd slot whose timeouts `sys_close` had cleared, so it waited the 30 s default
+  whatever the listener said (every in-ecosystem server set it on the accepted fd, so nothing broke —
+  a server ported from Linux would have). `sys_sock_accept` now marks the conn_id with the listen
+  slot it came from and `_agnos_sock_bind` copies that slot's timeouts; `sys_sock_connect` and
+  `sys_sock_close` drop the mark, so an outbound conn that reuses the id never inherits it. On
+  agnos-qemu a 1 s listener timeout ends an accepted read in ~1 s (the control: 30,003 ms). Gate:
+  `tests/gates/platform/agnos_accept_timeout_inherit.sh`.
+- **`lib/regression_agnos.cyr` defines every verb `lib/regression.cyr` defines.** (bite 7.)
+  `regression_exec_with_arg_capture_both_status` (6.6.7) and the two pipe pumps
+  `regression_pipe_write_all` / `regression_pipe_read_all` (6.6.6) had no agnos peer, so an agnos
+  build that called one did not compile. The pumps are real on agnos (O_NONBLOCK read/write with an
+  idle deadline on the socket adapter's #95-first clock; a pre-1.57.8 `-2` is retried, never EOF)
+  and were run on agnos-qemu; the status verb fails closed like its siblings. The other spawn verbs
+  there still fail closed — porting them onto the new spawn is not in this release. The module header no longer claims
+  agnos has no redirect or stdin/stdout control. Gate: `tests/gates/platform/agnos_process_peer_parity.sh`
+  (derives both verb lists from the source, name and arity, for process and regression).
+- **`lib/async_agnos.cyr` no longer says agnos has no fork.** (bite 7.) fork#96 has existed since agnos
+  1.56.55; `async_timeout` runs its body inline and ignores `ms` because the port was never done, and
+  the comment now says that.
 
 ## [6.6.7] — 2026-09-27
 

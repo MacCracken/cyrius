@@ -25,6 +25,22 @@
 #   send0  — like `us`, and sock_send#48 answers 0 (no ACK progress) every time.
 #   send3  — like `us`, and #48 answers min(3, len) bytes per call.
 #   oldnet — sock_listen#56 answers -1 for any a1 above 65535 (a pre-1.57.7 kernel: no classes).
+# The proc* modes drive lib/process_agnos.cyr (v6.6.8). In all of them pipe#25 writes the fds 3
+# (read) and 4 (write) into the child's buffer, exec_redirect#62 answers 0, spawn_path#43 answers
+# pid 2, read#5 on fd 3 answers 5 bytes once and then 0 (EOF), and waitpid#4 answers status 7 to
+# a WAIT_BLOCK on pid 2 (0x102) and -1 to anything else — unless the mode says otherwise:
+#   proc      — nothing else.
+#   procold   — a 1.57.6 kernel: WAIT_BLOCK (0x100 | pid) answers -1, the plain poll answers -2
+#               twice and then 7; the first read on fd 3 answers -2 (a pre-1.57.8 empty pipe).
+#   procsig   — the WAIT_BLOCK answers 265 (0x100 | SIGKILL: a death by signal).
+#   procarm   — #62 op 0 (arm fd 1) answers -1; REDIR_CLEAR still answers 0.
+#   procnoent — #43 answers -4 (-SPAWN_E_NOENT).
+#   procbig   — read#5 on fd 3 always fills the whole request (a child that never stops talking).
+#   procpipe  — pipe#25 answers -1 (no pipe to capture through).
+# In every proc* mode a #43 with a1 = 0 is the peer's refusal (_agnos_spawn_refuse: a2 = 0x40000)
+# and answers -6 (-SPAWN_E_ARGS), as agnos 1.57.6+ does. Every other #43 is followed by a `blob`
+# line — its argv blob read out of the child, each NUL shown as `|` — and, when a3 is non-zero,
+# an `env` line for the env blob.
 # In every mode sock_recv#49 answers 0 (WOULD_BLOCK) unless the mode says otherwise,
 # sock_connect#47 / sock_listen#56 answer id 0, sock_peer#106 answers 127.0.0.1:8080 packed
 # ((0x7F000001 << 16) | 8080) and net_config#61 field 0 (net_ip) answers 10.0.2.15.
@@ -102,6 +118,7 @@ fn _st_answer(mode, nr, k, a1, a3): i64 {
         if (_st_mode_is(mode, "oldnet") == 1) { if (a1 > 65535) { return 0 - 1; } }
         return 0;
     }
+    if (_st_is_proc(mode) == 1) { return _st_proc_answer(mode, nr, k, a1, a3); }
     if (nr == 48) {
         if (_st_mode_is(mode, "send3") == 1) {
             if (a3 < 3) { return a3; }
@@ -112,9 +129,78 @@ fn _st_answer(mode, nr, k, a1, a3): i64 {
     return 0;
 }
 
+# 1 iff `mode` is one of the proc* modes.
+fn _st_is_proc(mode): i64 {
+    if (load8(mode) != 112) { return 0; }
+    if (load8(mode + 1) != 114) { return 0; }
+    if (load8(mode + 2) != 111) { return 0; }
+    if (load8(mode + 3) != 99) { return 0; }
+    return 1;
+}
+
+# The proc* answer table (see the mode list at the top).
+fn _st_proc_answer(mode, nr, k, a1, a3): i64 {
+    if (nr == 62) {
+        if (_st_mode_is(mode, "procarm") == 1) { if (a1 == 1) { return 0 - 1; } }
+        return 0;
+    }
+    if (nr == 25) {
+        if (_st_mode_is(mode, "procpipe") == 1) { return 0 - 1; }
+        return 0;
+    }
+    if (nr == 43) {
+        if (a1 == 0) { return 0 - 6; }
+        if (_st_mode_is(mode, "procnoent") == 1) { return 0 - 4; }
+        return 2;
+    }
+    if (nr == 5) {
+        if (a1 != 3) { return 0; }
+        if (_st_mode_is(mode, "procbig") == 1) { return a3; }
+        if (_st_mode_is(mode, "procold") == 1) {
+            if (k == 0) { return 0 - 2; }
+            if (k == 1) { return 5; }
+            return 0;
+        }
+        if (k == 0) { return 5; }
+        return 0;
+    }
+    if (nr == 4) {
+        if (_st_mode_is(mode, "procold") == 1) {
+            if ((a1 & 0x100) != 0) { return 0 - 1; }
+            if (a1 != 2) { return 0 - 1; }
+            if (k < 3) { return 0 - 2; }
+            return 7;
+        }
+        if (a1 != 0x102) { return 0 - 1; }
+        if (_st_mode_is(mode, "procsig") == 1) { return 265; }
+        return 7;
+    }
+    return 0;
+}
+
 # ⚠ x86_64-Linux ONLY: the ptrace/fork/execve/wait4/kill numbers below and the user_regs_struct
 # offsets are x86_64's, and agnos is an x86_64 target, so the tracer never needs another host.
 #ifdef CYRIUS_ARCH_X86
+# Print `tag` and `len` bytes of the child's memory at `addr` (PTRACE_PEEKDATA), a NUL as `|`.
+fn _st_blob(pid, tag, addr, len): i64 {
+    if (len > 1100) { len = 1100; }
+    syscall(1, 1, tag, strlen(tag));
+    syscall(1, 1, " ", 1);
+    var w[8];
+    var i = 0;
+    while (i < len) {
+        store64(&w, 0);
+        syscall(101, 2, pid, addr + i, &w);  # PTRACE_PEEKDATA (raw: the word lands at &w)
+        var c = load8(&w);
+        if (c == 0) { c = 124; }
+        store8(&w, c);
+        syscall(1, 1, &w, 1);
+        i = i + 1;
+    }
+    syscall(1, 1, "\n", 1);
+    return 0;
+}
+
 fn main(): i64 {
     args_init();
     if (argc() < 3) {
@@ -163,6 +249,20 @@ fn main(): i64 {
             syscall(62, pid, 9);
             syscall(61, pid, &st, 0, 0);
             return 0;
+        }
+        if (_st_is_proc(mode) == 1) {
+            var refused = 1;                  # a1 = 0: the peer's refusal #43 — no blob
+            if (load64(&regs + 112) != 0) { refused = 0; }
+            if (nr == 43) {
+                if (refused == 0) {
+                    _st_blob(pid, "blob", load64(&regs + 112), load64(&regs + 104) & 0xFFFF);
+                    if (load64(&regs + 96) != 0) { _st_blob(pid, "env", load64(&regs + 96), load64(&regs + 56)); }
+                }
+            }
+            if (nr == 25) {
+                syscall(101, 5, pid, load64(&regs + 112), 3);        # PTRACE_POKEDATA: read end
+                syscall(101, 5, pid, load64(&regs + 112) + 8, 4);    # write end
+            }
         }
         var k = 0;
         if (nr >= 0) { if (nr < 128) { k = load64(&counts + nr * 8); store64(&counts + nr * 8, k + 1); } }

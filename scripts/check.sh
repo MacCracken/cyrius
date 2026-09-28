@@ -1285,3 +1285,16 @@ _chk_gate "$ROOT/tests/gates/memory/io_alloc_refused_per_call.sh"
 # fetch_add work on cx, the hash seed is published / OS-drawn / varies, clock_gettime is
 # translated, and call_site_stack_alignment.tcyr runs on cx.
 _chk_gate "$ROOT/tests/gates/toolchain/cx_runtime_foundations.sh"
+
+# 6.6.8 bite 7 — lib/process_agnos.cyr against the fake kernel's proc* modes: spawn_path#43 with
+# SPAWN_F_ARGV|CLEANFD and the exact argv blob, WAIT_BLOCK (and its pre-1.57.7 poll fallback), a
+# capture that reads to EOF BEFORE it reaps, refusals before any syscall, no spawn#3 / 8 MB alloc.
+_chk_gate "$ROOT/tests/gates/platform/agnos_process_spawn.sh"
+
+# 6.6.8 bite 7 — an accepted agnos socket inherits its listener's recv/send timeouts (Linux
+# semantics), and an outbound conn that reuses the conn_id does not.
+_chk_gate "$ROOT/tests/gates/platform/agnos_accept_timeout_inherit.sh"
+
+# 6.6.8 bite 7 — the agnos peers of process.cyr and regression.cyr define every host verb at the
+# same arity (derived from the #ifndef CYRIUS_TARGET_AGNOS regions, not a hand list).
+_chk_gate "$ROOT/tests/gates/platform/agnos_process_peer_parity.sh"
