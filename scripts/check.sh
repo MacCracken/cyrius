@@ -1439,3 +1439,7 @@ _chk_gate "$ROOT/tests/gates/frontend/globals_scale_linear.sh"
 # unreachable fn that came first hid every later live call of the same fn (x86/aarch64/PE). The
 # four aarch64/Mach-O forks now print the pre-pass "undefined function" warning like x86.
 _chk_gate "$ROOT/tests/gates/diagnostics/undefined_tail_call_refused.sh"
+
+# 6.6.9 (bite 2) — the "large static data" advisory prints on x86/x86-Mach-O/PE/aarch64/
+# arm64-Mach-O/cx, not x86 ELF alone; silent for small statics and for cx's own alloc heap.
+_chk_gate "$ROOT/tests/gates/diagnostics/large_static_data_every_backend.sh"

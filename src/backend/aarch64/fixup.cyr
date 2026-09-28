@@ -693,6 +693,10 @@ fn EMITELF(S): i64 {
     if (_had_error == 1) { S64(S + 0x1903F8, 0); return 0; }
     # v6.0.89: dispatch on the derived _emit_fmt (same selector _entry_base
     # uses) instead of re-reading the raw _TARGET_MACHO flag.
+    # 6.6.9: the "large static data" advisory x86 always printed, on both aarch64
+    # executable formats. This backend's DCE only NOP-fills, so there is no dead-static
+    # attribution to pass. CHANGELOG [6.6.9]
+    if (L64(S + 0x18FCA0) != 1) { _warn_large_static(L64(S + 0x18FCD0), 0, 0); }
     if (_emit_fmt(S) == 2) { EMITMACHO_ARM64(S); return 0; }
     if (L64(S + 0x18FCA0) == 1) { EMITELF_KERNEL(S); return 0; }
     var cp = GCP(S);

@@ -4455,6 +4455,44 @@ fn _tl_assert(S, arm): i64 {
     return 0;
 }
 
+# 6.6.9 — the "large static data" advisory, on every backend that writes an executable.
+# It used to live inline in x86 EMITELF_USER only, so the same `var buf[200000]` warned on
+# x86_64 ELF and was silent on PE, both Mach-O targets, aarch64 and cx. `dvb`/`dcn` are the
+# bytes/count of statics inside unreachable fns; only the x86 FIXUP computes them (its DCE
+# pass), the other backends pass 0 and skip the hint. CHANGELOG [6.6.9]
+fn _warn_large_static(totvar, dvb, dcn): i64 {
+    if (totvar <= 131072) { return 0; }
+    syscall(SYS_WRITE, 2, "warning: large static data (", 28);
+    PRNUM(totvar);
+    syscall(SYS_WRITE, 2, " bytes) — consider alloc() for buffers >4KB\n", 46);
+    # CYRIUS_DCE=1 NOPs the CODE of dead fns but does NOT free their bss reservations —
+    # users hitting this warning should know that "set CYRIUS_DCE=1" is NOT the fix.
+    # CHANGELOG [5.11.62]
+    if (dvb > 0) {
+        syscall(SYS_WRITE, 2, "  hint: ", 8);
+        PRNUM(dvb);
+        syscall(SYS_WRITE, 2, " bytes inside ", 14);
+        PRNUM(dcn);
+        syscall(SYS_WRITE, 2, " unreachable fn(s) — DCE NOPs code but keeps .bss; restructure with alloc() or move the static into a reachable consumer\n", 123);
+    }
+    return 0;
+}
+
+# Byte size of the global var named exactly `lit` (a C string), or 0 when there is none.
+# main_cx.cyr uses it to leave lib/alloc_cx.cyr's own heap out of the static-data advisory.
+fn _gvar_bytes_named(S, lit): i64 {
+    var vi = 0;
+    var n = GVCNT(S);
+    while (vi < n) {
+        var p = S + 0xEC00000 + L64(_varn_base + vi * 8);
+        var k = 0;
+        while (load8(p + k) != 0 && load8(p + k) == load8(lit + k)) { k = k + 1; }
+        if (load8(p + k) == 0 && load8(lit + k) == 0) { return L64(_vars_base + vi * 8); }
+        vi = vi + 1;
+    }
+    return 0;
+}
+
 # 6.6.5 — intern `mod_name` ONCE. Writes the candidate at GNPOS WITHOUT committing; if an
 # fn of exactly that name is already registered (pass 1 minted it), reuse THAT entry's
 # string and leave the pool untouched, otherwise commit. mmod == 0 → noff unchanged, so

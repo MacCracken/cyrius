@@ -753,7 +753,7 @@ fn FIXUP(S): i64 {
         }
     }
     # v5.11.62: tally dead-host array-byte attribution for the
-    # `large static data` warning that EMITELF_USER emits later.
+    # `large static data` warning that EMITELF emits later (every executable format).
     # live[] is fully populated by the DCE pass above; fn_var_bytes
     # (parser-built at 0x1C8000) holds the sum of each fn's array
     # declarations. The two need to land in EMITELF_USER, which is a
@@ -1399,25 +1399,8 @@ fn EMITELF_USER(S, etype): i64 {
         syscall(SYS_WRITE, 2, "\n  tip: heap-allocate large var buf[N] arrays (alloc(N) + pointer)\n", 67);
         syscall(SYS_EXIT, 1);
     }
-    if (totvar > 131072) {
-        syscall(SYS_WRITE, 2, "warning: large static data (", 28);
-        PRNUM(totvar);
-        syscall(SYS_WRITE, 2, " bytes) — consider alloc() for buffers >4KB\n", 46);
-        # v5.11.62: append dead-fn attribution if FIXUP's DCE pass
-        # found statics inside unreachable fns. CYRIUS_DCE=1 NOPs the
-        # CODE of those fns but does NOT free their bss reservations —
-        # users hitting this warning should know that "set CYRIUS_DCE=1"
-        # is NOT the fix. See CHANGELOG [5.11.62].
-        var u62_dvb = L64(S + 0x18FCD8);
-        var u62_dcn = L64(S + 0x18FCE0);
-        if (u62_dvb > 0) {
-            syscall(SYS_WRITE, 2, "  hint: ", 8);
-            PRNUM(u62_dvb);
-            syscall(SYS_WRITE, 2, " bytes inside ", 14);
-            PRNUM(u62_dcn);
-            syscall(SYS_WRITE, 2, " unreachable fn(s) — DCE NOPs code but keeps .bss; restructure with alloc() or move the static into a reachable consumer\n", 123);
-        }
-    }
+    # 6.6.9: the advisory is shared with every other executable backend. CHANGELOG [6.6.9]
+    _warn_large_static(totvar, L64(S + 0x18FCD8), L64(S + 0x18FCE0));
     var memsz = filesz + 4096;
 
     # Section header table — non-loaded metadata past PT_LOAD. Same
@@ -2396,6 +2379,9 @@ fn EMITELF(S): i64 {
     # v6.0.89: dispatch on the derived _emit_fmt instead of re-reading the
     # raw _TARGET_* flags (same selector FIXUP uses for the entry base).
     var fmt = _emit_fmt(S);
+    # 6.6.9: Mach-O and PE executables get the same "large static data" advisory
+    # EMITELF_USER prints; it was x86-ELF-only. CHANGELOG [6.6.9]
+    if (fmt == 1 || fmt == 3) { _warn_large_static(L64(S + 0x18FCD0), L64(S + 0x18FCD8), L64(S + 0x18FCE0)); }
     if (fmt == 1) { EMITMACHO_EXEC(S); return 0; }
     if (fmt == 2) {
         # The x86 backend cannot emit arm64 code. Calling EMITMACHO_ARM64
