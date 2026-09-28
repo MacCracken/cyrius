@@ -68,13 +68,18 @@ fn main(): i64 {
     assert_eq(nr, 4, "the file still holds its 4 bytes");
 
     test_group("getenv");
-    var p0 = getenv("PATH");
-    assert(p0 != 0, "setup: PATH is set and getenv loads the environment");
+    # The check.sh suite runner execs with an explicit envp carrying only CYRIUS_TEST_ENV=1
+    # (PATH is unset there); `cyrius test` and the cross-host runner go through a shell, so
+    # PATH is set. Use whichever is present — the getenv_environment.tcyr rule.
+    var name = "CYRIUS_TEST_ENV";
+    if (getenv(name) == 0) { name = "PATH"; }
+    var p0 = getenv(name);
+    assert(p0 != 0, "setup: a known variable is set and getenv loads the environment");
     refuse();
-    var p1 = getenv("PATH");
+    var p1 = getenv(name);
     serve();
     assert_eq(p1, 0, "a refused value copy is a miss, not a store to 0");
-    assert(getenv("PATH") != 0, "and the next served call finds it again");
+    assert(getenv(name) != 0, "and the next served call finds it again");
 
     xunlink(path);
     xrmdir(dir);
