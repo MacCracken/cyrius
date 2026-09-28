@@ -172,7 +172,8 @@ fn main(): i64 {
     # assertions already in this file sit inside the `#ifndef CYRIUS_TARGET_WIN` block that
     # opens ~line 52, so they are COMPILED OUT on cass — Windows had ZERO execution coverage
     # for access. They cannot simply be unguarded, because the enclosing block depends on
-    # `xsymlink`/`xlink`/`xmkdir_p`, which degrade to -1 on PE. This block builds its probe
+    # `xreadlink`/`xlink`, which degrade to -1 on PE (`xsymlink` is real there since 6.6.9, and
+    # is exercised on PE by open_flags_per_target.tcyr). This block builds its probe
     # file with `sys_open` only, so it runs on every target.
     #
     # These two wrappers were band-D (.25) items and BOTH reroutes (0xF01C

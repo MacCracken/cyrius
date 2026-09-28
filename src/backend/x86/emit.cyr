@@ -2257,6 +2257,35 @@ fn EFLUSHFB_PE(S): i64 {
     return 0;
 }
 
+# 6.6.9 — the file-handle reroutes behind POSIX open semantics on PE (lib/syscalls_windows.cyr
+# sys_open / sys_symlink / sys_ftruncate). All three go through the rbx-anchored aligned
+# callers, so they are correct at any expression depth. The raw Win32 result comes back,
+# ZERO-EXTENDED from what the callee defines: a BOOL is a DWORD (`mov eax, eax` drops an
+# undefined upper half so `!= 0` cannot read garbage as TRUE), and CreateSymbolicLinkW
+# returns a BOOLEAN — ONE byte — so only `al` is defined there. The peer folds each to the
+# POSIX contract. CHANGELOG [6.6.9]
+#   syscall(0xF03D, h, class, buf, size) → GetFileInformationByHandleEx (argc 5)
+#   syscall(0xF03E, wlink, wtarget, flags) → CreateSymbolicLinkW (argc 4; wide paths)
+#   syscall(0xF03F, h) → SetEndOfFile (argc 2)
+fn EGETFINFO_PE(S): i64 {
+    _pe_ensure_getfinfo(S);
+    _pe_call_4arg_aligned(S, _pe_getfinfo_get());
+    EB(S, 0x89); EB(S, 0xC0);                           # mov eax, eax (BOOL → zero-extended)
+    return 0;
+}
+fn ESYMLINKW_PE(S): i64 {
+    _pe_ensure_symlinkw(S);
+    _pe_call_3arg_aligned(S, _pe_symlinkw_get());
+    EB(S, 0x0F); EB(S, 0xB6); EB(S, 0xC0);              # movzx eax, al (BOOLEAN is one byte)
+    return 0;
+}
+fn ESETEOF_PE(S): i64 {
+    _pe_ensure_seteof(S);
+    _pe_srw_call_1arg(S, _pe_seteof_get());
+    EB(S, 0x89); EB(S, 0xC0);                           # mov eax, eax (BOOL → zero-extended)
+    return 0;
+}
+
 # v6.6.6: syscall(0xF03A, wbuf, cch) → kernel32!GetModuleFileNameW(NULL, wbuf, cch) —
 # the Windows source for "the full path of THIS executable", the thing
 # readlink("/proc/self/exe") answers on Linux and fcntl(F_GETPATH) on macOS. Stack on

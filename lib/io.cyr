@@ -283,9 +283,10 @@ fn _xdir_exists(path): i64 {
 # Create a symlink at `linkpath` pointing to `target`.
 #
 # AGNOS is 4-arg length-carrying (`target, targetlen, linkpath, linkpathlen`) where
-# POSIX is 2-arg — the same divergence class as xmkdir. Windows has no POSIX symlink
-# and no CreateSymbolicLinkW reroute wired, so it degrades to -1 the way xrmdir and
-# xstat already do; wire the reroute when a consumer needs it. CHANGELOG [6.5.7]
+# POSIX is 2-arg — the same divergence class as xmkdir. Windows goes through the
+# CreateSymbolicLinkW peer (reroute 0xF03E, since 6.6.9; it returned -1 before), which
+# needs Developer Mode or an elevated process — a Windows policy, reported as -1.
+# CHANGELOG [6.5.7], [6.6.9]
 fn xsymlink(target, linkpath): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
     var tn = 0;
@@ -294,13 +295,8 @@ fn xsymlink(target, linkpath): i64 {
     while (load8(linkpath + ln) != 0) { ln = ln + 1; }
     return sys_symlink(target, tn, linkpath, ln);
     #endif
-    #ifdef CYRIUS_TARGET_WIN
-    return 0 - 1;   # no CreateSymbolicLinkW reroute wired
-    #endif
     #ifndef CYRIUS_TARGET_AGNOS
-    #ifndef CYRIUS_TARGET_WIN
     return sys_symlink(target, linkpath);
-    #endif
     #endif
 }
 

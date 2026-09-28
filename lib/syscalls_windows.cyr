@@ -53,9 +53,10 @@ enum SysNr {
     # SYS_IOCTL above, and safe for the same reason: since v6.5.25 an unrouted literal
     # syscall number returns -38/-ENOSYS instead of emitting a raw `0F 05` that traps as
     # STATUS_ILLEGAL_INSTRUCTION. NOT rerouted: Windows has no sendmsg/sendto (ws2_32's
-    # WSASendMsg is a different contract and takes an OVERLAPPED), no truncate/ftruncate
-    # (SetEndOfFile needs a seek first) and no memfd (a named section object is a different
-    # object model). The stub wrappers below decline explicitly rather than issuing them.
+    # WSASendMsg is a different contract and takes an OVERLAPPED) and no memfd (a named
+    # section object is a different object model); the stub wrappers below decline explicitly
+    # rather than issuing them. truncate/ftruncate are REAL since 6.6.9, built on SetEndOfFile
+    # (0xF03F) + a seek — the numbers themselves stay unrouted, use the wrappers.
     # ⚠ SYS_NANOSLEEP is the exception — the PE backend HAS rerouted 35 to kernel32 Sleep
     # since v6.1.17 (ENANOSLEEP_PE), so sys_nanosleep issues it for real.
     SYS_SENDTO = 44;
@@ -423,11 +424,100 @@ fn sys_socketpair(domain, type, protocol, fds): i64 { return 0 - 1; }
 fn sys_sendmsg(fd, msghdr, flags): i64 { return 0 - 38; }
 # Send a datagram to an address. Declines on Windows for the same reason as sys_sendmsg.
 fn sys_sendto(fd, buf, len, flags, dstaddr, dstaddrlen): i64 { return 0 - 38; }
-# Set a file's length by descriptor. Declines on Windows: SetEndOfFile truncates at the
-# CURRENT file pointer, so an honest peer has to seek first and restore after.
-fn sys_ftruncate(fd, length): i64 { return 0 - 38; }
-# Set a file's length by path. Declines on Windows, same reason as sys_ftruncate.
-fn sys_truncate(path, length): i64 { return 0 - 38; }
+# Set a file's length by descriptor — REAL since 6.6.9 (it declined with -38 before). Windows
+# sets the end of file at the CURRENT file pointer (SetEndOfFile, reroute 0xF03F), so this
+# seeks to `length`, sets it, and puts the pointer back where the caller had it, which is what
+# ftruncate(2) leaves alone. Growing zero-fills, as POSIX requires. 0 on success, -22
+# (-EINVAL) for a negative length, -1 on a Win32 failure (a handle without write access, for
+# one). CHANGELOG [6.6.9]
+fn sys_ftruncate(fd, length): i64 {
+    if (length < 0) { return 0 - 22; }
+    var cur = syscall(SYS_LSEEK, fd, 0, 1);
+    if (cur < 0) { return 0 - 1; }
+    if (syscall(SYS_LSEEK, fd, length, 0) < 0) { return 0 - 1; }
+    var ok = syscall(61503, fd);
+    syscall(SYS_LSEEK, fd, cur, 0);
+    if (ok == 0) { return 0 - 1; }
+    return 0;
+}
+# Set a file's length by path — REAL since 6.6.9: opens the path for writing (following a
+# link, as truncate(2) does), then sys_ftruncate. Same returns. CHANGELOG [6.6.9]
+fn sys_truncate(path, length): i64 {
+    if (length < 0) { return 0 - 22; }
+    var h = syscall(SYS_OPEN, path, 1, 0);   # O_WRONLY
+    if (h < 0) { return 0 - 1; }
+    var r = sys_ftruncate(h, length);
+    syscall(SYS_CLOSE, h);
+    return r;
+}
+
+# Widen a UTF-8 (ASCII) path into `dst` as UTF-16LE with '/' → '\', at most `cap` - 1 units
+# plus a NUL. Returns the unit count. The peer's own copy: it includes nothing, so it cannot
+# borrow lib/fs_win.cyr's `_fs_widen`, and a stack buffer needs no allocator. CHANGELOG [6.6.9]
+fn _win_widen(dst, src, cap): i64 {
+    var i = 0;
+    while (i < cap - 1) {
+        var c = load8(src + i);
+        if (c == 0) { break; }
+        if (c == 47) { c = 92; }
+        store16(dst + i * 2, c);
+        i = i + 1;
+    }
+    store16(dst + i * 2, 0);
+    return i;
+}
+
+# symlink(target, linkpath) — REAL since 6.6.9: CreateSymbolicLinkW (reroute 0xF03E). Windows
+# has two link kinds and POSIX has one, so the kind is taken from what `target` names NOW,
+# resolved the way the link will resolve it (a relative target against the LINK's directory):
+# a directory gets SYMBOLIC_LINK_FLAG_DIRECTORY, anything else — including a target that does
+# not exist yet, a dangling link — a file link. SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE
+# is asked first (Developer Mode lets a normal user create links with it); a Windows too old
+# to know the flag refuses it, so the call is retried without. ⚠ Without Developer Mode a
+# NON-elevated process cannot create a link at all and this returns -1 — a Windows policy,
+# not a missing route. 0 on success, -1 on failure. CHANGELOG [6.6.9]
+fn sys_symlink(target, linkpath): i64 {
+    var wl[1040];
+    var wt[1040];
+    var wr[2080];
+    _win_widen(&wl, linkpath, 519);
+    var tn = _win_widen(&wt, target, 519);
+    # Resolve the target as the link will: absolute ('\...', 'X:...') as-is, else against
+    # the link's directory (the part of linkpath up to its last separator).
+    var abs = 0;
+    if (tn > 0) {
+        if (load16(&wt) == 92) { abs = 1; }
+    }
+    if (tn > 1) {
+        if (load16(&wt + 2) == 58) { abs = 1; }
+    }
+    var ri = 0;
+    if (abs == 0) {
+        var ls = 0 - 1;
+        var li = 0;
+        while (load16(&wl + li * 2) != 0) {
+            if (load16(&wl + li * 2) == 92) { ls = li; }
+            li = li + 1;
+        }
+        while (ri <= ls) {
+            store16(&wr + ri * 2, load16(&wl + ri * 2));
+            ri = ri + 1;
+        }
+    }
+    var ti = 0;
+    while (ti <= tn) {
+        store16(&wr + (ri + ti) * 2, load16(&wt + ti * 2));
+        ti = ti + 1;
+    }
+    var kind = 0;
+    var at = syscall(61465, &wr);                 # GetFileAttributesW
+    if (at != 4294967295) {
+        if ((at & 16) != 0) { kind = 1; }         # SYMBOLIC_LINK_FLAG_DIRECTORY
+    }
+    if (syscall(61502, &wl, &wt, kind | 2) != 0) { return 0; }
+    if (syscall(61502, &wl, &wt, kind) != 0) { return 0; }
+    return 0 - 1;
+}
 # Filesystem statistics by path. Declines on Windows: the nearest peer is GetDiskFreeSpaceExW,
 # a kernel32 import with three out-params and a wide path — a different contract, not a
 # renumber. Callers already bail on r < 0. v6.6.6.

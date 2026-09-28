@@ -192,13 +192,30 @@ fn main(): i64 {
     #endif
 
     #ifdef CYRIUS_TARGET_WIN
-    # ── Windows: the peer is STANDALONE and declines. What is under test here is that a
+    # 6.6.9: ftruncate / truncate are REAL on Windows — SetEndOfFile (reroute 0xF03F) after a
+    # seek, with the caller's file pointer put back. They declined with -38 before.
+    test_group("PE: ftruncate + truncate size a real file");
+    var wtp = test_scratch("cyr_shm_wtrunc.txt");
+    var wfd = file_open(wtp, O_RDWR | O_CREAT | O_TRUNC, 420);
+    assert_gte(wfd, 0, "PE: temp file opened");
+    sys_write(wfd, "abcdef", 6);
+    sys_lseek(wfd, 2, 0);
+    assert_eq(sys_ftruncate(wfd, 12345), 0, "PE: sys_ftruncate(fd, 12345) succeeds (was -38)");
+    assert_eq(sys_lseek(wfd, 0, 1), 2, "PE: the caller's file pointer is where it was left");
+    assert_eq(sys_lseek(wfd, 0, 2), 12345, "PE: the file is 12345 bytes");
+    assert_eq(sys_ftruncate(wfd, 0 - 1), 0 - 22, "PE: a negative length is -EINVAL");
+    sys_close(wfd);
+    assert_eq(sys_truncate(wtp, 777), 0, "PE: sys_truncate(path, 777) succeeds (was -38)");
+    var wfd2 = file_open(wtp, O_RDONLY, 0);
+    assert_eq(sys_lseek(wfd2, 0, 2), 777, "PE: truncate by PATH is visible through a fresh handle");
+    sys_close(wfd2);
+    xunlink(wtp);
+    assert_lt(sys_truncate("C:\\nope\\absent", 0), 0, "PE: sys_truncate of a missing path fails");
+    # ── The rest of the peer is STANDALONE and declines. What is under test here is that a
     # consumer NAMING these still COMPILES for PE and gets a negative answer rather than a
     # raw `0F 05` that traps as STATUS_ILLEGAL_INSTRUCTION.
     test_group("PE declines, and says so");
     assert_lt(sys_memfd_create("cyr", 1), 0, "sys_memfd_create declines on Windows");
-    assert_lt(sys_ftruncate(1, 0), 0, "sys_ftruncate declines on Windows");
-    assert_lt(sys_truncate("C:\\nope", 0), 0, "sys_truncate declines on Windows");
     assert_lt(sys_sendmsg(1, 0, 0), 0, "sys_sendmsg declines on Windows");
     assert_lt(sys_sendto(1, 0, 0, 0, 0, 0), 0, "sys_sendto declines on Windows");
     assert_eq(sys_sched_yield(), 0 - 38, "sys_sched_yield declines on Windows with -ENOSYS");
