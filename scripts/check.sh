@@ -1424,3 +1424,8 @@ _chk_gate "$ROOT/tests/gates/toolchain/api_surface_derive_matches_emitter.sh"
 # 6.6.8 (bite 8) — every gate under tests/gates/ is registered EXACTLY ONCE and runs through
 # `_chk_gate` or the driver; ten 6.6.6 gates were bare `sh` lines no selector could reach.
 _chk_gate "$ROOT/tests/gates/toolchain/check_gate_census.sh"
+
+# 6.6.9 (bite 8) — the Windows CLI: `_file_size` is open + lseek, not a raw stat (-38 on PE, so
+# distlib's verify was inert and `distlib --check` always STALE), and cyrius.exe finds the tools
+# in its own bin/ (GetModuleFileNameW, not a '/'-only argv(0) scan). Wine axes SKIP without wine.
+_chk_gate "$ROOT/tests/gates/toolchain/cli_pe_file_size_and_sibling_tools.sh"

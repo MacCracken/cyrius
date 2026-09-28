@@ -6,6 +6,28 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.9] — 2026-09-28
 
+### Fixed
+
+- **The Windows CLI sizes files: `_file_size` is open + lseek(SEEK_END), not a raw stat.** (bite 8;
+  audit.) **Root cause:** cbt's `_file_size` was `syscall(4, …)` — x86-Linux stat, with no PE
+  reroute — so `cyrius.exe` got -38 at every call site. User-visible on real Windows (cass):
+  `distlib`'s verify spliced nothing and published the inferred sidecar ("math" never re-added for an
+  undeclared `F64_ONE`), and `distlib --check` byte-compares through `_distlib_files_same`, which
+  bailed on the negative size — every bundle read as STALE, always. **Fix:** one portable body
+  (`file_open` + `xlseek(SEEK_END)`, a one-byte read to refuse a directory), and the distlib reads
+  moved to `file_read_whole`. `cyrius build -v`'s binary size, the last raw `syscall(4)` in cbt/,
+  reads the same way (`_artifact_size`) — it read the x86-Linux st_size offset on macOS too.
+  Verified on cass, ecb, ach and pi (distlib + `--check` + `deps`).
+- **`cyrius.exe` finds the tools in its own `bin/`.** (bite 8; placed from the 6.6.7 reviews.)
+  **Root cause:** `_wrapper_dir` scanned argv(0) for `/` only; on Windows argv(0) is
+  `C:\…\bin\cyrius.exe` (under wine `Z:\…`) or a bare name off PATH, so the v6.5.42 sibling lookup
+  never fired and `cyrius lint` with an empty or foreign `CYRIUS_HOME` said `tool not found:
+  <home>/bin/cyrlint` beside a working cyrlint.exe. **Fix:** on PE the wrapper's own path comes
+  from GetModuleFileNameW (`sys_self_exe_w`, a full buffer refused as truncated), normalised to `/`;
+  argv(0), normalised the same way, is the fallback. Verified on cass: by full path and by bare name
+  off PATH. Gate: `cli_pe_file_size_and_sibling_tools.sh` (axis 0 — no raw stat in cbt/ — runs
+  without wine; axes 1-3 under wine), mutation-proven per mechanism.
+
 ## [6.6.8] — 2026-09-28
 
 The second of the three small batch releases (roadmap.md, *The 6.6.7 → 6.6.9 batch*): the platform

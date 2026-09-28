@@ -72,23 +72,32 @@ fn _dep_dest_is_linked(dst): i64 {
     return 0;
 }
 
+# Byte size of the regular file at `path`, or -1 when it cannot be opened or read.
+#
+# ⛔ open + lseek(SEEK_END), NEVER stat. This was a raw `syscall(4, …)` (x86-Linux stat) with a
+# per-target st_size offset (48 on Linux, 72 in Darwin's legacy struct — CHANGELOG [6.0.41]).
+# Syscall 4 has no PE reroute, so on the Windows CLI every one of its call sites got -38 — among
+# them `cyrius distlib`'s verify loop, which sized every file it splices with it and therefore
+# compiled an EMPTY entry and reported "nothing undefined" over every sidecar. SYS_LSEEK is routed
+# on every target (SetFilePointerEx on PE), and `file_open` carries the agnos bridge, so one body
+# serves all of them and no stat struct offset can be wrong. Same shape as build.cyr's
+# `_artifact_size`.
+# ⚠ A DIRECTORY opens and seeks on Linux (ext4 answers its hash EOF, not a byte count), so a
+# positive size is confirmed by reading one byte: a directory's read fails (EISDIR) and answers
+# -1, which is what every caller — "size it, then read that many bytes" — needs.
+# CHANGELOG [6.6.9]
 fn _file_size(path): i64 {
-    var stat_buf[144];
-    var r = syscall(4, path, &stat_buf);
-    if (r != 0) { return 0 - 1; }
-    # st_size offset differs by platform. Linux struct stat puts it at
-    # byte 48. The raw Darwin stat syscall (SYS_stat 188) fills the LEGACY
-    # 32-bit-inode struct stat — st_size lands at byte 72 (NOT the SDK
-    # INODE64 layout's 96; the libc wrapper, not the raw syscall, produces
-    # that). Reading the wrong offset on Darwin returned garbage / 0, which
-    # truncated the stdlib include-scan read → transitive deps silently
-    # dropped on macOS (io copied without its syscalls/result chain).
-    # Verified by dumping the struct on ecb (size@72). See CHANGELOG [6.0.41].
-    #ifdef CYRIUS_TARGET_MACOS
-    return load64(&stat_buf + 72);
-    #else
-    return load64(&stat_buf + 48);
-    #endif
+    var fd = file_open(path, 0, 0);
+    if (fd < 0) { return 0 - 1; }
+    var n = xlseek(fd, 0, 2);
+    if (n > 0) {
+        var probe[8];
+        if (xlseek(fd, 0, 0) != 0) { n = 0 - 1; }
+        elif (file_read(fd, &probe, 1) != 1) { n = 0 - 1; }
+    }
+    file_close(fd);
+    if (n < 0) { return 0 - 1; }
+    return n;
 }
 
 # Resolve a (possibly relative) path to absolute using getcwd(2).
@@ -3023,8 +3032,8 @@ var _git_fmode_dir = 0;
 # x86-Linux, **16** on aarch64-Linux and **4** on macOS-arm64's stat64, and reading the
 # wrong one returns st_uid — a quiet wrong answer on exactly the targets the host suite
 # cannot see. `lib/io.cyr`'s `is_dir` carries the same warning after that bug shipped once.
-# (`_file_size` above predates the wrapper and reads byte 48, which happens to be st_size
-# on both Linux ABIs.) On Windows `xstat` is -1, so the probe declines — as it should:
+# (`_file_size` above needs no stat offset at all since 6.6.9: open + lseek(SEEK_END).)
+# On Windows `xstat` is -1, so the probe declines — as it should:
 # the git flow is POSIX-only there anyway.
 fn _file_mode(path): i64 {
     var st[144];

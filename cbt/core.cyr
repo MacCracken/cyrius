@@ -306,8 +306,19 @@ var ARCH_AARCH64 = 1;
 # ⚠ v6.5.37 made this STRICTLY WORSE rather than adjacent: it fixed `_try_redirect_to_pinned`
 # so the pin redirect now fires for essentially every consumer, which means consumers reliably
 # got the pinned WRAPPER and the CURRENT COMPILER — the mismatch became the default path.
+#
+# ⛔ WINDOWS: THE EXE'S OWN PATH, NOT argv(0), AND BOTH SEPARATORS. argv(0) there is whatever
+# the parent wrote — `C:\cyrius\bin\cyrius.exe`, or `Z:\…\bin\cyrius.exe` under wine, or a bare
+# `cyrius` found on PATH — and the scan below looked for '/' only, so on every Windows spelling
+# this answered 0: the wrapper never saw its own bin/ and fell through to `%CYRIUS_HOME%\bin`
+# (measured under wine: `bin/cyrius.exe audit` printed "skip: cyrlint not built" with
+# cyrlint.exe beside it). GetModuleFileNameW is always the absolute path of this .exe; it is
+# normalised to '/' (Win32 accepts it, and make_path joins with '/'). CHANGELOG [6.6.9]
 fn _wrapper_dir(): i64 {
     var a0 = argv(0);
+    #ifdef CYRIUS_TARGET_WIN
+    a0 = _wrapper_exe_win(a0);
+    #endif
     if (a0 == 0) { return 0; }
     var last = 0 - 1;
     var i = 0;
@@ -326,6 +337,37 @@ fn _wrapper_dir(): i64 {
     }
     return str_data(str_builder_build(sb));
 }
+
+#ifdef CYRIUS_TARGET_WIN
+# This .exe's absolute path with '\' rewritten to '/', from GetModuleFileNameW; `a0` (argv(0),
+# likewise normalised) when that fails. 0 only when both are absent. A full buffer is a
+# failure, not a length (GetModuleFileNameW truncates silently — see cyrius-init's
+# `_self_path_win`). CHANGELOG [6.6.9]
+fn _wrapper_exe_win(a0): i64 {
+    var p = 0;
+    var wbuf = alloc(8192);
+    var wn = sys_self_exe_w(wbuf, 4096);
+    if (wn > 0 && wn < 4096) {
+        store8(wbuf + wn * 2, 0);
+        store8(wbuf + wn * 2 + 1, 0);
+        var ubuf = alloc(4096);
+        var b = _args_w2u8(wbuf, ubuf, 4096);
+        if (b > 1 && b - 1 >= wn) { p = ubuf; }
+    }
+    if (p == 0) {
+        if (a0 == 0) { return 0; }
+        var al = strlen(a0);
+        p = alloc(al + 1);
+        memcpy(p, a0, al + 1);
+    }
+    var i = 0;
+    while (load8(p + i) != 0) {
+        if (load8(p + i) == 92) { store8(p + i, 47); }
+        i = i + 1;
+    }
+    return p;
+}
+#endif
 
 fn make_path(dir, name): i64 {
     var sb = str_builder_new();

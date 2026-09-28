@@ -1212,11 +1212,11 @@ fn compile(source, output): i64 {
             }
             sys_chmod(output, 0x1ED);
             if (_verbose == 1) {
-                # Report binary size
-                var stat_buf[144];
-                var sr = syscall(4, output, &stat_buf);
-                if (sr == 0) {
-                    var fsize = load64(&stat_buf + 48);
+                # Report binary size. 6.6.9: `_artifact_size`, not a raw `syscall(4)` stat
+                # read at the x86-Linux st_size offset (48) — wrong on macOS (72) and no
+                # stat at all where 4 is not routed.
+                var fsize = _artifact_size(output);
+                if (fsize >= 0) {
                     sys_write(STDERR_FD, "[verbose] binary: ", 18);
                     var szbuf[24];
                     var szlen = fmt_int_buf(fsize, &szbuf);
@@ -1604,7 +1604,7 @@ fn _copy_binary(src, dst): i64 {
 # the SAME length (measured at 6.6.3, on the pulsar path this same rule was written for).
 # `_files_identical` alone answers 1 for two 0-byte files, which is exactly what a spawn
 # that never started leaves behind, so it needs the non-empty floor `cmd_pulsar` carries
-# inline. On PE `_file_size` is a raw stat with no reroute and answers -38 for every path,
+# inline. On PE `_file_size` was a raw stat with no reroute (until 6.6.9) and answered -38,
 # so the size test read `-1 != -1` — false — and every iteration scored a PASS over files
 # that need not exist; `_win_files_equal` is the PE arm and has that floor built in.
 # CHANGELOG [6.6.6].
@@ -1849,10 +1849,8 @@ fn _win_system(cmd): i64 {
 # Byte-compare two files without reading either whole into memory (PE-only helper).
 # Used by the Windows
 # arm of `cyrius self`, where the two candidates are ~1.2 MB compilers.
-# ⚠ `_file_size` is a raw `syscall(4)` (stat), which is NOT a PE reroute and answers
-# -38 for BOTH paths — so the size pre-check is inert on Windows by design and the
-# streaming compare below is what actually decides. Stated because a size check that
-# silently always passes is exactly the kind of green placebo this release is about.
+# The streaming compare is the whole verdict — there is no size pre-check (`_file_size`
+# answered -38 for every path on PE until 6.6.9, which is why none was ever relied on here).
 #
 # ⚠ TWO EMPTY FILES ARE NOT A MATCH, and a READ ERROR is not end-of-file. Both callers
 # compare COMPILERS, so "0 bytes == 0 bytes" is never the answer they want — and cass is

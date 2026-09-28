@@ -2520,7 +2520,7 @@ fn cmd_soak(iters): i64 {
         #     "FAIL: self-host size mismatch" (1,315,048 vs 1,315,032 B);
         #   * step 2 ran cc5_t UNSIGNED, and Apple Silicon's AMFI SIGKILLs an unsigned
         #     arm64 Mach-O, so on ecb the step could never complete at all;
-        #   * the comparison was on SIZE — and on PE `_file_size` answers -38 for every
+        #   * the comparison was on SIZE — and on PE `_file_size` answered -38 (until 6.6.9) for every
         #     path, so `-1 != -1` scored a PASS over files that need not exist.
         # The PE spawn arm moved into `_pulsar_raw_compile` with the rest of the step;
         # its exit code is still the verdict ("step 2 exited N"). CHANGELOG [6.6.6].
