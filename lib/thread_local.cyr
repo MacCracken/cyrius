@@ -263,6 +263,13 @@ fn _tlocal_install(tls): i64 {
     #ifdef CYRIUS_TARGET_MACOS
     return 0 - 78;
     #endif
+    # cx: no thread-pointer register, and thread_local_init never gets here (see there). Declined
+    # like macOS rather than left with no arm at all, which returned whatever sat in the return
+    # register (cx_tcyr_runs.sh's empty-body axis; reachable once 6.6.9 made this file compile
+    # alone for cx). CHANGELOG [6.6.9]
+    #ifdef CYRIUS_TARGET_CX
+    return 0 - 38;
+    #endif
     #ifndef CYRIUS_TARGET_MACOS
     #ifdef CYRIUS_ARCH_X86
     return syscall(158, 0x1002, tls);
@@ -285,6 +292,9 @@ fn _tlocal_install(tls): i64 {
 fn thread_local_init(): i64 {
     #ifdef CYRIUS_TARGET_MACOS
     return 1;     # process-global _tlocal_macos is zero-init .bss; nothing to install
+    #endif
+    #ifdef CYRIUS_TARGET_CX
+    return 1;     # cx is a single-threaded VM: the process-global fallback IS its TLS (6.6.9)
     #endif
     #ifdef CYRIUS_TARGET_AGNOS
     return 1;     # process-global _tlocal_agnos is zero-init; nothing to install
@@ -313,6 +323,9 @@ fn thread_local_get(slot): i64 {
     #endif
     #ifdef CYRIUS_TARGET_AGNOS
     return load64(&_tlocal_agnos + slot * 8);
+    #endif
+    #ifdef CYRIUS_TARGET_CX
+    return load64(&_tlocal_fallback + slot * 8);   # single-threaded VM (6.6.9)
     #endif
     # Foreign host: %fs belongs to glibc — read from the process-global fallback.
     if (_tlocal_foreign == 1) { return load64(&_tlocal_fallback + slot * 8); }
@@ -345,6 +358,10 @@ fn thread_local_set(slot, val): i64 {
     #endif
     #ifdef CYRIUS_TARGET_AGNOS
     store64(&_tlocal_agnos + slot * 8, val);
+    return 0;
+    #endif
+    #ifdef CYRIUS_TARGET_CX
+    store64(&_tlocal_fallback + slot * 8, val);    # single-threaded VM (6.6.9)
     return 0;
     #endif
     # Foreign host: %fs belongs to glibc — write to the process-global fallback.
