@@ -636,6 +636,9 @@ lib/sandhi.cyr).
 | `sock_connect` | `sock_connect(fd, addr, port) → Result<0, errno>` | Connect |
 | `sock_send` / `sock_recv` | `(fd, buf, len) → Result<n, errno>` | Send/receive |
 | `sock_close` / `sock_shutdown` | `(fd, [how]) → int` | Bare int — no Err variant since failure on a valid fd is essentially impossible |
+| `net_parse_ipv4` | `net_parse_ipv4(s) → addr \| -1` | Strict dotted-quad literal → packed network-byte-order address (the `sock_connect` form). Leading zeros refused (v6.6.9) |
+| `net_resolve_ipv4` | `net_resolve_ipv4(host) → addr \| -1` | Literal, then `localhost` / `*.localhost` (always 127.0.0.1), then `/etc/hosts`, then one DNS A query to the first IPv4 `nameserver` in `/etc/resolv.conf` (127.0.0.1 if none). IPv4 only, no `search` domains (v6.6.9) |
+| `net_dns_query_ipv4` | `net_dns_query_ipv4(host, ns, port) → addr \| -1` | One A query over UDP to an explicit nameserver; random id, replies that are not for this query are ignored, 2 × 2 s (v6.6.9) |
 
 ### http.cyr
 
@@ -644,7 +647,8 @@ Minimal HTTP/1.0 client.
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `http_get` | `http_get(url) → resp_ptr` | GET request — back-compat shape; failure → resp with `status == HTTP_ERROR` (-1) |
-| `http_get_r` | `http_get_r(url) → Result<resp_ptr, HttpError>` | Result variant (v5.8.31). Bad URL → `Err(HttpBadUrl)`; net failure → `Err(HttpNetErr)`; 200-299 → `Ok(resp)`; non-2xx → `Err(HttpNon2xx)` |
+| `http_get_r` | `http_get_r(url) → Result<resp_ptr, HttpError>` | Result variant (v5.8.31). Bad URL or a request over 2048 bytes → `Err(HttpBadUrl)`; unresolvable host or net failure → `Err(HttpNetErr)`; 200-299 → `Ok(resp)`; non-2xx → `Err(HttpNon2xx)` |
+| `http_get_a` | `http_get_a(a, url) → resp_ptr` | Allocator variant (v5.8.36): the receive buffer and response come from `a` |
 | `http_status` / `http_body` / `http_body_len` | `(resp) → field` | Response accessors |
 
 `enum HttpError { HttpBadUrl; HttpNetErr; HttpNon2xx; HttpOther; }`.
@@ -652,6 +656,11 @@ Minimal HTTP/1.0 client.
 Note: `http_get` shipped with a long-standing latent bug
 (treated net.cyr Result heap pointers as raw int fds) that was
 fixed alongside the `http_get_r` addition at v5.8.31.
+
+v6.6.9: the URL's host is resolved with `net_resolve_ipv4` (before it, the host
+string's pointer was passed to `sock_connect` as the address, so no call reached
+any host), and the request is capped at 2048 bytes — a longer URL is refused
+instead of overflowing the request buffer (CVE-50).
 
 ### dynlib.cyr
 

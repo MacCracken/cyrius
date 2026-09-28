@@ -2,7 +2,7 @@
 
 **Scope:** the untrusted-source-input surface. Previous full audit:
 `docs/audit/2026-07-27-security-audit.md` (CVE-32…CVE-36) at cycc 6.4.82.
-**Next free identifier after this document: CVE-49.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
+**Next free identifier after this document: CVE-51.** (6.6.9 spends CVE-49 in bite 10 and **CVE-50** in bite 12 — `lib/http.cyr`'s request-buffer overflow, appended below.) (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
 document are **withdrawn** but still consume their ids.) CVE-43 was consumed at 6.6.5,
 **CVE-44 and CVE-45 at 6.6.6** — the release installer's fixed `/tmp` staging, and a forged `#@file` from an included file —
 and **CVE-46, CVE-47 and CVE-48 at 6.6.7** (a `secret var` inside a closure was never zeroised; a `secret var` in a
@@ -10,7 +10,7 @@ fn whose `return f(..)` was compiled as a tail call was never zeroised; on agnos
 listened on the network); all six are appended below.
 ⚠ **This line read "next free: CVE-42" while CLAUDE.md read "the next CVE number is 43" and this document ran 39-41.**
 Two authorities, two answers, and nothing reconciled them. CLAUDE.md is the one every closeout reads, so **42 is
-retired unused** and CVE-43 is the entry appended below. Anything below 49 now collides.
+retired unused** and CVE-43 is the entry appended below. Anything below 51 now collides.
 
 Run as part of the band K closeout, as nine parallel audit dimensions over the v6.5.x minor with
 an adversarial verification pass over the highest-severity findings. Everything recorded here was
@@ -620,3 +620,51 @@ byte-swaps its address — the first probe dialled the raw value, i.e. a foreign
 ACCEPTS that same dial, and the same probe built against the pre-fix `net.cyr` has the 127.0.0.1
 listener accept it too — the vulnerability reproduced on the real kernel, then closed. The pre-1.57.7 fail-closed arm is proven on the fake kernel only (no older
 kernel was booted).
+
+## CVE-50 — `lib/http.cyr` wrote a long URL past its 2048-byte request buffer
+
+*Appended 2026-09-28 (cyrius 6.6.9, bite 12), found by the 6.6.8 bite 3 review of `lib/http.cyr`.
+Not part of the 2026-09-03 sweep: recorded here because this is the live ledger and the id has to
+come from one place. 6.6.9 bite 10 spends CVE-49.*
+
+| | |
+|---|---|
+| **Severity** | **High (P1)** — an out-of-bounds heap write whose length and bytes are the caller's URL; silent (no diagnostic, and the call then fails or succeeds normally) |
+| **Affected** | `lib/http.cyr` `_http_build_request`, reached by `http_get`, `http_get_r` and `http_get_a`, since the module's first version, through cyrius 6.6.8 |
+| **Fixed** | 6.6.9 |
+
+**Vector.** `_http_build_request(method, host, path)` did `alloc(2048)` and then `memcpy`d the
+method, the whole path, the fixed ` HTTP/1.0\r\nHost: ` text, the host and the
+`Connection: close` trailer into it with no length check. `path` and `host` come straight from
+the URL (`_http_parse_url` points `path` into the caller's string and copies the host), and the
+URL is exactly what callers take from outside — phylax's `rules fetch <url>` passes its argument,
+abaco builds one from configuration. `_http_parse_url` rejects CR, LF, TAB and space, so the
+overflow carries any other byte. It runs **before** any socket is opened, so it was reachable even
+though the same release's connect defect (the host string passed as the address) meant no request
+was ever sent.
+
+**Impact.** The write lands past the buffer in the global allocator's chunk. Measured on this tree
+(the review's probe, now a test row): after building a request for a 4000-byte path, the NEXT
+`alloc(64)` comes back already full of the path's bytes — memory the allocator hands out as
+fresh, which cyrius code routinely treats as zeroed. Reasoned from `lib/alloc.cyr`, not
+demonstrated: `alloc` is shared by every thread under one lock, so another thread's LIVE
+allocation made just after the request buffer is overwritten; and a buffer near the end of a
+chunk writes past the chunk's mapping — a SIGSEGV, or corruption of whatever mapping follows.
+
+**Fix.** The builder computes the request's length first — method + 1 + path + 17 + host + 23 +
+the NUL — and returns 0 when it exceeds `_HTTP_REQ_CAP` (2048, the old buffer's size, so no
+request that used to fit is refused); otherwise it allocates exactly that length. All three
+callers go through `_http_prepare`, which builds the request first and returns before any lookup
+or socket when the builder refuses it: `http_get` / `http_get_a` return status `HTTP_ERROR`,
+`http_get_r` returns `Err(HttpBadUrl)`. (The first cut resolved the host before checking, in two
+of the three callers, so an over-long URL still read `/etc/hosts` + `/etc/resolv.conf` and sent a
+DNS datagram for its host; the review caught it under `qemu-x86_64 -strace`.)
+
+**Verified.** `tests/tcyr/crossos/http_connect_by_name.tcyr`, group *CVE-50*: a 4000-byte path
+is refused **and the next allocation holds none of its bytes**; an over-long Host is refused; a
+request of exactly 2048 bytes with its NUL builds (2047 long) and one byte more is refused; all
+three `http_get*` return their error for a long URL whose host only DNS could answer, and
+`_http_prepare` leaves its address slot untouched on the refusal (no lookup ran). Mutation: restoring the unchecked builder
+turns five rows red, including the next-allocation row. Green on x86_64 Linux, the agnosticos
+CI container, aarch64 (qemu and real pi), Mach-O arm64 (ecb), Mach-O x86_64 (ach) and PE (wine
+and real cass).

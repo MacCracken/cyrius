@@ -1,0 +1,458 @@
+# http_connect_by_name.tcyr — v6.6.9 (bite 12): lib/http.cyr reaches a host BY NAME, and its
+# request builder refuses a request it cannot hold (CVE-50) instead of writing past its buffer.
+#
+# ⛔ WHY. (1) http_get / http_get_r / http_get_a passed the URL's host STRING pointer to
+# sock_connect, which wants a packed IPv4 address, so every call dialled the low 32 bits of a heap
+# pointer and no http_* call could reach ANY host — by name or by literal. lib/net.cyr had no
+# resolver to call; it now has net_resolve_ipv4 (literal → localhost → /etc/hosts → one DNS A
+# query) and the builder's callers use it. (2) _http_build_request did alloc(2048) and copied the
+# method, path and host into it unchecked: a 4000-byte path filled the NEXT allocation with the
+# path's bytes. It now measures first and returns 0, which the callers report as a bad URL.
+#
+# ⚠ WHAT MAKES THIS A REAL TEST. The HTTP group dials `localhost` — a NAME — on a listener this
+# file owns, in a forked child, and the parent checks the request bytes it received. The DNS group
+# runs net_dns_query_ipv4 against a fake UDP server that first sends a FORGED reply (wrong id,
+# a different address) and then the real one with a CNAME and compression pointers, so "the first
+# datagram wins" or "A records only at the start" both fail. The overflow row is the review's own
+# probe: after a refused build, the next alloc() must not hold the path's bytes.
+# Groups that need fork + BSD sockets run on the POSIX hosts (Linux x86_64/aarch64, macOS); the
+# parser, encoder and overflow rows run on every target. CHANGELOG [6.6.9]
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/tagged.cyr"
+include "lib/io.cyr"
+include "lib/net.cyr"
+include "lib/http.cyr"
+include "lib/assert.cyr"
+
+# NUL-terminated decimal of `v` (>= 0) appended at p; returns the new end.
+fn _cb_dec(p, v): i64 {
+    var tmp[24];
+    var n = 0;
+    if (v == 0) { store8(&tmp, 48); n = 1; }
+    while (v > 0) { store8(&tmp + n, 48 + v % 10); v = v / 10; n = n + 1; }
+    var i = 0;
+    while (i < n) { store8(p + i, load8(&tmp + n - 1 - i)); i = i + 1; }
+    store8(p + n, 0);
+    return p + n;
+}
+
+# Copy the NUL-terminated `s` to p; returns the new end (at the NUL).
+fn _cb_cat(p, s): i64 {
+    var n = strlen(s);
+    memcpy(p, s, n);
+    store8(p + n, 0);
+    return p + n;
+}
+
+# Pack a.b.c.d the way sock_connect wants it (network byte order in memory).
+fn _cb_ip(a, b, c, d): i64 { return a | (b << 8) | (c << 16) | (d << 24); }
+
+# A DNS reply header into r: id bytes from q, flags hi/lo, qd = 1, an = `an`.
+fn _cb_hdr(r, q, fhi, flo, an): i64 {
+    memset(r, 0, 12);
+    store8(r, load8(q));
+    store8(r + 1, load8(q + 1));
+    store8(r + 2, fhi);
+    store8(r + 3, flo);
+    store8(r + 5, 1);
+    store8(r + 7, an);
+    return 12;
+}
+
+# Build the reply the fake server gives for `svc.cyrius.test`: a CNAME to real.cyrius.test
+# (compressed against the question) then the A record for the CNAME target, 10.1.2.3.
+# q[0..qlen) is the query. Returns the reply length.
+fn _cb_reply_cname(r, q, qlen): i64 {
+    _cb_hdr(r, q, 0x81, 0x80, 2);
+    memcpy(r + 12, q + 12, qlen - 12);
+    var w = qlen;
+    # answer 1: name = ptr to the question (offset 12), CNAME IN, ttl 60
+    store8(r + w, 0xC0); store8(r + w + 1, 12);
+    store8(r + w + 2, 0); store8(r + w + 3, 5);
+    store8(r + w + 4, 0); store8(r + w + 5, 1);
+    store8(r + w + 6, 0); store8(r + w + 7, 0); store8(r + w + 8, 0); store8(r + w + 9, 60);
+    store8(r + w + 10, 0); store8(r + w + 11, 7);
+    w = w + 12;
+    var target = w;
+    # rdata: 04 "real" + ptr to "cyrius.test" (offset 16: after 03 "svc")
+    store8(r + w, 4); memcpy(r + w + 1, "real", 4);
+    store8(r + w + 5, 0xC0); store8(r + w + 6, 16);
+    w = w + 7;
+    # answer 2: name = ptr to the CNAME target, A IN, ttl 60, 10.1.2.3
+    store8(r + w, 0xC0); store8(r + w + 1, target);
+    store8(r + w + 2, 0); store8(r + w + 3, 1);
+    store8(r + w + 4, 0); store8(r + w + 5, 1);
+    store8(r + w + 6, 0); store8(r + w + 7, 0); store8(r + w + 8, 0); store8(r + w + 9, 60);
+    store8(r + w + 10, 0); store8(r + w + 11, 4);
+    store8(r + w + 12, 10); store8(r + w + 13, 1); store8(r + w + 14, 2); store8(r + w + 15, 3);
+    return w + 16;
+}
+
+#ifndef CYRIUS_TARGET_WIN
+#ifndef CYRIUS_TARGET_AGNOS
+# Bind `fd` to 127.0.0.1 on a port the kernel picks (port 0, read back), so concurrent runs
+# never share one. Returns the port (host order) or -1.
+fn _cb_bind(fd): i64 {
+    var bt, bv = sock_bind(fd, INADDR_LOOPBACK(), 0);
+    if (is_err_result(bt) == 1) { return 0 - 1; }
+    var sa[16];
+    var sl[8];
+    store64(&sl, 16);
+    if (sys_getsockname(fd, &sa, &sl) != 0) { return 0 - 1; }
+    return ((load8(&sa + 2) & 0xFF) << 8) | (load8(&sa + 3) & 0xFF);
+}
+
+# Child: the three http_* calls by NAME. Exit 0 when all three got 200 + "hello", else the
+# first failure's code.
+fn _cb_http_child(port): i64 {
+    var url = alloc(64);
+    var e = _cb_cat(url, "http://localhost:");
+    e = _cb_dec(e, port);
+    _cb_cat(e, "/by-name");
+    var r0 = http_get(url);
+    if (http_status(r0) != 200) { sys_exit(10); }
+    if (http_body_len(r0) != 5) { sys_exit(11); }
+    if (memeq(http_body(r0), "hello", 5) != 1) { sys_exit(12); }
+    var t1, v1 = http_get_r(url);
+    if (is_err_result(t1) == 1) { sys_exit(20); }
+    if (http_status(v1) != 200) { sys_exit(21); }
+    var r2 = http_get_a(arena_allocator(131072), url);
+    if (r2 == 0) { sys_exit(30); }
+    if (http_status(r2) != 200) { sys_exit(31); }
+    if (memeq(http_body(r2), "hello", 5) != 1) { sys_exit(32); }
+    sys_exit(0);
+    return 0;
+}
+
+# Parent: serve one request on the listener. Copies the request's first bytes into `seen`
+# (NUL-terminated). Returns 0, or -1 when no client arrived in time.
+fn _cb_serve_one(lfd, seen): i64 {
+    var at, cfd = sock_accept(lfd);
+    if (is_err_result(at) == 1) { return 0 - 1; }
+    sock_set_recv_timeout(cfd, 10, 0);
+    var buf = alloc(2048);
+    var got = 0;
+    var go = 1;
+    while (go == 1 && got < 2047) {
+        var rt, rn = sock_recv(cfd, buf + got, 2047 - got);
+        if (is_err_result(rt) == 1) { go = 0; }
+        elif (rn <= 0) { go = 0; }
+        else {
+            got = got + rn;
+            if (got >= 4 && memeq(buf + got - 4, "\r\n\r\n", 4) == 1) { go = 0; }
+        }
+    }
+    store8(buf + got, 0);
+    memcpy(seen, buf, got + 1);
+    var resp = "HTTP/1.0 200 OK\r\nContent-Length: 5\r\n\r\nhello";
+    sock_send_all(cfd, resp, strlen(resp));
+    sock_close(cfd);
+    return 0;
+}
+
+# Reap `pid`, SIGKILLing it first when `kill` is set. Returns its exit status, or -1.
+# ⛔ Only a real child (pid > 0) is ever signalled: a failed fork's pid is -errno, and
+# kill(-1, SIGKILL) signals EVERY process this user can reach — as root in CI, the container.
+fn _cb_reap(pid, kill): i64 {
+    if (pid <= 0) { return 0 - 1; }
+    if (kill == 1) { sys_kill(pid, 9); }
+    var st[8];
+    store64(&st, 0);
+    sys_waitpid(pid, &st, 0);
+    if (WIFEXITED(load32(&st)) != 1) { return 0 - 1; }
+    return WEXITSTATUS(load32(&st));
+}
+
+fn _cb_http_group(): i64 {
+    test_group("v6.6.9 — http_get / http_get_r / http_get_a reach a listener by NAME (localhost)");
+    var lt, lfd = tcp_socket();
+    assert_eq(is_err_result(lt), 0, "tcp_socket");
+    sock_reuse(lfd);
+    var port = _cb_bind(lfd);
+    assert(port > 0, "bound a 127.0.0.1 port");
+    var st, sv = sock_listen(lfd, 4);
+    assert_eq(is_err_result(st), 0, "listen");
+    # accept() honours SO_RCVTIMEO on Linux and Darwin: a client that never connects (the old
+    # defect) fails this group in 10 s instead of hanging the suite.
+    sock_set_recv_timeout(lfd, 10, 0);
+    var pid = sys_fork();
+    if (pid == 0) { _cb_http_child(port); }
+    if (pid < 0) {
+        assert(0 == 1, "fork (EAGAIN / ENOMEM / a seccomp denial)");
+        sock_close(lfd);
+        return 0;
+    }
+    var seen = alloc(2048);
+    var ok = 0;
+    var k = 0;
+    while (k < 3) {
+        if (_cb_serve_one(lfd, seen) == 0) { ok = ok + 1; }
+        if (k == 0) {
+            var want = "GET /by-name HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+            assert_eq(streq(seen, want), 1, "the request line and Host header name the URL");
+        }
+        k = k + 1;
+    }
+    sock_close(lfd);
+    var kill = 0;
+    if (ok != 3) { kill = 1; }
+    assert_eq(ok, 3, "all three requests arrived (the host STRING used to be dialled as an address)");
+    assert_eq(_cb_reap(pid, kill), 0, "…and each call returned 200 + the body (child exit 0)");
+    return 0;
+}
+
+# Child: the DNS queries against the fake server. Exit 0 or the failing step's code.
+fn _cb_dns_child(port): i64 {
+    var a = net_dns_query_ipv4("svc.cyrius.test", INADDR_LOOPBACK(), port);
+    if (a != _cb_ip(10, 1, 2, 3)) {
+        if (a == _cb_ip(6, 6, 6, 6)) { sys_exit(41); }
+        sys_exit(40);
+    }
+    var b = net_dns_query_ipv4("gone.cyrius.test", INADDR_LOOPBACK(), port);
+    if (b != 0 - 1) { sys_exit(50); }
+    sys_exit(0);
+    return 0;
+}
+
+fn _cb_dns_group(): i64 {
+    test_group("v6.6.9 — net_dns_query_ipv4 against a fake nameserver on 127.0.0.1");
+    var ut, ufd = udp_socket();
+    assert_eq(is_err_result(ut), 0, "udp_socket");
+    var port = _cb_bind(ufd);
+    assert(port > 0, "bound a 127.0.0.1 UDP port");
+    sock_set_recv_timeout(ufd, 10, 0);
+    var pid = sys_fork();
+    if (pid == 0) { _cb_dns_child(port); }
+    if (pid < 0) {
+        assert(0 == 1, "fork (EAGAIN / ENOMEM / a seccomp denial)");
+        sock_close(ufd);
+        return 0;
+    }
+    var q = alloc(512);
+    var r = alloc(512);
+    var src = alloc(32);
+    var slen = alloc(8);
+    # query 1: a forged reply first (id + 1, answer 6.6.6.6), then the real one
+    store64(slen, 32);
+    var n1 = sys_recvfrom(ufd, q, 512, 0, src, slen);
+    var served = 0;
+    if (n1 > 12) {
+        _cb_hdr(r, q, 0x81, 0x80, 1);
+        store8(r + 1, (load8(q + 1) + 1) & 0xFF);
+        memcpy(r + 12, q + 12, n1 - 12);
+        var w = n1;
+        store8(r + w, 0xC0); store8(r + w + 1, 12);
+        store8(r + w + 2, 0); store8(r + w + 3, 1); store8(r + w + 4, 0); store8(r + w + 5, 1);
+        store8(r + w + 6, 0); store8(r + w + 7, 0); store8(r + w + 8, 0); store8(r + w + 9, 60);
+        store8(r + w + 10, 0); store8(r + w + 11, 4);
+        store8(r + w + 12, 6); store8(r + w + 13, 6); store8(r + w + 14, 6); store8(r + w + 15, 6);
+        sys_sendto(ufd, r, w + 16, 0, src, load64(slen));
+        var rl = _cb_reply_cname(r, q, n1);
+        sys_sendto(ufd, r, rl, 0, src, load64(slen));
+        served = served + 1;
+    }
+    # query 2: NXDOMAIN
+    store64(slen, 32);
+    var n2 = sys_recvfrom(ufd, q, 512, 0, src, slen);
+    if (n2 > 12) {
+        _cb_hdr(r, q, 0x81, 0x83, 0);
+        memcpy(r + 12, q + 12, n2 - 12);
+        sys_sendto(ufd, r, n2, 0, src, load64(slen));
+        served = served + 1;
+    }
+    sock_close(ufd);
+    var kill = 0;
+    if (served != 2) { kill = 1; }
+    assert_eq(served, 2, "both queries reached the fake server");
+    var ec = _cb_reap(pid, kill);
+    assert_neq(ec, 41, "the FORGED reply (wrong id) was not accepted");
+    assert_eq(ec, 0, "CNAME + compressed A resolved to 10.1.2.3, and NXDOMAIN is -1");
+    return 0;
+}
+
+# _net_conf_scan over a real file: a name on a line that straddles the 1 KiB read boundary, a
+# CRLF line, and an over-long line that must be skipped whole (not matched on its prefix).
+fn _cb_hosts_file_group(): i64 {
+    test_group("v6.6.9 — the hosts-file scan streams across reads");
+    var path = test_scratch("cy669_hosts");
+    var body = alloc(4096);
+    var w = 0;
+    store8(body, 35); w = 1;                        # "#xxxx…" filler comment, ~1000 bytes
+    while (w < 1000) { store8(body + w, 120); w = w + 1; }
+    store8(body + w, 10); w = w + 1;
+    var l1 = "10.9.8.7   far.example  alias.far  # a comment\n";
+    memcpy(body + w, l1, strlen(l1)); w = w + strlen(l1);
+    var l2 = "10.2.2.2 crlf.example\r\n";
+    memcpy(body + w, l2, strlen(l2)); w = w + strlen(l2);
+    var l3 = "10.1.1.1 long.example ";
+    memcpy(body + w, l3, strlen(l3)); w = w + strlen(l3);
+    var z = 0;
+    while (z < 1200) { store8(body + w, 121); w = w + 1; z = z + 1; }
+    store8(body + w, 10); w = w + 1;
+    var l4 = "10.4.4.4 last.example";                   # no trailing newline
+    memcpy(body + w, l4, strlen(l4)); w = w + strlen(l4);
+    assert_eq(file_write_all(path, body, w), w, "wrote the hosts fixture");
+    assert_eq(_net_conf_scan(path, "far.example"), _cb_ip(10, 9, 8, 7), "name on the line crossing the 1 KiB read");
+    assert_eq(_net_conf_scan(path, "ALIAS.far."), _cb_ip(10, 9, 8, 7), "alias, any case, trailing dot");
+    assert_eq(_net_conf_scan(path, "a.comment"), 0 - 1, "text after # is not a name");
+    assert_eq(_net_conf_scan(path, "crlf.example"), _cb_ip(10, 2, 2, 2), "CRLF line");
+    assert_eq(_net_conf_scan(path, "long.example"), 0 - 1, "an over-long line is skipped whole");
+    assert_eq(_net_conf_scan(path, "last.example"), _cb_ip(10, 4, 4, 4), "last line without a newline");
+    xunlink(path);
+    return 0;
+}
+#endif
+#endif
+
+fn main(): i64 {
+    alloc_init();
+
+    test_group("v6.6.9 — net_parse_ipv4: strict dotted quads only");
+    assert_eq(net_parse_ipv4("127.0.0.1"), INADDR_LOOPBACK(), "127.0.0.1 is INADDR_LOOPBACK");
+    assert_eq(net_parse_ipv4("10.1.2.3"), _cb_ip(10, 1, 2, 3), "network byte order");
+    assert_eq(net_parse_ipv4("255.255.255.255"), 0xFFFFFFFF, "broadcast is not the -1 sentinel");
+    assert_eq(net_parse_ipv4("0.0.0.0"), 0, "0.0.0.0");
+    assert_eq(net_parse_ipv4("1.2.3"), 0 - 1, "three parts");
+    assert_eq(net_parse_ipv4("1.2.3.4.5"), 0 - 1, "five parts");
+    assert_eq(net_parse_ipv4("1..3.4"), 0 - 1, "empty part");
+    assert_eq(net_parse_ipv4("1.2.3.256"), 0 - 1, "part above 255");
+    assert_eq(net_parse_ipv4("010.0.0.1"), 0 - 1, "leading zero (octal to inet_aton) refused");
+    assert_eq(net_parse_ipv4("1.2.3.4 "), 0 - 1, "trailing byte");
+    assert_eq(net_parse_ipv4("example.com"), 0 - 1, "a name is not a literal");
+    assert_eq(net_parse_ipv4(""), 0 - 1, "empty");
+
+    test_group("v6.6.9 — net_resolve_ipv4: literals and localhost never leave the process");
+    assert_eq(net_resolve_ipv4("127.0.0.1"), INADDR_LOOPBACK(), "literal");
+    assert_eq(net_resolve_ipv4("localhost"), INADDR_LOOPBACK(), "localhost");
+    assert_eq(net_resolve_ipv4("LocalHost."), INADDR_LOOPBACK(), "any case, trailing dot");
+    assert_eq(net_resolve_ipv4("api.localhost"), INADDR_LOOPBACK(), "*.localhost (RFC 6761)");
+    # The rule itself, apart from /etc/hosts (which usually names localhost too):
+    assert_eq(_net_is_localhost("LocalHost."), 1, "the localhost rule: any case, trailing dot");
+    assert_eq(_net_is_localhost("api.localhost"), 1, "the localhost rule: *.localhost");
+    assert_eq(_net_is_localhost("notlocalhost"), 0, "…but not a name merely ending in 'localhost'");
+    assert_eq(net_resolve_ipv4(""), 0 - 1, "empty name");
+
+    test_group("v6.6.9 — config lines");
+    var hl = "  10.0.0.9\tweb.lan   web  # web box";
+    assert_eq(_net_conf_line(hl, strlen(hl), "web"), _cb_ip(10, 0, 0, 9), "hosts: alias");
+    assert_eq(_net_conf_line(hl, strlen(hl), "WEB.LAN"), _cb_ip(10, 0, 0, 9), "hosts: name, any case");
+    assert_eq(_net_conf_line(hl, strlen(hl), "box"), 0 - 1, "hosts: comment text is not a name");
+    var h6 = "::1 localhost six";
+    assert_eq(_net_conf_line(h6, strlen(h6), "six"), 0 - 1, "hosts: an IPv6 line is skipped");
+    var rc = "nameserver 192.168.1.53";
+    assert_eq(_net_conf_line(rc, strlen(rc), 0), _cb_ip(192, 168, 1, 53), "resolv.conf: nameserver");
+    var rc6 = "nameserver fe80::1";
+    assert_eq(_net_conf_line(rc6, strlen(rc6), 0), 0 - 1, "resolv.conf: IPv6 nameserver skipped");
+    var rcx = "nameservers 1.1.1.1";
+    assert_eq(_net_conf_line(rcx, strlen(rcx), 0), 0 - 1, "resolv.conf: keyword must match whole");
+
+    test_group("v6.6.9 — DNS query encoding");
+    var q = alloc(512);
+    var ql = _net_dns_build(q, 0xBEEF, "ab.c.");
+    assert_eq(ql, 12 + 6 + 4, "12-byte header + 02ab01c00 + type/class");
+    assert_eq(load8(q), 0xBE, "id hi");
+    assert_eq(load8(q + 1), 0xEF, "id lo");
+    assert_eq(load8(q + 2), 1, "RD");
+    assert_eq(load8(q + 5), 1, "QDCOUNT 1");
+    var wantq = alloc(16);
+    store8(wantq, 2); store8(wantq + 1, 97); store8(wantq + 2, 98);
+    store8(wantq + 3, 1); store8(wantq + 4, 99); store8(wantq + 5, 0);
+    store8(wantq + 6, 0); store8(wantq + 7, 1); store8(wantq + 8, 0); store8(wantq + 9, 1);
+    assert_eq(memeq(q + 12, wantq, 10), 1, "02 'ab' 01 'c' 00, A, IN");
+    assert_eq(_net_dns_build(q, 1, "a..b"), 0 - 1, "empty label");
+    assert_eq(_net_dns_build(q, 1, ".a"), 0 - 1, "leading dot");
+    assert_eq(_net_dns_build(q, 1, "a b"), 0 - 1, "space in a name");
+    var l64 = alloc(80);
+    memset(l64, 97, 64);
+    store8(l64 + 64, 0);
+    assert_eq(_net_dns_build(q, 1, l64), 0 - 1, "64-byte label");
+    store8(l64 + 63, 0);
+    assert(_net_dns_build(q, 1, l64) > 0, "63-byte label is fine");
+
+    test_group("v6.6.9 — DNS reply parsing");
+    ql = _net_dns_build(q, 0x1234, "svc.cyrius.test");
+    var r = alloc(512);
+    var rl = _cb_reply_cname(r, q, ql);
+    assert_eq(_net_dns_answer(r, rl, q, ql), _cb_ip(10, 1, 2, 3), "CNAME then compressed A");
+    store8(r + 1, 0x35);
+    assert_eq(_net_dns_answer(r, rl, q, ql), 0 - 2, "wrong id: not our reply, keep listening");
+    store8(r + 1, 0x34);
+    store8(r + 2, 0x01);
+    assert_eq(_net_dns_answer(r, rl, q, ql), 0 - 2, "QR clear: not a reply");
+    store8(r + 2, 0x81);
+    store8(r + 13, 0x53);                                  # 's' -> 'S' in the echoed question
+    assert_eq(_net_dns_answer(r, rl, q, ql), 0 - 2, "a different question");
+    store8(r + 13, 0x73);
+    store8(r + 3, 0x83);
+    assert_eq(_net_dns_answer(r, rl, q, ql), 0 - 1, "NXDOMAIN");
+    store8(r + 3, 0x80);
+    assert_eq(_net_dns_answer(r, rl - 2, q, ql), 0 - 1, "A rdata cut short: bounded, no address");
+    assert_eq(_net_dns_answer(r, ql - 1, q, ql), 0 - 2, "shorter than the question");
+
+    test_group("v6.6.9 — CVE-50: a request longer than the buffer is refused, not written past");
+    var fits = alloc(2048);
+    memset(fits, 65, 1900);
+    store8(fits, 47);
+    store8(fits + 1900, 0);
+    assert(_http_build_request("GET", "h", fits) != 0, "a 1.9 KB path still builds");
+    var longp = alloc(4096);
+    memset(longp, 65, 4000);
+    store8(longp, 47);
+    store8(longp + 4000, 0);
+    var req = _http_build_request("GET", "h", longp);
+    var next = alloc(64);
+    assert_eq(req, 0, "a 4000-byte path is refused");
+    assert_neq(load8(next + 32), 65, "…and the NEXT allocation holds none of its bytes (the old overrun)");
+    var longh = alloc(4096);
+    memset(longh, 104, 2100);
+    store8(longh + 2100, 0);
+    assert_eq(_http_build_request("GET", longh, "/"), 0, "an over-long Host is refused too");
+    # Exactly at the cap: GET + SP + path + 17 + host(1) + 23 + NUL == 2048 -> path of 2002.
+    var edge = alloc(2048);
+    memset(edge, 66, 2002);
+    store8(edge, 47);
+    store8(edge + 2002, 0);
+    var er = _http_build_request("GET", "h", edge);
+    assert(er != 0, "a request of exactly 2048 bytes with its NUL builds");
+    if (er != 0) { assert_eq(strlen(er), 2047, "…and is 2047 bytes long"); }
+    store8(edge + 2002, 66);
+    store8(edge + 2003, 0);
+    assert_eq(_http_build_request("GET", "h", edge), 0, "one byte more is refused");
+    # The refusal comes BEFORE the lookup. _http_prepare writes the address slot only after a
+    # lookup ran, so a sentinel left there proves none did (http_get / _a used to resolve first,
+    # reading /etc/hosts + /etc/resolv.conf and sending a DNS query for a URL they then refused).
+    # `localhost` resolves with no I/O, so the control rows are exact on every host.
+    var slot = alloc(16);
+    store64(slot + 8, 0x5A5A);
+    assert_eq(_http_prepare("localhost", longp, slot), 1, "_http_prepare: an over-long request is 1");
+    assert_eq(load64(slot + 8), 0x5A5A, "…and no lookup ran (the address slot is untouched)");
+    assert_eq(_http_prepare("localhost", "/p", slot), 0, "control: a short request by name is 0");
+    assert_eq(load64(slot + 8), INADDR_LOOPBACK(), "…and was resolved (127.0.0.1)");
+    assert(load64(slot) != 0, "…with its request stored");
+    # By NAME: a host that only DNS could answer, refused before any lookup.
+    var url = alloc(4200);
+    var ue = _cb_cat(url, "http://refused-by-length.invalid");
+    _cb_cat(ue, longp);
+    assert_eq(load64(http_get(url)), HTTP_ERROR, "http_get: HTTP_ERROR, before any lookup");
+    var bt, bv = http_get_r(url);
+    assert_eq(is_err_result(bt), 1, "http_get_r: Err");
+    assert_eq(bv, HttpBadUrl, "…HttpBadUrl");
+    var ra = http_get_a(arena_allocator(131072), url);
+    assert_eq(load64(ra), HTTP_ERROR, "http_get_a: HTTP_ERROR");
+
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_AGNOS
+    _cb_hosts_file_group();
+    _cb_http_group();
+    _cb_dns_group();
+    #endif
+    #endif
+
+    return assert_summary();
+}
+var ec = main();
+syscall(60, ec);

@@ -481,6 +481,71 @@ a native cx compiler also exits 1 on the slice / await / async triggers.
   thoth have Windows code (thoth's PE lane does not build today; sigil's LUKS path has no Windows
   use). cbt's own `cbt/deps.cyr:57-58` / `cbt/cyrius.cyr:154,172` comments ("`is_symlink` is 0 on
   Windows") are handed to the cbt lane.
+- **`lib/http.cyr` reaches a host by NAME — and it reaches a host at all.** (bite 12.) **Root
+  cause:** `http_get`, `http_get_r` and `http_get_a` passed the URL's host STRING pointer to
+  `sock_connect`, which wants a packed IPv4 address, so every call dialled the low 32 bits of a
+  heap pointer — `connect(3, 0x33600828, 16)` under `qemu-aarch64 -strace`, then an 8 s hang on
+  an unroutable address. No `http_*` call has been able to reach any host, by name or by
+  literal, and `lib/net.cyr` had no resolver to call (the bite's own plan said it had one; it
+  did not — sandhi carries its own). **Fix:** `net.cyr` gains `net_resolve_ipv4` (below) and all
+  three callers resolve before connecting; an unresolvable host is `HTTP_ERROR` /
+  `Err(HttpNetErr)` with no TCP connection made (the lookup itself may send a UDP DNS query). The
+  three callers share one `_http_prepare`, which builds the request FIRST and resolves only a
+  request it kept. The Host header still carries the name. `http.cyr` now
+  includes `net.cyr` itself — it called six of its fns and included none, so `include
+  "lib/http.cyr"` alone compiled with `undefined function` warnings and a trapping `http_get`.
+  Pinned by `tests/tcyr/crossos/http_connect_by_name.tcyr`: a forked child runs all three calls
+  against `http://localhost:<port>/by-name` on a listener the test owns, and the parent checks the
+  request bytes; mutation (the host string back in `sock_connect`) turns three rows red in 10 s
+  instead of hanging. Real DNS verified by hand on x86_64 Linux, ecb, ach and pi
+  (`http_get("http://example.com/")` → 200).
+- **CVE-50: `_http_build_request` no longer writes a long URL past its 2048-byte buffer.** (bite 12;
+  `docs/audit/2026-09-03-security-audit.md`.) It `alloc(2048)`d and `memcpy`d the method, path and
+  host in unchecked, so a 4000-byte path filled the NEXT allocation with the path's bytes (measured;
+  under threads that allocation can be another thread's live object, and at a chunk end the write
+  leaves the mapping). The length is now computed first; a request over `_HTTP_REQ_CAP` (2048, the
+  old buffer's size — nothing that fitted is refused) returns 0, which `http_get` / `http_get_a`
+  report as `HTTP_ERROR` and `http_get_r` as `Err(HttpBadUrl)` before any lookup or socket (the
+  first cut of this fix had `http_get` / `http_get_a` resolve first, so an over-long URL still
+  read `/etc/hosts` + `/etc/resolv.conf` and sent a DNS query for its host before it was refused;
+  `_http_prepare` now owns the order). Rows: the 4000-byte path refused and the next allocation
+  clean, an over-long Host refused, exactly 2048 bytes accepted and one more refused, the refusal
+  leaving `_http_prepare`'s address slot untouched (no lookup ran), all three `http_get*` erroring
+  for a URL whose host only DNS could answer; mutation turns five red.
+
+### Added
+
+- **`lib/net.cyr`: `net_parse_ipv4(s)`, `net_resolve_ipv4(host)`, `net_dns_query_ipv4(host, ns,
+  port)`** (bite 12). All return the packed network-byte-order address `sock_connect` takes, or -1
+  (255.255.255.255 packs to `0xFFFFFFFF`, not -1). `net_parse_ipv4` is a strict dotted quad — a
+  leading zero is refused rather than read as octal (inet_aton) or decimal (everyone else).
+  `net_resolve_ipv4`: the literal; `localhost` / `*.localhost` → 127.0.0.1 always (RFC 6761, never
+  sent to DNS); the IPv4 entries of `/etc/hosts` (streamed in 1 KiB reads, so a blocklist-sized
+  file costs no heap; CRLF tolerated; comments honoured); then one A query to the first IPv4
+  `nameserver` in `/etc/resolv.conf`, 127.0.0.1 when there is none (glibc's default). The DNS query
+  uses a `getrandom` transaction id (then `/dev/urandom`; with neither the lookup FAILS — no
+  clock / stack-address fallback, the CVE-19 rule), a connected UDP socket, 2 s × 2 sends, stack buffers only, and
+  ignores any datagram that is not the reply to THIS query (wrong id, not a response, a different
+  question) — so a forged or stray datagram cannot end the lookup; CNAME chains and compression
+  pointers are skipped with every read bounded. IPv4 only, no `search` domains — `lib/sandhi.cyr`
+  remains the full client. agnos has no BSD UDP socket, so there only the first three steps can
+  succeed. `net.cyr` now includes `lib/io.cyr` for the file reads (include-once). The test file
+  above runs `net_dns_query_ipv4` against a fake nameserver that sends a FORGED reply (wrong id,
+  6.6.6.6) before the real CNAME + compressed A (10.1.2.3), then an NXDOMAIN; mutation (no id
+  check) takes the forged answer and fails four rows. Green on x86_64 Linux, the agnosticos CI
+  container (as root, under its seccomp profile), qemu-aarch64 and real pi, ecb, ach; the
+  target-neutral groups on wine and real cass.
+
+### Downstream
+
+- **`lib/http.cyr` callers — phylax (`src/cli.cyr` `cmd_rules_fetch`) and abaco (`src/ai.cyr`
+  `CurrencyCache_fetch`) — start actually connecting at 6.6.9.** Before it, `http_get` could not
+  reach any host, so both commands failed — after hanging on a connect to an unroutable address,
+  or at once when the pointer's bytes happened to make an unreachable one (phylax printed its
+  "HTTP status -1" error; abaco set `AI_ERR_HTTP`). No source change is needed. A URL whose request would exceed 2048 bytes now
+  fails as a bad URL instead of overflowing (CVE-50). Resolution is IPv4-only with no `search`
+  domains: a host that only has an AAAA record, or a short name that relies on a search suffix,
+  does not resolve here — use `lib/sandhi.cyr` for those.
 
 ## [6.6.8] — 2026-09-28
 
