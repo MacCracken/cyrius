@@ -2610,9 +2610,16 @@ fn cmd_deps(): i64 {
             # declared under an unchanged pin, or the FIRST lock of a stdlib-only project.
             # Both used to be left out — the leaf sat in lib/ unlocked and `--verify` passed
             # over it even tampered — restoring the v5.7.8 intent stated above.
-            if (copied > 0 || _dep_relock == 1 || _stamp_legacy == 1 || _dep_lock_new_leaf == 1) {
-                # v6.6.6: a lock that could not be written is an error, not a dropped rc.
-                if (cmd_deps_lock() != 0) { errors = errors + 1; }
+            var _must = 0;
+            if (copied > 0 || _dep_relock == 1 || _stamp_legacy == 1) { _must = 1; }
+            if (_must == 1 || _dep_lock_new_leaf == 1) {
+                # v6.6.6: a lock that could not be written is an error, not a dropped rc —
+                # except (6.6.9) a hash failure on a write owed ONLY to a new leaf, which is a
+                # named warning (_dep_lock_soft; cmd_deps_lock returns 2 for it).
+                _dep_lock_soft = 1 - _must;
+                var _lr = cmd_deps_lock();
+                _dep_lock_soft = 0;
+                if (_lr == 1 || (_lr != 0 && _must == 1)) { errors = errors + 1; }
             }
         }
     }
@@ -4241,7 +4248,9 @@ var _dep_lock_unhashable_why = 0;     # its _sha_fail/_sha_errno/_sha_rc, restor
 
 # Report the unhashable files and why the lock was not written.
 fn _dep_lock_unhashable_err(): i64 {
-    sys_write(STDERR_FD, "error: cannot hash ", 19);
+    if (_dep_lock_soft == 1) { _ew("warning: cyrius.lock NOT written — "); }
+    else { _ew("error: "); }
+    sys_write(STDERR_FD, "cannot hash ", 12);
     sys_write(STDERR_FD, _dep_lock_unhashable_first, strlen(_dep_lock_unhashable_first));
     if (_dep_lock_unhashable > 1) {
         sys_write(STDERR_FD, " (and ", 6);
@@ -4255,6 +4264,11 @@ fn _dep_lock_unhashable_err(): i64 {
         _sha_rc = load64(_dep_lock_unhashable_why + 16);
         _ew(": ");
         _sha_fail_why();
+    }
+    if (_dep_lock_soft == 1) {
+        _ew(".\n  The lock is left as it was; `cyrius deps --verify` reports the files it does not cover.\n");
+        _ew("  Run `cyrius deps --relock` once the hasher works.\n");
+        return 2;
     }
     sys_write(STDERR_FD, " — cyrius.lock would not cover it; left as it was\n", 52);
     return 1;

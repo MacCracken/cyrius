@@ -77,6 +77,11 @@ var _dep_lock_has_trailer = 0;   # 1 iff the loaded lock carried a `cyrius\t<pin
 # the cyrius source repo (`_dep_lock_active`), which never writes a lock.
 var _dep_lock_new_leaf = 0;
 var _dep_lock_active = 0;
+# 6.6.9: 1 while cmd_deps writes a lock ONLY because of `_dep_lock_new_leaf`. A lock that cannot
+# be HASHED then is a named warning, not a failed resolve: before 6.6.9 no lock was attempted
+# at all in that case, and a host with no working hasher (wine has no certutil) must not
+# lose every stdlib-only build to it. `deps --verify` still names each uncovered file.
+var _dep_lock_soft = 0;
 # v5.11.58: --strict-pin flag — when 1, compile() augments the
 # child's envp with CYRIUS_STRICT_PIN=1 so cycc's pin-drift check
 # (added v5.11.57) exits non-zero on mismatch instead of warning.

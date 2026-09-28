@@ -161,7 +161,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `deps_lock_new_leaf_locked.sh` — the filing's repro verbatim (first lock, new leaf locked,
   tamper caught), an unlocked nested file failing `--verify`, the empty lock, `cyrius build`
   writing the first lock, anti-churn, one-walker static, help; the pre-fix tree fails every axis
-  and four one-line mutants each fail their own.
+  and four one-line mutants each fail their own. ⚠ A lock write owed ONLY to a new leaf (in
+  practice: a stdlib-only project's first lock) that cannot HASH is a named warning —
+  `warning: cyrius.lock NOT written — cannot hash …: <why>` — and deps/build succeed: no lock was
+  attempted there before 6.6.9, and a host with no working hasher (wine has no certutil) must not
+  lose every stdlib-only build to the new write. The explicit `deps --lock` and every pre-6.6.9
+  write trigger still fail hard, and once a lock exists the 6.6.4 guard still refuses to vendor a
+  leaf it cannot hash (axis 8).
 
 ### Downstream
 
