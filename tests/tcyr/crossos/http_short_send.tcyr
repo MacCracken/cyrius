@@ -14,9 +14,9 @@
 # without running it and (b) answers write() with -EPIPE — the request write is the only write
 # the child makes. Both effects are ASSERTED in the child before the call under test (a real
 # connect to 127.0.0.1:1 would be refused; a pipe write would succeed), so a filter that did
-# not take cannot pass as a fix. Connect is faked rather than served because http_get hands
-# sock_connect the HOST STRING pointer where it wants a packed IPv4 address (a separate
-# defect, reported separately), so it cannot reach a real loopback listener today.
+# not take cannot pass as a fix. Connect is faked rather than served because, when this was
+# written, http_get handed sock_connect the HOST STRING pointer where it wants a packed IPv4
+# address; 6.6.9 fixed that, and http_connect_by_name.tcyr is the real loopback end-to-end.
 # Darwin has no seccomp; there, and on PE/agnos, only the target-neutral group runs.
 # CHANGELOG [6.6.8]
 include "lib/syscalls.cyr"
