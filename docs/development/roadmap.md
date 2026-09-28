@@ -90,7 +90,7 @@ found already shipped or wholly a sibling's (see *Not placed*).
   and the bench all run on the MERGED tree, with the box quiet (`check.sh` goes RED under load until
   6.6.8 bite 8 makes deadline kills say so).
 - **CVE ids**: 6.6.7 spends **CVE-46** (bite 1 — a `secret var` in a closure body was never
-  zeroised), **CVE-47** (bite 2) and **CVE-48** (bite 4); 6.6.9 spends **CVE-49** (bite 10) and **CVE-50** (bite 12, the `lib/http.cyr` request overflow). Each
+  zeroised), **CVE-47** (bite 2) and **CVE-48** (bite 4); 6.6.9 spent **CVE-49** (bite 10) and **CVE-50** (bite 12, the `lib/http.cyr` request overflow); 6.6.10 spends **CVE-51**, **CVE-52** and **CVE-53**. Each
   bite bumps the CLAUDE.md counter in the same commit. *(This line first planned CVE-46 for bite 2;
   bite 1's audit finding spent it first, so every later id moved up one.)*
 
@@ -147,48 +147,45 @@ bite a dependency on another lane's file, name the hand-off in BOTH lanes' specs
 
 ### 6.6.10 — the 6.6.8 review finds + group H of the 6.6.9 finds (added by the user 2026-09-28)
 
-~40 out-of-scope finds from the 6.6.8 reviews, deduplicated and grouped by the lane that would own
-them. **The user's call (2026-09-28): group A (`lib/http.cyr`) goes into 6.6.9 as bite 12; B–G are
-6.6.10**, which opens only after the 6.6.9 tag. Lanes and bite numbers are fixed when 6.6.10 opens.
-Groups:
+Groups B–G (the 6.6.8 review finds) and group H (the 6.6.9 review finds, memory safety + silent
+acceptance), placed here by the user. Every item was premise-checked on the 6.6.10 tree and re-verified by
+a second agent before planning; three were already fixed by 6.6.8/6.6.9 and are dropped (the aarch64
+polyfill diagnostic segfault, the Mach-O ARM "not routed" warnings from alloc/vec/fnptr, the aarch64 dead-fn
+undefined-call pre-pass). The premise-check also found a CVE-class silent write nobody had filed:
+**x86-macOS `clock_now_*` could write 8 bytes into the program image through a stale `rdx`** (bite 1,
+**CVE-51**). **CVE-52** (a stray `@` accepted by the lexer, bite 9) and **CVE-53** (`ws_recv_frame` read
+unbounded, bite 14) are also spent here.
 
-- **A. → MOVED TO 6.6.9 bite 12.** `lib/http.cyr` (security + correctness) — `http_*` cannot connect to ANY host: it passes the
-  host STRING pointer to `sock_connect` as the IPv4 address; `_http_build_request` writes past its
-  fixed 2048-byte buffer (a CVE — the next free id is 49 unless 6.6.9 bite 10 spends it first).
-- **B. async / generic / derive codegen (src, silent)** — plain (non-coroutine) Futures re-run their
-  body on every force; a coroutine that falls off its end hangs on the completing force; a generic
-  whose type is inferred from a struct argument returns 0 when its body loops; an explicit `i64`
-  type-arg on a generic that uses T as a struct returns 0; `#derive(accessors)` stacked above
-  `#derive(Deserialize)` emits no codecs; the guide's Async "Status & limits" paragraph is stale.
-- **C. float typing (src, silent)** — `f64`-typed struct fields are not typed F64 (binary ops and unary
-  minus on them are integer arithmetic); f64 builtins' results carry no F64 type; unary minus on an
-  UNTYPED variable holding float bits is integer negation (warn, per ADR-002); a float literal with a
-  19+ digit mantissa is silently wrong; cx `f64_sqrt/floor/ceil/round` are silent identity stubs.
-  ranga's `tests/gpu_kernels.tcyr:217` passes `-4.0` meaning `-1.0` (found by 6.6.8's kind-2 warning —
-  a downstream notice, now that `-1.0` is correct).
-- **D. Darwin gaps** — arm64-macOS `syscall(35)` with no arguments reads a timespec from address 35;
-  the x86-macOS peer has no `sys_epoll_wait` / `sys_inotify_*` at all; macOS `sys_getrandom`
-  (getentropy) fails for len > 256; Mach-O ARM "not routed" warnings from alloc/vec/fnptr includes; an
-  unconfirmed garbled assert message on ach.
-- **E. agnos userland** — `regression_agnos`'s spawn/capture verbs still fail closed although agnos
-  can now spawn, capture and wait (6.6.8 bite 7); `async_agnos` `async_timeout` / `async_run_process`
-  not ported to fork#96 / #43; stale "#96 fork STILL NOT MINTED" notes; the `sys_sock_close`
-  accept-mark clear is ungated.
-- **F. tools + harness** — the `cyrius test` runner kills only the pid at its deadline; cyrfmt/cyrlint
-  refuse an EMPTY `.cyr` (so `cyrius audit` reports empty files as errors); `_build_api_surface_if_missing`
-  never rebuilds a stale binary; api-surface misses `#inline fn f()`; distlib's own declaration scan
-  still reads only column-0 spellings; coverage is O(corpus × fns) (~9 s on agnosai) and silently skips
-  an unreadable `.tcyr`; the check driver reaps adopted orphans only at exit; a Windows deadline cannot
-  bound a grandchild holding the capture pipe; `process_win.cyr` lacks `PROC_ECHILD`;
-  `sandhi_platform_eagain.tcyr` binds fixed ports.
-- **G. stdlib hygiene (with 6.6.9 bite 7)** — the hashseed time fallback has one-second resolution;
-  `lib/assert.cyr` `test_scratch` stores through an unchecked alloc; `net_v6_connect.tcyr` does not
-  compile for PE or agnos; stale cx comments in `lib/syscalls.cyr` / `lib/alloc_cx.cyr`.
-- **Backlog, not a bite:** cxvm does no bounds check on guest addresses (it is not a sandbox — a design
-  statement to make, not a patch); the macOS hosts fail tests OUTSIDE `crossos/` that the release gate
-  never runs (measure the non-crossos corpus on ecb/ach before scoping).
-- **Sibling follow-ups:** yantra drops `sock_send`'s count; kriya issues raw x86 90/91/97/21 that
-  misroute on aarch64; ganita `pow`'s general path is off by tens to hundreds of ulp for large |y·ln x|.
+| # | Bite | Lane | src | Size |
+|---|---|---|---|---|
+| 1 | Darwin codegen: the x86-macOS clock stops writing mach time through a stale rdx (CVE-51), and short-arity pointer syscalls fault instead of writing | S2 | ✔ | M |
+| 2 | Frontend silent acceptance: the top-level destructure writes past the var table, every report-then-store cap stops storing (incl. the pp caps), #assert cannot use enum atoms, the panic latch is cleared unconditionally, and the PE unrouted-syscall warning names n and the site | S1 | ✔ | L |
+| 3 | Darwin syscall peers: getdents' basep write is declined, getrandom above 256 short-reads, the x86-macOS surface matches arm64-macOS, kill passes an explicit posix=0, and kriya stops issuing misrouting raw syscalls | D | — | M |
+| 4 | Async: `await` yields its value inside a coroutine, compiler-built Futures force once, coroutine SELF-arity and fall-off are fixed, 9+ params are refused at the declaration, and Linux async_timeout stops fabricating results | S1 | ✔ | L |
+| 5 | Struct fields: f64/f32 fields load typed, a struct value assigned into a field copies the whole struct, an unknown or forward field type is refused, and the 8-byte width of narrow fields is documented | S1 | ✔ | L |
+| 6 | f64 expression typing: builtin results type + - * / (option D), unary minus on an untyped float-initialised var warns, an int stored into an f64 slot warns, and ranga/ganita get their float fixes | S1 | ✔ | L |
+| 7 | Generics: a struct-T generic has no i64 instance (refused, including transitively, in tail position and via &g), and struct inference takes the struct binding on every path | S1 | ✔ | L |
+| 8 | Float literals are correctly rounded at compile time, and integer literals >= 2^64 are refused | S2 | ✔ | L |
+| 9 | Lexer/preprocessor acceptance: a stray `@` is an error (CVE-52), lexer and pp errors name file:line, #derive(accessors) refuses enums and emits codecs above Deserialize, and api-surface sees every fn and fails on unreadable input | S2 | ✔ | L |
+| 10 | Backend acceptance: cx reads the environment, cx sqrt/floor/ceil/round/mulh become real, object/shared/kernel are refused where no emitter exists, EMITELF_OBJ uses alloc, the fixup diagnostics are fixed, and cxvm states its guest-address contract | S2 | ✔ | L |
+| 11 | A deadline ends the whole descendant tree: the CLI batch runner (Linux subreaper + tree kill, macOS setsid/killpg), Windows Job objects, async_run_process on Linux, async_win's inline timeout, and PROC_ECHILD/PROC_ETIMEDOUT on every peer | S2 | ✔ | L |
+| 12 | Harness + first-party alloc: a census gate for unchecked allocs, test_scratch/regression/bench refuse a failed alloc, the check driver builds every tool it runs and reaps as it goes, the sandhi test binds :0 | T | — | L |
+| 13 | agnos userland: regression_agnos and async_agnos run real processes, the agnos-failing corpus is triaged to zero, and the stale 'no fork / #96 not minted / Phase B' notes are corrected | T | — | L |
+| 14 | stdlib hygiene: hashseed gets ns resolution, ws_recv_frame reads exactly and bounds its length (CVE-53), unowned-file alloc sites are checked, the corpus cross-compiles under a PE/Mach-O/agnos ratchet, macOS runs the whole corpus, cxvm's guest contract is stated, and yantra/patra/bayan/majra get their patches | G | — | L |
+| 15 | cbt tools: one lexer-faithful declaration reader for distlib and lsp, coverage in one pass, walkers that fail closed on unreadable dirs and files, and an empty .cyr is clean | F | — | L |
+| 16 | macOS async on kqueue: async_timeout, async_with_timeout, async_interval, async_run_process and async_spawn_process | D | — | L |
+| 17 | S1 closing hand-in commit: the Job-object PE routing, async_run_process's tree kill, and the late comment/guide hunks from S2 and T | S1 | ✔ | S |
+
+**Lanes** (one owner per file; every cross-lane hunk is named as a hand-off in BOTH bites — the 6.6.9
+lesson): S1 parser + typing (2 → 4 → 5 → 6 → 7 → 17; the only lane committing `build/cycc`; bite 17 is its
+closing hand-in commit for S2's and T's late hunks) · S2 lexer + backends (1 → 9 → 8 → 10 → 11; source
+only) · D Darwin lib (3 → 16) · T agnos + harness (12 → 13; lands every lane's gate registrations) · G
+stdlib hygiene (14) · F cbt tools (15). Merge D → F → S1 → S2 → G → T.
+
+**Defaults taken (no fork asked):** f64 builtin results get a transient type flag for `+ - * /` only
+(option D — no ecosystem compare changes meaning); `await` on a Future stays a suspend point and forces
+the saved Future at the landing; narrow struct fields stay 8 bytes (no layout/ABI change); the agnos peer
+keeps its own arity and Linux-arity-only test calls get a named SKIP.
 
 ### 6.6.11 — the rest of the 6.6.9 review finds (added by the user 2026-09-28)
 
