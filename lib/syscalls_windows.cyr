@@ -130,23 +130,31 @@ enum OFlags {
     #     appender would. (With O_CREAT the disposition is CREATE_ALWAYS, which needs no
     #     extra access, so the real append survives there.)
     #
-    # ⚠ STILL NOT HONOURED, and deliberately so — these two are dwFlagsAndAttributes bits
-    # whose Win32 near-equivalents do NOT mean what POSIX means, so mapping them is a
-    # semantic decision, not a port: FILE_FLAG_OPEN_REPARSE_POINT opens the symlink
-    # instead of REFUSING like O_NOFOLLOW does (lib/sigil.cyr's keyfile path relies on the
-    # refusal), and a Windows directory handle cannot be ReadFile'd the way O_DIRECTORY's
-    # caller expects. Defined so portable code still compiles.
-    #
-    # ⛔ AND NAME WHAT THAT COSTS, now that O_EXCL IS honoured. `luks_write_keyfile`
-    # (lib/sigil.cyr:4179) opens `O_WRONLY|O_CREAT|O_TRUNC|O_EXCL|O_NOFOLLOW` and treats
-    # the refusal as its guarantee that it created the keyfile itself. On PE that becomes
-    # CreateFileW CREATE_NEW, which RESOLVES a final reparse point instead of refusing it:
-    # measured on real cass 2026-09-19 — CREATE_NEW over a dangling symlink SUCCEEDS and
-    # creates the symlink's TARGET, where the same flags on Linux fail (verified both ways
-    # with the same source). So on Windows an O_EXCL|O_NOFOLLOW create is NOT the Linux
-    # refusal: a pre-planted symlink at the keyfile path redirects the write. A Windows
-    # caller that needs the Linux guarantee must stat the path first (FILE_ATTRIBUTE_REPARSE_POINT)
-    # or open with FILE_FLAG_OPEN_REPARSE_POINT and check — neither is wired yet. CHANGELOG [6.6.6]
+    # ⭐ 6.6.9 — O_NOFOLLOW, O_DIRECTORY and O_EXCL HAVE THEIR POSIX MEANING ON PE. The note
+    # that stood here called the first two a "semantic decision" and left them ignored; the
+    # cost was measured on real cass: CreateFileW resolves a final reparse point for EVERY
+    # disposition, so `O_CREAT|O_EXCL` over a DANGLING symlink created the symlink's TARGET
+    # (with or without O_NOFOLLOW), and `O_WRONLY|O_TRUNC|O_NOFOLLOW` on a symlink truncated
+    # the file it named. The map now (EOPEN_PE's `_pe_open_attr_flags` + `sys_open` below):
+    #   · O_CREAT|O_EXCL → CREATE_NEW + FILE_FLAG_OPEN_REPARSE_POINT. CREATE_NEW never opens
+    #     an existing object, so the flag cannot make it open a link; the name exists, so the
+    #     create fails. Race-free, no check. (The raw syscall gets this too.)
+    #   · O_NOFOLLOW → FILE_FLAG_OPEN_REPARSE_POINT, then `sys_open` asks the OPENED HANDLE
+    #     (GetFileInformationByHandleEx, FileAttributeTagInfo): a NAME-SURROGATE reparse point
+    #     (symlink, junction) is closed and refused with -ELOOP (-40); any OTHER reparse point
+    #     (OneDrive placeholder, dedup) is reopened normally, as the default taken 2026-09-27
+    #     says — those are files, not redirections. With O_TRUNC the open is made WITHOUT the
+    #     truncation and the verified handle is truncated afterwards (SetEndOfFile), so a link
+    #     object is never clobbered by the refusal either.
+    #   · O_DIRECTORY → FILE_FLAG_BACKUP_SEMANTICS (the only way CreateFileW opens a directory)
+    #     plus the handle check: a non-directory is -ENOTDIR (-20), a directory opened for
+    #     writing (or with O_CREAT/O_TRUNC) is -EISDIR (-21). BACKUP_SEMANTICS is NEVER set
+    #     without O_DIRECTORY: it would let O_WRONLY open a directory, so a plain open() of a
+    #     directory stays -1 on Windows (fail-closed; Linux answers a read fd).
+    # ⚠ The refusals live in `sys_open` (every stdlib open funnels through it). A RAW
+    # `syscall(2, p, O_NOFOLLOW, 0)` still never follows a link — the attribute word is the
+    # emitter's — but it hands back the LINK's handle instead of -40, and O_TRUNC on it
+    # truncates the link object, not the target. CHANGELOG [6.6.9]
     O_DIRECTORY = 65536;
     O_NOFOLLOW = 131072;
 }
@@ -179,10 +187,12 @@ fn sys_read(fd, buf, count) {
 # `dwFlagsAndAttributes` inside the reroute. `mode` has no Win32
 # equivalent and is dropped. Returns a handle usable by
 # sys_read/write/close, or a negative value: -1 for a Win32 failure,
-# -40 (-ELOOP) for O_NOFOLLOW on a symlink/junction. CHANGELOG [6.6.9]
+# -40 (-ELOOP) for O_NOFOLLOW on a symlink/junction, -20 (-ENOTDIR) /
+# -21 (-EISDIR) for O_DIRECTORY (O_DIRECTORY|O_NOFOLLOW on a link is
+# -ENOTDIR, as on Linux and Darwin). See the OFlags note. CHANGELOG [6.6.9]
 fn sys_open(path, flags, mode) {
-    # No O_NOFOLLOW; or O_CREAT|O_EXCL, whose CREATE_NEW never follows.
-    if ((flags & 131072) == 0) { return syscall(SYS_OPEN, path, flags, mode); }
+    # Neither O_NOFOLLOW nor O_DIRECTORY; or O_CREAT|O_EXCL, whose CREATE_NEW never follows.
+    if ((flags & 196608) == 0) { return syscall(SYS_OPEN, path, flags, mode); }
     if ((flags & 192) == 192) { return syscall(SYS_OPEN, path, flags, mode); }
     return _win_open_checked(path, flags, mode);
 }
@@ -206,26 +216,45 @@ fn _win_is_surrogate(at): i64 {
     return 1;
 }
 
-# The O_NOFOLLOW half of sys_open. The emitter has already made the open itself safe
-# (FILE_FLAG_OPEN_REPARSE_POINT, so the TARGET of a link is never touched); this decides
-# what the caller is told. CHANGELOG [6.6.9]
+# The O_NOFOLLOW / O_DIRECTORY half of sys_open. The emitter has already made the open itself
+# safe (FILE_FLAG_OPEN_REPARSE_POINT under O_NOFOLLOW, so the TARGET of a link is never
+# touched); this decides what the caller is told. See the OFlags note. CHANGELOG [6.6.9]
 fn _win_open_checked(path, flags, mode): i64 {
     var nf = flags & 131072;
+    var dr = flags & 65536;
+    var f = flags;
     var tr = 0;
-    if (nf != 0) { tr = flags & 512; }   # O_TRUNC waits until the handle is verified
-    var f = flags - tr;
+    if (dr != 0) {
+        # A directory handle is a READ handle: the write, create and truncate bits only
+        # decide EISDIR below. Opening read-only keeps a mistaken O_DIRECTORY|O_TRUNC on a
+        # FILE from truncating it on the way to -ENOTDIR.
+        f = flags & (0 - 1 - 1603);   # drop O_ACCMODE(3), O_CREAT(64), O_TRUNC(512), O_APPEND(1024)
+    } elif (nf != 0) {
+        tr = flags & 512;             # O_TRUNC waits until the handle is verified
+        f = flags - tr;
+    }
     var h = syscall(SYS_OPEN, path, f, mode);
     if (h < 0) { return h; }
     var at = _win_handle_tag(h);
     if (at == 0 - 1) { syscall(SYS_CLOSE, h); return 0 - 1; }   # fail closed
     if (nf != 0) {
-        if (_win_is_surrogate(at) == 1) { syscall(SYS_CLOSE, h); return 0 - 40; }
+        if (_win_is_surrogate(at) == 1) {
+            syscall(SYS_CLOSE, h);
+            # With O_DIRECTORY too, the unfollowed link is simply not a directory: Linux AND
+            # Darwin answer -ENOTDIR there, not -ELOOP (measured on both).
+            if (dr != 0) { return 0 - 20; }
+            return 0 - 40;
+        }
         if ((at & 1024) != 0) {
             # A reparse point that is not a redirection (cloud placeholder, dedup): open it
             # the ordinary way, so the filter driver presents the file.
             syscall(SYS_CLOSE, h);
             return _win_open_checked(path, flags - nf, mode);
         }
+    }
+    if (dr != 0) {
+        if ((at & 16) == 0) { syscall(SYS_CLOSE, h); return 0 - 20; }
+        if ((flags & 579) != 0) { syscall(SYS_CLOSE, h); return 0 - 21; }   # write access, O_CREAT or O_TRUNC
     }
     if (tr != 0) {
         if (_win_truncate_verified(h, path) != 0) { syscall(SYS_CLOSE, h); return 0 - 1; }

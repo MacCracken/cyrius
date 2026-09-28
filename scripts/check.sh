@@ -1429,6 +1429,10 @@ _chk_gate "$ROOT/tests/gates/toolchain/check_gate_census.sh"
 # not x87 fsin / fcos (66-bit π: sin(π) 1.6e11 ulp off, |x| >= 2^63 returned unchanged).
 _chk_gate "$ROOT/tests/gates/codegen/x86_trig_calls_polyfill.sh"
 
+# 6.6.9 (bite 5) — O_NOFOLLOW / O_DIRECTORY / O_CREAT|O_EXCL mean on PE what they mean on Linux
+# (CreateFileW resolved a final reparse point for EVERY disposition: O_EXCL over a dangling link
+# created its target, O_NOFOLLOW|O_TRUNC truncated a link's target, O_DIRECTORY opened files).
+_chk_gate "$ROOT/tests/gates/platform/pe_open_posix_semantics.sh"
 # 6.6.9 (bite 5) — agnos file_create_exclusive is one atomic AO_EXCL create (was a file_exists
 # pre-check + plain create), a refusal classified -EEXIST by lstat#102.
 _chk_gate "$ROOT/tests/gates/platform/agnos_create_exclusive_atomic.sh"

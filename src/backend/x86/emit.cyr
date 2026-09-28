@@ -3029,27 +3029,32 @@ fn _pe_open_flags(S): i64 {
 }
 
 # 6.6.9 — derive CreateFileW's dwFlagsAndAttributes from the Linux open() flag word, into
-# r8d. EOPEN_PE passed a FIXED 0x80 (FILE_ATTRIBUTE_NORMAL) before this, so O_NOFOLLOW was
-# accepted and ignored — and CreateFileW
-# resolves a final reparse point for EVERY disposition, so plain O_CREAT|O_EXCL over a
-# DANGLING symlink created the link's target (measured on real cass, CHANGELOG [6.6.6]).
-# Split out of `_pe_open_flags` for the cybs per-function limit, and it runs FIRST: it only
-# PEEKS the flag word at [rsp+8] (stack top→bottom: [mode] [flags] [path] [sc_nr]) before
-# `_pe_open_flags` pops it. r8 survives `_pe_open_flags` (rax/rcx/rdx/r9/r10) and the widen
-# loop (rax/rcx/rsi/rdi); EOPEN_PE stores it at [rsp+0x28] before it reuses r8d for dwShareMode.
+# r8d. EOPEN_PE passed a FIXED 0x80 (FILE_ATTRIBUTE_NORMAL) before this, so O_NOFOLLOW and
+# O_DIRECTORY were accepted and ignored — and CreateFileW resolves a final reparse point for
+# EVERY disposition, so plain O_CREAT|O_EXCL over a DANGLING symlink created the link's
+# target (measured on real cass, CHANGELOG [6.6.6]). Split out of `_pe_open_flags` for the
+# cybs per-function limit, and it runs FIRST: it only PEEKS the flag word at [rsp+8] (stack
+# top→bottom: [mode] [flags] [path] [sc_nr]) before `_pe_open_flags` pops it. r8 survives
+# `_pe_open_flags` (rax/rcx/rdx/r9/r10) and the widen loop (rax/rcx/rsi/rdi); EOPEN_PE
+# stores it at [rsp+0x28] before it reuses r8d for dwShareMode.
 #   base                    FILE_ATTRIBUTE_NORMAL          0x00000080
 #   O_NOFOLLOW (0x20000)    | FILE_FLAG_OPEN_REPARSE_POINT 0x00200000
-#   O_CREAT|O_EXCL (0xC0)   | FILE_FLAG_OPEN_REPARSE_POINT 0x00200000 — CREATE_NEW never opens
-#                           an existing object, so the flag cannot make it open a link; it only
+#   O_DIRECTORY (0x10000)   | FILE_FLAG_BACKUP_SEMANTICS   0x02000000 (only way to open a dir)
+#   O_CREAT|O_EXCL (0xC0)   | FILE_FLAG_OPEN_REPARSE_POINT — CREATE_NEW never opens an
+#                           existing object, so the flag cannot make it open a link; it only
 #                           stops the create from following one. Race-free, no check.
-# The -ELOOP answer comes from lib/syscalls_windows.cyr's sys_open, which asks the opened
-# handle (0xF03D). CHANGELOG [6.6.9]
+# BACKUP_SEMANTICS is NEVER set without O_DIRECTORY (it would let O_WRONLY open a directory).
+# The -ELOOP / -ENOTDIR answers come from lib/syscalls_windows.cyr's sys_open, which asks the
+# opened handle (0xF03D). CHANGELOG [6.6.9]
 fn _pe_open_attr_flags(S): i64 {
     EB(S, 0x48); EB(S, 0x8B); EB(S, 0x44); EB(S, 0x24); EB(S, 0x08); # mov rax, [rsp+8] (flags, peeked)
     EB(S, 0x41); EB(S, 0xB8); EB(S, 0x80); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); # mov r8d, 0x80 (FILE_ATTRIBUTE_NORMAL)
     EB(S, 0xA9); EB(S, 0x00); EB(S, 0x00); EB(S, 0x02); EB(S, 0x00); # test eax, 0x20000 (O_NOFOLLOW)
     EB(S, 0x74); EB(S, 0x07);                           # jz +7
     EB(S, 0x41); EB(S, 0x81); EB(S, 0xC8); EB(S, 0x00); EB(S, 0x00); EB(S, 0x20); EB(S, 0x00); # or r8d, FILE_FLAG_OPEN_REPARSE_POINT
+    EB(S, 0xA9); EB(S, 0x00); EB(S, 0x00); EB(S, 0x01); EB(S, 0x00); # test eax, 0x10000 (O_DIRECTORY)
+    EB(S, 0x74); EB(S, 0x07);                           # jz +7
+    EB(S, 0x41); EB(S, 0x81); EB(S, 0xC8); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); EB(S, 0x02); # or r8d, FILE_FLAG_BACKUP_SEMANTICS
     EB(S, 0x25); EB(S, 0xC0); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); # and eax, 0xC0 (O_CREAT|O_EXCL)
     EB(S, 0x3D); EB(S, 0xC0); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); # cmp eax, 0xC0
     EB(S, 0x75); EB(S, 0x07);                           # jne +7 (not CREATE_NEW)
