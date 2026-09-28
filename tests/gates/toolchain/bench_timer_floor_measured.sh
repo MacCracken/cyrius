@@ -60,6 +60,31 @@
 # which is what `_gate_run` execs: every intentionally-failing invocation is written
 # `rc=0; cmd || rc=$?`, since the bare form aborted the gate at exit 4 before its own
 # bookkeeping. CHANGELOG [6.6.5].
+#
+# ── v6.6.9: THE RESOLUTION RULE IS DECIDED FOR THE ROW, BY OP COUNT ────
+# 6.6.5 let each window claim a min/max on its OWN net (`net >= 100 × err`), and axis B
+# REQUIRED that test inside `_bench_record`. hisab filed what it does 2026-09-21: on a
+# fixed batch whose typical window is under the bar only the perturbed windows cross it,
+# so min/max were the extremes of the slow windows and printed ABOVE the mean
+# (`vec3_add: 16ns avg (min=39ns max=43ns)`). This gate pinned the defect as the rule.
+# Now axis B requires the OPPOSITE of `_bench_record` (no duration test; an eligibility
+# flag) and requires the decision in `bench_min_resolved` (min_k × mean vs the bar);
+# probe legs (6) and (7) are re-derived for `bench_run`'s eligibility and absorbed
+# remainder; legs (9) (the filed spike shape) and (10) (windows straddling the bar) are
+# new; and the mutants re-anchor on the new rule, seventeen in all.
+#
+# ── MUTATION LEDGER, 6.6.9 (all proven RED 2026-09-28 by this gate's own run_mut, which
+#    fails loudly on a survivor, plus the axis-B statements against hand-edited copies):
+#   admission_by_own_duration (the 6.6.5 rule restored)  → probe rc 31 (leg 9)
+#   row_resolves_on_any_window (6.6.5 bench_min_resolved) → probe rc 21
+#   min_k_not_tracked                                    → probe rc 21
+#   pilot_eligible                                       → probe rc 29
+#   sized_chunks_ineligible                              → probe rc 29
+#   growth_chunks_eligible                               → probe rc 29
+#   tail_not_absorbed                                    → probe rc 29
+#   no_margin (chunks sized ON the bar)                  → probe rc 29
+#   the 6.6.5 duration test put back in _bench_record    → "_bench_record decides admission by the window's OWN duration"
+#   bench_min_resolved without min_k                     → "no longer decides from min_k"
 set -u
 cd "$(dirname "$0")/../../.." || exit 2
 ROOT=$(pwd)
@@ -160,10 +185,20 @@ for fnname in $WINFNS; do
 done
 echo "  derived: $nwin window-closing timing paths, all booking through _bench_record ($(echo $WINFNS))"
 
-# The resolution rule is what stops a window shorter than the clock's own error from
-# claiming an extreme. It must live in the accounting site, and it must use the TICK.
-scan "$F" _bench_record | grep -q '_BENCH_RESOLVE' || fail "_bench_record no longer applies the resolution rule — every window can claim a per-op min again, which is the 2026-09-16 defect verbatim"
-scan "$F" _bench_record | grep -q '_bench_err_ns()' || fail "_bench_record's resolution test no longer uses the clock error (floor PLUS tick)"
+# The resolution rule is what stops a row whose windows are shorter than the clock's own
+# error from claiming an extreme. ⛔ v6.6.9: it is decided for the ROW at read time from
+# the smallest eligible op count, and it must NOT be decided per window from that
+# window's own duration — 6.6.5 did that inside `_bench_record`, and on a row whose
+# typical window is under the bar it admitted only the windows something slow had landed
+# in (hisab 2026-09-21: min printed ABOVE the mean). This axis used to REQUIRE that test
+# there; it now forbids it.
+grep -q '^fn _bench_record(b, raw, k, elig)' "$F" || fail "_bench_record no longer takes the eligibility flag — whether a window may claim an extreme must be decided by the CALLER that sized it, before it ran"
+scan "$F" _bench_record | grep -qE '_BENCH_RESOLVE|_bench_err_ns\(\)|_bench_resolves\(' \
+    && fail "_bench_record decides admission by the window's OWN duration again — on a row of sub-bar windows that selects the perturbed ones and prints min above the mean (hisab 2026-09-21, the 6.6.5-6.6.8 rule)"
+scan "$F" bench_min_resolved | grep -q '_BENCH_RESOLVE' || fail "bench_min_resolved no longer applies the resolution rule — a row too short to resolve reports per-op extremes again (the 2026-09-16 defect)"
+scan "$F" bench_min_resolved | grep -q '_bench_err_ns()' || fail "bench_min_resolved's bar no longer uses the clock error (floor PLUS tick)"
+scan "$F" bench_min_resolved | grep -q 'load64(b + 64)' || fail "bench_min_resolved no longer decides from min_k (the smallest eligible op count) — the decision is not by op count any more"
+scan "$F" _bench_chunk_for | grep -q '_BENCH_MARGIN' || fail "_bench_chunk_for no longer sizes for a MARGIN over the bar — chunks land ON it and half fall under"
 grep -q 'bench_clock_overhead_ns() + _bench_clock_tick' "$F" || fail "_bench_err_ns is no longer floor + tick — floor-only error sizes for 0 on a coarse counter (cass)"
 # v6.6.5 review: 0 IS still reachable, in exactly one case — an op at or under one clock
 # read — and the fix for that is to NAME it, not to invent a number. The predicate and the
@@ -356,6 +391,15 @@ fn _sc_reset(step): i64 {
 fn _sc_queue2(a, b): i64 { _sc_q0 = a; _sc_q1 = b; _sc_qn = 2; _sc_qi = 0; return 0; }
 fn _sc_advance(ns): i64 { _sc_t = _sc_t + ns; return 0; }
 fn _sc_op(): i64 { _sc_t = _sc_t + _op_ns; return 0; }
+var _sp_every = 0;
+var _sp_ns = 0;
+var _sp_calls = 0;
+fn _sc_spike_op(): i64 {
+    _sc_t = _sc_t + _op_ns;
+    _sp_calls = _sp_calls + 1;
+    if (_sp_calls >= _sp_every) { _sp_calls = 0; _sc_t = _sc_t + _sp_ns; }
+    return 0;
+}
 fn _sc_window(b, op, c): i64 {
     bench_start(b);
     _sc_advance(op);
@@ -425,15 +469,35 @@ fn main(): i64 {
     _bench_clock_ns = 0 - 1;
     if (bench_clock_overhead_ns() != 733) { return 27; }
     _sc_switch_at = 0;
-    # (6) bench_run's pilot and tail cannot set an extreme.
+    # (6) bench_run's eligibility and absorbed remainder (v6.6.9). err 2,000 ns, bar
+    #     200,000 ns, MARGIN 4 → a sized chunk of the 3 ns op is 800,000/3 + 1 = 266,667.
+    #     Cheap pilot (closing read 0): 16 | 256 (grown off 0 ps, ineligible) | 266,667 |
+    #     266,677 (absorbing a 10-op remainder). Two eligible windows; mean
+    #     (1,603,848 - 4,000) / 533,616 = 2,998 ps — 2 ps under min, the pilot's weight.
     _sc_reset(1000);
     _op_ns = 3;
     var e = bench_new("p");
     _sc_queue2(1000, 0);
-    bench_run(e, &_sc_op, 300000);
-    if (bench_iterations(e) != 300000) { return 29; }
+    bench_run(e, &_sc_op, 533616);
+    if (bench_iterations(e) != 533616) { return 29; }
+    if (bench_windows(e) != 4) { return 29; }
+    if (bench_windows_eligible(e) != 2) { return 29; }
+    if (bench_min_resolved(e) != 1) { return 29; }
     if (bench_min_ps(e) != 3000) { return 29; }
     if (bench_max_ps(e) != 3000) { return 29; }
+    if (bench_avg_ps(e) != 2998) { return 29; }
+    #     Cold pilot, inside the margin (closing read 1,048): it reads 6 ns/op and sizes
+    #     133,334 ops — 2x the bar, not 4x. Eligible, and still clears the bar at the mean:
+    #     16 | 133,334 | 266,667 | 266,677, three eligible, min = max = 3,000.
+    _sc_reset(1000);
+    var e2 = bench_new("q");
+    _sc_queue2(1000, 1048);
+    bench_run(e2, &_sc_op, 666694);
+    if (bench_windows(e2) != 4) { return 29; }
+    if (bench_windows_eligible(e2) != 3) { return 29; }
+    if (bench_min_resolved(e2) != 1) { return 29; }
+    if (bench_min_ps(e2) != 3000) { return 29; }
+    if (bench_avg_ps(e2) != 3000) { return 29; }
     # (7) a 15ms counter: windows are sized by the TICK, not by a 0 floor.
     _bench_clock_fp = &_sc_clock;
     _sc_qn = 0; _sc_switch_at = 0;
@@ -446,6 +510,7 @@ fn main(): i64 {
     var f = bench_new("c");
     bench_run(f, &_sc_op, 4000000);
     if (bench_min_resolved(f) != 1) { return 28; }
+    if (bench_windows_eligible(f) < 1) { return 28; }
     if (bench_min_ps(f) < 1960000) { return 28; }
     if (bench_min_ps(f) > 2040000) { return 28; }
     # (8) THE ONE CASE THAT MAY REPORT 0, and it must be FLAGGED rather than silent. An op
@@ -471,6 +536,37 @@ fn main(): i64 {
     }
     if (bench_sub_floor(h) != 0) { return 30; }
     if (bench_min_ps(h) != 250000) { return 30; }
+    # (9) THE FILED SHAPE (hisab 2026-09-21). A fixed batch whose plain window is 1/4 of
+    #     the 200 us bar (10,000 x 5 ns), with a 400 us spike in every third window. The
+    #     6.6.5 rule admitted only the spiked windows: min 45,000 ps over a 18,333 mean.
+    #     The row's smallest window at the MEAN cost is 183 us < 200 us: unresolved.
+    _sc_reset(1000);
+    _op_ns = 5;
+    _sp_every = 30000;
+    _sp_ns = 400000;
+    _sp_calls = 0;
+    var s9 = bench_new("k");
+    bench_run_batch(s9, &_sc_spike_op, 10000, 300);
+    if (bench_windows_eligible(s9) != 300) { return 31; }
+    if (bench_avg_ps(s9) != 18333) { return 31; }
+    if (bench_min_resolved(s9) != 0) { return 31; }
+    if (bench_min_ps(s9) != 18333) { return 31; }
+    if (bench_min_ps(s9) > bench_avg_ps(s9)) { return 31; }
+    # (10) THE RESOLVED MIRROR: 1,000-op windows of 0.9 and 1.3 x the bar. The row
+    #     resolves (1,000 x 220 ns = 220 us) and min comes from the 0.9 windows — the
+    #     6.6.5 rule dropped them and read 260,000 ps, above the 220,000 mean.
+    _sc_reset(1000);
+    var s10 = bench_new("m");
+    i = 0;
+    while (i < 10) {
+        bench_batch_start(s10); _sc_advance(180000); bench_batch_stop(s10, 1000);
+        bench_batch_start(s10); _sc_advance(260000); bench_batch_stop(s10, 1000);
+        i = i + 1;
+    }
+    if (bench_min_resolved(s10) != 1) { return 32; }
+    if (bench_min_ps(s10) != 180000) { return 32; }
+    if (bench_max_ps(s10) != 260000) { return 32; }
+    if (bench_avg_ps(s10) != 220000) { return 32; }
     _bench_clock_fp = 0;
     return 0;
 }
@@ -492,12 +588,14 @@ case "$src" in
   26) fail "scripted: a HIGHER re-measured floor was ADOPTED — over-subtraction is exactly what makes rows read 0" ;;
   27) fail "scripted: calibration stopped at one round, so a slow moment becomes the whole process's floor" ;;
   28) fail "scripted: on a 15ms counter the windows are not sized by the tick — floor-only sizing is back, which is what made cass thrash between 1 and 4096 iterations per window" ;;
-  29) fail "scripted: bench_run's pilot or tail chunk set min/max — that is what made bench_run(noop, 1e5) report min=0 in 91 of 200 runs" ;;
+  29) fail "scripted: bench_run's eligibility or chunking is wrong — the pilot, a growth chunk or a chunk sized from an unresolved window set min/max (what made bench_run(noop, 1e5) report min=0 in 91 of 200 runs), the remainder was not absorbed, or chunks are not sized for 4x the bar" ;;
+  31) fail "scripted: a fixed batch whose plain windows are under the bar, with a spike in every third window, reports a per-op min other than the mean — the extremes are being taken over the PERTURBED windows (hisab 2026-09-21: min printed above avg)" ;;
+  32) fail "scripted: a batch row whose windows straddle the bar (0.9 / 1.3) does not resolve with min from the short windows — admission is being decided per window by its own duration again" ;;
   30) fail "scripted: the sub-floor case is wrong — either an op at or under one clock read is no longer reported as 0-with-bench_sub_floor()==1, or a 250ns op on the same clock is being flagged sub-floor (0 is legitimate ONLY there, and it must be named)" ;;
   *)  cat "$TMP/sc.out"; fail "scripted-clock probe exited $src" ;;
 esac
 
-# Nine mutants, applied to COPIES of lib/bench.cyr. Each must be a real edit (cmp) and
+# Seventeen mutants, applied to COPIES of lib/bench.cyr. Each must be a real edit (cmp) and
 # each must turn the probe RED. The gate re-proves its own sensitivity on every run —
 # axis D was demonstrably vacuous for the defect it shipped with, so "this axis can still
 # see it" is not something to take on trust.
@@ -535,12 +633,16 @@ run_mut() {
     chmod +x "$md/m.bin"
     mrc2=0
     ( cd "$md" && ./m.bin > m.out 2>&1 ) || mrc2=$?
+    # BTF_MUT_LOG=1 prints which probe exit killed each mutant (how the ledger is re-derived).
+    [ -n "${BTF_MUT_LOG:-}" ] && echo "  mutant $mname -> rc $mrc2"
     [ "$mrc2" != "0" ] || fail "mutant $mname SURVIVED the scripted-clock probe — the axis cannot see that defect, which is what 'vacuous' looks like"
     nmut=$((nmut + 1))
 }
-run_mut min_over_all_windows \
-    '    if (net >= _BENCH_RESOLVE * _bench_err_ns()) {' \
-    '    if (1 == 1) {'
+# (1) v6.6.9: the 6.6.5 per-window duration test restored on top of eligibility — the
+# filed defect itself.
+run_mut admission_by_own_duration \
+    '    if (elig == 1) {' \
+    '    if (elig == 1 && net >= _BENCH_RESOLVE * _bench_err_ns()) {'
 run_mut per_window_clamp_in_total \
     '    store64(b + 16, load64(b + 16) + raw);' \
     '    var rr = raw;\n    if (rr < fl) { rr = fl; }\n    store64(b + 16, load64(b + 16) + rr);'
@@ -563,8 +665,8 @@ run_mut truncating_round \
     '    return (ps + 500) / 1000;' \
     '    return ps / 1000;'
 run_mut unresolved_min_is_zero \
-    '    if (load64(b + 56) > 0) { return load64(b + 32); }' \
-    '    if (load64(b + 56) > 0) { return load64(b + 32); }\n    return 0;'
+    '    if (bench_min_resolved(b) == 1) { return load64(b + 32); }' \
+    '    if (bench_min_resolved(b) == 1) { return load64(b + 32); }\n    return 0;'
 # (10) v6.6.5 review. `bench_sub_floor` is the NAME on the one case that legitimately
 # reports 0; a predicate that always answers 0 would leave that case looking exactly like
 # the filed defect. The probe's leg (8) also runs a 250ns control, so the mirror mutant
@@ -572,7 +674,29 @@ run_mut unresolved_min_is_zero \
 run_mut sub_floor_never_flagged \
     'fn bench_sub_floor(b): i64 {' \
     'fn bench_sub_floor(b): i64 {\n    return 0;'
-[ "$nmut" -eq 10 ] || fail "only $nmut of 10 mutants ran"
+# (11-17) v6.6.9 — the row-level rule and bench_run's eligibility, each piece separately.
+run_mut row_resolves_on_any_window \
+    '    if (bench_avg_ps(b) >= need) { return 1; }' \
+    '    return 1;'
+run_mut min_k_not_tracked \
+    '        if (k < load64(b + 64)) { store64(b + 64, k); }' \
+    '        # min_k no longer tracked'
+run_mut pilot_eligible \
+    '    var elig = 0;' \
+    '    var elig = 1;'
+run_mut sized_chunks_ineligible \
+    '        elig = 1;' \
+    '        elig = 0;'
+run_mut growth_chunks_eligible \
+    '        if (nxt == 0) { nxt = chunk * 16; elig = 0; }' \
+    '        if (nxt == 0) { nxt = chunk * 16; }'
+run_mut tail_not_absorbed \
+    '        if (n - done - nxt < nxt) { nxt = n - done; }' \
+    '        if (nxt > n - done) { nxt = n - done; }'
+run_mut no_margin \
+    '    var want = (err * _BENCH_RESOLVE * _BENCH_MARGIN * 1000) / per_ps + 1;' \
+    '    var want = (err * _BENCH_RESOLVE * 1000) / per_ps + 1;'
+[ "$nmut" -eq 17 ] || fail "only $nmut of 17 mutants ran"
 
 # ── D4. a CONSUMER's grammar, copied verbatim, not this file's own ───
 # ⭐ The row shape is an ecosystem contract: goonj, hisab, mabda, chitra, vani, libro and
@@ -686,5 +810,5 @@ EOS
         fail "the ELF build of the $mod-only consumer failed (rc $lrc)"; }
 done
 
-echo "PASS: bench timer floor is measured (no hardcoded per-call constant, 6 timing paths book through one accounting site, bench_run self-sizes and PROVES it by cost, resolution rule proved by a scripted clock with $nmut/10 mutants killed, $nrows row(s) parse under goonj's own ROW_RE, report stays out of bench-history, chunk-1 mutant rejected with rc=$mrc, chrono-only and bench-only consumers both cross-build for PE)"
+echo "PASS: bench timer floor is measured (no hardcoded per-call constant, 6 timing paths book through one accounting site, bench_run self-sizes and PROVES it by cost, resolution rule decided per ROW by op count, proved by a scripted clock with $nmut/17 mutants killed, $nrows row(s) parse under goonj's own ROW_RE, report stays out of bench-history, chunk-1 mutant rejected with rc=$mrc, chrono-only and bench-only consumers both cross-build for PE)"
 exit 0

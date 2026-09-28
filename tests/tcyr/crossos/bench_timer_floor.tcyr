@@ -172,7 +172,22 @@
 # windows that ARE the defect's shape — and the live axis asserts that count is under
 # n/20, with no wall clock anywhere in it.
 #
-# See CHANGELOG [6.5.19] and [6.6.5], docs/development/benchmark-regimes.md.
+# ════════════════════════════════════════════════════════════════════
+# ⛔ v6.6.9 — THE RESOLUTION RULE ITSELF WAS A SELECTOR, AND LEGS (j)/(k) PIN IT
+# ════════════════════════════════════════════════════════════════════
+# 6.6.5 let a window claim a min/max only if its OWN net cleared 100 × the clock error.
+# hisab filed the consequence 2026-09-21 — `vec3_add: 16ns avg (min=39ns max=43ns)`: on a
+# fixed batch whose typical window sits under the bar, the only windows that cross it are
+# the ones something slow landed in, so min/max were the extremes of the PERTURBED
+# windows and printed above the mean. Every leg that existed then was green over it,
+# because none of them had a row whose windows STRADDLE the bar. Leg (j) is the filed
+# shape closed-form (a spike in every third window, plain windows at 1/4 of the bar) and
+# leg (k) the resolved mirror (windows at 0.9 and 1.3 of the bar); both read min ABOVE
+# the mean under the 6.6.5 rule. Leg (e) is re-derived for `bench_run`'s new eligibility
+# (sized for the bar by `_bench_chunk_for`; never the pilot or a growth chunk) and its
+# absorbed remainder.
+#
+# See CHANGELOG [6.5.19], [6.6.5] and [6.6.9], docs/development/benchmark-regimes.md.
 
 include "lib/assert.cyr"
 include "lib/syscalls.cyr"
@@ -238,6 +253,21 @@ fn _sc_reset(step): i64 {
 fn _sc_queue2(a, b): i64 { _sc_q0 = a; _sc_q1 = b; _sc_qn = 2; _sc_qi = 0; return 0; }
 fn _sc_advance(ns): i64 { _sc_t = _sc_t + ns; return 0; }
 fn _sc_op(): i64 { _sc_t = _sc_t + _sc_op_ns; return 0; }
+
+# The hisab repro's op, scripted: `_sc_op_ns` per call, plus `_sc_spike_ns` on every
+# `_sc_spike_every`-th call — something slow landing in one window in N.
+var _sc_spike_every = 0;
+var _sc_spike_ns = 0;
+var _sc_calls = 0;
+fn _sc_spike_op(): i64 {
+    _sc_t = _sc_t + _sc_op_ns;
+    _sc_calls = _sc_calls + 1;
+    if (_sc_calls >= _sc_spike_every) {
+        _sc_calls = 0;
+        _sc_t = _sc_t + _sc_spike_ns;
+    }
+    return 0;
+}
 
 # One bench_start/bench_stop window around an op costing `op` ns, whose CLOSING clock
 # read costs `c` — i.e. the window's own clock cost, which is what jitters.
@@ -344,21 +374,65 @@ fn test_scripted_calibration_waits_for_stability() {
     _sc_switch_at = 0;
 }
 
-# (e) bench_run's PILOT and TAIL chunks are short, so they must not be able to claim an
-# extreme. Through 6.6.4 they could, which is why `bench_run(noop, 1e5)` reported min=0
-# in 91 of 200 runs and why 4 ns rows in this tree printed max=27-60 ns. The pilot's
-# closing read is scripted to cost 0 so its window is maximally misleading.
+# (e) WHICH bench_run CHUNKS MAY SET AN EXTREME, closed form. Through 6.6.4 the pilot and
+# the tail could (`bench_run(noop, 1e5)` min=0 in 91 of 200 runs; 4 ns rows printing
+# max=27-60 ns). 6.6.5-6.6.8 kept them out by their own short DURATION — the per-window
+# selection hisab filed — and left the truncated tail in the mean as a separate, cheaper
+# window. v6.6.9: a chunk is eligible iff `_bench_chunk_for` sized it for 4 × the bar; the
+# pilot and geometric-growth chunks never are; the remainder is ABSORBED into the last
+# chunk. 1,000 ns clock and tick, so err = 2,000 ns, the bar 200,000 ns, and a chunk sized
+# from an exact 3 ns reading is 4 × 200,000 / 3 + 1 = 266,667 ops.
 fn test_scripted_bench_run_pilot_cannot_set_extremes() {
-    test_group("scripted: bench_run's pilot and tail chunks cannot set min/max");
+    test_group("scripted: bench_run's pilot and growth chunks cannot set min/max; the tail is absorbed");
+    # (e1) A CHEAP pilot: its closing read is scripted to cost 0, so it nets -952 ns — 0 ps,
+    # which sizes nothing, so the next chunk grows ×16 to 256 (not eligible). The 256-op
+    # chunk reads 3 ns exactly and sizes 266,667; the next reading sizes 266,667 again,
+    # which would leave a 10-op tail, so it ABSORBS it: 16 | 256 | 266,667 | 266,677.
+    #   mean = (48 + 1,768 + 801,001 + 801,031 - 4 × 1,000) / 533,616 = 2,998.12 -> 2,998 ps
+    # The pilot's saved read puts the mean 2 ps UNDER the min: the documented bench_run
+    # tolerance (min <= avg holds to within the ineligible windows' weight), closed form.
     _sc_reset(1000);
     _sc_op_ns = 3;
-    var b = bench_new("scripted_pilot");
+    var b = bench_new("scripted_pilot_cheap");
     _sc_queue2(1000, 0);
-    bench_run(b, &_sc_op, 300000);
-    assert_eq(bench_iterations(b), 300000, "fp is called exactly n times whatever the chunking does");
-    assert_eq(bench_min_resolved(b), 1, "the sized chunks resolve");
-    assert_eq(bench_min_ps(b), 3000, "min is the op, not the clamped pilot");
-    assert_eq(bench_max_ps(b), 3000, "max is the op, not the pilot");
+    bench_run(b, &_sc_op, 533616);
+    assert_eq(bench_iterations(b), 533616, "fp is called exactly n times whatever the chunking does");
+    assert_eq(bench_windows(b), 4, "16 | 256 | 266,667 | 266,677: the 10-op remainder is ABSORBED, not a fifth window");
+    assert_eq(bench_windows_eligible(b), 2, "the two SIZED chunks are eligible; the pilot and the grown chunk are not");
+    assert_eq(bench_min_resolved(b), 1, "266,667 ops at the mean clear 100 x err");
+    assert_eq(bench_min_ps(b), 3000, "min is the op, not the 0-ps pilot");
+    assert_eq(bench_max_ps(b), 3000, "max is the op");
+    assert_eq(bench_avg_ps(b), 2998, "the mean carries the cheap pilot: 2 ps under min, the bench_run tolerance");
+    # (e2) A COLD pilot, WITHIN the margin: its closing read costs 1,048, so it reads 6 ns
+    # per op — twice the op — and sizes 133,334 ops, i.e. 2 × the bar instead of 4. That is
+    # what `_BENCH_MARGIN` is for: the chunk is eligible and still clears the bar at the
+    # mean. 16 | 133,334 | 266,667 | 266,677.
+    #   mean = (1,096 + 401,002 + 801,001 + 801,031 - 4,000) / 666,694 = 3,000.07 -> 3,000 ps
+    _sc_reset(1000);
+    var c = bench_new("scripted_pilot_cold");
+    _sc_queue2(1000, 1048);
+    bench_run(c, &_sc_op, 666694);
+    assert_eq(bench_windows(c), 4, "16 | 133,334 | 266,667 | 266,677");
+    assert_eq(bench_windows_eligible(c), 3, "every sized chunk is eligible, including the one sized from the cold pilot");
+    assert_eq(bench_min_resolved(c), 1, "a pilot 2x slow is inside the 4x margin: the row resolves");
+    assert_eq(bench_min_ps(c), 3000, "min is the op");
+    assert_eq(bench_max_ps(c), 3000, "max is the op, not the cold pilot");
+    assert_eq(bench_avg_ps(c), 3000, "the cold pilot is in the mean only (0.07 ps of it)");
+    # (e3) A COLD pilot BEYOND the margin: closing read 5,000, so it reads 253 ns per op and
+    # sizes a 3,163-op chunk — 9.5 us, far under the bar. That chunk is eligible (its size
+    # was chosen before it ran; nothing about its duration decides it), so the row's
+    # smallest eligible window at the mean cost is under the bar and the row reports the
+    # MEAN: the safe direction. It never produces a wrong extreme. 16 | 3,163 | 266,667 |
+    # 266,677; mean = (5,048 + 10,489 + 801,001 + 801,031 - 4,000) / 536,523 = 3,007 ps.
+    _sc_reset(1000);
+    var d = bench_new("scripted_pilot_frozen");
+    _sc_queue2(1000, 5000);
+    bench_run(d, &_sc_op, 536523);
+    assert_eq(bench_windows(d), 4, "16 | 3,163 | 266,667 | 266,677");
+    assert_eq(bench_windows_eligible(d), 3, "the under-bar chunk is eligible too");
+    assert_eq(bench_min_resolved(d), 0, "so the row does not resolve");
+    assert_eq(bench_min_ps(d), 3007, "and min reports the mean");
+    assert_eq(bench_max_ps(d), 3007, "and so does max");
 }
 
 # (f) A 15 ms COUNTER — cass, modelled. The floor genuinely calibrates to 0 there (1,024
@@ -508,13 +582,18 @@ fn test_scripted_bench_run_reads_the_clock_per_window() {
     var b = bench_new("scripted_read_count");
     _sc_reads = 0;
     bench_run(b, &_sc_op, 100000);
-    # Closed form. err = floor + tick = 2,000 ns; a window resolves at 100 × err =
-    # 200,000 ns; at 3 ns per op that is 66,667 iterations. So: a 16-op pilot, one sized
-    # chunk of 66,667, and a 33,317-op remainder — THREE windows, SIX reads, for 100,000
-    # iterations. One clock pair per iteration is 200,000 reads.
+    # Closed form. err = floor + tick = 2,000 ns; the bar is 100 × err = 200,000 ns and
+    # `bench_run` sizes for 4× it (v6.6.9): at 3 ns per op, 266,667 iterations — more than
+    # the 99,984 left after the 16-op pilot, so the rest is ONE absorbed chunk. TWO windows,
+    # FOUR reads, for 100,000 iterations. One clock pair per iteration is 200,000 reads.
+    # (Through 6.6.8: a 66,667 chunk sized ON the bar plus a 33,317 tail — 3 windows.)
     assert_eq(bench_iterations(b), 100000, "fp is called exactly n times whatever the chunking does");
-    assert_eq(bench_windows(b), 3, "three windows: the pilot, one sized chunk and the remainder");
-    assert_eq(_sc_reads, 6, "SIX clock reads for 100,000 iterations (per-iteration timing spends 200,000)");
+    assert_eq(bench_windows(b), 2, "two windows: the pilot and one chunk that absorbs the rest");
+    assert_eq(_sc_reads, 4, "FOUR clock reads for 100,000 iterations (per-iteration timing spends 200,000)");
+    # That chunk is eligible (sized from the pilot's 3 ns reading) and 99,984 ops at the
+    # mean is 300 us, over the 200 us bar, so the row resolves.
+    assert_eq(bench_windows_eligible(b), 1, "the one sized chunk is eligible; the pilot is not");
+    assert_eq(bench_min_resolved(b), 1, "99,984 ops at 3 ns clears the 200us bar");
     assert_eq(bench_min_ps(b), 3000, "and the sized chunk still reports the 3ns op");
     # POSITIVE CONTROL FOR THE COUNTER ITSELF. 100 hand-driven one-op windows — the exact
     # shape `bench_run` would have if the chunking were reverted — must cost exactly 2
@@ -534,9 +613,10 @@ fn test_scripted_bench_run_reads_the_clock_per_window() {
     # THE COARSE-COUNTER BRANCH, MODELLED — this is what says the live axis below is safe
     # to run on cass, which could not be reached in this slot. A 15 ms counter calibrates
     # a 0 floor, so `_bench_chunk_for` is sized by the TICK and the pilot's window
-    # quantizes to 0 ps, taking the geometric ×16 growth path: 16, 256, 4,096, 65,536 and
-    # a 30,096 remainder. FIVE windows, TEN reads — the bound holds on the coarsest clock
-    # in the fleet too, by the same structure and for a different reason.
+    # quantizes to 0 ps, taking the geometric ×16 growth path: 16, 256, 4,096 and a 65,536
+    # chunk that absorbs the 30,096 behind it (v6.6.9). FOUR windows, EIGHT reads — the
+    # bound holds on the coarsest clock in the fleet too, by the same structure and for a
+    # different reason.
     #
     # ⚠ `_sc_t` is re-based to an exact multiple of the quantum (15,000,000 × 66,667). A
     # quantized script is the ONE part of axis 0 whose window counts depend on where in a
@@ -557,10 +637,69 @@ fn test_scripted_bench_run_reads_the_clock_per_window() {
     _sc_reads = 0;
     bench_run(d, &_sc_op, 100000);
     assert_eq(bench_iterations(d), 100000, "fp is called exactly n times on a coarse counter too");
-    assert_eq(bench_windows(d), 5, "geometric growth off a 0-ps pilot: 16, 256, 4096, 65536, remainder");
-    assert_eq(_sc_reads, 10, "TEN clock reads for 100,000 iterations on a 15ms counter");
+    assert_eq(bench_windows(d), 4, "geometric growth off a 0-ps pilot: 16, 256, 4096, then 95,632 absorbed");
+    assert_eq(_sc_reads, 8, "EIGHT clock reads for 100,000 iterations on a 15ms counter");
+    assert_eq(bench_windows_eligible(d), 0, "growth chunks are never eligible");
     _sc_quant = 0;
     _bench_clock_fp = 0;
+}
+
+# (j) THE FILED SHAPE (hisab, 2026-09-21), CLOSED FORM. A fixed `bench_run_batch` whose
+# plain window is a QUARTER of the bar, with a 400 µs spike (2× the bar) in every third
+# window. Plain window 10,000 × 5 ns = 50,000 ns; the spiked one 450,000. Under 6.6.5-6.6.8
+# only the spiked windows cleared the bar on their own duration, so min = 45,000 ps
+# against a mean of 18,333 — the filing's `min=39ns` over `16ns avg`, verbatim in kind.
+# Now the ROW decides: its smallest window at the MEAN cost is 10,000 × 18,333 ps =
+# 183 µs, under the 200 µs bar, so min and max report the mean.
+fn test_scripted_spiked_windows_do_not_become_the_minimum() {
+    test_group("scripted: a spike in every 3rd sub-bar window does not become the min (hisab)");
+    _sc_reset(1000);
+    _sc_op_ns = 5;
+    _sc_spike_every = 30000;
+    _sc_spike_ns = 400000;
+    _sc_calls = 0;
+    var b = bench_new("scripted_hisab_spike");
+    bench_run_batch(b, &_sc_spike_op, 10000, 300);
+    assert_eq(bench_windows(b), 300, "300 windows (anti-vacuous)");
+    assert_eq(bench_windows_eligible(b), 300, "every batch window is eligible — none is chosen by its duration");
+    assert_eq(bench_avg_ps(b), 18333, "mean = (200 x 50,000 + 100 x 450,000) / 3,000,000 ops");
+    assert_eq(bench_min_resolved(b), 0, "10,000 ops at the 18.3ns mean is under the 200us bar: unresolved");
+    assert_eq(bench_min_ps(b), 18333, "so min reports the mean — 6.6.5-6.6.8 printed 45,000, above it");
+    assert_eq(bench_max_ps(b), 18333, "and so does max");
+    var ordered = 0;
+    if (bench_min_ps(b) <= bench_avg_ps(b)) { ordered = 1; }
+    assert_eq(ordered, 1, "min <= avg, the invariant the filing broke");
+    _sc_spike_every = 0;
+    _sc_spike_ns = 0;
+}
+
+# (k) THE RESOLVED MIRROR. 1,000-op batches alternating 180 µs and 260 µs of work — 0.9 and
+# 1.3 of the bar. The row resolves (1,000 × the 220 ns mean = 220 µs >= 200 µs) and min
+# must come from the 0.9 window: 180,000 ps. The 6.6.5 rule dropped every 0.9 window for
+# being under the bar on its own, so min was 260,000 — ABOVE the 220,000 mean — on a row
+# it called resolved. A leg that only had windows far above or far below the bar (every
+# leg before this one) could not tell the two rules apart.
+fn test_scripted_straddling_windows_resolve_as_a_row() {
+    test_group("scripted: windows straddling the bar resolve as a ROW, min from the short ones");
+    _sc_reset(1000);
+    var b = bench_new("scripted_straddle");
+    var i = 0;
+    while (i < 10) {
+        bench_batch_start(b);
+        _sc_advance(180000);
+        bench_batch_stop(b, 1000);
+        bench_batch_start(b);
+        _sc_advance(260000);
+        bench_batch_stop(b, 1000);
+        i = i + 1;
+    }
+    assert_eq(bench_avg_ps(b), 220000, "mean = (180,000 + 260,000) / 2,000 per pair");
+    assert_eq(bench_min_resolved(b), 1, "1,000 ops at the 220ns mean clears the 200us bar");
+    assert_eq(bench_min_ps(b), 180000, "min is the 0.9-bar window's op — 6.6.5 excluded it and read 260,000");
+    assert_eq(bench_max_ps(b), 260000, "max is the 1.3-bar window's op");
+    var ordered = 0;
+    if (bench_min_ps(b) <= bench_avg_ps(b) && bench_avg_ps(b) <= bench_max_ps(b)) { ordered = 1; }
+    assert_eq(ordered, 1, "min <= avg <= max on a batch row, exactly");
 }
 
 # ⛔ AND THE SCRIPTED CLOCK MUST BE UNINSTALLED PROPERLY, WHICH IS MORE THAN CLEARING THE
@@ -1234,6 +1373,34 @@ fn test_a_real_op_never_reports_a_zero_minimum() {
     }
 }
 
+# LIVE, and exact on every host: on a fixed-batch row every window is eligible, so the
+# mean is a weighted mean of exactly the per-op values min ranges over and `min_ps <=
+# avg_ps` holds to the picosecond whatever the clock, the load or the resolution
+# outcome. hisab's shape (2,000-op batches of a few-ns op) — the one that printed min
+# 2.4x the mean under 6.6.5-6.6.8. A TRIPWIRE: on a live clock the old rule failed it
+# only when a perturbed window happened to cross the bar, so legs (j) and (k) are the
+# discriminators; this says the property survives a real clock on ecb, ach, cass and pi.
+fn test_live_batch_row_min_never_exceeds_the_mean() {
+    test_group("live: a fixed-batch row never reports a min above its mean");
+    var b = bench_new("live_batch_min_le_avg");
+    bench_run_batch(b, &_btf_tiny, 2000, 200);
+    assert_eq(bench_windows_eligible(b), 200, "every batch window is eligible (anti-vacuous)");
+    var ordered = 0;
+    if (bench_min_ps(b) <= bench_avg_ps(b)) { ordered = 1; }
+    assert_eq(ordered, 1, "min_ps <= avg_ps on a batch row, exactly");
+    var c = bench_new("live_stop_min_le_avg");
+    var i = 0;
+    while (i < 200) {
+        bench_start(c);
+        _btf_chunky();
+        bench_stop(c);
+        i = i + 1;
+    }
+    ordered = 0;
+    if (bench_min_ps(c) <= bench_avg_ps(c)) { ordered = 1; }
+    assert_eq(ordered, 1, "min_ps <= avg_ps on a bench_stop row, exactly");
+}
+
 fn main() {
     test_scripted_single_op_never_reads_zero();
     test_scripted_resolved_windows_are_exact();
@@ -1244,6 +1411,8 @@ fn main() {
     test_scripted_sub_floor_reports_zero_and_says_so();
     test_scripted_dead_clock_is_unmeasurable_and_recovers();
     test_scripted_bench_run_reads_the_clock_per_window();
+    test_scripted_spiked_windows_do_not_become_the_minimum();
+    test_scripted_straddling_windows_resolve_as_a_row();
     test_the_live_clock_is_restored();
     test_reported_floor_matches_an_independent_measurement();
     test_the_two_measurement_paths_agree();
@@ -1253,6 +1422,7 @@ fn main() {
     test_per_iteration_api_nets_out_the_timer();
     test_the_floor_arithmetic_is_exact();
     test_a_real_op_never_reports_a_zero_minimum();
+    test_live_batch_row_min_never_exceeds_the_mean();
     return assert_summary();
 }
 

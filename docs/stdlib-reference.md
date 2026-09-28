@@ -437,14 +437,20 @@ Mac and ~3,550 ns on a Raspberry Pi, and `bench_clock_overhead_ns()` finds out w
 first use. `bench_clock_tick_ns()` is the separate question of how finely the counter
 steps. Every reported figure is net of the floor.
 
-⚠ **A minimum is only reported when a window can support one (v6.6.5).** A window
-contributes to min/max only if its net duration is at least 100 × (floor + tick) — i.e.
-only when the clock can be wrong by at most 1 % of it. When no window clears that bar,
-`bench_min_ns`/`bench_max_ns` return the **mean** and `bench_min_resolved(b)` returns 0.
-Before that rule, a minimum over windows net of a *mean* floor read low by the clock's own
+⚠ **A minimum is only reported when the row's windows can support one (v6.6.5, decided
+per ROW since v6.6.9).** Every window whose size the caller chose — each `bench_run_batch*`,
+`bench_batch_*` and `bench_stop` window, and each `bench_run` chunk sized for the bar — is
+*eligible* and feeds min/max; `bench_run`'s 16-op pilot and geometric-growth chunks are
+not. The row resolves iff its **smallest eligible window, at the row's mean per-op cost**,
+is at least 100 × (floor + tick) — i.e. the clock can be wrong by at most 1 % of it.
+Otherwise `bench_min_ns`/`bench_max_ns` return the **mean** and `bench_min_resolved(b)`
+returns 0. No window is ever admitted or refused on its OWN duration: 6.6.5–6.6.8 did
+that, and on a row whose typical window sits under the bar it kept only the windows
+something slow had landed in, printing a min **above** the mean (hisab, 2026-09-21).
+Before 6.6.5, a minimum over windows net of a *mean* floor read low by the clock's own
 jitter and reached **0 for real work**. Size explicit batches so `batch_size × per_op`
 clears 100 × (`bench_clock_overhead_ns()` + `bench_clock_tick_ns()`), or let `bench_run`
-size them for you.
+size them for you (it sizes for 4× that).
 
 ⛔ **0 is still reachable in exactly one case, and it is named.** If a row's windows do not
 in total outlast the clock reads that bracketed them (`raw_total <= windows × floor`), the
@@ -456,10 +462,14 @@ as instantaneous, and batch the op or raise `n` to measure it. (An earlier draft
 reporting the raw mean instead would report the *clock* as the op, which is the 256×
 inflation v6.5.19 removed.)
 
-⚠ **min and max need not bracket the mean.** The mean covers every iteration; min and max
-cover only the windows that resolved, so a row can read `1.007us avg (min=994ns max=996ns)`
-— the steady-state chunks resolved, while the shorter pilot and tail windows are in the mean
-and cannot claim an extreme.
+⭐ **`min <= avg` holds exactly on every batch, `bench_batch_*` and `bench_stop` row**
+(`min_ps <= avg_ps <= max_ps`, to the picosecond): every window is eligible, so the mean is
+a weighted mean of exactly the values min and max range over. **On a `bench_run` row it
+holds only to within the pilot's weight** — the pilot and any growth chunk are in the mean
+but not eligible, so a pilot cheaper per op than the steady state can put the mean a few
+picoseconds under the min, and a slower one can put it over the max
+(`1.007us avg (min=994ns max=996ns)`). Do not assert `min <= avg <= max` on `bench_run`
+rows without that tolerance.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
@@ -472,14 +482,15 @@ and cannot claim an extreme.
 | `bench_batch_stop` | `bench_batch_stop(b, batch) → ns` | Close it; returns per-op ns |
 | `bench_iterations` | `bench_iterations(b) → n` | Iterations recorded |
 | `bench_windows` | `bench_windows(b) → n` | Timed windows consumed — one clock PAIR each |
+| `bench_windows_eligible` | `bench_windows_eligible(b) → n` | Windows min/max range over (every caller-sized window; not `bench_run`'s pilot or growth chunks) |
 | `bench_total_ns` | `bench_total_ns(b) → ns` | Total, netted at read time |
 | `bench_avg_ns` | `bench_avg_ns(b) → ns` | Average nanoseconds (rounded half up) |
-| `bench_min_ns` | `bench_min_ns(b) → ns` | Minimum over RESOLVED windows, else the mean |
-| `bench_max_ns` | `bench_max_ns(b) → ns` | Maximum over resolved windows, else the mean |
+| `bench_min_ns` | `bench_min_ns(b) → ns` | Minimum over eligible windows if the row resolves, else the mean |
+| `bench_max_ns` | `bench_max_ns(b) → ns` | Maximum over eligible windows if the row resolves, else the mean |
 | `bench_avg_ps` | `bench_avg_ps(b) → ps` | Average in picoseconds |
 | `bench_min_ps` | `bench_min_ps(b) → ps` | Minimum in picoseconds |
 | `bench_max_ps` | `bench_max_ps(b) → ps` | Maximum in picoseconds |
-| `bench_min_resolved` | `bench_min_resolved(b) → 0/1` | 1 if any window resolved a per-op extreme |
+| `bench_min_resolved` | `bench_min_resolved(b) → 0/1` | 1 if the smallest eligible window, at the mean cost, is ≥ 100 × clock error |
 | `bench_sub_floor` | `bench_sub_floor(b) → 0/1` | 1 if every window was at or under one clock read (the only case that reports 0) |
 | `bench_clock_overhead_ns` | `bench_clock_overhead_ns() → ns` | Measured cost of one clock read |
 | `bench_clock_tick_ns` | `bench_clock_tick_ns() → ns` | Measured step of the clock |
@@ -493,15 +504,16 @@ szal parse it; integer nanoseconds, and every added line starts with `[` and nev
 
 ```
   name: 250ns avg (min=250ns max=250ns) [100 iters]
-    [per op in ps: mean 250000 min 250000; min UNRESOLVED, shows the mean: ...]
+    [per op in ps: mean 250000 min 250000; 100 of 100 windows eligible; min UNRESOLVED, shows the mean: ...]
 ```
 
 A sub-floor row, which is the one that reports 0:
 
 ```
   noop: 0ns avg (min=0ns max=0ns) [100 iters]
-    [per op in ps: mean 0 min 0; min UNRESOLVED, shows the mean: clock error 2.000us
-     exceeds 1 % of every window; SUB-FLOOR: the whole window is at or under one clock
+    [per op in ps: mean 0 min 0; 100 of 100 windows eligible; min UNRESOLVED, shows the
+     mean: clock error 2.000us exceeds 1 % of the smallest eligible window at the mean
+     cost; SUB-FLOOR: the whole window is at or under one clock
      read (1.000us), so 0 means below the instrument — batch the op or raise n]
 ```
 

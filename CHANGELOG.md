@@ -6,6 +6,48 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.9] — 2026-09-28
 
+### Fixed
+
+- **`lib/bench.cyr`: a row's per-op `min`/`max` are decided for the ROW, by op count — a
+  minimum can no longer print above the mean.** (bite 6; issue
+  `2026-09-21-hisab-bench-min-above-mean-below-resolution-bar`, archived.) **Root cause:**
+  6.6.5's resolution rule admitted each window into min/max on its OWN net
+  (`net >= 100 × (floor + tick)`). When a row's typical window sits under that bar, the only
+  windows that cross it are the ones something slow landed in, so min and max were the
+  extremes of the PERTURBED windows and `bench_min_resolved` answered 1 as soon as one did:
+  hisab's `vec3_add: 16ns avg (min=39ns max=43ns)`, 24 of 320 rows of its suite. `bench_run`
+  was exposed the same way one notch weaker — `_bench_chunk_for` sized each chunk to land
+  exactly ON the bar, so a chunk that ran faster than its predecessor was dropped — and its
+  truncated tail and pilot sat in the mean as cheaper windows that could claim nothing
+  (1-ps `min > avg` rows with two windows and no coin flip at all). **Fix:** `_bench_record`
+  takes an eligibility flag decided by the CALLER before the window runs, and an eligible
+  window feeds min/max and `min_k` (the smallest eligible op count) unconditionally; the row
+  resolves at read time iff `min_k × avg_ps >= 100 × err × 1000`. Every `bench_run_batch*`,
+  `bench_batch_*` and `bench_stop` window is eligible; in `bench_run` a chunk is eligible iff
+  `_bench_chunk_for` sized it, never the 16-op pilot or a geometric-growth chunk; chunks are
+  sized for **4×** the bar (`_BENCH_MARGIN`), and the remainder is absorbed into the last
+  chunk instead of running as a separate tail window. **The invariant is `min <= avg`:**
+  exact to the picosecond on batch, `bench_batch_*` and `bench_stop` rows; on `bench_run`
+  rows within the pilot's weight (2 ps in the closed-form leg, 16 ps worst across 80 live
+  rows here) — `min <= avg <= max` is deliberately NOT promised there. A stricter reading
+  of the planned rule — eligible only when sized from a window that itself resolved — was
+  measured and rejected: 61 of those 80 rows unresolved against 10, and a variant that
+  shrank its ineligible sizing chunk put `hashmap/has` at 86 ns avg under a 97 ns min. The
+  `[per op in ps: ...]` line now also says `E of W windows eligible`; new public accessor
+  `bench_windows_eligible(b)`. `avg` is unchanged; min/max are **regime 6** in
+  `docs/development/benchmark-regimes.md`. The hisab repro exits 0 on this box and on real
+  ecb, ach, pi and cass (3/3 each; it exits 1 here against the 6.6.8 library). Pinned by
+  `tests/tcyr/crossos/bench_timer_floor.tcyr` legs (e) (re-derived: cheap pilot, cold pilot
+  inside the margin, cold pilot beyond it — the safe direction, the row reports the mean),
+  (i) (re-derived counts), (j) (hisab's spike-every-third-window shape, closed form) and (k)
+  (windows straddling the bar), plus a live `min <= avg` tripwire — 124/124 here, under
+  qemu-aarch64, wine and the AGNOS container, and on ecb (125), ach, pi and cass; 21 of them
+  fail against the 6.6.8 `lib/bench.cyr`. `tests/gates/toolchain/bench_timer_floor_measured.sh`
+  pinned the defective rule (axis B required the per-window test inside `_bench_record`);
+  axis B now forbids it and requires the decision in `bench_min_resolved` from `min_k`,
+  probe legs (6) and (7) are re-derived, legs (9)/(10) are new, and the mutants re-anchor on
+  the new rule — 17, all killed (`BTF_MUT_LOG=1` prints which leg killed each).
+
 ## [6.6.8] — 2026-09-28
 
 The second of the three small batch releases (roadmap.md, *The 6.6.7 → 6.6.9 batch*): the platform
