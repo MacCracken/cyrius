@@ -1226,3 +1226,9 @@ _chk_gate "$ROOT/tests/gates/toolchain/audit_walk_fails_closed.sh"
 # were unverified and the "Updated:" list was unconditional. Runs `version-bump.sh
 # --docs-only` over scratch copies of the live docs plus fixtures; mutation-proven in the header.
 _chk_gate "$ROOT/tests/gates/toolchain/version_bump_doc_anchors.sh"
+
+# 6.6.8 (bite 10) — `cyrius vet` / `deny` (cyaudit) see exactly the compiler's includes: column 0,
+# outside a string, the WHOLE file (a fixed 256 KB read hid a later include from both, rc 0), and
+# a path judged by COMPONENT (`lib/../../x` was trusted by vet and passed deny). The compiler is
+# the oracle for what an include is; mutation-proven in the header.
+_chk_gate "$ROOT/tests/gates/toolchain/cyaudit_include_directives.sh"

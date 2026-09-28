@@ -6,6 +6,26 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.8] — 2026-09-27
 
+### Fixed
+
+- **`cyrius vet` / `cyrius deny` (cyaudit) see exactly the includes the compiler sees — all of
+  them, and nothing else — and judge a path by its components.** (bite 10.) **Root cause:**
+  `scan_includes` read a fixed 262,144 bytes and substring-searched them for `include "` at any
+  offset. So a COMMENT naming a removed include (`# Old: include "lib/gone.cyr"`) made `vet`
+  print `MISSING` and exit 1, and `# see include "../shared/x.cyr"` made `deny` report a
+  traversal; and, silently, a real include past byte 262,144 was invisible to both (`no
+  dependencies` / `0 deps, 0 violations`, rc 0 — ~41 ecosystem CI pipelines run `vet`, 10 run
+  `deny`). The trust test (`lib/`, `src/`, … prefixes) and the traversal test (a LEADING `..`)
+  were prefix tests, so `lib/../../etc/x.cyr` was trusted by `vet` and passed `deny`, and a path
+  that exists but cannot be read (a directory) read as "no dependencies". **Fix:** the
+  compiler's rule — an include is a directive only in column 0 (`ISINCLUDE`) and outside a string
+  literal (a copy of `PP_LEXST`), and it consumes its line; the file is read whole
+  (`file_read_whole`); `..` is refused as any component split on `/` and `\`, an absolute path is
+  `/x`, `\x` or `C:`; an unreadable file is an error. Gate
+  `tests/gates/toolchain/cyaudit_include_directives.sh` asks the COMPILER what an include is (a
+  commented / in-string include of a missing file compiles, the same text in column 0 does not);
+  8 mutations each RED, and the 6.6.7 cyaudit fails 12 of its 26 checks.
+
 ## [6.6.7] — 2026-09-27
 
 The first of three SMALL releases that the post-6.6.6 issue track is split into (roadmap.md, *The 6.6.7

@@ -8,16 +8,34 @@ include "lib/io.cyr"
 include "lib/vec.cyr"
 include "lib/args.cyr"
 
-# Pattern built at runtime (preprocessor eats the literal form)
-var _pat[2];
-fn _init_pat(): i64 {
-    store8(&_pat, 105); store8(&_pat + 1, 110); store8(&_pat + 2, 99);
-    store8(&_pat + 3, 108); store8(&_pat + 4, 117); store8(&_pat + 5, 100);
-    store8(&_pat + 6, 101); store8(&_pat + 7, 32); store8(&_pat + 8, 34);
+# 1 iff the include path has a `..` COMPONENT anywhere — split on `/` and `\`. The trust
+# test and the traversal test below were both PREFIX tests, so `lib/../../etc/x.cyr` was
+# "trusted" by vet and passed deny, which only looked for a LEADING `..`. CHANGELOG [6.6.8]
+fn _has_dotdot(path): i64 {
+    var i = 0;
+    var cs = 0;
+    while (1 == 1) {
+        var c = load8(path + i);
+        if (c == 0 || c == 47 || c == 92) {
+            if (i - cs == 2) { if (load8(path + cs) == 46) { if (load8(path + cs + 1) == 46) { return 1; } } }
+            if (c == 0) { return 0; }
+            cs = i + 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# 1 iff the include path is absolute: `/x`, `\x`, or a drive letter `C:`. CHANGELOG [6.6.8]
+fn _is_abs(path): i64 {
+    var c = load8(path);
+    if (c == 47 || c == 92) { return 1; }
+    if ((c >= 65 && c <= 90) || (c >= 97 && c <= 122)) { if (load8(path + 1) == 58) { return 1; } }
     return 0;
 }
 
 fn is_trusted(path): i64 {
+    if (_has_dotdot(path) == 1) { return 0; }
     if (memeq(path, "lib/", 4) == 1) { return 1; }
     if (memeq(path, "src/", 4) == 1) { return 1; }
     if (memeq(path, "programs/", 9) == 1) { return 1; }
@@ -26,36 +44,85 @@ fn is_trusted(path): i64 {
     return 0;
 }
 
+# The preprocessor's lexical state after byte `c` in state `st` — a copy of PP_LEXST
+# (src/frontend/lex_pp.cyr): 0 code, 1 string, 2 after `\` in a string, 3 `#` comment,
+# 4 char literal, 5 after `\` in a char literal.
+fn _au_lexst(st, c): i64 {
+    if (st == 2) { return 1; }
+    if (st == 5) { if (c == 10) { return 0; } return 4; }
+    if (st == 1) {
+        if (c == 92) { return 2; }
+        if (c == 34) { return 0; }
+        return 1;
+    }
+    if (st == 3) { if (c == 10) { return 0; } return 3; }
+    if (st == 4) {
+        if (c == 92) { return 5; }
+        if (c == 10) { return 0; }
+        if (c == 39) { return 0; }
+        return 4;
+    }
+    if (c == 35) { return 3; }
+    if (c == 34) { return 1; }
+    if (c == 39) { return 4; }
+    return 0;
+}
+
+# Collect every `include "…"` DIRECTIVE of the file into `inc`. Returns the count, or -1 when
+# the file cannot be read.
+# ⛔ 6.6.8 — the compiler's rule, not a substring search. An include is a directive only in
+# COLUMN 0 (ISINCLUDE; an indented `include` is an expression) and only outside a string
+# literal (PP_PASS gates on the PP_LEXST string state), and its line is consumed whole. This
+# matched `include "` at ANY offset of a fixed 256 KB read, so a COMMENT naming a removed
+# include made `vet` report it MISSING and `deny` report a traversal (rc 1), and a real
+# include past byte 262,144 was invisible to both (`no dependencies` / `0 violations`, rc 0).
+# The file is now read whole (file_read_whole). CHANGELOG [6.6.8]
 fn scan_includes(fp, inc): i64 {
-    _init_pat();
-    # v5.11.45: cap raised 16384 → 262144 to match _parse_drift_scan
-    # in programs/checks/lint_fmt.cyr; src/main.cyr alone is 86 KB and was
-    # being scanned truncated, returning "no dependencies" falsely.
-    var cap = 262144;
-    var buf = alloc(cap);
-    var n = file_read_all(fp, buf, cap);
-    if (n <= 0) { return 0; }
+    var lr[1];
+    var buf = file_read_whole(fp, &lr);
+    if (buf == 0) { return 0 - 1; }
+    var n = load64(&lr);
     var si = 0;
-    var ps = 0;
-    var pe = 0;
-    var pl = 0;
-    var pa = 0;
-    while (si < n - 10) {
-        if (memeq(buf + si, &_pat, 9) == 1) {
-            ps = si + 9;
-            pe = ps;
-            while (pe < n) { if (load8(buf + pe) == 34) { break; } pe = pe + 1; }
-            pl = pe - ps;
-            if (pl > 0) {
-                pa = alloc(pl + 1);
-                memcpy(pa, buf + ps, pl);
-                store8(pa + pl, 0);
-                vec_push(inc, pa);
+    var st = 0;
+    var bol = 1;
+    while (si < n) {
+        if (bol == 1 && st == 0 && si + 9 <= n) {
+            if (memeq(buf + si, "include \"", 9) == 1) {
+                var ps = si + 9;
+                var pe = ps;
+                while (pe < n) {
+                    var fc = load8(buf + pe);
+                    if (fc == 34 || fc == 10) { break; }
+                    pe = pe + 1;
+                }
+                var pl = pe - ps;
+                if (pl > 0) {
+                    var pa = alloc(pl + 1);
+                    memcpy(pa, buf + ps, pl);
+                    store8(pa + pl, 0);
+                    vec_push(inc, pa);
+                }
+                # The directive consumes its whole line, as PP_PASS does.
+                while (pe < n) { if (load8(buf + pe) == 10) { break; } pe = pe + 1; }
+                si = pe;
+                continue;
             }
         }
+        var c = load8(buf + si);
+        st = _au_lexst(st, c);
+        bol = 0;
+        if (c == 10) { bol = 1; }
         si = si + 1;
     }
     return vec_len(inc);
+}
+
+# A file that exists but cannot be read is an error, never "no dependencies".
+fn _au_unreadable(fp): i64 {
+    sys_write(STDERR_FD, "cyaudit: cannot read file: ", 27);
+    sys_write(STDERR_FD, fp, strlen(fp));
+    sys_write(STDERR_FD, "\n", 1);
+    return 1;
 }
 
 fn cmd_vet(fp): i64 {
@@ -73,7 +140,7 @@ fn cmd_vet(fp): i64 {
     sys_write(STDOUT_FD, fp, strlen(fp));
     sys_write(STDOUT_FD, "\n", 1);
     var inc = vec_new();
-    scan_includes(fp, inc);
+    if (scan_includes(fp, inc) < 0) { return _au_unreadable(fp); }
     var len = vec_len(inc);
     if (len == 0) { println("  no dependencies"); return 0; }
     var untrusted = 0;
@@ -106,19 +173,21 @@ fn cmd_vet(fp): i64 {
 fn cmd_deny(fp): i64 {
     println("=== cyaudit deny ===");
     var inc = vec_new();
-    scan_includes(fp, inc);
+    var sn = 0;
+    if (file_exists(fp) == 1) { sn = scan_includes(fp, inc); }
+    if (sn < 0) { return _au_unreadable(fp); }
     var len = vec_len(inc);
     var violations = 0;
     var di = 0;
     while (di < len) {
         var dp = vec_get(inc, di);
-        if (load8(dp) == 47) {
+        if (_is_abs(dp) == 1) {
             syscall(1, 2, "  DENY: absolute path: ", 23);
             syscall(1, 2, dp, strlen(dp));
             syscall(1, 2, "\n", 1);
             violations = violations + 1;
         }
-        if (memeq(dp, "..", 2) == 1) {
+        if (_has_dotdot(dp) == 1) {
             syscall(1, 2, "  DENY: parent traversal: ", 26);
             syscall(1, 2, dp, strlen(dp));
             syscall(1, 2, "\n", 1);
