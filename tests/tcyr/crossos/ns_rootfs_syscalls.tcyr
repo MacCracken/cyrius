@@ -51,6 +51,20 @@ fn _check_audit_arch(): i64 {
     return 0;
 }
 
+# 1 when a seccomp FILTER is active on this process (/proc/self/status "Seccomp:\t2").
+# Docker's default profile is one, and the AGNOS CI job runs this suite inside a container.
+fn _seccomp_filtered(): i64 {
+    var fd = sys_open("/proc/self/status", 0, 0);
+    if (fd < 0) { return 0; }
+    var buf[4096];
+    var n = sys_read(fd, &buf, 4095);
+    sys_close(fd);
+    if (n <= 0) { return 0; }
+    store8(&buf + n, 0);
+    if (strstr(&buf, "Seccomp:\t2") != 0 - 1) { return 1; }
+    return 0;
+}
+
 # The eight wrappers on a target that has none of these calls: each returns `want`.
 fn _check_declines(want, label): i64 {
     var hdr[8];
@@ -89,7 +103,15 @@ fn main(): i64 {
     #ifndef CYRIUS_TARGET_WIN
     #ifndef CYRIUS_TARGET_AGNOS
     test_group("v6.6.8 — unshare / chroot / pivot_root reach the kernel as themselves");
-    assert_eq(sys_unshare(0), 0, "unshare(0) is a no-op success (kcmp answered -ESRCH)");
+    # unshare(0) has NO permission check, so the only -EPERM it can return is a seccomp filter
+    # denying the syscall itself — Docker's default profile does, and the AGNOS CI job runs this
+    # file in a container (6.6.8's first CI run went red here). Accepted only when a filter is
+    # really active; the wrong call (kcmp on aarch64) answers -ESRCH either way.
+    var un = sys_unshare(0);
+    var un_ok = 0;
+    if (un == 0) { un_ok = 1; }
+    if (un == 0 - 1) { if (_seccomp_filtered() == 1) { un_ok = 1; } }
+    assert_eq(un_ok, 1, "unshare(0) is 0, or -EPERM under a seccomp filter (kcmp answered -ESRCH)");
     assert_eq(sys_chroot("/cyr_no_such_root_6_6_8"), 0 - 2,
       "chroot(missing path) is -ENOENT (sethostname answered -EPERM)");
     var pr = sys_pivot_root("/cyr_no_such_new_root", "/cyr_no_such_put_old");

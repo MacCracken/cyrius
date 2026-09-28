@@ -17,6 +17,13 @@ runtime; `process_agnos`; the check harness (subreaper launcher, deadline kills 
 census); coverage that counts real references; and tool scanners that agree with the compiler. Seven
 filed issues fixed. Sibling releases folded: yukti **2.3.14** and ganita **1.2.7**. No CVE.
 
+⚠ **Re-cut at the same version.** The first 6.6.8 tag (`57a57bac`) went red in CI's Test (AGNOS) job:
+`crossos/ns_rootfs_syscalls.tcyr` pinned `unshare(0) == 0`, and that job runs the suite inside the
+agnosticos Docker container, whose default seccomp profile denies `unshare` with -EPERM. `unshare(0)`
+has no permission check, so an -EPERM there can only be a filter; the test now accepts it only when
+`/proc/self/status` reports `Seccomp: 2`. Reproduced and verified in that image: 19/19, and the
+job's whole `.tcyr` loop 371/371. Every other CI job was green on the first tag.
+
 **Bench:** cycc **1,346,088 → 1,359,272 B** (+13,184, +1.0 %; `.text` 1,188,224). self_compile
 **961 ms** (6.6.7: 957 ms); same-box A/B on this tree, three rounds: 6.6.7's compiler ~970 ms, 6.6.8's
 ~963 ms — flat. ⚠ `build/cycc-native-aarch64` `.text` grew +82,952 B (+5.5 %): bite 3's nine ESYSXLAT
