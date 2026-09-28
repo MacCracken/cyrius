@@ -41,6 +41,9 @@ include "lib/result.cyr"
 include "lib/fnptr.cyr"
 include "lib/io.cyr"
 include "lib/bayan.cyr"
+# 6.6.9: http.cyr's socket layer (tcp_socket / sock_*); it was missing from this hand list, so
+# those compiled as ud2 stubs. CHANGELOG [6.6.9]
+include "lib/net.cyr"
 include "lib/http.cyr"
 include "lib/assert.cyr"
 

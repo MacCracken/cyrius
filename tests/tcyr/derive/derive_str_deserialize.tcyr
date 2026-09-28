@@ -20,6 +20,9 @@ include "lib/string.cyr"
 include "lib/vec.cyr"
 include "lib/str.cyr"
 include "lib/result.cyr"
+# 6.6.9: bayan's sidecar leaf io.cyr (its file_* helpers). A bundle strips its own includes, so
+# the consumer supplies it; without it those helpers compiled as ud2 stubs. CHANGELOG [6.6.9]
+include "lib/io.cyr"
 include "lib/bayan.cyr"
 include "lib/assert.cyr"
 
