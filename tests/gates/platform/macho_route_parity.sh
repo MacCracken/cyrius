@@ -4,9 +4,13 @@
 # The two Mach-O backends carry INDEPENDENT syscall route tables and NOTHING compared them:
 #   * arm64-macOS (ecb)      src/backend/aarch64/emit.cyr, ESYSXLAT's `_TARGET_MACHO == 2` branch
 #   * x86_64-macOS (ach)     src/backend/x86/emit.cyr,     EMACHO_SYSXLAT
-# A route missing from one is a SIGSYS kill (x86: the number reaches Darwin without the
-# 0x2000000 Unix-class prefix) or a stale-x16 garbage call (arm64) on THAT Mac only —
-# invisible on the other Mac and invisible on Linux.
+# A route missing from one is a SIGSYS kill on THAT Mac only — invisible on the other Mac and
+# invisible on Linux. (x86: the number reaches Darwin without the 0x2000000 Unix-class prefix.
+# arm64: since 6.6.8 ESYSXLAT's chain head defaults x16 to an invalid number; before that an
+# unrouted number silently RE-RAN whatever x16 last held, usually the previous syscall — a
+# garbage call with a plausible return value, which is how the class shipped eight times.)
+# This gate is NAME-level and static; darwin_syscall_literals_routed.sh is its compiled twin
+# (every literal site at its real arity, and every shipped macOS build warning-free).
 #
 # ⛔ WHAT THIS GATE EXISTS FOR. Every instance of this has been found by accident, late:
 #   v6.5.15  SIGPWR=30 fixed on the arm64 peer, left live on x86 — and Darwin 30 is SIGUSR1,
@@ -83,10 +87,11 @@ allow_reason() {
     SYS_MOUNT|SYS_UMOUNT2|SYS_REBOOT)
                       echo "both|admin syscalls with incompatible Darwin ABIs, unreachable from the macOS builds. NOTE the arm peer's SYS_UMOUNT2=39 collides with the x86-getpid row 39->20, so it LOOKS routed" ;;
     SYS_PRCTL)        echo "both|prctl is Linux-only; Darwin has no equivalent syscall" ;;
+    SYS_GETCWD)       echo "both|Darwin has no getcwd syscall (slot 326 is unused). The only issuer, programs/cyrius-init.cyr _cwd_path, takes an open(\".\") + fcntl(F_GETPATH) arm under #ifdef CYRIUS_TARGET_MACOS (as cbt/deps.cyr _abs_path has since 6.0.41), so neither Mac emits 79/17 — proven by compiling it in darwin_syscall_literals_routed.sh axis 2. Until 6.6.8 it did emit them: invisible here while this scan read lib/ only (v6.6.8)" ;;
     SYS_UNAME)        echo "both|Darwin has no uname(2); lib/sys.cyr reads the same fields via sysctl (routed as the private alias 1202->202)" ;;
     SYS_SYSINFO)      echo "arm|Darwin has no sysinfo(2); lib/sys.cyr derives it from sysctl + gettimeofday (1202/1116, both routed)" ;;
-    SYS_PAUSE)        echo "x86|Darwin has no pause(2); the x86 peer declares it but no wrapper reaches it on macOS" ;;
-    SYS_PPOLL)        echo "arm|Darwin has no ppoll(2); the only caller is sys_pause (Linux-only, blocks for a signal), and a bare renumber to poll(230) would be WRONG — our call passes timeout 0, so poll returns immediately instead of blocking. ⛔ Until v6.5.36 the arm peer spelled this 73, which COLLIDED with the flock row 73->131 and so LOOKED routed while silently issuing flock; it is now the private alias 1073, honestly unrouted here. Same shape as the SYS_SIGNALFD4 note above, and on ELF-aarch64 that same collision was a live Critical" ;;
+    SYS_PAUSE)        echo "x86|Darwin has no pause(2); the x86 peer declares it but its sys_pause declines with -78 (6.6.5), so no macOS build emits it" ;;
+    SYS_PPOLL)        echo "arm|Darwin has no ppoll(2); its callers — sys_pause (6.6.8; the x86 peer since 6.6.5) and lib/yukti.cyr _yk_ppoll (yukti 2.3.14) — decline with -ENOSYS under #ifdef CYRIUS_TARGET_MACOS, and a bare renumber to poll(230) would be WRONG — our call passes timeout 0, so poll returns immediately instead of blocking. ⛔ Until v6.5.36 the arm peer spelled this 73, which COLLIDED with the flock row 73->131 and so LOOKED routed while silently issuing flock; it is now the private alias 1073, honestly unrouted here. Same shape as the SYS_SIGNALFD4 note above, and on ELF-aarch64 that same collision was a live Critical" ;;
     # ---- a real Darwin call exists but a bare renumber would be WRONG ----
     SYS_RT_SIGPROCMASK)
                       echo "both|Darwin sigprocmask(48) is not a renumber of Linux rt_sigprocmask: Linux takes a 4th sigsetsize arg and a 64-bit sigset_t, Darwin a 32-bit one. Needs a shim, not a row" ;;
@@ -158,7 +163,19 @@ else bad "$badpfx x86 row(s) decode to an out-of-range BSD number — missing/!w
 grep -oE 'SYS_[A-Z0-9_]+ = [0-9]+;' "$PEER_X86" | sed 's/ = / /; s/;//' | sort -u > "$TMP/peer_x86"
 grep -oE 'SYS_[A-Z0-9_]+ = [0-9]+;' "$PEER_ARM" | sed 's/ = / /; s/;//' | sort -u > "$TMP/peer_arm"
 # Names a wrapper actually ISSUES. A constant nobody calls cannot break anything.
-grep -ohE 'syscall\(SYS_[A-Z0-9_]+' lib/*.cyr | sed 's/syscall(//' | sort -u > "$TMP/issued"
+# v6.6.8 — SCOPE WIDENED from lib/*.cyr to lib/ cbt/ programs/ tests/. The stdlib-only scan could
+# not see programs/cyrius-init.cyr's `syscall(SYS_GETCWD, …)` — unrouted on BOTH Macs (Darwin has
+# no getcwd syscall), a SIGSYS on Intel and a stale-x16 call on Apple Silicon whenever $PWD was
+# unset, and invisible to every gate. A name issued only under a non-Darwin #ifdef still counts
+# here (this scan is name-level); such a name carries an allow-list reason that says where its
+# Darwin arm is, and darwin_syscall_literals_routed.sh axis 2 proves the claim by compiling the
+# builds. Allow-listing SYS_GETCWD before cyrius-init had its Darwin arm would have turned THAT
+# gate red, which is the point of having both. CHANGELOG [6.6.8]
+find lib cbt programs tests \( -name '*.cyr' -o -name '*.tcyr' -o -name '*.bcyr' -o -name '*.fcyr' \) -print \
+  | sort | xargs grep -ohE 'syscall\(SYS_[A-Z0-9_]+' | sed 's/syscall(//' | sort -u > "$TMP/issued"
+nissued=$(wc -l < "$TMP/issued" | tr -d ' ')
+if [ "$nissued" -ge 100 ]; then ok "issued-name scan found $nissued SYS_* names across lib/ cbt/ programs/ tests/ (floor 100)"
+else bad "issued-name scan found only $nissued SYS_* names — the scan is broken, not the tree"; fi
 
 routed() { awk -v n="$2" '$1==n{f=1} END{exit !f}' "$1"; }
 

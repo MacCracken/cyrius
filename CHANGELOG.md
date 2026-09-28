@@ -234,6 +234,33 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   syscall; Linux: a zero-fd, zero-timeout ppoll returns 0) — 9/9 on x86_64, qemu-aarch64, ecb
   and ach, 2/2 under wine.
 
+### Added
+
+- **A Darwin axis for the syscall gates: `tests/gates/platform/darwin_syscall_literals_routed.sh`
+  (new) fails the build when anything a macOS build compiles is unrouted on either Mac.** (bite 2.)
+  The roadmap's "22 arch-neutral raw syscall literals unrouted on Darwin" was a SCAN ARTIFACT —
+  reproduced exactly, then taken apart: it re-ran `raw_syscall_literals_routed.sh` with the
+  `_msx` rows swapped in, which kept the ELF reach table (its `CYRIUS_TARGET_MACOS` /
+  `CYRIUS_TARGET_LINUX` sides mean the opposite on Darwin) and could not see the parse-time
+  reroutes (228, 35, 1700). The genuine Darwin set was five literal sites (dynlib and
+  thread_local raw 158 on x86-macOS; the ioctl test's raw 16 twice and the aarch64 peer's raw 232
+  on arm64-macOS) plus cyrius-init's named-constant getcwd, all fixed above. So the new gate asks
+  the Mach-O COMPILERS instead of decoding a table. **Axis 1:** every literal `syscall(N, …)` in
+  `lib/ cbt/ programs/ tests/tcyr/crossos/` that a per-backend Darwin reach table says a macOS
+  build compiles (the PEERS included — that is how the raw 232 hid) becomes a probe compiled with
+  `CYRIUS_MACHO=1` / `CYRIUS_MACHO_ARM=1` at the site's REAL argument count, and a warned pair
+  reports its sites (~880 reached sites per Mac, 31 / 39 probes). **Axis 2:** every
+  `programs/*.cyr`, `cbt/cyrius.cyr` and `tests/tcyr/crossos/*.tcyr` compiled for each Mac prints
+  zero `not routed` warnings — what sees a named constant or a fold's private number (199 builds
+  per Mac). Controls run first (4001 must warn, close must not, `syscall(228, id)` must warn and
+  `syscall(228, id, &ts)` must not), with file / site / reach floors; each exemption carries a
+  reason. Mutation ledger in the header, each measured RED: the epoll decline, the dynlib 158
+  guard, the 16 → 54 row, cyrius-init's Darwin arm, the arity check, yukti's decline. ~25 s.
+  **`macho_route_parity.sh`'s issued-name scan widens from `lib/*.cyr` to `lib/ cbt/ programs/
+  tests/`** (it is what first sees `SYS_GETCWD`; allow-listed with the reason, the compile gate
+  proving the claim), and its header, `SYS_PAUSE` / `SYS_PPOLL` reasons and
+  `raw_syscall_literals_routed.sh`'s "22" paragraph are corrected.
+
 ## [6.6.7] — 2026-09-27
 
 The first of three SMALL releases that the post-6.6.6 issue track is split into (roadmap.md, *The 6.6.7

@@ -1247,3 +1247,10 @@ _chk_gate "$ROOT/tests/gates/frontend/generic_type_arg_unknown_refused.sh"
 # HEAP-frame slot (ECALLIND called the stack slot: SIGSEGV), and a completed coroutine answers a
 # later force with its value instead of resuming its last suspend. Mutation-proven in the header.
 _chk_gate "$ROOT/tests/gates/frontend/coroutine_fnptr_and_completion.sh"
+
+# 6.6.8 (bite 2) — every syscall a macOS build reaches is ROUTED on both Macs: each literal site
+# at its real arity (probed through the Mach-O compilers' own diagnostic, per a Darwin reach
+# table), and every shipped program / crossos test compiled for each Mac with zero "not routed"
+# warnings. An unrouted arm64-macOS number used to re-run the previous syscall silently; the
+# class shipped eight times. Controls + mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/platform/darwin_syscall_literals_routed.sh"

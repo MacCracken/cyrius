@@ -27,11 +27,16 @@
 # ESYSXLAT carries an `82 → renameat(38)` row added at v6.0.68 for that very call site.
 # The defect there was that the result was discarded and the portable wrapper
 # (`file_rename`) already existed; that is a different question, pinned by
-# `tests/gates/toolchain/build_output_rename_checked.sh`. Re-running this scan with the
-# set derived from EMACHO_SYSXLAT's `_msx` rows instead reports **22** arch-neutral sites
-# unrouted on DARWIN (raw 228 clock_gettime in chrono/bench/hashseed/mabda/patra/sakshi/
-# tls_native_conn, raw 35, raw 79, raw 319) — a real second axis, NOT added here because
-# it is red on twenty sites this bite did not cause and must not silently fix.
+# `tests/gates/toolchain/build_output_rename_checked.sh`.
+# ⛔ CORRECTED v6.6.8. This paragraph used to say that re-running this scan with the set
+# derived from EMACHO_SYSXLAT's `_msx` rows "reports 22 arch-neutral sites unrouted on
+# DARWIN". That count was a SCAN ARTIFACT, reproduced exactly and then taken apart: the
+# side_table below means the OPPOSITE on Darwin (it exempts the CYRIUS_TARGET_MACOS if-side
+# and scans the CYRIUS_TARGET_LINUX else-side), and a table decode cannot see the parse-time
+# reroutes (228, 35, 1700), which have no row. The genuine Darwin defects behind it were five
+# literal sites plus a named-constant getcwd no literal scan could see, all fixed at 6.6.8.
+# The Darwin axis is its own gate, tests/gates/platform/darwin_syscall_literals_routed.sh,
+# which asks the Mach-O compilers per site at the site's real arity instead of decoding.
 #
 # Anti-vacuous: the derived set must decode ≥ 40 rows, the scan must visit ≥ 500 files and
 # find ≥ 200 literal sites, or the run fails rather than reporting "all routed" over nothing.
