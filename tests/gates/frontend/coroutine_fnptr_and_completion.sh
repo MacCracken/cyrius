@@ -22,10 +22,13 @@
 #   C  a capturing closure called inside the coroutine  -> 150
 #   D  a straight-line body forced 6 times              -> 3 x 0, then 327 x 3; body tail ran ONCE
 #   E  a three-await loop with a defer, forced 10 times -> 3 x 0, then 3 x 7; defer ran ONCE
+#   F  a TAIL-SHAPED `return helper(x);`, no defer, forced 6 times -> 0 0 12 12 12 12; helper ran
+#      ONCE (a tail call's `jmp` skipped the epilogue that marks the coroutine done, so every later
+#      force re-ran the tail; coroutines no longer tail-call)
 #
 # Mutations: remove the coroutine branch of ECALLIND -> A, B, C RED (139). Remove
-# `_coro_mark_done` -> D, E RED (the tail and the defer re-run). Remove `_coro_done_check` ->
-# D, E RED.
+# `_coro_mark_done` -> D, E, F RED (the tail and the defer re-run). Remove `_coro_done_check` ->
+# D, E, F RED. Drop the `_cur_fn_coro` line of `_tc_frame_divert` -> F RED (helper ran 4 times).
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -175,5 +178,29 @@ syscall(60, 0);
 EOF
 run e '0 0 0 7 7 7 7 7 7 7 1' "E: a finished loop coroutine does not resume; its defer ran once"
 
+cat > "$T/f.cyr" <<EOF
+$PRE
+var g_tail = 0;
+fn helper(v): i64 { g_tail = g_tail + 1; return v * 2; }
+async fn steps(C): i64 {
+    var x = 5;
+    var s1 = await nopark();
+    x = x + 1;
+    var s2 = await nopark();
+    return helper(x);
+}
+fn main(): i64 {
+    alloc_init();
+    var C = steps(0);
+    var n = 0;
+    while (n < 6) { fmt_int(future_force(C)); syscall(1, 1, " ", 1); n = n + 1; }
+    fmt_int(g_tail);
+    return 0;
+}
+var e = main();
+syscall(60, 0);
+EOF
+run f '0 0 12 12 12 12 1' "F: a tail-shaped return completes the coroutine; the tail ran once"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: coroutine_fnptr_and_completion — $fails axis(es) red"; exit 1; fi
-echo "PASS: coroutine_fnptr_and_completion — fncallN / callptr / closure calls inside a coroutine reach their callee (A-C); a completed coroutine answers with its value and runs nothing again (D-E)"
+echo "PASS: coroutine_fnptr_and_completion — fncallN / callptr / closure calls inside a coroutine reach their callee (A-C); a completed coroutine answers with its value and runs nothing again (D-F)"

@@ -18,9 +18,14 @@
 #   C  outer<Pt>(p) forwarding to a looping inner<T> -> 16 (was 2)
 #   D  the same with an inlinable inner<T>           -> 16 (was a compile error)
 #   E  control: id<i64>(4) / id<i32>(4) / id<Pt>     -> build and run
+#   F  id<Color>(4), Color a declared enum            -> refused, message says it is an enum
+#   G  id<u64> / <u8> / <bool> / <ptr> / <f32>        -> refused by name (not in the type-arg
+#      vocabulary, which is the return-type vocabulary: a struct, i8/i16/i32/i64, f64, or a bound
+#      type parameter — an alias would silently pick a width; these all used to run the i64 base)
 #
 # Mutations: drop the `_tp_resolve` consult in _type_arg_leaf -> C, D RED (refused as unknown
-# `T`). Drop the refusal -> A, B RED (rc 0). Let _call_forwarded_base inline -> D RED.
+# `T`). Drop the refusal -> A, B, F, G RED (rc 0). Let _call_forwarded_base inline -> D RED.
+# Drop the `_is_enum_name` arm -> F RED (refused, but as an "unknown type").
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -59,5 +64,17 @@ exits d 16 "D: a forwarded T reaches the inlinable struct instance"
 printf 'struct Pt { x; y; }\nfn id<T>(v: T): i64 { return v + 1; }\nfn gx<T>(p: T): i64 { return p.x; }\nfn main(): i64 { var p: Pt; p.x = 30; p.y = 1; return id<i64>(4) + id<i32>(4) + gx<Pt>(p); }\nsyscall(60, main());\n' > "$T/e.cyr"
 exits e 40 "E: control: i64 / i32 / struct type arguments"
 
+printf 'enum Color { RED; GREEN; }\nfn id<T>(v: T): i64 { return v + 1; }\nfn main(): i64 { return id<Color>(4); }\nsyscall(60, main());\n' > "$T/f.cyr"
+build f
+if [ "$rc" -eq 0 ]; then bad "F: an enum name as a type argument: BUILT (rc 0)"
+elif ! grep -q "'Color' is an enum, not a type argument" "$T/f.err"; then
+    bad "F: an enum name as a type argument: refused, but not as an enum: $(grep '^error' "$T/f.err" | head -1)"
+else ok "F: an enum name as a type argument: refused as an enum"; fi
+
+for w in u64 u8 bool ptr f32; do
+    printf 'fn id<T>(v: T): i64 { return v + 1; }\nfn main(): i64 { return id<%s>(4); }\nsyscall(60, main());\n' "$w" > "$T/g_$w.cyr"
+    refused "g_$w" "$w" "G: '$w' as a type argument"
+done
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: generic_type_arg_unknown_refused — $fails axis(es) red"; exit 1; fi
-echo "PASS: generic_type_arg_unknown_refused — a type-arg naming no type is refused by name (A-B); a forwarded type parameter resolves to its binding (C-D); scalar and struct type-args unchanged (E)"
+echo "PASS: generic_type_arg_unknown_refused — a type-arg naming no type is refused by name (A-B); a forwarded type parameter resolves to its binding (C-D); scalar and struct type-args unchanged (E); an enum or an unlisted scalar name is refused by name (F-G)"

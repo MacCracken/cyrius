@@ -96,14 +96,28 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   compile clean and run the i64 base (exit 5). **Fix:** `_type_arg_leaf` (parse_fn.cyr) resolves
   a bound type parameter to its binding first (`T` -> `Pt` in the `outer<Pt>` instance, -> i64 in
   outer's base) and refuses a name that is neither a bound parameter nor a type (`unknown type
-  'Nope' as a type argument ...`). In the base emission a forwarded all-i64 call is a plain call
+  'Nope' as a type argument (a type argument is a struct, i8/i16/i32/i64, f64, or a type
+  parameter in scope)`). **Newly refused** — each used to build and silently run the i64 base:
+  an undeclared name, a variable, `u8` `u16` `u32` `u64` `bool` `ptr` `f32` (the type-argument
+  vocabulary is the return-type vocabulary, which none of those is in; a type argument picks a
+  width and a layout, so an alias that picked one silently would be the defect again), and a
+  declared **enum** name, which gets its own message (`'Color' is an enum, not a type argument —
+  enum values are i64; write i64`). Outside cyrius's own fixtures the only generic in the
+  ecosystem is vidya's `type_systems` example (`ident<T>`, no explicit type argument), which
+  builds unchanged. **Also changed, and more correct:** inside a generic
+  instance `var b: Box<T>` now resolves to the instance for the binding (`Box$i32` in `mk<i32>`)
+  instead of the base `Box`, so its layout follows `T` — a field after a `T` field moves (`n` in
+  `struct Box<T> { v: T; n; }` goes from +8 to +4 in `mk<i32>`); code that reads such a local's
+  raw bytes by offset sees the new layout. In the base emission a forwarded all-i64 call is a plain call
   to the callee's base, never an inline replay (`_call_forwarded_base`): replaying a struct-using
   body against an i64 argument there is what raised the spurious error, and the base call is what
   `outer<i64>` means either way. `tests/fixtures/monomorph/monomorph_repairs.cyr` (which forwards
   `inner<T>`) now compiles to different bytes — it no longer mints a duplicate `inner` instance —
   with the same result. Pinned by `tests/tcyr/crossos/generic_forward_tparam.tcyr` (8/8 on ecb,
   ach, cass and pi, and under qemu-aarch64 and wine; 6.6.7 does not compile it) and gate
-  `tests/gates/frontend/generic_type_arg_unknown_refused.sh` (5 rows, mutation-proven).
+  `tests/gates/frontend/generic_type_arg_unknown_refused.sh` (rows A-G: the refusals incl. an
+  enum and the five unlisted scalar names, forwarding, and an i64/i32/struct control;
+  mutation-proven).
 - **An indirect call — `fncallN`, `callptr`, a closure — inside a coroutine `async fn` calls its
   callee instead of crashing.** (bite 1b; found by the 6.6.7 bite 1 implementer.) **Root
   cause:** PINDIRECT_CALL spills the callee to a fresh local and calls through it with ECALLIND.
@@ -124,11 +138,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   **Fix:** at the real return, after the defer walker, the coroutine stamps `C[state] = DONE`
   (-1) and keeps the value in a word past its frame (the constructor sizes the object 8 bytes
   larger); the resume dispatch answers a DONE entry with that value and leaves through the
-  suspend exit (`_coro_done_check` / `_coro_mark_done`, parse.cyr). A plain `async fn` with no
-  mid-body `await` is not a coroutine and keeps its documented re-run-per-force behaviour.
-  Gate `tests/gates/frontend/coroutine_fnptr_and_completion.sh` rows D-E (mutation-proven, RED
-  on 6.6.7); the same probes pass on ach, cass (the
-  completion bug was live on PE too) and under wine.
+  suspend exit (`_coro_done_check` / `_coro_mark_done`, parse.cyr). A coroutine never
+  tail-calls: `_tc_frame_divert` diverts a tail-shaped `return f(x);` in a coroutine body to the
+  normal call path, because the tail call's `jmp` skipped the epilogue that marks it done — so a
+  coroutine ending in `return helper(x);` (no `defer`) forced six times ran `helper` four times
+  (found by the bite 1b review). A plain `async fn` with no mid-body `await` is not a coroutine
+  and keeps its documented re-run-per-force behaviour. Gate
+  `tests/gates/frontend/coroutine_fnptr_and_completion.sh` rows D-F (mutation-proven; D-E RED on
+  6.6.7, F RED without the tail-call divert); the same probes pass on ach, cass (the completion
+  bug was live on PE too) and under wine.
 
 ## [6.6.7] — 2026-09-27
 

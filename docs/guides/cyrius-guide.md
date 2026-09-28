@@ -2169,8 +2169,10 @@ Type arguments may be **inferred** from the call (`add(1, 2)`) or written
 parameter may be **forwarded** — `fn outer<T>(p: T) { return inner<T>(p); }` calls
 `inner`'s instance for whatever `T` is bound to (v6.6.8; before that `T` read as
 "no type" and the call silently hit the i64 base, returning 0 for a struct `T`). A
-type argument that names no struct, no scalar and no type parameter in scope is a
-compile error naming it.
+type argument is a struct, `i8`/`i16`/`i32`/`i64`, `f64`, or a type parameter in
+scope — the same names a return type accepts; anything else (an undeclared name, a
+variable, `u8`..`u64`, `bool`, `ptr`, `f32`, an enum name) is a compile error naming
+it (v6.6.8; an enum's values are i64, so write `i64`).
 
 **Monomorphization.** Cyrius is i64-everywhere (ADR-002), so a generic
 definition's base *is* its i64 instantiation: the body is emitted once with
@@ -2254,11 +2256,12 @@ semantics, sugarier surface. A Future re-runs its body on each `await`
 (force-once memoization is a follow-on). A **coroutine** `async fn` — one that
 `await`s mid-body (v6.5.69) — is different: once its body has returned, forcing it
 again returns the same value and runs nothing, neither body nor `defer` (v6.6.8;
-before that it resumed from its last suspend and re-ran the tail). True stackless coroutines that *suspend
-and resume mid-body across an `await`* (a poll-driven state machine, without
-bundling the whole call) are a planned follow-on requiring a poll-based runtime;
-the current model is deferred-then-forced, which matches the run-to-completion
-runtime. `async` generic fns are not yet supported, nor is a value-form vector
+before that it resumed from its last suspend and re-ran the tail). A coroutine is a
+stackless state machine: its locals live in a heap frame, each force resumes it
+at the suspend where it last stopped, and a `return f(x);` in its body is an
+ordinary call, never a tail call. What stays run-to-completion is the RUNTIME —
+a force drives the coroutine to its next suspend or its end; there is no
+poll-based scheduler interleaving many suspended coroutines. `async` generic fns are not yet supported, nor is a value-form vector
 PARAMETER (`async fn f(v: f64v2)`) — an `async fn` captures each argument as one
 8-byte value, so since v6.6.6 that is a compile error naming the parameter; pass
 a pointer to the vector instead (before v6.6.6 it compiled and computed with the
