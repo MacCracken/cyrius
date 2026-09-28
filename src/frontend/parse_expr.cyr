@@ -497,6 +497,73 @@ fn _PE_ROUTE_PERFCOUNTER(S, sc_num, argc): i64 {
     return 0;
 }
 
+# v6.6.8 — the arity each Mach-O PARSE-TIME reroute fires at, or 0 if `n` is not one. `argc`
+# counts the number itself, as the reroute blocks in the syscall() parse do: 228 (clock) and 35
+# (nanosleep, x86 only — arm64 reroutes 35 inside ESYSXLAT at any arity) at 3, and 1700
+# (pthread_create, arm64 only) at 5. MUST mirror those blocks; the Darwin syscall gate probes
+# every in-tree literal site at its real argc through this diagnostic.
+fn _macho_reroute_argc(tgt, n): i64 {
+    if (n == 228) { return 3; }
+    if (tgt == 1) { if (n == 35) { return 3; } }
+    if (tgt == 2) { if (n == 1700) { return 5; } }
+    return 0;
+}
+
+# The Mach-O "syscall not routed" diagnostic — both backends, one source of truth each
+# (_macho_x86_routes replays EMACHO_SYSXLAT's rows, _macho_arm_routes replays ESYSXLAT's).
+# ⛔ v6.6.8 — IT WAS BLIND TO ARITY. The route queries answer by NUMBER, but the parse-time
+# reroutes (228/35 on x86-macOS, 228/1700 on arm64-macOS) fire only at one argc, so a
+# wrong-arity `syscall(228, id)` or `syscall(35, &ts)` was neither rerouted NOR warned: it fell
+# through to the chain and faulted at run time from a clean build. Such a call is now reported
+# with the arity the reroute wants. Also since v6.6.8 the arm64 wording says SIGSYS, which it
+# now is — ESYSXLAT's chain head defaults x16 to an invalid number; before that an unrouted
+# arm64 number silently re-ran the previous syscall and "will fault" was false.
+# v6.5.43: the x86 Mach-O half. _TARGET_MACHO==1 had NO unrouted diagnostic at all, so a
+# missing _msx row was silent at compile time and a SIGSYS at runtime — the shape that let
+# `ioctl` sit unrouted until v6.5.36 and that macho_route_parity.sh exists to catch.
+fn _macho_warn_unrouted(sc_num, argc): i64 {
+    if (sc_num < 0) { return 0; }
+    if (_TARGET_MACHO != 1) { if (_TARGET_MACHO != 2) { return 0; } }
+    var want = _macho_reroute_argc(_TARGET_MACHO, sc_num);
+    if (want > 0) {
+        if (argc != want) {
+            syscall(SYS_WRITE, 2, "warning: syscall ", 17);
+            PRNUM(sc_num);
+            syscall(SYS_WRITE, 2, " not routed at this arity: its Mach-O reroute takes the number plus ", 68);
+            PRNUM(want - 1);
+            syscall(SYS_WRITE, 2, " argument(s) and this call passes ", 34);
+            PRNUM(argc - 1);
+            syscall(SYS_WRITE, 2, "; it will SIGSYS on macOS. Pass the full argument list, or use the stdlib wrapper.\n", 83);
+            return 0;
+        }
+    }
+    if (_TARGET_MACHO == 1) {
+        var sx_ok = _macho_x86_routes(sc_num);
+        if (sx_ok == 0) {
+            syscall(SYS_WRITE, 2, "warning: syscall ", 17);
+            PRNUM(sc_num);
+            syscall(SYS_WRITE, 2,
+              " not routed by the Mach-O x86 translation (EMACHO_SYSXLAT); will SIGSYS on macOS. Add an _msx row or use a stdlib wrapper.\n",
+              123);
+        }
+    }
+    if (_TARGET_MACHO == 2) {
+        # v6.0.65: query the single source of truth (_macho_arm_routes, adjacent to ESYSXLAT)
+        # instead of a parallel hardcoded list that drifted out of sync.
+        var sc_ok = _macho_arm_routes(sc_num);
+        if (sc_ok == 0) {
+            # v6.5.43: NAME the number. This warned 470 times during cycc's own build and never
+            # once said which syscall — so it read as noise and was scrolled past.
+            syscall(SYS_WRITE, 2, "warning: syscall ", 17);
+            PRNUM(sc_num);
+            syscall(SYS_WRITE, 2,
+              " not routed by the Mach-O ARM translation (ESYSXLAT/__got); will SIGSYS on macOS. Add an ESYSXLAT entry or use a stdlib wrapper.\n",
+              129);
+        }
+    }
+    return 0;
+}
+
 # v6.6.6 — 0xF03A GetModuleFileNameW(NULL, wbuf, cch) → argc == 3. The Windows source
 # for "the full path of THIS executable"; the cyrius-side wrapper is `sys_self_exe_w`
 # (lib/syscalls_windows.cyr), whose caller narrows the UTF-16 result with `_args_w2u8`.
@@ -1151,43 +1218,9 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         # to build something that would have worked. v5.5.17 pins the
         # follow-up that adds ESYSXLAT translations or `__got` reroutes
         # for specific syscalls the tools actually exercise.
-        # v6.5.43: the x86 Mach-O half of the same check. _TARGET_MACHO==1 had NO unrouted
-        # diagnostic at all, so a missing _msx row was silent at compile time and a SIGSYS at
-        # runtime — the shape that let `ioctl` sit unrouted until v6.5.36 and that
-        # macho_route_parity.sh exists to catch. Same wording, same single source of truth
-        # (_macho_x86_routes replays EMACHO_SYSXLAT's own rows in query mode).
-        if (_TARGET_MACHO == 1) {
-            if (sc_num >= 0) {
-                var sx_ok = _macho_x86_routes(sc_num);
-                if (sx_ok == 0) {
-                    syscall(SYS_WRITE, 2, "warning: syscall ", 17);
-                    PRNUM(sc_num);
-                    syscall(SYS_WRITE, 2,
-                      " not routed by the Mach-O x86 translation (EMACHO_SYSXLAT); will SIGSYS on macOS. Add an _msx row or use a stdlib wrapper.\n",
-                      123);
-                }
-            }
-        }
-        if (_TARGET_MACHO == 2) {
-            if (sc_num >= 0) {
-                # v6.0.65: query the single source of truth (_macho_arm_routes,
-                # adjacent to ESYSXLAT in src/backend/aarch64/emit.cyr) instead of
-                # a parallel hardcoded list that drifted out of sync (it had only
-                # 0,1,2,3,9,10,11,60,228 while ESYSXLAT routes ~40, drowning the log).
-                var sc_ok = _macho_arm_routes(sc_num);
-                if (sc_ok == 0) {
-                    # v6.5.43: NAME the number. This warned 470 times during cycc's own build
-                    # and never once said which syscall — so it read as noise and was scrolled
-                    # past, which is how the five band-J numbers went unnoticed. Same reasoning
-                    # as the v6.4.77 reserved-keyword diagnostic.
-                    syscall(SYS_WRITE, 2, "warning: syscall ", 17);
-                    PRNUM(sc_num);
-                    syscall(SYS_WRITE, 2,
-                      " not routed by the Mach-O ARM translation (ESYSXLAT/__got); will fault on macOS. Add an ESYSXLAT entry or use a stdlib wrapper.\n",
-                      128);
-                }
-            }
-        }
+        # v6.5.43 put the x86 Mach-O half beside it; v6.6.8 made both ARITY-aware and moved them
+        # into _macho_warn_unrouted (below _PE_ROUTE_PERFCOUNTER) so this fn does not grow.
+        _macho_warn_unrouted(sc_num, argc);
         # v6.5.51 — ELF-aarch64: a raw syscall NUMBER that is really an x86_64 number.
         # ESYSXLAT's aarch64 arm passes unmatched numbers through to the `svc` verbatim,
         # which is correct by design (native numbers must not be rewritten) — but it means

@@ -190,6 +190,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the fix); it now asserts `dynlib_bootstrap_tls() == 0`. `darwin_unrouted_syscall_faults.tcyr`
   gains the peer-decline group (16/16 on ecb, 12/12 on ach).
 
+- **The Mach-O "syscall not routed" warning is arity-aware: a wrong-arity `syscall(228, …)`,
+  `syscall(35, …)` or `syscall(1700, …)` is reported instead of building clean and faulting.**
+  (bite 2.) **Root cause:** the parse-time reroutes fire at ONE argument count — 228 (clock) at
+  the number plus 2 on both Macs, 35 (nanosleep) at plus 2 on x86-macOS, 1700 (pthread_create) at
+  plus 4 on arm64-macOS — but the route queries `_macho_x86_routes` / `_macho_arm_routes` answer
+  by number alone and returned "routed" for all three, so `syscall(228, 4)` or `syscall(35, &ts)`
+  compiled with ZERO warnings on both Macs and then fell through to the table: no reroute, a
+  SIGSYS at run time (the arm64 disassembly shows the 2-arg 228 with no `__got` call). No in-tree
+  site had the wrong arity. **Fix:** the diagnostic moved out of the syscall() parse into
+  `_macho_warn_unrouted` (parse_expr.cyr; the parse fn shrinks, which matters for cybs), which
+  first asks `_macho_reroute_argc` for the arity the reroute wants and names it —
+  `warning: syscall 228 not routed at this arity: its Mach-O reroute takes the number plus 2
+  argument(s) and this call passes 1; it will SIGSYS on macOS`. The arm64 wording changes from
+  "will fault" to "will SIGSYS", which it now is. Pinned by the controls of
+  `tests/gates/platform/darwin_syscall_literals_routed.sh` (`syscall(228, id)` must warn and
+  `syscall(228, id, &ts)` must not, on both backends — RED with the check reverted).
+
 ## [6.6.7] — 2026-09-27
 
 The first of three SMALL releases that the post-6.6.6 issue track is split into (roadmap.md, *The 6.6.7
