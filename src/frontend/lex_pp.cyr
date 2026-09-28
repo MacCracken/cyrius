@@ -1125,6 +1125,8 @@ var _pp_dchk_size = 0;
 # parser will reject, so the backstop is not armed — the parser's error is the one to read).
 var _pp_dfull = 0;
 var _pp_dstop = 0;
+# `S` while a derived declaration's header and body are walked, else 0 — arms PP_DDIRCHK.
+var _pp_dS = 0;
 
 # 1 iff `c` is a space or a tab.
 fn PP_DBLANK(c): i64 {
@@ -1152,13 +1154,57 @@ fn PP_IDC(c): i64 {
 fn PP_DTRIV(base, p, end): i64 {
     while (p < end) {
         var c = load8(base + p);
-        if (c == 35) { p = PP_SKIPLINE(base, p, end); }
+        if (c == 35) { PP_DDIRCHK(base, p, end); p = PP_SKIPLINE(base, p, end); }
         elif (PP_DBLANK(c) == 1) { p = p + 1; }
         elif (c == 10) { p = p + 1; }
         elif (c == 13) { p = p + 1; }
         else { return p; }
     }
     return p;
+}
+
+# 1 iff the `#` at `p` opens a preprocessor directive: first non-blank byte of its line, and
+# one of the words PP_PASS / PP_IFDEF_PASS act on there.
+fn PP_DISDIR(base, p, end): i64 {
+    var q = p;
+    while (q > 0) { if (PP_DBLANK(load8(base + q - 1)) == 0) { break; } q = q - 1; }
+    if (q > 0) { if (load8(base + q - 1) != 10) { return 0; } }
+    if (ISIFDEF(base, p, end) == 1) { return 1; }
+    if (ISIFNDEF(base, p, end) == 1) { return 1; }
+    if (ISIF(base, p, end) == 1) { return 1; }
+    if (ISELIF(base, p, end) == 1) { return 1; }
+    if (ISELSE(base, p, end) == 1) { return 1; }
+    if (ISENDIF(base, p, end) == 1) { return 1; }
+    if (ISIFPLAT(base, p, end) == 1) { return 1; }
+    if (ISENDPLAT(base, p, end) == 1) { return 1; }
+    if (ISDEFINE(base, p, end) == 1) { return 1; }
+    return 0;
+}
+
+# ⛔ 6.6.8 — A PREPROCESSOR DIRECTIVE INSIDE A DERIVED DECLARATION IS REFUSED BY NAME. The walk
+# reads a `#` line as a comment, so `#ifdef X` / `b: i64;` / `#endif` counted `b` whatever X
+# was, while the parser — after PP_IFDEF_PASS evaluates the copied lines — saw one branch: the
+# codec keyed the wrong fields (garbage `"#ifdef"` keys before 6.6.7, the layout backstop's
+# misleading "not itself #derive'd" message after). Evaluating it here is not an option: the
+# walk runs in PP_PASS, before the defines of an earlier include are registered, so it could
+# pick the other branch from the one the parser compiles — silently. A conditional around the
+# WHOLE `#derive` + declaration works. Armed only while `_pp_dS` is set. CHANGELOG [6.6.8]
+fn PP_DDIRCHK(base, p, end): i64 {
+    if (_pp_dS == 0) { return 0; }
+    if (PP_DISDIR(base, p, end) == 0) { return 0; }
+    var n = 1;
+    while (p + n < end) { if (PP_IDC(load8(base + p + n)) == 0) { break; } n = n + 1; }
+    syscall(SYS_WRITE, 2, "error: #derive: a preprocessor directive (", 42);
+    syscall(SYS_WRITE, 2, base + p, n);
+    syscall(SYS_WRITE, 2, ") inside the declaration of ", 28);
+    var S = _pp_dS;
+    var k = 0;
+    while (load8(S + 0x197020 + k) != 0) { k = k + 1; }
+    syscall(SYS_WRITE, 2, S + 0x197020, k);
+    var hint = "; the derived code cannot follow a conditional field -- put the conditional around the whole #derive and declaration\n";
+    syscall(SYS_WRITE, 2, hint, 117);
+    syscall(SYS_EXIT, 1);
+    return 0;
 }
 
 # Refuse a byte the declaration grammar has no place for, naming it and the declaration.
@@ -1189,6 +1235,21 @@ fn PP_DERIVE_FLAG(S, base, q, bl): i64 {
     return 0;
 }
 
+# 6.6.8 — a directive between `#derive(...)` and its declaration was consumed as a comment line
+# below, so `#ifdef NOPE` there was dropped and the struct compiled anyway (and a `#define`
+# there never defined anything). Refused by name, as inside the body — see PP_DDIRCHK.
+# CHANGELOG [6.6.8]
+fn PP_DERIVE_PREDIR(base, q, bl): i64 {
+    var n = 1;
+    while (q + n < bl) { if (PP_IDC(load8(base + q + n)) == 0) { break; } n = n + 1; }
+    syscall(SYS_WRITE, 2, "error: #derive: a preprocessor directive (", 42);
+    syscall(SYS_WRITE, 2, base + q, n);
+    var m = ") between #derive(...) and the declaration it applies to -- put the conditional around both\n";
+    syscall(SYS_WRITE, 2, m, 92);
+    syscall(SYS_EXIT, 1);
+    return 0;
+}
+
 # Skip the lines between the entry `#derive(...)` and the declaration: `#` lines (stacked
 # derives and comments, indented or not) and blank lines. Returns the declaration's first
 # byte; `_pp_dndir` = the number of lines consumed, which the caller pads.
@@ -1207,6 +1268,7 @@ fn PP_DERIVE_SKIPDIRS(S, base, ip, bl): i64 {
         var c = load8(base + q);
         if (c == 10) { ip = q + 1; _pp_dndir = _pp_dndir + 1; }
         elif (c == 35) {
+            if (PP_DISDIR(base, q, bl) == 1) { PP_DERIVE_PREDIR(base, q, bl); }
             PP_DERIVE_FLAG(S, base, q, bl);
             ip = PP_SKIPLINE(base, q, bl);
             _pp_dndir = _pp_dndir + 1;
@@ -1554,6 +1616,7 @@ fn PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op): i64 {
         store8(S + 0x197020 + sni, c); sni = sni + 1; ip = ip + 1;
     }
     store8(S + 0x197020 + sni, 0);
+    _pp_dS = S;
     PP_DERIVE_HEADER(S, src_base, ip, bl, is_enum);
     var struct_start = decl_at;
     while (struct_start > 0) { if (load8(src_base + struct_start - 1) == 10) { break; } struct_start = struct_start - 1; }
@@ -1581,6 +1644,7 @@ fn PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op): i64 {
     if (body_open >= 0) {
         if (body_close > body_open) { fc = PP_DERIVE_FIELDS(S, src_base, body_open + 1, body_close); }
     }
+    _pp_dS = 0;
     ip = cp;
     # v6.5.20 — the closing-`}` line's tail (part 3 above). Its offset is HANDED OFF; the
     # entry-point handler flattens the generated bodies onto this same line, copies the

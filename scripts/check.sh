@@ -1232,3 +1232,8 @@ _chk_gate "$ROOT/tests/gates/toolchain/version_bump_doc_anchors.sh"
 # aarch64), page-faulted under wine, or wrote into dyld's frame on arm64 Mach-O, and every
 # read of the name was undefined. Host rows + qemu/wine legs; mutation-proven in the header.
 _chk_gate "$ROOT/tests/gates/frontend/toplevel_for_in.sh"
+
+# 6.6.8 (bite 1b) — a `#` directive inside a `#derive`d declaration (or between the `#derive`
+# line and it) is refused by name: the derive's walk read it as a comment and counted the fields
+# of every branch, while the parser compiled one. Mutation-proven in the header.
+_chk_gate "$ROOT/tests/gates/frontend/derive_directive_refused.sh"

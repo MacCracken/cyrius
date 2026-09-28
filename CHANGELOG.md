@@ -65,6 +65,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   codec cannot disagree on signedness again. Positive values and i64 fields emit the same text as
   before. Pinned by `tests/tcyr/derive/derive_serialize_signed.tcyr` (4 of 8 RED on 6.6.7; green
   on ecb, ach, cass and pi).
+- **A preprocessor directive inside a `#derive`d declaration — or between the `#derive(...)`
+  line and it — is refused by name.** (bite 1b; found by the 6.6.7 bite 5 review.) **Root
+  cause:** the derive's body walk reads a `#` line as a comment, so for `struct P { a: i64;` /
+  `#ifdef NOPE` / `b: i64;` / `#endif` / `c: i64; }` it counted `b` whatever `NOPE` was, while
+  the parser — after PP_IFDEF_PASS evaluated the copied lines — compiled one branch. On 6.6.6 that
+  built with rc 0 and a codec emitting `"#ifdef"` / `"#endif"` keys; on 6.6.7 the layout backstop
+  made it rc 1 with a message about non-derived nested structs, which is not the cause. The
+  pre-declaration case was worse: PP_DERIVE_SKIPDIRS consumed `#ifdef NOPE` above the struct as a
+  comment line, so the struct compiled although `NOPE` was undefined (and a `#define` there
+  defined nothing). **Fix:** refused by name (`error: #derive: a preprocessor directive (#ifdef)
+  inside the declaration of P; ...` / `... between #derive(...) and the declaration it applies
+  to`), for `#ifdef` `#ifndef` `#if` `#elif` `#else` `#endif` `#ifplat` `#endplat` `#define` at
+  the start of a line — a `#` comment, a mid-line `#`, and a stacked `#derive` are unaffected.
+  Evaluating the conditional in the walk was rejected: the walk runs in PP_PASS, before the
+  `#define`s of an earlier include are registered, so it could select the other branch from the
+  one the parser compiles — silently. A conditional around the whole `#derive` + declaration
+  works and is the documented form. No ecosystem source has either shape (679 files with a
+  `#derive` scanned). Gate `tests/gates/frontend/derive_directive_refused.sh` (8 rows,
+  mutation-proven; 4 RED on 6.6.7).
 
 ## [6.6.7] — 2026-09-27
 

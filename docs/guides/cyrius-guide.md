@@ -616,6 +616,15 @@ with the struct's real layout, which today means a field typed with a struct tha
 parser keeps the first layout, the check is not armed for the second, and that redefinition is a
 defect of its own (tracked separately).
 
+A preprocessor directive (`#ifdef`, `#ifndef`, `#if`, `#elif`, `#else`, `#endif`, `#ifplat`,
+`#endplat`, `#define`) **inside** a `#derive`d declaration, or between the `#derive(...)` line
+and the declaration, is a compile error naming the directive (v6.6.8). The derived code is
+generated from every line of the body, so a conditional field cannot follow the branch the
+parser compiles; put the conditional around the whole `#derive` + declaration instead. A `#`
+comment in the body is fine. `#derive(Serialize)` writes a negative `i8` / `i16` / `i32`
+field as the negative number it holds (v6.6.8; it was zero-extended — `-1` in an `i8` wrote
+`255`).
+
 ## Derive Serialize on an enum (v6.5.31)
 
 `#derive(Serialize)` and `#derive(Deserialize)` work on an **enum** as well as a struct, and
