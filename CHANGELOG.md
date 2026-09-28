@@ -26,7 +26,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   only mean a pre-1.57.7 kernel, so it falls back to polling #4 — there is deliberately no #108
   probe, which would misread 1.57.7/1.57.8. Capture is pipe → `sys_exec_redirect(1, w)` → spawn →
   close `w` → **read to EOF** → reap: the ring is 4080 B and a full-ring write blocks (1.57.9), so
-  reaping first deadlocks; an arm that never reached a spawn is cleared. `exec_cmd` splits the line
+  reaping first deadlocks. **A refused call still makes ONE #43** — the peer's
+  `_agnos_spawn_refuse` (a2 = 0x40000, answered -SPAWN_E_ARGS) — for an argv/env the builder
+  refused, a failed pipe, or a refused #62 arm alike: every #43 return clears the caller's spawn
+  arms, so a redirect or endowment armed for a call this module refused would otherwise reach the
+  caller's NEXT child (review of this bite; reproduced on agnos-qemu, where a refused 17-entry
+  `exec_vec` let the next child write into the caller's armed pipe). `exec_cmd` splits the line
   into argv (agnos has no shell). `wait_pid` on a pid that is not ours is `Err(PROC_ECHILD)` (now
   defined on agnos). Kernel floor 1.57.6, documented in the header. Verified on **agnos-qemu**
   (kernel 1.57.10, `-smp 1` and `-smp 4`, a 115 KB child seeded as `/bin/pchild`): 41/41 checks —

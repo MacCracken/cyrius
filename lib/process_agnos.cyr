@@ -31,7 +31,9 @@
 # Limits, all REFUSED up front, never truncated: argv <= SPAWN_ARGV_MAX (1024) bytes
 # including one NUL per entry and <= SPAWN_ARGC_MAX (16) entries; an env <= 1024 bytes and
 # 16 `KEY=VALUE` entries. An entry cannot carry a NUL byte. The argv/env blobs are built on
-# the stack: a spawn allocates nothing.
+# the stack: a spawn allocates nothing. A refusal still makes ONE #43 — the kernel's refusal
+# (_agnos_spawn_refuse) — because every #43 return clears the caller's spawn arms: a #62
+# redirect or endowment armed for a call this module refused must not reach the next child.
 #
 # Differences from the POSIX module, stated: there is no deadline (proc_set_timeout_ms is
 # POSIX-only, so calling it fails to compile here), so -2 is never returned; a capture
@@ -159,13 +161,23 @@ fn _agp_env_vec(b, env, is_str): i64 {
 
 # -- spawn / wait / capture --
 
+# End a verb that will NOT reach a spawn the way the kernel ends a refused one: through a #43
+# (_agnos_spawn_refuse), whose return clears every spawn arm the caller set — #62 redirects,
+# the channel endowment, the limits. ⛔ A bare `return` here would leave an arm the caller made
+# for THIS call armed for its NEXT child (agnos issue 2026-09-23 §3's class). Returns `code`.
+# CHANGELOG [6.6.8]
+fn _agp_refuse(code): i64 {
+    _agnos_spawn_refuse();
+    return code;
+}
+
 # Spawn the argv blob `b` (`len` bytes; < 0 = the builder refused it) with env blob `e`
 # (`elen`, 0 = default env) and a clean fd table. Returns the pid, or a negative code:
-# -SPAWN_E_* from the kernel, -SPAWN_E_ARGS for a blob the builder refused, or -1 (a
-# pre-1.57.6 kernel).
+# -SPAWN_E_* from the kernel, -SPAWN_E_ARGS for a blob the builder refused (still one #43 —
+# see _agp_refuse), or -1 (a pre-1.57.6 kernel).
 fn _agp_spawn(b, len, e, elen): i64 {
-    if (len < 0) { return 0 - SPAWN_E_ARGS; }
-    if (elen < 0) { return 0 - SPAWN_E_ARGS; }
+    if (len < 0) { return _agp_refuse(0 - SPAWN_E_ARGS); }
+    if (elen < 0) { return _agp_refuse(0 - SPAWN_E_ARGS); }
     if (elen == 0) { e = 0; }
     return sys_spawn_argv(b, len, e, elen, SPAWN_F_CLEANFD);
 }
@@ -225,18 +237,18 @@ fn _agp_drain(fd, buf, buflen): i64 {
 # write, so a reap-first parent deadlocks), and close our write end BEFORE reading (with it
 # open there is always a live writer, so the read never sees EOF). A full `buf` stops the
 # read and closes the read end — the child's further writes then fail (-1: agnos has no
-# SIGPIPE) and it runs to its end. An arm that did not reach a spawn is CLEARED, or it would
-# redirect whatever this process spawns next.
+# SIGPIPE) and it runs to its end. Every exit that does not reach a spawn goes through
+# _agp_refuse, or an arm (ours or the caller's) would redirect whatever this process spawns next.
 fn _agp_capture(b, len, e, elen, buf, buflen, stp): i64 {
     store64(stp, 0 - 1);
-    if (len < 0) { return 0 - SPAWN_E_ARGS; }
-    if (elen < 0) { return 0 - SPAWN_E_ARGS; }
+    if (len < 0) { return _agp_refuse(0 - SPAWN_E_ARGS); }
+    if (elen < 0) { return _agp_refuse(0 - SPAWN_E_ARGS); }
     var fds[16];
-    if (sys_pipe(&fds) < 0) { return 0 - 1; }
+    if (sys_pipe(&fds) < 0) { return _agp_refuse(0 - 1); }
     var rfd = load64(&fds);
     var wfd = load64(&fds + 8);
     if (sys_exec_redirect(1, wfd) < 0) {
-        sys_exec_redirect_clear();
+        _agp_refuse(0 - 1);
         sys_close(rfd);
         sys_close(wfd);
         return 0 - 1;

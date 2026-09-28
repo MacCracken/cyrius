@@ -36,8 +36,11 @@
 #   procarm   — #62 op 0 (arm fd 1) answers -1; REDIR_CLEAR still answers 0.
 #   procnoent — #43 answers -4 (-SPAWN_E_NOENT).
 #   procbig   — read#5 on fd 3 always fills the whole request (a child that never stops talking).
-# Every #43 is followed by a `blob` line — its argv blob read out of the child, each NUL shown
-# as `|` — and, when a3 is non-zero, an `env` line for the env blob.
+#   procpipe  — pipe#25 answers -1 (no pipe to capture through).
+# In every proc* mode a #43 with a1 = 0 is the peer's refusal (_agnos_spawn_refuse: a2 = 0x40000)
+# and answers -6 (-SPAWN_E_ARGS), as agnos 1.57.6+ does. Every other #43 is followed by a `blob`
+# line — its argv blob read out of the child, each NUL shown as `|` — and, when a3 is non-zero,
+# an `env` line for the env blob.
 # In every mode sock_recv#49 answers 0 (WOULD_BLOCK) unless the mode says otherwise,
 # sock_connect#47 / sock_listen#56 answer id 0, sock_peer#106 answers 127.0.0.1:8080 packed
 # ((0x7F000001 << 16) | 8080) and net_config#61 field 0 (net_ip) answers 10.0.2.15.
@@ -141,7 +144,12 @@ fn _st_proc_answer(mode, nr, k, a1, a3): i64 {
         if (_st_mode_is(mode, "procarm") == 1) { if (a1 == 1) { return 0 - 1; } }
         return 0;
     }
+    if (nr == 25) {
+        if (_st_mode_is(mode, "procpipe") == 1) { return 0 - 1; }
+        return 0;
+    }
     if (nr == 43) {
+        if (a1 == 0) { return 0 - 6; }
         if (_st_mode_is(mode, "procnoent") == 1) { return 0 - 4; }
         return 2;
     }
@@ -243,9 +251,13 @@ fn main(): i64 {
             return 0;
         }
         if (_st_is_proc(mode) == 1) {
+            var refused = 1;                  # a1 = 0: the peer's refusal #43 — no blob
+            if (load64(&regs + 112) != 0) { refused = 0; }
             if (nr == 43) {
-                _st_blob(pid, "blob", load64(&regs + 112), load64(&regs + 104) & 0xFFFF);
-                if (load64(&regs + 96) != 0) { _st_blob(pid, "env", load64(&regs + 96), load64(&regs + 56)); }
+                if (refused == 0) {
+                    _st_blob(pid, "blob", load64(&regs + 112), load64(&regs + 104) & 0xFFFF);
+                    if (load64(&regs + 96) != 0) { _st_blob(pid, "env", load64(&regs + 96), load64(&regs + 56)); }
+                }
             }
             if (nr == 25) {
                 syscall(101, 5, pid, load64(&regs + 112), 3);        # PTRACE_POKEDATA: read end

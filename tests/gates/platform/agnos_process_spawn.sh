@@ -68,6 +68,12 @@ blob() { awk '$1 == "blob" { sub(/^blob /, ""); print; exit }' "$T/$1.$2.log"; }
 envb() { awk '$1 == "env" { sub(/^env /, ""); print; exit }' "$T/$1.$2.log"; }
 nsc()  { awk -v n="$3" '$1 == "sc" && $2 == n { c++ } END { print c + 0 }' "$T/$1.$2.log"; }
 seq_of() { awk '$1 == "sc" && $2 != 999 && $2 != 0 { printf "%s%s", s, $2; s = " " } END { print "" }' "$T/$1.$2.log"; }
+# The #43s and the report marks, in order: R = the peer's refusal #43 (a1 = 0; a2 = 0x40000),
+# S = a real spawn, m<tag> = a syscall(999, tag, …) report.
+spawns() { awk '$1 == "sc" && $2 == 43 { printf "%s%s", s, ($3 == 0 ? "R" : "S"); s = " " }
+    $1 == "sc" && $2 == 999 { printf "%sm%s", s, $3; s = " " } END { print "" }' "$T/$1.$2.log"; }
+# The distinct a2 values of the refusal #43s (a1 = 0) — the reserved bit 18 alone is 262144.
+refusal_a2() { awk '$1 == "sc" && $2 == 43 && $3 == 0 { print $4 }' "$T/$1.$2.log" | sort -u | tr '\n' ' ' | sed 's/ $//'; }
 # Every syscall a legacy spawn needed and the rewrite must not make: spawn#3, open#7, mmap#27.
 legacy() { echo "$(nsc "$1" "$2" 3) $(nsc "$1" "$2" 7) $(nsc "$1" "$2" 27)"; }
 
@@ -101,9 +107,12 @@ trace cap procbig
 check "a child that never stops talking: the read stops at buflen, closes, and reaps (no hang)" \
     "64 7 0" "$(mark cap procbig 1)"
 trace cap procarm
-check "an arm the kernel refused is CLEARED (#62 REDIR_CLEAR = 512) and nothing is spawned" \
-    "512 0" "$(awk '$1 == "sc" && $2 == 62 && $3 == 512 { c = $3 } END { print c + 0 }' "$T/cap.procarm.log") $(nsc cap procarm 43)"
+check "an arm the kernel refused ends in the refusal #43 (it clears EVERY arm), nothing is spawned" \
+    "25 62 43 6 6 | R m1 | 262144" "$(seq_of cap procarm) | $(spawns cap procarm) | $(refusal_a2 cap procarm)"
 check "  …and exec_capture_status reports -1 / [-1, 0]" "-1 -1 0" "$(mark cap procarm 1)"
+trace cap procpipe
+check "no pipe: the refusal #43 still runs (a caller's arm must not outlive the call), -1 / [-1, 0]" \
+    "25 43 | R m1 | -1 -1 0" "$(seq_of cap procpipe) | $(spawns cap procpipe) | $(mark cap procpipe 1)"
 trace cap procnoent
 check "a spawn refused with -SPAWN_E_NOENT closes the read end and reports -1 / [-1, 0]" "-1 -1 0" \
     "$(mark cap procnoent 1)"
@@ -143,7 +152,7 @@ trace run procold
 check "1.57.6 kernel: run still waits for the exit (poll fallback)" "1 7 0" "$(mark run procold 1)"
 
 # ── axis 3 — the argv / env builders refuse what the kernel cannot carry, before any syscall ──
-echo "axis 3 — refusals happen up front (no #43 at all), never as a truncation:"
+echo "axis 3 — refusals happen up front, never as a truncation — and each is ONE refusal #43:"
 probe refuse 'var i = 0;
 while (i < 17) { sa(i, "/bin/child"); i = i + 1; }
 syscall(999, 1, exec_vec(av(17)), 0, 0);
@@ -161,7 +170,10 @@ sa(0, "/bin/child"); sa(1, "k");
 se(0, "NOEQUALS");
 syscall(999, 6, exec_env(av(2), ev(1)), 0, 0);
 var t, v = run(&big, 0, 0);
-syscall(999, 7, is_ok(t), v, 0);'
+syscall(999, 7, is_ok(t), v, 0);
+i = 0;
+while (i < 17) { sa(i, "/bin/child"); i = i + 1; }
+syscall(999, 8, exec_capture_status(av(17), &buf, 64, &st), load64(&st), load64(&st + 8));'
 trace refuse proc
 check "17 entries: -1, refused before any spawn" "-1 0 0" "$(mark refuse proc 1)"
 check "16 entries still run" "7 0 0" "$(mark refuse proc 2)"
@@ -170,7 +182,27 @@ check "an empty argv[0]: -1" "-1 0 0" "$(mark refuse proc 4)"
 check "an empty argv vec: -1" "-1 0 0" "$(mark refuse proc 5)"
 check "an env entry without '=': -1" "-1 0 0" "$(mark refuse proc 6)"
 check "run with a path over the blob: Err(SPAWN_E_ARGS = 6)" "0 6 0" "$(mark refuse proc 7)"
-check "exactly ONE #43 reached the kernel (the 16-entry one)" "1" "$(nsc refuse proc 43)"
+check "a capture of 17 entries: -1 / [-1, 0], and no pipe is made for it" "-1 -1 0 0" \
+    "$(mark refuse proc 8) $(nsc refuse proc 25)"
+# ⛔ Every #43 return clears the caller's spawn arms, so a refused call must still make ONE — the
+# kernel's refusal — or an arm the caller set for it redirects the NEXT child (agnos issue
+# 2026-09-23 §3's class; the peer's _agnos_spawn_refuse exists for exactly this).
+check "each refused call makes ONE refusal #43; only the 16-entry call spawns" \
+    "R m1 S m2 R m3 R m4 R m5 R m6 R m7 R m8" "$(spawns refuse proc)"
+check "  …and every refusal #43 is a2 = 0x40000 (the reserved bit alone), answered -6" "262144" \
+    "$(refusal_a2 refuse proc)"
+probe arm 'var i = 0;
+while (i < 17) { sa(i, "/bin/child"); i = i + 1; }
+sys_exec_redirect(1, 9);
+syscall(999, 1, exec_capture_status(av(17), &buf, 64, &st), 0, 0);
+sys_exec_redirect(1, 9);
+syscall(999, 2, exec_vec(av(17)), 0, 0);
+syscall(999, 3, exec_vec(av(2)), 0, 0);'
+trace arm proc
+check "a caller's #62 arm never outlives a refused verb: a refusal #43 follows each arm" \
+    "62 43 62 43 43 4" "$(seq_of arm proc)"
+check "  …before the next real spawn (capture refused, exec_vec refused, then the spawn)" \
+    "R m1 R m2 S m3" "$(spawns arm proc)"
 
 # ── axis 4 — env blobs, Str vecs, and the command line ──────────────────────────────────────
 echo "axis 4 — exec_env passes an env blob; the _str family reads Str lengths; exec_cmd splits a line:"
