@@ -38,10 +38,10 @@ unscheduled 6.x backlog. Whole-cycle framing plus v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.6.9** (2026-09-28) — cycc **1,359,272 B** (`.text` **1,188,224**) ·
-seed-derive **GREEN** · cross-OS on ecb/ach/cass/pi at the gate · self_compile: see CHANGELOG [6.6.8] ·
-**371** `.tcyr` (**124** in `crossos/`) · **104** `lib/*.cyr` · **254** shell gates under
-`tests/gates/<bucket>/` · **10 open issues** · **6 open proposals**.
+**Current head: v6.6.9** (2026-09-28, closed, awaiting the tag) — cycc **1,368,392 B** (`.text` **1,196,680**) ·
+seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi · self_compile **795 ms** ·
+**375** `.tcyr` (**128** in `crossos/`) · **104** `lib/*.cyr` · **269** shell gates under
+`tests/gates/<bucket>/` · **0 open issues** · **6 open proposals**.
 
 > ⚠ **Every figure above was DERIVED on the day, not carried** (re-derived 2026-09-27 at the 6.6.7 open).
 > `version-bump.sh` rewrites the version token, replaces the `(…)` after it with the bump date, and
@@ -115,7 +115,7 @@ borrowing yukti's `SYS_SOCKET`), vani **1.2.7** `5cdd402`, sigil **3.13.3** `92a
 **2.3.13** `ff97eec`, mabda **4.1.5** `2a9f67c`. sakshi 2.5.5, patra 1.15.0, niyama 1.0.12 and
 bayan 1.5.7 were folded from their existing tags.
 
-### 6.6.8 — CLOSED 2026-09-28 (re-cut at `f1c1d7d2` after CI's Test (AGNOS) job went red on the first tag)
+### 6.6.8 — SHIPPED 2026-09-28 (tag `6.6.8` @ `68eb2661`, a re-cut after CI's Test (AGNOS) job went red on the first tag)
 
 All eleven bites shipped (bite 1b — the nested-emitter and derive follow-ups — included), in six
 worktree lanes merged into main; detail in `CHANGELOG.md` [6.6.8]. The seven filed issues it fixed
@@ -132,41 +132,18 @@ raising a ratchet that only goes down.
 ⚠ **aarch64 size tax measured at the merge:** `build/cycc-native-aarch64` `.text` +82,952 B — bite 3's
 nine ESYSXLAT rows copied into each of 605 syscall sites (backlog: a shared translation stub).
 
-### 6.6.9 — remaining correctness and polish
+### 6.6.9 — CLOSED 2026-09-28 (awaiting the tag)
 
-| # | Bite | Items | Lane | src | Size |
-|---|---|---|---|---|---|
-| 1 | The global var table scales linearly (FNV name index, full-byte lexer hash, `gvar_toks` 4096 cap lifted) | [compile time is quadratic in the global count](issues/archived/2026-09-20-compile-time-is-quadratic-in-the-global-count.md) · audit: weak lexer identifier hash; `gvar_toks` 4096 deferred-init cap | S1-front | ✔ commits `build/cycc` | L |
-| 2 | One top-level attribute dispatcher for all 7 forks; undefined-prepass parity; aarch64 refuses an undefined tail call | [aarch64: #deprecated never fires](issues/archived/2026-09-22-agnodrm-aarch64-deprecated-warning-never-fires.md) · [aarch64: undefined tail call not refused](issues/archived/2026-09-22-agnodrm-aarch64-undefined-tail-call-not-refused.md) · audit: aarch64 forks skip the undefined prepass; "large static data" warns on x86 only | S1-front | ✔ | L |
-| 3 | Diagnostic exits: no rc 139 after a reported error on aarch64/cx; nullary `: stack` variants not flagged as dropped tags | [kybernet: mixed-return diagnostic misfires on nullary None](issues/archived/2026-09-23-kybernet-mixed-return-diagnostic-misfires-on-nullary-none.md) · audit: aarch64 polyfill ERR_MSG → ECALLFIX segfault | S1-front | ✔ | M |
-| 4 | sin/cos/atan correct on every target; x86 off bare `fsin`/`fcos` | audit: aarch64 sin/cos/atan polyfill accuracy; x87 `fsin`/`fcos` on large arguments | S2-x86 | ✔ source only | L |
-| 5 | POSIX PE open semantics (`CREATE_NEW` never follows a reparse point; `is_symlink` on Windows; `O_NOFOLLOW` refuses name surrogates; `O_DIRECTORY`) | [patra: O_NOFOLLOW accepted and ignored on PE](issues/archived/2026-09-23-patra-o-nofollow-accepted-and-ignored-on-pe.md) · tail: `O_DIRECTORY`/`O_NOFOLLOW` on PE (default taken: refuse name surrogates, open other reparse points) · audit: `file_create_exclusive`'s agnos pre-check is not atomic | S2-x86 | ✔ | XL |
-| 6 | `lib/bench.cyr`: min/max admitted by op count, min ≤ avg | [hisab: bench min above mean](issues/archived/2026-09-21-hisab-bench-min-above-mean-below-resolution-bar.md) | L-stdlib | — | L |
-| 7 | **Stdlib self-sufficiency**, per module family (A foundation, B text/collections + unicode, C io/fs/process, D concurrency, E net/tls), each family shipping complete, with a per-target ratchet gate | tail: 46 of 103 modules compile alone with undefined fns (the tls_native family ships with 6.6.7's fold) | L-stdlib | — | L |
-| 8 | distlib: the profile prune ignores comments and strings; the verify unit splices named-dep modules; `cbt` `_file_size` works on PE | [vani: distlib profile deps count comments](issues/archived/2026-09-26-vani-distlib-profile-deps-counts-comments-and-strings-as-references.md) · [libro: distlib verify attributes named-dep symbols to stdlib](issues/archived/2026-09-21-distlib-verify-loop-attributes-named-dep-symbols-to-stdlib-fold-from-libro.md) · audit: `_file_size` is raw syscall 4, -38 on the PE CLI | L-cbt | — | M |
-| 9 | `cyrius deps` integrity | [patra: deps never locks new stdlib leaves](issues/archived/2026-09-23-patra-deps-never-locks-new-stdlib-leaves.md) · [deps cache check reports an unwritable tmp as tampering](issues/archived/2026-09-27-deps-cache-check-reports-an-unwritable-tmp-as-a-tampered-cache.md) · tail: `[build].modules` ignored without `[deps]` | L-cbt | — | L |
-| 10 | CLI verdicts said once; temp hygiene | tail: `cyrius run` double verdict · tail: `_self_host_step_macos` leak · audit: `cmd_self` uses fixed shared `/tmp` names — **CVE-49** | L-cbt | — | M |
-| 11 | CI delegates to the check driver under a no-skip mode; driver SKIPs stop counting as PASS | tail: CI inlines its own copies of local gates · audit: 86 driver SKIP rows scored PASS | L-ci | — | M |
-| 12 | `lib/http.cyr` connects to a host by NAME and bounds its request | found by the 6.6.8 bite 3 fix review: `http_*` passes the host STRING pointer to `sock_connect` as the IPv4 address, so it cannot connect to ANY host; `_http_build_request` writes past its fixed 2048-byte buffer — **CVE-50** | L-net (own lane; merge before L-stdlib, whose bite 7 family E also edits `http.cyr` includes) | — | S–M |
+All twelve bites shipped (bite 12 — `lib/http.cyr`, CVE-50 — added by the user from the 6.6.8 review
+finds); detail in `CHANGELOG.md` [6.6.9]. The last ten filed issues are fixed and archived — the open
+issue queue is empty. **CVE-49** (bite 10) and **CVE-50** (bite 12); the next free id is 51. No sibling
+release. self_compile −17 % (bite 1's global-name index).
 
-Lanes: S1-front owns the parser files and all seven `src/main*.cyr`; S2-x86 owns `lib/math.cyr`,
-`lib/syscalls_windows.cyr`, `lib/io.cyr`, `lib/fs.cyr` and reroute ids `0xF03D`–`0xF03F`; L-cbt owns every
-`cbt/*.cyr`; L-ci owns `ci.yml`, `scripts/check.sh`, `programs/checks/*.cyr`. Merge S1 → S2 → L-stdlib →
-L-cbt → L-ci. Expected self_compile gain from bite 1: roughly 19 %.
-
-**Placed here from the 6.6.7 reviews:**
-
-- **bite 2** — a top-level `#assert` ends the declaration phase (every later struct/enum is refused).
-- **bite 3** — (from the 6.6.8 reviews) the aarch64 compiler segfaults (rc 139) right after printing its `f64_atan … requires include lib/math.cyr` error — this bite's exact class; a duplicate struct definition is accepted silently and the first layout wins; an
-  enum member and a top-level var of the same name with different values raise no duplicate warning
-  (yukti and mabda both declare `PCI_VENDOR_AMD`, differently).
-- **bite 5** — on PE a var-held syscall number at argc 2 gets -38 with no compile-time warning.
-- **bite 7** — `lib/tls.cyr` and `lib/syscalls.cyr` do not compile alone; three bayan-including
-  `.tcyr` compile with undefined `file_*`/`sock_*` (trap stubs).
-- **bite 8** — `cyrius.exe` under wine does not find tools in its own `bin/`.
-- **Not placed — a design call:** calling an undefined function is only a warning. Making it an error
-  changes every consumer build; asked when 6.6.9 bite 2 opens, with the default of keeping it a
-  warning outside tail position.
+⚠ **Merge lessons, third release running:** bite 7 (stdlib self-sufficiency) needed two small hunks in
+files lane S2 owned, which S2's bite never picked up — the lane handed over a verified patch instead of
+crossing its ownership line, applied at integration; and that same self-sufficiency made a gate's
+"file that cannot resolve" fixture (a copy of `lib/fs.cyr`) resolve. When a plan gives one lane's
+bite a dependency on another lane's file, name the hand-off in BOTH lanes' specs.
 
 ### 6.6.10 — the 6.6.8 review finds (added by the user 2026-09-28)
 
@@ -212,6 +189,46 @@ Groups:
   never runs (measure the non-crossos corpus on ecb/ach before scoping).
 - **Sibling follow-ups:** yantra drops `sock_send`'s count; kriya issues raw x86 90/91/97/21 that
   misroute on aarch64; ganita `pow`'s general path is off by tens to hundreds of ulp for large |y·ln x|.
+
+### Found by the 6.6.9 reviews — ⚠ RELEASE PENDING THE USER'S CALL
+
+~45 out-of-scope finds, deduplicated. 6.6.10 already holds groups B–G (~30 items), so these would make it
+the largest of the four; where they go is asked, not assumed. Grouped:
+
+- **H. memory safety + silent acceptance (compiler, src)** — a top-level destructure after the first
+  statement writes its names past the var table BEFORE growing it (at the 8192 boundary it overwrites
+  `var_sizes[0]`/`var_types[0]` and loses the second name); `too many await suspend points` reports and
+  keeps storing past `_coro_rcp[512]`; `cycc` compiles `return @@@;` with exit 0 (so `cyrius lint`
+  passes it); `#assert` cannot use enum constants; `(call site may be unreachable)` is printed for
+  references judged reachable; `_tl_deprecated` clears the panic latch unconditionally; the aarch64
+  compiler never reports an undefined fn called from a dead fn; cx stubs `_read_env` (so `CYRIUS_ASYNC`
+  can never be set on `cycc_cx`); the x86 Mach-O compiler's `EMITELF_OBJ` uses `brk` (syscall 12),
+  unrouted on macOS; the x86 dead-static hint never fires for an over-budget local array in a dead fn.
+- **I. Windows** — `lib/fs_win.cyr` `_fs_widen` reads to NUL with no bound (`is_dir`, `dir_list`); the PE
+  `SYS_OPEN` reroute widens byte by byte (ASCII, 260 units), so `cyrius.exe` cannot open a non-ASCII or
+  long path; the Windows CLI ignores `CYRIUS_RESOLVED=1`; `net.cyr` sockets are -ENOSYS on PE, so
+  `http_*` cannot work on Windows at all and the resolver's POSIX paths become `<drive>:\etc\hosts`.
+- **J. stdlib** — `http.cyr`'s Host header drops a non-default port and `_http_parse_url`'s control-byte
+  check is narrower than its comment; `bench_batch_stop(b, 0)` / `bench_run_batch(…, 0, …)` SIGFPE;
+  `load_environ` reads only 8,191 bytes of `/proc/self/environ`; `lib/sync.cyr` has no cx arm (so
+  `thread.cyr` cannot compile for cx) and `tls`/`tls_native` overflow the cx codebuf; macOS CLI children
+  do not inherit the user's PATH (so `cyrius deps` cannot hash on ecb/ach); the PENDING tier (`log`,
+  `ws`, `ws_server`) also lacks first-party definers; `programs/vidya.cyr` has 25 undefined fns alone.
+- **K. tools + harness** — shell gates have no SKIP exit code, so `CYRIUS_CHECK_NO_SKIP` cannot reach
+  them; CI's "CLI cross-compile" step is still a hand copy the census does not cover; `NO_SKIP` does
+  not fail a selected run that tallied zero rows; `check_gate_census.sh` / `check_targeted_run_selects.sh`
+  exit 2 under `bash -eo pipefail`; distlib sidecars depend on the host OS that runs them, and the
+  verify loop's 6-round cap returns success without a final compile; `cmd_soak`'s step-failure lines
+  fabricate a flat-1 status; `bench_timer_floor_measured.sh`, `pe_fsync_flushes.sh` and
+  `distlib_profile_sidecar.sh` hard-code their tool paths; the capacity row prints a stale
+  `fail@28000fns`; stale comments (the 4096-cap line in `syscalls_x86_64_linux.cyr`, the ganita fold
+  header's `lib/matrix.cyr`, cbt's "is_symlink is 0 on Windows", several gate descriptions).
+- **Sibling / ecosystem** — stiva and kavach both declare `struct AuditEntry` (distlib now refuses
+  stiva's sidecar); bote's clean resolution puts the monolithic sigil and the thin sigil-mldsa in one
+  unit; dhvani's named dep naad fails a `: stack` return binding; kavach needs re-vendoring in mehman,
+  stiva, aethersafha, agnosai and agnostic; sandhi still falls back to a clock-ns DNS TXID when
+  getrandom fails (a CVE-19 residual); ganita's `f32_sin`/`cos` NaN guard rests on a premise 6.6.9's
+  trig removed.
 
 ### Sibling follow-ups found at the 6.6.7 fold (each is that repo's next patch release)
 

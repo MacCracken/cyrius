@@ -6,6 +6,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.9] — 2026-09-28
 
+The third batch release (roadmap.md, *The 6.6.7 → 6.6.10 batch*): twelve bites in six worktree lanes —
+compile time LINEAR in the global count (a name index over the var table, a full-byte lexer hash, the
+`gvar_toks` 4096 cap lifted); one top-level directive dispatcher for all seven forks, with the undefined
+pre-pass and static-data advisory on every backend; diagnostic exits (no rc 139 after a reported error);
+sin/cos/atan ≤ 1 ulp on every target with x86 off bare `fsin`/`fcos`; POSIX open semantics on Windows
+(`CREATE_NEW` never follows a reparse point, `O_NOFOLLOW`, `O_DIRECTORY`, `is_symlink`); bench statistics
+(min ≤ avg); stdlib self-sufficiency across families A–E; distlib and `cyrius deps` integrity; CLI
+verdicts said once and `cyrius self` off shared `/tmp` (**CVE-49**); CI delegating to the check driver
+with SKIP no longer scored as PASS; and `lib/http.cyr`, which could not connect to ANY host and overran
+its request buffer (**CVE-50**). The last ten filed issues are fixed — **the open issue queue is empty.**
+
+**Bench:** self_compile **961 → 795 ms (−17 %)**; same-box A/B, three rounds: 6.6.8's compiler ~980 ms,
+6.6.9's ~797 ms (−18.6 %) — bite 1's name index, which also takes a 20,000-global program from ~4.9 s to
+75 ms. cycc **1,359,272 → 1,368,392 B** (+9,120, +0.7 %; `.text` 1,196,680).
+
 ### Fixed
 
 - **Compile time is linear in the number of globals and enum members — it was quadratic.**
