@@ -215,21 +215,34 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   since the exit sweep is rmdir-only, the whole `cyrius-<pid>` dir (reproduced on ecb and ach).
   **Fix:** the POSIX arm is native — `_self_host_step` twice and `_self_host_same`, the helpers
   `cmd_soak` already used, over `_cbt_tmpexe`/`_cbt_tmpfile` names in the private 0700 dir —
-  and removes what it staged on every path; a failed step is named (`error: self-host step 1
-  (the installed compiler) exited 127 compiling: src/main.cyr`) instead of folding into
-  `FAIL: cycc!=cycc`, and a missing compiler is named up front. `_copy_binary` removes dst on any
+  and removes what it staged on every path; a failed step is named — which step, the compiler
+  BY PATH (step 1's is `_cc`, `./build/cycc` in this repo, not necessarily "the installed
+  compiler"), the source, and what the compiler actually did (`error: self-host step 1
+  (./build/cycc, compiling src/main.cyr) exited 42`, `… was killed by signal 11`, `… exited 0
+  but wrote no output`) — instead of folding into `FAIL: cycc!=cycc`, and a missing compiler is
+  named up front. `_pulsar_raw_compile` now records WHY it returned non-zero
+  (`_raw_last_how`, rendered by `_raw_fail_describe`): it returned a flat 1 for a signal death,
+  an exit-0-with-no-output and a failed rename, and the first cut of this message quoted that
+  as "exited 1" — a status the compiler never returned (the class 6.6.6 bite 24 removed from
+  `cyrius build`). The PE arm (`_win_cmd_self`) names its step failures the same way. `_copy_binary` removes dst on any
   failure; `_self_host_step_macos` unlinks its copy on every return and names a failed chmod
   (a failed ad-hoc sign stays non-fatal: Intel macOS refuses it and runs the binary anyway).
   Entry appended to `docs/audit/2026-09-03-security-audit.md`; the next CVE id is 50. Gate:
   `cbt_no_shared_tmp_paths.sh` — no `/tmp/` in any cbt string literal (a comment- and
   char-literal-aware scanner with a self-test and a 2000-literal floor), `cyrius self` over a
   stub compiler (PASS with step 2 run from the private dir; step-1, step-2, mismatch and 0-byte
-  failures named, non-zero, nothing left under `$TMPDIR`), the extracted `_copy_binary` run on an
-  empty and an unreadable source, and a static every-return-unlinks check on the macOS step. The
-  6.6.8 `cmd_self` fails axes 1-5 and 3b; each of three one-line mutants fails its own axis.
+  failures named, non-zero, nothing left under `$TMPDIR`; a SIGSEGV'd step-1 compiler reads
+  `was killed by signal 11` and an empty output reads `exited 0 but wrote no output`, each with
+  the compiler's path), the extracted `_copy_binary` run on an empty and an unreadable source,
+  and a static every-return-unlinks check on the macOS step. The 6.6.8 `cmd_self` fails axes
+  1-5 and 3b; the flat-1 first cut fails 3, 3c, 3d and 4; each of five one-line mutants fails
+  its own axis.
   `cbt_fork_sites_have_pe_arm.sh`'s fork-site floor drops 16 → 15 (the script's fork is gone).
   **Verified on real hardware** with this tree's CLI and compiler: `cyrius self` PASSes on ecb,
-  ach and pi with nothing left behind, and the 0-byte compiler is refused on all three.
+  ach and pi with nothing left behind, and the 0-byte compiler is refused on all three (the
+  6.6.8 CLI PASSed it, rc 0, on each). Stub compilers that exit 42, die of SIGSEGV and exit 0
+  with no output are each reported as such, with the compiler's path, on ecb, ach and pi; on
+  cass the PE arm names a stub that exits 42 by path and still PASSes the real self-host.
 
 ### Downstream
 
@@ -239,8 +252,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (compiler exit N)` (check — now wholly on **stderr**; its name used to go to stdout) and
   `FAIL: <file>: compile error (compiler exit N)` (test). A script that grepped `(compile error)`
   or read check's failing file name from stdout must follow. `cyrius self` names a failed step
-  (`error: self-host step N (…) exited R compiling: <src>`) instead of printing `FAIL: cycc!=cycc`
-  for a step that never produced a compiler.
+  (`error: self-host step N (<compiler>, compiling <src>) exited R` — or `was killed by signal
+  S` / `exited 0 but wrote no output`) instead of printing `FAIL: cycc!=cycc` for a step that
+  never produced a compiler; on Windows this replaces `self-host: the installed compiler could
+  not compile: <src>`.
 - **Stdlib-only projects gain a `cyrius.lock` on their next `cyrius deps` / `cyrius build`**
   (41 repos under `~/Repos` have none today) — commit it. **itihas** (`lib/boxed.cyr` unlocked,
   no pin trailer) and **cyrius-bb** (a tracked 0-byte `cyrius.lock` over 53 `lib/` files) fail

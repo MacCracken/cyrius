@@ -693,16 +693,18 @@ cbt string.
 **Also found while fixing it (same script, no separate id).** The script scored a **0-byte
 compiler as a PASS**, rc 0: `/bin/sh` runs an empty executable as an empty SCRIPT (exit 0, no
 output), so both steps "succeeded" and `cmp` of two empty files is equal. Measured with the
-6.6.8 CLI on x86-64 Linux, pi and ach — a green self-host verdict for no compiler at all.
+6.6.8 CLI on x86-64 Linux, pi, ach and ecb — a green self-host verdict for no compiler at all.
 
 **Fix.** The POSIX arm is native: `_self_host_step(_cc, src, t1)`, `_self_host_step(t1, src,
 t2)`, `_self_host_same(t1, t2)` — the helpers `cmd_soak` already used — over `_cbt_tmpexe` /
 `_cbt_tmpfile` names inside the private directory, removing what it staged on every path. The
 step runs the compiler RAW (no `compile()` prepend), signs a COPY on macOS, and refuses an
 empty output; `_self_host_same` has a non-empty floor, so a 0-byte compiler is now
-`error: self-host step 1 (the installed compiler) exited 127` on Linux and `could not stage a
-signable copy` on macOS. A failed step is named with its status and source instead of folding
-into `FAIL: cycc!=cycc`. Packed with the same bite's temp-hygiene fix to the helper it now
+`error: self-host step 1 (./build/cycc, compiling src/main.cyr) exited 127` on Linux and
+`could not stage a signable copy` on macOS. A failed step is named — the step, the compiler by
+path, the source, and what it actually did (`exited N`, `was killed by signal S`, `exited 0 but
+wrote no output`; never a status the compiler did not return) — instead of folding into
+`FAIL: cycc!=cycc`. Packed with the same bite's temp-hygiene fix to the helper it now
 shares: `_copy_binary` removes its dst when it fails, and `_self_host_step_macos` removes its
 staged copy on every return — before, a failed stage (a 0-byte or unreadable `cc`, ENOSPC
 mid-copy) left `selfhost_signed` behind and, because the exit sweep is rmdir-only, the whole
@@ -718,4 +720,6 @@ empty; the real `_copy_binary`, extracted and run, leaves no dst for an empty or
 source. The 6.6.8 `cmd_self` fails axes 1-5 and 3b. **On real hardware** with this tree's CLI
 and a compiler built from this tree: `cyrius self` PASSes on ecb (macOS arm64), ach (Intel
 macOS) and pi (aarch64 Linux) with nothing left under the temp base, and the 0-byte compiler is
-refused on all three where the 6.6.8 CLI printed PASS.
+refused on all three where the 6.6.8 CLI printed PASS (rc 0). On ecb, ach and pi stub
+compilers that exit 42, die of SIGSEGV and exit 0 with no output are each reported as such; on
+cass the PE arm names a failing step by compiler path and still PASSes the real self-host.

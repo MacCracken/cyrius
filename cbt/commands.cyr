@@ -877,13 +877,13 @@ fn cmd_self(): i64 {
     var t2 = _cbt_tmpfile("self_b");
     var s1 = _self_host_step(_cc, self_src, t1);
     if (s1 != 0) {
-        _self_step_failed(1, s1, self_src);
+        _self_step_failed(1, s1, self_src, _cc);
         sys_unlink(t1);
         return 1;
     }
     var s2 = _self_host_step(t1, self_src, t2);
     if (s2 != 0) {
-        _self_step_failed(2, s2, self_src);
+        _self_step_failed(2, s2, self_src, 0);
         sys_unlink(t1);
         sys_unlink(t2);
         return 1;
@@ -899,19 +899,27 @@ fn cmd_self(): i64 {
     return 1;
 }
 
-# `cyrius self`'s named step failure: which step, its status, and the source. A step that
-# already named its own failure (`_self_host_step_macos`'s stage refusal returns -1 after
-# `_err_ctx`) is not given a second, vaguer line. CHANGELOG [6.6.9]
-fn _self_step_failed(step, rc, src): i64 {
+# `cyrius self`'s named step failure: which step, WHICH compiler, what it did, and the
+# source. A step that already named its own failure (`_self_host_step_macos`'s stage
+# refusal returns -1 after `_err_ctx`) is not given a second, vaguer line.
+# ⚠ Step 1's compiler is NAMED, not described: it is `_cc`, which in this repo is
+# `./build/cycc` and elsewhere may be a sibling of the wrapper — calling it "the installed
+# compiler" sent the user to the wrong binary. `cc` = 0 means step 1's own output. What it
+# DID comes from `_raw_fail_describe` (cbt/pulsar.cyr): a signal or an empty output is said
+# as such, never quoted as "exited 1". CHANGELOG [6.6.9]
+fn _self_step_failed(step, rc, src, cc): i64 {
     if (rc < 0) { return 0; }
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "self-host step ");
     str_builder_add_int(sb, step);
-    if (step == 1) { str_builder_add_cstr(sb, " (the installed compiler) exited "); }
-    else { str_builder_add_cstr(sb, " (the freshly built compiler) exited "); }
-    str_builder_add_int(sb, rc);
-    str_builder_add_cstr(sb, " compiling");
-    _err_ctx(str_data(str_builder_build(sb)), src);
+    str_builder_add_cstr(sb, " (");
+    if (cc != 0) { str_builder_add_cstr(sb, cc); }
+    else { str_builder_add_cstr(sb, "the compiler step 1 built"); }
+    str_builder_add_cstr(sb, ", compiling ");
+    str_builder_add_cstr(sb, src);
+    str_builder_add_cstr(sb, ") ");
+    _raw_fail_describe(sb, rc);
+    _err(str_data(str_builder_build(sb)));
     return 0;
 }
 

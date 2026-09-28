@@ -26,8 +26,10 @@
 #      Floor: the scan must see at least 2000 literals.
 #   2. `cyrius self` with a stub compiler that writes itself: PASS, rc 0; step 2 ran from
 #      under $TMPDIR (the private dir), never from a `/tmp/cyr_*` name; $TMPDIR is empty after.
-#   3. step 1 fails (stub exits 42): the step and its status are NAMED, rc != 0, no PASS, and
-#      $TMPDIR is empty after (nothing leaked on the failure path).
+#   3. step 1 fails (stub exits 42): the step, its compiler BY PATH and its status are NAMED,
+#      rc != 0, no PASS, and $TMPDIR is empty after (nothing leaked on the failure path).
+#   3c. step 1's compiler dies of SIGSEGV: "was killed by signal 11", no status quoted.
+#   3d. step 1's compiler exits 0 and writes nothing: "exited 0 but wrote no output".
 #   3b. a 0-byte compiler: no PASS, rc != 0 (the 6.6.8 script scored it PASS, rc 0).
 #   4. step 2 fails (the staged copy exits 3): named as step 2, rc != 0, $TMPDIR empty.
 #   5. the two outputs differ: `FAIL: cycc!=cycc`, rc 1, $TMPDIR empty.
@@ -43,6 +45,10 @@
 #   M3. `_self_host_step_macos` copy-failure branch without its unlink -> RED axis 7
 #   M4. cmd_self's step-2 failure branch drops `sys_unlink(t1)` -> RED axis 4 (the private
 #       dir survives, so axis 5's emptiness row reads it too)
+#   M5. the bite's first cut (`_pulsar_raw_compile`'s flat 1 quoted as "exited 1", step 1
+#       called "the installed compiler")                -> RED axes 3, 3c, 3d, 4
+#   M6. `_raw_fail_describe` ignoring the signal case     -> RED axis 3c only
+#   M7. `_raw_fail_describe` ignoring the empty-output case -> RED axis 3d only
 #
 # ⚠ NO `set -e`: failing verbs are the data.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -127,6 +133,8 @@ fn has_priv(p, n): i64 {
 }
 fn main(): i64 {
     if (MODE == 1) { return 42; }
+    if (MODE == 4) { store64(0, 1); return 0; }
+    if (MODE == 5) { return 0; }
     var n = syscall(89, "/proc/self/exe", &pth, 4000);
     if (n < 0) { return 90; }
     var lfd = syscall(2, LOG, 1089, 420);
@@ -174,15 +182,32 @@ if [ ! -s "$D/bin/cycc" ]; then bad "the stub compiler did not build — axes 2-
   tmp_empty "pass"
 fi
 
-# 3 — step 1 fails.
+# 3 — step 1 fails. The line names the compiler BY PATH (it is `_cc`, which need not be "the
+# installed compiler" — in this repo it is ./build/cycc) and says what it did.
+S1="self-host step 1 ($D/bin/cycc, compiling src/main.cyr)"
 stub 1; self_run
-if [ "$RC" != 0 ] && echo "$OUT" | grep -q 'self-host step 1 .* exited 42' && ! echo "$OUT" | grep -q PASS; then
-  ok "a failed step 1 is named with its status (42), rc $RC"
-else bad "step-1 failure not named or not failing (rc $RC): $OUT"; fi
+if [ "$RC" != 0 ] && echo "$OUT" | grep -qF "$S1 exited 42" && ! echo "$OUT" | grep -q PASS; then
+  ok "a failed step 1 names its compiler and its status (42), rc $RC"
+else bad "step-1 failure not named (want '$S1 exited 42') or not failing (rc $RC): $OUT"; fi
 tmp_empty "step 1 failed"
 
+# 3c — step 1's compiler is killed by a signal. It never exited, so no status is quoted: the
+# 6.6.9 first cut read "exited 1" here, a status the compiler never returned.
+stub 4; self_run
+if [ "$RC" != 0 ] && echo "$OUT" | grep -qF "$S1 was killed by signal 11" && ! echo "$OUT" | grep -q 'exited'; then
+  ok "a step-1 compiler killed by SIGSEGV is said as such, no status quoted (rc $RC)"
+else bad "a SIGSEGV'd step-1 compiler not reported as a signal (want '$S1 was killed by signal 11', no 'exited'; rc $RC): $OUT"; fi
+tmp_empty "step 1 killed"
+
+# 3d — step 1's compiler exits 0 and writes nothing: said as such, not "exited 1".
+stub 5; self_run
+if [ "$RC" != 0 ] && echo "$OUT" | grep -qF "$S1 exited 0 but wrote no output" && ! echo "$OUT" | grep -q 'exited 1'; then
+  ok "a step-1 compiler that exits 0 with no output is said as such (rc $RC)"
+else bad "an empty step-1 output not reported as such (want '$S1 exited 0 but wrote no output'; rc $RC): $OUT"; fi
+tmp_empty "step 1 wrote nothing"
+
 # 3b — a 0-byte "compiler" is not a fixpoint. The 6.6.8 script PASSED here, rc 0 — measured on
-# x86-64 Linux, pi and ach: /bin/sh runs an empty executable as an empty SCRIPT (exit 0, no
+# x86-64 Linux, pi, ach and ecb: /bin/sh runs an empty executable as an empty SCRIPT (exit 0, no
 # output), so both steps "succeeded", and `cmp` of two empty files is equal.
 : > "$D/bin/cycc"; chmod +x "$D/bin/cycc"; self_run
 if [ "$RC" != 0 ] && ! echo "$OUT" | grep -q PASS; then ok "a 0-byte compiler does not PASS (rc $RC)"
@@ -191,7 +216,7 @@ tmp_empty "0-byte compiler"
 
 # 4 — step 2 fails.
 stub 2; self_run
-if [ "$RC" != 0 ] && echo "$OUT" | grep -q 'self-host step 2 .* exited 3' && ! echo "$OUT" | grep -q PASS; then
+if [ "$RC" != 0 ] && echo "$OUT" | grep -qF 'self-host step 2 (the compiler step 1 built, compiling src/main.cyr) exited 3' && ! echo "$OUT" | grep -q PASS; then
   ok "a failed step 2 is named with its status (3), rc $RC"
 else bad "step-2 failure not named or not failing (rc $RC): $OUT"; fi
 tmp_empty "step 2 failed"
