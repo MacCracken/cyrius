@@ -2939,6 +2939,17 @@ fn _distlib_splice_file(sb, path): i64 {
     return 0;
 }
 
+# 1 iff the cstr vec `v` (0 = empty) holds `name`.
+fn _distlib_vec_has(v, name): i64 {
+    if (v == 0) { return 0; }
+    var i = 0;
+    while (i < vec_len(v)) {
+        if (streq(vec_get(v, i), name) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
 # The fixpoint loop itself. Returns the number of leaves RE-ADDED (0 = the inferred set was
 # already sufficient, which is the answer we want and cannot get any other way).
 fn _distlib_verify_leaves(leaves, out_path): i64 {
@@ -3768,10 +3779,11 @@ fn _distlib_leaf_referenced_d(leaf, bundle, blen, depth): i64 {
         path = str_data(str_builder_build(gsb));
         if (file_exists(path) == 0) { return 1; }
     }
-    var lbuf = alloc(1048576);
-    var llen = file_read_all(path, lbuf, 1048575);
-    if (llen <= 0) { return 1; }
-    store8(lbuf + llen, 0);
+    # Read WHOLE (6.6.9): the 1 MiB cap cut mabda.cyr (1,368,705 B) and sigil.cyr off mid-file,
+    # so a declaration past the cap could not keep its leaf.
+    var llen = 0;
+    var lbuf = file_read_whole(path, &llen);
+    if (lbuf == 0 || llen <= 0) { return 1; }
     # v6.5.29 — a leaf that is a DISPATCHER defines almost nothing itself. `lib/syscalls.cyr`
     # is 8 KB of `#ifdef` + `include` with TWO top-level definitions; every `sys_*` wrapper
     # lives in a per-arch peer it includes. Scanning only this file therefore found no
@@ -3917,19 +3929,54 @@ fn _distlib_union_declared_stdlib(leaves, mbuf, mlen): i64 {
     return added;
 }
 
+#
+# ⛔ 6.6.9 — ONLY CODE IS A REFERENCE. The bundle was matched as raw text, so a stdlib name in a
+# `#` comment or a string literal kept its leaf: "Safe to run twice" kept `process` (`fn run`),
+# and with it `vec`, `str` and `fmt` through the verify loop — vani's `core` sidecar went from 3
+# leaves to 8 on a comment edit. The bundle's non-code bytes are blanked once, length-preserving,
+# with the shared lexer-faithful blanker (cbt/core.cyr `_src_blank_noncode`: char literals before
+# strings, attribute tokens and `#define`/`#if` bodies kept as code). No cyrius construct resolves
+# a fn/var named in a string — `#pe_import`/`#deprecated`/`#derive` strings are foreign symbols,
+# messages and paths — and the compile-verified loop is the backstop in any case.
+# ⚠ An `include "lib/<leaf>.cyr"` line IS a reference even though its path is a string: the
+# bundle keeps those lines (v6.2.48), and in a consumer's build that include must resolve. The
+# raw scan only honoured it by accident (when the leaf declared a fn named like its file); it
+# is now read explicitly, before blanking.
+# ⚠ Residual, by design: the matcher sees NAMES, not resolutions, so a parameter or local that
+# reuses a stdlib top-level name (`fn f(run)`) still keeps that name's leaf — the safe direction.
 fn _distlib_prune_profile_leaves(leaves, bundle_path): i64 {
     if (file_exists(bundle_path) == 0) { return leaves; }
-    var bb = alloc(4194304);
-    var bl = file_read_all(bundle_path, bb, 4194303);
-    if (bl <= 0) { return leaves; }
+    var bl = 0;
+    var bb = file_read_whole(bundle_path, &bl);
+    if (bb == 0 || bl <= 0) { return leaves; }
+    var incl = vec_new();
+    _distlib_scan_lib_includes(incl, bb, bl);
+    _src_blank_noncode(bb, bl);
     var kept = vec_new();
     var i = 0;
     while (i < vec_len(leaves)) {
         var lf = vec_get(leaves, i);
-        if (_distlib_leaf_referenced(lf, bb, bl) == 1) { vec_push(kept, lf); }
+        if (_distlib_vec_has(incl, lf) == 1) { vec_push(kept, lf); }
+        elif (_distlib_leaf_referenced(lf, bb, bl) == 1) { vec_push(kept, lf); }
         i = i + 1;
     }
     return kept;
+}
+
+# Collect into `out` the leaf of every `include "lib/<leaf>.cyr"` line in buf[0, n) — the line's
+# first token, after indentation. Same capture rules as the module scan (`_distlib_capture_lib_leaf`).
+fn _distlib_scan_lib_includes(out, buf, n): i64 {
+    var p = 0;
+    while (p < n) {
+        var ls = _src_skip_ws(buf, p, n);
+        var le = ls;
+        while (le < n && load8(buf + le) != 10) { le = le + 1; }
+        if (le - ls >= 8 && memeq(buf + ls, "include ", 8) == 1) {
+            _distlib_capture_lib_leaf(out, buf + ls, le - ls);
+        }
+        p = le + 1;
+    }
+    return 0;
 }
 
 fn cmd_distlib(profile): i64 {

@@ -8,6 +8,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **`cyrius distlib <profile>`: a stdlib name in a comment or a string no longer keeps its leaf.**
+  (bite 8; issue `2026-09-26-vani-distlib-profile-deps-counts-comments-and-strings-as-references`,
+  archived.) **Root cause:** `_distlib_prune_profile_leaves` handed the raw bundle to an
+  identifier-boundary matcher, so "Safe to run twice" in a `#` comment — or `return "run";` — kept
+  `process` (`fn run`), and the verify loop then added `vec`/`str`/`fmt` for it: vani's `core`
+  sidecar went from 3 leaves to 8 on a comment edit, with the drift gate green throughout. **Fix:**
+  the bundle's non-code bytes are blanked once with 6.6.8's lexer-faithful `_src_blank_noncode`
+  (char literals before strings, attribute tokens and `#define`/`#if` bodies kept as code). An
+  `include "lib/<leaf>.cyr"` line the bundle keeps is now read explicitly as a reference (before
+  blanking): a consumer's build must resolve it, and the raw scan only honoured it when the leaf
+  happened to declare a fn named like its file. Bundle and leaf reads are whole-file
+  (`file_read_whole`) — the 1 MiB leaf cap cut `mabda.cyr` (1,368,705 B) and `sigil.cyr` short, the
+  bundle cap was 4 MiB. The filed repro now prints `syscalls alloc` for the comment, the reworded
+  comment and the string forms alike. ⚠ **Residual, documented:** the matcher sees names, not
+  resolutions, so a parameter or local that reuses a stdlib top-level name (`fn f(run)`) still keeps
+  that leaf — the safe direction. Gate: `distlib_profile_sidecar.sh` axes 8-10 (comment/string-only
+  mention keeps nothing; a real call after a `'"'` char literal is kept BY THE PRUNE, not repaired by
+  the verify loop; an explicit include keeps its leaf). Mutation-proven: the 6.6.8 CLI fails 8 and 10,
+  a blanker without its char-literal arm fails 9.
 - **The Windows CLI sizes files: `_file_size` is open + lseek(SEEK_END), not a raw stat.** (bite 8;
   audit.) **Root cause:** cbt's `_file_size` was `syscall(4, …)` — x86-Linux stat, with no PE
   reroute — so `cyrius.exe` got -38 at every call site. User-visible on real Windows (cass):
@@ -27,6 +46,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   argv(0), normalised the same way, is the fallback. Verified on cass: by full path and by bare name
   off PATH. Gate: `cli_pe_file_size_and_sibling_tools.sh` (axis 0 — no raw stat in cbt/ — runs
   without wine; axes 1-3 under wine), mutation-proven per mechanism.
+
+### Downstream
+
+- **vani** can narrow ADR 002 (`docs/architecture/002-distlib-deps-counts-comment-words.md`):
+  comments and strings no longer count, so the remaining rule is "no stdlib top-level fn/var name as
+  a profile module's parameter or local".
 
 ## [6.6.8] — 2026-09-28
 
