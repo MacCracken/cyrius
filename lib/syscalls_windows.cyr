@@ -175,12 +175,82 @@ fn sys_read(fd, buf, count) {
 
 # Open a file and return a descriptor. Rerouted to
 # kernel32!CreateFileW; `flags` (Linux-shaped) is decomposed into
-# Win32 `dwDesiredAccess` + `dwCreationDisposition` inside the
-# reroute. `mode` is passed as the security-attributes hint
-# (usually 0). Returns a handle usable by sys_read/write/close or
-# -1 on failure.
+# Win32 `dwDesiredAccess` + `dwCreationDisposition` +
+# `dwFlagsAndAttributes` inside the reroute. `mode` has no Win32
+# equivalent and is dropped. Returns a handle usable by
+# sys_read/write/close, or a negative value: -1 for a Win32 failure,
+# -40 (-ELOOP) for O_NOFOLLOW on a symlink/junction. CHANGELOG [6.6.9]
 fn sys_open(path, flags, mode) {
-    return syscall(SYS_OPEN, path, flags, mode);
+    # No O_NOFOLLOW; or O_CREAT|O_EXCL, whose CREATE_NEW never follows.
+    if ((flags & 131072) == 0) { return syscall(SYS_OPEN, path, flags, mode); }
+    if ((flags & 192) == 192) { return syscall(SYS_OPEN, path, flags, mode); }
+    return _win_open_checked(path, flags, mode);
+}
+
+# Attributes (low dword) and reparse tag (high dword) of an OPEN handle, via
+# GetFileInformationByHandleEx(FileAttributeTagInfo = 9) — reroute 0xF03D. -1 if the query
+# fails. Asking the handle, not the path, is what makes the O_NOFOLLOW / O_DIRECTORY checks
+# race-free: whatever the name pointed at by then, this is the object we hold. CHANGELOG [6.6.9]
+fn _win_handle_tag(h): i64 {
+    var ti[16];
+    store64(&ti, 0);
+    if (syscall(61501, h, 9, &ti, 8) == 0) { return 0 - 1; }
+    return load64(&ti);
+}
+
+# Is an attribute/tag pair a NAME SURROGATE reparse point (a symlink or a junction — the
+# kinds that redirect a name)? FILE_ATTRIBUTE_REPARSE_POINT 0x400 + tag bit 29.
+fn _win_is_surrogate(at): i64 {
+    if ((at & 1024) == 0) { return 0; }
+    if (((at >> 32) & 0x20000000) == 0) { return 0; }
+    return 1;
+}
+
+# The O_NOFOLLOW half of sys_open. The emitter has already made the open itself safe
+# (FILE_FLAG_OPEN_REPARSE_POINT, so the TARGET of a link is never touched); this decides
+# what the caller is told. CHANGELOG [6.6.9]
+fn _win_open_checked(path, flags, mode): i64 {
+    var nf = flags & 131072;
+    var tr = 0;
+    if (nf != 0) { tr = flags & 512; }   # O_TRUNC waits until the handle is verified
+    var f = flags - tr;
+    var h = syscall(SYS_OPEN, path, f, mode);
+    if (h < 0) { return h; }
+    var at = _win_handle_tag(h);
+    if (at == 0 - 1) { syscall(SYS_CLOSE, h); return 0 - 1; }   # fail closed
+    if (nf != 0) {
+        if (_win_is_surrogate(at) == 1) { syscall(SYS_CLOSE, h); return 0 - 40; }
+        if ((at & 1024) != 0) {
+            # A reparse point that is not a redirection (cloud placeholder, dedup): open it
+            # the ordinary way, so the filter driver presents the file.
+            syscall(SYS_CLOSE, h);
+            return _win_open_checked(path, flags - nf, mode);
+        }
+    }
+    if (tr != 0) {
+        if (_win_truncate_verified(h, path) != 0) { syscall(SYS_CLOSE, h); return 0 - 1; }
+    }
+    return h;
+}
+
+# Truncate the file behind a VERIFIED handle to 0 bytes. SetEndOfFile (0xF03F) needs
+# FILE_WRITE_DATA, which an O_RDONLY handle lacks and an O_APPEND one deliberately lacks (its
+# access is FILE_APPEND_DATA, NT's per-write append), so those truncate through a second
+# O_WRONLY handle opened with FILE_FLAG_OPEN_REPARSE_POINT and checked the same way — it can
+# never reach through a link either. 0 on success, -1 on failure. CHANGELOG [6.6.9]
+fn _win_truncate_verified(h, path): i64 {
+    if (syscall(61503, h) != 0) { return 0; }
+    var t = syscall(SYS_OPEN, path, 131073, 0);   # O_WRONLY | O_NOFOLLOW
+    if (t < 0) { return 0 - 1; }
+    var at = _win_handle_tag(t);
+    var r = 0 - 1;
+    if (at != 0 - 1) {
+        if ((at & 1024) == 0) {
+            if (syscall(61503, t) != 0) { r = 0; }
+        }
+    }
+    syscall(SYS_CLOSE, t);
+    return r;
 }
 
 # Close the descriptor `fd`. Rerouted to kernel32!CloseHandle.
