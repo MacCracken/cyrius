@@ -33,7 +33,18 @@ R=$(cd "$(dirname "$0")/../../.." && pwd)
 # both that run and a normal PASS run.
 VPID=""
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL install_atomic_over_running_binary: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
-trap 'if [ -n "$VPID" ]; then kill "$VPID" 2>/dev/null; wait "$VPID" 2>/dev/null; fi; rm -rf "$T"' EXIT
+# ⛔ 6.6.8: every command in the cleanup is `|| true`. `wait` on the victim WE killed returns
+# 143, and under `bash -eo pipefail` (how CLAUDE.md says shell gates must be tested) that
+# failing command inside the EXIT trap became the script's exit status: the gate printed PASS
+# and exited 143. Pinned by axis 4 below. CHANGELOG [6.6.8]
+_ia_cleanup() {
+    if [ -n "$VPID" ]; then
+        kill "$VPID" 2>/dev/null || true
+        wait "$VPID" 2>/dev/null || true
+    fi
+    rm -rf "$T" || true
+}
+trap _ia_cleanup EXIT
 mkdir -p "$T/bin" || { echo "FAIL install_atomic_over_running_binary: cannot create $T/bin"; exit 1; }
 
 # ── axis 1 — install over a RUNNING binary (the reported failure) ────────────────────────────
@@ -91,5 +102,18 @@ grep -q '^_install_file()' "$R/scripts/install.sh" || {
   echo "  three install paths (refresh / tarball / source-build) need at least 5 between them."
   exit 1; }
 
-echo "PASS install_atomic_over_running_binary: temp+rename replaces a RUNNING binary (plain cp reproduced ETXTBSY first) · no install path copies an executable in place · the helper exists and all three paths use it"
+# ── axis 4 — 6.6.8: the gate itself exits 0 under `bash -eo pipefail` ────────────────────────
+# Re-runs THIS file once under bash -eo pipefail (the inner run skips this axis). It printed
+# PASS and exited 143 there, because its EXIT trap's `wait` on the victim it had killed failed.
+if [ -z "${CY_IA_INNER:-}" ] && command -v bash > /dev/null 2>&1; then
+  IRC=0
+  CY_IA_INNER=1 bash -eo pipefail "$0" > "$T/inner.out" 2>&1 || IRC=$?
+  if [ "$IRC" != "0" ] || ! grep -q '^PASS install_atomic_over_running_binary' "$T/inner.out"; then
+    echo "FAIL install_atomic_over_running_binary axis4: under bash -eo pipefail the gate exited $IRC:"
+    sed 's/^/    /' "$T/inner.out"
+    exit 1
+  fi
+fi
+
+echo "PASS install_atomic_over_running_binary: temp+rename replaces a RUNNING binary (plain cp reproduced ETXTBSY first) · no install path copies an executable in place · the helper exists and all three paths use it · exits 0 under bash -eo pipefail"
 exit 0

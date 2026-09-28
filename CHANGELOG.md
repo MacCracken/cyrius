@@ -131,6 +131,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   requirement before writing anything (measured on real ecb and ach: rc 2, VERSION untouched).
   `version_bump_doc_anchors.sh` axis J: a BSD-style fake `sed` first on PATH is refused with
   nothing written; beside a GNU `gsed` the bump runs on gsed (red with the probe removed).
+- **`install_atomic_over_running_binary.sh` exits 0 under `bash -eo pipefail`.** (bite 8, placed
+  from the 6.6.7 reviews.) Its EXIT trap `wait`ed on the victim process it had just killed; that
+  returns 143, and under `-e` a failing command in the EXIT trap became the script's exit status —
+  the gate printed PASS and exited 143. Every cleanup command is now `|| true`, and a new axis 4
+  re-runs the gate under `bash -eo pipefail` and requires rc 0 (red without the fix: 143).
 
 ## [6.6.7] — 2026-09-27
 
