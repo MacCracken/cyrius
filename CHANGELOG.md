@@ -610,8 +610,8 @@ rounds each) — the rest is the box, not the code, and every phase moved alike 
   emitter shape — FlushFileBuffers imported, one flush tail per literal site, and `mov $0x9,%r8d`
   after every MoveFileExW setup, which is the ONLY guard on the write-through bit because no run
   on wine or on Windows can observe durability — and wine; five mutants each RED). ⚠ wine cannot
-  observe durability and cass was down for this bite: the real-Windows run of the .tcyr (including
-  the `O_APPEND` and `O_RDONLY` rows) is the release gate's cass leg.
+  observe durability; the real-Windows run of the .tcyr (including the `O_APPEND` and `O_RDONLY`
+  rows) is the release gate's cass leg, GREEN on the merged tree (109/109 crossos).
 - **On agnos, every syscall site passing fewer than four arguments handed the kernel an UNDEFINED
   a4 (r10), so whether a read or a write blocked depended on what ran before it.** (bite 4.) The
   agnos kernel reads a4 = r10 on every entry, and since 1.57.8 / 1.57.9 `read`#5 blocks on an empty
@@ -762,7 +762,7 @@ rounds each) — the rest is the box, not the code, and every phase moved alike 
   `SYSINFO_SIZE_FULL`, the -1 pre-fill) and, under mirshi, run it against a kernel that leaves +200
   unwritten: -1, not stack residue (exit 7 without the pre-fill, measured). Mutation-proven eleven
   ways, lib side and contract side. `tests/tcyr/crossos/sysinfo_uname.tcyr` asserts the
-  off-agnos -ENOSYS answer (ran on ecb, ach, pi, aarch64 qemu and PE/wine; cass pending) and, in
+  off-agnos -ENOSYS answer (ran on ecb, ach, pi, aarch64 qemu, PE/wine, and real cass at the release gate) and, in
   its agnos build, -1 or a count >= 0 after dirtying the stack with a negative pattern — so a
   dropped pre-fill or an -ENOSYS answer fails there too (checked under mirshi).
 
@@ -814,8 +814,7 @@ rounds each) — the rest is the box, not the code, and every phase moved alike 
   file and an empty file; the driver's lint suite against a fake cyrlint, including one that
   answers only the positive fixture; `cyrius audit` over the rekha shape; CI's step; ten
   mutations, each RED) and `tests/tcyr/crossos/exec_capture_status.tcyr` (23 assertions, run
-  on real pi / ecb / ach; 12 under wine — cass was down, so real Windows is pending the release
-  gate).
+  on real pi / ecb / ach; 12 under wine, and real Windows in the release gate's cass leg).
 
 - **The capture and run verbs decoded a wait status that `waitpid` never wrote** (bite 9 review).
   **Root cause:** `_proc_wait_deadline` (`lib/process.cyr`) and its twin
