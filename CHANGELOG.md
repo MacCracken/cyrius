@@ -55,6 +55,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `tests/tcyr/crossos/enum_fold_past_1024.tcyr` (enum-sized global and local arrays, a folded
   value, and `syscall(<enum 228>)` against the literal — ecb/ach/cass/pi) and rows G/H of
   `tests/gates/frontend/duplicate_symbol_warning_at_scale.sh` (0 warnings on 6.6.7).
+- **`#derive(Serialize)` writes a negative `i8` / `i16` / `i32` field as a negative number, so
+  its JSON round-trips.** (bite 1b; found by the 6.6.7 bite 5 review.) **Root cause:** the
+  `_to_json` emit read a narrow field with a bare `loadW`, which zero-extends — `struct N { a:
+  i8; b: i32; }` read back from `{"a":-1,"b":-3}` serialized as `{"a":255,"b":4294967293}`. The
+  6.6.7 accessor getter had already been made to sign-extend; Serialize had kept the old read.
+  **Fix:** both now emit the value expression from one helper, `PP_DLOAD_EXPR` (lex_pp.cyr) —
+  `(loadW(p + off) << S) >>> S` for a narrow field, `load64` otherwise — so the getter and the
+  codec cannot disagree on signedness again. Positive values and i64 fields emit the same text as
+  before. Pinned by `tests/tcyr/derive/derive_serialize_signed.tcyr` (4 of 8 RED on 6.6.7; green
+  on ecb, ach, cass and pi).
 
 ## [6.6.7] — 2026-09-27
 

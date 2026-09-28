@@ -1,0 +1,61 @@
+# derive_serialize_signed.tcyr — 6.6.8 bite 1b: `#derive(Serialize)` writes a NEGATIVE
+# i8 / i16 / i32 field as the negative number it holds, so the JSON round-trips.
+#
+# ⛔ The `_to_json` emit read a narrow field with a bare `loadW`, which ZERO-extends: an i8
+# holding -1 was written as 255, an i32 holding -3 as 4294967293. `from_json` then stored 255
+# back into the i8 — the same byte — so a byte-level round-trip looked fine and the JSON was
+# still wrong for every other reader, and a second `to_json` of a value re-read from that JSON
+# into an i64 would disagree. The 6.6.7 accessor getter had already been fixed to SIGN-extend
+# (`(loadW(p + off) << S) >>> S`); Serialize now emits the same expression from the same helper
+# (PP_DLOAD_EXPR), so the two cannot disagree again.
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/alloc.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/hashmap.cyr"
+include "lib/result.cyr"
+include "lib/fnptr.cyr"
+include "lib/io.cyr"
+include "lib/bayan.cyr"
+include "lib/assert.cyr"
+
+#derive(Serialize)
+#derive(accessors)
+struct sgn { a: i8; b: i16; c: i32; d: i64; }
+
+fn json_of(p): Str {
+    var sb = str_builder_new();
+    sgn_to_json(p, sb);
+    return str_builder_build(sb);
+}
+
+fn check(): i64 {
+    var src = "{\"a\":-1,\"b\":-300,\"c\":-70000,\"d\":-9}";
+    var p = sgn_from_json_str(src);
+    # The struct holds the signed values (the field reads are movsx).
+    assert_eq(sgn_a(p), 0 - 1, "i8 field reads -1");
+    assert_eq(sgn_b(p), 0 - 300, "i16 field reads -300");
+    assert_eq(sgn_c(p), 0 - 70000, "i32 field reads -70000");
+    # ... and Serialize writes them as such (was {"a":255,"b":65236,"c":4294897296,...}).
+    var s = json_of(p);
+    assert_eq(strlen(str_data(s)), strlen(src), "the JSON has the source's exact length");
+    assert_eq(memeq(str_data(s), src, strlen(src)), 1, "negative narrow fields serialize as negatives");
+    # Round-trip through the JSON again: stable.
+    var q = sgn_from_json_str(str_data(s));
+    var s2 = json_of(q);
+    assert_eq(memeq(str_data(s2), src, strlen(src)), 1, "second round-trip is stable");
+    # The extremes of each width.
+    var lo = "{\"a\":-128,\"b\":-32768,\"c\":-2147483648,\"d\":-1}";
+    var hi = "{\"a\":127,\"b\":32767,\"c\":2147483647,\"d\":1}";
+    var s3 = json_of(sgn_from_json_str(lo));
+    assert_eq(memeq(str_data(s3), lo, strlen(lo)), 1, "minimum of every width");
+    var s4 = json_of(sgn_from_json_str(hi));
+    assert_eq(memeq(str_data(s4), hi, strlen(hi)), 1, "maximum of every width (control: positives unchanged)");
+    return 0;
+}
+
+alloc_init();
+check();
+var r = assert_summary();

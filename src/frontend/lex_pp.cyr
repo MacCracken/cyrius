@@ -2144,11 +2144,12 @@ fn PP_DERIVE_SERIALIZE_BODY(S, out, op): i64 {
                             # the untyped-scalar branch below (which uses load64
                             # for raw 8-byte slots) but width-aware for narrow
                             # types.
-                            op = op + PP_EMIT_STR(out, op, "str_builder_add_int(sb, load");
-                            op = op + PP_EMIT_INT(out, op, prim_load);
-                            op = op + PP_EMIT_STR(out, op, "(ptr + ");
-                            op = op + PP_EMIT_INT(out, op, load64(S + 0x200000 + fi * 8));
-                            op = op + PP_EMIT_STR(out, op, "));\n");
+                            # ⛔ 6.6.8 — SIGN-extended through PP_DLOAD_EXPR, as the getter is: a
+                            # bare loadW zero-extends, so an i8 -1 was written as 255 and the
+                            # JSON did not round-trip. CHANGELOG [6.6.8]
+                            op = op + PP_EMIT_STR(out, op, "str_builder_add_int(sb, ");
+                            op = PP_DLOAD_EXPR(out, op, "ptr", prim_load, load64(S + 0x200000 + fi * 8));
+                            op = op + PP_EMIT_STR(out, op, ");\n");
                         } else {
                             # Nested struct: use composable 2-arg form.
                             # v5.9.31: matched the renamed top-level fn
@@ -2700,10 +2701,20 @@ fn PP_DFIELD_BITS(S, fi): i64 {
 # the shift pair a stored -1 in an i8 reads back as 255 through `P_x(p)` while `p.x` says -1.
 # CHANGELOG [6.6.7]
 fn PP_DGETTER_EXPR(out, op, fbits, off): i64 {
-    if (fbits < 64) { op = op + PP_EMIT_STR(out, op, "return (load"); }
-    if (fbits == 64) { op = op + PP_EMIT_STR(out, op, "return load"); }
+    op = op + PP_EMIT_STR(out, op, "return ");
+    op = PP_DLOAD_EXPR(out, op, "p", fbits, off);
+    return op;
+}
+
+# The value expression for a field of width `fbits` at `pname + off` (see PP_DGETTER_EXPR),
+# shared by the getter and Serialize so the two cannot disagree on signedness. CHANGELOG [6.6.8]
+fn PP_DLOAD_EXPR(out, op, pname, fbits, off): i64 {
+    if (fbits < 64) { op = op + PP_EMIT_STR(out, op, "("); }
+    op = op + PP_EMIT_STR(out, op, "load");
     op = op + PP_EMIT_INT(out, op, fbits);
-    op = op + PP_EMIT_STR(out, op, "(p + ");
+    op = op + PP_EMIT_STR(out, op, "(");
+    op = op + PP_EMIT_STR(out, op, pname);
+    op = op + PP_EMIT_STR(out, op, " + ");
     op = op + PP_EMIT_INT(out, op, off);
     op = op + PP_EMIT_STR(out, op, ")");
     if (fbits < 64) {
