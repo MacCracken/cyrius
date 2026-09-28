@@ -388,9 +388,11 @@ fn _run_regression_gates(): i64 {
     # SIGSEGV. ⚠ This gate was WRITTEN at .19 and left registered NOWHERE; the file
     # existed so the shell-gate count rose while the gate never once ran under check.sh
     # — the same green-placebo shape `toolchain/test_runner_bounded.sh` hit earlier in
-    # this very release. Derive the orphan set, never eyeball it:
-    #   comm -23 <(find tests/gates -name '*.sh' | sort) \
-    #            <(grep -ho 'tests/gates/[a-z-]*/[a-z0-9_]*\.sh' programs/checks/*.cyr scripts/check.sh | sort -u)
+    # this very release. The orphan set is now CHECKED, not derived by hand:
+    # tests/gates/toolchain/check_gate_census.sh. ⚠ The grep recipe that stood here counted
+    # ANY `tests/gates/…` literal as a registration, so it certified the ten bare `sh` lines
+    # 6.6.6 added to check.sh as registered — it shared the defect it was checking for.
+    # CHANGELOG [6.6.8]
     _gate("recursive descent is depth-bounded on every tier: over-deep input exits 1 with a located diagnostic naming the bound, never a signal (CVE-39, v6.5.19)", "tests/gates/diagnostics/recursion_depth_bounded.sh");
     println("");
 

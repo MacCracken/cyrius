@@ -6,6 +6,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.8] — 2026-09-27
 
+### Fixed
+
+- **Every shell gate runs through `_chk_gate` and is registered exactly once — and that is now a
+  gate, not a comment.** (bite 8.) **Root cause:** ten gates added by 6.6.6's later lanes were
+  called as bare `sh "$ROOT/tests/gates/…"` lines under `set -e`, and check.sh's registry reader
+  matches only `^_chk_gate`. A failing bare gate therefore ABORTED the run: every gate below it
+  reported NOT RUN, the FAILED list omitted the culprit, and the summary said `failures: 0`. The
+  bucket selectors build their manifest from the same reader, so `check.sh frontend` ran 33 of the
+  39 frontend gates (codegen 37/39, memory 11/12, toolchain 80/81) and could print ALL GREEN. The
+  driver-side reader took only `"tests/gates/…"` literals, so the driver row running
+  `scripts/differential-smoke.sh` was unreachable by any selector too. And the tree's one
+  documented orphan check (a grep recipe in `programs/checks/main.cyr`) counted ANY literal as a
+  registration — it reported 0 orphans over the ten. **Fix:** the ten lines go through
+  `_chk_gate`; the driver reader takes the path literal that ends each `_gate(` call (tests/gates
+  and scripts); `check.sh --registry` prints every registration from those readers with
+  duplicates kept; the false "the union is exactly…" comment and the blind recipe are replaced by
+  `tests/gates/toolchain/check_gate_census.sh`, which fails on an unregistered gate, a double
+  registration, a registration with no file, a driver `_gate(` whose path the reader cannot see,
+  and any check.sh line that runs a gate outside `_chk_gate` — and proves itself RED on four
+  mutants of the registry before it can read green.
+
 ## [6.6.7] — 2026-09-27
 
 The first of three SMALL releases that the post-6.6.6 issue track is split into (roadmap.md, *The 6.6.7
