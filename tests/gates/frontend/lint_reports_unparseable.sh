@@ -125,7 +125,18 @@ check "prints '0 warnings'" 1 "$(grep -c '^0 warnings' "$T/o" || true)"
 # ── AXIS 3 — ⭐ THE DISCRIMINATOR. A real stdlib module, alone in a directory with no
 # manifest and no lib/, cannot RESOLVE — and must still be linted.
 echo "axis 3 — ⭐ a file that cannot RESOLVE (no manifest, no lib/) is still linted:"
-cp "$ROOT/lib/fs.cyr" "$T/w/fs_copy.cyr"
+# A file that PARSES but cannot RESOLVE: names nothing in scope defines. ⚠ This used to be a
+# copy of lib/fs.cyr, which did not resolve alone only because it relied on its caller for its
+# definers — 6.6.9 bite 7 made every stdlib module include its own, so that copy started to
+# resolve and this axis's premise went false. A synthetic file keeps the premise independent of
+# how self-sufficient the stdlib is. CHANGELOG [6.6.9]
+printf '%s\n' \
+  'fn fs_copy_probe(p): i64 {' \
+  '    var fd = unresolved_open(p, CYR_NO_SUCH_FLAG, 0);' \
+  '    if (fd < 0) { return CYR_NO_SUCH_ERR; }' \
+  '    return unresolved_close(fd);' \
+  '}' \
+  'var r = fs_copy_probe("x");' > "$T/w/fs_copy.cyr"
 crc=0
 ( cd "$T/w" && timeout 300 "$CYRIUS" check fs_copy.cyr > "$T/co" 2> "$T/ce" ) || crc=$?
 check "premise: the file really does not resolve here (check exits non-zero)" "yes" \
