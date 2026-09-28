@@ -173,13 +173,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   were 139 on `cycc_cx`. x86 and PE exited 1. **Root cause:** ERR_MSG reports and CONTINUES
   (v6.4.62), and eleven callers passed the failed lookup's -1 on to ECALLFIX anyway. ECALLFIX
   stored `(2 << 56) | -1`, which is -1, and that reads back as fixup type 0xFF with an index
-  near 2^56. The aarch64 FIXUP and the cx fixup walk run BEFORE the `_had_error` early-out.
+  near 2^56. The aarch64 FIXUP and the cx fixup walk decode the table even on a failed compile.
   They decoded the entry as a variable fixup, and the `vi < idx` loop ran off `_vars_base`.
   6.6.4 had fixed one site of this shape (the capturing-closure alloc); the other eleven were
   missed. **Fix, three layers, each sufficient alone (mutation-checked):**
-  - aarch64 `FIXUP` returns at entry, and `main_cx.cyr` exits before its fixup walk, once an
-    error has been reported. The output is discarded anyway. cx's undefined-call report still
-    runs, since it skips type 0xFF.
+  - Once an error has been reported, aarch64 `FIXUP`'s relocation walk skips an entry whose
+    type it cannot decode (ftype > 5), and `main_cx.cyr` exits before its fixup walk. The
+    output is discarded anyway. Everything else in aarch64 `FIXUP` still runs — liveness, the
+    `note: N unreachable fns` line and the reachable-undefined refusal — so a failed aarch64
+    compile reports every error x86, PE and cx do (the v6.4.62 multi-error contract). cx's
+    undefined-call report runs before its exit and skips type 0xFF.
   - `ECALLFIX` refuses a negative index on x86, aarch64 and cx. If no error was reported yet,
     it reports an internal error.
   - Each site stops after its message. The seven polyfills return. The slice subscript skips
@@ -190,14 +193,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     not add a false "reachable undefined function".
   The stale aarch64 comment calling sin/cos/exp2/atan "hard-errors, no polyfill yet" is
   corrected. Measured over 495 corpus files per compiler: output byte-identical on x86,
-  aarch64, PE and cx. On a failed aarch64 or cx compile, the trailing `note: N unreachable
-  fns` line and the cx capacity advisory are no longer printed. New gate
-  `tests/gates/diagnostics/missing_helper_error_exits_1.sh` (34 rows, compilers built from
-  source). It checks every trigger on each backend it applies to: rc exactly 1 with exactly
-  one error line. It adds helpers-present rows that must build, plus structural rows for the
-  two generic backstops. Mutants: all layers reverted gives 24 rows RED (rc 139); per-site
-  returns reverted gives the second-error rows RED; either generic layer alone keeps rc 1,
-  and its structural row goes RED when removed.
+  aarch64, PE and cx. On a failed cx compile the capacity advisory is no longer printed. New
+  gate `tests/gates/diagnostics/missing_helper_error_exits_1.sh` (38 rows, compilers built
+  from source). It checks every trigger on each backend it applies to: rc exactly 1 with
+  exactly one error line. It adds helpers-present rows that must build, a multi-error row per
+  backend (an undefined variable plus a reachable undefined call must report BOTH errors on
+  x86, aarch64, PE and cx), and structural rows for the two generic backstops. Mutants: all
+  layers reverted gives 24 rows RED (rc 139); per-site returns reverted gives the
+  second-error rows RED; either generic layer alone keeps rc 1, and its structural row goes
+  RED when removed; the first cut's return-at-FIXUP-entry turns the aarch64 multi-error row
+  RED (it dropped the undefined-call refusal).
 - **`return None();` beside `return Some(v);` is no longer reported as a dropped tag.**
   (bite 3; issue `2026-09-23-kybernet-mixed-return-diagnostic-misfires-on-nullary-none`,
   archived.) The mixed-return warning fired on every nullary `: stack` variant (`None()`, any

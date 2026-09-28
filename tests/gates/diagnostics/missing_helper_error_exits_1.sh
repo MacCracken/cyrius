@@ -15,7 +15,8 @@
 # Scripts that key on rc == 1 read those crashes as something else.
 #
 # THREE layers, each enough on its own (mutation-checked when this gate was written):
-#   - aarch64 FIXUP and the cx fixup walk return early once an error has been reported;
+#   - aarch64 FIXUP's relocation walk skips an undecodable entry (ftype > 5) once an error has
+#     been reported, and the cx fixup walk exits before it runs;
 #   - ECALLFIX (x86, aarch64 and cx) refuses a negative index;
 #   - each of the eleven sites returns (or skips the call) after its message.
 # The rc rows prove the combination. The per-site returns are also observable: without them
@@ -23,6 +24,11 @@
 # "needs lib/alloc.cyr"), so each row also requires EXACTLY one error line. The first two
 # layers are generic backstops that no user trigger reaches once the sites return, so they
 # are pinned structurally below.
+#
+# The aarch64 skip is deliberately NARROW. Its first cut returned at FIXUP entry, which also
+# skipped the liveness pass and the reachable-undefined refusal, so an aarch64 compile with an
+# error plus an undefined call reported ONE error where x86, PE and cx report two (the v6.4.62
+# multi-error contract). The multi_err rows pin that parity on every backend.
 #
 # Anti-vacuous rows: with lib/math.cyr included, f64_exp builds rc 0 on aarch64. With
 # CYRIUS_ASYNC=1, lib/alloc.cyr and lib/async.cyr, await/async build rc 0 on x86. A gate that
@@ -64,6 +70,12 @@ EOF
 cat > "$T/asyncfn.cyr" <<'EOF'
 async fn f() { return 1; }
 fn main() { var x = f(); return 0; }
+var r = main();
+syscall(60, r);
+EOF
+# an error AND a reachable undefined call: every backend reports both
+cat > "$T/multi_err.cyr" <<'EOF'
+fn main() { var a = undefined_var_q; var b = nope_fn(3); return a + b; }
 var r = main();
 syscall(60, r);
 EOF
@@ -115,6 +127,15 @@ for c in x86 aarch64 win cx; do
   fi
 done
 
+# multi-error parity: rc 1, the undefined variable AND the undefined-call refusal
+for c in x86 aarch64 win cx; do
+  env -u CYRIUS_ASYNC "$T/$c" < "$T/multi_err.cyr" > "$T/o" 2>"$T/e"; rc=$?
+  n=$(grep -c '^error' "$T/e")
+  if [ "$rc" -ne 1 ] || [ "$n" -ne 2 ] || ! grep -q "undefined variable 'undefined_var_q'" "$T/e" || ! grep -q '^error.*undefined function' "$T/e"; then
+    _bad "$c multi_err: rc $rc, $n error line(s) — expected rc 1 with the undefined variable AND the undefined-call refusal"; grep '^error' "$T/e" | head -3 | sed 's/^/      /'
+  else pass=$((pass + 1)); fi
+done
+
 # ── anti-vacuous ────────────────────────────────────────────────────────────────────────────
 "$T/aarch64" < "$T/pf_ok.cyr" > "$T/o" 2>"$T/e"; rc=$?
 if [ "$rc" -ne 0 ] || [ ! -s "$T/o" ]; then _bad "aarch64 pf_ok: rc $rc — f64_exp WITH lib/math.cyr must build"; else pass=$((pass + 1)); fi
@@ -126,11 +147,11 @@ for f in src/backend/x86/emit.cyr src/backend/aarch64/emit.cyr src/backend/cx/em
   if awk '/^fn ECALLFIX\(S, fnidx\)/{f=1;n=0} f{n++; if (/if \(fnidx < 0\)/) {ok=1} if (n>12) f=0} END{exit ok?0:1}' "$f"; then pass=$((pass + 1))
   else _bad "$f: ECALLFIX no longer refuses a negative fn index in its first lines"; fi
 done
-if awk '/^fn FIXUP\(S\)/{f=1} f && /if \(_had_error == 1\) \{ return 0; \}/{ok=1; exit} f && /FIXUP entry/{} END{exit ok?0:1}' src/backend/aarch64/fixup.cyr; then pass=$((pass + 1))
-else _bad "src/backend/aarch64/fixup.cyr: FIXUP lost its _had_error early-out"; fi
+if awk '/^fn FIXUP\(S\)/{f=1} f && /if \(ftype > 5 && _had_error == 1\) \{ fi = fi \+ 1; continue; \}/{ok=1; exit} END{exit ok?0:1}' src/backend/aarch64/fixup.cyr; then pass=$((pass + 1))
+else _bad "src/backend/aarch64/fixup.cyr: FIXUP's relocation walk no longer skips an undecodable entry on a failed compile"; fi
 if grep -B2 '^var fcnt = GFCNT(S);' src/main_cx.cyr | grep -q '^if (_had_error == 1)'; then pass=$((pass + 1))
 else _bad "src/main_cx.cyr: the fixup walk is no longer guarded by _had_error"; fi
 
 if [ "$fail" -ne 0 ]; then echo "FAIL missing_helper_error_exits_1: $fail row(s) red, $pass green"; exit 1; fi
-echo "PASS missing_helper_error_exits_1: $pass rows — 7 aarch64 polyfills + slice/await/async on x86/aarch64/PE/cx exit 1 with one error, helpers-present rows build, backstops in place"
+echo "PASS missing_helper_error_exits_1: $pass rows — 7 aarch64 polyfills + slice/await/async on x86/aarch64/PE/cx exit 1 with one error, multi-error parity on all four, helpers-present rows build, backstops in place"
 exit 0
