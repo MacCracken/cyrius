@@ -67,7 +67,7 @@ check() {
 if [ ! -x "$ROOT/build/cycc" ]; then echo "FAIL: api-surface-derive — build/cycc not built"; exit 1; fi
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: api-surface-derive — mktemp -d failed"; exit 1; }
 trap 'rm -rf "$T"' EXIT
-CC="$ROOT/build/cycc"
+CC=${CYCC:-"$ROOT/build/cycc"}
 API="$T/api_surface"
 if ! "$CC" < "${API_SRC:-$ROOT/programs/cyrius_api_surface.cyr}" > "$API" 2> "$T/build.err"; then
     echo "FAIL: api-surface-derive — programs/cyrius_api_surface.cyr does not build"; sed -n '1,5p' "$T/build.err"; exit 1

@@ -389,6 +389,134 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   same `load64` in `main`; with `_pp_inl_has` answering 1 for every name it reads 0 over and fails
   (the old check passed it at 5).
 
+- **docs:** `faq.md` known-limitation 7 no longer prescribes `(0 - N)` (for a float it IS the
+  bug); `cyrius-guide.md` documents float unary minus, the left-operand typing rule with both
+  warnings, and `f64_to`'s NaN/overflow results. The x86-only `EMOVAPD_01` helper and its
+  aarch64/cx stubs are gone (the old `f64_neg` was their only caller).
+- **docs (bite 5):** `cyrius-guide.md` *Math Builtins* states the exp/ln family's contract
+  (≤ 1 ulp, IEEE specials, `log2(2^k)` exact, no cross-target bit identity for the builtins, the
+  polyfills as the bit-identical spelling); `faq.md` known-limitation 10 says the same in one
+  line. `docs/stdlib-reference.md` *math.cyr* now agrees: it called all the polyfills
+  "private", so the guide promised names the reference disowned. `_f64_exp_polyfill` /
+  `_f64_exp2_polyfill` / `_f64_ln_polyfill` / `_f64_log2_polyfill` are listed as supported
+  entry points with their contract (the api-surface snapshot skips `_` names, so
+  `f64_log_exp_polyfill.tcyr`, which calls all four, is what pins them); sin / cos / atan's
+  polyfills stay private. `lib/math.cyr`'s header no longer lists sinh/cosh/tanh/pow/hypot/fibonacci/binomial
+  (ganita has them), and its accuracy comments ("< 5 ulp", "same behavior as the x87 path")
+  are replaced by the measured contract. The Pi gate's label drops "bit-accurate", which the
+  polyfills never were. **ganita 1.2.7** moves its pin 6.6.4 → 6.6.7 (docs/ecosystem.md row).
+- **`lib/process_agnos.cyr` rewritten: a child is spawned from disk with its real argv and a clean
+  fd table, the verbs WAIT for it to exit, and the capture verbs capture.** (bite 7.) **Root
+  cause:** the module (v6.0.56) was written against agnos's frozen 0–33 surface and never
+  revisited. It read the whole ELF into an `alloc(8 MB)` it never freed (**8 MB leaked per spawn**)
+  and handed it to spawn#3, which refuses any image over **16 KB** (kernel 1.44.10) — a DCE'd
+  `println` hello is 15 KB, so nearly every real program, agnsh included, got -1. It then called
+  waitpid#4 ONCE, and #4 without the 0x100 bit is a POLL that answers **-2** while the child lives
+  (1.44.9): `run` returned Err(1) before the child finished, `wait_pid` Err(2), and every `exec_*`
+  reported -2 as the child's exit code. No argument reached the child ("args not passable") and
+  no capture variant captured ("sys_dup is a stub") — both stale since agnos 1.57.6. **Fix:** all
+  eleven verbs (plus `exec_capture_status`, same names and arities) now build a NUL-separated argv
+  blob on the stack — refused up front past 1024 bytes or 16 entries, never truncated; an env vec
+  becomes a `KEY=VALUE` blob — and spawn with `sys_spawn_argv(…, SPAWN_F_CLEANFD)`; they wait with
+  `sys_waitpid_block` and decode the §4.9 status (exit → code, signal → 128 + sig; the `exec_*`
+  verbs keep the POSIX `-1` for a signal death). A -1 from WAIT_BLOCK on a pid we just spawned can
+  only mean a pre-1.57.7 kernel, so it falls back to polling #4 — there is deliberately no #108
+  probe, which would misread 1.57.7/1.57.8. Capture is pipe → `sys_exec_redirect(1, w)` → spawn →
+  close `w` → **read to EOF** → reap: the ring is 4080 B and a full-ring write blocks (1.57.9), so
+  reaping first deadlocks. **A refused call still makes ONE #43** — the peer's
+  `_agnos_spawn_refuse` (a2 = 0x40000, answered -SPAWN_E_ARGS) — for an argv/env the builder
+  refused, a failed pipe, or a refused #62 arm alike: every #43 return clears the caller's spawn
+  arms, so a redirect or endowment armed for a call this module refused would otherwise reach the
+  caller's NEXT child (review of this bite; reproduced on agnos-qemu, where a refused 17-entry
+  `exec_vec` let the next child write into the caller's armed pipe). `exec_cmd` splits the line
+  into argv (agnos has no shell). `wait_pid` on a pid that is not ours is `Err(PROC_ECHILD)` (now
+  defined on agnos). Kernel floor 1.57.6, documented in the header. Verified on **agnos-qemu**
+  (kernel 1.57.10, `-smp 1` and `-smp 4`, a 115 KB child seeded as `/bin/pchild`): 41/41 checks —
+  a 10,000-byte capture through the 4080 B ring with every child write accepted, a 100-byte buffer
+  against 20,000 bytes of output that still reaps, `run` → Ok(137) for a SIGKILLed child and
+  Ok(142) for a #PF, an env blob reaching the child, CLEANFD dropping a parent fd, `wait_pid`
+  blocking 300 ms, and 64 sequential runs; the 6.6.7 control build scored 5 of 32 on the same
+  kernel (every spawn refused — the child is over #3's 16 KB cap). Gate: `tests/gates/platform/agnos_process_spawn.sh` (the fake kernel
+  in `tests/fixtures/agnos_sctrace.cyr` gains `proc*` modes that answer the spawn/pipe/wait
+  numbers and dump each #43 argv blob).
+- **An accepted agnos socket inherits its listener's recv/send timeouts.** (bite 7.) On Linux the
+  kernel copies SO_RCVTIMEO/SO_SNDTIMEO into the accepted socket; on agnos `sock_accept` wrapped the
+  conn in a fresh fd slot whose timeouts `sys_close` had cleared, so it waited the 30 s default
+  whatever the listener said (every in-ecosystem server set it on the accepted fd, so nothing broke —
+  a server ported from Linux would have). `sys_sock_accept` now marks the conn_id with the listen
+  slot it came from and `_agnos_sock_bind` copies that slot's timeouts; `sys_sock_connect` and
+  `sys_sock_close` drop the mark, so an outbound conn that reuses the id never inherits it. On
+  agnos-qemu a 1 s listener timeout ends an accepted read in ~1 s (the control: 30,003 ms). Gate:
+  `tests/gates/platform/agnos_accept_timeout_inherit.sh`.
+- **`lib/regression_agnos.cyr` defines every verb `lib/regression.cyr` defines.** (bite 7.)
+  `regression_exec_with_arg_capture_both_status` (6.6.7) and the two pipe pumps
+  `regression_pipe_write_all` / `regression_pipe_read_all` (6.6.6) had no agnos peer, so an agnos
+  build that called one did not compile. The pumps are real on agnos (O_NONBLOCK read/write with an
+  idle deadline on the socket adapter's #95-first clock; a pre-1.57.8 `-2` is retried, never EOF)
+  and were run on agnos-qemu; the status verb fails closed like its siblings. The other spawn verbs
+  there still fail closed — porting them onto the new spawn is not in this release. The module header no longer claims
+  agnos has no redirect or stdin/stdout control. Gate: `tests/gates/platform/agnos_process_peer_parity.sh`
+  (derives both verb lists from the source, name and arity, for process and regression).
+- **`lib/async_agnos.cyr` no longer says agnos has no fork.** (bite 7.) fork#96 has existed since agnos
+  1.56.55; `async_timeout` runs its body inline and ignores `ms` because the port was never done, and
+  the comment now says that.
+- **`cyrius coverage` counts only real references, over the whole public surface, from whole
+  files.** (bite 9; issue `2026-09-23-samay-coverage-counts-substrings-and-comments-as-references`
+  and three same-function defects the premise-check found.) Every one of these read HIGHER than
+  the truth and exited 0 under `--min`:
+  - **Substrings and comments counted as references.** The match was a raw `memeq` at every
+    offset of the concatenated `.tcyr` text, so `check_due` was "referenced" by every
+    `check_due_at(` call and `str_lt` by a comment naming it: the filed repro read **3/3 (100%)**
+    and passed `--min 100` with one fn referenced. Now a WHOLE-IDENTIFIER match over a corpus whose
+    comments, string literals and char literals are blanked, per file, once each read is known
+    complete. The blanker (`_src_blank_noncode`, cbt/core.cyr) is IN PLACE and length-preserving and
+    mirrors the lexer: char literals first (so `'"'` and `'#'` hide nothing after them), strings may
+    span lines, the ten attribute tokens take the `LEXATTRBOUND` boundary and stay code, and a line
+    opening `#define ` / `#if ` / `#elif ` keeps its body. It is the FOURTH mirror of the lexer's
+    attribute table and is pinned by `lexer_attribute_word_boundary.sh` group C (new axes C6/C7).
+    The repro now reads **1/3 (33%)**, `coverage gate FAILED`, exit 1.
+  - **`public fn` and every other spelling but two were invisible.** The declaration matcher knew
+    only a column-0 `fn ` / `pub fn `, so `public fn` (the same token as `pub`), `fn<TAB>`,
+    `pub  fn`, an indented fn, `#inline fn`, `pub #inline fn`, `#deprecated ("x") fn` and
+    `async fn` were never counted. Declarations are read at brace depth 0 only, as
+    `cyrius_api_surface` counts them: a fn inside `impl T for S { … }` is the method `S_m`, not a
+    top-level `m`.
+  - **The file-scope `private` rule was ignored — and inverted.** In a `private` file only
+    `pub`/`public` fns are exported; the tool counted exactly the other set. hisab (643 `public fn`,
+    one bare `fn`) read **1/1 = 100%**; it measures **642/644** now.
+  - **Each source was read into a fixed 256 KiB buffer** with no truncation check: bayan's
+    `pdf.cyr` (399,907 B) showed 114 of its 152 fns, crab's `ui.cyr` + `app.cyr` hid 49. Now
+    `file_read_whole_into` (grows, reuses one buffer, needs no file-size call — wrong on PE); a read
+    error is an error by name.
+  - **A `lib/` or `dist/` at ANY depth was pruned by name**, while the code comment called the
+    prune "inert for the src/ root". nein (`src/lib/`, 393 fns) read `main.cyr 1/1 (100%)` and passed
+    `--min 80`; hoosh, kriya and kybernet lost their `src/lib/` trees the same way. A named root is
+    walked whole now; only the `.` fallback skips its own TOP-LEVEL `./lib` and `./dist`.
+  - **The report never named a function.** The unreferenced fns are listed (`<path>: <name>`) under
+    `-v` and whenever `--min` fails — the actionable half of a failed gate.
+
+  The declaration rule lives once, in cbt/core.cyr (`_src_decl_at` / `_src_file_private` /
+  `_src_public_fn_at`), shared with `cyrius header`; distlib's identifier matcher moved there too
+  (`_distlib_bundle_refs` → `_src_refs_ident`). Residual, inherent to NAME-based reference
+  coverage: a test local or parameter that shares a fn's name still counts. Gate:
+  `tests/gates/toolchain/coverage_corpus_and_failopen.sh` axes 7-14 (16 mutations, each RED),
+  which also pins string escapes, `#define` bodies and `private;` followed by an item on the same
+  line.
+
+- **`cyrius header` emits a prototype for every public fn and reads the whole file.** (bite 9.) It
+  matched only a column-0 `pub fn ` — its own comment said "pub fn or fn" — so a bare `fn` (public
+  in an ordinary file) and `public fn` never got a prototype, it ignored the `private` rule, and it
+  read a fixed 64 KiB: an 81,752-byte file lost every fn past the cut, rc=0. It now uses the shared
+  public-surface rule and `file_read_whole`. It skips `impl` methods (brace depth > 0; they printed
+  conflicting bare `new` prototypes for `method_dispatch.tcyr`) and a program's `fn main`, whose
+  prototype would collide with the C host's `int main`. The verb had NO gate anywhere, while the
+  coverage gate's header claimed the two scanners "already handled both spellings";
+  `tests/gates/toolchain/header_spellings_and_size.sh` is its first (11 mutations, each RED).
+
+- **`cyrius doctest` reads the whole file.** (bite 9.) The same fixed 64 KiB read: an example past
+  the cut was neither run nor counted, so a FAILING example there read `1 passed, 0 failed`, rc=0.
+  Pinned by `header_spellings_and_size.sh` axis H5.
+
 ### Added
 
 - **A Darwin axis for the syscall gates: `tests/gates/platform/darwin_syscall_literals_routed.sh`
@@ -602,8 +730,6 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `tests/tcyr/stdlib/hashmap_fast_tombstones.tcyr` (new; the 6.6.7 map fails 10 of 20, and a
   live-only trigger fails the counter-balance row).
 
-### Added
-
 - **Warning: an INTEGER-left `+ - * /` with an `f64` right operand** — `integer arithmetic
   with an f64 right operand`. (bite 4.) Operators are typed by their left operand, so `0 -
   1.5` is an integer subtraction of 1.5's bits (-3.0), `2 * x` with `x: f64` multiplies the
@@ -612,136 +738,6 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   i64-boxed float idiom stays legal); `CYRIUS_TYPE_CHECK=0` silences it. The tree itself
   raises none. Gated by `tests/gates/diagnostics/f64_int_mix_warn.sh` (four ops warn once,
   no false positive on unary minus / f64-f64 / int-int, kind 1 intact, the switch works).
-
-### Changed
-
-- **docs:** `faq.md` known-limitation 7 no longer prescribes `(0 - N)` (for a float it IS the
-  bug); `cyrius-guide.md` documents float unary minus, the left-operand typing rule with both
-  warnings, and `f64_to`'s NaN/overflow results. The x86-only `EMOVAPD_01` helper and its
-  aarch64/cx stubs are gone (the old `f64_neg` was their only caller).
-- **docs (bite 5):** `cyrius-guide.md` *Math Builtins* states the exp/ln family's contract
-  (≤ 1 ulp, IEEE specials, `log2(2^k)` exact, no cross-target bit identity for the builtins, the
-  polyfills as the bit-identical spelling); `faq.md` known-limitation 10 says the same in one
-  line. `docs/stdlib-reference.md` *math.cyr* now agrees: it called all the polyfills
-  "private", so the guide promised names the reference disowned. `_f64_exp_polyfill` /
-  `_f64_exp2_polyfill` / `_f64_ln_polyfill` / `_f64_log2_polyfill` are listed as supported
-  entry points with their contract (the api-surface snapshot skips `_` names, so
-  `f64_log_exp_polyfill.tcyr`, which calls all four, is what pins them); sin / cos / atan's
-  polyfills stay private. `lib/math.cyr`'s header no longer lists sinh/cosh/tanh/pow/hypot/fibonacci/binomial
-  (ganita has them), and its accuracy comments ("< 5 ulp", "same behavior as the x87 path")
-  are replaced by the measured contract. The Pi gate's label drops "bit-accurate", which the
-  polyfills never were. **ganita 1.2.7** moves its pin 6.6.4 → 6.6.7 (docs/ecosystem.md row).
-- **`lib/process_agnos.cyr` rewritten: a child is spawned from disk with its real argv and a clean
-  fd table, the verbs WAIT for it to exit, and the capture verbs capture.** (bite 7.) **Root
-  cause:** the module (v6.0.56) was written against agnos's frozen 0–33 surface and never
-  revisited. It read the whole ELF into an `alloc(8 MB)` it never freed (**8 MB leaked per spawn**)
-  and handed it to spawn#3, which refuses any image over **16 KB** (kernel 1.44.10) — a DCE'd
-  `println` hello is 15 KB, so nearly every real program, agnsh included, got -1. It then called
-  waitpid#4 ONCE, and #4 without the 0x100 bit is a POLL that answers **-2** while the child lives
-  (1.44.9): `run` returned Err(1) before the child finished, `wait_pid` Err(2), and every `exec_*`
-  reported -2 as the child's exit code. No argument reached the child ("args not passable") and
-  no capture variant captured ("sys_dup is a stub") — both stale since agnos 1.57.6. **Fix:** all
-  eleven verbs (plus `exec_capture_status`, same names and arities) now build a NUL-separated argv
-  blob on the stack — refused up front past 1024 bytes or 16 entries, never truncated; an env vec
-  becomes a `KEY=VALUE` blob — and spawn with `sys_spawn_argv(…, SPAWN_F_CLEANFD)`; they wait with
-  `sys_waitpid_block` and decode the §4.9 status (exit → code, signal → 128 + sig; the `exec_*`
-  verbs keep the POSIX `-1` for a signal death). A -1 from WAIT_BLOCK on a pid we just spawned can
-  only mean a pre-1.57.7 kernel, so it falls back to polling #4 — there is deliberately no #108
-  probe, which would misread 1.57.7/1.57.8. Capture is pipe → `sys_exec_redirect(1, w)` → spawn →
-  close `w` → **read to EOF** → reap: the ring is 4080 B and a full-ring write blocks (1.57.9), so
-  reaping first deadlocks. **A refused call still makes ONE #43** — the peer's
-  `_agnos_spawn_refuse` (a2 = 0x40000, answered -SPAWN_E_ARGS) — for an argv/env the builder
-  refused, a failed pipe, or a refused #62 arm alike: every #43 return clears the caller's spawn
-  arms, so a redirect or endowment armed for a call this module refused would otherwise reach the
-  caller's NEXT child (review of this bite; reproduced on agnos-qemu, where a refused 17-entry
-  `exec_vec` let the next child write into the caller's armed pipe). `exec_cmd` splits the line
-  into argv (agnos has no shell). `wait_pid` on a pid that is not ours is `Err(PROC_ECHILD)` (now
-  defined on agnos). Kernel floor 1.57.6, documented in the header. Verified on **agnos-qemu**
-  (kernel 1.57.10, `-smp 1` and `-smp 4`, a 115 KB child seeded as `/bin/pchild`): 41/41 checks —
-  a 10,000-byte capture through the 4080 B ring with every child write accepted, a 100-byte buffer
-  against 20,000 bytes of output that still reaps, `run` → Ok(137) for a SIGKILLed child and
-  Ok(142) for a #PF, an env blob reaching the child, CLEANFD dropping a parent fd, `wait_pid`
-  blocking 300 ms, and 64 sequential runs; the 6.6.7 control build scored 5 of 32 on the same
-  kernel (every spawn refused — the child is over #3's 16 KB cap). Gate: `tests/gates/platform/agnos_process_spawn.sh` (the fake kernel
-  in `tests/fixtures/agnos_sctrace.cyr` gains `proc*` modes that answer the spawn/pipe/wait
-  numbers and dump each #43 argv blob).
-- **An accepted agnos socket inherits its listener's recv/send timeouts.** (bite 7.) On Linux the
-  kernel copies SO_RCVTIMEO/SO_SNDTIMEO into the accepted socket; on agnos `sock_accept` wrapped the
-  conn in a fresh fd slot whose timeouts `sys_close` had cleared, so it waited the 30 s default
-  whatever the listener said (every in-ecosystem server set it on the accepted fd, so nothing broke —
-  a server ported from Linux would have). `sys_sock_accept` now marks the conn_id with the listen
-  slot it came from and `_agnos_sock_bind` copies that slot's timeouts; `sys_sock_connect` and
-  `sys_sock_close` drop the mark, so an outbound conn that reuses the id never inherits it. On
-  agnos-qemu a 1 s listener timeout ends an accepted read in ~1 s (the control: 30,003 ms). Gate:
-  `tests/gates/platform/agnos_accept_timeout_inherit.sh`.
-- **`lib/regression_agnos.cyr` defines every verb `lib/regression.cyr` defines.** (bite 7.)
-  `regression_exec_with_arg_capture_both_status` (6.6.7) and the two pipe pumps
-  `regression_pipe_write_all` / `regression_pipe_read_all` (6.6.6) had no agnos peer, so an agnos
-  build that called one did not compile. The pumps are real on agnos (O_NONBLOCK read/write with an
-  idle deadline on the socket adapter's #95-first clock; a pre-1.57.8 `-2` is retried, never EOF)
-  and were run on agnos-qemu; the status verb fails closed like its siblings. The other spawn verbs
-  there still fail closed — porting them onto the new spawn is not in this release. The module header no longer claims
-  agnos has no redirect or stdin/stdout control. Gate: `tests/gates/platform/agnos_process_peer_parity.sh`
-  (derives both verb lists from the source, name and arity, for process and regression).
-- **`lib/async_agnos.cyr` no longer says agnos has no fork.** (bite 7.) fork#96 has existed since agnos
-  1.56.55; `async_timeout` runs its body inline and ignores `ms` because the port was never done, and
-  the comment now says that.
-- **`cyrius coverage` counts only real references, over the whole public surface, from whole
-  files.** (bite 9; issue `2026-09-23-samay-coverage-counts-substrings-and-comments-as-references`
-  and three same-function defects the premise-check found.) Every one of these read HIGHER than
-  the truth and exited 0 under `--min`:
-  - **Substrings and comments counted as references.** The match was a raw `memeq` at every
-    offset of the concatenated `.tcyr` text, so `check_due` was "referenced" by every
-    `check_due_at(` call and `str_lt` by a comment naming it: the filed repro read **3/3 (100%)**
-    and passed `--min 100` with one fn referenced. Now a WHOLE-IDENTIFIER match over a corpus whose
-    comments, string literals and char literals are blanked, per file, once each read is known
-    complete. The blanker (`_src_blank_noncode`, cbt/core.cyr) is IN PLACE and length-preserving and
-    mirrors the lexer: char literals first (so `'"'` and `'#'` hide nothing after them), strings may
-    span lines, the ten attribute tokens take the `LEXATTRBOUND` boundary and stay code, and a line
-    opening `#define ` / `#if ` / `#elif ` keeps its body. It is the FOURTH mirror of the lexer's
-    attribute table and is pinned by `lexer_attribute_word_boundary.sh` group C (new axes C6/C7).
-    The repro now reads **1/3 (33%)**, `coverage gate FAILED`, exit 1.
-  - **`public fn` and every other spelling but two were invisible.** The declaration matcher knew
-    only a column-0 `fn ` / `pub fn `, so `public fn` (the same token as `pub`), `fn<TAB>`,
-    `pub  fn`, an indented fn, `#inline fn`, `pub #inline fn`, `#deprecated ("x") fn` and
-    `async fn` were never counted. Declarations are read at brace depth 0 only, as
-    `cyrius_api_surface` counts them: a fn inside `impl T for S { … }` is the method `S_m`, not a
-    top-level `m`.
-  - **The file-scope `private` rule was ignored — and inverted.** In a `private` file only
-    `pub`/`public` fns are exported; the tool counted exactly the other set. hisab (643 `public fn`,
-    one bare `fn`) read **1/1 = 100%**; it measures **642/644** now.
-  - **Each source was read into a fixed 256 KiB buffer** with no truncation check: bayan's
-    `pdf.cyr` (399,907 B) showed 114 of its 152 fns, crab's `ui.cyr` + `app.cyr` hid 49. Now
-    `file_read_whole_into` (grows, reuses one buffer, needs no file-size call — wrong on PE); a read
-    error is an error by name.
-  - **A `lib/` or `dist/` at ANY depth was pruned by name**, while the code comment called the
-    prune "inert for the src/ root". nein (`src/lib/`, 393 fns) read `main.cyr 1/1 (100%)` and passed
-    `--min 80`; hoosh, kriya and kybernet lost their `src/lib/` trees the same way. A named root is
-    walked whole now; only the `.` fallback skips its own TOP-LEVEL `./lib` and `./dist`.
-  - **The report never named a function.** The unreferenced fns are listed (`<path>: <name>`) under
-    `-v` and whenever `--min` fails — the actionable half of a failed gate.
-
-  The declaration rule lives once, in cbt/core.cyr (`_src_decl_at` / `_src_file_private` /
-  `_src_public_fn_at`), shared with `cyrius header`; distlib's identifier matcher moved there too
-  (`_distlib_bundle_refs` → `_src_refs_ident`). Residual, inherent to NAME-based reference
-  coverage: a test local or parameter that shares a fn's name still counts. Gate:
-  `tests/gates/toolchain/coverage_corpus_and_failopen.sh` axes 7-14 (16 mutations, each RED),
-  which also pins string escapes, `#define` bodies and `private;` followed by an item on the same
-  line.
-
-- **`cyrius header` emits a prototype for every public fn and reads the whole file.** (bite 9.) It
-  matched only a column-0 `pub fn ` — its own comment said "pub fn or fn" — so a bare `fn` (public
-  in an ordinary file) and `public fn` never got a prototype, it ignored the `private` rule, and it
-  read a fixed 64 KiB: an 81,752-byte file lost every fn past the cut, rc=0. It now uses the shared
-  public-surface rule and `file_read_whole`. It skips `impl` methods (brace depth > 0; they printed
-  conflicting bare `new` prototypes for `method_dispatch.tcyr`) and a program's `fn main`, whose
-  prototype would collide with the C host's `int main`. The verb had NO gate anywhere, while the
-  coverage gate's header claimed the two scanners "already handled both spellings";
-  `tests/gates/toolchain/header_spellings_and_size.sh` is its first (11 mutations, each RED).
-
-- **`cyrius doctest` reads the whole file.** (bite 9.) The same fixed 64 KiB read: an example past
-  the cut was neither run nor counted, so a FAILING example there read `1 passed, 0 failed`, rc=0.
-  Pinned by `header_spellings_and_size.sh` axis H5.
 
 ### Downstream
 

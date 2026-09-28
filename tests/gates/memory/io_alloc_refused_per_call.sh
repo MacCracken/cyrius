@@ -33,7 +33,7 @@
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
-CC="$ROOT/build/cycc"
+CC=${CYCC:-"$ROOT/build/cycc"}
 [ -x "$CC" ] || { echo "FAIL: io_alloc_refused_per_call: build/cycc missing"; exit 1; }
 case "$(uname -s)-$(uname -m)" in
     Linux-x86_64) : ;;

@@ -59,7 +59,7 @@
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
-CC="$ROOT/build/cycc"
+CC=${CYCC:-"$ROOT/build/cycc"}
 [ -x "$CC" ] || { echo "FAIL: darwin_syscall_literals_routed: $CC missing"; exit 1; }
 TMP=$(mktemp -d) && [ -d "$TMP" ] || { echo "FAIL: darwin_syscall_literals_routed: mktemp -d failed"; exit 1; }
 trap 'rm -rf "$TMP"' EXIT INT TERM

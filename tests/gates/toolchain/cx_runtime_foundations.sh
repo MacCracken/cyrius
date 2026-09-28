@@ -54,7 +54,7 @@
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
-CC="$ROOT/build/cycc"
+CC=${CYCC:-"$ROOT/build/cycc"}
 [ -x "$CC" ] || { echo "FAIL: cx_runtime_foundations: build/cycc missing"; exit 1; }
 W=$(mktemp -d) && [ -d "$W" ] || { echo "FAIL: cx_runtime_foundations: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$W"' EXIT

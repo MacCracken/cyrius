@@ -219,6 +219,11 @@ L-cbt → L-ci. Expected self_compile gain from bite 1: roughly 19 %.
   **Default: the anchor `src` lane of the release after 6.6.9.**
 - **The two 2026-09-20 proposals** (coverage over run programs; fuzz poison through an allocator seam) — Phase 2
   (P5, P6). Their prerequisite defects ship in 6.6.8 bite 9 and 6.6.7 bite 8.
+- **ESYSXLAT emits its whole translation chain INLINE at every aarch64 syscall site** — measured at the 6.6.8
+  merge: `build/cycc-native-aarch64` `.text` 1,495,592 → 1,578,544 B (+82,952 over 605 `svc` sites, ~137 B
+  per site) because 6.6.8 bite 3 added nine rows and every row is copied into every site. Every aarch64
+  program pays it, and each new row makes it worse. A shared translation stub (one call per site) would
+  cut it to a few bytes a site. Correct today; a size tax, so it is placed here rather than in a release.
 - **Fold bundles that are raw-includable** — an XL cross-repo campaign (a distlib change released first, then
   ten sibling regenerations, then a re-vendor); backlog, below.
 

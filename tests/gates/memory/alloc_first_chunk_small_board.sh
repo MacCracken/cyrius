@@ -53,7 +53,7 @@
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
-CC="$ROOT/build/cycc"
+CC=${CYCC:-"$ROOT/build/cycc"}
 [ -x "$CC" ] || { echo "FAIL: alloc_first_chunk_small_board: build/cycc missing"; exit 1; }
 case "$(uname -s)-$(uname -m)" in
     Linux-x86_64) : ;;

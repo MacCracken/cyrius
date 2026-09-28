@@ -21,7 +21,7 @@
 # Mutation-proven: with the four `_INT_F64_MIX` calls removed, axis 1 reads 0 of 4 and fails.
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
-CC="$ROOT/build/cycc"
+CC=${CYCC:-"$ROOT/build/cycc"}
 [ -x "$CC" ] || { echo "FAIL: f64_int_mix_warn: no build/cycc"; exit 1; }
 cd "$ROOT"
 W=$(mktemp -d) && [ -d "$W" ] || { echo "FAIL: f64_int_mix_warn: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
