@@ -1183,11 +1183,24 @@ fn _split_csv(s): i64 {
 # `_dep_stdlib_seen`. FAIL-LOUD: a leaf that doesn't resolve returns the error
 # count. Shared by the `requires` key (.46) and the `.deps` sidecar (.47).
 # Caller must have inited `_dep_stdlib_seen` + resolved a non-0 `stdlib_dir`.
+# Record a stdlib leaf pulled on behalf of a named dep (see _dep_nd_leaves), once.
+fn _dep_note_nd_leaf(leaf): i64 {
+    if (_dep_nd_leaves == 0) { return 0; }
+    var i = 0;
+    while (i < vec_len(_dep_nd_leaves)) {
+        if (streq(vec_get(_dep_nd_leaves, i), leaf) == 1) { return 0; }
+        i = i + 1;
+    }
+    vec_push(_dep_nd_leaves, leaf);
+    return 0;
+}
+
 fn _dep_pull_leaves(stdlib_dir, dep_name, leaves): i64 {
     var errs = 0;
     var i = 0;
     while (i < vec_len(leaves)) {
         var leaf = vec_get(leaves, i);
+        _dep_note_nd_leaf(leaf);
         var r = _dep_copy_stdlib_recursive(stdlib_dir, leaf, 1);
         if (r == 1) {
             # v6.5.24 — SAY WHICH CONDITION ACTUALLY HELD. This printed
@@ -1615,6 +1628,7 @@ fn _dep_pull_submodule(dep_src, pkg, submod, stdlib_dir, seen): i64 {
                 if (_dep_reject_unsafe_name(d + 4) == 1) {   # CVE-32: index-controlled leaf name
                     errs = errs + 1;
                 } elif (stdlib_dir != 0) {
+                    _dep_note_nd_leaf(d + 4);
                     if (_dep_copy_stdlib_recursive(stdlib_dir, d + 4, 1) == 1) { errs = errs + 1; }
                 }
             } else {
@@ -1651,6 +1665,7 @@ fn _dep_pull_submodule(dep_src, pkg, submod, stdlib_dir, seen): i64 {
     var cr = _dep_copy_file(src, dst_full);
     if (cr == 0 || cr == 2) {
         vec_push(_dep_includes, dst_full);
+        vec_push(_dep_nd_modules, dst_full);   # 6.6.9: a named dep's module (distlib verify)
     } elif (cr == 1) {
         sys_write(STDERR_FD, "error: modular sub-module ", 26);
         sys_write(STDERR_FD, pkg, strlen(pkg));
@@ -2267,6 +2282,9 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                             # ⚠ Deliberately NO `vec_push(_dep_includes, dst)`: Phase 1
                             # already pushed this exact path when it copied the snapshot, and
                             # a second push would emit the include twice.
+                            # 6.6.9: it IS this dep's module in scope, so distlib's verify
+                            # splices it (the leaf of the same name is then skipped there).
+                            vec_push(_dep_nd_modules, dst);
                             dep_had_success = 1;
                             mi = mi + 1;
                             continue;
@@ -2276,6 +2294,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                     var cr2 = _dep_copy_file(src, dst);
                     if (cr2 == 0 || cr2 == 2) {
                         vec_push(_dep_includes, dst);
+                        vec_push(_dep_nd_modules, dst);   # 6.6.9: a named dep's module (distlib verify)
                         dep_had_success = 1;
                         if (cr2 == 0) {
                             if (_verbose == 1) {
@@ -2383,6 +2402,8 @@ fn cmd_deps(): i64 {
     var copied = 0;
     var errors = 0;
     _dep_includes = vec_new();
+    _dep_nd_modules = vec_new();     # 6.6.9: named-dep modules, for distlib's verify unit
+    _dep_nd_leaves = vec_new();      # 6.6.9: stdlib leaves pulled for named deps (same)
     # v5.7.14: per-cmd_deps state. visited names = closest-wins de-dup.
     # queue = abs dirs of resolved deps whose own cyrius.cyml needs walking.
     _dep_visited = vec_new();

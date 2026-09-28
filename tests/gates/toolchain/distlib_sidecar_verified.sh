@@ -111,4 +111,171 @@ for f in "$A/dist/vprobe.deps" "$B/dist/vprobe.deps" "$C/dist/vprobe.deps"; do
     done < "$f"
 done
 
-echo "PASS: distlib_sidecar_verified (missing leaf repaired, sufficient set untouched, dispatcher not peer, all resolve)"
+# ── axes 5-9 (6.6.9, libro filing): THE UNIT IS WHAT A CONSUMER'S BUILD HAS IN SCOPE ────
+# libro takes sigil as a THIN named dep. The verify spliced only the stdlib leaves and the
+# bundle, so every sigil symbol read as undefined, was credited to the stdlib sigil MONOLITH,
+# and the next round recorded the monolith's own need (`sys`) as libro's. Hermetic home with
+# three fake stdlib leaves and one PATH named dep — no git dep, so no <home>/deps is touched:
+#   fold.cyr      the monolith, SAME NAME as the named dep; its fold_sign/fold_extra need helperlib
+#   bigfold.cyr   a monolith under ANOTHER name that also declares thin_sign, and needs helperlib
+#   helperlib.cyr what the monoliths need and the bundle (normally) does not
+# and the named dep `fold` = ../foldsrc/dist/fold-thin.cyr (fold_sign, thin_sign, no needs).
+NH="$WORK/nhome"
+mkdir -p "$NH/versions/$VER" "$NH/bin" "$WORK/foldsrc/dist"
+cp -R "$ROOT/lib" "$NH/versions/$VER/lib"
+CC=${CYCC:-"$ROOT/build/cycc"}
+cp "$CC" "$NH/bin/cycc"; chmod +x "$NH/bin/cycc"
+printf 'fn helperlib_do(x): i64 { return x; }\n' > "$NH/versions/$VER/lib/helperlib.cyr"
+printf 'fn fold_sign(x): i64 { return helperlib_do(x); }\nfn fold_extra(x): i64 { return helperlib_do(x) + 1; }\n' > "$NH/versions/$VER/lib/fold.cyr"
+printf 'fn thin_sign(x): i64 { return helperlib_do(x) + 2; }\n' > "$NH/versions/$VER/lib/bigfold.cyr"
+printf '[package]\nname = "fold"\nversion = "1.0.0"\ncyrius = "%s"\n' "$VER" > "$WORK/foldsrc/cyrius.cyml"
+printf 'fn fold_sign(x): i64 { return x + 1; }\nfn thin_sign(x): i64 { return x + 2; }\n' > "$WORK/foldsrc/dist/fold-thin.cyr"
+
+mknd() {  # mknd <dir> <body-of-src/np.cyr> <src/lib.cyr umbrella body>
+    d="$WORK/$1"; mkdir -p "$d/src"
+    cat > "$d/cyrius.cyml" <<EOF
+[package]
+name = "np"
+version = "0.1.0"
+cyrius = "$VER"
+
+[lib]
+modules = ["src/np.cyr"]
+
+[deps]
+stdlib = ["syscalls", "alloc"]
+
+[deps.fold]
+path = "../foldsrc"
+modules = ["dist/fold-thin.cyr"]
+EOF
+    printf '%s\n' "$2" > "$d/src/np.cyr"
+    printf '%s\n' "$3" > "$d/src/lib.cyr"
+    echo "$d"
+}
+run_nd() { ( cd "$1" && CYRIUS_HOME="$NH" CYRIUS_RESOLVED=1 "$CYRIUS" distlib 2>&1 ); }
+nd_leaves() { grep -v '^#' "$1/dist/np.deps" 2>/dev/null | tr '\n' ' '; }
+
+# axis 5: a symbol the bundle takes from the named dep is DEFINED in the unit (module splice).
+# thin_sign's only stdlib declarer is bigfold, which is not a named dep, so neither the owner
+# guard nor the leaf skip can hide a missing splice here.
+P5=$(mknd p5 'fn np_a(x): i64 { return thin_sign(x); }' 'include "src/np.cyr"')
+O5=$(run_nd "$P5" || true)
+[ -f "$P5/dist/np.deps" ] || fail "axis 5: no sidecar written: $(echo "$O5" | head -3)"
+case " $(nd_leaves "$P5") " in
+    *" helperlib "*|*" bigfold "*) fail "axis 5: [$(nd_leaves "$P5")] — thin_sign comes from the named dep's module, but the verify unit left it out and credited it to the stdlib's bigfold (the libro 'sys' shape)" ;;
+esac
+
+# axis 6: a leaf that IS a named dep is the consumer's pinned module, not the stdlib fold.
+# The umbrella includes lib/fold.cyr, so `fold` is captured as a leaf; splicing the stdlib's
+# fold.cyr brings its helperlib need into the sidecar.
+P6=$(mknd p6 'fn np_c(x): i64 { return fold_sign(x); }' 'include "lib/fold.cyr"
+include "src/np.cyr"')
+O6=$(run_nd "$P6" || true)
+[ -f "$P6/dist/np.deps" ] || fail "axis 6: no sidecar written: $(echo "$O6" | head -3)"
+case " $(nd_leaves "$P6") " in
+    *" helperlib "*) fail "axis 6: [$(nd_leaves "$P6")] — the leaf 'fold' is a named dep, but the verify spliced the STDLIB fold and recorded its needs" ;;
+esac
+
+# axis 7: no named dep is ever an OWNER. fold_extra exists only in the stdlib fold (the thin
+# module lacks it); crediting it to `fold` re-adds a leaf the writer then silently drops.
+P7=$(mknd p7 'fn np_b(x): i64 { return fold_sign(x) + fold_extra(x); }' 'include "src/np.cyr"')
+O7=$(run_nd "$P7" || true)
+[ -f "$P7/dist/np.deps" ] || fail "axis 7: no sidecar written: $(echo "$O7" | head -3)"
+echo "$O7" | grep -q 're-added' && fail "axis 7: the verify re-added a leaf for fold_extra — a named dep ('fold') was taken as the owner: $(echo "$O7" | grep re-added)"
+
+# axis 8 (ANTI-VACUOUS for 5-7): a bundle that genuinely calls a helperlib fn still gets it.
+P8=$(mknd p8 'fn np_d(x): i64 { return thin_sign(x) + helperlib_do(x); }' 'include "src/np.cyr"')
+run_nd "$P8" >/dev/null 2>&1 || true
+case " $(nd_leaves "$P8") " in
+    *" helperlib "*) : ;;
+    *) fail "axis 8 (anti-vacuous): [$(nd_leaves "$P8")] — np_d calls helperlib_do, and helperlib was not re-added" ;;
+esac
+
+# axis 9: FAIL LOUD. A unit that fails to compile for a reason other than a missing symbol
+# (here: an include that resolves nowhere) used to read as "nothing undefined" — the sidecar
+# was published UNVERIFIED, silently. Now distlib exits non-zero and writes no sidecar.
+P9=$(mknd p9 'include "lib/no_such_leaf_zz.cyr"
+fn np_e(x): i64 { return x; }' 'include "src/np.cyr"')
+if O9=$(run_nd "$P9"); then fail "axis 9: distlib exited 0 over a verify unit that cannot compile"; fi
+[ -f "$P9/dist/np.deps" ] && fail "axis 9: a sidecar was written although its verify could not run: [$(nd_leaves "$P9")]"
+echo "$O9" | grep -q 'sidecar NOT written' || fail "axis 9: the refusal did not say why: $(echo "$O9" | head -3)"
+
+# axis 10: a named dep's OWN needs stay out. `fold2`'s module calls helperlib_do and hd_do, and
+# its sidecar names `helperlib` and `hd_impl`. Its module is in the unit, so those symbols
+# surface as undefined too; recorded, every named dep's leaves are copied into the bundle's
+# sidecar (measured on agnosai's `guard` profile: +12 leaves: tls, async, dynlib, …). A symbol
+# whose owner a named dep's leaf list brings, and which nothing of ours names, is taken into the
+# unit and NOT recorded. `hd_impl` is a private PEER whose dispatcher is `hd`, so the check must
+# accept either spelling. `math` is the anti-vacuous half: the bundle's own F64_ONE is still
+# re-added (axis 10b below covers the other half of the rule: OUR use of such a leaf is recorded).
+printf 'include "lib/hd_impl.cyr"\nvar _hd_marker = 0;\n' > "$NH/versions/$VER/lib/hd.cyr"
+printf 'fn hd_do(x): i64 { return x + 4; }\n' > "$NH/versions/$VER/lib/hd_impl.cyr"
+mkdir -p "$WORK/fold2src/dist"
+printf '[package]\nname = "fold2"\nversion = "1.0.0"\ncyrius = "%s"\n' "$VER" > "$WORK/fold2src/cyrius.cyml"
+printf 'fn fold2_do(x): i64 { return helperlib_do(x) + hd_do(x); }\n' > "$WORK/fold2src/dist/fold2.cyr"
+printf '# cyrius dep sidecar\nhelperlib\nhd_impl\n' > "$WORK/fold2src/dist/fold2.deps"
+P10=$(mknd p10 'fn np_f(x): i64 {
+    var one = F64_ONE;
+    return fold2_do(x) + one;
+}' 'include "src/np.cyr"')
+printf '\n[deps.fold2]\npath = "../fold2src"\nmodules = ["dist/fold2.cyr"]\n' >> "$P10/cyrius.cyml"
+O10=$(run_nd "$P10" || true)
+[ -f "$P10/dist/np.deps" ] || fail "axis 10: no sidecar written: $(echo "$O10" | head -3)"
+[ -f "$P10/lib/hd_impl.cyr" ] || fail "axis 10 premise: cyrius deps did not pull fold2's sidecar leaf hd_impl: $(echo "$O10" | head -3)"
+case " $(nd_leaves "$P10") " in
+    *" helperlib "*|*" hd "*|*" hd_impl "*) fail "axis 10: [$(nd_leaves "$P10")] — helperlib/hd_impl are fold2's needs (its sidecar carries them), not the bundle's" ;;
+esac
+case " $(nd_leaves "$P10") " in
+    *" math "*) : ;;
+    *) fail "axis 10 (anti-vacuous): [$(nd_leaves "$P10")] — np_f reads F64_ONE and 'math' was not re-added" ;;
+esac
+
+# axis 11: EACH FILE ONCE. The unit used to SPLICE leaf text, while the bundle (and other
+# leaves) still carried `include "lib/<leaf>.cyr"` — so the leaf arrived twice, and every
+# `#define` in it was spent twice from cycc's 16-entry table (majra's `backends` profile: the
+# sigil fold's seven `#define LINUX`, pulled in again through tls_native). `defs` carries nine;
+# twice is past the cap, once is not. The overflow printed no `undefined` line, so the old loop
+# read it as "fixpoint" and `math` (F64_ONE, below) was silently never re-added.
+printf '#define DEFS_A\n#define DEFS_B\n#define DEFS_C\n#define DEFS_D\n#define DEFS_E\n#define DEFS_F\n#define DEFS_G\n#define DEFS_H\n#define DEFS_I\nfn defs_do(x): i64 { return x + 9; }\n' > "$NH/versions/$VER/lib/defs.cyr"
+P11=$(mknd p11 'include "lib/defs.cyr"
+fn np_h(x): i64 {
+    var one = F64_ONE;
+    return defs_do(x) + one;
+}' 'include "src/np.cyr"')
+sed -i.bak 's/^stdlib = \["syscalls", "alloc"\]/stdlib = ["syscalls", "alloc", "defs"]/' "$P11/cyrius.cyml" && rm -f "$P11/cyrius.cyml.bak"
+O11=$(run_nd "$P11" || true)
+[ -f "$P11/dist/np.deps" ] || fail "axis 11: no sidecar written — the unit carried defs.cyr twice and overflowed the #define table: $(echo "$O11" | grep -i error | head -2)"
+grep -qx 'math' "$P11/dist/np.deps" || fail "axis 11: 'math' not re-added for F64_ONE in [$(nd_leaves "$P11")] — the unit failed (a leaf included twice) and the loop took the failure for a fixpoint"
+
+# axis 10b: the rule is "a named dep's need AND not ours". np_k calls helperlib_do ITSELF, so
+# helperlib is recorded even though fold2 brings it too — the sidecar must not lean on a
+# named dep's leaf list for what the bundle uses (measured: that is how rosnet's `gpu` sidecar
+# lost `alloc`, which its leaf mabda needs, because tyche happened to bring it).
+P10B=$(mknd p10b 'fn np_k(x): i64 { return fold2_do(x) + helperlib_do(x); }' 'include "src/np.cyr"')
+printf '\n[deps.fold2]\npath = "../fold2src"\nmodules = ["dist/fold2.cyr"]\n' >> "$P10B/cyrius.cyml"
+O10B=$(run_nd "$P10B" || true)
+grep -qx 'helperlib' "$P10B/dist/np.deps" 2>/dev/null || fail "axis 10b: [$(nd_leaves "$P10B")] — np_k calls helperlib_do itself, so helperlib must be recorded, not left to fold2: $(echo "$O10B" | grep -i error | head -2)"
+
+# axis 10c: "ours" includes a recorded leaf's PRIVATE PEERS. `pd` is a dispatcher whose peer
+# pd_impl calls helperlib_do; the bundle uses pd, never helperlib. helperlib is a need of OUR
+# leaf, so it is recorded although fold2 brings it too (syscalls.cyr is this shape: its x86
+# peer is where `alloc` is used).
+printf 'include "lib/pd_impl.cyr"\nvar _pd_marker = 0;\n' > "$NH/versions/$VER/lib/pd.cyr"
+printf 'fn pd_do(x): i64 { return helperlib_do(x) + 5; }\n' > "$NH/versions/$VER/lib/pd_impl.cyr"
+P10C=$(mknd p10c 'fn np_m(x): i64 { return fold2_do(x) + pd_do(x); }' 'include "src/np.cyr"')
+sed -i.bak 's/^stdlib = \["syscalls", "alloc"\]/stdlib = ["syscalls", "alloc", "pd"]/' "$P10C/cyrius.cyml" && rm -f "$P10C/cyrius.cyml.bak"
+printf '\n[deps.fold2]\npath = "../fold2src"\nmodules = ["dist/fold2.cyr"]\n' >> "$P10C/cyrius.cyml"
+O10C=$(run_nd "$P10C" || true)
+grep -qx 'pd' "$P10C/dist/np.deps" 2>/dev/null || fail "axis 10c premise: 'pd' not in [$(nd_leaves "$P10C")]: $(echo "$O10C" | grep -i error | head -2)"
+grep -qx 'helperlib' "$P10C/dist/np.deps" || fail "axis 10c: [$(nd_leaves "$P10C")] — pd's peer pd_impl calls helperlib_do; a recorded leaf's need was left to fold2"
+
+# axis 12: the verify's scratch mirror (dist/.dlverify-<pid>) never outlives the run — on the
+# success path or on the fail-loud one.
+for d in "$P5" "$P6" "$P9" "$P10" "$P10B" "$P10C" "$P11"; do
+    if ls -a "$d/dist" 2>/dev/null | grep -q '^\.dlverify-'; then
+        fail "axis 12: $d/dist still holds the verify's scratch mirror"
+    fi
+done
+
+echo "PASS: distlib_sidecar_verified (missing leaf repaired, sufficient set untouched, dispatcher not peer, all resolve, named deps in the unit, fails loud)"

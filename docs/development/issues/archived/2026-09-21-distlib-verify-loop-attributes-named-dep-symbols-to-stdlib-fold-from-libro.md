@@ -1,6 +1,6 @@
-# `cyrius distlib`'s verify loop attributes a named dep's symbols to the stdlib fold, and records the fold's leaves as the consumer's — OPEN
+# `cyrius distlib`'s verify loop attributes a named dep's symbols to the stdlib fold, and records the fold's leaves as the consumer's — RESOLVED
 
-**Status:** 🟡 **OPEN** — over-reports one leaf on libro; the sidecar still resolves, so no consumer is blocked.
+**Status:** ✅ **RESOLVED v6.6.9** (bite 8) — the verify unit carries the named deps' modules (recorded by `cyrius deps`), built from includes so each file enters once; a leaf that is a named dep is the consumer's pinned module; no named dep is an owner; a named dep's own need (its leaf list brings the owner, nothing of ours names the symbol) is kept out of the sidecar; and a unit that fails for any reason but a missing symbol is an error, not a fixpoint. libro c95f296: 27 leaves, no `sys`. Gate: `tests/gates/toolchain/distlib_sidecar_verified.sh` axes 5-12.
 **Placement:** **6.6.9 bite 8** — distlib: the profile prune ignores comments and strings; the verify unit splices named-dep modules and fails loudly; cbt _file_size works on PE. Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Discovered:** 2026-09-21 during libro's 2.10.2 bump to cyrius 6.6.6 / sigil 3.12.18 / patra 1.14.3
 **Severity:** Low

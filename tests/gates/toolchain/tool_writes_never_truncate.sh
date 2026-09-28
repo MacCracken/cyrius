@@ -177,6 +177,7 @@ cbt/pulsar.cyr|tmp|the compiler child'"'"'s stdout (cycc'"'"'s own output write)
 cbt/commands.cyr|tmperr|a child'"'"'s stderr capture in the private temp dir
 cbt/commands.cyr|entry|a _cbt_tmpfile probe source (short write checked: it then fails to compile)
 cbt/commands.cyr|dl_entry|a _cbt_tmpfile probe source
+cbt/commands.cyr|dst|distlib'"'"'s verify mirror (dist/.dlverify-<pid>, 6.6.9): a scratch copy of the pinned snapshot, removed after the verify — not a user or tree file; a short write fails the verify
 cbt/core.cyr|tmp|_aw_open'"'"'s own sibling temp — the crash-safe writer itself
 cbt/quality.cyr|tmpf|a _cbt_tmpfile doctest source
 cbt/deps.cyr|tmpf|a _cbt_tmpfile capture of sha256sum'"'"'s stdout

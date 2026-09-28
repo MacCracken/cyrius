@@ -27,6 +27,43 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   mention keeps nothing; a real call after a `'"'` char literal is kept BY THE PRUNE, not repaired by
   the verify loop; an explicit include keeps its leaf). Mutation-proven: the 6.6.8 CLI fails 8 and 10,
   a blanker without its char-literal arm fails 9.
+- **`cyrius distlib`'s verify unit is what a consumer's build has in scope, and it fails loud.**
+  (bite 8; issue `2026-09-21-distlib-verify-loop-attributes-named-dep-symbols-to-stdlib-fold-from-libro`,
+  archived.) **Root cause:** the compile-verified sidecar (6.5.37) spliced the stdlib leaves and the
+  bundle only. Every symbol libro takes from its THIN sigil named dep read as undefined,
+  `_distlib_leaf_defining` credited it to the first stdlib file declaring it — the sigil monolith —
+  and the next round recorded the monolith's own need (`sys_uname` → `sys`) as libro's: 28 leaves
+  for a bundle that needs 27. And `compile()`'s status was discarded, so any failure that printed no
+  `undefined` line (compiler missing, an include that resolves nowhere, a `#define` table overflow,
+  an unwritable unit) found zero names and returned "fixpoint" — the sidecar went out unverified,
+  silently. **Fix:** `cyrius deps` records the named-dep module files it places in `lib/` and the
+  stdlib leaves it pulls on their behalf (`_dep_nd_modules` / `_dep_nd_leaves`, cbt/deps.cyr). The
+  modules enter the unit; a leaf that IS a named dep is the consumer's pinned module rather than the
+  stdlib fold; no named dep is ever an owner; and a symbol is kept out of the sidecar as a named
+  dep's own need only when that dep's leaf list brings its owner AND nothing of ours (the bundle, a
+  recorded leaf or its private peers; comments and strings blanked) names it — anything else is
+  recorded, the safe direction. The unit is now built from INCLUDES (an entry in
+  `dist/.dlverify-<pid>/` beside a copy of the pinned snapshot, which resolves any leaf the project
+  has not vendored — cycc tries the CWD's `./lib` first, the entry's directory last — removed
+  afterwards): the old text splice defeated include-once — a spliced leaf arrived again through any
+  `include "lib/<it>.cyr"` — which doubled every `#define` and overflowed cycc's 16-entry table
+  (sigil's fold, seven `#define LINUX`). That had silently
+  truncated sigil's own profile sidecars: `sigil-mldsa`, `-ed25519`, `-x509` and `-authenticode`
+  now gain `syscalls`/`fmt`/`result`, and a clean-room compile of each from exactly its sidecar
+  leaves has no undefined symbol (6.6.8's `sigil-aes` had two). A unit that cannot be built or
+  compiled for any reason but a missing symbol is now an error (`… does not compile, and no symbol
+  is missing — sidecar NOT written`, its `error` lines echoed, exit 1, the previous sidecar left as
+  it was). libro at c95f296 under a throwaway home: 27 leaves, no `sys`. Gate:
+  `distlib_sidecar_verified.sh` axes 5-12, hermetic (PATH named deps, so no `<home>/deps` is
+  touched): the module splice, the named-dep leaf skip, the owner guard, fail-loud, a named dep's
+  own need (either spelling, peer or dispatcher), OUR use of such a leaf, a recorded leaf's peer's
+  need, each-file-once and the mirror's removal are each mutation-proven on their own axis; axis 8
+  is the anti-vacuous "a bundle that really calls the helper still gets it re-added". ⚠ Stated
+  residual: a need of a recorded leaf that a named dep's module already meets through its own
+  `include` is met in the unit and not recorded — as it is in every consumer's build, through that
+  dep (bote's `core` profile no longer lists `io`, which its leaf bayan uses and libro includes).
+  `distlib_sidecar_stdlib_only.sh`'s fixture included `lib/unicode.cyr` — a family that is a
+  directory — and passed only because the verify failed open on it; it now gives the include a shim.
 - **The Windows CLI sizes files: `_file_size` is open + lseek(SEEK_END), not a raw stat.** (bite 8;
   audit.) **Root cause:** cbt's `_file_size` was `syscall(4, …)` — x86-Linux stat, with no PE
   reroute — so `cyrius.exe` got -38 at every call site. User-visible on real Windows (cass):
@@ -52,6 +89,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **vani** can narrow ADR 002 (`docs/architecture/002-distlib-deps-counts-comment-words.md`):
   comments and strings no longer count, so the remaining rule is "no stdlib top-level fn/var name as
   a profile module's parameter or local".
+- **libro** regenerating with a 6.6.9 toolchain drops `sys` from `dist/libro.deps` (27 leaves).
+- **Sidecars move on the next `cyrius distlib`.** Measured across the 74 `[lib]` repos under
+  ~/Repos (each at HEAD, a throwaway home, old vs new CLI): 50 of 131 sidecars change — leaves kept
+  only by a comment or string drop (sandhi, sankoch, ranga, bayan, …), named deps' own needs drop
+  (mehman −16, nein-mcp −12, the `sys` of libro/kavach/nein/t-ron/agnosai), and needs the silently
+  failing verify had truncated appear (sigil's `mldsa`/`ed25519`/`x509`/`authenticode` gain
+  `syscalls`/`fmt`/`result`; bote gains `sys` for its `sigil` leaf). `distlib --check` in CI will
+  report them STALE until regenerated.
+- ⚠ **Two repos' `distlib` now REFUSES the sidecar** (the verify unit does not compile, which the
+  old loop read as success): **stiva** — its bundle and its named dep kavach both declare `struct
+  AuditEntry`, with different fields, and stiva's `#derive(accessors)` #assert fires; **dhvani** —
+  its named dep naad's module fails `: stack` return binding under the current compiler. Both are
+  real in a consumer's build of those bundles; each needs its own fix.
 
 ## [6.6.8] — 2026-09-28
 

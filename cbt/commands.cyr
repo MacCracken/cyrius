@@ -2925,17 +2925,35 @@ fn _distlib_leaf_is_stdlib(leaf): i64 {
 # fixup stage only), so the loop must read both and must not treat a non-zero exit as fatal
 # until the fixpoint says nothing more can be added. hisab's `F64_ONE` — the ordinary way to
 # write 1.0 in a language with no float literals — is exactly this shape.
+#
+# ⭐ 6.6.9 — THE UNIT IS WHAT A CONSUMER'S BUILD HAS IN SCOPE: the leaves, the leaves the named
+# deps bring, the NAMED DEPS' own modules, then the bundle. It used to be the leaves and the
+# bundle only, so every symbol the bundle takes from a named dep read as undefined,
+# `_distlib_leaf_defining` credited it to the first stdlib file declaring that name — for libro's
+# thin sigil surface, the sigil MONOLITH — and the next round recorded the monolith's own needs
+# (`sys`) as libro's. `cyrius deps` records the module paths and the leaves it pulled for named
+# deps (`_dep_nd_modules` / `_dep_nd_leaves`, cbt/deps.cyr): the modules enter the unit, and a
+# named dep's own need is kept out of the sidecar (see the classification in the loop); a leaf
+# that IS a named dep (libro's umbrella includes `lib/patra.cyr`) is the consumer's pinned
+# module, not the stdlib snapshot's fold; and no named dep is ever an owner.
+#
+# ⛔ AND IT FAILS LOUD. compile()'s status was discarded, so any failure that printed no
+# `undefined` line — the compiler missing, a missing include, an entry that could not be written
+# — found zero names and returned "fixpoint": the sidecar was published UNVERIFIED and said
+# nothing. A negative return is now that verdict, and cmd_distlib refuses to write the sidecar.
+
 # Append a file's bytes to `sb`, followed by a newline so a file with no trailing newline
-# cannot weld its last line onto the next file's first.
+# cannot weld its last line onto the next file's first. Returns 0, or -1 when the file cannot
+# be read. Read WHOLE: sizing the read with `_file_size` made it answer "empty" on the Windows
+# CLI (-38) and the verify compiled nothing. CHANGELOG [6.6.9]
 fn _distlib_splice_file(sb, path): i64 {
-    var sz = _file_size(path);
-    if (sz <= 0) { return 0; }
-    var b = alloc(sz + 2);
-    var got = file_read_all(path, b, sz);
-    if (got <= 0) { return 0; }
-    store8(b + got, 10);
-    store8(b + got + 1, 0);
-    str_builder_add_cstr(sb, b);
+    var n = 0;
+    var b = file_read_whole(path, &n);
+    if (b == 0) { return 0 - 1; }
+    if (n > 0) {
+        str_builder_add_cstr(sb, b);
+        str_builder_add_cstr(sb, "\n");
+    }
     return 0;
 }
 
@@ -2950,114 +2968,445 @@ fn _distlib_vec_has(v, name): i64 {
     return 0;
 }
 
+# ⭐ THE UNIT IS BUILT FROM INCLUDES (6.6.9). Splicing leaf TEXT defeated include-once: a spliced
+# leaf arrived AGAIN whenever anything in the unit (the bundle, another leaf, a named dep's
+# module) carried `include "lib/<it>.cyr"`. Every fn became a `duplicate fn` warning, and every
+# `#define` was spent twice from cycc's 16-entry table: majra's `backends` profile (the sigil
+# fold's seven `#define LINUX`, pulled in again through tls_native) overflowed it — hidden while
+# compile()'s status was discarded, loud the moment it was not. So the unit is an entry file of
+# `include "lib/<leaf>.cyr"` lines plus the bundle's text, and include-once admits each file
+# exactly once. cycc resolves an include against the CWD first — the project's ./lib, as in its
+# own build — and only then against the entry's directory (`#@incdir`, lex.cyr READFILE), so the
+# entry lives in `dist/.dlverify-<pid>/` beside a copy of the PINNED snapshot's lib/: a leaf the
+# project has not vendored (the one the loop just re-added) resolves there, from the pin.
+# (Under the project, because CVE-16 refuses absolute includes and cycc an absolute `#@incdir`.)
+# ⚠ A consequence, stated: a need of a recorded leaf that a named dep's module already brings
+# by its own include (bote-core's leaf bayan uses file_open; libro's bundle includes io) is met
+# in the unit and not recorded — as it is met in every consumer's build, through that dep.
+var _dl_mirror_files = 0;   # vec of cstr: every file the mirror holds (removed by _distlib_mirror_drop)
+var _dl_mirror_dirs = 0;    # vec of cstr: its directories, parents first
+
+# Copy `src` to `dst` whole. 0, or -1 (read or write failed).
+fn _distlib_copy_whole(src, dst): i64 {
+    var n = 0;
+    var b = file_read_whole(src, &n);
+    if (b == 0) { return 0 - 1; }
+    if (file_write_all(dst, b, n) != n) { return 0 - 1; }
+    vec_push(_dl_mirror_files, dst);
+    return 0;
+}
+
+# `a` + "/" + `b`.
+fn _distlib_join(a, b): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, a);
+    str_builder_add_cstr(sb, "/");
+    str_builder_add_cstr(sb, b);
+    return str_data(str_builder_build(sb));
+}
+
+# Make directory `d` (it must not exist) and remember it for the drop. 0, or -1.
+fn _distlib_mirror_mkdir(d): i64 {
+    if (sys_mkdir(d, 448) != 0) { return 0 - 1; }   # 0700
+    vec_push(_dl_mirror_dirs, d);
+    return 0;
+}
+
+# Copy every `.cyr` of directory `from` into `to` (created); one level of subdirectories (the
+# stdlib's family leaves) likewise. 0, or -1.
+fn _distlib_mirror_copy_dir(from, to, depth): i64 {
+    if (_distlib_mirror_mkdir(to) != 0) { return 0 - 1; }
+    var ents = dir_list(str_from(from));
+    if (ents == 0) { return 0; }
+    var i = 0;
+    while (i < vec_len(ents)) {
+        var e = str_data(vec_get(ents, i));
+        i = i + 1;
+        var el = strlen(e);
+        if (el == 0 || load8(e) == 46) { continue; }          # '.', '..', dotfiles
+        var fp = _distlib_join(from, e);
+        var tp = _distlib_join(to, e);
+        if (el > 4 && memeq(e + el - 4, ".cyr", 4) == 1) {
+            if (_distlib_copy_whole(fp, tp) != 0) { return 0 - 1; }
+        } elif (depth == 0 && is_dir(str_from(fp)) == 1) {
+            if (_distlib_mirror_copy_dir(fp, tp, 1) != 0) { return 0 - 1; }
+        }
+    }
+    return 0;
+}
+
+# Copy snapshot `root` to `dist/.dlverify-<pid>/lib/` (the unit's `#@incdir` fallback). Returns
+# the directory, or 0 after naming the failure.
+fn _distlib_mirror_make(root): i64 {
+    _dl_mirror_files = vec_new();
+    _dl_mirror_dirs = vec_new();
+    var msb = str_builder_new();
+    str_builder_add_cstr(msb, "dist/.dlverify-");
+    str_builder_add_int(msb, sys_getpid());
+    var m = str_data(str_builder_build(msb));
+    if (_distlib_mirror_mkdir(m) != 0) {
+        _err_ctx("distlib: sidecar verify cannot create its scratch directory (a stale one? remove it)", m);
+        return 0;
+    }
+    if (_distlib_mirror_copy_dir(root, _distlib_join(m, "lib"), 0) != 0) {
+        _err_ctx("distlib: sidecar verify cannot mirror the stdlib snapshot", root);
+        _distlib_mirror_drop();
+        return 0;
+    }
+    return m;
+}
+
+# Remove everything _distlib_mirror_make created: files, then directories deepest first.
+fn _distlib_mirror_drop(): i64 {
+    if (_dl_mirror_files == 0) { return 0; }
+    var i = 0;
+    while (i < vec_len(_dl_mirror_files)) { xunlink(vec_get(_dl_mirror_files, i)); i = i + 1; }
+    var d = vec_len(_dl_mirror_dirs);
+    while (d > 0) { d = d - 1; xrmdir(vec_get(_dl_mirror_dirs, d)); }
+    _dl_mirror_files = 0;
+    _dl_mirror_dirs = 0;
+    return 0;
+}
+
+# Append the include line(s) for stdlib leaf `lf` to the unit: `include "lib/<lf>.cyr"`, or
+# one line per `.cyr` of the family directory `lib/<lf>/` in name order. A leaf that is
+# neither (not in the snapshot) adds nothing.
+fn _distlib_unit_leaf(esb, m, lf): i64 {
+    var lib = _distlib_join(m, "lib");
+    var lbase = _distlib_join(lib, lf);
+    var fsb = str_builder_new();
+    str_builder_add_cstr(fsb, lbase);
+    str_builder_add_cstr(fsb, ".cyr");
+    if (file_exists(str_data(str_builder_build(fsb))) == 1) {
+        str_builder_add_cstr(esb, "include \"lib/");
+        str_builder_add_cstr(esb, lf);
+        str_builder_add_cstr(esb, ".cyr\"\n");
+        return 0;
+    }
+    if (is_dir(str_from(lbase)) == 0) { return 0; }
+    var fents = dir_list(str_from(lbase));
+    if (fents == 0) { return 0; }
+    vec_sort_by(fents, &_dep_name_cmp);   # v6.5.37 (A8): deterministic family order
+    var fi = 0;
+    while (fi < vec_len(fents)) {
+        var fe = str_data(vec_get(fents, fi));
+        fi = fi + 1;
+        var fel = strlen(fe);
+        if (fel > 4 && memeq(fe + fel - 4, ".cyr", 4) == 1) {
+            str_builder_add_cstr(esb, "include \"lib/");
+            str_builder_add_cstr(esb, lf);
+            str_builder_add_cstr(esb, "/");
+            str_builder_add_cstr(esb, fe);
+            str_builder_add_cstr(esb, "\"\n");
+        }
+    }
+    return 0;
+}
+
+# A set of identifier hashes (FNV-1a, 64-bit): { table, cap (power of 2), count, saturated }.
+# A collision can only make a name look PRESENT, which records its leaf — the safe direction;
+# so does saturation (more distinct identifiers than half the table).
+fn _dl_ids_new(textlen): i64 {
+    var cap = 4096;
+    while (cap < textlen / 4) { cap = cap * 2; }
+    var set = alloc(32);
+    var t = alloc(cap * 8);
+    memset(t, 0, cap * 8);
+    store64(set, t);
+    store64(set + 8, cap);
+    store64(set + 16, 0);
+    store64(set + 24, 0);
+    return set;
+}
+
+fn _dl_ids_hash(p, n): i64 {
+    var h = 0 - 3750763034362895579;           # FNV-1a offset basis (0xcbf29ce484222325)
+    var i = 0;
+    while (i < n) {
+        h = h ^ load8(p + i);
+        h = h * 1099511628211;
+        i = i + 1;
+    }
+    return h | 1;
+}
+
+# 1 iff the slot for hash `h` is found (add == 0) / was added or found (add == 1).
+fn _dl_ids_probe(set, h, add): i64 {
+    var t = load64(set);
+    var mask = load64(set + 8) - 1;
+    var i = h & mask;
+    while (1 == 1) {
+        var v = load64(t + i * 8);
+        if (v == h) { return 1; }
+        if (v == 0) {
+            if (add == 0) { return 0; }
+            if (load64(set + 16) * 2 >= load64(set + 8)) { store64(set + 24, 1); return 1; }
+            store64(t + i * 8, h);
+            store64(set + 16, load64(set + 16) + 1);
+            return 1;
+        }
+        i = (i + 1) & mask;
+    }
+    return 0;
+}
+
+fn _dl_ids_has(set, name): i64 {
+    if (load64(set + 24) == 1) { return 1; }
+    return _dl_ids_probe(set, _dl_ids_hash(name, strlen(name)), 0);
+}
+
+# Add every identifier of buf[0, n) — after blanking its comments, strings and char literals
+# IN PLACE (the caller's buffer is a private copy).
+fn _dl_ids_add_text(set, buf, n): i64 {
+    _src_blank_noncode(buf, n);
+    var p = 0;
+    while (p < n) {
+        if (_src_ident_char(load8(buf + p)) == 1) {
+            var e = p;
+            while (e < n && _src_ident_char(load8(buf + e)) == 1) { e = e + 1; }
+            _dl_ids_probe(set, _dl_ids_hash(buf + p, e - p), 1);
+            p = e;
+        } else { p = p + 1; }
+    }
+    return 0;
+}
+
+# The identifiers that are OURS: the bundle, each recorded leaf in the mirror `m` (flat file or
+# family directory), and each leaf's private peers — the `include "lib/<leaf>_…"` files a
+# dispatcher such as syscalls.cyr brings (its per-arch peer is where `alloc` is used).
+fn _distlib_own_ids(leaves, named_deps, out_path, m): i64 {
+    var paths = vec_new();
+    vec_push(paths, out_path);
+    var lib = _distlib_join(m, "lib");
+    var i = 0;
+    while (i < vec_len(leaves)) {
+        var lf = vec_get(leaves, i);
+        i = i + 1;
+        if (_distlib_vec_has(named_deps, lf) == 1) { continue; }
+        var fsb = str_builder_new();
+        str_builder_add_cstr(fsb, _distlib_join(lib, lf));
+        str_builder_add_cstr(fsb, ".cyr");
+        var flat = str_data(str_builder_build(fsb));
+        if (file_exists(flat) == 1) {
+            vec_push(paths, flat);
+            _distlib_own_peers(paths, lib, lf, flat);
+        } else {
+            var fam = _distlib_join(lib, lf);
+            if (is_dir(str_from(fam)) == 1) {
+                var fents = dir_list(str_from(fam));
+                var fi = 0;
+                while (fents != 0 && fi < vec_len(fents)) {
+                    vec_push(paths, _distlib_join(fam, str_data(vec_get(fents, fi))));
+                    fi = fi + 1;
+                }
+            }
+        }
+    }
+    var total = 0;
+    var k = 0;
+    while (k < vec_len(paths)) {
+        var sz = _file_size(vec_get(paths, k));
+        if (sz > 0) { total = total + sz; }
+        k = k + 1;
+    }
+    var set = _dl_ids_new(total);
+    k = 0;
+    while (k < vec_len(paths)) {
+        var n = 0;
+        var b = file_read_whole(vec_get(paths, k), &n);
+        if (b != 0 && n > 0) { _dl_ids_add_text(set, b, n); }
+        k = k + 1;
+    }
+    return set;
+}
+
+# Push onto `paths` the private peers `leaf` includes (`include "lib/<leaf>_…"`).
+fn _distlib_own_peers(paths, lib, leaf, path): i64 {
+    var n = 0;
+    var b = file_read_whole(path, &n);
+    if (b == 0) { return 0; }
+    var ll = strlen(leaf);
+    var p = 0;
+    while (p < n) {
+        var ls = _src_skip_ws(b, p, n);
+        var le = ls;
+        while (le < n && load8(b + le) != 10) { le = le + 1; }
+        if (le - ls > 13 + ll && memeq(b + ls, "include \"lib/", 13) == 1) {
+            if (memeq(b + ls + 13, leaf, ll) == 1 && load8(b + ls + 13 + ll) == 95) {
+                var ne = ls + 13;
+                while (ne < le && load8(b + ne) != 34) { ne = ne + 1; }
+                var nl = ne - (ls + 13);
+                var rel = alloc(nl + 1);
+                memcpy(rel, b + ls + 13, nl);
+                store8(rel + nl, 0);
+                vec_push(paths, _distlib_join(lib, rel));
+            }
+        }
+        p = le + 1;
+    }
+    return 0;
+}
+
+# Echo to stderr the lines of a captured compiler stream that contain `error` (at most 8).
+fn _distlib_show_errors(buf, n): i64 {
+    var shown = 0;
+    var p = 0;
+    while (p < n && shown < 8) {
+        var e = p;
+        while (e < n && load8(buf + e) != 10) { e = e + 1; }
+        var q = p;
+        var hit = 0;
+        while (q + 5 <= e && hit == 0) {
+            if (memeq(buf + q, "error", 5) == 1) { hit = 1; }
+            q = q + 1;
+        }
+        if (hit == 1) {
+            sys_write(STDERR_FD, "  ", 2);
+            sys_write(STDERR_FD, buf + p, e - p);
+            sys_write(STDERR_FD, "\n", 1);
+            shown = shown + 1;
+        }
+        p = e + 1;
+    }
+    return shown;
+}
+
+# Name why the verify could not run, and answer -1. `what` is a cstr; `path` may be 0.
+fn _distlib_verify_fail(what, path): i64 {
+    if (path != 0) { _err_ctx(what, path); } else { _err(what); }
+    return 0 - 1;
+}
+
 # The fixpoint loop itself. Returns the number of leaves RE-ADDED (0 = the inferred set was
-# already sufficient, which is the answer we want and cannot get any other way).
-fn _distlib_verify_leaves(leaves, out_path): i64 {
+# already sufficient, which is the answer we want and cannot get any other way), or -1 when
+# the unit could not be built or compiled — the sidecar is then NOT verified and must not be
+# published as if it were. `named_deps` is the manifest's `[deps.<name>]` set (a cstr vec).
+fn _distlib_verify_leaves(leaves, out_path, named_deps): i64 {
     var root = _distlib_stdlib_root();
     if (root == 0) { return 0; }          # no snapshot: nothing to verify against, keep as-is
+    var m = _distlib_mirror_make(root);
+    if (m == 0) { return 0 - 1; }
+    var r = _distlib_verify_rounds(leaves, out_path, named_deps, root, m);
+    _distlib_mirror_drop();
+    return r;
+}
+
+fn _distlib_verify_rounds(leaves, out_path, named_deps, root, m): i64 {
     var added_total = 0;
+    var scope = vec_new();                # in the unit, not recorded (see below)
     var round = 0;
     while (round < 6) {                   # a fixpoint in practice converges in 1-2
         round = round + 1;
-        # ⛔ CONCATENATE, DO NOT `include`. An entry built from `include "<abs path>"` is
+        # ⛔ NEVER AN ABSOLUTE `include`. An entry built from `include "<abs path>"` is
         # rejected outright — "absolute include path rejected ... set
         # CYRIUS_ALLOW_ABSOLUTE_INCLUDES=1 to permit" — which is the CVE-16 hardening and
         # must not be weakened for a convenience check. Measured: the first cut of this loop
         # captured 227 bytes of stderr that were entirely those rejections, so it saw zero
-        # undefined symbols and silently re-added nothing while looking like it worked.
-        # Splicing the sources into ONE buffer sidesteps include resolution completely.
-        #
-        # ⚠ Concatenation order is the leaf order, which is NOT topological. A global
-        # declared in a leaf spliced AFTER its use reads as `undefined variable` even though
-        # the leaf is present. That is an ordering artifact, not a missing leaf — and it is
-        # handled for free by the `dup` test below: an owner already in the set is never
-        # re-added, so the loop reaches its fixpoint instead of thrashing. The signal we act
-        # on is only ever a symbol whose owner is ABSENT.
+        # undefined symbols and silently re-added nothing while looking like it worked. The
+        # includes below are RELATIVE: ./lib first, the snapshot mirror as the fallback.
         var esb = str_builder_new();
         var li = 0;
         while (li < vec_len(leaves)) {
             var lf = vec_get(leaves, li);
             li = li + 1;
-            var fsb = str_builder_new();
-            str_builder_add_cstr(fsb, root);
-            str_builder_add_cstr(fsb, "/");
-            str_builder_add_cstr(fsb, lf);
-            var lbase = str_data(str_builder_build(fsb));
-            var csb = str_builder_new();
-            str_builder_add_cstr(csb, lbase);
-            str_builder_add_cstr(csb, ".cyr");
-            var lflat = str_data(str_builder_build(csb));
-            if (file_exists(lflat) == 1) {
-                _distlib_splice_file(esb, lflat);
-            } elif (is_dir(str_from(lbase)) == 1) {
-                var fents = dir_list(str_from(lbase));
-                if (fents != 0) { vec_sort_by(fents, &_dep_name_cmp); }   # v6.5.37 (A8): deterministic family order
-                if (fents != 0) {
-                    var fi = 0;
-                    while (fi < vec_len(fents)) {
-                        var fe = str_data(vec_get(fents, fi));
-                        fi = fi + 1;
-                        var fel = strlen(fe);
-                        if (fel > 4 && memeq(fe + fel - 4, ".cyr", 4) == 1) {
-                            var msb = str_builder_new();
-                            str_builder_add_cstr(msb, lbase);
-                            str_builder_add_cstr(msb, "/");
-                            str_builder_add_cstr(msb, fe);
-                            _distlib_splice_file(esb, str_data(str_builder_build(msb)));
-                        }
-                    }
-                }
+            # A leaf that is a NAMED DEP is the consumer's pinned module, included below.
+            if (_distlib_vec_has(named_deps, lf) == 1) { continue; }
+            _distlib_unit_leaf(esb, m, lf);
+        }
+        # Leaves taken in only because a named dep's own leaf list brings them (see the
+        # classification below): in the unit, never recorded.
+        var si = 0;
+        while (si < vec_len(scope)) {
+            _distlib_unit_leaf(esb, m, vec_get(scope, si));
+            si = si + 1;
+        }
+        if (_dep_nd_modules != 0) {
+            var mi = 0;
+            while (mi < vec_len(_dep_nd_modules)) {
+                str_builder_add_cstr(esb, "include \"");
+                str_builder_add_cstr(esb, vec_get(_dep_nd_modules, mi));
+                str_builder_add_cstr(esb, "\"\n");
+                mi = mi + 1;
             }
         }
-        _distlib_splice_file(esb, out_path);
-        var entry = _cbt_tmpfile("dlverify");
+        if (_distlib_splice_file(esb, out_path) != 0) {
+            return _distlib_verify_fail("distlib: sidecar verify cannot read the bundle", out_path);
+        }
+        var entry = _distlib_join(m, "entry.cyr");
         var vout = _cbt_tmpfile("dlverifyout");
         var verr = _cbt_tmpfile("dlverifyerr");
         var esrc = str_data(str_builder_build(esb));
-        if (file_write_all(entry, esrc, strlen(esrc)) < 0) { return added_total; }
+        if (file_write_all(entry, esrc, strlen(esrc)) < 0) {
+            xunlink(entry);
+            return _distlib_verify_fail("distlib: sidecar verify cannot write its compile unit", entry);
+        }
         # ⚠ _skip_deps = 1 is load-bearing: auto-prepend would put the whole declared stdlib
         # in scope and the compile would succeed no matter how wrong the sidecar is. The
-        # entry must contain EXACTLY the leaves under test.
+        # entry must contain EXACTLY the leaves under test. (compile() still prepends the
+        # `#@incdir` of the entry's directory, the mirror: a leaf ./lib lacks resolves there.)
         var sv_skip = _skip_deps;
         var sv_err = _cc_stderr_to;
         _skip_deps = 1;
         _cc_allow_undef = 1;
         _cc_stderr_to = verr;
-        compile(entry, vout);
+        var crc = compile(entry, vout);
         _cc_allow_undef = 0;
         _cc_stderr_to = sv_err;
         _skip_deps = sv_skip;
         xunlink(entry);
-        sys_unlink(vout);
-        var esz = _file_size(verr);
-        if (esz <= 0) { sys_unlink(verr); return added_total; }
-        var ebuf = alloc(esz + 1);
-        var eread = file_read_all(verr, ebuf, esz);
-        sys_unlink(verr);
-        if (eread <= 0) { return added_total; }
-        store8(ebuf + eread, 0);
+        xunlink(vout);
+        var elen = 0;
+        var ebuf = file_read_whole(verr, &elen);
+        xunlink(verr);
         var names = vec_new();
-        _distlib_collect_undefined(ebuf, eread, names);
-        if (vec_len(names) == 0) { return added_total; }
+        if (ebuf != 0 && elen > 0) { _distlib_collect_undefined(ebuf, elen, names); }
+        if (vec_len(names) == 0) {
+            if (crc == 0) { return added_total; }
+            # Failed, and not for a missing symbol: say what the compiler said — its `error`
+            # lines, not the first screenful of warnings.
+            if (ebuf != 0 && elen > 0) { _distlib_show_errors(ebuf, elen); }
+            return _distlib_verify_fail("distlib: sidecar verify: the bundle with its leaves does not compile, and no symbol is missing — sidecar NOT written", out_path);
+        }
+        # ⚖️ WHOSE NEED IS IT? The named deps' modules are in the unit, so their own undefined
+        # symbols surface here too — recorded, they copy every named dep's leaves into this
+        # bundle's sidecar (agnosai's `guard` profile gained 12: tls, async, dynlib, …). A
+        # symbol goes to `scope` (in the unit from the next round, NOT recorded) only when BOTH
+        # hold: a named dep's own leaf list already brings its owner (`_dep_nd_leaves`, so a
+        # consumer has it in scope through that dep), and nothing of OURS — the bundle or a
+        # recorded leaf, comments and strings blanked — names it. Anything else is recorded,
+        # as before: the safe direction. (Pre-splicing the named deps' leaves instead dropped
+        # `alloc` from rosnet's `gpu` sidecar, whose leaf mabda needs it, because tyche
+        # happened to bring it.)
+        var own = 0;
         var added_here = 0;
         var ni = 0;
         while (ni < vec_len(names)) {
             var nm = vec_get(names, ni);
             ni = ni + 1;
-            var owner = _distlib_leaf_defining(root, nm);
-            if (owner == 0) { continue; }   # not a stdlib symbol — the consumer's problem
-            owner = _distlib_resolve_dispatcher(root, owner);
-            var dup = 0;
-            var di = 0;
-            while (di < vec_len(leaves)) {
-                if (streq(vec_get(leaves, di), owner) == 1) { dup = 1; }
-                di = di + 1;
+            var raw = _distlib_leaf_defining(root, nm);
+            if (raw == 0) { continue; }     # not a stdlib symbol — the consumer's problem
+            var owner = _distlib_resolve_dispatcher(root, raw);
+            # Never a named dep: its symbols belong to the consumer's pinned module.
+            if (_distlib_vec_has(named_deps, owner) == 1) { continue; }
+            if (_distlib_vec_has(leaves, owner) == 1) { continue; }
+            if (_distlib_vec_has(scope, owner) == 1) { continue; }
+            # A named dep's leaf list may name the PEER itself (`hd_impl`), not the
+            # dispatcher the owner resolves to (`hd`): either one counts.
+            var brought = 0;
+            if (_distlib_vec_has(_dep_nd_leaves, owner) == 1) { brought = owner; }
+            elif (_distlib_vec_has(_dep_nd_leaves, raw) == 1) { brought = raw; }
+            if (brought != 0 && _distlib_vec_has(scope, brought) == 1) { continue; }
+            if (brought != 0) {
+                if (own == 0) { own = _distlib_own_ids(leaves, named_deps, out_path, m); }
+                if (_dl_ids_has(own, nm) == 0) {
+                    vec_push(scope, brought);
+                    added_here = added_here + 1;
+                    continue;
+                }
             }
-            if (dup == 0) {
-                vec_push(leaves, owner);
-                added_here = added_here + 1;
-                added_total = added_total + 1;
-            }
+            vec_push(leaves, owner);
+            added_here = added_here + 1;
+            added_total = added_total + 1;
         }
         if (added_here == 0) { return added_total; }   # fixpoint: nothing new to add
     }
@@ -3113,12 +3462,10 @@ fn _distlib_resolve_dispatcher(root, leaf): i64 {
             str_builder_add_cstr(dsb, ".cyr");
             var dpath = str_data(str_builder_build(dsb));
             if (file_exists(dpath) == 1) {
-                var dsz = _file_size(dpath);
-                if (dsz > 0) {
-                    var db = alloc(dsz + 1);
-                    var dg = file_read_all(dpath, db, dsz);
+                var dg = 0;
+                var db = file_read_whole(dpath, &dg);   # 6.6.9: whole, not _file_size-sized
+                if (db != 0) {
                     if (dg > 0) {
-                        store8(db + dg, 0);
                         var want = str_builder_new();
                         str_builder_add_cstr(want, "include \"lib/");
                         str_builder_add_cstr(want, leaf);
@@ -3188,12 +3535,11 @@ fn _distlib_snap_cache(root): i64 {
         str_builder_add_cstr(fsb, "/");
         str_builder_add_cstr(fsb, ed);
         var fp = str_data(str_builder_build(fsb));
-        var fsz = _file_size(fp);
-        if (fsz <= 0) { continue; }
-        var fb = alloc(fsz + 1);
-        var got = file_read_all(fp, fb, fsz);
-        if (got <= 0) { continue; }
-        store8(fb + got, 0);
+        # 6.6.9: read WHOLE. Sized by `_file_size`, every file read as empty on the Windows
+        # CLI (-38), so no symbol had an owner and the verify loop was inert there.
+        var got = 0;
+        var fb = file_read_whole(fp, &got);
+        if (fb == 0 || got <= 0) { continue; }
         vec_push(_dl_snap_names, e);
         vec_push(_dl_snap_bufs, fb);
         vec_push(_dl_snap_lens, got);
@@ -3340,12 +3686,9 @@ fn _distlib_capture_lib_leaf(leaves, line, ll): i64 {
 # only the folded modules yields an INCOMPLETE sidecar. No-op if absent.
 fn _distlib_scan_umbrella(leaves, path): i64 {
     if (file_exists(path) == 0) { return 0; }
-    var usz = _file_size(path);
-    if (usz <= 0) { return 0; }
-    var ubuf = alloc(usz + 1);
-    var un = file_read_all(path, ubuf, usz);
-    if (un <= 0) { return 0; }
-    store8(ubuf + un, 0);
+    var un = 0;
+    var ubuf = file_read_whole(path, &un);    # 6.6.9: whole, not _file_size-sized (-38 on PE)
+    if (ubuf == 0 || un <= 0) { return 0; }
     var upos = 0;
     while (upos < un) {
         var uls = upos;
@@ -4357,7 +4700,13 @@ fn cmd_distlib(profile): i64 {
     # invitation to inherit the wrong answer. The base path keeps the `> 0` guard so a
     # package with genuinely no leaves does not gain a stray file.
     # v6.5.37 (A3) — verify the leaf set against the artifact before publishing it.
-    var _verified_added = _distlib_verify_leaves(req_leaves, out_path);
+    var _verified_added = _distlib_verify_leaves(req_leaves, out_path, named_deps);
+    # 6.6.9: a verify that could not run is not a verified sidecar — keep the previous one
+    # (and, under --check, the temp bundle goes with it).
+    if (_verified_added < 0) {
+        if (_distlib_check == 1) { xunlink(out_path); }
+        return 1;
+    }
     if (_verified_added > 0) {
         sys_write(STDOUT_FD, "  sidecar: re-added ", 20);
         fmt_int(_verified_added);
