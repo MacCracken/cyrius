@@ -110,8 +110,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   6.6.7 bite-5 review.) No fork's pass 2 handled token 107, and five forks' pass 1 did not
   either, so `struct Q {…}` / `#assert sizeof(Q) == 2, "sz";` / `struct R {…}` stopped at the
   `#assert` and failed `unexpected struct` on every target. **Fix:** the same dispatcher —
-  pass 1 skips the line, pass 2 evaluates it through PARSE_STMT (which emits no code for it).
-  A false `#assert` still fails the build.
+  pass 2 evaluates it through PARSE_STMT (which emits no code for it), and pass 1 consumes
+  EXACTLY the tokens that arm does (`#assert ATOM [OP ATOM] [,]` then the shared
+  `_assert_tail`: the rest of that line and one `;`), without evaluating. A line-bounded
+  pass-1 skip — the first cut of this fix — left a WRAPPED `#assert 1 == 1,\n  "msg";` with
+  pass 1 on the continuation, its scan ended, and everything declared below went unregistered
+  (`undefined variable` / `uninitialized variable not allowed` far from the assert, on every
+  fork and all four real hosts; stock 6.6.8 built it). `directive_fork_parity.sh` axis 2d now
+  carries a wrapped row (after the `,`, mid-comparison, before the `,`, then a struct, an enum
+  and a global) that must build on all four runnable forks and run to 42 on x86, plus a false
+  wrapped row that must fail with its message; RED with the line-bounded skip. A false
+  `#assert` still fails the build.
 - **aarch64 refuses a reachable undefined TAIL call — it built rc 0 and died SIGILL.** (bite 2;
   issue `2026-09-22-agnodrm-aarch64-undefined-tail-call-not-refused`, archived.) **Root
   cause:** aarch64 records `return nosuchfn(x);` as fixup type 4 (`B rel26`, patched to
@@ -162,7 +171,8 @@ compiler 1,049 ms, this tree's 841 ms (box under lane load; the gvar phase 503 �
 fifteen dispatch chains became one fn; the new diagnostic strings account for the file growth).
 Self-host verified byte-identical on real pi (cross AND native aarch64 sources), ecb (arm64
 Mach-O), ach (x86 Mach-O) and cass (PE), each also running the attribute, tail-call,
-dead-first, pre-pass, `#assert` and large-static fixtures.
+dead-first, pre-pass, `#assert` and large-static fixtures; the wrapped-`#assert` fixtures
+(build, run 42; a false one refused) re-run on all four hosts after the review fix.
 
 ### Downstream
 

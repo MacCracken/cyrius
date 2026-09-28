@@ -48,7 +48,10 @@
 #            with the same calls prints none — without it an always-on warning would pass.
 #   axis 2d  a top-level #assert is a DECLARATION-phase directive: a struct after it is still
 #            accepted (it used to end pass 2, and "unexpected struct" followed), and a false one
-#            still fails the build.
+#            still fails the build. A WRAPPED #assert (operands, `,` or message on the next
+#            line) must leave both passes on the same token: pass 1 used to skip only the
+#            directive's own line, stop on the continuation, and leave every later struct/enum/
+#            global unregistered. It must build, and on x86 RUN to 42; a false wrapped one fails.
 #   axis 2e  a bare `#deprecated` is refused BY NAME in both positions (it was a silent no-op
 #            before the first statement and "expected '(', got fn" after it).
 #   axis 2f  #naked stays INERT on cx in both positions (a bytecode VM has no return address to
@@ -203,6 +206,24 @@ fn main(): i64 { var q: R; q.a = 40; q.b = 2; return q.a + q.b; }
 var r = main();
 EOF
 sed 's/== 2, "sz"/== 3, "sz"/' "$T/assert.cyr" > "$T/assert_false.cyr"
+# The wrapped shapes: after the `,`, mid-comparison, and before the `,`.
+cat > "$T/assert_wrap.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct P { x: i8; y: i8; }
+#assert 1 == 1,
+  "wrapped after the comma";
+#assert sizeof(P) ==
+  2, "wrapped mid-comparison";
+#assert 3 > 2
+  , "wrapped before the comma";
+struct Z { a; b; }
+enum ZE { ZA = 40, ZB = 2 }
+var zg = 0;
+fn main(): i64 { var z: Z; z.a = ZA; z.b = ZB; zg = z.a + z.b; return zg; }
+var rr = main();
+sys_exit(rr);
+EOF
+sed 's/^  2, "wrapped mid-comparison"/  3, "wrapped mid-comparison"/' "$T/assert_wrap.cyr" > "$T/assert_wrap_false.cyr"
 printf '#deprecated\nfn f(a): i64 { return a; }\nvar r = f(1);\n' > "$T/bare_pre.cyr"
 printf 'var z = 0;\nz = 1;\n#deprecated\nfn f(a): i64 { return a; }\nvar r = f(1);\n' > "$T/bare_post.cyr"
 # lib/fdlopen.cyr's cx shape: a #naked fn whose body is ordinary framed code
@@ -236,6 +257,20 @@ for f in $RUNNABLE; do
   if [ ! -s "$T/o" ]; then echo "FAIL directive_fork_parity axis2d: src/$f refuses a struct declared after a top-level #assert"; sed 's/^/      /' "$T/e" | grep -v 'routes n=' | head -3; exit 1; fi
   "$c" < "$T/assert_false.cyr" > "$T/o" 2>"$T/e"; rc=$?
   if [ "$rc" -eq 0 ] || ! grep -q '#assert failed: sz' "$T/e"; then echo "FAIL directive_fork_parity axis2d: src/$f accepted a FALSE top-level #assert (rc $rc)"; exit 1; fi
+  "$c" < "$T/assert_wrap.cyr" > "$T/o" 2>"$T/e"; rc=$?
+  if [ "$rc" -ne 0 ] || [ ! -s "$T/o" ]; then
+    echo "FAIL directive_fork_parity axis2d: src/$f cannot compile a WRAPPED top-level #assert followed by a struct, an enum and a global (rc $rc)"
+    sed 's/^/      /' "$T/e" | grep -v 'routes n=' | grep -E 'error' | head -3
+    echo "  Pass 1 (_tl_assert arm=0) stopped somewhere other than where PARSE_STMT's #assert arm"
+    echo "  stops; its scan ended there and everything declared below went unregistered."
+    exit 1
+  fi
+  if [ "$f" = main.cyr ]; then
+    chmod +x "$T/o"; "$T/o"; rc=$?
+    [ "$rc" -eq 42 ] || { echo "FAIL directive_fork_parity axis2d: the wrapped-#assert fixture built on x86 but ran to $rc, expected 42"; exit 1; }
+  fi
+  "$c" < "$T/assert_wrap_false.cyr" > "$T/o" 2>"$T/e"; rc=$?
+  if [ "$rc" -eq 0 ] || ! grep -q '#assert failed: wrapped mid-comparison' "$T/e"; then echo "FAIL directive_fork_parity axis2d: src/$f accepted a FALSE wrapped #assert (rc $rc)"; exit 1; fi
   # 2e — bare #deprecated refused by name, both positions
   for pos in pre post; do
     "$c" < "$T/bare_$pos.cyr" > "$T/o" 2>"$T/e"; rc=$?
@@ -258,5 +293,5 @@ for f in $RUNNABLE; do
 done
 [ "$rows" -ge 12 ] || { echo "FAIL directive_fork_parity axis2c: only $rows row(s) measured, expected >= 12"; exit 1; }
 
-echo "PASS directive_fork_parity: 7 forks + PARSE_PROG route every directive through _tl_directive · #inline non-inert on $checked forks · #deprecated/#must_use/#pure->#io/#alloc warn before AND after the first statement, control silent · #assert declaration-phase · bare #deprecated refused · #naked inert on cx only (macho pair structural here, run on ecb/ach)"
+echo "PASS directive_fork_parity: 7 forks + PARSE_PROG route every directive through _tl_directive · #inline non-inert on $checked forks · #deprecated/#must_use/#pure->#io/#alloc warn before AND after the first statement, control silent · #assert declaration-phase, wrapped or not · bare #deprecated refused · #naked inert on cx only (macho pair structural here, run on ecb/ach)"
 exit 0

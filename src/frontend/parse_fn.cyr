@@ -4442,16 +4442,46 @@ fn _tl_deprecated(S, arm): i64 {
     return 0;
 }
 
-# #assert — pass 1 skips the line; arm=1 evaluates it through PARSE_STMT, which emits no
-# code for it, so it stays a declaration-phase directive instead of the first statement.
+# #assert — arm=1 evaluates it through PARSE_STMT, which emits no code for it, so it stays a
+# declaration-phase directive instead of the first statement. Pass 1 (arm=0) must consume
+# EXACTLY the tokens PARSE_STMT's arm does — `#assert ATOM [OP ATOM] [,] <line tail>` —
+# without evaluating (a sizeof may name a struct pass 1 has not registered yet). It used to
+# skip only the #assert's own LINE, so a wrapped `#assert 1 == 1,\n  "msg";` left pass 1
+# on the continuation, its scan stopped, and every later declaration went unregistered
+# ("undefined variable" far below). CHANGELOG [6.6.9]
 fn _tl_assert(S, arm): i64 {
     if (arm == 1) { PARSE_STMT(S); return 0; }
-    var ln = GTLINE(S, GTI(S));
-    while (PEEKT(S) != 5 && PEEKT(S) != 12) {
-        if (GTLINE(S, GTI(S)) != ln) { break; }
+    STI(S, GTI(S) + 1);
+    _assert_skip_atom(S);
+    var op = PEEKT(S);
+    if (op >= 17 && op <= 22) {
         STI(S, GTI(S) + 1);
+        _assert_skip_atom(S);
     }
-    if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
+    if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
+    _assert_tail(S);
+    return 0;
+}
+
+# Pass 1's twin of _EVAL_CONST_ATOM: advance over the same tokens, evaluate nothing. A
+# number is one token; `sizeof ( [T] )` is its four; anything else is an error pass 2
+# reports, and _EVAL_CONST_ATOM does not advance over it either.
+fn _assert_skip_atom(S): i64 {
+    var t = PEEKT(S);
+    if (t == 1) { STI(S, GTI(S) + 1); return 0; }
+    if (t != 2) { return 0; }
+    var w = L64(S + 0xEC00000 + PEEKV(S)) & 0xFFFFFFFFFFFF;
+    if (w != 0x666F657A6973) { return 0; }
+    _assert_step(S);
+    _assert_step(S);
+    if (PEEKT(S) == 2) { _assert_step(S); }
+    _assert_step(S);
+    return 0;
+}
+
+# One token forward, never past EOF.
+fn _assert_step(S): i64 {
+    if (PEEKT(S) != 12) { STI(S, GTI(S) + 1); }
     return 0;
 }
 

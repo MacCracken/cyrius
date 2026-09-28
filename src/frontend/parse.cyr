@@ -1921,6 +1921,22 @@ fn PARSE_MATCH(S): i64 {
     return 0;
 }
 
+# The tail of an #assert, from wherever its operands and `,` ended: the rest of THAT line
+# (the message string), then one `;`. Shared by PARSE_STMT's arm and the pass-1 skip
+# (_tl_assert), so both passes stop on the same token. CHANGELOG [6.6.9]
+# ⛔ v6.5.39 — the newline stop is load-bearing: testing only `;` (5) and EOF (12) let a
+# `#assert` with no trailing `;` skip across the following `fn` header and eat its first
+# statement — silent wrong code, no diagnostic.
+fn _assert_tail(S): i64 {
+    var ln = GTLINE(S, GTI(S));
+    while (PEEKT(S) != 5 && PEEKT(S) != 12) {
+        if (GTLINE(S, GTI(S)) != ln) { break; }
+        STI(S, GTI(S) + 1);
+    }
+    if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
+    return 0;
+}
+
 # Evaluate a single constant atom for #assert: number literal or sizeof(T).
 # Returns the constant value. Advances TI past the consumed tokens.
 fn _EVAL_CONST_ATOM(S): i64 {
@@ -2376,20 +2392,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
             syscall(SYS_WRITE, 2, "\n", 1);
             syscall(SYS_EXIT, 1);
         }
-        # Skip to end of line (consume remaining tokens until ; or newline change)
-        # ⛔ v6.5.39 — THE NEWLINE CHECK THAT COMMENT PROMISED DID NOT EXIST. The loop tested
-        # only `;` (5) and EOF (12), so a `#assert` with no trailing `;` skipped straight
-        # across the following `fn` header and ate the first statement AND its `;` — silent
-        # wrong code, no diagnostic. Latent rather than live only because nothing in the tree
-        # actually uses `#assert` today (all 12 grep hits are compiler implementation or
-        # comments), so it was waiting for the first consumer who did.
-        # Duplicated at the pass-1 arms in src/main.cyr and src/main_win.cyr; all three fixed.
-        var _as_ln = GTLINE(S, GTI(S));
-        while (PEEKT(S) != 5 && PEEKT(S) != 12) {
-            if (GTLINE(S, GTI(S)) != _as_ln) { break; }
-            STI(S, GTI(S) + 1);
-        }
-        if (PEEKT(S) == 5) { STI(S, GTI(S) + 1); }
+        _assert_tail(S);
         return 0;
     }
     # #pe_import("kernel32.dll", "WriteFile"); — declare a PE32+ IAT

@@ -1195,8 +1195,8 @@ at every call site (unlike `#must_use`'s discard-only); a bare `#deprecated`
 is refused by name. These attributes (and `#pure`/`#io`/`#alloc`) warn the
 same way on every target and whether they sit before or after the first
 top-level statement — before 6.6.9 only x86_64 honoured them ahead of it.
-A top-level `#assert` is a declaration-phase directive: structs, enums and
-fns may follow it.
+A top-level `#assert` is a declaration-phase directive, on one line or
+wrapped: structs, enums and fns may follow it.
 
 ## Project Structure
 
