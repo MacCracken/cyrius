@@ -2359,6 +2359,7 @@ process_agnos::exec_vec/1
 process_agnos::exec_vec_str/1
 process_agnos::getpid/0
 process_agnos::getppid/0
+process_agnos::proc_deadline_kills/0
 process_agnos::run/3
 process_agnos::run_capture/5
 process_agnos::spawn/3
@@ -2456,6 +2457,7 @@ regression::regression_ssh_skip_check/1
 regression::regression_ssh_target/2
 regression::regression_terminate_children/1
 regression_agnos::regression_codesign_remote/3
+regression_agnos::regression_deadline_kills/0
 regression_agnos::regression_exec_capture/4
 regression_agnos::regression_exec_capture_status/5
 regression_agnos::regression_exec_in_dir3/7
@@ -2464,6 +2466,8 @@ regression_agnos::regression_exec_run/2
 regression_agnos::regression_exec_with_arg_capture/5
 regression_agnos::regression_exec_with_arg_capture_both/5
 regression_agnos::regression_exec_with_arg_capture_both_status/6
+regression_agnos::regression_exec_with_arg_capture_status/6
+regression_agnos::regression_last_deadline_ms/0
 regression_agnos::regression_pipe_read_all/4
 regression_agnos::regression_pipe_to_bin/3
 regression_agnos::regression_pipe_to_bin_capture/4
@@ -2473,6 +2477,7 @@ regression_agnos::regression_scp_to/4
 regression_agnos::regression_ssh_remote_exec_capture/4
 regression_agnos::regression_ssh_remote_exit/3
 regression_agnos::regression_ssh_skip_check/1
+regression_agnos::regression_terminate_children/1
 result::err_code_of/2
 result::err_via/2
 result::is_err_result/1

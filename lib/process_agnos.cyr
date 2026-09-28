@@ -41,6 +41,11 @@
 # vec runs the child with the kernel's default environment, because agnos has no way to
 # say "no environment".
 
+# How many children this process has ended at a deadline — always 0 here: agnos has no
+# deadline (above). A real peer rather than a POSIX-only exemption, because callers ask it
+# AROUND any call (sigil's cryptsetup, deps' git) and must compile on agnos. CHANGELOG [6.6.8]
+fn proc_deadline_kills(): i64 { return 0; }
+
 # errno ECHILD — `run` / `wait_pid` answer Err(PROC_ECHILD) when the wait saw no child to
 # reap (a pid that is not ours), so there is no status to report. Same value and meaning as
 # the POSIX module. CHANGELOG [6.6.8]
