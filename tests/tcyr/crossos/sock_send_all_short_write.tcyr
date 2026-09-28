@@ -1,0 +1,111 @@
+# sock_send_all_short_write.tcyr — v6.6.8: a short socket write is either completed or
+# REPORTED, never dropped — sock_send_all, and the WebSocket / HTTP senders built on it.
+#
+# ⛔ WHY. lib/ws_server.cyr (the 101 response and both writes of every frame), lib/ws.cyr (the
+# client's handshake and frames) and lib/http.cyr (all three request senders) called sock_send /
+# sys_write and dropped the count. A blocking stream write may return FEWER bytes than asked —
+# SO_SNDTIMEO expiring (lib/net.cyr's sock_set_send_timeout sets it) or a signal — and then the
+# frame on the wire was truncated while the sender reported success: the peer read the next
+# frame's header out of this one's missing payload. Found in the 6.6.7 review; on agnos the
+# socket write route already retried to completion, so this was the portable half.
+#
+# ⚠ THE PRECONDITION IS ASSERTED, not assumed: group 1 first shows a raw write on this host
+# really does come back SHORT under SO_SNDTIMEO (the kernel buffer is far smaller than 4 MiB and
+# nobody reads). Without that, "the frame send failed" could be a pass for the wrong reason.
+# Linux and Darwin both return the partial count there (Darwin's dofilewrite turns
+# EWOULDBLOCK-after-progress into success), so this runs on every POSIX host in the corpus.
+# CHANGELOG [6.6.8]
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/syscalls.cyr"
+include "lib/str.cyr"
+include "lib/tagged.cyr"
+include "lib/io.cyr"
+include "lib/net.cyr"
+include "lib/vec.cyr"
+include "lib/bayan.cyr"
+include "lib/ws_server.cyr"
+include "lib/assert.cyr"
+
+# ws_server's handshake parser dependency (lib/sandhi.cyr); unreached here, supplied so the
+# module resolves without dragging in sandhi's TLS stack (the ws_server_handshake.tcyr pattern).
+fn sandhi_server_find_header(buf, blen, name): i64 { return 0; }
+
+fn _pair(fds): i64 {
+    return sys_socketpair(1, 1, 0, fds);          # AF_UNIX, SOCK_STREAM
+}
+
+fn main(): i64 {
+    alloc_init();
+
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_AGNOS
+    var BIG = 4194304;                             # 4 MiB: larger than any socket buffer
+    var big = alloc(BIG);
+    memset(big, 0x5A, BIG);
+
+    test_group("v6.6.8 — precondition: a raw write under SO_SNDTIMEO comes back SHORT");
+    var p1[16];
+    assert_eq(_pair(&p1), 0, "socketpair");
+    var a1 = load32(&p1);
+    assert_eq(sock_set_send_timeout(a1, 0, 100000), 0, "SO_SNDTIMEO = 100 ms");
+    var raw = sys_write(a1, big, BIG);
+    assert_gt(raw, 0, "the write sent something");
+    assert_lt(raw, BIG, "…but not everything: the short write this file is about happens here");
+
+    test_group("v6.6.8 — sock_send_all reports the timeout instead of a count");
+    var r = sock_send_all(a1, big, BIG);
+    assert_lt(r, 0, "sock_send_all with a full buffer and no reader is -errno, not a byte count");
+    sys_close(a1);
+    sys_close(load32(&p1 + 4));
+
+    test_group("v6.6.8 — ws_server_send_frame reports a truncated frame");
+    var p2[16];
+    assert_eq(_pair(&p2), 0, "socketpair");
+    var a2 = load32(&p2);
+    assert_eq(sock_set_send_timeout(a2, 0, 100000), 0, "SO_SNDTIMEO = 100 ms");
+    var ws = ws_server_new(a2);
+    var fr = ws_server_send_binary(ws, big, 1048576);
+    assert_lt(fr, 0, "a 1 MiB frame nobody reads fails (it used to return 0 with the frame cut short)");
+    sys_close(a2);
+    sys_close(load32(&p2 + 4));
+
+    test_group("v6.6.8 — with a reader, the whole frame arrives");
+    var p3[16];
+    assert_eq(_pair(&p3), 0, "socketpair");
+    var a3 = load32(&p3);
+    var b3 = load32(&p3 + 4);
+    var pid = sys_fork();
+    if (pid == 0) {
+        sys_close(a3);
+        var buf = alloc(65536);
+        var total = 0;
+        var go = 1;
+        while (go == 1) {
+            var n = sys_read(b3, buf, 65536);
+            if (n > 0) { total = total + n; } else { go = 0; }
+        }
+        # 10-byte header (0x82, 127, 8-byte length) + the payload.
+        if (total == 10 + 1048576) { sys_exit(0); }
+        sys_exit(1);
+    }
+    sys_close(b3);
+    var ws3 = ws_server_new(a3);
+    assert_eq(ws_server_send_binary(ws3, big, 1048576), 0, "the frame send returns 0");
+    sys_close(a3);
+    var st[4];
+    store32(&st, 0);
+    sys_waitpid(pid, &st, 0);
+    assert_eq(WIFEXITED(load32(&st)), 1, "the reader exited normally");
+    assert_eq(WEXITSTATUS(load32(&st)), 0, "the reader received exactly 10 + 1048576 bytes");
+    #endif
+    #endif
+
+    test_group("v6.6.8 — sock_send_all on a descriptor that is not open fails");
+    assert_lt(sock_send_all(0 - 1, "x", 1), 0, "a bad fd is -errno");
+    assert_eq(sock_send_all(0 - 1, "x", 0), 0, "a zero-length send writes nothing and returns 0");
+
+    return assert_summary();
+}
+var ec = main();
+syscall(60, ec);

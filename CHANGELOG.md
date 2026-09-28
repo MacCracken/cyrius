@@ -307,6 +307,29 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   EAGAIN half is already fixed in 3.13.3), vani (`_audio_open_pcm`), daimon, cyim-lsp,
   cyrius-doom, argonaut (`ag_sys_fcntl`), kybernet, agnosai, majra.
 
+- **A short socket write is completed or reported, never dropped: `sock_send_all` (new, in
+  `lib/net.cyr`), and the WebSocket and HTTP senders built on it.** (bite 3; found in the 6.6.7
+  review.) **Root cause:** `lib/ws_server.cyr` (the 101 response and both writes of every frame),
+  `lib/http.cyr` (all three request senders) and — the same defect in the client twin —
+  `lib/ws.cyr` (its handshake request and both frame writes) called `sock_send` / `sys_write` and
+  dropped the count. A blocking stream write may return fewer bytes than asked when SO_SNDTIMEO
+  expires (`sock_set_send_timeout` sets it) or a signal lands, and the sender then reported
+  success for a truncated frame or request — a WebSocket peer read the next frame's header out of
+  this one's missing payload. On agnos the socket write route already retried to completion, so
+  this was the portable half. **Fix:** `sock_send_all(fd, buf, len)` loops until `len` bytes are
+  written (retrying EINTR) and returns `len` or -errno, with no Result box; `ws_server_send_frame`
+  returns -errno for a frame it could not send whole (it returned 0 always),
+  `ws_server_handshake` returns 0 when its 101 could not be sent, `_ws_send_frame` /
+  `ws_send_*` return -1 (they returned `len`), `ws_connect` marks the socket closed on a short
+  handshake, and `http_get` / `http_get_a` answer `HTTP_ERROR` and `http_get_r`
+  `Err(HttpNetErr)` on a short request. Pinned by `tests/tcyr/crossos/sock_send_all_short_write.tcyr`
+  (new; it first ASSERTS the precondition — a raw 4 MiB write under a 100 ms SO_SNDTIMEO comes
+  back short on this host — then requires `sock_send_all` and a 1 MiB `ws_server_send_binary`
+  nobody reads to fail, and a forked reader to receive exactly 10 + 1048576 bytes) and
+  `tests/tcyr/crossos/ws_client_short_write.tcyr` (new; the client frame must be -1, not
+  1048576). 14/14 and 9/9 on x86_64, qemu-aarch64, pi, ecb and ach; 2/2 each on cass. Each is RED
+  with its module reverted (the server frame returned 0, the client frame 1048576).
+
 ### Changed
 
 - **Stdlib fold — yukti 2.3.14** (bite 2), `lib/yukti.cyr` copied byte-identical from yukti

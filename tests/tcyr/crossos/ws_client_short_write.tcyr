@@ -1,0 +1,68 @@
+# ws_client_short_write.tcyr — v6.6.8: lib/ws.cyr's client frame sender reports a short write
+# instead of returning the full length with the frame cut short.
+#
+# The client twin of sock_send_all_short_write.tcyr (a separate file because lib/ws.cyr and
+# lib/ws_server.cyr both define the WS_OP_* names). `_ws_send_frame` wrote the header and the
+# masked payload with bare sys_write calls and dropped both counts, so under SO_SNDTIMEO (or a
+# signal) the peer got a truncated frame while ws_send_binary returned `len`. It now goes through
+# lib/net.cyr's sock_send_all and returns -1. CHANGELOG [6.6.8]
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/syscalls.cyr"
+include "lib/tagged.cyr"
+include "lib/io.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/net.cyr"
+include "lib/bayan.cyr"
+include "lib/ws.cyr"
+include "lib/assert.cyr"
+
+fn main(): i64 {
+    alloc_init();
+
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_AGNOS
+    var N = 1048576;
+    var big = alloc(N);
+    memset(big, 0x33, N);
+
+    test_group("v6.6.8 — a client frame nobody reads fails instead of returning its length");
+    var p[16];
+    assert_eq(sys_socketpair(1, 1, 0, &p), 0, "socketpair");
+    var a = load32(&p);
+    assert_eq(sock_set_send_timeout(a, 0, 100000), 0, "SO_SNDTIMEO = 100 ms");
+    var ws = ws_new(a);
+    store64(ws + 8, WS_OPEN);                   # skip the handshake: framing is what is tested
+    assert_eq(ws_send_binary(ws, big, N), 0 - 1, "ws_send_binary is -1 (it used to return 1048576)");
+    sys_close(a);
+    sys_close(load32(&p + 4));
+
+    test_group("v6.6.8 — a small frame to a live peer still sends in full");
+    var q[16];
+    assert_eq(sys_socketpair(1, 1, 0, &q), 0, "socketpair");
+    var qa = load32(&q);
+    var qb = load32(&q + 4);
+    var ws2 = ws_new(qa);
+    store64(ws2 + 8, WS_OPEN);
+    assert_eq(ws_send_text(ws2, "hello"), 5, "ws_send_text returns the payload length");
+    var got[32];
+    # 2-byte header (0x81, 0x80|5) + 4-byte mask + 5 masked bytes = 11.
+    assert_eq(sys_read(qb, &got, 32), 11, "the peer reads exactly one 11-byte frame");
+    assert_eq(load8(&got) & 0xFF, 0x81, "FIN + TEXT");
+    sys_close(qa);
+    sys_close(qb);
+    #endif
+    #endif
+
+    # Every target, so no host scores this file 0 of 0 (PE and agnos have no socketpair here).
+    test_group("v6.6.8 — a failed write is -1 on every target");
+    var wsx = ws_new(0 - 1);
+    store64(wsx + 8, WS_OPEN);
+    assert_eq(ws_send_text(wsx, "x"), 0 - 1, "a frame to a descriptor that is not open is -1");
+    assert_lt(sock_send_all(0 - 1, "x", 1), 0, "sock_send_all to a bad fd is -errno");
+
+    return assert_summary();
+}
+var ec = main();
+syscall(60, ec);

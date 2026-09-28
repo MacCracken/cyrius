@@ -204,9 +204,11 @@ fn http_get(url): i64 {
     var fd = fd_r;
     var c_r_tag, c_r = sock_connect(fd, host, port);
     if (is_err_result(c_r_tag) == 1) { sys_close(fd); var err = alloc(24); store64(err, HTTP_ERROR); return err; }
-    # Send request — drop the Result; transient-send-error tolerated
-    # for parity with the historic best-effort shape.
-    sock_send(fd, req, strlen(req));
+    # Send the WHOLE request. v6.6.8: this used to call sock_send and drop its count, so a
+    # short write (SO_SNDTIMEO, a signal) sent half a request and then waited for a response to
+    # it. A failed or short send is now HTTP_ERROR. CHANGELOG [6.6.8]
+    var qlen = strlen(req);
+    if (sock_send_all(fd, req, qlen) != qlen) { sys_close(fd); var serr = alloc(24); store64(serr, HTTP_ERROR); return serr; }
     # Read response — sock_recv returns Result; payload(Ok) is bytes
     # read, Err short-circuits the loop.
     var rbuf = alloc(65536);
@@ -242,7 +244,8 @@ fn http_get_r(url) : Result {
     var fd = fd_r;
     var c_r_tag, c_r = sock_connect(fd, host, port);
     if (is_err_result(c_r_tag) == 1) { sys_close(fd); return Err(HttpNetErr); }
-    sock_send(fd, req, strlen(req));
+    var qlen = strlen(req);
+    if (sock_send_all(fd, req, qlen) != qlen) { sys_close(fd); return Err(HttpNetErr); }   # v6.6.8
     var rbuf = alloc(65536);
     var total = 0;
     var rgo = 1;
@@ -306,7 +309,14 @@ fn http_get_a(a, url): i64 {
         store64(err, HTTP_ERROR);
         return err;
     }
-    sock_send(fd, req, strlen(req));
+    var qlen = strlen(req);
+    if (sock_send_all(fd, req, qlen) != qlen) {                 # v6.6.8: a short send is an error
+        sys_close(fd);
+        var serr = alloc_via(a, 24);
+        if (serr == 0) { return 0; }
+        store64(serr, HTTP_ERROR);
+        return serr;
+    }
     var rbuf = alloc_via(a, 65536);
     if (rbuf == 0) { sys_close(fd); return 0; }
     var total = 0;

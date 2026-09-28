@@ -410,6 +410,26 @@ fn sock_send(fd, buf, len) : Result {
     return Ok(n);
 }
 
+# Send ALL `len` bytes, looping over short writes. Returns `len`, or -errno (a failed or
+# timed-out write — -EAGAIN when SO_SNDTIMEO expires, -EPIPE on a closed peer — with an unknown
+# prefix already sent; the connection is then unusable for framed data). An interrupted write
+# (-EINTR) is retried. No Result box, so no allocation.
+# ⛔ WHY: a blocking stream write may return FEWER bytes than asked — a signal, or SO_SNDTIMEO
+# (which lib/ws_server.cyr's and lib/http.cyr's callers set through sock_set_send_timeout) — and
+# every caller that dropped sock_send's count silently truncated its frame or request: a
+# WebSocket peer then read the next frame's header out of this one's payload. CHANGELOG [6.6.8]
+fn sock_send_all(fd, buf, len): i64 {
+    var off = 0;
+    while (off < len) {
+        var n = sys_write(fd, buf + off, len - off);
+        if (n == 0 - 4) { continue; }               # EINTR: nothing was written; retry
+        if (n < 0) { return n; }
+        if (n == 0) { return 0 - 5; }               # EIO: a stream write never returns 0 for len > 0
+        off = off + n;
+    }
+    return len;
+}
+
 # Receive data from socket. Returns Result(bytes_read).
 fn sock_recv(fd, buf, len) : Result {
     var n = sys_read(fd, buf, len);
