@@ -1,0 +1,9 @@
+250
+# ⬆ LINE 1 IS THE NUMBER, AND IT IS THE ONLY COPY OF IT. The .tcyr corpus floor: every runner of
+# the whole tests/tcyr corpus FAILS when it sees fewer files than this, because a reader that
+# went blind (a flat glob over a subfoldered tree, a broken find) otherwise reports a small
+# GREEN count. Read by the check driver (programs/checks/selfhost.cyr::_tcyr_corpus_floor,
+# `cyrius_check --tcyr-floor`) and by every .tcyr loop in .github/workflows/ci.yml (ubuntu,
+# AGNOS, native arm64). Raise it deliberately as the corpus grows; never lower it to make a
+# run pass. 6.6.9: it was written down four times; tests/gates/toolchain/
+# ci_steps_delegate_to_driver.sh fails on a literal floor anywhere else.

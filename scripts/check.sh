@@ -1490,3 +1490,14 @@ _chk_gate "$ROOT/tests/gates/toolchain/deps_lock_new_leaf_locked.sh"
 # gone), names a failed step, refuses a 0-byte compiler (the script scored it PASS), and leaves
 # nothing behind; `_copy_binary` leaves no dst when it fails (the macOS stage leak).
 _chk_gate "$ROOT/tests/gates/toolchain/cbt_no_shared_tmp_paths.sh"
+
+# 6.6.9 (bite 11) — a check-driver row that did not run its check (missing tool, host or
+# fixture) prints SKIP and is tallied as a SKIP, never as a PASS; CYRIUS_CHECK_NO_SKIP=1 (what
+# CI's delegated steps run under) makes every SKIP a FAIL. 86 rows used to score it as a pass.
+_chk_gate "$ROOT/tests/gates/toolchain/check_driver_skip_is_not_pass.sh"
+
+# 6.6.9 (bite 11) — CI runs the check driver's rows (fmt, lint, object-init, linker,
+# shared-dlopen, capacity) under CYRIUS_CHECK_NO_SKIP=1 instead of carrying hand-copied shell
+# twins of them; no workflow run: line references tests/fixtures/; the .tcyr floor is written
+# once (tests/tcyr/CORPUS_FLOOR); every CI self-host step uses cross-os-selfhost.sh's fork.
+_chk_gate "$ROOT/tests/gates/toolchain/ci_steps_delegate_to_driver.sh"

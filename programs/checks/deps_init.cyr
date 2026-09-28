@@ -11,8 +11,7 @@ fn _deps_downstream_src_main_gate(): i64 {
 
     var cyrius_bin = _root_path("build/cyrius");
     if (file_exists(cyrius_bin) != 1) {
-        _p("  skip: build/cyrius not built\n");
-        _check(label, 0);
+        _skip(label, "build/cyrius not built");
         return 0;
     }
 
@@ -105,8 +104,7 @@ fn _deps_requires_gate(): i64 {
 
     var cyrius_bin = _root_path("build/cyrius");
     if (file_exists(cyrius_bin) != 1) {
-        _p("  skip: build/cyrius not built\n");
-        _check(label, 0);
+        _skip(label, "build/cyrius not built");
         return 0;
     }
 
@@ -175,8 +173,7 @@ fn _deps_sidecar_gate(): i64 {
 
     var cyrius_bin = _root_path("build/cyrius");
     if (file_exists(cyrius_bin) != 1) {
-        _p("  skip: build/cyrius not built\n");
-        _check(label, 0);
+        _skip(label, "build/cyrius not built");
         return 0;
     }
 
@@ -281,8 +278,7 @@ fn _deps_std_group_gate(): i64 {
 
     var cyrius_bin = _root_path("build/cyrius");
     if (file_exists(cyrius_bin) != 1) {
-        _p("  skip: build/cyrius not built\n");
-        _check(label, 0);
+        _skip(label, "build/cyrius not built");
         return 0;
     }
 
@@ -352,8 +348,7 @@ fn _deps_groups_gate(): i64 {
 
     var cyrius_bin = _root_path("build/cyrius");
     if (file_exists(cyrius_bin) != 1) {
-        _p("  skip: build/cyrius not built\n");
-        _check(label, 0);
+        _skip(label, "build/cyrius not built");
         return 0;
     }
 
@@ -406,8 +401,7 @@ fn _deps_modular_gate(): i64 {
 
     var cyrius_bin = _root_path("build/cyrius");
     if (file_exists(cyrius_bin) != 1) {
-        _p("  skip: build/cyrius not built\n");
-        _check(label, 0);
+        _skip(label, "build/cyrius not built");
         return 0;
     }
 
@@ -494,8 +488,7 @@ fn _distlib_failloud_gate(): i64 {
 
     var cyrius_bin = _root_path("build/cyrius");
     if (file_exists(cyrius_bin) != 1) {
-        _p("  skip: build/cyrius not built\n");
-        _check(label, 0);
+        _skip(label, "build/cyrius not built");
         return 0;
     }
 
@@ -569,8 +562,7 @@ fn _deps_features_gate(): i64 {
 
     var cyrius_bin = _root_path("build/cyrius");
     if (file_exists(cyrius_bin) != 1) {
-        _p("  skip: build/cyrius not built\n");
-        _check(label, 0);
+        _skip(label, "build/cyrius not built");
         return 0;
     }
 
@@ -649,8 +641,7 @@ fn _deps_modular_traversal_gate(): i64 {
 
     var cyrius_bin = _root_path("build/cyrius");
     if (file_exists(cyrius_bin) != 1) {
-        _p("  skip: build/cyrius not built\n");
-        _check(label, 0);
+        _skip(label, "build/cyrius not built");
         return 0;
     }
 
@@ -703,8 +694,7 @@ fn _deps_lock_gate(): i64 {
 
     var cyrius_bin = _root_path("build/cyrius");
     if (file_exists(cyrius_bin) != 1) {
-        _p("  skip: build/cyrius not built\n");
-        _check(label, 0);
+        _skip(label, "build/cyrius not built");
         return 0;
     }
 
@@ -790,16 +780,12 @@ fn _init_lib_bin_gate(): i64 {
     var label = "cyrius init --lib emits programs/smoke.cyr + [lib]; --bin/bare keep binary shape (v5.7.15)";
     var init_script = _root_path("build/cyrius-init");
     if (file_exists(init_script) != 1) {
-        _p("  skip: ");
-        _p(init_script);
-        println(" missing");
-        _check(label, 0);
+        _skip(label, _cat2(init_script, " missing"));
         return 0;
     }
     var cyrius_bin = _root_path("build/cyrius");
     if (file_exists(cyrius_bin) != 1) {
-        _p("  skip: build/cyrius not built");
-        _check(label, 0);
+        _skip(label, "build/cyrius not built");
         return 0;
     }
 
@@ -982,9 +968,7 @@ fn _init_doctree_gate(): i64 {
     # v6.2.40: native scaffolder binary; port mode via --__mode=port.
     var init_script = _root_path("build/cyrius-init");
     if (file_exists(init_script) != 1) {
-        _p("  skip: build/cyrius-init missing");
-        println("");
-        _check(label, 0);
+        _skip(label, "build/cyrius-init missing");
         return 0;
     }
 
@@ -1115,9 +1099,7 @@ fn _fuzz_deps_prepend_gate(): i64 {
     var label = "cyrius fuzz manifest-deps auto-prepend parity with test/bench (v5.7.21)";
     var cyrius_bin = _root_path("build/cyrius");
     if (file_exists(cyrius_bin) != 1) {
-        _p("  skip: build/cyrius not built");
-        println("");
-        _check(label, 0);
+        _skip(label, "build/cyrius not built");
         return 0;
     }
     var fail = 0;
@@ -1203,9 +1185,7 @@ fn _deps_transitive_gate(): i64 {
     var label = "cyrius deps walks [deps.X] transitively (3-level + diamond + cycle + rel-path; v5.7.14)";
     var cyrius_bin = _root_path("build/cyrius");
     if (file_exists(cyrius_bin) != 1) {
-        _p("  skip: build/cyrius not built");
-        println("");
-        _check(label, 0);
+        _skip(label, "build/cyrius not built");
         return 0;
     }
     var fail = 0;

@@ -70,6 +70,11 @@ var G_TOTAL = 0;
 # 6.6.8: rows during which a child was ended at a DEADLINE — reported as TIMEOUT rows and
 # counted as failures (see `_check`).
 var G_TIMEOUT = 0;
+# 6.6.9: rows that did not run their check (a missing tool, host or fixture) — reported as SKIP
+# rows and tallied on their own, never as passes (see `_skip`). Under CYRIUS_CHECK_NO_SKIP=1
+# (G_NO_SKIP) a SKIP is scored as a failure instead.
+var G_SKIP = 0;
+var G_NO_SKIP = 0;
 var _G_SEEN_RKILLS = 0;     # regression_deadline_kills() as of the previous row
 var _G_SEEN_PKILLS = 0;     # proc_deadline_kills() as of the previous row
 var _G_ROW_GATE_TIMEOUT = 0; # set by `_gate` when its supervisor reported the deadline (124)
@@ -143,7 +148,9 @@ fn _p(cstr): i64 {
 # lib/process.cyr now COUNT every deadline kill where it happens; a row during which either
 # count moved (or whose shell gate's supervisor exited 124) prints a TIMEOUT line naming the
 # setting, is scored as a failure, and is tallied in the final line.
-fn _check(name, exit_code): i64 {
+# Returns 1 when the row being scored saw a deadline kill (and says so), 0 otherwise; either
+# way the per-row bookkeeping is reset for the next row.
+fn _row_timed_out(name): i64 {
     var rk = regression_deadline_kills();
     var pk = proc_deadline_kills();
     var timed = 0;
@@ -172,11 +179,14 @@ fn _check(name, exit_code): i64 {
         print_num(knob_ms / 1000);
         println("s)");
         G_TIMEOUT = G_TIMEOUT + 1;
-        if (exit_code == 0) { exit_code = 1; }
     }
     _G_SEEN_RKILLS = rk;
     _G_SEEN_PKILLS = pk;
     _G_ROW_GATE_TIMEOUT = 0;
+    return timed;
+}
+
+fn _tally(name, exit_code): i64 {
     G_TOTAL = G_TOTAL + 1;
     _p("  ");
     if (exit_code == 0) {
@@ -192,6 +202,49 @@ fn _check(name, exit_code): i64 {
     }
     _p(": ");
     println(name);
+    return 0;
+}
+
+fn _check(name, exit_code): i64 {
+    if (_row_timed_out(name) == 1) {
+        if (exit_code == 0) { exit_code = 1; }
+    }
+    _tally(name, exit_code);
+    return 0;
+}
+
+# ⛔ 6.6.9 — A ROW THAT DID NOT RUN ITS CHECK SAYS SKIP, AND IS NOT A PASS.
+# 86 rows answered "the tool / host / fixture I need is missing" with `_check(label, 0)`: a
+# `skip:` note, then a green PASS line and a +1 on the passed count. A run with no build/cyrld,
+# no build/cyrius or no cross-compiler read exactly like one that had exercised all of them,
+# and a CI step delegated to such a row would turn a missing prerequisite into a silent pass.
+# A SKIP is now its own line and its own count in the final tally. CYRIUS_CHECK_NO_SKIP=1
+# (what CI runs under) scores every SKIP as a FAIL, naming why the row could not run. A
+# deadline kill during the probe that led to the skip is still a TIMEOUT failure.
+# Gate: tests/gates/toolchain/check_driver_skip_is_not_pass.sh. CHANGELOG [6.6.9]
+fn _skip(name, why): i64 {
+    if (_row_timed_out(name) == 1) {
+        _tally(name, 1);
+        return 1;
+    }
+    if (G_NO_SKIP == 1) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("SKIP REFUSED");
+        _p(ANSI_RESET);
+        _p(" (CYRIUS_CHECK_NO_SKIP=1): ");
+        _p(why);
+        _p("\n");
+        _tally(name, 1);
+        return 1;
+    }
+    G_TOTAL = G_TOTAL + 1;
+    G_SKIP = G_SKIP + 1;
+    _p("  SKIP: ");
+    _p(name);
+    _p(" — ");
+    _p(why);
+    _p("\n");
     return 0;
 }
 
@@ -346,26 +399,16 @@ fn _setup_paths(): i64 {
 }
 
 fn _run_regression_gates(): i64 {
-    _section("Shared-object");
-    _shared_dlopen_gate();
-    println("");
+    _row_shared_dlopen();
 
     _section("PIE executable");
     _pie_exec_gate();
     _kernel_pie_struct_gate();
     println("");
 
-    _section("Linker");
-    _linker_gate();
-    println("");
-
-    _section("Capacity meter");
-    _capacity_gate();
-    println("");
-
-    _section("Object init binding");
-    _object_init_gate();
-    println("");
+    _row_linker();
+    _row_capacity();
+    _row_object_init();
 
     _section("aarch64 syscalls + threads");
     _aarch64_syscalls_gate();
@@ -1012,6 +1055,14 @@ fn _run_regression_gates(): i64 {
 # this release keeps finding rotted (check.sh's hand-listed lib includes, the cross-OS
 # filename prefix); there is no second list here to rot. Adding a phase is adding a row.
 # `run == 1` executes it; anything else only names it. CHANGELOG [6.6.6]
+#
+# 6.6.9: `run == 2` asks "is this row part of the FULL run?" — the name (non-zero) for yes,
+# 0 for no. The rows after `lint` answer no: each is ONE row that `regression` already runs
+# (through the same `_row_*` fn, so there is one definition of it), made selectable on its own
+# because CI's granular steps delegate to it (`./build/cyrius_check object-init`, …) instead of
+# carrying a hand-copied shell twin. Excluded from the full run so it does not run twice.
+# `--list-selectable-only` prints them; tests/gates/toolchain/ci_steps_delegate_to_driver.sh
+# requires every one of them to be what a CI step runs. CHANGELOG [6.6.9]
 fn _suite_row(idx, run): i64 {
     if (idx == 0) { if (run == 1) { _self_host_gate(); } return "selfhost"; }
     if (idx == 1) { if (run == 1) { _var_grow_gate(); } return "var-grow"; }
@@ -1022,6 +1073,39 @@ fn _suite_row(idx, run): i64 {
     if (idx == 6) { if (run == 1) { _run_regression_gates(); } return "regression"; }
     if (idx == 7) { if (run == 1) { _format_gate(); } return "fmt"; }
     if (idx == 8) { if (run == 1) { _lint_suite(); } return "lint"; }
+    if (idx == 9) { if (run == 1) { _row_object_init(); } if (run == 2) { return 0; } return "object-init"; }
+    if (idx == 10) { if (run == 1) { _row_linker(); } if (run == 2) { return 0; } return "linker"; }
+    if (idx == 11) { if (run == 1) { _row_shared_dlopen(); } if (run == 2) { return 0; } return "shared-dlopen"; }
+    if (idx == 12) { if (run == 1) { _row_capacity(); } if (run == 2) { return 0; } return "capacity"; }
+    return 0;
+}
+
+# The four rows `regression` runs and CI selects by name (see `_suite_row`). CHANGELOG [6.6.9]
+fn _row_shared_dlopen(): i64 {
+    _section("Shared-object");
+    _shared_dlopen_gate();
+    println("");
+    return 0;
+}
+
+fn _row_linker(): i64 {
+    _section("Linker");
+    _linker_gate();
+    println("");
+    return 0;
+}
+
+fn _row_capacity(): i64 {
+    _section("Capacity meter");
+    _capacity_gate();
+    println("");
+    return 0;
+}
+
+fn _row_object_init(): i64 {
+    _section("Object init binding");
+    _object_init_gate();
+    println("");
     return 0;
 }
 
@@ -1070,6 +1154,35 @@ fn _suite_list(): i64 {
         i = i + 1;
     }
     return 0;
+}
+
+# The rows a full run does NOT walk (see `_suite_row`), one per line. CHANGELOG [6.6.9]
+fn _suite_list_selectable_only(): i64 {
+    var n = _suite_count();
+    var i = 0;
+    while (i < n) {
+        if (_suite_row(i, 2) == 0) {
+            _p(_suite_row(i, 0));
+            _p("\n");
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# CYRIUS_CHECK_NO_SKIP: "1" = a SKIP row is a failure; unset, empty or "0" = a SKIP is
+# reported and tallied as a SKIP. Anything else is REFUSED (exit 2): `=true` or `=yes`
+# silently meaning "off" would turn the strict mode CI relies on into a no-op. CHANGELOG [6.6.9]
+fn _read_no_skip(): i64 {
+    var v = getenv("CYRIUS_CHECK_NO_SKIP");
+    if (v == 0) { return 0; }
+    if (strlen(v) == 0) { return 0; }
+    if (streq(v, "0") == 1) { return 0; }
+    if (streq(v, "1") == 1) { return 1; }
+    _perr("error: CYRIUS_CHECK_NO_SKIP must be 1 (a SKIP row fails) or 0/unset; got '");
+    _perr(v);
+    _perr("'\n");
+    return 0 - 1;
 }
 
 # Loud, on stderr, and it NAMES the alternatives: the whole point of the bite is that an
@@ -1121,7 +1234,11 @@ fn main(): i64 {
     }
     if (sel_idx == 1) {
         var lone = 0;
-        if (argc() > 1) { if (streq(argv(1), "--list-suites") == 1) { lone = 1; } }
+        if (argc() > 1) {
+            if (streq(argv(1), "--list-suites") == 1) { lone = 1; }
+            if (streq(argv(1), "--list-selectable-only") == 1) { lone = 1; }
+            if (streq(argv(1), "--tcyr-floor") == 1) { lone = 1; }
+        }
         if (lone == 0) { return _rg_supervise_self(); }
     }
     # The driver proper is a child SUBREAPER too: a child it spawns that leaves an orphan
@@ -1186,6 +1303,23 @@ fn main(): i64 {
             _suite_list();
             return 0;
         }
+        if (streq(sel, "--list-selectable-only") == 1) {
+            _suite_list_selectable_only();
+            return 0;
+        }
+        # The .tcyr corpus floor as the driver READS it (tests/tcyr/CORPUS_FLOOR, via
+        # `_tcyr_corpus_floor`) — how a gate proves the driver and CI's loops use one number.
+        # Exit 1, printing nothing on stdout, when the file is unreadable. CHANGELOG [6.6.9]
+        if (streq(sel, "--tcyr-floor") == 1) {
+            var tf = _tcyr_corpus_floor();
+            if (tf < 1) {
+                _perr("error: tests/tcyr/CORPUS_FLOOR is missing or its line 1 is not a number\n");
+                return 1;
+            }
+            print_num(tf);
+            _p("\n");
+            return 0;
+        }
         only = _suite_index(sel);
         if (only < 0) {
             _suite_unknown(sel);
@@ -1193,13 +1327,19 @@ fn main(): i64 {
         }
     }
 
+    G_NO_SKIP = _read_no_skip();
+    if (G_NO_SKIP < 0) { return 2; }
+
     println("=== Cyrius v2.0 Audit ===");
+    if (G_NO_SKIP == 1) { println("(CYRIUS_CHECK_NO_SKIP=1: a row that cannot run is a FAIL, not a SKIP)"); }
     println("");
 
     var n = _suite_count();
     var i = 0;
     while (i < n) {
-        if (only < 0) { _suite_row(i, 1); }
+        if (only < 0) {
+            if (_suite_row(i, 2) != 0) { _suite_row(i, 1); }
+        }
         if (only == i) { _suite_row(i, 1); }
         i = i + 1;
     }
@@ -1217,7 +1357,9 @@ fn main(): i64 {
     print_num(G_PASS);
     _p(" passed, ");
     print_num(G_FAIL);
-    _p(" failed (");
+    _p(" failed, ");
+    print_num(G_SKIP);
+    _p(" skipped (");
     print_num(G_TOTAL);
     _p(" total)");
     if (G_TIMEOUT > 0) {

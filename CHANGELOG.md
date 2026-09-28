@@ -976,6 +976,66 @@ a native cx compiler also exits 1 on the slice / await / async triggers.
   AuditEntry`, with different fields, and stiva's `#derive(accessors)` #assert fires; **dhvani** —
   its named dep naad's module fails `: stack` return binding under the current compiler. Both are
   real in a consumer's build of those bundles; each needs its own fix.
+- **A check-driver row that did not run its check says SKIP, is counted as a SKIP, and is a
+  failure under `CYRIUS_CHECK_NO_SKIP=1`.** (bite 11; audit: driver SKIP rows scored PASS.)
+  **Root cause:** 86 rows in programs/checks/*.cyr answered "the tool / host / fixture I need is
+  missing" (no build/cyrld, no build/cyrius, no cross-compiler, no ssh host, no qemu/OVMF, …)
+  with `_check(label, 0)`: a `skip:` note, then a green `PASS:` line and +1 on the passed count,
+  so `cyrius_check linker` with no build/cyrld printed `1 passed, 0 failed` and exited 0 — a run
+  that exercised nothing read like one that exercised everything. It also blocked delegating
+  CI's hand-copied gates to the driver: the inline CI step failed on a missing tool, the driver
+  row passed on it. **Fix:** `_skip(label, why)` prints `SKIP: <row> — <why>` and the final
+  tally reads `P passed, F failed, S skipped (T total)` (the `passed, F failed` and `(T total)`
+  shapes release-gate.sh and the targeted-run gate read are unchanged). `CYRIUS_CHECK_NO_SKIP=1`
+  scores every SKIP as a FAIL naming the missing prerequisite; any value but `1`/`0`/empty is
+  refused with exit 2, so a typo cannot silently mean "off". The CLI cross-compile row's
+  per-target "compiler not built" sub-skip, and the binary-lint row's silent pass when
+  programs/collatz.cyr is missing, are SKIPs too. `_check` was split into `_row_timed_out` +
+  `_tally` so a deadline kill during a skip's probe is still a TIMEOUT failure. Gate:
+  `tests/gates/toolchain/check_driver_skip_is_not_pass.sh` (new) — runtime axes on a scratch
+  root, a strict-mode positive control, and a ratchet-0 structural scan for the old shape
+  (86 `_skip` sites; five mutants RED).
+
+### Changed
+
+- **CI runs the check driver's gates instead of hand-copied twins of them** (bite 11; tail: CI
+  inlines its own copies of local gates). **Root cause:** v5.9.3 / .17 / .22 moved the
+  object-init, linker, shared-object and capacity shell regressions into programs/checks/, and
+  ci.yml kept a second shell copy of each "so the job stays granular" — plus an inline copy of
+  the fmt walk — while never running the driver at all. Nothing tied a copy to its source: when
+  6.6.6 moved the dlopen fixture's working directory, only the driver moved and CI exited 11
+  while check.sh was green, and CI's flat `for f in lib/*.cyr` fmt loop had fallen behind the
+  recursive walker (it never saw lib/unicode/). **Fix:** the `check` and `test` jobs build
+  `build/cyrius_check` exactly as check.sh does, and the Format, Lint and four Regression steps
+  are each one line — `CYRIUS_CHECK_NO_SKIP=1 ./build/cyrius_check <row>` (`fmt`, `lint`,
+  `object-init`, `linker`, `shared-dlopen`, `capacity`). The no-skip mode is load-bearing: the
+  inline copies failed on a missing tool, and a driver row reports SKIP there (see *Fixed*).
+  The capacity step no longer copies build/cycc into `$HOME/.cyrius/bin` (measured: unneeded). The
+  `.tcyr` loops stay DELIBERATELY INDEPENDENT of the driver (CO-02 was caught because the two
+  differed; the step now documents the two remaining differences — full environment vs
+  `CYRIUS_TEST_ENV=1` only, no deadline vs 120 s) and share only the corpus floor, which was
+  written down FOUR times (the driver, and the ubuntu, AGNOS and native-arm64 loops) and now
+  lives once, in `tests/tcyr/CORPUS_FLOOR` line 1, read by all four. Verified CI-faithfully in a
+  fresh copy of the tree with an empty `$HOME` and no cyrius on `PATH`, every changed step under
+  `bash -eo pipefail` (the .tcyr loop 371/371), and the floor read inside the agnosticos
+  container; ⚠ the proof proper is the first GitHub Actions run after the push. Gate:
+  `tests/gates/toolchain/ci_steps_delegate_to_driver.sh` (new) — ratchet 0 on workflow `run:`
+  lines that reference tests/fixtures/ or invoke a delegated row's tool outside the driver, the
+  delegated set == {fmt, lint} + the driver's selectable-only rows (each run in no-skip mode,
+  after a build in the same job), one corpus floor, and every CI SELF-HOST step self-hosting the
+  same per-target fork scripts/cross-os-selfhost.sh uses for that host (ecb/ach/cass/pi). Nine
+  mutants RED, including the old inline dlopen step restored.
+
+### Added
+
+- **Four check-driver rows are selectable by name: `object-init`, `linker`, `shared-dlopen`,
+  `capacity`** (bite 11). Each is ONE row the `regression` phase already ran; it is now also a
+  suite of its own (`./build/cyrius_check linker`, `sh scripts/check.sh linker`), so CI's granular
+  steps can run the driver's implementation instead of a hand-copied shell twin. Both callers go
+  through the same `_row_*` fn, so there is one definition of each. The suite table gained a
+  third question (`_suite_row(i, 2)`: "is this row part of the FULL run?") and the four answer
+  no, so a full run does not execute them twice; `--list-selectable-only` prints them. Also
+  `--tcyr-floor`: the `.tcyr` corpus floor as the driver reads it (see *Changed*).
 
 ## [6.6.8] — 2026-09-28
 

@@ -574,10 +574,7 @@ fn _struct_cap_gate(): i64 {
 fn _match_coverage_dce_gate(): i64 {
     var label = "match exhaustiveness check fires for DCE-dead fns regardless of fn name (v5.9.24; agnosys 1.1.5)";
     if (file_exists(CC_PATH) != 1) {
-        _p("  skip: ");
-        _p(CC_PATH);
-        println(" not present");
-        _check(label, 0);
+        _skip(label, _cat2(CC_PATH, " not present"));
         return 0;
     }
 
@@ -637,10 +634,7 @@ fn _capacity_gate(): i64 {
     var label = "cyrius capacity (default / --check / --json / fnc>2048)";
     var cyrius_shim = _root_path("scripts/cyrius");
     if (file_exists(cyrius_shim) != 1) {
-        _p("  skip: ");
-        _p(cyrius_shim);
-        println(" not present");
-        _check(label, 0);
+        _skip(label, _cat2(cyrius_shim, " not present"));
         return 0;
     }
 
@@ -700,7 +694,8 @@ fn _capacity_gate(): i64 {
     # What this test asserts is unchanged: the >=85% trip fires and --check exits 1. That the
     # DENOMINATORS themselves are correct is pinned separately by
     # tests/gates/memory/capacity_meter_denominators.sh — three of them have been stale at
-    # different times. Keep in sync with the ci.yml capacity step.
+    # different times. (CI runs THIS row — `cyrius_check capacity`; its inline copy is gone
+    # since 6.6.9, so there is no second fixture to keep in sync.)
     var trip_sb_path = str_builder_new();
     str_builder_add_cstr(trip_sb_path, scratch);
     str_builder_add_cstr(trip_sb_path, "/trip.cyr");
@@ -713,8 +708,8 @@ fn _capacity_gate(): i64 {
     # ~300 KB of string_data on their own: the SAME file measures 90.9 % in the cyrius repo and
     # 76.2 % in a bare temp dir. There is no single literal count that works in both — 1600
     # trips in-repo but under-fills a temp dir, 1850 trips in a temp dir but hits the hard
-    # "string data overflow" in-repo. Both real call sites (this gate's scratch dir and ci.yml's
-    # mktemp -d) are manifest-free, so 1900 -> 1,901,900 / 2,097,152 = 90.7 % is correct HERE.
+    # "string data overflow" in-repo. This gate's scratch dir is manifest-free (and it is the
+    # only caller — CI runs this row), so 1900 -> 1,901,900 / 2,097,152 = 90.7 % is correct HERE.
     # Do not "verify" this fixture by running it from the repo root.
     while (tix < 1900) {
         str_builder_add_cstr(trip, "fn s");

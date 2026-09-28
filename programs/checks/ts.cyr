@@ -114,8 +114,7 @@ fn _ts_path_arg_gate(): i64 {
 
     var fix = _root_path("tests/fixtures/ts_lex/sample.ts");
     if (file_exists(fix) != 1) {
-        _p("  skip: sample.ts fixture missing\n");
-        _check(label, 0);
+        _skip(label, "sample.ts fixture missing");
         return 0;
     }
 
@@ -325,10 +324,7 @@ fn _emit_async_misplaced(out_path): i64 {
 fn _ts_walk_gate(): i64 {
     var label = "cycc --emit-js: AST walk has no overlap + emitted JS round-trips (v6.1.10 fix + v6.1.11 emitter)";
     if (file_exists(CC_PATH) != 1) {
-        _p("  skip: ");
-        _p(CC_PATH);
-        println(" not present");
-        _check(label, 0);
+        _skip(label, _cat2(CC_PATH, " not present"));
         return 0;
     }
     var fix = _root_path("tests/fixtures/ts_emit/walk_nested.tsx");
@@ -390,18 +386,12 @@ fn _ts_walk_gate(): i64 {
 
 fn _ts_corpus_gate(label, ext, threshold): i64 {
     if (file_exists(CC_PATH) != 1) {
-        _p("  skip: ");
-        _p(CC_PATH);
-        println(" not present");
-        _check(label, 0);
+        _skip(label, _cat2(CC_PATH, " not present"));
         return 0;
     }
     var corpus_root = _ssh_target("SY_CORPUS", "/home/macro/Repos/secureyeoman");
     if (is_dir(str_from(corpus_root)) != 1) {
-        _p("  skip: SY corpus not at ");
-        _p(corpus_root);
-        println(" (override via SY_CORPUS=...)");
-        _check(label, 0);
+        _skip(label, _cat2(_cat2("SY corpus not at ", corpus_root), " (override via SY_CORPUS=...)"));
         return 0;
     }
 

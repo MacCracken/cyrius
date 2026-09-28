@@ -251,8 +251,7 @@ fn _build_exit_nonzero_gate(): i64 {
 
     var cyrius_bin = _root_path("build/cyrius");
     if (file_exists(cyrius_bin) != 1) {
-        _p("  skip: build/cyrius not built\n");
-        _check(label, 0);
+        _skip(label, "build/cyrius not built");
         return 0;
     }
 
@@ -357,10 +356,7 @@ fn _args_init_4kb_gate(): i64 {
 fn _derive_serialize_primitive_gate(): i64 {
     var label = "#derive(Serialize) emits working JSON for i64-typed struct fields (v5.9.30; agnosys 1.1.12)";
     if (file_exists(CC_PATH) != 1) {
-        _p("  skip: ");
-        _p(CC_PATH);
-        println(" not present");
-        _check(label, 0);
+        _skip(label, _cat2(CC_PATH, " not present"));
         return 0;
     }
 
@@ -456,10 +452,7 @@ fn _derive_serialize_primitive_gate(): i64 {
 fn _inline_asm_discard_gate(): i64 {
     var label = "120B asm fn + standalone sys_write (sigil AES-NI shape)";
     if (file_exists(CC_PATH) != 1) {
-        _p("  skip: ");
-        _p(CC_PATH);
-        println(" not present");
-        _check(label, 0);
+        _skip(label, _cat2(CC_PATH, " not present"));
         return 0;
     }
 
@@ -528,20 +521,17 @@ fn _inline_asm_discard_gate(): i64 {
 fn _syscall_surface_v5735_gate(): i64 {
     var label = "stdlib syscall surface — getrandom + getdents64 + landlock + random_bytes (v5.7.35)";
     if (file_exists(CC_PATH) != 1) {
-        _p("  skip: ");
-        _p(CC_PATH);
-        println(" not present");
-        _check(label, 0);
+        _skip(label, _cat2(CC_PATH, " not present"));
         return 0;
     }
     var s_syscalls = _root_path("lib/syscalls.cyr");
     var s_random   = _root_path("lib/random.cyr");
     var s_security = _root_path("lib/security.cyr");
     var s_alloc    = _root_path("lib/alloc.cyr");
-    if (file_exists(s_syscalls) != 1) { _p("  skip: lib/syscalls.cyr missing"); println(""); _check(label, 0); return 0; }
-    if (file_exists(s_random)   != 1) { _p("  skip: lib/random.cyr missing");   println(""); _check(label, 0); return 0; }
-    if (file_exists(s_security) != 1) { _p("  skip: lib/security.cyr missing"); println(""); _check(label, 0); return 0; }
-    if (file_exists(s_alloc)    != 1) { _p("  skip: lib/alloc.cyr missing");    println(""); _check(label, 0); return 0; }
+    if (file_exists(s_syscalls) != 1) { _skip(label, "lib/syscalls.cyr missing"); return 0; }
+    if (file_exists(s_random)   != 1) { _skip(label, "lib/random.cyr missing"); return 0; }
+    if (file_exists(s_security) != 1) { _skip(label, "lib/security.cyr missing"); return 0; }
+    if (file_exists(s_alloc)    != 1) { _skip(label, "lib/alloc.cyr missing"); return 0; }
 
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "include \"lib/alloc.cyr\"\n");
