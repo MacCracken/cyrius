@@ -1429,3 +1429,9 @@ _chk_gate "$ROOT/tests/gates/toolchain/check_gate_census.sh"
 # distlib's verify was inert and `distlib --check` always STALE), and cyrius.exe finds the tools
 # in its own bin/ (GetModuleFileNameW, not a '/'-only argv(0) scan). Wine axes SKIP without wine.
 _chk_gate "$ROOT/tests/gates/toolchain/cli_pe_file_size_and_sibling_tools.sh"
+
+# 6.6.9 (bite 9) — a temp dir the CLI cannot write is named as that: the dep-cache check says
+# "could NOT be verified" (reason 10) instead of calling a healthy cache tampered, the hasher
+# names its capture, lint's pre-pass refuses instead of passing an unparsable file; an absolute
+# $TMPDIR is the temp base. Namespace axes SKIP without unprivileged userns.
+_chk_gate "$ROOT/tests/gates/toolchain/deps_cache_capture_failure_named.sh"

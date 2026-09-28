@@ -132,6 +132,11 @@
 # racily-clean rule re-hashes an entry whose mtime is not older than the index's, so the 6.6.4
 # check caught it too. See the axis for the three things that make it a real bypass.
 set -eu
+# The CLI's temp base, derived exactly as cbt/build.cyr::_cbt_tmpbase derives it (6.6.9 bite
+# 9): an ABSOLUTE $TMPDIR with trailing slashes dropped, else /tmp. A fixed /tmp here would
+# count nothing under a set TMPDIR and read GREEN over directories it never looked at.
+case "${TMPDIR:-}" in /*) CTB=$(printf '%s' "$TMPDIR" | sed 's:/*$::'); [ -n "$CTB" ] || CTB=/ ;; *) CTB=/tmp ;; esac
+export CTB
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
 CC="$ROOT/build/cycc"
@@ -300,8 +305,8 @@ printf '#!/bin/sh\necho $$ > "$PIDFILE"\nexec "$@"\n' > "$W/pidwrap" && chmod +x
 tmpn() {
     _p=$(cat "$W/last.pid" 2>/dev/null || true)
     [ -n "$_p" ] || { echo 0; return; }
-    ls /tmp/cyrius-"$_p"/git_err /tmp/cyrius-"$_p"/dep_verify_* /tmp/cyrius-"$_p"/git_rev_out \
-       /tmp/cyrius-"$_p"-*/git_err /tmp/cyrius-"$_p"-*/dep_verify_* /tmp/cyrius-"$_p"-*/git_rev_out 2>/dev/null | wc -l
+    ls "$CTB"/cyrius-"$_p"/git_err "$CTB"/cyrius-"$_p"/dep_verify_* "$CTB"/cyrius-"$_p"/git_rev_out \
+       "$CTB"/cyrius-"$_p"-*/git_err "$CTB"/cyrius-"$_p"-*/dep_verify_* "$CTB"/cyrius-"$_p"-*/git_rev_out 2>/dev/null | wc -l
 }
 
 refused() { # $1=axis $2=desc $3=proj $4=reason-substring $5=cachedir

@@ -298,6 +298,9 @@ if unshare -rm true >/dev/null 2>&1 && unshare -rpf --mount-proc true >/dev/null
   exec 3<"$D/cli"
   unshare -rmpf --mount-proc sh -c '
     mount -t tmpfs none /tmp || exit 9
+    # This axis squeezes the candidates under /tmp, so the CLI must use /tmp: an absolute
+    # $TMPDIR is honoured since 6.6.9 and would route it (and mktemp) around the squeeze.
+    unset TMPDIR
     # The workspace comes from mktemp even here. The tmpfs is private and dies with the
     # namespace, so a fixed name would be harmless — but naming one would be indefensible
     # to a reader (and to tests/gates/toolchain/gates_never_write_tree.sh axis 5, which

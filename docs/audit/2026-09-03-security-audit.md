@@ -620,3 +620,32 @@ byte-swaps its address — the first probe dialled the raw value, i.e. a foreign
 ACCEPTS that same dial, and the same probe built against the pre-fix `net.cyr` has the 127.0.0.1
 listener accept it too — the vulnerability reproduced on the real kernel, then closed. The pre-1.57.7 fail-closed arm is proven on the fake kernel only (no older
 kernel was booted).
+
+---
+
+## Hardening, 6.6.9 bite 9 (no CVE): the CLI's temp base honours `$TMPDIR`, and a temp dir it cannot write is never read as a verdict
+
+Not a CVE: every site below already FAILED CLOSED — nothing untrusted was accepted — but each
+read "my capture came back empty" as an answer, so the refusal named the wrong cause.
+
+- **`_git_run` / `_sha256sum_file`** opened their stdout capture in the CHILD and, when that open
+  failed (EDQUOT, ENOSPC, no inodes), ran git / sha256sum with the parent's stdout. Under a full
+  `/tmp` the CVE-43 cache check then refused every healthy git dep as **tampered** with `rm -rf`
+  advice (reasons 1, 2, 3, 8 all reachable), and the hasher read as "sha256sum missing?". The
+  capture is now opened by the PARENT before the fork; a refusal reached while a capture could
+  not be written — or while the private temp dir refuses a fresh 4 KB file — is **reason 10**
+  (still a refusal), which names the temp dir and errno and prints no restore recipe.
+- **`cyrius lint`'s syntax pre-pass** FAILED OPEN on the same condition — a file that does not
+  parse linted `0 warnings`, rc 0. It now refuses by name.
+- **`_cbt_tmpbase`** returned the literal `/tmp` on every POSIX target, so a user could not route
+  the CLI off a full `/tmp`. An **absolute** `$TMPDIR` is now the base (trailing slashes dropped;
+  a relative value is ignored, since it would resolve against whatever directory a verb runs in).
+  The private-directory discipline of CVE-35/CVE-36 is unchanged: an EXCLUSIVE 0700 `mkdir`, 16
+  candidates, fail closed, never a shared name. On macOS this moves every CLI temp from `/tmp`
+  to the per-user `/var/folders/…/T` — a 0700 per-user directory, which narrows the shared
+  namespace further. The leak gates that counted `/tmp/cyrius-*` derive the same base, so a set
+  `TMPDIR` cannot make them read green over directories they never looked at.
+
+Gate: `tests/gates/toolchain/deps_cache_capture_failure_named.sh` (the filing's `unshare` +
+`nr_inodes` recipe at 4/3/2, TMPDIR routing, the hasher, lint, and a static check that the
+capture is opened before the fork), mutation-proven per mechanism.

@@ -1655,6 +1655,18 @@ fn _lint_forward_diag(buf, n): i64 {
     return 0;
 }
 
+# The syntax pre-pass could not use the CLI's temp dir (errno `en`): an error by name, and
+# the caller counts the file as NOT linted (rc 1). CHANGELOG [6.6.9]
+fn _lint_prepass_tmp_fail(file, en): i64 {
+    _err_ctx("lint could not run its syntax pre-pass (the compiler's diagnostics could not be captured)", file);
+    _ew("  temp dir: ");
+    _ew(_cbt_tmpdir());
+    _ew(" (errno ");
+    fmt_int_fd(STDERR_FD, en);
+    _ew(") — free space there, or set TMPDIR to an absolute path elsewhere.\n");
+    return 1;
+}
+
 # 0 = parses (or we could not tell) -> run the line checks exactly as before.
 # 1 = a syntax error was reported -> the caller must not pretend to have linted.
 fn _lint_syntax_prepass(file): i64 {
@@ -1664,6 +1676,13 @@ fn _lint_syntax_prepass(file): i64 {
     if (file_exists(cc) == 0) { return 0; }
     var errf = _cbt_tmpfile("lint_err");
     var outf = _cbt_tmpfile("lint_out");
+    # 6.6.9: the diagnostics capture is created HERE, not only in compile()'s child — whose
+    # open "fails open" onto our stderr, so under a starved temp dir the compiler's errors
+    # went to the terminal, the capture read back empty and the file linted clean (rc 0).
+    # A capture that cannot be created is a failure by name. CHANGELOG [6.6.9]
+    var efd0 = sys_open(errf, O_WRONLY | O_CREAT | O_TRUNC, 0x180);
+    if (efd0 < 0) { return _lint_prepass_tmp_fail(file, 0 - efd0); }
+    sys_close(efd0);
     var sv_skip = _skip_deps;
     var sv_undef = _cc_allow_undef;
     var sv_syn = _cc_syntax_only;
@@ -1681,12 +1700,28 @@ fn _lint_syntax_prepass(file): i64 {
     _cc_syntax_only = sv_syn;
     _cc_allow_undef = sv_undef;
     _skip_deps = sv_skip;
-    sys_unlink(outf);
-    if (cr == 0) { sys_unlink(errf); return 0; }
+    if (cr == 0) { sys_unlink(outf); sys_unlink(errf); return 0; }
     var buf = alloc(65536);
     var n = file_read_all(errf, buf, 65535);
+    if (n <= 0) {
+        # probed with both temps still in place, so the answer is about the dir as the
+        # compiler found it (unlinking first freed the very inode it lacked)
+        var pe = _cbt_tmp_probe();
+        sys_unlink(outf);
+        sys_unlink(errf);
+        # ⛔ 6.6.9 bite 9 — the compiler FAILED and said nothing we could read. That was
+        # "lint as before", i.e. a verdict: under a starved temp dir `compile()` could not
+        # write its capture, so a file that does not parse linted `0 warnings`, rc 0. A full
+        # temp dir now fails BY NAME; otherwise the pass says it could not tell, then lints.
+        # CHANGELOG [6.6.9]
+        if (pe != 0) { return _lint_prepass_tmp_fail(file, pe); }
+        _ew("warning: ");
+        _ew(file);
+        _ew(": the syntax pre-pass could not tell whether it parses (the compiler failed with no diagnostic); linting anyway\n");
+        return 0;
+    }
+    sys_unlink(outf);
     sys_unlink(errf);
-    if (n <= 0) { return 0; }                        # no capture (or none possible) -> lint
     store8(buf + n, 0);
     if (_lint_capture_has_syntax(buf, n) == 0) { return 0; }   # resolution error -> lint
     _err_ctx("does not parse, so lint checks were NOT run", file);

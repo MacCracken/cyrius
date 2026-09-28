@@ -106,6 +106,39 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   ecosystem manifest uses `[build].modules` today (0 of 126). Gate:
   `build_temp_source_write_checked.sh` axis 3 drops the crutch and links the module with and without
   `[deps]`; the old early-return order fails it (rc 1, `undefined function`).
+- **A temp dir the CLI cannot write is reported as that — not as a tampered dep cache, a missing
+  `sha256sum`, or a clean lint — and an absolute `$TMPDIR` routes around it.** (bite 9; issue
+  `2026-09-27-deps-cache-check-reports-an-unwritable-tmp-as-a-tampered-cache`, archived.)
+  **Root cause:** `_git_run` and `_sha256sum_file` opened their stdout capture in the CHILD and,
+  when that failed (EDQUOT, ENOSPC, no inodes), ran git / the hasher with the parent's stdout. The
+  answer went to the terminal (the bare sha aethersafha saw), the capture read back empty, and
+  `_git_rev` returned 0 — the value for "the tag does not resolve". aethersafha's `/tmp` is a
+  usrquota tmpfs: at quota, every `build`/`test`/`deps` refused all ten deps as **tampered**
+  ("HEAD is not the tag's commit", and at 2 inodes "its .git is missing") and advised
+  `rm -rf` on a healthy cache. The hasher read the same condition as "sha256sum missing?", and
+  `cyrius lint`'s syntax pre-pass FAILED OPEN on it — a file that does not parse linted
+  `0 warnings`, rc 0. `_cbt_tmpbase` returned the literal `/tmp`, so TMPDIR could not help.
+  **Fix:** every capture is opened by the PARENT before the fork (`_git_run`, the new `_sha_run`;
+  the lint pre-pass pre-creates its diagnostics file). A cache refusal reached while a capture
+  could not be written, or while the private temp dir refuses a fresh 4 KB file
+  (`_cbt_tmp_probe`), is **reason 10** — still a refusal, but it names the temp dir and the errno,
+  says the cache was NOT judged, and prints no restore recipe and no `rm -rf`. The hasher says
+  why it failed (`_sha_fail_why`: the capture, no hasher on PATH, or the file), and the lint
+  pre-pass refuses by name. An **absolute** `$TMPDIR` is the temp base (`_cbt_env_str`; trailing
+  slashes dropped, a relative value ignored); the private 0700 exclusive-mkdir directory is
+  unchanged (CVE-35/36). Also: the hasher falls back to `shasum -a 256 -b` when `sha256sum` is
+  not on PATH — **macOS 13 has no `sha256sum`** (measured on ach), so `deps --lock`/`--verify`
+  could never hash there; `_git_cfg_hazard` now fails closed on a NEGATIVE git status too (`> 1`
+  let "not run" through to a size check that, with the capture now pre-created, would read
+  "clean"). ⚠ **macOS moves every CLI temp** from `/tmp` to the per-user `/var/folders/…/T`.
+  The leak gates that counted `/tmp/cyrius-*` (`cli_temp_dir_no_leak`, `test_runner_bounded`,
+  `build_temp_no_leak`, `deps_git_cache_verified`) derive the same base, so a set TMPDIR cannot
+  turn them silently green; `cli_progress_line_not_spliced` axis 10 unsets it (it squeezes
+  `/tmp`). Hardening note (no CVE — every site failed closed) in
+  `docs/audit/2026-09-03-security-audit.md`. Gate: `deps_cache_capture_failure_named.sh` — the
+  filing's `unshare` + `nr_inodes` 4/3/2 recipe, TMPDIR routing, the hasher, lint, the shasum
+  fallback, and a static before-the-fork check; the pre-fix tree fails axes 1-7, and each of seven
+  one-line mutants fails its own axis.
 
 ### Downstream
 
