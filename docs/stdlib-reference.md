@@ -1,5 +1,12 @@
 # Standard Library Reference
 
+> **Every first-party module includes what it calls (6.6.9).** `include "lib/<m>.cyr"` on its
+> own compiles clean on every target — a module no longer lists requirements for the CALLER to
+> include first. The "Includes:" line on an entry names the definers the module pulls in itself;
+> include-once makes a repeat include free. The exceptions are named where they occur: `log`,
+> `ws` and `ws_server` still need their vendored fold (and its sidecar) included by the caller.
+> Pinned per target by `tests/gates/toolchain/stdlib_modules_self_sufficient.sh`.
+
 ## Core Libraries
 
 ### string.cyr
@@ -91,7 +98,7 @@ call): `alloc_via` went 15.1 ns → 11 ns. The accessors remain public API.
 
 ### str.cyr
 
-Fat string type: `{data: ptr, len: i64}`. Requires alloc.cyr + string.cyr.
+Fat string type: `{data: ptr, len: i64}`. Includes: alloc, string, fmt, vec.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
@@ -153,7 +160,7 @@ helper API.
 
 ### vec.cyr
 
-Dynamic array. Elements are i64. Requires alloc.cyr.
+Dynamic array. Elements are i64. Includes: alloc, fnptr.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
@@ -245,7 +252,7 @@ int-returning fns (`file_open`, `file_close`, `file_read`,
 
 ### fmt.cyr
 
-Formatting and printing utilities. Requires string.cyr.
+Formatting and printing utilities. Includes: string, vec.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
@@ -262,7 +269,7 @@ Formatting and printing utilities. Requires string.cyr.
 
 ### args.cyr
 
-CLI argument parsing via /proc/self/cmdline. Requires string.cyr.
+CLI argument parsing via /proc/self/cmdline. Includes: syscalls + alloc on Linux, alloc + string on agnos, and the per-OS `args_*` peer elsewhere.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
@@ -285,8 +292,8 @@ Indirect function calls via inline assembly.
 ### tagged.cyr
 
 Tagged-union primitives + `Option` / `Either` (`Result` carved out
-into its own module — see `result.cyr` below). Requires alloc.cyr,
-fmt.cyr (for `option_print`). Transitively `include`s
+into its own module — see `result.cyr` below). Includes: boxed,
+fmt (for `option_print`). Transitively `include`s
 `lib/result.cyr` so legacy callers that include only `tagged.cyr`
 keep getting `Result` symbols.
 
@@ -358,7 +365,7 @@ plain (non-`: stack`) `enum Foo { A(v); }` still emits, so a box built either wa
 `Result<T, E>` typed sum type plus the Result-specific helpers,
 carved out of `lib/tagged.cyr` so consumers that only need
 `Result` can include just this module. `Ok = 0`, `Err = 1`.
-Requires alloc.cyr, fmt.cyr.
+Includes: fmt (which brings string + vec).
 
 ⭐ **v6.6.0 — the VALUE FORM.** `Ok(v)` / `Err(e)` return a `(tag, payload)` register pair and
 allocate **zero bytes** (previously a 16-byte box per construction from the global bump
@@ -388,7 +395,7 @@ the operator's parse + emit shape.
 
 ### hashmap.cyr
 
-Hash table with string keys and i64 values. FNV-1a hash, open addressing. Requires alloc.cyr + string.cyr.
+Hash table with string keys and i64 values. FNV-1a hash, open addressing. Includes: alloc, string, str, vec, fmt, fnptr, hashseed.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
@@ -403,7 +410,7 @@ Hash table with string keys and i64 values. FNV-1a hash, open addressing. Requir
 
 ### assert.cyr
 
-Test assertions. Requires string.cyr + fmt.cyr.
+Test assertions. Includes: alloc, string, fmt, vec, syscalls.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
@@ -415,7 +422,7 @@ Test assertions. Requires string.cyr + fmt.cyr.
 
 ### callback.cyr
 
-Functional patterns via function pointers. Requires fnptr.cyr + vec.cyr.
+Functional patterns via function pointers. Includes: fnptr, vec, syscalls.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
@@ -430,7 +437,7 @@ Functional patterns via function pointers. Requires fnptr.cyr + vec.cyr.
 
 ### bench.cyr
 
-Benchmarking. Requires fnptr.cyr.
+Benchmarking. Includes: alloc, string, fmt, vec, fnptr, syscalls.
 
 The clock is **measured, not declared**: one `now_ns()` read costs ~15 ns on an M-series
 Mac and ~3,550 ns on a Raspberry Pi, and `bench_clock_overhead_ns()` finds out which at
@@ -534,7 +541,7 @@ Opt-in runtime bounds checking. Aborts with error message on violation.
 
 ### trait.cyr
 
-Vtable-based trait objects for polymorphic dispatch. Requires fnptr.cyr.
+Vtable-based trait objects for polymorphic dispatch. Includes: alloc, fmt, fnptr, str.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
@@ -947,7 +954,7 @@ x86_64/aarch64 use a **three-state** futex lock (v6.5.9 — Drepper "Futexes Are
 Tricky", Mutex Take 3: `0` free / `1` held-no-waiters / `2` held-waiters-may-be-parked);
 Windows uses SRWLOCK; macOS uses an atomic_cas spinlock (no routed blocking
 futex / `__ulock` primitive, so it **spins** — correct for short, low-contention
-sections). Requires atomic.cyr + alloc.cyr. No `trylock`: SRWLOCK has no routed
+sections). Includes: atomic, alloc, syscalls (and its per-OS `sync_*` peer). No `trylock`: SRWLOCK has no routed
 TryAcquire, so the surface stays to what every backend supports.
 
 | Function | Signature | Description |
@@ -1269,7 +1276,7 @@ SHA-1 message digest (FIPS 180-4). WARNING: SHA-1 is NOT collision-resistant (pr
 
 ### keccak.cyr (v5.4.15)
 
-Keccak-f[1600] permutation and SHAKE-128 / SHAKE-256 extendable-output functions (FIPS 202). Pure reference implementation (64-bit lanes, no platform variants). Requires `lib/alloc.cyr` and `lib/string.cyr`.
+Keccak-f[1600] permutation and SHAKE-128 / SHAKE-256 extendable-output functions (FIPS 202). Pure reference implementation (64-bit lanes, no platform variants). Includes: string.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
@@ -1278,7 +1285,7 @@ Keccak-f[1600] permutation and SHAKE-128 / SHAKE-256 extendable-output functions
 
 ### ct.cyr (v5.9.18)
 
-Constant-time primitives for cryptographic code. All comparisons and selections use mask-xor arithmetic with no data-dependent branches. Requires `lib/alloc.cyr` for `ct_eq_bytes_lens`.
+Constant-time primitives for cryptographic code. All comparisons and selections use mask-xor arithmetic with no data-dependent branches. Includes nothing — it calls no other module.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
@@ -1320,7 +1327,7 @@ RFC 4180 CSV parser and writer. Requires alloc.cyr, string.cyr, vec.cyr, str.cyr
 
 ### chrono.cyr
 
-Time and duration utilities for wall-clock and monotonic clocks. Requires syscalls.cyr.
+Time and duration utilities for wall-clock and monotonic clocks. Includes: syscalls, alloc, string, atomic.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
@@ -1343,7 +1350,7 @@ Time and duration utilities for wall-clock and monotonic clocks. Requires syscal
 
 ### flags.cyr
 
-getopt-long-shaped CLI flag parser with bool/int/string/list flag types. Requires alloc.cyr, string.cyr, syscalls.cyr.
+getopt-long-shaped CLI flag parser with bool/int/string/list flag types. Includes: alloc, string, syscalls.
 
 ⚠ **v6.6.5 fixed three silent drops here.** Positionals used to stop at 128 and `flags_parse`
 still returned success, so a driver handed 200 paths processed 128 and was told nothing was
@@ -1403,7 +1410,7 @@ Structured logging wrapper with level filtering (TRACE/DEBUG/INFO/WARN/ERROR/FAT
 
 ### hashmap_fast.cyr
 
-SIMD-accelerated hash table with Swiss-table-inspired design (metadata + separate key/value arrays). Requires alloc.cyr, string.cyr, fnptr.cyr. **Status (v5.8.62): experimental, no production consumers — not in the `[deps].stdlib` auto-prepend list, and the only in-repo caller is `tests/tcyr/hashmap_ext.tcyr`. Use hashmap.cyr for production.**
+SIMD-accelerated hash table with Swiss-table-inspired design (metadata + separate key/value arrays). Includes: alloc, string, vec, fnptr, hashseed. **Status (v5.8.62): experimental, no production consumers — not in the `[deps].stdlib` auto-prepend list, and the only in-repo caller is `tests/tcyr/hashmap_ext.tcyr`. Use hashmap.cyr for production.**
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
@@ -1427,7 +1434,7 @@ Layered on `net.cyr`/`http.cyr` (above). TLS has a libssl façade + a sovereign 
 
 ### tls.cyr
 
-TLS client façade. Default backend wraps `libssl.so.3` (loaded via `fdlopen`-bootstrapped glibc `dlopen`); `tls_set_backend(TLS_BACKEND_NATIVE)` flips to the sovereign stack in `tls_native.cyr` (no OpenSSL). Requires fdlopen.cyr, net.cyr, mmap.cyr, dynlib.cyr.
+TLS client façade. Default backend wraps `libssl.so.3` (loaded via `fdlopen`-bootstrapped glibc `dlopen`); `tls_set_backend(TLS_BACKEND_NATIVE)` flips to the sovereign stack in `tls_native.cyr` (no OpenSSL). Includes: tls_native, fdlopen (which brings dynlib + mmap).
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
@@ -1448,7 +1455,7 @@ The façade also exposes **session resumption** (`tls_connect_alloc`/`tls_connec
 
 ### tls_native.cyr
 
-Sovereign TLS 1.2 + 1.3 stack — no OpenSSL. ECDSA (P-256/P-384) / RSA (PSS, PKCS#1) / Ed25519 signatures; AES-128/256-GCM + ChaCha20-Poly1305; ALPN, SNI, Extended Master Secret, OS trust-store verification; server-flight reassembly; client + server. Live-interop-proven against Cloudflare + OpenSSL. Requires syscalls.cyr, alloc.cyr, sigil.cyr, thread.cyr, thread_local.cyr.
+Sovereign TLS 1.2 + 1.3 stack — no OpenSSL. ECDSA (P-256/P-384) / RSA (PSS, PKCS#1) / Ed25519 signatures; AES-128/256-GCM + ChaCha20-Poly1305; ALPN, SNI, Extended Master Secret, OS trust-store verification; server-flight reassembly; client + server. Live-interop-proven against Cloudflare + OpenSSL. Includes its whole closure itself, the sigil and bayan folds among them (with sigil's `sys`, `chrono` and `random` sidecar).
 
 **Connection lifecycle:**
 
@@ -1675,7 +1682,7 @@ Memory mapping, dynamic loading, C FFI, and Windows GPU enumeration. (`dynlib.cy
 
 ### mmap.cyr
 
-Memory-mapped I/O via direct syscalls. Requires syscalls.cyr.
+Memory-mapped I/O via direct syscalls. Includes nothing (raw `syscall()` numbers); its `PROT_*` / `MAP_*` values agree with the syscall peers' in either include order.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
@@ -1688,7 +1695,7 @@ Memory-mapped I/O via direct syscalls. Requires syscalls.cyr.
 
 ### fdlopen.cyr
 
-Foreign-dlopen: glibc function access from static cyrius binaries via ld.so bootstrap (x86_64 Linux only). Requires string.cyr, syscalls.cyr, mmap.cyr, dynlib.cyr, fnptr.cyr.
+Foreign-dlopen: glibc function access from static cyrius binaries via ld.so bootstrap (x86_64 Linux only). Includes: alloc, string, mmap, dynlib, fnptr.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
@@ -1714,7 +1721,7 @@ Foreign-dlopen: glibc function access from static cyrius binaries via ld.so boot
 
 ### cffi.cyr
 
-C struct layout helpers for foreign struct interop (field offsets with C alignment/padding rules). Requires alloc.cyr.
+C struct layout helpers for foreign struct interop (field offsets with C alignment/padding rules). Includes: alloc.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|

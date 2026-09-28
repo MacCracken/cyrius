@@ -90,8 +90,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     `hashmap_fast`, `regex`, `protobuf`, `trait`, `bench`, `unicode/casefold`,
     `unicode/normalize`.
   - **C io/fs/process** — `process` (before its per-target peers), `dynlib`, `fdlopen`,
-    `grp`, `pwd`, `shadow`, `audit_walk`, `regression`. (`fs.cyr`'s own lines are bite 5's,
-    which owns that file this release.)
+    `grp`, `pwd`, `shadow`, `audit_walk`, `regression`. `fs.cyr` → syscalls, alloc, string,
+    str, vec, and PE gains a fail-closed `sys_pipe` (-1; the name was UNDEFINED on PE, so
+    `regression.cyr`'s capture path was a ud2 trap there) — these two hunks sit in files
+    another lane owns this release and merge with this bite, pinned by the new
+    `tests/tcyr/crossos/sys_pipe_every_target.tcyr`.
   - **D concurrency** — `sync`, `thread`, `thread_local`, `async`. Making `thread_local`
     compile alone for cx exposed that it did nothing there: neither `CYRIUS_ARCH_*` is
     defined on cx, so `_tlocal_install` had no arm at all (it returned the leftover return
@@ -105,13 +108,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     on all four targets). `http.cyr`'s net include is bite 12's.
 
   Stale `Requires:` lines in `flags`, `boxed`, `mmap` and `tls_native` now say what the file
-  does; `ws.cyr` / `ws_server.cyr` no longer name the retired `base64.cyr` /
+  does — `mmap.cyr`'s claim that its `MAP_*` enum "expects syscalls.cyr FIRST" had been false
+  since v6.5.15 (every syscall peer's `MmapConst` carries the same per-platform value) and
+  now mattered, since `dynlib`, `fdlopen` and `thread` include `mmap.cyr` themselves; the
+  new `tests/tcyr/crossos/mmap_include_order.tcyr` pins the reverse order (mmap first, the
+  PEER decides) that `mmap_anon_flag.tcyr` never exercised. `docs/stdlib-reference.md`'s
+  per-module "Requires …" lines (the same contract-for-the-caller) became "Includes: …"
+  lists read from the files, under one stated contract; `ct.cyr`'s claimed alloc need was
+  false outright; `ws.cyr` / `ws_server.cyr` no longer name the retired `base64.cyr` /
   `http_server.cyr`. **Placed from the 6.6.7/6.6.8 reviews:** `lib/tls.cyr` and
   `lib/syscalls.cyr` compile alone (above); `derive_str_deserialize.tcyr`,
   `ws_server_handshake.tcyr` and `benches/bench_mulmod.bcyr` include `lib/io.cyr` before
   `lib/bayan.cyr` (bayan's `file_*` were 8 ud2 stubs — a bundle strips its own includes, so
   the consumer supplies its sidecar leaf), and `alloc_serdes.tcyr` includes `lib/net.cyr`
-  before `lib/http.cyr` (4 stubs). **Result (lane, before bites 5 and 12 merge):** linux 71,
+  before `lib/http.cyr` (4 stubs). **Result (lane, before the `fs.cyr` / `sys_pipe` hunks and bite 12 merge):** linux 71,
   agnos 71, PE 70, Mach-O 72, cx 66, aarch64 70 of 111 modules compile alone clean
   (6.6.7: 26–29 of 104 on x86; stock aarch64 reported 90 "OK" by not looking); on a
   simulated merge 73 / 73 / 73 / 74 / 68 / 72, with every first-party module clean on every
@@ -121,7 +131,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   benches, fuzz, probes) change layout; every runnable one exits identically with identical
   output, and the corpus's undefined-function lines drop from 18 files to 3
   (`struct_name_param_collision` — `#derive(Serialize)`-generated calls into bayan;
-  `sandbox_syscalls` — `fs.cyr`, clears with bite 5; `programs/vidya.cyr`, a fixture with no
+  `sandbox_syscalls` — `fs.cyr`, clears with its includes above; `programs/vidya.cyr`, a fixture with no
   includes of its own). **Not fixed here:** `log`, `ws` and `ws_server` call fold bundles that
   are not raw-includable (sakshi, bayan, sandhi — `ws` + `lib/bayan.cyr` still leaves 45
   undefined functions, because a bundle needs its sidecar); they are the gate's named
@@ -134,7 +144,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `Usage:` line — 31 peers; 68 first-party; 12 folds), axis 1 holds every first-party module
   outside PENDING clean on linux, agnos, PE, Mach-O and aarch64, axis 2 keeps PENDING honest
   (a pending module that compiles clean must be promoted), axis 3 checks each peer through a
-  first-party root, axis 4 is a per-target ratchet over the whole population (cx held here —
+  first-party root, axis 4 is a per-target ratchet over the whole population, its floors set
+  to the MERGED counts (73 / 73 / 73 / 74 / 68 / 72 — the gate holds the release, not a lane)
+  (cx held here —
   `tls`/`tls_native` overflow its codebuf and `thread` has no cx mutex), axis 5 runs one
   call-through probe per family (A–E) plus 6.6.6's io probe, axis 6 pins the four hand
   lists. Its ledger holds 20 mutations; the twelve new ones (and three of 6.6.6's) were

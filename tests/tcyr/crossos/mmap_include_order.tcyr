@@ -1,0 +1,42 @@
+# mmap_include_order.tcyr — cross-host: lib/mmap.cyr included BEFORE lib/syscalls.cyr
+# must still map anonymous memory with the host kernel's MAP_ANONYMOUS.
+#
+# Duplicate enum constants are last-wins, so whichever of mmap.cyr's MmapFlags and the
+# syscall peer's MmapConst comes SECOND decides MAP_ANONYMOUS. mmap_anon_flag.tcyr covers
+# syscalls-first (mmap.cyr decides); this file covers the reverse, where the PEER decides.
+# The reverse order is no longer a caller's choice: since 6.6.9 dynlib, fdlopen and thread
+# include mmap.cyr themselves, so a program that includes one of them ahead of syscalls.cyr
+# gets exactly this order. A peer whose MmapConst carried Linux's 32 on Darwin (the
+# v6.5.11 defect, one file over) turns this RED on ecb/ach and nowhere else — which is why
+# it lives in crossos/. CHANGELOG [6.6.9] bite 7.
+include "lib/mmap.cyr"
+include "lib/syscalls.cyr"
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+
+fn main(): i64 {
+    alloc_init();
+
+    test_group("mmap.cyr first: MAP_ANONYMOUS still carries the host kernel's value");
+    #ifdef CYRIUS_TARGET_MACOS
+    assert_eq(MAP_ANONYMOUS, 4096, "Darwin MAP_ANONYMOUS is 0x1000 with mmap.cyr first");
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
+    assert_eq(MAP_ANONYMOUS, 32, "Linux/agnos MAP_ANONYMOUS is 32 with mmap.cyr first");
+    #endif
+
+    # Windows has no mmap — cyr_mmap's syscall(9) is not a PE path. Value check only.
+    #ifndef CYRIUS_TARGET_WIN
+    test_group("mmap_anon returns writable memory with mmap.cyr first");
+    var p = mmap_anon(4096);
+    assert_neq(p, 0, "mmap_anon(4096) returned a mapping (0 = the EBADF-shaped failure)");
+    store64(p, 305419896);
+    assert_eq(load64(p), 305419896, "start of the mapping round-trips");
+    store64(p + 4088, 2596069104);
+    assert_eq(load64(p + 4088), 2596069104, "last 8 bytes of the page round-trip");
+    assert_eq(cyr_munmap(p, 4096), 0, "cyr_munmap released the mapping");
+    #endif
+
+    var r = assert_summary();
+    return r;
+}

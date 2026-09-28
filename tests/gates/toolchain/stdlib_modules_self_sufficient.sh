@@ -285,12 +285,15 @@ done
 # ── axis 4: RATCHET per target over the whole population ──
 # ⚠ A FLOOR IS NOT A TARGET. It is measured, not declared — the gate prints the count ("N of
 # M") — and it only goes UP: raise it whenever a module is fixed, never lower it. Measured on
-# the 6.6.9 bite-7 lane (fs, http and PE's regression still open there, and the aarch64 count
-# taken with a prepass-enabled compiler): linux 71, agnos 71, PE 70, Mach-O 72, cx 66,
-# aarch64 70 of 111. Measured on a simulated merge (fs.cyr's includes from bite 5, http.cyr
-# from bite 12, PE's sys_pipe stub): linux 73, agnos 73, PE 73, Mach-O 74, cx 68, aarch64 72 —
-# raise them to those on the merged tree. 6.6.7's single x86 floor was 27 of 104.
-FLOORS="linux:71 agnos:71 pe:70 macho:72 cx:66 aarch64:70"
+# the 6.6.9 bite-7 lane alone (fs, http and PE's regression still open there, the aarch64
+# count taken with a prepass-enabled compiler): linux 71, agnos 71, PE 70, Mach-O 72, cx 66,
+# aarch64 70 of 111. The floors below are the SIMULATED-MERGE values (fs.cyr's includes,
+# http.cyr's net include from bite 12, PE's sys_pipe stub): the gate ships holding the
+# release, not the lane, so they are red in the lane by design. Re-measure once on the real
+# merged tree with bite 2's aarch64 compiler — if a count comes in HIGHER, raise its floor;
+# a count LOWER than these is a regression in the merge, not a floor to relax. 6.6.7's single
+# x86 floor was 27 of 104.
+FLOORS="linux:73 agnos:73 pe:73 macho:74 cx:68 aarch64:72"
 x=0; summary=""
 for tf in $FLOORS; do
     t=${tf%%:*}; fl=${tf#*:}
