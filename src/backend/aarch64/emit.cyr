@@ -1967,10 +1967,11 @@ fn ELOAD_LOCAL_ADDR(S, adisp): i64 {
 }
 
 # v5.11.37 path-A named ops — Class C refactor (f64 unary ops).
-# aarch64 has native FNEG for f64_neg; the transcendentals split
-# into hard-errors (sin/cos/exp2/atan — no native, no polyfill yet)
-# and polyfill-dispatch (exp/ln/log2 — dispatch to lib/math.cyr's
-# `_f64_<op>_polyfill` fns via _FINDFN_CSTR + ECALLFIX).
+# aarch64 has native FNEG for f64_neg. It has no native transcendentals, so
+# all seven (sin/cos/exp2/atan/exp/ln/log2) are polyfill-dispatch: each finds
+# lib/math.cyr's `_f64_<op>_polyfill` via _FINDFN_CSTR and calls it through
+# ECALLFIX. When the polyfill is absent the op reports and RETURNS — ERR_MSG
+# does not exit, and the -1 it would otherwise pass on crashed FIXUP. CHANGELOG [6.6.9]
 
 # EF64_NEG — fmov d0, x0; fneg d0, d0; fmov x0, d0.
 fn EF64_NEG(S): i64 {
@@ -1988,6 +1989,7 @@ fn EF64_SIN(S): i64 {
     var pf = _FINDFN_CSTR(S, "_f64_sin_polyfill", 17);
     if (pf < 0) {
         ERR_MSG(S, "f64_sin on aarch64 requires include \"lib/math.cyr\" (provides _f64_sin_polyfill)", 79);
+        return 0;   # nothing to call; the compile is failed (6.6.9)
     }
     EPUSHR(S);
     ECALLPOPS(S, 1);
@@ -1999,6 +2001,7 @@ fn EF64_COS(S): i64 {
     var pf = _FINDFN_CSTR(S, "_f64_cos_polyfill", 17);
     if (pf < 0) {
         ERR_MSG(S, "f64_cos on aarch64 requires include \"lib/math.cyr\" (provides _f64_cos_polyfill)", 79);
+        return 0;   # nothing to call; the compile is failed (6.6.9)
     }
     EPUSHR(S);
     ECALLPOPS(S, 1);
@@ -2014,6 +2017,7 @@ fn EF64_EXP2(S): i64 {
     var pf = _FINDFN_CSTR(S, "_f64_exp2_polyfill", 18);
     if (pf < 0) {
         ERR_MSG(S, "f64_exp2 on aarch64 requires include \"lib/math.cyr\" (provides _f64_exp2_polyfill)", 81);
+        return 0;   # nothing to call; the compile is failed (6.6.9)
     }
     EPUSHR(S);
     ECALLPOPS(S, 1);
@@ -2025,6 +2029,7 @@ fn EF64_ATAN(S): i64 {
     var pf = _FINDFN_CSTR(S, "_f64_atan_polyfill", 18);
     if (pf < 0) {
         ERR_MSG(S, "f64_atan on aarch64 requires include \"lib/math.cyr\" (provides _f64_atan_polyfill)", 81);
+        return 0;   # nothing to call; the compile is failed (6.6.9)
     }
     EPUSHR(S);
     ECALLPOPS(S, 1);
@@ -2043,6 +2048,7 @@ fn EF64_EXP(S): i64 {
     var pf = _FINDFN_CSTR(S, "_f64_exp_polyfill", 17);
     if (pf < 0) {
         ERR_MSG(S, "f64_exp on aarch64 requires include \"lib/math.cyr\" (provides _f64_exp_polyfill)", 79);
+        return 0;   # nothing to call; the compile is failed (6.6.9)
     }
     EPUSHR(S);
     ECALLPOPS(S, 1);
@@ -2054,6 +2060,7 @@ fn EF64_LN(S): i64 {
     var pf = _FINDFN_CSTR(S, "_f64_ln_polyfill", 16);
     if (pf < 0) {
         ERR_MSG(S, "f64_ln on aarch64 requires include \"lib/math.cyr\" (provides _f64_ln_polyfill)", 77);
+        return 0;   # nothing to call; the compile is failed (6.6.9)
     }
     EPUSHR(S);
     ECALLPOPS(S, 1);
@@ -2065,6 +2072,7 @@ fn EF64_LOG2(S): i64 {
     var pf = _FINDFN_CSTR(S, "_f64_log2_polyfill", 18);
     if (pf < 0) {
         ERR_MSG(S, "f64_log2 on aarch64 requires include \"lib/math.cyr\" (provides _f64_log2_polyfill)", 81);
+        return 0;   # nothing to call; the compile is failed (6.6.9)
     }
     EPUSHR(S);
     ECALLPOPS(S, 1);
@@ -2160,6 +2168,15 @@ fn ECALLTO(S, target): i64 {
 
 # Emit BL placeholder, record type-2 fixup
 fn ECALLFIX(S, fnidx): i64 {
+    # A negative index is a failed lookup that reached the emitter. It must not become a
+    # fixup: `(2 << 56) | -1` decodes as a different fixup type with an index near 2^56,
+    # which the aarch64 and cx walks followed off their tables (rc 139). Every caller that
+    # can fail reports first; the check here is the backstop for one that does not.
+    # CHANGELOG [6.6.9]
+    if (fnidx < 0) {
+        if (_had_error == 0) { ERR_MSG(S, "internal: a call was emitted for an unresolved function (index < 0)", 67); }
+        return 0;
+    }
     var poff = GCP(S);
     EW(S, 0x94000000);  # bl +0 (placeholder)
     var fc = GFCNT(S);

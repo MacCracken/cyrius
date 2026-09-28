@@ -4776,13 +4776,19 @@ fn _mint_impl_name(S, base_noff): i64 {
 # (future_force) rather than the hidden-env callptr convention. Needs lib/alloc.cyr.
 fn _async_emit_constructor(S, noff_f, fi_impl, pc): i64 {
     var alloc_fi = _FINDFN_CSTR(S, "alloc", 5);
-    if (alloc_fi < 0) {
-        ERR_MSG(S, "an async fn needs include \"lib/alloc.cyr\" for its Future heap object", 68);
-    }
     var fi_f = FINDFN(S, noff_f);
     if (fi_f < 0) { fi_f = REGFN(S, noff_f); }
     SFAS(S, fi_f, 1);
     S64(_fnt_params + fi_f * 8, pc);
+    # Refused BEFORE any code: ERR_MSG does not exit, and the body below handed -1 to
+    # ECALLFIX — rc 139 on aarch64/cx after the diagnostic. `f` still gets an offset (nothing
+    # is written for a failed compile) so its callers do not add a second, false "reachable
+    # undefined function" refusal. CHANGELOG [6.6.9]
+    if (alloc_fi < 0) {
+        ERR_MSG(S, "an async fn needs include \"lib/alloc.cyr\" for its Future heap object", 68);
+        S64(_fnt_offsets + fi_f * 8, GCP(S));
+        return 0;
+    }
     # --- save enclosing (top-level) state; the constructor is its own fn ---
     # 6.6.7 — through the shared per-fn snapshot (parse.cyr `_fnst_save`), which zeroes the
     # parameter span, regalloc, ret class and the rest, and gives the constructor its own
@@ -5019,8 +5025,10 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     if (_pending_async == 1) {
         _pending_async = 0;
         _ensure_async_gate(S);
+        # A refused `async fn` compiles as a plain fn: lowering it anyway needed lib/alloc.cyr
+        # for a Future nothing will run, and reported a second error for it. CHANGELOG [6.6.9]
         if (_ASYNC_OK == 0) { ERR_MSG(S, "async fn requires CYRIUS_ASYNC=1 (async/await are gated)", 56); }
-        _is_async = 1;
+        else { _is_async = 1; }
     }
     var _defstart_ti = GTI(S);   # v6.3.10: the `fn`-keyword token, for instance re-emit
     STI(S, GTI(S) + 1);  # consume FN

@@ -529,6 +529,14 @@ if (cx_undef > 0) {
 # program that allocates. CHANGELOG [6.6.9]
 _warn_large_static(totvar - _gvar_bytes_named(S, "_cx_heap_buf"), 0, 0);
 
+# A compile that already reported an error emits no .cyx (see the write below), and its
+# fixup table may hold an entry this walk must not decode: ERR_MSG reports and CONTINUES,
+# so a caller whose lookup failed used to hand -1 to ECALLFIX — `(2 << 56) | -1` reads back
+# as ftype 0xFF, the var-address arm, whose `vi < idx` loop ran off `_vars_base`: SIGSEGV
+# (rc 139) right after the correct diagnostic. The undefined-call report above still runs
+# (it ignores ftype 0xFF). CHANGELOG [6.6.9]
+if (_had_error == 1) { syscall(SYS_EXIT, 1); }
+
 var fcnt = GFCNT(S);
 var fi = 0;
 while (fi < fcnt) {

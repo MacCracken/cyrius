@@ -88,6 +88,13 @@ fn FIXUP(S): i64 {
         if (load8(fx_dbg_env) == 49 && load8(fx_dbg_env + 1) == 0) { fx_dbg = 1; }
     }
     if (fx_dbg == 1) { syscall(SYS_WRITE, 2, "[phase] aarch64 FIXUP entry\n", 28); }
+    # A compile that already reported an error writes no image (EMITELF zeroes the output),
+    # and its fixup table may hold entries no pass may decode: ERR_MSG reports and CONTINUES,
+    # so a caller that failed a lookup used to hand -1 to ECALLFIX, and `(2 << 56) | -1`
+    # decodes as ftype 0xFF — the var-address branch, whose `vi < idx` walk ran off
+    # `_vars_base` and SIGSEGV'd (rc 139) right after the correct diagnostic. Nothing past
+    # this point is worth doing for a failed compile. CHANGELOG [6.6.9]
+    if (_had_error == 1) { return 0; }
     var cp = GCP(S);
     # v6.0.64: round the code size to 8 (was 4) so the var-area base
     # (entry + acp for the global-addr fixups; 0x400000 + bss_foff in EMITELF)

@@ -1443,3 +1443,8 @@ _chk_gate "$ROOT/tests/gates/diagnostics/undefined_tail_call_refused.sh"
 # 6.6.9 (bite 2) — the "large static data" advisory prints on x86/x86-Mach-O/PE/aarch64/
 # arm64-Mach-O/cx, not x86 ELF alone; silent for small statics and for cx's own alloc heap.
 _chk_gate "$ROOT/tests/gates/diagnostics/large_static_data_every_backend.sh"
+
+# 6.6.9 (bite 3) — a "requires lib/<x>.cyr" / "async is gated" error EXITS 1 on every backend:
+# aarch64 (7 f64 polyfills, slice, await, async fn) and cx (slice, await, async fn) used to
+# SIGSEGV (rc 139) right after the diagnostic, decoding the -1 fn index as a var fixup.
+_chk_gate "$ROOT/tests/gates/diagnostics/missing_helper_error_exits_1.sh"

@@ -965,7 +965,9 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                             ERR_MSG(S, "slice subscript requires include \"lib/slice.cyr\" (provides _slice_idx_get_W helpers)", 84);
                         }
                         ECALLPOPS(S, 2);
-                        ECALLFIX(S, idx_fn);
+                        # ERR_MSG does not exit: -1 must not reach ECALLFIX (rc 139 on aarch64/cx
+                        # after the diagnostic). The pops/clean stay so push depth balances. CHANGELOG [6.6.9]
+                        if (idx_fn >= 0) { ECALLFIX(S, idx_fn); }
                         ECALLCLEAN(S, 2);   # 6.6.5: was missing — leaked Win64's 32 B shadow
                         # Result in rax. Set expression-width tracking so
                         # narrowing assignment warnings work for u8/u16/u32.
@@ -2281,7 +2283,16 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         # (factor-level prefix), so `await f() + 1` is `(await f()) + 1`. Gated on
         # _ASYNC_OK; needs lib/async.cyr (future_force).
         _ensure_async_gate(S);
-        if (_ASYNC_OK == 0) { ERR_MSG(S, "await requires CYRIUS_ASYNC=1 (async/await are gated)", 53); }
+        # A refused `await` still parses its operand (so the next token is where the caller
+        # expects it) and emits no call: ERR_MSG does not exit, and falling through reached
+        # either a second, misleading "needs lib/async.cyr" or ECALLFIX(-1) — rc 139 on
+        # aarch64/cx after the correct diagnostic. Same for a missing future_force. CHANGELOG [6.6.9]
+        if (_ASYNC_OK == 0) {
+            ERR_MSG(S, "await requires CYRIUS_ASYNC=1 (async/await are gated)", 53);
+            STI(S, GTI(S) + 1);
+            PARSE_FACTOR(S);
+            return 0;
+        }
         STI(S, GTI(S) + 1);                       # consume `await`
         # v6.5.69 — INSIDE A COROUTINE, `await e` IS A SUSPEND POINT, not a force.
         # ⛔ It used to be a force here too, and that is the defect this release closes: a
@@ -2311,7 +2322,11 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             return 0;
         }
         var _aw_ff = _FINDFN_CSTR(S, "future_force", 12);
-        if (_aw_ff < 0) { ERR_MSG(S, "await needs include \"lib/async.cyr\" for future_force", 52); }
+        if (_aw_ff < 0) {
+            ERR_MSG(S, "await needs include \"lib/async.cyr\" for future_force", 52);
+            PARSE_FACTOR(S);
+            return 0;
+        }
         PARSE_FACTOR(S);                          # rax = the Future object
         EPUSHR(S);                                # push the future as the sole arg
         ECALLPOPS(S, 1);                          # marshal into arg-reg 0

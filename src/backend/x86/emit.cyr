@@ -3717,6 +3717,15 @@ fn ECALLTO(S, target): i64 {
 
 # Emit call placeholder, record type-2 fixup
 fn ECALLFIX(S, fnidx): i64 {
+    # A negative index is a failed lookup that reached the emitter. It must not become a
+    # fixup: `(2 << 56) | -1` decodes as a different fixup type with an index near 2^56,
+    # which the aarch64 and cx walks followed off their tables (rc 139). Every caller that
+    # can fail reports first; the check here is the backstop for one that does not.
+    # CHANGELOG [6.6.9]
+    if (fnidx < 0) {
+        if (_had_error == 0) { ERR_MSG(S, "internal: a call was emitted for an unresolved function (index < 0)", 67); }
+        return 0;
+    }
     if (_IR_REC1(S, IR_CALL, fnidx) == 1) { return 0; }
     EB(S, 0xE8);
     var poff = GCP(S);
