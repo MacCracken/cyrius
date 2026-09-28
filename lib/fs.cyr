@@ -8,7 +8,8 @@
 #   freestanding.
 # fs.cyr — filesystem operations
 # Usage: include "lib/fs.cyr"
-# Requires: string.cyr, alloc.cyr, str.cyr, vec.cyr, agnosys/syscalls.cyr
+# Includes its own definers (syscalls, alloc, string, str, vec) — `include "lib/fs.cyr"` alone
+# compiles clean on every target. CHANGELOG [6.6.9] bite 7.
 #
 # Path operations, directory listing, file info.
 
@@ -23,6 +24,11 @@ var DT_LNK = 10;
 # v6.1.18: Windows has no getdents64 — directory enumeration is FindFirstFileW.
 # fs_win.cyr supplies the Windows dir_list/is_dir; the getdents64 bodies below
 # are excluded on PE (#ifndef CYRIUS_TARGET_WIN). Mirrors args.cyr/process.cyr.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
 #ifdef CYRIUS_TARGET_WIN
 include "lib/fs_win.cyr"
 #endif

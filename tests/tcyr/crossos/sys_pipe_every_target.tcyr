@@ -1,0 +1,36 @@
+# sys_pipe_every_target.tcyr — cross-host: `sys_pipe` is DEFINED on every target.
+#
+# lib/syscalls_windows.cyr had no sys_pipe, so on PE every caller (lib/regression.cyr's
+# child-capture path, among others) compiled with an undefined function — a ud2 trap at the
+# call, not a link error. Windows now answers -1 (fail closed; there is no anonymous-pipe
+# reroute), and every POSIX target still creates a working pipe. Includes ONLY
+# lib/syscalls.cyr + lib/assert.cyr. CHANGELOG [6.6.9] bite 7.
+include "lib/syscalls.cyr"
+include "lib/assert.cyr"
+
+fn main(): i64 {
+    alloc_init();
+    var fds[16];
+    store64(&fds, 0 - 1);
+    store64(&fds + 8, 0 - 1);
+    #ifdef CYRIUS_TARGET_WIN
+    test_group("sys_pipe on Windows fails closed");
+    assert_eq(sys_pipe(&fds), 0 - 1, "sys_pipe returns -1 on PE (no reroute), not a trap");
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    test_group("sys_pipe makes a working pipe");
+    assert_eq(sys_pipe(&fds), 0, "sys_pipe returns 0");
+    var rd = load32(&fds);
+    var wr = load32(&fds + 4);
+    assert(rd >= 0, "read fd is valid");
+    assert(wr >= 0, "write fd is valid");
+    assert_eq(sys_write(wr, "ok", 2), 2, "wrote 2 bytes");
+    var b[8];
+    assert_eq(sys_read(rd, &b, 2), 2, "read 2 bytes back");
+    assert_eq(load8(&b + 1), 107, "the bytes round-trip");
+    sys_close(rd);
+    sys_close(wr);
+    #endif
+    var r = assert_summary();
+    return r;
+}
