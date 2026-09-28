@@ -20,9 +20,15 @@
 # reason (+25.6 % on cycc at v1.11.3), and `_fn_has_simd_param` exists precisely to admit the
 # SIMD wrappers WITHOUT enabling it.
 #
-# ⚠ Axis 1's bound is a FIXTURE CONSTANT, not a universal one. It was 35 before the fix and 30
-# after, on this exact fixture with these includes; the bound sits between them. If the fixture
-# or lib/simd.cyr changes, re-measure it — do not nudge it to make the gate pass.
+# ⚠ Axis 1 counts the calls the FIXTURE'S OWN CODE adds: `callq` in the fixture minus `callq` in
+# a control that has the same includes and a main with no wrapper calls (6.6.9). It used to count
+# the whole binary against a constant (31: 35 before the fix, 30 after), and that constant moved
+# with every include's contents — measured at the 6.6.9 open, before any 6.6.9 change, the
+# fixture had 16 calls with the fix and 22 WITHOUT it, so the bound of 31 could no longer see the
+# defect at all; then 6.6.9's lib/syscalls.cyr -> alloc.cyr include put the fixed compiler at 71
+# and the gate went red for a reason unrelated to inlining. The delta is 2 with the fix and 8
+# without, on both of those libs (the "without" compiler rebuilt from this tree with the
+# pre-v6.5.58 `[0, pc)` window restored), so the bound sits between them. CHANGELOG [6.6.9]
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: simd_param_inline_reach: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$T"' EXIT
@@ -55,9 +61,21 @@ fn main(): i64 {
 }
 EOF
 "$CC" < "$T/a1.cyr" > "$T/a1" 2>/dev/null || { echo "FAIL simd_param_inline_reach: axis1 fixture did not compile"; exit 1; }
-N=$(llvm-objdump -d "$T/a1" 2>/dev/null | grep -c callq)
-if [ "$N" -gt 31 ]; then
-  echo "FAIL simd_param_inline_reach axis1: $N callq (bound 31; 30 with the fix, 35 without)."
+cat > "$T/a0.cyr" <<'EOF'
+include "lib/simd.cyr"
+include "lib/syscalls.cyr"
+fn main(): i64 {
+    syscall(60, 0, 0, 0, 0, 0);
+    return 0;
+}
+EOF
+"$CC" < "$T/a0.cyr" > "$T/a0" 2>/dev/null || { echo "FAIL simd_param_inline_reach: axis1 control did not compile"; exit 1; }
+N1=$(llvm-objdump -d "$T/a1" 2>/dev/null | grep -c callq)
+N0=$(llvm-objdump -d "$T/a0" 2>/dev/null | grep -c callq)
+[ "$N0" -ge 1 ] || { echo "FAIL simd_param_inline_reach axis1: the control has $N0 callq — llvm-objdump read nothing"; exit 1; }
+N=$((N1 - N0))
+if [ "$N" -gt 4 ]; then
+  echo "FAIL simd_param_inline_reach axis1: the fixture adds $N callq over its control (bound 4; 2 with the fix, 8 without)."
   echo "  A 1-param 128-bit or 256-bit SIMD wrapper is not reaching the inline-replay path."
   exit 1
 fi
@@ -82,5 +100,5 @@ C=$(llvm-objdump -d "$T/a2" 2>/dev/null | grep -c callq)
 [ "$C" -ge 2 ] || { echo "FAIL simd_param_inline_reach axis2 (control): only $C callq — an i64-param fn was inlined, so general inlining leaked on"; exit 1; }
 chmod +x "$T/a2"; "$T/a2"; [ $? -eq 12 ] || { echo "FAIL simd_param_inline_reach axis2: control returned wrong value"; exit 1; }
 
-echo "PASS simd_param_inline_reach: 1-param 128-bit and 256-bit wrappers inline ($N callq, bound 31), result correct, i64 control still calls"
+echo "PASS simd_param_inline_reach: 1-param 128-bit and 256-bit wrappers inline ($N callq over the control, bound 4), result correct, i64 control still calls"
 exit 0
