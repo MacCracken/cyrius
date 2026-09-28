@@ -572,7 +572,7 @@ fn _aarch64_f64_basic_gate(): i64 {
 }
 
 fn _aarch64_f64_polyfill_gate(): i64 {
-    var label = "aarch64 f64_exp / f64_ln / f64_log2 polyfills bit-accurate on Pi (v5.7.31 + v5.8.4; phylax-unblock)";
+    var label = "aarch64 f64_exp / f64_ln / f64_log2 / f64_exp2 polyfills within 1 ulp + IEEE specials on Pi (6.6.8)";
     if (file_exists(CC_AARCH64_PATH) != 1) {
         _p("  skip: ");
         _p(CC_AARCH64_PATH);
@@ -638,9 +638,9 @@ fn _aarch64_f64_polyfill_gate(): i64 {
         _p(ANSI_GREEN);
         _p("PASS");
         _p(ANSI_RESET);
-        _p(": aarch64 f64_exp / f64_ln / f64_log2 polyfills bit-accurate within ulp budget on ");
+        _p(": aarch64 f64_exp / f64_ln / f64_log2 / f64_exp2 within 1 ulp and IEEE specials on ");
         _p(target);
-        println(" (v5.7.31 + v5.8.4)");
+        println(" (6.6.8)");
         _check(label, 0);
         return 0;
     }
@@ -651,16 +651,8 @@ fn _aarch64_f64_polyfill_gate(): i64 {
     _p(ANSI_RESET);
     _p(": polyfill failure (exit=");
     print_num(ec);
-    if (ec == 1)  { _p(" — f64_exp(0) != 1.0 exactly"); }
-    if (ec == 2)  { _p(" — f64_exp(1) deviates >1024 ulp from e"); }
-    if (ec == 3)  { _p(" — f64_ln(1) deviates >1024 ulp from 0"); }
-    if (ec == 4)  { _p(" — f64_ln(e) deviates >1024 ulp from 1.0"); }
-    if (ec == 5)  { _p(" — exp(ln(2)) deviates >4096 ulp from 2.0 (round-trip)"); }
-    if (ec == 6)  { _p(" — f64_exp(-1) deviates >1024 ulp from 1/e"); }
-    if (ec == 7)  { _p(" — f64_log2(1) deviates >1024 ulp from 0"); }
-    if (ec == 8)  { _p(" — f64_log2(8) deviates >8192 ulp from 3.0"); }
-    if (ec == 9)  { _p(" — f64_log2(1024) deviates >8192 ulp from 10.0"); }
-    if (ec == 10) { _p(" — f64_log2(0.5) deviates >8192 ulp from -1.0"); }
+    # The fixture exits with the number of its first failing row; each row names its input.
+    _p(" — first failing row; see tests/fixtures/aarch64_f64/polyfill_ops.cyr");
     println(")");
     _check(label, 1);
     return 1;

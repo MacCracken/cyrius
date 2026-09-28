@@ -21,6 +21,16 @@ fn near(a, b) {
     return f64_lt(f64_abs(f64_sub(a, b)), eps);
 }
 
+# exp2 promises <= 1 ulp from the correctly rounded value on every target since 6.6.8
+# (lib/math.cyr's fdlibm-grade port), so its rows use that bar, not the 1e-9 absolute eps the
+# atan/trig rows below still use. `b` is the correctly rounded bit pattern.
+fn ulp1(a, b) {
+    var d = a - b;
+    if (d < 0) { d = 0 - d; }
+    if (d > 1) { return 0; }
+    return 1;
+}
+
 # Reference bit patterns (dev-computed). F64_PI_6/2/4 come from lib/math.cyr;
 # π/3 is test-only (not needed by any polyfill), so it stays local here.
 var F64_PI_3 = 0x3FF0C152382D7365;   # π/3         → atan(√3)
@@ -35,14 +45,16 @@ var SIN1M   = 0xBFD6664B2568D867;   # sin(1000000)
 var COS1M   = 0x3FEDF9DF9906D32C;   # cos(1000000)
 
 test_group("f64_exp2 known values (arch-dispatched builtin)");
-assert(near(f64_exp2(f64_from(0)),  f64_from(1))    == 1, "2^0 = 1");
-assert(near(f64_exp2(f64_from(1)),  f64_from(2))    == 1, "2^1 = 2");
-assert(near(f64_exp2(f64_from(10)), f64_from(1024)) == 1, "2^10 = 1024");
-assert(near(f64_exp2(f64_neg(f64_from(1))), F64_HALF) == 1, "2^-1 = 0.5");
-assert(near(f64_exp2(F64_HALF), F64_SQRT2) == 1, "2^0.5 = √2");
+assert(ulp1(f64_exp2(f64_from(0)),  f64_from(1))    == 1, "2^0 = 1");
+assert(ulp1(f64_exp2(f64_from(1)),  f64_from(2))    == 1, "2^1 = 2");
+assert(ulp1(f64_exp2(f64_from(10)), f64_from(1024)) == 1, "2^10 = 1024");
+assert(ulp1(f64_exp2(f64_neg(f64_from(1))), F64_HALF) == 1, "2^-1 = 0.5");
+assert(ulp1(f64_exp2(F64_HALF), F64_SQRT2) == 1, "2^0.5 = √2");
 
 test_group("_f64_exp2_polyfill direct (the aarch64 path, on every arch)");
-assert(near(_f64_exp2_polyfill(f64_from(3)),  f64_from(8)) == 1, "polyfill 2^3 = 8");
+assert(ulp1(_f64_exp2_polyfill(f64_from(3)),  f64_from(8)) == 1, "polyfill 2^3 = 8");
+assert(ulp1(_f64_exp2_polyfill(F64_HALF), F64_SQRT2) == 1, "polyfill 2^0.5 = √2");
+assert(ulp1(_f64_exp2_polyfill(0x400C000000000000), EXP2_35) == 1, "polyfill 2^3.5 = 8√2");
 assert(near(_f64_exp2_polyfill(F64_SQRT2), EXP2_35) == 0, "polyfill 2^√2 ≠ 2^3.5 (sanity)");
 assert(near(_f64_exp2_polyfill(F64_ONE_HALF), F64_SQRT2) == 0, "polyfill 2^1.5 ≠ √2 (sanity)");
 
