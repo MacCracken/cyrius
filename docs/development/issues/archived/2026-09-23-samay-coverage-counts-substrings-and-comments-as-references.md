@@ -1,9 +1,7 @@
 # `cyrius coverage` counts a name inside another identifier, or in a comment, as a reference, so `--min 100` passes for functions no test references — OPEN
 
-**Status:** 🟡 **OPEN** — Verified 2026-09-23 against the 6.6.6 release binary and at HEAD
-`52fabac5`: the match loop at `cbt/quality.cyr:180-181` is identical in both, and the
-reproduction below passes `--min 100` with one of three functions referenced.
-**Placement:** **6.6.8 bite 9** — cyrius coverage and header tell the truth: whole-identifier match over a non-code-blanked corpus, every public spelling, the file-private rule, no nested lib/ prune, whole-file reads. Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
+**Status:** ✅ **RESOLVED v6.6.8** (bite 9) — whole-identifier references over a corpus whose comments, strings and char literals are blanked (`_src_blank_noncode`, cbt/core.cyr), and the unreferenced fns named under `-v` and on a failed `--min`. The filed repro, run verbatim, reads `sched.cyr 1/3 fns`, `Functions referenced: 1/3 (33%)`, `coverage gate FAILED: 33% < --min 100%`, exit 1, listing `check_due` and `str_lt`. Pinned by `tests/gates/toolchain/coverage_corpus_and_failopen.sh` axes 7-8 and 13, and `lexer_attribute_word_boundary.sh` C6/C7.
+**Placement:** **6.6.8 bite 9** — cyrius coverage and header tell the truth: whole-identifier match over a non-code-blanked corpus, every public spelling, the file-private rule, no nested lib/ prune, whole-file reads. Pinned 2026-09-27 in [roadmap.md](../../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Discovered:** 2026-09-23 during samay 1.1.5, while auditing whether samay's `rust-old/`
 could be deleted.
 **Severity:** Medium — a CI gate reports green for functions that no test references. A
@@ -23,7 +21,7 @@ that are not references:
 
 The design since 6.4.72 is that "a referenced symbol is a watched symbol" whether the test
 calls the function or re-implements it (the linked-vs-mirror note in
-[`archived/2026-07-23-hoosh-coverage-reports-stdlib-not-local-repo.md`](archived/2026-07-23-hoosh-coverage-reports-stdlib-not-local-repo.md)).
+[`2026-07-23-hoosh-coverage-reports-stdlib-not-local-repo.md`](2026-07-23-hoosh-coverage-reports-stdlib-not-local-repo.md)).
 Neither case above fits that design: `check_due_at` does not watch `check_due`, and a comment
 watches nothing. So `--min 100` reports "gate OK" for code that no test references, and the
 report cannot show which functions it counted.

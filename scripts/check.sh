@@ -1298,3 +1298,9 @@ _chk_gate "$ROOT/tests/gates/platform/agnos_accept_timeout_inherit.sh"
 # 6.6.8 bite 7 — the agnos peers of process.cyr and regression.cyr define every host verb at the
 # same arity (derived from the #ifndef CYRIUS_TARGET_AGNOS regions, not a hand list).
 _chk_gate "$ROOT/tests/gates/platform/agnos_process_peer_parity.sh"
+
+# 6.6.8 (bite 9) — `cyrius header` had NO gate. It matched only a column-0 `pub fn `, so a bare
+# `fn` and `public fn` (the same token) never got a prototype, it ignored the file-scope
+# `private` rule, and it read a fixed 64 KiB (every fn past the cut silently dropped, rc=0).
+# Spellings, the private rule and a >64 KiB file; mutation-proven in the gate header.
+_chk_gate "$ROOT/tests/gates/toolchain/header_spellings_and_size.sh"

@@ -63,6 +63,11 @@
 #           and did not; scored against the spaced twin so it cannot be vacuous
 #   C5      over-correction guard for cyrdoc: a real `#inline` is still an
 #           attribute, so the fn below it is still reported undocumented
+#   C6      the cbt CLI (`cyrius coverage`, cbt/core.cyr _src_blank_noncode — the
+#           FOURTH mirror, 6.6.8) reads `#ioctl ...` / `#io(fd) ...` as comments, so
+#           the names in them are not references
+#   C7      over-correction guard for the cbt CLI: a real `#inline` / `#deprecated(`
+#           stays code, so the call after it still counts
 #   E1..E6  the three probes left unbounded in the same file after D (bite 5h):
 #           ISENDIF, ISENDPLAT, ISSRCLINE. ISELSE already carried the boundary
 #           inline, which is why these three stood out. `#endifoo note` — a
@@ -114,7 +119,9 @@
 #       → 1 FAIL: D6, listing four accessors for a comment
 #   M11 `_doc_attr_bound` in programs/cyrdoc.cyr forced to 1 → 1 FAIL: C4
 #   M12 `_doc_attr_bound` in programs/cyrdoc.cyr forced to 0 → 1 FAIL: C5
-#   real tree → 39/39 green
+#   M13 `_src_attr_bound` in cbt/core.cyr forced to 1 → 1 FAIL: C6 (6.6.8)
+#   M14 `_src_attr_bound` in cbt/core.cyr forced to 0 → 1 FAIL: C7 (6.6.8)
+#   real tree → 41/41 green (6.6.8: C6/C7 added)
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
@@ -275,7 +282,7 @@ arm B11 '#assert: expected constant expression' \
 '#assert( stays a LOUD error rather than becoming a silent comment' \
 '#assert(8 == 9)\nvar A = 42;\nsyscall(60, A);\n'
 
-# ── Group C — the three mirror readers must take the same boundary as the lexer,
+# ── Group C — the four mirror readers must take the same boundary as the lexer,
 #    or a tool disagrees with the compiler about which `#` lines are comments.
 build_tool() {
     "$CC" < "programs/$1.cyr" > "$D/$1" 2> "$D/$1.buildlog" || {
@@ -354,6 +361,46 @@ if build_tool cyrfmt; then
     else
         printf '  FAIL: axis C2 — cyrfmt --check rejected an attribute-prefixed comment (rc=%s)\n' "$rcf"
         fail=$((fail+1))
+    fi
+fi
+
+# C6/C7 — the cbt CLI, the FOURTH mirror reader (6.6.8). `cyrius coverage` now blanks the
+# non-code bytes of every test (cbt/core.cyr `_src_blank_noncode`), and whether a `#` line
+# is a comment or an attribute decides whether the names after it are REFERENCES: a comment
+# read as an attribute counts the names in it (coverage reads high), an attribute read as a
+# comment hides a real call (coverage reads low). Its attribute table is `_src_attr_len` /
+# `_src_attr_bound`, so it takes the lexer's boundary like the three above.
+cbt_ok=1
+"$CC" < cbt/cyrius.cyr > "$D/cyrius" 2> "$D/cyrius.buildlog" || cbt_ok=0
+[ -s "$D/cyrius" ] || cbt_ok=0
+if [ "$cbt_ok" -eq 0 ]; then
+    printf '  FAIL: could not build the cbt CLI (cbt/cyrius.cyr)\n'
+    fail=$((fail+1))
+else
+    chmod +x "$D/cyrius"
+    mkdir -p "$D/cov/src" "$D/cov/tests"
+    printf 'fn c_word(): i64 { return 1; }\nfn c_paren(): i64 { return 2; }\nfn c_inline(): i64 { return 3; }\nfn c_dep(): i64 { return 4; }\n' > "$D/cov/src/m.cyr"
+    printf '#ioctl c_word notes\n#io(fd) c_paren reads a byte\n#inline fn w1(): i64 { return c_inline(); }\n#deprecated("x") fn w2(): i64 { return c_dep(); }\n' > "$D/cov/tests/t.tcyr"
+    ( cd "$D/cov" && "$D/cyrius" -v coverage ) > "$D/cov.out" 2>&1 || true
+    if ! grep -q 'Functions referenced: [0-9]*/4 ' "$D/cov.out"; then
+        printf '  FAIL: axes C6/C7 — the cbt CLI did not measure the 4-fn fixture: %s\n' \
+            "$(grep -m1 -E 'error|referenced' "$D/cov.out" | cut -c1-90)"
+        fail=$((fail+1))
+    else
+        if grep -qx '  src/m.cyr: c_word' "$D/cov.out" && grep -qx '  src/m.cyr: c_paren' "$D/cov.out"; then
+            printf '  ok: axis C6 — cyrius coverage reads `#ioctl ...` and `#io(fd) ...` as COMMENTS (their names are not references)\n'
+            pass=$((pass+1))
+        else
+            printf '  FAIL: axis C6 — cyrius coverage read an attribute-prefixed comment as code, so a name in it counted as a reference\n'
+            fail=$((fail+1))
+        fi
+        if grep -q ': c_inline$' "$D/cov.out" || grep -q ': c_dep$' "$D/cov.out"; then
+            printf '  FAIL: axis C7 — cyrius coverage read a real `#inline` / `#deprecated(` as a comment and hid the call after it\n'
+            fail=$((fail+1))
+        else
+            printf '  ok: axis C7 — a real `#inline` / `#deprecated("x")` stays code (the call after it counts)\n'
+            pass=$((pass+1))
+        fi
     fi
 fi
 

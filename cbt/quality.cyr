@@ -24,6 +24,13 @@
 # is -1 when no gate was asked for; the caller has already validated the integer.
 # v6.5.8: a SUBFOLDER CALLOUT — `cyrius coverage src/sub` scans that directory (it
 # used to be dropped on the floor and the scan ran against ./ anyway).
+# 6.6.8: what counts, on both sides. The DENOMINATOR is the public surface as the
+# compiler defines it — every declaration spelling (indented, attributed, `pub`/`public`,
+# `fn` + any whitespace) and the file-scope `private` rule — read from whole files under
+# the whole root. The NUMERATOR is a whole-identifier reference in the CODE of a test
+# (comments, strings and char literals blanked). Unreferenced names are listed under -v
+# and whenever --min fails. Residual, inherent to NAME-based coverage: a test local or
+# parameter that shares a fn's name still counts. CHANGELOG [6.6.8]
 fn cmd_coverage(full, min_pct, root_arg): i64 {
 
     # Scan root: an explicit callout wins, then lib/ for --full, else the project's own
@@ -48,7 +55,10 @@ fn cmd_coverage(full, min_pct, root_arg): i64 {
     } else {
         sys_write(STDOUT_FD, "  mode: local repo sources (", 28);
         sys_write(STDOUT_FD, root, strlen(root));
-        println("/, recursive; lib/ + dist/ excluded); reference coverage");
+        # 6.6.8: only the '.' fallback excludes anything, and only its top-level lib/ +
+        # dist/ — this line claimed the exclusion for every root. CHANGELOG [6.6.8]
+        if (streq(root, ".") == 1) { println("/, recursive; top-level lib/ + dist/ excluded); reference coverage"); }
+        else { println("/, recursive); reference coverage"); }
     }
     println("");
 
@@ -105,7 +115,14 @@ fn cmd_coverage(full, min_pct, root_arg): i64 {
                     corpus_cap = corpus_cap * 2;
                     # Do NOT advance ti — re-read this file into the larger buffer.
                 } else {
-                    if (n > 0) { corpus_len = corpus_len + n; }
+                    # Only now is the read known COMPLETE, so only now is it blanked: its
+                    # comments, strings and char literals become spaces in place (same
+                    # length), and a name there no longer reads as a reference. Per file,
+                    # so an unclosed string cannot run on into the next file. CHANGELOG [6.6.8]
+                    if (n > 0) {
+                        _src_blank_noncode(corpus + corpus_len, n);
+                        corpus_len = corpus_len + n;
+                    }
                     ti = ti + 1;
                 }
             } else {
@@ -115,78 +132,76 @@ fn cmd_coverage(full, min_pct, root_arg): i64 {
     }
     store8(corpus + corpus_len, 0);
 
-    # Recursively collect .cyr sources under `root`, pruning vendored trees
-    # (the prunes are inert for the src/ and lib/ roots — their entries are never
-    # named lib/dist — and matter only for the '.' flat-project fallback).
-    var prunes = vec_new();
-    vec_push(prunes, str_from("lib"));       # vendored stdlib (never "local")
-    vec_push(prunes, str_from("dist"));      # generated bundles
-    var walked = vec_new();
-    dir_walk_with_prunes(str_from(root), walked, prunes);
-    var srcs = vec_new();
-    var wi = 0;
-    while (wi < vec_len(walked)) {
-        var wf = vec_get(walked, wi);
-        if (str_ends_with(wf, ".cyr") == 1) { vec_push(srcs, wf); }
-        wi = wi + 1;
-    }
+    # The sources to measure. ⛔ 6.6.8: the vendored-tree prune is applied at the TOP LEVEL
+    # of the '.' fallback only. It used to be a by-NAME prune at every depth, so a project
+    # keeping its code under src/lib/ (nein, hoosh, kriya, kybernet) had that whole tree
+    # silently dropped — nein read `main.cyr 1/1 (100%)` and passed `--min 80` while 259 of
+    # its 393 fns were never measured. The comment here claimed the prune was "inert for the
+    # src/ root". CHANGELOG [6.6.8]
+    var srcs = _cov_sources(root);
 
     var total_files = 0;
     var covered_files = 0;
     var total_fns = 0;
     var covered_fns = 0;
-    var lbuf = alloc(262144);                 # one reusable file buffer (avoid per-file alloc)
+    var miss_path = vec_new();                # unreferenced public fns, for the report
+    var miss_name = vec_new();
+    # ⛔ 6.6.8: WHOLE-FILE READS. Each source went into a fixed 256 KiB buffer with no
+    # truncation check, so every fn past the cut was never counted — bayan's pdf.cyr
+    # (399,907 B) showed 114 of its 152 fns. `file_read_whole_into` grows the buffer (it
+    # needs no file-size call, which is wrong on PE) and REUSES it across files; a read
+    # error is an error by name, not a skipped file. CHANGELOG [6.6.8]
+    var rb[16];
+    store64(&rb, 0);
+    store64(&rb + 8, 0);
     var li = 0;
     while (li < vec_len(srcs)) {
         var spath = str_data(vec_get(srcs, li));
         li = li + 1;
-        var ln = file_read_all(spath, lbuf, 262143);
-        if (ln <= 0) { continue; }
-        store8(lbuf + ln, 0);
+        var ln = file_read_whole_into(&rb, spath, ALLOC_MAX - 1);
+        if (ln < 0) {
+            _err_ctx("coverage: cannot read source", spath);
+            return 1;
+        }
+        if (ln == 0) { continue; }
+        var lbuf = load64(&rb);
+        # Declarations are read from CODE only: a fn in a comment or a multi-line string is
+        # not a fn. And a `private` file exports only its `pub` / `public` fns — counting its
+        # bare fns measured exactly the wrong set (hisab's whole 643-fn `public fn` API was
+        # invisible and the tool reported 1/1 = 100%). CHANGELOG [6.6.8]
+        _src_blank_noncode(lbuf, ln);
+        var fpriv = _src_file_private(lbuf, ln);
 
         var pub_fns = 0;
         var called = 0;
         var pos = 0;
+        var depth = 0;                        # brace depth: only depth-0 fns are top-level
         while (pos < ln) {
-            if (pos == 0 || load8(lbuf + pos - 1) == 10) {
-                # ⛔ v6.5.8: `pub fn` COUNTS TOO. This matched only a bare `fn ` at line
-                # start, so every `pub fn` — the explicit-public spelling that shipped
-                # with file-scoped public/private at v6.5.0 — was INVISIBLE. A project
-                # that adopted `pub` got "0/0 public functions" from the tool whose whole
-                # job is counting public functions, and (before the fail-open fix above)
-                # exit 0 with it. The native-header generator in this same file already
-                # handled both spellings at :433, so the two scanners disagreed.
-                var ns = 0 - 1;
-                if (memeq(lbuf + pos, "fn ", 3) == 1) { ns = pos + 3; }
-                elif (memeq(lbuf + pos, "pub fn ", 7) == 1) { ns = pos + 7; }
-                if (ns >= 0) {
-                    var ne = ns;
-                    while (ne < ln) {
-                        var nc = load8(lbuf + ne);
-                        if (nc == 40 || nc == 32 || nc == 10) { break; }
-                        ne = ne + 1;
-                    }
-                    var fname_len = ne - ns;
-                    if (fname_len > 0) {
-                        if (load8(lbuf + ns) != 95) {     # skip `_`-prefixed (private convention)
-                            pub_fns = pub_fns + 1;
-                            total_fns = total_fns + 1;
-                            var found = 0;
-                            var ci = 0;
-                            # `<=`, not `<`: a symbol occurring at the very END of the
-                            # corpus was never found. Normally masked by trailing
-                            # newlines, but the truncation bug above made the corpus end
-                            # at an arbitrary cut point, so the two compounded. v6.5.8.
-                            while (ci <= corpus_len - fname_len) {
-                                if (memeq(corpus + ci, lbuf + ns, fname_len) == 1) { found = 1; break; }
-                                ci = ci + 1;
-                            }
-                            if (found == 1) { called = called + 1; covered_fns = covered_fns + 1; }
-                        }
-                    }
+            var le = pos;
+            while (le < ln) { if (load8(lbuf + le) == 10) { break; } le = le + 1; }
+            var ns = 0 - 1;
+            if (depth == 0) { ns = _src_public_fn_at(lbuf, pos, le, fpriv); }
+            depth = depth + _src_brace_delta(lbuf, pos, le);
+            if (depth < 0) { depth = 0; }
+            if (ns >= 0) {
+                var fname_len = _src_ident_end(lbuf, ns, le) - ns;
+                pub_fns = pub_fns + 1;
+                total_fns = total_fns + 1;
+                # ⛔ 6.6.8: a WHOLE-IDENTIFIER match over a corpus whose comments, strings and
+                # char literals are blanked. A raw substring match counted `check_due` as
+                # referenced by every `check_due_at(` and `str_lt` by a comment naming it, so
+                # samay's `--min 100` passed with functions no test referenced. (The v6.5.8
+                # `<=` end-of-corpus bound lives on in _src_refs_ident; the corpus is
+                # NUL-terminated, so the boundary read at its end is in bounds.)
+                if (_src_refs_ident(corpus, corpus_len, lbuf + ns, fname_len) == 1) {
+                    called = called + 1;
+                    covered_fns = covered_fns + 1;
+                } else {
+                    vec_push(miss_path, spath);
+                    vec_push(miss_name, str_from_buf(lbuf + ns, fname_len));
                 }
             }
-            pos = pos + 1;
+            pos = le + 1;
         }
 
         if (pub_fns == 0) { continue; }        # no public surface — omit from the per-file list
@@ -236,8 +251,13 @@ fn cmd_coverage(full, min_pct, root_arg): i64 {
         _err_ctx("no public functions found — nothing was measured, so this is not a pass; check the path", root);
         return 1;
     }
+    var gate_fail = 0;
+    if (min_pct >= 0) { if (pct < min_pct) { gate_fail = 1; } }
+    # Name the misses under -v and whenever the gate fails: a failed gate with only a
+    # percentage tells a project nothing about WHAT to cover. CHANGELOG [6.6.8]
+    if (_verbose == 1 || gate_fail == 1) { _cov_print_misses(miss_path, miss_name); }
     if (min_pct >= 0) {
-        if (pct < min_pct) {
+        if (gate_fail == 1) {
             sys_write(STDERR_FD, "coverage gate FAILED: ", 22);
             fmt_int_fd(2, pct); sys_write(STDERR_FD, "% < --min ", 10); fmt_int_fd(2, min_pct);
             sys_write(STDERR_FD, "%\n", 2);
@@ -245,6 +265,57 @@ fn cmd_coverage(full, min_pct, root_arg): i64 {
         }
         sys_write(STDOUT_FD, "  gate OK: ", 11);
         fmt_int(pct); sys_write(STDOUT_FD, "% >= --min ", 11); fmt_int(min_pct); println("%");
+    }
+    return 0;
+}
+
+# The `.cyr` files cmd_coverage measures under `root`. A named root (src/, lib/, a callout)
+# is walked WHOLE. Only the '.' fallback (a flat project with no src/) skips the vendored
+# stdlib and generated bundles — and only its own TOP-LEVEL ./lib and ./dist; a lib/ deeper
+# down is the project's code. CHANGELOG [6.6.8]
+fn _cov_sources(root): i64 {
+    var walked = vec_new();
+    if (streq(root, ".") == 1) {
+        var ents = dir_list(str_from("."));
+        var ei = 0;
+        while (ei < vec_len(ents)) {
+            var en = vec_get(ents, ei);
+            ei = ei + 1;
+            if (str_eq_cstr(en, "lib") == 1 || str_eq_cstr(en, "dist") == 1) { continue; }
+            var full = path_join(str_from("."), en);
+            if (is_dir(full) == 1 && is_symlink(full) == 0) { dir_walk(full, walked); }
+            else { vec_push(walked, full); }
+        }
+    } else {
+        dir_walk(str_from(root), walked);
+    }
+    var srcs = vec_new();
+    var wi = 0;
+    while (wi < vec_len(walked)) {
+        var wf = vec_get(walked, wi);
+        if (str_ends_with(wf, ".cyr") == 1) { vec_push(srcs, wf); }
+        wi = wi + 1;
+    }
+    return srcs;
+}
+
+# The unreferenced public fns, one `  <source path>: <name>` per line.
+fn _cov_print_misses(miss_path, miss_name): i64 {
+    var nm = vec_len(miss_name);
+    println("");
+    sys_write(STDOUT_FD, "-- Unreferenced (", 17);
+    fmt_int(nm);
+    println(") --");
+    var mi = 0;
+    while (mi < nm) {
+        var mp = vec_get(miss_path, mi);
+        sys_write(STDOUT_FD, "  ", 2);
+        sys_write(STDOUT_FD, mp, strlen(mp));
+        sys_write(STDOUT_FD, ": ", 2);
+        var mn = vec_get(miss_name, mi);
+        sys_write(STDOUT_FD, str_data(mn), str_len(mn));
+        println("");
+        mi = mi + 1;
     }
     return 0;
 }
@@ -269,15 +340,17 @@ fn cmd_doctest(arg): i64 {
         println("Usage: cyrius doctest <file.cyr>");
         return 1;
     }
-    var fbuf = alloc(65536);
-    var fn_read = file_read_all(arg, fbuf, 65535);
-    if (fn_read <= 0) {
+    # ⛔ 6.6.8: the WHOLE file. This read into a fixed 64 KiB buffer and never checked for
+    # truncation, so every example past the cut silently did not exist — neither run nor
+    # counted — and the verdict was over the head of the file only. CHANGELOG [6.6.8]
+    var fn_read = 0;
+    var fbuf = file_read_whole(arg, &fn_read);
+    if (fbuf == 0) {
         sys_write(STDERR_FD, "error: cannot read ", 19);
         sys_write(STDERR_FD, arg, strlen(arg));
         sys_write(STDERR_FD, "\n", 1);
         return 1;
     }
-    store8(fbuf + fn_read, 0);
 
     var dt_pass = 0;
     var dt_fail = 0;
@@ -438,22 +511,32 @@ fn cmd_doctest(arg): i64 {
 }
 
 # ================================================================
-# Native header: scan pub fn declarations, emit C prototypes
+# Native header: scan the public fn declarations, emit C prototypes
 # ================================================================
+# 6.6.8: the PUBLIC SURFACE, the same rule cmd_coverage counts (_src_public_fn_at): every
+# declaration spelling at brace depth 0, the file-scope `private` rule, `_`-prefixed names
+# and the `main` entry point excluded. This
+# matched only a column-0 `pub fn ` — its own comment said "pub fn or fn" — so a bare `fn`
+# (public in an ordinary file) and `public fn` (the same token as `pub`) never got a
+# prototype. And it read a fixed 64 KiB: an 81,752-byte file lost every fn past the cut
+# with rc=0. It had no gate; tests/gates/toolchain/header_spellings_and_size.sh is it.
+# CHANGELOG [6.6.8]
 fn cmd_header(arg): i64 {
     if (arg == 0) {
         println("Usage: cyrius header <file.cyr>");
         return 1;
     }
-    var hbuf = alloc(65536);
-    var hn = file_read_all(arg, hbuf, 65535);
-    if (hn <= 0) {
+    var hn = 0;
+    var hbuf = file_read_whole(arg, &hn);
+    if (hbuf == 0) {
         sys_write(STDERR_FD, "error: cannot read ", 19);
         sys_write(STDERR_FD, arg, strlen(arg));
         sys_write(STDERR_FD, "\n", 1);
         return 1;
     }
-    store8(hbuf + hn, 0);
+    # Declarations come from CODE only — a fn named in a comment or string is not one.
+    _src_blank_noncode(hbuf, hn);
+    var fpriv = _src_file_private(hbuf, hn);
 
     println("/* Auto-generated by cyrius header -- do not edit */");
     println("#ifndef CYRIUS_FFI_H");
@@ -466,6 +549,7 @@ fn cmd_header(arg): i64 {
     println("");
 
     var pos = 0;
+    var depth = 0;                            # brace depth: an `impl` method is not FFI surface
     while (pos < hn) {
         var ls = pos;
         while (pos < hn) {
@@ -474,23 +558,22 @@ fn cmd_header(arg): i64 {
         }
         var le = pos;
         if (le > ls) { if (load8(hbuf + le - 1) == 10) { le = le - 1; } }
-        var ll = le - ls;
 
-        # Match "pub fn " or "fn " at start of line
-        var fname_start = 0;
-        if (ll >= 7) {
-            if (memeq(hbuf + ls, "pub fn ", 7) == 1) { fname_start = ls + 7; }
-        }
-        if (fname_start == 0) { continue; }
+        var d0 = depth;
+        depth = depth + _src_brace_delta(hbuf, ls, le);
+        if (depth < 0) { depth = 0; }
+        if (d0 != 0) { continue; }
+        var fname_start = _src_public_fn_at(hbuf, ls, le, fpriv);
+        if (fname_start < 0) { continue; }
 
-        # Extract function name
-        var ne = fname_start;
-        while (ne < le) {
-            if (load8(hbuf + ne) == 40) { break; }
-            ne = ne + 1;
-        }
+        # Extract function name; its `(` must follow on the same line
+        var fname_len = _src_ident_end(hbuf, fname_start, le) - fname_start;
+        # A program's `fn main` is its entry point, not FFI surface — its prototype would
+        # collide with the C host's own `int main`. CHANGELOG [6.6.8]
+        if (fname_len == 4) { if (memeq(hbuf + fname_start, "main", 4) == 1) { continue; } }
+        var ne = _src_skip_ws(hbuf, fname_start + fname_len, le);
         if (ne >= le) { continue; }
-        var fname_len = ne - fname_start;
+        if (load8(hbuf + ne) != 40) { continue; }
 
         # Extract params between ( and )
         var ps = ne + 1;

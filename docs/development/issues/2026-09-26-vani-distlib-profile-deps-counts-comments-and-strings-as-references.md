@@ -92,7 +92,7 @@ Not traced: how `process` brings `vec` / `str` / `fmt`. Speculation — the veri
 what `process.cyr` itself references.
 
 Same shape as
-[`2026-09-23-samay-coverage-counts-substrings-and-comments-as-references.md`](2026-09-23-samay-coverage-counts-substrings-and-comments-as-references.md)
+[`2026-09-23-samay-coverage-counts-substrings-and-comments-as-references.md`](archived/2026-09-23-samay-coverage-counts-substrings-and-comments-as-references.md)
 (`cyrius coverage`, `cbt/quality.cyr`): a reference scan over raw text. One comment- and
 string-aware scanner could serve both.
 

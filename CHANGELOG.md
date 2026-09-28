@@ -686,6 +686,75 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`lib/async_agnos.cyr` no longer says agnos has no fork.** (bite 7.) fork#96 has existed since agnos
   1.56.55; `async_timeout` runs its body inline and ignores `ms` because the port was never done, and
   the comment now says that.
+- **`cyrius coverage` counts only real references, over the whole public surface, from whole
+  files.** (bite 9; issue `2026-09-23-samay-coverage-counts-substrings-and-comments-as-references`
+  and three same-function defects the premise-check found.) Every one of these read HIGHER than
+  the truth and exited 0 under `--min`:
+  - **Substrings and comments counted as references.** The match was a raw `memeq` at every
+    offset of the concatenated `.tcyr` text, so `check_due` was "referenced" by every
+    `check_due_at(` call and `str_lt` by a comment naming it: the filed repro read **3/3 (100%)**
+    and passed `--min 100` with one fn referenced. Now a WHOLE-IDENTIFIER match over a corpus whose
+    comments, string literals and char literals are blanked, per file, once each read is known
+    complete. The blanker (`_src_blank_noncode`, cbt/core.cyr) is IN PLACE and length-preserving and
+    mirrors the lexer: char literals first (so `'"'` and `'#'` hide nothing after them), strings may
+    span lines, the ten attribute tokens take the `LEXATTRBOUND` boundary and stay code, and a line
+    opening `#define ` / `#if ` / `#elif ` keeps its body. It is the FOURTH mirror of the lexer's
+    attribute table and is pinned by `lexer_attribute_word_boundary.sh` group C (new axes C6/C7).
+    The repro now reads **1/3 (33%)**, `coverage gate FAILED`, exit 1.
+  - **`public fn` and every other spelling but two were invisible.** The declaration matcher knew
+    only a column-0 `fn ` / `pub fn `, so `public fn` (the same token as `pub`), `fn<TAB>`,
+    `pub  fn`, an indented fn, `#inline fn`, `pub #inline fn`, `#deprecated ("x") fn` and
+    `async fn` were never counted. Declarations are read at brace depth 0 only, as
+    `cyrius_api_surface` counts them: a fn inside `impl T for S { … }` is the method `S_m`, not a
+    top-level `m`.
+  - **The file-scope `private` rule was ignored — and inverted.** In a `private` file only
+    `pub`/`public` fns are exported; the tool counted exactly the other set. hisab (643 `public fn`,
+    one bare `fn`) read **1/1 = 100%**; it measures **642/644** now.
+  - **Each source was read into a fixed 256 KiB buffer** with no truncation check: bayan's
+    `pdf.cyr` (399,907 B) showed 114 of its 152 fns, crab's `ui.cyr` + `app.cyr` hid 49. Now
+    `file_read_whole_into` (grows, reuses one buffer, needs no file-size call — wrong on PE); a read
+    error is an error by name.
+  - **A `lib/` or `dist/` at ANY depth was pruned by name**, while the code comment called the
+    prune "inert for the src/ root". nein (`src/lib/`, 393 fns) read `main.cyr 1/1 (100%)` and passed
+    `--min 80`; hoosh, kriya and kybernet lost their `src/lib/` trees the same way. A named root is
+    walked whole now; only the `.` fallback skips its own TOP-LEVEL `./lib` and `./dist`.
+  - **The report never named a function.** The unreferenced fns are listed (`<path>: <name>`) under
+    `-v` and whenever `--min` fails — the actionable half of a failed gate.
+
+  The declaration rule lives once, in cbt/core.cyr (`_src_decl_at` / `_src_file_private` /
+  `_src_public_fn_at`), shared with `cyrius header`; distlib's identifier matcher moved there too
+  (`_distlib_bundle_refs` → `_src_refs_ident`). Residual, inherent to NAME-based reference
+  coverage: a test local or parameter that shares a fn's name still counts. Gate:
+  `tests/gates/toolchain/coverage_corpus_and_failopen.sh` axes 7-14 (16 mutations, each RED),
+  which also pins string escapes, `#define` bodies and `private;` followed by an item on the same
+  line.
+
+- **`cyrius header` emits a prototype for every public fn and reads the whole file.** (bite 9.) It
+  matched only a column-0 `pub fn ` — its own comment said "pub fn or fn" — so a bare `fn` (public
+  in an ordinary file) and `public fn` never got a prototype, it ignored the `private` rule, and it
+  read a fixed 64 KiB: an 81,752-byte file lost every fn past the cut, rc=0. It now uses the shared
+  public-surface rule and `file_read_whole`. It skips `impl` methods (brace depth > 0; they printed
+  conflicting bare `new` prototypes for `method_dispatch.tcyr`) and a program's `fn main`, whose
+  prototype would collide with the C host's `int main`. The verb had NO gate anywhere, while the
+  coverage gate's header claimed the two scanners "already handled both spellings";
+  `tests/gates/toolchain/header_spellings_and_size.sh` is its first (11 mutations, each RED).
+
+- **`cyrius doctest` reads the whole file.** (bite 9.) The same fixed 64 KiB read: an example past
+  the cut was neither run nor counted, so a FAILING example there read `1 passed, 0 failed`, rc=0.
+  Pinned by `header_spellings_and_size.sh` axis H5.
+
+### Downstream
+
+- ⚠ **`cyrius coverage` reads LOWER at the next pin bump for three gated consumers** (bite 9 — the
+  stricter semantics ship outright; no legacy substring flag). Re-measured with the 6.6.8 CLI on
+  the repos' current HEADs (old → new): **bayan** `--min 100`: 465/465 → **355/503 (70%)** — 143
+  of the 148 misses are `src/_compat.cyr` aliases; **ganita** `--min 94`: 133/141 → **85/141
+  (60%)** — 49 of the 56 misses in `_compat.cyr`; its own `scripts/coverage-honest.sh 58` floor is
+  the honest one, so align the tool floor to it; **crab** `--min 85`: 322/370 → **346/419 (82%)**.
+  Each must add tests or lower its floor; `cyrius -v coverage` lists exactly what to cover.
+  Unchanged or fine: samay 79/79 (can drop its CI re-scan), agnosai 1577/1590 (99%), ghurni
+  136/185 (73%, floor 65). Newly measured: hisab 1/1 → 642/644 (its CLAUDE.md "640/644" now
+  matches the tool), nein 1/1 → 255/394, hoosh 14/465 → 84/764, kriya 6/87 → 72/304.
 
 ## [6.6.7] — 2026-09-27
 
