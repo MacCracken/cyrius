@@ -2353,6 +2353,9 @@ process_win::exec_vec/1
 process_win::exec_vec_str/1
 process_win::getpid/0
 process_win::getppid/0
+process_win::proc_deadline_kills/0
+process_win::proc_set_timeout_ms/1
+process_win::proc_timeout_ms/0
 process_win::run/3
 process_win::run_capture/5
 process_win::spawn/3

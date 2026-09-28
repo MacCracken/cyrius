@@ -1084,17 +1084,17 @@ fn _testsuite_gate(): i64 {
             print_num(_regression_timeout_ms() / 1000);
             println("s)");
             fail_count = fail_count + 1;
-        } else { if (failed < 0) {
+        } elif (failed < 0) {
             println("FAIL (compile)");
             fail_count = fail_count + 1;
-        } else { if (failed > 0) {
-                _p("FAIL (");
-                print_num(failed);
-                println(" failed)");
-                fail_count = fail_count + 1;
-            } else {
-                println("PASS");
-            } } }
+        } elif (failed > 0) {
+            _p("FAIL (");
+            print_num(failed);
+            println(" failed)");
+            fail_count = fail_count + 1;
+        } else {
+            println("PASS");
+        }
         total = total + 1;
         i = i + 1;
     }

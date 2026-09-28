@@ -43,6 +43,10 @@
 #      clean project with a crashing cyrdoc: rc≠0, the file named under docs, no
 #      "ok: docs complete".
 #   F  CI's lint step runs that suite (`cyrius_check lint`) and parses no trailer itself.
+#   G  (6.6.8) the FMT walker fails closed too — a cyrfmt that crashes with no output on an
+#      empty .cyr, hangs to the deadline, or refuses (rc 1) is an ERROR naming the file, not
+#      "formatted" or "needs reformatting"; and `cyrius audit` SETS the walkers' deadline
+#      (CYRIUS_TEST_TIMEOUT), so a hung cyrlint ends the audit red, by name, in seconds.
 #
 # MUTATIONS (each RED; run by hand when this gate was written)
 #   m1 the lint walker back on exec_capture + the old parser (missing trailer = 0)  A,C,E
@@ -55,6 +59,8 @@
 #   m8 _aw_parse_undoc returns 0, not -1, when there is no summary line                  B6
 #   m9 `cyrius audit` ignores AW_DOC_ERRORS (no FAIL block, "ok: docs complete" on it)   E2
 #   m10 _cyrlint_count_marker verifies one run and counts a second, unchecked one        D5
+#   m11 (6.6.8) audit_fmt_walk back on exec_capture, no status verdict        G1, G2, G3, G6
+#   m12 (6.6.8) `cyrius audit` no longer calls proc_set_timeout_ms                      G5
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -111,6 +117,9 @@ fn main(): i64 {
     if (streq(argv(1), "lint") == 1) {
         audit_lint_walk(argv(2), dirs);
         tot = AW_LINT_TOTAL; errs = AW_LINT_ERRORS; notes = AW_LINT_ERROR_FILES;
+    } elif (streq(argv(1), "fmt") == 1) {
+        audit_fmt_walk(argv(2), dirs);
+        tot = AW_FMT_FAIL; errs = AW_FMT_ERRORS; notes = AW_FMT_ERROR_FILES;
     } else {
         audit_doc_walk(argv(2), dirs);
         tot = AW_DOC_TOTAL; errs = AW_DOC_ERRORS; notes = AW_DOC_ERROR_FILES;
@@ -124,7 +133,7 @@ syscall(60, r);
 EOF
 build_one "$T/harness.cyr" "$T/h"
 H="$T/h"
-walk() {   # $1 lint|doc  $2 tool  $3 dir  $4 deadline-ms  → $T/w.out
+walk() {   # $1 lint|doc|fmt  $2 tool  $3 dir  $4 deadline-ms  → $T/w.out
     timeout 20 "$H" "$1" "$2" "$3" "$4" > "$T/w.out" 2>&1 || echo "HARNESS rc=$?" >> "$T/w.out"
 }
 counts() { head -n 1 "$T/w.out"; }
@@ -300,6 +309,45 @@ check "E2 a crashing cyrdoc: cyrius audit exits non-zero" yes "$([ "$ARC" -ne 0 
 check "   …and never says 'ok: docs complete'" no "$(grep -qF 'ok: docs complete' "$T/a.out" && echo yes || echo no)"
 check "   …and names the file under the docs section" yes "$(awk '/── docs ──/ { on = 1 } /── tests ──/ { on = 0 } on' "$T/a.out" | grep -qF 'src/main.cyr: ' && echo yes || echo no)"
 check "   …while lint of the same project is still clean" yes "$(grep -qF 'ok: lint clean' "$T/a.out" && echo yes || echo no)"
+
+# ── G — 6.6.8: the FMT walker fails closed, and `cyrius audit` bounds its tools ────────
+# The fmt walker compared cyrfmt's stdout with the file and dropped the exit status, so a
+# cyrfmt that crashed with no output on an EMPTY .cyr read 0 == 0 bytes: formatted. And
+# `cyrius audit` never set lib/process.cyr's deadline, so the walkers' "killed at the
+# deadline" verdict could not fire there — a hung tool hung the audit.
+G="$T/gfmt"; mkdir -p "$G"; : > "$G/e.cyr"
+fake f_segv 'kill -SEGV $$'
+walk fmt "$T/f_segv" "$G" 0
+check "G1 a cyrfmt that CRASHES with no output on an empty .cyr is an error, not 'formatted'" "TOTAL=0 ERRORS=1" "$(counts)"
+check "   …named, with the reason" yes "$(named "$G/e.cyr" "crashed")"
+fake f_hang 'exec sleep 30'
+walk fmt "$T/f_hang" "$G" 500
+check "G2 a cyrfmt killed at the deadline is an error" "TOTAL=0 ERRORS=1" "$(counts)"
+check "   …named 'timed out'" yes "$(named "$G/e.cyr" "timed out")"
+fake f_refuse 'echo "cyrfmt: cannot read file"; exit 1'
+walk fmt "$T/f_refuse" "$G" 0
+check "G3 a REFUSING cyrfmt (rc 1) is an error, not 'needs reformatting'" "TOTAL=0 ERRORS=1" "$(counts)"
+fake f_ok 'cat "$1"'
+walk fmt "$T/f_ok" "$D" 0
+check "G4 control: a cyrfmt that echoes the file exactly is clean" "TOTAL=0 ERRORS=0" "$(counts)"
+cp "$T/cyrdoc.real" "$B/cyrdoc"
+cp "$B/cyrlint" "$T/cyrlint.real"
+printf '#!/bin/sh\nexec sleep 30\n' > "$B/cyrlint"; chmod +x "$B/cyrlint"
+T0=$(date +%s)
+ARC=0
+( cd "$P" && HOME="$T/hh" CYRIUS_HOME="$T/cyhome" CYRIUS_TEST_TIMEOUT=1 timeout 120 "$B/cyrius" audit ) > "$T/a.out" 2>&1 || ARC=$?
+EL=$(( $(date +%s) - T0 ))
+cp "$T/cyrlint.real" "$B/cyrlint"
+check "G5 a HUNG cyrlint under 'cyrius audit' (CYRIUS_TEST_TIMEOUT=1): the audit exits non-zero, not at the harness timeout" yes "$([ "$ARC" -ne 0 ] && [ "$ARC" -ne 124 ] && echo yes || echo no)"
+check "   …names the file 'timed out and was killed at the deadline'" yes "$(grep -F 'src/main.cyr: ' "$T/a.out" | grep -qF 'timed out and was killed at the deadline' && echo yes || echo no)"
+check "   …in well under the tool's 30 s" yes "$([ "$EL" -lt 25 ] && echo yes || echo no)"
+cp "$B/cyrfmt" "$T/cyrfmt.real"
+printf '#!/bin/sh\nkill -SEGV $$\n' > "$B/cyrfmt"; chmod +x "$B/cyrfmt"
+audit "$P"
+cp "$T/cyrfmt.real" "$B/cyrfmt"
+check "G6 a crashing cyrfmt under 'cyrius audit': exits non-zero" yes "$([ "$ARC" -ne 0 ] && [ "$ARC" -ne 124 ] && echo yes || echo no)"
+check "   …says cyrfmt did not finish, naming the file" yes "$(grep -qF 'cyrfmt did not finish' "$T/a.out" && grep -F 'src/main.cyr: ' "$T/a.out" | grep -qF 'crashed' && echo yes || echo no)"
+check "   …and never 'ok: format clean'" no "$(grep -qF 'ok: format clean' "$T/a.out" && echo yes || echo no)"
 
 # ── F — CI's lint step is the driver's suite, not an inline re-implementation ─────────
 # Read the step's own `run:` block (from its `- name:` line to the next one).

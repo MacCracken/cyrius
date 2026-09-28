@@ -92,6 +92,28 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   marker, and a "marker absent" row passed over it. It now reads with `file_read_whole` and scans
   by length. Pinned by `tests/tcyr/platform/regression_file_contains_whole_file.tcyr` (red on the
   old read: 2 rows).
+- **`cyrius audit` bounds the tools it runs, the fmt walker fails closed, and Windows waits no
+  longer read a failure as "exit 0".** (bite 8, placed from the 6.6.7 reviews.) **Root causes:**
+  the walkers report a tool killed at the deadline as an error (6.6.7), but `cyrius audit` never
+  set one — lib/process.cyr defaults to none — so a hung cyrlint/cyrdoc hung the audit for ever;
+  `audit_fmt_walk` compared cyrfmt's stdout with the file and dropped the exit status, so a cyrfmt
+  that crashed with no output on an EMPTY .cyr read 0 == 0 bytes, formatted, and a refusal was
+  reported as "needs reformatting"; and on Windows `proc_set_timeout_ms` did not exist, every
+  wait was INFINITE, and `_win_wait_close` / `_win_wait_timeout` ignored what
+  WaitForSingleObject and GetExitCodeProcess returned — a failed GetExitCodeProcess read as
+  exit 0 (fail-open), a WAIT_FAILED as STILL_ACTIVE (259). **Fix:** the audit sets the walkers'
+  deadline from `CYRIUS_TEST_TIMEOUT` (the batch verbs' knob, 300 s default) and restores it
+  before the tests stage; `audit_fmt_walk` runs `exec_capture_status` and records a run that did
+  not exit 0 on its own as `AW_FMT_ERRORS` / `AW_FMT_ERROR_FILES` (named, with the reason) —
+  `cyrius audit` and the driver's `format (stdlib)` row fail on it; lib/process_win.cyr gains the
+  POSIX deadline contract (`proc_set_timeout_ms`, `proc_timeout_ms`, `proc_deadline_kills`): a
+  bounded WaitForSingleObject + TerminateProcess for the plain verbs (-2; `run` / `wait_pid`
+  `Err(110)`) and a watchdog THREAD for the capturing ones, whose drain blocks until the child
+  exits; a wait or exit-code read that failed is -1 (`Err(10)`), never 0. Gated by
+  `audit_walk_fails_closed.sh` section G (a crashing, hanging and refusing fake cyrfmt; a hung
+  cyrlint under `cyrius audit` with `CYRIUS_TEST_TIMEOUT=1`; a crashing cyrfmt under the audit —
+  mutation-proven) and new Windows rows in `tests/tcyr/crossos/exec_capture_status.tcyr`
+  (green on real cass and under wine; red there with the watchdog disabled).
 
 ## [6.6.7] — 2026-09-27
 

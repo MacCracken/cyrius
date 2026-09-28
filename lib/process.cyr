@@ -306,9 +306,10 @@ fn _proc_wait_deadline(pid, stbuf, timeout_ms): i64 {
         if (waited >= 2000) { slice = 50; }
     }
     _proc_deadline_kills = _proc_deadline_kills + 1;
-    _proc_kill_tree(pid, stbuf);   # the deadline fired and WE ended it (6.6.8: its whole tree,
-    return 0;                      # TERM -> grace -> KILL): 0 is the truth even if an auto-reap
-                                   # leaves nothing to collect
+    # The deadline fired and WE ended it (6.6.8: its whole tree, TERM -> grace -> KILL): 0 is
+    # the truth even if an auto-reap leaves nothing to collect.
+    _proc_kill_tree(pid, stbuf);
+    return 0;
 }
 
 # poll(POLLIN) one fd. >0 readable (or hung up / errored — poll reports POLLHUP and POLLERR

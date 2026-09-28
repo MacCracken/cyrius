@@ -26,6 +26,7 @@ include "lib/str.cyr"
 include "lib/args.cyr"
 include "lib/tagged.cyr"
 include "lib/fs.cyr"
+include "lib/chrono.cyr"
 include "lib/process.cyr"
 include "lib/audit_walk.cyr"
 
@@ -58,6 +59,20 @@ fn _child(mode): i64 {
         syscall(7, 0, 0, 700);
         sys_write(1, SAY, strlen(SAY));
         return 37;
+    }
+    # 6.6.8: a hang that also works on Windows, where poll (syscall 7) is not routed.
+    if (streq(mode, "whang") == 1) {
+        var wi = 0;
+        while (wi < 30) {
+            #ifdef CYRIUS_TARGET_WIN
+            syscall(0xF00F, 1000);   # kernel32 Sleep
+            #endif
+            #ifndef CYRIUS_TARGET_WIN
+            syscall(7, 0, 0, 1000);
+            #endif
+            wi = wi + 1;
+        }
+        return 31;
     }
     if (streq(mode, "hang") == 1) {
         # Bounded even if the deadline never fires: 30 × 1 s, then a code the parent rejects.
@@ -114,6 +129,25 @@ fn main(): i64 {
     assert_eq(load64(st) != 0, 1, "…and does NOT report exit 0");
     assert_eq(_aw_run_verdict(str_from("x.cyr"), st, _aw_parse_lint_warnings(buf, mb), 0) != 0, 1,
       "…so the walker's verdict is an error");
+
+    # ⛔ 6.6.8 — the deadline on EVERY target that has one (Windows gained it: a watchdog
+    # thread for the capturing verbs, a bounded WaitForSingleObject for the rest). Before,
+    # `proc_set_timeout_ms` did not exist on Windows and `cyrius audit` waited for a hung tool
+    # for ever there.
+    test_group("a deadline bounds the capture and the plain wait (6.6.8)");
+    var dprev = proc_set_timeout_ms(500);
+    var dt0 = clock_now_ms();
+    _run("whang", buf, st);
+    var del = clock_now_ms() - dt0;
+    assert_eq(load64(st), 0 - 2, "a capturing child ended at the deadline reports -2");
+    assert_eq(del < 15000, 1, "…and the capture returned long before the child's 30 s");
+    var dv = vec_new();
+    vec_push(dv, argv(0));
+    vec_push(dv, "whang");
+    assert_eq(exec_vec(dv), 0 - 2, "exec_vec: a child ended at the deadline reports -2");
+    _run("say", buf, st);
+    assert_eq(load64(st), 73, "a child that finishes inside the deadline still reports its code");
+    proc_set_timeout_ms(dprev);
 
     #ifndef CYRIUS_TARGET_WIN
     _run("kill", buf, st);
