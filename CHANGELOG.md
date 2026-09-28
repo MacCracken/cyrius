@@ -6,6 +6,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.10] — 2026-09-28
 
+### Fixed
+
+- **The hash seed's getrandom-failure fallback has nanosecond resolution — it had one-second
+  resolution, and on agnos it was a constant.** (bite 14.) **Root cause:** the 6.6.4 port from
+  time(2) to clock_gettime kept the scalar shape `syscall(228, 0, &ts) + load64(&ts)`, which
+  reads only `tv_sec` from a Linux or cx timespec; the agnos arm called #46 (time_unix), which
+  is unminted on exactly the pre-1.45 kernels where #45 getrandom can fail, so it read -1 and
+  the seed was always 1096857192450. Measured with getrandom denied by seccomp: every process
+  started in the same second drew the SAME seed. **Fix:** `_hm_seed_time_mix()` in
+  `lib/hashseed.cyr` = `clock_epoch_ns() ^ clock_now_ns()*golden ^ <stack address>`, taken from
+  `lib/chrono.cyr` (now included), whose clocks already carry every target's contract; the raw
+  228 and the #46 arm are gone. **Proof:** `tests/tcyr/crossos/hashseed_os_rng_source.tcyr`
+  forks two children that deny getrandom with their own seccomp filter (the denial is asserted),
+  and requires src == 2 and different seeds — restoring `+ load64(&ts)` makes them identical
+  (mutation-proven); qemu-user SKIPs by name, real pi runs it. Every host runs a mix row, and
+  `hash_seed_flood_resistance.sh` axis 4 statically refuses `load64(&ts)` / `SYS_TIME_UNIX`.
+  ⚠ Every hashmap consumer now also includes `lib/chrono.cyr` (its globals `CLOCK_REALTIME` /
+  `CLOCK_MONOTONIC`; a consumer redeclaring them — shakti — still compiles). cycc is unaffected.
+
 ## [6.6.9] — 2026-09-28
 
 The third batch release (roadmap.md, *The 6.6.7 → 6.6.10 batch*): twelve bites in six worktree lanes —

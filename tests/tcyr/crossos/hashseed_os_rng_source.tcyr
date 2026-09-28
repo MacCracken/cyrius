@@ -14,11 +14,128 @@
 #
 # The blocking half (1) is pinned statically by tests/gates/memory/hash_seed_flood_resistance.sh
 # axis 4 (a starved-CRNG boot needs a VM, not a unit test).
+#
+# ⛔ 6.6.10 — THE FALLBACK ITSELF. When getrandom fails the seed comes from a time mix, and that
+# mix read only `tv_sec` (the ns half of the timespec was dropped), so every process started in
+# the same second drew the SAME seed; on agnos it was a constant. Nothing ran the fallback: the OS
+# RNG never fails on a CI or verification host. So on Linux a forked child denies getrandom with
+# its OWN seccomp filter (ENOSYS), ASSERTS the denial took, draws the seed, and reports it; two
+# such children must both report src == 2 and DIFFERENT seeds. Forked children share the
+# parent's address-space layout, so only the clock can separate them — which is exactly the
+# resolution being tested. qemu-user answers seccomp() itself with -ENOSYS, so under qemu the
+# group SKIPs by name (the aarch64 leg is real pi, via the crossos run). Every host also runs the
+# mix row: two draws of `_hm_seed_time_mix()` 2 ms apart differ. CHANGELOG [6.6.10]
 include "lib/assert.cyr"
 include "lib/syscalls.cyr"
 include "lib/hashseed.cyr"
 
+#ifdef CYRIUS_TARGET_LINUX
+fn _hsr_ins(p, i, code, jt, jf, k): i64 {
+    store16(p + i * 8, code);
+    store8(p + i * 8 + 2, jt);
+    store8(p + i * 8 + 3, jf);
+    store32(p + i * 8 + 4, k);
+    return 0;
+}
+
+# The native (kernel-side) getrandom number: the filter sees what the kernel sees.
+fn _hsr_nr_getrandom(): i64 {
+    #ifdef CYRIUS_ARCH_AARCH64
+    return 278;
+    #endif
+    #ifdef CYRIUS_ARCH_X86
+    return 318;
+    #endif
+}
+
+# getrandom -> -ENOSYS, everything else allowed. Returns 0 or -errno.
+fn _hsr_deny_getrandom(): i64 {
+    var prog[48];
+    _hsr_ins(&prog, 0, 0x20, 0, 0, 4);                      # ld [4]      arch
+    _hsr_ins(&prog, 1, 0x15, 0, 3, AUDIT_ARCH_NATIVE);       # jne -> allow
+    _hsr_ins(&prog, 2, 0x20, 0, 0, 0);                      # ld [0]      nr
+    _hsr_ins(&prog, 3, 0x15, 0, 1, _hsr_nr_getrandom());
+    _hsr_ins(&prog, 4, 0x06, 0, 0, 0x00050026);             # ERRNO | ENOSYS (38)
+    _hsr_ins(&prog, 5, 0x06, 0, 0, 0x7FFF0000);             # ALLOW
+    var fprog[16];
+    store64(&fprog, 0);
+    store16(&fprog, 6);
+    store64(&fprog + 8, &prog);
+    var r = sys_prctl(38, 1, 0, 0, 0);                      # PR_SET_NO_NEW_PRIVS
+    if (r < 0) { return r; }
+    return sys_seccomp(1, 0, &fprog);                       # SECCOMP_SET_MODE_FILTER
+}
+
+# Child: exit 97 = no seccomp here (qemu-user), 99 = the denial did not take (precondition).
+# Otherwise write {seed, src} to the pipe and exit 0.
+fn _hsr_child(wfd): i64 {
+    var ir = _hsr_deny_getrandom();
+    if (ir == 0 - 38) { syscall(60, 97); }
+    if (ir != 0) { syscall(60, 99); }
+    var probe[8];
+    if (sys_getrandom(&probe, 8, 4) != 0 - 38) { syscall(60, 99); }
+    var out[16];
+    store64(&out, _hm_seed_get());
+    store64(&out + 8, _hm_seed_src);
+    if (sys_write(wfd, &out, 16) != 16) { syscall(60, 99); }
+    syscall(60, 0);
+    return 0;
+}
+
+# Fork one child; returns its exit code and leaves {seed, src} at `res`.
+fn _hsr_run(res): i64 {
+    var pf[8];
+    if (sys_pipe(&pf) != 0) { return 0 - 1; }
+    var pid = sys_fork();
+    if (pid == 0) { _hsr_child(load32(&pf + 4)); }
+    sys_close(load32(&pf + 4));
+    store64(res, 0);
+    store64(res + 8, 0);
+    var got = sys_read(load32(&pf), res, 16);
+    sys_close(load32(&pf));
+    var st[4];
+    store32(&st, 0);
+    sys_waitpid(pid, &st, 0);
+    if (WIFEXITED(load32(&st)) != 1) { return 0 - 1; }
+    var ex = WEXITSTATUS(load32(&st));
+    if (ex == 0) {
+        if (got != 16) { return 0 - 2; }
+    }
+    return ex;
+}
+#endif
+
 fn main(): i64 {
+    # Runs BEFORE this process draws its own seed: a forked child inherits _hm_seed, so a parent
+    # that had already drawn would hand both children its OS-RNG seed and the group would read
+    # nothing about the fallback.
+    #ifdef CYRIUS_TARGET_LINUX
+    test_group("6.6.10 — getrandom denied: the fallback seed has ns resolution, never one second");
+    var r1[16];
+    var r2[16];
+    var e1 = _hsr_run(&r1);
+    if (e1 == 97) {
+        var sk = "  SKIP: seccomp() is -ENOSYS here (qemu-user); the fallback group needs a real kernel\n";
+        sys_write(1, sk, strlen(sk));
+    }
+    if (e1 != 97) {
+        var e2 = _hsr_run(&r2);
+        assert_eq(e1, 0, "child 1 denied getrandom (ENOSYS) and reported its seed (99 = the denial did not take)");
+        assert_eq(e2, 0, "child 2 denied getrandom (ENOSYS) and reported its seed");
+        assert_eq(load64(&r1 + 8), 2, "child 1's seed came from the time fallback");
+        assert_eq(load64(&r2 + 8), 2, "child 2's seed came from the time fallback");
+        assert(load64(&r1) != 0, "the fallback seed is never the 'not drawn' sentinel");
+        assert(load64(&r1) != load64(&r2), "two processes in the same second draw DIFFERENT fallback seeds (it was tv_sec only)");
+    }
+    #endif
+
+    test_group("6.6.10 — the time mix changes between draws on every host");
+    var m1 = _hm_seed_time_mix();
+    sleep_ms(2);
+    var m2 = _hm_seed_time_mix();
+    assert(m1 != m2, "two _hm_seed_time_mix() draws 2 ms apart differ");
+
+    test_group("6.6.7 — the seed comes from the OS RNG");
     assert_eq(_hm_seed_src, 0, "no seed drawn before first use");
     var s = _hm_seed_get();
     assert(s != 0, "the seed is never the 'not drawn' sentinel");

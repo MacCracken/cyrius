@@ -183,4 +183,16 @@ echo "$LARM" | grep -q 'sys_getrandom(&_hm_seed_buf, 8, 4)' \
 echo "$LARM" | grep -q 'sys_getrandom([^)]*, 0)' \
     && fail "axis 4: the Linux arm of the seed draw passes getrandom flags 0 (BLOCKING) — PID 1 stalls until the kernel CRNG seeds"
 
+# 6.6.10: the getrandom-failure fallback is a NANOSECOND mix. It read only tv_sec (the
+# `syscall(228, 0, &ts) + load64(&ts)` shape) and on agnos a constant; the runtime proof, with
+# getrandom denied by the test's own seccomp filter, is tests/tcyr/crossos/hashseed_os_rng_source.tcyr
+# (local x86_64 and real pi). This static half keeps the second-resolution shape from coming back
+# on the targets that runtime row cannot reach (agnos, cx).
+echo "$CODE" | grep -q 'load64(&ts)' \
+    && fail "axis 4: lib/hashseed.cyr reads load64(&ts) — the one-second time fallback (tv_sec only) is back; use _hm_seed_time_mix()"
+echo "$CODE" | grep -q 'SYS_TIME_UNIX' \
+    && fail "axis 4: lib/hashseed.cyr calls SYS_TIME_UNIX (#46) — unminted on the agnos kernels where getrandom can fail, so the fallback seed is a constant there"
+echo "$CODE" | grep -q 'clock_epoch_ns() ^ (clock_now_ns()' \
+    || fail "axis 4: _hm_seed_time_mix no longer mixes clock_epoch_ns with clock_now_ns — the fallback must carry nanosecond resolution on every target"
+
 echo "PASS: hash_seed_flood_resistance (attack set: 1 bucket unseeded -> $LIB1 / $LIB2 seeded across two processes; seeds differ; Linux draw non-blocking)"
