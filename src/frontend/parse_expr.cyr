@@ -553,6 +553,18 @@ fn PARSE_FACTOR(S): i64 {
     return _rc;
 }
 
+# Unary minus on an f32 value (bits in the low 32 of rax, the pushed 0 still on the stack):
+# flip bit 31. Composed from the generic emitters so every backend has it. CHANGELOG [6.6.8]
+fn _NEG_F32(S): i64 {
+    EPOPC(S);
+    EPUSHR(S);
+    EMOVI(S, 0x80000000);
+    EMOVCA(S);
+    EPOPR(S);
+    EXORR(S);
+    return 0;
+}
+
 fn _PARSE_FACTOR_IMPL(S): i64 {
     var typ = PEEKT(S);
     SPSC(S, 0);
@@ -578,10 +590,18 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             STI(S, GTI(S) + 1);
             return 0;
         }
-        # General: parse factor, emit 0-rax via push/sub
+        # General: parse factor, emit 0-rax via push/sub.
+        # ⛔ A FLOAT operand (a float literal, an f64/f32-typed value) is negated by flipping
+        # its SIGN BIT, never by integer `0 - bits`: that computed `-1.0` as -4.0, `-0.0` as
+        # +0 and `-x` on an f64 likewise, on every target. The operand's type is known only
+        # after it is parsed, so the integer prologue is shared and a float operand discards
+        # its pushed 0 (EF64_NEG is exact for every value, -0.0 and NaN included). CHANGELOG [6.6.8]
         EMOVI(S, 0);
         EPUSHR(S);
         PARSE_FACTOR(S);
+        var _ngt = GESTYPE(S);
+        if (_ngt == F64_TYID) { EPOPC(S); EF64_NEG(S); _cfo = 0; return 0; }
+        if (_ngt == F32_TYID) { _NEG_F32(S); SESTYPE(S, F32_TYID); _cfo = 0; return 0; }
         EMOVCA(S);
         EPOPR(S);
         ESUBR(S);
