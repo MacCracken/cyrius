@@ -1530,10 +1530,11 @@ fn ESYSXLAT(S): i64 {
     # pair above. So a native-numbered `syscall(43, path, buf)` was reissued as **accept**:
     # measured on this tree under `qemu-aarch64 -strace`,
     #     accept(6293449, 0x7f…, [0]) = -1 errno=14 (Bad address)
-    # yukti 2.3.11 declares exactly that number (lib/yukti.cyr:58 under #ifdef
-    # CYRIUS_ARCH_AARCH64), so `filesystem_usage` has answered "statfs failed: errno 14" on
-    # every ARM host since the socket block landed at v6.2.10 — and statfs had no NAME in
-    # either Linux peer, which is why a consumer had to hardcode a number at all.
+    # yukti <= 2.3.11 declared exactly that number (under #ifdef CYRIUS_ARCH_AARCH64), so
+    # `filesystem_usage` answered "statfs failed: errno 14" on every ARM host from the socket
+    # block at v6.2.10 until yukti 2.3.12 switched to sys_statfs (folded at 6.6.7) — and
+    # statfs had no NAME in either Linux peer, which is why a consumer had to hardcode a
+    # number at all.
     # Both peers now spell the X86 numbers (137/138) and these rows renumber them: pure
     # renumbers, since x86_64 and aarch64 agree on the (path|fd, buf) argument layout and on
     # the 120-byte struct statfs (verified on pi and on the x86 host, byte-identical to libc).
