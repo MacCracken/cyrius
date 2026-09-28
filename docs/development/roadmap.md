@@ -157,7 +157,7 @@ L-cbt → L-ci. Expected self_compile gain from bite 1: roughly 19 %.
 **Placed here from the 6.6.7 reviews:**
 
 - **bite 2** — a top-level `#assert` ends the declaration phase (every later struct/enum is refused).
-- **bite 3** — a duplicate struct definition is accepted silently and the first layout wins; an
+- **bite 3** — (from the 6.6.8 reviews) the aarch64 compiler segfaults (rc 139) right after printing its `f64_atan … requires include lib/math.cyr` error — this bite's exact class; a duplicate struct definition is accepted silently and the first layout wins; an
   enum member and a top-level var of the same name with different values raise no duplicate warning
   (yukti and mabda both declare `PCI_VENDOR_AMD`, differently).
 - **bite 5** — on PE a var-held syscall number at argc 2 gets -38 with no compile-time warning.
