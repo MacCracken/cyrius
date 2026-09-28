@@ -6,6 +6,76 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.9] — 2026-09-28
 
+### Fixed
+
+- **Compile time is linear in the number of globals and enum members — it was quadratic.**
+  (bite 1; issue `2026-09-20-compile-time-is-quadratic-in-the-global-count`, archived.)
+  **Root cause:** the global var table had no name index. Two walks were O(N) per call:
+  `_findvar_core` (parse_types.cyr — every global reference through FINDVAR, plus the
+  declaration-time probes: PARSE_GVAR_REG's `sit_shadow`, CHKDUPVAL, CHK_ENUM_SHADOW and the
+  enum pass-2 value store) walked every registered global in reverse with STREQ, and
+  `_gv_prior` (parse_decl.cyr, via `_gv_fold`, the one-global-per-name fold) walked every
+  global below the new slot again. Each new top-level global or enum member paid at least two
+  full walks, so N registrations cost O(N²), and every read of an early global paid O(N).
+  Measured at 6.6.8: 20,000 constant globals **4,879 ms** (99 % in the gvar phase), 20,000
+  enum members **4,833 ms**, 20,000 references **7.8 s**; the filed shape (`var gN = f(N);`)
+  never got that far — it was refused past 4096 (next bullet), so the issue's own table timed
+  failing compiles. **Fix:** an alloc'd open-addressed FNV-1a name map (name → highest slot of
+  that name) plus a per-slot link to the next lower slot of the same name (`_nm_*` / `_fvh_*`,
+  parse_types.cyr). Both walks visit only the slots that share the name, highest first — the
+  order the reverse walk tested them in, with the same GVDEAD / `_fv_hidden` / GVENUMID / GVFI
+  tests — so every result is unchanged. The index syncs lazily for [synced, GVCNT): every
+  `_varn_base` writer stores the name at an index ≥ GVCNT before bumping the count, and nothing
+  renames a counted slot. No heap/brk layout change; one-step fixpoint. After: 20k constants
+  **90 ms**, 20k enum members **78 ms**, 20k deferred **135 ms**, 120k deferred 0.8 s.
+  Gate `tests/gates/frontend/globals_scale_linear.sh` (new): const / enum / deferred /
+  reference rows at 10k vs 20k as a RATIO (limit 3.0x; now ~1.9x, 6.6.8 ~4.0x on every row;
+  mutation — `_findvar_core` restored to the reverse walk — RED on all four). Bench rows
+  `compiler/scale_20k_{const_globals,enum_members,deferred_globals}` in `bench-history.sh`.
+- **The deferred global-initializer table grows — the "too many initialized globals (max
+  4096)" cap is gone, and it never counted what it said.** (bite 1; audit.) **Root cause:**
+  `gvar_toks`, 4096 fixed entries at `0x729000`, survived the v6.3.0 conversion of the var
+  family to grown tables. The static-init path takes a NONZERO constant only (`gvar_initval`
+  uses 0 as "no value"), so `var x = 0;`, string literals, byte-array literals and top-level
+  destructures all took a slot, not only computed initializers — while `= -1` never did. The
+  diagnostic said "initialized", and the guide documented the counting rule wrong in both
+  directions. **Fix:** `_gvt` / `_gv_defer` (parse_decl.cyr) — the table starts in its
+  `0x729000` region and moves to alloc'd storage on the 4097th entry, doubling; all three
+  registration sites go through `_gv_defer`, and `_gv_ent_base` (the slot each entry declared)
+  grows with it. The lift exposed the next quadratic: `_gv_supersede` scanned EVERY deferred
+  entry per constant redeclaration, bounded only by the cap. It now walks a per-name list
+  recorded at registration from the same tokens the scan compared (`_gvx_*`), so the same
+  supersede bits are set. Heap-map comments in the five forks that list the region updated;
+  no layout change. Guide *Global Initializers* and *Known Limitations* rewritten. Gate
+  `tests/gates/memory/gvar_toks_cap_guards_the_store.sh` (which pinned the cap) is now
+  **`gvar_toks_grows_past_4096.sh`**: five shapes at 5000 plus the filed 20,000 repro compile
+  and read back; a constant redeclaration past 4096 supersedes (plain and destructure target 1)
+  while every earlier initializer still runs; a `kernel;` replay past 4096 stores into the
+  declaration-zone slot; statically, exactly one growing store path — because a store run past
+  the region without growing is INVISIBLE (the bytes up to TS are free; a no-grow mutant runs
+  120,000 entries correctly), the 6.6.6 lesson this gate inherits. Three mutants RED. A
+  20,000-entry fixture (supersede + `= 0` + strings + destructures) exits 42 on the host,
+  qemu-aarch64, cx, wine, and natively on ecb, ach, pi and cass.
+- **LEXID's identifier-dedup buckets hash every byte of the name.** (bite 1; audit.)
+  **Root cause:** the v6.5.50 key was `klen*131 + first*7 + last*65599 + mid*4099` — the length
+  and three sampled bytes. Generated names differ in the bytes it never read: g0..g139999 fell
+  into 500 of 16,384 buckets (max chain 900) and `f%09d` into 20, so the lex phase went
+  superlinear again (35k → 70k fn names: 77 → 262 ms; 20k `f%09d` names 268 ms). The comment
+  claiming it spread f0..f59999 across 16,384 chains was false. **Fix:** `FNV1A_NOFF(S, bl) &
+  16383` — FNV-1a over every byte (the name is NUL-terminated there). Canonical offsets stay
+  first-occurrence and the exact-length compare stays, so only chain order moves (output
+  byte-identical). Lex phase now 41 / 85 ms at 35k / 70k; 20k `f%09d` 24 ms. **The gate was
+  blind to it:** `lexid_buckets_by_content.sh` compared two DEGENERATE distributions (20 vs 380
+  buckets) and read 1.30 — a check sharing the defect it checks. Row 2 compares the uniform
+  fixture against a same-size, same-length control that is random in every byte, on the
+  `CYRIUS_PROF` lex phase: sampled key **10.7x** (RED), FNV-1a 1.0x (limit 3.0). Row 1 still
+  catches `bucket = klen` (re-run: 5.4x, RED). The gate now honours `$CYCC`
+  (`check_gate_census.sh` ceiling 74 → 73).
+
+**Bench (bite 1):** self_compile **−19 %** — same-box A/B, three rounds of best-of-5: 6.6.8's
+compiler 1,049 ms, this tree's 841 ms (box under lane load; the gvar phase 503 → 299 ms). cycc
+**1,359,272 → 1,359,328 B** (+56; `.text` 1,188,224 → 1,191,152, +2,928).
+
 ## [6.6.8] — 2026-09-28
 
 The second of the three small batch releases (roadmap.md, *The 6.6.7 → 6.6.9 batch*): the platform

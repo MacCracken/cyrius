@@ -175,6 +175,18 @@ bench_cmd() {
 bench_cmd "compiler/trivial" "echo 'var x = 42;' | $CC > /dev/null"
 bench_cmd "compiler/self_compile" "cat $REPO_ROOT/src/main.cyr | $CC > /dev/null"
 
+# 6.6.9 (bite 1) — compile-time SCALE rows: one unit of 20,000 globals per shape. The global
+# var table had no name index until 6.6.9, so these were O(N²) (20k constants ~4.9 s, 20k
+# deferred refused past 4096) while self_compile — about a thousand globals — barely showed it. A shape
+# that regresses to a per-registration scan shows here as a jump of seconds, not ms.
+# tests/gates/frontend/globals_scale_linear.sh is the pass/fail ratio; this is the trend.
+awk 'BEGIN{for(i=0;i<20000;i++) printf "var g%d = %d;\n", i, i+1; print "syscall(60, 0);"}' > "$TMPDIR/scale_const.cyr"
+awk 'BEGIN{print "enum E {"; for(i=0;i<20000;i++) printf "    E%d = %d;\n", i, i+1; print "}"; print "syscall(60, 0);"}' > "$TMPDIR/scale_enum.cyr"
+awk 'BEGIN{print "fn f(n: i64): i64 { return n + 1; }"; for(i=0;i<20000;i++) printf "var g%d = f(%d);\n", i, i; print "syscall(60, 0);"}' > "$TMPDIR/scale_defer.cyr"
+bench_cmd "compiler/scale_20k_const_globals" "$CC < $TMPDIR/scale_const.cyr > /dev/null"
+bench_cmd "compiler/scale_20k_enum_members" "$CC < $TMPDIR/scale_enum.cyr > /dev/null"
+bench_cmd "compiler/scale_20k_deferred_globals" "$CC < $TMPDIR/scale_defer.cyr > /dev/null"
+
 # v6.3.17 (PF-03): per-phase-resolved self-compile via the v5.10.0 CYRIUS_PROF profiler.
 # Appends compiler/phase_<pp|lex|gvar|parse|fixup|emit|write> rows (ns) so the cycle
 # carries a phase-resolved trend into the v6.5.x perf-refactor "first-step audit" (which

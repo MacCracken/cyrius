@@ -1,8 +1,7 @@
-# Compile time is QUADRATIC in the number of globals — 70,000 exceeds two minutes — OPEN
+# Compile time is QUADRATIC in the number of globals — 70,000 exceeds two minutes — RESOLVED v6.6.9
 
-**Status:** 🟡 open — measured during 6.6.6 (bite 19's review); identical on 6.6.5, so not a
-regression from this release.
-**Placement:** **6.6.9 bite 1** — The global var table scales linearly: FNV name index, full-byte lexer hash, gvar_toks 4096 cap lifted. Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
+**Status:** ✅ **RESOLVED v6.6.9** (bite 1) — the global var table has an FNV name index, gvar_toks grows past 4096 and the supersede scan reads a per-name list: 20,000 globals compile in ~0.1 s (gate `globals_scale_linear.sh`, bench rows `compiler/scale_20k_*` in `scripts/bench-history.sh`; the two quadratic walks, `_findvar_core` and `_gv_prior`, are named in CHANGELOG [6.6.9]). ⚠ The table below timed FAILING compiles: `var gN = f(N);` was refused past 4096 until this fix.
+**Placement:** **6.6.9 bite 1** — The global var table scales linearly: FNV name index, full-byte lexer hash, gvar_toks 4096 cap lifted. Pinned 2026-09-27 in [roadmap.md](../../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Discovered:** 2026-09-20
 
 ## Measured

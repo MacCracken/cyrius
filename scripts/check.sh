@@ -1423,3 +1423,9 @@ _chk_gate "$ROOT/tests/gates/toolchain/api_surface_derive_matches_emitter.sh"
 # 6.6.8 (bite 8) — every gate under tests/gates/ is registered EXACTLY ONCE and runs through
 # `_chk_gate` or the driver; ten 6.6.6 gates were bare `sh` lines no selector could reach.
 _chk_gate "$ROOT/tests/gates/toolchain/check_gate_census.sh"
+
+# 6.6.9 (bite 1) — compile time is LINEAR in the global count: constants, enum members,
+# deferred initializers and references at 10k vs 20k, as a ratio (limit 3.0x; the 6.6.8
+# compiler read ~4x on every row — the var table had no name index, so each registration paid
+# two full STREQ walks and every reference a reverse one).
+_chk_gate "$ROOT/tests/gates/frontend/globals_scale_linear.sh"
