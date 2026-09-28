@@ -439,29 +439,31 @@ var DIR_WALK_MAX_DEPTH = 64;
 fn is_symlink(path: Str): i64 {
     #ifdef CYRIUS_TARGET_WIN
     # Widened HERE, bounded by str_len: a Str need not be NUL-terminated (str_sub shares its
-    # parent's bytes), so `_fs_widen`'s read-to-NUL is not safe for an arbitrary Str.
+    # parent's bytes), so `_fs_widen`'s read-to-NUL is not safe for an arbitrary Str. Both
+    # buffers are on the STACK — dir_walk calls this for every entry, and a bump-allocated
+    # pair per call leaked ~600 B + 2x the path each time. A path past 519 characters answers
+    # 0: the PE image is not long-path-aware, so GetFileAttributesW fails past MAX_PATH anyway.
     var pn = str_len(path);
     var pd = str_data(path);
-    var wp = alloc(pn * 2 + 2);
-    if (wp == 0) { return 0; }
+    if (pn > 519) { return 0; }
+    var wp[1040];
     var wi = 0;
     while (wi < pn) {
         var wc = load8(pd + wi);
         if (wc == 0) { break; }
         if (wc == 47) { wc = 92; }                  # '/' → '\'
-        store16(wp + wi * 2, wc);
+        store16(&wp + wi * 2, wc);
         wi = wi + 1;
     }
-    store16(wp + wi * 2, 0);
-    var attrs = syscall(61465, wp);                 # GetFileAttributesW (no final-link follow)
+    store16(&wp + wi * 2, 0);
+    var attrs = syscall(61465, &wp);                # GetFileAttributesW (no final-link follow)
     if (attrs == 4294967295) { return 0; }          # INVALID_FILE_ATTRIBUTES
     if ((attrs & 1024) == 0) { return 0; }          # not FILE_ATTRIBUTE_REPARSE_POINT
-    var fd = alloc(592);                            # WIN32_FIND_DATAW
-    if (fd == 0) { return 0; }
-    var h = syscall(61462, wp, fd);                 # FindFirstFileW on the name itself
+    var fd[592];                                    # WIN32_FIND_DATAW
+    var h = syscall(61462, &wp, &fd);               # FindFirstFileW on the name itself
     if (h == 0 - 1) { return 0; }
     syscall(61464, h);                              # FindClose
-    if ((load32(fd + 36) & 0x20000000) != 0) { return 1; }   # dwReserved0 = tag; name surrogate
+    if ((load32(&fd + 36) & 0x20000000) != 0) { return 1; }   # dwReserved0 = tag; name surrogate
     return 0;
     #endif
     #ifndef CYRIUS_TARGET_WIN

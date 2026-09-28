@@ -80,20 +80,31 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `GetFileInformationByHandleEx(FileAttributeTagInfo)`, new reroute `0xF03D` — so there is no
   check-then-open window: a NAME-SURROGATE reparse point (symlink, junction) is closed and refused
   with -40 (-ENOTDIR, -20, together with `O_DIRECTORY`, which is what Linux AND Darwin answer —
-  measured on both); any other reparse point (a cloud placeholder, dedup) is reopened normally, the
-  default taken; a non-directory under `O_DIRECTORY` is -20 and a directory opened for writing,
+  measured on both). A junction or a symlink to a DIRECTORY is a directory object, which
+  CreateFileW refuses outright without `BACKUP_SEMANTICS` — before `sys_open` holds a handle to
+  ask — so a failed `O_NOFOLLOW` open (no `O_DIRECTORY`) asks the name why with a read-only
+  `O_DIRECTORY|O_NOFOLLOW` probe that never follows, truncates or creates: a name surrogate is -40,
+  a real directory under write access / `O_CREAT` / `O_TRUNC` is -21 (Linux's EISDIR), anything
+  else keeps the original answer; the probe only chooses the errno (the review of this bite
+  measured the first cut returning a bare -1 for a junction and a directory symlink on real cass).
+  Any other reparse point (a cloud placeholder, dedup) is reopened normally, the default taken —
+  that reopen is by name and follows links, so it is made without `O_TRUNC`, the verified handle
+  stays open meanwhile, and the two must be the SAME FILE (`GetFileInformationByHandleEx(FileIdInfo)`:
+  volume serial + 128-bit id) or the open is refused (-1) — a name swapped for a link in between
+  cannot be followed and truncated. A non-directory under `O_DIRECTORY` is -20 and a directory opened for writing,
   `O_CREAT` or `O_TRUNC` is -21 (the check open is read-only, so a mistaken `O_DIRECTORY|O_TRUNC`
   cannot truncate the file on its way to -20). An `O_NOFOLLOW|O_TRUNC` open is made WITHOUT the
   truncation and the verified handle is truncated afterwards (`SetEndOfFile`, `0xF03F`; an
   `O_RDONLY` or `O_APPEND` handle, which lacks `FILE_WRITE_DATA`, truncates through a second
-  verified `O_WRONLY|O_NOFOLLOW` handle), so neither a link's target nor the link object is
+  `O_WRONLY|O_NOFOLLOW` handle, used only when it is the same file as the verified one), so neither a link's target nor the link object is
   clobbered by a refusal — and `O_WRONLY|O_TRUNC|O_APPEND|O_NOFOLLOW` keeps its real append, which
   the plain `TRUNCATE_EXISTING` path trades away. A refused `CREATE_NEW` is classified -17 by
   `file_create_exclusive` (GetFileAttributesW does not follow a final link). A raw
   `syscall(2, p, O_NOFOLLOW, 0)` still never follows, but hands back the link's own handle: the
-  refusals live in `sys_open`, which every stdlib open goes through. Verified on real cass (41/41,
-  and the 6.6.8 build of the same test fails 21), ecb, ach, pi and x86_64 Linux (40/40 each) and
-  wine; the `FILE_READ_ATTRIBUTES` the handle query needs is present on `O_WRONLY` and `O_APPEND`
+  refusals live in `sys_open`, which every stdlib open goes through. Verified on real cass (51/51
+  — seven PE-only rows, six of them on a `mklink /J` junction; the 6.6.8 build of the same test
+  fails 21 of the 41 rows it had), ecb, ach, pi, x86_64 Linux and the CI agnosticos container
+  (44/44 each) and wine; the `FILE_READ_ATTRIBUTES` the handle query needs is present on `O_WRONLY` and `O_APPEND`
   handles (CreateFileW adds it — measured). Gated by `tests/tcyr/crossos/open_flags_per_target.tcyr`
   (rewritten: every row runs on every target — the symlink rows too, because the fixtures are made
   by `CreateSymbolicLinkW`, whose links wine does see) and `tests/gates/platform/pe_open_posix_semantics.sh`
@@ -105,7 +116,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   all. It now reads `FILE_ATTRIBUTE_REPARSE_POINT` (GetFileAttributesW, which does not follow a
   final link, so a dangling one answers) and the reparse TAG (FindFirstFileW's `dwReserved0`): a
   name surrogate is 1, a placeholder or dedup file is 0. The path is widened bounded by `str_len`
-  (a `Str` need not be NUL-terminated).
+  (a `Str` need not be NUL-terminated), into STACK buffers — `dir_walk` asks for every entry, and
+  a bump-allocated pair per call would leak ~600 B + twice the path each time; a path past 519
+  characters answers 0 (the PE image is not long-path-aware, so GetFileAttributesW fails there).
+  An `open_flags_per_target.tcyr` row asserts 64 calls allocate nothing (the heap version: 40,448 B).
 - **`file_create_exclusive` is atomic on agnos.** (bite 5; audit: the agnos pre-check is not
   atomic.) Its agnos arm was `file_exists` then a plain `AO_CREAT` open — a check-then-create, and
   a name that existed as a DIRECTORY or a DANGLING symlink was not "existing" to it (both came back
@@ -127,8 +141,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   all (the value is known only at run time); `_PE_ROUTE_PERFCOUNTER`'s comment and the guide both
   claimed it warned. The arity-2 arm moved into its own function (`_pe_dyn_arity2`, clear of the
   cybs per-function limit) and routes 74 / 75 to `FlushFileBuffers`; the comments now say what
-  happens. Gated by two new `fsync_flushes.tcyr` rows (every target; -38 on PE before) and the
-  gate's floor (16 → 18).
+  happens. Gated by two new `fsync_flushes.tcyr` rows (every target; -38 on PE before), the
+  gate's floor (16 → 18), and a new emitter-shape check in `pe_fsync_flushes.sh` (axis 2(d): every
+  argc-2 runtime switch carries a 74 and a 75 candidate whose arm ends in the flush tail). Axis 2
+  counts flush tails with `>=`, so removing the two arms left it green ("9 tails for 9 sites"
+  against 15) and only wine saw the regression; (d) is red for that mutant, and for an arm that
+  calls something other than `FlushFileBuffers`, without wine.
 
 ### Changed
 
@@ -148,7 +166,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   link when the target, resolved as the link will resolve it, is a directory; it asks for
   `SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE` and retries without it, and without Developer
   Mode a non-elevated process gets -1 — a Windows policy. `sys_ftruncate` seeks, sets the end and
-  puts the caller's file pointer back (growing zero-fills; a negative length is -22). The
+  puts the caller's file pointer back (growing zero-fills; a negative length is -22). ⚠ It is -1
+  on an `O_APPEND` descriptor, where Linux succeeds: the PE open of `O_APPEND` grants
+  `FILE_APPEND_DATA` without `FILE_WRITE_DATA`, which `SetEndOfFile` needs — truncate by path
+  (`sys_truncate`) or open without `O_APPEND`. The
   `0xF03D`–`0xF03F` ids are literal-only, like every `0xF0xx` id. `syscall_shm_fd_passing.tcyr`'s
   PE arm now sizes a real file where it asserted the decline.
 

@@ -1,6 +1,6 @@
 # `O_NOFOLLOW` is accepted and ignored on Windows — a symlink-refusal flag that fails open — RESOLVED v6.6.9
 
-**Status:** ✅ **RESOLVED v6.6.9** (bite 5) — O_NOFOLLOW refuses a symlink/junction with -40 on PE (handle-verified, target untouched), CREATE_NEW never follows a reparse point, O_DIRECTORY opens directories only; verified on real cass.
+**Status:** ✅ **RESOLVED v6.6.9** (bite 5) — O_NOFOLLOW refuses a file symlink, a directory symlink and a junction with -40 on PE (handle-verified; a directory object CreateFileW refuses is classified by a read-only probe), target untouched; CREATE_NEW never follows a reparse point; O_DIRECTORY opens directories only; verified on real cass (junction rows included).
 **Placement:** **6.6.9 bite 5** — POSIX PE open semantics: CREATE_NEW never follows a reparse point; is_symlink works on Windows; O_NOFOLLOW refuses name surrogates; O_DIRECTORY = BACKUP_SEMANTICS + -ENOTDIR; file_create_exclusive's agnos arm is atomic. Pinned 2026-09-27 in [roadmap.md](../../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Discovered:** 2026-09-23 during patra's 1.15.0 cut.
 **Severity:** Medium–High on Windows: a flag callers pass for safety is silently not applied. It is

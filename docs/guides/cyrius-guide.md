@@ -2894,8 +2894,9 @@ Windows, Linux, macOS and aarch64:
 | Flags | Linux | Windows (v6.6.9) |
 |---|---|---|
 | `O_CREAT\|O_EXCL` on a name that exists — even a **dangling** symlink | -17 | refused (`file_open` -1, `file_create_exclusive` -17); the link's target is never created |
-| `O_NOFOLLOW` on a symlink or junction | -40 (-62 macOS) | -40; the target is never opened or truncated |
-| `O_NOFOLLOW` on any other reparse point (cloud placeholder, dedup) | — | opens the file normally |
+| `O_NOFOLLOW` on a symlink or junction (to a file or a directory) | -40 (-62 macOS) | -40; the target is never opened or truncated |
+| `O_NOFOLLOW` with write access, `O_CREAT` or `O_TRUNC`, on a directory | -21 | -21 |
+| `O_NOFOLLOW` on any other reparse point (cloud placeholder, dedup) | — | opens the file normally (the reopen must be the same file) |
 | `O_DIRECTORY` on a directory / a file | fd / -20 | handle / -20 |
 | `O_DIRECTORY` with write access, `O_CREAT` or `O_TRUNC`, on a directory | -21 | -21 |
 | `O_DIRECTORY\|O_NOFOLLOW` on a link to a directory | -20 | -20 (macOS too — the unfollowed link is not a directory) |
@@ -2905,7 +2906,12 @@ word carries `FILE_FLAG_OPEN_REPARSE_POINT` for `O_NOFOLLOW` and for `CREATE_NEW
 opens an existing object, so the flag only stops it following one), and
 `FILE_FLAG_BACKUP_SEMANTICS` for `O_DIRECTORY`. `sys_open` then asks the **opened handle**
 (`GetFileInformationByHandleEx`) what it is — no check-then-open window — and an
-`O_NOFOLLOW|O_TRUNC` open is truncated only after that check. The refusals live in `sys_open`,
+`O_NOFOLLOW|O_TRUNC` open is truncated only after that check. A junction or a link to a
+directory is a directory object, which CreateFileW refuses before there is a handle to ask; a
+failed `O_NOFOLLOW` open therefore asks the name why, with a read-only probe that never follows,
+truncates or creates, and only the errno comes from it. The one reopen by name (a non-surrogate
+reparse point, opened normally so its filter presents the file) is compared with the verified
+handle by file id and refused if the name changed in between. The refusals live in `sys_open`,
 which every stdlib open goes through; a raw `syscall(2, p, O_NOFOLLOW, 0)` still never follows
 a link, but hands back the link's own handle instead of -40.
 

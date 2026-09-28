@@ -29,6 +29,8 @@ include "lib/str.cyr"
 include "lib/vec.cyr"
 include "lib/io.cyr"
 include "lib/fs.cyr"
+include "lib/tagged.cyr"
+include "lib/process.cyr"
 include "lib/assert.cyr"
 
 # v6.6.6: a PER-PROCESS scratch name (fixed names were shared by concurrent runs). Windows has no
@@ -123,6 +125,16 @@ fn main(): i64 {
     assert_eq(xsymlink(tgt, lnk), 0, "xsymlink makes the fixture (on Windows: CreateSymbolicLinkW)");
     assert_eq(is_symlink(str_from(lnk)), 1, "is_symlink(link) is 1 (was 0 for everything on Windows)");
     assert_eq(is_symlink(str_from(tgt)), 0, "is_symlink(regular file) is 0");
+    # dir_walk asks is_symlink for every entry. The first 6.6.9 Windows arm bump-allocated the
+    # widened path and a WIN32_FIND_DATAW on every call and never gave them back.
+    var ls = str_from(lnk);
+    var u0 = alloc_used();
+    var k = 0;
+    while (k < 64) {
+        is_symlink(ls);
+        k = k + 1;
+    }
+    assert_eq(alloc_used() - u0, 0, "64 is_symlink calls allocate nothing (Windows leaked ~600 B + 2x the path each)");
     var nf = file_open(lnk, O_RDWR | O_TRUNC | O_NOFOLLOW, 0);
     assert_eq(nf, _eloop(), "file_open(symlink, O_RDWR|O_TRUNC|O_NOFOLLOW) is -ELOOP (62 on Darwin)");
     if (nf >= 0) { sys_close(nf); }
@@ -225,6 +237,48 @@ fn main(): i64 {
     var dl2 = file_open(dln, O_RDONLY | O_DIRECTORY | O_NOFOLLOW, 0);
     assert_eq(dl2, 0 - 20, "O_DIRECTORY|O_NOFOLLOW on a link to a directory is -ENOTDIR (the link is not a dir)");
     if (dl2 >= 0) { sys_close(dl2); }
+    # WITHOUT O_DIRECTORY the link to a directory is -ELOOP, like a link to a file. On Windows it
+    # is a DIRECTORY object, which CreateFileW refuses outright without BACKUP_SEMANTICS — the
+    # first 6.6.9 cut handed that refusal back as a bare -1; sys_open now asks the name why.
+    var dl3 = file_open(dln, O_RDONLY | O_NOFOLLOW, 0);
+    assert_eq(dl3, _eloop(), "O_RDONLY|O_NOFOLLOW on a link to a directory is -ELOOP (was -1 on Windows)");
+    if (dl3 >= 0) { sys_close(dl3); }
+    var dl4 = file_open(dln, O_WRONLY | O_TRUNC | O_NOFOLLOW, 0);
+    assert_eq(dl4, _eloop(), "O_WRONLY|O_TRUNC|O_NOFOLLOW on a link to a directory is -ELOOP");
+    if (dl4 >= 0) { sys_close(dl4); }
+    var wd = file_open(dir, O_WRONLY | O_NOFOLLOW, 0);
+    assert_eq(wd, 0 - 21, "O_WRONLY|O_NOFOLLOW on a real directory is -EISDIR (was -1 on Windows)");
+    if (wd >= 0) { sys_close(wd); }
+    #ifdef CYRIUS_TARGET_WIN
+    # A JUNCTION (tag 0xA0000003) is the other name surrogate, and the one an unprivileged
+    # Windows user can make; it is a directory object like the directory symlink above.
+    # `mklink /J` needs no privilege; wine's cmd implements it and reports the same tag.
+    var jnc = _scratch("cyr_oflag_junction", "");
+    xrmdir(jnc);
+    var mk = vec_new();
+    vec_push(mk, "cmd");
+    vec_push(mk, "/c");
+    vec_push(mk, "mklink");
+    vec_push(mk, "/J");
+    vec_push(mk, jnc);
+    vec_push(mk, dir);
+    vec_push(mk, ">nul");
+    assert_eq(exec_vec(mk), 0, "Windows: `mklink /J` makes the junction fixture");
+    assert_eq(is_symlink(str_from(jnc)), 1, "Windows: is_symlink(junction) is 1");
+    var j1 = file_open(jnc, O_RDONLY | O_NOFOLLOW, 0);
+    assert_eq(j1, 0 - 40, "Windows: O_RDONLY|O_NOFOLLOW on a junction is -ELOOP (was -1)");
+    if (j1 >= 0) { sys_close(j1); }
+    var j2 = file_open(jnc, O_RDWR | O_CREAT | O_TRUNC | O_NOFOLLOW, 420);
+    assert_eq(j2, 0 - 40, "Windows: O_RDWR|O_CREAT|O_TRUNC|O_NOFOLLOW on a junction is -ELOOP");
+    if (j2 >= 0) { sys_close(j2); }
+    var j3 = file_open(jnc, O_RDONLY | O_DIRECTORY | O_NOFOLLOW, 0);
+    assert_eq(j3, 0 - 20, "Windows: O_DIRECTORY|O_NOFOLLOW on a junction is -ENOTDIR, as for a dir symlink");
+    if (j3 >= 0) { sys_close(j3); }
+    var j4 = file_open(jnc, O_RDONLY | O_DIRECTORY, 0);
+    assert_eq(j4 >= 0, 1, "Windows: O_DIRECTORY through a junction opens");
+    if (j4 >= 0) { sys_close(j4); }
+    xrmdir(jnc);
+    #endif
     #ifdef CYRIUS_TARGET_WIN
     # The one documented divergence: CreateFileW opens a directory only with
     # FILE_FLAG_BACKUP_SEMANTICS, which is set for O_DIRECTORY ONLY — set always, it would let

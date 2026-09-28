@@ -35,7 +35,8 @@
 # ANTI-VACUOUS. The expected pass count of EACH build is derived statically from the .tcyr
 # (assert_* call sites, comments stripped, split by the CYRIUS_TARGET_WIN guards; every row
 # runs exactly once) and must be at least the FLOOR, so deleting rows fails the gate.
-# ROW FLOOR: 40 native rows (measured 2026-09-28 at 6.6.9).
+# ROW FLOOR: 44 native rows (40 measured 2026-09-28 at 6.6.9; +4 after the bite-5 review — the
+# directory-link -ELOOP rows, the directory -EISDIR row and the is_symlink allocation row).
 #
 # MUTATION LEDGER — every mutant BUILT AND RUN 2026-09-28 at 6.6.9 (x86_64 Linux + wine 11.17).
 # Each is one edit in a scratch copy of lib/src/tests, rebuilt with build/cycc, with this gate
@@ -48,6 +49,16 @@
 #   sys_open without the handle check (raw syscall only)     PASS    FAIL, 8 rows
 #   O_TRUNC not deferred past the check (tr = 0)             PASS    FAIL, 1 row (the append row)
 #   is_symlink's PE arm back to `return 0`                   PASS    FAIL, 3 rows
+# Added after the bite-5 review (same day, same method; cass rows measured on real hardware):
+#   no directory-object probe (the first cut: a failed        PASS    FAIL, 5 rows (dir link and
+#     O_NOFOLLOW open handed back CreateFileW's bare -1)               junction -40, dir -21;
+#                                                                      cass: the same 5)
+#   `_win_same_file` always 0 (a truncation via the second    PASS    FAIL, 2 rows (O_RDONLY;
+#     handle is never trusted)                                         cass: 4, O_APPEND too —
+#                                                                      wine does not enforce
+#                                                                      FILE_WRITE_DATA there)
+#   is_symlink's PE arm back to the bump-allocated buffers     PASS    FAIL, 1 row (40448 B over
+#                                                                      64 calls)
 # The lib-only mutants pass axis 2 by construction (it reads the emitter), so on a box without
 # wine this gate catches an emitter revert and NOT a peer revert — the cass leg is the
 # hardware check for both. ⚠ The first draft of this ledger PREDICTED wine would miss the
@@ -60,7 +71,7 @@
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
 SRC="$ROOT/tests/tcyr/crossos/open_flags_per_target.tcyr"
-FLOOR=40
+FLOOR=44
 
 [ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 0; }
 [ -f "$SRC" ] || { echo "  FAIL: $SRC is missing — the cross-OS companion for this fix is gone"; exit 1; }
@@ -174,6 +185,10 @@ else
     else
         echo "  ok axis 3: $got of $want_pe rows hold on PE under wine (hardware: the cass cross-OS leg)"
     fi
+    # The junction rows spawn `cmd /c mklink /J`, which leaves this prefix's wineserver (and
+    # its services) running past `wine`'s exit. Ended inline, scoped to OUR prefix — never a
+    # bare `wineserver -k` (see cbt_fork_sites_have_pe_arm.sh: that kills other lanes' wine).
+    WINEPREFIX="$D/wp" wineserver -k > /dev/null 2>&1 || true
     rm -rf "$D/wp"
 fi
 
