@@ -148,6 +148,30 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   6.6.7, F RED without the tail-call divert); the same probes pass on ach, cass (the completion
   bug was live on PE too) and under wine.
 
+- **On macOS an unrouted syscall number now FAILS — SIGSYS, or -ENOSYS (-78) with SIGSYS
+  ignored — on both Macs; on arm64-macOS it used to re-run the PREVIOUS syscall.** (bite 2.)
+  **Root cause:** ESYSXLAT's Mach-O arm (src/backend/aarch64/emit.cyr) writes Darwin's syscall
+  register x16 only when a row MATCHES, and nothing defaulted it, so an unmatched number left
+  x16 holding whatever last wrote it — normally the previous call's BSD number, since x16
+  survives `svc` — and the `svc` re-ran that call with the new arguments. Measured on ecb with
+  6.6.7: `getpid` then an unrouted number returned the PID again. The class shipped at least
+  eight times (getdents, fchmod, pipe2, getuid, async fcntl, sendmsg, ftruncate, statfs), each
+  fixed by adding the one row that surfaced, and `crossos/syscall_ioctl_x86_compat.tcyr` passed
+  on ecb only because its raw 16 had no row and re-ran ioctl out of x16 = 54. **Fix:** the chain
+  head emits `movz x16, #0xFFFF` (query-mode guarded; +4 B per arm64-macOS syscall site), which
+  xnu maps to nosys — the SIGSYS parse_expr's "will fault on macOS" warning had always promised
+  — and the missing raw-x86 `16 → 54` ioctl row lands with it, so that test is now a real test
+  (without the row it dies rc 140 on ecb). x86-macOS never re-ran a stale call, but with SIGSYS
+  ignored an unclassed number came back UNCHANGED — `syscall(4000)` returned 4000, a positive
+  "success" (measured on ach); EMACHO_SYSXLAT now ends with `_msx_tail`, which classes a leftover
+  number as Unix 0xFFFF, so both Macs answer -78. ⚠ **A program that "worked" on arm64-macOS by
+  accident — its unrouted call re-running a neighbour that happened to succeed — now dies with
+  SIGSYS.** That is the intended signal; build with the Mach-O target and read the `not routed`
+  warnings. Pinned by `tests/tcyr/crossos/darwin_unrouted_syscall_faults.tcyr` (SIGSYS ignored:
+  a runtime and a literal unrouted number return -78 and not the preceding getpid; default: a
+  forked child dies of SIGSYS) — 6 of 11 RED on ecb and 2 of 11 RED on ach with 6.6.7, 11/11 on
+  both with this change.
+
 ## [6.6.7] — 2026-09-27
 
 The first of three SMALL releases that the post-6.6.6 issue track is split into (roadmap.md, *The 6.6.7

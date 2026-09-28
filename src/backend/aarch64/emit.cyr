@@ -778,6 +778,22 @@ fn ESYSXLAT(S): i64 {
     # Emit chained cmp/b.ne/movz pattern, comparing x8 (Linux num) and
     # writing BSD num to x16. The caller-side ESYSCALL emits svc #0x80.
     if (_TARGET_MACHO == 2) {
+        # ⛔ THE CHAIN HEAD DEFAULTS x16 TO AN INVALID NUMBER, so an UNROUTED number faults.
+        # Every row below writes x16 only on a MATCH. Without this word an unmatched number
+        # left x16 holding whatever last wrote it — usually the PREVIOUS syscall's BSD number
+        # (ESYSCALL preserves x16 across svc) — so the svc silently re-ran that call with the
+        # new arguments and returned a plausible value. x86-macOS never had the hole: an
+        # unmatched rax reaches Darwin unclassed and SIGSYSes. The class shipped at least
+        # eight times (getdents, fchmod, pipe2, getuid, async fcntl, sendmsg, ftruncate,
+        # statfs), each "fixed" by adding the one row that surfaced; the crossos ioctl test
+        # passed on ecb for exactly this reason (raw 16 had no row and re-ran ioctl out of
+        # x16 = 54). xnu maps a number >= nsysent to nosys: SIGSYS, or -ENOSYS (-78) when
+        # SIGSYS is ignored — the same outcome as x86-macOS, and what parse_expr's
+        # "not routed" warning has always promised. +4 B per arm64-macOS syscall site.
+        # ⚠ Guarded on query mode like every other word here: `_macho_arm_routes` replays this
+        # chain with S = 0, and an unguarded EW would write into buffer 0.
+        # Gated by tests/tcyr/crossos/darwin_unrouted_syscall_faults.tcyr. CHANGELOG [6.6.8]
+        if (_esx_qon == 0) { EW(S, 0xD29FFFF0); }   # movz x16, #0xFFFF
         # read: 0→3     movz x16,#3  = 0xD2800070
         _esx_arm(S, 0, 3);
         # write: 1→4    movz x16,#4  = 0xD2800090
@@ -1112,6 +1128,10 @@ fn ESYSXLAT(S): i64 {
         _esx_arm(S, 75, 187);  # fdatasync 75→187
         _esx_arm(S, 23, 41);  # dup   23→41
         _esx_arm(S, 29, 54);  # ioctl 29→54
+        # v6.6.8: raw x86 ioctl 16, the fourth target of the v6.5.38 raw-16 parity (x86-macOS
+        # `_msx(S, 16, …)`, ELF-aarch64 16→29). Without it raw 16 had no row and, before the
+        # chain-head default above, silently re-ran whatever x16 held. CHANGELOG [6.6.8]
+        _esx_arm(S, 16, 54);  # raw x86 ioctl 16→54
         _esx_arm(S, 129, 37);  # kill  129→37
         _esx_arm(S, 81, 36);  # sync  81→36
         _esx_arm(S, 178, 372);  # gettid 178→thread_selfid 372

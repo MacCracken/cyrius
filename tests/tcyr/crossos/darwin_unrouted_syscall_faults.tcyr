@@ -1,0 +1,72 @@
+# darwin_unrouted_syscall_faults.tcyr — v6.6.8: on BOTH macOS targets a syscall number the
+# Mach-O translation does not route FAILS — SIGSYS by default, -ENOSYS (-78) when SIGSYS is
+# ignored. It never quietly runs some other call.
+#
+# THE DEFECT (arm64-macOS). ESYSXLAT's Mach-O chain writes x16 (Darwin's syscall register) only
+# when a row MATCHES. An unmatched number left x16 holding whatever last wrote it — normally the
+# PREVIOUS syscall's BSD number, since x16 survives `svc` — so the call silently re-ran that
+# previous syscall with the new arguments. Measured on ecb with the 6.6.7 compiler: getpid, then
+# an unrouted number, returned the PID again. The class shipped at least eight times, each fixed
+# by adding the one row that surfaced; `syscall_ioctl_x86_compat.tcyr` passed on ecb only because
+# its raw 16 re-ran ioctl out of x16 = 54. Fixed at the root: the chain head sets x16 = 0xFFFF,
+# which xnu maps to nosys.
+#
+# x86-macOS never re-ran a stale call (an unmatched number reaches Darwin unclassed), but with
+# SIGSYS ignored it returned the NUMBER ITSELF — `syscall(4000)` gave 4000, a positive "success"
+# (measured on ach). Its chain now ends by classing a leftover number as Unix 0xFFFF, so both
+# Macs answer -78.
+#
+# ⭐ WHY THE CALL BEFORE IS getpid. The stale-x16 failure returns whatever the PREVIOUS call
+# returned, so the test primes it with a call whose answer is distinctive and known. An
+# assertion of "r < 0" alone would pass over a stale call that happened to fail.
+# ⭐ WHY A RUNTIME NUMBER AND A LITERAL. The literal is what the compiler warns about; the runtime
+# number (`_nr`, set in main) is the one it cannot see. Both go through the same chain.
+# ⭐ WHY A FORKED CHILD. "Returns -78 with SIGSYS ignored" is the half a test can observe in
+# process; the DEFAULT is that the process dies, and only a child can show that.
+#
+# Elsewhere the file compiles and asserts nothing: Linux and aarch64 pass an unrouted number
+# through to the kernel by design (native numbers must survive), and PE declines with -38.
+include "lib/syscalls.cyr"
+include "lib/assert.cyr"
+
+var _nr = 0;
+fn _unrouted_nr(): i64 { return _nr; }
+
+fn main(): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    _nr = 4000;   # no Mach-O row on either backend (rows stop well below; 4095 is the arm cmp cap)
+
+    test_group("Darwin: an unrouted syscall, SIGSYS ignored, returns -ENOSYS");
+    assert_eq(signal_ignore(12), 0, "signal_ignore(SIGSYS) == 0");
+    var pid = syscall(SYS_GETPID);
+    assert(pid > 0, "getpid > 0 (primes the syscall register with a distinctive answer)");
+    var r = syscall(_unrouted_nr(), 0, 0, 0);
+    assert(r != pid, "a runtime unrouted number does NOT re-run the previous call (was: == getpid)");
+    assert_eq(r, 0 - 78, "a runtime unrouted number returns -ENOSYS (-78)");
+    var pid2 = syscall(SYS_GETPID);
+    var r2 = syscall(4001, 0, 0, 0);
+    assert(r2 != pid2, "a literal unrouted number does NOT re-run the previous call");
+    assert_eq(r2, 0 - 78, "a literal unrouted number returns -ENOSYS (-78)");
+
+    test_group("Darwin: by default an unrouted syscall kills the process with SIGSYS");
+    assert_eq(signal_default(12), 0, "signal_default(SIGSYS) == 0");
+    var child = sys_fork();
+    if (child == 0) {
+        syscall(_unrouted_nr(), 0, 0, 0);
+        syscall(60, 0);   # reached only if the call did NOT fault — the parent sees exit 0
+    }
+    assert(child > 0, "fork succeeded");
+    var st = 0;
+    var w = sys_waitpid(child, &st, 0);
+    assert_eq(w, child, "waitpid returns the child");
+    assert_eq(WIFSIGNALED(st), 1, "the child was killed by a signal");
+    assert_eq(WTERMSIG(st), 12, "the signal is SIGSYS (12)");
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
+    test_group("not Darwin: an unrouted number passes through by design — nothing to assert");
+    assert_eq(1, 1, "skipped");
+    #endif
+    return assert_summary();
+}
+var ec = main();
+syscall(60, ec);

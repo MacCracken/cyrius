@@ -976,6 +976,24 @@ fn _msx32(S, lin, classed): i64 {
     EB(S, (classed >> 16) & 0xFF); EB(S, (classed >> 24) & 0xFF);
     return 0;
 }
+# v6.6.8 — the chain TAIL: a number no row matched is still unclassed (< 0x1000000; every
+# row writes 0x2000000|bsd, and a pre-classed caller such as EEXIT is already above it), so
+# rewrite it to Unix-class 0xFFFF, which xnu maps to nosys. The default is unchanged — the
+# process dies with SIGSYS — but with SIGSYS IGNORED an unclassed number came back with rax
+# UNTOUCHED: `syscall(4000)` returned 4000, a positive "success" that `if (r < 0)` waves
+# through (measured on ach). Now it returns -ENOSYS (-78), the same answer arm64-macOS gives
+# through ESYSXLAT's chain-head default, so the two Macs have one contract. Unsigned `jae`,
+# so a negative number passes untouched. Gated by
+# tests/tcyr/crossos/darwin_unrouted_syscall_faults.tcyr. CHANGELOG [6.6.8]
+# Its own fn, not inline above: EMACHO_SYSXLAT already carries ~100 calls, and cybs (the
+# seed's bootstrap compiler) fails SILENTLY past its per-fn reference cap.
+fn _msx_tail(S): i64 {
+    if (_msx_qon == 1) { return 0; }
+    EB(S, 0x48); EB(S, 0x3D); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); EB(S, 0x01);  # cmp rax, 0x1000000
+    EB(S, 0x73); EB(S, 0x07);                                                      # jae +7
+    EB(S, 0x48); EB(S, 0xC7); EB(S, 0xC0); EB(S, 0xFF); EB(S, 0xFF); EB(S, 0x00); EB(S, 0x02);  # mov rax, 0x200FFFF
+    return 0;
+}
 fn EMACHO_SYSXLAT(S): i64 {
     _msx(S, 0,  0x2000003);   # read     0  → 3
     _msx(S, 1,  0x2000004);   # write    1  → 4
@@ -1184,6 +1202,7 @@ fn EMACHO_SYSXLAT(S): i64 {
     # unrouted 92 reached Darwin unprefixed and SIGSYS'd. io.cyr now issues the x86-Linux
     # flock number 73 on macOS so a single source serves both Mach-O backends.
     _msx(S, 73, 0x2000083);   # flock 73 → 131
+    _msx_tail(S);
     return 0;
 }
 # v6.5.43: the x86 Mach-O peer of `_macho_arm_routes`. An unrouted number falls through the
