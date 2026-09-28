@@ -38,10 +38,10 @@ unscheduled 6.x backlog. Whole-cycle framing plus v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.6.8** (2026-09-27) — cycc **1,346,088 B** (`.text` **1,179,392**) ·
-seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi · self_compile **869 ms** (6.6.6 bench) ·
-**353** `.tcyr` (**109** in `crossos/`) · **104** `lib/*.cyr` · **236** shell gates under
-`tests/gates/<bucket>/` · **17 open issues** · **6 open proposals**.
+**Current head: v6.6.8** (2026-09-28, closed, awaiting the tag) — cycc **1,359,272 B** (`.text` **1,188,224**) ·
+seed-derive **GREEN** · cross-OS on ecb/ach/cass/pi at the gate · self_compile: see CHANGELOG [6.6.8] ·
+**371** `.tcyr` (**124** in `crossos/`) · **104** `lib/*.cyr` · **254** shell gates under
+`tests/gates/<bucket>/` · **10 open issues** · **6 open proposals**.
 
 > ⚠ **Every figure above was DERIVED on the day, not carried** (re-derived 2026-09-27 at the 6.6.7 open).
 > `version-bump.sh` rewrites the version token, replaces the `(…)` after it with the bump date, and
@@ -115,52 +115,66 @@ borrowing yukti's `SYS_SOCKET`), vani **1.2.7** `5cdd402`, sigil **3.13.3** `92a
 **2.3.13** `ff97eec`, mabda **4.1.5** `2a9f67c`. sakshi 2.5.5, patra 1.15.0, niyama 1.0.12 and
 bayan 1.5.7 were folded from their existing tags.
 
-### 6.6.8 — the platform silent-defect sweep
+### 6.6.8 — CLOSED 2026-09-28 (awaiting the tag)
 
-| # | Bite | Items | Lane | src | Size |
-|---|---|---|---|---|---|
-| 1 | Top-level `for-in` binds a live global; enum constants fold past var index 1024 | [top-level for-in is broken](issues/2026-09-20-toplevel-for-in-loop-is-broken.md) · tail: the 1024 enum-fold cap (it also silently drops compile-time syscall reroutes on BOTH macOS targets; and it forced 6.6.7's `sys_sched_kicks` to size its buffer as a literal `208` — put back `var buf[SYSINFO_SIZE_FULL]` when this lands) | S1-route | ✔ commits `build/cycc` | M |
-| 1b | Nested-emitter + derive follow-ups from the 6.6.7 reviews | generic type-param forwarding returns 0; fn-pointer call inside a coroutine SIGSEGVs; forcing a completed coroutine re-runs it; derived Serialize zero-extends negative narrow fields; `#ifdef` inside a derived struct body (see *Placed here* below) | S1-route | ✔ | M |
-| 2 | arm64-macOS: an unrouted syscall faults instead of re-running a stale `x16`; the Darwin raw-literal axis made true; the Mach-O route query argc-aware | audit: stale-`x16` reissue (the class has shipped 8 times) · tail: 22 arch-neutral raw literals unrouted on Darwin · audit: Mach-O route query blind to argc | S1-route | ✔ | L |
-| 3 | Names + rows for aarch64-unreachable syscalls (`unshare`/`chroot`/`pivot_root`, `capget`/`capset`, `process_vm_*`, `mknodat`); stdlib `sys_fcntl` / `fd_set_nonblocking` / `fd_restore_flags` | [kavach: unshare/chroot unnamed, aarch64 chroot unreachable](issues/2026-09-25-kavach-unshare-chroot-unnamed-aarch64-chroot-unreachable.md) · [sigil: sys_fcntl wrapper](issues/2026-09-23-sigil-sys-fcntl-wrapper.md) · the first tier of the *nine syscall families* backlog | S1-route | ✔ | L |
-| 4 | IEEE float negation and conversion | audit: unary minus negates the BIT PATTERN (`-1.0` → `-4.0`, `-0.0` → `+0`); x86 `f64_neg` of `+0`; `f64_to` diverges across targets | S2-rt | ✔ source only | M |
-| 5 | The exp/ln family correct on every target (fdlibm ports, IEEE specials, range guards before `x·log2e`) | [tyche: aarch64 f64_ln polyfill specials + accuracy](issues/2026-09-25-tyche-aarch64-f64-ln-polyfill-specials-and-accuracy.md) · audit: PE x87 exp at 53-bit precision control; ganita `pow` Annex F (upstream ganita release pinned to cyrius 6.6.7, refolded from its tag) | S2-rt | ✔ | L |
-| 6 | Runtime foundations on constrained targets | audit: `alloc_init`'s 256 MiB first chunk refused on small boards (PID 1 panics in a `-m 256M` VM); cx `atomic_cas` a no-op; cxvm pointer translation for `getrandom`/`clock_gettime` | S2-rt | ✔ | M |
-| 7 | `process_agnos` rewrite on 6.6.7's released wrappers | audit: `run`/`exec_*`/`wait_pid` return before the child exits; ELFs over 16 KB refused; 8 MB leaked per spawn | L-agnos | — | L |
-| 8 | Check harness: every gate registered once and run through `_chk_gate`; a subreaper launcher (TERM → grace → KILL); deadline kills SAY they were deadline kills | tail: shell gates orphaned by a SIGKILLed check.sh · tail: check.sh RED under load without saying why · audit: 10 bare `sh` gate invocations; `regression_file_contains_substr`'s 512 KiB cap | L-gates | — | L |
-| 9 | `cyrius coverage` / `header` tell the truth | [samay: coverage counts substrings and comments](issues/2026-09-23-samay-coverage-counts-substrings-and-comments-as-references.md) · audit: the denominator drops public fns and a 256 KiB source tail; `pub fn` spellings missed; nested `lib/` pruned | L-cbt | — | L |
-| 10 | Tool scanners agree with the compiler | [agnodrm: api-surface derive(Serialize) arity](issues/2026-09-22-agnodrm-api-surface-derive-serialize-arity.md) · [sakshi: err-enum lint owner matched by path spelling](issues/2026-09-23-sakshi-err-enum-lint-owner-matched-by-path-spelling.md) · audit: cyaudit/vet count commented-out includes | L-tools | — | M |
+All eleven bites shipped (bite 1b — the nested-emitter and derive follow-ups — included), in six
+worktree lanes merged into main; detail in `CHANGELOG.md` [6.6.8]. The seven filed issues it fixed
+are archived by their bites. No CVE was spent. **Sibling releases the fold took, by commit — tag
+each BEFORE the cyrius 6.6.8 tag:** yukti **2.3.14** `bcc8cb0` (ppoll declines on macOS) and
+ganita **1.2.7** `3c15403` (`pow` follows C99 Annex F).
 
-Lanes: S1-route owns `aarch64/emit.cyr` ESYSXLAT and all five `lib/syscalls_*` peers; S2-rt owns
-`lib/math.cyr`, `lib/ganita.cyr`, `lib/alloc.cyr`, `lib/atomic.cyr`, `programs/cxvm.cyr`; L-gates owns
-`scripts/check.sh`, `programs/checks/*.cyr`, `lib/regression.cyr`, `lib/process.cyr`. Merge S1 → S2 →
-L-agnos, L-cbt, L-tools → L-gates. No CVE.
+⚠ **The merge found two more lane interactions, again invisible per lane:** bite 7's new
+`agnos_process_peer_parity` gate required agnos peers for five host verbs bite 8 added in another
+lane, and bite 8's new `check_gate_census` ratchet (gates hard-coding `CC`, measured at 74 on its
+own lane) saw 80 once six other lanes' new gates arrived — converted to `${CYCC:-…}` rather than
+raising a ratchet that only goes down.
 
-**Placed here from the 6.6.7 reviews** (found outside their bite; each rides the bite that owns its class):
+⚠ **aarch64 size tax measured at the merge:** `build/cycc-native-aarch64` `.text` +82,952 B — bite 3's
+nine ESYSXLAT rows copied into each of 605 syscall sites (backlog: a shared translation stub).
 
-- **bite 1b (new, S1-route, src) — nested-emitter follow-ups:** a generic that forwards its type
-  parameter to another generic (`inner<T>(p)` inside a generic body) silently returns 0; `fncall1` /
-  a fn-pointer call inside a coroutine `async fn` SIGSEGVs; forcing a COMPLETED coroutine resumes it
-  from its last suspend, so its body and defers run again; `#derive(Serialize)` writes negative
-  i8/i16/i32 fields zero-extended (JSON does not round-trip); an `#ifdef`/`#endif` inside a derived
-  struct body reads as a comment to the derive walk.
-- **bite 2** — Mach-O unrouted-syscall warnings in builds that pull in sigil or yukti.
-- **bite 3** — `ws_server` / `http` ignore `sock_send`'s count (a short send is lost); the
-  `src/backend/aarch64/emit.cyr` ~1492 comment still cites yukti 2.3.11.
-- **bite 6** — cxvm's register file is 256 B but fp (r253) / sp (r254) are written at +2024/+2032,
-  inside guest memory; `call_site_stack_alignment.tcyr` does not compile on cx although its header
-  says its value rows run everywhere; six more unchecked allocs in `lib/io.cyr`; `fhm_set` silently
-  drops an insert when the table is saturated with tombstones.
-- **bite 7** — accepted agnos connections do not inherit the listener's per-socket timeouts;
-  `async_agnos`'s `async_timeout` comment says AGNOS has no fork.
-- **bite 8** — `cyrius audit` sets no child deadline (a hung cyrlint/cyrdoc hangs it); the fmt
-  walker ignores cyrfmt's exit status; Windows `exec_capture_status` can report exit 0 when
-  WaitForSingleObject/GetExitCodeProcess fail; the POSIX idle-deadline cut also fires on a `poll()`
-  error; the doc-stamp row accepts VERSION anywhere within 240 B of `Current head:`;
-  `install_atomic_over_running_binary.sh` exits 143 under `bash -eo pipefail` while printing PASS;
-  `derive_non_struct_rejected.sh` hard-codes `CC`; `crossos/fs_dirlist.tcyr` depends on the cwd;
-  `folds_agnos_parity`'s preamble puts every fold in scope for every fold, which hides cross-fold
-  borrowing (the exact way sandhi borrowed yukti's `SYS_SOCKET`); `version-bump.sh` is GNU-sed-only.
+### Found by the 6.6.8 reviews — ⚠ RELEASE PENDING THE USER'S CALL
+
+~40 out-of-scope finds, deduplicated and grouped by the lane that would own them. They would push
+6.6.9 from 11 to about 16 bites, against the rule that these releases stay SMALL — so where they go
+(into 6.6.9, or a 6.6.10 after it) is asked, not assumed. Grouped as bites:
+
+- **A. `lib/http.cyr` (security + correctness)** — `http_*` cannot connect to ANY host: it passes the
+  host STRING pointer to `sock_connect` as the IPv4 address; `_http_build_request` writes past its
+  fixed 2048-byte buffer (a CVE — the next free id is 49 unless 6.6.9 bite 10 spends it first).
+- **B. async / generic / derive codegen (src, silent)** — plain (non-coroutine) Futures re-run their
+  body on every force; a coroutine that falls off its end hangs on the completing force; a generic
+  whose type is inferred from a struct argument returns 0 when its body loops; an explicit `i64`
+  type-arg on a generic that uses T as a struct returns 0; `#derive(accessors)` stacked above
+  `#derive(Deserialize)` emits no codecs; the guide's Async "Status & limits" paragraph is stale.
+- **C. float typing (src, silent)** — `f64`-typed struct fields are not typed F64 (binary ops and unary
+  minus on them are integer arithmetic); f64 builtins' results carry no F64 type; unary minus on an
+  UNTYPED variable holding float bits is integer negation (warn, per ADR-002); a float literal with a
+  19+ digit mantissa is silently wrong; cx `f64_sqrt/floor/ceil/round` are silent identity stubs.
+  ranga's `tests/gpu_kernels.tcyr:217` passes `-4.0` meaning `-1.0` (found by 6.6.8's kind-2 warning —
+  a downstream notice, now that `-1.0` is correct).
+- **D. Darwin gaps** — arm64-macOS `syscall(35)` with no arguments reads a timespec from address 35;
+  the x86-macOS peer has no `sys_epoll_wait` / `sys_inotify_*` at all; macOS `sys_getrandom`
+  (getentropy) fails for len > 256; Mach-O ARM "not routed" warnings from alloc/vec/fnptr includes; an
+  unconfirmed garbled assert message on ach.
+- **E. agnos userland** — `regression_agnos`'s spawn/capture verbs still fail closed although agnos
+  can now spawn, capture and wait (6.6.8 bite 7); `async_agnos` `async_timeout` / `async_run_process`
+  not ported to fork#96 / #43; stale "#96 fork STILL NOT MINTED" notes; the `sys_sock_close`
+  accept-mark clear is ungated.
+- **F. tools + harness** — the `cyrius test` runner kills only the pid at its deadline; cyrfmt/cyrlint
+  refuse an EMPTY `.cyr` (so `cyrius audit` reports empty files as errors); `_build_api_surface_if_missing`
+  never rebuilds a stale binary; api-surface misses `#inline fn f()`; distlib's own declaration scan
+  still reads only column-0 spellings; coverage is O(corpus × fns) (~9 s on agnosai) and silently skips
+  an unreadable `.tcyr`; the check driver reaps adopted orphans only at exit; a Windows deadline cannot
+  bound a grandchild holding the capture pipe; `process_win.cyr` lacks `PROC_ECHILD`;
+  `sandhi_platform_eagain.tcyr` binds fixed ports.
+- **G. stdlib hygiene (with 6.6.9 bite 7)** — the hashseed time fallback has one-second resolution;
+  `lib/assert.cyr` `test_scratch` stores through an unchecked alloc; `net_v6_connect.tcyr` does not
+  compile for PE or agnos; stale cx comments in `lib/syscalls.cyr` / `lib/alloc_cx.cyr`.
+- **Backlog, not a bite:** cxvm does no bounds check on guest addresses (it is not a sandbox — a design
+  statement to make, not a patch); the macOS hosts fail tests OUTSIDE `crossos/` that the release gate
+  never runs (measure the non-crossos corpus on ecb/ach before scoping).
+- **Sibling follow-ups:** yantra drops `sock_send`'s count; kriya issues raw x86 90/91/97/21 that
+  misroute on aarch64; ganita `pow`'s general path is off by tens to hundreds of ulp for large |y·ln x|.
 
 ### 6.6.9 — remaining correctness and polish
 
@@ -461,8 +475,8 @@ priority surfaces. **These are technical items → they stay in the 6.x cycle, n
   class thoth filed**: `_SYSX_MEANT` only carries numbers named in BOTH peers, so a NAMELESS
   number produces **no warning at all** (measured: raw 160 on the aarch64 fork warns nothing).
   Two tiers:
-  - ⭐ **Tier 1 is now PLACED in 6.6.8 bite 3** — kavach filed for `unshare`/`chroot`
-    ([`issues/2026-09-25-kavach-unshare-chroot-unnamed-aarch64-chroot-unreachable.md`](issues/2026-09-25-kavach-unshare-chroot-unnamed-aarch64-chroot-unreachable.md)),
+  - ⭐ **Tier 1 SHIPPED at 6.6.8 bite 3** — kavach filed for `unshare`/`chroot`
+    ([`issues/archived/2026-09-25-kavach-unshare-chroot-unnamed-aarch64-chroot-unreachable.md`](issues/archived/2026-09-25-kavach-unshare-chroot-unnamed-aarch64-chroot-unreachable.md)),
     and shakti is broken on aarch64 today, so `capget`/`capset` and `process_vm_*` ride with it.
   - **No technical blocker, held only as API surface nobody filed for** — `capget`/`capset`
     (125/126 → 90/91, consumers kybernet + shakti), `chroot` (161 → 51, kavach — the row must sit

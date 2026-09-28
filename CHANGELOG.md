@@ -4,7 +4,24 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [6.6.8] — 2026-09-27
+## [6.6.8] — 2026-09-28
+
+The second of the three small batch releases (roadmap.md, *The 6.6.7 → 6.6.9 batch*): the platform
+silent-defect sweep. Eleven bites in six worktree lanes — top-level `for-in` and the 1024 enum-fold cap
+(which also silently dropped compile-time syscall reroutes on both macOS targets); the nested-emitter and
+`#derive` follow-ups the 6.6.7 reviews found (bite 1b); an unrouted arm64-macOS syscall that silently
+RE-RAN the previous one through a stale `x16`; the aarch64/Darwin syscall surface (`unshare`, `chroot`,
+`pivot_root`, `capget`/`capset`, `process_vm_*`, `mknodat`, `sys_fcntl`); IEEE float negation (`-1.0`
+evaluated to `-4.0`) and the exp/ln family to ≤ 1 ulp on every target; small-board alloc and the cx
+runtime; `process_agnos`; the check harness (subreaper launcher, deadline kills that say so, a gate
+census); coverage that counts real references; and tool scanners that agree with the compiler. Seven
+filed issues fixed. Sibling releases folded: yukti **2.3.14** and ganita **1.2.7**. No CVE.
+
+**Bench:** cycc **1,346,088 → 1,359,272 B** (+13,184, +1.0 %; `.text` 1,188,224). self_compile
+**961 ms** (6.6.7: 957 ms); same-box A/B on this tree, three rounds: 6.6.7's compiler ~970 ms, 6.6.8's
+~963 ms — flat. ⚠ `build/cycc-native-aarch64` `.text` grew +82,952 B (+5.5 %): bite 3's nine ESYSXLAT
+rows are copied into each of 605 syscall sites; every aarch64 program pays that per site (roadmap
+backlog: a shared translation stub).
 
 ### Fixed
 
