@@ -1044,7 +1044,7 @@ fn _tcyr_compile_and_run(src_path): i64 {
 
     # CO-02: a tcyr that crashed (signal) or exited nonzero WITHOUT printing
     # " failed" was recorded as PASS (parse_failed==0). Treat a nonzero exit as
-    # a failure — matches ci.yml:196's `$ec`-AND-count gate.
+    # a failure — matches the `$ec`-AND-count check of ci.yml's (independent) .tcyr loop.
     var failed = _tcyr_parse_failed(out_buf, out_n);
     if (failed == 0 && _last_exec_ec != 0) { return 1; }
     return failed;
@@ -1052,12 +1052,33 @@ fn _tcyr_compile_and_run(src_path): i64 {
 
 # ⛔ NO SILENT CAPS. A corpus that SHRINKS is the failure the .tcyr gates exist to catch,
 # and a count alone cannot raise it — "test suite (160 files)" reads as green. The floor
-# turns a blind reader into a hard FAIL. Raise it deliberately when the corpus grows; never
-# lower it to make a run pass. 6.6.9: this is the ONE definition — CI's independent .tcyr
-# loop asks for it (`cyrius_check --tcyr-floor`) instead of carrying its own copy of the
-# number. CHANGELOG [6.6.9]
+# turns a blind reader into a hard FAIL. 6.6.9: the number lives in ONE place,
+# tests/tcyr/CORPUS_FLOOR (line 1), read here and by every .tcyr loop in ci.yml — it had been
+# written down four times. Returns -1 when the file is missing or line 1 is not exactly a
+# number; the caller FAILS on that rather than running without a floor. CHANGELOG [6.6.9]
 fn _tcyr_corpus_floor(): i64 {
-    return 250;
+    var cap = 4096;
+    var buf = alloc(cap);
+    var n = file_read_all(_root_path("tests/tcyr/CORPUS_FLOOR"), buf, cap);
+    if (n <= 0) { return 0 - 1; }
+    var v = 0;
+    var digits = 0;
+    var i = 0;
+    var going = 1;
+    while (going == 1) {
+        if (i >= n) { going = 0; }
+        else {
+            var c = load8(buf + i);
+            if (c >= 48 && c <= 57) {
+                v = v * 10 + (c - 48);
+                digits = digits + 1;
+                i = i + 1;
+            } else { going = 0; }
+        }
+    }
+    if (digits == 0 || digits > 9) { return 0 - 1; }
+    if (i < n && load8(buf + i) != 10) { return 0 - 1; }
+    return v;
 }
 
 fn _testsuite_gate(): i64 {
@@ -1109,7 +1130,14 @@ fn _testsuite_gate(): i64 {
         i = i + 1;
     }
     var floor = _tcyr_corpus_floor();
-    if (total < floor) {
+    if (floor < 1) {
+        _p("  ");
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        println(": corpus floor — tests/tcyr/CORPUS_FLOOR is missing or its line 1 is not a number (the floor is not optional)");
+        fail_count = fail_count + 1;
+    } elif (total < floor) {
         _p("  ");
         _p(ANSI_RED);
         _p("FAIL");

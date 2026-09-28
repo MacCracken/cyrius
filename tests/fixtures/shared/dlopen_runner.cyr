@@ -3,12 +3,11 @@
 # cyrius_audit_shared.so in its private scratch dir, then compiles this and runs it WITH
 # THAT DIR AS ITS CWD — the path below is relative (v6.6.6: it was a fixed /tmp name shared
 # by concurrent check.sh runs).
-# ⛔ TWO CALLERS, AND THEY MUST MOVE TOGETHER: programs/checks/services.cyr's
-# _shared_dlopen_gate, and the "Regression — shared object (.so + dlopen)" step in
-# .github/workflows/ci.yml, which inlines its own copy of this pair. 6.6.6 changed the path
-# here and updated only the first, so local check.sh stayed green while CI exited 11 — the
-# open failed because that step staged the .so at the old /tmp path and ran the binary from
-# the repo root. Exit code:
+# ONE CALLER: programs/checks/services.cyr's _shared_dlopen_gate. CI's "Regression — shared
+# object (.so + dlopen)" step runs that row (`cyrius_check shared-dlopen`); until 6.6.9 it
+# inlined its own copy of this pair, and when 6.6.6 changed the path here only the driver
+# moved — local check.sh stayed green while CI exited 11. A workflow line that names this
+# fixture now fails tests/gates/toolchain/ci_steps_delegate_to_driver.sh. Exit code:
 #   99 — all sub-tests green
 #   10 — dynlib_bootstrap_cpu_features failed (need /lib64/ld-linux)
 #   11 — dynlib_open failed

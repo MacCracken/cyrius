@@ -1307,10 +1307,16 @@ fn main(): i64 {
             _suite_list_selectable_only();
             return 0;
         }
-        # The .tcyr corpus floor, from the ONE place it is defined (`_tcyr_corpus_floor`), so
-        # CI's independent .tcyr loop enforces the same number. CHANGELOG [6.6.9]
+        # The .tcyr corpus floor as the driver READS it (tests/tcyr/CORPUS_FLOOR, via
+        # `_tcyr_corpus_floor`) — how a gate proves the driver and CI's loops use one number.
+        # Exit 1, printing nothing on stdout, when the file is unreadable. CHANGELOG [6.6.9]
         if (streq(sel, "--tcyr-floor") == 1) {
-            print_num(_tcyr_corpus_floor());
+            var tf = _tcyr_corpus_floor();
+            if (tf < 1) {
+                _perr("error: tests/tcyr/CORPUS_FLOOR is missing or its line 1 is not a number\n");
+                return 1;
+            }
+            print_num(tf);
             _p("\n");
             return 0;
         }

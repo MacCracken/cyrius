@@ -28,6 +28,36 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   root, a strict-mode positive control, and a ratchet-0 structural scan for the old shape
   (86 `_skip` sites; five mutants RED).
 
+### Changed
+
+- **CI runs the check driver's gates instead of hand-copied twins of them** (bite 11; tail: CI
+  inlines its own copies of local gates). **Root cause:** v5.9.3 / .17 / .22 moved the
+  object-init, linker, shared-object and capacity shell regressions into programs/checks/, and
+  ci.yml kept a second shell copy of each "so the job stays granular" — plus an inline copy of
+  the fmt walk — while never running the driver at all. Nothing tied a copy to its source: when
+  6.6.6 moved the dlopen fixture's working directory, only the driver moved and CI exited 11
+  while check.sh was green, and CI's flat `for f in lib/*.cyr` fmt loop had fallen behind the
+  recursive walker (it never saw lib/unicode/). **Fix:** the `check` and `test` jobs build
+  `build/cyrius_check` exactly as check.sh does, and the Format, Lint and four Regression steps
+  are each one line — `CYRIUS_CHECK_NO_SKIP=1 ./build/cyrius_check <row>` (`fmt`, `lint`,
+  `object-init`, `linker`, `shared-dlopen`, `capacity`). The no-skip mode is load-bearing: the
+  inline copies failed on a missing tool, and a driver row reports SKIP there (see *Fixed*).
+  The capacity step no longer copies build/cycc into `$HOME/.cyrius/bin` (measured: unneeded). The
+  `.tcyr` loops stay DELIBERATELY INDEPENDENT of the driver (CO-02 was caught because the two
+  differed; the step now documents the two remaining differences — full environment vs
+  `CYRIUS_TEST_ENV=1` only, no deadline vs 120 s) and share only the corpus floor, which was
+  written down FOUR times (the driver, and the ubuntu, AGNOS and native-arm64 loops) and now
+  lives once, in `tests/tcyr/CORPUS_FLOOR` line 1, read by all four. Verified CI-faithfully in a
+  fresh copy of the tree with an empty `$HOME` and no cyrius on `PATH`, every changed step under
+  `bash -eo pipefail` (the .tcyr loop 371/371), and the floor read inside the agnosticos
+  container; ⚠ the proof proper is the first GitHub Actions run after the push. Gate:
+  `tests/gates/toolchain/ci_steps_delegate_to_driver.sh` (new) — ratchet 0 on workflow `run:`
+  lines that reference tests/fixtures/ or invoke a delegated row's tool outside the driver, the
+  delegated set == {fmt, lint} + the driver's selectable-only rows (each run in no-skip mode,
+  after a build in the same job), one corpus floor, and every CI SELF-HOST step self-hosting the
+  same per-target fork scripts/cross-os-selfhost.sh uses for that host (ecb/ach/cass/pi). Nine
+  mutants RED, including the old inline dlopen step restored.
+
 ### Added
 
 - **Four check-driver rows are selectable by name: `object-init`, `linker`, `shared-dlopen`,
@@ -37,8 +67,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   through the same `_row_*` fn, so there is one definition of each. The suite table gained a
   third question (`_suite_row(i, 2)`: "is this row part of the FULL run?") and the four answer
   no, so a full run does not execute them twice; `--list-selectable-only` prints them. Also
-  `--tcyr-floor`: the `.tcyr` corpus floor (250), from the one place it is now defined
-  (`_tcyr_corpus_floor`, programs/checks/selfhost.cyr), for CI's independent loop to read.
+  `--tcyr-floor`: the `.tcyr` corpus floor as the driver reads it (see *Changed*).
 
 ## [6.6.8] — 2026-09-28
 
