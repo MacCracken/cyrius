@@ -1236,3 +1236,7 @@ _chk_gate "$ROOT/tests/gates/diagnostics/f64_int_mix_warn.sh"
 # grain-sized chunk is MAP_NORESERVE and a refusal falls back to 16 MB chunks (as PID 1 in a
 # -m 256M VM it panicked). Row 4, the starved-VM PID-1 boot, is opt-in: CYRIUS_ALLOC_VM=1.
 _chk_gate "$ROOT/tests/gates/memory/alloc_first_chunk_small_board.sh"
+
+# 6.6.8 (bite 6) — every allocation check lib/io.cyr gained holds when ITS call alone is
+# refused (per-call fault injection): file_write_atomic / file_replace_atomic / getenv.
+_chk_gate "$ROOT/tests/gates/memory/io_alloc_refused_per_call.sh"

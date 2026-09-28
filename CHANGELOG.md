@@ -118,6 +118,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   256 MB grain, and — opt-in, `CYRIUS_ALLOC_VM=1` — the starved-VM PID-1 boot itself (`-m 256M`,
   `random.trust_cpu=off`; recipe in the header). On the 6.6.8 heap `-m 256M`, `-m 160M` and
   `-m 96M` all boot; on pi the same probes give `nr`, the 16 MB fallback and the kept grain.
+- **`lib/io.cyr`: six allocations stored through unchecked — a refused allocation is now a return
+  code, not a store to address 0.** (bite 6; the class 6.6.7 bite 8 closed in `file_read_whole`
+  / `_env_load`.) `_io_tmp_name` (→ `file_write_atomic` returns -ENOMEM, `path` untouched),
+  `_io_link_join` and both `_io_replace_target` buffers (→ `file_replace_atomic` returns -ENOMEM,
+  the target untouched) and `getenv`'s value copy (→ 0, a miss) now check; the Windows
+  `_xdir_exists` widen buffer is a stack buffer (it was `alloc(1024)` — on real cass `xmkdir_p`
+  of an existing directory faulted with the allocator refusing). Gated by
+  `tests/tcyr/crossos/io_refused_alloc.tcyr` (new; `ALLOC_MAX = 0` refuses every allocation on
+  every allocator arm; green on x86, pi, ecb, ach and cass; the 6.6.7 `io.cyr` SIGSEGVs on
+  Linux and faults on cass) and `tests/gates/memory/io_alloc_refused_per_call.sh` (new;
+  per-call fault injection reaches the SECOND and THIRD checks on each path, which a size
+  refusal cannot; each check removed alone turns it red).
 
 ### Added
 

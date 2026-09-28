@@ -247,7 +247,10 @@ fn _xdir_exists(path): i64 {
     # and nothing else can tell "already there" from "could not create".
     # ⚠ The 0xF019 reroute takes an ALREADY-WIDE path, unlike the mkdir/unlink reroutes
     # which widen inline — hence the widen loop here. ASCII-only, matching `_fs_widen`.
-    var wp = alloc(1024);
+    # A STACK buffer (v6.6.8): it was alloc(1024) stored through unchecked, so a refused
+    # allocation wrote the wide path to address 0. 511 UTF-16 units + NUL fit exactly.
+    var wbuf[1024];
+    var wp = &wbuf;
     var wi = 0;
     while (load8(path + wi) != 0) {
         if (wi >= 510) { break; }
@@ -728,6 +731,7 @@ fn _io_append_dec(buf, pos, val): i64 {
 fn _io_tmp_name(path): i64 {
     var plen = strlen(path);
     var buf = alloc(plen + 48);
+    if (buf == 0) { return 0; }   # v6.6.8: was memcpy'd through unchecked
     memcpy(buf, path, plen);
     memcpy(buf + plen, ".cyrtmp.", 8);
     var pos = plen + 8;
@@ -768,6 +772,7 @@ fn _io_link_join(link, target, tn): i64 {
         i = i + 1;
     }
     var out = alloc(cut + tn + 1);
+    if (out == 0) { return 0; }   # v6.6.8: was memcpy'd through unchecked
     memcpy(out, link, cut);
     memcpy(out + cut, target, tn);
     store8(out + cut + tn, 0);
@@ -777,20 +782,24 @@ fn _io_link_join(link, target, tn): i64 {
 # The path a REPLACE of `path` must write: `path` itself, or — when it is a symlink — the file
 # the chain finally names (40 hops, then -ELOOP (-40)). A negative errno or a NUL-terminated
 # path. Windows has no readlink route, so there it is always `path`. CHANGELOG [6.6.6]
+# A refused allocation is -ENOMEM (-12); all three were stored through unchecked. CHANGELOG [6.6.8]
 fn _io_replace_target(path): i64 {
     var cur = path;
     var lb = alloc(4097);
+    if (lb == 0) { return 0 - 12; }
     var hops = 0;
     while (hops < 40) {
         var n = xreadlink(cur, lb, 4096);
         if (n <= 0) { return cur; }   # not a link (or absent: it will be created)
         if (load8(lb) == 47) {
             var ab = alloc(n + 1);
+            if (ab == 0) { return 0 - 12; }
             memcpy(ab, lb, n);
             store8(ab + n, 0);
             cur = ab;
         } else {
             cur = _io_link_join(cur, lb, n);
+            if (cur == 0) { return 0 - 12; }
         }
         hops = hops + 1;
     }
@@ -809,6 +818,7 @@ fn _io_replace_target(path): i64 {
 # file_replace_atomic, which writes the file the link names. CHANGELOG [6.6.6]
 fn file_write_atomic(path, buf, len): i64 {
     var tmp = _io_tmp_name(path);
+    if (tmp == 0) { return 0 - 12; }   # -ENOMEM; `path` untouched. CHANGELOG [6.6.8]
     var fd = file_open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
     if (fd < 0) { return fd; }
     _io_keep_mode(fd, path);   # v6.6.6: an existing file keeps its permission bits
@@ -1171,7 +1181,8 @@ fn _env_load(): i64 {
     return 0;
 }
 
-# Read environment variable by name. Returns pointer to value or 0 if not found.
+# Read environment variable by name. Returns pointer to a heap copy of the value, or 0 if
+# not found (or if that copy could not be allocated — v6.6.8).
 # Reads from /proc/self/environ (null-separated KEY=VALUE pairs).
 fn getenv(name): i64 {
     # agnos has no /proc/self/environ; the kernel stages envp on the exec init
@@ -1224,6 +1235,7 @@ fn getenv(name): i64 {
                 var vlen = 0;
                 while (vstart + vlen < n && load8(buf + vstart + vlen) != 0) { vlen = vlen + 1; }
                 var result = alloc(vlen + 1);
+                if (result == 0) { return 0; }   # v6.6.8: a refused copy is a miss, not a store to 0
                 memcpy(result, buf + vstart, vlen);
                 store8(result + vlen, 0);
                 return result;
