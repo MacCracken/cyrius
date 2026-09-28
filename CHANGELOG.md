@@ -123,6 +123,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `cyrius_check --doc-stamp-row` runs that row alone; `version_bump_doc_anchors.sh` axis I runs it
   on an exact stamp, the old-head-with-new-version shape, a mid-line quote, and the roadmap the
   next bump writes (red on the old reader: I2, I3).
+- **`version-bump.sh` refuses a non-GNU sed up front, and uses `gsed` when that is the GNU
+  one.** (bite 8, placed from the 6.6.7 reviews.) The document steps use `sed -i` with no suffix,
+  `sed -E -i` and `0,/re/` address ranges — GNU-only; BSD sed (macOS: ecb, ach) fails on each,
+  some after earlier steps have rewritten their files, i.e. half a bump. The script now probes
+  for GNU sed, falls back to a GNU `gsed` (Homebrew's gnu-sed), and otherwise exits 2 naming the
+  requirement before writing anything (measured on real ecb and ach: rc 2, VERSION untouched).
+  `version_bump_doc_anchors.sh` axis J: a BSD-style fake `sed` first on PATH is refused with
+  nothing written; beside a GNU `gsed` the bump runs on gsed (red with the probe removed).
 
 ## [6.6.7] — 2026-09-27
 

@@ -64,6 +64,8 @@
 #      `**Current head: v<VERSION>**` at the start of a line: an exact stamp passes (I1), the
 #      OLD head with the new version in its parenthetical fails (I2), a mid-line quote does
 #      not count (I3), and the roadmap the next bump WRITES (axis A) reads current (I4).
+#   J  (6.6.8) GNU sed: a BSD-style sed first on PATH is refused (rc 2, named, nothing
+#      written, the fake never used for a rewrite); beside a GNU `gsed` the bump runs on gsed.
 #
 # MUTATIONS (each RED; run by hand when this gate was written)
 #   m1 step 5 back on the basic-regex date-only pattern                    A, B1
@@ -80,6 +82,7 @@
 #   m12 `(already $NEW — unchanged)` reported as `(updated)`                H4
 #   m13 same-version summary `(SKIPPED — …` reworded to `(updated — …`      F3
 #   m14 (6.6.8) the doc-stamp row back on `_stamp_near(…, "Current head:", …, 240, …)`  I2, I3
+#   m15 (6.6.8) the GNU-sed probe removed from version-bump.sh                 J1, J2
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 VB="$ROOT/scripts/version-bump.sh"
@@ -326,6 +329,31 @@ else
         _expect "I4: the roadmap the next bump WRITES (axis A) is not read as current by the row (rc $IRC)" '[ "$IRC" = 0 ]'
     fi
 fi
+
+# ---- J: 6.6.8 — GNU sed, or a named refusal that writes nothing --------------------------
+# The script's sed usage (`-i` with no suffix, `-E -i`, `0,/re/`) is GNU-only; BSD sed (macOS)
+# would fail part-way through a bump. A fake BSD-style `sed` first on PATH must be refused
+# before any write; the same fake beside a GNU `gsed` must bump normally through gsed.
+REAL_SED=$(command -v sed)
+mkdir -p "$T/bsd" "$T/gnu"
+printf '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "sed: illegal option -- -" >&2; echo "usage: sed script [-Ealnru] [-i extension] [file ...]" >&2; exit 1; fi\necho "fake BSD sed invoked: $*" >&2\nexit 1\n' > "$T/bsd/sed"
+cp "$T/bsd/sed" "$T/gnu/sed"
+printf '#!/bin/sh\nexec "%s" "$@"\n' "$REAL_SED" > "$T/gnu/gsed"
+chmod +x "$T/bsd/sed" "$T/gnu/sed" "$T/gnu/gsed"
+_fx "$T/j1"
+J1_BEFORE=$(cat "$T/j1/VERSION" "$T/j1/CLAUDE.md" "$T/j1/cyrius.cyml" "$T/j1/CHANGELOG.md" "$T/j1/docs/development/roadmap.md" | cksum)
+RC=0
+PATH="$T/bsd:$PATH" sh "$VB" --docs-only "$T/j1" 6.6.7 > "$T/J1.out" 2> "$T/J1.err" || RC=$?
+_expect "J1: a non-GNU sed was not refused (rc $RC)" '[ "$RC" = 2 ]'
+_expect "J1: the refusal does not name GNU sed" 'grep -qF "needs GNU sed" "$T/J1.err"'
+_expect "J1: the refused run changed a document" '[ "$(cat "$T/j1/VERSION" "$T/j1/CLAUDE.md" "$T/j1/cyrius.cyml" "$T/j1/CHANGELOG.md" "$T/j1/docs/development/roadmap.md" | cksum)" = "$J1_BEFORE" ]'
+_expect "J1: the fake BSD sed was used for a rewrite before the refusal" '! grep -qF "fake BSD sed invoked" "$T/J1.err"'
+_fx "$T/j2"
+RC=0
+PATH="$T/gnu:$PATH" sh "$VB" --docs-only "$T/j2" 6.6.7 > "$T/J2.out" 2> "$T/J2.err" || RC=$?
+_expect "J2: with GNU sed available as gsed the bump failed (rc $RC): $(head -3 "$T/J2.err")" '[ "$RC" = 0 ]'
+_expect "J2: the gsed bump did not rewrite the roadmap stamp" 'grep -qE "^\*\*Current head: v6\.6\.7\*\* \(" "$T/j2/docs/development/roadmap.md"'
+_expect "J2: the non-GNU sed was still invoked" '! grep -qF "fake BSD sed invoked" "$T/J2.err"'
 
 # anti-vacuous floor: every axis above contributes checks
 if [ "$CHECKS" -lt 75 ]; then
