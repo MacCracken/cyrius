@@ -28,7 +28,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   already follow; by-value capture spans both binding kinds and is one separate change. Top-level
   `defer` stays refused by name (6.6.7). Gate `tests/gates/frontend/toplevel_for_in.sh` (27 rows:
   host + qemu-aarch64 + wine, mutation-proven) and `tests/tcyr/crossos/toplevel_for_in.tcyr`
-  (ecb/ach/cass/pi). The C-style `for (var i = ...)` was never affected.
+  (12/12 on ecb, ach, cass and pi). On the real hosts the 6.6.7 compiler's unread-variable loop
+  exits 139 on ach (x86_64 Mach-O) and pi, `0xC0000005` on cass, and a *correct-looking* 4 on ecb
+  — the write into dyld's frame, silent. The C-style `for (var i = ...)` was never affected.
 - **An enum constant registered past var index 1024 is a compile-time constant again — array
   sizes, the duplicate-symbol warning and, on both macOS targets, the compile-time syscall
   reroutes.** (bite 1.) **Root cause:** v6.5.36 moved enum-constant presence out of band into
