@@ -24,6 +24,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `hash_seed_flood_resistance.sh` axis 4 statically refuses `load64(&ts)` / `SYS_TIME_UNIX`.
   ⚠ Every hashmap consumer now also includes `lib/chrono.cyr` (its globals `CLOCK_REALTIME` /
   `CLOCK_MONOTONIC`; a consumer redeclaring them — shakti — still compiles). cycc is unaffected.
+- **The whole `.tcyr` corpus runs green on both Macs — three files failed OUTSIDE `crossos/`.**
+  (bite 14; the 6.6.10 backlog item.) A full-corpus run on real ecb (Mach-O arm64) and ach (Intel
+  Mac) at bite start reported ecb 372/3, ach 373/2 — none of it platform breakage, all of it
+  test-side: `derive/derive_enum_inside_ifdef.tcyr` did not COMPILE for either Mach-O target (or
+  PE — `Green` / `Col_to_json` existed only under `CYRIUS_TARGET_LINUX`; the non-Linux arm now
+  carries the same derive in a taken `#ifndef`, so every target runs the case);
+  `math/math_inverse_trig.tcyr` compiled to ZERO assertions on aarch64 behind a stale
+  `#ifdef CYRIUS_ARCH_X86` that matched ganita ≤1.0.2 (the functions have been on every arch
+  since; 17/17 now on aarch64); `platform/dynlib_init.tcyr`'s non-glibc SKIP path printed a
+  0-assertion summary, which the cross-OS runner rightly scores as "ran nothing" — it now asserts
+  that the bootstrap declines.
 
 ## [6.6.9] — 2026-09-28
 

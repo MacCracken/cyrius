@@ -25,6 +25,11 @@ test_group("bootstrap sequence");
 var boot_rc = dynlib_bootstrap_cpu_features();
 if (boot_rc != 0) {
     syscall(SYS_WRITE, 1, "  SKIP: ld-linux not available (non-glibc host)\n", 48);
+    # 6.6.10: the SKIP path asserts what it observed. It used to print a summary of ZERO
+    # assertions, which the cross-OS runner rightly scores as a binary that ran nothing — so
+    # this file was red on both Macs in the full-corpus run. On a non-glibc host the bootstrap
+    # must DECLINE (non-zero), never claim a libc it could not find. CHANGELOG [6.6.10]
+    assert_neq(boot_rc, 0, "non-glibc host: dynlib_bootstrap_cpu_features declines instead of claiming success");
     var _r = assert_summary();
     syscall(60, 0);
 }
