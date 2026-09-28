@@ -8,7 +8,7 @@
 #   freestanding.
 # process.cyr — process management
 # Usage: include "lib/process.cyr"
-# Requires: lib/syscalls.cyr, lib/string.cyr, lib/alloc.cyr, lib/tagged.cyr
+# Includes its own definers (6.6.9): syscalls.cyr, alloc.cyr, string.cyr, result.cyr, vec.cyr, str.cyr.
 #
 # v5.10.18 — was hard-blocked on `O_WRONLY` from `lib/io.cyr` for
 # the `/dev/null` redirect in `run_capture`; cyrius's own
@@ -19,6 +19,17 @@
 # literal `1` + a comment to keep this module self-sufficient
 # (matching the pattern in `lib/fdlopen.cyr:234` —
 # `# O_RDONLY`).
+
+# 6.6.9: the rest of that job. Every arm — POSIX, process_win and process_agnos — calls the
+# syscall peer, alloc, strlen, Ok/Err, vec_* and str_data, and this file included none of them,
+# so a bare include was a hard error on Linux (`undefined variable 'SYS_GETPPID'`) and agnos
+# (`SPAWN_ARGV_MAX`) and ~25 undefined functions elsewhere. CHANGELOG [6.6.9]
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/result.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
 
 # v6.0.51: Win32 has no fork/exec — the Windows process surface lives in a
 # CreateProcessW-based variant. The POSIX implementations below are guarded
