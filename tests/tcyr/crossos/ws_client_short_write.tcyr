@@ -5,7 +5,8 @@
 # lib/ws_server.cyr both define the WS_OP_* names). `_ws_send_frame` wrote the header and the
 # masked payload with bare sys_write calls and dropped both counts, so under SO_SNDTIMEO (or a
 # signal) the peer got a truncated frame while ws_send_binary returned `len`. It now goes through
-# lib/net.cyr's sock_send_all and returns -1. CHANGELOG [6.6.8]
+# lib/net.cyr's sock_send_all and returns -1; ws_connect's handshake request likewise marks the
+# socket CLOSED instead of reading a 101 for a request that never went out. CHANGELOG [6.6.8]
 include "lib/string.cyr"
 include "lib/alloc.cyr"
 include "lib/syscalls.cyr"
@@ -52,6 +53,31 @@ fn main(): i64 {
     assert_eq(load8(&got) & 0xFF, 0x81, "FIN + TEXT");
     sys_close(qa);
     sys_close(qb);
+
+    # ws_connect's handshake request. The server's 101 is already waiting on the socket, so the
+    # only thing that can decide the outcome is the request write — forced to fail here by
+    # shutting this end for writing (-EPIPE, SIGPIPE ignored). Pre-6.6.8 ws_connect dropped that
+    # count, read the 101 and reported an OPEN socket the server never received a request on.
+    test_group("v6.6.8 — ws_connect: a handshake request that was not sent is not OPEN");
+    signal_ignore(SIGPIPE);
+    var r101 = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n";
+    var h[16];
+    assert_eq(sys_socketpair(1, 1, 0, &h), 0, "socketpair");
+    var ha = load32(&h);
+    var hb = load32(&h + 4);
+    assert_eq(sys_write(hb, r101, strlen(r101)), strlen(r101), "control: the peer's 101 is queued");
+    assert_eq(ws_state(ws_connect(ha, "/chat", "h")), WS_OPEN, "control: request sent, 101 read -> OPEN");
+    sys_close(ha);
+    sys_close(hb);
+    var k[16];
+    assert_eq(sys_socketpair(1, 1, 0, &k), 0, "socketpair");
+    var ka = load32(&k);
+    var kb = load32(&k + 4);
+    assert_eq(sys_write(kb, r101, strlen(r101)), strlen(r101), "the peer's 101 is queued");
+    assert_eq(sock_shutdown(ka, 1), 0, "SHUT_WR on the client end");
+    assert_eq(ws_state(ws_connect(ka, "/chat", "h")), WS_CLOSED, "request not sent -> CLOSED (it used to be OPEN)");
+    sys_close(ka);
+    sys_close(kb);
     #endif
     #endif
 

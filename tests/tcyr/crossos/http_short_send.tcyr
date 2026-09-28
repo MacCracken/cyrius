@@ -1,0 +1,161 @@
+# http_short_send.tcyr — v6.6.8: lib/http.cyr's three request senders report a request they
+# could not send, instead of dropping sock_send's count and waiting for a reply to it.
+#
+# ⛔ WHY. http_get / http_get_r / http_get_a called sock_send(fd, req, len) and ignored the
+# result, so a failed or short request write went on to read a "response" — status 0 (not
+# HTTP_ERROR) from http_get / http_get_a, and Err(HttpNon2xx) (not HttpNetErr) from
+# http_get_r. They now go through lib/net.cyr's sock_send_all and fail with HTTP_ERROR /
+# Err(HttpNetErr). The WebSocket halves of the same fix are sock_send_all_short_write.tcyr and
+# ws_client_short_write.tcyr; http.cyr gets its own file because it cannot share one with a
+# ws module.
+#
+# ⚠ HOW THE FAILURE IS FORCED. http_get makes its own socket, so the test cannot shut it down
+# first. On Linux a forked child installs a seccomp filter that (a) answers connect() with 0
+# without running it and (b) answers write() with -EPIPE — the request write is the only write
+# the child makes. Both effects are ASSERTED in the child before the call under test (a real
+# connect to 127.0.0.1:1 would be refused; a pipe write would succeed), so a filter that did
+# not take cannot pass as a fix. Connect is faked rather than served because http_get hands
+# sock_connect the HOST STRING pointer where it wants a packed IPv4 address (a separate
+# defect, reported separately), so it cannot reach a real loopback listener today.
+# Darwin has no seccomp; there, and on PE/agnos, only the target-neutral group runs.
+# CHANGELOG [6.6.8]
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/tagged.cyr"
+include "lib/net.cyr"
+include "lib/http.cyr"
+include "lib/assert.cyr"
+
+#ifdef CYRIUS_TARGET_LINUX
+# One BPF instruction: struct sock_filter { u16 code; u8 jt; u8 jf; u32 k; }.
+fn _hs_ins(p, i, code, jt, jf, k): i64 {
+    store16(p + i * 8, code);
+    store8(p + i * 8 + 2, jt);
+    store8(p + i * 8 + 3, jf);
+    store32(p + i * 8 + 4, k);
+    return 0;
+}
+
+# The native (kernel-side) numbers: the filter sees what the kernel sees, after ESYSXLAT.
+fn _hs_nr_connect(): i64 {
+    #ifdef CYRIUS_ARCH_AARCH64
+    return 203;
+    #endif
+    #ifdef CYRIUS_ARCH_X86
+    return 42;
+    #endif
+}
+fn _hs_nr_write(): i64 {
+    #ifdef CYRIUS_ARCH_AARCH64
+    return 64;
+    #endif
+    #ifdef CYRIUS_ARCH_X86
+    return 1;
+    #endif
+}
+
+# connect -> 0 (not run), write -> -EPIPE, everything else allowed. Returns 0 or -errno.
+fn _hs_install(): i64 {
+    var prog = alloc(8 * 8);
+    _hs_ins(prog, 0, 0x20, 0, 0, 4);                        # ld [4]      arch
+    _hs_ins(prog, 1, 0x15, 0, 5, AUDIT_ARCH_NATIVE);         # jne -> allow
+    _hs_ins(prog, 2, 0x20, 0, 0, 0);                        # ld [0]      nr
+    _hs_ins(prog, 3, 0x15, 0, 1, _hs_nr_connect());
+    _hs_ins(prog, 4, 0x06, 0, 0, 0x00050000);               # ERRNO | 0
+    _hs_ins(prog, 5, 0x15, 0, 1, _hs_nr_write());
+    _hs_ins(prog, 6, 0x06, 0, 0, 0x00050020);               # ERRNO | EPIPE
+    _hs_ins(prog, 7, 0x06, 0, 0, 0x7FFF0000);               # ALLOW
+    var fprog[16];
+    store64(&fprog, 0);
+    store16(&fprog, 8);
+    store64(&fprog + 8, prog);
+    var r = sys_prctl(38, 1, 0, 0, 0);                      # PR_SET_NO_NEW_PRIVS
+    if (r < 0) { return r; }
+    return sys_seccomp(1, 0, &fprog);                       # SECCOMP_SET_MODE_FILTER
+}
+
+# Child body. Exit 97: this kernel has no seccomp at all (-ENOSYS — qemu-user, which answers
+# the seccomp syscall with ENOSYS). Exit 99: the filter is not doing what this file relies on
+# (precondition). Otherwise exit with a code the parent decodes per `which`.
+fn _hs_child(which): i64 {
+    var pf[8];
+    if (sys_pipe(&pf) != 0) { syscall(60, 99); }
+    var ir = _hs_install();
+    if (ir == 0 - 38) { syscall(60, 97); }
+    if (ir != 0) { syscall(60, 99); }
+    if (sys_write(load32(&pf + 4), "x", 1) != 0 - 32) { syscall(60, 99); }
+    var pt, pr = tcp_socket();
+    if (is_err_result(pt) == 1) { syscall(60, 99); }
+    var ct, cr = sock_connect(pr, INADDR_LOOPBACK(), 1);    # port 1: refused if it really ran
+    if (is_err_result(ct) == 1) { syscall(60, 99); }
+    sys_close(pr);
+    var url = "http://127.0.0.1:1/index.html";
+    if (which == 0) {
+        var r0 = http_get(url);
+        if (load64(r0) == HTTP_ERROR) { syscall(60, 10); }
+        syscall(60, 20 + (load64(r0) & 0x3F));
+    }
+    if (which == 1) {
+        var t1, v1 = http_get_r(url);
+        if (is_err_result(t1) == 0) { syscall(60, 30); }
+        syscall(60, 40 + (v1 & 0x3F));                      # 41 = HttpNetErr, 42 = HttpNon2xx
+    }
+    if (which == 2) {
+        var r2 = http_get_a(arena_allocator(131072), url);
+        if (r2 == 0) { syscall(60, 50); }
+        if (load64(r2) == HTTP_ERROR) { syscall(60, 10); }
+        syscall(60, 20 + (load64(r2) & 0x3F));
+    }
+    syscall(60, 98);
+    return 0;
+}
+
+fn _hs_run(which): i64 {
+    var pid = sys_fork();
+    if (pid == 0) { _hs_child(which); }
+    var st[4];
+    store32(&st, 0);
+    sys_waitpid(pid, &st, 0);
+    if (WIFEXITED(load32(&st)) != 1) { return 0 - 1; }
+    return WEXITSTATUS(load32(&st));
+}
+#endif
+
+fn main(): i64 {
+    alloc_init();
+
+    #ifdef CYRIUS_TARGET_LINUX
+    test_group("v6.6.8 — http_get / http_get_r / http_get_a: a request that was not sent is an error");
+    var e0 = _hs_run(0);
+    if (e0 == 97) {
+        # ONLY -ENOSYS from seccomp() lands here; any other install failure is exit 99 and FAILS.
+        # Every real Linux host in the corpus (x86_64, pi) has seccomp and runs this group.
+        var sk = "  SKIP: seccomp() is -ENOSYS here (qemu-user); the HTTP group needs a real kernel\n";
+        sys_write(1, sk, strlen(sk));
+    }
+    if (e0 != 97) {
+        assert_neq(e0, 99, "http_get: the seccomp stand-in fakes connect and fails writes (precondition)");
+        assert_eq(e0, 10, "http_get: status HTTP_ERROR (it used to be status 0 — exit 20)");
+        var e1 = _hs_run(1);
+        assert_neq(e1, 99, "http_get_r: precondition");
+        assert_eq(e1, 40 + HttpNetErr, "http_get_r: Err(HttpNetErr) (it used to be Err(HttpNon2xx) — exit 42)");
+        var e2 = _hs_run(2);
+        assert_neq(e2, 99, "http_get_a: precondition");
+        assert_eq(e2, 10, "http_get_a: status HTTP_ERROR (it used to be status 0 — exit 20)");
+    }
+    #endif
+
+    # Every target, so no host scores this file 0 of 0.
+    test_group("v6.6.8 — a URL that never reaches the send is still HTTP_ERROR");
+    assert_eq(load64(http_get("http://")), HTTP_ERROR, "empty host");
+    var bt, bv = http_get_r("http://bad host/");
+    assert_eq(is_err_result(bt), 1, "http_get_r rejects a split request line");
+    assert_eq(bv, HttpBadUrl, "…as HttpBadUrl");
+
+    return assert_summary();
+}
+var ec = main();
+syscall(60, ec);

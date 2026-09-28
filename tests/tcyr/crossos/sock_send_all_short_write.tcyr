@@ -6,7 +6,9 @@
 # sys_write and dropped the count. A blocking stream write may return FEWER bytes than asked —
 # SO_SNDTIMEO expiring (lib/net.cyr's sock_set_send_timeout sets it) or a signal — and then the
 # frame on the wire was truncated while the sender reported success: the peer read the next
-# frame's header out of this one's missing payload. Found in the 6.6.7 review; on agnos the
+# frame's header out of this one's missing payload. The 101 handshake group forces its write to
+# fail by shutting the end for writing first; lib/http.cyr's senders are pinned separately by
+# http_short_send.tcyr. Found in the 6.6.7 review; on agnos the
 # socket write route already retried to completion, so this was the portable half.
 #
 # ⚠ THE PRECONDITION IS ASSERTED, not assumed: group 1 first shows a raw write on this host
@@ -27,13 +29,58 @@ include "lib/bayan.cyr"
 include "lib/ws_server.cyr"
 include "lib/assert.cyr"
 
-# ws_server's handshake parser dependency (lib/sandhi.cyr); unreached here, supplied so the
-# module resolves without dragging in sandhi's TLS stack (the ws_server_handshake.tcyr pattern).
-fn sandhi_server_find_header(buf, blen, name): i64 { return 0; }
+# ws_server's handshake parser dependency (lib/sandhi.cyr). A local stand-in with the real one's
+# contract — (buf, blen, name) -> allocated NUL-terminated value or 0, case-insensitive name —
+# so the handshake group reaches the 101 send without dragging in sandhi's TLS stack (the
+# ws_server_handshake.tcyr pattern).
+fn _sst_lc(c): i64 { if (c >= 65 && c <= 90) { return c + 32; } return c; }
+fn sandhi_server_find_header(buf, blen, name): i64 {
+    var nlen = strlen(name);
+    var i = 0;
+    while (i < blen) {
+        var hit = 1;
+        var j = 0;
+        while (j < nlen) {
+            if (i + j >= blen) { hit = 0; }
+            if (hit == 1) {
+                if (_sst_lc(load8(buf + i + j)) != _sst_lc(load8(name + j))) { hit = 0; }
+            }
+            j = j + 1;
+        }
+        if (hit == 1 && i + nlen < blen && load8(buf + i + nlen) == 58) {
+            var v = i + nlen + 1;
+            while (v < blen && load8(buf + v) == 32) { v = v + 1; }
+            var e = v;
+            while (e < blen && load8(buf + e) != 13 && load8(buf + e) != 10) { e = e + 1; }
+            var out = alloc(e - v + 1);
+            var k = 0;
+            while (v + k < e) { store8(out + k, load8(buf + v + k)); k = k + 1; }
+            store8(out + k, 0);
+            return out;
+        }
+        while (i < blen && load8(buf + i) != 10) { i = i + 1; }
+        i = i + 1;
+    }
+    return 0;
+}
 
+# A valid RFC 6455 upgrade request (the RFC's own sample key).
+fn _upgrade_req(): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "GET /chat HTTP/1.1\r\nHost: h\r\nUpgrade: websocket\r\n");
+    str_builder_add_cstr(sb, "Connection: Upgrade\r\nSec-WebSocket-Version: 13\r\n");
+    str_builder_add_cstr(sb, "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n");
+    return str_data(str_builder_build(sb));
+}
+
+# POSIX only, like its callers: PE and agnos declare no sys_socketpair.
+#ifndef CYRIUS_TARGET_WIN
+#ifndef CYRIUS_TARGET_AGNOS
 fn _pair(fds): i64 {
     return sys_socketpair(1, 1, 0, fds);          # AF_UNIX, SOCK_STREAM
 }
+#endif
+#endif
 
 fn main(): i64 {
     alloc_init();
@@ -98,6 +145,31 @@ fn main(): i64 {
     sys_waitpid(pid, &st, 0);
     assert_eq(WIFEXITED(load32(&st)), 1, "the reader exited normally");
     assert_eq(WEXITSTATUS(load32(&st)), 0, "the reader received exactly 10 + 1048576 bytes");
+
+    # The 101 response is the handshake's only write. Its failure is forced deterministically:
+    # this end is shut for writing before the call, so the send is -EPIPE (SIGPIPE ignored). The
+    # pre-6.6.8 code dropped that count and handed back a WebSocket the peer never agreed to.
+    test_group("v6.6.8 — ws_server_handshake: a 101 that was not sent is no WebSocket");
+    signal_ignore(SIGPIPE);
+    var req = _upgrade_req();
+    var rq = strlen(req);
+    var p4[16];
+    assert_eq(_pair(&p4), 0, "socketpair");
+    var a4 = load32(&p4);
+    var b4 = load32(&p4 + 4);
+    assert_neq(ws_server_handshake(a4, req, rq), 0, "control: to a live peer the handshake returns a handle");
+    var got[64];
+    assert_gt(sys_read(b4, &got, 12), 11, "control: the peer reads the response");
+    assert_eq(memeq(&got, "HTTP/1.1 101", 12), 1, "control: …and it is the 101");
+    sys_close(a4);
+    sys_close(b4);
+    var p5[16];
+    assert_eq(_pair(&p5), 0, "socketpair");
+    var a5 = load32(&p5);
+    assert_eq(sock_shutdown(a5, 1), 0, "SHUT_WR on the server end");
+    assert_eq(ws_server_handshake(a5, req, rq), 0, "a 101 that was not sent is 0 (it used to be a handle)");
+    sys_close(a5);
+    sys_close(load32(&p5 + 4));
     #endif
     #endif
 

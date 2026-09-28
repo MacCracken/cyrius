@@ -15,6 +15,8 @@
 # ⚠ MUTATION-PROVEN: with `_pp_inl_add` stubbed to a no-op, axis 1's call count does not drop
 # (4 callq over the baseline, not 0 — "7, not 3" when this counted the whole binary) while every answer stays correct — which is exactly why axis 1 asserts the
 # CALL COUNT and not just the value. An inlining change is invisible to a result assertion.
+# Axis 3's mirror: with `_pp_inl_has` answering 1 for every name, plain_get reads 0 callq over
+# its baseline and the row fails (the absolute `>= 2` it replaced passed that mutant at 5).
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: derive_accessors_inlined: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$T"' EXIT
@@ -111,11 +113,23 @@ EOF
 "$T/stage1" < "$T/a3.cyr" > "$T/a3" 2>/dev/null || { echo "FAIL derive_accessors_inlined axis3: control did not compile"; exit 1; }
 chmod +x "$T/a3"; "$T/a3"; g3=$?
 [ "$g3" -eq 42 ] || { echo "FAIL derive_accessors_inlined axis3: control gave $g3, expected 42"; exit 1; }
+# ⚠ Counted against a baseline too, for axis 1's reason: the probe links all of lib/syscalls.cyr,
+# whose own callq count (6 at 6.6.8) cleared the old absolute `>= 2` on its own, so the row read
+# GREEN with plain_get inlined. The control does the same load64 in main with no fn, so the
+# DIFFERENCE is plain_get's one call site: 1 out of line, 0 if it was swept into the inline path.
+# CHANGELOG [6.6.8]
+printf '%s\n' 'include "lib/syscalls.cyr"' 'fn main(): i64 {' '    var buf: i64[2];' \
+  '    store64(&buf, 42);' '    var t = 0;' '    var i = 0;' \
+  '    while (i < 100) { t = t + load64(&buf + 0); i = i + 1; }' \
+  '    syscall(60, (t / 100) & 0xFF);' '    return 0;' '}' 'var e = main();' > "$T/a3b.cyr"
+"$T/stage1" < "$T/a3b.cyr" > "$T/a3b" 2>/dev/null || { echo "FAIL derive_accessors_inlined axis3: the baseline did not compile"; exit 1; }
+[ -s "$T/a3b" ] || { echo "FAIL derive_accessors_inlined axis3: the baseline binary is empty"; exit 1; }
+PB=$(llvm-objdump -d "$T/a3b" 2>/dev/null | grep -c callq)
 PC=$(llvm-objdump -d "$T/a3" 2>/dev/null | grep -c callq)
-[ "$PC" -ge 2 ] || {
-  echo "FAIL derive_accessors_inlined axis3: a PLAIN fn was inlined ($PC callq). The side channel"
-  echo "  must fire only for names the preprocessor generated."
+[ $((PC - PB)) -ge 1 ] || {
+  echo "FAIL derive_accessors_inlined axis3: a PLAIN fn was inlined ($PC callq vs $PB in the baseline;"
+  echo "  out of line is 1 more). The side channel must fire only for names the preprocessor generated."
   exit 1; }
 
-echo "PASS derive_accessors_inlined: generated accessors inlined ($((NC - NB)) callq over the baseline; out-of-line is 4) · stacked #derive still fires · a plain fn of the same shape stays out of line"
+echo "PASS derive_accessors_inlined: generated accessors inlined ($((NC - NB)) callq over the baseline; out-of-line is 4) · stacked #derive still fires · a plain fn of the same shape stays out of line ($((PC - PB)) callq over its baseline)"
 exit 0

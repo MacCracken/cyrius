@@ -238,7 +238,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `SYS_MKNODAT = 259` (the x86 numbers; the agnos peer mints none, by its own rule); eight
   ESYSXLAT rows renumber them on ELF-aarch64 (`272→97`, `161→51`, `155→41`, `125→90`, `126→91`,
   `310→270`, `311→271`, `259→33`), appended below the compat rows they produce into and above the
-  private-alias band. `lib/syscalls_linux_common.cyr` gains `sys_unshare(flags)`,
+  private-alias band. ⚠ **Size:** ESYSXLAT is emitted inline at every ELF-aarch64 syscall site,
+  so each site grows by the eight rows' 24 instructions, **+96 B**; the native aarch64 compiler
+  (604 sites) goes 1,640,256 → 1,705,792 B, and so does the tracked `build/cycc-native-aarch64`
+  once it is regenerated. `lib/syscalls_linux_common.cyr` gains `sys_unshare(flags)`,
   `sys_chroot(path)`, `sys_pivot_root(new_root, put_old)`, `sys_capget(hdr, data)`,
   `sys_capset(hdr, data)`, `sys_process_vm_readv` / `_writev(pid, liov, liovcnt, riov, riovcnt,
   flags)` and `sys_mknodat(dirfd, path, mode, dev)`, each declining with -78 on macOS (Darwin has
@@ -327,8 +330,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   back short on this host — then requires `sock_send_all` and a 1 MiB `ws_server_send_binary`
   nobody reads to fail, and a forked reader to receive exactly 10 + 1048576 bytes) and
   `tests/tcyr/crossos/ws_client_short_write.tcyr` (new; the client frame must be -1, not
-  1048576). 14/14 and 9/9 on x86_64, qemu-aarch64, pi, ecb and ach; 2/2 each on cass. Each is RED
-  with its module reverted (the server frame returned 0, the client frame 1048576).
+  1048576). Both also drive the HANDSHAKE writes, forced to fail deterministically by shutting
+  the end for writing first (-EPIPE, SIGPIPE ignored) with the peer's reply already queued:
+  `ws_server_handshake` must return 0 (it returned a handle) and `ws_connect` must leave the
+  socket CLOSED (it read the queued 101 and said OPEN), each beside a live-peer control. The HTTP
+  senders are pinned by `tests/tcyr/crossos/http_short_send.tcyr` (new): `http_get` makes its own
+  socket, so a forked child installs a seccomp filter that answers `connect` with 0 without
+  running it and `write` with -EPIPE — both ASSERTED in the child before the call, and qemu-user's
+  -ENOSYS for `seccomp()` is the only reason the group is skipped — and requires `HTTP_ERROR`
+  from `http_get` / `http_get_a` (they returned status 0) and `Err(HttpNetErr)` from `http_get_r`
+  (it returned `Err(HttpNon2xx)`). 21/21, 16/16 and 9/9 on x86_64 and pi; 21/21, 16/16 and 3/3 on
+  ecb and ach (no seccomp on Darwin); 2/2, 2/2 and 3/3 on cass. Every fixed write is RED alone
+  with its hunk reverted — each frame path, both handshakes on x86_64, ecb, ach and pi, and each
+  of the three HTTP senders.
 
 ### Changed
 
@@ -369,7 +383,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   it went RED when `fd_set_nonblocking` (three calls) landed, with the accessors still inlined
   (6 callq, all in the stdlib). It now builds a control with the same includes and struct and no
   accessor calls and requires the DIFFERENCE to be <= 1 (inlined 0, out of line 4); with
-  `_pp_inl_add` stubbed it reads 4 over the baseline and fails.
+  `_pp_inl_add` stubbed it reads 4 over the baseline and fails. Axis 3 (a plain fn must NOT be
+  inlined) had the same defect the other way round — an absolute `>= 2` that the stdlib's own 6
+  calls cleared with `plain_get` inlined — and now requires one call over a control that does the
+  same `load64` in `main`; with `_pp_inl_has` answering 1 for every name it reads 0 over and fails
+  (the old check passed it at 5).
 
 ### Added
 
@@ -412,8 +430,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   reason each. <1 s.
 
 - **`tests/gates/platform/fcntl_wrapper_only.sh` (new).** (bite 3.) Axis A: no
-  `syscall(SYS_FCNTL|72|25, …)` in `lib/ cbt/ programs/ tests/tcyr/` outside `sys_fcntl` (579
-  files; the sigil and vani folds exempt by name with a reason — theirs to migrate). Axis B:
+  `syscall(SYS_FCNTL|72|25, …)` in `lib/ cbt/ programs/ tests/tcyr/` outside `sys_fcntl` (every
+  file there; the sigil and vani folds exempt by name with a reason — theirs to migrate). Axis B:
   `fd_set_nonblocking` takes its bit from `_fd_o_nonblock()` (the literals 4 / 2048) and never
   names the public `O_NONBLOCK`. Axis C: PE and agnos decline all three with -38. Axis D runs
   `crossos/fd_nonblocking.tcyr` on the host and under qemu-aarch64. Four mutations, all RED. <1 s.
