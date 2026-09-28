@@ -58,6 +58,7 @@ fn regression_exec_with_arg_capture_status(bin_path, arg, buf, buflen, envp, sta
 }
 # No verb here runs a child under a deadline, so none has ever been ended at one.
 fn regression_deadline_kills(): i64 { return 0; }
+# The bound that fired for the most recent deadline kill — 0, since none ever has here.
 fn regression_last_deadline_ms(): i64 { return 0; }
 # Nothing here forks a child tree, so there is nothing to end; 0 descendants were running.
 fn regression_terminate_children(grace_ms): i64 { return 0; }
