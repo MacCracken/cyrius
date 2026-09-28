@@ -6,6 +6,28 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.10] — 2026-09-28
 
+### Security
+
+- **CVE-53 (P1): `lib/ws.cyr`'s `ws_recv_frame` let a remote peer choose its allocation size and
+  read frames it had not received.** (bite 14; entry in `docs/audit/2026-09-03-security-audit.md`.)
+  **Root cause:** the extended-length, mask and payload reads were single unchecked `sys_read`
+  calls — a short read (any frame larger than one TCP segment) left stale stack bytes as the
+  length or mask and reported a partial payload as complete; the 64-bit length dropped its high 32
+  bits; and `alloc(plen + 1)` took the peer's length unbounded and unchecked, so a peer declaring
+  ~4 GiB crashed the client through the failed allocation. **Fix:** read-exactly loops for every
+  frame part (EINTR retried); a 64-bit length with any top-32 bit set, or above the new public
+  `WS_RECV_MAX_PAYLOAD` (16 MiB), is refused before any allocation; the allocation is checked; a
+  refused or short frame returns 0 with `len_out` 0 and marks the connection CLOSED. Same file:
+  `_ws_handshake_request` overran its fixed 512-byte buffer with a long path (the CVE-50 shape —
+  the next `alloc` came back full of path bytes), `ws_connect` read status bytes past a short
+  response, and `ws_new` / the sender's mask buffer used `alloc` unchecked. `lib/ws_server.cyr`'s
+  reader gets the same exact reads (a split frame used to drop a healthy client) and refuses the
+  top-bit length that composed to a NEGATIVE `len` past both bounds; its unchecked allocs are
+  checked. majra's own reader was already correct (its 2.6.9 repair); yantra reads through this
+  `ws_recv`. **Proof:** `tests/tcyr/stdlib/ws_recv_frame_short_reads.tcyr` (30 rows, incl. a
+  forked writer delivering one frame in nine pieces) — the 6.6.9 reader fails 17;
+  `tests/tcyr/stdlib/ws_server_recv_frame_exact.tcyr` — the 6.6.9 server reader fails 3 of 7.
+
 ### Fixed
 
 - **The hash seed's getrandom-failure fallback has nanosecond resolution — it had one-second
