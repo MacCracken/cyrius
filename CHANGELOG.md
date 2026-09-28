@@ -29,8 +29,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   renames a counted slot. No heap/brk layout change; one-step fixpoint. After: 20k constants
   **90 ms**, 20k enum members **78 ms**, 20k deferred **135 ms**, 120k deferred 0.8 s.
   Gate `tests/gates/frontend/globals_scale_linear.sh` (new): const / enum / deferred /
-  reference rows at 10k vs 20k as a RATIO (limit 3.0x; now ~1.9x, 6.6.8 ~4.0x on every row;
-  mutation — `_findvar_core` restored to the reverse walk — RED on all four). Bench rows
+  reference / redeclaration rows at 10k vs 20k as a RATIO (limit 3.0x; now ~1.9x, 6.6.8 ~4.0x
+  on every row; mutation — `_findvar_core` restored to the reverse walk — RED on the first
+  four; the supersede scan restored — next bullet — RED on the redeclaration row). Bench rows
   `compiler/scale_20k_{const_globals,enum_members,deferred_globals}` in `bench-history.sh`.
 - **The deferred global-initializer table grows — the "too many initialized globals (max
   4096)" cap is gone, and it never counted what it said.** (bite 1; audit.) **Root cause:**
@@ -45,7 +46,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   grows with it. The lift exposed the next quadratic: `_gv_supersede` scanned EVERY deferred
   entry per constant redeclaration, bounded only by the cap. It now walks a per-name list
   recorded at registration from the same tokens the scan compared (`_gvx_*`), so the same
-  supersede bits are set. Heap-map comments in the five forks that list the region updated;
+  supersede bits are set — 10k → 20k redeclarations 108 → 212 ms, where the old scan (made to
+  read the grown table, so still correct) takes 3.4 → 13.7 s. That scan is invisible to every
+  correctness check, so it is pinned twice: `globals_scale_linear.sh`'s redeclaration row (RED
+  at 4.0x on the mutant) and a static axis in the gate below (`_gv_supersede` never reads
+  `gvar_cnt`). Heap-map comments in the five forks that list the region updated;
   no layout change. Guide *Global Initializers* and *Known Limitations* rewritten. Gate
   `tests/gates/memory/gvar_toks_cap_guards_the_store.sh` (which pinned the cap) is now
   **`gvar_toks_grows_past_4096.sh`**: five shapes at 5000 plus the filed 20,000 repro compile
@@ -53,7 +58,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   while every earlier initializer still runs; a `kernel;` replay past 4096 stores into the
   declaration-zone slot; statically, exactly one growing store path — because a store run past
   the region without growing is INVISIBLE (the bytes up to TS are free; a no-grow mutant runs
-  120,000 entries correctly), the 6.6.6 lesson this gate inherits. Three mutants RED. A
+  120,000 entries correctly), the 6.6.6 lesson this gate inherits. Four mutants RED. A
   20,000-entry fixture (supersede + `= 0` + strings + destructures) exits 42 on the host,
   qemu-aarch64, cx, wine, and natively on ecb, ach, pi and cass.
 - **LEXID's identifier-dedup buckets hash every byte of the name.** (bite 1; audit.)

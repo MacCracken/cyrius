@@ -37,7 +37,8 @@
 #   5. STATIC — the one growing store path: exactly one gvar_cnt bump and one gvar_toks store
 #      in parse_decl.cyr, both inside _gv_defer; _gv_defer grows the table past its cap; the
 #      fixed 0x729000 base appears in code only as _gvt's initial value; _gv_ent_set and the
-#      supersede list grow too.
+#      supersede list grow too; _gv_supersede walks the per-name list and never reads
+#      gvar_cnt (its runtime twin is globals_scale_linear.sh's redecl row).
 #
 # MUTATION LEDGER (6.6.9, each on a scratch copy of src built with the tree's cycc):
 #   1. real tree -> GREEN
@@ -46,6 +47,9 @@
 #   3. `_gv_supersede` returns 0 immediately -> RED axis 2 (exit 19: g4500, g10 and db4700 all
 #      keep their deferred value)
 #   4. the 6.6.8 parse_decl.cyr (the cap) -> RED axes 1-5 (32 checks)
+#   5. `_gv_supersede` restored to the 6.6.8 O(entries) `_gv_entry_hit` scan over `_gvt(S)`
+#      (correct past 4096, quadratic) -> RED axis 5 only, 2 checks (axes 1-3 stay GREEN;
+#      globals_scale_linear.sh's redecl row reads it at 4.0x)
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -165,6 +169,12 @@ grep -q '_gvt_cap = _gvt_cap \* 2' "$WORK/defer.txt" || bad "axis 5: _gv_defer n
 grep -q '_gvx_note(S, gc, sti)' "$WORK/defer.txt" || bad "axis 5: _gv_defer no longer records the entry's names for _gv_supersede"
 body _gv_ent_set | grep -q '_grow_one(_gv_ent_base, _gv_ent_cap)' || bad "axis 5: _gv_ent_set no longer grows with the table"
 body _gvx_rec1 | grep -q '_gvx_grow()' || bad "axis 5: the supersede list no longer grows"
+# _gv_supersede reads the per-name list, never the whole table: with the cap gone, a scan
+# bounded by gvar_cnt (0x19A000) is O(entries) per constant redeclaration — quadratic, and
+# still CORRECT, so only this axis and globals_scale_linear.sh's redecl row can see it.
+body _gv_supersede > "$WORK/sup.txt"
+grep -q '0x19A000' "$WORK/sup.txt" && bad "axis 5: _gv_supersede reads gvar_cnt (0x19A000) — it is scanning every deferred entry again"
+grep -q '_nm_get(S, _gvx_m, noff)' "$WORK/sup.txt" || bad "axis 5: _gv_supersede no longer walks the per-name _gvx list"
 
 if [ "$NFAIL" -gt 0 ]; then
     echo "FAIL: gvar_toks_grows_past_4096: $NFAIL checks"
