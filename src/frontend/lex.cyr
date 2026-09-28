@@ -1222,20 +1222,25 @@ fn LEXID(S, p, npos): i64 {
     # v6.5.50: bucket by CONTENT, not by length alone. `bucket = klen` (saturated at
     # 255) put EVERY identifier of the same length on one chain, so a unit with many
     # similar names degenerated to the O(N²) walk this index was added to remove — a
-    # 60,000-fn unit named f0..f59999 is ~50,000 entries in a single bucket. Mixing
-    # length with the first, middle and last byte spreads them across 16384 chains.
+    # 60,000-fn unit named f0..f59999 is ~50,000 entries in a single bucket. v6.5.50
+    # mixed length with the first, middle and last byte to spread them over 16384 chains;
+    # it did not (see the v6.6.9 correction below).
     # Only the chain ORDER changes: the canonical offset is still the first occurrence in
     # source order, so cycc's output is byte-identical.
+    # ⛔ CORRECTED v6.6.9 — the key used to be `klen*131 + first*7 + last*65599 + mid*4099`,
+    # and this comment claimed it spread f0..f59999 across 16384 chains. False: generated
+    # names differ in bytes three samples never look at. g0..g139999 landed in 500 buckets
+    # (max chain 900) and the old gate's own "uniform" fixture f%09d in 20, so the lex phase
+    # went superlinear again (35k -> 70k names: 3.5x). The key is now FNV-1a over EVERY byte
+    # of the name (FNV1A_NOFF — the name is NUL-terminated at bl+klen just above): 16376 and
+    # 9854 buckets for those two sets. Gated by lexid_buckets_by_content.sh's scaling row,
+    # which is RED on the sampled key. CHANGELOG [6.6.9]
     # ⛔ CORRECTED v6.5.56 — this comment used to end "dedup remains an exact byte-compare",
     # and that was FALSE and load-bearing: the compare below is a PREFIX compare that was only
     # exact because `bucket = klen` put one length per chain. Changing the bucketing silently
     # invalidated it, and the sentence asserting the property is what made the gap invisible.
     # See the P0 note at the compare itself.
-    var hsh = klen * 131;
-    hsh = hsh + load8(S + 0xEC00000 + bl) * 7;
-    hsh = hsh + load8(S + 0xEC00000 + bl + klen - 1) * 65599;
-    hsh = hsh + load8(S + 0xEC00000 + bl + (klen >> 1)) * 4099;
-    var bucket = hsh & 16383;
+    var bucket = FNV1A_NOFF(S, bl) & 16383;
     var hi = L64(S + 0x457C100 + bucket * 8);
     while (hi > 0) {
         var idx = hi - 1;
