@@ -38,7 +38,7 @@ unscheduled 6.x backlog. Whole-cycle framing plus v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.6.9** (2026-09-28, closed, awaiting the tag) — cycc **1,368,392 B** (`.text` **1,196,680**) ·
+**Current head: v6.6.10** (2026-09-28) — cycc **1,368,392 B** (`.text` **1,196,680**) ·
 seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi · self_compile **795 ms** ·
 **375** `.tcyr` (**128** in `crossos/`) · **104** `lib/*.cyr` · **269** shell gates under
 `tests/gates/<bucket>/` · **0 open issues** · **6 open proposals**.
@@ -58,7 +58,7 @@ CHANGELOG; do not re-add shipped slots here.
 
 ---
 
-## The 6.6.7 → 6.6.10 batch (planned 2026-09-27; 6.6.10 added 2026-09-28)
+## The 6.6.7 → 6.6.11 batch (planned 2026-09-27; 6.6.10 and 6.6.11 added by the user 2026-09-28)
 
 After the 6.6.6 tag the ecosystem filed **28 new issues** in a week (agnodrm, agnostik, kybernet, daimon,
 patra, sigil, kavach, tyche, hisab, samay, sakshi, vani, libro, aethersafha, agnos), on top of the two
@@ -132,7 +132,7 @@ raising a ratchet that only goes down.
 ⚠ **aarch64 size tax measured at the merge:** `build/cycc-native-aarch64` `.text` +82,952 B — bite 3's
 nine ESYSXLAT rows copied into each of 605 syscall sites (backlog: a shared translation stub).
 
-### 6.6.9 — CLOSED 2026-09-28 (awaiting the tag)
+### 6.6.9 — SHIPPED 2026-09-28 (tag `6.6.9` @ `a5f6691e`)
 
 All twelve bites shipped (bite 12 — `lib/http.cyr`, CVE-50 — added by the user from the 6.6.8 review
 finds); detail in `CHANGELOG.md` [6.6.9]. The last ten filed issues are fixed and archived — the open
@@ -145,7 +145,7 @@ crossing its ownership line, applied at integration; and that same self-sufficie
 "file that cannot resolve" fixture (a copy of `lib/fs.cyr`) resolve. When a plan gives one lane's
 bite a dependency on another lane's file, name the hand-off in BOTH lanes' specs.
 
-### 6.6.10 — the 6.6.8 review finds (added by the user 2026-09-28)
+### 6.6.10 — the 6.6.8 review finds + group H of the 6.6.9 finds (added by the user 2026-09-28)
 
 ~40 out-of-scope finds from the 6.6.8 reviews, deduplicated and grouped by the lane that would own
 them. **The user's call (2026-09-28): group A (`lib/http.cyr`) goes into 6.6.9 as bite 12; B–G are
@@ -190,12 +190,12 @@ Groups:
 - **Sibling follow-ups:** yantra drops `sock_send`'s count; kriya issues raw x86 90/91/97/21 that
   misroute on aarch64; ganita `pow`'s general path is off by tens to hundreds of ulp for large |y·ln x|.
 
-### Found by the 6.6.9 reviews — ⚠ RELEASE PENDING THE USER'S CALL
+### 6.6.11 — the rest of the 6.6.9 review finds (added by the user 2026-09-28)
 
-~45 out-of-scope finds, deduplicated. 6.6.10 already holds groups B–G (~30 items), so these would make it
-the largest of the four; where they go is asked, not assumed. Grouped:
+~45 out-of-scope finds, deduplicated. **The user's call (2026-09-28): group H goes to 6.6.10** (with B–G);
+**I, J, K and the sibling items are 6.6.11**, which opens only after the 6.6.10 tag. Grouped:
 
-- **H. memory safety + silent acceptance (compiler, src)** — a top-level destructure after the first
+- **H. → MOVED TO 6.6.10.** memory safety + silent acceptance (compiler, src) — a top-level destructure after the first
   statement writes its names past the var table BEFORE growing it (at the 8192 boundary it overwrites
   `var_sizes[0]`/`var_types[0]` and loses the second name); `too many await suspend points` reports and
   keeps storing past `_coro_rcp[512]`; `cycc` compiles `return @@@;` with exit 0 (so `cyrius lint`

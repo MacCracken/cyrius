@@ -4,6 +4,8 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.6.10] — 2026-09-28
+
 ## [6.6.9] — 2026-09-28
 
 The third batch release (roadmap.md, *The 6.6.7 → 6.6.10 batch*): twelve bites in six worktree lanes —
