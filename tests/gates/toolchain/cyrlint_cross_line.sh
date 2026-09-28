@@ -127,7 +127,7 @@
 #   mFB cyrfmt: the indent loop keeps spinning past the cap (>10 s)               6+6
 #   mFC cyrfmt: stdout mode writes a truncated result instead of refusing         2+0
 #   mRP harness: a fixture PROGRAM that never exits — RED in 13 s, not a hang     1+1
-# 6.6.8 (bite 10) — axes 9b/9c (each mutant GREEN→RED, 160 checks):
+# 6.6.8 (bite 10) — axes 9b/9c and the doc_huge write (each mutant GREEN→RED, 161 checks):
 #   C1  the 6.6.7 owner test (the typed path contains "sakshi")                   9+0
 #   C2  `\` not a path separator for the basename                                2+0
 #   C3  basename ENDS in sakshi.cyr (not exact)                                   2+0
@@ -137,6 +137,8 @@
 #   C7  is_err pre-pass: no column-0 anchor                                       1+0
 #   C8  is_err pre-pass: no string state (a line inside a string is column 0)     1+0
 #   C9  is_err pre-pass: the directive's line not consumed (a stray quote)        1+0
+#   CA  harness: the doc_huge write fails (awk > /dev/full) — named as a write    3+0
+#       failure, where the 6.6.7 gate showed only "premise … got [no]"
 #   (the whole 6.6.7 cyrlint: 10+0)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -590,7 +592,11 @@ awk 'BEGIN { for (i = 0; i < 3000; i++) { print "# doc " i; print "fn dg_" i "()
 check "  (premise: doc_big is past the old 64 KB read)" yes "$([ "$(wc -c < "$T/doc_big.cyr")" -gt 65536 ] && echo yes || echo no)"
 doc_run "$T/doc_big.cyr"
 check "cyrdoc reads the WHOLE file: every fn is counted, and the undocumented one past 64 KB is seen" "3000 documented, 1 undocumented (3001 total)" "$(tail -n 1 "$T/do")"
-awk 'BEGIN { for (i = 0; i < 30000; i++) { print "# doc " i; print "fn dh_" i "(): i64 { return 0; }" } print "fn dh_tail(): i64 { return 0; }" }' > "$T/doc_huge.cyr"
+# 6.6.8 — the WRITE is checked. An awk that could not write this 1.3 MB fixture (a full
+# RAM-backed /tmp) surfaced only as "premise … got [no]", which reads like a cyrdoc defect.
+arc=0
+awk 'BEGIN { for (i = 0; i < 30000; i++) { print "# doc " i; print "fn dh_" i "(): i64 { return 0; }" } print "fn dh_tail(): i64 { return 0; }" }' > "$T/doc_huge.cyr" || arc=$?
+check "  (the 1.3 MB doc_huge fixture was WRITTEN: awk rc 0 — non-zero means $T's filesystem is full)" 0 "$arc"
 check "  (premise: doc_huge is past cyrdoc's first 1 MB buffer)" yes "$([ "$(wc -c < "$T/doc_huge.cyr")" -gt 1048576 ] && echo yes || echo no)"
 doc_run "$T/doc_huge.cyr"
 check "  …and past the first 1 MB buffer (it grows; sigil's 1.1 MB bundle was judged on 6 %)" "30000 documented, 1 undocumented (30001 total)" "$(tail -n 1 "$T/do")"

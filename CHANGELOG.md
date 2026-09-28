@@ -46,8 +46,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (`ISINCLUDE` / `PP_LEXST`), the same one `cyrius vet` now uses.
 - `tests/gates/toolchain/cyrlint_cross_line.sh` gains axis 9b (the owner, every case run
   RELATIVE and ABSOLUTE — the gate had only ever passed absolute paths, so it could not see the
-  relative-path direction) and axis 9c (the is_err fixtures `is_err_anchor.cyr` /
-  `is_err_clash.cyr`). 9 new mutations, each RED; the 6.6.7 cyrlint fails 10 of 160.
+  relative-path direction), axis 9c (the is_err fixtures `is_err_anchor.cyr` / `is_err_clash.cyr`),
+  and checks the write of its 1.3 MB `doc_huge` fixture: a failed write (a full RAM-backed
+  `/tmp`) surfaced only as "premise: doc_huge … got [no]", which read like a cyrdoc defect.
+  10 new mutations, each RED; the 6.6.7 cyrlint fails 10 of 161.
 
 ## [6.6.7] — 2026-09-27
 
