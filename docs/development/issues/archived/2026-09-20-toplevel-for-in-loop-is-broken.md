@@ -1,7 +1,7 @@
-# A top-level `for x in a..b` cannot use its own loop variable, and nesting two SIGSEGVs — OPEN
+# A top-level `for x in a..b` cannot use its own loop variable, and nesting two SIGSEGVs — RESOLVED
 
-**Status:** 🟡 open — found during 6.6.6 (bite 19's review, probing top-level block scoping);
-reproduces identically on 6.6.5 and on the 6.6.6 tree.
+**Status:** ✅ **RESOLVED v6.6.8** (bite 1) — a top-level for-in variable is a live global scoped to its loop (`_HTNAMED`); repro A exits 6, repro B exits 6, on x86/aarch64/PE/Mach-O.
+(Found during 6.6.6 — bite 19's review, probing top-level block scoping; reproduced identically on 6.6.5 and on the 6.6.6 tree.)
 **Placement:** **6.6.8 bite 1** — Top-level for-in binds a live global; enum constants fold past var index 1024. Pinned 2026-09-27 in [roadmap.md](../roadmap.md) *The 6.6.7 → 6.6.9 batch* (releases ship strictly in order).
 **Discovered:** 2026-09-20
 

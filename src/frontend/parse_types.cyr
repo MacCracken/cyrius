@@ -830,23 +830,36 @@ fn _fv_hidden(vi): i64 {
 # say WHICH variable and WHERE to put it instead of the bare "missing include or enum?".
 # Printed as a `note:` after the error so the error text every gate greps stays unchanged.
 # CHANGELOG [6.6.6]
+#
+# 6.6.8: a top-level `for x in ...` variable is marked 3 (_HTLOOPEND, parse.cyr) — the block
+# note's advice ("declare it before the block") does not apply to a loop variable, so the
+# most recent out-of-scope match picks which note is printed. CHANGELOG [6.6.8]
 fn _gv_blockscoped(S, noff): i64 {
     var vi = GVCNT(S) - 1;
     while (vi >= 0) {
-        if (GVDEAD(S, vi) == 2) {
-            if (STREQ(S, L64(_varn_base + vi * 8), noff) == 1) { return 1; }
+        var d = GVDEAD(S, vi);
+        if (d >= 2) {
+            if (STREQ(S, L64(_varn_base + vi * 8), noff) == 1) { return d; }
         }
         vi = vi - 1;
     }
     return 0;
 }
 fn _gv_note_blockscoped(S, noff): i64 {
-    if (_gv_blockscoped(S, noff) == 0) { return 0; }
+    var k = _gv_blockscoped(S, noff);
+    if (k == 0) { return 0; }
     syscall(SYS_WRITE, 2, "note: '", 7);
     PRSTR(S + 0xEC00000 + noff);
+    if (k == 3) { return _gv_note_loopvar(S); }
     syscall(SYS_WRITE, 2, "' was declared inside a top-level block and goes out of scope at its '}'\n", 73);
     syscall(SYS_WRITE, 2, "      (since 6.6.6 a top-level block scopes its `var`s like a fn body does)\n", 76);
     syscall(SYS_WRITE, 2, "      declare it at top level, before the block, to use it after the block\n", 75);
+    return 0;
+}
+
+fn _gv_note_loopvar(S): i64 {
+    syscall(SYS_WRITE, 2, "' is a `for ... in` loop variable and goes out of scope at the end of its loop\n", 79);
+    syscall(SYS_WRITE, 2, "      to use a value after the loop, assign it to a variable declared before the loop\n", 86);
     return 0;
 }
 

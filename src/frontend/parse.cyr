@@ -1413,6 +1413,34 @@ fn _HTEMP(S): i64 {
     SVCNT(S, _hvi + 1);
     return 0 - 2 - _hvi;
 }
+# The NAMED sibling of _HTEMP: a `for x in ...` loop variable. Inside a fn it is a frame slot
+# at the loop's scope depth, as it always was. At top level there is NO frame on any executable
+# entry (ELF x86/aarch64, PE, Mach-O), and the frame slot it used to get there was an `[rbp-8]`
+# store into nothing: every top-level for-in segfaulted, and every READ of the variable was
+# `undefined variable` because top-level resolution never runs FINDLOCAL. So at top level it is
+# a LIVE global; the loop's SCOPE_PUSH recorded GVCNT, so its SCOPE_POP takes the name out of
+# scope and _HTLOOPEND re-marks it as a loop variable for the diagnostic. CHANGELOG [6.6.8]
+fn _HTNAMED(S, noff): i64 {
+    if (GINFN(S) == 1) {
+        var li = GFLC(S);
+        S64(S + 0x5D9D000 + li * 8, noff);
+        SLDEP(S, li, GSDEP(S));
+        SLTYPE(S, li, 0);
+        SFLC(S, li + 1);
+        return li;
+    }
+    var vi = GVCNT(S);
+    S64(_varn_base + vi * 8, noff);
+    S64(_vars_base + vi * 8, 8);
+    SVCNT(S, vi + 1);
+    return 0 - 2 - vi;
+}
+# After the loop's SCOPE_POP: dead mark 3 (not the block-var 2) so a later use of the name is
+# told it was a loop variable — "declare it before the block" does not apply to one.
+fn _HTLOOPEND(S, h): i64 {
+    if (h < 0) { SVDEAD(S, 0 - 2 - h, 3); }
+    return 0;
+}
 fn _HTSTORE(S, h): i64 {
     if (h >= 0) { EFLSTORE(S, h); } else { EVSTORE(S, 0 - 2 - h); }
     return 0;

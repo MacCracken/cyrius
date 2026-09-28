@@ -1,0 +1,87 @@
+# toplevel_for_in.tcyr — `for x in a..b` / `for x in vec` at TOP LEVEL (6.6.8 bite 1).
+#
+# WHY A CROSS-HOST TEST. Before 6.6.8 PARSE_FOR gave the loop variable a fn FRAME slot even
+# at top level, and no executable entry sets up a frame for top-level code: the store was
+# `[rbp-8]` / `[x29-8]` into nothing. Measured at 6.6.7: SIGSEGV on x86_64 and aarch64 Linux,
+# a page fault at 0xFFFFFFFFFFFFFFF8 under wine, and on arm64 Mach-O (LC_MAIN, x29 = dyld's
+# frame) a silent write into the loader's frame. Every READ of the variable was
+# `undefined variable` besides. Where the variable lives is per-target codegen, so this runs
+# on ecb/ach/cass/pi, not only on the build host.
+#
+# RED on the 6.6.7 compiler: it does not compile (`undefined variable 'tfi_i'`), and the
+# unread forms segfault — tests/gates/frontend/toplevel_for_in.sh carries those rows.
+# CHANGELOG [6.6.8]
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/fnptr.cyr"
+
+var tfi_outer = 100;
+var tfi_sum = 0;
+var tfi_go = 0;
+alloc_init();
+
+# `tfi_go = 1;` is a statement, so everything below it is parsed by pass 2 — the top-level
+# code path, which has no frame.
+tfi_go = 1;
+
+# Range form, the variable READ in the body.
+for tfi_i in 0..4 { tfi_sum = tfi_sum + tfi_i; }
+var r1 = assert_eq(tfi_sum, 6, "top-level range for-in reads its variable (0+1+2+3)");
+
+# Range form, the variable never read: the loop counter alone used to be the crashing store.
+var tfi_cnt = 0;
+for tfi_u in 0..4 { tfi_cnt = tfi_cnt + 1; }
+var r2 = assert_eq(tfi_cnt, 4, "top-level range for-in with an unread variable runs 4 times");
+
+# Nested range loops.
+var tfi_nest = 0;
+for tfi_a in 0..3 { for tfi_b in 0..2 { tfi_nest = tfi_nest + tfi_a * 10 + tfi_b; } }
+var r3 = assert_eq(tfi_nest, 63, "nested top-level range loops see both variables");
+
+# Collection form, read and unread.
+var tfi_v = vec_new();
+vec_push(tfi_v, 1); vec_push(tfi_v, 2); vec_push(tfi_v, 3);
+var tfi_cs = 0;
+for tfi_x in tfi_v { tfi_cs = tfi_cs + tfi_x; }
+var r4 = assert_eq(tfi_cs, 6, "top-level collection for-in reads its item");
+var tfi_cc = 0;
+for tfi_y in tfi_v { tfi_cc = tfi_cc + 1; }
+var r5 = assert_eq(tfi_cc, 3, "top-level collection for-in with an unread item runs 3 times");
+
+# A range loop nested inside a collection loop, bounded by the item.
+var tfi_mix = 0;
+for tfi_x2 in tfi_v { for tfi_j in 0..tfi_x2 { tfi_mix = tfi_mix + tfi_j; } }
+var r6 = assert_eq(tfi_mix, 4, "range loop bounded by a collection item (0 + 0+1 + 0+1+2)");
+
+# break / continue.
+var tfi_bc = 0;
+for tfi_k in 0..10 { if (tfi_k == 5) { break; } if (tfi_k == 2) { continue; } tfi_bc = tfi_bc + tfi_k; }
+var r7 = assert_eq(tfi_bc, 8, "break and continue in a top-level for-in (0+1+3+4)");
+
+# The same name reused by two sequential loops: each loop gets its own variable.
+var tfi_seq = 0;
+for tfi_s in 0..3 { tfi_seq = tfi_seq + tfi_s; }
+for tfi_s in 0..2 { tfi_seq = tfi_seq + 10; }
+var r8 = assert_eq(tfi_seq, 23, "two sequential top-level loops may reuse one variable name");
+
+# A loop variable that SHADOWS an outer global leaves the global untouched.
+var tfi_sh = 0;
+for tfi_outer in 0..3 { tfi_sh = tfi_sh + tfi_outer; }
+var r9 = assert_eq(tfi_sh, 3, "a loop variable shadowing a global reads the loop's value inside");
+var r10 = assert_eq(tfi_outer, 100, "the shadowed global is unchanged after the loop");
+
+# Inside a top-level `if`.
+var tfi_in_if = 1;
+if (tfi_go == 1) { for tfi_m in 0..4 { tfi_in_if = tfi_in_if + tfi_m; } }
+var r11 = assert_eq(tfi_in_if, 7, "a for-in inside a top-level if");
+
+# CLOSURE CAPTURE — PINNED, not endorsed. A closure created in a top-level loop reads the
+# loop variable's LIVE global (the value when it is CALLED: 3 after the loop), where the same
+# code inside a fn captures by value (0). This is the rule 6.6.6 top-level block `var`s
+# already follow; changing it is one separate change spanning both binding kinds.
+var tfi_f = 0;
+for tfi_c in 0..3 { if (tfi_c == 0) { tfi_f = |x| x + tfi_c; } }
+var r12 = assert_eq(fncall1(tfi_f, 10), 13, "a closure in a top-level loop reads the live loop variable");
+
+var r = assert_summary();

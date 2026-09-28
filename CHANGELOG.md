@@ -6,6 +6,30 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.8] — 2026-09-27
 
+### Fixed
+
+- **A top-level `for x in a..b` / `for x in vec` works: its loop variable is a live global
+  scoped to the loop.** (bite 1; issue `2026-09-20-toplevel-for-in-loop-is-broken`, archived.)
+  **Root cause:** PARSE_FOR registered the user-visible loop variable (and the collection form's
+  hidden index) as a fn FRAME slot unconditionally, and top-level code has no frame on any
+  executable entry. The store addressed `[rbp-8]` / `[x29-8]` off an unset frame pointer and
+  top-level resolution never runs FINDLOCAL, so **every** top-level for-in was broken: a read of
+  the variable was `undefined variable 'i'`; a loop that never read it SIGSEGV'd on x86_64 and
+  aarch64 Linux (139), page-faulted at `0xFFFFFFFFFFFFFFF8` under wine, and on arm64 Mach-O
+  (LC_MAIN, x29 = dyld's frame) wrote silently into the loader's frame. 6.6.5 had given only the
+  anonymous loop temporaries a top-level arm. **Fix:** `_HTNAMED` (parse.cyr), the named sibling
+  of `_HTEMP` — a frame slot inside a fn (the emitted code there is byte-identical: 353 `.tcyr` +
+  every `programs/*.cyr` compile to the same bytes), a live global at top level, which the
+  loop's SCOPE_POP takes out of scope. Using the variable after the loop is an error with its
+  own note (`'i' is a \`for ... in\` loop variable and goes out of scope at the end of its loop`)
+  instead of the 6.6.6 block note, whose "declare it before the block" does not apply to a loop
+  variable. **Pinned, not changed:** a closure made inside a top-level loop reads the variable's
+  LIVE value (13 where the same code in a fn captures 10) — the rule 6.6.6 top-level block `var`s
+  already follow; by-value capture spans both binding kinds and is one separate change. Top-level
+  `defer` stays refused by name (6.6.7). Gate `tests/gates/frontend/toplevel_for_in.sh` (27 rows:
+  host + qemu-aarch64 + wine, mutation-proven) and `tests/tcyr/crossos/toplevel_for_in.tcyr`
+  (ecb/ach/cass/pi). The C-style `for (var i = ...)` was never affected.
+
 ## [6.6.7] — 2026-09-27
 
 The first of three SMALL releases that the post-6.6.6 issue track is split into (roadmap.md, *The 6.6.7

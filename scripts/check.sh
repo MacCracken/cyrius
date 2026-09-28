@@ -1226,3 +1226,9 @@ _chk_gate "$ROOT/tests/gates/toolchain/audit_walk_fails_closed.sh"
 # were unverified and the "Updated:" list was unconditional. Runs `version-bump.sh
 # --docs-only` over scratch copies of the live docs plus fixtures; mutation-proven in the header.
 _chk_gate "$ROOT/tests/gates/toolchain/version_bump_doc_anchors.sh"
+
+# 6.6.8 (bite 1) — a TOP-LEVEL `for x in a..b` / `for x in vec` binds a live global. Its loop
+# variable was a fn FRAME slot, and top-level code has no frame: every one segfaulted (x86,
+# aarch64), page-faulted under wine, or wrote into dyld's frame on arm64 Mach-O, and every
+# read of the name was undefined. Host rows + qemu/wine legs; mutation-proven in the header.
+_chk_gate "$ROOT/tests/gates/frontend/toplevel_for_in.sh"

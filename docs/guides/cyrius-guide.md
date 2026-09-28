@@ -137,8 +137,14 @@ while (x < 10) { x = x + 1; }
 # For — all three clauses (init; cond; step) are required and non-empty.
 # Cyrius does not accept `for (;;)` / `for (; c;)` (omitted clauses).
 # For an unbounded or custom-stepped loop, use `while`; the idiomatic
-# forms are the counted `for` above and (where supported) `for x in …`.
+# forms are the counted `for` above and `for x in …`.
 for (var i = 0; i < 10; i = i + 1) { ... }
+
+# For-in — a half-open range, or every element of a vec (lib/vec.cyr).
+# Works inside a fn AND at top level (since 6.6.8 — before it, a top-level
+# for-in crashed or failed to compile). The loop variable belongs to the loop.
+for i in 0..10 { ... }          # i = 0, 1, ..., 9
+for x in v { ... }              # x = vec_get(v, 0), vec_get(v, 1), ...
 
 # Break / Continue
 # `break` leaves the NEAREST ENCLOSING while, for, switch or match (v6.5.20 — C
@@ -2378,6 +2384,33 @@ code that relied on the leak — a survey of ~12,600 `.cyr` sources across the e
 the time of the change found no file that did. Pinned by
 `tests/tcyr/crossos/toplevel_block_var_scope.tcyr` and
 `tests/gates/frontend/toplevel_block_var_scope.sh`.
+
+### A top-level `for x in …` (6.6.8)
+
+`for i in a..b { }` and `for x in v { }` work at top level. The loop variable is scoped to
+the loop, like a block `var`; using it after the loop is an error with its own note:
+
+```
+note: 'i' is a `for ... in` loop variable and goes out of scope at the end of its loop
+      to use a value after the loop, assign it to a variable declared before the loop
+```
+
+Before 6.6.8 every top-level for-in was broken — the loop variable was given a function
+frame slot, and top-level code has no frame: it segfaulted on Linux (x86_64 and aarch64),
+page-faulted on Windows, wrote into the loader's frame on arm64 macOS, and any read of the
+variable was `undefined variable`.
+
+⚠ **A closure made inside a top-level loop reads the loop variable's current value**, not
+the value when the closure was made — the same rule as a closure over a top-level block
+`var`. Inside a function the closure captures by value:
+
+```
+var f0 = 0;
+for i in 0..3 { if (i == 0) { f0 = |x| x + i; } }
+fncall1(f0, 10);   # 13 at top level (i is 3 by now); 10 for the same code in a fn
+```
+
+Pinned by `tests/tcyr/crossos/toplevel_for_in.tcyr` and `tests/gates/frontend/toplevel_for_in.sh`.
 
 ## String Standard Library
 

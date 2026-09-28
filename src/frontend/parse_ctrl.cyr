@@ -304,21 +304,26 @@ fn PARSE_FOR(S): i64 {
                 # USER-VISIBLE name `_i`, so a user's own `_i` read inside the loop body
                 # resolved to the compiler's counter (measured 3 where 30 is right) and a
                 # 3-byte identifier-pool allocation leaked per loop. It is anonymous now.
-                var fili = GFLC(S);
-                S64(S + 0x5D9D000 + fili * 8, 0 - 1);
-                SLDEP(S, fili, GSDEP(S));
-                SLTYPE(S, fili, 0);
-                EMOVI(S, 0);
-                EFLSTORE(S, fili);
-                SFLC(S, fili + 1);
+                # 6.6.8: at TOP LEVEL both are globals (no frame there) — see _HTNAMED.
+                var fili = 0;
+                var fiitem = 0;
+                if (GINFN(S) == 1) {
+                    fili = GFLC(S);
+                    S64(S + 0x5D9D000 + fili * 8, 0 - 1);
+                    SLDEP(S, fili, GSDEP(S));
+                    SLTYPE(S, fili, 0);
+                    EMOVI(S, 0);
+                    EFLSTORE(S, fili);
+                    SFLC(S, fili + 1);
+                } else {
+                    fili = _HTEMP(S);
+                    EMOVI(S, 0);
+                    _HTSTORE(S, fili);
+                }
                 # Item var
-                var fiitem = GFLC(S);
-                S64(S + 0x5D9D000 + fiitem * 8, finoff);
-                SLDEP(S, fiitem, GSDEP(S));
-                SLTYPE(S, fiitem, 0);
+                fiitem = _HTNAMED(S, finoff);
                 EMOVI(S, 0);
-                EFLSTORE(S, fiitem);
-                SFLC(S, fiitem + 1);
+                _HTSTORE(S, fiitem);
                 # Loop: while (idx < len)
                 var fislt = L64(S + 0x18F838);
                 var fisbk = L64(S + 0x18F840);
@@ -333,7 +338,7 @@ fn PARSE_FOR(S): i64 {
                 # v5.6.14: IR_NOP landing pad at for-in loop top.
                 var _ire_fi1 = IR_ENABLED(S);
                 if (_ire_fi1 >= 1) { ir_emit(S, IR_NOP, 0, fitop, 0); }
-                EFLLOAD(S, fili);
+                _HTLOAD(S, fili);
                 EPUSHR(S);
                 _HTLOAD(S, filen);
                 EMOVCA(S);
@@ -343,7 +348,7 @@ fn PARSE_FOR(S): i64 {
                 # item = vec_get(collection, idx)
                 _HTLOAD(S, ficol);
                 EPUSHR(S);
-                EFLLOAD(S, fili);
+                _HTLOAD(S, fili);
                 EPUSHR(S);
                 ECALLPOPS(S, 2);
                 var vgfi = FINDFN(S, 0);
@@ -359,7 +364,7 @@ fn PARSE_FOR(S): i64 {
                 var vgoff = L64(_fnt_offsets + vgfi * 8);
                 if (vgoff >= 0) { ECALLTO(S, vgoff); } else { ECALLFIX(S, vgfi); }
                 ECALLCLEAN(S, 2);
-                EFLSTORE(S, fiitem);
+                _HTSTORE(S, fiitem);
                 # Body
                 if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); } STI(S, GTI(S) + 1);
                 _loop_body(S, 1);   # 6.6.7: counts the loop for break/continue
@@ -370,13 +375,13 @@ fn PARSE_FOR(S): i64 {
                 while (ficfwi < ficfwn) { EPATCH(S, L64(S + 0x18F8A0 + ficfwi * 8)); ficfwi = ficfwi + 1; }
                 S64(S + 0x18F898, 0);
                 # Step: idx = idx + 1
-                EFLLOAD(S, fili);
+                _HTLOAD(S, fili);
                 EPUSHR(S);
                 EMOVI(S, 1);
                 EMOVCA(S);
                 EPOPR(S);
                 EADDR(S);
-                EFLSTORE(S, fili);
+                _HTSTORE(S, fili);
                 EJMP(S, fitop);
                 PATCHXP(S);
                 EPATCH(S, ficond);
@@ -386,17 +391,14 @@ fn PARSE_FOR(S): i64 {
                 S64(S + 0x18F840, fisbk);
                 S64(S + 0x18F898, fiscfw);
                 SCOPE_POP(S);
+                _HTLOOPEND(S, fiitem);
                 SLVAR(S, slv);
                 return 0;
             }
             # RANGE for-in (.. already consumed, is_range==1)
             # rax has start value from PEXPR above
-            var fili = GFLC(S);
-            S64(S + 0x5D9D000 + fili * 8, finoff);
-            SLDEP(S, fili, GSDEP(S));
-            SLTYPE(S, fili, 0);
-            EFLSTORE(S, fili);
-            SFLC(S, fili + 1);
+            var fili = _HTNAMED(S, finoff);   # 6.6.8: a global at top level — see there
+            _HTSTORE(S, fili);
             # End value into hidden global
             PCMPE(S);
             var fiend = _HTEMP(S);
@@ -416,7 +418,7 @@ fn PARSE_FOR(S): i64 {
             var _ire_fi2 = IR_ENABLED(S);
             if (_ire_fi2 >= 1) { ir_emit(S, IR_NOP, 0, fitop, 0); }
             # Condition: var < end
-            EFLLOAD(S, fili);
+            _HTLOAD(S, fili);
             EPUSHR(S);
             _HTLOAD(S, fiend);
             EMOVCA(S);
@@ -433,13 +435,13 @@ fn PARSE_FOR(S): i64 {
             while (ficfwi < ficfwn) { EPATCH(S, L64(S + 0x18F8A0 + ficfwi * 8)); ficfwi = ficfwi + 1; }
             S64(S + 0x18F898, 0);
             # Step: var = var + 1
-            EFLLOAD(S, fili);
+            _HTLOAD(S, fili);
             EPUSHR(S);
             EMOVI(S, 1);
             EMOVCA(S);
             EPOPR(S);
             EADDR(S);
-            EFLSTORE(S, fili);
+            _HTSTORE(S, fili);
             EJMP(S, fitop);
             PATCHXP(S);
             EPATCH(S, ficond);
@@ -449,6 +451,7 @@ fn PARSE_FOR(S): i64 {
             S64(S + 0x18F840, fisbk);
             S64(S + 0x18F898, fiscfw);
             SCOPE_POP(S);
+            _HTLOOPEND(S, fili);
             SLVAR(S, slv);
             return 0;
         }
