@@ -983,9 +983,22 @@ Scalar f64 math, SIMD vector types, matrices/linear algebra, and big numbers.
 
 Scalar f64 primitives that stayed in the stdlib after the v6.1.26 **ganita
 carve**: the `F64_*` bit-pattern constants, comparison / rounding / clamping
-ops, integer gcd+lcm, the private `f64`-builtin polyfills (exp / ln / log2 /
-exp2 / sin / cos / atan cores), and f64 parsing. All values are f64 **bit
-patterns** carried in i64.
+ops, integer gcd+lcm, the `f64`-builtin polyfills, and f64 parsing. All values
+are f64 **bit patterns** carried in i64.
+
+The polyfills are what the `f64_exp` / `f64_ln` / `f64_log2` / `f64_exp2` /
+`f64_sin` / `f64_cos` / `f64_atan` builtins call on aarch64. Four of them — the
+exp/ln family, fdlibm ports since 6.6.8 — are **supported public entry points**
+for one purpose: they use only f64 add/sub/mul/div and integer bit operations, so
+they return the **same bits on every target**, where the builtins are only
+promised to be within 1 ulp (x86 and Windows run x87, aarch64 the polyfill). Call
+them directly when output must match across targets (a golden file, a seeded
+simulation). The `_` prefix is historical; the names are pinned by
+`tests/tcyr/crossos/f64_log_exp_polyfill.tcyr`, which calls all four and checks
+their bits. The sin / cos / atan polyfills (`_f64_sin_polyfill`,
+`_f64_cos_polyfill`, `_f64_atan_polyfill` and the `_f64_sin_core` /
+`_f64_cos_core` kernels) remain **private**: they carry no ≤1-ulp promise yet,
+and may change bits or names.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
@@ -1002,6 +1015,10 @@ patterns** carried in i64.
 | `lcm` | `lcm(a, b) → i64` | Least common multiple |
 | `f64_parse` | `f64_parse(s) → i64` | Parse null-terminated string to f64 |
 | `f64_parse_ok` | `f64_parse_ok(s, out) → i64` | Parse with success flag |
+| `_f64_exp_polyfill` | `_f64_exp_polyfill(x) → i64` | e^x — ≤1 ulp, IEEE specials (+inf→+inf, -inf→+0, overflow→+inf, gradual underflow), **same bits on every target** (6.6.8) |
+| `_f64_exp2_polyfill` | `_f64_exp2_polyfill(x) → i64` | 2^x — ≤1 ulp, `exp2(k) == 2^k` exactly for integral k, IEEE specials, **same bits on every target** (6.6.8) |
+| `_f64_ln_polyfill` | `_f64_ln_polyfill(x) → i64` | ln x — ≤1 ulp; ±0→-inf, any negative→NaN, +inf→+inf; **same bits on every target** (6.6.8) |
+| `_f64_log2_polyfill` | `_f64_log2_polyfill(x) → i64` | log2 x — ≤1 ulp, `log2(2^k) == k` exactly; specials as ln; **same bits on every target** (6.6.8) |
 
 Constants include `F64_ONE` / `F64_TWO` / `F64_HALF` / `F64_PI` (+ `PI_2`,
 `PI_4`, `PI_6`, `2_PI`) / `F64_TAU` / `F64_E` / `F64_LN2` / `F64_LN10` /

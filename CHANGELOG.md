@@ -91,8 +91,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Mach-O output is byte-identical. On real cass the 6.6.7 compiler fails 7 exp rows of
   `f64_log_exp_polyfill.tcyr`; its two control-word rows (read with `fnstcw` before and after)
   fail if the restore is dropped.
-- **`f64_pow` / `ganita_f64_pow` follow the C99 Annex F table.** (bite 5; ganita **1.2.7**, commit
-  `cbdaf6c`, refolded byte-identical.) It returned NaN for every infinite base or exponent that
+- **`f64_pow` / `ganita_f64_pow` follow the C99 Annex F table.** (bite 5; ganita **1.2.7**, commits
+  `cbdaf6c` + `3c15403` — the second corrects a stale INFINITY-policy comment — refolded
+  byte-identical from `3c15403`.) It returned NaN for every infinite base or exponent that
   missed ganita's integral fast path (`pow(2, +inf)`, `pow(+inf, 0.5)`, `pow(0.5, +inf)`, …), and
   its NaN check ran ahead of `pow(1, y) = 1`, so `pow(1, NaN)` and `pow(±1, ±inf)` were NaN too; a
   zero base dropped its sign. Upstream now answers the whole table before the `exp(y·ln x)`
@@ -121,7 +122,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **docs (bite 5):** `cyrius-guide.md` *Math Builtins* states the exp/ln family's contract
   (≤ 1 ulp, IEEE specials, `log2(2^k)` exact, no cross-target bit identity for the builtins, the
   polyfills as the bit-identical spelling); `faq.md` known-limitation 10 says the same in one
-  line. `lib/math.cyr`'s header no longer lists sinh/cosh/tanh/pow/hypot/fibonacci/binomial
+  line. `docs/stdlib-reference.md` *math.cyr* now agrees: it called all the polyfills
+  "private", so the guide promised names the reference disowned. `_f64_exp_polyfill` /
+  `_f64_exp2_polyfill` / `_f64_ln_polyfill` / `_f64_log2_polyfill` are listed as supported
+  entry points with their contract (the api-surface snapshot skips `_` names, so
+  `f64_log_exp_polyfill.tcyr`, which calls all four, is what pins them); sin / cos / atan's
+  polyfills stay private. `lib/math.cyr`'s header no longer lists sinh/cosh/tanh/pow/hypot/fibonacci/binomial
   (ganita has them), and its accuracy comments ("< 5 ulp", "same behavior as the x87 path")
   are replaced by the measured contract. The Pi gate's label drops "bit-accurate", which the
   polyfills never were. **ganita 1.2.7** moves its pin 6.6.4 → 6.6.7 (docs/ecosystem.md row).

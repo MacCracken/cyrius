@@ -761,8 +761,10 @@ rounding boundary. When a program needs identical output everywhere (a golden fi
 simulation), call `_f64_exp_polyfill` / `_f64_ln_polyfill` / `_f64_log2_polyfill` /
 `_f64_exp2_polyfill` directly: they use only f64 add/sub/mul/div and integer bit operations,
 so they give the same bits on every target, and `tests/tcyr/crossos/f64_log_exp_polyfill.tcyr`
-pins them. (Before 6.6.8 the aarch64 polyfills returned finite values for ln of 0, of +inf
-and of most negatives — `ln(-1.5)` was +4.27e9 — wrapped `exp(1000)` to a negative number,
+pins them. Despite the `_` prefix these four are supported entry points (listed in
+`docs/stdlib-reference.md`, *math.cyr*); the sin / cos / atan polyfills stay private.
+(Before 6.6.8 the aarch64 polyfills returned finite values for ln of 0, of +inf and of most
+negatives — `ln(-1.5)` was +4.27e9 — wrapped `exp(1000)` to a negative number,
 and were up to 2,300 ulp off; and on Windows the x87 `f64_exp` ran at 53-bit precision and
 was up to 350 ulp off.)
 
