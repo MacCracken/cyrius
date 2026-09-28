@@ -1,6 +1,6 @@
 # thread_local.cyr — per-thread slot storage (Thread-Local Storage)
 # Usage: include "lib/thread_local.cyr"
-# Requires: syscalls.cyr, alloc.cyr
+# Includes its own definers (6.6.9): syscalls.cyr, alloc.cyr, atomic.cyr.
 #
 # Each thread gets its own 4KB block addressed via the CPU's
 # thread-pointer register: `%fs` on x86_64, `TPIDR_EL0` on aarch64.
@@ -83,6 +83,10 @@ var TLOCAL_MAX_SLOTS = 128;
 # needs the atomics directly rather than free-riding on whatever included it (self-sufficient
 # modules — a lib file references nothing it does not include).
 include "lib/atomic.cyr"
+# 6.6.9: the slot blocks come from alloc (and alloc_init on first use); neither the allocator nor
+# the syscall peer was included. CHANGELOG [6.6.9]
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
 
 #ifdef CYRIUS_TARGET_MACOS
 var _tlocal_macos[128];     # 128 i64 slots (top-level var[N] = N*8 bytes), zero-init .bss

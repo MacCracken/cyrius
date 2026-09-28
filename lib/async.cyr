@@ -1,6 +1,6 @@
 # async.cyr — cooperative async runtime with epoll event loop
 # Usage: include "lib/async.cyr"
-# Requires: syscalls.cyr, alloc.cyr, string.cyr, fnptr.cyr
+# Includes its own definers (6.6.9): syscalls.cyr, alloc.cyr, string.cyr, fnptr.cyr, atomic.cyr.
 #
 # Event-loop based cooperative multitasking. Tasks are function
 # pointers scheduled on an epoll loop with timer and IO support.
@@ -27,6 +27,15 @@
 # serial/blocking peer, exactly as thread.cyr → thread_agnos.cyr (v6.2.3). The
 # cancel-token API at the bottom stays SHARED (atomic-only, portable). Resolves
 # docs/development/issues/2026-06-15-cyrius-thread-agnos-clone-dispatch.md §2.
+
+# 6.6.9: every arm calls the syscall peer, alloc / alloc_via and fncall*; they were a Requires
+# line for the caller, so a bare include was a hard error on Linux (`SYS_EPOLL_CREATE1`) and
+# left ~25 functions undefined. CHANGELOG [6.6.9]
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fnptr.cyr"
+
 #ifdef CYRIUS_TARGET_AGNOS
 include "lib/async_agnos.cyr"
 #endif
