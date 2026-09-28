@@ -30,7 +30,7 @@
 #     with the wrong working directory — reported a percentage computed from an empty set
 #     and passed. Same green-placebo shape as `capacity` at v6.4.73.
 #
-# 6.6.8 — FIVE MORE, ALL OF WHICH READ HIGHER THAN THE TRUTH (axes 7-13):
+# 6.6.8 — FIVE MORE, ALL OF WHICH READ HIGHER THAN THE TRUTH (axes 7-13; 14 pins no. 10):
 #
 #  5. SUBSTRING + COMMENT REFERENCES (issue 2026-09-23-samay-…). A raw `memeq` at every
 #     corpus offset counted `check_due` as referenced by `check_due_at(` and `str_lt` by a
@@ -47,6 +47,11 @@
 #     399,907-byte pdf.cyr: 114 of 152 fns).
 #  9. A lib/ OR dist/ AT ANY DEPTH WAS PRUNED BY NAME. src/lib/ projects (nein, hoosh,
 #     kriya, kybernet) had their whole tree dropped; nein read 1/1 and passed --min 80.
+# 10. (The first cut of 6.6.8's spelling fix, caught in its review, never released:) a fn
+#     INSIDE an `impl T for S { … }` block was read as a top-level fn by its bare name — a
+#     false miss for `S_m`, a false hit for a method called `get`. Only brace depth 0 is
+#     public surface, as cyrius_api_surface counts it (axis 14). 6 also gained
+#     `pub #inline fn`, `#deprecated ("x") fn` and `async fn` (axis 9).
 # Every unreferenced fn is now NAMED under -v and whenever --min fails.
 #
 # MUTATION LEDGER (6.6.8; build/cyrius rebuilt from each mutant, gate re-run):
@@ -59,6 +64,13 @@
 #   M7 the by-name lib/ + dist/ prune restored for a named root         → axis 12 FAIL
 #   M8 the miss list never printed                                      → axes 7-13 FAIL
 #   M9 the '.' fallback's top-level lib/ + dist/ skip removed           → axis 12 FAIL
+#   M10 _src_brace_delta made to count nothing (impl methods top-level) → axis 14 FAIL
+#   M11 no whitespace skipped between an attribute and its `(`           → axis 9 FAIL
+#   M12 the optional `async` before `fn` not accepted                   → axis 9 FAIL
+#   M13 `pub` / `public` must follow every attribute (no interleave)     → axis 9 FAIL
+#   M14 `private;` followed by an item on the same line rejected        → axis 10c FAIL
+#   M15 _src_str_end ignores `\` escapes                                → axis 8b FAIL
+#   M16 the `#define`/`#if`/`#elif` code-line arm removed from the blanker → axis 8b FAIL
 #   real tree → every axis green
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -190,16 +202,27 @@ check "a string-only name is a miss" 1 "$(grep -cx '  src/m.cyr: spaced' "$D/o10
 check "a name inside a multi-line string is a miss" 1 "$(grep -cx '  src/m.cyr: in_ml' "$D/o10" || true)"
 check "the call after the '\"' char literal is found" 0 "$(grep -c ': after_dq$' "$D/o10" || true)"
 check "the call after the '#' char literal is found" 0 "$(grep -c ': after_hash$' "$D/o10" || true)"
+# 8b: a `\"` inside a string is an ESCAPE, not its end — so a name after it is still
+# string, and a real call after the string's true end is still code. And a `#define` line
+# is CODE (its body is the macro), not a comment: a fn referenced only through a macro is
+# referenced.
+printf 'fn esc_hidden(): i64 { return 1; }\nfn esc_after(): i64 { return 2; }\nfn via_macro(): i64 { return 3; }\n' > src/e.cyr
+printf 'var s = "a \\" esc_hidden("; var c = esc_after();\n#define M via_macro()\n' > tests/e.tcyr
+"$CY" -v coverage > "$D/o10b" 2>&1
+check "8b: the escape fixture is what the axis means" 1 "$(grep -c 'a \\" esc_hidden' tests/e.tcyr || true)"
+check "8b: a name after an escaped quote is still string (a miss)" 1 "$(grep -cx '  src/e.cyr: esc_hidden' "$D/o10b" || true)"
+check "8b: the call after the string's real end is found" 0 "$(grep -c ': esc_after$' "$D/o10b" || true)"
+check "8b: a #define body is code — the macro's fn is referenced" 0 "$(grep -c ': via_macro$' "$D/o10b" || true)"
 
 # ── AXIS 9: every declaration spelling the compiler accepts is counted; `_` names, and a
 # "declaration" inside a comment or a string, are not.
 echo "axis 9 — every public spelling is counted:"
 mkdir -p "$D/sp/src" "$D/sp/tests" && cd "$D/sp" || exit 2
-printf 'public fn s_public(): i64 { return 1; }\nfn\ts_tab(): i64 { return 1; }\npub  fn s_twosp(): i64 { return 1; }\n    fn s_indent(): i64 { return 1; }\n#inline fn s_attr(): i64 { return 1; }\n#deprecated("use (x)") pub fn s_dep(): i64 { return 1; }\nfn _s_private(): i64 { return 1; }\n# fn s_comment(): i64 { return 1; }\nvar t = "\nfn s_string(): i64 {\n";\n' > src/m.cyr
+printf 'public fn s_public(): i64 { return 1; }\nfn\ts_tab(): i64 { return 1; }\npub  fn s_twosp(): i64 { return 1; }\n    fn s_indent(): i64 { return 1; }\n#inline fn s_attr(): i64 { return 1; }\n#deprecated("use (x)") pub fn s_dep(): i64 { return 1; }\n#deprecated ("old") fn s_depsp(): i64 { return 1; }\nasync fn s_async(x) { return x; }\npub async fn s_pasync(x) { return x; }\npub #inline fn s_pubattr(): i64 { return 1; }\npublic #inline fn s_publicattr(): i64 { return 1; }\nfn _s_private(): i64 { return 1; }\n# fn s_comment(): i64 { return 1; }\nvar t = "\nfn s_string(): i64 {\n";\n' > src/m.cyr
 printf 'var z = 0;\n' > tests/t.tcyr
 "$CY" -v coverage > "$D/o11" 2>&1
-check "6 declarations counted (0/6)" 1 "$(grep -c 'Functions referenced: 0/6' "$D/o11" || true)"
-for n in s_public s_tab s_twosp s_indent s_attr s_dep; do
+check "11 declarations counted (0/11)" 1 "$(grep -c 'Functions referenced: 0/11' "$D/o11" || true)"
+for n in s_public s_tab s_twosp s_indent s_attr s_dep s_depsp s_async s_pasync s_pubattr s_publicattr; do
     check "$n is in the denominator" 1 "$(grep -cx "  src/m.cyr: $n" "$D/o11" || true)"
 done
 check "no comment / string / _ name counted" 0 "$(grep -cE 's_comment|s_string|_s_private' "$D/o11" || true)"
@@ -221,6 +244,17 @@ check "10b: an untested public fn is counted (2/3)" 1 "$(grep -c 'Functions refe
 check "10b: and fails --min 100" 1 "$rc12b"
 check "10b: and is named" 1 "$(grep -cx '  src/m.cyr: exported3' "$D/o12b" || true)"
 check "10b: the helper is not named" 0 "$(grep -c ': helper$' "$D/o12b" || true)"
+
+# 10c: `private;` closes the file marker and an item may follow ON THE SAME LINE. That
+# line both makes the file private AND declares its item: `private; pub fn` is exported,
+# `private; fn` is file-private.
+mkdir -p "$D/pvs/src" "$D/pvs/tests" && cd "$D/pvs" || exit 2
+printf 'private; pub fn pvs_x(): i64 { return 1; }\nprivate; fn pvs_y(): i64 { return 2; }\n' > src/m.cyr
+printf 'var z = 0;\n' > tests/t.tcyr
+"$CY" -v coverage > "$D/o12c" 2>&1
+check "10c: \`private; pub fn\` is counted, \`private; fn\` is not (0/1)" 1 "$(grep -c 'Functions referenced: 0/1' "$D/o12c" || true)"
+check "10c: pvs_x is named" 1 "$(grep -cx '  src/m.cyr: pvs_x' "$D/o12c" || true)"
+check "10c: pvs_y is not" 0 "$(grep -c 'pvs_y' "$D/o12c" || true)"
 
 # ── AXIS 11: a source larger than the old fixed 256 KiB read, with an UNTESTED fn after
 # the cut. The old build read 1/1 and passed --min 100.
@@ -264,6 +298,20 @@ cd "$D/samay" || exit 2
 "$CY" -v coverage > "$D/o17" 2>&1
 check "no list without -v when no gate failed" 0 "$(grep -c 'Unreferenced' "$D/o16" || true)"
 check "-v lists both misses" 1 "$(grep -c -- '-- Unreferenced (2) --' "$D/o17" || true)"
+
+# ── AXIS 14: only TOP-LEVEL fns are public surface. A fn inside an `impl T for S { … }`
+# block is a METHOD, emitted as `S_m` and called as `S_m(x)` — it used to be counted by its
+# bare name, so `norm` was a false miss when its test called `Pt_norm(q)`, and a method
+# named `get` was "covered" by any unrelated `get`. Depth must also come BACK to 0 after
+# the block, or every later fn would vanish.
+echo "axis 14 — impl methods are not top-level fns; depth recovers after the block:"
+mkdir -p "$D/im/src" "$D/im/tests" && cd "$D/im" || exit 2
+printf 'fn top_m(): i64 { return 1; }\nimpl Show for Pt {\n    fn norm(self) { return 1; }\n    fn get(self) { return 2; }\n}\nfn after_impl(): i64 { return 3; }\n' > src/p.cyr
+printf 'var a = top_m(); var b = Pt_norm(q);\n' > tests/t.tcyr
+"$CY" -v coverage > "$D/o18" 2>&1
+check "14: 1/2 — the two methods are not in the denominator" 1 "$(grep -c 'Functions referenced: 1/2' "$D/o18" || true)"
+check "14: the fn after the impl block is still counted and named" 1 "$(grep -cx '  src/p.cyr: after_impl' "$D/o18" || true)"
+check "14: no method is named as a miss" 0 "$(grep -cE ': (norm|get)$' "$D/o18" || true)"
 
 cd "$ROOT" || exit 2
 echo ""

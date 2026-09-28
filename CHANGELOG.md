@@ -25,7 +25,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     The repro now reads **1/3 (33%)**, `coverage gate FAILED`, exit 1.
   - **`public fn` and every other spelling but two were invisible.** The declaration matcher knew
     only a column-0 `fn ` / `pub fn `, so `public fn` (the same token as `pub`), `fn<TAB>`,
-    `pub  fn`, an indented fn and `#inline fn` were never counted.
+    `pub  fn`, an indented fn, `#inline fn`, `pub #inline fn`, `#deprecated ("x") fn` and
+    `async fn` were never counted. Declarations are read at brace depth 0 only, as
+    `cyrius_api_surface` counts them: a fn inside `impl T for S { … }` is the method `S_m`, not a
+    top-level `m`.
   - **The file-scope `private` rule was ignored — and inverted.** In a `private` file only
     `pub`/`public` fns are exported; the tool counted exactly the other set. hisab (643 `public fn`,
     one bare `fn`) read **1/1 = 100%**; it measures **642/644** now.
@@ -44,15 +47,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `_src_public_fn_at`), shared with `cyrius header`; distlib's identifier matcher moved there too
   (`_distlib_bundle_refs` → `_src_refs_ident`). Residual, inherent to NAME-based reference
   coverage: a test local or parameter that shares a fn's name still counts. Gate:
-  `tests/gates/toolchain/coverage_corpus_and_failopen.sh` axes 7-13 (9 mutations, each RED).
+  `tests/gates/toolchain/coverage_corpus_and_failopen.sh` axes 7-14 (16 mutations, each RED),
+  which also pins string escapes, `#define` bodies and `private;` followed by an item on the same
+  line.
 
 - **`cyrius header` emits a prototype for every public fn and reads the whole file.** (bite 9.) It
   matched only a column-0 `pub fn ` — its own comment said "pub fn or fn" — so a bare `fn` (public
   in an ordinary file) and `public fn` never got a prototype, it ignored the `private` rule, and it
   read a fixed 64 KiB: an 81,752-byte file lost every fn past the cut, rc=0. It now uses the shared
-  public-surface rule and `file_read_whole`. The verb had NO gate anywhere, while the coverage
-  gate's header claimed the two scanners "already handled both spellings";
-  `tests/gates/toolchain/header_spellings_and_size.sh` is its first (5 mutations, each RED).
+  public-surface rule and `file_read_whole`. It skips `impl` methods (brace depth > 0; they printed
+  conflicting bare `new` prototypes for `method_dispatch.tcyr`) and a program's `fn main`, whose
+  prototype would collide with the C host's `int main`. The verb had NO gate anywhere, while the
+  coverage gate's header claimed the two scanners "already handled both spellings";
+  `tests/gates/toolchain/header_spellings_and_size.sh` is its first (11 mutations, each RED).
 
 - **`cyrius doctest` reads the whole file.** (bite 9.) The same fixed 64 KiB read: an example past
   the cut was neither run nor counted, so a FAILING example there read `1 passed, 0 failed`, rc=0.

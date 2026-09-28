@@ -937,10 +937,12 @@ var _src_decl_pub = 0;
 
 # Offset of the fn NAME declared by the line buf[ls, le), or -1. Accepts every spelling the
 # compiler does: indentation, `private;` closing the file marker on the same line, any number
-# of attribute tokens (a `#deprecated(...)`-style argument list skipped), `pub` / `public`,
-# and `fn` followed by any spaces or tabs. Run it on a _src_blank_noncode'd buffer so a
-# comment or a string cannot declare anything. Sets _src_decl_pub. Modelled on cyrdoc's
-# _doc_fn_at. CHANGELOG [6.6.8]
+# of attribute tokens and `pub` / `public` in either order (an attribute's `(...)` argument
+# list skipped, with or without a space before it: `#deprecated ("x") fn`), an optional
+# `async`, and `fn` followed by any spaces or tabs. Run it on a _src_blank_noncode'd buffer
+# so a comment or a string cannot declare anything. It does NOT know brace depth — a caller
+# only asks it about lines at depth 0 (_src_brace_delta), so an `impl` method is not read as
+# a top-level fn. Sets _src_decl_pub. Modelled on cyrdoc's _doc_fn_at. CHANGELOG [6.6.8]
 fn _src_decl_at(buf, ls, le): i64 {
     _src_decl_pub = 0;
     var si = _src_skip_ws(buf, ls, le);
@@ -950,23 +952,19 @@ fn _src_decl_at(buf, ls, le): i64 {
         if (load8(buf + ps) != 59) { return 0 - 1; }          # `private;` then an item
         si = _src_skip_ws(buf, ps + 1, le);
     }
-    while (si < le && load8(buf + si) == 35) {
-        var al = _src_attr_len(buf, si, le);
-        if (al == 0) { return 0 - 1; }
-        si = si + al;
-        if (si < le && load8(buf + si) == 40) {                # `#deprecated("…")`
-            var dep = 0;
-            while (si < le) {
-                var pc = load8(buf + si);
-                if (pc == 40) { dep = dep + 1; }
-                if (pc == 41) { dep = dep - 1; if (dep == 0) { si = si + 1; break; } }
-                si = si + 1;
-            }
-        }
+    var more = 1;
+    while (more == 1 && si < le) {
+        if (load8(buf + si) == 35) {
+            var al = _src_attr_len(buf, si, le);
+            if (al == 0) { return 0 - 1; }
+            si = _src_skip_ws(buf, si + al, le);
+            if (si < le && load8(buf + si) == 40) { si = _src_skip_parens(buf, si, le); }
+        } elif (_src_word_at(buf, si, le, "public", 6) == 1) { _src_decl_pub = 1; si = si + 6; }
+        elif (_src_word_at(buf, si, le, "pub", 3) == 1) { _src_decl_pub = 1; si = si + 3; }
+        else { more = 0; }
         si = _src_skip_ws(buf, si, le);
     }
-    if (_src_word_at(buf, si, le, "public", 6) == 1) { _src_decl_pub = 1; si = _src_skip_ws(buf, si + 6, le); }
-    elif (_src_word_at(buf, si, le, "pub", 3) == 1) { _src_decl_pub = 1; si = _src_skip_ws(buf, si + 3, le); }
+    if (_src_word_at(buf, si, le, "async", 5) == 1) { si = _src_skip_ws(buf, si + 5, le); }
     if (si + 3 > le) { return 0 - 1; }
     if (memeq(buf + si, "fn", 2) == 0) { return 0 - 1; }
     var k = load8(buf + si + 2);
@@ -976,6 +974,36 @@ fn _src_decl_at(buf, ls, le): i64 {
     var c0 = load8(buf + si);
     if (_src_ident_char(c0) == 0 || (c0 >= 48 && c0 <= 57)) { return 0 - 1; }
     return si;
+}
+
+# Offset just past the balanced `(...)` group opening at buf[p] (an attribute's argument
+# list), or le when it does not close on the line.
+fn _src_skip_parens(buf, p, le): i64 {
+    var dep = 0;
+    while (p < le) {
+        var pc = load8(buf + p);
+        if (pc == 40) { dep = dep + 1; }
+        if (pc == 41) { dep = dep - 1; if (dep == 0) { return p + 1; } }
+        p = p + 1;
+    }
+    return le;
+}
+
+# Net `{` minus `}` on the line buf[ls, le) of a _src_blank_noncode'd buffer (so a brace in
+# a string, char literal or comment is already gone). The reference tools track brace depth
+# with it and ask _src_decl_at only about depth-0 lines, as cyrius_api_surface does: a fn
+# inside an `impl T for S { … }` block is a METHOD, emitted as `S_m`, and reading it by its
+# bare name gave `cyrius header` conflicting `cyr_val new(...)` prototypes and coverage a
+# false miss. Callers clamp the running depth at 0. CHANGELOG [6.6.8]
+fn _src_brace_delta(buf, ls, le): i64 {
+    var d = 0;
+    while (ls < le) {
+        var c = load8(buf + ls);
+        if (c == 123) { d = d + 1; }
+        elif (c == 125) { d = d - 1; }
+        ls = ls + 1;
+    }
+    return d;
 }
 
 # 1 iff the (blanked) file declares itself private-by-default: a line whose code opens with
@@ -999,7 +1027,8 @@ fn _src_file_private(buf, len): i64 {
 
 # Offset of the fn name on line buf[ls, le) when that fn is PUBLIC SURFACE, else -1: a
 # declaration (_src_decl_at) whose name does not start with `_`, and — in a `private` file
-# (`fpriv` from _src_file_private) — only one marked `pub` / `public`. The ONE rule coverage
+# (`fpriv` from _src_file_private) — only one marked `pub` / `public`. Callers ask it only
+# about lines at brace depth 0 (_src_brace_delta). The ONE rule coverage
 # and header share, as cyrius_api_surface applies it. CHANGELOG [6.6.8]
 fn _src_public_fn_at(buf, ls, le, fpriv): i64 {
     var ns = _src_decl_at(buf, ls, le);

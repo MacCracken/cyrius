@@ -175,10 +175,14 @@ fn cmd_coverage(full, min_pct, root_arg): i64 {
         var pub_fns = 0;
         var called = 0;
         var pos = 0;
+        var depth = 0;                        # brace depth: only depth-0 fns are top-level
         while (pos < ln) {
             var le = pos;
             while (le < ln) { if (load8(lbuf + le) == 10) { break; } le = le + 1; }
-            var ns = _src_public_fn_at(lbuf, pos, le, fpriv);
+            var ns = 0 - 1;
+            if (depth == 0) { ns = _src_public_fn_at(lbuf, pos, le, fpriv); }
+            depth = depth + _src_brace_delta(lbuf, pos, le);
+            if (depth < 0) { depth = 0; }
             if (ns >= 0) {
                 var fname_len = _src_ident_end(lbuf, ns, le) - ns;
                 pub_fns = pub_fns + 1;
@@ -510,7 +514,8 @@ fn cmd_doctest(arg): i64 {
 # Native header: scan the public fn declarations, emit C prototypes
 # ================================================================
 # 6.6.8: the PUBLIC SURFACE, the same rule cmd_coverage counts (_src_public_fn_at): every
-# declaration spelling, the file-scope `private` rule, `_`-prefixed names excluded. This
+# declaration spelling at brace depth 0, the file-scope `private` rule, `_`-prefixed names
+# and the `main` entry point excluded. This
 # matched only a column-0 `pub fn ` — its own comment said "pub fn or fn" — so a bare `fn`
 # (public in an ordinary file) and `public fn` (the same token as `pub`) never got a
 # prototype. And it read a fixed 64 KiB: an 81,752-byte file lost every fn past the cut
@@ -544,6 +549,7 @@ fn cmd_header(arg): i64 {
     println("");
 
     var pos = 0;
+    var depth = 0;                            # brace depth: an `impl` method is not FFI surface
     while (pos < hn) {
         var ls = pos;
         while (pos < hn) {
@@ -553,11 +559,18 @@ fn cmd_header(arg): i64 {
         var le = pos;
         if (le > ls) { if (load8(hbuf + le - 1) == 10) { le = le - 1; } }
 
+        var d0 = depth;
+        depth = depth + _src_brace_delta(hbuf, ls, le);
+        if (depth < 0) { depth = 0; }
+        if (d0 != 0) { continue; }
         var fname_start = _src_public_fn_at(hbuf, ls, le, fpriv);
         if (fname_start < 0) { continue; }
 
         # Extract function name; its `(` must follow on the same line
         var fname_len = _src_ident_end(hbuf, fname_start, le) - fname_start;
+        # A program's `fn main` is its entry point, not FFI surface — its prototype would
+        # collide with the C host's own `int main`. CHANGELOG [6.6.8]
+        if (fname_len == 4) { if (memeq(hbuf + fname_start, "main", 4) == 1) { continue; } }
         var ne = _src_skip_ws(hbuf, fname_start + fname_len, le);
         if (ne >= le) { continue; }
         if (load8(hbuf + ne) != 40) { continue; }
