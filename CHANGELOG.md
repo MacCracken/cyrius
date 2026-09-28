@@ -33,6 +33,49 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   rows ≤ 1 ulp with the bits pinned, and a 2,128-argument sweep whose hash was pinned after every
   result was checked within 1 ulp; large-argument sin/cos rows from 10^4 to 2^80 moved from a 1e-9
   absolute bar to 1 ulp — the 6.6.8 `math.cyr` fails 12 of them on x86).
+- **x86 `f64_sin` / `f64_cos` (Linux, Windows, x86 macOS) are within 1 ulp for every argument —
+  they no longer run x87 `fsin` / `fcos`.** (bite 4; audit: x87 `fsin`/`fcos` on large arguments.)
+  **Root cause:** `EF64_SIN` / `EF64_COS` emitted bare `D9 FE` / `D9 FF`. x87 reduces with a
+  66-bit π, an absolute error of about |x|·2^-66 — catastrophic relative to sin near every
+  multiple of π, at ANY k ≥ 1: `sin(π)` was `0x3CA1A60000000000`, 1.6e11 ulp off, with |x| only
+  π; away from those, error grew from 24 ulp at 2^10 to 1.3e6 at 2^29 and 2.4e11 at 2^45. For
+  |x| ≥ 2^63 the instruction sets C2 and leaves ST0 alone, and nothing tested C2, so
+  `sin(2^63)` = 2^63, `sin(1e19)` = 1e19, `sin(DBL_MAX)` = DBL_MAX. Precision control does not
+  reach `fsin`, so Windows and x86 macOS were the same. A range branch keeping `fsin` for small
+  |x| is unsound (only |x| ≤ π/4, where no reduction happens, is safe). **Fix:** the x86 emitter
+  calls `_f64_sin_polyfill` / `_f64_cos_polyfill`, as aarch64 does; a missing
+  `include "lib/math.cyr"` is a compile error naming it, and returns before emitting a call to
+  index -1. sin and cos are now the **same bits on every target** (except a NaN's sign).
+  Verified on Linux, wine, cass (PE, and the PE compiler self-hosts byte-identical there) and
+  ach (x86 Mach-O, same); the builtin equals the polyfill bit for bit on every argument of the
+  243,842-argument scan. Gated by `tests/tcyr/crossos/trig_polyfill.tcyr`, rewritten (303 rows):
+  specials, `sin(π)` / `cos(π/2)` / the multiples of π/2 bit-exact, 25 finite rows ≤ 1 ulp with
+  the bits pinned on both the builtin and the polyfill — near k·π/2 up to 2^30 and the double
+  closest to a multiple of π/2 (6381956970095103·2^797), 2^50 … 2^80, 1e22, 1e300, ±DBL_MAX — and
+  a 6,224-argument sweep whose sin and cos hashes were pinned after every result was checked
+  within 1 ulp, plus builtin == polyfill on all of them. With this `math.cyr` the 6.6.8 compiler
+  fails 77 rows on x86 (the builtin); with this compiler the 6.6.8 `math.cyr` fails 166. And by
+  `tests/gates/codegen/x86_trig_calls_polyfill.sh` (new): for ELF, PE and x86 Mach-O, a missing
+  include is a named compile error, the disassembly has no `fsin`/`fcos`, and `sin(π)`,
+  `sin(1e19)`, `cos(DBL_MAX)` run correctly rounded (ELF natively, PE under wine) — the 6.6.8
+  compiler fails 8 of its rows.
+
+### Changed
+
+- **`f64_sin` / `f64_cos` need `include "lib/math.cyr"` on x86 too** (they always did on
+  aarch64), and they cost differently: on this box 10^7 calls over [0, 100] take 42 ns each
+  against x87's 47, and 39 against 45 over [0, 2π]; above 2^20·π/2 (≈ 1.6e6) the Payne-Hanek
+  reduction takes ~540 ns against x87's 52 — where x87 was up to ~10^6 ulp off. DSP code that
+  lets a phase accumulator grow unbounded pays that; wrapping the phase keeps the fast path.
+  (bite 4.)
+
+### Downstream
+
+- **sin / cos callers:** every ecosystem repo calling `f64_sin` / `f64_cos` (abaco, agnosai,
+  attn11, dhvani, ganita, garjan, ghurni, goonj, hisab, jalwa, naad, nidhi, prajna, prakash, prani,
+  ranga, sankhya, shravan, svara) already includes `lib/math.cyr`, so the new x86 requirement
+  breaks none; their x86 builds change bits (now correct) and aarch64 ones become correct past
+  small arguments. (bite 4.)
 
 ## [6.6.8] — 2026-09-28
 

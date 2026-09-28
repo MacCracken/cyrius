@@ -987,18 +987,19 @@ ops, integer gcd+lcm, the `f64`-builtin polyfills, and f64 parsing. All values
 are f64 **bit patterns** carried in i64.
 
 The polyfills are what the `f64_exp` / `f64_ln` / `f64_log2` / `f64_exp2` /
-`f64_sin` / `f64_cos` / `f64_atan` builtins call on aarch64. Four of them — the
-exp/ln family, fdlibm ports since 6.6.8 — are **supported public entry points**
-for one purpose: they use only f64 add/sub/mul/div and integer bit operations, so
-they return the **same bits on every target**, where the builtins are only
-promised to be within 1 ulp (x86 and Windows run x87, aarch64 the polyfill). Call
-them directly when output must match across targets (a golden file, a seeded
-simulation). The `_` prefix is historical; the names are pinned by
-`tests/tcyr/crossos/f64_log_exp_polyfill.tcyr`, which calls all four and checks
-their bits. The sin / cos / atan polyfills (`_f64_sin_polyfill`,
-`_f64_cos_polyfill`, `_f64_atan_polyfill` and the `_f64_sin_core` /
-`_f64_cos_core` kernels) remain **private**: they carry no ≤1-ulp promise yet,
-and may change bits or names.
+`f64_atan` builtins call on aarch64, and what `f64_sin` / `f64_cos` call on
+**every** target (6.6.9 — x86 no longer emits x87 `fsin`/`fcos`, so those two
+builtins need `include "lib/math.cyr"` everywhere). All seven are fdlibm ports
+with a ≤1-ulp bound and IEEE special values, and are **supported public entry
+points** for one purpose: they use only f64 add/sub/mul/div and integer bit
+operations, so they return the **same bits on every target**, where the exp/ln
+family and `f64_atan` builtins are only promised to be within 1 ulp (x86 and
+Windows run x87, aarch64 the polyfill). Call them directly when output must
+match across targets (a golden file, a seeded simulation). The `_` prefix is
+historical; the names are pinned by `tests/tcyr/crossos/f64_log_exp_polyfill.tcyr`,
+`trig_polyfill.tcyr` and `exp2_atan_bigtrig.tcyr`, which call them and check their
+bits. (Their internal helpers — `_f64_rem_pio2`, `_f64_k_sin`, `_f64_k_cos` and
+the `_f64_trig_*` fns — remain private.)
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
@@ -1019,11 +1020,15 @@ and may change bits or names.
 | `_f64_exp2_polyfill` | `_f64_exp2_polyfill(x) → i64` | 2^x — ≤1 ulp, `exp2(k) == 2^k` exactly for integral k, IEEE specials, **same bits on every target** (6.6.8) |
 | `_f64_ln_polyfill` | `_f64_ln_polyfill(x) → i64` | ln x — ≤1 ulp; ±0→-inf, any negative→NaN, +inf→+inf; **same bits on every target** (6.6.8) |
 | `_f64_log2_polyfill` | `_f64_log2_polyfill(x) → i64` | log2 x — ≤1 ulp, `log2(2^k) == k` exactly; specials as ln; **same bits on every target** (6.6.8) |
+| `_f64_sin_polyfill` | `_f64_sin_polyfill(x) → i64` | sin x — ≤1 ulp for every finite x (Payne-Hanek reduction up to DBL_MAX); ±0 kept, ±inf/NaN→NaN; the `f64_sin` builtin on every target; **same bits on every target** (a NaN's sign aside) (6.6.9) |
+| `_f64_cos_polyfill` | `_f64_cos_polyfill(x) → i64` | cos x — ≤1 ulp for every finite x; ±inf/NaN→NaN; the `f64_cos` builtin on every target; **same bits on every target** (a NaN's sign aside) (6.6.9) |
+| `_f64_atan_polyfill` | `_f64_atan_polyfill(x) → i64` | atan x — ≤1 ulp; `atan(±1)` exactly ±π/4, ±inf→±π/2, ±0 kept; **same bits on every target** (6.6.9) |
 
 Constants include `F64_ONE` / `F64_TWO` / `F64_HALF` / `F64_PI` (+ `PI_2`,
 `PI_4`, `PI_6`, `2_PI`) / `F64_TAU` / `F64_E` / `F64_LN2` / `F64_LN10` /
 `F64_LOG2E` / `F64_SQRT2` / `F64_FRAC_1_SQRT2`, plus the Dekker
-double-double reduction constants used by the large-argument trig path.
+double-double constants (`F64_DD_SPLIT`, `F64_2PI_*`, `F64_PI2_*`,
+`F64_TRIG_BIG`) of the pre-6.6.9 trig reduction, kept as public constants.
 
 > ⛔ **Carved out — no longer in `lib/math.cyr`.** The transcendental,
 > hyperbolic, power and combinatorial fns moved into `lib/ganita.cyr` at

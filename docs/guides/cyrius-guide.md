@@ -777,11 +777,26 @@ simulation), call `_f64_exp_polyfill` / `_f64_ln_polyfill` / `_f64_log2_polyfill
 `_f64_exp2_polyfill` directly: they use only f64 add/sub/mul/div and integer bit operations,
 so they give the same bits on every target, and `tests/tcyr/crossos/f64_log_exp_polyfill.tcyr`
 pins them. Despite the `_` prefix these four are supported entry points (listed in
-`docs/stdlib-reference.md`, *math.cyr*); the sin / cos / atan polyfills stay private.
+`docs/stdlib-reference.md`, *math.cyr*), as are the sin / cos / atan ones since 6.6.9.
 (Before 6.6.8 the aarch64 polyfills returned finite values for ln of 0, of +inf and of most
 negatives — `ln(-1.5)` was +4.27e9 — wrapped `exp(1000)` to a negative number,
 and were up to 2,300 ulp off; and on Windows the x87 `f64_exp` ran at 53-bit precision and
 was up to 350 ulp off.)
+
+`f64_sin`, `f64_cos` and `f64_atan` (6.6.9) make the same promise: within **1 ulp** of the
+correctly rounded value for **every** finite argument, `DBL_MAX` included — not just small
+ones. `sin(±0)` is ±0 and a tiny `x` comes back unchanged, `sin`/`cos` of ±inf or NaN is NaN,
+`atan(±inf)` is ±π/2 and `atan(±1)` is exactly the double nearest ±π/4. On **every** target
+`f64_sin` / `f64_cos` call `lib/math.cyr`'s `_f64_sin_polyfill` / `_f64_cos_polyfill` (fdlibm
+ports), so **include `lib/math.cyr` wherever you use them, x86 included** — without it the
+compile fails with a message naming the include. Because the builtin is the same code
+everywhere, sin and cos give the same **bits** on every target (except a NaN's sign). `f64_atan`
+is x87 `fpatan` on x86 and `_f64_atan_polyfill` on aarch64: both within 1 ulp, not always the
+same bits; call `_f64_atan_polyfill` directly for identical output. (Before 6.6.9 x86 ran the
+x87 `fsin`/`fcos`, which reduce with a 66-bit π — `sin(π)` was 1.6e11 ulp off and `sin(1e19)`
+returned 1e19 — and the aarch64 polyfills were up to millions of ulp off near multiples of π/2,
+returned `sin(π) = -0`, and gave +inf or NaN for huge arguments.) Huge arguments cost more:
+above 2^20·π/2 the reduction multiplies by as many bits of 2/π as it needs, about 0.5 µs a call.
 
 ## SIMD Vectors
 

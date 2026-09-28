@@ -138,6 +138,7 @@ assert(ulp1(_f64_sin_polyfill(f64_from(10000)),   SIN10K) == 1, "sin(10000)");
 assert(ulp1(_f64_cos_polyfill(f64_from(10000)),   COS10K) == 1, "cos(10000)");
 assert(ulp1(_f64_sin_polyfill(f64_from(1000000)), SIN1M)  == 1, "sin(1e6)");
 assert(ulp1(_f64_cos_polyfill(f64_from(1000000)), COS1M)  == 1, "cos(1e6)");
+assert(ulp1(f64_sin(f64_from(1000000)), SIN1M) == 1, "builtin sin(1e6)");
 assert(ulp1(_f64_sin_polyfill(0x4310000000000000), 0x3FDFC4F5E3AAEDDB) == 1, "sin(2^50)");
 assert(ulp1(_f64_sin_polyfill(0x4350000000000000), SIN2P54) == 1, "sin(2^54) (was 3.9e10 ulp off)");
 assert(ulp1(_f64_cos_polyfill(0x4370000000000000), COS2P56) == 1, "cos(2^56) (|cos| was > 1)");

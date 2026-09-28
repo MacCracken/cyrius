@@ -3330,8 +3330,8 @@ fn ELOAD_LOCAL_ADDR(S, adisp): i64 {
 }
 
 # v5.11.37 path-A named ops — Class C refactor (f64 unary ops).
-# x86 uses a sign-bit flip (btc) for f64_neg and x87 (fsin/fcos/fyl2x/etc.)
-# for transcendentals. aarch64 has native fneg but errors / dispatches
+# x86 uses a sign-bit flip (btc) for f64_neg and x87 (fyl2x/f2xm1/fpatan) for
+# transcendentals, except sin/cos, which call lib/math.cyr (6.6.9). aarch64 has native fneg but errors / dispatches
 # to lib/math.cyr polyfills for transcendentals. cx has no f64
 # opcodes in this slot (real CYX f64 ops = future work). Closes
 # Class C of docs/audit/2026-04-27-cx-direct-emit-inventory.md.
@@ -3351,21 +3351,36 @@ fn EF64_NEG(S): i64 {
     return 0;
 }
 
-# EF64_SIN — x87 fsin (D9 FE).
+# EF64_SIN / EF64_COS — a call to lib/math.cyr's `_f64_sin_polyfill` / `_f64_cos_polyfill`,
+# the same route aarch64 takes. NOT x87 fsin / fcos: those reduce with a 66-bit π, so
+# sin(π) was 1.6e11 ulp off and error grew from 2^10 up, and for |x| ≥ 2^63 they set C2
+# and leave the argument UNCHANGED (sin(1e19) = 1e19). Precision control does not reach
+# them, so PE and x86 Mach-O were the same. The software route is < 1 ulp everywhere and
+# gives the same bits on every target, at a speed cost. ERR_MSG reports and continues,
+# so a missing include returns before ECALLFIX sees the -1 index. CHANGELOG [6.6.9]
 fn EF64_SIN(S): i64 {
-    EX87PUSH(S);
-    _IR_REC0(S, IR_RAW_EMIT);
-    EB(S, 0xD9); EB(S, 0xFE);
-    EX87POP(S);
+    var pf = _FINDFN_CSTR(S, "_f64_sin_polyfill", 17);
+    if (pf < 0) {
+        ERR_MSG(S, "f64_sin requires include \"lib/math.cyr\" (provides _f64_sin_polyfill)", 68);
+        return 0;
+    }
+    EPUSHR(S);
+    ECALLPOPS(S, 1);
+    ECALLFIX(S, pf);
+    ECALLCLEAN(S, 1);
     return 0;
 }
 
-# EF64_COS — x87 fcos (D9 FF).
 fn EF64_COS(S): i64 {
-    EX87PUSH(S);
-    _IR_REC0(S, IR_RAW_EMIT);
-    EB(S, 0xD9); EB(S, 0xFF);
-    EX87POP(S);
+    var pf = _FINDFN_CSTR(S, "_f64_cos_polyfill", 17);
+    if (pf < 0) {
+        ERR_MSG(S, "f64_cos requires include \"lib/math.cyr\" (provides _f64_cos_polyfill)", 68);
+        return 0;
+    }
+    EPUSHR(S);
+    ECALLPOPS(S, 1);
+    ECALLFIX(S, pf);
+    ECALLCLEAN(S, 1);
     return 0;
 }
 
