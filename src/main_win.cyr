@@ -102,9 +102,10 @@
 # --- Reclaimable / scratch ---
 #   0x1C0000  include_fnames[32768]       256 include-once filenames × 128 B (v4.8.4-alpha2)
 #   0x14A000  fn_regalloc   [65536]       8192 per-fn #regalloc flags (v4.8.4-alpha4; v5.11.19 doubled + relocated)
-#   0x1D8000  enum_const_val[8192]        1024 slots × 8 B — PARSE_ENUM_DEF
-#                                        stores (1<<63)|val per variant; read
-#                                        by PARSE_FACTOR to const-fold enum
+#   0x1D8000  enum_const_val[65536]       8192 slots × 8 B, grown by _grow_g5 —
+#                                        PARSE_ENUM_DEF stores the RAW value per
+#                                        variant (presence = the GVECP byte map);
+#                                        read by PARSE_FACTOR to const-fold enum
 #                                        identifiers at parse time (v5.5.2)
 #   0x1DA000  (PHANTOM, removed from the map v6.5.26 — was "DCE bitmap [8192]".
 #             NOTHING in the tree ever read or wrote S + 0x1DA000: the only two hits

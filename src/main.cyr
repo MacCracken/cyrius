@@ -163,8 +163,9 @@
 #                                        v5.11.19 when fn_regalloc relocated
 #                                        0x1C8000 → 0x14A000. v5.11.62.
 #   0x14A000  (FREED v6.4.75 — was fn_regalloc; now _fnreg_base, alloc'd max-sized)
-#   0x1D8000  enum_const_val[65536]       PARSE_ENUM_DEF stores (1<<63)|val per
-#                                        variant; read by PARSE_FACTOR to
+#   0x1D8000  enum_const_val[65536]       PARSE_ENUM_DEF stores the RAW value per
+#                                        variant (presence = the GVECP byte map,
+#                                        v6.5.36/6.6.8); read by PARSE_FACTOR to
 #                                        const-fold enum identifiers at parse
 #                                        time (v5.5.2).
 #                                        ⛔ SIZE CORRECTED v6.5.26 — the map said

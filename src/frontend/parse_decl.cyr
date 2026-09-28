@@ -38,8 +38,8 @@ fn PARSE_ARRAY(S, noff, ew): i64 {
     var _pa_decl_ti = GTI(S);   # v6.6.4: the `[` token — `]` and `;` are consumed below, so by the stamp the cursor may already sit in the NEXT file
     STI(S, GTI(S) + 1);  # consume [
     # v5.10.48: accept either NUM literal OR an IDENT that resolves
-    # to a compile-time-known enum constant (via enum_const_val at
-    # 0x1D8000, marker bit 63 set per v5.5.2 fold registration).
+    # to a compile-time-known enum constant (raw value in _vecv_base,
+    # GVECP presence flag set by the v5.5.2 fold registration).
     # Closes `docs/development/issues/2026-05-03-parser-cosmetic-
     # limits-...` `var_bracket_size_must_be_literal`. Plain `var
     # NAME = LITERAL;` named constants stay unsupported here —

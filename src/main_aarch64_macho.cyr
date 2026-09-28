@@ -64,7 +64,7 @@
 #   0x1CC000  fn_body_start [16384]
 #   0x1D0000  fn_body_end   [16384]
 #   0x1D4000  fn_inline     [16384]
-#   0x1DC000  fn_param_str_mask [16384]
+#   0x1D8000  enum_const_val[65536]       8192 slots × 8 B RAW enum values, grown by _grow_g5 (v5.5.2; see main.cyr)
 #   0x11A000 var_noffs     [65536]       8192 variables
 #   0x12A000 var_sizes     [65536]
 #   0x13A000 var_types     [65536]
