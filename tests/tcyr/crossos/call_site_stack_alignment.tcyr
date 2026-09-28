@@ -77,11 +77,12 @@
 #                         WITH: 320 of 320 exit 0. Same binary, same host, same session.
 #
 # A target that predefines NEITHER arch macro (cx) skips the alignment rows: a bytecode VM
-# has no machine stack for them to be about. That arm is dead today — no file in this
-# directory compiles under the cx fork (measured: 0 of 76) — but it is written so the file
-# degrades to its VALUE rows rather than to a vacuous pass if that ever changes. The value
-# rows at the end run everywhere, because the fix also changed what several of these shapes
-# RETURN (missing ECALLCLEAN, Win64 5/6-arg tail calls, statement-position fncallN).
+# has no machine stack for them to be about. The value rows at the end run everywhere,
+# because the fix also changed what several of these shapes RETURN (missing ECALLCLEAN,
+# Win64 5/6-arg tail calls, statement-position fncallN). ⚠ Until 6.6.8 "everywhere" did not
+# include cx: this file did not COMPILE for cx (its f64_exp row has no cx lowering), so the
+# claim was never exercised there. It now compiles and passes on cxvm, and
+# tests/gates/toolchain/cx_runtime_foundations.sh runs it there.
 include "lib/assert.cyr"
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
@@ -491,7 +492,15 @@ fn main(): i64 {
 
     # --- a call emitted after f64_exp in the SAME expression (the x87 +/-inf guard emits
     #     its two arms out of execution order, so a depth model needs a branch restore) ---
+    # cx has no f64_exp lowering (the VM has no libm opcode) and no machine stack for this row
+    # to be about, so the row is counted there instead of compiled — the one line that kept
+    # this file from compiling for cx at all. CHANGELOG [6.6.8]
+    #ifndef CYRIUS_TARGET_CX
     a(snd(f64_exp(f64_from(0)), align_probe()), "argument after f64_exp");
+    #endif
+    #ifdef CYRIUS_TARGET_CX
+    a(0, "argument after f64_exp (no f64_exp on cx)");
+    #endif
 
     # --- nesting depth 1, 2, 3 and an intermediate cyrius frame ---
     a(snd(0, snd(0, align_probe())), "two values pending");

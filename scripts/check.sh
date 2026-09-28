@@ -1240,3 +1240,8 @@ _chk_gate "$ROOT/tests/gates/memory/alloc_first_chunk_small_board.sh"
 # 6.6.8 (bite 6) — every allocation check lib/io.cyr gained holds when ITS call alone is
 # refused (per-call fault injection): file_write_atomic / file_replace_atomic / getenv.
 _chk_gate "$ROOT/tests/gates/memory/io_alloc_refused_per_call.sh"
+
+# 6.6.8 (bite 6) — cx runtime foundations: cxvm's register file holds fp/sp, atomic_cas /
+# fetch_add work on cx, the hash seed is published / OS-drawn / varies, clock_gettime is
+# translated, and call_site_stack_alignment.tcyr runs on cx.
+_chk_gate "$ROOT/tests/gates/toolchain/cx_runtime_foundations.sh"

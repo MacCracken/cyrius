@@ -915,7 +915,7 @@ Per-thread slot storage (TLS) via CPU thread-pointer register (`%fs` on x86_64, 
 
 ### atomic.cyr
 
-Atomic memory primitives for concurrent code. Provides race-safe 8-byte load-modify-write and memory-ordering operations. Uses `lock cmpxchg`/`lock xadd`/`mfence` on x86_64; LL-SC loops + `dmb ish` on aarch64.
+Atomic memory primitives for concurrent code. Provides race-safe 8-byte load-modify-write and memory-ordering operations. Uses `lock cmpxchg`/`lock xadd`/`mfence` on x86_64; LL-SC loops + `dmb ish` on aarch64; plain load/compare/store on cx, whose VM is single-threaded (v6.6.8 — before that `atomic_cas` / `atomic_fetch_add` had empty bodies on cx and every CAS reported failure).
 
 | Function | Signature | Description |
 |----------|-----------|-------------|

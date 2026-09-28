@@ -130,6 +130,38 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Linux and faults on cass) and `tests/gates/memory/io_alloc_refused_per_call.sh` (new;
   per-call fault injection reaches the SECOND and THIRD checks on each path, which a size
   refusal cannot; each check removed alone turns it red).
+- **cx: `atomic_cas` / `atomic_fetch_add` work, so the hash seed is published — every cx process
+  hashed with the same seed.** (bite 6.) **Root cause, three layers:** `lib/atomic.cyr`'s bodies
+  are inline asm under `CYRIUS_ARCH_X86` / `CYRIUS_ARCH_AARCH64`, cx predefines neither, so both
+  compiled to EMPTY bodies — every CAS reported failure and swapped nothing, and
+  `lib/hashseed.cyr` returned its unpublished `_hm_seed`, 0, on every call (any `while
+  (atomic_cas(...) == 0)` lock would have spun forever). Under that, cxvm translated guest
+  pointers only for read/write/open: `getrandom(318)` handed the host a raw guest offset and got
+  EFAULT, and so did the clock fallback `clock_gettime(228)`, so the seed was a constant computed
+  from `-EFAULT`. And translating was not enough on real hardware: 318 is unassigned on
+  aarch64-Linux (pi: ENOSYS), Windows has no getrandom syscall, and neither macOS route of 228
+  fills a timespec (ecb: rc 0, `tv_sec` 0). **Fix:** a plain single-threaded `CYRIUS_TARGET_CX`
+  arm for both atomics (inactive in the compiler's own compile); cxvm translates the pointer
+  argument of 318 and 228 and serves both through the HOST's stdlib — `sys_getrandom` (ProcessPrng
+  on Windows, getentropy on macOS) and `lib/chrono.cyr`, filling the guest's timespec in the
+  Linux shape the .cyx ABI promises. `programs/cxvm.cyr` now includes `lib/syscalls.cyr` and
+  `lib/chrono.cyr` (the x86-Linux cxvm grows from 29,656 to 64,336 bytes).
+- **cxvm's register file holds all 256 registers — fp and sp no longer alias guest memory.**
+  (bite 6; found in 6.6.7 triage.) It was `alloc(256)`, sized for r0–r31, while a register
+  operand is a full byte and the cx backend keeps fp/sp in r253/r254 — so they lived inside the
+  next allocation, `_cx_mem`, at guest offsets ~1768/1776: every call rewrote guest data there
+  and a guest store there rewrote the stack pointer. Whether a cx row passed tracked CODE SIZE
+  (one unrelated fn flipped the 6.6.7 triage probe). Now 2,048 bytes.
+- **`call_site_stack_alignment.tcyr` compiles and runs on cx, as its header said it did.**
+  (bite 6.) One row, the x87 `f64_exp` guard, has no cx lowering, and the whole file failed to
+  compile for cx (`this float op is not yet supported on the cx bytecode target`); the row is
+  counted instead of compiled on cx, and the file's value rows now pass on cxvm. All four cx
+  items are gated by `tests/gates/toolchain/cx_runtime_foundations.sh` (new; seven rows: a guest
+  array across offsets 1768–1784 survives a recursion, atomic semantics on cx and natively,
+  `crossos/hashseed_os_rng_source.tcyr` on cxvm, three runs → three distinct non-zero seeds,
+  REALTIME and MONOTONIC timespecs filled, this file on cxvm, and the seed/clock fixtures on an
+  aarch64 cxvm under qemu and a PE cxvm under wine — the legs where the host's raw syscalls do
+  not keep the contract). Rows 1–6 were run by hand on pi, ecb, ach and cass: green on all four.
 
 ### Added
 
