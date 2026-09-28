@@ -1452,3 +1452,7 @@ _chk_gate "$ROOT/tests/gates/diagnostics/missing_helper_error_exits_1.sh"
 # 6.6.9 (bite 3) — `return None();` (any nullary `: stack` variant) beside `return Some(v);` is
 # a whole variant, not a dropped tag: no mixed-return warning. The dropped-tag shapes still warn.
 _chk_gate "$ROOT/tests/gates/frontend/stack_enum_mixed_return_warning.sh"
+
+# 6.6.9 (bite 3) — a second struct/union with a different layout (the first silently won) and
+# an enum constant over a zero/computed global of the same name are warned, not silent.
+_chk_gate "$ROOT/tests/gates/frontend/redefinition_layout_and_enum_over_var.sh"

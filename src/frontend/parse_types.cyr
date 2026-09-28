@@ -536,6 +536,7 @@ fn PARSE_ENUM_DEF(S, emit_code): i64 {
                 # (issue 2026-06-14) BEFORE registering it, so the lookup sees only
                 # prior defs. Pass-1-only (emit_code==0) → no double-warn.
                 CHKDUPVAL(S, vnoff, val);
+                CHK_ENUM_OVER_VAR(S, vnoff, val);   # 6.6.9: the zero/computed-var prior CHKDUPVAL cannot compare
                 S64(_varn_base + vcnt * 8, vnoff);
                 S64(_vars_base + vcnt * 8, 8);
                 # v5.5.2: record enum variant's compile-time value in the
@@ -631,17 +632,51 @@ fn FINDFIELD(S, si, fnoff): i64 {
 }
 
 # Parse: struct Name<T> { field; field; ... }
+# 6.6.9 — A SECOND `struct X` / `union X` WITH A DIFFERENT LAYOUT. REGSTRUCT appends and
+# FINDSTRUCT returns the FIRST match, so the second definition was registered and never read:
+# sizeof(X) and every field offset came from the first, silently. Measured: two `SP` structs of
+# 5 and 3 fields built rc 0 with sizeof(SP) = 40, and code written against the 3-field one read
+# the 5-field offsets. Live in the older kavach several repos still vendor (two
+# `struct SpawnedProcess`). A WARNING, so those builds keep compiling; an identical
+# redefinition (same kind, same field names and types, in order) stays silent. CHANGELOG [6.6.9]
+fn _struct_same_layout(S, a, b): i64 {
+    if (L64(S + 0x1A8018 + a * 8) != L64(S + 0x1A8018 + b * 8)) { return 0; }   # count + union bit
+    var n = GETFCOUNT(S, a);
+    var i = 0;
+    while (i < n) {
+        if (STREQ(S, GETFNAME(S, a, i), GETFNAME(S, b, i)) == 0) { return 0; }
+        if (GETFTYPE(S, a, i) != GETFTYPE(S, b, i)) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# `prev` = FINDSTRUCT before this definition registered (1-based, 0 = new name); `sid` = this one.
+fn _chk_struct_redef(S, prev, sid, name_ti): i64 {
+    if (prev == 0) { return 0; }
+    if (_struct_same_layout(S, prev - 1, sid - 1) == 1) { return 0; }
+    syscall(SYS_WRITE, 2, "warning:", 8);
+    _err_head_at(S, name_ti);
+    if (ISUNION(S, sid - 1) == 1) { syscall(SYS_WRITE, 2, ": union '", 9); }
+    else { syscall(SYS_WRITE, 2, ": struct '", 10); }
+    PRSTR(S + 0xEC00000 + L64(S + 0x1A6018 + (sid - 1) * 8));
+    syscall(SYS_WRITE, 2, "' redefined with a different layout — the FIRST definition is the one used (sizeof, field offsets, every access)\n", 115);
+    return 0;
+}
+
 fn PARSE_STRUCT_DEF(S): i64 {
     var _sdefstart = GTI(S);   # v6.3.10: the `struct` token, for generic instance re-emit
     STI(S, GTI(S) + 1);  # consume STRUCT
     if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
     var noff = PEEKV(S);
+    var _sname_ti = GTI(S);
     STI(S, GTI(S) + 1);
     # Skip generic parameters if present: struct Foo<T, U>
     # v6.3.10 (generic structs): capture <T> (flag-off / non-generic = old SKIP_GENERICS).
     var _stp = _capture_tparams(S);
     # v6.3.10: re-emitting a `Box$ty` instance uses the mangled name verbatim.
     if (_inst_name != 0) { noff = _inst_name; }
+    var _sprev = FINDSTRUCT(S, noff);
     var sid = REGSTRUCT(S, noff);
     var si = sid - 1;
     if (_stp != 0) { SSTP(S, si, _stp); SSDS(S, si, _sdefstart + 1); }   # record for instantiation
@@ -725,6 +760,7 @@ fn PARSE_STRUCT_DEF(S): i64 {
     # v6.5.19: verify the brace — the loop can now exit on EOF too. See PARSE_ENUM_DEF.
     if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
     STI(S, GTI(S) + 1);  # consume }
+    _chk_struct_redef(S, _sprev, sid, _sname_ti);
     return 0;
 }
 
@@ -733,8 +769,10 @@ fn PARSE_UNION_DEF(S): i64 {
     STI(S, GTI(S) + 1);  # consume UNION
     if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
     var noff = PEEKV(S);
+    var _uname_ti = GTI(S);
     STI(S, GTI(S) + 1);
     SKIP_GENERICS(S);
+    var _uprev = FINDSTRUCT(S, noff);
     var sid = REGSTRUCT(S, noff);
     var si = sid - 1;
     # Set union flag (high bit of fcount)
@@ -797,6 +835,7 @@ fn PARSE_UNION_DEF(S): i64 {
     # v6.5.19: verify the brace — the loop can now exit on EOF too. See PARSE_ENUM_DEF.
     if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
     STI(S, GTI(S) + 1);
+    _chk_struct_redef(S, _uprev, sid, _uname_ti);
     return 0;
 }
 
@@ -1091,7 +1130,8 @@ fn _vis_check_var(S, vi, noff): i64 {
 # under-fires (false-negatives only, never false-positives) in these cases:
 #   - a prior literal-init-to-ZERO global is indistinguishable from an
 #     uninitialised 0x1EC000 slot, so a `var X = 0` prior is not compared (the
-#     dangerous SYS_*/ERR_* cases are enum or nonzero);
+#     dangerous SYS_*/ERR_* cases are enum or nonzero). 6.6.9: when the NEW
+#     definition is a nonzero enum constant, CHK_ENUM_OVER_VAR (above) reports it;
 #   - value-identical redefinitions are silent (intended);
 #   - (no index cap on either half any more.) 6.6.6 bite 19c removed a blanket
 #     `if (pi >= 1024) { return 0; }` over the WHOLE function, which made a LITERAL-init
@@ -1113,6 +1153,29 @@ fn _vis_check_var(S, vi, noff): i64 {
 # read got 0). A constant redeclaration now records its value, so a 3rd+ link
 # of a chain is compared against the 2nd (it used to compare against 0 and stay
 # silent). CHANGELOG [6.6.6]
+# 6.6.9 — THE ENUM-AFTER-VAR HALF OF THE PAIRING. CHK_ENUM_SHADOW refuses a var declared
+# after an enum constant of the same name, and CHKDUPVAL compares values when both sides are
+# compile-time literals. The case neither saw: a global whose value is ZERO or COMPUTED
+# (`var A = 0;`, `var A = f();`, `var A = "s";` — nothing recorded in the static-init table),
+# then an enum member `A`. Every later use folds to the constant — the variable's own module
+# included — with no diagnostic. Measured: `var A = f();` then `enum { A = 4130 }` built rc 0
+# and read 4130 everywhere. A WARNING (as CHKDUPVAL is) so existing builds keep compiling; a
+# zero constant over such a var is not compared (a zero var and a zero constant agree).
+# CHANGELOG [6.6.9]
+fn CHK_ENUM_OVER_VAR(S, noff, newval): i64 {
+    if (newval == 0) { return 0; }
+    var pi = _findvar_core(S, noff);
+    if (pi < 0) { return 0; }
+    if (GVECP(S, pi) == 1) { return 0; }                 # prior is an enum const: CHKDUPVAL
+    if (L64(_vgsi_base + pi * 8) != 0) { return 0; }     # prior literal recorded: CHKDUPVAL
+    syscall(SYS_WRITE, 2, "warning:", 8);
+    _err_head(S);
+    syscall(SYS_WRITE, 2, ": duplicate symbol '", 20);
+    PRSTR(S + 0xEC00000 + noff);
+    syscall(SYS_WRITE, 2, "' is an enum constant here and a global variable before it (value 0 or computed) — every use now reads the constant, including the variable's own module\n", 155);
+    return 0;
+}
+
 fn CHKDUPVAL(S, noff, newval): i64 {
     # 6.6.6: _findvar_core, not FINDVAR — this is a DECLARATION-time probe of a name being
     # registered, not a reference to the prior global, so it must not run the cross-file
