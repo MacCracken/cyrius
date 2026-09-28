@@ -1433,3 +1433,9 @@ _chk_gate "$ROOT/tests/gates/toolchain/check_gate_census.sh"
 # compiler read ~4x on every row — the var table had no name index, so each registration paid
 # two full STREQ walks and every reference a reverse one).
 _chk_gate "$ROOT/tests/gates/frontend/globals_scale_linear.sh"
+
+# 6.6.9 (bite 2) — a REACHABLE undefined call is refused on every backend whatever its shape:
+# an aarch64 TAIL call (fixup type 4) used to build rc 0 and die SIGILL, and a reference from an
+# unreachable fn that came first hid every later live call of the same fn (x86/aarch64/PE). The
+# four aarch64/Mach-O forks now print the pre-pass "undefined function" warning like x86.
+_chk_gate "$ROOT/tests/gates/diagnostics/undefined_tail_call_refused.sh"

@@ -547,7 +547,16 @@ fn FIXUP(S): i64 {
         var u59_uraw = L64(u59_ufaddr + 8);
         var u59_uftype = u59_uraw >> 56;
         var u59_uidx = u59_uraw & 0x00FFFFFFFFFFFFFF;
-        if (u59_uftype == 2 || u59_uftype == 3) {
+        # 6.6.9: mirror of x86's v6.5.72 skip — a CP of -1 is a call site inside a body
+        # dead-code ELIMINATION removed. This backend's DCE only NOP-fills today, so no such
+        # entry exists yet; the guard keeps the two loops the same shape. CHANGELOG [6.6.9]
+        if (u59_ucoff < 0) { u59_ufi = u59_ufi + 1; continue; }
+        # 6.6.9: ftype 4 is the aarch64 TAIL call (`B rel26`, recorded by the tail-call
+        # emitter and patched to UDF #0 above when the target is undefined). It was missing
+        # here, so `return nosuchfn(x)` built with rc 0 and no diagnostic and died SIGILL at
+        # run time, while x86 — whose tail calls are ftype 2 — refused it. On x86, ftype 4 is
+        # the PE IAT; the numbers are per-backend. CHANGELOG [6.6.9]
+        if (u59_uftype == 2 || u59_uftype == 3 || u59_uftype == 4) {
             var u59_utarget = L64(_fnt_offsets + u59_uidx * 8);
             if (u59_utarget == 0 - 1) {
                 # v6.1.5: host-scan hoisted to common/runtime.cyr (_dce_host_fn).
@@ -566,8 +575,10 @@ fn FIXUP(S): i64 {
                     syscall(SYS_WRITE, 2, u59_unptr, u59_unlen);
                     syscall(SYS_WRITE, 2, "' (call site may be unreachable)\n", 33);
                     undef_count = undef_count + 1;
+                    # 6.6.9: marked REPORTED only when it was — marking a dead-host reference
+                    # hid every later LIVE call of the same fn from the refusal. CHANGELOG [6.6.9]
+                    S64(_fnt_offsets + u59_uidx * 8, 0 - 2);
                 }
-                S64(_fnt_offsets + u59_uidx * 8, 0 - 2);
             }
         }
         u59_ufi = u59_ufi + 1;

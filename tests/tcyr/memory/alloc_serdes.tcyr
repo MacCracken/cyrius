@@ -41,6 +41,10 @@ include "lib/result.cyr"
 include "lib/fnptr.cyr"
 include "lib/io.cyr"
 include "lib/bayan.cyr"
+# lib/net.cyr: http_get_a's connect path is REACHABLE (the bad-URL case returns before it
+# runs, but the call is in a live fn), and lib/http.cyr does not include its own net layer.
+# 6.6.9 stopped an earlier call from an unreachable fn hiding it from the refusal.
+include "lib/net.cyr"
 include "lib/http.cyr"
 include "lib/assert.cyr"
 

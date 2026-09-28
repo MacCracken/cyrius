@@ -822,11 +822,13 @@ fn FIXUP(S): i64 {
                     syscall(SYS_WRITE, 2, u59_unptr, u59_unlen);
                     syscall(SYS_WRITE, 2, "' (call site may be unreachable)\n", 33);
                     undef_count = undef_count + 1;
+                    # Mark as REPORTED so a second reachable call is not counted twice.
+                    # 6.6.9: only when it WAS reported. This used to be set on the skip path
+                    # too, so a reference from an unreachable fn that happened to come FIRST
+                    # hid every later reachable call of the same fn: `var x = nope(2)` in
+                    # main built rc 0 whenever a dead fn above it also called nope(). CHANGELOG [6.6.9]
+                    S64(_fnt_offsets + u59_uidx * 8, 0 - 2);
                 }
-                # Mark as reported to avoid duplicates if a future caller
-                # walks the table again. Set even on skip — the fixup
-                # patch loop already ran above; this is just bookkeeping.
-                S64(_fnt_offsets + u59_uidx * 8, 0 - 2);
             }
         }
         u59_ufi = u59_ufi + 1;

@@ -507,6 +507,10 @@ while (escan == 1) {
 EMIT_GVAR_INITS(S);
 STI(S, gvar_save_ti);
 
+# 6.6.9: the pre-PARSE_PROG "undefined function" warning every other fork prints — this
+# fork never called it, so an undefined call in code DCE judges unreachable was silent here
+# and loud on x86. See _warn_undefined_prepass (parse_fn.cyr). CHANGELOG [6.6.9]
+_warn_undefined_prepass(S);
 # Parse main code (top-level statements)
 PARSE_PROG(S);
 
