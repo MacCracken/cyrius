@@ -216,30 +216,38 @@ fi
 # the same fixtures run on those cxvms too. Emulators are not hardware (the real legs are
 # pi and cass — recorded in the CHANGELOG entry); each leg SKIPs, named, without its tool.
 foreign() {   # $1 label, $2 runner prefix ("" or "qemu-aarch64" / "wine"), $3 cxvm binary
+    # Returns non-zero when this leg failed, so the caller prints its success line only
+    # for a leg that added no failure (a red log must not also claim the leg passed).
+    LEGFAIL=0
     for fx in hs clk; do
         FRC=0
         ( cd "$W" && ulimit -c 0; WINEDEBUG=-all timeout 180 $2 "$3" < "$W/$fx.cyx" > "$W/$fx.$1.out" 2>&1 ) || FRC=$?
         if [ "$fx" = hs ]; then
             if [ "$FRC" != 0 ] || ! tr -d '\r' < "$W/$fx.$1.out" | grep -q ' 0 failed'; then
                 fail "row 7: $HS on the $1 cxvm exited $FRC: $(tr -d '\r' < "$W/$fx.$1.out" | grep FAIL | head -2 | tr '\n' ' ')"
+                LEGFAIL=1
             fi
         elif [ "$FRC" != 42 ]; then
             fail "row 7: clock_gettime on the $1 cxvm exited $FRC (10/13 = non-zero rc; 11/12 realtime, 14 monotonic timespec not filled)"
+            LEGFAIL=1
         fi
     done
+    return "$LEGFAIL"
 }
 if [ -f "$W/hs.cyx" ] && [ -f "$W/clk.cyx" ]; then
     if command -v qemu-aarch64 >/dev/null 2>&1; then
         if "$CC" < src/main_aarch64.cyr > "$W/cc_a64" 2>/dev/null && chmod +x "$W/cc_a64" \
             && "$W/cc_a64" < programs/cxvm.cyr > "$W/cxvm_a64" 2>/dev/null && chmod +x "$W/cxvm_a64"; then
-            foreign aarch64 qemu-aarch64 "$W/cxvm_a64"
-            echo "  row 7: aarch64-Linux cxvm (qemu-aarch64): OS-RNG seed + filled timespec"
+            if foreign aarch64 qemu-aarch64 "$W/cxvm_a64"; then
+                echo "  row 7: aarch64-Linux cxvm (qemu-aarch64): OS-RNG seed + filled timespec"
+            fi
         else fail "row 7: building the aarch64 cxvm failed"; fi
     else echo "  row 7: SKIP aarch64 leg (qemu-aarch64 not installed)"; fi
     if command -v wine >/dev/null 2>&1; then
         if CYRIUS_TARGET_WIN=1 "$CC" < programs/cxvm.cyr > "$W/cxvm.exe" 2>/dev/null; then
-            foreign pe wine "$W/cxvm.exe"
-            echo "  row 7: PE cxvm (wine): ProcessPrng seed + filled timespec"
+            if foreign pe wine "$W/cxvm.exe"; then
+                echo "  row 7: PE cxvm (wine): ProcessPrng seed + filled timespec"
+            fi
         else fail "row 7: building the PE cxvm failed"; fi
     else echo "  row 7: SKIP PE leg (wine not installed)"; fi
 fi
