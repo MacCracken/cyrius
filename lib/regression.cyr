@@ -151,15 +151,25 @@ fn regression_count_substr(buf, n, needle): i64 {
 # Read `path`'s contents into a fresh buffer; return 1 if the
 # cstring `substr` appears anywhere in those bytes, else 0.
 # Returns 0 also on read failure (the only file-not-readable
-# distinction the audit shape needs). Uses `strstr` from
-# `lib/string.cyr` for the actual scan.
+# distinction the audit shape needs).
+# ⛔ 6.6.8: the WHOLE file (`file_read_whole`), and a length-bounded scan. This read a fixed
+# 512 KiB, so a needle past byte 524,288 was "absent" — a file the check driver greps grows
+# past that silently, and a gate asserting a marker is PRESENT then fails for a reason that
+# has nothing to do with the marker, while one asserting it is ABSENT passes over it. The
+# old `strstr` also stopped at the first NUL byte in the file. CHANGELOG [6.6.8]
 fn regression_file_contains_substr(path, substr): i64 {
-    var cap = 524288;
-    var buf = alloc(cap + 1);
-    var n = file_read_all(path, buf, cap);
+    var lenb[8];
+    var buf = file_read_whole(path, &lenb);
+    if (buf == 0) { return 0; }
+    var n = load64(&lenb);
     if (n <= 0) { return 0; }
-    store8(buf + n, 0);
-    if (strstr(buf, substr) >= 0) { return 1; }
+    var nlen = strlen(substr);
+    if (nlen == 0) { return 1; }
+    var i = 0;
+    while (i + nlen <= n) {
+        if (regression_buf_eq(buf + i, substr, nlen) == 1) { return 1; }
+        i = i + 1;
+    }
     return 0;
 }
 

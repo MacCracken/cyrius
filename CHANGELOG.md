@@ -86,6 +86,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `check_driver_bounded.sh` axis 4 (4a a spinning .tcyr, 4b a print-then-hang output fixture with
   an exiting control, 4c six malformed knob values, 4d a hung lint child, 4e a static census of
   sig-only checks — each mutation-proven) and `check_driver_dies_with_check_sh.sh` axis 6b.
+- **`regression_file_contains_substr` searches the whole file.** (bite 8.) It read a fixed
+  512 KiB and `strstr`-ed the buffer, so a needle past byte 524,288 — or after the first NUL
+  byte — was reported absent: a "marker present" row failed for a reason unrelated to the
+  marker, and a "marker absent" row passed over it. It now reads with `file_read_whole` and scans
+  by length. Pinned by `tests/tcyr/platform/regression_file_contains_whole_file.tcyr` (red on the
+  old read: 2 rows).
 
 ## [6.6.7] — 2026-09-27
 
