@@ -6,6 +6,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.9] — 2026-09-28
 
+### Added
+
+- **Four check-driver rows are selectable by name: `object-init`, `linker`, `shared-dlopen`,
+  `capacity`** (bite 11). Each is ONE row the `regression` phase already ran; it is now also a
+  suite of its own (`./build/cyrius_check linker`, `sh scripts/check.sh linker`), so CI's granular
+  steps can run the driver's implementation instead of a hand-copied shell twin. Both callers go
+  through the same `_row_*` fn, so there is one definition of each. The suite table gained a
+  third question (`_suite_row(i, 2)`: "is this row part of the FULL run?") and the four answer
+  no, so a full run does not execute them twice; `--list-selectable-only` prints them. Also
+  `--tcyr-floor`: the `.tcyr` corpus floor (250), from the one place it is now defined
+  (`_tcyr_corpus_floor`, programs/checks/selfhost.cyr), for CI's independent loop to read.
+
 ## [6.6.8] — 2026-09-28
 
 The second of the three small batch releases (roadmap.md, *The 6.6.7 → 6.6.9 batch*): the platform

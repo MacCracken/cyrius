@@ -1050,6 +1050,16 @@ fn _tcyr_compile_and_run(src_path): i64 {
     return failed;
 }
 
+# ⛔ NO SILENT CAPS. A corpus that SHRINKS is the failure the .tcyr gates exist to catch,
+# and a count alone cannot raise it — "test suite (160 files)" reads as green. The floor
+# turns a blind reader into a hard FAIL. Raise it deliberately when the corpus grows; never
+# lower it to make a run pass. 6.6.9: this is the ONE definition — CI's independent .tcyr
+# loop asks for it (`cyrius_check --tcyr-floor`) instead of carrying its own copy of the
+# number. CHANGELOG [6.6.9]
+fn _tcyr_corpus_floor(): i64 {
+    return 250;
+}
+
 fn _testsuite_gate(): i64 {
     _section("Test Suite");
     var dir = _root_path("tests/tcyr");
@@ -1098,11 +1108,7 @@ fn _testsuite_gate(): i64 {
         total = total + 1;
         i = i + 1;
     }
-    # ⛔ NO SILENT CAPS. A corpus that SHRINKS is the failure this gate exists to
-    # catch, and a count alone cannot raise it — "test suite (160 files)" reads as
-    # green. The floor turns a blind reader into a hard FAIL. Raise it deliberately
-    # when the corpus grows; never lower it to make a run pass.
-    var floor = 250;
+    var floor = _tcyr_corpus_floor();
     if (total < floor) {
         _p("  ");
         _p(ANSI_RED);
