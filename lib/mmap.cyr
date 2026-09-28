@@ -1,6 +1,8 @@
 # mmap.cyr — memory-mapped I/O via direct syscalls
 # Usage: include "lib/mmap.cyr"
-# Requires: syscalls.cyr
+# Includes nothing: it issues SYS_MMAP / SYS_MUNMAP as raw syscall() numbers, so it compiles
+# alone on every target (its MAP_* enum still expects syscalls.cyr FIRST when both are used —
+# see below).
 #
 # Wraps SYS_MMAP (9) and SYS_MUNMAP (11) for:
 # - Dynamic library loading (dynlib.cyr)

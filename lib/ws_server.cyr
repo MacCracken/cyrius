@@ -1,11 +1,15 @@
 # lib/ws_server.cyr — server-side WebSocket (RFC 6455)
 #
 # Companion to lib/ws.cyr (client-side).
-# Requires: alloc.cyr, string.cyr, fmt.cyr, str.cyr, syscalls.cyr, base64.cyr,
-#           sha1.cyr, net.cyr, tagged.cyr, http_server.cyr (for handshake parsing).
+# Requires (NOT self-sufficient yet — the PENDING tier of
+# tests/gates/toolchain/stdlib_modules_self_sufficient.sh): alloc.cyr, string.cyr, fmt.cyr,
+# str.cyr, syscalls.cyr, sha1.cyr, net.cyr, tagged.cyr, plus base64_encode from lib/bayan.cyr
+# (base64.cyr was folded into bayan) and sandhi_server_find_header from lib/sandhi.cyr
+# (http_server.cyr was folded into sandhi). Both are distlib bundles that strip their own
+# includes, so this file cannot compile alone until they are raw-includable.
 #
-# Design: integrates with lib/http_server.cyr — an HTTP handler detects a WS
-# upgrade request, calls ws_server_handshake(cfd, buf, n) to upgrade in
+# Design: integrates with sandhi's HTTP server (formerly lib/http_server.cyr) — an HTTP
+# handler detects a WS upgrade request, calls ws_server_handshake(cfd, buf, n) to upgrade in
 # place, then runs the read/write loop. When the loop exits, the http
 # handler returns and http_server_run closes cfd as normal.
 #
