@@ -1563,3 +1563,21 @@ _chk_gate "$ROOT/tests/gates/memory/harness_alloc_refused.sh"
 # a census against a SHRINK-ONLY allowlist (a new unchecked site fails, a fixed site fails
 # until its allowlist line is deleted), with a self-tested detector and a mutation row.
 _chk_gate "$ROOT/tests/gates/memory/stdlib_alloc_checked_census.sh"
+
+# 6.6.10 — gates added by bites that finished after lane T's registration pass, registered at
+# integration (check_gate_census axis 1 found them unregistered on the merged tree):
+# cx float unary ops run (bite 10); the dead-static hint on every backend (bite 10); integer
+# literals >= 2^64 refused (bite 8); unknown/forward struct field types refused (bite 5); agnos
+# proc_kill_tree refused by name (bite 11); cycc_cx reads its environment (bite 10); object mode
+# refused where no emitter exists (bite 10); a PE-hosted ELF object (bite 10); the Job-object PE
+# reroutes routed (bite 17); process errno constants on every target (bite 11).
+_chk_gate "$ROOT/tests/gates/codegen/cx_float_unary_ops_run.sh"
+_chk_gate "$ROOT/tests/gates/diagnostics/dead_static_hint_every_backend.sh"
+_chk_gate "$ROOT/tests/gates/frontend/integer_literal_overflow_refused.sh"
+_chk_gate "$ROOT/tests/gates/frontend/struct_field_type_unknown_refused.sh"
+_chk_gate "$ROOT/tests/gates/platform/agnos_proc_kill_tree_refused.sh"
+_chk_gate "$ROOT/tests/gates/platform/cx_compiler_reads_env.sh"
+_chk_gate "$ROOT/tests/gates/platform/object_mode_non_elf_refused.sh"
+_chk_gate "$ROOT/tests/gates/platform/pe_hosted_elf_object.sh"
+_chk_gate "$ROOT/tests/gates/platform/pe_job_reroutes_routed.sh"
+_chk_gate "$ROOT/tests/gates/platform/process_errno_constants_every_target.sh"

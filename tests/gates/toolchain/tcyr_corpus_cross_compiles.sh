@@ -46,7 +46,6 @@ fail() { echo "FAIL: tcyr_corpus_cross_compiles: $1"; exit 1; }
 # PE: a fork + socket-interop TLS suite whose POSIX-only groups are unguarded (the agnos leg lists
 # it too; one guard pass serves both).
 cat > "$T/allow.pe" <<'EOF'
-crypto/tls_native_scaffold.tcyr
 EOF
 : > "$T/allow.mx"
 : > "$T/allow.ma"
@@ -54,37 +53,7 @@ EOF
 # the 6.6.10 default — so Linux-arity test calls need a named-SKIP guard; lane T's bite 13 owns
 # that pass and shrinks this list toward empty.
 cat > "$T/allow.agnos" <<'EOF'
-concurrency/thread_join_single_load.tcyr
-crossos/async_multi_waiter.tcyr
-crossos/atomic_replace_keeps_mode_and_link.tcyr
-crossos/exec_capture_status.tcyr
-crossos/syscall_ioctl_x86_compat.tcyr
-crossos/syscall_shm_fd_passing.tcyr
-crossos/syscall_stat_x86_compat.tcyr
-crossos/syscall_wrappers.tcyr
-crossos/syscalls_fileops.tcyr
-crossos/syscalls_meta.tcyr
-crossos/thread_detach.tcyr
-crossos/uid_identity.tcyr
-crossos/win_self_exe_path.tcyr
-crypto/tls12_handshake.tcyr
-crypto/tls_native_alpn.tcyr
-crypto/tls_native_ed25519.tcyr
-crypto/tls_native_freestanding.tcyr
-crypto/tls_native_mtls_client.tcyr
-crypto/tls_native_realpeer.tcyr
-crypto/tls_native_scaffold.tcyr
-crypto/tls_wrapper_native.tcyr
-formats/toml.tcyr
-lang/defer.tcyr
-platform/fsync.tcyr
-platform/io.tcyr
-platform/process.tcyr
-platform/regression_file_contains_whole_file.tcyr
-stdlib/result_allocator_via.tcyr
-stdlib/result_stdlib.tcyr
 stdlib/result_stdlib_pass2.tcyr
-stdlib/sakshi_full.tcyr
 EOF
 
 # ── the cross compilers, from this tree ────────────────────────────────────────────────────────
