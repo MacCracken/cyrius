@@ -1540,6 +1540,14 @@ fn _run_sleep_ms(ms): i64 {
     #endif
 }
 
+# 6.6.11 (O3) — when non-zero, run_binary_timed sends the child's STDOUT to this path instead
+# of ours, so `cyrius test` can READ the assert summary it grades on (cmd_test echoes the capture
+# back). Opt-in and reset by the caller, like `_cc_stderr_to`. The caller creates the file first
+# (so an unwritable temp is named there); a child that still cannot open it exits 126 and the
+# test fails — it never runs with its output unseen. POSIX: dup2 in the child. Windows: cmd.exe
+# redirects it (`_win_run_timed`), the pattern `_win_compile_spawn` uses. CHANGELOG [6.6.11]
+var _run_stdout_to = 0;
+
 fn run_binary_timed(path, timeout_ms, args): i64 {
     #ifdef CYRIUS_TARGET_WIN
     return _win_run_timed(path, timeout_ms, args);
@@ -1586,11 +1594,24 @@ fn run_binary_timed(path, timeout_ms, args): i64 {
         # Apple-Silicon `cyrius test` failure). Gate it OUT on macOS — exec directly.
         #ifndef CYRIUS_TARGET_MACOS
         if (_arch == ARCH_AARCH64) {
+            if (_run_stdout_to != 0) {
+                var qfd = sys_open(_run_stdout_to, O_WRONLY | O_CREAT | O_TRUNC, 0x180);
+                if (qfd < 0) { sys_exit(126); }
+                sys_dup2(qfd, 1);
+                sys_close(qfd);
+            }
             var qav = _run_argv(path, args, "/usr/bin/qemu-aarch64");
             sys_execve("/usr/bin/qemu-aarch64", qav, _envp);
             sys_exit(127);
         }
         #endif
+        # 6.6.11: `cyrius test` reads the child's stdout (see `_run_stdout_to`).
+        if (_run_stdout_to != 0) {
+            var cfd = sys_open(_run_stdout_to, O_WRONLY | O_CREAT | O_TRUNC, 0x180);
+            if (cfd < 0) { sys_exit(126); }
+            sys_dup2(cfd, 1);
+            sys_close(cfd);
+        }
         var nav = _run_argv(path, args, 0);
         sys_execve(path, nav, _envp);
         sys_exit(127);
@@ -2035,6 +2056,22 @@ fn _win_run_cx(vm, cyx): i64 {
     return _win_wait_close(&pi);
 }
 
+# 6.6.11 (O3) — `cmd /s /c ""<path>" > "<cap>""`: the program with its stdout redirected by
+# cmd.exe (Win32 has no dup2), the shape `_win_compile_spawn` uses; `/s` strips only the outer
+# quote pair, and cmd's exit status is the program's. Only `cyrius test` asks for it, with no
+# program arguments. The job and the deadline apply to cmd.exe and the program under it alike.
+fn _win_cmdline_cap(path, cap): i64 {
+    var wbuf = alloc((strlen(path) + strlen(cap) + 32) * 2);
+    var o = 0;
+    o = _w_append_cstr(wbuf, o, "cmd /s /c \"\"");
+    o = _w_append_cstr(wbuf, o, path);
+    o = _w_append_cstr(wbuf, o, "\" > \"");
+    o = _w_append_cstr(wbuf, o, cap);
+    o = _w_append_cstr(wbuf, o, "\"\"");
+    _w_terminate(wbuf, o);
+    return wbuf;
+}
+
 # v6.6.5 (round-3 review) — the Windows arm of run_binary_timed. The POSIX body is
 # fork/execve/waitpid, and on PE `sys_fork` is a -1 stub, so `cyrius run/test/tests/
 # bench/fuzz/soak/smoke/doctest` NEVER RAN THE PROGRAM on Windows: the parent
@@ -2049,7 +2086,9 @@ fn _win_run_cx(vm, cyx): i64 {
 # outlives it" (see run_binary_timed). It used TerminateProcess on the child alone.
 # `cyrius run` (0) keeps `_win_wait_close`: the program owns what it starts.
 fn _win_run_timed(path, timeout_ms, args): i64 {
-    var wbuf = _win_cmdline(path, args);
+    var wbuf = 0;
+    if (_run_stdout_to != 0) { wbuf = _win_cmdline_cap(path, _run_stdout_to); }
+    else { wbuf = _win_cmdline(path, args); }
     if (wbuf == 0) { return 1; }
     var pi[24];
     if (_win_create_process(wbuf, 0, 0, &pi) == 0) {

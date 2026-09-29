@@ -304,6 +304,89 @@ fn cmd_run(source, args): i64 {
     return exit_code;
 }
 
+# ⛔ 6.6.11 (O3) — THE ONE .tcyr RULE, the same one every reader applies (programs/checks/
+# selfhost.cyr `_tcyr_grade`, ci.yml, scripts/cross-os-libtest-runner.sh, the cass leg): when the
+# test SOURCE calls assert_summary(, the LAST stdout line that STARTS with `N passed, M failed`
+# must exist with N >= 1 and M == 0 — on top of exit 0. `cyrius test` graded on the exit code
+# alone and never saw stdout, so a test that died before its summary with `syscall(60, 0)` (its
+# FAIL row went to stderr), a body run twice by the epilogue's auto-call of a defined `main`
+# (`1 passed, 1 failed`, exit 0) and a test that asserted nothing (`0 passed, 0 failed`) all
+# scored PASS on `cyrius test`, `cyrius tests` and bare `cyrius test`. The requirement comes from
+# the source text, so a .tcyr without assert_summary( is graded on its exit code.
+
+# Parse decimal digits at buf[p..n) into *valp; returns the first non-digit offset.
+fn _test_num_at(buf, n, p, valp): i64 {
+    var v = 0;
+    while (p < n) {
+        var c = load8(buf + p);
+        if (c < 48 || c > 57) { break; }
+        v = v * 10 + (c - 48);
+        p = p + 1;
+    }
+    store64(valp, v);
+    return p;
+}
+
+# The LAST line of buf[0, n) that starts with `N passed, M failed`: N at out+0, M at out+8,
+# answers 1; 0 when there is none.
+fn _test_last_summary(buf, n, out): i64 {
+    var found = 0;
+    var np[8];
+    var nf[8];
+    var ls = 0;
+    while (ls < n) {
+        var p = _test_num_at(buf, n, ls, &np);
+        if (p > ls && p + 9 <= n && memeq(buf + p, " passed, ", 9) == 1) {
+            var q = _test_num_at(buf, n, p + 9, &nf);
+            if (q > p + 9 && q + 7 <= n && memeq(buf + q, " failed", 7) == 1) {
+                store64(out, load64(&np));
+                store64(out + 8, load64(&nf));
+                found = 1;
+            }
+        }
+        while (ls < n && load8(buf + ls) != 10) { ls = ls + 1; }
+        ls = ls + 1;
+    }
+    return found;
+}
+
+# 1 when the file at `path` contains the cstr `needle`.
+fn _test_src_has(path, needle): i64 {
+    var n = 0;
+    var b = file_read_whole(path, &n);
+    if (b == 0 || n <= 0) { return 0; }
+    var nl = strlen(needle);
+    var i = 0;
+    while (i + nl <= n) {
+        if (memeq(b + i, needle, nl) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# The verdict of a test that EXITED 0, from its captured stdout: 0 = pass, M > 0 = the summary
+# reports failures, -3 = no summary although the source calls assert_summary(, -4 = a summary
+# of 0 assertions.
+fn _test_grade(source, buf, n): i64 {
+    var sm[16];
+    store64(&sm, 0);
+    store64(&sm + 8, 0);
+    var have = 0;
+    if (buf != 0) { have = _test_last_summary(buf, n, &sm); }
+    if (have == 1 && load64(&sm + 8) > 0) { return load64(&sm + 8); }
+    if (_test_src_has(source, "assert_summary(") == 1) {
+        if (have == 0) { return 0 - 3; }
+        if (load64(&sm) < 1) { return 0 - 4; }
+    }
+    return 0;
+}
+
+fn _test_grade_why(gv): i64 {
+    if (gv == 0 - 3) { return "no assert summary on stdout: the test stopped before assert_summary() or ran nothing"; }
+    if (gv == 0 - 4) { return "the assert summary reports 0 assertions"; }
+    return "the assert summary reports failures";
+}
+
 fn cmd_test(source): i64 {
     # v6.6.5 — `cyrius test --dry-run f.tcyr` consumed the flag and RAN the test
     # anyway (measured: "T1 RAN", exit 3). A dry run compiles nothing and runs
@@ -340,11 +423,44 @@ fn cmd_test(source): i64 {
     # tripwire red). See `run_binary_timed` in cbt/build.cyr for both halves of the
     # fix. Report the timeout BY NAME: a bare nonzero code here would read as an
     # ordinary assertion failure and send the reader into the test's logic.
+    # 6.6.11 (O3): the test's STDOUT is captured, echoed back, and its assert summary GRADED —
+    # see `_test_grade`. The capture file is created here so a temp that cannot hold it is named
+    # (and the test counted failed) rather than the verdict falling back to the exit code.
+    var cap = _cbt_tmpfile("test_out");
+    var cfd0 = sys_open(cap, O_WRONLY | O_CREAT | O_TRUNC, 0x180);
+    if (cfd0 < 0) {
+        _err_ctx("cyrius test cannot capture the test's output (its assert summary is the verdict)", cap);
+        sys_write(STDERR_FD, "  FAIL: ", 8);
+        sys_write(STDERR_FD, source, strlen(source));
+        sys_write(STDERR_FD, " (not run)\n", 11);
+        _fail = _fail + 1;
+        sys_unlink(tmpbin);
+        return 1;
+    }
+    sys_close(cfd0);
+    _run_stdout_to = cap;
     var exit_code = run_binary_timed(tmpbin, _run_timeout_ms(), 0);
+    _run_stdout_to = 0;
     sys_unlink(tmpbin);
+    var clen = 0;
+    var cbuf = file_read_whole(cap, &clen);
+    sys_unlink(cap);
+    if (cbuf == 0) { clen = 0; }
+    if (clen > 0) { sys_write(STDOUT_FD, cbuf, clen); }
     if (exit_code == 0) {
-        _pass = _pass + 1;
-        return 0;
+        var gv = _test_grade(source, cbuf, clen);
+        if (gv == 0) {
+            _pass = _pass + 1;
+            return 0;
+        }
+        sys_write(STDERR_FD, "  FAIL: ", 8);
+        sys_write(STDERR_FD, source, strlen(source));
+        sys_write(STDERR_FD, " (exit 0, but ", 14);
+        var gw = _test_grade_why(gv);
+        sys_write(STDERR_FD, gw, strlen(gw));
+        sys_write(STDERR_FD, ")\n", 2);
+        _fail = _fail + 1;
+        return 1;
     }
     if (exit_code == _RUN_TIMEOUT_KILLED) {
         sys_write(STDERR_FD, "  FAIL: ", 8);
