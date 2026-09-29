@@ -473,6 +473,11 @@ fn sys_mkdir(path, mode): i64 { return syscall(83, path, mode); }
 # (_pe_ensure_deletef, v5.11.22). Returns 0 on success, -1 on failure. (Was a
 # no-op `return 0` stub through v6.3.42 — VR-01 surfaced the file was never deleted.)
 fn sys_unlink(path): i64 { return syscall(87, path); }
+# Remove an empty directory — kernel32!RemoveDirectoryW through the 0xF03B reroute (the one
+# lib/io.cyr's xrmdir already uses). Returns 0 on success, -1 on failure. 6.6.10: the reroute
+# existed since 6.6.6 but no `sys_rmdir` did, so a portable caller of the POSIX name failed to
+# COMPILE for PE (tests/tcyr/platform/fs.tcyr). CHANGELOG [6.6.10]
+fn sys_rmdir(path): i64 { return syscall(0xF03B, path); }
 
 # --- v6.5.25: raw floor wrappers this STANDALONE peer never defined ---
 # This file includes nothing, so it inherits nothing: a name missing here is missing for
@@ -808,6 +813,15 @@ fn sys_getsockname(fd, addr, addrlen): i64 {
     var r = syscall(61495, fd, addr, addrlen);
     if (r == 0) { return 0; }
     return 0 - syscall(61476);
+}
+# listen (0xF033 → ws2_32!listen): same normalization as getsockname — 0, or -WSAGetLastError.
+# 6.6.10: the reroute existed since v6.4.44 but no `sys_listen` did, so a portable caller of
+# the POSIX name failed to COMPILE for PE (tests/tcyr/platform/socket_syscalls.tcyr).
+# `fd` is a ws2_32 SOCKET (lib/net.cyr's tcp_socket on PE). CHANGELOG [6.6.10]
+fn sys_listen(fd, backlog): i64 {
+    var r = syscall(0xF033, fd, backlog);
+    if (r == 0) { return 0; }
+    return 0 - syscall(61476);      # -WSAGetLastError (0xF024)
 }
 
 # ================================================================
