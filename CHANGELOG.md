@@ -119,6 +119,52 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Verified (B07): the fixpoint and seed-derive; self-hosts on ecb, ach, pi and cass (PE, with the
   route hunk applied); the five net/http `.tcyr` files and the two ws socket files on ecb, ach, pi,
   cass, under wine and in the agnosticos container.
+- **cx: `lib/thread.cyr` compiles and fails HONESTLY; `lib/sync.cyr` has a cx arm (B08, item J5a).**
+  **Root cause:** cx predefines only `CYRIUS_TARGET_CX` (not `TARGET_LINUX`), and `lib/sync.cyr` had
+  arms for Windows, macOS, Linux and agnos — so on cx `mutex_*` were undefined and
+  `include "lib/thread.cyr"` was refused (`undefined function(s) called (cx backend): mutex_new,
+  mutex_lock`). With a sync arm alone, `thread_create` walked the Linux spawn path: cxvm hands a
+  guest mmap to the HOST kernel, which succeeds, and the stores that follow go through a host address
+  as if it were a guest offset — cxvm SIGSEGVs; and the channels' raw FUTEX wakes killed cxvm with
+  SIGSYS on a Darwin host (measured on ecb and ach). **Fix:** sync.cyr gains the agnos no-op contract
+  as a cx arm (one guest thread, never a contender; listed in its BACKENDS header). thread.cyr on cx:
+  `thread_create` / `thread_create_detached` return 0 before touching the spawn path (the heap lock is
+  not armed), `THREADS_CONCURRENT` is 0, `gettid()` is 1, and no `SYS_FUTEX` is issued (the channel
+  ring works single-threaded). Other targets compile byte-identically (150 target/test pairs cmp'd).
+- **cx: `lib/tls.cyr`, `lib/tls_native.cyr` and `lib/sigil.cyr` are refused BY NAME (B08, item J5b).**
+  They compile to several MB of cx bytecode (cx runs ~3.2x x86; tls is ~1.6 MB as an x86 ELF) against
+  cx's fixed 512 KiB code buffer and cxvm's 1 MB caps, and died mid-emit with a bare
+  `error: codebuf overflow` naming nothing. They are declared OUT of cx scope rather than growing the
+  compiler and the VM: `src/main_cx.cyr` checks the file map right after preprocessing
+  (`_cx_scope_refused`, `src/backend/cx/emit.cyr`) and prints
+  `error: lib/tls.cyr is outside the cx target's scope ...` for each one included, exit 1. Neither
+  file is in cycc's image (fixpoint and seed-derive unchanged).
+- **The PENDING stdlib tier carries its first-party includes (B08, item J7).** `lib/log.cyr` included
+  nothing (undefined `strlen`), `lib/ws.cyr` nothing (`alloc`, `memcpy`, `strlen`, `sock_send_all`,
+  `sys_getrandom`, `sys_read`, `_net_os_recv`), and `lib/ws_server.cyr` only `sha1.cyr`
+  (`sock_close`, `str_builder_*`, `str_data`, ...). They now include syscalls / alloc / string / str /
+  net as they use them, so what stays undefined on linux, agnos, PE, Mach-O and aarch64 is fold names
+  only: `sakshi_*` (log), `base64_encode` (ws) and `+ sandhi_server_find_header` (ws_server) — the
+  "raw-includable fold bundles" backlog item. Their `Requires:` headers are corrected.
+- **`programs/vidya.cyr` includes its definers (B08, item J8).** It included nothing, so
+  `include "programs/vidya.cyr"` alone left 26 fns undefined (the roadmap said 25), and its header named
+  `lib/toml.cyr`, which was folded into bayan. It now includes syscalls, alloc, string, fmt, vec, str,
+  hashmap, io, fs, fnptr, then bayan (after io, for the bundle's `file_*` sidecar). Its four includers
+  (`large_input`, `large_source`, `preprocessor_past_cap` and the walkers gate's probe) build
+  byte-identical binaries.
+- `lib/syscalls_x86_64_linux.cyr`'s header gave a stale reason for its enum constants (the
+  `gvar_toks` 4096 cap, lifted in 6.6.9); it now gives the real one (compile-time literals, which the
+  per-target syscall routing needs) (B08, item K10).
+- `tests/gates/toolchain/stdlib_modules_self_sufficient.sh`: axis 2 holds each PENDING module's
+  residual on every host target to the fold-ONLY names (defined in a fold bundle and in no first-party
+  lib file), so a first-party gap cannot hide behind PENDING again; axis 4's cx leg leaves the named
+  `CX_OUT_OF_SCOPE` list out (cx 69/108 here); axis 6 adds `programs/vidya.cyr`; new axis 7 asserts the
+  by-name cx refusal and runs `lib/thread.cyr` on cxvm (exit 255, one bit per behaviour). Mutation
+  ledger t-x in the header.
+- Verified (B08): the fixpoint and seed-derive (formality — no cycc-image file changed); on ecb, ach,
+  pi and cass a natively built `cycc_cx` refuses tls / tls_native / sigil by name and compiles the
+  thread probe, which the host's native cxvm runs to 255 (ecb and ach exited 140, SIGSYS, before the
+  futex guards).
 
 ## [6.6.10] — 2026-09-29
 
