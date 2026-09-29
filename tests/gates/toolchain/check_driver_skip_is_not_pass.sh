@@ -65,6 +65,8 @@
 #      driver block, the driver call narrowed to object-init) over the axis-6 driver — the
 #      driver exits 0 over its SKIP, and check.sh still counts it (`+ 1 driver row(s)`), lists
 #      the gate script, and says GREEN-with-SKIPPED, never ALL GREEN; strict = FAIL, 0 skips
+#  10  the scripts/ gates check.sh registers (sign-efi, qemu-boot — outside the tests/gates
+#      sweep): sign-efi-gate with no openssl exits 77; none prints SKIP then exits 0
 # MUTATIONS (6.6.11, each RED; measured):
 #   M6 `_gate_score` drops its 77 branch (77 -> `_check` -> FAIL)          -> axis 6 RED
 #   M7 `_gate` calls `_check` directly again (bypasses `_gate_score`)      -> axis 6 RED
@@ -74,6 +76,8 @@
 #   M11 `_skip` never calls `_skip_report` (the driver writes no report)    -> axis 9 RED
 #   M12 check.sh never reads the report back (driver rc alone again)        -> axis 9 RED
 #   M13 `_gate` no longer sets `_G_SKIP_SUBJECT` (the prose label is listed) -> axis 9 RED
+#   M14 sign-efi-gate.sh's openssl skip back to `exit 0`                   -> axis 10 RED (both halves)
+#   M15 qemu-boot-gate.sh's qemu-absent skip back to `exit 0`              -> axis 10 RED
 set -e
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -324,6 +328,31 @@ if [ -x "$D/drv77" ]; then
 else
     _fail "axis 9: no axis-6 scratch driver to run"
 fi
+
+echo "axis 10: the scripts/ gates check.sh registers exit 77, not 0, when they cannot run"
+# The K1 sweep derived its list from tests/gates/; scripts/sign-efi-gate.sh (no openssl) and
+# scripts/qemu-boot-gate.sh (no qemu, or no aarch64 kernel) printed SKIP and exited 0 — PASS.
+# Behavioural half: sign-efi-gate under a PATH holding only `dirname` (it asks for openssl
+# before anything else). Structural half: no registered scripts/ gate prints SKIP and then
+# exits 0 (same line, or the next line) — the detector is self-tested on both shapes.
+mkdir -p "$D/p10"
+ln -s "$(command -v dirname)" "$D/p10/dirname"
+_rc=0
+env PATH="$D/p10" /bin/sh "$ROOT/scripts/sign-efi-gate.sh" > "$D/a10" 2>&1 || _rc=$?
+[ "$_rc" = 77 ] || _fail "axis 10: sign-efi-gate.sh with no openssl exited $_rc, expected 77 ($(head -1 "$D/a10"))"
+skip0() {
+    awk '
+    /SKIP/ && /exit 0([^0-9]|$)/ && $0 !~ /^[ \t]*#/ { print FILENAME ":" FNR; prev = ""; next }
+    prev != "" && /^[ \t]*exit 0[ \t]*;?[ \t]*$/ { print FILENAME ":" FNR }
+    { prev = ($0 ~ /^[ \t]*echo .*SKIP/) ? $0 : "" }' "$@"
+}
+printf 'x || { echo "SKIP a"; exit 0; }\n    echo "SKIP: b"\n    exit 0\n    echo "SKIP c"; exit 77\n# SKIP then exit 0 in prose\n' > "$D/skip0.sh"
+N10=$(skip0 "$D/skip0.sh" | grep -c . || true)
+[ "$N10" = 2 ] || _fail "axis 10: the detector found $N10 of the 2 planted SKIP-then-exit-0 shapes (and must not flag exit 77 or a comment)"
+SG=$(grep -oE '^_chk_gate "\$ROOT/scripts/[^"]+"' "$ROOT/scripts/check.sh" | sed 's|^_chk_gate "\$ROOT/||; s|"$||')
+[ -n "$SG" ] || _fail "axis 10: check.sh registers no scripts/ gate — the scan read nothing"
+for _g in $SG; do skip0 "$ROOT/$_g"; done > "$D/a10hits"
+[ ! -s "$D/a10hits" ] || { _fail "axis 10: a registered scripts/ gate prints SKIP and exits 0:"; sed 's/^/      /' "$D/a10hits"; }
 
 echo ""
 if [ "$FAILS" -gt 0 ]; then

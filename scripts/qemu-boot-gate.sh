@@ -16,12 +16,14 @@
 #      kernel writes "AGNOS" to serial. This is the real execution proof of the
 #      shared kmode codegen (entry, prologue-less _start, the asm{} block, port I/O).
 #
-# Exit 0 = gate passed (or visibly skipped when QEMU is absent — never a silent
-# green: a skip prints a loud SKIP line so a qemu-less CI box can't masquerade as
-# "boot verified").
+# Exit 0 = gate passed. Exit 77 = it could not run all of its check (QEMU absent, or the
+# aarch64 shape-check could not build its kernel) — a SKIP result in check.sh, never a pass,
+# and a FAIL under CYRIUS_CHECK_NO_SKIP=1. This used to print SKIP and exit 0, which check.sh
+# scored PASS: the "boot verified" placebo this gate exists to kill. CHANGELOG [6.6.11]
 
 set -e
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
+GATE_SKIPS=0
 CYRIUS="$REPO/build/cyrius"
 SRC="$REPO/programs/boot_serial.cyr"
 TRIPLE_OUT="$REPO/build/boot_serial_elf64"
@@ -90,6 +92,7 @@ sys.exit(0 if ok else 1)
 PY
 else
     echo "  SKIP aarch64 shape-check: cycc_aarch64 not built (run the build job first)"
+    GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 fi
 
 # --- 2. plain kernel; → ELF32 multiboot1: REAL boot under QEMU ---
@@ -106,7 +109,7 @@ if [ -z "$QEMU" ]; then
         exit 1
     fi
     echo "SKIP: qemu-system-x86_64 not installed — kernel BOOT not run (install 'qemu-system-x86' to gate execution; the ELF64 shape-checks above still passed)"
-    exit 0
+    exit 77
 fi
 
 # boot_serial ends in `cli; hlt; jmp $` — it HALTS after printing, it does NOT
@@ -114,6 +117,10 @@ fi
 # timeout is the steady-state stop (and a backstop against a genuine hang).
 OUT="$(timeout 12 "$QEMU" -accel tcg -kernel "$BOOT_OUT" -serial stdio -display none -no-reboot 2>/dev/null | tr -d '\0' || true)"
 case "$OUT" in
-    *AGNOS*) echo "  BOOT OK: kernel executed, serial emitted 'AGNOS'"; echo "PASS: qemu boot gate"; exit 0 ;;
+    *AGNOS*) echo "  BOOT OK: kernel executed, serial emitted 'AGNOS'"
+             if [ "${GATE_SKIPS:-0}" -gt 0 ]; then
+                 echo "SKIP: qemu boot gate — booted, but ${GATE_SKIPS} check(s) above could not run"; exit 77
+             fi
+             echo "PASS: qemu boot gate"; exit 0 ;;
     *)       echo "FAIL: kernel booted but did not emit 'AGNOS' (got: $(printf '%s' "$OUT" | head -c 80))"; exit 1 ;;
 esac
