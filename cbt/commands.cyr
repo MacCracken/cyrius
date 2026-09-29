@@ -1933,7 +1933,7 @@ fn _lint_syntax_prepass(file): i64 {
         _ew(": the syntax pre-pass could not tell whether it compiles (the compiler failed with no error line); linting anyway\n");
         return 0;
     }
-    _err_ctx("the compiler refuses this file, so lint checks were NOT run", file);
+    _err_ctx("does not parse or compile, so lint checks were NOT run", file);
     _info("  cyrlint is a line-based scanner with no parser, so its \"0 warnings\" would");
     _info("  describe its own rules rather than the file. The compiler reports:");
     _lint_forward_diag(buf, n);
