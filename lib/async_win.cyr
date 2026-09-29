@@ -787,7 +787,9 @@ fn async_await_readable(fd): i64 {
     return 0;
 }
 
-# Run `fp(arg)` with a timeout. No fork on Windows; run inline (mirrors agnos). `ms` ignored.
+# Run `fp(arg)` with a timeout. No fork on Windows, so there is no second process to bound: the
+# body runs INLINE and `ms` is ignored. (This said "(mirrors agnos)"; agnos forks the body under
+# a real deadline since 6.6.10. CHANGELOG [6.6.10])
 fn async_timeout(fp, arg, ms): i64 {
     return fncall1(fp, arg);
 }
