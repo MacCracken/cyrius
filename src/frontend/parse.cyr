@@ -573,12 +573,6 @@ var _flc_hwm = 0;
 # past it. Reset per fn in PARSE_FN_DEF; read by the tail-call guard in
 # parse_fn.cyr. See CHANGELOG [6.5.14].
 var _fn_local_addr = 0;
-# v6.3.39 (B3) — per-fn bitmask: bit i set = param i's declared type is a type-param
-# (`fn wrap<T>(p: T)` → bit 0). Populated in PARSE_FN_DEF's param loop (gated
-# _MONOMORPH_OK) and read by _body_field_accesses_tparam to decide whether the i64
-# BASE emission must skip the body (a tparam-typed param field-accessed as a struct
-# has no valid i64 form). Reset per fn; stays 0 on default builds → byte-identical.
-var _cur_fn_tp_pmask = 0;
 # v6.3.7 — set to 1 when the current fn emits a closure literal. Closures are
 # emitted INLINE in the enclosing fn's code range (jumped over), so the enclosing
 # fn's regalloc post-pass — a byte-scan that NOP-patches + reallocates locals —
@@ -819,7 +813,8 @@ fn _fnst_put_cg(b): i64 {
     store64(b + 144, _cur_fn_naked);    _cur_fn_naked = 0;
     store64(b + 152, _cur_fn_ix);
     store64(b + 160, _cur_fn_pslots);   _cur_fn_pslots = 0;
-    store64(b + 168, _cur_fn_tp_pmask); _cur_fn_tp_pmask = 0;
+    # b + 168 was _cur_fn_tp_pmask (retired 6.6.10: the B3 stub fact is recorded per fn, GFGM).
+    store64(b + 168, _cur_fn_ptrp);     _cur_fn_ptrp = 0;
     store64(b + 176, _cur_fn_is_pure);  _cur_fn_is_pure = 0;
     return 0;
 }
@@ -834,7 +829,7 @@ fn _fnst_get_cg(b): i64 {
     _cur_fn_naked = load64(b + 144);
     _cur_fn_ix = load64(b + 152);
     _cur_fn_pslots = load64(b + 160);
-    _cur_fn_tp_pmask = load64(b + 168);
+    _cur_fn_ptrp = load64(b + 168);
     _cur_fn_is_pure = load64(b + 176);
     return 0;
 }
@@ -1952,8 +1947,57 @@ fn _assert_tail(S): i64 {
     return 0;
 }
 
-# Evaluate a single constant atom for #assert: number literal or sizeof(T).
-# Returns the constant value. Advances TI past the consumed tokens.
+# 6.6.10 — the operands of an #assert (`ATOM [OP ATOM]`) may be followed only by `,` (the
+# message), the message string itself (the comma-less `#assert 1 == 1 "ok"` form the failure
+# printer has always honoured), `;`, EOF, or a token on a LATER line. _assert_tail skips
+# the rest of the line unchecked, so `#assert E.EB * 2 == 9;` evaluated `E.EB` alone and a
+# FALSE assertion compiled green, as did `#assert 4 == 4 junk;`. Reports once (ERR_MSG
+# latches) and returns 1; the caller then drops the "#assert failed" cascade. CHANGELOG [6.6.10]
+fn _assert_operands_end(S): i64 {
+    var t = PEEKT(S);
+    if (t == 31) { return 0; }
+    if (t == 30) { return 0; }
+    if (t == 5) { return 0; }
+    if (t == 12) { return 0; }
+    if (GTLINE(S, GTI(S)) != GTLINE(S, GTI(S) - 1)) { return 0; }
+    ERR_MSG(S, "#assert: expected `,` or `;` after the operands (no arithmetic inside #assert)", 78);
+    return 1;
+}
+
+# 6.6.10 — ONE recogniser for an enum-constant atom: `NAME` or `Enum.NAME`, where NAME is a
+# folded enum constant (the GVECP flag). Shared by #assert (_EVAL_CONST_ATOM) and both
+# array-size parsers (PARSE_ARRAY, and the top-level one in parse_decl.cyr), which each
+# hand-rolled the bare form only — so `#assert EB == 4` and `var buf[E.EB]` were refused
+# while `syscall(60, E.EB)` compiled. As in expressions, a base that is a VARIABLE makes
+# `.NAME` a field access, not a variant. Returns the var index and advances past the atom,
+# or -1 without moving (spelled `0 - 1`: cybs has no unary minus). CHANGELOG [6.6.10]
+fn _enum_atom_idx(S): i64 {
+    if (PEEKT(S) != 2) { return 0 - 1; }
+    var ti = GTI(S);
+    var vn = PEEKV(S);
+    if (TOKTYP(S, ti + 1) == 41) {
+        if (TOKTYP(S, ti + 2) != 2) { return 0 - 1; }
+        if (GINFN(S) == 1) { if (FINDLOCAL(S, vn) >= 0) { return 0 - 1; } }
+        if (FINDVAR(S, vn) >= 0) { return 0 - 1; }
+        vn = TOKVAL(S, ti + 2);
+        ti = ti + 2;
+    }
+    var vi = FINDVAR(S, vn);
+    if (GVECP(S, vi) != 1) { return 0 - 1; }
+    STI(S, ti + 1);
+    return vi;
+}
+
+# `sizeof` as a whole identifier: the 6 letters AND the NUL after them (7 bytes). A 6-byte
+# prefix test took `sizeofzz(P)` for sizeof. Also used by pass 1's _assert_skip_atom.
+fn _is_sizeof_word(S, noff): i64 {
+    if (L64(S + 0xEC00000 + noff) & 0xFFFFFFFFFFFFFF == 0x666F657A6973) { return 1; }
+    return 0;
+}
+
+# Evaluate a single constant atom for #assert: number literal, sizeof(T), or an enum
+# constant (`NAME` / `Enum.NAME`, 6.6.10). Returns the constant value. Advances TI past the
+# consumed tokens.
 fn _EVAL_CONST_ATOM(S): i64 {
     var t = PEEKT(S);
     if (t == 1) {
@@ -1963,8 +2007,10 @@ fn _EVAL_CONST_ATOM(S): i64 {
     }
     if (t == 2) {
         var noff = PEEKV(S);
+        var ei = _enum_atom_idx(S);
+        if (ei >= 0) { return L64(_vecv_base + ei * 8); }
         # sizeof(Type)
-        if (L64(S + 0xEC00000 + noff) & 0xFFFFFFFFFFFF == 0x666F657A6973) {
+        if (_is_sizeof_word(S, noff) == 1) {
             STI(S, GTI(S) + 1);
             if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
             STI(S, GTI(S) + 1);
@@ -1984,7 +2030,7 @@ fn _EVAL_CONST_ATOM(S): i64 {
             STI(S, GTI(S) + 1);
             return szval;
         }
-        ERR_MSG(S, "#assert: expected number or sizeof()", 36);
+        ERR_MSG(S, "#assert: expected a number, sizeof(T) or an enum constant", 57);
     }
     ERR_MSG(S, "#assert: expected constant expression", 37);
     return 0;
@@ -2058,12 +2104,16 @@ fn _agc_operand(S, onoff): i64 {
 # `x`, address-passed) sees the old value. At top level there is no frame for the temp: a
 # retptr callee is refused by PARSE_FNCALL, a rax:rdx one here. CHANGELOG [6.6.6]
 fn _try_struct_call_assign(S, noff): i64 {
-    if (PEEKT(S) != 2) { return 0; }
-    if (TOKTYP(S, GTI(S) + 1) != 10) { return 0; }
-    var fi = FINDFN(S, PEEKV(S));
+    # ⛔ 6.6.10 (bite 7 review): `name<..>(` too, and the fn the call REACHES. `r = mk(p);` into a
+    # `Box<Pt>` local compared the base's `Box` return, missed, and fell to the scalar store —
+    # fields stale, silently; the explicit `r = mk<Pt>(p);` did the same once its return type
+    # named the instance.
+    var o = _gcall_open(S, GTI(S));
+    if (o < 0) { return 0; }
+    var fi = _gen_resolve_call(S, GTI(S));
     var cls = _ret_agg_class(S, fi);
     if (cls == 0) { return 0; }
-    if (_call_follow(S, GTI(S)) != 5) { return 0; }
+    if (_call_follow(S, o - 1) != 5) { return 0; }
     var n = _agc_operand(S, noff);
     if (n <= 1) { return 0; }
     if (_agc_t != 0 - GFRS(S, fi)) { return 0; }
@@ -2255,7 +2305,10 @@ fn _PARSE_CONTINUE(S): i64 {
         # For-loop: forward patch to step (array of patches)
         var ci = cfw - 1;
         if (ci >= 8) {
+            # ERR_MSG returns (v6.4.62), so the cap stops the store itself: the 9th+ patch slot
+            # swept S+0x18F8A0.. over ~16 KB of heap-map state. CHANGELOG [6.6.10]
             ERR_MSG(S, "too many continue statements in loop (max 8)", 44);
+            return 0;
         }
         S64(S + 0x18F8A0 + ci * 8, EJMP0(S));
         S64(S + 0x18F898, cfw + 1);
@@ -2374,6 +2427,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
     }
     # #assert EXPR OP EXPR, "msg" — compile-time check
     if (typ == 107) {
+        var as_p0 = _panic;
         STI(S, GTI(S) + 1);
         var lhs = _EVAL_CONST_ATOM(S);
         # Check for comparison operator
@@ -2391,7 +2445,13 @@ fn _PARSE_STMT_IMPL(S): i64 {
             lhs = result;
         }
         # lhs is now the assertion value (0 = fail, non-zero = pass)
+        _assert_operands_end(S);
         if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
+        # 6.6.10: an operand (or a trailing token) that THIS assert reported has latched
+        # _panic; a "#assert failed" after it was a second error for the same mistake. Only
+        # this assert's own latch counts — an earlier, unresynced error must not swallow an
+        # independent failing #assert. CHANGELOG [6.6.10]
+        if (as_p0 == 0) { if (_panic == 1) { lhs = 1; } }
         if (lhs == 0) {
             syscall(SYS_WRITE, 2, "error:", 6);
             _err_head(S);
@@ -2874,9 +2934,11 @@ fn _PARSE_STMT_IMPL(S): i64 {
                 }
             }
         }
+        _asg_ti = 0 - 1;
         if (compound_op == 0) {
             if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
             STI(S, GTI(S) + 1);
+            _asg_ti = GTI(S);   # 6.6.10: the RHS's first token, for _IFS_CHECK below
         }
         if (compound_op != 0) {
             # Compound: x += expr → load x, push, eval expr, then x OP expr
@@ -2986,6 +3048,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
         if (idx >= 0) {
             var lt = GLTYPE(S, idx);
             var ew = GEXW(S);
+            _IFS_CHECK(S, _IFS_K(lt), _asg_ti);   # 6.6.10: `t = 1` into an f64 / f32 local
             if (lt > 0) {
                 if (lt <= 8) {
                     if (ew > lt) { WARN(S, "narrowing assignment (value may truncate)", 41); }
@@ -3024,6 +3087,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
             }
             var avsz = L64(_vars_base + idx * 8);
             var ew = GEXW(S);
+            _IFS_CHECK(S, _IFS_K(vt), _asg_ti);   # 6.6.10: `G = 1` into an f64 / f32 global
             if (avsz < 8) {
                 if (ew > avsz) { WARN(S, "narrowing assignment (value may truncate)", 41); }
                 EVSTORE_W(S, idx, avsz);

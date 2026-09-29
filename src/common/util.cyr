@@ -310,7 +310,10 @@ var _ASYNC_OK = 0;
 # now a dispatch. CHANGELOG [6.5.69]
 #
 # Coro object layout, allocated by the synthesized constructor:
-#   [0] impl fn ptr   [8] argc(=1)   [16] SELF   [24] state   [32 + i*8] local slot i
+#   [0] impl fn ptr   [8] argc word (1 | FUT_CORO 512)   [16] SELF   [24] state
+#   [32 + i*8] local slot i   [32 + flc*8] completion value. The argc word was the declared
+#   parameter count until 6.6.10, so a 0-parameter coroutine was forced with fncall0 (SIGSEGV).
+#   (parse_fn.cyr `_async_argc_word`; CHANGELOG [6.6.10])
 var _cur_fn_coro = 0;       # 1 while emitting a coroutine body
 var _coro_base = 0;         # stack slot holding the heap frame base (always 0)
 var _coro_lo = 0;           # locals with idx >= this live in the heap frame
@@ -319,8 +322,10 @@ var _coro_top_jmp = 0;      # the fn-top `jmp DISPATCH` placeholder
 var _coro_entry_cp = 0;     # state 0 landing pad (top of the real body)
 var _CORO_STATE_OFF = 24;   # byte offset of the state word inside the coro object
 var _CORO_LOCAL_OFF = 32;   # byte offset of local slot 0
-var _CORO_MAX_SUSP = 64;    # resume-label table size; exceeding it is a hard error
-var _coro_rcp[512];         # resume-label CP per suspend index (1-based), 64 x 8 B
+var _CORO_MAX_SUSP = 64;    # resume-label table bound; the await at this index errors and stores nothing
+# resume-label CP per suspend index (1-based). Only indices < _CORO_MAX_SUSP are ever written;
+# [512] holds 64 x 8 B whether a top-level array is sized N bytes or N slots. CHANGELOG [6.6.10]
+var _coro_rcp[512];
 # --- v6.5.71: PP-generated functions that must be inlined, passed by SIDE CHANNEL ----------
 # ⛔ WHY A SIDE CHANNEL AND NOT `#inline` TEXT. `#derive(accessors)` generates the canonical
 # inline candidate — `fn Name_field(p) { return load64(p + K); }`, one parameter, flat,
@@ -432,7 +437,13 @@ var _fnvar_base = 0;      # was 0x16A000 fn_variadic (1 = fn f(a, ...))
 var _fnflg_base = 0;      # was 0x17A000 fn_flags (must_use/deprecated/pure/io/alloc bits)
 var _fnvb_base = 0;       # was 0x1C8000 fn_var_bytes (per-fn array-bytes attribution)
 
-# v6.5.28 — FLOAT LITERAL side table. Two i64 slots per literal: numer @0, denom @8.
+# v6.5.28 — FLOAT LITERAL side table. Two i64 slots per literal. Since 6.6.10 slot @0
+# (FLIT_NUM) holds the literal's correctly rounded binary64 BITS — the lexer converts the
+# digits exactly (_flit_bits in src/frontend/lex.cyr) and stores FLIT_ADD(bits, 0) — and slot
+# @8 is unused (FLIT_DEN has no caller). The three EMIT_FLOAT_LIT load FLIT_NUM as a 64-bit
+# immediate. The history below is why the table exists; the i64 numer/denom pair it describes
+# overflowed in its turn (past 18 fraction digits or a 2^63 digit string) and was double-rounded
+# by the runtime divide, both silently. CHANGELOG [6.6.10]
 #
 # ⛔ WHY THIS EXISTS. A decimal float literal used to be packed into ONE token value as
 # `(denom << 32) | (numer & 0xFFFFFFFF)` — a 32/32 rational. Both halves overflowed silently
@@ -454,11 +465,15 @@ var _fnvb_base = 0;       # was 0x1C8000 fn_var_bytes (per-fn array-bytes attrib
 # v6.5.28 — the declared return sid of the call on the RHS of an assignment, captured before
 # the RHS is parsed (src/frontend/parse.cyr). 0 when the RHS is not a call to a known fn.
 var _asg_ret_sid = 0;
+# 6.6.10 — the first token of a plain assignment's RHS (-1 for a compound one), so an integer
+# constant stored into an f64 / f32 variable warns (_IFS_CHECK, src/frontend/parse_expr.cyr).
+var _asg_ti = 0 - 1;
 var _flit_base = 0;
 var _flit_n = 0;
 var _FLIT_CAP = 16384;
 
-# Intern a float literal's numer/denom, returning its index (the token value). Fails CLOSED:
+# Intern a float literal (since 6.6.10: its binary64 bits in `numer`; `denom` unused), returning
+# its index (the token value). Fails CLOSED:
 # past the cap it returns -1 and the caller emits a hard error rather than aliasing slot 0,
 # which is the v6.4.75 fn_table lesson (index N aliasing index 0 of the neighbour was a SILENT
 # miscompile, and silence is exactly what this whole fix is removing).
@@ -757,6 +772,33 @@ fn _FINDFN_CSTR(S, str_ptr, str_len): i64 {
 fn GINFN(S): i64 { return L64(S + 0x18DA08); }
 fn SINFN(S, v): i64 { S64(S + 0x18DA08, v); return 0; }
 fn GFLC(S): i64 { return L64(S + 0x18DA10); }
+# 6.6.10 — "this untyped variable was initialised from a float", one byte per LOCAL slot
+# (`_lfi_base`, 16384 = SFLC's cap) and per GLOBAL (`_gfi_base`, the var table's hard cap).
+# Both alloc()'d lazily on the first flagged declaration: no heap-LAYOUT change, and never on
+# the `_grow_g*` chain. A slot SFLC hands out is cleared here, so a parameter, a hidden temp or
+# the next fn's local never inherits a flag. Read by unary minus to warn; see _UFV_L
+# (src/frontend/parse_expr.cyr). CHANGELOG [6.6.10]
+var _lfi_base = 0;
+var _gfi_base = 0;
+fn _lfi_clear(S, v): i64 {
+    var i = GFLC(S);
+    while (i < v) { store8(_lfi_base + i, 0); i = i + 1; }
+    return 0;
+}
+fn SLFI(S, li, f): i64 {
+    if (li < 0) { return 0; }
+    if (li >= 16384) { return 0; }
+    if (_lfi_base == 0) { if (f == 0) { return 0; } _lfi_base = alloc(16384); }
+    store8(_lfi_base + li, f);
+    return 0;
+}
+fn SGFI(S, vi, f): i64 {
+    if (vi < 0) { return 0; }
+    if (vi >= 1048576) { return 0; }
+    if (_gfi_base == 0) { if (f == 0) { return 0; } _gfi_base = alloc(1048576); }
+    store8(_gfi_base + vi, f);
+    return 0;
+}
 # CVE-24 (v6.1.40): cap the per-fn stack-slot count. SFLC counts FRAME SLOTS
 # (a `stack var buf[N]` registers N/8 fillers), and the four slot-indexed local
 # tables — fn_local_names/local_depths/local_types/local_slice_widths, relocated
@@ -767,6 +809,7 @@ fn SFLC(S, v): i64 {
         syscall(SYS_WRITE, 2, "error: too many stack slots in one function (max 16384)\n", 56);
         syscall(SYS_EXIT, 1);
     }
+    if (_lfi_base != 0) { _lfi_clear(S, v); }
     S64(S + 0x18DA10, v);
     return 0;
 }
@@ -829,6 +872,19 @@ fn _ipt_slots(S, sltype): i64 {
 
 fn GFTP(S, fi): i64 { if (_fnt_tparams == 0) { return 0; } return L64(_fnt_tparams + fi * 8); }
 fn SFTP(S, fi, v): i64 { if (_fnt_tparams == 0) { _fnt_tparams = alloc(131072 * 8); } S64(_fnt_tparams + fi * 8, v); return 0; }
+# 6.6.10 — per-GENERIC-fn facts a CALL SITE needs, recorded in pass 1 (`_gen_record`) so they do
+# not depend on definition order. Whether a generic's i64 base is a dead stub used to be known
+# only while that base was being emitted, so no call, tail call or `&g` could ask — and each of
+# them reached the `rax = 0` stub silently. Lazy-alloc'd at the max fn cap like _fnt_tparams.
+#   bit 0      the body uses a T-typed value as a struct, so there is no scalar instance
+#   bit 1      the same, transitively: it forwards T to a generic that has bit 0 or 1
+#   bit 2      recorded (0: never scanned — inference falls back to argument position)
+#   bits 8-15  1 + the index of the first parameter typed with type parameter 0 (0 = none)
+#   bits 16-23 the same for type parameter 1
+# CHANGELOG [6.6.10]
+var _fnt_gmeta = 0;
+fn GFGM(S, fi): i64 { if (_fnt_gmeta == 0) { return 0; } return L64(_fnt_gmeta + fi * 8); }
+fn SFGM(S, fi, v): i64 { if (_fnt_gmeta == 0) { _fnt_gmeta = alloc(131072 * 8); } S64(_fnt_gmeta + fi * 8, v); return 0; }
 # v6.3.10 (instantiate-once): the base fn's `fn`-keyword token index (lazy-alloc'd).
 fn GFDS(S, fi): i64 { if (_fnt_defstart == 0) { return 0; } return L64(_fnt_defstart + fi * 8); }
 fn SFDS(S, fi, v): i64 { if (_fnt_defstart == 0) { _fnt_defstart = alloc(131072 * 8); } S64(_fnt_defstart + fi * 8, v); return 0; }
@@ -901,6 +957,27 @@ fn GSTP(S, si): i64 { if (_struct_tparams == 0) { return 0; } return L64(_struct
 fn SSTP(S, si, v): i64 { if (_struct_tparams == 0) { _struct_tparams = alloc(1024 * 8); } S64(_struct_tparams + si * 8, v); return 0; }
 fn GSDS(S, si): i64 { if (_struct_defstart == 0) { return 0; } return L64(_struct_defstart + si * 8); }
 fn SSDS(S, si, v): i64 { if (_struct_defstart == 0) { _struct_defstart = alloc(1024 * 8); } S64(_struct_defstart + si * 8, v); return 0; }
+# 6.6.10 — the FLOAT KIND of a struct/union field, one byte per packed field-pool entry
+# (1 = f64, 2 = f32, 0 = everything else), so `p.x` on an `x: f64` field loads TYPED and
+# `p.x + p.y` takes the float arm. The ftype cell cannot carry it: an f64 field is 8 bytes
+# like i64, and every reader decodes ftype < 0 as a signed narrow width. alloc()'d, so not a
+# heap-LAYOUT change. The entry is masked to the pool (a union's field count carries bit 63
+# into its entry arithmetic) and bounds-checked, so neither side can index past the table.
+# CHANGELOG [6.6.10]
+var _fld_fk = 0;
+fn SFFK(S, ent, k): i64 {
+    ent = ent & 0x7FFFFFFFFFFFFFFF;
+    if (ent >= 8192) { return 0; }
+    if (_fld_fk == 0) { _fld_fk = alloc(8192); }
+    store8(_fld_fk + ent, k);
+    return 0;
+}
+fn GFFK(S, si, fi): i64 {
+    if (_fld_fk == 0) { return 0; }
+    var ent = (L64(S + 0x1AA018 + si * 8) + fi) & 0x7FFFFFFFFFFFFFFF;
+    if (ent >= 8192) { return 0; }
+    return load8(_fld_fk + ent);
+}
 # v6.3.9 (F-fns): the ACTIVE generic-instantiation binding — up to 2 type-params,
 # each {name-offset -> CANONICAL concrete-type token}. The token: <0 = scalar of
 # width -tok (i64=-8, i32=-4, i16=-2, i8=-1); >0 = struct sid (1-based, FINDSTRUCT
@@ -912,9 +989,20 @@ var _tp_n0 = 0;
 var _tp_c0 = 0;
 var _tp_n1 = 0;
 var _tp_c1 = 0;
-# 6.6.8: 1 iff a type-arg of the explicit-type-arg call being parsed was a bound type
-# parameter (`inner<T>` forwarded from a generic body) — see _type_arg_leaf / _call_forwarded_base.
-var _ta_fwd = 0;
+# 6.6.10: 1 from an explicit-type-arg call (`g<Pt>(p)`, `g<i64>(5)`) until the PARSE_FNCALL it
+# makes reads it — that call must not re-infer its type arguments from the argument list.
+var _ta_explicit = 0;
+# 6.6.10: the type arguments PARSE_FNCALL's head inferred for a scalar generic call, read by the
+# inline replay's binding (was a positional re-inference inside the replay's argument loop).
+var _gh_inf0 = 0;
+var _gh_inf1 = 0;
+# 6.6.10: the last `_gen_resolve_call` that could NOT instantiate (-2 / -3) and the generic it fell
+# back to, so the path that then emits its own call refuses it by name instead of calling the base.
+var _grc_err = 0;
+var _grc_fi = 0 - 1;
+# 6.6.10: bit li = parameter li was declared `name: *T` (a pointer: it never binds a type argument
+# to the pointee struct). Saved with the per-fn snapshot, zeroed with `_cur_fn_pslots`.
+var _cur_fn_ptrp = 0;
 fn _tp_clear(S): i64 { _tp_n0 = 0; _tp_c0 = 0; _tp_n1 = 0; _tp_c1 = 0; return 0; }
 fn _tp_bind(S, slot, noff, conc): i64 {
     if (slot == 0) { _tp_n0 = noff; _tp_c0 = conc; }
@@ -1858,9 +1946,10 @@ fn _xd_check(S, d0, tag): i64 {
 # the project root and its `include "b.cyr"` — a file sitting right next to it —
 # does not resolve. Three fixes were considered and two are dead: `chdir` breaks
 # the dep prepend (`_materialize_source` emits `include "lib/…"` lines that are
-# root-relative), and an env var is unreadable on two targets (`_read_env` is
-# stubbed on Windows and cx). What every target DOES read identically is the source
-# text itself, so the directory rides in-band as `#@incdir <dir>` on line 1.
+# root-relative), and an env var was unreadable on two targets then (`_read_env` was a
+# stub on Windows until 6.6.6 and on cx until 6.6.10). What every target DOES read
+# identically is the source text itself, so the directory rides in-band as
+# `#@incdir <dir>` on line 1.
 #
 # WHY IT IS INERT EVERYWHERE ELSE. `#` opens a comment in cyrius, so the marker is
 # already ignored by every compiler that does not look for it — older cycc, cybs,
@@ -1922,9 +2011,9 @@ var _pp_incdir_len = 0;
 # v6.5.21 — `#@pkgver <version>`: the package version cbt resolves from
 # `[package].version`, surfaced to source as `CYRIUS_PKG_VERSION`. Same in-band
 # shape as `#@incdir` and for the same reason (common/util.cyr's note above): the
-# source text is the ONE channel every target reads identically — `_read_env` is
-# dead on the PE fork and stubbed on cx, and the macOS forks do not honour the
-# CLI-flag scan.
+# source text is the ONE channel every target reads identically — `_read_env` was
+# dead on the PE fork (until 6.6.6) and stubbed on cx (until 6.6.10), and the macOS forks
+# do not honour the CLI-flag scan.
 var _pp_pkgver[128];
 var _pp_pkgver_len = 0;
 # v6.5.34 — where PP_EMIT_PKGVER put the declaration in the expanded buffer, and how long
@@ -2457,9 +2546,9 @@ fn _HEAP_INIT_SCRATCH(S): i64 {
 #
 # v6.6.6: MOVED here from src/backend/common/runtime.cyr, unchanged. util.cyr is
 # the ONE module every fork includes; runtime.cyr is not (main_cx.cyr keeps its
-# own RECFIX + _read_env stub), so parking this there put macOS argv out of reach
-# of the cx driver. runtime.cyr's `_read_env` is included after util.cyr in every
-# fork that has both, so its calls still resolve.
+# own RECFIX), so parking this there put macOS argv out of reach of the cx driver.
+# `_read_env` (src/backend/common/env.cyr since 6.6.10, included from runtime.cyr AND
+# main_cx.cyr) is included after util.cyr in every fork, so its calls resolve.
 #
 # arm64: the prologue parks the base in x28 (callee-saved, untouched by the
 # aarch64 backend). Same inline-asm pattern as lib/args_macos.cyr's

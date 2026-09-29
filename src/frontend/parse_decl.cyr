@@ -51,21 +51,18 @@ fn PARSE_ARRAY(S, noff, ew): i64 {
         STI(S, GTI(S) + 1);
     } else {
         if (PEEKT(S) == 2) {
-            var as_noff = PEEKV(S);
-            var as_idx = FINDVAR(S, as_noff);
-            if (as_idx >= 0) {   # 6.6.8: no 1024 cap (util.cyr GVECP)
-                if (GVECP(S, as_idx) == 1) {
-                    asz = L64(_vecv_base + as_idx * 8);
-                    # v6.5.32 — a NEGATIVE enum constant is now spellable, so reject it as a
-                    # size rather than letting it through. Before negative values existed this
-                    # could not arise; the old mask turned such a slot into a colossal positive
-                    # instead. Silent acceptance of a nonsensical size is the failure mode this
-                    # release line keeps removing.
-                    if (asz < 0) { ERR_MSG(S, "array size must not be negative; an enum constant used as a size has to be >= 0", 79); }
-                    STI(S, GTI(S) + 1);
-                } else {
-                    ERR_MSG(S, "array size identifier must be an enum constant (compile-time literal); use `enum Sz { N = 16; } var buf[N];`", 108);
-                }
+            # 6.6.10: `N` or `Enum.N` through the shared recogniser (parse.cyr); it advances
+            # past the atom on success, so no STI below. CHANGELOG [6.6.10]
+            var as_idx = _enum_atom_idx(S);
+            # Presence is asked for HERE too, at the reader (enum_negative_value.sh axis 5c).
+            if (GVECP(S, as_idx) == 1) {   # 6.6.8: no 1024 cap (util.cyr GVECP)
+                asz = L64(_vecv_base + as_idx * 8);
+                # v6.5.32 — a NEGATIVE enum constant is now spellable, so reject it as a
+                # size rather than letting it through. Before negative values existed this
+                # could not arise; the old mask turned such a slot into a colossal positive
+                # instead. Silent acceptance of a nonsensical size is the failure mode this
+                # release line keeps removing.
+                if (asz < 0) { ERR_MSG(S, "array size must not be negative; an enum constant used as a size has to be >= 0", 79); }
             } else {
                 ERR_MSG(S, "array size identifier must be an enum constant (compile-time literal); use `enum Sz { N = 16; } var buf[N];`", 108);
             }
@@ -371,8 +368,14 @@ fn _agc_copy_bytes(S, dli, dgv, sli, sgv, nb): i64 {
 # load/store WIDTH comes from the leaf field (v6.3.33), not the intermediate
 # struct. Returns the leaf ftype; writes the updated byte-offset to _rlf_off
 # (the second return — read it immediately at the call site; non-reentrant).
+# 6.6.10: also publishes the LEAF's struct index and field index (`_rlf_si` / `_rlf_fi`), which
+# the load reads for the field's float kind (GFFK). CHANGELOG [6.6.10]
 var _rlf_off = 0;
+var _rlf_si = 0;
+var _rlf_fi = 0;
 fn _resolve_leaf_field(S, si, fi, off): i64 {
+    _rlf_si = si;
+    _rlf_fi = fi;
     var ft = GETFTYPE(S, si, fi);
     if (ft > 0) { if (PEEKT(S) == 41) {
             STI(S, GTI(S) + 1);
@@ -390,9 +393,260 @@ fn _resolve_leaf_field(S, si, fi, off): i64 {
             }
             off = off + FIELDOFF(S, isi, ifi);
             ft = GETFTYPE(S, isi, ifi);
+            _rlf_si = isi;
+            _rlf_fi = ifi;
         } }
     _rlf_off = off;
     return ft;
+}
+
+# ⛔ 6.6.10 — A STRUCT VALUE ASSIGNED INTO A STRUCT-TYPED FIELD COPIED ONE WORD. `b.v = p;` with
+# `struct Box { v: Pt; n; }` parsed `p` as an ordinary value (a struct's value is its FIRST word)
+# and stored it with the field's width capped at 8, so `b.v.y` kept whatever was there — and for
+# an address-passed struct PARAMETER the one word was the POINTER (`r.v.x` read a stack-address
+# byte). Silent on every backend. The v6.6.6 struct-copy arc covered a local, a parameter and a
+# global as the destination, never a field. Now the field store copies the whole struct from:
+#   a named struct (inline local, by-value parameter, pointer-mode local, inline or pointer-mode
+#   global), a call / method / overloaded operator returning the struct (through a temp), or
+#   another field of that struct type (`b.v = a.v`, `b.v = o.i.v`).
+# A struct of a DIFFERENT type is refused by name, as the variable form has been since 6.6.6. A
+# source that is not a struct (an integer, a pointer expression) keeps the one-word store.
+# ⚠ The source is described, not evaluated into a register: its address is re-emitted per chunk
+# (8/4/2/1 bytes, so an odd-sized struct is copied byte-exact), exactly as `_agc_copy_bytes`
+# does for the variable form. CHANGELOG [6.6.10]
+var _fsc_li = 0 - 1;    # source: a local's slot, or `_AGC_DREF(slot)` when the slot holds the address
+var _fsc_gv = 0 - 1;    # source: a global's slot
+var _fsc_gdr = 0;       # 1 = that global's slot HOLDS the struct's address (pointer-mode)
+var _fsc_fidx = 0;      # source: a struct FIELD — PARSE_FIELD_LOAD's base encoding (idx, sid) ...
+var _fsc_fsid = 0;
+var _fsc_foff = 0 - 1;  # ... and its byte offset; >= 0 selects the field form
+# PARSE_FIELD_LOAD's half: when the field access starting at `_fla_want` is the WHOLE right-hand
+# side and its leaf is a struct, it records the field here and emits nothing.
+var _fla_want = 0 - 1;
+var _fla_hit = 0;
+var _fla_ft = 0;
+var _fla_name = 0;
+
+fn _fsc_reset(): i64 {
+    _fsc_li = 0 - 1;
+    _fsc_gv = 0 - 1;
+    _fsc_gdr = 0;
+    _fsc_foff = 0 - 1;
+    return 0;
+}
+
+# x1 = the source struct's address + `boff`.
+fn _fsc_src_x1(S, boff): i64 {
+    if (_fsc_foff >= 0) {
+        _resolve_field_base_addr(S, _fsc_fidx, _fsc_fsid);
+        if (_fsc_foff + boff > 0) { EADDIMM_X1(S, _fsc_foff + boff); }
+        return 0;
+    }
+    if (_fsc_gdr == 1) {
+        EVLOAD(S, _fsc_gv);
+        EMOVCA(S);
+        if (boff > 0) { EADDIMM_X1(S, boff); }
+        return 0;
+    }
+    _agc_addr_x1(S, _fsc_li, _fsc_gv, boff);
+    return 0;
+}
+
+# Copy `nb` bytes from the recorded source into the field at `off` of the struct `idx`/`sid`
+# (PARSE_FIELD_STORE's encoding).
+fn _fsc_copy(S, idx, sid, off, nb): i64 {
+    var o = 0;
+    while (o < nb) {
+        var w = 8;
+        var rem = nb - o;
+        if (rem < 8) { w = 4; }
+        if (rem < 4) { w = 2; }
+        if (rem < 2) { w = 1; }
+        _fsc_src_x1(S, o);
+        EFIELD_LOAD_W(S, w);
+        EPUSHR(S);
+        _resolve_field_base_addr(S, idx, sid);
+        if (off + o > 0) { EADDIMM_X1(S, off + o); }
+        EPOPR(S);
+        if (w == 1) { ESTORE8(S); }
+        elif (w == 2) { ESTORE16(S); }
+        elif (w == 4) { ESTORE32(S); }
+        else { ESTOC(S); }
+        o = o + w;
+    }
+    return 0;
+}
+
+fn _fsc_type_err(S, snoff, fnoff): i64 {
+    ERR_IDENT(S, "cannot copy ", snoff, " into a struct field of a different struct type: ", fnoff);
+    return 0;
+}
+
+# A named source's struct type as `0 - sid` (the source recorded), or 0 when the name is not a
+# struct operand. A vector answers its own (band) type, so the caller reports the mismatch.
+fn _fsc_local_src(S, li): i64 {
+    var lt = GLTYPE(S, li);
+    if (lt >= 0) { return 0; }
+    if (lt <= 0 - 2048) { return lt; }
+    if (GLAGG(S, li) != 0) { _fsc_li = li; return lt; }   # inline: the slot IS the struct
+    _fsc_li = _AGC_DREF(li);                             # a parameter or pointer-mode local
+    return lt;
+}
+fn _fsc_global_src(S, gv): i64 {
+    var gt = GVTYPE(S, gv);
+    if (gt <= 0) { return 0; }
+    var pm = GVPM(S, gv);
+    if (pm == 0) { return 0; }   # GVTYPE's positive range is shared with scalar widths
+    _fsc_gv = gv;
+    if (pm == 1) { _fsc_gdr = 1; }
+    return 0 - gt;
+}
+fn _fsc_name_src(S, noff): i64 {
+    _fsc_reset();
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, noff);
+        if (li >= 0) { return _fsc_local_src(S, li); }
+    }
+    var gv = FINDVAR(S, noff);
+    if (gv < 0) { return 0; }
+    return _fsc_global_src(S, gv);
+}
+
+# `IDENT ;` — 1 when it named a struct of type `ft` (consumed), else 0 (cursor untouched).
+fn _fsc_name(S, ft, fnoff): i64 {
+    var noff = PEEKV(S);
+    var t = _fsc_name_src(S, noff);
+    if (t == 0) { return 0; }
+    if (t != 0 - ft) { _fsc_type_err(S, noff, fnoff); return 0; }
+    STI(S, GTI(S) + 1);
+    return 1;
+}
+
+# `IDENT ( .. ) ;` — a free fn returning a struct: the call into a temp, the temp recorded (1).
+# 0 = not that shape (cursor untouched). A <= 8 B result (an odd-sized one: only those reach
+# here — see `_fsc_src`) comes back in rax and is left to the byte-exact store, `_fst_odd`, at
+# top level and in a fn alike.
+fn _fsc_call(S, ft, fnoff): i64 {
+    # 6.6.10 (bite 7 review): `name<..>(` too, and the fn the call REACHES — `b.v = idp(p);` sized
+    # the copy from the base's i64 `T` return and stored one word.
+    var o = _gcall_open(S, GTI(S));
+    if (o < 0) { return 0; }
+    var fi = _gen_resolve_call(S, GTI(S));
+    if (fi < 0) { return 0; }
+    var rs = GFRS(S, fi);
+    if (rs <= 0) { return 0; }
+    if (_call_follow(S, o - 1) != 5) { return 0; }
+    if (rs != ft) { _fsc_type_err(S, PEEKV(S), fnoff); return 0; }
+    var cls = _ret_agg_class(S, fi);
+    if (cls == 0) { return 0; }
+    if (GINFN(S) != 1) { _refuse_toplevel_struct_call(S, PEEKV(S)); return 0; }
+    _fsc_reset();
+    _fsc_li = _struct_call_into_temp(S);
+    return 1;
+}
+
+# Any other right-hand side: parse it with the two destination arms armed. A method / operator
+# call spanning it lands in a temp (1); a struct-typed field spanning it is recorded (1);
+# otherwise its value is in rax (2) for the ordinary store.
+fn _fsc_expr(S, ft, fnoff): i64 {
+    var st = GTI(S);
+    var sv = _fla_want;
+    _fla_want = st;
+    _fla_hit = 0;
+    var w = _sc_arm(S);
+    PCMPE(S);
+    _sc_want = w;
+    _fla_want = sv;
+    var t = _sc_whole(S, st);
+    if (t >= 0 || t == 0 - 1) { return _fsc_from_call(S, t, ft, fnoff); }
+    if (_fla_hit == 1) {
+        _fla_hit = 0;
+        if (_fla_ft != ft) { _fsc_type_err(S, _fla_name, fnoff); return 2; }
+        return 1;
+    }
+    return 2;
+}
+fn _fsc_from_call(S, t, ft, fnoff): i64 {
+    if (t < 0) { _refuse_toplevel_struct_call(S, _sc_fn); return 2; }
+    if (_sc_sid != ft) { _fsc_type_err(S, _sc_fn, fnoff); return 2; }
+    _fsc_reset();
+    _fsc_li = t;
+    return 1;
+}
+
+# The dispatch, cursor on the right-hand side of `x.f = `: 0 = not a struct copy (nothing
+# parsed), 1 = the source is recorded for `_fsc_copy`, 2 = the RHS is parsed and its value is
+# in rax. A named source is taken at every width; the others only when the field is not one
+# exact register store (1/2/4/8 B), where the one-word path was already right.
+fn _fsc_src(S, ft, fnoff): i64 {
+    if (ft <= 0) { return 0; }
+    if (IS_STR_FIELD(S, ft) == 1) { return 0; }
+    if (PEEKT(S) == 2) {
+        if (TOKTYP(S, GTI(S) + 1) == 5) { return _fsc_name(S, ft, fnoff); }
+    }
+    var sz = STRUCTSZ(S, ft - 1);
+    if (sz == 8 || sz == 4 || sz == 2 || sz == 1) { return 0; }
+    if (PEEKT(S) == 2) {
+        var r = _fsc_call(S, ft, fnoff);
+        if (r != 0) { return r; }
+    }
+    return _fsc_expr(S, ft, fnoff);
+}
+
+# ⛔ 6.6.10 (bite 5 review) — A VALUE IN rax STORED INTO A 3/5/6/7-BYTE FIELD (an odd-sized
+# struct: `struct Odd { a: i8; b: i16; }`) wrote EIGHT bytes — the width ladder's `else` is ESTOC
+# — and silently overwrote the fields after it. Every <= 8 B struct result arrives this way (a
+# method, an overloaded operator, a free call at top level), and so does a plain integer. Now
+# exactly `nb` bytes: 4/2/1-byte chunks, each shifted down into place. The value is kept on the
+# stack across the chunks (the field address is re-resolved per chunk and may use rax).
+# CHANGELOG [6.6.10]
+fn _fst_odd_sz(nb): i64 {
+    if (nb == 3 || nb == 5 || nb == 6 || nb == 7) { return 1; }
+    return 0;
+}
+fn _fst_chunk(S, idx, sid, off, o, w): i64 {
+    if (o > 0) { EMOVI(S, o * 8); EMOVCA(S); }
+    EPOPR(S);
+    EPUSHR(S);
+    if (o > 0) { ESHRCL(S); }
+    EPUSHR(S);
+    _resolve_field_base_addr(S, idx, sid);
+    if (off + o > 0) { EADDIMM_X1(S, off + o); }
+    EPOPR(S);
+    if (w == 1) { ESTORE8(S); }
+    elif (w == 2) { ESTORE16(S); }
+    else { ESTORE32(S); }
+    return 0;
+}
+fn _fst_odd(S, idx, sid, off, nb): i64 {
+    EPUSHR(S);
+    var o = 0;
+    while (o < nb) {
+        var w = 4;
+        if (nb - o < 4) { w = 2; }
+        if (nb - o < 2) { w = 1; }
+        _fst_chunk(S, idx, sid, off, o, w);
+        o = o + w;
+    }
+    EPOPR(S);
+    return 0;
+}
+
+# PARSE_FIELD_LOAD's side: the access began at `_fla_want`, its leaf is a (non-Str) struct and
+# `;` follows — record it for `_fsc_copy` and emit nothing. Returns 1 when taken.
+fn _fla_take(S, idx, sid, off, ft): i64 {
+    if (ft <= 0) { return 0; }
+    if (IS_STR_FIELD(S, ft) == 1) { return 0; }
+    if (PEEKT(S) != 5) { return 0; }
+    _fla_want = 0 - 1;
+    _fla_hit = 1;
+    _fla_ft = ft;
+    _fla_name = GETFNAME(S, _rlf_si, _rlf_fi);
+    _fsc_reset();
+    _fsc_fidx = idx;
+    _fsc_fsid = sid;
+    _fsc_foff = off;
+    return 1;
 }
 
 # Load a struct field: ident.field → emit load from var_addr + field_offset
@@ -651,6 +905,7 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
     # Check for chained access: s.inner.field — leaf retype (R1, v6.4.15).
     var ft = _resolve_leaf_field(S, si, fi, off);
     off = _rlf_off;
+    if (_fla_want == pfl_beg) { if (_fla_take(S, idx, sid, off, ft) == 1) { return 0; } }   # 6.6.10
     # Load variable address + field offset, then load value (width-correct).
     # Pointer-vs-inline struct-base resolution: v5.5.36 local-encoded idx
     # (lea rcx,[rbp-disp] via EFLADDR_X1 vs global EVADDR_X1), v5.8.17 -1-sentinel
@@ -675,6 +930,24 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
         if (IS_VEC_FIELD(S, ft) == 0) { fld_sz = 0 - fld_sz; }
     }
     EFIELD_LOAD_W(S, fld_sz);
+    _field_load_type(S, _rlf_si, _rlf_fi);
+    return 0;
+}
+
+# ⛔ 6.6.10 — AN f64 / f32 FIELD LOADED UNTYPED, so every operator on it took its INTEGER arm:
+# with `struct P { x: f64; y: f64; }`, `p.x + p.y` added two bit patterns (NaN for 1.5 + 2.0),
+# `p.x * p.y` and `p.x / p.y` gave 0, `-p.x` negated the integer, and `p.x < p.y` compared the
+# bits — wrong for negatives — all silent, through a local, a parameter, a global, a chain, a
+# union, a method's `self` and `Pair<f64>` alike. And correct code (`2.0 * p.x`, `t + p.y`)
+# drew a false kind-1 warning. The load now types the value from the field's recorded kind.
+# ⚠ `#derive(accessors)` getters stay UNTYPED on purpose (`P_x(&p)` is `load64`): 21 bit-exact
+# `==` / `!=` compares of such getters in svara/samay would become float compares (NaN, ±0).
+# So `p.x + p.y` is a float add and `P_x(&p) + P_y(&p)` an integer one; the guide says so.
+# CHANGELOG [6.6.10]
+fn _field_load_type(S, si, fi): i64 {
+    var k = GFFK(S, si, fi);
+    if (k == 1) { SESTYPE(S, F64_TYID); }
+    if (k == 2) { SESTYPE(S, F32_TYID); }
     return 0;
 }
 
@@ -798,9 +1071,30 @@ fn PARSE_FIELD_STORE(S, noff): i64 {
     # Check for chained access: s.inner.field = expr — leaf retype (R1, v6.4.15).
     var ft = _resolve_leaf_field(S, si, fi, off);
     off = _rlf_off;
+    var lfn = GETFNAME(S, _rlf_si, _rlf_fi);
+    var lfk = GFFK(S, _rlf_si, _rlf_fi);   # 6.6.10: read before the RHS can re-resolve a field
     if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
     STI(S, GTI(S) + 1);
-    PCMPE(S);
+    # 6.6.10: a struct VALUE into a struct-typed field copies the whole struct. See `_fsc_src`.
+    var fsc = _fsc_src(S, ft, lfn);
+    if (fsc == 1) {
+        _fsc_copy(S, idx, sid, off, STRUCTSZ(S, ft - 1));
+        if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
+        STI(S, GTI(S) + 1);
+        return 0;
+    }
+    if (fsc == 0) {
+        var fst_ti = GTI(S);
+        PCMPE(S);
+        _IFS_CHECK(S, lfk, fst_ti);   # 6.6.10: `p.x = 1` into an f64 / f32 field
+    }
+    var fst_sz = FIELDSZ(S, ft);
+    if (_fst_odd_sz(fst_sz) == 1) {
+        _fst_odd(S, idx, sid, off, fst_sz);
+        if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
+        STI(S, GTI(S) + 1);
+        return 0;
+    }
     # Store value to struct field (width-correct). Route to local or
     # global addr-emit based on idx encoding (same convention as
     # PARSE_FIELD_LOAD; v5.5.36 Phase 2). v5.8.17 §9: same
@@ -810,7 +1104,6 @@ fn PARSE_FIELD_STORE(S, noff): i64 {
     _resolve_field_base_addr(S, idx, sid);
     if (off > 0) { EADDIMM_X1(S, off); }
     EPOPR(S);
-    var fst_sz = FIELDSZ(S, ft);
     if (fst_sz == 1) { ESTORE8(S); }
     elif (fst_sz == 2) { ESTORE16(S); }
     elif (fst_sz == 4) { ESTORE32(S); }
@@ -836,9 +1129,16 @@ fn PARSE_FIELD_STORE(S, noff): i64 {
 # initialiser expression can contain a closure whose body declares its own literal and would
 # otherwise leave the wrong base in place for the rest of this literal's fields.
 var _sl_base_li = 0 - 1;
+# 6.6.10: the float kind of the field EMIT_STRUCT_FIELD_W is about to initialise (1 = f64,
+# 2 = f32), set by its callers and consumed on entry, so `P { 1, 2 }` into f64 fields warns.
+var _sfw_fk = 0;
 fn EMIT_STRUCT_FIELD_W(S, vcnt, boff, width): i64 {
     var sl_li = _sl_base_li;
+    var fk = _sfw_fk;
+    _sfw_fk = 0;
+    var t0 = GTI(S);
     PCMPE(S);
+    _IFS_CHECK(S, fk, t0);
     EPUSHR(S);
     # Load variable address into x1/rcx via fixup
     if (sl_li >= 0) { EFLADDR_X1(S, sl_li); }
@@ -877,6 +1177,7 @@ fn _emit_struct_positional_init(S, target_idx, sid): i64 {
                 var ifc = GETFCOUNT(S, ft - 1);
                 var ifi = 0;
                 while (ifi < ifc) {
+                    _sfw_fk = GFFK(S, ft - 1, ifi);
                     EMIT_STRUCT_FIELD_W(S, target_idx, boff, 8);
                     boff = boff + 8;
                     ifi = ifi + 1;
@@ -884,6 +1185,7 @@ fn _emit_struct_positional_init(S, target_idx, sid): i64 {
             }
         } else {
             var w = FIELDSZ(S, ft);
+            _sfw_fk = GFFK(S, si, fi);
             EMIT_STRUCT_FIELD_W(S, target_idx, boff, w);
             boff = boff + w;
         }
@@ -936,6 +1238,7 @@ fn _STRUCT_INIT_BODY(S, target_idx, sid): i64 {
             # broke for the LAST narrow field at end-of-struct
             # (which would overflow the struct's allocation).
             var nf_w = FIELDSZ(S, ft);
+            if (found >= 0) { _sfw_fk = GFFK(S, si, found); }
             EMIT_STRUCT_FIELD_W(S, target_idx, boff, nf_w);
         }
         # Require every field to be set — no implicit zero defaults (yet).
@@ -1104,21 +1407,18 @@ fn PARSE_GVAR_ARR(S, noff, sti, ew): i64 {
         STI(S, GTI(S) + 1);
     } else {
         if (PEEKT(S) == 2) {
-            var gas_noff = PEEKV(S);
-            var gas_idx = FINDVAR(S, gas_noff);
-            if (gas_idx >= 0) {   # 6.6.8: no 1024 cap (util.cyr GVECP)
-                if (GVECP(S, gas_idx) == 1) {
-                    sz_raw = L64(_vecv_base + gas_idx * 8);
-                    # v6.5.32 — a NEGATIVE enum constant is now spellable, so reject it as a
-                    # size rather than letting it through. Before negative values existed this
-                    # could not arise; the old mask turned such a slot into a colossal positive
-                    # instead. Silent acceptance of a nonsensical size is the failure mode this
-                    # release line keeps removing.
-                    if (sz_raw < 0) { ERR_MSG(S, "array size must not be negative; an enum constant used as a size has to be >= 0", 79); }
-                    STI(S, GTI(S) + 1);
-                } else {
-                    ERR_MSG(S, "array size identifier must be an enum constant (compile-time literal); use `enum Sz { N = 16; } var buf[N];`", 108);
-                }
+            # 6.6.10: `N` or `Enum.N` through the shared recogniser (parse.cyr); it advances
+            # past the atom on success, so no STI below. CHANGELOG [6.6.10]
+            var gas_idx = _enum_atom_idx(S);
+            # Presence is asked for HERE too, at the reader (enum_negative_value.sh axis 5c).
+            if (GVECP(S, gas_idx) == 1) {   # 6.6.8: no 1024 cap (util.cyr GVECP)
+                sz_raw = L64(_vecv_base + gas_idx * 8);
+                # v6.5.32 — a NEGATIVE enum constant is now spellable, so reject it as a
+                # size rather than letting it through. Before negative values existed this
+                # could not arise; the old mask turned such a slot into a colossal positive
+                # instead. Silent acceptance of a nonsensical size is the failure mode this
+                # release line keeps removing.
+                if (sz_raw < 0) { ERR_MSG(S, "array size must not be negative; an enum constant used as a size has to be >= 0", 79); }
             } else {
                 ERR_MSG(S, "array size identifier must be an enum constant (compile-time literal); use `enum Sz { N = 16; } var buf[N];`", 108);
             }
@@ -1663,6 +1963,51 @@ fn _skip_gvar_decl(S): i64 {
     return 0;
 }
 
+# 6.6.10 — the untyped-float flag for a global registered here (see _UFV_G, parse_expr.cyr).
+# No code is emitted for the initialiser yet, so its SHAPE decides: after any leading `-` / `(`,
+# a float literal, a float builtin, a call to a `: f64` fn, or a lone f64 / f32 / flagged
+# global. `typed` is the sum of the declaration's (non-negative) annotation channels.
+fn _gv_ufv(S, sti, typed): i64 {
+    if (typed != 0) { return 0; }
+    if (TOKTYP(S, sti + 2) != 4) { return 0; }
+    var ti = sti + 3;
+    while (TOKTYP(S, ti) == 7 || TOKTYP(S, ti) == 10) { ti = ti + 1; }
+    var t = TOKTYP(S, ti);
+    if (t == 61) { return 1; }
+    if (_NEG_INTRIN_KIND(t) != 0) { return 1; }
+    if (t != 2) { return 0; }
+    if (TOKTYP(S, ti + 1) == 10) {
+        var fi = FINDFN(S, TOKVAL(S, ti));
+        if (fi < 0) { return 0; }
+        if (GFRS(S, fi) == 0 - 9) { return 1; }
+        return 0;
+    }
+    if (TOKTYP(S, ti + 1) != 5) { if (TOKTYP(S, ti + 1) != 11) { return 0; } }
+    # ⚠ _findvar_core, NOT FINDVAR: this is a DECLARATION-time peek, and FINDVAR's cross-file
+    # `private` check turns it into an accusation (private_does_not_block_own_declaration.sh).
+    var vi = _findvar_core(S, TOKVAL(S, ti));
+    if (vi < 0) { return 0; }
+    var gt = GVTYPE(S, vi);
+    if (gt == F64_TYID) { return 1; }
+    if (gt == F32_TYID) { return 1; }
+    if (_gfi_base == 0) { return 0; }
+    return load8(_gfi_base + vi);
+}
+# 6.6.10 — `var G: f64 = 1;` at registration: the same integer-constant judgement as a local
+# (_IFS_CHECK), over `= <expr> ;`, reported at the initialiser. The cursor is restored.
+fn _gv_ifs(S, sti, ann_float): i64 {
+    var ti = sti + 5;
+    if (TOKTYP(S, ti - 1) != 4) { return 0; }
+    var end = ti + 1;
+    if (TOKTYP(S, end) != 5) { end = ti + 2; }
+    if (TOKTYP(S, end) != 5) { return 0; }
+    var g = GTI(S);
+    STI(S, end);
+    _IFS_CHECK(S, _IFS_K(ann_float), ti);
+    STI(S, g);
+    return 0;
+}
+
 fn PARSE_GVAR_REG(S): i64 {
     var sti = GTI(S);
     STI(S, GTI(S) + 1);  # consume VAR
@@ -1906,6 +2251,8 @@ fn PARSE_GVAR_REG(S): i64 {
     # destructure form stamps per name — each carries its own _GVAR_VIS (v6.6.4).
     var gvi = _gv_fold(S, vcnt, sti);   # 6.6.6: a redeclaration reuses the global's slot
     _GVAR_VIS(S, gvi, sti);
+    SGFI(S, gvi, _gv_ufv(S, sti, psc + ann_sid + ann_scalar + ann_float));   # 6.6.10
+    if (ann_float != 0) { _gv_ifs(S, sti, ann_float); }                      # 6.6.10
     if (gvi == vcnt) {
         SVCNT(S, vcnt + 1);
         # A shadow that keeps its own slot (over an enum constant, or over a global with
@@ -2459,6 +2806,11 @@ fn PARSE_VAR(S): i64 {
             var gi1 = GVCNT(S);
             var gi2 = gi1 + 1;
             var gi3 = gi1 + 2;
+            # Grow the var family BEFORE the name stores: the GVCNT < _var_cap invariant covers
+            # only gi1, so gi2/gi3 written first landed past the cap — aliasing var_sizes[0] /
+            # var_types[0] at 8190, or the next alloc'd table at 16382 (a silent miscompile).
+            # SVCNT may reallocate, so _varn_base/_vars_base are read after it. CHANGELOG [6.6.10]
+            if (_dt_n == 3) { SVCNT(S, gi1 + 3); } else { SVCNT(S, gi1 + 2); }
             S64(_varn_base + gi1 * 8, noff);
             S64(_vars_base + gi1 * 8, 8);
             if (_dt_t1 != 0) { SVTYPE(S, gi1, _dt_t1); }
@@ -2479,7 +2831,6 @@ fn PARSE_VAR(S): i64 {
             _GVAR_VIS(S, gi1, GTI(S));   # v6.6.4: stamp visibility — a global registered on the PARSE_PROG path (any `var` after the FIRST top-level statement) skipped PARSE_GVAR_REG entirely and was never private
             _GVAR_VIS(S, gi2, GTI(S));
             if (_dt_n == 3) { _GVAR_VIS(S, gi3, GTI(S)); }
-            if (_dt_n == 3) { SVCNT(S, gi1 + 3); } else { SVCNT(S, gi1 + 2); }
         }
         if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
         STI(S, GTI(S) + 1);
@@ -3007,6 +3358,7 @@ fn PARSE_VAR(S): i64 {
     }
     var asv_try = 0;
     var asv_pair = 0;
+    var _rcv_fi = 0 - 1;   # 6.6.10: the fn the receive's call actually reaches (_gen_resolve_call)
     if ((pscale <= 0) && (PEEKT(S) == 4) && (GINFN(S) == 1)) {
         var _look_ti = GTI(S) + 1;
         if (TOKTYP(S, _look_ti) == 2) {
@@ -3021,8 +3373,13 @@ fn PARSE_VAR(S): i64 {
                         if (_look_gfi0 >= 0) { if (GFTP(S, _look_gfi0) != 0) { _look_iscall = 1; } }
                     } } }
             if (_look_iscall == 1) {
-                var _look_noff = TOKVAL(S, _look_ti);
-                var _look_fi = FINDFN(S, _look_noff);
+                # ⛔ 6.6.10: the callee the call REACHES — a generic's instance for explicit
+                # type args or an inferred struct argument — not the base FINDFN names. The
+                # receive below sized itself from the base's return (`v: T` an 8-byte i64, so
+                # `var r: Box<Pt> = mk<Pt>(p); r.v.x` failed to parse) and then CALLED the base,
+                # T = i64. CHANGELOG [6.6.10]
+                var _look_fi = _gen_resolve_call(S, _look_ti);
+                _rcv_fi = _look_fi;
                 if (_look_fi >= 0) {
                     var _look_sid = GFRS(S, _look_fi);
                     # v6.3.39 (B-explicit): an EXPLICIT specialized-instance receiver of a
@@ -3139,7 +3496,9 @@ fn PARSE_VAR(S): i64 {
             ERR_MSG(S, "struct-valued assignment RHS must be a fn call", 46);
         }
         var asv_fi = FINDFN(S, asv_fnoff);
+        if (_rcv_fi >= 0) { asv_fi = _rcv_fi; }   # 6.6.10: the instance the lookahead resolved
         if (asv_fi < 0) { asv_fi = REGFN(S, asv_fnoff); }
+        _gen_own_call_check(S, asv_fi, asv_fnoff);
         _vis_check(S, asv_fi, asv_fnoff);   # v6.6.4: retptr struct receive emits its own call
         var asv_callee_sid = GFRS(S, asv_fi);
         if (asv_callee_sid == 0) {
@@ -3212,7 +3571,9 @@ fn PARSE_VAR(S): i64 {
             ERR_MSG(S, "struct-valued assignment RHS must be a fn call", 46);
         }
         var asp_fi = FINDFN(S, asp_fnoff);
+        if (_rcv_fi >= 0) { asp_fi = _rcv_fi; }   # 6.6.10: see asv_try
         if (asp_fi < 0) { asp_fi = REGFN(S, asp_fnoff); }
+        _gen_own_call_check(S, asp_fi, asp_fnoff);
         _vis_check(S, asp_fi, asp_fnoff);   # v6.6.4: pair struct receive emits its own call (also the inferred `var q = f()` form)
         var asp_callee_sid = GFRS(S, asp_fi);
         if (asp_callee_sid == 0) {
@@ -3312,8 +3673,7 @@ fn PARSE_VAR(S): i64 {
                             if (_ti_gfi >= 0) { if (GFTP(S, _ti_gfi) != 0) { _ti_iscall = 1; } }
                         } } }
                 if (_ti_iscall == 1) {
-                    var _ti_noff = PEEKV(S);
-                    var _ti_fi = FINDFN(S, _ti_noff);
+                    var _ti_fi = _gen_resolve_call(S, GTI(S));   # 6.6.10: the instance's return
                     if (_ti_fi >= 0) {
                         _ti_inferred_sid = GFRS(S, _ti_fi);
                     }
@@ -3336,6 +3696,13 @@ fn PARSE_VAR(S): i64 {
     var scv_prev = _sc_arm(S);
     PCMPE(S);
     _sc_want = scv_prev;
+    # 6.6.10: an integer constant into an `f64` / `f32` declaration warns (_IFS_CHECK), and an
+    # UNTYPED declaration records whether its initialiser was a float (_UFV_*).
+    _IFS_CHECK(S, _IFS_K(lfloat), scv_start);
+    var ufv = 0;
+    if (pscale == 0) { if (scalar_type == 0) { if (lfloat == 0) { if (slice_elt_w == 0) { if (_ti_inferred_sid == 0) {
+                        ufv = _UFV_IS_FLOAT(S);
+                    } } } } }
     # Type check: warn if pointer/scalar mismatch
     var expr_ps = GPSC(S);
     if (pscale > 0) {
@@ -3494,6 +3861,7 @@ fn PARSE_VAR(S): i64 {
             # the sentinel is invisible to it. The load reads it to sign-extend (movsx).
             if (scalar_signed == 1) { if (slice_elt_w == 0) { SSLICE_W(S, li, 0 - scalar_type); } }
             SFLC(S, li + 1);
+            SLFI(S, li, ufv);   # 6.6.10: set on EVERY declaration, after SFLC cleared it (see _UFV_L)
         }
     } else {
         _sc_global_receive(S, pscale, scv_start);   # 6.6.6: no frame at top level — refused by name
@@ -3534,6 +3902,7 @@ fn PARSE_VAR(S): i64 {
             EVSTORE(S, vcnt);
         }
         SLVAR(S, vcnt);
+        SGFI(S, vcnt, ufv);   # 6.6.10: see _UFV_G
         _GVAR_VIS(S, vcnt, GTI(S));   # v6.6.4: stamp visibility — a global registered on the PARSE_PROG path (any `var` after the FIRST top-level statement) skipped PARSE_GVAR_REG entirely and was never private
         SVCNT(S, vcnt + 1);
     }

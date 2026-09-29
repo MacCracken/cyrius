@@ -43,16 +43,55 @@ var perms = 0o644;      # common Unix file-mode form      → 420
 
 Octal uses digits `0`–`7`; a `8` or `9` ends the literal. (There is no
 `0b` binary literal form.) A decimal literal with a fractional part
-(`3.14`) is lexed as an `f64` float.
+(`3.14`) is lexed as an `f64` float, and its value is the **correctly rounded** binary64 of
+the digits as written (round-half-even, any number of digits, subnormals, +inf past
+~1.8e308) — the compiler converts it exactly and emits the bits as one immediate. There is
+no exponent form (`1e-9`): spell small constants out (`0.000000001`). Until 6.6.10 a literal
+with more than 18 fraction digits or a digit string ≥ 2^63 was silent garbage (often
+negative), and 16–18 digit literals were 1 ulp off on some values.
+
+An integer literal must fit in 64 bits: anything ≥ 2^64 — decimal, hex or octal — is a
+compile error (`integer literal does not fit in 64 bits`; until 6.6.10 it wrapped silently).
+2^63 … 2^64 − 1 is accepted and reads as the negative i64 with those bits
+(`0xFFFFFFFFFFFFFFFF` is -1).
 
 Unary minus flips the **sign bit** of a float the compiler can see is a float: a float
-literal, a value typed `f64` / `f32`, or a direct call to a float-returning builtin
-(`-f64_sqrt(v)`, `-f64_exp(v)`, `-f32_from(v)`, …). So `-1.5` is -1.5, `-0.0` is negative
-zero and `-x` negates an `f64` exactly (6.6.8; before it, `-1.0` evaluated to -4.0 and
-`-0.0` to +0, silently). It does NOT cover an **untyped** variable or a struct field holding
-float bits, or a parenthesised operand whose own type is untyped (`-(f64_exp(u))` with
-`u` untyped, `-(a + b)` over untyped vars) — those are `i64` as far as the compiler
-knows, and `-v` is integer negation of the bits. Negate them with `f64_neg(v)`.
+literal, a value typed `f64` / `f32`, or the result of a float-returning builtin — directly
+or in parentheses (`-f64_sqrt(v)`, `-(f64_exp(v))`, `-f32_from(v)`, …). So `-1.5` is -1.5,
+`-0.0` is negative zero and `-x` negates an `f64` exactly (6.6.8; before it, `-1.0`
+evaluated to -4.0 and `-0.0` to +0, silently; the parenthesised builtin form was integer
+negation until 6.6.10). A struct or union field declared `f64` / `f32` counts as typed too
+(6.6.10 — see [Field types](#field-types-v6610)). It does NOT cover an **untyped** variable,
+an untyped field holding float bits, or an untyped expression (`-(a + b)` over untyped vars)
+— those are `i64` as far as the compiler knows, and `-v` is integer negation of the bits.
+Negate them with `f64_neg(v)`, or declare the variable `: f64`. Since 6.6.10 an untyped
+variable whose declaration was initialised from a float (`var c = 1.5;`, `var z = 0.0;`,
+`var x = f64_sqrt(u);`, or a copy of such a variable) WARNS when negated: `unary minus on an
+untyped variable holding a float is integer negation (declare it f64)`. `-c` of 1.5 is -3.0,
+`-z` of 0.0 is +0 and `-n` of -2.5 is 1.75. The judgement is made at the declaration; a later
+assignment does not change it.
+
+**Float builtin results in arithmetic (6.6.10).** The result of a float-returning builtin
+(`f64_sqrt`, `f64_add`, `f64_sin`, `f64_exp`, `f32_from`, … — every `f64_*` / `f32_*` that
+returns a float) is a float operand of `+ - * /`, on either side, directly, in parentheses
+or after unary minus: `f64_sqrt(u) * 2.0`, `f64_sin(z) - f64_cos(z)`, `2.0 * f64_sqrt(u)`,
+`f64_mul(u, v) / v` and `-f64_sqrt(u) * 2.0` are all float arithmetic now, whatever the
+builtin's arguments were typed. Until 6.6.10 they were INTEGER operations over the bit
+patterns — `f64_sqrt(u) * f64_sqrt(u)` was 0 and `f64_sin(0) - f64_cos(0)` -4.0 — and the
+answer depended on the ORDER of the arguments (`f64_add(p, u)` took the last argument's
+type). The result is still not a typed *value*: `==`, `!=`, `<` … on builtin results remain
+INTEGER compares of the bit patterns (so `f64_neg(z) == z` is 0 for z = 0.0, and
+`f64_neg(a) < f64_neg(b)` is wrong for negative values — compare with `f64_lt` /
+`f64_gt` / `f64_eq`), and `var x = f64_sqrt(u);` declares an untyped `x` (declare it `: f64`
+to make later arithmetic on it float). Code that wants the integer ulp distance of two
+results goes through an untyped variable first: `var a = f64_atan(x); d = a - b;`.
+
+An integer CONSTANT stored into an `f64` / `f32` slot keeps its integer bits — `var t: f64 =
+1;`, `t = 1;`, `p.x = 1;` (an `f64` field) and `P { 1, 2 }` store `0x1`, a subnormal — and
+since 6.6.10 each WARNS: `an integer stored into an f64/f32 slot keeps its integer bits`.
+Write `1.0`, or `f64_from(n)` for a runtime integer. `0` is exempt (its bits are 0.0), and
+so is a hex bit pattern at or above 2^52 (`0x3FF0000000000000` is 1.0 on purpose); a runtime
+untyped value (`var x: f64 = load64(p);`) is the legal boxed-float idiom and is not judged.
 
 ⚠ Binary operators are typed by their LEFT operand. `0 - 1.5` is an INTEGER subtraction
 of 1.5's bit pattern (it is -3.0), and `2 * x` with `x: f64` multiplies x's bits. Write
@@ -96,6 +135,12 @@ is best reserved for byte buffers:
 > `var a[4]` with the slot idiom `store64(&a + i*8, …)` runs off its 8-byte
 > backing — the array only holds 1 slot, not 4. Declare slot arrays as
 > `var a: i64[4]` (32 bytes) instead. See CHANGELOG [6.2.1].
+
+`N` is an integer literal or an **enum constant**, bare or qualified —
+`enum Sz { BUF = 16; }` then `var b[BUF]`, `var b[Sz.BUF]` or
+`var a: i64[Sz.BUF]`, in a function or at top level (the qualified form
+since 6.6.10). A plain `var` is not a constant and is refused as a size, as is
+a negative enum value.
 
 ## Functions
 
@@ -265,6 +310,50 @@ var r = Rect { 0, 0, 10, 5 };
 var w = r.br.x - r.tl.x;   # 10
 ```
 
+### Field types (v6.6.10)
+
+A field is untyped (`x;`, 8 bytes, i64) or annotated `x: T`, where `T` is one of:
+
+| `T` | Bytes | Notes |
+|-----|-------|-------|
+| `i8` / `i16` / `i32` | 1 / 2 / 4 | Narrow and **signed**: `p.x` sign-extends. |
+| `i64` | 8 | The same as no annotation. |
+| `u8` / `u16` / `u32` / `u64` | **8 each** | ⚠ Not narrow. The name is accepted but the field is a full word, so `struct { a: u8; b: u8; }` is 16 bytes, not 2. For a binary layout, use `i8` / `i16` / `i32` and mask the value. |
+| `f64` | 8 | **Typed** — `p.x + p.y`, `p.x * 2.0`, `-p.x` and `p.x < p.y` are float operations. |
+| `f32` | **8** | Typed (single-precision arithmetic), stored in the low 32 bits of a full word. |
+| `cstring`, `Result`, `Option`, `Tagged`, an enum | 8 | An enum may be declared before or after the struct. |
+| a struct or union | its size | Stored **inline**. It must be declared ABOVE the struct that uses it. |
+| `Vec` / `Vec<T>` | 8 | A handle. |
+| a type parameter of the struct being declared (`struct Box<T> { v: T; }`) | per instance | |
+
+⚠ The field widths are layout (and ABI). `u8`..`u32` and `f32` have always taken 8 bytes;
+v6.6.10 documents that rather than changing it.
+
+Anything else is a **compile error that names the type**. Before v6.6.10 an unknown name was
+silently an 8-byte i64, and three cases were silent miscompiles:
+
+* `a: Nonexist` compiled (a typo, or a missing `include`).
+* A struct used as a field type **above** its own declaration got a different layout than the
+  same text below it: `struct A { b: B; x; }` written before `struct B { p; q; }` made A 16
+  bytes instead of 24, and `a.b` read 8 bytes of a 16-byte value. It now reports
+  `struct field type 'B' is declared after its use; declare it before 'A'`.
+* `v: i16v8` (a vector type) registered as a 2-byte `i16` field. A vector cannot be a field
+  type.
+
+A struct cannot contain itself (`struct Node { next: Node; }` crashed the compiler before
+v6.6.10); a link to another node is an `i64` (pointer) field.
+
+**f64 fields are typed; `#derive(accessors)` getters are not.** For
+`struct P { x: f64; y: f64; }`, `p.x + p.y` is a float add. Before v6.6.10 every operator on
+such a field was an INTEGER operation on the bit pattern (`p.x + p.y` read as NaN for 1.5 + 2.0,
+`p.x * p.y` as 0) with no warning, and correct code like `2.0 * p.x` drew a false
+`f64 arithmetic with a non-f64 right operand` warning. A generated getter is `load64(...)` and
+stays **untyped** on purpose, so `P_x(&p) + P_y(&p)` is still an integer add: code in the
+ecosystem compares getter results bit-for-bit (`==` on the bit pattern), and a typed getter
+would turn those into float compares with different NaN and ±0 answers. When you want float
+arithmetic on a getter's result, hold it in an `f64` variable (`var x: f64 = P_x(&p);`) or use
+the field directly.
+
 ### Where a struct lives (v6.6.5)
 
 A struct declared inside a fn — `var p = Point { 1, 2 };`, `var p: Point;`, `var p: Point = q;`
@@ -335,6 +424,20 @@ look reasonable:
   give it an out-pointer and have it store the lanes —
   `var v: f64v2; var ig = callptr(fp, &v, 41, 7); return v;` — which carries both lanes
   correctly.
+
+⚠ **A struct-typed FIELD is a copy destination too (v6.6.10).** With `struct Box { v: P3; n; }`,
+`b.v = p` copies the whole struct into the field. So does a call, method or operator that
+returns a `P3` (`b.v = mk(1)`, `b.v = a.mk(1)`, `b.v = a + c`), a by-value `P3` parameter, a
+pointer-mode `P3` local (the struct it points at, not the pointer), a global, and another `P3`
+field (`b.v = o.b.v`). A struct of a different type is a compile error naming it — except a
+method or operator result of 8 bytes or less, which is not type-checked yet. Before v6.6.10
+every one of these stored ONE word: `b.v.y` kept its old value, and from a parameter the stored
+word was the parameter's address. A source that is not a struct (an integer, an untyped
+pointer) still stores one word, capped at the field's size. An odd-sized struct field (3, 5, 6
+or 7 bytes, such as `struct Odd { a: i8; b: i16; }`) gets exactly that many bytes from any
+source, so the fields after it are never touched. Before v6.6.10 a method, an operator, a
+top-level call or an integer stored 8 bytes into such a field, silently overwriting its
+neighbours.
 
 ⚠ **A copy moves one struct into a variable of that SAME struct type.** `p = q` and
 `var p: P3 = q` between two DIFFERENT struct types are a compile error since v6.6.6
@@ -620,6 +723,17 @@ struct Config { host: Str; port; timeout; }
 #            Config_port(p), Config_set_port(p, v), etc.
 ```
 
+`#derive(accessors)` applies to a **struct** only. On an `enum` it is a compile error, by
+name, whether it is the first directive or stacked under `#derive(Serialize)` /
+`#derive(Deserialize)` (v6.6.10; before that an enum's members were emitted as 8-byte
+"fields" — `col_RED(p)` read `p + 0`, and the members' values were never involved). Derive an
+enum's name codec with `#derive(Serialize)` / `#derive(Deserialize)` instead (below).
+
+Stacked derives emit the same fns in **any order**: `#derive(accessors)` above or below
+`#derive(Serialize)` or `#derive(Deserialize)` gives the accessors AND both JSON codecs
+(v6.6.10; before that, accessors directly above Deserialize emitted no codecs, and the first
+call to `X_from_json_str` failed as an undefined function).
+
 An accessor reads and writes at the field's own width: an `i8` / `i16` / `i32` field gets
 `load8/16/32` and `store8/16/32`, everything else (untyped, `i64`, `Str`, `Vec<T>`, `f64`, a
 nested `#derive`d struct) an 8-byte slot (v6.6.7; before that every accessor was `load64` /
@@ -724,6 +838,8 @@ compile clean and do something silent instead):
   when the enclosing function does (the same for `secret var`, whose zeroise is a defer).
   (v6.6.7; before, a closure's defer was registered on the ENCLOSING function.)
 - **A body that falls off its end** (no `return`) runs its defers too (v6.6.7; before, it looped).
+  That includes a coroutine `async fn`, which falls off to completion with the value 0
+  (6.6.10; before, it looped on its own resume dispatch and the completing force never returned).
 - **In a coroutine `async fn`** (one that `await`s mid-body) a defer runs exactly once, when
   the body completes — not at each suspend. An `await` inside a defer body is refused there,
   because the suspend would abandon the walker mid-run.
@@ -1212,6 +1328,26 @@ same way on every target and whether they sit before or after the first
 top-level statement — before 6.6.9 only x86_64 honoured them ahead of it.
 A top-level `#assert` is a declaration-phase directive, on one line or
 wrapped: structs, enums and fns may follow it.
+
+`#assert A OP B, "message";` checks a compile-time fact and stops the build
+with `#assert failed: message` when it does not hold. Each operand is ONE
+atom — an integer literal, `sizeof(T)`, or an enum constant (`EB` or
+`E.EB`, since 6.6.10) — and `OP` is one of `== != < > <= >=` (a lone atom
+asserts non-zero). There is no arithmetic inside an `#assert`: write
+`#assert sizeof(Hdr) == 16;`, not `== E.N * 8`. Only `,`, the message
+string, `;` or the end of the line may follow the operands; anything else (`E.N * 8`, a stray word) is
+refused with ``expected `,` or `;` after the operands`` — before 6.6.10 it was
+skipped unchecked, so a false `#assert E.EB * 2 == 9;` compiled clean. An
+operand that is none of
+these is reported once, by name (`expected a number, sizeof(T) or an enum
+constant`), and `sizeof` must be the whole word — `sizeofzz(P)` is refused,
+not read as `sizeof`.
+
+```
+enum Wire { HDR = 16; }
+struct Hdr { magic; len; }
+#assert sizeof(Hdr) == Wire.HDR, "Hdr must match the wire header";
+```
 
 ## Project Structure
 
@@ -2259,7 +2395,17 @@ fn run(): i64 {
 
 The type parameter `T` may appear in parameter types (`x: T`), the return type
 (`: T`), and inside the body (`var y: T`, `sizeof(T)`, `slice<T>`). At a call,
-the concrete type is **inferred** positionally from the arguments.
+the concrete type is **inferred** from the argument in the parameter `T` types —
+the first such parameter, wherever it sits (`fn g<T>(n, p: T)` infers `T` from
+`g(2, p)`'s `p`). A struct argument — a struct local or by-value struct
+parameter, a struct global, a call returning a struct — binds `T` to that struct
+on every call path (an expression, `var r = g(p)`, `r = g(p);`, `b.v = g(p);`,
+`return g(p);`, an argument, a struct receive), exactly as the explicit
+`g<Pt>(p)` does (6.6.10; before that only an inlined body inferred a struct, and
+every other path ran the i64 base). Only a WHOLE argument binds `T`: `g(p.y)`,
+`g(p.x + p.y)` and `g(p + 1)` infer `i64`, and so does a `pp: *Pt` pointer
+parameter (a pointer, like a `var q: *Pt` local). Any other argument infers
+`i64`, or the width a scalar-returning call declares.
 
 Type arguments may be **inferred** from the call (`add(1, 2)`) or written
 **explicitly** (`add<i64>(x)`, `add<i32>(x)`). Inside a generic body a type
@@ -2279,6 +2425,35 @@ specialized instance `add$i32` / `Box$Point` is emitted **once** (deduped — a
 second `add<i32>` call reuses it) and called normally. There is no runtime type
 dispatch — `T` is resolved entirely at compile time.
 
+**A generic that uses `T` as a struct has no i64 instance.** When a `T`-typed
+value — a parameter or a `var q: T` local — is used as a struct (`p.y`), there is
+no valid i64 form, so the base is a dead stub, and any use that would reach it is
+a compile error naming the fn: a scalar call (`g(5)`, `g<i64>(5)`, `g<i32>(5)`,
+in any position, tail included), `&g`, and a generic that FORWARDS its own `T` to
+such a generic (`fn outer<T>(p: T) { return g(p); }` makes `outer(5)` an error
+too, whichever order the two are defined in). Call it with a struct argument or a
+struct type argument (6.6.10; before that each of these compiled and returned 0).
+
+```
+struct Pt { x; y; }
+fn sum<T>(p: T): i64 { return p.x + p.y; }
+fn run(): i64 {
+    var p: Pt; p.x = 40; p.y = 2;
+    return sum(p);               # 42 — T inferred as Pt
+    # sum(5) / sum<i64>(5) / &sum — error: 'sum' has no i64 (or other scalar) instance
+}
+```
+
+A signature may name a generic struct instance: `fn mk<T>(x: T): Box<T>` returns
+`Box<Pt>` from its `Pt` instance, and a plain `fn f(r: Box<Pt>): Box<Pt>` takes and
+returns the instance — `return mk(p);` and `return mk<Pt>(p);` included, in the
+register-pair (9-16 byte) and retptr classes alike (6.6.10; before that such a
+type was sized as the base `Box`, where `v: T` is an i64 — `r.v.x` failed to
+parse). As for a `var`, an all-`i64` argument list names the base struct itself.
+A `: T` return in an instance whose `T` is a struct returns that struct by value,
+as a `: Pt` fn does (`fn id<T>(x: T): T` — `var q: Pt = id(p)`; 6.6.10, it used to
+return the struct's address); `Str` keeps its heap-handle return.
+
 ### Generic structs
 
 A struct may be parameterized too:
@@ -2297,13 +2472,16 @@ The type argument may itself be a struct (`Box<Point>`) — the instance's field
 is laid out at the concrete type's size, so a following field lands at the right
 offset. Each distinct `Struct<type-args>` mints one deduped instance.
 
-**Status & limits (v6.3.10).** Generic functions and structs are supported over
+**Status & limits (6.6.10).** Generic functions and structs are supported over
 i64, narrow scalars (`i32`/`i16`/`i8`), and struct type arguments, inferred or
-explicit. Function bodies follow the inline-candidate shape (≤2 type-bearing
-params, straight-line — no `if`/`while`/`var`-decl control flow). Single type
-parameter is the well-tested case; multi-parameter (`Pair<T, U>` with distinct
-`T`/`U`) maps both to the first argument for now. Enum generic params
-(`<T, E>`) remain syntactically accepted but type-erased.
+explicit, with any body (a small straight-line body is inlined at its call sites;
+anything else is an ordinary call). At most two type parameters are recorded. A
+struct type argument is supported on a generic with ONE type parameter: a struct
+beside a second type argument — explicit (`g<Pt, i64>`) or inferred (`g(p, q)`
+with two structs, or a struct and a scalar) — is a compile error on every call
+path, struct receives and assignments included (6.6.10 for the inferred form; it
+ran the i64 base). Enum generic params (`<T, E>`) remain syntactically accepted
+but type-erased.
 
 ## Async / Await
 
@@ -2336,29 +2514,76 @@ async_run(rt);                        # drives spawned Futures to completion
 ```
 
 **Lowering.** An `async fn f(args)` compiles to a constructor that allocates a
-heap Future `[ &f$impl, argc, args… ]` (the body is emitted as a hidden `f$impl`)
-and returns its pointer. `await fut` lowers to `future_force(fut)`, which calls
-the bundled impl with the bundled args (via `fncallN`) and returns its value.
-The Future object reuses the same heap construction as a closure env. Requires
-`include "lib/alloc.cyr"` (the Future is heap-allocated) and `lib/async.cyr`
-(for `future_force`); `alloc_init()` must run before the first `async`-fn call.
+heap Future and returns its pointer; the body is emitted as a hidden `f$impl`.
+The Future reuses the same heap construction as a closure env. Requires
+`include "lib/alloc.cyr"` (the Future is heap-allocated), `lib/fnptr.cyr` and
+`lib/async.cyr` (for `future_force`); `alloc_init()` must run before the first
+`async`-fn call. The constructor and `lib/async.cyr` ship in lockstep: a program
+built by one release needs that release's `lib/async.cyr`.
 
-**Gating.** `async`/`await` are opt-in: compile with `CYRIUS_ASYNC=1`. A default
-build rejects them with a clear error (so default codegen — which has no
-async — stays byte-identical). Enable via the env var or `cyrius build` flags.
+**Force-once.** An `async fn` whose body has no `await` builds a plain Future
+`[ &f$impl, argc|256, args…, done, value ]`. `await fut` lowers to
+`future_force(fut)`: the first force calls the impl with the bundled args (via
+`fncallN`) and keeps the value; every later force returns that value and runs
+nothing (6.6.10 — before, every `await` of the same Future re-ran the body). A
+Future you build by hand, `[ fp, argc, args… ]` with no marker, is re-run on each
+force.
 
-**Status & limits (v6.3.11).** `async fn` (0–6 params) + `await` build and force
-first-class, spawnable Futures over the existing runtime — same cooperative
-semantics, sugarier surface. A Future re-runs its body on each `await`
-(force-once memoization is a follow-on). A **coroutine** `async fn` — one that
-`await`s mid-body (v6.5.69) — is different: once its body has returned, forcing it
-again returns the same value and runs nothing, neither body nor `defer` (v6.6.8;
-before that it resumed from its last suspend and re-ran the tail). A coroutine is a
-stackless state machine: its locals live in a heap frame, each force resumes it
-at the suspend where it last stopped, and a `return f(x);` in its body is an
-ordinary call, never a tail call. What stays run-to-completion is the RUNTIME —
-a force drives the coroutine to its next suspend or its end; there is no
-poll-based scheduler interleaving many suspended coroutines. `async` generic fns are not yet supported, nor is a value-form vector
+**Enabling it.** `async`/`await` are opt-in: set `CYRIUS_ASYNC=1` in the
+compiler's environment (`CYRIUS_ASYNC=1 cyrius build …` passes it on). There is
+no command-line flag. A default build rejects them with a clear error, so
+default codegen, which has no async, stays byte-identical.
+
+**Arity.** A plain `async fn` takes 0–8 parameters. One with 9 or more is refused
+at its declaration, naming the fn (6.6.10; it used to compile and exit 70 at its
+first force). A coroutine (below) takes any number.
+
+**Coroutines.** An `async fn` that `await`s in its own body is a **coroutine**
+(v6.5.69) — on x86_64 Linux, x86_64 macOS and Windows (PE) only; the aarch64 and
+cx backends refuse it at compile time, naming the backend. It is a stackless
+state machine: its locals live in a heap frame, each force resumes it at the
+`await` where it last stopped and runs to the next `await` (answering 0) or to
+its end. Once its body has returned — by `return`, or by falling off its end,
+which completes it with 0 and runs its defers (6.6.10; it used to hang) —
+forcing it again returns the same value and runs nothing, neither body nor
+`defer` (v6.6.8). A `return f(x);` in its body is an ordinary call, never a tail
+call.
+
+**What `await e` yields inside a coroutine** (6.6.10; it used to be the suspend
+index — `var s = await five();` three times returned 123 for 555). `e` is
+evaluated, the coroutine suspends, and at the next force:
+
+- if `e` is a call to an `async fn`, or a bare variable (a Future, as `await`'s
+  operand is everywhere else), it is forced and `await` yields its value. While
+  it is a coroutine Future that has not finished, the outer coroutine suspends
+  again at the same point, so each force of the outer one drives the inner one a
+  step until it completes;
+- anything else — a call to an ordinary fn, such as the park idiom
+  `await async_wait_fd(rt, fd)` — yields that value.
+
+The test is on the operand's **shape**, and parentheses do not change it:
+`await (inner(a))` forces like `await inner(a)`. A Future reached any other way
+— a field (`await s.fut`), `vec_get` (`await vec_get(futs, i)`), an index — is
+"anything else" and yields the Future's pointer; bind it to a variable first
+(`var F = vec_get(futs, i); var v = await F;`).
+
+`await` may sit anywhere in an expression: `total = total + await f`,
+`add(1000, await g())`, `s += await g()`, `store64(p + 8, await g())`. Whatever
+the expression had already evaluated before the `await` — a left operand,
+earlier call arguments, an address — is kept in the coroutine frame across the
+suspend (6.6.10; it used to be lost, so `b + await five()` gave 5 and the
+`store64` form crashed).
+
+**Under the reactor.** `async_spawn_future(rt, co(..))` + `async_run(rt)` drives
+coroutines that PARK before they suspend (`await async_wait_fd(rt, fd)` /
+`async_wait_writable`): each parked task sleeps until its fd is ready and
+resumes where it stopped, interleaved with the others. A task that returns
+without having parked is finished as far as the reactor is concerned, so a
+coroutine whose `await` did not park (an `await` of a Future, or of a call that
+does not park) ends there with 0 when run by `async_run`; force such a coroutine
+yourself with `future_force` until it completes.
+
+**Other limits.** `async` generic fns are not yet supported, nor is a value-form vector
 PARAMETER (`async fn f(v: f64v2)`) — an `async fn` captures each argument as one
 8-byte value, so since v6.6.6 that is a compile error naming the parameter; pass
 a pointer to the vector instead (before v6.6.6 it compiled and computed with the
@@ -3244,25 +3469,29 @@ code in `rdi`), not Linux `syscall(60)`. The binary is a valid x86_64 ELF64 at e
 
 ### AGNOS Syscall ABI
 
-agnos defines an append-only syscall surface: **#0–#95 contiguous, plus #97**, at agnos
-1.56.x (`lib/syscalls_x86_64_agnos.cyr`). Beyond the GPU-compute band #82–#91 it now carries
-`gpu_shader_op` (#92), `gpu_modeset_op` (#93), `gpu_recover_op` (#94), `uptime_us` (#95) and
-the local-IPC **channel band** `chan_op` (#97, minted at v6.5.8). ⚠ **#96 (`fork`) is
-reserved but deliberately NOT minted** — on agnos an unknown number falls *through* the
+agnos defines an append-only syscall surface: **#0–#104 and #106–#108** at agnos 1.57.10
+(`lib/syscalls_x86_64_agnos.cyr`; #105 was withdrawn and is never re-added). Beyond the
+GPU-compute band #82–#91 it carries `gpu_shader_op` (#92), `gpu_modeset_op` (#93),
+`gpu_recover_op` (#94), `uptime_us` (#95), **`fork` (#96, minted at v6.5.37 / agnos 1.56.55 —
+its arm is in the ring-3 entry stub)**, the local-IPC **channel band** `chan_op` (#97, v6.5.8),
+and on up to `sched_yield_to` (#108, agnos 1.57.9); the next free number is #109. ⚠ A number
+is minted only once its kernel arm exists — on agnos an unknown number falls *through* the
 dispatch chain and the caller reads the fall-through value as data, so a
 minted-but-unimplemented constant is strictly worse than an absent one. The register
 convention is x86_64 SysV (rax=number, rdi/rsi/rdx/r10=args 1–4, rax returns
 result ≥0 on success, -1 on error). Key differences from Linux:
 
 ```
-# agnos syscall numbers — append-only, #0–#95 + #97 (lib/syscalls_x86_64_agnos.cyr)
+# agnos syscall numbers — append-only, #0–#104 + #106–#108 (lib/syscalls_x86_64_agnos.cyr)
 SYS_EXIT = 0       (not Linux 60)
 SYS_WRITE = 1
 SYS_READ = 5
 SYS_OPEN = 7
-SYS_SPAWN = 3      (spawn in-memory ELF; no fork/exec)
-SYS_WAITPID = 4    (returns exit_code directly, not wait-status)
+SYS_SPAWN = 3      (legacy: spawn an in-memory ELF ≤ 16 KB; from disk use #43 spawn_path)
+SYS_WAITPID = 4    (NON-blocking poll: a WAIT STATUS, -2 while the child lives, -1 not ours;
+                    0x100|pid blocks (WAIT_BLOCK, 1.57.7) — decode with WIFEXITED/WEXITSTATUS/…)
 SYS_MMAP = 27      (anonymous, 2 MB-granular, no hint support)
+SYS_FORK = 96      (fork: the child's pid / 0 in the child / -1; NO execve — start a program with #43)
 ```
 
 **Explicit lengths, no NUL assumption**: every path argument carries its length.
@@ -3323,12 +3552,15 @@ agnos ring-3 init stack (ABI §4.6). The kernel stages `[rsp]=argc`, argv pointe
 a NULL, envp, AT_NULL-only auxv. The cycc entry captures the init-rsp, so `argc()`,
 `argv(n)`, and `getenv(name)` read the cached rsp.
 
-**`lib/process_agnos.cyr`**: process spawn and wait. agnos has no fork/exec; instead,
-`sys_spawn(elf_addr, elf_size)` runs an in-memory ELF image (you must read the file
-into heap first). The wrappers are `run(cmd)`, `spawn(cmd)`, `wait_pid(pid)`, and
-variants like `exec_vec(args)`, `exec_capture` (capture is a stub — output goes to
-terminal). **Limitation**: `sys_spawn` takes no argv/envp, so spawned programs
-receive only their own name; arguments cannot be passed.
+**`lib/process_agnos.cyr`**: process spawn and wait (rewritten 6.6.8; agnos ≥ 1.57.6).
+agnos has fork (#96) but no execve, so a program is started from disk by the parent:
+`spawn_path` #43 with a real argv (`SPAWN_F_ARGV`, arguments may hold spaces) and a clean fd
+table (`SPAWN_F_CLEANFD`), waited for with WAIT_BLOCK (1.57.7), and captured through a pipe
+armed on the child's fd 1 by `exec_redirect` #62. The wrappers are `run`, `spawn`, `wait_pid`,
+`exec_vec`, `exec_capture` / `exec_capture_status`, `exec_env` and `exec_cmd`. argv[0] is an
+absolute path — there is no PATH search and no shell. `lib/regression.cyr`'s spawn and capture
+verbs and `lib/async.cyr`'s `async_timeout` / `async_run_process` run real processes on agnos
+too (6.6.10).
 
 ### Conditional Compilation Pattern
 
@@ -3464,7 +3696,8 @@ everywhere else. cycc warns on a conflicting `SYS_*` redefinition.
 - Syscall wrappers (all of #0–#104 and #106–#108; #105 was withdrawn)
 - Heap allocation (bump, 2 MB chunks)
 - File I/O (read, write, open, close, stat, getdents/readdir)
-- Process spawn and wait (in-memory ELF, or from disk via `sys_spawn_path`)
+- Process spawn, wait and capture from disk (`sys_spawn_argv` / #43, WAIT_BLOCK, #62 redirects),
+  and `fork` (#96) — but no execve
 - Arguments and environment variables
 - **Passing an environment to a spawned child** — `sys_spawn_path_env(path, len, env, envlen)`
   (v6.5.9). The blob is packed `KEY=VALUE\0…`, ≤1024 B, ≤16 entries. ⛔ The kernel treats a
@@ -3496,8 +3729,9 @@ everywhere else. cycc warns on a conflicting `SYS_*` redefinition.
 - Process **arguments** to an in-memory `sys_spawn` (elf_addr, elf_size only). From disk,
   `sys_spawn_argv` (v6.6.7, agnos 1.57.6) passes a real argv — arguments may contain spaces —
   where the line-form `sys_spawn_path` splits on spaces
-- stdout/stderr redirection (`sys_dup` is a stub returning `fd` unchanged; pipe → spawn → wait
-  works, but output goes to the terminal, not a buffer; `run_capture` returns 0 bytes)
+- `dup2`-style redirection in the CURRENT process (`sys_dup` is a stub returning `fd` unchanged).
+  A CHILD's fds are redirected at spawn time instead (`sys_exec_redirect`, #62), which is how
+  `run_capture` / `exec_capture` capture stdout since 6.6.8
 - `getppid` (no getppid in the surface; returns 0)
 - `getuid` (always 0 / root)
 - `chmod` (no permission model; `sys_chmod` is a no-op stub returning 0)

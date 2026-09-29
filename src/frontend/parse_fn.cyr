@@ -604,6 +604,7 @@ fn _tc_must_divert(S, cfi, ti_after): i64 {
     if (_tc_frame_divert(S) == 1) { return 1; }
     if (_tc_callee_divert(S, cfi) == 1) { return 1; }
     if (_tc_args_divert(S, cfi, ti_after) == 1) { return 1; }
+    if (_tc_generic_divert(S, cfi, ti_after) == 1) { return 1; }   # 6.6.10
     return 0;
 }
 # What THIS fn must still do after the callee returns, or what its frame must outlive.
@@ -1459,10 +1460,13 @@ fn _try_push_struct_addr_arg(S, fi, argc): i64 {
     # retptr callee falls through to PARSE_FNCALL, which refuses it by name; a rax:rdx one is
     # refused here (as first committed it fell through too, and PARSE_FNCALL refuses only the
     # retptr class, so `hy(p2(1, 2))` compiled clean and SIGSEGV'd). CHANGELOG [6.6.6]
-    if (nx == 10) {
-        if (GINFN(S) != 1) { return _refuse_toplevel_pair_arg(S); }
-        if (_ret_agg_class(S, FINDFN(S, PEEKV(S))) == 0) { return 0; }
-        if (_call_is_whole_arg(S, GTI(S)) == 0) { return 0; }
+    if (nx == 10) { if (GINFN(S) != 1) { return _refuse_toplevel_pair_arg(S); } }
+    # 6.6.10 (bite 7 review): an explicit `idp<i32>(4)` too — it fell to the value push (SIGSEGV).
+    var o = 0 - 1;
+    if (GINFN(S) == 1) { o = _gcall_open(S, GTI(S)); }
+    if (o >= 0) {
+        if (_ret_agg_class(S, _gen_resolve_call(S, GTI(S))) == 0) { return 0; }   # 6.6.10: the instance's class
+        if (_call_is_whole_arg(S, o - 1) == 0) { return 0; }
         EFLADDR(S, _struct_call_into_temp(S));
         EPUSHR(S);
         return 1;
@@ -1841,13 +1845,15 @@ fn _struct_call_emit(S, fi, noff, dst): i64 {
 # the call into it, return the temp's field-0 slot. CHANGELOG [6.6.6]
 fn _struct_call_into_temp(S): i64 {
     var noff = PEEKV(S);
-    var fi = FINDFN(S, noff);
+    var o = _gcall_open(S, GTI(S));          # 6.6.10: also `name<..>(`
+    if (o < 0) { o = GTI(S) + 1; }
+    var fi = _gen_resolve_call(S, GTI(S));   # 6.6.10: a generic's instance, not its base
     if (fi < 0) { fi = REGFN(S, noff); }
+    _gen_own_call_check(S, fi, noff);
     _vis_check(S, fi, noff);
     _DEPRECATED_WARN(S, fi, noff);
     var t = _agg_temp(S, GFRS(S, fi));
-    STI(S, GTI(S) + 1);   # consume IDENT
-    STI(S, GTI(S) + 1);   # consume `(`
+    STI(S, o + 1);   # consume IDENT [<..>] `(`
     _struct_call_emit(S, fi, noff, t);
     return t;
 }
@@ -1877,9 +1883,8 @@ fn _call_is_whole_arg(S, ti): i64 {
 # `return f(..);` in a struct-returning fn, where `f` returns that same struct: the call into a
 # temp (returned), or -1 when the return expression is not that shape. CHANGELOG [6.6.6]
 fn _return_struct_call(S): i64 {
-    if (PEEKT(S) != 2) { return 0 - 1; }
-    if (TOKTYP(S, GTI(S) + 1) != 10) { return 0 - 1; }
-    var fi = FINDFN(S, PEEKV(S));
+    if (_gcall_open(S, GTI(S)) < 0) { return 0 - 1; }   # 6.6.10: `name(` or `name<..>(`
+    var fi = _gen_resolve_call(S, GTI(S));   # 6.6.10: a generic's instance, not its base
     if (fi < 0) { return 0 - 1; }
     if (GFRS(S, fi) != _cur_fn_ret_sid) { return 0 - 1; }
     if (_ret_agg_class(S, fi) != 2) { return 0 - 1; }
@@ -1904,7 +1909,7 @@ fn _refuse_toplevel_pair_init(S, pscale): i64 {
 # there is no frame to put the pair in, so refuse it by name. Always returns 0 — the argument
 # is then pushed by the ordinary path, and `_had_error` keeps the binary from being written.
 fn _refuse_toplevel_pair_arg(S): i64 {
-    if (_ret_agg_class(S, FINDFN(S, PEEKV(S))) != 1) { return 0; }
+    if (_ret_agg_class(S, _gen_resolve_call(S, GTI(S))) != 1) { return 0; }   # 6.6.10: the instance's class
     if (_call_is_whole_arg(S, GTI(S)) == 0) { return 0; }
     _refuse_toplevel_struct_call(S, PEEKV(S));
     return 0;
@@ -2063,9 +2068,10 @@ fn _return_struct_expr(S): i64 {
 # `_sc_post` land in a frame temp for the pair load. Anything else is refused BY NAME.
 # CHANGELOG [6.6.6]
 fn _pair_ret_call_ok(S): i64 {
-    if (PEEKT(S) != 2) { return 0; }
-    if (TOKTYP(S, GTI(S) + 1) != 10) { return 0; }
-    var fi = FINDFN(S, PEEKV(S));
+    if (_gcall_open(S, GTI(S)) < 0) { return 0; }   # 6.6.10: `name(` or `name<..>(`
+    # 6.6.10 (bite 7 review): the fn the call REACHES — `return mkw(p);` from a `: W1<Pt>` fn was
+    # compared against the base's 8 B `W1` and refused (6.6.9 compiled it).
+    var fi = _gen_resolve_call(S, GTI(S));
     if (fi < 0) { return 0; }
     if (GFRS(S, fi) != _cur_fn_ret_sid) { return 0; }
     if (_ret_agg_class(S, fi) != 1) { return 0; }
@@ -2527,6 +2533,10 @@ fn PARSE_FNCALL(S, noff): i64 {
     # Check for inline candidate
     var fi = FINDFN(S, noff);
     if (fi < 0) { fi = REGFN(S, noff); }
+    # 6.6.10: a generic callee — infer a struct type argument (-> its instance) or refuse a scalar
+    # call of a stub generic. See _gen_call_head.
+    var _gfi = _gen_call_head(S, fi, noff);
+    if (_gfi != fi) { fi = _gfi; noff = L64(_fnt_names + fi * 8); }
     # v5.10.25 — Phase 3 generalize: registry-based overload
     # dispatch. Replaces the v5.10.3-5 hardcoded {println, strlen}
     # name lookups with a lookup table populated at REGFN time.
@@ -2752,10 +2762,11 @@ fn PARSE_FNCALL(S, noff): i64 {
                     }
                     # Evaluate args and store to param slots
                     var iargc = 0;
-                    # v6.3.9 (F-fns): positional generic inference — capture each arg's
-                    # concrete type BEFORE PCMPE consumes it (default i64 = -8).
-                    var _ginf0 = 0 - 8;
-                    var _ginf1 = 0 - 8;
+                    # 6.6.10: the head's inference (by the parameter that carries each type
+                    # parameter; a struct never gets here — it instantiated). Was a positional
+                    # re-inference in the loop below, so `g(2, p)` bound T from the `2`.
+                    var _ginf0 = _gh_inf0;
+                    var _ginf1 = _gh_inf1;
                     # v6.2.41 — capture call-site line for the arity warning below.
                     var _iar_line = GTLINE(S, GTI(S));
                     if (PEEKT(S) != 11) {
@@ -2767,8 +2778,6 @@ fn PARSE_FNCALL(S, noff): i64 {
                             if (iargc == 0) { if (_t0 != 0) { _inl_simd_arg(S, p0_slot, _w0, _t0); _sd = 1; } }
                             if (iargc == 1) { if (_t1 != 0) { _inl_simd_arg(S, p1_slot, _w1, _t1); _sd = 1; } }
                             if (_sd == 0) {
-                                if (iargc == 0) { _ginf0 = _infer_conc_at_cursor(S); }
-                                if (iargc == 1) { _ginf1 = _infer_conc_at_cursor(S); }
                                 PCMPE(S);
                                 if (iargc == 0) { _inl_store_arg(S, p0_slot, _w0); }
                                 if (iargc == 1) { _inl_store_arg(S, p1_slot, _w1); }
@@ -3196,10 +3205,41 @@ fn _infer_conc_at_cursor(S): i64 {
             var _ic_lli = FINDLOCAL(S, _ic_noff);
             if (_ic_lli >= 0) {
                 var _ic_lt = GLTYPE(S, _ic_lli);
+                # 6.6.10: a vector local's SLTYPE is a descriptor sentinel (<= -2048), not a
+                # struct id — it read as "struct 2093". Vectors are not type arguments.
+                if (_ic_lt <= 0 - 2048) { return 0 - 8; }
+                if (_is_ptr_param(_ic_lli) == 1) { return 0 - 8; }   # 6.6.10: `pp: *Pt` is a pointer
                 if (_ic_lt < 0) { return 0 - _ic_lt; }
+                return 0 - 8;
             }
+            return _infer_conc_global(S, _ic_noff);
         }
     }
+    return 0 - 8;
+}
+# 6.6.10 (bite 7 review): a `pp: *Pt` parameter. The parameter loop skips the `*`, so the slot is
+# typed `Pt` like a by-value one and `pp.x` works — but it is a POINTER, and a `var q: *Pt` local
+# (not struct-typed at all) infers i64, so `f(pp)` does too. It used to instantiate `f$Pt`.
+fn _mark_ptr_param(S): i64 {
+    var li = GFLC(S);
+    if (li < 64) { _cur_fn_ptrp = _cur_fn_ptrp | (1 << li); }
+    return 0;
+}
+fn _is_ptr_param(li): i64 {
+    if (li >= 64) { return 0; }
+    if (li >= _cur_fn_pslots) { return 0; }
+    return (_cur_fn_ptrp >> li) & 1;
+}
+# 6.6.10: a struct GLOBAL argument binds its struct like a struct local does. GVTYPE alone is
+# ambiguous (a narrow scalar global stores its WIDTH there, 1..7); a struct global is the one
+# with a recorded layout mode (GVPM 1 or 2, 6.6.5). A PEEK: `_findvar_core`, not FINDVAR, whose
+# visibility report belongs to the argument's own parse.
+fn _infer_conc_global(S, noff): i64 {
+    var vi = _findvar_core(S, noff);
+    if (vi < 0) { return 0 - 8; }
+    if (GVPM(S, vi) == 0) { return 0 - 8; }
+    var t = GVTYPE(S, vi);
+    if (t > 0) { return t; }
     return 0 - 8;
 }
 
@@ -3230,17 +3270,8 @@ fn _is_tparam_of(S, fi, noff): i64 {
     return 0;
 }
 
-# v6.3.39 (B3): scan a generic fn's body (GTI must be AT the first body token, just
-# after `{`) for a `<param> .` field access where <param> is a type-param-TYPED param
-# (`fn wrap<T>(p: T)` → p, recorded in _cur_fn_tp_pmask). Such a fn uses a type-param AS
-# A STRUCT and has NO valid i64 base (`p.x` on the i64-bound param is illegal), so the
-# base-as-i64 emission must skip the body (see PARSE_FN_DEF). NOTE the accessed token is
-# the PARAM name (`p`), not the type-param name (`T`) — the param's slot bit in
-# _cur_fn_tp_pmask is the discriminator (a NON-tparam struct param like `s: Point` is a
-# real struct → `s.field` is legal → its bit is clear → not skipped). Non-consuming:
-# saves + restores GTI. Depth starts at 1 (inside the body); stops at the matching `}`.
 # v6.5.69 — does this fn body contain an `await`? Token lookahead over the body's brace
-# span, restoring the cursor. Same shape as `_body_field_accesses_tparam` above.
+# span, restoring the cursor. Same shape as `_body_has_defer` below.
 #
 # ⛔ THIS SELECTOR IS LOAD-BEARING, NOT AN OPTIMISATION. The coroutine transform moves a
 # body's locals into a heap frame and treats parameter 0 as the frame base. Applying it to
@@ -3303,27 +3334,478 @@ fn _body_has_defer(S): i64 {
     return 0;
 }
 
-fn _body_field_accesses_tparam(S, fi): i64 {
-    if (GFTP(S, fi) == 0) { return 0; }
-    if (_cur_fn_tp_pmask == 0) { return 0; }         # no tparam-typed params → nothing to skip
-    var _sv = GTI(S);
-    var _bd = 1;
-    var _found = 0;
-    while (_bd > 0) {
-        var _t = PEEKT(S);
-        if (_t == 12) { break; }                     # EOF guard
-        if (_t == 13) { _bd = _bd + 1; }
-        elif (_t == 14) { _bd = _bd - 1; if (_bd == 0) { break; } }
-        elif (_t == 2) {
-            if (TOKTYP(S, GTI(S) + 1) == 41) {
-                var _sl = FINDLOCAL(S, PEEKV(S));
-                if (_sl >= 0) { if ((_cur_fn_tp_pmask & (1 << _sl)) != 0) { _found = 1; } }
-            }
-        }
-        STI(S, GTI(S) + 1);
+# ⛔ 6.6.10 — A GENERIC THAT USES T AS A STRUCT HAS NO SCALAR INSTANCE, AND EVERY CALL SITE HAS TO
+# KNOW IT. `fn g<T>(p: T) { .. p.y .. }` has no valid i64 form, so its base (the i64 instance) is
+# emitted as a `rax = 0` dead stub (v6.3.39 B3). That decision was made only WHILE the base was
+# being emitted and recorded nowhere, so `g<i64>(5)`, `g(5)`, `return g(5);`, `outer<i64>(5)`
+# forwarding to it, and `&g` all reached the stub and returned 0 with no diagnostic — and a body
+# small enough to inline gave a misleading "no struct type in scope for 'p'" instead.
+#
+# The facts are now recorded per fn (GFGM, util.cyr) in PASS 1, BY NAME over the tokens, so a call
+# preceding the definition asks the same question as one following it:
+#   _gen_record  a generic's T-typed parameters (and which parameter carries each type parameter,
+#                for inference) plus whether a T-typed name — a parameter OR a `var x: T` local —
+#                is used as a struct (`x.f`; `x..y` is a range, not a field).
+#   _gen_close   the transitive half: a generic that forwards a T-typed value (`g(p)`) or T itself
+#                (`g<T>(p)`) into a generic with a stub base has a stub base too. Iterated to a
+#                fixpoint, so the order the two are defined in does not matter.
+# ⚠ The scan is lexical and so approximate. It can only err toward MORE stubs, and a stub is
+# refused loudly at every scalar call — never the other way round, which was the silent bug.
+# CHANGELOG [6.6.10]
+var _gsn = 0;           # the T-typed names of the fn being scanned (params, then `var x: T`)
+var _gsn_n = 0;
+var _gs_at = 0;         # _gs_params: the token just past the parameter list
+var _gm_gen = 0;        # bumped on every record, so the closure below knows to recompute
+var _gm_closed = 0 - 1;
+
+fn _gsn_add(noff): i64 {
+    if (_gsn == 0) { _gsn = alloc(64 * 8); }
+    if (_gsn_n < 64) { store64(_gsn + _gsn_n * 8, noff); _gsn_n = _gsn_n + 1; }
+    return 0;
+}
+fn _gsn_has(noff): i64 {
+    var i = 0;
+    while (i < _gsn_n) {
+        if (load64(_gsn + i * 8) == noff) { return 1; }
+        i = i + 1;
     }
-    STI(S, _sv);
-    return _found;
+    return 0;
+}
+
+# The parameter list at token `open` (its `(`): collect the T-typed parameter names and return the
+# 1-based index of the first parameter carrying each type parameter, packed as GFGM bits 8-23.
+fn _gs_params(S, fi, open): i64 {
+    _gsn_n = 0;
+    var i = open + 1;
+    var n = GTCNT(S);
+    var pk = 0;
+    var pc = 0;
+    var d = 0;
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 12) { break; }
+        if (d == 0) {
+            if (t == 11) { i = i + 1; break; }
+            if (t == 31) { pc = pc + 1; }
+            if (t == 2) { pk = _gs_param(S, fi, i, pc, pk); }
+        }
+        if (t == 10 || t == 19 || t == 28) { d = d + 1; }
+        if (t == 11 || t == 20 || t == 29) { d = d - 1; }
+        if (t == 39) { d = d - 2; }
+        if (t == 152) { d = d - 3; }
+        if (d < 0) { d = 0; }
+        i = i + 1;
+    }
+    _gs_at = i;
+    return pk;
+}
+# One `name: [*]Type` parameter at token i (parameter index pc).
+fn _gs_param(S, fi, i, pc, pk): i64 {
+    if (TOKTYP(S, i + 1) != 49) { return pk; }
+    var ti = i + 2;
+    if (TOKTYP(S, ti) == 8) { ti = ti + 1; }
+    if (TOKTYP(S, ti) != 2) { return pk; }
+    if (pc > 254) { return pk; }
+    var tp = GFTP(S, fi);
+    var tn = TOKVAL(S, ti);
+    if (tn == (tp & 0xFFFFFFFF) - 1) {
+        _gsn_add(TOKVAL(S, i));
+        if ((pk & 0xFF00) == 0) { pk = pk | ((pc + 1) << 8); }
+    }
+    if (tn == ((tp >> 32) & 0xFFFFFFFF) - 1) {
+        _gsn_add(TOKVAL(S, i));
+        if ((pk & 0xFF0000) == 0) { pk = pk | ((pc + 1) << 16); }
+    }
+    return pk;
+}
+# From token i (past the parameter list) to the token after the body's `{`, or -1 (no body).
+fn _gs_body_open(S, i): i64 {
+    var n = GTCNT(S);
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 13) { return i + 1; }
+        if (t == 12 || t == 5) { return 0 - 1; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+# Walk the body from token i (just past its `{`) to the matching `}`. mode 0: 1 iff a T-typed name
+# is used as a struct. mode 1: 1 iff the body forwards a T-typed value, or T, to a stub generic.
+fn _gs_scan(S, fi, i, mode): i64 {
+    var n = GTCNT(S);
+    var d = 1;
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 12) { return 0; }
+        if (t == 13) { d = d + 1; }
+        if (t == 14) { d = d - 1; if (d == 0) { return 0; } }
+        if (t == 3) { _gs_var(S, fi, i); }
+        if (t == 2) { if (_gs_use(S, fi, i, mode) == 1) { return 1; } }
+        i = i + 1;
+    }
+    return 0;
+}
+# `var x: T` / `var x: *T` at token i: x is T-typed from here on.
+fn _gs_var(S, fi, i): i64 {
+    if (TOKTYP(S, i + 1) != 2) { return 0; }
+    if (TOKTYP(S, i + 2) != 49) { return 0; }
+    var ti = i + 3;
+    if (TOKTYP(S, ti) == 8) { ti = ti + 1; }
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    if (_is_tparam_of(S, fi, TOKVAL(S, ti)) == 1) { _gsn_add(TOKVAL(S, i + 1)); }
+    return 0;
+}
+fn _gs_use(S, fi, i, mode): i64 {
+    var nx = TOKTYP(S, i + 1);
+    if (mode == 0) {
+        if (nx != 41) { return 0; }
+        if (TOKTYP(S, i + 2) == 41) { return 0; }
+        return _gsn_has(TOKVAL(S, i));
+    }
+    if (nx != 19 && nx != 10) { return 0; }
+    var cfi = FINDFN(S, TOKVAL(S, i));
+    if (cfi < 0 || cfi == fi) { return 0; }
+    if (GFTP(S, cfi) == 0) { return 0; }
+    if ((GFGM(S, cfi) & 3) == 0) { return 0; }
+    if (nx == 19) { return _gs_targs_fwd(S, fi, i + 2); }
+    var m = GFGM(S, cfi);
+    if (_gs_arg_named(S, i + 1, (m >> 8) & 255) == 1) { return 1; }
+    return _gs_arg_named(S, i + 1, (m >> 16) & 255);
+}
+# `callee<...>(`: 1 iff a type argument names one of fi's own type parameters.
+fn _gs_targs_fwd(S, fi, j): i64 {
+    var n = GTCNT(S);
+    var d = 1;
+    while (j < n) {
+        var t = TOKTYP(S, j);
+        if (t == 12 || t == 10 || t == 5) { return 0; }
+        if (t == 2) { if (_is_tparam_of(S, fi, TOKVAL(S, j)) == 1) { return 1; } }
+        if (t == 19) { d = d + 1; }
+        if (t == 20) { d = d - 1; }
+        if (t == 39) { d = d - 2; }
+        if (t == 152) { d = d - 3; }
+        if (d <= 0) { return 0; }
+        j = j + 1;
+    }
+    return 0;
+}
+# 1 iff argument k-1 (k is 1-based; 0 = none) of the call whose `(` is at `open` is a bare
+# T-typed name.
+fn _gs_arg_named(S, open, k): i64 {
+    if (k == 0) { return 0; }
+    var a = _call_arg_start(S, open, k - 1);
+    if (a < 0) { return 0; }
+    if (TOKTYP(S, a) != 2) { return 0; }
+    var nt = TOKTYP(S, a + 1);
+    if (nt != 31 && nt != 11) { return 0; }
+    return _gsn_has(TOKVAL(S, a));
+}
+# The first token of argument k (0-based) of the call whose `(` is at `open`, or -1.
+fn _call_arg_start(S, open, k): i64 {
+    var i = open + 1;
+    if (TOKTYP(S, i) == 11) { return 0 - 1; }
+    if (k == 0) { return i; }
+    var n = GTCNT(S);
+    var d = 0;
+    var c = 0;
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 12) { return 0 - 1; }
+        if (t == 10 || t == 28 || t == 13) { d = d + 1; }
+        if (t == 11 || t == 29 || t == 14) {
+            if (d == 0) { return 0 - 1; }
+            d = d - 1;
+        }
+        if (d == 0) {
+            if (t == 31) { c = c + 1; if (c == k) { return i + 1; } }
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+# Pass 1 (`_prescan_fn_sig`, cursor on the `(`): record fi's GFGM word. Also the lazy path for a
+# definition pass 1 never saw.
+fn _gen_record(S, fi, open): i64 {
+    var pk = _gs_params(S, fi, open);
+    var b = _gs_body_open(S, _gs_at);
+    var d = 0;
+    if (b >= 0) { d = _gs_scan(S, fi, b, 0); }
+    SFGM(S, fi, pk | 4 | d);
+    _gm_gen = _gm_gen + 1;
+    return 0;
+}
+# The `(` of fi's definition, from its recorded def-start.
+fn _gen_def_open(S, fi): i64 {
+    var i = GFDS(S, fi) - 1;
+    if (i < 0) { return 0 - 1; }
+    var n = GTCNT(S);
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 10) { return i; }
+        if (t == 12 || t == 13) { return 0 - 1; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+fn _gen_forwards(S, fi): i64 {
+    var o = _gen_def_open(S, fi);
+    if (o < 0) { return 0; }
+    _gs_params(S, fi, o);
+    var b = _gs_body_open(S, _gs_at);
+    if (b < 0) { return 0; }
+    return _gs_scan(S, fi, b, 1);
+}
+fn _gen_close(S): i64 {
+    if (_gm_closed == _gm_gen) { return 0; }
+    var ch = 1;
+    while (ch == 1) {
+        ch = 0;
+        var fi = 0;
+        var n = GFNC(S);
+        while (fi < n) {
+            var m = GFGM(S, fi);
+            if ((m & 7) == 4) {
+                if (_gen_forwards(S, fi) == 1) { SFGM(S, fi, m | 2); ch = 1; }
+            }
+            fi = fi + 1;
+        }
+    }
+    _gm_closed = _gm_gen;
+    return 0;
+}
+# 1 iff fi's name is a minted instance (`base$Pt`): '$' is never a source identifier byte.
+fn _gen_is_inst(S, fi): i64 {
+    var p = S + 0xEC00000 + L64(_fnt_names + fi * 8);
+    var i = 0;
+    while (load8(p + i) != 0) {
+        if (load8(p + i) == 36) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+# Nonzero iff fi is a generic whose base (every scalar binding) is the dead stub: 1 direct,
+# 2 transitive. An instance is never a stub.
+fn _gen_stub(S, fi): i64 {
+    if (fi < 0) { return 0; }
+    if (GFTP(S, fi) == 0) { return 0; }
+    if ((GFGM(S, fi) & 4) == 0) {
+        if (_gen_is_inst(S, fi) == 1) { return 0; }
+        var o = _gen_def_open(S, fi);
+        if (o >= 0) { _gen_record(S, fi, o); }
+    }
+    _gen_close(S);
+    return GFGM(S, fi) & 3;
+}
+# The refusal, by name, for a scalar call / type argument / address of a stub generic.
+fn _refuse_gen_stub(S, noff): i64 {
+    ERR_IDENT(S, "generic ", noff, " has no i64 (or other scalar) instance: it uses its type parameter as a struct (a '.field' on a T-typed value, directly or in a generic it forwards T to) — pass a struct argument, or name a struct type argument", 0 - 1);
+    return 0;
+}
+# `&g`: the address is the base's, so a stub base is refused like a scalar call.
+fn _gen_addr_check(S, fi, noff): i64 {
+    if (_MONOMORPH_OK == 0) { return 0; }
+    if (_gen_stub(S, fi) != 0) { _refuse_gen_stub(S, noff); }
+    return 0;
+}
+
+# Infer the concrete type of type parameter `which` (0|1) for a call to generic fi whose `(` is
+# at token `open`, from the argument in the parameter position that carries it. A generic pass 1
+# never recorded binds positionally, as before. No carrying parameter -> i64.
+fn _gen_infer_tp(S, fi, open, which): i64 {
+    var m = GFGM(S, fi);
+    var k = which + 1;
+    if ((m & 4) != 0) { k = (m >> (8 + which * 8)) & 255; }
+    if (k == 0) { return 0 - 8; }
+    var a = _call_arg_start(S, open, k - 1);
+    if (a < 0) { return 0 - 8; }
+    if (_gen_arg_whole(S, a) == 0) { return 0 - 8; }
+    var sv = GTI(S);
+    STI(S, a);
+    var c = _infer_conc_at_cursor(S);
+    STI(S, sv);
+    return c;
+}
+# ⛔ 6.6.10 (bite 7 review) — only a WHOLE argument binds a type parameter: a bare name (next
+# token `,` / `)`) or one whole call. The first cut read the argument's first token, so `f(p.y)`,
+# `f(p.x + p.y)` and `f(p + 1)` all bound T to `Pt` and instantiated `f$Pt`, whose `v + 1` then
+# needed an undefined `Pt_add` — programs 6.6.9 compiled and ran. Anything else infers i64.
+fn _gen_arg_whole(S, a): i64 {
+    if (TOKTYP(S, a) != 2) { return 1; }
+    var nt = TOKTYP(S, a + 1);
+    if (nt == 31 || nt == 11) { return 1; }
+    if (nt == 10) { return _call_is_whole_arg(S, a); }
+    return 0;
+}
+# ⛔ 6.6.10 — PARSE_FNCALL's head, for a call to a GENERIC (cursor just past its `(`). Struct
+# inference used to exist only inside the inline replay, positionally, where `_inl_bind_param`
+# then re-applied the base's i64 param type — so `var r = g(p)` with `p: Pt` ran the dead stub
+# (0), `return g(p)` too, `g(2, p)` bound T from the `2`, and an inlinable body said "no struct
+# type in scope for 'p'". Now an argument that infers a struct instantiates `g$Pt` exactly as
+# `g<Pt>(p)` does, and a scalar call of a stub generic is refused by name. An explicit call
+# (`_ta_explicit`) has already chosen its callee and is not re-inferred. Returns the fi to call.
+# CHANGELOG [6.6.10]
+fn _gen_call_head(S, fi, noff): i64 {
+    _gh_inf0 = 0 - 8;
+    _gh_inf1 = 0 - 8;
+    var ex = _ta_explicit;
+    _ta_explicit = 0;
+    if (_MONOMORPH_OK == 0) { return fi; }
+    if (GFTP(S, fi) == 0) { return fi; }
+    if (ex == 0) {
+        var open = GTI(S) - 1;
+        var c0 = _gen_infer_tp(S, fi, open, 0);
+        var c1 = _gen_infer_tp(S, fi, open, 1);
+        if (c0 > 0 || c1 > 0) { return _gen_call_struct(S, fi, noff, c0, c1); }
+        _gh_inf0 = c0;
+        _gh_inf1 = c1;
+    }
+    if (_gen_stub(S, fi) != 0) { _refuse_gen_stub(S, noff); }
+    return fi;
+}
+fn _gen_call_struct(S, fi, noff, c0, c1): i64 {
+    if (((GFTP(S, fi) >> 32) & 0xFFFFFFFF) == 0) { c1 = 0; }
+    var spec = _instantiate_generic_fn(S, fi, c0, c1);
+    if (spec >= 0) { return spec; }
+    _refuse_gen_inst(S, noff, spec);
+    return fi;
+}
+fn _refuse_gen_inst(S, noff, spec): i64 {
+    if (spec == 0 - 3) {
+        ERR_IDENT(S, "generic ", noff, ": a STRUCT type-argument (inferred or explicit) alongside a second type argument is unsupported — only a generic with ONE type parameter takes a struct", 0 - 1);
+    } else {
+        ERR_IDENT(S, "generic ", noff, ": no definition to instantiate for a struct type argument", 0 - 1);
+    }
+    return 0;
+}
+# 6.6.10 — THE FN A CALL AT TOKEN ti (`name(` / `name<..>(`) ACTUALLY REACHES: a generic's
+# instance for explicit non-i64 type arguments or an argument that infers a struct, else FINDFN's
+# entry. For the call paths that emit their OWN call instead of going through PARSE_FNCALL (the
+# struct receives in PARSE_VAR, `_struct_call_into_temp`) and for their lookaheads, which all
+# FINDFN'd the base: `var r: Box<Pt> = mk<Pt>(p)` was sized from the base's return and then
+# CALLED the base with T = i64. Instantiates when needed; FINDFN is the dedup index, so the call
+# itself then finds the same instance. A stub generic with scalar type arguments resolves to its
+# base — the emitting path refuses it (`_gen_own_call_check`).
+fn _gen_resolve_call(S, ti): i64 {
+    _grc_err = 0;
+    var fi = FINDFN(S, TOKVAL(S, ti));
+    if (fi < 0) { return fi; }
+    if (_MONOMORPH_OK == 0) { return fi; }
+    if (GFTP(S, fi) == 0) { return fi; }
+    var c0 = 0 - 8;
+    var c1 = 0;
+    if (TOKTYP(S, ti + 1) == 19) {
+        # A list naming anything but a declared struct / plain scalar / bound type parameter is
+        # left to the call's own parse, which reports it — once.
+        if (_targs_resolvable(S, ti + 2) == 0) { return fi; }
+        var sv = GTI(S);
+        var sv_gt = _ta_pending_gt;
+        _ta_pending_gt = 0;
+        STI(S, ti + 2);
+        c0 = _parse_one_type_arg(S);
+        if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); c1 = _parse_one_type_arg(S); }
+        _ta_pending_gt = sv_gt;
+        STI(S, sv);
+        if (c0 <= 0 && c1 <= 0) {
+            if (_gen_stub(S, fi) != 0) { return fi; }
+            if (c0 == 0 - 8 && (c1 == 0 || c1 == 0 - 8)) { return fi; }
+        }
+    } else {
+        c0 = _gen_infer_tp(S, fi, ti + 1, 0);
+        c1 = _gen_infer_tp(S, fi, ti + 1, 1);
+        if (c0 <= 0 && c1 <= 0) { return fi; }
+        if (((GFTP(S, fi) >> 32) & 0xFFFFFFFF) == 0) { c1 = 0; }
+    }
+    var spec = _instantiate_generic_fn(S, fi, c0, c1);
+    if (spec >= 0) { return spec; }
+    # ⛔ 6.6.10 (bite 7 review): the base is NOT this call's callee — `var r = mk2(p, 1)` then ran it
+    # with T = i64, silently. Recorded, and refused by the emitting path (`_gen_own_call_check`).
+    _grc_err = spec;
+    _grc_fi = fi;
+    return fi;
+}
+# The `(` of the call at token ti — `name(`, or an explicit generic `name<..>(` whose type-argument
+# list resolves (an unresolvable one is left to the call's own parse, which reports it) — or -1.
+# 6.6.10: the paths that emit their OWN struct-valued call took only `name(`, so `r = mk<Pt>(p)`,
+# `return mkw<Pt>(p)` and `gs(idp<i32>(4))` fell to a scalar value path.
+fn _gcall_open(S, ti): i64 {
+    if (TOKTYP(S, ti) != 2) { return 0 - 1; }
+    var nt = TOKTYP(S, ti + 1);
+    if (nt == 10) { return ti + 1; }
+    if (nt != 19) { return 0 - 1; }
+    if (_MONOMORPH_OK == 0) { return 0 - 1; }
+    var fi = FINDFN(S, TOKVAL(S, ti));
+    if (fi < 0) { return 0 - 1; }
+    if (GFTP(S, fi) == 0) { return 0 - 1; }
+    if (_targs_resolvable(S, ti + 2) == 0) { return 0 - 1; }
+    var e = _targs_end(S, ti + 2);
+    if (TOKTYP(S, e + 1) != 10) { return 0 - 1; }
+    return e + 1;
+}
+# The token closing the type-argument list that starts at token i (`>`, or a `>>` / `>>>` tail).
+fn _targs_end(S, i): i64 {
+    var n = GTCNT(S);
+    var d = 1;
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 19) { d = d + 1; }
+        if (t == 20) { d = d - 1; }
+        if (t == 39) { d = d - 2; }
+        if (t == 152) { d = d - 3; }
+        if (d <= 0) { return i; }
+        i = i + 1;
+    }
+    return n;
+}
+# Does every name in the type-argument list starting at token i resolve — a declared struct, a
+# plain scalar, or a type parameter bound right now? (A lookahead that parsed an unresolvable
+# list would report its error a second time when the call itself is parsed.)
+fn _targs_resolvable(S, i): i64 {
+    var n = GTCNT(S);
+    var d = 1;
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 12 || t == 13 || t == 5 || t == 10) { return 0; }
+        if (t == 2) { if (_targ_name_ok(S, TOKVAL(S, i)) == 0) { return 0; } }
+        if (t == 19) { d = d + 1; }
+        if (t == 20) { d = d - 1; }
+        if (t == 39) { d = d - 2; }
+        if (t == 152) { d = d - 3; }
+        if (d <= 0) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+fn _targ_name_ok(S, noff): i64 {
+    if (_tp_c0 != 0) { if (_tp_resolve(S, noff) != 0) { return 1; } }
+    var c = _classify_return_type(S, noff);
+    if (c == 0) { return 0; }
+    if (c <= 0 - 16) { return 0; }
+    return 1;
+}
+# The refusal for a path that emits its own call to a stub generic's base.
+fn _gen_own_call_check(S, fi, noff): i64 {
+    if (_MONOMORPH_OK == 0) { return 0; }
+    if (_grc_err < 0) { if (_grc_fi == fi) {
+            var e = _grc_err;
+            _grc_err = 0;
+            _refuse_gen_inst(S, noff, e);
+            return 0;
+        } }
+    if (_gen_stub(S, fi) != 0) { _refuse_gen_stub(S, noff); }
+    return 0;
+}
+# The tail path (`return g(..);`) must take PARSE_FNCALL for a generic callee that the head would
+# redirect or refuse: a stub base, or an argument that infers a struct. ⚠ ONLY those — diverting
+# every generic cost a scalar generic its tail call (a 20,000,000-deep `cnt<T>` then SIGSEGV'd).
+fn _tc_generic_divert(S, cfi, ti_after): i64 {
+    if (_MONOMORPH_OK == 0) { return 0; }
+    if (cfi < 0) { return 0; }
+    if (GFTP(S, cfi) == 0) { return 0; }
+    if (_gen_stub(S, cfi) != 0) { return 1; }
+    if (_gen_infer_tp(S, cfi, ti_after, 0) > 0) { return 1; }
+    if (_gen_infer_tp(S, cfi, ti_after, 1) > 0) { return 1; }
+    return 0;
 }
 
 # v6.3.10 (instantiate-once): mint a deduped specialized name `base$<tyname>` into
@@ -3596,7 +4078,6 @@ fn _reject_special_type_arg(S, c): i64 {
 fn _type_arg_leaf(S, noff): i64 {
     var _c0 = 0;
     if (_tp_c0 != 0) { _c0 = _tp_resolve(S, noff); }
-    if (_c0 != 0) { _ta_fwd = 1; }
     if (_c0 == 0) { _c0 = _classify_return_type(S, noff); }
     if (_c0 == 0) {
         _refuse_type_arg_name(S, noff);
@@ -3624,20 +4105,6 @@ fn _is_enum_name(S, noff): i64 {
         if (STREQ(S, GENUMNM(S, i), noff) == 1) { return 1; }
         i = i + 1;
     }
-    return 0;
-}
-
-# The all-i64 call of a FORWARDED type parameter (`inner<T>(p)` where T is bound to i64) in the
-# generic's own body: a plain call to the callee's base, never an inline replay. At inline depth
-# 0 with T bound to i64 this is the BASE emission, which is compiled whether or not anything
-# calls it — and replaying a callee that uses T as a struct (`p.y`) against an i64 `p` there was
-# a hard error in a program that never asks for `outer<i64>`. The base call is what
-# `outer<i64>` means either way. CHANGELOG [6.6.8]
-fn _call_forwarded_base(S, noff, fi): i64 {
-    var sv = GFINL(S, fi);
-    if (GIDEP(S) == 0) { SFINL(S, fi, 0); }
-    PARSE_FNCALL(S, noff);
-    SFINL(S, fi, sv);
     return 0;
 }
 
@@ -4233,6 +4700,9 @@ fn _prescan_params(S, fi): i64 {
                         elif (c <= 0 - 2048) { if (_TARGET_PE == 1) { struct_mask = struct_mask | (1 << pc); } else { simd_mask = simd_mask | (1 << (pc * 2)); } }  # v6.4.7: integer 128-bit vector → 16-byte/1-XMM (mask 1)
                         # v6.3.36 (issue [5]) — plain struct >8 B param → address-passed.
                         if (_param_wants_struct_ptr(S, PEEKV(S)) == 1) { struct_mask = struct_mask | (1 << pc); }
+                        # 6.6.10: `r: Box<Pt>` — the instance's size decides (see _gtype_sid).
+                        var _pb = FINDSTRUCT(S, PEEKV(S));
+                        if (_pb > 0) { struct_mask = _gtype_param_mask(S, struct_mask, pc, _pb, _gtype_sid(S, fi, _pb)); }
                         STI(S, GTI(S) + 1);                  # consume type name
                         SKIP_GENERICS(S);                    # `: Vec<i64>` etc.
                     }
@@ -4276,7 +4746,8 @@ fn _prescan_params(S, fi): i64 {
 # `_mod_name_intern` answers the pool question (mint once, reuse from either pass), so
 # the guard is gone and EVERY definition kind is stamped here. CHANGELOG [6.6.5]
 fn _prescan_fn_sig(S): i64 {
-    if (PEEKT(S) == 134) { STI(S, GTI(S) + 1); }   # v6.3.11: consume optional `async` prefix
+    var _pasync = 0;
+    if (PEEKT(S) == 134) { STI(S, GTI(S) + 1); _pasync = 1; }   # v6.3.11: consume optional `async` prefix
     var start_ti = GTI(S);
     STI(S, GTI(S) + 1);                 # consume FN
     if (PEEKT(S) == 2) {
@@ -4309,6 +4780,10 @@ fn _prescan_fn_sig(S): i64 {
         # 1". The v6.5.38 identity rule now runs in BOTH passes, from one place.
         var fi = _fn_def_slot(S, noff, _pfid, _ppriv);
         if (_ptp != 0) { SFTP(S, fi, _ptp); }   # v6.3.9: forward-ref generic sig
+        if (_ptp != 0) { _gen_record(S, fi, GTI(S)); }   # 6.6.10: stub + carrier facts, by name
+        # 6.6.10 — mark `async fn` HERE, so a coroutine's `await f(..)` classifies a callee
+        # defined further down (`_await_operand_is_future`). CHANGELOG [6.6.10]
+        if (_pasync == 1) { SFAS(S, fi, 1); }
         # 6.6.5 — def-start for EVERY prescanned fn, not just generics. It is how pass 2
         # finds the entry THIS definition owns (_fn_by_defti), and it is what lets a
         # forward `f<i32>(x)` instantiate (GFDS was pass-2-only, so the instantiator
@@ -4327,6 +4802,7 @@ fn _prescan_fn_sig(S): i64 {
             } else {
                 if (PEEKT(S) == 2) {
                     var rtc = _classify_return_type(S, PEEKV(S));
+                    if (rtc > 0) { rtc = _gtype_sid(S, fi, rtc); }   # 6.6.10: `: Box<Pt>`
                     if (rtc != 0) { SFRS(S, fi, rtc); }
                 }
             }
@@ -4335,6 +4811,83 @@ fn _prescan_fn_sig(S): i64 {
     STI(S, start_ti);
     _prescan_skip_fn(S);
     return 0;
+}
+
+# ⛔ 6.6.10 — A TYPE THAT NAMES A GENERIC STRUCT INSTANCE IN A SIGNATURE (`: Box<Pt>`, and
+# `: Box<T>` in a generic's instance) was classified by its BASE name and the `<..>` skipped. As a
+# return type the fn returned the base `Box` — whose `v: T` is an 8-byte i64 — while its caller
+# declared `Box<Pt>` (24 B, `v` a Pt): `var r: Box<Pt> = mk<Pt>(p); r.v.x` failed with "expected
+# ';', got '.'", and a plain `fn mkp(x: Pt): Box<Pt>` was refused ("fn return struct-id differs
+# from declared var type"). As a parameter type `r.v.x` failed the same way. The type now
+# resolves exactly as a `var b: Box<Pt>` does (parse_decl.cyr): an ALL-i64 argument list is the
+# base struct itself, anything else the deduped `Box$..` instance, with an instance's T bound.
+# A generic's BASE keeps the base struct — its T is unbound in the signature, and pass 1 records
+# the same, so a forward call agrees. A list naming something that does not resolve YET keeps
+# the base, as before: pass 1 is source-ordered (the definition corrects it once the names are
+# declared), and the signature is read more than once (the pre-parameter rough scan, pass 1), so
+# this is not the place to report it. Cursor on the type name; NOT consumed. CHANGELOG [6.6.10]
+fn _gtype_sid(S, fi, base): i64 {
+    if (_MONOMORPH_OK == 0) { return base; }
+    if (base <= 0) { return base; }
+    if (TOKTYP(S, GTI(S) + 1) != 19) { return base; }
+    if (GSTP(S, base - 1) == 0) { return base; }
+    if (GFTP(S, fi) != 0) { if (_inst_conc0 == 0) { return base; } }
+    var sv_n0 = _tp_n0; var sv_c0 = _tp_c0; var sv_n1 = _tp_n1; var sv_c1 = _tp_c1;
+    if (GFTP(S, fi) != 0) { _bind_generic_call(S, fi, _inst_conc0, _inst_conc1); }
+    var r = base;
+    if (_targs_resolvable(S, GTI(S) + 2) == 1) {
+        var sv = GTI(S);
+        r = _ret_targ_parse(S, base);
+        STI(S, sv);
+    }
+    _tp_n0 = sv_n0; _tp_c0 = sv_c0; _tp_n1 = sv_n1; _tp_c1 = sv_c1;
+    return r;
+}
+# ⛔ 6.6.10 (bite 7 review) — AN INSTANCE'S `: T` RETURN, T BOUND TO A STRUCT, returns THAT struct
+# by value, exactly as a `: Pt` fn does (the rough scan and the return type both ask this). It was
+# always the base's i64 — the instance handed back rax, which for an address-passed parameter is
+# the caller's struct ADDRESS: `q = idp(p)` stored a pointer into `q.x`, `var q: Pt = idp(p)` said
+# "no struct type in scope". `Str` keeps its rax heap-handle return through the same exclusion a
+# written `: Str` gets (the rough scan's pair test). 0 = not an instance's struct-bound `: T`.
+fn _gtype_tp_ret(S, fi, noff): i64 {
+    if (_MONOMORPH_OK == 0) { return 0; }
+    if (_inst_conc0 == 0) { return 0; }
+    var tp = GFTP(S, fi);
+    if (tp == 0) { return 0; }
+    var c = 0;
+    if ((tp & 0xFFFFFFFF) == noff + 1) { c = _inst_conc0; }
+    if (((tp >> 32) & 0xFFFFFFFF) == noff + 1) { c = _inst_conc1; }
+    if (c <= 0) { return 0; }
+    return c;
+}
+# `Name<a[, b]>` at the cursor (Name the generic struct `base`): its instance under the rule a
+# `var x: Name<..>` declaration uses — ALL-i64 (or an unbound parameter) is the base struct itself,
+# anything else the deduped `Name$..` instance. Consumes the type; leaves the explicit-call parse
+# state it shares (`_ta_pending_gt`) as it found it.
+fn _ret_targ_parse(S, base): i64 {
+    var sv_gt = _ta_pending_gt;
+    _ta_pending_gt = 0;
+    STI(S, GTI(S) + 2);                  # the name, `<`
+    var c0 = _parse_one_type_arg(S);
+    var c1 = 0;
+    if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); c1 = _parse_one_type_arg(S); }
+    _consume_gt(S);
+    _ta_pending_gt = sv_gt;
+    var inst = 0;
+    if (c0 != 0 - 8 && c0 != 0) { inst = 1; }
+    if (c1 != 0 && c1 != 0 - 8) { inst = 1; }
+    if (inst == 0) { return base; }
+    var g = _instantiate_generic_struct(S, base - 1, c0, c1);
+    if (g > 0) { return g; }
+    return base;
+}
+# A parameter typed `Name<..>` resolved to an instance: its address-passed bit follows the
+# INSTANCE's size (`_param_wants_struct_ptr` sized the base by name).
+fn _gtype_param_mask(S, mask, pc, base, inst): i64 {
+    if (inst == base) { return mask; }
+    mask = mask & (0 - 1 - (1 << pc));
+    if (STRUCTSZ(S, inst - 1) > 8) { mask = mask | (1 << pc); }
+    return mask;
 }
 
 # 6.6.5 — the pre-PARSE_PROG "registered but never defined" warning, extracted from the
@@ -4425,10 +4978,14 @@ fn _tl_deprecated(S, arm): i64 {
     if (PEEKT(S) != 10) {
         # Report at the directive, not at the `fn` after it, and name the fix. The cursor is
         # already on a clean token, so clear the panic latch instead of letting the next
-        # fn body's first statement resync over real code.
+        # fn body's first statement resync over real code — but only the latch THIS error
+        # set. When an earlier, unresynced error already held it, ERR_MSG swallowed this one
+        # and an unconditional clear un-suppressed that error's cascade (a struct error plus
+        # a bare `#deprecated ) )` reported 2 errors, not 1). CHANGELOG [6.6.10]
+        var _dp_was = _panic;
         STI(S, GTI(S) - 1);
         ERR_MSG(S, "#deprecated needs a message string: #deprecated(<why, and what to use instead>)", 79);
-        _panic = 0;
+        if (_dp_was == 0) { _panic = 0; }
         STI(S, GTI(S) + 1);
         return 0;
     }
@@ -4464,14 +5021,19 @@ fn _tl_assert(S, arm): i64 {
 }
 
 # Pass 1's twin of _EVAL_CONST_ATOM: advance over the same tokens, evaluate nothing. A
-# number is one token; `sizeof ( [T] )` is its four; anything else is an error pass 2
-# reports, and _EVAL_CONST_ATOM does not advance over it either.
+# number is one token; `sizeof ( [T] )` is its four; an enum constant is `NAME` (one) or
+# `Enum.NAME` (three, 6.6.10); anything else is an error pass 2 reports. `sizeof` is the
+# whole word (_is_sizeof_word, 7 bytes), not a 6-byte prefix. CHANGELOG [6.6.10]
 fn _assert_skip_atom(S): i64 {
     var t = PEEKT(S);
     if (t == 1) { STI(S, GTI(S) + 1); return 0; }
     if (t != 2) { return 0; }
-    var w = L64(S + 0xEC00000 + PEEKV(S)) & 0xFFFFFFFFFFFF;
-    if (w != 0x666F657A6973) { return 0; }
+    if (_is_sizeof_word(S, PEEKV(S)) != 1) {
+        var ti = GTI(S);
+        if (TOKTYP(S, ti + 1) == 41) { if (TOKTYP(S, ti + 2) == 2) { STI(S, ti + 3); return 0; } }
+        STI(S, ti + 1);
+        return 0;
+    }
     _assert_step(S);
     _assert_step(S);
     if (PEEKT(S) == 2) { _assert_step(S); }
@@ -4488,8 +5050,10 @@ fn _assert_step(S): i64 {
 # 6.6.9 — the "large static data" advisory, on every backend that writes an executable.
 # It used to live inline in x86 EMITELF_USER only, so the same `var buf[200000]` warned on
 # x86_64 ELF and was silent on PE, both Mach-O targets, aarch64 and cx. `dvb`/`dcn` are the
-# bytes/count of statics inside unreachable fns; only the x86 FIXUP computes them (its DCE
-# pass), the other backends pass 0 and skip the hint. CHANGELOG [6.6.9]
+# bytes of statics inside unreachable fns and how many such fns HOLD them (GFVB > 0), computed
+# by _dead_static_stash (src/backend/common/runtime.cyr) from the x86 AND aarch64 liveness
+# passes since 6.6.10; cx has no liveness pass and passes 0, so it skips the hint.
+# CHANGELOG [6.6.9] [6.6.10]
 fn _warn_large_static(totvar, dvb, dcn): i64 {
     if (totvar <= 131072) { return 0; }
     syscall(SYS_WRITE, 2, "warning: large static data (", 28);
@@ -4766,6 +5330,39 @@ fn _mint_impl_name(S, base_noff): i64 {
     return noff;
 }
 
+# 6.6.10 — THE ARGC WORD CARRIES TWO MARKERS, so `future_force` can tell the three Future
+# shapes apart without rewriting anything during a force (lib/async.cyr, lockstep):
+#   FUT_MEMO (256) — a PLAIN compiler-built Future `[fp, argc, args…, done, value]`: forced once,
+#                    and every later force answers from the memo. It used to re-run the body on
+#                    every force (`await F; await F;` ran it twice), while a coroutine did not.
+#   FUT_CORO (512) — a coroutine. Its impl takes exactly ONE argument, SELF at obj[16], so the
+#                    arity is 1 whatever the declared parameter count; storing `pc` there made a
+#                    0-parameter coroutine SIGSEGV (fncall0 left SELF garbage) and a 9+-parameter
+#                    one exit 70 at its first force.
+# A hand-built Future (`[fp, argc, args…]`, argc 0..8) carries neither and is re-run per force.
+fn _async_argc_word(pc): i64 {
+    if (_coro_was == 1) { return 1 | 512; }
+    return pc | 256;
+}
+# 6.6.10 — `future_force`'s dispatch ladder stops at fncall8, so a PLAIN async fn with 9+
+# parameters compiled clean and died at its first force (exit 70). Refuse it at the declaration.
+# A coroutine has no limit: its arguments are frame locals and its impl takes SELF alone.
+fn _async_refuse_arity(S, fi_f, noff_f, pc): i64 {
+    if (_coro_was == 1) { return 0; }
+    if (pc <= 8) { return 0; }
+    if (_panic == 1) { return 1; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    var dti = GFDS(S, fi_f) - 1;
+    if (dti >= 0) { _err_head_at(S, dti); } else { _err_head(S); }
+    syscall(SYS_WRITE, 2, ": async fn `", 12);
+    PRSTR(S + 0xEC00000 + noff_f);
+    syscall(SYS_WRITE, 2, "` takes ", 8);
+    PRNUM(pc);
+    syscall(SYS_WRITE, 2, " parameters; an async fn that never awaits takes at most 8 (its Future is forced through fncall0..fncall8)\n", 107);
+    _had_error = 1;
+    return 1;
+}
+
 # v6.3.11 (G): emit the Future constructor for an `async fn`. The body has already
 # been emitted (as `f$impl`, fi_impl, with pc params); this synthesizes the
 # user-named fn `f(p0..p{pc-1})` whose body allocates a Future heap object
@@ -4780,6 +5377,10 @@ fn _async_emit_constructor(S, noff_f, fi_impl, pc): i64 {
     if (fi_f < 0) { fi_f = REGFN(S, noff_f); }
     SFAS(S, fi_f, 1);
     S64(_fnt_params + fi_f * 8, pc);
+    if (_async_refuse_arity(S, fi_f, noff_f, pc) == 1) {
+        S64(_fnt_offsets + fi_f * 8, GCP(S));
+        return 0;
+    }
     # Refused BEFORE any code: ERR_MSG does not exit, and the body below handed -1 to
     # ECALLFIX — rc 139 on aarch64/cx after the diagnostic. `f` still gets an offset (nothing
     # is written for a failed compile) so its callers do not add a second, false "reachable
@@ -4825,7 +5426,9 @@ fn _async_emit_constructor(S, noff_f, fi_impl, pc): i64 {
     # ⛔ Getting this wrong is a heap overflow, not a wrong answer: the transform stores the
     # state word at +24 and locals from +32, and the pre-v6.5.69 object is (2+pc)*8 = 24
     # bytes for a 1-parameter fn — the state write alone lands one word past the allocation.
-    var _obj_bytes = (2 + pc) * 8;
+    # 6.6.10: a PLAIN Future also carries two trailing memo words `[done, value]` (see
+    # `_async_argc_word`); a coroutine already keeps its completion past the frame.
+    var _obj_bytes = (2 + pc) * 8 + 16;
     if (_coro_was == 1) { _obj_bytes = _coro_res_off() + 8; }   # 6.6.8: + the completion word
     # obj = alloc(_obj_bytes)
     EMOVI(S, _obj_bytes);
@@ -4849,11 +5452,11 @@ fn _async_emit_constructor(S, noff_f, fi_impl, pc): i64 {
     ELOAD_FN_ADDR(S, _fixup_base + fc * 16, fc, fi_impl);
     EPOPC(S);
     ESTORE64(S);
-    # obj[8] = argc (pc)
+    # obj[8] = the argc word (pc | FUT_MEMO, or 1 | FUT_CORO — `_async_argc_word`)
     EFLLOAD(S, obj_slot);
     EADDRA_IMM(S, 8);
     EPUSHR(S);
-    EMOVI(S, pc);
+    EMOVI(S, _async_argc_word(pc));
     EPOPC(S);
     ESTORE64(S);
     # v6.5.69: a coroutine's arg0 is the object ITSELF. `future_force` re-enters the body as
@@ -4899,6 +5502,17 @@ fn _async_emit_constructor(S, noff_f, fi_impl, pc): i64 {
         EPOPC(S);
         ESTORE64(S);
         i = i + 1;
+    }
+    # obj[16 + pc*8] = 0: the memo's `done` word. alloc does not promise zeroed memory (a
+    # freelist / arena hands back used blocks), and a stale 1 would answer the first force with
+    # a stale value. CHANGELOG [6.6.10]
+    if (_coro_was == 0) {
+        EFLLOAD(S, obj_slot);
+        EADDRA_IMM(S, 16 + pc * 8);
+        EPUSHR(S);
+        EMOVI(S, 0);
+        EPOPC(S);
+        ESTORE64(S);
     }
     # return obj
     EFLLOAD(S, obj_slot);
@@ -5389,6 +6003,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     _cur_fn_ret_scalar = 0;
     _cur_fn_ret_pair = 0;
     _cur_fn_pslots = 0;   # 6.6.6 — recorded at the end of the parameter loop
+    _cur_fn_ptrp = 0;     # 6.6.10 — `p: *T` parameters, set in the parameter loop
     var _rs_save_ti = GTI(S);
     if (PEEKT(S) == 10) {
         STI(S, GTI(S) + 1);
@@ -5416,6 +6031,8 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
             if (PEEKT(S) == 2) {
                 var _rs_rt_noff = PEEKV(S);
                 var _rs_rt_sid = FINDSTRUCT(S, _rs_rt_noff);
+                if (_rs_rt_sid > 0) { _rs_rt_sid = _gtype_sid(S, fi, _rs_rt_sid); }   # 6.6.10: `: Box<Pt>`
+                else { _rs_rt_sid = _gtype_tp_ret(S, fi, _rs_rt_noff); }             # 6.6.10: `: T`, T = Pt
                 if (_rs_rt_sid > 0) {
                     var _rs_rt_sz = STRUCTSZ(S, _rs_rt_sid - 1);
                     if (_rs_rt_sz > 16) {
@@ -5777,7 +6394,6 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     var option_mask = 0;
     var tagged_mask = 0;
     var struct_mask = 0;   # v6.3.36 (issue [5]): bit N = plain struct >8 B param
-    _cur_fn_tp_pmask = 0;  # v6.3.39 (B3): reset per-fn tparam-typed-param mask
     # v6.3.39 (B3): for a specialized INSTANCE re-emit, bind T -> the concrete type(s)
     # BEFORE the param loop so a type-param-typed param `p: T` resolves to the concrete
     # struct (p becomes a by-value struct param → `p.x` in the body lays out + reads
@@ -5831,7 +6447,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
             var pt_simd_sid = 0;     # SLTYPE sentinel: 2093 f64v2 / 2125 f64v4 / 2121 f32v4 (all descriptor-band)
             if (PEEKT(S) == 49) {
                 STI(S, GTI(S) + 1);  # consume :
-                if (PEEKT(S) == 8) { STI(S, GTI(S) + 1); }  # skip * for pointer types
+                if (PEEKT(S) == 8) { STI(S, GTI(S) + 1); _mark_ptr_param(S); }  # skip * for pointer types
                 if (PEEKT(S) == 2) {
                     var tnoff = PEEKV(S);
                     # v6.3.5 CO-01 — classify the param type-name once via the
@@ -5868,11 +6484,13 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                     elif (_ptc <= 0 - 2048) { pt_simd_class = 1; pt_simd_sid = 0 - _ptc; }  # v6.4.7: integer 128-bit vector (16-byte/1-XMM, SLTYPE = sentinel)
                     # v6.3.36 (issue [5]) — plain struct >8 B param → address-passed.
                     if (_param_wants_struct_ptr(S, tnoff) == 1) { struct_mask = struct_mask | (1 << pc); }
-                    # v6.3.39 (B3) — record params whose declared type is a type-param, so
-                    # the i64 BASE emission can skip the body when such a param is field-
-                    # accessed as a struct (no valid i64 form). Gated; default byte-identical.
-                    if (_MONOMORPH_OK == 1) { if (_is_tparam_of(S, fi, tnoff) == 1) { _cur_fn_tp_pmask = _cur_fn_tp_pmask | (1 << pc); } }
                     pt_sid = FINDSTRUCT(S, tnoff);
+                    # 6.6.10: `r: Box<Pt>` is the instance, sized as one (see _gtype_sid).
+                    if (pt_sid > 0) {
+                        var _pgi = _gtype_sid(S, fi, pt_sid);
+                        struct_mask = _gtype_param_mask(S, struct_mask, pc, pt_sid, _pgi);
+                        pt_sid = _pgi;
+                    }
                     # v6.3.9 (F-fns): param `: T` under an active generic binding.
                     # A struct-bound tparam makes this a struct param (pt_sid);
                     # scalar-bound tparams correctly stay int params (register-width;
@@ -6167,7 +6785,10 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                 # (-8); the concrete return is per-instantiation (the inline-replay body
                 # leaves the value in rax). Struct-typed generic returns (retptr ABI)
                 # ride the struct-interaction work (v6.3.10). Non-tparam unknowns error.
-                if (_is_tparam_of(S, fi, rt_noff) == 1) { _rtc = 0 - 8; }
+                if (_is_tparam_of(S, fi, rt_noff) == 1) {
+                    _rtc = _gtype_tp_ret(S, fi, rt_noff);   # 6.6.10: an instance's `: T`, T = Pt
+                    if (_rtc == 0) { _rtc = 0 - 8; }
+                }
                 # v6.5.19: `: T` where T is a struct declared in a SIBLING FILE is a
                 # RESOLUTION failure, and under --syntax-only it must not become an error at
                 # all. Measured on agnosai, which BUILDS GREEN yet had 3 of its files
@@ -6184,6 +6805,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                     ERR_MSG(S, "fn return type must be struct or i8/i16/i32/i64/Result/Option/Tagged/cstring/f64/f64v2/f64v4", 92);
                 }
             }
+            if (_rtc > 0) { _rtc = _gtype_sid(S, fi, _rtc); }   # 6.6.10: `: Box<Pt>`
             SFRS(S, fi, _rtc);
             if (_rtc > 0) {
                 _cur_fn_ret_sid = _rtc;
@@ -6276,9 +6898,12 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # by-value struct param → `p.x` resolves; the v6.3.36 structmask + v6.3.39 le8 fix
     # make that ABI sound — a plain `fn wrap_point(p: Point): i64` already works). Gated
     # under _MONOMORPH_OK (this whole _gen_base block) → default byte-identical.
+    # 6.6.10: the decision is the recorded one (`_gen_stub`), which also covers a `var q: T` local
+    # used as a struct and a base that FORWARDS T to a stub generic — the same answer every call
+    # site now gets. CHANGELOG [6.6.10]
     var _b3_skip = 0;
     if (_gen_base == 1 && _inst_conc0 == 0) {
-        if (_body_field_accesses_tparam(S, fi) == 1) { _b3_skip = 1; }
+        if (_gen_stub(S, fi) != 0) { _b3_skip = 1; }
     }
     # v6.5.69 — COROUTINE SETUP. An `async fn` body becomes a state machine: its locals live
     # in the heap object the runtime hands back on every resume, and the fn top dispatches to
@@ -6328,6 +6953,13 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # whole-program compactor's own notes flag as the thing a linear decoder walks into. The
     # chain is what that parser itself falls back to and it needs no new machinery.
     if (_cur_fn_coro == 1) {
+        # 6.6.10 — A BODY THAT FALLS OFF ITS END COMPLETES with 0, through the return landing
+        # (its defers, then `_coro_mark_done`). The dispatch below sits right after the body, so
+        # a fall-off ran into it, read C[state] and jumped back to the last resume label: the
+        # force that should have completed the coroutine never returned. The plain-fn path got
+        # this routing in 6.6.7 (`_defer_emit_init`); the coroutine path never did.
+        EMOVI(S, 0);
+        vec_push(rp_vec, EJMP0(S));
         EPATCH(S, _coro_top_jmp);
         _coro_flc = GFLC(S);
         _coro_done_check(S);
@@ -7436,6 +8068,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # v5.10.45 Phase 1 — clear pair-return flag.
     _cur_fn_ret_pair = 0;
     _cur_fn_pslots = 0;   # 6.6.6 — parameter slot span (see _local_is_sptr_param)
+    _cur_fn_ptrp = 0;
     # v5.8.20 — same for the #pure mirror.
     _cur_fn_is_pure = 0;
     # v5.11.62 — clear per-fn array-byte attribution tracker so top-level

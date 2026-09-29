@@ -1,0 +1,211 @@
+# async_timeout_result.tcyr — Linux `async_timeout(fp, arg, ms)` returns the body's value only
+# when the child actually wrote it, and -1 for every other outcome, without touching a caller fd.
+#
+# ⛔ WHY. The Linux arm forks, lets the child run the body and write an 8-byte result down a pipe,
+# and waits on the read end with epoll. It took ANY wake as "the child wrote its result": the
+# read was unchecked and the call returned `load64(&rbuf)`. A child that exits early or dies
+# writes nothing, but the pipe's write end closing wakes epoll exactly the same way (HUP), so:
+#   * an early-exit or killed body returned STALE STACK BYTES as its value (measured 6293997 on
+#     x86_64; on aarch64 and real pi, the PREVIOUS call's value — 42 after a body returning 42);
+#   * a FAILED fork did the same (the parent closed wfd, epoll saw HUP at once) — a fabricated
+#     result from a body that never ran;
+#   * a FAILED pipe left `pipefd` uninitialised, so the parent's "close my fds" closed whatever
+#     numbers the stack held — measured: the CALLER's fd 4 was EBADF afterwards.
+# The fix (lib/async.cyr, CHANGELOG [6.6.10]) checks pipe, fork and epoll, and accepts a result
+# only on an exact 8-byte read; everything else reaps the child and returns -1.
+#
+# Rows (Linux x86_64 + aarch64 only — every other target's async_timeout runs the body inline,
+# so the rows print a named SKIP there):
+#   ok        a body returning 42                 -> 42
+#   early     a body that calls exit(3)            -> -1   (was the previous call's 42 / junk)
+#   killed    a body that SIGKILLs itself          -> -1   (no core dump, so no HUP delay)
+#   hang      a body sleeping 5 s, 200 ms deadline -> -1, returned well under 5 s
+#   pipe      RLIMIT_NOFILE filled: pipe fails     -> -1, and every caller fd still open
+#   fork      RLIMIT_NPROC = 0: fork fails         -> -1   (SKIPs loudly under uid 0: root is
+#                                                            exempt from RLIMIT_NPROC, and CI
+#                                                            containers run as root)
+#   tree      async_run_process under a 400 ms deadline: the shell's background child is ended
+#             too (bite 11 — it SIGKILLed the shell's pid alone and left the child running)
+
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/fmt.cyr"
+include "lib/atomic.cyr"
+include "lib/fnptr.cyr"
+include "lib/chrono.cyr"
+include "lib/async.cyr"
+include "lib/assert.cyr"
+
+fn _at_ok(arg): i64 { return arg + 40; }
+fn _at_early(arg): i64 { sys_exit(3); return 7; }
+
+#ifdef CYRIUS_TARGET_LINUX
+# prlimit64 is not in the stdlib tables; its number differs per arch (and is not an
+# ESYSXLAT row, so the native number is what reaches the kernel).
+#ifdef CYRIUS_ARCH_AARCH64
+var _AT_PRLIMIT = 261;
+#endif
+#ifndef CYRIUS_ARCH_AARCH64
+var _AT_PRLIMIT = 302;
+#endif
+var _AT_RLIMIT_NPROC = 6;
+var _AT_RLIMIT_NOFILE = 7;
+
+fn _at_killed(arg): i64 { sys_kill(sys_getpid(), 9); return 7; }
+fn _at_hang(arg): i64 {
+    var ts[16];
+    store64(&ts, 5);
+    store64(&ts + 8, 0);
+    sys_nanosleep(&ts, 0);
+    return 7;
+}
+# Set resource `res`'s SOFT limit to `soft`, keeping its hard limit; the old pair lands in `old`.
+fn _at_setsoft(res, soft, old): i64 {
+    var r = syscall(_AT_PRLIMIT, 0, res, 0, old);
+    if (r < 0) { return r; }
+    var nw[16];
+    store64(&nw, soft);
+    store64(&nw + 8, load64(old + 8));
+    return syscall(_AT_PRLIMIT, 0, res, &nw, 0);
+}
+fn _at_restore(res, old): i64 { return syscall(_AT_PRLIMIT, 0, res, old, 0); }
+# Leave `fd` in every 32-bit word of the stack a callee at this depth is about to reuse. An
+# uninitialised `pipefd` in async_timeout then reads a CALLER fd, which is exactly what the
+# measured defect closed (fd 4); without this the row would depend on whatever the stack held.
+fn _at_stain_stack(fd): i64 {
+    var junk[1024];
+    var k = 0;
+    while (k < 1024) { store64(&junk + k, (fd << 32) | fd); k = k + 8; }
+    return load64(&junk + 512);
+}
+
+fn _at_rows(): i64 {
+    test_group("async_timeout: a result only when the child wrote one");
+    assert_eq(async_timeout(&_at_ok, 2, 10000), 42, "ok: a body returning 42 gives 42");
+    assert_eq(async_timeout(&_at_early, 0, 10000), 0 - 1, "early: a body that exits before returning gives -1 (not the last call's 42)");
+    assert_eq(async_timeout(&_at_ok, 5, 10000), 45, "ok again: 45");
+    assert_eq(async_timeout(&_at_killed, 0, 10000), 0 - 1, "killed: a body killed by a signal gives -1");
+    var t0 = clock_now_ms();
+    assert_eq(async_timeout(&_at_hang, 0, 200), 0 - 1, "hang: a 5 s body under a 200 ms deadline gives -1");
+    assert_eq(clock_now_ms() - t0 < 4000, 1, "hang: the deadline, not the body, ended the wait");
+
+    # --- pipe failure: fill the fd table under a lowered RLIMIT_NOFILE, so the pipe cannot be
+    # made; every fd the caller holds must survive the call.
+    test_group("async_timeout: a failed pipe closes none of the caller's fds");
+    var held = vec_new();
+    var p0[16];
+    assert_eq(sys_pipe(&p0) >= 0, 1, "pipe: the caller's own pipe");
+    vec_push(held, load32(&p0));
+    vec_push(held, load32(&p0 + 4));
+    var hi = load32(&p0 + 4);
+    if (load32(&p0) > hi) { hi = load32(&p0); }
+    var oldn[16];
+    assert_eq(_at_setsoft(_AT_RLIMIT_NOFILE, hi + 1, &oldn), 0, "pipe: RLIMIT_NOFILE lowered to just past the caller's fds");
+    # Fill any gap below the limit so no two fds are free.
+    var guard = 0;
+    while (guard < 64) {
+        var pf[16];
+        if (sys_pipe(&pf) < 0) { break; }
+        vec_push(held, load32(&pf));
+        vec_push(held, load32(&pf + 4));
+        guard = guard + 1;
+    }
+    var probe[16];
+    assert_eq(sys_pipe(&probe) < 0, 1, "pipe: the fd table is full (a pipe cannot be made)");
+    _at_stain_stack(load32(&p0 + 4));
+    assert_eq(async_timeout(&_at_ok, 2, 10000), 0 - 1, "pipe: async_timeout reports the failure as -1");
+    var i = 0;
+    var alive = 0;
+    while (i < vec_len(held)) {
+        if (sys_fcntl(vec_get(held, i), 1, 0) >= 0) { alive = alive + 1; }   # F_GETFD
+        i = i + 1;
+    }
+    assert_eq(alive, vec_len(held), "pipe: every fd the caller held is still open");
+    assert_eq(_at_restore(_AT_RLIMIT_NOFILE, &oldn), 0, "pipe: RLIMIT_NOFILE restored");
+    i = 0;
+    while (i < vec_len(held)) { sys_close(vec_get(held, i)); i = i + 1; }
+
+    # --- fork failure: RLIMIT_NPROC = 0 makes fork fail with EAGAIN — for a non-root user.
+    test_group("async_timeout: a failed fork is -1, not a fabricated result");
+    if (sys_getuid() == 0) {
+        println("    SKIP fork row: running as uid 0, which RLIMIT_NPROC does not bind (the fork would succeed)");
+    } else {
+        var oldp[16];
+        assert_eq(_at_setsoft(_AT_RLIMIT_NPROC, 0, &oldp), 0, "fork: RLIMIT_NPROC lowered to 0");
+        assert_eq(async_timeout(&_at_ok, 2, 10000), 0 - 1, "fork: async_timeout reports the failed fork as -1");
+        assert_eq(_at_restore(_AT_RLIMIT_NPROC, &oldp), 0, "fork: RLIMIT_NPROC restored");
+        assert_eq(async_timeout(&_at_ok, 3, 10000), 43, "fork: with the limit back, a body runs again (43)");
+    }
+    return 0;
+}
+
+# 6.6.10 (bite 11) — async_run_process's deadline SIGKILLed the child's pid alone, so a
+# grandchild kept running past it. The shell records its background child's pid and waits;
+# the deadline must end that background child too.
+fn _at_read_num(path): i64 {
+    var fd = sys_open(path, 0, 0);
+    if (fd < 0) { return 0; }
+    var b[32];
+    var n = sys_read(fd, &b, 31);
+    sys_close(fd);
+    var v = 0;
+    var i = 0;
+    while (i < n && load8(&b + i) >= 48 && load8(&b + i) <= 57) { v = v * 10 + load8(&b + i) - 48; i = i + 1; }
+    return v;
+}
+
+fn _at_tree_rows(): i64 {
+    test_group("async_run_process: the deadline ends the child's whole tree");
+    var pf = test_scratch("cyrius_at_bgpid");
+    sys_unlink(pf);
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "sleep 30 & echo $! > ");
+    str_builder_add_cstr(sb, pf);
+    str_builder_add_cstr(sb, "; wait");
+    var av = alloc(32);
+    store64(av, "/bin/sh");
+    store64(av + 8, "-c");
+    store64(av + 16, str_data(str_builder_build(sb)));
+    store64(av + 24, 0);
+    var ev = alloc(8);
+    store64(ev, 0);
+    var rt = async_new();
+    var t0 = clock_now_ms();
+    assert_eq(async_run_process(rt, "/bin/sh", av, ev, 400), 0 - 2, "tree: the deadline fired (-2)");
+    assert_eq(clock_now_ms() - t0 < 8000, 1, "tree: and it returned inside the TERM grace");
+    var bg = _at_read_num(pf);
+    assert_eq(bg > 0, 1, "tree: premise — the shell recorded its background child");
+    var gone = 0;
+    var k = 0;
+    while (k < 150 && gone == 0) {
+        if (bg <= 0) { gone = 1; }
+        elif (sys_kill(bg, 0) != 0) { gone = 1; }
+        elif (_proc_zombie(bg) == 1) { gone = 1; }    # ended, waiting for a non-us ancestor to reap it
+        else { sleep_ms(20); }
+        k = k + 1;
+    }
+    assert_eq(gone, 1, "tree: the grandchild did not survive the deadline");
+    if (bg > 0) { sys_kill(bg, 9); }
+    sys_unlink(pf);
+    return 0;
+}
+#endif
+
+fn main(): i64 {
+    alloc_init();
+    #ifdef CYRIUS_TARGET_LINUX
+    _at_rows();
+    _at_tree_rows();
+    #endif
+    #ifndef CYRIUS_TARGET_LINUX
+    println("    SKIP: async_timeout forks only on Linux; this target runs the body inline (no pipe, no fork, no stale result to read)");
+    assert_eq(async_timeout(&_at_ok, 2, 1000), 42, "inline: a body returning 42 gives 42");
+    #endif
+    return assert_summary();
+}
+
+var exit_code = main();
+sys_exit(exit_code);

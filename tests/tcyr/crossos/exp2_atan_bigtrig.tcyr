@@ -115,6 +115,7 @@ var far = 0;
 var x = 0;
 var e = 0;
 var d = 0;
+var fa = 0;
 var j = 0;
 while (j < 2128) {
     s = s ^ (s << 13);
@@ -125,7 +126,11 @@ while (j < 2128) {
     x = ((e + 1023) << 52) | (s & 0x000FFFFFFFFFFFFF) | (s & 0x8000000000000000);
     ha = (ha ^ _f64_atan_polyfill(x)) * 0x100000001B3;
     # x87 fpatan and the polyfill are each within 1 ulp of the true value, so never 3 apart.
-    d = f64_atan(x) - _f64_atan_polyfill(x);
+    # The ulp distance is an INTEGER subtraction of the two bit patterns, so the builtin's
+    # result goes through an untyped temp first: since 6.6.10 `f64_atan(x) - ...` is a float
+    # subtraction (the builtin's result is a float operand). CHANGELOG [6.6.10]
+    fa = f64_atan(x);
+    d = fa - _f64_atan_polyfill(x);
     if (d < 0) { d = 0 - d; }
     if (d > 2) { far = far + 1; }
     j = j + 1;

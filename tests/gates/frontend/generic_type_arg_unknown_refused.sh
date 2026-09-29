@@ -23,9 +23,53 @@
 #      vocabulary, which is the return-type vocabulary: a struct, i8/i16/i32/i64, f64, or a bound
 #      type parameter — an alias would silently pick a width; these all used to run the i64 base)
 #
+# ⛔ 6.6.10 (bite 7) — A GENERIC THAT USES T AS A STRUCT HAS NO SCALAR INSTANCE. Its base is the
+# `rax = 0` dead stub, and whether it was one was known only while that base was being emitted —
+# so every row below BUILT on 6.6.9 and returned 0 (or failed with a misleading "no struct type in
+# scope for 'p'"). Each is now refused by name, 'g' (or the forwarding 'outer'):
+#   H  g<i64>(5), g(5), `return g<i64>(5)`, `return g(5)`, g<i32>(5), and an inlinable body
+#   I  TRANSITIVE: outer<T> forwarding `g<T>(p)` / `g(p)`, called outer<i64>(5) / outer(5) —
+#      and with the three fns defined in REVERSE order (the facts are recorded in pass 1)
+#   J  `&g` (the address is the stub's)
+#   K  inferring two struct type args, or a struct beside a scalar — refused like the explicit
+#      form (was 0 silently)
+#   L  a stub generic returning a struct, received as `var r: Box<i64> = mkb(5)` (its own call path)
+#   N  a bad type argument in a `var x = f<..>(..)` receive is reported ONCE (the receive now
+#      resolves the instance ahead of the call's own parse, and must not report it a second time)
+#   K  (review) the same on every path that emits its OWN call — `var r = mk3(p, q)`,
+#      `var r = mk2(p, 1)`, `bs(mk2(p, 4))`, `r = mk2(p, 6)`, and the explicit `mk2<Pt, i64>(p, ..)`
+#      receive and assignment: `_gen_resolve_call` swallowed the failed instantiation and the BASE
+#      ran with T = i64, silently. Refused ONCE each, by name.
+#   O  (review) a `pp: *Pt` parameter binds T to i64 (it is a pointer), not to the pointee:
+#      `g(pp)` is refused like `g(5)`, `f(pp) - pp` runs the base (exit 1)
+#   P  (review) at top level, `w1s(mkw(gp))` — a register-pair INSTANCE result as a struct
+#      argument — is refused by name (the class was read from the 8 B base: SIGSEGV)
+#   M  CONTROLS that must still build and run: a 20,000,001-deep scalar generic TAIL recursion
+#      (exit 1; the prototype that diverted every generic off the tail path made it rc 139), a
+#      stub generic nobody calls with a scalar (exit 3), a vector local as an inferred argument
+#      (exit 10; its descriptor read as "struct 2093"), and the struct call of every H/I shape
+#      (exit 12 / 14)
+#
 # Mutations: drop the `_tp_resolve` consult in _type_arg_leaf -> C, D RED (refused as unknown
-# `T`). Drop the refusal -> A, B, F, G RED (rc 0). Let _call_forwarded_base inline -> D RED.
-# Drop the `_is_enum_name` arm -> F RED (refused, but as an "unknown type").
+# `T`). Drop the refusal -> A, B, F, G RED (rc 0). Drop the `_is_enum_name` arm -> F RED
+# (refused, but as an "unknown type"). (6.6.8's third mutation, "let _call_forwarded_base inline
+# -> D RED", went GREEN at 6.6.10 and that fn was retired: outer's base is now a transitive stub
+# whose body is skipped, so no replay of the inlinable inner<T> is left for it to suppress.)
+# 6.6.10 (src/frontend/parse_fn.cyr; each run on a scratch tree, never the repo):
+#   `_gen_call_head` never calls _refuse_gen_stub     -> H, I RED (rc 0, the stub's 0)
+#   drop `_tc_generic_divert` from _tc_must_divert     -> H's `return g(5)` RED (rc 0)
+#   _tc_generic_divert returns 1 for EVERY generic      -> M's tail recursion RED (rc 139)
+#   `_gen_close` returns at once (no transitive half)   -> I RED (rc 0)
+#   drop the `_gen_addr_check` call (parse_expr.cyr)    -> J RED (rc 0)
+#   `_gen_call_struct` instantiates without refusing -3 -> K RED
+#   drop the `_gen_own_call_check` in the asv_pair receive (parse_decl.cyr) -> L RED (rc 0)
+#   drop the vector guard in _infer_conc_at_cursor      -> M's vector row RED
+#   drop the `_targs_resolvable` early-out in _gen_resolve_call -> N RED (reported twice)
+#   (review) `_gen_resolve_call` records no failure, or `_gen_own_call_check` ignores it -> K RED
+#   (the six own-call rows BUILD); `_is_ptr_param` / `_mark_ptr_param` inert -> O RED;
+#   `_refuse_toplevel_pair_arg` on FINDFN -> P RED (BUILT)
+# The runtime halves (inference on every path, signature types) are mutation-proven by
+# tests/tcyr/crossos/generic_struct_inference.tcyr — its header lists them.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -76,5 +120,126 @@ for w in u64 u8 bool ptr f32; do
     refused "g_$w" "$w" "G: '$w' as a type argument"
 done
 
+# ── 6.6.10 (bite 7): a generic that uses T as a struct has no scalar instance ──────────────────
+stubref() {   # <name> <fn-named> <what> — refused, naming <fn-named>, as having no i64 instance
+    build "$1"
+    if [ "$rc" -eq 0 ]; then bad "$3: BUILT (rc 0)"
+    elif ! grep -q "generic '$2' has no i64 (or other scalar) instance" "$T/$1.err"; then
+        bad "$3: refused, but not by name: $(grep '^error' "$T/$1.err" | head -1)"
+    elif grep -q "no struct type in scope" "$T/$1.err"; then
+        bad "$3: refused, but ALSO with the misleading 'no struct type in scope'"
+    else ok "$3: refused, naming '$2'"; fi
+}
+GL='fn g<T>(p: T): i64 { var s = 0; var i = 0; while (i < 2) { s = s + p.y; i = i + 1; } return s + p.x; }'
+GF='fn g<T>(p: T): i64 { return p.y * 2 + p.x; }'
+PT='struct Pt { x; y; }'
+MKP='var p: Pt; p.x = 2; p.y = 5;'
+n=0
+for call in 'g<i64>(5) + 7' 'g(5) + 7' 'g<i32>(5)'; do
+    n=$((n + 1))
+    printf '%s\n%s\nfn main(): i64 { return %s; }\nsyscall(60, main());\n' "$PT" "$GL" "$call" > "$T/h$n.cyr"
+    stubref "h$n" g "H: $call"
+done
+for call in 'g<i64>(5)' 'g(5)'; do
+    n=$((n + 1))
+    printf '%s\n%s\nfn main(): i64 { return %s; }\nsyscall(60, main());\n' "$PT" "$GL" "$call" > "$T/h$n.cyr"
+    stubref "h$n" g "H: return $call (tail position)"
+done
+for call in 'g<i64>(5) + 7' 'g(5) + 7'; do
+    n=$((n + 1))
+    printf '%s\n%s\nfn main(): i64 { return %s; }\nsyscall(60, main());\n' "$PT" "$GF" "$call" > "$T/h$n.cyr"
+    stubref "h$n" g "H: $call, an inlinable body"
+done
+
+OE='fn outer<T>(p: T): i64 { var r = g<T>(p); return r + 2; }'
+OI='fn outer<T>(p: T): i64 { var r = g(p); return r + 2; }'
+printf '%s\n%s\n%s\nfn main(): i64 { return outer<i64>(5) + 7; }\nsyscall(60, main());\n' "$PT" "$GL" "$OE" > "$T/i1.cyr"
+stubref i1 outer "I: outer<i64>(5), outer forwarding g<T>(p)"
+printf '%s\n%s\n%s\nfn main(): i64 { return outer(5) + 7; }\nsyscall(60, main());\n' "$PT" "$GL" "$OI" > "$T/i2.cyr"
+stubref i2 outer "I: outer(5), outer forwarding g(p) by inference"
+printf '%s\nfn main(): i64 { return outer(5) + 7; }\n%s\n%s\nsyscall(60, main());\n' "$PT" "$OI" "$GL" > "$T/i3.cyr"
+stubref i3 outer "I: the same, main -> outer -> g defined in REVERSE order"
+printf '%s\nfn outer2<T>(p: T): i64 { return outer(p) + 1; }\n%s\n%s\nfn main(): i64 { return outer2(5); }\nsyscall(60, main());\n' "$PT" "$OI" "$GL" > "$T/i4.cyr"
+stubref i4 outer2 "I: two levels of forwarding"
+
+printf 'include "lib/fnptr.cyr"\n%s\n%s\nfn main(): i64 { %s var f = &g; return fncall1(f, &p) + 7; }\nsyscall(60, main());\n' "$PT" "$GL" "$MKP" > "$T/j.cyr"
+stubref j g "J: &g"
+
+build_refused_by() {   # <name> <grep> <what>
+    build "$1"
+    if [ "$rc" -eq 0 ]; then bad "$3: BUILT (rc 0)"
+    elif ! grep -q "$2" "$T/$1.err"; then bad "$3: refused, but not as expected: $(grep '^error' "$T/$1.err" | head -1)"
+    else ok "$3: refused"; fi
+}
+printf '%s\nstruct Q { a; b; c; }\nfn g2<T, U>(p: T, q: U): i64 { var s = 0; var i = 0; while (i < 1) { s = s + p.y + q.c; i = i + 1; } return s; }\nfn main(): i64 { %s var q: Q; q.a = 1; q.b = 1; q.c = 9; return g2(p, q); }\nsyscall(60, main());\n' "$PT" "$MKP" > "$T/k1.cyr"
+build_refused_by k1 "generic 'g2': a STRUCT type-argument (inferred or explicit) alongside" "K: g2(p, q), two struct type args inferred (was 0)"
+printf '%s\nfn g2<T, U>(p: T, n: U): i64 { var s = 0; var i = 0; while (i < n) { s = s + p.y; i = i + 1; } return s; }\nfn main(): i64 { %s return g2(p, 2); }\nsyscall(60, main());\n' "$PT" "$MKP" > "$T/k2.cyr"
+build_refused_by k2 "generic 'g2': a STRUCT type-argument (inferred or explicit) alongside" "K: g2(p, 2), a struct beside a scalar"
+
+# ...and on every path that emits its OWN call (review): `_gen_resolve_call` swallowed the failed
+# instantiation and returned the base, which then ran with T = i64 — silently. Refused ONCE each.
+refused_once() {   # <name> <what>
+    build "$1"
+    k=$(grep -c "generic 'mk[23]': a STRUCT type-argument (inferred or explicit) alongside" "$T/$1.err" || true)
+    if [ "$rc" -eq 0 ]; then bad "$2: BUILT (rc 0)"
+    elif [ "$k" -ne 1 ]; then bad "$2: refused $k times by name, want 1: $(grep '^error' "$T/$1.err" | head -1)"
+    else ok "$2: refused once, by name"; fi
+}
+BX='struct Box<T> { v: T; n; }
+struct Q { a; b; c; }
+fn mk2<T, U>(x: T, n: U): Box<T> { var b: Box<T>; b.v = x; b.n = n; return b; }
+fn mk3<T, U>(x: T, y: U): Box<T> { var b: Box<T>; b.v = x; b.n = 7; return b; }
+fn bs(b: Box): i64 { return b.n; }'
+n=0
+for body in 'var q: Q; q.c = 1; var r = mk3(p, q); return r.n;' 'var r = mk2(p, 1); return r.n;' \
+        'return bs(mk2(p, 4));' 'var r: Box; r = mk2(p, 6); return r.n;' \
+        'var r: Box<Pt> = mk2<Pt, i64>(p, 1); return r.n;' 'var r: Box; r = mk2<Pt, i64>(p, 6); return r.n;'; do
+    n=$((n + 1))
+    printf '%s\n%s\nfn main(): i64 { %s %s }\nsyscall(60, main());\n' "$PT" "$BX" "$MKP" "$body" > "$T/ko$n.cyr"
+    refused_once "ko$n" "K: $body"
+done
+
+printf '%s\nstruct Box<T> { v: T; n; }\nfn mkb<T>(p: T): Box<T> { var b: Box<T>; b.n = p.x; return b; }\nfn main(): i64 { var r: Box<i64> = mkb(5); return r.n; }\nsyscall(60, main());\n' "$PT" > "$T/l.cyr"
+stubref l mkb "L: var r: Box<i64> = mkb(5), a stub generic on the struct-receive path"
+
+# O (review) — a `pp: *Pt` parameter is a POINTER: it binds T to i64, like a `var q: *Pt` local,
+# not to the pointee (the parameter loop skips the `*`, so its slot is typed `Pt`). A struct-using
+# generic is then refused by name; an arithmetic one runs the base.
+printf '%s\n%s\nfn h(pp: *Pt): i64 { return g(pp); }\nfn main(): i64 { %s return h(&p); }\nsyscall(60, main());\n' "$PT" "$GL" "$MKP" > "$T/o1.cyr"
+stubref o1 g "O: g(pp) for a \`pp: *Pt\` parameter binds i64"
+printf '%s\nfn f<T>(v: T): i64 { return v + 1; }\nfn h(pp: *Pt): i64 { return f(pp) - pp; }\nfn main(): i64 { %s return h(&p); }\nsyscall(60, main());\n' "$PT" "$MKP" > "$T/o2.cyr"
+exits o2 1 "O: f(pp) - pp for a \`pp: *Pt\` parameter runs the i64 base"
+
+# P (review) — at top level a register-pair INSTANCE result as a struct argument has no frame to
+# land in: refused by name like a plain fn's (the class was read from the 8 B base: SIGSEGV).
+printf '%s\nstruct W1<T> { v: T; }\nfn mkw<T>(x: T): W1<T> { var w: W1<T>; w.v = x; return w; }\nfn w1s(w: W1<Pt>): i64 { return w.v.x + w.v.y * 10; }\nvar gp: Pt = Pt { 2, 5 };\nsyscall(60, w1s(mkw(gp)));\n' "$PT" > "$T/p1.cyr"
+build_refused_by p1 "'mkw' returns a struct by value, and a struct result needs storage in a fn's frame" "P: w1s(mkw(gp)) at top level, a W1<Pt> pair instance"
+
+printf 'fn cnt<T>(n: T, acc: T): T { if (n == 0) { return acc; } return cnt(n - 1, acc + 1); }\nfn main(): i64 { return cnt(20000001, 0) & 127; }\nsyscall(60, main());\n' > "$T/m1.cyr"
+exits m1 1 "M: a 20,000,001-deep scalar generic tail recursion"
+printf '%s\n%s\nfn main(): i64 { return 3; }\nsyscall(60, main());\n' "$PT" "$GL" > "$T/m2.cyr"
+exits m2 3 "M: a stub generic nobody calls with a scalar"
+printf 'include "lib/simd.cyr"\nfn tw<T>(v: T): i64 { return 5; }\nfn tl<T>(v: T): i64 { var s = 0; var i = 0; while (i < 2) { s = s + 1; i = i + 1; } return s + 3; }\nfn main(): i64 { var a: f64v2; return tw(a) + tl(a); }\nsyscall(60, main());\n' > "$T/m3.cyr"
+exits m3 10 "M: a vector local as an inferred argument"
+# ...and it is the BASE call: byte-identical to the explicit `<i64>` spelling. Read as "struct
+# 2093" the inference minted an instance named from out-of-table memory — invisible in the exit
+# code, visible here as a different binary.
+sed 's/tw(a) + tl(a)/tw<i64>(a) + tl<i64>(a)/' "$T/m3.cyr" > "$T/m3x.cyr"
+build m3x
+if [ "$rc" -ne 0 ]; then bad "M: the explicit vector control: rc $rc"
+elif cmp -s "$T/m3.bin" "$T/m3x.bin"; then ok "M: a vector argument infers the base, byte-identical to tw<i64>(a)"
+else bad "M: a vector argument minted an instance (differs from tw<i64>(a))"; fi
+printf '%s\n%s\nfn tail(a): i64 { var p: Pt; p.x = a; p.y = 5; return g(p); }\nfn main(): i64 { %s var r = g(p); return r * 0 + tail(2); }\nsyscall(60, main());\n' "$PT" "$GL" "$MKP" > "$T/m4.cyr"
+exits m4 12 "M: the struct call of the H shapes (var r = g(p); return g(p))"
+printf '%s\n%s\nfn main(): i64 { %s return outer(p); }\n%s\nsyscall(60, main());\n' "$PT" "$OI" "$MKP" "$GL" > "$T/m5.cyr"
+exits m5 14 "M: the struct call of the I shape, reverse order (outer(p) -> g(p))"
+
+printf 'fn idv<T>(a: T): T { return a; }\nfn main(): i64 { var v: f64v2; var a = idv<f64v2>(v); return 42; }\nsyscall(60, main());\n' > "$T/n.cyr"
+build n
+nerr=$(grep -c "generic type-args must be a scalar" "$T/n.err" || true)
+if [ "$rc" -eq 0 ]; then bad "N: var a = idv<f64v2>(v): BUILT (rc 0)"
+elif [ "$nerr" -ne 1 ]; then bad "N: var a = idv<f64v2>(v): the refusal printed $nerr times, want 1"
+else ok "N: var a = idv<f64v2>(v): refused once"; fi
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: generic_type_arg_unknown_refused — $fails axis(es) red"; exit 1; fi
-echo "PASS: generic_type_arg_unknown_refused — a type-arg naming no type is refused by name (A-B); a forwarded type parameter resolves to its binding (C-D); scalar and struct type-args unchanged (E); an enum or an unlisted scalar name is refused by name (F-G)"
+echo "PASS: generic_type_arg_unknown_refused — a type-arg naming no type is refused by name (A-B); a forwarded type parameter resolves to its binding (C-D); scalar and struct type-args unchanged (E); an enum or an unlisted scalar name is refused by name (F-G); a generic using T as a struct is refused at every scalar call, tail call, forwarding generic and &g (H-J, L), two inferred struct type args are refused on every path (K), a \`*Pt\` parameter binds i64 (O), a top-level pair instance argument is refused (P), scalar tail recursion and the struct calls still run (M), and a bad type argument in a receive is reported once (N)"

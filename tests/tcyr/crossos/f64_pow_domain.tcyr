@@ -36,6 +36,14 @@ fn is_nan(v): i64 { if (f64_eq(v, v) == 1) { return 0; } return 1; }
 # this test is about the domain.
 fn pow_i(b, e): i64 { return f64_to(f64_round(f64_pow(b, e))); }
 
+# |ganita_f64_pow(x, y) - want| in ulp, for a positive result.
+fn pw_ulp(x, y, want): i64 {
+    var got = f64_pow(x, y);
+    var d = got - want;
+    if (d < 0) { d = 0 - d; }
+    return d;
+}
+
 fn main(): i64 {
     alloc_init();
     test_group("f64_pow domain (v6.5.30)");
@@ -92,9 +100,11 @@ fn main(): i64 {
     assert_eq(f64_pow(NZ, f64_from(0 - 3)), NINF, "pow(-0, -3) = -inf");
     assert_eq(is_nan(f64_pow(two, NAN_)), 1, "pow(2, NaN) = NaN");
 
-    # Past ganita's integral path (|y| > 1024) pow is exp(y·ln x), so these rows are the
-    # toolchain's exp. On aarch64 the 6.6.7 polyfill wrapped the 2^n exponent pack into the
+    # Before ganita 1.2.8 pow past its integral path (|y| > 1024) was exp(y·ln x), i.e. the
+    # toolchain's exp — on aarch64 the 6.6.7 polyfill wrapped the 2^n exponent pack into the
     # sign bit: pow(2, 1100) was -1.5e-285 and pow(2, -1100) was -2^948 (CHANGELOG [6.6.8]).
+    # Since 1.2.8 (cyrius 6.6.10) every finite case is ganita's own fdlibm e_pow core; the
+    # rows stay as the overflow / underflow contract.
     test_group("f64_pow past the integral path: overflow and underflow, never a wrap");
     assert_eq(f64_pow(two, f64_from(1100)), PINF, "pow(2, 1100) = +inf (aarch64 was -1.5e-285)");
     assert_eq(f64_pow(two, f64_from(0 - 1100)), 0, "pow(2, -1100) = +0 (aarch64 was -2^948)");
@@ -105,6 +115,19 @@ fn main(): i64 {
     var d = p2h - 0x3FF6A09E667F3BCD;
     if (d < 0) { d = 0 - d; }
     assert(d <= 1, "pow(2, 0.5) within 1 ulp of sqrt(2) (aarch64 was 1,007 ulp)");
+
+    # ganita 1.2.8 (cyrius 6.6.10): pow was hundreds of ulp out on BOTH finite paths — exp(y·ln x)
+    # loses ~|y·ln x| ulp, the integral squaring path doubles its error per squaring. The
+    # expected values are correctly rounded (glibc pow, re-checked against an 80-digit decimal
+    # power); the first two rows were the worst of 20,000 inputs to the general path, the next
+    # two the worst of 20,000 to the integral one. ganita's own suite carries 108 such rows.
+    test_group("f64_pow within 1 ulp (ganita 1.2.8's fdlibm e_pow core)");
+    assert(pw_ulp(0x0308A0A9A5132AC5, 0x3FEFA0B5EC6B1DD0, 0x03BF0ADA86288D7D) <= 1, "pow at |y ln x| = 667 (was 909 ulp)");
+    assert(pw_ulp(0x0F8C585F8E8BE3BD, 0xBFF4B8EE996DBB3A, 0x7E997F40E791E3DB) <= 1, "pow at |y ln x| = 695 (was 850 ulp)");
+    assert(pw_ulp(0x3FF0000F1A7307E8, 0xC08CA00000000000, 0x3FEF94A0A62A91F5) <= 1, "pow(1.0000144, -916) (was 772 ulp)");
+    assert(pw_ulp(0x3FF0001A31A55749, 0xC08E700000000000, 0x3FEF3B1698FEAF09) <= 1, "pow(1.000025, -974) (was 699 ulp)");
+    assert_eq(f64_pow(f64_from(3), f64_from(33)), f64_from(5559060566555523), "pow(3, 33) is exact");
+    assert_eq(f64_pow(two, f64_from(0 - 1074)), 1, "pow(2, -1074) is the smallest subnormal");
 
     var r = assert_summary();
     return r;

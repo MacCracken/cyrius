@@ -82,9 +82,11 @@ fn _STR_FROM_NOFF(S): i64 {
 # enclosing `var c0` shadowed by a later closure's `|x|` param became "undefined".
 # Snapshot the enclosing range before the closure and restore it after, so the
 # enclosing fn's locals survive. (n is the enclosing fn's GFLC at the closure site.)
+# 6.6.10: a fifth segment, n BYTES at buf + n*32, carries the untyped-float flags (_lfi_base),
+# so a closure's locals cannot leave the enclosing fn's `-c` warning wrong. CHANGELOG [6.6.10]
 fn _cl_save_locals(S, n): i64 {
     if (n <= 0) { return 0; }
-    var buf = alloc(n * 32);
+    var buf = alloc(n * 33);
     var i = 0;
     while (i < n) {
         S64(buf + i * 8,          L64(S + 0x5D9D000 + i * 8));
@@ -93,6 +95,7 @@ fn _cl_save_locals(S, n): i64 {
         S64(buf + n * 24 + i * 8, L64(S + 0x5DFD000 + i * 8));
         i = i + 1;
     }
+    _cl_lfi_copy(buf + n * 32, _lfi_base, n);
     return buf;
 }
 fn _cl_restore_locals(S, buf, n): i64 {
@@ -105,6 +108,13 @@ fn _cl_restore_locals(S, buf, n): i64 {
         S64(S + 0x5DFD000 + i * 8, L64(buf + n * 24 + i * 8));
         i = i + 1;
     }
+    _cl_lfi_copy(_lfi_base, buf + n * 32, n);
+    return 0;
+}
+fn _cl_lfi_copy(dst, src, n): i64 {
+    if (_lfi_base == 0) { return 0; }
+    var i = 0;
+    while (i < n) { store8(dst + i, load8(src + i)); i = i + 1; }
     return 0;
 }
 
@@ -500,13 +510,73 @@ fn _PE_ROUTE_PERFCOUNTER(S, sc_num, argc): i64 {
 
 # v6.6.8 — the arity each Mach-O PARSE-TIME reroute fires at, or 0 if `n` is not one. `argc`
 # counts the number itself, as the reroute blocks in the syscall() parse do: 228 (clock) and 35
-# (nanosleep, x86 only — arm64 reroutes 35 inside ESYSXLAT at any arity) at 3, and 1700
-# (pthread_create, arm64 only) at 5. MUST mirror those blocks; the Darwin syscall gate probes
-# every in-tree literal site at its real argc through this diagnostic.
+# (nanosleep) at 3, and 1700 (pthread_create, arm64 only) at 5. MUST mirror those blocks; the
+# Darwin syscall gate probes every in-tree literal site at its real argc through this diagnostic.
+# 6.6.10: 35 on BOTH backends. arm64 reroutes it inside ESYSXLAT (EMACHO_NANOSLEEP_ARM), which
+# used to fire at ANY arity — at argc 1 it dereferenced x0 = the number (SIGSEGV, no warning) —
+# and now fires at argc 3 only, so every other arity is SIGSYS, as on x86-macOS and PE.
 fn _macho_reroute_argc(tgt, n): i64 {
     if (n == 228) { return 3; }
-    if (tgt == 1) { if (n == 35) { return 3; } }
+    if (n == 35) { return 3; }
     if (tgt == 2) { if (n == 1700) { return 5; } }
+    return 0;
+}
+
+# 6.6.10 — the MINIMUM arity of the Mach-O pipe emulations, or 0. Darwin pipe returns both fds in
+# registers and the backend stores them through the caller's fds pointer, so a call that passes
+# no pointer (argc 1) has nothing to store through: the backend now emits no row for it
+# (x86 `_msx_short`, arm64 `_esx_short`) and the call is SIGSYS. Before, x86-macOS stored the
+# fds through a STALE rdi — a silent 8-byte write — and arm64-macOS through x0 = 59 (SIGSEGV).
+# pipe is 22 on the x86 peer and pipe2 59 on the aarch64 peer.
+fn _macho_min_argc(tgt, n): i64 {
+    if (tgt == 1) { if (n == 22) { return 2; } }
+    if (tgt == 2) { if (n == 59) { return 2; } }
+    return 0;
+}
+
+# Warns and returns 1 when `sc_num` is below its Mach-O emulation's minimum arity. Its own fn so
+# _macho_warn_unrouted does not grow past cybs's per-function reference limit. CHANGELOG [6.6.10]
+fn _macho_warn_short(sc_num, argc): i64 {
+    var need = _macho_min_argc(_TARGET_MACHO, sc_num);
+    if (need == 0) { return 0; }
+    if (argc >= need) { return 0; }
+    syscall(SYS_WRITE, 2, "warning: syscall ", 17);
+    PRNUM(sc_num);
+    syscall(SYS_WRITE, 2, " not routed at this arity: its Mach-O emulation stores through a pointer argument and this call passes none; it will SIGSYS on macOS. Pass the fds buffer, or use the stdlib wrapper.\n", 182);
+    return 1;
+}
+
+# 6.6.10 — the PE "unrouted literal syscall" warning names the NUMBER and the SITE. It was one
+# 1,471-byte line naming neither, so the warnings left in a PE compiler build could not be
+# attributed to a call. The cursor is past the call's `)`; walk back over the balanced
+# parentheses to its `syscall` token so the site is the call, not the `;` after it. The
+# routed-number list is a note printed ONCE per compile, not once per site.
+var _pe_unrouted_noted = 0;
+fn _pe_warn_unrouted(S, sc_num, argc): i64 {
+    var ti = GTI(S) - 1;
+    var depth = 0;
+    while (ti > 0) {
+        var t = TOKTYP(S, ti);
+        if (t == 11) { depth = depth + 1; }
+        if (t == 10) {
+            depth = depth - 1;
+            if (depth == 0) { break; }
+        }
+        ti = ti - 1;
+    }
+    if (ti > 0) { ti = ti - 1; }
+    syscall(SYS_WRITE, 2, "warning:", 8);
+    _err_head_at(S, ti);
+    syscall(SYS_WRITE, 2, ": syscall ", 10);
+    PRNUM(sc_num);
+    syscall(SYS_WRITE, 2, " with ", 6);
+    PRNUM(argc - 1);
+    syscall(SYS_WRITE, 2, " argument(s) is not routed on CYRIUS_TARGET_WIN=1; it returns -38 (-ENOSYS) on Windows. Guard the call with #ifdef CYRIUS_TARGET_WIN, use the stdlib wrapper, or add a PE reroute.\n", 179);
+    if (_pe_unrouted_noted == 1) { return 0; }
+    _pe_unrouted_noted = 1;
+    syscall(SYS_WRITE, 2,
+      "  note: CYRIUS_TARGET_WIN=1 routes, each at its own arity, n=0,1,2,3,8,9,35,60,74,75,83,87,228 + 0xF001-0xF005 (process creation) + 0xF006 (cmdline) + 0xF007-0xF00A (threading) + 0xF00B-0xF00E (thread-local) + 0xF00F (sleep) + 0xF010-0xF011 (CommandLineToArgvW/LocalFree) + 0xF012 (CreateDXGIFactory1) + 0xF013-0xF015 (GetModuleHandleA/GetProcAddress/GetEnvironmentVariableA) + 0xF016-0xF019 (FindFirstFileW/FindNextFileW/FindClose/GetFileAttributesW) + 0xF01A (ProcessPrng CSPRNG) + 0xF01B (GetSystemTimeAsFileTime) + 0xF01C (GetCurrentProcessId) + 0xF01D (TerminateProcess) + 0xF01E (WSAStartup) + 0xF01F-0xF021 (IOCP: CreateIoCompletionPort/GetQueuedCompletionStatus/PostQueuedCompletionStatus) + 0xF022-0xF02C (ws2_32: WSASocketW/closesocket/WSAGetLastError/bind/getsockopt/WSAIoctl/connect/WSARecv/WSASend/getaddrinfo/freeaddrinfo) + 0xF02D-0xF032 (kernel32/ws2_32: RegisterWaitForSingleObject/CreateWaitableTimerW/SetWaitableTimer/UnregisterWaitEx/CancelIoEx/setsockopt) + 0xF033 (ws2_32: listen) + 0xF034 (kernel32: MoveFileExW) + 0xF035 (kernel32: DeleteFileW) + 0xF036-0xF037 (ws2_32: getpeername/getsockname) + 0xF038-0xF039 (kernel32: QueryPerformanceCounter/QueryPerformanceFrequency) + 0xF03A-0xF03B (kernel32: GetModuleFileNameW/RemoveDirectoryW) + 0xF03D-0xF03F (kernel32: GetFileInformationByHandleEx/CreateSymbolicLinkW/SetEndOfFile) + 0xF040-0xF044 (kernel32: CreateJobObjectW/AssignProcessToJobObject/TerminateJobObject/ResumeThread/SetInformationJobObject).\n",
+      1478);
     return 0;
 }
 
@@ -525,6 +595,8 @@ fn _macho_reroute_argc(tgt, n): i64 {
 fn _macho_warn_unrouted(sc_num, argc): i64 {
     if (sc_num < 0) { return 0; }
     if (_TARGET_MACHO != 1) { if (_TARGET_MACHO != 2) { return 0; } }
+    var shw = _macho_warn_short(sc_num, argc);
+    if (shw == 1) { return 0; }
     var want = _macho_reroute_argc(_TARGET_MACHO, sc_num);
     if (want > 0) {
         if (argc != want) {
@@ -615,6 +687,30 @@ fn _PE_ROUTE_FILEHANDLE(S, sc_num, argc): i64 {
     if (sc_num == 61501) { if (argc == 5) { EGETFINFO_PE(S); return 1; } }
     if (sc_num == 61502) { if (argc == 4) { ESYMLINKW_PE(S); return 1; } }
     if (sc_num == 61503) { if (argc == 2) { ESETEOF_PE(S); return 1; } }
+    # 6.6.10: the Job-object table is reached THROUGH this helper, so the inline chain in
+    # `_PARSE_FACTOR_IMPL` gains no reference (cybs's per-function limit — see
+    # _PE_ROUTE_PERFCOUNTER). Held in a var, not `return f(...)`: cybs miscompiles a tail call.
+    var jb = _PE_ROUTE_JOB(S, sc_num, argc);
+    return jb;
+}
+
+# 6.6.10 — the reroutes behind a Windows process TREE (lib/process_win.cyr, lib/async_win.cyr,
+# cbt's `_win_run_timed`): a child starts CREATE_SUSPENDED, joins a KILL_ON_JOB_CLOSE Job
+# object, then resumes, and a deadline ends the job — before, it could TerminateProcess the
+# direct child only, so a grandchild holding the capture pipe outlived the bound.
+#   0xF040 CreateJobObjectW(attrs, name)             → argc 3
+#   0xF041 AssignProcessToJobObject(job, hProcess)   → argc 3
+#   0xF042 TerminateJobObject(job, code)             → argc 3
+#   0xF043 ResumeThread(hThread)                     → argc 2
+#   0xF044 SetInformationJobObject(job, class, info, len) → argc 5
+# Literal-only, like every 0xF0xx id. The emitters are ECREATEJOB_PE … ESETJOBINFO_PE
+# (x86/emit.cyr; stubs on the aarch64 and cx backends). CHANGELOG [6.6.10]
+fn _PE_ROUTE_JOB(S, sc_num, argc): i64 {
+    if (sc_num == 61504) { if (argc == 3) { ECREATEJOB_PE(S); return 1; } }
+    if (sc_num == 61505) { if (argc == 3) { EASSIGNJOB_PE(S); return 1; } }
+    if (sc_num == 61506) { if (argc == 3) { ETERMJOB_PE(S); return 1; } }
+    if (sc_num == 61507) { if (argc == 2) { ERESUMETHREAD_PE(S); return 1; } }
+    if (sc_num == 61508) { if (argc == 5) { ESETJOBINFO_PE(S); return 1; } }
     return 0;
 }
 
@@ -624,6 +720,147 @@ fn _PE_ROUTE_FILEHANDLE(S, sc_num, argc): i64 {
 # operand descends straight back into this tier. Guarding PEXPR/PARSE_TERM/PARSE_FACTOR
 # together covers the whole expression ladder named in this file's header comment.
 # See _rd_enter (src/common/util.cyr).
+# 6.6.10 — WHAT `await e` YIELDS INSIDE A COROUTINE. The suspend used to keep nothing: the
+# operand was evaluated, the state stamped, and at the landing rax held whatever the resume
+# dispatch left there — C[state], the suspend INDEX. `var s = await five();` x3 returned 123 for
+# 555, and `var v = await inner(a);` never ran inner's body at all.
+# The operand now goes to a coroutine-frame word (which survives the suspend) and the landing
+# reloads it. What the landing does with it depends on the operand's SHAPE:
+#   * a call to an `async fn` (`await inner(a)`), or a bare variable (`await F` — the operand of
+#     `await` is a Future by definition, as it is outside a coroutine): FORCE it with
+#     future_force, and while it is a coroutine Future that has not completed (future_pending),
+#     suspend again at the same point, so a nested coroutine is driven to its value;
+#   * anything else — a call to a plain fn, the park idiom `await async_wait_fd(rt, fd)`: the
+#     operand's own value.
+# Pass 1 marks every `async fn` (`_prescan_fn_sig`), so a callee defined later still classifies.
+# The shape test looks through balanced enclosing parentheses: `await (inner(a))` is the same
+# operand as `await inner(a)` and forces too (it yielded the raw Future pointer). Any OTHER road
+# to a Future — a field, `vec_get`, an index — is "anything else": bind it to a variable first.
+fn _await_operand_is_future(S, ti0): i64 {
+    var te = GTI(S);
+    while (_await_paren_wraps(S, ti0, te) == 1) {
+        ti0 = ti0 + 1;
+        te = te - 1;
+    }
+    if (TOKTYP(S, ti0) != 2) { return 0; }
+    if (te == ti0 + 1) { return 1; }                      # a bare variable
+    if (TOKTYP(S, ti0 + 1) != 10) { return 0; }           # not `name(`
+    if (TOKTYP(S, te - 1) != 11) { return 0; }            # the factor is more than the call
+    if (_await_paren_wraps(S, ti0 + 1, te) == 0) { return 0; }   # `f(a)(b)`, `f(a).x`
+    var fi = FINDFN(S, TOKVAL(S, ti0));
+    if (fi < 0) { return 0; }
+    return GFAS(S, fi);
+}
+# 1 when the token at `ti` is a `(` whose matching `)` is the last token before `te`.
+fn _await_paren_wraps(S, ti, te): i64 {
+    if (te - ti < 2) { return 0; }
+    if (TOKTYP(S, ti) != 10) { return 0; }
+    var depth = 0;
+    var i = ti;
+    while (i < te) {
+        var t = TOKTYP(S, i);
+        if (t == 10) { depth = depth + 1; }
+        if (t == 11) {
+            depth = depth - 1;
+            if (depth == 0) {
+                if (i == te - 1) { return 1; }
+                return 0;
+            }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+# The suspend and its landing. rax = the operand on entry; rax = the `await` value on exit.
+# ⛔ THE EXPRESSION STACK DOES NOT SURVIVE A SUSPEND. The suspend returns through the fn end and
+# the resume re-enters from the top, so every word the enclosing expression had pushed before
+# the await was reached — `b` in `b + await f()`, `1000` in `add(1000, await f())`, the address
+# in `store64(m + 8, await f())` — was gone at the landing, and the parser's pending pop took
+# whatever sat at the new rsp: `b + await five()` gave 5, and the store64 form SIGSEGV'd.
+# `_xdepth` is exact on the x86 family, the only one with a coroutine frame (parse_fn.cyr
+# refuses aarch64 and cx), so those `_xdepth` words are popped into coroutine-frame words
+# before the suspend and pushed back, in order, at the landing. CHANGELOG [6.6.10]
+fn _await_coro_suspend(S, sk, fut): i64 {
+    var ff = 0;
+    var fpend = 0;
+    if (fut == 1) {
+        ff = _FINDFN_CSTR(S, "future_force", 12);
+        fpend = _FINDFN_CSTR(S, "future_pending", 14);
+        if (ff < 0 || fpend < 0) {
+            ERR_MSG(S, "await needs include \"lib/async.cyr\" for future_force and future_pending", 71);
+            return 0;
+        }
+    }
+    var slot = _HTEMP(S);                 # a coroutine-frame word: it survives the suspend
+    EFLSTORE(S, slot);
+    var d = _xdepth;                      # the enclosing expression's pending pushes
+    var s0 = _await_spill(S, d);
+    EFLLOAD(S, _coro_base);               # rax = C (slot < _coro_lo: the stack path)
+    EADDRA_IMM(S, _CORO_STATE_OFF);
+    EPUSHR(S);
+    EMOVI(S, sk);
+    EPOPC(S);
+    ESTORE64(S);                          # C[state] = sk
+    var again = GCP(S);                   # a still-pending coroutine Future suspends from here
+    EMOVI(S, 0);                          # a suspended task returns 0
+    _coro_suspend_jmp(S, sk);             # jump to the fn end, past the defer walker (6.6.7)
+    S64(&_coro_rcp + sk * 8, GCP(S));     # the resume label for state sk
+    _coro_nsusp = sk;
+    var vslot = slot;
+    if (fut == 1) { vslot = _await_coro_force(S, slot, ff, fpend, again); }
+    _await_unspill(S, s0, d);
+    EFLLOAD(S, vslot);
+    return 0;
+}
+# Pop `d` pending expression words into consecutive fresh coroutine-frame words (top of stack
+# first); returns the first word's slot. The landing's `_await_unspill` pushes them back.
+fn _await_spill(S, d): i64 {
+    var s0 = 0;
+    var i = 0;
+    while (i < d) {
+        var s = _HTEMP(S);
+        if (i == 0) { s0 = s; }
+        EPOPR(S);
+        EFLSTORE(S, s);
+        i = i + 1;
+    }
+    return s0;
+}
+fn _await_unspill(S, s0, d): i64 {
+    var i = d;
+    while (i > 0) {
+        i = i - 1;
+        EFLLOAD(S, s0 + i);
+        EPUSHR(S);
+    }
+    return 0;
+}
+# The landing of a Future operand: force it, and while it is a coroutine Future that has not
+# completed, suspend again from `again`. Returns the slot holding the forced value.
+fn _await_coro_force(S, slot, ff, fpend, again): i64 {
+    EFLLOAD(S, slot);
+    _await_call1(S, ff);                  # rax = future_force(operand)
+    var vslot = _HTEMP(S);
+    EFLSTORE(S, vslot);
+    EFLLOAD(S, slot);
+    _await_call1(S, fpend);               # rax = future_pending(operand)
+    EPUSHR(S);
+    EMOVI(S, 0);
+    EPOPC(S);
+    ECMPR(S);
+    var done = EJCC(S, 0x84);             # je -> completed
+    EJMP(S, again);
+    EPATCH(S, done);
+    return vslot;
+}
+fn _await_call1(S, fi): i64 {
+    EPUSHR(S);
+    ECALLPOPS(S, 1);
+    ECALLFIX(S, fi);
+    ECALLCLEAN(S, 1);
+    return 0;
+}
+
 fn PARSE_FACTOR(S): i64 {
     _rd_enter(S);
     var _xd0 = _xdepth;
@@ -655,11 +892,12 @@ fn _NEG_F32(S): i64 {
 }
 
 # _NEG_INTRIN_KIND — 1 when token `t` is a builtin whose RESULT is a scalar f64, 2 when it is
-# a scalar f32 bit pattern, else 0. Unary minus reads it BEFORE parsing its operand: those
-# builtins inherit their ARGUMENT's estype (the i64-boxed idiom leaves it 0), so GESTYPE
-# alone negated `-f64_exp(u)` as an integer (-4.0 for -1.0). The compiler knows these calls
-# return a float, whatever the argument was typed. f64_to/eq/lt/gt return integers and are
-# absent. Kept a flat compare chain: cybs compiles this file. CHANGELOG [6.6.8]
+# a scalar f32 bit pattern, else 0. Those builtins inherit their ARGUMENT's estype (the
+# i64-boxed idiom leaves it 0), so GESTYPE alone negated `-f64_exp(u)` as an integer (-4.0 for
+# -1.0). The compiler knows these calls return a float, whatever the argument was typed.
+# f64_to/eq/lt/gt return integers and are absent. Since 6.6.10 it drives the float-builtin
+# RESULT flag (PARSE_INTRIN, _FBR_MARK), which unary minus reads through _FBR_ST.
+# Kept a flat compare chain: cybs compiles this file. CHANGELOG [6.6.8] [6.6.10]
 fn _NEG_INTRIN_KIND(t): i64 {
     if (t >= 62) { if (t <= 66) { return 1; } }     # f64_add/sub/mul/div, f64_from
     if (t == 71) { return 1; }                       # f64_neg
@@ -676,12 +914,197 @@ fn _NEG_INTRIN_KIND(t): i64 {
     return 0;
 }
 
+# ⛔ 6.6.10 — THE FLOAT-BUILTIN RESULT FLAG (option D). A float-returning builtin left the
+# estype of its LAST ARGUMENT (0 under the i64-boxed idiom), so every `+ - * /` on its result
+# took the INTEGER arm, silently: `f64_sqrt(u) * f64_sqrt(u)` was 0, `f64_sin(0) - f64_cos(0)`
+# was -4.0, `f64_mul(u, v) / v` was 1, and `f64_add(p, u) * 2.0` differed from
+# `f64_add(u, p) * 2.0` because the argument ORDER leaked the type.
+# The result is marked instead of typed: `_fbr_k` (1 = f64, 2 = f32) stamped with the code
+# pointer and token index at the end of the call. It reads as valid (_FBR_KIND) only while
+# NOTHING has been emitted or consumed since — so it survives a parenthesised factor (whose
+# `)` re-stamps the token index) and unary minus (which re-marks), and dies at any other
+# operator. The `+ - * /` arms read their LEFT operand through _FBR_ST, the kind-1 check its
+# RIGHT operand, and the kind-2 check (_INT_F64_MIX) the right operand captured by _RHS_F /
+# _RHS_T before the integer op is emitted.
+# ⚠ WHY NOT TYPE THE RESULT F64 (option A): that also turns ORDERED and equality compares of
+# builtin results into float compares, and 41 ecosystem sites compare those bit patterns on
+# purpose (hex constants, hisab's -0 check, ganita's `f64_floor(v) == v`) — NaN and ±0 would
+# change meaning. So a builtin-vs-builtin `<` stays an INTEGER compare (wrong for negative
+# values); the guide says so. A leaked argument estype that is not the builtin's own float
+# type is dropped (a struct id there dispatched an operator overload; an f32 one an f32 op).
+# Kind 3 is the untyped-float-variable load marker (_UFV_*), which types nothing: it only
+# lets unary minus warn. CHANGELOG [6.6.10]
+var _fbr_k = 0;
+var _fbr_cp = 0;
+var _fbr_ti = 0;
+var _fbr_rhs = 0;
+fn _FBR_MARK(S, k): i64 {
+    if (k == 1) { if (GESTYPE(S) != F64_TYID) { SESTYPE(S, 0); } }
+    if (k == 2) { if (GESTYPE(S) != F32_TYID) { SESTYPE(S, 0); } }
+    _fbr_k = k;
+    _fbr_cp = GCP(S);
+    _fbr_ti = GTI(S);
+    return 0;
+}
+fn _FBR_KIND(S): i64 {
+    if (_fbr_k == 0) { return 0; }
+    if (GCP(S) != _fbr_cp) { return 0; }
+    if (GTI(S) != _fbr_ti) { return 0; }
+    return _fbr_k;
+}
+# The operand's effective type: its estype, else the builtin-result flag's.
+fn _FBR_ST(S): i64 {
+    var t = GESTYPE(S);
+    if (t != 0) { return t; }
+    var k = _FBR_KIND(S);
+    if (k == 1) { return F64_TYID; }
+    if (k == 2) { return F32_TYID; }
+    return 0;
+}
+# The integer arms' right operand: parse it, then capture the flag BEFORE the op is emitted.
+fn _RHS_F(S): i64 { PARSE_FACTOR(S); _fbr_rhs = _FBR_KIND(S); return 0; }
+fn _RHS_T(S): i64 { PARSE_TERM(S); _fbr_rhs = _FBR_KIND(S); return 0; }
+
+# ⛔ 6.6.10 — UNARY MINUS ON AN UNTYPED FLOAT VARIABLE. `var c = 1.5; -c` is an INTEGER
+# negation of 1.5's bits (-3.0; `-z` of 0.0 is +0, `-n` of -2.5 is 1.75), silent, because an
+# untyped var is i64-boxed (ADR-002) and nothing recorded what initialised it. WARN, the
+# roadmap's agreed posture: inferring f64 would change what existing code computes.
+# One byte per slot: `_lfi_base` for locals (cleared as SFLC hands a slot out, so a param or a
+# later fn never inherits a stale flag; saved/restored with the closure local snapshot) and
+# `_gfi_base` for globals (lazily alloc'd at the var table's hard cap — the `_var_dead`
+# precedent; never on the cybs-fragile `_grow_g*` chain). Set on EVERY declaration: 1 when
+# the initialiser was a float (a float literal, an f64/f32 value, a float builtin, or another
+# such variable), else 0. A load of a flagged variable marks kind 3. CHANGELOG [6.6.10]
+fn _UFV_L(S, li): i64 {
+    if (_lfi_base == 0) { return 0; }
+    if (li < 0) { return 0; }
+    if (li >= 16384) { return 0; }
+    if (load8(_lfi_base + li) == 1) { _FBR_MARK(S, 3); }
+    return 0;
+}
+fn _UFV_G(S, vi): i64 {
+    if (_gfi_base == 0) { return 0; }
+    if (vi < 0) { return 0; }
+    if (load8(_gfi_base + vi) == 1) { _FBR_MARK(S, 3); }
+    return 0;
+}
+# 1 when the expression just parsed is a float (the local-declaration test).
+fn _UFV_IS_FLOAT(S): i64 {
+    var t = GESTYPE(S);
+    if (t == F64_TYID) { return 1; }
+    if (t == F32_TYID) { return 1; }
+    if (_FBR_KIND(S) != 0) { return 1; }
+    return 0;
+}
+
+# ⛔ 6.6.10 — AN INTEGER STORED INTO AN f64 / f32 SLOT keeps its integer BITS: `var t: f64 = 1;`,
+# `t = 1;`, `p.x = 1;` and `P { 1, 2 }` store 0x1, a subnormal, silently. WARN (ADR-002: a
+# conversion would change existing code). Only a compile-time integer CONSTANT is judged — a
+# literal, a negated literal or an enum constant, spanning the whole initialiser `[ti, end)` —
+# because a runtime untyped value is the legal i64-boxed float idiom (`var x: f64 = load64(p)`
+# is everywhere). 0 is exempt (its bits ARE 0.0), and so is |v| >= 2^52: an IEEE bit pattern
+# written in hex (0x3FF0000000000000) is never below 2^52 unless it is a subnormal, while an
+# integer COUNT essentially always is. `k` is the slot's float type (0 = not a float slot).
+fn _ic_val_ok(v): i64 {
+    if (v == 0) { return 0; }
+    if (v < 0) { v = 0 - v; }
+    if (v <= 0) { return 0; }
+    if (v >= 0x10000000000000) { return 0; }
+    return 1;
+}
+fn _IFS_SPAN(S, ti, end): i64 {
+    var n = end - ti;
+    if (n == 2) {
+        if (TOKTYP(S, ti) != 7) { return 0; }
+        if (TOKTYP(S, ti + 1) != 1) { return 0; }
+        return _ic_val_ok(TOKVAL(S, ti + 1));
+    }
+    if (n != 1) { return 0; }
+    var t = TOKTYP(S, ti);
+    if (t == 1) { return _ic_val_ok(TOKVAL(S, ti)); }
+    if (t != 2) { return 0; }
+    if (GINFN(S) == 1) { if (FINDLOCAL(S, TOKVAL(S, ti)) >= 0) { return 0; } }
+    # _findvar_core, not FINDVAR: a warning heuristic must not raise FINDVAR's `private`
+    # refusal — it also runs at global REGISTRATION (_gv_ifs), where that is an accusation.
+    var vi = _findvar_core(S, TOKVAL(S, ti));
+    if (vi < 0) { return 0; }
+    if (GVECP(S, vi) != 1) { return 0; }
+    return _ic_val_ok(L64(_vecv_base + vi * 8));
+}
+fn _IFS_CHECK(S, k, ti): i64 {
+    if (k == 0) { return 0; }
+    if (ti < 0) { return 0; }
+    if (_IFS_SPAN(S, ti, GTI(S)) == 1) { _FLT_TYPE_WARN(S, 4); }
+    return 0;
+}
+# A slot type (F64_TYID / F32_TYID / anything) as a float kind for _IFS_CHECK.
+fn _IFS_K(t): i64 {
+    if (t == F64_TYID) { return 1; }
+    if (t == F32_TYID) { return 2; }
+    return 0;
+}
+
+# v6.3.10 (explicit): `foo<i64>(x)` / `foo<Pt>(p)` — cursor on the `<`. Out of
+# `_PARSE_FACTOR_IMPL` since 6.6.10: that body is near cybs's per-function reference limit, and
+# this path grew the stub refusal.
+# ⛔ 6.6.10 — `_ta_explicit` tells the PARSE_FNCALL below not to re-infer, and a stub generic
+# (it uses T as a struct) is refused by name for ANY scalar type argument: `g<i64>(5)` ran the
+# `rax = 0` stub silently, and `g<i32>(5)` minted an instance that failed with "no struct type
+# in scope for 'p'". A forwarded `inner<T>` in a base emission never gets here with a stub
+# callee: the enclosing generic is a (transitive) stub itself, so its base body is skipped —
+# which retired 6.6.8's `_call_forwarded_base` (a base call with the inline replay suppressed at
+# depth 0, which existed only to keep that replay out of such a base). CHANGELOG [6.6.10]
+fn _explicit_generic_call(S, noff, fi): i64 {
+    STI(S, GTI(S) + 1);                 # consume `<`
+    _ta_pending_gt = 0;
+    # v6.3.33: parse conc0 [, conc1] via _parse_one_type_arg (nested
+    # type-args instantiate → their instance sid; `>>` tail handled).
+    var _ta_conc = _parse_one_type_arg(S);
+    var _ta_conc1 = 0;
+    if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); _ta_conc1 = _parse_one_type_arg(S); }  # `,`
+    _consume_gt(S);                     # consume the closing `>` (or `>>` tail)
+    # Call the base (the all-i64 instance) only when EVERY arg is i64.
+    var _ta_do = 0;
+    if (_ta_conc != 0 - 8) { _ta_do = 1; }
+    if (_ta_conc1 != 0 && _ta_conc1 != 0 - 8) { _ta_do = 1; }
+    # A stub generic with a scalar type argument: route it to the base call, whose head refuses it.
+    if (_ta_conc < 0 && _ta_conc1 <= 0) { if (_gen_stub(S, fi) != 0) { _ta_do = 0; } }
+    if (_ta_do == 0) {
+        _ta_explicit = 1;               # set right before the call that reads it (see below)
+        PARSE_FNCALL(S, noff);          # all-i64: call the base
+        return 0;
+    }
+    # non-i64: monomorphize on demand + call the specialized fn.
+    var _spec = _instantiate_generic_fn(S, fi, _ta_conc, _ta_conc1);
+    if (_spec == 0 - 2) {
+        ERR_MSG(S, "non-i64 generic fns with parameters: instantiate-once param re-emission is a follow-on bite", 91);
+    }
+    if (_spec == 0 - 3) {
+        ERR_MSG(S, "generic fns with STRUCT type-arguments are a follow-on (monomorphized struct-ABI); use a generic struct or scalar type-args", 123);
+    }
+    # ⛔ 6.6.5 — `_spec` is -2 / -3 on the two error paths above,
+    # and `_fnt_names + _spec * 8` read 16/24 bytes BEFORE the
+    # table: an out-of-bounds load whose garbage was then parsed
+    # as a name, which is where the nonsense
+    # "undefined function 'enum'" came from. ERR_MSG does not
+    # exit (the multi-error contract), so the guard has to be
+    # here. Arguments are still consumed, by PARSE_FNCALL on the
+    # base name, so the parse stays in sync. CHANGELOG [6.6.5]
+    # ⚠ `_ta_explicit` is set only NOW: the instance body just emitted makes calls of its own,
+    # and the first of them would have taken the flag as its own and skipped its inference.
+    _ta_explicit = 1;
+    if (_spec >= 0) { PARSE_FNCALL(S, L64(_fnt_names + _spec * 8)); }
+    else { PARSE_FNCALL(S, noff); }
+    return 0;
+}
+
 fn _PARSE_FACTOR_IMPL(S): i64 {
     var typ = PEEKT(S);
     SPSC(S, 0);
     SESTYPE(S, 0);
     SESVAR(S, 0 - 1);
     SEXW(S, 0);
+    _fbr_k = 0;   # 6.6.10: a new factor's value is not the last builtin's (see _FBR_MARK)
     # v6.4.83 — the RIGHT-operand half of the intrinsic-flanking fix. PARSE_TERM's
     # `* / % << >> >>>` loop parses its right operand with PARSE_FACTOR, one tier DOWN
     # from where the intrinsics were dispatched, so `a * f64_from(2)` was a syntax
@@ -707,18 +1130,17 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         # +0 and `-x` on an f64 likewise, on every target. The operand's type is known only
         # after it is parsed, so the integer prologue is shared and a float operand discards
         # its pushed 0 (EF64_NEG is exact for every value, -0.0 and NaN included). CHANGELOG [6.6.8]
-        # A float-returning BUILTIN is recognised by its token, read before the operand is
-        # consumed (its estype is its argument's — see _NEG_INTRIN_KIND); its estype is left
-        # as the builtin set it.
-        var _ngk = _NEG_INTRIN_KIND(PEEKT(S));
+        # A float-returning BUILTIN is recognised through the result flag (_FBR_ST), which also
+        # reaches one inside parentheses (`-(f64_sqrt(v))` negated the integer until 6.6.10); the
+        # negation re-marks it, so `-f64_sqrt(u) * 2.0` is still a float multiply. An untyped
+        # variable that holds a float (kind 3) is negated as an integer and WARNS. CHANGELOG [6.6.10]
         EMOVI(S, 0);
         EPUSHR(S);
         PARSE_FACTOR(S);
-        if (_ngk == 1) { EPOPC(S); EF64_NEG(S); _cfo = 0; return 0; }
-        if (_ngk == 2) { _NEG_F32(S); _cfo = 0; return 0; }
-        var _ngt = GESTYPE(S);
-        if (_ngt == F64_TYID) { EPOPC(S); EF64_NEG(S); _cfo = 0; return 0; }
-        if (_ngt == F32_TYID) { _NEG_F32(S); SESTYPE(S, F32_TYID); _cfo = 0; return 0; }
+        var _ngt = _FBR_ST(S);
+        if (_ngt == F64_TYID) { EPOPC(S); EF64_NEG(S); _FBR_MARK(S, 1); _cfo = 0; return 0; }
+        if (_ngt == F32_TYID) { _NEG_F32(S); _FBR_MARK(S, 2); _cfo = 0; return 0; }
+        if (_FBR_KIND(S) == 3) { _FLT_TYPE_WARN(S, 3); }
         EMOVCA(S);
         EPOPR(S);
         ESUBR(S);
@@ -845,42 +1267,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                 var _eta_fi = FINDFN(S, noff);
                 if (_eta_fi >= 0) { if (GFTP(S, _eta_fi) != 0) {
                         if (LOOKAHEAD_IS_TYPE_ARG_CALL(S) == 1) {
-                            STI(S, GTI(S) + 1);                 # consume `<`
-                            _ta_pending_gt = 0;
-                            _ta_fwd = 0;
-                            # v6.3.33: parse conc0 [, conc1] via _parse_one_type_arg (nested
-                            # type-args instantiate → their instance sid; `>>` tail handled).
-                            var _ta_conc = _parse_one_type_arg(S);
-                            var _ta_conc1 = 0;
-                            if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); _ta_conc1 = _parse_one_type_arg(S); }  # `,`
-                            _consume_gt(S);                     # consume the closing `>` (or `>>` tail)
-                            # Call the base (the all-i64 instance) only when EVERY arg is i64.
-                            var _ta_do = 0;
-                            if (_ta_conc != 0 - 8) { _ta_do = 1; }
-                            if (_ta_conc1 != 0 && _ta_conc1 != 0 - 8) { _ta_do = 1; }
-                            if (_ta_do == 0) {
-                                if (_ta_fwd == 1) { _call_forwarded_base(S, noff, _eta_fi); }
-                                else { PARSE_FNCALL(S, noff); }   # all-i64: call the base
-                            } else {
-                                # non-i64: monomorphize on demand + call the specialized fn.
-                                var _spec = _instantiate_generic_fn(S, _eta_fi, _ta_conc, _ta_conc1);
-                                if (_spec == 0 - 2) {
-                                    ERR_MSG(S, "non-i64 generic fns with parameters: instantiate-once param re-emission is a follow-on bite", 91);
-                                }
-                                if (_spec == 0 - 3) {
-                                    ERR_MSG(S, "generic fns with STRUCT type-arguments are a follow-on (monomorphized struct-ABI); use a generic struct or scalar type-args", 123);
-                                }
-                                # ⛔ 6.6.5 — `_spec` is -2 / -3 on the two error paths above,
-                                # and `_fnt_names + _spec * 8` read 16/24 bytes BEFORE the
-                                # table: an out-of-bounds load whose garbage was then parsed
-                                # as a name, which is where the nonsense
-                                # "undefined function 'enum'" came from. ERR_MSG does not
-                                # exit (the multi-error contract), so the guard has to be
-                                # here. Arguments are still consumed, by PARSE_FNCALL on the
-                                # base name, so the parse stays in sync. CHANGELOG [6.6.5]
-                                if (_spec >= 0) { PARSE_FNCALL(S, L64(_fnt_names + _spec * 8)); }
-                                else { PARSE_FNCALL(S, noff); }
-                            }
+                            _explicit_generic_call(S, noff, _eta_fi);
                             _cfo = 0;
                             return 0;
                         }
@@ -1039,6 +1426,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                             if (AGG_NSLOTS(S, lt) > 1) { SESVAR(S, 0 - 2 - li); }
                         } } }
                 EFLLOAD(S, li);
+                if (lt == 0) { _UFV_L(S, li); }   # 6.6.10: an untyped float variable (kind 3)
                 return 0;
             }
         }
@@ -1125,13 +1513,16 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             }
         }
         EVLOAD(S, idx);
+        if (vt == 0) { _UFV_G(S, idx); }   # 6.6.10: an untyped float variable (kind 3)
         return 0;
     }
     if (typ == 10) {
         STI(S, GTI(S) + 1);
         PCMPE(S);
         if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
+        var _pfk = _FBR_KIND(S);
         STI(S, GTI(S) + 1);
+        if (_pfk != 0) { _fbr_ti = GTI(S); }   # 6.6.10: `(builtin(..))` is still its result
         _cfo = 0;
         return 0;
     }
@@ -1217,6 +1608,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             # v6.6.4: `&fn` is its own resolution path — a private fn was reachable from any
             # file by taking its address and calling through callptr/fncallN (hisab 2026-09-13).
             _vis_check(S, fni, anoff);
+            _gen_addr_check(S, fni, anoff);   # 6.6.10: `&g` of a stub generic reaches the stub
             var fc = GFCNT(S);
             if (fc >= 1048576) {
                 syscall(SYS_WRITE, 2, "error: fixup table full (1048576)\n", 34);
@@ -2106,9 +2498,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             # Others crash; gate with `#ifdef CYRIUS_TARGET_WIN`
             # at the call site, or file an upstream issue for a
             # new PE reroute.
-            syscall(SYS_WRITE, 2,
-              "warning: syscall(n, ...) on CYRIUS_TARGET_WIN=1 routes n=0,1,2,3,8,9,35,60,74,75,83,87,228 + 0xF001-0xF005 (process creation) + 0xF006 (cmdline) + 0xF007-0xF00A (threading) + 0xF00B-0xF00E (thread-local) + 0xF00F (sleep) + 0xF010-0xF011 (CommandLineToArgvW/LocalFree) + 0xF012 (CreateDXGIFactory1) + 0xF013-0xF015 (GetModuleHandleA/GetProcAddress/GetEnvironmentVariableA) + 0xF016-0xF019 (FindFirstFileW/FindNextFileW/FindClose/GetFileAttributesW) + 0xF01A (ProcessPrng CSPRNG) + 0xF01B (GetSystemTimeAsFileTime) + 0xF01C (GetCurrentProcessId) + 0xF01D (TerminateProcess) + 0xF01E (WSAStartup) + 0xF01F-0xF021 (IOCP: CreateIoCompletionPort/GetQueuedCompletionStatus/PostQueuedCompletionStatus) + 0xF022-0xF02C (ws2_32: WSASocketW/closesocket/WSAGetLastError/bind/getsockopt/WSAIoctl/connect/WSARecv/WSASend/getaddrinfo/freeaddrinfo) + 0xF02D-0xF032 (kernel32/ws2_32: RegisterWaitForSingleObject/CreateWaitableTimerW/SetWaitableTimer/UnregisterWaitEx/CancelIoEx/setsockopt) + 0xF033 (ws2_32: listen) + 0xF034 (kernel32: MoveFileExW) + 0xF035 (kernel32: DeleteFileW) + 0xF036-0xF037 (ws2_32: getpeername/getsockname) + 0xF038-0xF039 (kernel32: QueryPerformanceCounter/QueryPerformanceFrequency) + 0xF03A-0xF03B (kernel32: GetModuleFileNameW/RemoveDirectoryW) + 0xF03D-0xF03F (kernel32: GetFileInformationByHandleEx/CreateSymbolicLinkW/SetEndOfFile) today; others return -38/-ENOSYS on Windows (v6.5.25; before that they CRASHED with STATUS_ILLEGAL_INSTRUCTION 0xC000001D).\n",
-              1471);
+            _pe_warn_unrouted(S, sc_num, argc);   # 6.6.10: names n, its arity and the call site
             # v6.5.25 — DEGRADE HONESTLY INSTEAD OF FALLING THROUGH TO `0F 05`.
             #
             # A LITERAL unrouted syscall number used to warn and then emit a raw Linux
@@ -2188,6 +2578,12 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                         # called with 2 user args, so the structural match
                         # is unambiguous (same logic as the SYS_OPEN skip).
                         if (sc_num == 113) { if (got == 2) { skip_warn = 1; } }
+                        # 6.6.10: Darwin's kill is kill(pid, sig, posix). lib's sys_kill passes
+                        # posix = 0 explicitly on macOS (a stale third register made kill(-pgid)
+                        # answer EPERM or ESRCH at random), and this Linux table then warned on
+                        # every x86-macOS build. Linux kill never takes 3 user args, so the
+                        # structural match is unambiguous (the 113 shape). CHANGELOG [6.6.10]
+                        if (sc_num == 62) { if (got == 3) { skip_warn = 1; } }
                         # v6.0.48: agnos uses NATIVE syscall numbers (0-33) that
                         # collide with Linux numbers at different arities (agnos
                         # getpid=2 vs Linux open=2/3-args; agnos exit=0 vs Linux
@@ -2326,21 +2722,16 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         # object, and return through the shared epilogue. The landing pad recorded here is
         # where the fn-end dispatch will send the next entry. CHANGELOG [6.5.69]
         if (_cur_fn_coro == 1) {
+            var _aw_ti = GTI(S);
             PARSE_FACTOR(S);                      # evaluate the operand
             var _sk = _coro_nsusp + 1;
             if (_sk >= _CORO_MAX_SUSP) {
+                # ERR_MSG returns (multi-error, v6.4.62), so the cap must stop here itself: the
+                # stores below indexed _coro_rcp past its bound. CHANGELOG [6.6.10]
                 ERR_MSG(S, "too many `await` suspend points in one `async fn` (max 63)", 58);
+                return 0;
             }
-            EFLLOAD(S, _coro_base);               # rax = C (slot < _coro_lo: the stack path)
-            EADDRA_IMM(S, _CORO_STATE_OFF);
-            EPUSHR(S);
-            EMOVI(S, _sk);
-            EPOPC(S);
-            ESTORE64(S);                          # C[state] = _sk
-            EMOVI(S, 0);                          # a suspended task returns 0
-            _coro_suspend_jmp(S, _sk);            # jump to the fn end, past the defer walker (6.6.7)
-            S64(&_coro_rcp + _sk * 8, GCP(S));    # the resume label for state _sk
-            _coro_nsusp = _sk;
+            _await_coro_suspend(S, _sk, _await_operand_is_future(S, _aw_ti));
             return 0;
         }
         var _aw_ff = _FINDFN_CSTR(S, "future_force", 12);
@@ -3263,7 +3654,19 @@ fn _PARSE_F64V4_UNARY(S, op): i64 {
     return 1;
 }
 
+# 6.6.10 — every builtin dispatch goes through here, so the float-builtin RESULT flag is
+# cleared for any other intrinsic and set for a float-returning one (_NEG_INTRIN_KIND), in
+# ONE place for both tiers that dispatch intrinsics. See _FBR_MARK. CHANGELOG [6.6.10]
 fn PARSE_INTRIN(S, ptyp): i64 {
+    _fbr_k = 0;
+    var r = _PARSE_INTRIN_IMPL(S, ptyp);
+    if (r != 1) { return r; }
+    var k = _NEG_INTRIN_KIND(ptyp);
+    if (k != 0) { _FBR_MARK(S, k); }
+    return r;
+}
+
+fn _PARSE_INTRIN_IMPL(S, ptyp): i64 {
     if (ptyp >= 93) { if (ptyp <= 99) { PARSE_SIMD_EXT(S, ptyp); return 1; } }
     if (ptyp >= 100) { if (ptyp <= 104) { PARSE_SIMD_EXT(S, ptyp); return 1; } }
     # v5.10.17 — f64v_dot/scale/axpy
@@ -3594,9 +3997,9 @@ fn _PARSE_TERM_IMPL(S): i64 {
         # 2's-complement). Collapse the token ID.
         if (typ == 119) { typ = 8; }
         if (typ == 8) {
-            var mulst = GESTYPE(S);
+            var mulst = _FBR_ST(S);   # 6.6.10: a float builtin's result is a float left operand
             STI(S, GTI(S) + 1);
-            if (mulst == F64_TYID) { ESPILL(S); PARSE_FACTOR(S); if (GESTYPE(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } EMIT_F64_BINOP(S, 2); SESTYPE(S, F64_TYID); _cfo = 0; }
+            if (mulst == F64_TYID) { ESPILL(S); PARSE_FACTOR(S); if (_FBR_ST(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } EMIT_F64_BINOP(S, 2); SESTYPE(S, F64_TYID); _cfo = 0; }
             elif (mulst == F32_TYID) { ESPILL(S); PARSE_FACTOR(S); EMIT_F32_BINOP(S, 2); SESTYPE(S, F32_TYID); _cfo = 0; }
             elif (mulst > 0) { EMIT_OP_DISPATCH(S, mulst, "mul", 3, _tbeg); _cfo = 0; }
             else {
@@ -3621,14 +4024,14 @@ fn _PARSE_TERM_IMPL(S): i64 {
                                 _cfo = 0;
                                 ESPILL(S);
                                 if (_TRY_MUL_BY_POW2(S) == 1) { _cfo = 0; }
-                                else { PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); EIMUL(S); _cfo = 0; }
+                                else { _RHS_F(S); EMOVCA(S); EUNSPILL(S); EIMUL(S); _cfo = 0; }
                             }
                         }
                         else {
                             _cfo = 0;
                             ESPILL(S);
                             if (_TRY_MUL_BY_POW2(S) == 1) { _cfo = 0; }
-                            else { PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); EIMUL(S); _cfo = 0; }
+                            else { _RHS_F(S); EMOVCA(S); EUNSPILL(S); EIMUL(S); _cfo = 0; }
                         }
                     } else {
                         # The RHS may itself be an enum/NUM const — PARSE_FACTOR
@@ -3641,7 +4044,7 @@ fn _PARSE_TERM_IMPL(S): i64 {
                         _cfo = 0;
                         ESPILL(S);
                         if (_TRY_MUL_BY_POW2(S) == 1) { _cfo = 0; }
-                        else { PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); EIMUL(S); _cfo = 0; }
+                        else { _RHS_F(S); EMOVCA(S); EUNSPILL(S); EIMUL(S); _cfo = 0; }
                     }
                 } else {
                     # v5.6.7 O2: ESPILL LHS, then try strength-reduction
@@ -3649,15 +4052,15 @@ fn _PARSE_TERM_IMPL(S): i64 {
                     # general `PARSE_FACTOR + EIMUL` sequence.
                     ESPILL(S);
                     if (_TRY_MUL_BY_POW2(S) == 1) { _cfo = 0; }
-                    else { PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); EIMUL(S); _cfo = 0; }
+                    else { _RHS_F(S); EMOVCA(S); EUNSPILL(S); EIMUL(S); _cfo = 0; }
                 }
             }
             if (mulst <= 0) { _INT_F64_MIX(S); }
         }
         else { if (typ == 9) {
-                var divst = GESTYPE(S);
+                var divst = _FBR_ST(S);   # 6.6.10: a float builtin's result is a float left operand
                 STI(S, GTI(S) + 1);
-                if (divst == F64_TYID) { ESPILL(S); PARSE_FACTOR(S); if (GESTYPE(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } EMIT_F64_BINOP(S, 3); SESTYPE(S, F64_TYID); _cfo = 0; }
+                if (divst == F64_TYID) { ESPILL(S); PARSE_FACTOR(S); if (_FBR_ST(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } EMIT_F64_BINOP(S, 3); SESTYPE(S, F64_TYID); _cfo = 0; }
                 elif (divst == F32_TYID) { ESPILL(S); PARSE_FACTOR(S); EMIT_F32_BINOP(S, 3); SESTYPE(S, F32_TYID); _cfo = 0; }
                 elif (divst > 0) { EMIT_OP_DISPATCH(S, divst, "div", 3, _tbeg); _cfo = 0; }
                 else {
@@ -3667,12 +4070,12 @@ fn _PARSE_TERM_IMPL(S): i64 {
                                     var cfr = _cfv / crv;
                                     if (cfr > 0) { if (cfr < 0x10000) {
                                             STI(S, GTI(S) + 1); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
-                                        } else { ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; } }
-                                    else { ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; }
-                                } else { ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; } }
-                            else { ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; }
-                        } else { ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; } }
-                    else { ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; }
+                                        } else { ESPILL(S); _RHS_F(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; } }
+                                    else { ESPILL(S); _RHS_F(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; }
+                                } else { ESPILL(S); _RHS_F(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; } }
+                            else { ESPILL(S); _RHS_F(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; }
+                        } else { ESPILL(S); _RHS_F(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; } }
+                    else { ESPILL(S); _RHS_F(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; }
                 }
                 if (divst <= 0) { _INT_F64_MIX(S); }
             }
@@ -3988,9 +4391,9 @@ fn _PEXPR_IMPL(S): i64 {
         # corresponding `lib/overflow.cyr` helper. Handled in their own
         # branches below so the constant-fold paths don't fire on them.
         if (typ == 6) {
-            var addst = GESTYPE(S);
+            var addst = _FBR_ST(S);   # 6.6.10: a float builtin's result is a float left operand
             STI(S, GTI(S) + 1);
-            if (addst == F64_TYID) { ESPILL(S); PARSE_TERM(S); if (GESTYPE(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } EMIT_F64_BINOP(S, 0); SESTYPE(S, F64_TYID); _cfo = 0; }
+            if (addst == F64_TYID) { ESPILL(S); PARSE_TERM(S); if (_FBR_ST(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } EMIT_F64_BINOP(S, 0); SESTYPE(S, F64_TYID); _cfo = 0; }
             elif (addst == F32_TYID) { ESPILL(S); PARSE_TERM(S); EMIT_F32_BINOP(S, 0); SESTYPE(S, F32_TYID); _cfo = 0; }
             elif (addst > 0) { EMIT_OP_DISPATCH(S, addst, "add", 3, _xbeg); _cfo = 0; }
             else {
@@ -4009,17 +4412,17 @@ fn _PEXPR_IMPL(S): i64 {
                         var cfr = _cfv + crv;
                         if (cfr >= 0) {
                             STI(S, GTI(S) + 1); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
-                        } else { ESPILL(S); SPSC(S, 0); PARSE_TERM(S); EPTR_SCALE(S, ps); EMOVCA(S); EUNSPILL(S); EADDR(S); SPSC(S, ps); _cfo = 0; }
+                        } else { ESPILL(S); SPSC(S, 0); _RHS_T(S); EPTR_SCALE(S, ps); EMOVCA(S); EUNSPILL(S); EADDR(S); SPSC(S, ps); _cfo = 0; }
                     }
-                    else { ESPILL(S); SPSC(S, 0); PARSE_TERM(S); EPTR_SCALE(S, ps); EMOVCA(S); EUNSPILL(S); EADDR(S); SPSC(S, ps); _cfo = 0; }
-                } else { ESPILL(S); SPSC(S, 0); PARSE_TERM(S); EPTR_SCALE(S, ps); EMOVCA(S); EUNSPILL(S); EADDR(S); SPSC(S, ps); _cfo = 0; }
+                    else { ESPILL(S); SPSC(S, 0); _RHS_T(S); EPTR_SCALE(S, ps); EMOVCA(S); EUNSPILL(S); EADDR(S); SPSC(S, ps); _cfo = 0; }
+                } else { ESPILL(S); SPSC(S, 0); _RHS_T(S); EPTR_SCALE(S, ps); EMOVCA(S); EUNSPILL(S); EADDR(S); SPSC(S, ps); _cfo = 0; }
             }
             if (addst <= 0) { _INT_F64_MIX(S); }
         }
         else { if (typ == 7) {
-                var subst = GESTYPE(S);
+                var subst = _FBR_ST(S);   # 6.6.10: a float builtin's result is a float left operand
                 STI(S, GTI(S) + 1);
-                if (subst == F64_TYID) { ESPILL(S); PARSE_TERM(S); if (GESTYPE(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } EMIT_F64_BINOP(S, 1); SESTYPE(S, F64_TYID); _cfo = 0; }
+                if (subst == F64_TYID) { ESPILL(S); PARSE_TERM(S); if (_FBR_ST(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } EMIT_F64_BINOP(S, 1); SESTYPE(S, F64_TYID); _cfo = 0; }
                 elif (subst == F32_TYID) { ESPILL(S); PARSE_TERM(S); EMIT_F32_BINOP(S, 1); SESTYPE(S, F32_TYID); _cfo = 0; }
                 elif (subst > 0) { EMIT_OP_DISPATCH(S, subst, "sub", 3, _xbeg); _cfo = 0; }
                 else {
@@ -4037,10 +4440,10 @@ fn _PEXPR_IMPL(S): i64 {
                             var cfr = _cfv - crv;
                             if (cfr >= 0) {
                                 STI(S, GTI(S) + 1); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
-                            } else { EPUSHR(S); SPSC(S, 0); PARSE_TERM(S); EPTR_SCALE(S, ps); EMOVCA(S); EPOPR(S); ESUBR(S); SPSC(S, ps); _cfo = 0; }
+                            } else { EPUSHR(S); SPSC(S, 0); _RHS_T(S); EPTR_SCALE(S, ps); EMOVCA(S); EPOPR(S); ESUBR(S); SPSC(S, ps); _cfo = 0; }
                         }
-                        else { EPUSHR(S); SPSC(S, 0); PARSE_TERM(S); EPTR_SCALE(S, ps); EMOVCA(S); EPOPR(S); ESUBR(S); SPSC(S, ps); _cfo = 0; }
-                    } else { EPUSHR(S); SPSC(S, 0); PARSE_TERM(S); EPTR_SCALE(S, ps); EMOVCA(S); EPOPR(S); ESUBR(S); SPSC(S, ps); _cfo = 0; }
+                        else { EPUSHR(S); SPSC(S, 0); _RHS_T(S); EPTR_SCALE(S, ps); EMOVCA(S); EPOPR(S); ESUBR(S); SPSC(S, ps); _cfo = 0; }
+                    } else { EPUSHR(S); SPSC(S, 0); _RHS_T(S); EPTR_SCALE(S, ps); EMOVCA(S); EPOPR(S); ESUBR(S); SPSC(S, ps); _cfo = 0; }
                 }
                 if (subst <= 0) { _INT_F64_MIX(S); }
             }
@@ -4170,6 +4573,9 @@ fn _PEXPR_IMPL(S): i64 {
 # wired in the _PLOGIC_ATOM compare arm WITH literal-0 suppression — `if (x > 0)` on an f64
 # does NOT warn (the int literal 0's bits ARE 0.0, so the compare is exact), but `if (x > 5)`
 # / `if (x > y)` DO (5's int bits ≠ 5.0's f64 bits — a denormal compare). stderr (fd 2).
+# kind 2 (6.6.8) is the int-left mirror of kind 1 (see _INT_F64_MIX); kinds 3 and 4 (6.6.10)
+# are unary minus on an untyped float variable (_UFV_L) and an integer constant stored into an
+# f64 / f32 slot (_IFS_CHECK).
 fn _FLT_TYPE_WARN(S, kind): i64 {
     if (_TYPE_CHECK_ENABLED() != 1) { return 0; }
     syscall(SYS_WRITE, 2, "warning:", 8);
@@ -4178,6 +4584,10 @@ fn _FLT_TYPE_WARN(S, kind): i64 {
         syscall(SYS_WRITE, 2, ": comparison mixes f64 and integer operands\n", 44);
     } elif (kind == 2) {
         syscall(SYS_WRITE, 2, ": integer arithmetic with an f64 right operand\n", 47);
+    } elif (kind == 3) {
+        syscall(SYS_WRITE, 2, ": unary minus on an untyped variable holding a float is integer negation (declare it f64)\n", 90);
+    } elif (kind == 4) {
+        syscall(SYS_WRITE, 2, ": an integer stored into an f64/f32 slot keeps its integer bits (write a float literal)\n", 88);
     } else {
         syscall(SYS_WRITE, 2, ": f64 arithmetic with a non-f64 right operand\n", 46);
     }
@@ -4189,8 +4599,13 @@ fn _FLT_TYPE_WARN(S, kind): i64 {
 # -3.0). WARN only, the same ADR-002 posture as kind 1: the result type is left as it was.
 # Called after the int arm has parsed its right operand; a folded literal RHS never set
 # the type, so it cannot fire. CHANGELOG [6.6.8]
+# 6.6.10: a float builtin's result on the right (`2 * f64_sqrt(u)`) is an f64 operand too; its
+# flag was captured by _RHS_F / _RHS_T before the integer op was emitted, and is consumed here.
 fn _INT_F64_MIX(S): i64 {
-    if (GESTYPE(S) == F64_TYID) { _FLT_TYPE_WARN(S, 2); }
+    var fr = _fbr_rhs;
+    _fbr_rhs = 0;
+    if (GESTYPE(S) == F64_TYID) { _FLT_TYPE_WARN(S, 2); return 0; }
+    if (fr == 1) { _FLT_TYPE_WARN(S, 2); }
     return 0;
 }
 
