@@ -1952,6 +1952,21 @@ fn _assert_tail(S): i64 {
     return 0;
 }
 
+# 6.6.10 — the operands of an #assert (`ATOM [OP ATOM]`) may be followed only by `,` (the
+# message), `;`, EOF, or a token on a LATER line (a `;`-less #assert). _assert_tail skips
+# the rest of the line unchecked, so `#assert E.EB * 2 == 9;` evaluated `E.EB` alone and a
+# FALSE assertion compiled green, as did `#assert 4 == 4 junk;`. Reports once (ERR_MSG
+# latches) and returns 1; the caller then drops the "#assert failed" cascade. CHANGELOG [6.6.10]
+fn _assert_operands_end(S): i64 {
+    var t = PEEKT(S);
+    if (t == 31) { return 0; }
+    if (t == 5) { return 0; }
+    if (t == 12) { return 0; }
+    if (GTLINE(S, GTI(S)) != GTLINE(S, GTI(S) - 1)) { return 0; }
+    ERR_MSG(S, "#assert: expected `,` or `;` after the operands (no arithmetic inside #assert)", 78);
+    return 1;
+}
+
 # 6.6.10 — ONE recogniser for an enum-constant atom: `NAME` or `Enum.NAME`, where NAME is a
 # folded enum constant (the GVECP flag). Shared by #assert (_EVAL_CONST_ATOM) and both
 # array-size parsers (PARSE_ARRAY, and the top-level one in parse_decl.cyr), which each
@@ -2411,6 +2426,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
     }
     # #assert EXPR OP EXPR, "msg" — compile-time check
     if (typ == 107) {
+        var as_p0 = _panic;
         STI(S, GTI(S) + 1);
         var lhs = _EVAL_CONST_ATOM(S);
         # Check for comparison operator
@@ -2428,10 +2444,13 @@ fn _PARSE_STMT_IMPL(S): i64 {
             lhs = result;
         }
         # lhs is now the assertion value (0 = fail, non-zero = pass)
+        _assert_operands_end(S);
         if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
-        # 6.6.10: an operand that did not evaluate has already been reported (and latched);
-        # a message-less "#assert failed" after it was a second error for the same mistake.
-        if (_panic == 1) { if (_had_error == 1) { lhs = 1; } }
+        # 6.6.10: an operand (or a trailing token) that THIS assert reported has latched
+        # _panic; a "#assert failed" after it was a second error for the same mistake. Only
+        # this assert's own latch counts — an earlier, unresynced error must not swallow an
+        # independent failing #assert. CHANGELOG [6.6.10]
+        if (as_p0 == 0) { if (_panic == 1) { lhs = 1; } }
         if (lhs == 0) {
             syscall(SYS_WRITE, 2, "error:", 6);
             _err_head(S);

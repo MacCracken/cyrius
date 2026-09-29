@@ -11,6 +11,11 @@
 #     compiled rc 0 as if it were sizeof.
 #   - a bad operand printed two errors: the real one and a message-less
 #     "#assert failed" cascade.
+#   - anything AFTER the operands was skipped unchecked, so `#assert E.EB * 2 == 9;`
+#     evaluated E.EB alone and a FALSE assertion compiled rc 0 (so did `#assert 4 == 4
+#     junk;`). Only `,`, `;`, EOF or the next line may follow the operands now.
+#   - the cascade guard fired on ANY latched error, so an independent failing #assert
+#     after an earlier unresynced error was swallowed; only this assert's own latch counts.
 # One shared recogniser (_enum_atom_idx, parse.cyr) now serves #assert and both
 # array-size parsers; pass 1 (_assert_skip_atom) steps over the 1- and 3-token forms.
 # CHANGELOG [6.6.10]
@@ -70,6 +75,31 @@ syscall(60, 7);'
 no "a VARIABLE base is a field access, not an enum" 'expected a number, sizeof(T) or an enum constant' 'var p = 0;
 #assert p.x == 0;
 syscall(60, 7);'
+AR='no arithmetic inside #assert'
+no "arithmetic after an enum atom (false assert, in a fn)" "$AR" 'fn f(): i64 { #assert E.EB * 2 == 9; return 5; }
+syscall(60, f());'
+no "arithmetic after an enum atom (true if evaluated)" "$AR" '#assert E.EB * 2 == 8;
+syscall(60, 7);'
+no "arithmetic between literals" "$AR" '#assert 4 * 2 == 9;
+syscall(60, 7);'
+no "junk after the comparison" "$AR" '#assert 4 == 4 junk junk;
+syscall(60, 7);'
+no "junk after a lone atom" "$AR" '#assert 5 junk;
+syscall(60, 7);'
+no "a bad atom followed by arithmetic still reports once" 'expected a number, sizeof(T) or an enum constant' '#assert foo * 2 == 1;
+syscall(60, 7);'
+
+# An earlier, unresynced error must not swallow an independent failing #assert: both report.
+printf '%s\n%s\n' "$HDR" 'struct Q { a; b: ; }
+#assert 1 == 2, "real2";
+syscall(60, 7);' > "$D/t.cyr"
+if "$CC" < "$D/t.cyr" > "$D/t.bin" 2> "$D/t.err"; then
+    bad "earlier error + failing #assert: compiled, want refused"
+else
+    n=$(grep -c '^error' "$D/t.err")
+    [ "$n" = 2 ] || { bad "earlier error + failing #assert: $n errors, want 2:"; grep '^error' "$D/t.err" | head -3; }
+    grep -q '#assert failed: real2' "$D/t.err" || bad "earlier error + failing #assert: the assert failure was swallowed"
+fi
 
 # Array sizes: the qualified form must produce the SAME binary as the bare form.
 arr() {
@@ -103,4 +133,4 @@ for fork in main_aarch64 main_cx; do
 done
 
 [ "$fail" = 0 ] || exit 1
-echo "PASS: #assert and array sizes take enum constants (NAME / Enum.NAME), sizeof is a whole word, no cascade (x86 + aarch64 + cx; 6.6.10)"
+echo "PASS: #assert and array sizes take enum constants (NAME / Enum.NAME), sizeof is a whole word, nothing trails the operands, no cascade (x86 + aarch64 + cx; 6.6.10)"

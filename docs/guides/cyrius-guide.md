@@ -1224,7 +1224,11 @@ with `#assert failed: message` when it does not hold. Each operand is ONE
 atom — an integer literal, `sizeof(T)`, or an enum constant (`EB` or
 `E.EB`, since 6.6.10) — and `OP` is one of `== != < > <= >=` (a lone atom
 asserts non-zero). There is no arithmetic inside an `#assert`: write
-`#assert sizeof(Hdr) == 16;`, not `== E.N * 8`. An operand that is none of
+`#assert sizeof(Hdr) == 16;`, not `== E.N * 8`. Only `,`, `;` or the end of
+the line may follow the operands; anything else (`E.N * 8`, a stray word) is
+refused with ``expected `,` or `;` after the operands`` — before 6.6.10 it was
+skipped unchecked, so a false `#assert E.EB * 2 == 9;` compiled clean. An
+operand that is none of
 these is reported once, by name (`expected a number, sizeof(T) or an enum
 constant`), and `sizeof` must be the whole word — `sizeofzz(P)` is refused,
 not read as `sizeof`.
