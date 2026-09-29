@@ -1,0 +1,112 @@
+# fs_walk_fails_closed.tcyr — lib/fs.cyr's error channel, on every target's lister
+# (Linux getdents64, Darwin getdirentries on ecb/ach, the Windows FindFirstFileW arm on
+# cass, aarch64 on pi).
+#
+# ⛔ 6.6.10 — dir_list folded "could not list" into "empty": an open error returned the
+# empty vec and a getdents error ended the loop like end-of-directory, and is_dir (an
+# open+getdents probe) answered 0 for a directory it could not read, so every walker took
+# an unreadable subdirectory for a FILE and dropped it. `chmod 000 tests/bad` turned
+# `cyrius test` from "1 passed, 1 failed" into "1 passed, 0 failed". The checked forms
+# report the failure; is_dir asks stat(2). The fixture is its own, per-pid, in the cwd.
+# The permission rows need a POSIX mode and a non-root user (root reads a 000 directory),
+# so they are compiled out on Windows and skipped, by name, under uid 0. CHANGELOG [6.6.10]
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+include "lib/io.cyr"
+include "lib/fs.cyr"
+
+# "<stem><pid><tail>", NUL-terminated.
+fn _name(stem, tail): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, stem);
+    str_builder_add_int(sb, sys_getpid());
+    str_builder_add_cstr(sb, tail);
+    return str_data(str_builder_build(sb));
+}
+
+# 1 iff some Str in `v` ends with the cstr `tail`.
+fn _has_suffix(v, tail): i64 {
+    var tl = strlen(tail);
+    var i = 0;
+    while (i < vec_len(v)) {
+        var e = vec_get(v, i);
+        if (str_len(e) >= tl) {
+            if (memeq(str_data(e) + str_len(e) - tl, tail, tl) == 1) { return 1; }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    var root = _name("cyrius_fswalk_", "");
+    var sub = _name("cyrius_fswalk_", "/sub");
+    var f1 = _name("cyrius_fswalk_", "/a.tcyr");
+    var f2 = _name("cyrius_fswalk_", "/sub/b.tcyr");
+    assert_eq(xmkdir(root, 493), 0, "premise: the fixture root was created");
+    assert_eq(xmkdir(sub, 493), 0, "premise: a subdirectory was created");
+    assert_eq(file_write_all(f1, "x\n", 2), 2, "premise: a file at the root");
+    assert_eq(file_write_all(f2, "y\n", 2), 2, "premise: a file in the subdirectory");
+
+    test_group("dir_list_checked: 0 on a listing, NEGATIVE when it cannot list");
+    var e = vec_new();
+    assert_eq(dir_list_checked(str_from(root), e), 0, "a readable directory lists with 0");
+    assert_eq(vec_len(e), 2, "…both of its entries");
+    var e2 = vec_new();
+    assert_eq(dir_list_checked(str_from("no_such_dir_fswalk") , e2) < 0, 1, "a MISSING directory is an error, not an empty listing");
+    var e3 = vec_new();
+    assert_eq(dir_list_checked(str_from(f1), e3) < 0, 1, "a FILE is an error, not an empty listing");
+    assert_eq(vec_len(dir_list(str_from("no_such_dir_fswalk"))), 0, "unchecked dir_list still answers empty (probe semantics kept)");
+
+    test_group("dir_walk_checked: the whole tree, and no failures");
+    var r = vec_new();
+    var fl = vec_new();
+    assert_eq(dir_walk_checked(str_from(root), r, fl), 0, "a readable tree walks with 0 failures");
+    assert_eq(vec_len(r), 2, "…and reaches both files");
+    assert_eq(_has_suffix(r, "/sub/b.tcyr"), 1, "…including the one in the subdirectory");
+    var r2 = vec_new();
+    var fl2 = vec_new();
+    assert_eq(dir_walk_checked(str_from("no_such_dir_fswalk"), r2, fl2), 1, "a missing ROOT is one failure");
+    assert_eq(_has_suffix(fl2, "no_such_dir_fswalk"), 1, "…and it is named");
+    var ff = vec_new();
+    var m = find_files_checked(str_from(root), str_from(".tcyr"), ff);
+    assert_eq(vec_len(m), 2, "find_files_checked matches both .tcyr files");
+    assert_eq(vec_len(ff), 0, "…with no failures");
+
+    #ifndef CYRIUS_TARGET_WIN
+    test_group("an UNREADABLE subdirectory is a directory, and a named failure");
+    if (sys_geteuid() == 0) {
+        println("  skip: running as root (uid 0 reads a mode-000 directory) — permission rows not run");
+    } else {
+        assert_eq(sys_chmod(sub, 0), 0, "premise: the subdirectory is now mode 000");
+        assert_eq(is_dir(str_from(sub)), 1, "is_dir answers 1 for a directory it cannot read");
+        var r3 = vec_new();
+        var fl3 = vec_new();
+        assert_eq(dir_walk_checked(str_from(root), r3, fl3), 1, "the walk reports ONE failure");
+        assert_eq(_has_suffix(fl3, "/sub"), 1, "…naming the unreadable subdirectory");
+        assert_eq(vec_len(r3), 1, "…and still returns the file it could reach");
+        var ff3 = vec_new();
+        find_files_checked(str_from(root), str_from(".tcyr"), ff3);
+        assert_eq(vec_len(ff3), 1, "find_files_checked reports it too");
+        var e4 = vec_new();
+        assert_eq(dir_list_checked(str_from(sub), e4) < 0, 1, "dir_list_checked on it is an error");
+        sys_chmod(sub, 493);
+    }
+    #endif
+
+    xunlink(f2);
+    xunlink(f1);
+    xrmdir(sub);
+    xrmdir(root);
+    assert_eq(is_dir(str_from(root)), 0, "the fixture was removed");
+    var rc = assert_summary();
+    return rc;
+}
+var ec = main();
+syscall(60, ec);
