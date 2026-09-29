@@ -1,0 +1,98 @@
+# darwin_kill_posix_explicit.tcyr — 6.6.10: on macOS sys_kill passes Darwin's third argument
+# (`posix`) explicitly, so a group kill answers the same way every time.
+#
+# THE DEFECT (both Macs). Darwin's kill is kill(pid, signum, posix); the shared wrapper issued the
+# Linux 2-arg form, so `posix` was whatever the third argument register (rdx / x2) still held.
+# posix matters only for pid <= 0: for a process group with nothing signalable in it, xnu answers
+# EPERM when posix != 0 and ESRCH when it is 0. Measured on ach and ecb: for a group whose only
+# member is an unreaped zombie, kill(-pgid, 0) returned -3 (ESRCH) after a call that left the
+# register 0 and -1 (EPERM) after one that left it 1 — the tree kill a deadline ends with
+# (kill(-pgid)) had a result that depended on unrelated earlier code. Not memory-unsafe (posix is
+# a value), but non-deterministic.
+#
+# ⭐ WHY THE PRIMING CALL. A failing 3-arg lseek (fd -1) leaves 1 in the third argument register
+# on both Macs (an error return does not rewrite it), which is the value that turned the answer
+# into EPERM. The wrapper must hand xnu its own 0 regardless.
+# ⭐ WHY A ZOMBIE-ONLY GROUP. It is the one shape where the group EXISTS but nothing in it can be
+# signalled, so the posix-dependent branch runs — and it needs no second user or root process.
+#
+# Linux: the group kill of a zombie is 0 both times (Linux signals zombies); asserted equal, so the
+# fork/setsid/group-kill path runs here too. Elsewhere (PE, agnos, cx) nothing to assert.
+include "lib/syscalls.cyr"
+include "lib/assert.cyr"
+
+# Sleep about one millisecond.
+fn _kp_nap(): i64 {
+    var ts[16];
+    store64(&ts, 0);
+    store64(&ts + 8, 1000000);
+    sys_nanosleep(&ts, 0);
+    return 0;
+}
+
+fn main(): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    test_group("Darwin: kill(-pgid) of a zombie-only group answers ESRCH whatever rdx/x2 held");
+    var fds[16];
+    assert_eq(sys_pipe(&fds), 0, "pipe");
+    var c = sys_fork();
+    if (c == 0) {
+        sys_setsid();
+        var one[8];
+        store64(&one, 1);
+        sys_write(load32(&fds + 4), &one, 1);
+        syscall(60, 0);
+    }
+    assert(c > 0, "fork succeeded");
+    var got[8];
+    sys_read(load32(&fds), &got, 1);
+    # The child has its own group now; wait (bounded) until it is a zombie, which is when the
+    # group stops having anything signalable in it.
+    var i = 0;
+    var r0 = 0;
+    while (i < 5000) {
+        r0 = sys_kill(0 - c, 0);
+        if (r0 != 0) { i = 5000; } else { _kp_nap(); i = i + 1; }
+    }
+    assert_eq(r0, 0 - 3, "the zombie-only group answers ESRCH (-3)");
+    syscall(SYS_LSEEK, 0 - 1, 0, 1);
+    assert_eq(sys_kill(0 - c, 0), 0 - 3,
+      "after a call that left 1 in the 3rd arg register: still ESRCH (was EPERM, -1)");
+    syscall(SYS_LSEEK, 0 - 1, 0, 0);
+    assert_eq(sys_kill(0 - c, 0), 0 - 3, "after a call that left 0 there: ESRCH");
+    var st = 0;
+    assert_eq(sys_waitpid(c, &st, 0), c, "reap the child");
+    #endif
+    #ifdef CYRIUS_TARGET_LINUX
+    test_group("Linux: a group kill answers the same with or without a primed 3rd register");
+    var lfds[16];
+    assert_eq(sys_pipe(&lfds), 0, "pipe");
+    var lc = sys_fork();
+    if (lc == 0) {
+        sys_setsid();
+        var lone[8];
+        store64(&lone, 1);
+        sys_write(load32(&lfds + 4), &lone, 1);
+        syscall(60, 0);
+    }
+    assert(lc > 0, "fork succeeded");
+    var lgot[8];
+    sys_read(load32(&lfds), &lgot, 1);
+    syscall(SYS_LSEEK, 0 - 1, 0, 1);
+    var la = sys_kill(0 - lc, 0);
+    syscall(SYS_LSEEK, 0 - 1, 0, 0);
+    var lb = sys_kill(0 - lc, 0);
+    assert_eq(la, lb, "sys_kill(-pgid, 0) is independent of the 3rd argument register");
+    var lst = 0;
+    assert_eq(sys_waitpid(lc, &lst, 0), lc, "reap the child");
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
+    #ifndef CYRIUS_TARGET_LINUX
+    test_group("not macOS or Linux: no fork/setsid group kill here — nothing to assert");
+    assert_eq(1, 1, "skipped");
+    #endif
+    #endif
+    return assert_summary();
+}
+var r = main();
+syscall(60, r);

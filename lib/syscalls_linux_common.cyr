@@ -239,9 +239,23 @@ fn sys_getppid(): i64 {
     return syscall(SYS_GETPPID);
 }
 
-# Send a signal to a process by PID.
+# Send a signal to a process by PID (pid > 0), to a process group (pid < -1 is -pgid, pid 0
+# is the caller's own group), or to every process the caller may signal (pid -1).
+#
+# macOS: Darwin's kill is kill(pid, signum, posix) — one parameter more than Linux — and the
+# 2-arg form left `posix` to whatever the third argument register (rdx / x2) held from earlier
+# code. posix only matters for pid <= 0: it decides whether a broadcast skips the caller and
+# whether an empty group answers EPERM or ESRCH, so a stale value made kill(-pgid) — the tree
+# kill a deadline ends with — answer differently run to run. Pass 0 explicitly (the historic
+# BSD behaviour). Not memory-unsafe (posix is a value, not a pointer); it was non-determinism.
+# CHANGELOG [6.6.10]
 fn sys_kill(pid, sig): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    return syscall(SYS_KILL, pid, sig, 0);
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
     return syscall(SYS_KILL, pid, sig);
+    #endif
 }
 
 # Create a new session and become its leader. Detaches from the
