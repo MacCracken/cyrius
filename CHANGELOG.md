@@ -122,7 +122,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   differ on purpose: outputs are DRAINED into a scratch buffer, never discarded through a closed
   read end (the child's writes would fail where /dev/null's succeed); a FILE fd is never
   redirected into the child (vfs_fd_inherit copies a FAT write entry by value and the parent's
-  close releases its block) — the parent writes the output file itself; ONE interleaved
+  close releases its block) — the parent writes the output file itself, continuing a short write
+  and returning -1 (never the child's exit code over a truncated file) when a write fails, a failure
+  the POSIX verb cannot have because its CHILD writes the file; ONE interleaved
   non-blocking pump feeds stdin and drains stdout/stderr (a write-all-then-read pump deadlocks once
   the child has written more than the 4080 B ring), streaming the source instead of the POSIX
   verb's 1 MB buffer; and the deadline kill is `kill_tree(9)` at once (SIGTERM has no default
@@ -132,11 +134,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   fail-closed (no cwd, no ssh). The argv/envp-to-blob, wait-with-deadline and kill-and-reap
   helpers live in the agnos peer (`_agnos_blob_*`, `_agnos_wait_poll`, `_agnos_kill_reap`),
   shared with the async port. Kernel floor 1.57.7 (1.57.9 for the stdin-feeding pipe_to_bin).
-  **Gate:** `tests/gates/platform/agnos_regression_spawn.sh` — 45 rows over the fake kernel's new
+  **Gate:** `tests/gates/platform/agnos_regression_spawn.sh` — 50 rows over the fake kernel's new
   stateful rg* modes (distinct fds per pipe, a #4 that answers -2 until a #16, a child that won't
-  read stdin until its stdout is drained, a proclist table); the pre-port tree fails 42 lines of
-  it, and six mutants (write-all-then-read pump, closed read end, SIGTERM kill, uncounted kill,
-  stderr captured, blocking reads) each redden it. Verified on agnos-qemu 1.57.10 at -smp 1 and 4.
+  read stdin until its stdout is drained, a proclist table, an output file whose write fails or
+  comes up short); the pre-port tree fails 42 lines of it, and eight mutants (write-all-then-read
+  pump, closed read end, SIGTERM kill, uncounted kill, stderr captured, blocking reads, the
+  SPAWN_ARGC_MAX refusal dropped — an envp of 17 entries — and the output write's result ignored)
+  each redden it. Verified on agnos-qemu 1.57.10 at -smp 1 and 4.
 
 - **agnos `async_timeout` bounds its body; `async_run_process` / `async_spawn_process` run
   children.** (bite 13) **Root cause:** the v6.2.3 / v6.4.36 serial fallback predated fork on
@@ -150,10 +154,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   is dropped) and polls #4 against its deadline (-2, tree killed); `async_spawn_process` is a
   serial task around it. The header's "inbound TCP is Phase B — not reachable" rationale is gone
   (sock_bind/listen/accept run on #56/#57 since v6.2.22). **Gate:**
-  `tests/gates/platform/agnos_async_process.sh` — 18 rows over the fake kernel's as* modes, which
+  `tests/gates/platform/agnos_async_process.sh` — 19 rows over the fake kernel's as* modes, which
   answer fork with a pid (the parent's side) or 0 (the child's): PTRACE_SYSEMU runs neither, so
-  each trace proves one side. The pre-port tree fails 19 lines; five mutants redden it (inline
-  body, short read accepted, no kill, `ms` ignored, argv[0] sent). Both sides together on
+  each trace proves one side. The pre-port tree fails 19 lines; six mutants redden it (inline
+  body, short read accepted, no kill, `ms` ignored, argv[0] sent, a signal death read as an exit
+  code instead of -1). ⚠ Documented, not fixed here: fork copies the fd table BY VALUE and reaping
+  the child flushes and releases its FAT/exFAT write entries — the block the caller's open fd
+  still names — so `async_timeout`'s doc says not to hold such a file open across the call; the
+  fix belongs in the agnos kernel. Both sides together on
   agnos-qemu 1.57.10 at -smp 1 and 4: the value comes back from the forked child, the caller's
   memory is untouched by it, a 5 s body under 300 ms is -1 with the child gone, a crashing body is
   -1, and run_process returns 7 / -2 (child gone) / 7 through task_join.

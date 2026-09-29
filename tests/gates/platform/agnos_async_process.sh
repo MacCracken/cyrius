@@ -21,6 +21,7 @@
 #   MA3 no kill at the deadline (the child is left running)          -> axis 3 kill row
 #   MA4 async_run_process ignores `ms`                               -> axis 5 deadline row
 #   MA5 the caller's argv[0] is sent instead of `path`               -> axis 5 blob row
+#   MA6 async_run_process drops its WIFSIGNALED -> -1 arm            -> axis 5 signal row
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: agnos_async_process: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
@@ -121,6 +122,9 @@ check "  …the env blob carries envp; the spawn has a clean fd table (#43 flags
 check "exit code 7 (the #4 poll answered -2, then 7)" "7 0 0" "$(mark rp as 1)"
 trace rp asslow
 check "at the 1 s deadline: -2, the tree killed with SIGKILL" "-2 0 0 | 2:265" "$(mark rp asslow 1) | $(args12 rp asslow 16)"
+trace rp rgsig
+check "a death by a signal (#4 answers 265 = 0x100 | SIGKILL): -1 as documented, never an exit code" \
+    "-1 0 0" "$(mark rp rgsig 1)"
 probe rp0 'sa(0, 0);
 se(0, 0);
 syscall(999, 1, async_run_process(rt, "/bin/p", &av, &ev, 0), 0, 0);'

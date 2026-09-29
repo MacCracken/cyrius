@@ -56,10 +56,11 @@ include "lib/regression.cyr"
 
 #ifdef CYRIUS_TARGET_AGNOS
 # ── one child: its pipes, its pump, its end ──
-# A job is 10 i64 slots on the caller's stack (`var j[80]`):
+# A job is 11 i64 slots on the caller's stack (`var j[88]`):
 #   +0 pid · +8 stdin write end · +16 stdout read end · +24 stderr read end (-1 = none / closed)
 #   +32 the file streamed to stdin (-1: none) · +40 the file stdout is written to (-1: none)
 #   +48 capture buffer · +56 its size · +64 bytes captured · +72 1 once the deadline fired
+#   +80 1 once a write to the output file failed or came up short
 
 # Close `fd` when it is open. Returns -1, the "closed" marker a slot is set back to.
 fn _rga_close(fd): i64 {
@@ -75,6 +76,7 @@ fn _rga_job_init(j): i64 {
     store64(j + 56, 0);
     store64(j + 64, 0);
     store64(j + 72, 0);
+    store64(j + 80, 0);
     return 0;
 }
 
@@ -146,7 +148,10 @@ fn _rga_spawn(j, b, blen, e, elen, feed, merge): i64 {
 
 # Hand `n` bytes of the child's stdout at `src` on: into the capture buffer while it has room,
 # then to the output file; the rest is discarded (the pump still drained it, so the child never
-# blocks on a full pipe).
+# blocks on a full pipe). The file write is looped over short writes; a write that fails (or takes
+# nothing) sets j+80 and stops further writes — the pump still drains — so the verb can report the
+# truncated file instead of the child's exit code. On POSIX the CHILD writes the file, so this
+# failure exists only here. CHANGELOG [6.6.10]
 fn _rga_deliver(j, src, n): i64 {
     var room = load64(j + 56) - load64(j + 64);
     var c = n;
@@ -155,7 +160,13 @@ fn _rga_deliver(j, src, n): i64 {
         memcpy(load64(j + 48) + load64(j + 64), src, c);
         store64(j + 64, load64(j + 64) + c);
     }
-    if (load64(j + 40) >= 0) { sys_write(load64(j + 40), src, n); }
+    if (load64(j + 40) < 0 || load64(j + 80) != 0) { return 0; }
+    var off = 0;
+    while (off < n) {
+        var w = sys_write(load64(j + 40), src + off, n - off);
+        if (w <= 0) { store64(j + 80, 1); return 0; }
+        off = off + w;
+    }
     return 0;
 }
 
@@ -257,7 +268,7 @@ fn _rga_code(reaped, st): i64 {
 fn _rga_run_discard(bin, arg, envp, timeout_ms): i64 {
     var b[1024];
     var e[1024];
-    var j[80];
+    var j[88];
     _rga_job_init(&j);
     if (_rga_spawn(&j, &b, _rga_argv(&b, bin, arg), &e, _rga_env(&e, envp), 0, 1) < 0) { return 0 - 1; }
     var st[8];
@@ -273,7 +284,7 @@ fn _rga_run_capture(bin, arg, buf, buflen, envp, status_out, merge): i64 {
     store64(status_out + 8, 0);
     var b[1024];
     var e[1024];
-    var j[80];
+    var j[88];
     _rga_job_init(&j);
     if (_rga_spawn(&j, &b, _rga_argv(&b, bin, arg), &e, _rga_env(&e, envp), 0, merge) < 0) { return 0; }
     store64(&j + 48, buf);
@@ -288,7 +299,8 @@ fn _rga_run_capture(bin, arg, buf, buflen, envp, status_out, merge): i64 {
 #ifdef CYRIUS_TARGET_AGNOS
 # Pipe `src_path`'s bytes to `bin_path`'s stdin and write its stdout to `out_path` (0: discard);
 # stderr is discarded. Returns the exit code, 128 + signal, -2 (the deadline) or -1 (the output
-# file could not be opened, or nothing could be spawned). An unreadable source feeds nothing, as
+# file could not be opened or fully written — a truncated output file is never reported as the
+# child's exit code — or nothing could be spawned). An unreadable source feeds nothing, as
 # the POSIX verb sends 0 bytes. The source is STREAMED in chunks and interleaved with the output.
 fn regression_pipe_to_bin_capture(bin_path, src_path, out_path, envp): i64 {
     var out_fd = 0 - 1;
@@ -300,7 +312,7 @@ fn regression_pipe_to_bin_capture(bin_path, src_path, out_path, envp): i64 {
     if (src_path != 0) { src_fd = file_open(src_path, 0, 0); }
     var b[1024];
     var e[1024];
-    var j[80];
+    var j[88];
     _rga_job_init(&j);
     if (_rga_spawn(&j, &b, _rga_argv(&b, bin_path, 0), &e, _rga_env(&e, envp), 1, 0) < 0) {
         _rga_close(src_fd);
@@ -313,6 +325,7 @@ fn regression_pipe_to_bin_capture(bin_path, src_path, out_path, envp): i64 {
     var reaped = _rga_finish(&j, _regression_timeout_ms(), &st);
     _rga_close(src_fd);
     _rga_close(out_fd);
+    if (load64(&j + 80) != 0) { return 0 - 1; }
     return _rga_code(reaped, load64(&st));
 }
 # Pipe a source file to a binary's stdin and discard its output.

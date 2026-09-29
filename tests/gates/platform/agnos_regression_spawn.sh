@@ -30,6 +30,8 @@
 #   M4 the deadline kill is not counted                           -> axis 1 rghang counters row
 #   M5 stderr captured into the buffer on the stdout-only verb     -> axis 1 "stderr is not captured"
 #   M6 the output pipes read with the BLOCKING sys_read             -> axis 1 "O_NONBLOCK" row
+#   M7 _agnos_blob_ptrs drops its SPAWN_ARGC_MAX refusal            -> axis 6 "17 entries" row
+#   M8 _rga_deliver ignores the output file's write result          -> axis 4 rgwfail + rgwshort rows
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: agnos_regression_spawn: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
@@ -197,6 +199,14 @@ check "the source is read in chunks of at most 2048 (no whole-file buffer)" "204
     "$(awk '$1 == "sc" && $2 == 5 && $3 == 21 { if ($5 > m) m = $5 } END { print m + 0 }' "$(L pipe rgin)")"
 trace pipe rghang
 check "a child that never ends: -2 and one deadline kill" "-2 1 0" "$(mark pipe rghang 1)"
+trace pipe rgwfail
+check "the output file cannot be written (write#1 on fd 20 answers -1): -1, never exit 7 over a truncated file" \
+    "-1 0 0" "$(mark pipe rgwfail 1)"
+check "  …one write attempted and no retry after it; the child is still drained to EOF and reaped" "1 | 2 | 2" \
+    "$(wcount pipe rgwfail 20) | $(awk '$1 == "sc" && $2 == 5 && $3 == 5 { c++ } END { print c + 0 }' "$(L pipe rgwfail)") | $(nsc pipe rgwfail 4)"
+trace pipe rgwshort
+check "a SHORT write to the output file is continued, not dropped: 5 bytes as 2 + 2 + 1, exit 7" "2 2 1 | 7 0 0" \
+    "$(awk '$1 == "fw" { printf "%s%s", s, $2; s = " " } END { print "" }' "$(L pipe rgwshort)") | $(mark pipe rgwshort 1)"
 probe pipe0 'sv(0, 0);
 syscall(999, 1, regression_pipe_to_bin("/bin/cc", "/src/in.cyr", &ev), 0, 0);'
 trace pipe0 rg
@@ -229,6 +239,19 @@ check "a non-KEY=VALUE env entry: 0 bytes, [-1, 0], no pipe made, one refusal #4
 check "an empty path: -1" "-1 0 0" "$(mark ref rg 2)"
 check "  …both refusals reach the kernel as the peer's refusal #43 (a1 = 0, a2 = 0x40000)" "0:262144 0:262144" \
     "$(args12 ref rg 43)"
+probe envn 'var i = 0;
+while (i < 17) { sv(i, "K=V"); i = i + 1; }
+sv(17, 0);
+var n = regression_exec_capture_status("/bin/child", &buf, 64, &ev, &st);
+syscall(999, 1, n, load64(&st), load64(&st + 8));
+sv(16, 0);
+n = regression_exec_capture_status("/bin/child", &buf, 64, &ev, &st);
+syscall(999, 2, n, load64(&st), load64(&st + 8));'
+trace envn rg
+check "an envp of 17 KEY=VALUE entries (over #43's 16): 0 bytes, [-1, 0], no pipe, the refusal #43 — never truncated" \
+    "0 -1 0 | 0 | 0:262144" "$(mark envn rg 1) | $(awk '$1 == "sc" && $2 == 25 { c++ } $1 == "sc" && $2 == 999 { exit } END { print c + 0 }' "$(L envn rg)") | $(args12 envn rg 43 | cut -d' ' -f1)"
+check "  …16 entries (the limit) are sent whole: 5 bytes, exit 7, an env blob of 16 entries" "5 7 0 | 16" \
+    "$(mark envn rg 2) | $(envb envn rg | tr -cd '|' | wc -c | tr -d ' ')"
 
 if [ "$fails" -ne 0 ]; then echo "FAIL agnos_regression_spawn: $fails check(s)"; exit 1; fi
 echo "PASS agnos_regression_spawn"
