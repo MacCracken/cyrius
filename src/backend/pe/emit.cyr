@@ -538,6 +538,24 @@ fn _pe_ensure_removedir(S): i64 {
 }
 fn _pe_removedir_get(): i64 { return _pe_removedir_idx; }
 
+# 6.6.11 — the two kernel32 imports behind `_pe_widen_path` (x86/emit.cyr), the one
+# UTF-8 → UTF-16 path sequence every narrow-path reroute shares: MultiByteToWideChar
+# (CP_UTF8 + MB_ERR_INVALID_CHARS decodes and REFUSES invalid UTF-8) and GetFullPathNameW
+# (a path of 248+ units is made absolute and handed over with a `\\?\` prefix instead of
+# being cut at MAX_PATH). CHANGELOG [6.6.11]
+var _pe_mbtowc_ready      = 0;
+var _pe_mbtowc_idx        = 0;
+var _pe_fullpath_idx      = 0;
+fn _pe_ensure_widen(S): i64 {
+    if (_pe_mbtowc_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_mbtowc_idx, "MultiByteToWideChar");
+    _pe_register_kernel32(S, &_pe_fullpath_idx, "GetFullPathNameW");
+    _pe_mbtowc_ready = 1;
+    return 0;
+}
+fn _pe_mbtowc_get(): i64 { return _pe_mbtowc_idx; }
+fn _pe_fullpath_get(): i64 { return _pe_fullpath_idx; }
+
 # v6.6.7: FlushFileBuffers auto-import for the Linux fsync(74) / fdatasync(75)
 # reroute (EFLUSHFB_PE). kernel32!FlushFileBuffers(HANDLE->rcx) returns BOOL. Before
 # it existed, both numbers fell to the honest -38 and lib/io.cyr's xfsync hard-coded

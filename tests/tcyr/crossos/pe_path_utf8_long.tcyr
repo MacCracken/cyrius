@@ -1,0 +1,152 @@
+# pe_path_utf8_long.tcyr — a path is opened, created, renamed, listed and removed under ITS
+# OWN NAME: a non-ASCII name is not narrowed to Latin-1, and a path longer than 260 bytes is
+# not cut to 260. Runs unguarded on every target (POSIX is the oracle: Linux, macOS and agnos
+# already get both right); the invalid-UTF-8 rows are Windows-only because Linux accepts any
+# byte string as a name.
+#
+# ⛔ 6.6.11 — THE DEFECT. Every narrow-path PE reroute (open, mkdir, unlink, rename, rmdir) widened
+# its UTF-8 path one BYTE per UTF-16 unit and stopped at 260 units with a forced NUL. Measured under
+# wine at 6.6.10: `open("caf\xC3\xA9.txt", O_WRONLY|O_CREAT|O_TRUNC)` returned -1 and created
+# nothing, and a 288-byte relative O_CREAT open returned a VALID handle and wrote the file at the
+# path's first 260 units — a silent write to the WRONG file. The stdlib's own widens (is_dir,
+# dir_list, is_symlink, access, xmkdir_p's directory probe) had the same Latin-1 copy, so a name
+# the emitter could open could not be listed or stat'ed. CHANGELOG [6.6.11]
+#
+# Fixtures are per-pid names in the cwd, removed at the end — and REMOVING them is itself a row:
+# `xrmdir` of the deepest directory succeeds only if nothing (a truncated-name file) is left in it.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+include "lib/io.cyr"
+include "lib/fs.cyr"
+
+# "<a><b>", NUL-terminated.
+fn _cat(a, b): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, a);
+    str_builder_add_cstr(sb, b);
+    return str_data(str_builder_build(sb));
+}
+
+# "<a>/<run of n copies of byte c>", NUL-terminated.
+fn _cat_run(a, c, n): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, a);
+    str_builder_add_cstr(sb, "/");
+    var i = 0;
+    while (i < n) {
+        str_builder_add_byte(sb, c);
+        i = i + 1;
+    }
+    return str_data(str_builder_build(sb));
+}
+
+# How many entries of directory `d` equal `name` byte for byte (-1 if `d` cannot be listed).
+fn _count_named(d, name): i64 {
+    var v = vec_new();
+    if (dir_list_checked(str_from(d), v) < 0) { return 0 - 1; }
+    var nl = strlen(name);
+    var hits = 0;
+    var i = 0;
+    while (i < vec_len(v)) {
+        var e = vec_get(v, i);
+        if (str_len(e) == nl) {
+            if (memeq(str_data(e), name, nl) == 1) { hits = hits + 1; }
+        }
+        i = i + 1;
+    }
+    return hits;
+}
+
+# How many entries directory `d` holds (-1 if it cannot be listed).
+fn _count_all(d): i64 {
+    var v = vec_new();
+    if (dir_list_checked(str_from(d), v) < 0) { return 0 - 1; }
+    return vec_len(v);
+}
+
+# Read `p` whole into a fresh buffer and compare it with `want` (`wn` bytes). 1 on a match.
+fn _reads_back(p, want, wn): i64 {
+    var buf[64];
+    var n = file_read_all(p, &buf, 64);
+    if (n != wn) { return 0; }
+    return memeq(&buf, want, wn);
+}
+
+fn main(): i64 {
+    alloc_init();
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "cyrius_u8l_");
+    str_builder_add_int(sb, sys_getpid());
+    var root = str_data(str_builder_build(sb));
+    assert_eq(xmkdir(root, 493), 0, "premise: the fixture root was created");
+
+    test_group("a non-ASCII name is created, read and listed under ITS OWN name");
+    var cafe_leaf = "caf\xC3\xA9.txt";                    # café.txt: U+00E9, two UTF-8 bytes
+    var cafe = _cat(_cat(root, "/"), cafe_leaf);
+    assert_eq(file_write_all(cafe, "hello\n", 6), 6, "open(O_CREAT) + write of caf\xC3\xA9.txt");
+    assert_eq(_reads_back(cafe, "hello\n", 6), 1, "it reads back by the same name");
+    assert_eq(_count_named(root, cafe_leaf), 1, "dir_list shows it under its exact UTF-8 name");
+    var smile_leaf = "\xF0\x9F\x98\x80.txt";               # U+1F600: a UTF-16 surrogate pair
+    var smile = _cat(_cat(root, "/"), smile_leaf);
+    assert_eq(file_write_all(smile, "pair\n", 5), 5, "a 4-byte (surrogate-pair) name is created");
+    assert_eq(_count_named(root, smile_leaf), 1, "and listed under its exact name");
+    assert_eq(_count_all(root), 2, "nothing else was created (no Latin-1 twin)");
+    var ndir_leaf = "d\xC3\xADr";                          # dír
+    var ndir = _cat(_cat(root, "/"), ndir_leaf);
+    assert_eq(xmkdir(ndir, 493), 0, "mkdir of a non-ASCII directory");
+    assert_eq(is_dir(str_from(ndir)), 1, "is_dir sees it (the stdlib's own widen decodes too)");
+    assert_eq(is_symlink(str_from(ndir)), 0, "is_symlink stats it and says 0");
+    var moved = _cat(ndir, "/moved\xC3\xA9.txt");
+    assert_eq(file_rename(cafe, moved), 0, "rename of a non-ASCII file into a non-ASCII directory");
+    assert_eq(_reads_back(moved, "hello\n", 6), 1, "the renamed file reads back");
+    assert_eq(_count_named(ndir, "moved\xC3\xA9.txt"), 1, "and is listed there by its exact name");
+    assert_eq(xunlink(moved), 0, "unlink of a non-ASCII name");
+    assert_eq(xunlink(smile), 0, "unlink of a surrogate-pair name");
+    assert_eq(xrmdir(ndir), 0, "rmdir of a non-ASCII directory");
+    assert_eq(_count_all(root), 0, "the root is empty again");
+
+    test_group("a path past 260 bytes is used WHOLE, never cut to 260");
+    var d1 = _cat_run(root, 100, 90);                      # root/ddd...  (90 bytes)
+    var d2 = _cat_run(d1, 101, 90);                        # .../eee...
+    var d3 = _cat_run(d2, 102, 90);                        # .../fff...   (> 248: long on Windows)
+    var lf = _cat(d3, "/target_file.txt");
+    assert_gt(strlen(lf), 260, "premise: the file's path is longer than 260 bytes");
+    assert_eq(xmkdir(d1, 493), 0, "mkdir level 1");
+    assert_eq(xmkdir(d2, 493), 0, "mkdir level 2");
+    assert_eq(xmkdir(d3, 493), 0, "mkdir level 3 (past MAX_PATH-12 on Windows)");
+    assert_eq(file_write_all(lf, "long\n", 5), 5, "open(O_CREAT) + write at the long path");
+    assert_eq(_reads_back(lf, "long\n", 5), 1, "it reads back at the long path");
+    var cut[272];
+    memcpy(&cut, lf, 260);
+    store8(&cut + 260, 0);
+    assert_eq(file_exists(&cut), 0, "nothing exists at the path cut to 260 bytes");
+    var lf2 = _cat(d3, "/renamed_target_file.txt");
+    assert_eq(file_rename(lf, lf2), 0, "rename between two long paths");
+    assert_eq(_reads_back(lf2, "long\n", 5), 1, "the renamed long file reads back");
+    assert_eq(file_exists(lf), 0, "the old long name is gone");
+    assert_eq(xunlink(lf2), 0, "unlink at a long path");
+    assert_eq(xrmdir(d3), 0, "rmdir of the long directory — it held nothing else");
+    assert_eq(_count_all(d2), 0, "level 2 is empty (no truncated twin of level 3)");
+    assert_eq(xrmdir(d2), 0, "rmdir level 2");
+    assert_eq(xrmdir(d1), 0, "rmdir level 1");
+
+    #ifdef CYRIUS_TARGET_WIN
+    test_group("Windows: a name that is not valid UTF-8 is REFUSED, not guessed");
+    var bad = _cat(root, "/bad\xFF.txt");
+    assert_lt(file_open(bad, O_WRONLY | O_CREAT | O_TRUNC, 420), 0, "open(O_CREAT) of invalid UTF-8");
+    assert_lt(xmkdir(_cat(root, "/bad\xC3"), 493), 0, "mkdir of a truncated UTF-8 sequence");
+    assert_eq(is_dir(str_from(_cat(root, "/\xED\xA0\x80"))), 0, "is_dir of an encoded surrogate is 0");
+    assert_eq(_count_all(root), 0, "and nothing was created");
+    #endif
+
+    assert_eq(xrmdir(root), 0, "the fixture root was removed");
+    var rc = assert_summary();
+    return rc;
+}
+var ec = main();
+syscall(60, ec);
