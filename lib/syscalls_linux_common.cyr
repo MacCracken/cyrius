@@ -125,7 +125,9 @@ fn sys_utimensat(dirfd, path, times, flags): i64 {
     # the first time; both arms above then matched nothing and
     # `sys_utimensat(AT_FDCWD, "/missing", 0, 0)` answered 0 — a FAILED file-time
     # set reading as SUCCESS. -ENOSYS is the honest answer on any target this
-    # chain does not name (cx: cxvm routes only read/write/open/close/lseek/exit).
+    # chain does not name (cx: cxvm translates only read/write/open/close/lseek/exit and
+    # host-serves getrandom/clock_gettime — programs/cxvm.cyr's op-0x70 dispatch is the
+    # authority; docs/platform-status.md states the guest contract. CHANGELOG [6.6.10]).
     # Deliberately a trailing default rather than one more named arm, so an
     # eighth target inherits the error instead of the garbage.
     # CHANGELOG [6.6.6]
