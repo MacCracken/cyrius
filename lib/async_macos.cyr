@@ -43,6 +43,24 @@ var TASK_SIZE = 64;
 # data@16 i64, udata@24 ptr } = 32 bytes. EVFILT_READ = -1, EVFILT_WRITE = -2 (int16, so
 # stored as 0xFFFF / 0xFFFE). EV_ADD = 1, EV_DELETE = 2.
 var KEV_SIZE = 32;
+# Filters beyond READ/WRITE, flags and wait bits (xnu bsd/sys/event.h): EVFILT_PROC -5 = 0xFFFB,
+# EVFILT_TIMER -7 = 0xFFF9. CHANGELOG [6.6.10]
+var _KEVF_READ = 65535;
+var _KEVF_WRITE = 65534;
+var _KEVF_PROC = 65531;
+var _KEVF_TIMER = 65529;
+# flags: EV_ADD 0x1, EV_DELETE 0x2, EV_ONESHOT 0x10. fflags: NOTE_EXIT 0x80000000 (EVFILT_PROC).
+# EVFILT_TIMER's `data` is the period in milliseconds when no NOTE_*SECONDS unit flag is set.
+var _EV_ADD = 1;
+var _EV_DELETE = 2;
+var _EV_ONESHOT = 16;
+var _NOTE_EXIT = 0x80000000;
+# wait_ev bits. 1 and 4 are the epoll backend's EPOLLIN / EPOLLOUT, so consumer code passes the
+# same values on every target; the timer and proc bits are private to this file.
+var _KEV_READ = 1;
+var _KEV_WRITE = 4;
+var _KEV_TIMER = 256;
+var _KEV_PROC = 512;
 
 # Runtime struct: { epfd, tasks, task_count, active, allocator, current } = 48
 # bytes (mirror async.cyr F1). epfd is unused on agnos (no epoll for arbitrary
@@ -97,16 +115,80 @@ fn async_spawn(rt, fp, arg): i64 {
     return t;
 }
 
-# One reactor step (mirror of async.cyr _async_step). Runs every TASK_READY task, capturing
-# its return into the result slot (@40); a task that parks via async_wait_fd stays
-# TASK_WAITING. If nothing ran and tasks are parked, block in kevent() once and wake whoever
-# fired. Returns the count of tasks still live (0 = idle).
-#
-# ⛔ THIS DOC BLOCK USED TO DESCRIBE A SERIAL LOOP, AND IT WAS COPIED FROM THE AGNOS BACKEND
-# ALONG WITH THE BODY. v6.5.27 replaced the body with a real kqueue reactor but the comment
-# still said "AGNOS has no epoll/parking, so there is no wait phase" — describing behaviour
-# the code no longer had. Caught by cyrlint flagging the stale wording, which is the only
-# reason it did not ship as a lie about a file nobody re-reads. See CHANGELOG [6.5.27].
+# Issue ONE kevent change (register, modify or delete) and return kevent's result: 0, or < 0.
+# A changelist-only call (nevents 0) never blocks, and an error in the change is RETURNED rather
+# than reported as an EV_ERROR event, which is why every registration in this file goes through
+# here instead of riding a waiting call.
+fn _async_kev_change(kq, ident, filter, flags, fflags, data): i64 {
+    var ch[32];
+    store64(&ch, ident);
+    store16(&ch + 8, filter);
+    store16(&ch + 10, flags);
+    store32(&ch + 12, fflags);
+    store64(&ch + 16, data);
+    store64(&ch + 24, 0);
+    return sys_kevent(kq, &ch, 1, 0, 0, 0);
+}
+
+# The _KEV_* wait bit a delivered event's filter answers.
+fn _async_kev_bit(filt): i64 {
+    if (filt == _KEVF_READ) { return _KEV_READ; }
+    if (filt == _KEVF_WRITE) { return _KEV_WRITE; }
+    if (filt == _KEVF_TIMER) { return _KEV_TIMER; }
+    if (filt == _KEVF_PROC) { return _KEV_PROC; }
+    return 0;
+}
+
+# Park the CURRENT task on (ident, bits) without touching the kqueue — for a registration that is
+# already armed (a periodic timer between ticks) or that the caller armed itself. Returns -1
+# outside a running task.
+fn _async_kev_park(rt, ident, bits): i64 {
+    var cur = load64(rt + 40);
+    if (cur == 0) { return 0 - 1; }
+    store64(cur + 32, ident);
+    store64(cur + 56, bits);
+    store64(cur + 16, TASK_WAITING);
+    return 0;
+}
+
+# Union of the _KEV_* bits every PARKED task waits on for `ident`. The registry IS the task list.
+fn _async_kev_mask(rt, ident): i64 {
+    var m = 0;
+    var t = load64(rt + 8);
+    while (t != 0) {
+        if (load64(t + 16) == TASK_WAITING) {
+            if (load64(t + 32) == ident) { m = m | load64(t + 56); }
+        }
+        t = load64(t + 24);
+    }
+    return m;
+}
+
+# Wake every parked task waiting on (ident, bit). Returns how many it woke.
+fn _async_kev_wake(rt, ident, bit): i64 {
+    var n = 0;
+    var t = load64(rt + 8);
+    while (t != 0) {
+        if (load64(t + 16) == TASK_WAITING) {
+            if (load64(t + 32) == ident) {
+                if ((load64(t + 56) & bit) != 0) {
+                    store64(t + 32, 0 - 1);
+                    store64(t + 56, 0);
+                    store64(t + 16, TASK_READY);
+                    n = n + 1;
+                }
+            }
+        }
+        t = load64(t + 24);
+    }
+    return n;
+}
+
+# One reactor step (mirror of async.cyr _async_step). Runs every TASK_READY task, capturing its
+# return into the result slot (@40); a task that parks stays TASK_WAITING. If nothing ran and
+# tasks are parked, block in kevent() once and wake whoever fired: fd readiness, a timer (the
+# async_with_timeout sentinel, an interval tick) or a child's exit. Returns the count of tasks
+# still live (0 = idle).
 fn _async_step(rt): i64 {
     var kq = load64(rt);
     var active = 0;
@@ -114,7 +196,7 @@ fn _async_step(rt): i64 {
     var t = load64(rt + 8);
     while (t != 0) {
         if (load64(t + 16) == TASK_READY) {
-            store64(rt + 40, t);            # current task, for async_wait_fd
+            store64(rt + 40, t);            # current task, for the park helpers
             var r = fncall1(load64(t), load64(t + 8));
             ran = 1;
             if (load64(t + 16) == TASK_READY) {
@@ -127,33 +209,15 @@ fn _async_step(rt): i64 {
     }
     if (active > 0) {
         if (ran == 0) {
-            # Every live task is parked. Block in kevent() and wake whoever fired.
-            # kqueue reports ONE event per (fd, filter) pair, so the two directions of one
-            # fd arrive as two distinct events — the multi-waiter problem epoll needed a
-            # union mask and a MOD dance for is structurally absent here.
+            # Every live task is parked. Block in kevent() and wake whoever fired. kqueue
+            # reports ONE event per (ident, filter), so the directions of one fd, a timer and a
+            # pid arrive as distinct events.
             var evb[256];                   # 8 events x 32 B
             var nr = sys_kevent(kq, 0, 0, &evb, 8, 0);
             var ei = 0;
             while (ei < nr) {
                 var eo = ei * KEV_SIZE;
-                var wfd = load64(&evb + eo);
-                var filt = load16(&evb + eo + 8);
-                # int16 filter: 0xFFFF = EVFILT_READ (-1), 0xFFFE = EVFILT_WRITE (-2).
-                var want = 1;
-                if (filt == 65534) { want = 4; }
-                var t2 = load64(rt + 8);
-                while (t2 != 0) {
-                    if (load64(t2 + 16) == TASK_WAITING) {
-                        if (load64(t2 + 32) == wfd) {
-                            if ((load64(t2 + 56) & want) != 0) {
-                                store64(t2 + 32, 0 - 1);
-                                store64(t2 + 56, 0);
-                                store64(t2 + 16, TASK_READY);
-                            }
-                        }
-                    }
-                    t2 = load64(t2 + 24);
-                }
+                _async_kev_wake(rt, load64(&evb + eo), _async_kev_bit(load16(&evb + eo + 8)));
                 ei = ei + 1;
             }
         }
@@ -218,13 +282,84 @@ fn async_select(rt, handles, n): i64 {
     }
 }
 
-# async_with_timeout (agnos): no reactor/timerfd — the handle runs to completion
-# inline on the serial model, so the deadline is moot. Join it and report completed.
-# Mirror of async.cyr's P1 surface. v6.4.35.
-fn async_with_timeout(rt, handle, ms): i64 {
-    if (handle == 0) { return 0; }      # mirror async.cyr: null handle → 0, not 1, so a
-    task_join(rt, handle);              # target-agnostic consumer doesn't deref a 0 handle
+# Retire a task that may still be parked (the loser of a timeout race): mark it DONE so the
+# reactor never re-runs it, and take its registrations out of the kqueue. A read/write filter is
+# deleted only when no OTHER parked task still waits on it (kqueue keys by (ident, filter), so
+# deleting it would silently drop that waiter too); a timer the task armed is always deleted.
+# ⚠ Leaving them armed is not harmless: a level-triggered fd registration nobody waits on makes
+# every later kevent() return at once, so the reactor spins instead of sleeping. No-op on a DONE
+# task.
+fn _async_retire(rt, t): i64 {
+    if (t == 0) { return 0; }
+    if (load64(t + 16) == TASK_DONE) { return 0; }
+    var kq = load64(rt);
+    var ident = load64(t + 32);
+    var bits = load64(t + 56);
+    var own = load64(t + 48);
+    store64(t + 16, TASK_DONE);
+    store64(t + 32, 0 - 1);
+    store64(t + 56, 0);
+    store64(t + 48, 0 - 1);
+    if (bits != 0) {
+        var left = _async_kev_mask(rt, ident);
+        if ((bits & _KEV_READ) != 0) {
+            if ((left & _KEV_READ) == 0) { _async_kev_change(kq, ident, _KEVF_READ, _EV_DELETE, 0, 0); }
+        }
+        if ((bits & _KEV_WRITE) != 0) {
+            if ((left & _KEV_WRITE) == 0) { _async_kev_change(kq, ident, _KEVF_WRITE, _EV_DELETE, 0, 0); }
+        }
+        if ((bits & _KEV_PROC) != 0) { _async_kev_change(kq, ident, _KEVF_PROC, _EV_DELETE, 0, 0); }
+    }
+    if (own >= 0) { _async_kev_change(kq, own, _KEVF_TIMER, _EV_DELETE, 0, 0); }
+    return 0;
+}
+
+# Deadline sentinel for async_with_timeout: parks on the one-shot EVFILT_TIMER its caller armed
+# (ident = this task's ctx) and completes (-> 1) when it fires. ctx = { step, rt }.
+fn _async_timeout_sentinel(ctx): i64 {
+    if (load64(ctx) == 0) {
+        store64(ctx, 1);
+        _async_kev_park(load64(ctx + 8), ctx, _KEV_TIMER);
+        return 0;
+    }
     return 1;
+}
+
+# Await `handle` (an async_spawn / async_spawn_future return) with a deadline of `ms`
+# milliseconds. Returns 1 if the task completed in time (its result is then in the handle's
+# result slot, or via task_join), 0 if the deadline fired first (the still-pending task is
+# retired: it will not run again and its kqueue registrations are removed), or -1 if the deadline
+# could not be armed (the handle is then left as it was). Races the task against a one-shot
+# EVFILT_TIMER sentinel on the reactor — the kqueue analogue of the epoll backend's timerfd
+# sentinel; does NOT close the runtime. `ms <= 0` is a deadline that has already passed: the
+# handle still gets the tasks that are READY now, but nothing that parks. v6.4.35 (P1).
+# ⛔ Until 6.6.10 this joined with NO deadline and always returned 1: on this reactor a handle
+# parked on an fd that never became ready waited for ever. CHANGELOG [6.6.10]
+fn async_with_timeout(rt, handle, ms): i64 {
+    if (handle == 0) { return 0; }      # null handle -> 0, not 1 (mirror async.cyr)
+    if (load64(handle + 16) == TASK_DONE) { return 1; }
+    var d = ms;
+    if (d < 0) { d = 0; }
+    var sctx = alloc_via(load64(rt + 32), 16);      # rt's allocator (arena-reclaimable)
+    if (sctx == 0) { return 0 - 1; }
+    store64(sctx, 0);
+    store64(sctx + 8, rt);
+    if (_async_kev_change(load64(rt), sctx, _KEVF_TIMER, _EV_ADD | _EV_ONESHOT, 0, d) < 0) {
+        return 0 - 1;
+    }
+    var sentinel = async_spawn(rt, &_async_timeout_sentinel, sctx);
+    if (sentinel == 0) {
+        _async_kev_change(load64(rt), sctx, _KEVF_TIMER, _EV_DELETE, 0, 0);
+        return 0 - 1;
+    }
+    store64(sentinel + 48, sctx);                   # retire disarms the timer if it never fired
+    _async_pump(rt, handle, sentinel);
+    # snapshot the winner BEFORE retiring (retire marks the loser DONE)
+    var completed = 0;
+    if (load64(handle + 16) == TASK_DONE) { completed = 1; }
+    _async_retire(rt, handle);
+    _async_retire(rt, sentinel);
+    return completed;
 }
 
 # async_interval (agnos): a repeating reactor timer is a server-path primitive with no
@@ -323,51 +458,23 @@ fn async_await_readable(fd): i64 {
     return 0;
 }
 
-# v6.5.27 — REAL kqueue registration (these were no-op parks; macOS had no reactor at all).
-# Registers (fd, filter) on the runtime's kqueue keyed to the current task and parks it.
-# `events` uses the SAME bits as the epoll backend (1 = readable, 4 = writable) so consumer
-# code is identical across targets; they are translated to EVFILT_READ / EVFILT_WRITE here.
-#
-# ⭐ kqueue needs NO union mask and NO modify-on-conflict. epoll keys its registration by fd
-# alone, so two waiters on one fd collide and the second `EPOLL_CTL_ADD` returns -EEXIST —
-# the bug v6.5.26 fixed. kqueue keys by (ident, filter), so read and write are independent
-# registrations and repeated EV_ADD of the same pair is an idempotent update, not an error.
+# v6.5.27 — kqueue registration: register (fd, filter) on the runtime's kqueue and park the
+# current task on it. `events` uses the epoll backend's bits (1 = readable, 4 = writable) so
+# consumer code is identical across targets; they become EVFILT_READ / EVFILT_WRITE here.
+# ⭐ kqueue needs NO union mask and NO modify-on-conflict: it keys by (ident, filter), so read and
+# write are independent registrations and repeated EV_ADD of the same pair is an idempotent
+# update, not an error (the -EEXIST the epoll backend fixed at v6.5.26 cannot happen).
 fn _async_kev_register(rt, fd, events): i64 {
     var cur = load64(rt + 40);
     if (cur == 0) { return 0 - 1; }
     var kq = load64(rt);
-    store64(cur + 32, fd);
-    store64(cur + 56, events);
-    store64(cur + 16, TASK_WAITING);
-    var ch[64];                          # up to 2 changes x 32 B
-    var n = 0;
-    if ((events & 1) != 0) {
-        store64(&ch + n * KEV_SIZE, fd);
-        store16(&ch + n * KEV_SIZE + 8, 65535);   # EVFILT_READ (-1)
-        store16(&ch + n * KEV_SIZE + 10, 1);      # EV_ADD
-        store32(&ch + n * KEV_SIZE + 12, 0);
-        store64(&ch + n * KEV_SIZE + 16, 0);
-        store64(&ch + n * KEV_SIZE + 24, 0);
-        n = n + 1;
+    var rc = 0;
+    if ((events & _KEV_READ) != 0) { rc = _async_kev_change(kq, fd, _KEVF_READ, _EV_ADD, 0, 0); }
+    if (rc >= 0) {
+        if ((events & _KEV_WRITE) != 0) { rc = _async_kev_change(kq, fd, _KEVF_WRITE, _EV_ADD, 0, 0); }
     }
-    if ((events & 4) != 0) {
-        store64(&ch + n * KEV_SIZE, fd);
-        store16(&ch + n * KEV_SIZE + 8, 65534);   # EVFILT_WRITE (-2)
-        store16(&ch + n * KEV_SIZE + 10, 1);      # EV_ADD
-        store32(&ch + n * KEV_SIZE + 12, 0);
-        store64(&ch + n * KEV_SIZE + 16, 0);
-        store64(&ch + n * KEV_SIZE + 24, 0);
-        n = n + 1;
-    }
-    # changelist-only call: nevents 0, so it registers and returns without blocking.
-    var rc = sys_kevent(kq, &ch, n, 0, 0, 0);
-    if (rc < 0) {
-        store64(cur + 16, TASK_READY);   # un-park rather than sleep on an unwatched fd
-        store64(cur + 32, 0 - 1);
-        store64(cur + 56, 0);
-        return 0 - 1;
-    }
-    return 0;
+    if (rc < 0) { return 0 - 1; }   # not parked: a caller that sees -1 can fall back to blocking I/O
+    return _async_kev_park(rt, fd, events);
 }
 
 # Park until `fd` is READABLE. Mirror of the epoll backend's async_wait_fd.
