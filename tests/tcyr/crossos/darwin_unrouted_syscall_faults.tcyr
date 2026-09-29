@@ -24,11 +24,14 @@
 # ⭐ WHY A FORKED CHILD. "Returns -78 with SIGSYS ignored" is the half a test can observe in
 # process; the DEFAULT is that the process dies, and only a child can show that.
 #
-# 6.6.10 — sys_getdents64 joined the peer-decline group: Darwin's getdirentries64 takes a fourth
-# OUT-pointer (basep) the 3-arg wrapper never passed, so xnu wrote 8 bytes through whatever
-# r10 / x3 held — the assert primes that register with the address of a live sentinel first,
-# which is exactly how the stray write was measured (sentinel zeroed on both Macs), so a wrapper
-# that regressed to issuing the call fails here even when it returns data.
+# 6.6.10 — the peer-decline group covers BOTH Macs. The epoll/inotify asserts used to sit under
+# `#ifdef CYRIUS_ARCH_AARCH64` because the x86-macOS peer did not define those wrappers at all
+# (the test would not have compiled on ach); it now carries them, the six pure helpers and the
+# flag enums, so the same source runs on ach and ecb. sys_getdents64 joined the group: Darwin's
+# getdirentries64 takes a fourth OUT-pointer (basep) the 3-arg wrapper never passed, so xnu wrote
+# 8 bytes through whatever r10 / x3 held — the assert primes that register with the address of a
+# live sentinel first, which is exactly how the stray write was measured (sentinel zeroed on both
+# Macs), so a wrapper that regressed to issuing the call fails here even when it returns data.
 #
 # Elsewhere the file compiles and asserts nothing: Linux and aarch64 pass an unrouted number
 # through to the kernel by design (native numbers must survive), and PE declines with -38.
@@ -61,13 +64,11 @@ fn main(): i64 {
     # wrapper that regressed to issuing its number shows up as a FAIL here, not a dead process.
     test_group("Darwin: the peer declines what Darwin does not have (-ENOSYS, no syscall)");
     assert_eq(sys_pause(), 0 - 78, "sys_pause() == -78 (Darwin has no pause; would block on Linux)");
-    #ifdef CYRIUS_ARCH_AARCH64
     var evs[64];
     assert_eq(sys_epoll_wait(0, &evs, 1, 0), 0 - 78, "sys_epoll_wait() == -78 (no epoll on Darwin)");
     assert_eq(sys_inotify_init(), 0 - 78, "sys_inotify_init() == -78");
-    assert_eq(sys_inotify_add_watch(0, ".", 2), 0 - 78, "sys_inotify_add_watch() == -78");
+    assert_eq(sys_inotify_add_watch(0, ".", IN_MODIFY), 0 - 78, "sys_inotify_add_watch() == -78");
     assert_eq(sys_inotify_rm_watch(0, 1), 0 - 78, "sys_inotify_rm_watch() == -78");
-    #endif
 
     # getdents: prime the 4th-argument register with &sent (a failing 4-arg openat), then list
     # a real, open directory. The broken wrapper returned Darwin records (n > 0) AND zeroed sent.
@@ -82,6 +83,38 @@ fn main(): i64 {
     assert_eq(load64(&sent), 0x5A5A5A5A5A5A5A5A,
       "the sentinel the 4th-argument register pointed at is intact (was: zeroed)");
     sys_close(dfd);
+
+    # The x86-macOS peer now has the arm64-macOS surface: the flag enums, the SYS_* names and the
+    # pure helpers all resolve (this group did not COMPILE on ach before 6.6.10).
+    test_group("Darwin: both Macs expose the same Linux-shaped surface");
+    assert_eq(IN_MODIFY, 2, "IN_MODIFY resolves (InotifyEvent)");
+    assert_eq(IN_CLOSE_WRITE, 8, "IN_CLOSE_WRITE resolves");
+    assert_eq(MS_BIND, 4096, "MS_BIND resolves (MsFlag)");
+    assert_eq(MS_RDONLY, 1, "MS_RDONLY resolves");
+    assert_eq(SYS_FLOCK, 73, "SYS_FLOCK is the x86 number 73 on both Macs (renumbered to BSD 131)");
+    assert(SYS_DUP3 > 0, "SYS_DUP3 resolves");
+    assert(SYS_FACCESSAT > 0, "SYS_FACCESSAT resolves");
+    assert(SYS_SYSINFO > 0, "SYS_SYSINFO resolves");
+    assert(SYS_INOTIFY_INIT1 > 0, "SYS_INOTIFY_INIT1 resolves");
+    var ss = sigset_new();
+    assert(ss != 0, "sigset_new() returns a set");
+    sigset_add(ss, 15);
+    assert_eq(sigset_has(ss, 15), 1, "sigset_has(15) after sigset_add(15)");
+    assert_eq(sigset_has(ss, 9), 0, "sigset_has(9) is clear");
+    var ev = epoll_event_new(EPOLLIN, 0x1122334455);
+    assert(ev != 0, "epoll_event_new() returns an event");
+    assert_eq(load32(ev), EPOLLIN, "epoll_event.events @0");
+    #ifdef CYRIUS_ARCH_AARCH64
+    assert_eq(load64(ev + 8), 0x1122334455, "epoll_event.data @8 (aarch64: unpacked)");
+    #endif
+    #ifdef CYRIUS_ARCH_X86
+    assert_eq(load64(ev + 4), 0x1122334455, "epoll_event.data @4 (x86_64: packed)");
+    #endif
+    var ts = timerspec_new(3, 5);
+    assert(ts != 0, "timerspec_new() returns an itimerspec");
+    assert_eq(load64(ts), 3, "itimerspec.it_interval.tv_sec");
+    assert_eq(load64(ts + 16), 5, "itimerspec.it_value.tv_sec");
+    assert_eq(timerfd_drain(0 - 1), 0, "timerfd_drain() on a bad fd reads nothing and returns 0");
 
     test_group("Darwin: by default an unrouted syscall kills the process with SIGSYS");
     assert_eq(signal_default(12), 0, "signal_default(SIGSYS) == 0");

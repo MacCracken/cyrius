@@ -71,7 +71,7 @@ allow_reason() {
                       echo "both|Darwin has no epoll; the BSD equivalent is kqueue, a different API not a renumber" ;;
     SYS_FUTEX)        echo "both|Darwin has no futex; macOS sync uses __ulock/pthread, not a renumber" ;;
     SYS_INOTIFY_ADD_WATCH|SYS_INOTIFY_INIT1|SYS_INOTIFY_RM_WATCH)
-                      echo "arm|Darwin has no inotify; file events are kqueue/FSEvents, a different API" ;;
+                      echo "both|Darwin has no inotify; file events are kqueue/FSEvents, a different API. Both peers' sys_inotify_* decline with -78 without issuing a number (the x86 peer declares the names since 6.6.10 so portable source compiles on both Macs)" ;;
     SYS_LANDLOCK_ADD_RULE|SYS_LANDLOCK_CREATE_RULESET|SYS_LANDLOCK_RESTRICT_SELF)
                       echo "both|Landlock is a Linux LSM; Darwin sandboxing is Seatbelt, no syscall peer" ;;
     SYS_SECCOMP)      echo "both|seccomp is Linux-only; no Darwin peer" ;;
@@ -97,7 +97,7 @@ allow_reason() {
     SYS_MKNODAT)      echo "both|Darwin has no mknodat; its mknod(14)/mkfifo(132) take no dirfd, so a row would drop an argument silently. sys_mknodat declines with -78 on macOS (v6.6.8)" ;;
     SYS_GETCWD)       echo "both|Darwin has no getcwd syscall (slot 326 is unused). The only issuer, programs/cyrius-init.cyr _cwd_path, takes an open(\".\") + fcntl(F_GETPATH) arm under #ifdef CYRIUS_TARGET_MACOS (as cbt/deps.cyr _abs_path has since 6.0.41), so neither Mac emits 79/17 — proven by compiling it in darwin_syscall_literals_routed.sh axis 2. Until 6.6.8 it did emit them: invisible here while this scan read lib/ only (v6.6.8)" ;;
     SYS_UNAME)        echo "both|Darwin has no uname(2); lib/sys.cyr reads the same fields via sysctl (routed as the private alias 1202->202)" ;;
-    SYS_SYSINFO)      echo "arm|Darwin has no sysinfo(2); lib/sys.cyr derives it from sysctl + gettimeofday (1202/1116, both routed)" ;;
+    SYS_SYSINFO)      echo "both|Darwin has no sysinfo(2); lib/sys.cyr derives it from sysctl + gettimeofday (1202/1116, both routed). The x86 peer declares the name since 6.6.10, for the same portable-source reason as the arm peer" ;;
     SYS_PAUSE)        echo "x86|Darwin has no pause(2); the x86 peer declares it but its sys_pause declines with -78 (6.6.5), so no macOS build emits it" ;;
     SYS_PPOLL)        echo "arm|Darwin has no ppoll(2); its callers — sys_pause (6.6.8; the x86 peer since 6.6.5) and lib/yukti.cyr _yk_ppoll (yukti 2.3.14) — decline with -ENOSYS under #ifdef CYRIUS_TARGET_MACOS, and a bare renumber to poll(230) would be WRONG — our call passes timeout 0, so poll returns immediately instead of blocking. ⛔ Until v6.5.36 the arm peer spelled this 73, which COLLIDED with the flock row 73->131 and so LOOKED routed while silently issuing flock; it is now the private alias 1073, honestly unrouted here. Same shape as the SYS_SIGNALFD4 note above, and on ELF-aarch64 that same collision was a live Critical" ;;
     # ---- a real Darwin call exists but a bare renumber would be WRONG ----
@@ -107,6 +107,8 @@ allow_reason() {
                       echo "both|Darwin has no setresuid/setresgid; the closest peers (setreuid/setregid) have different semantics, so a row would silently change behaviour" ;;
     # ---- same capability, different spelling: routed under the OTHER name ----
     SYS_CLONE)        echo "x86|the x86 peer implements sys_fork via bare SYS_FORK=57 (routed ->2); only the arm peer spells fork as clone(220). Same capability" ;;
+    SYS_DUP3)         echo "x86|the x86 peer implements sys_dup2 via bare SYS_DUP2=33 (routed ->90); only the arm peer, which has no dup2, spells it dup3(old, new, 0) (24 ->90). Same capability. Darwin has no dup3, so there is no x86 row to add: a 292 -> dup2 row would silently drop the flags argument (6.6.10 declared the name for surface parity)" ;;
+    SYS_FACCESSAT)    echo "x86|the x86 peer implements sys_access via bare SYS_ACCESS=21 (routed ->33); only the arm peer, which has no access(2), spells it faccessat (269 ->466). Same capability. A raw syscall(SYS_FACCESSAT, ...) on Intel-Mac is unrouted (SIGSYS, -78 with SIGSYS ignored) until an EMACHO_SYSXLAT 269 -> 466 row exists (6.6.10 declared the name for surface parity)" ;;
     *) echo "" ;;
     esac
 }
