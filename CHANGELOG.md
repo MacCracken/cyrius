@@ -6,6 +6,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.11] — 2026-09-29
 
+### Downstream
+
+- **sandhi 1.10.3 folded (`lib/sandhi.cyr`, sandhi commit `fba0433`) — the DNS TXID fails CLOSED
+  again (CVE-19 residual; no new CVE).** (bite 14.) **Root cause:** CVE-19's fail-closed TXID
+  (d4b24c76, 2026-06-11) was applied to THIS fold only; the next re-vendor (d6032e26) brought back
+  sandhi's clock-ns fallback, so since then a failed `sys_getrandom` sent the query with
+  `(clock_now_ns() ^ (ns >> 16)) & 0xFFFF` — a TXID an off-path attacker can estimate. **Fix, at
+  the source:** sandhi 1.10.3's `_sandhi_resolve_txid_from` maps a short or failed read to -1, and
+  `_sandhi_resolve_ipv4_query_a` / `_ipv6_query_a` (the `_impl_a` entry points delegate to them)
+  refuse a negative TXID before reading resolv.conf, allocating or opening a socket. No public
+  signature changes. `tests/tcyr/stdlib/sandhi_dns_txid_fail_closed.tcyr` is the cyrius-side
+  tripwire for a re-vendor that loses it again (fails on the 1.10.2 fold, on a clock-fallback
+  mutant and on a dropped caller guard).
+
 ## [6.6.10] — 2026-09-29
 
 The fourth batch release: the 6.6.8 review finds (groups B–G) and group H of the 6.6.9 finds, placed by
