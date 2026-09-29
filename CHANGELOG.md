@@ -121,6 +121,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   folded byte-identical from bayan commit `07c96a3` (`dist/bayan.cyr`; pin 6.6.9). (bite 14.) Its
   FlateDecode loop said `callptr` "is a hard compile error on one backend" — cx, false since v6.5.13;
   comment-only, plus bayan's previously unreleased issue-archive path-string moves (8 comment paths).
+- ⛔ **yantra 1.0.6 must be TAGGED by the user before cyrius 6.6.10 is tagged** — `lib/yantra.cyr` is
+  folded byte-identical from yantra commit `2be8a37` (`dist/yantra.cyr`; pin 6.6.9). (bite 14; the
+  roadmap's "yantra drops sock_send's count" item, premise-checked: `src/protocol/cdp.cyr:235`.)
+  `_cdp_http_get` sent the CDP discovery request with `sock_send` and ignored the count, then parsed
+  a "response" to a request that never went out; it now uses `sock_send_all` and returns 0, pinned
+  by yantra's new offline `tests/cdp_http_short_send.tcyr` (seccomp-denied write; the old code
+  returned the canned body). yantra reads WS frames through this stdlib's `ws_recv`, so CVE-53
+  reaches it through `lib/ws.cyr`; its Chromium/CDP e2e smoke passes 11/11 against the 6.6.10
+  reader (live Chromium 153).
+- **majra needs no WebSocket fix**: `majra_ws_recv_frame` (majra `src/ws.cyr`) already reads every
+  frame part exactly, bounds the length (`WS_MAX_PAYLOAD`) and rejects the top 32 bits — its 2.6.9
+  repair. (bite 14, premise-checked.) The fold table in `docs/ecosystem.md` names the three new fold
+  commits (`fold_table_matches_vendored.sh` green).
 
 ## [6.6.9] — 2026-09-28
 
