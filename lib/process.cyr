@@ -136,10 +136,18 @@ fn proc_timeout_ms(): i64 {
 # prctl is not a Darwin/BSD syscall and is not routed on PE. The getppid re-check closes the
 # race where the parent died between the fork and the prctl: the death signal was then
 # delivered to nobody and will never fire, so the child exits itself.
+# macOS (6.6.10): when a deadline is in force the child also calls setsid(), so it leads its
+# own process group and `proc_kill_tree` can end that GROUP — macOS has no /proc to walk for
+# descendants. Only with a deadline: a session of its own detaches the child from the terminal
+# (no Ctrl-C, no /dev/tty), which an unbounded call — `git` prompting for credentials through
+# cbt/deps.cyr — must keep. CHANGELOG [6.6.10]
 fn _proc_child_guard(ppid_before): i64 {
     #ifdef CYRIUS_TARGET_LINUX
     sys_prctl(1, 9, 0, 0, 0);
     if (syscall(SYS_GETPPID) != ppid_before) { sys_exit(1); }
+    #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    if (_PROC_DEADLINE_MS > 0) { sys_setsid(); }
     #endif
     return 0;
 }
@@ -221,11 +229,22 @@ fn _proc_tree_add(pid, tid, n): i64 {
 }
 #endif
 
+# Allocate the snapshot buffer once. Returns 1 when it exists, 0 when the allocation failed —
+# then no tree can be snapshotted and the callers end the direct child alone (6.6.10: the
+# allocation was unchecked, so an exhausted heap walked /proc into address 0). CHANGELOG [6.6.10]
+fn _proc_tree_ready(): i64 {
+    if (_proc_tree != 0) { return 1; }
+    var tb = alloc(_PROC_TREE_CAP * 8 + 4096 + 65536);
+    if (tb == 0) { return 0; }
+    _proc_tree = tb;
+    return 1;
+}
+
 # Snapshot every descendant of `root` into `_proc_tree`, breadth-first; returns how many
 # (0 off Linux — nothing to walk).
 fn _proc_tree_collect(root): i64 {
     #ifdef CYRIUS_TARGET_LINUX
-    if (_proc_tree == 0) { _proc_tree = alloc(_PROC_TREE_CAP * 8 + 4096 + 65536); }
+    if (_proc_tree_ready() == 0) { return 0; }
     var n = _proc_tree_add(root, 0, 0);
     var i = 0;
     while (i < n) { n = _proc_tree_add(load64(_proc_tree + i * 8), 0, n); i = i + 1; }
@@ -286,11 +305,74 @@ fn _proc_tree_sweep(n, sig): i64 {
     return live;
 }
 
+# End child `pid` and every process descended from it, and REAP `pid` into `stbuf` (the
+# wait-status buffer — at least 4 bytes; never a signal number). TERM first, a grace of
+# `_PROC_GRACE_MS` (5 s) for the tree to go, then KILL whatever is left. Returns 0. The caller
+# must NOT waitpid `pid` again: it has been reaped here.
+#   Linux: the descendants are snapshotted from /proc/<pid>/task/*/children before the TERM;
+#          `pid` gets its TERM first, and each descendant ONE TERM once `pid` has gone (a
+#          second TERM kills a shell mid-EXIT-trap — see lib/regression.cyr's twin).
+#   macOS: there is no /proc, so "the tree" is `pid`'s PROCESS GROUP — the whole group gets
+#          one TERM, then one KILL. That covers the tree when the child called setsid() before
+#          exec (this module's verbs do when a deadline is set; cbt's batch runner and
+#          lib/async_macos.cyr's async_run_process always do). A child that does not lead a
+#          group of its own is ended alone.
+# Not defined on Windows (a process there is a HANDLE; process_win.cyr ends a tree through a
+# Job object). The agnos peer defines it on kill#16's tree bit.
+# 6.6.10: public. It was the private `_proc_kill_tree` (6.6.8), so every other deadline in the
+# stdlib — lib/async.cyr's async_run_process, cbt's test runner — SIGKILLed the pid alone and
+# left the grandchildren running. CHANGELOG [6.6.10]
+fn proc_kill_tree(pid, stbuf): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    var g = _proc_kill_group(pid, stbuf);
+    return g;
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
+    var t = _proc_kill_tree(pid, stbuf);
+    return t;
+    #endif
+}
+
+# macOS: `proc_kill_tree` by process group. `kill(-pid, 0)` answers 0 while a group with that
+# id has a live member — and POSIX does not reuse a pid while a process group of that id
+# exists, so while ours lives the probe cannot reach a stranger's group. This relies on
+# sys_kill passing Darwin's third `posix` argument as 0: with a stale register an all-zombie
+# group answered EPERM instead of ESRCH, and the wait below ran out its whole grace
+# (lib/syscalls_linux_common.cyr, CHANGELOG [6.6.10]).
+fn _proc_kill_group(pid, stbuf): i64 {
+    var tgt = pid;
+    if (sys_kill(0 - pid, 0) == 0) { tgt = 0 - pid; }
+    sys_kill(tgt, 15);
+    var got = 0;
+    var waited = 0;
+    var go = 1;
+    while (go == 1) {
+        if (got == 0) {
+            var w = sys_waitpid(pid, stbuf, 1);
+            if (w == pid) { got = 1; }
+            if (w < 0) { got = 2; }
+        }
+        if (got != 0) {
+            if (tgt == pid) { go = 0; }
+            else { if (sys_kill(tgt, 0) != 0) { go = 0; } }
+        }
+        if (go == 1) {
+            if (waited >= _PROC_GRACE_MS) { go = 0; }
+            else { syscall(7, 0, 0, 10); waited = waited + 10; }
+        }
+    }
+    if (tgt != pid) { sys_kill(tgt, 9); }
+    if (got == 0) { sys_kill(pid, 9); sys_waitpid(pid, stbuf, 0); }
+    return 0;
+}
+
 # SIGTERM `pid`; once it has gone, ONE SIGTERM to each descendant it left (a second TERM kills
 # a shell mid-EXIT-trap — see lib/regression.cyr's twin); all within `_PROC_GRACE_MS`; then
-# SIGKILL the stragglers and reap `pid` into `stbuf`.
+# SIGKILL the stragglers and reap `pid` into `stbuf`. The /proc walk behind `proc_kill_tree`
+# (off Linux the snapshot is empty and `pid` alone is signalled).
 fn _proc_kill_tree(pid, stbuf): i64 {
     var n = _proc_tree_collect(pid);
+
     sys_kill(pid, 15);
     var got = 0;
     var waited = 0;
@@ -313,9 +395,112 @@ fn _proc_kill_tree(pid, stbuf): i64 {
     return 0;
 }
 
+# TERM the first `n` snapshot entries (each once), give them `_PROC_GRACE_MS` to go, KILL
+# what is left, and reap every one of them that is our child. CHANGELOG [6.6.10]
+fn _proc_tree_end(n): i64 {
+    var waited = 0;
+    var live = _proc_tree_sweep(n, 15);
+    while (live > 0 && waited < _PROC_GRACE_MS) {
+        syscall(7, 0, 0, 10);
+        waited = waited + 10;
+        live = _proc_tree_sweep(n, 15);
+    }
+    _proc_tree_sweep(n, 9);
+    var tries = 0;
+    while (_proc_tree_sweep(n, 0) > 0 && tries < 100) { syscall(7, 0, 0, 10); tries = tries + 1; }
+    return 0;
+}
+
+# ⛔ 6.6.10 — AN ADOPTION WINDOW, for a caller that must also end what its child LEFT BEHIND.
+# `proc_kill_tree` reaches the tree that exists when a deadline fires. A child that EXITS on its
+# own leaves its descendants to init, where nothing of ours can find them again: the
+# `cyrius test` runner left a test's forked `sleep` at PPID=1 on every clean pass, and one that
+# held the runner's stdout hung `cyrius test f | cat` until it exited. Linux's
+# PR_SET_CHILD_SUBREAPER makes those orphans OUR children instead. Open the window just before
+# the fork and close it once the child has been reaped:
+#   `_proc_subreap_begin()` — become a subreaper and remember the children we ALREADY have;
+#   `_proc_subreap_end()`   — end every child adopted since, and its descendants (TERM, grace,
+#                             KILL, reap), then clear the subreaper bit if begin set it.
+# Children that existed before the window are left alone — and they are all a subreaper can
+# have adopted before it — so a daemon an earlier step started (a git credential-cache daemon
+# from an implicit `cyrius deps` resolve) survives the window. Linux only: elsewhere both
+# return 0 and do nothing (macOS: the child leads its own process group and `proc_kill_tree`
+# ends that group after the reap). Not re-entrant. CHANGELOG [6.6.10]
+var _proc_sr_pre = 0;       # i64[_PROC_TREE_CAP]: our children when the window opened
+var _proc_sr_npre = 0;
+var _proc_sr_set = 0;       # 1 when begin set the bit (it was clear), so end clears it again
+
+# Open the adoption window. Returns 0, or -1 when it could not (no memory, or prctl refused) —
+# the caller then runs without one, exactly as before 6.6.10.
+fn _proc_subreap_begin(): i64 {
+    #ifdef CYRIUS_TARGET_LINUX
+    if (_proc_tree_ready() == 0) { return 0 - 1; }
+    if (_proc_sr_pre == 0) {
+        var pb = alloc(_PROC_TREE_CAP * 8);
+        if (pb == 0) { return 0 - 1; }
+        _proc_sr_pre = pb;
+    }
+    var cur[8];
+    store64(&cur, 0);
+    sys_prctl(37, &cur, 0, 0, 0);                             # PR_GET_CHILD_SUBREAPER
+    _proc_sr_set = 0;
+    if (load32(&cur) == 0) {
+        if (sys_prctl(36, 1, 0, 0, 0) != 0) { return 0 - 1; } # PR_SET_CHILD_SUBREAPER
+        _proc_sr_set = 1;
+    }
+    var n = _proc_tree_add(sys_getpid(), 0, 0);
+    var i = 0;
+    while (i < n) { store64(_proc_sr_pre + i * 8, load64(_proc_tree + i * 8)); i = i + 1; }
+    _proc_sr_npre = n;
+    #endif
+    return 0;
+}
+
+# 1 when `p` was already our child when the window opened.
+fn _proc_sr_had(p): i64 {
+    var i = 0;
+    while (i < _proc_sr_npre) {
+        if (load64(_proc_sr_pre + i * 8) == p) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Close the adoption window: end every child adopted since `_proc_subreap_begin` and all of
+# their descendants. Up to four rounds, because a process ended in one round can orphan its
+# own children onto us. Returns how many the first round found (0 when nothing was left).
+fn _proc_subreap_end(): i64 {
+    var found = 0;
+    #ifdef CYRIUS_TARGET_LINUX
+    if (_proc_sr_pre == 0) { return 0; }
+    var round = 0;
+    while (round < 4) {
+        var n = _proc_tree_add(sys_getpid(), 0, 0);
+        var k = 0;
+        var i = 0;
+        while (i < n) {
+            var p = load64(_proc_tree + i * 8);
+            if (_proc_sr_had(p) == 0) { store64(_proc_tree + k * 8, p); k = k + 1; }
+            i = i + 1;
+        }
+        if (k == 0) { round = 4; }
+        else {
+            i = 0;
+            while (i < k) { k = _proc_tree_add(load64(_proc_tree + i * 8), 0, k); i = i + 1; }
+            if (round == 0) { found = k; }
+            _proc_tree_end(k);
+            round = round + 1;
+        }
+    }
+    if (_proc_sr_set == 1) { sys_prctl(36, 0, 0, 0, 0); _proc_sr_set = 0; }
+    _proc_sr_npre = 0;
+    #endif
+    return found;
+}
+
 # Wait for `pid`, but not for ever. Returns 1 if the child was reaped normally (`stbuf` holds
 # its status), 0 if the deadline fired (the child's whole tree was then ended by
-# `_proc_kill_tree`: TERM, grace, KILL — 6.6.8), and -1 if waitpid failed before either —
+# `proc_kill_tree`: TERM, grace, KILL — 6.6.8), and -1 if waitpid failed before either —
 # then `stbuf` was NEVER WRITTEN and must not be decoded. That is not hypothetical: a caller
 # that inherited SIGCHLD = SIG_IGN (it survives execve) has its children auto-reaped by the
 # kernel, so waitpid blocks until they exit and then fails ECHILD; decoding the untouched
@@ -338,7 +523,7 @@ fn _proc_wait_deadline(pid, stbuf, timeout_ms): i64 {
     while (waited < timeout_ms) {
         var w = sys_waitpid(pid, stbuf, 1);
         if (w == pid) { return 1; }
-        if (w < 0) { _proc_kill_tree(pid, stbuf); return 0 - 1; }
+        if (w < 0) { proc_kill_tree(pid, stbuf); return 0 - 1; }
         syscall(7, 0, 0, slice);
         waited = waited + slice;
         if (waited >= 50) { slice = 10; }
@@ -347,7 +532,7 @@ fn _proc_wait_deadline(pid, stbuf, timeout_ms): i64 {
     _proc_deadline_kills = _proc_deadline_kills + 1;
     # The deadline fired and WE ended it (6.6.8: its whole tree, TERM -> grace -> KILL): 0 is
     # the truth even if an auto-reap leaves nothing to collect.
-    _proc_kill_tree(pid, stbuf);
+    proc_kill_tree(pid, stbuf);
     return 0;
 }
 

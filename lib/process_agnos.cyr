@@ -215,6 +215,19 @@ fn _agp_code(st): i64 {
     return WEXITSTATUS(st);
 }
 
+# End child `pid` and its whole descendant tree, and reap `pid` into `stbuf` (its wait status,
+# stored as 4 bytes; left untouched when there was nothing of ours to reap). Returns 0; the
+# caller must not wait for `pid` again. The agnos peer of lib/process.cyr's `proc_kill_tree`:
+# kill#16 with the tree bit (agnos 1.57.7) ENDS the root and every descendant in one snapshot.
+# There is no TERM-then-grace step because agnos gives SIGTERM no default action — a TERM here
+# would only set a pending bit. CHANGELOG [6.6.10]
+fn proc_kill_tree(pid, stbuf): i64 {
+    sys_kill_tree(pid, 9);
+    var st = _agp_wait(pid);
+    if (st >= 0) { store32(stbuf, st); }
+    return 0;
+}
+
 # Wait for `pid` and answer the i64 verbs' way: the exit code, or -1 when it died of a
 # signal or could not be waited for (the POSIX exec_* contract).
 fn _agp_wait_exit(pid): i64 {
