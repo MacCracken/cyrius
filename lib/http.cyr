@@ -2,8 +2,10 @@
 # Usage: include "lib/http.cyr"
 # Requires: alloc.cyr, string.cyr, net.cyr, str.cyr
 # The URL's host is resolved with net.cyr's net_resolve_ipv4 — an IPv4 literal, `localhost`,
-# /etc/hosts, then DNS (v6.6.9; before it no http_* call could reach any host). The request is
-# at most _HTTP_REQ_CAP (2048) bytes; a longer one is refused as a bad URL (CVE-50).
+# /etc/hosts, then DNS; the system resolver on Windows (v6.6.9; before it no http_* call could
+# reach any host). The request is at most _HTTP_REQ_CAP (2048) bytes; a longer one is refused as
+# a bad URL (CVE-50). Every socket is closed with net.cyr's sock_close: on Windows it is a
+# Winsock SOCKET, which sys_close (CloseHandle there) does not close (6.6.11).
 
 # v5.8.31: Result-returning *_r variant (`http_get_r`) for typed
 # error returns. Also v5.8.31 fixes a long-standing bug in the
@@ -289,7 +291,7 @@ fn http_get(url): i64 {
     var fd = fd_r;
     var c_r_tag, c_r = sock_connect(fd, addr, port);
     if (is_err_result(c_r_tag) == 1) {
-        sys_close(fd);
+        sock_close(fd);
         var cerr = alloc(24);
         if (cerr == 0) { return 0; }
         store64(cerr, HTTP_ERROR);
@@ -300,7 +302,7 @@ fn http_get(url): i64 {
     # it. A failed or short send is now HTTP_ERROR. CHANGELOG [6.6.8]
     var qlen = strlen(req);
     if (sock_send_all(fd, req, qlen) != qlen) {
-        sys_close(fd);
+        sock_close(fd);
         var serr = alloc(24);
         if (serr == 0) { return 0; }
         store64(serr, HTTP_ERROR);
@@ -309,7 +311,7 @@ fn http_get(url): i64 {
     # Read response — sock_recv returns Result; payload(Ok) is bytes
     # read, Err short-circuits the loop.
     var rbuf = alloc(65536);
-    if (rbuf == 0) { sys_close(fd); return 0; }
+    if (rbuf == 0) { sock_close(fd); return 0; }
     var total = 0;
     var rgo = 1;
     while (rgo == 1) {
@@ -321,7 +323,7 @@ fn http_get(url): i64 {
             else { total = total + n; if (total >= 65536) { rgo = 0; } }
         }
     }
-    sys_close(fd);
+    sock_close(fd);
     return _http_parse_response(rbuf, total);
 }
 
@@ -348,11 +350,11 @@ fn http_get_r(url) : Result {
     if (is_err_result(fd_r_tag) == 1) { return Err(HttpNetErr); }
     var fd = fd_r;
     var c_r_tag, c_r = sock_connect(fd, addr, port);
-    if (is_err_result(c_r_tag) == 1) { sys_close(fd); return Err(HttpNetErr); }
+    if (is_err_result(c_r_tag) == 1) { sock_close(fd); return Err(HttpNetErr); }
     var qlen = strlen(req);
-    if (sock_send_all(fd, req, qlen) != qlen) { sys_close(fd); return Err(HttpNetErr); }   # v6.6.8
+    if (sock_send_all(fd, req, qlen) != qlen) { sock_close(fd); return Err(HttpNetErr); }   # v6.6.8
     var rbuf = alloc(65536);
-    if (rbuf == 0) { sys_close(fd); return Err(HttpOther); }
+    if (rbuf == 0) { sock_close(fd); return Err(HttpOther); }
     var total = 0;
     var rgo = 1;
     while (rgo == 1) {
@@ -364,7 +366,7 @@ fn http_get_r(url) : Result {
             else { total = total + n; if (total >= 65536) { rgo = 0; } }
         }
     }
-    sys_close(fd);
+    sock_close(fd);
     var resp = _http_parse_response(rbuf, total);
     var st = load64(resp);
     if (st < 200) { return Err(HttpNon2xx); }
@@ -420,7 +422,7 @@ fn http_get_a(a, url): i64 {
     var fd = fd_r;
     var c_r_tag, c_r = sock_connect(fd, addr, port);
     if (is_err_result(c_r_tag) == 1) {
-        sys_close(fd);
+        sock_close(fd);
         var err = alloc_via(a, 24);
         if (err == 0) { return 0; }
         store64(err, HTTP_ERROR);
@@ -428,14 +430,14 @@ fn http_get_a(a, url): i64 {
     }
     var qlen = strlen(req);
     if (sock_send_all(fd, req, qlen) != qlen) {                 # v6.6.8: a short send is an error
-        sys_close(fd);
+        sock_close(fd);
         var serr = alloc_via(a, 24);
         if (serr == 0) { return 0; }
         store64(serr, HTTP_ERROR);
         return serr;
     }
     var rbuf = alloc_via(a, 65536);
-    if (rbuf == 0) { sys_close(fd); return 0; }
+    if (rbuf == 0) { sock_close(fd); return 0; }
     var total = 0;
     var rgo = 1;
     while (rgo == 1) {
@@ -447,7 +449,7 @@ fn http_get_a(a, url): i64 {
             else { total = total + n; if (total >= 65536) { rgo = 0; } }
         }
     }
-    sys_close(fd);
+    sock_close(fd);
     return _http_parse_response_a(a, rbuf, total);
 }
 
