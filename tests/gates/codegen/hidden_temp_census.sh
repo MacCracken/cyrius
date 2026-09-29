@@ -101,7 +101,9 @@ fi
 #   into a frame top-level code does not have; inside a fn it stays a frame slot)
 #   _gv_target 1 (6.6.6: the dead sink a superseded global initializer stores into; the
 #   replay runs at top level, so it is always the dead-global arm)
-HT_SPEC="PARSE_SWITCH:1 PARSE_MATCH:1 _PARSE_STMT_IMPL:3 _PARSE_TERM_IMPL:3 PARSE_FOR:4 _gv_target:1"
+#   _await_coro_suspend 2 (6.6.10: a coroutine `await` keeps its operand, and a forced Future's
+#   value, in coroutine-frame words across the suspend — parse_expr.cyr)
+HT_SPEC="PARSE_SWITCH:1 PARSE_MATCH:1 _PARSE_STMT_IMPL:3 _PARSE_TERM_IMPL:3 PARSE_FOR:4 _gv_target:1 _await_coro_suspend:2"
 ht_attr=$(for f in $(find src/frontend src/common src/backend -name '*.cyr'); do
     awk '/^fn /{fn=$2; sub(/\(.*/,"",fn)} /_HTEMP\(S\)/{ if ($0 !~ /fn _HTEMP/) print fn }' "$f"
 done | sort | uniq -c | awk '{print $2":"$1}')
