@@ -64,6 +64,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the injection note, the named FAIL for a broken `programs/cyrld.cyr`, and a static ratchet;
   three mutations, each RED.
 
+- **`tests/tcyr/crossos/sandhi_platform_eagain.tcyr` binds ephemeral ports, and the fixed-port
+  detector sees a port passed through a helper.** (bite 12) **Root cause:** the test bound
+  loopback ports 39631/39632 through `_eg_listener(port)`, so concurrent runs collided (four at
+  once: three failed `loopback listener is up`), and `gates_never_write_tree.sh` axis 6 flagged a
+  bind only when its port was a non-zero LITERAL or a name assigned one in the file — a helper
+  PARAMETER was invisible. **Fix:** the listener binds `:0` and reads the port back with
+  `sys_getsockname`; axis 6 now flags any bind whose port is not the literal `0` (sock_bind's
+  third argument, the port bytes stored into a bound sockaddr, `sockaddr_in[6](a, P)`), with a
+  `PORT_ALLOW` escape hatch that fails when an entry matches nothing (empty), and self-tests the
+  helper-parameter and computed-port shapes. The old test file reddens it. Four concurrent runs:
+  4/4 green; real ecb, ach, pi and cass green.
+
 ### Added
 
 - **A census gate for unchecked first-party `alloc(` results, with a shrink-only allowlist.**

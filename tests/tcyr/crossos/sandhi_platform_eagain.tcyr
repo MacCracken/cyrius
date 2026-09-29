@@ -53,22 +53,34 @@ assert_eq(sandhi_conn_recv(0, 0, 0), 0 - 1, "a null conn is refused, not derefer
 #endif
 
 #ifndef CYRIUS_TARGET_WIN
-fn _eg_listener(port): i64 {
+# A loopback listener on an EPHEMERAL port: bind :0 and read the kernel's choice back with
+# getsockname. It bound the fixed ports 39631/39632 until 6.6.10, so concurrent runs of this
+# file (two check.sh at once, a CI matrix on one box) collided — measured: of four at once,
+# three failed "loopback listener is up". `port_out` receives the port. CHANGELOG [6.6.10]
+fn _eg_listener(port_out): i64 {
     var lt, lfd = tcp_socket();
     if (is_err_result(lt) == 1) { return 0 - 1; }
-    sock_reuse(lfd);
-    if (is_err_result(sock_bind(lfd, 0x0100007F, port)) == 1) { sock_close(lfd); return 0 - 1; }
+    if (is_err_result(sock_bind(lfd, 0x0100007F, 0)) == 1) { sock_close(lfd); return 0 - 1; }
     if (is_err_result(sock_listen(lfd, 4)) == 1) { sock_close(lfd); return 0 - 1; }
+    var sa[32];
+    memset(&sa, 0, 32);
+    var salen[8];
+    store64(&salen, 16);
+    if (sys_getsockname(lfd, &sa, &salen) < 0) { sock_close(lfd); return 0 - 1; }
+    var port = (load8(&sa + 2) << 8) | load8(&sa + 3);     # sin_port, network order
+    if (port == 0) { sock_close(lfd); return 0 - 1; }
+    store64(port_out, port);
     return lfd;
 }
 
 test_group("a read deadline is a TIMEOUT, not a broken connection");
-var lfd = _eg_listener(39631);
+var lport = 0;
+var lfd = _eg_listener(&lport);
 assert_gt(lfd, 0 - 1, "loopback listener is up");
 if (lfd >= 0) {
     # Plain conn, 300 ms read deadline. The listener never accepts or sends, so every recv
     # below can only end by SO_RCVTIMEO firing.
-    var conn = sandhi_conn_open_timed(0x0100007F, 39631, 0, 0, 300, 0);
+    var conn = sandhi_conn_open_timed(0x0100007F, lport, 0, 0, 300, 0);
     assert_neq(conn, 0, "sandhi_conn_open_timed connects");
     if (conn != 0) {
         var buf = alloc(128);
@@ -85,7 +97,8 @@ if (lfd >= 0) {
 }
 
 test_group("an idle non-blocking listener is RETRY, never backed off");
-var afd = _eg_listener(39632);
+var aport = 0;
+var afd = _eg_listener(&aport);
 assert_gt(afd, 0 - 1, "loopback listener is up");
 if (afd >= 0) {
     sock_set_nonblocking(afd);

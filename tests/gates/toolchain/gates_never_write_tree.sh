@@ -838,13 +838,19 @@ _fixed_tmp_lits() {  # "<file>|<literal>" for every "/tmp/<name>…" string lite
         }
     }' "$1"
 }
-# A port a test BINDS that is not 0: sock_bind(fd, addr, P) with P a non-zero literal or a
-# name assigned one, and a raw bind (sys_bind / syscall(SYS_BIND|49, …)) whose sockaddr gets
-# non-zero port bytes (store8 at +2/+3, store16 at +2) or comes from sockaddr_in[6](a, P).
+# A port a test BINDS that is not the LITERAL 0: sock_bind(fd, addr, P) with P anything but
+# `0`, and a raw bind (sys_bind / syscall(SYS_BIND|49, …)) whose sockaddr gets port bytes other
+# than a literal 0 (store8 at +2/+3, store16 at +2) or comes from sockaddr_in[6](a, P).
+# ⛔ 6.6.10: it used to flag only a non-zero LITERAL or a name ASSIGNED one in the file, so a
+# port passed through a helper's PARAMETER was invisible — crossos/sandhi_platform_eagain.tcyr
+# bound 39631/39632 via `_eg_listener(port)` and four concurrent runs failed three. A bind is
+# now ephemeral by construction or it is flagged; PORT_ALLOW (below) is the escape hatch, and
+# like the /tmp list it fails when an entry matches nothing. CHANGELOG [6.6.10]
 cat > "$W/ports.awk" <<'AWK'
 function trim(x) { sub(/^[ \t]+/, "", x); sub(/[ \t]+$/, "", x); return x }
 function isnz(x) { return (x ~ /^(0[xX][0-9A-Fa-f]+|[0-9]+)$/) && (x !~ /^(0[xX]0+|0+)$/) }
 function nzname(x) { return isnz(x) || (x in NZ) }
+function notzero(x) { return x != "0" }
 function splitargs(s, pos,    depth, i, c, cur, instr) {   # top-level args of the call at pos
     depth = 0; NA = 0; cur = ""; instr = 0
     for (i = pos; i <= length(s); i++) {
@@ -871,7 +877,7 @@ END {
     for (i = 1; i <= NR; i++) {
         t = L[i]
         while ((k = index(t, "sock_bind(")) > 0) {
-            if (splitargs(t, k + 10) == 3 && nzname(AR[3])) print i ": sock_bind(…, " AR[3] ") binds a FIXED port"
+            if (splitargs(t, k + 10) == 3 && notzero(AR[3])) print i ": sock_bind(…, " AR[3] ") binds a port that is not the literal 0"
             t = substr(t, k + 10)
         }
         t = L[i]
@@ -885,25 +891,26 @@ END {
     for (i = 1; i <= NR; i++) {
         t = L[i]
         while ((k = index(t, "store8(")) > 0) {
-            if (splitargs(t, k + 7) == 2 && isnz(AR[2])) { a = AR[1]; sub(/^&/, "", a); gsub(/[ \t]/, "", a)
+            if (splitargs(t, k + 7) == 2 && notzero(AR[2])) { a = AR[1]; sub(/^&/, "", a); gsub(/[ \t]/, "", a)
                 for (s in SA) if (a == s "+2" || a == s "+3") print i ": port byte " AR[2] " stored into the bound sockaddr " s }
             t = substr(t, k + 7)
         }
         t = L[i]
         while ((k = index(t, "store16(")) > 0) {
-            if (splitargs(t, k + 8) == 2 && isnz(AR[2])) { a = AR[1]; sub(/^&/, "", a); gsub(/[ \t]/, "", a)
+            if (splitargs(t, k + 8) == 2 && notzero(AR[2])) { a = AR[1]; sub(/^&/, "", a); gsub(/[ \t]/, "", a)
                 for (s in SA) if (a == s "+2") print i ": port " AR[2] " stored into the bound sockaddr " s }
             t = substr(t, k + 8)
         }
         if (match(L[i], /[A-Za-z_][A-Za-z0-9_]*[ \t]*=[ \t]*sockaddr_in6?\(/)) {
             id = substr(L[i], RSTART, RLENGTH); sub(/[ \t]*=.*/, "", id)
-            if ((id in SA) && splitargs(L[i], RSTART + RLENGTH) == 2 && nzname(AR[2])) print i ": the bound sockaddr " id " is built with port " AR[2]
+            if ((id in SA) && splitargs(L[i], RSTART + RLENGTH) == 2 && notzero(AR[2])) print i ": the bound sockaddr " id " is built with port " AR[2]
         }
     }
 }
 AWK
 _fixed_port() { awk -f "$W/ports.awk" "$1"; }
 # file|literal|reason — literals that are not paths the test opens
+PORT_ALLOW=''
 TMPLIT_ALLOW='tests/tcyr/crossos/flags.tcyr|/tmp/out.s|argv string for the flag parser; never opened
 tests/fixtures/aarch64_cluster/syscalls_combined.cyr|/tmp/out|argv string for the flag parser; never opened'
 mkdir -p "$W/fx6"
@@ -911,6 +918,10 @@ printf 'var testpath = "/tmp/cyrius_fs_test";\n' > "$W/fx6/tmp_lit.tcyr"
 printf '    xsymlink("/tmp/cyr_xlat_f", "/tmp/cyr_xlat_lnk");\n' > "$W/fx6/tmp_two.tcyr"
 printf 'fn main(): i64 {\n    var port = 47663;\n    sock_bind(lfd, 0, port);\n}\n' > "$W/fx6/port_var.cyr"
 printf '    sock_bind(srv, localhost, 47671);\n' > "$W/fx6/port_lit.cyr"
+# 6.6.10: the helper-PARAMETER shape (sandhi_platform_eagain.tcyr until 6.6.10) — no literal
+# ever reaches the bind line, and a computed port (a getenv'd one) is the same hole.
+printf 'fn _lst(port): i64 {\n    sock_bind(lfd, 0x0100007F, port);\n    return 0;\n}\nvar l = _lst(39631);\n' > "$W/fx6/port_param.tcyr"
+printf '    var sa9[16];\n    store16(&sa9 + 2, htons(p));\n    sys_bind(fd, &sa9, 16);\n' > "$W/fx6/port_raw_var.tcyr"
 { printf '    var sa23[16];\n    store8(&sa23 + 2, 0xAD); store8(&sa23 + 3, 0x23);   # port 44323 (BE)\n'
   printf '    assert_eq(sys_bind(lfd, &sa23, 16), 0, "bind 127.0.0.1:44323");\n'; } > "$W/fx6/port_raw.tcyr"
 printf 'var l4sa = sockaddr_in(INADDR_LOOPBACK(), 8080);\nsyscall(SYS_BIND, l4, l4sa, 16);\n' > "$W/fx6/port_sockaddr.tcyr"
@@ -924,7 +935,7 @@ for f in tmp_lit.tcyr tmp_two.tcyr; do
     [ -n "$(_fixed_tmp_lits "$W/fx6/$f")" ] || { echo "FAIL: axis 6 self-test: a \"/tmp/<name>\" literal in a test ('$f') was not flagged"; st6=1; }
 done
 [ "$(_fixed_tmp_lits "$W/fx6/tmp_two.tcyr" | wc -l)" -eq 2 ] || { echo "FAIL: axis 6 self-test: two literals on one line were not both reported"; st6=1; }
-for f in port_var.cyr port_lit.cyr port_raw.tcyr port_sockaddr.tcyr; do
+for f in port_var.cyr port_lit.cyr port_raw.tcyr port_sockaddr.tcyr port_param.tcyr port_raw_var.tcyr; do
     [ -n "$(_fixed_port "$W/fx6/$f")" ] || { echo "FAIL: axis 6 self-test: a fixed port ('$f') was not flagged"; st6=1; }
 done
 [ -z "$(_fixed_tmp_lits "$W/fx6/clean.tcyr")$(_fixed_port "$W/fx6/clean.tcyr")" ] \
@@ -935,9 +946,21 @@ n6=0; bad6=0
 for t in $(find tests/tcyr tests/fixtures -type f \( -name '*.tcyr' -o -name '*.cyr' \) | LC_ALL=C sort); do
     n6=$((n6 + 1))
     _fixed_tmp_lits "$t" >> "$W/lits6"
-    h=$(_fixed_port "$t")
+    h=$(_fixed_port "$t" | while IFS= read -r hl; do
+            m=${hl#*: }
+            if printf '%s\n' "$PORT_ALLOW" | cut -d'|' -f1,2 | grep -qxF "$t|$m"; then echo "$t|$m" >> "$W/portallow_used"
+            else printf '%s\n' "$hl"; fi
+        done)
     [ -n "$h" ] && { echo "$h" | sed "s|^|FAIL: axis 6: $t: a FIXED port (bind port 0 and read it back with getsockname) at line |"; bad6=1; }
 done
+# file|<the detector's message, minus its line number>|reason — a bind that must stay fixed.
+# Empty since 6.6.10; an entry that matches no live bind fails, so the list cannot rot.
+while IFS='|' read -r pf pm pr; do
+    [ -n "$pf" ] || continue
+    grep -qxF "$pf|$pm" "$W/portallow_used" 2>/dev/null || { echo "FAIL: axis 6: PORT_ALLOW entry '$pf|$pm' matches no live bind — remove it"; bad6=1; }
+done <<EOF
+$PORT_ALLOW
+EOF
 nallow=0
 while IFS='|' read -r af al ar; do
     [ -n "$af" ] || continue
