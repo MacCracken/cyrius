@@ -75,7 +75,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - `async_interval` uses a periodic EVFILT_TIMER and is cancelled through its token.
   - `async_spawn_process` does fork + exec, then parks on EVFILT_PROC/NOTE_EXIT and reaps. xnu
     refuses EVFILT_PROC on an already-exited child (ESRCH, measured), so the task reaps that
-    child directly instead of parking for ever.
+    child directly instead of parking for ever. Any other refused registration takes the same
+    direct reap.
   - `async_run_process` makes the child a group leader and at the deadline calls
     `proc_kill_tree` once (bite 11), then returns -2.
   - `async_timeout` does fork + pipe + a bounded kevent wait, with bite 4's checked-read rule:
@@ -84,10 +85,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - Refused allocations in `async_recv` and `async_send` return 0 (G census class).
   - The header and every "(agnos)" note in the file are rewritten.
 
-  New `crossos/async_macos_verbs.tcyr`: **54/54 on real ecb and ach**; 1/1 (the shared-contract
+  New `crossos/async_macos_verbs.tcyr`: **56/56 on real ecb and ach**; 1/1 (the shared-contract
   row) on x86_64, pi, cass, qemu-aarch64, wine, cxvm and the agnosticos container. Mutation-proven
   on both Macs: each verb's 6.6.9 body, the exact read, both retire deletes, the filter-keyed wake,
-  the child's setsid and the refused-alloc checks each redden or hang it. ⚠ Its ach run needs
+  the child's setsid, the refused-alloc checks and the refused-registration reap each redden or
+  hang it. ⚠ Its ach run needs
   bite 1's CVE-51 fix in the compiler: with the 6.6.9 compiler, `clock_now_ms` on x86-macOS writes
   through a stale rdx and crashes the test. The tree-kill row needs `proc_kill_tree` to end the
   child's process group on macOS (bite 11).

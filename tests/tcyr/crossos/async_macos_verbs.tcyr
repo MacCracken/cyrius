@@ -17,7 +17,8 @@
 # Each group below FAILS (or, for async_with_timeout, hangs) against that file. Measured on ecb
 # and ach, one mutation at a time: each verb's 6.6.9 body restored; the exact-8-byte read; the
 # retire's EVFILT_READ delete; the owned-timer delete; the (ident, filter) wake; the child's
-# setsid; the refused-alloc checks — every one reddens or hangs this file.
+# setsid; the refused-alloc checks; the refused-registration reap — every one reddens or hangs
+# this file.
 #
 # ⚠ The tree-kill row depends on lib/process.cyr's `proc_kill_tree` (6.6.10 bite 11) ending the
 # child's PROCESS GROUP on macOS; async_run_process makes the child a group leader for it.
@@ -233,6 +234,17 @@ fn main(): i64 {
     assert_eq(_kq_pending(kqz), 0, "...and no event is queued for it");
     assert_eq(_async_reap_code(zp), 4, "the direct reap still yields its exit code");
     sys_close(kqz);
+    # The ESRCH race itself cannot be forced, but the fallback's other half can: ANY refused
+    # registration takes the same direct reap. A runtime whose kqueue is gone refuses every
+    # registration (EBADF); parking there would hang, the reap completes with the exit code.
+    var rtb = async_new();
+    sys_close(load64(rtb));
+    store64(rtb, 0 - 1);
+    var h9 = async_spawn_process(rtb, "/bin/sh", _argv3("/bin/sh", "-c", "exit 9"), &_envp);
+    assert_eq(task_join(rtb, h9), 9,
+      "a refused EVFILT_PROC registration: the child is reaped directly, its exit code (not parked)");
+    var zs9[8];
+    assert_eq(sys_waitpid(0 - 1, &zs9, 1), 0 - 10, "...and no zombie is left behind");
     #endif
 
     test_group("async_interval: a periodic EVFILT_TIMER");
