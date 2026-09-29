@@ -730,6 +730,8 @@ compile clean and do something silent instead):
   when the enclosing function does (the same for `secret var`, whose zeroise is a defer).
   (v6.6.7; before, a closure's defer was registered on the ENCLOSING function.)
 - **A body that falls off its end** (no `return`) runs its defers too (v6.6.7; before, it looped).
+  That includes a coroutine `async fn`, which falls off to completion with the value 0
+  (6.6.10; before, it looped on its own resume dispatch and the completing force never returned).
 - **In a coroutine `async fn`** (one that `await`s mid-body) a defer runs exactly once, when
   the body completes — not at each suspend. An `await` inside a defer body is refused there,
   because the suspend would abandon the walker mid-run.
@@ -2362,29 +2364,63 @@ async_run(rt);                        # drives spawned Futures to completion
 ```
 
 **Lowering.** An `async fn f(args)` compiles to a constructor that allocates a
-heap Future `[ &f$impl, argc, args… ]` (the body is emitted as a hidden `f$impl`)
-and returns its pointer. `await fut` lowers to `future_force(fut)`, which calls
-the bundled impl with the bundled args (via `fncallN`) and returns its value.
-The Future object reuses the same heap construction as a closure env. Requires
-`include "lib/alloc.cyr"` (the Future is heap-allocated) and `lib/async.cyr`
-(for `future_force`); `alloc_init()` must run before the first `async`-fn call.
+heap Future and returns its pointer; the body is emitted as a hidden `f$impl`.
+The Future reuses the same heap construction as a closure env. Requires
+`include "lib/alloc.cyr"` (the Future is heap-allocated), `lib/fnptr.cyr` and
+`lib/async.cyr` (for `future_force`); `alloc_init()` must run before the first
+`async`-fn call. The constructor and `lib/async.cyr` ship in lockstep: a program
+built by one release needs that release's `lib/async.cyr`.
 
-**Gating.** `async`/`await` are opt-in: compile with `CYRIUS_ASYNC=1`. A default
-build rejects them with a clear error (so default codegen — which has no
-async — stays byte-identical). Enable via the env var or `cyrius build` flags.
+**Force-once.** An `async fn` whose body has no `await` builds a plain Future
+`[ &f$impl, argc|256, args…, done, value ]`. `await fut` lowers to
+`future_force(fut)`: the first force calls the impl with the bundled args (via
+`fncallN`) and keeps the value; every later force returns that value and runs
+nothing (6.6.10 — before, every `await` of the same Future re-ran the body). A
+Future you build by hand, `[ fp, argc, args… ]` with no marker, is re-run on each
+force.
 
-**Status & limits (v6.3.11).** `async fn` (0–6 params) + `await` build and force
-first-class, spawnable Futures over the existing runtime — same cooperative
-semantics, sugarier surface. A Future re-runs its body on each `await`
-(force-once memoization is a follow-on). A **coroutine** `async fn` — one that
-`await`s mid-body (v6.5.69) — is different: once its body has returned, forcing it
-again returns the same value and runs nothing, neither body nor `defer` (v6.6.8;
-before that it resumed from its last suspend and re-ran the tail). A coroutine is a
-stackless state machine: its locals live in a heap frame, each force resumes it
-at the suspend where it last stopped, and a `return f(x);` in its body is an
-ordinary call, never a tail call. What stays run-to-completion is the RUNTIME —
-a force drives the coroutine to its next suspend or its end; there is no
-poll-based scheduler interleaving many suspended coroutines. `async` generic fns are not yet supported, nor is a value-form vector
+**Enabling it.** `async`/`await` are opt-in: set `CYRIUS_ASYNC=1` in the
+compiler's environment (`CYRIUS_ASYNC=1 cyrius build …` passes it on). There is
+no command-line flag. A default build rejects them with a clear error, so
+default codegen, which has no async, stays byte-identical.
+
+**Arity.** A plain `async fn` takes 0–8 parameters. One with 9 or more is refused
+at its declaration, naming the fn (6.6.10; it used to compile and exit 70 at its
+first force). A coroutine (below) takes any number.
+
+**Coroutines.** An `async fn` that `await`s in its own body is a **coroutine**
+(v6.5.69) — on x86_64 Linux, x86_64 macOS and Windows (PE) only; the aarch64 and
+cx backends refuse it at compile time, naming the backend. It is a stackless
+state machine: its locals live in a heap frame, each force resumes it at the
+`await` where it last stopped and runs to the next `await` (answering 0) or to
+its end. Once its body has returned — by `return`, or by falling off its end,
+which completes it with 0 and runs its defers (6.6.10; it used to hang) —
+forcing it again returns the same value and runs nothing, neither body nor
+`defer` (v6.6.8). A `return f(x);` in its body is an ordinary call, never a tail
+call.
+
+**What `await e` yields inside a coroutine** (6.6.10; it used to be the suspend
+index — `var s = await five();` three times returned 123 for 555). `e` is
+evaluated, the coroutine suspends, and at the next force:
+
+- if `e` is a call to an `async fn`, or a bare variable (a Future, as `await`'s
+  operand is everywhere else), it is forced and `await` yields its value. While
+  it is a coroutine Future that has not finished, the outer coroutine suspends
+  again at the same point, so each force of the outer one drives the inner one a
+  step until it completes;
+- anything else — a call to an ordinary fn, such as the park idiom
+  `await async_wait_fd(rt, fd)` — yields that value.
+
+**Under the reactor.** `async_spawn_future(rt, co(..))` + `async_run(rt)` drives
+coroutines that PARK before they suspend (`await async_wait_fd(rt, fd)` /
+`async_wait_writable`): each parked task sleeps until its fd is ready and
+resumes where it stopped, interleaved with the others. A task that returns
+without having parked is finished as far as the reactor is concerned, so a
+coroutine whose `await` did not park (an `await` of a Future, or of a call that
+does not park) ends there with 0 when run by `async_run`; force such a coroutine
+yourself with `future_force` until it completes.
+
+**Other limits.** `async` generic fns are not yet supported, nor is a value-form vector
 PARAMETER (`async fn f(v: f64v2)`) — an `async fn` captures each argument as one
 8-byte value, so since v6.6.6 that is a compile error naming the parameter; pass
 a pointer to the vector instead (before v6.6.6 it compiled and computed with the

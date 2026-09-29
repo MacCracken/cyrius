@@ -1863,9 +1863,10 @@ fn _xd_check(S, d0, tag): i64 {
 # the project root and its `include "b.cyr"` — a file sitting right next to it —
 # does not resolve. Three fixes were considered and two are dead: `chdir` breaks
 # the dep prepend (`_materialize_source` emits `include "lib/…"` lines that are
-# root-relative), and an env var is unreadable on two targets (`_read_env` is
-# stubbed on Windows and cx). What every target DOES read identically is the source
-# text itself, so the directory rides in-band as `#@incdir <dir>` on line 1.
+# root-relative), and an env var was unreadable on two targets then (`_read_env` was a
+# stub on Windows until 6.6.6 and on cx until 6.6.10). What every target DOES read
+# identically is the source text itself, so the directory rides in-band as
+# `#@incdir <dir>` on line 1.
 #
 # WHY IT IS INERT EVERYWHERE ELSE. `#` opens a comment in cyrius, so the marker is
 # already ignored by every compiler that does not look for it — older cycc, cybs,
