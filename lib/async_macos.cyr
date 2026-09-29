@@ -500,7 +500,12 @@ fn async_run_process(rt, path, argv, envp, ms): i64 {
     var pid = load64(load64(h + 8) + 32);
     if (pid > 0) {
         var st[8];
+        # Guarded although this peer only ever serves macOS: a whole-lib concatenation (e.g.
+        # tests/gates/codegen/dce_pe_macho_layout_declines_compaction.sh) compiles every
+        # lib/*_macos.cyr for PE too, where process.cyr's POSIX block — and this fn — is absent.
+        #ifndef CYRIUS_TARGET_WIN
         proc_kill_tree(pid, &st);                   # TERM the tree, grace, KILL, reap pid
+        #endif
     }
     if (w < 0) { return 0 - 1; }
     return 0 - 2;
