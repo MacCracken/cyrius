@@ -1452,9 +1452,11 @@ fn EMACHO_NANOSLEEP_X86(S): i64 {
 # `_xdepth` still counts them here.
 #
 # 6.6.11: EOPEN_PE, ECREATEDIR_PE and EDELETEF_PE left this list — their path widen needs a
-# ~128 KB probed frame, so they use the rbx-anchored one (`_pe_path_frame`). Four remain.
+# ~128 KB probed frame, so they use the rbx-anchored one (`_pe_path_frame`). Four fixed
+# frames remain: three `_pe_fixed_frame` callers (EWRITE_PE, EREAD_PE, ELSEEK_PE) plus
+# EEXIT's hard-coded one.
 #
-# ⛔ The seed and these six call sites MUST land together. The seed alone is what
+# ⛔ The seed and these fixed frames MUST land together. The seed alone is what
 # "destabilised cycc" at v6.0.71: with the base corrected and the frames still carrying
 # their hidden +8, cycc_win faults inside kernelbase's own `movaps` in CreateFileW.
 # CHANGELOG [6.6.5]
