@@ -32,8 +32,8 @@
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
-CC="$ROOT/build/cycc"
-[ -x "$CC" ] || { echo "FAIL: hash_seed_flood_resistance: build/cycc missing"; exit 1; }
+CC=${CYCC:-"$ROOT/build/cycc"}
+[ -x "$CC" ] || { echo "FAIL: hash_seed_flood_resistance: $CC missing"; exit 1; }
 WORK=$(mktemp -d) && [ -d "$WORK" ] || { echo "FAIL: hash_seed_flood_resistance: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$WORK"' EXIT
 fail() { echo "FAIL: hash_seed_flood_resistance: $1"; exit 1; }
 
@@ -199,31 +199,52 @@ echo "$CODE" | grep -q 'clock_epoch_ns() ^ (clock_now_ns()' \
 # tests/fixtures/agnos_sctrace.cyr runs an agnos-target ELF under PTRACE_SYSEMU and answers every
 # syscall itself; getrandom (#45) answers 0 in every mode, so the seed MUST come from the time
 # fallback (src 2). The probe hands the seed back as the first argument of an otherwise unused
-# syscall number (999), which the tracer logs. Mode `us` advances the #95 clock per read. Before
-# 6.6.10 the agnos arm read time_unix (#46), which answers 0 here (and -1 on the real pre-1.45
-# kernels where #45 can fail), so every process drew the PUBLISHED constant 1099511628211.
-# Mutation (measured): the 6.6.9 lib/hashseed.cyr seeds 1099511628211 in both runs; an agnos-only
-# `return syscall(46);` at the top of _hm_seed_time_mix (axis 4 cannot see it) fails "SAME seed".
+# syscall number (999), which the tracer logs. Mode `us` answers the Nth #95 (uptime_us) read with
+# 250000 * N and time_unix #46 with 0. Before 6.6.10 the agnos arm read time_unix (#46), which
+# answers 0 here (and -1 on the real pre-1.45 kernels where #45 can fail), so every process drew
+# the PUBLISHED constant 1099511628211.
+# ⚠ The fallback also mixes in a STACK ADDRESS, so two plain runs differ under host ASLR whatever
+# the clock does — a "two processes differ" row run that way proves nothing about the agnos clock
+# (and goes red on a host with ASLR off). So every run here is under `setarch -R` (layout pinned),
+# and the two probes are the same shape — one extra syscall before the draw, the same locals, the
+# same argv length — differing ONLY in whether that syscall is a #95 read (shifting the seed's own
+# #95 read from 250000 to 500000) or the unanswered #998:
+#   5a  the same probe twice   -> the SAME seed  (control: the layout really is pinned, and no
+#                                                 other entropy leaks in — else 5b is vacuous)
+#   5b  clock read 1 vs 2      -> DIFFERENT seeds (the #95 clock, alone, moves the seed)
+# Mutation (measured): the 6.6.9 lib/hashseed.cyr seeds 1099511628211 in every run; an agnos-only
+# `return syscall(46);` at the top of _hm_seed_time_mix (axis 4 cannot see it) fails 5b.
+command -v setarch > /dev/null 2>&1 || fail "axis 5: setarch (util-linux) is required to pin the address layout"
 cat "$ROOT/tests/fixtures/agnos_sctrace.cyr" | "$CC" > "$WORK/sct" 2> /dev/null && chmod +x "$WORK/sct" \
     || fail "axis 5: could not build tests/fixtures/agnos_sctrace.cyr"
-cat > "$WORK/agp.cyr" <<'AGP'
+for V in 998 95; do
+    cat > "$WORK/ag$V.cyr" <<AGP
 include "lib/syscalls.cyr"
 include "lib/hashseed.cyr"
 fn main(): i64 {
+    var t = syscall($V);
     var s = _hm_seed_get();
-    syscall(999, s, _hm_seed_src, 0, 0);
+    syscall(999, s, _hm_seed_src, t, 0);
     return 0;
 }
 var r = main();
 syscall(SYS_EXIT, r);
 AGP
-( cd "$ROOT" && CYRIUS_TARGET_AGNOS=1 "$CC" < "$WORK/agp.cyr" > "$WORK/agp" 2> /dev/null ) && chmod +x "$WORK/agp" \
-    || fail "axis 5: the agnos probe did not compile"
-A1=$("$WORK/sct" "$WORK/agp" us | sed -n 's/^sc 999 \([-0-9]*\) \([0-9]*\) .*/\1 \2/p')
-A2=$("$WORK/sct" "$WORK/agp" us | sed -n 's/^sc 999 \([-0-9]*\) \([0-9]*\) .*/\1 \2/p')
-[ -n "$A1" ] && [ -n "$A2" ] || fail "axis 5: the agnos probe never reported its seed (no 'sc 999' line) — the axis is reading nothing"
-[ "${A1#* }" = "2" ] || fail "axis 5: the agnos seed did not come from the time fallback (src ${A1#* }, want 2) — getrandom answers 0 here"
+    ( cd "$ROOT" && CYRIUS_TARGET_AGNOS=1 "$CC" < "$WORK/ag$V.cyr" > "$WORK/ag$V" 2> /dev/null ) && chmod +x "$WORK/ag$V" \
+        || fail "axis 5: the agnos probe ag$V did not compile"
+done
+_ag_seed() { setarch "$(uname -m)" -R "$WORK/sct" "$WORK/$1" us | sed -n 's/^sc 999 \([-0-9]*\) \([0-9]*\) .*/\1 \2/p'; }
+A1=$(_ag_seed ag998)
+A2=$(_ag_seed ag998)
+B1=$(_ag_seed ag95)
+[ -n "$A1" ] && [ -n "$A2" ] && [ -n "$B1" ] \
+    || fail "axis 5: an agnos probe never reported its seed (no 'sc 999' line) — the axis is reading nothing"
+[ "${A1#* }" = "2" ] && [ "${B1#* }" = "2" ] \
+    || fail "axis 5: the agnos seed did not come from the time fallback (src ${A1#* }/${B1#* }, want 2) — getrandom answers 0 here"
 [ "${A1% *}" != "1099511628211" ] || fail "axis 5: the agnos fallback seed is the PUBLISHED constant 1099511628211 (the #46 arm is back)"
-[ "${A1% *}" != "${A2% *}" ] || fail "axis 5: two agnos processes drew the SAME fallback seed (${A1% *})"
+[ "${A1% *}" = "${A2% *}" ] \
+    || fail "axis 5a: the same probe under a pinned layout drew two seeds (${A1% *} / ${A2% *}) — something besides the clock varies, so 5b would prove nothing"
+[ "${A1% *}" != "${B1% *}" ] \
+    || fail "axis 5b: a different #95 clock reading left the agnos fallback seed unchanged (${A1% *}) — the clock does not reach the seed"
 
-echo "PASS: hash_seed_flood_resistance (attack set: 1 bucket unseeded -> $LIB1 / $LIB2 seeded across two processes; seeds differ; Linux draw non-blocking; agnos fallback varies)"
+echo "PASS: hash_seed_flood_resistance (attack set: 1 bucket unseeded -> $LIB1 / $LIB2 seeded across two processes; seeds differ; Linux draw non-blocking; agnos fallback moves with the #95 clock under a pinned layout)"

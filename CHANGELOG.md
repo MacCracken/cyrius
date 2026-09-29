@@ -45,8 +45,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (mutation-proven); qemu-user SKIPs by name, real pi runs it. Every host runs a mix row, and
   `hash_seed_flood_resistance.sh` axis 4 statically refuses `load64(&ts)` / `SYS_TIME_UNIX`, and
   axis 5 runs the AGNOS build under the fake agnos kernel (`tests/fixtures/agnos_sctrace.cyr`,
-  whose getrandom answers 0): src == 2 and two processes' seeds differ — the 6.6.9 arm drew the
-  published constant 1099511628211 both times. The seccomp row ran on real pi (and a mutant with
+  whose getrandom answers 0) with the address layout pinned (`setarch -R`, since the mix's stack
+  address alone makes two runs differ under ASLR): src == 2, the same probe twice draws the SAME
+  seed (control), and a probe whose #95 read comes second draws a DIFFERENT one — so the clock,
+  alone, moves the seed. The 6.6.9 arm drew the published constant 1099511628211 every time; an
+  agnos-only `clock_epoch_ns() ^ &here` (no #95 clock) passed a plain two-run row and fails 5b. The seccomp row ran on real pi (and a mutant with
   the old shape failed there) and inside the agnosticos CI container.
   ⚠ Every hashmap consumer now also includes `lib/chrono.cyr` (its globals `CLOCK_REALTIME` /
   `CLOCK_MONOTONIC`; a consumer redeclaring them — shakti — still compiles). cycc is unaffected.
