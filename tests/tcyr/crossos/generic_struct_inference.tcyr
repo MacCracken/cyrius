@@ -1,0 +1,184 @@
+# generic_struct_inference.tcyr — 6.6.10 bite 7: a generic call whose T is INFERRED from a struct
+# argument takes the struct instance on EVERY call path, exactly as `g<Pt>(p)` does.
+#
+# ⛔ Struct inference existed only inside the inline replay — positionally, and there the param
+# was re-typed with the base's i64 — so the normal and tail paths ran the base, whose body a
+# struct-using generic has as a `rax = 0` dead stub. Every row below returned 0 (or 2, or failed
+# to compile with a misleading "no struct type in scope for 'p'") on 6.6.9:
+#   E  `var r = g(p)`                 0     F   an inlinable body          "no struct type"
+#   E2 `return g(p)` (tail)           0     O3  inlinable, tail            0
+#   I  `g(mk(2))`                     0     M   T from the caller's `q: Pt` param   0
+#   H  T on param 1: `g1(2, p)`       0     N   `outer<Pt>` forwarding `g(p)`       2
+#   K  a struct global                0     R   `outer<Pt>` forwarding to an inlinable g   error
+#   T  a `var q: T` local used as a struct — even explicit `gl<Pt>(p)` failed to compile
+#   B  a generic returning `Box<T>`, and a plain fn returning `Box<Pt>` or taking `r: Box<Pt>`: the
+#      type was sized as the BASE `Box` (`v: T` an 8-byte i64): `r.v.x` failed to parse, `mkp(p)`
+#      was refused, and the receive then CALLED the base with T = i64
+#   RG `for i in n..10` on a T-typed `n` was read as a field access: the base became the stub, 0
+# The refusals (a scalar call of a struct-using generic, `&g`, two inferred struct type args) are
+# compile-time and live in tests/gates/frontend/generic_type_arg_unknown_refused.sh.
+#
+# ⚠ TAIL-CALL CONTROL (TC): `return cnt(n - 1, acc + 1);` in a SCALAR generic must stay a tail
+# call. The first prototype diverted every generic callee off the tail path, and this 20,000,001-
+# deep recursion then overflowed the stack (rc 139). Only a struct-inferred or stub callee
+# diverts.
+#
+# MUTATIONS (src/frontend, scratch trees only), each RED here — a compile failure, a failed row,
+# or a run that dies before its summary: no struct inference in PARSE_FNCALL's head (E, F, H..);
+# no `_tc_generic_divert` (E2, O3, M2); positional instead of by-carrier inference (H); no
+# `var x: T` collection in the stub scan (T); the range test dropped (RG); no struct-global
+# inference (K); `_gtype_sid` answering the base (B), or skipped in pass 1 for a return / a
+# parameter (the forward rows), or in the pre-parameter rough scan; the parameter mask left at
+# the base's size (W1); FINDFN instead of `_gen_resolve_call` in the var receive, the inferred-
+# receiver typing, `_struct_call_into_temp` or the struct-argument class check (B rows);
+# `_ta_explicit` set before an explicit call emits its instance (whose own calls then skip
+# their inference: R, T).
+#
+# CROSS-HOST because each instance is a by-value struct-param fn emitted inline (jumped over) by
+# every backend, and struct returns take the per-target retptr / register-pair ABI.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+
+struct Pt { x; y; }
+struct Box<T> { v: T; n; }
+struct W1<T> { v: T; }          # the base is 8 B (value-passed); W1<Pt> is 16 B (address-passed)
+struct M2<T> { a: T; b: T; }    # the base is 16 B (a register pair); M2<i32> is 8 B (rax)
+
+var gp: Pt = Pt { 2, 5 };
+
+# A loop, so it is never inlined (the old dead-stub path).
+fn g<T>(p: T): i64 { var s = 0; var i = 0; while (i < 2) { s = s + p.y; i = i + 1; } return s + p.x; }
+# Small enough to inline (the old "no struct type in scope" path).
+fn gf<T>(p: T): i64 { return p.y * 2 + p.x; }
+# T carried by parameter 1, not 0.
+fn g1<T>(n, p: T): i64 { var s = 0; var i = 0; while (i < n) { s = s + p.y; i = i + 1; } return s + p.x; }
+# A T-typed LOCAL used as a struct.
+fn gl<T>(p: T): i64 { var q: T = p; var s = 0; var i = 0; while (i < 2) { s = s + q.y; i = i + 1; } return s + q.x; }
+# Forwarding by inference.
+fn outer_inf<T>(p: T): i64 { var r = g(p); return r + 2; }
+fn outer_flat<T>(p: T): i64 { return gf(p) + 2; }
+# Generic and plain fns returning a generic struct instance. (Off on cx: its backend has no
+# 9-16 B register-pair struct return, which the base `Box` and `Pt` use — a cx limit this file
+# does not test; the call-path rows, `r: Box<Pt>` parameters and controls still run there.)
+#ifndef CYRIUS_TARGET_CX
+fn mk<T>(x: T): Box<T> { var b: Box<T>; b.v = x; b.n = 5; return b; }
+fn mkp(x: Pt): Box<Pt> { var b: Box<Pt>; b.v = x; b.n = 5; return b; }
+fn wrap(p: Pt): Box<Pt> { return mk(p); }
+fn mkm<T>(x: T, y: T): M2<T> { var m: M2<T>; m.a = x; m.b = y; return m; }
+fn mk9<T>(x: T): Box<T> { var b: Box<T>; b.v = x; b.n = 9; return b; }
+# A struct-valued generic call as a struct ARGUMENT, in a frame of its own (distinct values, so a
+# stale 24-byte Box left by another row cannot make a 16-byte base result read right).
+fn arg_row(a): i64 { var p: Pt; p.x = a; p.y = 7; return box_sum(mk9(p)); }
+# The base `W1` is 8 B (returned in rax); `W1<Pt>` is 16 B (a register pair).
+fn mkw<T>(x: T): W1<T> { var w: W1<T>; w.v = x; return w; }
+#endif
+# A range over a T-typed value is not a field access.
+fn sm<T>(n: T): i64 { var s = 0; for i in n..10 { s = s + i; } return s; }
+# Scalar controls.
+fn cnt<T>(n: T, acc: T): T { if (n == 0) { return acc; } return cnt(n - 1, acc + 1); }
+fn id1<T>(v: T): i64 { return v + 1; }
+
+fn top(q: Pt): i64 { var r = g(q); return r; }
+fn top_tail(q: Pt): i64 { return g(q); }
+fn tail_g(a): i64 { var p: Pt; p.x = a; p.y = 5; return g(p); }
+fn tail_gf(a): i64 { var p: Pt; p.x = a; p.y = 5; return gf(p); }
+#ifndef CYRIUS_TARGET_CX
+fn mkpt(a): Pt { var p: Pt; p.x = a; p.y = 5; return p; }
+# Calls a plain fn defined BELOW it (pass 1 must record `mkq`'s instance return).
+fn use_fwd(p: Pt): i64 { var r: Box<Pt> = mkq(p); return r.n * 10 + r.v.x + r.v.y * 100; }
+fn mkq(x: Pt): Box<Pt> { var b: Box<Pt>; b.v = x; b.n = 5; return b; }
+#endif
+
+fn box_sum(r: Box<Pt>): i64 { return r.n * 10 + r.v.x + r.v.y * 100; }
+# A parameter typed with an instance whose size class differs from its base's, called before
+# its definition (pass 1 must record the address-passed bit from the INSTANCE) and after.
+fn use_w1(a): i64 { var w: W1<Pt>; w.v.x = a; w.v.y = 20; return w1s(w); }
+fn w1s(w: W1<Pt>): i64 { return w.v.x + w.v.y; }
+
+fn run_calls(a): i64 {
+    var p: Pt; p.x = a; p.y = 5;
+    test_group("inferred struct T: the instance on every call path");
+    var r = g(p);
+    assert_eq(r, 12, "E: var r = g(p) (was 0)");
+    assert_eq(tail_g(a), 12, "E2: return g(p), tail position (was 0)");
+    var rf = gf(p);
+    assert_eq(rf, 12, "F: an inlinable body, var r = gf(p) (was a compile error)");
+    assert_eq(gf(p) + 0, 12, "O4: an inlinable body in an expression (was a compile error)");
+    assert_eq(tail_gf(a), 12, "O3: an inlinable body, tail position (was 0)");
+    assert_eq(top(p), 12, "M: T from the caller's own struct parameter (was 0)");
+    assert_eq(top_tail(p), 12, "M2: the same in tail position");
+    assert_eq(g1(2, p), 12, "H: T carried by parameter 1 (was 0)");
+    assert_eq(g1(3, p), 17, "H: parameter 0 still the count");
+    assert_eq(g(gp), 12, "K: a struct global (was 0)");
+    assert_eq(gl(p), 12, "T: a T-typed local used as a struct, inferred");
+    assert_eq(gl<Pt>(p), 12, "T: the same, explicit (was a compile error)");
+    assert_eq(outer_inf(p), 14, "N: forwarding by inference, outer inferred");
+    assert_eq(outer_inf<Pt>(p), 14, "N: forwarding by inference, outer explicit (was 2)");
+    assert_eq(outer_flat<Pt>(p), 14, "R: forwarding to an inlinable body (was a compile error)");
+    assert_eq(g<Pt>(p), 12, "J: the explicit form, unchanged");
+    return 0;
+}
+
+fn run_params(): i64 {
+    test_group("a parameter type naming a generic struct instance");
+    var r: Box<Pt>; r.v.x = 1; r.v.y = 2; r.n = 5;
+    assert_eq(box_sum(r), 251, "B: a `r: Box<Pt>` param reads r.v.x (was a parse error)");
+    assert_eq(use_w1(3), 23, "B: a `w: W1<Pt>` param (16 B; its 8 B base is value-passed), called before its definition");
+    var w: W1<Pt>; w.v.x = 4; w.v.y = 30;
+    assert_eq(w1s(w), 34, "B: the same, called after its definition");
+    return 0;
+}
+
+#ifndef CYRIUS_TARGET_CX
+fn run_returns(): i64 {
+    var p: Pt; p.x = 1; p.y = 2;
+    test_group("a return type naming a generic struct instance");
+    assert_eq(g(mkpt(2)), 12, "I: T from a struct-returning call (was 0)");
+    var r: Box<Pt> = mk<Pt>(p);
+    assert_eq(r.n * 10 + r.v.x + r.v.y * 100, 251, "B: var r: Box<Pt> = mk<Pt>(p); r.v.x (was a parse error)");
+    var ri: Box<Pt> = mk(p);
+    assert_eq(ri.n * 10 + ri.v.x + ri.v.y * 100, 251, "B: the same, T inferred");
+    var ru = mk(p);
+    assert_eq(ru.v.y * 100 + ru.v.x, 201, "B: an unannotated receiver");
+    var rp: Box<Pt> = mkp(p);
+    assert_eq(rp.n * 10 + rp.v.x + rp.v.y * 100, 251, "B: a plain fn returning Box<Pt> (was refused)");
+    assert_eq(use_fwd(p), 251, "B: a plain fn returning Box<Pt>, called before its definition");
+    var rw: Box<Pt> = wrap(p);
+    assert_eq(box_sum(rw), 251, "B: `return mk(p);` in a Box<Pt>-returning fn");
+    assert_eq(arg_row(3), 793, "B: a generic's struct result as a struct argument, T inferred");
+    assert_eq(w1s(mkw(p)), 3, "B: the same where the instance's return class differs from its base's");
+    var m: M2<i32> = mkm<i32>(10, 4);
+    assert_eq(m.a + m.b, 14, "B: a scalar instance returning an 8 B M2<i32> (its base is 16 B), annotated receiver");
+    var mu = mkm<i32>(20, 5);
+    assert_eq(mu.a + mu.b, 25, "B: the same, unannotated receiver");
+    var rs: Box<i64> = mk(7);
+    assert_eq(rs.v + rs.n * 10, 57, "control: Box<i64> from the i64 base");
+    return 0;
+}
+#endif
+
+fn main(): i64 {
+    alloc_init();
+    run_calls(2);
+    run_params();
+    #ifndef CYRIUS_TARGET_CX
+    run_returns();
+    #endif
+    test_group("scalar generics and controls");
+    assert_eq(sm(5), 35, "RG: for i in n..10 over a T-typed n (was 0: read as a field access)");
+    # Off on cx: its backend emits no tail call for ANY fn (a plain 20M-deep `c(n - 1, ..)` dies
+    # there too), so the row would test cx, not this divert.
+    #ifndef CYRIUS_TARGET_CX
+    assert_eq(cnt(20000001, 0) & 127, 1, "TC: a 20,000,001-deep scalar generic tail recursion stays a tail call");
+    #endif
+    assert_eq(cnt(1001, 0), 1001, "control: a scalar generic recursion's value");
+    assert_eq(id1(4), 5, "control: an inferred scalar call runs the base");
+    assert_eq(id1<i32>(4), 5, "control: an explicit scalar instance");
+    return 0;
+}
+var _m = main();
+var r = assert_summary();

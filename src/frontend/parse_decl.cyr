@@ -3356,6 +3356,7 @@ fn PARSE_VAR(S): i64 {
     }
     var asv_try = 0;
     var asv_pair = 0;
+    var _rcv_fi = 0 - 1;   # 6.6.10: the fn the receive's call actually reaches (_gen_resolve_call)
     if ((pscale <= 0) && (PEEKT(S) == 4) && (GINFN(S) == 1)) {
         var _look_ti = GTI(S) + 1;
         if (TOKTYP(S, _look_ti) == 2) {
@@ -3370,8 +3371,13 @@ fn PARSE_VAR(S): i64 {
                         if (_look_gfi0 >= 0) { if (GFTP(S, _look_gfi0) != 0) { _look_iscall = 1; } }
                     } } }
             if (_look_iscall == 1) {
-                var _look_noff = TOKVAL(S, _look_ti);
-                var _look_fi = FINDFN(S, _look_noff);
+                # ⛔ 6.6.10: the callee the call REACHES — a generic's instance for explicit
+                # type args or an inferred struct argument — not the base FINDFN names. The
+                # receive below sized itself from the base's return (`v: T` an 8-byte i64, so
+                # `var r: Box<Pt> = mk<Pt>(p); r.v.x` failed to parse) and then CALLED the base,
+                # T = i64. CHANGELOG [6.6.10]
+                var _look_fi = _gen_resolve_call(S, _look_ti);
+                _rcv_fi = _look_fi;
                 if (_look_fi >= 0) {
                     var _look_sid = GFRS(S, _look_fi);
                     # v6.3.39 (B-explicit): an EXPLICIT specialized-instance receiver of a
@@ -3488,7 +3494,9 @@ fn PARSE_VAR(S): i64 {
             ERR_MSG(S, "struct-valued assignment RHS must be a fn call", 46);
         }
         var asv_fi = FINDFN(S, asv_fnoff);
+        if (_rcv_fi >= 0) { asv_fi = _rcv_fi; }   # 6.6.10: the instance the lookahead resolved
         if (asv_fi < 0) { asv_fi = REGFN(S, asv_fnoff); }
+        _gen_own_call_check(S, asv_fi, asv_fnoff);
         _vis_check(S, asv_fi, asv_fnoff);   # v6.6.4: retptr struct receive emits its own call
         var asv_callee_sid = GFRS(S, asv_fi);
         if (asv_callee_sid == 0) {
@@ -3561,7 +3569,9 @@ fn PARSE_VAR(S): i64 {
             ERR_MSG(S, "struct-valued assignment RHS must be a fn call", 46);
         }
         var asp_fi = FINDFN(S, asp_fnoff);
+        if (_rcv_fi >= 0) { asp_fi = _rcv_fi; }   # 6.6.10: see asv_try
         if (asp_fi < 0) { asp_fi = REGFN(S, asp_fnoff); }
+        _gen_own_call_check(S, asp_fi, asp_fnoff);
         _vis_check(S, asp_fi, asp_fnoff);   # v6.6.4: pair struct receive emits its own call (also the inferred `var q = f()` form)
         var asp_callee_sid = GFRS(S, asp_fi);
         if (asp_callee_sid == 0) {
@@ -3661,8 +3671,7 @@ fn PARSE_VAR(S): i64 {
                             if (_ti_gfi >= 0) { if (GFTP(S, _ti_gfi) != 0) { _ti_iscall = 1; } }
                         } } }
                 if (_ti_iscall == 1) {
-                    var _ti_noff = PEEKV(S);
-                    var _ti_fi = FINDFN(S, _ti_noff);
+                    var _ti_fi = _gen_resolve_call(S, GTI(S));   # 6.6.10: the instance's return
                     if (_ti_fi >= 0) {
                         _ti_inferred_sid = GFRS(S, _ti_fi);
                     }

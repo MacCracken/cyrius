@@ -573,12 +573,6 @@ var _flc_hwm = 0;
 # past it. Reset per fn in PARSE_FN_DEF; read by the tail-call guard in
 # parse_fn.cyr. See CHANGELOG [6.5.14].
 var _fn_local_addr = 0;
-# v6.3.39 (B3) — per-fn bitmask: bit i set = param i's declared type is a type-param
-# (`fn wrap<T>(p: T)` → bit 0). Populated in PARSE_FN_DEF's param loop (gated
-# _MONOMORPH_OK) and read by _body_field_accesses_tparam to decide whether the i64
-# BASE emission must skip the body (a tparam-typed param field-accessed as a struct
-# has no valid i64 form). Reset per fn; stays 0 on default builds → byte-identical.
-var _cur_fn_tp_pmask = 0;
 # v6.3.7 — set to 1 when the current fn emits a closure literal. Closures are
 # emitted INLINE in the enclosing fn's code range (jumped over), so the enclosing
 # fn's regalloc post-pass — a byte-scan that NOP-patches + reallocates locals —
@@ -819,7 +813,8 @@ fn _fnst_put_cg(b): i64 {
     store64(b + 144, _cur_fn_naked);    _cur_fn_naked = 0;
     store64(b + 152, _cur_fn_ix);
     store64(b + 160, _cur_fn_pslots);   _cur_fn_pslots = 0;
-    store64(b + 168, _cur_fn_tp_pmask); _cur_fn_tp_pmask = 0;
+    # b + 168: free (was _cur_fn_tp_pmask, retired 6.6.10 — the B3 stub fact is per-fn
+    # recorded state now, GFGM, read at every call site; CHANGELOG [6.6.10])
     store64(b + 176, _cur_fn_is_pure);  _cur_fn_is_pure = 0;
     return 0;
 }
@@ -834,7 +829,6 @@ fn _fnst_get_cg(b): i64 {
     _cur_fn_naked = load64(b + 144);
     _cur_fn_ix = load64(b + 152);
     _cur_fn_pslots = load64(b + 160);
-    _cur_fn_tp_pmask = load64(b + 168);
     _cur_fn_is_pure = load64(b + 176);
     return 0;
 }

@@ -8,6 +8,11 @@
 # small enough to inline, the same shape was instead a compile error ("no struct type in scope
 # for 'p'") raised from outer's own base emission, which nothing calls.
 #
+# 6.6.10 (bite 7): forwarding by INFERENCE (`g(p)` inside `fn outer<T>`), which took the base on
+# every path — `outer<Pt>(p)` forwarding a looping `g(p)` returned 2, an inlinable one failed to
+# compile — and forwarding generics defined in REVERSE order (outer above its callee), whose stub
+# facts are now recorded in pass 1.
+#
 # ⚠ CROSS-HOST because the instance is a by-value struct-param fn emitted inline (jumped over) in
 # the enclosing body by each backend; the fix is in the front end, the code it selects is not.
 include "lib/assert.cyr"
@@ -39,6 +44,11 @@ fn fwd<T>(v: T): i64 { return id1<T>(v) * 2; }
 fn sum2<A, B>(a: A, b: B): i64 { return a + b; }
 fn fwd2<A, B>(a: A, b: B): i64 { return sum2<A, B>(a, b) + 1; }
 
+# Forwarding by inference, and a caller defined ABOVE the generics it forwards to.
+fn top_inf<T>(p: T): i64 { return mid_inf(p) + 1000; }
+fn mid_inf<T>(p: T): i64 { var r = inner_loop(p); return r + 100; }
+fn flat_inf<T>(p: T): i64 { return inner_flat(p) + 2; }
+
 fn run_structs(a): i64 {
     var p: Pt; p.x = a; p.y = 3;
     assert_eq(outer_loop<Pt>(p), 16, "forwarded T -> a looping struct generic (was 2: the dead stub)");
@@ -46,6 +56,9 @@ fn run_structs(a): i64 {
     assert_eq(outer_flat_ret<Pt>(p), 16, "forwarded T in a return expression");
     var q: Pt; q.x = 7; q.y = 9;
     assert_eq(top<Pt>(q), 1107, "two levels of forwarding");
+    assert_eq(mid_inf<Pt>(p), 114, "forwarded by inference -> a looping struct generic (was 100: the stub)");
+    assert_eq(flat_inf<Pt>(p), 16, "forwarded by inference -> an inlinable struct generic (was a compile error)");
+    assert_eq(top_inf(q), 1143, "two levels by inference, callers defined above their callees");
     return 0;
 }
 

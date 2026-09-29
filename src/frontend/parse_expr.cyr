@@ -1020,6 +1020,60 @@ fn _IFS_K(t): i64 {
     return 0;
 }
 
+# v6.3.10 (explicit): `foo<i64>(x)` / `foo<Pt>(p)` — cursor on the `<`. Out of
+# `_PARSE_FACTOR_IMPL` since 6.6.10: that body is near cybs's per-function reference limit, and
+# this path grew the stub refusal.
+# ⛔ 6.6.10 — `_ta_explicit` tells the PARSE_FNCALL below not to re-infer, and a stub generic
+# (it uses T as a struct) is refused by name for ANY scalar type argument: `g<i64>(5)` ran the
+# `rax = 0` stub silently, and `g<i32>(5)` minted an instance that failed with "no struct type
+# in scope for 'p'". A forwarded `inner<T>` in a base emission never gets here with a stub
+# callee: the enclosing generic is a (transitive) stub itself, so its base body is skipped —
+# which retired 6.6.8's `_call_forwarded_base` (a base call with the inline replay suppressed at
+# depth 0, which existed only to keep that replay out of such a base). CHANGELOG [6.6.10]
+fn _explicit_generic_call(S, noff, fi): i64 {
+    STI(S, GTI(S) + 1);                 # consume `<`
+    _ta_pending_gt = 0;
+    # v6.3.33: parse conc0 [, conc1] via _parse_one_type_arg (nested
+    # type-args instantiate → their instance sid; `>>` tail handled).
+    var _ta_conc = _parse_one_type_arg(S);
+    var _ta_conc1 = 0;
+    if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); _ta_conc1 = _parse_one_type_arg(S); }  # `,`
+    _consume_gt(S);                     # consume the closing `>` (or `>>` tail)
+    # Call the base (the all-i64 instance) only when EVERY arg is i64.
+    var _ta_do = 0;
+    if (_ta_conc != 0 - 8) { _ta_do = 1; }
+    if (_ta_conc1 != 0 && _ta_conc1 != 0 - 8) { _ta_do = 1; }
+    # A stub generic with a scalar type argument: route it to the base call, whose head refuses it.
+    if (_ta_conc < 0 && _ta_conc1 <= 0) { if (_gen_stub(S, fi) != 0) { _ta_do = 0; } }
+    if (_ta_do == 0) {
+        _ta_explicit = 1;               # set right before the call that reads it (see below)
+        PARSE_FNCALL(S, noff);          # all-i64: call the base
+        return 0;
+    }
+    # non-i64: monomorphize on demand + call the specialized fn.
+    var _spec = _instantiate_generic_fn(S, fi, _ta_conc, _ta_conc1);
+    if (_spec == 0 - 2) {
+        ERR_MSG(S, "non-i64 generic fns with parameters: instantiate-once param re-emission is a follow-on bite", 91);
+    }
+    if (_spec == 0 - 3) {
+        ERR_MSG(S, "generic fns with STRUCT type-arguments are a follow-on (monomorphized struct-ABI); use a generic struct or scalar type-args", 123);
+    }
+    # ⛔ 6.6.5 — `_spec` is -2 / -3 on the two error paths above,
+    # and `_fnt_names + _spec * 8` read 16/24 bytes BEFORE the
+    # table: an out-of-bounds load whose garbage was then parsed
+    # as a name, which is where the nonsense
+    # "undefined function 'enum'" came from. ERR_MSG does not
+    # exit (the multi-error contract), so the guard has to be
+    # here. Arguments are still consumed, by PARSE_FNCALL on the
+    # base name, so the parse stays in sync. CHANGELOG [6.6.5]
+    # ⚠ `_ta_explicit` is set only NOW: the instance body just emitted makes calls of its own,
+    # and the first of them would have taken the flag as its own and skipped its inference.
+    _ta_explicit = 1;
+    if (_spec >= 0) { PARSE_FNCALL(S, L64(_fnt_names + _spec * 8)); }
+    else { PARSE_FNCALL(S, noff); }
+    return 0;
+}
+
 fn _PARSE_FACTOR_IMPL(S): i64 {
     var typ = PEEKT(S);
     SPSC(S, 0);
@@ -1189,42 +1243,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                 var _eta_fi = FINDFN(S, noff);
                 if (_eta_fi >= 0) { if (GFTP(S, _eta_fi) != 0) {
                         if (LOOKAHEAD_IS_TYPE_ARG_CALL(S) == 1) {
-                            STI(S, GTI(S) + 1);                 # consume `<`
-                            _ta_pending_gt = 0;
-                            _ta_fwd = 0;
-                            # v6.3.33: parse conc0 [, conc1] via _parse_one_type_arg (nested
-                            # type-args instantiate → their instance sid; `>>` tail handled).
-                            var _ta_conc = _parse_one_type_arg(S);
-                            var _ta_conc1 = 0;
-                            if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); _ta_conc1 = _parse_one_type_arg(S); }  # `,`
-                            _consume_gt(S);                     # consume the closing `>` (or `>>` tail)
-                            # Call the base (the all-i64 instance) only when EVERY arg is i64.
-                            var _ta_do = 0;
-                            if (_ta_conc != 0 - 8) { _ta_do = 1; }
-                            if (_ta_conc1 != 0 && _ta_conc1 != 0 - 8) { _ta_do = 1; }
-                            if (_ta_do == 0) {
-                                if (_ta_fwd == 1) { _call_forwarded_base(S, noff, _eta_fi); }
-                                else { PARSE_FNCALL(S, noff); }   # all-i64: call the base
-                            } else {
-                                # non-i64: monomorphize on demand + call the specialized fn.
-                                var _spec = _instantiate_generic_fn(S, _eta_fi, _ta_conc, _ta_conc1);
-                                if (_spec == 0 - 2) {
-                                    ERR_MSG(S, "non-i64 generic fns with parameters: instantiate-once param re-emission is a follow-on bite", 91);
-                                }
-                                if (_spec == 0 - 3) {
-                                    ERR_MSG(S, "generic fns with STRUCT type-arguments are a follow-on (monomorphized struct-ABI); use a generic struct or scalar type-args", 123);
-                                }
-                                # ⛔ 6.6.5 — `_spec` is -2 / -3 on the two error paths above,
-                                # and `_fnt_names + _spec * 8` read 16/24 bytes BEFORE the
-                                # table: an out-of-bounds load whose garbage was then parsed
-                                # as a name, which is where the nonsense
-                                # "undefined function 'enum'" came from. ERR_MSG does not
-                                # exit (the multi-error contract), so the guard has to be
-                                # here. Arguments are still consumed, by PARSE_FNCALL on the
-                                # base name, so the parse stays in sync. CHANGELOG [6.6.5]
-                                if (_spec >= 0) { PARSE_FNCALL(S, L64(_fnt_names + _spec * 8)); }
-                                else { PARSE_FNCALL(S, noff); }
-                            }
+                            _explicit_generic_call(S, noff, _eta_fi);
                             _cfo = 0;
                             return 0;
                         }
@@ -1565,6 +1584,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             # v6.6.4: `&fn` is its own resolution path — a private fn was reachable from any
             # file by taking its address and calling through callptr/fncallN (hisab 2026-09-13).
             _vis_check(S, fni, anoff);
+            _gen_addr_check(S, fni, anoff);   # 6.6.10: `&g` of a stub generic reaches the stub
             var fc = GFCNT(S);
             if (fc >= 1048576) {
                 syscall(SYS_WRITE, 2, "error: fixup table full (1048576)\n", 34);

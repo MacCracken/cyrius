@@ -872,6 +872,19 @@ fn _ipt_slots(S, sltype): i64 {
 
 fn GFTP(S, fi): i64 { if (_fnt_tparams == 0) { return 0; } return L64(_fnt_tparams + fi * 8); }
 fn SFTP(S, fi, v): i64 { if (_fnt_tparams == 0) { _fnt_tparams = alloc(131072 * 8); } S64(_fnt_tparams + fi * 8, v); return 0; }
+# 6.6.10 — per-GENERIC-fn facts a CALL SITE needs, recorded in pass 1 (`_gen_record`) so they do
+# not depend on definition order. Whether a generic's i64 base is a dead stub used to be known
+# only while that base was being emitted, so no call, tail call or `&g` could ask — and each of
+# them reached the `rax = 0` stub silently. Lazy-alloc'd at the max fn cap like _fnt_tparams.
+#   bit 0      the body uses a T-typed value as a struct, so there is no scalar instance
+#   bit 1      the same, transitively: it forwards T to a generic that has bit 0 or 1
+#   bit 2      recorded (0: never scanned — inference falls back to argument position)
+#   bits 8-15  1 + the index of the first parameter typed with type parameter 0 (0 = none)
+#   bits 16-23 the same for type parameter 1
+# CHANGELOG [6.6.10]
+var _fnt_gmeta = 0;
+fn GFGM(S, fi): i64 { if (_fnt_gmeta == 0) { return 0; } return L64(_fnt_gmeta + fi * 8); }
+fn SFGM(S, fi, v): i64 { if (_fnt_gmeta == 0) { _fnt_gmeta = alloc(131072 * 8); } S64(_fnt_gmeta + fi * 8, v); return 0; }
 # v6.3.10 (instantiate-once): the base fn's `fn`-keyword token index (lazy-alloc'd).
 fn GFDS(S, fi): i64 { if (_fnt_defstart == 0) { return 0; } return L64(_fnt_defstart + fi * 8); }
 fn SFDS(S, fi, v): i64 { if (_fnt_defstart == 0) { _fnt_defstart = alloc(131072 * 8); } S64(_fnt_defstart + fi * 8, v); return 0; }
@@ -976,9 +989,13 @@ var _tp_n0 = 0;
 var _tp_c0 = 0;
 var _tp_n1 = 0;
 var _tp_c1 = 0;
-# 6.6.8: 1 iff a type-arg of the explicit-type-arg call being parsed was a bound type
-# parameter (`inner<T>` forwarded from a generic body) — see _type_arg_leaf / _call_forwarded_base.
-var _ta_fwd = 0;
+# 6.6.10: 1 from an explicit-type-arg call (`g<Pt>(p)`, `g<i64>(5)`) until the PARSE_FNCALL it
+# makes reads it — that call must not re-infer its type arguments from the argument list.
+var _ta_explicit = 0;
+# 6.6.10: the type arguments PARSE_FNCALL's head inferred for a scalar generic call, read by the
+# inline replay's binding (was a positional re-inference inside the replay's argument loop).
+var _gh_inf0 = 0;
+var _gh_inf1 = 0;
 fn _tp_clear(S): i64 { _tp_n0 = 0; _tp_c0 = 0; _tp_n1 = 0; _tp_c1 = 0; return 0; }
 fn _tp_bind(S, slot, noff, conc): i64 {
     if (slot == 0) { _tp_n0 = noff; _tp_c0 = conc; }
