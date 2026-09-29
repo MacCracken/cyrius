@@ -19,8 +19,12 @@
 #   D. http_get against a one-shot HTTP server on the listener — in a thread on Windows, a forked
 #      child elsewhere — which checks the request it receives, Host header and port included.
 #
+#   E. (Windows only) sock_reuse before bind keeps the port exclusive: a second socket asking to
+#      share it (sock_reuseport) cannot bind it.
+#
 # MUTATION (6.6.11): reverting ONE Windows arm — _net_os_accept's to `syscall(SYS_ACCEPT, ...)` —
-# fails groups A, B and D under wine and on cass. CHANGELOG [6.6.11]
+# fails groups A, B and D under wine and on cass. `_NET_SO_REUSE = 0x0004` (Windows' SO_REUSEADDR
+# instead of SO_EXCLUSIVEADDRUSE) fails group E on cass. CHANGELOG [6.6.11]
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -238,6 +242,36 @@ fn _lb_udp_group(): i64 {
     return 0;
 }
 
+#ifdef CYRIUS_TARGET_WIN
+# ⛔ Windows' SO_REUSEADDR lets ANOTHER socket bind a port already in use — a local port hijack —
+# so sock_reuse sets SO_EXCLUSIVEADDRUSE there instead. Set before bind, it must make a second
+# socket's bind of the same port fail even when that socket asks to share (sock_reuseport, which
+# is Windows' SO_REUSEADDR).
+fn _lb_exclusive_group(): i64 {
+    test_group("6.6.11 — Windows: sock_reuse is SO_EXCLUSIVEADDRUSE, so a bound port cannot be taken");
+    var at, a = tcp_socket();
+    assert_eq(is_err_result(at), 0, "socket A");
+    assert_eq(sock_reuse(a), 0, "sock_reuse(A) before bind");
+    var bt, bv = sock_bind(a, INADDR_LOOPBACK(), 0);
+    assert_eq(is_err_result(bt), 0, "A binds 127.0.0.1:0");
+    # A's own address, as the kernel assigned it (an ephemeral port, never a fixed one).
+    var sa[16];
+    var sl[8];
+    store64(&sl, 16);
+    assert_eq(sys_getsockname(a, &sa, &sl), 0, "A's address reads back");
+    var lt, lv = sock_listen(a, 4);
+    assert_eq(is_err_result(lt), 0, "A listens");
+    var ct, c = tcp_socket();
+    assert_eq(is_err_result(ct), 0, "socket B");
+    assert_eq(sock_reuseport(c), 0, "sock_reuseport(B): B asks to share the port");
+    # Bind B to exactly that sockaddr, through the same primitive sock_bind uses.
+    assert(_net_os_bind(c, &sa, 16) < 0, "B cannot bind A's address (with SO_REUSEADDR it could: the hijack)");
+    sock_close(c);
+    sock_close(a);
+    return 0;
+}
+#endif
+
 # The one-shot HTTP server: accept one client on the non-blocking listener `lfd` (up to ~10 s),
 # read its request, answer 200 "hello". Returns 0 when the request was exactly the one http_get
 # must send for http://localhost:<port>/lb, 1 when no client came, 2 when it differed. It CLOSES
@@ -344,6 +378,9 @@ fn main(): i64 {
     _lb_tcp_group();
     _lb_nonblocking_group();
     _lb_udp_group();
+    #ifdef CYRIUS_TARGET_WIN
+    _lb_exclusive_group();
+    #endif
     _lb_http_group();
     #endif
     return assert_summary();
