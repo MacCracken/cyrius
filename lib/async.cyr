@@ -516,6 +516,7 @@ fn _async_connect_task(ctx): i64 {
 # client — connect).
 fn async_connect(rt, addr, port): i64 {
     var ctx = alloc_via(load64(rt + 32), 40);       # rt's allocator (arena-reclaimable)
+    if (ctx == 0) { return 0; }      # out of memory: no task (async_spawn's own OOM answer). CHANGELOG [6.6.10]
     store64(ctx, 0);
     store64(ctx + 8, addr);
     store64(ctx + 16, port);
@@ -545,6 +546,7 @@ fn _async_accept_task(ctx): i64 {
 # async_win.cyr's `async_accept` (AcceptEx). v6.4.44 R3 (async "W"-arc server step).
 fn async_accept(rt, listen_fd): i64 {
     var ctx = alloc_via(load64(rt + 32), 24);
+    if (ctx == 0) { return 0; }      # out of memory: no task (async_spawn's own OOM answer). CHANGELOG [6.6.10]
     store64(ctx, 0);
     store64(ctx + 8, rt);
     store64(ctx + 16, listen_fd);
@@ -568,6 +570,7 @@ fn _async_recv_task(ctx): i64 {
 # chunk (streaming with backpressure awaits the mid-body-suspend follow-on). v6.4.39.
 fn async_recv(rt, fd, buf, len): i64 {
     var ctx = alloc_via(load64(rt + 32), 40);       # rt's allocator (arena-reclaimable)
+    if (ctx == 0) { return 0; }      # out of memory: no task (async_spawn's own OOM answer). CHANGELOG [6.6.10]
     store64(ctx, 0);
     store64(ctx + 8, fd);
     store64(ctx + 16, buf);
@@ -592,6 +595,7 @@ fn _async_send_task(ctx): i64 {
 # count written (<0 = error). One write per call. v6.4.39.
 fn async_send(rt, fd, buf, len): i64 {
     var ctx = alloc_via(load64(rt + 32), 40);       # rt's allocator (arena-reclaimable)
+    if (ctx == 0) { return 0; }      # out of memory: no task (async_spawn's own OOM answer). CHANGELOG [6.6.10]
     store64(ctx, 0);
     store64(ctx + 8, fd);
     store64(ctx + 16, buf);
@@ -745,6 +749,7 @@ fn _async_resolve_task(ctx): i64 {
 # run concurrently. Linux only. v6.4.40 (async DNS).
 fn async_resolve(rt, ns_addr, ns_port, host): i64 {
     var ctx = alloc_via(load64(rt + 32), 56);       # rt's allocator (arena-reclaimable)
+    if (ctx == 0) { return 0; }      # out of memory: no task (async_spawn's own OOM answer). CHANGELOG [6.6.10]
     store64(ctx, 0);
     store64(ctx + 8, host);
     store64(ctx + 16, ns_addr);
@@ -822,10 +827,14 @@ fn async_with_timeout(rt, handle, ms): i64 {
     var tfd = _async_timerfd(ms, 0);
     if (tfd < 0) { return 0 - 1; }
     var sctx = alloc_via(load64(rt + 32), 24);      # rt's allocator (arena-reclaimable)
+    # Out of memory: -1, like a failed timerfd. With no sentinel, `_async_pump(rt, handle, 0)`
+    # would wait for the handle alone — a deadline that never fires. CHANGELOG [6.6.10]
+    if (sctx == 0) { syscall(SYS_CLOSE, tfd); return 0 - 1; }
     store64(sctx, 0);
     store64(sctx + 8, tfd);
     store64(sctx + 16, rt);
     var sentinel = async_spawn(rt, &_async_timeout_sentinel, sctx);
+    if (sentinel == 0) { syscall(SYS_CLOSE, tfd); return 0 - 1; }
     _async_pump(rt, handle, sentinel);
     # snapshot the winner BEFORE retiring (retire marks the loser DONE, which would
     # otherwise make the handle look completed)
@@ -871,13 +880,16 @@ fn async_interval(rt, fp, arg, ms, tok): i64 {
     var tfd = _async_timerfd(ms, ms);
     if (tfd < 0) { return 0; }
     var ctx = alloc_via(load64(rt + 32), 48);       # rt's allocator (arena-reclaimable)
+    if (ctx == 0) { syscall(SYS_CLOSE, tfd); return 0; }   # out of memory. CHANGELOG [6.6.10]
     store64(ctx, 0);
     store64(ctx + 8, fp);
     store64(ctx + 16, arg);
     store64(ctx + 24, tfd);
     store64(ctx + 32, rt);
     store64(ctx + 40, tok);
-    return async_spawn(rt, &_async_interval_task, ctx);
+    var h = async_spawn(rt, &_async_interval_task, ctx);
+    if (h == 0) { syscall(SYS_CLOSE, tfd); }         # no task owns the timer: do not leak it
+    return h;
 }
 
 # ================================================================
@@ -926,6 +938,7 @@ fn _async_process_task(ctx): i64 {
 # v6.4.36 (P2 — tokio::process::Command spawn).
 fn async_spawn_process(rt, path, argv, envp): i64 {
     var ctx = alloc_via(load64(rt + 32), 56);       # rt's allocator (arena-reclaimable)
+    if (ctx == 0) { return 0; }      # out of memory: no task (async_spawn's own OOM answer). CHANGELOG [6.6.10]
     store64(ctx, 0);
     store64(ctx + 8, path);
     store64(ctx + 16, argv);
