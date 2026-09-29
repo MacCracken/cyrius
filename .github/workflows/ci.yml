@@ -265,30 +265,13 @@ jobs:
           # free to rot). Exits non-zero if any harness fails to compile or fails.
           ./build/cyrius fuzz
       - name: CLI cross-compile (the .25-class gate, v6.2.29)
-        run: |
-          # cbt/cyrius.cyr cross-compiles to PE / Mach-O / aarch64 — the exact
-          # surface the v6.2.25 Windows break slipped through (a raw host-only
-          # syscall in a CLI-reachable lib). Turns red HERE per-PR, not at release.
-          set -e
-          cat src/main_aarch64.cyr | ./build/cycc > ./build/cycc_aarch64 && chmod +x ./build/cycc_aarch64
-          chk() { # $1=label $2=file $3=expected-hex-magic(2 bytes)
-            sz=$(wc -c < "$2"); test "$sz" -gt 200000 || { echo "FAIL: $1 too small ($sz B)"; exit 1; }
-            m=$(head -c2 "$2" | od -An -tx1 | tr -d ' \n')
-            test "$m" = "$3" || { echo "FAIL: $1 wrong magic (got $m, want $3)"; exit 1; }
-            echo "ok: $1 CLI ($sz B)"
-          }
-          env CYRIUS_TARGET_WIN=1 ./build/cycc < cbt/cyrius.cyr > /tmp/cli_win   && chk PE          /tmp/cli_win   4d5a
-          env CYRIUS_MACHO=1      ./build/cycc < cbt/cyrius.cyr > /tmp/cli_macho && chk Mach-O      /tmp/cli_macho cffa
-          ./build/cycc_aarch64               < cbt/cyrius.cyr > /tmp/cli_a64   && chk aarch64-ELF /tmp/cli_a64   7f45
-          # v6.2.32: also exercise the main_win.cyr PE DRIVER (cc_win) compiling a
-          # bayan/annotation-bearing program — the exact path the v6.2.31 windows
-          # tarball break slipped through. The gate above uses the x86 frontend
-          # (CYRIUS_TARGET_WIN=1), NOT main_win.cyr; main_win.cyr had dropped the
-          # 122/124/125/126/127 annotation tokens, so cyrsign→bayan hit "unexpected
-          # enum" only when built via cc_win (release-only, never per-PR).
-          cat src/main_win.cyr | ./build/cycc > /tmp/cc_win && chmod +x /tmp/cc_win
-          cat programs/cyrsign.cyr | /tmp/cc_win > /tmp/cyrsign_pe && chk cyrsign-via-cc_win /tmp/cyrsign_pe 4d5a
-      # ── 6.6.9: these four steps RUN THE CHECK DRIVER'S ROWS; they carry no copy of them. ──
+        # programs/checks/platform_win_macho.cyr::_cli_cross_compile_gate — cbt/cyrius.cyr
+        # cross-compiles to PE / Mach-O / aarch64 (> 200000 B, the right magic: the surface the
+        # v6.2.25 Windows break slipped through), and the main_win.cyr PE driver (`cc_win`)
+        # compiles programs/cyrsign.cyr to an MZ image (the v6.2.31 tarball break). 6.6.11 (K2):
+        # this step was a hand copy of that row; it now runs the row itself.
+        run: CYRIUS_CHECK_NO_SKIP=1 ./build/cyrius_check cli-cross
+      # ── 6.6.9: these four steps (and cli-cross above, 6.6.11) RUN THE CHECK DRIVER'S ROWS; they carry no copy of them. ──
       # v5.9.3 / v5.9.17 / v5.9.22 moved the shell regressions into programs/checks/, and each
       # of these steps kept a hand-written shell twin "so the job stays granular". Nothing kept
       # a twin in agreement with its source: when 6.6.6 moved the dlopen fixture's working

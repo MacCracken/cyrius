@@ -296,6 +296,9 @@ fn _root_path(tail): i64 {
 fn _tool_src(name): i64 {
     if (streq(name, "cyrius") == 1) { return "cbt/cyrius.cyr"; }
     if (streq(name, "cycc_aarch64") == 1) { return "src/main_aarch64.cyr"; }
+    # The main_win.cyr PE DRIVER built by the x86 compiler: a Linux-hosted compiler that emits
+    # PE (CI's `cc_win`). The cli-cross row compiles programs/cyrsign.cyr with it. CHANGELOG [6.6.11]
+    if (streq(name, "cc_win") == 1) { return "src/main_win.cyr"; }
     return _cat2(_cat2("programs/", name), ".cyr");
 }
 
@@ -506,9 +509,7 @@ fn _run_regression_gates(): i64 {
     _macho_cross_build_gate();
     println("");
 
-    _section("CLI cross-compile (the .25-class gate)");
-    _cli_cross_compile_gate();
-    println("");
+    _row_cli_cross();
 
     _section("Inline-asm discard-result");
     _inline_asm_discard_gate();
@@ -1160,10 +1161,21 @@ fn _suite_row(idx, run): i64 {
     if (idx == 10) { if (run == 1) { _row_linker(); } if (run == 2) { return 0; } return "linker"; }
     if (idx == 11) { if (run == 1) { _row_shared_dlopen(); } if (run == 2) { return 0; } return "shared-dlopen"; }
     if (idx == 12) { if (run == 1) { _row_capacity(); } if (run == 2) { return 0; } return "capacity"; }
+    if (idx == 13) { if (run == 1) { _row_cli_cross(); } if (run == 2) { return 0; } return "cli-cross"; }
     return 0;
 }
 
-# The four rows `regression` runs and CI selects by name (see `_suite_row`). CHANGELOG [6.6.9]
+# The rows `regression` runs and CI selects by name (see `_suite_row`). CHANGELOG [6.6.9]
+# 6.6.11 (K2): `cli-cross` joins them — CI's "CLI cross-compile" step was an unaudited hand
+# copy of `_cli_cross_compile_gate` (plus a cyrsign-via-cc_win extra the driver lacked, now
+# folded in), invisible to ci_steps_delegate_to_driver.sh because the row was not selectable.
+fn _row_cli_cross(): i64 {
+    _section("CLI cross-compile (the .25-class gate)");
+    _cli_cross_compile_gate();
+    println("");
+    return 0;
+}
+
 fn _row_shared_dlopen(): i64 {
     _section("Shared-object");
     _shared_dlopen_gate();
