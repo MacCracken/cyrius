@@ -2459,6 +2459,11 @@ fn PARSE_VAR(S): i64 {
             var gi1 = GVCNT(S);
             var gi2 = gi1 + 1;
             var gi3 = gi1 + 2;
+            # Grow the var family BEFORE the name stores: the GVCNT < _var_cap invariant covers
+            # only gi1, so gi2/gi3 written first landed past the cap — aliasing var_sizes[0] /
+            # var_types[0] at 8190, or the next alloc'd table at 16382 (a silent miscompile).
+            # SVCNT may reallocate, so _varn_base/_vars_base are read after it. CHANGELOG [6.6.10]
+            if (_dt_n == 3) { SVCNT(S, gi1 + 3); } else { SVCNT(S, gi1 + 2); }
             S64(_varn_base + gi1 * 8, noff);
             S64(_vars_base + gi1 * 8, 8);
             if (_dt_t1 != 0) { SVTYPE(S, gi1, _dt_t1); }
@@ -2479,7 +2484,6 @@ fn PARSE_VAR(S): i64 {
             _GVAR_VIS(S, gi1, GTI(S));   # v6.6.4: stamp visibility — a global registered on the PARSE_PROG path (any `var` after the FIRST top-level statement) skipped PARSE_GVAR_REG entirely and was never private
             _GVAR_VIS(S, gi2, GTI(S));
             if (_dt_n == 3) { _GVAR_VIS(S, gi3, GTI(S)); }
-            if (_dt_n == 3) { SVCNT(S, gi1 + 3); } else { SVCNT(S, gi1 + 2); }
         }
         if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
         STI(S, GTI(S) + 1);
