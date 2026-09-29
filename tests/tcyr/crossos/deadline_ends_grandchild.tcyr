@@ -216,6 +216,21 @@ fn main(): i64 {
     assert_eq(file_exists(mark3), 0, "the grandchild never wrote its marker");
     sys_unlink(mark3);
 
+    # A lib built against a cycc without the 0xF040-0xF044 routes gets -ENOSYS (-38) from every
+    # job call. `_win_job_new` took -38 as a job HANDLE and `_win_job_start` checked ResumeThread
+    # against 0xFFFFFFFF only, so it reported a job without resuming the child: every spawn then
+    # failed and left its child SUSPENDED for ever (reproduced under wine: six orphaned
+    # suspended children). A reroute's answer is a success only when it is > 0, and ResumeThread
+    # resumed only when it answered a suspend count.
+    test_group("the job helpers never read -ENOSYS as a success (Windows)");
+    assert_eq(_win_ok(0 - 38), 0, "-38 (an unrouted job call) is a failure, not a handle / TRUE");
+    assert_eq(_win_ok(0), 0, "0 (NULL / FALSE) is a failure");
+    assert_eq(_win_ok(420), 1, "a handle is a success");
+    assert_eq(_win_resumed(0 - 38), 0, "ResumeThread -38: not resumed (the child must be ended)");
+    assert_eq(_win_resumed(4294967295), 0, "ResumeThread (DWORD)-1: not resumed");
+    assert_eq(_win_resumed(1), 1, "ResumeThread 1 (a CREATE_SUSPENDED thread's count): resumed");
+    assert_eq(_win_resumed(0), 1, "ResumeThread 0 (was not suspended): running");
+
     # async_win's async_timeout ran its body INLINE and ignored `ms` — an unbounded call that
     # answered as if it had been bounded. It now refuses: -1, and the body does not run.
     test_group("async_timeout fails closed on Windows (no fork to bound)");

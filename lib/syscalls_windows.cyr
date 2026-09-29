@@ -953,13 +953,32 @@ fn _win_job_set_kill(job, on): i64 {
     return syscall(0xF044, job, 9, &info, 144);
 }
 
+# 1 iff `r`, a job reroute's answer, is a success: a HANDLE, or a BOOL / DWORD the call reports
+# as done. Success is > 0, never merely != 0: a reroute this compiler does not route answers
+# -ENOSYS (-38), which is non-zero too — a lib built against a cycc without `_PE_ROUTE_JOB`
+# took -38 as a job handle and as a successful assignment. CHANGELOG [6.6.10]
+fn _win_ok(r): i64 {
+    if (r > 0) { return 1; }
+    return 0;
+}
+
+# 1 iff ResumeThread's answer `rs` means the thread was resumed: its previous suspend count,
+# 0..0xFFFFFFFE. 0xFFFFFFFF ((DWORD)-1) is the Win32 failure and a negative value is an
+# unrouted reroute (-ENOSYS) — both leave the child SUSPENDED, so the caller must end it.
+# CHANGELOG [6.6.10]
+fn _win_resumed(rs): i64 {
+    if (rs < 0) { return 0; }
+    if (rs == 4294967295) { return 0; }
+    return 1;
+}
+
 # Create an unnamed job, KILL_ON_JOB_CLOSE when `kill_on_close` is 1. Returns its handle, or 0
 # when it could not be created or configured (nothing is left open then).
 fn _win_job_new(kill_on_close): i64 {
     var job = syscall(0xF040, 0, 0);                 # CreateJobObjectW(NULL, NULL)
-    if (job == 0) { return 0; }
+    if (_win_ok(job) == 0) { return 0; }
     if (kill_on_close == 1) {
-        if (_win_job_set_kill(job, 1) == 0) { syscall(3, job); return 0; }
+        if (_win_ok(_win_job_set_kill(job, 1)) == 0) { syscall(3, job); return 0; }
     }
     return job;
 }
@@ -972,10 +991,10 @@ fn _win_job_new(kill_on_close): i64 {
 fn _win_job_start(pi, kill_on_close): i64 {
     var job = _win_job_new(kill_on_close);
     if (job != 0) {
-        if (syscall(0xF041, job, load64(pi)) == 0) { syscall(3, job); job = 0; }
+        if (_win_ok(syscall(0xF041, job, load64(pi))) == 0) { syscall(3, job); job = 0; }
     }
     var rs = syscall(0xF043, load64(pi + 8));        # ResumeThread(hThread)
-    if (rs == 4294967295) {
+    if (_win_resumed(rs) == 0) {
         syscall(61469, load64(pi), 1);               # TerminateProcess — never left suspended
         if (job != 0) { syscall(3, job); }
         return 0 - 1;
