@@ -1155,7 +1155,10 @@ fn _flit_bits(S, p0, pe, fd, nd): i64 {
     var i0 = _flit_scan(S, p0, pe, 0 - 1);
     if (i0 < 0) { return 0; }
     var i1 = _flit_last(S, p0, pe);
-    if (_flb == 0) { _flb = alloc(_FLB_W * 16); }
+    if (_flb == 0) {
+        _flb = alloc(_FLB_W * 16);
+        if (_flb == 0) { _lex_die(S, p0, "out of memory converting a float literal"); }
+    }
     var a = _flb;
     store64(a, 0);
     var iu = i1;
