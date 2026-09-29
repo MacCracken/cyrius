@@ -2314,6 +2314,7 @@ fn LEX(S): i64 {
                                                                                                                                     p = p + 1;
                                                                                                                                     var spos = GSPOS(S);
                                                                                                                                     var sstart = spos;
+                                                                                                                                    var sline = GCLINE(S);   # the token keeps its OPENING line; LFs inside count after it
                                                                                                                                     var sgo = 1;
                                                                                                                                     while (sgo == 1) {
                                                                                                                                         if (p >= bl) { sgo = 0; }
@@ -2412,8 +2413,15 @@ fn LEX(S): i64 {
                                                                                                                                                         }
                                                                                                                                                         spos = _LEX_EMIT_UTF8(S, spos, cp);
                                                                                                                                                     }
-                                                                                                                                                    else { store8(S + 0x21A000 + spos, ec); spos = spos + 1; }
+                                                                                                                                                    # `\<LF>` KEEPS its LF (the v6.5.18 contract, tests/gates/toolchain/cyrfmt_string_
+                                                                                                                                                    # continuation.sh) and counts the line; `\<CR><LF>` keeps both bytes, the LF counted
+                                                                                                                                                    # by the plain arm below. Any other byte after `\` is refused: it used to be stored
+                                                                                                                                                    # verbatim with the backslash dropped (`"\q"` was "q"). CHANGELOG [6.6.11]
+                                                                                                                                                    elif (ec == 10) { SCLINE(S, GCLINE(S) + 1); store8(S + 0x21A000 + spos, 10); spos = spos + 1; }
+                                                                                                                                                    elif (ec == 13 && load8(S + 0x459D000 + p) == 10) { store8(S + 0x21A000 + spos, 13); spos = spos + 1; }
+                                                                                                                                                    else { _lex_die(S, esc, "unknown string escape"); }
                                                                                                                                                 } else {
+                                                                                                                                                    if (sc == 10) { SCLINE(S, GCLINE(S) + 1); }   # a raw LF in a string is a line. CHANGELOG [6.6.11]
                                                                                                                                                     store8(S + 0x21A000 + spos, sc);
                                                                                                                                                     spos = spos + 1;
                                                                                                                                                     p = p + 1;
@@ -2456,7 +2464,10 @@ fn LEX(S): i64 {
                                                                                                                                     # literal's length INTO the offset, so the literal read from its 2nd byte.
                                                                                                                                     # Decoders: parse_expr.cyr ESADDR, parse.cyr #assert/#pe_import, parse_fn.cyr
                                                                                                                                     # #deprecated. CHANGELOG [6.6.4]
+                                                                                                                                    var eline = GCLINE(S);
+                                                                                                                                    SCLINE(S, sline);
                                                                                                                                     ADDTOK(S, 30, (sstart << 32) | slen);
+                                                                                                                                    SCLINE(S, eline);
                                                                                                                                 }
                                                                                                                                 else {
                                                                                                                                     # Reject non-ASCII bytes outside strings/comments
