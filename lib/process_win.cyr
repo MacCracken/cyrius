@@ -84,12 +84,15 @@ fn _w_cmdbuf(nchars): i64 {
 
 # Build a writable UTF-16LE command line "cmd [arg1 [arg2]]" on the heap.
 # (CreateProcessW may modify lpCommandLine in place, so it must be writable
-# heap, never a read-only literal.) Returns the buffer pointer.
+# heap, never a read-only literal.) Returns the buffer pointer, 0 when the heap is exhausted
+# (6.6.10 — the three builders here stored through address 0 before; a 0 command line makes
+# CreateProcessW fail, so every verb reports a failed spawn).
 fn _win_wcmdline3(cmd, arg1, arg2): i64 {
     var total = strlen(cmd) + 1;
     if (arg1 != 0) { total = total + strlen(arg1) + 1; }
     if (arg2 != 0) { total = total + strlen(arg2) + 1; }
     var wbuf = alloc((total + 1) * 2);
+    if (wbuf == 0) { return 0; }
     var o = _w_append_cstr(wbuf, 0, cmd);
     if (arg1 != 0) { o = _w_append_space(wbuf, o); o = _w_append_cstr(wbuf, o, arg1); }
     if (arg2 != 0) { o = _w_append_space(wbuf, o); o = _w_append_cstr(wbuf, o, arg2); }
@@ -111,6 +114,7 @@ fn _win_wcmdline_vec(args, is_str): i64 {
         i = i + 1;
     }
     var wbuf = alloc((total + 1) * 2);
+    if (wbuf == 0) { return 0; }
     var o = 0;
     var j = 0;
     while (j < argc) {
@@ -138,6 +142,7 @@ fn _win_wenvblock_vec(env, is_str): i64 {
         i = i + 1;
     }
     var wbuf = alloc((total + 1) * 2);
+    if (wbuf == 0) { return 0; }
     var o = 0;
     var j = 0;
     while (j < envc) {
@@ -675,6 +680,7 @@ fn exec_env(args, env): i64 {
     if (vec_len(args) < 1) { return 0 - 1; }
     var wcmd = _win_wcmdline_vec(args, 0);
     var wenv = _win_wenvblock_vec(env, 0);
+    if (wcmd == 0 || wenv == 0) { return 0 - 1; }   # out of memory (0 would mean "inherit the env")
     var pi[24];
     var ok = _win_create_process(wcmd, 0, wenv, &pi);
     if (ok == 0) { return 0 - 1; }
@@ -720,6 +726,7 @@ fn exec_env_str(args, env): i64 {
     if (vec_len(args) < 1) { return 0 - 1; }
     var wcmd = _win_wcmdline_vec(args, 1);
     var wenv = _win_wenvblock_vec(env, 1);
+    if (wcmd == 0 || wenv == 0) { return 0 - 1; }   # out of memory (0 would mean "inherit the env")
     var pi[24];
     var ok = _win_create_process(wcmd, 0, wenv, &pi);
     if (ok == 0) { return 0 - 1; }

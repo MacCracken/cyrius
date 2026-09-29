@@ -726,6 +726,10 @@ fn getppid(): i64 { return sys_getppid(); }
 # literals), the _str family pushes Str envp entries. envp shape
 # follows the family, not the call site.
 
+# 6.6.10: every verb below checks its argv / envp allocations and answers -1 (nothing ran)
+# when the heap is exhausted — they stored through address 0 before (the alloc census,
+# tests/gates/memory/stdlib_alloc_checked_census.sh). CHANGELOG [6.6.10]
+
 # Run command with a vec of cstr argv elements. Returns exit code
 # or -1.
 # Usage: var args = vec_new(); vec_push(args, "/usr/bin/ls");
@@ -739,6 +743,7 @@ fn exec_vec(args): i64 {
     var cmd = vec_get(args, 0);
     # Build argv array (argc + 1 for null terminator)
     var argv = alloc((argc + 1) * 8);
+    if (argv == 0) { return 0 - 1; }
     var avi = 0;
     while (avi < argc) {
         store64(argv + avi * 8, vec_get(args, avi));
@@ -746,6 +751,7 @@ fn exec_vec(args): i64 {
     }
     store64(argv + argc * 8, 0);
     var envp = alloc(8);
+    if (envp == 0) { return 0 - 1; }
     store64(envp, 0);
     var _pg_ppid = sys_getpid();
     var pid = sys_fork();
@@ -803,6 +809,7 @@ fn exec_capture_status(args, buf, buflen, status_out): i64 {
     if (argc < 1) { return 0 - 1; }
     var cmd = vec_get(args, 0);
     var argv = alloc((argc + 1) * 8);
+    if (argv == 0) { return 0 - 1; }
     var avi = 0;
     while (avi < argc) {
         store64(argv + avi * 8, vec_get(args, avi));
@@ -810,6 +817,7 @@ fn exec_capture_status(args, buf, buflen, status_out): i64 {
     }
     store64(argv + argc * 8, 0);
     var envp = alloc(8);
+    if (envp == 0) { return 0 - 1; }
     store64(envp, 0);
     var pipefd[16];
     if (sys_pipe(&pipefd) < 0) { return 0 - 1; }
@@ -864,6 +872,7 @@ fn exec_env(args, env): i64 {
     if (argc < 1) { return 0 - 1; }
     var cmd = vec_get(args, 0);
     var argv = alloc((argc + 1) * 8);
+    if (argv == 0) { return 0 - 1; }
     var avi = 0;
     while (avi < argc) {
         store64(argv + avi * 8, vec_get(args, avi));
@@ -872,6 +881,7 @@ fn exec_env(args, env): i64 {
     store64(argv + argc * 8, 0);
     var envc = vec_len(env);
     var envp = alloc((envc + 1) * 8);
+    if (envp == 0) { return 0 - 1; }
     var evi = 0;
     while (evi < envc) {
         store64(envp + evi * 8, vec_get(env, evi));
@@ -923,6 +933,7 @@ fn exec_vec_str(args): i64 {
     if (argc < 1) { return 0 - 1; }
     var cmd = str_data(vec_get(args, 0));
     var argv = alloc((argc + 1) * 8);
+    if (argv == 0) { return 0 - 1; }
     var avi = 0;
     while (avi < argc) {
         store64(argv + avi * 8, str_data(vec_get(args, avi)));
@@ -930,6 +941,7 @@ fn exec_vec_str(args): i64 {
     }
     store64(argv + argc * 8, 0);
     var envp = alloc(8);
+    if (envp == 0) { return 0 - 1; }
     store64(envp, 0);
     var _pg_ppid = sys_getpid();
     var pid = sys_fork();
@@ -955,6 +967,7 @@ fn exec_capture_str(args, buf, buflen): i64 {
     if (argc < 1) { return 0 - 1; }
     var cmd = str_data(vec_get(args, 0));
     var argv = alloc((argc + 1) * 8);
+    if (argv == 0) { return 0 - 1; }
     var avi = 0;
     while (avi < argc) {
         store64(argv + avi * 8, str_data(vec_get(args, avi)));
@@ -962,6 +975,7 @@ fn exec_capture_str(args, buf, buflen): i64 {
     }
     store64(argv + argc * 8, 0);
     var envp = alloc(8);
+    if (envp == 0) { return 0 - 1; }
     store64(envp, 0);
     var pipefd[16];
     sys_pipe(&pipefd);
@@ -997,6 +1011,7 @@ fn exec_env_str(args, env): i64 {
     if (argc < 1) { return 0 - 1; }
     var cmd = str_data(vec_get(args, 0));
     var argv = alloc((argc + 1) * 8);
+    if (argv == 0) { return 0 - 1; }
     var avi = 0;
     while (avi < argc) {
         store64(argv + avi * 8, str_data(vec_get(args, avi)));
@@ -1005,6 +1020,7 @@ fn exec_env_str(args, env): i64 {
     store64(argv + argc * 8, 0);
     var envc = vec_len(env);
     var envp = alloc((envc + 1) * 8);
+    if (envp == 0) { return 0 - 1; }
     var evi = 0;
     while (evi < envc) {
         store64(envp + evi * 8, str_data(vec_get(env, evi)));
@@ -1045,6 +1061,7 @@ fn _read_environ_envp(): i64 {
     var fd = sys_open("/proc/self/environ", 0, 0);   # 0 = O_RDONLY
     if (fd < 0) { return 0; }
     var blob = alloc(65536);
+    if (blob == 0) { sys_close(fd); return 0; }
     var n = sys_read(fd, blob, 65535);
     sys_close(fd);
     if (n <= 0) { return 0; }
@@ -1057,6 +1074,7 @@ fn _read_environ_envp(): i64 {
         i = i + 1;
     }
     var envp = alloc((count + 1) * 8);
+    if (envp == 0) { return 0; }
     var ei = 0;
     var start = 0;
     i = 0;
@@ -1088,7 +1106,11 @@ fn exec_cmd(cmdline): i64 {
     store64(&argv + 16, cmdline);
     store64(&argv + 24, 0);
     var envp = _read_environ_envp();
-    if (envp == 0) { envp = alloc(8); store64(envp, 0); }
+    if (envp == 0) {
+        envp = alloc(8);
+        if (envp == 0) { return 0 - 1; }
+        store64(envp, 0);
+    }
     var _pg_ppid = sys_getpid();
     var pid = sys_fork();
     if (pid < 0) { return 0 - 1; }
