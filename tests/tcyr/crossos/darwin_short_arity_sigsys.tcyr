@@ -26,10 +26,13 @@
 # fixup stored through.
 #
 # Elsewhere the file compiles and asserts nothing: the emulations are Mach-O only (Linux passes
-# the numbers to the kernel, PE routes 35 at argc 3 only, and the others are not Darwin).
+# the numbers to the kernel, PE routes 35 at argc 3 only, and the others are not Darwin). The
+# helpers are compiled on macOS only, so every target builds the file (agnos's sys_waitpid takes
+# one argument, and the 6.6.10 cross-target ratchet compiles crossos/ for win, macho and agnos).
 include "lib/syscalls.cyr"
 include "lib/assert.cyr"
 
+#ifdef CYRIUS_TARGET_MACOS
 fn _prime_rdi(p): i64 { return 0; }
 
 # Fork a child that runs `which` and reports how it ended: the signal number if it was killed,
@@ -56,6 +59,7 @@ fn _child_end(which): i64 {
     if (WIFSIGNALED(st) == 1) { return WTERMSIG(st); }
     return 1000 + WEXITSTATUS(st);
 }
+#endif
 
 fn main(): i64 {
     #ifdef CYRIUS_TARGET_MACOS
