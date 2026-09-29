@@ -2325,6 +2325,48 @@ fn ESETEOF_PE(S): i64 {
     return 0;
 }
 
+# 6.6.10 — the Job-object reroutes: a process TREE on Windows (lib/process_win.cyr,
+# lib/async_win.cyr, cbt's `_win_run_timed`). A deadline could only TerminateProcess the direct
+# child, so a grandchild holding the capture pipe kept the verb blocked until it exited (a
+# 2000 ms deadline returned after 19,437 ms on cass). Every callee is reached through the
+# rbx-anchored aligned callers, so each is correct at any expression depth. CHANGELOG [6.6.10]
+#   syscall(0xF040, attrs, name)            → CreateJobObjectW (argc 3) — a HANDLE, all 64 bits
+#   syscall(0xF041, job, hProcess)          → AssignProcessToJobObject (argc 3) — BOOL
+#   syscall(0xF042, job, code)              → TerminateJobObject (argc 3) — BOOL
+#   syscall(0xF043, hThread)                → ResumeThread (argc 2) — DWORD, 0xFFFFFFFF on failure
+#   syscall(0xF044, job, class, info, len)  → SetInformationJobObject (argc 5) — BOOL
+# A BOOL / DWORD is zero-extended (`mov eax, eax`) so an undefined upper half cannot read as
+# TRUE; the HANDLE is returned whole.
+fn ECREATEJOB_PE(S): i64 {
+    _pe_ensure_createjob(S);
+    _pe_call_2arg_aligned(S, _pe_createjob_get());
+    return 0;
+}
+fn EASSIGNJOB_PE(S): i64 {
+    _pe_ensure_assignjob(S);
+    _pe_call_2arg_aligned(S, _pe_assignjob_get());
+    EB(S, 0x89); EB(S, 0xC0);                           # mov eax, eax (BOOL → zero-extended)
+    return 0;
+}
+fn ETERMJOB_PE(S): i64 {
+    _pe_ensure_termjob(S);
+    _pe_call_2arg_aligned(S, _pe_termjob_get());
+    EB(S, 0x89); EB(S, 0xC0);                           # mov eax, eax (BOOL → zero-extended)
+    return 0;
+}
+fn ERESUMETHREAD_PE(S): i64 {
+    _pe_ensure_resumethread(S);
+    _pe_srw_call_1arg(S, _pe_resumethread_get());
+    EB(S, 0x89); EB(S, 0xC0);                           # mov eax, eax (DWORD → zero-extended)
+    return 0;
+}
+fn ESETJOBINFO_PE(S): i64 {
+    _pe_ensure_setjobinfo(S);
+    _pe_call_4arg_aligned(S, _pe_setjobinfo_get());
+    EB(S, 0x89); EB(S, 0xC0);                           # mov eax, eax (BOOL → zero-extended)
+    return 0;
+}
+
 # v6.6.6: syscall(0xF03A, wbuf, cch) → kernel32!GetModuleFileNameW(NULL, wbuf, cch) —
 # the Windows source for "the full path of THIS executable", the thing
 # readlink("/proc/self/exe") answers on Linux and fcntl(F_GETPATH) on macOS. Stack on

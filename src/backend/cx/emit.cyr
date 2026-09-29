@@ -1645,6 +1645,11 @@ fn EFLUSHFB_PE(S): i64 { return 0; }      # v6.6.7 kernel32!FlushFileBuffers (fs
 fn EGETFINFO_PE(S): i64 { return 0; }     # 6.6.9 kernel32!GetFileInformationByHandleEx (0xF03D)
 fn ESYMLINKW_PE(S): i64 { return 0; }     # 6.6.9 kernel32!CreateSymbolicLinkW (0xF03E)
 fn ESETEOF_PE(S): i64 { return 0; }       # 6.6.9 kernel32!SetEndOfFile (0xF03F)
+fn ECREATEJOB_PE(S): i64 { return 0; }    # 6.6.10 kernel32!CreateJobObjectW (0xF040)
+fn EASSIGNJOB_PE(S): i64 { return 0; }    # 6.6.10 kernel32!AssignProcessToJobObject (0xF041)
+fn ETERMJOB_PE(S): i64 { return 0; }      # 6.6.10 kernel32!TerminateJobObject (0xF042)
+fn ERESUMETHREAD_PE(S): i64 { return 0; } # 6.6.10 kernel32!ResumeThread (0xF043)
+fn ESETJOBINFO_PE(S): i64 { return 0; }   # 6.6.10 kernel32!SetInformationJobObject (0xF044)
 fn EINITSRW_PE(S): i64 { return 0; }
 fn ELOCALFREE_PE(S): i64 { return 0; }
 fn ELSEEK_PE(S): i64 { return 0; }
