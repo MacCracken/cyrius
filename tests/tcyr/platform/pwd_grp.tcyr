@@ -89,4 +89,4 @@ assert_eq(n_nou, 1, "nonexistent user yields just primary");
 assert_eq(load64(&gids), 42, "that single gid is the primary");
 
 var r = assert_summary();
-syscall(60, 0);
+syscall(60, r);

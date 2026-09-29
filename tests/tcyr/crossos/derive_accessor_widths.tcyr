@@ -73,8 +73,10 @@ fn main() {
     assert_eq(load8(s + 1), 9, "y at byte 1, not clobbered by x's setter");
     assert_eq(Spaced_y(s), 9, "y getter");
     assert_eq(load64(sn), 1234, "neighbour of the 2-byte struct untouched");
-    return 0;
+    return assert_summary();
 }
 
-main();
-var r = assert_summary();
+# main() is auto-called by the executable epilogue when defined, so a
+# top-level `main();` would run the body twice and exit with the second
+# run's value. Exit here with the summary instead (CHANGELOG [6.6.11]).
+syscall(60, main());
