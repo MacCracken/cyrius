@@ -6,6 +6,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.10] — 2026-09-28
 
+### Added
+
+- **A census gate for unchecked first-party `alloc(` results, with a shrink-only allowlist.**
+  (bite 12) `tests/gates/memory/stdlib_alloc_checked_census.sh` flags a `v = alloc(` whose first
+  later mention in the same fn is not a zero check (or `return v;`), over `lib/*.cyr` and
+  `lib/*/*.cyr` minus the vendored folds read from `docs/ecosystem.md`'s fold table. At the slot's
+  open it found **131 unchecked sites of 246** across 39 files (the triage's hand heuristic had
+  said ~112); its per-file hit list, with the owning lane for each file, was published to every
+  6.6.10 lane before they started, so the ~130-site sweep is checked by a gate instead of a hand
+  count. The allowlist is keyed on file + fn + variable (not line), a NEW unchecked site fails by
+  name, and a FIXED site fails until its allowlist line is deleted — the list can only shrink. The
+  detector is self-tested on nine shapes (next-line check, a joint `a == 0 || b == 0`, `return v`,
+  a reassignment through `alloc_via`, `!v`, a use on the alloc line, a value escaping into a
+  global, a check that comes too late, a check-shaped string) and a mutation row deletes a live
+  check and requires the site to be flagged.
+
 ## [6.6.9] — 2026-09-28
 
 The third batch release (roadmap.md, *The 6.6.7 → 6.6.10 batch*): twelve bites in six worktree lanes —

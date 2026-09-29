@@ -1501,3 +1501,8 @@ _chk_gate "$ROOT/tests/gates/toolchain/check_driver_skip_is_not_pass.sh"
 # twins of them; no workflow run: line references tests/fixtures/; the .tcyr floor is written
 # once (tests/tcyr/CORPUS_FLOOR); every CI self-host step uses cross-os-selfhost.sh's fork.
 _chk_gate "$ROOT/tests/gates/toolchain/ci_steps_delegate_to_driver.sh"
+
+# 6.6.10 (bite 12) — every first-party `alloc(` result is zero-checked before its first use:
+# a census against a SHRINK-ONLY allowlist (a new unchecked site fails, a fixed site fails
+# until its allowlist line is deleted), with a self-tested detector and a mutation row.
+_chk_gate "$ROOT/tests/gates/memory/stdlib_alloc_checked_census.sh"
