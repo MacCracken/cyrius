@@ -110,6 +110,16 @@ assert_eq(is_err_result(sm_null_tag), 1, "null handle is Err");
 assert_eq(sm_null, DynlibNotFound, "payload = DynlibNotFound");
 
 # ---- pwd ----
+# 6.6.10: the pwd / grp / shadow / pam groups read the POSIX account databases (/etc/passwd,
+# /etc/group, /etc/shadow, unix_chkpwd) and need sys_getuid, which the PE peer does not define —
+# so the file did not COMPILE for PE (the corpus cross-compile ratchet,
+# tests/gates/toolchain/tcyr_corpus_cross_compiles.sh). On PE they are compiled out with a named
+# SKIP; the Result groups above run everywhere. CHANGELOG [6.6.10]
+#ifdef CYRIUS_TARGET_WIN
+var _skw = "  SKIP: pwd/grp/shadow/pam read POSIX account databases — not on Windows\n";
+sys_write(1, _skw, strlen(_skw));
+#endif
+#ifndef CYRIUS_TARGET_WIN
 
 # Get the calling uid via the portable sys_getuid() wrapper. (The old hardcoded
 # syscall(102) is the x86_64 getuid number; aarch64 getuid is 174 — the bare
@@ -225,5 +235,6 @@ assert_eq(chain_ok, lookup_uid, "chain returns the uid it looked up");
 var chain_err_tag, chain_err = _self_uid_via_chain(2147483647, &pw_q, &sb_q, 1024);
 assert_eq(is_err_result(chain_err_tag), 1, "chain on bogus uid is Err");
 assert_eq(chain_err, PwdNotFound, "chain payload = PwdNotFound");
+#endif
 
 var r = assert_summary();

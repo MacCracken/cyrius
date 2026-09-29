@@ -57,6 +57,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   since; 17/17 now on aarch64); `platform/dynlib_init.tcyr`'s non-glibc SKIP path printed a
   0-assertion summary, which the cross-OS runner rightly scores as "ran nothing" — it now asserts
   that the bootstrap declines.
+- **The whole `.tcyr` corpus compiles for PE, both Mach-O targets and agnos — a ratchet gate keeps
+  it that way.** (bite 14.) Nothing cross-compiled `tests/tcyr` outside `crossos/`: on the 6.6.10
+  tree 9 files failed for PE, 1 for both Mach-O targets and 37 for agnos, every one a missing guard
+  or a missing wrapper. Fixed in the files: `platform/net_v6_connect.tcyr` (it reached the PRIVATE
+  `_fd_o_nonblock` and raw `SYS_BIND` / `SYS_LISTEN` / x86 `51`; the nonblocking group is now
+  Linux/macOS, the loopback group Linux through `sys_bind` / `sys_listen` / `sys_getsockname` /
+  `sys_accept4`, named SKIP elsewhere), `platform/fs.tcyr` (`xmkdir` / `xunlink` / `xrmdir`, and no
+  `/tmp` on Windows), `platform/socket_syscalls.tcyr`, `platform/sandbox_syscalls.tcyr`,
+  `platform/syscalls_at_family.tcyr`, `platform/regression_wait_unobserved.tcyr` (PE asserts the
+  fork-less verbs report "not observed", never an invented status) and
+  `stdlib/result_stdlib_pass2.tcyr`. PE gains `sys_listen` (0xF033) and `sys_rmdir` (0xF03B), whose
+  reroutes existed without wrappers (lane S2's `lib/syscalls_windows.cyr`; bite 14's hand-off),
+  pinned on real hosts by the new `tests/tcyr/crossos/listen_rmdir_wrappers.tcyr`.
+  `tests/gates/toolchain/tcyr_corpus_cross_compiles.sh` builds the PE and aarch64 cross compilers
+  from the tree and compiles all 378 files per leg against SHRINK-ONLY allowlists (PE 1, Mach-O 0,
+  agnos 31 — lane T's agnos pass empties that one): a failure not on the list is a FAIL, and so is
+  an allowlisted file that compiles; an empty or wrong-magic output is a failure; axis 0 proves every
+  leg can see a failure; a 350-file floor. Mutation: restoring the 6.6.9 `net_v6_connect.tcyr` and
+  `derive_enum_inside_ifdef.tcyr` gives six FAIL rows.
 
 ## [6.6.9] — 2026-09-28
 

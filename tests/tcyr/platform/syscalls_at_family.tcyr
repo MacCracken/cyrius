@@ -5,6 +5,12 @@
 #
 # Existence is checked via sys_access (portable — no arch-dependent
 # struct stat offsets). Uses /tmp to avoid CWD pollution.
+#
+# 6.6.10: the *at family is POSIX — the PE peer declines sys_fstatat (-ENOSYS) and defines none
+# of the others, and agnos has none — so the file did not COMPILE for either (the corpus
+# cross-compile ratchet, tests/gates/toolchain/tcyr_corpus_cross_compiles.sh). The round-trip is
+# compiled only on Linux/macOS; PE asserts its documented decline, agnos prints a named SKIP.
+# CHANGELOG [6.6.10]
 
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
@@ -47,6 +53,19 @@ fn _scratch(name, suffix): i64 {   # "/tmp/<name>.<pid><suffix>", NUL-terminated
 alloc_init();
 
 var stbuf[160];
+
+#ifdef CYRIUS_TARGET_WIN
+var skw = "  SKIP: Windows has no *at() family; only the peer's documented decline is checked\n";
+sys_write(1, skw, strlen(skw));
+assert_eq(sys_fstatat(0 - 100, "x", &stbuf, 0), 0 - 38, "PE sys_fstatat declines with -ENOSYS");
+#endif
+#ifdef CYRIUS_TARGET_AGNOS
+var ska = "  SKIP: the agnos peer has no *at() family\n";
+sys_write(1, ska, strlen(ska));
+assert(sys_getpid() > 0, "SKIP arm ran (getpid) — no *at() family on agnos");
+#endif
+#ifndef CYRIUS_TARGET_WIN
+#ifndef CYRIUS_TARGET_AGNOS
 
 # Clean any leftovers from a prior run (ignore errors).
 sys_unlinkat(AT_FDCWD, _scratch("cyr_at_a", ""), 0);
@@ -99,6 +118,8 @@ assert_eq(sys_unlinkat(AT_FDCWD, _scratch("cyr_at_a", ""), 0), 0, "sys_unlinkat 
 assert_eq(sys_unlink(_scratch("cyr_at_c", "")), 0, "sys_unlink removes the hard-linked name");
 assert_neq(sys_access(_scratch("cyr_at_a", ""), 0), 0, "a gone");
 assert_neq(sys_access(_scratch("cyr_at_c", ""), 0), 0, "c gone");
+#endif
+#endif
 
 var _exit_code = assert_summary();
 syscall(60, _exit_code);

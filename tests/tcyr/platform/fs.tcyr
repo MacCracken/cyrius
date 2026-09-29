@@ -16,13 +16,24 @@ alloc_init();
 # failed, each deleting or rewriting the others' files mid-assert. The bare-literal group below
 # needs its paths as literal TOKENS (the coercion fires only for a literal), so the test works in a
 # private dir, /tmp/cyrius_fs.<pid>, and spells every path relative to it. CHANGELOG [6.6.6]
-fn _scratch(name, suffix): i64 {   # "/tmp/<name>.<pid><suffix>", NUL-terminated
+#
+# 6.6.10: the file also COMPILES and runs on every target (the corpus cross-compile ratchet,
+# tests/gates/toolchain/tcyr_corpus_cross_compiles.sh). It spelled mkdir/unlink/rmdir with the raw
+# POSIX-shaped wrappers, which agnos takes length-carrying and PE had no sys_rmdir for; the portable
+# xmkdir / xunlink / xrmdir (lib/io.cyr) bridge both. Windows has no /tmp, so there the private dir
+# is made in the current directory (and not entered — PE's sys_chdir declines), and cleanup
+# leaves it with chdir("..").
+fn _scratch(name, suffix): i64 {   # "/tmp/<name>.<pid><suffix>" (PE: "<name>.<pid><suffix>")
     var nl = strlen(name);
     var sl = strlen(suffix);
     var p = alloc(nl + sl + 32);
+    var o = 0;
+    #ifndef CYRIUS_TARGET_WIN
     memcpy(p, "/tmp/", 5);
-    memcpy(p + 5, name, nl);
-    var o = 5 + nl;
+    o = 5;
+    #endif
+    memcpy(p + o, name, nl);
+    o = o + nl;
     store8(p + o, 46);
     o = o + 1;
     var d[24];
@@ -44,8 +55,12 @@ fn _scratch(name, suffix): i64 {   # "/tmp/<name>.<pid><suffix>", NUL-terminated
     return p;
 }
 var privdir = _scratch("cyrius_fs", "");
-if (sys_mkdir(privdir, 448) != 0) { panic("fs.tcyr: cannot create its private scratch dir"); }
+if (xmkdir(privdir, 448) != 0) { panic("fs.tcyr: cannot create its private scratch dir"); }
+# PE's sys_chdir declines (-1, no SetCurrentDirectoryW reroute), so there the relative paths
+# below land in the current directory, which the PE runner already makes per-run.
+#ifndef CYRIUS_TARGET_WIN
 if (sys_chdir(privdir) != 0) { panic("fs.tcyr: cannot enter its private scratch dir"); }
+#endif
 
 test_group("file_write_all / file_read_all");
 var testpath = "cyrius_fs_test";
@@ -119,8 +134,8 @@ test_group("bare literal -> Str param coercion (silent-zero gate)");
 # used only for the str_from(...) control side and the mkdir/cleanup syscalls.
 var wroot = "cyrius_fs_bare_gate";
 var wsub  = "cyrius_fs_bare_gate/sub";
-sys_mkdir(wroot, 493);          # 0755
-sys_mkdir(wsub, 493);
+xmkdir(wroot, 493);             # 0755
+xmkdir(wsub, 493);
 file_write_all("cyrius_fs_bare_gate/a.cyr", "x", 1);
 file_write_all("cyrius_fs_bare_gate/b.txt", "y", 1);
 file_write_all("cyrius_fs_bare_gate/sub/c.cyr", "z", 1);
@@ -161,16 +176,18 @@ assert_eq(path_has_ext("/a/b/c.txt", ".txt"), 1, "path_has_ext bare literals");
 # ELF-aarch64 87 is timerfd_gettime and 84 is sync_file_range, so this cleanup did
 # NOTHING on ARM and left the fixtures behind. ESYSXLAT routes both now, but the
 # stdlib name is the spelling a test should model. CHANGELOG [6.6.5]
-sys_unlink("cyrius_fs_bare_gate/sub/c.cyr");
-sys_unlink("cyrius_fs_bare_gate/b.txt");
-sys_unlink("cyrius_fs_bare_gate/a.cyr");
-sys_rmdir(wsub);
-sys_rmdir(wroot);
+xunlink("cyrius_fs_bare_gate/sub/c.cyr");
+xunlink("cyrius_fs_bare_gate/b.txt");
+xunlink("cyrius_fs_bare_gate/a.cyr");
+xrmdir(wsub);
+xrmdir(wroot);
 
 # Cleanup
-sys_unlink(testpath);
-sys_chdir("/tmp");
-sys_rmdir(privdir);
+xunlink(testpath);
+#ifndef CYRIUS_TARGET_WIN
+sys_chdir("..");
+#endif
+xrmdir(privdir);
 assert_eq(is_dir(str_from(privdir)), 0, "the private scratch dir is gone");
 
 var r = assert_summary();

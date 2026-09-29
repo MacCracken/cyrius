@@ -1,0 +1,51 @@
+# listen_rmdir_wrappers.tcyr — 6.6.10: `sys_listen` and `sys_rmdir` exist AND route on every
+# host that has the call, PE included.
+#
+# ⛔ WHY. PE had the reroutes — 0xF033 (ws2_32!listen, since v6.4.44) and 0xF03B
+# (kernel32!RemoveDirectoryW, since 6.6.6, behind lib/io.cyr's xrmdir) — but no `sys_listen` or
+# `sys_rmdir` wrapper in lib/syscalls_windows.cyr, so a portable caller of the POSIX names did not
+# COMPILE for Windows (tests/tcyr/platform/fs.tcyr and socket_syscalls.tcyr, found by the 6.6.10
+# corpus cross-compile ratchet). A wrapper that compiles is not a wrapper that runs, so this file
+# is in crossos/: the release gate executes it on real ecb, ach, cass and pi.
+#
+# The listen row uses a descriptor that is not a socket, so it needs no network and no WSAStartup:
+# the call must come back NEGATIVE (-EBADF / -ENOTSOCK on POSIX, -WSAGetLastError on Windows) —
+# never -ENOSYS (an unrouted stub) and never 0. The rmdir rows remove a directory this file made,
+# then fail to remove it a second time. agnos's peer takes rmdir length-carrying and has no BSD
+# listen, so it runs only the portable xmkdir/xrmdir pair. CHANGELOG [6.6.10]
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/assert.cyr"
+
+fn main(): i64 {
+    alloc_init();
+    var d = test_scratch("listen_rmdir_wrappers");
+
+    #ifndef CYRIUS_TARGET_AGNOS
+    test_group("6.6.10 — sys_rmdir removes an empty directory, then reports the second removal");
+    assert_eq(xmkdir(d, 493), 0, "made the scratch directory");
+    assert_eq(sys_rmdir(d), 0, "sys_rmdir removes it (0)");
+    var again = sys_rmdir(d);
+    assert(again < 0, "a second sys_rmdir fails (negative)");
+    assert_neq(again, 0 - 38, "…and not as an unrouted -ENOSYS");
+
+    test_group("6.6.10 — sys_listen routes: a non-socket descriptor is refused, not stubbed");
+    var lr = sys_listen(123457, 1);
+    assert(lr < 0, "listen on a descriptor that is not a socket is negative");
+    assert_neq(lr, 0 - 38, "…and not -ENOSYS (the call reached the OS)");
+    #endif
+
+    #ifdef CYRIUS_TARGET_AGNOS
+    var ska = "  SKIP: agnos has no BSD listen and a length-carrying rmdir; the portable pair runs\n";
+    sys_write(1, ska, strlen(ska));
+    assert_eq(xmkdir(d, 493), 0, "made the scratch directory");
+    assert_eq(xrmdir(d), 0, "xrmdir removes it");
+    #endif
+
+    return assert_summary();
+}
+var ec = main();
+syscall(60, ec);

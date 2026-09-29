@@ -7,6 +7,14 @@
 # refactor must be behaviour-identical). The macOS-specific constant values
 # (AF_INET6=30, sin6_len) are exercised by the Mach-O compile gate + are
 # symmetric with the macOS-verified sockaddr_in v4 path.
+#
+# 6.6.10: the file COMPILES for every target (the corpus cross-compile ratchet,
+# tests/gates/toolchain/tcyr_corpus_cross_compiles.sh). It failed for PE and agnos: the
+# nonblocking group reached lib/syscalls_linux_common.cyr's PRIVATE `_fd_o_nonblock` and BSD
+# fds, and the loopback group used raw SYS_BIND / SYS_LISTEN / SYS_ACCEPT and the x86 number 51.
+# Group 1 (layout) stays portable; the nonblocking group is Linux/macOS (the only peers with BSD
+# socket fds); the loopback group is Linux, through the stdlib wrappers (sys_getsockname exists
+# on every peer). Every other target prints a named SKIP. CHANGELOG [6.6.10]
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -32,6 +40,8 @@ fn main(): i64 {
     assert_eq((load8(sa6 + 2) << 8) | (load8(sa6 + 3) & 0xFF), 0x1234, "sockaddr_in6 port network-byte-order");
     assert_eq(load8(sa6 + 23) & 0xFF, 1, "sockaddr_in6 carries ::1 in the addr field @8 (byte 15 = 1)");
 
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_AGNOS
     test_group("sock_set_nonblocking / sock_clear_nonblocking");
     var s = sys_socket(AF_INET6, SOCK_STREAM, 0);
     assert(s >= 0, "v6 socket created");
@@ -42,6 +52,8 @@ fn main(): i64 {
     sock_clear_nonblocking(s, saved);
     assert_eq(sys_fcntl(s, F_GETFL, 0), saved, "sock_clear_nonblocking restores the saved flags");
     sys_close(s);
+    #endif
+    #endif
 
     # The connect-loopback below uses getsockname + bind/listen/accept directly
     # for an ephemeral-port server; that test scaffolding's Mach-O syscall
@@ -49,18 +61,18 @@ fn main(): i64 {
     # On macOS the Darwin-specific correctness (AF_INET6=30 / sin6_len=28) is
     # covered by the target-aware sockaddr_in6 layout check above + the Mach-O
     # compile gate; the end-to-end macOS v6 connect is sandhi's acceptance.
-    #ifndef CYRIUS_TARGET_MACOS
+    #ifdef CYRIUS_TARGET_LINUX
     test_group("net_connect_nb6 — ::1 loopback");
     var lfd = sys_socket(AF_INET6, SOCK_STREAM, 0);
     assert(lfd >= 0, "v6 listener socket");
     var lsa = sockaddr_in6(loop6, 0);            # port 0 = ephemeral
-    assert_eq(syscall(SYS_BIND, lfd, lsa, 28), 0, "bind ::1:0 (ephemeral)");
-    assert_eq(syscall(SYS_LISTEN, lfd, 4), 0, "listen on the v6 socket");
-    # getsockname (x86_64 #51) to read the assigned ephemeral port.
+    assert_eq(sys_bind(lfd, lsa, 28), 0, "bind ::1:0 (ephemeral)");
+    assert_eq(sys_listen(lfd, 4), 0, "listen on the v6 socket");
+    # getsockname to read the assigned ephemeral port.
     var gsa = alloc(28);
     var gslen = alloc(4);
     store32(gslen, 28);
-    syscall(51, lfd, gsa, gslen);
+    assert_eq(sys_getsockname(lfd, gsa, gslen), 0, "getsockname on the v6 listener");
     var port = ((load8(gsa + 2) & 0xFF) << 8) | (load8(gsa + 3) & 0xFF);
     assert(port > 0, "getsockname yielded an ephemeral v6 port");
 
@@ -73,7 +85,7 @@ fn main(): i64 {
         if (rc == _NET_CONN_NB_OK) { sys_exit(0); }
         sys_exit(1);
     }
-    var cli = syscall(SYS_ACCEPT, lfd, 0, 0);
+    var cli = sys_accept4(lfd, 0, 0, 0);
     assert(cli >= 0, "server accepted the v6 client (net_connect_nb6 connected)");
     var cst[4];
     sys_waitpid(pid, &cst, 0);
@@ -85,12 +97,12 @@ fn main(): i64 {
     var l4_t, l4_v = tcp_socket();
     var l4 = result_unwrap(l4_t, l4_v);
     var l4sa = sockaddr_in(INADDR_LOOPBACK(), 0);
-    assert_eq(syscall(SYS_BIND, l4, l4sa, 16), 0, "bind 127.0.0.1:0");
-    assert_eq(syscall(SYS_LISTEN, l4, 4), 0, "listen v4");
+    assert_eq(sys_bind(l4, l4sa, 16), 0, "bind 127.0.0.1:0");
+    assert_eq(sys_listen(l4, 4), 0, "listen v4");
     var g4 = alloc(16);
     var g4l = alloc(4);
     store32(g4l, 16);
-    syscall(51, l4, g4, g4l);
+    assert_eq(sys_getsockname(l4, g4, g4l), 0, "getsockname on the v4 listener");
     var p4 = ((load8(g4 + 2) & 0xFF) << 8) | (load8(g4 + 3) & 0xFF);
     var pid4 = sys_fork();
     if (pid4 == 0) {
@@ -101,13 +113,17 @@ fn main(): i64 {
         if (rc4 == _NET_CONN_NB_OK) { sys_exit(0); }
         sys_exit(1);
     }
-    var cli4 = syscall(SYS_ACCEPT, l4, 0, 0);
+    var cli4 = sys_accept4(l4, 0, 0, 0);
     assert(cli4 >= 0, "server accepted the v4 client (net_connect_nb still works)");
     var cst4[4];
     sys_waitpid(pid4, &cst4, 0);
     assert_eq((load64(&cst4) >> 8) & 0xFF, 0, "net_connect_nb v4 returned _NET_CONN_NB_OK (child exit 0)");
     if (cli4 >= 0) { sys_close(cli4); }
     sys_close(l4);
+    #endif
+    #ifndef CYRIUS_TARGET_LINUX
+    var sk = "  SKIP: the ::1 / 127.0.0.1 loopback-connect groups run on Linux only\n";
+    sys_write(1, sk, strlen(sk));
     #endif
 
     var r = assert_summary();

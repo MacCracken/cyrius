@@ -15,6 +15,11 @@
 #     filter that locks the test process), or sys_execveat
 #     (would replace the process image). Compile-time reference
 #     via &fn confirms definedness.
+#
+# 6.6.10: these are Linux/Darwin wrappers — the PE and agnos peers define none of the six, so
+# the file did not COMPILE for either (the corpus cross-compile ratchet,
+# tests/gates/toolchain/tcyr_corpus_cross_compiles.sh). The groups are compiled only where the
+# wrappers exist; PE and agnos print a named SKIP. CHANGELOG [6.6.10]
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -61,6 +66,19 @@ var PR_GET_DUMPABLE = 3;
 fn main(): i64 {
     alloc_init();
 
+    #ifdef CYRIUS_TARGET_WIN
+    var skw = "  SKIP: the PE peer has no sandbox wrappers (fchmod/setres*id/prctl/seccomp/execveat)\n";
+    sys_write(1, skw, strlen(skw));
+    assert(sys_getpid() > 0, "SKIP arm ran (getpid) — no sandbox wrappers on PE");
+    #endif
+    #ifdef CYRIUS_TARGET_AGNOS
+    var ska = "  SKIP: the agnos peer has no sandbox wrappers (fchmod/setres*id/prctl/seccomp/execveat)\n";
+    sys_write(1, ska, strlen(ska));
+    assert(sys_getpid() > 0, "SKIP arm ran (getpid) — no sandbox wrappers on agnos");
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_AGNOS
+
     test_group("sys_fchmod — fd-based chmod");
     var tmp_path = _scratch("cyrius_v511_sandbox_fchmod_test", "");
     # v6.5.15: was the literal 65. Darwin's O_CREAT is 0x200, not 0x40, so 65
@@ -97,6 +115,8 @@ fn main(): i64 {
     assert(fp_setresgid != 0, "sys_setresgid defined");
     assert(fp_seccomp != 0, "sys_seccomp defined");
     assert(fp_execveat != 0, "sys_execveat defined");
+    #endif
+    #endif
 
     var r = assert_summary();
     return r;
