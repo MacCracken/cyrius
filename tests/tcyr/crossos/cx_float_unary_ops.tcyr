@@ -1,0 +1,71 @@
+# cx_float_unary_ops.tcyr — 6.6.10: f64_sqrt / f64_floor / f64_ceil / f64_round and mulh64
+# compute their results on EVERY backend, bit-exact, including the cx bytecode target.
+#
+# ⛔ THE DEFECT. On cx the five emitters were `return 0` stubs (src/backend/cx/emit.cyr), so the
+# operand stayed in r0 and came back as the "result": f64_sqrt(4.0) = 4.0, f64_floor(2.5) = 2.5,
+# f64_round(2.5) = 2.5, and mulh64(2^32, 2^32) = 2^32 (its second argument) instead of 1. No
+# diagnostic. cxvm already had fsqrt (0x68) and nothing emitted it. They now emit fsqrt and the
+# new host-backed ffloor/fceil/fround/mulhu opcodes (0x6A-0x6D, programs/cxvm.cyr).
+#
+# ⭐ WHY BIT PATTERNS. A stub is an IDENTITY, so a row whose expected value is close to its input
+# (sqrt(1), floor(3.0)) cannot see it; every row below moves its operand, and the -0 rows
+# (round(-0.4), ceil(-0.5)) compare the sign bit, which `==` on floats does not see.
+# round is ties-to-EVEN on every backend: x86 roundsd imm 0, aarch64 frintn, and cxvm calls
+# the host's own f64_round. mulh64 is UNSIGNED (x86 `mul`, aarch64 `umulh`).
+#
+# In crossos/ because each row is three emitters (x86 SSE4.1, aarch64 FRINT*/FSQRT/UMULH, cx
+# opcodes run by cxvm on the host). tests/gates/codegen/cx_float_unary_ops_run.sh runs this file
+# on cxvm; natively it runs in the ordinary corpus.
+include "lib/assert.cyr"
+include "lib/syscalls.cyr"
+
+# Untyped params: the builtins see raw i64 bits, as the i64-boxed float idiom passes them.
+fn sq(x) { return f64_sqrt(x); }
+fn fl(x) { return f64_floor(x); }
+fn ce(x) { return f64_ceil(x); }
+fn ro(x) { return f64_round(x); }
+
+fn main(): i64 {
+    test_group("f64_sqrt");
+    assert_eq(sq(0x4010000000000000), 0x4000000000000000, "sqrt(4.0) is 2.0 (the cx stub returned 4.0)");
+    assert_eq(sq(0x4000000000000000), 0x3FF6A09E667F3BCD, "sqrt(2.0) is correctly rounded");
+    assert_eq(sq(0x4059000000000000), 0x4024000000000000, "sqrt(100.0) is 10.0");
+    assert_eq(sq(0x8000000000000000), 0x8000000000000000, "sqrt(-0) is -0");
+    var sn = sq(0xBFF0000000000000);
+    assert_eq((sn >> 52) & 0x7FF, 0x7FF, "sqrt(-1.0) is a NaN (exponent all ones)");
+    assert_neq(sn & 0xFFFFFFFFFFFFF, 0, "sqrt(-1.0) is a NaN (non-zero mantissa)");
+
+    test_group("f64_floor");
+    assert_eq(fl(0x4004000000000000), 0x4000000000000000, "floor(2.5) is 2.0 (the cx stub returned 2.5)");
+    assert_eq(fl(0xC004000000000000), 0xC008000000000000, "floor(-2.5) is -3.0");
+    assert_eq(fl(0xBFE0000000000000), 0xBFF0000000000000, "floor(-0.5) is -1.0");
+    assert_eq(fl(0x3FEFFFFFFFFFFFFF), 0, "floor(0.99999...) is +0");
+    assert_eq(fl(0x4330000000000001), 0x4330000000000001, "floor(2^52 + 1) is itself (already integral)");
+
+    test_group("f64_ceil");
+    assert_eq(ce(0x4004000000000000), 0x4008000000000000, "ceil(2.5) is 3.0 (the cx stub returned 2.5)");
+    assert_eq(ce(0xC004000000000000), 0xC000000000000000, "ceil(-2.5) is -2.0");
+    assert_eq(ce(0xBFE0000000000000), 0x8000000000000000, "ceil(-0.5) is -0 (sign kept)");
+    assert_eq(ce(0x3FB999999999999A), 0x3FF0000000000000, "ceil(0.1) is 1.0");
+
+    test_group("f64_round (nearest, ties to even)");
+    assert_eq(ro(0x4004000000000000), 0x4000000000000000, "round(2.5) is 2.0 — ties to even (the cx stub returned 2.5)");
+    assert_eq(ro(0x400C000000000000), 0x4010000000000000, "round(3.5) is 4.0 — ties to even");
+    assert_eq(ro(0xC004000000000000), 0xC000000000000000, "round(-2.5) is -2.0 — ties to even");
+    assert_eq(ro(0x3FE0000000000000), 0, "round(0.5) is +0 — ties to even");
+    assert_eq(ro(0xBFD999999999999A), 0x8000000000000000, "round(-0.4) is -0 (sign kept)");
+    assert_eq(ro(0x4002666666666666), 0x4000000000000000, "round(2.3) is 2.0");
+    assert_eq(ro(0x4004CCCCCCCCCCCD), 0x4008000000000000, "round(2.6) is 3.0");
+
+    test_group("mulh64 (unsigned high half)");
+    assert_eq(mulh64(4294967296, 4294967296), 1, "mulh64(2^32, 2^32) is 1 (the cx stub returned 2^32)");
+    assert_eq(mulh64(0 - 1, 0 - 1), 0 - 2, "mulh64(2^64-1, 2^64-1) is 2^64-2 (unsigned)");
+    assert_eq(mulh64(0 - 1, 2), 1, "mulh64(2^64-1, 2) is 1");
+    assert_eq(mulh64(0x8000000000000000, 2), 1, "mulh64(2^63, 2) is 1");
+    assert_eq(mulh64(3, 5), 0, "mulh64(3, 5) is 0");
+    assert_eq(mulh64(0x123456789ABCDEF0, 0x0FEDCBA987654321), 0x0121FA00AD77D742, "mulh64 of two wide operands");
+    return 0;
+}
+
+main();
+var r = assert_summary();

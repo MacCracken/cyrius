@@ -1098,10 +1098,15 @@ fn E2(S, v): i64 { EB(S, v & 0xFF); EB(S, v >> 8 & 0xFF); return 0; }
 fn E3(S, v): i64 { EB(S, v & 0xFF); EB(S, v >> 8 & 0xFF); EB(S, v >> 16 & 0xFF); return 0; }
 fn E8(S, v): i64 { var i = 0; while (i < 8) { EB(S, (v >> (i * 8)) & 0xFF); i = i + 1; } return 0; }
 
-# cx arc B: scalar f64 is REAL now via the host-backed cxvm float opcodes
-# (0x54-0x5F fadd/fsub/fmul/fdiv, i2f/f2i, flt/fle/fgt/fge/feq/fne; 0x64/0x65
-# fneg/fabs). f32 conversion + transcendentals (sin/cos/exp/ln/…) + sqrt/floor
-# still FAIL LOUD — the VM has no f32 or libm opcodes yet (a later cx-arc tail).
+# cx arc B: scalar f64 is REAL via the host-backed cxvm float opcodes (0x54-0x5F
+# fadd/fsub/fmul/fdiv, i2f/f2i, flt/fle/fgt/fge/feq/fne; 0x64/0x65 fneg/fabs;
+# 0x66/0x67 f32widen/f32narrow since v6.4.32; 0x68 fsqrt; 0x6A-0x6C ffloor/fceil/
+# fround and 0x6D mulhu since 6.6.10 — EF64SQRT/FLOOR/CEIL/ROUND and EMULH below).
+# What still FAILS LOUD through the helper below is the transcendental family
+# (sin/cos/exp/ln/…): the VM has no libm opcodes. ⛔ Until 6.6.10 this comment said
+# sqrt/floor and f32 conversion failed loud too — f32 was already real, and sqrt,
+# floor, ceil, round and mulh64 were `return 0` stubs that left the operand in r0:
+# a silent identity (sqrt(4.0) = 4.0, mulh64(2^32, 2^32) = 2^32). CHANGELOG [6.6.10]
 fn _cx_float_unsupported(S): i64 {
     ERR_MSG(S, "this float op is not yet supported on the cx bytecode target", 60);
     return 0;
@@ -1494,17 +1499,20 @@ fn EMIT_IVEC_DP8(S, vbase): i64 {
 }
 fn EUCOMISD(S): i64 { return 0; }
 fn EXORPD_X1(S): i64 { return 0; }
-fn EF64SQRT(S): i64 { return 0; }
-fn EF64FLOOR(S): i64 { return 0; }
-fn EF64CEIL(S): i64 { return 0; }
-fn EF64ROUND(S): i64 { return 0; }
+# f64 unary ops on the f64 BITS in r0 (the frontend's EMOVQ_* around these are no-ops
+# on cx), host-backed like the other float opcodes. round = nearest, ties to EVEN — the
+# x86 `roundsd imm 0` and aarch64 `frintn` contract, which cxvm inherits by calling the
+# host's own f64_round. These were `return 0` stubs until 6.6.10. CHANGELOG [6.6.10]
+fn EF64SQRT(S): i64 { CX_EMIT(S, 104, 0, 0, 0); return 0; }    # 0x68 fsqrt  r0, r0
+fn EF64FLOOR(S): i64 { CX_EMIT(S, 106, 0, 0, 0); return 0; }   # 0x6A ffloor r0, r0
+fn EF64CEIL(S): i64 { CX_EMIT(S, 107, 0, 0, 0); return 0; }    # 0x6B fceil  r0, r0
+fn EF64ROUND(S): i64 { CX_EMIT(S, 108, 0, 0, 0); return 0; }   # 0x6C fround r0, r0
 # v5.9.40 — clean up cx-side undefined-fn warnings carried since
 # v5.9.39's Mach-O fix (EADRP/EADD_IMM12 added to aarch64/x86
 # but cx wasn't paired). Stubs for the dead cross-arch branches
-# in shared frontend files. EFLADDR + EMULH + _read_env are
-# pre-existing carry-overs from earlier minors — folded in here
-# rather than spinning a separate slot per the v5.9.38/.39
-# "don't lazy-defer related fixes" feedback.
+# in shared frontend files. (EMULH and _read_env were stubbed
+# here too; both are real since 6.6.10 — EMULH below, _read_env
+# in src/backend/common/env.cyr.)
 fn EADRP(S, reg): i64 { return 0; }
 fn EADD_IMM12(S, reg): i64 { return 0; }
 # v5.9.40 Phase 2c — real EFLADDR / EFLADDR_X1 for cx. Compute
@@ -1554,7 +1562,10 @@ fn ESTOREREGPARM(S, pidx, disp): i64 {
     CX_EMIT(S, 67, 14, 3 + pidx, 0);      # store64 [r14], r(3+pidx)
     return 0;
 }
-fn EMULH(S): i64 { return 0; }
+# mulh64(a, b): the high 64 bits of the UNSIGNED 128-bit product. The frontend pops a
+# into r1 (EPOPC) with b in r0, as x86 `mul rcx` / aarch64 `umulh x0, x1, x0` expect.
+# A `return 0` stub until 6.6.10, which returned b. CHANGELOG [6.6.10]
+fn EMULH(S): i64 { CX_EMIT(S, 109, 0, 1, 0); return 0; }       # 0x6D mulhu r0, r1, r0
 
 # ============================================================================
 # v6.3.2: cross-arch emit stubs. The cyrius-x (cx) bytecode target shares the

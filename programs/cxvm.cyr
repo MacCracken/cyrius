@@ -42,7 +42,11 @@
 #   0x65 = fabs   ra, rb          ra = f64-bits of |f64(rb)|
 #   0x66 = f32widen  ra, rb       ra = f64-bits of f32-from-bits(rb)   (cvtss2sd; v6.4.32 cx-SIMD)
 #   0x67 = f32narrow ra, rb       ra = f32-bits of narrow(f64-bits rb) (cvtsd2ss; v6.4.32 cx-SIMD)
-#   0x68 = fsqrt  ra, rb          ra = f64-bits of sqrt(f64(rb))       (v6.4.32 cx-SIMD)
+#   0x68 = fsqrt  ra, rb          ra = f64-bits of sqrt(f64(rb))       (v6.4.32 cx-SIMD; f64_sqrt 6.6.10)
+#   0x6A = ffloor ra, rb          ra = f64-bits of floor(f64(rb))      (6.6.10)
+#   0x6B = fceil  ra, rb          ra = f64-bits of ceil(f64(rb))       (6.6.10)
+#   0x6C = fround ra, rb          ra = f64-bits of round-half-even(f64(rb)) (6.6.10)
+#   0x6D = mulhu  ra, rb, rc      ra = high 64 bits of unsigned rb * rc (6.6.10)
 #   0x40 = load8  ra, [rb]        ra = zero-extend byte at mem[rb]
 #   0x41 = load64 ra, [rb]        ra = 64-bit at mem[rb]
 #   0x42 = store8 [ra], rb        mem[ra] = low byte of rb
@@ -239,6 +243,12 @@ fn cx_run(code, code_len): i64 {
         elif (op == 102) { cx_reg_set(ra, f32_to(cx_reg_get(rb))); }    # 0x66 f32widen  (cvtss2sd)
         elif (op == 103) { cx_reg_set(ra, f32_from(cx_reg_get(rb))); }  # 0x67 f32narrow (cvtsd2ss)
         elif (op == 104) { cx_reg_set(ra, f64_sqrt(cx_reg_get(rb))); }  # 0x68 fsqrt
+        # 6.6.10: the rest of the f64 unary builtins and mulh64, host-backed. The backend
+        # emitted NOTHING for them before, so the operand came back unchanged, silently.
+        elif (op == 106) { cx_reg_set(ra, f64_floor(cx_reg_get(rb))); } # 0x6A ffloor
+        elif (op == 107) { cx_reg_set(ra, f64_ceil(cx_reg_get(rb))); }  # 0x6B fceil
+        elif (op == 108) { cx_reg_set(ra, f64_round(cx_reg_get(rb))); } # 0x6C fround (ties to even)
+        elif (op == 109) { cx_reg_set(ra, mulh64(cx_reg_get(rb), cx_reg_get(rc))); } # 0x6D mulhu
 
         # memory: load8/16/32/64, store8/16/32/64
         elif (op == 64) { cx_reg_set(ra, load8(_cx_mem + cx_reg_get(rb))); }
