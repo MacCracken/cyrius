@@ -2163,7 +2163,8 @@ fn _agc_from_temp(S, t, dli, dgv, n, sid): i64 {
 # side. `r = b.mk(5)` SIGSEGV'd, `q = b.mp(3)` kept rax only. Returns 1 when the statement is done
 # (`;` consumed); 0 leaves the ordinary store to run, exactly as after a plain PCMPE.
 # 6.6.11: also arms the struct-typed FIELD source (`q = b.v;`, see `_fla_arm`) when the destination
-# is a struct. CHANGELOG [6.6.11]
+# is a struct, and type-checks every recorded struct result against it — a <= 8 B one (`_sc_tmp`
+# -3, value in rax) included — before any exit. CHANGELOG [6.6.11]
 fn _pcmpe_struct_assign(S, noff): i64 {
     var st = GTI(S);
     _agc_operand(S, noff);
@@ -2176,6 +2177,9 @@ fn _pcmpe_struct_assign(S, noff): i64 {
     var t = _sc_whole(S, st);
     if (t == 0 - 2) { return 0; }
     var n = _agc_operand(S, noff);
+    if (t == 0 - 3) { _asg_ret_sid = _sc_sid; }   # a <= 8 B struct VALUE: not a pointer mismatch
+    if (_AGG_ASSIGN_TYPE_ERR(S, _agc_t, 0 - _sc_sid, noff, _sc_fn) == 1) { return 0; }
+    if (t == 0 - 3) { return 0; }
     if (n <= 1) { return 0; }
     if (_agc_t != 0 - _sc_sid) { return 0; }
     if (t < 0) { _refuse_toplevel_struct_call(S, _sc_fn); return 0; }

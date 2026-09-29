@@ -563,6 +563,8 @@ fn _fsc_expr(S, ft, fnoff): i64 {
     _fla_want = sv;
     var t = _sc_whole(S, st);
     if (t >= 0 || t == 0 - 1) { return _fsc_from_call(S, t, ft, fnoff); }
+    # 6.6.11: a <= 8 B struct result (rax, no temp) is type-checked too, then stored. See `_sc_post`.
+    if (t == 0 - 3) { if (_sc_sid != ft) { _fsc_type_err(S, _sc_fn, fnoff); } return 2; }
     if (_fla_hit == 1) {
         _fla_hit = 0;
         if (_fla_ft != ft) { _fsc_type_err(S, _fla_name, fnoff); return 2; }
@@ -580,16 +582,17 @@ fn _fsc_from_call(S, t, ft, fnoff): i64 {
 
 # The dispatch, cursor on the right-hand side of `x.f = `: 0 = not a struct copy (nothing
 # parsed), 1 = the source is recorded for `_fsc_copy`, 2 = the RHS is parsed and its value is
-# in rax. A named source is taken at every width; the others only when the field is not one
-# exact register store (1/2/4/8 B), where the one-word path was already right.
+# in rax. Every source shape is taken at every width.
+# ⛔ 6.6.11 — an exact-register field (1/2/4/8 B) used to return 0 here, before the call and
+# expression arms, because its one-word store was already the right COPY. It was not the right
+# TYPE CHECK: `h.p = y.mq()` and `h.p = mkq8()` stored a Q8 into a P8 field with no diagnostic.
+# The arms below store through the same width ladder (2) when the value is in rax. CHANGELOG [6.6.11]
 fn _fsc_src(S, ft, fnoff): i64 {
     if (ft <= 0) { return 0; }
     if (IS_STR_FIELD(S, ft) == 1) { return 0; }
     if (PEEKT(S) == 2) {
         if (TOKTYP(S, GTI(S) + 1) == 5) { return _fsc_name(S, ft, fnoff); }
     }
-    var sz = STRUCTSZ(S, ft - 1);
-    if (sz == 8 || sz == 4 || sz == 2 || sz == 1) { return 0; }
     if (PEEKT(S) == 2) {
         var r = _fsc_call(S, ft, fnoff);
         if (r != 0) { return r; }

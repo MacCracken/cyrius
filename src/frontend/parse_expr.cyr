@@ -4266,6 +4266,7 @@ fn EMIT_OP_DISPATCH(S, stype, op_str, op_len, beg): i64 {
     else { ECALLFIX(S, ofi); }
     ECALLCLEAN(S, 2);
     SESTYPE(S, 0);
+    _sc_post_small(S, ofi, opnoff, beg);   # 6.6.11: a <= 8 B struct result, for the destination's type check
     return 0;
 }
 

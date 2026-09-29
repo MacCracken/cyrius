@@ -1955,7 +1955,7 @@ fn _sc_x8(S, fi, t): i64 {
 
 fn _sc_post(S, fi, noff, beg, t): i64 {
     var cls = _ret_agg_class(S, fi);
-    if (cls == 0) { return 0; }
+    if (cls == 0) { return _sc_post_small(S, fi, noff, beg); }
     if (t >= 0) {
         if (cls == 1) { EFLSTORE_STRUCT_INT_PAIR(S, t); }
         else { EFLLOAD(S, t); SESTYPE(S, 0); }
@@ -1969,6 +1969,36 @@ fn _sc_post(S, fi, noff, beg, t): i64 {
     _sc_sid = GFRS(S, fi);
     _sc_fn = noff;
     return 0;
+}
+
+# ⛔ 6.6.11 — A STRUCT RESULT OF 8 B OR LESS WAS NEVER RECORDED, so no destination could compare its
+# type: `h.o = y.same()`, `z = y.same()`, `var z: Odd = y + y` stored an Od2 into an Odd silently
+# (only the free-call FIELD form was refused). Recorded now with `_sc_tmp = -3`: "the value is in
+# rax, there is no temp". Every `_sc_whole` consumer either type-checks it (`_fsc_expr`,
+# `_pcmpe_struct_assign`, both var receives) or keeps ignoring it (-3 is neither -1 nor a slot).
+# Str (16 B, a handle in rax) is not a <= 8 B struct and stays unrecorded. The scalar operator
+# dispatch (parse_expr.cyr) calls this directly. CHANGELOG [6.6.11]
+fn _sc_post_small(S, fi, noff, beg): i64 {
+    if (fi < 0) { return 0; }
+    var sid = GFRS(S, fi);
+    if (sid <= 0) { return 0; }
+    if (STRUCTSZ(S, sid - 1) > 8) { return 0; }
+    _sc_beg = beg;
+    _sc_end = GTI(S);
+    _sc_tmp = 0 - 3;
+    _sc_sid = sid;
+    _sc_fn = noff;
+    return 0;
+}
+
+# A struct-typed declaration (`pscale` = `0 - sid`) initialised from a recorded struct call of a
+# different struct: refused (1). CHANGELOG [6.6.11]
+fn _sc_decl_mismatch(S, pscale, sid): i64 {
+    if (pscale >= 0) { return 0; }
+    if (pscale <= 0 - 2048) { return 0; }
+    if (pscale == 0 - sid) { return 0; }
+    ERR_MSG(S, "fn return struct-id differs from declared var type", 50);
+    return 1;
 }
 
 # ⛔ 6.6.11 — PARSE_VAR's initialiser arming, for a struct-typed declaration: the struct-typed
@@ -2011,13 +2041,13 @@ fn _sc_whole(S, start): i64 {
 fn _sc_var_receive(S, noff, pscale, ext, start): i64 {
     if (_fla_hit == 1) { return _fla_var_receive(S, noff, pscale); }   # 6.6.11: `var p: S = b.v`
     var t = _sc_whole(S, start);
+    if (t == 0 - 3) { _sc_decl_mismatch(S, pscale, _sc_sid); return 0; }   # 6.6.11: <= 8 B, in rax
     if (t < 0) { return 0; }
     if (pscale == 0) {
         if (ext != 0) { return 0; }
+    } elif (_sc_decl_mismatch(S, pscale, _sc_sid) == 1) {
+        return 0;
     } elif (pscale != 0 - _sc_sid) {
-        if (pscale < 0) { if (pscale > 0 - 2048) {
-                ERR_MSG(S, "fn return struct-id differs from declared var type", 50);
-            } }
         return 0;
     }
     S64(S + 0x5D9D000 + t * 8, noff);
@@ -2028,7 +2058,9 @@ fn _sc_var_receive(S, noff, pscale, ext, start): i64 {
 # `var G: S = <expr>` at top level: no frame, so a 9-16 B method/operator result is refused by name
 # (a >16 B one already was, in `_sc_pre`). Untyped `var g = ..` keeps the first word.
 fn _sc_global_receive(S, pscale, start): i64 {
-    if (_sc_whole(S, start) != 0 - 1) { return 0; }
+    var t = _sc_whole(S, start);
+    if (t == 0 - 3) { _sc_decl_mismatch(S, pscale, _sc_sid); return 0; }   # 6.6.11: <= 8 B, in rax
+    if (t != 0 - 1) { return 0; }
     if (pscale != 0 - _sc_sid) { return 0; }
     _refuse_toplevel_struct_call(S, _sc_fn);
     return 0;
