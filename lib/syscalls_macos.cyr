@@ -592,6 +592,12 @@ fn sys_pause(): i64 {
 # builders, copied from the x86_64 Linux peer; the wrappers decline without compiling a syscall
 # number, so no build of them can reach Darwin unrouted. Each helper refuses a failed alloc
 # (returns 0) instead of storing through it. CHANGELOG [6.6.10]
+# ⚠ The `#ifndef CYRIUS_TARGET_AGNOS` around this block and the alloc include at the end: this
+# peer is only ever SELECTED for x86-macOS, but the stdlib self-sufficiency census compiles every
+# lib module alone on all six targets, and on agnos lib/alloc.cyr includes lib/syscalls.cyr —
+# i.e. the agnos peer, whose fns collide with this one's. Leaving the alloc users out of that one
+# synthetic build keeps the peer self-sufficient everywhere without touching a real build.
+#ifndef CYRIUS_TARGET_AGNOS
 
 # Allocate an empty 64-bit signal set. Returns the set, or 0 when the allocation fails.
 fn sigset_new(): i64 {
@@ -669,6 +675,8 @@ fn sys_inotify_rm_watch(fd, wd): i64 {
     return 0 - 78;
 }
 
+#endif
+
 # Utility
 fn is_err(ret): i64 {
     if (ret < 0) { return 1; }
@@ -719,3 +727,13 @@ fn sys_ulock_wake(operation, addr, wake_value): i64 {
     return syscall(SYS_ULOCK_WAKE, operation, addr, wake_value);
 }
 
+
+# ── alloc.cyr, LAST (6.6.10) ──
+# sigset_new / epoll_event_new / timerspec_new above call `alloc()`, so this peer included
+# alone (the stdlib self-sufficiency census compiles every lib module that way) reported
+# `undefined function 'alloc'`. lib/syscalls.cyr already includes alloc.cyr right after the
+# peer; including it here too is free (include-once) and keeps the peer self-sufficient.
+# Not on agnos — see the note above sigset_new. CHANGELOG [6.6.10]
+#ifndef CYRIUS_TARGET_AGNOS
+include "lib/alloc.cyr"
+#endif
