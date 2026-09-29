@@ -400,6 +400,219 @@ fn _resolve_leaf_field(S, si, fi, off): i64 {
     return ft;
 }
 
+# ⛔ 6.6.10 — A STRUCT VALUE ASSIGNED INTO A STRUCT-TYPED FIELD COPIED ONE WORD. `b.v = p;` with
+# `struct Box { v: Pt; n; }` parsed `p` as an ordinary value (a struct's value is its FIRST word)
+# and stored it with the field's width capped at 8, so `b.v.y` kept whatever was there — and for
+# an address-passed struct PARAMETER the one word was the POINTER (`r.v.x` read a stack-address
+# byte). Silent on every backend. The v6.6.6 struct-copy arc covered a local, a parameter and a
+# global as the destination, never a field. Now the field store copies the whole struct from:
+#   a named struct (inline local, by-value parameter, pointer-mode local, inline or pointer-mode
+#   global), a call / method / overloaded operator returning the struct (through a temp), or
+#   another field of that struct type (`b.v = a.v`, `b.v = o.i.v`).
+# A struct of a DIFFERENT type is refused by name, as the variable form has been since 6.6.6. A
+# source that is not a struct (an integer, a pointer expression) keeps the one-word store.
+# ⚠ The source is described, not evaluated into a register: its address is re-emitted per chunk
+# (8/4/2/1 bytes, so an odd-sized struct is copied byte-exact), exactly as `_agc_copy_bytes`
+# does for the variable form. CHANGELOG [6.6.10]
+var _fsc_li = 0 - 1;    # source: a local's slot, or `_AGC_DREF(slot)` when the slot holds the address
+var _fsc_gv = 0 - 1;    # source: a global's slot
+var _fsc_gdr = 0;       # 1 = that global's slot HOLDS the struct's address (pointer-mode)
+var _fsc_fidx = 0;      # source: a struct FIELD — PARSE_FIELD_LOAD's base encoding (idx, sid) ...
+var _fsc_fsid = 0;
+var _fsc_foff = 0 - 1;  # ... and its byte offset; >= 0 selects the field form
+# PARSE_FIELD_LOAD's half: when the field access starting at `_fla_want` is the WHOLE right-hand
+# side and its leaf is a struct, it records the field here and emits nothing.
+var _fla_want = 0 - 1;
+var _fla_hit = 0;
+var _fla_ft = 0;
+var _fla_name = 0;
+
+fn _fsc_reset(): i64 {
+    _fsc_li = 0 - 1;
+    _fsc_gv = 0 - 1;
+    _fsc_gdr = 0;
+    _fsc_foff = 0 - 1;
+    return 0;
+}
+
+# x1 = the source struct's address + `boff`.
+fn _fsc_src_x1(S, boff): i64 {
+    if (_fsc_foff >= 0) {
+        _resolve_field_base_addr(S, _fsc_fidx, _fsc_fsid);
+        if (_fsc_foff + boff > 0) { EADDIMM_X1(S, _fsc_foff + boff); }
+        return 0;
+    }
+    if (_fsc_gdr == 1) {
+        EVLOAD(S, _fsc_gv);
+        EMOVCA(S);
+        if (boff > 0) { EADDIMM_X1(S, boff); }
+        return 0;
+    }
+    _agc_addr_x1(S, _fsc_li, _fsc_gv, boff);
+    return 0;
+}
+
+# Copy `nb` bytes from the recorded source into the field at `off` of the struct `idx`/`sid`
+# (PARSE_FIELD_STORE's encoding).
+fn _fsc_copy(S, idx, sid, off, nb): i64 {
+    var o = 0;
+    while (o < nb) {
+        var w = 8;
+        var rem = nb - o;
+        if (rem < 8) { w = 4; }
+        if (rem < 4) { w = 2; }
+        if (rem < 2) { w = 1; }
+        _fsc_src_x1(S, o);
+        EFIELD_LOAD_W(S, w);
+        EPUSHR(S);
+        _resolve_field_base_addr(S, idx, sid);
+        if (off + o > 0) { EADDIMM_X1(S, off + o); }
+        EPOPR(S);
+        if (w == 1) { ESTORE8(S); }
+        elif (w == 2) { ESTORE16(S); }
+        elif (w == 4) { ESTORE32(S); }
+        else { ESTOC(S); }
+        o = o + w;
+    }
+    return 0;
+}
+
+fn _fsc_type_err(S, snoff, fnoff): i64 {
+    ERR_IDENT(S, "cannot copy ", snoff, " into a struct field of a different struct type: ", fnoff);
+    return 0;
+}
+
+# A named source's struct type as `0 - sid` (the source recorded), or 0 when the name is not a
+# struct operand. A vector answers its own (band) type, so the caller reports the mismatch.
+fn _fsc_local_src(S, li): i64 {
+    var lt = GLTYPE(S, li);
+    if (lt >= 0) { return 0; }
+    if (lt <= 0 - 2048) { return lt; }
+    if (GLAGG(S, li) != 0) { _fsc_li = li; return lt; }   # inline: the slot IS the struct
+    _fsc_li = _AGC_DREF(li);                             # a parameter or pointer-mode local
+    return lt;
+}
+fn _fsc_global_src(S, gv): i64 {
+    var gt = GVTYPE(S, gv);
+    if (gt <= 0) { return 0; }
+    var pm = GVPM(S, gv);
+    if (pm == 0) { return 0; }   # GVTYPE's positive range is shared with scalar widths
+    _fsc_gv = gv;
+    if (pm == 1) { _fsc_gdr = 1; }
+    return 0 - gt;
+}
+fn _fsc_name_src(S, noff): i64 {
+    _fsc_reset();
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, noff);
+        if (li >= 0) { return _fsc_local_src(S, li); }
+    }
+    var gv = FINDVAR(S, noff);
+    if (gv < 0) { return 0; }
+    return _fsc_global_src(S, gv);
+}
+
+# `IDENT ;` — 1 when it named a struct of type `ft` (consumed), else 0 (cursor untouched).
+fn _fsc_name(S, ft, fnoff): i64 {
+    var noff = PEEKV(S);
+    var t = _fsc_name_src(S, noff);
+    if (t == 0) { return 0; }
+    if (t != 0 - ft) { _fsc_type_err(S, noff, fnoff); return 0; }
+    STI(S, GTI(S) + 1);
+    return 1;
+}
+
+# `IDENT ( .. ) ;` — a free fn returning a struct: the call into a temp, the temp recorded (1).
+# 0 = not that shape (cursor untouched). A <= 8 B result comes back in rax, so it is spilled to
+# a temp too; only an odd-sized one (3/5/6/7 B) reaches here — see `_fsc_src`.
+fn _fsc_call(S, ft, fnoff): i64 {
+    var fi = FINDFN(S, PEEKV(S));
+    if (fi < 0) { return 0; }
+    var rs = GFRS(S, fi);
+    if (rs <= 0) { return 0; }
+    if (_call_follow(S, GTI(S)) != 5) { return 0; }
+    if (rs != ft) { _fsc_type_err(S, PEEKV(S), fnoff); return 0; }
+    var cls = _ret_agg_class(S, fi);
+    if (GINFN(S) != 1) {
+        if (cls != 0) { _refuse_toplevel_struct_call(S, PEEKV(S)); }
+        return 0;
+    }
+    _fsc_reset();
+    if (cls != 0) { _fsc_li = _struct_call_into_temp(S); return 1; }
+    var t = _agg_temp(S, ft);
+    PCMPE(S);
+    EFLSTORE(S, t);
+    _fsc_li = t;
+    return 1;
+}
+
+# Any other right-hand side: parse it with the two destination arms armed. A method / operator
+# call spanning it lands in a temp (1); a struct-typed field spanning it is recorded (1);
+# otherwise its value is in rax (2) for the ordinary store.
+fn _fsc_expr(S, ft, fnoff): i64 {
+    var st = GTI(S);
+    var sv = _fla_want;
+    _fla_want = st;
+    _fla_hit = 0;
+    var w = _sc_arm(S);
+    PCMPE(S);
+    _sc_want = w;
+    _fla_want = sv;
+    var t = _sc_whole(S, st);
+    if (t >= 0 || t == 0 - 1) { return _fsc_from_call(S, t, ft, fnoff); }
+    if (_fla_hit == 1) {
+        _fla_hit = 0;
+        if (_fla_ft != ft) { _fsc_type_err(S, _fla_name, fnoff); return 2; }
+        return 1;
+    }
+    return 2;
+}
+fn _fsc_from_call(S, t, ft, fnoff): i64 {
+    if (t < 0) { _refuse_toplevel_struct_call(S, _sc_fn); return 2; }
+    if (_sc_sid != ft) { _fsc_type_err(S, _sc_fn, fnoff); return 2; }
+    _fsc_reset();
+    _fsc_li = t;
+    return 1;
+}
+
+# The dispatch, cursor on the right-hand side of `x.f = `: 0 = not a struct copy (nothing
+# parsed), 1 = the source is recorded for `_fsc_copy`, 2 = the RHS is parsed and its value is
+# in rax. A named source is taken at every width; the others only when the field is not one
+# exact register store (1/2/4/8 B), where the one-word path was already right.
+fn _fsc_src(S, ft, fnoff): i64 {
+    if (ft <= 0) { return 0; }
+    if (IS_STR_FIELD(S, ft) == 1) { return 0; }
+    if (PEEKT(S) == 2) {
+        if (TOKTYP(S, GTI(S) + 1) == 5) { return _fsc_name(S, ft, fnoff); }
+    }
+    var sz = STRUCTSZ(S, ft - 1);
+    if (sz == 8 || sz == 4 || sz == 2 || sz == 1) { return 0; }
+    if (PEEKT(S) == 2) {
+        if (TOKTYP(S, GTI(S) + 1) == 10) {
+            var r = _fsc_call(S, ft, fnoff);
+            if (r != 0) { return r; }
+        }
+    }
+    return _fsc_expr(S, ft, fnoff);
+}
+
+# PARSE_FIELD_LOAD's side: the access began at `_fla_want`, its leaf is a (non-Str) struct and
+# `;` follows — record it for `_fsc_copy` and emit nothing. Returns 1 when taken.
+fn _fla_take(S, idx, sid, off, ft): i64 {
+    if (ft <= 0) { return 0; }
+    if (IS_STR_FIELD(S, ft) == 1) { return 0; }
+    if (PEEKT(S) != 5) { return 0; }
+    _fla_want = 0 - 1;
+    _fla_hit = 1;
+    _fla_ft = ft;
+    _fla_name = GETFNAME(S, _rlf_si, _rlf_fi);
+    _fsc_reset();
+    _fsc_fidx = idx;
+    _fsc_fsid = sid;
+    _fsc_foff = off;
+    return 1;
+}
+
 # Load a struct field: ident.field → emit load from var_addr + field_offset
 # Or call a method: ident.method(args) → call StructName_method(&ident, args)
 fn PARSE_FIELD_LOAD(S, noff): i64 {
@@ -656,6 +869,7 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
     # Check for chained access: s.inner.field — leaf retype (R1, v6.4.15).
     var ft = _resolve_leaf_field(S, si, fi, off);
     off = _rlf_off;
+    if (_fla_want == pfl_beg) { if (_fla_take(S, idx, sid, off, ft) == 1) { return 0; } }   # 6.6.10
     # Load variable address + field offset, then load value (width-correct).
     # Pointer-vs-inline struct-base resolution: v5.5.36 local-encoded idx
     # (lea rcx,[rbp-disp] via EFLADDR_X1 vs global EVADDR_X1), v5.8.17 -1-sentinel
@@ -821,9 +1035,18 @@ fn PARSE_FIELD_STORE(S, noff): i64 {
     # Check for chained access: s.inner.field = expr — leaf retype (R1, v6.4.15).
     var ft = _resolve_leaf_field(S, si, fi, off);
     off = _rlf_off;
+    var lfn = GETFNAME(S, _rlf_si, _rlf_fi);
     if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
     STI(S, GTI(S) + 1);
-    PCMPE(S);
+    # 6.6.10: a struct VALUE into a struct-typed field copies the whole struct. See `_fsc_src`.
+    var fsc = _fsc_src(S, ft, lfn);
+    if (fsc == 1) {
+        _fsc_copy(S, idx, sid, off, STRUCTSZ(S, ft - 1));
+        if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
+        STI(S, GTI(S) + 1);
+        return 0;
+    }
+    if (fsc == 0) { PCMPE(S); }
     # Store value to struct field (width-correct). Route to local or
     # global addr-emit based on idx encoding (same convention as
     # PARSE_FIELD_LOAD; v5.5.36 Phase 2). v5.8.17 §9: same

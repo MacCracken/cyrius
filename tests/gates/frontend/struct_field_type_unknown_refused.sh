@@ -24,11 +24,15 @@
 #   I  `s: Str` without lib/str.cyr is refused; with it, the field builds (8 bytes)
 #   J  a struct / union naming ITSELF as a field type -> refused by name (the compiler SIGSEGV'd:
 #      STRUCTSZ recursed through the field forever); Vec<Self> still builds
+#   K  (the field-copy side, same release) a struct of a DIFFERENT type assigned into a
+#      struct-typed field — from a name, a call or another field — is refused by name (it stored
+#      one word, silently); a struct-valued call into a field at top level is refused (no frame)
 #
 # Mutations: make `_refuse_field_type` return without reporting -> A-G RED (rc 0). Drop the
 # `_declared_later` arm -> C RED (refused as "unknown"). Drop `_field_scalar_width` from the
 # ladders -> E (i16v8) and F RED (rc 0). Drop the latch clear -> G RED (one error). Drop the
-# `fsid == si + 1` arm in `_add_named_field` -> J RED (compiler rc 139).
+# `fsid == si + 1` arm in `_add_named_field` -> J RED (compiler rc 139). Make `_fsc_src`
+# (parse_decl.cyr) return 0 -> K RED (rc 0).
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -110,5 +114,15 @@ refused j2 "field 'next' makes a struct contain itself: 'UN'" "J: a union contai
 printf 'struct Tree { kids: Vec<Tree>; val; }\nsyscall(60, sizeof(Tree));\n' > "$T/j3.cyr"
 exits j3 16 "J: Vec<Self> (a handle) still builds"
 
+K='struct Pt { x; y; }\nstruct Big { a; b; c; }\nstruct Box { v: Pt; n; }\nstruct BB { k; w: Big; }\nfn mkbig(a): Big { var p: Big; p.a = a; p.b = a; p.c = a; return p; }\n'
+printf "$K"'fn f(): i64 { var g: Big; g.a = 1; var b: Box; b.v = g; return b.n; }\nsyscall(60, f());\n' > "$T/k1.cyr"
+refused k1 "cannot copy 'g' into a struct field of a different struct type: 'v'" "K: a different struct type (a name) into a field"
+printf "$K"'fn f(): i64 { var b: Box; b.v = mkbig(1); return b.n; }\nsyscall(60, f());\n' > "$T/k2.cyr"
+refused k2 "cannot copy 'mkbig' into a struct field of a different struct type: 'v'" "K: a different struct type (a call) into a field"
+printf "$K"'fn f(): i64 { var q: BB; q.k = 0; var b: Box; b.v = q.w; return b.n; }\nsyscall(60, f());\n' > "$T/k3.cyr"
+refused k3 "cannot copy 'w' into a struct field of a different struct type: 'v'" "K: a different struct type (a field) into a field"
+printf "$K"'fn mkpt(a): Pt { var p: Pt; p.x = a; p.y = a; return p; }\nvar GB = Box { 0, 0, 0 };\nGB.v = mkpt(1);\nsyscall(60, GB.v.y);\n' > "$T/k4.cyr"
+refused k4 "'mkpt' returns a struct by value, and a struct result needs storage" "K: a struct-valued call into a field at top level"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: struct_field_type_unknown_refused — $fails axis(es) red"; exit 1; fi
-echo "PASS: struct_field_type_unknown_refused — an unknown field type is refused by name (A-B, D-G), a field type declared below its use says 'declare it before' (C), every accepted spelling builds at its documented width (H), Str needs its include (I), a struct containing itself is refused (J)"
+echo "PASS: struct_field_type_unknown_refused — an unknown field type is refused by name (A-B, D-G), a field type declared below its use says 'declare it before' (C), every accepted spelling builds at its documented width (H), Str needs its include (I), a struct containing itself is refused (J), a different struct type into a struct field is refused (K)"
