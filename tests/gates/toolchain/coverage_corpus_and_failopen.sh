@@ -54,6 +54,22 @@
 #     `pub #inline fn`, `#deprecated ("x") fn` and `async fn` (axis 9).
 # Every unreferenced fn is now NAMED under -v and whenever --min fails.
 #
+# 6.6.10 (bite 15) — THREE MORE, AND THE SPEED (axes 15-19):
+# 11. AN UNREADABLE .tcyr WAS SKIPPED IN SILENCE (`if (n > 0)`), so the fns only it
+#     referenced read as misses: 50 % → 25 %, no diagnostic. It is an error by name.
+# 12. AN UNREADABLE DIRECTORY VANISHED. lib/fs.cyr's dir_walk folded an open/getdents error
+#     into "empty", and is_dir answered 0 for a directory it could not read. An unreadable
+#     tests/ subdir LOWERED the figure; an unreadable src/ subdir left the DENOMINATOR and
+#     RAISED it — 50 % → 100 %, `--min 60` passed (fail-OPEN). Both exit 1, naming the dir.
+# 13. THE IDENTIFIER SET must not saturate: distlib's `_dl_ids_*` answered PRESENT for every
+#     name once half full (safe for distlib, fail-open for coverage). The shared `_src_ids_*`
+#     grows and confirms every hit byte for byte (axis 18: thousands of distinct identifiers
+#     and one fn that none of them is).
+# 14. O(corpus × fns): one memeq scan of the whole corpus per public fn — 78 s on this repo's
+#     --full (now ~0.4 s, byte-identical report; agnosai 8.5 s → 0.1 s). Axis 19 is the
+#     timing row.
+# The chmod rows (15-17) SKIP by name under uid 0, which reads a mode-000 file or directory.
+#
 # MUTATION LEDGER (6.6.8; build/cyrius rebuilt from each mutant, gate re-run):
 #   M1 _src_refs_ident's boundary checks removed (a raw substring)       → axes 7, 13 FAIL
 #   M2 _src_blank_noncode made a no-op                                  → axes 7, 8, 9, 13 FAIL
@@ -71,6 +87,10 @@
 #   M14 `private;` followed by an item on the same line rejected        → axis 10c FAIL
 #   M15 _src_str_end ignores `\` escapes                                → axis 8b FAIL
 #   M16 the `#define`/`#if`/`#elif` code-line arm removed from the blanker → axis 8b FAIL
+#   M17 (6.6.10) the unreadable-.tcyr arm removed (n < 0 folded into empty) → axis 15 FAIL
+#   M18 (6.6.10) coverage back on unchecked dir_walk                     → axes 16, 17 FAIL
+#   M19 (6.6.10) _src_ids_add stops growing and answers PRESENT when full → axis 18 FAIL
+#   M20 (6.6.10) the per-fn corpus scan (_src_refs_ident) restored        → axis 19 FAIL
 #   real tree → every axis green
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -312,6 +332,70 @@ printf 'var a = top_m(); var b = Pt_norm(q);\n' > tests/t.tcyr
 check "14: 1/2 — the two methods are not in the denominator" 1 "$(grep -c 'Functions referenced: 1/2' "$D/o18" || true)"
 check "14: the fn after the impl block is still counted and named" 1 "$(grep -cx '  src/p.cyr: after_impl' "$D/o18" || true)"
 check "14: no method is named as a miss" 0 "$(grep -cE ': (norm|get)$' "$D/o18" || true)"
+
+# ── AXES 15-17 (6.6.10): an unreadable test, test directory or source directory FAILS,
+# by name. The fixture reads 50 % when readable, so a dropped test LOWERS it and a dropped
+# source directory RAISES it (the fail-open direction) — the verdict must be an error.
+if [ "$(id -u)" = "0" ]; then
+    echo "  SKIP: axes 15-17 — running as root (uid 0 reads a mode-000 file or directory)"
+else
+    echo "axes 15-17 — an unreadable test / tests dir / src dir is an ERROR, not a percentage:"
+    mkdir -p "$D/ur/src/sub" "$D/ur/tests/sub" && cd "$D/ur" || exit 2
+    printf '[package]\nname = "ur"\nversion = "0.1.0"\n' > cyrius.cyml
+    printf 'fn alpha(): i64 { return 1; }\nfn beta(): i64 { return 2; }\n' > src/m.cyr
+    printf 'fn gamma(): i64 { return 3; }\nfn delta(): i64 { return 4; }\n' > src/sub/u.cyr
+    printf 'var a = alpha();\n' > tests/a.tcyr
+    printf 'var b = beta();\n' > tests/sub/b.tcyr
+    "$CY" coverage --min 40 > "$D/o19" 2>&1; rc19=$?
+    check "15 premise: the readable tree reads 2/4 (50%) and passes --min 40" "1 0" "$(grep -c 'Functions referenced: 2/4 (50%)' "$D/o19") $rc19"
+    chmod 000 tests/sub/b.tcyr
+    "$CY" coverage --min 40 > "$D/o20" 2>&1; rc20=$?
+    chmod 644 tests/sub/b.tcyr
+    check "15 an unreadable .tcyr: exit 1" 1 "$rc20"
+    check "15 …and it is named" 1 "$(grep -c 'coverage: cannot read test: tests/sub/b.tcyr' "$D/o20" || true)"
+    check "15 …and no percentage is reported as the answer" 0 "$(grep -c 'Functions referenced' "$D/o20" || true)"
+    chmod 000 tests/sub
+    "$CY" coverage --min 40 > "$D/o21" 2>&1; rc21=$?
+    chmod 755 tests/sub
+    check "16 an unreadable tests/ SUBDIRECTORY: exit 1" 1 "$rc21"
+    check "16 …and it is named" 1 "$(grep -c 'cannot list directory: tests/sub' "$D/o21" || true)"
+    chmod 000 src/sub
+    "$CY" coverage --min 60 > "$D/o22" 2>&1; rc22=$?
+    chmod 755 src/sub
+    check "17 an unreadable src/ SUBDIRECTORY (was 100%, passing --min 60): exit 1" 1 "$rc22"
+    check "17 …and it is named" 1 "$(grep -c 'cannot list directory: src/sub' "$D/o22" || true)"
+    check "17 …and never 'gate OK'" 0 "$(grep -c 'gate OK' "$D/o22" || true)"
+fi
+
+# ── AXIS 18 (6.6.10): the identifier set grows — it never saturates into "present".
+# Every 3-letter identifier (17,576 of them, 4 bytes each with the space) and one public fn
+# none of them is. The set is sized from the corpus length (a slot per 4 bytes, rounded up to
+# a power of 2), so only a corpus this dense in DISTINCT short tokens drives it past half
+# full — exactly where distlib's old set started answering PRESENT for every name.
+echo "axis 18 — 17,576 distinct short test identifiers do not make an unreferenced fn 'referenced':"
+mkdir -p "$D/sat/src" "$D/sat/tests" && cd "$D/sat" || exit 2
+printf '[package]\nname = "sat"\nversion = "0.1.0"\n' > cyrius.cyml
+printf 'fn sat_used(): i64 { return 1; }\nfn sat_never(): i64 { return 2; }\n' > src/m.cyr
+awk 'BEGIN { a = "abcdefghijklmnopqrstuvwxyz"; print "var u = sat_used();"
+    for (i = 1; i <= 26; i++) for (j = 1; j <= 26; j++) { for (k = 1; k <= 26; k++) printf "%s%s%s ", substr(a, i, 1), substr(a, j, 1), substr(a, k, 1); print "" } }' > tests/t.tcyr
+"$CY" -v coverage > "$D/o23" 2>&1
+check "18 1/2 — sat_never is still a miss" 1 "$(grep -c 'Functions referenced: 1/2' "$D/o23" || true)"
+check "18 …and named" 1 "$(grep -cx '  src/m.cyr: sat_never' "$D/o23" || true)"
+
+# ── AXIS 19 (6.6.10): ONE pass over the corpus. 3,000 public fns against a ~3 MB test corpus
+# is 9 G byte-compares for the per-fn scan (minutes); the set answers it in well under a
+# second. The bound is generous (a loaded box) and still far below the quadratic cost.
+echo "axis 19 — coverage is linear in corpus + fns (timing row):"
+mkdir -p "$D/fast/src" "$D/fast/tests" && cd "$D/fast" || exit 2
+printf '[package]\nname = "fast"\nversion = "0.1.0"\n' > cyrius.cyml
+awk 'BEGIN { for (i = 0; i < 3000; i++) printf "fn fast_fn_%d(): i64 { return %d; }\n", i, i }' > src/m.cyr
+awk 'BEGIN { for (i = 0; i < 60000; i++) printf "var filler_line_%d = fast_fn_%d() + %d; # padding the corpus\n", i, i % 1500, i }' > tests/t.tcyr
+check "19 premise: the corpus is over 2.5 MB" 1 "$([ "$(wc -c < tests/t.tcyr)" -gt 2621440 ] && echo 1 || echo 0)"
+T0=$(date +%s)
+"$CY" coverage > "$D/o24" 2>&1
+EL=$(( $(date +%s) - T0 ))
+check "19 the report is right (1500/3000)" 1 "$(grep -c 'Functions referenced: 1500/3000 (50%)' "$D/o24" || true)"
+check "19 …in under 10 s (took ${EL} s)" 1 "$([ "$EL" -lt 10 ] && echo 1 || echo 0)"
 
 cd "$ROOT" || exit 2
 echo ""

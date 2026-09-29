@@ -87,10 +87,21 @@ fn cmd_coverage(full, min_pct, root_arg): i64 {
     # size call at all and uses only alloc + memcpy, both already available here.
     var corpus_cap = 1048576;
     var corpus = alloc(corpus_cap);
+    if (corpus == 0) {
+        _err("coverage: out of memory for the test corpus");
+        return 1;
+    }
     var corpus_len = 0;
     if (is_dir(str_from("tests")) == 1) {
         var tests = vec_new();
-        dir_walk(str_from("tests"), tests);      # recursive: tests/tcyr/*.tcyr AND tests/*.tcyr
+        # ⛔ 6.6.10: CHECKED. dir_walk dropped an unreadable tests/ subdirectory in silence, so
+        # the fns only its tests reference read as unreferenced — or, for the SOURCE side
+        # below, a whole unreadable src/ subtree left the denominator and the percentage ROSE
+        # (50 % -> 100 %, passing --min 60). Every directory not listed is named and fails
+        # the run. CHANGELOG [6.6.10]
+        var tfail = vec_new();
+        dir_walk_checked(str_from("tests"), tests, tfail);   # recursive: tests/tcyr/*.tcyr AND tests/*.tcyr
+        if (_cov_unlisted(tfail, "its tests were NOT read") != 0) { return 1; }
         var ti = 0;
         while (ti < vec_len(tests)) {
             var tf = vec_get(tests, ti);
@@ -114,6 +125,12 @@ fn cmd_coverage(full, min_pct, root_arg): i64 {
                     corpus = nb;
                     corpus_cap = corpus_cap * 2;
                     # Do NOT advance ti — re-read this file into the larger buffer.
+                } elif (n < 0) {
+                    # ⛔ 6.6.10: an unreadable test is an ERROR, by name. `if (n > 0)` below
+                    # folded it into "empty", so the fns only it referenced read as misses and
+                    # the percentage dropped with no diagnostic (50 % -> 25 %). CHANGELOG [6.6.10]
+                    _err_ctx("coverage: cannot read test", str_data(tf));
+                    return 1;
                 } else {
                     # Only now is the read known COMPLETE, so only now is it blanked: its
                     # comments, strings and char literals become spaces in place (same
@@ -131,6 +148,14 @@ fn cmd_coverage(full, min_pct, root_arg): i64 {
         }
     }
     store8(corpus + corpus_len, 0);
+    # 6.6.10: ONE pass over the corpus. Every identifier goes into a set once, and each public
+    # fn below is one lookup — it was one memeq scan of the whole corpus PER FN (78 s on this
+    # repo's --full). Same whole-identifier rule as _src_refs_ident; see cbt/srcscan.cyr.
+    var refs = _src_ids_new(corpus_len);
+    if (refs == 0 || _src_ids_add_text(refs, corpus, corpus_len) != 0) {
+        _err("coverage: out of memory indexing the test corpus");
+        return 1;
+    }
 
     # The sources to measure. ⛔ 6.6.8: the vendored-tree prune is applied at the TOP LEVEL
     # of the '.' fallback only. It used to be a by-NAME prune at every depth, so a project
@@ -139,6 +164,7 @@ fn cmd_coverage(full, min_pct, root_arg): i64 {
     # its 393 fns were never measured. The comment here claimed the prune was "inert for the
     # src/ root". CHANGELOG [6.6.8]
     var srcs = _cov_sources(root);
+    if (srcs == 0) { return 1; }             # 6.6.10: a directory could not be listed (named)
 
     var total_files = 0;
     var covered_files = 0;
@@ -193,7 +219,7 @@ fn cmd_coverage(full, min_pct, root_arg): i64 {
                 # samay's `--min 100` passed with functions no test referenced. (The v6.5.8
                 # `<=` end-of-corpus bound lives on in _src_refs_ident; the corpus is
                 # NUL-terminated, so the boundary read at its end is in bounds.)
-                if (_src_refs_ident(corpus, corpus_len, lbuf + ns, fname_len) == 1) {
+                if (_src_ids_has(refs, lbuf + ns, fname_len) == 1) {
                     called = called + 1;
                     covered_fns = covered_fns + 1;
                 } else {
@@ -273,22 +299,27 @@ fn cmd_coverage(full, min_pct, root_arg): i64 {
 # is walked WHOLE. Only the '.' fallback (a flat project with no src/) skips the vendored
 # stdlib and generated bundles — and only its own TOP-LEVEL ./lib and ./dist; a lib/ deeper
 # down is the project's code. CHANGELOG [6.6.8]
+# 6.6.10: 0 (after naming it) when any directory under the root could not be listed — an
+# unreadable subtree left the DENOMINATOR, which raised the percentage. CHANGELOG [6.6.10]
 fn _cov_sources(root): i64 {
     var walked = vec_new();
+    var failed = vec_new();
     if (streq(root, ".") == 1) {
-        var ents = dir_list(str_from("."));
+        var ents = _cbt_list_dir(".", "coverage cannot measure it");
+        if (ents == 0) { return 0; }
         var ei = 0;
         while (ei < vec_len(ents)) {
             var en = vec_get(ents, ei);
             ei = ei + 1;
             if (str_eq_cstr(en, "lib") == 1 || str_eq_cstr(en, "dist") == 1) { continue; }
             var full = path_join(str_from("."), en);
-            if (is_dir(full) == 1 && is_symlink(full) == 0) { dir_walk(full, walked); }
+            if (is_dir(full) == 1 && is_symlink(full) == 0) { dir_walk_checked(full, walked, failed); }
             else { vec_push(walked, full); }
         }
     } else {
-        dir_walk(str_from(root), walked);
+        dir_walk_checked(str_from(root), walked, failed);
     }
+    if (_cov_unlisted(failed, "its sources were NOT measured") != 0) { return 0; }
     var srcs = vec_new();
     var wi = 0;
     while (wi < vec_len(walked)) {
@@ -297,6 +328,25 @@ fn _cov_sources(root): i64 {
         wi = wi + 1;
     }
     return srcs;
+}
+
+# Name every directory in `failed` (a vec of Str) — "error: coverage: cannot list directory
+# (<what>): <dir>" — and answer 1 when there was any, else 0. CHANGELOG [6.6.10]
+fn _cov_unlisted(failed, what): i64 {
+    var i = 0;
+    while (i < vec_len(failed)) {
+        var d = vec_get(failed, i);
+        _progress_close();
+        _err_count = _err_count + 1;
+        sys_write(STDERR_FD, "error: coverage: cannot list directory: ", 40);
+        sys_write(STDERR_FD, str_data(d), str_len(d));
+        sys_write(STDERR_FD, " — ", 5);
+        sys_write(STDERR_FD, what, strlen(what));
+        sys_write(STDERR_FD, "\n", 1);
+        i = i + 1;
+    }
+    if (vec_len(failed) > 0) { return 1; }
+    return 0;
 }
 
 # The unreferenced public fns, one `  <source path>: <name>` per line.
