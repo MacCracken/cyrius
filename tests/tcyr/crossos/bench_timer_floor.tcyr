@@ -1507,6 +1507,77 @@ fn test_live_batch_row_min_never_exceeds_the_mean() {
     assert_eq(inv, 0, "no small-n bench_run row reports min above its mean, in ps or as printed");
 }
 
+# ── A window of ZERO (or fewer) ops books nothing (6.6.11, J3) ──────
+# `bench_batch_stop(b, 0)` and `bench_run_batch*(…, 0, …)` return normally; the defect fired
+# at the first min/max READ. `_bench_record` booked the empty window as ELIGIBLE with
+# `min_k = k / pairs = 0`, and `bench_min_resolved` then computed `(bar + mk - 1) / mk`:
+# `idiv` by zero, SIGFPE, on x86 (rc 136, inside bench_report's `min=`), and on aarch64 —
+# where sdiv by 0 is 0 — a SILENT `min=0ns max=0ns [0 iters] … 1 of 1 windows eligible`, a
+# row that "resolved" having measured nothing. A negative batch made min_k negative and
+# resolved falsely the same way. On x86 this test dies before its summary without the fix;
+# on aarch64 and PE the resolved/eligible asserts are what catch it.
+fn _btf_arg1(a): i64 { _btf_sink = _btf_sink + a; return 0; }
+fn _btf_arg2(a, c): i64 { _btf_sink = _btf_sink + a + c; return 0; }
+
+fn _btf_empty_row_ok(b, what): i64 {
+    assert_eq(bench_iterations(b), 0, what);
+    assert_eq(bench_windows(b), 0, what);
+    assert_eq(bench_windows_eligible(b), 0, what);
+    assert_eq(bench_min_resolved(b), 0, what);
+    # The reads that trapped. Each must RETURN — reaching the next assert is the check.
+    assert_eq(bench_min_ps(b), 0, what);
+    assert_eq(bench_max_ps(b), 0, what);
+    bench_report(b);
+    assert_eq(bench_avg_ns(b), 0, what);
+    return 0;
+}
+
+fn test_a_zero_or_negative_op_window_books_nothing() {
+    test_group("a batch of 0 (or fewer) ops books no window, never traps, never resolves");
+    var b = bench_new("zero_batch_stop");
+    bench_batch_start(b);
+    bench_batch_stop(b, 0);
+    _btf_empty_row_ok(b, "bench_batch_stop(b, 0) booked nothing and reads back unresolved");
+    var c = bench_new("zero_run_batch");
+    bench_run_batch(c, &_btf_tiny, 0, 3);
+    _btf_empty_row_ok(c, "bench_run_batch(…, 0, 3) booked nothing and reads back unresolved");
+    var c1 = bench_new("zero_run_batch1");
+    bench_run_batch1(c1, &_btf_arg1, 7, 0, 3);
+    _btf_empty_row_ok(c1, "bench_run_batch1(…, 0, 3) booked nothing and reads back unresolved");
+    var c2 = bench_new("zero_run_batch2");
+    bench_run_batch2(c2, &_btf_arg2, 7, 8, 0, 3);
+    _btf_empty_row_ok(c2, "bench_run_batch2(…, 0, 3) booked nothing and reads back unresolved");
+    var n = bench_new("negative_batch");
+    bench_batch_start(n);
+    bench_batch_stop(n, 0 - 5);
+    bench_run_batch(n, &_btf_tiny, 0 - 4, 2);
+    _btf_empty_row_ok(n, "a NEGATIVE batch size booked nothing (min_k never goes negative)");
+    # A real row with an empty window after it: the empty one changes nothing.
+    var m = bench_new("mixed_zero_batch");
+    bench_run_batch(m, &_btf_tiny, 2000, 3);
+    var w0 = bench_windows(m);
+    var i0 = bench_iterations(m);
+    var r0 = bench_min_resolved(m);
+    bench_batch_start(m);
+    bench_batch_stop(m, 0);
+    assert_eq(w0, 3, "the real batch row booked its 3 windows (anti-vacuous)");
+    assert_eq(i0, 6000, "the real batch row booked its 6,000 ops (anti-vacuous)");
+    assert_eq(bench_windows(m), w0, "an empty window after a real row adds no window");
+    assert_eq(bench_iterations(m), i0, "an empty window after a real row adds no op");
+    assert_eq(bench_windows_eligible(m), w0, "an empty window after a real row adds no eligible window");
+    assert_eq(bench_min_resolved(m), r0, "an empty window does not change whether the row resolves");
+    bench_report(m);
+    # The defensive half: `bench_min_resolved` never divides by a min_k <= 0, whatever
+    # booked it. Forced here through the row's own slot (offset 64, the layout bench_new
+    # writes), because no public call can book one any more.
+    var f = bench_new("forced_min_k_zero");
+    bench_run_batch(f, &_btf_tiny, 2000, 3);
+    store64(f + 64, 0);
+    assert_eq(bench_min_resolved(f), 0, "a row whose min_k is 0 does not resolve (and does not divide by it)");
+    store64(f + 64, 0 - 3);
+    assert_eq(bench_min_resolved(f), 0, "a row whose min_k is negative does not resolve");
+}
+
 fn main() {
     test_scripted_single_op_never_reads_zero();
     test_scripted_resolved_windows_are_exact();
@@ -1531,6 +1602,7 @@ fn main() {
     test_the_floor_arithmetic_is_exact();
     test_a_real_op_never_reports_a_zero_minimum();
     test_live_batch_row_min_never_exceeds_the_mean();
+    test_a_zero_or_negative_op_window_books_nothing();
     return assert_summary();
 }
 
