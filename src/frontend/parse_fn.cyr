@@ -6387,6 +6387,13 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     # whole-program compactor's own notes flag as the thing a linear decoder walks into. The
     # chain is what that parser itself falls back to and it needs no new machinery.
     if (_cur_fn_coro == 1) {
+        # 6.6.10 — A BODY THAT FALLS OFF ITS END COMPLETES with 0, through the return landing
+        # (its defers, then `_coro_mark_done`). The dispatch below sits right after the body, so
+        # a fall-off ran into it, read C[state] and jumped back to the last resume label: the
+        # force that should have completed the coroutine never returned. The plain-fn path got
+        # this routing in 6.6.7 (`_defer_emit_init`); the coroutine path never did.
+        EMOVI(S, 0);
+        vec_push(rp_vec, EJMP0(S));
         EPATCH(S, _coro_top_jmp);
         _coro_flc = GFLC(S);
         _coro_done_check(S);

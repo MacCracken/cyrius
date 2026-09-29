@@ -237,6 +237,34 @@ syscall(60, 0);
 EOF
 run h '0 49 49 49 49 ' "H: a 9-parameter coroutine (was exit 70 at the first force)"
 
+# I — falling off the end completes the coroutine (was a hang: the fall-off ran into the resume
+# dispatch and jumped back to the last landing forever). Four shapes: after an await, a body that
+# ENDS in an await, a fall-off on one path only, and a fall-off with a defer.
+fo() {    # <tag> <body> <want> <what>
+    cat > "$T/$1.cyr" <<EOF
+$PRE
+var g_t = 0;
+async fn co(a): i64 {
+$2
+}
+fn main(): i64 {
+    alloc_init();
+    var C = co(3);
+    var n = 0;
+    while (n < 4) { fmt_int(future_force(C)); syscall(1, 1, " ", 1); n = n + 1; }
+    fmt_int(g_t);
+    return 0;
+}
+var e = main();
+syscall(60, 0);
+EOF
+    run "$1" "$3" "$4"
+}
+fo i1 '    var x = a; var s = await nopark(); g_t = g_t + 1;' '0 0 0 0 1' "I1: falls off after an await"
+fo i2 '    g_t = g_t + 1; var s = await nopark();' '0 0 0 0 1' "I2: the body ENDS in an await"
+fo i3 '    var s = await nopark(); if (a > 5) { return 9; } g_t = g_t + 1;' '0 0 0 0 1' "I3: falls off on one path"
+fo i4 '    defer { g_t = g_t + 100; } var s = await nopark(); g_t = g_t + 1;' '0 0 0 0 101' "I4: falls off with a defer (the defer runs once)"
+
 # K — a PLAIN (no-await) async fn's Future runs its body ONCE however often it is forced (it
 # re-ran on every force), a 0-parameter one too.
 cat > "$T/k.cyr" <<EOF
@@ -277,4 +305,4 @@ elif grep -q 'async fn `a9` takes 9 parameters' "$T/l.err" && ! grep -q '`a8`' "
 else bad "L: the refusal did not name a9 (or named a8): $(grep -m1 '^error' "$T/l.err")"; fi
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: coroutine_fnptr_and_completion — $fails axis(es) red"; exit 1; fi
-echo "PASS: coroutine_fnptr_and_completion — fncallN / callptr / closure calls inside a coroutine reach their callee (A-C); a completed coroutine answers with its value and runs nothing again (D-F); 0- and 9-parameter coroutines (G-H); a plain Future runs once (K); 9+ plain parameters refused (L)"
+echo "PASS: coroutine_fnptr_and_completion — fncallN / callptr / closure calls inside a coroutine reach their callee (A-C); a completed coroutine answers with its value and runs nothing again (D-F); 0- and 9-parameter coroutines (G-H); a fall-off completes (I1-I4); a plain Future runs once (K); 9+ plain parameters refused (L)"
