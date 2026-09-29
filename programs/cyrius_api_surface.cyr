@@ -633,8 +633,18 @@ fn _module_name(filename, len) {
 
 fn _scan_dir(dir_cstr) {
     var dir_str = str_from(dir_cstr);
-    var names = dir_list(dir_str);
-    if (names == 0) { return 0; }
+    # 6.6.10 (bite 15's lib/fs.cyr): a directory that EXISTS but cannot be listed is an
+    # error, by name — dir_list read it as empty, so `--update` wrote a snapshot missing the
+    # whole scope at rc 0. An ABSENT scope directory (no src/ in a lib-only tree) is still
+    # skipped, as before. CHANGELOG [6.6.10]
+    var names = vec_new();
+    if (dir_list_checked(dir_str, names) < 0) {
+        if (is_dir(dir_str) == 0) { return 0; }
+        syscall(SYS_WRITE, 2, "error: api-surface: cannot list directory: ", 43);
+        syscall(SYS_WRITE, 2, dir_cstr, strlen(dir_cstr));
+        syscall(SYS_WRITE, 2, "\n", 1);
+        syscall(60, 3);
+    }
     var n = vec_len(names);
     var dir_len = strlen(dir_cstr);
     # v6.0.53: per-file read buffer alloc'd ONCE + reused. Was alloc(262144) PER
