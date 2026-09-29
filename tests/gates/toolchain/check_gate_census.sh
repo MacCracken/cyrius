@@ -134,8 +134,11 @@ NDISK=$(find tests/gates -name '*.sh' | grep -c . || true)
 # Floors: an empty reader or an empty find would make every axis vacuously green.
 [ "$NDISK" -ge 200 ] || _fail "only $NDISK gate file(s) under tests/gates — the find is blind"
 [ "$NREG" -ge 200 ] || _fail "check.sh --registry printed only $NREG registration(s) — the reader is blind"
-_census "$R" real
-RC=$?
+# `|| RC=$?`, never `; RC=$?`: _census RETURNS its finding count as data, and under
+# `bash -eo pipefail` a non-zero return on a bare call aborts the gate with no FAIL line (the
+# mutants below return >= 2 by design). CHANGELOG [6.6.11]
+RC=0
+_census "$R" real || RC=$?
 [ "$RC" = "0" ] || _fail "the census found $RC problem(s) in the registry (listed above)"
 echo "  $NDISK gate file(s), $NREG registration(s)"
 
@@ -160,24 +163,24 @@ _victim=$(grep -m1 -E '^_chk_gate "\$ROOT/tests/gates/' "$M/scripts/check.sh")
 _vpath=$(printf '%s\n' "$_victim" | sed 's|^_chk_gate "\$ROOT/||; s|".*||')
 awk -v v="$_victim" '$0 == v && !done { sub(/^_chk_gate /, "sh "); done = 1 } { print }' \
     "$M/scripts/check.sh" > "$M/scripts/check.sh.new" && mv "$M/scripts/check.sh.new" "$M/scripts/check.sh"
-_census "$M" m1 > "$D/m1.out"; RCM=$?
+RCM=0; _census "$M" m1 > "$D/m1.out" || RCM=$?
 [ "$RCM" -ge 2 ] || _fail "a bare \`sh\` gate line was not caught on both axes 1 and 4 (census found $RCM)"
 grep -q "axis 1: NOT REGISTERED.*$_vpath" "$D/m1.out" || _fail "mutant 6a: axis 1 did not name $_vpath"
 grep -q "axis 4: .*$_vpath" "$D/m1.out" || _fail "mutant 6a: axis 4 did not name the bare line"
 # 6b: a gate registered twice.
 M="$D/m2"; _mkroot "$M"
 printf '_chk_gate "$ROOT/%s"\n' "$_vpath" >> "$M/scripts/check.sh"
-_census "$M" m2 > "$D/m2.out"; RCM=$?
+RCM=0; _census "$M" m2 > "$D/m2.out" || RCM=$?
 grep -q "axis 1: REGISTERED MORE THAN ONCE.*$_vpath" "$D/m2.out" || _fail "mutant 6b: a double registration was not caught (census found $RCM)"
 # 6c: a registration of a file that does not exist.
 M="$D/m3"; _mkroot "$M"
 printf '_chk_gate "$ROOT/tests/gates/toolchain/zz_no_such_gate_census.sh"\n' >> "$M/scripts/check.sh"
-_census "$M" m3 > "$D/m3.out"; RCM=$?
+RCM=0; _census "$M" m3 > "$D/m3.out" || RCM=$?
 grep -q "axis 2: .*zz_no_such_gate_census.sh" "$D/m3.out" || _fail "mutant 6c: a registration with no file was not caught (census found $RCM)"
 # 6d: a driver _gate( call whose path the reader cannot see.
 M="$D/m4"; _mkroot "$M"
 printf 'fn _zz_census_probe(p): i64 {\n    _gate("census probe", p);\n    return 0;\n}\n' >> "$M/programs/checks/main.cyr"
-_census "$M" m4 > "$D/m4.out"; RCM=$?
+RCM=0; _census "$M" m4 > "$D/m4.out" || RCM=$?
 grep -q "axis 3: " "$D/m4.out" || _fail "mutant 6d: a _gate( call with a non-literal path was not caught (census found $RCM)"
 
 echo "axis 7: gates that ignore \$CYCC do not grow (ratchet)"

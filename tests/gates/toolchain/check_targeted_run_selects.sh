@@ -273,7 +273,8 @@ _run definitely-not-a-selector
 [ "$(_ran)" = "0" ] || _fail "an unknown selector still ran $(_ran) gate(s)"
 grep -q "definitely-not-a-selector" "$W/out" || _fail "check.sh's error does not name the rejected selector"
 grep -q "gate buckets" "$W/out" || _fail "check.sh's error does not list the valid selectors"
-LEFT=$(ls -d "$W"/tmp/cyrius-check-home.* 2>/dev/null | wc -l)
+# find, not `ls <glob> | wc`: an unmatched glob fails the pipeline under `bash -eo pipefail`.
+LEFT=$(find "$W/tmp" -maxdepth 1 -name 'cyrius-check-home.*' | wc -l)
 [ "$LEFT" = "0" ] || _fail "$LEFT staged CYRIUS_HOME tree(s) left behind by a rejected selector"
 
 echo "axis 8: every selector --list advertises resolves, to exactly one kind"
@@ -369,7 +370,9 @@ for f in $(find programs cbt lib src -name '*.cyr' | LC_ALL=C sort); do
     grep -qE '(^|[^_A-Za-z0-9])arg[vc][[:space:]]*\(' "$D/c9.s" && echo "$f" >> "$D/c9.uses"
     grep -qE '(^|[^_A-Za-z0-9])args_init[[:space:]]*\(' "$D/c9.s" && echo "$f" >> "$D/c9.init"
     _dir=$(dirname "$f")
-    sed 's/#.*//' "$f" | grep -oE 'include[[:space:]]+"[^"]+"' | sed 's/.*"\(.*\)"/\1/' \
+    # `{ grep … || true; }`: a file with no include makes grep -o exit 1, which under
+    # `bash -eo pipefail` failed the whole pipeline and ended the gate silently at axis 9.
+    sed 's/#.*//' "$f" | { grep -oE 'include[[:space:]]+"[^"]+"' || true; } | sed 's/.*"\(.*\)"/\1/' \
         | while read -r i; do
             if   [ -f "$i" ];       then printf '%s %s\n' "$f" "$i"
             elif [ -f "$_dir/$i" ]; then printf '%s %s\n' "$f" "$_dir/$i"
