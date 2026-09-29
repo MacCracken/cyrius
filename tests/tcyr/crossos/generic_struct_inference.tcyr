@@ -34,6 +34,26 @@
 # `_ta_explicit` set before an explicit call emits its instance (whose own calls then skip
 # their inference: R, T).
 #
+# REVIEW ROWS (bite 7 review; each was RED on the first cut of this bite, a regression or silent):
+#   W  only a WHOLE argument binds T: `id1(p.y)`, `f2(p.x, p.y)`, `fd(p.x + p.y)` and a `pp: *Pt`
+#      parameter all bound T to Pt and failed to build (undefined Pt_add / Pt_mul) — 6.6.9 ran them
+#   P  `return mkw(p);` / `return mkw<Pt>(p);` from a `: W1<Pt>` fn (a register pair) was refused;
+#      `return mk<Pt>(p);` from a `: Box<Pt>` fn (retptr) was refused on 6.6.9 too
+#   A  `r = mk(p);` / `r = mk<Pt>(p);` into a Box<Pt> local stored one word (fields stale); the same
+#      into a field, `b.v = idp(p);`
+#   R  a `: T` return with T bound to a struct returned the i64 base's rax — the struct's ADDRESS:
+#      `q = idp(p)` stored a pointer, `var q: Pt = idp(p)` said "no struct type in scope"
+#   E  `p3s(p3i<i32>(4))`, an explicit generic call as a struct argument, SIGSEGV'd (6.6.9 too)
+# Review mutations (scratch trees), each RED here: `_gen_arg_whole` dropped (W: build fails);
+# `_is_ptr_param` / `_mark_ptr_param` inert (W); `_pair_ret_call_ok` on FINDFN, or `name(` only (P);
+# `_try_struct_call_assign` on FINDFN, or `name(` only (A, R); `_fsc_call` on FINDFN (A);
+# `_gtype_tp_ret` answering 0 (R: build fails); `_struct_call_into_temp` not skipping `<..>` (P);
+# `_try_push_struct_addr_arg` `name(` only (E: rc 139); `_return_struct_call` `name(` only (P).
+#
+# ⚠ THE FILE ENDS IN AN EXPLICIT EXIT. With `fn main` defined, the entry auto-calls it a second time
+# after the top level, and that run's 0 was the exit code — so on the first cut of this file a
+# failing row still exited 0 (the header's "RED" above then meant "a FAIL line on stderr").
+#
 # CROSS-HOST because each instance is a by-value struct-param fn emitted inline (jumped over) by
 # every backend, and struct returns take the per-target retptr / register-pair ABI.
 include "lib/assert.cyr"
@@ -47,6 +67,7 @@ struct Pt { x; y; }
 struct Box<T> { v: T; n; }
 struct W1<T> { v: T; }          # the base is 8 B (value-passed); W1<Pt> is 16 B (address-passed)
 struct M2<T> { a: T; b: T; }    # the base is 16 B (a register pair); M2<i32> is 8 B (rax)
+struct P3 { a; b; c; }          # 24 B: the retptr class
 
 var gp: Pt = Pt { 2, 5 };
 
@@ -75,12 +96,26 @@ fn mk9<T>(x: T): Box<T> { var b: Box<T>; b.v = x; b.n = 9; return b; }
 fn arg_row(a): i64 { var p: Pt; p.x = a; p.y = 7; return box_sum(mk9(p)); }
 # The base `W1` is 8 B (returned in rax); `W1<Pt>` is 16 B (a register pair).
 fn mkw<T>(x: T): W1<T> { var w: W1<T>; w.v = x; return w; }
+# `return` of a generic call from a fn declaring the instance: register-pair and retptr classes,
+# inferred and explicit (review: the pair class compared the base's 8 B `W1` and refused).
+fn wrw(p: Pt): W1<Pt> { return mkw(p); }
+fn wrwx(p: Pt): W1<Pt> { return mkw<Pt>(p); }
+fn wrx(p: Pt): Box<Pt> { return mk<Pt>(p); }
+# A `: T` return with T bound to a struct returns THAT struct (review: it returned the address).
+fn idp<T>(x: T): T { return x; }
+fn idq<T>(x: T): T { var y: T; y.a = x.a; y.b = x.b; y.c = x.c + 1; return y; }
+fn p3i<T>(x: T): P3 { var r: P3; r.a = x; r.b = x + 1; r.c = x + 2; return r; }
+fn p3s(q: P3): i64 { return q.a + q.b * 10 + q.c * 100; }
 #endif
 # A range over a T-typed value is not a field access.
 fn sm<T>(n: T): i64 { var s = 0; for i in n..10 { s = s + i; } return s; }
 # Scalar controls.
 fn cnt<T>(n: T, acc: T): T { if (n == 0) { return acc; } return cnt(n - 1, acc + 1); }
 fn id1<T>(v: T): i64 { return v + 1; }
+# Only a WHOLE argument binds T (review): a field, an expression over one, a `*Pt` pointer.
+fn f2<T>(v: T, w: T): i64 { return v * 10 + w; }
+fn fd<T>(v: T): i64 { var s = 0; var i = 0; while (i < 1) { s = s + v * 2; i = i + 1; } return s; }
+fn hptr(pp: *Pt): i64 { return id1(pp) - pp; }
 
 fn top(q: Pt): i64 { var r = g(q); return r; }
 fn top_tail(q: Pt): i64 { return g(q); }
@@ -120,6 +155,11 @@ fn run_calls(a): i64 {
     assert_eq(outer_inf<Pt>(p), 14, "N: forwarding by inference, outer explicit (was 2)");
     assert_eq(outer_flat<Pt>(p), 14, "R: forwarding to an inlinable body (was a compile error)");
     assert_eq(g<Pt>(p), 12, "J: the explicit form, unchanged");
+    test_group("only a whole argument binds T");
+    assert_eq(id1(p.y), 6, "W: id1(p.y), a field, runs the i64 base (was refused: undefined Pt_add)");
+    assert_eq(f2(p.x, p.y), 25, "W: f2(p.x, p.y) (was refused: undefined Pt_mul)");
+    assert_eq(fd(p.x + p.y), 14, "W: fd(p.x + p.y), an expression over fields (was refused)");
+    assert_eq(hptr(&p), 1, "W: id1(pp) for a `pp: *Pt` parameter binds i64, not the pointee (was refused)");
     return 0;
 }
 
@@ -159,6 +199,48 @@ fn run_returns(): i64 {
     assert_eq(rs.v + rs.n * 10, 57, "control: Box<i64> from the i64 base");
     return 0;
 }
+
+# Review rows: every call path that emits its OWN struct-valued call reaches the instance.
+fn run_paths(): i64 {
+    var p: Pt; p.x = 3; p.y = 4;
+    test_group("return / assignment / argument paths reach the instance");
+    assert_eq(w1s(wrw(p)), 7, "P: `return mkw(p);` from a `: W1<Pt>` fn, register pair (was refused)");
+    assert_eq(w1s(wrwx(p)), 7, "P: `return mkw<Pt>(p);`, the explicit form (was refused)");
+    assert_eq(box_sum(wrx(p)), 453, "P: `return mk<Pt>(p);` from a `: Box<Pt>` fn, retptr (was refused)");
+    var ra: Box<Pt>; ra.n = 1; ra.v.x = 0; ra.v.y = 0;
+    ra = mk(p);
+    assert_eq(box_sum(ra), 453, "A: `r = mk(p);` into a Box<Pt> local (was 1-word, fields stale)");
+    var rb: Box<Pt>; rb.n = 1;
+    rb = mk<Pt>(p);
+    assert_eq(box_sum(rb), 453, "A: `r = mk<Pt>(p);`, the explicit form (was the same)");
+    var rc: Box<Pt>; rc.n = 5; rc.v.x = 0; rc.v.y = 0;
+    rc.v = idp(p);
+    assert_eq(box_sum(rc), 453, "A: `b.v = idp(p);` into a struct field");
+    rc.v.x = 0;
+    rc.v = idp<Pt>(p);
+    assert_eq(box_sum(rc), 453, "A: `b.v = idp<Pt>(p);`, the explicit form");
+    var q: Pt = idp(p);
+    assert_eq(q.x + q.y * 10, 43, "R: `var q: Pt = idp(p);`, a `: T` return (was 'no struct type in scope')");
+    var q2: Pt; q2.x = 0; q2.y = 0;
+    q2 = idp(p);
+    assert_eq(q2.x + q2.y * 10, 43, "R: `q = idp(p);` (was the struct's address in q.x)");
+    var q3 = idp<Pt>(p);
+    assert_eq(q3.x + q3.y * 10, 43, "R: `var q = idp<Pt>(p);`, unannotated");
+    var t: P3; t.a = 1; t.b = 2; t.c = 3;
+    var t1: P3 = idq(t);
+    assert_eq(p3s(t1), 421, "R: a 24 B `: T` return (retptr), received");
+    t1 = idq<P3>(t1);
+    assert_eq(p3s(t1), 521, "R: the same, assigned, explicit");
+    assert_eq(p3s(idq(t)), 421, "R: the same, as a struct argument");
+    var rg: Box<Pt> = idp(ra);
+    assert_eq(box_sum(rg), 453, "R: T bound to a generic struct INSTANCE (Box<Pt>, 24 B)");
+    var hs = str_from("hello");
+    var ht = idp(hs);
+    assert_eq(str_len(ht), 5, "R: T bound to Str (a heap handle) keeps its rax handle return");
+    assert_eq(p3s(p3i<i32>(4)), 654, "E: an explicit generic call as a struct ARGUMENT (was SIGSEGV)");
+    assert_eq(p3s(p3i(4)), 654, "E: the same, inferred");
+    return 0;
+}
 #endif
 
 fn main(): i64 {
@@ -167,6 +249,7 @@ fn main(): i64 {
     run_params();
     #ifndef CYRIUS_TARGET_CX
     run_returns();
+    run_paths();
     #endif
     test_group("scalar generics and controls");
     assert_eq(sm(5), 35, "RG: for i in n..10 over a T-typed n (was 0: read as a field access)");
@@ -182,3 +265,6 @@ fn main(): i64 {
 }
 var _m = main();
 var r = assert_summary();
+# ⚠ The explicit exit is load-bearing: with `fn main` defined, the entry auto-calls it AGAIN after
+# the top level, and that second run's 0 would be the exit code — a failed row then exits 0.
+syscall(60, r);

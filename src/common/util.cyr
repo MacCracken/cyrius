@@ -996,6 +996,13 @@ var _ta_explicit = 0;
 # inline replay's binding (was a positional re-inference inside the replay's argument loop).
 var _gh_inf0 = 0;
 var _gh_inf1 = 0;
+# 6.6.10: the last `_gen_resolve_call` that could NOT instantiate (-2 / -3) and the generic it fell
+# back to, so the path that then emits its own call refuses it by name instead of calling the base.
+var _grc_err = 0;
+var _grc_fi = 0 - 1;
+# 6.6.10: bit li = parameter li was declared `name: *T` (a pointer: it never binds a type argument
+# to the pointee struct). Saved with the per-fn snapshot, zeroed with `_cur_fn_pslots`.
+var _cur_fn_ptrp = 0;
 fn _tp_clear(S): i64 { _tp_n0 = 0; _tp_c0 = 0; _tp_n1 = 0; _tp_c1 = 0; return 0; }
 fn _tp_bind(S, slot, noff, conc): i64 {
     if (slot == 0) { _tp_n0 = noff; _tp_c0 = conc; }

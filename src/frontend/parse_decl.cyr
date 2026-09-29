@@ -527,11 +527,15 @@ fn _fsc_name(S, ft, fnoff): i64 {
 # here — see `_fsc_src`) comes back in rax and is left to the byte-exact store, `_fst_odd`, at
 # top level and in a fn alike.
 fn _fsc_call(S, ft, fnoff): i64 {
-    var fi = FINDFN(S, PEEKV(S));
+    # 6.6.10 (bite 7 review): `name<..>(` too, and the fn the call REACHES — `b.v = idp(p);` sized
+    # the copy from the base's i64 `T` return and stored one word.
+    var o = _gcall_open(S, GTI(S));
+    if (o < 0) { return 0; }
+    var fi = _gen_resolve_call(S, GTI(S));
     if (fi < 0) { return 0; }
     var rs = GFRS(S, fi);
     if (rs <= 0) { return 0; }
-    if (_call_follow(S, GTI(S)) != 5) { return 0; }
+    if (_call_follow(S, o - 1) != 5) { return 0; }
     if (rs != ft) { _fsc_type_err(S, PEEKV(S), fnoff); return 0; }
     var cls = _ret_agg_class(S, fi);
     if (cls == 0) { return 0; }
@@ -583,10 +587,8 @@ fn _fsc_src(S, ft, fnoff): i64 {
     var sz = STRUCTSZ(S, ft - 1);
     if (sz == 8 || sz == 4 || sz == 2 || sz == 1) { return 0; }
     if (PEEKT(S) == 2) {
-        if (TOKTYP(S, GTI(S) + 1) == 10) {
-            var r = _fsc_call(S, ft, fnoff);
-            if (r != 0) { return r; }
-        }
+        var r = _fsc_call(S, ft, fnoff);
+        if (r != 0) { return r; }
     }
     return _fsc_expr(S, ft, fnoff);
 }

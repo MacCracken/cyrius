@@ -2386,12 +2386,15 @@ The type parameter `T` may appear in parameter types (`x: T`), the return type
 (`: T`), and inside the body (`var y: T`, `sizeof(T)`, `slice<T>`). At a call,
 the concrete type is **inferred** from the argument in the parameter `T` types —
 the first such parameter, wherever it sits (`fn g<T>(n, p: T)` infers `T` from
-`g(2, p)`'s `p`). A struct argument — a struct local or parameter, a struct
-global, a call returning a struct — binds `T` to that struct on every call path
-(an expression, `var r = g(p)`, `return g(p);`, an argument, a struct receive),
-exactly as the explicit `g<Pt>(p)` does (6.6.10; before that only an inlined body
-inferred a struct, and every other path ran the i64 base). Any other argument
-infers `i64`, or the width a scalar-returning call declares.
+`g(2, p)`'s `p`). A struct argument — a struct local or by-value struct
+parameter, a struct global, a call returning a struct — binds `T` to that struct
+on every call path (an expression, `var r = g(p)`, `r = g(p);`, `b.v = g(p);`,
+`return g(p);`, an argument, a struct receive), exactly as the explicit
+`g<Pt>(p)` does (6.6.10; before that only an inlined body inferred a struct, and
+every other path ran the i64 base). Only a WHOLE argument binds `T`: `g(p.y)`,
+`g(p.x + p.y)` and `g(p + 1)` infer `i64`, and so does a `pp: *Pt` pointer
+parameter (a pointer, like a `var q: *Pt` local). Any other argument infers
+`i64`, or the width a scalar-returning call declares.
 
 Type arguments may be **inferred** from the call (`add(1, 2)`) or written
 **explicitly** (`add<i64>(x)`, `add<i32>(x)`). Inside a generic body a type
@@ -2432,9 +2435,13 @@ fn run(): i64 {
 
 A signature may name a generic struct instance: `fn mk<T>(x: T): Box<T>` returns
 `Box<Pt>` from its `Pt` instance, and a plain `fn f(r: Box<Pt>): Box<Pt>` takes and
-returns the instance (6.6.10; before that such a type was sized as the base
-`Box`, where `v: T` is an i64 — `r.v.x` failed to parse). As for a `var`, an
-all-`i64` argument list names the base struct itself.
+returns the instance — `return mk(p);` and `return mk<Pt>(p);` included, in the
+register-pair (9-16 byte) and retptr classes alike (6.6.10; before that such a
+type was sized as the base `Box`, where `v: T` is an i64 — `r.v.x` failed to
+parse). As for a `var`, an all-`i64` argument list names the base struct itself.
+A `: T` return in an instance whose `T` is a struct returns that struct by value,
+as a `: Pt` fn does (`fn id<T>(x: T): T` — `var q: Pt = id(p)`; 6.6.10, it used to
+return the struct's address); `Str` keeps its heap-handle return.
 
 ### Generic structs
 
@@ -2460,9 +2467,10 @@ explicit, with any body (a small straight-line body is inlined at its call sites
 anything else is an ordinary call). At most two type parameters are recorded. A
 struct type argument is supported on a generic with ONE type parameter: a struct
 beside a second type argument — explicit (`g<Pt, i64>`) or inferred (`g(p, q)`
-with two structs, or a struct and a scalar) — is a compile error (6.6.10 for the
-inferred form; it returned 0). Enum generic params (`<T, E>`) remain syntactically
-accepted but type-erased.
+with two structs, or a struct and a scalar) — is a compile error on every call
+path, struct receives and assignments included (6.6.10 for the inferred form; it
+ran the i64 base). Enum generic params (`<T, E>`) remain syntactically accepted
+but type-erased.
 
 ## Async / Await
 

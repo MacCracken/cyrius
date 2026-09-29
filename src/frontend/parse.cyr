@@ -813,8 +813,8 @@ fn _fnst_put_cg(b): i64 {
     store64(b + 144, _cur_fn_naked);    _cur_fn_naked = 0;
     store64(b + 152, _cur_fn_ix);
     store64(b + 160, _cur_fn_pslots);   _cur_fn_pslots = 0;
-    # b + 168: free (was _cur_fn_tp_pmask, retired 6.6.10 — the B3 stub fact is per-fn
-    # recorded state now, GFGM, read at every call site; CHANGELOG [6.6.10])
+    # b + 168 was _cur_fn_tp_pmask (retired 6.6.10: the B3 stub fact is recorded per fn, GFGM).
+    store64(b + 168, _cur_fn_ptrp);     _cur_fn_ptrp = 0;
     store64(b + 176, _cur_fn_is_pure);  _cur_fn_is_pure = 0;
     return 0;
 }
@@ -829,6 +829,7 @@ fn _fnst_get_cg(b): i64 {
     _cur_fn_naked = load64(b + 144);
     _cur_fn_ix = load64(b + 152);
     _cur_fn_pslots = load64(b + 160);
+    _cur_fn_ptrp = load64(b + 168);
     _cur_fn_is_pure = load64(b + 176);
     return 0;
 }
@@ -2103,12 +2104,16 @@ fn _agc_operand(S, onoff): i64 {
 # `x`, address-passed) sees the old value. At top level there is no frame for the temp: a
 # retptr callee is refused by PARSE_FNCALL, a rax:rdx one here. CHANGELOG [6.6.6]
 fn _try_struct_call_assign(S, noff): i64 {
-    if (PEEKT(S) != 2) { return 0; }
-    if (TOKTYP(S, GTI(S) + 1) != 10) { return 0; }
-    var fi = FINDFN(S, PEEKV(S));
+    # ⛔ 6.6.10 (bite 7 review): `name<..>(` too, and the fn the call REACHES. `r = mk(p);` into a
+    # `Box<Pt>` local compared the base's `Box` return, missed, and fell to the scalar store —
+    # fields stale, silently; the explicit `r = mk<Pt>(p);` did the same once its return type
+    # named the instance.
+    var o = _gcall_open(S, GTI(S));
+    if (o < 0) { return 0; }
+    var fi = _gen_resolve_call(S, GTI(S));
     var cls = _ret_agg_class(S, fi);
     if (cls == 0) { return 0; }
-    if (_call_follow(S, GTI(S)) != 5) { return 0; }
+    if (_call_follow(S, o - 1) != 5) { return 0; }
     var n = _agc_operand(S, noff);
     if (n <= 1) { return 0; }
     if (_agc_t != 0 - GFRS(S, fi)) { return 0; }

@@ -73,3 +73,6 @@ fn main(): i64 {
 }
 var _m = main();
 var r = assert_summary();
+# ⚠ The explicit exit is load-bearing: with `fn main` defined, the entry auto-calls it AGAIN after
+# the top level, and that second run's 0 would be the exit code — a failed row then exits 0.
+syscall(60, r);
