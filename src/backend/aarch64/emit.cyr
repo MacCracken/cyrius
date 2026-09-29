@@ -1031,8 +1031,11 @@ fn ESYSXLAT(S): i64 {
         # buffers with junk, so build_client_hello and every CSPRNG path
         # failed). Map both the x86/macos number (318) and the aarch64-Linux
         # number (278) → 500 (defensive dual-map, cf. getdents64 above). The
-        # 0-on-success → byte-count return conversion is the ESYSCALL post-svc
-        # fixup. getentropy caps at 256 bytes/call (ample for TLS's ≤32).
+        # 0-on-success → byte-count return conversion lives in lib's
+        # sys_getrandom, NOT in ESYSCALL (x1 does not survive a getentropy svc —
+        # see ESYSCALL's own note). getentropy REFUSES a request above 256 bytes
+        # (EINVAL, no short read), so sys_getrandom clamps to 256 on macOS and
+        # random_bytes loops. CHANGELOG [6.6.10]
         # cmp x8,#318 = 0xF104F91F; movz x16,#500 = 0xD2803E90.
         _esx_arm(S, 318, 500);  # getrandom 318→getentropy 500
         _esx_arm(S, 278, 500);  # getrandom aarch64 278→500
