@@ -148,6 +148,7 @@ _CHK_TIMEOUTS=0
 _CHK_SKIPS=0
 _CHK_DRV_SKIPS=0        # of _CHK_SKIPS, the driver's own SKIP rows (its --skip-report)
 _CHK_DRV_SKIPS_F=""
+_CHK_DRV_SKIPS_RM=""    # the private dir holding it, when no staged home did
 _CHK_NO_SKIP=0
 # CYRIUS_CHECK_NO_SKIP: "1" = a gate that exits 77 (could not run) is a FAIL; unset, empty or
 # "0" = it is reported and counted as a SKIP. Anything else is REFUSED (exit 2) — `=true` or
@@ -175,7 +176,7 @@ _chk_finish() {
         HUP)  _xrc=129 ;;
     esac
     if [ -n "$_CHK_STAGED_DIR" ]; then rm -rf "$_CHK_STAGED_DIR"; fi
-    if [ -n "$_CHK_DRV_SKIPS_F" ]; then rm -f "$_CHK_DRV_SKIPS_F"; fi
+    if [ -n "$_CHK_DRV_SKIPS_RM" ]; then rm -rf "$_CHK_DRV_SKIPS_RM"; fi
     if [ "$_CHK_STARTED" != "1" ]; then exit "$_xrc"; fi
 
     # Everything THIS run is supposed to have produced a result for (the full registered
@@ -695,12 +696,13 @@ _CHK_STARTED=1
 # gates could not run, and the summary said ALL GREEN. `--skip-report` has it append each
 # SKIP row to a file; every line is a result here and a SKIP in the count. CHANGELOG [6.6.11]
 if [ -n "$_CHK_STAGED_DIR" ]; then
-    _CHK_DRV_SKIPS_F="$_CHK_STAGED_DIR/.driver-skips"
-    : > "$_CHK_DRV_SKIPS_F"
+    _CHK_DRV_SKIPS_D="$_CHK_STAGED_DIR"
 else
-    _CHK_DRV_SKIPS_F=$(mktemp "${TMPDIR:-/tmp}/cyrius-check-skips.XXXXXX") && [ -f "$_CHK_DRV_SKIPS_F" ] \
-        || { printf "error: mktemp failed for the driver's skip report (TMPDIR=%s)\n" "${TMPDIR:-/tmp}" >&2; exit 1; }
+    _CHK_DRV_SKIPS_D=$(mktemp -d "${TMPDIR:-/tmp}/cyrius-check-skips.XXXXXX") && [ -d "$_CHK_DRV_SKIPS_D" ] || { printf "error: mktemp -d failed for the driver's skip report (TMPDIR=%s)\n" "${TMPDIR:-/tmp}" >&2; exit 1; }
+    _CHK_DRV_SKIPS_RM="$_CHK_DRV_SKIPS_D"
 fi
+_CHK_DRV_SKIPS_F="$_CHK_DRV_SKIPS_D/.driver-skips"
+: > "$_CHK_DRV_SKIPS_F"
 _chk_run_bg "$CHECK_BIN" --skip-report "$_CHK_DRV_SKIPS_F"
 _CHK_DRIVER_RC=$_CHK_RC
 while IFS= read -r _dsk || [ -n "$_dsk" ]; do
