@@ -26,7 +26,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and `deps --verify`, the dep-cache gitlink check (an unlistable gitlink read as empty and PASSED),
   `update`, `lib sync`, `clean`, the distlib verify mirror, `cyrius_type_audit`, `cyriusly list`,
   `cyrius-init`'s stdlib vendoring and `vidya_load_dir`. `cyrius_api_surface`'s walk is bite 9's.
-  Gates `walkers_fail_closed_unreadable_dir.sh` (new, 20 checks; 17 red on the 6.6.9 tree) and
+  An unreadable harness ROOT fails as well as a subdirectory: `soak` and `smoke` gated their walks on
+  `file_exists` — an `open()`, which fails on a mode-000 directory — so `chmod 000 tests/smcyr` still
+  printed "No smoke harnesses found" at rc 0; they ask `is_dir` (stat) now. A directory that does not
+  EXIST stays an empty scope, not an error — a project with no `lib/` locks and verifies at rc 0, `soak`
+  without `tests/tcyr` runs, `cyrius_type_audit` outside a full checkout and `vidya_load_dir` on a
+  missing path answer as in 6.6.9 (the bite's first cut turned all four into "cannot list … (error 2)").
+  Gates `walkers_fail_closed_unreadable_dir.sh` (new, 28 checks; 17 of the original 20 red on the 6.6.9
+  tree, and the soak/smoke-root and absent-root rows red on the bite's first cut) and
   `tests/tcyr/crossos/fs_walk_fails_closed.tcyr` (new; green on ecb, ach, pi and cass).
 - **`cyrius audit` never descended on macOS or Windows.** (bite 15.) `lib/audit_walk.cyr`'s non-Linux
   lister marked EVERY entry a regular file, and the walkers' recursive descent keys on "directory" — so

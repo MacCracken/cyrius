@@ -4391,6 +4391,10 @@ var _deps_lock_unlisted = 0;
 fn _deps_lock_files(dir): i64 {
     var out = vec_new();
     _deps_lock_unlisted = 0;
+    # An ABSENT root is an empty lock, as it always was (a project with no deps has no lib/);
+    # only an existing directory the walk cannot list counts. is_dir asks stat, so a mode-000
+    # lib/ is still 1 and still fails. CHANGELOG [6.6.10]
+    if (is_dir(str_from(dir)) == 0) { return out; }
     _deps_lock_files_into(dir, out);
     return out;
 }

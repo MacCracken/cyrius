@@ -168,8 +168,11 @@ fn vidya_load_concept(r, path): i64 {
 # Load all content from a vidya content directory (pass a Str path).
 # Scans for: topic/concept.toml and cyrius/*.toml. Returns the number of entries loaded, or
 # -1 (after naming it on stderr) when a directory could not be listed — 6.6.10: it read as
-# empty, so a partial corpus was reported as the whole one. CHANGELOG [6.6.10]
+# empty, so a partial corpus was reported as the whole one. A content path that does not
+# EXIST is still 0 entries, as it always was — only an existing directory that cannot be
+# listed is the error. CHANGELOG [6.6.10]
 fn vidya_load_dir(r, content_path): i64 {
+    if (is_dir(content_path) == 0) { return 0; }
     var total = 0;
     var dirs = vec_new();
     var unl = vec_new();

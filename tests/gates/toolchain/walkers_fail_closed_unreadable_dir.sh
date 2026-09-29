@@ -31,11 +31,26 @@
 #   W8  `cyrius clean`           build/ unreadable
 #   W9  cyrius_type_audit        src/ unreadable
 #   W10 cyriusly list            <home>/versions unreadable
+#   W11 `cyrius smoke`           tests/smcyr (the harness ROOT) unreadable
+#   W12 `cyrius soak 1`          tests/scyr (the harness ROOT) unreadable
+# plus ABSENT-root controls (any uid) — a directory that does not exist is an empty scope,
+# never "cannot list": the first cut of this bite turned absence into an error in three
+# walkers (6.6.10 bite 15 review), and these rows pin that it did not stay that way:
+#   A1  `cyrius soak 1`, no tests/ at all          → rc 0 (was "cannot list …: tests/tcyr")
+#   A2  `cyrius deps --lock` / `--verify`, no lib/ → rc 0 (was an unlisted-dir lock refusal)
+#   A3  cyrius_type_audit outside a full checkout  → rc 0 (was nine ENOENT errors)
+#   A4  programs/vidya.cyr vidya_load_dir on a path that does not exist → 0 entries (was -1);
+#       W13 (non-root) is its unreadable-directory half → -1, named
+# The soak rows use a one-file "compiler" whose output is its own executable, so the
+# self-host fixpoint soak runs first holds trivially and the rows isolate the walkers.
 # Every row needs a mode-000 directory and a non-root user (root reads one), so under uid 0
 # (the AGNOS CI container) they SKIP, by name; W0 still runs.
 #
 # PROVEN RED: this gate run against the 6.6.9 tree (6d12c1e6, build/cycc unchanged) fails 17
-# of its 20 checks — every W1-W10 row; only the two W0 controls and W7's premise pass.
+# of its 20 original checks — every W1-W10 row; only the two W0 controls and W7's premise
+# pass. The review rows are proven against the bite's first cut (b39ca4f4): W11 and W12
+# fail against its `file_exists` harness-root guard, and A1-A4 fail against the
+# absent-is-an-error walkers.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -90,8 +105,64 @@ check "W0 control: \`cyrius test\` over the readable tree says '1 passed, 1 fail
 cy "$P" audit
 check "W0 control: \`cyrius audit\` flags src/bad/x.cyr for formatting, rc non-zero" "yes yes" "$(has 'x.cyr') $([ "$RC" -ne 0 ] && echo yes || echo no)"
 
+# ── Absent-root controls: run under every uid ──────────────────────────────────────────
+K="$T/soakproj"; mkdir -p "$K/src"
+printf '[package]\nname = "sk"\nversion = "0.1.0"\n' > "$K/cyrius.cyml"
+# A "compiler" that writes its own executable to stdout: cycc(main) == main(main).
+cat > "$K/src/main.cyr" <<'SELFCOPY'
+var buf[8192];
+var fd = syscall(2, "/proc/self/exe", 0, 0);
+var n = syscall(0, fd, &buf, 65536);
+while (n > 0) {
+    syscall(1, 1, &buf, n);
+    n = syscall(0, fd, &buf, 65536);
+}
+syscall(60, 0);
+SELFCOPY
+cy "$K" soak 1
+check "A1 \`cyrius soak 1\` with no tests/ at all: rc 0, '1/1 passed', no 'cannot list'" "0 yes no" "$RC $(has '1/1 passed') $(has 'cannot list')"
+
+N="$T/nolibproj"; mkdir -p "$N/src"
+printf '[package]\nname = "nl"\nversion = "0.1.0"\n' > "$N/cyrius.cyml"
+printf 'fn main(): i64 {\n    return 0;\n}\n' > "$N/src/main.cyr"
+cy "$N" deps --lock
+check "A2 \`cyrius deps --lock\` with no lib/: rc 0, no 'cannot list'" "0 no" "$RC $(has 'cannot list')"
+cy "$N" deps --verify
+check "A2 \`cyrius deps --verify\` with no lib/: rc 0, no 'cannot list'" "0 no" "$RC $(has 'cannot list')"
+
+RC=0; ( cd "$N" && timeout 60 "$B/cyrius_type_audit" --summary ) > "$T/o" 2>&1 || RC=$?
+check "A3 cyrius_type_audit with only src/ (no lib/, programs/, src/backend/…): rc 0, no 'cannot list'" "0 no" "$RC $(has 'cannot list')"
+
+cat > "$T/vp.cyr" <<'VPROBE'
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/syscalls.cyr"
+include "lib/hashmap.cyr"
+include "lib/io.cyr"
+include "lib/fs.cyr"
+include "lib/tagged.cyr"
+include "lib/bayan.cyr"
+include "programs/vidya.cyr"
+var vr = vidya_registry_new();
+sys_write(STDOUT_FD, "absent=", 7);
+fmt_int(vidya_load_dir(vr, str_from("vabsent")));
+sys_write(STDOUT_FD, " unread=", 8);
+fmt_int(vidya_load_dir(vr, str_from("vunread")));
+sys_write(STDOUT_FD, "\n", 1);
+syscall(60, 0);
+VPROBE
+( cd "$ROOT" && "$CC" < "$T/vp.cyr" > "$B/vprobe" 2> "$T/build.err" ) || {
+    echo "FAIL: $NAME — could not build the vidya probe"; sed -n '1,5p' "$T/build.err"; exit 1; }
+chmod +x "$B/vprobe"
+V="$T/vidyaproj"; mkdir -p "$V/vunread/topic"
+RC=0; ( cd "$V" && timeout 60 "$B/vprobe" ) > "$T/o" 2>&1 || RC=$?
+check "A4 vidya_load_dir on a content path that does not exist: 0 entries, not -1" "0 yes" "$RC $(has 'absent=0 ')"
+
 if [ "$(id -u)" = "0" ]; then
-    echo "  SKIP: W1-W10 — running as root (uid 0 reads a mode-000 directory)"
+    echo "  SKIP: W1-W13 — running as root (uid 0 reads a mode-000 directory)"
 else
     chmod 000 "$P/tests/bad" "$P/src/bad" "$P/fuzz/sub" "$P/benches/sub"
 
@@ -157,6 +228,29 @@ else
     RC=0; ( HOME="$T/hh" CYRIUS_HOME="$H" timeout 60 "$B/cyriusly" list ) > "$T/o" 2>&1 || RC=$?
     chmod 755 "$H/versions"
     check "W10 cyriusly list with versions/ unreadable: rc 1, named, not '(none …)'" "1 yes no" "$RC $(has 'cannot list') $(has '(none')"
+
+    # ── W11/W12: an unreadable harness ROOT (not just a subdirectory) ───────────────────
+    # The guard in front of each walk was file_exists — an open(), which fails on a mode-000
+    # directory — so the root was skipped as if absent and the walker never ran.
+    M="$T/smokeproj"; mkdir -p "$M/src" "$M/tests/smcyr"
+    printf '[package]\nname = "sm"\nversion = "0.1.0"\n' > "$M/cyrius.cyml"
+    printf 'var r = 1;\nsyscall(60, r);\n' > "$M/tests/smcyr/s.smcyr"
+    chmod 000 "$M/tests/smcyr"
+    cy "$M" smoke
+    chmod 755 "$M/tests/smcyr"
+    check "W11 \`cyrius smoke\` with tests/smcyr unreadable: rc 1, named, never 'No smoke harnesses found'" "1 yes no" "$RC $(has 'cannot list directory: tests/smcyr') $(has 'No smoke harnesses found')"
+
+    mkdir -p "$K/tests/scyr"
+    printf 'var r = 0;\nsyscall(60, r);\n' > "$K/tests/scyr/h.scyr"
+    chmod 000 "$K/tests/scyr"
+    cy "$K" soak 1
+    chmod 755 "$K/tests/scyr"
+    check "W12 \`cyrius soak 1\` with tests/scyr unreadable: rc 1, named" "1 yes" "$RC $(has 'cannot list directory: tests/scyr')"
+
+    chmod 000 "$V/vunread"
+    RC=0; ( cd "$V" && timeout 60 "$B/vprobe" ) > "$T/o" 2> "$T/e" || RC=$?
+    chmod 755 "$V/vunread"
+    check "W13 vidya_load_dir on an unreadable content directory: -1, named" "yes yes" "$(has 'unread=-1') $(grep -qF 'vidya: cannot list directory: vunread' "$T/e" && echo yes || echo no)"
 fi
 
 echo ""

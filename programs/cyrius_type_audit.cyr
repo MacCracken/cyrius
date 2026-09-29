@@ -251,6 +251,9 @@ fn _scan_dir(dir): i64 {
     var entries = vec_new();
     var lr = dir_list_checked(str_from(dir), entries);
     if (lr < 0) {
+        # An ABSENT scope directory is out of scope (outside a full checkout most are); only
+        # an existing directory it cannot list is an error. CHANGELOG [6.6.10]
+        if (is_dir(str_from(dir)) == 0) { return 0; }
         sys_write(2, "error: cannot list directory: ", 30);
         sys_write(2, dir, strlen(dir));
         sys_write(2, " (error ", 8);

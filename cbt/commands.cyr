@@ -2665,8 +2665,13 @@ fn cmd_soak(iters): i64 {
         # find_files returns full paths (path_join → str_builder_build, NUL-terminated).
         if (iter_ok == 1) {
             # 6.6.10: an unlistable test directory fails the iteration, by name.
+            # An ABSENT tests/tcyr is an empty suite, as before; only an existing directory
+            # it cannot list is an error (is_dir asks stat, so mode 000 is still 1).
             var _sk_e0 = _err_count;
-            var tent = _cbt_find_files("tests/tcyr", ".tcyr", "its tests were NOT run");
+            var tent = vec_new();
+            if (is_dir(str_from("tests/tcyr")) == 1) {
+                tent = _cbt_find_files("tests/tcyr", ".tcyr", "its tests were NOT run");
+            }
             if (_err_count > _sk_e0) { iter_ok = 0; }
             var ti = 0;
             while (ti < vec_len(tent)) {
@@ -2729,7 +2734,9 @@ fn cmd_soak(iters): i64 {
     vec_push(sdirs, "soak");
     while (sd < vec_len(sdirs)) {
         var sdir = vec_get(sdirs, sd);
-        if (file_exists(sdir) == 1) {
+        # 6.6.10: is_dir (stat), not file_exists (open) — open fails on a directory you may
+        # not read, so a mode-000 harness ROOT was skipped in silence. Absent still skips.
+        if (is_dir(str_from(sdir)) == 1) {
             # v6.5.11: RECURSIVE. Was a depth-1 dir_list, so tests/scyr/<sub>/x.scyr
             # never ran and cmd_soak still reported success — the same defect the
             # v6.5.7 pass fixed for bench/fuzz without bringing scyr/smcyr along.
@@ -2805,7 +2812,7 @@ fn cmd_smoke(): i64 {
     vec_push(sdirs, "smoke");
     while (sd < vec_len(sdirs)) {
         var sdir = vec_get(sdirs, sd);
-        if (file_exists(sdir) == 1) {
+        if (is_dir(str_from(sdir)) == 1) {   # 6.6.10: stat, not open — see cmd_soak
             # v6.5.11: RECURSIVE — see the matching note in cmd_soak. The printed
             # path is now dir-relative rather than a bare basename; the smoke gate
             # (programs/checks/services.cyr) matches on a SUBSTRING, so the
