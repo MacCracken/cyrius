@@ -3527,7 +3527,11 @@ fn _distlib_verify_rounds(leaves, out_path, named_deps, root, m): i64 {
         if (added_here == 0) { return added_total; }   # fixpoint: nothing new to add
         if (recorded_here > 0) { scope = vec_new(); }   # (2) above
     }
-    return added_total;
+    # ⛔ THE CAP IS NOT A FIXPOINT. Falling out of the loop means the last round ADDED leaves that
+    # were never compiled, so the set is unverified. This returned `added_total`, the same answer
+    # as real convergence, and an 8-leaf chain published 6 leaves as "compile-verified" at rc 0.
+    # A bigger cap would only move the failure one leaf further out. CHANGELOG [6.6.11]
+    return _distlib_verify_fail("distlib: sidecar verify did not converge in 6 rounds — sidecar NOT written", out_path);
 }
 
 fn _distlib_stdlib_root(): i64 {

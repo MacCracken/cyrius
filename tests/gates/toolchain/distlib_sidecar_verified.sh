@@ -294,12 +294,45 @@ O10E=$(run_nd "$P10E" || true)
 grep -qx 'rr' "$P10E/dist/np.deps" 2>/dev/null || fail "axis 10e premise: 'rr' not re-added in [$(nd_leaves "$P10E")]: $(echo "$O10E" | head -3)"
 grep -qx 'helperlib' "$P10E/dist/np.deps" || fail "axis 10e: [$(nd_leaves "$P10E")] — the re-added leaf rr calls helperlib_do; its need was hidden by the scope an earlier round gave fold2"
 
+# axis 13 (6.6.11, K6): THE ROUND CAP IS NOT CONVERGENCE. zc1..zc8 is a chain (zcK_f calls
+# zc(K+1)_f), so each round finds exactly one more leaf. The loop ran out of rounds with zc7 and
+# zc8 never added, returned the same answer as a real fixpoint, and published zc1..zc6 as
+# "compile-verified" at rc 0 — a consumer then failed on an undefined zc7_f. Now it exits
+# non-zero, names the non-convergence and writes no sidecar. 13b is the anti-vacuous control:
+# a 5-leaf chain converges inside the cap and records all five.
+k=1
+while [ "$k" -le 8 ]; do
+    if [ "$k" -lt 8 ]; then zb="zc$((k + 1))_f(x) + 1"; else zb="x"; fi
+    printf 'fn zc%s_f(x): i64 { return %s; }\n' "$k" "$zb" > "$NH/versions/$VER/lib/zc$k.cyr"
+    if [ "$k" -le 5 ]; then
+        if [ "$k" -lt 5 ]; then yb="yc$((k + 1))_f(x) + 1"; else yb="x"; fi
+        printf 'fn yc%s_f(x): i64 { return %s; }\n' "$k" "$yb" > "$NH/versions/$VER/lib/yc$k.cyr"
+    fi
+    k=$((k + 1))
+done
+mkchain() {  # mkchain <dir> <body of src/np.cyr> — no declared leaves, no named deps
+    d="$WORK/$1"; mkdir -p "$d/src"
+    printf '[package]\nname = "np"\nversion = "0.1.0"\ncyrius = "%s"\n\n[lib]\nmodules = ["src/np.cyr"]\n' "$VER" > "$d/cyrius.cyml"
+    printf '%s\n' "$2" > "$d/src/np.cyr"
+    echo "$d"
+}
+P13=$(mkchain p13 'fn np_z(x): i64 { return zc1_f(x); }')
+if O13=$(run_nd "$P13"); then fail "axis 13: distlib exited 0 on an 8-leaf chain the 6-round verify cannot finish: [$(nd_leaves "$P13")]"; fi
+[ -f "$P13/dist/np.deps" ] && fail "axis 13: an unverified sidecar was written: [$(nd_leaves "$P13")]"
+echo "$O13" | grep -q 'did not converge in 6 rounds' || fail "axis 13: the refusal did not name the non-convergence: $(echo "$O13" | grep -i error | head -3)"
+P13B=$(mkchain p13b 'fn np_y(x): i64 { return yc1_f(x); }')
+O13B=$(run_nd "$P13B" || true)
+[ -f "$P13B/dist/np.deps" ] || fail "axis 13b (anti-vacuous): no sidecar for a 5-leaf chain: $(echo "$O13B" | grep -i error | head -3)"
+for k in 1 2 3 4 5; do
+    grep -qx "yc$k" "$P13B/dist/np.deps" || fail "axis 13b (anti-vacuous): 'yc$k' missing from [$(nd_leaves "$P13B")]"
+done
+
 # axis 12: the verify's scratch mirror (dist/.dlverify-<pid>) never outlives the run — on the
 # success path or on the fail-loud one.
-for d in "$P5" "$P6" "$P9" "$P10" "$P10B" "$P10C" "$P10D" "$P10E" "$P11"; do
+for d in "$P5" "$P6" "$P9" "$P10" "$P10B" "$P10C" "$P10D" "$P10E" "$P11" "$P13" "$P13B"; do
     if ls -a "$d/dist" 2>/dev/null | grep -q '^\.dlverify-'; then
         fail "axis 12: $d/dist still holds the verify's scratch mirror"
     fi
 done
 
-echo "PASS: distlib_sidecar_verified (missing leaf repaired, sufficient set untouched, dispatcher not peer, all resolve, named deps in the unit, fails loud)"
+echo "PASS: distlib_sidecar_verified (missing leaf repaired, sufficient set untouched, dispatcher not peer, all resolve, named deps in the unit, fails loud, the round cap is not convergence)"
