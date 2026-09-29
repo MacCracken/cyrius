@@ -41,6 +41,27 @@
 #   M4 the linker row's `_skip` restored to `_p("  skip: …"); _check(label, 0)` -> axes 1, 5 RED
 #   M5 `_skip` under NO_SKIP scores every row, not just skips, as failed
 #      (G_NO_SKIP makes `_tally` fail everything)                          -> axis 4 RED
+#
+# ⛔ 6.6.11 (K1) — THE SHELL-GATE HALF.
+# K1: a SHELL gate had no way to say "I could not run" but `echo SKIP; exit 0`, and both paths
+# that run one — the driver's `_gate` (programs/checks/main.cyr) and check.sh's `_chk_gate` —
+# scored rc 0 as PASS and everything else as FAIL, so 57 whole-gate SKIPs (and ~50 gates that
+# skipped an axis) were PASSes and CYRIUS_CHECK_NO_SKIP never reached a shell gate at all.
+# Exit 77 (automake's SKIP) is now "could not run its check": a SKIP row by default, a FAIL
+# under CYRIUS_CHECK_NO_SKIP=1, in BOTH paths; check.sh reads the variable with the driver's
+# 1/0/unset/refuse contract.
+#   6  the DRIVER path: a scratch driver whose object-init row is ONE `_gate(...)` over a fake
+#      gate that exits 77 — SKIP row / `1 skipped` / exit 0 by default, SKIP REFUSED + FAIL
+#      under NO_SKIP=1; `--gate-row` (the same `_gate_score`) agrees, and honours NO_SKIP too
+#   7  the CHECK.SH path: the real scripts/check.sh over a fake bucket {a 77 gate, a 0 gate},
+#      run through the real driver's `--run-gate` supervisor — SKIP result, `skipped: 1`, the
+#      SKIPPED list, rc 0 and NOT `ALL GREEN` by default; FAIL + rc != 0 under NO_SKIP=1 with
+#      the 0 gate still PASS (positive control); `=yes` refused with rc 2, running nothing
+# MUTATIONS (6.6.11, each RED; measured):
+#   M6 `_gate_score` drops its 77 branch (77 -> `_check` -> FAIL)          -> axis 6 RED
+#   M7 `_gate` calls `_check` directly again (bypasses `_gate_score`)      -> axis 6 RED
+#   M8 check.sh's `_chk_gate` 77 branch removed (77 -> the FAIL arm)       -> axis 7 RED
+#   M9 `_chk_read_no_skip` never called (NO_SKIP ignored by check.sh)       -> axis 7 RED
 set -e
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -56,6 +77,7 @@ strip_ansi() { sed 's/\x1b\[[0-9;]*m//g'; }
 ( cd "$ROOT" && cat programs/checks/main.cyr | "$CC" > "$D/drv" 2>"$D/drv.err" ) \
     || { cat "$D/drv.err"; echo "FAIL: $NAME — the check driver does not compile"; exit 1; }
 chmod +x "$D/drv"
+cp "$D/drv" "$D/drv0"
 
 # A scratch ROOT: the driver takes its root from its cwd. It holds build/cycc and nothing else,
 # so the linker row's build/cyrld is missing (a SKIP) while the object-init row — which needs
@@ -133,10 +155,107 @@ NH=$(grep -c . "$D/hits" || true)
 NSK=$(grep -hE '(^|[^A-Za-z0-9_])_skip\(' "$ROOT"/programs/checks/*.cyr | grep -vcE '^[[:space:]]*#|fn _skip' || true)
 [ "$NSK" -ge 80 ] || _fail "axis 5: only $NSK _skip( call(s) in programs/checks/ (floor 80) — the scan read nothing, or skips were turned back into passes"
 
+# ── 6.6.11: scratch drivers built from THIS tree with one row body swapped ─────────────────
+# `mkdrv <out> <replacement>` copies programs/checks/ into a scratch source tree (lib/ is a
+# symlink — nothing under $ROOT is written), replaces the `_object_init_gate();` call inside
+# `fn _row_object_init` with <replacement>, and builds it. The row is the SAME one `object-init`
+# selects, so the real selector, run loop and verdict code run around it.
+mkdrv() {
+    _t="$D/src_$1"
+    mkdir -p "$_t/programs"
+    cp -R "$ROOT/programs/checks" "$_t/programs/"
+    ln -s "$ROOT/lib" "$_t/lib"
+    awk -v rep="$2" '
+        /^fn _row_object_init\(/ { inrow = 1 }
+        inrow && /_object_init_gate\(\);/ { print rep; hit = 1; next }
+        inrow && /^}/ { inrow = 0 }
+        { print }
+        END { if (!hit) exit 3 }' "$ROOT/programs/checks/main.cyr" > "$_t/programs/checks/main.cyr" \
+        || { _fail "mkdrv $1: fn _row_object_init no longer calls _object_init_gate(); — re-anchor this gate"; return 1; }
+    ( cd "$_t" && cat programs/checks/main.cyr | "$CC" > "$D/$1" 2>"$D/$1.err" ) \
+        || { cat "$D/$1.err"; _fail "mkdrv $1: the scratch driver does not compile"; return 1; }
+    chmod +x "$D/$1"
+}
+mkdir -p "$R/tests/gates/zzskip"
+printf '#!/bin/sh\necho "SKIP: zzskip/s77 — the fake tool is not installed"\nexit 77\n' > "$R/tests/gates/zzskip/s77.sh"
+printf '#!/bin/sh\necho "PASS: zzskip/ok"\nexit 0\n' > "$R/tests/gates/zzskip/ok.sh"
+
+echo "axis 6: the DRIVER path — a shell gate's exit 77 is a SKIP row, a FAIL under NO_SKIP=1"
+if mkdrv drv77 '    _gate("zz fake skip gate", "tests/gates/zzskip/s77.sh");'; then
+    cp "$D/drv77" "$D/drv"
+    ROW=object-init
+    run "$D/a6" CYRIUS_CHECK_NO_SKIP=
+    [ "$(cat "$D/a6.rc")" = 0 ] || _fail "axis 6: a gate that exited 77 made the default run exit $(cat "$D/a6.rc"), expected 0 (a SKIP is not a failure by default)"
+    grep -q '^  SKIP: zz fake skip gate — the gate exited 77' "$D/a6" || _fail "axis 6: no 'SKIP: zz fake skip gate — the gate exited 77' row"
+    grep -q '^  PASS: zz fake skip gate' "$D/a6" && _fail "axis 6: a gate that exited 77 was scored PASS"
+    grep -q '^  FAIL: zz fake skip gate' "$D/a6" && _fail "axis 6: a gate that exited 77 was scored FAIL by default"
+    grep -qx '0 passed, 0 failed, 1 skipped (1 total)' "$D/a6" \
+        || _fail "axis 6: tally is '$(grep -E 'passed,' "$D/a6" | tail -1)', expected '0 passed, 0 failed, 1 skipped (1 total)'"
+    run "$D/a6s" CYRIUS_CHECK_NO_SKIP=1
+    [ "$(cat "$D/a6s.rc")" != 0 ] || _fail "axis 6: under CYRIUS_CHECK_NO_SKIP=1 a gate that exited 77 still exited 0"
+    grep -q 'SKIP REFUSED.*the gate exited 77' "$D/a6s" || _fail "axis 6: under NO_SKIP=1 the failure does not say the gate exited 77"
+    grep -qx '0 passed, 1 failed, 0 skipped (1 total)' "$D/a6s" \
+        || _fail "axis 6: strict tally is '$(grep -E 'passed,' "$D/a6s" | tail -1)', expected '0 passed, 1 failed, 0 skipped (1 total)'"
+    cp "$D/drv0" "$D/drv"
+fi
+# `--gate-row` — the one-gate mode other gates use to drive the real `_gate_run` path.
+for mode in default strict; do
+    _v=; [ "$mode" = strict ] && _v=1
+    _rc=0
+    ( cd "$R" && env CYRIUS_CHECK_NO_SKIP=$_v "$D/drv0" --gate-row tests/gates/zzskip/s77.sh ) > "$D/a6g.raw" 2>&1 || _rc=$?
+    strip_ansi < "$D/a6g.raw" > "$D/a6g"
+    if [ "$mode" = default ]; then
+        { [ "$_rc" = 0 ] && grep -q '^  SKIP: tests/gates/zzskip/s77.sh' "$D/a6g"; } \
+            || _fail "axis 6: --gate-row over a 77 gate: rc $_rc, expected 0 and a SKIP row"
+    else
+        { [ "$_rc" != 0 ] && grep -q '^  FAIL: tests/gates/zzskip/s77.sh' "$D/a6g"; } \
+            || _fail "axis 6: --gate-row over a 77 gate under NO_SKIP=1: rc $_rc, expected != 0 and a FAIL row"
+    fi
+done
+
+echo "axis 7: the CHECK.SH path — _chk_gate scores 77 as SKIP, and reads CYRIUS_CHECK_NO_SKIP"
+# The REAL scripts/check.sh and the REAL driver (its `--run-gate` supervisor passes 77 through)
+# over a fake bucket, in a scratch root. CYRIUS_HOME is set, so check.sh stages no home.
+W7="$D/w7"
+mkdir -p "$W7/scripts" "$W7/build" "$W7/programs/checks" "$W7/lib" "$W7/tests/gates/zzskip" "$W7/home"
+cp "$ROOT/scripts/check.sh" "$W7/scripts/check.sh"
+cp "$ROOT/VERSION" "$W7/"
+: > "$W7/lib/placeholder.cyr"
+: > "$W7/programs/checks/placeholder.cyr"
+printf '#!/bin/sh\nexit 0\n' > "$W7/build/cycc"; chmod +x "$W7/build/cycc"
+cp "$D/drv0" "$W7/build/cyrius_check"
+touch -d '2038-01-01' "$W7/build/cyrius_check"
+cp "$R/tests/gates/zzskip/s77.sh" "$R/tests/gates/zzskip/ok.sh" "$W7/tests/gates/zzskip/"
+printf '_chk_gate "$ROOT/tests/gates/zzskip/s77.sh"\n_chk_gate "$ROOT/tests/gates/zzskip/ok.sh"\n' >> "$W7/scripts/check.sh"
+run7() {  # $1 = out, $2 = CYRIUS_CHECK_NO_SKIP value
+    _rc=0
+    ( cd "$W7" && env CYRIUS_HOME="$W7/home" CYRIUS_CHECK_NO_SKIP="$2" sh scripts/check.sh zzskip ) \
+        > "$1.raw" 2>&1 || _rc=$?
+    strip_ansi < "$1.raw" > "$1"
+    echo "$_rc" > "$1.rc"
+}
+run7 "$D/a7" ""
+[ "$(cat "$D/a7.rc")" = 0 ] || _fail "axis 7: check.sh with a 77 gate exited $(cat "$D/a7.rc") by default, expected 0"
+grep -q 'SKIP (exit 77.*zzskip/s77.sh' "$D/a7" || _fail "axis 7: check.sh printed no SKIP line for the 77 gate"
+grep -q 'FAILED (exit 77)' "$D/a7" && _fail "axis 7: check.sh scored the 77 gate as a FAILURE by default"
+grep -q '^  skipped:     1 ' "$D/a7" || _fail "axis 7: the summary does not count 1 skipped gate"
+grep -q '^    tests/gates/zzskip/s77.sh$' "$D/a7" || _fail "axis 7: the summary's SKIPPED list does not name the 77 gate"
+grep -q '2 of 2 produced a result, 0 NOT RUN' "$D/a7" || _fail "axis 7: a SKIP was not counted as a result (bookkeeping: $(grep 'produced a result' "$D/a7"))"
+grep -q 'ALL GREEN' "$D/a7" && _fail "axis 7: a run with a SKIPPED gate still says ALL GREEN"
+run7 "$D/a7s" 1
+[ "$(cat "$D/a7s.rc")" != 0 ] || _fail "axis 7: under CYRIUS_CHECK_NO_SKIP=1 check.sh with a 77 gate exited 0"
+grep -q 'SKIP REFUSED.*zzskip/s77.sh' "$D/a7s" || _fail "axis 7: under NO_SKIP=1 check.sh does not say the SKIP was refused"
+grep -qE '^    FAIL tests/gates/zzskip/s77.sh$' "$D/a7s" || _fail "axis 7: under NO_SKIP=1 the 77 gate is not listed as FAILED"
+grep -qE '^    FAIL tests/gates/zzskip/ok.sh$' "$D/a7s" && _fail "axis 7: under NO_SKIP=1 the PASSING gate was failed too (positive control)"
+run7 "$D/a7y" yes
+[ "$(cat "$D/a7y.rc")" = 2 ] || _fail "axis 7: CYRIUS_CHECK_NO_SKIP=yes made check.sh exit $(cat "$D/a7y.rc"), expected 2"
+grep -q "CYRIUS_CHECK_NO_SKIP.*'yes'" "$D/a7y" || _fail "axis 7: check.sh's refusal does not name the variable and the value"
+grep -q 'zzskip/' "$D/a7y" && _fail "axis 7: a refused CYRIUS_CHECK_NO_SKIP still ran a gate"
+
 echo ""
 if [ "$FAILS" -gt 0 ]; then
     echo "FAIL: $NAME — $FAILS check(s) failed"
     exit 1
 fi
-echo "PASS: $NAME (a missing prerequisite is a SKIP row and a SKIP count, a FAIL under CYRIUS_CHECK_NO_SKIP=1, $NSK skip sites, 0 scored as passes)"
+echo "PASS: $NAME (a missing prerequisite is a SKIP row and a SKIP count, a FAIL under CYRIUS_CHECK_NO_SKIP=1, $NSK skip sites, 0 scored as passes; a shell gate's exit 77 is a SKIP in both the driver and check.sh)"
 exit 0

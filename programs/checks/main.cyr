@@ -435,11 +435,28 @@ fn _gate_run(script_abs): i64 {
     return 1;
 }
 
+# ⛔ 6.6.11 — A SHELL GATE THAT COULD NOT RUN ITS CHECK EXITS 77, AND 77 IS A SKIP ROW.
+# The shell-gate protocol was binary — 0 PASS, anything else FAIL — so a gate whose tool,
+# host or fixture was missing had only `echo SKIP; exit 0` to say so, and every one of them
+# (57 whole-gate sites, ~50 more that skipped an axis) was scored PASS. 6.6.9 gave the
+# driver's OWN rows a SKIP (`_skip`) but not the path a shell gate goes through. 77 is
+# automake's SKIP; the supervisor (run_gate.cyr) passes it through untouched, and so does
+# check.sh's `_chk_gate`. Under CYRIUS_CHECK_NO_SKIP=1 `_skip` scores it as a FAIL.
+# Gate: tests/gates/toolchain/check_driver_skip_is_not_pass.sh. CHANGELOG [6.6.11]
+fn _gate_score(name, rc): i64 {
+    if (rc == 124) { _G_ROW_GATE_TIMEOUT = 1; }
+    if (rc == 77) {
+        _skip(name, "the gate exited 77 — it could not run its check (see its SKIP line above)");
+        return rc;
+    }
+    _check(name, rc);
+    return rc;
+}
+
 fn _gate(name, script_rel): i64 {
     var script_abs = _root_path(script_rel);
     var rc = _gate_run(script_abs);
-    if (rc == 124) { _G_ROW_GATE_TIMEOUT = 1; }
-    _check(name, rc);
+    _gate_score(name, rc);
     return rc;
 }
 
@@ -1340,14 +1357,16 @@ fn main(): i64 {
     if (argc() > sel_idx + 1) {
         if (streq(argv(sel_idx), "--gate-row") == 1) {
             var gp = argv(sel_idx + 1);
-            # _gate_run + _check, never the registering call: each of THOSE carries a literal
-            # path (tests/gates/toolchain/check_gate_census.sh axis 3 caught a computed one here
-            # in this mode's first cut).
+            # _gate_run + _gate_score, never the registering call: each of THOSE carries a
+            # literal path (tests/gates/toolchain/check_gate_census.sh axis 3 caught a computed
+            # one here in this mode's first cut). CYRIUS_CHECK_NO_SKIP is read HERE too — this
+            # mode returns before the full run's read, and a gate's exit 77 is scored by it.
+            G_NO_SKIP = _read_no_skip();
+            if (G_NO_SKIP < 0) { return 2; }
             var gabs = gp;
             if (load8(gp) != 47) { gabs = _root_path(gp); }
             var grc = _gate_run(gabs);
-            if (grc == 124) { _G_ROW_GATE_TIMEOUT = 1; }
-            _check(gp, grc);
+            _gate_score(gp, grc);
             regression_terminate_children(_RG_GRACE_MS);
             return G_FAIL;
         }

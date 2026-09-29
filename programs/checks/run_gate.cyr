@@ -203,6 +203,9 @@ fn _rg_supervise(path, argvp, envp, deadline_ms, label, knob): i64 {
         _rg_err(" exited 124 on its own — reported as 1, because 124 here means the deadline\n");
         return 1;
     }
+    # Every other code passes through untouched — including 77, a gate's "I could not run my
+    # check" (the SKIP protocol), which `_gate_score` (main.cyr) and check.sh's `_chk_gate`
+    # score as a SKIP row, and as a FAIL under CYRIUS_CHECK_NO_SKIP=1. CHANGELOG [6.6.11]
     return code;
     #endif
     #ifndef CYRIUS_TARGET_LINUX

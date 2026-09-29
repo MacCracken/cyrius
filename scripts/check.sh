@@ -107,6 +107,23 @@ MISSING $_gn"
     if [ "$_grc" = 0 ]; then
         _CHK_RESULTS="$_CHK_RESULTS
 PASS $_gn"
+    elif [ "$_grc" = 77 ]; then
+        # ⛔ 6.6.11: 77 is the gate saying it could NOT run its check (a missing tool, host or
+        # fixture — its own SKIP line above says which). It used to have no way to say so but
+        # `exit 0`, and was scored PASS. A SKIP is its own result and its own count, never a
+        # pass; under CYRIUS_CHECK_NO_SKIP=1 it is a FAIL — the same rule the driver's rows
+        # follow (`_gate_score` in programs/checks/main.cyr). CHANGELOG [6.6.11]
+        if [ "$_CHK_NO_SKIP" = 1 ]; then
+            echo "  ^^ SKIP REFUSED (CYRIUS_CHECK_NO_SKIP=1 — a gate that could not run is a FAIL): $_gn"
+            _CHK_RESULTS="$_CHK_RESULTS
+FAIL $_gn"
+            _CHK_FAILS=$((_CHK_FAILS + 1))
+        else
+            echo "  ^^ SKIP (exit 77 — the gate could not run its check; NOT a pass): $_gn"
+            _CHK_RESULTS="$_CHK_RESULTS
+SKIP $_gn"
+            _CHK_SKIPS=$((_CHK_SKIPS + 1))
+        fi
     elif [ "$_grc" = 124 ]; then
         # 124 from --run-gate is its deadline and nothing else (a gate's own 124 is reported
         # as 1 — programs/checks/run_gate.cyr). A timeout is a failure, and says it was one.
@@ -128,6 +145,23 @@ FAIL $_gn"
 _CHK_DONE=0
 _CHK_SIGNAL=""
 _CHK_TIMEOUTS=0
+_CHK_SKIPS=0
+_CHK_NO_SKIP=0
+# CYRIUS_CHECK_NO_SKIP: "1" = a gate that exits 77 (could not run) is a FAIL; unset, empty or
+# "0" = it is reported and counted as a SKIP. Anything else is REFUSED (exit 2) — `=true` or
+# `=yes` silently meaning "off" would make the strict mode a no-op. The SAME contract as the
+# driver's `_read_no_skip` (programs/checks/main.cyr), which reads the same variable for its
+# own rows; this file used to read it not at all. Called only once a RUN is about to start
+# (`--list` / `--resolve` / `--registry` run nothing and ignore it). CHANGELOG [6.6.11]
+_chk_read_no_skip() {
+    case "${CYRIUS_CHECK_NO_SKIP:-}" in
+        ''|0) _CHK_NO_SKIP=0 ;;
+        1)    _CHK_NO_SKIP=1 ;;
+        *)    printf "error: CYRIUS_CHECK_NO_SKIP must be 1 (a SKIP gate fails) or 0/unset; got '%s'\n" \
+                  "$CYRIUS_CHECK_NO_SKIP" >&2
+              exit 2 ;;
+    esac
+}
 _chk_finish() {
     _xrc=$?
     # INT/TERM handlers `exit`, which re-enters via the EXIT trap in some shells.
@@ -149,7 +183,7 @@ _chk_finish() {
     _nnot=0
     for _m in $_manifest; do
         if ! printf '%s\n' "$_CHK_RESULTS" | grep -qx "PASS $_m"; then
-            if ! printf '%s\n' "$_CHK_RESULTS" | grep -qxE "(FAIL|MISSING) $_m"; then
+            if ! printf '%s\n' "$_CHK_RESULTS" | grep -qxE "(FAIL|MISSING|SKIP) $_m"; then
                 _notrun="$_notrun $_m"
                 _nnot=$((_nnot + 1))
             fi
@@ -161,9 +195,11 @@ _chk_finish() {
     # from the tally) and gates with no result (counted from the manifest). If they do not
     # sum to the registered total, this bookkeeping is itself broken — say so rather than
     # printing a self-consistent lie, which is the failure mode this whole block exists for.
-    _res_n=$(printf '%s\n' "$_CHK_RESULTS" | grep -cE '^(PASS|FAIL|MISSING) (tests/gates|scripts)/' || true)
+    _res_n=$(printf '%s\n' "$_CHK_RESULTS" | grep -cE '^(PASS|FAIL|MISSING|SKIP) (tests/gates|scripts)/' || true)
     printf '  shell gates: %s of %s produced a result, %s NOT RUN\n' "$_res_n" "$_total" "$_nnot"
     printf '  failures:    %s (the check binary counts as one row here)\n' "$_CHK_FAILS"
+    printf '  skipped:     %s (exit 77 — the gate could not run its check; NOT passes%s)\n' "$_CHK_SKIPS" \
+        "$( [ "$_CHK_NO_SKIP" = 1 ] && echo '' || echo '; CYRIUS_CHECK_NO_SKIP=1 makes them failures' )"
     if [ "$_CHK_TIMEOUTS" != "0" ]; then
         printf '  timeouts:    %s of those failures were a gate killed at its deadline (CYRIUS_CHECK_LONG_TIMEOUT) — see the TIMEOUT lines\n' "$_CHK_TIMEOUTS"
     fi
@@ -175,12 +211,21 @@ _chk_finish() {
         echo "  FAILED:"
         printf '%s\n' "$_CHK_RESULTS" | grep -E '^(FAIL|MISSING) ' | sed 's/^/    /'
     fi
+    if [ "$_CHK_SKIPS" != "0" ]; then
+        echo "  SKIPPED — these ran but could not check anything, and are NOT passes:"
+        printf '%s\n' "$_CHK_RESULTS" | grep -E '^SKIP ' | sed 's/^SKIP /    /'
+    fi
     if [ "$_nnot" != "0" ]; then
         echo "  NOT RUN — these did NOT execute and are NOT passes:"
         for _m in $_notrun; do echo "    $_m"; done
     fi
     if [ -n "$_CHK_SIGNAL" ]; then
         echo "  INTERRUPTED by SIG$_CHK_SIGNAL — the running child was sent SIGTERM and waited for"
+        echo "────────────────────────────────────────────────────────────────────"
+        exit "$_xrc"
+    fi
+    if [ "$_CHK_FAILS" = "0" ] && [ "$_nnot" = "0" ] && [ "$_CHK_SKIPS" != "0" ]; then
+        echo "  GREEN, with $_CHK_SKIPS gate(s) SKIPPED — no failure, but not everything was checked"
         echo "────────────────────────────────────────────────────────────────────"
         exit "$_xrc"
     fi
@@ -607,6 +652,7 @@ if [ $# -gt 0 ]; then
         exit 2
     fi
     _chk_resolve "$1" || exit 2
+    _chk_read_no_skip
 
     _chk_stage_home
     if [ "$_CHK_KIND" = "suite" ]; then
@@ -631,6 +677,7 @@ if [ $# -gt 0 ]; then
     exit 0    # _chk_finish turns the tally into the verdict
 fi
 
+_chk_read_no_skip
 _chk_stage_home
 
 # ⛔ v6.6.6: RECORD the driver's verdict, do NOT abort on it. `"$CHECK_BIN"` used to be a
