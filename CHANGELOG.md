@@ -25,8 +25,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   inside the deadline with a child left running; the envp merge, `_regression_termed` and the
   source buffer return -1. **Gate:** `tests/gates/memory/harness_alloc_refused.sh` runs the
   test_scratch panic and its served twin on x86, qemu-aarch64, wine and cxvm (each compiler built
-  fresh from `src/`), plus the regression rows on x86 Linux; each check removed alone reddens it
-  (ledger in the header — cx is the row that shows a silent guest write). Verified on real ecb,
+  fresh from `src/`), plus the regression rows on x86 Linux — including one fresh-process case per
+  walk buffer (`ALLOC_MAX` is a per-call size cap, so 40000 refuses only the 64 KB children
+  buffer; the pid list and the dirent buffer are refused alone by seeding the others first); each
+  check removed alone reddens it (ledger in the header — cx is the row that shows a silent guest
+  write). Verified on real ecb,
   ach, pi and cass: exit 1 with the panic line.
 
 - **The check driver reaps adopted orphans between rows, and its exit note counts only

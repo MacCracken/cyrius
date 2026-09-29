@@ -31,6 +31,11 @@
 #      for regression_exec_in_dir3_env; regression_pipe_to_bin_capture returns -1; a refused
 #      `_regression_termed` does not fault regression_terminate_children, which still ends
 #      the child; each served twin runs
+#   3b (x86 Linux) EACH walk buffer alone, one fresh process per case: cbuf (ALLOC_MAX 40000),
+#      pids+cbuf (20000), pids alone and dbuf alone (the other buffers seeded first — by size
+#      alone pids cannot be refused without cbuf, nor dbuf without both, since dbuf is the
+#      smallest and cbuf the largest). Each: -1, no child ran, then the same process with the
+#      cap restored retries the missing buffer and the verb runs
 # Each cross target is built FRESH from src/ with $CC (a stale build/cycc_aarch64 is exactly
 # what the check-driver half of this bite stops trusting). wine / qemu-aarch64 missing = a
 # named SKIP of that target only.
@@ -43,6 +48,12 @@
 #                                           write through 0 is silent and bench_new then returns
 #                                           0 anyway (the cxvm no-bounds-check backlog item)
 #   * `_regression_fork`'s tree init    -> row 3: "a child ran although the walk buffers were refused"
+#   * tree init's `cbuf == 0`           -> row 3b cbuf: "got 0, expected -1" + a child ran (row 3's
+#                                           ALLOC_MAX = 0 refuses all three at once and STAYS GREEN
+#                                           on this mutation — the reason 3b exists)
+#   * tree init's `pids == 0` term      -> row 3b pids: got 0 + a child ran
+#   * tree init's `dbuf == 0` term      -> row 3b dbuf: got 0 + a child ran
+#   * all but pids (the 6.6.9 shape)    -> row 3b cbuf and dbuf
 #   * the envp merge's `merged == 0`    -> row 3: rc 139
 #   * `_regression_termed == 0` return  -> row 3: rc 139
 #   * the src_buf check                 -> row 3: "pipe_to_bin_capture ... returns -1 (got 0)"
@@ -206,6 +217,52 @@ CYR
     else
         _fail "row 3: the regression probe did not compile"
     fi
+
+    # row 3b — EACH walk buffer's check, in a fresh process (the buffers persist once served, so
+    # every case is its own program). ALLOC_MAX is a per-call SIZE cap (lib/alloc.cyr), so the
+    # sizes select what is refused: pids 32 KB, dbuf 4 KB, cbuf 64 KB. By size alone only cbuf
+    # (ALLOC_MAX 40000) and pids+cbuf (20000) are refusable; pids alone and dbuf alone are made
+    # refusable by SEEDING the other buffers first (white-box: the probe allocates them into the
+    # module's globals while the cap is open). Each case: the verb returns -1, no child ran, then
+    # with the cap restored the same process retries the missing buffer and the verb runs.
+    tree_case() {  # $1 label, $2 seed statements, $3 ALLOC_MAX while refused
+        c="$W/t_$1"; mkdir -p "$c.d"
+        { sed -n '1,12p' "$W/p3.cyr"; cat <<CYR
+fn main(): i64 {
+    alloc_init();
+    var envp[8];
+    store64(&envp, 0);
+    $2
+    var saved = ALLOC_MAX;
+    ALLOC_MAX = $3;
+    var r1 = regression_exec_in_dir3(".", "/bin/sh", "-c", "echo x > m1", 0, 0, &envp);
+    ALLOC_MAX = saved;
+    assert_eq(r1, 0 - 1, "$1: exec_in_dir3 with that walk buffer refused returns -1");
+    assert_eq(file_exists("m1"), 0, "$1: a child ran although a walk buffer was refused");
+    var r2 = regression_exec_in_dir3(".", "/bin/sh", "-c", "echo x > m2", 0, 0, &envp);
+    assert_eq(r2, 0, "$1: served again, the retry allocates it and exec_in_dir3 runs");
+    assert_eq(file_exists("m2"), 1, "$1: served again, the child ran");
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);
+CYR
+        } > "$c.cyr"
+        if "$CC" < "$c.cyr" > "$c.bin" 2>/dev/null; then
+            chmod +x "$c.bin"
+            RRC=0; ( cd "$c.d" && timeout 60 "$c.bin" ) > "$c.out" 2>&1 || RRC=$?
+            [ "$RRC" = 0 ] || { _fail "row 3b $1: exit $RRC"; grep -E 'FAIL|passed' "$c.out" | sed 's/^/      /'; }
+            grep -qE '^[1-9][0-9]* passed, 0 failed' "$c.out" || _fail "row 3b $1: no clean summary"
+        else
+            _fail "row 3b $1: the probe did not compile"
+        fi
+    }
+    echo "row 3b: each walk buffer's refusal alone fails the verb before the fork"
+    tree_case cbuf  "" 40000
+    tree_case pids+cbuf "" 20000
+    tree_case pids  "_regression_tree_cbuf = alloc(65536);" 20000
+    tree_case dbuf  "_regression_tree_pids = alloc(_REGRESSION_TREE_CAP * 8); _regression_tree_cbuf = alloc(65536);" 0
     ;;
 *) echo "  SKIP: row 3 — x86_64 Linux only (it forks and walks /proc)" ;;
 esac
