@@ -2,17 +2,18 @@
 
 **Scope:** the untrusted-source-input surface. Previous full audit:
 `docs/audit/2026-07-27-security-audit.md` (CVE-32…CVE-36) at cycc 6.4.82.
-**Next free identifier after this document: CVE-51.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
+**Next free identifier after this document: CVE-52.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
 document are **withdrawn** but still consume their ids.) CVE-43 was consumed at 6.6.5,
 **CVE-44 and CVE-45 at 6.6.6** — the release installer's fixed `/tmp` staging, and a forged `#@file` from an included file —
 **CVE-46, CVE-47 and CVE-48 at 6.6.7** (a `secret var` inside a closure was never zeroised; a `secret var` in a
 fn whose `return f(..)` was compiled as a tail call was never zeroised; on agnos a server bound to 127.0.0.1
 listened on the network), and **CVE-49 and CVE-50 at 6.6.9** (`cyrius self` staged and executed compilers at
-predictable shared `/tmp` names; `lib/http.cyr` wrote a long URL past its 2048-byte request buffer); all eight are
+predictable shared `/tmp` names; `lib/http.cyr` wrote a long URL past its 2048-byte request buffer), and
+**CVE-51 at 6.6.10** (on Intel-Mac, reading the clock wrote mach time through a stale `rdx`); all nine are
 appended below.
 ⚠ **This line read "next free: CVE-42" while CLAUDE.md read "the next CVE number is 43" and this document ran 39-41.**
 Two authorities, two answers, and nothing reconciled them. CLAUDE.md is the one every closeout reads, so **42 is
-retired unused** and CVE-43 is the entry appended below. Anything below 51 now collides.
+retired unused** and CVE-43 is the entry appended below. Anything below 52 now collides.
 
 Run as part of the band K closeout, as nine parallel audit dimensions over the v6.5.x minor with
 an adversarial verification pass over the highest-severity findings. Everything recorded here was
@@ -771,3 +772,74 @@ macOS) and pi (aarch64 Linux) with nothing left under the temp base, and the 0-b
 refused on all three where the 6.6.8 CLI printed PASS (rc 0). On ecb, ach and pi stub
 compilers that exit 42, die of SIGSEGV and exit 0 with no output are each reported as such; on
 cass the PE arm names a failing step by compiler path and still PASSes the real self-host.
+
+---
+
+## CVE-51 — on Intel-Mac, reading the clock wrote mach time through a stale register (and its stale-register out-pointer siblings)
+
+*Appended 2026-09-28 (cyrius 6.6.10, bite 1), found by the 6.6.10 group-D triage while chasing
+"an unconfirmed garbled assert message on ach" that had stood in the roadmap since 6.6.8. Not part
+of the 2026-09-03 sweep: recorded here because this is the live ledger and the id has to come from
+one place. 6.6.10 bite 9 spends CVE-52 and bite 14 CVE-53.*
+
+| | |
+|---|---|
+| **Severity** | **Medium (P2)** — an 8-byte write of emitted-code-chosen data (mach time) to a stale address in an rwx image; neither the value nor the address is attacker-chosen. Silent: no diagnostic, rc unchanged, and a non-writable address is swallowed as EFAULT |
+| **Affected** | x86_64-macOS (`CYRIUS_MACHO=1`): every `syscall(228, id, &ts)` — so every `clock_now_ns` / `clock_now_ms` / `bench_*` / sakshi timestamp — from v6.5.16 through cyrius 6.6.9. Siblings below |
+| **Fixed** | 6.6.10 |
+
+**Vector.** Darwin has no `clock_gettime`, so `EMACHO_CLOCK_X86` (src/backend/x86/emit.cyr)
+composes `syscall(228)` from BSD `gettimeofday(struct timeval *tp, struct timezone *tzp,
+uint64_t *mach_absolute_time)`. The THIRD parameter is an out-pointer: xnu copies mach time out
+through it when it is non-NULL. The emitter set `rdi = &tv` and `esi = 0` and never wrote `rdx`,
+so the kernel wrote 8 bytes to whatever address the previous code left there — normally the
+previous call's third argument. `lib/sys.cyr`'s own `_macos_gettimeofday` has documented exactly
+this hazard, and passed an explicit 0, since v6.5.16; the emitter never got the same treatment.
+
+**Impact.** The x86 Mach-O image is a single `__TEXT` segment with maxprot/initprot rwx
+(`llvm-objdump --macho --private-headers`), so code, string literals and globals are all
+writable targets. Measured on ach: `take3(0, 0, &buf); clock_now_ms();` overwrote the sentinel in
+3 of 3 runs with `0x0012ADE8A2EA59E2` ns ≈ 60.9 days — ach's uptime; the same probe on ecb
+(arm64 binds `_clock_gettime_nsec_np` through `__got`) left it intact. It was the "garbled
+assert": `regression_terminate_children.tcyr` against the 6.6.8-lane `lib/regression.cyr`
+printed `FAIL: \xAD (got 0, expected 1)` twice on ach — an assert label's bytes overwritten
+mid-test — and prints the full message with the fix. When `rdx` held no writable address,
+copyout failed with EFAULT, which the reroute ignores, so the defect is "whenever the previous
+code left a live pointer in rdx", not literally every call.
+
+**The same class — a Darwin call whose extra or unsupplied argument is an OUT-pointer, filled
+from a register the Linux-shaped caller never wrote:**
+- **x86-macOS `syscall(22)` at argc 1** (pipe with no fds pointer). `EMACHO_PROC_FIXUP` stores
+  Darwin's rax:rdx fds through `rdi`, which the call never wrote: with `rdi` primed by
+  `syscall(21, &sentinel, 0)`, `syscall(22)` overwrote the sentinel (ach). arm64's twin stored
+  through `x0 = 59` (SIGSEGV), and arm64 `syscall(35)` dereferenced `x0 = 35` in the nanosleep
+  emulation. **Fixed here:** both backends now emit those emulations only at their arity
+  (ESCPOPS records argc; `_msx_short`, `_esx_short`, and `EMACHO_NANOSLEEP_ARM` at argc 3), so a
+  too-short call is SIGSYS (or -ENOSYS with SIGSYS ignored), and parse_expr warns at compile time.
+- **x86-macOS `EMACHO_PROC_FIXUP`'s error guard.** Found while testing the row above: its `js`
+  had no `test rax, rax` in front of it and read the sign of the preceding `cmp r11, 22`, which is
+  zero on that path — so a FAILED pipe stored `-errno` and a stale `rdx` over the caller's fds and
+  returned 0 (measured on ach: a -ENOSYS pipe came back 0 with `0x…FFFFFFB2` written). **Fixed
+  here** (`test rax, rax`; the arm64 twin's `cmp x0, #0; b.lt` was already right).
+- **`sys_getdents64` on both Macs.** Darwin's `getdirentries64` takes a fourth parameter, `off_t
+  *basep`, and the shared 3-argument Linux wrapper left `r10` / `x3` stale: with it primed to
+  `&sentinel`, a directory read zeroed the sentinel on ach AND ecb (and returned Darwin records
+  under the `linux_dirent64` contract). **Fixed in 6.6.10 bite 3** (lane D): the wrapper declines
+  with -78 on macOS.
+
+**Fix.** `xor edx, edx` before the `syscall` in `EMACHO_CLOCK_X86` (+2 B per x86-macOS clock
+site): mach time out-pointer = NULL. Fixpoint and `seed → cybs → cycc` hold. Using gettimeofday's
+third argument as a MONOTONIC source for Intel-Mac (it is the only syscall-reachable mach time) is
+a separate change and is not made here.
+
+**Verified.** `tests/tcyr/crossos/darwin_clock_no_stray_write.tcyr` primes the third argument
+register with `&sentinel` through a cyrius call, then reads the clock through `clock_now_ns()` and
+through a raw `syscall(228, 4, &ts)` in the same function: 3 rows RED on ach with the 6.6.9
+compiler (the sentinel reads back as mach time), green with the fix, and green on every other
+target. `tests/tcyr/crossos/darwin_short_arity_sigsys.tcyr` covers the siblings fixed here:
+the too-short calls die with SIGSYS 12 on ach and ecb (6.6.9: SIGSEGV 11 on ecb and on ach's
+pipe), and with SIGSYS ignored return -78 and leave the rdi sentinel intact (6.6.9: the fds
+stored over it). `tests/gates/platform/macho_clock_buffer_contract.sh` fails on the Linux host
+if `EMACHO_CLOCK_X86` stops zeroing rdx before its syscall (mutation-proven), and
+`darwin_syscall_literals_routed.sh`'s controls pin the compile-time warnings for 35 at argc 2 and
+a pipe with no fds pointer on both Macs.

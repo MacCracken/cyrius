@@ -119,8 +119,10 @@ fn _cx_host_getrandom(buf, len, flags): i64 {
 # clock_gettime(clk, ts) for the guest, with the LINUX contract the .cyx ABI promises (fill
 # `ts` = {sec, nsec}, return 0) on every host. The host's own syscall(228) does not keep that
 # contract: arm64-macOS routes it to _clock_gettime_nsec_np and x86-macOS composes it from
-# gettimeofday — both RETURN nanoseconds and leave the timespec untouched (measured on ecb:
-# rc 0, tv_sec 0) — and Windows routes it to GetTickCount64, milliseconds since boot. So read
+# gettimeofday — both RETURN nanoseconds; arm64 leaves the timespec untouched (measured on
+# ecb: rc 0, tv_sec 0) while x86 writes a struct TIMEVAL into it ({sec, usec}, not
+# {sec, nsec}; this note said "untouched" for both until 6.6.10) — and Windows routes it to
+# GetTickCount64, milliseconds since boot. Neither Mac leaves a Linux timespec. So read
 # the host clock through lib/chrono.cyr, which is written per host, and fill the timespec
 # here. clk 0 (CLOCK_REALTIME) is wall time; every other id is the monotonic clock.
 # CHANGELOG [6.6.8]
