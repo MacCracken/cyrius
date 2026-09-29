@@ -24,14 +24,23 @@ alloc_init();
 test_group("bootstrap sequence");
 var boot_rc = dynlib_bootstrap_cpu_features();
 if (boot_rc != 0) {
-    syscall(SYS_WRITE, 1, "  SKIP: ld-linux not available (non-glibc host)\n", 48);
-    # 6.6.10: the SKIP path asserts what it observed. It used to print a summary of ZERO
-    # assertions, which the cross-OS runner rightly scores as a binary that ran nothing — so
-    # this file was red on both Macs in the full-corpus run. On a non-glibc host the bootstrap
-    # must DECLINE (non-zero), never claim a libc it could not find. CHANGELOG [6.6.10]
-    assert_neq(boot_rc, 0, "non-glibc host: dynlib_bootstrap_cpu_features declines instead of claiming success");
+    syscall(SYS_WRITE, 1, "  SKIP: no usable x86-64 glibc loader on this host\n", 51);
+    # 6.6.10: the SKIP path asserts things that CAN fail. A bare decline used to print a
+    # summary of zero assertions (scored "ran nothing" by the cross-OS runner, red on both
+    # Macs); a restated `boot_rc != 0` would have been a tautology that also hid the real
+    # regressions. dynlib_bootstrap_cpu_features returns 1 = loader not opened, 2 = the
+    # getter is missing, 3 = the getter returned null — 2 and 3 mean the loader WAS found
+    # and the bootstrap is broken, so only 1 is an honest skip. CHANGELOG [6.6.10]
+    assert_eq(boot_rc, 1, "declined because the loader was not opened (2/3 = found but broken)");
+    #ifndef CYRIUS_ARCH_AARCH64
+    # x86_64: a decline is honest only when the loader really is absent. (aarch64 declines
+    # by design — dynlib_open is x86_64-only — whether or not a foreign loader is on disk,
+    # e.g. the host's under qemu-user, so this half is x86-only.)
+    assert_neq(sys_access("/lib64/ld-linux-x86-64.so.2", 0), 0, "the x86-64 glibc loader is absent on this host");
+    #endif
+    # exit WITH the failure count — `syscall(60, 0)` scored a failed SKIP as a pass
     var _r = assert_summary();
-    syscall(60, 0);
+    syscall(60, _r);
 }
 assert_eq(boot_rc, 0, "dynlib_bootstrap_cpu_features returns 0");
 var tls = dynlib_bootstrap_tls();
@@ -149,4 +158,4 @@ assert_eq(dynlib_auxv_get(0, ar3, 6), 0, "null auxv buffer returns 0");
 assert_eq(dynlib_auxv_get(abuf, 8, 6), 0, "short auxv buffer returns 0");
 
 var r = assert_summary();
-syscall(60, 0);
+syscall(60, r);   # the failure count, not 0 (it hid every FAIL above)

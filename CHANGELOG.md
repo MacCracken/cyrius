@@ -58,9 +58,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   carries the same derive in a taken `#ifndef`, so every target runs the case);
   `math/math_inverse_trig.tcyr` compiled to ZERO assertions on aarch64 behind a stale
   `#ifdef CYRIUS_ARCH_X86` that matched ganita ≤1.0.2 (the functions have been on every arch
-  since; 17/17 now on aarch64); `platform/dynlib_init.tcyr`'s non-glibc SKIP path printed a
-  0-assertion summary, which the cross-OS runner rightly scores as "ran nothing" — it now asserts
-  that the bootstrap declines.
+  since; 17/17 now on aarch64); `platform/dynlib_init.tcyr`'s SKIP path printed a 0-assertion
+  summary, which the cross-OS runner rightly scores as "ran nothing". It now asserts what can
+  fail: the decline is code 1 (loader not opened — 2/3 mean found-but-broken), and on x86_64 that
+  `/lib64/ld-linux-x86-64.so.2` really is absent (aarch64 declines by design). Both exits now carry
+  the failure count — `syscall(60, 0)` had scored every FAIL in the file, main path included, as
+  a pass (mutation: a forced return of 2 was green, now exits 2).
 - **The whole `.tcyr` corpus compiles for PE, both Mach-O targets and agnos — a ratchet gate keeps
   it that way.** (bite 14.) Nothing cross-compiled `tests/tcyr` outside `crossos/`: on the 6.6.10
   tree 9 files failed for PE, 1 for both Mach-O targets and 37 for agnos, every one a missing guard
