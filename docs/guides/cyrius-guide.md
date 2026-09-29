@@ -2384,7 +2384,14 @@ fn run(): i64 {
 
 The type parameter `T` may appear in parameter types (`x: T`), the return type
 (`: T`), and inside the body (`var y: T`, `sizeof(T)`, `slice<T>`). At a call,
-the concrete type is **inferred** positionally from the arguments.
+the concrete type is **inferred** from the argument in the parameter `T` types —
+the first such parameter, wherever it sits (`fn g<T>(n, p: T)` infers `T` from
+`g(2, p)`'s `p`). A struct argument — a struct local or parameter, a struct
+global, a call returning a struct — binds `T` to that struct on every call path
+(an expression, `var r = g(p)`, `return g(p);`, an argument, a struct receive),
+exactly as the explicit `g<Pt>(p)` does (6.6.10; before that only an inlined body
+inferred a struct, and every other path ran the i64 base). Any other argument
+infers `i64`, or the width a scalar-returning call declares.
 
 Type arguments may be **inferred** from the call (`add(1, 2)`) or written
 **explicitly** (`add<i64>(x)`, `add<i32>(x)`). Inside a generic body a type
@@ -2404,6 +2411,31 @@ specialized instance `add$i32` / `Box$Point` is emitted **once** (deduped — a
 second `add<i32>` call reuses it) and called normally. There is no runtime type
 dispatch — `T` is resolved entirely at compile time.
 
+**A generic that uses `T` as a struct has no i64 instance.** When a `T`-typed
+value — a parameter or a `var q: T` local — is used as a struct (`p.y`), there is
+no valid i64 form, so the base is a dead stub, and any use that would reach it is
+a compile error naming the fn: a scalar call (`g(5)`, `g<i64>(5)`, `g<i32>(5)`,
+in any position, tail included), `&g`, and a generic that FORWARDS its own `T` to
+such a generic (`fn outer<T>(p: T) { return g(p); }` makes `outer(5)` an error
+too, whichever order the two are defined in). Call it with a struct argument or a
+struct type argument (6.6.10; before that each of these compiled and returned 0).
+
+```
+struct Pt { x; y; }
+fn sum<T>(p: T): i64 { return p.x + p.y; }
+fn run(): i64 {
+    var p: Pt; p.x = 40; p.y = 2;
+    return sum(p);               # 42 — T inferred as Pt
+    # sum(5) / sum<i64>(5) / &sum — error: 'sum' has no i64 (or other scalar) instance
+}
+```
+
+A signature may name a generic struct instance: `fn mk<T>(x: T): Box<T>` returns
+`Box<Pt>` from its `Pt` instance, and a plain `fn f(r: Box<Pt>): Box<Pt>` takes and
+returns the instance (6.6.10; before that such a type was sized as the base
+`Box`, where `v: T` is an i64 — `r.v.x` failed to parse). As for a `var`, an
+all-`i64` argument list names the base struct itself.
+
 ### Generic structs
 
 A struct may be parameterized too:
@@ -2422,13 +2454,15 @@ The type argument may itself be a struct (`Box<Point>`) — the instance's field
 is laid out at the concrete type's size, so a following field lands at the right
 offset. Each distinct `Struct<type-args>` mints one deduped instance.
 
-**Status & limits (v6.3.10).** Generic functions and structs are supported over
+**Status & limits (6.6.10).** Generic functions and structs are supported over
 i64, narrow scalars (`i32`/`i16`/`i8`), and struct type arguments, inferred or
-explicit. Function bodies follow the inline-candidate shape (≤2 type-bearing
-params, straight-line — no `if`/`while`/`var`-decl control flow). Single type
-parameter is the well-tested case; multi-parameter (`Pair<T, U>` with distinct
-`T`/`U`) maps both to the first argument for now. Enum generic params
-(`<T, E>`) remain syntactically accepted but type-erased.
+explicit, with any body (a small straight-line body is inlined at its call sites;
+anything else is an ordinary call). At most two type parameters are recorded. A
+struct type argument is supported on a generic with ONE type parameter: a struct
+beside a second type argument — explicit (`g<Pt, i64>`) or inferred (`g(p, q)`
+with two structs, or a struct and a scalar) — is a compile error (6.6.10 for the
+inferred form; it returned 0). Enum generic params (`<T, E>`) remain syntactically
+accepted but type-erased.
 
 ## Async / Await
 
