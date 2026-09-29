@@ -275,6 +275,9 @@ PREPROCESS(S);
 # +6 with two). Measured pre-existing, but 6.5.20 removed a compensating error
 # that had been masking it on the derive path, so it must not ship unfixed.
 FM_BUILD(S);
+# 6.6.11: tls / tls_native / sigil are outside cx's scope — refused by name, not at the
+# codebuf cap mid-emit (backend/cx/emit.cyr). CHANGELOG [6.6.11]
+if (_cx_scope_refused(S) == 1) { syscall(SYS_EXIT, 1); }
 
 # Lex
 LEX(S);
