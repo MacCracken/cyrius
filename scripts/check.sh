@@ -1592,6 +1592,18 @@ _chk_gate "$ROOT/tests/gates/toolchain/cli_child_env_complete.sh"
 # 6.6.11 (B09: I3) — cyrius.exe honours CYRIUS_RESOLVED=1 and runs a pinned versions/<pin>/bin/
 # cyrius.exe as a child (sys_execve is a -1 stub on PE), propagating its exit code. Wine; 77 without.
 _chk_gate "$ROOT/tests/gates/toolchain/cli_pe_pinned_redirect.sh"
+# 6.6.11 (B10: K7) — `cyrius soak` says what a failed self-host step DID (signal, empty output,
+# a real status) through `_raw_fail_describe`, never the raw `_self_host_step` return as an
+# "exit". Exit 77 with no compiler or CLI.
+_chk_gate "$ROOT/tests/gates/toolchain/cyrius_soak_describes_failures.sh"
+# 6.6.11 (B10: S2) — a named dep's THIN PROFILE of a package the consumer declares as a stdlib
+# leaf (bote → libro → sigil-mldsa) is neither vendored nor auto-included; the fold is the
+# package and the build succeeds on it alone. Exit 77 with no compiler, CLI or lib/sigil.cyr.
+_chk_gate "$ROOT/tests/gates/toolchain/deps_stdlib_profile_not_vendored.sh"
+# 6.6.11 (B10: K5/K8) — a distlib `.deps` sidecar is the UNION over every target, identical
+# whichever host / target env runs it, with a named owner rule for target-partial symbols.
+# Exit 77 with no compiler or CLI, or when cycc_aarch64 does not build from src/.
+_chk_gate "$ROOT/tests/gates/toolchain/distlib_sidecar_host_independent.sh"
 
 # 6.6.9 (bite 9) — a temp dir the CLI cannot write is named as that: the dep-cache check says
 # "could NOT be verified" (reason 10) instead of calling a healthy cache tampered, the hasher
