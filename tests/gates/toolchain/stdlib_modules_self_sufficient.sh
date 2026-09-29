@@ -150,7 +150,7 @@ _status() {
     printf 'include "%s";\nfn _ssm(): i64 { return 0; }\nvar _ssr = _ssm();\nsyscall(60, _ssr);\n' "$2" > "$3/ss.cyr"
     _compile "$1" "$3/ss.cyr" "$3/ss.bin" "$3/ss.err"
     rc=$?
-    u=$(grep '^warning: undefined function' "$3/ss.err" | grep -v 'call site may be unreachable' \
+    u=$(grep '^warning: undefined function' "$3/ss.err" | grep -v "' (reachable call site)\$" \
         | sed "s/^warning: undefined function //" | tr -d "'" | tr '\n' ' ')
     if [ "$rc" -ne 0 ]; then
         # the cx backend reports its undefined calls in the error line itself

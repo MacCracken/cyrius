@@ -587,7 +587,10 @@ fn FIXUP(S): i64 {
                     var u59_unlen = 0;
                     while (load8(u59_unptr + u59_unlen) != 0) { u59_unlen = u59_unlen + 1; }
                     syscall(SYS_WRITE, 2, u59_unptr, u59_unlen);
-                    syscall(SYS_WRITE, 2, "' (call site may be unreachable)\n", 33);
+                    # 6.6.10: this line prints ONLY for a site judged reachable (u59_skip == 0);
+                    # it read "(call site may be unreachable)", the v5.11.56 wording from before
+                    # the reachability filter existed. CHANGELOG [6.6.10]
+                    syscall(SYS_WRITE, 2, "' (reachable call site)\n", 24);
                     undef_count = undef_count + 1;
                     # 6.6.9: marked REPORTED only when it was — marking a dead-host reference
                     # hid every later LIVE call of the same fn from the refusal. CHANGELOG [6.6.9]
