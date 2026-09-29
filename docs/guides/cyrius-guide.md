@@ -723,6 +723,17 @@ struct Config { host: Str; port; timeout; }
 #            Config_port(p), Config_set_port(p, v), etc.
 ```
 
+`#derive(accessors)` applies to a **struct** only. On an `enum` it is a compile error, by
+name, whether it is the first directive or stacked under `#derive(Serialize)` /
+`#derive(Deserialize)` (v6.6.10; before that an enum's members were emitted as 8-byte
+"fields" — `col_RED(p)` read `p + 0`, and the members' values were never involved). Derive an
+enum's name codec with `#derive(Serialize)` / `#derive(Deserialize)` instead (below).
+
+Stacked derives emit the same fns in **any order**: `#derive(accessors)` above or below
+`#derive(Serialize)` or `#derive(Deserialize)` gives the accessors AND both JSON codecs
+(v6.6.10; before that, accessors directly above Deserialize emitted no codecs, and the first
+call to `X_from_json_str` failed as an undefined function).
+
 An accessor reads and writes at the field's own width: an `i8` / `i16` / `i32` field gets
 `load8/16/32` and `store8/16/32`, everything else (untyped, `i64`, `Str`, `Vec<T>`, `f64`, a
 nested `#derive`d struct) an 8-byte slot (v6.6.7; before that every accessor was `load64` /
@@ -3458,25 +3469,29 @@ code in `rdi`), not Linux `syscall(60)`. The binary is a valid x86_64 ELF64 at e
 
 ### AGNOS Syscall ABI
 
-agnos defines an append-only syscall surface: **#0–#95 contiguous, plus #97**, at agnos
-1.56.x (`lib/syscalls_x86_64_agnos.cyr`). Beyond the GPU-compute band #82–#91 it now carries
-`gpu_shader_op` (#92), `gpu_modeset_op` (#93), `gpu_recover_op` (#94), `uptime_us` (#95) and
-the local-IPC **channel band** `chan_op` (#97, minted at v6.5.8). ⚠ **#96 (`fork`) is
-reserved but deliberately NOT minted** — on agnos an unknown number falls *through* the
+agnos defines an append-only syscall surface: **#0–#104 and #106–#108** at agnos 1.57.10
+(`lib/syscalls_x86_64_agnos.cyr`; #105 was withdrawn and is never re-added). Beyond the
+GPU-compute band #82–#91 it carries `gpu_shader_op` (#92), `gpu_modeset_op` (#93),
+`gpu_recover_op` (#94), `uptime_us` (#95), **`fork` (#96, minted at v6.5.37 / agnos 1.56.55 —
+its arm is in the ring-3 entry stub)**, the local-IPC **channel band** `chan_op` (#97, v6.5.8),
+and on up to `sched_yield_to` (#108, agnos 1.57.9); the next free number is #109. ⚠ A number
+is minted only once its kernel arm exists — on agnos an unknown number falls *through* the
 dispatch chain and the caller reads the fall-through value as data, so a
 minted-but-unimplemented constant is strictly worse than an absent one. The register
 convention is x86_64 SysV (rax=number, rdi/rsi/rdx/r10=args 1–4, rax returns
 result ≥0 on success, -1 on error). Key differences from Linux:
 
 ```
-# agnos syscall numbers — append-only, #0–#95 + #97 (lib/syscalls_x86_64_agnos.cyr)
+# agnos syscall numbers — append-only, #0–#104 + #106–#108 (lib/syscalls_x86_64_agnos.cyr)
 SYS_EXIT = 0       (not Linux 60)
 SYS_WRITE = 1
 SYS_READ = 5
 SYS_OPEN = 7
-SYS_SPAWN = 3      (spawn in-memory ELF; no fork/exec)
-SYS_WAITPID = 4    (returns exit_code directly, not wait-status)
+SYS_SPAWN = 3      (legacy: spawn an in-memory ELF ≤ 16 KB; from disk use #43 spawn_path)
+SYS_WAITPID = 4    (NON-blocking poll: a WAIT STATUS, -2 while the child lives, -1 not ours;
+                    0x100|pid blocks (WAIT_BLOCK, 1.57.7) — decode with WIFEXITED/WEXITSTATUS/…)
 SYS_MMAP = 27      (anonymous, 2 MB-granular, no hint support)
+SYS_FORK = 96      (fork: the child's pid / 0 in the child / -1; NO execve — start a program with #43)
 ```
 
 **Explicit lengths, no NUL assumption**: every path argument carries its length.
@@ -3537,12 +3552,15 @@ agnos ring-3 init stack (ABI §4.6). The kernel stages `[rsp]=argc`, argv pointe
 a NULL, envp, AT_NULL-only auxv. The cycc entry captures the init-rsp, so `argc()`,
 `argv(n)`, and `getenv(name)` read the cached rsp.
 
-**`lib/process_agnos.cyr`**: process spawn and wait. agnos has no fork/exec; instead,
-`sys_spawn(elf_addr, elf_size)` runs an in-memory ELF image (you must read the file
-into heap first). The wrappers are `run(cmd)`, `spawn(cmd)`, `wait_pid(pid)`, and
-variants like `exec_vec(args)`, `exec_capture` (capture is a stub — output goes to
-terminal). **Limitation**: `sys_spawn` takes no argv/envp, so spawned programs
-receive only their own name; arguments cannot be passed.
+**`lib/process_agnos.cyr`**: process spawn and wait (rewritten 6.6.8; agnos ≥ 1.57.6).
+agnos has fork (#96) but no execve, so a program is started from disk by the parent:
+`spawn_path` #43 with a real argv (`SPAWN_F_ARGV`, arguments may hold spaces) and a clean fd
+table (`SPAWN_F_CLEANFD`), waited for with WAIT_BLOCK (1.57.7), and captured through a pipe
+armed on the child's fd 1 by `exec_redirect` #62. The wrappers are `run`, `spawn`, `wait_pid`,
+`exec_vec`, `exec_capture` / `exec_capture_status`, `exec_env` and `exec_cmd`. argv[0] is an
+absolute path — there is no PATH search and no shell. `lib/regression.cyr`'s spawn and capture
+verbs and `lib/async.cyr`'s `async_timeout` / `async_run_process` run real processes on agnos
+too (6.6.10).
 
 ### Conditional Compilation Pattern
 
@@ -3678,7 +3696,8 @@ everywhere else. cycc warns on a conflicting `SYS_*` redefinition.
 - Syscall wrappers (all of #0–#104 and #106–#108; #105 was withdrawn)
 - Heap allocation (bump, 2 MB chunks)
 - File I/O (read, write, open, close, stat, getdents/readdir)
-- Process spawn and wait (in-memory ELF, or from disk via `sys_spawn_path`)
+- Process spawn, wait and capture from disk (`sys_spawn_argv` / #43, WAIT_BLOCK, #62 redirects),
+  and `fork` (#96) — but no execve
 - Arguments and environment variables
 - **Passing an environment to a spawned child** — `sys_spawn_path_env(path, len, env, envlen)`
   (v6.5.9). The blob is packed `KEY=VALUE\0…`, ≤1024 B, ≤16 entries. ⛔ The kernel treats a
@@ -3710,8 +3729,9 @@ everywhere else. cycc warns on a conflicting `SYS_*` redefinition.
 - Process **arguments** to an in-memory `sys_spawn` (elf_addr, elf_size only). From disk,
   `sys_spawn_argv` (v6.6.7, agnos 1.57.6) passes a real argv — arguments may contain spaces —
   where the line-form `sys_spawn_path` splits on spaces
-- stdout/stderr redirection (`sys_dup` is a stub returning `fd` unchanged; pipe → spawn → wait
-  works, but output goes to the terminal, not a buffer; `run_capture` returns 0 bytes)
+- `dup2`-style redirection in the CURRENT process (`sys_dup` is a stub returning `fd` unchanged).
+  A CHILD's fds are redirected at spawn time instead (`sys_exec_redirect`, #62), which is how
+  `run_capture` / `exec_capture` capture stdout since 6.6.8
 - `getppid` (no getppid in the surface; returns 0)
 - `getuid` (always 0 / root)
 - `chmod` (no permission model; `sys_chmod` is a no-op stub returning 0)
