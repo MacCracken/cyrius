@@ -13,6 +13,11 @@
 # operator, a free call at top level — and a plain integer arrive in rax, and a 3/5/6/7-byte field
 # took the width ladder's 8-byte ESTOC, overwriting the fields after it. Each row checks the
 # neighbours. Mutation: make `_fst_odd_sz` return 0 — every odd-width row goes red.
+#
+# 6.6.11 rows — the reverse direction and its neighbours:
+#   * `var y: Q = x;` from an address-passed by-value PARAMETER bound a second pointer to the
+#     caller's struct: writes through `y` changed the caller, `return y;` returned garbage.
+#     Mutation: restore `return 0` for a non-inline source in `_try_struct_copy_init`.
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/assert.cyr"
@@ -80,6 +85,17 @@ fn s7_call(): i64 { var h: H7; h.t = 8; h.s = mks7(1); return h.s.a + h.s.b * 10
 fn odd_integer(): i64 { var h: HO; h.t = 5; h.u = 9; h.o = 0x030201; return h.o.a + h.o.b * 10 + h.t * 100 + h.u * 1000; }
 fn keep_neighbours(): i64 { var b: Box; b.n = 42; var p: Pt; p.x = 1; p.y = 1; b.v = p; return b.n; }
 
+# ── 6.6.11: copy-init from an address-passed struct parameter ──────────────────────────────────
+struct Q { a; b; c; }
+fn pc_mod16(x: Pt): i64 { var y: Pt = x; y.x = 9; return y.x; }
+fn pc_mod24(x: Q): i64 { var y: Q = x; y.a = 9; return y.a; }
+fn pc_id16(x: Pt): Pt { var y: Pt = x; return y; }
+fn pc_id24(x: Q): Q { var y: Q = x; return y; }
+fn pc_caller16(): i64 { var p: Pt; p.x = 1; p.y = 2; var m = pc_mod16(p); return p.x + p.y * 10 + m * 100; }
+fn pc_caller24(): i64 { var q: Q; q.a = 1; q.b = 2; q.c = 3; var m = pc_mod24(q); return q.a + q.b * 10 + q.c * 100 + m * 1000; }
+fn pc_ret16(): i64 { var p: Pt; p.x = 1; p.y = 2; var r: Pt = pc_id16(p); return r.x + r.y * 10; }
+fn pc_ret24(): i64 { var q: Q; q.a = 1; q.b = 2; q.c = 3; var r: Q = pc_id24(q); return r.a + r.b * 10 + r.c * 100; }
+
 test_group("a struct value assigned into a struct-typed field copies the whole struct");
 var gp: Pt = alloc(16);
 gp.x = 3; gp.y = 4;
@@ -111,5 +127,11 @@ var GHO = HO { 0, 0, 0, 0 };
 GHO.t = 5; GHO.u = 9;
 GHO.o = mkodd(2);
 assert_eq(GHO.o.a + GHO.o.b * 10 + GHO.t * 10000 + GHO.u * 100000, 952002, "a free call into a 3-byte field at top level");
+
+test_group("var y: T = x from an address-passed struct parameter is a copy (6.6.11)");
+assert_eq(pc_caller16(), 921, "writing y leaves the caller's 16 B struct intact");
+assert_eq(pc_caller24(), 9321, "writing y leaves the caller's 24 B struct intact");
+assert_eq(pc_ret16(), 21, "copy-init then return y (rax:rdx)");
+assert_eq(pc_ret24(), 321, "copy-init then return y (retptr)");
 
 var r = assert_summary();

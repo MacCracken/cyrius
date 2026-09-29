@@ -2559,7 +2559,16 @@ fn _try_struct_copy_init(S, noff, pscale): i64 {
         # `b.y` read 99 (the neighbour) where 22 was right. Same class as the v6.6.0 P0, on the
         # declaration path. A pointer source now falls through to the scalar init, which binds b as
         # a second pointer to the same struct — the C semantics of `P *b = a`. CHANGELOG [6.6.5]
-        if (GLAGG(S, src_li) == 0) { return 0; }
+        # ⛔ 6.6.11 — ...BUT AN ADDRESS-PASSED BY-VALUE STRUCT PARAMETER IS NOT A POINTER-MODE LOCAL.
+        # Its slot holds the CALLER's struct's address too, so this bail bound `y` as a second
+        # pointer to the caller's struct: `var y: Q = x; y.a = 9;` changed the caller's `q`, and
+        # `return y;` copied the pointer slot as if it were the struct. `y = x;` has copied through
+        # since 6.6.6 (`_agc_operand`); the declaration now takes the same addressed copy.
+        # CHANGELOG [6.6.11]
+        if (GLAGG(S, src_li) == 0) {
+            if (_local_is_sptr_param(S, src_li) == 0) { return 0; }
+            src_li = _AGC_DREF(src_li);
+        }
     }
     # v6.5.57 — VECTORS TAKE THIS PATH TOO, and used to fall out of it. A `pscale` in the
     # descriptor band (<= -2048) is a vector, not a struct sid, so `STRUCTSZ` returned nothing
@@ -2601,12 +2610,13 @@ fn _try_struct_copy_init(S, noff, pscale): i64 {
     # Word-by-word copy: a's word i → b's word i (slot named - i). A LOCAL source is named at
     # its deepest slot so its word i is `src_li - i`; a GLOBAL's fields ascend from its named
     # slot so its word i is `_sci_gsrc + i`.
-    if (_sci_gsrc >= 0) {
+    if (_sci_gsrc >= 0 || src_li <= 0 - 1000) {
         # A global source is addressed and byte-exact — its slot index is not a word index
         # and reading `ceil(sz/8)` words would run past its neighbour. See `_agc_copy_bytes`.
+        # 6.6.11: so is an address-passed parameter (`src_li` in the `_AGC_DREF` band).
         var gnb = nslots * 8;
         if (pscale > 0 - 2048) { gnb = STRUCTSZ(S, (0 - pscale) - 1); }
-        _agc_copy_bytes(S, named, 0 - 1, 0 - 1, _sci_gsrc, gnb);
+        _agc_copy_bytes(S, named, 0 - 1, src_li, _sci_gsrc, gnb);
     }
     else {
         var i = 0;
