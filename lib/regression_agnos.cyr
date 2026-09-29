@@ -62,6 +62,8 @@ fn regression_deadline_kills(): i64 { return 0; }
 fn regression_last_deadline_ms(): i64 { return 0; }
 # Nothing here forks a child tree, so there is nothing to end; 0 descendants were running.
 fn regression_terminate_children(grace_ms): i64 { return 0; }
+# Nothing here forks a child, so no child has ended to be reaped; 0. CHANGELOG [6.6.10]
+fn regression_reap_orphans(): i64 { return 0; }
 
 # ⚠ The two pumps call agnos-only wrappers (the O_NONBLOCK read/write, and the socket adapter's
 # deadline _agnos_dl_start / _agnos_dl_over — uptime_us#95 with its refused-calibration fallback,

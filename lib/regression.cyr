@@ -590,6 +590,19 @@ fn _regression_reap_ended(): i64 {
     return w;
 }
 
+# Reap, WITHOUT waiting, every child of this process that has already ended — including the
+# orphans a child SUBREAPER adopts — and return how many were reaped. For a supervisor that
+# must not accumulate zombies between rows (the check driver calls it before each row). Only
+# call it while no child whose status you still want is running: it collects ANY ended child.
+# CHANGELOG [6.6.10]
+fn regression_reap_orphans(): i64 {
+    var st[8];
+    var n = 0;
+    var w = sys_waitpid(0 - 1, &st, 1);
+    while (w > 0) { n = n + 1; w = sys_waitpid(0 - 1, &st, 1); }
+    return n;
+}
+
 var _regression_termed = 0;     # i64[_REGRESSION_TREE_CAP] pids already sent their SIGTERM
 var _regression_termed_n = 0;
 
@@ -624,7 +637,10 @@ fn _regression_term_children_once(): i64 {
 # orphan as it is reparented here (the caller must be a child SUBREAPER — prctl
 # PR_SET_CHILD_SUBREAPER — or orphans go to init instead); EXIT traps get up to `grace_ms`;
 # then the whole remaining tree is SIGKILLed and reaped. Returns how many descendants were
-# running when it started (0: nothing to do). The check driver calls it on its way out and
+# RUNNING when it started (0: nothing to do) — zombies are not counted: ended children are
+# reaped first and an ended grandchild is skipped (it used to count every listed descendant,
+# so the check driver blamed rows for "leaving running" processes that were long dead —
+# measured: 3 zombies reported as 3; CHANGELOG [6.6.10]). The check driver calls it on its way out and
 # `cyrius_check --run-gate` when its gate ends. Linux only (it walks /proc); elsewhere it
 # reaps the children that have ALREADY ended, signals nothing and returns 0 at once — the
 # loops below are Linux-only because off Linux they would kill nothing and only wait out
@@ -636,7 +652,8 @@ fn regression_terminate_children(grace_ms): i64 {
     #endif
     #ifdef CYRIUS_TARGET_LINUX
     var me = sys_getpid();
-    var n = _regression_tree_collect(me);
+    _regression_reap_ended();
+    var n = _regression_tree_sweep(_regression_tree_collect(me), 0);   # the LIVE ones
     _regression_termed_n = 0;
     var waited = 0;
     var left = _regression_reap_ended();

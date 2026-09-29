@@ -2452,6 +2452,7 @@ regression::regression_pipe_to_bin/3
 regression::regression_pipe_to_bin_capture/4
 regression::regression_pipe_write_all/4
 regression::regression_print/1
+regression::regression_reap_orphans/0
 regression::regression_run_with_timeout/3
 regression::regression_scp_to/4
 regression::regression_section/1
@@ -2476,6 +2477,7 @@ regression_agnos::regression_pipe_read_all/4
 regression_agnos::regression_pipe_to_bin/3
 regression_agnos::regression_pipe_to_bin_capture/4
 regression_agnos::regression_pipe_write_all/4
+regression_agnos::regression_reap_orphans/0
 regression_agnos::regression_run_with_timeout/3
 regression_agnos::regression_scp_to/4
 regression_agnos::regression_ssh_remote_exec_capture/4

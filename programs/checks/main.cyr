@@ -205,7 +205,21 @@ fn _tally(name, exit_code): i64 {
     return 0;
 }
 
+# Reap, without waiting, the orphans this SUBREAPER adopted during the row that just ended.
+# The driver used to reap them only in the exit sweep, so they sat as zombies for the rest of
+# the run and the exit note then counted them as processes "a row left running". Safe here
+# because of an INVARIANT every row keeps: no row holds a live child across its _check/_skip
+# (each waits for, or ends, what it spawned before scoring) — so anything collectable now is
+# an orphan, never a status a row still wants. CHANGELOG [6.6.10]
+fn _reap_between_rows(): i64 {
+    #ifdef CYRIUS_TARGET_LINUX
+    regression_reap_orphans();
+    #endif
+    return 0;
+}
+
 fn _check(name, exit_code): i64 {
+    _reap_between_rows();
     if (_row_timed_out(name) == 1) {
         if (exit_code == 0) { exit_code = 1; }
     }
@@ -223,6 +237,7 @@ fn _check(name, exit_code): i64 {
 # deadline kill during the probe that led to the skip is still a TIMEOUT failure.
 # Gate: tests/gates/toolchain/check_driver_skip_is_not_pass.sh. CHANGELOG [6.6.9]
 fn _skip(name, why): i64 {
+    _reap_between_rows();
     if (_row_timed_out(name) == 1) {
         _tally(name, 1);
         return 1;

@@ -29,6 +29,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (ledger in the header — cx is the row that shows a silent guest write). Verified on real ecb,
   ach, pi and cass: exit 1 with the panic line.
 
+- **The check driver reaps adopted orphans between rows, and its exit note counts only
+  processes still RUNNING.** (bite 12) **Root cause:** the driver is a child subreaper (6.6.8)
+  but reaped only in its exit sweep, so every orphan a row left sat as a zombie for the rest of
+  the run; and `regression_terminate_children` returned the number of descendants `/proc`
+  listed, zombies included, so the exit line `note: N process(es) a row left running were ended
+  at exit` blamed rows for processes that had long since exited (measured: 3 zombies reported as
+  3). **Fix:** `_check` / `_skip` reap WNOHANG on Linux through the new public
+  `regression_reap_orphans()` (the invariant that makes it safe — no row holds a live child
+  across its `_check` — is written at the call), and `regression_terminate_children` reaps
+  first and returns the LIVE count. **Test:** `tests/tcyr/crossos/regression_terminate_children.tcyr`
+  gains a zombie row (0, not 1) and a `regression_reap_orphans` row (reaps the ended child,
+  never waits for the live one); green on x86, qemu-aarch64 and real ecb, ach, pi and cass.
+
 ### Added
 
 - **A census gate for unchecked first-party `alloc(` results, with a shrink-only allowlist.**
