@@ -727,7 +727,6 @@ fn sys_ulock_wake(operation, addr, wake_value): i64 {
     return syscall(SYS_ULOCK_WAKE, operation, addr, wake_value);
 }
 
-
 # ── alloc.cyr, LAST (6.6.10) ──
 # sigset_new / epoll_event_new / timerspec_new above call `alloc()`, so this peer included
 # alone (the stdlib self-sufficiency census compiles every lib module that way) reported
