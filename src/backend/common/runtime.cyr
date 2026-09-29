@@ -65,6 +65,46 @@ fn _emit_fmt(S): i64 {
     return 0;
 }
 
+# 6.6.10 — `kernel;` / `shared;` / `object;` are refused BY NAME where no emitter exists.
+# Only the ELF emitters implement them (x86: EMITELF_KERNEL/_SHARED/_OBJ; aarch64: KERNEL),
+# but every fork's pass 1 accepted the directives unconditionally, and both EMITELF
+# ladders dispatch Mach-O/PE before consulting the mode — so the request was dropped or
+# half-applied, silently: PE `object;` wrote 0 bytes with rc 0 (FIXUP's object early
+# return), PE `shared;` built an exe that access-violates (RIP-relative _IS_OBJ codegen,
+# no loader to relocate it), x86 Mach-O `object;` ran and exited 72, `kernel;`/`shared;`
+# on Mach-O were byte-identical to no mode, and aarch64 ELF `shared;` emitted an
+# EXECUTABLE. Per mode, not per format: `kernel;` STAYS legal on PE — it is the bare-metal
+# gate a UEFI build relies on (gnoboot, programs/efi_probe.cyr; it drives the #host_only
+# refusal), and PE/EFI output needs nothing else from it. cx has its own check
+# (_cx_mode_refused, backend/cx/emit.cyr). `a64` = 1 from the aarch64 FIXUP. CHANGELOG [6.6.10]
+fn _mode_word(km): i64 {
+    if (km == 1) { return "kernel;"; }
+    if (km == 2) { return "shared;"; }
+    return "object;";
+}
+fn _fmt_word(fmt): i64 {
+    if (fmt == 1) { return "x86_64 Mach-O"; }
+    if (fmt == 2) { return "arm64 Mach-O"; }
+    if (fmt == 3) { return "PE"; }
+    return "aarch64 ELF";
+}
+fn _mode_unsupported(S, a64): i64 {
+    var km = L64(S + 0x18FCA0);
+    if (km == 0) { return 0; }
+    var fmt = _emit_fmt(S);
+    var bad = 0;
+    if (fmt == 1 || fmt == 2) { bad = 1; }
+    if (fmt == 3) { if (km != 1) { bad = 1; } }
+    if (fmt == 0) { if (a64 == 1) { if (km != 1) { bad = 1; } } }
+    if (bad == 0) { return 0; }
+    syscall(SYS_WRITE, 2, "error: `", 8);
+    PRSTR(_mode_word(km));
+    syscall(SYS_WRITE, 2, "` is not supported for ", 23);
+    PRSTR(_fmt_word(fmt));
+    syscall(SYS_WRITE, 2, " output (no emitter for it on this target: x86_64 ELF implements kernel;/shared;/object;, aarch64 ELF kernel;, PE kernel; only)\n", 128);
+    return 1;
+}
+
 # _env_scratch + _read_env live in env.cyr (6.6.10), shared with the cx driver.
 include "src/backend/common/env.cyr"
 

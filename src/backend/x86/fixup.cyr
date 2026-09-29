@@ -110,6 +110,9 @@ fn _wx_data_vaddr(S, entry, cp): i64 {
 var _wx_dbase_frozen = 0;
 
 fn FIXUP(S): i64 {
+    # 6.6.10: `object;`/`shared;` on PE and all three modes on Mach-O have no emitter —
+    # refused by name BEFORE the object early return below (runtime.cyr). CHANGELOG [6.6.10]
+    if (_mode_unsupported(S, 0) == 1) { syscall(SYS_EXIT, 1); }
     # Align code to 8 (don't write — leave as zeros, matching cybs)
     var cp = GCP(S);
     cp = (cp + 7) & (0 - 8);

@@ -1107,6 +1107,17 @@ fn E8(S, v): i64 { var i = 0; while (i < 8) { EB(S, (v >> (i * 8)) & 0xFF); i = 
 # sqrt/floor and f32 conversion failed loud too — f32 was already real, and sqrt,
 # floor, ceil, round and mulh64 were `return 0` stubs that left the operand in r0:
 # a silent identity (sqrt(4.0) = 4.0, mulh64(2^32, 2^32) = 2^32). CHANGELOG [6.6.10]
+# 6.6.10 — `kernel;` / `shared;` have no cx emitter: pass 1 (main_cx.cyr) recorded the mode
+# and nothing read it, so the .cyx was byte-identical to no directive. Refused by name.
+# (`object;` never reaches here: the cx pass 1 does not accept it.) CHANGELOG [6.6.10]
+fn _cx_mode_refused(S): i64 {
+    var km = L64(S + 0x18FCA0);
+    if (km == 0) { return 0; }
+    syscall(SYS_WRITE, 2, "error: `", 8);
+    if (km == 1) { syscall(SYS_WRITE, 2, "kernel;", 7); } else { syscall(SYS_WRITE, 2, "shared;", 7); }
+    syscall(SYS_WRITE, 2, "` is not supported by the cx bytecode backend (a .cyx is a cxvm program; there is no kernel image or shared object to emit)\n", 124);
+    return 1;
+}
 fn _cx_float_unsupported(S): i64 {
     ERR_MSG(S, "this float op is not yet supported on the cx bytecode target", 60);
     return 0;

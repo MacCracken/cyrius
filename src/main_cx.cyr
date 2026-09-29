@@ -461,6 +461,8 @@ _warn_undefined_prepass(S);
 
 # Parse main code (top-level statements)
 PARSE_PROG(S);
+# 6.6.10: `kernel;` / `shared;` are refused by name on cx (backend/cx/emit.cyr).
+if (_cx_mode_refused(S) == 1) { syscall(SYS_EXIT, 1); }
 
 # Exit epilogue — load last var
 var lv = GLVAR(S);

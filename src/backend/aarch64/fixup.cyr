@@ -88,6 +88,9 @@ fn FIXUP(S): i64 {
         if (load8(fx_dbg_env) == 49 && load8(fx_dbg_env + 1) == 0) { fx_dbg = 1; }
     }
     if (fx_dbg == 1) { syscall(SYS_WRITE, 2, "[phase] aarch64 FIXUP entry\n", 28); }
+    # 6.6.10: `shared;` on ELF and `kernel;`/`shared;` on Mach-O have no emitter here —
+    # refused by name (after the CYRIUS_MACHO_ARM read above fixes the format). runtime.cyr.
+    if (_mode_unsupported(S, 1) == 1) { syscall(SYS_EXIT, 1); }
     var cp = GCP(S);
     # v6.0.64: round the code size to 8 (was 4) so the var-area base
     # (entry + acp for the global-addr fixups; 0x400000 + bss_foff in EMITELF)
