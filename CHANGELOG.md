@@ -52,6 +52,76 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   arm since 6.6.9 (GetFileAttributesW's REPARSE_POINT bit, then FindFirstFileW's name-surrogate
   tag). Comment-only.
 
+- **`cyrius distlib`'s sidecar no longer depends on the host that runs it — it is the union over
+  every target.** (B10: K5, K8.) **Root cause:** `_distlib_verify_rounds` compiled its verify unit
+  once, for the HOST target, so the recorded leaf set was whatever that host's `#ifdef` arms left
+  undefined and `distlib --check` could drift between a Mac or ARM box and Linux CI (15 of 60
+  ecosystem bundles have different undefined sets per target at 6.6.10). **Fix:** each round
+  compiles the unit for x86_64 Linux, Windows (CYRIUS_TARGET_WIN=1) and macOS (CYRIUS_MACHO=1),
+  and aarch64 Linux and macOS (cycc_aarch64, CYRIUS_MACHO_ARM=1) — concurrently, read back in
+  target order — and classifies the union. Only an x86_64-Linux CLI has a compiler per target;
+  macOS, Windows and aarch64 CLIs **refuse by name** ("only an x86_64 Linux CLI has a compiler for
+  each"), and a missing `cycc_aarch64` is named. A per-target compile gets the inherited
+  environment minus every target selector. A symbol undefined on only SOME targets is credited to
+  a declarer already in the unit (nothing added), else the one dispatcher whose peer declares it,
+  else the one non-peer declarer, else a **named refusal** — never the first snapshot file (mihi's
+  EINTR on PE would have recorded the sigil monolith). A PRIVATE peer of a peer
+  (`syscalls_linux_common`) belongs to its dispatcher. `-v` prints each leaf a round adds.
+  **Measured:** `distlib --all` over 74 ecosystem repos gives sidecars byte-identical to the
+  6.6.10 CLI's (the extra per-target symbols are all owned by recorded leaves); total 488 s vs
+  437 s. Verified on ecb, ach, pi and cass (the named refusal). New
+  `toolchain/distlib_sidecar_host_independent.sh`; every `distlib_*.sh` gate stages cycc and a
+  `cycc_aarch64` built from src/ beside a private copy of the CLI (exit 77 if it cannot).
+  K8: `distlib_profile_sidecar.sh` takes `CYRIUS_BIN` / `CYCC` and copies `$CC` into its fake home.
+
+- **`cyrius distlib`'s verify no longer calls running out of rounds "converged".** (B10: K6.)
+  **Root cause:** falling out of the 6-round loop returned `added_total`, the same answer as a
+  real fixpoint, so the last round's leaves were never compiled and an 8-leaf chain published 6
+  leaves as "compile-verified" at rc 0. **Fix:** a named refusal ("did not converge in 6 rounds
+  — sidecar NOT written"); not a bigger cap. Gate: `distlib_sidecar_verified.sh` axis 13 (the
+  8-leaf chain fails; a 5-leaf chain still converges).
+
+- **`cyrius test` / `cyrius tests` grade the assert summary, not the exit code alone.** (B10: O3,
+  the cmd_test half of B01's rule.) **Root cause:** cmd_test ran each binary exit-code-only and
+  never saw stdout, so a test that died before `assert_summary()` with exit 0, a body run twice
+  (`1 passed, 1 failed`, exit 0) and a test that asserted nothing all PASSED. **Fix:** the test's
+  stdout is captured (POSIX dup2 in the child; Windows `cmd /s /c` redirection), echoed back, and
+  graded: when the source calls `assert_summary(`, the LAST `N passed, M failed` line must exist
+  with N >= 1 and M == 0. Verified by lane H's `test_runner_bounded.sh` axis 9 and on pi, ecb, ach
+  and cass. ⚠ It finds one: in this repo `tests/tcyr/crossos/struct_field_value_copy.tcyr`, built
+  with the manifest's auto-prepend, prints `\0` where assert_summary's leading `\n` belongs.
+
+- **`cyrius soak` says what a failed self-host step did.** (B10: K7.) It printed
+  `step N exited ` + the raw `_self_host_step` status — `exited 1` for a SIGSEGV and for an empty
+  output, `exited -1` after macOS's own named refusal. It now uses `_raw_fail_describe` like
+  `cyrius self` ("was killed by signal 11", "exited 0 but wrote no output"). New
+  `toolchain/cyrius_soak_describes_failures.sh`; the macOS branch verified on ecb and ach.
+
+- **`cyrius lint` fails on every compiler refusal except a named context set.** (B10: O4.)
+  **Root cause:** the pre-pass linted anyway unless an error message began with a SYNTAX
+  allow-list entry, so `#derive(accessors)` on an enum, `#derive` on neither a struct nor an enum
+  and a duplicate variable all linted `0 warnings`, rc 0. **Fix:** inverted — every error must be
+  in `_lint_msg_is_context` (`… requires include "…"`, an array sized by another file's enum, a
+  struct from a sibling module as a `.field` target, a field type or a `sizeof`) or lint fails and
+  forwards the diagnostic. **Measured** (read-only, lint's own flags): 2,837 sibling-repo source
+  files lint exactly as at 6.6.10; in-repo lib/, cbt/, programs/: 0 refusals.
+  `lint_reports_unparseable.sh` axes 10-11.
+
+- **`cyrius coverage` does not count the entry point `main`.** (B10: S7.) No test can name it, so
+  it held ganita at 139/141 and bayan at 501/503 with nothing else missing (now 139/139, 501/501).
+  One helper, `_src_is_entry_fn`, shared with `cyrius header`. `coverage_corpus_and_failopen.sh`
+  axis 20.
+
+- **`cyrius deps` keeps the stdlib fold over a named dep's thin profile of the same package.**
+  (B10: S2, the cyrius half.) bote declares the stdlib leaf `sigil` and depends on libro, whose
+  `[deps.sigil]` is the thin `dist/sigil-mldsa.cyr` + `src/*.cyr`; both copies landed in one unit
+  (232 duplicate fns; at the 6.6.10 pin, five arity errors and a failed build). A named dep
+  `<leaf>`'s `<leaf>-<profile>.cyr` / `<leaf>_<x>.cyr` is now neither vendored nor auto-included
+  when `<leaf>` is a stdlib leaf the resolution copied (a stale copy is removed; one `note:` each).
+  Measured: bote 3.3.13 pinned to 6.6.10 builds with 0 duplicate fns and its 14 tests pass (6.6.10:
+  exit 1). New `toolchain/deps_stdlib_profile_not_vendored.sh`; `deps_stdlib_leaf_not_clobbered.sh`
+  axis 2b.
+
 ## [6.6.10] — 2026-09-29
 
 The fourth batch release: the 6.6.8 review finds (groups B–G) and group H of the 6.6.9 finds, placed by
