@@ -1584,6 +1584,15 @@ _chk_gate "$ROOT/tests/gates/platform/agnos_create_exclusive_atomic.sh"
 # in its own bin/ (GetModuleFileNameW, not a '/'-only argv(0) scan). Wine axes SKIP without wine.
 _chk_gate "$ROOT/tests/gates/toolchain/cli_pe_file_size_and_sibling_tools.sh"
 
+# 6.6.11 (B09: J4/J6) — a CLI child inherits the WHOLE environment. `load_environ` read
+# /proc/self/environ into a fixed 8 KB buffer (every variable past it dropped in every child) and,
+# on macOS, left `_envp` EMPTY. Linux/aarch64 axis here; the macOS half is the ecb/ach row in
+# cross-os-selfhost.sh. Exit 77 with no /proc/self/environ or no compiler.
+_chk_gate "$ROOT/tests/gates/toolchain/cli_child_env_complete.sh"
+# 6.6.11 (B09: I3) — cyrius.exe honours CYRIUS_RESOLVED=1 and runs a pinned versions/<pin>/bin/
+# cyrius.exe as a child (sys_execve is a -1 stub on PE), propagating its exit code. Wine; 77 without.
+_chk_gate "$ROOT/tests/gates/toolchain/cli_pe_pinned_redirect.sh"
+
 # 6.6.9 (bite 9) — a temp dir the CLI cannot write is named as that: the dep-cache check says
 # "could NOT be verified" (reason 10) instead of calling a healthy cache tampered, the hasher
 # names its capture, lint's pre-pass refuses instead of passing an unparsable file; an absolute
