@@ -463,7 +463,9 @@ through every call form: `p = mkq()` with `mkq` returning a different struct is 
 `var p: P3 = mkq()` already was, and so are `z = y.same()`, `var z: Odd = y + y` and a generic
 call whose inferred instance differs (`s = mk(r.v)` into a `Box<Pt>`: a FIELD argument infers
 `T = i64`, so the call reaches `Box<i64>` — copy the field into a `Pt` variable first,
-`var p: Pt = r.v; s = mk(p);`). Before v6.6.11 each of those stored one word, silently.
+`var p: Pt = r.v; s = mk(p);`). The same holds for a struct-typed **global**, at top level and in
+the leading declaration block: `var G: Odd = mkod2();` is refused wherever it appears. Before
+v6.6.11 each of those stored one word, silently.
 
 ⚠ **A by-value struct PARAMETER over 8 bytes is address-passed** — the parameter's slot holds
 the caller's address, which is why writing `q.z = 5` inside the callee is visible to the caller.

@@ -42,7 +42,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   compared the sid only after its `cls == 0` and `n <= 1` exits, and on a mismatch returned to the
   scalar store; PARSE_VAR compared it only on the retptr / pair receives. **Fix:** `_sca_mismatch`
   runs before every exit, `_scv_call_check` covers the <= 8 B declaration, and `_gen_decl_check`
-  names the generic declaration (which failed as "expected ';', got '.'").
+  names the generic declaration (which failed as "expected ';', got '.'"). **At top level** the
+  same mismatch compiled clean at 9-16 B too — `var GZ: Pt = mkr()` and `var GZ: Pt = GQ.mr()`
+  SIGSEGV'd reading `GZ.x`, no frame meaning no receive compared the sid — and the LEADING
+  declaration block (replayed by `EMIT_GVAR_INITS`, not PARSE_VAR) checked nothing at any size:
+  `_scv_call_check` now checks a 9-16 B free call at top level, `_sc_global_mismatch` a method /
+  operator result of either class, and `_gvi_ann` / `_gvi_expr` give the leading block the same
+  arming and checks. A >16 B call at top level is still refused as needing a frame.
 - **`var y: Q = x;` from an address-passed by-value struct parameter aliased the caller's struct
   (L6).** `y.a = 9` changed the caller's `q` (329 vs 321, x86 / aarch64 / PE; 16 B too) and
   `return y;` returned garbage for the retptr and the pair class. **Root cause:**
@@ -50,9 +56,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   pointer-mode local (a rebind), wrong for the parameter. **Fix:** a `_local_is_sptr_param` source
   takes the same addressed copy `y = x;` has had since 6.6.6.
 - Regression coverage: 18 new rows in `tests/tcyr/crossos/struct_field_value_copy.tcyr` (cross-OS)
-  and the new gate `tests/gates/frontend/struct_result_type_refused.sh` (24 refusals at 3 / 8 / 16 /
-  24 B, generic, field / assignment / declaration / top-level forms, plus 8 same-type acceptances
-  checked against field-by-field controls); both mutation-proven per fix.
+  and the new gate `tests/gates/frontend/struct_result_type_refused.sh` (30 refusals at 3 / 8 / 16 /
+  24 B, generic, field / assignment / declaration forms, in a fn, at top level and in the leading
+  declaration block, plus 11 same-type acceptances, each checked against a control that builds the
+  same struct field by field); both mutation-proven per fix.
 
 ## [6.6.10] — 2026-09-29
 

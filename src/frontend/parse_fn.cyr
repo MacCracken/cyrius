@@ -2027,7 +2027,12 @@ fn _scv_call_check(S, pscale): i64 {
     if (_grc_err < 0) { return 0; }   # a failed instantiation: the call refuses itself, once
     var rs = GFRS(S, fi);
     if (rs <= 0) { return 0; }
-    if (STRUCTSZ(S, rs - 1) > 8) { return 0; }
+    if (STRUCTSZ(S, rs - 1) > 8) {
+        # In a fn the retptr / rax:rdx receives compare the sid; at top level there are none, so
+        # a 9-16 B result is checked here (a >16 B one refuses itself: no frame). CHANGELOG [6.6.11]
+        if (GINFN(S) == 1) { return 0; }
+        if (_ret_agg_class(S, fi) != 1) { return 0; }
+    }
     _sc_decl_mismatch(S, pscale, rs);
     return 0;
 }
@@ -2074,12 +2079,21 @@ fn _sc_var_receive(S, noff, pscale, ext, start): i64 {
 # `var G: S = <expr>` at top level: no frame, so a 9-16 B method/operator result is refused by name
 # (a >16 B one already was, in `_sc_pre`). Untyped `var g = ..` keeps the first word.
 fn _sc_global_receive(S, pscale, start): i64 {
-    var t = _sc_whole(S, start);
-    if (t == 0 - 3) { _sc_decl_mismatch(S, pscale, _sc_sid); return 0; }   # 6.6.11: <= 8 B, in rax
-    if (t != 0 - 1) { return 0; }
+    if (_sc_global_mismatch(S, pscale, start) != 0) { return 0; }
+    if (_sc_whole(S, start) != 0 - 1) { return 0; }
     if (pscale != 0 - _sc_sid) { return 0; }
     _refuse_toplevel_struct_call(S, _sc_fn);
     return 0;
+}
+
+# A top-level struct-typed destination given a whole method/operator result of another struct —
+# <= 8 B (-3, in rax) or 9-16 B (-1, no frame) — refused by name (1). CHANGELOG [6.6.11]
+fn _sc_global_mismatch(S, pscale, start): i64 {
+    var t = _sc_whole(S, start);
+    if (t != 0 - 3) { if (t != 0 - 1) { return 0; } }
+    if (pscale >= 0) { return 0; }
+    if (pscale == 0 - _sc_sid) { return 0; }
+    return _sc_decl_mismatch(S, pscale, _sc_sid);
 }
 
 # A by-value struct parameter given an expression that is neither a bare name nor a free-fn call

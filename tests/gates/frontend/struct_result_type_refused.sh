@@ -19,21 +19,31 @@
 #       name either — only the retptr / rax:rdx receives compared the sid. Root cause:
 #       `_try_struct_call_assign` (src/frontend/parse.cyr) exited at `cls == 0`, `n <= 1` and
 #       the sid test with `return 0` = the scalar store.
+#       At TOP LEVEL the same mismatch compiled clean at 9-16 B too (`var GZ: Pt = mkr()`,
+#       `= GQ.mr()`: no frame, so no receive compared the sid; the binary SIGSEGV'd reading GZ.x),
+#       and the LEADING declaration block — replayed by EMIT_GVAR_INITS, not PARSE_VAR — checked
+#       nothing at any size. Fixed in `_scv_call_check` (9-16 B at top level),
+#       `_sc_global_mismatch` (-3 and -1) and `_gvi_ann` / `_gvi_expr` (the leading block).
 #   L1  (refusal half) `var p: Pt = h.q` / `p = h.q` from a field of a DIFFERENT struct type
 #       SIGSEGV'd / copied a word; now a named refusal like every other struct copy.
 #
 # Refusal rows are checked on the MESSAGE (and that no binary was written), so a row cannot pass
 # on an unrelated syntax error. Acceptance rows (same types) are checked against the literal exit
-# code AND a CONTROL program that builds the same value field by field, so an acceptance cannot
-# pass by both sides sharing one defect.
+# code AND a CONTROL program that builds the same value field by field (every row, K1-K11: the
+# control declares the same struct, assigns each field, and returns the same expression), so an
+# acceptance cannot pass by the result path alone.
 #
 # MUTATION LEDGER (6.6.11, each mutant rebuilt from the fixed tree with the one change):
-#   base 6.6.10 build/cycc                                -> RED, 22 of 24 refusal rows
+#   base 6.6.10 build/cycc                                -> RED, 28 of 30 refusal rows + K1
 #                                                            (D16 / D24 were already refused)
-#   `_sc_post_small` returns before recording              -> RED F3m F3o F8m A3m A8m D3m D3o D8m G3m
+#   `_sc_post_small` returns before recording              -> RED F3m F3o F8m A3m A8m D3m D3o D8m G3m L3m
 #   `_pcmpe_struct_assign`'s type test removed             -> RED A3m A8m A16m
 #   `_sca_mismatch` returns 0                              -> RED A3c A16 A24 AG
-#   `_scv_call_check` returns 0                            -> RED D3c D8c
+#   `_scv_call_check` returns 0                            -> RED D3c D8c G16c L3c L16c
+#   `_scv_call_check` skips > 8 B at top level too         -> RED G16c L16c
+#   `_sc_global_mismatch` checks only -3 (not 9-16 B, -1)  -> RED G16m L16m
+#   `_gvi_expr` = a bare PCMPE (no leading-block check)    -> RED L3c L3m L16c L16m
+#   `_gvi_ann` never reports the struct annotation         -> RED L3c L3m L16c L16m
 #   `_fsc_src` keeps its exact-register `return 0`         -> RED F8m F8c
 #   `_fla_arm` never arms                                  -> RED FLd FLa FL8 FL3 (and acceptance K1)
 #   `_gen_decl_check` returns 0                            -> RED DG
@@ -164,6 +174,34 @@ GY.c = 3;
 var GZ: Odd = GY.same();
 syscall(60, 0);
 '
+# The same three results into a TOP-LEVEL struct-typed global, both after the first top-level
+# statement (PARSE_VAR: `_scv_call_check`, `_sc_global_receive`) and in the LEADING declaration
+# block (replayed by EMIT_GVAR_INITS through `_gvi_expr`). A 9-16 B result has no frame there:
+# before this row it compiled clean and SIGSEGV'd reading GZ.x.
+refuse "G16c var GZ: Pt = mkr()  (top)" "$MD" "$T"'var GQ = Q { 1, 2, 3 };
+GQ.a = 4;
+var GZ: Pt = mkr();
+syscall(60, GZ.x);
+'
+refuse "G16m var GZ: Pt = GQ.mr()  (top)" "$MD" "$T"'var GQ = Q { 1, 2, 3 };
+GQ.a = 4;
+var GZ: Pt = GQ.mr();
+syscall(60, GZ.x);
+'
+refuse "L3c var GZ: Odd = mkod2()  (lead)" "$MD" "$T"'var GZ: Odd = mkod2();
+syscall(60, 0);
+'
+refuse "L3m var GZ: Odd = GY.same()  (lead)" "$MD" "$T"'var GY = Od2 { 1, 2 };
+var GZ: Odd = GY.same();
+syscall(60, 0);
+'
+refuse "L16c var GZ: Pt = mkr()  (lead)" "$MD" "$T"'var GZ: Pt = mkr();
+syscall(60, GZ.x);
+'
+refuse "L16m var GZ: Pt = GQ.mr()  (lead)" "$MD" "$T"'var GQ = Q { 1, 2, 3 };
+var GZ: Pt = GQ.mr();
+syscall(60, GZ.x);
+'
 refuse "FLd var p: Pt = h.q  (field src)" "$MA" "$T"'fn main(): i64 { var h: HQ; h.n = 1; var p: Pt = h.q; return p.x; }'"$E"
 refuse "FLa p = h.q  (field src)" "$MA" "$T"'fn main(): i64 { var h: HQ; h.n = 1; var p: Pt; p.x = 0; p.y = 0; p = h.q; return p.x; }'"$E"
 refuse "FL8 z = h.p  (8 B field src)" "$MA" "$T"'struct HQ8 { p: Q8; }
@@ -176,19 +214,48 @@ struct Box { v: Pt; n; }
 fn main(): i64 { var b: Box; b.v.x = 3; b.v.y = 4; b.n = 9; var p: Pt = b.v; return p.x * 10 + p.y; }'"$E" 34 'struct Pt { x; y; }
 fn main(): i64 { var p: Pt; p.x = 3; p.y = 4; return p.x * 10 + p.y; }'"$E"
 accept "K2 h.o = x.dup()  (3 B method)" "$T"'fn main(): i64 { var x: Odd; var h: H; h.t = 1; h.o = x.dup(); return h.o.a * 10 + h.o.b + h.t * 100; }'"$E" 134 \
-    'fn main(): i64 { return 3 * 10 + 4 + 100; }'"$E"
+    "$T"'fn main(): i64 { var h: H; h.t = 1; h.o.a = 3; h.o.b = 4; return h.o.a * 10 + h.o.b + h.t * 100; }'"$E"
 accept "K3 z = x.dup()  (3 B method)" "$T"'fn main(): i64 { var x: Odd; var z: Odd; z = x.dup(); return z.a * 10 + z.b; }'"$E" 34 \
-    'fn main(): i64 { return 34; }'"$E"
+    "$T"'fn main(): i64 { var z: Odd; z.a = 3; z.b = 4; return z.a * 10 + z.b; }'"$E"
 accept "K4 var z: Odd = x + x  (operator)" "$T"'fn main(): i64 { var x: Odd; x.a = 1; x.b = 2; var z: Odd = x + x; return z.a * 10 + z.b; }'"$E" 24 \
-    'fn main(): i64 { return 24; }'"$E"
+    "$T"'fn main(): i64 { var z: Odd; z.a = 2; z.b = 4; return z.a * 10 + z.b; }'"$E"
 accept "K5 var z: P8 = x.dup()  (8 B)" "$T"'fn main(): i64 { var x: P8; var z: P8 = x.dup(); return z.x * 10 + z.y; }'"$E" 67 \
-    'fn main(): i64 { return 67; }'"$E"
+    "$T"'fn main(): i64 { var z: P8; z.x = 6; z.y = 7; return z.x * 10 + z.y; }'"$E"
 accept "K6 h.p = mkp8()  (8 B free call)" "$T"'fn main(): i64 { var h: HP; h.k = 1; h.p = mkp8(); return h.p.x * 10 + h.p.y + h.k * 100; }'"$E" 189 \
-    'fn main(): i64 { return 189; }'"$E"
+    "$T"'fn main(): i64 { var h: HP; h.k = 1; h.p.x = 8; h.p.y = 9; return h.p.x * 10 + h.p.y + h.k * 100; }'"$E"
 accept "K7 var z: Odd = mkodd()" "$T"'fn main(): i64 { var z: Odd = mkodd(); var w: Odd; w = mkodd(); return z.a * 10 + w.b; }'"$E" 56 \
-    'fn main(): i64 { return 56; }'"$E"
+    "$T"'fn main(): i64 { var z: Odd; z.a = 5; z.b = 6; var w: Odd; w.a = 5; w.b = 6; return z.a * 10 + w.b; }'"$E"
 accept "K8 s = mk(p)  (generic, same T)" "$G"'fn main(): i64 { var p: Pt; p.x = 2; p.y = 7; var s: Box<Pt>; s.n = 0; s = mk(p); return s.v.x + s.v.y * 10 + s.n * 100; }'"$E" 60 \
-    'fn main(): i64 { return (2 + 70 + 500) & 255; }'"$E"
+    "$G"'fn main(): i64 { var s: Box<Pt>; s.v.x = 2; s.v.y = 7; s.n = 5; return s.v.x + s.v.y * 10 + s.n * 100; }'"$E"
+# Top level, same types: the leading block's check (`_gvi_expr`) and PARSE_VAR's global arm
+# must leave a matching <= 8 B result alone. Controls set the same global field by field.
+accept "K9 var GZ: Odd = mkodd()  (lead)" "$T"'var GZ: Odd = mkodd();
+syscall(60, GZ.a * 10 + GZ.b);
+' 56 "$T"'var GZ = Odd { 0, 0 };
+GZ.a = 5;
+GZ.b = 6;
+syscall(60, GZ.a * 10 + GZ.b);
+'
+accept "K10 var GZ: Odd = mkodd()  (top)" "$T"'var GY = Od2 { 7, 8 };
+GY.c = 3;
+var GZ: Odd = mkodd();
+syscall(60, GZ.a * 10 + GZ.b);
+' 56 "$T"'var GY = Od2 { 7, 8 };
+GY.c = 3;
+var GZ = Odd { 0, 0 };
+GZ.a = 5;
+GZ.b = 6;
+syscall(60, GZ.a * 10 + GZ.b);
+'
+accept "K11 var GZ: Od2 = GY.same()  (lead)" "$T"'var GY = Od2 { 7, 8 };
+var GZ: Od2 = GY.same();
+syscall(60, GZ.c * 10 + GZ.d);
+' 12 "$T"'var GY = Od2 { 7, 8 };
+var GZ = Od2 { 0, 0 };
+GZ.c = 1;
+GZ.d = 2;
+syscall(60, GZ.c * 10 + GZ.d);
+'
 
 echo "struct_result_type_refused: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
 [ "$fail" -eq 0 ] || exit 1

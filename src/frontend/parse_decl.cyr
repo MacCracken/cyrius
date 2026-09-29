@@ -2370,6 +2370,36 @@ fn PARSE_GVAR_REG(S): i64 {
 }
 
 # Emit deferred global var inits (replays saved token positions)
+# The leading declaration block's `: Type` annotation, consumed. Returns `0 - sid` for a plain
+# struct name, else 0 (a pointer, a scalar, a generic instance: not checked here).
+fn _gvi_ann(S): i64 {
+    STI(S, GTI(S) + 1);   # consume :
+    var ps = 0;
+    if (PEEKT(S) == 8) { STI(S, GTI(S) + 1); ps = 1; }
+    var sid = 0;
+    if (PEEKT(S) == 2) { sid = FINDSTRUCT(S, PEEKV(S)); }
+    STI(S, GTI(S) + 1);
+    if (PEEKT(S) == 19) { ps = 1; }
+    SKIP_GENERICS(S);
+    if (ps == 1) { return 0; }
+    if (sid <= 0) { return 0; }
+    return 0 - sid;
+}
+
+# ⛔ 6.6.11 — a leading-block initialiser, replayed here rather than parsed by PARSE_VAR, so a
+# struct-typed global's whole call / method result was never type-checked (`var G: Odd = mk2();`
+# compiled silently where the same line after a statement was refused). The same arming and
+# check PARSE_VAR's top-level arm makes. CHANGELOG [6.6.11]
+fn _gvi_expr(S, gps): i64 {
+    if (gps == 0) { PCMPE(S); return 0; }
+    var st = GTI(S);
+    var w = _scv_arm(S, gps);
+    PCMPE(S);
+    _scv_disarm(w);
+    _sc_global_mismatch(S, gps, st);
+    return 0;
+}
+
 fn EMIT_GVAR_INITS(S): i64 {
     if (_TARGET_CX == 1) { _gv_cx_prestore(S); }   # 6.6.6: see _gv_cx_prestore
     _gv_hide_program(S, 1);   # 6.6.6: a kernel replay reads declaration-zone globals (FINDVAR)
@@ -2421,7 +2451,8 @@ fn EMIT_GVAR_INITS(S): i64 {
             gi = gi + 1;
             continue;
         }
-        if (PEEKT(S) == 49) { STI(S, GTI(S) + 1); if (PEEKT(S) == 8) { STI(S, GTI(S) + 1); } STI(S, GTI(S) + 1); SKIP_GENERICS(S); }
+        var gps = 0;
+        if (PEEKT(S) == 49) { gps = _gvi_ann(S); }
         # v5.11.51: byte-array literal `var foo[N] = { 0x.., ... };`
         # After IDENT (+ optional `:type`) the next token is `[` for
         # array-typed gvar inits. PARSE_GVAR_ARR registered the var in
@@ -2531,7 +2562,7 @@ fn EMIT_GVAR_INITS(S): i64 {
             }
         }
         if (did_struct == 0) {
-            PCMPE(S);
+            _gvi_expr(S, gps);
             if (idx >= 0) { EVSTORE(S, idx); _gv_slvar(S, idx); }
             if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
             STI(S, GTI(S) + 1);
