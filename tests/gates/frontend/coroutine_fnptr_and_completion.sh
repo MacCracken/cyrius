@@ -202,5 +202,79 @@ syscall(60, 0);
 EOF
 run f '0 0 12 12 12 12 1' "F: a tail-shaped return completes the coroutine; the tail ran once"
 
+# ── 6.6.10 — arity, fall-off, the value of `await`, force-once ──────────────────────────────
+cat > "$T/g.cyr" <<EOF
+$PRE
+async fn co(): i64 { var x = 3; var s = await nopark(); x = x + 4; return x; }
+fn main(): i64 {
+    alloc_init();
+    var C = co();
+    var n = 0;
+    while (n < 5) { fmt_int(future_force(C)); syscall(1, 1, " ", 1); n = n + 1; }
+    return 0;
+}
+var e = main();
+syscall(60, 0);
+EOF
+run g '0 7 7 7 7 ' "G: a 0-parameter coroutine (was SIGSEGV: argc 0 left SELF garbage)"
+
+cat > "$T/h.cyr" <<EOF
+$PRE
+async fn co(a, b, c, d, e1, f, g, h, i9): i64 {
+    var x = a + b + c + d + e1 + f + g + h + i9;
+    var s = await nopark();
+    return x + 4;
+}
+fn main(): i64 {
+    alloc_init();
+    var C = co(1, 2, 3, 4, 5, 6, 7, 8, 9);
+    var n = 0;
+    while (n < 5) { fmt_int(future_force(C)); syscall(1, 1, " ", 1); n = n + 1; }
+    return 0;
+}
+var e = main();
+syscall(60, 0);
+EOF
+run h '0 49 49 49 49 ' "H: a 9-parameter coroutine (was exit 70 at the first force)"
+
+# K — a PLAIN (no-await) async fn's Future runs its body ONCE however often it is forced (it
+# re-ran on every force), a 0-parameter one too.
+cat > "$T/k.cyr" <<EOF
+$PRE
+var g_n = 0;
+async fn side(k): i64 { g_n = g_n + 1; return k + g_n * 100; }
+async fn zero(): i64 { g_n = g_n + 10; return 7; }
+fn main(): i64 {
+    alloc_init();
+    var F = side(3);
+    fmt_int(await F); syscall(1, 1, " ", 1);
+    fmt_int(await F); syscall(1, 1, " ", 1);
+    fmt_int(future_force(F)); syscall(1, 1, " ", 1);
+    var Z = zero();
+    fmt_int(await Z); syscall(1, 1, " ", 1);
+    fmt_int(await Z); syscall(1, 1, " ", 1);
+    fmt_int(g_n);
+    return 0;
+}
+var e = main();
+syscall(60, 0);
+EOF
+run k '103 103 103 7 7 11' "K: a plain Future forced 3 times runs its body once"
+
+# L — a PLAIN async fn with 9+ parameters is refused at its declaration, by name (it compiled
+# clean and died at its first force, exit 70). The 8-parameter form still compiles.
+cat > "$T/l.cyr" <<EOF
+$PRE
+async fn a8(a, b, c, d, e1, f, g, h): i64 { return a + h * 100; }
+async fn a9(a, b, c, d, e1, f, g, h, i9): i64 { return a + i9 * 100; }
+fn main(): i64 { alloc_init(); var F = a9(1, 2, 3, 4, 5, 6, 7, 8, 9); return await F; }
+var e = main();
+syscall(60, e);
+EOF
+rc=0; CYRIUS_ASYNC=1 "$CC" < "$T/l.cyr" > "$T/l.bin" 2> "$T/l.err" || rc=$?
+if [ "$rc" -ne 1 ]; then bad "L: a 9-parameter plain async fn compiled (rc $rc), want a refusal"
+elif grep -q 'async fn `a9` takes 9 parameters' "$T/l.err" && ! grep -q '`a8`' "$T/l.err"; then ok "L: a9 refused by name, a8 accepted"
+else bad "L: the refusal did not name a9 (or named a8): $(grep -m1 '^error' "$T/l.err")"; fi
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: coroutine_fnptr_and_completion — $fails axis(es) red"; exit 1; fi
-echo "PASS: coroutine_fnptr_and_completion — fncallN / callptr / closure calls inside a coroutine reach their callee (A-C); a completed coroutine answers with its value and runs nothing again (D-F)"
+echo "PASS: coroutine_fnptr_and_completion — fncallN / callptr / closure calls inside a coroutine reach their callee (A-C); a completed coroutine answers with its value and runs nothing again (D-F); 0- and 9-parameter coroutines (G-H); a plain Future runs once (K); 9+ plain parameters refused (L)"

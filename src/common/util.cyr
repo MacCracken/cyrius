@@ -310,7 +310,10 @@ var _ASYNC_OK = 0;
 # now a dispatch. CHANGELOG [6.5.69]
 #
 # Coro object layout, allocated by the synthesized constructor:
-#   [0] impl fn ptr   [8] argc(=1)   [16] SELF   [24] state   [32 + i*8] local slot i
+#   [0] impl fn ptr   [8] argc word (1 | FUT_CORO 512)   [16] SELF   [24] state
+#   [32 + i*8] local slot i   [32 + flc*8] completion value. The argc word was the declared
+#   parameter count until 6.6.10, so a 0-parameter coroutine was forced with fncall0 (SIGSEGV).
+#   (parse_fn.cyr `_async_argc_word`; CHANGELOG [6.6.10])
 var _cur_fn_coro = 0;       # 1 while emitting a coroutine body
 var _coro_base = 0;         # stack slot holding the heap frame base (always 0)
 var _coro_lo = 0;           # locals with idx >= this live in the heap frame

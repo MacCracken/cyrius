@@ -1177,23 +1177,54 @@ fn async_write_unlock(lk): i64 {
 # epoll/fork/syscalls). Backing for the `async fn` / `await` sugar:
 #
 #   async fn fetch(url): i64 { ... }      # compiles to a constructor that builds
-#   var f = fetch(addr);                  # a Future [ &fetch$impl, 1, addr ] (lazy)
+#   var f = fetch(addr);                  # a Future [ &fetch$impl, 1|FUT_MEMO, addr, done, value ] (lazy)
 #   var result = await f;                 # → future_force(f): runs the body, returns its value
 #
 # A Future is a heap object `[ impl_fn_ptr, argc, arg0, …, arg{argc-1} ]` produced
 # by the async-fn constructor (synthesized in PARSE_FN_DEF). Forcing it calls the
 # impl with the bundled args. The lazy shape means an `async fn` only runs when
 # awaited (or spawned + run) — matching the cooperative runtime above, where a
-# Future is exactly a task with its arguments bundled in. v1 re-runs the body on
-# each force; force-once memoization (cache the result + a done flag) is a follow-on
-# (CHANGELOG [6.3.11]). A COROUTINE async fn (one that awaits mid-body) is the exception:
-# its body stamps DONE when it returns, and a later force answers with the same value and
-# runs nothing (CHANGELOG [6.6.8]). Requires lib/fnptr.cyr (already a hard requirement of this
-# file — async_run dispatches tasks via fncall1).
+# Future is exactly a task with its arguments bundled in.
+#
+# The argc word carries two compiler-set markers (src/frontend/parse_fn.cyr
+# `_async_argc_word`; the compiler and this file ship in LOCKSTEP):
+#   FUT_MEMO (256) — a compiler-built PLAIN Future, laid out
+#                    `[fp, argc|256, arg0 … arg{n-1}, done, value]`. It runs its body ONCE;
+#                    every later force answers from `value`. (It re-ran the body on every
+#                    force until 6.6.10 — `await F; await F;` ran it twice.)
+#   FUT_CORO (512) — a COROUTINE (an async fn that awaits mid-body), `[fp, 1|512, SELF,
+#                    state, …]`. Its impl takes SELF alone; each force resumes it once, and
+#                    once it has returned it answers with the same value and runs nothing
+#                    (CHANGELOG [6.6.8]).
+# A hand-built Future (`[fp, argc, args…]`, argc 0..8, no marker) is re-run on each force.
+# Requires lib/fnptr.cyr (already a hard requirement of this file — async_run dispatches
+# tasks via fncall1).
+var FUT_MEMO = 256;
+var FUT_CORO = 512;
+
+# Force a Future and return its value (0 for a null Future). See the layout above; the
+# header is never rewritten, so a force that re-enters the same Future (a spawned copy plus
+# a direct await) sees the same shape. CHANGELOG [6.6.10]
 fn future_force(fut): i64 {
     if (fut == 0) { return 0; }
-    var fp = load64(fut);
-    var argc = load64(fut + 8);
+    var aw = load64(fut + 8);
+    if ((aw & FUT_MEMO) == 0) {
+        var argc = aw;
+        if ((aw & FUT_CORO) != 0) { argc = aw & 255; }
+        return _future_call(load64(fut), argc, fut);
+    }
+    var n = aw & 255;
+    var mw = fut + 16 + n * 8;             # [done, value], past the arguments
+    if (load64(mw) == 1) { return load64(mw + 8); }
+    var v = _future_call(load64(fut), n, fut);
+    store64(mw + 8, v);
+    store64(mw, 1);
+    return v;
+}
+
+# Call a Future's impl `fp` with its `argc` bundled arguments (fut+16 …). Split out of
+# future_force so the memo path calls the SAME ladder with the unmarked arity.
+fn _future_call(fp, argc, fut): i64 {
     if (argc == 0) { return fncall0(fp); }
     if (argc == 1) { return fncall1(fp, load64(fut + 16)); }
     if (argc == 2) { return fncall2(fp, load64(fut + 16), load64(fut + 24)); }
@@ -1221,8 +1252,8 @@ fn future_force(fut): i64 {
     }
     # v6.5.70: past the fncall ladder's top rung. ⛔ THIS USED TO FALL THROUGH TO fncall6 —
     # `argc >= 7` called the impl with six arguments, so arguments 7+ were never written and
-    # the body read stack garbage: `await a7(1,2,3,4,5,6,7)` returned a code-address-shaped
-    # value instead of 28, exit 0, no diagnostic. Fail loudly instead of quietly wrong.
+    # the body read stack garbage. A compiler-built Future can no longer get here (a plain
+    # async fn with 9+ parameters is refused at its declaration, 6.6.10); a hand-built one can.
     sys_write(2, "future_force: async fn arity above 8 is not supported\n", 54);
     sys_exit(70);
     return 0;

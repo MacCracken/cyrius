@@ -4775,6 +4775,39 @@ fn _mint_impl_name(S, base_noff): i64 {
     return noff;
 }
 
+# 6.6.10 — THE ARGC WORD CARRIES TWO MARKERS, so `future_force` can tell the three Future
+# shapes apart without rewriting anything during a force (lib/async.cyr, lockstep):
+#   FUT_MEMO (256) — a PLAIN compiler-built Future `[fp, argc, args…, done, value]`: forced once,
+#                    and every later force answers from the memo. It used to re-run the body on
+#                    every force (`await F; await F;` ran it twice), while a coroutine did not.
+#   FUT_CORO (512) — a coroutine. Its impl takes exactly ONE argument, SELF at obj[16], so the
+#                    arity is 1 whatever the declared parameter count; storing `pc` there made a
+#                    0-parameter coroutine SIGSEGV (fncall0 left SELF garbage) and a 9+-parameter
+#                    one exit 70 at its first force.
+# A hand-built Future (`[fp, argc, args…]`, argc 0..8) carries neither and is re-run per force.
+fn _async_argc_word(pc): i64 {
+    if (_coro_was == 1) { return 1 | 512; }
+    return pc | 256;
+}
+# 6.6.10 — `future_force`'s dispatch ladder stops at fncall8, so a PLAIN async fn with 9+
+# parameters compiled clean and died at its first force (exit 70). Refuse it at the declaration.
+# A coroutine has no limit: its arguments are frame locals and its impl takes SELF alone.
+fn _async_refuse_arity(S, fi_f, noff_f, pc): i64 {
+    if (_coro_was == 1) { return 0; }
+    if (pc <= 8) { return 0; }
+    if (_panic == 1) { return 1; }
+    syscall(SYS_WRITE, 2, "error:", 6);
+    var dti = GFDS(S, fi_f) - 1;
+    if (dti >= 0) { _err_head_at(S, dti); } else { _err_head(S); }
+    syscall(SYS_WRITE, 2, ": async fn `", 12);
+    PRSTR(S + 0xEC00000 + noff_f);
+    syscall(SYS_WRITE, 2, "` takes ", 8);
+    PRNUM(pc);
+    syscall(SYS_WRITE, 2, " parameters; an async fn that never awaits takes at most 8 (its Future is forced through fncall0..fncall8)\n", 107);
+    _had_error = 1;
+    return 1;
+}
+
 # v6.3.11 (G): emit the Future constructor for an `async fn`. The body has already
 # been emitted (as `f$impl`, fi_impl, with pc params); this synthesizes the
 # user-named fn `f(p0..p{pc-1})` whose body allocates a Future heap object
@@ -4789,6 +4822,10 @@ fn _async_emit_constructor(S, noff_f, fi_impl, pc): i64 {
     if (fi_f < 0) { fi_f = REGFN(S, noff_f); }
     SFAS(S, fi_f, 1);
     S64(_fnt_params + fi_f * 8, pc);
+    if (_async_refuse_arity(S, fi_f, noff_f, pc) == 1) {
+        S64(_fnt_offsets + fi_f * 8, GCP(S));
+        return 0;
+    }
     # Refused BEFORE any code: ERR_MSG does not exit, and the body below handed -1 to
     # ECALLFIX — rc 139 on aarch64/cx after the diagnostic. `f` still gets an offset (nothing
     # is written for a failed compile) so its callers do not add a second, false "reachable
@@ -4834,7 +4871,9 @@ fn _async_emit_constructor(S, noff_f, fi_impl, pc): i64 {
     # ⛔ Getting this wrong is a heap overflow, not a wrong answer: the transform stores the
     # state word at +24 and locals from +32, and the pre-v6.5.69 object is (2+pc)*8 = 24
     # bytes for a 1-parameter fn — the state write alone lands one word past the allocation.
-    var _obj_bytes = (2 + pc) * 8;
+    # 6.6.10: a PLAIN Future also carries two trailing memo words `[done, value]` (see
+    # `_async_argc_word`); a coroutine already keeps its completion past the frame.
+    var _obj_bytes = (2 + pc) * 8 + 16;
     if (_coro_was == 1) { _obj_bytes = _coro_res_off() + 8; }   # 6.6.8: + the completion word
     # obj = alloc(_obj_bytes)
     EMOVI(S, _obj_bytes);
@@ -4858,11 +4897,11 @@ fn _async_emit_constructor(S, noff_f, fi_impl, pc): i64 {
     ELOAD_FN_ADDR(S, _fixup_base + fc * 16, fc, fi_impl);
     EPOPC(S);
     ESTORE64(S);
-    # obj[8] = argc (pc)
+    # obj[8] = the argc word (pc | FUT_MEMO, or 1 | FUT_CORO — `_async_argc_word`)
     EFLLOAD(S, obj_slot);
     EADDRA_IMM(S, 8);
     EPUSHR(S);
-    EMOVI(S, pc);
+    EMOVI(S, _async_argc_word(pc));
     EPOPC(S);
     ESTORE64(S);
     # v6.5.69: a coroutine's arg0 is the object ITSELF. `future_force` re-enters the body as
@@ -4908,6 +4947,17 @@ fn _async_emit_constructor(S, noff_f, fi_impl, pc): i64 {
         EPOPC(S);
         ESTORE64(S);
         i = i + 1;
+    }
+    # obj[16 + pc*8] = 0: the memo's `done` word. alloc does not promise zeroed memory (a
+    # freelist / arena hands back used blocks), and a stale 1 would answer the first force with
+    # a stale value. CHANGELOG [6.6.10]
+    if (_coro_was == 0) {
+        EFLLOAD(S, obj_slot);
+        EADDRA_IMM(S, 16 + pc * 8);
+        EPUSHR(S);
+        EMOVI(S, 0);
+        EPOPC(S);
+        ESTORE64(S);
     }
     # return obj
     EFLLOAD(S, obj_slot);
