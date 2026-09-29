@@ -45,8 +45,7 @@ fn _wss_magic(): i64 { return "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"; }
 # ws_server-internal readability; body calls `sha1(...)`.
 
 fn _wss_sha1(data, len, digest_out): i64 {
-    sha1(data, len, digest_out);
-    return 0;
+    return sha1(data, len, digest_out);
 }
 
 # ================================================================
@@ -113,7 +112,7 @@ fn ws_server_handshake(cfd, req_buf, req_len): i64 {
 
     var digest = alloc(20);
     if (digest == 0) { return 0; }
-    _wss_sha1(concat, concat_len, digest);
+    if (_wss_sha1(concat, concat_len, digest) != 0) { return 0; }
     var accept_b64 = base64_encode(digest, 20);
     if (accept_b64 == 0) { return 0; }
 

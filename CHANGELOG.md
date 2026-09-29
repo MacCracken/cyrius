@@ -91,6 +91,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   served ones reaches the host kernel with the guest's raw arguments, so an untrusted `.cyx` is a
   native binary with cxvm's privileges. (The matching `programs/cxvm.cyr` header line is lane
   S2's bite 10.)
+- **A refused `alloc()` in the first-party stdlib returns the fn's error sentinel — ~70 sites wrote
+  through it.** (bite 14; lane T's census, the files no other lane owns.) `boxed_new`,
+  `cffi_struct_new`, chrono's `dur_new` / month table / `epoch_to_date` / `iso8601` / `dt_format`,
+  dynlib's `_parse_dynamic` / `dynlib_open` (unmaps on failure), `lib/http.cyr`'s URL parse, request
+  build, response parse and every error-response / slot / receive buffer (`http_get_r` returns
+  `Err(HttpOther)`), regex's `str_glob` / `str_replace` / `regex_compile` and the matcher's lazy
+  buffers (`_re_m_lazy_init` is now a status fn; a refused init is "no match", never a store at 0),
+  `sha1` (now returns -1 with the digest untouched; `ws_server_handshake` refuses the upgrade),
+  `str_from_buf` / `str_cstr`, `str_lower_cstr` / `str_upper_cstr`, every `mutex_new`, the Linux peers'
+  `sigset_new` / `epoll_event_new` / `timerspec_new`, `thread_create` / `chan_new` on Linux, macOS and
+  Windows, `_tlocal_win_block`, the TLS ctx / key cells (freeing the SSL objects they would have
+  owned), the trait vtables, and unicode casefold / normalize. **Proof:**
+  `tests/gates/memory/stdlib_alloc_refusal_sentinels.sh` — fault injection over a copy of `lib/` whose
+  `alloc` refuses exactly the k-th call, 58 rows: each fn returns its sentinel for every k, the k-th
+  call is REACHED, and k = count + 1 succeeds. Removing one check gives rc 139 (boxed_new, sha1,
+  sigset_new) or rc 1 (chan_new); the pre-6.6.10 lib/ dies at the first row.
 
 ## [6.6.9] — 2026-09-28
 

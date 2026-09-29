@@ -342,6 +342,7 @@ fn unicode_compose(cp1, cp2) {
 
 fn _uc_decompose_cp_recursive(cp, buf, off, cap) {
     var step_buf = alloc(32);    # max 3 cps × 8 bytes (Hangul LVT)
+    if (step_buf == 0) { return off; }
     var n = unicode_canonical_decomp(cp, step_buf, 3);
     if (n == 1) {
         if (load64(step_buf) == cp) {
@@ -368,6 +369,7 @@ fn _uc_decompose_cp_recursive(cp, buf, off, cap) {
 # decomposition for any character that has only a canonical mapping).
 fn _uc_decompose_cp_recursive_compat(cp, buf, off, cap) {
     var step_buf = alloc(_UC_COMPAT_MAX_CPS * 8);
+    if (step_buf == 0) { return off; }
     var n = unicode_compat_decomp(cp, step_buf, _UC_COMPAT_MAX_CPS);
     if (n == 1) {
         if (load64(step_buf) == cp) {
@@ -472,6 +474,7 @@ fn str_normalize(s, form) {
     if (form == NFKD) { per_cp_factor = _UC_COMPAT_MAX_CPS; }
     var max_cps = src_len * per_cp_factor + 4;
     var dec_buf = alloc(max_cps * 8);
+    if (dec_buf == 0) { return 0; }
     # 1. Decompose (canonical for NFC/NFD, compat for NFKC/NFKD).
     var use_compat = 0;
     if (form == NFKC) { use_compat = 1; }
@@ -479,6 +482,7 @@ fn str_normalize(s, form) {
     var i = 0;
     var dec_len = 0;
     var cp_slot = alloc(8);
+    if (cp_slot == 0) { return 0; }
     while (i < src_len) {
         var consumed = _uc_decode_utf8(src, i, src_len, cp_slot);
         var cp = load64(cp_slot);
@@ -501,6 +505,7 @@ fn str_normalize(s, form) {
     }
     # 4. Re-encode to UTF-8.
     var out_buf = alloc(dec_len * 4 + 4);
+    if (out_buf == 0) { return 0; }
     var oi = 0;
     var k = 0;
     while (k < dec_len) {
