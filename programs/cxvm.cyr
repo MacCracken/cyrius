@@ -5,7 +5,14 @@
 # Encoding: [opcode:8][a:8][b:8][c:8] (little-endian in file)
 #
 # Registers: r0-r255 (64-bit), r0 = accumulator, r253 = fp, r254 = sp
-# Memory: 64KB data segment
+# Memory: 1 MB data segment (_CX_MEM_SIZE; it read "64KB" here after the v6.4.20 raise)
+#
+# ⚠ GUEST CONTRACT (6.6.10): cxvm runs TRUSTED bytecode — it is NOT a sandbox. Loads/stores
+#   compute `_cx_mem + reg` with NO bounds check (a guest can read/write host memory), the data
+#   and call stacks are unchecked, a jump to a negative offset decodes host memory, and the 0x70
+#   syscall opcode passes every number but 0/1/2/3/8/60/318/228 to the host kernel with the
+#   guest's raw arguments. Running an untrusted .cyx == running a native binary with cxvm's
+#   privileges. docs/platform-status.md "cyrius-x guest contract" is the full statement.
 #
 # OPCODES:
 #   0x00 = halt
@@ -84,7 +91,7 @@ include "lib/alloc.cyr"
 # CHANGELOG [6.6.8]
 var _CX_REGS_BYTES = 2048;
 var _cx_regs = 0;        # r0-r255 (256 × 8 = 2048 bytes)
-var _cx_mem = 0;          # 64KB data segment (stack grows down from top)
+var _cx_mem = 0;          # 1 MB data segment (_CX_MEM_SIZE; stack grows down from top)
 var _cx_dstack = 0;       # 1024 data stack entries (saved fp, expression spills)
 var _cx_dsp = 0;
 var _cx_cstack = 0;       # 1024 call stack entries (return addresses)
