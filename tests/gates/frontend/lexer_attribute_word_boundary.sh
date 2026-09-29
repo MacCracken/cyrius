@@ -74,6 +74,12 @@
 #           COMMENT — CLOSED a conditional, so code inside a skipped `#ifdef`
 #           was compiled in silently; `#@srclinex 10` shifted every diagnostic
 #           in the file by one line. E2/E4/E6 are the arm axes.
+#   F1..F7  the FIFTH mirror, programs/cyrius_api_surface.cyr (6.6.10): same-line
+#           attributed fns (F1), a multi-line `#inline` / `#naked` / `#deprecated("x")`
+#           fn no longer drops every later fn (F2, F3), `async fn` (F4) — each scored
+#           against the fns the COMPILER emits for the same source; F5 is anti-vacuous
+#           (`#ioctl notes {` is still a comment); F6/F7 an unreadable source and one at
+#           the 2 MiB read cap are errors by name, not a silently short snapshot.
 #   D1..D6  the SAME root cause in the preprocessor (review round): PP_IS_HOST_ONLY
 #           and the three ISDERIVE* probes in src/frontend/lex_pp.cyr, plus the
 #           fourth reader of `#derive` (programs/cyrius_api_surface.cyr). These
@@ -121,7 +127,13 @@
 #   M12 `_doc_attr_bound` in programs/cyrdoc.cyr forced to 0 → 1 FAIL: C5
 #   M13 `_src_attr_bound` in cbt/core.cyr forced to 1 → 1 FAIL: C6 (6.6.8)
 #   M14 `_src_attr_bound` in cbt/core.cyr forced to 0 → 1 FAIL: C7 (6.6.8)
-#   real tree → 41/41 green (6.6.8: C6/C7 added)
+#   real tree → 41/41 green (6.6.8: C6/C7 added); 49/49 at 6.6.10 (group F added)
+#   6.6.10 (group F, measured against the tool from programs/cyrius_api_surface.cyr):
+#   M15 the 6.6.9 tool (no attribute knowledge, `if (nbytes > 0)`)
+#       → 6 FAIL: F1, F2, F3, F4, F6, F7 (F5 green)
+#   M16 `_asf_attr_bound` forced to 1 → 1 FAIL: F5 (a comment's `{` counted)
+#   M17 the depth clamp removed, attribute skip in the brace scan reverted to comment-to-EOL
+#       → 2 FAIL: F2, F3 (the later fns vanish again)
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
@@ -624,6 +636,78 @@ if [ -n "$l6" ] && [ -n "$l6t" ] && [ "$l6" != "$l6t" ]; then
 else
     printf '  FAIL: axis E6 — #@srcline stopped arming: real=[%s] comment=[%s]\n' "$l6" "$l6t"
     fail=$((fail+1))
+fi
+
+# ── Group F — the FIFTH mirror (6.6.10): programs/cyrius_api_surface.cyr's line reader
+#    had no attribute knowledge. Its declaration test wanted `fn ` at the first non-blank,
+#    so a SAME-LINE `#inline fn` / `#regalloc fn` / `#deprecated("x") fn` / `async fn` was
+#    never public surface; and its brace scan read the attribute's `#` as a comment, which
+#    skipped the attributed fn's `{` while its `}` still counted — depth -1, and EVERY later
+#    fn in the file vanished from the snapshot. Separately, an unreadable source was
+#    skipped and one at the 2 MiB read cap scanned truncated, both at rc 0 under --update.
+#    ⭐ The oracle is the COMPILER: each fixture must compile and name the listed fns
+#    (CYRIUS_DCE_VERBOSE lists every emitted-but-uncalled fn), so an expected list cannot
+#    drift from what the language accepts.
+if [ -x "$D/cyrius_api_surface" ] || build_tool cyrius_api_surface; then
+    # fsnap <name> <printf-fmt>: the tool's snapshot of a one-file project, names only.
+    fsnap() {
+        rm -rf "$D/apif"; mkdir -p "$D/apif/src" "$D/apif/lib"
+        printf "$2" > "$D/apif/src/f.cyr"
+        frc=0
+        ( cd "$D/apif" && "$D/cyrius_api_surface" --update --scope=project --snapshot="$D/$1.snap" ) \
+            > "$D/$1.out" 2>&1 || frc=$?
+        sed 's/.*:://; s|/.*||' "$D/$1.snap" 2>/dev/null | sort | paste -sd' ' -
+    }
+    # femit <name> <printf-fmt> [env]: the fns the COMPILER emits for the same source.
+    femit() {
+        printf "$2" > "$D/$1.cyr"
+        ( cd "$D" && env ${3:-X_=1} CYRIUS_DCE_VERBOSE=1 "$CC" < "$1.cyr" > /dev/null 2> "$1.dce" ) || true
+        sed -n 's/^  dead: \([A-Za-z0-9_]*\)$/\1/p' "$D/$1.dce" | sort | paste -sd' ' -
+    }
+    faxis() {   # faxis <id> <label> <want> <got>
+        if [ "$3" = "$4" ]; then printf '  ok: axis %s — %s (%s)\n' "$1" "$2" "$4"; pass=$((pass+1))
+        else printf '  FAIL: axis %s — %s: want [%s], got [%s]\n' "$1" "$2" "$3" "$4"; fail=$((fail+1)); fi
+    }
+    F1='fn f_before() { return 0; }\n#inline fn f_inl(a) { return a; }\n#regalloc fn f_ra(a) { return a; }\n#deprecated("use f_new() instead") fn f_old(a, b) { return a; }\n#must_use pub fn f_mu() { return 0; }\npub #inline fn f_pi() { return 0; }\nfn f_last() { return 0; }\n'
+    faxis F1 'same-line attributed fns are public surface' "$(femit F1 "$F1")" "$(fsnap F1 "$F1")"
+    F2='fn f_before() { return 0; }\n#inline fn f_mid() {\n    return 1;\n}\nfn f_after() { return 2; }\nfn f_later(a) { return a; }\n'
+    faxis F2 'a MULTI-LINE #inline fn no longer drops every later fn' "$(femit F2 "$F2")" "$(fsnap F2 "$F2")"
+    F3='fn f_before() { return 0; }\n#naked fn f_nk() {\n    return 1;\n}\n#deprecated("x") fn f_dep(a) {\n    return a;\n}\nfn f_after() { return 2; }\n'
+    faxis F3 'multi-line #naked and #deprecated("x") fns, then a later fn' "$(femit F3 "$F3")" "$(fsnap F3 "$F3")"
+    # The compiler's dead list is not the oracle here: it never reports the fn AFTER an
+    # async fn as dead (a DCE quirk outside this gate). Premise instead: the fixture
+    # compiles with CYRIUS_ASYNC=1 and emits f_fut; the expected list is then literal.
+    # The fixture's `include "lib/alloc.cyr"` resolves from $D: link the TREE's lib there.
+    # Without the link it fell through to $HOME/.cyrius/versions/<VERSION>/lib — the live
+    # store — so F4a tested the installed stdlib and failed on any host lacking that slot.
+    ln -sfn "$ROOT/lib" "$D/lib"
+    F4='include "lib/alloc.cyr"\nfn f_before() { return 0; }\nasync fn f_fut(a) {\n    return a;\n}\nfn f_after() { return 2; }\n'
+    faxis F4a 'premise: the async fixture compiles and emits f_fut' "f_fut" \
+        "$(femit F4 "$F4" CYRIUS_ASYNC=1 | tr ' ' '\n' | grep -x 'f_fut')"
+    rm -f "$D/lib"
+    faxis F4 'an async fn is public surface' "f_after f_before f_fut" "$(fsnap F4 'fn f_before() { return 0; }\nasync fn f_fut(a) {\n    return a;\n}\nfn f_after() { return 2; }\n')"
+    # ANTI-VACUOUS: a COMMENT that only starts like an attribute still hides its `{` — the
+    # attribute skip must not turn `#ioctl notes {` into code (depth 1 would drop f_after).
+    F5='fn f_before() { return 0; }\n#ioctl notes {\n#io(fd) reads {\nfn f_after() { return 2; }\n'
+    faxis F5 'ANTI-VACUOUS: `#ioctl notes {` / `#io(fd) reads {` stay comments' "$(femit F5 "$F5")" "$(fsnap F5 "$F5")"
+    # F6/F7 — a source the scan cannot see WHOLE is an error by name, never a short snapshot.
+    rm -rf "$D/apir"; mkdir -p "$D/apir/src" "$D/apir/lib"
+    printf 'fn f_x() { return 0; }\n' > "$D/apir/src/x.cyr"
+    printf 'fn f_y() { return 0; }\n' > "$D/apir/src/y.cyr"
+    chmod 000 "$D/apir/src/y.cyr"
+    if [ -r "$D/apir/src/y.cyr" ]; then
+        printf '  ok: axis F6 — SKIPPED by name: running as a user who can read a mode-000 file (root)\n'
+        pass=$((pass+1))
+    else
+        frc=0
+        ( cd "$D/apir" && "$D/cyrius_api_surface" --update --scope=project --snapshot="$D/F6.snap" ) > "$D/F6.out" 2>&1 || frc=$?
+        faxis F6 'an UNREADABLE source is an error by name (rc 3)' "3 1" "$frc $(grep -c 'cannot read source file: src/y.cyr' "$D/F6.out")"
+    fi
+    chmod 644 "$D/apir/src/y.cyr"
+    { printf 'fn f_x2() { return 0; }\n'; i=0; while [ "$i" -lt 34000 ]; do printf '# padding padding padding padding padding padding padding pad\n'; i=$((i + 1)); done; printf 'fn f_tail() { return 0; }\n'; } > "$D/apir/src/big.cyr"
+    frc=0
+    ( cd "$D/apir" && "$D/cyrius_api_surface" --update --scope=project --snapshot="$D/F7.snap" ) > "$D/F7.out" 2>&1 || frc=$?
+    faxis F7 "a source at the 2 MiB read cap ($(wc -c < "$D/apir/src/big.cyr" | tr -d ' ') B) is an error by name (rc 3)" "3 1" "$frc $(grep -c 'read cap: src/big.cyr' "$D/F7.out")"
 fi
 
 if [ "$fail" -gt 0 ]; then

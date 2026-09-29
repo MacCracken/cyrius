@@ -162,11 +162,16 @@ write_broken 'fn a() { var s = "unterminated;\n    return 0; }\nfn main() { retu
 write_broken 'fn a() { return (1 + 2; }\nfn main() { return 0; }\nvar r = main();\n'
 write_broken 'fn a(; ) { return 0; }\nfn main() { return 0; }\nvar r = main();\n'
 write_broken 'fn main() { return 0; }\nvar r = main()\n}}} ]]] (((\n'
+# 6.6.10 (CVE-52): a stray `@` was dropped by the LEXER, so `return @@@;` compiled at rc 0
+# and lint printed `0 warnings` over it. Refused by name now, like `$`.
+write_broken 'fn a() { return @@@; }\nfn main() { return a(); }\nvar r = main();\n'
+write_broken 'fn a() { var y = 5 @- 3; return y; }\nfn main() { return a(); }\nvar r = main();\n'
 n=$i
 j=1
 while [ "$j" -le "$n" ]; do
     rc=$(lint "b$j.cyr")
     check "broken shape $j rejected" "yes" "$([ "$rc" != 0 ] && echo yes || echo no)"
+    check "broken shape $j: no bare '0 warnings'" 0 "$(grep -c '^0 warnings' "$T/o" || true)"
     j=$((j + 1))
 done
 

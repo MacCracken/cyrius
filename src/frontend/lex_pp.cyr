@@ -731,6 +731,42 @@ fn _pp_lineno_at(S, base, upto): i64 {
     return n;
 }
 
+# ⛔ 6.6.10 — a PREPROCESSOR error names where it is. The flag-table cap reported through
+# ERR_MSG, whose head reads the TOKEN cursor — and the preprocessor runs before a single
+# token exists, so it printed `error:0:1:`, a location that names nothing. `base` is the
+# buffer the directive was read from, and the line is derived the way the re-anchor
+# markers derive it: PP_PASS reads the raw main source (S+_SRCB — exact by counting, as
+# PP_REANCHOR_SRC), PP_IFDEF_PASS a marker-carrying stream (relative to the current file's
+# marker, as PP_REANCHOR_CUR). `base` 0 = no source position (a builtin predefine): the
+# head is then a bare `error: `, never a fabricated one. Report-and-continue like ERR_MSG
+# (`_had_error` fails the compile); `_panic` is left alone — there is no parse cascade to
+# suppress yet, and setting it swallowed the first real parse error. CHANGELOG [6.6.10]
+fn _pp_err_at(S, base, pos, msg): i64 {
+    syscall(SYS_WRITE, 2, "error:", 6);
+    if (base == 0) { syscall(SYS_WRITE, 2, " ", 1); }
+    else {
+        var ln = 0;
+        if (base == S + _SRCB) {
+            PRSTR("<source>");
+            ln = _pp_lineno_at(S, base, pos) - _pp_srcline_bias;
+        } else {
+            PRSTR(_pp_curfile_ptr());
+            ln = _pp_curfile_base + _pp_count_nl(base, _pp_curfile_anchor, pos);
+        }
+        syscall(SYS_WRITE, 2, ":", 1);
+        PRNUM(ln);
+        var ls = pos;
+        while (ls > 0) { if (load8(base + ls - 1) == 10) { break; } ls = ls - 1; }
+        syscall(SYS_WRITE, 2, ":", 1);
+        PRNUM(pos - ls + 1);
+        syscall(SYS_WRITE, 2, ": ", 2);
+    }
+    PRSTR(msg);
+    syscall(SYS_WRITE, 2, "\n", 1);
+    _had_error = 1;
+    return 0;
+}
+
 # v6.5.3 — `base` is the source line the span AFTER this marker starts on.
 #   ENTER  (a fresh include)  -> 1, the included file's own first line
 #   RESUME (back to the parent) -> the parent's line just past the include directive
@@ -2791,6 +2827,26 @@ fn PP_DLOAD_EXPR(out, op, pname, fbits, off): i64 {
 }
 
 # Emit #derive(accessors) — generates Name_field(p) getters and Name_set_field(p, v) setters
+# ⛔ 6.6.10 — `#derive(accessors)` on an ENUM is refused. The header/field parser is shared
+# with Serialize, and this body had no enum guard (SERIALIZE_BODY has had one since it
+# learned enums), so an enum's MEMBER list was emitted as a FIELD list: `enum col { RED = 5;
+# GREEN = 9; BLUE; }` compiled clean into col_RED / col_set_BLUE loading and storing 8-byte
+# "fields" at offsets 0, 8, 16 of whatever pointer was passed — the members' values were
+# never involved. Nothing in the ecosystem used it (surveyed at 6.6.10; the guide documents
+# accessors for structs only). Checked HERE, in the one body, so the accessors entry and
+# both stacked call sites (PP_DERIVE_SERIALIZE / PP_DERIVE_DESER with accessors stacked)
+# refuse alike. programs/cyrius_api_surface.cyr mirrors the refusal. CHANGELOG [6.6.10]
+fn PP_DERIVE_ACC_ENUM(S): i64 {
+    syscall(SYS_WRITE, 2, "error: #derive(accessors) applies to a struct; ", 47);
+    var n = 0;
+    while (load8(S + 0x197020 + n) != 0) { n = n + 1; }
+    syscall(SYS_WRITE, 2, S + 0x197020, n);
+    var m = " is an enum (its members are constants, not fields -- derive Serialize / Deserialize for an enum)\n";
+    syscall(SYS_WRITE, 2, m, 98);
+    syscall(SYS_EXIT, 1);
+    return 0;
+}
+
 # Same struct parsing as PP_DERIVE_SERIALIZE. Generates, with W the field's width
 # (PP_DFIELD_BITS):
 #   fn Name_field(p) { return loadW(p + OFFSET); }     (W = 64)
@@ -2807,6 +2863,7 @@ fn PP_DLOAD_EXPR(out, op, pname, fbits, off): i64 {
 # / S+0x197010 (field count). Caller is responsible for having
 # called PP_PARSE_STRUCT_DEF first to populate that metadata.
 fn PP_DERIVE_ACCESSORS_BODY(S, out, op): i64 {
+    if (_pp_decl_is_enum == 1) { return PP_DERIVE_ACC_ENUM(S); }
     var field_count = load64(S + 0x197010);
     # v6.6.3 — a `public struct` gets PUBLIC accessors. Emitting them at default
     # visibility would leave a caller in another file able to name the type but unable
@@ -2861,8 +2918,14 @@ fn PP_DERIVE_ACCESSORS(S, src_base, ip, bl, out, op): i64 {
     # `#`-skip loop set bit 0 in S+0x197F08. Run Serialize codegen
     # too so consumers get both fn families. Same metadata; no
     # struct re-parse.
+    # ⛔ 6.6.10 — `& 3`, not `& 1`: a stacked Deserialize (bit 2) needs the codecs too, and
+    # SERIALIZE_BODY is what emits both (PP_DERIVE_DESER calls it unconditionally). With
+    # `& 1`, `#derive(accessors)` directly above `#derive(Deserialize)` emitted no codecs at
+    # all — the only one of the eight stacking orders that did not — and the first use was
+    # an `undefined function 'X_from_json_str'` naming nothing about the derive stack.
+    # CHANGELOG [6.6.10]
     var _stacked = L64(S + 0x197F08);
-    if ((_stacked & 1) != 0) {
+    if ((_stacked & 3) != 0) {
         op = PP_DERIVE_SERIALIZE_BODY(S, out, op);
     }
     _pp_flatten = 0;
@@ -3246,7 +3309,9 @@ fn PP_HASH_CSTR(name): i64 {
 # `#ifdef CYRIUS_ARCH_AARCH64` / `#ifdef CYRIUS_ARCH_X86` to gate
 # architecture-specific asm blocks without per-arch lib files.
 fn PP_PREDEFINE(S, name): i64 {
-    if (_pp_flag_count >= 16) { ERR_MSG(S, "too many preprocessor #define/flag entries (max 16)", 51); }
+    # 6.6.10: ERR_MSG returns (v6.4.62), so the cap stops the store itself — the 17th hash
+    # landed on value[0] at S+0x190880. CHANGELOG [6.6.10]
+    if (_pp_flag_count >= 16) { _pp_err_at(S, 0, 0, "too many preprocessor #define/flag entries (max 16)"); return 0; }
     var h = PP_HASH_CSTR(name);
     store64(S + 0x190800 + _pp_flag_count * 8, h);
     store64(S + 0x190880 + _pp_flag_count * 8, 0);
@@ -3257,7 +3322,8 @@ fn PP_PREDEFINE(S, name): i64 {
 # v5.6.42: src_base separated from S — see PP_HASH above. Source reads
 # come from src_base+pos; flag-table writes stay at S+0x190800/0x190880.
 fn PP_DEFINE(S, src_base, pos): i64 {
-    if (_pp_flag_count >= 16) { ERR_MSG(S, "too many preprocessor #define/flag entries (max 16)", 51); }
+    # 6.6.10: stop at the cap — see PP_PREDEFINE. CHANGELOG [6.6.10]
+    if (_pp_flag_count >= 16) { _pp_err_at(S, src_base, pos, "too many preprocessor #define/flag entries (max 16)"); return 0; }
     var h = PP_HASH(src_base, pos);
     store64(S + 0x190800 + _pp_flag_count * 8, h);
     # Check for value: #define NAME VALUE (skip name, find space, parse int)

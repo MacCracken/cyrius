@@ -32,27 +32,38 @@
 #      clean — names, visibility and arity at once (the compiler checks all three);
 #   4. anti-vacuous: the same program with one arity off by one is refused.
 # Plus a literal table of the expected snapshot, and floors on this tree's own snapshot.
-# ⚠ The rule mirrored for `#derive(accessors)` above `#derive(Deserialize)` is the
-# compiler's today (no codecs; the reverse order emits them). If the compiler changes, axis 1
-# goes red here — which is the point: the tool must move with it.
+# ⚠ 6.6.10 — two rules this gate used to PIN were compiler defects, and the tool mirrored
+# them faithfully: `#derive(accessors)` above `#derive(Deserialize)` emitted no codecs (the
+# accessors entry tested only the Serialize bit), and `#derive(accessors)` on an ENUM emitted
+# per-member "field" accessors (dv_ea / dv_lb / dv_pen in the 6.6.8 table). The compiler now
+# emits the codecs in the first case and refuses the build in the second; the tool mirrors
+# both (dv_ad's codecs are in the table; axis 7 pins the refusal), and the enum fixtures that
+# exercised body shapes (char-literal values, `= -2`, a `'{'` inside the body) derive
+# Serialize instead, so that coverage is kept. If the compiler changes, axis 1 goes red here
+# — which is the point: the tool must move with it.
 #
 # The tool under test is BUILT HERE from programs/cyrius_api_surface.cyr (API_SRC=<file>
 # builds a different source — how the mutants below were run).
 #
-# MUTATION PROOF (checks failed of 12; the 6.6.7 tool fails 5 — axes 1, 2, 3, 5, 6):
+# MUTATION PROOF (checks failed; A1-A13 measured at 6.6.8 against 12 checks — A5, A7 and A9
+# RE-MEASURED at 6.6.10 against the 18 checks after the enum fixtures moved to Serialize, and
+# A14 added. The 6.6.7 tool failed 5 — axes 1, 2, 3, 5, 6. At 6.6.10 the 6.6.9 tool fails 6
+# (axes 2, 5, 7) and the 6.6.9 COMPILER fails 5 (axes 1, 3, 7) — each side of the mirror
+# is caught moving alone):
 #   A1  `_to_json` at arity 1 again                                              3
 #   A2  `_from_json_str` not listed                                               4
 #   A3  `#derive(Deserialize)` not recognised                                     3
 #   A4  a `public` / `pub` declaration prefix not recognised                      3
-#   A5  `enum` not a derive target                                                3
+#   A5  `enum` not a derive target                                                3 (6.6.10: 3)
 #   A6  file-private visibility ignored                                           3
-#   A7  an accessors entry honours a stacked Deserialize (diverges from lex_pp)   3
+#   A7  an accessors entry ignores a stacked Deserialize (the pre-6.6.10 `& 1`)  3
 #   A8  the field walk skips to the next `;` (the 6.6.7 walk)                     3
-#   A9  braces in a comment / char literal count toward the body's `}`            3
+#   A9  braces in a comment / char literal count toward the body's `}`            3 (6.6.10: 3)
 #   A10 `pub fn` not stepped over                                                 4
 #   A11 a signature must close on its own line (the 6.6.7 rule)                   4
 #   A12 a comma inside a `#` comment in a wrapped signature counts                2
 #   A13 an enum's `: stack` header not skipped                                    3
+#   A14 `#derive(accessors)` on an enum listed again (no -1 refusal)             3
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -124,7 +135,7 @@ struct dv_ns { u }
 #derive(accessors)
 struct dv_nosep { p q r }
 
-#derive(accessors)
+#derive(Serialize)
 enum dv_ea { MA = 1; MB = 'x'; MC = -2, MD }
 
     #derive(Serialize)
@@ -136,7 +147,7 @@ struct dv_cmt { z; }
 #derive(Serialize) # a trailing comment
 struct dv_trail { v; }
 
-#derive(accessors)
+#derive(Serialize)
 enum dv_lb { LB = '{'; RB = 2; }
 
 fn dv_plain(a, b) { return 0; }
@@ -154,7 +165,7 @@ private
 struct dv_hid { x; }
 #derive(Serialize)
 public struct dv_shown { y; }
-#derive(accessors)
+#derive(Serialize)
 pub enum dv_pen { PA; PB; }
 #derive(Deserialize)
 enum dv_hen { HA; HB; }
@@ -188,7 +199,7 @@ crc=0
 ( cd "$P" && CYRIUS_DCE_VERBOSE=1 "$CC" < prog.cyr > "$T/prog" 2> "$T/dce.txt" ) || crc=$?
 check "the fixture project compiles (rc 0)" 0 "$crc"
 sed -n 's/^  dead: \(dv_[A-Za-z0-9_]*\)$/\1/p' "$T/dce.txt" | sort > "$T/E.txt"
-check "  (floor: the compiler emitted >= 85 fixture fns)" yes "$([ "$(wc -l < "$T/E.txt")" -ge 85 ] && echo yes || echo no)"
+check "  (floor: the compiler emitted >= 78 fixture fns)" yes "$([ "$(wc -l < "$T/E.txt")" -ge 78 ] && echo yes || echo no)"
 
 echo "axis 1 — every listed fn is one the compiler emitted"
 check "listed but not emitted" "" "$(comm -23 "$T/A.txt" "$T/E.txt" | paste -sd' ' -)"
@@ -227,10 +238,13 @@ check "axis 4 — anti-vacuous: one arity off by one is refused" "nonzero 1" "$(
 
 echo "axis 5 — the literal table"
 cat > "$T/expect.snap" <<'EOF'
+dv_plain::dv_ad_from_json/1
+dv_plain::dv_ad_from_json_str/1
 dv_plain::dv_ad_g/1
 dv_plain::dv_ad_h/1
 dv_plain::dv_ad_set_g/2
 dv_plain::dv_ad_set_h/2
+dv_plain::dv_ad_to_json/2
 dv_plain::dv_da_d/1
 dv_plain::dv_da_e/1
 dv_plain::dv_da_from_json/1
@@ -241,14 +255,8 @@ dv_plain::dv_da_to_json/2
 dv_plain::dv_de_from_json/1
 dv_plain::dv_de_from_json_str/1
 dv_plain::dv_de_to_json/2
-dv_plain::dv_ea_MA/1
-dv_plain::dv_ea_MB/1
-dv_plain::dv_ea_MC/1
-dv_plain::dv_ea_MD/1
-dv_plain::dv_ea_set_MA/2
-dv_plain::dv_ea_set_MB/2
-dv_plain::dv_ea_set_MC/2
-dv_plain::dv_ea_set_MD/2
+dv_plain::dv_ea_from_json_str/1
+dv_plain::dv_ea_to_json/2
 dv_plain::dv_en2_from_json_str/1
 dv_plain::dv_en2_to_json/2
 dv_plain::dv_en_from_json_str/1
@@ -267,10 +275,8 @@ dv_plain::dv_gap_to_json/2
 dv_plain::dv_ind_from_json/1
 dv_plain::dv_ind_from_json_str/1
 dv_plain::dv_ind_to_json/2
-dv_plain::dv_lb_LB/1
-dv_plain::dv_lb_RB/1
-dv_plain::dv_lb_set_LB/2
-dv_plain::dv_lb_set_RB/2
+dv_plain::dv_lb_from_json_str/1
+dv_plain::dv_lb_to_json/2
 dv_plain::dv_nosep_p/1
 dv_plain::dv_nosep_q/1
 dv_plain::dv_nosep_r/1
@@ -305,15 +311,38 @@ dv_plain::dv_trail_to_json/2
 dv_plain::dv_wrapped/4
 dv_priv::dv_outer/1
 dv_priv::dv_outer2/2
-dv_priv::dv_pen_PA/1
-dv_priv::dv_pen_PB/1
-dv_priv::dv_pen_set_PA/2
-dv_priv::dv_pen_set_PB/2
+dv_priv::dv_pen_from_json_str/1
+dv_priv::dv_pen_to_json/2
 dv_priv::dv_shown_from_json/1
 dv_priv::dv_shown_from_json_str/1
 dv_priv::dv_shown_to_json/2
 EOF
 check "the fixture snapshot equals the literal table (diff lines)" 0 "$(diff "$T/expect.snap" "$T/A.snap" | grep -c '^[<>]')"
+
+echo "axis 7 — #derive(accessors) on an ENUM refuses the build, and the tool lists nothing for it"
+# Every route into the accessors body: the accessors entry, and accessors stacked below a
+# Serialize / Deserialize entry. The compiler must refuse each by name (6.6.9 compiled all
+# three clean into per-member load/store "fields"), and the tool must not list the enum's
+# fns — while still listing the ordinary fn beside it (anti-vacuous: the file WAS scanned).
+for order in acc ser_acc de_acc; do
+    case $order in
+        acc)     dirs='#derive(accessors)' ;;
+        ser_acc) dirs='#derive(Serialize)
+#derive(accessors)' ;;
+        de_acc)  dirs='#derive(Deserialize)
+#derive(accessors)' ;;
+    esac
+    R="$T/rx_$order"
+    mkdir -p "$R/src"
+    ln -s "$ROOT/lib" "$R/lib"
+    printf '%s\nenum dv_rx { RA = 5; RB = 9; RC; }\nfn dv_rx_beside(a) { return a; }\n' "$dirs" > "$R/src/dv_rx.cyr"
+    printf '%s\ninclude "src/dv_rx.cyr"\nsyscall(60, 0);\n' "$(printf '%s\n' "$HDR" | grep -v 'src/dv_')" > "$R/prog.cyr"
+    rrc=0
+    ( cd "$R" && "$CC" < prog.cyr > /dev/null 2> "$R/err" ) || rrc=$?
+    check "$order: the compiler refuses it" "1 1" "$rrc $(grep -c 'error: #derive(accessors) applies to a struct; dv_rx is an enum' "$R/err")"
+    ( cd "$R" && timeout 20 "$API" --update --scope=project --snapshot="$R/snap" ) > /dev/null 2>&1 || :
+    check "$order: the tool lists only the fn beside it" "dv_rx::dv_rx_beside/1" "$(paste -sd' ' - < "$R/snap")"
+done
 
 echo "axis 6 — this tree's own surface (floors; the snapshot itself is gated by check.sh)"
 ( cd "$ROOT" && timeout 30 "$API" --update --snapshot="$T/tree.snap" ) > /dev/null 2>&1 || :

@@ -238,6 +238,95 @@ fn _asf_blank(c): i64 {
     return 0;
 }
 
+# ---------------------------------------------------------------------------------------
+# 6.6.10 — THE FIFTH MIRROR OF THE LEXER'S ATTRIBUTE TABLE (after cyrlint _lx_attr_len,
+# cyrfmt _cf_attr_len, cyrdoc _doc_attr_len and cbt/core.cyr _src_attr_len; the original is
+# the `#` branch of src/frontend/lex.cyr + LEXATTRBOUND). This scanner had no attribute
+# knowledge at all, and it cost it twice:
+#   * the declaration test wanted `fn ` at the line's first non-blank, so a SAME-LINE
+#     `#inline fn f()` / `#regalloc fn` / `#deprecated("x") fn`, and `async fn`, were never
+#     public surface;
+#   * the brace scan read an attribute's `#` as a comment opener and skipped the rest of the
+#     line — the attributed fn's `{` with it — while its closing `}` still counted. Depth
+#     went to -1, and every LATER fn in the file fell outside the `depth == 0` test: one
+#     multi-line `#inline fn mid() {` dropped the whole remainder of its file.
+# Both now step over the attribute token (and a parenthesised argument list); depth is
+# clamped at 0 so no future miscount can silently drop a file's tail again. Pinned by
+# tests/gates/frontend/lexer_attribute_word_boundary.sh group F. CHANGELOG [6.6.10]
+# ---------------------------------------------------------------------------------------
+
+# 1 iff the byte at `q` ENDS an attribute name: whitespace, end of line, or — when `ap` is
+# 1 — `(`. LEXATTRBOUND: `ap` is 1 only for `#assert`, `#deprecated` and `#pe_import`.
+fn _asf_attr_bound(b, q, lim, ap): i64 {
+    if (q >= lim) { return 1; }
+    var c = load8(b + q);
+    if (c == 32 || c == 9 || c == 10 || c == 13) { return 1; }
+    if (c == 40) { if (ap == 1) { return 1; } }
+    return 0;
+}
+
+# Length of the `#`-attribute TOKEN at b[p] — one of the ten names the lexer turns into a
+# token and keeps lexing the same line after — or 0: the `#` opens a comment.
+fn _asf_attr_len(b, p, lim): i64 {
+    var n = lim - p;
+    if (n < 3) { return 0; }
+    var s = b + p;
+    if (memeq(s, "#io", 3) == 1) { if (_asf_attr_bound(b, p + 3, lim, 0) == 1) { return 3; } }
+    if (n >= 5) { if (memeq(s, "#pure", 5) == 1) { if (_asf_attr_bound(b, p + 5, lim, 0) == 1) { return 5; } } }
+    if (n >= 6) { if (memeq(s, "#alloc", 6) == 1) { if (_asf_attr_bound(b, p + 6, lim, 0) == 1) { return 6; } } }
+    if (n >= 6) { if (memeq(s, "#naked", 6) == 1) { if (_asf_attr_bound(b, p + 6, lim, 0) == 1) { return 6; } } }
+    if (n >= 7) { if (memeq(s, "#inline", 7) == 1) { if (_asf_attr_bound(b, p + 7, lim, 0) == 1) { return 7; } } }
+    if (n >= 7) { if (memeq(s, "#assert", 7) == 1) { if (_asf_attr_bound(b, p + 7, lim, 1) == 1) { return 7; } } }
+    if (n >= 9) { if (memeq(s, "#regalloc", 9) == 1) { if (_asf_attr_bound(b, p + 9, lim, 0) == 1) { return 9; } } }
+    if (n >= 9) { if (memeq(s, "#must_use", 9) == 1) { if (_asf_attr_bound(b, p + 9, lim, 0) == 1) { return 9; } } }
+    if (n >= 10) { if (memeq(s, "#pe_import", 10) == 1) { if (_asf_attr_bound(b, p + 10, lim, 1) == 1) { return 10; } } }
+    if (n >= 11) { if (memeq(s, "#deprecated", 11) == 1) { if (_asf_attr_bound(b, p + 11, lim, 1) == 1) { return 11; } } }
+    return 0;
+}
+
+# Past the attribute at b[p] (length `al`) and its `( ... )` argument list when one follows
+# — strings inside it may hold parens (`#deprecated("use g() instead")`). Stops at `lim`.
+fn _asf_attr_skip(b, p, al, lim): i64 {
+    var q = p + al;
+    if (q >= lim) { return q; }
+    if (load8(b + q) != 40) { return q; }
+    var depth = 0;
+    while (q < lim) {
+        var c = load8(b + q);
+        if (c == 34) {
+            q = q + 1;
+            while (q < lim) {
+                var sc = load8(b + q);
+                if (sc == 92) { q = q + 1; } elif (sc == 34) { break; }
+                q = q + 1;
+            }
+        } else {
+            if (c == 40) { depth = depth + 1; }
+            if (c == 41) { depth = depth - 1; if (depth == 0) { return q + 1; } }
+        }
+        q = q + 1;
+    }
+    return lim;
+}
+
+# Step over everything that may precede `fn` on a declaration line: `public` / `pub`
+# (setting `_asf_saw_public`), `async`, and attribute tokens, in any order. Returns the
+# first byte after them (blanks skipped).
+fn _asf_decl_prefix(b, p, eol): i64 {
+    var go = 1;
+    while (go == 1) {
+        while (p < eol) { if (_asf_blank(load8(b + p)) == 0) { break; } p = p + 1; }
+        var al = 0;
+        if (p < eol) { if (load8(b + p) == 35) { al = _asf_attr_len(b, p, eol); } }
+        if (al > 0) { p = _asf_attr_skip(b, p, al, eol); }
+        elif (_asf_kw(b, p, eol + 1, "public", 6) == 1) { p = p + 7; _asf_saw_public = 1; }
+        elif (_asf_kw(b, p, eol + 1, "pub", 3) == 1) { p = p + 4; _asf_saw_public = 1; }
+        elif (_asf_kw(b, p, eol + 1, "async", 5) == 1) { p = p + 6; }
+        else { go = 0; }
+    }
+    return p;
+}
+
 # Skip trivia in [p, end): blanks, CR, LF and a `#` comment to its line end (PP_DTRIV).
 fn _asf_triv(b, p, end): i64 {
     while (p < end) {
@@ -356,10 +445,12 @@ fn _asf_kw(b, p, n, lit, k): i64 {
 #
 # Which families are emitted is the ENTRY handler's rule (PP_DERIVE_SERIALIZE / _DESER /
 # _ACCESSORS): the codecs for a Serialize or Deserialize entry, or an accessors entry with
-# Serialize stacked; the accessors for an accessors entry, or any entry with accessors
-# stacked. ⚠ An accessors entry IGNORES a stacked Deserialize — `#derive(accessors)` above
-# `#derive(Deserialize)` emits no codecs, while the reverse order does. That is the
-# compiler's behaviour today and this mirrors it; the gate goes red when the two differ.
+# Serialize OR Deserialize stacked; the accessors for an accessors entry, or any entry with
+# accessors stacked — and, since 6.6.10, never for an ENUM: the compiler refuses the build
+# (PP_DERIVE_ACC_ENUM), so this returns -1 and lists nothing. (Before 6.6.10 an accessors
+# entry ignored a stacked Deserialize and an enum got per-member "field" accessors; this
+# mirrored both, and the gate pinned them. The gate goes red when the two differ.)
+# CHANGELOG [6.6.10]
 fn _scan_derive_decl(b, n, module_off, module_len, p, first, stacked) {
     var is_public = 0;
     if (_asf_kw(b, p, n, "public", 6) == 1) { is_public = 1; p = _asf_triv(b, p + 7, n); }
@@ -382,14 +473,16 @@ fn _scan_derive_decl(b, n, module_off, module_len, p, first, stacked) {
     if (load8(b + p) != 123) { return 0 - 1; }
     var close = _asf_body_close(b, p, n);
     if (close < 0) { return 0 - 1; }
+    var acc = 0;
+    if (first == 4 || (stacked & 4) != 0) { acc = 1; }
+    # PP_DERIVE_ACC_ENUM: accessors on an enum refuse the build, whatever the visibility.
+    if (is_enum == 1 && acc == 1) { return 0 - 1; }
     # In a `private` file only a `public` declaration's generated fns are public (the
     # emitters prefix `public ` exactly when `_pp_decl_public` is set).
     if (_asf_file_private == 1 && is_public == 0) { return close + 1; }
     var codecs = 0;
     if (first == 1 || first == 2) { codecs = 1; }
-    if (first == 4 && (stacked & 1) != 0) { codecs = 1; }
-    var acc = 0;
-    if (first == 4 || (stacked & 4) != 0) { acc = 1; }
+    if (first == 4 && (stacked & 3) != 0) { codecs = 1; }
     if (codecs == 1) {
         # PP_DERIVE_SERIALIZE_BODY: `_to_json(ptr, sb)`, `_from_json(pairs)`,
         # `_from_json_str(json)`; an enum (PP_DERIVE_ENUM_BODY) has no pairs form.
@@ -513,13 +606,8 @@ fn _scan_file(filebuf, filelen, module_off, module_len) {
                 # removals the moment lib/regex.cyr adopted the feature.
                 # 6.6.8 — `pub` is the same token (73) and was not stepped over, so every
                 # `pub fn` was invisible (322 in lib/yukti.cyr). CHANGELOG [6.6.8]
-                if (_asf_kw(filebuf, p, eol + 1, "public", 6) == 1) {
-                    p = p + 7; _asf_saw_public = 1;
-                    while (p < eol) { if (_asf_blank(load8(filebuf + p)) == 0) { break; } p = p + 1; }
-                } elif (_asf_kw(filebuf, p, eol + 1, "pub", 3) == 1) {
-                    p = p + 4; _asf_saw_public = 1;
-                    while (p < eol) { if (_asf_blank(load8(filebuf + p)) == 0) { break; } p = p + 1; }
-                }
+                # 6.6.10 — and attributes / `async`, same line, any order (_asf_decl_prefix).
+                p = _asf_decl_prefix(filebuf, p, eol);
                 if (p + 7 <= eol) {
                     if (memeq(filebuf + p, "private", 7) == 1) {
                         if (eol - p <= 8) { _asf_file_private = 1; }
@@ -580,8 +668,9 @@ fn _scan_file(filebuf, filelen, module_off, module_len) {
         var bp = line_start;
         while (bp < eol) {
             var bc = load8(filebuf + bp);
-            if (bc == 35) {                  # '#' comment to EOL
-                bp = eol;
+            if (bc == 35) {                  # '#' comment to EOL — unless it is an attribute
+                var bal = _asf_attr_len(filebuf, bp, eol);
+                if (bal > 0) { bp = bp + bal; } else { bp = eol; }
             }
             elif (bc == 34) {                # '"' string literal
                 bp = bp + 1;
@@ -603,7 +692,7 @@ fn _scan_file(filebuf, filelen, module_off, module_len) {
             }
             else {
                 if (bc == 123) { depth = depth + 1; }
-                if (bc == 125) { depth = depth - 1; }
+                if (bc == 125) { depth = depth - 1; if (depth < 0) { depth = 0; } }
                 bp = bp + 1;
             }
         }
@@ -627,10 +716,31 @@ fn _module_name(filename, len) {
     return len;
 }
 
+# A source file the scan cannot see whole: name it and stop (exit 3, the tool's hard-error
+# code) — a partial snapshot written at rc 0 is the defect, not a degraded mode.
+fn _asf_read_fail(path, why): i64 {
+    syscall(SYS_WRITE, 2, "error: api-surface: ", 20);
+    syscall(SYS_WRITE, 2, why, strlen(why));
+    syscall(SYS_WRITE, 2, path, strlen(path));
+    syscall(SYS_WRITE, 2, "\n", 1);
+    syscall(60, 3);
+    return 0;
+}
+
 fn _scan_dir(dir_cstr) {
     var dir_str = str_from(dir_cstr);
-    var names = dir_list(dir_str);
-    if (names == 0) { return 0; }
+    # 6.6.10 (bite 15's lib/fs.cyr): a directory that EXISTS but cannot be listed is an
+    # error, by name — dir_list read it as empty, so `--update` wrote a snapshot missing the
+    # whole scope at rc 0. An ABSENT scope directory (no src/ in a lib-only tree) is still
+    # skipped, as before. CHANGELOG [6.6.10]
+    var names = vec_new();
+    if (dir_list_checked(dir_str, names) < 0) {
+        if (is_dir(dir_str) == 0) { return 0; }
+        syscall(SYS_WRITE, 2, "error: api-surface: cannot list directory: ", 43);
+        syscall(SYS_WRITE, 2, dir_cstr, strlen(dir_cstr));
+        syscall(SYS_WRITE, 2, "\n", 1);
+        syscall(60, 3);
+    }
     var n = vec_len(names);
     var dir_len = strlen(dir_cstr);
     # v6.0.53: per-file read buffer alloc'd ONCE + reused. Was alloc(262144) PER
@@ -657,6 +767,12 @@ fn _scan_dir(dir_cstr) {
                             while (qi < fname_len) { store8(path_buf + dir_len + 1 + qi, load8(fname + qi)); qi = qi + 1; }
                             store8(path_buf + dir_len + 1 + fname_len, 0);
                             var nbytes = file_read_all(path_buf, filebuf, 2097152);
+                            # 6.6.10: an unreadable source and one at the read cap are
+                            # ERRORS. `if (nbytes > 0)` skipped the first silently and the
+                            # second was scanned truncated, so `--update` wrote a snapshot
+                            # missing the file (or its tail) at rc 0. CHANGELOG [6.6.10]
+                            if (nbytes < 0) { _asf_read_fail(path_buf, "cannot read source file: "); }
+                            if (nbytes >= 2097152) { _asf_read_fail(path_buf, "source file at or over the 2 MiB read cap: "); }
                             if (nbytes > 0) {
                                 var module_len = _module_name(fname, fname_len);
                                 _scan_file(filebuf, nbytes, fname, module_len);

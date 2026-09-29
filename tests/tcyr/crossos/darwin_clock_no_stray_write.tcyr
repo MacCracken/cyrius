@@ -1,0 +1,83 @@
+# darwin_clock_no_stray_write.tcyr — 6.6.10 (CVE-51): reading the clock writes NOTHING but its
+# own buffer, whatever the previous call left in the argument registers.
+#
+# THE DEFECT (x86-macOS). Darwin has no clock_gettime, so EMACHO_CLOCK_X86 composes
+# `syscall(228, id, &ts)` from BSD gettimeofday(tp, tzp, uint64_t *mach_absolute_time) — and the
+# third parameter is an OUT-pointer: xnu copies 8 bytes of mach time out through it. The emitter
+# set rdi and rsi and never wrote rdx, so from v6.5.16 to 6.6.9 every clock_now_* on Intel-Mac
+# stored mach time at whatever address rdx still held — normally the previous call's third
+# argument — into an image whose one __TEXT segment is rwx. Measured on ach: a sentinel passed as
+# the third argument of the call just before clock_now_ms() came back as the box's uptime in ns,
+# 3 runs of 3; it is also what garbled an assert message mid-test on ach at 6.6.8. The fix is
+# `xor edx, edx` (mach time out-pointer = NULL).
+#
+# ⭐ WHY `_take3(0, 0, &sentinel)` FIRST. Priming rdx needs a call whose third argument is the
+# sentinel's address and which then leaves rdx alone; a cyrius call does exactly that (the
+# probe that proved the defect used this shape). The raw-228 group then issues the syscall in
+# the SAME function straight after the priming call, so no intervening code can clear rdx by
+# accident and make the test pass for the wrong reason.
+# ⭐ WHY EVERY TARGET RUNS IT. "Reading the clock writes nothing else" is a portable promise; on
+# the other targets the assertions simply hold. The raw 228 spelling is Darwin-only (it means
+# something else on agnos, and the PE route returns ms), so that group is guarded.
+include "lib/syscalls.cyr"
+include "lib/assert.cyr"
+include "lib/chrono.cyr"
+
+var _sent_g = 0;
+var _sent_g_hi = 0;
+
+# Leaves its third argument in the third argument register — that is the whole point.
+fn _take3(a, b, c): i64 { return 0; }
+
+fn _primed_clock_now(p): i64 {
+    _take3(0, 0, p);
+    var t = clock_now_ns();
+    return t;
+}
+
+#ifdef CYRIUS_TARGET_MACOS
+fn _primed_raw_228(p): i64 {
+    var ts[16];
+    _take3(0, 0, p);
+    var t = syscall(228, 4, &ts);
+    return t;
+}
+#endif
+
+fn main(): i64 {
+    var sentinel = 0x4141414141414141;
+
+    test_group("clock_now_ns() after a call that left &global in the third argument register");
+    _sent_g = 0x4141414141414141; _sent_g_hi = 0x4242424242424242;
+    var r = 0;
+    var i = 0;
+    while (i < 3) {
+        r = _primed_clock_now(&_sent_g);
+        i = i + 1;
+    }
+    assert(r > 0, "clock_now_ns() > 0");
+    assert_eq(_sent_g, 0x4141414141414141, "the global sentinel is untouched (was: mach time on ach)");
+    assert_eq(_sent_g_hi, 0x4242424242424242, "the word after it is untouched");
+
+    test_group("clock_now_ns() after a call that left &local in the third argument register");
+    i = 0;
+    while (i < 3) {
+        r = _primed_clock_now(&sentinel);
+        i = i + 1;
+    }
+    assert(r > 0, "clock_now_ns() > 0");
+    assert_eq(sentinel, 0x4141414141414141, "the local sentinel is untouched");
+
+    #ifdef CYRIUS_TARGET_MACOS
+    test_group("Darwin: raw syscall(228, 4, &ts) straight after the priming call");
+    _sent_g = 0x4141414141414141;
+    var t1 = _primed_raw_228(&_sent_g);
+    var t2 = _primed_raw_228(&_sent_g);
+    assert(t1 > 0, "syscall(228) returns ns > 0");
+    assert(t2 > 0, "and again");
+    assert_eq(_sent_g, 0x4141414141414141, "the sentinel is untouched by the raw reroute");
+    #endif
+    return assert_summary();
+}
+var ec = main();
+syscall(60, ec);

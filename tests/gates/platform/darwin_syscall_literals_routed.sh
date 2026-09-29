@@ -38,6 +38,8 @@
 # Exemptions carry a reason; an unexplained one is how this rots:
 #   programs/checks/            the check.sh driver runs on the Linux build host only
 #   darwin_unrouted_syscall_faults.tcyr:4001   that test issues an unrouted number ON PURPOSE
+#   darwin_short_arity_sigsys.tcyr:35/22/59    that test issues too-short nanosleep / pipe calls
+#                               ON PURPOSE, to prove they SIGSYS rather than fault or write (6.6.10)
 #   lib/*_win.cyr, *_windows.cyr, *_agnos.cyr, syscalls_x86_64_linux.cyr  included only under
 #                               their own target's #ifdef — never on Darwin (the Windows reroute
 #                               band 0xF0xx in lib/sync_windows.cyr is what an unscoped scan hits)
@@ -48,6 +50,12 @@
 # routed one must not, and `syscall(228, id)` (argc 2) must warn while `syscall(228, id, &ts)`
 # must not. A scanner that reached nothing, or a compiler that stopped warning, fails here
 # before it can report "all routed".
+# 6.6.10 adds the pointer-emulation arities to the controls: `syscall(35, &ts)` (argc 2) must
+# warn on BOTH Macs (arm64 used to emulate 35 at any arity, dereferencing x0 = the number at
+# argc 1) while `syscall(35, &ts, 0)` must not, and the pipe with no fds pointer — x86 `syscall(22)`,
+# arm64 `syscall(59)` — must warn while the full call must not (x86 stored the fds through a
+# stale rdi, arm64 through x0 = 59). The backend half is gated at run time by
+# tests/tcyr/crossos/darwin_short_arity_sigsys.tcyr.
 #
 # MUTATION LEDGER (each measured RED, then restored):
 #   * drop the aarch64 peer's #ifdef CYRIUS_TARGET_MACOS decline in sys_epoll_wait   → axis 1: arm 232, axis 2
@@ -56,6 +64,8 @@
 #   * revert cyrius-init's Darwin _cwd_path arm                                        → axis 2: x86 79, arm 17
 #   * revert parse_expr's arity check (_macho_reroute_argc)                            → control: 228 argc 2
 #   * restore yukti's un-declined _yk_ppoll                                            → axis 2: x86 271, arm 1073
+#   * restore `_macho_reroute_argc`'s `tgt == 1` guard on 35 (6.6.10)                 → control: arm 35 argc 2
+#   * drop the `_macho_warn_short` call from _macho_warn_unrouted (6.6.10)             → control: x86 22, arm 59
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
@@ -82,17 +92,21 @@ fail=0
 
 # ── controls: prove the probe machinery before trusting a quiet answer ──────────────
 for T in x86 arm; do
-    printf 'var ts[16];\nsyscall(4001, 0, 0, 0);\nsyscall(3, 0);\nsyscall(228, 4);\nsyscall(228, 4, &ts);\n' > "$TMP/ctl.cyr"
+    # the pipe emulation's number per peer: x86 pipe 22, aarch64 pipe2 59
+    if [ "$T" = x86 ]; then P=22; want="22 35 228 4001 "; else P=59; want="35 59 228 4001 "; fi
+    printf 'var ts[16];\nvar fds[8];\nsyscall(4001, 0, 0, 0);\nsyscall(3, 0);\nsyscall(228, 4);\nsyscall(228, 4, &ts);\nsyscall(35, &ts);\nsyscall(35, &ts, 0);\nsyscall(%s);\nsyscall(%s, &fds, 0);\n' "$P" "$P" > "$TMP/ctl.cyr"
     macho_compile "$T" "$TMP/ctl.cyr" "$TMP/ctl.$T.err"
     got=$(warned_numbers "$TMP/ctl.$T.err" | tr '\n' ' ')
     n228=$(grep -c '^warning: syscall 228 not routed' "$TMP/ctl.$T.err" || true)
-    if [ "$got" != "228 4001 " ] || [ "$n228" != 1 ]; then
-        echo "FAIL: darwin_syscall_literals_routed: $T control — want exactly 4001 and ONE 228 (the argc-2 call) warned, got '$got' ($n228 x 228)"
-        echo "      (4001 unwarned: the diagnostic is dead; 3 warned: it cries wolf; 228 twice or never: the arity check is gone)"
+    n35=$(grep -c '^warning: syscall 35 not routed' "$TMP/ctl.$T.err" || true)
+    nP=$(grep -c "^warning: syscall $P not routed" "$TMP/ctl.$T.err" || true)
+    if [ "$got" != "$want" ] || [ "$n228" != 1 ] || [ "$n35" != 1 ] || [ "$nP" != 1 ]; then
+        echo "FAIL: darwin_syscall_literals_routed: $T control — want exactly '$want' warned, ONE each for 228, 35 and $P (the short calls); got '$got' ($n228 x 228, $n35 x 35, $nP x $P)"
+        echo "      (4001 unwarned: the diagnostic is dead; 3 warned: it cries wolf; 228/35/$P twice or never: an arity check is gone)"
         exit 1
     fi
 done
-echo "  controls: both Mach-O compilers warn on 4001 and on syscall(228, id), and not on close or syscall(228, id, &ts)"
+echo "  controls: both Mach-O compilers warn on 4001, syscall(228, id), syscall(35, &ts) and a pipe with no fds pointer, and not on close or the full-arity calls"
 
 # ── axis 1: literal sites ────────────────────────────────────────────────────────────
 files=$(find lib cbt programs tests/tcyr/crossos \( -name '*.cyr' -o -name '*.tcyr' \) \
@@ -192,6 +206,7 @@ for T in x86 arm; do
         BEGIN { while ((getline l < U) > 0) { split(l, f, " "); u[f[1] " " f[2]] = 1 } }
         ($1 " " $2) in u {
             if ($3 ~ /^tests\/tcyr\/crossos\/darwin_unrouted_syscall_faults\.tcyr:/ && $1 == 4001) next
+            if ($3 ~ /^tests\/tcyr\/crossos\/darwin_short_arity_sigsys\.tcyr:/ && ($1 == 35 || $1 == 22 || $1 == 59)) next
             printf "    UNROUTED on %s-macOS  %s  syscall(%s, …) with %d argument(s) incl. the number\n", T, $3, $1, $2
         }')
     if [ -n "$bad" ]; then echo "$bad"; fail=$((fail + $(echo "$bad" | wc -l))); fi
@@ -208,6 +223,7 @@ for T in x86 arm; do
         macho_compile "$T" "$f" "$TMP/b.err"
         for n in $(warned_numbers "$TMP/b.err"); do
             case "$f:$n" in tests/tcyr/crossos/darwin_unrouted_syscall_faults.tcyr:4001) continue ;; esac
+            case "$f:$n" in tests/tcyr/crossos/darwin_short_arity_sigsys.tcyr:35|tests/tcyr/crossos/darwin_short_arity_sigsys.tcyr:22|tests/tcyr/crossos/darwin_short_arity_sigsys.tcyr:59) continue ;; esac
             echo "    WARNS on $T-macOS  $f  syscall $n not routed"
             nw=$((nw + 1))
         done

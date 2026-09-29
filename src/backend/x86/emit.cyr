@@ -407,6 +407,11 @@ fn ESYSCALL(S): i64 {
 # still self-hosts byte-identical. macho-only (Linux path never reaches here).
 # r11 holds the RAW Linux syscall number (pushed pre-translation in ESYSCALL),
 # so the compares use the Linux numbers (fork 57, pipe 22) as clean imm8s.
+# ⛔ 6.6.10: the `js` guard had NO `test rax, rax` in front of it, so it read the sign of
+# `cmp r11, 22` — which is ZERO on the pipe path by construction — and never skipped: a FAILED
+# pipe stored -errno and a stale rdx over the caller's fds and returned 0 (measured on ach with
+# SIGSYS ignored: a -ENOSYS pipe came back 0 with 0x...FFFFFFB2 written through rdi). Found by
+# tests/tcyr/crossos/darwin_short_arity_sigsys.tcyr. CHANGELOG [6.6.10]
 fn EMACHO_PROC_FIXUP(S): i64 {
     EB(S, 0x41); EB(S, 0x5B);                            # pop r11  (recover Linux num)
     EB(S, 0x49); EB(S, 0x83); EB(S, 0xFB); EB(S, 0x39);  # cmp r11, 57  (fork?)
@@ -415,7 +420,8 @@ fn EMACHO_PROC_FIXUP(S): i64 {
     EB(S, 0x75); EB(S, 0x03);                            # jne +3
     EB(S, 0x48); EB(S, 0x31); EB(S, 0xC0);               # xor rax, rax (child → 0)
     EB(S, 0x49); EB(S, 0x83); EB(S, 0xFB); EB(S, 0x16);  # cmp r11, 22  (pipe?)
-    EB(S, 0x75); EB(S, 0x0A);                            # jne +10
+    EB(S, 0x75); EB(S, 0x0D);                            # jne +13
+    EB(S, 0x48); EB(S, 0x85); EB(S, 0xC0);               # test rax, rax
     EB(S, 0x78); EB(S, 0x08);                            # js  +8  (rax<0 error → skip)
     EB(S, 0x89); EB(S, 0x07);                            # mov [rdi], eax     (fds[0])
     EB(S, 0x89); EB(S, 0x57); EB(S, 0x04);               # mov [rdi+4], edx   (fds[1])
@@ -740,6 +746,10 @@ fn ESADDR(S, soff): i64 {
     return 0;
 }
 
+# The arity of the syscall being emitted, counting the number (ESCPOPS' `n`); 7 = full arity
+# outside ESCPOPS, so a direct ESYSCALL (EEXIT's pre-classed exit) is unaffected. Read by
+# _msx_short. CHANGELOG [6.6.10]
+var _msx_argc = 7;
 # emit syscall pops for N args then syscall
 fn ESCPOPS(S, n): i64 {
     var _ire = IR_ENABLED(S); if (_ire >= 1) { ir_emit1(S, IR_CALL_POPS, n); }
@@ -751,7 +761,9 @@ fn ESCPOPS(S, n): i64 {
     if (n >= 2) { EPOPRDI(S); }
     if (n >= 1) { EPOPR(S); }
     if (n < 5) { if (_TARGET_AGNOS == 1) { E3(S, 0xD23145); } }   # xor r10d, r10d
+    _msx_argc = n;          # EMACHO_SYSXLAT's pointer-carrying rows key on it (see _msx_short)
     ESYSCALL(S);
+    _msx_argc = 7;
     return 0;
 }
 # ⚠ agnos reads a4 = r10 on EVERY syscall (read#5 / write#1 block only when a4 == 0), and a
@@ -953,8 +965,24 @@ fn EEXIT(S): i64 {
 var _msx_qon = 0;
 var _msx_q = 0;
 var _msx_hit = 0;
+# 6.6.10 — 1 when row `lin` must NOT be emitted at this call's arity. The pipe row (22) is
+# emitted only when the call PASSES the fds pointer (argc >= 2, counting the number, as ESCPOPS
+# does): Darwin pipe returns fd0:fd1 in rax:rdx and EMACHO_PROC_FIXUP stores them through rdi,
+# and `syscall(22)` at argc 1 never wrote rdi — so the fixup stored 8 bytes through whatever the
+# previous code left there (measured on ach: rdi primed with &sentinel, then `syscall(22)`
+# overwrote it, rc 0). With no row, 22 stays unclassed and _msx_tail makes it 0x200FFFF: SIGSYS,
+# or -ENOSYS with SIGSYS ignored, and the fixup's sign test then skips the store. parse_expr
+# warns at compile time (`_macho_warn_short`). Query mode never gets here — the number IS
+# routed, at its arity. The rule lives in the row emitter, not as a guard in the table, so
+# EMACHO_SYSXLAT stays a flat list of rows (macho_route_parity.sh reads it as source, and cybs
+# caps its per-fn references). CHANGELOG [6.6.10]
+fn _msx_short(lin): i64 {
+    if (lin == 22) { if (_msx_argc < 2) { return 1; } }
+    return 0;
+}
 fn _msx(S, lin, classed): i64 {
     if (_msx_qon == 1) { if (lin == _msx_q) { _msx_hit = 1; } return 0; }
+    if (_msx_short(lin) == 1) { return 0; }
     if (lin >= 128) { return _msx32(S, lin, classed); }   # >127 sets imm8 bit 7 -> sign-extends to negative; route to the imm32 form (cf. getdents64 217, getrandom 318). CHANGELOG [6.4.15] L2
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xF8); EB(S, lin);    # cmp rax, lin (imm8)
     EB(S, 0x75); EB(S, 0x07);                             # jne +7 (skip the mov)
@@ -1056,7 +1084,7 @@ fn EMACHO_SYSXLAT(S): i64 {
     # dup2 needs translating (Linux 33 == BSD `access`!). fork + pipe also get a
     # post-syscall fixup in ESYSCALL (rax:rdx multi-return) — see EMACHO_PROC_FIXUP.
     _msx(S, 33, 0x200005A);   # dup2     33 → 90
-    _msx(S, 22, 0x200002A);   # pipe     22 → 42
+    _msx(S, 22, 0x200002A);   # pipe     22 → 42 (argc >= 2 only — see _msx_short)
     _msx(S, 57, 0x2000002);   # fork     57 → 2
     # v6.0.59: net.cyr socket surface (parity with arm64 ESYSXLAT — cross-arch).
     _msx(S, 41, 0x2000061);   # socket     41 → 97
@@ -1100,10 +1128,10 @@ fn EMACHO_SYSXLAT(S): i64 {
     # ⚠ The 0x2000000 Unix-class prefix is NOT optional: live-probed on ach, a raw
     # `syscall` with rax=202 unprefixed is KILLED by SIGSYS (shell rc 140), while
     # rax=0x20000CA returns "Darwin". That is the exact v6.5.15 fchmod bug.
-    # gettimeofday rather than clock_gettime: syscall(228) is unrouted on THIS arch
-    # (lib/chrono.cyr:27 — "x86-macOS does not route 228 → clock stays dead there"),
-    # so uptime's "now" has to come from 116, which measured identically on ach and
-    # ecb (rc 0, tv_sec i64 @ +0 matching libc time(0)).
+    # 1116 is lib/sys.cyr's own gettimeofday (uptime's "now", with an explicit NULL third
+    # argument), which measured identically on ach and ecb (rc 0, tv_sec i64 @ +0 matching
+    # libc time(0)). syscall(228) IS routed on this arch — since v6.5.16, by the parse-time
+    # EMACHO_CLOCK_X86 reroute, not by a row here; this note said "unrouted" until 6.6.10.
     _msx32(S, 1202, 0x20000CA); # sysctl       1202 (private alias) → BSD 202
     _msx32(S, 1116, 0x2000074); # gettimeofday 1116 (private alias) → BSD 116
     # v6.5.27 — kqueue/kevent, Darwin's readiness API. Private-alias band (1000 + native),
@@ -1273,11 +1301,21 @@ fn EMACHO_CLOCK_ARM(S): i64 {
 #
 # ⚠ HONEST LIMITATION: gettimeofday is the REALTIME clock, so on Intel-Mac only,
 # clock_now_ns() is wall-clock-backed rather than monotonic and can step under NTP.
-# Darwin exposes no monotonic clock through the syscall table (mach_absolute_time is a
-# commpage/libSystem routine, not a syscall), so this is the platform's ceiling short of
-# porting the whole dyld-bind machinery to the x86 writer. A working realtime-backed
-# clock is strictly better than SIGSYS, and this is the same trade v6.5.16 already made
-# for sys_sysinfo's uptime on both backends.
+# (This note used to say mach_absolute_time is "not reachable through a syscall". It is:
+# Darwin's gettimeofday takes a THIRD argument, `uint64_t *mach_absolute_time`, and copies
+# mach time out through it — see below. Using it as the monotonic source is a separate
+# change; this emitter passes NULL there.)
+#
+# ⛔ rdx MUST BE ZEROED. Darwin's syscall is gettimeofday(tp, tzp, uint64_t *mach_abs): the
+# third argument is an OUT-pointer, and xnu writes 8 bytes of mach time through whatever rdx
+# holds. Until 6.6.10 nothing here wrote rdx, so every clock_now_* on Intel-Mac since v6.5.16
+# stored mach time at the address the PREVIOUS code left in rdx — usually the last call's third
+# argument — into an image whose single __TEXT segment is rwx (code, literals and globals all
+# writable). Silent: when rdx was not a writable address copyout failed with EFAULT, which this
+# sequence never checks. It was the "garbled assert message on ach" (an assert label's bytes
+# overwritten mid-test). lib/sys.cyr's _macos_gettimeofday documents the same hazard and always
+# passed an explicit 0; the emitter never did. CVE-51; gated by
+# tests/tcyr/crossos/darwin_clock_no_stray_write.tcyr. CHANGELOG [6.6.10]
 #
 # Stack top-down on entry (argc==3): [arg2=&tv][arg1=clock_id][sc_num=228].
 # The 16-byte `var ts[16]` every caller passes is exactly Darwin's struct timeval
@@ -1289,6 +1327,7 @@ fn EMACHO_CLOCK_X86(S): i64 {
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x10);   # add rsp, 16     (drop clock_id + sc_num)
     EB(S, 0x57);                                          # push rdi        (save &tv across the call)
     EB(S, 0x31); EB(S, 0xF6);                             # xor esi, esi    (tzp = NULL)
+    EB(S, 0x31); EB(S, 0xD2);                             # xor edx, edx    (mach_abs out-ptr = NULL)
     EB(S, 0x48); EB(S, 0xC7); EB(S, 0xC0);                # mov rax, 0x2000074 (BSD gettimeofday,
     EB(S, 0x74); EB(S, 0x00); EB(S, 0x00); EB(S, 0x02);   #   Unix class prefix NOT optional)
     EB(S, 0x0F); EB(S, 0x05);                             # syscall
@@ -2282,6 +2321,48 @@ fn ESYMLINKW_PE(S): i64 {
 fn ESETEOF_PE(S): i64 {
     _pe_ensure_seteof(S);
     _pe_srw_call_1arg(S, _pe_seteof_get());
+    EB(S, 0x89); EB(S, 0xC0);                           # mov eax, eax (BOOL → zero-extended)
+    return 0;
+}
+
+# 6.6.10 — the Job-object reroutes: a process TREE on Windows (lib/process_win.cyr,
+# lib/async_win.cyr, cbt's `_win_run_timed`). A deadline could only TerminateProcess the direct
+# child, so a grandchild holding the capture pipe kept the verb blocked until it exited (a
+# 2000 ms deadline returned after 19,437 ms on cass). Every callee is reached through the
+# rbx-anchored aligned callers, so each is correct at any expression depth. CHANGELOG [6.6.10]
+#   syscall(0xF040, attrs, name)            → CreateJobObjectW (argc 3) — a HANDLE, all 64 bits
+#   syscall(0xF041, job, hProcess)          → AssignProcessToJobObject (argc 3) — BOOL
+#   syscall(0xF042, job, code)              → TerminateJobObject (argc 3) — BOOL
+#   syscall(0xF043, hThread)                → ResumeThread (argc 2) — DWORD, 0xFFFFFFFF on failure
+#   syscall(0xF044, job, class, info, len)  → SetInformationJobObject (argc 5) — BOOL
+# A BOOL / DWORD is zero-extended (`mov eax, eax`) so an undefined upper half cannot read as
+# TRUE; the HANDLE is returned whole.
+fn ECREATEJOB_PE(S): i64 {
+    _pe_ensure_createjob(S);
+    _pe_call_2arg_aligned(S, _pe_createjob_get());
+    return 0;
+}
+fn EASSIGNJOB_PE(S): i64 {
+    _pe_ensure_assignjob(S);
+    _pe_call_2arg_aligned(S, _pe_assignjob_get());
+    EB(S, 0x89); EB(S, 0xC0);                           # mov eax, eax (BOOL → zero-extended)
+    return 0;
+}
+fn ETERMJOB_PE(S): i64 {
+    _pe_ensure_termjob(S);
+    _pe_call_2arg_aligned(S, _pe_termjob_get());
+    EB(S, 0x89); EB(S, 0xC0);                           # mov eax, eax (BOOL → zero-extended)
+    return 0;
+}
+fn ERESUMETHREAD_PE(S): i64 {
+    _pe_ensure_resumethread(S);
+    _pe_srw_call_1arg(S, _pe_resumethread_get());
+    EB(S, 0x89); EB(S, 0xC0);                           # mov eax, eax (DWORD → zero-extended)
+    return 0;
+}
+fn ESETJOBINFO_PE(S): i64 {
+    _pe_ensure_setjobinfo(S);
+    _pe_call_4arg_aligned(S, _pe_setjobinfo_get());
     EB(S, 0x89); EB(S, 0xC0);                           # mov eax, eax (BOOL → zero-extended)
     return 0;
 }

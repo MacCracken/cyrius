@@ -14,7 +14,9 @@
 #      x86, aarch64 and PE — v6.3.2's refusal only held when the live call came first.
 #   3. The four aarch64 / Mach-O forks never called `_warn_undefined_prepass`, so an undefined
 #      call in an unreachable fn warned on x86 and was silent on aarch64 — and the reachable
-#      form printed only the suffixed "(call site may be unreachable)" line there.
+#      form printed only the suffixed reachability line there (it read "(call site may be
+#      unreachable)" — inverted, since it only ever fires for REACHABLE sites; 6.6.10 made it
+#      "(reachable call site)").
 #
 # Anti-vacuous rows: the non-tail form is refused; `--allow-undef` still EMITS a binary; an
 # undefined tail call inside an UNREACHABLE fn is NOT refused (it warns). A gate that refused

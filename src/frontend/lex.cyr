@@ -865,8 +865,18 @@ fn LEXATTRBOUND(S, q, bl, ap): i64 {
     return 0;
 }
 
+# ⛔ 6.6.10 — a hex, octal or decimal literal whose value does not fit in 64 bits is an
+# ERROR. The three lexers accumulated with no check, so `0x10000000000000001` was 1 and
+# `99999999999999999999` was 0x6bc75e2d630fffff, silently. 2^63..2^64-1 stays legal (it is
+# how a bit pattern with the sign bit set is written). CHANGELOG [6.6.10]
+fn _lex_int_ovf(S): i64 {
+    _lex_die(S, _tok_start, "integer literal does not fit in 64 bits");
+    return 0;
+}
+
 fn LEXHEX(S, p): i64 {
     var val = 0;
+    var ovf = 0;
     var go = 1;
     while (go == 1) {
         if (p >= GBL(S)) { go = 0; }
@@ -879,11 +889,15 @@ fn LEXHEX(S, p): i64 {
                 if (c >= 48) { if (c <= 57) { hd = c - 48; } }
                 if (c >= 97) { if (c <= 102) { hd = c - 87; } }
                 if (c >= 65) { if (c <= 70) { hd = c - 55; } }
-                if (hd >= 0) { val = val << 4 | hd; p = p + 1; }
+                if (hd >= 0) {
+                    if ((val >> 60) != 0) { ovf = 1; }
+                    val = val << 4 | hd; p = p + 1;
+                }
                 else { go = 0; }
             }
         }
     }
+    if (ovf == 1) { _lex_int_ovf(S); }
     ADDTOK(S, 1, val);
     return p;
 }
@@ -894,6 +908,7 @@ fn LEXHEX(S, p): i64 {
 # skipped silently, like hex/decimal.
 fn LEXOCT(S, p): i64 {
     var val = 0;
+    var ovf = 0;
     var go = 1;
     while (go == 1) {
         if (p >= GBL(S)) { go = 0; }
@@ -903,19 +918,285 @@ fn LEXOCT(S, p): i64 {
             else {
                 var od = 0 - 1;
                 if (c >= 48) { if (c <= 55) { od = c - 48; } }
-                if (od >= 0) { val = val << 3 | od; p = p + 1; }
+                if (od >= 0) {
+                    if ((val >> 61) != 0) { ovf = 1; }
+                    val = val << 3 | od; p = p + 1;
+                }
                 else { go = 0; }
             }
         }
     }
+    if (ovf == 1) { _lex_int_ovf(S); }
     ADDTOK(S, 1, val);
     return p;
 }
 
+# ================================================================
+# DECIMAL FLOAT LITERALS -> correctly rounded binary64, at compile time.
+# ================================================================
+# ⛔ 6.6.10 — the literal is converted HERE, exactly, and the token carries the IEEE-754 bits.
+# It used to be an i64 numerator/denominator pair divided at RUNTIME (cvtsi2sd/scvtf + divide):
+# the numerator overflowed once the digit string reached 2^63 and the denominator past 18
+# fraction digits (leading zeros included), so `0.0000000000000000001` was NEGATIVE and
+# `9.999999999999999999` was -8.2; and once numer > 2^53 the runtime division double-rounded,
+# putting ~3%/24%/21% of 16/17/18-digit literals 1 ulp off. All of it silent.
+#
+# Integer-only bignums (32-bit limbs in 8-byte slots, slot 0 = limb count, no leading zero
+# limb), a sticky bit, round-half-even, subnormals, overflow to +inf. Two scratch bignums,
+# allocated on the first float literal — no heap-map region, no layout change.
+# Size bound: at most _FLIT_SIG significant digits are kept (a nonzero tail becomes one
+# trailing `1`, which cannot move the result: every binary64 value and every halfway point
+# between two of them has at most 767 significant digits), and anything below 1e-324 or at
+# or above 1e309 is decided before any bignum is built, so D < 10^1125 and both operands
+# stay under 3800 bits — inside _FLB_W.
+# Every fn here is small and plain on purpose: cybs (the seed's compiler) fails SILENTLY past
+# its per-fn limits. CHANGELOG [6.6.10]
+var _flb = 0;
+var _FLB_W = 136;
+var _FLIT_SIG = 800;
+
+# b = b * m + a, for small m and a.
+fn _bn_muladd(b, m, a): i64 {
+    var n = load64(b);
+    var c = a;
+    var i = 0;
+    while (i < n) {
+        var x = load64(b + 8 + i * 8) * m + c;
+        store64(b + 8 + i * 8, x & 0xFFFFFFFF);
+        c = x >> 32;
+        i = i + 1;
+    }
+    if (c != 0) { store64(b + 8 + n * 8, c); store64(b, n + 1); }
+    return 0;
+}
+
+# b = b << k.
+fn _bn_shl(b, k): i64 {
+    var n = load64(b);
+    if (n == 0) { return 0; }
+    var w = k >> 5;
+    var s = k & 31;
+    store64(b + 8 + (n + w) * 8, 0);
+    var i = n - 1;
+    while (i >= 0) {
+        var v = load64(b + 8 + i * 8) << s;
+        var d = b + 8 + (i + w) * 8;
+        store64(d + 8, load64(d + 8) | (v >> 32));
+        store64(d, v & 0xFFFFFFFF);
+        i = i - 1;
+    }
+    i = 0;
+    while (i < w) { store64(b + 8 + i * 8, 0); i = i + 1; }
+    n = n + w;
+    if (load64(b + 8 + n * 8) != 0) { n = n + 1; }
+    store64(b, n);
+    return 0;
+}
+
+# b = b >> 1.
+fn _bn_shr1(b): i64 {
+    var n = load64(b);
+    var i = 0;
+    while (i < n) {
+        var v = load64(b + 8 + i * 8) >> 1;
+        if (i + 1 < n) { v = v | ((load64(b + 16 + i * 8) & 1) << 31); }
+        store64(b + 8 + i * 8, v);
+        i = i + 1;
+    }
+    if (n > 0) { if (load64(b + n * 8) == 0) { store64(b, n - 1); } }
+    return 0;
+}
+
+# -1 / 0 / 1 as a < / == / > b.
+fn _bn_cmp(a, b): i64 {
+    var n = load64(a);
+    var m = load64(b);
+    if (n > m) { return 1; }
+    if (n < m) { return 0 - 1; }
+    var i = n - 1;
+    while (i >= 0) {
+        var x = load64(a + 8 + i * 8);
+        var y = load64(b + 8 + i * 8);
+        if (x > y) { return 1; }
+        if (x < y) { return 0 - 1; }
+        i = i - 1;
+    }
+    return 0;
+}
+
+# a = a - b, for a >= b.
+fn _bn_sub(a, b): i64 {
+    var n = load64(a);
+    var m = load64(b);
+    var br = 0;
+    var i = 0;
+    while (i < n) {
+        var y = 0;
+        if (i < m) { y = load64(b + 8 + i * 8); }
+        var x = load64(a + 8 + i * 8) - y - br;
+        br = 0;
+        if (x < 0) { x = x + 0x100000000; br = 1; }
+        store64(a + 8 + i * 8, x);
+        i = i + 1;
+    }
+    var go = 1;
+    while (go == 1) {
+        if (n == 0) { go = 0; }
+        elif (load64(a + n * 8) != 0) { go = 0; }
+        else { n = n - 1; }
+    }
+    store64(a, n);
+    return 0;
+}
+
+# Number of significant bits of b (0 for zero).
+fn _bn_bitlen(b): i64 {
+    var n = load64(b);
+    if (n == 0) { return 0; }
+    var top = load64(b + n * 8);
+    var l = (n - 1) * 32;
+    while (top != 0) { l = l + 1; top = top >> 1; }
+    return l;
+}
+
+# Bits of q (2^54 <= q < 2^56), the value being q * 2^-k plus a tail that is nonzero when
+# st != 0, rounded to binary64: nearest, ties to even; subnormal below 2^-1022; +inf at or
+# past the overflow threshold.
+fn _flit_round(q, k, st): i64 {
+    var lq = 0;
+    var t = q;
+    while (t != 0) { lq = lq + 1; t = t >> 1; }
+    var e = lq - 1 - k;
+    if (e > 1023) { return 0x7FF0000000000000; }
+    var s = lq - 53;
+    if (e < 0 - 1022) { s = s + (0 - 1022 - e); }
+    if (s > 57) { return 0; }
+    var m = q >> s;
+    var half = 1 << (s - 1);
+    var sticky = st;
+    if ((q & (half - 1)) != 0) { sticky = 1; }
+    if ((q & half) != 0) {
+        if (sticky != 0) { m = m + 1; }
+        elif ((m & 1) != 0) { m = m + 1; }
+    }
+    # Subnormal: the bits ARE m (a carry to 2^52 is exactly the smallest normal).
+    if (e < 0 - 1022) { return m; }
+    # Normal: m in [2^52, 2^53]; a carry to 2^53 bumps the exponent, and past 1023 is +inf.
+    var bits = ((e + 1022) << 52) + m;
+    if (bits >= 0x7FF0000000000000) { return 0x7FF0000000000000; }
+    return bits;
+}
+
+# The 56-bit quotient of a / (d >> 55), d already shifted left by 55; the remainder is
+# left in a.
+fn _flit_divq(a, d): i64 {
+    var q = 0;
+    var i = 55;
+    while (i >= 0) {
+        if (_bn_cmp(a, d) >= 0) { _bn_sub(a, d); q = q | (1 << i); }
+        _bn_shr1(d);
+        i = i - 1;
+    }
+    return q;
+}
+
+# Bits of n * 10^e10, n a nonzero bignum in the first scratch slot.
+fn _flit_scale(e10): i64 {
+    var a = _flb;
+    var d = _flb + _FLB_W * 8;
+    store64(d, 1);
+    store64(d + 8, 1);
+    var i = 0;
+    if (e10 >= 0) { while (i < e10) { _bn_muladd(a, 10, 0); i = i + 1; } }
+    else { while (i < 0 - e10) { _bn_muladd(d, 10, 0); i = i + 1; } }
+    var k = 55 - (_bn_bitlen(a) - _bn_bitlen(d));
+    if (k >= 0) { _bn_shl(a, k); } else { _bn_shl(d, 0 - k); }
+    _bn_shl(d, 55);
+    var q = _flit_divq(a, d);
+    return _flit_round(q, k, load64(a));
+}
+
+# Index (0-based, `_` and `.` skipped) of the first nonzero digit of the literal at
+# [p0, pe), or -1 when every digit is zero.
+fn _flit_scan(S, p0, pe): i64 {
+    var i = 0 - 1;
+    var p = p0;
+    while (p < pe) {
+        var c = load8(S + 0x459D000 + p);
+        if (c >= 48) { if (c <= 57) {
+                i = i + 1;
+                if (c != 48) { return i; }
+            } }
+        p = p + 1;
+    }
+    return 0 - 1;
+}
+
+# Index of the last nonzero digit of the literal at [p0, pe), or -1.
+fn _flit_last(S, p0, pe): i64 {
+    var i = 0 - 1;
+    var last = 0 - 1;
+    var p = p0;
+    while (p < pe) {
+        var c = load8(S + 0x459D000 + p);
+        if (c >= 48) { if (c <= 57) {
+                i = i + 1;
+                if (c != 48) { last = i; }
+            } }
+        p = p + 1;
+    }
+    return last;
+}
+
+# Correctly rounded binary64 bits of the decimal literal at [p0, pe), which has `fd`
+# fraction digits and `nd` digits in all.
+fn _flit_bits(S, p0, pe, fd, nd): i64 {
+    var i0 = _flit_scan(S, p0, pe);
+    if (i0 < 0) { return 0; }
+    var i1 = _flit_last(S, p0, pe);
+    if (_flb == 0) {
+        _flb = alloc(_FLB_W * 16);
+        if (_flb == 0) { _lex_die(S, p0, "out of memory converting a float literal"); }
+    }
+    var a = _flb;
+    store64(a, 0);
+    var iu = i1;
+    if (i1 - i0 >= _FLIT_SIG) { iu = i0 + _FLIT_SIG - 1; }
+    var p = p0;
+    var i = 0 - 1;
+    while (p < pe) {
+        var c = load8(S + 0x459D000 + p);
+        if (c >= 48) { if (c <= 57) {
+                i = i + 1;
+                if (i >= i0) { if (i <= iu) { _bn_muladd(a, 10, c - 48); } }
+            } }
+        p = p + 1;
+    }
+    # A dropped tail is never all zeros (i1 is the last nonzero digit): one trailing 1.
+    if (iu < i1) { _bn_muladd(a, 10, 1); iu = iu + 1; }
+    # value = a * 10^e10, and 10^(sig-1+e10) <= value < 10^(sig+e10).
+    var e10 = (nd - 1 - iu) - fd;
+    var top = iu - i0 + 1 + e10;
+    if (top <= 0 - 324) { return 0; }
+    if (top > 309) { return 0x7FF0000000000000; }
+    return _flit_scale(e10);
+}
+
+# 1 when v * 10 + d no longer fits in 64 bits (unsigned: 2^64 - 1 = 1844674407370955161 * 10 + 5).
+fn _lex_u64_ovf10(v, d): i64 {
+    if (v < 0) { return 1; }
+    if (v > 1844674407370955161) { return 1; }
+    if (v == 1844674407370955161) { if (d > 5) { return 1; } }
+    return 0;
+}
+
 # Lex decimal number
 fn LEXDEC(S, p): i64 {
+    var p0 = p;
     var c = load8(S + 0x459D000 + p);
     var val = c - 48;
+    var nd = 1;
+    var ovf = 0;
     p = p + 1;
     var go = 1;
     while (go == 1) {
@@ -925,7 +1206,10 @@ fn LEXDEC(S, p): i64 {
             # Underscore separator (e.g. 1_000_000) — skip silently.
             if (c == 95) { p = p + 1; }
             elif (c >= 48) {
-                if (c <= 57) { val = val * 10 + (c - 48); p = p + 1; }
+                if (c <= 57) {
+                    if (_lex_u64_ovf10(val, c - 48) == 1) { ovf = 1; }
+                    val = val * 10 + (c - 48); nd = nd + 1; p = p + 1;
+                }
                 else { go = 0; }
             } else { go = 0; }
         }
@@ -936,39 +1220,30 @@ fn LEXDEC(S, p): i64 {
             if (np < GBL(S)) { var nc = load8(S + 0x459D000 + np);
                 if (nc >= 48) { if (nc <= 57) {
                         p = np;
-                        var frac = 0;
-                        var denom = 1;
+                        var fd = 0;
                         var fgo = 1;
                         while (fgo == 1) {
                             if (p >= GBL(S)) { fgo = 0; }
                             if (fgo == 1) {
                                 c = load8(S + 0x459D000 + p);
-                                if (c >= 48) { if (c <= 57) {
-                                        frac = frac * 10 + (c - 48);
-                                        denom = denom * 10;
-                                        p = p + 1;
-                                    } else { fgo = 0; } }
+                                if (c >= 48) { if (c <= 57) { fd = fd + 1; p = p + 1; }
+                                    else { fgo = 0; } }
                                 else { fgo = 0; }
                             }
                         }
-                        # v6.5.28 — full-i64 numer/denom via the side table (see FLIT_ADD in
-                        # src/common/util.cyr). This line used to be
-                        #   ADDTOK(S, 61, (denom << 32) | (numer & 0xFFFFFFFF));
-                        # which overflowed TWICE past ~9 significant digits — the mask
-                        # truncated numer, and `denom << 32` overflowed the i64 once denom
-                        # exceeded 2^32 — turning 3.141592653589793 into 0.061575 with no
-                        # diagnostic at all. The token now carries an INDEX, so both fields
-                        # keep their full width and real f64 precision survives.
-                        var numer = val * denom + frac;
-                        var fidx = FLIT_ADD(numer, denom);
+                        # 6.6.10 — the token indexes the literal's correctly rounded binary64
+                        # BITS (FLIT_NUM); the backends load them as one 64-bit immediate. See
+                        # the block above _bn_muladd for what the i64 numer/denom pair did.
+                        var bits = _flit_bits(S, p0, p, fd, nd + fd);
+                        var fidx = FLIT_ADD(bits, 0);
                         if (fidx < 0) {
-                            syscall(SYS_WRITE, 2, "error: too many distinct float literals (raise _FLIT_CAP in src/common/util.cyr)\n", 81);
-                            syscall(SYS_EXIT, 1);
+                            _lex_die(S, p0, "too many distinct float literals (raise _FLIT_CAP in src/common/util.cyr)");
                         }
                         ADDTOK(S, 61, fidx);
                         return p;
                     } } }
         } }
+    if (ovf == 1) { _lex_int_ovf(S); }
     ADDTOK(S, 1, val);
     return p;
 }
@@ -1492,6 +1767,67 @@ fn LEXID(S, p, npos): i64 {
     return p;
 }
 
+# ⛔ 6.6.10 — THE LEXER'S ONE DIAGNOSTIC HEAD: `error:<file>:<line>:<col>: `.
+# The lexer's error sites printed `error:<N>:` with N the raw EXPANDED line — every
+# `#@file` marker line and every included file's body counted — and no file and no
+# column, so `$` on line 1 of a one-line source said `error:2:`, and a defect in an
+# included file named a line of nothing. FM_BUILD runs before LEX in every fork, so the
+# parser's own FM_LOOKUP maps the line and `_err_col` gives the column from the byte
+# offset. ⚠ The message text after the head is load-bearing: `cyrius lint` classifies
+# on it through `_lint_capture_has_syntax` (cbt/commands.cyr), which parses exactly this
+# shape. Kept small and separate: LEX is far past the size cybs compiles comfortably.
+# CHANGELOG [6.6.10]
+fn _lex_err_head(S, p): i64 {
+    syscall(SYS_WRITE, 2, "error:", 6);
+    FM_LOOKUP(S, GCLINE(S));
+    syscall(SYS_WRITE, 2, ":", 1);
+    PRNUM(_err_col(S, p));
+    syscall(SYS_WRITE, 2, ": ", 2);
+    return 0;
+}
+
+# Report `msg` (a cstr, no newline) at expanded-source offset `p`, and stop: a lexer
+# error leaves no token stream to recover in. CHANGELOG [6.6.10]
+fn _lex_die(S, p, msg): i64 {
+    _lex_err_head(S, p);
+    PRSTR(msg);
+    syscall(SYS_WRITE, 2, "\n", 1);
+    syscall(SYS_EXIT, 1);
+    return 0;
+}
+
+# Byte `c` as two lowercase hex digits on stderr.
+fn _lex_hex2(c): i64 {
+    var b = 0;
+    var hi = (c >> 4) & 15;
+    var lo = c & 15;
+    if (hi < 10) { store8(&b, 48 + hi); } else { store8(&b, 87 + hi); }
+    if (lo < 10) { store8(&b + 1, 48 + lo); } else { store8(&b + 1, 87 + lo); }
+    syscall(SYS_WRITE, 2, &b, 2);
+    return 0;
+}
+
+# ⛔ 6.6.10 (CVE-52) — a byte at offset `p` that begins no token is an ERROR, whatever
+# the byte. CVE-31 (v6.1.35) made every unmatched ASCII byte and every non-ASCII one an
+# error, but never touched the `@` arm, which since v5.6.3 skipped any `@` that did not
+# spell `@unsafe`: `return @@@;` compiled and returned 0, `5 @- 3` was 2, `a @* 2` was
+# a*2, and `cyrius lint` passed all of it, because every gate that trusts cycc's rc
+# inherited the rc 0. All three routes now share this one reject. CHANGELOG [6.6.10]
+fn _lex_stray(S, p, c): i64 {
+    _lex_err_head(S, p);
+    if (c > 127) {
+        syscall(SYS_WRITE, 2, "non-ASCII byte (0x", 18);
+        _lex_hex2(c);
+        syscall(SYS_WRITE, 2, ") -- only ASCII allowed in source (UTF-8 ok in strings)\n", 56);
+    } else {
+        syscall(SYS_WRITE, 2, "unexpected character (0x", 24);
+        _lex_hex2(c);
+        syscall(SYS_WRITE, 2, ")\n", 2);
+    }
+    syscall(SYS_EXIT, 1);
+    return 0;
+}
+
 fn LEX(S): i64 {
     var p = 0;
     var bl = GBL(S);
@@ -1921,10 +2257,8 @@ fn LEX(S): i64 {
                                                                                                                                                     continue;
                                                                                                                                                 } } } } } }
                                                                                                                         }
-                                                                                                                        # Unknown @-sequence: skip for now. Keeping `@` as a syntax
-                                                                                                                        # error rather than a silently-eaten byte would need a
-                                                                                                                        # tokname entry; deferred until more `@X` attributes land.
-                                                                                                                        p = p + 1;
+                                                                                                                        # Any other `@` is a stray byte (CVE-52): see _lex_stray. CHANGELOG [6.6.10]
+                                                                                                                        _lex_stray(S, p, c);
                                                                                                                     }
                                                                                                                     else { if (c == 37) { ADDTOK(S, 34, 0); p = p + 1; }
                                                                                                                         # << or <
@@ -1941,18 +2275,14 @@ fn LEX(S): i64 {
                                                                                                                         else { if (c == 39) {
                                                                                                                                 p = p + 1;
                                                                                                                                 if (p >= bl) {
-                                                                                                                                    syscall(SYS_WRITE, 2, "error:", 6); PRNUM(GCLINE(S));
-                                                                                                                                    syscall(SYS_WRITE, 2, ": unterminated char literal\n", 28);
-                                                                                                                                    syscall(SYS_EXIT, 1);
+                                                                                                                                    _lex_die(S, _tok_start, "unterminated char literal");
                                                                                                                                 }
                                                                                                                                 var clv = 0;
                                                                                                                                 var c0 = load8(S + 0x459D000 + p);
                                                                                                                                 if (c0 == 92) {
                                                                                                                                     p = p + 1;
                                                                                                                                     if (p >= bl) {
-                                                                                                                                        syscall(SYS_WRITE, 2, "error:", 6); PRNUM(GCLINE(S));
-                                                                                                                                        syscall(SYS_WRITE, 2, ": unterminated char escape\n", 27);
-                                                                                                                                        syscall(SYS_EXIT, 1);
+                                                                                                                                        _lex_die(S, _tok_start, "unterminated char escape");
                                                                                                                                     }
                                                                                                                                     var c1 = load8(S + 0x459D000 + p);
                                                                                                                                     p = p + 1;
@@ -1964,23 +2294,17 @@ fn LEX(S): i64 {
                                                                                                                                     elif    (c1 == 39)  { clv = 39; }       # \'
                                                                                                                                     elif    (c1 == 34)  { clv = 34; }       # \"
                                                                                                                                     else {
-                                                                                                                                        syscall(SYS_WRITE, 2, "error:", 6); PRNUM(GCLINE(S));
-                                                                                                                                        syscall(SYS_WRITE, 2, ": unknown char escape\n", 22);
-                                                                                                                                        syscall(SYS_EXIT, 1);
+                                                                                                                                        _lex_die(S, _tok_start, "unknown char escape");
                                                                                                                                     }
                                                                                                                                 } else {
                                                                                                                                     clv = c0;
                                                                                                                                     p = p + 1;
                                                                                                                                 }
                                                                                                                                 if (p >= bl) {
-                                                                                                                                    syscall(SYS_WRITE, 2, "error:", 6); PRNUM(GCLINE(S));
-                                                                                                                                    syscall(SYS_WRITE, 2, ": unterminated char literal\n", 28);
-                                                                                                                                    syscall(SYS_EXIT, 1);
+                                                                                                                                    _lex_die(S, _tok_start, "unterminated char literal");
                                                                                                                                 }
                                                                                                                                 if (load8(S + 0x459D000 + p) != 39) {
-                                                                                                                                    syscall(SYS_WRITE, 2, "error:", 6); PRNUM(GCLINE(S));
-                                                                                                                                    syscall(SYS_WRITE, 2, ": multi-byte char literal not supported\n", 40);
-                                                                                                                                    syscall(SYS_EXIT, 1);
+                                                                                                                                    _lex_die(S, _tok_start, "multi-byte char literal not supported");
                                                                                                                                 }
                                                                                                                                 p = p + 1;
                                                                                                                                 ADDTOK(S, 1, clv);
@@ -2003,6 +2327,7 @@ fn LEX(S): i64 {
                                                                                                                                             if (sc == 34) { p = p + 1; sgo = 0; }
                                                                                                                                             else {
                                                                                                                                                 if (sc == 92) {
+                                                                                                                                                    var esc = p;   # the backslash: where an escape diagnostic points. CHANGELOG [6.6.10]
                                                                                                                                                     p = p + 1;
                                                                                                                                                     var ec = load8(S + 0x459D000 + p);
                                                                                                                                                     p = p + 1;
@@ -2020,24 +2345,15 @@ fn LEX(S): i64 {
                                                                                                                                                     elif (ec == 120) {
                                                                                                                                                         # v5.7.13: \x## - exactly two hex digits.
                                                                                                                                                         if (p + 1 >= bl) {
-                                                                                                                                                            syscall(SYS_WRITE, 2, "error:", 6);
-                                                                                                                                                            PRNUM(GCLINE(S));
-                                                                                                                                                            syscall(SYS_WRITE, 2, ": \\x escape needs two hex digits\n", 33);
-                                                                                                                                                            syscall(SYS_EXIT, 1);
+                                                                                                                                                            _lex_die(S, esc, "\\x escape needs two hex digits");
                                                                                                                                                         }
                                                                                                                                                         var h1 = _LEX_HEX_VAL(load8(S + 0x459D000 + p));
                                                                                                                                                         var h2 = _LEX_HEX_VAL(load8(S + 0x459D000 + p + 1));
                                                                                                                                                         if (h1 < 0) {
-                                                                                                                                                            syscall(SYS_WRITE, 2, "error:", 6);
-                                                                                                                                                            PRNUM(GCLINE(S));
-                                                                                                                                                            syscall(SYS_WRITE, 2, ": \\x escape: bad hex digit\n", 27);
-                                                                                                                                                            syscall(SYS_EXIT, 1);
+                                                                                                                                                            _lex_die(S, esc, "\\x escape: bad hex digit");
                                                                                                                                                         }
                                                                                                                                                         if (h2 < 0) {
-                                                                                                                                                            syscall(SYS_WRITE, 2, "error:", 6);
-                                                                                                                                                            PRNUM(GCLINE(S));
-                                                                                                                                                            syscall(SYS_WRITE, 2, ": \\x escape: bad hex digit\n", 27);
-                                                                                                                                                            syscall(SYS_EXIT, 1);
+                                                                                                                                                            _lex_die(S, esc, "\\x escape: bad hex digit");
                                                                                                                                                         }
                                                                                                                                                         store8(S + 0x21A000 + spos, (h1 << 4) | h2);
                                                                                                                                                         spos = spos + 1;
@@ -2052,26 +2368,17 @@ fn LEX(S): i64 {
                                                                                                                                                             var udone = 0;
                                                                                                                                                             while (udone == 0) {
                                                                                                                                                                 if (p >= bl) {
-                                                                                                                                                                    syscall(SYS_WRITE, 2, "error:", 6);
-                                                                                                                                                                    PRNUM(GCLINE(S));
-                                                                                                                                                                    syscall(SYS_WRITE, 2, ": \\u{...} escape: missing closing brace\n", 40);
-                                                                                                                                                                    syscall(SYS_EXIT, 1);
+                                                                                                                                                                    _lex_die(S, esc, "\\u{...} escape: missing closing brace");
                                                                                                                                                                 }
                                                                                                                                                                 var bc = load8(S + 0x459D000 + p);
                                                                                                                                                                 if (bc == 125) { udone = 1; }
                                                                                                                                                                 else {
                                                                                                                                                                     var hv = _LEX_HEX_VAL(bc);
                                                                                                                                                                     if (hv < 0) {
-                                                                                                                                                                        syscall(SYS_WRITE, 2, "error:", 6);
-                                                                                                                                                                        PRNUM(GCLINE(S));
-                                                                                                                                                                        syscall(SYS_WRITE, 2, ": \\u{...} escape: bad hex digit\n", 32);
-                                                                                                                                                                        syscall(SYS_EXIT, 1);
+                                                                                                                                                                        _lex_die(S, esc, "\\u{...} escape: bad hex digit");
                                                                                                                                                                     }
                                                                                                                                                                     if (ndig >= 6) {
-                                                                                                                                                                        syscall(SYS_WRITE, 2, "error:", 6);
-                                                                                                                                                                        PRNUM(GCLINE(S));
-                                                                                                                                                                        syscall(SYS_WRITE, 2, ": \\u{...} escape: > 6 hex digits\n", 33);
-                                                                                                                                                                        syscall(SYS_EXIT, 1);
+                                                                                                                                                                        _lex_die(S, esc, "\\u{...} escape: > 6 hex digits");
                                                                                                                                                                     }
                                                                                                                                                                     cp = (cp << 4) | hv;
                                                                                                                                                                     ndig = ndig + 1;
@@ -2079,27 +2386,18 @@ fn LEX(S): i64 {
                                                                                                                                                                 }
                                                                                                                                                             }
                                                                                                                                                             if (ndig == 0) {
-                                                                                                                                                                syscall(SYS_WRITE, 2, "error:", 6);
-                                                                                                                                                                PRNUM(GCLINE(S));
-                                                                                                                                                                syscall(SYS_WRITE, 2, ": \\u{...} escape: no hex digits\n", 32);
-                                                                                                                                                                syscall(SYS_EXIT, 1);
+                                                                                                                                                                _lex_die(S, esc, "\\u{...} escape: no hex digits");
                                                                                                                                                             }
                                                                                                                                                             p = p + 1;
                                                                                                                                                         } else {
                                                                                                                                                             if (p + 3 >= bl) {
-                                                                                                                                                                syscall(SYS_WRITE, 2, "error:", 6);
-                                                                                                                                                                PRNUM(GCLINE(S));
-                                                                                                                                                                syscall(SYS_WRITE, 2, ": \\u escape needs four hex digits\n", 34);
-                                                                                                                                                                syscall(SYS_EXIT, 1);
+                                                                                                                                                                _lex_die(S, esc, "\\u escape needs four hex digits");
                                                                                                                                                             }
                                                                                                                                                             var di = 0;
                                                                                                                                                             while (di < 4) {
                                                                                                                                                                 var hv = _LEX_HEX_VAL(load8(S + 0x459D000 + p + di));
                                                                                                                                                                 if (hv < 0) {
-                                                                                                                                                                    syscall(SYS_WRITE, 2, "error:", 6);
-                                                                                                                                                                    PRNUM(GCLINE(S));
-                                                                                                                                                                    syscall(SYS_WRITE, 2, ": \\u escape: bad hex digit\n", 27);
-                                                                                                                                                                    syscall(SYS_EXIT, 1);
+                                                                                                                                                                    _lex_die(S, esc, "\\u escape: bad hex digit");
                                                                                                                                                                 }
                                                                                                                                                                 cp = (cp << 4) | hv;
                                                                                                                                                                 di = di + 1;
@@ -2107,16 +2405,10 @@ fn LEX(S): i64 {
                                                                                                                                                             p = p + 4;
                                                                                                                                                         }
                                                                                                                                                         if (cp > 1114111) {
-                                                                                                                                                            syscall(SYS_WRITE, 2, "error:", 6);
-                                                                                                                                                            PRNUM(GCLINE(S));
-                                                                                                                                                            syscall(SYS_WRITE, 2, ": \\u escape: codepoint > U+10FFFF\n", 34);
-                                                                                                                                                            syscall(SYS_EXIT, 1);
+                                                                                                                                                            _lex_die(S, esc, "\\u escape: codepoint > U+10FFFF");
                                                                                                                                                         }
                                                                                                                                                         if (cp >= 55296 && cp <= 57343) {
-                                                                                                                                                            syscall(SYS_WRITE, 2, "error:", 6);
-                                                                                                                                                            PRNUM(GCLINE(S));
-                                                                                                                                                            syscall(SYS_WRITE, 2, ": \\u escape: surrogate codepoint not allowed\n", 45);
-                                                                                                                                                            syscall(SYS_EXIT, 1);
+                                                                                                                                                            _lex_die(S, esc, "\\u escape: surrogate codepoint not allowed");
                                                                                                                                                         }
                                                                                                                                                         spos = _LEX_EMIT_UTF8(S, spos, cp);
                                                                                                                                                     }
@@ -2169,34 +2461,13 @@ fn LEX(S): i64 {
                                                                                                                                 else {
                                                                                                                                     # Reject non-ASCII bytes outside strings/comments
                                                                                                                                     if (c > 127) {
-                                                                                                                                        syscall(SYS_WRITE, 2, "error:", 6);
-                                                                                                                                        PRNUM(GCLINE(S));
-                                                                                                                                        syscall(SYS_WRITE, 2, ": non-ASCII byte (0x", 20);
-                                                                                                                                        # Print hex byte
-                                                                                                                                        var hi = c >> 4;
-                                                                                                                                        var lo = c & 15;
-                                                                                                                                        if (hi < 10) { store8(S, 48 + hi); } else { store8(S, 87 + hi); }
-                                                                                                                                        syscall(SYS_WRITE, 2, S, 1);
-                                                                                                                                        if (lo < 10) { store8(S, 48 + lo); } else { store8(S, 87 + lo); }
-                                                                                                                                        syscall(SYS_WRITE, 2, S, 1);
-                                                                                                                                        syscall(SYS_WRITE, 2, ") -- only ASCII allowed in source (UTF-8 ok in strings)\n", 56);
-                                                                                                                                        syscall(SYS_EXIT, 1);
+                                                                                                                                        _lex_stray(S, p, c);
                                                                                                                                     }
                                                                                                                                     else {
                                                                                                                                         # CVE-31: a stray ASCII byte (`$`, backtick, a control char, ...) that
-                                                                                                                                        # matched no token was silently skipped, changing program meaning with
-                                                                                                                                        # no diagnostic -- error now (mirrors the >127 non-ASCII reject above).
-                                                                                                                                        syscall(SYS_WRITE, 2, "error:", 6);
-                                                                                                                                        PRNUM(GCLINE(S));
-                                                                                                                                        syscall(SYS_WRITE, 2, ": unexpected character (0x", 26);
-                                                                                                                                        var hi2 = c >> 4;
-                                                                                                                                        var lo2 = c & 15;
-                                                                                                                                        if (hi2 < 10) { store8(S, 48 + hi2); } else { store8(S, 87 + hi2); }
-                                                                                                                                        syscall(SYS_WRITE, 2, S, 1);
-                                                                                                                                        if (lo2 < 10) { store8(S, 48 + lo2); } else { store8(S, 87 + lo2); }
-                                                                                                                                        syscall(SYS_WRITE, 2, S, 1);
-                                                                                                                                        syscall(SYS_WRITE, 2, ")\n", 2);
-                                                                                                                                        syscall(SYS_EXIT, 1);
+                                                                                                                                        # matched no token was silently skipped -- error now, through the same
+                                                                                                                                        # reject as `@` and non-ASCII (_lex_stray). CHANGELOG [6.6.10]
+                                                                                                                                        _lex_stray(S, p, c);
                                                                                                                                     }
                                                                                                                                     p = p + 1;
                                                                                                                                 }

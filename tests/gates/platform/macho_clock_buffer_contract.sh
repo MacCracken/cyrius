@@ -19,6 +19,14 @@
 #
 # PROPERTY: no syscall(228, _, 0) may be reachable on a macOS build. A literal 0 third
 # argument is allowed ONLY inside a CYRIUS_TARGET_WIN guard, where the route ignores it.
+#
+# SECOND PROPERTY (6.6.10, CVE-51): EMACHO_CLOCK_X86 zeroes rdx before its gettimeofday. Darwin's
+# gettimeofday takes a THIRD argument, `uint64_t *mach_absolute_time`, an OUT-pointer xnu writes
+# 8 bytes through; the emitter never wrote rdx, so every Intel-Mac clock read stored mach time at
+# whatever address the previous call left in rdx (measured on ach, in an rwx image). The runtime
+# half is tests/tcyr/crossos/darwin_clock_no_stray_write.tcyr, which only ach can run; this
+# source check fails on the Linux build host the moment the `xor edx, edx` is dropped.
+# MUTATION: delete `EB(S, 0x31); EB(S, 0xD2);` from EMACHO_CLOCK_X86 → FAIL (measured).
 set -e
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 fail() { echo "FAIL macho_clock_buffer_contract: $1" >&2; exit 1; }
@@ -27,6 +35,17 @@ fail() { echo "FAIL macho_clock_buffer_contract: $1" >&2; exit 1; }
 # dereferencing arg 3, this gate should be revisited rather than silently kept.
 grep -A20 'fn EMACHO_CLOCK_X86' "$ROOT/src/backend/x86/emit.cyr" | grep -q '0x8B); EB(S, 0x07)' \
   || fail "EMACHO_CLOCK_X86 no longer looks like it dereferences arg 3 (mov rax,[rdi]) — re-derive this gate's premise instead of trusting it"
+
+# The body of EMACHO_CLOCK_X86 alone (up to its closing brace) — NOT a fixed -A window, which
+# would also see EMACHO_NANOSLEEP_X86's own `xor edx, edx` (for its div) if the fns ever moved
+# closer together.
+CLOCK_BODY=$(awk '/^fn EMACHO_CLOCK_X86\(S\)/{s=1} s{print} s&&/^\}/{exit}' "$ROOT/src/backend/x86/emit.cyr")
+[ -n "$CLOCK_BODY" ] || fail "fn EMACHO_CLOCK_X86 not found in src/backend/x86/emit.cyr"
+echo "$CLOCK_BODY" | grep -q 'EB(S, 0x31); EB(S, 0xD2);' \
+  || fail "EMACHO_CLOCK_X86 no longer zeroes rdx (xor edx, edx) before gettimeofday — xnu writes mach_absolute_time through the third argument register, so a stale rdx is an 8-byte write to an arbitrary address (CVE-51)"
+# ...and it must precede the syscall, not follow it.
+echo "$CLOCK_BODY" | awk '/EB\(S, 0x31\); EB\(S, 0xD2\);/{x=NR} /EB\(S, 0x0F\); EB\(S, 0x05\);/{if(!sc)sc=NR} END{exit !(x && sc && x < sc)}' \
+  || fail "EMACHO_CLOCK_X86's xor edx, edx is not before its syscall"
 
 BAD=$(find "$ROOT/src" "$ROOT/lib" -name '*.cyr' -print0 2>/dev/null | xargs -0 awk '
   /^[[:space:]]*#ifdef CYRIUS_TARGET_WIN/ { win = 1 }
@@ -42,4 +61,4 @@ if [ -n "$BAD" ]; then
   echo "$BAD" | sed 's/^/  /' >&2
   fail "syscall(228, _, 0) outside a CYRIUS_TARGET_WIN guard — NULL is dereferenced by EMACHO_CLOCK_X86 on Intel-Mac. Pass a real 16-byte buffer; both other routes ignore it."
 fi
-echo "PASS macho_clock_buffer_contract: every reachable syscall(228) passes a real buffer"
+echo "PASS macho_clock_buffer_contract: every reachable syscall(228) passes a real buffer, and the x86 reroute passes NULL for mach time"

@@ -439,6 +439,102 @@ fi
 check "no cpp_* preprocessed source left by THIS build" 0 "$leftover"
 check "⭐ and the build's own temp directory is gone afterwards" 0 "$survivors"
 
+# ── AXES 5-8 — ⛔ 6.6.10: NO DESCENDANT OF A TEST OUTLIVES IT. Axes 1-2 are about the test
+# child; nothing reached what the child STARTED. Measured before the fix (x86_64 Linux, and
+# ecb): a test that spawned `/bin/sleep` left it at PPID=1 after the deadline (axis 5) AND
+# after a clean pass (axis 6), and while that sleep held the runner's stdout,
+# `cyrius test f | cat` did not return until an outer `timeout` shot it (axis 7). The kill
+# paths were `sys_kill(pid, 9)` on the pid alone and the runner was not a subreaper.
+# Each fixture spawns a `/bin/sleep <N>` with an N unique to this run, so a stranger's sleep
+# on a shared box cannot be counted. MUTATION (6.6.10, run): `proc_kill_tree(pid, …)` ->
+# `sys_kill(pid, 9)` + waitpid on both kill paths of `_run_wait_timed` AND `_run_end_leftovers`
+# made a no-op -> axes 5, 6 and 7 RED (the sleep survives at PPID=1; the pipe hangs to the
+# 30 s backstop); axis 8 stays GREEN. `_proc_sr_had` returning 0 -> axis 8 exit 3; dropping the
+# `_proc_sr_open` guard from `_proc_subreap_end` -> axis 8 exit 4.
+N5=$(( 41000 + $$ % 9000 ))
+N6=$(( N5 + 9000 ))
+survivor() {   # pids of `/bin/sleep $1` still running (a zombie is not "running")
+    ps -eo pid=,stat=,args= 2>/dev/null | awk -v n="$1" '$3 == "/bin/sleep" && $4 == n && $2 !~ /^Z/ {print $1}'
+}
+printf 'include "lib/process.cyr"\nvar r = spawn("/bin/sleep", "%s", 0);\nvar i = 0;\nwhile (1 == 1) { i = i + 1; }\n' "$N5" > "$T/fork_hang.tcyr"
+printf 'include "lib/process.cyr"\ninclude "lib/assert.cyr"\nvar r = spawn("/bin/sleep", "%s", 0);\nvar a = assert_eq(1, 1, "passes");\nvar s = assert_summary();\nsyscall(SYS_EXIT, s);\n' "$N6" > "$T/fork_pass.tcyr"
+
+echo "axis 5 — ⭐ the deadline ends the test's own children, not only the test:"
+( cd "$T" && CYRIUS_TEST_TIMEOUT=2 timeout 120 "$CY" test "$T/fork_hang.tcyr" > "$T/x5.out" 2> "$T/x5.err" ) || true
+check "premise: the fixture hit the deadline" 1 "$(grep -c 'timed out after 2s' "$T/x5.err" || true)"
+sleep 0.5
+left=$(survivor "$N5")
+check "its spawned /bin/sleep $N5 is gone" "" "$left"
+for p in $left; do kill -9 "$p" 2>/dev/null; done
+
+echo "axis 6 — ⭐ a test that PASSES leaves nothing running either:"
+rc=0
+( cd "$T" && CYRIUS_TEST_TIMEOUT=60 timeout 120 "$CY" test "$T/fork_pass.tcyr" > "$T/x6.out" 2> "$T/x6.err" ) || rc=$?
+check "premise: it passed" "0 1" "$rc $(grep -c '1 passed, 0 failed' "$T/x6.out" || true)"
+sleep 0.5
+left=$(survivor "$N6")
+check "its spawned /bin/sleep $N6 is gone" "" "$left"
+for p in $left; do kill -9 "$p" 2>/dev/null; done
+# The same with the deadline switched OFF (CYRIUS_TEST_TIMEOUT=0): still a batch run, still
+# swept — `cyrius run` is the only verb exempt (axis 3).
+( cd "$T" && CYRIUS_TEST_TIMEOUT=0 timeout 120 "$CY" test "$T/fork_pass.tcyr" > "$T/x6b.out" 2> "$T/x6b.err" ) || true
+sleep 0.5
+left=$(survivor "$N6")
+check "…and with CYRIUS_TEST_TIMEOUT=0 too" "" "$left"
+for p in $left; do kill -9 "$p" 2>/dev/null; done
+
+echo "axis 7 — ⭐ 'cyrius test f | cat' returns within the bound:"
+t0=$(date +%s)
+rc=0
+( cd "$T" && CYRIUS_TEST_TIMEOUT=2 timeout 30 sh -c '"$0" test "$1" 2>&1 | cat > /dev/null' "$CY" "$T/fork_hang.tcyr" ) || rc=$?
+el=$(( $(date +%s) - t0 ))
+check "the pipeline was not shot by the 30 s backstop" "yes" "$([ "$rc" != 124 ] && echo yes || echo no)"
+check "it returned within 15 s (deadline 2 s + the TERM grace)" "yes" "$([ "$el" -lt 15 ] && echo yes || echo no)"
+left=$(survivor "$N5")
+for p in $left; do kill -9 "$p" 2>/dev/null; done
+
+# ── AXIS 8 — the sweep is SCOPED. The adoption window ends only what was adopted inside it; a
+# child that already existed when it opened (the CLI's analogue: a daemon from an implicit
+# deps resolve) is not touched. Probed on the lib/process.cyr helpers directly.
+echo "axis 8 — the window spares children that existed before it opened:"
+cat > "$T/win.cyr" <<'WIN'
+include "lib/process.cyr"
+var pp = sys_fork();
+if (pp == 0) { _exec3("/bin/sleep", "30", 0); }
+_proc_subreap_begin();
+var c = sys_fork();
+if (c == 0) {
+    if (sys_fork() == 0) { _exec3("/bin/sleep", "31", 0); }
+    sys_exit(0);
+}
+var st[8];
+sys_waitpid(c, &st, 0);
+var found = _proc_subreap_end();
+var rc = 0;
+if (found != 1) { rc = rc + 1; }                # the orphaned sleep 31 was adopted and ended
+if (sys_kill(pp, 0) != 0) { rc = rc + 2; }      # the pre-existing sleep 30 is still alive
+# An end with NO window open (begin never ran again, or failed) touches nothing: the
+# snapshot of the previous window is stale, and "every child not in it" is every child.
+var late = sys_fork();
+if (late == 0) { _exec3("/bin/sleep", "32", 0); }
+_proc_subreap_end();
+if (sys_kill(late, 0) != 0) { rc = rc + 4; }
+sys_kill(late, 9);
+sys_waitpid(late, &st, 0);
+sys_kill(pp, 9);
+sys_waitpid(pp, &st, 0);
+sys_exit(rc);
+WIN
+rc=0
+( cd "$ROOT" && "$ROOT/build/cycc" < "$T/win.cyr" > "$T/win" 2> "$T/win.err" ) || rc=$?
+if [ "$rc" = 0 ]; then
+    chmod +x "$T/win"
+    rc=0; timeout 60 "$T/win" || rc=$?
+    check "one child adopted and ended, the pre-existing one untouched, and an end with no window open ends nothing (exit 0)" 0 "$rc"
+else
+    check "the window probe compiles" 0 "$rc"; sed -n 1,3p "$T/win.err"
+fi
+
 echo ""
 if [ "$fails" = "0" ]; then
     echo "PASS: test-runner-bounded — hanging tests are killed, and no child outlives the runner"

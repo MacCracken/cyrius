@@ -1,0 +1,249 @@
+# deadline_ends_grandchild.tcyr — CROSS-HOST: a deadline set with `proc_set_timeout_ms` that
+# catches a LIVE child ends the child's WHOLE TREE on every host that has one — Linux (/proc
+# walk), macOS (the child's process group) and Windows (a Job object) — so a grandchild can
+# neither outlive the deadline nor hold a capture pipe open past it. And a child that exits on
+# its own is NOT a deadline: what it left running is left alone. The one place the peers differ:
+# a child that EXITED at once while its grandchild kept the capture pipe open. Every host cuts
+# the drain at the deadline and reports -2; macOS and Windows also end the grandchild (its group
+# / its job), Linux does not — a library verb has no process group to end there and opening an
+# adoption window would change who reaps the caller's orphans, so that grandchild is only cut
+# off from the pipe (the capture-leftover row below says so). Runs on ecb (macOS arm64), ach
+# (Intel Mac), cass (Windows) and pi (aarch64) through the release gate's cross-OS leg. agnos
+# has no deadline (process_agnos.cyr), so there the file only reports its summary.
+#
+# ⛔ WHY (6.6.10). Two hosts ended the direct child only:
+#   * Windows: `_win_watchdog` / `_win_wait_handle` TerminateProcess'd the child. Measured on
+#     cass: `exec_capture_status([cmd.exe, /c, "ping -n 20 127.0.0.1"])` under a 2000 ms
+#     deadline returned -2 after 19,437 ms — ping (the grandchild) kept the capture pipe open
+#     and ran to completion. Children now start CREATE_SUSPENDED, join a KILL_ON_JOB_CLOSE Job
+#     object and resume; a deadline ends the job.
+#   * macOS: `_proc_kill_tree` had no /proc to walk, so it signalled the pid alone. With a
+#     deadline in force the child now calls setsid(), and `proc_kill_tree` ends its group.
+# CHANGELOG [6.6.10]
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/syscalls.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/tagged.cyr"
+include "lib/chrono.cyr"
+include "lib/process.cyr"
+#ifdef CYRIUS_TARGET_WIN
+include "lib/async.cyr"
+#endif
+
+# The decimal number at the start of `buf` (0 when there is none).
+fn _num(buf, n): i64 {
+    var v = 0;
+    var i = 0;
+    while (i < n && load8(buf + i) >= 48 && load8(buf + i) <= 57) {
+        v = v * 10 + load8(buf + i) - 48;
+        i = i + 1;
+    }
+    return v;
+}
+
+# 1 once `p` has ended — gone, or a zombie waiting for an ancestor that is not us to reap it
+# (a container's PID 1 may never do that, and kill(p, 0) still succeeds on a zombie). Waits up
+# to 3 s for it. POSIX: on Windows the grandchild is observed through the pipe and a marker.
+#ifndef CYRIUS_TARGET_WIN
+#ifndef CYRIUS_TARGET_AGNOS
+fn _ended(p): i64 {
+    var k = 0;
+    while (k < 150) {
+        if (sys_kill(p, 0) != 0) { return 1; }
+        if (_proc_zombie(p) == 1) { return 1; }
+        sleep_ms(20);
+        k = k + 1;
+    }
+    return 0;
+}
+#endif
+#endif
+
+# argv for a shell command line, per host.
+fn _shell(line): i64 {
+    var a = vec_new();
+    #ifdef CYRIUS_TARGET_WIN
+    vec_push(a, "cmd.exe");
+    vec_push(a, "/c");
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    vec_push(a, "/bin/sh");
+    vec_push(a, "-c");
+    #endif
+    vec_push(a, line);
+    return a;
+}
+
+# `pre` + `path` + `post` as one cstr.
+fn _cat3(pre, path, post): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, pre);
+    str_builder_add_cstr(sb, path);
+    str_builder_add_cstr(sb, post);
+    return str_data(str_builder_build(sb));
+}
+
+#ifdef CYRIUS_TARGET_WIN
+var _deg_ran = 0;
+fn _deg_body(a): i64 { _deg_ran = 1; return 7; }
+#endif
+
+fn main(): i64 {
+    alloc_init();
+    #ifndef CYRIUS_TARGET_AGNOS
+    test_group("a deadline ends a grandchild that holds the capture pipe");
+    # The grandchild inherits the pipe as its stdout, so the drain cannot see EOF until IT has
+    # gone: the verb returns inside the bound only if the deadline ended the grandchild too.
+    # ⚠ The buffer must be far larger than the output: the drain also stops when it is FULL, and
+    # with 256 bytes ping's fourth line ended it at ~4 s, which passed this row against the 6.6.9
+    # code on real Windows (the full 6.6.9 run measured 29,333 ms on cass).
+    var buf = alloc(65536);
+    var st[16];
+    var prev = proc_set_timeout_ms(700);
+    var t0 = clock_now_ms();
+    #ifdef CYRIUS_TARGET_WIN
+    var n = exec_capture_status(_shell("ping -n 30 127.0.0.1"), buf, 65535, &st);
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    var n = exec_capture_status(_shell("sleep 30 & echo $!; wait"), buf, 65535, &st);
+    #endif
+    var el = clock_now_ms() - t0;
+    proc_set_timeout_ms(prev);
+    assert_eq(load64(&st), 0 - 2, "the verb reports the deadline (-2)");
+    assert_eq(el < 9000, 1, "and returns inside the bound, not when the grandchild would have exited (~30 s)");
+    #ifndef CYRIUS_TARGET_WIN
+    var gp = _num(buf, n);
+    assert_eq(gp > 0, 1, "premise: the shell reported its background child's pid");
+    if (gp > 0) {
+        assert_eq(_ended(gp), 1, "the grandchild itself was ended");
+        sys_kill(gp, 9);
+    }
+    #endif
+
+    test_group("a child that exits at once while its grandchild holds the capture pipe");
+    # The child is reaped normally; only the drain is waiting, for a grandchild the child left on
+    # the pipe. The verb must still come back at the deadline and report it, and on macOS and
+    # Windows that grandchild must be ENDED, not merely abandoned: a cut with no kill left it
+    # running at PPID 1 on macOS (the capture verbs ended a group only for a LIVE child).
+    prev = proc_set_timeout_ms(700);
+    t0 = clock_now_ms();
+    #ifdef CYRIUS_TARGET_WIN
+    var n4 = exec_capture_status(_shell("start \"\" /b ping -n 30 127.0.0.1"), buf, 65535, &st);
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    var n4 = exec_capture_status(_shell("sleep 30 & echo $!"), buf, 65535, &st);
+    #endif
+    el = clock_now_ms() - t0;
+    proc_set_timeout_ms(prev);
+    assert_eq(load64(&st), 0 - 2, "the verb reports the deadline (-2)");
+    assert_eq(el < 9000, 1, "and returns inside the bound (the grandchild would run ~30 s)");
+    #ifndef CYRIUS_TARGET_WIN
+    var gp4 = _num(buf, n4);
+    assert_eq(gp4 > 0, 1, "premise: the shell reported its background child's pid");
+    if (gp4 > 0) {
+        #ifdef CYRIUS_TARGET_MACOS
+        assert_eq(_ended(gp4), 1, "the grandchild itself was ended (the child's process group)");
+        #endif
+        # Linux: not ended by the verb (see the header) — end it here so the run leaves nothing.
+        sys_kill(gp4, 9);
+    }
+    #endif
+
+    test_group("a deadline ends a grandchild that holds no pipe");
+    # The grandchild would write a marker ~1-2 s after the deadline fired; the marker must never
+    # appear. A child that is ended alone leaves its own children running to write it.
+    var mark = test_scratch("cyrius_deg_mark");
+    sys_unlink(mark);
+    prev = proc_set_timeout_ms(400);
+    #ifdef CYRIUS_TARGET_WIN
+    var rc = exec_vec(_shell(_cat3("cmd /c \"ping -n 3 127.0.0.1 >nul & echo x> ", mark, "\"")));
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    var rc = exec_vec(_shell(_cat3("(sleep 1; echo x > ", mark, ") & wait")));
+    #endif
+    proc_set_timeout_ms(prev);
+    assert_eq(rc, 0 - 2, "the verb reports the deadline (-2)");
+    sleep_ms(3500);
+    assert_eq(file_exists(mark), 0, "the grandchild never wrote its marker: it was ended at the deadline");
+    sys_unlink(mark);
+
+    test_group("a clean exit is not a deadline: what the child left running is left alone");
+    # Parity with the POSIX verbs, which end a tree only at a deadline. On Windows this is the
+    # job's KILL_ON_JOB_CLOSE being cleared before the handle is closed on a normal exit.
+    var mark2 = test_scratch("cyrius_deg_left");
+    sys_unlink(mark2);
+    prev = proc_set_timeout_ms(5000);
+    #ifdef CYRIUS_TARGET_WIN
+    var rc2 = exec_vec(_shell(_cat3("start \"\" /b cmd /c \"ping -n 2 127.0.0.1 >nul & echo x> ", mark2, "\"")));
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    var rc2 = exec_vec(_shell(_cat3("(sleep 1; echo x > ", mark2, ") &")));
+    #endif
+    proc_set_timeout_ms(prev);
+    assert_eq(rc2, 0, "the child exits 0 at once");
+    var seen = 0;
+    var k = 0;
+    while (k < 40 && seen == 0) {
+        if (file_exists(mark2) == 1) { seen = 1; }
+        else { sleep_ms(200); }
+        k = k + 1;
+    }
+    assert_eq(seen, 1, "its background grandchild lived on and wrote its marker");
+    sys_unlink(mark2);
+
+    #ifdef CYRIUS_TARGET_WIN
+    # lib/async_win.cyr's async_run_process: its deadline TerminateProcess'd the child alone.
+    # (The Linux row is async_timeout_result.tcyr; macOS is async_macos_verbs.tcyr.)
+    test_group("async_run_process: the deadline ends the whole tree (Windows)");
+    var mark3 = test_scratch("cyrius_deg_async");
+    sys_unlink(mark3);
+    var av = alloc(32);
+    store64(av, "cmd");
+    store64(av + 8, "/c");
+    store64(av + 16, _cat3("cmd /c \"ping -n 3 127.0.0.1 >nul & echo x> ", mark3, "\""));
+    store64(av + 24, 0);
+    var ev = alloc(8);
+    store64(ev, 0);
+    var rt = async_new();
+    var arc = async_run_process(rt, "cmd", av, ev, 400);
+    assert_eq(arc, 0 - 2, "the deadline fired (-2)");
+    sleep_ms(3500);
+    assert_eq(file_exists(mark3), 0, "the grandchild never wrote its marker");
+    sys_unlink(mark3);
+
+    # A lib built against a cycc without the 0xF040-0xF044 routes gets -ENOSYS (-38) from every
+    # job call. `_win_job_new` took -38 as a job HANDLE and `_win_job_start` checked ResumeThread
+    # against 0xFFFFFFFF only, so it reported a job without resuming the child: every spawn then
+    # failed and left its child SUSPENDED for ever (reproduced under wine: six orphaned
+    # suspended children). A reroute's answer is a success only when it is > 0, and ResumeThread
+    # resumed only when it answered a suspend count.
+    test_group("the job helpers never read -ENOSYS as a success (Windows)");
+    assert_eq(_win_ok(0 - 38), 0, "-38 (an unrouted job call) is a failure, not a handle / TRUE");
+    assert_eq(_win_ok(0), 0, "0 (NULL / FALSE) is a failure");
+    assert_eq(_win_ok(420), 1, "a handle is a success");
+    assert_eq(_win_resumed(0 - 38), 0, "ResumeThread -38: not resumed (the child must be ended)");
+    assert_eq(_win_resumed(4294967295), 0, "ResumeThread (DWORD)-1: not resumed");
+    assert_eq(_win_resumed(1), 1, "ResumeThread 1 (a CREATE_SUSPENDED thread's count): resumed");
+    assert_eq(_win_resumed(0), 1, "ResumeThread 0 (was not suspended): running");
+
+    # async_win's async_timeout ran its body INLINE and ignored `ms` — an unbounded call that
+    # answered as if it had been bounded. It now refuses: -1, and the body does not run.
+    test_group("async_timeout fails closed on Windows (no fork to bound)");
+    assert_eq(async_timeout(&_deg_body, 0, 50), 0 - 1, "it answers -1 (the timeout value)");
+    assert_eq(_deg_ran, 0, "and never ran the body unbounded");
+    #endif
+    #endif
+    #ifdef CYRIUS_TARGET_AGNOS
+    test_group("agnos: no deadline to test (process_agnos.cyr)");
+    assert_eq(PROC_ETIMEDOUT, 110, "the name exists even so");
+    #endif
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);

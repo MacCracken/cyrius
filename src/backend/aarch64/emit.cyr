@@ -181,6 +181,14 @@ fn EFLUSHFB_PE(S) { return 0; }
 fn EGETFINFO_PE(S) { return 0; }
 fn ESYMLINKW_PE(S) { return 0; }
 fn ESETEOF_PE(S) { return 0; }
+# 6.6.10: ECREATEJOB_PE / EASSIGNJOB_PE / ETERMJOB_PE / ERESUMETHREAD_PE / ESETJOBINFO_PE
+# (kernel32 Job objects + ResumeThread, reroutes 0xF040-0xF044 — process trees on PE) — same
+# x86/PE-only cohort, same stub reason. See CHANGELOG [6.6.10].
+fn ECREATEJOB_PE(S) { return 0; }
+fn EASSIGNJOB_PE(S) { return 0; }
+fn ETERMJOB_PE(S) { return 0; }
+fn ERESUMETHREAD_PE(S) { return 0; }
+fn ESETJOBINFO_PE(S) { return 0; }
 # v6.0.54: close the .23 stub gap. ECREATEDIR_PE (mkdir/83) +
 # EDELETEF_PE (unlink/87) shipped x86-only at v5.11.22-23 and never
 # got aarch64 stubs — they fired "undefined function" warnings on
@@ -678,11 +686,30 @@ fn ESADDR(S, soff): i64 {
 var _esx_qon = 0;
 var _esx_q = 0;
 var _esx_hit = 0;
+# The arity of the syscall being emitted, counting the number (ESCPOPS' `n`); 7 = full arity
+# outside ESCPOPS. The Mach-O emulations that take a POINTER argument key on it: at argc 1
+# ESCPOPS leaves x0 = the syscall number, so an emulation reading x0 as a pointer faults (35)
+# or stores through it (59). CHANGELOG [6.6.10]
+var _esx_argc = 7;
+# 6.6.10 — 1 when row `src` must NOT be emitted at this call's arity. The pipe row (59) is
+# emitted only when the call PASSES the fds pointer (argc >= 2): Darwin pipe returns fd0/fd1 in
+# x0/x1 and ESYSCALL's post-svc fixup stores them through the pointer it stashed from x0 pre-svc,
+# and at argc 1 x0 is the syscall NUMBER — `syscall(59)` stored to address 59, SIGSEGV with no
+# diagnostic (rc 139 on ecb). With no row x16 keeps the chain head's 0xFFFF: SIGSYS, the pre-svc
+# `cmp x16,#42` misses, and nothing is stashed or stored. The x86 twin is `_msx_short`; the
+# nanosleep emulation carries its own argc-3 test (EMACHO_NANOSLEEP_ARM). The rule lives in the
+# row emitter so ESYSXLAT stays a flat list of rows (macho_route_parity.sh reads it as source).
+# CHANGELOG [6.6.10]
+fn _esx_short(src): i64 {
+    if (src == 59) { if (_esx_argc < 2) { return 1; } }
+    return 0;
+}
 fn _esx_arm(S, src, dst): i64 {
     if (_esx_qon == 1) {
         if (src == _esx_q) { _esx_hit = 1; }
         return 0;
     }
+    if (_esx_short(src) == 1) { return 0; }
     if (src > 4095) {
         syscall(SYS_WRITE, 2, "error: ESYSXLAT source number exceeds the 12-bit cmp immediate\n", 63);
         syscall(SYS_EXIT, 1);
@@ -757,11 +784,20 @@ fn _esx_arm_shift(S, src, dst, nshift): i64 {
 # `#ifdef CYRIUS_TARGET_LINUX` to reach ecb at all (review round 1) — before that it was
 # covered by nothing, anywhere. If a word here is wrong the failure is loud (a SIGSYS or a
 # sleep that does not sleep), which is only true because something on ecb now runs it.
+#
+# ⛔ EMITTED ONLY AT argc 3 (6.6.10). The words below `ldp` through x0, and at argc 1 ESCPOPS
+# leaves x0 = the syscall NUMBER (it pops the number into x0 and copies it to x8), so
+# `syscall(35)` dereferenced address 35 — SIGSEGV, no diagnostic. At argc 2 it worked by
+# accident. Now any other arity gets no row, x16 keeps the chain head's 0xFFFF, and the call
+# is SIGSYS — the answer x86-macOS (a parse-time reroute at argc 3) and PE (argc 3) already
+# gave; parse_expr's `_macho_reroute_argc` warns at compile time. `_esx_argc` is ESCPOPS' n.
+# Query mode still answers "routed". CHANGELOG [6.6.10]
 fn EMACHO_NANOSLEEP_ARM(S): i64 {
     if (_esx_qon == 1) {
         if (_esx_q == 35) { _esx_hit = 1; }
         return 0;
     }
+    if (_esx_argc != 3) { return 0; }
     EW(S, 0xF1008D1F); EW(S, 0x54000161);   # cmp x8,#35; b.ne +44 (past the ten words)
     EW(S, 0xA9400C02);                      # ldp  x2, x3, [x0]   tv_sec, tv_nsec
     EW(S, 0xD2807D04);                      # movz x4, #1000
@@ -1003,8 +1039,11 @@ fn ESYSXLAT(S): i64 {
         # buffers with junk, so build_client_hello and every CSPRNG path
         # failed). Map both the x86/macos number (318) and the aarch64-Linux
         # number (278) → 500 (defensive dual-map, cf. getdents64 above). The
-        # 0-on-success → byte-count return conversion is the ESYSCALL post-svc
-        # fixup. getentropy caps at 256 bytes/call (ample for TLS's ≤32).
+        # 0-on-success → byte-count return conversion lives in lib's
+        # sys_getrandom, NOT in ESYSCALL (x1 does not survive a getentropy svc —
+        # see ESYSCALL's own note). getentropy REFUSES a request above 256 bytes
+        # (EINVAL, no short read), so sys_getrandom clamps to 256 on macOS and
+        # random_bytes loops. CHANGELOG [6.6.10]
         # cmp x8,#318 = 0xF104F91F; movz x16,#500 = 0xD2803E90.
         _esx_arm(S, 318, 500);  # getrandom 318→getentropy 500
         _esx_arm(S, 278, 500);  # getrandom aarch64 278→500
@@ -1022,7 +1061,7 @@ fn ESYSXLAT(S): i64 {
         # SYS_pipe 42 read off ecb's MacOSX.sdk sys/syscall.h AND confirmed by a live
         # raw-svc probe (x0=3, x1=4, caller buffer untouched).
         # cmp x8,#59 = 0xF100ED1F; movz x16,#42 = 0xD2800550 (as -arch arm64 verified).
-        _esx_arm(S, 59, 42);  # pipe2 59→pipe 42 (x0/x1-fixup post-svc)
+        _esx_arm(S, 59, 42);  # pipe2 59→pipe 42 (x0/x1-fixup post-svc; argc >= 2 only — _esx_short)
         # v6.5.15: fchmod. syscalls_linux_common.cyr:153 issues the peer's SYS_FCHMOD,
         # which on the aarch64 enum is 52 — unmapped here, so sys_fchmod ran a stale x16.
         # ⚠ The "x86-52 collides with SYS_FCHMOD" warning in syscalls_aarch64_linux.cyr:202
@@ -1707,7 +1746,9 @@ fn ESCPOPS(S, n): i64 {
             EPOPR(S); EW(S, 0xAA0003E8);  # pop → x0, mov x8, x0
         }
     }
+    _esx_argc = n;          # the Mach-O pointer emulations key on it (EMACHO_NANOSLEEP_ARM, _esx_short)
     ESYSXLAT(S);
+    _esx_argc = 7;
     ESYSCALL(S);
     return 0;
 }
@@ -3147,23 +3188,13 @@ fn EMIT_F32_BINOP(S, fop): i64 {
     return 0;
 }
 
-# Load a float literal into x0 as IEEE 754 bits. The lexer encodes
-# fval as `(denom << 32) | numer` so we reconstruct the double at
-# runtime via scvtf + fdiv, matching x86/float.cyr's strategy.
-# Mirrors the EMIT_FLOAT_LIT in x86/float.cyr — same input shape,
-# same output (f64 bit pattern in x0/rax), aarch64 FP instructions.
+# Load a float literal into x0 as IEEE 754 bits. `fval` indexes the side table, whose
+# FLIT_NUM is the literal's binary64 bits, correctly rounded by the lexer (_flit_bits in
+# src/frontend/lex.cyr), so this is one movz/movk immediate — the same bits as x86's movabs.
+# ⛔ 6.6.10 — it was scvtf/scvtf/fdiv over an i64 numer/denom pair, which overflowed and
+# double-rounded silently. CHANGELOG [6.6.10]
 fn EMIT_FLOAT_LIT(S, fval): i64 {
-    # v6.5.28 — `fval` is now an INDEX into the float-literal side table, not a packed 32/32
-    # rational (which overflowed silently past ~9 significant digits). See FLIT_ADD in
-    # src/common/util.cyr.
-    var numer = FLIT_NUM(fval);
-    var denom = FLIT_DEN(fval);
-    EMOVI(S, numer);           # x0 = numer
-    EW(S, 0x9E620000);         # scvtf d0, x0   — d0 = (double) numer
-    EMOVI(S, denom);           # x0 = denom (clobbers x0; that's fine)
-    EW(S, 0x9E620001);         # scvtf d1, x0   — d1 = (double) denom
-    EW(S, 0x1E611800);         # fdiv d0, d0, d1
-    EW(S, 0x9E660000);         # fmov x0, d0    — x0 = f64 bit pattern
+    EMOVI(S, FLIT_NUM(fval));   # x0 = f64 bit pattern
     return 0;
 }
 

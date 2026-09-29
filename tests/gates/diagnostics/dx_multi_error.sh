@@ -25,12 +25,18 @@ grep -q ':3:5: ' "$E" || { echo "FAIL: first error not at :3:5::"; cat "$E"; exi
 grep -q ':7:5: ' "$E" || { echo "FAIL: second error not at :7:5::"; cat "$E"; exit 1; }
 
 # 2) garbage tokens past EOF → must terminate (not SIGSEGV, not hang), no output.
-printf 'fn main(): i64 { var x = @@@ ][ }} return' > "$T"
-rc=0; timeout 10 "$CC" < "$T" > "$O" 2>/dev/null || rc=$?
+#    ⚠ 6.6.10: the fixture was `var x = @@@ ][ }} return`, and it only exercised the
+#    PARSER because the lexer silently dropped a stray `@` (CVE-52). With `@` refused at
+#    the lexer, `@@@` exits before one token reaches the parser and the case would pass
+#    without testing recovery at all — so the `@@@` is gone, and the last row proves the
+#    diagnostic comes from the parser, not the lexer. CHANGELOG [6.6.10]
+printf 'fn main(): i64 { var x = ][ }} return' > "$T"
+rc=0; timeout 10 "$CC" < "$T" > "$O" 2>"$E" || rc=$?
 [ "$rc" -ne 124 ] || { echo "FAIL: garbage input HUNG (timeout)"; exit 1; }
 [ "$rc" -ne 139 ] || { echo "FAIL: garbage input SIGSEGV'd (139)"; exit 1; }
 [ "$rc" -ne 0 ] || { echo "FAIL: garbage input compiled clean (exit 0)"; exit 1; }
 [ ! -s "$O" ] || { echo "FAIL: garbage input emitted output"; exit 1; }
+grep -q 'unexpected character' "$E" && { echo "FAIL: garbage input stopped in the LEXER — case 2 no longer reaches parser recovery:"; cat "$E"; exit 1; }
 
 # 2b) v6.4.78 — TRUNCATED input must not spew. `TOKTYP` is an unchecked L64, so past
 #     GTCNT it returned zeroed heap = token type 0, never 12 (EOF). Every `t == 12`
@@ -72,6 +78,17 @@ for _cc in "$CC" "$CX"; do
     grep -q 'a capturing closure needs include' "$E" || { echo "FAIL: closure-without-alloc lost its diagnostic ($_cc)"; cat "$E"; exit 1; }
     [ ! -s "$O" ] || { echo "FAIL: closure-without-alloc emitted output ($_cc)"; exit 1; }
 done
+
+# 2d) 6.6.10 — a bare `#deprecated` must not clear a panic latch it did not set. An
+#     earlier, unresynced error (the struct field) already held the latch, so ERR_MSG
+#     swallowed the directive's own error — and the unconditional `_panic = 0` after it
+#     un-suppressed the struct error's cascade: 2 errors ('expected identifier', then
+#     "unexpected ')'") for one mistake. Exactly 1 now.
+printf 'struct Q { a; b: ; }\n#deprecated ) )\nfn f(): i64 { return 1; }\nsyscall(60, f());\n' > "$T"
+rc=0; "$CC" < "$T" > "$O" 2>"$E" || rc=$?
+[ "$rc" -ne 0 ] || { echo "FAIL: struct error + bare #deprecated compiled clean"; exit 1; }
+n=$(grep -c '^error:' "$E" || true)
+[ "$n" -eq 1 ] || { echo "FAIL: struct error + bare #deprecated reported $n errors, want 1 (the latch was cleared):"; cat "$E"; exit 1; }
 
 # 3) VALID input still compiles + emits (no false positive).
 printf 'fn main(): i64 { return 42; }\n' > "$T"

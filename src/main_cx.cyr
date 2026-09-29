@@ -6,9 +6,12 @@ enum Sys { SYS_READ = 0; SYS_WRITE = 1; SYS_OPEN = 2; SYS_CLOSE = 3; SYS_BRK = 1
 
 include "src/version_str.cyr"
 include "src/common/util.cyr"
+# The real environment reader, shared with every other fork. cx used to compile
+# against a `return 0` stub, so every CYRIUS_* knob was dead on cycc_cx and the
+# refusals naming one were unactionable. After util.cyr (_macho_x28). CHANGELOG [6.6.10]
+include "src/backend/common/env.cyr"
 # v6.0.8 — token helpers shared with x86/aarch64. cx KEEPS its own
-# RECFIX (different cap + region) and _read_env stub, so it does
-# NOT include common/runtime.cyr.
+# RECFIX (different cap + region), so it does NOT include common/runtime.cyr.
 include "src/backend/common/tokens.cyr"
 include "src/backend/cx/emit.cyr"
 # v5.7.11: ir.cyr added at v5.6.12 (O3a IR instrumentation) but
@@ -458,6 +461,8 @@ _warn_undefined_prepass(S);
 
 # Parse main code (top-level statements)
 PARSE_PROG(S);
+# 6.6.10: `kernel;` / `shared;` are refused by name on cx (backend/cx/emit.cyr).
+if (_cx_mode_refused(S) == 1) { syscall(SYS_EXIT, 1); }
 
 # Exit epilogue — load last var
 var lv = GLVAR(S);

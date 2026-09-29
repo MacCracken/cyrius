@@ -110,6 +110,9 @@ fn _wx_data_vaddr(S, entry, cp): i64 {
 var _wx_dbase_frozen = 0;
 
 fn FIXUP(S): i64 {
+    # 6.6.10: `object;`/`shared;` on PE and all three modes on Mach-O have no emitter —
+    # refused by name BEFORE the object early return below (runtime.cyr). CHANGELOG [6.6.10]
+    if (_mode_unsupported(S, 0) == 1) { syscall(SYS_EXIT, 1); }
     # Align code to 8 (don't write — leave as zeros, matching cybs)
     var cp = GCP(S);
     cp = (cp + 7) & (0 - 8);
@@ -760,22 +763,9 @@ fn FIXUP(S): i64 {
     # separate fn and can't see this local live[] — so stash
     # (dead_var_bytes, dead_fn_count) into the post-data_size scratch
     # slots at 0x18FCD8/E0 for the warning emitter to read.
-    var u62_dvb = 0;
-    var u62_dcn = 0;
-    var u62_fi = 0;
-    while (u62_fi < fnc) {
-        var u62_dnoff = L64(_fnt_offsets + u62_fi * 8);
-        if (u62_dnoff >= 0) {
-            var u62_live = load8(&live + (u62_fi >> 3)) & (1 << (u62_fi & 7));
-            if (u62_live == 0) {
-                u62_dvb = u62_dvb + GFVB(S, u62_fi);
-                u62_dcn = u62_dcn + 1;
-            }
-        }
-        u62_fi = u62_fi + 1;
-    }
-    S64(S + 0x18FCD8, u62_dvb);
-    S64(S + 0x18FCE0, u62_dcn);
+    # 6.6.10: the loop is shared with the aarch64 FIXUP (runtime.cyr), and counts only dead
+    # fns that HOLD statics — it counted every dead fn. CHANGELOG [6.6.10]
+    _dead_static_stash(S, &live, fnc);
     # v5.11.59: undef-fn check moved here from before the fixup
     # patch loop. The DCE pass above populated `live[]`; for each
     # undef'd fixup (type 2 call, type 3 addr-of), locate the host
@@ -820,7 +810,10 @@ fn FIXUP(S): i64 {
                     var u59_unlen = 0;
                     while (load8(u59_unptr + u59_unlen) != 0) { u59_unlen = u59_unlen + 1; }
                     syscall(SYS_WRITE, 2, u59_unptr, u59_unlen);
-                    syscall(SYS_WRITE, 2, "' (call site may be unreachable)\n", 33);
+                    # 6.6.10: this line prints ONLY for a site judged reachable (u59_skip == 0);
+                    # it read "(call site may be unreachable)", the v5.11.56 wording from before
+                    # the reachability filter existed. CHANGELOG [6.6.10]
+                    syscall(SYS_WRITE, 2, "' (reachable call site)\n", 24);
                     undef_count = undef_count + 1;
                     # Mark as REPORTED so a second reachable call is not counted twice.
                     # 6.6.9: only when it WAS reported. This used to be set on the skip path
@@ -1945,9 +1938,16 @@ fn EMITELF_OBJ(S): i64 {
     var O = _output_base;
     var op = 0;
 
-    # --- Allocate scratch via brk extension ---
-    # Compiler has no alloc() — extend brk for temp buffers.
-    # Layout (matches the +OFFSETS used below; sized for the v4.7.1
+    # --- Allocate scratch (alloc since 6.6.10; a raw brk extension before) ---
+    # ⛔ 6.6.10 — "Compiler has no alloc()" stopped being true long ago (every fork that
+    # includes this file includes lib/alloc.cyr), and the raw brk it justified was the last one
+    # in shared x86 code. brk is ENOSYS on Windows, so the Windows-hosted compiler's ELF-object
+    # path (`CYRIUS_TARGET_WIN=0` + `object;`, main_win.cyr) always died with "could not extend
+    # brk", and the x86 Mach-O compiler build warned about an unrouted syscall 12 twice.
+    # alloc is mmap/VirtualAlloc-backed per host and hands back fresh (zeroed) pages; the
+    # compiler never alloc_reset()s, so nothing below relies on anything brk gave that alloc
+    # does not. CHANGELOG [6.6.10]
+    # Historical layout (matches the +OFFSETS used below; sized for the v4.7.1
     # 4096 fn cap, was 2048 — pre-4.8.3 the four regions overlapped
     # for any unit > ~2000 fns and EMITELF_OBJ segfaulted):
     #   +0x00000  strtab        (256 KB — fn names + section names)
@@ -1989,9 +1989,9 @@ fn EMITELF_OBJ(S): i64 {
     var off_symtab = off_fnoff + fnc * 8 + 16;
     var off_rela   = off_symtab + (4 + fnc + 1) * 24 + 16;
     var scratch_need = off_rela + fcnt * 24 + 4096;
-    var scratch = syscall(SYS_BRK, 0);
-    if (syscall(SYS_BRK, scratch + scratch_need) < scratch + scratch_need) {
-        syscall(SYS_WRITE, 2, "error: EMITELF_OBJ could not extend brk for its scratch tables\n", 63);
+    var scratch = alloc(scratch_need);
+    if (scratch == 0) {
+        syscall(SYS_WRITE, 2, "error: EMITELF_OBJ could not allocate its scratch tables\n", 57);
         syscall(SYS_EXIT, 1);
     }
 

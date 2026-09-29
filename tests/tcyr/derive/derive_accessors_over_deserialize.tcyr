@@ -1,0 +1,59 @@
+# derive_accessors_over_deserialize.tcyr — 6.6.10
+#
+# `#derive(accessors)` stacked directly ABOVE `#derive(Deserialize)` emits the JSON codecs.
+#
+# The accessors entry point (lex_pp.cyr PP_DERIVE_ACCESSORS) ran the codec body only when the
+# SERIALIZE bit (1) was stacked below it; Deserialize is bit 2. So of the eight stacking orders
+# this one alone emitted just the accessors, and the first use of a codec failed to compile
+# with `undefined function 'ad_pt_from_json_str'` — a message about a fn, not about the stack.
+# Every other order (Deserialize above accessors, Serialize either way, the three-deep stacks)
+# emitted all of them. Fixed with `(_stacked & 3)`; programs/cyrius_api_surface.cyr mirrors it.
+#
+# Without the fix this file does not compile. With it, the codecs round-trip and the accessors
+# still read and write the same struct. CHANGELOG [6.6.10]
+
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/alloc.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/hashmap.cyr"
+include "lib/result.cyr"
+include "lib/fnptr.cyr"
+include "lib/io.cyr"
+include "lib/bayan.cyr"
+include "lib/assert.cyr"
+
+#derive(accessors)
+#derive(Deserialize)
+struct ad_pt {
+    x: i64;
+    y: i64;
+}
+
+# The accessors are there (the half that always worked).
+var p = alloc(16);
+ad_pt_set_x(p, 11);
+ad_pt_set_y(p, 0 - 4);
+assert_eq(ad_pt_x(p), 11, "ad_pt_set_x / ad_pt_x");
+assert_eq(ad_pt_y(p), 0 - 4, "ad_pt_set_y / ad_pt_y");
+
+# The encoder — emitted with the decoder by the one codec body.
+var sb = str_builder_new();
+ad_pt_to_json(p, sb);
+var js = str_builder_build(sb);
+assert_eq(strlen(str_data(js)) > 0, 1, "ad_pt_to_json emits JSON");
+
+# The decoder round-trips what the encoder wrote, and the accessors read the result.
+var q = ad_pt_from_json_str(str_data(js));
+assert_eq(q != 0, 1, "ad_pt_from_json_str returns a struct");
+assert_eq(ad_pt_x(q), 11, "x round-trips through to_json / from_json_str");
+assert_eq(ad_pt_y(q), 0 - 4, "y round-trips through to_json / from_json_str");
+
+# A literal document decodes too.
+var q2 = ad_pt_from_json_str("{\"x\":7,\"y\":9}");
+assert_eq(ad_pt_x(q2), 7, "from_json_str on a literal: x");
+assert_eq(ad_pt_y(q2), 9, "from_json_str on a literal: y");
+
+var r = assert_summary();

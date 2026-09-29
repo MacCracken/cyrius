@@ -91,12 +91,13 @@ fn main(): i64 {
     var u2 = 0x4000000000000000;      # 2.0, untyped
     var u15 = 0x3FF8000000000000;     # 1.5, untyped: 0 - 0x4000.. happens to BE -2.0's
                                       # bits, so a 2.0 result cannot tell the two apart
-    # Off on cx: it rejects f64_sin/f64_exp, and its f64_sqrt is still an identity stub.
+    # Off on cx: it rejects f64_sin/f64_exp (no libm opcodes).
 #ifndef CYRIUS_TARGET_CX
     assert_eq(-f64_exp(0), 0xBFF0000000000000, "-f64_exp(0) is -1.0 (was -4.0)");
     assert_eq(-f64_sin(0), 0x8000000000000000, "-f64_sin(0) is -0 (was +0)");
-    assert_eq(-f64_sqrt(u2), 0xBFF6A09E667F3BCD, "-f64_sqrt(untyped 2.0) is -sqrt(2)");
 #endif
+    # On every target since 6.6.10: cx's f64_sqrt was an identity stub (cx_float_unary_ops.tcyr).
+    assert_eq(-f64_sqrt(u2), 0xBFF6A09E667F3BCD, "-f64_sqrt(untyped 2.0) is -sqrt(2)");
     assert_eq(-f64_add(u2, u2), 0xC010000000000000, "-f64_add(untyped) is -4.0");
     assert_eq(-f64_abs(u15), 0xBFF8000000000000, "-f64_abs(untyped 1.5) is -1.5");
     assert_eq(-f64_neg(u15), 0x3FF8000000000000, "-f64_neg(x) is x");

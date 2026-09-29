@@ -113,18 +113,15 @@ for op in sin cos exp2 atan exp ln log2; do
   exits1 aarch64 "pf_$op" 0 "f64_$op on aarch64 requires include \"lib/math.cyr\""
 done
 # every backend: slice, the async gate, and (with the gate open) the missing runtime helpers.
-# cx stubs _read_env, so CYRIUS_ASYNC never opens there: its rows stay on the gate message.
+# cx is an ordinary row since 6.6.10: it compiled against a `return 0` _read_env stub, so
+# CYRIUS_ASYNC=1 never opened the gate there and its rows were special-cased to the gate
+# message — the refusal told the user to set a variable cycc_cx could not read.
 for c in x86 aarch64 win cx; do
   exits1 "$c" slice 0 'slice subscript requires include "lib/slice.cyr"'
   exits1 "$c" await 0 'await requires CYRIUS_ASYNC=1'
   exits1 "$c" asyncfn 0 'async fn requires CYRIUS_ASYNC=1'
-  if [ "$c" = cx ]; then
-    exits1 cx await 1 'await requires CYRIUS_ASYNC=1'
-    exits1 cx asyncfn 1 'async fn requires CYRIUS_ASYNC=1'
-  else
-    exits1 "$c" await 1 'await needs include "lib/async.cyr"'
-    exits1 "$c" asyncfn 1 'an async fn needs include "lib/alloc.cyr"'
-  fi
+  exits1 "$c" await 1 'await needs include "lib/async.cyr"'
+  exits1 "$c" asyncfn 1 'an async fn needs include "lib/alloc.cyr"'
 done
 
 # multi-error parity: rc 1, the undefined variable AND the undefined-call refusal
