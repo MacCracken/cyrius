@@ -30,23 +30,10 @@ fn _src_ident_char(c): i64 {
     return 0;
 }
 
-# Does `buf` (blen bytes) contain `name` (nlen) as a WHOLE identifier? ⚠ Reads the byte AT
-# `blen` for the right-hand boundary, so the buffer must carry a readable terminator there
-# (both callers NUL-terminate). A raw substring match counted `check_due` as referenced by
-# every `check_due_at(` call. (Was `_distlib_bundle_refs`.) CHANGELOG [6.6.8]
-fn _src_refs_ident(buf, blen, name, nlen): i64 {
-    if (nlen <= 0) { return 0; }
-    var i = 0;
-    while (i + nlen <= blen) {
-        if (memeq(buf + i, name, nlen) == 1) {
-            var lok = 0;
-            if (i == 0) { lok = 1; } elif (_src_ident_char(load8(buf + i - 1)) == 0) { lok = 1; }
-            if (lok == 1 && _src_ident_char(load8(buf + i + nlen)) == 0) { return 1; }
-        }
-        i = i + 1;
-    }
-    return 0;
-}
+# (`_src_refs_ident` — "does buf contain name as a WHOLE identifier", one memeq scan per
+# question — was here, 6.6.8. Its two callers, coverage and distlib's prune, asked it once per
+# name, which made both O(corpus × names); they now tokenise once into `_src_ids_*` below,
+# which answers the same whole-identifier question. Removed 6.6.10, unreferenced.)
 
 # 1 iff the byte at `q` ENDS an attribute name: whitespace, end of buffer, or — when `ap`
 # is 1 — `(`. Mirrors LEXATTRBOUND in src/frontend/lex.cyr: `ap` is 1 only for `#assert`,
@@ -465,7 +452,7 @@ fn _src_decls_line(buf, len, ls, le, offs, lens, kinds): i64 {
 # ⛔ `cyrius coverage` asked "is this fn referenced?" with a byte-wise memeq scan of the whole
 # test corpus PER PUBLIC FN — O(corpus × fns): 78 s on this repo's `--full`, 8.5 s on agnosai.
 # A whole-identifier reference is exactly "some maximal run of identifier bytes equals the
-# name" (_src_refs_ident's boundary rule), so tokenising the corpus ONCE into a set answers
+# name" (the whole-identifier boundary rule), so tokenising the corpus ONCE into a set answers
 # every name in O(1). The set was distlib's `_dl_ids_*`, which kept only hashes and, when more
 # than half full, answered PRESENT for every name — safe for distlib (present records a leaf),
 # but FAIL-OPEN for coverage (every fn "referenced"). So it now keeps each token's position,

@@ -72,6 +72,7 @@
 #
 # MUTATION LEDGER (6.6.8; build/cyrius rebuilt from each mutant, gate re-run):
 #   M1 _src_refs_ident's boundary checks removed (a raw substring)       → axes 7, 13 FAIL
+#      (6.6.10: that fn is gone; the rule is now the tokeniser's maximal identifier run)
 #   M2 _src_blank_noncode made a no-op                                  → axes 7, 8, 9, 13 FAIL
 #   M3 _src_blank_noncode's char-literal arm removed                    → axis 8 FAIL
 #   M4 _src_decl_at back to column-0 `fn `/`pub fn ` only                → axes 9, 10 FAIL
@@ -90,7 +91,7 @@
 #   M17 (6.6.10) the unreadable-.tcyr arm removed (n < 0 folded into empty) → axis 15 FAIL
 #   M18 (6.6.10) coverage back on unchecked dir_walk                     → axes 16, 17 FAIL
 #   M19 (6.6.10) _src_ids_add stops growing and answers PRESENT when full → axis 18 FAIL
-#   M20 (6.6.10) the per-fn corpus scan (_src_refs_ident) restored        → axis 19 FAIL
+#   M20 (6.6.10) the per-fn corpus scan restored (the 6.6.9 CLI: 38 s)    → axis 19 FAIL
 #   real tree → every axis green
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)

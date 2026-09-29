@@ -4214,7 +4214,8 @@ fn _distlib_modular_emit(pkg_name, modules, mbuf, mlen): i64 {
 # deps (bayan / keccak / mldsa-adjacent / thread / process …). Prune req_leaves to
 # only the leaves the profile's bundle actually references. (Full-bundle path unchanged.)
 # (`_distlib_ident_char` / `_distlib_bundle_refs` moved to cbt/core.cyr as
-# `_src_ident_char` / `_src_refs_ident`, shared with cyrius coverage. CHANGELOG [6.6.8])
+# `_src_ident_char` / `_src_refs_ident`, shared with cyrius coverage. CHANGELOG [6.6.8]; the
+# per-name scan was replaced by a set built once per bundle in 6.6.10.)
 
 # Return 1 if the bundle references any symbol DECLARED at top level in leaf lib/<leaf>.cyr
 # — a fn, a var or an enum member, in every spelling (cbt/srcscan.cyr `_src_decls`).

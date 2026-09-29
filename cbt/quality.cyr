@@ -150,7 +150,7 @@ fn cmd_coverage(full, min_pct, root_arg): i64 {
     store8(corpus + corpus_len, 0);
     # 6.6.10: ONE pass over the corpus. Every identifier goes into a set once, and each public
     # fn below is one lookup — it was one memeq scan of the whole corpus PER FN (78 s on this
-    # repo's --full). Same whole-identifier rule as _src_refs_ident; see cbt/srcscan.cyr.
+    # repo's --full). The same whole-identifier rule; see cbt/srcscan.cyr `_src_ids_*`.
     var refs = _src_ids_new(corpus_len);
     if (refs == 0 || _src_ids_add_text(refs, corpus, corpus_len) != 0) {
         _err("coverage: out of memory indexing the test corpus");
@@ -216,9 +216,8 @@ fn cmd_coverage(full, min_pct, root_arg): i64 {
                 # ⛔ 6.6.8: a WHOLE-IDENTIFIER match over a corpus whose comments, strings and
                 # char literals are blanked. A raw substring match counted `check_due` as
                 # referenced by every `check_due_at(` and `str_lt` by a comment naming it, so
-                # samay's `--min 100` passed with functions no test referenced. (The v6.5.8
-                # `<=` end-of-corpus bound lives on in _src_refs_ident; the corpus is
-                # NUL-terminated, so the boundary read at its end is in bounds.)
+                # samay's `--min 100` passed with functions no test referenced. (6.6.10: a
+                # token ending at the corpus's last byte is a token — axis 2's v6.5.8 case.)
                 if (_src_ids_has(refs, lbuf + ns, fname_len) == 1) {
                     called = called + 1;
                     covered_fns = covered_fns + 1;
