@@ -407,6 +407,11 @@ fn ESYSCALL(S): i64 {
 # still self-hosts byte-identical. macho-only (Linux path never reaches here).
 # r11 holds the RAW Linux syscall number (pushed pre-translation in ESYSCALL),
 # so the compares use the Linux numbers (fork 57, pipe 22) as clean imm8s.
+# ⛔ 6.6.10: the `js` guard had NO `test rax, rax` in front of it, so it read the sign of
+# `cmp r11, 22` — which is ZERO on the pipe path by construction — and never skipped: a FAILED
+# pipe stored -errno and a stale rdx over the caller's fds and returned 0 (measured on ach with
+# SIGSYS ignored: a -ENOSYS pipe came back 0 with 0x...FFFFFFB2 written through rdi). Found by
+# tests/tcyr/crossos/darwin_short_arity_sigsys.tcyr. CHANGELOG [6.6.10]
 fn EMACHO_PROC_FIXUP(S): i64 {
     EB(S, 0x41); EB(S, 0x5B);                            # pop r11  (recover Linux num)
     EB(S, 0x49); EB(S, 0x83); EB(S, 0xFB); EB(S, 0x39);  # cmp r11, 57  (fork?)
@@ -415,7 +420,8 @@ fn EMACHO_PROC_FIXUP(S): i64 {
     EB(S, 0x75); EB(S, 0x03);                            # jne +3
     EB(S, 0x48); EB(S, 0x31); EB(S, 0xC0);               # xor rax, rax (child → 0)
     EB(S, 0x49); EB(S, 0x83); EB(S, 0xFB); EB(S, 0x16);  # cmp r11, 22  (pipe?)
-    EB(S, 0x75); EB(S, 0x0A);                            # jne +10
+    EB(S, 0x75); EB(S, 0x0D);                            # jne +13
+    EB(S, 0x48); EB(S, 0x85); EB(S, 0xC0);               # test rax, rax
     EB(S, 0x78); EB(S, 0x08);                            # js  +8  (rax<0 error → skip)
     EB(S, 0x89); EB(S, 0x07);                            # mov [rdi], eax     (fds[0])
     EB(S, 0x89); EB(S, 0x57); EB(S, 0x04);               # mov [rdi+4], edx   (fds[1])
@@ -740,6 +746,10 @@ fn ESADDR(S, soff): i64 {
     return 0;
 }
 
+# The arity of the syscall being emitted, counting the number (ESCPOPS' `n`); 7 = full arity
+# outside ESCPOPS, so a direct ESYSCALL (EEXIT's pre-classed exit) is unaffected. Read by
+# _msx_short. CHANGELOG [6.6.10]
+var _msx_argc = 7;
 # emit syscall pops for N args then syscall
 fn ESCPOPS(S, n): i64 {
     var _ire = IR_ENABLED(S); if (_ire >= 1) { ir_emit1(S, IR_CALL_POPS, n); }
@@ -751,7 +761,9 @@ fn ESCPOPS(S, n): i64 {
     if (n >= 2) { EPOPRDI(S); }
     if (n >= 1) { EPOPR(S); }
     if (n < 5) { if (_TARGET_AGNOS == 1) { E3(S, 0xD23145); } }   # xor r10d, r10d
+    _msx_argc = n;          # EMACHO_SYSXLAT's pointer-carrying rows key on it (see _msx_short)
     ESYSCALL(S);
+    _msx_argc = 7;
     return 0;
 }
 # ⚠ agnos reads a4 = r10 on EVERY syscall (read#5 / write#1 block only when a4 == 0), and a
@@ -953,8 +965,24 @@ fn EEXIT(S): i64 {
 var _msx_qon = 0;
 var _msx_q = 0;
 var _msx_hit = 0;
+# 6.6.10 — 1 when row `lin` must NOT be emitted at this call's arity. The pipe row (22) is
+# emitted only when the call PASSES the fds pointer (argc >= 2, counting the number, as ESCPOPS
+# does): Darwin pipe returns fd0:fd1 in rax:rdx and EMACHO_PROC_FIXUP stores them through rdi,
+# and `syscall(22)` at argc 1 never wrote rdi — so the fixup stored 8 bytes through whatever the
+# previous code left there (measured on ach: rdi primed with &sentinel, then `syscall(22)`
+# overwrote it, rc 0). With no row, 22 stays unclassed and _msx_tail makes it 0x200FFFF: SIGSYS,
+# or -ENOSYS with SIGSYS ignored, and the fixup's sign test then skips the store. parse_expr
+# warns at compile time (`_macho_warn_short`). Query mode never gets here — the number IS
+# routed, at its arity. The rule lives in the row emitter, not as a guard in the table, so
+# EMACHO_SYSXLAT stays a flat list of rows (macho_route_parity.sh reads it as source, and cybs
+# caps its per-fn references). CHANGELOG [6.6.10]
+fn _msx_short(lin): i64 {
+    if (lin == 22) { if (_msx_argc < 2) { return 1; } }
+    return 0;
+}
 fn _msx(S, lin, classed): i64 {
     if (_msx_qon == 1) { if (lin == _msx_q) { _msx_hit = 1; } return 0; }
+    if (_msx_short(lin) == 1) { return 0; }
     if (lin >= 128) { return _msx32(S, lin, classed); }   # >127 sets imm8 bit 7 -> sign-extends to negative; route to the imm32 form (cf. getdents64 217, getrandom 318). CHANGELOG [6.4.15] L2
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xF8); EB(S, lin);    # cmp rax, lin (imm8)
     EB(S, 0x75); EB(S, 0x07);                             # jne +7 (skip the mov)
@@ -1056,7 +1084,7 @@ fn EMACHO_SYSXLAT(S): i64 {
     # dup2 needs translating (Linux 33 == BSD `access`!). fork + pipe also get a
     # post-syscall fixup in ESYSCALL (rax:rdx multi-return) — see EMACHO_PROC_FIXUP.
     _msx(S, 33, 0x200005A);   # dup2     33 → 90
-    _msx(S, 22, 0x200002A);   # pipe     22 → 42
+    _msx(S, 22, 0x200002A);   # pipe     22 → 42 (argc >= 2 only — see _msx_short)
     _msx(S, 57, 0x2000002);   # fork     57 → 2
     # v6.0.59: net.cyr socket surface (parity with arm64 ESYSXLAT — cross-arch).
     _msx(S, 41, 0x2000061);   # socket     41 → 97

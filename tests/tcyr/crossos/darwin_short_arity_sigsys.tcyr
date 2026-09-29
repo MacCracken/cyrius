@@ -1,0 +1,111 @@
+# darwin_short_arity_sigsys.tcyr — 6.6.10: a Mach-O syscall EMULATION that takes a pointer
+# argument is not emitted when the call does not pass one. Too-short calls get SIGSYS (or
+# -ENOSYS with SIGSYS ignored) on both Macs, instead of dereferencing or storing through
+# whatever the pointer register happened to hold.
+#
+# THE DEFECT. Darwin has no nanosleep (35), and its pipe returns both fds in registers, so both
+# Mach-O backends EMULATE those Linux calls — and the emulations were keyed on the syscall
+# NUMBER, not on how many arguments the call passed:
+#   * arm64-macOS `syscall(35)` / `syscall(59)`: at argc 1 ESCPOPS leaves x0 = the number, so the
+#     nanosleep emulation's `ldp x2, x3, [x0]` and the pipe fixup's `str w0, [x2]` (x2 = the x0
+#     stashed pre-svc) hit address 35 / 59 — SIGSEGV with no diagnostic (rc 139 on ecb).
+#     `syscall(35, &ts)` at argc 2 worked by accident, unlike x86-macOS and PE.
+#   * x86-macOS `syscall(22)`: EMACHO_PROC_FIXUP stored fd0/fd1 through rdi, which the call never
+#     wrote. With a live pointer left in rdi that is a SILENT 8-byte write (measured on ach: rdi
+#     primed by `syscall(21, &sentinel, 0)`, then `syscall(22)` overwrote the sentinel).
+# Now the rows are emitted only at their arity (35 at argc 3, pipe at argc >= 2, counting the
+# number); any other arity is left unrouted and faults like every unrouted number (see
+# darwin_unrouted_syscall_faults.tcyr), and cycc warns at compile time.
+#
+# ⭐ WHY FORKED CHILDREN. The default outcome is that the process DIES; only a child can show
+# which signal killed it — and before the fix the arm64 child died of SIGSEGV (11), so asserting
+# "it died" alone would pass over the defect. The SIGSYS-ignored groups then show the call
+# RETURNS -ENOSYS without writing anything.
+# ⭐ WHY `_prime_rdi(&sentinel)` (x86). A cyrius call leaves its first argument in rdi, and
+# ESCPOPS at argc 1 writes only rax — so the sentinel's address is exactly what the old pipe
+# fixup stored through.
+#
+# Elsewhere the file compiles and asserts nothing: the emulations are Mach-O only (Linux passes
+# the numbers to the kernel, PE routes 35 at argc 3 only, and the others are not Darwin).
+include "lib/syscalls.cyr"
+include "lib/assert.cyr"
+
+fn _prime_rdi(p): i64 { return 0; }
+
+# Fork a child that runs `which` and reports how it ended: the signal number if it was killed,
+# or 1000 + its exit code if it exited.
+fn _child_end(which): i64 {
+    var child = sys_fork();
+    if (child == 0) {
+        #ifdef CYRIUS_TARGET_MACOS
+        if (which == 1) { syscall(35); }
+        if (which == 2) { var ts[16]; store64(&ts, 0); store64(&ts + 8, 1000000); syscall(35, &ts); }
+        #ifdef CYRIUS_ARCH_X86
+        if (which == 3) { syscall(22); }
+        #endif
+        #ifdef CYRIUS_ARCH_AARCH64
+        if (which == 3) { syscall(59); }
+        #endif
+        #endif
+        syscall(60, 7);   # reached only if the call did NOT fault
+    }
+    if (child <= 0) { return 0 - 1; }
+    var st = 0;
+    var w = sys_waitpid(child, &st, 0);
+    if (w != child) { return 0 - 2; }
+    if (WIFSIGNALED(st) == 1) { return WTERMSIG(st); }
+    return 1000 + WEXITSTATUS(st);
+}
+
+fn main(): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    test_group("Darwin: too-short nanosleep / pipe calls die with SIGSYS (12), not SIGSEGV");
+    assert_eq(signal_default(12), 0, "signal_default(SIGSYS) == 0");
+    assert_eq(_child_end(1), 12, "syscall(35) at argc 1 -> SIGSYS (arm64 was SIGSEGV 11)");
+    assert_eq(_child_end(2), 12, "syscall(35, &ts) at argc 2 -> SIGSYS (arm64 used to sleep; x86/PE never did)");
+    assert_eq(_child_end(3), 12, "pipe with no fds pointer -> SIGSYS (arm64 SIGSEGV 11; x86 stored through stale rdi)");
+
+    test_group("Darwin: with SIGSYS ignored they return -ENOSYS and write nothing");
+    assert_eq(signal_ignore(12), 0, "signal_ignore(SIGSYS) == 0");
+    var sentinel = 0x4141414141414141;
+    var r = 0;
+    #ifdef CYRIUS_ARCH_X86
+    _prime_rdi(&sentinel);
+    r = syscall(22);
+    assert_eq(r, 0 - 78, "syscall(22) at argc 1 returns -ENOSYS (-78)");
+    assert_eq(sentinel, 0x4141414141414141, "the sentinel rdi pointed at is untouched (was: fd0/fd1 stored over it)");
+    #endif
+    #ifdef CYRIUS_ARCH_AARCH64
+    r = syscall(59);
+    assert_eq(r, 0 - 78, "syscall(59) at argc 1 returns -ENOSYS (-78) (was: SIGSEGV storing to address 59)");
+    #endif
+    r = syscall(35);
+    assert_eq(r, 0 - 78, "syscall(35) at argc 1 returns -ENOSYS (-78)");
+    var ts[16];
+    store64(&ts, 0); store64(&ts + 8, 1000000);
+    r = syscall(35, &ts);
+    assert_eq(r, 0 - 78, "syscall(35, &ts) at argc 2 returns -ENOSYS (-78)");
+    assert_eq(signal_default(12), 0, "signal_default(SIGSYS) restored");
+
+    test_group("Darwin: at their real arity the emulations still work");
+    r = syscall(35, &ts, 0);
+    assert_eq(r, 0, "syscall(35, &ts, 0) sleeps and returns 0");
+    var fds[8];
+    store64(&fds, 0 - 1);
+    r = sys_pipe(&fds);
+    assert_eq(r, 0, "sys_pipe(&fds) == 0");
+    var fd0 = load32(&fds);
+    var fd1 = load32(&fds + 4);
+    assert(fd0 > 2, "fds[0] is a real descriptor");
+    assert(fd1 > 2, "fds[1] is a real descriptor");
+    assert(fd0 != fd1, "the two ends differ");
+    sys_close(fd0); sys_close(fd1);
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
+    test_group("not Darwin: the emulations are Mach-O only — nothing to assert");
+    assert_eq(1, 1, "skipped");
+    #endif
+    return assert_summary();
+}
+var ec = main();
+syscall(60, ec);
