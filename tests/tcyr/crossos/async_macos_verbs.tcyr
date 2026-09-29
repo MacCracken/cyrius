@@ -279,6 +279,19 @@ fn main(): i64 {
     sys_close(load32(&_pr)); sys_close(load32(&_pr + 4));
     #endif
 
+    test_group("async_run closes the runtime's kqueue (6.6.11)");
+    #ifndef CYRIUS_TARGET_MACOS
+    println("    SKIP: the macOS kqueue backend (lib/async_macos.cyr) only - not this target");
+    #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    var rtc = async_new();
+    var kqc = load64(rtc);
+    assert(sys_fcntl(kqc, 1, 0) >= 0, "premise: the new runtime's kqueue is open (F_GETFD)");
+    async_spawn(rtc, &_ret5, 0);
+    async_run(rtc);
+    assert(sys_fcntl(kqc, 1, 0) < 0, "after async_run it is closed: one fd no longer leaks per runtime");
+    #endif
+
     test_group("async_interval: a periodic EVFILT_TIMER");
     #ifndef CYRIUS_TARGET_MACOS
     println("    SKIP: the macOS kqueue backend (lib/async_macos.cyr) only - not this target");

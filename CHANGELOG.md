@@ -34,6 +34,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and loop. **Fix:** the registrations are `EV_ADD | EV_ONESHOT` (a wake already wakes every waiter on
   the (ident, filter); a later park re-adds). Row: `async_macos_verbs.tcyr` "a normal wake leaves no
   read filter armed" — RED against the pre-fix lib on ecb and ach, green with it.
+- **macOS `async_run` never closed the runtime's kqueue — one fd leaked per runtime (P3).** Its
+  comment recorded the leak ("the kqueue stays open") instead of fixing it. **Fix:** closed after the
+  pump, single-use like the epoll backend. Row: `async_macos_verbs.tcyr` "async_run closes the
+  runtime's kqueue" (F_GETFD after the run) — RED on ecb and ach against the pre-fix lib.
 
 ## [6.6.10] — 2026-09-29
 

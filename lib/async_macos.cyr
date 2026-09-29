@@ -255,10 +255,12 @@ fn _async_pump(rt, until_a, until_b): i64 {
     }
 }
 
-# Run all spawned tasks to completion. The kqueue stays open (the epoll backend's async_run closes
-# its epfd).
+# Run all spawned tasks to completion, then close the runtime's kqueue: single-use, like the epoll
+# backend (6.6.11 — it was left open, one fd leaked per runtime, and this comment said so instead).
+# CHANGELOG [6.6.11]
 fn async_run(rt): i64 {
     _async_pump(rt, 0, 0);
+    sys_close(load64(rt));
     return 0;
 }
 
