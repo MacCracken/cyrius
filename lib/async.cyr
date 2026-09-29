@@ -51,10 +51,12 @@ include "lib/async_agnos.cyr"
 include "lib/async_win.cyr"
 #endif
 
-# v6.5.27: macOS (Darwin) has no epoll either — its readiness API is kqueue, which cyrius has
-# no wrappers for. Before this guard macOS fell into the epoll body below and carried an
-# undefined `sys_epoll_wait`; route it to a serial/blocking peer, the same per-target split as
-# agnos and win. See lib/async_macos.cyr for why a fallback rather than a kqueue reactor.
+# v6.5.27: macOS (Darwin) has no epoll either — its readiness API is kqueue. Before this guard
+# macOS fell into the epoll body below and carried an undefined `sys_epoll_wait`; route it to
+# lib/async_macos.cyr, the same per-target split as agnos and win. That file is a kqueue REACTOR
+# (EVFILT_READ/WRITE for fd parking, EVFILT_TIMER for async_with_timeout's deadline and
+# async_interval, EVFILT_PROC for async_spawn_process), not a serial fallback; this note said
+# "no kqueue wrappers ... a fallback" until 6.6.10. CHANGELOG [6.6.10]
 #ifdef CYRIUS_TARGET_MACOS
 include "lib/async_macos.cyr"
 #endif
