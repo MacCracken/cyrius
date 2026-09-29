@@ -50,6 +50,46 @@ assert_eq(_http_parse_url("http://host/bad path"), 0, "reject space in path");
 # Embedded TAB — RFC 7230 treats as whitespace too.
 assert_eq(_http_parse_url("http://host\t/path"), 0, "reject TAB in host");
 
+# 6.6.11: EVERY control byte and DEL is refused, in the host AND in the path. Only CR, LF, TAB
+# and SPACE were, although the parser's comment promised all of them: the other 29 control bytes
+# went into the Host header and the request line. CHANGELOG [6.6.11]
+test_group("every control byte and DEL rejected, host and path");
+# "http://ho?st/" with byte `c` at the ?, or "http://host/pa?th" when in_path is 1.
+fn _crlf_url(c, in_path): i64 {
+    var u = alloc(32);
+    if (in_path == 1) {
+        memcpy(u, "http://host/pa", 14);
+        store8(u + 14, c);
+        memcpy(u + 15, "th", 3);
+    } else {
+        memcpy(u, "http://ho", 9);
+        store8(u + 9, c);
+        memcpy(u + 10, "st/", 4);
+    }
+    return u;
+}
+var cb = 1;
+var ctl_ok = 0;
+while (cb < 33) {
+    if (_http_parse_url(_crlf_url(cb, 0)) == 0) { ctl_ok = ctl_ok + 1; }
+    if (_http_parse_url(_crlf_url(cb, 1)) == 0) { ctl_ok = ctl_ok + 1; }
+    cb = cb + 1;
+}
+assert_eq(ctl_ok, 64, "0x01-0x20: all 32 refused in the host and in the path");
+assert_eq(_http_parse_url(_crlf_url(0x01, 0)), 0, "reject 0x01 in host");
+assert_eq(_http_parse_url(_crlf_url(0x0B, 0)), 0, "reject VT (0x0B) in host");
+assert_eq(_http_parse_url(_crlf_url(0x0C, 0)), 0, "reject FF (0x0C) in host");
+assert_eq(_http_parse_url(_crlf_url(0x1F, 0)), 0, "reject 0x1F in host");
+assert_eq(_http_parse_url(_crlf_url(0x7F, 0)), 0, "reject DEL (0x7F) in host");
+assert_eq(_http_parse_url(_crlf_url(0x01, 1)), 0, "reject 0x01 in path");
+assert_eq(_http_parse_url(_crlf_url(0x0B, 1)), 0, "reject VT (0x0B) in path");
+assert_eq(_http_parse_url(_crlf_url(0x0C, 1)), 0, "reject FF (0x0C) in path");
+assert_eq(_http_parse_url(_crlf_url(0x1F, 1)), 0, "reject 0x1F in path");
+assert_eq(_http_parse_url(_crlf_url(0x7F, 1)), 0, "reject DEL (0x7F) in path");
+# Controls: the printable neighbours still parse, so the rule is not "refuse everything".
+assert(_http_parse_url(_crlf_url(0x21, 0)) != 0, "'!' (0x21) in the host still parses");
+assert(_http_parse_url(_crlf_url(0x7E, 1)) != 0, "'~' (0x7E) in the path still parses");
+
 test_group("malformed input rejected");
 assert_eq(_http_parse_url("http://"), 0, "reject empty host");
 assert_eq(_http_parse_url("http:///path"), 0, "reject host-less URL");

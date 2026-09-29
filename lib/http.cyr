@@ -53,20 +53,22 @@ var HTTP_ERROR = 0 - 1;
 # looks like two distinct headers to the upstream server. The
 # defence is to reject any URL with embedded control bytes *before*
 # allocating the host/path pointers. Rejecting early also guards
-# against embedded NULs and stray tabs/spaces that would split the
-# request line. Returning 0 (instead of aborting the process) lets
-# caller-side code treat bad URLs as a normal error path.
+# against stray tabs/spaces that would split the request line.
+# Returning 0 (instead of aborting the process) lets caller-side code
+# treat bad URLs as a normal error path.
 fn _http_parse_url(url): i64 {
-    # Validate: reject CR, LF, NUL-before-end, and any byte < 0x20
-    # or == 0x7F in the host portion. Walk the whole URL first so
-    # malformed input can't corrupt the downstream parse.
+    # Validate the WHOLE URL — host and path both reach the request, and the request-target
+    # forbids control bytes too: reject every control byte (0x01-0x1F: CR and LF split headers,
+    # TAB splits the request line, the rest have no place in a URL), SPACE (a request-line split)
+    # and DEL (0x7F). The URL is NUL-terminated, so the walk ends at its first NUL.
+    # ⛔ Until 6.6.11 only CR, LF, TAB and SPACE were refused, though this comment already
+    # promised every byte below 0x20 and 0x7F — 29 control bytes went through into the Host
+    # header and the request line. CHANGELOG [6.6.11]
     var vi = 0;
     while (load8(url + vi) != 0) {
         var vc = load8(url + vi);
-        if (vc == 13) { return 0; }   # CR — CRLF injection vector
-        if (vc == 10) { return 0; }   # LF — header split
-        if (vc == 9)  { return 0; }   # TAB — request-line split
-        if (vc == 32) { return 0; }   # SPACE — request-line split
+        if (vc <= 32) { return 0; }   # a control byte (CR/LF/TAB among them) or SPACE
+        if (vc == 127) { return 0; }  # DEL
         vi = vi + 1;
     }
     var result = alloc(24);
