@@ -1953,13 +1953,15 @@ fn _assert_tail(S): i64 {
 }
 
 # 6.6.10 — the operands of an #assert (`ATOM [OP ATOM]`) may be followed only by `,` (the
-# message), `;`, EOF, or a token on a LATER line (a `;`-less #assert). _assert_tail skips
+# message), the message string itself (the comma-less `#assert 1 == 1 "ok"` form the failure
+# printer has always honoured), `;`, EOF, or a token on a LATER line. _assert_tail skips
 # the rest of the line unchecked, so `#assert E.EB * 2 == 9;` evaluated `E.EB` alone and a
 # FALSE assertion compiled green, as did `#assert 4 == 4 junk;`. Reports once (ERR_MSG
 # latches) and returns 1; the caller then drops the "#assert failed" cascade. CHANGELOG [6.6.10]
 fn _assert_operands_end(S): i64 {
     var t = PEEKT(S);
     if (t == 31) { return 0; }
+    if (t == 30) { return 0; }
     if (t == 5) { return 0; }
     if (t == 12) { return 0; }
     if (GTLINE(S, GTI(S)) != GTLINE(S, GTI(S) - 1)) { return 0; }

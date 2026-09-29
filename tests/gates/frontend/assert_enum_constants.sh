@@ -13,7 +13,8 @@
 #     "#assert failed" cascade.
 #   - anything AFTER the operands was skipped unchecked, so `#assert E.EB * 2 == 9;`
 #     evaluated E.EB alone and a FALSE assertion compiled rc 0 (so did `#assert 4 == 4
-#     junk;`). Only `,`, `;`, EOF or the next line may follow the operands now.
+#     junk;`). Only `,`, the message string, `;`, EOF or the next line may follow the
+#     operands now.
 #   - the cascade guard fired on ANY latched error, so an independent failing #assert
 #     after an earlier unresynced error was swallowed; only this assert's own latch counts.
 # One shared recogniser (_enum_atom_idx, parse.cyr) now serves #assert and both
@@ -76,6 +77,12 @@ no "a VARIABLE base is a field access, not an enum" 'expected a number, sizeof(T
 #assert p.x == 0;
 syscall(60, 7);'
 AR='no arithmetic inside #assert'
+# The comma-less message form is still accepted (tests/gates/diagnostics/
+# resolution_excerpt_and_assert_skip.sh axis 3 relies on it) and still printed on failure.
+ok "comma-less message after the operands" 7 '#assert E.EB == 4 "fine";
+syscall(60, 7);'
+no "comma-less message on a failing assert" '#assert failed: nocomma' '#assert E.EB == 5 "nocomma";
+syscall(60, 7);'
 no "arithmetic after an enum atom (false assert, in a fn)" "$AR" 'fn f(): i64 { #assert E.EB * 2 == 9; return 5; }
 syscall(60, f());'
 no "arithmetic after an enum atom (true if evaluated)" "$AR" '#assert E.EB * 2 == 8;
