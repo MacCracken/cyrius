@@ -21,11 +21,14 @@
 # iteration. Pair with `chan_try_recv` (lib/thread.cyr) for the
 # progress channel side. See CHANGELOG [5.11.15].
 
-# v6.2.7: AGNOS has no epoll_create1 / fcntl / clone-fork / wait4 in its frozen
-# syscall surface, and async is a SERVER-path runtime unused on the agnos
-# CLIENT target (inbound TCP is AGNOS Phase B; sit is a client). Route to a
-# serial/blocking peer, exactly as thread.cyr → thread_agnos.cyr (v6.2.3). The
-# cancel-token API at the bottom stays SHARED (atomic-only, portable). Resolves
+# v6.2.7: AGNOS has no epoll_create1 / fcntl / clone / wait4 in its syscall surface, so the
+# reactor below cannot exist there. Route to a serial/blocking peer, exactly as thread.cyr →
+# thread_agnos.cyr (v6.2.3). agnos DOES have fork#96 (1.56.55), a from-disk spawn (#43, 1.57.6)
+# and a blocking wait (1.57.7), and the peer's async_timeout / async_run_process use them
+# (6.6.10); inbound TCP (sock_bind/listen/accept on #56/#57) works since v6.2.22, so an async
+# server does run there, serially. (This read "clone-fork … inbound TCP is AGNOS Phase B; sit
+# is a client" until 6.6.10. CHANGELOG [6.6.10]) The cancel-token API at the bottom stays
+# SHARED (atomic-only, portable). Resolves
 # docs/development/issues/2026-06-15-cyrius-thread-agnos-clone-dispatch.md §2.
 
 # 6.6.9: every arm calls the syscall peer, alloc / alloc_via and fncall*; they were a Requires
