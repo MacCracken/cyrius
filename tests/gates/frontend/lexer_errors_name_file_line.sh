@@ -17,7 +17,12 @@
 #   * restore `p = p + 1;` in lex.cyr's `@` arm in place of `_lex_stray(S, p, c);`
 #     -> axis 1 RED (every `@` shape compiles, rc 0); axes 2-3 green.
 #   * make `_lex_err_head` print `PRNUM(GCLINE(S))` instead of FM_LOOKUP + column
-#     -> axis 3 RED on every row.
+#     -> axes 1, 3 and 4 RED on every row.
+#   * in lex_pp.cyr PP_DEFINE, pass `ERR_MSG(S, ...)` back instead of `_pp_err_at`
+#     -> axis 5 RED (`error:0:1:` is back).
+# AXIS 4 — the 16 char/string-literal error sites, each by file:line:col.
+# AXIS 5 — the preprocessor's flag-table cap printed `error:0:1:` (ERR_MSG reads the token
+# cursor, and no token exists yet); it names the #define's file:line:col now.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -62,6 +67,53 @@ refused nonascii   'var a = 1;\nvar c = 1 \303\251;\n'                          
 mkdir -p "$T/inc"
 printf 'fn h(): i64 {\n    return 1 @ 2;\n}\n' > "$T/inc/bad_inc.cyr"
 refused in_include 'var a = 1;\ninclude "inc/bad_inc.cyr"\nvar r = h();\n'           'error:inc/bad_inc.cyr:2:14: unexpected character (0x40)'
+
+echo "axis 4 — every char/string-literal error (16 sites) names <file>:<line>:<col>:"
+# char literals point at the opening quote (col 9), string escapes at their backslash
+# (col 10: `var t = "` is 9 bytes). Line 2 of 2 — 6.6.9 said `error:3:` for all of them.
+L='var a = 1;\n'
+refused ch_unterm     "${L}var c = '"                       "error:<source>:2:9: unterminated char literal"
+refused ch_unterm_esc "${L}var c = '\\\\"                   "error:<source>:2:9: unterminated char escape"
+refused ch_bad_esc    "${L}var c = '\\\\q';\n"              "error:<source>:2:9: unknown char escape"
+refused ch_unterm2    "${L}var c = 'a"                      "error:<source>:2:9: unterminated char literal"
+refused ch_multi      "${L}var c = 'ab';\n"                 "error:<source>:2:9: multi-byte char literal not supported"
+refused x_short       "${L}var t = \"\\\\x1"                "error:<source>:2:10: \\x escape needs two hex digits"
+refused x_bad1        "${L}var t = \"\\\\xZ1\";\n"          "error:<source>:2:10: \\x escape: bad hex digit"
+refused x_bad2        "${L}var t = \"\\\\x1Z\";\n"          "error:<source>:2:10: \\x escape: bad hex digit"
+refused ub_open       "${L}var t = \"\\\\u{12"              "error:<source>:2:10: \\u{...} escape: missing closing brace"
+refused ub_bad        "${L}var t = \"\\\\u{1Z}\";\n"        "error:<source>:2:10: \\u{...} escape: bad hex digit"
+refused ub_long       "${L}var t = \"\\\\u{1234567}\";\n"   "error:<source>:2:10: \\u{...} escape: > 6 hex digits"
+refused ub_empty      "${L}var t = \"\\\\u{}\";\n"          "error:<source>:2:10: \\u{...} escape: no hex digits"
+refused u4_short      "${L}var t = \"\\\\u12"               "error:<source>:2:10: \\u escape needs four hex digits"
+refused u4_bad        "${L}var t = \"\\\\u12Z4\";\n"        "error:<source>:2:10: \\u escape: bad hex digit"
+refused u_big         "${L}var t = \"\\\\u{110000}\";\n"    "error:<source>:2:10: \\u escape: codepoint > U+10FFFF"
+refused u_surr        "${L}var t = \"\\\\uD800\";\n"        "error:<source>:2:10: \\u escape: surrogate codepoint not allowed"
+
+echo "axis 5 — the preprocessor flag-table cap names the #define, not \`error:0:1:\`:"
+# 16 slots shared with the builtin predefines, so 20 user #defines overflow on every
+# target. The first refused one is whichever lands on slot 16; the row checks the SHAPE
+# (a real file and a line inside the defines) and that 0:1 is gone.
+: > "$T/ppcap.cyr"
+i=0; while [ "$i" -lt 20 ]; do echo "#define PPLOC_D$i" >> "$T/ppcap.cyr"; i=$((i + 1)); done
+echo 'var r = 0;' >> "$T/ppcap.cyr"
+rc=0; "$CC" < "$T/ppcap.cyr" > /dev/null 2> "$T/ppcap.err" || rc=$?
+check "20 #defines: refused" 1 "$rc"
+check "no locationless error:0:1:" 0 "$(grep -c '^error:0:1:' "$T/ppcap.err" || true)"
+check "names <source>:<line>:9 inside the defines" yes \
+    "$(grep -qE '^error:<source>:(1[0-9]|20):9: too many preprocessor #define/flag entries' "$T/ppcap.err" && echo yes || echo no)"
+# ERR_MSG also set the panic latch, so the FIRST real parse error after a refused #define
+# was swallowed (6.6.9: only the cap errors printed). The pp report leaves the latch alone.
+cp "$T/ppcap.cyr" "$T/ppcap2.cyr"
+echo 'var x = 2 3;' >> "$T/ppcap2.cyr"
+"$CC" < "$T/ppcap2.cyr" > /dev/null 2> "$T/ppcap2.err" || true
+check "a parse error after the refused #defines is still reported" 1 \
+    "$(grep -c "^error:<source>:22:11: expected ';', got number 3" "$T/ppcap2.err" || true)"
+cp "$T/ppcap.cyr" "$T/inc/ppcap_inc.cyr"
+printf 'var a = 1;\ninclude "inc/ppcap_inc.cyr"\n' > "$T/ppcap_main.cyr"
+rc=0; ( cd "$T" && "$CC" < "$T/ppcap_main.cyr" > /dev/null 2> "$T/ppcap_inc.err" ) || rc=$?
+check "20 #defines in an INCLUDED file: refused" 1 "$rc"
+check "…named by the included file's own line" yes \
+    "$(grep -qE '^error:inc/ppcap_inc.cyr:(1[0-9]|20):9: too many preprocessor' "$T/ppcap_inc.err" && echo yes || echo no)"
 
 echo ""
 if [ "$fails" = 0 ]; then

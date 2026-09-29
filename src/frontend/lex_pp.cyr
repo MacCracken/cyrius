@@ -731,6 +731,42 @@ fn _pp_lineno_at(S, base, upto): i64 {
     return n;
 }
 
+# ⛔ 6.6.10 — a PREPROCESSOR error names where it is. The flag-table cap reported through
+# ERR_MSG, whose head reads the TOKEN cursor — and the preprocessor runs before a single
+# token exists, so it printed `error:0:1:`, a location that names nothing. `base` is the
+# buffer the directive was read from, and the line is derived the way the re-anchor
+# markers derive it: PP_PASS reads the raw main source (S+_SRCB — exact by counting, as
+# PP_REANCHOR_SRC), PP_IFDEF_PASS a marker-carrying stream (relative to the current file's
+# marker, as PP_REANCHOR_CUR). `base` 0 = no source position (a builtin predefine): the
+# head is then a bare `error: `, never a fabricated one. Report-and-continue like ERR_MSG
+# (`_had_error` fails the compile); `_panic` is left alone — there is no parse cascade to
+# suppress yet, and setting it swallowed the first real parse error. CHANGELOG [6.6.10]
+fn _pp_err_at(S, base, pos, msg): i64 {
+    syscall(SYS_WRITE, 2, "error:", 6);
+    if (base == 0) { syscall(SYS_WRITE, 2, " ", 1); }
+    else {
+        var ln = 0;
+        if (base == S + _SRCB) {
+            PRSTR("<source>");
+            ln = _pp_lineno_at(S, base, pos) - _pp_srcline_bias;
+        } else {
+            PRSTR(_pp_curfile_ptr());
+            ln = _pp_curfile_base + _pp_count_nl(base, _pp_curfile_anchor, pos);
+        }
+        syscall(SYS_WRITE, 2, ":", 1);
+        PRNUM(ln);
+        var ls = pos;
+        while (ls > 0) { if (load8(base + ls - 1) == 10) { break; } ls = ls - 1; }
+        syscall(SYS_WRITE, 2, ":", 1);
+        PRNUM(pos - ls + 1);
+        syscall(SYS_WRITE, 2, ": ", 2);
+    }
+    PRSTR(msg);
+    syscall(SYS_WRITE, 2, "\n", 1);
+    _had_error = 1;
+    return 0;
+}
+
 # v6.5.3 — `base` is the source line the span AFTER this marker starts on.
 #   ENTER  (a fresh include)  -> 1, the included file's own first line
 #   RESUME (back to the parent) -> the parent's line just past the include directive
@@ -3248,7 +3284,7 @@ fn PP_HASH_CSTR(name): i64 {
 fn PP_PREDEFINE(S, name): i64 {
     # 6.6.10: ERR_MSG returns (v6.4.62), so the cap stops the store itself — the 17th hash
     # landed on value[0] at S+0x190880. CHANGELOG [6.6.10]
-    if (_pp_flag_count >= 16) { ERR_MSG(S, "too many preprocessor #define/flag entries (max 16)", 51); return 0; }
+    if (_pp_flag_count >= 16) { _pp_err_at(S, 0, 0, "too many preprocessor #define/flag entries (max 16)"); return 0; }
     var h = PP_HASH_CSTR(name);
     store64(S + 0x190800 + _pp_flag_count * 8, h);
     store64(S + 0x190880 + _pp_flag_count * 8, 0);
@@ -3260,7 +3296,7 @@ fn PP_PREDEFINE(S, name): i64 {
 # come from src_base+pos; flag-table writes stay at S+0x190800/0x190880.
 fn PP_DEFINE(S, src_base, pos): i64 {
     # 6.6.10: stop at the cap — see PP_PREDEFINE. CHANGELOG [6.6.10]
-    if (_pp_flag_count >= 16) { ERR_MSG(S, "too many preprocessor #define/flag entries (max 16)", 51); return 0; }
+    if (_pp_flag_count >= 16) { _pp_err_at(S, src_base, pos, "too many preprocessor #define/flag entries (max 16)"); return 0; }
     var h = PP_HASH(src_base, pos);
     store64(S + 0x190800 + _pp_flag_count * 8, h);
     # Check for value: #define NAME VALUE (skip name, find space, parse int)
