@@ -2550,6 +2550,28 @@ fn cmd_capacity(source, check_mode, json_mode): i64 {
 # Soak — extended test loop
 # ================================================================
 
+# `cyrius soak`'s step-failure line, on stdout like soak's other FAIL lines. What the step
+# DID comes from `_raw_fail_describe` — the same words `cyrius self` uses (`_self_step_failed`)
+# — because the raw `_self_host_step` status is not an exit code: `_pulsar_raw_compile` returns
+# a flat 1 for a signal, an empty output and a failed rename, so soak printed "step 2 exited 1"
+# for a SIGSEGV that `cyrius self` on the same tree called "killed by signal 11". A negative
+# status means the step already NAMED its failure (the macOS stage refusal, -1 after its own
+# `_err_ctx`); soak printed "exited -1" on top of it. It now says only where. CHANGELOG [6.6.11]
+fn _soak_step_failed(step, rc): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "FAIL: self-host step ");
+    str_builder_add_int(sb, step);
+    if (rc < 0) { str_builder_add_cstr(sb, " failed (the error above names why)"); }
+    else {
+        str_builder_add_cstr(sb, " ");
+        _raw_fail_describe(sb, rc);
+    }
+    str_builder_add_cstr(sb, "\n");
+    var m = str_data(str_builder_build(sb));
+    sys_write(STDOUT_FD, m, strlen(m));
+    return 0;
+}
+
 fn cmd_soak(iters): i64 {
     if (iters <= 0) { iters = 100; }
     _status("=== cyrius soak test ===");
@@ -2633,17 +2655,13 @@ fn cmd_soak(iters): i64 {
         # its exit code is still the verdict ("step 2 exited N"). CHANGELOG [6.6.6].
         var s1 = _self_host_step(soak_cc, soak_src, cc5_t);
         if (s1 != 0) {
-            sys_write(STDOUT_FD, "FAIL: self-host step 1 exited ", 30);
-            fmt_int(s1);
-            sys_write(STDOUT_FD, "\n", 1);
+            _soak_step_failed(1, s1);
             iter_ok = 0;
         }
         if (iter_ok == 1) {
             var s2 = _self_host_step(cc5_t, soak_src, cc4_t);
             if (s2 != 0) {
-                sys_write(STDOUT_FD, "FAIL: self-host step 2 exited ", 30);
-                fmt_int(s2);
-                sys_write(STDOUT_FD, "\n", 1);
+                _soak_step_failed(2, s2);
                 iter_ok = 0;
             }
         }
