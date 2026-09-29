@@ -54,8 +54,9 @@ fn _dep_refuse_symlinked_dest(path): i64 {
 # the v6.5.36 lesson verbatim — a gate that pins the mechanism rather than the property
 # passes while the mechanism is wrong — which is why the companion gate asserts BOTH.
 #
-# ⚠ Returns 0 on Windows for every path: `is_symlink` has no PE arm (no readlink wrapper;
-# junctions are tracked with the Windows fs surface). Stated rather than hidden.
+# Windows too: `is_symlink`'s PE arm (GetFileAttributesW's REPARSE_POINT bit, then
+# FindFirstFileW's name-surrogate tag — lib/fs.cyr) sees symlinks and junctions.
+# CHANGELOG [6.6.9]
 fn _dep_dest_is_linked(dst): i64 {
     var n = strlen(dst);
     var buf = alloc(n + 1);
@@ -247,9 +248,8 @@ fn _dep_copy_file(src, dst): i64 {
     # `return 1`, so every write path (stdlib leaves, `requires`, `.deps` sidecar, modules,
     # submodules) inherits it without a per-caller edit.
     #
-    # ⚠ HONEST LIMIT: `is_symlink` returns 0 on Windows — there is no PE readlink wrapper and
-    # junctions are tracked with the Windows fs surface — so this guard does not fire on PE.
-    # Stated rather than hidden; the Linux/macOS/aarch64/agnos arms all check.
+    # It fires on every target, PE included: `is_symlink` has a Windows arm since 6.6.9
+    # (GetFileAttributesW + FindFirstFileW's reparse tag, lib/fs.cyr). CHANGELOG [6.6.9]
     if (_dep_vendor_mode == 1) {
         var linked = _dep_dest_is_linked(dst);
         if (linked != 0) { return _dep_refuse_symlinked_dest(linked); }

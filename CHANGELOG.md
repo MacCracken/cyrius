@@ -46,6 +46,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   loop. Mutations: the find_tools line, the `.exe` suffix and the redirect call each FAIL it.
   Verified on real Windows (cass): all four axes (0 / 1 naming `cyrius.exe` / 37 / 0).
 
+- **cbt comments no longer say the symlinked-`lib/` guard is inert on Windows.** (B09: K12.) Four
+  comment blocks in `cbt/cyrius.cyr` and `cbt/deps.cyr` still read "`is_symlink` returns 0 on
+  Windows — no PE readlink wrapper" (one framed as an "HONEST LIMIT"); `is_symlink` has had a PE
+  arm since 6.6.9 (GetFileAttributesW's REPARSE_POINT bit, then FindFirstFileW's name-surrogate
+  tag). Comment-only.
+
 ## [6.6.10] — 2026-09-29
 
 The fourth batch release: the 6.6.8 review finds (groups B–G) and group H of the 6.6.9 finds, placed by

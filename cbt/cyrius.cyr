@@ -183,8 +183,9 @@ fn _try_redirect_to_pinned(): i64 {
     #
     # Scoped to the verbs that vendor into lib/ so read-only commands still work in an
     # affected tree; the first non-flag argv entry is the verb (mirrors the cmd_idx loop
-    # in main). ⚠ `is_symlink` returns 0 on Windows — no PE readlink wrapper — so this
-    # does not fire on PE. Stated, not hidden.
+    # in main). It fires on PE too: `is_symlink` has a Windows arm (GetFileAttributesW's
+    # REPARSE_POINT bit, then FindFirstFileW's name-surrogate tag — lib/fs.cyr,
+    # CHANGELOG [6.6.9]).
     #
     # ⛔ v6.6.2 — THE SYMLINKED-lib/ GUARD RUNS BEFORE EVERY EARLY RETURN, INCLUDING
     # `_cyrius_resolved`. It used to sit ~80 lines below, after both the resolved-pass
@@ -202,7 +203,6 @@ fn _try_redirect_to_pinned(): i64 {
     # absent version and still exercise this path deterministically.
     # ⚠ Safe above the source-repo return: this repo's ./lib is a real directory, so
     # `is_symlink` is 0 and the guard is inert here.
-    # ⚠ `is_symlink` returns 0 on Windows (no PE readlink wrapper) — stated, not hidden.
     var _vi = 1;
     var _verb = 0;
     while (_vi < argc()) {
