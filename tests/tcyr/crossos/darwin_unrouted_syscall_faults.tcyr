@@ -24,6 +24,12 @@
 # ⭐ WHY A FORKED CHILD. "Returns -78 with SIGSYS ignored" is the half a test can observe in
 # process; the DEFAULT is that the process dies, and only a child can show that.
 #
+# 6.6.10 — sys_getdents64 joined the peer-decline group: Darwin's getdirentries64 takes a fourth
+# OUT-pointer (basep) the 3-arg wrapper never passed, so xnu wrote 8 bytes through whatever
+# r10 / x3 held — the assert primes that register with the address of a live sentinel first,
+# which is exactly how the stray write was measured (sentinel zeroed on both Macs), so a wrapper
+# that regressed to issuing the call fails here even when it returns data.
+#
 # Elsewhere the file compiles and asserts nothing: Linux and aarch64 pass an unrouted number
 # through to the kernel by design (native numbers must survive), and PE declines with -38.
 include "lib/syscalls.cyr"
@@ -62,6 +68,20 @@ fn main(): i64 {
     assert_eq(sys_inotify_add_watch(0, ".", 2), 0 - 78, "sys_inotify_add_watch() == -78");
     assert_eq(sys_inotify_rm_watch(0, 1), 0 - 78, "sys_inotify_rm_watch() == -78");
     #endif
+
+    # getdents: prime the 4th-argument register with &sent (a failing 4-arg openat), then list
+    # a real, open directory. The broken wrapper returned Darwin records (n > 0) AND zeroed sent.
+    var sent[8];
+    store64(&sent, 0x5A5A5A5A5A5A5A5A);
+    var dfd = sys_open(".", O_RDONLY, 0);
+    assert(dfd >= 0, "open(\".\") for the getdents probe");
+    var dbuf[4096];
+    syscall(SYS_OPENAT, 0 - 100, "/nonexistent-cyrius-6610", 0, &sent);
+    assert_eq(sys_getdents64(dfd, &dbuf, 4096), 0 - 78,
+      "sys_getdents64() == -78 (Darwin getdirentries64 has a 4th basep out-pointer)");
+    assert_eq(load64(&sent), 0x5A5A5A5A5A5A5A5A,
+      "the sentinel the 4th-argument register pointed at is intact (was: zeroed)");
+    sys_close(dfd);
 
     test_group("Darwin: by default an unrouted syscall kills the process with SIGSYS");
     assert_eq(signal_default(12), 0, "signal_default(SIGSYS) == 0");

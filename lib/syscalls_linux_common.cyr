@@ -689,8 +689,23 @@ fn sys_timerfd_settime(fd, flags, new_value, old_value): i64 {
 # Returns bytes written into buf, 0 at end-of-dir, -errno on error.
 # Used by drm device-node enumeration; high-level fs::list_dir
 # wraps this for the typical case.
+#
+# macOS: declines with -ENOSYS (-78) and issues no syscall. The Mach-O backends route the
+# number to Darwin getdirentries64(fd, buf, nbytes, off_t *basep), which has a FOURTH
+# parameter and it is an OUT-pointer: through this 3-arg wrapper xnu wrote the 8-byte seek
+# position to whatever address the fourth argument register (r10 / x3) still held — measured on
+# both Macs zeroing a live 8-byte variable. The records it returns are not linux_dirent64
+# either (d_namlen u16 at 18, d_type at 20, d_name at 21, against d_type 18 / d_name 19 here),
+# so a caller parsing them read shifted names. lib/fs.cyr's dir_list has a Darwin lister that
+# passes basep and parses the Darwin layout; use that for a portable directory walk.
+# CHANGELOG [6.6.10]
 fn sys_getdents64(fd, buf, count): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    return 0 - 78;
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
     return syscall(SYS_GETDENTS64, fd, buf, count);
+    #endif
 }
 
 # Fill up to `len` bytes of `buf` from the kernel CSPRNG. `flags`
