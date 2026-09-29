@@ -2357,7 +2357,10 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             PARSE_FACTOR(S);                      # evaluate the operand
             var _sk = _coro_nsusp + 1;
             if (_sk >= _CORO_MAX_SUSP) {
+                # ERR_MSG returns (multi-error, v6.4.62), so the cap must stop here itself: the
+                # stores below indexed _coro_rcp past its bound. CHANGELOG [6.6.10]
                 ERR_MSG(S, "too many `await` suspend points in one `async fn` (max 63)", 58);
+                return 0;
             }
             EFLLOAD(S, _coro_base);               # rax = C (slot < _coro_lo: the stack path)
             EADDRA_IMM(S, _CORO_STATE_OFF);

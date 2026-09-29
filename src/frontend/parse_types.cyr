@@ -95,11 +95,19 @@ fn DUMP_STRUCTS(S): i64 {
 }
 
 # Register a new struct, return index (1-based, 0 = not a struct)
+# 6.6.10: returns 0 when the table is full. ERR_MSG returns (multi-error, v6.4.62), so this
+# cap used to fall through into the stores at index 1024+; both callers now skip the body on
+# 0 (indexing with sid - 1 = -1 would write at negative indices). DUMP_STRUCTS runs on the
+# FIRST overflow only — once per refused struct made the note quadratic (600,953 lines at
+# 1500 structs). CHANGELOG [6.6.10]
+var _regstruct_dumped = 0;
 fn REGSTRUCT(S, noff): i64 {
     var sc = GSTC(S);
     if (sc >= 1024) {
-        DUMP_STRUCTS(S);
+        if (_regstruct_dumped == 0) { DUMP_STRUCTS(S); }
+        _regstruct_dumped = 1;
         ERR_MSG(S, "too many struct definitions (max 1024)", 38);
+        return 0;
     }
     S64(S + 0x1A6018 + sc * 8, noff);
     S64(S + 0x1A8018 + sc * 8, 0);
@@ -123,9 +131,9 @@ fn FINDSTRUCT(S, noff): i64 {
 # Add field to struct (0-based struct index si), ftype = struct_id or 0 for scalar
 fn ADDFIELD(S, si, fnoff): i64 {
     var fc = L64(S + 0x1A8018 + si * 8);
-    if (fc >= 256) { ERR_MSG(S, "too many struct fields (max 256)", 32); }
+    if (fc >= 256) { ERR_MSG(S, "too many struct fields (max 256)", 32); return 0; }   # 6.6.10: stop, don't store
     var ent = L64(S + 0x1AA018 + si * 8) + fc;   # packed pool: field_base[si] + fc
-    if (ent >= 8192) { ERR_MSG(S, "struct field pool exhausted (8192 max)", 38); }
+    if (ent >= 8192) { ERR_MSG(S, "struct field pool exhausted (8192 max)", 38); return 0; }
     S64(S + 0x92A000 + ent * 8, fnoff);
     S64(S + 0x91A000 + ent * 8, 0);
     S64(S + 0x1A8018 + si * 8, fc + 1);
@@ -135,9 +143,9 @@ fn ADDFIELD(S, si, fnoff): i64 {
 
 fn ADDFIELDTYPED(S, si, fnoff, ftype): i64 {
     var fc = L64(S + 0x1A8018 + si * 8);
-    if (fc >= 256) { ERR_MSG(S, "too many struct fields (max 256)", 32); }
+    if (fc >= 256) { ERR_MSG(S, "too many struct fields (max 256)", 32); return 0; }   # 6.6.10: stop, don't store
     var ent = L64(S + 0x1AA018 + si * 8) + fc;   # packed pool: field_base[si] + fc
-    if (ent >= 8192) { ERR_MSG(S, "struct field pool exhausted (8192 max)", 38); }
+    if (ent >= 8192) { ERR_MSG(S, "struct field pool exhausted (8192 max)", 38); return 0; }
     S64(S + 0x92A000 + ent * 8, fnoff);
     S64(S + 0x91A000 + ent * 8, ftype);
     S64(S + 0x1A8018 + si * 8, fc + 1);
@@ -664,6 +672,24 @@ fn _chk_struct_redef(S, prev, sid, name_ti): i64 {
     return 0;
 }
 
+# 6.6.10 — REGSTRUCT refused the definition (table full, already reported): consume its
+# `{ ... }` body without registering anything, so the caller never indexes with sid - 1 = -1.
+# Stops at EOF; a body that does not start with `{` is left for the caller's error path.
+fn _skip_refused_body(S): i64 {
+    if (PEEKT(S) != 13) { return 0; }
+    var depth = 0;
+    while (PEEKT(S) != 12) {
+        var t = PEEKT(S);
+        STI(S, GTI(S) + 1);
+        if (t == 13) { depth = depth + 1; }
+        if (t == 14) {
+            depth = depth - 1;
+            if (depth == 0) { return 0; }
+        }
+    }
+    return 0;
+}
+
 fn PARSE_STRUCT_DEF(S): i64 {
     var _sdefstart = GTI(S);   # v6.3.10: the `struct` token, for generic instance re-emit
     STI(S, GTI(S) + 1);  # consume STRUCT
@@ -678,6 +704,7 @@ fn PARSE_STRUCT_DEF(S): i64 {
     if (_inst_name != 0) { noff = _inst_name; }
     var _sprev = FINDSTRUCT(S, noff);
     var sid = REGSTRUCT(S, noff);
+    if (sid == 0) { return _skip_refused_body(S); }   # 6.6.10: table full — never index -1
     var si = sid - 1;
     if (_stp != 0) { SSTP(S, si, _stp); SSDS(S, si, _sdefstart + 1); }   # record for instantiation
     if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
@@ -774,6 +801,7 @@ fn PARSE_UNION_DEF(S): i64 {
     SKIP_GENERICS(S);
     var _uprev = FINDSTRUCT(S, noff);
     var sid = REGSTRUCT(S, noff);
+    if (sid == 0) { return _skip_refused_body(S); }   # 6.6.10: table full — never index -1
     var si = sid - 1;
     # Set union flag (high bit of fcount)
     S64(S + 0x1A8018 + si * 8, 1 << 63);

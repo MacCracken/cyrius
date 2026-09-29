@@ -319,8 +319,10 @@ var _coro_top_jmp = 0;      # the fn-top `jmp DISPATCH` placeholder
 var _coro_entry_cp = 0;     # state 0 landing pad (top of the real body)
 var _CORO_STATE_OFF = 24;   # byte offset of the state word inside the coro object
 var _CORO_LOCAL_OFF = 32;   # byte offset of local slot 0
-var _CORO_MAX_SUSP = 64;    # resume-label table size; exceeding it is a hard error
-var _coro_rcp[512];         # resume-label CP per suspend index (1-based), 64 x 8 B
+var _CORO_MAX_SUSP = 64;    # resume-label table bound; the await at this index errors and stores nothing
+# resume-label CP per suspend index (1-based). Only indices < _CORO_MAX_SUSP are ever written;
+# [512] holds 64 x 8 B whether a top-level array is sized N bytes or N slots. CHANGELOG [6.6.10]
+var _coro_rcp[512];
 # --- v6.5.71: PP-generated functions that must be inlined, passed by SIDE CHANNEL ----------
 # ⛔ WHY A SIDE CHANNEL AND NOT `#inline` TEXT. `#derive(accessors)` generates the canonical
 # inline candidate — `fn Name_field(p) { return load64(p + K); }`, one parameter, flat,
