@@ -222,6 +222,14 @@ fn proc_timeout_ms(): i64 { return _PROC_DEADLINE_MS; }
 # How many children this process has ended at a deadline, ever.
 fn proc_deadline_kills(): i64 { return _proc_deadline_kills; }
 
+# errno ETIMEDOUT / ECHILD — the same names and values as lib/process.cyr's POSIX block:
+# `run` / `wait_pid` answer Err(PROC_ETIMEDOUT) when the deadline ended the child and
+# Err(PROC_ECHILD) when its exit code could not be read. 6.6.7 added both to the POSIX block
+# only, and this peer spelled them as the literals 110 / 10, so a portable caller that
+# compared against the names failed to COMPILE for PE. CHANGELOG [6.6.10]
+var PROC_ETIMEDOUT = 110;
+var PROC_ECHILD = 10;
+
 # Wait for process handle `h` (bounded by the deadline in force) and return its exit code;
 # -2 when the deadline ended it, -1 when the wait or GetExitCodeProcess failed (the code is
 # then UNKNOWN — never a guessed 0). Does not close `h`.
@@ -411,8 +419,8 @@ fn run(cmd, arg1, arg2): Result {
     var ok = _win_create_process(wcmd, 0, 0, &pi);
     if (ok == 0) { return Err(1); }
     var ec = _win_wait_close(&pi);
-    if (ec == 0 - 2) { return Err(110); }         # ETIMEDOUT — the POSIX peer's PROC_ETIMEDOUT
-    if (ec == 0 - 1) { return Err(10); }          # the exit code is unknown (PROC_ECHILD)
+    if (ec == 0 - 2) { return Err(PROC_ETIMEDOUT); }
+    if (ec == 0 - 1) { return Err(PROC_ECHILD); }   # the exit code is unknown
     return Ok(ec);
 }
 
@@ -450,8 +458,8 @@ fn spawn(cmd, arg1, arg2): Result {
 fn wait_pid(pid): Result {
     var ec = _win_wait_handle(pid);               # bounded by the deadline in force (6.6.8)
     syscall(3, pid);                              # CloseHandle
-    if (ec == 0 - 2) { return Err(110); }
-    if (ec == 0 - 1) { return Err(10); }
+    if (ec == 0 - 2) { return Err(PROC_ETIMEDOUT); }
+    if (ec == 0 - 1) { return Err(PROC_ECHILD); }
     return Ok(ec);
 }
 

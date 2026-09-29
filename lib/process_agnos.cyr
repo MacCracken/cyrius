@@ -51,6 +51,12 @@ fn proc_deadline_kills(): i64 { return 0; }
 # the POSIX module. CHANGELOG [6.6.8]
 var PROC_ECHILD = 10;
 
+# errno ETIMEDOUT — defined so a portable caller that compares a Result against it compiles
+# here (6.6.7 put it in the POSIX block only, so `PROC_ETIMEDOUT` was an undefined variable —
+# a hard error — on agnos). No verb here RETURNS it: agnos has no deadline (see the header).
+# Same value as the POSIX and Windows modules. CHANGELOG [6.6.10]
+var PROC_ETIMEDOUT = 110;
+
 # -- argv / env blobs --
 
 # Length of the NUL-terminated string at `p`.

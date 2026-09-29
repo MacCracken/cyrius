@@ -114,9 +114,11 @@ fn proc_deadline_kills(): i64 { return _proc_deadline_kills; }
 
 # Bound every child this module WAITS for to `ms` milliseconds; 0 = wait for ever (the
 # default, and the pre-6.6.6 behaviour). Returns the previous value, so a caller can set a
-# short bound around one call and put the old one back. POSIX only: process_win.cyr /
-# process_agnos.cyr do not define this, so a call on those targets fails to COMPILE rather
-# than silently not bounding anything.
+# short bound around one call and put the old one back. POSIX and Windows (process_win.cyr
+# has had its own since 6.6.8); process_agnos.cyr does not define it — agnos verbs have no
+# deadline — so a call there fails to COMPILE rather than silently not bounding anything.
+# (This said "POSIX only … process_win.cyr … do not define this" until 6.6.10.
+# CHANGELOG [6.6.10])
 fn proc_set_timeout_ms(ms): i64 {
     var prev = _PROC_DEADLINE_MS;
     _PROC_DEADLINE_MS = ms;
