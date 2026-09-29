@@ -112,6 +112,83 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Notice (no change needed): crab's host directory walk (`src/app.cyr:4077`) now fails cleanly
   (-1) on a macOS host build instead of misparsing Darwin records and taking the stray basep
   write; sigil's RSA-3072/4096 signing and LUKS keygen work on macOS through the getrandom fix.
+- **Every tree walker fails, by name, on a directory it cannot list — they read it as empty.**
+  (bite 15.) **Root cause:** `lib/fs.cyr`'s `dir_list` folded an open or `getdents` error into "an
+  empty directory" on every arm (Linux getdents64, Darwin getdirentries, agnos, the Windows
+  `FindFirstFileW` lister, `dir_list_into`), and `is_dir` — an open+getdents probe — answered 0 for a
+  directory the caller could not READ, so each walker took it for a file, filtered it out by extension
+  and never tried to list it. Measured on 6.6.9 after `chmod 000 tests/bad src/bad`: `cyrius test`
+  went from "1 passed, 1 failed" rc 1 to **"1 passed, 0 failed" rc 0**, `cyrius audit` to "ok: format
+  clean" / "ok: lint clean" rc 0, and `cyrius coverage` from 50 % to **100 %, passing `--min 60`**.
+  **Fix:** `lib/fs.cyr` gains an error channel — `dir_list_checked(path, entries)`,
+  `dir_walk_checked(path, results, failed)`, `find_files_checked(path, ext, failed)` — and `is_dir`
+  asks `stat(2)` (a directory you cannot read is still a directory; agnos keeps its `AO_DIRECTORY`
+  open). The unchecked `dir_walk` / `dir_walk_with_prunes` name an unlistable subdirectory on stderr.
+  Every walker lists through it and fails by name (`error: cannot list directory: <dir> (error N) — …`):
+  `cyrius test`/`tests`/`fuzz`/`bench`/`soak`/`smoke` (a failure in the count), `audit` (the
+  fmt/lint/doc walkers record the directory as an error), `coverage`, `deps --lock` (no lock written)
+  and `deps --verify`, the dep-cache gitlink check (an unlistable gitlink read as empty and PASSED),
+  `update`, `lib sync`, `clean`, the distlib verify mirror, `cyrius_type_audit`, `cyriusly list`,
+  `cyrius-init`'s stdlib vendoring and `vidya_load_dir`. `cyrius_api_surface`'s walk is bite 9's.
+  An unreadable harness ROOT fails as well as a subdirectory: `soak` and `smoke` gated their walks on
+  `file_exists` — an `open()`, which fails on a mode-000 directory — so `chmod 000 tests/smcyr` still
+  printed "No smoke harnesses found" at rc 0; they ask `is_dir` (stat) now. A directory that does not
+  EXIST stays an empty scope, not an error — a project with no `lib/` locks and verifies at rc 0, `soak`
+  without `tests/tcyr` runs, `cyrius_type_audit` outside a full checkout and `vidya_load_dir` on a
+  missing path answer as in 6.6.9 (the bite's first cut turned all four into "cannot list … (error 2)").
+  Gates `walkers_fail_closed_unreadable_dir.sh` (new, 28 checks; 17 of the original 20 red on the 6.6.9
+  tree, and the soak/smoke-root and absent-root rows red on the bite's first cut) and
+  `tests/tcyr/crossos/fs_walk_fails_closed.tcyr` (new; green on ecb, ach, pi and cass).
+- **`cyrius audit` never descended on macOS or Windows.** (bite 15.) `lib/audit_walk.cyr`'s non-Linux
+  lister marked EVERY entry a regular file, and the walkers' recursive descent keys on "directory" — so
+  off Linux the audit checked the top level of `src/` and `tests/` and nothing below (measured on ecb:
+  the subdirectory typed 8, one of two files reached). It now types directories and symlinks (and the
+  Linux arm asks the filesystem on `DT_UNKNOWN`). `tests/tcyr/crossos/audit_walk_lister.tcyr` (new).
+- **`cyrfmt` / `cyrlint` refused an EMPTY `.cyr`; `cyrdoc` accepted a DIRECTORY.** (bite 15.) All three
+  predate 6.6.6's `file_read_all` contract (0 = empty, negative = the errno). cyrfmt and cyrlint branched
+  on `n <= 0` ("cannot read file", rc 1 — cyrfmt's on stdout, no path), so `cyrius fmt --check`, `cyrius
+  lint` and the audit walker failed a module cycc compiles; cyrdoc's `n <= 0` + `file_exists` probe (an
+  `open()`, which succeeds on a directory) read `cyrdoc dirx.cyr` as an empty module, rc 0. Now `n < 0`
+  is an error naming the path and errno on stderr and `n == 0` is an empty, clean module (cyrdoc prints
+  its header for it, as for any file). `audit_walk_fails_closed.sh` row C1 flips (it pinned the refusal);
+  C3-C5 added.
+- **`cyrius distlib` wrote a profile sidecar WITHOUT the leaf it needs, at rc 0.** (bite 15.) The
+  profile prune and the verify loop's symbol attribution each matched column-0 `fn ` / `var ` lines, so
+  a leaf whose symbol is `#inline fn`, indented, `fn<TAB>` or a one-line enum member was invisible to
+  both, and the verify loop read the still-undefined symbol as "not stdlib" (`raw == 0 → continue`); a
+  `pub fn` leaf was pruned and only re-added by the loop. Both now use one depth-0 reader
+  (`cbt/srcscan.cyr` `_src_decls`; the dead `private fn` / `private var` arms are gone — cycc refuses
+  per-item `private`). A symbol declared where the reader cannot place it — a stdlib file whose braces do
+  not balance — is a **hard error** naming the file, and an unreadable snapshot file or directory is an
+  error; every `lib/*.cyr` is balanced. `distlib_profile_sidecar.sh` axes 11-16.
+- **cyrius-lsp indexed column-0 `fn ` / `var ` only.** (bite 15.) Its sixth hand-rolled declaration
+  reader missed `pub`/`public`, attributes, indentation, `fn<TAB>` and generic `fn f<T>(`, so
+  go-to-definition, documentSymbol and hover missed every `pub fn` (322 in `lib/yukti.cyr`) and indexed a
+  fn inside a string; it also read files through a fixed 1 MB buffer (`lib/mabda.cyr` is 1.37 MB). It now
+  includes `cbt/srcscan.cyr` and indexes through `_src_decls` over a blanked copy, reading files whole.
+  `lsp_indexes_every_decl_spelling.sh` (new; the 6.6.9 LSP fails 15 of 25).
+- **`cyrius coverage` skipped an unreadable `.tcyr` in silence** (bite 15) — the fns only it referenced
+  read as misses (50 % → 25 %). It is `coverage: cannot read test: <path>`, exit 1.
+- **Unchecked allocations in `lib/fs_win.cyr` and `lib/audit_walk.cyr`** (bite 15; lane T's census):
+  fs_win's lister/is_dir buffers and audit_walk's probe/list buffers move to the stack; the walkers'
+  capture buffers are checked.
+- **Windows `is_dir("x")` / `dir_list("x")` read a raw cstring as a Str** (bite 14's find, landed in
+  bite 15): the PE arms now take `path: Str` like the POSIX ones.
+
+### Changed
+
+- **`cyrius coverage` is one pass over the corpus — 78 s → 0.4 s on this repo's `--full`.** (bite 15.)
+  Each public fn was one `memeq` scan of the whole test corpus (O(corpus × fns)). The corpus is now
+  tokenised once into `cbt/srcscan.cyr`'s `_src_ids_*` set — distlib's `_dl_ids_*`, moved and made
+  collision-safe: it stores each token, confirms every hash hit byte for byte, and grows instead of
+  saturating into "present for every name" (safe for distlib, fail-OPEN for coverage). Byte-identical
+  reports, old binary vs new on the same tree: this repo `--full -v` 82,601 → 382 ms, `-v` 22,069 →
+  252 ms; agnosai 9,181 → 104 ms. The distlib prune tokenises its bundle once the same way.
+  `coverage_corpus_and_failopen.sh` axes 15-19 (unreadable test / tests dir / src dir; set saturation;
+  a timing row).
+- **`cbt/srcscan.cyr`** (bite 15): the source-scanning section of `cbt/core.cyr` moved to its own file,
+  included by `cbt/core.cyr` and by `programs/cyrius-lsp.cyr` — one declaration reader for coverage,
+  header, distlib and the LSP. `_src_refs_ident` (the per-name scan) is removed, unreferenced.
 
 ## [6.6.9] — 2026-09-28
 

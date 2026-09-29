@@ -664,7 +664,14 @@ fn _vendor_stdlib(templates_dir, proj_root, inplace): i64 {
     var libdst = _join(proj_root, "lib");
     var srcStr = str_from(src);
     var dstStr = str_from(libdst);
-    var entries = dir_list(srcStr);
+    # 6.6.10: CHECKED — an unreadable stdlib source vendored NOTHING and the scaffold still
+    # reported success; it now counts toward the INCOMPLETE-scaffold report. CHANGELOG [6.6.10]
+    var entries = vec_new();
+    if (dir_list_checked(srcStr, entries) < 0) {
+        _rw_fails = _rw_fails + 1;
+        _eprint("error: cannot list "); _eprint(src); _eprint(" — the stdlib was NOT vendored\n");
+        return 0;
+    }
     var dotcyr = str_from(".cyr");
     var i = 0;
     while (i < vec_len(entries)) {
@@ -1063,7 +1070,15 @@ fn _count_src_loc(target, ext): i64 {
     # Python projects commonly keep modules at the repo root or in a package dir rather
     # than under src/, so fall back to the project root instead of reporting 0 lines.
     if (is_dir(str_from(srcdir)) == 0) { scan = target; }
-    var files = find_files(str_from(scan), str_from(ext));
+    # 6.6.10: an unlistable subdirectory is named — the line count is then a floor, and says so.
+    var unl = vec_new();
+    var files = find_files_checked(str_from(scan), str_from(ext), unl);
+    var ui = 0;
+    while (ui < vec_len(unl)) {
+        var ud = vec_get(unl, ui);
+        _eprint("warning: cannot list "); _eprint(str_data(ud)); _eprint(" — its lines are NOT counted\n");
+        ui = ui + 1;
+    }
     var total = 0;
     var i = 0;
     while (i < vec_len(files)) {

@@ -842,8 +842,14 @@ fn _dep_copy_stdlib_recursive(stdlib_dir, mod_name, is_top): i64 {
         str_builder_add_cstr(dsb, stdlib_dir);
         str_builder_add_cstr(dsb, "/");
         str_builder_add_cstr(dsb, mod_name);
-        var dir_path = str_builder_build(dsb);   # dir_list takes a Str, not a cstr
-        var entries = dir_list(dir_path);
+        var dir_path = str_builder_build(dsb);
+        # 6.6.10: a family directory that EXISTS but cannot be listed is named (it read as an
+        # empty family, and the error below then blamed a missing `<name>.cyr`).
+        var entries = 0;
+        if (is_dir(dir_path) == 1) {
+            entries = _cbt_list_dir(str_data(dir_path), "its modules were NOT resolved");
+            if (entries == 0) { return 1; }
+        }
         if (entries != 0) { vec_sort_by(entries, &_dep_name_cmp); }   # v6.5.37 (A8): readdir order is not deterministic
         if (entries != 0) {
             var n = vec_len(entries);
@@ -2728,9 +2734,12 @@ fn cmd_package(): i64 {
 # cwd, preserving subdir structure. `rel_prefix == 0` at the root call;
 # recursion appends "<dirname>" / "<rel_prefix>/<dirname>" as we descend.
 # Returns total file count copied.
+# 6.6.10: an unlistable directory is named (_cbt_list_dir) and counted in _err_count, which
+# cmd_update checks — it copied a partial stdlib and reported success.
 fn _update_walk(src_dir, rel_prefix): i64 {
     var copied = 0;
-    var entries = dir_list(str_from(src_dir));
+    var entries = _cbt_list_dir(src_dir, "its modules were NOT copied");
+    if (entries == 0) { return 0; }
     var ei = 0;
     while (ei < vec_len(entries)) {
         var name = vec_get(entries, ei);
@@ -2809,7 +2818,12 @@ fn cmd_update(): i64 {
     # they had been seen. Helper `_update_walk` defers file copying
     # to `_dep_copy_file` which handles streaming reads of any size
     # plus mkdir-p of intermediate destination dirs.
+    var _upd_e0 = _err_count;
     var copied = _update_walk(src_lib, 0);
+    if (_err_count > _upd_e0) {
+        _err_ctx("update: lib/ is INCOMPLETE — a directory above could not be listed", src_lib);
+        return 1;
+    }
     sys_write(STDOUT_FD, "  updated lib/ from ", 20);
     sys_write(STDOUT_FD, src_lib, strlen(src_lib));
     sys_write(STDOUT_FD, " (", 2);
@@ -3598,7 +3612,11 @@ fn _git_gitlink_scan(clone_dir, lb, sz): i64 {
                 var gp = _cat2(_cat2(clone_dir, "/"), lb + q + 1);
                 var gl = str_from(gp);
                 if (is_dir(gl) == 0) { return 4; }
-                if (vec_len(dir_list(gl)) != 0) { _git_bad_gitlink = gp; return 6; }
+                # 6.6.10: CHECKED. An unlistable gitlink directory read as EMPTY and passed —
+                # the tamper check failed OPEN on exactly the directory it could not see.
+                var glents = vec_new();
+                if (dir_list_checked(gl, glents) < 0) { _git_bad_gitlink = gp; return 6; }
+                if (vec_len(glents) != 0) { _git_bad_gitlink = gp; return 6; }
             }
         }
         p = p + 1;
@@ -4363,15 +4381,27 @@ fn _deps_lock_dir(dir, lock_h): i64 {
 # failed for any lock committed elsewhere (agnostic 2026-09-12: "98 insertions(+), 98
 # deletions(-)" over identical hashes). See issues/archived/2026-09-12-cyrius-lock-unstable-order.md.
 # The commit-pin lines need no sort: they are appended in manifest declaration order.
+#
+# ⛔ 6.6.10 — an unlistable directory under lib/ is named and COUNTED in _deps_lock_unlisted:
+# it read as empty, so `cyrius deps --lock` wrote a lock that silently did not cover its files
+# and `deps --verify` (same walker) reported every covered file verified — an integrity check
+# failing OPEN on the files it could not see. Both callers fail on the count.
+var _deps_lock_unlisted = 0;
+
 fn _deps_lock_files(dir): i64 {
     var out = vec_new();
+    _deps_lock_unlisted = 0;
+    # An ABSENT root is an empty lock, as it always was (a project with no deps has no lib/);
+    # only an existing directory the walk cannot list counts. is_dir asks stat, so a mode-000
+    # lib/ is still 1 and still fails. CHANGELOG [6.6.10]
+    if (is_dir(str_from(dir)) == 0) { return out; }
     _deps_lock_files_into(dir, out);
     return out;
 }
 
 fn _deps_lock_files_into(dir, out): i64 {
-    var entries = dir_list(str_from(dir));
-    if (entries == 0) { return 0; }
+    var entries = _cbt_list_dir(dir, "cyrius.lock cannot cover its files");
+    if (entries == 0) { _deps_lock_unlisted = _deps_lock_unlisted + 1; return 0; }
     vec_sort_by(entries, &_dep_name_cmp);
     var li = 0;
     while (li < vec_len(entries)) {
@@ -4447,6 +4477,11 @@ fn cmd_deps_lock(): i64 {
         }
     }
     var count = _deps_lock_dir("lib", lock_h);
+    if (_deps_lock_unlisted != 0) {
+        _aw_abort(lock_h);
+        _err("cyrius.lock: a directory under lib/ could not be listed (named above) — left as it was");
+        return 1;
+    }
     if (_dep_lock_unhashable != 0) {
         _aw_abort(lock_h);
         return _dep_lock_unhashable_err();
@@ -4562,6 +4597,7 @@ fn cmd_deps_verify(): i64 {
     # checker cannot drift from the writer (a check that shares its subject's blind spot
     # reads green). CHANGELOG [6.6.9]
     var files = _deps_lock_files("lib");
+    fail = fail + _deps_lock_unlisted;       # 6.6.10: an unlistable directory is not verified
     var fi = 0;
     while (fi < vec_len(files)) {
         var fp = vec_get(files, fi);

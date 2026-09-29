@@ -421,7 +421,10 @@ fn _tests_walk_d(dir, depth): i64 {
         sys_write(STDERR_FD, "\n", 1);
         return 0;
     }
-    var entries = dir_list(str_from(dir));
+    # 6.6.10: a directory that cannot be listed is a FAILED run, by name — `dir_list` read it
+    # as empty, so its tests silently did not run and the verdict stayed green. CHANGELOG [6.6.10]
+    var entries = _cbt_list_dir(dir, "its tests were NOT run (counted as a failure)");
+    if (entries == 0) { _fail = _fail + 1; return 1; }
     var ei = 0;
     while (ei < vec_len(entries)) {
         var name = vec_get(entries, ei);
@@ -453,6 +456,9 @@ fn cmd_tests(dir): i64 {
         return 1;
     }
     _tests_walk(dir);
+    # 6.6.10: nothing found BECAUSE a directory could not be listed is that failure (already
+    # named), not "no tests".
+    if (_tests_found == 0 && _fail > 0) { return 1; }
     if (_tests_found == 0) {
         sys_write(STDOUT_FD, "No .tcyr files found under ", 27);
         sys_write(STDOUT_FD, dir, strlen(dir));
@@ -460,8 +466,12 @@ fn cmd_tests(dir): i64 {
         return 1;
     }
     # v6.6.5 — a dry run has no verdict to report; printing "0 passed, 0 failed"
-    # would be a result for work that was never done.
-    if (_dry_run == 1) { return 0; }
+    # would be a result for work that was never done. (6.6.10: an unlistable directory is
+    # still a failure — the dry run could not say what it would have run.)
+    if (_dry_run == 1) {
+        if (_fail > 0) { return 1; }
+        return 0;
+    }
     sys_write(STDOUT_FD, "\n", 1);
     fmt_int(_pass);
     sys_write(STDOUT_FD, " passed, ", 9);
@@ -517,8 +527,16 @@ fn _fuzz_walk_dir_d(dir, passcnt_ptr, failcnt_ptr, found_ptr, depth): i64 {
         sys_write(STDERR_FD, "warning: fuzz walk depth cap (64) hit — symlink loop? subtree skipped\n", 72);
         return 0;
     }
-    if (file_exists(dir) == 0) { return 0; }
-    var entries = dir_list(str_from(dir));
+    # 6.6.10: an ABSENT dir is nothing to run (fuzz/ is optional); one that exists and cannot
+    # be listed is a failure by name. `file_exists` is an open(), which fails on a mode-000
+    # directory, so it answered "absent" for exactly the case that must fail. CHANGELOG [6.6.10]
+    if (is_dir(str_from(dir)) == 0) { return 0; }
+    var entries = _cbt_list_dir(dir, "its harnesses were NOT run (counted as a failure)");
+    if (entries == 0) {
+        store64(found_ptr, 1);
+        store64(failcnt_ptr, load64(failcnt_ptr) + 1);
+        return 0;
+    }
     var fi = 0;
     var n = 0;
     while (fi < vec_len(entries)) {
@@ -561,7 +579,9 @@ fn cmd_fuzz(source): i64 {
     store64(&found_store, 0);
     # v6.5.7: an explicit file or SUBFOLDER argument, symmetric with bench/tests.
     if (source != 0) {
-        if (file_exists(source) == 0) {
+        # 6.6.10: `file_exists` is an open(), which fails on a directory the user cannot read —
+        # that is not "no such file", it is a walk that fails (by name) below.
+        if (file_exists(source) == 0 && is_dir(str_from(source)) == 0) {
             _err_ctx("no such file or directory", source);
             return 1;
         }
@@ -646,8 +666,14 @@ fn _bench_walk_dir_d(dir, passcnt_ptr, failcnt_ptr, found_ptr, depth): i64 {
         sys_write(STDERR_FD, "warning: bench walk depth cap (64) hit — symlink loop? subtree skipped\n", 73);
         return 0;
     }
-    if (file_exists(dir) == 0) { return 0; }
-    var entries = dir_list(str_from(dir));
+    # 6.6.10: as _fuzz_walk_dir_d — absent is nothing to run, unlistable is a failure.
+    if (is_dir(str_from(dir)) == 0) { return 0; }
+    var entries = _cbt_list_dir(dir, "its benchmarks were NOT run (counted as a failure)");
+    if (entries == 0) {
+        store64(found_ptr, 1);
+        store64(failcnt_ptr, load64(failcnt_ptr) + 1);
+        return 0;
+    }
     var fi = 0;
     var n = 0;
     while (fi < vec_len(entries)) {
@@ -693,7 +719,7 @@ fn cmd_bench(source): i64 {
     # over zero benchmarks. A path that does not exist is refused rather than
     # silently building the auto-prepended stdlib into a do-nothing program.
     if (source != 0) {
-        if (file_exists(source) == 0) {
+        if (file_exists(source) == 0 && is_dir(str_from(source)) == 0) {   # 6.6.10: see cmd_fuzz
             _err_ctx("no such file or directory", source);
             return 1;
         }
@@ -1016,8 +1042,9 @@ fn _libsync_copy_pkg(src_dir, name): i64 {
     str_builder_add_cstr(s_sb, src_dir);
     str_builder_add_cstr(s_sb, "/");
     str_builder_add_cstr(s_sb, name);
-    var pkg_src = str_builder_build(s_sb);          # Str — dir_list takes a Str
-    var entries = dir_list(pkg_src);
+    var pkg_src = str_builder_build(s_sb);          # Str
+    # 6.6.10: unlistable is named (and counted in _err_count, which cmd_lib_sync checks).
+    var entries = _cbt_list_dir(str_data(pkg_src), "the family was NOT copied");
     if (entries == 0) { return 0; }
     var pkg_src_c = str_data(pkg_src);
     var dst_dir = make_path("lib", name);
@@ -1303,7 +1330,10 @@ fn cmd_lib_sync(): i64 {
         declared = _libsync_declared_mods();
         if (declared != 0) { if (vec_len(declared) == 0) { declared = 0; } }
     }
-    var entries = dir_list(str_from(src_dir));
+    # 6.6.10: an unlistable snapshot is an error by name, not "copied 0 files".
+    var _ls_e0 = _err_count;
+    var entries = _cbt_list_dir(src_dir, "nothing was copied");
+    if (entries == 0) { return 1; }
     var li = 0;
     var copied = 0;
     # v6.5.12: per-declared-module SATISFIED flags. Without this, a declared module
@@ -1417,6 +1447,8 @@ fn cmd_lib_sync(): i64 {
             return 1;
         }
     }
+    # 6.6.10: a family directory that could not be listed (named above) fails the sync.
+    if (_err_count > _ls_e0) { return 1; }
     if (_dry_run == 1) {
         sys_write(STDOUT_FD, "dry-run: would sync ", 20);
     } else {
@@ -1439,7 +1471,8 @@ fn cmd_clean(): i64 {
         println("nothing to clean");
         return 0;
     }
-    var entries = dir_list(str_from("build"));
+    var entries = _cbt_list_dir("build", "nothing was cleaned");   # 6.6.10: not "removed 0"
+    if (entries == 0) { return 1; }
     var ci = 0;
     var cleaned = 0;
     while (ci < vec_len(entries)) {
@@ -2631,7 +2664,15 @@ fn cmd_soak(iters): i64 {
         # success — soak was never brought along by the v6.5.7 bench/fuzz pass.
         # find_files returns full paths (path_join → str_builder_build, NUL-terminated).
         if (iter_ok == 1) {
-            var tent = find_files(str_from("tests/tcyr"), str_from(".tcyr"));
+            # 6.6.10: an unlistable test directory fails the iteration, by name.
+            # An ABSENT tests/tcyr is an empty suite, as before; only an existing directory
+            # it cannot list is an error (is_dir asks stat, so mode 000 is still 1).
+            var _sk_e0 = _err_count;
+            var tent = vec_new();
+            if (is_dir(str_from("tests/tcyr")) == 1) {
+                tent = _cbt_find_files("tests/tcyr", ".tcyr", "its tests were NOT run");
+            }
+            if (_err_count > _sk_e0) { iter_ok = 0; }
             var ti = 0;
             while (ti < vec_len(tent)) {
                 var tpath = vec_get(tent, ti);
@@ -2693,11 +2734,15 @@ fn cmd_soak(iters): i64 {
     vec_push(sdirs, "soak");
     while (sd < vec_len(sdirs)) {
         var sdir = vec_get(sdirs, sd);
-        if (file_exists(sdir) == 1) {
+        # 6.6.10: is_dir (stat), not file_exists (open) — open fails on a directory you may
+        # not read, so a mode-000 harness ROOT was skipped in silence. Absent still skips.
+        if (is_dir(str_from(sdir)) == 1) {
             # v6.5.11: RECURSIVE. Was a depth-1 dir_list, so tests/scyr/<sub>/x.scyr
             # never ran and cmd_soak still reported success — the same defect the
             # v6.5.7 pass fixed for bench/fuzz without bringing scyr/smcyr along.
-            var sentries = find_files(str_from(sdir), str_from(".scyr"));
+            var _sc_e0 = _err_count;   # 6.6.10: an unlistable directory is a failed harness run
+            var sentries = _cbt_find_files(sdir, ".scyr", "its harnesses were NOT run (counted as a failure)");
+            if (_err_count > _sc_e0) { scyr_fail = scyr_fail + 1; }
             var sei = 0;
             while (sei < vec_len(sentries)) {
                 var spath_s = vec_get(sentries, sei);
@@ -2767,12 +2812,14 @@ fn cmd_smoke(): i64 {
     vec_push(sdirs, "smoke");
     while (sd < vec_len(sdirs)) {
         var sdir = vec_get(sdirs, sd);
-        if (file_exists(sdir) == 1) {
+        if (is_dir(str_from(sdir)) == 1) {   # 6.6.10: stat, not open — see cmd_soak
             # v6.5.11: RECURSIVE — see the matching note in cmd_soak. The printed
             # path is now dir-relative rather than a bare basename; the smoke gate
             # (programs/checks/services.cyr) matches on a SUBSTRING, so the
             # basename it looks for is still present.
-            var entries = find_files(str_from(sdir), str_from(".smcyr"));
+            var _sm_e0 = _err_count;   # 6.6.10: an unlistable directory fails the smoke run
+            var entries = _cbt_find_files(sdir, ".smcyr", "its smoke harnesses were NOT run");
+            if (_err_count > _sm_e0) { return 1; }
             var ei = 0;
             while (ei < vec_len(entries)) {
                 var name = vec_get(entries, ei);
@@ -3090,8 +3137,10 @@ fn _distlib_mirror_mkdir(d): i64 {
 # stdlib's family leaves) likewise. 0, or -1.
 fn _distlib_mirror_copy_dir(from, to, depth): i64 {
     if (_distlib_mirror_mkdir(to) != 0) { return 0 - 1; }
-    var ents = dir_list(str_from(from));
-    if (ents == 0) { return 0; }
+    # 6.6.10: an unlistable snapshot directory fails the mirror (it read as empty, so the
+    # verify compiled against a partial stdlib). CHANGELOG [6.6.10]
+    var ents = _cbt_list_dir(from, "the sidecar verify cannot mirror it");
+    if (ents == 0) { return 0 - 1; }
     var i = 0;
     while (i < vec_len(ents)) {
         var e = str_data(vec_get(ents, i));
@@ -3158,7 +3207,8 @@ fn _distlib_unit_leaf(esb, m, lf): i64 {
         return 0;
     }
     if (is_dir(str_from(lbase)) == 0) { return 0; }
-    var fents = dir_list(str_from(lbase));
+    # 6.6.10: named and counted in _err_count (the verify then fails) — it read as empty.
+    var fents = _cbt_list_dir(lbase, "the sidecar verify cannot include that family");
     if (fents == 0) { return 0; }
     vec_sort_by(fents, &_dep_name_cmp);   # v6.5.37 (A8): deterministic family order
     var fi = 0;
@@ -3177,73 +3227,9 @@ fn _distlib_unit_leaf(esb, m, lf): i64 {
     return 0;
 }
 
-# A set of identifier hashes (FNV-1a, 64-bit): { table, cap (power of 2), count, saturated }.
-# A collision can only make a name look PRESENT, which records its leaf — the safe direction;
-# so does saturation (more distinct identifiers than half the table).
-fn _dl_ids_new(textlen): i64 {
-    var cap = 4096;
-    while (cap < textlen / 4) { cap = cap * 2; }
-    var set = alloc(32);
-    var t = alloc(cap * 8);
-    memset(t, 0, cap * 8);
-    store64(set, t);
-    store64(set + 8, cap);
-    store64(set + 16, 0);
-    store64(set + 24, 0);
-    return set;
-}
-
-fn _dl_ids_hash(p, n): i64 {
-    var h = 0 - 3750763034362895579;           # FNV-1a offset basis (0xcbf29ce484222325)
-    var i = 0;
-    while (i < n) {
-        h = h ^ load8(p + i);
-        h = h * 1099511628211;
-        i = i + 1;
-    }
-    return h | 1;
-}
-
-# 1 iff the slot for hash `h` is found (add == 0) / was added or found (add == 1).
-fn _dl_ids_probe(set, h, add): i64 {
-    var t = load64(set);
-    var mask = load64(set + 8) - 1;
-    var i = h & mask;
-    while (1 == 1) {
-        var v = load64(t + i * 8);
-        if (v == h) { return 1; }
-        if (v == 0) {
-            if (add == 0) { return 0; }
-            if (load64(set + 16) * 2 >= load64(set + 8)) { store64(set + 24, 1); return 1; }
-            store64(t + i * 8, h);
-            store64(set + 16, load64(set + 16) + 1);
-            return 1;
-        }
-        i = (i + 1) & mask;
-    }
-    return 0;
-}
-
-fn _dl_ids_has(set, name): i64 {
-    if (load64(set + 24) == 1) { return 1; }
-    return _dl_ids_probe(set, _dl_ids_hash(name, strlen(name)), 0);
-}
-
-# Add every identifier of buf[0, n) — after blanking its comments, strings and char literals
-# IN PLACE (the caller's buffer is a private copy).
-fn _dl_ids_add_text(set, buf, n): i64 {
-    _src_blank_noncode(buf, n);
-    var p = 0;
-    while (p < n) {
-        if (_src_ident_char(load8(buf + p)) == 1) {
-            var e = p;
-            while (e < n && _src_ident_char(load8(buf + e)) == 1) { e = e + 1; }
-            _dl_ids_probe(set, _dl_ids_hash(buf + p, e - p), 1);
-            p = e;
-        } else { p = p + 1; }
-    }
-    return 0;
-}
+# (6.6.10: the `_dl_ids_*` identifier set moved to cbt/srcscan.cyr as `_src_ids_*`, shared
+# with `cyrius coverage`. It keeps each token and confirms a hash hit byte for byte, and it
+# grows instead of saturating — a saturated set answered PRESENT for every name. CHANGELOG [6.6.10])
 
 # The identifiers that are OURS: the bundle, each recorded leaf in the mirror `m` (flat file or
 # family directory), and each leaf's private peers — the `include "lib/<leaf>_…"` files a
@@ -3267,7 +3253,9 @@ fn _distlib_own_ids(leaves, named_deps, out_path, m): i64 {
         } else {
             var fam = _distlib_join(lib, lf);
             if (is_dir(str_from(fam)) == 1) {
-                var fents = dir_list(str_from(fam));
+                # 6.6.10: unlistable is named and fails the verify (_err_count). An unseen
+                # family file would make its identifiers look NOT ours — the unsafe direction.
+                var fents = _cbt_list_dir(fam, "the sidecar verify cannot read that leaf");
                 var fi = 0;
                 while (fents != 0 && fi < vec_len(fents)) {
                     vec_push(paths, _distlib_join(fam, str_data(vec_get(fents, fi))));
@@ -3283,12 +3271,18 @@ fn _distlib_own_ids(leaves, named_deps, out_path, m): i64 {
         if (sz > 0) { total = total + sz; }
         k = k + 1;
     }
-    var set = _dl_ids_new(total);
+    var set = _src_ids_new(total);
+    if (set == 0) { _err("distlib: sidecar verify: out of memory"); return 0; }
     k = 0;
     while (k < vec_len(paths)) {
         var n = 0;
         var b = file_read_whole(vec_get(paths, k), &n);
-        if (b != 0 && n > 0) { _dl_ids_add_text(set, b, n); }
+        if (b != 0 && n > 0) {
+            # Blanked IN PLACE — the buffer is a private copy, and the set keeps pointers into
+            # it, so it must stay (nothing is freed).
+            _src_blank_noncode(b, n);
+            if (_src_ids_add_text(set, b, n) != 0) { _err("distlib: sidecar verify: out of memory"); return 0; }
+        }
         k = k + 1;
     }
     return set;
@@ -3360,8 +3354,15 @@ fn _distlib_verify_leaves(leaves, out_path, named_deps): i64 {
     if (root == 0) { return 0; }          # no snapshot: nothing to verify against, keep as-is
     var m = _distlib_mirror_make(root);
     if (m == 0) { return 0 - 1; }
+    var e0 = _err_count;
     var r = _distlib_verify_rounds(leaves, out_path, named_deps, root, m);
     _distlib_mirror_drop();
+    # 6.6.10: a directory the verify could not list (named where it happened) means it
+    # verified against less than the snapshot — never a verified sidecar.
+    if (r >= 0 && _err_count > e0) {
+        var vfm = "distlib: sidecar verify could not read all of the stdlib snapshot (above) — sidecar NOT written";
+        return _distlib_verify_fail(vfm, out_path);
+    }
     return r;
 }
 
@@ -3463,12 +3464,34 @@ fn _distlib_verify_rounds(leaves, out_path, named_deps, root, m): i64 {
         var own = 0;
         var added_here = 0;
         var recorded_here = 0;
+        # 6.6.10: a snapshot that cannot be read in full cannot attribute anything — every
+        # symbol would read "not stdlib" and the sidecar would be written short, at rc 0.
+        if (_distlib_snap_cache(root) != 0) {
+            var snm = "distlib: sidecar verify cannot read the stdlib snapshot — sidecar NOT written";
+            return _distlib_verify_fail(snm, root);
+        }
         var ni = 0;
         while (ni < vec_len(names)) {
             var nm = vec_get(names, ni);
             ni = ni + 1;
             var raw = _distlib_leaf_defining(root, nm);
-            if (raw == 0) { continue; }     # not a stdlib symbol — the consumer's problem
+            if (raw == 0) {
+                # Not a stdlib symbol — the consumer's problem — UNLESS the snapshot does declare
+                # it somewhere the depth-0 reader could not place (6.6.10). That used to be this
+                # same silent `continue`: the leaf was never recorded and the sidecar was
+                # written, wrong, at rc 0. A hard error now, naming the file.
+                var lost = _distlib_snap_lost_decl(nm);
+                if (lost != 0) {
+                    var lsb = str_builder_new();
+                    str_builder_add_cstr(lsb, "distlib: sidecar verify: '");
+                    str_builder_add_cstr(lsb, nm);
+                    str_builder_add_cstr(lsb, "' is declared in a stdlib file whose braces do not balance,");
+                    str_builder_add_cstr(lsb, " so its top-level declarations cannot be read reliably");
+                    str_builder_add_cstr(lsb, " — sidecar NOT written");
+                    return _distlib_verify_fail(str_data(str_builder_build(lsb)), lost);
+                }
+                continue;
+            }
             var owner = _distlib_resolve_dispatcher(root, raw);
             # Never a named dep: its symbols belong to the consumer's pinned module.
             if (_distlib_vec_has(named_deps, owner) == 1) { continue; }
@@ -3481,8 +3504,14 @@ fn _distlib_verify_rounds(leaves, out_path, named_deps, root, m): i64 {
             var scoped = _distlib_vec_has(scope, owner);
             if (scoped == 0 && brought != 0) { scoped = _distlib_vec_has(scope, brought); }
             if (scoped == 1 || brought != 0) {
-                if (own == 0) { own = _distlib_own_ids(leaves, named_deps, out_path, m); }
-                if (_dl_ids_has(own, nm) == 0) {
+                if (own == 0) {
+                    own = _distlib_own_ids(leaves, named_deps, out_path, m);
+                    if (own == 0) {
+                        var oim = "distlib: sidecar verify cannot index the bundle — sidecar NOT written";
+                        return _distlib_verify_fail(oim, out_path);
+                    }
+                }
+                if (_src_ids_has(own, nm, strlen(nm)) == 0) {
                     if (scoped == 0) {
                         vec_push(scope, brought);
                         added_here = added_here + 1;
@@ -3574,9 +3603,8 @@ fn _distlib_resolve_dispatcher(root, leaf): i64 {
     return leaf;
 }
 
-# Which stdlib leaf defines `name` as a top-level `fn name(` or `var name`? Returns the leaf
-# name, or 0. Scans on demand: the undefined set is small (single digits in practice), so a
-# whole-snapshot symbol map would cost far more than it saves.
+# Which stdlib leaf DECLARES `name` at top level — a fn, a var or an enum member, in any
+# spelling the compiler accepts? Returns the leaf name, or 0.
 # v6.6.3 — SNAPSHOT CACHE. `_distlib_leaf_defining` used to `dir_list` the whole stdlib
 # snapshot and `alloc` + read EVERY `.cyr` file on EVERY call, and the verify loop calls it
 # ONCE PER UNDEFINED SYMBOL. cyrius's allocator is an arena that never frees, so the cost
@@ -3598,18 +3626,37 @@ fn _distlib_resolve_dispatcher(root, leaf): i64 {
 # The cache reads each file ONCE per root. Entries are kept in `dir_list` order so symbol
 # attribution is byte-for-byte what it was; making that order deterministic is a separate
 # question, noted in the issue.
+#
+# ⛔ 6.6.10 — THE DECLARATION READER IS cbt/srcscan.cyr's `_src_decls`. This matched
+# column-0 `fn ` / `var ` / `pub fn ` / … lines, so `#inline fn attrleaf_do`, an indented
+# top-level fn and `fn<TAB>name` were invisible: the verify loop classified the symbol as "not
+# stdlib" and wrote a profile sidecar WITHOUT its leaf at rc 0 (measured: "0 stdlib leaf
+# requirements" for a profile that needs one). Its `private fn` / `private var` arms were dead
+# — cycc refuses per-item `private`. Each file's declared names now go into a set once
+# (O(1) per symbol), and a file whose braces do not balance — the one way the depth-0 reader
+# can lose declarations — contributes its loose `fn X` / `var X` names to
+# `_dl_snap_lost`, so such a symbol is a hard error instead of a silent miss.
 var _dl_snap_root = 0;
 var _dl_snap_names = 0;   # vec of Str: directory entry names, dir_list order
-var _dl_snap_bufs = 0;    # vec of i64: file contents, NUL-terminated
-var _dl_snap_lens = 0;    # vec of i64: bytes read
+var _dl_snap_sets = 0;    # vec of i64: each file's _src_ids set of declared names
+var _dl_snap_lost = 0;    # _src_ids set: `fn X` / `var X` names in files whose braces do not balance
+var _dl_snap_lostf = 0;   # vec of cstr: those files, for the error
+var _dl_snap_lostb = 0;   # vec of i64: their (blanked) buffers
+var _dl_snap_lostn = 0;   # vec of i64: their lengths
 
+# 0, or -1 after naming why the snapshot could not be read (an unlistable directory or an
+# unreadable file: attributing against a partial snapshot would miss symbols in silence).
 fn _distlib_snap_cache(root): i64 {
     if (_dl_snap_root != 0) { if (streq(str_from(_dl_snap_root), str_from(root)) == 1) { return 0; } }
-    var ents = dir_list(str_from(root));
+    var ents = _cbt_list_dir(root, "the sidecar verify cannot attribute symbols");
     if (ents == 0) { return 0 - 1; }
     _dl_snap_names = vec_new();
-    _dl_snap_bufs = vec_new();
-    _dl_snap_lens = vec_new();
+    _dl_snap_sets = vec_new();
+    _dl_snap_lost = _src_ids_new(4096);
+    _dl_snap_lostf = vec_new();
+    _dl_snap_lostb = vec_new();
+    _dl_snap_lostn = vec_new();
+    if (_dl_snap_lost == 0) { _err("distlib: out of memory"); return 0 - 1; }
     var i = 0;
     while (i < vec_len(ents)) {
         var e = vec_get(ents, i);
@@ -3625,84 +3672,76 @@ fn _distlib_snap_cache(root): i64 {
         var fp = str_data(str_builder_build(fsb));
         # 6.6.9: read WHOLE. Sized by `_file_size`, every file read as empty on the Windows
         # CLI (-38), so no symbol had an owner and the verify loop was inert there.
+        # 6.6.10: an unreadable file is an error by name — it was skipped in silence.
         var got = 0;
         var fb = file_read_whole(fp, &got);
-        if (fb == 0 || got <= 0) { continue; }
+        if (fb == 0) { _err_ctx("distlib: cannot read stdlib file", fp); return 0 - 1; }
+        if (got <= 0) { continue; }
+        var set = _distlib_snap_index(fb, got, fp);
+        if (set == 0) { _err("distlib: out of memory"); return 0 - 1; }
         vec_push(_dl_snap_names, e);
-        vec_push(_dl_snap_bufs, fb);
-        vec_push(_dl_snap_lens, got);
+        vec_push(_dl_snap_sets, set);
     }
     _dl_snap_root = root;
     return 0;
 }
 
+# The declared-name set of one snapshot file (buffer fb[0, n), blanked here in place — the
+# cache owns it). Adds the file to the "lost" index when its braces do not balance. 0 on OOM.
+fn _distlib_snap_index(fb, n, fp): i64 {
+    _src_blank_noncode(fb, n);
+    var offs = vec_new();
+    var lens = vec_new();
+    var kinds = vec_new();
+    var bal = _src_decls(fb, n, offs, lens, kinds);
+    var set = _src_ids_new(vec_len(offs) * 8);
+    if (set == 0) { return 0; }
+    var k = 0;
+    while (k < vec_len(offs)) {
+        var kd = vec_get(kinds, k);
+        if (kd == SRC_DECL_FN || kd == SRC_DECL_VAR || kd == SRC_DECL_MEMBER) {
+            if (_src_ids_add(set, fb + vec_get(offs, k), vec_get(lens, k)) != 0) { return 0; }
+        }
+        k = k + 1;
+    }
+    if (bal != 0) {
+        if (_src_ids_add_decl_tokens(_dl_snap_lost, fb, n) != 0) { return 0; }
+        vec_push(_dl_snap_lostf, fp);
+        vec_push(_dl_snap_lostb, fb);
+        vec_push(_dl_snap_lostn, n);
+    }
+    return set;
+}
+
+# The unbalanced snapshot file that spells `fn <name>` / `var <name>` somewhere, or 0.
+fn _distlib_snap_lost_decl(name): i64 {
+    if (_dl_snap_lost == 0) { return 0; }
+    var nl = strlen(name);
+    if (_src_ids_has(_dl_snap_lost, name, nl) == 0) { return 0; }
+    var i = 0;
+    while (i < vec_len(_dl_snap_lostf)) {
+        var one = _src_ids_new(1024);
+        if (one == 0) { return vec_get(_dl_snap_lostf, i); }
+        _src_ids_add_decl_tokens(one, vec_get(_dl_snap_lostb, i), vec_get(_dl_snap_lostn, i));
+        if (_src_ids_has(one, name, nl) == 1) { return vec_get(_dl_snap_lostf, i); }
+        i = i + 1;
+    }
+    return 0;
+}
+
 fn _distlib_leaf_defining(root, name): i64 {
-    var nlen = strlen(name);
     if (_distlib_snap_cache(root) != 0) { return 0; }
+    var nlen = strlen(name);
     var i = 0;
     while (i < vec_len(_dl_snap_names)) {
         var e = vec_get(_dl_snap_names, i);
-        var fb = vec_get(_dl_snap_bufs, i);
-        var got = vec_get(_dl_snap_lens, i);
+        var set = vec_get(_dl_snap_sets, i);
         i = i + 1;
-        var ed = str_data(e);
-        var el = strlen(ed);
-        var p = 0;
-        var hit = 0;
-        var in_enum = 0;
-        while (p < got) {
-            var bol = 0;
-            if (p == 0) { bol = 1; } elif (load8(fb + p - 1) == 10) { bol = 1; }
-            if (bol == 1) {
-                # ⛔ ENUM MEMBERS ARE DECLARATIONS TOO, and there are 2604 of them in the
-                # 6.5.36 snapshot. `SYS_MMAP = 9;` sits INDENTED inside `enum SysNr { ... }`,
-                # so a `fn `/`var ` line-start scan cannot see it — and SYS_MMAP is precisely
-                # the symbol whose absence made sigil-sha's sidecar unrecoverable. Tracked
-                # with a one-bit enum-block state rather than by matching any `X = ...;`
-                # line, which would also match ordinary assignments in function bodies and
-                # attribute symbols to whichever leaf happened to assign them.
-                var ts = p;
-                while (ts < got && (load8(fb + ts) == 32 || load8(fb + ts) == 9)) { ts = ts + 1; }
-                if (ts + 5 < got && memeq(fb + ts, "enum ", 5) == 1) { in_enum = 1; }
-                elif (in_enum == 1 && load8(fb + ts) == 125) { in_enum = 0; }   # '}'
-                elif (in_enum == 1) {
-                    if (ts + nlen <= got && memeq(fb + ts, name, nlen) == 1) {
-                        var ea = ts + nlen;
-                        while (ea < got && load8(fb + ea) == 32) { ea = ea + 1; }
-                        if (ea < got && load8(fb + ea) == 61) { hit = 1; p = got; }   # '='
-                    }
-                }
-                var kw = 0;
-                if (p + 3 < got && memeq(fb + p, "fn ", 3) == 1) { kw = 3; }
-                elif (p + 4 < got && memeq(fb + p, "var ", 4) == 1) { kw = 4; }
-                # ⚠ VISIBILITY MODIFIERS ARE PART OF THE DECLARATION. A bare `fn `/`var `
-                # scan cannot see `pub fn` — and the 6.5.36 snapshot has 322 of them, so a
-                # third of the public surface was invisible to symbol attribution. This is
-                # the same blindness the audit measured in the prune predicate; fixing it
-                # here is what lets the verify loop attribute a symbol to the leaf that
-                # really declares it instead of giving up and leaving it undefined.
-                if (kw == 0) {
-                    if (p + 7 < got && memeq(fb + p, "pub fn ", 7) == 1) { kw = 7; }
-                    elif (p + 10 < got && memeq(fb + p, "public fn ", 10) == 1) { kw = 10; }
-                    elif (p + 11 < got && memeq(fb + p, "private fn ", 11) == 1) { kw = 11; }
-                    elif (p + 8 < got && memeq(fb + p, "pub var ", 8) == 1) { kw = 8; }
-                    elif (p + 11 < got && memeq(fb + p, "public var ", 11) == 1) { kw = 11; }
-                    elif (p + 12 < got && memeq(fb + p, "private var ", 12) == 1) { kw = 12; }
-                }
-                if (kw > 0) {
-                    var ns = p + kw;
-                    while (ns < got && load8(fb + ns) == 32) { ns = ns + 1; }
-                    if (ns + nlen <= got && memeq(fb + ns, name, nlen) == 1) {
-                        var after = load8(fb + ns + nlen);
-                        if (_src_ident_char(after) == 0) { hit = 1; p = got; }
-                    }
-                }
-            }
-            while (p < got && load8(fb + p) != 10) { p = p + 1; }
-            p = p + 1;
-        }
-        if (hit == 1) {
+        if (_src_ids_has(set, name, nlen) == 1) {
+            var ed = str_data(e);
+            var el = strlen(ed);
             var lname = alloc(el - 3);
+            if (lname == 0) { return 0; }
             memcpy(lname, ed, el - 4);
             store8(lname + el - 4, 0);
             return lname;
@@ -4182,16 +4221,23 @@ fn _distlib_modular_emit(pkg_name, modules, mbuf, mlen): i64 {
 # deps (bayan / keccak / mldsa-adjacent / thread / process …). Prune req_leaves to
 # only the leaves the profile's bundle actually references. (Full-bundle path unchanged.)
 # (`_distlib_ident_char` / `_distlib_bundle_refs` moved to cbt/core.cyr as
-# `_src_ident_char` / `_src_refs_ident`, shared with cyrius coverage. CHANGELOG [6.6.8])
+# `_src_ident_char` / `_src_refs_ident`, shared with cyrius coverage. CHANGELOG [6.6.8]; the
+# per-name scan was replaced by a set built once per bundle in 6.6.10.)
 
-# Return 1 if `bundle` references any symbol DEFINED in leaf lib/<leaf>.cyr —
-# a top-level `fn NAME(` or a `var NAME`. Conservative: on any read failure or
-# a leaf we can't inspect, keep it (return 1) so we never drop a real dep.
-fn _distlib_leaf_referenced(leaf, bundle, blen): i64 {
-    return _distlib_leaf_referenced_d(leaf, bundle, blen, 0);
+# Return 1 if the bundle references any symbol DECLARED at top level in leaf lib/<leaf>.cyr
+# — a fn, a var or an enum member, in every spelling (cbt/srcscan.cyr `_src_decls`).
+# `refs` is the bundle's identifier set (_src_ids, built ONCE per bundle from its blanked
+# text). Conservative: on any read failure or a leaf we can't inspect, keep it (return 1)
+# so we never drop a real dep.
+# ⛔ 6.6.10: this matched column-0 `fn ` / `var ` only, so a leaf whose symbols are
+# `pub fn` / attributed / indented was pruned and had to be RE-ADDED by the verify loop
+# (`sidecar: re-added 1 leaf(s) the inference missed`) — or, attributed or indented, was
+# lost outright. And each declaration was a memeq scan of the whole bundle (O(bundle × decls)).
+fn _distlib_leaf_referenced(leaf, refs): i64 {
+    return _distlib_leaf_referenced_d(leaf, refs, 0);
 }
 
-fn _distlib_leaf_referenced_d(leaf, bundle, blen, depth): i64 {
+fn _distlib_leaf_referenced_d(leaf, refs, depth): i64 {
     # Resolve the leaf: repo-vendored lib/<leaf>.cyr first, else the global
     # stdlib snapshot <CYRIUS_HOME>/lib/<leaf>.cyr (a package vendors only its
     # declared deps, but the umbrella can name others that live only globally).
@@ -4252,33 +4298,27 @@ fn _distlib_leaf_referenced_d(leaf, bundle, blen, depth): i64 {
                     var peer = alloc(plen2 + 1);
                     memcpy(peer, lbuf + ns2, plen2);
                     store8(peer + plen2, 0);
-                    if (_distlib_leaf_referenced_d(peer, bundle, blen, depth + 1) == 1) { return 1; }
+                    if (_distlib_leaf_referenced_d(peer, refs, depth + 1) == 1) { return 1; }
                 }
             }
             while (ip < llen && load8(lbuf + ip) != 10) { ip = ip + 1; }
             ip = ip + 1;
         }
     }
-    var p = 0;
-    while (p < llen) {
-        var bol = 0;
-        if (p == 0) { bol = 1; } elif (load8(lbuf + p - 1) == 10) { bol = 1; }
-        if (bol == 1) {
-            var kw = 0;   # 3 = "fn ", 4 = "var "
-            if (p + 3 < llen && memeq(lbuf + p, "fn ", 3) == 1) { kw = 3; }
-            elif (p + 4 < llen && memeq(lbuf + p, "var ", 4) == 1) { kw = 4; }
-            if (kw > 0) {
-                var ns = p + kw;
-                while (ns < llen && load8(lbuf + ns) == 32) { ns = ns + 1; }
-                var ne = ns;
-                while (ne < llen && _src_ident_char(load8(lbuf + ne)) == 1) { ne = ne + 1; }
-                if (ne > ns) {
-                    if (_src_refs_ident(bundle, blen, lbuf + ns, ne - ns) == 1) { return 1; }
-                }
-            }
+    # The include scan above reads the RAW text (a path is a string literal); the declaration
+    # reader wants it blanked. lbuf is this call's own copy.
+    _src_blank_noncode(lbuf, llen);
+    var offs = vec_new();
+    var lens = vec_new();
+    var kinds = vec_new();
+    _src_decls(lbuf, llen, offs, lens, kinds);
+    var k = 0;
+    while (k < vec_len(offs)) {
+        var kd = vec_get(kinds, k);
+        if (kd == SRC_DECL_FN || kd == SRC_DECL_VAR || kd == SRC_DECL_MEMBER) {
+            if (_src_ids_has(refs, lbuf + vec_get(offs, k), vec_get(lens, k)) == 1) { return 1; }
         }
-        while (p < llen && load8(lbuf + p) != 10) { p = p + 1; }
-        p = p + 1;
+        k = k + 1;
     }
     return 0;
 }
@@ -4383,12 +4423,16 @@ fn _distlib_prune_profile_leaves(leaves, bundle_path): i64 {
     var incl = vec_new();
     _distlib_scan_lib_includes(incl, bb, bl);
     _src_blank_noncode(bb, bl);
+    # 6.6.10: the bundle is tokenised ONCE; every leaf declaration is then one lookup.
+    var refs = _src_ids_new(bl);
+    if (refs == 0) { return leaves; }
+    if (_src_ids_add_text(refs, bb, bl) != 0) { return leaves; }   # keep all: the safe direction
     var kept = vec_new();
     var i = 0;
     while (i < vec_len(leaves)) {
         var lf = vec_get(leaves, i);
         if (_distlib_vec_has(incl, lf) == 1) { vec_push(kept, lf); }
-        elif (_distlib_leaf_referenced(lf, bb, bl) == 1) { vec_push(kept, lf); }
+        elif (_distlib_leaf_referenced(lf, refs) == 1) { vec_push(kept, lf); }
         i = i + 1;
     }
     return kept;

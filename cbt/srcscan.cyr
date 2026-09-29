@@ -1,0 +1,596 @@
+# cbt/srcscan.cyr — the lexer-faithful source reader the reference tools share.
+#
+# Included by cbt/core.cyr (the CLI: `cyrius coverage`, `cyrius header`, `cyrius distlib`)
+# and by programs/cyrius-lsp.cyr, so there is ONE answer to "which bytes of a cyrius source
+# are code, where does a top-level declaration start, and is this identifier referenced".
+# ⛔ 6.6.10 — it was a section of cbt/core.cyr, and the tools outside the CLI could not reach
+# it: distlib's attribution and prune scans and the LSP's indexer each kept a column-0
+# `fn `/`var ` matcher, so an attribute-prefixed, indented, `pub` or `fn<TAB>` declaration
+# was invisible to them — a leaf silently missing from a profile sidecar (rc 0), a
+# go-to-definition that could not find any of yukti's 322 `pub fn`s. CHANGELOG [6.6.10]
+#
+# Needs only lib/string.cyr (memeq), lib/alloc.cyr and lib/vec.cyr.
+
+# ================================================================
+# Source scanning shared by the reference tools (coverage, header;
+# distlib's profile prune). CHANGELOG [6.6.8]
+# ================================================================
+# These answer "which bytes of a cyrius source are CODE, and where does a declaration
+# start", and they exist ONCE so the tools cannot drift apart again: cmd_coverage and
+# cmd_header each carried their own column-0 `fn ` / `pub fn ` matcher, the two disagreed
+# (header never saw a bare `fn`, neither saw `public fn`), and comments in both files and
+# in their gate claimed they agreed.
+
+# 1 iff `c` can continue an identifier: [A-Za-z0-9_]. (Was `_distlib_ident_char`.)
+fn _src_ident_char(c): i64 {
+    if (c >= 97 && c <= 122) { return 1; }   # a-z
+    if (c >= 65 && c <= 90)  { return 1; }   # A-Z
+    if (c >= 48 && c <= 57)  { return 1; }   # 0-9
+    if (c == 95) { return 1; }               # _
+    return 0;
+}
+
+# (`_src_refs_ident` — "does buf contain name as a WHOLE identifier", one memeq scan per
+# question — was here, 6.6.8. Its two callers, coverage and distlib's prune, asked it once per
+# name, which made both O(corpus × names); they now tokenise once into `_src_ids_*` below,
+# which answers the same whole-identifier question. Removed 6.6.10, unreferenced.)
+
+# 1 iff the byte at `q` ENDS an attribute name: whitespace, end of buffer, or — when `ap`
+# is 1 — `(`. Mirrors LEXATTRBOUND in src/frontend/lex.cyr: `ap` is 1 only for `#assert`,
+# `#deprecated` and `#pe_import`. The FOURTH mirror of the lexer's attribute table (after
+# cyrlint _lx_attr_len, cyrfmt _cf_attr_len, cyrdoc _doc_attr_len); pinned by
+# tests/gates/frontend/lexer_attribute_word_boundary.sh group C. CHANGELOG [6.6.8]
+fn _src_attr_bound(buf, q, lim, ap): i64 {
+    if (q >= lim) { return 1; }
+    var b = load8(buf + q);
+    if (b == 32 || b == 9 || b == 10 || b == 13) { return 1; }
+    if (b == 40) { if (ap == 1) { return 1; } }
+    return 0;
+}
+
+# Length of the `#`-attribute TOKEN at buf[p] (`#inline`, `#naked`, …) — the ten names the
+# lexer turns into tokens and keeps lexing the same line after — or 0: the `#` opens a
+# comment. `ap` per name as LEXATTRBOUND's call sites.
+fn _src_attr_len(buf, p, lim): i64 {
+    var n = lim - p;
+    if (n < 3) { return 0; }
+    var s = buf + p;
+    if (memeq(s, "#io", 3) == 1) { if (_src_attr_bound(buf, p + 3, lim, 0) == 1) { return 3; } }
+    if (n >= 5) { if (memeq(s, "#pure", 5) == 1) { if (_src_attr_bound(buf, p + 5, lim, 0) == 1) { return 5; } } }
+    if (n >= 6) { if (memeq(s, "#alloc", 6) == 1) { if (_src_attr_bound(buf, p + 6, lim, 0) == 1) { return 6; } } }
+    if (n >= 6) { if (memeq(s, "#naked", 6) == 1) { if (_src_attr_bound(buf, p + 6, lim, 0) == 1) { return 6; } } }
+    if (n >= 7) { if (memeq(s, "#inline", 7) == 1) { if (_src_attr_bound(buf, p + 7, lim, 0) == 1) { return 7; } } }
+    if (n >= 7) { if (memeq(s, "#assert", 7) == 1) { if (_src_attr_bound(buf, p + 7, lim, 1) == 1) { return 7; } } }
+    if (n >= 9) { if (memeq(s, "#regalloc", 9) == 1) { if (_src_attr_bound(buf, p + 9, lim, 0) == 1) { return 9; } } }
+    if (n >= 9) { if (memeq(s, "#must_use", 9) == 1) { if (_src_attr_bound(buf, p + 9, lim, 0) == 1) { return 9; } } }
+    if (n >= 10) {
+        if (memeq(s, "#pe_import", 10) == 1) { if (_src_attr_bound(buf, p + 10, lim, 1) == 1) { return 10; } }
+    }
+    if (n >= 11) {
+        if (memeq(s, "#deprecated", 11) == 1) { if (_src_attr_bound(buf, p + 11, lim, 1) == 1) { return 11; } }
+    }
+    return 0;
+}
+
+# Overwrite buf[a, b) with spaces, keeping every newline (line numbers survive).
+fn _src_blank(buf, a, b): i64 {
+    while (a < b) {
+        if (load8(buf + a) != 10) { store8(buf + a, 32); }
+        a = a + 1;
+    }
+    return 0;
+}
+
+# Offset just past the string literal whose opening `"` is at p (a string may span lines;
+# `\X` is one escape), or lim when it never closes.
+fn _src_str_end(buf, p, lim): i64 {
+    var q = p + 1;
+    while (q < lim) {
+        var c = load8(buf + q);
+        if (c == 92) { q = q + 2; }
+        elif (c == 34) { return q + 1; }
+        else { q = q + 1; }
+    }
+    return lim;
+}
+
+# Offset just past the char literal at p (`'x'` or `'\x'`); a `'` that forms none is one byte.
+fn _src_char_end(buf, p, lim): i64 {
+    var close = p + 2;
+    if (p + 1 < lim) { if (load8(buf + p + 1) == 92) { close = p + 3; } }
+    if (close < lim) { if (load8(buf + close) == 39) { return close + 1; } }
+    return p + 1;
+}
+
+# 1 iff buf[p] (the first non-blank byte of its line) opens a preprocessor line whose body
+# is CODE: `#define `, `#if ` or `#elif ` (lex_pp's ISDEFINE / ISIF / ISELIF spellings).
+fn _src_pp_code_line(buf, p, lim): i64 {
+    var n = lim - p;
+    if (n >= 8) { if (memeq(buf + p, "#define ", 8) == 1) { return 1; } }
+    if (n >= 4) { if (memeq(buf + p, "#if ", 4) == 1) { return 1; } }
+    if (n >= 6) { if (memeq(buf + p, "#elif ", 6) == 1) { return 1; } }
+    return 0;
+}
+
+# Blank everything in buf[0, len) that is NOT code — string literals, char literals and `#`
+# comments — IN PLACE and LENGTH-PRESERVING: every blanked byte becomes a space, newlines
+# stay, so offsets, line numbers and the byte count are unchanged (a compacting blanker
+# would shrink a comment-padded corpus and make coverage's grow-and-retry path untestable).
+# Kept as code, as the lexer keeps them: the ten attribute tokens (LEXATTRBOUND boundary),
+# and a line opening with `#define ` / `#if ` / `#elif ` (its body is code). Char literals
+# are taken before strings and comments, so `'"'` and `'#'` hide nothing after them.
+# CHANGELOG [6.6.8]
+fn _src_blank_noncode(buf, len): i64 {
+    var p = 0;
+    var bol = 1;                  # nothing but blanks since the last newline
+    while (p < len) {
+        var c = load8(buf + p);
+        if (c == 34) {
+            var se = _src_str_end(buf, p, len);
+            _src_blank(buf, p, se);
+            p = se; bol = 0;
+        } elif (c == 39) {
+            var ce = _src_char_end(buf, p, len);
+            _src_blank(buf, p, ce);
+            p = ce; bol = 0;
+        } elif (c == 35) {
+            var al = _src_attr_len(buf, p, len);
+            if (al > 0) { p = p + al; }
+            elif (bol == 1 && _src_pp_code_line(buf, p, len) == 1) { p = p + 3; }
+            else {
+                var e = p;
+                while (e < len) { if (load8(buf + e) == 10) { break; } e = e + 1; }
+                _src_blank(buf, p, e);
+                p = e;
+            }
+            bol = 0;
+        } else {
+            if (c == 10) { bol = 1; }
+            elif (c != 32 && c != 9 && c != 13) { bol = 0; }
+            p = p + 1;
+        }
+    }
+    return 0;
+}
+
+# First offset in [p, lim) that is not a space or tab.
+fn _src_skip_ws(buf, p, lim): i64 {
+    while (p < lim) {
+        var c = load8(buf + p);
+        if (c != 32 && c != 9) { break; }
+        p = p + 1;
+    }
+    return p;
+}
+
+# 1 iff buf[p, lim) opens with the keyword `kw` (klen) followed by a non-identifier byte.
+fn _src_word_at(buf, p, lim, kw, klen): i64 {
+    if (p + klen > lim) { return 0; }
+    if (memeq(buf + p, kw, klen) == 0) { return 0; }
+    if (p + klen == lim) { return 1; }
+    if (_src_ident_char(load8(buf + p + klen)) == 1) { return 0; }
+    return 1;
+}
+
+# Set by _src_decl_at: 1 iff the declaration carried `pub` / `public`.
+var _src_decl_pub = 0;
+
+# Offset of the fn NAME declared by the line buf[ls, le), or -1. Accepts every spelling the
+# compiler does: indentation, `private;` closing the file marker on the same line, any number
+# of attribute tokens and `pub` / `public` in either order (an attribute's `(...)` argument
+# list skipped, with or without a space before it: `#deprecated ("x") fn`), an optional
+# `async`, and `fn` followed by any spaces or tabs. Run it on a _src_blank_noncode'd buffer
+# so a comment or a string cannot declare anything. It does NOT know brace depth — a caller
+# only asks it about lines at depth 0 (_src_brace_delta), so an `impl` method is not read as
+# a top-level fn. Sets _src_decl_pub. Modelled on cyrdoc's _doc_fn_at. CHANGELOG [6.6.8]
+fn _src_decl_at(buf, ls, le): i64 {
+    _src_decl_pub = 0;
+    var si = _src_skip_ws(buf, ls, le);
+    if (_src_word_at(buf, si, le, "private", 7) == 1) {
+        var ps = _src_skip_ws(buf, si + 7, le);
+        if (ps >= le) { return 0 - 1; }
+        if (load8(buf + ps) != 59) { return 0 - 1; }          # `private;` then an item
+        si = _src_skip_ws(buf, ps + 1, le);
+    }
+    var more = 1;
+    while (more == 1 && si < le) {
+        if (load8(buf + si) == 35) {
+            var al = _src_attr_len(buf, si, le);
+            if (al == 0) { return 0 - 1; }
+            si = _src_skip_ws(buf, si + al, le);
+            if (si < le && load8(buf + si) == 40) { si = _src_skip_parens(buf, si, le); }
+        } elif (_src_word_at(buf, si, le, "public", 6) == 1) { _src_decl_pub = 1; si = si + 6; }
+        elif (_src_word_at(buf, si, le, "pub", 3) == 1) { _src_decl_pub = 1; si = si + 3; }
+        else { more = 0; }
+        si = _src_skip_ws(buf, si, le);
+    }
+    if (_src_word_at(buf, si, le, "async", 5) == 1) { si = _src_skip_ws(buf, si + 5, le); }
+    if (si + 3 > le) { return 0 - 1; }
+    if (memeq(buf + si, "fn", 2) == 0) { return 0 - 1; }
+    var k = load8(buf + si + 2);
+    if (k != 32 && k != 9) { return 0 - 1; }
+    si = _src_skip_ws(buf, si + 2, le);
+    if (si >= le) { return 0 - 1; }
+    var c0 = load8(buf + si);
+    if (_src_ident_char(c0) == 0 || (c0 >= 48 && c0 <= 57)) { return 0 - 1; }
+    return si;
+}
+
+# Offset just past the balanced `(...)` group opening at buf[p] (an attribute's argument
+# list), or le when it does not close on the line.
+fn _src_skip_parens(buf, p, le): i64 {
+    var dep = 0;
+    while (p < le) {
+        var pc = load8(buf + p);
+        if (pc == 40) { dep = dep + 1; }
+        if (pc == 41) { dep = dep - 1; if (dep == 0) { return p + 1; } }
+        p = p + 1;
+    }
+    return le;
+}
+
+# Net `{` minus `}` on the line buf[ls, le) of a _src_blank_noncode'd buffer (so a brace in
+# a string, char literal or comment is already gone). The reference tools track brace depth
+# with it and ask _src_decl_at only about depth-0 lines, as cyrius_api_surface does: a fn
+# inside an `impl T for S { … }` block is a METHOD, emitted as `S_m`, and reading it by its
+# bare name gave `cyrius header` conflicting `cyr_val new(...)` prototypes and coverage a
+# false miss. Callers clamp the running depth at 0. CHANGELOG [6.6.8]
+fn _src_brace_delta(buf, ls, le): i64 {
+    var d = 0;
+    while (ls < le) {
+        var c = load8(buf + ls);
+        if (c == 123) { d = d + 1; }
+        elif (c == 125) { d = d - 1; }
+        ls = ls + 1;
+    }
+    return d;
+}
+
+# 1 iff the (blanked) file declares itself private-by-default: a line whose code opens with
+# the bare word `private` (alone, or `private;`). It applies to the WHOLE file wherever it
+# sits (cyrius-guide §Visibility), hence a pre-pass. CHANGELOG [6.6.8]
+fn _src_file_private(buf, len): i64 {
+    var p = 0;
+    while (p < len) {
+        var e = p;
+        while (e < len) { if (load8(buf + e) == 10) { break; } e = e + 1; }
+        var si = _src_skip_ws(buf, p, e);
+        if (_src_word_at(buf, si, e, "private", 7) == 1) {
+            var t = _src_skip_ws(buf, si + 7, e);
+            if (t >= e) { return 1; }
+            if (load8(buf + t) == 59 || load8(buf + t) == 13) { return 1; }
+        }
+        p = e + 1;
+    }
+    return 0;
+}
+
+# Offset of the fn name on line buf[ls, le) when that fn is PUBLIC SURFACE, else -1: a
+# declaration (_src_decl_at) whose name does not start with `_`, and — in a `private` file
+# (`fpriv` from _src_file_private) — only one marked `pub` / `public`. Callers ask it only
+# about lines at brace depth 0 (_src_brace_delta). The ONE rule coverage
+# and header share, as cyrius_api_surface applies it. CHANGELOG [6.6.8]
+fn _src_public_fn_at(buf, ls, le, fpriv): i64 {
+    var ns = _src_decl_at(buf, ls, le);
+    if (ns < 0) { return 0 - 1; }
+    if (load8(buf + ns) == 95) { return 0 - 1; }
+    if (fpriv == 1 && _src_decl_pub == 0) { return 0 - 1; }
+    return ns;
+}
+
+# End of the identifier starting at p (first non-identifier byte, or lim).
+fn _src_ident_end(buf, p, lim): i64 {
+    while (p < lim) {
+        if (_src_ident_char(load8(buf + p)) == 0) { break; }
+        p = p + 1;
+    }
+    return p;
+}
+
+# ================================================================
+# Every top-level declaration of a file — the ONE depth-0 reader. CHANGELOG [6.6.10]
+# ================================================================
+# Kinds reported by _src_decls (the numbering cyrius-lsp's symbol table already used).
+var SRC_DECL_FN = 1;
+var SRC_DECL_VAR = 2;
+var SRC_DECL_ENUM = 3;
+var SRC_DECL_STRUCT = 4;
+var SRC_DECL_MEMBER = 5;
+
+# Offset of the NAME declared by the line buf[ls, le) with keyword `kw` (klen) — `var`, `enum`
+# or `struct` — or -1. The same prefix rules as _src_decl_at: indentation, `private;` closing
+# the file marker on the line, any attribute tokens (an attribute's `(...)` skipped), and
+# `pub` / `public` / `secret` in any order; then the keyword and at least one space or tab.
+fn _src_kw_decl_at(buf, ls, le, kw, klen): i64 {
+    var si = _src_skip_ws(buf, ls, le);
+    if (_src_word_at(buf, si, le, "private", 7) == 1) {
+        var ps = _src_skip_ws(buf, si + 7, le);
+        if (ps >= le) { return 0 - 1; }
+        if (load8(buf + ps) != 59) { return 0 - 1; }
+        si = _src_skip_ws(buf, ps + 1, le);
+    }
+    var more = 1;
+    while (more == 1 && si < le) {
+        if (load8(buf + si) == 35) {
+            var al = _src_attr_len(buf, si, le);
+            if (al == 0) { return 0 - 1; }
+            si = _src_skip_ws(buf, si + al, le);
+            if (si < le && load8(buf + si) == 40) { si = _src_skip_parens(buf, si, le); }
+        } elif (_src_word_at(buf, si, le, "public", 6) == 1) { si = si + 6; }
+        elif (_src_word_at(buf, si, le, "pub", 3) == 1) { si = si + 3; }
+        elif (_src_word_at(buf, si, le, "secret", 6) == 1) { si = si + 6; }
+        else { more = 0; }
+        si = _src_skip_ws(buf, si, le);
+    }
+    if (si + klen >= le) { return 0 - 1; }
+    if (memeq(buf + si, kw, klen) == 0) { return 0 - 1; }
+    var k = load8(buf + si + klen);
+    if (k != 32 && k != 9) { return 0 - 1; }
+    si = _src_skip_ws(buf, si + klen, le);
+    if (si >= le) { return 0 - 1; }
+    var c0 = load8(buf + si);
+    if (_src_ident_char(c0) == 0 || (c0 >= 48 && c0 <= 57)) { return 0 - 1; }
+    return si;
+}
+
+fn _src_decl_push(offs, lens, kinds, off, len, kind): i64 {
+    vec_push(offs, off);
+    vec_push(lens, len);
+    if (kinds != 0) { vec_push(kinds, kind); }
+    return 0;
+}
+
+# Push every name a `var` line declares from `ns` on: the first, then each `, name` of a
+# destructuring bind (`var q, r = divmod(10, 3);` declares both — v6.6.0 allows it at top
+# level). Stops at the first byte that is neither.
+fn _src_var_names(buf, ns, le, offs, lens, kinds): i64 {
+    var p = ns;
+    var go = 1;
+    while (go == 1) {
+        var ne = _src_ident_end(buf, p, le);
+        _src_decl_push(offs, lens, kinds, p, ne - p, SRC_DECL_VAR);
+        var q = _src_skip_ws(buf, ne, le);
+        go = 0;
+        if (q < le && load8(buf + q) == 44) {
+            q = _src_skip_ws(buf, q + 1, le);
+            if (q < le) {
+                var c = load8(buf + q);
+                if (_src_ident_char(c) == 1 && (c < 48 || c > 57)) { p = q; go = 1; }
+            }
+        }
+    }
+    return 0;
+}
+
+# The members of the enum whose name ends at `p`: from its `{` (on this line or a later one)
+# to the matching `}`, a member is the first identifier after the `{` or after a `;` / `,` at
+# parenthesis depth 0 — `RED;`, `NOT_FOUND = 44;`, `Ok(v);`, `Triple(a, b, c),`, `Bare`. The
+# buffer is _src_blank_noncode'd. Returns the offset just past the `}` (or len).
+fn _src_enum_members(buf, len, p, offs, lens, kinds): i64 {
+    while (p < len) {
+        var c0 = load8(buf + p);
+        if (c0 == 123) { break; }
+        if (c0 == 59) { return p; }             # `enum X;` — no body
+        p = p + 1;
+    }
+    if (p >= len) { return len; }
+    p = p + 1;
+    var want = 1;
+    var pd = 0;
+    while (p < len) {
+        var c = load8(buf + p);
+        if (c == 125 && pd == 0) { return p + 1; }
+        if (c == 40) { pd = pd + 1; }
+        if (c == 41 && pd > 0) { pd = pd - 1; }
+        if (pd == 0 && (c == 59 || c == 44)) { want = 1; p = p + 1; }
+        elif (want == 1 && _src_ident_char(c) == 1 && (c < 48 || c > 57)) {
+            var e = _src_ident_end(buf, p, len);
+            _src_decl_push(offs, lens, kinds, p, e - p, SRC_DECL_MEMBER);
+            want = 0;
+            p = e;
+        } else {
+            if (c != 32 && c != 9 && c != 10 && c != 13) { want = 0; }
+            p = p + 1;
+        }
+    }
+    return len;
+}
+
+# Every TOP-LEVEL declaration of the _src_blank_noncode'd buffer buf[0, len): fns
+# (_src_decl_at — attributes, indentation, pub/public, async, `fn` + any spaces or tabs), vars
+# (_src_kw_decl_at — pub/public/secret, destructuring binds), enums and their members, and
+# struct names. Pushes each name's offset and length onto `offs` / `lens`, and its SRC_DECL_*
+# kind onto `kinds` (0 = not wanted). Only lines at brace depth 0 declare anything, so an
+# `impl` method or a fn-local `var` is not read as top-level (_src_brace_delta).
+# Returns the brace depth at the end of the file: 0 for a balanced file. A non-zero result
+# means the depth tracking was thrown off (for example `#ifdef` arms that open a brace each
+# but share one close), so declarations after that point may have been missed — a caller
+# that must not miss one checks it. CHANGELOG [6.6.10]
+fn _src_decls(buf, len, offs, lens, kinds): i64 {
+    var pos = 0;
+    var depth = 0;
+    var raw = 0;
+    while (pos < len) {
+        var le = pos;
+        while (le < len) { if (load8(buf + le) == 10) { break; } le = le + 1; }
+        if (depth == 0) { _src_decls_line(buf, len, pos, le, offs, lens, kinds); }
+        var bd = _src_brace_delta(buf, pos, le);
+        raw = raw + bd;
+        depth = depth + bd;
+        if (depth < 0) { depth = 0; }
+        pos = le + 1;
+    }
+    return raw;
+}
+
+# The declarations the depth-0 line buf[ls, le) makes (see _src_decls).
+fn _src_decls_line(buf, len, ls, le, offs, lens, kinds): i64 {
+    var ns = _src_decl_at(buf, ls, le);
+    if (ns >= 0) {
+        _src_decl_push(offs, lens, kinds, ns, _src_ident_end(buf, ns, le) - ns, SRC_DECL_FN);
+        return 0;
+    }
+    ns = _src_kw_decl_at(buf, ls, le, "var", 3);
+    if (ns >= 0) { return _src_var_names(buf, ns, le, offs, lens, kinds); }
+    ns = _src_kw_decl_at(buf, ls, le, "enum", 4);
+    if (ns >= 0) {
+        var ee = _src_ident_end(buf, ns, le);
+        _src_decl_push(offs, lens, kinds, ns, ee - ns, SRC_DECL_ENUM);
+        _src_enum_members(buf, len, ee, offs, lens, kinds);
+        return 0;
+    }
+    ns = _src_kw_decl_at(buf, ls, le, "struct", 6);
+    if (ns >= 0) {
+        _src_decl_push(offs, lens, kinds, ns, _src_ident_end(buf, ns, le) - ns, SRC_DECL_STRUCT);
+    }
+    return 0;
+}
+
+# ================================================================
+# An identifier SET — built once per corpus, asked once per name. CHANGELOG [6.6.10]
+# ================================================================
+# ⛔ `cyrius coverage` asked "is this fn referenced?" with a byte-wise memeq scan of the whole
+# test corpus PER PUBLIC FN — O(corpus × fns): 78 s on this repo's `--full`, 8.5 s on agnosai.
+# A whole-identifier reference is exactly "some maximal run of identifier bytes equals the
+# name" (the whole-identifier boundary rule), so tokenising the corpus ONCE into a set answers
+# every name in O(1). The set was distlib's `_dl_ids_*`, which kept only hashes and, when more
+# than half full, answered PRESENT for every name — safe for distlib (present records a leaf),
+# but FAIL-OPEN for coverage (every fn "referenced"). So it now keeps each token's position,
+# confirms every hash hit with memeq, and GROWS (rehash at half full) instead of saturating.
+#
+# Layout: { table, cap (a power of 2), count }; a slot is 24 bytes { hash|1, ptr, len }, and
+# hash 0 marks an empty slot. `ptr` points INTO the buffer the token came from, so that
+# buffer must outlive the set (every caller's does: nothing here is freed).
+fn _src_ids_new(hint): i64 {
+    var cap = 1024;
+    while (cap < hint / 4) { cap = cap * 2; }
+    var set = alloc(24);
+    if (set == 0) { return 0; }
+    var t = alloc(cap * 24);
+    if (t == 0) { return 0; }
+    memset(t, 0, cap * 24);
+    store64(set, t);
+    store64(set + 8, cap);
+    store64(set + 16, 0);
+    return set;
+}
+
+fn _src_ids_hash(p, n): i64 {
+    var h = 0 - 3750763034362895579;           # FNV-1a offset basis (0xcbf29ce484222325)
+    var i = 0;
+    while (i < n) {
+        h = h ^ load8(p + i);
+        h = h * 1099511628211;
+        i = i + 1;
+    }
+    return h | 1;
+}
+
+# The slot address for token p[0, n) with hash h: the slot holding it, or the empty slot
+# where it belongs.
+fn _src_ids_slot(t, mask, h, p, n): i64 {
+    var i = h & mask;
+    while (1 == 1) {
+        var s = t + i * 24;
+        var v = load64(s);
+        if (v == 0) { return s; }
+        if (v == h) {
+            if (load64(s + 16) == n) { if (memeq(load64(s + 8), p, n) == 1) { return s; } }
+        }
+        i = (i + 1) & mask;
+    }
+    return 0;
+}
+
+# Double the table and re-insert every token. 0, or -1 when the allocation is refused.
+fn _src_ids_grow(set): i64 {
+    var ot = load64(set);
+    var ocap = load64(set + 8);
+    var ncap = ocap * 2;
+    var nt = alloc(ncap * 24);
+    if (nt == 0) { return 0 - 1; }
+    memset(nt, 0, ncap * 24);
+    var i = 0;
+    while (i < ocap) {
+        var os = ot + i * 24;
+        var h = load64(os);
+        if (h != 0) {
+            var ns = _src_ids_slot(nt, ncap - 1, h, load64(os + 8), load64(os + 16));
+            store64(ns, h);
+            store64(ns + 8, load64(os + 8));
+            store64(ns + 16, load64(os + 16));
+        }
+        i = i + 1;
+    }
+    store64(set, nt);
+    store64(set + 8, ncap);
+    return 0;
+}
+
+# Add token p[0, n). 0, or -1 when the table could not grow (the caller must not answer
+# from an incomplete set).
+fn _src_ids_add(set, p, n): i64 {
+    if ((load64(set + 16) + 1) * 2 > load64(set + 8)) {
+        if (_src_ids_grow(set) != 0) { return 0 - 1; }
+    }
+    var h = _src_ids_hash(p, n);
+    var s = _src_ids_slot(load64(set), load64(set + 8) - 1, h, p, n);
+    if (load64(s) == 0) {
+        store64(s, h);
+        store64(s + 8, p);
+        store64(s + 16, n);
+        store64(set + 16, load64(set + 16) + 1);
+    }
+    return 0;
+}
+
+# 1 iff token p[0, n) is in the set — confirmed byte for byte, never by hash alone.
+fn _src_ids_has(set, p, n): i64 {
+    var h = _src_ids_hash(p, n);
+    var s = _src_ids_slot(load64(set), load64(set + 8) - 1, h, p, n);
+    if (load64(s) == 0) { return 0; }
+    return 1;
+}
+
+# Add every identifier (maximal run of [A-Za-z0-9_]) of buf[0, n) — the caller blanks the
+# buffer first when comments and strings must not count. 0, or -1 (see _src_ids_add).
+fn _src_ids_add_text(set, buf, n): i64 {
+    var p = 0;
+    while (p < n) {
+        if (_src_ident_char(load8(buf + p)) == 1) {
+            var e = p;
+            while (e < n && _src_ident_char(load8(buf + e)) == 1) { e = e + 1; }
+            if (_src_ids_add(set, buf + p, e - p) != 0) { return 0 - 1; }
+            p = e;
+        } else { p = p + 1; }
+    }
+    return 0;
+}
+
+# Add every name that follows a `fn` or `var` TOKEN anywhere in buf[0, n) (a blanked buffer),
+# at any depth and on any line position — the loose superset of _src_decls' fns and vars, for
+# a caller that must tell "not declared" from "declared where the depth-0 reader could not
+# see it". 0, or -1 (see _src_ids_add).
+fn _src_ids_add_decl_tokens(set, buf, n): i64 {
+    var p = 0;
+    while (p < n) {
+        if (_src_ident_char(load8(buf + p)) == 1) {
+            var e = _src_ident_end(buf, p, n);
+            var kw = 0;
+            if (e - p == 2) { if (memeq(buf + p, "fn", 2) == 1) { kw = 1; } }
+            if (e - p == 3) { if (memeq(buf + p, "var", 3) == 1) { kw = 1; } }
+            if (kw == 1) {
+                var q = _src_skip_ws(buf, e, n);
+                if (q < n && q > e) {
+                    var c = load8(buf + q);
+                    if (_src_ident_char(c) == 1 && (c < 48 || c > 57)) {
+                        var qe = _src_ident_end(buf, q, n);
+                        if (_src_ids_add(set, buf + q, qe - q) != 0) { return 0 - 1; }
+                    }
+                }
+            }
+            p = e;
+        } else { p = p + 1; }
+    }
+    return 0;
+}

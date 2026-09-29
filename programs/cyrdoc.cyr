@@ -209,6 +209,9 @@ fn extract_fn_sig(line, len, buf) {
     return 0;
 }
 
+# The errno of the last read `process_file` could not do (for main's "cannot read" line).
+var _doc_errno = 0;
+
 fn process_file(filepath, check_mode) {
     var n = _doc_read(filepath);
     if (_doc_too_big == 1) { return 2; }
@@ -217,15 +220,15 @@ fn process_file(filepath, check_mode) {
     # with NO output, which from a doc generator is indistinguishable from "this
     # file has no documentation". `cyrdoc /nonexistent.cyr` reported success.
     #
-    # ⚠ v6.6.5 (round-2 review): `file_read_all` returns 0 for BOTH "could not open"
-    # and "opened, zero bytes", so the first cut of this guard also failed a legal
-    # 0-byte module — a consumer with an empty `mod.cyr` would have started failing
-    # `cyrius doc` where 6.6.4 exited 0. Probe existence SEPARATELY: an existing empty
-    # file is "no functions", which is a real and correct answer.
-    if (n <= 0) {
-        if (file_exists(filepath) == 1) { return 0; }
-        return 1;
-    }
+    # ⛔ 6.6.10 — n < 0 IS THE ERROR, n == 0 IS AN EMPTY MODULE. This was `n <= 0` plus an
+    # existence probe, written when file_read_all returned 0 for both "could not open" and
+    # "opened, zero bytes" — false since 6.6.6 (a failed open/read is a NEGATIVE errno). The
+    # probe then folded a read error back into "empty": `file_exists` is an open(), which
+    # succeeds on a DIRECTORY, so `cyrdoc dirx.cyr` (a directory, EISDIR on read) exited 0
+    # with no output. And an empty file printed NOTHING in generate mode, where a 1-byte file
+    # printed the `# API Reference:` header — it now takes the same path as any other module
+    # (the header, then no entries). CHANGELOG [6.6.10]
+    if (n < 0) { _doc_errno = 0 - n; return 1; }
 
     # Parse into lines
     var lines = vec_new();
@@ -245,6 +248,7 @@ fn process_file(filepath, check_mode) {
     var num_lines = vec_len(lines);
     var namebuf = alloc(128);
     var sigbuf = alloc(256);
+    if (namebuf == 0 || sigbuf == 0) { return 1; }
 
     if (check_mode == 0) {
         # Generate mode — output markdown
@@ -383,7 +387,9 @@ fn main() {
         } elif (pr != 0) {
             sys_write(STDERR_FD, "cyrdoc: cannot read file: ", 26);
             sys_write(STDERR_FD, f, strlen(f));
-            sys_write(STDERR_FD, "\n", 1);
+            sys_write(STDERR_FD, " (error ", 8);
+            fmt_int_fd(STDERR_FD, _doc_errno);
+            sys_write(STDERR_FD, ")\n", 2);
             read_err = 1;
         }
         fi = fi + 1;

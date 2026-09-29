@@ -44,16 +44,18 @@ awk '/^fn _dep_name_cmp/,/^}/' "$D" | grep -q 'load8(pa + i)' || fail "axis 1: _
 
 # ── axis 2: the RESOLVER's family expansion sorts before walking ────────────────────
 # `_dep_copy_stdlib_recursive`'s expansion is what populates a consumer's lib/.
-grep -q 'var entries = dir_list(dir_path);' "$D" || fail "axis 2: the resolver's family expansion moved — re-point this gate"
-awk '/var entries = dir_list\(dir_path\);/{found=1; next} found && c<2 {print; c++}' "$D" \
+# (6.6.10: the listing is the checked `_cbt_list_dir`, which fails by name on an unreadable
+# family directory; the sort follows it within the next three lines.)
+grep -q 'entries = _cbt_list_dir(str_data(dir_path), ' "$D" || fail "axis 2: the resolver's family expansion moved — re-point this gate"
+awk '/entries = _cbt_list_dir\(str_data\(dir_path\), /{found=1; next} found && c<4 {print; c++}' "$D" \
   | grep -q 'vec_sort_by(entries, &_dep_name_cmp)' \
   || fail "axis 2: the resolver expands a package directory WITHOUT sorting — include order is filesystem-dependent"
 
 # ── axis 3: the sidecar VERIFY loop's expansion sorts too ───────────────────────────
 # A3's compile-verify splices family members into one source; unsorted there means the
 # verification compiles a different program than the consumer will.
-grep -q 'var fents = dir_list(str_from(lbase));' "$C" || fail "axis 3: the verify-loop family expansion moved — re-point this gate"
-awk '/var fents = dir_list\(str_from\(lbase\)\);/{found=1; next} found && c<2 {print; c++}' "$C" \
+grep -q 'var fents = _cbt_list_dir(lbase, ' "$C" || fail "axis 3: the verify-loop family expansion moved — re-point this gate"
+awk '/var fents = _cbt_list_dir\(lbase, /{found=1; next} found && c<2 {print; c++}' "$C" \
   | grep -q 'vec_sort_by(fents, &_dep_name_cmp)' \
   || fail "axis 3: the sidecar verify loop splices family members in filesystem order"
 

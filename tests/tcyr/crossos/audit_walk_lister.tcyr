@@ -1,0 +1,115 @@
+# audit_walk_lister.tcyr — lib/audit_walk.cyr's directory lister, on every target's arm:
+# the Linux getdents64 arm (x86_64, pi) and the portable arm (macOS on ecb/ach, Windows on
+# cass), which `cyrius audit` and the check driver's fmt/lint walkers descend through.
+#
+# ⛔ 6.6.10 — TWO DEFECTS. (1) Both arms folded an open/getdents failure into "an empty
+# directory", so `chmod 000 src/bad` made `cyrius audit` print "ok: format clean" over a
+# subtree it never saw; the lister now returns a NEGATIVE error, which each walker records by
+# name. (2) The portable arm marked EVERY entry a regular file, and the walkers' recursive
+# descent keys on "directory" — so off Linux `cyrius audit` checked the top level of src/ and
+# tests/ and nothing below it. This pins the type the lister reports for a directory and a
+# file, and the error for a missing (and, off Windows and not as root, an unreadable)
+# directory. The fixture is its own, per-pid, in the cwd. CHANGELOG [6.6.10]
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+include "lib/io.cyr"
+include "lib/fs.cyr"
+include "lib/process.cyr"
+include "lib/audit_walk.cyr"
+
+# "<stem><pid><tail>", NUL-terminated.
+fn _name(stem, tail): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, stem);
+    str_builder_add_int(sb, sys_getpid());
+    str_builder_add_cstr(sb, tail);
+    return str_data(str_builder_build(sb));
+}
+
+# The dtype the lister reported for entry `want` (a cstr), or -1 when it is not listed.
+fn _dtype_of(names, dtypes, want): i64 {
+    var wl = strlen(want);
+    var i = 0;
+    while (i < vec_len(names)) {
+        var n = vec_get(names, i);
+        if (str_len(n) == wl) {
+            if (memeq(str_data(n), want, wl) == 1) { return vec_get(dtypes, i); }
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+fn main(): i64 {
+    alloc_init();
+    var root = _name("cyrius_awl_", "");
+    var sub = _name("cyrius_awl_", "/sub");
+    var f1 = _name("cyrius_awl_", "/x.cyr");
+    var f2 = _name("cyrius_awl_", "/sub/y.cyr");
+    assert_eq(xmkdir(root, 493), 0, "premise: the fixture root was created");
+    assert_eq(xmkdir(sub, 493), 0, "premise: a subdirectory was created");
+    assert_eq(file_write_all(f1, "x\n", 2), 2, "premise: a file at the root");
+    assert_eq(file_write_all(f2, "y\n", 2), 2, "premise: a file in the subdirectory");
+
+    test_group("the lister types a directory as a directory (the walkers descend on it)");
+    var names = vec_new();
+    var dtypes = vec_new();
+    assert_eq(_aw_dir_list_typed(str_from(root), names, dtypes), 0, "a readable directory lists with 0");
+    assert_eq(vec_len(names), 2, "…both entries");
+    assert_eq(_dtype_of(names, dtypes, "sub"), _AW_DT_DIR, "the subdirectory is DT_DIR (4)");
+    assert_eq(_dtype_of(names, dtypes, "x.cyr"), 8, "the file is DT_REG (8)");
+
+    test_group("a directory the lister cannot open is an error, not an empty listing");
+    var n2 = vec_new();
+    var d2 = vec_new();
+    assert_eq(_aw_dir_list_typed(str_from("no_such_dir_awl"), n2, d2) < 0, 1, "a MISSING directory answers negative");
+    assert_eq(vec_len(n2), 0, "…with no entries");
+
+    test_group("the lint walker reaches the file in the subdirectory");
+    # A missing tool is an ERROR per file it was asked to lint — so the walker's error count
+    # is exactly the number of .cyr files it REACHED: 2 means it descended into sub/.
+    var dirs = vec_new();
+    vec_push(dirs, str_from(root));
+    audit_lint_walk("no_such_cyrlint_awl", dirs);
+    assert_eq(AW_LINT_ERRORS, 2, "both .cyr files were reached (the walk descended)");
+
+    #ifndef CYRIUS_TARGET_WIN
+    test_group("an UNREADABLE subdirectory is a named walker error");
+    if (sys_geteuid() == 0) {
+        println("  skip: running as root (uid 0 reads a mode-000 directory) — permission rows not run");
+    } else {
+        assert_eq(sys_chmod(sub, 0), 0, "premise: the subdirectory is now mode 000");
+        var n3 = vec_new();
+        var d3 = vec_new();
+        assert_eq(_aw_dir_list_typed(str_from(sub), n3, d3) < 0, 1, "listing it answers negative");
+        var dirs2 = vec_new();
+        vec_push(dirs2, str_from(root));
+        audit_lint_walk("no_such_cyrlint_awl", dirs2);
+        # x.cyr (the missing tool) + the unlistable sub/ = 2 errors, and sub/ is named.
+        assert_eq(AW_LINT_ERRORS, 2, "the walker records x.cyr and the unlistable directory");
+        var named = 0;
+        var i = 0;
+        while (i < vec_len(AW_LINT_ERROR_FILES)) {
+            var nt = vec_get(AW_LINT_ERROR_FILES, i);
+            if (str_contains(nt, str_from("cannot list directory")) == 1) { named = 1; }
+            i = i + 1;
+        }
+        assert_eq(named, 1, "…naming it as a directory it could not list");
+        sys_chmod(sub, 493);
+    }
+    #endif
+
+    xunlink(f2);
+    xunlink(f1);
+    xrmdir(sub);
+    xrmdir(root);
+    var rc = assert_summary();
+    return rc;
+}
+var ec = main();
+syscall(60, ec);
