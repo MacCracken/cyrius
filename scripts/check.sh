@@ -1413,6 +1413,12 @@ _chk_gate "$ROOT/tests/gates/platform/agnos_process_peer_parity.sh"
 # terminate_children over proclist#99. Fake kernel, stateful rg* modes; mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/platform/agnos_regression_spawn.sh"
 
+# 6.6.10 bite 13 — lib/async_agnos.cyr: async_timeout forks the body (it ran INLINE and ignored
+# `ms`), reads only a whole 8-byte result, and kills the child's tree at the deadline;
+# async_run_process spawns from disk under a deadline; async_spawn_process is a serial task. Fake
+# kernel as* modes (fork answered as the parent OR the child — one side per trace).
+_chk_gate "$ROOT/tests/gates/platform/agnos_async_process.sh"
+
 # 6.6.8 (bite 9) — `cyrius header` had NO gate. It matched only a column-0 `pub fn `, so a bare
 # `fn` and `public fn` (the same token) never got a prototype, it ignored the file-scope
 # `private` rule, and it read a fixed 64 KiB (every fn past the cut silently dropped, rc=0).

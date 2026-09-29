@@ -132,11 +132,31 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   fail-closed (no cwd, no ssh). The argv/envp-to-blob, wait-with-deadline and kill-and-reap
   helpers live in the agnos peer (`_agnos_blob_*`, `_agnos_wait_poll`, `_agnos_kill_reap`),
   shared with the async port. Kernel floor 1.57.7 (1.57.9 for the stdin-feeding pipe_to_bin).
-  **Gate:** `tests/gates/platform/agnos_regression_spawn.sh` — 40 rows over the fake kernel's new
+  **Gate:** `tests/gates/platform/agnos_regression_spawn.sh` — 45 rows over the fake kernel's new
   stateful rg* modes (distinct fds per pipe, a #4 that answers -2 until a #16, a child that won't
   read stdin until its stdout is drained, a proclist table); the pre-port tree fails 42 lines of
   it, and six mutants (write-all-then-read pump, closed read end, SIGTERM kill, uncounted kill,
   stderr captured, blocking reads) each redden it. Verified on agnos-qemu 1.57.10 at -smp 1 and 4.
+
+- **agnos `async_timeout` bounds its body; `async_run_process` / `async_spawn_process` run
+  children.** (bite 13) **Root cause:** the v6.2.3 / v6.4.36 serial fallback predated fork on
+  agnos, and 6.6.8 corrected the comments but left the code: `async_timeout(fp, arg, ms)` ran the
+  body INLINE and ignored `ms` (a 5 s body under a 100 ms bound traced `sc 41 5000` and returned
+  its value — silent), and the two subprocess verbs were the constants -1 / 0. **Fix:**
+  `async_timeout` forks (fork#96) and the child writes its u64 result into a pipe; the parent
+  reads with a deadline and only a WHOLE 8-byte read counts, so a body that crashed mid-way is -1,
+  never stale bytes; at the deadline the child's tree is SIGKILLed and reaped. `async_run_process`
+  spawns from disk (#43, CLEANFD, `path` as argv[0] — agnos opens argv[0], so the caller's argv[0]
+  is dropped) and polls #4 against its deadline (-2, tree killed); `async_spawn_process` is a
+  serial task around it. The header's "inbound TCP is Phase B — not reachable" rationale is gone
+  (sock_bind/listen/accept run on #56/#57 since v6.2.22). **Gate:**
+  `tests/gates/platform/agnos_async_process.sh` — 18 rows over the fake kernel's as* modes, which
+  answer fork with a pid (the parent's side) or 0 (the child's): PTRACE_SYSEMU runs neither, so
+  each trace proves one side. The pre-port tree fails 19 lines; five mutants redden it (inline
+  body, short read accepted, no kill, `ms` ignored, argv[0] sent). Both sides together on
+  agnos-qemu 1.57.10 at -smp 1 and 4: the value comes back from the forked child, the caller's
+  memory is untouched by it, a 5 s body under 300 ms is -1 with the child gone, a crashing body is
+  -1, and run_process returns 7 / -2 (child gone) / 7 through task_join.
 
 ### Added
 
