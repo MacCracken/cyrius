@@ -28,6 +28,9 @@ include "lib/io.cyr"
 include "lib/vec.cyr"
 include "lib/str.cyr"
 include "lib/syscalls.cyr"
+# 6.6.10: the declaration reader the CLI uses (`cyrius coverage`, `cyrius distlib`) — ONE
+# answer to "what does this file declare at top level". See lsp_index_file.
+include "cbt/srcscan.cyr"
 
 fn prints(s): i64 { syscall(1, 1, s, strlen(s)); return 0; }
 
@@ -434,19 +437,13 @@ fn lsp_index_file(path): i64 {
     if (_lsp_already_indexed(path) == 1) { return 0; }
     if (_lsp_mark_indexed(path) < 0) { return 0; }    # cap full → soft-fail
 
-    # Read the file into a fresh buf. 1 MB cap is enough for cyrius's
-    # largest source (src/frontend/ts/parse.cyr at 4506 LOC ≈ 180 KB).
-    var fd = sys_open(path, 0, 0);
-    if (fd < 0) { return 0; }
-    var buf = alloc(1048576);
+    # Read the WHOLE file (6.6.10). This was a fixed 1 MB read — "enough for cyrius's largest
+    # source" — but the stdlib it indexes through `include` is larger: lib/mabda.cyr is
+    # 1.37 MB and lib/sigil.cyr 1.26 MB, so every declaration past the cut was unindexed.
+    # And the buffer was stored through unchecked. An unreadable file indexes nothing.
     var total = 0;
-    var n = 1;
-    while (n > 0 && total < 1048575) {
-        n = syscall(0, fd, buf + total, 1048575 - total);
-        if (n > 0) { total = total + n; }
-    }
-    sys_close(fd);
-    store8(buf + total, 0);
+    var buf = file_read_whole(path, &total);
+    if (buf == 0) { return 0; }
 
     # Compute the directory of `path` for include-relative resolution.
     var path_len = strlen(path);
@@ -513,64 +510,45 @@ fn lsp_index_file(path): i64 {
                 }
             }
         }
-        # `fn NAME(`
-        elif (eol - pos > 4 && memeq(buf + pos, "fn ", 3) == 1) {
-            var ns = pos + 3;
-            if (ns < eol && _lsp_id_start(load8(buf + ns)) == 1) {
-                var ne = _lsp_scan_id_end(buf, ns, eol);
-                if (ne < eol && load8(buf + ne) == 40) {       # '('
-                    _lsp_add_symbol(buf + ns, ne - ns, path, line, ns - pos, 1);
-                }
-            }
-        }
-        # `var NAME` (top-level only — pos == 0 at line start, no
-        # leading whitespace; cyrius indents fn-body vars).
-        elif (eol - pos > 5 && memeq(buf + pos, "var ", 4) == 1) {
-            var vs = pos + 4;
-            if (vs < eol && _lsp_id_start(load8(buf + vs)) == 1) {
-                var ve = _lsp_scan_id_end(buf, vs, eol);
-                _lsp_add_symbol(buf + vs, ve - vs, path, line, vs - pos, 2);
-            }
-        }
-        # `enum NAME { K1, K2, ... }` — record both NAME (kind=3) and
-        # each enumerator (kind=5, scan inside the braces).
-        elif (eol - pos > 6 && memeq(buf + pos, "enum ", 5) == 1) {
-            var es = pos + 5;
-            if (es < eol && _lsp_id_start(load8(buf + es)) == 1) {
-                var ee = _lsp_scan_id_end(buf, es, eol);
-                _lsp_add_symbol(buf + es, ee - es, path, line, es - pos, 3);
-                # Walk to first '{' (may be on this line or later) then
-                # collect comma-separated enumerator IDENTs until '}'.
-                var bp = ee;
-                # search this line first
-                while (bp < eol && load8(buf + bp) != 123) { bp = bp + 1; }
-                if (bp < eol) {
-                    bp = bp + 1;
-                    var stop = 0;
-                    while (stop == 0 && bp < total) {
-                        var c = load8(buf + bp);
-                        if (c == 125) { stop = 1; }     # '}'
-                        elif (_lsp_id_start(c) == 1) {
-                            var ks = bp;
-                            var ke = _lsp_scan_id_end(buf, ks, total);
-                            _lsp_add_symbol(buf + ks, ke - ks, path, line, ks - pos, 5);
-                            bp = ke;
-                        } else { bp = bp + 1; }
-                    }
-                }
-            }
-        }
-        # `struct NAME { ... }`
-        elif (eol - pos > 8 && memeq(buf + pos, "struct ", 7) == 1) {
-            var ss = pos + 7;
-            if (ss < eol && _lsp_id_start(load8(buf + ss)) == 1) {
-                var se = _lsp_scan_id_end(buf, ss, eol);
-                _lsp_add_symbol(buf + ss, se - ss, path, line, ss - pos, 4);
-            }
-        }
-
         pos = eol + 1;
         line = line + 1;
+    }
+    lsp_index_decls(buf, total, path);
+    return 0;
+}
+
+# Record every top-level declaration of buf[0, total) under `path`, through cbt/srcscan.cyr's
+# `_src_decls` — the reader `cyrius coverage` and `cyrius distlib` use.
+# ⛔ 6.6.10: this was a SIXTH hand-rolled declaration reader, and it matched only `fn `, `var `,
+# `enum ` and `struct ` at COLUMN 0: no `pub`/`public`, no attribute (`#inline fn`), no
+# indentation, no `fn<TAB>`, and `fn NAME` only when `(` followed the name at once (so no
+# generic `fn f<T>(`). Go-to-definition and hover missed every `pub fn` — the 322 in
+# lib/yukti.cyr among them. And it read comments and strings as code: a `fn x` inside a
+# multi-line string was indexed. It reads a blanked COPY (the include scan above needs the
+# raw paths), so a declaration in a comment or string is not one. CHANGELOG [6.6.10]
+fn lsp_index_decls(buf, total, path): i64 {
+    var cb = alloc(total + 1);
+    if (cb == 0) { return 0; }
+    memcpy(cb, buf, total);
+    store8(cb + total, 0);
+    _src_blank_noncode(cb, total);
+    var offs = vec_new();
+    var lens = vec_new();
+    var kinds = vec_new();
+    _src_decls(cb, total, offs, lens, kinds);
+    # Offsets come out in file order, so the line/column of each is one forward walk.
+    var line = 0;
+    var ls = 0;
+    var p = 0;
+    var k = 0;
+    while (k < vec_len(offs)) {
+        var off = vec_get(offs, k);
+        while (p < off) {
+            if (load8(buf + p) == 10) { line = line + 1; ls = p + 1; }
+            p = p + 1;
+        }
+        _lsp_add_symbol(buf + off, vec_get(lens, k), path, line, off - ls, vec_get(kinds, k));
+        k = k + 1;
     }
     return 0;
 }

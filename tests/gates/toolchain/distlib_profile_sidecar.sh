@@ -19,6 +19,19 @@
 # The fix keeps rule 1's INTENT and inverts its mechanism: union for profiles too, then PRUNE
 # the union down to what the profile bundle actually references. Over-reporting is prevented
 # by a positive filter instead of by withholding the leaves entirely.
+#
+# 6.6.10 (bite 15) — EVERY DECLARATION SPELLING, AT THE PRUNE AND AT THE VERIFY (axes 11-16).
+# The prune and the verify loop's symbol attribution each matched column-0 `fn ` / `var `
+# lines, so a leaf whose symbols are `#inline fn` or indented was invisible to BOTH: the
+# profile sidecar came out with 0 leaves at rc 0 (measured), because the verify loop read the
+# still-undefined symbol as "not stdlib" and moved on. A `pub fn` leaf was dropped by the
+# prune and only rescued by the loop ("re-added 1 leaf(s)"). Both now use cbt/srcscan.cyr's
+# `_src_decls`. Axes 11-15: each leaf is kept BY THE PRUNE (no "re-added" line). Axis 16: a
+# stdlib file whose braces do not balance (so the depth-0 reader cannot see past the skew)
+# and that declares the missing symbol is a HARD ERROR naming the file, not a short sidecar.
+# MUTATIONS (6.6.10, run by hand): the prune back on column-0 `fn `/`var ` → 11, 12, 13, 14,
+# 15 FAIL; the attribution back on it → 11, 12 FAIL (0 leaves, rc 0); the unbalanced-file
+# check removed (`raw == 0` → continue) → 16 FAIL.
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CLI="$ROOT/build/cyrius"
@@ -96,6 +109,37 @@ cat > src/f.cyr <<'EOF'
 include "lib/heavy.cyr"
 fn f_six(): i64 { return 6; }
 EOF
+# 6.6.10 — one leaf per declaration spelling (axes 11-15), and an unbalanced one (axis 16).
+cat > lib/attrleaf.cyr <<'EOF'
+#inline fn attrleaf_do(x): i64 { return x + 11; }
+EOF
+cat > lib/indleaf.cyr <<'EOF'
+    fn indleaf_do(x): i64 { return x + 12; }
+EOF
+cat > lib/publeaf.cyr <<'EOF'
+pub fn publeaf_do(x): i64 { return x + 13; }
+EOF
+printf 'fn\ttableaf_do(x): i64 { return x + 14; }\n' > lib/tableaf.cyr
+cat > lib/enumleaf.cyr <<'EOF'
+enum EnumLeafK { ENUMLEAF_A = 15; ENUMLEAF_B; }
+EOF
+cat > lib/skewleaf.cyr <<'EOF'
+#ifdef CYRIUS_TARGET_NO_SUCH_TARGET
+fn skewleaf_head(x): i64 {
+#endif
+#ifndef CYRIUS_TARGET_NO_SUCH_TARGET
+fn skewleaf_head(x): i64 {
+#endif
+    return x;
+}
+fn skewleaf_do(x): i64 { return x + 16; }
+EOF
+printf 'fn g_attr(): i64 { return attrleaf_do(1); }\n' > src/g_attr.cyr
+printf 'fn g_ind(): i64 { return indleaf_do(1); }\n' > src/g_ind.cyr
+printf 'fn g_pub(): i64 { return publeaf_do(1); }\n' > src/g_pub.cyr
+printf 'fn g_tab(): i64 { return tableaf_do(1); }\n' > src/g_tab.cyr
+printf 'fn g_enm(): i64 { return ENUMLEAF_A; }\n' > src/g_enm.cyr
+printf 'fn g_skew(): i64 { return skewleaf_do(1); }\n' > src/g_skew.cyr
 cat > src/lib.cyr <<'EOF'
 include "src/a.cyr"
 include "src/b.cyr"
@@ -107,7 +151,7 @@ name = "pf"
 version = "0.1.0"
 
 [deps]
-stdlib = ["dispatch", "plainleaf", "heavy"]
+stdlib = ["dispatch", "plainleaf", "heavy", "attrleaf", "indleaf", "publeaf", "tableaf", "enumleaf", "skewleaf"]
 
 [lib]
 modules = ["src/a.cyr", "src/b.cyr", "src/c.cyr"]
@@ -126,11 +170,30 @@ modules = ["src/e.cyr"]
 
 [lib.inc]
 modules = ["src/f.cyr"]
+
+[lib.attr]
+modules = ["src/g_attr.cyr"]
+
+[lib.ind]
+modules = ["src/g_ind.cyr"]
+
+[lib.pubp]
+modules = ["src/g_pub.cyr"]
+
+[lib.tab]
+modules = ["src/g_tab.cyr"]
+
+[lib.enm]
+modules = ["src/g_enm.cyr"]
+
+[lib.skew]
+modules = ["src/g_skew.cyr"]
 EOF
 
 # The fake leaves must live where [deps].stdlib resolves them (CYRIUS_HOME/lib) AND where
 # the prune's own scan looks first (the package's ./lib).
 cp lib/dispatch.cyr lib/dispatch_impl.cyr lib/plainleaf.cyr lib/heavy.cyr "$W/home/lib/"
+cp lib/attrleaf.cyr lib/indleaf.cyr lib/publeaf.cyr lib/tableaf.cyr lib/enumleaf.cyr lib/skewleaf.cyr "$W/home/lib/"
 
 "$CLI" distlib      > "$W/base.log"  2>&1 || true
 "$CLI" distlib small > "$W/prof.log" 2>&1 || true
@@ -138,6 +201,8 @@ cp lib/dispatch.cyr lib/dispatch_impl.cyr lib/plainleaf.cyr lib/heavy.cyr "$W/ho
 "$CLI" distlib words > "$W/words.log" 2>&1 || true
 "$CLI" distlib chr   > "$W/chr.log" 2>&1 || true
 "$CLI" distlib inc   > "$W/inc.log" 2>&1 || true
+for pr in attr ind pubp tab enm; do "$CLI" distlib "$pr" > "$W/$pr.log" 2>&1 || true; done
+SKEW_RC=0; "$CLI" distlib skew > "$W/skew.log" 2>&1 || SKEW_RC=$?
 
 # PREMISE ROW — if the bundles did not build, every axis below is vacuous.
 if [ ! -f dist/pf.cyr ] || [ ! -f dist/pf-small.cyr ]; then
@@ -242,6 +307,40 @@ case " $IN " in
     *" heavy "*) echo "  ok axis 10: an explicit include of lib/heavy.cyr keeps 'heavy'" ;;
     *) echo "  FAIL axis 10: 'heavy' missing from [$IN] — the bundle keeps its include of lib/heavy.cyr, so a consumer following this sidecar cannot resolve it"; fail=1 ;;
 esac
+
+# --- axes 11-15 (6.6.10): every declaration spelling keeps its leaf AT THE PRUNE ---
+spelled() {   # $1 profile, $2 leaf, $3 axis, $4 spelling
+    if [ ! -f "dist/pf-$1.deps" ]; then
+        echo "  FAIL axis $3: dist/pf-$1.deps not written"; sed -n '1,4p' "$W/$1.log" | sed 's/^/    /'; fail=1; return
+    fi
+    L=$(leaves "dist/pf-$1.deps")
+    case " $L " in
+        *" $2 "*) if grep -q 're-added' "$W/$1.log"; then
+                echo "  FAIL axis $3: '$2' ($4) was dropped by the prune and only re-added by the verify loop"; fail=1
+            else echo "  ok axis $3: a $4 leaf is kept by the prune itself [$L]"; fi ;;
+        *) echo "  FAIL axis $3: '$2' missing from [$L] — its only symbol is spelled '$4', and the sidecar was written without it"; fail=1 ;;
+    esac
+}
+spelled attr attrleaf 11 "#inline fn"
+spelled ind  indleaf  12 "indented top-level fn"
+spelled pubp publeaf  13 "pub fn"
+spelled tab  tableaf  14 "fn<TAB>"
+spelled enm  enumleaf 15 "enum member"
+
+# --- axis 16 (6.6.10): a declaration the reader cannot see is a HARD ERROR, not a short file ---
+# skewleaf.cyr opens a brace in each of two #ifdef arms and closes one, so the depth-0 reader
+# is still at depth 1 when `skewleaf_do` is declared. The verify loop used to read the
+# still-undefined symbol as "not stdlib" (`raw == 0 → continue`) and write the sidecar
+# without the leaf, at rc 0.
+if [ "$SKEW_RC" -eq 0 ]; then
+    echo "  FAIL axis 16: distlib skew exited 0 — the leaf it needs is declared where the reader cannot see it, and it wrote the sidecar anyway [$(leaves dist/pf-skew.deps 2>/dev/null)]"; fail=1
+elif ! grep -q "skewleaf_do" "$W/skew.log" || ! grep -q "skewleaf.cyr" "$W/skew.log"; then
+    echo "  FAIL axis 16: distlib skew failed (rc $SKEW_RC) without naming the symbol and the file"; sed -n '1,6p' "$W/skew.log" | sed 's/^/    /'; fail=1
+elif [ -f dist/pf-skew.deps ]; then
+    echo "  FAIL axis 16: distlib skew failed but still left dist/pf-skew.deps behind"; fail=1
+else
+    echo "  ok axis 16: an unreadable declaration is a hard error naming skewleaf_do and skewleaf.cyr (rc $SKEW_RC)"
+fi
 
 [ "$fail" -eq 0 ] || { echo "FAIL: distlib-profile-sidecar"; exit 1; }
 echo "PASS: distlib-profile-sidecar — profiles emit a sidecar scoped to their own references"
