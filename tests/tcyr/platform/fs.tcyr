@@ -94,12 +94,20 @@ assert_eq(path_has_ext(str_from("test.cyr"), str_from(".cyr")), 1, "ext yes");
 assert_eq(path_has_ext(str_from("test.cyr"), str_from(".rs")), 0, "ext no");
 
 test_group("is_dir");
-assert_eq(is_dir(str_from("/tmp")), 1, "tmp is dir");
+# 6.6.10: on Windows there is no /tmp; the current directory (the runner's per-run dir, which
+# holds this test's own binary) stands in for it.
+#ifdef CYRIUS_TARGET_WIN
+var _tmpd = ".";
+#endif
+#ifndef CYRIUS_TARGET_WIN
+var _tmpd = "/tmp";
+#endif
+assert_eq(is_dir(str_from(_tmpd)), 1, "tmp is dir");
 assert_eq(is_dir(str_from(testpath)), 0, "file not dir");
 
 test_group("dir_list");
 # /tmp should have entries
-var entries = dir_list(str_from("/tmp"));
+var entries = dir_list(str_from(_tmpd));
 var has_entries = 0;
 if (vec_len(entries) > 0) { has_entries = 1; }
 assert_eq(has_entries, 1, "tmp has entries");

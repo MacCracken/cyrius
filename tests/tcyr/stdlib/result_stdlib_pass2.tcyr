@@ -58,14 +58,20 @@ include "lib/assert.cyr"
 # run of the suite (two check.sh at once), so one run deleted or rewrote another's file
 # mid-assert. The pid is taken once, so a forked child names the same files. CHANGELOG [6.6.6]
 var _scratch_pid = 0;
-fn _scratch(name, suffix): i64 {   # "/tmp/<name>.<pid><suffix>", NUL-terminated
+# 6.6.10: Windows has no /tmp — there the name is cwd-relative (the PE runner's cwd is per-run),
+# so the DynlibBadElf probe's fixture is actually written. CHANGELOG [6.6.10]
+fn _scratch(name, suffix): i64 {   # "/tmp/<name>.<pid><suffix>" (PE: "<name>.<pid><suffix>")
     if (_scratch_pid == 0) { _scratch_pid = sys_getpid(); }
     var nl = strlen(name);
     var sl = strlen(suffix);
     var p = alloc(nl + sl + 32);
+    var o = 0;
+    #ifndef CYRIUS_TARGET_WIN
     memcpy(p, "/tmp/", 5);
-    memcpy(p + 5, name, nl);
-    var o = 5 + nl;
+    o = 5;
+    #endif
+    memcpy(p + o, name, nl);
+    o = o + nl;
     store8(p + o, 46);
     o = o + 1;
     var d[24];
