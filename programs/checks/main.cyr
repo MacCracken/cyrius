@@ -73,6 +73,12 @@ var G_TIMEOUT = 0;
 # (G_NO_SKIP) a SKIP is scored as a failure instead.
 var G_SKIP = 0;
 var G_NO_SKIP = 0;
+# 6.6.11: `--skip-report <file>` — every SKIP row is also appended to <file>, one line each (the
+# gate script for a `_gate` row, else the row's label), so check.sh can count and list the
+# driver's SKIPs in ITS verdict instead of reading the driver's exit 0 as "all passed". An
+# argument, not an environment variable: a gate that runs a nested driver must not inherit it.
+var G_SKIP_REPORT = 0;
+var _G_SKIP_SUBJECT = 0;    # set by `_gate` around its `_gate_score`: the script, not the prose
 var _G_SEEN_RKILLS = 0;     # regression_deadline_kills() as of the previous row
 var _G_SEEN_PKILLS = 0;     # proc_deadline_kills() as of the previous row
 var _G_ROW_GATE_TIMEOUT = 0; # set by `_gate` when its supervisor reported the deadline (124)
@@ -253,6 +259,7 @@ fn _skip(name, why): i64 {
     }
     G_TOTAL = G_TOTAL + 1;
     G_SKIP = G_SKIP + 1;
+    _skip_report(name);
     _p("  SKIP: ");
     _p(name);
     _p(" — ");
@@ -438,6 +445,26 @@ fn _gate_run(script_abs): i64 {
     return 1;
 }
 
+# Append one SKIP row to the `--skip-report` file: `_G_SKIP_SUBJECT` when a `_gate` set it,
+# else `name` up to its first newline (at most 200 bytes). A write that fails is said on
+# stderr — a report check.sh then under-counts must not be silent. CHANGELOG [6.6.11]
+fn _skip_report(name): i64 {
+    if (G_SKIP_REPORT == 0) { return 0; }
+    var subj = name;
+    if (_G_SKIP_SUBJECT != 0) { subj = _G_SKIP_SUBJECT; }
+    var n = 0;
+    while (n < 200 && load8(subj + n) != 0 && load8(subj + n) != 10) { n = n + 1; }
+    var fd = file_open(G_SKIP_REPORT, O_WRONLY | O_CREAT | O_APPEND, 420);
+    if (fd < 0) {
+        _perr("error: could not append to the --skip-report file\n");
+        return 0 - 1;
+    }
+    file_write(fd, subj, n);
+    file_write(fd, "\n", 1);
+    file_close(fd);
+    return 0;
+}
+
 # ⛔ 6.6.11 — A SHELL GATE THAT COULD NOT RUN ITS CHECK EXITS 77, AND 77 IS A SKIP ROW.
 # The shell-gate protocol was binary — 0 PASS, anything else FAIL — so a gate whose tool,
 # host or fixture was missing had only `echo SKIP; exit 0` to say so, and every one of them
@@ -459,7 +486,9 @@ fn _gate_score(name, rc): i64 {
 fn _gate(name, script_rel): i64 {
     var script_abs = _root_path(script_rel);
     var rc = _gate_run(script_abs);
+    _G_SKIP_SUBJECT = script_rel;
     _gate_score(name, rc);
+    _G_SKIP_SUBJECT = 0;
     return rc;
 }
 
@@ -1326,6 +1355,14 @@ fn main(): i64 {
     if (argc() > 1) {
         if (streq(argv(1), "--run-gate") == 1) { return _run_gate_main(); }
         if (streq(argv(1), "--supervised") == 1) { sel_idx = 2; }
+    }
+    # `--skip-report <file>` leads the arguments (after `--supervised`, which the re-exec
+    # below prepends). check.sh passes it on its full run. CHANGELOG [6.6.11]
+    if (sel_idx == 2 && argc() > 3) {
+        if (streq(argv(2), "--skip-report") == 1) {
+            G_SKIP_REPORT = argv(3);
+            sel_idx = 4;
+        }
     }
     if (sel_idx == 1) {
         var lone = 0;

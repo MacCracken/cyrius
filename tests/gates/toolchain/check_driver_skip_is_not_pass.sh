@@ -61,12 +61,19 @@
 #      the 0 gate still PASS (positive control); `=yes` refused with rc 2, running nothing
 #   8  the EMPTY SELECTION: a scratch driver whose object-init row tallies nothing exits != 0
 #      and names the suite, default and strict; the real row still exits 0 (axis 4)
+#   9  the DRIVER'S SKIPS IN CHECK.SH'S VERDICT: the real check.sh full-run path (cut after the
+#      driver block, the driver call narrowed to object-init) over the axis-6 driver — the
+#      driver exits 0 over its SKIP, and check.sh still counts it (`+ 1 driver row(s)`), lists
+#      the gate script, and says GREEN-with-SKIPPED, never ALL GREEN; strict = FAIL, 0 skips
 # MUTATIONS (6.6.11, each RED; measured):
 #   M6 `_gate_score` drops its 77 branch (77 -> `_check` -> FAIL)          -> axis 6 RED
 #   M7 `_gate` calls `_check` directly again (bypasses `_gate_score`)      -> axis 6 RED
 #   M8 check.sh's `_chk_gate` 77 branch removed (77 -> the FAIL arm)       -> axis 7 RED
 #   M9 `_chk_read_no_skip` never called (NO_SKIP ignored by check.sh)       -> axis 7 RED
 #   M10 main()'s `only >= 0 && G_TOTAL == 0` check removed                  -> axis 8 RED
+#   M11 `_skip` never calls `_skip_report` (the driver writes no report)    -> axis 9 RED
+#   M12 check.sh never reads the report back (driver rc alone again)        -> axis 9 RED
+#   M13 `_gate` no longer sets `_G_SKIP_SUBJECT` (the prose label is listed) -> axis 9 RED
 set -e
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -269,10 +276,59 @@ if mkdrv drvempty '    # (emptied by check_driver_skip_is_not_pass.sh axis 8)'; 
     done
 fi
 
+echo "axis 9: the driver's own SKIP rows reach check.sh's verdict (--skip-report)"
+# The REAL scripts/check.sh full-run path, cut after its driver-verdict block (the shell-gate
+# list that follows is replaced by one passing gate), over the axis-6 scratch driver whose
+# object-init row is a 77 gate. The ONE edit to check.sh is a selector on the driver call, so
+# the run is one row, not the whole suite; the reading, counting and verdict are check.sh's.
+if [ -x "$D/drv77" ]; then
+    W9="$D/w9"
+    mkdir -p "$W9/scripts" "$W9/build" "$W9/programs/checks" "$W9/lib" "$W9/tests/gates/zzskip" "$W9/home" "$W9/tmp"
+    cp "$ROOT/VERSION" "$W9/"
+    : > "$W9/lib/placeholder.cyr"
+    : > "$W9/programs/checks/placeholder.cyr"
+    printf '#!/bin/sh\nexit 0\n' > "$W9/build/cycc"; chmod +x "$W9/build/cycc"
+    cp "$D/drv77" "$W9/build/cyrius_check"
+    touch -d '2038-01-01' "$W9/build/cyrius_check"
+    cp "$R/tests/gates/zzskip/s77.sh" "$R/tests/gates/zzskip/ok.sh" "$W9/tests/gates/zzskip/"
+    if awk '
+        /^_chk_run_bg "\$CHECK_BIN" --skip-report "\$_CHK_DRV_SKIPS_F"$/ { print $0 " object-init"; call = 1; next }
+        /^# v6\.2\.28 D7: the bare-metal kernel BOOT gate/ { cut = 1; exit }
+        { print }
+        END { if (!call || !cut) exit 3 }' "$ROOT/scripts/check.sh" > "$W9/scripts/check.sh"; then
+        printf '_chk_gate "$ROOT/tests/gates/zzskip/ok.sh"\n' >> "$W9/scripts/check.sh"
+        run9() {  # $1 = out, $2 = CYRIUS_CHECK_NO_SKIP value
+            _rc=0
+            ( cd "$W9" && env CYRIUS_HOME="$W9/home" TMPDIR="$W9/tmp" CYRIUS_CHECK_NO_SKIP="$2" sh scripts/check.sh ) \
+                > "$1.raw" 2>&1 || _rc=$?
+            strip_ansi < "$1.raw" > "$1"
+            echo "$_rc" > "$1.rc"
+        }
+        run9 "$D/a9" ""
+        [ "$(cat "$D/a9.rc")" = 0 ] || _fail "axis 9: a full run whose only driver row SKIPPED exited $(cat "$D/a9.rc"), expected 0"
+        grep -q '^  SKIP: zz fake skip gate — the gate exited 77' "$D/a9" || _fail "axis 9: the scratch driver printed no SKIP row (the run did not reach it)"
+        grep -q '^  skipped:     1 (0 shell gate(s) exited 77 + 1 driver row(s)' "$D/a9" \
+            || _fail "axis 9: the summary does not count the driver's SKIP ($(grep '^  skipped:' "$D/a9"))"
+        grep -q '^    (driver row) tests/gates/zzskip/s77.sh$' "$D/a9" || _fail "axis 9: the SKIPPED list does not name the driver row's gate script"
+        grep -q 'GREEN, with 1 gate(s) SKIPPED' "$D/a9" || _fail "axis 9: no 'GREEN, with 1 gate(s) SKIPPED' verdict"
+        grep -q 'ALL GREEN' "$D/a9" && _fail "axis 9: a run whose driver SKIPPED a row still says ALL GREEN"
+        grep -q '1 of 1 produced a result, 0 NOT RUN' "$D/a9" || _fail "axis 9: the shell-gate bookkeeping moved ($(grep 'produced a result' "$D/a9"))"
+        [ -z "$(ls -A "$W9/tmp")" ] || _fail "axis 9: the skip report was left behind in TMPDIR: $(ls -A "$W9/tmp" | tr '\n' ' ')"
+        # Strict: the driver fails the row itself, writes no report line, and check.sh says FAIL.
+        run9 "$D/a9s" 1
+        [ "$(cat "$D/a9s.rc")" != 0 ] || _fail "axis 9: under NO_SKIP=1 a driver row that could not run left check.sh at rc 0"
+        grep -q '^  skipped:     0 ' "$D/a9s" || _fail "axis 9: under NO_SKIP=1 a refused SKIP was ALSO counted as a skip ($(grep '^  skipped:' "$D/a9s"))"
+    else
+        _fail "axis 9: scripts/check.sh no longer has the '_chk_run_bg \"\$CHECK_BIN\" --skip-report \"\$_CHK_DRV_SKIPS_F\"' call or the D7 boot-gate comment after it — re-anchor this gate"
+    fi
+else
+    _fail "axis 9: no axis-6 scratch driver to run"
+fi
+
 echo ""
 if [ "$FAILS" -gt 0 ]; then
     echo "FAIL: $NAME — $FAILS check(s) failed"
     exit 1
 fi
-echo "PASS: $NAME (a missing prerequisite is a SKIP row and a SKIP count, a FAIL under CYRIUS_CHECK_NO_SKIP=1, $NSK skip sites, 0 scored as passes; a shell gate's exit 77 is a SKIP in both the driver and check.sh; an empty selection fails)"
+echo "PASS: $NAME (a missing prerequisite is a SKIP row and a SKIP count, a FAIL under CYRIUS_CHECK_NO_SKIP=1, $NSK skip sites, 0 scored as passes; a shell gate's exit 77 is a SKIP in both the driver and check.sh; the driver's SKIPs reach check.sh's verdict; an empty selection fails)"
 exit 0

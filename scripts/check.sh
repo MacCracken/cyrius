@@ -146,6 +146,8 @@ _CHK_DONE=0
 _CHK_SIGNAL=""
 _CHK_TIMEOUTS=0
 _CHK_SKIPS=0
+_CHK_DRV_SKIPS=0        # of _CHK_SKIPS, the driver's own SKIP rows (its --skip-report)
+_CHK_DRV_SKIPS_F=""
 _CHK_NO_SKIP=0
 # CYRIUS_CHECK_NO_SKIP: "1" = a gate that exits 77 (could not run) is a FAIL; unset, empty or
 # "0" = it is reported and counted as a SKIP. Anything else is REFUSED (exit 2) — `=true` or
@@ -173,6 +175,7 @@ _chk_finish() {
         HUP)  _xrc=129 ;;
     esac
     if [ -n "$_CHK_STAGED_DIR" ]; then rm -rf "$_CHK_STAGED_DIR"; fi
+    if [ -n "$_CHK_DRV_SKIPS_F" ]; then rm -f "$_CHK_DRV_SKIPS_F"; fi
     if [ "$_CHK_STARTED" != "1" ]; then exit "$_xrc"; fi
 
     # Everything THIS run is supposed to have produced a result for (the full registered
@@ -198,7 +201,8 @@ _chk_finish() {
     _res_n=$(printf '%s\n' "$_CHK_RESULTS" | grep -cE '^(PASS|FAIL|MISSING|SKIP) (tests/gates|scripts)/' || true)
     printf '  shell gates: %s of %s produced a result, %s NOT RUN\n' "$_res_n" "$_total" "$_nnot"
     printf '  failures:    %s (the check binary counts as one row here)\n' "$_CHK_FAILS"
-    printf '  skipped:     %s (exit 77 — the gate could not run its check; NOT passes%s)\n' "$_CHK_SKIPS" \
+    printf '  skipped:     %s (%s shell gate(s) exited 77 + %s driver row(s) — could not run their check; NOT passes%s)\n' \
+        "$_CHK_SKIPS" "$((_CHK_SKIPS - _CHK_DRV_SKIPS))" "$_CHK_DRV_SKIPS" \
         "$( [ "$_CHK_NO_SKIP" = 1 ] && echo '' || echo '; CYRIUS_CHECK_NO_SKIP=1 makes them failures' )"
     if [ "$_CHK_TIMEOUTS" != "0" ]; then
         printf '  timeouts:    %s of those failures were a gate killed at its deadline (CYRIUS_CHECK_LONG_TIMEOUT) — see the TIMEOUT lines\n' "$_CHK_TIMEOUTS"
@@ -214,6 +218,7 @@ _chk_finish() {
     if [ "$_CHK_SKIPS" != "0" ]; then
         echo "  SKIPPED — these ran but could not check anything, and are NOT passes:"
         printf '%s\n' "$_CHK_RESULTS" | grep -E '^SKIP ' | sed 's/^SKIP /    /'
+        printf '%s\n' "$_CHK_RESULTS" | grep -E '^DSKIP ' | sed 's/^DSKIP /    (driver row) /'
     fi
     if [ "$_nnot" != "0" ]; then
         echo "  NOT RUN — these did NOT execute and are NOT passes:"
@@ -685,8 +690,26 @@ _chk_stage_home
 # header. The shell gates cover things the binary cannot, and a red doc stamp is no reason to
 # stop looking at them.
 _CHK_STARTED=1
-_chk_run_bg "$CHECK_BIN"
+# ⛔ 6.6.11: the driver's own SKIP rows reach THIS verdict. The driver exits 0 over a SKIP (it
+# is not a failure), so its rc alone recorded `PASS` for a run in which ~30 driver-registered
+# gates could not run, and the summary said ALL GREEN. `--skip-report` has it append each
+# SKIP row to a file; every line is a result here and a SKIP in the count. CHANGELOG [6.6.11]
+if [ -n "$_CHK_STAGED_DIR" ]; then
+    _CHK_DRV_SKIPS_F="$_CHK_STAGED_DIR/.driver-skips"
+    : > "$_CHK_DRV_SKIPS_F"
+else
+    _CHK_DRV_SKIPS_F=$(mktemp "${TMPDIR:-/tmp}/cyrius-check-skips.XXXXXX") && [ -f "$_CHK_DRV_SKIPS_F" ] \
+        || { printf "error: mktemp failed for the driver's skip report (TMPDIR=%s)\n" "${TMPDIR:-/tmp}" >&2; exit 1; }
+fi
+_chk_run_bg "$CHECK_BIN" --skip-report "$_CHK_DRV_SKIPS_F"
 _CHK_DRIVER_RC=$_CHK_RC
+while IFS= read -r _dsk || [ -n "$_dsk" ]; do
+    [ -n "$_dsk" ] || continue
+    _CHK_RESULTS="$_CHK_RESULTS
+DSKIP $_dsk"
+    _CHK_DRV_SKIPS=$((_CHK_DRV_SKIPS + 1))
+done < "$_CHK_DRV_SKIPS_F"
+_CHK_SKIPS=$((_CHK_SKIPS + _CHK_DRV_SKIPS))
 if [ "$_CHK_DRIVER_RC" = "0" ]; then
     _CHK_RESULTS="$_CHK_RESULTS
 PASS $_CHK_DRIVER"
