@@ -1555,7 +1555,6 @@ fn ESTOREREGPARM(S, pidx, disp): i64 {
     return 0;
 }
 fn EMULH(S): i64 { return 0; }
-fn _read_env(name): i64 { return 0; }
 
 # ============================================================================
 # v6.3.2: cross-arch emit stubs. The cyrius-x (cx) bytecode target shares the

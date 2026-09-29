@@ -8,10 +8,10 @@
 # message text. v6.0.8 unifies them here.
 #
 # NOT included from main_cx.cyr — cx/emit.cyr has its own RECFIX
-# (different fixup-table cap, different region) and a _read_env
-# stub returning 0 (no env-var support in the bytecode mode). cx also
-# keeps its OWN _TARGET_* block (with _TARGET_CX=1); the copy below is
-# the shared x86+aarch64 one.
+# (different fixup-table cap, different region). cx also keeps its OWN
+# _TARGET_* block (with _TARGET_CX=1); the copy below is the shared
+# x86+aarch64 one. The env reader is the exception: it lives in env.cyr,
+# which main_cx.cyr includes directly (6.6.10).
 
 # ================================================================
 # Output-target flags (v6.1.4: hoisted here from x86/emit.cyr +
@@ -65,164 +65,8 @@ fn _emit_fmt(S): i64 {
     return 0;
 }
 
-# Static scratch for env value (256 bytes).
-var _env_scratch[256];
-
-# v6.6.6: `_macho_x28()` MOVED to src/common/util.cyr. It is the only way any
-# fork reaches argv on macOS, and util.cyr is the one module all SEVEN drivers
-# include — main_cx.cyr deliberately does NOT include this file (it keeps its own
-# RECFIX + _read_env stub), so a macOS argv reader parked here was unreachable
-# from the cx driver and `cycc_cx --version` had nothing to read. util.cyr is
-# included before this file in every fork that has both, so `_read_env` below
-# still resolves it. CHANGELOG [6.6.6]
-
-# Read an env var by name. Returns &_env_scratch (NUL-terminated
-# value) on hit, 0 on miss. /proc/self/environ is Linux-only; macOS
-# reads the init-stack envp (v6.0.33) and Windows asks kernel32
-# (v6.6.6, below). The SYS_OPEN == 2 shim picks the correct Linux
-# path: x86_64 uses raw `open` (syscall 2), aarch64 native uses
-# `openat(AT_FDCWD, ...)` (-100 first arg).
-#
-# ⛔ v6.6.6 — WINDOWS WAS STILL RETURNING 0 HERE, FOR EVERY NAME. The comment that
-# stood above said the Win lookup was "queued for v5.5.x tail"; the PE reroute it needs
-# (0xF015 GetEnvironmentVariableA) shipped at v6.0.85 and this function was never wired
-# to it, so `cycc.exe` saw NONE of its own knobs — all 20 of them, derived from the
-# `_read_env` call sites reachable from src/main_win.cyr: CYRIUS_STATS, CYRIUS_DCE,
-# CYRIUS_DCE_VERBOSE, CYRIUS_DEBUG_PHASES, CYRIUS_DECODE_AUDIT, CYRIUS_SYMS, CYRIUS_WX,
-# CYRIUS_IR, CYRIUS_MONOMORPH, CYRIUS_ASYNC, CYRIUS_STACK_ARRAYS, CYRIUS_TYPE_CHECK,
-# CYRIUS_FILEID_DUMP, CYRIUS_POISON, CYRIUS_MACHO, CYRIUS_MACHO_ARM, CYRIUS_TARGET_WIN,
-# CYRIUS_TARGET_EFI, CYRIUS_ALLOW_PARENT_INCLUDES, CYRIUS_ALLOW_ABSOLUTE_INCLUDES.
-# ⭐ THE SHAPE IS THE ONE lib/io.cyr's `getenv` CARRIES A NOTE ABOUT: at v6.5.45 the
-# stdlib hit exactly this — "Windows has the reroute but NOTHING IN THE STDLIB CALLED
-# IT". The stdlib half was fixed then and the COMPILER half, one call away in this file,
-# was not, because each was investigated as its own bug rather than as one class. The
-# same gap on macOS was the root of the v5.3.13→v6.0.32 self-host rot.
-fn _read_env(name): i64 {
-    #ifdef CYRIUS_TARGET_LINUX
-    var ebuf[8192];
-    var efd = 0;
-    if (SYS_OPEN == 2) { efd = syscall(SYS_OPEN, "/proc/self/environ", 0, 0); }
-    else { efd = syscall(SYS_OPEN, 0 - 100, "/proc/self/environ", 0, 0); }
-    if (efd < 0) { return 0; }
-    var elen = syscall(SYS_READ, efd, &ebuf, 8191);
-    syscall(SYS_CLOSE, efd);
-    if (elen <= 0) { return 0; }
-    store8(&ebuf + elen, 0);
-    var nlen = 0;
-    while (load8(name + nlen) != 0) { nlen = nlen + 1; }
-    var pos = 0;
-    while (pos < elen) {
-        var end = pos;
-        while (end < elen && load8(&ebuf + end) != 0) { end = end + 1; }
-        if (end - pos > nlen && load8(&ebuf + pos + nlen) == 61) {
-            var matched = 1;
-            var k = 0;
-            while (k < nlen) {
-                if (load8(&ebuf + pos + k) != load8(name + k)) { matched = 0; break; }
-                k = k + 1;
-            }
-            if (matched == 1) {
-                var vstart = pos + nlen + 1;
-                var vlen = end - vstart;
-                if (vlen > 255) { vlen = 255; }
-                var ci = 0;
-                while (ci < vlen) {
-                    store8(&_env_scratch + ci, load8(&ebuf + vstart + ci));
-                    ci = ci + 1;
-                }
-                store8(&_env_scratch + vlen, 0);
-                return &_env_scratch;
-            }
-        }
-        pos = end + 1;
-    }
-    #endif
-    #ifdef CYRIUS_TARGET_MACOS
-    # macOS has no /proc/self/environ. The Mach-O arm64 entry prologue
-    # (main_aarch64.cyr v5.5.17) parked argc/argv in x28; on the Darwin
-    # stack envp immediately follows argv + its NULL terminator, so
-    # envp = argv + (argc+1)*8. Walk the NAME=VALUE entries (the array
-    # is NULL-terminated). Without this, _read_env returned 0 on macOS →
-    # a natively-running cycc never saw CYRIUS_MACHO_ARM → it built every
-    # binary Linux-shaped (no entry prologue, brk heap, no ESYSXLAT) and
-    # could not self-host on Apple Silicon. Root cause of the macOS
-    # self-host rot v5.3.13 → v6.0.32. See CHANGELOG [6.0.33].
-    # v6.0.44: only the arm64 driver parks argv in x28. On x86-macOS there
-    # is no argv parking yet, so _macho_x28() would return a stale-register
-    # garbage value (e.g. 0x23), which the `m_base == 0` guard does NOT
-    # catch → load64(garbage) SIGSEGVs. There's nothing to read on x86
-    # macho, so return 0 directly without touching _macho_x28. Guard on the
-    # TARGET arch (AARCH64), NOT CYRIUS_ARCH_X86 (the x86 cross-compiler
-    # predefines X86 even when building the arm64 cycc). See issue layer 6.
-    #ifdef CYRIUS_ARCH_AARCH64
-    # arm64: x28 base; argc=[base], argv=[base+8] (a char**); envp follows argv+NULL.
-    var m_base = _macho_x28();
-    if (m_base == 0) { return 0; }
-    var m_argc = load64(m_base);
-    var m_argv = load64(m_base + 8);
-    var m_envp = m_argv + (m_argc + 1) * 8;
-    #else
-    # x86-macho (v6.4.59): _macho_x28() returns r15 = the init rsp. The
-    # LC_UNIXTHREAD init stack is INLINE — [rsp]=argc, argv[i] at rsp+8+i*8, then a
-    # NULL, then envp — so envp = r15 + 8 + (argc+1)*8 (single-deref, unlike the
-    # arm64 char** double-deref above). Un-stubs the old `return 0` so native Intel
-    # cycc now honors CYRIUS_MONOMORPH / CYRIUS_SYMS / CYRIUS_DCE /
-    # CYRIUS_ALLOW_PARENT_INCLUDES. Byte-identical self-host: env unset → the walk
-    # below finds nothing → same defaults as the stub.
-    var m_base = _macho_x28();
-    if (m_base == 0) { return 0; }
-    var m_argc = load64(m_base);
-    var m_envp = m_base + 8 + (m_argc + 1) * 8;
-    #endif
-    var m_nlen = 0;
-    while (load8(name + m_nlen) != 0) { m_nlen = m_nlen + 1; }
-    var m_i = 0;
-    var m_e = load64(m_envp);
-    while (m_e != 0) {
-        # m_e -> "NAME=VALUE\0". Match name then '='.
-        if (load8(m_e + m_nlen) == 61) {
-            var m_match = 1;
-            var m_k = 0;
-            while (m_k < m_nlen) {
-                if (load8(m_e + m_k) != load8(name + m_k)) { m_match = 0; break; }
-                m_k = m_k + 1;
-            }
-            if (m_match == 1) {
-                var m_vs = m_e + m_nlen + 1;
-                var m_vl = 0;
-                while (load8(m_vs + m_vl) != 0) { m_vl = m_vl + 1; }
-                if (m_vl > 255) { m_vl = 255; }
-                var m_ci = 0;
-                while (m_ci < m_vl) {
-                    store8(&_env_scratch + m_ci, load8(m_vs + m_ci));
-                    m_ci = m_ci + 1;
-                }
-                store8(&_env_scratch + m_vl, 0);
-                return &_env_scratch;
-            }
-        }
-        m_i = m_i + 1;
-        m_e = load64(m_envp + m_i * 8);
-    }
-    #endif
-    #ifdef CYRIUS_TARGET_WIN
-    # Windows has no /proc and no readable init-stack envp — the environment block is
-    # the loader's, reached through kernel32. syscall(0xF015, name, buf, size) is the
-    # GetEnvironmentVariableA reroute (EGETENV_PE, src/backend/x86/emit.cyr), which
-    # returns the character count written EXCLUDING the NUL, 0 when the name is not
-    # defined, or the count INCLUDING the NUL when the buffer was too small. So 0 is an
-    # honest miss, and a value that does not fit is refused rather than handed back cut
-    # short — the same call shape and the same refusal as lib/io.cyr's `getenv`.
-    # ⚠ This runs during the gvar-init prologue, before alloc_init, which is why it
-    # writes the static _env_scratch and allocates nothing. CHANGELOG [6.6.6]
-    var w_n = syscall(0xF015, name, &_env_scratch, 256);
-    if (w_n <= 0) { return 0; }
-    if (w_n > 255) { return 0; }
-    store8(&_env_scratch + w_n, 0);
-    return &_env_scratch;
-    #endif
-    return 0;
-}
+# _env_scratch + _read_env live in env.cyr (6.6.10), shared with the cx driver.
+include "src/backend/common/env.cyr"
 
 # v6.3.23 (DX-01): shared function-symbol dump — opt-in via the CYRIUS_SYMS env
 # var (value = output path). Writes "<16-hex VA> <name>\n" per emitted function so
@@ -236,7 +80,7 @@ fn _read_env(name): i64 {
 # other arch (aarch64) has no bare open, so mirror _read_env's openat(AT_FDCWD)
 # shim. Flags 0x241 = O_WRONLY|O_CREAT|O_TRUNC, mode 0x1A4 = 0644. Entirely behind
 # the `sym_path != 0` guard → zero effect (byte-identical emitted programs) unless
-# CYRIUS_SYMS is set. cx keeps its own no-op _read_env stub, so this is inert there.
+# CYRIUS_SYMS is set. cx never calls this (it has no symbol dump).
 fn _emit_sym_dump(S, base): i64 {
     var sym_path = _read_env("CYRIUS_SYMS");
     if (sym_path == 0) { return 0; }

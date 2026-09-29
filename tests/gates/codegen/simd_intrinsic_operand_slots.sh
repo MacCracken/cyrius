@@ -603,14 +603,16 @@ fi
 # never matched (44 of 44 cx-compilable corpus files emit identical bytecode with the gates), so
 # this is a latent hazard closed, not a live bug — and that is exactly why it needs a pin.
 #
-# ⛔ THIS LEG IS DELIBERATELY A SOURCE ASSERTION, AND THE OBVIOUS RUNTIME ONE IS VACUOUS.
-# `_read_env` is a STUB on the cx driver (`fn _read_env(name): i64 { return 0; }`,
-# src/backend/cx/emit.cyr) — main_cx.cyr reads NO environment at all. So "compile a cx probe with
-# and without CYRIUS_REGALLOC_PICKER_CAP=0 and require identical .cyx" passes whatever the
-# compiler does, `CYRIUS_FRAMETRIM=0` likewise, and `CYRIUS_REGALLOC_DUMP=1` prints nothing on cx
-# even on a compiler where the picker runs there (measured: 0 `ra: fi=` lines over the entire cx
-# corpus with the PRE-fix compiler). Each of those would be a check that shares its defect with
-# the thing it checks. What is actually observable is the source shape, so that is what is pinned.
+# ⛔ THIS LEG IS DELIBERATELY A SOURCE ASSERTION. When it was written (6.6.5) the obvious runtime
+# one was VACUOUS: `_read_env` was a `return 0` stub on the cx driver, so "compile a cx probe with
+# and without CYRIUS_REGALLOC_PICKER_CAP=0 and require identical .cyx" passed whatever the compiler
+# did, and `CYRIUS_REGALLOC_DUMP=1` printed nothing on cx even on a compiler where the picker ran
+# there (measured: 0 `ra: fi=` lines over the entire cx corpus with the PRE-fix compiler) — a
+# check sharing its defect with the thing it checks. 6.6.10 gave cycc_cx the real reader
+# (src/backend/common/env.cyr; tests/gates/platform/cx_compiler_reads_env.sh), but those three
+# knobs are read in src/main.cyr, which the cx driver does not include, so a runtime leg would
+# still observe nothing.
+# What is observable is the source shape, so that is what stays pinned.
 GF="src/frontend/parse_fn.cyr"
 NBP=$(grep -c 'bp_x86 == 1' "$GF" || true)
 [ "$NBP" -eq 4 ] || fail "axis G: $NBP byte-pattern passes in $GF are gated on \`bp_x86\`, expected 4 (DSE, the integer LASE loop, the SIMD SLASE loop, the NOP-compaction block that also carries _ra_frame_trim) — a pass has lost its cx gate and is scanning cx bytecode again"
