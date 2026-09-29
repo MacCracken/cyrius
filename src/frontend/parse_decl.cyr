@@ -1946,6 +1946,34 @@ fn _skip_gvar_decl(S): i64 {
     return 0;
 }
 
+# 6.6.10 — the untyped-float flag for a global registered here (see _UFV_G, parse_expr.cyr).
+# No code is emitted for the initialiser yet, so its SHAPE decides: after any leading `-` / `(`,
+# a float literal, a float builtin, a call to a `: f64` fn, or a lone f64 / f32 / flagged
+# global. `typed` is the sum of the declaration's (non-negative) annotation channels.
+fn _gv_ufv(S, sti, typed): i64 {
+    if (typed != 0) { return 0; }
+    if (TOKTYP(S, sti + 2) != 4) { return 0; }
+    var ti = sti + 3;
+    while (TOKTYP(S, ti) == 7 || TOKTYP(S, ti) == 10) { ti = ti + 1; }
+    var t = TOKTYP(S, ti);
+    if (t == 61) { return 1; }
+    if (_NEG_INTRIN_KIND(t) != 0) { return 1; }
+    if (t != 2) { return 0; }
+    if (TOKTYP(S, ti + 1) == 10) {
+        var fi = FINDFN(S, TOKVAL(S, ti));
+        if (fi < 0) { return 0; }
+        if (GFRS(S, fi) == 0 - 9) { return 1; }
+        return 0;
+    }
+    var vi = FINDVAR(S, TOKVAL(S, ti));
+    if (vi < 0) { return 0; }
+    var gt = GVTYPE(S, vi);
+    if (gt == F64_TYID) { return 1; }
+    if (gt == F32_TYID) { return 1; }
+    if (_gfi_base == 0) { return 0; }
+    return load8(_gfi_base + vi);
+}
+
 fn PARSE_GVAR_REG(S): i64 {
     var sti = GTI(S);
     STI(S, GTI(S) + 1);  # consume VAR
@@ -2189,6 +2217,7 @@ fn PARSE_GVAR_REG(S): i64 {
     # destructure form stamps per name — each carries its own _GVAR_VIS (v6.6.4).
     var gvi = _gv_fold(S, vcnt, sti);   # 6.6.6: a redeclaration reuses the global's slot
     _GVAR_VIS(S, gvi, sti);
+    SGFI(S, gvi, _gv_ufv(S, sti, psc + ann_sid + ann_scalar + ann_float));   # 6.6.10
     if (gvi == vcnt) {
         SVCNT(S, vcnt + 1);
         # A shadow that keeps its own slot (over an enum constant, or over a global with
@@ -3623,6 +3652,11 @@ fn PARSE_VAR(S): i64 {
     var scv_prev = _sc_arm(S);
     PCMPE(S);
     _sc_want = scv_prev;
+    # 6.6.10: an UNTYPED declaration records whether its initialiser was a float (_UFV_*).
+    var ufv = 0;
+    if (pscale == 0) { if (scalar_type == 0) { if (lfloat == 0) { if (slice_elt_w == 0) { if (_ti_inferred_sid == 0) {
+                        ufv = _UFV_IS_FLOAT(S);
+                    } } } } }
     # Type check: warn if pointer/scalar mismatch
     var expr_ps = GPSC(S);
     if (pscale > 0) {
@@ -3781,6 +3815,7 @@ fn PARSE_VAR(S): i64 {
             # the sentinel is invisible to it. The load reads it to sign-extend (movsx).
             if (scalar_signed == 1) { if (slice_elt_w == 0) { SSLICE_W(S, li, 0 - scalar_type); } }
             SFLC(S, li + 1);
+            SLFI(S, li, ufv);   # 6.6.10: set on EVERY declaration, after SFLC cleared it (see _UFV_L)
         }
     } else {
         _sc_global_receive(S, pscale, scv_start);   # 6.6.6: no frame at top level — refused by name
@@ -3821,6 +3856,7 @@ fn PARSE_VAR(S): i64 {
             EVSTORE(S, vcnt);
         }
         SLVAR(S, vcnt);
+        SGFI(S, vcnt, ufv);   # 6.6.10: see _UFV_G
         _GVAR_VIS(S, vcnt, GTI(S));   # v6.6.4: stamp visibility — a global registered on the PARSE_PROG path (any `var` after the FIRST top-level statement) skipped PARSE_GVAR_REG entirely and was never private
         SVCNT(S, vcnt + 1);
     }

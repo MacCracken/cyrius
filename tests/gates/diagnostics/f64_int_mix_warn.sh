@@ -23,8 +23,14 @@
 #   axis 6  (6.6.10) a float BUILTIN's result is an f64 operand (option D): `f64_add(u, v) * 2.0`
 #           and `2.0 * f64_add(u, v)` are clean, `2 * f64_add(u, u)` is kind 2 (once, also
 #           nested under an outer `+`), `f64_add(u, u) * 3` kind 1. Red on 6.6.9.
+#   axis 7  (6.6.10) kind 3: unary minus on an UNTYPED variable initialised from a float —
+#           a local, a copy of one, ±0, a negative literal, a float builtin, a global, a
+#           parenthesised one — warns once each; an integer, a typed f64, a parameter do not,
+#           and a closure's own declarations leave the enclosing fn's flags as they were.
+#   axis 9  CYRIUS_TYPE_CHECK=0 silences kind 3.
 # Mutation-proven: with the four `_INT_F64_MIX` calls removed, axis 1 reads 0 of 4 and fails.
-# (6.6.10) with PARSE_INTRIN's `_FBR_MARK` call removed axis 6 fails.
+# (6.6.10) with PARSE_INTRIN's `_FBR_MARK` call removed axis 6 fails; with the unary-minus
+# `_FLT_TYPE_WARN(S, 3)` removed, or _cl_restore_locals' flag copy removed, axis 7 fails.
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -121,6 +127,7 @@ build "$W/a5b.cyr"
 n=$(count "$K1"); [ "$n" = 1 ] || bad "axis 5: kind-1 warning count $n on 'p.x + 1' (an f64 field left), want 1"
 
 # --- axis 6 (6.6.10): a float builtin's RESULT is an f64 operand (option D) ---
+K3="unary minus on an untyped variable holding a float"
 cat > "$W/a6.cyr" <<'EOF'
 include "lib/syscalls.cyr"
 fn main(): i64 {
@@ -147,5 +154,54 @@ printf 'include "lib/syscalls.cyr"\nfn main(): i64 {\n    var u = 4.0;\n    var 
 build "$W/a6c.cyr"
 n=$(count "$K1"); [ "$n" = 1 ] || bad "axis 6: kind-1 count $n on 'f64_add(u, u) * 3' (a builtin result left, an int right), want 1"
 
+# --- axis 7 (6.6.10): kind 3, unary minus on an untyped float-initialised variable ---
+cat > "$W/a7.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+var G = 1.5;
+var GT: f64 = 1.5;
+var GI = 3;
+fn neg(a): i64 { return -a; }
+# The closure's own slots start again at 0 (its param clears slot 0's flag as it is handed
+# out); the enclosing fn's flags must come back with the rest of its local table.
+fn clos(): i64 {
+    var c = 1.5;
+    var n = 3;
+    var f = |x| { var w = 7; return x + w; };
+    var a = -n;
+    var b = -c;
+    return a + b + fncall1(f, 1);
+}
+fn main(): i64 {
+    var c = 1.5;
+    var r1 = -c;
+    var e = c;
+    var r2 = -e;
+    var z = 0.0;
+    var r3 = -z;
+    var n = -2.5;
+    var r4 = -n;
+    var x = f64_add(c, c);
+    var r5 = -x;
+    var r6 = -G;
+    var r7 = -(c);
+    var i = 5;
+    var q: f64 = 2.0;
+    var k1 = -i;
+    var k2 = -GT;
+    var k3 = -GI;
+    var k4 = -q;
+    return r1 + r2 + r3 + r4 + r5 + r6 + r7 + k1 + k3 + neg(1) + clos();
+}
+var r = main();
+syscall(60, r & 255);
+EOF
+build "$W/a7.cyr"
+n=$(count "$K3"); [ "$n" = 8 ] || { bad "axis 7: kind-3 warning count $n, want 8 (-c -e -z -n -x -G -(c), and clos()'s -c across a closure; not -i -GT -GI -q, clos()'s -n or a parameter)"; sed -n 1,12p "$W/e"; }
+
+# --- axis 9: CYRIUS_TYPE_CHECK=0 silences kind 3 ---
+CYRIUS_TYPE_CHECK=0 "$CC" < "$W/a7.cyr" > "$W/o" 2> "$W/e" || true
+n=$(count "$K3"); [ "$n" = 0 ] || bad "axis 9: CYRIUS_TYPE_CHECK=0 still printed $n kind-3 warning(s)"
+
 [ "$fail" = 0 ] || exit 1
-echo "PASS: f64_int_mix_warn (4 int-left ops warn; no false positives; kind 1 intact; TYPE_CHECK=0 silences; f64 fields and builtin results typed)"
+echo "PASS: f64_int_mix_warn (4 int-left ops warn; no false positives; kind 1 intact; TYPE_CHECK=0 silences; f64 fields and builtin results typed; kind 3)"

@@ -82,9 +82,11 @@ fn _STR_FROM_NOFF(S): i64 {
 # enclosing `var c0` shadowed by a later closure's `|x|` param became "undefined".
 # Snapshot the enclosing range before the closure and restore it after, so the
 # enclosing fn's locals survive. (n is the enclosing fn's GFLC at the closure site.)
+# 6.6.10: a fifth segment, n BYTES at buf + n*32, carries the untyped-float flags (_lfi_base),
+# so a closure's locals cannot leave the enclosing fn's `-c` warning wrong. CHANGELOG [6.6.10]
 fn _cl_save_locals(S, n): i64 {
     if (n <= 0) { return 0; }
-    var buf = alloc(n * 32);
+    var buf = alloc(n * 33);
     var i = 0;
     while (i < n) {
         S64(buf + i * 8,          L64(S + 0x5D9D000 + i * 8));
@@ -93,6 +95,7 @@ fn _cl_save_locals(S, n): i64 {
         S64(buf + n * 24 + i * 8, L64(S + 0x5DFD000 + i * 8));
         i = i + 1;
     }
+    _cl_lfi_copy(buf + n * 32, _lfi_base, n);
     return buf;
 }
 fn _cl_restore_locals(S, buf, n): i64 {
@@ -105,6 +108,13 @@ fn _cl_restore_locals(S, buf, n): i64 {
         S64(S + 0x5DFD000 + i * 8, L64(buf + n * 24 + i * 8));
         i = i + 1;
     }
+    _cl_lfi_copy(_lfi_base, buf + n * 32, n);
+    return 0;
+}
+fn _cl_lfi_copy(dst, src, n): i64 {
+    if (_lfi_base == 0) { return 0; }
+    var i = 0;
+    while (i < n) { store8(dst + i, load8(src + i)); i = i + 1; }
     return 0;
 }
 
@@ -898,7 +908,8 @@ fn _NEG_INTRIN_KIND(t): i64 {
 # change meaning. So a builtin-vs-builtin `<` stays an INTEGER compare (wrong for negative
 # values); the guide says so. A leaked argument estype that is not the builtin's own float
 # type is dropped (a struct id there dispatched an operator overload; an f32 one an f32 op).
-# CHANGELOG [6.6.10]
+# Kind 3 is the untyped-float-variable load marker (_UFV_*), which types nothing: it only
+# lets unary minus warn. CHANGELOG [6.6.10]
 var _fbr_k = 0;
 var _fbr_cp = 0;
 var _fbr_ti = 0;
@@ -929,6 +940,38 @@ fn _FBR_ST(S): i64 {
 # The integer arms' right operand: parse it, then capture the flag BEFORE the op is emitted.
 fn _RHS_F(S): i64 { PARSE_FACTOR(S); _fbr_rhs = _FBR_KIND(S); return 0; }
 fn _RHS_T(S): i64 { PARSE_TERM(S); _fbr_rhs = _FBR_KIND(S); return 0; }
+
+# ⛔ 6.6.10 — UNARY MINUS ON AN UNTYPED FLOAT VARIABLE. `var c = 1.5; -c` is an INTEGER
+# negation of 1.5's bits (-3.0; `-z` of 0.0 is +0, `-n` of -2.5 is 1.75), silent, because an
+# untyped var is i64-boxed (ADR-002) and nothing recorded what initialised it. WARN, the
+# roadmap's agreed posture: inferring f64 would change what existing code computes.
+# One byte per slot: `_lfi_base` for locals (cleared as SFLC hands a slot out, so a param or a
+# later fn never inherits a stale flag; saved/restored with the closure local snapshot) and
+# `_gfi_base` for globals (lazily alloc'd at the var table's hard cap — the `_var_dead`
+# precedent; never on the cybs-fragile `_grow_g*` chain). Set on EVERY declaration: 1 when
+# the initialiser was a float (a float literal, an f64/f32 value, a float builtin, or another
+# such variable), else 0. A load of a flagged variable marks kind 3. CHANGELOG [6.6.10]
+fn _UFV_L(S, li): i64 {
+    if (_lfi_base == 0) { return 0; }
+    if (li < 0) { return 0; }
+    if (li >= 16384) { return 0; }
+    if (load8(_lfi_base + li) == 1) { _FBR_MARK(S, 3); }
+    return 0;
+}
+fn _UFV_G(S, vi): i64 {
+    if (_gfi_base == 0) { return 0; }
+    if (vi < 0) { return 0; }
+    if (load8(_gfi_base + vi) == 1) { _FBR_MARK(S, 3); }
+    return 0;
+}
+# 1 when the expression just parsed is a float (the local-declaration test).
+fn _UFV_IS_FLOAT(S): i64 {
+    var t = GESTYPE(S);
+    if (t == F64_TYID) { return 1; }
+    if (t == F32_TYID) { return 1; }
+    if (_FBR_KIND(S) != 0) { return 1; }
+    return 0;
+}
 
 fn _PARSE_FACTOR_IMPL(S): i64 {
     var typ = PEEKT(S);
@@ -964,13 +1007,15 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         # its pushed 0 (EF64_NEG is exact for every value, -0.0 and NaN included). CHANGELOG [6.6.8]
         # A float-returning BUILTIN is recognised through the result flag (_FBR_ST), which also
         # reaches one inside parentheses (`-(f64_sqrt(v))` negated the integer until 6.6.10); the
-        # negation re-marks it, so `-f64_sqrt(u) * 2.0` is still a float multiply. CHANGELOG [6.6.10]
+        # negation re-marks it, so `-f64_sqrt(u) * 2.0` is still a float multiply. An untyped
+        # variable that holds a float (kind 3) is negated as an integer and WARNS. CHANGELOG [6.6.10]
         EMOVI(S, 0);
         EPUSHR(S);
         PARSE_FACTOR(S);
         var _ngt = _FBR_ST(S);
         if (_ngt == F64_TYID) { EPOPC(S); EF64_NEG(S); _FBR_MARK(S, 1); _cfo = 0; return 0; }
         if (_ngt == F32_TYID) { _NEG_F32(S); _FBR_MARK(S, 2); _cfo = 0; return 0; }
+        if (_FBR_KIND(S) == 3) { _FLT_TYPE_WARN(S, 3); }
         EMOVCA(S);
         EPOPR(S);
         ESUBR(S);
@@ -1291,6 +1336,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                             if (AGG_NSLOTS(S, lt) > 1) { SESVAR(S, 0 - 2 - li); }
                         } } }
                 EFLLOAD(S, li);
+                if (lt == 0) { _UFV_L(S, li); }   # 6.6.10: an untyped float variable (kind 3)
                 return 0;
             }
         }
@@ -1377,6 +1423,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             }
         }
         EVLOAD(S, idx);
+        if (vt == 0) { _UFV_G(S, idx); }   # 6.6.10: an untyped float variable (kind 3)
         return 0;
     }
     if (typ == 10) {
@@ -4429,7 +4476,8 @@ fn _PEXPR_IMPL(S): i64 {
 # wired in the _PLOGIC_ATOM compare arm WITH literal-0 suppression — `if (x > 0)` on an f64
 # does NOT warn (the int literal 0's bits ARE 0.0, so the compare is exact), but `if (x > 5)`
 # / `if (x > y)` DO (5's int bits ≠ 5.0's f64 bits — a denormal compare). stderr (fd 2).
-# kind 2 (6.6.8) is the int-left mirror of kind 1 (see _INT_F64_MIX).
+# kind 2 (6.6.8) is the int-left mirror of kind 1 (see _INT_F64_MIX); kind 3 (6.6.10) is
+# unary minus on an untyped float variable (_UFV_L).
 fn _FLT_TYPE_WARN(S, kind): i64 {
     if (_TYPE_CHECK_ENABLED() != 1) { return 0; }
     syscall(SYS_WRITE, 2, "warning:", 8);
@@ -4438,6 +4486,8 @@ fn _FLT_TYPE_WARN(S, kind): i64 {
         syscall(SYS_WRITE, 2, ": comparison mixes f64 and integer operands\n", 44);
     } elif (kind == 2) {
         syscall(SYS_WRITE, 2, ": integer arithmetic with an f64 right operand\n", 47);
+    } elif (kind == 3) {
+        syscall(SYS_WRITE, 2, ": unary minus on an untyped variable holding a float is integer negation (declare it f64)\n", 90);
     } else {
         syscall(SYS_WRITE, 2, ": f64 arithmetic with a non-f64 right operand\n", 46);
     }

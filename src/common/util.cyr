@@ -769,6 +769,33 @@ fn _FINDFN_CSTR(S, str_ptr, str_len): i64 {
 fn GINFN(S): i64 { return L64(S + 0x18DA08); }
 fn SINFN(S, v): i64 { S64(S + 0x18DA08, v); return 0; }
 fn GFLC(S): i64 { return L64(S + 0x18DA10); }
+# 6.6.10 — "this untyped variable was initialised from a float", one byte per LOCAL slot
+# (`_lfi_base`, 16384 = SFLC's cap) and per GLOBAL (`_gfi_base`, the var table's hard cap).
+# Both alloc()'d lazily on the first flagged declaration: no heap-LAYOUT change, and never on
+# the `_grow_g*` chain. A slot SFLC hands out is cleared here, so a parameter, a hidden temp or
+# the next fn's local never inherits a flag. Read by unary minus to warn; see _UFV_L
+# (src/frontend/parse_expr.cyr). CHANGELOG [6.6.10]
+var _lfi_base = 0;
+var _gfi_base = 0;
+fn _lfi_clear(S, v): i64 {
+    var i = GFLC(S);
+    while (i < v) { store8(_lfi_base + i, 0); i = i + 1; }
+    return 0;
+}
+fn SLFI(S, li, f): i64 {
+    if (li < 0) { return 0; }
+    if (li >= 16384) { return 0; }
+    if (_lfi_base == 0) { if (f == 0) { return 0; } _lfi_base = alloc(16384); }
+    store8(_lfi_base + li, f);
+    return 0;
+}
+fn SGFI(S, vi, f): i64 {
+    if (vi < 0) { return 0; }
+    if (vi >= 1048576) { return 0; }
+    if (_gfi_base == 0) { if (f == 0) { return 0; } _gfi_base = alloc(1048576); }
+    store8(_gfi_base + vi, f);
+    return 0;
+}
 # CVE-24 (v6.1.40): cap the per-fn stack-slot count. SFLC counts FRAME SLOTS
 # (a `stack var buf[N]` registers N/8 fillers), and the four slot-indexed local
 # tables — fn_local_names/local_depths/local_types/local_slice_widths, relocated
@@ -779,6 +806,7 @@ fn SFLC(S, v): i64 {
         syscall(SYS_WRITE, 2, "error: too many stack slots in one function (max 16384)\n", 56);
         syscall(SYS_EXIT, 1);
     }
+    if (_lfi_base != 0) { _lfi_clear(S, v); }
     S64(S + 0x18DA10, v);
     return 0;
 }
