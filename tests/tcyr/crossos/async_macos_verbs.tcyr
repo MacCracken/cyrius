@@ -1,0 +1,374 @@
+# async_macos_verbs.tcyr — CROSS-HOST: the macOS kqueue reactor's timer, deadline and process
+# verbs do what lib/async.cyr's epoll backend promises. Runs on ecb (macOS arm64) and ach
+# (Intel Mac) through the release gate's cross-OS leg. On every other target each group prints
+# a named SKIP: the Linux arm has its own tests (async_timeout_result.tcyr), and the Windows and
+# agnos peers are different backends.
+#
+# ⛔ WHY (6.6.10). v6.5.27 cloned lib/async_macos.cyr from the agnos peer, stubs and rationale
+# included, and then gave it a real kqueue reactor for fd parking only. So on a kernel with fork,
+# EVFILT_TIMER and EVFILT_PROC:
+#   async_timeout        ran the body INLINE and ignored `ms`       (a 3 s body under a 200 ms
+#                                                                     deadline returned its value)
+#   async_with_timeout   joined with NO deadline and returned 1     (a handle parked on an fd
+#                                                                     that never fires: for ever)
+#   async_interval       returned 0 and never ticked
+#   async_spawn_process  returned 0 and spawned nothing
+#   async_run_process    returned -1 and spawned nothing
+# Each group below FAILS (or, for async_with_timeout, hangs) against that file. Measured on ecb
+# and ach, one mutation at a time: each verb's 6.6.9 body restored; the exact-8-byte read; the
+# retire's EVFILT_READ delete; the owned-timer delete; the (ident, filter) wake; the child's
+# setsid; the refused-alloc checks — every one reddens or hangs this file.
+#
+# ⚠ The tree-kill row depends on lib/process.cyr's `proc_kill_tree` (6.6.10 bite 11) ending the
+# child's PROCESS GROUP on macOS; async_run_process makes the child a group leader for it.
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/chrono.cyr"
+include "lib/assert.cyr"
+include "lib/async.cyr"
+
+#ifdef CYRIUS_TARGET_MACOS
+# ---- async_timeout bodies ----
+fn _body_ok(arg): i64 { return arg * 2; }
+fn _body_slow(arg): i64 { sleep_ms(3000); return 7; }
+fn _body_exit(arg): i64 { sys_exit(3); return 0; }
+
+# ---- async_with_timeout tasks ----
+var _pp[2];              # pipe P: never written while a task waits on it
+var _pq[2];              # pipe Q: written by a sibling task
+var _pw_step = 0;
+var _qw_step = 0;
+fn _park_on_p(rt): i64 {
+    if (_pw_step == 0) {
+        _pw_step = 1;
+        if (async_wait_fd(rt, load32(&_pp)) < 0) { return 0 - 1; }
+        return 0;
+    }
+    return 99;           # woken: P became readable (it must not, inside the deadline)
+}
+fn _park_on_q(rt): i64 {
+    if (_qw_step == 0) {
+        _qw_step = 1;
+        if (async_wait_fd(rt, load32(&_pq)) < 0) { return 0 - 1; }
+        return 0;
+    }
+    var b[8];
+    sys_read(load32(&_pq), &b, 1);
+    return 11;
+}
+fn _write_q(arg): i64 { sys_write(load32(&_pq + 4), "q", 1); return 0; }
+fn _ret5(arg): i64 { return 5; }
+
+# Poll `kq` without blocking: how many events are pending right now.
+fn _kq_pending(kq): i64 {
+    var ev[256];
+    var ts[16];
+    store64(&ts, 0);
+    store64(&ts + 8, 0);
+    return sys_kevent(kq, 0, 0, &ev, 8, &ts);
+}
+
+# ---- (ident, filter) wake ----
+var _sp[2];              # socketpair: s0 is writable at once and never readable here
+var _sr_step = 0;
+var _sw_step = 0;
+fn _sp_reader(rt): i64 {
+    if (_sr_step == 0) {
+        _sr_step = 1;
+        if (async_wait_fd(rt, load32(&_sp)) < 0) { return 0 - 1; }
+        return 0;
+    }
+    return 21;
+}
+fn _sp_writer(rt): i64 {
+    if (_sw_step == 0) {
+        _sw_step = 1;
+        if (async_wait_writable(rt, load32(&_sp)) < 0) { return 0 - 1; }
+        return 0;
+    }
+    return 22;
+}
+
+# ---- async_interval ----
+var _ticks = 0;
+var _tok = 0;
+fn _tick(arg): i64 {
+    _ticks = _ticks + 1;
+    if (_ticks >= 3) { store64(_tok, 1); }
+    return 0;
+}
+
+# ---- processes ----
+var _envp: i64[1];
+var _av: i64[4];
+fn _argv3(a, b, c): i64 {
+    store64(&_av, a);
+    store64(&_av + 8, b);
+    store64(&_av + 16, c);
+    store64(&_av + 24, 0);
+    return &_av;
+}
+# A second argv for the concurrent-spawn group (the two children must not share one array
+# while the first is still to be forked).
+var _av2: i64[4];
+fn _argv3b(a, b, c): i64 {
+    store64(&_av2, a);
+    store64(&_av2 + 8, b);
+    store64(&_av2 + 16, c);
+    store64(&_av2 + 24, 0);
+    return &_av2;
+}
+var _counter_ran = 0;
+fn _counter(arg): i64 { _counter_ran = 1; return 0; }
+
+fn _read_pid(path): i64 {
+    var b[32];
+    var n = file_read_all(path, &b, 31);
+    if (n <= 0) { return 0; }
+    var v = 0;
+    var i = 0;
+    while (i < n) {
+        var c = load8(&b + i);
+        if (c >= 48 && c <= 57) { v = v * 10 + c - 48; }
+        i = i + 1;
+    }
+    return v;
+}
+#endif
+
+fn main(): i64 {
+    alloc_init();
+    #ifdef CYRIUS_TARGET_MACOS
+    store64(&_envp, 0);
+    #endif
+
+    test_group("async_timeout: fork + pipe + a bounded kevent wait");
+    #ifndef CYRIUS_TARGET_MACOS
+    println("    SKIP: the macOS kqueue backend (lib/async_macos.cyr) only - not this target");
+    #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    assert_eq(async_timeout(&_body_ok, 21, 5000), 42, "a body that returns in time: its result");
+    var t0 = clock_now_ms();
+    var rs = async_timeout(&_body_slow, 0, 200);
+    var el = clock_now_ms() - t0;
+    assert_eq(rs, 0 - 1, "a 3 s body under a 200 ms deadline: -1 (the old inline run returned 7)");
+    assert_lt(el, 2500, "...and the caller got control back at the deadline, not after the body");
+    assert_eq(async_timeout(&_body_ok, 21, 5000), 42, "a fresh call after a timeout still works");
+    assert_eq(async_timeout(&_body_exit, 0, 5000), 0 - 1,
+      "a body that exits before writing: -1, never the previous call's 42 (exact 8-byte read)");
+    assert_eq(async_timeout(&_body_ok, 5, 0 - 1), 10, "ms < 0 waits without limit");
+    #endif
+
+    test_group("async_with_timeout: an EVFILT_TIMER deadline sentinel in the reactor");
+    #ifndef CYRIUS_TARGET_MACOS
+    println("    SKIP: the macOS kqueue backend (lib/async_macos.cyr) only - not this target");
+    #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    assert_eq(sys_pipe(&_pp), 0, "pipe P created");
+    assert_eq(sys_pipe(&_pq), 0, "pipe Q created");
+    var rt = async_new();
+    assert(rt != 0, "runtime created");
+    _pw_step = 0;
+    var hp = async_spawn(rt, &_park_on_p, rt);
+    t0 = clock_now_ms();
+    var w1 = async_with_timeout(rt, hp, 200);
+    el = clock_now_ms() - t0;
+    assert_eq(w1, 0, "a handle parked on an fd that never fires: 0 at the deadline (was: for ever)");
+    assert_lt(el, 3000, "...within the deadline's order, not the test's timeout");
+    assert_eq(load64(hp + 16), 2, "the loser is retired (TASK_DONE) so it never runs again");
+    sys_write(load32(&_pp + 4), "p", 1);
+    assert_eq(_kq_pending(load64(rt)), 0,
+      "its EVFILT_READ was deleted: P turning readable queues nothing (a leftover spins the reactor)");
+    var hr = async_spawn(rt, &_ret5, 0);
+    assert_eq(async_with_timeout(rt, hr, 1000), 1, "a task that completes in time: 1");
+    assert_eq(load64(hr + 40), 5, "...and its result is in the handle");
+    _qw_step = 0;
+    var hq = async_spawn(rt, &_park_on_q, rt);
+    async_spawn(rt, &_write_q, 0);
+    assert_eq(async_with_timeout(rt, hq, 150), 1, "a parked task woken by a sibling in time: 1");
+    assert_eq(load64(hq + 40), 11, "...with its result");
+    sleep_ms(400);
+    assert_eq(_kq_pending(load64(rt)), 0,
+      "the winner's sentinel timer was deleted, not left to fire after the race");
+    var hl = async_spawn(rt, &_ret5, 0);
+    async_run(rt);
+    assert_eq(load64(hl + 16), 2, "the runtime still runs a task to completion afterwards");
+    assert_eq(async_with_timeout(rt, 0, 100), 0, "a null handle: 0");
+    sys_close(load32(&_pp)); sys_close(load32(&_pp + 4));
+    sys_close(load32(&_pq)); sys_close(load32(&_pq + 4));
+    #endif
+
+    test_group("the reactor wakes a task by (ident, filter), not by ident alone");
+    #ifndef CYRIUS_TARGET_MACOS
+    println("    SKIP: the macOS kqueue backend (lib/async_macos.cyr) only - not this target");
+    #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    if (sys_socketpair(1, 1, 0, &_sp) == 0) {          # AF_UNIX, SOCK_STREAM
+        var rtf = async_new();
+        _sr_step = 0;
+        _sw_step = 0;
+        var hsr = async_spawn(rtf, &_sp_reader, rtf);
+        var hsw = async_spawn(rtf, &_sp_writer, rtf);
+        assert_eq(async_with_timeout(rtf, hsw, 2000), 1, "the WRITE waiter on s0 woke (s0 is writable)");
+        assert_eq(load64(hsr + 16), 1,
+          "the READ waiter on the SAME fd is still parked: write readiness is not read readiness");
+        sys_close(load32(&_sp)); sys_close(load32(&_sp + 4));
+    } else {
+        assert(0, "socketpair created");
+    }
+    # Why _async_process_task reaps a child it cannot watch: xnu refuses EVFILT_PROC on a
+    # ZOMBIE (ESRCH) and queues nothing, so a child that exits before its registration would
+    # otherwise be parked on for ever.
+    var kqz = sys_kqueue();
+    var zp = sys_fork();
+    if (zp == 0) { sys_exit(4); }
+    sleep_ms(200);
+    var zrc = _async_kev_change(kqz, zp, _KEVF_PROC, _EV_ADD | _EV_ONESHOT, _NOTE_EXIT, 0);
+    assert_eq(zrc, 0 - 3, "EVFILT_PROC on an exited, unreaped child: ESRCH");
+    assert_eq(_kq_pending(kqz), 0, "...and no event is queued for it");
+    assert_eq(_async_reap_code(zp), 4, "the direct reap still yields its exit code");
+    sys_close(kqz);
+    #endif
+
+    test_group("async_interval: a periodic EVFILT_TIMER");
+    #ifndef CYRIUS_TARGET_MACOS
+    println("    SKIP: the macOS kqueue backend (lib/async_macos.cyr) only - not this target");
+    #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    var rti = async_new();
+    _ticks = 0;
+    _tok = cancel_token_new();
+    assert_eq(async_interval(rti, &_tick, 0, 0, _tok), 0, "ms <= 0: no period, no handle");
+    t0 = clock_now_ms();
+    var hi = async_interval(rti, &_tick, 0, 40, _tok);
+    assert(hi != 0, "a 40 ms interval is scheduled (was: 0, unscheduled)");
+    async_run(rti);
+    el = clock_now_ms() - t0;
+    assert_eq(_ticks, 3, "it ticked until the callback signalled the token, then stopped");
+    assert_gte(el, 100, "three 40 ms ticks took at least ~120 ms (it waited on the timer)");
+    assert_lt(el, 3000, "...and ended when cancelled");
+    #endif
+
+    test_group("async_spawn_process: fork + exec, EVFILT_PROC/NOTE_EXIT");
+    #ifndef CYRIUS_TARGET_MACOS
+    println("    SKIP: the macOS kqueue backend (lib/async_macos.cyr) only - not this target");
+    #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    var rtp = async_new();
+    var h7 = async_spawn_process(rtp, "/bin/sh", _argv3("/bin/sh", "-c", "exit 7"), &_envp);
+    assert(h7 != 0, "a handle (was: 0, nothing spawned)");
+    assert_eq(task_join(rtp, h7), 7, "task_join yields the child's exit code");
+    var hn = async_spawn_process(rtp, "/nonexistent/cyrius_amv", _argv3("x", 0, 0), &_envp);
+    assert_eq(task_join(rtp, hn), 127, "an exec that fails: 127");
+    t0 = clock_now_ms();
+    _counter_ran = 0;
+    var ha = async_spawn_process(rtp, "/bin/sh", _argv3("/bin/sh", "-c", "sleep 0.3; exit 3"), &_envp);
+    async_spawn(rtp, &_counter, 0);
+    var ra = task_join(rtp, ha);
+    var hb = async_spawn_process(rtp, "/bin/sh", _argv3b("/bin/sh", "-c", "exit 4"), &_envp);
+    var rb = task_join(rtp, hb);
+    el = clock_now_ms() - t0;
+    assert_eq(ra, 3, "a child that sleeps first: its exit code, once it exits");
+    assert_eq(rb, 4, "a second child on the same runtime");
+    assert_eq(_counter_ran, 1, "a sibling task ran while the child was running");
+    assert_lt(el, 5000, "...no stall");
+    #endif
+
+    test_group("async_run_process: spawn, wait, deadline");
+    #ifndef CYRIUS_TARGET_MACOS
+    println("    SKIP: the macOS kqueue backend (lib/async_macos.cyr) only - not this target");
+    #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    var rtr = async_new();
+    assert_eq(async_run_process(rtr, "/bin/sh", _argv3("/bin/sh", "-c", "exit 5"), &_envp, 0), 5,
+      "no deadline: the exit code (was: -1)");
+    assert_eq(async_run_process(rtr, "/bin/sh", _argv3("/bin/sh", "-c", "exit 6"), &_envp, 5000), 6,
+      "a deadline that does not fire: the exit code");
+    t0 = clock_now_ms();
+    var rk = async_run_process(rtr, "/bin/sleep", _argv3("/bin/sleep", "30", 0), &_envp, 300);
+    el = clock_now_ms() - t0;
+    assert_eq(rk, 0 - 2, "a child still running at the deadline: -2");
+    assert_lt(el, 4000, "...ended at the deadline (SIGTERM honoured), not waited for");
+    #endif
+
+    test_group("async_run_process: the deadline ends the whole tree");
+    #ifndef CYRIUS_TARGET_MACOS
+    println("    SKIP: the macOS kqueue backend (lib/async_macos.cyr) only - not this target");
+    #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    var bgp = test_scratch("cyrius_amv_bg");
+    sys_unlink(bgp);
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "sleep 30 & echo $! > ");
+    str_builder_add_cstr(sb, bgp);
+    str_builder_add_cstr(sb, "; wait");
+    var cmd = str_data(str_builder_build(sb));
+    var rtg = async_new();
+    var rg = async_run_process(rtg, "/bin/sh", _argv3("/bin/sh", "-c", cmd), &_envp, 500);
+    assert_eq(rg, 0 - 2, "the shell hit the deadline: -2");
+    var bg = _read_pid(bgp);
+    assert(bg > 0, "the shell's background child was recorded");
+    var gone = 0;
+    var k = 0;
+    while (k < 150 && gone == 0) {
+        if (sys_kill(bg, 0) != 0) { gone = 1; }
+        else { sleep_ms(20); }
+        k = k + 1;
+    }
+    assert_eq(gone, 1, "the shell's own child was ended too (its process group)");
+    if (gone == 0) { if (bg > 0) { sys_kill(bg, 9); } }
+    sys_unlink(bgp);
+    #endif
+
+    test_group("a refused allocation is reported, never stored through");
+    #ifndef CYRIUS_TARGET_MACOS
+    println("    SKIP: the macOS kqueue backend (lib/async_macos.cyr) only - not this target");
+    #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    var fa1 = fail_after_n_allocs(1);                  # the runtime, then nothing
+    var rtx = async_new_in(fa1);
+    assert(rtx != 0, "a runtime from a one-alloc allocator");
+    var xb[8];
+    assert_eq(async_recv(rtx, 0, &xb, 1), 0, "async_recv: no handle (was: a store through 0)");
+    assert_eq(async_send(rtx, 1, &xb, 1), 0, "async_send: no handle (was: a store through 0)");
+    assert_eq(async_interval(rtx, &_tick, 0, 40, 0), 0, "async_interval: no handle");
+    assert_eq(async_spawn_process(rtx, "/bin/sh", _argv3("/bin/sh", "-c", "exit 0"), &_envp), 0,
+      "async_spawn_process: no handle");
+    assert_eq(async_run_process(rtx, "/bin/sh", _argv3("/bin/sh", "-c", "exit 0"), &_envp, 100),
+      0 - 1, "async_run_process: -1");
+    var fa2 = fail_after_n_allocs(2);                  # the runtime and one task
+    var rty = async_new_in(fa2);
+    var hy = async_spawn(rty, &_ret5, 0);
+    assert(hy != 0, "a task from the two-alloc allocator");
+    assert_eq(async_with_timeout(rty, hy, 100), 0 - 1,
+      "async_with_timeout: -1 when the sentinel cannot be allocated");
+    assert_eq(load64(hy + 16), 0, "...and the handle is left as it was (READY, not retired)");
+    #endif
+
+    test_group("no child is left behind");
+    #ifndef CYRIUS_TARGET_MACOS
+    println("    SKIP: the macOS kqueue backend (lib/async_macos.cyr) only - not this target");
+    #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    var zs[8];
+    assert_eq(sys_waitpid(0 - 1, &zs, 1), 0 - 10,
+      "every forked child was reaped (waitpid(-1, WNOHANG) is ECHILD)");
+    #endif
+
+    #ifndef CYRIUS_TARGET_MACOS
+    # The cross-OS runner requires at least one assertion from every host, so the other
+    # backends assert the one contract this file's verbs share with them.
+    test_group("every backend: async_with_timeout on a null handle answers 0");
+    assert_eq(async_with_timeout(0, 0, 100), 0, "a null handle: 0, and the runtime is not touched");
+    #endif
+
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);
