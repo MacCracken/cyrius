@@ -151,6 +151,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   returned the canned body). yantra reads WS frames through this stdlib's `ws_recv`, so CVE-53
   reaches it through `lib/ws.cyr`; its Chromium/CDP e2e smoke passes 11/11 against the 6.6.10
   reader (live Chromium 153).
+- ⛔ **majra 2.9.2 must be TAGGED by the user** — commit `53dfc94` on majra main, untagged. Independent
+  of the cyrius tag (majra is not vendored here). No src/ change: toolchain pin 6.6.6 → 6.6.9;
+  `tests/test.sh` runs the real bench (it built a `benches/bench_all.cyr` renamed to `.bcyr` long
+  ago and printed FAILED on every run); `docs/development/cyrius-quirks.md` #6 gains a forward note
+  that cyrius 6.6.10 corrects the inverted "(call site may be unreachable)" suffix. ⚠ That note
+  depends on S2 bite 10 landing the suffix wording in 6.6.10 — confirm it on the merged tree
+  before tagging majra, and revise the note if it did not land. (bite 14.)
 - **majra needs no WebSocket fix**: `majra_ws_recv_frame` (majra `src/ws.cyr`) already reads every
   frame part exactly, bounds the length (`WS_MAX_PAYLOAD`) and rejects the top 32 bits — its 2.6.9
   repair. (bite 14, premise-checked.) The fold table in `docs/ecosystem.md` names the three new fold
