@@ -536,6 +536,40 @@ fn _macho_warn_short(sc_num, argc): i64 {
     return 1;
 }
 
+# 6.6.10 — the PE "unrouted literal syscall" warning names the NUMBER and the SITE. It was one
+# 1,471-byte line naming neither, so the warnings left in a PE compiler build could not be
+# attributed to a call. The cursor is past the call's `)`; walk back over the balanced
+# parentheses to its `syscall` token so the site is the call, not the `;` after it. The
+# routed-number list is a note printed ONCE per compile, not once per site.
+var _pe_unrouted_noted = 0;
+fn _pe_warn_unrouted(S, sc_num, argc): i64 {
+    var ti = GTI(S) - 1;
+    var depth = 0;
+    while (ti > 0) {
+        var t = TOKTYP(S, ti);
+        if (t == 11) { depth = depth + 1; }
+        if (t == 10) {
+            depth = depth - 1;
+            if (depth == 0) { break; }
+        }
+        ti = ti - 1;
+    }
+    if (ti > 0) { ti = ti - 1; }
+    syscall(SYS_WRITE, 2, "warning:", 8);
+    _err_head_at(S, ti);
+    syscall(SYS_WRITE, 2, ": syscall ", 10);
+    PRNUM(sc_num);
+    syscall(SYS_WRITE, 2, " with ", 6);
+    PRNUM(argc - 1);
+    syscall(SYS_WRITE, 2, " argument(s) is not routed on CYRIUS_TARGET_WIN=1; it returns -38 (-ENOSYS) on Windows. Guard the call with #ifdef CYRIUS_TARGET_WIN, use the stdlib wrapper, or add a PE reroute.\n", 179);
+    if (_pe_unrouted_noted == 1) { return 0; }
+    _pe_unrouted_noted = 1;
+    syscall(SYS_WRITE, 2,
+      "  note: CYRIUS_TARGET_WIN=1 routes, each at its own arity, n=0,1,2,3,8,9,35,60,74,75,83,87,228 + 0xF001-0xF005 (process creation) + 0xF006 (cmdline) + 0xF007-0xF00A (threading) + 0xF00B-0xF00E (thread-local) + 0xF00F (sleep) + 0xF010-0xF011 (CommandLineToArgvW/LocalFree) + 0xF012 (CreateDXGIFactory1) + 0xF013-0xF015 (GetModuleHandleA/GetProcAddress/GetEnvironmentVariableA) + 0xF016-0xF019 (FindFirstFileW/FindNextFileW/FindClose/GetFileAttributesW) + 0xF01A (ProcessPrng CSPRNG) + 0xF01B (GetSystemTimeAsFileTime) + 0xF01C (GetCurrentProcessId) + 0xF01D (TerminateProcess) + 0xF01E (WSAStartup) + 0xF01F-0xF021 (IOCP: CreateIoCompletionPort/GetQueuedCompletionStatus/PostQueuedCompletionStatus) + 0xF022-0xF02C (ws2_32: WSASocketW/closesocket/WSAGetLastError/bind/getsockopt/WSAIoctl/connect/WSARecv/WSASend/getaddrinfo/freeaddrinfo) + 0xF02D-0xF032 (kernel32/ws2_32: RegisterWaitForSingleObject/CreateWaitableTimerW/SetWaitableTimer/UnregisterWaitEx/CancelIoEx/setsockopt) + 0xF033 (ws2_32: listen) + 0xF034 (kernel32: MoveFileExW) + 0xF035 (kernel32: DeleteFileW) + 0xF036-0xF037 (ws2_32: getpeername/getsockname) + 0xF038-0xF039 (kernel32: QueryPerformanceCounter/QueryPerformanceFrequency) + 0xF03A-0xF03B (kernel32: GetModuleFileNameW/RemoveDirectoryW) + 0xF03D-0xF03F (kernel32: GetFileInformationByHandleEx/CreateSymbolicLinkW/SetEndOfFile).\n",
+      1352);
+    return 0;
+}
+
 # The Mach-O "syscall not routed" diagnostic — both backends, one source of truth each
 # (_macho_x86_routes replays EMACHO_SYSXLAT's rows, _macho_arm_routes replays ESYSXLAT's).
 # ⛔ v6.6.8 — IT WAS BLIND TO ARITY. The route queries answer by NUMBER, but the parse-time
@@ -2134,9 +2168,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             # Others crash; gate with `#ifdef CYRIUS_TARGET_WIN`
             # at the call site, or file an upstream issue for a
             # new PE reroute.
-            syscall(SYS_WRITE, 2,
-              "warning: syscall(n, ...) on CYRIUS_TARGET_WIN=1 routes n=0,1,2,3,8,9,35,60,74,75,83,87,228 + 0xF001-0xF005 (process creation) + 0xF006 (cmdline) + 0xF007-0xF00A (threading) + 0xF00B-0xF00E (thread-local) + 0xF00F (sleep) + 0xF010-0xF011 (CommandLineToArgvW/LocalFree) + 0xF012 (CreateDXGIFactory1) + 0xF013-0xF015 (GetModuleHandleA/GetProcAddress/GetEnvironmentVariableA) + 0xF016-0xF019 (FindFirstFileW/FindNextFileW/FindClose/GetFileAttributesW) + 0xF01A (ProcessPrng CSPRNG) + 0xF01B (GetSystemTimeAsFileTime) + 0xF01C (GetCurrentProcessId) + 0xF01D (TerminateProcess) + 0xF01E (WSAStartup) + 0xF01F-0xF021 (IOCP: CreateIoCompletionPort/GetQueuedCompletionStatus/PostQueuedCompletionStatus) + 0xF022-0xF02C (ws2_32: WSASocketW/closesocket/WSAGetLastError/bind/getsockopt/WSAIoctl/connect/WSARecv/WSASend/getaddrinfo/freeaddrinfo) + 0xF02D-0xF032 (kernel32/ws2_32: RegisterWaitForSingleObject/CreateWaitableTimerW/SetWaitableTimer/UnregisterWaitEx/CancelIoEx/setsockopt) + 0xF033 (ws2_32: listen) + 0xF034 (kernel32: MoveFileExW) + 0xF035 (kernel32: DeleteFileW) + 0xF036-0xF037 (ws2_32: getpeername/getsockname) + 0xF038-0xF039 (kernel32: QueryPerformanceCounter/QueryPerformanceFrequency) + 0xF03A-0xF03B (kernel32: GetModuleFileNameW/RemoveDirectoryW) + 0xF03D-0xF03F (kernel32: GetFileInformationByHandleEx/CreateSymbolicLinkW/SetEndOfFile) today; others return -38/-ENOSYS on Windows (v6.5.25; before that they CRASHED with STATUS_ILLEGAL_INSTRUCTION 0xC000001D).\n",
-              1471);
+            _pe_warn_unrouted(S, sc_num, argc);   # 6.6.10: names n, its arity and the call site
             # v6.5.25 — DEGRADE HONESTLY INSTEAD OF FALLING THROUGH TO `0F 05`.
             #
             # A LITERAL unrouted syscall number used to warn and then emit a raw Linux
