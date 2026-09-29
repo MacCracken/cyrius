@@ -53,6 +53,13 @@ include "lib/process.cyr"
 #endif
 #endif
 
+# 6.6.11: the per-target peers' `_async_step` asks `_async_coro_pending` (defined below, in the
+# shared Futures section) whether a task that returned still READY is a suspended coroutine.
+# That helper exists only when the peer is reached THROUGH this file; a whole-lib build that
+# concatenates the peers on their own (tests/gates/codegen/dce_pe_macho_layout_declines_
+# compaction.sh) has no Futures to force, and compiles the check out.
+#define CYRIUS_ASYNC_FUTURES
+
 #ifdef CYRIUS_TARGET_AGNOS
 include "lib/async_agnos.cyr"
 #endif
@@ -172,13 +179,17 @@ fn async_spawn(rt, fp, arg): i64 {
 # One reactor step (extracted from the F1/F2 pump at v6.4.37 so task_join /
 # async_with_timeout / async_join_all / async_select share one loop body). Runs every
 # TASK_READY task, capturing its return into the result slot (@40); a task that parks
-# via async_wait_fd stays TASK_WAITING. If nothing ran and tasks are parked, block on
-# the shared epfd once and wake the task whose fd fired. Returns the count of tasks not
+# via async_wait_fd stays TASK_WAITING, and a coroutine that suspended without parking stays
+# TASK_READY (`_async_coro_pending`). If nothing ran and tasks are parked, block on the shared
+# epfd once and wake the task whose fd fired. If a coroutine was kept READY, poll the epfd
+# WITHOUT blocking instead: a coroutine that keeps awaiting non-parking work runs every step,
+# and with only the blocking wait the fd-parked tasks — and async_with_timeout's deadline
+# sentinel — would never be woken until it finished (6.6.11). Returns the count of tasks not
 # yet DONE (0 = the runtime is idle). Does NOT close the epfd.
 fn _async_step(rt): i64 {
-    var epfd = load64(rt);
     var active = 0;
     var ran = 0;
+    var kept = 0;
     var t = load64(rt + 8);
     while (t != 0) {
         var state = load64(t + 16);
@@ -187,8 +198,11 @@ fn _async_step(rt): i64 {
             var r = fncall1(load64(t), load64(t + 8));
             ran = 1;
             if (load64(t + 16) == TASK_READY) {
-                store64(t + 40, r);         # F2: capture return
-                store64(t + 16, TASK_DONE);
+                if (_async_coro_pending(t) == 1) { kept = 1; }
+                else {
+                    store64(t + 40, r);         # F2: capture return
+                    store64(t + 16, TASK_DONE);
+                }
             }
         }
         if (load64(t + 16) != TASK_DONE) {
@@ -197,70 +211,75 @@ fn _async_step(rt): i64 {
         t = load64(t + 24);
     }
     if (active > 0) {
-        if (ran == 0) {
-            # every live task is parked on an fd; block on the shared epfd, then wake
-            # the task whose fd fired.
-            # v6.5.26 — room for 8 ready fds per wait, not 1. maxevents was 1, so even with
-            # several fds ready the reactor woke one task per syscall; with multiple waiters
-            # that is a needless round trip per direction.
-            var evbuf[128];
-            var nr = sys_epoll_wait(epfd, &evbuf, 8, 0 - 1);
-            var ei = 0;
-            while (ei < nr) {
-                var eoff = ei * 16;
-                var fired = load32(&evbuf + eoff);
-                # epoll_event.data offset is ABI-dependent: x86_64 has EPOLL_PACKED
-                # (data @4); aarch64 leaves the struct unpacked so the u64 aligns to @8.
-                # Must match the write in _async_wait_events. (CHANGELOG [6.4.42])
-                #ifdef CYRIUS_ARCH_AARCH64
-                var wfd = load64(&evbuf + eoff + 8);
-                #endif
-                #ifndef CYRIUS_ARCH_AARCH64
-                var wfd = load64(&evbuf + eoff + 4);
-                #endif
-                # v6.5.26 — data is the FD, so resolve it to EVERY parked task waiting on
-                # it whose mask intersects what actually fired. Previously data was a single
-                # task pointer and exactly one task could ever be woken per fd.
-                # ⚠ EPOLLERR (8) and EPOLLHUP (16) are reported WITHOUT being requested, and
-                # a peer that closes mid-relay delivers HUP only — so they must wake every
-                # waiter on the fd, or a closed TTY/socket parks its readers forever.
-                var wake_all = 0;
-                if (fired & 24 != 0) { wake_all = 1; }
-                var t2 = load64(rt + 8);
-                while (t2 != 0) {
-                    if (load64(t2 + 16) == TASK_WAITING) {
-                        if (load64(t2 + 32) == wfd) {
-                            if (wake_all == 1 || (load64(t2 + 56) & fired) != 0) {
-                                store64(t2 + 32, 0 - 1);
-                                store64(t2 + 56, 0);
-                                store64(t2 + 16, TASK_READY);
-                            }
-                        }
-                    }
-                    t2 = load64(t2 + 24);
-                }
-                # Re-register the REMAINDER. Unconditionally DELeting the fd (what the old
-                # single-waiter path did) would drop the registration for waiters still
-                # parked on the other direction. DEL only when nobody is left.
-                var rem = _async_fd_mask(rt, wfd);
-                if (rem == 0) {
-                    syscall(SYS_EPOLL_CTL, epfd, 2, wfd, 0);   # EPOLL_CTL_DEL
-                } else {
-                    var rev[16];
-                    store32(&rev, rem);
-                    #ifdef CYRIUS_ARCH_AARCH64
-                    store64(&rev + 8, wfd);
-                    #endif
-                    #ifndef CYRIUS_ARCH_AARCH64
-                    store64(&rev + 4, wfd);
-                    #endif
-                    syscall(SYS_EPOLL_CTL, epfd, 3, wfd, &rev);   # EPOLL_CTL_MOD
-                }
-                ei = ei + 1;
-            }
-        }
+        if (ran == 0) { _async_poll(rt, 0 - 1); }
+        elif (kept == 1) { _async_poll(rt, 0); }
     }
     return active;
+}
+
+# Wait on the runtime's epfd for at most `timeout` ms (-1 = until something fires, 0 = do not
+# block) and wake every parked task whose fd fired. Returns the number of events taken.
+fn _async_poll(rt, timeout): i64 {
+    var epfd = load64(rt);
+    # v6.5.26 — room for 8 ready fds per wait, not 1. maxevents was 1, so even with
+    # several fds ready the reactor woke one task per syscall; with multiple waiters
+    # that is a needless round trip per direction.
+    var evbuf[128];
+    var nr = sys_epoll_wait(epfd, &evbuf, 8, timeout);
+    var ei = 0;
+    while (ei < nr) {
+        var eoff = ei * 16;
+        var fired = load32(&evbuf + eoff);
+        # epoll_event.data offset is ABI-dependent: x86_64 has EPOLL_PACKED
+        # (data @4); aarch64 leaves the struct unpacked so the u64 aligns to @8.
+        # Must match the write in _async_wait_events. (CHANGELOG [6.4.42])
+        #ifdef CYRIUS_ARCH_AARCH64
+        var wfd = load64(&evbuf + eoff + 8);
+        #endif
+        #ifndef CYRIUS_ARCH_AARCH64
+        var wfd = load64(&evbuf + eoff + 4);
+        #endif
+        # v6.5.26 — data is the FD, so resolve it to EVERY parked task waiting on
+        # it whose mask intersects what actually fired. Previously data was a single
+        # task pointer and exactly one task could ever be woken per fd.
+        # ⚠ EPOLLERR (8) and EPOLLHUP (16) are reported WITHOUT being requested, and
+        # a peer that closes mid-relay delivers HUP only — so they must wake every
+        # waiter on the fd, or a closed TTY/socket parks its readers forever.
+        var wake_all = 0;
+        if (fired & 24 != 0) { wake_all = 1; }
+        var t2 = load64(rt + 8);
+        while (t2 != 0) {
+            if (load64(t2 + 16) == TASK_WAITING) {
+                if (load64(t2 + 32) == wfd) {
+                    if (wake_all == 1 || (load64(t2 + 56) & fired) != 0) {
+                        store64(t2 + 32, 0 - 1);
+                        store64(t2 + 56, 0);
+                        store64(t2 + 16, TASK_READY);
+                    }
+                }
+            }
+            t2 = load64(t2 + 24);
+        }
+        # Re-register the REMAINDER. Unconditionally DELeting the fd (what the old
+        # single-waiter path did) would drop the registration for waiters still
+        # parked on the other direction. DEL only when nobody is left.
+        var rem = _async_fd_mask(rt, wfd);
+        if (rem == 0) {
+            syscall(SYS_EPOLL_CTL, epfd, 2, wfd, 0);   # EPOLL_CTL_DEL
+        } else {
+            var rev[16];
+            store32(&rev, rem);
+            #ifdef CYRIUS_ARCH_AARCH64
+            store64(&rev + 8, wfd);
+            #endif
+            #ifndef CYRIUS_ARCH_AARCH64
+            store64(&rev + 4, wfd);
+            #endif
+            syscall(SYS_EPOLL_CTL, epfd, 3, wfd, &rev);   # EPOLL_CTL_MOD
+        }
+        ei = ei + 1;
+    }
+    return nr;
 }
 
 # Drive the reactor until either watched handle (until_a / until_b) is DONE — task_join
@@ -1275,6 +1294,18 @@ fn future_pending(fut): i64 {
     if ((load64(fut + 8) & FUT_CORO) == 0) { return 0; }
     if (load64(fut + 24) == 0 - 1) { return 0; }   # C[state] == DONE (parse.cyr _coro_mark_done)
     return 1;
+}
+
+# 1 when task `t`, which has just returned while still TASK_READY, is a COROUTINE that
+# suspended at an `await` that did not park — it must stay READY and be forced again, not be
+# finished with the 0 its suspend returned. Shared by all four backends' `_async_step`, which is why it lives
+# here, outside the epoll guard.
+# ⛔ 6.6.11 — every backend marked such a task DONE, so `await inner(a)` inside a spawned
+# coroutine ended it with 0 under async_run (measured: 0 where future_force gave 41), and the
+# guide wrote the defect down as a rule ("force such a coroutine yourself"). CHANGELOG [6.6.11]
+fn _async_coro_pending(t): i64 {
+    if (load64(t) != &future_force) { return 0; }
+    return future_pending(load64(t + 8));
 }
 
 # Call a Future's impl `fp` with its `argc` bundled arguments (fut+16 …). Split out of

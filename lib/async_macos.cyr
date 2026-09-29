@@ -189,12 +189,12 @@ fn _async_kev_wake(rt, ident, bit): i64 {
 # One reactor step (mirror of async.cyr _async_step). Runs every TASK_READY task, capturing its
 # return into the result slot (@40); a task that parks stays TASK_WAITING. If nothing ran and
 # tasks are parked, block in kevent() once and wake whoever fired: fd readiness, a timer (the
-# async_with_timeout sentinel, an interval tick) or a child's exit. Returns the count of tasks
-# still live (0 = idle).
+# async_with_timeout sentinel, an interval tick) or a child's exit; if a coroutine was kept
+# READY, poll without blocking instead. Returns the count of tasks still live (0 = idle).
 fn _async_step(rt): i64 {
-    var kq = load64(rt);
     var active = 0;
     var ran = 0;
+    var kept = 0;
     var t = load64(rt + 8);
     while (t != 0) {
         if (load64(t + 16) == TASK_READY) {
@@ -202,29 +202,48 @@ fn _async_step(rt): i64 {
             var r = fncall1(load64(t), load64(t + 8));
             ran = 1;
             if (load64(t + 16) == TASK_READY) {
-                store64(t + 40, r);
-                store64(t + 16, TASK_DONE);
+                # A coroutine suspended at an await that did not park stays READY (6.6.11 —
+                # it was finished with the 0 its suspend returned). lib/async.cyr explains.
+                var keep = 0;
+                #ifdef CYRIUS_ASYNC_FUTURES
+                keep = _async_coro_pending(t);
+                #endif
+                if (keep == 1) { kept = 1; }
+                else {
+                    store64(t + 40, r);
+                    store64(t + 16, TASK_DONE);
+                }
             }
         }
         if (load64(t + 16) != TASK_DONE) { active = active + 1; }
         t = load64(t + 24);
     }
     if (active > 0) {
-        if (ran == 0) {
-            # Every live task is parked. Block in kevent() and wake whoever fired. kqueue
-            # reports ONE event per (ident, filter), so the directions of one fd, a timer and a
-            # pid arrive as distinct events.
-            var evb[256];                   # 8 events x 32 B
-            var nr = sys_kevent(kq, 0, 0, &evb, 8, 0);
-            var ei = 0;
-            while (ei < nr) {
-                var eo = ei * KEV_SIZE;
-                _async_kev_wake(rt, load64(&evb + eo), _async_kev_bit(load16(&evb + eo + 8)));
-                ei = ei + 1;
-            }
-        }
+        if (ran == 0) { _async_kev_poll(rt, 0 - 1); }
+        elif (kept == 1) { _async_kev_poll(rt, 0); }   # so parked tasks are not starved
     }
     return active;
+}
+
+# Collect up to 8 events from the runtime's kqueue — blocking until one arrives when `block` is
+# -1, returning at once when it is 0 — and wake whoever fired. kqueue reports ONE event per
+# (ident, filter), so the directions of one fd, a timer and a pid arrive as distinct events.
+# Returns the number of events taken.
+fn _async_kev_poll(rt, block): i64 {
+    var evb[256];                   # 8 events x 32 B
+    var ts[16];
+    store64(&ts, 0);
+    store64(&ts + 8, 0);
+    var tsp = &ts;
+    if (block < 0) { tsp = 0; }
+    var nr = sys_kevent(load64(rt), 0, 0, &evb, 8, tsp);
+    var ei = 0;
+    while (ei < nr) {
+        var eo = ei * KEV_SIZE;
+        _async_kev_wake(rt, load64(&evb + eo), _async_kev_bit(load16(&evb + eo + 8)));
+        ei = ei + 1;
+    }
+    return nr;
 }
 
 # Drive the reactor until either watched handle is DONE, or — both 0 — until idle.

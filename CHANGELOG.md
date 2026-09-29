@@ -6,6 +6,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.11] — 2026-09-29
 
+### Fixed — async runtime and process-tree lifetime (B12)
+
+- **The reactor ended a coroutine whose `await` did not park with 0 (P1).** Every backend's
+  `_async_step` (lib/async.cyr, async_macos.cyr, async_win.cyr, async_agnos.cyr) marked a task that
+  returned still-READY as DONE. A coroutine suspending at `await inner(a)` (a plain async fn) or at an
+  `await` of a call that does not park returns 0 from that suspend while READY, so under
+  `async_spawn_future` + `async_run` it was finished with 0 and never resumed (measured: 0, state DONE,
+  where `future_force` gave 41). The guide wrote the defect down as a rule ("force such a coroutine
+  yourself"). **Fix:** the shared `_async_coro_pending(t)` keeps a `future_force` task READY while its
+  Future is a pending coroutine; and when one was kept, the Linux/macOS/Windows reactors poll their
+  epfd / kqueue / IOCP WITHOUT blocking, because a coroutine that keeps awaiting non-parking work runs
+  every step and fd-parked tasks — and `async_with_timeout`'s deadline sentinel — otherwise starve until
+  it finishes. Gate: `coroutine_midbody_suspend.sh` axis 10 (async_run, task_join, a parked waiter that
+  must wake a spinning coroutine, a deadline over a coroutine that never finishes). Verified on x86_64
+  Linux, ach (x86_64 macOS) and cass (Windows PE) against a pre-fix control (exit 1 → 42).
+
 ## [6.6.10] — 2026-09-29
 
 The fourth batch release: the 6.6.8 review finds (groups B–G) and group H of the 6.6.9 finds, placed by

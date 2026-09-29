@@ -536,5 +536,77 @@ chmod +x "$T/a9"; timeout 30 "$T/a9"; g9=$?
   echo "  local, which the \`guard\` word catches). Controls are the non-async fns."
   exit 1; }
 
-echo "PASS coroutine_midbody_suspend: vector params refused by name (4 classes x coroutine/plain; a pointer works) · by-value struct returns (24 B / 16 B) and value-form vector returns (4 classes) refused by name, with the <= 8 B struct and the sync vector fn still computing · mid-body suspend resumes in place · in loops · multi-parameter · &local across suspends · arity 6/7/8 against plain-fn controls · &struct-local (typed AND literal, single- and multi-word) across a suspend with a trashed stack · no-await async fns bit-identical"
+# ── axis 10 — THE REACTOR RESUMES A COROUTINE WHOSE AWAIT DID NOT PARK (6.6.11) ──────────
+# ⛔ Every backend's `_async_step` marked a task that returned still-READY as DONE. A coroutine
+# that suspends at `await inner(a)` (a plain async fn) or at `await f()` (a call that does not
+# park) returns 0 from that suspend while still READY — so under async_spawn_future + async_run
+# it was finished with 0 and never resumed. Measured at 6.6.10: `outer(4)` gave 0 (state DONE)
+# where future_force gave 41. The guide wrote the defect down as a rule ("force such a coroutine
+# yourself"). Rows 1/2: the values, through async_run AND task_join. Row 3: a coroutine that
+# keeps awaiting non-parking work is run every step, so the reactor must still poll its fds or a
+# parked task starves — the waiter here is what ends the spinner, so without the non-blocking
+# poll the probe HANGS (timeout 124). Row 4: the same starvation for async_with_timeout's
+# deadline sentinel.
+# Mutations (measured 6.6.11): drop the `_async_coro_pending` keep in lib/async.cyr's
+# _async_step -> exit 1; drop its `elif (kept == 1)` non-blocking poll -> 124.
+cat > "$T/a10.cyr" <<EOF
+${PRE}
+var g_flag = 0;
+var g_pfd: i64[2];
+var g_wstep = 0;
+fn nopark(): i64 { return 0; }
+async fn inner(a): i64 { return a * 10; }
+async fn outer(a): i64 {
+    var v = await inner(a);
+    var s = await nopark();
+    return v + s + 1;
+}
+async fn spinner(n): i64 {
+    var turns = 0;
+    while (g_flag == 0) { var s = await nopark(); turns = turns + 1; }
+    return n;
+}
+fn waiter(rt): i64 {
+    if (g_wstep == 0) { g_wstep = 1; async_wait_fd(rt, load32(&g_pfd)); return 0; }
+    g_flag = 1;
+    return 7;
+}
+fn writer(a): i64 { sys_write(load32(&g_pfd + 4), "x", 1); return 0; }
+fn main(): i64 {
+    alloc_init();
+    var rt = async_new();
+    var h = async_spawn_future(rt, outer(4));
+    async_run(rt);
+    if (load64(h + 40) != 41) { return 1; }
+    var rt2 = async_new();
+    var h2 = async_spawn_future(rt2, outer(6));
+    if (task_join(rt2, h2) != 61) { return 2; }
+    sys_pipe(&g_pfd);
+    var rt3 = async_new();
+    var hs = async_spawn_future(rt3, spinner(33));
+    async_spawn(rt3, &waiter, rt3);
+    async_spawn(rt3, &writer, 0);
+    async_run(rt3);
+    if (load64(hs + 40) != 33) { return 3; }
+    g_flag = 0;
+    var rt4 = async_new();
+    var hf = async_spawn_future(rt4, spinner(5));
+    if (async_with_timeout(rt4, hf, 100) != 0) { return 4; }
+    return 0;
+}
+var e = main();
+syscall(60, e);
+EOF
+CYRIUS_ASYNC=1 "$T/stage1" < "$T/a10.cyr" > "$T/a10" 2>"$T/a10.err" || {
+  echo "FAIL coroutine_midbody_suspend axis10: the reactor probe did not compile"; grep -m2 '^error' "$T/a10.err"; exit 1; }
+[ -s "$T/a10" ] || { echo "FAIL coroutine_midbody_suspend axis10: empty binary"; exit 1; }
+chmod +x "$T/a10"; g10=0; timeout 30 "$T/a10" > /dev/null 2>&1 || g10=$?
+[ "$g10" -eq 0 ] || {
+  echo "FAIL coroutine_midbody_suspend axis10: exit $g10 — 1 = async_run finished outer() with its"
+  echo "  suspend's 0 (want 41); 2 = task_join the same (want 61); 3 = the spinner's value was lost;"
+  echo "  4 = async_with_timeout did not report the deadline; 124 = a task parked on an fd (or the"
+  echo "  deadline sentinel) starved behind a coroutine that never parks."
+  exit 1; }
+
+echo "PASS coroutine_midbody_suspend: the reactor resumes a coroutine whose await did not park (async_run, task_join; parked tasks and the deadline are not starved) · vector params refused by name (4 classes x coroutine/plain; a pointer works) · by-value struct returns (24 B / 16 B) and value-form vector returns (4 classes) refused by name, with the <= 8 B struct and the sync vector fn still computing · mid-body suspend resumes in place · in loops · multi-parameter · &local across suspends · arity 6/7/8 against plain-fn controls · &struct-local (typed AND literal, single- and multi-word) across a suspend with a trashed stack · no-await async fns bit-identical"
 exit 0
