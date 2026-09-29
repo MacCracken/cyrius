@@ -356,10 +356,12 @@ fn _asf_kw(b, p, n, lit, k): i64 {
 #
 # Which families are emitted is the ENTRY handler's rule (PP_DERIVE_SERIALIZE / _DESER /
 # _ACCESSORS): the codecs for a Serialize or Deserialize entry, or an accessors entry with
-# Serialize stacked; the accessors for an accessors entry, or any entry with accessors
-# stacked. ⚠ An accessors entry IGNORES a stacked Deserialize — `#derive(accessors)` above
-# `#derive(Deserialize)` emits no codecs, while the reverse order does. That is the
-# compiler's behaviour today and this mirrors it; the gate goes red when the two differ.
+# Serialize OR Deserialize stacked; the accessors for an accessors entry, or any entry with
+# accessors stacked — and, since 6.6.10, never for an ENUM: the compiler refuses the build
+# (PP_DERIVE_ACC_ENUM), so this returns -1 and lists nothing. (Before 6.6.10 an accessors
+# entry ignored a stacked Deserialize and an enum got per-member "field" accessors; this
+# mirrored both, and the gate pinned them. The gate goes red when the two differ.)
+# CHANGELOG [6.6.10]
 fn _scan_derive_decl(b, n, module_off, module_len, p, first, stacked) {
     var is_public = 0;
     if (_asf_kw(b, p, n, "public", 6) == 1) { is_public = 1; p = _asf_triv(b, p + 7, n); }
@@ -382,14 +384,16 @@ fn _scan_derive_decl(b, n, module_off, module_len, p, first, stacked) {
     if (load8(b + p) != 123) { return 0 - 1; }
     var close = _asf_body_close(b, p, n);
     if (close < 0) { return 0 - 1; }
+    var acc = 0;
+    if (first == 4 || (stacked & 4) != 0) { acc = 1; }
+    # PP_DERIVE_ACC_ENUM: accessors on an enum refuse the build, whatever the visibility.
+    if (is_enum == 1 && acc == 1) { return 0 - 1; }
     # In a `private` file only a `public` declaration's generated fns are public (the
     # emitters prefix `public ` exactly when `_pp_decl_public` is set).
     if (_asf_file_private == 1 && is_public == 0) { return close + 1; }
     var codecs = 0;
     if (first == 1 || first == 2) { codecs = 1; }
-    if (first == 4 && (stacked & 1) != 0) { codecs = 1; }
-    var acc = 0;
-    if (first == 4 || (stacked & 4) != 0) { acc = 1; }
+    if (first == 4 && (stacked & 3) != 0) { codecs = 1; }
     if (codecs == 1) {
         # PP_DERIVE_SERIALIZE_BODY: `_to_json(ptr, sb)`, `_from_json(pairs)`,
         # `_from_json_str(json)`; an enum (PP_DERIVE_ENUM_BODY) has no pairs form.

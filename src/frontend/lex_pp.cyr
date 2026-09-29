@@ -2827,6 +2827,26 @@ fn PP_DLOAD_EXPR(out, op, pname, fbits, off): i64 {
 }
 
 # Emit #derive(accessors) — generates Name_field(p) getters and Name_set_field(p, v) setters
+# ⛔ 6.6.10 — `#derive(accessors)` on an ENUM is refused. The header/field parser is shared
+# with Serialize, and this body had no enum guard (SERIALIZE_BODY has had one since it
+# learned enums), so an enum's MEMBER list was emitted as a FIELD list: `enum col { RED = 5;
+# GREEN = 9; BLUE; }` compiled clean into col_RED / col_set_BLUE loading and storing 8-byte
+# "fields" at offsets 0, 8, 16 of whatever pointer was passed — the members' values were
+# never involved. Nothing in the ecosystem used it (surveyed at 6.6.10; the guide documents
+# accessors for structs only). Checked HERE, in the one body, so the accessors entry and
+# both stacked call sites (PP_DERIVE_SERIALIZE / PP_DERIVE_DESER with accessors stacked)
+# refuse alike. programs/cyrius_api_surface.cyr mirrors the refusal. CHANGELOG [6.6.10]
+fn PP_DERIVE_ACC_ENUM(S): i64 {
+    syscall(SYS_WRITE, 2, "error: #derive(accessors) applies to a struct; ", 47);
+    var n = 0;
+    while (load8(S + 0x197020 + n) != 0) { n = n + 1; }
+    syscall(SYS_WRITE, 2, S + 0x197020, n);
+    var m = " is an enum (its members are constants, not fields -- derive Serialize / Deserialize for an enum)\n";
+    syscall(SYS_WRITE, 2, m, 98);
+    syscall(SYS_EXIT, 1);
+    return 0;
+}
+
 # Same struct parsing as PP_DERIVE_SERIALIZE. Generates, with W the field's width
 # (PP_DFIELD_BITS):
 #   fn Name_field(p) { return loadW(p + OFFSET); }     (W = 64)
@@ -2843,6 +2863,7 @@ fn PP_DLOAD_EXPR(out, op, pname, fbits, off): i64 {
 # / S+0x197010 (field count). Caller is responsible for having
 # called PP_PARSE_STRUCT_DEF first to populate that metadata.
 fn PP_DERIVE_ACCESSORS_BODY(S, out, op): i64 {
+    if (_pp_decl_is_enum == 1) { return PP_DERIVE_ACC_ENUM(S); }
     var field_count = load64(S + 0x197010);
     # v6.6.3 — a `public struct` gets PUBLIC accessors. Emitting them at default
     # visibility would leave a caller in another file able to name the type but unable
@@ -2897,8 +2918,14 @@ fn PP_DERIVE_ACCESSORS(S, src_base, ip, bl, out, op): i64 {
     # `#`-skip loop set bit 0 in S+0x197F08. Run Serialize codegen
     # too so consumers get both fn families. Same metadata; no
     # struct re-parse.
+    # ⛔ 6.6.10 — `& 3`, not `& 1`: a stacked Deserialize (bit 2) needs the codecs too, and
+    # SERIALIZE_BODY is what emits both (PP_DERIVE_DESER calls it unconditionally). With
+    # `& 1`, `#derive(accessors)` directly above `#derive(Deserialize)` emitted no codecs at
+    # all — the only one of the eight stacking orders that did not — and the first use was
+    # an `undefined function 'X_from_json_str'` naming nothing about the derive stack.
+    # CHANGELOG [6.6.10]
     var _stacked = L64(S + 0x197F08);
-    if ((_stacked & 1) != 0) {
+    if ((_stacked & 3) != 0) {
         op = PP_DERIVE_SERIALIZE_BODY(S, out, op);
     }
     _pp_flatten = 0;
