@@ -1327,6 +1327,20 @@ _chk_gate "$ROOT/tests/gates/memory/alloc_failure_returns_zero.sh"
 # `cyrius audit` over the rekha shape; each fix is mutation-proven in the gate header.
 _chk_gate "$ROOT/tests/gates/toolchain/audit_walk_fails_closed.sh"
 
+# 6.6.10 (bite 15) — every tree walker FAILS, by name, on a directory it cannot list. lib/fs.cyr
+# read an unreadable directory as empty and is_dir called it a file, so `chmod 000 tests/bad` made
+# `cyrius test` read "1 passed, 0 failed" rc 0 and `cyrius audit` "ok: lint clean". W1-W13: test,
+# tests, audit, fuzz, bench, deps --lock/--verify, clean, cyrius_type_audit, cyriusly list, the
+# smoke/soak harness ROOT, vidya_load_dir; the chmod rows SKIP by name under root. A1-A4 (every
+# uid): an ABSENT directory stays an empty scope, not an error. Proven red on the 6.6.9 tree.
+_chk_gate "$ROOT/tests/gates/toolchain/walkers_fail_closed_unreadable_dir.sh"
+
+# 6.6.10 (bite 15) — cyrius-lsp indexes every declaration spelling through cbt/srcscan.cyr's
+# `_src_decls` (the reader coverage and distlib use): pub/public, attributes, indentation,
+# fn<TAB>, generics, pub/secret var, destructures, enums + members, structs — and nothing in a
+# comment, a string or a fn body; files read whole (past 1 MiB). The 6.6.9 LSP fails 15 of 25.
+_chk_gate "$ROOT/tests/gates/toolchain/lsp_indexes_every_decl_spelling.sh"
+
 # 6.6.7 (bite 10) — the NEXT version-bump can rewrite every document anchor in the live tree.
 # Step 5's stamp sed admitted only a date in the parenthetical, so the hand-annotated stamp
 # matched nothing and the bump exited 0 (twice: 6.6.7, and — measured — 6.6.8); steps 3/4
@@ -1361,6 +1375,20 @@ _chk_gate "$ROOT/tests/gates/frontend/coroutine_fnptr_and_completion.sh"
 # warnings. An unrouted arm64-macOS number used to re-run the previous syscall silently; the
 # class shipped eight times. Controls + mutation ledger in the header.
 _chk_gate "$ROOT/tests/gates/platform/darwin_syscall_literals_routed.sh"
+
+# 6.6.10 (bite 14) — the WHOLE .tcyr corpus compiles for PE, x86 Mach-O, arm64 Mach-O and agnos,
+# or the file is on that leg's allowlist, and the allowlists only SHRINK (an allowlisted file that
+# compiles is a FAIL too). Nothing cross-built tests/tcyr outside crossos/: 9 PE, 1 Mach-O and 37
+# agnos files did not compile. Axis 0 (a never-compiles and an always-compiles fixture per leg) and
+# a 350-file floor keep it from reading nothing. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/toolchain/tcyr_corpus_cross_compiles.sh"
+
+# 6.6.10 (bite 14) — a refused alloc() in the first-party stdlib returns the fn's sentinel: a lib/
+# copy whose alloc refuses exactly the k-th call drives ~45 fns in three probes (67 + 12 lib/ws.cyr +
+# 11 lib/ws_server.cyr rows, ~1 s) — each returns its sentinel, REACHES the k-th call, and succeeds
+# at count+1. Complements T's static census.
+# Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/memory/stdlib_alloc_refusal_sentinels.sh"
 
 # 6.6.8 (bite 3) — unshare / chroot / pivot_root / capget / capset / process_vm_* / mknodat are
 # named in every peer, wrapped on every target, and on ELF-aarch64 the x86 number each peer
@@ -1446,6 +1474,12 @@ _chk_gate "$ROOT/tests/gates/toolchain/check_gate_census.sh"
 # compiler read ~4x on every row — the var table had no name index, so each registration paid
 # two full STREQ walks and every reference a reverse one).
 _chk_gate "$ROOT/tests/gates/frontend/globals_scale_linear.sh"
+
+# 6.6.10 (bite 2) — a TOP-LEVEL destructure grows the var table before storing its names:
+# gi1+1/gi1+2 were written before SVCNT, past the 8192 band (aliasing var_sizes[0]/var_types[0]:
+# a lost name, or g0 silently read 0) and at the grown 16384 cap into the next table. 8 rows,
+# both caps.
+_chk_gate "$ROOT/tests/gates/frontend/toplevel_destructure_var_cap.sh"
 
 # 6.6.9 (bite 2) — a REACHABLE undefined call is refused on every backend whatever its shape:
 # an aarch64 TAIL call (fixup type 4) used to build rc 0 and die SIGILL, and a reference from an
