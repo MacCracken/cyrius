@@ -97,6 +97,12 @@ is best reserved for byte buffers:
 > backing — the array only holds 1 slot, not 4. Declare slot arrays as
 > `var a: i64[4]` (32 bytes) instead. See CHANGELOG [6.2.1].
 
+`N` is an integer literal or an **enum constant**, bare or qualified —
+`enum Sz { BUF = 16; }` then `var b[BUF]`, `var b[Sz.BUF]` or
+`var a: i64[Sz.BUF]`, in a function or at top level (the qualified form
+since 6.6.10). A plain `var` is not a constant and is refused as a size, as is
+a negative enum value.
+
 ## Functions
 
 ```
@@ -1212,6 +1218,22 @@ same way on every target and whether they sit before or after the first
 top-level statement — before 6.6.9 only x86_64 honoured them ahead of it.
 A top-level `#assert` is a declaration-phase directive, on one line or
 wrapped: structs, enums and fns may follow it.
+
+`#assert A OP B, "message";` checks a compile-time fact and stops the build
+with `#assert failed: message` when it does not hold. Each operand is ONE
+atom — an integer literal, `sizeof(T)`, or an enum constant (`EB` or
+`E.EB`, since 6.6.10) — and `OP` is one of `== != < > <= >=` (a lone atom
+asserts non-zero). There is no arithmetic inside an `#assert`: write
+`#assert sizeof(Hdr) == 16;`, not `== E.N * 8`. An operand that is none of
+these is reported once, by name (`expected a number, sizeof(T) or an enum
+constant`), and `sizeof` must be the whole word — `sizeofzz(P)` is refused,
+not read as `sizeof`.
+
+```
+enum Wire { HDR = 16; }
+struct Hdr { magic; len; }
+#assert sizeof(Hdr) == Wire.HDR, "Hdr must match the wire header";
+```
 
 ## Project Structure
 

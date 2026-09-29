@@ -51,21 +51,18 @@ fn PARSE_ARRAY(S, noff, ew): i64 {
         STI(S, GTI(S) + 1);
     } else {
         if (PEEKT(S) == 2) {
-            var as_noff = PEEKV(S);
-            var as_idx = FINDVAR(S, as_noff);
-            if (as_idx >= 0) {   # 6.6.8: no 1024 cap (util.cyr GVECP)
-                if (GVECP(S, as_idx) == 1) {
-                    asz = L64(_vecv_base + as_idx * 8);
-                    # v6.5.32 — a NEGATIVE enum constant is now spellable, so reject it as a
-                    # size rather than letting it through. Before negative values existed this
-                    # could not arise; the old mask turned such a slot into a colossal positive
-                    # instead. Silent acceptance of a nonsensical size is the failure mode this
-                    # release line keeps removing.
-                    if (asz < 0) { ERR_MSG(S, "array size must not be negative; an enum constant used as a size has to be >= 0", 79); }
-                    STI(S, GTI(S) + 1);
-                } else {
-                    ERR_MSG(S, "array size identifier must be an enum constant (compile-time literal); use `enum Sz { N = 16; } var buf[N];`", 108);
-                }
+            # 6.6.10: `N` or `Enum.N` through the shared recogniser (parse.cyr); it advances
+            # past the atom on success, so no STI below. CHANGELOG [6.6.10]
+            var as_idx = _enum_atom_idx(S);
+            # Presence is asked for HERE too, at the reader (enum_negative_value.sh axis 5c).
+            if (GVECP(S, as_idx) == 1) {   # 6.6.8: no 1024 cap (util.cyr GVECP)
+                asz = L64(_vecv_base + as_idx * 8);
+                # v6.5.32 — a NEGATIVE enum constant is now spellable, so reject it as a
+                # size rather than letting it through. Before negative values existed this
+                # could not arise; the old mask turned such a slot into a colossal positive
+                # instead. Silent acceptance of a nonsensical size is the failure mode this
+                # release line keeps removing.
+                if (asz < 0) { ERR_MSG(S, "array size must not be negative; an enum constant used as a size has to be >= 0", 79); }
             } else {
                 ERR_MSG(S, "array size identifier must be an enum constant (compile-time literal); use `enum Sz { N = 16; } var buf[N];`", 108);
             }
@@ -1104,21 +1101,18 @@ fn PARSE_GVAR_ARR(S, noff, sti, ew): i64 {
         STI(S, GTI(S) + 1);
     } else {
         if (PEEKT(S) == 2) {
-            var gas_noff = PEEKV(S);
-            var gas_idx = FINDVAR(S, gas_noff);
-            if (gas_idx >= 0) {   # 6.6.8: no 1024 cap (util.cyr GVECP)
-                if (GVECP(S, gas_idx) == 1) {
-                    sz_raw = L64(_vecv_base + gas_idx * 8);
-                    # v6.5.32 — a NEGATIVE enum constant is now spellable, so reject it as a
-                    # size rather than letting it through. Before negative values existed this
-                    # could not arise; the old mask turned such a slot into a colossal positive
-                    # instead. Silent acceptance of a nonsensical size is the failure mode this
-                    # release line keeps removing.
-                    if (sz_raw < 0) { ERR_MSG(S, "array size must not be negative; an enum constant used as a size has to be >= 0", 79); }
-                    STI(S, GTI(S) + 1);
-                } else {
-                    ERR_MSG(S, "array size identifier must be an enum constant (compile-time literal); use `enum Sz { N = 16; } var buf[N];`", 108);
-                }
+            # 6.6.10: `N` or `Enum.N` through the shared recogniser (parse.cyr); it advances
+            # past the atom on success, so no STI below. CHANGELOG [6.6.10]
+            var gas_idx = _enum_atom_idx(S);
+            # Presence is asked for HERE too, at the reader (enum_negative_value.sh axis 5c).
+            if (GVECP(S, gas_idx) == 1) {   # 6.6.8: no 1024 cap (util.cyr GVECP)
+                sz_raw = L64(_vecv_base + gas_idx * 8);
+                # v6.5.32 — a NEGATIVE enum constant is now spellable, so reject it as a
+                # size rather than letting it through. Before negative values existed this
+                # could not arise; the old mask turned such a slot into a colossal positive
+                # instead. Silent acceptance of a nonsensical size is the failure mode this
+                # release line keeps removing.
+                if (sz_raw < 0) { ERR_MSG(S, "array size must not be negative; an enum constant used as a size has to be >= 0", 79); }
             } else {
                 ERR_MSG(S, "array size identifier must be an enum constant (compile-time literal); use `enum Sz { N = 16; } var buf[N];`", 108);
             }

@@ -1952,8 +1952,40 @@ fn _assert_tail(S): i64 {
     return 0;
 }
 
-# Evaluate a single constant atom for #assert: number literal or sizeof(T).
-# Returns the constant value. Advances TI past the consumed tokens.
+# 6.6.10 — ONE recogniser for an enum-constant atom: `NAME` or `Enum.NAME`, where NAME is a
+# folded enum constant (the GVECP flag). Shared by #assert (_EVAL_CONST_ATOM) and both
+# array-size parsers (PARSE_ARRAY, and the top-level one in parse_decl.cyr), which each
+# hand-rolled the bare form only — so `#assert EB == 4` and `var buf[E.EB]` were refused
+# while `syscall(60, E.EB)` compiled. As in expressions, a base that is a VARIABLE makes
+# `.NAME` a field access, not a variant. Returns the var index and advances past the atom,
+# or -1 without moving (spelled `0 - 1`: cybs has no unary minus). CHANGELOG [6.6.10]
+fn _enum_atom_idx(S): i64 {
+    if (PEEKT(S) != 2) { return 0 - 1; }
+    var ti = GTI(S);
+    var vn = PEEKV(S);
+    if (TOKTYP(S, ti + 1) == 41) {
+        if (TOKTYP(S, ti + 2) != 2) { return 0 - 1; }
+        if (GINFN(S) == 1) { if (FINDLOCAL(S, vn) >= 0) { return 0 - 1; } }
+        if (FINDVAR(S, vn) >= 0) { return 0 - 1; }
+        vn = TOKVAL(S, ti + 2);
+        ti = ti + 2;
+    }
+    var vi = FINDVAR(S, vn);
+    if (GVECP(S, vi) != 1) { return 0 - 1; }
+    STI(S, ti + 1);
+    return vi;
+}
+
+# `sizeof` as a whole identifier: the 6 letters AND the NUL after them (7 bytes). A 6-byte
+# prefix test took `sizeofzz(P)` for sizeof. Also used by pass 1's _assert_skip_atom.
+fn _is_sizeof_word(S, noff): i64 {
+    if (L64(S + 0xEC00000 + noff) & 0xFFFFFFFFFFFFFF == 0x666F657A6973) { return 1; }
+    return 0;
+}
+
+# Evaluate a single constant atom for #assert: number literal, sizeof(T), or an enum
+# constant (`NAME` / `Enum.NAME`, 6.6.10). Returns the constant value. Advances TI past the
+# consumed tokens.
 fn _EVAL_CONST_ATOM(S): i64 {
     var t = PEEKT(S);
     if (t == 1) {
@@ -1963,8 +1995,10 @@ fn _EVAL_CONST_ATOM(S): i64 {
     }
     if (t == 2) {
         var noff = PEEKV(S);
+        var ei = _enum_atom_idx(S);
+        if (ei >= 0) { return L64(_vecv_base + ei * 8); }
         # sizeof(Type)
-        if (L64(S + 0xEC00000 + noff) & 0xFFFFFFFFFFFF == 0x666F657A6973) {
+        if (_is_sizeof_word(S, noff) == 1) {
             STI(S, GTI(S) + 1);
             if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
             STI(S, GTI(S) + 1);
@@ -1984,7 +2018,7 @@ fn _EVAL_CONST_ATOM(S): i64 {
             STI(S, GTI(S) + 1);
             return szval;
         }
-        ERR_MSG(S, "#assert: expected number or sizeof()", 36);
+        ERR_MSG(S, "#assert: expected a number, sizeof(T) or an enum constant", 57);
     }
     ERR_MSG(S, "#assert: expected constant expression", 37);
     return 0;
@@ -2395,6 +2429,9 @@ fn _PARSE_STMT_IMPL(S): i64 {
         }
         # lhs is now the assertion value (0 = fail, non-zero = pass)
         if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); }
+        # 6.6.10: an operand that did not evaluate has already been reported (and latched);
+        # a message-less "#assert failed" after it was a second error for the same mistake.
+        if (_panic == 1) { if (_had_error == 1) { lhs = 1; } }
         if (lhs == 0) {
             syscall(SYS_WRITE, 2, "error:", 6);
             _err_head(S);

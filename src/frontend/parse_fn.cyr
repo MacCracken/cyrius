@@ -4464,14 +4464,19 @@ fn _tl_assert(S, arm): i64 {
 }
 
 # Pass 1's twin of _EVAL_CONST_ATOM: advance over the same tokens, evaluate nothing. A
-# number is one token; `sizeof ( [T] )` is its four; anything else is an error pass 2
-# reports, and _EVAL_CONST_ATOM does not advance over it either.
+# number is one token; `sizeof ( [T] )` is its four; an enum constant is `NAME` (one) or
+# `Enum.NAME` (three, 6.6.10); anything else is an error pass 2 reports. `sizeof` is the
+# whole word (_is_sizeof_word, 7 bytes), not a 6-byte prefix. CHANGELOG [6.6.10]
 fn _assert_skip_atom(S): i64 {
     var t = PEEKT(S);
     if (t == 1) { STI(S, GTI(S) + 1); return 0; }
     if (t != 2) { return 0; }
-    var w = L64(S + 0xEC00000 + PEEKV(S)) & 0xFFFFFFFFFFFF;
-    if (w != 0x666F657A6973) { return 0; }
+    if (_is_sizeof_word(S, PEEKV(S)) != 1) {
+        var ti = GTI(S);
+        if (TOKTYP(S, ti + 1) == 41) { if (TOKTYP(S, ti + 2) == 2) { STI(S, ti + 3); return 0; } }
+        STI(S, ti + 1);
+        return 0;
+    }
     _assert_step(S);
     _assert_step(S);
     if (PEEKT(S) == 2) { _assert_step(S); }
