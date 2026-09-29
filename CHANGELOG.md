@@ -38,6 +38,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   comment recorded the leak ("the kqueue stays open") instead of fixing it. **Fix:** closed after the
   pump, single-use like the epoll backend. Row: `async_macos_verbs.tcyr` "async_run closes the
   runtime's kqueue" (F_GETFD after the run) — RED on ecb and ach against the pre-fix lib.
+- **`async_run_process`'s deadline stalled the whole reactor for up to 5 s (P5), and
+  `async_with_timeout` on an `async_spawn_process` handle left the child running and unreaped (P6),
+  on Linux and macOS.** The deadline called the BLOCKING `proc_kill_tree` — TERM, then a 10 ms
+  sleep-poll for up to `_PROC_GRACE_MS` in which no task ran (measured: a TERM-ignoring child held a
+  sibling 10 ms interval for 5,234 ms); and `_async_retire` knew nothing about the child a process
+  task forked, so a direct `async_with_timeout(rt, h, 100)` returned 0 with `/bin/sleep 7` still
+  running (it outlived the caller) and, on Linux, its pidfd leaked. **Fix:** lib/process.cyr's kill
+  is split into `_proc_kill_begin` / `_proc_kill_step` (one non-blocking look) / `_proc_kill_finish`
+  (and `_proc_kill_wait`, the blocking remainder), with `proc_kill_tree` unchanged on top of them.
+  Both reactors' `_async_retire` now ends a process task's child: it TERMs the tree (Linux, /proc
+  snapshot — copied, since other tasks may snapshot during the grace) or the group (macOS, the child
+  alone when it leads none) and spawns a kill task that parks on a 10 ms timerfd / EVFILT_TIMER and
+  takes one look per tick until nothing is left or the grace runs out, then KILLs, reaps and (Linux)
+  closes the pidfd. `async_with_timeout` pumps that task to DONE before returning — other tasks keep
+  running — and `async_run_process`'s own kill is gone (the Windows shape). If no task can be made
+  (a refused allocation or timer) the kill completes inline, blocking, as before. Rows:
+  `async_timeout_result.tcyr` "grace" / "loser", `async_macos_verbs.tcyr` the same two, and the
+  `async_process` fixture's row 4 — RED against the pre-fix lib on x86_64 Linux, pi, ecb and ach.
 
 ## [6.6.10] — 2026-09-29
 

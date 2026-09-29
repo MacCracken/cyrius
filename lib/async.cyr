@@ -827,8 +827,10 @@ fn _async_timerfd(value_ms, interval_ms): i64 {
 }
 
 # Retire a task that may still be parked (the loser of a timeout race): DEL its
-# wait_fd from the epfd and mark it DONE so the reactor never re-runs it. No-op if
-# the task is already done.
+# wait_fd from the epfd and mark it DONE so the reactor never re-runs it. A process task's
+# child is ended too — its tree TERMed now, the rest of the kill left to a task on `rt`
+# (`_async_process_end`). Returns that kill task's handle, which the caller must pump to DONE
+# (async_with_timeout does), or 0 when there is none. No-op (0) if the task is already done.
 fn _async_retire(rt, t): i64 {
     if (t == 0) { return 0; }
     if (load64(t + 16) == TASK_DONE) { return 0; }
@@ -845,8 +847,15 @@ fn _async_retire(rt, t): i64 {
         syscall(SYS_CLOSE, ofd);
         store64(t + 48, 0 - 1);
     }
+    # ⛔ 6.6.11 — a retired PROCESS task left its child running and unreaped, and leaked its
+    # pidfd: `async_with_timeout(rt, h, 100)` on an async_spawn_process handle returned 0 with
+    # `/bin/sleep 7` still running, and it outlived the caller (measured). Only
+    # async_run_process killed, after its own timeout. The Windows peer ends the child's job
+    # here; this is that shape.
+    var kt = 0;
+    if (load64(t) == &_async_process_task) { kt = _async_process_end(rt, load64(t + 8)); }
     store64(t + 16, TASK_DONE);
-    return 0;
+    return kt;
 }
 
 # Deadline sentinel for async_with_timeout — a poll task that parks on the deadline
@@ -865,7 +874,8 @@ fn _async_timeout_sentinel(ctx): i64 {
 # Await `handle` (an async_spawn / async_spawn_future return) with a deadline of `ms`.
 # Returns 1 if the task completed in time (its result is then available via
 # task_join(rt, handle) or the handle's result slot), 0 if the deadline fired first
-# (the still-pending task is retired — it will not run again), or -1 if the timerfd
+# (the still-pending task is retired — it will not run again; an async_spawn_process
+# handle's child tree is ended and reaped before this returns, 6.6.11), or -1 if the timerfd
 # could not be created. Races the task against a timerfd sentinel on the reactor;
 # does NOT close the runtime. `ms <= 0` is a deadline that has already passed: the handle
 # still gets the steps that are READY now, but nothing that parks (6.6.11 — it hung).
@@ -890,9 +900,12 @@ fn async_with_timeout(rt, handle, ms): i64 {
     var completed = 0;
     if (load64(handle + 16) == TASK_DONE) { completed = 1; }
     # drop the race loser so nothing is left parked on the fd we close
-    _async_retire(rt, handle);
+    var kt = _async_retire(rt, handle);
     _async_retire(rt, sentinel);
     syscall(SYS_CLOSE, tfd);
+    # A process loser's child is being ended by a kill task: drive it to done, so the child is
+    # reaped when this returns, while the runtime's other tasks keep running (6.6.11).
+    if (kt != 0) { _async_pump(rt, kt, 0); }
     return completed;
 }
 
@@ -951,7 +964,8 @@ fn async_interval(rt, fp, arg, ms, tok): i64 {
 
 # Async subprocess task: on first run fork+exec the child and park on its pidfd
 # (readable when the child exits); on wake reap it and return the exit code as the
-# task result. ctx = { step, path, argv, envp, pid, pidfd, rt }.
+# task result. ctx = { step, path, argv, envp, pid, pidfd, rt }; step 0 = not forked,
+# 1 = forked and parked, 2 = retired and handed to a kill task (`_async_process_end`).
 fn _async_process_task(ctx): i64 {
     if (load64(ctx) == 0) {
         var pid = sys_fork();
@@ -1001,28 +1015,113 @@ fn async_spawn_process(rt, path, argv, envp): i64 {
     return async_spawn(rt, &_async_process_task, ctx);
 }
 
+# ── The deadline's kill as a reactor task (6.6.11) ──────
+# ⛔ async_run_process called the BLOCKING proc_kill_tree after its deadline: TERM, then a 10 ms
+# sleep-poll for up to `_PROC_GRACE_MS` (5 s) during which NO task ran — measured, a TERM-
+# ignoring child held a sibling 10 ms interval for 5,234 ms. Now the deadline TERMs the tree
+# (`_proc_kill_begin`) and a task on the same reactor finishes the kill: it parks on a 10 ms
+# timerfd and takes one non-blocking look (`_proc_kill_step`) per tick until nothing is left
+# or the grace has run out, then KILLs and reaps (`_proc_kill_finish`) and closes the pidfd.
+# ctx (88 B) = { kill state @0 (40 B, lib/process.cyr), status @40, pidfd @48, tfd @56,
+# waited ms @64, rt @72, parked @80 }.
+fn _async_kill_task(ctx): i64 {
+    if (load64(ctx + 80) == 1) {
+        store64(ctx + 80, 0);
+        var buf[8];
+        store64(&buf, 0);
+        # a timerfd read is the number of 10 ms periods since the last one
+        if (syscall(SYS_READ, load64(ctx + 56), &buf, 8) == 8) {
+            store64(ctx + 64, load64(ctx + 64) + 10 * load64(&buf));
+        }
+    }
+    if (_proc_kill_step(ctx, ctx + 40) == 0) {
+        if (load64(ctx + 64) < _PROC_GRACE_MS) {
+            store64(ctx + 80, 1);
+            if (async_wait_fd(load64(ctx + 72), load64(ctx + 56)) == 0) { return 0; }
+            store64(ctx + 80, 0);
+            # the reactor would not take the timer: finish the grace here, blocking
+            _proc_kill_wait(ctx, ctx + 40, load64(ctx + 64));
+            return _async_kill_close(ctx);
+        }
+    }
+    _proc_kill_finish(ctx, ctx + 40);
+    return _async_kill_close(ctx);
+}
+
+# Close the kill task's timer and the child's pidfd. Returns 0.
+fn _async_kill_close(ctx): i64 {
+    syscall(SYS_CLOSE, load64(ctx + 56));
+    if (load64(ctx + 48) > 0) { syscall(SYS_CLOSE, load64(ctx + 48)); }
+    return 0;
+}
+
+# End the child of a retired process task (ctx `pctx`): TERM its tree now and return a kill task
+# on `rt` that finishes the job, or 0 when there is nothing to end or the kill was completed here
+# because no task could be made (then it BLOCKS for the grace, which is the pre-6.6.11 shape —
+# correct, only not concurrent).
+fn _async_process_end(rt, pctx): i64 {
+    if (load64(pctx) != 1) { return 0; }          # never forked, or already handed over
+    var pid = load64(pctx + 32);
+    if (pid <= 0) { return 0; }
+    store64(pctx, 2);
+    var a = load64(rt + 32);
+    var ctx = alloc_via(a, 88);
+    var tfd = 0 - 1;
+    if (ctx != 0) { tfd = _async_timerfd(10, 10); }
+    if (tfd < 0) {
+        var sb[8];
+        proc_kill_tree(pid, &sb);
+        if (load64(pctx + 40) > 0) { syscall(SYS_CLOSE, load64(pctx + 40)); }
+        return 0;
+    }
+    store64(ctx + 48, load64(pctx + 40));
+    store64(ctx + 56, tfd);
+    store64(ctx + 64, 0);
+    store64(ctx + 72, rt);
+    store64(ctx + 80, 0);
+    _proc_kill_begin(ctx, pid, 0);
+    # The /proc snapshot lives in process.cyr's one shared buffer, which the next snapshot —
+    # any process verb another task runs during the grace — overwrites. Keep a copy.
+    var n = load64(ctx + 24);
+    var kt = 0;
+    if (n > 0) {
+        var cp = alloc_via(a, n * 8);
+        if (cp != 0) {
+            memcpy(cp, load64(ctx + 32), n * 8);
+            store64(ctx + 32, cp);
+            kt = async_spawn(rt, &_async_kill_task, ctx);
+        }
+    } else {
+        kt = async_spawn(rt, &_async_kill_task, ctx);
+    }
+    if (kt == 0) {
+        _proc_kill_wait(ctx, ctx + 40, 0);        # no task: finish it here, blocking
+        _async_kill_close(ctx);
+    }
+    return kt;
+}
+
 # Spawn `path` and wait for it, with an optional deadline (ms <= 0 = no deadline).
-# Returns the child's exit code, or -2 if the deadline fired first — in which case
-# the child's whole tree is ended (TERM, grace, KILL — 6.6.10), the child reaped, and its
-# pidfd closed (no orphan, no fd leak). Does
-# NOT close the runtime. v6.4.36 (P2 — the spawn + wait + timeout combinator).
+# Returns the child's exit code, -2 if the deadline fired first — in which case the child's
+# whole tree has been ended (TERM, grace, KILL), the child reaped and its pidfd closed, while
+# the runtime's other tasks kept running — or -1 if it could not be started or the deadline
+# could not be armed. Does NOT close the runtime. v6.4.36 (P2 — the spawn + wait + timeout
+# combinator). 6.6.11: the kill moved into async_with_timeout's retire of the handle (a kill
+# task, no longer a blocking proc_kill_tree here), which is also what ends the child of a
+# plain async_with_timeout on an async_spawn_process handle. CHANGELOG [6.6.11]
 fn async_run_process(rt, path, argv, envp, ms): i64 {
     var h = async_spawn_process(rt, path, argv, envp);
     if (h == 0) { return 0 - 1; }
     if (ms <= 0) { return task_join(rt, h); }
-    if (async_with_timeout(rt, h, ms) == 1) { return load64(h + 40); }
-    # Timed out: end the still-running child's WHOLE TREE. 6.6.10 — this was `sys_kill(pid, 9)`
-    # on the pid alone, so whatever the child had started kept running past the deadline.
-    # `proc_kill_tree` (lib/process.cyr) TERMs the tree, waits up to `_PROC_GRACE_MS`, KILLs the
-    # stragglers and REAPS `pid` — so there is no waitpid here. CHANGELOG [6.6.10]
-    var ctx = load64(h + 8);
-    var pid = load64(ctx + 32);
-    if (pid > 0) {
-        var sb[8];
-        proc_kill_tree(pid, &sb);
+    var w = async_with_timeout(rt, h, ms);
+    if (w == 1) { return load64(h + 40); }
+    if (w < 0) {
+        # No deadline could be armed, so nothing was run: retire the handle so a later pump
+        # does not start a child nobody is waiting for.
+        var kt = _async_retire(rt, h);
+        if (kt != 0) { _async_pump(rt, kt, 0); }
+        return 0 - 1;
     }
-    var pidfd = load64(ctx + 40);
-    if (pidfd > 0) { syscall(SYS_CLOSE, pidfd); }
     return 0 - 2;
 }
 

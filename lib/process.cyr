@@ -352,7 +352,7 @@ fn _proc_kill_group(pid, stbuf): i64 {
     return g;
 }
 
-# ── A kill in three steps (6.6.11) ────────────────────────────────────────────────────────────
+# ── A kill in three steps (6.6.11) ──────
 # `_proc_kill_begin` sends the TERM, `_proc_kill_step` is ONE non-blocking look (called every
 # 10 ms until it answers 1 or `_PROC_GRACE_MS` has passed) and `_proc_kill_finish` KILLs what is
 # left and reaps. `_proc_kill_run` is the blocking loop over them behind `proc_kill_tree`; the
@@ -419,19 +419,25 @@ fn _proc_kill_finish(ks, stbuf): i64 {
     return 0;
 }
 
-# The blocking kill: begin, look every 10 ms for up to `_PROC_GRACE_MS`, finish. `grp` 1 ends
-# `pid`'s process group (macOS's `proc_kill_tree`, and `_proc_end_cut_group`), 0 its /proc tree.
-fn _proc_kill_run(pid, stbuf, grp): i64 {
-    var ks[40];
-    _proc_kill_begin(&ks, pid, grp);
-    var waited = 0;
+# The rest of a begun kill, blocking: look every 10 ms until nothing is left or `_PROC_GRACE_MS`
+# has passed (`waited` of it already has), then finish. Returns 0.
+fn _proc_kill_wait(ks, stbuf, waited): i64 {
     var go = 1;
     while (go == 1) {
-        if (_proc_kill_step(&ks, stbuf) == 1) { go = 0; }
+        if (_proc_kill_step(ks, stbuf) == 1) { go = 0; }
         elif (waited >= _PROC_GRACE_MS) { go = 0; }
         else { syscall(7, 0, 0, 10); waited = waited + 10; }
     }
-    _proc_kill_finish(&ks, stbuf);
+    _proc_kill_finish(ks, stbuf);
+    return 0;
+}
+
+# The blocking kill: begin, then `_proc_kill_wait`. `grp` 1 ends `pid`'s process group (macOS's
+# `proc_kill_tree`, and `_proc_end_cut_group`), 0 its /proc tree.
+fn _proc_kill_run(pid, stbuf, grp): i64 {
+    var ks[40];
+    _proc_kill_begin(&ks, pid, grp);
+    _proc_kill_wait(&ks, stbuf, 0);
     return 0;
 }
 

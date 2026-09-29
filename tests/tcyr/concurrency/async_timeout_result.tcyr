@@ -26,6 +26,12 @@
 #                                                            containers run as root)
 #   tree      async_run_process under a 400 ms deadline: the shell's background child is ended
 #             too (bite 11 — it SIGKILLed the shell's pid alone and left the child running)
+#   grace     (6.6.11) async_run_process's deadline on a TERM-ignoring child: a sibling 10 ms
+#             interval keeps ticking through the grace. The kill was a blocking 10 ms sleep-poll
+#             for up to _PROC_GRACE_MS, during which no task ran (measured 5,234 ms, 0 ticks).
+#   loser     (6.6.11) async_with_timeout on an async_spawn_process handle: the child is ended,
+#             reaped and its pidfd closed before the call returns. It was left running (it
+#             outlived the parent), unreaped, and the pidfd leaked.
 #   zero      (6.6.11) async_with_timeout / async_interval / async_sleep_ms with ms 0 and -5
 #             return at once. An all-zero itimerspec DISARMS a timerfd and a negative one is
 #             EINVAL, so all six waited for ever. Each runs inside async_timeout's own bound, so
@@ -110,6 +116,62 @@ fn _at_iv(ms): i64 {
     return 201;
 }
 fn _at_sl(ms): i64 { async_sleep_ms(ms); return 300; }
+
+# ---- the deadline's kill runs as a reactor task (6.6.11) ----
+var _at_ticks = 0;
+fn _at_tick(a): i64 { _at_ticks = _at_ticks + 1; return 0; }
+fn _at_argv(a0, a1, a2): i64 {
+    var av = alloc(32);
+    store64(av, a0);
+    store64(av + 8, a1);
+    store64(av + 16, a2);
+    store64(av + 24, 0);
+    return av;
+}
+
+fn _at_kill_rows(): i64 {
+    var ev = alloc(8);
+    store64(ev, 0);
+    var st[8];
+
+    test_group("async_run_process: the grace does not stall the reactor (6.6.11)");
+    var prevg = _PROC_GRACE_MS;
+    _PROC_GRACE_MS = 1000;                        # keep the row short; the shape is the same at 5 s
+    var rt = async_new();
+    var tok = cancel_token_new();
+    _at_ticks = 0;
+    assert_eq(async_interval(rt, &_at_tick, 0, 10, tok) != 0, 1, "premise: a 10 ms interval on the runtime");
+    var t0 = clock_now_ms();
+    var r = async_run_process(rt, "/bin/sh", _at_argv("/bin/sh", "-c", "trap '' TERM; sleep 30"), ev, 200);
+    var el = clock_now_ms() - t0;
+    var ticks = _at_ticks;
+    cancel_token_signal(tok);
+    async_run(rt);
+    _PROC_GRACE_MS = prevg;
+    assert_eq(r, 0 - 2, "grace: the deadline fired (-2)");
+    assert_eq(el >= 1000, 1, "grace: the TERM-ignoring child was given its grace before the KILL");
+    assert_eq(el < 6000, 1, "grace: ...and then KILLed");
+    assert_eq(ticks >= 40, 1, "grace: the sibling interval kept ticking through the grace (was ~20: none during it)");
+    assert_eq(sys_waitpid(0 - 1, &st, 1), 0 - 10, "grace: no child is left unreaped");
+
+    test_group("async_with_timeout on a process handle ends and reaps its child (6.6.11)");
+    var rt2 = async_new();
+    var h = async_spawn_process(rt2, "/bin/sleep", _at_argv("/bin/sleep", "30", 0), ev);
+    t0 = clock_now_ms();
+    var w = async_with_timeout(rt2, h, 100);
+    el = clock_now_ms() - t0;
+    var pid = load64(load64(h + 8) + 32);
+    var pfd = load64(load64(h + 8) + 40);
+    assert_eq(w, 0, "loser: the deadline won (0)");
+    assert_eq(pid > 0, 1, "loser: premise — the child was forked");
+    assert_eq(sys_waitpid(pid, &st, 1), 0 - 10, "loser: the child was reaped before the call returned (was: still running)");
+    assert_eq(sys_kill(pid, 0) != 0, 1, "loser: ...and it is gone");
+    assert_eq(sys_fcntl(pfd, 1, 0) < 0, 1, "loser: its pidfd was closed (was: leaked)");
+    assert_eq(el < 3000, 1, "loser: sleep honoured the TERM; no grace was waited out");
+    if (pid > 0) { if (sys_kill(pid, 0) == 0) { sys_kill(pid, 9); sys_waitpid(pid, &st, 0); } }
+    async_run(rt2);
+    return 0;
+}
 
 fn _at_zero_rows(): i64 {
     test_group("a zero or negative timer is a deadline that has passed, not a disarmed one (6.6.11)");
@@ -243,6 +305,7 @@ fn main(): i64 {
     _at_rows();
     _at_tree_rows();
     _at_zero_rows();
+    _at_kill_rows();
     #endif
     #ifndef CYRIUS_TARGET_LINUX
     println("    SKIP: async_timeout forks only on Linux; this target runs the body inline (no pipe, no fork, no stale result to read)");

@@ -3,14 +3,17 @@
 # async_spawn_process(rt, path, argv, envp) forks+execs a child and parks on its
 # pidfd (readable on exit) so the reactor waits without a blocking waitpid; the task
 # result is the child's exit code. async_run_process(rt, path, argv, envp, ms) spawns
-# + waits with an optional deadline: exit code, or -2 on timeout (child SIGKILLed +
-# reaped, pidfd closed). Plain library API.
+# + waits with an optional deadline: exit code, or -2 on timeout (the child's tree TERMed,
+# a grace, KILLed, the child reaped and its pidfd closed — by a kill task on the reactor
+# since 6.6.11). Plain library API.
 #
 # Proven fail-on-bug — the three children sum to exactly 42:
 #   /bin/sh -c "exit 19"  -> 19 (exit code read via the pidfd reap)
 #   /bin/sh -c "exit 21"  -> 21 (completes well before its 5 s deadline)
 #   /bin/sleep 5 (50 ms deadline) -> -2 (times out, killed+reaped) -> +2
 # A wrong exit code, a missed timeout, or a premature kill all miss 42.
+# (4) 6.6.11: async_with_timeout on an async_spawn_process handle must end AND reap the
+#   child before it returns (+100 when it is still ours to reap — it was left running).
 # MUST exit 42.
 
 include "lib/syscalls.cyr"
@@ -49,6 +52,18 @@ fn main(): i64 {
     store64(&argv3 + 16, 0);
     if (async_run_process(rt, "/bin/sleep", &argv3, &envp, 50) == 0 - 2) {
         total = total + 2;
+    }
+
+    # (4) async_with_timeout on a process handle: the loser's child is ended and reaped
+    var h4 = async_spawn_process(rt, "/bin/sleep", &argv3, &envp);
+    if (async_with_timeout(rt, h4, 50) != 0) { total = total + 100; }
+    var pid4 = load64(load64(h4 + 8) + 32);
+    var st4[8];
+    if (pid4 <= 0) { total = total + 100; }
+    elif (sys_waitpid(pid4, &st4, 1) != 0 - 10) {   # ECHILD: already reaped
+        total = total + 100;
+        sys_kill(pid4, 9);
+        sys_waitpid(pid4, &st4, 0);
     }
 
     async_run(rt);
