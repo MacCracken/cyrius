@@ -34,6 +34,15 @@ VER=$(cat "$ROOT/VERSION")
 WORK=$(mktemp -d) && [ -d "$WORK" ] || { echo "FAIL: distlib_sidecar_staleness: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$WORK"' EXIT
 fail() { echo "FAIL: distlib_sidecar_staleness: $1"; exit 1; }
+# 6.6.11 (K5): the sidecar verify compiles for EVERY target, so the CLI needs cycc AND
+# cycc_aarch64 beside it (it resolves its tools from its own directory). Stage a private tool
+# dir from this tree; a staging failure means the gate could not run (77), never a FAIL.
+CC=${CYCC:-"$ROOT/build/cycc"}
+mkdir -p "$WORK/tools" && cp "$CYRIUS" "$WORK/tools/cyrius" && cp "$CC" "$WORK/tools/cycc" \
+    && ( cd "$ROOT" && "$CC" < src/main_aarch64.cyr > "$WORK/tools/cycc_aarch64" 2>/dev/null ) \
+    && chmod +x "$WORK/tools/cyrius" "$WORK/tools/cycc" "$WORK/tools/cycc_aarch64" \
+    || { echo "SKIP: distlib_sidecar_staleness: could not stage cycc + cycc_aarch64 beside the CLI"; exit 77; }
+CYRIUS="$WORK/tools/cyrius"
 # CYRIUS_RESOLVED=1: a fixture pinning another version would re-exec an older binary.
 run() { ( cd "$1" && shift; CYRIUS_RESOLVED=1 "$CYRIUS" "$@" 2>&1 ); }
 

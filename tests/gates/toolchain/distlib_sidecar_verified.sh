@@ -42,7 +42,16 @@ SNAP="$HOMEDIR/versions/$VER/lib"
 WORK=$(mktemp -d) && [ -d "$WORK" ] || { echo "FAIL: distlib_sidecar_verified: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$WORK"' EXIT
 fail() { echo "FAIL: distlib_sidecar_verified: $1"; exit 1; }
-[ -d "$SNAP" ] || { echo "  SKIPPED: no stdlib snapshot at $SNAP"; exit 0; }
+# 6.6.11 (K5): the sidecar verify compiles for EVERY target, so the CLI needs cycc AND
+# cycc_aarch64 beside it (it resolves its tools from its own directory). Stage a private tool
+# dir from this tree; a staging failure means the gate could not run (77), never a FAIL.
+CC=${CYCC:-"$ROOT/build/cycc"}
+mkdir -p "$WORK/tools" && cp "$CYRIUS" "$WORK/tools/cyrius" && cp "$CC" "$WORK/tools/cycc" \
+    && ( cd "$ROOT" && "$CC" < src/main_aarch64.cyr > "$WORK/tools/cycc_aarch64" 2>/dev/null ) \
+    && chmod +x "$WORK/tools/cyrius" "$WORK/tools/cycc" "$WORK/tools/cycc_aarch64" \
+    || { echo "SKIP: distlib_sidecar_verified: could not stage cycc + cycc_aarch64 beside the CLI"; exit 77; }
+CYRIUS="$WORK/tools/cyrius"
+[ -d "$SNAP" ] || { echo "SKIP: distlib_sidecar_verified: no stdlib snapshot at $SNAP"; exit 77; }
 
 # ⚠ CYRIUS_RESOLVED=1 on every invocation. Without it, a fixture pinning anything other than
 # the running version re-execs `versions/<pin>/bin/cyrius` — a binary built before this
@@ -123,7 +132,6 @@ done
 NH="$WORK/nhome"
 mkdir -p "$NH/versions/$VER" "$NH/bin" "$WORK/foldsrc/dist"
 cp -R "$ROOT/lib" "$NH/versions/$VER/lib"
-CC=${CYCC:-"$ROOT/build/cycc"}
 cp "$CC" "$NH/bin/cycc"; chmod +x "$NH/bin/cycc"
 printf 'fn helperlib_do(x): i64 { return x; }\nfn helperlib_two(x): i64 { return x + 2; }\n' > "$NH/versions/$VER/lib/helperlib.cyr"
 printf 'fn fold_sign(x): i64 { return helperlib_do(x); }\nfn fold_extra(x): i64 { return helperlib_do(x) + 1; }\n' > "$NH/versions/$VER/lib/fold.cyr"

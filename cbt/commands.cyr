@@ -3352,6 +3352,7 @@ fn _distlib_verify_fail(what, path): i64 {
 fn _distlib_verify_leaves(leaves, out_path, named_deps): i64 {
     var root = _distlib_stdlib_root();
     if (root == 0) { return 0; }          # no snapshot: nothing to verify against, keep as-is
+    if (_distlib_verify_host_ok(out_path) == 0) { return 0 - 1; }
     var m = _distlib_mirror_make(root);
     if (m == 0) { return 0 - 1; }
     var e0 = _err_count;
@@ -3364,6 +3365,295 @@ fn _distlib_verify_leaves(leaves, out_path, named_deps): i64 {
         return _distlib_verify_fail(vfm, out_path);
     }
     return r;
+}
+
+# ⭐ 6.6.11 (K5) — THE SIDECAR IS THE UNION OVER EVERY TARGET, NOT THE HOST'S ANSWER.
+# The verify compiled its unit once, for the host, so the recorded set was whatever THIS
+# host's `#ifdef` arms left undefined: `distlib --check` drifted between a Mac or an ARM box
+# and Linux CI, and a fold published from Linux could be short on Windows. Measured over 60
+# ecosystem bundles: 15 have different undefined sets per target (14 on PE, nous on aarch64).
+# Each round now compiles the unit for all five targets the toolchain ships and classifies
+# the union, so the answer is the same whichever host runs it. That needs a compiler per
+# target, and only an x86_64-Linux CLI has them (cycc emits x86 Linux, PE and Mach-O by
+# environment; cycc_aarch64 emits aarch64 Linux and Mach-O). Any other host REFUSES by name
+# rather than publishing a host-shaped sidecar — the store slots of macOS, Windows and
+# aarch64 hosts carry only native compilers. CHANGELOG [6.6.11]
+var _DL_TGT_N = 5;
+
+fn _distlib_tgt_name(t): i64 {
+    if (t == 0) { return "x86_64-linux"; }
+    if (t == 1) { return "x86_64-windows"; }
+    if (t == 2) { return "x86_64-macos"; }
+    if (t == 3) { return "aarch64-linux"; }
+    return "aarch64-macos";
+}
+
+# The environment entry that selects target `t` for its compiler ("" = the compiler's default).
+fn _distlib_tgt_env(t): i64 {
+    if (t == 1) { return "CYRIUS_TARGET_WIN=1"; }
+    if (t == 2) { return "CYRIUS_MACHO=1"; }
+    if (t == 4) { return "CYRIUS_MACHO_ARM=1"; }
+    return "";
+}
+
+fn _distlib_tgt_cc(t): i64 {
+    if (t >= 3) { return _cc_arm; }
+    return _cc;
+}
+
+# 1 when this CLI can compile for every target; otherwise names why (the sidecar is not
+# written) and answers 0.
+fn _distlib_verify_host_ok(out_path): i64 {
+    var x86lin = 0;
+    #ifdef CYRIUS_TARGET_LINUX
+    #ifdef CYRIUS_ARCH_X86
+    x86lin = 1;
+    #endif
+    #endif
+    if (x86lin == 0) {
+        var hm = "distlib: the sidecar verify compiles the bundle for every target (x86_64 Linux, Windows and macOS; aarch64 Linux and macOS), and only an x86_64 Linux CLI has a compiler for each — regenerate or --check sidecars there. Sidecar NOT written";
+        _distlib_verify_fail(hm, out_path);
+        return 0;
+    }
+    if (_cc == 0) { _err("distlib: the sidecar verify needs cycc, and none was found — sidecar NOT written"); return 0; }
+    var t = 0;
+    while (t < _DL_TGT_N) {
+        var cc = _distlib_tgt_cc(t);
+        if (cc == 0 || file_exists(cc) == 0) {
+            var msb = str_builder_new();
+            str_builder_add_cstr(msb, "distlib: the sidecar verify compiles for ");
+            str_builder_add_cstr(msb, _distlib_tgt_name(t));
+            str_builder_add_cstr(msb, " too, and its compiler is missing (build/cycc_aarch64 comes from `cyrius pulsar`; an installed release ships it) — sidecar NOT written");
+            var cpath = cc;
+            if (cpath == 0) { cpath = "cycc_aarch64"; }
+            _err_ctx(str_data(str_builder_build(msb)), cpath);
+            return 0;
+        }
+        t = t + 1;
+    }
+    return 1;
+}
+
+# Fold the names in `got` into `names`, OR-ing `bit` into each one's entry in `masks`.
+fn _distlib_merge_names(names, masks, got, bit): i64 {
+    var i = 0;
+    while (i < vec_len(got)) {
+        var nm = vec_get(got, i);
+        i = i + 1;
+        var j = 0;
+        var at = 0 - 1;
+        while (j < vec_len(names) && at < 0) {
+            if (streq(vec_get(names, j), nm) == 1) { at = j; }
+            j = j + 1;
+        }
+        if (at < 0) { vec_push(names, nm); vec_push(masks, bit); }
+        else { vec_set(masks, at, vec_get(masks, at) | bit); }
+    }
+    return 0;
+}
+
+# ⚡ The five target compiles of a round run CONCURRENTLY — one forked CLI child per target, each
+# running compile() and exiting with its status — and are then read back in target order, so the
+# answer is exactly the sequential one. Sequentially, the union cost 4-5x a host-only verify
+# (agnosai's `guard` profile: 36 s -> 146 s); concurrently it costs about the slowest target.
+# Each child writes its own `dlverifyerr<t>` / `dlverifyout<t>`, and compile()'s own temps carry
+# the child's pid. POSIX only — `_distlib_verify_host_ok` has already refused anywhere else.
+
+# Fork the compile of `entry` for target `t` (stderr to `verr`); answers the child's pid, or -1.
+fn _distlib_target_spawn(entry, t, vout, verr): i64 {
+    var pid = sys_fork();
+    if (pid == 0) {
+        # ⚠ _skip_deps = 1 is load-bearing: auto-prepend would put the whole declared stdlib
+        # in scope and the compile would succeed no matter how wrong the sidecar is. The
+        # entry must contain EXACTLY the leaves under test. (compile() still prepends the
+        # `#@incdir` of the entry's directory, the mirror: a leaf ./lib lacks resolves there.)
+        _skip_deps = 1;
+        _cc_allow_undef = 1;
+        _cc_stderr_to = verr;
+        _cc_override = _distlib_tgt_cc(t);
+        _cc_target_env = _distlib_tgt_env(t);
+        var crc = compile(entry, vout);
+        sys_unlink(vout);
+        sys_exit(crc & 255);
+    }
+    return pid;
+}
+
+# Read back target `t`'s compile (`pid`, stderr in `verr`) and merge what it left undefined into
+# names/masks. 0, or -1 after naming why (a compile that failed with nothing undefined — or a
+# child that never reported — is not verifiable).
+fn _distlib_target_collect(out_path, t, pid, verr, names, masks, quiet): i64 {
+    var crc = 1;
+    if (pid > 0) {
+        var st[1];
+        store64(&st, 0);
+        if (sys_waitpid(pid, &st, 0) == pid) {
+            var sv = load32(&st);
+            if (WIFEXITED(sv) == 1) { crc = WEXITSTATUS(sv); }
+        }
+    }
+    var elen = 0;
+    var ebuf = file_read_whole(verr, &elen);
+    xunlink(verr);
+    var got = vec_new();
+    if (ebuf != 0 && elen > 0) { _distlib_collect_undefined(ebuf, elen, got); }
+    if (vec_len(got) == 0 && crc != 0) {
+        if (quiet == 1) { return 0 - 1; }   # an earlier target already said it
+        # Failed, and not for a missing symbol: say what the compiler said — its `error`
+        # lines, not the first screenful of warnings — and for which target.
+        if (ebuf != 0 && elen > 0) { _distlib_show_errors(ebuf, elen); }
+        var fsb = str_builder_new();
+        str_builder_add_cstr(fsb, "distlib: sidecar verify: the bundle with its leaves does not compile for ");
+        str_builder_add_cstr(fsb, _distlib_tgt_name(t));
+        str_builder_add_cstr(fsb, ", and no symbol is missing — sidecar NOT written");
+        return _distlib_verify_fail(str_data(str_builder_build(fsb)), out_path);
+    }
+    _distlib_merge_names(names, masks, got, 1 << t);
+    return 0;
+}
+
+# Every target's compile of `entry`, concurrently; the union into names/masks. 0 or -1 (named).
+fn _distlib_verify_targets(entry, out_path, names, masks): i64 {
+    var pids = vec_new();
+    var errs = vec_new();
+    var t = 0;
+    while (t < _DL_TGT_N) {
+        var tsb = str_builder_new();
+        str_builder_add_cstr(tsb, "dlverifyout");
+        str_builder_add_int(tsb, t);
+        var esb = str_builder_new();
+        str_builder_add_cstr(esb, "dlverifyerr");
+        str_builder_add_int(esb, t);
+        var verr = _cbt_tmpfile(str_data(str_builder_build(esb)));
+        sys_unlink(verr);
+        vec_push(errs, verr);
+        vec_push(pids, _distlib_target_spawn(entry, t, _cbt_tmpfile(str_data(str_builder_build(tsb))), verr));
+        t = t + 1;
+    }
+    var rc = 0;
+    t = 0;
+    while (t < _DL_TGT_N) {
+        # Every child is reaped even after a failure, so none outlives the verify; only the
+        # first failing target is reported (a broken bundle fails on all five alike).
+        var quiet = 0;
+        if (rc != 0) { quiet = 1; }
+        if (_distlib_target_collect(out_path, t, vec_get(pids, t), vec_get(errs, t), names, masks, quiet) != 0) { rc = 0 - 1; }
+        t = t + 1;
+    }
+    return rc;
+}
+
+# -v: one line per leaf a verify round adds — which symbol, on which targets, and to what.
+fn _distlib_verify_trace(round, what, nm, mask, leaf): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "  sidecar verify round ");
+    str_builder_add_int(sb, round);
+    str_builder_add_cstr(sb, ": ");
+    str_builder_add_cstr(sb, leaf);
+    str_builder_add_cstr(sb, " ");
+    str_builder_add_cstr(sb, what);
+    str_builder_add_cstr(sb, " for '");
+    str_builder_add_cstr(sb, nm);
+    str_builder_add_cstr(sb, "' (");
+    if (mask == (1 << _DL_TGT_N) - 1) { str_builder_add_cstr(sb, "every target"); }
+    else { _distlib_add_targets(sb, mask); }
+    str_builder_add_cstr(sb, ")\n");
+    var line = str_data(str_builder_build(sb));
+    sys_write(STDOUT_FD, line, strlen(line));
+    return 0;
+}
+
+# The targets in `mask`, comma-separated, onto `sb`.
+fn _distlib_add_targets(sb, mask): i64 {
+    var t = 0;
+    var first = 1;
+    while (t < _DL_TGT_N) {
+        if ((mask & (1 << t)) != 0) {
+            if (first == 0) { str_builder_add_cstr(sb, ", "); }
+            str_builder_add_cstr(sb, _distlib_tgt_name(t));
+            first = 0;
+        }
+        t = t + 1;
+    }
+    return 0;
+}
+
+# ⚖️ OWNER OF A SYMBOL ONLY SOME TARGETS LACK. Crediting the first snapshot file that declares
+# it (what a host-only verify did) is wrong once the union is taken: mihi's EINTR is undefined
+# on PE only (syscalls_windows lacks it), and `sigil.cyr` sorts before every syscalls peer, so
+# the first declarer would put the sigil monolith in mihi's sidecar on EVERY host. So, over
+# every declarer, each mapped to its dispatcher:
+#   - one of them already in the unit (a recorded leaf or a named dep) => it is the target's
+#     own gap, nothing to add: answers 1 and sets `_dl_own_raw` = 0 (one in the unit-only
+#     scope is returned as the owner, so the scope rule below still applies to it);
+#   - else the declarers that are a dispatcher's PEER name that target's canonical definer —
+#     exactly one dispatcher => it;
+#   - else exactly one non-peer declarer => it;
+#   - else (two or more candidates either way) it is a named refusal: answers -1.
+# Answers 0 when nothing declares it, 1 with `_dl_own_raw` / `_dl_own_owner` set otherwise.
+var _dl_own_raw = 0;
+var _dl_own_owner = 0;
+
+fn _distlib_partial_owner(root, nm, mask, leaves, named_deps, scope): i64 {
+    _dl_own_raw = 0;
+    _dl_own_owner = 0;
+    var nlen = strlen(nm);
+    var peer_raw = vec_new();
+    var peer_own = vec_new();
+    var solo = vec_new();
+    var i = 0;
+    while (i < vec_len(_dl_snap_names)) {
+        var set = vec_get(_dl_snap_sets, i);
+        var ed = str_data(vec_get(_dl_snap_names, i));
+        i = i + 1;
+        if (_src_ids_has(set, nm, nlen) == 0) { continue; }
+        var el = strlen(ed);
+        var raw = alloc(el - 3);
+        memcpy(raw, ed, el - 4);
+        store8(raw + el - 4, 0);
+        var owner = _distlib_resolve_dispatcher(root, raw);
+        if (_distlib_vec_has(leaves, owner) == 1 || _distlib_vec_has(named_deps, owner) == 1) { return 1; }
+        if (_distlib_vec_has(leaves, raw) == 1) { return 1; }
+        # In the unit-only scope: the caller's scope rule decides (it never outranks "ours").
+        if (_distlib_vec_has(scope, owner) == 1 || _distlib_vec_has(scope, raw) == 1) {
+            _dl_own_raw = raw;
+            _dl_own_owner = owner;
+            return 1;
+        }
+        if (streq(owner, raw) == 0) {
+            if (_distlib_vec_has(peer_own, owner) == 0) { vec_push(peer_own, owner); vec_push(peer_raw, raw); }
+        } elif (_distlib_vec_has(solo, raw) == 0) { vec_push(solo, raw); }
+    }
+    if (vec_len(peer_own) == 1) {
+        _dl_own_raw = vec_get(peer_raw, 0);
+        _dl_own_owner = vec_get(peer_own, 0);
+        return 1;
+    }
+    var cands = peer_own;
+    if (vec_len(peer_own) == 0) {
+        if (vec_len(solo) == 0) { return 0; }
+        if (vec_len(solo) == 1) {
+            _dl_own_raw = vec_get(solo, 0);
+            _dl_own_owner = _dl_own_raw;
+            return 1;
+        }
+        cands = solo;
+    }
+    var rsb = str_builder_new();
+    str_builder_add_cstr(rsb, "distlib: sidecar verify: '");
+    str_builder_add_cstr(rsb, nm);
+    str_builder_add_cstr(rsb, "' is undefined only on ");
+    _distlib_add_targets(rsb, mask);
+    str_builder_add_cstr(rsb, ", and more than one stdlib leaf could own it there (");
+    var k = 0;
+    while (k < vec_len(cands)) {
+        if (k > 0) { str_builder_add_cstr(rsb, ", "); }
+        str_builder_add_cstr(rsb, vec_get(cands, k));
+        k = k + 1;
+    }
+    str_builder_add_cstr(rsb, ") — declare the right one in [deps] stdlib. Sidecar NOT written");
+    _err(str_data(str_builder_build(rsb)));
+    return 0 - 1;
 }
 
 fn _distlib_verify_rounds(leaves, out_path, named_deps, root, m): i64 {
@@ -3408,59 +3698,19 @@ fn _distlib_verify_rounds(leaves, out_path, named_deps, root, m): i64 {
             return _distlib_verify_fail("distlib: sidecar verify cannot read the bundle", out_path);
         }
         var entry = _distlib_join(m, "entry.cyr");
-        var vout = _cbt_tmpfile("dlverifyout");
-        var verr = _cbt_tmpfile("dlverifyerr");
         var esrc = str_data(str_builder_build(esb));
         if (file_write_all(entry, esrc, strlen(esrc)) < 0) {
             xunlink(entry);
             return _distlib_verify_fail("distlib: sidecar verify cannot write its compile unit", entry);
         }
-        # ⚠ _skip_deps = 1 is load-bearing: auto-prepend would put the whole declared stdlib
-        # in scope and the compile would succeed no matter how wrong the sidecar is. The
-        # entry must contain EXACTLY the leaves under test. (compile() still prepends the
-        # `#@incdir` of the entry's directory, the mirror: a leaf ./lib lacks resolves there.)
-        var sv_skip = _skip_deps;
-        var sv_err = _cc_stderr_to;
-        _skip_deps = 1;
-        _cc_allow_undef = 1;
-        _cc_stderr_to = verr;
-        var crc = compile(entry, vout);
-        _cc_allow_undef = 0;
-        _cc_stderr_to = sv_err;
-        _skip_deps = sv_skip;
-        xunlink(entry);
-        xunlink(vout);
-        var elen = 0;
-        var ebuf = file_read_whole(verr, &elen);
-        xunlink(verr);
+        # One compile per target; `masks[i]` says which targets left `names[i]` undefined.
         var names = vec_new();
-        if (ebuf != 0 && elen > 0) { _distlib_collect_undefined(ebuf, elen, names); }
-        if (vec_len(names) == 0) {
-            if (crc == 0) { return added_total; }
-            # Failed, and not for a missing symbol: say what the compiler said — its `error`
-            # lines, not the first screenful of warnings.
-            if (ebuf != 0 && elen > 0) { _distlib_show_errors(ebuf, elen); }
-            return _distlib_verify_fail("distlib: sidecar verify: the bundle with its leaves does not compile, and no symbol is missing — sidecar NOT written", out_path);
-        }
-        # ⚖️ WHOSE NEED IS IT? The named deps' modules are in the unit, so their own undefined
-        # symbols surface here too — recorded, they copy every named dep's leaves into this
-        # bundle's sidecar (agnosai's `guard` profile gained 12: tls, async, dynlib, …). A
-        # symbol goes to `scope` (in the unit from the next round, NOT recorded) only when BOTH
-        # hold: a named dep's own leaf list already brings its owner (`_dep_nd_leaves`, so a
-        # consumer has it in scope through that dep), and nothing of OURS — the bundle or a
-        # recorded leaf, comments and strings blanked — names it. Anything else is recorded,
-        # as before: the safe direction. (Pre-splicing the named deps' leaves instead dropped
-        # `alloc` from rosnet's `gpu` sidecar, whose leaf mabda needs it, because tyche
-        # happened to bring it.)
-        #
-        # ⚠ THE SCOPE NEVER OUTRANKS "OURS" — not by order, not by round. (1) A symbol whose
-        # owner is ALREADY in the scope is still checked against what is ours: the named deps'
-        # modules sit before the bundle in the unit, so a dep's `helperlib_do` is classified
-        # first and the bundle's own `helperlib_two` then found helperlib "already handled" —
-        # and from the next round it was defined, so it never surfaced again. (2) A round that
-        # RECORDS a leaf drops the scope: every entry in it was decided without that leaf
-        # counted as ours, and a leaf's need the scope already satisfies can never surface.
-        # The next round re-decides it with the leaf included. CHANGELOG [6.6.9]
+        var masks = vec_new();
+        var vt = _distlib_verify_targets(entry, out_path, names, masks);
+        xunlink(entry);
+        if (vt != 0) { return 0 - 1; }
+        if (vec_len(names) == 0) { return added_total; }
+        var all_mask = (1 << _DL_TGT_N) - 1;
         var own = 0;
         var added_here = 0;
         var recorded_here = 0;
@@ -3473,8 +3723,21 @@ fn _distlib_verify_rounds(leaves, out_path, named_deps, root, m): i64 {
         var ni = 0;
         while (ni < vec_len(names)) {
             var nm = vec_get(names, ni);
+            var nmask = vec_get(masks, ni);
             ni = ni + 1;
-            var raw = _distlib_leaf_defining(root, nm);
+            var raw = 0;
+            var owner = 0;
+            if (nmask == all_mask) {
+                raw = _distlib_leaf_defining(root, nm);
+                if (raw != 0) { owner = _distlib_resolve_dispatcher(root, raw); }
+            } else {
+                # Undefined on SOME targets only: see _distlib_partial_owner.
+                var po = _distlib_partial_owner(root, nm, nmask, leaves, named_deps, scope);
+                if (po < 0) { return 0 - 1; }
+                if (po == 1 && _dl_own_raw == 0) { continue; }   # already in the unit
+                raw = _dl_own_raw;
+                owner = _dl_own_owner;
+            }
             if (raw == 0) {
                 # Not a stdlib symbol — the consumer's problem — UNLESS the snapshot does declare
                 # it somewhere the depth-0 reader could not place (6.6.10). That used to be this
@@ -3492,7 +3755,6 @@ fn _distlib_verify_rounds(leaves, out_path, named_deps, root, m): i64 {
                 }
                 continue;
             }
-            var owner = _distlib_resolve_dispatcher(root, raw);
             # Never a named dep: its symbols belong to the consumer's pinned module.
             if (_distlib_vec_has(named_deps, owner) == 1) { continue; }
             if (_distlib_vec_has(leaves, owner) == 1) { continue; }
@@ -3515,10 +3777,12 @@ fn _distlib_verify_rounds(leaves, out_path, named_deps, root, m): i64 {
                     if (scoped == 0) {
                         vec_push(scope, brought);
                         added_here = added_here + 1;
+                        if (_verbose == 1) { _distlib_verify_trace(round, "in scope (a named dep's)", nm, nmask, brought); }
                     }
                     continue;
                 }
             }
+            if (_verbose == 1) { _distlib_verify_trace(round, "recorded", nm, nmask, owner); }
             vec_push(leaves, owner);
             added_here = added_here + 1;
             recorded_here = recorded_here + 1;
@@ -3568,6 +3832,116 @@ fn _distlib_stdlib_root(): i64 {
 # already relies on. Walk the underscore-separated prefixes and return the shortest one that
 # is a real leaf AND actually includes this peer; requiring the include is what stops a
 # coincidental name prefix from hijacking the answer.
+# ⭐ 6.6.11 — AND A PEER OF A PEER. `syscalls_linux_common.cyr` is included by the x86_64-Linux,
+# aarch64-Linux and macOS syscalls peers, never by `syscalls.cyr`, so the walk above answered
+# `syscalls_linux_common` itself for `AT_EMPTY_PATH` — and once the verify took the per-target
+# union (a PE-only undefined symbol is attributed across every declarer) that private helper
+# landed in agnodrm's, dhancha's, dhvani's and agnosai's sidecars, putting Linux wrappers in a
+# consumer's Windows build. The dispatcher also owns a file one of ITS peers (`<pre>_…`)
+# includes. CHANGELOG [6.6.11]
+
+# 1 when the snapshot file root/<file>.cyr contains `include "lib/<leaf>.cyr"`.
+fn _distlib_file_includes(root, file, leaf): i64 {
+    var fsb = str_builder_new();
+    str_builder_add_cstr(fsb, root);
+    str_builder_add_cstr(fsb, "/");
+    str_builder_add_cstr(fsb, file);
+    str_builder_add_cstr(fsb, ".cyr");
+    var fp = str_data(str_builder_build(fsb));
+    if (file_exists(fp) == 0) { return 0; }
+    var n = 0;
+    var b = file_read_whole(fp, &n);      # 6.6.9: whole, not _file_size-sized
+    if (b == 0 || n <= 0) { return 0; }
+    var want = str_builder_new();
+    str_builder_add_cstr(want, "include \"lib/");
+    str_builder_add_cstr(want, leaf);
+    str_builder_add_cstr(want, ".cyr\"");
+    var w = str_data(str_builder_build(want));
+    var wl = strlen(w);
+    var q = 0;
+    while (q + wl <= n) {
+        if (memeq(b + q, w, wl) == 1) { return 1; }
+        q = q + 1;
+    }
+    return 0;
+}
+
+# ⚠ ONLY A PRIVATE ONE. `thread_local.cyr` is also `thread_`-prefixed and included by a
+# `thread` peer (thread_macos), but it is a leaf in its own right — patra and tls_native
+# include it too — and crediting its symbols to `thread` dropped it from majra's, prakash's,
+# szal's and sigil's sidecars. A peer of a peer belongs to the dispatcher only when nothing
+# outside that dispatcher's peers includes it. Answers are memoized: this reads the snapshot,
+# and the allocator never frees (the v6.6.3 OOM). CHANGELOG [6.6.11]
+var _dl_pp_keys = 0;
+var _dl_pp_vals = 0;
+
+# 1 when no snapshot file includes root/<leaf>.cyr except `leaf` itself and the `<pre>_…` files.
+fn _distlib_only_peers_include(root, pre, leaf): i64 {
+    if (_dl_pp_keys == 0) { _dl_pp_keys = vec_new(); _dl_pp_vals = vec_new(); }
+    var ksb = str_builder_new();
+    str_builder_add_cstr(ksb, pre);
+    str_builder_add_cstr(ksb, ":");
+    str_builder_add_cstr(ksb, leaf);
+    var key = str_data(str_builder_build(ksb));
+    var k = 0;
+    while (k < vec_len(_dl_pp_keys)) {
+        if (streq(vec_get(_dl_pp_keys, k), key) == 1) { return vec_get(_dl_pp_vals, k); }
+        k = k + 1;
+    }
+    var ans = 1;
+    var pl = strlen(pre);
+    var i = 0;
+    while (ans == 1 && _dl_snap_names != 0 && i < vec_len(_dl_snap_names)) {
+        var ed = str_data(vec_get(_dl_snap_names, i));
+        i = i + 1;
+        var el = strlen(ed);
+        var base = alloc(el - 3);
+        memcpy(base, ed, el - 4);
+        store8(base + el - 4, 0);
+        if (streq(base, leaf) == 1) { continue; }
+        if (el - 4 > pl && memeq(base, pre, pl) == 1 && load8(base + pl) == 95) { continue; }
+        if (_distlib_file_includes(root, base, leaf) == 1) { ans = 0; }
+    }
+    vec_push(_dl_pp_keys, key);
+    vec_push(_dl_pp_vals, ans);
+    return ans;
+}
+
+# 1 when some peer `<pre>_…` that root/<pre>.cyr includes itself includes `leaf`, and nothing
+# but those peers does (see above).
+fn _distlib_peer_includes(root, pre, leaf): i64 {
+    var dsb = str_builder_new();
+    str_builder_add_cstr(dsb, root);
+    str_builder_add_cstr(dsb, "/");
+    str_builder_add_cstr(dsb, pre);
+    str_builder_add_cstr(dsb, ".cyr");
+    var n = 0;
+    var b = file_read_whole(str_data(str_builder_build(dsb)), &n);
+    if (b == 0 || n <= 0) { return 0; }
+    var pl = strlen(pre);
+    var p = 0;
+    while (p + 13 + pl < n) {
+        if (memeq(b + p, "include \"lib/", 13) == 1 && memeq(b + p + 13, pre, pl) == 1 && load8(b + p + 13 + pl) == 95) {
+            var ne = p + 13;
+            while (ne < n && load8(b + ne) != 34) { ne = ne + 1; }
+            if (ne - (p + 13) > 4 && memeq(b + ne - 4, ".cyr", 4) == 1) {
+                var nl = ne - 4 - (p + 13);
+                var peer = alloc(nl + 1);
+                memcpy(peer, b + p + 13, nl);
+                store8(peer + nl, 0);
+                if (streq(peer, leaf) == 0) {
+                    if (_distlib_file_includes(root, peer, leaf) == 1) {
+                        return _distlib_only_peers_include(root, pre, leaf);
+                    }
+                }
+            }
+            p = ne;
+        }
+        p = p + 1;
+    }
+    return 0;
+}
+
 fn _distlib_resolve_dispatcher(root, leaf): i64 {
     var ll = strlen(leaf);
     var i = 1;
@@ -3600,6 +3974,7 @@ fn _distlib_resolve_dispatcher(root, leaf): i64 {
                         }
                     }
                 }
+                if (_distlib_peer_includes(root, pre, leaf) == 1) { return pre; }
             }
         }
         i = i + 1;

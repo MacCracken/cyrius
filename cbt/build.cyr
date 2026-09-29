@@ -978,6 +978,51 @@ fn _cbt_exit(code): i64 {
 # (stay quiet and lint anyway), and it must not spray either onto the user's terminal.
 var _cc_stderr_to = 0;
 
+# 6.6.11 — the distlib sidecar verify compiles ONE unit for every target, so it needs to pick
+# the compiler and the target per compile. When `_cc_override` is non-zero compile() runs that
+# binary instead of current_cc(); when `_cc_target_env` is non-zero the child's environment is
+# ours MINUS every target selector (CYRIUS_TARGET_WIN/EFI/AGNOS, CYRIUS_MACHO, CYRIUS_MACHO_ARM),
+# PLUS `_cc_target_env` itself unless it is "". Stripping is the point: B09 made every child
+# inherit the whole environment, so a CYRIUS_TARGET_WIN=1 left in a shell would otherwise turn
+# the "x86_64-linux" compile into a PE one. Both are opt-in and reset by the caller. POSIX
+# arm only — the verify refuses to run on any other host. CHANGELOG [6.6.11]
+var _cc_override = 0;
+var _cc_target_env = 0;
+
+# 1 when the cstr `e` begins with the cstr `p`.
+fn _cc_pfx(e, p): i64 {
+    var pl = strlen(p);
+    if (strlen(e) < pl) { return 0; }
+    return memeq(e, p, pl);
+}
+
+# 1 when the env entry `e` (a cstr) sets one of the target selectors above.
+fn _cc_env_is_target(e): i64 {
+    if (_cc_pfx(e, "CYRIUS_TARGET_WIN=") == 1) { return 1; }
+    if (_cc_pfx(e, "CYRIUS_TARGET_EFI=") == 1) { return 1; }
+    if (_cc_pfx(e, "CYRIUS_TARGET_AGNOS=") == 1) { return 1; }
+    if (_cc_pfx(e, "CYRIUS_MACHO=") == 1) { return 1; }
+    if (_cc_pfx(e, "CYRIUS_MACHO_ARM=") == 1) { return 1; }
+    return 0;
+}
+
+# `_envp` without its target selectors, plus `tv` when it is not "". A fresh NULL-terminated array.
+fn _cc_env_retarget(tv): i64 {
+    var n = 0;
+    while (load64(_envp + n * 8) != 0) { n = n + 1; }
+    var out = alloc((n + 2) * 8);
+    var o = 0;
+    var i = 0;
+    while (i < n) {
+        var e = load64(_envp + i * 8);
+        if (_cc_env_is_target(e) == 0) { store64(out + o * 8, e); o = o + 1; }
+        i = i + 1;
+    }
+    if (strlen(tv) > 0) { store64(out + o * 8, tv); o = o + 1; }
+    store64(out + o * 8, 0);
+    return out;
+}
+
 # The Windows twin of the child-side dup2 below. lib/process_win.cyr's
 # `_win_compile_spawn` builds `cmd /s /c ""cc" < "src" > "out""` and leaves stderr on
 # the console; this adds the `2> "err"` leg. Kept HERE rather than in lib/ so the
@@ -1067,6 +1112,7 @@ fn _compile_fail_hint(): i64 {
 fn compile(source, output): i64 {
     _cc_last_exit = 0 - 1;
     var cc = current_cc();
+    if (_cc_override != 0) { cc = _cc_override; }   # 6.6.11: the distlib per-target verify
     # v6.2.27: --target=aarch64-bare-metal-elf routes to the aarch64
     # cross-compiler (the same env knobs apply — kernel_mode + ELF64 kernel).
     # HARD-ERROR if cycc_aarch64 is absent (review P1) — never silently fall
@@ -1254,6 +1300,11 @@ fn compile(source, output): i64 {
             ax = ax + 1;
         }
         store64(&argv + ax * 8, 0);
+        # 6.6.11: a per-target compile (the distlib verify) gets its target and nothing else's.
+        if (_cc_target_env != 0) {
+            sys_execve(cc, &argv, _cc_env_retarget(_cc_target_env));
+            sys_exit(127);
+        }
         # v5.11.58: when --strict-pin is set, augment envp with
         # CYRIUS_STRICT_PIN=1 so cycc's pin-drift check (added
         # v5.11.57) exits non-zero on mismatch. CI gating path.

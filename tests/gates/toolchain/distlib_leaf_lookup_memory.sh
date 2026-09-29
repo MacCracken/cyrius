@@ -38,8 +38,8 @@
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
-CC="$ROOT/build/cycc"
-[ -x "$CC" ] || { echo "FAIL: distlib_leaf_lookup_memory: build/cycc missing"; exit 1; }
+CC=${CYCC:-"$ROOT/build/cycc"}
+[ -x "$CC" ] || { echo "SKIP: distlib_leaf_lookup_memory: no compiler at $CC"; exit 77; }
 
 WORK=$(mktemp -d) && [ -d "$WORK" ] || { echo "FAIL: distlib_leaf_lookup_memory: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$WORK"' EXIT
@@ -47,11 +47,16 @@ fail() { echo "FAIL: distlib_leaf_lookup_memory: $1"; exit 1; }
 
 V=$(cat "$ROOT/VERSION")
 SNAP="${CYRIUS_HOME:-$HOME/.cyrius}/versions/$V/lib"   # v6.6.4: check.sh stages CYRIUS_HOME from the tree
-[ -d "$SNAP" ] || { echo "SKIP: no stdlib snapshot for $V (install not refreshed)"; exit 0; }
+[ -d "$SNAP" ] || { echo "SKIP: distlib_leaf_lookup_memory: no stdlib snapshot for $V (install not refreshed)"; exit 77; }
 
 ( cd "$ROOT" && cat cbt/cyrius.cyr | "$CC" > "$WORK/cyrius" ) 2>/dev/null \
-    || fail "could not build cbt/cyrius.cyr with build/cycc"
+    || fail "could not build cbt/cyrius.cyr with $CC"
 chmod +x "$WORK/cyrius"
+# 6.6.11 (K5): the sidecar verify compiles for every target, and the CLI resolves its tools
+# from its own directory — stage cycc and cycc_aarch64 beside it (77 if that fails).
+cp "$CC" "$WORK/cycc" && ( cd "$ROOT" && "$CC" < src/main_aarch64.cyr > "$WORK/cycc_aarch64" 2>/dev/null ) \
+    && chmod +x "$WORK/cycc" "$WORK/cycc_aarch64" \
+    || { echo "SKIP: distlib_leaf_lookup_memory: could not stage cycc + cycc_aarch64 beside the CLI"; exit 77; }
 
 # Fixture: reference ~160 REAL stdlib fn names with NO leaves declared, so each one comes
 # back undefined and drives one _distlib_leaf_defining lookup.
