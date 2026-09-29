@@ -121,7 +121,7 @@ fn _fs_narrow(w, dst, cap): i64 {
 # The three buffers are on the STACK (they were alloc()ed and stored through unchecked —
 # a refused allocation wrote the pattern to address 0 — and never given back: the default
 # allocator has no free, and dir_walk lists every directory it visits). CHANGELOG [6.6.10]
-fn _dir_list_into_vec(path, entries): i64 {
+fn _dir_list_into_vec(path: Str, entries): i64 {
     # UTF-16LE search pattern "<path>\*". _fs_widen writes (len+1) WCHARs; the pattern adds
     # two more, so a path past 509 bytes cannot fit — refused rather than overrun.
     var pd = str_data(path);
@@ -156,10 +156,13 @@ fn _dir_list_into_vec(path, entries): i64 {
     return 0;
 }
 
-# Is `path` a directory? One GetFileAttributesW call — no handle churn. The attributes
+# Is `path` a directory? One GetFileAttributesW call — no handle churn. Both fns here take
+# `path: Str` as fs.cyr's POSIX arms do (bite 14's find, 6.6.10): untyped, a bare literal
+# (`is_dir("dir")`) arrived as a raw cstring and `str_data` read garbage — a page fault at
+# 0xFFFFFFFFFFFFFFFF under wine, while every POSIX arm coerced it. The attributes
 # answer for a directory whose ACL denies LISTING, so such a directory is still a directory
 # here (the walkers then fail to list it, by name). Stack buffer, as above. CHANGELOG [6.6.10]
-fn is_dir(path): i64 {
+fn is_dir(path: Str): i64 {
     var pd = str_data(path);
     if (strlen(pd) > 511) { return 0; }
     var wpath[1040];
