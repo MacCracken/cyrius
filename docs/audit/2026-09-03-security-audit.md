@@ -2,18 +2,19 @@
 
 **Scope:** the untrusted-source-input surface. Previous full audit:
 `docs/audit/2026-07-27-security-audit.md` (CVE-32…CVE-36) at cycc 6.4.82.
-**Next free identifier after this document: CVE-53.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
+**Next free identifier after this document: CVE-54.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
 document are **withdrawn** but still consume their ids.) CVE-43 was consumed at 6.6.5,
 **CVE-44 and CVE-45 at 6.6.6** — the release installer's fixed `/tmp` staging, and a forged `#@file` from an included file —
 **CVE-46, CVE-47 and CVE-48 at 6.6.7** (a `secret var` inside a closure was never zeroised; a `secret var` in a
 fn whose `return f(..)` was compiled as a tail call was never zeroised; on agnos a server bound to 127.0.0.1
 listened on the network), and **CVE-49 and CVE-50 at 6.6.9** (`cyrius self` staged and executed compilers at
 predictable shared `/tmp` names; `lib/http.cyr` wrote a long URL past its 2048-byte request buffer), and
-**CVE-51 and CVE-52 at 6.6.10** (on Intel-Mac, reading the clock wrote mach time through a stale `rdx`; the
-lexer silently dropped any `@` that did not spell `@unsafe`); all ten are appended below.
+**CVE-51, CVE-52 and CVE-53 at 6.6.10** (on Intel-Mac, reading the clock wrote mach time through a stale
+`rdx`; the lexer silently dropped any `@` that did not spell `@unsafe`; `lib/ws.cyr`'s `ws_recv_frame` let a
+remote peer choose its allocation size and read frames it had not received); all eleven are appended below.
 ⚠ **This line read "next free: CVE-42" while CLAUDE.md read "the next CVE number is 43" and this document ran 39-41.**
 Two authorities, two answers, and nothing reconciled them. CLAUDE.md is the one every closeout reads, so **42 is
-retired unused** and CVE-43 is the entry appended below. Anything below 53 now collides.
+retired unused** and CVE-43 is the entry appended below. Anything below 54 now collides.
 
 Run as part of the band K closeout, as nine parallel audit dimensions over the v6.5.x minor with
 an adversarial verification pass over the highest-severity findings. Everything recorded here was
