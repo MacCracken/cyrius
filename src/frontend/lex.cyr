@@ -912,10 +912,261 @@ fn LEXOCT(S, p): i64 {
     return p;
 }
 
+# ================================================================
+# DECIMAL FLOAT LITERALS -> correctly rounded binary64, at compile time.
+# ================================================================
+# ⛔ 6.6.10 — the literal is converted HERE, exactly, and the token carries the IEEE-754 bits.
+# It used to be an i64 numerator/denominator pair divided at RUNTIME (cvtsi2sd/scvtf + divide):
+# the numerator overflowed once the digit string reached 2^63 and the denominator past 18
+# fraction digits (leading zeros included), so `0.0000000000000000001` was NEGATIVE and
+# `9.999999999999999999` was -8.2; and once numer > 2^53 the runtime division double-rounded,
+# putting ~3%/24%/21% of 16/17/18-digit literals 1 ulp off. All of it silent.
+#
+# Integer-only bignums (32-bit limbs in 8-byte slots, slot 0 = limb count, no leading zero
+# limb), a sticky bit, round-half-even, subnormals, overflow to +inf. Two scratch bignums,
+# allocated on the first float literal — no heap-map region, no layout change.
+# Size bound: at most _FLIT_SIG significant digits are kept (a nonzero tail becomes one
+# trailing `1`, which cannot move the result: every binary64 value and every halfway point
+# between two of them has at most 767 significant digits), and anything below 1e-324 or at
+# or above 1e309 is decided before any bignum is built, so D < 10^1125 and both operands
+# stay under 3800 bits — inside _FLB_W.
+# Every fn here is small and plain on purpose: cybs (the seed's compiler) fails SILENTLY past
+# its per-fn limits. CHANGELOG [6.6.10]
+var _flb = 0;
+var _FLB_W = 136;
+var _FLIT_SIG = 800;
+
+# b = b * m + a, for small m and a.
+fn _bn_muladd(b, m, a): i64 {
+    var n = load64(b);
+    var c = a;
+    var i = 0;
+    while (i < n) {
+        var x = load64(b + 8 + i * 8) * m + c;
+        store64(b + 8 + i * 8, x & 0xFFFFFFFF);
+        c = x >> 32;
+        i = i + 1;
+    }
+    if (c != 0) { store64(b + 8 + n * 8, c); store64(b, n + 1); }
+    return 0;
+}
+
+# b = b << k.
+fn _bn_shl(b, k): i64 {
+    var n = load64(b);
+    if (n == 0) { return 0; }
+    var w = k >> 5;
+    var s = k & 31;
+    store64(b + 8 + (n + w) * 8, 0);
+    var i = n - 1;
+    while (i >= 0) {
+        var v = load64(b + 8 + i * 8) << s;
+        var d = b + 8 + (i + w) * 8;
+        store64(d + 8, load64(d + 8) | (v >> 32));
+        store64(d, v & 0xFFFFFFFF);
+        i = i - 1;
+    }
+    i = 0;
+    while (i < w) { store64(b + 8 + i * 8, 0); i = i + 1; }
+    n = n + w;
+    if (load64(b + 8 + n * 8) != 0) { n = n + 1; }
+    store64(b, n);
+    return 0;
+}
+
+# b = b >> 1.
+fn _bn_shr1(b): i64 {
+    var n = load64(b);
+    var i = 0;
+    while (i < n) {
+        var v = load64(b + 8 + i * 8) >> 1;
+        if (i + 1 < n) { v = v | ((load64(b + 16 + i * 8) & 1) << 31); }
+        store64(b + 8 + i * 8, v);
+        i = i + 1;
+    }
+    if (n > 0) { if (load64(b + n * 8) == 0) { store64(b, n - 1); } }
+    return 0;
+}
+
+# -1 / 0 / 1 as a < / == / > b.
+fn _bn_cmp(a, b): i64 {
+    var n = load64(a);
+    var m = load64(b);
+    if (n > m) { return 1; }
+    if (n < m) { return 0 - 1; }
+    var i = n - 1;
+    while (i >= 0) {
+        var x = load64(a + 8 + i * 8);
+        var y = load64(b + 8 + i * 8);
+        if (x > y) { return 1; }
+        if (x < y) { return 0 - 1; }
+        i = i - 1;
+    }
+    return 0;
+}
+
+# a = a - b, for a >= b.
+fn _bn_sub(a, b): i64 {
+    var n = load64(a);
+    var m = load64(b);
+    var br = 0;
+    var i = 0;
+    while (i < n) {
+        var y = 0;
+        if (i < m) { y = load64(b + 8 + i * 8); }
+        var x = load64(a + 8 + i * 8) - y - br;
+        br = 0;
+        if (x < 0) { x = x + 0x100000000; br = 1; }
+        store64(a + 8 + i * 8, x);
+        i = i + 1;
+    }
+    var go = 1;
+    while (go == 1) {
+        if (n == 0) { go = 0; }
+        elif (load64(a + n * 8) != 0) { go = 0; }
+        else { n = n - 1; }
+    }
+    store64(a, n);
+    return 0;
+}
+
+# Number of significant bits of b (0 for zero).
+fn _bn_bitlen(b): i64 {
+    var n = load64(b);
+    if (n == 0) { return 0; }
+    var top = load64(b + n * 8);
+    var l = (n - 1) * 32;
+    while (top != 0) { l = l + 1; top = top >> 1; }
+    return l;
+}
+
+# Bits of q (2^54 <= q < 2^56), the value being q * 2^-k plus a tail that is nonzero when
+# st != 0, rounded to binary64: nearest, ties to even; subnormal below 2^-1022; +inf at or
+# past the overflow threshold.
+fn _flit_round(q, k, st): i64 {
+    var lq = 0;
+    var t = q;
+    while (t != 0) { lq = lq + 1; t = t >> 1; }
+    var e = lq - 1 - k;
+    if (e > 1023) { return 0x7FF0000000000000; }
+    var s = lq - 53;
+    if (e < 0 - 1022) { s = s + (0 - 1022 - e); }
+    if (s > 57) { return 0; }
+    var m = q >> s;
+    var half = 1 << (s - 1);
+    var sticky = st;
+    if ((q & (half - 1)) != 0) { sticky = 1; }
+    if ((q & half) != 0) {
+        if (sticky != 0) { m = m + 1; }
+        elif ((m & 1) != 0) { m = m + 1; }
+    }
+    # Subnormal: the bits ARE m (a carry to 2^52 is exactly the smallest normal).
+    if (e < 0 - 1022) { return m; }
+    # Normal: m in [2^52, 2^53]; a carry to 2^53 bumps the exponent, and past 1023 is +inf.
+    var bits = ((e + 1022) << 52) + m;
+    if (bits >= 0x7FF0000000000000) { return 0x7FF0000000000000; }
+    return bits;
+}
+
+# The 56-bit quotient of a / (d >> 55), d already shifted left by 55; the remainder is
+# left in a.
+fn _flit_divq(a, d): i64 {
+    var q = 0;
+    var i = 55;
+    while (i >= 0) {
+        if (_bn_cmp(a, d) >= 0) { _bn_sub(a, d); q = q | (1 << i); }
+        _bn_shr1(d);
+        i = i - 1;
+    }
+    return q;
+}
+
+# Bits of n * 10^e10, n a nonzero bignum in the first scratch slot.
+fn _flit_scale(e10): i64 {
+    var a = _flb;
+    var d = _flb + _FLB_W * 8;
+    store64(d, 1);
+    store64(d + 8, 1);
+    var i = 0;
+    if (e10 >= 0) { while (i < e10) { _bn_muladd(a, 10, 0); i = i + 1; } }
+    else { while (i < 0 - e10) { _bn_muladd(d, 10, 0); i = i + 1; } }
+    var k = 55 - (_bn_bitlen(a) - _bn_bitlen(d));
+    if (k >= 0) { _bn_shl(a, k); } else { _bn_shl(d, 0 - k); }
+    _bn_shl(d, 55);
+    var q = _flit_divq(a, d);
+    return _flit_round(q, k, load64(a));
+}
+
+# Index (0-based, `_` and `.` skipped) of the first nonzero digit of the literal at
+# [p0, pe) when want == -1, else the value of digit `want`; -1 when there is none.
+fn _flit_scan(S, p0, pe, want): i64 {
+    var i = 0 - 1;
+    var p = p0;
+    while (p < pe) {
+        var c = load8(S + 0x459D000 + p);
+        if (c >= 48) { if (c <= 57) {
+                i = i + 1;
+                if (want == 0 - 1) { if (c != 48) { return i; } }
+                if (want == i) { return c - 48; }
+            } }
+        p = p + 1;
+    }
+    return 0 - 1;
+}
+
+# Index of the last nonzero digit of the literal at [p0, pe), or -1.
+fn _flit_last(S, p0, pe): i64 {
+    var i = 0 - 1;
+    var last = 0 - 1;
+    var p = p0;
+    while (p < pe) {
+        var c = load8(S + 0x459D000 + p);
+        if (c >= 48) { if (c <= 57) {
+                i = i + 1;
+                if (c != 48) { last = i; }
+            } }
+        p = p + 1;
+    }
+    return last;
+}
+
+# Correctly rounded binary64 bits of the decimal literal at [p0, pe), which has `fd`
+# fraction digits and `nd` digits in all.
+fn _flit_bits(S, p0, pe, fd, nd): i64 {
+    var i0 = _flit_scan(S, p0, pe, 0 - 1);
+    if (i0 < 0) { return 0; }
+    var i1 = _flit_last(S, p0, pe);
+    if (_flb == 0) { _flb = alloc(_FLB_W * 16); }
+    var a = _flb;
+    store64(a, 0);
+    var iu = i1;
+    if (i1 - i0 >= _FLIT_SIG) { iu = i0 + _FLIT_SIG - 1; }
+    var p = p0;
+    var i = 0 - 1;
+    while (p < pe) {
+        var c = load8(S + 0x459D000 + p);
+        if (c >= 48) { if (c <= 57) {
+                i = i + 1;
+                if (i >= i0) { if (i <= iu) { _bn_muladd(a, 10, c - 48); } }
+            } }
+        p = p + 1;
+    }
+    # A dropped tail is never all zeros (i1 is the last nonzero digit): one trailing 1.
+    if (iu < i1) { _bn_muladd(a, 10, 1); iu = iu + 1; }
+    # value = a * 10^e10, and 10^(sig-1+e10) <= value < 10^(sig+e10).
+    var e10 = (nd - 1 - iu) - fd;
+    var top = iu - i0 + 1 + e10;
+    if (top <= 0 - 324) { return 0; }
+    if (top > 309) { return 0x7FF0000000000000; }
+    return _flit_scale(e10);
+}
+
 # Lex decimal number
 fn LEXDEC(S, p): i64 {
+    var p0 = p;
     var c = load8(S + 0x459D000 + p);
     var val = c - 48;
+    var nd = 1;
     p = p + 1;
     var go = 1;
     while (go == 1) {
@@ -925,7 +1176,7 @@ fn LEXDEC(S, p): i64 {
             # Underscore separator (e.g. 1_000_000) — skip silently.
             if (c == 95) { p = p + 1; }
             elif (c >= 48) {
-                if (c <= 57) { val = val * 10 + (c - 48); p = p + 1; }
+                if (c <= 57) { val = val * 10 + (c - 48); nd = nd + 1; p = p + 1; }
                 else { go = 0; }
             } else { go = 0; }
         }
@@ -936,34 +1187,24 @@ fn LEXDEC(S, p): i64 {
             if (np < GBL(S)) { var nc = load8(S + 0x459D000 + np);
                 if (nc >= 48) { if (nc <= 57) {
                         p = np;
-                        var frac = 0;
-                        var denom = 1;
+                        var fd = 0;
                         var fgo = 1;
                         while (fgo == 1) {
                             if (p >= GBL(S)) { fgo = 0; }
                             if (fgo == 1) {
                                 c = load8(S + 0x459D000 + p);
-                                if (c >= 48) { if (c <= 57) {
-                                        frac = frac * 10 + (c - 48);
-                                        denom = denom * 10;
-                                        p = p + 1;
-                                    } else { fgo = 0; } }
+                                if (c >= 48) { if (c <= 57) { fd = fd + 1; p = p + 1; }
+                                    else { fgo = 0; } }
                                 else { fgo = 0; }
                             }
                         }
-                        # v6.5.28 — full-i64 numer/denom via the side table (see FLIT_ADD in
-                        # src/common/util.cyr). This line used to be
-                        #   ADDTOK(S, 61, (denom << 32) | (numer & 0xFFFFFFFF));
-                        # which overflowed TWICE past ~9 significant digits — the mask
-                        # truncated numer, and `denom << 32` overflowed the i64 once denom
-                        # exceeded 2^32 — turning 3.141592653589793 into 0.061575 with no
-                        # diagnostic at all. The token now carries an INDEX, so both fields
-                        # keep their full width and real f64 precision survives.
-                        var numer = val * denom + frac;
-                        var fidx = FLIT_ADD(numer, denom);
+                        # 6.6.10 — the token indexes the literal's correctly rounded binary64
+                        # BITS (FLIT_NUM); the backends load them as one 64-bit immediate. See
+                        # the block above _bn_muladd for what the i64 numer/denom pair did.
+                        var bits = _flit_bits(S, p0, p, fd, nd + fd);
+                        var fidx = FLIT_ADD(bits, 0);
                         if (fidx < 0) {
-                            syscall(SYS_WRITE, 2, "error: too many distinct float literals (raise _FLIT_CAP in src/common/util.cyr)\n", 81);
-                            syscall(SYS_EXIT, 1);
+                            _lex_die(S, p0, "too many distinct float literals (raise _FLIT_CAP in src/common/util.cyr)");
                         }
                         ADDTOK(S, 61, fidx);
                         return p;

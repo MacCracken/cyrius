@@ -3180,23 +3180,13 @@ fn EMIT_F32_BINOP(S, fop): i64 {
     return 0;
 }
 
-# Load a float literal into x0 as IEEE 754 bits. The lexer encodes
-# fval as `(denom << 32) | numer` so we reconstruct the double at
-# runtime via scvtf + fdiv, matching x86/float.cyr's strategy.
-# Mirrors the EMIT_FLOAT_LIT in x86/float.cyr — same input shape,
-# same output (f64 bit pattern in x0/rax), aarch64 FP instructions.
+# Load a float literal into x0 as IEEE 754 bits. `fval` indexes the side table, whose
+# FLIT_NUM is the literal's binary64 bits, correctly rounded by the lexer (_flit_bits in
+# src/frontend/lex.cyr), so this is one movz/movk immediate — the same bits as x86's movabs.
+# ⛔ 6.6.10 — it was scvtf/scvtf/fdiv over an i64 numer/denom pair, which overflowed and
+# double-rounded silently. CHANGELOG [6.6.10]
 fn EMIT_FLOAT_LIT(S, fval): i64 {
-    # v6.5.28 — `fval` is now an INDEX into the float-literal side table, not a packed 32/32
-    # rational (which overflowed silently past ~9 significant digits). See FLIT_ADD in
-    # src/common/util.cyr.
-    var numer = FLIT_NUM(fval);
-    var denom = FLIT_DEN(fval);
-    EMOVI(S, numer);           # x0 = numer
-    EW(S, 0x9E620000);         # scvtf d0, x0   — d0 = (double) numer
-    EMOVI(S, denom);           # x0 = denom (clobbers x0; that's fine)
-    EW(S, 0x9E620001);         # scvtf d1, x0   — d1 = (double) denom
-    EW(S, 0x1E611800);         # fdiv d0, d0, d1
-    EW(S, 0x9E660000);         # fmov x0, d0    — x0 = f64 bit pattern
+    EMOVI(S, FLIT_NUM(fval));   # x0 = f64 bit pattern
     return 0;
 }
 
