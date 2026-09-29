@@ -94,15 +94,18 @@ fn main(): i64 {
     test_group("a deadline ends a grandchild that holds the capture pipe");
     # The grandchild inherits the pipe as its stdout, so the drain cannot see EOF until IT has
     # gone: the verb returns inside the bound only if the deadline ended the grandchild too.
-    var buf = alloc(256);
+    # ⚠ The buffer must be far larger than the output: the drain also stops when it is FULL, and
+    # with 256 bytes ping's fourth line ended it at ~4 s, which passed this row against the 6.6.9
+    # code on real Windows (the full 6.6.9 run measured 29,333 ms on cass).
+    var buf = alloc(65536);
     var st[16];
     var prev = proc_set_timeout_ms(700);
     var t0 = clock_now_ms();
     #ifdef CYRIUS_TARGET_WIN
-    var n = exec_capture_status(_shell("ping -n 30 127.0.0.1"), buf, 255, &st);
+    var n = exec_capture_status(_shell("ping -n 30 127.0.0.1"), buf, 65535, &st);
     #endif
     #ifndef CYRIUS_TARGET_WIN
-    var n = exec_capture_status(_shell("sleep 30 & echo $!; wait"), buf, 255, &st);
+    var n = exec_capture_status(_shell("sleep 30 & echo $!; wait"), buf, 65535, &st);
     #endif
     var el = clock_now_ms() - t0;
     proc_set_timeout_ms(prev);
