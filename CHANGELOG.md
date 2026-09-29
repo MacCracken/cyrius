@@ -198,10 +198,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (bite 14), `walkers_fail_closed_unreadable_dir.sh` and `lsp_indexes_every_decl_spelling.sh`
   (bite 15), `toplevel_destructure_var_cap.sh` (bite 2); in `programs/checks/main.cyr` —
   `cap_errors_stop_storing.sh`, `assert_enum_constants.sh`, `pe_unrouted_warning_names_site.sh`
-  (bite 2) and `macos_peer_surface_parity.sh` (bite 3). `pp_flag_cap.sh`'s driver label no longer
-  says "hard-errors" (a refusal since v6.4.62). `check_gate_census.sh` reads all of them as
-  registered on a merge of every lane (the one gate it still reports unregistered,
-  `lexer_errors_name_file_line.sh`, arrives with S2 bite 9's own hand-off).
+  (bite 2), `macos_peer_surface_parity.sh` (bite 3) and `lexer_errors_name_file_line.sh` (S2 bite 9,
+  CVE-52). `pp_flag_cap.sh`'s driver label no longer says "hard-errors" (a refusal since v6.4.62), and
+  the labels of `dx_multi_error.sh`, `cli_temp_dir_no_leak.sh` and `lexer_attribute_word_boundary.sh`
+  name what bite 9 changed in them. `check_gate_census.sh` reads every gate as registered exactly once
+  on a merge of every lane.
 
 ### Downstream
 
