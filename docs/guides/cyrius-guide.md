@@ -391,10 +391,15 @@ look reasonable:
 `b.v = p` copies the whole struct into the field. So does a call, method or operator that
 returns a `P3` (`b.v = mk(1)`, `b.v = a.mk(1)`, `b.v = a + c`), a by-value `P3` parameter, a
 pointer-mode `P3` local (the struct it points at, not the pointer), a global, and another `P3`
-field (`b.v = o.b.v`). A struct of a different type is a compile error naming it. Before v6.6.10
+field (`b.v = o.b.v`). A struct of a different type is a compile error naming it — except a
+method or operator result of 8 bytes or less, which is not type-checked yet. Before v6.6.10
 every one of these stored ONE word: `b.v.y` kept its old value, and from a parameter the stored
 word was the parameter's address. A source that is not a struct (an integer, an untyped
-pointer) still stores one word, as before.
+pointer) still stores one word, capped at the field's size. An odd-sized struct field (3, 5, 6
+or 7 bytes, such as `struct Odd { a: i8; b: i16; }`) gets exactly that many bytes from any
+source, so the fields after it are never touched. Before v6.6.10 a method, an operator, a
+top-level call or an integer stored 8 bytes into such a field, silently overwriting its
+neighbours.
 
 ⚠ **A copy moves one struct into a variable of that SAME struct type.** `p = q` and
 `var p: P3 = q` between two DIFFERENT struct types are a compile error since v6.6.6

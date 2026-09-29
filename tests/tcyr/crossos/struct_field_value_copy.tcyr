@@ -8,6 +8,11 @@
 # a field. Each row below read the stale / pointer word on 6.6.9.
 #
 # Mutation that reddens this file: make `_fsc_src` (src/frontend/parse_decl.cyr) return 0.
+#
+# The "odd-width" rows (6.6.10, bite 5 review): a <= 8 B struct result — a method, an overloaded
+# operator, a free call at top level — and a plain integer arrive in rax, and a 3/5/6/7-byte field
+# took the width ladder's 8-byte ESTOC, overwriting the fields after it. Each row checks the
+# neighbours. Mutation: make `_fst_odd_sz` return 0 — every odd-width row goes red.
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/assert.cyr"
@@ -19,6 +24,13 @@ struct BB { k; w: Big; }
 struct Outer { t; b: Box; }
 struct Odd { a: i8; b: i16; }
 struct HasOdd { o: Odd; tail: i8; }
+struct HO { o: Odd; t: i8; u: i32; }
+struct S5 { a: i32; b: i8; }
+struct S6 { a: i16; b: i16; c: i16; }
+struct S7 { a: i32; b: i16; c: i8; }
+struct H5 { s: S5; t: i8; u: i16; }
+struct H6 { s: S6; t: i16; }
+struct H7 { s: S7; t: i8; }
 union UB { v: Pt; raw: i64; }
 
 var GB = Box { 0, 0, 0 };
@@ -27,6 +39,11 @@ var GP = Pt { 50, 60 };
 fn mkpt(a): Pt { var p: Pt; p.x = a; p.y = a + 1; return p; }
 fn mkbig(a): Big { var p: Big; p.a = a; p.b = a + 1; p.c = a + 2; return p; }
 fn mkodd(a): Odd { var o: Odd; o.a = a; o.b = a * 100; return o; }
+impl Mk for Odd { fn twice(self): Odd { var r: Odd; r.a = load8(self) * 2; r.b = load16(self + 1) * 2; return r; } }
+fn Odd_add(p: Odd, q: Odd): Odd { var r: Odd; r.a = p.a + q.a; r.b = p.b + q.b; return r; }
+fn S6_add(p: S6, q: S6): S6 { var r: S6; r.a = p.a + q.a; r.b = p.b + q.b; r.c = p.c + q.c; return r; }
+fn mks5(a): S5 { var r: S5; r.a = a; r.b = a + 1; return r; }
+fn mks7(a): S7 { var r: S7; r.a = a; r.b = a + 1; r.c = a + 2; return r; }
 impl Mk for Pt { fn twice(self): Pt { var r: Pt; r.x = load64(self) * 2; r.y = load64(self + 8) * 2; return r; } }
 fn Big_add(a: Big, b: Big): Big { var r: Big; r.a = a.a + b.a; r.b = a.b + b.b; r.c = a.c + b.c; return r; }
 
@@ -53,6 +70,14 @@ fn odd_sizes(): i64 {
     h.tail = 6; h.o = mkodd(2);
     return r * 1000000 + h.o.a + h.o.b + h.tail * 10000;
 }
+# Each returns the field's bytes plus the neighbours; a clobbered neighbour reads 0.
+fn odd_method(): i64 { var x: Odd; x.a = 1; x.b = 2; var h: HO; h.t = 5; h.u = 9; h.o = x.twice(); return h.o.a + h.o.b * 10 + h.t * 100 + h.u * 1000; }
+fn odd_operator(): i64 { var x: Odd; x.a = 1; x.b = 2; var h: HO; h.t = 5; h.u = 9; h.o = x + x; return h.o.a + h.o.b * 10 + h.t * 100 + h.u * 1000; }
+fn s6_operator(): i64 { var x: S6; x.a = 1; x.b = 2; x.c = 3; var h: H6; h.t = 77; h.s = x + x; return h.s.a + h.s.b * 10 + h.s.c * 100 + h.t * 1000; }
+fn s5_call(): i64 { var h: H5; h.t = 3; h.u = 4; h.s = mks5(6); return h.s.a + h.s.b * 10 + h.t * 100 + h.u * 1000; }
+fn s7_call(): i64 { var h: H7; h.t = 8; h.s = mks7(1); return h.s.a + h.s.b * 10 + h.s.c * 100 + h.t * 1000; }
+# 0x030201 into Odd: a = 1, b = 0x0302 = 770; the fourth byte (0) must not reach `t`.
+fn odd_integer(): i64 { var h: HO; h.t = 5; h.u = 9; h.o = 0x030201; return h.o.a + h.o.b * 10 + h.t * 100 + h.u * 1000; }
 fn keep_neighbours(): i64 { var b: Box; b.n = 42; var p: Pt; p.x = 1; p.y = 1; b.v = p; return b.n; }
 
 test_group("a struct value assigned into a struct-typed field copies the whole struct");
@@ -73,5 +98,18 @@ assert_eq(into_global(), 189, "into a global's field");
 assert_eq(into_union(), 23, "into a union field");
 assert_eq(odd_sizes(), 50703060202, "a 3-byte struct field, byte-exact (neighbour intact)");
 assert_eq(keep_neighbours(), 42, "the field after the copied one is untouched");
+
+
+test_group("an odd-width (3/5/6/7 B) struct field is stored byte-exact: its neighbours survive");
+assert_eq(odd_method(), 9542, "a method returning a 3-byte struct");
+assert_eq(odd_operator(), 9542, "an overloaded operator into a 3-byte field");
+assert_eq(s6_operator(), 77642, "an overloaded operator into a 6-byte field");
+assert_eq(s5_call(), 4376, "a free call into a 5-byte field");
+assert_eq(s7_call(), 8321, "a free call into a 7-byte field");
+assert_eq(odd_integer(), 17201, "a plain integer into a 3-byte field writes three bytes");
+var GHO = HO { 0, 0, 0, 0 };
+GHO.t = 5; GHO.u = 9;
+GHO.o = mkodd(2);
+assert_eq(GHO.o.a + GHO.o.b * 10 + GHO.t * 10000 + GHO.u * 100000, 952002, "a free call into a 3-byte field at top level");
 
 var r = assert_summary();

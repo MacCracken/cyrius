@@ -523,8 +523,9 @@ fn _fsc_name(S, ft, fnoff): i64 {
 }
 
 # `IDENT ( .. ) ;` — a free fn returning a struct: the call into a temp, the temp recorded (1).
-# 0 = not that shape (cursor untouched). A <= 8 B result comes back in rax, so it is spilled to
-# a temp too; only an odd-sized one (3/5/6/7 B) reaches here — see `_fsc_src`.
+# 0 = not that shape (cursor untouched). A <= 8 B result (an odd-sized one: only those reach
+# here — see `_fsc_src`) comes back in rax and is left to the byte-exact store, `_fst_odd`, at
+# top level and in a fn alike.
 fn _fsc_call(S, ft, fnoff): i64 {
     var fi = FINDFN(S, PEEKV(S));
     if (fi < 0) { return 0; }
@@ -533,16 +534,10 @@ fn _fsc_call(S, ft, fnoff): i64 {
     if (_call_follow(S, GTI(S)) != 5) { return 0; }
     if (rs != ft) { _fsc_type_err(S, PEEKV(S), fnoff); return 0; }
     var cls = _ret_agg_class(S, fi);
-    if (GINFN(S) != 1) {
-        if (cls != 0) { _refuse_toplevel_struct_call(S, PEEKV(S)); }
-        return 0;
-    }
+    if (cls == 0) { return 0; }
+    if (GINFN(S) != 1) { _refuse_toplevel_struct_call(S, PEEKV(S)); return 0; }
     _fsc_reset();
-    if (cls != 0) { _fsc_li = _struct_call_into_temp(S); return 1; }
-    var t = _agg_temp(S, ft);
-    PCMPE(S);
-    EFLSTORE(S, t);
-    _fsc_li = t;
+    _fsc_li = _struct_call_into_temp(S);
     return 1;
 }
 
@@ -594,6 +589,45 @@ fn _fsc_src(S, ft, fnoff): i64 {
         }
     }
     return _fsc_expr(S, ft, fnoff);
+}
+
+# ⛔ 6.6.10 (bite 5 review) — A VALUE IN rax STORED INTO A 3/5/6/7-BYTE FIELD (an odd-sized
+# struct: `struct Odd { a: i8; b: i16; }`) wrote EIGHT bytes — the width ladder's `else` is ESTOC
+# — and silently overwrote the fields after it. Every <= 8 B struct result arrives this way (a
+# method, an overloaded operator, a free call at top level), and so does a plain integer. Now
+# exactly `nb` bytes: 4/2/1-byte chunks, each shifted down into place. The value is kept on the
+# stack across the chunks (the field address is re-resolved per chunk and may use rax).
+# CHANGELOG [6.6.10]
+fn _fst_odd_sz(nb): i64 {
+    if (nb == 3 || nb == 5 || nb == 6 || nb == 7) { return 1; }
+    return 0;
+}
+fn _fst_chunk(S, idx, sid, off, o, w): i64 {
+    if (o > 0) { EMOVI(S, o * 8); EMOVCA(S); }
+    EPOPR(S);
+    EPUSHR(S);
+    if (o > 0) { ESHRCL(S); }
+    EPUSHR(S);
+    _resolve_field_base_addr(S, idx, sid);
+    if (off + o > 0) { EADDIMM_X1(S, off + o); }
+    EPOPR(S);
+    if (w == 1) { ESTORE8(S); }
+    elif (w == 2) { ESTORE16(S); }
+    else { ESTORE32(S); }
+    return 0;
+}
+fn _fst_odd(S, idx, sid, off, nb): i64 {
+    EPUSHR(S);
+    var o = 0;
+    while (o < nb) {
+        var w = 4;
+        if (nb - o < 4) { w = 2; }
+        if (nb - o < 2) { w = 1; }
+        _fst_chunk(S, idx, sid, off, o, w);
+        o = o + w;
+    }
+    EPOPR(S);
+    return 0;
 }
 
 # PARSE_FIELD_LOAD's side: the access began at `_fla_want`, its leaf is a (non-Str) struct and
@@ -1047,6 +1081,13 @@ fn PARSE_FIELD_STORE(S, noff): i64 {
         return 0;
     }
     if (fsc == 0) { PCMPE(S); }
+    var fst_sz = FIELDSZ(S, ft);
+    if (_fst_odd_sz(fst_sz) == 1) {
+        _fst_odd(S, idx, sid, off, fst_sz);
+        if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
+        STI(S, GTI(S) + 1);
+        return 0;
+    }
     # Store value to struct field (width-correct). Route to local or
     # global addr-emit based on idx encoding (same convention as
     # PARSE_FIELD_LOAD; v5.5.36 Phase 2). v5.8.17 §9: same
@@ -1056,7 +1097,6 @@ fn PARSE_FIELD_STORE(S, noff): i64 {
     _resolve_field_base_addr(S, idx, sid);
     if (off > 0) { EADDIMM_X1(S, off); }
     EPOPR(S);
-    var fst_sz = FIELDSZ(S, ft);
     if (fst_sz == 1) { ESTORE8(S); }
     elif (fst_sz == 2) { ESTORE16(S); }
     elif (fst_sz == 4) { ESTORE32(S); }
