@@ -26,6 +26,20 @@ include "lib/chrono.cyr"
 include "lib/net.cyr"
 include "lib/regression.cyr"
 
+# The decimal pid in file `path` (0 when there is none).
+fn _rtc_read_pid(path): i64 {
+    var b[32];
+    var n = file_read_all(path, &b, 31);
+    var v = 0;
+    var i = 0;
+    while (i < n) {
+        var c = load8(&b + i);
+        if (c >= 48 && c <= 57) { v = v * 10 + c - 48; }
+        i = i + 1;
+    }
+    return v;
+}
+
 fn main(): i64 {
     alloc_init();
     test_group("regression_terminate_children keeps its contract on this target");
@@ -84,6 +98,45 @@ fn main(): i64 {
     assert_eq(sys_waitpid(r1, &st, 1) < 0, 1, "…and the ended one is gone");
     sys_kill(r2, 9);
     sys_waitpid(r2, &st, 0);
+
+    # 6.6.11 — a regression_* deadline ends the child's whole tree on every POSIX host. On macOS
+    # `_regression_kill_tree` had no /proc to walk and signalled the child alone, so a script's
+    # background child outlived the deadline; the child now leads its own process group and the
+    # group is ended (lib/process.cyr's shape). Linux walks /proc.
+    test_group("a regression_* deadline ends the grandchild too (6.6.11)");
+    var scr = test_scratch("cyrius_rtc_sh");
+    var pidf = test_scratch("cyrius_rtc_bg");
+    sys_unlink(pidf);
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "#!/bin/sh\n/bin/sleep 30 &\necho $! > ");
+    str_builder_add_cstr(sb, pidf);
+    str_builder_add_cstr(sb, "\nwait\n");
+    var body = str_builder_build(sb);
+    var sfd = sys_open(scr, 577, 493);
+    assert_eq(sfd >= 0, 1, "premise: the script was written");
+    sys_write(sfd, str_data(body), str_len(body));
+    sys_close(sfd);
+    sys_chmod(scr, 493);
+    var envp[8];
+    store64(&envp, 0);
+    var rc = regression_run_with_timeout(scr, 600, &envp);
+    assert_eq(rc, 0 - 2, "the deadline fired (-2)");
+    var bg = _rtc_read_pid(pidf);
+    assert_eq(bg > 0, 1, "premise: the script recorded its background child");
+    var gone = 0;
+    var k = 0;
+    while (k < 150 && gone == 0) {
+        if (bg <= 0) { gone = 1; }
+        elif (sys_kill(bg, 0) != 0) { gone = 1; }
+        elif (_regression_proc_zombie(bg) == 1) { gone = 1; }
+        else { syscall(7, 0, 0, 20); }
+        k = k + 1;
+    }
+    assert_eq(gone, 1, "the script's background child was ended too (macOS: its process group)");
+    if (bg > 0) { sys_kill(bg, 9); }
+    regression_reap_orphans();
+    sys_unlink(pidf);
+    sys_unlink(scr);
     #endif
     #endif
     var r = assert_summary();

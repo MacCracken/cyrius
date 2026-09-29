@@ -73,6 +73,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   its parent dies. Row: `deadline_ends_grandchild.tcyr`'s grandchild assert is no longer macOS-only —
   RED against the pre-fix lib on x86_64 and pi; green on x86_64, pi, ecb, ach and the agnosticos
   container.
+- **`lib/regression.cyr`'s deadline ended only the pid off Linux (P9).** `_regression_tree_collect`
+  returns nothing without /proc, so `_regression_kill_tree` signalled the child alone, and
+  `_regression_child_guard` had no `setsid()`, so there was no group to reach: the 6.6.10 macOS port
+  of lib/process.cyr's group kill never reached its twin. **Fix:** on macOS the child calls
+  `setsid()` (unconditionally — every verb here waits under a deadline and gives the child
+  /dev/null for stdin), and `_regression_kill_tree` targets `-pid` when that group exists: one TERM,
+  the grace, one KILL (`_proc_kill_group`'s shape). Rows: `regression_terminate_children.tcyr` "a
+  regression_* deadline ends the grandchild too" (RED on ecb and ach against the pre-fix lib), and
+  `process_deadline_tree.tcyr`'s whole-tree assert is no longer Linux-only (it tests lib/process.cyr,
+  which has ended the group on macOS since 6.6.10; green on ecb and ach).
 
 ## [6.6.10] — 2026-09-29
 
