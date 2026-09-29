@@ -926,3 +926,62 @@ fn sys_rename(oldpath, newpath): i64 { return syscall(61492, oldpath, newpath); 
 # and a tool that derives an install root from its own GRANDPARENT directory (the
 # scaffolder's templates dir) gets the wrong answer or none. CHANGELOG [6.6.6].
 fn sys_self_exe_w(wbuf, cch): i64 { return syscall(61498, wbuf, cch); }
+
+# ================================================================
+# Job objects (6.6.10) — a Windows process TREE
+# ================================================================
+# Win32 has no process group and no parent-death signal, and a deadline that could only
+# TerminateProcess the direct child left the child's own children running — one of them
+# holding a capture pipe kept `exec_capture_status` blocked long past its bound (measured on
+# cass: a 2000 ms deadline returned after 19,437 ms). A Job object is both missing pieces:
+# every process a member starts joins the job too, TerminateJobObject ends all of them, and
+# with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE the kernel ends all of them when the last handle to
+# the job closes — including when OUR process dies (the Windows PR_SET_PDEATHSIG). A child is
+# created CREATE_SUSPENDED, assigned, and only then resumed, so nothing it starts can be born
+# outside the job. Reroutes 0xF040-0xF044 (src/backend/x86/emit.cyr). Used by
+# lib/process_win.cyr, lib/async_win.cyr and cbt's `_win_run_timed`. CHANGELOG [6.6.10]
+
+# Set (`on` = 1) or clear (`on` = 0) JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE (0x2000) — the only
+# limit these jobs carry. JOBOBJECT_EXTENDED_LIMIT_INFORMATION is 144 bytes on x64 and its
+# LimitFlags is the DWORD at offset 16; class 9 = JobObjectExtendedLimitInformation.
+# Returns the SetInformationJobObject BOOL (non-zero = success).
+fn _win_job_set_kill(job, on): i64 {
+    var info[144];
+    var z = 0;
+    while (z < 144) { store64(&info + z, 0); z = z + 8; }
+    if (on == 1) { store32(&info + 16, 0x2000); }
+    return syscall(0xF044, job, 9, &info, 144);
+}
+
+# Create an unnamed job, KILL_ON_JOB_CLOSE when `kill_on_close` is 1. Returns its handle, or 0
+# when it could not be created or configured (nothing is left open then).
+fn _win_job_new(kill_on_close): i64 {
+    var job = syscall(0xF040, 0, 0);                 # CreateJobObjectW(NULL, NULL)
+    if (job == 0) { return 0; }
+    if (kill_on_close == 1) {
+        if (_win_job_set_kill(job, 1) == 0) { syscall(3, job); return 0; }
+    }
+    return job;
+}
+
+# Put the CREATE_SUSPENDED process in PROCESS_INFORMATION `pi` into a new job, then resume
+# it. Returns the job handle; 0 when the process could not be put in a job (it runs anyway,
+# untracked — the caller loses the TREE, never the child); -1 when it could not be RESUMED,
+# in which case it has been terminated and the caller must report a failed spawn (a
+# suspended child would otherwise wait for ever).
+fn _win_job_start(pi, kill_on_close): i64 {
+    var job = _win_job_new(kill_on_close);
+    if (job != 0) {
+        if (syscall(0xF041, job, load64(pi)) == 0) { syscall(3, job); job = 0; }
+    }
+    var rs = syscall(0xF043, load64(pi + 8));        # ResumeThread(hThread)
+    if (rs == 4294967295) {
+        syscall(61469, load64(pi), 1);               # TerminateProcess — never left suspended
+        if (job != 0) { syscall(3, job); }
+        return 0 - 1;
+    }
+    return job;
+}
+
+# End every process in `job` with exit code `code` (TerminateJobObject). Returns the BOOL.
+fn _win_job_kill(job, code): i64 { return syscall(0xF042, job, code); }

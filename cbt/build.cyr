@@ -1992,6 +1992,11 @@ fn _win_run_cx(vm, cyx): i64 {
 # that happened to decode as 0 would have reported a test that never ran as PASSED.
 # CreateProcessW + the WaitForSingleObject deadline (_win_wait_timeout, 0xF001/0xF01D)
 # give the same contract: the child's own exit code, or _RUN_TIMEOUT_KILLED.
+# 6.6.10: the child runs in a Job object (lib/process_win.cyr) and a BATCH run (timeout_ms
+# != 0) waits through `_win_wait_tree`, which ends the job at the deadline and ends whatever
+# is left in it after a clean exit — the Windows half of "no descendant of a batch run
+# outlives it" (see run_binary_timed). It used TerminateProcess on the child alone.
+# `cyrius run` (0) keeps `_win_wait_close`: the program owns what it starts.
 fn _win_run_timed(path, timeout_ms, args): i64 {
     var wbuf = _win_cmdline(path, args);
     if (wbuf == 0) { return 1; }
@@ -2000,9 +2005,9 @@ fn _win_run_timed(path, timeout_ms, args): i64 {
         _err_ctx("failed to start", path);
         return 127;
     }
-    if (timeout_ms <= 0) { return _win_wait_close(&pi); }
+    if (timeout_ms == 0) { return _win_wait_close(&pi); }
     var killed = 0;
-    var ec = _win_wait_timeout(&pi, timeout_ms, &killed);
+    var ec = _win_wait_tree(&pi, timeout_ms, &killed);
     if (killed == 1) { return _RUN_TIMEOUT_KILLED; }
     return ec;
 }
