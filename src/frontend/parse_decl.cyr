@@ -1070,6 +1070,7 @@ fn PARSE_FIELD_STORE(S, noff): i64 {
     var ft = _resolve_leaf_field(S, si, fi, off);
     off = _rlf_off;
     var lfn = GETFNAME(S, _rlf_si, _rlf_fi);
+    var lfk = GFFK(S, _rlf_si, _rlf_fi);   # 6.6.10: read before the RHS can re-resolve a field
     if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
     STI(S, GTI(S) + 1);
     # 6.6.10: a struct VALUE into a struct-typed field copies the whole struct. See `_fsc_src`.
@@ -1080,7 +1081,11 @@ fn PARSE_FIELD_STORE(S, noff): i64 {
         STI(S, GTI(S) + 1);
         return 0;
     }
-    if (fsc == 0) { PCMPE(S); }
+    if (fsc == 0) {
+        var fst_ti = GTI(S);
+        PCMPE(S);
+        _IFS_CHECK(S, lfk, fst_ti);   # 6.6.10: `p.x = 1` into an f64 / f32 field
+    }
     var fst_sz = FIELDSZ(S, ft);
     if (_fst_odd_sz(fst_sz) == 1) {
         _fst_odd(S, idx, sid, off, fst_sz);
@@ -1122,9 +1127,16 @@ fn PARSE_FIELD_STORE(S, noff): i64 {
 # initialiser expression can contain a closure whose body declares its own literal and would
 # otherwise leave the wrong base in place for the rest of this literal's fields.
 var _sl_base_li = 0 - 1;
+# 6.6.10: the float kind of the field EMIT_STRUCT_FIELD_W is about to initialise (1 = f64,
+# 2 = f32), set by its callers and consumed on entry, so `P { 1, 2 }` into f64 fields warns.
+var _sfw_fk = 0;
 fn EMIT_STRUCT_FIELD_W(S, vcnt, boff, width): i64 {
     var sl_li = _sl_base_li;
+    var fk = _sfw_fk;
+    _sfw_fk = 0;
+    var t0 = GTI(S);
     PCMPE(S);
+    _IFS_CHECK(S, fk, t0);
     EPUSHR(S);
     # Load variable address into x1/rcx via fixup
     if (sl_li >= 0) { EFLADDR_X1(S, sl_li); }
@@ -1163,6 +1175,7 @@ fn _emit_struct_positional_init(S, target_idx, sid): i64 {
                 var ifc = GETFCOUNT(S, ft - 1);
                 var ifi = 0;
                 while (ifi < ifc) {
+                    _sfw_fk = GFFK(S, ft - 1, ifi);
                     EMIT_STRUCT_FIELD_W(S, target_idx, boff, 8);
                     boff = boff + 8;
                     ifi = ifi + 1;
@@ -1170,6 +1183,7 @@ fn _emit_struct_positional_init(S, target_idx, sid): i64 {
             }
         } else {
             var w = FIELDSZ(S, ft);
+            _sfw_fk = GFFK(S, si, fi);
             EMIT_STRUCT_FIELD_W(S, target_idx, boff, w);
             boff = boff + w;
         }
@@ -1222,6 +1236,7 @@ fn _STRUCT_INIT_BODY(S, target_idx, sid): i64 {
             # broke for the LAST narrow field at end-of-struct
             # (which would overflow the struct's allocation).
             var nf_w = FIELDSZ(S, ft);
+            if (found >= 0) { _sfw_fk = GFFK(S, si, found); }
             EMIT_STRUCT_FIELD_W(S, target_idx, boff, nf_w);
         }
         # Require every field to be set — no implicit zero defaults (yet).
@@ -1973,6 +1988,20 @@ fn _gv_ufv(S, sti, typed): i64 {
     if (_gfi_base == 0) { return 0; }
     return load8(_gfi_base + vi);
 }
+# 6.6.10 — `var G: f64 = 1;` at registration: the same integer-constant judgement as a local
+# (_IFS_CHECK), over `= <expr> ;`, reported at the initialiser. The cursor is restored.
+fn _gv_ifs(S, sti, ann_float): i64 {
+    var ti = sti + 5;
+    if (TOKTYP(S, ti - 1) != 4) { return 0; }
+    var end = ti + 1;
+    if (TOKTYP(S, end) != 5) { end = ti + 2; }
+    if (TOKTYP(S, end) != 5) { return 0; }
+    var g = GTI(S);
+    STI(S, end);
+    _IFS_CHECK(S, _IFS_K(ann_float), ti);
+    STI(S, g);
+    return 0;
+}
 
 fn PARSE_GVAR_REG(S): i64 {
     var sti = GTI(S);
@@ -2218,6 +2247,7 @@ fn PARSE_GVAR_REG(S): i64 {
     var gvi = _gv_fold(S, vcnt, sti);   # 6.6.6: a redeclaration reuses the global's slot
     _GVAR_VIS(S, gvi, sti);
     SGFI(S, gvi, _gv_ufv(S, sti, psc + ann_sid + ann_scalar + ann_float));   # 6.6.10
+    if (ann_float != 0) { _gv_ifs(S, sti, ann_float); }                      # 6.6.10
     if (gvi == vcnt) {
         SVCNT(S, vcnt + 1);
         # A shadow that keeps its own slot (over an enum constant, or over a global with
@@ -3652,7 +3682,9 @@ fn PARSE_VAR(S): i64 {
     var scv_prev = _sc_arm(S);
     PCMPE(S);
     _sc_want = scv_prev;
-    # 6.6.10: an UNTYPED declaration records whether its initialiser was a float (_UFV_*).
+    # 6.6.10: an integer constant into an `f64` / `f32` declaration warns (_IFS_CHECK), and an
+    # UNTYPED declaration records whether its initialiser was a float (_UFV_*).
+    _IFS_CHECK(S, _IFS_K(lfloat), scv_start);
     var ufv = 0;
     if (pscale == 0) { if (scalar_type == 0) { if (lfloat == 0) { if (slice_elt_w == 0) { if (_ti_inferred_sid == 0) {
                         ufv = _UFV_IS_FLOAT(S);

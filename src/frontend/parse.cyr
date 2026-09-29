@@ -2935,9 +2935,11 @@ fn _PARSE_STMT_IMPL(S): i64 {
                 }
             }
         }
+        _asg_ti = 0 - 1;
         if (compound_op == 0) {
             if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
             STI(S, GTI(S) + 1);
+            _asg_ti = GTI(S);   # 6.6.10: the RHS's first token, for _IFS_CHECK below
         }
         if (compound_op != 0) {
             # Compound: x += expr → load x, push, eval expr, then x OP expr
@@ -3047,6 +3049,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
         if (idx >= 0) {
             var lt = GLTYPE(S, idx);
             var ew = GEXW(S);
+            _IFS_CHECK(S, _IFS_K(lt), _asg_ti);   # 6.6.10: `t = 1` into an f64 / f32 local
             if (lt > 0) {
                 if (lt <= 8) {
                     if (ew > lt) { WARN(S, "narrowing assignment (value may truncate)", 41); }
@@ -3085,6 +3088,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
             }
             var avsz = L64(_vars_base + idx * 8);
             var ew = GEXW(S);
+            _IFS_CHECK(S, _IFS_K(vt), _asg_ti);   # 6.6.10: `G = 1` into an f64 / f32 global
             if (avsz < 8) {
                 if (ew > avsz) { WARN(S, "narrowing assignment (value may truncate)", 41); }
                 EVSTORE_W(S, idx, avsz);

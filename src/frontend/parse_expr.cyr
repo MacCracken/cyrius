@@ -973,6 +973,51 @@ fn _UFV_IS_FLOAT(S): i64 {
     return 0;
 }
 
+# ⛔ 6.6.10 — AN INTEGER STORED INTO AN f64 / f32 SLOT keeps its integer BITS: `var t: f64 = 1;`,
+# `t = 1;`, `p.x = 1;` and `P { 1, 2 }` store 0x1, a subnormal, silently. WARN (ADR-002: a
+# conversion would change existing code). Only a compile-time integer CONSTANT is judged — a
+# literal, a negated literal or an enum constant, spanning the whole initialiser `[ti, end)` —
+# because a runtime untyped value is the legal i64-boxed float idiom (`var x: f64 = load64(p)`
+# is everywhere). 0 is exempt (its bits ARE 0.0), and so is |v| >= 2^52: an IEEE bit pattern
+# written in hex (0x3FF0000000000000) is never below 2^52 unless it is a subnormal, while an
+# integer COUNT essentially always is. `k` is the slot's float type (0 = not a float slot).
+fn _ic_val_ok(v): i64 {
+    if (v == 0) { return 0; }
+    if (v < 0) { v = 0 - v; }
+    if (v <= 0) { return 0; }
+    if (v >= 0x10000000000000) { return 0; }
+    return 1;
+}
+fn _IFS_SPAN(S, ti, end): i64 {
+    var n = end - ti;
+    if (n == 2) {
+        if (TOKTYP(S, ti) != 7) { return 0; }
+        if (TOKTYP(S, ti + 1) != 1) { return 0; }
+        return _ic_val_ok(TOKVAL(S, ti + 1));
+    }
+    if (n != 1) { return 0; }
+    var t = TOKTYP(S, ti);
+    if (t == 1) { return _ic_val_ok(TOKVAL(S, ti)); }
+    if (t != 2) { return 0; }
+    if (GINFN(S) == 1) { if (FINDLOCAL(S, TOKVAL(S, ti)) >= 0) { return 0; } }
+    var vi = FINDVAR(S, TOKVAL(S, ti));
+    if (vi < 0) { return 0; }
+    if (GVECP(S, vi) != 1) { return 0; }
+    return _ic_val_ok(L64(_vecv_base + vi * 8));
+}
+fn _IFS_CHECK(S, k, ti): i64 {
+    if (k == 0) { return 0; }
+    if (ti < 0) { return 0; }
+    if (_IFS_SPAN(S, ti, GTI(S)) == 1) { _FLT_TYPE_WARN(S, 4); }
+    return 0;
+}
+# A slot type (F64_TYID / F32_TYID / anything) as a float kind for _IFS_CHECK.
+fn _IFS_K(t): i64 {
+    if (t == F64_TYID) { return 1; }
+    if (t == F32_TYID) { return 2; }
+    return 0;
+}
+
 fn _PARSE_FACTOR_IMPL(S): i64 {
     var typ = PEEKT(S);
     SPSC(S, 0);
@@ -4476,8 +4521,9 @@ fn _PEXPR_IMPL(S): i64 {
 # wired in the _PLOGIC_ATOM compare arm WITH literal-0 suppression — `if (x > 0)` on an f64
 # does NOT warn (the int literal 0's bits ARE 0.0, so the compare is exact), but `if (x > 5)`
 # / `if (x > y)` DO (5's int bits ≠ 5.0's f64 bits — a denormal compare). stderr (fd 2).
-# kind 2 (6.6.8) is the int-left mirror of kind 1 (see _INT_F64_MIX); kind 3 (6.6.10) is
-# unary minus on an untyped float variable (_UFV_L).
+# kind 2 (6.6.8) is the int-left mirror of kind 1 (see _INT_F64_MIX); kinds 3 and 4 (6.6.10)
+# are unary minus on an untyped float variable (_UFV_L) and an integer constant stored into an
+# f64 / f32 slot (_IFS_CHECK).
 fn _FLT_TYPE_WARN(S, kind): i64 {
     if (_TYPE_CHECK_ENABLED() != 1) { return 0; }
     syscall(SYS_WRITE, 2, "warning:", 8);
@@ -4488,6 +4534,8 @@ fn _FLT_TYPE_WARN(S, kind): i64 {
         syscall(SYS_WRITE, 2, ": integer arithmetic with an f64 right operand\n", 47);
     } elif (kind == 3) {
         syscall(SYS_WRITE, 2, ": unary minus on an untyped variable holding a float is integer negation (declare it f64)\n", 90);
+    } elif (kind == 4) {
+        syscall(SYS_WRITE, 2, ": an integer stored into an f64/f32 slot keeps its integer bits (write a float literal)\n", 88);
     } else {
         syscall(SYS_WRITE, 2, ": f64 arithmetic with a non-f64 right operand\n", 46);
     }

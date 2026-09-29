@@ -27,10 +27,13 @@
 #           a local, a copy of one, ±0, a negative literal, a float builtin, a global, a
 #           parenthesised one — warns once each; an integer, a typed f64, a parameter do not,
 #           and a closure's own declarations leave the enclosing fn's flags as they were.
-#   axis 9  CYRIUS_TYPE_CHECK=0 silences kind 3.
+#   axis 8  (6.6.10) kind 4: an integer CONSTANT stored into an f64 / f32 slot (declaration,
+#           assignment, field store, struct literal, global) warns once each; 0, an IEEE bit
+#           pattern in hex (>= 2^52), a float literal and a runtime value do not.
+#   axis 9  CYRIUS_TYPE_CHECK=0 silences kinds 3 and 4.
 # Mutation-proven: with the four `_INT_F64_MIX` calls removed, axis 1 reads 0 of 4 and fails.
 # (6.6.10) with PARSE_INTRIN's `_FBR_MARK` call removed axis 6 fails; with the unary-minus
-# `_FLT_TYPE_WARN(S, 3)` removed, or _cl_restore_locals' flag copy removed, axis 7 fails.
+# `_FLT_TYPE_WARN(S, 3)` removed, or _cl_restore_locals' flag copy removed, axis 7 fails; with `_IFS_CHECK` returning early axis 8 fails.
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -128,6 +131,7 @@ n=$(count "$K1"); [ "$n" = 1 ] || bad "axis 5: kind-1 warning count $n on 'p.x +
 
 # --- axis 6 (6.6.10): a float builtin's RESULT is an f64 operand (option D) ---
 K3="unary minus on an untyped variable holding a float"
+K4="an integer stored into an f64/f32 slot"
 cat > "$W/a6.cyr" <<'EOF'
 include "lib/syscalls.cyr"
 fn main(): i64 {
@@ -199,9 +203,51 @@ EOF
 build "$W/a7.cyr"
 n=$(count "$K3"); [ "$n" = 8 ] || { bad "axis 7: kind-3 warning count $n, want 8 (-c -e -z -n -x -G -(c), and clos()'s -c across a closure; not -i -GT -GI -q, clos()'s -n or a parameter)"; sed -n 1,12p "$W/e"; }
 
-# --- axis 9: CYRIUS_TYPE_CHECK=0 silences kind 3 ---
+# --- axis 8 (6.6.10): kind 4, an integer constant stored into an f64 / f32 slot ---
+cat > "$W/a8.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct P { x: f64; y: f64; }
+struct Q { a: f32; n; }
+enum E { ONE = 1, BIG = 0x3FF0000000000000 }
+var G: f64 = 1;
+var G0: f64 = 0;
+var GH: f64 = 0x3FF0000000000000;
+fn main(): i64 {
+    var t: f64 = 1;
+    var tn: f64 = -1;
+    var te: f64 = ONE;
+    var s: f32 = 3;
+    t = 2;
+    G = 3;
+    var p: P;
+    p.x = 1;
+    var q: Q;
+    q.a = 2;
+    var pp = P { 1, 2.0 };
+    var pn = P { x: 1.0, y: 5 };
+    var t0: f64 = 0;
+    var th: f64 = 0x3FF0000000000000;
+    var tb: f64 = BIG;
+    var tf: f64 = 1.5;
+    var i = 1;
+    var ti: f64 = i;
+    t = 2.0;
+    p.y = 0;
+    q.n = 2;
+    var pf = P { 1.0, 2.0 };
+    return 0;
+}
+var r = main();
+syscall(60, r);
+EOF
+build "$W/a8.cyr"
+n=$(count "$K4"); [ "$n" = 11 ] || { bad "axis 8: kind-4 warning count $n, want 11 (G, t, tn, te, s, t=2, G=3, p.x, q.a, P{1,..}, P{..y:5})"; sed -n 1,14p "$W/e"; }
+
+# --- axis 9: CYRIUS_TYPE_CHECK=0 silences kinds 3 and 4 ---
 CYRIUS_TYPE_CHECK=0 "$CC" < "$W/a7.cyr" > "$W/o" 2> "$W/e" || true
 n=$(count "$K3"); [ "$n" = 0 ] || bad "axis 9: CYRIUS_TYPE_CHECK=0 still printed $n kind-3 warning(s)"
+CYRIUS_TYPE_CHECK=0 "$CC" < "$W/a8.cyr" > "$W/o" 2> "$W/e" || true
+n=$(count "$K4"); [ "$n" = 0 ] || bad "axis 9: CYRIUS_TYPE_CHECK=0 still printed $n kind-4 warning(s)"
 
 [ "$fail" = 0 ] || exit 1
-echo "PASS: f64_int_mix_warn (4 int-left ops warn; no false positives; kind 1 intact; TYPE_CHECK=0 silences; f64 fields and builtin results typed; kind 3)"
+echo "PASS: f64_int_mix_warn (4 int-left ops warn; no false positives; kind 1 intact; TYPE_CHECK=0 silences; f64 fields and builtin results typed; kinds 3 + 4)"
