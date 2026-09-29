@@ -43,7 +43,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   forks two children that deny getrandom with their own seccomp filter (the denial is asserted),
   and requires src == 2 and different seeds — restoring `+ load64(&ts)` makes them identical
   (mutation-proven); qemu-user SKIPs by name, real pi runs it. Every host runs a mix row, and
-  `hash_seed_flood_resistance.sh` axis 4 statically refuses `load64(&ts)` / `SYS_TIME_UNIX`.
+  `hash_seed_flood_resistance.sh` axis 4 statically refuses `load64(&ts)` / `SYS_TIME_UNIX`, and
+  axis 5 runs the AGNOS build under the fake agnos kernel (`tests/fixtures/agnos_sctrace.cyr`,
+  whose getrandom answers 0): src == 2 and two processes' seeds differ — the 6.6.9 arm drew the
+  published constant 1099511628211 both times. The seccomp row ran on real pi (and a mutant with
+  the old shape failed there) and inside the agnosticos CI container.
   ⚠ Every hashmap consumer now also includes `lib/chrono.cyr` (its globals `CLOCK_REALTIME` /
   `CLOCK_MONOTONIC`; a consumer redeclaring them — shakti — still compiles). cycc is unaffected.
 - **The whole `.tcyr` corpus runs green on both Macs — three files failed OUTSIDE `crossos/`.**

@@ -195,4 +195,35 @@ echo "$CODE" | grep -q 'SYS_TIME_UNIX' \
 echo "$CODE" | grep -q 'clock_epoch_ns() ^ (clock_now_ns()' \
     || fail "axis 4: _hm_seed_time_mix no longer mixes clock_epoch_ns with clock_now_ns — the fallback must carry nanosecond resolution on every target"
 
-echo "PASS: hash_seed_flood_resistance (attack set: 1 bucket unseeded -> $LIB1 / $LIB2 seeded across two processes; seeds differ; Linux draw non-blocking)"
+# ── axis 5 (6.6.10): the agnos fallback, run under the fake agnos kernel ──────────────────────
+# tests/fixtures/agnos_sctrace.cyr runs an agnos-target ELF under PTRACE_SYSEMU and answers every
+# syscall itself; getrandom (#45) answers 0 in every mode, so the seed MUST come from the time
+# fallback (src 2). The probe hands the seed back as the first argument of an otherwise unused
+# syscall number (999), which the tracer logs. Mode `us` advances the #95 clock per read. Before
+# 6.6.10 the agnos arm read time_unix (#46), which answers 0 here (and -1 on the real pre-1.45
+# kernels where #45 can fail), so every process drew the PUBLISHED constant 1099511628211.
+# Mutation (measured): the 6.6.9 lib/hashseed.cyr seeds 1099511628211 in both runs; an agnos-only
+# `return syscall(46);` at the top of _hm_seed_time_mix (axis 4 cannot see it) fails "SAME seed".
+cat "$ROOT/tests/fixtures/agnos_sctrace.cyr" | "$CC" > "$WORK/sct" 2> /dev/null && chmod +x "$WORK/sct" \
+    || fail "axis 5: could not build tests/fixtures/agnos_sctrace.cyr"
+cat > "$WORK/agp.cyr" <<'AGP'
+include "lib/syscalls.cyr"
+include "lib/hashseed.cyr"
+fn main(): i64 {
+    var s = _hm_seed_get();
+    syscall(999, s, _hm_seed_src, 0, 0);
+    return 0;
+}
+var r = main();
+syscall(SYS_EXIT, r);
+AGP
+( cd "$ROOT" && CYRIUS_TARGET_AGNOS=1 "$CC" < "$WORK/agp.cyr" > "$WORK/agp" 2> /dev/null ) && chmod +x "$WORK/agp" \
+    || fail "axis 5: the agnos probe did not compile"
+A1=$("$WORK/sct" "$WORK/agp" us | sed -n 's/^sc 999 \([-0-9]*\) \([0-9]*\) .*/\1 \2/p')
+A2=$("$WORK/sct" "$WORK/agp" us | sed -n 's/^sc 999 \([-0-9]*\) \([0-9]*\) .*/\1 \2/p')
+[ -n "$A1" ] && [ -n "$A2" ] || fail "axis 5: the agnos probe never reported its seed (no 'sc 999' line) — the axis is reading nothing"
+[ "${A1#* }" = "2" ] || fail "axis 5: the agnos seed did not come from the time fallback (src ${A1#* }, want 2) — getrandom answers 0 here"
+[ "${A1% *}" != "1099511628211" ] || fail "axis 5: the agnos fallback seed is the PUBLISHED constant 1099511628211 (the #46 arm is back)"
+[ "${A1% *}" != "${A2% *}" ] || fail "axis 5: two agnos processes drew the SAME fallback seed (${A1% *})"
+
+echo "PASS: hash_seed_flood_resistance (attack set: 1 bucket unseeded -> $LIB1 / $LIB2 seeded across two processes; seeds differ; Linux draw non-blocking; agnos fallback varies)"
