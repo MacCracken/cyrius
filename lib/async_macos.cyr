@@ -1,50 +1,62 @@
-# async_macos.cyr — macOS (Darwin) async runtime: serial / blocking fallback.
+# async_macos.cyr — macOS (Darwin) async runtime: a kqueue reactor.
+# Usage: included by lib/async.cyr under #ifdef CYRIUS_TARGET_MACOS.
 #
-# ⛔ WHY THIS FILE EXISTS (v6.5.27). Before it, macOS fell through to `lib/async.cyr`'s
-# EPOLL body — on a kernel that has no epoll. The result was not a clean failure: the epoll
-# body referenced `sys_epoll_wait`, which has no Darwin wrapper, so any macOS program using
-# async carried an undefined reference; and `lib/syscalls_macos.cyr` DECLARES
-# SYS_EPOLL_WAIT=232 / SYS_EPOLL_CTL=233 / SYS_EPOLL_CREATE1=291 — LINUX numbers that the
-# macho translators do NOT route — so code reaching them would issue raw Darwin syscalls
-# 232/233/291. Dead-but-armed constants, the same class as the Linux SIGCHLD=17 that is
-# Darwin's SIGSTOP (v6.5.15).
+# ⛔ WHY THIS FILE EXISTS (v6.5.27). Before it, macOS fell through to `lib/async.cyr`'s EPOLL
+# body — on a kernel that has no epoll. The epoll body referenced `sys_epoll_wait`, which had no
+# Darwin wrapper, and `lib/syscalls_macos.cyr` declared the LINUX epoll numbers, which the macho
+# translators do not route, so code reaching them issued raw Darwin syscalls 232/233/291.
 #
-# ⚠ THIS IS A FALLBACK, NOT A REACTOR, AND THE DISTINCTION IS THE POINT. Darwin's readiness
-# API is kqueue/kevent, which cyrius has no wrappers for at all (`grep -rn 'kqueue\|kevent'
-# lib/` → nothing). A real macOS reactor is a kqueue backend and is NOT what this is. This
-# gives macOS the same honest serial/blocking semantics agnos has had since v6.2.3: tasks run
-# to completion in order, a park is a no-op because the subsequent blocking read IS the wait.
-# Single-waiter-per-fd is therefore not a limitation here — there is no registry to be
-# limited. Consumers written against the epoll backend LINK and RUN; they do not multiplex.
+# ⭐ WHAT IT IS. A real reactor on kqueue/kevent (`sys_kqueue` / `sys_kevent`, the private-alias
+# band 1362/1363 -> BSD 362/363). The public surface and the task/runtime layouts are
+# lib/async.cyr's, so a consumer written against the epoll backend runs here unchanged:
+#   fd readiness       EVFILT_READ / EVFILT_WRITE, keyed (fd, filter)
+#   timers             EVFILT_TIMER, keyed (a heap pointer the caller owns, filter) — the
+#                      async_with_timeout deadline sentinel and async_interval; Linux's timerfd
+#   child exit         EVFILT_PROC + NOTE_EXIT, keyed (pid, filter) — async_spawn_process;
+#                      Linux's pidfd
+#   async_timeout      fork + a pipe + a bounded kevent() wait
+# kqueue keys a registration by (ident, filter), so two directions of one fd, a timer and a pid
+# never collide and need no union mask.
 #
-# Structure and contract mirror lib/async_agnos.cyr exactly (same serial model, same public
-# surface) so the three backends stay comparable. Kept as its own file rather than reusing
-# the agnos one because the reasons differ (agnos: server path unused on a client target;
-# macOS: wrong readiness API) and a future kqueue reactor replaces THIS file only.
+# ⚠ HISTORY, because it is the reason the old header was wrong. v6.5.27 created this file by
+# cloning lib/async_agnos.cyr — the serial model, the stubs AND their agnos rationale — and then
+# replaced the step and park code with the kqueue reactor. The timer, deadline and process verbs
+# stayed agnos stubs, agnos's no-fork rationale included, on a kernel that has fork, and two of
+# them were SILENT: async_with_timeout joined with no deadline and returned 1 (with a real
+# reactor, a parked task then waited for ever), and async_timeout ran the body inline and
+# ignored `ms`. The header kept calling this "A FALLBACK, NOT A REACTOR". CHANGELOG [6.6.10]
+#
+# Still not provided on macOS (they answer 0, no handle): async_connect, async_accept and
+# async_resolve. async_recv / async_send run their I/O inline in a task.
 
 include "lib/fnptr.cyr"
+# `sleep_ms` (NOT the agnos-only `sys_sleep_ms`): lib/chrono.cyr's portable one is
+# `poll(NULL, 0, ms)`, 7 -> 230 on Darwin (CHANGELOG [6.0.65]).
+include "lib/chrono.cyr"
+# `proc_kill_tree` — async_run_process's deadline ends the child's whole tree and reaps it.
+include "lib/process.cyr"
 
 # Task states (mirror lib/async.cyr).
 var TASK_READY = 0;
 var TASK_WAITING = 1;
 var TASK_DONE = 2;
 
-# Task struct: { fp, arg, state, next, wait_fd, result } = 48 bytes (mirror async.cyr).
-# wait_fd is unused on agnos (no epoll parking; tasks run to completion inline);
-# result (@40, v6.4.34 F2) carries the task fn's return so task_join hands it back.
-# v6.5.27 — 48 -> 64 to match lib/async.cyr's task layout exactly: wait_fd@32, result@40,
-# owned_fd@48, wait_ev@56. The kqueue reactor below needs wait_ev for the same reason the
-# epoll one does — to know which DIRECTION a parked task is waiting on, so a read-waiter is
-# not woken by a write-readiness event. Tasks are heap-allocated, so this is not a layout
-# change in the heap-map sense.
+# Task struct = lib/async.cyr's 64 bytes: { fp@0, arg@8, state@16, next@24, wait_ident@32,
+# result@40, owned_timer@48, wait_ev@56 }.
+#   wait_ident  what a parked task waits on: an fd, a pid, or a timer's ident; -1 when not parked.
+#   wait_ev     WHICH filter(s) it waits on, as _KEV_* bits below; 0 when not parked. It is what
+#               keeps a read-waiter from being woken by write readiness, and a pid-waiter from
+#               being woken by an fd that happens to have the same number.
+#   owned_timer the ident of an EVFILT_TIMER this task armed and must disarm if it is RETIRED
+#               without resuming (the deadline sentinel, an interval); -1 when none. The kqueue
+#               twin of Linux's owned_fd, which _async_retire closes.
 var TASK_SIZE = 64;
 
 # Darwin kevent struct (64-bit): { ident@0 u64, filter@8 i16, flags@10 u16, fflags@12 u32,
-# data@16 i64, udata@24 ptr } = 32 bytes. EVFILT_READ = -1, EVFILT_WRITE = -2 (int16, so
-# stored as 0xFFFF / 0xFFFE). EV_ADD = 1, EV_DELETE = 2.
+# data@16 i64, udata@24 ptr } = 32 bytes. Filters are int16, stored as their u16 pattern:
+# EVFILT_READ -1 = 0xFFFF, EVFILT_WRITE -2 = 0xFFFE, EVFILT_PROC -5 = 0xFFFB,
+# EVFILT_TIMER -7 = 0xFFF9 (xnu bsd/sys/event.h).
 var KEV_SIZE = 32;
-# Filters beyond READ/WRITE, flags and wait bits (xnu bsd/sys/event.h): EVFILT_PROC -5 = 0xFFFB,
-# EVFILT_TIMER -7 = 0xFFF9. CHANGELOG [6.6.10]
 var _KEVF_READ = 65535;
 var _KEVF_WRITE = 65534;
 var _KEVF_PROC = 65531;
@@ -62,34 +74,22 @@ var _KEV_WRITE = 4;
 var _KEV_TIMER = 256;
 var _KEV_PROC = 512;
 
-# Runtime struct: { epfd, tasks, task_count, active, allocator, current } = 48
-# bytes (mirror async.cyr F1). epfd is unused on agnos (no epoll for arbitrary
-# fds) and stored as -1; current is unused (serial run-to-completion loop).
-# ⚠ `sleep_ms` NOT `sys_sleep_ms`. The agnos original this file was derived from calls
-# `sys_sleep_ms`, an AGNOS-ONLY syscall (SYS_SLEEP_MS) that does not exist on Darwin —
-# copying the backend wholesale inherited a dependency that cannot resolve here.
-# `lib/chrono.cyr`'s `sleep_ms` is the portable one and already handles Darwin correctly
-# (`poll(NULL, 0, ms)`, 7→230; XNU has no plain `nanosleep` BSD syscall — chrono.cyr:141-152,
-# CHANGELOG [6.0.65]). Included so this module is self-sufficient, per the stdlib rule that a
-# lib file referencing something must include its definer.
-include "lib/chrono.cyr"
-# `proc_kill_tree` — async_run_process's deadline ends the child's whole tree and reaps it.
-include "lib/process.cyr"
-
+# Runtime struct = lib/async.cyr's 48 bytes: { kq@0, tasks@8, task_count@16, active@24,
+# allocator@32, current@40 }. kq is the runtime's kqueue fd (the epoll backend's epfd slot);
+# current is the task _async_step is running, which async_wait_fd parks.
 var RT_SIZE = 48;
 
-# Create a new async runtime backed by allocator `a`. No epoll instance is
-# created (Darwin has no epoll at all; the cooperative loop below needs none —
-# tasks run to completion inline). epfd slot holds -1.
+# Create a new async runtime backed by allocator `a`: the runtime and every task come from `a`,
+# and the runtime owns one kqueue. Returns 0 if the allocation is refused.
 fn async_new_in(a): i64 {
     var rt = alloc_via(a, RT_SIZE);
     if (rt == 0) { return 0; }
-    store64(rt, sys_kqueue());   # v6.5.27: a REAL kqueue fd (was -1 / no reactor)
+    store64(rt, sys_kqueue());
     store64(rt + 8, 0);
     store64(rt + 16, 0);
     store64(rt + 24, 0);
     store64(rt + 32, a);
-    store64(rt + 40, 0);         # current: unused on agnos (mirror layout)
+    store64(rt + 40, 0);
     return rt;
 }
 
@@ -98,19 +98,19 @@ fn async_new(): i64 {
     return async_new_in(default_alloc());
 }
 
-# Spawn a task on the runtime (identical to the Linux path — pure memory ops).
+# Spawn a task on the runtime (identical to the Linux path — pure memory ops). Returns the task
+# handle, or 0 if the allocation is refused.
 fn async_spawn(rt, fp, arg): i64 {
     var t = alloc_via(load64(rt + 32), TASK_SIZE);
     if (t == 0) { return 0; }
     store64(t, fp);
     store64(t + 8, arg);
     store64(t + 16, TASK_READY);
-    store64(t + 32, 0 - 1);          # wait_fd: not fd-waiting
-    store64(t + 48, 0 - 1);          # owned_fd
-    store64(t + 56, 0);              # wait_ev: not parked on any filter
     store64(t + 24, load64(rt + 8));
-    store64(t + 32, 0 - 1);          # wait_fd: unused on agnos (mirror layout)
+    store64(t + 32, 0 - 1);          # wait_ident: not parked
     store64(t + 40, 0);              # result: captured on done (F2)
+    store64(t + 48, 0 - 1);          # owned_timer: none
+    store64(t + 56, 0);              # wait_ev: not parked on any filter
     store64(rt + 8, t);
     store64(rt + 16, load64(rt + 16) + 1);
     store64(rt + 24, load64(rt + 24) + 1);
@@ -227,7 +227,7 @@ fn _async_step(rt): i64 {
     return active;
 }
 
-# Drive the serial loop until either watched handle is DONE, or — both 0 — until idle.
+# Drive the reactor until either watched handle is DONE, or — both 0 — until idle.
 fn _async_pump(rt, until_a, until_b): i64 {
     while (1 == 1) {
         if (until_a != 0) { if (load64(until_a + 16) == TASK_DONE) { return 0; } }
@@ -236,22 +236,22 @@ fn _async_pump(rt, until_a, until_b): i64 {
     }
 }
 
-# Run all spawned tasks to completion. No epfd to close (epfd == -1, never opened).
+# Run all spawned tasks to completion. The kqueue stays open (the epoll backend's async_run closes
+# its epfd).
 fn async_run(rt): i64 {
     _async_pump(rt, 0, 0);
     return 0;
 }
 
-# Await a spawned task's result (JoinHandle, F2). On the serial model the pump runs
-# the task inline; returns its captured return value. Mirror of async.cyr task_join.
+# Await a spawned task's result (JoinHandle, F2) without closing the runtime. Returns the task
+# fn's captured return value; 0 on a null handle. Mirror of async.cyr task_join.
 fn task_join(rt, handle): i64 {
     if (handle == 0) { return 0; }
     if (load64(handle + 16) != TASK_DONE) { _async_pump(rt, handle, 0); }
     return load64(handle + 40);
 }
 
-# Await every handle in handles[0..n), collecting results (mirror async.cyr, serial).
-# v6.4.37 (P3).
+# Await every handle in handles[0..n), collecting results (mirror async.cyr). v6.4.37 (P3).
 fn async_join_all(rt, handles, n, results): i64 {
     var i = 0;
     while (i < n) {
@@ -262,7 +262,7 @@ fn async_join_all(rt, handles, n, results): i64 {
 }
 
 # Await the first handle to complete; returns its index, or -1 if idle with none done.
-# v6.4.37 (P3, serial).
+# v6.4.37 (P3).
 fn async_select(rt, handles, n): i64 {
     while (1 == 1) {
         var i = 0;
@@ -364,9 +364,7 @@ fn async_with_timeout(rt, handle, ms): i64 {
     return completed;
 }
 
-# Repeating-timer task for async_interval: parks on its periodic EVFILT_TIMER (ident = ctx),
-# invokes fp(arg) each tick, and completes when `tok` (a cancel-token cell) is non-zero, deleting
-# the timer. ctx = { step, fp, arg, rt, tok }.
+# Stop an interval from inside its task: delete its timer and clear the task's owned timer.
 fn _async_interval_stop(ctx): i64 {
     var rt = load64(ctx + 24);
     _async_kev_change(load64(rt), ctx, _KEVF_TIMER, _EV_DELETE, 0, 0);
@@ -374,6 +372,9 @@ fn _async_interval_stop(ctx): i64 {
     if (cur != 0) { store64(cur + 48, 0 - 1); }
     return 0;
 }
+# Repeating-timer task for async_interval: parks on its periodic EVFILT_TIMER (ident = ctx),
+# invokes fp(arg) each tick, and completes when `tok` (a cancel-token cell) is non-zero, deleting
+# the timer. ctx = { step, fp, arg, rt, tok }.
 fn _async_interval_task(ctx): i64 {
     var tok = load64(ctx + 32);                   # cancel-token CELL (0 = never cancel)
     if (tok != 0) { if (load64(tok) != 0) { return _async_interval_stop(ctx); } }
@@ -456,6 +457,7 @@ fn _async_process_task(ctx): i64 {
     return _async_reap_code(load64(ctx + 32));
 }
 
+# Allocate the process task's ctx and spawn it; `group` != 0 makes the child a group leader.
 fn _async_spawn_process_in(rt, path, argv, envp, group): i64 {
     var ctx = alloc_via(load64(rt + 32), 56);       # rt's allocator (arena-reclaimable)
     if (ctx == 0) { return 0; }
@@ -509,27 +511,27 @@ fn async_wait_writable(rt, fd): i64 {
     return _async_kev_register(rt, fd, 4);
 }
 
-# Async TCP connect (agnos): no reactor / BSD non-blocking connect on the serial client
-# model — unsupported, returns 0 (no handle). Present so consumers stay target-agnostic.
-# v6.4.38.
+# Async TCP connect: not provided on macOS (no non-blocking BSD connect on this reactor yet) —
+# returns 0 (no handle). Present so consumers stay target-agnostic. v6.4.38.
 fn async_connect(rt, addr, port): i64 {
     return 0;
 }
 
-# Async accept (agnos): no reactor / no server-accept on the serial client model —
-# unsupported, returns 0 (no handle). Present so consumers stay target-agnostic. v6.4.44 R3.
+# Async accept: not provided on macOS — returns 0 (no handle). Present so consumers stay
+# target-agnostic. v6.4.44 R3.
 fn async_accept(rt, listen_fd): i64 {
     return 0;
 }
 
-# recv task (agnos): a plain blocking read inline — no epoll. v6.4.39.
+# recv task: a plain read inline in the task (no park). v6.4.39.
 fn _async_recv_task(ctx): i64 {
     return sys_read(load64(ctx + 8), load64(ctx + 16), load64(ctx + 24));
 }
-# Async single-shot recv (agnos): spawn a task that blocking-reads into buf; task_join
-# yields the byte count. Mirror of async.cyr's reactor recv, degraded to serial. v6.4.39.
+# Async single-shot recv: spawn a task that reads into buf; task_join yields the byte count.
+# Returns the task handle, or 0 if an allocation is refused. v6.4.39.
 fn async_recv(rt, fd, buf, len): i64 {
     var ctx = alloc_via(load64(rt + 32), 40);       # rt's allocator (mirror async.cyr)
+    if (ctx == 0) { return 0; }
     store64(ctx, 0);
     store64(ctx + 8, fd);
     store64(ctx + 16, buf);
@@ -537,14 +539,15 @@ fn async_recv(rt, fd, buf, len): i64 {
     store64(ctx + 32, rt);
     return async_spawn(rt, &_async_recv_task, ctx);
 }
-# send task (agnos): a plain blocking write inline — no epoll. v6.4.39.
+# send task: a plain write inline in the task (no park). v6.4.39.
 fn _async_send_task(ctx): i64 {
     return sys_write(load64(ctx + 8), load64(ctx + 16), load64(ctx + 24));
 }
-# Async single-shot send (agnos): spawn a task that blocking-writes from buf; task_join
-# yields the byte count. Mirror of async.cyr's reactor send, degraded to serial. v6.4.39.
+# Async single-shot send: spawn a task that writes from buf; task_join yields the byte count.
+# Returns the task handle, or 0 if an allocation is refused. v6.4.39.
 fn async_send(rt, fd, buf, len): i64 {
     var ctx = alloc_via(load64(rt + 32), 40);       # rt's allocator (mirror async.cyr)
+    if (ctx == 0) { return 0; }
     store64(ctx, 0);
     store64(ctx + 8, fd);
     store64(ctx + 16, buf);
@@ -553,31 +556,28 @@ fn async_send(rt, fd, buf, len): i64 {
     return async_spawn(rt, &_async_send_task, ctx);
 }
 
-# Async DNS resolve (agnos): no reactor UDP round-trip on the serial client model —
-# unsupported, returns 0 (no handle). Present so consumers stay target-agnostic. v6.4.40.
+# Async DNS resolve: not provided on macOS — returns 0 (no handle). Present so consumers stay
+# target-agnostic. v6.4.40.
 fn async_resolve(rt, ns_addr, ns_port, host): i64 {
     return 0;
 }
 
-# Sleep for `ms` milliseconds. AGNOS has a real sleep primitive (#41,
-# sys_sleep_ms — halts until the 100 Hz tick), so this is a faithful sleep,
-# not a stub. Guard ms<=0 (sys_sleep_ms caps at 1 h on the kernel side).
+# Sleep for `ms` milliseconds (blocking; lib/chrono.cyr's poll(NULL, 0, ms)). ms <= 0 returns at
+# once.
 fn async_sleep_ms(ms): i64 {
     if (ms <= 0) { return 0; }
     sleep_ms(ms);
     return 0;
 }
 
-# Non-blocking read on Linux; on agnos fds are blocking and there is no fcntl,
-# so this is a plain blocking read (the cooperative loop tolerates blocking on
-# the single-core model).
+# Read from `fd`. The epoll backend flips the fd non-blocking around one read; here it is a
+# plain read, so on a blocking fd it waits for data.
 fn async_read(fd, buf, len): i64 {
     return sys_read(fd, buf, len);
 }
 
-# Wait for `fd` to become readable. AGNOS has no epoll for arbitrary fds and
-# its reads block until data, so the subsequent read already blocks — this is a
-# no-op that returns immediately.
+# Wait for `fd` to become readable. A no-op on macOS that returns 0 at once: a caller's following
+# read blocks until data. Inside a runtime, park with async_wait_fd instead.
 fn async_await_readable(fd): i64 {
     return 0;
 }
@@ -612,8 +612,8 @@ fn async_wait_rw(rt, fd): i64 {
     return _async_kev_register(rt, fd, 5);
 }
 
-# v6.5.26 — one direction of a byte relay (agnos). The blocking read IS the wait on this
-# target, so this is the epoll body minus the park. Returns bytes WRITTEN, 0 on clean EOF.
+# v6.5.26 — one direction of a byte relay. The same body as every backend (lib/async.cyr
+# explains why no park): read once, write what was read. Returns bytes WRITTEN, 0 on clean EOF.
 fn async_relay_once(rt, rfd, wfd, buf, len): i64 {
     var n = sys_read(rfd, buf, len);
     if (n <= 0) { return n; }
@@ -625,8 +625,8 @@ fn async_relay_once(rt, rfd, wfd, buf, len): i64 {
 # SIGKILLed and reaped), the body did not deliver a whole result (it exited early or crashed), or
 # the pipe, kqueue or fork failed. ⚠ A body that legitimately returns -1 is indistinguishable
 # from a failure — the same contract as the epoll backend.
-# ⛔ Until 6.6.10 this ran the body INLINE and ignored `ms` ("AGNOS has no fork", on a kernel
-# with fork). The result is accepted only on an EXACT 8-byte read: a child that died before
+# ⛔ Until 6.6.10 this ran the body INLINE and ignored `ms` (the agnos no-fork rationale, on a
+# kernel with fork). The result is accepted only on an EXACT 8-byte read: a child that died before
 # writing wakes the wait with EOF, and taking whatever the buffer held then is the stale-result
 # defect the Linux arm had (CHANGELOG [6.6.10]). The registration is its own changelist-only
 # call: riding the waiting call, an error would come back as an EV_ERROR "event" and the read
