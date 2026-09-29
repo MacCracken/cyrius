@@ -30,6 +30,16 @@ assert_eq(tls_native_set_version_range(vctx, TLS_VERSION_1_3, TLS_VERSION_1_2), 
 assert_eq(tls_native_set_version_range(vctx, 0x0301, 0x0303), TLS_ERR_INVALID_PARAM, "TLS 1.0 min rejected");
 
 # --- full 1.2 handshake + app data over a socketpair ---
+#ifdef CYRIUS_TARGET_AGNOS
+# 6.6.10: a named SKIP on agnos — the corpus cross-compile ratchet
+# (tests/gates/toolchain/tcyr_corpus_cross_compiles.sh).
+# This end-to-end run is a socketpair + fork + 3-arg waitpid; agnos has no socketpair
+# (-ENOSYS) and its waitpid is the 1-arg #4 poll (the peer's own ABI, kept).
+# CHANGELOG [6.6.10]
+var _agnos_skip = "  SKIP (agnos): the socketpair + fork end-to-end run (no socketpair; 1-arg waitpid)\n";
+sys_write(1, _agnos_skip, strlen(_agnos_skip));
+#endif
+#ifndef CYRIUS_TARGET_AGNOS
 var fds[8];
 sys_socketpair(1, 1, 0, &fds);
 var fdp = load64(&fds);
@@ -84,6 +94,7 @@ var st[4];
 sys_waitpid(pid, &st, 0);
 var code = (load64(&st) >> 8) & 0xFF;
 assert_eq(code, 0, "client connect()+handshake+app-data succeeded (child exit 0)");
+#endif
 
 # --- ChaCha20-Poly1305 key-schedule + Finished cross-verify (SHA-256 path) ---
 # The socket e2e negotiates AES-256-GCM (SHA-384); this exercises the

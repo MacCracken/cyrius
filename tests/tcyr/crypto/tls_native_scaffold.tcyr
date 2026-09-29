@@ -1102,6 +1102,20 @@ test_group("v6.0.22 accept() loopback e2e");
 # socketpair(AF_UNIX, SOCK_STREAM) → two connected fds. fork: parent
 # runs the server accept(), child plays a minimal TLS 1.3 client built
 # from the existing primitives.
+# 6.6.10: the socket/fork/exec groups of this file are POSIX-only — Windows and agnos have no
+# socketpair, no POSIX fork+execve and no 3-arg waitpid — so each is a named SKIP there; the
+# crypto groups between them run everywhere (the corpus cross-compile ratchet,
+# tests/gates/toolchain/tcyr_corpus_cross_compiles.sh). CHANGELOG [6.6.10]
+#ifdef CYRIUS_TARGET_WIN
+var _sk_22 = "  SKIP (windows): the socketpair + fork accept() loopback (no socketpair or POSIX fork/waitpid here)\n";
+sys_write(1, _sk_22, strlen(_sk_22));
+#endif
+#ifdef CYRIUS_TARGET_AGNOS
+var _sk_22a = "  SKIP (agnos): the socketpair + fork accept() loopback (no socketpair or POSIX fork/waitpid here)\n";
+sys_write(1, _sk_22a, strlen(_sk_22a));
+#endif
+#ifndef CYRIUS_TARGET_WIN
+#ifndef CYRIUS_TARGET_AGNOS
 var fds[8];
 var spr = sys_socketpair(1, 1, 0, &fds);
 assert_eq(spr, 0, "socketpair created");
@@ -1207,11 +1221,17 @@ assert_eq(tls_native_get_state(s22), TLS_STATE_CONNECTED, "server reached CONNEC
 sys_close(fd0);
 var wstatus[4];
 sys_waitpid(pid, &wstatus, 0);
+#endif
+#endif
 
 # v6.6.6: every OpenSSL interop listener binds 127.0.0.1:0 and reads the kernel-assigned port
 # back. The fixed ports 44323/44324/44325 were shared by every concurrent run of this suite (two
 # check.sh at once — worktrees, a CI matrix on one runner): one run's s_client reached the OTHER
 # run's server and this run's accept() blocked until the runner's timeout. CHANGELOG [6.6.6]
+# 6.6.10: the BSD-socket listener helpers the two OpenSSL groups use — POSIX-only, so compiled
+# out with them on Windows and agnos (the corpus cross-compile ratchet). CHANGELOG [6.6.10]
+#ifndef CYRIUS_TARGET_WIN
+#ifndef CYRIUS_TARGET_AGNOS
 fn _tn_listen_ephemeral(sa): i64 {   # returns the listening fd (< 0 on failure); sa = bound addr
     var lfd = sys_socket(2, 1, 0);
     if (lfd < 0) { return lfd; }
@@ -1236,6 +1256,8 @@ fn _tn_connect_arg(sa): i64 {
     str_builder_add_int(sb, _tn_port_of(sa));
     return str_data(str_builder_build(sb));
 }
+#endif
+#endif
 
 # ================================================================
 # v6.0.23 — OpenSSL s_client real-peer interop
@@ -1252,6 +1274,16 @@ assert_eq(tls_native_server_load_creds(s23), TLS_OK, "load openssl-generated cer
 assert_eq(tls_native_get_key_algo(s23), SIG_PRIVKEY_ECDSA_P256, "openssl key algo = ECDSA P-256");
 
 # Real interop only when openssl is present (skip cleanly otherwise).
+#ifdef CYRIUS_TARGET_WIN
+var _sk_23 = "  SKIP (windows): OpenSSL s_client interop (POSIX fork + execve + BSD listen/accept4)\n";
+sys_write(1, _sk_23, strlen(_sk_23));
+#endif
+#ifdef CYRIUS_TARGET_AGNOS
+var _sk_23a = "  SKIP (agnos): OpenSSL s_client interop (POSIX fork + execve + BSD listen/accept4)\n";
+sys_write(1, _sk_23a, strlen(_sk_23a));
+#endif
+#ifndef CYRIUS_TARGET_WIN
+#ifndef CYRIUS_TARGET_AGNOS
 if (sys_access("/usr/bin/openssl", 0) == 0) {
     var sa23[16];
     var lfd = _tn_listen_ephemeral(&sa23);
@@ -1288,6 +1320,8 @@ if (sys_access("/usr/bin/openssl", 0) == 0) {
 } else {
     assert_eq(1, 1, "openssl absent — real-peer interop skipped");
 }
+#endif
+#endif
 
 # ================================================================
 # v6.0.24 — TLS 1.3 client: ClientHello construction
@@ -1832,6 +1866,16 @@ test_group("v6.0.31 connect() + client<->server e2e");
 # socketpair + fork: parent = our server (accept), child = our client
 # (connect). Full TLS 1.3 handshake + bidirectional app data, over a
 # real socket, both sides cyrius-native.
+#ifdef CYRIUS_TARGET_WIN
+var _sk_31 = "  SKIP (windows): the socketpair + fork connect() e2e (no socketpair or POSIX fork/waitpid here)\n";
+sys_write(1, _sk_31, strlen(_sk_31));
+#endif
+#ifdef CYRIUS_TARGET_AGNOS
+var _sk_31a = "  SKIP (agnos): the socketpair + fork connect() e2e (no socketpair or POSIX fork/waitpid here)\n";
+sys_write(1, _sk_31a, strlen(_sk_31a));
+#endif
+#ifndef CYRIUS_TARGET_WIN
+#ifndef CYRIUS_TARGET_AGNOS
 var fds31[8];
 sys_socketpair(1, 1, 0, &fds31);
 var fdp31 = load64(&fds31);
@@ -1876,6 +1920,8 @@ var st31[4];
 sys_waitpid(pid31, &st31, 0);
 var code31 = (load64(&st31) >> 8) & 0xFF;
 assert_eq(code31, 0, "client connect()+write+read succeeded (child exit 0)");
+#endif
+#endif
 
 # ================================================================
 # v6.0.77 — OpenSSL s_client TLS 1.2 interop (ECDHE-ECDSA + EMS)
@@ -1892,6 +1938,16 @@ test_group("v6.0.77 OpenSSL s_client 1.2 interop");
 var s77a = tls_native_new_server(cert23, 385, key23, 138);
 assert_eq(tls_native_server_load_creds(s77a), TLS_OK, "load cert+key (AES variant)");
 
+#ifdef CYRIUS_TARGET_WIN
+var _sk_77 = "  SKIP (windows): OpenSSL s_client 1.2 interop (POSIX fork + execve + BSD listen/accept4)\n";
+sys_write(1, _sk_77, strlen(_sk_77));
+#endif
+#ifdef CYRIUS_TARGET_AGNOS
+var _sk_77a = "  SKIP (agnos): OpenSSL s_client 1.2 interop (POSIX fork + execve + BSD listen/accept4)\n";
+sys_write(1, _sk_77a, strlen(_sk_77a));
+#endif
+#ifndef CYRIUS_TARGET_WIN
+#ifndef CYRIUS_TARGET_AGNOS
 if (sys_access("/usr/bin/openssl", 0) == 0) {
     # ---- ECDHE-ECDSA-AES256-GCM-SHA384, kernel-assigned port ----
     var saa[16];
@@ -1968,5 +2024,7 @@ if (sys_access("/usr/bin/openssl", 0) == 0) {
 } else {
     assert_eq(1, 1, "openssl absent — 1.2 real-peer interop skipped");
 }
+#endif
+#endif
 
 var r = assert_summary();

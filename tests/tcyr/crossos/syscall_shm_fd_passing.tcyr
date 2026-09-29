@@ -159,6 +159,13 @@ fn main(): i64 {
     var dt = clock_now_ms() - t0;
     assert_gte(dt, 100, "sys_nanosleep(120 ms) waited at least 100 ms");
     assert_lt(dt, 5000, "sys_nanosleep(120 ms) returned within 5 s (it is not blocking forever)");
+    #ifdef CYRIUS_TARGET_AGNOS
+    # 6.6.10: a named SKIP on agnos, whose peer keeps its own ABI — the corpus cross-compile
+    # ratchet (tests/gates/toolchain/tcyr_corpus_cross_compiles.sh). CHANGELOG [6.6.10]
+    var _agnos_skip = "  SKIP (agnos): raw x86 numbers, truncate, memfd, SCM_RIGHTS and sendto are not agnos surface\n";
+    sys_write(1, _agnos_skip, strlen(_agnos_skip));
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
 
     # ⛔ RAW 35, UNGUARDED, AND THAT IS THE POINT. This assertion used to sit at the bottom of
     # the `#ifdef CYRIUS_TARGET_LINUX` raw group, so the release gate's ecb and ach legs never
@@ -415,6 +422,7 @@ fn main(): i64 {
     var dupd = syscall(33, 1, 71);
     assert_eq(dupd, 71, "raw 33 is dup2, not mknodat");
     sys_close(71);
+    #endif
     #endif
 
     return 0;

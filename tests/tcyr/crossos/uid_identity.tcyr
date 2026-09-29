@@ -33,7 +33,15 @@ fn main(): i64 {
     println("SKIP: windows peer defines no getuid/geteuid (identity is OpenProcessToken)");
     _armed = 1;
 #endif
+#ifdef CYRIUS_TARGET_AGNOS
+    # 6.6.10: the corpus cross-compile ratchet (tests/gates/toolchain/tcyr_corpus_cross_compiles.sh).
+    # agnos has no file ownership (its stat carries no st_uid) and every process is uid/gid 0, so
+    # neither half of this test has anything to compare. CHANGELOG [6.6.10]
+    println("SKIP (agnos): no file ownership, every process is uid 0 / gid 0");
+    _armed = 1;
+#endif
 #ifndef CYRIUS_TARGET_WIN
+#ifndef CYRIUS_TARGET_AGNOS
     alloc_init();
 
     test_group("credential wrappers return a self-consistent identity");
@@ -90,6 +98,7 @@ fn main(): i64 {
     assert_eq(is_root(), expect_root, "is_root() matches (sys_geteuid() == 0)");
 
     _armed = 1;
+#endif
 #endif
 
     # ⚠ ANTI-VACUOUS GUARD. Every assertion above sits inside a #ifdef, so on a target none

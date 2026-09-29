@@ -79,7 +79,9 @@ assert_eq(file_read(rwfd2, rwbuf, 63), 9, "read 9 from reopened O_RDWR fd (agnos
 store8(rwbuf + 9, 0);
 assert_eq(streq(rwbuf, "rdwr-data"), 1, "O_RDWR content round-trips");
 file_close(rwfd2);
-sys_unlink(rwp);
+# 6.6.10: xunlink (lib/io.cyr), not the raw sys_unlink — agnos's is length-carrying, so the raw
+# call did not compile there (the corpus cross-compile ratchet). CHANGELOG [6.6.10]
+xunlink(rwp);
 
 test_group("file_exists");
 assert_eq(file_exists(path), 1, "exists");
@@ -121,7 +123,7 @@ file_unlock(tfd);
 file_close(tfd);
 
 test_group("file_append_locked");
-sys_unlink(lockpath);
+xunlink(lockpath);
 file_append_locked(lockpath, "line1\n", 6);
 file_append_locked(lockpath, "line2\n", 6);
 var abuf = alloc(64);
@@ -129,10 +131,10 @@ var an = file_read_all(lockpath, abuf, 63);
 assert_eq(an, 12, "append 12 bytes");
 store8(abuf + an, 0);
 assert_eq(streq(abuf, "line1\nline2\n"), 1, "append content");
-sys_unlink(lockpath);
+xunlink(lockpath);
 #endif
 
-# Cleanup (portable — sys_unlink routes per-target)
-sys_unlink(path);
+# Cleanup (portable — xunlink bridges every peer, agnos length-carrying included; 6.6.10)
+xunlink(path);
 
 var r = assert_summary();

@@ -55,8 +55,9 @@ assert_eq(n, 2, "defer wrote+closed");
 # v6.6.5: the bare x86 fs numbers (unlink 87, rmdir 84) were raw literals here. On
 # ELF-aarch64 87 is timerfd_gettime and 84 is sync_file_range, so this cleanup did
 # NOTHING on ARM and left the fixtures behind. ESYSXLAT routes both now, but the
-# stdlib name is the spelling a test should model. CHANGELOG [6.6.5]
-sys_unlink(_scratch("cyrius_defer_t1", ""));
+# stdlib name is the spelling a test should model. CHANGELOG [6.6.5] — and since 6.6.10 that name
+# is xunlink: the raw sys_unlink is length-carrying on agnos and did not compile there.
+xunlink(_scratch("cyrius_defer_t1", ""));
 
 test_group("defer LIFO");
 fn test_defer_lifo() {
@@ -73,7 +74,7 @@ var n2 = file_read_all(_scratch("cyrius_defer_t2", ""), buf2, 31);
 store8(buf2 + n2, 0);
 assert_eq(n2, 4, "lifo 4 bytes");
 assert_eq(streq(buf2, "0ABC"), 1, "lifo order 0ABC");
-sys_unlink(_scratch("cyrius_defer_t2", ""));
+xunlink(_scratch("cyrius_defer_t2", ""));
 
 test_group("defer with return value");
 fn test_defer_retval() {

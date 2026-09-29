@@ -741,6 +741,32 @@ fn sys_truncate(path, length): i64 { return 0 - 38; }
 # Create an anonymous in-memory file. agnos has no memfd; shared memory is sys_mmap.
 fn sys_memfd_create(name, flags): i64 { return 0 - 38; }
 
+# ── 6.6.10: agnos peers for the portable wrappers the .tcyr corpus calls and this peer lacked —
+# found by the corpus cross-compile ratchet (tests/gates/toolchain/tcyr_corpus_cross_compiles.sh),
+# where each one was an "undefined function" that failed the whole agnos build. Same rule as the
+# blocks around it: no Linux `SYS_*` constant is minted, because the Linux number is a live,
+# unrelated agnos call. CHANGELOG [6.6.10]
+# Create a connected socket pair. agnos has no AF_UNIX and no socketpair; its local IPC is the
+# #97 channel band (sys_chan_mint), whose endpoints are not an fd pair of this shape. -ENOSYS.
+fn sys_socketpair(domain, type, protocol, fds): i64 { return 0 - 38; }
+# Receive a datagram and its source address. agnos sockets are connection-id based (sock_recv#49
+# on a connected id); there is no unconnected receive-from form. -ENOSYS.
+fn sys_recvfrom(fd, buf, len, flags, srcaddr, srcaddrlen): i64 { return 0 - 38; }
+# Receive a message (a msghdr). agnos has no msghdr surface — sys_sendmsg's twin. -ENOSYS.
+fn sys_recvmsg(fd, msghdr, flags): i64 { return 0 - 38; }
+# Change a file's mode by descriptor: a no-op success, exactly as sys_chmod — agnos has no
+# permission model, so there is no mode to change.
+fn sys_fchmod(fd, mode): i64 { return 0; }
+# The real group id: 0. agnos has no groups (and every process is uid 0 — sys_getuid).
+fn sys_getgid(): i64 { return 0; }
+# The effective group id: 0, as sys_getgid.
+fn sys_getegid(): i64 { return 0; }
+# Flush `fd`'s data and metadata to disk. agnos has no per-file flush; sync#12 flushes every
+# mounted filesystem, a superset, so this is sync's answer (0).
+fn sys_fsync(fd): i64 { return syscall(SYS_SYNC); }
+# Flush `fd`'s data to disk: sync#12, as sys_fsync.
+fn sys_fdatasync(fd): i64 { return syscall(SYS_SYNC); }
+
 # ── v6.6.8: agnos peers for the namespace / root / capability / cross-process-memory /
 # mknodat wrappers. ⛔ Same rule as the block above — NO `SYS_*` Linux constant is minted
 # for any of them, because a Linux number here would issue whatever agnos call owns it.

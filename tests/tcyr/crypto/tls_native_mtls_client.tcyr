@@ -80,6 +80,16 @@ fn chook(hctx, handle): i64 {
     return 0;
 }
 
+#ifdef CYRIUS_TARGET_AGNOS
+# 6.6.10: a named SKIP on agnos — the corpus cross-compile ratchet
+# (tests/gates/toolchain/tcyr_corpus_cross_compiles.sh).
+# This end-to-end run is a socketpair + fork + 3-arg waitpid; agnos has no socketpair
+# (-ENOSYS) and its waitpid is the 1-arg #4 poll (the peer's own ABI, kept).
+# CHANGELOG [6.6.10]
+var _agnos_skip = "  SKIP (agnos): the socketpair + fork end-to-end run (no socketpair; 1-arg waitpid)\n";
+sys_write(1, _agnos_skip, strlen(_agnos_skip));
+#endif
+#ifndef CYRIUS_TARGET_AGNOS
 assert_eq(_dump(mtls_cert_path, cert, 320), 0, "wrote client cert DER");
 assert_eq(_dump(mtls_key_path, key, 48), 0, "wrote client key DER");
 
@@ -145,4 +155,5 @@ sys_waitpid(pid2, &st2, 0);
 sys_unlink(mtls_cert_path);
 sys_unlink(mtls_key_path);
 
+#endif
 var r = assert_summary();

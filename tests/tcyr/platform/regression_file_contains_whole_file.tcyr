@@ -46,8 +46,10 @@ fn main(): i64 {
     assert_eq(_write(q, 64, 0, "AFTER-THE-NUL\n"), 78, "a fixture whose bytes start with NULs");
     assert_eq(regression_file_contains_substr(q, "AFTER-THE-NUL"), 1, "a needle after a NUL byte is found");
     assert_eq(regression_file_contains_substr(_path("cyrius_rfc_missing"), "x"), 0, "a missing file is 0, not a crash");
-    sys_unlink(p);
-    sys_unlink(q);
+    # 6.6.10: xunlink (lib/io.cyr), not the raw sys_unlink — agnos's is length-carrying, so the raw
+    # call did not compile there (the corpus cross-compile ratchet). CHANGELOG [6.6.10]
+    xunlink(p);
+    xunlink(q);
     var r = assert_summary();
     return r;
 }

@@ -6,6 +6,7 @@ include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
 include "lib/assert.cyr"
+include "lib/io.cyr"
 
 # v6.6.6: a PER-PROCESS scratch name. This test used fixed /tmp names, shared by every concurrent
 # run of the suite (two check.sh at once), so one run deleted or rewrote another's file
@@ -45,7 +46,10 @@ fn main(): i64 {
     test_group("sys_fsync / sys_fdatasync");
 
     var path = _scratch("_cyrius_fsync_test", ".tmp");
-    var fd = sys_open(path, O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);   # 0644
+    # 6.6.10: the portable xopen / xunlink (lib/io.cyr) — the raw POSIX-shaped sys_open / sys_unlink
+    # did not compile for agnos, whose peer is length-carrying (the corpus cross-compile ratchet);
+    # agnos's sys_fsync / sys_fdatasync are sync#12 there. CHANGELOG [6.6.10]
+    var fd = xopen(path, 577);                   # O_WRONLY | O_CREAT | O_TRUNC, 0644
     assert(fd >= 0, "tmp file opened for write");
 
     var msg = "durable\n";
@@ -58,7 +62,7 @@ fn main(): i64 {
     assert_eq(r2, 0, "sys_fdatasync returns 0");
 
     sys_close(fd);
-    sys_unlink(path);
+    xunlink(path);
 
     var rr = assert_summary();
     return rr;

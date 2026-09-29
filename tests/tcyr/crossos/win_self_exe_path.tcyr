@@ -150,6 +150,11 @@ fn _wsep_write(path, data, n): i64 {
     return w;
 }
 
+# 6.6.10: compiled out on agnos — the corpus cross-compile ratchet
+# (tests/gates/toolchain/tcyr_corpus_cross_compiles.sh). The Windows arms have nothing to run
+# there, and the portable half calls the POSIX-shaped sys_unlink / sys_rename, which agnos's
+# peer takes length-carrying (its own ABI, kept). main() names the SKIP. CHANGELOG [6.6.10]
+#ifndef CYRIUS_TARGET_AGNOS
 fn test_the_module_path_is_absolute_and_names_a_real_directory() {
     test_group("windows: GetModuleFileNameW answers an absolute path whose directory is real");
     if (_wsep_is_win() == 0) {
@@ -297,13 +302,21 @@ fn test_rename_moves_a_file_and_replaces_an_existing_one() {
     assert_eq(_wsep_exists(b), 0, "cleanup: the test leaves no file behind");
 }
 
+#endif
+
 fn main(): i64 {
     alloc_init();
     args_init();
+    #ifdef CYRIUS_TARGET_AGNOS
+    var _agnos_skip = "  SKIP (agnos): Windows module-path arms; POSIX-shaped sys_unlink/sys_rename\n";
+    sys_write(1, _agnos_skip, strlen(_agnos_skip));
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
     test_the_module_path_is_absolute_and_names_a_real_directory();
     test_the_module_path_names_this_binary();
     test_a_too_small_buffer_returns_the_capacity_not_a_length();
     test_rename_moves_a_file_and_replaces_an_existing_one();
+    #endif
     return assert_summary();
 }
 

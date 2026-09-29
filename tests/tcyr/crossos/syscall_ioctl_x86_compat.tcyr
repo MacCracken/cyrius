@@ -25,6 +25,13 @@ include "lib/assert.cyr"
 
 fn main(): i64 {
     test_group("raw x86_64 ioctl number (16) routes to ioctl on this target");
+    #ifdef CYRIUS_TARGET_AGNOS
+    # 6.6.10: a named SKIP on agnos, whose peer keeps its own ABI — the corpus cross-compile
+    # ratchet (tests/gates/toolchain/tcyr_corpus_cross_compiles.sh). CHANGELOG [6.6.10]
+    var _agnos_skip = "  SKIP (agnos): raw x86 syscall numbers are Linux numbering; agnos has its own\n";
+    sys_write(1, _agnos_skip, strlen(_agnos_skip));
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
 
     # Same fd, same request, same NULL argp — issued twice: once through the peer's own
     # declared constant, once through the hardcoded x86_64 number a consumer would write.
@@ -38,6 +45,7 @@ fn main(): i64 {
     var bad_const = syscall(SYS_IOCTL, 0 - 1, 0, 0);
     var bad_raw16 = syscall(16, 0 - 1, 0, 0);
     assert_eq(bad_raw16, bad_const, "syscall(16,...) == syscall(SYS_IOCTL,...) on a bad fd");
+    #endif
 
     var r = assert_summary();
     return r;

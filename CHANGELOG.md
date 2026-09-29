@@ -158,6 +158,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   memory is untouched by it, a 5 s body under 300 ms is -1 with the child gone, a crashing body is
   -1, and run_process returns 7 / -2 (child gone) / 7 through task_join.
 
+- **The .tcyr corpus compiles for agnos — the 31 files left after bite 14 — and
+  `crypto/tls_native_scaffold.tcyr` for PE.** (bite 13) **Root cause:** no gate cross-built the
+  non-crossos buckets, so 37 corpus files did not compile for agnos (bite 14 fixed the six it
+  owns and put the rest on its ratchet's agnos allowlist): Linux-arity calls into a peer that keeps
+  its own ABI (1-arg `sys_waitpid`, length-carrying `sys_unlink` / `sys_lstat` / `sys_rename`),
+  raw x86-Linux syscall numbers, Linux-only names (SYS_FUTEX, SYS_IOCTL, O_RDONLY, STAT_UID), and
+  eight portable wrappers the agnos peer simply lacked. **Fix**, per the 6.6.10 default (the peer's
+  arity is kept): the missing wrappers go INTO the agnos peer — `sys_socketpair`, `sys_recvfrom`,
+  `sys_recvmsg` (-ENOSYS declines, as `sys_sendmsg` / `sys_sendto`), `sys_fchmod` (a no-op, as
+  `sys_chmod`), `sys_getgid` / `sys_getegid` (0: no groups), `sys_fsync` / `sys_fdatasync`
+  (sync#12); a cleanup `sys_unlink` becomes the portable `xunlink` (and `fsync.tcyr` opens through
+  `xopen`), so those tests now genuinely build for agnos; and what is Linux / POSIX surface — raw
+  numbers, socketpair + fork + 3-arg waitpid end-to-end runs, POSIX modes / lstat / credentials,
+  `proc_set_timeout_ms` — gets a NAMED SKIP line on agnos (and, in tls_native_scaffold's four
+  socket/fork/exec groups, on Windows too). Every guard is `#ifdef`-only, so the other targets
+  compile the same code: all 29 touched files give identical pass counts on x86-Linux before and
+  after. With bite 14's files the agnos and PE allowlists of
+  `tests/gates/toolchain/tcyr_corpus_cross_compiles.sh` are EMPTY on the merged tree.
+
 ### Added
 
 - **A census gate for unchecked first-party `alloc(` results, with a shrink-only allowlist.**

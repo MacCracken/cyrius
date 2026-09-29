@@ -55,6 +55,7 @@ fn _content_is(path, want): i64 {   # 1 iff `path` holds exactly the bytes of cs
 }
 
 #ifndef CYRIUS_TARGET_WIN
+#ifndef CYRIUS_TARGET_AGNOS
 fn _perm(path): i64 {   # rwx bits via stat (follows links); -1 if absent
     var st[144];
     if (xstat(path, &st) != 0) { return 0 - 1; }
@@ -67,6 +68,7 @@ fn _is_link(path): i64 {
     if ((load32(&st + STAT_MODE) & 0xF000) == 0xA000) { return 1; }
     return 0;
 }
+#endif
 #endif
 
 fn main(): i64 {
@@ -81,6 +83,13 @@ fn main(): i64 {
     xunlink(wp);
     #endif
 
+    #ifdef CYRIUS_TARGET_AGNOS
+    # 6.6.10: a named SKIP on agnos, whose peer keeps its own ABI — the corpus cross-compile
+    # ratchet (tests/gates/toolchain/tcyr_corpus_cross_compiles.sh). CHANGELOG [6.6.10]
+    var _agnos_skip = "  SKIP (agnos): POSIX modes, lstat, 2-arg mkdir (agnos's are length-carrying)\n";
+    sys_write(1, _agnos_skip, strlen(_agnos_skip));
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
     #ifndef CYRIUS_TARGET_WIN
     var dir = _scratch("cyr_arepl", "");
     assert_eq(sys_mkdir(dir, 448), 0, "private scratch dir created");
@@ -152,6 +161,7 @@ fn main(): i64 {
     xunlink(l2); xunlink(t2); xunlink(l1); xunlink(t1);
     xunlink(pnew); xunlink(p755); xunlink(p600);
     assert_eq(xrmdir(dir), 0, "scratch dir empty and removed (no temp left behind)");
+    #endif
     #endif
 
     var r = assert_summary();

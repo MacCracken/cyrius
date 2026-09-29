@@ -14,6 +14,13 @@ include "lib/syscalls.cyr"
 fn main(): i64 {
     alloc_init();
     test_group("syscalls file I/O round-trip (open/write/lseek/read/close/unlink)");
+    #ifdef CYRIUS_TARGET_AGNOS
+    # 6.6.10: a named SKIP on agnos, whose peer keeps its own ABI — the corpus cross-compile
+    # ratchet (tests/gates/toolchain/tcyr_corpus_cross_compiles.sh). CHANGELOG [6.6.10]
+    var _agnos_skip = "  SKIP (agnos): POSIX-shaped sys_open/sys_unlink (agnos's are length-carrying)\n";
+    sys_write(1, _agnos_skip, strlen(_agnos_skip));
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
     # v6.6.6: PID-suffixed (test_scratch, lib/assert.cyr). The name was fixed and the check
     # driver's cwd is the REPO ROOT (and ~/_cyaud on the cross-OS hosts), so two runs in one
     # checkout raced over the same file. Still cwd-relative — Windows has no /tmp.
@@ -40,6 +47,7 @@ fn main(): i64 {
     assert_eq(u < 0, 0, "sys_unlink removed the file");
     var gone = sys_open(path, 0, 0);
     assert_eq(gone < 0, 1, "the unlinked file no longer opens");
+    #endif
 
     var rc = assert_summary();
     return rc;

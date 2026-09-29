@@ -26,6 +26,15 @@ var key = hex_decode("302e020100300506032b657004220420ea5da8171db67e4e169e246d8f
 
 # --- Positive: server prefers h2 then http/1.1; client offers http/1.1 then h2.
 # Server preference wins → "h2". Both sides must see it. ---
+#ifdef CYRIUS_TARGET_AGNOS
+# 6.6.10: a named SKIP on agnos — the corpus cross-compile ratchet
+# (tests/gates/toolchain/tcyr_corpus_cross_compiles.sh). This end-to-end run is a socketpair + fork +
+# 3-arg waitpid; agnos has no socketpair (-ENOSYS) and its waitpid is the 1-arg #4 poll (own ABI, kept).
+# CHANGELOG [6.6.10]
+var _agnos_skip = "  SKIP (agnos): the socketpair + fork end-to-end run (no socketpair; 1-arg waitpid)\n";
+sys_write(1, _agnos_skip, strlen(_agnos_skip));
+#endif
+#ifndef CYRIUS_TARGET_AGNOS
 var fds[8];
 sys_socketpair(1, 1, 0, &fds);
 var fdp = load64(&fds);
@@ -98,4 +107,5 @@ var st2[4];
 sys_waitpid(pid2, &st2, 0);
 assert_eq((load64(&st2) >> 8) & 0xFF, 0, "client saw no ALPN selected (child exit 0)");
 
+#endif
 var r = assert_summary();
