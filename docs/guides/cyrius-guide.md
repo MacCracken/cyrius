@@ -43,7 +43,17 @@ var perms = 0o644;      # common Unix file-mode form      → 420
 
 Octal uses digits `0`–`7`; a `8` or `9` ends the literal. (There is no
 `0b` binary literal form.) A decimal literal with a fractional part
-(`3.14`) is lexed as an `f64` float.
+(`3.14`) is lexed as an `f64` float, and its value is the **correctly rounded** binary64 of
+the digits as written (round-half-even, any number of digits, subnormals, +inf past
+~1.8e308) — the compiler converts it exactly and emits the bits as one immediate. There is
+no exponent form (`1e-9`): spell small constants out (`0.000000001`). Until 6.6.10 a literal
+with more than 18 fraction digits or a digit string ≥ 2^63 was silent garbage (often
+negative), and 16–18 digit literals were 1 ulp off on some values.
+
+An integer literal must fit in 64 bits: anything ≥ 2^64 — decimal, hex or octal — is a
+compile error (`integer literal does not fit in 64 bits`; until 6.6.10 it wrapped silently).
+2^63 … 2^64 − 1 is accepted and reads as the negative i64 with those bits
+(`0xFFFFFFFFFFFFFFFF` is -1).
 
 Unary minus flips the **sign bit** of a float the compiler can see is a float: a float
 literal, a value typed `f64` / `f32`, or a direct call to a float-returning builtin
