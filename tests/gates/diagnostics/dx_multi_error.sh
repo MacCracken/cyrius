@@ -73,6 +73,17 @@ for _cc in "$CC" "$CX"; do
     [ ! -s "$O" ] || { echo "FAIL: closure-without-alloc emitted output ($_cc)"; exit 1; }
 done
 
+# 2d) 6.6.10 — a bare `#deprecated` must not clear a panic latch it did not set. An
+#     earlier, unresynced error (the struct field) already held the latch, so ERR_MSG
+#     swallowed the directive's own error — and the unconditional `_panic = 0` after it
+#     un-suppressed the struct error's cascade: 2 errors ('expected identifier', then
+#     "unexpected ')'") for one mistake. Exactly 1 now.
+printf 'struct Q { a; b: ; }\n#deprecated ) )\nfn f(): i64 { return 1; }\nsyscall(60, f());\n' > "$T"
+rc=0; "$CC" < "$T" > "$O" 2>"$E" || rc=$?
+[ "$rc" -ne 0 ] || { echo "FAIL: struct error + bare #deprecated compiled clean"; exit 1; }
+n=$(grep -c '^error:' "$E" || true)
+[ "$n" -eq 1 ] || { echo "FAIL: struct error + bare #deprecated reported $n errors, want 1 (the latch was cleared):"; cat "$E"; exit 1; }
+
 # 3) VALID input still compiles + emits (no false positive).
 printf 'fn main(): i64 { return 42; }\n' > "$T"
 "$CC" < "$T" > "$O" 2>/dev/null || { echo "FAIL: valid program failed to compile"; exit 1; }
