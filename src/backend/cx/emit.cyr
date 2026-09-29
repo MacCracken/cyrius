@@ -1650,6 +1650,12 @@ fn EASSIGNJOB_PE(S): i64 { return 0; }    # 6.6.10 kernel32!AssignProcessToJobOb
 fn ETERMJOB_PE(S): i64 { return 0; }      # 6.6.10 kernel32!TerminateJobObject (0xF042)
 fn ERESUMETHREAD_PE(S): i64 { return 0; } # 6.6.10 kernel32!ResumeThread (0xF043)
 fn ESETJOBINFO_PE(S): i64 { return 0; }   # 6.6.10 kernel32!SetInformationJobObject (0xF044)
+fn EACCEPT_PE(S): i64 { return 0; }      # 6.6.11 ws2_32!accept (0xF045)
+fn ESHUTDOWN_PE(S): i64 { return 0; }    # 6.6.11 ws2_32!shutdown (0xF046)
+fn ESEND_PE(S): i64 { return 0; }        # 6.6.11 ws2_32!send (0xF047)
+fn ERECV_PE(S): i64 { return 0; }        # 6.6.11 ws2_32!recv (0xF048)
+fn EIOCTLSOCK_PE(S): i64 { return 0; }   # 6.6.11 ws2_32!ioctlsocket (0xF049)
+fn EWSAPOLL_PE(S): i64 { return 0; }     # 6.6.11 ws2_32!WSAPoll (0xF04A)
 fn EINITSRW_PE(S): i64 { return 0; }
 fn ELOCALFREE_PE(S): i64 { return 0; }
 fn ELSEEK_PE(S): i64 { return 0; }

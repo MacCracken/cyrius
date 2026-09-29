@@ -2220,6 +2220,52 @@ fn EGETSOCKOPT_PE(S): i64 {
     return _pe_call_5arg_aligned(S, _pe_getsockopt_get());
 }
 
+# 6.6.11 — the blocking ws2_32 verbs behind lib/net.cyr's PE arms (before them every socket
+# verb there returned -38 on Windows, so http_* could not work). All go through the
+# rbx-anchored aligned callers, so each is correct at any expression depth.
+#   syscall(0xF045, s, addr, addrlen)     → accept (argc 4) — a SOCKET, returned whole
+#                                           (INVALID_SOCKET is all ones, i.e. -1)
+#   syscall(0xF046, s, how)               → shutdown (argc 3)
+#   syscall(0xF047, s, buf, len, flags)   → send (argc 5)
+#   syscall(0xF048, s, buf, len, flags)   → recv (argc 5)
+#   syscall(0xF049, s, cmd, argp)         → ioctlsocket (argc 4) — FIONBIO
+#   syscall(0xF04A, fds, nfds, timeout)   → WSAPoll (argc 4)
+# The five `int` results are SIGN-extended (`movsxd rax, eax`), so SOCKET_ERROR reads as -1
+# and a byte count as itself; only eax is defined by the callee. CHANGELOG [6.6.11]
+fn _pe_sx_eax(S): i64 {
+    EB(S, 0x48); EB(S, 0x63); EB(S, 0xC0);              # movsxd rax, eax (int → i64)
+    return 0;
+}
+fn EACCEPT_PE(S): i64 {
+    _pe_ensure_accept(S);
+    return _pe_call_3arg_aligned(S, _pe_accept_get());
+}
+fn ESHUTDOWN_PE(S): i64 {
+    _pe_ensure_shutdown(S);
+    _pe_call_2arg_aligned(S, _pe_shutdown_get());
+    return _pe_sx_eax(S);
+}
+fn ESEND_PE(S): i64 {
+    _pe_ensure_send(S);
+    _pe_call_4arg_aligned(S, _pe_send_get());
+    return _pe_sx_eax(S);
+}
+fn ERECV_PE(S): i64 {
+    _pe_ensure_recv(S);
+    _pe_call_4arg_aligned(S, _pe_recv_get());
+    return _pe_sx_eax(S);
+}
+fn EIOCTLSOCK_PE(S): i64 {
+    _pe_ensure_ioctlsock(S);
+    _pe_call_3arg_aligned(S, _pe_ioctlsock_get());
+    return _pe_sx_eax(S);
+}
+fn EWSAPOLL_PE(S): i64 {
+    _pe_ensure_wsapoll(S);
+    _pe_call_3arg_aligned(S, _pe_wsapoll_get());
+    return _pe_sx_eax(S);
+}
+
 # syscall(0xF012, &iid, &ppFactory) → dxgi!CreateDXGIFactory1. 2 args
 # (REFIID riid → rcx, void** ppFactory → rdx). Returns HRESULT (0=S_OK) in
 # rax/eax; *ppFactory receives the IDXGIFactory1*. v6.0.70 §0 — dxgi.dll is

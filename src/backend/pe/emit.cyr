@@ -1199,6 +1199,66 @@ fn _pe_ensure_setsockopt(S): i64 {
 }
 fn _pe_setsockopt_get(): i64 { return _pe_setsockopt_idx; }
 
+# 6.6.11 — the BLOCKING socket verbs lib/net.cyr's PE arms need beyond the async reactor's
+# overlapped set (dll_id 4 = ws2_32): accept(s, addr, addrlen), shutdown(s, how),
+# send(s, buf, len, flags), recv(s, buf, len, flags), ioctlsocket(s, cmd, argp) for FIONBIO,
+# and WSAPoll(fds, nfds, timeout) for net_connect_sa_nb. Reroutes 0xF045-0xF04A
+# (src/backend/x86/emit.cyr EACCEPT_PE ... EWSAPOLL_PE). CHANGELOG [6.6.11]
+var _pe_accept_ready = 0;
+var _pe_accept_idx   = 0;
+fn _pe_ensure_accept(S): i64 {
+    if (_pe_accept_ready == 1) { return 0; }
+    _pe_register_import(S, &_pe_accept_idx, "accept", 4);
+    _pe_accept_ready = 1;
+    return 0;
+}
+fn _pe_accept_get(): i64 { return _pe_accept_idx; }
+var _pe_shutdown_ready = 0;
+var _pe_shutdown_idx   = 0;
+fn _pe_ensure_shutdown(S): i64 {
+    if (_pe_shutdown_ready == 1) { return 0; }
+    _pe_register_import(S, &_pe_shutdown_idx, "shutdown", 4);
+    _pe_shutdown_ready = 1;
+    return 0;
+}
+fn _pe_shutdown_get(): i64 { return _pe_shutdown_idx; }
+var _pe_send_ready = 0;
+var _pe_send_idx   = 0;
+fn _pe_ensure_send(S): i64 {
+    if (_pe_send_ready == 1) { return 0; }
+    _pe_register_import(S, &_pe_send_idx, "send", 4);
+    _pe_send_ready = 1;
+    return 0;
+}
+fn _pe_send_get(): i64 { return _pe_send_idx; }
+var _pe_recv_ready = 0;
+var _pe_recv_idx   = 0;
+fn _pe_ensure_recv(S): i64 {
+    if (_pe_recv_ready == 1) { return 0; }
+    _pe_register_import(S, &_pe_recv_idx, "recv", 4);
+    _pe_recv_ready = 1;
+    return 0;
+}
+fn _pe_recv_get(): i64 { return _pe_recv_idx; }
+var _pe_ioctlsock_ready = 0;
+var _pe_ioctlsock_idx   = 0;
+fn _pe_ensure_ioctlsock(S): i64 {
+    if (_pe_ioctlsock_ready == 1) { return 0; }
+    _pe_register_import(S, &_pe_ioctlsock_idx, "ioctlsocket", 4);
+    _pe_ioctlsock_ready = 1;
+    return 0;
+}
+fn _pe_ioctlsock_get(): i64 { return _pe_ioctlsock_idx; }
+var _pe_wsapoll_ready = 0;
+var _pe_wsapoll_idx   = 0;
+fn _pe_ensure_wsapoll(S): i64 {
+    if (_pe_wsapoll_ready == 1) { return 0; }
+    _pe_register_import(S, &_pe_wsapoll_idx, "WSAPoll", 4);
+    _pe_wsapoll_ready = 1;
+    return 0;
+}
+fn _pe_wsapoll_get(): i64 { return _pe_wsapoll_idx; }
+
 # v6.2.13 — kernel32!GetSystemTimeAsFileTime for the Windows wall-clock
 # (chrono.clock_epoch_secs/ns). `void GetSystemTimeAsFileTime(LPFILETIME)` fills
 # an 8-byte FILETIME (100ns ticks since 1601-01-01) at the pointer arg; the
