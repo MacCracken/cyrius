@@ -1621,35 +1621,30 @@ fn cmd_hooks(action): i64 {
 # linter still unable to answer the question. (a) reuses the component that is already
 # correct and stays entirely inside cbt/.
 #
-# ⭐ THE TRAP, AND THE RULE THAT AVOIDS IT: **classify on the MESSAGE, never on the
-# exit code.** 38 of the 191 files `cyrius audit` lints in this very repo exit non-zero
-# standalone, 27 of them with `undefined variable 'X' (missing include or enum?)` —
-# emitted through the SAME `_err_head` as `unexpected ';'`, identical shape, identical
-# exit 1. Gating on the exit code would make lint REFUSE 20 % of the stdlib, which is
-# the "linter that refuses to lint" the filing explicitly warned against; a lint of ONE
-# file in isolation, with no manifest and no lib/, is the whole point of the verb.
-# So: `_skip_deps = 1` (never drag the dep graph into a lint), `--allow-undef`, and a
-# POSITIVE allow-list of syntax-class message prefixes.
+# ⛔ 6.6.11 (O4) — THE CLASSIFIER IS INVERTED: a refusal lints only when EVERY error is a
+# named CONTEXT-dependent message. Until 6.6.11 it was the other way round — lint refused only
+# when an error's message started with an entry of a SYNTAX allow-list (`unexpected `,
+# `expected `, …) and linted anyway otherwise — so any refusal the list did not name read
+# `0 warnings`, rc 0. Measured at 6.6.10: `#derive(accessors)` on an enum
+# (`error: #derive(accessors) applies to a struct; Color is an enum`), and #derive on neither a
+# struct nor an enum, both of which `cyrius build` refuses. Those messages carry no
+# `<loc>: ` part and are not syntax-shaped; the list could never have named every refusal the
+# compiler has, and each one it missed was a clean bill of health on a broken file.
 #
-# ⭐ THE ALLOW-LIST IS ONLY AS HONEST AS THE COMPILER'S MESSAGE CLASSES, AND AT 6.5.19
-# IT WAS NOT. This block used to claim the failure direction was the safe one —
-# "never a false accusation against a file that merely lacks context" — and cited
-# "0 false positives across all 191 files". **Both halves were an artefact of
-# measuring only IN-REPO.** Six struct-field sites in `src/frontend/parse_decl.cyr`
-# reported resolution failures through `ERR(S)`, the SYNTAX emitter, so
-# `total = total + e.size;` — with `Entry` declared in a SIBLING file, the ordinary
-# shape for any project whose manifest concatenates modules — came back
-# `unexpected ';'` and was condemned. In-repo exposure really is zero (cyrius' own
-# modules include their struct definitions), which is exactly why 191/191 looked
-# clean; the sweep that found it ran 472 files across NINE repos and hit 3, all in
-# stiva — the repo that filed this issue. Fixed at the ROOT (v6.5.19: `ERR_IDENT`
-# in src/common/util.cyr; those six sites now emit `no struct type in scope for
-# 'e'` / `unknown field 'x' on struct 'Y'`), NOT by weakening the predicate here —
-# the filed repro is literally `unexpected ';'`, so dropping that prefix would have
-# gutted the detection the issue asked for.
-# RE-MEASURED at 6.5.19: 0 refusals across all 472 files, 6/6 detection on broken
-# shapes. Gate axis 6 in tests/gates/frontend/lint_reports_unparseable.sh pins the
-# cross-file shape so the hole cannot reopen silently.
+# WHY THE OLD DIRECTION EXISTED, AND WHY IT NO LONGER HOLDS. The v6.5.19 pre-pass ran with
+# `--allow-undef` only, and 38 of 191 in-repo files exited non-zero standalone — 27 with
+# `undefined variable 'X'`, a file merely lacking its includes. `--syntax-only` (also v6.5.19,
+# src/common/util.cyr `_syntax_only`) now suppresses undefined variables and fns, and the
+# census under lint's own flags is 2 refusals in 199 in-repo files, both context-dependent:
+# lib/ganita.cyr (`f64_sin requires include "lib/math.cyr"`) and lib/yukti.cyr (`array size
+# identifier must be an enum constant`, the enum lives in another file). So the exception is
+# now small and NAMED — `_lint_msg_is_context` — and everything else the compiler refuses
+# fails lint and is forwarded. A read-only sweep over the sibling repos' sources, with the
+# CLI's own flags, is recorded in CHANGELOG [6.6.11].
+#
+# ⚠ `no struct type in scope for` is in the context set on purpose: the 6.5.19 cross-file
+# struct shape (`e.size` with `Entry` declared in a SIBLING module — the ordinary layout of a
+# manifest that concatenates modules) must still lint. Gate axis 6 pins it.
 #
 # COST: ~89 ms per lint against ~6 ms for cyrlint alone. It does NOT touch
 # `cyrius audit`: `audit_lint_walk` (lib/audit_walk.cyr) execs the cyrlint BINARY
@@ -1661,48 +1656,66 @@ fn _lint_pfx(p, n, s): i64 {
     return memeq(p, s, sl);
 }
 
-# The allow-list. Every entry is a message a SYNTAX error produces; nothing here can be
-# produced by name resolution, type checking or capacity. Grep `src/frontend/` for
-# `syscall(SYS_WRITE, 2, ": ` to see the full message table this is drawn from.
-fn _lint_msg_is_syntax(p, n): i64 {
-    if (_lint_pfx(p, n, "unexpected ") == 1) { return 1; }
-    if (_lint_pfx(p, n, "expected ") == 1) { return 1; }
-    if (_lint_pfx(p, n, "unterminated ") == 1) { return 1; }
-    if (_lint_pfx(p, n, "unknown char escape") == 1) { return 1; }
-    if (_lint_pfx(p, n, "non-ASCII byte ") == 1) { return 1; }
-    if (_lint_pfx(p, n, "multi-byte char literal") == 1) { return 1; }
-    if (_lint_pfx(p, n, "\\x escape") == 1) { return 1; }
-    if (_lint_pfx(p, n, "\\u escape") == 1) { return 1; }
-    if (_lint_pfx(p, n, "\\u{...}") == 1) { return 1; }
-    if (_lint_pfx(p, n, "nested @unsafe") == 1) { return 1; }
+# 1 when the cstr `s` occurs anywhere in p[0, n).
+fn _lint_has(p, n, s): i64 {
+    var sl = strlen(s);
+    var q = 0;
+    while (q + sl <= n) {
+        if (memeq(p + q, s, sl) == 1) { return 1; }
+        q = q + 1;
+    }
     return 0;
 }
 
-# Does the captured stderr carry a syntax-class error? Diagnostics are
-# `error:<file>:<line>:<col>: <message>`; the location can never contain a COLON
-# FOLLOWED BY A SPACE (line and column are digits), so the first `": "` ends it — the
-# message itself may well contain more, e.g. `expected ';', got ...`.
-fn _lint_capture_has_syntax(buf, n): i64 {
+# The CONTEXT set: messages that depend on what OTHER files of the unit supply, so a file
+# linted alone may legitimately produce them. Every other error is a refusal of the file itself.
+fn _lint_msg_is_context(p, n): i64 {
+    # f64_sin / f64_cos / … and the slice subscript: `<what> requires include "lib/<x>.cyr"`
+    if (_lint_has(p, n, " requires include \"") == 1) { return 1; }
+    # an array sized by an enum constant another file declares (lib/yukti.cyr)
+    if (_lint_pfx(p, n, "array size identifier must be an enum constant") == 1) { return 1; }
+    # a struct declared in a sibling module (the 6.5.19 cross-file shape, gate axis 6)
+    if (_lint_pfx(p, n, "no struct type in scope for ") == 1) { return 1; }
+    # …and the same struct named as a field's type or measured by sizeof (the 6.6.11 sweep:
+    # 23 sibling-repo files, e.g. samay's `name: Str` with lib/str.cyr not in the file)
+    if (_lint_pfx(p, n, "unknown type '") == 1 && _lint_has(p, n, "' for struct field '") == 1) { return 1; }
+    if (_lint_pfx(p, n, "sizeof: unknown type") == 1) { return 1; }
+    return 0;
+}
+
+# The message of an `error:` line buf[ls, le): after `error:<file>:<line>:<col>: ` — the
+# location can never contain a COLON FOLLOWED BY A SPACE (line and column are digits), so the
+# first `": "` ends it — or after `error: ` when the compiler gave no location (the #derive
+# stage). -1 when the line is not an error line.
+fn _lint_err_msg(buf, ls, le): i64 {
+    if (le - ls < 7) { return 0 - 1; }
+    if (memeq(buf + ls, "error:", 6) == 0) { return 0 - 1; }
+    if (load8(buf + ls + 6) == 32) { return ls + 7; }
+    var q = ls + 6;
+    while (q + 1 < le) {
+        if (load8(buf + q) == 58) { if (load8(buf + q + 1) == 32) { return q + 2; } }
+        q = q + 1;
+    }
+    return le;                        # a located error with no message: not a context one
+}
+
+# The verdict on a captured stderr: 0 = every error line is context-dependent (lint the file),
+# 1 = some error is the file's own (refuse), 2 = no error line at all (could not tell).
+fn _lint_capture_verdict(buf, n): i64 {
+    var seen = 0;
     var p = 0;
     while (p < n) {
         var ls = p;
         while (p < n) { if (load8(buf + p) == 10) { break; } p = p + 1; }
         var le = p;
         if (p < n) { p = p + 1; }
-        if (le - ls > 6) {
-            if (memeq(buf + ls, "error:", 6) == 1) {
-                var q = ls + 6;
-                var mstart = 0;
-                while (q + 1 < le && mstart == 0) {
-                    if (load8(buf + q) == 58) { if (load8(buf + q + 1) == 32) { mstart = q + 2; } }
-                    q = q + 1;
-                }
-                if (mstart > 0) {
-                    if (_lint_msg_is_syntax(buf + mstart, le - mstart) == 1) { return 1; }
-                }
-            }
+        var ms = _lint_err_msg(buf, ls, le);
+        if (ms >= 0) {
+            seen = 1;
+            if (_lint_msg_is_context(buf + ms, le - ms) == 0) { return 1; }
         }
     }
+    if (seen == 0) { return 2; }
     return 0;
 }
 
@@ -1795,8 +1808,15 @@ fn _lint_syntax_prepass(file): i64 {
     sys_unlink(outf);
     sys_unlink(errf);
     store8(buf + n, 0);
-    if (_lint_capture_has_syntax(buf, n) == 0) { return 0; }   # resolution error -> lint
-    _err_ctx("does not parse, so lint checks were NOT run", file);
+    var verdict = _lint_capture_verdict(buf, n);
+    if (verdict == 0) { return 0; }   # only context-dependent errors -> lint
+    if (verdict == 2) {
+        _ew("warning: ");
+        _ew(file);
+        _ew(": the syntax pre-pass could not tell whether it compiles (the compiler failed with no error line); linting anyway\n");
+        return 0;
+    }
+    _err_ctx("the compiler refuses this file, so lint checks were NOT run", file);
     _info("  cyrlint is a line-based scanner with no parser, so its \"0 warnings\" would");
     _info("  describe its own rules rather than the file. The compiler reports:");
     _lint_forward_diag(buf, n);

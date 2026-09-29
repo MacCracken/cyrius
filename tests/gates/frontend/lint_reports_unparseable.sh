@@ -57,6 +57,19 @@
 #     the predicate" shortcut) -> 8 RED across axes 1, 4 and 7, axis 6 green: the
 #     filed repro IS `unexpected ';'`, so that shortcut buys axis 6 by gutting the
 #     detection the issue asked for. That is why v6.5.19 fixed the compiler instead.
+#
+# ⛔ 6.6.11 (O4) — THE CLASSIFIER IS INVERTED. Lint used to refuse only when an error's
+# message began with an entry of a SYNTAX allow-list, so any refusal the list did not name
+# linted `0 warnings`, rc 0 — measured on `#derive(accessors)` over an enum and on a #derive
+# over neither a struct nor an enum, both refused by `cyrius build`. Now EVERY compiler
+# refusal fails lint, unless each error line is in the named CONTEXT set
+# (`_lint_msg_is_context`: `… requires include "…"`, an array sized by another file's enum
+# constant, a struct declared in a sibling module). The refusal line now reads "the compiler
+# refuses this file" (a #derive refusal is not a parse failure). Axis 10 is the new refusal
+# rows; axis 11 the context controls (ganita- and yukti-shaped); u3 (a duplicate variable,
+# which no context can fix) moved from axis 5's lint-anyway set into axis 10.
+# MUTATION (6.6.11): `_lint_capture_verdict` back to "refuse only on a syntax-class message"
+# -> axis 10 RED (derive rows + u3), axes 1-9, 11 green.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -113,7 +126,7 @@ check "exits non-zero" "yes" "$([ "$rc" != 0 ] && echo yes || echo no)"
 check "no bare '0 warnings' on stdout" 0 "$(grep -c '^0 warnings' "$T/o" || true)"
 check "names the syntax error" 1 "$(grep -c "unexpected ';'" "$T/e" || true)"
 check "cites line:column" 1 "$(grep -cE ':[0-9]+:[0-9]+: unexpected' "$T/e" || true)"
-check "says lint checks did not run" 1 "$(grep -c 'does not parse' "$T/e" || true)"
+check "says lint checks did not run" 1 "$(grep -c 'compiler refuses this file' "$T/e" || true)"
 
 # ── AXIS 2 — ANTI-VACUOUS: a well-formed file still lints normally.
 echo "axis 2 — ANTI-VACUOUS: a clean file still lints and reports 0 warnings, exit 0:"
@@ -150,7 +163,7 @@ check "premise: and they are RESOLUTION errors, not syntax ones" "yes" \
 rc=$(lint fs_copy.cyr)
 check "lint still runs (exit 0)" 0 "$rc"
 check "lint still reports a count" 1 "$(grep -c 'warnings' "$T/o" || true)"
-check "lint does NOT claim a parse failure" 0 "$(grep -c 'does not parse' "$T/e" || true)"
+check "lint does NOT claim a parse failure" 0 "$(grep -c 'compiler refuses this file' "$T/e" || true)"
 
 # ── AXIS 4 — a spread of syntax shapes, so detection is not keyed on one message.
 echo "axis 4 — every syntax shape is caught, not just the filed one:"
@@ -181,11 +194,10 @@ done
 echo "axis 5 — ANTI-VACUOUS: unresolvable-but-well-formed files are linted, not refused:"
 printf 'fn a() { return SOME_UNDEFINED_CONST; }\nfn main() { return a(); }\nvar r = main();\n' > "$T/w/u1.cyr"
 printf 'fn a() { return some_undefined_fn(1); }\nfn main() { return a(); }\nvar r = main();\n' > "$T/w/u2.cyr"
-printf 'fn a() { var x = 1; var x = 2; return x; }\nfn main() { return a(); }\nvar r = main();\n' > "$T/w/u3.cyr"
-for f in u1.cyr u2.cyr u3.cyr; do
+for f in u1.cyr u2.cyr; do
     rc=$(lint "$f")
     check "$f linted, not refused (exit 0)" 0 "$rc"
-    check "$f no parse-failure claim" 0 "$(grep -c 'does not parse' "$T/e" || true)"
+    check "$f no parse-failure claim" 0 "$(grep -c 'compiler refuses this file' "$T/e" || true)"
 done
 
 # ── AXIS 6 — ⭐ THE SHAPE THAT ACTUALLY BROKE (v6.5.19, P1). A module that reads
@@ -236,7 +248,7 @@ for f in x_read x_write x_method x_chain; do
     rc=$(lint "$f.cyr")
     check "$f is LINTED, not refused (exit 0)" 0 "$rc"
     check "$f reports a warning count" 1 "$(grep -c 'warnings' "$T/o" || true)"
-    check "$f no parse-failure claim" 0 "$(grep -c 'does not parse' "$T/e" || true)"
+    check "$f no parse-failure claim" 0 "$(grep -c 'compiler refuses this file' "$T/e" || true)"
 done
 
 # ── AXIS 7 — ANTI-VACUOUS for axis 6: a file that mixes a cross-file field access
@@ -246,7 +258,7 @@ echo "axis 7 — ANTI-VACUOUS: a cross-file field access does NOT immunise a bro
 printf 'fn total_of(p) {\n    var total = ;\n    var e: Entry = p;\n    total = total + e.size;\n    return total;\n}\nfn main() { return 0; }\nvar r = main();\n' > "$T/w/x_both.cyr"
 rc=$(lint x_both.cyr)
 check "still refused when a real syntax error is present" "yes" "$([ "$rc" != 0 ] && echo yes || echo no)"
-check "and it names the syntax error" 1 "$(grep -c 'does not parse' "$T/e" || true)"
+check "and it names the syntax error" 1 "$(grep -c 'compiler refuses this file' "$T/e" || true)"
 
 # The SIXTH site — a genuinely wrong field name in a CHAINED access, with both
 # structs in scope. It has no other coverage here, and unlike the four above it is a
@@ -305,7 +317,7 @@ check "lint REFUSES it (exit non-zero)" "yes" "$([ "$rc" != 0 ] && echo yes || e
 check "no bare '0 warnings' on stdout" 0 "$(grep -c '^0 warnings' "$T/o" || true)"
 check "names the syntax error hidden behind the resolution one" 1 \
     "$(grep -c "unexpected ';'" "$T/e" || true)"
-check "says lint checks did not run" 1 "$(grep -c 'does not parse' "$T/e" || true)"
+check "says lint checks did not run" 1 "$(grep -c 'compiler refuses this file' "$T/e" || true)"
 
 # ANTI-VACUOUS for axis 8: the SAME file with the syntax error removed is unresolvable
 # ONLY, and must still be linted. Without this row, axis 8 is satisfiable by refusing
@@ -315,7 +327,7 @@ check "says lint checks did not run" 1 "$(grep -c 'does not parse' "$T/e" || tru
 printf 'fn a() { return SOME_UNDEFINED_CONST; }\nfn b() { var y = OTHER_UNDEFINED; return y; }\nfn main() { return 0; }\nvar r = main();\n' > "$T/w/both_ok.cyr"
 rc=$(lint both_ok.cyr)
 check "ANTI-VACUOUS: unresolvable-only sibling is still LINTED (exit 0)" 0 "$rc"
-check "ANTI-VACUOUS: and makes no parse-failure claim" 0 "$(grep -c 'does not parse' "$T/e" || true)"
+check "ANTI-VACUOUS: and makes no parse-failure claim" 0 "$(grep -c 'compiler refuses this file' "$T/e" || true)"
 
 # The cross-file struct shape (axis 6) with a syntax error added — the same ordering
 # hole one class over, since a `.field` resolution failure also precedes the grammar
@@ -324,7 +336,7 @@ printf 'fn total_of(p) {\n    var e: Entry = p;\n    var t = e.size;\n    var q 
 rc=$(lint both_struct.cyr)
 check "cross-file field access + a real syntax error is REFUSED" "yes" \
     "$([ "$rc" != 0 ] && echo yes || echo no)"
-check "…and the syntax error is named" 1 "$(grep -c 'does not parse' "$T/e" || true)"
+check "…and the syntax error is named" 1 "$(grep -c 'compiler refuses this file' "$T/e" || true)"
 
 # ── AXIS 9 — ⭐ THE RETURN-TYPE SITE (v6.5.19, the second half of the same P1).
 #
@@ -382,7 +394,7 @@ check "premise: a plain compile MANUFACTURES a syntax-class cascade" "yes" \
 rc=$(lint x_ret.cyr)
 check "x_ret is LINTED, not refused (exit 0)" 0 "$rc"
 check "x_ret reports a warning count" 1 "$(grep -c 'warnings' "$T/o" || true)"
-check "x_ret no parse-failure claim" 0 "$(grep -c 'does not parse' "$T/e" || true)"
+check "x_ret no parse-failure claim" 0 "$(grep -c 'compiler refuses this file' "$T/e" || true)"
 
 # ── AXIS 9b — ANTI-VACUOUS for axis 9: a return-type file WITH a real syntax error is
 # still refused, so axis 9 cannot be bought by exempting anything containing `: T`.
@@ -390,7 +402,54 @@ printf 'fn name_of(members): Str2 {\n    for (var i = 0; i < 4; i = i + 1) {\n  
 rc=$(lint x_ret_bad.cyr)
 check "ANTI-VACUOUS: sibling return type + a REAL syntax error is refused" "yes" \
     "$([ "$rc" != 0 ] && echo yes || echo no)"
-check "ANTI-VACUOUS: …and the syntax error is named" 1 "$(grep -c 'does not parse' "$T/e" || true)"
+check "ANTI-VACUOUS: …and the syntax error is named" 1 "$(grep -c 'compiler refuses this file' "$T/e" || true)"
+
+# ── AXIS 10 (6.6.11, O4) — ⭐ EVERY REFUSAL, not only a syntax-shaped one. These three are
+# refused by `cyrius build` and linted `0 warnings`, rc 0 at 6.6.10: two #derive-stage
+# refusals with no `<loc>: ` part, and a duplicate variable (no context can make it compile).
+echo "axis 10 — ⭐ a file the compiler refuses for a NON-syntax reason is refused, by name:"
+printf '#derive(accessors)\nenum Color { RED = 0; GREEN = 1; }\nvar x = 42;\n' > "$T/w/r_acc_enum.cyr"
+printf '#derive(accessors)\nfn not_a_type(): i64 { return 1; }\nvar x = 42;\n' > "$T/w/r_derive_neither.cyr"
+printf 'fn a() { var x = 1; var x = 2; return x; }\nfn main() { return a(); }\nvar r = main();\n' > "$T/w/u3.cyr"
+for f in r_acc_enum r_derive_neither u3; do
+    b_rc=0
+    ( cd "$T/w" && timeout 300 "$CYRIUS" build "$f.cyr" "$T/w/$f.bin" > /dev/null 2>&1 ) || b_rc=$?
+    check "premise: cyrius build refuses $f" "yes" "$([ "$b_rc" != 0 ] && echo yes || echo no)"
+    rc=$(lint "$f.cyr")
+    check "$f refused by lint (exit non-zero)" "yes" "$([ "$rc" != 0 ] && echo yes || echo no)"
+    check "$f: no bare '0 warnings'" 0 "$(grep -c '^0 warnings' "$T/o" || true)"
+    check "$f: says lint checks did not run" 1 "$(grep -c 'compiler refuses this file' "$T/e" || true)"
+done
+check "the accessors-on-enum diagnostic is forwarded" 1 \
+    "$(lint r_acc_enum.cyr > /dev/null; grep -c 'applies to a struct; Color is an enum' "$T/e" || true)"
+
+# ── AXIS 11 (6.6.11) — ANTI-VACUOUS for axis 10: the named CONTEXT errors still lint. Each is
+# refused standalone and compiles once its context is in front (premise), and lint runs it.
+# The shapes of the two in-repo files a standalone lint refuses under lint's own flags:
+# lib/ganita.cyr (f64_sin without lib/math.cyr) and lib/yukti.cyr (an array sized by an enum
+# constant another file declares).
+echo "axis 11 — ANTI-VACUOUS: context-dependent refusals (ganita/yukti shapes) are still linted:"
+printf 'fn gsin(x): i64 { return f64_sin(x); }\nvar r = gsin(0);\n' > "$T/w/c_sin.cyr"
+printf 'include "lib/math.cyr"\n' > "$T/w/c_sin_ctx.cyr"
+printf 'fn ybuf(): i64 {\n    var buf[YK_SZ];\n    return 0;\n}\nvar r = ybuf();\n' > "$T/w/c_enum.cyr"
+printf 'enum YkSz { YK_SZ = 16; }\n' > "$T/w/c_enum_ctx.cyr"
+mkdir -p "$T/w/lib" && cp "$ROOT/lib/math.cyr" "$T/w/lib/math.cyr"
+for f in c_sin c_enum; do
+    s_rc=0
+    ( cd "$T/w" && "$CYCC" --allow-undef --syntax-only < "$f.cyr" > /dev/null 2> "$T/ce" ) || s_rc=$?
+    check "premise: $f alone is refused under lint's flags" "yes" "$([ "$s_rc" != 0 ] && echo yes || echo no)"
+    cat "$T/w/${f}_ctx.cyr" "$T/w/$f.cyr" > "$T/w/joined_$f.cyr"
+    j_rc=0
+    ( cd "$T/w" && "$CYCC" --allow-undef --syntax-only < "joined_$f.cyr" > /dev/null 2> "$T/cj" ) || j_rc=$?
+    check "premise: $f compiles with its context in front" 0 "$j_rc"
+    rc=$(lint "$f.cyr")
+    check "$f is LINTED, not refused (exit 0)" 0 "$rc"
+    check "$f reports a warning count" 1 "$(grep -c 'warnings' "$T/o" || true)"
+done
+# …but a context error does not immunise a real refusal in the same file.
+printf 'fn gsin(x): i64 { return f64_sin(x); }\nfn a() { var x = 1; var x = 2; return x; }\nvar r = gsin(0);\n' > "$T/w/c_mixed.cyr"
+rc=$(lint c_mixed.cyr)
+check "a context error beside a real refusal is still refused" "yes" "$([ "$rc" != 0 ] && echo yes || echo no)"
 
 echo ""
 if [ "$fails" = "0" ]; then
