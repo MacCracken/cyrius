@@ -411,6 +411,9 @@ opens only after the 6.6.11 tag.
   per site) because 6.6.8 bite 3 added nine rows and every row is copied into every site. Every aarch64
   program pays it, and each new row makes it worse. A shared translation stub (one call per site) would
   cut it to a few bytes a site. Correct today; a size tax, so it is placed here rather than in a release.
+- **bayan: `bayan_toml_array_parse_a` (`src/toml.cyr`) never checks `vec_new_a`'s result** — on a refusing
+  allocator it SIGSEGVs instead of returning 0 (found 2026-09-29 while exercising bayan's aliases on a
+  refusing allocator; a comment in bayan's test marks it). bayan's next patch release.
 - **Fold bundles that are raw-includable** — an XL cross-repo campaign (a distlib change released first, then
   ten sibling regenerations, then a re-vendor); backlog, below.
 
