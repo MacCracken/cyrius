@@ -20,9 +20,13 @@
 #   E  the diagnostic names the literal: `error:<file>:<line>:<col>: integer literal ...`
 #   F  a FLOAT literal is not an integer literal: a 20-digit integer part before `.5` compiles
 #   G  programs/cyrld.cyr compiles
+#   H  the float-literal table cap: exactly _FLIT_CAP distinct float literals compile, and one
+#      more is refused with the same located form, `error:<file>:<line>:<col>: too many
+#      distinct float literals ...` (it printed an unlocated `error: too many ...` before 6.6.10)
 #
 # Mutations: drop the `ovf` test in LEXDEC -> B RED (rc 0); in LEXHEX -> C RED; in LEXOCT -> D
-# RED; refuse in LEXDEC before the `.` check -> F RED; restore the cyrld line -> G RED.
+# RED; refuse in LEXDEC before the `.` check -> F RED; restore the cyrld line -> G RED; put back
+# the unlocated SYS_WRITE for the float-cap error -> H RED; drop the `fidx < 0` check -> H RED.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -105,6 +109,34 @@ fi
 echo "  -- G programs/cyrld.cyr (the one >= 2^64 literal in the ecosystem, removed) compiles"
 rc=0; "$CC" < programs/cyrld.cyr > "$T/cyrld" 2> "$T/g.err" || rc=$?
 if [ "$rc" -eq 0 ]; then ok "cyrld compiles"; else bad "cyrld: rc $rc: $(grep '^error' "$T/g.err" | head -1)"; fi
+
+echo "  -- H the float-literal table cap is refused with a located diagnostic"
+# The cap is read from the tree so the row follows a resize. Line 1 is `var f = 0;`, then one
+# distinct literal `f = <k>.5;` per line, so literal k sits on line k + 2 at column 5.
+cap=$(sed -n 's/^var _FLIT_CAP = \([0-9][0-9]*\);.*/\1/p' src/common/util.cyr)
+if [ -z "$cap" ]; then bad "could not read _FLIT_CAP from src/common/util.cyr"
+else
+    # flits <count> <file>: `count` distinct float literals, then exit 3
+    flits() {
+        { echo 'var f = 0;'; k=0; while [ "$k" -lt "$1" ]; do echo "f = $k.5;"; k=$((k + 1)); done
+          echo 'syscall(60, 3);'; } > "$2"
+    }
+    flits "$cap" "$T/h1.cyr"
+    rc=0; "$CC" < "$T/h1.cyr" > "$T/h1.bin" 2> "$T/h1.err" || rc=$?
+    if [ "$rc" -ne 0 ]; then bad "$cap float literals (the cap): rc $rc: $(grep '^error' "$T/h1.err" | head -1)"
+    else
+        chmod +x "$T/h1.bin"; e=0; (ulimit -c 0; "$T/h1.bin") || e=$?
+        if [ "$e" -eq 3 ]; then ok "$cap distinct float literals compile"; else bad "$cap float literals: exit $e, want 3"; fi
+    fi
+    flits $((cap + 1)) "$T/h2.cyr"
+    want=":$((cap + 2)):5: too many distinct float literals"
+    rc=0; "$CC" < "$T/h2.cyr" > "$T/h2.bin" 2> "$T/h2.err" || rc=$?
+    if [ "$rc" -ne 0 ] && grep -q "^error:.*$want" "$T/h2.err"; then
+        ok "$((cap + 1)) float literals refused at $((cap + 2)):5 (rc $rc)"
+    else
+        bad "$((cap + 1)) float literals: want rc != 0 and 'error:<file>$want', rc $rc: $(head -1 "$T/h2.err")"
+    fi
+fi
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: integer_literal_overflow_refused: $fails row(s)"; exit 1; fi
 echo "PASS: integer_literal_overflow_refused"

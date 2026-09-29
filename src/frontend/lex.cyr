@@ -1117,16 +1117,15 @@ fn _flit_scale(e10): i64 {
 }
 
 # Index (0-based, `_` and `.` skipped) of the first nonzero digit of the literal at
-# [p0, pe) when want == -1, else the value of digit `want`; -1 when there is none.
-fn _flit_scan(S, p0, pe, want): i64 {
+# [p0, pe), or -1 when every digit is zero.
+fn _flit_scan(S, p0, pe): i64 {
     var i = 0 - 1;
     var p = p0;
     while (p < pe) {
         var c = load8(S + 0x459D000 + p);
         if (c >= 48) { if (c <= 57) {
                 i = i + 1;
-                if (want == 0 - 1) { if (c != 48) { return i; } }
-                if (want == i) { return c - 48; }
+                if (c != 48) { return i; }
             } }
         p = p + 1;
     }
@@ -1152,7 +1151,7 @@ fn _flit_last(S, p0, pe): i64 {
 # Correctly rounded binary64 bits of the decimal literal at [p0, pe), which has `fd`
 # fraction digits and `nd` digits in all.
 fn _flit_bits(S, p0, pe, fd, nd): i64 {
-    var i0 = _flit_scan(S, p0, pe, 0 - 1);
+    var i0 = _flit_scan(S, p0, pe);
     if (i0 < 0) { return 0; }
     var i1 = _flit_last(S, p0, pe);
     if (_flb == 0) {
