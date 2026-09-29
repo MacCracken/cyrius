@@ -4,7 +4,23 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [6.6.10] — 2026-09-28
+## [6.6.10] — 2026-09-29
+
+The fourth batch release: the 6.6.8 review finds (groups B–G) and group H of the 6.6.9 finds, placed by
+the user. Every item was premise-checked on the tree and re-verified before planning; three were already
+fixed and dropped. Seventeen bites in six worktree lanes, and the merge had **no conflicts** — one lane
+owned every gate registration and every cross-lane hunk travelled as a named hand-off patch. The
+premise-check found an unfiled CVE-class write (**CVE-51**: x86-macOS `clock_now_*` wrote 8 bytes into
+the program image through a stale `rdx`); **CVE-52** (a stray `@` silently accepted) and **CVE-53**
+(`ws_recv_frame` read unbounded) are also here. Nine sibling patch releases (sigil 3.13.4, ganita
+1.2.8, sandhi 1.10.2, patra 1.15.1, bayan 1.5.8, yantra 1.0.6 folded; kriya 1.7.2, ranga 2.0.3, majra
+2.9.2 not vendored). The stdlib's unchecked-allocation census is now **0 of 240 sites**, and the whole
+394-file `.tcyr` corpus cross-compiles for PE and both Mach-O targets.
+
+**Bench:** cycc **1,368,392 → 1,424,272 B** (+55,880, +4.1 %; `.text` 1,251,248) — the release's content
+(correctly-rounded float literals, f64 expression and struct-field typing, generic struct-T refusal and
+inference, force-once Futures, per-backend acceptance). self_compile **833 ms**; same-box A/B, three
+rounds: 6.6.9's compiler ~833 ms, 6.6.10's ~833 ms — flat.
 
 ### Security
 
