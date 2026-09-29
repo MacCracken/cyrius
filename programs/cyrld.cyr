@@ -605,7 +605,6 @@ fn apply_relocations(): i64 {
             var r_off = load64(rel + 0);
             var r_info = load64(rel + 8);
             var r_add = load64(rel + 16);
-            if (r_add >= 0x8000000000000000) { r_add = r_add - 0x10000000000000000; }
             var r_type = r_info & 0xFFFFFFFF;
             var r_sym = r_info >> 32;
             # Find the fn containing this patch site in module mi.
