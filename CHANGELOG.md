@@ -6,6 +6,52 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.11] — 2026-09-29
 
+### Fixed
+
+- **PE: a path is opened, created, renamed and removed under ITS OWN NAME — real UTF-8, no silent
+  truncation, long paths (B06, item I2).** **Root cause:** every narrow-path Windows reroute —
+  `EOPEN_PE`, `ECREATEDIR_PE`, `EDELETEF_PE`, `EDELETEFILEW_PE`, `EREMOVEDIRW_PE` and both paths of
+  `EMOVEFILEEX_PE` (`src/backend/x86/emit.cyr`) — carried its own inline 24-byte loop that copied one
+  UTF-8 BYTE into one WCHAR and, at 260 units, stopped and forced a NUL. So `open("café.txt",
+  O_CREAT)` failed outright, and a 288-byte relative `O_CREAT` open returned a **valid handle** for
+  the name cut to 260 units (measured under wine at 6.6.10) — a silent write to the WRONG file; a
+  caller's `\\?\` path does the same on real Windows. **Fix:** one shared emitted sequence,
+  `_pe_widen_path`: kernel32!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS) — invalid UTF-8 or
+  no room is REFUSED (the API is not called; open returns -1, the BOOL reroutes -1), never guessed
+  or cut — then a verbatim `\\?\` / `\\.\` path is passed as given, and a path whose
+  GetFullPathNameW form is 248+ units (CreateDirectoryW's MAX_PATH-12, so all seven share one rule)
+  is handed over as `\\?\<full>` / `\\?\UNC\server\share…`; shorter paths keep their original form.
+  The buffers are 32768 units (the `\\?\` limit), so the three former fixed-frame reroutes now use
+  the rbx-anchored `and rsp,-16` frame, probed a page at a time (a 128 KB `sub rsp` that skips the
+  stack guard page faults on real Windows — measured, `0xC0000005`). Two new kernel32 imports
+  (`src/backend/pe/emit.cyr`). **Verified on real cass:** `tests/tcyr/crossos/pe_path_utf8_long.tcyr`
+  37/37 (the 6.6.10 compiler and stdlib: 17 rows fail), the cass PE self-host fixpoint (its own
+  `include` opens go through the new EOPEN_PE) and the five `tests/win` exit-42 guards; the full
+  143-file `tests/tcyr/crossos` set on cass is unchanged against 6.6.10 apart from the two fixed
+  files.
+- **The stdlib's own path widens decode UTF-8 and are bounded by the Str's length (B06, item I1).**
+  **Root cause:** `lib/fs_win.cyr`'s `_fs_widen(dst, src)` read to a NUL and zero-extended each byte
+  (Latin-1), and its callers bounded on `strlen`, never `str_len` — so `is_dir(str_sub(str_from
+  ("dirA"), 0, 3))` answered 1 for a missing `dir` and `dir_list_checked` listed dirA; the same
+  Latin-1 copy sat in `is_symlink`'s PE arm, `sys_access`, `_win_widen` (which also CUT
+  `sys_symlink`'s paths at 518 units) and `lib/io.cyr`'s `_xdir_exists` (cut at 510). The POSIX arms
+  gave the same wrong answer: `is_dir`, `_dir_list_into_vec`, `dir_list_into` and `is_symlink`
+  handed `str_data(path)` to stat/open/readlink as a C string. **Fix:** one decoder,
+  `_win_widen_n(dst, src, n, cap)` in `lib/syscalls_windows.cyr` (exactly `n` bytes; surrogate pairs;
+  -1 for an embedded NUL, invalid UTF-8 or no room), which `_fs_widen(dst, src, n)`, `_win_widen`,
+  `is_symlink` and `_xdir_exists` all call; the POSIX arms copy exactly the Str's bytes into a
+  bounded NUL-terminated buffer (`_fs_cpath`, PATH_MAX) and refuse an embedded NUL. The new
+  `tests/tcyr/crossos/fs_dirlist.tcyr` rows run unguarded on every target (5 fail on 6.6.10 on x86
+  Linux, under wine and on real cass). ⚠ The wide-path reroutes the stdlib widens feed
+  (GetFileAttributesW, FindFirstFileW) are still not long-path-aware: past ~259 units `is_dir` /
+  `dir_list` REFUSE (answer "not a directory" / -1) rather than answer for a cut path.
+- `tests/gates/platform/pe_open_posix_semantics.sh` gains axis 2b (every narrow path handed to
+  kernel32 goes through one widen carrying CP_UTF8 + MB_ERR_INVALID_CHARS + the long-path branch, every
+  path frame probed, the cut-at-260 loop gone) and axis 4 (`pe_path_utf8_long.tcyr` natively and under
+  wine with a UTF-8 locale); its whole-gate SKIP exits 77. Mutation ledger in the gate header.
+- Verified off-host: the ach (Intel-Mac) self-host fixpoint, ecb and pi native self-hosts, and the
+  path/fs `.tcyr` rows on ecb, ach, pi and in the agnosticos container.
+
 ## [6.6.10] — 2026-09-29
 
 The fourth batch release: the 6.6.8 review finds (groups B–G) and group H of the 6.6.9 finds, placed by
