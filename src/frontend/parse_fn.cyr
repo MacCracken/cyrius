@@ -4425,10 +4425,14 @@ fn _tl_deprecated(S, arm): i64 {
     if (PEEKT(S) != 10) {
         # Report at the directive, not at the `fn` after it, and name the fix. The cursor is
         # already on a clean token, so clear the panic latch instead of letting the next
-        # fn body's first statement resync over real code.
+        # fn body's first statement resync over real code — but only the latch THIS error
+        # set. When an earlier, unresynced error already held it, ERR_MSG swallowed this one
+        # and an unconditional clear un-suppressed that error's cascade (a struct error plus
+        # a bare `#deprecated ) )` reported 2 errors, not 1). CHANGELOG [6.6.10]
+        var _dp_was = _panic;
         STI(S, GTI(S) - 1);
         ERR_MSG(S, "#deprecated needs a message string: #deprecated(<why, and what to use instead>)", 79);
-        _panic = 0;
+        if (_dp_was == 0) { _panic = 0; }
         STI(S, GTI(S) + 1);
         return 0;
     }
