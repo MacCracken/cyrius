@@ -293,6 +293,12 @@ currently documents one of these defects as a rule (L4, P1), the fix also delete
   agnosai and agnostic. sandhi still falls back to a clock-ns DNS TXID when getrandom fails (a CVE-19
   residual). ganita's `f32_sin`/`cos` NaN guard rests on a premise that 6.6.9's trig removed.
 
+- **`cyrius coverage` excludes the `main` entry point** (promoted from the backlog by the user,
+  2026-09-29) — an entry point is never referenced by name, so a repo with `src/main.cyr` / `src/test.cyr`
+  cannot reach 100 % (bayan's floor had to drop to 99, ganita's tops out at 98). Skip `main` in the
+  coverage denominator exactly as `cyrius header` already does (`cbt/quality.cyr:622`), with a gate row
+  that fails without it. After it ships, bayan can raise its floor back to 100.
+
 ### 6.6.12 — the overflow (by the user, 2026-09-29); the batch ENDS here
 
 The real 6.6.10 finds that do not produce wrong results: platform surface, language-surface gaps that are
@@ -405,11 +411,6 @@ opens only after the 6.6.11 tag.
   per site) because 6.6.8 bite 3 added nine rows and every row is copied into every site. Every aarch64
   program pays it, and each new row makes it worse. A shared translation stub (one call per site) would
   cut it to a few bytes a site. Correct today; a size tax, so it is placed here rather than in a release.
-- **`cyrius coverage` counts the `main` entry point in its denominator** — found 2026-09-29 while fixing
-  ganita's and bayan's CI after they moved to the 6.6.9 pin: an entry point is never referenced by name, so a
-  repo with `src/main.cyr` / `src/test.cyr` can never reach 100 % (bayan's floor had to drop to 99, ganita's
-  tops out at 98). `cyrius header` already skips `main` (`cbt/quality.cyr:622`); coverage should too. A few
-  lines in `cbt/quality.cyr` + a gate row. Backlog by the 2026-09-29 rule; the user promotes it.
 - **Fold bundles that are raw-includable** — an XL cross-repo campaign (a distlib change released first, then
   ten sibling regenerations, then a re-vendor); backlog, below.
 
