@@ -96,6 +96,29 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   is looked up in an enum of THAT NAME (an enum name may be declared more than once — the
   `lib/syscalls*.cyr` files each declare `Signal`); otherwise `'Foo' is not an enum` /
   `'EB' is not a variant of 'E2'`, once.
+  ⚠ **Downstream: this refusal breaks four consumers the moment they re-pin 6.6.11.** Every site is
+  a stale spelling that compiled only because the qualifier was ignored. kavach renamed `enum
+  Backend` to `KavachBackend`, and its error enum's members are `KAVACH_ERR_*`:
+  - **agnosai** — `Backend.NOOP/WASM/PROCESS/OCI` in `src/sandbox/kavach_bridge.cyr:90-94`,
+    `src/sandbox/wasm.cyr:168,365` and `tests/sandbox_kavach_bridge.tcyr` (7 sites), plus
+    `dist/agnosai.cyr`.
+  - **mehman** — `Backend.PROCESS` at `src/sandbox.cyr:93,97` and `KavachError.OK` at `:128`.
+    That one read whichever global named `OK` came last; it is `KavachError.KAVACH_ERR_OK`.
+  - **agnostic** — its vendored `lib/agnosai.cyr`, and `tests/deps_symbols.tcyr:70`, which asserted
+    that "an enum qualifier is cosmetic".
+  - **aethersafha** — its vendored `lib/mehman_sandbox.cyr` (mehman 1.0.3).
+
+  **How it was measured.** Every target (entry, tests, benches, fuzz) of the 125 `cyrius.cyml`
+  repos in `~/Repos` was built through `cyrius build` with deps composed, and each composed unit
+  went to both the pre-B05 and the B05 compiler: 1,685 builds. Results:
+  - 1,655 builds reached the compiler.
+  - 1,650 compile on the pre-B05 compiler. On B05, 1,557 of them are byte-identical and the other
+    93 are these N4 refusals.
+  - The 5 that fail on both give the same diagnostics.
+  - The 30 that failed before compiling (an unpublished dep tag, sibling path deps, no build
+    entry) were compiled from raw includes instead. Nothing changed, except two agnosai benches
+    that hit the same `Backend.X` refusal.
+  - The agnos kernel, composed the way its `scripts/build.sh` does it, is byte-identical.
 - **`#assert 1 == 1` with no `;` swallowed the NEXT line (N5)** — `return 42;` was dropped and the
   fn returned garbage, rc 0, on every backend. **Root cause:** `_assert_tail` took the line of the
   token at the cursor, which is already the next line's. **Fix:** the last consumed token's line,
