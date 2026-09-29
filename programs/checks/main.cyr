@@ -58,10 +58,8 @@ var ANSI_RESET = "\033[0m";
 # Discovered tool paths (resolved at startup).
 var ROOT_PATH    = 0;   # repo root absolute path (cstring)
 var CC_PATH      = 0;   # build/cycc (cstring)
-var CYRFMT_PATH  = 0;   # build/cyrfmt or PATH-resolved cyrfmt (cstring)
-var CYRLINT_PATH = 0;   # build/cyrlint or PATH-resolved cyrlint (cstring)
-var CYRDOC_PATH  = 0;   # build/cyrdoc or PATH-resolved cyrdoc (cstring)
-var CC_AARCH64_PATH = 0; # build/cycc_aarch64 cross-compiler (cstring)
+var _TOOLS = 0;         # `_tool` memo: name, path (0 = unavailable) pairs
+var _TOOL_BIN = 0;      # <run tmp>/tree/build — where the driver builds what it runs
 
 # Counters.
 var G_PASS = 0;
@@ -279,19 +277,82 @@ fn _root_path(tail): i64 {
     return str_data(s);
 }
 
-fn _resolve_tool(rel_build_path, name): i64 {
-    var absp = _root_path(rel_build_path);
-    if (file_exists(absp) == 1) { return absp; }
-    var home = getenv("HOME");
-    if (home == 0) { return 0; }
-    var sb = str_builder_new();
-    str_builder_add_cstr(sb, home);
-    str_builder_add_cstr(sb, "/.cyrius/bin/");
-    str_builder_add_cstr(sb, name);
-    var s = str_builder_build(sb);
-    var cand = str_data(s);
-    if (file_exists(cand) == 1) { return cand; }
+# ⛔ 6.6.10 — THE DRIVER RUNS ONLY TOOLS IT BUILT, FROM THIS TREE, IN THIS RUN.
+# It used to trust whatever sat at build/<tool> on EXISTENCE alone, for nine executables
+# (cyrfmt, cyrlint, cyrdoc, cyrius_api_surface, cyrld, cyrius-init, cyrius-lsp, the cyrius CLI
+# and cycc_aarch64), and to fall back to the RELEASED store's `~/.cyrius/bin` for three of them.
+# Those are gitignored dev-local products rebuilt only by install.sh on an mtime rule that
+# never looks at build/cycc or src/, so a row could pass or fail against a binary from a
+# different tree. v6.4.81 fixed exactly this for cycc_win_cross alone. Now each tool is built
+# with build/cycc from its source the first time a row asks for it (once per run, so a
+# targeted run builds only what it uses) into the run's private dir, laid out as a tree
+# (`build/` beside symlinks to lib/, programs/ and VERSION) because the CLI and cyrius-init
+# find their compiler, sibling tools and templates relative to their own path. A compile
+# failure is a FAIL row naming the tool. There is no `~/.cyrius/bin` fallback.
+# ⚠ A root with NO source for a tool (a gate's scratch root holding lib/ and a fake
+# build/<tool>) runs the build/<tool> it was given, and says so — that is how the
+# fail-closed gates inject a fake. Gate: tests/gates/toolchain/check_driver_builds_its_tools.sh.
+# CHANGELOG [6.6.10]
+fn _tool_src(name): i64 {
+    if (streq(name, "cyrius") == 1) { return "cbt/cyrius.cyr"; }
+    if (streq(name, "cycc_aarch64") == 1) { return "src/main_aarch64.cyr"; }
+    return _cat2(_cat2("programs/", name), ".cyr");
+}
+
+fn _tool_link(tail): i64 {
+    var tree = _cat2(_run_tmp(), "/tree/");
+    sys_symlink(_root_path(tail), _cat2(tree, tail));
     return 0;
+}
+
+fn _tool_bin_dir(): i64 {
+    if (_TOOL_BIN != 0) { return _TOOL_BIN; }
+    var tree = _cat2(_run_tmp(), "/tree");
+    sys_mkdir(tree, 448);
+    _TOOL_BIN = _cat2(tree, "/build");
+    sys_mkdir(_TOOL_BIN, 448);
+    sys_symlink(CC_PATH, _cat2(_TOOL_BIN, "/cycc"));
+    _tool_link("lib");
+    _tool_link("programs");
+    _tool_link("VERSION");
+    return _TOOL_BIN;
+}
+
+fn _tool_build(name): i64 {
+    var src = _tool_src(name);
+    var prebuilt = _root_path(_cat2("build/", name));
+    if (file_exists(_root_path(src)) != 1) {
+        if (file_exists(prebuilt) != 1) { return 0; }
+        _p("  note: this root has no ");
+        _p(src);
+        _p(" — running the build/");
+        _p(name);
+        println(" it was given");
+        return prebuilt;
+    }
+    var out = _cat2(_cat2(_tool_bin_dir(), "/"), name);
+    var rc = 0 - 1;
+    if (file_exists(CC_PATH) == 1) { rc = _self_host_pipe(_root_path(src), CC_PATH, out); }
+    if (rc != 0) {
+        _check(_cat2(_cat2(_cat2("the check driver builds ", name), " from "), src), 1);
+        return 0;
+    }
+    sys_chmod(out, 493);
+    return out;
+}
+
+# The path of `name` as this run built it, or 0 when it is unavailable (see above).
+fn _tool(name): i64 {
+    if (_TOOLS == 0) { _TOOLS = vec_new(); }
+    var i = 0;
+    while (i < vec_len(_TOOLS)) {
+        if (streq(vec_get(_TOOLS, i), name) == 1) { return vec_get(_TOOLS, i + 1); }
+        i = i + 2;
+    }
+    var p = _tool_build(name);
+    vec_push(_TOOLS, name);
+    vec_push(_TOOLS, p);
+    return p;
 }
 
 fn _load_environ(): i64 {
@@ -382,16 +443,6 @@ fn _gate(name, script_rel): i64 {
     return rc;
 }
 
-fn _build_api_surface_if_missing(): i64 {
-    var bin = _root_path("build/cyrius_api_surface");
-    if (file_exists(bin) == 1) { return 0; }
-    var src = _root_path("programs/cyrius_api_surface.cyr");
-    if (file_exists(src) != 1) { return 0; }
-    if (file_exists(CC_PATH) != 1) { return 0; }
-    _self_host_pipe(src, CC_PATH, bin);
-    sys_chmod(bin, 493);
-    return 0;
-}
 
 fn _resolve_root(): i64 {
     var cwd_buf = alloc(4096);
@@ -406,10 +457,6 @@ fn _resolve_root(): i64 {
 fn _setup_paths(): i64 {
     ROOT_PATH = _resolve_root();
     CC_PATH = _root_path("build/cycc");
-    CYRFMT_PATH = _resolve_tool("build/cyrfmt", "cyrfmt");
-    CYRLINT_PATH = _resolve_tool("build/cyrlint", "cyrlint");
-    CYRDOC_PATH = _resolve_tool("build/cyrdoc", "cyrdoc");
-    CC_AARCH64_PATH = _root_path("build/cycc_aarch64");
     return 0;
 }
 
@@ -991,7 +1038,6 @@ fn _run_regression_gates(): i64 {
     _aarch64_f64_polyfill_gate();
     println("");
 
-    _build_api_surface_if_missing();
     _section("cyrius api-surface");
     _api_surface_gate();
     println("");
@@ -1298,6 +1344,18 @@ fn main(): i64 {
             if (grc == 124) { _G_ROW_GATE_TIMEOUT = 1; }
             _check(gp, grc);
             regression_terminate_children(_RG_GRACE_MS);
+            return G_FAIL;
+        }
+        # `--tool-path <name>`: build ONE of the tools the rows run, exactly as a row would get
+        # it (`_tool`), print `<name> <path>` and exit 0 — or exit 1 when it is unavailable.
+        # How tests/gates/toolchain/check_driver_builds_its_tools.sh proves all nine come from
+        # this run's private dir, never from build/ or ~/.cyrius/bin. CHANGELOG [6.6.10]
+        if (streq(argv(sel_idx), "--tool-path") == 1) {
+            var tn = argv(sel_idx + 1);
+            var tp = _tool(tn);
+            if (tp != 0) { _p(tn); _p(" "); println(tp); }
+            _run_tmp_cleanup();
+            if (tp == 0) { return 1; }
             return G_FAIL;
         }
         # `--output-row <name>`: one output-comparison row (`_expected_output_gate`) over

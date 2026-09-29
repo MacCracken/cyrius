@@ -42,6 +42,28 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   gains a zombie row (0, not 1) and a `regression_reap_orphans` row (reaps the ended child,
   never waits for the live one); green on x86, qemu-aarch64 and real ecb, ach, pi and cass.
 
+- **The check driver runs only tools it BUILT from the tree under test, in that run.** (bite 12)
+  **Root cause:** `programs/checks/` executed nine build products it never built — cyrfmt,
+  cyrlint, cyrdoc, cyrius_api_surface, cyrld, cyrius-init, cyrius-lsp, the cyrius CLI and
+  cycc_aarch64 — trusting whatever sat at `build/<tool>` on existence alone, and falling back to
+  the RELEASED store's `~/.cyrius/bin` for cyrfmt/cyrlint/cyrdoc. Those binaries are gitignored
+  and rebuilt only by `install.sh --refresh-only`, on an mtime rule that never looks at
+  build/cycc or src/, so a row's verdict could be about a binary from a different tree (v6.4.81
+  fixed exactly this for `cycc_win_cross` alone). **Fix:** `_tool(name)` builds each one with
+  build/cycc from its source (`programs/<t>.cyr`, `cbt/cyrius.cyr`, `src/main_aarch64.cyr`) the
+  first time a row asks — once per run, so a targeted run builds only what it uses — into the
+  run's private dir, laid out as a tree (`build/` beside links to `lib/`, `programs/`, `VERSION`
+  and the tree's `cycc`) because the CLI and cyrius-init find their compiler, sibling tools and
+  templates relative to their own path. A tool that does not compile is a FAIL row naming it.
+  The `~/.cyrius/bin` fallback is gone. A root with NO source for a tool (a gate's scratch root)
+  runs the `build/<tool>` it was given and prints a note saying so — that is how the fail-closed
+  gates inject their fakes. A new `--tool-path <name>` mode prints where a tool comes from.
+  **Gate:** `tests/gates/toolchain/check_driver_builds_its_tools.sh` plants a logging stub at
+  `build/<tool>` for all nine in a scratch tree and proves none runs (`--tool-path` for all nine,
+  then the linker/fmt/lint rows end to end), that a `$HOME/.cyrius/bin` copy is never consulted,
+  the injection note, the named FAIL for a broken `programs/cyrld.cyr`, and a static ratchet;
+  three mutations, each RED.
+
 ### Added
 
 - **A census gate for unchecked first-party `alloc(` results, with a shrink-only allowlist.**

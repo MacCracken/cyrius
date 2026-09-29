@@ -8,7 +8,7 @@
 
 fn _cyrfmt_idempotent_subcase(case_label, fixture_path): i64 {
     var args = vec_new();
-    vec_push(args, CYRFMT_PATH);
+    vec_push(args, _tool("cyrfmt"));
     vec_push(args, fixture_path);
     var cap = 65536;
     var out_buf = alloc(cap);
@@ -38,11 +38,11 @@ fn _cyrfmt_idempotent_subcase(case_label, fixture_path): i64 {
 }
 
 fn _cyrfmt_comment_braces_gate(): i64 {
-    if (CYRFMT_PATH == 0) {
+    if (_tool("cyrfmt") == 0) {
         _skip("cyrfmt skips {/} inside # comments + string literals (v5.7.22; agnos issue)", "cyrfmt not built");
         return 0;
     }
-    if (file_exists(CYRFMT_PATH) != 1) {
+    if (file_exists(_tool("cyrfmt")) != 1) {
         _skip("cyrfmt skips {/} inside # comments + string literals (v5.7.22; agnos issue)", "cyrfmt not built");
         return 0;
     }
@@ -153,7 +153,7 @@ fn _cc5_contamination_gate(): i64 {
 # CHANGELOG [6.6.7]
 fn _cyrlint_count_marker(file_path, marker, buf, buflen): i64 {
     var st[16];
-    var n = _exec_with_arg_capture_both_status(CYRLINT_PATH, file_path, buf, buflen, &st);
+    var n = _exec_with_arg_capture_both_status(_tool("cyrlint"), file_path, buf, buflen, &st);
     var bad = _aw_run_verdict(str_from(file_path), &st, _aw_parse_lint_warnings(buf, n), 0);
     if (bad != 0) {
         _p("    ");
@@ -169,11 +169,11 @@ fn _cyrlint_count_marker(file_path, marker, buf, buflen): i64 {
 }
 
 fn _cyrlint_large_file_gate(): i64 {
-    if (CYRLINT_PATH == 0) {
+    if (_tool("cyrlint") == 0) {
         _skip("cyrlint clean on 7K-line synthetic (mabda 2026-04-28 repro shape; v5.8.41 floor)", "cyrlint not built");
         return 0;
     }
-    if (file_exists(CYRLINT_PATH) != 1) {
+    if (file_exists(_tool("cyrlint")) != 1) {
         _skip("cyrlint clean on 7K-line synthetic (mabda 2026-04-28 repro shape; v5.8.41 floor)", "cyrlint not built");
         return 0;
     }
@@ -270,11 +270,11 @@ fn _cyrlint_large_file_gate(): i64 {
 }
 
 fn _lint_init_order_gate(): i64 {
-    if (CYRLINT_PATH == 0) {
+    if (_tool("cyrlint") == 0) {
         _skip("cyrlint flags forward-ref var inits (v5.7.32; mabda-surfaced)", "cyrlint not built");
         return 0;
     }
-    if (file_exists(CYRLINT_PATH) != 1) {
+    if (file_exists(_tool("cyrlint")) != 1) {
         _skip("cyrlint flags forward-ref var inits (v5.7.32; mabda-surfaced)", "cyrlint not built");
         return 0;
     }
@@ -656,21 +656,21 @@ fn _vendored_dist_selfcontained_gate(): i64 {
 
 fn _format_gate(): i64 {
     _section("Format");
-    if (CYRFMT_PATH == 0) {
-        println("  cyrfmt not found in build/ or on PATH — install via 'cyriusly setup' or build via build/cycc");
+    if (_tool("cyrfmt") == 0) {
+        println("  cyrfmt unavailable: it did not build from programs/cyrfmt.cyr, and this root has no build/cyrfmt");
         _check("format (stdlib)", 1);
         println("");
         return 1;
     }
-    if (file_exists(CYRFMT_PATH) != 1) {
-        println("  cyrfmt not found in build/ or on PATH — install via 'cyriusly setup' or build via build/cycc");
+    if (file_exists(_tool("cyrfmt")) != 1) {
+        println("  cyrfmt unavailable: it did not build from programs/cyrfmt.cyr, and this root has no build/cyrfmt");
         _check("format (stdlib)", 1);
         println("");
         return 1;
     }
     var dirs = vec_new();
     vec_push(dirs, str_from(_root_path("lib")));
-    audit_fmt_walk(CYRFMT_PATH, dirs);
+    audit_fmt_walk(_tool("cyrfmt"), dirs);
     # 6.6.8: a file cyrfmt did not finish on is not a formatted file.
     if (AW_FMT_ERRORS > 0) {
         println("  cyrfmt did not finish on these files (NOT checked):");
@@ -688,21 +688,21 @@ fn _format_gate(): i64 {
 
 fn _lint_gate(): i64 {
     _section("Lint");
-    if (CYRLINT_PATH == 0) {
-        println("  cyrlint not found in build/ or on PATH — install via 'cyriusly setup' or build via build/cycc");
+    if (_tool("cyrlint") == 0) {
+        println("  cyrlint unavailable: it did not build from programs/cyrlint.cyr, and this root has no build/cyrlint");
         _check("lint (stdlib)", 1);
         println("");
         return 1;
     }
-    if (file_exists(CYRLINT_PATH) != 1) {
-        println("  cyrlint not found in build/ or on PATH — install via 'cyriusly setup' or build via build/cycc");
+    if (file_exists(_tool("cyrlint")) != 1) {
+        println("  cyrlint unavailable: it did not build from programs/cyrlint.cyr, and this root has no build/cyrlint");
         _check("lint (stdlib)", 1);
         println("");
         return 1;
     }
     var dirs = vec_new();
     vec_push(dirs, str_from(_root_path("lib")));
-    audit_lint_walk(CYRLINT_PATH, dirs);
+    audit_lint_walk(_tool("cyrlint"), dirs);
     var fail = 0;
     if (AW_LINT_TOTAL > 0) {
         _p("  ");
@@ -730,9 +730,9 @@ fn _lint_gate(): i64 {
 
 fn _cyrfmt_write_gate(): i64 {
     var label = "cyrfmt --write / -w in-place rewrite + idempotent mtime";
-    var cyrfmt_bin = _root_path("build/cyrfmt");
+    var cyrfmt_bin = _tool("cyrfmt");
     if (file_exists(cyrfmt_bin) != 1) {
-        _skip(label, _cat2(cyrfmt_bin, " not present"));
+        _skip(label, "build/cyrfmt not present");
         return 0;
     }
 

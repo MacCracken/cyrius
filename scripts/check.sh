@@ -1502,6 +1502,11 @@ _chk_gate "$ROOT/tests/gates/toolchain/check_driver_skip_is_not_pass.sh"
 # once (tests/tcyr/CORPUS_FLOOR); every CI self-host step uses cross-os-selfhost.sh's fork.
 _chk_gate "$ROOT/tests/gates/toolchain/ci_steps_delegate_to_driver.sh"
 
+# 6.6.10 (bite 12) — the check driver runs only tools it BUILT from this tree in this run:
+# all nine executables it runs come from its private run dir, planted build/ stubs and a
+# ~/.cyrius/bin copy are ignored, and a tool that does not compile is a FAIL naming it.
+_chk_gate "$ROOT/tests/gates/toolchain/check_driver_builds_its_tools.sh"
+
 # 6.6.10 (bite 12) — the harness never stores through a refused allocation: test_scratch
 # panics by name on x86, qemu-aarch64, wine and cxvm; bench_new returns 0; the regression verbs
 # return -1 before any fork. Mutation ledger in the header.

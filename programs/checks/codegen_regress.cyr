@@ -249,7 +249,7 @@ fn _object_init_gate(): i64 {
 fn _build_exit_nonzero_gate(): i64 {
     var label = "cyrius build exits non-zero when cycc fails (v6.0.5; yeo-cy-test papercut #2 invariant)";
 
-    var cyrius_bin = _root_path("build/cyrius");
+    var cyrius_bin = _tool("cyrius");
     if (file_exists(cyrius_bin) != 1) {
         _skip(label, "build/cyrius not built");
         return 0;
