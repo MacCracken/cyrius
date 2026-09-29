@@ -56,14 +56,42 @@ compile error (`integer literal does not fit in 64 bits`; until 6.6.10 it wrappe
 (`0xFFFFFFFFFFFFFFFF` is -1).
 
 Unary minus flips the **sign bit** of a float the compiler can see is a float: a float
-literal, a value typed `f64` / `f32`, or a direct call to a float-returning builtin
-(`-f64_sqrt(v)`, `-f64_exp(v)`, `-f32_from(v)`, …). So `-1.5` is -1.5, `-0.0` is negative
-zero and `-x` negates an `f64` exactly (6.6.8; before it, `-1.0` evaluated to -4.0 and
-`-0.0` to +0, silently). A struct or union field declared `f64` / `f32` counts as typed too
+literal, a value typed `f64` / `f32`, or the result of a float-returning builtin — directly
+or in parentheses (`-f64_sqrt(v)`, `-(f64_exp(v))`, `-f32_from(v)`, …). So `-1.5` is -1.5,
+`-0.0` is negative zero and `-x` negates an `f64` exactly (6.6.8; before it, `-1.0`
+evaluated to -4.0 and `-0.0` to +0, silently; the parenthesised builtin form was integer
+negation until 6.6.10). A struct or union field declared `f64` / `f32` counts as typed too
 (6.6.10 — see [Field types](#field-types-v6610)). It does NOT cover an **untyped** variable,
-an untyped field holding float bits, or a parenthesised operand whose own type is untyped
-(`-(f64_exp(u))` with `u` untyped, `-(a + b)` over untyped vars) — those are `i64` as far
-as the compiler knows, and `-v` is integer negation of the bits. Negate them with `f64_neg(v)`.
+an untyped field holding float bits, or an untyped expression (`-(a + b)` over untyped vars)
+— those are `i64` as far as the compiler knows, and `-v` is integer negation of the bits.
+Negate them with `f64_neg(v)`, or declare the variable `: f64`. Since 6.6.10 an untyped
+variable whose declaration was initialised from a float (`var c = 1.5;`, `var z = 0.0;`,
+`var x = f64_sqrt(u);`, or a copy of such a variable) WARNS when negated: `unary minus on an
+untyped variable holding a float is integer negation (declare it f64)`. `-c` of 1.5 is -3.0,
+`-z` of 0.0 is +0 and `-n` of -2.5 is 1.75. The judgement is made at the declaration; a later
+assignment does not change it.
+
+**Float builtin results in arithmetic (6.6.10).** The result of a float-returning builtin
+(`f64_sqrt`, `f64_add`, `f64_sin`, `f64_exp`, `f32_from`, … — every `f64_*` / `f32_*` that
+returns a float) is a float operand of `+ - * /`, on either side, directly, in parentheses
+or after unary minus: `f64_sqrt(u) * 2.0`, `f64_sin(z) - f64_cos(z)`, `2.0 * f64_sqrt(u)`,
+`f64_mul(u, v) / v` and `-f64_sqrt(u) * 2.0` are all float arithmetic now, whatever the
+builtin's arguments were typed. Until 6.6.10 they were INTEGER operations over the bit
+patterns — `f64_sqrt(u) * f64_sqrt(u)` was 0 and `f64_sin(0) - f64_cos(0)` -4.0 — and the
+answer depended on the ORDER of the arguments (`f64_add(p, u)` took the last argument's
+type). The result is still not a typed *value*: `==`, `!=`, `<` … on builtin results remain
+INTEGER compares of the bit patterns (so `f64_neg(z) == z` is 0 for z = 0.0, and
+`f64_neg(a) < f64_neg(b)` is wrong for negative values — compare with `f64_lt` /
+`f64_gt` / `f64_eq`), and `var x = f64_sqrt(u);` declares an untyped `x` (declare it `: f64`
+to make later arithmetic on it float). Code that wants the integer ulp distance of two
+results goes through an untyped variable first: `var a = f64_atan(x); d = a - b;`.
+
+An integer CONSTANT stored into an `f64` / `f32` slot keeps its integer bits — `var t: f64 =
+1;`, `t = 1;`, `p.x = 1;` (an `f64` field) and `P { 1, 2 }` store `0x1`, a subnormal — and
+since 6.6.10 each WARNS: `an integer stored into an f64/f32 slot keeps its integer bits`.
+Write `1.0`, or `f64_from(n)` for a runtime integer. `0` is exempt (its bits are 0.0), and
+so is a hex bit pattern at or above 2^52 (`0x3FF0000000000000` is 1.0 on purpose); a runtime
+untyped value (`var x: f64 = load64(p);`) is the legal boxed-float idiom and is not judged.
 
 ⚠ Binary operators are typed by their LEFT operand. `0 - 1.5` is an INTEGER subtraction
 of 1.5's bit pattern (it is -3.0), and `2 * x` with `x: f64` multiplies x's bits. Write
