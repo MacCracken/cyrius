@@ -1542,9 +1542,10 @@ fn _run_sleep_ms(ms): i64 {
 
 # 6.6.11 (O3) — when non-zero, run_binary_timed sends the child's STDOUT to this path instead
 # of ours, so `cyrius test` can READ the assert summary it grades on (cmd_test echoes the capture
-# back). Opt-in and reset by the caller, like `_cc_stderr_to`. The caller creates the file first
-# (so an unwritable temp is named there); a child that still cannot open it exits 126 and the
-# test fails — it never runs with its output unseen. POSIX: dup2 in the child. Windows: cmd.exe
+# back). Opt-in and reset by the caller, like `_cc_stderr_to`. The caller CREATES the file, fresh
+# and empty (so an unwritable temp is named there, and nothing is ever truncated); the child only
+# opens it for writing, and a child that cannot exits 126 and the test fails — it never runs with
+# its output unseen. POSIX: dup2 in the child. Windows: cmd.exe
 # redirects it (`_win_run_timed`), the pattern `_win_compile_spawn` uses. CHANGELOG [6.6.11]
 var _run_stdout_to = 0;
 
@@ -1595,7 +1596,7 @@ fn run_binary_timed(path, timeout_ms, args): i64 {
         #ifndef CYRIUS_TARGET_MACOS
         if (_arch == ARCH_AARCH64) {
             if (_run_stdout_to != 0) {
-                var qfd = sys_open(_run_stdout_to, O_WRONLY | O_CREAT | O_TRUNC, 0x180);
+                var qfd = sys_open(_run_stdout_to, O_WRONLY, 0);
                 if (qfd < 0) { sys_exit(126); }
                 sys_dup2(qfd, 1);
                 sys_close(qfd);
@@ -1607,7 +1608,7 @@ fn run_binary_timed(path, timeout_ms, args): i64 {
         #endif
         # 6.6.11: `cyrius test` reads the child's stdout (see `_run_stdout_to`).
         if (_run_stdout_to != 0) {
-            var cfd = sys_open(_run_stdout_to, O_WRONLY | O_CREAT | O_TRUNC, 0x180);
+            var cfd = sys_open(_run_stdout_to, O_WRONLY, 0);
             if (cfd < 0) { sys_exit(126); }
             sys_dup2(cfd, 1);
             sys_close(cfd);

@@ -427,7 +427,8 @@ fn cmd_test(source): i64 {
     # see `_test_grade`. The capture file is created here so a temp that cannot hold it is named
     # (and the test counted failed) rather than the verdict falling back to the exit code.
     var cap = _cbt_tmpfile("test_out");
-    var cfd0 = sys_open(cap, O_WRONLY | O_CREAT | O_TRUNC, 0x180);
+    sys_unlink(cap);
+    var cfd0 = sys_open(cap, O_WRONLY | O_CREAT | O_EXCL, 0x180);   # fresh and empty: the child only opens it
     if (cfd0 < 0) {
         _err_ctx("cyrius test cannot capture the test's output (its assert summary is the verdict)", cap);
         sys_write(STDERR_FD, "  FAIL: ", 8);
