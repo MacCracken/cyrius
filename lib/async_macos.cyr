@@ -73,6 +73,8 @@ var _KEV_PROC = 512;
 # CHANGELOG [6.0.65]). Included so this module is self-sufficient, per the stdlib rule that a
 # lib file referencing something must include its definer.
 include "lib/chrono.cyr"
+# `proc_kill_tree` — async_run_process's deadline ends the child's whole tree and reaps it.
+include "lib/process.cyr"
 
 var RT_SIZE = 48;
 
@@ -411,15 +413,95 @@ fn async_interval(rt, fp, arg, ms, tok): i64 {
     return t;
 }
 
-# async subprocess (agnos): AGNOS has no clone-fork, so a reactor-driven subprocess
-# is unsupported on the serial client target. Returns 0 / -1 (unscheduled); present so
-# consumers stay target-agnostic. Mirror of async.cyr's P2 surface. v6.4.36.
-fn async_spawn_process(rt, path, argv, envp): i64 {
-    return 0;
-}
-# spawn + wait + timeout (agnos): no clone-fork, so unsupported. Returns -1. v6.4.36.
-fn async_run_process(rt, path, argv, envp, ms): i64 {
+# Reap `pid` (blocking; EINTR retried) and decode: the exit code, or -1 if it did not exit
+# normally or could not be reaped.
+fn _async_reap_code(pid): i64 {
+    var sb[8];
+    store64(&sb, 0);
+    var w = sys_waitpid(pid, &sb, 0);
+    while (w == 0 - 4) { w = sys_waitpid(pid, &sb, 0); }
+    if (w != pid) { return 0 - 1; }
+    var status = load32(&sb);
+    if (WIFEXITED(status) == 1) { return WEXITSTATUS(status); }
     return 0 - 1;
+}
+
+# Async subprocess task: on first run fork + exec the child and park on EVFILT_PROC/NOTE_EXIT
+# for its pid (the kqueue twin of the epoll backend's pidfd); on wake reap it and return the exit
+# code. ctx = { step, path, argv, envp, pid, group, rt }. With `group` set the child becomes its
+# own session and process-group leader first, so a deadline can signal its whole tree.
+fn _async_process_task(ctx): i64 {
+    if (load64(ctx) == 0) {
+        var pid = sys_fork();
+        if (pid < 0) { return 0 - 1; }
+        if (pid == 0) {
+            if (load64(ctx + 40) != 0) { sys_setsid(); }
+            sys_execve(load64(ctx + 8), load64(ctx + 16), load64(ctx + 24));
+            sys_exit(127);                                       # exec failed
+        }
+        store64(ctx + 32, pid);
+        var rt = load64(ctx + 48);
+        # ⚠ A child that has ALREADY exited is a zombie, and xnu refuses to attach EVFILT_PROC
+        # to one (ESRCH). Parking then would wait for ever; the child is reapable now, so reap
+        # it here and complete with its real status (any other refusal: the same blocking reap,
+        # never a leaked zombie).
+        if (_async_kev_change(load64(rt), pid, _KEVF_PROC, _EV_ADD | _EV_ONESHOT, _NOTE_EXIT, 0) < 0) {
+            return _async_reap_code(pid);
+        }
+        store64(ctx, 1);
+        _async_kev_park(rt, pid, _KEV_PROC);
+        return 0;
+    }
+    # wake: the child has exited — reap it (returns at once)
+    return _async_reap_code(load64(ctx + 32));
+}
+
+fn _async_spawn_process_in(rt, path, argv, envp, group): i64 {
+    var ctx = alloc_via(load64(rt + 32), 56);       # rt's allocator (arena-reclaimable)
+    if (ctx == 0) { return 0; }
+    store64(ctx, 0);
+    store64(ctx + 8, path);
+    store64(ctx + 16, argv);
+    store64(ctx + 24, envp);
+    store64(ctx + 32, 0);        # pid
+    store64(ctx + 40, group);
+    store64(ctx + 48, rt);
+    return async_spawn(rt, &_async_process_task, ctx);
+}
+
+# Spawn a child process on the reactor: exec `path` with NULL-terminated `argv` and `envp`,
+# non-blocking (the reactor parks on the child's exit). Returns a task handle whose result — via
+# task_join(rt, handle) — is the child's exit code (127 if exec failed, -1 if it did not exit
+# normally or could not be forked), or 0 if an allocation is refused. v6.4.36 (P2); on macOS
+# since 6.6.10 (before, it returned 0 and spawned nothing). CHANGELOG [6.6.10]
+fn async_spawn_process(rt, path, argv, envp): i64 {
+    return _async_spawn_process_in(rt, path, argv, envp, 0);
+}
+
+# Spawn `path` and wait for it, with an optional deadline (ms <= 0 = no deadline). Returns the
+# child's exit code, -2 if the deadline fired first, or -1 if it could not be started or the
+# deadline could not be armed. With a deadline the child runs as its own process-group leader,
+# and on expiry `proc_kill_tree` ends its whole tree (TERM, grace, KILL) and REAPS it — so it is
+# not waited for again here. Does NOT close the runtime. v6.4.36 (P2); on macOS since 6.6.10
+# (before, it returned -1 and spawned nothing). CHANGELOG [6.6.10]
+fn async_run_process(rt, path, argv, envp, ms): i64 {
+    if (ms <= 0) {
+        var h0 = async_spawn_process(rt, path, argv, envp);
+        if (h0 == 0) { return 0 - 1; }
+        return task_join(rt, h0);
+    }
+    var h = _async_spawn_process_in(rt, path, argv, envp, 1);
+    if (h == 0) { return 0 - 1; }
+    var w = async_with_timeout(rt, h, ms);
+    if (w == 1) { return load64(h + 40); }
+    _async_retire(rt, h);                           # w == -1 leaves it unretired
+    var pid = load64(load64(h + 8) + 32);
+    if (pid > 0) {
+        var st[8];
+        proc_kill_tree(pid, &st);                   # TERM the tree, grace, KILL, reap pid
+    }
+    if (w < 0) { return 0 - 1; }
+    return 0 - 2;
 }
 
 # Park until `fd` is WRITABLE (EVFILT_WRITE). Mirror of the epoll backend.
