@@ -1991,13 +1991,57 @@ fn _enum_atom_idx(S): i64 {
         if (TOKTYP(S, ti + 2) != 2) { return 0 - 1; }
         if (GINFN(S) == 1) { if (FINDLOCAL(S, vn) >= 0) { return 0 - 1; } }
         if (FINDVAR(S, vn) >= 0) { return 0 - 1; }
-        vn = TOKVAL(S, ti + 2);
-        ti = ti + 2;
+        var qvi = _enum_qual_resolve(S, ti);
+        if (qvi < 0) { return 0 - 1; }
+        STI(S, ti + 3);
+        return qvi;
     }
     var vi = FINDVAR(S, vn);
     if (GVECP(S, vi) != 1) { return 0 - 1; }
     STI(S, ti + 1);
     return vi;
+}
+
+# ⛔ 6.6.11 — `Base.NAME` resolved NAME alone and never looked at Base: `Foo.EB` (no such
+# enum) and `E2.EB` (EB belongs to E1) compiled in expressions, #assert and array sizes,
+# `Nope.gz` loaded the plain global gz, and with a variant name shared by two enums `A.X`
+# read B's X. ONE resolver for all three sites. Base is known not to be a variable (that
+# is a field access). Returns NAME's slot IN Base's enum; when NAME is a global but Base is
+# not an enum, or not NAME's enum, reports it and returns FINDVAR's slot (the caller goes on
+# as before, no cascade); -1 when NAME is no global at all (the caller's own path, as
+# before). CHANGELOG [6.6.11]
+fn _enum_qual_resolve(S, bti): i64 {
+    var bnoff = TOKVAL(S, bti);
+    var vn = TOKVAL(S, bti + 2);
+    var eid = _enum_id_of(S, bnoff);
+    if (eid > 0) {
+        var vi = _enum_variant_in(S, eid, vn);
+        if (vi >= 0) { _vis_check_var(S, vi, vn); return vi; }
+    }
+    var any = FINDVAR(S, vn);
+    if (any < 0) { return 0 - 1; }
+    var sv = GTI(S);
+    if (eid == 0) {
+        STI(S, bti);
+        ERR_IDENT(S, "", bnoff, " is not an enum", 0 - 1);
+    } else {
+        STI(S, bti + 2);
+        ERR_IDENT(S, "", vn, " is not a variant of ", bnoff);
+    }
+    STI(S, sv);
+    return any;
+}
+
+# The slot of the enum constant `vn` whose parent enum is `eid` (1-based), or -1. Walks
+# every global of that name (FINDVAR returns only the LAST). CHANGELOG [6.6.11]
+fn _enum_variant_in(S, eid, vn): i64 {
+    var e = _fvh_head(S, vn);
+    while (e != 0) {
+        var vi = e - 1;
+        if (GVECP(S, vi) == 1) { if (GVENUMID(S, vi) == eid) { return vi; } }
+        e = _fvh_next(vi);
+    }
+    return 0 - 1;
 }
 
 # `sizeof` as a whole identifier: the 6 letters AND the NUL after them (7 bytes). A 6-byte

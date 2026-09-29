@@ -1310,8 +1310,8 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             var dot_ti = GTI(S);
             STI(S, GTI(S) + 1);
             if (_base_is_var == 0 && PEEKT(S) == 2) {
-                var vn = PEEKV(S);
-                var vi = FINDVAR(S, vn);
+                # 6.6.11: the base must be the variant's own enum (_enum_qual_resolve).
+                var vi = _enum_qual_resolve(S, dot_ti - 1);
                 if (vi >= 0) {
                     # Enum.VARIANT — load the variant's global value.
                     # v5.5.2: if this gvar was registered by PARSE_ENUM_DEF
