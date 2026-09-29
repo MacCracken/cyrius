@@ -9,8 +9,10 @@
 # getaddrinfo (the real %SystemRoot%\System32\drivers\etc\hosts and the adapters' DNS).
 #
 # ⚠ WINE CANNOT SHOW THE PLANT: it maps a rooted path to the unix root, so "/etc/hosts" is the
-# LINUX file there and this test leaves it alone (it only plants a file it can remove again). The
-# plant rows bite on real Windows (cass, the release gate's cross-OS leg).
+# LINUX file there and this test leaves it alone (wine is detected by ntdll's wine_get_version
+# export). The plant rows bite on real Windows (cass, the release gate's cross-OS leg), and there
+# the plant is ASSERTED: a C:\etc\hosts already present, or a mkdir/write that failed, fails a
+# named row instead of letting "the planted name does not resolve" pass without a plant.
 #
 # MUTATION (6.6.11, measured): restoring the POSIX steps on Windows (dropping the
 # _net_resolve_win arm) fails the planted-name rows on cass — the planted 10.9.8.7 came back.
@@ -28,15 +30,31 @@ include "lib/assert.cyr"
 fn _rp_ip(a, b, c, d): i64 { return a | (b << 8) | (c << 16) | (d << 24); }
 
 #ifdef CYRIUS_TARGET_WIN
+# 1 under wine: its ntdll exports wine_get_version, which no Windows ntdll has.
+fn _rp_is_wine(): i64 {
+    var nt = syscall(0xF013, "ntdll.dll");
+    if (nt == 0) { return 0; }
+    if (syscall(0xF014, nt, "wine_get_version") != 0) { return 1; }
+    return 0;
+}
+
 fn _rp_windows_group(): i64 {
     test_group("6.6.11 — Windows: a planted C:\\etc\\hosts is NOT honoured");
     var planted = _rp_ip(10, 9, 8, 7);
     var made_dir = 0;
     var made_file = 0;
-    if (file_exists("/etc/hosts") == 0) {
+    var wine = _rp_is_wine();
+    if (wine == 0) {
+        # Real Windows: the plant MUST happen, or the rows below pass without testing anything. A
+        # C:\etc\hosts that is already there is not this file's to overwrite or remove — it fails
+        # here by name instead.
+        assert_eq(file_exists("/etc/hosts"), 0, "no C:\\etc\\hosts exists yet (remove it to run the plant)");
+    }
+    if (wine == 0 && file_exists("/etc/hosts") == 0) {
         if (sys_mkdir("/etc", 493) == 0) { made_dir = 1; }
         var line = "10.9.8.7 cyrprobe-planted.invalid\r\n";
         if (file_write_all("/etc/hosts", line, strlen(line)) == strlen(line)) { made_file = 1; }
+        assert_eq(made_file, 1, "the hosts file is planted at C:\\etc\\hosts (else the rows below are vacuous)");
     }
     var got = net_resolve_ipv4("cyrprobe-planted.invalid");
     assert_neq(got, planted, "the name planted in the drive-root etc\\hosts does not resolve to it");
