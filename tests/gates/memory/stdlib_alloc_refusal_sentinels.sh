@@ -22,6 +22,8 @@
 #   * sha1's `w` check (k=2)                    -> rc 139
 #   * sigset_new's check (syscalls_x86_64_linux) -> rc 139
 #   * chan_new's `buf` check (k=2)              -> rc 1   (returned a channel over a 0 buffer)
+#   * normalize: the 6.6.9 step-buffer `return off` -> rc 1 (a SHORTER string, returned as success);
+#     dropping the -1 propagation in the walk    -> rc 1 at the nested row (k=4)
 #   * every lib/ file at its pre-6.6.10 state   -> rc 139 at the first row
 # Linux x86_64 only (the harness is host-built); the static census covers the other targets.
 set -u
@@ -53,26 +55,9 @@ fn alloc(size): i64 {
 fn _fi_arm(k): i64 { _fi_at = k; _fi_seen = 0; return 0; }
 CYR
 
-cat > "$W/fi/probe.cyr" <<'CYR'
-include "lib/syscalls.cyr"
-include "lib/alloc.cyr"
-include "lib/string.cyr"
-include "lib/str.cyr"
-include "lib/vec.cyr"
-include "lib/fmt.cyr"
-include "lib/chrono.cyr"
-include "lib/boxed.cyr"
-include "lib/cffi.cyr"
-include "lib/trait.cyr"
-include "lib/regex.cyr"
-include "lib/sha1.cyr"
-include "lib/thread.cyr"
-include "lib/unicode/casefold.cyr"
-include "lib/unicode/normalize.cyr"
-include "lib/tagged.cyr"
-include "lib/net.cyr"
-include "lib/http.cyr"
-
+# The row helpers, shared by every probe (the ws client and server stdlibs declare the same
+# WS_* names, so they cannot share one translation unit).
+cat > "$W/fi/rows.cyr" <<'CYR'
 var _rows = 0;
 
 fn _bad(site, k, what): i64 {
@@ -104,6 +89,41 @@ fn _served(site, k, ok): i64 {
     if (ok != 1) { return _bad(site, k, "failed with every allocation served"); }
     _rows = _rows + 1;
     return 0;
+}
+
+# Emit the probe's row count and exit 0 (the runner below parses "<n> rows").
+fn _rows_done(): i64 {
+    fmt_int(_rows);
+    syscall(1, 1, " rows\n", 6);
+    return 0;
+}
+CYR
+
+cat > "$W/fi/probe.cyr" <<'CYR'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/fmt.cyr"
+include "lib/chrono.cyr"
+include "lib/boxed.cyr"
+include "lib/cffi.cyr"
+include "lib/trait.cyr"
+include "lib/regex.cyr"
+include "lib/sha1.cyr"
+include "lib/thread.cyr"
+include "lib/unicode/casefold.cyr"
+include "lib/unicode/normalize.cyr"
+include "lib/tagged.cyr"
+include "lib/net.cyr"
+include "lib/http.cyr"
+include "rows.cyr"
+
+# str_len, or -1 for a refused (0) result — a served row must not dereference a refusal.
+fn _norm_len(s): i64 {
+    if (s == 0) { return 0 - 1; }
+    return str_len(s);
 }
 
 fn main(): i64 {
@@ -180,6 +200,23 @@ fn main(): i64 {
     _fi_arm(2); _refused("str_upper_unicode cp_out", 2, str_upper_unicode(u), 0);
     _fi_arm(1); _refused("str_normalize dec_buf", 1, str_normalize(u, NFC), 0);
     _fi_arm(2); _refused("str_normalize cp_slot", 2, str_normalize(u, NFC), 0);
+    # 6.6.10 review: then ONE step buffer per decomposition step, recursively. A refused step
+    # returned the offset unchanged — the cp "decomposed to nothing" — so a SHORTER string came
+    # back as a success. k = 3 is 'H''s step (canonical and compat walkers); for U+00E9 k = 3 is
+    # its own step and 4 / 5 are the nested steps for 'e' and U+0301 (the -1 must propagate up).
+    _fi_arm(3); _refused("str_normalize step_buf NFC", 3, str_normalize(u, NFC), 0);
+    _fi_arm(3); _refused("str_normalize step_buf NFKD (compat)", 3, str_normalize(u, NFKD), 0);
+    var eb[8];
+    store8(&eb, 0xC3);
+    store8(&eb + 1, 0xA9);
+    var ea = str_new(&eb, 2);
+    _fi_arm(3); _refused("str_normalize step_buf U+00E9", 3, str_normalize(ea, NFD), 0);
+    _fi_arm(4); _refused("str_normalize nested step_buf e", 4, str_normalize(ea, NFD), 0);
+    _fi_arm(5); _refused("str_normalize nested step_buf U+0301", 5, str_normalize(ea, NFD), 0);
+    _fi_arm(5); _refused("str_normalize nested step_buf U+0301 (compat)", 5, str_normalize(ea, NFKD), 0);
+    _fi_arm(6); _refused("str_normalize out_buf", 6, str_normalize(ea, NFD), 0);
+    _fi_arm(7); _refused("str_normalize str_new", 7, str_normalize(ea, NFD), 0);
+    _fi_arm(8); _served("str_normalize U+00E9", 8, _norm_len(str_normalize(ea, NFD)) == 3);
 
     _fi_arm(1); _refused("_http_parse_url result", 1, _http_parse_url("http://h/p"), 0);
     _fi_arm(2); _refused("_http_parse_url host", 2, _http_parse_url("http://h/p"), 0);
@@ -189,9 +226,7 @@ fn main(): i64 {
     # response is the SECOND allocation.
     _fi_arm(2); _refused("http_get (bad-url response)", 2, http_get("http://"), 0);
 
-    fmt_int(_rows);
-    syscall(1, 1, " rows\n", 6);
-    return 0;
+    return _rows_done();
 }
 var ec = main();
 syscall(60, ec);
@@ -209,5 +244,5 @@ if [ "$rc" != 0 ]; then
 fi
 n=$(printf '%s\n' "$out" | sed -n 's/^\([0-9][0-9]*\) rows$/\1/p' | tail -1)
 [ -n "$n" ] || fail "the probe printed no row count — it did not run to the end"
-[ "$n" -ge 58 ] || fail "only $n rows ran (floor 58) — the probe is not exercising the sites it names"
+[ "$n" -ge 67 ] || fail "only $n rows ran (floor 67) — the probe is not exercising the sites it names"
 echo "PASS: stdlib_alloc_refusal_sentinels ($n rows: every refused alloc returned its sentinel, every count exact)"

@@ -112,11 +112,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `str_from_buf` / `str_cstr`, `str_lower_cstr` / `str_upper_cstr`, every `mutex_new`, the Linux peers'
   `sigset_new` / `epoll_event_new` / `timerspec_new`, `thread_create` / `chan_new` on Linux, macOS and
   Windows, `_tlocal_win_block`, the TLS ctx / key cells (freeing the SSL objects they would have
-  owned), the trait vtables, and unicode casefold / normalize. **Proof:**
+  owned), the trait vtables, and unicode casefold / normalize — normalize's recursive decompose helpers
+  returned the unchanged offset on a refused step buffer, so the character "decomposed to nothing"
+  and `str_normalize` returned a SHORTER string as a success; they now return -1 up every
+  recursion level and `str_normalize` returns 0 (niyama's fuzzy matcher, the one outside caller,
+  loops `k < n` and treats -1 like 0, as before). **Proof:**
   `tests/gates/memory/stdlib_alloc_refusal_sentinels.sh` — fault injection over a copy of `lib/` whose
-  `alloc` refuses exactly the k-th call, 58 rows: each fn returns its sentinel for every k, the k-th
+  `alloc` refuses exactly the k-th call, 67 rows: each fn returns its sentinel for every k, the k-th
   call is REACHED, and k = count + 1 succeeds. Removing one check gives rc 139 (boxed_new, sha1,
-  sigset_new) or rc 1 (chan_new); the pre-6.6.10 lib/ dies at the first row.
+  sigset_new) or rc 1 (chan_new, normalize's step check or its -1 propagation); the pre-6.6.10 lib/
+  dies at the first row.
 
 ### Downstream
 
