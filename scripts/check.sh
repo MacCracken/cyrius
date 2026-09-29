@@ -833,6 +833,12 @@ _chk_gate "$ROOT/tests/gates/codegen/cx_forward_read_constant_global.sh"
 # printed nothing and exited 0: a PASS over the preprocessor defect it is named for. The runner
 # now requires the binary's own "N passed" line for any test whose source calls assert_summary.
 _chk_gate "$ROOT/tests/gates/toolchain/crossos_runner_rejects_a_silent_binary.sh"
+# 6.6.11 B01: no .tcyr may end in a shape that exits 0 after an assertion failed. A file that
+# defines `fn main` AND calls `main();` at top level without exiting runs the body twice (the
+# epilogue auto-calls a defined main) and exits with the second run's `return 0` —
+# crossos/derive_accessor_widths.tcyr printed `1 failed` and exited 0 on x86, aarch64 and PE.
+# The other shape is `assert_summary();` then a literal `syscall(60, 0)` (platform/pwd_grp).
+_chk_gate "$ROOT/tests/gates/toolchain/tcyr_epilogue_shape.sh"
 # 6.6.6: copying between two DIFFERENT struct (or vector) types is an error, not an 8-byte
 # store. Both copy paths answered a type mismatch with `return 0`, which falls through to the
 # generic scalar store: `p = q` between a P3 and a Q3 copied ONE word of three and left the
