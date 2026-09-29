@@ -57,6 +57,8 @@ WRD="C:\\cyrius-tests\\$RD"        # cass, cmd.exe form
 WRDS="/cyrius-tests/$RD"           # cass, scp form
 WLT="_lt_$RUNID.exe"               # cass lib-test binary — per-run so the reap below
                                    # cannot kill another run's child by image name.
+WLO="_lto_$RUNID.txt"              # cass lib-test stdout / stderr captures (6.6.11) — inside
+WLE="_lte_$RUNID.txt"              # $WRD, so a green run's cleanup takes them with it.
 
 # Local scratch always goes; the remote staging dir goes only on a GREEN run, because
 # every failure message here points at files inside it (cass's _cl*.txt, the r1/r2 pair).
@@ -604,19 +606,44 @@ if [ -n "$LIBTEST" ]; then
     # minutes with no output before it was killed by hand. It stayed invisible because the
     # old loop was fail-fast and quit at an earlier failure without ever reaching it.
     # A timeout also has to COUNT as a failure, not abort the sweep — a hang is a result.
+    #
+    # ⛔ 6.6.11 — THE STDOUT IS CAPTURED AND THE SUMMARY IS READ BACK. This leg graded on the
+    # exit code ALONE, so a test that printed `23 passed, 1 failed` and exited 0 (the main-twice
+    # shape crossos/derive_accessor_widths.tcyr shipped in), one that died before its summary
+    # and exited 0, and one that printed `0 passed, 0 failed` all scored PASS on Windows —
+    # MEASURED on real cass at 6.6.11: four staged fixtures of those shapes, all rc 0 through
+    # the old command. The binary's stdout goes to a per-run file and, ONLY when it exited 0,
+    # is `type`d back over the same ssh (no extra round-trip). The redirect is to FILES on both
+    # streams (`> $WLO 2> $WLE`): `2>nul` inside a compound corrupts the redirect on cmd.exe
+    # (CLAUDE.md, cass gotchas), and the `if !errorlevel!` form is the one proven here — `&
+    # echo %errorlevel%` expands at parse time. Nothing stale can be typed: the file is only
+    # read on the branch where this run's binary just wrote it. The rule is the one every .tcyr
+    # reader applies (programs/checks/selfhost.cyr `_tcyr_grade`): when the SOURCE calls
+    # assert_summary(, the LAST `N passed, M failed` line must exist with N >= 1 and M == 0,
+    # and the exit code must be 0. CHANGELOG [6.6.11]
     cass_p=0; cass_f=0; cass_t=0; cass_bad=""; cass_n=0
     for t in $TESTS; do
       base=$(basename "$t")
       wt=$(echo "$t" | tr '/' '\\')
       cass_n=$((cass_n + 1))
       rc=0
-      timeout 90 ssh $SSHO cass "cmd /v /c \"cd /d C:\\cyrius-tests\\$RD && c2.exe < $wt > $WLT && $WLT & if !errorlevel! NEQ 0 (exit 1) else (exit 0)\"" >/dev/null 2>&1 || rc=$?
-      if [ "$rc" = "0" ]; then
+      cass_out=$(timeout 90 ssh $SSHO cass "cmd /v /c \"cd /d C:\\cyrius-tests\\$RD && c2.exe < $wt > $WLT && $WLT > $WLO 2> $WLE & if !errorlevel! NEQ 0 (exit 1) else (type $WLO & exit 0)\"" 2>/dev/null) || rc=$?
+      why=""
+      if [ "$rc" = "0" ] && grep -q 'assert_summary(' "$t" 2>/dev/null; then
+        _sl=$(printf '%s\n' "$cass_out" | tr -d '\r' | grep -E '^[0-9]+ passed, [0-9]+ failed' | tail -1) || _sl=""
+        _np=$(printf '%s\n' "$_sl" | sed -n 's/^\([0-9][0-9]*\) passed,.*/\1/p')
+        _nf=$(printf '%s\n' "$_sl" | sed -n 's/^[0-9][0-9]* passed, \([0-9][0-9]*\) failed.*/\1/p')
+        if [ -z "$_np" ] || [ -z "$_nf" ]; then why="(exit 0 but NO assert summary — it ran nothing)"
+        elif [ "$_np" -lt 1 ]; then why="(assert summary reports $_np assertions)"
+        elif [ "$_nf" -ne 0 ]; then why="(exit 0 but the assert summary reports $_nf failed)"
+        fi
+      fi
+      if [ "$rc" = "0" ] && [ -z "$why" ]; then
         cass_p=$((cass_p + 1))
       elif [ "$rc" = "124" ]; then
         cass_t=$((cass_t + 1)); cass_f=$((cass_f + 1)); cass_bad="$cass_bad ${base}(HANG)"
       else
-        cass_f=$((cass_f + 1)); cass_bad="$cass_bad $base"
+        cass_f=$((cass_f + 1)); cass_bad="$cass_bad ${base}${why}"
       fi
       # Progress: 260 sequential SSH round-trips is minutes of silence otherwise, and
       # silence is exactly what made the hang look like normal slowness.
