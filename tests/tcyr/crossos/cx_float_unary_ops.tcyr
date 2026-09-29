@@ -64,8 +64,10 @@ fn main(): i64 {
     assert_eq(mulh64(0x8000000000000000, 2), 1, "mulh64(2^63, 2) is 1");
     assert_eq(mulh64(3, 5), 0, "mulh64(3, 5) is 0");
     assert_eq(mulh64(0x123456789ABCDEF0, 0x0FEDCBA987654321), 0x0121FA00AD77D742, "mulh64 of two wide operands");
-    return 0;
+    return assert_summary();
 }
-
-main();
-var r = assert_summary();
+# The exit status IS the summary: main returns it and the top level exits with it. A top-level
+# `main();` + trailing `var r = assert_summary();` would let cycc auto-call main a second time
+# at program end and exit with main's own return value (see src/main.cyr's note on the shape).
+var rc = main();
+syscall(60, rc);

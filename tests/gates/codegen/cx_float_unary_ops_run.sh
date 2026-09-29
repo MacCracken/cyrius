@@ -17,7 +17,10 @@
 # MUTATION (6.6.10, built and run): restore the five `return 0` stubs → cx_float_unary_ops.tcyr
 # reports 26 FAILs and f64_negation.tcyr 1 (its sqrt row, enabled on cx in the same change),
 # both exit non-zero → RED. Drop only cxvm's 0x6A-0x6D arms → the floor/ceil/round/mulh64 rows
-# read back the unchanged operand (an unknown cxvm opcode is a no-op) → RED.
+# read back the unchanged operand (an unknown cxvm opcode is a no-op) → RED. Native leg: change
+# one expected value → the native run reports "27 passed, 1 failed" and exits 1 → RED; restore
+# the old top-level `main(); var r = assert_summary();` ending → main's second run prints after
+# the summary → RED (and with a failing row it still exits 0, which the count check catches).
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -46,8 +49,14 @@ check() {
   if [ "$vrc" -ne 0 ]; then _bad "$f on cxvm: exit $vrc"; grep 'FAIL' "$T/out" | head -5 | sed 's/^/      /'; return; fi
   if ! grep -q "^$want passed, 0 failed" "$T/out"; then _bad "$f on cxvm: expected '$want passed, 0 failed', got: $(tail -1 "$T/out")"; return; fi
   pass=$((pass + 1))
+  # Natively every assertion row is compiled in (no #ifndef CYRIUS_TARGET_CX skip), and the
+  # count must match too: rc 0 alone is not evidence — a file that let cycc auto-call main a
+  # second time exited with main's constant return value whatever the summary said (6.6.10).
+  nwant=$(grep -cE '^[[:space:]]*assert_(eq|neq)\(' "$f")
   "$CC" < "$f" > "$T/nat" 2> "$T/e" && chmod +x "$T/nat" && "$T/nat" > "$T/out" 2>&1; nrc=$?
   if [ "$nrc" -ne 0 ]; then _bad "$f natively: rc $nrc — the file must pass on the host too"; grep 'FAIL' "$T/out" | head -3 | sed 's/^/      /'; return; fi
+  if ! grep -q "^$nwant passed, 0 failed" "$T/out"; then _bad "$f natively: expected '$nwant passed, 0 failed', got: $(grep 'passed,' "$T/out" | tail -1)"; return; fi
+  if ! tail -1 "$T/out" | grep -q "^$nwant passed, 0 failed"; then _bad "$f natively: output continues after the summary (main ran a second time): $(tail -1 "$T/out")"; return; fi
   pass=$((pass + 1))
 }
 check tests/tcyr/crossos/cx_float_unary_ops.tcyr 28
