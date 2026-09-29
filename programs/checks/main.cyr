@@ -1466,6 +1466,22 @@ fn main(): i64 {
     }
     println("");
 
+    # ⛔ 6.6.11 — A SELECTED SUITE THAT RAN NO ROWS IS NOT A PASS. The verdict was the failure
+    # count alone, so a row whose body tallied nothing (an emptied `_row_*`, a gate fn that
+    # returned before scoring) printed `0 passed, 0 failed, 0 skipped (0 total)` and exited 0 —
+    # under CYRIUS_CHECK_NO_SKIP=1 too, which is how every CI-delegated step runs. A full run
+    # always tallies; a selection that checked nothing is never green, strict mode or not.
+    # Gate: tests/gates/toolchain/check_driver_skip_is_not_pass.sh (axis 8). CHANGELOG [6.6.11]
+    if (only >= 0 && G_TOTAL == 0) {
+        _p(ANSI_RED);
+        _p("FAIL");
+        _p(ANSI_RESET);
+        _p(": suite '");
+        _p(_suite_row(only, 0));
+        println("' ran no rows — a selection that checked nothing is not a pass");
+        return 1;
+    }
+
     # 6.6.8: the exit status is the failure count, CLAMPED to 123 — an exit status is one
     # byte, so 256 failures used to exit 0 (a green run), and 124 and up collide with the
     # supervisor's deadline code and the shell's 126/127/128+n. CHANGELOG [6.6.8]
