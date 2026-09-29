@@ -44,6 +44,15 @@
 #             base64_encode). Including the fold does not fix them — `ws` + lib/bayan.cyr still
 #             leaves 45 undefined functions, because a bundle needs its sidecar leaves — and
 #             mirroring a fold's sidecar into a first-party file is the rot that item removes.
+#             ⚠ PENDING excuses the FOLD half only. Until 6.6.11 all three also lacked their
+#             first-party includes (log: strlen; ws: alloc, memcpy, strlen, sock_send_all,
+#             sys_getrandom, sys_read; ws_server: sock_close, str_builder_*, str_data, ...)
+#             and axis 2 could not see it — it only checked that they still FAILED, not on
+#             what. Axis 2 now holds their residual to names defined ONLY in fold bundles.
+#   CX_OUT_OF_SCOPE  modules the cx target refuses BY NAME (6.6.11): tls, tls_native and the
+#             sigil fold compile to several MB of cx bytecode against a 512 KiB .cyx, and cx
+#             is declared not to carry them rather than grown to (src/main_cx.cyr,
+#             _cx_scope_refused). Axis 7 holds the refusal; axis 4's cx leg leaves them out.
 #
 # AXES
 #   0. SELF-TEST, per target compiler: a fixture calling a function nothing defines MUST be
@@ -53,20 +62,28 @@
 #   1. FIRST-PARTY TIER, strict: every public module outside PENDING compiles alone with ZERO
 #      undefined functions (and no compile error) on x86-Linux, agnos, PE, Mach-O and aarch64.
 #   2. PENDING tier: each named module exists, is public, and still fails on x86-Linux — when one
-#      stops failing, move it out of PENDING so axis 1 holds it.
+#      stops failing, move it out of PENDING so axis 1 holds it. And on every host target its
+#      residual undefined set is a SUBSET of the fold-only names (fns defined in a fold bundle
+#      and in no first-party lib file), so a first-party gap cannot hide behind PENDING (6.6.11).
 #   3. PEERS via their parents: >= 25 peers classified from the include graph, and every peer's
 #      root is a first-party module in axis 1 (not PENDING, not a fold).
 #   4. RATCHET per target over the WHOLE population (folds and peers included, since a fold
 #      re-vendor or a peer edit can move them): linux, agnos, PE, Mach-O, cx, aarch64. The cx
-#      backend emits every fn and hard-errors on an undefined call, and it cannot compile
-#      tls / tls_native (codebuf overflow) or thread (sync.cyr has no cx arm), so cx is held
-#      by its floor, not by axis 1.
+#      backend emits every fn and hard-errors on an undefined call, so cx is held by its floor,
+#      not by axis 1 — over the population MINUS CX_OUT_OF_SCOPE, which cx refuses by name.
+#      (thread counted against cx until 6.6.11: sync.cyr had no cx arm, so mutex_* were
+#      undefined there.)
 #   5. ANTI-VACUOUS, per family: a probe that includes only that family's modules calls THROUGH
 #      the includes this bite added and runs to a known answer — so the includes carry real
 #      definitions rather than silencing warnings. Plus 6.6.6's io.cyr probe.
 #   6. The hand-written include lists a review found short (three bayan-including tcyr and
 #      bench_mulmod lacked io.cyr's file_*; alloc_serdes lacked net.cyr) compile with zero
-#      undefined functions.
+#      undefined functions — and programs/vidya.cyr (6.6.11), which included NOTHING and left
+#      26 fns undefined when included alone.
+#   7. cx SCOPE (6.6.11): each CX_OUT_OF_SCOPE module is refused on cx with an error that NAMES
+#      it (not a bare "codebuf overflow" mid-emit), and lib/thread.cyr runs on cxvm through
+#      sync.cyr's cx arm: mutex_* work, thread_create / thread_create_detached fail with 0,
+#      THREADS_CONCURRENT is 0 and the channel ring works single-threaded.
 #
 # MUTATION LEDGER (6.6.6, each by editing a COPY or reverting in a scratch tree)
 #   a. lib/fmt.cyr's two includes removed      -> axes 1 and 4 FAIL ('strlen', 'vec_get')
@@ -98,6 +115,19 @@
 #      (bayan's file_* x8). alloc_serdes' net include is belt-and-braces once http.cyr includes
 #      net.cyr itself (bite 12) — removing it no longer reddens anything, by design
 #   s. aarch64 compiler without the undefined prepass (stock 6.6.8) -> axis 0 FAIL
+# MUTATION LEDGER (6.6.11 B08, each measured against this file)
+#   t. lib/ws.cyr's net include removed         -> axis 2 FAIL (sock_send_all, _net_os_recv are
+#      not fold-only; its string include alone is NOT load-bearing — net.cyr brings string)
+#   t2. lib/ws_server.cyr's str include removed -> axis 2 FAIL (str_builder_*, str_data)
+#   u. lib/log.cyr's string include removed     -> axis 2 FAIL ('strlen')
+#   v. lib/sync.cyr's cx arm removed            -> axis 7 FAIL (the thread probe does not build)
+#   v2. lib/thread.cyr's cx `return 0` in thread_create removed -> axis 7 FAIL (cxvm exits 139:
+#      cxvm hands the guest's mmap to the HOST kernel, which succeeds, and the Linux spawn path
+#      then stores through a host address as if it were a guest offset)
+#   w. src/main_cx.cyr's _cx_scope_refused call removed -> axis 7 FAIL (tls/tls_native/sigil
+#      die at "codebuf overflow", naming nothing)
+#   x. programs/vidya.cyr's include block removed -> axis 6 FAIL (the 26 undefined fns; one
+#      include alone is not load-bearing — hashmap / vec / fs bring their own neighbours)
 # Real tree (with 6.6.9 bites 2, 5 and 12 merged) -> PASS.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -130,6 +160,8 @@ STRICT_TARGETS="linux agnos pe macho aarch64"
 # PENDING: see the header. Each entry is a first-party module whose remaining undefined calls
 # are into a fold bundle that is not raw-includable.
 PENDING="log ws ws_server"
+# CX_OUT_OF_SCOPE: see the header. Refused BY NAME by the cx driver; axis 7 holds it.
+CX_OUT_OF_SCOPE="tls tls_native sigil"
 
 # _compile <target> <in.cyr> <out> <err> — compile for <target> from the CURRENT directory.
 # --allow-undef: cycc REFUSES to emit a binary with a reachable undefined function, and the
@@ -224,6 +256,12 @@ NPUB=$(grep -c ' public ' "$D/class")
 PUB_FLOOR=68
 [ "$NPUB" -ge "$PUB_FLOOR" ] || fail "classification: $NPUB first-party modules, below the $PUB_FLOOR floor — a public module was reclassified as a peer (lost its '# Usage: include \"lib/<m>.cyr\"' line?) or deleted"
 echo "  classified: $NTOT lib modules = $NPUB public (first-party) + $NPEER peers + $NFOLD folds"
+# fold-only names (axis 2): fns a fold bundle defines and no first-party lib file does.
+_fn_names() { sed -n 's/^[[:space:]]*\(pub \|public \)\{0,1\}fn \([A-Za-z_][A-Za-z0-9_]*\).*/\2/p' "$@" | sort -u; }
+_fn_names $(awk '$2 == "fold" { print "lib/" $1 ".cyr" }' "$D/class") > "$D/foldfns"
+_fn_names $(awk '$2 != "fold" { print "lib/" $1 ".cyr" }' "$D/class") > "$D/firstfns"
+comm -23 "$D/foldfns" "$D/firstfns" > "$D/foldonly"
+[ "$(wc -l < "$D/foldonly" | tr -d ' ')" -ge 100 ] || fail "classification: only $(wc -l < "$D/foldonly" | tr -d ' ') fold-only fn names derived — the fn scan read nothing"
 
 # ── the scan: every module on every target, one background job per target ──
 for t in $TARGETS; do
@@ -268,8 +306,21 @@ for s in $PENDING; do
     esac
     st=$(awk -v m="$s" '$1 == m { print $2; exit }' "$D/scan_linux")
     [ "$st" = OK ] && { fail "axis 2: lib/$s.cyr now includes alone cleanly — move it OUT of PENDING so axis 1 holds it"; x=1; }
+    # 6.6.11: WHAT it still fails on. Every residual name must be fold-only.
+    for t in $STRICT_TARGETS; do
+        st=$(awk -v m="$s" '$1 == m { $1 = ""; sub(/^ /, ""); print; exit }' "$D/scan_$t")
+        case "$st" in
+            OK) continue ;;
+            CERR*) fail "axis 2 [$t]: PENDING lib/$s.cyr does not compile alone:${st#CERR} — PENDING excuses fold names, not a compile error"; x=1; continue ;;
+        esac
+        bad=""
+        for u in ${st#UNDEF }; do
+            grep -qx "$u" "$D/foldonly" || bad="$bad $u"
+        done
+        [ -z "$bad" ] || { fail "axis 2 [$t]: PENDING lib/$s.cyr leaves$bad undefined — not fold-only names (a first-party module defines them): include its definer"; x=1; }
+    done
 done
-[ "$x" = 0 ] && echo "  ok: axis 2: PENDING ($PENDING) — each is first-party and still waits on a raw-includable fold bundle"
+[ "$x" = 0 ] && echo "  ok: axis 2: PENDING ($PENDING) — each is first-party, still waits on a raw-includable fold bundle, and leaves only fold-only names undefined on linux, agnos, PE, Mach-O and aarch64 ($(wc -l < "$D/foldonly" | tr -d ' ') fold-only names)"
 
 # ── axis 3: peers are checked through their parents ──
 x=0
@@ -297,8 +348,13 @@ FLOORS="linux:73 agnos:73 pe:73 macho:74 cx:68 aarch64:72"
 x=0; summary=""
 for tf in $FLOORS; do
     t=${tf%%:*}; fl=${tf#*:}
-    nok=$(awk '$2 == "OK"' "$D/scan_$t" | wc -l | tr -d ' ')
-    summary="$summary $t $nok/$NTOT (floor $fl);"
+    if [ "$t" = cx ]; then
+        nok=$(awk -v o=" $CX_OUT_OF_SCOPE " '$2 == "OK" && index(o, " " $1 " ") == 0' "$D/scan_$t" | wc -l | tr -d ' ')
+        summary="$summary $t $nok/$((NTOT - $(echo $CX_OUT_OF_SCOPE | wc -w))) (floor $fl; out of scope: $CX_OUT_OF_SCOPE);"
+    else
+        nok=$(awk '$2 == "OK"' "$D/scan_$t" | wc -l | tr -d ' ')
+        summary="$summary $t $nok/$NTOT (floor $fl);"
+    fi
     if [ "$nok" -lt "$fl" ]; then
         fail "axis 4 [$t]: $nok of $NTOT lib modules include alone with no undefined function — below the $fl floor. A module became LESS self-sufficient; do not lower the floor."; x=1
     fi
@@ -483,7 +539,7 @@ CYR
 # ── axis 6: the corpus hand lists a review found short ──
 x=0; n6=0
 for f in tests/tcyr/derive/derive_str_deserialize.tcyr tests/tcyr/formats/ws_server_handshake.tcyr \
-         tests/tcyr/memory/alloc_serdes.tcyr benches/bench_mulmod.bcyr; do
+         tests/tcyr/memory/alloc_serdes.tcyr benches/bench_mulmod.bcyr programs/vidya.cyr; do
     [ -f "$f" ] || { fail "axis 6: $f does not exist — renamed? update this list"; x=1; continue; }
     n6=$((n6 + 1))
     "$CC" < "$f" > "$D/c6.bin" 2> "$D/c6.err" || { fail "axis 6: $f does not compile"; x=1; continue; }
@@ -492,5 +548,55 @@ for f in tests/tcyr/derive/derive_str_deserialize.tcyr tests/tcyr/formats/ws_ser
 done
 [ "$x" = 0 ] && echo "  ok: axis 6: $n6 hand-written include lists compile with no undefined function"
 
+# ── axis 7: cx scope — refused BY NAME, and thread.cyr runs on cxvm ──
+x=0
+for s in $CX_OUT_OF_SCOPE; do
+    [ -f "lib/$s.cyr" ] || { fail "axis 7: CX_OUT_OF_SCOPE names lib/$s.cyr, which does not exist — drop it"; x=1; continue; }
+    mkdir -p "$D/w7"
+    printf 'include "lib/%s.cyr";\nvar _r7 = 0;\nsyscall(60, _r7);\n' "$s" > "$D/w7/p.cyr"
+    "$CXCC" < "$D/w7/p.cyr" > "$D/w7/p.cyx" 2> "$D/w7/p.err"; rc7=$?
+    if [ "$rc7" -eq 0 ] || ! grep -q "^error: lib/$s\.cyr is outside the cx target's scope" "$D/w7/p.err"; then
+        fail "axis 7: including lib/$s.cyr on cx gave rc $rc7 without naming it (got: $(head -2 "$D/w7/p.err" | tr '\n' ' ')) — it must be refused BY NAME"; x=1
+    fi
+done
+"$CC" < programs/cxvm.cyr > "$D/cxvm" 2> "$D/cxvm.err" && chmod +x "$D/cxvm" \
+    || { fail "axis 7: cannot build cxvm from programs/cxvm.cyr"; x=1; }
+cat > "$D/w7/thr.cyr" <<'CYR'
+include "lib/thread.cyr";
+var _t7_cell = 0;
+fn _t7_body(arg): i64 { _t7_cell = arg; return 0; }
+fn main(): i64 {
+    alloc_init();
+    var s = 0;
+    var m = mutex_new();
+    mutex_lock(m);
+    mutex_unlock(m);
+    if (m != 0) { s = s + 1; }
+    # _threads_active stays 0: the failure returns BEFORE the Linux spawn path arms the heap
+    # lock (lib/atomic.cyr) or asks cxvm for an mmap — it does not merely fail by accident there.
+    if (thread_create(&_t7_body, 9) == 0 && _t7_cell == 0 && _threads_active == 0) { s = s + 2; }
+    if (thread_create_detached(&_t7_body, 9) == 0 && _t7_cell == 0 && _threads_active == 0) { s = s + 4; }
+    if (THREADS_CONCURRENT == 0) { s = s + 8; }
+    var ch = chan_new(2);
+    if (chan_try_send(ch, 5) == 0 && chan_try_send(ch, 6) == 0 && chan_try_send(ch, 7) == 0 - 2) { s = s + 16; }
+    if (chan_try_recv(ch) == 5 && chan_recv(ch) == 6) { s = s + 32; }
+    chan_close(ch);
+    if (chan_try_send(ch, 1) == 0 - 1 && chan_recv(ch) == 0) { s = s + 64; }
+    if (gettid() == 1) { s = s + 128; }
+    return s;
+}
+var r = main();
+syscall(60, r);
+CYR
+if [ -x "$D/cxvm" ]; then
+    if "$CXCC" < "$D/w7/thr.cyr" > "$D/w7/thr.cyx" 2> "$D/w7/thr.err"; then
+        "$D/cxvm" < "$D/w7/thr.cyx" > /dev/null 2>&1; trc=$?
+        [ "$trc" = 255 ] || { fail "axis 7: lib/thread.cyr on cxvm exited $trc, expected 255 (one bit per check: mutex, thread_create fails, detached fails, THREADS_CONCURRENT 0, try_send, recv, close, gettid)"; x=1; }
+    else
+        fail "axis 7: lib/thread.cyr does not compile for cx: $(grep -v '^note' "$D/w7/thr.err" | head -3 | tr '\n' ' ')"; x=1
+    fi
+fi
+[ "$x" = 0 ] && echo "  ok: axis 7: cx refuses $CX_OUT_OF_SCOPE by name; lib/thread.cyr runs on cxvm (mutex no-op, thread_create fails honestly)"
+
 [ "$FAIL" = 0 ] || exit 1
-echo "PASS: stdlib_modules_self_sufficient (7 axes)"
+echo "PASS: stdlib_modules_self_sufficient (8 axes)"
