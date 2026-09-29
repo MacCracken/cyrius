@@ -233,8 +233,10 @@ fn udp_socket() : Result {
 fn sock_reuse(fd): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
     # AGNOS has no setsockopt — Linux NSYS_SETSOCKOPT=54 collides with agnos
-    # #54=SYS_UDP_UNBIND (silent mis-dispatch). Server-side reuse is AGNOS
-    # Phase B (inbound TCP), unreached on the client path; no-op success. v6.2.7.
+    # #54=SYS_UDP_UNBIND (silent mis-dispatch) — and nothing to set: the kernel has no
+    # TIME_WAIT hold on a listen port, so a restarted server re-listens without it.
+    # No-op success. (This read "server-side reuse is Phase B, unreached on the client
+    # path" — false since v6.2.22 wired bind/listen/accept to #56/#57. CHANGELOG [6.6.10])
     return 0;
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
@@ -334,7 +336,7 @@ fn sock_bind(fd, addr, port) : Result {
     #endif
 }
 
-# Listen on socket. Returns Result(0). AGNOS Phase B — see sock_bind.
+# Listen on socket. Returns Result(0). On AGNOS it issues sock_listen#56 (see sock_bind).
 fn sock_listen(fd, backlog) : Result {
     #ifdef CYRIUS_TARGET_AGNOS
     # Issue sock_listen(#56) on the port stashed by sock_bind (the kernel merges
@@ -353,7 +355,7 @@ fn sock_listen(fd, backlog) : Result {
     #endif
 }
 
-# Accept a connection. Returns Result(client_fd). AGNOS Phase B — see sock_bind.
+# Accept a connection. Returns Result(client_fd). On AGNOS it issues sock_accept#57 (see sock_bind).
 fn sock_accept(fd) : Result {
     #ifdef CYRIUS_TARGET_AGNOS
     # AGNOS sock_accept(#57) is NON-BLOCKING: it drives net_poll (advancing the

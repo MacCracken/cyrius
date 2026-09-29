@@ -32,21 +32,23 @@
 # doc is the bug. Return convention: rax >= 0 on success, -1 on error (NOT
 # Linux -errno).
 #
-# ⚠ #96 / #97 (agnos, assigned by operator ruling 2026-08-05; next free = #98).
-# Neither may be swapped on first-come grounds.
+# ⚠ #96 / #97 (agnos, assigned by operator ruling 2026-08-05). Both are MINTED; the kernel's
+# highest arm is #108 (sched_yield_to, agnos 1.57.9), so the next free number is #109.
 #   #97 = chan_op — MINTED at cyrius 6.5.8. The kernel arm shipped in agnos 1.56.40
-#                   (`kernel/core/syscall.cyr:7620`, `if (num == 97)`), with all five
+#                   (`kernel/core/syscall.cyr`, `if (num == 97)`), with all five
 #                   ops CAPS/MINT/SEND/RECV/CLOSE dispatching and `CH_OP_SUPPORTED`
 #                   = 0x1F advertising exactly those. Verified by reading the kernel,
 #                   not the ABI doc — see the RE-FREEZE RULE above.
-#   #96 = fork    — STILL NOT MINTED. No dispatch arm exists in agnos 1.56.40
-#                   (`grep 'num == 96'` finds nothing). Do NOT add the constant until
-#                   it does: on agnos an unknown `num` falls THROUGH the dispatch
-#                   chain and the caller reads the fall-through value as DATA, so a
-#                   minted-but-unimplemented constant is strictly worse than an absent
-#                   one — and a host build of the same consumer looks healthy either
-#                   way, so nothing off-target catches it. Gated by
-#                   tests/gates/platform/syscall_wrapper_pass.sh axis 5.
+#   #96 = fork    — MINTED at cyrius v6.5.37 (agnos 1.56.55). Its arm is in the ring-3 ENTRY
+#                   STUB (`kernel/arch/x86_64/syscall_hw.cyr`, `sc_num == 96`), not in
+#                   `core/syscall.cyr` — which is why a `grep 'num == 96'` of the dispatch
+#                   finds nothing; see sys_fork. The rule that kept it unminted until then
+#                   still holds for every future number: do NOT add a constant before its
+#                   kernel arm exists — an unknown `num` falls THROUGH the dispatch chain and
+#                   the caller reads the fall-through value as DATA, and a host build of the
+#                   same consumer looks healthy either way. Gated by
+#                   tests/gates/platform/syscall_wrapper_pass.sh axis 5. (This block read
+#                   "#96 STILL NOT MINTED; next free = #98" until 6.6.10 — CHANGELOG [6.6.10].)
 
 # ================================================================
 # Syscall numbers — §2 FROZEN (0-28) + §3 (29-33)
@@ -164,7 +166,7 @@ enum SysNrAgnos {
     #   Linux call would read a garbage mask and SUCCEED, returning the old one)
     # v6.5.8 — the local-IPC channel band. ONE syscall, op-dispatched on arg1, which is
     # the same `MDO_OP_SUPPORTED` shape that grew #93 across a whole arc with no ABI
-    # break. (#96 fork is NOT minted — see the header; no kernel arm exists yet.)
+    # break. (#96 is fork, minted at v6.5.37 and declared with the stat band above.)
     SYS_CHAN_OP          = 97;    # chan_op(op, a1, a2, a3) → 0/len / negative CH_E_*
     SYS_PTRSCAN          = 98;    # ptrscan(buf, max) → 16 / 0 (idle) / -1  (agnos 1.56.42)
     SYS_PROCLIST         = 99;    # proclist(buf, max) → record count / -1  (agnos 1.56.47)
@@ -674,8 +676,14 @@ var _agnos_sock_sndto_us: i64[8];
 # by conn_id 0..7. sys_sock_accept writes it and _agnos_sock_bind consumes it, so an accepted
 # socket starts with its LISTENER's recv/send timeouts — Linux copies SO_RCVTIMEO/SO_SNDTIMEO into
 # the accepted socket, and the fresh slot here used to fall back to the 30 s default instead.
-# sys_sock_connect and sys_sock_close clear the mark, so a conn_id the kernel recycles for an
-# OUTBOUND connection never inherits a listener's deadline. CHANGELOG [6.6.8]
+# The lifecycle is: accept WRITES the mark, _agnos_sock_bind CONSUMES it, sys_sock_connect
+# CLEARS it. The connect clear is the LOAD-BEARING one — a conn_id the kernel recycles for an
+# OUTBOUND connection must not inherit a listener's deadline (pinned by
+# tests/gates/platform/agnos_accept_timeout_inherit.sh). The clear in sys_sock_close is
+# DEFENSIVE and cannot be observed: every path to a bind goes through an accept (which
+# overwrites the mark) or a connect (which clears it) first, so no gate can tell whether it is
+# there — measured by mutation, 6.6.10. It stays as belt and braces, not as a guarantee.
+# CHANGELOG [6.6.8] [6.6.10]
 var _agnos_accept_from: i64[8];
 
 # ================================================================
@@ -1177,12 +1185,14 @@ fn statfs_bsize(buf): i64 { return load64(buf + STATFS_BSIZE); }
 # tests/gates/platform/syscall_wrapper_pass.sh asserted the CONSTANT MUST NOT EXIST on that
 # same stale premise; that assertion is inverted at v6.5.37.
 #
-# ⚠ A forked child of a FOREGROUND `exec_and_wait` process does not run until the foreground
-# run ends (IF=0, not preempted). fork is for processes under the scheduler — spawned via
-# `spawn_path`#43 — which is how a server like agora runs anyway.
+# The child is an ordinary SCHEDULED process from the fork on: since agnos 1.57.7 its RFLAGS
+# always has IF set (`syscall_hw.cyr`, "THE CHILD'S RFLAGS ALWAYS HAS IF SET"), so a child forked
+# by a foreground `exec_and_wait` process runs alongside it. (This read "does not run until the
+# foreground run ends (IF=0, not preempted)" until 6.6.10 — true before 1.57.7. CHANGELOG [6.6.10])
+# It inherits the parent's fd table (vfs_fd_inherit copies the entries by value).
 # ⚠ `waitpid`#4 gained WAIT-ANY in the same cut: `sys_waitpid(-1)` returns a finished child's
-# exit code, -2 while children are still running, -1 when there are none. A fork-per-
-# connection loop wants that, not the single-pid poll.
+# WAIT STATUS (decode with the W* helpers), -2 while children are still running, -1 when there
+# are none. A fork-per-connection loop wants that, not the single-pid poll.
 fn sys_fork(): i64 { return syscall(SYS_FORK); }
 
 # agnos has NO fstat-by-fd syscall — the kernel exposes only path-based
@@ -1773,7 +1783,9 @@ fn sys_sock_send(conn_id, buf, len): i64 { return syscall(SYS_SOCK_SEND, conn_id
 # Non-blocking drain from a conn (#49): bytes drained, 0 = WOULD_BLOCK,
 # -1 = EOF / bad arg (the inverted-from-Linux sense the recv loop honors).
 fn sys_sock_recv(conn_id, buf, maxlen): i64 { return syscall(SYS_SOCK_RECV, conn_id, buf, maxlen); }
-# Close a conn (#50; FIN+ACK if established) + free its buffers. 0, or -1.
+# Close a conn (#50; FIN+ACK if established) + free its buffers. 0, or -1. The accept-mark clear
+# here is defensive only (see _agnos_accept_from): nothing can bind the id before an accept or a
+# connect rewrites the mark anyway.
 fn sys_sock_close(conn_id): i64 {
     _agnos_accept_mark(conn_id, 0);
     return syscall(SYS_SOCK_CLOSE, conn_id);

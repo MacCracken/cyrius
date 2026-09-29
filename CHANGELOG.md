@@ -79,6 +79,26 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   helper-parameter and computed-port shapes. The old test file reddens it. Four concurrent runs:
   4/4 green; real ecb, ach, pi and cass green.
 
+- **The stale "agnos has no fork / #96 is not minted / inbound TCP is Phase B" notes are
+  corrected.** (bite 13) **Root cause:** four agnos changes each updated only the lines they
+  touched — fork was minted in agnos 1.56.55 (cyrius v6.5.37), a forked child became a scheduled
+  process in 1.57.7, #43 argv/CLEANFD spawn arrived in 1.57.6 (cyrius 6.6.8), and inbound TCP
+  listen/accept in agnos 1.45.5/.6 (cyrius v6.2.22) — so ~25 comments in 13 files kept
+  describing the old kernel. **Fix:** the agnos peer's #96/#97 ledger (both minted; the highest
+  arm is #108, so the next free number is #109, not #98), its chan-band note and the sys_fork
+  "IF=0 foreground" caveat (false since 1.57.7) and WAIT-ANY "exit code" (a wait status);
+  `syscall_wrapper_pass.sh`'s header, which still described axis 5 as a do-not-mint assertion two
+  cuts after the axis was inverted, and its check-driver description; `lib/callback.cyr`'s reason
+  for guarding `fork_with_pre_exec` out on agnos (the reason is no execve, not no fork);
+  `lib/net.cyr`'s "Phase B / unreached on the client path" on sock_reuse / sock_listen /
+  sock_accept. Also the accept-mark lifecycle: the clear in `sys_sock_close` was described (peer
+  comment and `agnos_accept_timeout_inherit.sh`'s header) as though it were pinned, and mutation
+  shows it cannot be observed — the connect clear is the load-bearing one; both now say so. The
+  guide's AGNOS section (whose `SYS_WAITPID` row was factually wrong: #4 is a non-blocking poll
+  returning a WAIT STATUS, not "the exit code directly"), `lib/async.cyr`, `lib/process.cyr`,
+  `lib/async_win.cyr`, `lib/async_macos.cyr` and sigil's `sys_util.cyr` are corrected by the lanes
+  that own them.
+
 ### Added
 
 - **A census gate for unchecked first-party `alloc(` results, with a shrink-only allowlist.**

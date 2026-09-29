@@ -15,12 +15,15 @@
 # A host-only test passes while any of those is broken. `cyrius build` on each target is
 # the cheapest thing that does not.
 #
-# ⛔ AXIS 5 IS A DO-NOT-DO ASSERTION. agnos reserved #96 (fork) and #97 (chan_op) on
-# 2026-08-05 but the kernel arms do not exist yet. On agnos an unknown `num` falls THROUGH
-# the dispatch chain and the caller reads the fall-through value as data, so a
-# minted-but-unimplemented constant is strictly WORSE than an absent one — and a host build
-# of the same consumer looks healthy either way, so nothing off-target catches it. This axis
-# fails if someone mints them early.
+# ⛔ AXIS 5: A NUMBER IS MINTED WHEN ITS KERNEL ARM EXISTS — not before, not after. On agnos
+# an unknown `num` falls THROUGH the dispatch chain and the caller reads the fall-through value
+# as data, so a minted-but-unimplemented constant is strictly WORSE than an absent one — and a
+# host build of the same consumer looks healthy either way, so nothing off-target catches it.
+# Both #96 (fork, agnos 1.56.55 — its arm is in the ring-3 entry stub) and #97 (chan_op, agnos
+# 1.56.40) have arms and are minted; the axis pins that they STAY minted along with the rest of
+# the band. (This header read "#96/#97 reserved, the kernel arms do not exist yet; fails if
+# someone mints them early" until 6.6.10, two cuts after axis 5 itself was inverted at v6.5.37.
+# CHANGELOG [6.6.10])
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
