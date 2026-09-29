@@ -366,6 +366,22 @@ fn _proc_kill_group(pid, stbuf): i64 {
     return 0;
 }
 
+# A capture the deadline cut short (`_proc_read_cut` == 1) whose child had ALREADY exited on its
+# own: the drain was held open by something the child left running (a `cmd & echo` grandchild on
+# the pipe), and the verb reports the deadline. On macOS end what is left of the child's process
+# group — the child called setsid() because a deadline was set, and POSIX does not reuse a pid
+# while a group of that id exists, so the probe cannot reach a stranger's group (the same shape
+# as cbt's `_run_end_leftovers`). Linux has no group here and no adoption window in a LIBRARY
+# verb (that changes who reaps the caller's orphans), so the leftover is only cut off from the
+# pipe there. Returns 0. CHANGELOG [6.6.10]
+fn _proc_end_cut_group(pid): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    var st[8];
+    if (sys_kill(0 - pid, 0) == 0) { proc_kill_tree(pid, &st); }
+    #endif
+    return 0;
+}
+
 # SIGTERM `pid`; once it has gone, ONE SIGTERM to each descendant it left (a second TERM kills
 # a shell mid-EXIT-trap — see lib/regression.cyr's twin); all within `_PROC_GRACE_MS`; then
 # SIGKILL the stragglers and reap `pid` into `stbuf`. The /proc walk behind `proc_kill_tree`
@@ -656,7 +672,7 @@ fn run_capture(cmd, arg1, arg2, buf, buflen): Result {
     sys_close(read_fd);
     var status_buf[4];
     var reaped = _proc_wait_deadline(pid, &status_buf, proc_timeout_ms());
-    if (cut == 1 && reaped == 1) { _proc_deadline_kills = _proc_deadline_kills + 1; }
+    if (cut == 1 && reaped == 1) { _proc_deadline_kills = _proc_deadline_kills + 1; _proc_end_cut_group(pid); }
     return Ok(total);
 }
 
@@ -850,7 +866,7 @@ fn exec_capture_status(args, buf, buflen, status_out): i64 {
     # which is "unknown" (-1), never a guessed -2. A poll error (cut 2) is a failure to read
     # the child's output, reported as -1, never as the deadline. CHANGELOG [6.6.8]
     if (cut == 1) {
-        if (reaped == 1) { reaped = 0; _proc_deadline_kills = _proc_deadline_kills + 1; }
+        if (reaped == 1) { reaped = 0; _proc_deadline_kills = _proc_deadline_kills + 1; _proc_end_cut_group(pid); }
     }
     if (cut == 2) { if (reaped == 1) { reaped = 0 - 1; } }
     _proc_store_status(status_out, reaped, load32(&stbuf));
@@ -1003,7 +1019,7 @@ fn exec_capture_str(args, buf, buflen): i64 {
     sys_close(rfd);
     var stbuf[4];
     var reaped = _proc_wait_deadline(pid, &stbuf, proc_timeout_ms());
-    if (cut == 1 && reaped == 1) { _proc_deadline_kills = _proc_deadline_kills + 1; }
+    if (cut == 1 && reaped == 1) { _proc_deadline_kills = _proc_deadline_kills + 1; _proc_end_cut_group(pid); }
     return total;
 }
 
