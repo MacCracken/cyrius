@@ -36,6 +36,17 @@ fn _scalar_name_width(name64): i64 {
     return 0;
 }
 
+# 6.6.10 — the same ladder for a FIELD type, which must match the WHOLE name. The masks above
+# test only the leading bytes, so `v: i16v8` registered a 2-byte i16 field and `v: i64v2` an
+# 8-byte one, silently; a vector (or `i8foo`) now falls through to the named-type path, where
+# it is refused by name. The other five callers keep the prefix test. CHANGELOG [6.6.10]
+fn _field_scalar_width(name64): i64 {
+    var w = _scalar_name_width(name64);
+    if (w == 1) { if ((name64 >> 16) & 0xFF != 0) { return 0; } }
+    if (w > 1) { if ((name64 >> 24) & 0xFF != 0) { return 0; } }
+    return w;
+}
+
 # Get/set struct_id for global variable at index vi.
 # v6.2.18+ math mini-arc: scalar f64/f32 reuse the var-type slot with high
 # sentinel codes (distinct from struct ids, which are small positives). A var
@@ -703,21 +714,113 @@ fn _skip_refused_body(S): i64 {
     return 0;
 }
 
-# ⛔ 6.6.10 — `f64` / `f32` were never in the field ladder, so an `x: f64` field fell to the
-# named-type arm, FINDSTRUCT answered 0 — the i64 encoding — and the float type was lost: every
-# operator on `p.x` then took its integer arm. The named arm now records the float kind (the
-# field stays 8 bytes; see SFFK). Shared by struct and union. CHANGELOG [6.6.10]
-fn _field_float_kind(S, tnoff): i64 {
+# ⛔ 6.6.10 — A FIELD TYPE THAT NAMES NOTHING WAS SILENTLY AN 8-BYTE i64. The ladder's last
+# arm was `ADDFIELDTYPED(.., FINDSTRUCT(name))`, and FINDSTRUCT answers 0 — the i64 encoding —
+# for a name it does not know. So `a: Nonexist` compiled (sizeof 16 for `{ a: Nonexist; x; }`),
+# a struct declared BELOW its use gave its user a different layout than the same text declared
+# above (sizeof(A) = 16 vs 24 for `struct A { b: B; x; }`, and `a.b` loaded 8 bytes with no
+# diagnostic), and `f64` / `f32` — never in the ladder — lost their float type.
+# A field type is now one of: a struct or union declared ABOVE it; i8/i16/i32/i64 (their
+# widths); u8/u16/u32/u64, cstring, Result/Option/Tagged or an enum (8 bytes); f64 / f32
+# (8 bytes, typed — see SFFK); Vec<T> or a bare Vec; or a type parameter of the struct being
+# declared. An enum may be declared on either side (its values are i64, so its position
+# changes nothing).
+# ⚠ u8/u16/u32 and f32 fields occupy 8 BYTES — the layout (and ABI) is unchanged, and the guide
+# says so. Anything else is refused by name. CHANGELOG [6.6.10]
+var _sdef_tp_ti = 0;   # the token after the declaring struct's name (its `<` when generic)
+
+# The float kind of an accepted non-struct field type name (0 = plain 8 bytes, 1 = f64, 2 = f32),
+# or -1 when the name is not a field type at all.
+fn _field_name_kind(S, tnoff): i64 {
     var nm = L64(S + 0xEC00000 + tnoff);
     if (nm & 0xFFFFFFFF == 0x343666) { return 1; }     # f64
     if (nm & 0xFFFFFFFF == 0x323366) { return 2; }     # f32
+    if (nm & 0xFFFFFF == 0x3875) { return 0; }         # u8
+    if (nm & 0xFFFFFFFF == 0x363175) { return 0; }     # u16
+    if (nm & 0xFFFFFFFF == 0x323375) { return 0; }     # u32
+    if (nm & 0xFFFFFFFF == 0x343675) { return 0; }     # u64
+    var c = _classify_return_type(S, tnoff);
+    if (c <= 0 - 16) { if (c >= 0 - 19) { return 0; } }   # Result / Option / Tagged / cstring
+    if (_is_enum_name(S, tnoff) == 1) { return 0; }
+    if (_is_own_tparam(S, tnoff) == 1) { return 0; }
+    if (_declared_later(S, tnoff, 60, 60) == 1) { return 0; }   # an enum below: still i64
+    return 0 - 1;
+}
+
+# Is `noff` one of the type parameters of the struct being declared (`struct Box<T> { v: T; }`)?
+# Read from the tokens, not the monomorph binding: the default build never captures them.
+fn _is_own_tparam(S, noff): i64 {
+    var k = _sdef_tp_ti;
+    if (k <= 0) { return 0; }
+    if (TOKTYP(S, k) != 19) { return 0; }
+    k = k + 1;
+    while (k < GTCNT(S)) {
+        var t = TOKTYP(S, k);
+        if (t == 20) { return 0; }
+        if (t == 13) { return 0; }
+        if (t == 2) { if (STREQ(S, TOKVAL(S, k), noff) == 1) { return 1; } }
+        k = k + 1;
+    }
     return 0;
 }
 
+# Is a declaration of this name — keyword token `ta` or `tb` (struct 40, union 101, enum 60)
+# followed by the name — LATER in the token stream?
+fn _declared_later(S, noff, ta, tb): i64 {
+    var k = GTI(S);
+    var n = GTCNT(S);
+    while (k + 1 < n) {
+        var t = TOKTYP(S, k);
+        if (t == ta || t == tb) {
+            if (TOKTYP(S, k + 1) == 2) { if (STREQ(S, TOKVAL(S, k + 1), noff) == 1) { return 1; } }
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+
+# The refusal. The cursor is already past the type name, so the declaration parses on: the
+# panic latch THIS error set is cleared again, and every bad field of every struct is reported
+# (not only the first of the file). An error that already held the latch is left alone.
+fn _refuse_field_type(S, tnoff, fnoff, snoff): i64 {
+    if (_panic == 1) { return 0; }
+    if (_classify_return_type(S, tnoff) <= 0 - 2048) {
+        ERR_IDENT(S, "vector type ", tnoff, " cannot be a struct field type; field ", fnoff);
+    } elif (_declared_later(S, tnoff, 40, 101) == 1) {
+        ERR_IDENT(S, "struct field type ", tnoff, " is declared after its use; declare it before ", snoff);
+    } else {
+        ERR_IDENT(S, "unknown type ", tnoff, " for struct field ", fnoff);
+        PRSTR("  note: a field type is a struct or union declared above it, i8/i16/i32/i64, u8/u16/u32/u64, f32, f64, cstring, an enum, or Vec / Vec<T> (missing include?)\n");
+    }
+    _panic = 0;
+    return 0;
+}
+
+# The ladder's named-type arm, shared by struct and union: a struct/union declared above, or
+# an accepted scalar name (float kind recorded), or a refusal naming the type.
 fn _add_named_field(S, si, fnoff, tnoff): i64 {
     var fsid = FINDSTRUCT(S, tnoff);
     if (fsid > 0) { ADDFIELDTYPED(S, si, fnoff, fsid); return 0; }
-    ADDFIELDFK(S, si, fnoff, _field_float_kind(S, tnoff));
+    var k = _field_name_kind(S, tnoff);
+    if (k < 0) {
+        _refuse_field_type(S, tnoff, fnoff, L64(S + 0x1A6018 + si * 8));
+        k = 0;
+    }
+    ADDFIELDFK(S, si, fnoff, k);
+    return 0;
+}
+
+# A `Vec<T>` element type in the same vocabulary: its field-type encoding, refusing a name
+# that is none of them.
+fn _vec_elem_code(S, si, fnoff, etoff): i64 {
+    var ew = _field_scalar_width(L64(S + 0xEC00000 + etoff));
+    if (ew > 0) {
+        if (ew < 8) { return 0 - ew; }
+        return 0;
+    }
+    var es = FINDSTRUCT(S, etoff);
+    if (es > 0) { return es; }
+    if (_field_name_kind(S, etoff) < 0) { _refuse_field_type(S, etoff, fnoff, L64(S + 0x1A6018 + si * 8)); }
     return 0;
 }
 
@@ -737,6 +840,8 @@ fn PARSE_STRUCT_DEF(S): i64 {
     var sid = REGSTRUCT(S, noff);
     if (sid == 0) { return _skip_refused_body(S); }   # 6.6.10: table full — never index -1
     var si = sid - 1;
+    var _sv_tp_ti = _sdef_tp_ti;
+    _sdef_tp_ti = _sname_ti + 1;   # 6.6.10: its `<T>`, for _is_own_tparam
     if (_stp != 0) { SSTP(S, si, _stp); SSDS(S, si, _sdefstart + 1); }   # record for instantiation
     if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
     STI(S, GTI(S) + 1);  # consume {
@@ -774,7 +879,7 @@ fn PARSE_STRUCT_DEF(S): i64 {
                 } else {
                     # Check scalar types first
                     var ftname = L64(S + 0xEC00000 + tnoff);
-                    var fscalar = _scalar_name_width(ftname);
+                    var fscalar = _field_scalar_width(ftname);
                     STI(S, GTI(S) + 1);
                     # v6.4.x Pin 2 — Vec<T> array-typed field. `Vec` (0x636556)
                     # followed by `<` (token 19) is a typed handle field: an
@@ -785,21 +890,14 @@ fn PARSE_STRUCT_DEF(S): i64 {
                             STI(S, GTI(S) + 1);   # consume <
                             if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
                             var etoff = PEEKV(S);
-                            var ename = L64(S + 0xEC00000 + etoff);
-                            var ew = _scalar_name_width(ename);
                             STI(S, GTI(S) + 1);   # consume element type name
-                            var elemc = 0;
-                            if (ew > 0) {
-                                if (ew < 8) { elemc = 0 - ew; }
-                            } else {
-                                elemc = FINDSTRUCT(S, etoff);
-                            }
+                            var elemc = _vec_elem_code(S, si, fnoff, etoff);   # 6.6.10: refuses an unknown name
                             if (PEEKT(S) != 20) { ERR_EXPECT(S, 20); }
                             STI(S, GTI(S) + 1);   # consume >
                             var _vsent = MKVEC(S, elemc);
                             ADDFIELDTYPED(S, si, fnoff, _vsent);
                         } else {
-                            var _bsid = FINDSTRUCT(S, tnoff);
+                            var _bsid = FINDSTRUCT(S, tnoff);   # a bare `Vec`: an untyped 8-byte handle
                             ADDFIELDTYPED(S, si, fnoff, _bsid);
                         }
                     } elif (fscalar > 0) {
@@ -807,7 +905,7 @@ fn PARSE_STRUCT_DEF(S): i64 {
                         if (fscalar < 8) { ADDFIELDTYPED(S, si, fnoff, 0 - fscalar); }
                         else { ADDFIELD(S, si, fnoff); }
                     } else {
-                        _add_named_field(S, si, fnoff, tnoff);   # 6.6.10: records f64 / f32
+                        _add_named_field(S, si, fnoff, tnoff);   # 6.6.10: refuses an unknown name
                     }
                 }
             } else {
@@ -819,6 +917,7 @@ fn PARSE_STRUCT_DEF(S): i64 {
     # v6.5.19: verify the brace — the loop can now exit on EOF too. See PARSE_ENUM_DEF.
     if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
     STI(S, GTI(S) + 1);  # consume }
+    _sdef_tp_ti = _sv_tp_ti;
     _chk_struct_redef(S, _sprev, sid, _sname_ti);
     return 0;
 }
@@ -835,6 +934,8 @@ fn PARSE_UNION_DEF(S): i64 {
     var sid = REGSTRUCT(S, noff);
     if (sid == 0) { return _skip_refused_body(S); }   # 6.6.10: table full — never index -1
     var si = sid - 1;
+    var _sv_tp_ti = _sdef_tp_ti;
+    _sdef_tp_ti = _uname_ti + 1;   # 6.6.10: its `<T>`, for _is_own_tparam
     # Set union flag (high bit of fcount)
     S64(S + 0x1A8018 + si * 8, 1 << 63);
     if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
@@ -853,7 +954,7 @@ fn PARSE_UNION_DEF(S): i64 {
                 if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
                 var tnoff = PEEKV(S);
                 var ftname = L64(S + 0xEC00000 + tnoff);
-                var fscalar = _scalar_name_width(ftname);
+                var fscalar = _field_scalar_width(ftname);
                 STI(S, GTI(S) + 1);
                 # v6.4.x Pin 2 — Vec<T> array-typed field (PARSE_UNION_DEF
                 # parallel copy of the PARSE_STRUCT_DEF branch).
@@ -862,28 +963,21 @@ fn PARSE_UNION_DEF(S): i64 {
                         STI(S, GTI(S) + 1);   # consume <
                         if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
                         var etoff = PEEKV(S);
-                        var ename = L64(S + 0xEC00000 + etoff);
-                        var ew = _scalar_name_width(ename);
                         STI(S, GTI(S) + 1);   # consume element type name
-                        var elemc = 0;
-                        if (ew > 0) {
-                            if (ew < 8) { elemc = 0 - ew; }
-                        } else {
-                            elemc = FINDSTRUCT(S, etoff);
-                        }
+                        var elemc = _vec_elem_code(S, si, fnoff, etoff);   # 6.6.10: refuses an unknown name
                         if (PEEKT(S) != 20) { ERR_EXPECT(S, 20); }
                         STI(S, GTI(S) + 1);   # consume >
                         var _vsent = MKVEC(S, elemc);
                         ADDFIELDTYPED(S, si, fnoff, _vsent);
                     } else {
-                        var _bsid = FINDSTRUCT(S, tnoff);
+                        var _bsid = FINDSTRUCT(S, tnoff);   # a bare `Vec`: an untyped 8-byte handle
                         ADDFIELDTYPED(S, si, fnoff, _bsid);
                     }
                 } elif (fscalar > 0) {
                     if (fscalar < 8) { ADDFIELDTYPED(S, si, fnoff, 0 - fscalar); }
                     else { ADDFIELD(S, si, fnoff); }
                 } else {
-                    _add_named_field(S, si, fnoff, tnoff);   # 6.6.10: records f64 / f32
+                    _add_named_field(S, si, fnoff, tnoff);   # 6.6.10: refuses an unknown name
                 }
             } else {
                 ADDFIELD(S, si, fnoff);
@@ -894,6 +988,7 @@ fn PARSE_UNION_DEF(S): i64 {
     # v6.5.19: verify the brace — the loop can now exit on EOF too. See PARSE_ENUM_DEF.
     if (PEEKT(S) != 14) { ERR_EXPECT(S, 14); }
     STI(S, GTI(S) + 1);
+    _sdef_tp_ti = _sv_tp_ti;
     _chk_struct_redef(S, _uprev, sid, _uname_ti);
     return 0;
 }
