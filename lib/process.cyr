@@ -429,6 +429,7 @@ fn _proc_tree_end(n): i64 {
 var _proc_sr_pre = 0;       # i64[_PROC_TREE_CAP]: our children when the window opened
 var _proc_sr_npre = 0;
 var _proc_sr_set = 0;       # 1 when begin set the bit (it was clear), so end clears it again
+var _proc_sr_open = 0;      # 1 between a SUCCESSFUL begin and its end — end does nothing otherwise
 
 # Open the adoption window. Returns 0, or -1 when it could not (no memory, or prctl refused) —
 # the caller then runs without one, exactly as before 6.6.10.
@@ -452,6 +453,7 @@ fn _proc_subreap_begin(): i64 {
     var i = 0;
     while (i < n) { store64(_proc_sr_pre + i * 8, load64(_proc_tree + i * 8)); i = i + 1; }
     _proc_sr_npre = n;
+    _proc_sr_open = 1;
     #endif
     return 0;
 }
@@ -472,7 +474,8 @@ fn _proc_sr_had(p): i64 {
 fn _proc_subreap_end(): i64 {
     var found = 0;
     #ifdef CYRIUS_TARGET_LINUX
-    if (_proc_sr_pre == 0) { return 0; }
+    if (_proc_sr_open == 0) { return 0; }         # begin failed (or never ran): nothing adopted
+    _proc_sr_open = 0;
     var round = 0;
     while (round < 4) {
         var n = _proc_tree_add(sys_getpid(), 0, 0);
