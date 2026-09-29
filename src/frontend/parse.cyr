@@ -2550,25 +2550,25 @@ fn _PARSE_STMT_IMPL(S): i64 {
         # independent failing #assert. CHANGELOG [6.6.10]
         if (as_p0 == 0) { if (_panic == 1) { lhs = 1; } }
         if (lhs == 0) { if (GTI(S) > _assert_rep_ti) {
-            _assert_rep_ti = GTI(S);
-            syscall(SYS_WRITE, 2, "error:", 6);
-            _err_head(S);
-            syscall(SYS_WRITE, 2, ": #assert failed", 16);
-            if (PEEKT(S) == 30) {
-                # String token value is (offset << 32) | length
-                var sv = PEEKV(S);
-                var soff = sv >> 32;
-                var slen = sv & 0xFFFFFFFF;
-                syscall(SYS_WRITE, 2, ": ", 2);
-                syscall(SYS_WRITE, 2, S + 0x21A000 + soff, slen);
-            }
-            syscall(SYS_WRITE, 2, "\n", 1);
-            # 6.6.11: record, don't exit. A top-level #assert runs in the declaration phase,
-            # BEFORE PARSE_PROG parses the top-level `var` initialisers, so exiting here lost
-            # an earlier syntax error (`var x = ;` then a failing assert printed only the
-            # assert). Every fork's EMITELF refuses on _had_error and main exits with it.
-            _had_error = 1;
-        } }
+                _assert_rep_ti = GTI(S);
+                syscall(SYS_WRITE, 2, "error:", 6);
+                _err_head(S);
+                syscall(SYS_WRITE, 2, ": #assert failed", 16);
+                if (PEEKT(S) == 30) {
+                    # String token value is (offset << 32) | length
+                    var sv = PEEKV(S);
+                    var soff = sv >> 32;
+                    var slen = sv & 0xFFFFFFFF;
+                    syscall(SYS_WRITE, 2, ": ", 2);
+                    syscall(SYS_WRITE, 2, S + 0x21A000 + soff, slen);
+                }
+                syscall(SYS_WRITE, 2, "\n", 1);
+                # 6.6.11: record, don't exit. A top-level #assert runs in the declaration phase,
+                # BEFORE PARSE_PROG parses the top-level `var` initialisers, so exiting here lost
+                # an earlier syntax error (`var x = ;` then a failing assert printed only the
+                # assert). Every fork's EMITELF refuses on _had_error and main exits with it.
+                _had_error = 1;
+            } }
         _assert_tail(S);
         return 0;
     }
