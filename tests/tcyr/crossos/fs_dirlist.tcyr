@@ -9,6 +9,12 @@
 # correct fs layer — a verdict about the cwd, not the code. It now creates a directory and a
 # file of its own (per-pid names, in the cwd), checks those, and removes them.
 # CHANGELOG [6.6.8]
+#
+# 6.6.11 — a Str is answered for ITS OWN bytes. `str_sub` shares its parent's bytes and leaves no
+# NUL at its end, and every arm (the Windows widen, the POSIX stat/open) read the path to a NUL:
+# `is_dir` of a 3-byte prefix of "dirA" said 1 and `dir_list_checked` listed dirA. The rows below
+# run on every target, unguarded, because the POSIX arms had the same wrong answer. The fixture
+# directory ends in "_dir" so its one-byte-shorter prefix names nothing. CHANGELOG [6.6.11]
 include "lib/assert.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -30,8 +36,8 @@ fn _name(stem, tail): i64 {
 
 fn main(): i64 {
     alloc_init();
-    var dir = _name("cyrius_fsdl_", "");
-    var file = _name("cyrius_fsdl_", "/member.txt");
+    var dir = _name("cyrius_fsdl_", "_dir");
+    var file = _name("cyrius_fsdl_", "_dir/member.txt");
     var leaf = "member.txt";
     assert_eq(xmkdir(dir, 493), 0, "premise: the fixture directory was created");
     assert_eq(file_write_all(file, "x\n", 2), 2, "premise: a file was created inside it");
@@ -56,6 +62,24 @@ fn main(): i64 {
     assert_eq(found, 1, "dir_list found the file created in it, by name");
     var c = dir_list(str_from("."));
     assert_eq(c != 0 && vec_len(c) > 0, 1, "dir_list found at least one entry in the CWD");
+
+    test_group("a Str is answered for its own bytes, not the bytes after it");
+    var full = str_from(dir);
+    var pre = str_sub(full, 0, str_len(full) - 1);     # "<...>_di" — shares full's bytes, no NUL
+    assert_eq(is_dir(pre), 0, "is_dir of a str_sub prefix naming a MISSING path is 0");
+    var pv = vec_new();
+    assert_lt(dir_list_checked(pre, pv), 0, "dir_list_checked of that prefix fails");
+    assert_eq(vec_len(pv), 0, "and lists nothing (not the fixture's member)");
+    var nb[256];
+    var dn = strlen(dir);
+    memcpy(&nb, dir, dn);
+    store8(&nb + dn, 0);                               # "<fixture>\0zz" — to its NUL, the fixture
+    store8(&nb + dn + 1, 122);
+    store8(&nb + dn + 2, 122);
+    var withnul = str_new(&nb, dn + 3);
+    assert_eq(is_dir(withnul), 0, "is_dir refuses a path with an embedded NUL");
+    var nv = vec_new();
+    assert_lt(dir_list_checked(withnul, nv), 0, "dir_list_checked refuses it too");
 
     xunlink(file);
     xrmdir(dir);
