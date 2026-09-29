@@ -173,8 +173,14 @@ done
 # 6.5.19 sibling gate (build_temp_no_leak.sh) had to be written for: a cleanup that
 # only runs on success is not a cleanup.
 echo "axis 3 — error paths leave no temp directory:"
-( cd "$T/proj" && run_cli "$T/p3a" build src/bad.cyr build/out2.bin > "$T/o3a" 2>&1 ) || true
-check "a COMPILE ERROR is reported" "yes" "$([ -s "$T/o3a" ] && echo yes || echo no)"
+# ⚠ 6.6.10: this row used to check only that the output was non-empty — and `@@@` was
+# silently dropped by the lexer (CVE-52), so `build src/bad.cyr` printed `OK (4448 bytes)`
+# at rc 0 and this "COMPILE ERROR" row passed on a SUCCESSFUL build. It now requires the
+# build to FAIL, with the compiler's own diagnostic. CHANGELOG [6.6.10]
+rc3a=0
+( cd "$T/proj" && run_cli "$T/p3a" build src/bad.cyr build/out2.bin > "$T/o3a" 2>&1 ) || rc3a=$?
+check "a COMPILE ERROR fails the build (rc != 0)" "yes" "$([ "$rc3a" != 0 ] && echo yes || echo no)"
+check "…and is reported by the compiler" "yes" "$(grep -q 'unexpected character (0x40)' "$T/o3a" && echo yes || echo no)"
 check "…and leaves 0 temp dirs" 0 "$(dirs_for "$T/p3a")"
 sweep_for "$T/p3a"
 ( cd "$T/proj" && run_cli "$T/p3b" run src/missing_source.cyr > "$T/o3b" 2>&1 ) || true

@@ -2,18 +2,18 @@
 
 **Scope:** the untrusted-source-input surface. Previous full audit:
 `docs/audit/2026-07-27-security-audit.md` (CVE-32…CVE-36) at cycc 6.4.82.
-**Next free identifier after this document: CVE-52.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
+**Next free identifier after this document: CVE-53.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
 document are **withdrawn** but still consume their ids.) CVE-43 was consumed at 6.6.5,
 **CVE-44 and CVE-45 at 6.6.6** — the release installer's fixed `/tmp` staging, and a forged `#@file` from an included file —
 **CVE-46, CVE-47 and CVE-48 at 6.6.7** (a `secret var` inside a closure was never zeroised; a `secret var` in a
 fn whose `return f(..)` was compiled as a tail call was never zeroised; on agnos a server bound to 127.0.0.1
 listened on the network), and **CVE-49 and CVE-50 at 6.6.9** (`cyrius self` staged and executed compilers at
 predictable shared `/tmp` names; `lib/http.cyr` wrote a long URL past its 2048-byte request buffer), and
-**CVE-51 at 6.6.10** (on Intel-Mac, reading the clock wrote mach time through a stale `rdx`); all nine are
-appended below.
+**CVE-51 and CVE-52 at 6.6.10** (on Intel-Mac, reading the clock wrote mach time through a stale `rdx`; the
+lexer silently dropped any `@` that did not spell `@unsafe`); all ten are appended below.
 ⚠ **This line read "next free: CVE-42" while CLAUDE.md read "the next CVE number is 43" and this document ran 39-41.**
 Two authorities, two answers, and nothing reconciled them. CLAUDE.md is the one every closeout reads, so **42 is
-retired unused** and CVE-43 is the entry appended below. Anything below 52 now collides.
+retired unused** and CVE-43 is the entry appended below. Anything below 53 now collides.
 
 Run as part of the band K closeout, as nine parallel audit dimensions over the v6.5.x minor with
 an adversarial verification pass over the highest-severity findings. Everything recorded here was
@@ -843,3 +843,45 @@ stored over it). `tests/gates/platform/macho_clock_buffer_contract.sh` fails on 
 if `EMACHO_CLOCK_X86` stops zeroing rdx before its syscall (mutation-proven), and
 `darwin_syscall_literals_routed.sh`'s controls pin the compile-time warnings for 35 at argc 2 and
 a pipe with no fds pointer on both Macs.
+
+## CVE-52 — the lexer silently dropped any `@` that did not spell `@unsafe` (a CVE-31 residual)
+
+*Appended 2026-09-28 (cyrius 6.6.10, bite 9), found by the 6.6.10 group-H triage. Not part of the
+2026-09-03 sweep: recorded here because this is the live ledger. 6.6.10 bite 14 spends CVE-53.*
+
+| | |
+|---|---|
+| **Severity** | **Medium (P2)** — a narrow residual of P1 CVE-31 (`docs/audit/2026-06-10-deep-dive-review.md`): source bytes that change a program's meaning with no diagnostic, rc 0. Not a memory-safety defect in the compiler; the hazard is review-evasion — code that reads as one expression and compiles as another |
+| **Affected** | every target: `src/frontend/lex.cyr`'s `@` arm, from v5.6.3 (when `@unsafe` landed) through cyrius 6.6.9 |
+| **Fixed** | 6.6.10 |
+
+**Vector.** The v5.6.3 `@unsafe` arm matched the seven bytes `@unsafe` and, for any other `@`,
+ran `p = p + 1` — the byte vanished before tokenisation. CVE-31 (v6.1.35) made every OTHER
+unmatched ASCII byte, and every non-ASCII byte, a hard error at the bottom of the lexer's
+dispatch, but the `@` arm returned before control reached it.
+
+**Impact.** Measured on 6.6.9: `return @@@;` and `return @;` compiled at rc 0 and returned 0;
+`var y = 5 @- 3` was 2; `var z = @y` was 7; `var b = a @* 2` was 6; `@@unsafe {}` was accepted.
+`$` in the same position was refused (`error:2: unexpected character (0x24)`). Because cycc
+exited 0, everything that trusts its rc inherited the gap: `cyrius lint` printed `0 warnings`
+over `return @@@;`, and two gates had gone vacuous on it —
+`tests/gates/toolchain/cli_temp_dir_no_leak.sh` axis 3 ("a COMPILE ERROR is reported") passed
+on a build that printed `OK (4448 bytes)`, and `tests/gates/diagnostics/dx_multi_error.sh`
+case 2's "garbage must terminate" fixture only reached the parser because its `@@@` was eaten.
+An ecosystem scan (24,717 `.cyr`/`.tcyr`/`.bcyr`/`.fcyr`/`.scyr`/`.smcyr` files under `~/Repos`,
+strings and comments stripped) found **0** stray `@`, so nothing valid depended on the skip.
+
+**Fix.** One shared reject, `_lex_stray(S, p, c)`, now serves all three routes — the `@` arm,
+the non-ASCII arm and the CVE-31 stray-ASCII arm — so `@` cannot be the one byte that skips it
+again. It prints `error:<file>:<line>:<col>: unexpected character (0x40)` and exits 1. The same
+release moves every lexer error site onto one location head (`_lex_err_head`): they printed the
+raw EXPANDED line with no file and no column. `@unsafe` is unchanged. Fixpoint and
+`seed → cybs → cycc` hold.
+
+**Verified.** `tests/gates/frontend/lexer_errors_name_file_line.sh` axis 1 refuses `@@@`, `@`,
+`@-`, `@y`, `@*`, `@@unsafe` and a trailing `@` by file:line:col (all compile at rc 0 on 6.6.9);
+axis 2 keeps `@unsafe` compiling and running. `lint_reports_unparseable.sh` axis 4 gains two
+stray-`@` shapes (6.6.9: `0 warnings`, rc 0). The two vacuous gates are repaired:
+`cli_temp_dir_no_leak.sh` axis 3 now requires rc != 0 and the compiler's own diagnostic (RED on
+6.6.9), and `dx_multi_error.sh` case 2 drops `@@@` and proves its diagnostic comes from the
+parser, not the lexer.

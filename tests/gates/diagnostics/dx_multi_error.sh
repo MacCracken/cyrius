@@ -25,12 +25,18 @@ grep -q ':3:5: ' "$E" || { echo "FAIL: first error not at :3:5::"; cat "$E"; exi
 grep -q ':7:5: ' "$E" || { echo "FAIL: second error not at :7:5::"; cat "$E"; exit 1; }
 
 # 2) garbage tokens past EOF → must terminate (not SIGSEGV, not hang), no output.
-printf 'fn main(): i64 { var x = @@@ ][ }} return' > "$T"
-rc=0; timeout 10 "$CC" < "$T" > "$O" 2>/dev/null || rc=$?
+#    ⚠ 6.6.10: the fixture was `var x = @@@ ][ }} return`, and it only exercised the
+#    PARSER because the lexer silently dropped a stray `@` (CVE-52). With `@` refused at
+#    the lexer, `@@@` exits before one token reaches the parser and the case would pass
+#    without testing recovery at all — so the `@@@` is gone, and the last row proves the
+#    diagnostic comes from the parser, not the lexer. CHANGELOG [6.6.10]
+printf 'fn main(): i64 { var x = ][ }} return' > "$T"
+rc=0; timeout 10 "$CC" < "$T" > "$O" 2>"$E" || rc=$?
 [ "$rc" -ne 124 ] || { echo "FAIL: garbage input HUNG (timeout)"; exit 1; }
 [ "$rc" -ne 139 ] || { echo "FAIL: garbage input SIGSEGV'd (139)"; exit 1; }
 [ "$rc" -ne 0 ] || { echo "FAIL: garbage input compiled clean (exit 0)"; exit 1; }
 [ ! -s "$O" ] || { echo "FAIL: garbage input emitted output"; exit 1; }
+grep -q 'unexpected character' "$E" && { echo "FAIL: garbage input stopped in the LEXER — case 2 no longer reaches parser recovery:"; cat "$E"; exit 1; }
 
 # 2b) v6.4.78 — TRUNCATED input must not spew. `TOKTYP` is an unchecked L64, so past
 #     GTCNT it returned zeroed heap = token type 0, never 12 (EOF). Every `t == 12`
