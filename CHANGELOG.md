@@ -117,6 +117,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   starts at 0, so two processes falling back in the same second drew the same database id and WAL
   salts; it is now the same ns-resolution mix as `lib/hashseed.cyr`, pinned by a two-child fork row
   in patra's suite (1,305 assertions). The refused `_pt_alloc(8)` takes the fallback explicitly.
+- ⛔ **bayan 1.5.8 must be TAGGED by the user before cyrius 6.6.10 is tagged** — `lib/bayan.cyr` is
+  folded byte-identical from bayan commit `07c96a3` (`dist/bayan.cyr`; pin 6.6.9). (bite 14.) Its
+  FlateDecode loop said `callptr` "is a hard compile error on one backend" — cx, false since v6.5.13;
+  comment-only, plus bayan's previously unreleased issue-archive path-string moves (8 comment paths).
 
 ## [6.6.9] — 2026-09-28
 
