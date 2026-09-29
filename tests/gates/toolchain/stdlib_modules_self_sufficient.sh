@@ -83,7 +83,9 @@
 #   7. cx SCOPE (6.6.11): each CX_OUT_OF_SCOPE module is refused on cx with an error that NAMES
 #      it (not a bare "codebuf overflow" mid-emit), and lib/thread.cyr runs on cxvm through
 #      sync.cyr's cx arm: mutex_* work, thread_create / thread_create_detached fail with 0,
-#      THREADS_CONCURRENT is 0 and the channel ring works single-threaded.
+#      THREADS_CONCURRENT is 0 and the channel ring works single-threaded — and issues NO
+#      SYS_FUTEX: a harness copy of cxvm exits 140 on guest syscall 202 (a Darwin host SIGSYS-
+#      kills cxvm there; Linux answers EFAULT, which is why the plain run cannot see it).
 #
 # MUTATION LEDGER (6.6.6, each by editing a COPY or reverting in a scratch tree)
 #   a. lib/fmt.cyr's two includes removed      -> axes 1 and 4 FAIL ('strlen', 'vec_get')
@@ -128,6 +130,10 @@
 #      die at "codebuf overflow", naming nothing)
 #   x. programs/vidya.cyr's include block removed -> axis 6 FAIL (the 26 undefined fns; one
 #      include alone is not load-bearing — hashmap / vec / fs bring their own neighbours)
+#   y. each of lib/thread.cyr's five `#ifndef CYRIUS_TARGET_CX` futex guards removed ALONE ->
+#      axis 7 FAIL: chan_send's WAKE, _chan_wake and chan_recv's WAKE via the probe (140, not
+#      255); chan_send's WAIT and chan_recv's WAIT via the blocking probes (140, not timeout's
+#      124). All five removed on real hardware: ecb and ach cxvm exit 140 (the cross-OS fixture).
 # Real tree (with 6.6.9 bites 2, 5 and 12 merged) -> PASS.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -578,7 +584,7 @@ fn main(): i64 {
     if (thread_create_detached(&_t7_body, 9) == 0 && _t7_cell == 0 && _threads_active == 0) { s = s + 4; }
     if (THREADS_CONCURRENT == 0) { s = s + 8; }
     var ch = chan_new(2);
-    if (chan_try_send(ch, 5) == 0 && chan_try_send(ch, 6) == 0 && chan_try_send(ch, 7) == 0 - 2) { s = s + 16; }
+    if (chan_try_send(ch, 5) == 0 && chan_send(ch, 6) == 0 && chan_try_send(ch, 7) == 0 - 2) { s = s + 16; }
     if (chan_try_recv(ch) == 5 && chan_recv(ch) == 6) { s = s + 32; }
     chan_close(ch);
     if (chan_try_send(ch, 1) == 0 - 1 && chan_recv(ch) == 0) { s = s + 64; }
@@ -596,7 +602,40 @@ if [ -x "$D/cxvm" ]; then
         fail "axis 7: lib/thread.cyr does not compile for cx: $(grep -v '^note' "$D/w7/thr.err" | head -3 | tr '\n' ' ')"; x=1
     fi
 fi
-[ "$x" = 0 ] && echo "  ok: axis 7: cx refuses $CX_OUT_OF_SCOPE by name; lib/thread.cyr runs on cxvm (mutex no-op, thread_create fails honestly)"
+# No SYS_FUTEX from lib/thread.cyr on cx. cxvm passes an unknown guest syscall to the HOST
+# kernel; Linux answers the guest-offset futex with EFAULT (ignored, so the run above stays 255
+# either way) while a Darwin host kills cxvm with SIGSYS. This harness copy of cxvm (in $D only;
+# programs/cxvm.cyr is not changed) exits 140 on guest syscall 202 — Darwin's verdict, on Linux.
+# The real-hardware twin of this hold is the cx thread fixture in scripts/cross-os-selfhost.sh.
+NF_LINE='            else { result = syscall(sn, s2, s3, s4, s5, s6); }'
+if [ -x "$D/cxvm" ] && [ -s "$D/w7/thr.cyx" ]; then
+    if [ "$(grep -cxF "$NF_LINE" programs/cxvm.cyr)" != 1 ]; then
+        fail "axis 7: programs/cxvm.cyr's pass-through dispatch line moved — update NF_LINE so the no-futex hold still instruments it"; x=1
+    else
+        awk -v L="$NF_LINE" '$0 == L { print "            elif (sn == 202) { syscall(60, 140); }" } { print }' \
+            programs/cxvm.cyr > "$D/cxvm_nf.cyr"
+        if "$CC" < "$D/cxvm_nf.cyr" > "$D/cxvm_nf" 2> "$D/cxvm_nf.err" && chmod +x "$D/cxvm_nf"; then
+            "$D/cxvm_nf" < "$D/w7/thr.cyx" > /dev/null 2>&1; frc=$?
+            [ "$frc" = 255 ] || { fail "axis 7: lib/thread.cyr on cx issued SYS_FUTEX (instrumented cxvm exited $frc, expected 255; 140 = a futex, which SIGSYS-kills cxvm on a Darwin host)"; x=1; }
+            # The two WAIT sites: a blocking recv on an empty open channel and a blocking send
+            # on a full one. With one guest thread both must SPIN (timeout 124); reaching the
+            # futex exits 140 at once.
+            for bw in recv send; do
+                if [ "$bw" = recv ]; then bb='chan_recv(ch);'; else bb='chan_try_send(ch, 1); chan_send(ch, 2);'; fi
+                printf 'include "lib/thread.cyr";\nfn main(): i64 { alloc_init(); var ch = chan_new(1); %s return 0; }\nvar r = main();\nsyscall(60, r);\n' "$bb" > "$D/w7/blk_$bw.cyr"
+                if "$CXCC" < "$D/w7/blk_$bw.cyr" > "$D/w7/blk_$bw.cyx" 2> "$D/w7/blk_$bw.err"; then
+                    timeout 2 "$D/cxvm_nf" < "$D/w7/blk_$bw.cyx" > /dev/null 2>&1; brc=$?
+                    [ "$brc" = 124 ] || { fail "axis 7: a blocking chan_$bw on cx exited $brc under the no-futex cxvm, expected 124 (the single-thread spin; 140 = the FUTEX_WAIT was issued)"; x=1; }
+                else
+                    fail "axis 7: the blocking chan_$bw probe does not compile for cx"; x=1
+                fi
+            done
+        else
+            fail "axis 7: cannot build the no-futex instrumented cxvm"; x=1
+        fi
+    fi
+fi
+[ "$x" = 0 ] && echo "  ok: axis 7: cx refuses $CX_OUT_OF_SCOPE by name; lib/thread.cyr runs on cxvm (mutex no-op, thread_create fails honestly, no SYS_FUTEX)"
 
 [ "$FAIL" = 0 ] || exit 1
 echo "PASS: stdlib_modules_self_sufficient (8 axes)"

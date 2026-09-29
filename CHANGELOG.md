@@ -130,7 +130,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   as a cx arm (one guest thread, never a contender; listed in its BACKENDS header). thread.cyr on cx:
   `thread_create` / `thread_create_detached` return 0 before touching the spawn path (the heap lock is
   not armed), `THREADS_CONCURRENT` is 0, `gettid()` is 1, and no `SYS_FUTEX` is issued (the channel
-  ring works single-threaded). Other targets compile byte-identically (150 target/test pairs cmp'd).
+  ring works single-threaded). Other targets compile byte-identically: every direct includer of the
+  touched modules, on linux, aarch64, x86-macho, agnos, PE and Mach-O, cmp'd against the pre-bite tree
+  (only `programs/vidya.cyr`, J8, differs).
 - **cx: `lib/tls.cyr`, `lib/tls_native.cyr` and `lib/sigil.cyr` are refused BY NAME (B08, item J5b).**
   They compile to several MB of cx bytecode (cx runs ~3.2x x86; tls is ~1.6 MB as an x86 ELF) against
   cx's fixed 512 KiB code buffer and cxvm's 1 MB caps, and died mid-emit with a bare
@@ -159,12 +161,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   residual on every host target to the fold-ONLY names (defined in a fold bundle and in no first-party
   lib file), so a first-party gap cannot hide behind PENDING again; axis 4's cx leg leaves the named
   `CX_OUT_OF_SCOPE` list out (cx 69/108 here); axis 6 adds `programs/vidya.cyr`; new axis 7 asserts the
-  by-name cx refusal and runs `lib/thread.cyr` on cxvm (exit 255, one bit per behaviour). Mutation
-  ledger t-x in the header.
+  by-name cx refusal and runs `lib/thread.cyr` on cxvm (exit 255, one bit per behaviour). Axis 7 also
+  holds the five futex guards on Linux: a harness copy of cxvm (in the gate's temp dir; `programs/cxvm.cyr`
+  is unchanged) exits 140 on guest syscall 202 — Darwin's SIGSYS verdict — and runs the probe (the WAKE
+  sites, 255) plus a blocking `chan_recv` / `chan_send` (the WAIT sites, which must spin: `timeout` 124).
+  Each guard removed alone fails the gate. Mutation ledger t-y in the header.
+- `scripts/cross-os-selfhost.sh` (hand-off to lane H): the same thread probe as a portable `.cyx`,
+  run by each host's native cxvm, must exit 255 — ach's leg builds a cxvm for it (it had none). With
+  the guards removed, ecb and ach exit 140; pi and cass stay 255 (their hosts answer EFAULT / ENOSYS).
 - Verified (B08): the fixpoint and seed-derive (formality — no cycc-image file changed); on ecb, ach,
   pi and cass a natively built `cycc_cx` refuses tls / tls_native / sigil by name and compiles the
   thread probe, which the host's native cxvm runs to 255 (ecb and ach exited 140, SIGSYS, before the
-  futex guards).
+  futex guards — re-measured with a cxvm built from the tree by the leg's own compiler chain; a cxvm
+  built by an older installed cycc need not reproduce it on ecb).
 
 ## [6.6.10] — 2026-09-29
 
