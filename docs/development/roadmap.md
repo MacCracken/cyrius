@@ -157,6 +157,35 @@ parallel with the lanes it measures — it is an integration step, and it is now
 
 ### 6.6.11 — the 6.6.9 review finds I–K + the 6.6.10 finds that produce wrong results (by the user, 2026-09-29)
 
+**Plan (2026-09-29).** Every listed item premise-checked on the 6.6.11 tree (lean: only the listed items, no
+sweeps); 67 of 68 still open (L2 was fixed at 6.6.10). Fourteen bites in six lanes — F frontend (the only
+`build/cycc` committer), W backend + Windows/net/cx stdlib, T cbt CLI, H harness (and every gate
+registration), L async runtime, E sibling releases. Defaults taken for the design forks (N2 keeps
+`\<LF>` a literal newline; M3 narrow float typing; K5 per-target sidecar verify; S2 resolver rule; S3 dhvani
+drops its `../hisab` path); **J5b overridden to the smaller option** — `tls`/`tls_native`/`sigil` are out of
+cx scope and refused by name rather than growing cx to multi-MB images. ⛔ Tag ordering: libro 2.10.4
+before bote 3.3.14; sandhi 1.10.3 and ganita 1.2.9 before cyrius 6.6.11.
+
+| # | Bite | Lane | src | Size |
+|---|---|---|---|---|
+| B01 | Test graders that exit 0 on failure: fix the tcyr epilogues and make every reader require the assert summary | H | — | M |
+| B02 | Struct value copies and struct-result type checks (assign, declaration, method self, parameter copy) | F | ✔ | L |
+| B05 | Lexer line accounting and string escapes; directive, enum and intrinsic resolution; async constructor jmp | F | ✔ | M |
+| B04 | Float typing: compound assignment on globals and in the for-step, f32 operand checks, declared-float inference, re-judging reassignment | F | ✔ | M |
+| B03 | Declaration-zone struct globals and struct-table caps | F | ✔ | M |
+| B06 | PE path encoding: real UTF-8 to UTF-16, no silent truncation, long paths, a widen bounded by the Str's length | W | ✔ | L |
+| B07 | Networking on Windows (ws2_32 sockets + resolver) and HTTP request correctness | W | ✔ | L |
+| B08 | Stdlib self-sufficiency on every target: cx sync arm, multi-MB cx images, first-party includes for the PENDING modules, vidya.cyr | W | ✔ | L |
+| B09 | CLI child environment and the Windows pinned-version redirect | T | — | M |
+| B10 | CLI verdicts that lie: distlib sidecar (host-independent, owner-resolved, fails on non-convergence), soak messages, lint on refused files, coverage excludes main, thin-profile resolver rule | T | — | L |
+| B11 | Check harness: SKIP exit code, empty-run strictness, CI delegation, pipefail-safe gates, tool-path hygiene, stale descriptions, bench zero-batch trap, and every lane's registrations | H | — | L |
+| B12 | Async reactor and process-tree lifetime | L | — | L |
+| B13 | Consumer pin lockstep: kavach, sigil and hisab consumer patch releases | E | — | M |
+| B14 | Fold-source fixes re-vendored: sandhi CVE-19 TXID fail-closed, ganita f32 trig guard + stale headers | E | — | M |
+
+The group text below is the item reference each bite's spec was built from.
+
+
 The 6.6.9 review finds I–K and the sibling items (placed here 2026-09-28), plus the 6.6.10 finds that
 compile wrong code, crash, corrupt memory, or score a failure green. The 6.6.10 lanes filed 212 notes
 (implementer, reviewer and fixer each reported the same defects), which deduplicate to the 34 defects in
