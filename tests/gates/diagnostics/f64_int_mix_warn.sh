@@ -26,14 +26,17 @@
 #   axis 7  (6.6.10) kind 3: unary minus on an UNTYPED variable initialised from a float —
 #           a local, a copy of one, ±0, a negative literal, a float builtin, a global, a
 #           parenthesised one — warns once each; an integer, a typed f64, a parameter do not,
-#           and a closure's own declarations leave the enclosing fn's flags as they were.
+#           and a closure's own declarations leave the enclosing fn's flags as they were;
+#           a later fn's parameter that reuses a flagged slot 0 (neg2 after clos) does not warn.
 #   axis 8  (6.6.10) kind 4: an integer CONSTANT stored into an f64 / f32 slot (declaration,
 #           assignment, field store, struct literal, global) warns once each; 0, an IEEE bit
 #           pattern in hex (>= 2^52), a float literal and a runtime value do not.
 #   axis 9  CYRIUS_TYPE_CHECK=0 silences kinds 3 and 4.
 # Mutation-proven: with the four `_INT_F64_MIX` calls removed, axis 1 reads 0 of 4 and fails.
 # (6.6.10) with PARSE_INTRIN's `_FBR_MARK` call removed axis 6 fails; with the unary-minus
-# `_FLT_TYPE_WARN(S, 3)` removed, or _cl_restore_locals' flag copy removed, axis 7 fails; with `_IFS_CHECK` returning early axis 8 fails.
+# `_FLT_TYPE_WARN(S, 3)` removed, or _cl_restore_locals' flag copy removed, axis 7 fails; with SFLC's `_lfi_clear` call removed
+# axis 7 reads 9 (neg2's `-a` inherits clos()'s slot-0 flag) and fails; with `_IFS_CHECK`
+# returning early axis 8 fails.
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -176,6 +179,9 @@ fn clos(): i64 {
     var b = -c;
     return a + b + fncall1(f, 1);
 }
+# Compiled AFTER clos(), whose slot 0 (`c`) is flagged: the parameter handed slot 0 here
+# must not inherit that flag (SFLC clears it as it hands the slot out).
+fn neg2(a): i64 { return -a; }
 fn main(): i64 {
     var c = 1.5;
     var r1 = -c;
@@ -195,13 +201,13 @@ fn main(): i64 {
     var k2 = -GT;
     var k3 = -GI;
     var k4 = -q;
-    return r1 + r2 + r3 + r4 + r5 + r6 + r7 + k1 + k3 + neg(1) + clos();
+    return r1 + r2 + r3 + r4 + r5 + r6 + r7 + k1 + k3 + neg(1) + clos() + neg2(1);
 }
 var r = main();
 syscall(60, r & 255);
 EOF
 build "$W/a7.cyr"
-n=$(count "$K3"); [ "$n" = 8 ] || { bad "axis 7: kind-3 warning count $n, want 8 (-c -e -z -n -x -G -(c), and clos()'s -c across a closure; not -i -GT -GI -q, clos()'s -n or a parameter)"; sed -n 1,12p "$W/e"; }
+n=$(count "$K3"); [ "$n" = 8 ] || { bad "axis 7: kind-3 warning count $n, want 8 (-c -e -z -n -x -G -(c), and clos()'s -c across a closure; not -i -GT -GI -q, clos()'s -n or a parameter, including neg2's which reuses clos()'s flagged slot 0)"; sed -n 1,12p "$W/e"; }
 
 # --- axis 8 (6.6.10): kind 4, an integer constant stored into an f64 / f32 slot ---
 cat > "$W/a8.cyr" <<'EOF'
