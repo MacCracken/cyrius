@@ -5050,8 +5050,10 @@ fn _assert_step(S): i64 {
 # 6.6.9 — the "large static data" advisory, on every backend that writes an executable.
 # It used to live inline in x86 EMITELF_USER only, so the same `var buf[200000]` warned on
 # x86_64 ELF and was silent on PE, both Mach-O targets, aarch64 and cx. `dvb`/`dcn` are the
-# bytes/count of statics inside unreachable fns; only the x86 FIXUP computes them (its DCE
-# pass), the other backends pass 0 and skip the hint. CHANGELOG [6.6.9]
+# bytes of statics inside unreachable fns and how many such fns HOLD them (GFVB > 0), computed
+# by _dead_static_stash (src/backend/common/runtime.cyr) from the x86 AND aarch64 liveness
+# passes since 6.6.10; cx has no liveness pass and passes 0, so it skips the hint.
+# CHANGELOG [6.6.9] [6.6.10]
 fn _warn_large_static(totvar, dvb, dcn): i64 {
     if (totvar <= 131072) { return 0; }
     syscall(SYS_WRITE, 2, "warning: large static data (", 28);

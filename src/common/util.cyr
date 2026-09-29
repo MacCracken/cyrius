@@ -2011,9 +2011,9 @@ var _pp_incdir_len = 0;
 # v6.5.21 — `#@pkgver <version>`: the package version cbt resolves from
 # `[package].version`, surfaced to source as `CYRIUS_PKG_VERSION`. Same in-band
 # shape as `#@incdir` and for the same reason (common/util.cyr's note above): the
-# source text is the ONE channel every target reads identically — `_read_env` is
-# dead on the PE fork and stubbed on cx, and the macOS forks do not honour the
-# CLI-flag scan.
+# source text is the ONE channel every target reads identically — `_read_env` was
+# dead on the PE fork (until 6.6.6) and stubbed on cx (until 6.6.10), and the macOS forks
+# do not honour the CLI-flag scan.
 var _pp_pkgver[128];
 var _pp_pkgver_len = 0;
 # v6.5.34 — where PP_EMIT_PKGVER put the declaration in the expanded buffer, and how long
@@ -2546,9 +2546,9 @@ fn _HEAP_INIT_SCRATCH(S): i64 {
 #
 # v6.6.6: MOVED here from src/backend/common/runtime.cyr, unchanged. util.cyr is
 # the ONE module every fork includes; runtime.cyr is not (main_cx.cyr keeps its
-# own RECFIX + _read_env stub), so parking this there put macOS argv out of reach
-# of the cx driver. runtime.cyr's `_read_env` is included after util.cyr in every
-# fork that has both, so its calls still resolve.
+# own RECFIX), so parking this there put macOS argv out of reach of the cx driver.
+# `_read_env` (src/backend/common/env.cyr since 6.6.10, included from runtime.cyr AND
+# main_cx.cyr) is included after util.cyr in every fork, so its calls resolve.
 #
 # arm64: the prologue parks the base in x28 (callee-saved, untouched by the
 # aarch64 backend). Same inline-asm pattern as lib/args_macos.cyr's
