@@ -2554,6 +2554,12 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                         # called with 2 user args, so the structural match
                         # is unambiguous (same logic as the SYS_OPEN skip).
                         if (sc_num == 113) { if (got == 2) { skip_warn = 1; } }
+                        # 6.6.10: Darwin's kill is kill(pid, sig, posix). lib's sys_kill passes
+                        # posix = 0 explicitly on macOS (a stale third register made kill(-pgid)
+                        # answer EPERM or ESRCH at random), and this Linux table then warned on
+                        # every x86-macOS build. Linux kill never takes 3 user args, so the
+                        # structural match is unambiguous (the 113 shape). CHANGELOG [6.6.10]
+                        if (sc_num == 62) { if (got == 3) { skip_warn = 1; } }
                         # v6.0.48: agnos uses NATIVE syscall numbers (0-33) that
                         # collide with Linux numbers at different arities (agnos
                         # getpid=2 vs Linux open=2/3-args; agnos exit=0 vs Linux
