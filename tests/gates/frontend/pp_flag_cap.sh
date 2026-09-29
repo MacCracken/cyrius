@@ -3,7 +3,12 @@
 # FIXED 16-slot array — the hash table at S+0x190800 and the value table at
 # S+0x190880 are only 0x80 bytes (16 slots) apart. Before v6.4.15 the 17th
 # registered flag silently wrote its hash over value[0] (heap corruption with no
-# diagnostic). PP_PREDEFINE / PP_DEFINE now hard-error past 16 total entries.
+# diagnostic). v6.4.15 made PP_PREDEFINE / PP_DEFINE report an error past 16 total
+# entries — but v6.4.62 turned ERR_MSG into print-and-RETURN (multi-error), so from
+# then until 6.6.10 the error was printed and the 17th hash was STILL stored over
+# value[0]. This header claimed "hard-error" through all of it. 6.6.10: both caps
+# return after the error, so nothing is stored past the table; the no-store half is
+# proven by tests/gates/diagnostics/cap_errors_stop_storing.sh. CHANGELOG [6.6.10]
 #
 # The counter is SHARED across builtin predefines (CYRIUS_ARCH_*, CYRIUS_TARGET_*,
 # ~3 on Linux x86_64) and user #defines, so the user budget is 16 minus whatever
@@ -21,13 +26,13 @@ T=$(mktemp) && [ -f "$T" ] || { echo "FAIL: pp_flag_cap: mktemp failed (TMPDIR=$
 E=$(mktemp) && [ -f "$E" ] || { echo "FAIL: pp_flag_cap: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -f "$T" "$E"' EXIT
 
-# --- Guard: 20 #defines overflow the 16-slot table -> hard-error ---
+# --- Guard: 20 #defines overflow the 16-slot table -> refused (rc != 0) ---
 : > "$T"
 i=0; while [ "$i" -lt 20 ]; do echo "#define PPCAP_D$i" >> "$T"; i=$((i + 1)); done
 echo 'fn main(): i64 { return 0; }' >> "$T"
 echo 'var ec = main();' >> "$T"
 if "$CC" < "$T" > /dev/null 2>"$E"; then
-    echo "FAIL: 20 #defines compiled — must hard-error (16-slot table overflow)"; exit 1
+    echo "FAIL: 20 #defines compiled — must be refused (16-slot table overflow)"; exit 1
 fi
 grep -q 'too many preprocessor #define/flag entries' "$E" || { echo "FAIL: overflow gave wrong error:"; cat "$E"; exit 1; }
 
@@ -38,4 +43,4 @@ echo 'fn main(): i64 { return 0; }' >> "$T"
 echo 'var ec = main();' >> "$T"
 "$CC" < "$T" > /dev/null 2>&1 || { echo "FAIL: 5 #defines failed to compile (guard over-firing?)"; exit 1; }
 
-echo "PASS: PP flag table hard-errors past 16 entries; small #define sets compile clean (L1, v6.4.15)"
+echo "PASS: PP flag table refuses past 16 entries; small #define sets compile clean (L1, v6.4.15; 6.6.10)"
