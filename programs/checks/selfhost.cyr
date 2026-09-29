@@ -171,8 +171,7 @@ fn _tcyr_grade(src_path, buf, n, sm): i64 {
         if (have == 0) { return 0 - 3; }
         if (load64(sm) < 1) { return 0 - 4; }
     }
-    if (_last_exec_ec != 0) { return 0 - 5; }
-    if (_last_exec_sig != 0) { return 0 - 5; }
+    if (_last_exec_ec != 0 || _last_exec_sig != 0) { return 0 - 5; }
     return 0;
 }
 
