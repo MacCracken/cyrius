@@ -716,7 +716,11 @@ fn tls_connect_alloc(sock, host, hook_fp, hook_ctx): i64 {
     # state correctly via SSL_free which works on either
     # connected or unconnected SSL handles.
     var ctx = alloc(24);
-    if (ctx == 0) { if (_fn_SSL_free != 0) { fncall1(_fn_SSL_free, ssl); } fncall1(_fn_SSL_CTX_free, ssl_ctx); return 0; }
+    if (ctx == 0) {
+        if (_fn_SSL_free != 0) { fncall1(_fn_SSL_free, ssl); }
+        fncall1(_fn_SSL_CTX_free, ssl_ctx);
+        return 0;
+    }
     store64(ctx, ssl_ctx);
     store64(ctx + 8, ssl);
     store64(ctx + 16, sock);
@@ -855,7 +859,11 @@ fn tls_accept_alloc(sock, creds, hook_fp, hook_ctx): i64 {
     if (ssl == 0) { fncall1(_fn_SSL_CTX_free, ssl_ctx); return 0; }
     fncall2(_fn_SSL_set_fd, ssl, sock);
     var ctx = alloc(24);
-    if (ctx == 0) { if (_fn_SSL_free != 0) { fncall1(_fn_SSL_free, ssl); } fncall1(_fn_SSL_CTX_free, ssl_ctx); return 0; }
+    if (ctx == 0) {
+        if (_fn_SSL_free != 0) { fncall1(_fn_SSL_free, ssl); }
+        fncall1(_fn_SSL_CTX_free, ssl_ctx);
+        return 0;
+    }
     store64(ctx, ssl_ctx);
     store64(ctx + 8, ssl);
     store64(ctx + 16, sock);
