@@ -136,15 +136,19 @@ fn proc_timeout_ms(): i64 {
 # prctl is not a Darwin/BSD syscall and is not routed on PE. The getppid re-check closes the
 # race where the parent died between the fork and the prctl: the death signal was then
 # delivered to nobody and will never fire, so the child exits itself.
-# macOS (6.6.10): when a deadline is in force the child also calls setsid(), so it leads its
-# own process group and `proc_kill_tree` can end that GROUP — macOS has no /proc to walk for
-# descendants. Only with a deadline: a session of its own detaches the child from the terminal
-# (no Ctrl-C, no /dev/tty), which an unbounded call — `git` prompting for credentials through
-# cbt/deps.cyr — must keep. CHANGELOG [6.6.10]
+# When a deadline is in force the child also calls setsid(), so it leads its own process group
+# and a deadline can end that GROUP: macOS (6.6.10) because it has no /proc to walk for
+# descendants; Linux (6.6.11) for the one case the /proc walk cannot reach — a child that exited
+# while a grandchild it started still holds the capture pipe (`_proc_end_cut_group`): by then the
+# child is reaped and its orphans reparented, so they are nobody's descendants. Only with a
+# deadline: a session of its own detaches the child from the terminal (no Ctrl-C, no /dev/tty),
+# which an unbounded call — `git` prompting for credentials through cbt/deps.cyr — must keep.
+# PR_SET_PDEATHSIG still ends a Linux child when its parent dies. CHANGELOG [6.6.10] [6.6.11]
 fn _proc_child_guard(ppid_before): i64 {
     #ifdef CYRIUS_TARGET_LINUX
     sys_prctl(1, 9, 0, 0, 0);
     if (syscall(SYS_GETPPID) != ppid_before) { sys_exit(1); }
+    if (_PROC_DEADLINE_MS > 0) { sys_setsid(); }
     #endif
     #ifdef CYRIUS_TARGET_MACOS
     if (_PROC_DEADLINE_MS > 0) { sys_setsid(); }
@@ -443,17 +447,17 @@ fn _proc_kill_run(pid, stbuf, grp): i64 {
 
 # A capture the deadline cut short (`_proc_read_cut` == 1) whose child had ALREADY exited on its
 # own: the drain was held open by something the child left running (a `cmd & echo` grandchild on
-# the pipe), and the verb reports the deadline. On macOS end what is left of the child's process
-# group — the child called setsid() because a deadline was set, and POSIX does not reuse a pid
-# while a group of that id exists, so the probe cannot reach a stranger's group (the same shape
-# as cbt's `_run_end_leftovers`). Linux has no group here and no adoption window in a LIBRARY
-# verb (that changes who reaps the caller's orphans), so the leftover is only cut off from the
-# pipe there. Returns 0. CHANGELOG [6.6.10]
+# the pipe), and the verb reports the deadline. End what is left of the child's process group —
+# the child called setsid() because a deadline was set, and POSIX does not reuse a pid while a
+# group of that id exists, so the probe cannot reach a stranger's group (the same shape as cbt's
+# `_run_end_leftovers`). Every POSIX host: `_proc_kill_group` directly, never `proc_kill_tree`,
+# whose Linux arm walks /proc from a pid that is already reaped. Returns 0.
+# ⛔ 6.6.11 — this was macOS-only: Linux had no group here, so the verb returned -2 with the
+# grandchild still running at PPID 1 (measured: `sleep 9 & echo hi` under a 300 ms deadline).
+# CHANGELOG [6.6.10] [6.6.11]
 fn _proc_end_cut_group(pid): i64 {
-    #ifdef CYRIUS_TARGET_MACOS
     var st[8];
-    if (sys_kill(0 - pid, 0) == 0) { proc_kill_tree(pid, &st); }
-    #endif
+    if (sys_kill(0 - pid, 0) == 0) { _proc_kill_group(pid, &st); }
     return 0;
 }
 

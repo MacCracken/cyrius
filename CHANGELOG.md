@@ -62,6 +62,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   grace, KILL — which reaps it. A body that already EXITED without a result has had its children
   reparented before the /proc walk, so that case is not reachable from here. Row:
   `async_timeout_result.tcyr` "forker" (RED on the pre-fix lib; green on x86_64 and pi).
+- **Linux capture verbs: a child that exited while its grandchild held the pipe reported -2 and left
+  the grandchild running at PPID 1 (P8).** `_proc_child_guard` called `setsid()` only on macOS and
+  `_proc_end_cut_group` was a no-op off macOS, so after the child was reaped and its orphan
+  reparented, nothing could reach it (measured: `sleep 9 & echo hi` under a 300 ms deadline).
+  **Fix:** on Linux too the child calls `setsid()` when a deadline is in force, and
+  `_proc_end_cut_group` is unconditional, calling `_proc_kill_group` directly (never
+  `proc_kill_tree`, whose Linux arm walks /proc from an already-reaped pid). Accepted side effect: a
+  Linux child run under a deadline has no controlling terminal; PR_SET_PDEATHSIG still ends it when
+  its parent dies. Row: `deadline_ends_grandchild.tcyr`'s grandchild assert is no longer macOS-only —
+  RED against the pre-fix lib on x86_64 and pi; green on x86_64, pi, ecb, ach and the agnosticos
+  container.
 
 ## [6.6.10] — 2026-09-29
 
