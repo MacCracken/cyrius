@@ -1980,7 +1980,10 @@ fn _gv_ufv(S, sti, typed): i64 {
         if (GFRS(S, fi) == 0 - 9) { return 1; }
         return 0;
     }
-    var vi = FINDVAR(S, TOKVAL(S, ti));
+    if (TOKTYP(S, ti + 1) != 5) { if (TOKTYP(S, ti + 1) != 11) { return 0; } }
+    # ⚠ _findvar_core, NOT FINDVAR: this is a DECLARATION-time peek, and FINDVAR's cross-file
+    # `private` check turns it into an accusation (private_does_not_block_own_declaration.sh).
+    var vi = _findvar_core(S, TOKVAL(S, ti));
     if (vi < 0) { return 0; }
     var gt = GVTYPE(S, vi);
     if (gt == F64_TYID) { return 1; }
