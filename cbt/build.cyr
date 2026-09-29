@@ -1435,20 +1435,42 @@ fn _macho_codesign(path): i64 {
 # a server through the CLI must not be shot at 5 minutes. PDEATHSIG applies to every
 # path including `cyrius run`; if the CLI dies the program it launched should die too.
 #
-# Deliberately NOT setpgid + kill(-pgid): setpgid needs a syscall number this file
-# does not have on all four targets (109 x86-Linux / 154 aarch64 / 82 BSD, and none
-# of them routed on PE), and it would not survive the SIGKILL case anyway. PDEATHSIG
-# reuses SYS_PRCTL, which is already in the x86-Linux and aarch64 tables.
-# CHANGELOG [6.5.19].
+# ⛔ 6.6.10 — NO DESCENDANT OF A BATCH RUN OUTLIVES IT. The two halves above end the CHILD;
+# neither reached what the child STARTED. Measured on x86_64 Linux and real macOS (ecb): a
+# test that forked `/bin/sleep` left it running at PPID=1 after the deadline AND after a clean
+# pass, and one holding the runner's stdout hung `cyrius test f | cat` until an outer timeout
+# shot it — the kill paths below were `sys_kill(pid, 9)` on the pid alone. Now, for the batch
+# verbs (every `timeout_ms != 0` caller: test, tests, bench, fuzz, soak, smoke, doctest):
+#   * Linux: an adoption window (lib/process.cyr `_proc_subreap_begin` / `_end`) —
+#     PR_SET_CHILD_SUBREAPER from just before the fork until the child is reaped, so a
+#     test's orphans become OUR children, and are ended (TERM, grace, KILL) when it closes.
+#     Only processes adopted INSIDE the window are touched: a daemon started earlier by the
+#     same CLI (a git credential-cache daemon from an implicit deps resolve) survives.
+#   * macOS: the child calls setsid() before exec and the whole group is ended after the
+#     reap — there is no /proc to walk. ⚠ The price, taken deliberately: a terminal Ctrl-C no
+#     longer reaches the test directly (it is not in the terminal's foreground group).
+#   * both kill paths (the deadline, and a waitpid error) end the child's TREE through
+#     lib/process.cyr's `proc_kill_tree` — TERM, grace, KILL — instead of SIGKILLing its pid.
+#   * Windows: the child runs in a KILL_ON_JOB_CLOSE Job object (`_win_run_timed`).
+# `cyrius run` (timeout 0) is exempt: a program run through the CLI owns its descendants — a
+# server that daemonizes must keep running. CHANGELOG [6.6.10]
+# (Deliberately NOT setpgid on Linux — the subreaper window also catches a descendant that
+# calls setsid() itself, which a process-group kill would miss.)
 var _RUN_TIMEOUT_KILLED = 0 - 2;
 
 # Default deadline for the batch verbs (test/tests/bench/fuzz/soak/smoke/doctest).
 # 5 minutes: the same figure tests/gates/**.sh already uses for `timeout`, and ~2
 # orders of magnitude above the slowest .tcyr in the corpus. `CYRIUS_TEST_TIMEOUT`
 # (seconds; 0 disables) overrides it for a genuinely long-running harness.
+# 6.6.10: "disabled" is -1, not 0. `run_binary_timed` reads 0 as `cyrius run` (no deadline
+# AND no descendant sweep), so a batch run with the deadline switched off must still say it
+# is a batch run: its test's leftovers are ended all the same. Every caller passes the value
+# straight to `run_binary_timed` or `proc_set_timeout_ms`, which treat any value <= 0 as "no
+# deadline". CHANGELOG [6.6.10]
 fn _run_timeout_ms(): i64 {
     var v = _cbt_env_int("CYRIUS_TEST_TIMEOUT", 0 - 1);
-    if (v >= 0) { return v * 1000; }
+    if (v == 0) { return 0 - 1; }
+    if (v > 0) { return v * 1000; }
     return 300000;
 }
 
@@ -1471,6 +1493,7 @@ fn run_binary_timed(path, timeout_ms, args): i64 {
     #ifdef CYRIUS_TARGET_WIN
     return _win_run_timed(path, timeout_ms, args);
     #endif
+    #ifndef CYRIUS_TARGET_WIN
     # Bug 2 (v6.0.66): cmd_test/run/bench/fuzz/doctest compile to /tmp and run via
     # run_binary without signing — only cmd_build signed (6.0.38). On arm64 macOS an
     # unsigned binary is AMFI-SIGKILL'd (128+9=137). Sign here so EVERY run path works.
@@ -1479,8 +1502,17 @@ fn run_binary_timed(path, timeout_ms, args): i64 {
     #ifdef CYRIUS_TARGET_LINUX
     ppid_before = sys_getpid();      # our pid == the child's ppid after fork
     #endif
+    # 6.6.10: a batch run (any deadline value but `cyrius run`'s 0) ends its whole tree.
+    var batch = 0;
+    if (timeout_ms != 0) { batch = 1; }
+    if (batch == 1) { _proc_subreap_begin(); }
     var pid = sys_fork();
     if (pid == 0) {
+        # macOS: lead a process group of our own, so the tree can be ended as that group
+        # (see the 6.6.10 note above). No-op elsewhere.
+        #ifdef CYRIUS_TARGET_MACOS
+        if (batch == 1) { sys_setsid(); }
+        #endif
         # Die with the parent. PR_SET_PDEATHSIG = 1, SIGKILL = 9. It survives execve
         # (the binary is not setuid), so the exec'd test inherits it. Linux only —
         # prctl is not a BSD/Darwin syscall and is not routed on PE; SYS_PRCTL is in
@@ -1512,6 +1544,39 @@ fn run_binary_timed(path, timeout_ms, args): i64 {
         sys_execve(path, nav, _envp);
         sys_exit(127);
     }
+    # A failed fork has no child to wait for — and `pid` is then -errno, which the waits and
+    # the group kill below would read as "any child" / a real pid. Close the window and say so.
+    if (pid < 0) {
+        if (batch == 1) { _proc_subreap_end(); }
+        _err_ctx("failed to start", path);
+        return 127;
+    }
+    var rc = _run_wait_timed(pid, timeout_ms);
+    if (batch == 1) { _run_end_leftovers(pid); }
+    return rc;
+    #endif
+}
+
+# What a batch child left behind, ended once the child itself has been reaped (6.6.10):
+# Linux closes the adoption window, macOS ends the child's process group (it called setsid).
+# `kill(-pid)` after the reap is safe on macOS: POSIX does not reuse a pid while a process
+# group of that id still exists, and when the group is empty the probe answers ESRCH and
+# nothing is signalled. CHANGELOG [6.6.10]
+fn _run_end_leftovers(pid): i64 {
+    #ifndef CYRIUS_TARGET_WIN
+    #ifdef CYRIUS_TARGET_MACOS
+    var st[8];
+    if (sys_kill(0 - pid, 0) == 0) { proc_kill_tree(pid, &st); }
+    #endif
+    _proc_subreap_end();
+    #endif
+    return 0;
+}
+
+# Wait for the batch/run child `pid` (see run_binary_timed): its exit code, 128+signal, 1 for
+# a failed wait, or _RUN_TIMEOUT_KILLED once the deadline has ended the child's tree.
+fn _run_wait_timed(pid, timeout_ms): i64 {
+    #ifndef CYRIUS_TARGET_WIN
     var status_buf[1];
     if (timeout_ms <= 0) {
         sys_waitpid(pid, &status_buf, 0);
@@ -1539,9 +1604,9 @@ fn run_binary_timed(path, timeout_ms, args): i64 {
         # it as a sampling artifact of the post-SIGKILL teardown window. It is not: the gate
         # measured TWO children alive across 18 CONSECUTIVE samples (4.5 s), which is
         # abandonment, not teardown. Reproduces only under load, which is why it looked flaky.
+        # 6.6.10: the child's TREE, not its pid (proc_kill_tree reaps `pid` itself).
         if (w < 0) {
-            sys_kill(pid, 9);
-            sys_waitpid(pid, &status_buf, 0);
+            proc_kill_tree(pid, &status_buf);
             return 1;
         }
         _run_sleep_ms(slice);
@@ -1549,11 +1614,15 @@ fn run_binary_timed(path, timeout_ms, args): i64 {
         if (waited >= 50)   { slice = 10; }
         if (waited >= 2000) { slice = 50; }
     }
-    # Deadline. SIGKILL (not SIGTERM): the child may be spinning in a tight loop with
-    # no handler, and a TERM it ignores leaves exactly the orphan this exists to stop.
-    sys_kill(pid, 9);
-    sys_waitpid(pid, &status_buf, 0);
+    # Deadline. The child's whole tree (6.6.10 — this was `sys_kill(pid, 9)`, which left a
+    # test's own children running): TERM, a grace, then KILL, so a child spinning in a tight
+    # loop with a TERM handler that never returns is still ended. proc_kill_tree reaps `pid`.
+    proc_kill_tree(pid, &status_buf);
     return _RUN_TIMEOUT_KILLED;
+    #endif
+    #ifdef CYRIUS_TARGET_WIN
+    return 1;
+    #endif
 }
 
 fn run_binary(path): i64 {
