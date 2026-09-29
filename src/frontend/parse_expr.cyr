@@ -500,14 +500,40 @@ fn _PE_ROUTE_PERFCOUNTER(S, sc_num, argc): i64 {
 
 # v6.6.8 — the arity each Mach-O PARSE-TIME reroute fires at, or 0 if `n` is not one. `argc`
 # counts the number itself, as the reroute blocks in the syscall() parse do: 228 (clock) and 35
-# (nanosleep, x86 only — arm64 reroutes 35 inside ESYSXLAT at any arity) at 3, and 1700
-# (pthread_create, arm64 only) at 5. MUST mirror those blocks; the Darwin syscall gate probes
-# every in-tree literal site at its real argc through this diagnostic.
+# (nanosleep) at 3, and 1700 (pthread_create, arm64 only) at 5. MUST mirror those blocks; the
+# Darwin syscall gate probes every in-tree literal site at its real argc through this diagnostic.
+# 6.6.10: 35 on BOTH backends. arm64 reroutes it inside ESYSXLAT (EMACHO_NANOSLEEP_ARM), which
+# used to fire at ANY arity — at argc 1 it dereferenced x0 = the number (SIGSEGV, no warning) —
+# and now fires at argc 3 only, so every other arity is SIGSYS, as on x86-macOS and PE.
 fn _macho_reroute_argc(tgt, n): i64 {
     if (n == 228) { return 3; }
-    if (tgt == 1) { if (n == 35) { return 3; } }
+    if (n == 35) { return 3; }
     if (tgt == 2) { if (n == 1700) { return 5; } }
     return 0;
+}
+
+# 6.6.10 — the MINIMUM arity of the Mach-O pipe emulations, or 0. Darwin pipe returns both fds in
+# registers and the backend stores them through the caller's fds pointer, so a call that passes
+# no pointer (argc 1) has nothing to store through: the backend now emits no row for it
+# (x86 `_msx_short`, arm64 `_esx_short`) and the call is SIGSYS. Before, x86-macOS stored the
+# fds through a STALE rdi — a silent 8-byte write — and arm64-macOS through x0 = 59 (SIGSEGV).
+# pipe is 22 on the x86 peer and pipe2 59 on the aarch64 peer.
+fn _macho_min_argc(tgt, n): i64 {
+    if (tgt == 1) { if (n == 22) { return 2; } }
+    if (tgt == 2) { if (n == 59) { return 2; } }
+    return 0;
+}
+
+# Warns and returns 1 when `sc_num` is below its Mach-O emulation's minimum arity. Its own fn so
+# _macho_warn_unrouted does not grow past cybs's per-function reference limit. CHANGELOG [6.6.10]
+fn _macho_warn_short(sc_num, argc): i64 {
+    var need = _macho_min_argc(_TARGET_MACHO, sc_num);
+    if (need == 0) { return 0; }
+    if (argc >= need) { return 0; }
+    syscall(SYS_WRITE, 2, "warning: syscall ", 17);
+    PRNUM(sc_num);
+    syscall(SYS_WRITE, 2, " not routed at this arity: its Mach-O emulation stores through a pointer argument and this call passes none; it will SIGSYS on macOS. Pass the fds buffer, or use the stdlib wrapper.\n", 182);
+    return 1;
 }
 
 # The Mach-O "syscall not routed" diagnostic — both backends, one source of truth each
@@ -525,6 +551,8 @@ fn _macho_reroute_argc(tgt, n): i64 {
 fn _macho_warn_unrouted(sc_num, argc): i64 {
     if (sc_num < 0) { return 0; }
     if (_TARGET_MACHO != 1) { if (_TARGET_MACHO != 2) { return 0; } }
+    var shw = _macho_warn_short(sc_num, argc);
+    if (shw == 1) { return 0; }
     var want = _macho_reroute_argc(_TARGET_MACHO, sc_num);
     if (want > 0) {
         if (argc != want) {
