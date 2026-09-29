@@ -24,6 +24,9 @@
 #   * chan_new's `buf` check (k=2)              -> rc 1   (returned a channel over a 0 buffer)
 #   * normalize: the 6.6.9 step-buffer `return off` -> rc 1 (a SHORTER string, returned as success);
 #     dropping the -1 propagation in the walk    -> rc 1 at the nested row (k=4)
+#   * each of lib/ws.cyr's four checks (ws_new, the handshake buffer, the sender's masked copy,
+#     CVE-53's ws_recv_frame payload) and lib/ws_server.cyr's six (ws_server_new, concat,
+#     digest, ws_server_send_close, the recv buffer, the recv copy) -> rc 139 in its probe
 #   * every lib/ file at its pre-6.6.10 state   -> rc 139 at the first row
 # Linux x86_64 only (the harness is host-built); the static census covers the other targets.
 set -u
@@ -232,17 +235,199 @@ var ec = main();
 syscall(60, ec);
 CYR
 
-rc=0
-( cd "$W/fi" && "$CC" < probe.cyr > "$W/probe" 2> "$W/probe.err" ) || rc=$?
-[ "$rc" = 0 ] && [ -s "$W/probe" ] || { grep -m5 'error' "$W/probe.err" | sed 's/^/      /'; fail "the fault-injection probe did not compile (rc $rc)"; }
-chmod +x "$W/probe"
-rc=0
-out=$(cd "$W" && ./probe 2> "$W/run.err") || rc=$?
-if [ "$rc" != 0 ]; then
-    sed 's/^/      /' "$W/run.err" | head -5
-    fail "the probe exited $rc — a refused allocation was written through (139 = SIGSEGV) or returned the wrong value"
-fi
-n=$(printf '%s\n' "$out" | sed -n 's/^\([0-9][0-9]*\) rows$/\1/p' | tail -1)
-[ -n "$n" ] || fail "the probe printed no row count — it did not run to the end"
-[ "$n" -ge 67 ] || fail "only $n rows ran (floor 67) — the probe is not exercising the sites it names"
-echo "PASS: stdlib_alloc_refusal_sentinels ($n rows: every refused alloc returned its sentinel, every count exact)"
+
+# ── the WebSocket client (lib/ws.cyr) — CVE-53's "the allocation is checked" half ──
+# Frames come from a FILE in the probe's cwd, as ws_recv_frame_short_reads.tcyr does, so no
+# socket is needed. ⚠ THE REFUSED-PAYLOAD ROW USES A ZERO-LENGTH FRAME ON PURPOSE: for a non-empty
+# frame an unchecked alloc would read into address 0, get EFAULT, and close the connection — the
+# right answer by accident. With plen = 0 nothing is read, so without the check the reader stores
+# the NUL terminator at address 0 (rc 139).
+cat > "$W/fi/ws_probe.cyr" <<'CYR'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/fmt.cyr"
+include "lib/tagged.cyr"
+include "lib/net.cyr"
+include "lib/bayan.cyr"
+include "lib/ws.cyr"
+include "rows.cyr"
+
+# A ws handle (state OPEN) reading one unmasked FIN|TEXT frame of `n` <= 3 bytes ("abc").
+# O_WRONLY|O_CREAT|O_TRUNC = 577. Allocates (ws_new) — call it BEFORE arming.
+fn _frame_ws(n): i64 {
+    var fb[8];
+    store8(&fb, 0x81);
+    store8(&fb + 1, n);
+    memcpy(&fb + 2, "abc", 3);
+    var wfd = sys_open("wsframe.bin", 577, 420);
+    sys_write(wfd, &fb, 2 + n);
+    sys_close(wfd);
+    var ws = ws_new(sys_open("wsframe.bin", 0, 0));
+    store64(ws + 8, WS_OPEN);
+    return ws;
+}
+
+# 1 iff ws_recv_frame refused the frame the documented way: 0, len_out 0, connection CLOSED.
+fn _recv_refused(ws): i64 {
+    var op[8];
+    var ln[8];
+    store64(&ln, 99);
+    var p = ws_recv_frame(ws, &op, &ln);
+    if (p != 0) { return 0; }
+    if (load64(&ln) != 0) { return 0; }
+    if (ws_state(ws) != WS_CLOSED) { return 0; }
+    return 1;
+}
+
+# 1 iff ws_recv_frame returned the n-byte payload with the connection still OPEN.
+fn _recv_served(ws, n): i64 {
+    var op[8];
+    var ln[8];
+    var p = ws_recv_frame(ws, &op, &ln);
+    if (p == 0) { return 0; }
+    if (load64(&ln) != n) { return 0; }
+    if (ws_state(ws) != WS_OPEN) { return 0; }
+    return 1;
+}
+
+# ws_connect's state, or -1 when it returned no handle.
+fn _connect_state(r): i64 {
+    if (r == 0) { return 0 - 1; }
+    return ws_state(r);
+}
+
+fn main(): i64 {
+    alloc_init();
+    var key[32];
+
+    _fi_arm(1); _refused("ws_new", 1, ws_new(3), 0);
+    _fi_arm(2); _served("ws_new", 2, ws_new(3) != 0);
+
+    # the Sec-WebSocket-Key base64 (k=1), then the request buffer sized from its inputs (k=2).
+    # ⚠ k=1 is NOT armed: bayan_base64_encode (the lib/bayan.cyr fold) stores through its own
+    # refused alloc — a bayan defect, reported for bayan's next release, not a lib/ws.cyr site.
+    _fi_arm(2); _refused("_ws_handshake_request buf", 2, _ws_handshake_request("/p", "h", &key), 0);
+    _fi_arm(3); _served("_ws_handshake_request", 3, _ws_handshake_request("/p", "h", &key) != 0);
+    # ws_connect: no handle at all, or a CLOSED one when the request could not be built (fd -1:
+    # the refusal must come before any I/O)
+    _fi_arm(1); _refused("ws_connect ws_new", 1, ws_connect(0 - 1, "/p", "h"), 0);
+    _fi_arm(3); _refused("ws_connect request buf", 3, _connect_state(ws_connect(0 - 1, "/p", "h")), WS_CLOSED);
+
+    # the sender's masked copy
+    var ow = ws_new(sys_open("wsout.bin", 577, 420));
+    store64(ow + 8, WS_OPEN);
+    _fi_arm(1); _refused("_ws_send_frame masked", 1, ws_send_text(ow, "hi"), 0 - 1);
+    _fi_arm(2); _served("_ws_send_frame", 2, ws_send_text(ow, "hi") == 2);
+
+    # CVE-53: the payload allocation (zero-length frame — see the note above this probe)
+    var w0 = _frame_ws(0);
+    _fi_arm(1); _refused("ws_recv_frame payload (empty frame)", 1, _recv_refused(w0), 1);
+    var w3 = _frame_ws(3);
+    _fi_arm(1); _refused("ws_recv_frame payload (3 bytes)", 1, _recv_refused(w3), 1);
+    var w0b = _frame_ws(0);
+    _fi_arm(2); _served("ws_recv_frame (empty frame)", 2, _recv_served(w0b, 0));
+    var w3b = _frame_ws(3);
+    _fi_arm(2); _served("ws_recv_frame (3 bytes)", 2, _recv_served(w3b, 3));
+    return _rows_done();
+}
+var ec = main();
+syscall(60, ec);
+CYR
+
+# ── the WebSocket server (lib/ws_server.cyr) ──
+# sandhi_server_find_header is stubbed WITHOUT allocating (lib/sandhi.cyr would drag the TLS
+# stack in for one symbol, and its allocs are sandhi's, not this file's), so the handshake's
+# first allocations are its own: concat (k=1), digest (k=2), then sha1's two (k=3, 4).
+# ⚠ ws_server_recv's two rows follow the same zero-length reasoning as ws_recv_frame's: an
+# unchecked recv BUFFER only writes through (store8 at 0 + 0) for an empty frame, and an
+# unchecked OUT copy only does (memcpy to 0) for a non-empty one.
+cat > "$W/fi/wss_probe.cyr" <<'CYR'
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/fmt.cyr"
+include "lib/tagged.cyr"
+include "lib/net.cyr"
+include "lib/bayan.cyr"
+
+fn sandhi_server_find_header(buf, blen, name): i64 {
+    if (streq(name, "Upgrade") == 1) { return "websocket"; }
+    if (streq(name, "Connection") == 1) { return "Upgrade"; }
+    if (streq(name, "Sec-WebSocket-Version") == 1) { return "13"; }
+    if (streq(name, "Sec-WebSocket-Key") == 1) { return "dGhlIHNhbXBsZSBub25jZQ=="; }
+    return 0;
+}
+include "lib/ws_server.cyr"
+include "rows.cyr"
+
+# A server handle reading one unmasked FIN|TEXT frame of `n` <= 3 bytes. Allocates — call it
+# BEFORE arming.
+fn _frame_wss(n): i64 {
+    var fb[8];
+    store8(&fb, 0x81);
+    store8(&fb + 1, n);
+    memcpy(&fb + 2, "abc", 3);
+    var wfd = sys_open("wssframe.bin", 577, 420);
+    sys_write(wfd, &fb, 2 + n);
+    sys_close(wfd);
+    return ws_server_new(sys_open("wssframe.bin", 0, 0));
+}
+
+fn main(): i64 {
+    alloc_init();
+    var ofd = sys_open("wssout.bin", 577, 420);
+
+    _fi_arm(1); _refused("ws_server_new", 1, ws_server_new(ofd), 0);
+    _fi_arm(2); _served("ws_server_new", 2, ws_server_new(ofd) != 0);
+
+    _fi_arm(1); _refused("ws_server_handshake concat", 1, ws_server_handshake(ofd, "x", 1), 0);
+    _fi_arm(2); _refused("ws_server_handshake digest", 2, ws_server_handshake(ofd, "x", 1), 0);
+    _fi_arm(3); _refused("ws_server_handshake sha1 buf", 3, ws_server_handshake(ofd, "x", 1), 0);
+    _fi_arm(4); _refused("ws_server_handshake sha1 w", 4, ws_server_handshake(ofd, "x", 1), 0);
+
+    var ws = ws_server_new(ofd);
+    _fi_arm(1); _refused("ws_server_send_close payload", 1, ws_server_send_close(ws, 1000, "bye"), 0 - 1);
+    _fi_arm(2); _served("ws_server_send_close", 2, ws_server_send_close(ws, 1000, "bye") == 0);
+
+    # the recv buffer is lazy (first use), then one copy per data frame
+    var r0 = _frame_wss(0);
+    _fi_arm(1); _refused("ws_server_recv buffer (empty frame)", 1, ws_server_recv(r0), 0);
+    var r3 = _frame_wss(3);
+    _fi_arm(2); _refused("ws_server_recv out (3 bytes)", 2, ws_server_recv(r3), 0);
+    var r3b = _frame_wss(3);
+    _fi_arm(2); _served("ws_server_recv", 2, ws_server_recv(r3b) != 0);
+    return _rows_done();
+}
+var ec = main();
+syscall(60, ec);
+CYR
+
+# Compile and run one probe from $W/fi; leaves its row count in $_n (fails the gate on anything
+# else). Called directly, never in $(...), so a `fail` inside it ends the gate AND is printed.
+_run_probe() {
+    _p=$1
+    rc=0
+    ( cd "$W/fi" && "$CC" < "$_p.cyr" > "$W/$_p" 2> "$W/$_p.err" ) || rc=$?
+    [ "$rc" = 0 ] && [ -s "$W/$_p" ] || { grep -m5 'error' "$W/$_p.err" | sed 's/^/      /'; fail "the fault-injection $_p did not compile (rc $rc)"; }
+    chmod +x "$W/$_p"
+    rc=0
+    _out=$(cd "$W" && "./$_p" 2> "$W/$_p.run.err") || rc=$?
+    if [ "$rc" != 0 ]; then
+        sed 's/^/      /' "$W/$_p.run.err" | head -5
+        fail "$_p exited $rc — a refused allocation was written through (139 = SIGSEGV) or returned the wrong value"
+    fi
+    _n=$(printf '%s\n' "$_out" | sed -n 's/^\([0-9][0-9]*\) rows$/\1/p' | tail -1)
+    [ -n "$_n" ] || fail "$_p printed no row count — it did not run to the end"
+}
+_run_probe probe; n=$_n
+[ "$n" -ge 67 ] || fail "only $n rows ran in probe (floor 67) — the probe is not exercising the sites it names"
+_run_probe ws_probe; nw=$_n
+[ "$nw" -ge 12 ] || fail "only $nw rows ran in ws_probe (floor 12)"
+_run_probe wss_probe; ns=$_n
+[ "$ns" -ge 11 ] || fail "only $ns rows ran in wss_probe (floor 11)"
+echo "PASS: stdlib_alloc_refusal_sentinels ($n + $nw ws + $ns ws_server rows: every refused alloc returned its sentinel, every count exact)"

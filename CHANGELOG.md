@@ -26,7 +26,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   checked. majra's own reader was already correct (its 2.6.9 repair); yantra reads through this
   `ws_recv`. **Proof:** `tests/tcyr/stdlib/ws_recv_frame_short_reads.tcyr` (30 rows, incl. a
   forked writer delivering one frame in nine pieces) — the 6.6.9 reader fails 17;
-  `tests/tcyr/stdlib/ws_server_recv_frame_exact.tcyr` — the 6.6.9 server reader fails 3 of 7.
+  `tests/tcyr/stdlib/ws_server_recv_frame_exact.tcyr` — the 6.6.9 server reader fails 3 of 7. The
+  "allocation is checked" half is pinned by `tests/gates/memory/stdlib_alloc_refusal_sentinels.sh`'s
+  ws rows: a refused payload alloc on a ZERO-length frame (the only shape where the unchecked
+  reader writes through — a non-empty one gets EFAULT reading into 0 and closes by accident) must
+  return 0 with `len_out` 0 and the connection CLOSED; without the check it is rc 139.
 
 ### Fixed
 
@@ -118,10 +122,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   recursion level and `str_normalize` returns 0 (niyama's fuzzy matcher, the one outside caller,
   loops `k < n` and treats -1 like 0, as before). **Proof:**
   `tests/gates/memory/stdlib_alloc_refusal_sentinels.sh` — fault injection over a copy of `lib/` whose
-  `alloc` refuses exactly the k-th call, 67 rows: each fn returns its sentinel for every k, the k-th
-  call is REACHED, and k = count + 1 succeeds. Removing one check gives rc 139 (boxed_new, sha1,
-  sigset_new) or rc 1 (chan_new, normalize's step check or its -1 propagation); the pre-6.6.10 lib/
-  dies at the first row.
+  `alloc` refuses exactly the k-th call, 90 rows (67 + 12 over `lib/ws.cyr` + 11 over
+  `lib/ws_server.cyr`, in their own probes — the two declare the same `WS_*` names): each fn returns
+  its sentinel for every k, the k-th call is REACHED, and k = count + 1 succeeds. Removing one check
+  gives rc 139 (boxed_new, sha1, sigset_new, and each of the ten ws / ws_server checks) or rc 1
+  (chan_new, normalize's step check or its -1 propagation); the pre-6.6.10 lib/ dies at the first
+  row.
 
 ### Downstream
 
