@@ -53,7 +53,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   takes one look per tick until nothing is left or the grace runs out, then KILLs, reaps and (Linux)
   closes the pidfd. `async_with_timeout` pumps that task to DONE before returning — other tasks keep
   running — and `async_run_process`'s own kill is gone (the Windows shape). If no task can be made
-  (a refused allocation or timer) the kill completes inline, blocking, as before. Rows:
+  (a refused allocation or timer) the kill completes inline, blocking, as before. Return-value
+  change: on Linux `async_run_process` now returns -1 (was -2, a deadline that never fired) when the
+  deadline could not be armed, as on macOS, and the unrun handle is retired. Rows:
   `async_timeout_result.tcyr` "grace" / "loser", `async_macos_verbs.tcyr` the same two, and the
   `async_process` fixture's row 4 — RED against the pre-fix lib on x86_64 Linux, pi, ecb and ach.
 - **Linux `async_timeout`'s deadline SIGKILLed only the forked body; its children outlived the
@@ -77,8 +79,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   returns nothing without /proc, so `_regression_kill_tree` signalled the child alone, and
   `_regression_child_guard` had no `setsid()`, so there was no group to reach: the 6.6.10 macOS port
   of lib/process.cyr's group kill never reached its twin. **Fix:** on macOS the child calls
-  `setsid()` (unconditionally — every verb here waits under a deadline and gives the child
-  /dev/null for stdin), and `_regression_kill_tree` targets `-pid` when that group exists: one TERM,
+  `setsid()` (unconditionally — every verb here runs its child under a deadline, and a deadline
+  means no controlling terminal, the rule lib/process.cyr applies; so `ssh` / `scp` run by these
+  verbs on macOS cannot prompt for a host key or passphrase), and `_regression_kill_tree` targets `-pid` when that group exists: one TERM,
   the grace, one KILL (`_proc_kill_group`'s shape). Rows: `regression_terminate_children.tcyr` "a
   regression_* deadline ends the grandchild too" (RED on ecb and ach against the pre-fix lib), and
   `process_deadline_tree.tcyr`'s whole-tree assert is no longer Linux-only (it tests lib/process.cyr,

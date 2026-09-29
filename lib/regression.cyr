@@ -314,8 +314,9 @@ fn regression_file_contains_substr(path, substr): i64 {
 # macOS (6.6.11): the child calls setsid() so it leads its own process group, and a deadline's
 # `_regression_kill_tree` can end that GROUP — macOS has no /proc to walk for descendants, so
 # it signalled the child alone and a `sh -c 'x &'` grandchild outlived the deadline. No
-# condition, unlike lib/process.cyr's twin: every verb here waits under a deadline and gives the
-# child /dev/null for stdin, so there is no terminal to lose. CHANGELOG [6.6.11]
+# condition, unlike lib/process.cyr's twin: every verb here runs its child under a deadline, and
+# a deadline means no controlling terminal (lib/process.cyr's rule), so ssh/scp run from here on
+# macOS cannot prompt for a host key or passphrase. CHANGELOG [6.6.11]
 fn _regression_child_guard(ppid_before): i64 {
     #ifdef CYRIUS_TARGET_LINUX
     sys_prctl(1, 9, 0, 0, 0);

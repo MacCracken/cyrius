@@ -167,7 +167,8 @@ fn _at_kill_rows(): i64 {
     var pfd = load64(load64(h + 8) + 40);
     assert_eq(w, 0, "loser: the deadline won (0)");
     assert_eq(pid > 0, 1, "loser: premise — the child was forked");
-    assert_eq(sys_waitpid(pid, &st, 1), 0 - 10, "loser: the child was reaped before the call returned (was: still running)");
+    assert_eq(sys_waitpid(pid, &st, 1), 0 - 10,
+      "loser: the child was reaped before the call returned (was: still running)");
     assert_eq(sys_kill(pid, 0) != 0, 1, "loser: ...and it is gone");
     assert_eq(sys_fcntl(pfd, 1, 0) < 0, 1, "loser: its pidfd was closed (was: leaked)");
     assert_eq(el < 3000, 1, "loser: sleep honoured the TERM; no grace was waited out");

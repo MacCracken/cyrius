@@ -1,9 +1,10 @@
 # process_deadline_tree.tcyr — CROSS-HOST: when lib/process.cyr's deadline
 # (`proc_set_timeout_ms`) ends a child, it asks first (SIGTERM, a grace period, then SIGKILL),
 # and it ends the child's whole tree — Linux by walking /proc, macOS through the child's process
-# group (the tree row ran on Linux only until 6.6.11; macOS has ended the group since 6.6.10). Runs on ecb (macOS arm64) + ach (Intel Mac) +
-# pi (aarch64) through the release gate's cross-OS leg; on Windows and agnos there is no
-# POSIX deadline to test and the file only reports its summary.
+# group (the tree row ran on Linux only until 6.6.11; macOS has ended the group since 6.6.10).
+# Runs on ecb (macOS arm64) + ach (Intel Mac) + pi (aarch64) through the release gate's
+# cross-OS leg; on Windows and agnos there is no POSIX deadline to test and the file only
+# reports its summary.
 #
 # ⛔ WHY (6.6.8). The deadline killed the child alone, with SIGKILL. SIGKILL runs no cleanup,
 # so a `/bin/sh -c` child's trap never removed what it made (the check driver's OVMF boot
