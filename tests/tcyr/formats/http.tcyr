@@ -17,8 +17,27 @@ assert_eq(streq(load64(u1), "example.com"), 1, "host");
 assert_eq(load64(u1 + 8), 80, "default port");
 
 test_group("request building");
-var req = _http_build_request("GET", "example.com", "/");
+var req = _http_build_request("GET", "example.com", 80, "/");
 assert_eq(memeq(req, "GET / HTTP/1.0", 14), 1, "GET line");
+
+# 6.6.11: the Host header names a non-default port (it used to drop it, so a server on :8080 was
+# told :80). An explicit :80 is the default and takes no suffix. CHANGELOG [6.6.11]
+test_group("Host header carries a non-default port");
+assert_eq(streq(req, "GET / HTTP/1.0\r\nHost: example.com\r\nConnection: close\r\n\r\n"), 1,
+          "port 80: Host has no suffix");
+var u80 = _http_parse_url("http://h:80/x");
+var r80 = _http_build_request("GET", load64(u80), load64(u80 + 8), load64(u80 + 16));
+assert_eq(streq(r80, "GET /x HTTP/1.0\r\nHost: h\r\nConnection: close\r\n\r\n"), 1,
+          "explicit :80 in the URL: Host has no suffix");
+var u8080 = _http_parse_url("http://localhost:8080/x");
+var r8080 = _http_build_request("GET", load64(u8080), load64(u8080 + 8), load64(u8080 + 16));
+assert_eq(streq(r8080, "GET /x HTTP/1.0\r\nHost: localhost:8080\r\nConnection: close\r\n\r\n"), 1,
+          ":8080 gives Host: localhost:8080");
+var r1 = _http_build_request("GET", "h", 1, "/");
+assert_eq(streq(r1, "GET / HTTP/1.0\r\nHost: h:1\r\nConnection: close\r\n\r\n"), 1, "one-digit port");
+var r65535 = _http_build_request("GET", "h", 65535, "/");
+assert_eq(streq(r65535, "GET / HTTP/1.0\r\nHost: h:65535\r\nConnection: close\r\n\r\n"), 1,
+          "five-digit port");
 
 test_group("response parsing");
 # Build response with explicit CR LF bytes

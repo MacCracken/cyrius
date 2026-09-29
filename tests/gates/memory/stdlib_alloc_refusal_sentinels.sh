@@ -223,7 +223,7 @@ fn main(): i64 {
 
     _fi_arm(1); _refused("_http_parse_url result", 1, _http_parse_url("http://h/p"), 0);
     _fi_arm(2); _refused("_http_parse_url host", 2, _http_parse_url("http://h/p"), 0);
-    _fi_arm(1); _refused("_http_build_request", 1, _http_build_request("GET", "h", "/"), 0);
+    _fi_arm(1); _refused("_http_build_request", 1, _http_build_request("GET", "h", 80, "/"), 0);
     _fi_arm(1); _refused("_http_parse_response", 1, _http_parse_response("HTTP/1.1 200 OK\r\n\r\n", 19), 0);
     # http_get on an empty host: parse_url allocates its result then refuses, and the error
     # response is the SECOND allocation.
