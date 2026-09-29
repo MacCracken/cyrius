@@ -1,7 +1,9 @@
 # The assertion + allocator + fmt + string surface a .tcyr needs, with NO file
 # I/O, threads, floats or syscalls beyond write/exit — so it runs on EVERY
-# target INCLUDING the cyrius-x bytecode VM, whose guest can only reach
-# read/write/open/close/lseek/exit through cxvm.
+# target INCLUDING the cyrius-x bytecode VM, whose guest reaches the host only
+# through cxvm's op-0x70 dispatch (read/write/open/close/lseek/exit translated,
+# getrandom/clock_gettime host-served since 6.6.8 — programs/cxvm.cyr is the
+# authority; docs/platform-status.md states the guest contract).
 #
 # WHY IT EXISTS (v6.6.6): before this release `include "lib/assert.cyr"` did
 # not compile for cx at all. The cx driver predefined no CYRIUS_TARGET_* macro,

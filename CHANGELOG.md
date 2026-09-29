@@ -76,6 +76,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   an allowlisted file that compiles; an empty or wrong-magic output is a failure; axis 0 proves every
   leg can see a failure; a 350-file floor. Mutation: restoring the 6.6.9 `net_v6_connect.tcyr` and
   `derive_enum_inside_ifdef.tcyr` gives six FAIL rows.
+- **cx prose tells the truth, `lib/alloc_cx.cyr` drops a workaround for a fixed defect, and cxvm's
+  guest contract is written down.** (bite 14.) Four sites said cxvm serves only
+  read/write/open/close/lseek/exit — false since 6.6.8 added host-served getrandom(318) /
+  clock_gettime(228) — and `lib/vec.cyr` (a cycc input; byte-identical, fixpoint + seed-derive
+  green) and `docs/platform-status.md` said cx has no indirect call, false since v6.5.13's
+  `callind` (re-verified: `callptr` / `fncall2` return 42 on cxvm, `vec_sort_by` sorts; the
+  archived issue reads RESOLVED, not "still OPEN"). `lib/alloc_cx.cyr` kept `_CX_HEAP_BYTES` to
+  dodge a "`global * <power of two>` corrupts the next call" defect whose real cause, cx ESETCC
+  `<=` / `>=`, 6.6.6 bite 21a fixed; one enum slot count now sizes `_cx_heap_buf` and bounds the
+  heap. **New:** `docs/platform-status.md` § *cyrius-x guest contract* — cxvm runs TRUSTED
+  bytecode and is NOT a sandbox: no guest-address bounds checks on any load/store, unchecked
+  data/call stacks, negative jump targets decode host memory, and every syscall but the eight
+  served ones reaches the host kernel with the guest's raw arguments, so an untrusted `.cyx` is a
+  native binary with cxvm's privileges. (The matching `programs/cxvm.cyr` header line is lane
+  S2's bite 10.)
 
 ## [6.6.9] — 2026-09-28
 
