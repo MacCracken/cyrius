@@ -346,6 +346,11 @@ fn async_relay_once(rt, rfd, wfd, buf, len): i64 {
 # and at the deadline ends the child's tree with SIGKILL and reaps it. `ms` < 0 waits without
 # limit; `ms` 0 gives the body no time, as the Linux epoll wait does. ⚠ The child is a COPY of
 # this process: a body's side effects on memory are not seen by the caller, as on Linux.
+# ⛔ Do not hold a FAT/exFAT file open for WRITING across async_timeout on agnos: fork copies the
+# fd table BY VALUE (vfs_fd_inherit), and reaping the child flushes and releases every write
+# entry it holds — the same pool block the caller's still-open fd names — so the caller's later
+# writes and close land on a freed entry. (A kernel defect — fork should not share the entry; until
+# it is fixed, close such a file before the call.)
 # (This ran the body INLINE and ignored `ms` until 6.6.10. CHANGELOG [6.6.10])
 fn async_timeout(fp, arg, ms): i64 {
     var fds[16];
