@@ -5509,7 +5509,10 @@ fn _async_emit_constructor(S, noff_f, fi_impl, pc): i64 {
     # list drifted; the shared snapshot is what stops the next one drifting.) CHANGELOG [6.6.7]
     var st = _fnst_save(S);
     _cur_fn_ix = fi_f;
-    var jmp = EJMP0(S);
+    # 6.6.11: no skip-jmp before the constructor. Every caller is either unreachable by
+    # fall-through here (the previous byte is f$impl's `ret`) or already jumps over the whole
+    # definition (PARSE_PROG's fn_skip, the generic re-emit). The jmp sat in no fn's range,
+    # so the DCE seed pass took it as a root and kept the NEXT fn alive. CHANGELOG [6.6.11]
     S64(_fnt_offsets + fi_f * 8, GCP(S));
     EFNPRO(S);
     # params p0..p{pc-1} → anonymous local slots 0..pc-1
@@ -5632,7 +5635,6 @@ fn _async_emit_constructor(S, noff_f, fi_impl, pc): i64 {
     var fsz = (GFLC(S) * 8 + 15) & (0 - 16);
     EPATCHFRAME(S, frame_patch, fsz);
     SFNE(S, fi_f, GCP(S));
-    EPATCH(S, jmp);
     # --- restore enclosing state ---
     _fnst_restore(S, st);
     return 0;
