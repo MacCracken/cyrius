@@ -620,9 +620,57 @@ fn async_relay_once(rt, rfd, wfd, buf, len): i64 {
     return sys_write(wfd, buf, n);
 }
 
-# Run `fp(arg)` with a timeout. AGNOS has no fork, so there is no second
-# process to bound; run the body INLINE (serial — mirrors thread_agnos.cyr's
-# inline-body model) and return its result. `ms` is advisory / ignored here.
+# Run `fp(arg)` in a forked child and wait at most `ms` milliseconds for its 8-byte result
+# (`ms < 0` waits without limit). Returns the result, or -1 if the deadline fired (the child is
+# SIGKILLed and reaped), the body did not deliver a whole result (it exited early or crashed), or
+# the pipe, kqueue or fork failed. ⚠ A body that legitimately returns -1 is indistinguishable
+# from a failure — the same contract as the epoll backend.
+# ⛔ Until 6.6.10 this ran the body INLINE and ignored `ms` ("AGNOS has no fork", on a kernel
+# with fork). The result is accepted only on an EXACT 8-byte read: a child that died before
+# writing wakes the wait with EOF, and taking whatever the buffer held then is the stale-result
+# defect the Linux arm had (CHANGELOG [6.6.10]). The registration is its own changelist-only
+# call: riding the waiting call, an error would come back as an EV_ERROR "event" and the read
+# after it would block. CHANGELOG [6.6.10]
 fn async_timeout(fp, arg, ms): i64 {
-    return fncall1(fp, arg);
+    var pipefd[16];
+    store64(&pipefd, 0);
+    store64(&pipefd + 8, 0);
+    if (sys_pipe(&pipefd) < 0) { return 0 - 1; }
+    var rfd = load32(&pipefd);
+    var wfd = load32(&pipefd + 4);
+    var kq = sys_kqueue();
+    if (kq < 0) { sys_close(rfd); sys_close(wfd); return 0 - 1; }
+    var pid = sys_fork();
+    if (pid < 0) { sys_close(rfd); sys_close(wfd); sys_close(kq); return 0 - 1; }
+    if (pid == 0) {
+        sys_close(rfd);
+        var out[8];
+        store64(&out, fncall1(fp, arg));
+        sys_write(wfd, &out, 8);
+        sys_exit(0);
+    }
+    sys_close(wfd);
+    var nr = _async_kev_change(kq, rfd, _KEVF_READ, _EV_ADD, 0, 0);
+    if (nr >= 0) {
+        var ev[32];
+        var ts[16];
+        store64(&ts, ms / 1000);
+        store64(&ts + 8, (ms % 1000) * 1000000);
+        var tsp = &ts;
+        if (ms < 0) { tsp = 0; }
+        nr = sys_kevent(kq, 0, 0, &ev, 1, tsp);
+    }
+    sys_close(kq);
+    if (nr > 0) {
+        var rbuf[8];
+        var got = sys_read(rfd, &rbuf, 8);
+        sys_close(rfd);
+        sys_waitpid(pid, 0, 0);
+        if (got == 8) { return load64(&rbuf); }
+        return 0 - 1;
+    }
+    sys_kill(pid, 9);
+    sys_waitpid(pid, 0, 0);
+    sys_close(rfd);
+    return 0 - 1;
 }
