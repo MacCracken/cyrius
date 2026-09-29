@@ -362,11 +362,53 @@ fn async_with_timeout(rt, handle, ms): i64 {
     return completed;
 }
 
-# async_interval (agnos): a repeating reactor timer is a server-path primitive with no
-# equivalent on the serial single-core client model (no timerfd/epoll). Returns 0
-# (unscheduled); present so consumers stay target-agnostic. v6.4.35.
-fn async_interval(rt, fp, arg, ms, tok): i64 {
+# Repeating-timer task for async_interval: parks on its periodic EVFILT_TIMER (ident = ctx),
+# invokes fp(arg) each tick, and completes when `tok` (a cancel-token cell) is non-zero, deleting
+# the timer. ctx = { step, fp, arg, rt, tok }.
+fn _async_interval_stop(ctx): i64 {
+    var rt = load64(ctx + 24);
+    _async_kev_change(load64(rt), ctx, _KEVF_TIMER, _EV_DELETE, 0, 0);
+    var cur = load64(rt + 40);
+    if (cur != 0) { store64(cur + 48, 0 - 1); }
     return 0;
+}
+fn _async_interval_task(ctx): i64 {
+    var tok = load64(ctx + 32);                   # cancel-token CELL (0 = never cancel)
+    if (tok != 0) { if (load64(tok) != 0) { return _async_interval_stop(ctx); } }
+    if (load64(ctx) == 1) {
+        fncall1(load64(ctx + 8), load64(ctx + 16));   # fp(arg)
+        if (tok != 0) { if (load64(tok) != 0) { return _async_interval_stop(ctx); } }
+    }
+    store64(ctx, 1);
+    # The timer stays armed between ticks (a kqueue timer accumulates expirations until they
+    # are collected), so park WITHOUT re-adding it: EV_ADD on a live timer restarts its period.
+    _async_kev_park(load64(ctx + 24), ctx, _KEV_TIMER);
+    return 0;
+}
+
+# Invoke fp(arg) every `ms` milliseconds on the reactor until `tok` is signalled, then stop and
+# delete the timer. `tok` is a cancel-token cell (cancel_token_new(), or any 8-byte cell set
+# non-zero to stop). Returns the interval task handle — async_run / task_join drive the ticks —
+# or 0 when `ms <= 0` (no period), the timer cannot be armed, or an allocation is refused.
+# The callback runs synchronously each tick; keep it short. v6.4.35 (P1 — `interval`); a periodic
+# EVFILT_TIMER here since 6.6.10 (before, it returned 0 and never ran). CHANGELOG [6.6.10]
+fn async_interval(rt, fp, arg, ms, tok): i64 {
+    if (ms <= 0) { return 0; }
+    var ctx = alloc_via(load64(rt + 32), 40);       # rt's allocator (arena-reclaimable)
+    if (ctx == 0) { return 0; }
+    store64(ctx, 0);
+    store64(ctx + 8, fp);
+    store64(ctx + 16, arg);
+    store64(ctx + 24, rt);
+    store64(ctx + 32, tok);
+    if (_async_kev_change(load64(rt), ctx, _KEVF_TIMER, _EV_ADD, 0, ms) < 0) { return 0; }
+    var t = async_spawn(rt, &_async_interval_task, ctx);
+    if (t == 0) {
+        _async_kev_change(load64(rt), ctx, _KEVF_TIMER, _EV_DELETE, 0, 0);
+        return 0;
+    }
+    store64(t + 48, ctx);                           # retire deletes the timer
+    return t;
 }
 
 # async subprocess (agnos): AGNOS has no clone-fork, so a reactor-driven subprocess
