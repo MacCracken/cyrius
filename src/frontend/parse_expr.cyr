@@ -699,16 +699,53 @@ fn _PE_ROUTE_FILEHANDLE(S, sc_num, argc): i64 {
 #   * anything else — a call to a plain fn, the park idiom `await async_wait_fd(rt, fd)`: the
 #     operand's own value.
 # Pass 1 marks every `async fn` (`_prescan_fn_sig`), so a callee defined later still classifies.
+# The shape test looks through balanced enclosing parentheses: `await (inner(a))` is the same
+# operand as `await inner(a)` and forces too (it yielded the raw Future pointer). Any OTHER road
+# to a Future — a field, `vec_get`, an index — is "anything else": bind it to a variable first.
 fn _await_operand_is_future(S, ti0): i64 {
+    var te = GTI(S);
+    while (_await_paren_wraps(S, ti0, te) == 1) {
+        ti0 = ti0 + 1;
+        te = te - 1;
+    }
     if (TOKTYP(S, ti0) != 2) { return 0; }
-    if (GTI(S) == ti0 + 1) { return 1; }                  # a bare variable
+    if (te == ti0 + 1) { return 1; }                      # a bare variable
     if (TOKTYP(S, ti0 + 1) != 10) { return 0; }           # not `name(`
-    if (TOKTYP(S, GTI(S) - 1) != 11) { return 0; }        # the factor is more than the call
+    if (TOKTYP(S, te - 1) != 11) { return 0; }            # the factor is more than the call
+    if (_await_paren_wraps(S, ti0 + 1, te) == 0) { return 0; }   # `f(a)(b)`, `f(a).x`
     var fi = FINDFN(S, TOKVAL(S, ti0));
     if (fi < 0) { return 0; }
     return GFAS(S, fi);
 }
+# 1 when the token at `ti` is a `(` whose matching `)` is the last token before `te`.
+fn _await_paren_wraps(S, ti, te): i64 {
+    if (te - ti < 2) { return 0; }
+    if (TOKTYP(S, ti) != 10) { return 0; }
+    var depth = 0;
+    var i = ti;
+    while (i < te) {
+        var t = TOKTYP(S, i);
+        if (t == 10) { depth = depth + 1; }
+        if (t == 11) {
+            depth = depth - 1;
+            if (depth == 0) {
+                if (i == te - 1) { return 1; }
+                return 0;
+            }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
 # The suspend and its landing. rax = the operand on entry; rax = the `await` value on exit.
+# ⛔ THE EXPRESSION STACK DOES NOT SURVIVE A SUSPEND. The suspend returns through the fn end and
+# the resume re-enters from the top, so every word the enclosing expression had pushed before
+# the await was reached — `b` in `b + await f()`, `1000` in `add(1000, await f())`, the address
+# in `store64(m + 8, await f())` — was gone at the landing, and the parser's pending pop took
+# whatever sat at the new rsp: `b + await five()` gave 5, and the store64 form SIGSEGV'd.
+# `_xdepth` is exact on the x86 family, the only one with a coroutine frame (parse_fn.cyr
+# refuses aarch64 and cx), so those `_xdepth` words are popped into coroutine-frame words
+# before the suspend and pushed back, in order, at the landing. CHANGELOG [6.6.10]
 fn _await_coro_suspend(S, sk, fut): i64 {
     var ff = 0;
     var fpend = 0;
@@ -722,6 +759,8 @@ fn _await_coro_suspend(S, sk, fut): i64 {
     }
     var slot = _HTEMP(S);                 # a coroutine-frame word: it survives the suspend
     EFLSTORE(S, slot);
+    var d = _xdepth;                      # the enclosing expression's pending pushes
+    var s0 = _await_spill(S, d);
     EFLLOAD(S, _coro_base);               # rax = C (slot < _coro_lo: the stack path)
     EADDRA_IMM(S, _CORO_STATE_OFF);
     EPUSHR(S);
@@ -733,8 +772,39 @@ fn _await_coro_suspend(S, sk, fut): i64 {
     _coro_suspend_jmp(S, sk);             # jump to the fn end, past the defer walker (6.6.7)
     S64(&_coro_rcp + sk * 8, GCP(S));     # the resume label for state sk
     _coro_nsusp = sk;
+    var vslot = slot;
+    if (fut == 1) { vslot = _await_coro_force(S, slot, ff, fpend, again); }
+    _await_unspill(S, s0, d);
+    EFLLOAD(S, vslot);
+    return 0;
+}
+# Pop `d` pending expression words into consecutive fresh coroutine-frame words (top of stack
+# first); returns the first word's slot. The landing's `_await_unspill` pushes them back.
+fn _await_spill(S, d): i64 {
+    var s0 = 0;
+    var i = 0;
+    while (i < d) {
+        var s = _HTEMP(S);
+        if (i == 0) { s0 = s; }
+        EPOPR(S);
+        EFLSTORE(S, s);
+        i = i + 1;
+    }
+    return s0;
+}
+fn _await_unspill(S, s0, d): i64 {
+    var i = d;
+    while (i > 0) {
+        i = i - 1;
+        EFLLOAD(S, s0 + i);
+        EPUSHR(S);
+    }
+    return 0;
+}
+# The landing of a Future operand: force it, and while it is a coroutine Future that has not
+# completed, suspend again from `again`. Returns the slot holding the forced value.
+fn _await_coro_force(S, slot, ff, fpend, again): i64 {
     EFLLOAD(S, slot);
-    if (fut == 0) { return 0; }
     _await_call1(S, ff);                  # rax = future_force(operand)
     var vslot = _HTEMP(S);
     EFLSTORE(S, vslot);
@@ -747,8 +817,7 @@ fn _await_coro_suspend(S, sk, fut): i64 {
     var done = EJCC(S, 0x84);             # je -> completed
     EJMP(S, again);
     EPATCH(S, done);
-    EFLLOAD(S, vslot);
-    return 0;
+    return vslot;
 }
 fn _await_call1(S, fi): i64 {
     EPUSHR(S);

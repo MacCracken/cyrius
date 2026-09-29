@@ -2411,6 +2411,19 @@ evaluated, the coroutine suspends, and at the next force:
 - anything else — a call to an ordinary fn, such as the park idiom
   `await async_wait_fd(rt, fd)` — yields that value.
 
+The test is on the operand's **shape**, and parentheses do not change it:
+`await (inner(a))` forces like `await inner(a)`. A Future reached any other way
+— a field (`await s.fut`), `vec_get` (`await vec_get(futs, i)`), an index — is
+"anything else" and yields the Future's pointer; bind it to a variable first
+(`var F = vec_get(futs, i); var v = await F;`).
+
+`await` may sit anywhere in an expression: `total = total + await f`,
+`add(1000, await g())`, `s += await g()`, `store64(p + 8, await g())`. Whatever
+the expression had already evaluated before the `await` — a left operand,
+earlier call arguments, an address — is kept in the coroutine frame across the
+suspend (6.6.10; it used to be lost, so `b + await five()` gave 5 and the
+`store64` form crashed).
+
 **Under the reactor.** `async_spawn_future(rt, co(..))` + `async_run(rt)` drives
 coroutines that PARK before they suspend (`await async_wait_fd(rt, fd)` /
 `async_wait_writable`): each parked task sleeps until its fd is ready and

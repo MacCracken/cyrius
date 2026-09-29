@@ -34,10 +34,16 @@
 #      Future (was 1002, inner never ran); J3 a nested coroutine re-suspends until it is done, a
 #      Future in a variable is forced and then answered from the memo; both callees are defined
 #      BELOW the caller (pass 1 marks async fns)                                           6.6.10
+#   J4 `await` inside a larger expression — a binary op's left operand, earlier call arguments
+#      (2 and 9 args), `+=`, store64's address, a nested coroutine under a pushed word — keeps
+#      what the expression had pushed (was 5 for 105 .. and a SIGSEGV for store64)         6.6.10
+#   J5 `await (inner(3))` forces like `await inner(3)` (was the raw Future pointer); a vec_get
+#      Future bound to a variable forces                                                    6.6.10
 #   K  a plain Future forced 3 times runs its body once (was 103 203 303)                 6.6.10
 #   L  a plain async fn with 9 parameters is refused by name; 8 compiles                  6.6.10
-#   PE (wine) G H I1 J3 K, aarch64 (qemu) K, cx (cxvm) K + L + the coroutine refusal (the cx leg
-#   says PENDING until the cx compiler reads CYRIUS_ASYNC, S2 bite 10).
+#   PE (wine) G H I1 J3 J4 K, aarch64 (qemu) K, cx (cxvm) K + L + the coroutine refusal (the cx
+#   leg says PENDING while the tree has no src/backend/common/env.cyr — S2 bite 10 — and FAILS if
+#   that file exists and the cx compiler still refuses CYRIUS_ASYNC).
 #
 # Mutations: remove the coroutine branch of ECALLIND -> A, B, C RED (139). Remove
 # `_coro_mark_done` -> D, E, F RED (the tail and the defer re-run). Remove `_coro_done_check` ->
@@ -45,7 +51,9 @@
 # 6.6.10: coroutine argc word = pc -> G, H RED (PE G 0xC0000005, H exit 70). Drop the fall-off
 # `jmp` -> I1-I4 RED (timeout). Never force an awaited Future -> J2, J3 RED. future_pending
 # always 0 -> J3 RED. Drop the pass-1 `SFAS` -> J3 RED. Drop the memo hit in future_force -> K
-# (x86, PE, aarch64) and J3 RED. Raise the arity cap -> L RED.
+# (x86, PE, aarch64) and J3 RED. Raise the arity cap -> L RED. Spill no pending pushes in
+# `_await_coro_suspend` (d = 0) -> J4 and PE J4 RED. Drop the parenthesis look-through in
+# `_await_operand_is_future` -> J5 RED.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -357,6 +365,58 @@ syscall(60, 0);
 EOF
 run j3 '0 0 0 0 0 0 21132 21132 11' "J3: a nested coroutine, a forward async fn in a variable, awaited twice"
 
+# J4 — `await` INSIDE A LARGER EXPRESSION. Whatever the enclosing expression had pushed before the
+# await was reached (a binary op's left operand, earlier call arguments, a compound-assign target,
+# store64's address) was lost across the suspend, and the landing's pop took whatever sat at the
+# new rsp: `b + await five()` gave 5, `add(1000, await five())` 5, `s += await five()` 5, and the
+# store64 form SIGSEGV'd. Every shape here, including a nested coroutine that re-suspends while
+# the outer expression still holds a pushed word, and a 9-argument call (stack arguments on PE).
+cat > "$T/j4.cyr" <<EOF
+$PRE
+fn five(): i64 { return 5; }
+fn add(x, y): i64 { return x + y; }
+fn s9(a, b, c, d, e, f, g, h, i): i64 { return a + b + c + d + e + f + g + h + i * 1000; }
+async fn inner(k): i64 { return k * 2; }
+async fn cor2(k): i64 { var q = await five(); return q + k; }
+async fn c_plus(a): i64 { var b = 100; var v = b + await five(); return v; }
+async fn c_ret(a): i64 { return 1 + await inner(3); }
+async fn c_mul(a): i64 { var b = 3; return b * await five(); }
+async fn c_add(a): i64 { return add(1000, await five()); }
+async fn c_s9(a): i64 { return s9(1, 1, 1, 1, 1, 1, 1, 1, await five()); }
+async fn c_pluseq(a): i64 { var s = 100; s += await five(); return s; }
+async fn c_store(a): i64 { var m = alloc(16); store64(m, 0); store64(m + 8, await five()); return load64(m + 8) + load64(m); }
+async fn c_loop(a): i64 { var s = 100; var i = 0; while (i < 3) { s = s + await inner(i); i = i + 1; } return s; }
+async fn c_nest(a): i64 { var b = 1000; return b + await cor2(20); }
+async fn c_two(a): i64 { return await five() * 10 + await five(); }
+fn drain(C): i64 { var r = 0; var n = 0; while (n < 6) { r = future_force(C); n = n + 1; } fmt_int(r); syscall(1, 1, " ", 1); return 0; }
+fn main(): i64 {
+    alloc_init();
+    drain(c_plus(0)); drain(c_ret(0)); drain(c_mul(0)); drain(c_add(0)); drain(c_s9(0));
+    drain(c_pluseq(0)); drain(c_store(0)); drain(c_loop(0)); drain(c_nest(0)); drain(c_two(0));
+    return 0;
+}
+var e = main();
+syscall(60, 0);
+EOF
+run j4 '105 7 15 1005 5008 105 5 106 1025 55 ' "J4: await inside a larger expression keeps what the expression had pushed"
+
+# J5 — the operand's SHAPE decides whether the landing forces it, and parentheses do not change
+# the shape: `await (inner(3))` forces like `await inner(3)` (it yielded the raw Future pointer).
+# A Future reached through a call to a PLAIN fn is "anything else" — bound to a variable first,
+# `await F` forces it (the documented idiom).
+cat > "$T/j5.cyr" <<EOF
+$PRE
+async fn inner(k): i64 { return k * 2; }
+async fn c_paren(a): i64 { var v = await (inner(3)); return v; }
+async fn c_pvar(a): i64 { var F = inner(4); var v = await ((F)); return v; }
+async fn c_vec(a): i64 { var vv = vec_new(); vec_push(vv, inner(5)); var F = vec_get(vv, 0); var v = await F; return v; }
+fn drain(C): i64 { var r = 0; var n = 0; while (n < 4) { r = future_force(C); n = n + 1; } fmt_int(r); syscall(1, 1, " ", 1); return 0; }
+fn main(): i64 { alloc_init(); drain(c_paren(0)); drain(c_pvar(0)); drain(c_vec(0)); return 0; }
+var e = main();
+syscall(60, 0);
+EOF
+run j5 '6 8 10 ' "J5: a parenthesised Future operand forces; a vec_get Future forces once bound to a variable"
+
 # K — a PLAIN (no-await) async fn's Future runs its body ONCE however often it is forced (it
 # re-ran on every force), a 0-parameter one too.
 cat > "$T/k.cyr" <<EOF
@@ -417,6 +477,7 @@ if command -v wine > /dev/null 2>&1; then
     xrun "$WRUN" "$WCC" h '0 49 49 49 49 ' "PE H: 9-parameter coroutine"
     xrun "$WRUN" "$WCC" i1 '0 0 0 0 1' "PE I1: fall-off completes"
     xrun "$WRUN" "$WCC" j3 '0 0 0 0 0 0 21132 21132 11' "PE J3: await values"
+    xrun "$WRUN" "$WCC" j4 '105 7 15 1005 5008 105 5 106 1025 55 ' "PE J4: await inside a larger expression"
     xrun "$WRUN" "$WCC" k '103 103 103 7 7 11' "PE K: a plain Future runs once"
 else echo "  SKIP: PE leg (wine not installed)"; fi
 if command -v qemu-aarch64 > /dev/null 2>&1; then
@@ -431,8 +492,13 @@ else echo "  SKIP: aarch64 leg (qemu-aarch64 not installed)"; fi
 if "$CC" < "$ROOT/src/main_cx.cyr" > "$T/cc_cx" 2>/dev/null && chmod +x "$T/cc_cx" \
    && "$CC" < "$ROOT/programs/cxvm.cyr" > "$T/cxvm" 2>/dev/null && chmod +x "$T/cxvm"; then
     rc=0; CYRIUS_ASYNC=1 "$T/cc_cx" < "$T/k.cyr" > "$T/k.cyx" 2> "$T/k.cxerr" || rc=$?
-    if grep -q 'requires CYRIUS_ASYNC=1' "$T/k.cxerr"; then
-        echo "  PENDING cx leg: the cx compiler cannot read CYRIUS_ASYNC yet (S2 bite 10)"
+    # ⛔ PENDING is allowed ONLY while the tree has no src/backend/common/env.cyr — the file S2
+    # bite 10 adds to wire cx `_read_env`. Once it exists the leg must be real: a cx compiler that
+    # still refuses CYRIUS_ASYNC there is a FAIL, not a vacuous pass. CHANGELOG [6.6.10]
+    if grep -q 'requires CYRIUS_ASYNC=1' "$T/k.cxerr" && [ -f "$ROOT/src/backend/common/env.cyr" ]; then
+        bad "cx leg: src/backend/common/env.cyr is present but the cx compiler still refuses CYRIUS_ASYNC=1"
+    elif grep -q 'requires CYRIUS_ASYNC=1' "$T/k.cxerr"; then
+        echo "  PENDING cx leg: the cx compiler cannot read CYRIUS_ASYNC yet (S2 bite 10: no src/backend/common/env.cyr)"
     else
         if [ "$rc" -ne 0 ]; then bad "cx K: rc $rc: $(grep -m1 '^error' "$T/k.cxerr")"
         else
@@ -450,4 +516,4 @@ if "$CC" < "$ROOT/src/main_cx.cyr" > "$T/cc_cx" 2>/dev/null && chmod +x "$T/cc_c
 else bad "cx leg: could not build src/main_cx.cyr / programs/cxvm.cyr"; fi
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: coroutine_fnptr_and_completion — $fails axis(es) red"; exit 1; fi
-echo "PASS: coroutine_fnptr_and_completion — fncallN / callptr / closure calls inside a coroutine reach their callee (A-C); a completed coroutine answers with its value and runs nothing again (D-F); 0- and 9-parameter coroutines (G-H); a fall-off completes (I1-I4); await yields its value and forces Futures (J1-J3); a plain Future runs once (K); 9+ plain parameters refused (L); PE / aarch64 / cx legs"
+echo "PASS: coroutine_fnptr_and_completion — fncallN / callptr / closure calls inside a coroutine reach their callee (A-C); a completed coroutine answers with its value and runs nothing again (D-F); 0- and 9-parameter coroutines (G-H); a fall-off completes (I1-I4); await yields its value and forces Futures, inside any expression (J1-J5); a plain Future runs once (K); 9+ plain parameters refused (L); PE / aarch64 / cx legs"
