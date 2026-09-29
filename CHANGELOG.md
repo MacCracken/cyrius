@@ -108,6 +108,36 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `_agnos_getenv` reads a refused copy as unset. The census allowlist loses the eight lines
   (shrink-only), and restoring any one unchecked site fails it by name.
 
+- **`lib/regression.cyr`'s spawn, capture and deadline verbs run real children on agnos.**
+  (bite 13) **Root cause:** 6.6.8 rewrote `process_agnos` onto spawn_path#43, #62 redirects and
+  WAIT_BLOCK and left `regression_agnos`'s ten verbs as the v6.2.7 constant stubs (exec_run -1,
+  exec_capture 0 bytes, capture_status [-1, 0], …) — a probe calling all ten made ZERO #25 / #43
+  / #62 / #4 — and `regression_deadline_kills` / `regression_last_deadline_ms` /
+  `regression_terminate_children` answered 0, because the deadline knobs and counters sat inside
+  regression.cyr's `#ifndef CYRIUS_TARGET_AGNOS` region where the peer could not reach them.
+  **Fix:** the knobs, the counters and `_regression_store_status` are SHARED code now (same
+  CYRIUS_CHECK_TIMEOUT, same counters the check driver reads), and the agnos verbs spawn from
+  disk with a clean fd table, every child fd a pipe armed through #62. The port is not a
+  translation — agnos has no /dev/null, temp-file-friendly redirect or poll(2) — and four things
+  differ on purpose: outputs are DRAINED into a scratch buffer, never discarded through a closed
+  read end (the child's writes would fail where /dev/null's succeed); a FILE fd is never
+  redirected into the child (vfs_fd_inherit copies a FAT write entry by value and the parent's
+  close releases its block) — the parent writes the output file itself; ONE interleaved
+  non-blocking pump feeds stdin and drains stdout/stderr (a write-all-then-read pump deadlocks once
+  the child has written more than the 4080 B ring), streaming the source instead of the POSIX
+  verb's 1 MB buffer; and the deadline kill is `kill_tree(9)` at once (SIGTERM has no default
+  action on agnos), counted, with the wait polling #4 (WAIT_BLOCK has no timeout).
+  `regression_terminate_children` ends each running direct child found through proclist#99 and
+  reaps; `regression_reap_orphans` is a WAIT-ANY poll. exec_in_dir3 / ssh / scp / codesign stay
+  fail-closed (no cwd, no ssh). The argv/envp-to-blob, wait-with-deadline and kill-and-reap
+  helpers live in the agnos peer (`_agnos_blob_*`, `_agnos_wait_poll`, `_agnos_kill_reap`),
+  shared with the async port. Kernel floor 1.57.7 (1.57.9 for the stdin-feeding pipe_to_bin).
+  **Gate:** `tests/gates/platform/agnos_regression_spawn.sh` — 40 rows over the fake kernel's new
+  stateful rg* modes (distinct fds per pipe, a #4 that answers -2 until a #16, a child that won't
+  read stdin until its stdout is drained, a proclist table); the pre-port tree fails 42 lines of
+  it, and six mutants (write-all-then-read pump, closed read end, SIGTERM kill, uncounted kill,
+  stderr captured, blocking reads) each redden it. Verified on agnos-qemu 1.57.10 at -smp 1 and 4.
+
 ### Added
 
 - **A census gate for unchecked first-party `alloc(` results, with a shrink-only allowlist.**

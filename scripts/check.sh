@@ -1406,6 +1406,13 @@ _chk_gate "$ROOT/tests/gates/platform/agnos_accept_timeout_inherit.sh"
 # same arity (derived from the #ifndef CYRIUS_TARGET_AGNOS regions, not a hand list).
 _chk_gate "$ROOT/tests/gates/platform/agnos_process_peer_parity.sh"
 
+# 6.6.10 bite 13 — lib/regression_agnos.cyr's spawn / capture / deadline verbs run real children
+# (they were constant stubs): pipes on fds 0/1/2 armed through #62, outputs DRAINED by one
+# interleaved non-blocking pump (a write-all-then-read pump deadlocks: mode rgin), the source
+# streamed, kill_tree(9) at the deadline, counted in the SHARED regression_deadline_kills;
+# terminate_children over proclist#99. Fake kernel, stateful rg* modes; mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/platform/agnos_regression_spawn.sh"
+
 # 6.6.8 (bite 9) — `cyrius header` had NO gate. It matched only a column-0 `pub fn `, so a bare
 # `fn` and `public fn` (the same token) never got a prototype, it ignored the file-scope
 # `private` rule, and it read a fixed 64 KiB (every fn past the cut silently dropped, rc=0).

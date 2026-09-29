@@ -1,7 +1,11 @@
 # regression_terminate_children.tcyr — CROSS-HOST: lib/regression.cyr's
 # `regression_terminate_children(grace_ms)` does what its contract says on EVERY target. Runs
 # on ecb (macOS arm64) + ach (Intel Mac) + pi (aarch64) through the release gate's cross-OS
-# leg; on Windows and agnos there is no fork and the file only reports its summary.
+# leg; on Windows (no fork) the file only reports its summary. agnos is not a cross-OS host and
+# its peer is a different implementation (proclist#99 + kill_tree(9), lib/regression_agnos.cyr),
+# pinned by tests/gates/platform/agnos_regression_spawn.sh axis 5 and run on agnos-qemu — so the
+# body is compiled out there too. (This line read "on Windows and agnos there is no fork"; agnos
+# has had fork#96 since 1.56.55. CHANGELOG [6.6.10])
 #
 # ⛔ WHY (6.6.8). The verb ends every descendant of the caller on Linux — it walks /proc. Its
 # comment promised that elsewhere it "reaps and returns 0", but the two wait loops ran on

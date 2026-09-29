@@ -1017,6 +1017,92 @@ fn sys_kill_tree(pid, sig): i64 {
     return syscall(SYS_KILL, pid, sig | AGNOS_KILL_TREE);
 }
 
+# ── Child helpers shared by lib/regression_agnos.cyr and lib/async_agnos.cyr (6.6.10) ──────────
+# Both ports hand the kernel a POSIX-shaped argv/envp (NULL-terminated arrays of cstrs) as #43
+# blobs, bound a child with a deadline, and end it at the deadline — one copy here, rather than a
+# private copy per module (lib/process_agnos.cyr's _agp_* builders take vecs, not pointer arrays).
+
+# Append the NUL-terminated string `s` and one NUL to the #43 blob `b` at offset `off` (capacity
+# `cap`). Returns the new offset, or -1 when `off` is already -1, `s` is 0, or it does not fit.
+fn _agnos_blob_put(b, off, cap, s): i64 {
+    if (off < 0) { return 0 - 1; }
+    if (s == 0) { return 0 - 1; }
+    var i = 0;
+    while (load8(s + i) != 0) {
+        if (off + i + 1 >= cap) { return 0 - 1; }
+        store8(b + off + i, load8(s + i));
+        i = i + 1;
+    }
+    if (off + i + 1 > cap) { return 0 - 1; }
+    store8(b + off + i, 0);
+    return off + i + 1;
+}
+
+# 1 iff the blob entry b[s, e) has a '=' at index >= 1 — the kernel's KEY=VALUE rule for an env.
+fn _agnos_blob_has_eq(b, s, e): i64 {
+    var j = s + 1;
+    while (j < e) {
+        if (load8(b + j) == 61) { return 1; }
+        j = j + 1;
+    }
+    return 0;
+}
+
+# Append every string of the NULL-terminated pointer array `ptrs` from index `from` (`ptrs` 0 is
+# an empty array). With `need_eq` 1 an entry that is not KEY=VALUE is refused. Returns the new
+# offset, or -1 — also when the blob would then hold more than SPAWN_ARGC_MAX entries, which the
+# kernel refuses (-SPAWN_E_ARGS) and never truncates.
+fn _agnos_blob_ptrs(b, off, cap, ptrs, from, need_eq): i64 {
+    if (off < 0) { return 0 - 1; }
+    if (ptrs == 0) { return off; }
+    var i = from;
+    while (load64(ptrs + i * 8) != 0) {
+        var s = off;
+        off = _agnos_blob_put(b, off, cap, load64(ptrs + i * 8));
+        if (off < 0) { return 0 - 1; }
+        if (need_eq == 1) { if (_agnos_blob_has_eq(b, s, off - 1) == 0) { return 0 - 1; } }
+        i = i + 1;
+    }
+    var n = 0;
+    var k = 0;
+    while (k < off) {
+        if (load8(b + k) == 0) { n = n + 1; }
+        k = k + 1;
+    }
+    if (n > SPAWN_ARGC_MAX) { return 0 - 1; }
+    return off;
+}
+
+# Poll child `pid` (#4, NON-blocking) until it exits. Returns its wait status (>= 0), -1 when it is
+# not ours, or -2 when `bounded` is 1 and the deadline in `dl` (_agnos_dl_start) passed first. A
+# wait with a deadline cannot use WAIT_BLOCK (it has no timeout, and takes only pids 0..15), so
+# this polls, sleeping 1 ms between polls (#41 blocks only the caller).
+fn _agnos_wait_poll(pid, dl, bounded): i64 {
+    while (1 == 1) {
+        var st = sys_waitpid(pid);
+        if (st != 0 - 2) { return st; }
+        if (bounded == 1) { if (_agnos_dl_over(dl) == 1) { return 0 - 2; } }
+        sys_sleep_ms(1);
+    }
+    return 0 - 1;
+}
+
+# End child `pid` and its whole tree with SIGKILL, then reap it. Returns its wait status, or -1
+# when it could not be reaped within ~5 s. SIGKILL AT ONCE: agnos gives SIGTERM no default action
+# (see sys_kill), so the POSIX TERM -> grace -> KILL sequence would end nothing and only wait.
+# kill_tree needs agnos 1.57.7; an older kernel answers -1 and the child alone is killed.
+fn _agnos_kill_reap(pid): i64 {
+    if (sys_kill_tree(pid, 9) < 0) { sys_kill(pid, 9); }
+    var i = 0;
+    while (i < 5000) {
+        var st = sys_waitpid(pid);
+        if (st != 0 - 2) { return st; }
+        sys_sleep_ms(1);
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
 # spawn_limits(mem_pages, cpu_ms) — #107, agnos 1.57.7: ONE-SHOT resource caps for the caller's
 # NEXT child (#3 / #37 / #43 consume the arm on every return, success or refusal).
 #   mem_pages  the child's mapped user memory in 4 KiB pages, 0 = none, 0..2^36; enforced at 2 MB
