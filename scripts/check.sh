@@ -844,6 +844,11 @@ _chk_gate "$ROOT/tests/gates/toolchain/tcyr_epilogue_shape.sh"
 # before assert_summary (its FAIL rows go to stderr, never captured) and exited 0, or printed
 # `0 passed, 0 failed`, read PASS. Now: the LAST `N passed, M failed` line, N >= 1, M == 0, ec 0.
 _chk_gate "$ROOT/tests/gates/toolchain/check_driver_requires_summary.sh"
+# 6.6.11 B01: ci.yml's three full-corpus .tcyr loops (ubuntu, AGNOS container, native arm64)
+# grade by the same rule. They passed `ec == 0` plus an optional `N failed` count, so a test
+# that died before its summary and exited 0 had no count to read and scored PASS. Each step's
+# own `tcyr_verdict` is extracted and run under bash -eo pipefail over 9 cases, plus a mutant.
+_chk_gate "$ROOT/tests/gates/toolchain/ci_tcyr_loops_require_summary.sh"
 # 6.6.6: copying between two DIFFERENT struct (or vector) types is an error, not an 8-byte
 # store. Both copy paths answered a type mismatch with `return 0`, which falls through to the
 # generic scalar store: `p = q` between a P3 and a Q3 copied ONE word of three and left the

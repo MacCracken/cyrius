@@ -216,6 +216,23 @@ jobs:
           case "$floor" in ''|*[!0-9]*) echo "FAIL: tests/tcyr/CORPUS_FLOOR line 1 is '$floor', not a number"; exit 1 ;; esac
           test "$floor" -gt 0 || { echo "FAIL: corpus floor is $floor"; exit 1; }
           pass=0; fail=0
+          # ⛔ 6.6.11 — THE ONE .tcyr RULE (same as the check driver's `_tcyr_grade`, the cross-OS
+          # runner, its cass leg and `cyrius test`): when the SOURCE calls assert_summary(, the LAST
+          # `N passed, M failed` line must exist with N >= 1 and M == 0, AND the exit code must be 0.
+          # Grading on `ec` plus an optional count passed a test that died before its summary and
+          # exited 0 (no count to read) — and the count came from the first `N failed` anywhere.
+          tcyr_verdict() {   # $1 = source, $2 = exit code, $3 = output -> prints "" (pass) or why
+            _sl=$(printf '%s\n' "$3" | grep -E '^[0-9]+ passed, [0-9]+ failed' | tail -1) || _sl=""
+            _np=$(printf '%s\n' "$_sl" | sed -n 's/^\([0-9][0-9]*\) passed,.*/\1/p')
+            _nf=$(printf '%s\n' "$_sl" | sed -n 's/^[0-9][0-9]* passed, \([0-9][0-9]*\) failed.*/\1/p')
+            if [ -n "$_nf" ] && [ "$_nf" -gt 0 ]; then echo "$_nf failed"; return 0; fi
+            if grep -q 'assert_summary(' "$1"; then
+              if [ -z "$_np" ]; then echo "no assert summary"; return 0; fi
+              if [ "$_np" -lt 1 ]; then echo "0 assertions"; return 0; fi
+            fi
+            if [ "$2" != 0 ]; then echo "exit $2"; return 0; fi
+            echo ""
+          }
           # v6.5.11: RECURSIVE find, not the flat `tests/tcyr/*.tcyr` glob. The corpus
           # lives in topical subfolders now, and the flat glob would match NONE of them.
           # That failure was SILENT-GREEN, not red: an unmatched glob stays literal, `cat`
@@ -229,9 +246,9 @@ jobs:
             if [ $? -ne 0 ]; then echo "FAIL (compile): $name"; fail=$((fail+1)); continue; fi
             output=$("$tmpbin" 2>&1) && ec=0 || ec=$?
             rm -f "$tmpbin"
-            f=$(echo "$output" | grep -o '[0-9]* failed' | tail -1 | grep -o '^[0-9]*') || f=""  # set-e-safe: a test with no "N failed" output (exit-code-only tests) makes grep exit 1 → bare f=$(…) aborts the step under bash -eo pipefail
-            if [ "$ec" -ne 0 ] || { [ -n "$f" ] && [ "$f" -gt 0 ]; }; then
-              echo "FAIL: $name"; fail=$((fail+1))
+            why=$(tcyr_verdict "$t" "$ec" "$output")
+            if [ -n "$why" ]; then
+              echo "FAIL: $name ($why)"; fail=$((fail+1))
             else
               echo "PASS: $name"; pass=$((pass+1))
             fi
@@ -350,6 +367,23 @@ jobs:
       - name: Test suite (.tcyr)
         run: |
           pass=0; fail=0; skip=0
+          # ⛔ 6.6.11 — THE ONE .tcyr RULE (same as the check driver's `_tcyr_grade`, the cross-OS
+          # runner, its cass leg and `cyrius test`): when the SOURCE calls assert_summary(, the LAST
+          # `N passed, M failed` line must exist with N >= 1 and M == 0, AND the exit code must be 0.
+          # Grading on `ec` plus an optional count passed a test that died before its summary and
+          # exited 0 (no count to read) — and the count came from the first `N failed` anywhere.
+          tcyr_verdict() {   # $1 = source, $2 = exit code, $3 = output -> prints "" (pass) or why
+            _sl=$(printf '%s\n' "$3" | grep -E '^[0-9]+ passed, [0-9]+ failed' | tail -1) || _sl=""
+            _np=$(printf '%s\n' "$_sl" | sed -n 's/^\([0-9][0-9]*\) passed,.*/\1/p')
+            _nf=$(printf '%s\n' "$_sl" | sed -n 's/^[0-9][0-9]* passed, \([0-9][0-9]*\) failed.*/\1/p')
+            if [ -n "$_nf" ] && [ "$_nf" -gt 0 ]; then echo "$_nf failed"; return 0; fi
+            if grep -q 'assert_summary(' "$1"; then
+              if [ -z "$_np" ]; then echo "no assert summary"; return 0; fi
+              if [ "$_np" -lt 1 ]; then echo "0 assertions"; return 0; fi
+            fi
+            if [ "$2" != 0 ]; then echo "exit $2"; return 0; fi
+            echo ""
+          }
           # v6.5.11: RECURSIVE find — see the note on the ubuntu Test suite step above
           # for why the flat glob failed SILENTLY GREEN rather than red.
           for t in $(find tests/tcyr -name '*.tcyr' | sort); do
@@ -362,9 +396,9 @@ jobs:
             if [ $? -ne 0 ]; then echo "FAIL (compile): $name"; fail=$((fail+1)); continue; fi
             output=$("$tmpbin" 2>&1) && ec=0 || ec=$?
             rm -f "$tmpbin"
-            f=$(echo "$output" | grep -o '[0-9]* failed' | tail -1 | grep -o '^[0-9]*') || f=""  # set-e-safe: a test with no "N failed" output (exit-code-only tests) makes grep exit 1 → bare f=$(…) aborts the step under bash -eo pipefail
-            if [ "$ec" -ne 0 ] || { [ -n "$f" ] && [ "$f" -gt 0 ]; }; then
-              echo "FAIL: $name"; fail=$((fail+1))
+            why=$(tcyr_verdict "$t" "$ec" "$output")
+            if [ -n "$why" ]; then
+              echo "FAIL: $name ($why)"; fail=$((fail+1))
             else
               echo "PASS: $name"; pass=$((pass+1))
             fi
@@ -538,6 +572,23 @@ jobs:
           # imm9 large-frame limit that had blocked simd_ints from compiling on aarch64.)
           XFAIL=""
           pass=0; fail=0; xfail=0; xpass=0; skip=0
+          # ⛔ 6.6.11 — THE ONE .tcyr RULE (same as the check driver's `_tcyr_grade`, the cross-OS
+          # runner, its cass leg and `cyrius test`): when the SOURCE calls assert_summary(, the LAST
+          # `N passed, M failed` line must exist with N >= 1 and M == 0, AND the exit code must be 0.
+          # Grading on `ec` plus an optional count passed a test that died before its summary and
+          # exited 0 (no count to read) — and the count came from the first `N failed` anywhere.
+          tcyr_verdict() {   # $1 = source, $2 = exit code, $3 = output -> prints "" (pass) or why
+            _sl=$(printf '%s\n' "$3" | grep -E '^[0-9]+ passed, [0-9]+ failed' | tail -1) || _sl=""
+            _np=$(printf '%s\n' "$_sl" | sed -n 's/^\([0-9][0-9]*\) passed,.*/\1/p')
+            _nf=$(printf '%s\n' "$_sl" | sed -n 's/^[0-9][0-9]* passed, \([0-9][0-9]*\) failed.*/\1/p')
+            if [ -n "$_nf" ] && [ "$_nf" -gt 0 ]; then echo "$_nf failed"; return 0; fi
+            if grep -q 'assert_summary(' "$1"; then
+              if [ -z "$_np" ]; then echo "no assert summary"; return 0; fi
+              if [ "$_np" -lt 1 ]; then echo "0 assertions"; return 0; fi
+            fi
+            if [ "$2" != 0 ]; then echo "exit $2"; return 0; fi
+            echo ""
+          }
           # v6.5.11: RECURSIVE find — the flat glob matched no subfoldered test and went
           # silently green on a single fake iteration (cycc on empty stdin exits 0 and
           # emits a runnable binary). SKIP/XFAIL stay keyed on the BARE name so existing
@@ -555,11 +606,10 @@ jobs:
               # exits non-zero (e.g. an XFAIL test that legitimately fails on ARM)
               # would ABORT the whole step at `out=$(...)` before the xfail
               # bookkeeping — the step dies with the test's exit code. `|| ec=$?`
-              # captures the code without tripping set -e; the grep gets `|| f=""`
-              # for tests whose output has no "N failed" line (crash / no assert).
+              # captures the code without tripping set -e; `tcyr_verdict` is set-e-safe too.
               ec=0; out=$("$bin" 2>&1) || ec=$?
-              f=$(printf '%s' "$out" | grep -oE '[0-9]+ failed' | tail -1 | grep -oE '^[0-9]+') || f=""
-              bad=0; [ "$ec" -ne 0 ] && bad=1; [ "${f:-0}" -gt 0 ] && bad=1
+              why=$(tcyr_verdict "$t" "$ec" "$out")
+              bad=0; if [ -n "$why" ]; then bad=1; ec="$why"; fi
             else
               bad=1; ec="compile"
             fi
