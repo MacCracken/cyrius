@@ -140,7 +140,12 @@ is best reserved for byte buffers:
 `enum Sz { BUF = 16; }` then `var b[BUF]`, `var b[Sz.BUF]` or
 `var a: i64[Sz.BUF]`, in a function or at top level (the qualified form
 since 6.6.10). A plain `var` is not a constant and is refused as a size, as is
-a negative enum value.
+a negative enum value. The qualifier must be the constant's OWN enum (since
+6.6.11, here and in every expression): `Foo.BUF` with no enum `Foo` is refused
+with `'Foo' is not an enum`, and `Other.BUF` with `'BUF' is not a variant of
+'Other'` — before 6.6.11 the qualifier was ignored. When two enums share a
+variant name, `A.X` and `B.X` each read their own enum's value (the bare `X`
+keeps "last definition wins", with its warning).
 
 ## Functions
 
@@ -567,6 +572,18 @@ syscall(1, 1, "hello\n", 6);   # Write to stdout
 | `\x##`         | one byte       | exactly 2 hex digits, e.g. `\x1b`    |
 | `\u####`       | 1-3 UTF-8 b    | exactly 4 hex digits (BMP)           |
 | `\u{...}`      | 1-4 UTF-8 b    | 1..6 hex digits, up to `\u{10FFFF}`  |
+| `\` + newline  | `0x0A`         | KEEPS the newline (not a C splice)   |
+
+That is the whole list. **Any other byte after a `\` is a lex error**
+(`unknown string escape`, pointing at the backslash) since v6.6.11;
+before that it was stored with the backslash dropped, so `"ab\q"`
+compiled to `abq`. A `\` at the end of a line inside a string is an
+escape that keeps its line feed (`\` + CR LF keeps both bytes): the
+string still contains the newline, it is not joined to the next line.
+A newline inside a string, raw or escaped, is counted as a source
+line, so diagnostics after a multi-line string name the right line
+(and the right file) — before v6.6.11 every later token was reported
+one line high per newline.
 
 `\u` codepoints in the surrogate range `D800..DFFF` and any
 `\u{...}` codepoint > `U+10FFFF` are lex errors. Malformed
@@ -1362,7 +1379,13 @@ skipped unchecked, so a false `#assert E.EB * 2 == 9;` compiled clean. An
 operand that is none of
 these is reported once, by name (`expected a number, sizeof(T) or an enum
 constant`), and `sizeof` must be the whole word — `sizeofzz(P)` is refused,
-not read as `sizeof`.
+not read as `sizeof`. So must its TYPE (since 6.6.11, in `#assert` and in
+expressions alike): `sizeof(i16v8)` and `sizeof(i8zz)` are `unknown type`, not
+2 and 1. An `#assert` with no message and no `;` ends at the end of its line —
+before 6.6.11 it swallowed the whole NEXT line (`#assert 1 == 1` then
+`return 42;` dropped the return). A failing `#assert` no longer stops the
+compile on the spot: every failing assert and any other error in the file is
+reported, and no binary is written.
 
 ```
 enum Wire { HDR = 16; }

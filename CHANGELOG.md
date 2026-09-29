@@ -61,6 +61,60 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   declaration block, plus 11 same-type acceptances, each checked against a control that builds the
   same struct field by field); both mutation-proven per fix.
 
+### Fixed — lexer line accounting and string escapes; `#assert`, enum and intrinsic resolution; the async constructor jmp (B05)
+
+- **A newline inside a string literal was not counted as a line (N1, N3).** After any multi-line
+  string every later token was lexed one line HIGH per newline: `var s = "a<LF>b<LF>c";` then an
+  undefined name on line 5 reported line 3; line 1 of the next `include` landed on its own `#@file`
+  marker line and printed a bare `error:4:12:` with no file; and `FM_FILEID`, which reads the token
+  line, attributed code to the WRONG FILE, so a call to another file's `private` fn **compiled** and
+  the error landed on an innocent name. The "diagnostics in `backend/x86/fixup.cyr` are one line
+  high" report (N3) is this defect, triggered by the one raw-newline literal in
+  `src/frontend/parse_expr.cyr`; the `#@file` bookkeeping was correct and is untouched. **Root
+  cause:** LEX's string loop stored a raw LF (and a `\<LF>`) without bumping the line counter.
+  **Fix:** both bump it; the string token keeps its opening line (matching the column its
+  diagnostic head prints).
+- **An unknown string escape was stored verbatim with the backslash dropped (N2).** `"ab\q"`
+  compiled to `abq`; the char-literal ladder already refused. **Fix:** any byte after `\` other
+  than the documented escapes is `unknown string escape`, at the backslash. `\` + newline keeps its
+  line feed (the v6.5.18 contract `cyrfmt_string_continuation.sh` pins) and `\` + CR LF keeps both
+  bytes; both are now in the guide's escape table. A comment/char/string-aware scan of every cyrius
+  source under `~/Repos` and `~/.cyrius` found no other escape in use, so nothing downstream breaks.
+- **`sizeof(i16v8)` was 2 and `sizeof(i8zz)` 1, and `#assert sizeof(i16v8) == 2` passed (L8).**
+  Both sizeof sites used the prefix-only `_scalar_name_width`; 6.6.10 fixed only the field ladders.
+  **Fix:** `_field_scalar_width` (the whole name) at both; a non-scalar name is `unknown type`.
+- **A user fn named `mulh64x(a, b)` compiled as the `mulh64` intrinsic** (found in premise): the
+  PARSE_FACTOR tests for `sizeof` / `mulh64` matched a 6-byte prefix. **Fix:** whole-word
+  `_is_mulh64_word` next to `_is_sizeof_word`.
+- **`return mulh64(a, b);` and `return sizeof(i64);` were compiled as tail calls to undefined fns
+  (N7)** and refused on every backend, while the same expression through a local worked. **Fix:**
+  `_tc_callee_divert` sends an IDENT-spelled intrinsic (`_is_ident_intrinsic`) to the normal path.
+- **A qualified enum access never checked its enum (N4).** `Foo.EB` (no enum `Foo`) and `E2.EB`
+  (EB belongs to E1) compiled in expressions, `#assert` and array sizes, `Nope.gz` loaded the plain
+  global `gz`, and when two enums share a variant name `A.X` read the LAST one's value. **Fix:** one
+  resolver, `_enum_qual_resolve`, for all three sites: the base must name an enum and the variant
+  is looked up in an enum of THAT NAME (an enum name may be declared more than once — the
+  `lib/syscalls*.cyr` files each declare `Signal`); otherwise `'Foo' is not an enum` /
+  `'EB' is not a variant of 'E2'`, once.
+- **`#assert 1 == 1` with no `;` swallowed the NEXT line (N5)** — `return 42;` was dropped and the
+  fn returned garbage, rc 0, on every backend. **Root cause:** `_assert_tail` took the line of the
+  token at the cursor, which is already the next line's. **Fix:** the last consumed token's line,
+  unless a string (the message) sits at the cursor, so `#assert X,<LF> "msg";` still works.
+- **A failing `#assert` hid an earlier syntax error (N6).** `var x = ;` then a failing top-level
+  assert printed only the assert: the assert exited in the declaration phase, before PARSE_PROG
+  parsed the `var`. **Fix:** it records the error and continues (EMITELF refuses on it); each
+  assert reports once even in an `#inline` body replayed per call, and several failing asserts
+  are now all reported.
+- **DCE never reported the fn defined right after an `async fn` as dead (N8).** The constructor
+  began with a redundant skip-`jmp` that sat in no fn's range, which the DCE seed pass took as a
+  root for the next fn. **Fix:** the jmp is gone (5 B less per async fn on x86); the async and
+  coroutine gates and fixtures pass on x86, qemu-aarch64 and wine.
+- Regression coverage: new `tests/gates/frontend/sizeof_whole_name.sh` and cross-OS
+  `tests/tcyr/crossos/return_intrinsic_values.tcyr`; new rows in `lexer_errors_name_file_line.sh`
+  (axis 6 and the escape rows), `assert_enum_constants.sh` (N4), `resolution_excerpt_and_assert_skip.sh`
+  (axes 5-7) and `lexer_attribute_word_boundary.sh` (F4 now scored against the compiler; its root-host
+  F6 skip exits 77 instead of passing). Each is mutation-proven against its fix.
+
 ## [6.6.10] — 2026-09-29
 
 The fourth batch release: the 6.6.8 review finds (groups B–G) and group H of the 6.6.9 finds, placed by
