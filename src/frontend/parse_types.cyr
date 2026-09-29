@@ -798,8 +798,20 @@ fn _refuse_field_type(S, tnoff, fnoff, snoff): i64 {
 
 # The ladder's named-type arm, shared by struct and union: a struct/union declared above, or
 # an accepted scalar name (float kind recorded), or a refusal naming the type.
+# ⛔ A struct naming ITSELF as a field type (`struct Node { next: Node; }`) is refused too: FINDSTRUCT
+# finds the struct being declared, and STRUCTSZ then recursed through that field forever — the
+# compiler died with SIGSEGV, no diagnostic. A link to another node is an i64 (pointer) field.
 fn _add_named_field(S, si, fnoff, tnoff): i64 {
     var fsid = FINDSTRUCT(S, tnoff);
+    if (fsid == si + 1) {
+        if (_panic == 0) {
+            ERR_IDENT(S, "field ", fnoff, " makes a struct contain itself: ", tnoff);
+            PRSTR("  note: a link to another one is an i64 (pointer) field\n");
+            _panic = 0;
+        }
+        ADDFIELD(S, si, fnoff);
+        return 0;
+    }
     if (fsid > 0) { ADDFIELDTYPED(S, si, fnoff, fsid); return 0; }
     var k = _field_name_kind(S, tnoff);
     if (k < 0) {

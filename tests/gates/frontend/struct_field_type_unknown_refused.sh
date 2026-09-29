@@ -22,10 +22,13 @@
 #      declared above or below, a generic's own `T` (default and CYRIUS_MONOMORPH=0),
 #      Vec / Vec<i32> / Vec<P>, a struct declared above
 #   I  `s: Str` without lib/str.cyr is refused; with it, the field builds (8 bytes)
+#   J  a struct / union naming ITSELF as a field type -> refused by name (the compiler SIGSEGV'd:
+#      STRUCTSZ recursed through the field forever); Vec<Self> still builds
 #
 # Mutations: make `_refuse_field_type` return without reporting -> A-G RED (rc 0). Drop the
 # `_declared_later` arm -> C RED (refused as "unknown"). Drop `_field_scalar_width` from the
-# ladders -> E (i16v8) and F RED (rc 0). Drop the latch clear -> G RED (one error).
+# ladders -> E (i16v8) and F RED (rc 0). Drop the latch clear -> G RED (one error). Drop the
+# `fsid == si + 1` arm in `_add_named_field` -> J RED (compiler rc 139).
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -100,5 +103,12 @@ refused i1 "unknown type 'Str' for struct field 's'" "I: Str without lib/str.cyr
 printf 'include "lib/syscalls.cyr"\ninclude "lib/alloc.cyr"\ninclude "lib/string.cyr"\ninclude "lib/str.cyr"\nstruct S1 { s: Str; n; }\nsyscall(60, sizeof(S1));\n' > "$T/i2.cyr"
 exits i2 16 "I: Str with lib/str.cyr (an 8-byte pointer slot)"
 
+printf 'struct Node { next: Node; val; }\nsyscall(60, sizeof(Node));\n' > "$T/j1.cyr"
+refused j1 "field 'next' makes a struct contain itself: 'Node'" "J: a struct containing itself"
+printf 'union UN { next: UN; val; }\nsyscall(60, sizeof(UN));\n' > "$T/j2.cyr"
+refused j2 "field 'next' makes a struct contain itself: 'UN'" "J: a union containing itself"
+printf 'struct Tree { kids: Vec<Tree>; val; }\nsyscall(60, sizeof(Tree));\n' > "$T/j3.cyr"
+exits j3 16 "J: Vec<Self> (a handle) still builds"
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: struct_field_type_unknown_refused — $fails axis(es) red"; exit 1; fi
-echo "PASS: struct_field_type_unknown_refused — an unknown field type is refused by name (A-B, D-G), a field type declared below its use says 'declare it before' (C), every accepted spelling builds at its documented width (H), Str needs its include (I)"
+echo "PASS: struct_field_type_unknown_refused — an unknown field type is refused by name (A-B, D-G), a field type declared below its use says 'declare it before' (C), every accepted spelling builds at its documented width (H), Str needs its include (I), a struct containing itself is refused (J)"
