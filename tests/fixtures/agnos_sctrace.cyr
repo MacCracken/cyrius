@@ -250,7 +250,7 @@ fn _st_blob(pid, tag, addr, len): i64 {
     return 0;
 }
 
-# ── rg* / as* (6.6.10): stateful answers ───────────────────────────────────────────────────
+# ── rg* / as* (6.6.10): stateful answers ──
 var _rg_rdn: i64[64];        # reads answered so far, per fd (0..63)
 var _rg_pipes = 0;           # pipe#25 calls so far
 var _rg_opens = 0;           # open#7 calls so far
