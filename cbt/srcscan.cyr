@@ -278,6 +278,16 @@ fn _src_public_fn_at(buf, ls, le, fpriv): i64 {
     return ns;
 }
 
+# 1 when the identifier buf[ns, ns+len) is a program's ENTRY POINT, `main` — invoked by its
+# own file's top-level `syscall(60, main())` (or the epilogue's auto-call), never named by an
+# API caller or a test. `cyrius header` skips it (its prototype collides with the C host's
+# `int main`, 6.6.8) and `cyrius coverage` skips it (a test can never reference it, so it
+# capped every project with an entry point below 100 % — 6.6.11). One rule, both tools.
+fn _src_is_entry_fn(buf, ns, len): i64 {
+    if (len != 4) { return 0; }
+    return memeq(buf + ns, "main", 4);
+}
+
 # End of the identifier starting at p (first non-identifier byte, or lim).
 fn _src_ident_end(buf, p, lim): i64 {
     while (p < lim) {
