@@ -1844,12 +1844,24 @@ fn _lint_one(path, strict, exit_with_count): i64 {
     # peaked at 143 MB) — nothing is ever freed. The read overwrites it in full and
     # `n` bounds every reader, so reuse cannot leak one file into the next.
     if (_lint_buf == 0) { _lint_buf = alloc(_MAX_FILE); }
+    if (_lint_buf == 0) {
+        sys_write(STDERR_FD, "cyrlint: out of memory\n", 23);
+        _lint_hard = 1;
+        return 1;
+    }
     var buf = _lint_buf;
     var n = file_read_all(path, buf, _MAX_FILE);
-    if (n <= 0) {
+    # ⛔ 6.6.10 — `n <= 0` REFUSED AN EMPTY FILE (rc 1, no trailer), so `cyrius lint` and the
+    # audit walker failed a valid empty module. file_read_all returns 0 for "opened, zero
+    # bytes" and a NEGATIVE errno for a failed open/read (6.6.6); only the latter is an error.
+    # An empty module has nothing to warn about: it runs on through the rules below and ends
+    # with "0 warnings". CHANGELOG [6.6.10]
+    if (n < 0) {
         sys_write(STDERR_FD, "cyrlint: cannot read file: ", 27);
         sys_write(STDERR_FD, path, strlen(path));
-        sys_write(STDERR_FD, "\n", 1);
+        sys_write(STDERR_FD, " (error ", 8);
+        fmt_int_fd(STDERR_FD, 0 - n);
+        sys_write(STDERR_FD, ")\n", 2);
         _lint_hard = 1;
         return 1;
     }

@@ -29,9 +29,12 @@
 #      no trailer. Every failure: ERRORS=1, TOTAL=0, the note names the file.
 #   B  walker × fake cyrdoc: control (exit = the undocumented count) · crash · hang · refusal
 #      · missing tool · an exit status that disagrees with the trailer · rc 0 with no trailer.
-#   C  walker × THIS tree's real cyrlint/cyrdoc: a >1028 KB non-bundle file and an EMPTY .cyr
-#      are both ERRORS (cyrlint's own rc-1 refusals); a trailing-whitespace file still counts
-#      1 warning and a clean one 0 (over-correction guard); cyrdoc counts an undocumented fn.
+#   C  walker × THIS tree's real cyrlint/cyrdoc: a >1028 KB non-bundle file is an ERROR (cyrlint's
+#      own rc-1 refusal); a trailing-whitespace file still counts 1 warning and a clean one 0
+#      (over-correction guard); cyrdoc counts an undocumented fn. (6.6.10) An EMPTY .cyr is a
+#      valid, empty module — clean in the fmt, lint AND doc walkers — while an UNREADABLE .cyr
+#      (mode 000; skipped by name under root) stays an error, and cyrdoc handed a DIRECTORY
+#      named x.cyr is an error, not an empty module with rc 0.
 #   D  the check DRIVER's `lint` suite in a scratch root whose build/cyrlint is a fake: every
 #      one of its three rows goes RED, for a killed-after-"0 warnings" fake and a refusing
 #      fake; the init-order row goes RED for a fake that answers only its positive fixture
@@ -61,6 +64,9 @@
 #   m10 _cyrlint_count_marker verifies one run and counts a second, unchecked one        D5
 #   m11 (6.6.8) audit_fmt_walk back on exec_capture, no status verdict        G1, G2, G3, G6
 #   m12 (6.6.8) `cyrius audit` no longer calls proc_set_timeout_ms                      G5
+#   m13 (6.6.10) cyrlint back on `n <= 0` (an empty file refused)                   C1, C3
+#   m14 (6.6.10) cyrfmt back on `n <= 0`                                                  C3
+#   m15 (6.6.10) cyrdoc back on `n <= 0` + the file_exists probe                     C3, C5
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -207,13 +213,45 @@ printf '# ws\nfn ws(): i64 {\n    return 0; \n}\n' > "$C/ws.cyr"
 awk 'BEGIN { print "# GENERATED, do not hand-edit"; for (i = 0; i < 40000; i++) print "var big_" i " = 1234567890;" }' > "$C/big.cyr"
 check "C0 (premise: big.cyr is past cyrlint's 1028 KB limit)" yes "$([ "$(wc -c < "$C/big.cyr")" -gt 1052672 ] && echo yes || echo no)"
 walk lint "$T/cyrlint" "$C" 0
-check "C1 real cyrlint: 1 warning counted, the >1028 KB file and the empty file are ERRORS" "TOTAL=1 ERRORS=2" "$(counts)"
+# 6.6.10: this row read "TOTAL=1 ERRORS=2" — it pinned cyrlint REFUSING the empty file
+# (`n <= 0` → "cannot read file", rc 1). An empty module is clean (cycc compiles it,
+# `cyaudit vet` passes it); only a file that cannot be READ is an error.
+check "C1 real cyrlint: 1 warning counted, the >1028 KB file is an ERROR, the empty file is clean" "TOTAL=1 ERRORS=1" "$(counts)"
 check "   …the too-large refusal is named" yes "$(named "$C/big.cyr" "exit 1")"
-check "   …the empty-file refusal is named" yes "$(named "$C/empty.cyr" "exit 1")"
+check "   …the empty file is NOT an error" no "$(named "$C/empty.cyr" "exit")"
 D2="$T/docs"; mkdir -p "$D2"
 printf '# has a doc\nfn a(): i64 { return 0; }\nfn b(): i64 { return 0; }\n' > "$D2/d.cyr"
 walk doc "$T/cyrdoc" "$D2" 0
 check "C2 real cyrdoc: the undocumented fn is counted and the run is trusted" "TOTAL=1 ERRORS=0" "$(counts)"
+
+# C3-C5 (6.6.10): an empty file is clean in all three walkers; an unreadable one is not.
+build_one "$ROOT/programs/cyrfmt.cyr" "$T/cyrfmt_real"
+E="$T/emptyonly"; mkdir -p "$E"; : > "$E/empty.cyr"
+walk fmt "$T/cyrfmt_real" "$E" 0
+check "C3 real cyrfmt on an EMPTY .cyr: clean" "TOTAL=0 ERRORS=0" "$(counts)"
+walk lint "$T/cyrlint" "$E" 0
+check "   real cyrlint on it: clean" "TOTAL=0 ERRORS=0" "$(counts)"
+walk doc "$T/cyrdoc" "$E" 0
+check "   real cyrdoc --check on it: clean" "TOTAL=0 ERRORS=0" "$(counts)"
+if [ "$(id -u)" = "0" ]; then
+    echo "  SKIP: C4 unreadable-file rows — running as root (uid 0 reads a mode-000 file)"
+else
+    U="$T/unread"; mkdir -p "$U"; printf 'fn u(): i64 { return 0; }\n' > "$U/u.cyr"; chmod 000 "$U/u.cyr"
+    walk fmt "$T/cyrfmt_real" "$U" 0
+    check "C4 an UNREADABLE .cyr is still an ERROR — fmt walker" "TOTAL=0 ERRORS=1" "$(counts)"
+    check "   …named" yes "$(named "$U/u.cyr" "error")"
+    walk lint "$T/cyrlint" "$U" 0
+    check "   …lint walker" "TOTAL=0 ERRORS=1" "$(counts)"
+    walk doc "$T/cyrdoc" "$U" 0
+    check "   …doc walker" "TOTAL=0 ERRORS=1" "$(counts)"
+    chmod 644 "$U/u.cyr"
+fi
+mkdir -p "$T/dirx.cyr"
+DRC=0; "$T/cyrdoc" "$T/dirx.cyr" > "$T/cd.out" 2>&1 || DRC=$?
+check "C5 cyrdoc handed a DIRECTORY named dirx.cyr: rc 1 (was 0, no output)" 1 "$DRC"
+check "   …and it says it cannot read it, with the errno" yes "$(grep -qF 'cannot read file:' "$T/cd.out" && grep -qF '(error 21)' "$T/cd.out" && echo yes || echo no)"
+DRC=0; "$T/cyrdoc" "$E/empty.cyr" > "$T/cd.out" 2>&1 || DRC=$?
+check "   …an empty file in generate mode prints the header, rc 0" "yes 0" "$(grep -qF '# API Reference:' "$T/cd.out" && echo yes || echo no) $DRC"
 
 # ── D — the check driver's lint suite ────────────────────────────────────────────────
 build_one "$ROOT/programs/checks/main.cyr" "$T/chk"

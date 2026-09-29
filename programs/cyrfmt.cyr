@@ -345,10 +345,23 @@ fn _fmt_one(path): i64 {
     # the buffer size per file (nothing is freed); n bounds every reader of the input.
     if (_in_buf == 0) { _in_buf = alloc(_MAX_FILE); }
     if (_out_buf == 0) { _out_buf = alloc(_OUT_CAP); }
+    if (_in_buf == 0 || _out_buf == 0) {
+        syscall(1, 2, "cyrfmt: out of memory\n", 22);
+        return 1;
+    }
     var buf = _in_buf;
     var n = file_read_all(path, buf, _MAX_FILE);
-    if (n <= 0) {
-        println("cyrfmt: cannot read file");
+    # ⛔ 6.6.10 — `n <= 0` REFUSED AN EMPTY FILE. file_read_all has returned 0 for "opened,
+    # zero bytes" and a NEGATIVE errno for a failed open/read since 6.6.6, and this folded
+    # both into "cannot read file" (on stdout, with no path). An empty .cyr is a valid, empty
+    # module — cycc compiles it and `cyaudit vet` passes it — and its canonical form is itself,
+    # so it is clean. Only n < 0 is an error, named on stderr with its errno. CHANGELOG [6.6.10]
+    if (n < 0) {
+        syscall(1, 2, "cyrfmt: cannot read file: ", 26);
+        syscall(1, 2, path, strlen(path));
+        syscall(1, 2, " (error ", 8);
+        fmt_int_fd(2, 0 - n);
+        syscall(1, 2, ")\n", 2);
         return 1;
     }
     # Fail loud on a truncated read: file_read_all stops at _MAX_FILE, so
