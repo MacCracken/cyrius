@@ -53,6 +53,45 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   carries a reason for each). `darwin_unrouted_syscall_faults.tcyr`'s epoll/inotify asserts leave
   their `#ifdef CYRIUS_ARCH_AARCH64`, so ach asserts them (38/38 on ach and ecb).
 
+- **macOS async: the timer, deadline and process verbs run on the kqueue reactor.** (bite 16.)
+  **Root cause:** v6.5.27 cloned lib/async_macos.cyr from the agnos peer, stubs and rationale
+  included, then gave it a kqueue reactor for fd parking only. So on a kernel with fork,
+  EVFILT_TIMER and EVFILT_PROC:
+  - ⛔ `async_with_timeout` joined with NO deadline and always returned 1. With a real reactor, a
+    handle parked on an fd that never fires waited for ever. This was silent.
+  - ⛔ `async_timeout` ran the body inline and ignored `ms`: a 3 s body under a 200 ms deadline
+    returned its value, and a body that called exit() took the caller with it.
+  - `async_interval` returned 0 and never ticked.
+  - `async_spawn_process` returned 0 and `async_run_process` returned -1, and neither spawned
+    anything.
+
+  **Fix:**
+  - The reactor wakes a task by (ident, filter): READ, WRITE, TIMER and PROC. The new
+    `_async_retire` takes a race loser's registrations out of the kqueue; a leftover
+    level-triggered one makes every later kevent() return at once.
+  - `async_with_timeout` races the handle against a one-shot EVFILT_TIMER sentinel, the twin of
+    the epoll backend's timerfd sentinel. It returns 1, 0 (the loser retired), or -1 (the timer
+    could not be armed).
+  - `async_interval` uses a periodic EVFILT_TIMER and is cancelled through its token.
+  - `async_spawn_process` does fork + exec, then parks on EVFILT_PROC/NOTE_EXIT and reaps. xnu
+    refuses EVFILT_PROC on an already-exited child (ESRCH, measured), so the task reaps that
+    child directly instead of parking for ever.
+  - `async_run_process` makes the child a group leader and at the deadline calls
+    `proc_kill_tree` once (bite 11), then returns -2.
+  - `async_timeout` does fork + pipe + a bounded kevent wait, with bite 4's checked-read rule:
+    the result is accepted only on an exact 8-byte read, and a failed pipe, kqueue or fork
+    returns -1 without touching a caller fd.
+  - Refused allocations in `async_recv` and `async_send` return 0 (G census class).
+  - The header and every "(agnos)" note in the file are rewritten.
+
+  New `crossos/async_macos_verbs.tcyr`: **54/54 on real ecb and ach**; 1/1 (the shared-contract
+  row) on x86_64, pi, cass, qemu-aarch64, wine, cxvm and the agnosticos container. Mutation-proven
+  on both Macs: each verb's 6.6.9 body, the exact read, both retire deletes, the filter-keyed wake,
+  the child's setsid and the refused-alloc checks each redden or hang it. ⚠ Its ach run needs
+  bite 1's CVE-51 fix in the compiler: with the 6.6.9 compiler, `clock_now_ms` on x86-macOS writes
+  through a stale rdx and crashes the test. The tree-kill row needs `proc_kill_tree` to end the
+  child's process group on macOS (bite 11).
+
 ### Added
 
 - **`tests/gates/platform/macos_peer_surface_parity.sh`** (bite 3): every fn, enum and enum
