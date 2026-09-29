@@ -368,8 +368,14 @@ fn _agc_copy_bytes(S, dli, dgv, sli, sgv, nb): i64 {
 # load/store WIDTH comes from the leaf field (v6.3.33), not the intermediate
 # struct. Returns the leaf ftype; writes the updated byte-offset to _rlf_off
 # (the second return — read it immediately at the call site; non-reentrant).
+# 6.6.10: also publishes the LEAF's struct index and field index (`_rlf_si` / `_rlf_fi`), which
+# the load reads for the field's float kind (GFFK). CHANGELOG [6.6.10]
 var _rlf_off = 0;
+var _rlf_si = 0;
+var _rlf_fi = 0;
 fn _resolve_leaf_field(S, si, fi, off): i64 {
+    _rlf_si = si;
+    _rlf_fi = fi;
     var ft = GETFTYPE(S, si, fi);
     if (ft > 0) { if (PEEKT(S) == 41) {
             STI(S, GTI(S) + 1);
@@ -387,6 +393,8 @@ fn _resolve_leaf_field(S, si, fi, off): i64 {
             }
             off = off + FIELDOFF(S, isi, ifi);
             ft = GETFTYPE(S, isi, ifi);
+            _rlf_si = isi;
+            _rlf_fi = ifi;
         } }
     _rlf_off = off;
     return ft;
@@ -672,6 +680,24 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
         if (IS_VEC_FIELD(S, ft) == 0) { fld_sz = 0 - fld_sz; }
     }
     EFIELD_LOAD_W(S, fld_sz);
+    _field_load_type(S, _rlf_si, _rlf_fi);
+    return 0;
+}
+
+# ⛔ 6.6.10 — AN f64 / f32 FIELD LOADED UNTYPED, so every operator on it took its INTEGER arm:
+# with `struct P { x: f64; y: f64; }`, `p.x + p.y` added two bit patterns (NaN for 1.5 + 2.0),
+# `p.x * p.y` and `p.x / p.y` gave 0, `-p.x` negated the integer, and `p.x < p.y` compared the
+# bits — wrong for negatives — all silent, through a local, a parameter, a global, a chain, a
+# union, a method's `self` and `Pair<f64>` alike. And correct code (`2.0 * p.x`, `t + p.y`)
+# drew a false kind-1 warning. The load now types the value from the field's recorded kind.
+# ⚠ `#derive(accessors)` getters stay UNTYPED on purpose (`P_x(&p)` is `load64`): 21 bit-exact
+# `==` / `!=` compares of such getters in svara/samay would become float compares (NaN, ±0).
+# So `p.x + p.y` is a float add and `P_x(&p) + P_y(&p)` an integer one; the guide says so.
+# CHANGELOG [6.6.10]
+fn _field_load_type(S, si, fi): i64 {
+    var k = GFFK(S, si, fi);
+    if (k == 1) { SESTYPE(S, F64_TYID); }
+    if (k == 2) { SESTYPE(S, F32_TYID); }
     return 0;
 }
 

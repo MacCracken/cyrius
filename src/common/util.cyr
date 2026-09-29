@@ -906,6 +906,27 @@ fn GSTP(S, si): i64 { if (_struct_tparams == 0) { return 0; } return L64(_struct
 fn SSTP(S, si, v): i64 { if (_struct_tparams == 0) { _struct_tparams = alloc(1024 * 8); } S64(_struct_tparams + si * 8, v); return 0; }
 fn GSDS(S, si): i64 { if (_struct_defstart == 0) { return 0; } return L64(_struct_defstart + si * 8); }
 fn SSDS(S, si, v): i64 { if (_struct_defstart == 0) { _struct_defstart = alloc(1024 * 8); } S64(_struct_defstart + si * 8, v); return 0; }
+# 6.6.10 — the FLOAT KIND of a struct/union field, one byte per packed field-pool entry
+# (1 = f64, 2 = f32, 0 = everything else), so `p.x` on an `x: f64` field loads TYPED and
+# `p.x + p.y` takes the float arm. The ftype cell cannot carry it: an f64 field is 8 bytes
+# like i64, and every reader decodes ftype < 0 as a signed narrow width. alloc()'d, so not a
+# heap-LAYOUT change. The entry is masked to the pool (a union's field count carries bit 63
+# into its entry arithmetic) and bounds-checked, so neither side can index past the table.
+# CHANGELOG [6.6.10]
+var _fld_fk = 0;
+fn SFFK(S, ent, k): i64 {
+    ent = ent & 0x7FFFFFFFFFFFFFFF;
+    if (ent >= 8192) { return 0; }
+    if (_fld_fk == 0) { _fld_fk = alloc(8192); }
+    store8(_fld_fk + ent, k);
+    return 0;
+}
+fn GFFK(S, si, fi): i64 {
+    if (_fld_fk == 0) { return 0; }
+    var ent = (L64(S + 0x1AA018 + si * 8) + fi) & 0x7FFFFFFFFFFFFFFF;
+    if (ent >= 8192) { return 0; }
+    return load8(_fld_fk + ent);
+}
 # v6.3.9 (F-fns): the ACTIVE generic-instantiation binding — up to 2 type-params,
 # each {name-offset -> CANONICAL concrete-type token}. The token: <0 = scalar of
 # width -tok (i64=-8, i32=-4, i16=-2, i8=-1); >0 = struct sid (1-based, FINDSTRUCT

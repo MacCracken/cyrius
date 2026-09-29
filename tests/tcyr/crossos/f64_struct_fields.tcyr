@@ -1,0 +1,90 @@
+# f64_struct_fields.tcyr — 6.6.10 — an `f64` / `f32` struct field loads TYPED, so an operator
+# on it takes the float arm, on every backend.
+#
+# Struct and union field registration had no float names in its type ladder, so `x: f64`
+# became ftype 0 — the i64 encoding — and the field load never set the expression type. Every
+# operator on `p.x` was an INTEGER op over the IEEE-754 bits: with x = 1.5, y = 2.0,
+# `p.x + p.y` read as NaN, `p.x * p.y` and `p.x / p.y` as 0, `-p.x` as -3.0, and with
+# x = -1.5, y = -2.0 `p.x < p.y` was TRUE. Silent, and the same through a struct parameter, a
+# global, a two-level chain, a union, a method's `self`, and a generic `Pair<f64>`.
+# The expected values are compared as BIT PATTERNS (assert_eq on an untyped result), so a
+# float literal on the right is exact.
+#
+# Mutation that reddens this file: drop the `_field_load_type` call in PARSE_FIELD_LOAD
+# (src/frontend/parse_decl.cyr) — every arithmetic row fails.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+struct P { x: f64; y: f64; }
+struct O { i: P; z: f64; }
+union U { f: f64; bits: i64; }
+struct F { a: f32; b: f32; }
+struct Pair<T> { a: T; b: T; }
+struct Mix { n: i64; w: f64; k: i32; }
+
+var G = P { 0.0, 0.0 };
+
+fn addp(p: P) { return p.x + p.y; }
+fn P_sum(self: P) { return self.x * self.y; }
+
+fn bits(v) { return v; }
+
+fn local_ops(): i64 {
+    var p: P;
+    p.x = 1.5; p.y = 2.0;
+    assert_eq(bits(p.x + p.y), 3.5, "local: p.x + p.y is a float add");
+    assert_eq(bits(p.x - p.y), 0.0 - 0.5, "local: p.x - p.y is a float sub");
+    assert_eq(bits(p.x * p.y), 3.0, "local: p.x * p.y is a float mul");
+    assert_eq(bits(p.x / p.y), 0.75, "local: p.x / p.y is a float div");
+    assert_eq(bits(-p.x), 0.0 - 1.5, "local: -p.x flips the sign bit");
+    var t: f64 = 4.0;
+    assert_eq(bits(2.0 * p.x), 3.0, "float literal * field");
+    assert_eq(bits(t + p.y), 6.0, "f64 local + field");
+    assert_eq(bits(p.x * 2.0), 3.0, "field * float literal");
+    assert_eq(bits(p.x + t), 5.5, "field + f64 local");
+    p.x = 0.0 - 1.5; p.y = 0.0 - 2.0;
+    var lt = 0; if (p.x < p.y) { lt = 1; }
+    var gt = 0; if (p.x > p.y) { gt = 1; }
+    assert_eq(lt, 0, "negative compare: -1.5 < -2.0 is false");
+    assert_eq(gt, 1, "negative compare: -1.5 > -2.0 is true");
+    return 0;
+}
+
+fn param_global_chain(): i64 {
+    var p: P;
+    p.x = 1.5; p.y = 2.0;
+    assert_eq(bits(addp(p)), 3.5, "struct parameter: p.x + p.y");
+    G.x = 0.25; G.y = 0.5;
+    assert_eq(bits(G.x + G.y), 0.75, "global: G.x + G.y");
+    var o: O;
+    o.i.x = 1.25; o.z = 2.0;
+    assert_eq(bits(o.i.x + o.z), 3.25, "two-level chain: o.i.x + o.z");
+    assert_eq(bits(p.sum()), 3.0, "method self: self.x * self.y");
+    return 0;
+}
+
+fn union_f32_generic(): i64 {
+    var u: U;
+    u.f = 1.5;
+    assert_eq(bits(u.f + u.f), 3.0, "union field: u.f + u.f");
+    var f: F;
+    f.a = f32_from(6.0); f.b = f32_from(2.0);
+    assert_eq(f64_to(f32_to(f.a * f.b)), 12, "f32 field: f.a * f.b is mulss");
+    assert_eq(f64_to(f32_to(f.a - f.b)), 4, "f32 field: f.a - f.b is subss");
+    var q: Pair<f64>;
+    q.a = 1.5; q.b = 2.0;
+    assert_eq(bits(q.a + q.b), 3.5, "generic Pair<f64>: q.a + q.b");
+    var m: Mix;
+    m.n = 7; m.w = 0.5; m.k = 3;
+    assert_eq(m.n + m.k, 10, "i64/i32 fields beside an f64 stay integer");
+    assert_eq(bits(m.w + m.w), 1.0, "f64 field between integer fields");
+    assert_eq(sizeof(Mix), 20, "layout unchanged: 8 + 8 + 4");
+    return 0;
+}
+
+test_group("f64 / f32 struct fields load typed");
+local_ops();
+param_global_chain();
+union_f32_generic();
+var r = assert_summary();

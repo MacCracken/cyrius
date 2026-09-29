@@ -18,6 +18,8 @@
 #           and unary minus on an f64 do NOT raise kind 2
 #   axis 3  kind 1 still fires (the extension did not replace it)
 #   axis 4  CYRIUS_TYPE_CHECK=0 silences kind 2 like every other type-check warning
+#   axis 5  (6.6.10) an f64 struct/union FIELD is an f64 operand: no false positive on either
+#           side, and `p.x + 1` is a kind-1 mix. Red on 6.6.9 (2 kind-1, 2 kind-2, then 0).
 # Mutation-proven: with the four `_INT_F64_MIX` calls removed, axis 1 reads 0 of 4 and fails.
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -81,5 +83,38 @@ n=$(count "$K2"); [ "$n" = 0 ] || bad "axis 3: kind 2 fired on an f64-LEFT mix"
 CYRIUS_TYPE_CHECK=0 "$CC" < "$W/a1_sub.cyr" > "$W/o" 2> "$W/e" || true
 n=$(count "$K2"); [ "$n" = 0 ] || bad "axis 4: CYRIUS_TYPE_CHECK=0 still printed $n kind-2 warning(s)"
 
+# --- axis 5 (6.6.10): an f64 STRUCT FIELD is an f64 operand, on either side ---
+# Before 6.6.10 a field loaded untyped, so `2.0 * p.x` and `t + p.y` (correct code) drew a
+# false kind-1 warning and `p.x * 2.0` / `p.x + t` a kind-2 one while computing garbage.
+# The last row is the converse: a field LEFT with an integer right is a real kind-1 mix.
+cat > "$W/a5.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct P { x: f64; y: f64; }
+union U { f: f64; b: i64; }
+fn main(): i64 {
+    var p: P;
+    p.x = 1.5; p.y = 2.0;
+    var t: f64 = 4.0;
+    var u: U;
+    u.f = 0.5;
+    var a: f64 = 2.0 * p.x;
+    var b: f64 = t + p.y;
+    var c: f64 = p.x * 2.0;
+    var d: f64 = p.x + t;
+    var e: f64 = p.x + p.y - p.x / p.y;
+    var f: f64 = -p.x;
+    var g: f64 = u.f + u.f;
+    return f64_to(a) + f64_to(b) + f64_to(c) + f64_to(d) + f64_to(e) + f64_to(f) + f64_to(g);
+}
+var r = main();
+syscall(60, r & 255);
+EOF
+build "$W/a5.cyr"
+n=$(count "$K2"); [ "$n" = 0 ] || { bad "axis 5: $n kind-2 warning(s) on f64-field arithmetic"; sed -n 1,5p "$W/e"; }
+n=$(count "$K1"); [ "$n" = 0 ] || { bad "axis 5: $n kind-1 warning(s) on f64-field arithmetic"; sed -n 1,5p "$W/e"; }
+printf 'include "lib/syscalls.cyr"\nstruct P { x: f64; }\nfn main(): i64 {\n    var p: P;\n    p.x = 1.5;\n    var a: f64 = p.x + 1;\n    return 0;\n}\nvar r = main();\nsyscall(60, r);\n' > "$W/a5b.cyr"
+build "$W/a5b.cyr"
+n=$(count "$K1"); [ "$n" = 1 ] || bad "axis 5: kind-1 warning count $n on 'p.x + 1' (an f64 field left), want 1"
+
 [ "$fail" = 0 ] || exit 1
-echo "PASS: f64_int_mix_warn (4 int-left ops warn; no false positives; kind 1 intact; TYPE_CHECK=0 silences)"
+echo "PASS: f64_int_mix_warn (4 int-left ops warn; no false positives; kind 1 intact; TYPE_CHECK=0 silences; f64 fields typed)"

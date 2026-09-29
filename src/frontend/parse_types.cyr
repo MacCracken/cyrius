@@ -153,6 +153,19 @@ fn ADDFIELDTYPED(S, si, fnoff, ftype): i64 {
     return 0;
 }
 
+# 6.6.10 — ADDFIELD, then record the field's float kind (1 = f64, 2 = f32; 0 records nothing).
+# The entry is computed the way ADDFIELD computes it, and marked only when ADDFIELD actually
+# stored (a refused field leaves the pool top where it was). See SFFK. CHANGELOG [6.6.10]
+fn ADDFIELDFK(S, si, fnoff, k): i64 {
+    var ent = L64(S + 0x1AA018 + si * 8) + L64(S + 0x1A8018 + si * 8);
+    var top = L64(S + 0x1AC018);
+    ADDFIELD(S, si, fnoff);
+    if (k == 0) { return 0; }
+    if (L64(S + 0x1AC018) == top) { return 0; }
+    SFFK(S, ent, k);
+    return 0;
+}
+
 fn GETFTYPE(S, si, fi): i64 {
     var b = L64(S + 0x1AA018 + si * 8);
     return L64(S + 0x91A000 + (b + fi) * 8);
@@ -690,6 +703,24 @@ fn _skip_refused_body(S): i64 {
     return 0;
 }
 
+# ⛔ 6.6.10 — `f64` / `f32` were never in the field ladder, so an `x: f64` field fell to the
+# named-type arm, FINDSTRUCT answered 0 — the i64 encoding — and the float type was lost: every
+# operator on `p.x` then took its integer arm. The named arm now records the float kind (the
+# field stays 8 bytes; see SFFK). Shared by struct and union. CHANGELOG [6.6.10]
+fn _field_float_kind(S, tnoff): i64 {
+    var nm = L64(S + 0xEC00000 + tnoff);
+    if (nm & 0xFFFFFFFF == 0x343666) { return 1; }     # f64
+    if (nm & 0xFFFFFFFF == 0x323366) { return 2; }     # f32
+    return 0;
+}
+
+fn _add_named_field(S, si, fnoff, tnoff): i64 {
+    var fsid = FINDSTRUCT(S, tnoff);
+    if (fsid > 0) { ADDFIELDTYPED(S, si, fnoff, fsid); return 0; }
+    ADDFIELDFK(S, si, fnoff, _field_float_kind(S, tnoff));
+    return 0;
+}
+
 fn PARSE_STRUCT_DEF(S): i64 {
     var _sdefstart = GTI(S);   # v6.3.10: the `struct` token, for generic instance re-emit
     STI(S, GTI(S) + 1);  # consume STRUCT
@@ -731,7 +762,9 @@ fn PARSE_STRUCT_DEF(S): i64 {
                 if (_tp_c0 != 0) { _ftc = _tp_resolve(S, tnoff); }
                 if (_ftc != 0) {
                     STI(S, GTI(S) + 1);   # consume the type name
-                    if (_ftc < 0) {
+                    if (_ftc == 0 - 9) {
+                        ADDFIELDFK(S, si, fnoff, 1);   # 6.6.10: `T` bound to f64 is an f64 field
+                    } elif (_ftc < 0) {
                         var _fw = 0 - _ftc;
                         if (_fw < 8) { ADDFIELDTYPED(S, si, fnoff, 0 - _fw); }
                         else { ADDFIELD(S, si, fnoff); }
@@ -774,8 +807,7 @@ fn PARSE_STRUCT_DEF(S): i64 {
                         if (fscalar < 8) { ADDFIELDTYPED(S, si, fnoff, 0 - fscalar); }
                         else { ADDFIELD(S, si, fnoff); }
                     } else {
-                        var fsid = FINDSTRUCT(S, tnoff);
-                        ADDFIELDTYPED(S, si, fnoff, fsid);
+                        _add_named_field(S, si, fnoff, tnoff);   # 6.6.10: records f64 / f32
                     }
                 }
             } else {
@@ -851,8 +883,7 @@ fn PARSE_UNION_DEF(S): i64 {
                     if (fscalar < 8) { ADDFIELDTYPED(S, si, fnoff, 0 - fscalar); }
                     else { ADDFIELD(S, si, fnoff); }
                 } else {
-                    var fsid = FINDSTRUCT(S, tnoff);
-                    ADDFIELDTYPED(S, si, fnoff, fsid);
+                    _add_named_field(S, si, fnoff, tnoff);   # 6.6.10: records f64 / f32
                 }
             } else {
                 ADDFIELD(S, si, fnoff);
