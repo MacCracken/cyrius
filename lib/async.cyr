@@ -798,7 +798,13 @@ fn async_resolve(rt, ns_addr, ns_port, host): i64 {
 # ================================================================
 
 # Create a CLOCK_MONOTONIC timerfd that first fires after value_ms and then every
-# interval_ms (interval_ms == 0 = one-shot). Returns the fd, or -1 on failure.
+# interval_ms (interval_ms == 0 = one-shot). `value_ms <= 0` is a deadline that has already
+# passed: the timer fires at once. Returns the fd, or -1 on failure.
+# ⛔ 6.6.11 — value_ms went straight into it_value. An all-zero it_value DISARMS a timerfd and a
+# negative one is EINVAL (the settime return was unchecked), so `async_with_timeout(rt, h, 0)`,
+# `async_interval(.., 0, ..)` and `async_sleep_ms(0)` — and their negative forms — waited for
+# ever (measured: all six hung). It is now 1 ns, which expires at once, matching macOS's
+# "a deadline that has already passed"; a refused settime closes the fd and fails. CHANGELOG [6.6.11]
 fn _async_timerfd(value_ms, interval_ms): i64 {
     var tfd = syscall(SYS_TIMERFD_CREATE, 1, TFD_CLOEXEC);   # CLOEXEC (v6.4.43)
     if (tfd < 0) { return 0 - 1; }
@@ -806,9 +812,17 @@ fn _async_timerfd(value_ms, interval_ms): i64 {
     var spec[32];
     store64(&spec, interval_ms / 1000);
     store64(&spec + 8, (interval_ms % 1000) * 1000000);
-    store64(&spec + 16, value_ms / 1000);
-    store64(&spec + 24, (value_ms % 1000) * 1000000);
-    syscall(SYS_TIMERFD_SETTIME, tfd, 0, &spec, 0);
+    if (value_ms <= 0) {
+        store64(&spec + 16, 0);
+        store64(&spec + 24, 1);
+    } else {
+        store64(&spec + 16, value_ms / 1000);
+        store64(&spec + 24, (value_ms % 1000) * 1000000);
+    }
+    if (syscall(SYS_TIMERFD_SETTIME, tfd, 0, &spec, 0) < 0) {
+        syscall(SYS_CLOSE, tfd);
+        return 0 - 1;
+    }
     return tfd;
 }
 
@@ -853,7 +867,9 @@ fn _async_timeout_sentinel(ctx): i64 {
 # task_join(rt, handle) or the handle's result slot), 0 if the deadline fired first
 # (the still-pending task is retired — it will not run again), or -1 if the timerfd
 # could not be created. Races the task against a timerfd sentinel on the reactor;
-# does NOT close the runtime. v6.4.35 (P1 — tokio's `timeout(future, dur)`).
+# does NOT close the runtime. `ms <= 0` is a deadline that has already passed: the handle
+# still gets the steps that are READY now, but nothing that parks (6.6.11 — it hung).
+# v6.4.35 (P1 — tokio's `timeout(future, dur)`).
 fn async_with_timeout(rt, handle, ms): i64 {
     if (handle == 0) { return 0; }
     if (load64(handle + 16) == TASK_DONE) { return 1; }
@@ -908,8 +924,11 @@ fn _async_interval_task(ctx): i64 {
 # then stop (and close the timer). `tok` is a cancel-token cell (cancel_token_new(),
 # or any 8-byte cell set non-zero to stop — cancel_token_signal / store64(tok, 1)).
 # Returns the interval task handle; async_run / task_join drive the ticks. The
-# callback runs synchronously each tick — keep it short. v6.4.35 (P1 — `interval`).
+# callback runs synchronously each tick — keep it short. Returns 0 (no handle) when `ms <= 0`
+# — there is no period — as macOS does (6.6.11; it armed a disarmed timer and the runtime
+# waited for ever). v6.4.35 (P1 — `interval`). CHANGELOG [6.6.11]
 fn async_interval(rt, fp, arg, ms, tok): i64 {
+    if (ms <= 0) { return 0; }
     var tfd = _async_timerfd(ms, ms);
     if (tfd < 0) { return 0; }
     var ctx = alloc_via(load64(rt + 32), 48);       # rt's allocator (arena-reclaimable)
@@ -1008,7 +1027,8 @@ fn async_run_process(rt, path, argv, envp, ms): i64 {
 }
 
 # Timer: sleep for ms milliseconds using timerfd + epoll. Shares the one-shot timerfd
-# construction with the reactor via _async_timerfd (interval 0) — v6.4.42 dedup.
+# construction with the reactor via _async_timerfd (interval 0) — v6.4.42 dedup. `ms <= 0`
+# returns at once (6.6.11; it blocked for ever on a disarmed timer).
 fn async_sleep_ms(ms): i64 {
     var tfd = _async_timerfd(ms, 0);
     if (tfd < 0) { return 0 - 1; }

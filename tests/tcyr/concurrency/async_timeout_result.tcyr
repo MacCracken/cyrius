@@ -26,6 +26,10 @@
 #                                                            containers run as root)
 #   tree      async_run_process under a 400 ms deadline: the shell's background child is ended
 #             too (bite 11 — it SIGKILLed the shell's pid alone and left the child running)
+#   zero      (6.6.11) async_with_timeout / async_interval / async_sleep_ms with ms 0 and -5
+#             return at once. An all-zero itimerspec DISARMS a timerfd and a negative one is
+#             EINVAL, so all six waited for ever. Each runs inside async_timeout's own bound, so
+#             a regression is a FAIL (-1), not a hung test.
 
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
@@ -80,6 +84,45 @@ fn _at_stain_stack(fd): i64 {
     var k = 0;
     while (k < 1024) { store64(&junk + k, (fd << 32) | fd); k = k + 8; }
     return load64(&junk + 512);
+}
+
+# ---- zero / negative timers (6.6.11). Each body returns a code the row checks; a body that
+# hangs is ended by async_timeout's bound and reads -1.
+var _at_pfd: i64[2];
+var _at_pstep = 0;
+fn _at_park(rt): i64 {
+    if (_at_pstep == 0) { _at_pstep = 1; async_wait_fd(rt, load32(&_at_pfd)); return 0; }
+    return 99;                                    # woken: the pipe is never written
+}
+fn _at_wt(ms): i64 {
+    if (sys_pipe(&_at_pfd) < 0) { return 0 - 7; }
+    _at_pstep = 0;
+    var rt = async_new();
+    var h = async_spawn(rt, &_at_park, rt);
+    return 100 + async_with_timeout(rt, h, ms);   # 100: the deadline won
+}
+fn _at_nop(a): i64 { return 0; }
+fn _at_iv(ms): i64 {
+    var rt = async_new();
+    var h = async_interval(rt, &_at_nop, 0, ms, cancel_token_new());
+    async_run(rt);
+    if (h == 0) { return 200; }                   # 200: no period, no handle
+    return 201;
+}
+fn _at_sl(ms): i64 { async_sleep_ms(ms); return 300; }
+
+fn _at_zero_rows(): i64 {
+    test_group("a zero or negative timer is a deadline that has passed, not a disarmed one (6.6.11)");
+    var t0 = clock_now_ms();
+    assert_eq(async_timeout(&_at_wt, 0, 3000), 100, "async_with_timeout(rt, h, 0): 0 at once");
+    assert_eq(async_timeout(&_at_wt, 0 - 5, 3000), 100, "async_with_timeout(rt, h, -5): 0 at once");
+    assert_eq(async_timeout(&_at_iv, 0, 3000), 200, "async_interval(.., 0, ..): no handle, and async_run returns");
+    assert_eq(async_timeout(&_at_iv, 0 - 5, 3000), 200, "async_interval(.., -5, ..): no handle");
+    assert_eq(async_timeout(&_at_sl, 0, 3000), 300, "async_sleep_ms(0) returns");
+    assert_eq(async_timeout(&_at_sl, 0 - 5, 3000), 300, "async_sleep_ms(-5) returns");
+    assert_eq(async_timeout(&_at_wt, 30, 3000), 100, "control: a 30 ms deadline still fires");
+    assert_eq(clock_now_ms() - t0 < 2500, 1, "all of them promptly (a hang costs each row 3 s)");
+    return 0;
 }
 
 fn _at_rows(): i64 {
@@ -199,6 +242,7 @@ fn main(): i64 {
     #ifdef CYRIUS_TARGET_LINUX
     _at_rows();
     _at_tree_rows();
+    _at_zero_rows();
     #endif
     #ifndef CYRIUS_TARGET_LINUX
     println("    SKIP: async_timeout forks only on Linux; this target runs the body inline (no pipe, no fork, no stale result to read)");

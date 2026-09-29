@@ -21,6 +21,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   it finishes. Gate: `coroutine_midbody_suspend.sh` axis 10 (async_run, task_join, a parked waiter that
   must wake a spinning coroutine, a deadline over a coroutine that never finishes). Verified on x86_64
   Linux, ach (x86_64 macOS) and cass (Windows PE) against a pre-fix control (exit 1 → 42).
+- **Linux `async_with_timeout(.., 0)`, `async_interval(.., 0, ..)` and `async_sleep_ms(0)` — and
+  their negative forms — waited for ever (P4).** `_async_timerfd` wrote `value_ms` straight into
+  `it_value`: all-zero DISARMS a timerfd and a negative value is EINVAL, and the `timerfd_settime`
+  return was unchecked. **Fix:** `value_ms <= 0` arms 1 ns (a deadline that has already passed, as on
+  macOS); a refused settime closes the fd and fails; `async_interval` returns no handle for
+  `ms <= 0`, as macOS does. Rows: `async_timeout_result.tcyr` "zero" group (each call bounded inside
+  `async_timeout`, so a regression FAILs rather than hangs; 7 RED on the old lib).
 
 ## [6.6.10] — 2026-09-29
 
