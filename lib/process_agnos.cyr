@@ -220,9 +220,12 @@ fn _agp_code(st): i64 {
 # caller must not wait for `pid` again. The agnos peer of lib/process.cyr's `proc_kill_tree`:
 # kill#16 with the tree bit (agnos 1.57.7) ENDS the root and every descendant in one snapshot.
 # There is no TERM-then-grace step because agnos gives SIGTERM no default action — a TERM here
-# would only set a pending bit. CHANGELOG [6.6.10]
+# would only set a pending bit. When the tree kill is REFUSED (-1: a pre-1.57.7 kernel does not
+# know the tree bit) the root is killed alone before the wait — the WAIT_BLOCK below would
+# otherwise wait for a child nothing had signalled, for ever. The tree is lost then, never the
+# bound. CHANGELOG [6.6.10]
 fn proc_kill_tree(pid, stbuf): i64 {
-    sys_kill_tree(pid, 9);
+    if (sys_kill_tree(pid, 9) != 0) { sys_kill(pid, 9); }
     var st = _agp_wait(pid);
     if (st >= 0) { store32(stbuf, st); }
     return 0;
