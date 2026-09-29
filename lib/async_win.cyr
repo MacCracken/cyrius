@@ -825,9 +825,14 @@ fn async_await_readable(fd): i64 {
     return 0;
 }
 
-# Run `fp(arg)` with a timeout. No fork on Windows, so there is no second process to bound: the
-# body runs INLINE and `ms` is ignored. (This said "(mirrors agnos)"; agnos forks the body under
-# a real deadline since 6.6.10. CHANGELOG [6.6.10])
+# Run `fp(arg)` with a timeout — REFUSED on Windows: returns -1 (the timeout value of the
+# Linux contract) and does not run `fp`.
+# ⛔ 6.6.10 — FAIL CLOSED. This ran the body INLINE and ignored `ms`, so a caller that asked
+# for "at most ms" got an unbounded call that answered as if it had been bounded. There is no
+# fork on Windows, so there is no second process to put a deadline on, and a thread cannot be
+# killed safely mid-body. -1 is what a caller of this API already handles (the body did not
+# finish in time); an answer that looks like success is not. Nothing in the tree or the
+# ecosystem calls it on Windows. CHANGELOG [6.6.10]
 fn async_timeout(fp, arg, ms): i64 {
-    return fncall1(fp, arg);
+    return 0 - 1;
 }

@@ -83,6 +83,11 @@ fn _cat3(pre, path, post): i64 {
     return str_data(str_builder_build(sb));
 }
 
+#ifdef CYRIUS_TARGET_WIN
+var _deg_ran = 0;
+fn _deg_body(a): i64 { _deg_ran = 1; return 7; }
+#endif
+
 fn main(): i64 {
     alloc_init();
     #ifndef CYRIUS_TARGET_AGNOS
@@ -174,6 +179,11 @@ fn main(): i64 {
     assert_eq(file_exists(mark3), 0, "the grandchild never wrote its marker");
     sys_unlink(mark3);
 
+    # async_win's async_timeout ran its body INLINE and ignored `ms` — an unbounded call that
+    # answered as if it had been bounded. It now refuses: -1, and the body does not run.
+    test_group("async_timeout fails closed on Windows (no fork to bound)");
+    assert_eq(async_timeout(&_deg_body, 0, 50), 0 - 1, "it answers -1 (the timeout value)");
+    assert_eq(_deg_ran, 0, "and never ran the body unbounded");
     #endif
     #endif
     #ifdef CYRIUS_TARGET_AGNOS
