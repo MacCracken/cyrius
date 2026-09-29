@@ -1945,9 +1945,16 @@ fn EMITELF_OBJ(S): i64 {
     var O = _output_base;
     var op = 0;
 
-    # --- Allocate scratch via brk extension ---
-    # Compiler has no alloc() — extend brk for temp buffers.
-    # Layout (matches the +OFFSETS used below; sized for the v4.7.1
+    # --- Allocate scratch (alloc since 6.6.10; a raw brk extension before) ---
+    # ⛔ 6.6.10 — "Compiler has no alloc()" stopped being true long ago (every fork that
+    # includes this file includes lib/alloc.cyr), and the raw brk it justified was the last one
+    # in shared x86 code. brk is ENOSYS on Windows, so the Windows-hosted compiler's ELF-object
+    # path (`CYRIUS_TARGET_WIN=0` + `object;`, main_win.cyr) always died with "could not extend
+    # brk", and the x86 Mach-O compiler build warned about an unrouted syscall 12 twice.
+    # alloc is mmap/VirtualAlloc-backed per host and hands back fresh (zeroed) pages; the
+    # compiler never alloc_reset()s, so nothing below relies on anything brk gave that alloc
+    # does not. CHANGELOG [6.6.10]
+    # Historical layout (matches the +OFFSETS used below; sized for the v4.7.1
     # 4096 fn cap, was 2048 — pre-4.8.3 the four regions overlapped
     # for any unit > ~2000 fns and EMITELF_OBJ segfaulted):
     #   +0x00000  strtab        (256 KB — fn names + section names)
@@ -1989,9 +1996,9 @@ fn EMITELF_OBJ(S): i64 {
     var off_symtab = off_fnoff + fnc * 8 + 16;
     var off_rela   = off_symtab + (4 + fnc + 1) * 24 + 16;
     var scratch_need = off_rela + fcnt * 24 + 4096;
-    var scratch = syscall(SYS_BRK, 0);
-    if (syscall(SYS_BRK, scratch + scratch_need) < scratch + scratch_need) {
-        syscall(SYS_WRITE, 2, "error: EMITELF_OBJ could not extend brk for its scratch tables\n", 63);
+    var scratch = alloc(scratch_need);
+    if (scratch == 0) {
+        syscall(SYS_WRITE, 2, "error: EMITELF_OBJ could not allocate its scratch tables\n", 57);
         syscall(SYS_EXIT, 1);
     }
 
