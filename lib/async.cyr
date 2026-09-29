@@ -40,10 +40,17 @@ include "lib/string.cyr"
 include "lib/fnptr.cyr"
 
 # 6.6.10: async_run_process's deadline ends the child's whole tree through lib/process.cyr's
-# `proc_kill_tree` (Linux — the other arms route to their own files, which carry their own
-# include). Named here so this module stays self-sufficient. CHANGELOG [6.6.10]
-#ifdef CYRIUS_TARGET_LINUX
+# `proc_kill_tree`. Named here so this module stays self-sufficient, under the SAME guard as
+# the epoll body below that calls it — NOT `#ifdef CYRIUS_TARGET_LINUX`: cx defines only
+# CYRIUS_TARGET_CX, compiles that body too, and was left with proc_kill_tree undefined. The
+# agnos, PE and macOS arms route to their own files, which carry their own include.
+# CHANGELOG [6.6.10]
+#ifndef CYRIUS_TARGET_AGNOS
+#ifndef CYRIUS_TARGET_WIN
+#ifndef CYRIUS_TARGET_MACOS
 include "lib/process.cyr"
+#endif
+#endif
 #endif
 
 #ifdef CYRIUS_TARGET_AGNOS
