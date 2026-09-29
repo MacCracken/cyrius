@@ -6,8 +6,12 @@
 # Usage: include "programs/vidya.cyr" (or build standalone via
 # `cyrius build programs/vidya.cyr build/vidya`).
 #
-# Requires: string.cyr, fmt.cyr, alloc.cyr, vec.cyr, str.cyr,
-#           hashmap.cyr, io.cyr, fs.cyr, toml.cyr (cyrius stdlib).
+# Includes its own definers (6.6.11 — it included NOTHING, so `include "programs/vidya.cyr"`
+# alone left 26 fns undefined, each a ud2 stub): syscalls, alloc, string, fmt, vec, str,
+# hashmap, io, fs, fnptr, then lib/bayan.cyr for toml_* (lib/toml.cyr, which this line used to
+# name, was folded into bayan). bayan comes AFTER io.cyr because a distlib bundle strips its
+# own includes and needs io's file_* sidecar. Its includers list the same modules first, so
+# for them these are include-once no-ops.
 #
 # Relocated v5.8.62 from lib/vidya.cyr per the cycle's lib/
 # structural-cleanup pass. Pre-v5.8.62 the file lived in lib/
@@ -26,6 +30,18 @@
 #      (cyrius/*.toml)
 #   2. concept.toml with id, title, topic, description
 #      (topic directories)
+
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/str.cyr"
+include "lib/hashmap.cyr"
+include "lib/io.cyr"
+include "lib/fs.cyr"
+include "lib/fnptr.cyr"
+include "lib/bayan.cyr"
 
 # Entry: { name: Str, description: Str, category: Str, content: Str }
 # Create a new entry
