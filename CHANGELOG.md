@@ -193,6 +193,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   global, a check that comes too late, a check-shaped string) and a mutation row deletes a live
   check and requires the site to be flagged.
 
+### Downstream
+
+- **sandhi 1.10.2** (bite 13; committed on sandhi main as `16f19ea`, **not tagged**, **not
+  re-vendored** into cyrius this release — `lib/sandhi.cyr` stays the fold it was): the stale "inbound
+  TCP is agnos Phase B — `sock_listen` already returns Err" note in `src/server/mod.cyr` is corrected
+  (agnos listen/accept have been wired to #56/#57 since cyrius v6.2.22), and the pin moves 6.6.6 →
+  the released 6.6.9 (lib/ re-resolved from empty, all five dist bundles regenerated and idempotent,
+  four suites green, fuzz 8/8). Independent of the cyrius 6.6.10 tag.
+- **agnos** (bite 13; docs commit `4ac576de` on agnos main, no tag needed):
+  `docs/development/roadmap.md:14` said "syscalls 0–107, next free #108", "the ABI gate is red by
+  design until cyrius lands their peer" and "#96 fork remains unminted" — #108 shipped in 1.57.9,
+  `syscall-abi-check.sh` reads kernel 108 · abi-doc 108 · cyrius 108, and fork was minted in
+  1.56.55. The next free number is #109.
+
 ## [6.6.9] — 2026-09-28
 
 The third batch release (roadmap.md, *The 6.6.7 → 6.6.10 batch*): twelve bites in six worktree lanes —
