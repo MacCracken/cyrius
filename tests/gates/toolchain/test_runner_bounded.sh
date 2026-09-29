@@ -184,10 +184,11 @@ include "lib/assert.cyr"
 
 fn main(): i64 {
     var a = assert_eq(2 + 2, 4, "the runner still runs real assertions");
-    return 0;
+    return assert_summary();
 }
-var m = main();
-var r = assert_summary();
+# Not `var m = main(); var r = assert_summary();` — a defined main is auto-called AGAIN by the
+# epilogue, so that shape runs the body twice (6.6.11; tests/gates/toolchain/tcyr_epilogue_shape.sh).
+syscall(60, main());
 FINE
 
 # ── AXIS 0 — ANTI-VACUOUS. A well-behaved test still passes, exits 0, and is not
@@ -534,6 +535,34 @@ if [ "$rc" = 0 ]; then
 else
     check "the window probe compiles" 0 "$rc"; sed -n 1,3p "$T/win.err"
 fi
+
+# ── AXIS 9 (6.6.11 B01 / B10, O3): `cyrius test` grades by the assert summary. `cmd_test` ran
+# each binary through the exit-code-only `run_binary_timed`, so a test that died before
+# assert_summary() and exited 0 — or ran its body twice (fn main + a top-level `main();`, the
+# epilogue auto-calls a defined main again) and exited 0 with `1 failed` printed — scored PASS
+# on `cyrius test`, `cyrius tests <dir>` and bare `cyrius test`. The rule is the one every
+# .tcyr reader applies (programs/checks/selfhost.cyr `_tcyr_grade`): when the SOURCE calls
+# assert_summary(, the LAST `N passed, M failed` line must exist with N >= 1 and M == 0, and the
+# exit code must be 0. The capture lives in cbt (lane T, B10); these rows are RED against a CLI
+# without it — MEASURED against the 6.6.10 build/cyrius: die_early, main_twice and zero all rc 0.
+echo "axis 9 — 'cyrius test' fails a test whose assert summary is missing, empty or failing:"
+mkdir -p "$T/sum"
+printf 'include "lib/assert.cyr"\nassert_eq(1, 2, "dies before its summary");\nsyscall(60, 0);\nvar r = assert_summary();\n' > "$T/sum/die_early.tcyr"
+printf 'include "lib/assert.cyr"\nfn main() {\n    assert_eq(1, 1, "right");\n    assert_eq(1, 2, "wrong");\n    return 0;\n}\nmain();\nvar r = assert_summary();\n' > "$T/sum/main_twice.tcyr"
+printf 'include "lib/assert.cyr"\nvar r = assert_summary();\nsyscall(60, r);\n' > "$T/sum/zero.tcyr"
+for n in die_early main_twice zero; do
+    rc=0
+    ( cd "$T" && CYRIUS_TEST_TIMEOUT=60 timeout 300 "$CY" test "$T/sum/$n.tcyr" > "$T/sum_$n.out" 2> "$T/sum_$n.err" ) || rc=$?
+    check "cyrius test $n.tcyr is a FAILURE" "yes" "$([ "$rc" != 0 ] && [ "$rc" != 124 ] && echo yes || echo no)"
+done
+# The directory verb over the same three, beside one genuine pass: nonzero, and not by timeout.
+cp "$T/fine.tcyr" "$T/sum/fine.tcyr"
+rc=0
+( cd "$T" && CYRIUS_TEST_TIMEOUT=60 timeout 300 "$CY" tests "$T/sum" > "$T/sum_dir.out" 2> "$T/sum_dir.err" ) || rc=$?
+check "cyrius tests <dir> with those three is a FAILURE" "yes" "$([ "$rc" != 0 ] && [ "$rc" != 124 ] && echo yes || echo no)"
+# The capture must not swallow the output: the passing test's summary still reaches the user.
+check "the captured output is echoed back (the passing test's summary is visible)" 1 \
+    "$(grep -c '^1 passed, 0 failed' "$T/f.out" || true)"
 
 echo ""
 if [ "$fails" = "0" ]; then
