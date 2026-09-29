@@ -108,6 +108,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   call is REACHED, and k = count + 1 succeeds. Removing one check gives rc 139 (boxed_new, sha1,
   sigset_new) or rc 1 (chan_new); the pre-6.6.10 lib/ dies at the first row.
 
+### Downstream
+
+- ⛔ **patra 1.15.1 must be TAGGED by the user before cyrius 6.6.10 is tagged** — `lib/patra.cyr` is
+  folded byte-identical from patra commit `589d226` (`dist/patra.cyr`, "1.15.1 — the CSPRNG-failure
+  fallback separates two processes in one second"; pin 6.6.9). (bite 14.) patra's `_pt_rand64` /
+  `_wal_gen_salts` fallback was `clock_epoch_secs() * k + counter` with a per-process counter that
+  starts at 0, so two processes falling back in the same second drew the same database id and WAL
+  salts; it is now the same ns-resolution mix as `lib/hashseed.cyr`, pinned by a two-child fork row
+  in patra's suite (1,305 assertions). The refused `_pt_alloc(8)` takes the fallback explicitly.
+
 ## [6.6.9] — 2026-09-28
 
 The third batch release (roadmap.md, *The 6.6.7 → 6.6.10 batch*): twelve bites in six worktree lanes —
