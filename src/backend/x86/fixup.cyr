@@ -763,22 +763,9 @@ fn FIXUP(S): i64 {
     # separate fn and can't see this local live[] — so stash
     # (dead_var_bytes, dead_fn_count) into the post-data_size scratch
     # slots at 0x18FCD8/E0 for the warning emitter to read.
-    var u62_dvb = 0;
-    var u62_dcn = 0;
-    var u62_fi = 0;
-    while (u62_fi < fnc) {
-        var u62_dnoff = L64(_fnt_offsets + u62_fi * 8);
-        if (u62_dnoff >= 0) {
-            var u62_live = load8(&live + (u62_fi >> 3)) & (1 << (u62_fi & 7));
-            if (u62_live == 0) {
-                u62_dvb = u62_dvb + GFVB(S, u62_fi);
-                u62_dcn = u62_dcn + 1;
-            }
-        }
-        u62_fi = u62_fi + 1;
-    }
-    S64(S + 0x18FCD8, u62_dvb);
-    S64(S + 0x18FCE0, u62_dcn);
+    # 6.6.10: the loop is shared with the aarch64 FIXUP (runtime.cyr), and counts only dead
+    # fns that HOLD statics — it counted every dead fn. CHANGELOG [6.6.10]
+    _dead_static_stash(S, &live, fnc);
     # v5.11.59: undef-fn check moved here from before the fixup
     # patch loop. The DCE pass above populated `live[]`; for each
     # undef'd fixup (type 2 call, type 3 addr-of), locate the host

@@ -65,8 +65,8 @@
 #   0x18FCC0  scope_depth   [8]
 #   0x18FCC8  str_pos       [8]           string write position (moved from 0x70000 in v4.6.2)
 #   0x18FCD0  data_size     [8]           total variable data bytes (moved from 0x70008 in v4.6.2)
-#   0x18FCD8  dce_dead_var_bytes [8]      DCE-warning scratch: bytes inside unreachable fns (written fixup.cyr:661, read :1207)
-#   0x18FCE0  dce_dead_fn_count  [8]      DCE-warning scratch: count of unreachable fns (written fixup.cyr:662, read :1208)
+#   0x18FCD8  dce_dead_var_bytes [8]      DCE-warning scratch: static bytes inside unreachable fns (written by _dead_static_stash, runtime.cyr)
+#   0x18FCE0  dce_dead_fn_count  [8]      DCE-warning scratch: unreachable fns HOLDING statics (6.6.10; was every dead fn)
 #   0x18FCE8  kernel_load_base [8]        v6.3.3 #5: settable kernel ELF base (0 = built-in default)
 #   0x18FEC8  current_module [8]
 #   0x18FED0  pub_flags     [256]

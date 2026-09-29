@@ -350,6 +350,32 @@ fn _dce_hash_lookup(S, tgt): i64 {
     return 0 - 1;
 }
 
+# 6.6.10 — the dead-static attribution behind the "large static data" hint
+# (_warn_large_static, parse_fn.cyr): bytes of array statics declared inside UNREACHABLE fns,
+# and how many such fns hold them, stashed in the DCE-warning cells 0x18FCD8 / 0x18FCE0 for
+# the emitters. `live` is the caller's reachability bitmap. Shared by the x86 and aarch64
+# FIXUPs. Two defects it replaces: the x86 loop (inline in FIXUP) counted EVERY dead fn, so
+# one static holder plus two empty dead fns printed "inside 3 unreachable fn(s)"; and the
+# aarch64 FIXUP had live[] but never computed either number, so the hint never fired there
+# (EMITELF passed 0, 0). Only fns with GFVB > 0 count now. CHANGELOG [6.6.10]
+fn _dead_static_stash(S, live, fnc): i64 {
+    var dvb = 0;
+    var dcn = 0;
+    var fi = 0;
+    while (fi < fnc) {
+        if (L64(_fnt_offsets + fi * 8) >= 0) {
+            if ((load8(live + (fi >> 3)) & (1 << (fi & 7))) == 0) {
+                var vb = GFVB(S, fi);
+                if (vb > 0) { dvb = dvb + vb; dcn = dcn + 1; }
+            }
+        }
+        fi = fi + 1;
+    }
+    S64(S + 0x18FCD8, dvb);
+    S64(S + 0x18FCE0, dcn);
+    return 0;
+}
+
 # Host fn for a code offset: the fn whose [start, end) range contains
 # `coff`, or -1 when `coff` lies outside every fn body (entry / top-level
 # code → conservative ROOT in the seed pass; always-live in the undef-fn

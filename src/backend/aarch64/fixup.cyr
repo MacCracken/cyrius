@@ -543,6 +543,9 @@ fn FIXUP(S): i64 {
             }
         }
     }
+    # 6.6.10: the dead-static attribution for the "large static data" hint — this FIXUP had
+    # live[] all along and never computed it, so the hint was x86-only. runtime.cyr.
+    _dead_static_stash(S, &live, fnc);
     # v5.11.59: reachability-filtered undef-fn check (moved from
     # before the patch loop). Same shape as x86 — locate host fn
     # for each undef'd fixup's coff; skip the warning if host is
@@ -705,9 +708,9 @@ fn EMITELF(S): i64 {
     # v6.0.89: dispatch on the derived _emit_fmt (same selector _entry_base
     # uses) instead of re-reading the raw _TARGET_MACHO flag.
     # 6.6.9: the "large static data" advisory x86 always printed, on both aarch64
-    # executable formats. This backend's DCE only NOP-fills, so there is no dead-static
-    # attribution to pass. CHANGELOG [6.6.9]
-    if (L64(S + 0x18FCA0) != 1) { _warn_large_static(L64(S + 0x18FCD0), 0, 0); }
+    # executable formats. 6.6.10: with the dead-static attribution FIXUP stashes
+    # (_dead_static_stash) — this passed 0, 0, so the hint never fired here. CHANGELOG [6.6.10]
+    if (L64(S + 0x18FCA0) != 1) { _warn_large_static(L64(S + 0x18FCD0), L64(S + 0x18FCD8), L64(S + 0x18FCE0)); }
     if (_emit_fmt(S) == 2) { EMITMACHO_ARM64(S); return 0; }
     if (L64(S + 0x18FCA0) == 1) { EMITELF_KERNEL(S); return 0; }
     var cp = GCP(S);

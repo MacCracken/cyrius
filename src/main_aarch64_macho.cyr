@@ -32,6 +32,8 @@
 #                                        0x110000. 0x60000-0x100000 (640KB) is now FREE.
 #   0x18FCC8  str_pos       [8]           string write position (moved in v4.6.2)
 #   0x18FCD0  data_size     [8]           total variable data bytes (moved in v4.6.2)
+#   0x18FCD8  dce_dead_var_bytes [8]      DCE-warning scratch (6.6.10 on aarch64): static bytes in unreachable fns
+#   0x18FCE0  dce_dead_fn_count  [8]      DCE-warning scratch (6.6.10 on aarch64): unreachable fns holding them
 #   0x18E630  struct_names  [2048]        256 struct name offsets (cap 256, v5.7.17)
 #   0x18EE30  struct_fcounts[2048]        256 struct field counts (relocated v5.7.17)
 #   0x18F830  struct_count  [8]
