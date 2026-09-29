@@ -1265,20 +1265,24 @@ fn _net_conf_scan(path, want): i64 {
 }
 
 # A 16-bit DNS transaction id from the kernel CSPRNG — a guessable id is what lets an off-path
-# attacker forge the answer (the Kaminsky class). /dev/urandom if getrandom fails; -1 when
-# neither yields 2 bytes, and the caller fails the lookup.
+# attacker forge the answer (the Kaminsky class). /dev/urandom if getrandom fails (POSIX only);
+# -1 when neither yields 2 bytes, and the caller fails the lookup.
 # ⛔ NEVER add a weak fallback (clock, stack address, pid): a predictable TXID is worse than a
 # failed lookup, which is exactly what CVE-19 closed. CHANGELOG [6.6.9]
 fn _net_dns_id(): i64 {
     var b[8];
     store64(&b, 0);
     if (sys_getrandom(&b, 2, 0) == 2) { return load16(&b); }
+    #ifndef CYRIUS_TARGET_WIN
+    # ⛔ Not on Windows: sys_getrandom there is ProcessPrng, and "/dev/urandom" is a DRIVE-RELATIVE
+    # path (C:\dev\urandom) that any local user can create and fill with fixed bytes. CHANGELOG [6.6.11]
     var fd = file_open("/dev/urandom", 0, 0);
     if (fd >= 0) {
         var n = file_read(fd, &b, 2);
         file_close(fd);
         if (n == 2) { return load16(&b); }
     }
+    #endif
     return 0 - 1;
 }
 
@@ -1417,20 +1421,75 @@ fn net_dns_query_ipv4(host, ns, port): i64 {
 # takes, or -1. In order: a dotted-quad literal; `localhost` and any `*.localhost` name, which
 # are always 127.0.0.1 (RFC 6761); the IPv4 entries of /etc/hosts; one DNS A query to the first
 # IPv4 `nameserver` in /etc/resolv.conf — 127.0.0.1 when it names none, as glibc does. agnos
-# has no BSD UDP socket, so there only the first three steps can succeed.
+# has no BSD UDP socket, so there only the first three steps can succeed. On Windows the last
+# two steps are the system resolver instead (see _net_resolve_win).
 fn net_resolve_ipv4(host): i64 {
     if (host == 0) { return 0 - 1; }
     if (load8(host) == 0) { return 0 - 1; }
     var lit = net_parse_ipv4(host);
     if (lit != 0 - 1) { return lit; }
     if (_net_is_localhost(host) == 1) { return INADDR_LOOPBACK(); }
+    #ifdef CYRIUS_TARGET_WIN
+    var w = _net_resolve_win(host);
+    return w;
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
     var h = _net_conf_scan("/etc/hosts", host);
     if (h != 0 - 1) { return h; }
     var ns = _net_conf_scan("/etc/resolv.conf", 0);
     if (ns == 0 - 1) { ns = INADDR_LOOPBACK(); }
     return net_dns_query_ipv4(host, ns, 53);
+    #endif
 }
 
+#ifdef CYRIUS_TARGET_WIN
+# net_resolve_ipv4's Windows steps: getaddrinfo, the SYSTEM resolver — the real hosts file
+# (%SystemRoot%\System32\drivers\etc\hosts) and the adapters' DNS servers. Returns the first
+# IPv4 address, or -1.
+# ⛔ CVE-grade: NEVER open /etc/hosts or /etc/resolv.conf here, and never fall back to
+# 127.0.0.1:53. On Windows a rooted path is DRIVE-RELATIVE — "/etc/hosts" is C:\etc\hosts — and
+# any authenticated user may create folders at the root of the system drive, so the POSIX steps
+# let an unprivileged local user redirect every other user's lookups; and port 53 is not
+# privileged there, so the fallback nameserver is whoever binds it first. CHANGELOG [6.6.11]
+# Refused before any lookup: a name with a byte that is not printable ASCII (getaddrinfo reads
+# an ANSI code-page string, and IDNs need punycode first), and a name Windows would parse as an
+# ADDRESS although net_parse_ipv4 refused it ("010.0.0.1", "127.1", "0x7f000001") — the
+# strict-literal rule must not be undone one layer down. Measured: wine's getaddrinfo (glibc)
+# reads all three as addresses; Windows' own refused them on cass, so there this is defence.
+fn _net_resolve_win(host): i64 {
+    var n = strlen(host);
+    if (n == 0 || n > 254) { return 0 - 1; }
+    var i = 0;
+    while (i < n) {
+        var c = load8(host + i);
+        if (c <= 32 || c >= 127) { return 0 - 1; }
+        i = i + 1;
+    }
+    if (_net_wsa_init() != 0) { return 0 - 1; }
+    var hints[48];                                  # ADDRINFOA
+    memset(&hints, 0, 48);
+    store32(&hints, 4);                             # ai_flags = AI_NUMERICHOST
+    store32(&hints + 4, AF_INET);                   # ai_family
+    var res[8];
+    store64(&res, 0);
+    if (_net_wsa_rc(syscall(0xF02B, host, 0, &hints, &res)) == 0) {
+        syscall(0xF02C, load64(&res));              # freeaddrinfo
+        return 0 - 1;                               # a numeric form the strict parser refused
+    }
+    store32(&hints, 0);
+    store64(&res, 0);
+    if (_net_wsa_rc(syscall(0xF02B, host, 0, &hints, &res)) != 0) { return 0 - 1; }
+    var addr = 0 - 1;
+    var ai = load64(&res);
+    while (ai != 0 && addr == 0 - 1) {
+        # ADDRINFOA on Win64: ai_family @4, ai_addr @32, ai_next @40; sin_addr is at +4.
+        if (load32(ai + 4) == AF_INET && load64(ai + 32) != 0) { addr = load32(load64(ai + 32) + 4); }
+        ai = load64(ai + 40);
+    }
+    syscall(0xF02C, load64(&res));                  # freeaddrinfo
+    return addr;
+}
+#endif
 
 # === Simple TCP server pattern ===
 # fn handle_client(cfd) { ... }
