@@ -2162,11 +2162,17 @@ fn _agc_from_temp(S, t, dli, dgv, n, sid): i64 {
 # replaces the statement's PCMPE and takes that temp when the record spans the whole right-hand
 # side. `r = b.mk(5)` SIGSEGV'd, `q = b.mp(3)` kept rax only. Returns 1 when the statement is done
 # (`;` consumed); 0 leaves the ordinary store to run, exactly as after a plain PCMPE.
+# 6.6.11: also arms the struct-typed FIELD source (`q = b.v;`, see `_fla_arm`) when the destination
+# is a struct. CHANGELOG [6.6.11]
 fn _pcmpe_struct_assign(S, noff): i64 {
     var st = GTI(S);
+    _agc_operand(S, noff);
+    _fla_arm(st, _agc_t);
     var w = _sc_arm(S);
     PCMPE(S);
     _sc_want = w;
+    _fla_want = 0 - 1;
+    if (_fla_hit == 1) { return _fla_assign(S, noff); }
     var t = _sc_whole(S, st);
     if (t == 0 - 2) { return 0; }
     var n = _agc_operand(S, noff);

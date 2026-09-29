@@ -335,8 +335,12 @@ fn _resolve_field_base_addr(S, idx, sid): i64 {
 # real slot is >= 0, "no local" is -1, and slots cap well below 1000. Same encode-in-the-index
 # convention `_resolve_field_base_addr` uses for captures. CHANGELOG [6.6.6]
 fn _AGC_DREF(li): i64 { return 0 - 1000 - li; }
+# 6.6.11 — `li == -2` is a FOURTH source: the struct-typed FIELD recorded by `_fla_take`, so a
+# variable destination (`q = b.v;`, `var p: Pt = b.v;`) takes this same byte-exact copy. `-2` is
+# free: a slot is >= 0, "none" is -1 and the dereferenced band starts at -1000. CHANGELOG [6.6.11]
 fn _agc_addr_x1(S, li, gv, boff): i64 {
     if (gv >= 0) { EVADDR_X1(S, gv); }
+    elif (li == 0 - 2) { _fsc_src_x1(S, boff); return 0; }
     elif (li <= 0 - 1000) { EFLLOAD(S, 0 - 1000 - li); EMOVCA(S); }
     else { EFLADDR_X1(S, li); }
     if (boff > 0) { EADDIMM_X1(S, boff); }
@@ -646,6 +650,48 @@ fn _fla_take(S, idx, sid, off, ft): i64 {
     _fsc_fidx = idx;
     _fsc_fsid = sid;
     _fsc_foff = off;
+    return 1;
+}
+
+# ⛔ 6.6.11 — A STRUCT VARIABLE ASSIGNED FROM A STRUCT-TYPED FIELD COPIED ONE WORD (`q = b.v;`,
+# a local, a global and an address-passed parameter alike), and the DECLARATION `var p: Pt = b.v;`
+# stored that word into a slot typed `Pt` that was not inline, so `p.x` dereferenced it: SIGSEGV
+# on x86 and aarch64, a page fault on PE. 6.6.10 taught the FIELD destination (`b.v = a.v`) to
+# record such a source instead of loading it (`_fla_take`); the variable destinations now arm the
+# same record and copy from it byte-exact (`_agc_copy_bytes` with the `-2` source). A field of a
+# DIFFERENT struct type is refused by name, as the variable-to-variable copy has been since 6.6.6.
+# Armed only when the destination IS a struct, so a scalar `x = b.v;` keeps its one-word load.
+# CHANGELOG [6.6.11]
+fn _fla_arm(st, dt): i64 {
+    _fla_hit = 0;
+    if (dt >= 0) { return 0; }
+    if (dt <= 0 - 2048) { return 0; }
+    _fla_want = st;
+    return 0;
+}
+
+# `q = b.v;` after the armed PCMPE recorded the field: 1 = copied (`;` consumed).
+fn _fla_assign(S, noff): i64 {
+    _fla_hit = 0;
+    _agc_operand(S, noff);
+    if (_AGG_ASSIGN_TYPE_ERR(S, _agc_t, 0 - _fla_ft, noff, _fla_name) == 1) { return 0; }
+    var dli = _agc_li;
+    if (_agc_pp == 1) { dli = _AGC_DREF(dli); }
+    _agc_copy_bytes(S, dli, _agc_gvi, 0 - 2, 0 - 1, STRUCTSZ(S, _fla_ft - 1));
+    if (_agc_gvi >= 0) { SLVAR(S, _agc_gvi); }
+    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
+    STI(S, GTI(S) + 1);   # consume ';'
+    return 1;
+}
+
+# `var p: S = b.v;` in a fn: an inline `S` named `p`, filled from the recorded field. 1 = declared.
+fn _fla_var_receive(S, noff, pscale): i64 {
+    _fla_hit = 0;
+    if (_AGG_ASSIGN_TYPE_ERR(S, pscale, 0 - _fla_ft, noff, _fla_name) == 1) { return 0; }
+    var t = _agg_temp(S, _fla_ft);
+    _agc_copy_bytes(S, t, 0 - 1, 0 - 2, 0 - 1, STRUCTSZ(S, _fla_ft - 1));
+    S64(S + 0x5D9D000 + t * 8, noff);
+    SSLICE_W(S, t, 0);
     return 1;
 }
 
@@ -3721,9 +3767,9 @@ fn PARSE_VAR(S): i64 {
     # 6.6.6 (bite 14 review): armed, so a method / operator returning a struct stores it in a temp
     # this declaration can take — see `_sc_var_receive`. CHANGELOG [6.6.6]
     var scv_start = GTI(S);
-    var scv_prev = _sc_arm(S);
+    var scv_prev = _scv_arm(S, pscale);   # 6.6.11: + the field source and the <= 8 B call check
     PCMPE(S);
-    _sc_want = scv_prev;
+    _scv_disarm(scv_prev);
     # 6.6.10: an integer constant into an `f64` / `f32` declaration warns (_IFS_CHECK), and an
     # UNTYPED declaration records whether its initialiser was a float (_UFV_*).
     _IFS_CHECK(S, _IFS_K(lfloat), scv_start);

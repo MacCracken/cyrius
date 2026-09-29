@@ -1971,6 +1971,21 @@ fn _sc_post(S, fi, noff, beg, t): i64 {
     return 0;
 }
 
+# ⛔ 6.6.11 — PARSE_VAR's initialiser arming, for a struct-typed declaration: the struct-typed
+# FIELD source (`var p: Pt = b.v`, see `_fla_arm`) in a fn. Returns the previous `_sc_want`, for
+# `_scv_disarm`. CHANGELOG [6.6.11]
+fn _scv_arm(S, pscale): i64 {
+    if (pscale < 0) { if (pscale > 0 - 2048) {
+            if (GINFN(S) == 1) { _fla_arm(GTI(S), pscale); }
+        } }
+    return _sc_arm(S);
+}
+fn _scv_disarm(w): i64 {
+    _sc_want = w;
+    _fla_want = 0 - 1;
+    return 0;
+}
+
 # The destination half. Arm before parsing the expression at the cursor; the previous want is
 # returned for the caller to restore right after the parse, since a nested destination re-arms.
 fn _sc_arm(S): i64 {
@@ -1994,6 +2009,7 @@ fn _sc_whole(S, start): i64 {
 # untyped, the same inference). `ext` != 0 = a scalar/float/slice annotation: the first word, as
 # ever. Returns 1 when `p` is declared. CHANGELOG [6.6.6]
 fn _sc_var_receive(S, noff, pscale, ext, start): i64 {
+    if (_fla_hit == 1) { return _fla_var_receive(S, noff, pscale); }   # 6.6.11: `var p: S = b.v`
     var t = _sc_whole(S, start);
     if (t < 0) { return 0; }
     if (pscale == 0) {
