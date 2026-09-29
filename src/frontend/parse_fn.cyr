@@ -2002,10 +2002,13 @@ fn _sc_decl_mismatch(S, pscale, sid): i64 {
 }
 
 # ⛔ 6.6.11 — PARSE_VAR's initialiser arming, for a struct-typed declaration: the struct-typed
-# FIELD source (`var p: Pt = b.v`, see `_fla_arm`) in a fn. Returns the previous `_sc_want`, for
-# `_scv_disarm`. CHANGELOG [6.6.11]
+# FIELD source (`var p: Pt = b.v`, see `_fla_arm`) in a fn, and the type check of a whole free
+# call returning a struct of 8 B or less (`var z: Odd = mkod2()`), which comes back in rax and so
+# never reached the retptr / rax:rdx receives, the only ones that compared the sid. Returns the
+# previous `_sc_want`, for `_scv_disarm`. CHANGELOG [6.6.11]
 fn _scv_arm(S, pscale): i64 {
     if (pscale < 0) { if (pscale > 0 - 2048) {
+            _scv_call_check(S, pscale);
             if (GINFN(S) == 1) { _fla_arm(GTI(S), pscale); }
         } }
     return _sc_arm(S);
@@ -2013,6 +2016,19 @@ fn _scv_arm(S, pscale): i64 {
 fn _scv_disarm(w): i64 {
     _sc_want = w;
     _fla_want = 0 - 1;
+    return 0;
+}
+fn _scv_call_check(S, pscale): i64 {
+    var o = _gcall_open(S, GTI(S));
+    if (o < 0) { return 0; }
+    if (_call_follow(S, o - 1) != 5) { return 0; }
+    var fi = _gen_resolve_call(S, GTI(S));
+    if (fi < 0) { return 0; }
+    if (_grc_err < 0) { return 0; }   # a failed instantiation: the call refuses itself, once
+    var rs = GFRS(S, fi);
+    if (rs <= 0) { return 0; }
+    if (STRUCTSZ(S, rs - 1) > 8) { return 0; }
+    _sc_decl_mismatch(S, pscale, rs);
     return 0;
 }
 

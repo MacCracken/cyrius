@@ -12,6 +12,13 @@
 #       called it). Fixed by recording it with `_sc_tmp = -3` (`_sc_post_small`). An exact-
 #       register (1/2/4/8 B) struct FIELD skipped every check, the free call `h.p = mkq8()` too:
 #       `_fsc_src` (src/frontend/parse_decl.cyr) returned 0 before its call and expression arms.
+#   L5  A struct destination ASSIGNED from a FREE call returning a DIFFERENT struct stored one
+#       word: `p = mkq()` (24 B), `p = mkr()` (16 B), `z = mkod2()` (3 B), generic `s = mk(r.v)`
+#       (the field argument infers T = i64, so the call reaches Box<i64>, not Box<Pt>). The
+#       declarations `var z: Odd = mkod2()` and `var s: Box<Pt> = mk(r.v)` were not refused by
+#       name either — only the retptr / rax:rdx receives compared the sid. Root cause:
+#       `_try_struct_call_assign` (src/frontend/parse.cyr) exited at `cls == 0`, `n <= 1` and
+#       the sid test with `return 0` = the scalar store.
 #   L1  (refusal half) `var p: Pt = h.q` / `p = h.q` from a field of a DIFFERENT struct type
 #       SIGSEGV'd / copied a word; now a named refusal like every other struct copy.
 #
@@ -21,11 +28,15 @@
 # pass by both sides sharing one defect.
 #
 # MUTATION LEDGER (6.6.11, each mutant rebuilt from the fixed tree with the one change):
-#   base 6.6.10 build/cycc                                -> RED, 14 of 16 refusal rows
+#   base 6.6.10 build/cycc                                -> RED, 22 of 24 refusal rows
 #                                                            (D16 / D24 were already refused)
 #   `_sc_post_small` returns before recording              -> RED F3m F3o F8m A3m A8m D3m D3o D8m G3m
+#   `_pcmpe_struct_assign`'s type test removed             -> RED A3m A8m A16m
+#   `_sca_mismatch` returns 0                              -> RED A3c A16 A24 AG
+#   `_scv_call_check` returns 0                            -> RED D3c D8c
 #   `_fsc_src` keeps its exact-register `return 0`         -> RED F8m F8c
 #   `_fla_arm` never arms                                  -> RED FLd FLa FL8 FL3 (and acceptance K1)
+#   `_gen_decl_check` returns 0                            -> RED DG
 #   real tree                                              -> GREEN
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
@@ -107,6 +118,7 @@ impl Mk for Od2 { fn same(self): Od2 { var r: Od2; r.c = 1; r.d = 2; return r; }
 impl Mk for Q8 { fn mq(self): Q8 { var r: Q8; r.z = 5; return r; } }
 impl Mk for Odd { fn dup(self): Odd { var r: Odd; r.a = 3; r.b = 4; return r; } }
 impl Mk for P8 { fn dup(self): P8 { var r: P8; r.x = 6; r.y = 7; return r; } }
+impl Mk for Q { fn mr(self): R2 { var r: R2; r.a = 1; r.b = 2; return r; } }
 fn Od2_add(p: Od2, q: Od2): Od2 { var r: Od2; r.c = 1; r.d = 2; return r; }
 fn Odd_add(p: Odd, q: Odd): Odd { var r: Odd; r.a = p.a + q.a; r.b = p.b + q.b; return r; }
 fn mkod2(): Od2 { var r: Od2; r.c = 1; r.d = 2; return r; }
@@ -132,11 +144,19 @@ refuse "F8m h.p = y.mq()  (8 B method)" "$MF" "$T"'fn main(): i64 { var y: Q8; v
 refuse "F8c h.p = mkq8()  (8 B free call)" "$MF" "$T"'fn main(): i64 { var h: HP; h.p = mkq8(); return 0; }'"$E"
 refuse "A3m z = y.same()  (3 B method)" "$MA" "$T"'fn main(): i64 { var y: Od2; var z: Odd; z = y.same(); return 0; }'"$E"
 refuse "A8m z = y.mq()  (8 B method)" "$MA" "$T"'fn main(): i64 { var y: Q8; var z: P8; z = y.mq(); return 0; }'"$E"
+refuse "A3c z = mkod2()  (3 B free call)" "$MA" "$T"'fn main(): i64 { var z: Odd; z = mkod2(); return 0; }'"$E"
+refuse "A16m p = y.mr()  (16 B method)" "$MA" "$T"'fn main(): i64 { var y: Q; var p: Pt; p.x = 9; p.y = 9; p = y.mr(); return p.x; }'"$E"
+refuse "A16 p = mkr()  (16 B rax:rdx)" "$MA" "$T"'fn main(): i64 { var p: Pt; p.x = 9; p.y = 9; p = mkr(); return p.x; }'"$E"
+refuse "A24 p = mkq()  (24 B retptr)" "$MA" "$T"'fn main(): i64 { var p: Pt; p.x = 9; p.y = 9; p = mkq(); return p.x; }'"$E"
+refuse "AG  s = mk(r.v)  (generic)" "$MA" "$G"'fn main(): i64 { var r: RB; r.v.x = 2; r.v.y = 7; r.n = 1; var s: Box<Pt>; s.n = 0; s = mk(r.v); return s.n; }'"$E"
 refuse "D3m var z: Odd = y.same()" "$MD" "$T"'fn main(): i64 { var y: Od2; var z: Odd = y.same(); return 0; }'"$E"
 refuse "D3o var z: Odd = y + y" "$MD" "$T"'fn main(): i64 { var y: Od2; var z: Odd = y + y; return 0; }'"$E"
 refuse "D8m var z: P8 = y.mq()" "$MD" "$T"'fn main(): i64 { var y: Q8; var z: P8 = y.mq(); return 0; }'"$E"
+refuse "D3c var z: Odd = mkod2()" "$MD" "$T"'fn main(): i64 { var z: Odd = mkod2(); return 0; }'"$E"
+refuse "D8c var z: P8 = mkq8()" "$MD" "$T"'fn main(): i64 { var z: P8 = mkq8(); return 0; }'"$E"
 refuse "D16 var p: Pt = mkr()" "$MD" "$T"'fn main(): i64 { var p: Pt = mkr(); return p.x; }'"$E"
 refuse "D24 var p: Pt = mkq()" "$MD" "$T"'fn main(): i64 { var p: Pt = mkq(); return p.x; }'"$E"
+refuse "DG  var s: Box<Pt> = mk(r.v)" "$MD" "$G"'fn main(): i64 { var r: RB; r.v.x = 2; r.v.y = 7; r.n = 1; var s: Box<Pt> = mk(r.v); return s.n; }'"$E"
 # G3m — a top-level declaration AFTER the first top-level statement (PARSE_VAR's global arm,
 # `_sc_global_receive`); the leading declaration block is replayed by EMIT_GVAR_INITS instead.
 refuse "G3m var GZ: Odd = GY.same()  (top)" "$MD" "$T"'var GY = Od2 { 1, 2 };

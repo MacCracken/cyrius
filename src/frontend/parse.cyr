@@ -2111,10 +2111,16 @@ fn _try_struct_call_assign(S, noff): i64 {
     var o = _gcall_open(S, GTI(S));
     if (o < 0) { return 0; }
     var fi = _gen_resolve_call(S, GTI(S));
-    var cls = _ret_agg_class(S, fi);
-    if (cls == 0) { return 0; }
     if (_call_follow(S, o - 1) != 5) { return 0; }
     var n = _agc_operand(S, noff);
+    # ⛔ 6.6.11 — THE TYPE CHECK COMES BEFORE EVERY EXIT. `p = mkq();` (Q into a Pt) returned 0 at
+    # the sid test below and the scalar store kept one word, silently; a <= 8 B result had already
+    # left at `cls == 0`, and a one-slot destination at `n <= 1`. The declaration form refuses
+    # all of these. A generic call is compared as the instance it reaches, so `s = mk(r.v)` into
+    # a `Box<Pt>` (the field argument infers T = i64) is refused by name. CHANGELOG [6.6.11]
+    if (_sca_mismatch(S, fi, noff) == 1) { return 0; }
+    var cls = _ret_agg_class(S, fi);
+    if (cls == 0) { return 0; }
     if (n <= 1) { return 0; }
     if (_agc_t != 0 - GFRS(S, fi)) { return 0; }
     if (GINFN(S) != 1) {
@@ -2129,6 +2135,16 @@ fn _try_struct_call_assign(S, noff): i64 {
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
     STI(S, GTI(S) + 1);   # consume ';'
     return 1;
+}
+
+# `x = f(..);` — x a struct operand (`_agc_operand` just ran) and f returning a DIFFERENT struct:
+# refused by name (1). Reads `_agc_t`. CHANGELOG [6.6.11]
+fn _sca_mismatch(S, fi, noff): i64 {
+    if (fi < 0) { return 0; }
+    if (_grc_err < 0) { return 0; }   # a failed instantiation: the call refuses itself, once
+    var rs = GFRS(S, fi);
+    if (rs <= 0) { return 0; }
+    return _AGG_ASSIGN_TYPE_ERR(S, _agc_t, 0 - rs, noff, PEEKV(S));
 }
 
 # The copy both struct-call assignments end with: temp `t` (field-0 slot, `n` slots of struct

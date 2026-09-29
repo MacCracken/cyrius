@@ -2586,6 +2586,22 @@ fn _sci_gsrc_type(S, snoff): i64 {
     return 0 - gt;
 }
 
+# ⛔ 6.6.11 — `var s: Box<Pt> = mk(r.v);` — a generic call whose instance (here Box<i64>: the
+# field argument infers T = i64) is not the declared one. The receive below resets `pscale` to
+# re-derive the layout from the callee, so the declared type was dropped without a word and the
+# first `s.v.x` failed as "expected ';', got '.'". Compared first, as the instance the call
+# REACHES (`_gen_resolve_call`), the same comparison the assignment form makes. 1 = refused, and
+# the declared type is kept so the statement parses on without a cascade. A call that failed to
+# instantiate (`_grc_err`, or a stub base) is the call's own refusal to make, once, and is left
+# to it. CHANGELOG [6.6.11]
+fn _gen_decl_check(S, pscale, fi): i64 {
+    if (_grc_err < 0) { return 0; }
+    if (_gen_stub(S, fi) != 0) { return 0; }
+    var rs = GFRS(S, fi);
+    if (rs <= 0) { return 0; }
+    return _sc_decl_mismatch(S, pscale, rs);
+}
+
 fn _try_struct_copy_init(S, noff, pscale): i64 {
     if (pscale >= 0) { return 0; }
     if (PEEKT(S) != 4) { return 0; }
@@ -3472,7 +3488,7 @@ fn PARSE_VAR(S): i64 {
                     # i64 case re-derives to the same base sid (no behavior change). Default
                     # (flag-off) byte-identical.
                     if (_MONOMORPH_OK == 1) { if (pscale < 0) {
-                            if (GFTP(S, _look_fi) != 0) { pscale = 0; }
+                            if (GFTP(S, _look_fi) != 0) { if (_gen_decl_check(S, pscale, _look_fi) == 0) { pscale = 0; } }
                         } }
                     # v6.3.16: inferred `var p = mk();` (no type annotation → pscale==0)
                     # from a struct-returning callee. Infer the local's struct type so
