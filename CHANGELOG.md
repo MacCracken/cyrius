@@ -99,6 +99,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `lib/async_win.cyr`, `lib/async_macos.cyr` and sigil's `sys_util.cyr` are corrected by the lanes
   that own them.
 
+- **net.cyr, the agnos peer, args_agnos and thread_agnos check their allocations.** (bite 13)
+  The census's eight lane-T sites: `sockaddr_in` / `sockaddr_in6` return 0 on a refused
+  allocation (and `sock_bind` / `sock_connect` answer Err(12) instead of handing the kernel
+  address 0); `sock_reuse`, `sock_set_recv_timeout` and `sock_set_send_timeout` build their
+  setsockopt value ON THE STACK — the kernel copies it in, so there is no allocation to refuse, and
+  each call no longer leaks 4 or 16 bytes; agnos `sigset_new` and `chan_new` return 0, and
+  `_agnos_getenv` reads a refused copy as unset. The census allowlist loses the eight lines
+  (shrink-only), and restoring any one unchecked site fails it by name.
+
 ### Added
 
 - **A census gate for unchecked first-party `alloc(` results, with a shrink-only allowlist.**

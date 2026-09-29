@@ -173,7 +173,6 @@ while read -r f; do [ -f "$f" ] || _fail "axis 2: the fold table names $f, which
 
 echo "axis 3: the census against the shrink-only allowlist"
 cat > "$W/allow" <<'ALLOW'
-lib/args_agnos.cyr _agnos_getenv res
 lib/async_win.cyr _asw_wcmdline wbuf
 lib/async_win.cyr _asw_wenvblock wbuf
 lib/audit_walk.cyr _aw_is_generated buf
@@ -210,11 +209,6 @@ lib/http.cyr http_get rbuf
 lib/http.cyr http_get_r slot
 lib/http.cyr http_get_r rbuf
 lib/http.cyr http_get_a slot
-lib/net.cyr sockaddr_in sa
-lib/net.cyr sockaddr_in6 sa
-lib/net.cyr sock_reuse val
-lib/net.cyr sock_set_recv_timeout tv
-lib/net.cyr sock_set_send_timeout tv
 lib/process.cyr _proc_tree_collect _proc_tree
 lib/process.cyr exec_vec argv
 lib/process.cyr exec_vec envp
@@ -254,14 +248,12 @@ lib/sync_windows.cyr mutex_new m
 lib/syscalls_aarch64_linux.cyr sigset_new set
 lib/syscalls_aarch64_linux.cyr epoll_event_new ev
 lib/syscalls_aarch64_linux.cyr timerspec_new ts
-lib/syscalls_x86_64_agnos.cyr sigset_new set
 lib/syscalls_x86_64_linux.cyr sigset_new set
 lib/syscalls_x86_64_linux.cyr epoll_event_new ev
 lib/syscalls_x86_64_linux.cyr timerspec_new ts
 lib/thread.cyr thread_create t
 lib/thread.cyr chan_new ch
 lib/thread.cyr chan_new buf
-lib/thread_agnos.cyr chan_new buf
 lib/thread_local.cyr _tlocal_win_block blk
 lib/thread_macos.cyr chan_new buf
 lib/thread_win.cyr thread_create a

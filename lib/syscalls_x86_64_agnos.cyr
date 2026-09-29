@@ -972,9 +972,10 @@ fn WIFSIGNALED(status): i64 {
 # The signal that ended the child; meaningful when WIFSIGNALED.
 fn WTERMSIG(status): i64 { return status & 0xFF; }
 
-# Allocate an 8-byte (64-bit) pending-signal mask, zeroed.
+# Allocate an 8-byte (64-bit) pending-signal mask, zeroed. 0 when the allocation is refused.
 fn sigset_new(): i64 {
     var set = alloc(8);
+    if (set == 0) { return 0; }                                      # CHANGELOG [6.6.10]
     store64(set, 0);
     return set;
 }
