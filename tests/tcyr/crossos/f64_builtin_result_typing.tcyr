@@ -1,0 +1,109 @@
+# f64_builtin_result_typing.tcyr — 6.6.10 — `+ - * /` on the RESULT of a float-returning
+# builtin is float arithmetic, on every backend (option D: a result flag, not a type).
+#
+# A float builtin left the estype of its LAST ARGUMENT behind, which under the i64-boxed idiom
+# (ADR-002: `var u = 4.0;` is untyped) is 0 — so every arithmetic operator on its result took
+# the INTEGER arm, silently: `f64_sqrt(u) * f64_sqrt(u)` was 0, `f64_sin(z) - f64_cos(z)` was
+# -4.0, `f64_mul(u, v) / v` an integer divide (1), `f64_exp(z) + f64_exp(z)` garbage, and
+# `f64_add(p, u) * 2.0` differed from `f64_add(u, p) * 2.0` because the ORDER of the arguments
+# decided the type. Parentheses and unary minus lost it too: `-(f64_sqrt(v))` negated the
+# integer, `-f64_sqrt(u) * 2.0` multiplied one.
+# The expected values are compared as BIT PATTERNS (assert_eq on an untyped result), so a
+# float literal on the right is exact. The `(f64_sqrt(v))` rows use sqrt(2): for sqrt(4) the
+# integer negation happens to produce the right bits, so that input discriminates nothing.
+#
+# ⚠ WHAT OPTION D DOES NOT CHANGE, pinned below: `==` / `<` on builtin results stay INTEGER
+# (bit-pattern) compares — 41 ecosystem sites compare those bits on purpose — and a builtin
+# result inside a comparison that is then multiplied is an integer.
+#
+# The cx target has no transcendental ops and (until its stubs are real) an identity
+# f64_sqrt/f64_floor, so those rows are compiled off there; the f64_add/sub/mul/div/neg/abs
+# rows run everywhere.
+#
+# Mutation that reddens this file: make PARSE_INTRIN skip `_FBR_MARK` (src/frontend/
+# parse_expr.cyr) — every arithmetic row fails.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+#ifndef CYRIUS_TARGET_CX
+include "lib/math.cyr"
+#endif
+
+fn every_target(): i64 {
+    var u = 4.0;
+    var v = 2.0;
+    var t3 = 3.0;
+    var z = 0.0;
+    var p: f64 = 3.0;
+
+    test_group("a float builtin's result is a float LEFT operand");
+    assert_eq(f64_mul(u, v) * 2.0, 16.0, "f64_mul(u, v) * 2.0");
+    assert_eq(f64_add(u, v) + 1.0, 7.0, "f64_add(u, v) + 1.0");
+    assert_eq(f64_sub(u, v) - 1.0, 1.0, "f64_sub(u, v) - 1.0");
+    assert_eq(f64_neg(u) + 1.0, 0.0 - 3.0, "f64_neg(u) + 1.0");
+    assert_eq(f64_div(u, v) * f64_div(u, v), 4.0, "builtin * builtin");
+    assert_eq(f64_mul(u, v) / v, 4.0, "f64_mul(u, v) / v (was an integer divide: 1)");
+
+    test_group("the argument ORDER no longer decides the type");
+    assert_eq(f64_add(p, u) * 2.0, 14.0, "f64_add(p, u) * 2.0 (was 0)");
+    assert_eq(f64_add(u, p) * 2.0, 14.0, "f64_add(u, p) * 2.0");
+
+    test_group("a float builtin's result is a float RIGHT operand");
+    assert_eq(2.0 * f64_add(v, v), 8.0, "2.0 * f64_add(v, v)");
+    assert_eq(p + f64_abs(f64_neg(u)), 7.0, "p + f64_abs(f64_neg(u))");
+
+    test_group("parentheses and unary minus keep it");
+    assert_eq((f64_div(u, t3)), 0x3FF5555555555555, "(f64_div(u, t3)) is its own bits");
+    assert_eq(-(f64_div(u, t3)), 0xBFF5555555555555, "-(f64_div(u, t3)) flips the sign (was the integer negation)");
+    assert_eq(-f64_add(u, v) * 2.0, 0.0 - 12.0, "-f64_add(u, v) * 2.0 (was an integer multiply)");
+    assert_eq((f64_add(u, v) * 2.0) + 1.0, 13.0, "(f64_add(u, v) * 2.0) + 1.0");
+
+    test_group("typed declarations");
+    var w: f64 = f64_mul(u, v) * 2.0;
+    assert_eq(w, 16.0, "var w: f64 = f64_mul(u, v) * 2.0");
+
+    test_group("what option D leaves an INTEGER");
+    assert_eq(f64_neg(z) == z, 0, "== on builtin results stays a bit compare (-0.0 vs 0.0)");
+    assert_eq((z < f64_add(u, v)) * 3, 3, "a compare of a builtin result, then * 3, is an integer multiply");
+    assert_eq(3 + f64_to(f64_add(v, v)), 7, "f64_to's result is an integer");
+    assert_eq(f64_to(f64_add(v, v)) * 3, 12, "f64_to(builtin) * 3 is an integer multiply");
+    return 0;
+}
+
+#ifndef CYRIUS_TARGET_CX
+fn native_only(): i64 {
+    var u = 4.0;
+    var v = 2.0;
+    var z = 0.0;
+    var h = 2.5;
+    var p: f64 = 3.0;
+
+    test_group("sqrt / floor / transcendental results (off on cx)");
+    assert_eq(f64_sqrt(u) * 2.0, 4.0, "f64_sqrt(u) * 2.0 (was 0)");
+    assert_eq(f64_sqrt(u) + 1.0, 3.0, "f64_sqrt(u) + 1.0 (was +inf)");
+    assert_eq(f64_floor(h) - 1.0, 1.0, "f64_floor(h) - 1.0");
+    assert_eq(f64_sqrt(u) * f64_sqrt(u), 4.0, "f64_sqrt(u) * f64_sqrt(u) (was 0)");
+    assert_eq(f64_sin(z) - f64_cos(z), 0.0 - 1.0, "f64_sin(z) - f64_cos(z) (was -4.0)");
+    assert_eq(f64_exp(z) + f64_exp(z), 2.0, "f64_exp(z) + f64_exp(z)");
+    assert_eq(f64_ln(u) * 0.0, 0.0, "f64_ln(u) * 0.0");
+    assert_eq(2.0 * f64_sqrt(u), 4.0, "2.0 * f64_sqrt(u)");
+    assert_eq(p + f64_sqrt(u), 5.0, "p + f64_sqrt(u)");
+    # sqrt(2), not sqrt(4): the integer negation of sqrt(4)'s bits happens to be -2.0's.
+    assert_eq((f64_sqrt(v)), 0x3FF6A09E667F3BCD, "(f64_sqrt(v)) is its own bits");
+    assert_eq(-(f64_sqrt(v)), 0xBFF6A09E667F3BCD, "-(f64_sqrt(v)) flips the sign (was the integer negation)");
+    assert_eq(-f64_sqrt(u) * 2.0, 0.0 - 4.0, "-f64_sqrt(u) * 2.0 (was an integer multiply)");
+    assert_eq((f64_sqrt(v)) * (f64_sqrt(v)) - 2.0 < 0.000001, 1, "(sqrt 2) * (sqrt 2) is ~2.0");
+    var w: f64 = f64_sqrt(u) * 2.0;
+    assert_eq(w, 4.0, "var w: f64 = f64_sqrt(u) * 2.0");
+    assert_eq(f32_to(f32_from(u) * f32_from(v)), 8.0, "f32_from(u) * f32_from(v) is mulss");
+    assert_eq((z < f64_sqrt(u)) * 3, 3, "a compare of f64_sqrt, then * 3, is an integer multiply");
+    return 0;
+}
+#endif
+
+alloc_init();
+every_target();
+#ifndef CYRIUS_TARGET_CX
+native_only();
+#endif
+var r = assert_summary();

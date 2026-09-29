@@ -858,11 +858,12 @@ fn _NEG_F32(S): i64 {
 }
 
 # _NEG_INTRIN_KIND — 1 when token `t` is a builtin whose RESULT is a scalar f64, 2 when it is
-# a scalar f32 bit pattern, else 0. Unary minus reads it BEFORE parsing its operand: those
-# builtins inherit their ARGUMENT's estype (the i64-boxed idiom leaves it 0), so GESTYPE
-# alone negated `-f64_exp(u)` as an integer (-4.0 for -1.0). The compiler knows these calls
-# return a float, whatever the argument was typed. f64_to/eq/lt/gt return integers and are
-# absent. Kept a flat compare chain: cybs compiles this file. CHANGELOG [6.6.8]
+# a scalar f32 bit pattern, else 0. Those builtins inherit their ARGUMENT's estype (the
+# i64-boxed idiom leaves it 0), so GESTYPE alone negated `-f64_exp(u)` as an integer (-4.0 for
+# -1.0). The compiler knows these calls return a float, whatever the argument was typed.
+# f64_to/eq/lt/gt return integers and are absent. Since 6.6.10 it drives the float-builtin
+# RESULT flag (PARSE_INTRIN, _FBR_MARK), which unary minus reads through _FBR_ST.
+# Kept a flat compare chain: cybs compiles this file. CHANGELOG [6.6.8] [6.6.10]
 fn _NEG_INTRIN_KIND(t): i64 {
     if (t >= 62) { if (t <= 66) { return 1; } }     # f64_add/sub/mul/div, f64_from
     if (t == 71) { return 1; }                       # f64_neg
@@ -879,12 +880,63 @@ fn _NEG_INTRIN_KIND(t): i64 {
     return 0;
 }
 
+# ⛔ 6.6.10 — THE FLOAT-BUILTIN RESULT FLAG (option D). A float-returning builtin left the
+# estype of its LAST ARGUMENT (0 under the i64-boxed idiom), so every `+ - * /` on its result
+# took the INTEGER arm, silently: `f64_sqrt(u) * f64_sqrt(u)` was 0, `f64_sin(0) - f64_cos(0)`
+# was -4.0, `f64_mul(u, v) / v` was 1, and `f64_add(p, u) * 2.0` differed from
+# `f64_add(u, p) * 2.0` because the argument ORDER leaked the type.
+# The result is marked instead of typed: `_fbr_k` (1 = f64, 2 = f32) stamped with the code
+# pointer and token index at the end of the call. It reads as valid (_FBR_KIND) only while
+# NOTHING has been emitted or consumed since — so it survives a parenthesised factor (whose
+# `)` re-stamps the token index) and unary minus (which re-marks), and dies at any other
+# operator. The `+ - * /` arms read their LEFT operand through _FBR_ST, the kind-1 check its
+# RIGHT operand, and the kind-2 check (_INT_F64_MIX) the right operand captured by _RHS_F /
+# _RHS_T before the integer op is emitted.
+# ⚠ WHY NOT TYPE THE RESULT F64 (option A): that also turns ORDERED and equality compares of
+# builtin results into float compares, and 41 ecosystem sites compare those bit patterns on
+# purpose (hex constants, hisab's -0 check, ganita's `f64_floor(v) == v`) — NaN and ±0 would
+# change meaning. So a builtin-vs-builtin `<` stays an INTEGER compare (wrong for negative
+# values); the guide says so. A leaked argument estype that is not the builtin's own float
+# type is dropped (a struct id there dispatched an operator overload; an f32 one an f32 op).
+# CHANGELOG [6.6.10]
+var _fbr_k = 0;
+var _fbr_cp = 0;
+var _fbr_ti = 0;
+var _fbr_rhs = 0;
+fn _FBR_MARK(S, k): i64 {
+    if (k == 1) { if (GESTYPE(S) != F64_TYID) { SESTYPE(S, 0); } }
+    if (k == 2) { if (GESTYPE(S) != F32_TYID) { SESTYPE(S, 0); } }
+    _fbr_k = k;
+    _fbr_cp = GCP(S);
+    _fbr_ti = GTI(S);
+    return 0;
+}
+fn _FBR_KIND(S): i64 {
+    if (_fbr_k == 0) { return 0; }
+    if (GCP(S) != _fbr_cp) { return 0; }
+    if (GTI(S) != _fbr_ti) { return 0; }
+    return _fbr_k;
+}
+# The operand's effective type: its estype, else the builtin-result flag's.
+fn _FBR_ST(S): i64 {
+    var t = GESTYPE(S);
+    if (t != 0) { return t; }
+    var k = _FBR_KIND(S);
+    if (k == 1) { return F64_TYID; }
+    if (k == 2) { return F32_TYID; }
+    return 0;
+}
+# The integer arms' right operand: parse it, then capture the flag BEFORE the op is emitted.
+fn _RHS_F(S): i64 { PARSE_FACTOR(S); _fbr_rhs = _FBR_KIND(S); return 0; }
+fn _RHS_T(S): i64 { PARSE_TERM(S); _fbr_rhs = _FBR_KIND(S); return 0; }
+
 fn _PARSE_FACTOR_IMPL(S): i64 {
     var typ = PEEKT(S);
     SPSC(S, 0);
     SESTYPE(S, 0);
     SESVAR(S, 0 - 1);
     SEXW(S, 0);
+    _fbr_k = 0;   # 6.6.10: a new factor's value is not the last builtin's (see _FBR_MARK)
     # v6.4.83 — the RIGHT-operand half of the intrinsic-flanking fix. PARSE_TERM's
     # `* / % << >> >>>` loop parses its right operand with PARSE_FACTOR, one tier DOWN
     # from where the intrinsics were dispatched, so `a * f64_from(2)` was a syntax
@@ -910,18 +962,15 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         # +0 and `-x` on an f64 likewise, on every target. The operand's type is known only
         # after it is parsed, so the integer prologue is shared and a float operand discards
         # its pushed 0 (EF64_NEG is exact for every value, -0.0 and NaN included). CHANGELOG [6.6.8]
-        # A float-returning BUILTIN is recognised by its token, read before the operand is
-        # consumed (its estype is its argument's — see _NEG_INTRIN_KIND); its estype is left
-        # as the builtin set it.
-        var _ngk = _NEG_INTRIN_KIND(PEEKT(S));
+        # A float-returning BUILTIN is recognised through the result flag (_FBR_ST), which also
+        # reaches one inside parentheses (`-(f64_sqrt(v))` negated the integer until 6.6.10); the
+        # negation re-marks it, so `-f64_sqrt(u) * 2.0` is still a float multiply. CHANGELOG [6.6.10]
         EMOVI(S, 0);
         EPUSHR(S);
         PARSE_FACTOR(S);
-        if (_ngk == 1) { EPOPC(S); EF64_NEG(S); _cfo = 0; return 0; }
-        if (_ngk == 2) { _NEG_F32(S); _cfo = 0; return 0; }
-        var _ngt = GESTYPE(S);
-        if (_ngt == F64_TYID) { EPOPC(S); EF64_NEG(S); _cfo = 0; return 0; }
-        if (_ngt == F32_TYID) { _NEG_F32(S); SESTYPE(S, F32_TYID); _cfo = 0; return 0; }
+        var _ngt = _FBR_ST(S);
+        if (_ngt == F64_TYID) { EPOPC(S); EF64_NEG(S); _FBR_MARK(S, 1); _cfo = 0; return 0; }
+        if (_ngt == F32_TYID) { _NEG_F32(S); _FBR_MARK(S, 2); _cfo = 0; return 0; }
         EMOVCA(S);
         EPOPR(S);
         ESUBR(S);
@@ -1334,7 +1383,9 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         STI(S, GTI(S) + 1);
         PCMPE(S);
         if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); }
+        var _pfk = _FBR_KIND(S);
         STI(S, GTI(S) + 1);
+        if (_pfk != 0) { _fbr_ti = GTI(S); }   # 6.6.10: `(builtin(..))` is still its result
         _cfo = 0;
         return 0;
     }
@@ -3459,7 +3510,19 @@ fn _PARSE_F64V4_UNARY(S, op): i64 {
     return 1;
 }
 
+# 6.6.10 — every builtin dispatch goes through here, so the float-builtin RESULT flag is
+# cleared for any other intrinsic and set for a float-returning one (_NEG_INTRIN_KIND), in
+# ONE place for both tiers that dispatch intrinsics. See _FBR_MARK. CHANGELOG [6.6.10]
 fn PARSE_INTRIN(S, ptyp): i64 {
+    _fbr_k = 0;
+    var r = _PARSE_INTRIN_IMPL(S, ptyp);
+    if (r != 1) { return r; }
+    var k = _NEG_INTRIN_KIND(ptyp);
+    if (k != 0) { _FBR_MARK(S, k); }
+    return r;
+}
+
+fn _PARSE_INTRIN_IMPL(S, ptyp): i64 {
     if (ptyp >= 93) { if (ptyp <= 99) { PARSE_SIMD_EXT(S, ptyp); return 1; } }
     if (ptyp >= 100) { if (ptyp <= 104) { PARSE_SIMD_EXT(S, ptyp); return 1; } }
     # v5.10.17 — f64v_dot/scale/axpy
@@ -3790,9 +3853,9 @@ fn _PARSE_TERM_IMPL(S): i64 {
         # 2's-complement). Collapse the token ID.
         if (typ == 119) { typ = 8; }
         if (typ == 8) {
-            var mulst = GESTYPE(S);
+            var mulst = _FBR_ST(S);   # 6.6.10: a float builtin's result is a float left operand
             STI(S, GTI(S) + 1);
-            if (mulst == F64_TYID) { ESPILL(S); PARSE_FACTOR(S); if (GESTYPE(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } EMIT_F64_BINOP(S, 2); SESTYPE(S, F64_TYID); _cfo = 0; }
+            if (mulst == F64_TYID) { ESPILL(S); PARSE_FACTOR(S); if (_FBR_ST(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } EMIT_F64_BINOP(S, 2); SESTYPE(S, F64_TYID); _cfo = 0; }
             elif (mulst == F32_TYID) { ESPILL(S); PARSE_FACTOR(S); EMIT_F32_BINOP(S, 2); SESTYPE(S, F32_TYID); _cfo = 0; }
             elif (mulst > 0) { EMIT_OP_DISPATCH(S, mulst, "mul", 3, _tbeg); _cfo = 0; }
             else {
@@ -3817,14 +3880,14 @@ fn _PARSE_TERM_IMPL(S): i64 {
                                 _cfo = 0;
                                 ESPILL(S);
                                 if (_TRY_MUL_BY_POW2(S) == 1) { _cfo = 0; }
-                                else { PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); EIMUL(S); _cfo = 0; }
+                                else { _RHS_F(S); EMOVCA(S); EUNSPILL(S); EIMUL(S); _cfo = 0; }
                             }
                         }
                         else {
                             _cfo = 0;
                             ESPILL(S);
                             if (_TRY_MUL_BY_POW2(S) == 1) { _cfo = 0; }
-                            else { PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); EIMUL(S); _cfo = 0; }
+                            else { _RHS_F(S); EMOVCA(S); EUNSPILL(S); EIMUL(S); _cfo = 0; }
                         }
                     } else {
                         # The RHS may itself be an enum/NUM const — PARSE_FACTOR
@@ -3837,7 +3900,7 @@ fn _PARSE_TERM_IMPL(S): i64 {
                         _cfo = 0;
                         ESPILL(S);
                         if (_TRY_MUL_BY_POW2(S) == 1) { _cfo = 0; }
-                        else { PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); EIMUL(S); _cfo = 0; }
+                        else { _RHS_F(S); EMOVCA(S); EUNSPILL(S); EIMUL(S); _cfo = 0; }
                     }
                 } else {
                     # v5.6.7 O2: ESPILL LHS, then try strength-reduction
@@ -3845,15 +3908,15 @@ fn _PARSE_TERM_IMPL(S): i64 {
                     # general `PARSE_FACTOR + EIMUL` sequence.
                     ESPILL(S);
                     if (_TRY_MUL_BY_POW2(S) == 1) { _cfo = 0; }
-                    else { PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); EIMUL(S); _cfo = 0; }
+                    else { _RHS_F(S); EMOVCA(S); EUNSPILL(S); EIMUL(S); _cfo = 0; }
                 }
             }
             if (mulst <= 0) { _INT_F64_MIX(S); }
         }
         else { if (typ == 9) {
-                var divst = GESTYPE(S);
+                var divst = _FBR_ST(S);   # 6.6.10: a float builtin's result is a float left operand
                 STI(S, GTI(S) + 1);
-                if (divst == F64_TYID) { ESPILL(S); PARSE_FACTOR(S); if (GESTYPE(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } EMIT_F64_BINOP(S, 3); SESTYPE(S, F64_TYID); _cfo = 0; }
+                if (divst == F64_TYID) { ESPILL(S); PARSE_FACTOR(S); if (_FBR_ST(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } EMIT_F64_BINOP(S, 3); SESTYPE(S, F64_TYID); _cfo = 0; }
                 elif (divst == F32_TYID) { ESPILL(S); PARSE_FACTOR(S); EMIT_F32_BINOP(S, 3); SESTYPE(S, F32_TYID); _cfo = 0; }
                 elif (divst > 0) { EMIT_OP_DISPATCH(S, divst, "div", 3, _tbeg); _cfo = 0; }
                 else {
@@ -3863,12 +3926,12 @@ fn _PARSE_TERM_IMPL(S): i64 {
                                     var cfr = _cfv / crv;
                                     if (cfr > 0) { if (cfr < 0x10000) {
                                             STI(S, GTI(S) + 1); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
-                                        } else { ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; } }
-                                    else { ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; }
-                                } else { ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; } }
-                            else { ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; }
-                        } else { ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; } }
-                    else { ESPILL(S); PARSE_FACTOR(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; }
+                                        } else { ESPILL(S); _RHS_F(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; } }
+                                    else { ESPILL(S); _RHS_F(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; }
+                                } else { ESPILL(S); _RHS_F(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; } }
+                            else { ESPILL(S); _RHS_F(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; }
+                        } else { ESPILL(S); _RHS_F(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; } }
+                    else { ESPILL(S); _RHS_F(S); EMOVCA(S); EUNSPILL(S); ECQO(S); EIDIV(S); _cfo = 0; }
                 }
                 if (divst <= 0) { _INT_F64_MIX(S); }
             }
@@ -4184,9 +4247,9 @@ fn _PEXPR_IMPL(S): i64 {
         # corresponding `lib/overflow.cyr` helper. Handled in their own
         # branches below so the constant-fold paths don't fire on them.
         if (typ == 6) {
-            var addst = GESTYPE(S);
+            var addst = _FBR_ST(S);   # 6.6.10: a float builtin's result is a float left operand
             STI(S, GTI(S) + 1);
-            if (addst == F64_TYID) { ESPILL(S); PARSE_TERM(S); if (GESTYPE(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } EMIT_F64_BINOP(S, 0); SESTYPE(S, F64_TYID); _cfo = 0; }
+            if (addst == F64_TYID) { ESPILL(S); PARSE_TERM(S); if (_FBR_ST(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } EMIT_F64_BINOP(S, 0); SESTYPE(S, F64_TYID); _cfo = 0; }
             elif (addst == F32_TYID) { ESPILL(S); PARSE_TERM(S); EMIT_F32_BINOP(S, 0); SESTYPE(S, F32_TYID); _cfo = 0; }
             elif (addst > 0) { EMIT_OP_DISPATCH(S, addst, "add", 3, _xbeg); _cfo = 0; }
             else {
@@ -4205,17 +4268,17 @@ fn _PEXPR_IMPL(S): i64 {
                         var cfr = _cfv + crv;
                         if (cfr >= 0) {
                             STI(S, GTI(S) + 1); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
-                        } else { ESPILL(S); SPSC(S, 0); PARSE_TERM(S); EPTR_SCALE(S, ps); EMOVCA(S); EUNSPILL(S); EADDR(S); SPSC(S, ps); _cfo = 0; }
+                        } else { ESPILL(S); SPSC(S, 0); _RHS_T(S); EPTR_SCALE(S, ps); EMOVCA(S); EUNSPILL(S); EADDR(S); SPSC(S, ps); _cfo = 0; }
                     }
-                    else { ESPILL(S); SPSC(S, 0); PARSE_TERM(S); EPTR_SCALE(S, ps); EMOVCA(S); EUNSPILL(S); EADDR(S); SPSC(S, ps); _cfo = 0; }
-                } else { ESPILL(S); SPSC(S, 0); PARSE_TERM(S); EPTR_SCALE(S, ps); EMOVCA(S); EUNSPILL(S); EADDR(S); SPSC(S, ps); _cfo = 0; }
+                    else { ESPILL(S); SPSC(S, 0); _RHS_T(S); EPTR_SCALE(S, ps); EMOVCA(S); EUNSPILL(S); EADDR(S); SPSC(S, ps); _cfo = 0; }
+                } else { ESPILL(S); SPSC(S, 0); _RHS_T(S); EPTR_SCALE(S, ps); EMOVCA(S); EUNSPILL(S); EADDR(S); SPSC(S, ps); _cfo = 0; }
             }
             if (addst <= 0) { _INT_F64_MIX(S); }
         }
         else { if (typ == 7) {
-                var subst = GESTYPE(S);
+                var subst = _FBR_ST(S);   # 6.6.10: a float builtin's result is a float left operand
                 STI(S, GTI(S) + 1);
-                if (subst == F64_TYID) { ESPILL(S); PARSE_TERM(S); if (GESTYPE(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } EMIT_F64_BINOP(S, 1); SESTYPE(S, F64_TYID); _cfo = 0; }
+                if (subst == F64_TYID) { ESPILL(S); PARSE_TERM(S); if (_FBR_ST(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } EMIT_F64_BINOP(S, 1); SESTYPE(S, F64_TYID); _cfo = 0; }
                 elif (subst == F32_TYID) { ESPILL(S); PARSE_TERM(S); EMIT_F32_BINOP(S, 1); SESTYPE(S, F32_TYID); _cfo = 0; }
                 elif (subst > 0) { EMIT_OP_DISPATCH(S, subst, "sub", 3, _xbeg); _cfo = 0; }
                 else {
@@ -4233,10 +4296,10 @@ fn _PEXPR_IMPL(S): i64 {
                             var cfr = _cfv - crv;
                             if (cfr >= 0) {
                                 STI(S, GTI(S) + 1); SCP(S, _cfp); EMOVI(S, cfr); _cfv = cfr;
-                            } else { EPUSHR(S); SPSC(S, 0); PARSE_TERM(S); EPTR_SCALE(S, ps); EMOVCA(S); EPOPR(S); ESUBR(S); SPSC(S, ps); _cfo = 0; }
+                            } else { EPUSHR(S); SPSC(S, 0); _RHS_T(S); EPTR_SCALE(S, ps); EMOVCA(S); EPOPR(S); ESUBR(S); SPSC(S, ps); _cfo = 0; }
                         }
-                        else { EPUSHR(S); SPSC(S, 0); PARSE_TERM(S); EPTR_SCALE(S, ps); EMOVCA(S); EPOPR(S); ESUBR(S); SPSC(S, ps); _cfo = 0; }
-                    } else { EPUSHR(S); SPSC(S, 0); PARSE_TERM(S); EPTR_SCALE(S, ps); EMOVCA(S); EPOPR(S); ESUBR(S); SPSC(S, ps); _cfo = 0; }
+                        else { EPUSHR(S); SPSC(S, 0); _RHS_T(S); EPTR_SCALE(S, ps); EMOVCA(S); EPOPR(S); ESUBR(S); SPSC(S, ps); _cfo = 0; }
+                    } else { EPUSHR(S); SPSC(S, 0); _RHS_T(S); EPTR_SCALE(S, ps); EMOVCA(S); EPOPR(S); ESUBR(S); SPSC(S, ps); _cfo = 0; }
                 }
                 if (subst <= 0) { _INT_F64_MIX(S); }
             }
@@ -4366,6 +4429,7 @@ fn _PEXPR_IMPL(S): i64 {
 # wired in the _PLOGIC_ATOM compare arm WITH literal-0 suppression — `if (x > 0)` on an f64
 # does NOT warn (the int literal 0's bits ARE 0.0, so the compare is exact), but `if (x > 5)`
 # / `if (x > y)` DO (5's int bits ≠ 5.0's f64 bits — a denormal compare). stderr (fd 2).
+# kind 2 (6.6.8) is the int-left mirror of kind 1 (see _INT_F64_MIX).
 fn _FLT_TYPE_WARN(S, kind): i64 {
     if (_TYPE_CHECK_ENABLED() != 1) { return 0; }
     syscall(SYS_WRITE, 2, "warning:", 8);
@@ -4385,8 +4449,13 @@ fn _FLT_TYPE_WARN(S, kind): i64 {
 # -3.0). WARN only, the same ADR-002 posture as kind 1: the result type is left as it was.
 # Called after the int arm has parsed its right operand; a folded literal RHS never set
 # the type, so it cannot fire. CHANGELOG [6.6.8]
+# 6.6.10: a float builtin's result on the right (`2 * f64_sqrt(u)`) is an f64 operand too; its
+# flag was captured by _RHS_F / _RHS_T before the integer op was emitted, and is consumed here.
 fn _INT_F64_MIX(S): i64 {
-    if (GESTYPE(S) == F64_TYID) { _FLT_TYPE_WARN(S, 2); }
+    var fr = _fbr_rhs;
+    _fbr_rhs = 0;
+    if (GESTYPE(S) == F64_TYID) { _FLT_TYPE_WARN(S, 2); return 0; }
+    if (fr == 1) { _FLT_TYPE_WARN(S, 2); }
     return 0;
 }
 

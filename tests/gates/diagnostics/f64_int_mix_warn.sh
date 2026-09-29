@@ -20,7 +20,11 @@
 #   axis 4  CYRIUS_TYPE_CHECK=0 silences kind 2 like every other type-check warning
 #   axis 5  (6.6.10) an f64 struct/union FIELD is an f64 operand: no false positive on either
 #           side, and `p.x + 1` is a kind-1 mix. Red on 6.6.9 (2 kind-1, 2 kind-2, then 0).
+#   axis 6  (6.6.10) a float BUILTIN's result is an f64 operand (option D): `f64_add(u, v) * 2.0`
+#           and `2.0 * f64_add(u, v)` are clean, `2 * f64_add(u, u)` is kind 2 (once, also
+#           nested under an outer `+`), `f64_add(u, u) * 3` kind 1. Red on 6.6.9.
 # Mutation-proven: with the four `_INT_F64_MIX` calls removed, axis 1 reads 0 of 4 and fails.
+# (6.6.10) with PARSE_INTRIN's `_FBR_MARK` call removed axis 6 fails.
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -116,5 +120,32 @@ printf 'include "lib/syscalls.cyr"\nstruct P { x: f64; }\nfn main(): i64 {\n    
 build "$W/a5b.cyr"
 n=$(count "$K1"); [ "$n" = 1 ] || bad "axis 5: kind-1 warning count $n on 'p.x + 1' (an f64 field left), want 1"
 
+# --- axis 6 (6.6.10): a float builtin's RESULT is an f64 operand (option D) ---
+cat > "$W/a6.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+fn main(): i64 {
+    var u = 4.0;
+    var v = 2.0;
+    var p: f64 = 3.0;
+    var a: f64 = f64_add(u, v) * 2.0;
+    var b: f64 = 2.0 * f64_add(u, v);
+    var c: f64 = p + f64_mul(u, v);
+    var d: f64 = -f64_add(u, v) * 2.0;
+    var e: f64 = (f64_add(u, v)) - 1.0;
+    return f64_to(a) + f64_to(b) + f64_to(c) + f64_to(d) + f64_to(e);
+}
+var r = main();
+syscall(60, r & 255);
+EOF
+build "$W/a6.cyr"
+n=$(count "$K2"); [ "$n" = 0 ] || { bad "axis 6: $n kind-2 warning(s) on builtin-result float arithmetic"; sed -n 1,5p "$W/e"; }
+n=$(count "$K1"); [ "$n" = 0 ] || { bad "axis 6: $n kind-1 warning(s) on builtin-result float arithmetic"; sed -n 1,5p "$W/e"; }
+printf 'include "lib/syscalls.cyr"\nfn main(): i64 {\n    var u = 4.0;\n    var a = 2 * f64_add(u, u);\n    var b = 1 + 2 * f64_add(u, u);\n    return a + b;\n}\nvar r = main();\nsyscall(60, r & 255);\n' > "$W/a6b.cyr"
+build "$W/a6b.cyr"
+n=$(count "$K2"); [ "$n" = 2 ] || bad "axis 6: kind-2 count $n on '2 * f64_add(u, u)' and '1 + 2 * f64_add(u, u)', want 2 (one each)"
+printf 'include "lib/syscalls.cyr"\nfn main(): i64 {\n    var u = 4.0;\n    var a: f64 = f64_add(u, u) * 3;\n    return 0;\n}\nvar r = main();\nsyscall(60, r);\n' > "$W/a6c.cyr"
+build "$W/a6c.cyr"
+n=$(count "$K1"); [ "$n" = 1 ] || bad "axis 6: kind-1 count $n on 'f64_add(u, u) * 3' (a builtin result left, an int right), want 1"
+
 [ "$fail" = 0 ] || exit 1
-echo "PASS: f64_int_mix_warn (4 int-left ops warn; no false positives; kind 1 intact; TYPE_CHECK=0 silences; f64 fields typed)"
+echo "PASS: f64_int_mix_warn (4 int-left ops warn; no false positives; kind 1 intact; TYPE_CHECK=0 silences; f64 fields and builtin results typed)"
