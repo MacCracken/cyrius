@@ -19,6 +19,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   signature changes. `tests/tcyr/stdlib/sandhi_dns_txid_fail_closed.tcyr` is the cyrius-side
   tripwire for a re-vendor that loses it again (fails on the 1.10.2 fold, on a clock-fallback
   mutant and on a dropped caller guard).
+- **ganita 1.2.9 folded (`lib/ganita.cyr`, ganita commit `a59e30e`) — `ganita_f32_sin` / `_cos`
+  are correct past 2^63.** (bite 14.) **Root cause:** a NaN guard for |x| ≥ 2^63 written against
+  the pre-6.6.9 `f64_sin`, which returned its argument there; 6.6.9 made `f64_sin` / `f64_cos`
+  within 1 ulp for every finite argument, so the guard discarded a correct value (`sin(2^70)` was
+  NaN, is `0xBF7F88AF`). The guard is gone upstream. The fold's headers also stop naming the
+  retired `lib/matrix.cyr` / `lib/linalg.cyr` (fixed in ganita's `src/`, not here).
+  `tests/tcyr/math/ganita_f32_trig_large.tcyr` pins the correctly rounded bits (7 rows fail on
+  the 1.2.8 fold).
+- Both siblings pin the released cyrius 6.6.10 and ran their full CI in a clean copy.
+  ⛔ **sandhi 1.10.3 and ganita 1.2.9 must be TAGGED before cyrius 6.6.11 is**; the folds were
+  copied byte-identical from those commits' `dist/`. `docs/ecosystem.md`'s two fold rows updated
+  (`fold_table_matches_vendored.sh` green).
 
 ## [6.6.10] — 2026-09-29
 
