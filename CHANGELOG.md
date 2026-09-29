@@ -76,7 +76,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Windows, a child elsewhere — that checks the request it receives) and
   `tests/gates/platform/pe_socket_reroutes_routed.sh` (routed at arity, named in the note, imported,
   and no unrouted literal left in net.cyr / http.cyr on PE; exit 77 when it cannot run). Mutation:
-  reverting `_net_os_accept`'s Windows arm fails 6 loopback rows under wine and on cass.
+  reverting `_net_os_accept`'s Windows arm fails 6 loopback rows under wine and on cass. A Windows-only
+  group pins the port-hijack defence: with `sock_reuse` set before bind, a second socket asking to
+  share the port (`sock_reuseport`) cannot bind it — `_NET_SO_REUSE = 0x0004` (SO_REUSEADDR) fails it
+  on cass (wine's socket layer refuses that bind either way, so only real Windows shows it).
+  **`lib/ws.cyr` / `lib/ws_server.cyr` read sockets through `_net_os_recv`.** `ws_connect`'s 101 read
+  and both `_ws_recv_exact` / `_wss_recv_exact` called `sys_read` — ReadFile on Windows, which with no
+  OVERLAPPED returns 0 on the overlapped sockets `tcp_socket` now makes there, so the WebSocket client
+  and server would connect and then read a false EOF (measured on cass). Off Windows `_net_os_recv` is
+  `sys_read`, so file-fd frame tests are unchanged. New `tests/tcyr/crossos/ws_client_socket_reads.tcyr`
+  and `ws_server_socket_reads.tcyr` (a loopback pair in one process: the 101, a text frame, a 16-bit
+  length frame, a peer-close EOF); with `sys_read` back they fail 5 and 4 rows on cass (wine's
+  ReadFile tolerates it).
 - **Windows: `net_resolve_ipv4` is the system resolver and never reads a drive-relative `/etc`
   (B07, item I5; security — see the notes for the CVE).** **Root cause:** the resolver read
   `/etc/hosts` and `/etc/resolv.conf` on every target, and on Windows a rooted path is DRIVE-RELATIVE:
@@ -87,8 +98,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `%SystemRoot%\System32\drivers\etc\hosts` and the adapters' DNS); a non-ASCII name, and a name the
   resolver would read as an ADDRESS although `net_parse_ipv4` refused it (`010.0.0.1`, `127.1`,
   `0x7f000001` — probed with AI_NUMERICHOST), are refused before any lookup; no `/dev/urandom` on
-  Windows. New `tests/tcyr/crossos/net_resolve_pe.tcyr` plants `C:\etc\hosts` when it is absent and
-  asserts it is ignored (wine maps a rooted path to the unix root, so only real Windows shows this).
+  Windows. New `tests/tcyr/crossos/net_resolve_pe.tcyr` plants `C:\etc\hosts` and asserts it is
+  ignored (wine maps a rooted path to the unix root, so only real Windows shows this). On real Windows
+  — wine is told apart by ntdll's `wine_get_version` export — the plant itself is asserted: a
+  `C:\etc\hosts` already present or a failed write fails a named row instead of leaving "the planted
+  name does not resolve" to pass vacuously (measured on cass with a pre-existing file: 1 row fails).
   Mutation, measured on cass: with the POSIX steps restored the planted 10.9.8.7 came back.
 - **`lib/http.cyr`: the Host header carries a non-default port (B07, item J1).**
   `_http_build_request(method, host, path)` took no port, so `http://localhost:8080/x` sent
@@ -103,8 +117,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Host header and request line. It now refuses 0x01-0x20 and 0x7F across the whole URL;
   `tests/tcyr/formats/http_crlf.tcyr` walks all 32 low bytes in the host and the path, plus DEL.
 - Verified (B07): the fixpoint and seed-derive; self-hosts on ecb, ach, pi and cass (PE, with the
-  route hunk applied); the five net/http `.tcyr` files on ecb, ach, pi, cass, under wine and in the
-  agnosticos container.
+  route hunk applied); the five net/http `.tcyr` files and the two ws socket files on ecb, ach, pi,
+  cass, under wine and in the agnosticos container.
 
 ## [6.6.10] — 2026-09-29
 
