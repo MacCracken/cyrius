@@ -18,6 +18,8 @@
 #   * `var y: Q = x;` from an address-passed by-value PARAMETER bound a second pointer to the
 #     caller's struct: writes through `y` changed the caller, `return y;` returned garbage.
 #     Mutation: restore `return 0` for a non-inline source in `_try_struct_copy_init`.
+#   * a method whose `self: T` is a struct of 8 B or less was handed `&x` where the free call
+#     passes x's value. Mutation: make `_fn_self_byval` (src/frontend/parse_fn.cyr) return 0.
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/assert.cyr"
@@ -96,6 +98,21 @@ fn pc_caller24(): i64 { var q: Q; q.a = 1; q.b = 2; q.c = 3; var m = pc_mod24(q)
 fn pc_ret16(): i64 { var p: Pt; p.x = 1; p.y = 2; var r: Pt = pc_id16(p); return r.x + r.y * 10; }
 fn pc_ret24(): i64 { var q: Q; q.a = 1; q.b = 2; q.c = 3; var r: Q = pc_id24(q); return r.a + r.b * 10 + r.c * 100; }
 
+# ── 6.6.11: a method's by-value `self` of 8 B or less ──────────────────────────────────────────
+struct P8 { x: i32; y: i32; }
+fn P8_sum(self: P8): i64 { return self.x + self.y * 10; }
+fn Odd_sum(self: Odd): i64 { return self.a + self.b * 10; }
+fn Odd_dbl(self: Odd): Odd { var r: Odd; r.a = self.a * 2; r.b = self.b * 2; return r; }
+fn P8_twice(self: P8): P8 { var r: P8; r.x = self.x * 2; r.y = self.y * 2; return r; }
+var GP8 = P8 { 3, 4 };
+var GODD = Odd { 1, 2 };
+fn sb_local(): i64 { var x: Odd; x.a = 1; x.b = 2; var y: P8; y.x = 3; y.y = 4; return x.sum() + y.sum() * 100; }
+fn sb_global(): i64 { return GODD.sum() + GP8.sum() * 100; }
+fn sb_result(): i64 { var x: Odd; x.a = 1; x.b = 2; var z: Odd = x.dbl(); var y: P8; y.x = 3; y.y = 4; var w: P8; w.x = 0; w.y = 0; w = y.twice(); return z.a + z.b * 10 + w.x * 100 + w.y * 1000; }
+fn sb_capture(): i64 { var x: P8; x.x = 2; x.y = 3; var f = || x.sum(); return callptr(f); }
+fn sb_forward(): i64 { var x: P8; x.x = 4; x.y = 5; return x.later(); }
+fn P8_later(self: P8): i64 { return self.x * self.y; }
+
 test_group("a struct value assigned into a struct-typed field copies the whole struct");
 var gp: Pt = alloc(16);
 gp.x = 3; gp.y = 4;
@@ -133,5 +150,12 @@ assert_eq(pc_caller16(), 921, "writing y leaves the caller's 16 B struct intact"
 assert_eq(pc_caller24(), 9321, "writing y leaves the caller's 24 B struct intact");
 assert_eq(pc_ret16(), 21, "copy-init then return y (rax:rdx)");
 assert_eq(pc_ret24(), 321, "copy-init then return y (retptr)");
+
+test_group("a method whose self is a struct of 8 B or less gets the VALUE (6.6.11)");
+assert_eq(sb_local(), 4321, "x.sum() on a 3 B and an 8 B local");
+assert_eq(sb_global(), 4321, "G.sum() on a 3 B and an 8 B global");
+assert_eq(sb_result(), 8642, "x.dbl() / y.twice() returning the struct");
+assert_eq(sb_capture(), 32, "a captured receiver");
+assert_eq(sb_forward(), 20, "a method defined after its call");
 
 var r = assert_summary();

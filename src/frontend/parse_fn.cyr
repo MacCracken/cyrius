@@ -649,7 +649,7 @@ fn _tc_callee_divert(S, cfi): i64 {
     if (_ret_agg_class(S, cfi) == 2) { return 1; }
     if (cfi < 0) { return 0; }
     # v6.3.36 — plain-struct params are ADDRESS-passed: pointers into the frame the jmp frees.
-    if (L64(_fnt_structmask + cfi * 8) != 0) { return 1; }
+    if (_smask_args(cfi) != 0) { return 1; }
     # v6.4.53 — value-form SIMD params travel in vector registers; the tail path loads only the
     # integer ones (`return f32v4_add(v, v)` returned v).
     if (L64(_fnt_simdmask + cfi * 8) != 0) { return 1; }
@@ -2712,7 +2712,7 @@ fn PARSE_FNCALL(S, noff): i64 {
     # struct-ptr / retptr path (handled in parse_decl + PARSE_FNCALL below).
     var _pe_no_inline = 0;
     if (_TARGET_PE == 1) {
-        if (L64(_fnt_structmask + fi * 8) != 0) { _pe_no_inline = 1; }
+        if (_smask_args(fi) != 0) { _pe_no_inline = 1; }
         if (_is_simd_any(S, GFRS(S, fi)) == 1) { _pe_no_inline = 1; }
     }
     if (GFINL(S, fi) != 0) { if (GIDEP(S) < 3) { if (GINFN(S) == 1) { if (_pe_no_inline == 0) {
@@ -4654,6 +4654,32 @@ fn _param_wants_struct_ptr(S, tnoff): i64 {
     return 1;
 }
 
+# ⛔ 6.6.11 — BIT 62 OF `_fnt_structmask`: "param 0 is a declared plain struct of 8 B or less,
+# passed BY VALUE". The method-call arm (PARSE_FIELD_LOAD) needs it to push the receiver's value
+# where it pushes `&x` for an untyped `self` (which IS a pointer) and for a > 8 B one (address-
+# passed); without it `x.sum()` with `self: Odd` handed the callee an address. Read from the
+# tokens of param 0 by BOTH passes (`_prescan_params`, PARSE_FN_DEF), so they cannot disagree.
+# A spare bit, not a new table, so the brk layout does not move; the per-param readers test
+# `1 << argc` and the whole-mask readers go through `_smask_args`. A generic `self: Box<T>` is
+# left unflagged. `lp` = the `(` token. CHANGELOG [6.6.11]
+fn _selfbv_bit(S, lp): i64 {
+    if (TOKTYP(S, lp + 1) != 2) { return 0; }
+    if (TOKTYP(S, lp + 2) != 49) { return 0; }
+    if (TOKTYP(S, lp + 3) != 2) { return 0; }
+    if (TOKTYP(S, lp + 4) == 19) { return 0; }
+    var tnoff = TOKVAL(S, lp + 3);
+    if (_classify_param_type(S, tnoff) != 0) { return 0; }
+    var sid = FINDSTRUCT(S, tnoff);
+    if (sid <= 0) { return 0; }
+    if (STRUCTSZ(S, sid - 1) > 8) { return 0; }
+    return 1 << 62;
+}
+fn _smask_args(fi): i64 { return L64(_fnt_structmask + fi * 8) & ((1 << 62) - 1); }
+fn _fn_self_byval(fi): i64 {
+    if (fi < 0) { return 0; }
+    return (L64(_fnt_structmask + fi * 8) >> 62) & 1;
+}
+
 # Scan the param list `( ... )` for fn `fi`, computing the per-fn ABI masks the
 # same way PARSE_FN_DEF's param loop does (shared _classify_param_type → first
 # match sets one mask at bit `pc`; SIMD uses 2 bits at pc*2), plus the param
@@ -4669,7 +4695,7 @@ fn _prescan_params(S, fi): i64 {
     var option_mask = 0;
     var tagged_mask = 0;
     var simd_mask = 0;
-    var struct_mask = 0;
+    var struct_mask = _selfbv_bit(S, GTI(S) - 1);   # 6.6.11: bit 62, see there
     if (PEEKT(S) != 11) {
         var pgo = 1;
         while (pgo == 1) {
@@ -6393,7 +6419,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     _stkp_reset();   # 6.6.6: this fn's deferred stack-param homes (see _stkp_defer)
     var option_mask = 0;
     var tagged_mask = 0;
-    var struct_mask = 0;   # v6.3.36 (issue [5]): bit N = plain struct >8 B param
+    var struct_mask = _selfbv_bit(S, GTI(S) - 1);   # v6.3.36: bit N = plain struct >8 B param; 6.6.11: bit 62
     # v6.3.39 (B3): for a specialized INSTANCE re-emit, bind T -> the concrete type(s)
     # BEFORE the param loop so a type-param-typed param `p: T` resolves to the concrete
     # struct (p becomes a by-value struct param → `p.x` in the body lays out + reads
