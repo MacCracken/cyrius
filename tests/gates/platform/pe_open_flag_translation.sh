@@ -96,7 +96,7 @@ CC="$ROOT/build/cycc"
 SRC="$ROOT/tests/tcyr/crossos/open_flag_translation.tcyr"
 FLOOR=30
 
-[ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 0; }
+[ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 77; }
 [ -f "$SRC" ] || { echo "  FAIL: $SRC is missing — the cross-OS companion for this bite is gone"; exit 1; }
 
 D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: mktemp"; exit 1; }
@@ -149,6 +149,7 @@ if [ ! -s "$D/oft.exe" ]; then
     fail=1
 elif ! command -v objdump > /dev/null 2>&1; then
     echo "  SKIP axis 2: objdump not available (a raw byte scan is not a substitute — see pe_no_raw_syscall_bytes)"
+    GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 else
     objdump -d "$D/oft.exe" > "$D/dis" 2>/dev/null
     hard=$(grep -cE 'mov[[:space:]]+\$0xc0000000,%edx' "$D/dis")
@@ -181,6 +182,7 @@ if [ ! -s "$D/oft.exe" ]; then
     :
 elif ! command -v wine > /dev/null 2>&1; then
     echo "  SKIP axis 3: wine absent — the PE BEHAVIOUR of these rows is covered only by the cass leg (see the ledger: axis 2 alone misses a disposition-only regression)"
+    GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 else
     mkdir -p "$D/w" && cp "$D/oft.exe" "$D/w/oft.exe"
     ( cd "$D/w" && ulimit -c 0; WINEPREFIX="$D/wp" WINEDEBUG=-all \
@@ -198,6 +200,8 @@ else
 fi
 
 if [ "$fail" = "0" ]; then
+    # 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
+    if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: pe_open_flag_translation — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
     echo "PASS: open() flags translate to CreateFileW faithfully on PE ($want rows, POSIX oracle + emitter shape + wine)"
     exit 0
 fi

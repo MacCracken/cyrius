@@ -943,6 +943,7 @@ echo "axis 19 — the WINDOWS CLI under wine (SKIP when wine is absent — NOT h
 # (scripts/cross-os-selfhost.sh, cass leg).
 if ! command -v wine > /dev/null 2>&1 || ! command -v winepath > /dev/null 2>&1; then
     echo "  SKIP: wine/winepath not installed — the Windows CLI spawn is covered by the cass leg only"
+    GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 else
     # A THROWAWAY prefix under $T, so the leg reads and writes nothing of the user's
     # ~/.wine (and HOME is already $T/h). winemenubuilder/mono/gecko are disabled so a
@@ -1034,6 +1035,8 @@ fi
 echo ""
 echo "  assertions: $checks"
 if [ "$fails" = "0" ]; then
+    # 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
+    if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: cli_args_never_dropped — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
     echo "PASS: cli-args-never-dropped — no flag taken as a file, no flag dropped, no operand dropped"
     exit 0
 fi

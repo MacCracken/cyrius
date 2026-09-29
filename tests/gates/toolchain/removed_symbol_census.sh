@@ -41,8 +41,8 @@ cd "$ROOT"
 
 [ -f "$SNAPSHOT" ] || fail "docs/api-surface.snapshot missing"
 [ -f "$ALLOW" ]    || fail "docs/retired-symbols.allow missing — the accounting ledger IS the fix"
-[ -x "$TOOL" ]     || { echo "SKIP: removed_symbol_census (build/cyrius_api_surface not built)"; exit 0; }
-[ -d "$SIBLINGS" ] || { echo "SKIP: removed_symbol_census (no sibling checkouts at $SIBLINGS)"; exit 0; }
+[ -x "$TOOL" ]     || { echo "SKIP: removed_symbol_census (build/cyrius_api_surface not built)"; exit 77; }
+[ -d "$SIBLINGS" ] || { echo "SKIP: removed_symbol_census (no sibling checkouts at $SIBLINGS)"; exit 77; }
 
 # ── 1. what disappeared since the last RELEASED tag? ────────────────────────────────────
 # ⚠ THE BASELINE IS THE LAST RELEASE TAG, NOT HEAD, AND THAT IS LOAD-BEARING. The first cut of

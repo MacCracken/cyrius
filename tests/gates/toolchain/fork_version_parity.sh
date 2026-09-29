@@ -45,8 +45,8 @@ set -e
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
 CC="$ROOT/build/cycc"
-[ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 0; }
-[ -f VERSION ] || { echo "SKIP: VERSION missing"; exit 0; }
+[ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 77; }
+[ -f VERSION ] || { echo "SKIP: VERSION missing"; exit 77; }
 VER=$(cat VERSION)
 [ -n "$VER" ] || { echo "FAIL: VERSION is empty"; exit 1; }
 

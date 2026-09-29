@@ -9,8 +9,8 @@
 set -e
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC="$ROOT/build/cycc"
-[ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 0; }
-command -v objdump >/dev/null 2>&1 || { echo "SKIP: objdump not available"; exit 0; }
+[ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 77; }
+command -v objdump >/dev/null 2>&1 || { echo "SKIP: objdump not available"; exit 77; }
 T=$(mktemp) && [ -f "$T" ] || { echo "FAIL: simd_f32v8_disasm: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 B=$(mktemp) && [ -f "$B" ] || { echo "FAIL: simd_f32v8_disasm: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 D=$(mktemp) && [ -f "$D" ] || { echo "FAIL: simd_f32v8_disasm: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
@@ -31,7 +31,7 @@ var ec = main();
 syscall(60, ec);
 EOF
 "$CC" < "$T" > "$B" 2>/dev/null || { echo "FAIL: f32v8 disasm probe did not compile"; exit 1; }
-objdump -d "$B" 2>/dev/null > "$D" || { echo "SKIP: objdump could not disassemble"; exit 0; }
+objdump -d "$B" 2>/dev/null > "$D" || { echo "SKIP: objdump could not disassemble"; exit 77; }
 
 # Each check requires the EXACT bytes AND the intended mnemonic on the same line —
 # proving byte sequence X decodes to instruction Y (a vvvv typo would decode to a

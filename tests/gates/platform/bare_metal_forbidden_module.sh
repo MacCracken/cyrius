@@ -26,7 +26,7 @@
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC="$ROOT/build/cycc"
-[ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 0; }
+[ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 77; }
 cd "$ROOT"
 T=$(mktemp --suffix=.cyr) && [ -f "$T" ] || { echo "FAIL: bare_metal_forbidden_module: mktemp --suffix=.cyr failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 E=$(mktemp) && [ -f "$E" ] || { echo "FAIL: bare_metal_forbidden_module: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }

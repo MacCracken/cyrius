@@ -68,7 +68,7 @@ ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC="$ROOT/build/cycc"
 LABEL_FLOOR=6
 
-[ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 0; }
+[ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 77; }
 [ -f "$ROOT/src/main_win.cyr" ] || { echo "  FAIL: src/main_win.cyr is missing"; exit 1; }
 
 D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: mktemp"; exit 1; }
@@ -110,6 +110,7 @@ if [ ! -s "$D/cycc.exe" ]; then
     fail=1
 elif ! command -v objdump > /dev/null 2>&1; then
     echo "  SKIP axis 2: objdump not available (a strings scan is NOT a substitute — cycc carries the name as a literal in its own reroute-warning text whether or not it imports it)"
+    GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 else
     nimp=$(objdump -x "$D/cycc.exe" 2>/dev/null | sed -n '/DLL Name/,$p' | grep -c 'GetEnvironmentVariableA')
     ncf=$(objdump -x "$D/cycc.exe" 2>/dev/null | sed -n '/DLL Name/,$p' | grep -c 'CreateFileW')
@@ -129,6 +130,7 @@ if [ ! -s "$D/cycc.exe" ]; then
     :
 elif ! command -v wine > /dev/null 2>&1; then
     echo "  SKIP axes 3-4: wine absent — the PE BEHAVIOUR of the knobs is covered only by the cass leg"
+    GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 else
     export WINEPREFIX="$D/wp" WINEDEBUG=-all
     export WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d'
@@ -165,6 +167,8 @@ else
 fi
 
 if [ "$fail" = "0" ]; then
+    # 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
+    if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: pe_compiler_reads_env — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
     echo "PASS: the PE compiler reads its own environment (import table + two knobs in two files)"
     exit 0
 fi

@@ -30,7 +30,7 @@ ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 # 6.6.8: honour $CYCC like the gates that can be pointed at a candidate compiler without
 # overwriting build/cycc. CHANGELOG [6.6.8]
 CC=${CYCC:-"$ROOT/build/cycc"}
-[ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 0; }
+[ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 77; }
 cd "$ROOT"
 T=$(mktemp --suffix=.cyr) && [ -f "$T" ] || { echo "FAIL: derive_non_struct_rejected: mktemp --suffix=.cyr failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 O=$(mktemp) && [ -f "$O" ] || { echo "FAIL: derive_non_struct_rejected: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }

@@ -30,7 +30,7 @@ fail() { echo "FAIL agnos_proclist_record_parity: $1" >&2; exit 1; }
 
 if [ ! -f "$KSRC" ]; then
   echo "SKIP agnos_proclist_record_parity: agnos kernel source not found at $KSRC (sibling repo absent)"
-  exit 0
+  exit 77
 fi
 
 # Does the kernel write the slot? Derived from the kernel, not from any doc.

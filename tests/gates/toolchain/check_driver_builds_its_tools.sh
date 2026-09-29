@@ -39,7 +39,7 @@ ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
 NAME=check_driver_builds_its_tools
 [ -x "$CC" ] || { echo "FAIL: $NAME — no compiler at $CC"; exit 1; }
-case "$(uname -s)" in Linux) : ;; *) echo "SKIP: $NAME — the check driver is a Linux program"; exit 0 ;; esac
+case "$(uname -s)" in Linux) : ;; *) echo "SKIP: $NAME — the check driver is a Linux program"; exit 77 ;; esac
 D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: $NAME — mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$D"' EXIT
 FAILS=0

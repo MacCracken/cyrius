@@ -10,8 +10,8 @@ set -e
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
 CC="$ROOT/build/cycc"
-[ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 0; }
-[ -f src/main_cx.cyr ] || { echo "SKIP: src/main_cx.cyr missing"; exit 0; }
+[ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 77; }
+[ -f src/main_cx.cyr ] || { echo "SKIP: src/main_cx.cyr missing"; exit 77; }
 
 CYR=$(mktemp) && [ -f "$CYR" ] || { echo "FAIL: cx_cli: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 cat cbt/cyrius.cyr | "$CC" > "$CYR" 2>/dev/null || { echo "FAIL: cyrius CLI build"; rm -f "$CYR"; exit 1; }

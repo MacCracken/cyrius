@@ -278,7 +278,7 @@ EOF
         echo "FAIL agnos_monotonic_clock_rdtsc axis5: $NE mirshi '#95' stderr lines for two clock waits —"
         echo "  a clock is re-trying #95 on every read instead of latching to #40."; exit 1; }
       RT="mirshi: both clocks advance on a refused-calibration #95, $NE #95 calls total (latched)" ;;
-    10) RT="SKIP axis5 by name: this mirshi answers #95 >= 0 (it emulates uptime_us), so the refused-calibration fallback is unreachable here" ;;
+    10) RT="SKIP axis5 by name: this mirshi answers #95 >= 0 (it emulates uptime_us), so the refused-calibration fallback is unreachable here"; GATE_SKIPS=$((${GATE_SKIPS:-0} + 1)) ;;
     3) echo "FAIL agnos_monotonic_clock_rdtsc axis5: clock_now_ms stood still under mirshi (#95 = -1) — 20000 polls, no 10 ms elapsed"; exit 1 ;;
     4) echo "FAIL agnos_monotonic_clock_rdtsc axis5: bench now_ns stood still under mirshi (#95 = -1) — 20000 polls, no 5 ms elapsed"; exit 1 ;;
     *) echo "FAIL agnos_monotonic_clock_rdtsc axis5: runtime probe under mirshi exited $rc"
@@ -286,5 +286,7 @@ EOF
   esac
 fi
 
+# 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
+if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: agnos_monotonic_clock_rdtsc — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS agnos_monotonic_clock_rdtsc: $NR1 #95 readers in lib/ all test the -1 sentinel, #40 only as the fallback, clock_now_ns + bench now_ns latched · both AGNOS builds emit syscall 95 + 40 and no raw 228 · the Linux path still uses clock_gettime · $RT"
 exit 0

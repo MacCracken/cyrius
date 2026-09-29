@@ -48,6 +48,7 @@ if grep -nE 'SYS_BRK|syscall\(12[,)]' src/backend/x86/fixup.cyr > "$T/brk"; then
 # ── row 3: the Windows-hosted compiler's ELF-object path ──────────────────────────────────
 if ! command -v wine > /dev/null 2>&1; then
   echo "  SKIP row 3: wine absent — the Windows-hosted object path is covered only by the cass measurement"
+  GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 else
   CYRIUS_TARGET_WIN=1 "$CC" < src/main_win.cyr > "$T/cycc.exe" 2> "$T/pe.err"
   if [ ! -s "$T/cycc.exe" ]; then _bad "the PE compiler did not build"; grep -m3 '^error' "$T/pe.err"
@@ -73,5 +74,7 @@ else
 fi
 
 if [ "$fail" -ne 0 ]; then echo "FAIL pe_hosted_elf_object: $fail row(s) red, $pass green"; exit 1; fi
+# 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
+if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: pe_hosted_elf_object — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS pe_hosted_elf_object: $pass rows — no raw brk in the x86 fixup, the x86 Mach-O compiler builds warning-free, and the Windows-hosted compiler's ELF objects match Linux byte for byte"
 exit 0

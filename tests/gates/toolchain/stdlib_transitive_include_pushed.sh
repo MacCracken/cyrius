@@ -18,9 +18,9 @@
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
-command -v cyrius >/dev/null 2>&1 || { echo "SKIP: cyrius CLI not on PATH"; exit 0; }
+command -v cyrius >/dev/null 2>&1 || { echo "SKIP: cyrius CLI not on PATH"; exit 77; }
 R="docs/development/issues/repros/2026-08-17-stdlib-transitive-pull-drops-top-level-include.sh"
-[ -f "$R" ] || { echo "SKIP: repro script $R missing"; exit 0; }
+[ -f "$R" ] || { echo "SKIP: repro script $R missing"; exit 77; }
 fail=0
 
 OUT=$(sh "$R" "$(cat VERSION)" 2>&1 || true)

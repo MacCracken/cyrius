@@ -15,7 +15,7 @@
 set -e
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
-[ -x "$CC" ] || { echo "SKIP: toplevel_destructure_var_cap: build/cycc missing"; exit 0; }
+[ -x "$CC" ] || { echo "SKIP: toplevel_destructure_var_cap: build/cycc missing"; exit 77; }
 D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: toplevel_destructure_var_cap: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$D"' EXIT
 

@@ -38,8 +38,8 @@ cd "$ROOT"
 # returncode -11 (the shell would say 139), `>= 128` alone reports 0 crashes and the
 # fixed predicate reports it.
 CC="${CYCC_FUZZ_CC:-$ROOT/build/cycc}"
-[ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 0; }
-command -v python3 >/dev/null 2>&1 || { echo "SKIP: python3 unavailable"; exit 0; }
+[ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 77; }
+command -v python3 >/dev/null 2>&1 || { echo "SKIP: python3 unavailable"; exit 77; }
 
 # Iterations per corpus file. The check.sh gate runs a cheap smoke (default 15);
 # a real fuzz run is CYCC_FUZZ_ITERS=300 sh tests/gates/diagnostics/cycc_parser_fuzz.sh.

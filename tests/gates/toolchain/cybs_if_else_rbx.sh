@@ -23,7 +23,7 @@
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
-[ -x bootstrap/asm ] || { echo "SKIP: bootstrap/asm missing"; exit 0; }
+[ -x bootstrap/asm ] || { echo "SKIP: bootstrap/asm missing"; exit 77; }
 D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: cybs-if-else-rbx: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$D"' EXIT
 fail=0

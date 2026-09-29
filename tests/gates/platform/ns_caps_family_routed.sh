@@ -272,9 +272,12 @@ $wrong"
     fi
 else
     echo "  SKIP: ns_caps_family_routed axis D — qemu-aarch64 not installed (the static axes still ran)"
+    GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 fi
 
 if [ "$FAIL" = 0 ]; then
+    # 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
+    if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: ns_caps_family_routed — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
     echo "PASS: ns_caps_family_routed"
     exit 0
 fi

@@ -32,7 +32,7 @@
 set -e
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CY="$ROOT/build/cyrius"
-[ -x "$CY" ] || { echo "SKIP: build/cyrius missing"; exit 0; }
+[ -x "$CY" ] || { echo "SKIP: build/cyrius missing"; exit 77; }
 VER=$(cat "$ROOT/VERSION")
 
 W=$(mktemp -d) && [ -d "$W" ] || { echo "FAIL: lib_freshness: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
@@ -47,7 +47,7 @@ mkdir -p "$SNAP" "$PROJ/lib" "$PROJ/src" "$W/home/bin"
 # also what a broken/unknown flag produces — that is how it passed while
 # `--check-lib-sync` was advertised-but-rejected. Assertions must be able to fail for
 # only the reason under test.)
-[ -x "$ROOT/build/cycc" ] || { echo "SKIP: build/cycc missing"; exit 0; }
+[ -x "$ROOT/build/cycc" ] || { echo "SKIP: build/cycc missing"; exit 77; }
 cp "$ROOT/build/cycc" "$W/home/bin/cycc"
 
 # `syscalls.cyr` is the marker _dep_dir_has_stdlib probes to decide "this lib/

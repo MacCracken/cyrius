@@ -26,7 +26,7 @@ fail() { echo "FAIL agnos_net_config_field_parity: $1" >&2; exit 1; }
 # agnos is a SIBLING repo and may be absent — SKIP loudly rather than pass quietly.
 if [ ! -f "$ABI" ]; then
   echo "SKIP agnos_net_config_field_parity: agnos ABI contract not found at $ABI (sibling repo absent)"
-  exit 0
+  exit 77
 fi
 
 ROW=$(grep -m1 '^| 61 | `net_config`' "$ABI") || fail "no #61 net_config row in the agnos contract"

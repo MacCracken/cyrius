@@ -20,7 +20,7 @@
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC="$ROOT/build/cycc"
-[ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 0; }
+[ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 77; }
 cd "$ROOT"
 O=$(mktemp) && [ -f "$O" ] || { echo "FAIL: bench_fuzz_sources_compile: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 E=$(mktemp) && [ -f "$E" ] || { echo "FAIL: bench_fuzz_sources_compile: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -f "$O" "$E"' EXIT

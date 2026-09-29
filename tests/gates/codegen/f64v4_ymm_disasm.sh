@@ -20,8 +20,8 @@
 set -e
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC="$ROOT/build/cycc"
-[ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 0; }
-command -v objdump >/dev/null 2>&1 || { echo "SKIP: objdump not available"; exit 0; }
+[ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 77; }
+command -v objdump >/dev/null 2>&1 || { echo "SKIP: objdump not available"; exit 77; }
 T=$(mktemp) && [ -f "$T" ] || { echo "FAIL: f64v4_ymm_disasm: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 B=$(mktemp) && [ -f "$B" ] || { echo "FAIL: f64v4_ymm_disasm: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 D=$(mktemp) && [ -f "$D" ] || { echo "FAIL: f64v4_ymm_disasm: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
@@ -46,7 +46,7 @@ var ec = main();
 syscall(60, ec);
 EOF
 "$CC" < "$T" > "$B" 2>/dev/null || { echo "FAIL: f64v4 ymm disasm probe did not compile"; exit 1; }
-objdump -d "$B" 2>/dev/null > "$D" || { echo "SKIP: objdump could not disassemble"; exit 0; }
+objdump -d "$B" 2>/dev/null > "$D" || { echo "SKIP: objdump could not disassemble"; exit 77; }
 
 # Anti-vacuous floor: if the probe compiled to something with no ymm instructions at all,
 # every check below would still have to fail loudly — but assert the disassembly is
@@ -96,7 +96,7 @@ var ec = main();
 syscall(60, ec);
 EOF
 "$CC" < "$T" > "$B" 2>/dev/null || { echo "FAIL: f64v4 ymm extended-op probe did not compile"; exit 1; }
-objdump -d "$B" 2>/dev/null > "$D" || { echo "SKIP: objdump could not disassemble"; exit 0; }
+objdump -d "$B" 2>/dev/null > "$D" || { echo "SKIP: objdump could not disassemble"; exit 77; }
 LINES=$(wc -l < "$D")
 [ "$LINES" -ge 50 ] || { echo "FAIL: extended-op disassembly only $LINES lines — objdump is blind"; exit 1; }
 

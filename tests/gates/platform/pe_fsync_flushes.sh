@@ -81,7 +81,7 @@ CC=${CYCC:-"$ROOT/build/cycc"}
 SRC="$ROOT/tests/tcyr/crossos/fsync_flushes.tcyr"
 FLOOR=18
 
-[ -x "$CC" ] || { echo "SKIP: $CC missing"; exit 0; }
+[ -x "$CC" ] || { echo "SKIP: $CC missing"; exit 77; }
 [ -f "$SRC" ] || { echo "  FAIL: $SRC is missing — the cross-OS companion for this gate is gone"; exit 1; }
 
 D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: mktemp"; exit 1; }
@@ -131,6 +131,7 @@ if [ ! -s "$D/ff.exe" ]; then
     fail=1
 elif ! command -v objdump > /dev/null 2>&1; then
     echo "  SKIP axis 2: objdump not available — the write-through bit then has NO local guard"
+    GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 else
     objdump -x "$D/ff.exe" 2>/dev/null | sed -n '/DLL Name/,$p' > "$D/imp"
     objdump -dw "$D/ff.exe" > "$D/dis" 2>/dev/null
@@ -206,6 +207,7 @@ if [ ! -s "$D/ff.exe" ]; then
     :
 elif ! command -v wine > /dev/null 2>&1; then
     echo "  SKIP axis 3: wine absent — the PE behaviour of these rows is covered only by the cass leg"
+    GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 else
     mkdir -p "$D/w" && cp "$D/ff.exe" "$D/w/ff.exe"
     ( cd "$D/w" && ulimit -c 0; WINEPREFIX="$D/wp" WINEDEBUG=-all \
@@ -223,6 +225,8 @@ else
 fi
 
 if [ "$fail" = "0" ]; then
+    # 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
+    if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: pe_fsync_flushes — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
     echo "PASS: fsync/fdatasync flush on PE and file_rename is write-through ($want rows)"
     exit 0
 fi

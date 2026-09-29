@@ -50,7 +50,7 @@ chmod +x "$WORK/cyrius"
 
 V=$(cat "$ROOT/VERSION")
 [ -d "${CYRIUS_HOME:-$HOME/.cyrius}/versions/$V/lib" ] \
-    || { echo "SKIP: no stdlib snapshot for $V (install not refreshed)"; exit 0; }
+    || { echo "SKIP: no stdlib snapshot for $V (install not refreshed)"; exit 77; }
 
 # Outside the cyrius repo on purpose: cmd_deps_lock SKIPS lock generation when it
 # detects the source repo (_dep_is_cyrius_source_repo), so an in-tree fixture would

@@ -159,15 +159,15 @@ uname_s=$(uname -s 2>/dev/null || echo unknown)
 uname_m=$(uname -m 2>/dev/null || echo unknown)
 if [ "$uname_s" != "Linux" ] || [ "$uname_m" != "x86_64" ]; then
     echo "SKIP: call-site alignment gate is Linux/x86_64 only (host: $uname_s/$uname_m)"
-    exit 0
+    exit 77
 fi
 if ! command -v gcc >/dev/null 2>&1; then
     echo "SKIP: gcc not available (needed to assemble the alignment leaf)"
-    exit 0
+    exit 77
 fi
 if [ ! -x "$CYCC" ]; then
     echo "SKIP: build/cycc not built"
-    exit 0
+    exit 77
 fi
 
 TMP=$(mktemp -d) && [ -d "$TMP" ] || { echo "FAIL: call_site_stack_alignment: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
@@ -196,7 +196,7 @@ CEOF
 if ! gcc -c "$TMP/leaf.c" -o "$TMP/leaf.o" 2>"$TMP/gcc.err"; then
     echo "SKIP: gcc could not assemble the alignment leaf"
     sed 's/^/  /' "$TMP/gcc.err" 2>/dev/null | head -5
-    exit 0
+    exit 77
 fi
 
 cat > "$TMP/drv.cyr" <<'EOF'

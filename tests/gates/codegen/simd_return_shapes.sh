@@ -298,6 +298,7 @@ if command -v qemu-aarch64 > /dev/null 2>&1; then
     fi
 else
     echo "  SKIP: qemu-aarch64 not installed (the pi hardware leg still covers it)"
+    GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 fi
 
 if command -v wine > /dev/null 2>&1; then
@@ -314,6 +315,7 @@ if command -v wine > /dev/null 2>&1; then
     wineserver -k > /dev/null 2>&1 || true
 else
     echo "  SKIP: wine not installed (the cass hardware leg still covers it)"
+    GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 fi
 
 # Anti-vacuous. The floor is DERIVED from the row tables (every row on host + cx, the two legs
@@ -340,4 +342,6 @@ n=$(grep -c "$MSG" src/frontend/parse_fn.cyr || true)
 [ "$n" -ge 1 ] || bad "src/frontend/parse_fn.cyr no longer spells '$MSG' — reworded?"
 
 echo "simd_return_shapes: $pass passed, $fail failed ($nrefuse refusals, $naccept acceptances)"
+# 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
+if [ "$fail" -eq 0 ] && [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: simd_return_shapes — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 [ "$fail" -eq 0 ]

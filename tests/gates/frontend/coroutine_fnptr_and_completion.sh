@@ -479,12 +479,12 @@ if command -v wine > /dev/null 2>&1; then
     xrun "$WRUN" "$WCC" j3 '0 0 0 0 0 0 21132 21132 11' "PE J3: await values"
     xrun "$WRUN" "$WCC" j4 '105 7 15 1005 5008 105 5 106 1025 55 ' "PE J4: await inside a larger expression"
     xrun "$WRUN" "$WCC" k '103 103 103 7 7 11' "PE K: a plain Future runs once"
-else echo "  SKIP: PE leg (wine not installed)"; fi
+else echo "  SKIP: PE leg (wine not installed)"; GATE_SKIPS=$((${GATE_SKIPS:-0} + 1)); fi
 if command -v qemu-aarch64 > /dev/null 2>&1; then
     if "$CC" < "$ROOT/src/main_aarch64.cyr" > "$T/cc_a64" 2>/dev/null && chmod +x "$T/cc_a64"; then
         xrun qemu-aarch64 "$T/cc_a64" k '103 103 103 7 7 11' "aarch64 K: a plain Future runs once"
     else bad "aarch64 leg: src/main_aarch64.cyr did not build"; fi
-else echo "  SKIP: aarch64 leg (qemu-aarch64 not installed)"; fi
+else echo "  SKIP: aarch64 leg (qemu-aarch64 not installed)"; GATE_SKIPS=$((${GATE_SKIPS:-0} + 1)); fi
 
 # ── cx: the plain-Future memo runs under cxvm, and the 9-parameter and coroutine refusals name
 # themselves. ⚠ Until the cx compiler reads CYRIUS_ASYNC (S2 bite 10 wires cx `_read_env`) every
@@ -516,4 +516,6 @@ if "$CC" < "$ROOT/src/main_cx.cyr" > "$T/cc_cx" 2>/dev/null && chmod +x "$T/cc_c
 else bad "cx leg: could not build src/main_cx.cyr / programs/cxvm.cyr"; fi
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: coroutine_fnptr_and_completion — $fails axis(es) red"; exit 1; fi
+# 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
+if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: coroutine_fnptr_and_completion — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS: coroutine_fnptr_and_completion — fncallN / callptr / closure calls inside a coroutine reach their callee (A-C); a completed coroutine answers with its value and runs nothing again (D-F); 0- and 9-parameter coroutines (G-H); a fall-off completes (I1-I4); await yields its value and forces Futures, inside any expression (J1-J5); a plain Future runs once (K); 9+ plain parameters refused (L); PE / aarch64 / cx legs"

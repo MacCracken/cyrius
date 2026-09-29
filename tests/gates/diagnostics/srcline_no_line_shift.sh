@@ -22,7 +22,7 @@
 # by one cannot pass.
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
-command -v cyrius >/dev/null 2>&1 || { echo "SKIP: cyrius CLI not on PATH"; exit 0; }
+command -v cyrius >/dev/null 2>&1 || { echo "SKIP: cyrius CLI not on PATH"; exit 77; }
 W=$(mktemp -d) && [ -d "$W" ] || { echo "FAIL: srcline_no_line_shift: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$W"' EXIT
 

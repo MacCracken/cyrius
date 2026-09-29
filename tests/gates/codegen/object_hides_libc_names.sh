@@ -38,7 +38,7 @@ WORK=$(mktemp -d) && [ -d "$WORK" ] || { echo "FAIL: object_hides_libc_names: mk
 trap 'rm -rf "$WORK"' EXIT
 fail() { echo "FAIL: object_hides_libc_names: $1"; exit 1; }
 [ -x "$CYCC" ] || fail "no cycc at $CYCC"
-command -v readelf >/dev/null 2>&1 || { echo "SKIP: object_hides_libc_names (no readelf)"; exit 0; }
+command -v readelf >/dev/null 2>&1 || { echo "SKIP: object_hides_libc_names (no readelf)"; exit 77; }
 cd "$ROOT"
 
 # Reach every one of the 11 reserved names so none is eliminated as unreachable — the bug only

@@ -141,14 +141,14 @@ ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
 CC="$ROOT/build/cycc"
 OS=$(uname -s 2>/dev/null || echo unknown)
-command -v git >/dev/null 2>&1 || { echo "SKIP: deps_git_cache_verified: git not found"; exit 0; }
+command -v git >/dev/null 2>&1 || { echo "SKIP: deps_git_cache_verified: git not found"; exit 77; }
 HAVE_PY=1; command -v python3 >/dev/null 2>&1 || HAVE_PY=0
 # `sha256sum` is GNU, `shasum -a 256` is what macOS/BSD ship — same digest. A gate that
 # skipped wholesale on either spelling could never run on ecb/ach, which is exactly where
 # the CYRIUS_GATE_CLI route is meant to take it.
 if command -v sha256sum >/dev/null 2>&1; then SHACMD="sha256sum"
 elif command -v shasum >/dev/null 2>&1; then SHACMD="shasum -a 256"
-else echo "SKIP: deps_git_cache_verified: no sha256sum/shasum"; exit 0; fi
+else echo "SKIP: deps_git_cache_verified: no sha256sum/shasum"; exit 77; fi
 # `find -printf` is GNU too. With it, the .git snapshot is path+mtime+size, a FILESYSTEM
 # fact; without it, it is path-list + content digest, which still catches every WRITE (the
 # thing the ⛔ rule above is about) but not a pure mtime touch inside .git. Set
@@ -176,7 +176,7 @@ CR=$(printf '\r')   # never $'\r': this gate runs under /bin/sh, which may be da
 nohost() {   # $1 = why
     if [ "$OS" = Linux ]; then echo "FAIL: deps_git_cache_verified: $1"; exit 1; fi
     echo "SKIP: deps_git_cache_verified: $1 (pass CYRIUS_GATE_CLI=<built cyrius> to run here)"
-    exit 0
+    exit 77
 }
 if [ -n "${CYRIUS_GATE_CLI:-}" ]; then
     [ -x "$CYRIUS_GATE_CLI" ] || { echo "FAIL: deps_git_cache_verified: CYRIUS_GATE_CLI=$CYRIUS_GATE_CLI is not executable"; exit 1; }
@@ -387,7 +387,7 @@ if first "$P"; then
         # with unprivileged userns off — i.e. on every host the CYRIUS_GATE_CLI route was
         # added for. Measured with a failing `unshare` first in PATH: the bare echo came up
         # one axis short of the asserted total and the whole gate FAILED; through skip() the
-        # same run reports one SKIPPED and exits 0.
+        # same run reports one SKIPPED and exits 77 (6.6.11: a gate with a skipped axis is a SKIP).
         skip "B7: unshare -r unavailable — the uid-mapped-namespace row is not exercised"
     fi
 fi
@@ -1105,4 +1105,6 @@ if [ "$TOTAL" -ne 65 ]; then
 fi
 
 echo "deps_git_cache_verified: $pass passed, $fail failed, $skipped skipped"
+# 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
+if [ "$fail" -eq 0 ] && [ "$skipped" -gt 0 ]; then echo "SKIP: deps_git_cache_verified — $skipped axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 [ "$fail" -eq 0 ]

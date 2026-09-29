@@ -27,10 +27,10 @@
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC="$ROOT/build/cycc"
-[ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 0; }
+[ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 77; }
 cd "$ROOT"
 G="tests/gates/platform/folds_agnos_parity.sh"
-[ -f "$G" ] || { echo "SKIP: $G missing (source of the dependency-ordered preamble)"; exit 0; }
+[ -f "$G" ] || { echo "SKIP: $G missing (source of the dependency-ordered preamble)"; exit 77; }
 D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: pe_reloc_cap_full_stdlib: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$D"' EXIT
 fail=0

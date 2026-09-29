@@ -65,7 +65,7 @@ done
 # ⚠ The baseline cannot be zero — lib/alloc.cyr fences on both arches (the old shape), so
 # alloc-only already calls it. Comparing against zero would be vacuous; comparing the two
 # is what isolates chrono's contribution.
-command -v llvm-objdump >/dev/null 2>&1 || { echo "SKIP: llvm-objdump not available"; exit 0; }
+command -v llvm-objdump >/dev/null 2>&1 || { echo "SKIP: llvm-objdump not available"; exit 77; }
 cat "$ROOT/src/main_aarch64.cyr" | "$CC" > "$WORK/cc-a64" 2>/dev/null \
     || fail "axis 3: could not build the x86-hosted aarch64 emitter"
 chmod +x "$WORK/cc-a64"

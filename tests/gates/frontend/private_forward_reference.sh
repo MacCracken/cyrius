@@ -93,7 +93,7 @@ set -u
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 cd "$ROOT"
 CC="${CC:-$ROOT/build/cycc}"
-[ -x "$CC" ] || { printf "  SKIP: private_forward_reference — %s not built\n" "$CC"; exit 0; }
+[ -x "$CC" ] || { printf "  SKIP: private_forward_reference — %s not built\n" "$CC"; exit 77; }
 
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: private_forward_reference: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$T"' EXIT
 fail=0

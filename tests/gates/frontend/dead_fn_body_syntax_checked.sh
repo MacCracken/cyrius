@@ -38,7 +38,7 @@ CC="${CC:-$ROOT/build/cycc}"
 
 if [ ! -x "$CC" ]; then
     printf "  SKIP: dead-fn-body-syntax-checked — %s not built\n" "$CC"
-    exit 0
+    exit 77
 fi
 
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: dead_fn_body_syntax_checked: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }

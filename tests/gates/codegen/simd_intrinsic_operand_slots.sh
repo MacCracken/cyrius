@@ -632,6 +632,8 @@ NEFMT=2; case "$ESKIP" in *pe*) NEFMT=$((NEFMT - 1)) ;; esac; case "$ESKIP" in *
 [ "$CEN_N" -eq "$NE" ] || fail "floor: axis F censused $CEN_N binaries, expected $NE (one per axis-A row plus the filed repro)"
 [ "$CEN_REFS" -ge "$CEN_FNS" ] || fail "floor: axis F saw $CEN_REFS local disp32 refs over $CEN_FNS regalloc fns"
 
-[ -z "$NSKIP" ] || echo "SKIP (loud): axis A did not EXECUTE${NSKIP} — this host lacks the CPU feature; their C/D/F/E axes still ran"
-[ -z "$ESKIP" ] || echo "SKIP (loud): axis E did not run for${ESKIP}"
+[ -z "$NSKIP" ] || { echo "SKIP (loud): axis A did not EXECUTE${NSKIP} — this host lacks the CPU feature; their C/D/F/E axes still ran"; GATE_SKIPS=$((${GATE_SKIPS:-0} + 1)); }
+[ -z "$ESKIP" ] || { echo "SKIP (loud): axis E did not run for${ESKIP}"; GATE_SKIPS=$((${GATE_SKIPS:-0} + 1)); }
+# 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
+if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: simd_intrinsic_operand_slots — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS: simd_intrinsic_operand_slots (axes 0-5; A: $NROW rows, $NEXEC executed; B filed repro; C/D: $NC builds each; E: $NEFMT extra formats; F: $CEN_N binaries, $CEN_FNS regalloc fns, $CEN_REFS disp32 local refs, 0 disp8/SIB; G: 4 cx gates)"

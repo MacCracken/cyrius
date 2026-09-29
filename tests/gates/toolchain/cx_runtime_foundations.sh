@@ -242,16 +242,18 @@ if [ -f "$W/hs.cyx" ] && [ -f "$W/clk.cyx" ]; then
                 echo "  row 7: aarch64-Linux cxvm (qemu-aarch64): OS-RNG seed + filled timespec"
             fi
         else fail "row 7: building the aarch64 cxvm failed"; fi
-    else echo "  row 7: SKIP aarch64 leg (qemu-aarch64 not installed)"; fi
+    else echo "  row 7: SKIP aarch64 leg (qemu-aarch64 not installed)"; GATE_SKIPS=$((${GATE_SKIPS:-0} + 1)); fi
     if command -v wine >/dev/null 2>&1; then
         if CYRIUS_TARGET_WIN=1 "$CC" < programs/cxvm.cyr > "$W/cxvm.exe" 2>/dev/null; then
             if foreign pe wine "$W/cxvm.exe"; then
                 echo "  row 7: PE cxvm (wine): ProcessPrng seed + filled timespec"
             fi
         else fail "row 7: building the PE cxvm failed"; fi
-    else echo "  row 7: SKIP PE leg (wine not installed)"; fi
+    else echo "  row 7: SKIP PE leg (wine not installed)"; GATE_SKIPS=$((${GATE_SKIPS:-0} + 1)); fi
 fi
 
 [ "$FAIL" = 0 ] || exit 1
+# 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
+if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: cx_runtime_foundations — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS: cx_runtime_foundations (register file holds fp/sp; atomics work on cx; the hash seed is published, OS-drawn and varies; clock_gettime translated; call_site_stack_alignment runs on cx)"
 exit 0

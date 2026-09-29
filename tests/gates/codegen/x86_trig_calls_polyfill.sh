@@ -42,7 +42,7 @@ syscall(60, e);
 EOF
 
 OBJDUMP=$(command -v llvm-objdump 2>/dev/null || true)
-[ -n "$OBJDUMP" ] || echo "  SKIP axis 2: llvm-objdump not installed — no disassembly check"
+[ -n "$OBJDUMP" ] || { echo "  SKIP axis 2: llvm-objdump not installed — no disassembly check"; GATE_SKIPS=$((${GATE_SKIPS:-0} + 1)); }
 
 for fmt in elf pe macho; do
     case "$fmt" in
@@ -93,11 +93,14 @@ if command -v wine > /dev/null 2>&1; then
     fi
 else
     echo "  SKIP [pe] axis 3: wine not installed"
+    GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 fi
 
 if [ "$fail" -ne 0 ]; then
     echo "FAIL: x86_trig_calls_polyfill"
     exit 1
 fi
+# 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
+if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: x86_trig_calls_polyfill — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS: x86 f64_sin / f64_cos (ELF, PE, x86 Mach-O) call lib/math.cyr's fdlibm polyfill, not x87 fsin/fcos, and a missing include is a named compile error (6.6.9)"
 exit 0

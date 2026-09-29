@@ -90,9 +90,9 @@ ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
 CC="$ROOT/build/cycc"
 TCYR=tests/tcyr/platform/cx_stdlib_harness.tcyr
-[ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 0; }
-[ -f src/main_cx.cyr ] || { echo "SKIP: src/main_cx.cyr missing"; exit 0; }
-[ -f programs/cxvm.cyr ] || { echo "SKIP: programs/cxvm.cyr missing"; exit 0; }
+[ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 77; }
+[ -f src/main_cx.cyr ] || { echo "SKIP: src/main_cx.cyr missing"; exit 77; }
+[ -f programs/cxvm.cyr ] || { echo "SKIP: programs/cxvm.cyr missing"; exit 77; }
 [ -f "$TCYR" ] || { echo "FAIL: $TCYR missing — the cx row has nothing to run"; exit 1; }
 
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: cx_tcyr_runs: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }

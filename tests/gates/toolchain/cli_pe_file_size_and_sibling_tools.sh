@@ -51,7 +51,7 @@ fi
 # came back truncated (a wrong sibling dir) and its `b - 1 >= wn` check could not tell. The
 # conversion is the host-testable `_wrapper_w2u8`: 2000 CJK units must come back as 6000 bytes,
 # and a surrogate pair as its 4-byte form.
-[ -x "$CC" ] || { echo "SKIP: $CC missing"; exit 0; }
+[ -x "$CC" ] || { echo "SKIP: $CC missing"; exit 77; }
 P0=$(mktemp -d) && [ -d "$P0" ] || { echo "FAIL: cli_pe_file_size_and_sibling_tools: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 sed -n '/^include "lib\//p; /^include "src\/version_str.cyr"/p' "$ROOT/cbt/cyrius.cyr" > "$P0/p.cyr"
 cat >> "$P0/p.cyr" <<'EOF0'
@@ -94,9 +94,8 @@ rm -rf "$P0"
 
 command -v wine >/dev/null 2>&1 || {
     [ "$fail" -eq 0 ] || { echo "FAIL: cli_pe_file_size_and_sibling_tools"; exit 1; }
-    echo "  SKIPPED axes 1-3: wine not installed"
-    echo "PASS: cli_pe_file_size_and_sibling_tools (axis 0 only)"; exit 0; }
-[ -x "$CC" ] || { echo "SKIP: $CC missing"; exit 0; }
+    echo "SKIP: cli_pe_file_size_and_sibling_tools — axes 1-3 need wine (axis 0 passed; exit 77: a SKIP, not a PASS)"; exit 77; }
+[ -x "$CC" ] || { echo "SKIP: $CC missing"; exit 77; }
 
 W=$(mktemp -d) && [ -d "$W" ] || { echo "FAIL: cli_pe_file_size_and_sibling_tools: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$W"' EXIT

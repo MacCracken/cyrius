@@ -141,6 +141,7 @@ EOF
 # compiler), not by build/cycc_win, which IS a PE32+ binary and only runs through wine.
 if ! command -v wine >/dev/null 2>&1; then
     echo "  SKIP: axis 3 (PE alloc_init abort) — wine not installed; axis 3s still checked"
+    GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 else
     CYRIUS_TARGET_WIN=1 "$CC" < "$W/winit.cyr" > "$W/winit.exe" 2>/dev/null || fail "axis 3: the PE probe did not compile"
     wrc=0; ( cd "$W" && WINEDEBUG=-all timeout 120 wine ./winit.exe > wo.txt 2> we.txt ) || wrc=$?
@@ -351,4 +352,6 @@ CYR
 fi
 
 [ "$FAIL" = 0 ] || exit 1
+# 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
+if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: alloc_failure_returns_zero — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS: alloc_failure_returns_zero (freelist.cyr includes alone on 5 targets; refused arena refills return 0 and the allocator recovers; PE alloc_init aborts loudly; fhm_new/flags_new return 0 over an exhausted heap; every allocation check in fhm_new / flags_new / _fhm_grow / _flags_list_push holds when ITS call alone is refused)"

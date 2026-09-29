@@ -267,6 +267,7 @@ done
 echo "axis 6 — ⭐ RUNTIME: the gated verbs really do get the manifest prepend:"
 if [ ! -x "$ROOT/build/cyrius" ] || [ ! -x "$ROOT/build/cycc" ]; then
     echo "  SKIP: build/cyrius or build/cycc not built — static axes above still ran"
+    GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 else
     T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: auto_deps_verb_gate: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
     # Hermetic home: this tree's compiler + this tree's lib/, so the axis cannot pass
@@ -385,6 +386,8 @@ fi
 echo ""
 echo "  verbs dispatched: $(printf '%s\n' "$VERBS" | grep -c .)   reaching compile(): $(printf '%s\n' "$COMPILING" | grep -c .)   gated: $(stat gate)   exempt: $(printf '%s\n' $EXEMPT_LIST | grep -c .)"
 if [ "$fails" = "0" ]; then
+    # 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
+    if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: auto_deps_verb_gate — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
     echo "PASS: auto-deps-verb-gate — no compile()-invoking verb is missing the manifest prepend"
     exit 0
 fi

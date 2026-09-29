@@ -26,7 +26,7 @@ CC="${CC:-$ROOT/build/cycc}"
 
 if [ ! -x "$CC" ]; then
     printf "  SKIP: valform-simd-crosstarget — %s not built\n" "$CC"
-    exit 0
+    exit 77
 fi
 
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: valform_simd_crosstarget: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }

@@ -37,7 +37,7 @@ CC=${CYCC:-"$ROOT/build/cycc"}
 [ -x "$CC" ] || { echo "FAIL: io_alloc_refused_per_call: build/cycc missing"; exit 1; }
 case "$(uname -s)-$(uname -m)" in
     Linux-x86_64) : ;;
-    *) echo "SKIP: io_alloc_refused_per_call: x86_64 Linux only (the wrapper targets the Linux alloc arm)"; exit 0 ;;
+    *) echo "SKIP: io_alloc_refused_per_call: x86_64 Linux only (the wrapper targets the Linux alloc arm)"; exit 77 ;;
 esac
 W=$(mktemp -d) && [ -d "$W" ] || { echo "FAIL: io_alloc_refused_per_call: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$W"' EXIT

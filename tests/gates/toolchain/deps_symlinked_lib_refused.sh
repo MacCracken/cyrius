@@ -85,6 +85,7 @@ if [ -d "$HOMEDIR/versions" ]; then
 fi
 if [ -z "$OTHER" ]; then
     echo "  axis 1b SKIPPED: no second cyrius version installed under $HOMEDIR/versions"
+    GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
     echo "  (the delegation path is unexercised on this host — axis 1 still covers ordering)"
 else
     mkdir -p "$WORK/d/snap" "$WORK/d/proj"
@@ -223,4 +224,6 @@ set -e
 [ "$RC6" -ne 0 ] || fail "axis 6: deps SUCCEEDED under CYRIUS_RESOLVED=1 in a symlinked-lib tree"
 echo "$OUT6" | grep -q 'SYMLINKED' || fail "axis 6: refused under CYRIUS_RESOLVED=1 but not for the symlink reason: $OUT6"
 
+# 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
+if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: deps_symlinked_lib_refused — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS: deps_symlinked_lib_refused (7 axes: delegate-refuse, delegate-real, per-file, resolver-refuse, normal-op, read-only, non-vendor-unaffected, resolved-cannot-disarm)"

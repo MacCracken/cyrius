@@ -182,10 +182,13 @@ EOF
     kill "$SRVPID" 2>/dev/null || true; SRVPID=""
 else
     echo "  SKIP: mirshi not built at $MIRSHI — axes 1-4 carry the tiers; this is the live path"
+    GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 fi
 
 echo ""
 if [ "$fails" = "0" ]; then
+    # 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
+    if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: agnos_sock_recv_bound — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
     echo "PASS: agnos_sock_recv_bound — socket waits are timed by a real clock and a timeout is -11"
     exit 0
 fi

@@ -9,7 +9,7 @@ set -e
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
 CC="$ROOT/build/cycc"
-[ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 0; }
+[ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 77; }
 T=$(mktemp --suffix=.cyr) && [ -f "$T" ] || { echo "FAIL: net_accept_no_leak: mktemp --suffix=.cyr failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 B=$(mktemp) && [ -f "$B" ] || { echo "FAIL: net_accept_no_leak: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 E=$(mktemp) && [ -f "$E" ] || { echo "FAIL: net_accept_no_leak: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
@@ -55,5 +55,5 @@ if [ "$rc" -eq 42 ]; then
 elif [ "$rc" -eq 4 ]; then
     echo "FAIL: sock_accept LEAKS on the would-block path (bump heap grew over 100k polls)"; exit 1
 else
-    echo "SKIP: probe setup returned $rc (socket/bind/listen unavailable in this env)"; exit 0
+    echo "SKIP: probe setup returned $rc (socket/bind/listen unavailable in this env)"; exit 77
 fi

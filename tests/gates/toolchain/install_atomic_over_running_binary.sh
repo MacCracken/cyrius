@@ -48,19 +48,19 @@ trap _ia_cleanup EXIT
 mkdir -p "$T/bin" || { echo "FAIL install_atomic_over_running_binary: cannot create $T/bin"; exit 1; }
 
 # ── axis 1 — install over a RUNNING binary (the reported failure) ────────────────────────────
-[ -x /bin/sleep ] && [ -x /bin/true ] || { echo "SKIP install_atomic_over_running_binary: no /bin/sleep or /bin/true on this host"; exit 0; }
+[ -x /bin/sleep ] && [ -x /bin/true ] || { echo "SKIP install_atomic_over_running_binary: no /bin/sleep or /bin/true on this host"; exit 77; }
 cp /bin/sleep "$T/bin/victim" && cp /bin/true "$T/bin/replacement" \
   || { echo "FAIL install_atomic_over_running_binary: cannot stage /bin/sleep and /bin/true into $T/bin"; exit 1; }
 "$T/bin/victim" 30 &
 VPID=$!
 sleep 1
-kill -0 "$VPID" 2>/dev/null || { echo "SKIP install_atomic_over_running_binary: victim did not stay running"; exit 0; }
+kill -0 "$VPID" 2>/dev/null || { echo "SKIP install_atomic_over_running_binary: victim did not stay running"; exit 77; }
 
 # The premise: a plain `cp` MUST fail here. If it does not, this platform cannot reproduce
 # ETXTBSY and the axis would be vacuous — say so rather than passing silently.
 if cp "$T/bin/replacement" "$T/bin/victim" 2>/dev/null; then
   echo "SKIP install_atomic_over_running_binary: this platform allows cp over a running binary"
-  exit 0
+  exit 77
 fi
 
 # The install path must succeed anyway.

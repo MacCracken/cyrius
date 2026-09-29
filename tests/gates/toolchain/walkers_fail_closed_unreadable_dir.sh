@@ -163,6 +163,7 @@ check "A4 vidya_load_dir on a content path that does not exist: 0 entries, not -
 
 if [ "$(id -u)" = "0" ]; then
     echo "  SKIP: W1-W13 — running as root (uid 0 reads a mode-000 directory)"
+    GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 else
     chmod 000 "$P/tests/bad" "$P/src/bad" "$P/fuzz/sub" "$P/benches/sub"
 
@@ -258,5 +259,7 @@ if [ "$fails" -gt 0 ]; then
     echo "FAIL: $NAME — $fails of $checks checks failed"
     exit 1
 fi
+# 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
+if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: walkers_fail_closed_unreadable_dir — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS: $NAME — $checks checks"
 exit 0
