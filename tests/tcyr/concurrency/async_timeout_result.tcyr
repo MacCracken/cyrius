@@ -24,6 +24,8 @@
 #   fork      RLIMIT_NPROC = 0: fork fails         -> -1   (SKIPs loudly under uid 0: root is
 #                                                            exempt from RLIMIT_NPROC, and CI
 #                                                            containers run as root)
+#   tree      async_run_process under a 400 ms deadline: the shell's background child is ended
+#             too (bite 11 — it SIGKILLed the shell's pid alone and left the child running)
 
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
@@ -139,12 +141,64 @@ fn _at_rows(): i64 {
     }
     return 0;
 }
+
+# 6.6.10 (bite 11) — async_run_process's deadline SIGKILLed the child's pid alone, so a
+# grandchild kept running past it. The shell records its background child's pid and waits;
+# the deadline must end that background child too.
+fn _at_read_num(path): i64 {
+    var fd = sys_open(path, 0, 0);
+    if (fd < 0) { return 0; }
+    var b[32];
+    var n = sys_read(fd, &b, 31);
+    sys_close(fd);
+    var v = 0;
+    var i = 0;
+    while (i < n && load8(&b + i) >= 48 && load8(&b + i) <= 57) { v = v * 10 + load8(&b + i) - 48; i = i + 1; }
+    return v;
+}
+
+fn _at_tree_rows(): i64 {
+    test_group("async_run_process: the deadline ends the child's whole tree");
+    var pf = test_scratch("cyrius_at_bgpid");
+    sys_unlink(pf);
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "sleep 30 & echo $! > ");
+    str_builder_add_cstr(sb, pf);
+    str_builder_add_cstr(sb, "; wait");
+    var av = alloc(32);
+    store64(av, "/bin/sh");
+    store64(av + 8, "-c");
+    store64(av + 16, str_data(str_builder_build(sb)));
+    store64(av + 24, 0);
+    var ev = alloc(8);
+    store64(ev, 0);
+    var rt = async_new();
+    var t0 = clock_now_ms();
+    assert_eq(async_run_process(rt, "/bin/sh", av, ev, 400), 0 - 2, "tree: the deadline fired (-2)");
+    assert_eq(clock_now_ms() - t0 < 8000, 1, "tree: and it returned inside the TERM grace");
+    var bg = _at_read_num(pf);
+    assert_eq(bg > 0, 1, "tree: premise — the shell recorded its background child");
+    var gone = 0;
+    var k = 0;
+    while (k < 150 && gone == 0) {
+        if (bg <= 0) { gone = 1; }
+        elif (sys_kill(bg, 0) != 0) { gone = 1; }
+        elif (_proc_zombie(bg) == 1) { gone = 1; }    # ended, waiting for a non-us ancestor to reap it
+        else { sleep_ms(20); }
+        k = k + 1;
+    }
+    assert_eq(gone, 1, "tree: the grandchild did not survive the deadline");
+    if (bg > 0) { sys_kill(bg, 9); }
+    sys_unlink(pf);
+    return 0;
+}
 #endif
 
 fn main(): i64 {
     alloc_init();
     #ifdef CYRIUS_TARGET_LINUX
     _at_rows();
+    _at_tree_rows();
     #endif
     #ifndef CYRIUS_TARGET_LINUX
     println("    SKIP: async_timeout forks only on Linux; this target runs the body inline (no pipe, no fork, no stale result to read)");
