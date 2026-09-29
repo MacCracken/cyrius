@@ -26,8 +26,10 @@
 # loaded the plain global gz, and with a variant name shared by two enums `A.X` read the
 # LAST X. One resolver (_enum_qual_resolve, parse.cyr) serves all three sites now: the
 # base must be an enum and the variant must be ITS variant, looked up in that enum.
+# An enum NAME may be declared more than once, so the parent is matched by NAME, not id.
 # Mutation: make _enum_qual_resolve `return FINDVAR(S, vn);` -> every N4 refusal compiles
-# (rc 0) and the shared-name row exits 22 (want 12).
+# (rc 0) and the shared-name row exits 22 (want 12); match the parent by the FIRST enum of
+# that name only -> the re-declared-enum row is refused (`'SB' is not a variant of 'Sig'`).
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -144,6 +146,20 @@ if "$CC" < "$D/dup.cyr" > "$D/dup" 2> "$D/dup.err"; then
 else
     bad "shared variant name: refused:"; grep '^error' "$D/dup.err" | head -3
 fi
+
+# An enum NAME may be declared more than once (lib/syscalls*.cyr each declare `Signal`): a
+# qualified variant resolves through ANY enum of that name, and only a name in none is refused.
+printf '%s\n' 'enum Sig { SA = 1; }' 'enum Sig { SB = 2; }' '#assert Sig.SB == 2;' 'var q[Sig.SA];' \
+    'syscall(60, Sig.SA * 10 + Sig.SB);' > "$D/dupenum.cyr"
+if "$CC" < "$D/dupenum.cyr" > "$D/dupenum" 2> "$D/dupenum.err"; then
+    chmod +x "$D/dupenum"; rc=0; "$D/dupenum" || rc=$?
+    [ "$rc" = 12 ] || bad "a re-declared enum name: exit $rc, want 12"
+else
+    bad "a re-declared enum name: refused:"; grep '^error' "$D/dupenum.err" | head -3
+fi
+printf '%s\n' 'enum Sig { SA = 1; }' 'enum Sig { SB = 2; }' 'enum T { SC = 3; }' 'syscall(60, Sig.SC);' > "$D/dupenum2.cyr"
+if "$CC" < "$D/dupenum2.cyr" > /dev/null 2> "$D/dupenum2.err"; then bad "a re-declared enum name: Sig.SC compiled, want refused"
+else grep -q "'SC' is not a variant of 'Sig'" "$D/dupenum2.err" || bad "a re-declared enum name: Sig.SC refused for another reason: $(head -1 "$D/dupenum2.err")"; fi
 
 # An earlier, unresynced error must not swallow an independent failing #assert: both report.
 printf '%s\n%s\n' "$HDR" 'struct Q { a; b: ; }

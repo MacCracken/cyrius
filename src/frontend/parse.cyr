@@ -2013,15 +2013,12 @@ fn _enum_atom_idx(S): i64 {
 fn _enum_qual_resolve(S, bti): i64 {
     var bnoff = TOKVAL(S, bti);
     var vn = TOKVAL(S, bti + 2);
-    var eid = _enum_id_of(S, bnoff);
-    if (eid > 0) {
-        var vi = _enum_variant_in(S, eid, vn);
-        if (vi >= 0) { _vis_check_var(S, vi, vn); return vi; }
-    }
+    var vi = _enum_variant_in(S, bnoff, vn);
+    if (vi >= 0) { _vis_check_var(S, vi, vn); return vi; }
     var any = FINDVAR(S, vn);
     if (any < 0) { return 0 - 1; }
     var sv = GTI(S);
-    if (eid == 0) {
+    if (_enum_id_of(S, bnoff) == 0) {
         STI(S, bti);
         ERR_IDENT(S, "", bnoff, " is not an enum", 0 - 1);
     } else {
@@ -2032,13 +2029,18 @@ fn _enum_qual_resolve(S, bti): i64 {
     return any;
 }
 
-# The slot of the enum constant `vn` whose parent enum is `eid` (1-based), or -1. Walks
-# every global of that name (FINDVAR returns only the LAST). CHANGELOG [6.6.11]
-fn _enum_variant_in(S, eid, vn): i64 {
+# The slot of the enum constant `vn` declared in an enum NAMED `bnoff`, or -1. Walks every
+# global of that name (FINDVAR returns only the LAST) and compares the parent's NAME, not
+# its id: an enum name may be declared more than once (lib/syscalls*.cyr each declare
+# `Signal`, and a program may declare its own). CHANGELOG [6.6.11]
+fn _enum_variant_in(S, bnoff, vn): i64 {
     var e = _fvh_head(S, vn);
     while (e != 0) {
         var vi = e - 1;
-        if (GVECP(S, vi) == 1) { if (GVENUMID(S, vi) == eid) { return vi; } }
+        if (GVECP(S, vi) == 1) {
+            var pe = GVENUMID(S, vi);
+            if (pe > 0) { if (STREQ(S, GENUMNM(S, pe - 1), bnoff) == 1) { return vi; } }
+        }
         e = _fvh_next(vi);
     }
     return 0 - 1;
