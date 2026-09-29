@@ -1155,7 +1155,8 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
     }
     if (typ == 61) { var fval = PEEKV(S); STI(S, GTI(S) + 1); EMIT_FLOAT_LIT(S, fval); SESTYPE(S, F64_TYID); return 0; }
     # sizeof(Type) — compile-time constant (detected as IDENT "sizeof")
-    if (typ == 2) { if (L64(S + 0xEC00000 + PEEKV(S)) & 0xFFFFFFFFFFFF == 0x666F657A6973) {
+    # 6.6.11: the WHOLE name (_is_sizeof_word); a 6-byte prefix took `sizeofzz(..)` too.
+    if (typ == 2) { if (_is_sizeof_word(S, PEEKV(S)) == 1) {
             STI(S, GTI(S) + 1);
             if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
             STI(S, GTI(S) + 1);
@@ -1175,7 +1176,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                 if (_tp_c0 != 0) { _szc = _tp_resolve(S, szn); }
                 if (_szc != 0) { if (_szc < 0) { szval = 0 - _szc; } else { szval = STRUCTSZ(S, _szc - 1); } }
                 else {
-                    szval = _scalar_name_width(szname);
+                    szval = _field_scalar_width(szname);   # whole name: sizeof(i16v8) was 2. CHANGELOG [6.6.11]
                     if (szval == 0) {
                         var szsid = FINDSTRUCT(S, szn);
                         if (szsid > 0) { szval = STRUCTSZ(S, szsid - 1); }
@@ -1189,8 +1190,9 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             return 0;
         } }
     # mulh64(a, b) — high 64 bits of a 64×64 unsigned multiply
-    # Packed LE encoding of "mulh64" = 0x3436686C756D.
-    if (typ == 2) { if (L64(S + 0xEC00000 + PEEKV(S)) & 0xFFFFFFFFFFFF == 0x3436686C756D) {
+    # The WHOLE name (_is_mulh64_word): a 6-byte prefix compiled a user fn `mulh64x(..)` as
+    # this intrinsic. CHANGELOG [6.6.11]
+    if (typ == 2) { if (_is_mulh64_word(S, PEEKV(S)) == 1) {
             STI(S, GTI(S) + 1);
             if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); }
             STI(S, GTI(S) + 1);

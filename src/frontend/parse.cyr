@@ -1995,6 +1995,21 @@ fn _is_sizeof_word(S, noff): i64 {
     return 0;
 }
 
+# `mulh64` as a whole identifier, the same 7-byte test. PARSE_FACTOR's 6-byte prefix test
+# compiled a user fn `mulh64x(a, b)` as the intrinsic. CHANGELOG [6.6.11]
+fn _is_mulh64_word(S, noff): i64 {
+    if (L64(S + 0xEC00000 + noff) & 0xFFFFFFFFFFFFFF == 0x3436686C756D) { return 1; }
+    return 0;
+}
+
+# An IDENT-spelled intrinsic that PARSE_FACTOR lowers inline: `sizeof(..)`, `mulh64(..)`.
+# Neither is a fn, so `return sizeof(i64);` must not take the tail-call path, which
+# jumped to an undefined fn of that name. CHANGELOG [6.6.11]
+fn _is_ident_intrinsic(S, noff): i64 {
+    if (_is_sizeof_word(S, noff) == 1) { return 1; }
+    return _is_mulh64_word(S, noff);
+}
+
 # Evaluate a single constant atom for #assert: number literal, sizeof(T), or an enum
 # constant (`NAME` / `Enum.NAME`, 6.6.10). Returns the constant value. Advances TI past the
 # consumed tokens.
@@ -2019,7 +2034,7 @@ fn _EVAL_CONST_ATOM(S): i64 {
                 var szn = PEEKV(S);
                 STI(S, GTI(S) + 1);
                 var szname = L64(S + 0xEC00000 + szn);
-                szval = _scalar_name_width(szname);
+                szval = _field_scalar_width(szname);   # whole name: `i16v8` is not i16. CHANGELOG [6.6.11]
                 if (szval == 0) {
                     var szsid = FINDSTRUCT(S, szn);
                     if (szsid > 0) { szval = STRUCTSZ(S, szsid - 1); }

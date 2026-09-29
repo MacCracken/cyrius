@@ -1,0 +1,58 @@
+# return_intrinsic_values.tcyr — 6.6.11. `return mulh64(a, b);` and `return sizeof(T);` are
+# VALUES, not tail calls.
+#
+# PARSE_RETURN's tail-call detector accepts any `IDENT ( … ) ;`, and `sizeof` / `mulh64` are
+# spelled as identifiers that only PARSE_FACTOR lowers. The divert predicate knew fncallN but
+# not these two, so the return compiled as `jmp mulh64` / `jmp sizeof` — `undefined variable
+# 'i64'` plus "refusing to emit binary with 2 reachable undefined function(s)" on every
+# backend, while the same expression through a local (`var r = mulh64(a, b); return r;`)
+# compiled and ran. EMULH is per-arch (x86 `mul`, aarch64 `umulh`, cx), so this runs on
+# every cross-OS host.
+#
+# The same fix made both names WHOLE words: PARSE_FACTOR tested a 6-byte prefix, so a user fn
+# `mulh64x(a, b)` compiled as the intrinsic (the high word of a*b — 0 for small args) instead
+# of calling the fn. `mulh64x` below returns a + b; the intrinsic would give 0.
+#
+# Every expected value is a hand-derived constant, and each return form also has a CONTROL
+# spelled through a local, the lowering that was already correct.
+#
+# Mutation: drop the `_is_ident_intrinsic` line from `_tc_callee_divert` (parse_fn.cyr) -> this
+# file no longer compiles (undefined fns mulh64/sizeof); put back the 6-byte prefix test for
+# mulh64 in PARSE_FACTOR -> the mulh64x rows read 0 (want 7 and 2).
+include "lib/assert.cyr"
+include "lib/syscalls.cyr"
+
+struct Trio { a; b; c; }
+
+fn ret_mulh(a, b): i64 { return mulh64(a, b); }
+fn ret_mulh_ctl(a, b): i64 { var r = mulh64(a, b); return r; }
+fn ret_sz_i64(): i64 { return sizeof(i64); }
+fn ret_sz_i16(): i64 { return sizeof(i16); }
+fn ret_sz_trio(): i64 { return sizeof(Trio); }
+fn ret_sz_ctl(): i64 { var r = sizeof(Trio); return r; }
+
+fn mulh64x(a, b): i64 { return a + b; }
+fn ret_user_prefix(): i64 { return mulh64x(3, 4); }
+
+fn main(): i64 {
+    test_group("return mulh64(..) is the intrinsic's value");
+    # 2^63 * 16 = 2^67 -> high word 8
+    assert_eq(ret_mulh(0x8000000000000000, 16), 8, "return mulh64(2^63, 16) = 8");
+    assert_eq(ret_mulh_ctl(0x8000000000000000, 16), 8, "control through a local = 8");
+    # (2^64 - 1)^2 = 2^128 - 2^65 + 1 -> high word 2^64 - 2
+    assert_eq(ret_mulh(0 - 1, 0 - 1), 0 - 2, "return mulh64(-1, -1) = 0xFFFFFFFFFFFFFFFE (unsigned)");
+    assert_eq(ret_mulh(3, 5), 0, "return mulh64(3, 5) = 0 (no high word)");
+
+    test_group("return sizeof(..) is a constant");
+    assert_eq(ret_sz_i64(), 8, "return sizeof(i64) = 8");
+    assert_eq(ret_sz_i16(), 2, "return sizeof(i16) = 2");
+    assert_eq(ret_sz_trio(), 24, "return sizeof(Trio) = 24 (three 8-byte fields)");
+    assert_eq(ret_sz_ctl(), 24, "control through a local = 24");
+
+    test_group("a user fn whose name STARTS with mulh64 is a call");
+    assert_eq(ret_user_prefix(), 7, "return mulh64x(3, 4) calls the fn = 7");
+    assert_eq(mulh64x(1, 1), 2, "mulh64x(1, 1) in an expression calls the fn = 2");
+    return assert_summary();
+}
+var rc = main();
+syscall(60, rc);

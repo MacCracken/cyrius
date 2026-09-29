@@ -645,6 +645,8 @@ fn _tc_frame_divert(S): i64 {
 fn _tc_callee_divert(S, cfi): i64 {
     # v6.5.17 — fncall0..8 are INDIRECT calls; `jmp fncallN` skipped the closure dispatch.
     if (_IS_FNCALL_NAME(S, PEEKV(S)) == 1) { return 1; }
+    # 6.6.11 — `sizeof` / `mulh64` are lowered inline by PARSE_FACTOR; there is no fn to jump to.
+    if (_is_ident_intrinsic(S, PEEKV(S)) == 1) { return 1; }
     # 6.6.6 — a >16 B struct-returning callee writes through a retptr the tail path never passes.
     if (_ret_agg_class(S, cfi) == 2) { return 1; }
     if (cfi < 0) { return 0; }
