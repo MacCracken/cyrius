@@ -1192,7 +1192,8 @@ fn async_await_readable(fd): i64 {
 # Run a function with a timeout (ms). Returns the function's result, or -1 on timeout or on
 # any failure: the pipe, the fork or the epoll set could not be made, or the child ended
 # without writing its 8-byte result (it crashed or exited early). Uses fork: the child runs
-# fn and writes the result down a pipe; the parent waits for it with the deadline.
+# fn and writes the result down a pipe; the parent waits for it with the deadline. On a
+# timeout the child's whole tree is ended (TERM, grace, KILL — 6.6.11) and the child reaped.
 # ⛔ 6.6.10 — A WAKE IS NOT A RESULT. The parent took any EPOLLIN/HUP as "the child wrote its
 # result" and returned `load64(&rbuf)` after an unchecked read, so a body that crashed or
 # called exit, and a fork that FAILED (the parent closed wfd, epoll saw HUP at once), all
@@ -1242,8 +1243,17 @@ fn async_timeout(fp, arg, ms): i64 {
         # Child finished in time — or died: only a whole 8-byte result counts.
         if (nr > 0) { got = syscall(SYS_READ, rfd, &rbuf, 8); }
     }
-    if (got != 8) { syscall(SYS_KILL, pid, 9); }       # timed out, or no result: stop it
-    syscall(SYS_WAIT4, pid, 0, 0, 0);
+    # Timed out, or no result: end the body AND whatever it started. 6.6.11 — this SIGKILLed the
+    # body's pid alone, so a child the body had forked (measured: `/bin/sleep 8`) kept running
+    # at PPID 1 past the deadline. proc_kill_tree (TERM the tree, grace, KILL) reaps `pid` itself.
+    # A body that already EXITED without a result has had its children reparented before this
+    # walk, so only the timeout case — the measured one — reaches them. CHANGELOG [6.6.11]
+    if (got != 8) {
+        var ksb[8];
+        proc_kill_tree(pid, &ksb);
+    } else {
+        syscall(SYS_WAIT4, pid, 0, 0, 0);
+    }
     syscall(SYS_CLOSE, rfd);
     if (got != 8) { return 0 - 1; }
     return load64(&rbuf);

@@ -56,6 +56,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (a refused allocation or timer) the kill completes inline, blocking, as before. Rows:
   `async_timeout_result.tcyr` "grace" / "loser", `async_macos_verbs.tcyr` the same two, and the
   `async_process` fixture's row 4 — RED against the pre-fix lib on x86_64 Linux, pi, ecb and ach.
+- **Linux `async_timeout`'s deadline SIGKILLed only the forked body; its children outlived the
+  deadline (P7).** Measured: a body that forked `/bin/sleep 8` and hung left the sleep running at
+  PPID 1. **Fix:** a timed-out (or result-less) body is ended with `proc_kill_tree` — TERM the tree,
+  grace, KILL — which reaps it. A body that already EXITED without a result has had its children
+  reparented before the /proc walk, so that case is not reachable from here. Row:
+  `async_timeout_result.tcyr` "forker" (RED on the pre-fix lib; green on x86_64 and pi).
 
 ## [6.6.10] — 2026-09-29
 

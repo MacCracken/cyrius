@@ -26,6 +26,9 @@
 #                                                            containers run as root)
 #   tree      async_run_process under a 400 ms deadline: the shell's background child is ended
 #             too (bite 11 — it SIGKILLed the shell's pid alone and left the child running)
+#   forker    (6.6.11) async_timeout's deadline ends what the BODY started: a body that forks
+#             `/bin/sleep 8` and then hangs. It SIGKILLed the body's pid alone and the grandchild
+#             ran on at PPID 1.
 #   grace     (6.6.11) async_run_process's deadline on a TERM-ignoring child: a sibling 10 ms
 #             interval keeps ticking through the grace. The kill was a blocking 10 ms sleep-poll
 #             for up to _PROC_GRACE_MS, during which no task ran (measured 5,234 ms, 0 ticks).
@@ -173,6 +176,55 @@ fn _at_kill_rows(): i64 {
     return 0;
 }
 
+# ---- async_timeout ends the body's children too (6.6.11) ----
+var _at_gpath = 0;
+fn _at_forker(a): i64 {
+    var g = sys_fork();
+    if (g == 0) {
+        var av[24];
+        store64(&av, "/bin/sleep");
+        store64(&av + 8, "8");
+        store64(&av + 16, 0);
+        var ev[8];
+        store64(&ev, 0);
+        sys_execve("/bin/sleep", &av, &ev);
+        sys_exit(127);
+    }
+    var b[24];
+    var n = 0;
+    var t[24];
+    var v = g;
+    while (v > 0) { store8(&t + n, 48 + v % 10); v = v / 10; n = n + 1; }
+    var i = 0;
+    while (i < n) { store8(&b + i, load8(&t + n - 1 - i)); i = i + 1; }
+    var fd = sys_open(_at_gpath, 577, 420);
+    if (fd >= 0) { sys_write(fd, &b, n); sys_close(fd); }
+    _at_hang(0);
+    return 7;
+}
+
+fn _at_forker_rows(): i64 {
+    test_group("async_timeout: the deadline ends what the body started (6.6.11)");
+    _at_gpath = test_scratch("cyrius_at_gc");
+    sys_unlink(_at_gpath);
+    assert_eq(async_timeout(&_at_forker, 0, 300), 0 - 1, "forker: the deadline fired (-1)");
+    var gc = _at_read_num(_at_gpath);
+    assert_eq(gc > 0, 1, "forker: premise — the body recorded its child");
+    var gone = 0;
+    var k = 0;
+    while (k < 150 && gone == 0) {
+        if (gc <= 0) { gone = 1; }
+        elif (sys_kill(gc, 0) != 0) { gone = 1; }
+        elif (_proc_zombie(gc) == 1) { gone = 1; }
+        else { sleep_ms(20); }
+        k = k + 1;
+    }
+    assert_eq(gone, 1, "forker: the body's own child did not outlive the deadline (it ran on at PPID 1)");
+    if (gc > 0) { sys_kill(gc, 9); }
+    sys_unlink(_at_gpath);
+    return 0;
+}
+
 fn _at_zero_rows(): i64 {
     test_group("a zero or negative timer is a deadline that has passed, not a disarmed one (6.6.11)");
     var t0 = clock_now_ms();
@@ -306,6 +358,7 @@ fn main(): i64 {
     _at_tree_rows();
     _at_zero_rows();
     _at_kill_rows();
+    _at_forker_rows();
     #endif
     #ifndef CYRIUS_TARGET_LINUX
     println("    SKIP: async_timeout forks only on Linux; this target runs the body inline (no pipe, no fork, no stale result to read)");
