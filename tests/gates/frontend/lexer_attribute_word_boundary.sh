@@ -677,9 +677,14 @@ if [ -x "$D/cyrius_api_surface" ] || build_tool cyrius_api_surface; then
     # The compiler's dead list is not the oracle here: it never reports the fn AFTER an
     # async fn as dead (a DCE quirk outside this gate). Premise instead: the fixture
     # compiles with CYRIUS_ASYNC=1 and emits f_fut; the expected list is then literal.
+    # The fixture's `include "lib/alloc.cyr"` resolves from $D: link the TREE's lib there.
+    # Without the link it fell through to $HOME/.cyrius/versions/<VERSION>/lib — the live
+    # store — so F4a tested the installed stdlib and failed on any host lacking that slot.
+    ln -sfn "$ROOT/lib" "$D/lib"
     F4='include "lib/alloc.cyr"\nfn f_before() { return 0; }\nasync fn f_fut(a) {\n    return a;\n}\nfn f_after() { return 2; }\n'
     faxis F4a 'premise: the async fixture compiles and emits f_fut' "f_fut" \
         "$(femit F4 "$F4" CYRIUS_ASYNC=1 | tr ' ' '\n' | grep -x 'f_fut')"
+    rm -f "$D/lib"
     faxis F4 'an async fn is public surface' "f_after f_before f_fut" "$(fsnap F4 'fn f_before() { return 0; }\nasync fn f_fut(a) {\n    return a;\n}\nfn f_after() { return 2; }\n')"
     # ANTI-VACUOUS: a COMMENT that only starts like an attribute still hides its `{` — the
     # attribute skip must not turn `#ioctl notes {` into code (depth 1 would drop f_after).
