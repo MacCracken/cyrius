@@ -1043,7 +1043,7 @@ fn sys_kill_tree(pid, sig): i64 {
     return syscall(SYS_KILL, pid, sig | AGNOS_KILL_TREE);
 }
 
-# ── Child helpers shared by lib/regression_agnos.cyr and lib/async_agnos.cyr (6.6.10) ──────────
+# ── Child helpers shared by lib/regression_agnos.cyr and lib/async_agnos.cyr (6.6.10) ──
 # Both ports hand the kernel a POSIX-shaped argv/envp (NULL-terminated arrays of cstrs) as #43
 # blobs, bound a child with a deadline, and end it at the deadline — one copy here, rather than a
 # private copy per module (lib/process_agnos.cyr's _agp_* builders take vecs, not pointer arrays).

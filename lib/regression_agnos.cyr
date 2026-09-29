@@ -55,7 +55,7 @@ include "lib/regression.cyr"
 #endif
 
 #ifdef CYRIUS_TARGET_AGNOS
-# ── one child: its pipes, its pump, its end ──────────────────────────────────────────────────
+# ── one child: its pipes, its pump, its end ──
 # A job is 10 i64 slots on the caller's stack (`var j[80]`):
 #   +0 pid · +8 stdin write end · +16 stdout read end · +24 stderr read end (-1 = none / closed)
 #   +32 the file streamed to stdin (-1: none) · +40 the file stdout is written to (-1: none)

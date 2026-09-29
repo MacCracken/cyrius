@@ -182,7 +182,7 @@ check "  …a 1 s bound is 1 + 4 quarter-second clock reads" "5" "$(nsc rwt rgha
 # ── axis 4 — pipe_to_bin_capture: streamed, interleaved, written by the parent ────────────────
 echo "axis 4 — pipe_to_bin_capture: the source streamed in chunks, stdin interleaved with stdout, the file written by us:"
 probe pipe 'sv(0, 0);
-syscall(999, 1, regression_pipe_to_bin_capture("/bin/cc", "/src/in.cyr", "/tmp/out", &ev), regression_deadline_kills(), 0);'
+syscall(999, 1, regression_pipe_to_bin_capture("/bin/cc", "/src/in.cyr", "/rx/outf", &ev), regression_deadline_kills(), 0);'
 trace pipe rgin
 check "a child that reads no more stdin until its stdout is drained: it completes, exit 7, no deadline" \
     "7 0 0" "$(mark pipe rgin 1)"

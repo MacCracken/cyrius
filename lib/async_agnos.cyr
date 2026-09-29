@@ -179,7 +179,7 @@ fn async_interval(rt, fp, arg, ms, tok): i64 {
     return 0;
 }
 
-# ── subprocesses (6.6.10) ─────────────────────────────────────────────────────────────────
+# ── subprocesses (6.6.10) ──
 # Spawn `path` from disk with the POSIX `argv` / `envp` (NULL-terminated cstr arrays) and wait,
 # bounded by `ms` (<= 0: no deadline). Returns the exit code, -1 (it could not be spawned, died of
 # a signal, or had no status) or -2 (the deadline fired: its tree was SIGKILLed and reaped).
