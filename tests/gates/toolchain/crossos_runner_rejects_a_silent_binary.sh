@@ -40,6 +40,15 @@
 # deleted, i.e. the shape the runner shipped in before this fix):
 #   1. summary check removed  -> row B reports "1 0" (a PASS for the silent binary) -> RED
 #   2. real runner            -> GREEN (4 rows)
+#
+# 6.6.11 — THE SUMMARY MUST ALSO SAY `0 failed`. The runner read N from the summary and
+# ignored M, so a binary that PRINTED `1 passed, 1 failed` and exited 0 scored PASS. Rows E
+# and F are that pair: E is the real main-twice shape (`fn main` + a top-level `main();` —
+# the executable epilogue auto-calls a defined main as well, so the process exits with the
+# second run's `return 0`; crossos/derive_accessor_widths.tcyr shipped in that shape), F is
+# the explicit `assert_summary(); syscall(60, 0);` shape platform/pwd_grp.tcyr shipped in.
+# MUTATION (6.6.11, run on every invocation as row N): a copy of the runner with the M==0
+# branch deleted reports "1 0" for row E -> the ledger is a measurement, not a claim.
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -68,6 +77,11 @@ SILENT='# a dropped program: the text below would have run assert_summary() and 
 FAILING='include "lib/assert.cyr"\nvar r1 = assert_eq(2 + 2, 5, "deliberately wrong");\nvar rc = assert_summary();\nsyscall(60, rc);\n'
 # A file that never mentions assert_summary: silent, exit 0, and legitimately a PASS.
 OPTOUT='var q = 0;\nsyscall(60, q);\n'
+# 6.6.11: main runs twice (the epilogue auto-calls a defined main), prints `1 passed, 1 failed`
+# on the top-level run, and the process exits 0 from the second run's `return 0`.
+TWICE='include "lib/assert.cyr"\nfn main() {\n    assert_eq(2 + 2, 4, "right");\n    assert_eq(2 + 2, 5, "deliberately wrong");\n    return 0;\n}\nmain();\nvar rc = assert_summary();\n'
+# 6.6.11: prints its failing summary, then exits with a literal 0.
+EXIT0='include "lib/assert.cyr"\nvar r1 = assert_eq(2 + 2, 4, "right");\nvar r2 = assert_eq(2 + 2, 5, "deliberately wrong");\nvar rc = assert_summary();\nsyscall(60, 0);\n'
 
 # _row <id> <dir> <want-pass> <want-fail> <runner> <file-spec>...
 # Each file-spec is "name:BODYVAR".
@@ -104,6 +118,12 @@ printf '%s\n' "$_ROW_OUT" | grep -q 'printed NO assert summary' \
 _row C gc 0 1 "$RUNNER" "failing:FAILING"
 # D — a file that never calls assert_summary is not subject to the check (the corpus has one).
 _row D gd 1 0 "$RUNNER" "optout:OPTOUT"
+# E — 6.6.11: `1 failed` in the summary, exit 0 via main-twice. Must be a failure.
+_row E ge 0 1 "$RUNNER" "twice:TWICE"
+printf '%s\n' "$_ROW_OUT" | grep -q 'assert summary reports 1 failed' \
+    || bad "row E: the failure does not name the summary's failed count"
+# F — 6.6.11: `1 failed` in the summary, exit 0 via a literal `syscall(60, 0)`.
+_row F gf 0 1 "$RUNNER" "exit0:EXIT0"
 
 # ── mutant: the runner with the summary check deleted. Row B must then read "1 0".
 MUT="$D/runner_mut.sh"
@@ -121,13 +141,26 @@ else
     _row M gm 1 0 "$MUT" "silent:SILENT"
 fi
 
+# ── mutant 2 (6.6.11): the runner with the M==0 branch deleted. Row E must then read "1 0".
+MUT2="$D/runner_mut2.sh"
+awk '
+  /^            elif \[ "\$_nf" -ne 0 \]; then$/ { skip = 1; next }
+  skip { skip = 0; next }
+  { print }
+' "$RUNNER" > "$MUT2"
+if grep -q 'assert summary reports $_nf failed' "$MUT2"; then
+    bad "mutant 2: the M==0 branch was not removed — the 6.6.11 ledger is not proven"
+else
+    _row N gn 1 0 "$MUT2" "twice:TWICE"
+fi
+
 # Anti-vacuity: the floor is DERIVED from this file's own row calls.
-WANT=$(grep -cE '^_row [A-D] ' "$0")
+WANT=$(grep -cE '^_row [A-F] ' "$0")
 [ "$NROWS" -ge "$WANT" ] || bad "only $NROWS rows ran; this file spells $WANT"
 
 if [ "$NFAIL" -gt 0 ]; then
     echo "FAIL: crossos_runner_rejects_a_silent_binary: $NFAIL problem(s) over $NROWS rows"
     exit 1
 fi
-echo "PASS: the cross-OS runner fails a binary that exits 0 without running its assertions ($NROWS rows)"
+echo "PASS: the cross-OS runner fails a binary that exits 0 without running its assertions or with a failing summary ($NROWS rows)"
 exit 0
