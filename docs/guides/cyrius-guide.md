@@ -163,6 +163,11 @@ var r = add(20, 22);   # r = 42
   the dot form supplies a receiver the method never declared. Call it by its mangled name
   (`Type_method(args)`), which is how the constructor idiom `fn new(a, b)` inside an `impl` is
   written anyway. Forward calls are exempt from the check — the callee has no body yet.
+- **`x.m()` passes `self` exactly as `T_m(x)` would.** An untyped `self` (the `impl` form) is
+  the receiver's address. A typed `self: T` follows the parameter rule: a struct over 8 bytes is
+  address-passed, one of **8 bytes or less is passed by value** — so `fn Odd_sum(self: Odd)`
+  sees a copy, and writing `self.a` inside it does not change `x`. Before v6.6.11 the dot form
+  pushed `&x` for a small typed `self` too and the method read its fields out of the address.
 
 **Reserved words are a CLASS, not a short list.** `TOKNAME_BUILTIN` in
 `src/common/util.cyr` is the single source of truth — **76** builtin/intrinsic names
@@ -429,8 +434,8 @@ look reasonable:
 `b.v = p` copies the whole struct into the field. So does a call, method or operator that
 returns a `P3` (`b.v = mk(1)`, `b.v = a.mk(1)`, `b.v = a + c`), a by-value `P3` parameter, a
 pointer-mode `P3` local (the struct it points at, not the pointer), a global, and another `P3`
-field (`b.v = o.b.v`). A struct of a different type is a compile error naming it — except a
-method or operator result of 8 bytes or less, which is not type-checked yet. Before v6.6.10
+field (`b.v = o.b.v`). A struct of a different type is a compile error naming it, at every
+size — a method or operator result of 8 bytes or less included (v6.6.11). Before v6.6.10
 every one of these stored ONE word: `b.v.y` kept its old value, and from a parameter the stored
 word was the parameter's address. A source that is not a struct (an integer, an untyped
 pointer) still stores one word, capped at the field's size. An odd-sized struct field (3, 5, 6
@@ -448,13 +453,27 @@ of `p` stale, and the declaration stored `q`'s *address* into a struct-typed slo
 back a stack address. The struct-*literal* form (`var p: P3 = Q3{..}`) has been an error since
 v6.6.5. A source that is **not** a struct or vector still binds as a pointer, unchanged.
 
+The other direction is a copy too (v6.6.11): a struct **variable** taken from a struct-typed
+FIELD — `q = b.v`, `var p: P3 = b.v`, into a local, a global or a by-value parameter — copies the
+whole struct, byte-exact, and `p` is its own copy. Before v6.6.11 the assignment copied one word
+and the declaration stored that word into a slot typed `P3`, so the next `p.x` SIGSEGV'd. A
+struct-valued **call** assigned to a struct variable must return that struct, at every size and
+through every call form: `p = mkq()` with `mkq` returning a different struct is refused
+(`cannot copy 'mkq' into a variable of a different struct/vector type: 'p'`) as
+`var p: P3 = mkq()` already was, and so are `z = y.same()`, `var z: Odd = y + y` and a generic
+call whose inferred instance differs (`s = mk(r.v)` into a `Box<Pt>`: a FIELD argument infers
+`T = i64`, so the call reaches `Box<i64>` — copy the field into a `Pt` variable first,
+`var p: Pt = r.v; s = mk(p);`). Before v6.6.11 each of those stored one word, silently.
+
 ⚠ **A by-value struct PARAMETER over 8 bytes is address-passed** — the parameter's slot holds
 the caller's address, which is why writing `q.z = 5` inside the callee is visible to the caller.
 Since v6.6.6 every path that copies or returns such a parameter goes through that address:
 `q = r`, `q = mk(..)`, `q = b.mk(..)`, `q = a + b`, `q = G`, `r = q`, `G = q`, `q = w` (a copy,
 not an alias) and `return q;` all move the whole struct. Before v6.6.6 they moved the POINTER
 instead — `q = r` overwrote it and the next `q.z` SIGSEGV'd, `r = q` put the pointer in `r`'s
-first field, and `return q;` returned the address as the value, silently. `Str` (and `Result` /
+first field, and `return q;` returned the address as the value, silently. The declaration
+`var y: P3 = q;` joined the list at v6.6.11 — before, it bound `y` as a second pointer to the
+CALLER's struct, so `y.a = 9` changed the caller and `return y;` returned garbage. `Str` (and `Result` /
 `Option` / `Tagged`) are unaffected: they are heap handles passed by value, so `a = b` between
 two of them is still a rebind.
 

@@ -6,6 +6,54 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.11] — 2026-09-29
 
+### Fixed — struct value copies and struct-result type checks (B02)
+
+- **A struct variable copied from a struct-typed field copied one word, and the declaration
+  SIGSEGV'd (L1).** With `struct Box { v: Pt; n; }`, `q = b.v` left `q.y` stale (30 where 34 is
+  right) into a local, a global and an address-passed parameter alike, and `var p: Pt = b.v`
+  stored that word into a slot typed `Pt` that was not inline, so `p.x` dereferenced it (rc 139 on
+  x86 and aarch64, a page fault on PE, garbage on cx). **Root cause:** 6.6.10's field-source record
+  (`_fla_want` / `_fla_take`) was armed only for a field DESTINATION; `_try_aggregate_copy_assign`
+  and `_try_struct_copy_init` require `IDENT ;`, so a `b.v` source fell to the scalar store/init.
+  **Fix:** `_pcmpe_struct_assign` (src/frontend/parse.cyr) and PARSE_VAR's initialiser (`_scv_arm`)
+  arm the record when the destination is a struct; a hit is copied byte-exact through
+  `_agc_copy_bytes`' new `-2` source (the recorded field), a field of a different struct type is
+  refused by name.
+- **A method whose `self: T` is a struct of 8 B or less received the receiver's address (L3).**
+  `x.sum()` with `fn Odd_sum(self: Odd)` returned -23905 / 11130 / 4047 on x86 / aarch64 / cx
+  (want 3), where `Odd_sum(x)` was right. **Root cause:** the method arm of PARSE_FIELD_LOAD pushed
+  `&x` for every `self`, and nothing recorded that param 0 of such a fn is by value. **Fix:** bit
+  62 of `_fnt_structmask` (`_selfbv_bit`, set from param 0's tokens by both passes, masked out of
+  the whole-mask readers by `_smask_args`) — no brk-layout change; the method arm then loads the
+  receiver's value (`_self_value_ra`), for a local, a global, a captured and a forward-called one.
+- **A struct result of 8 B or less from a method or operator was never type-checked (L4).**
+  `h.o = y.same()`, `h.o = y + y`, `var z: Odd = y.same()`, `var z: Odd = y + y`, `h.p = y.mq()`,
+  `var z: P8 = y.mq()` stored an Od2 / Q8 into an Odd / P8 with no diagnostic. **Root cause:**
+  `_sc_post` returned before recording a class-0 result, and the scalar operator dispatch never
+  called it. **Fix:** `_sc_post_small` records it with `_sc_tmp = -3` ("in rax, no temp"); the field,
+  assignment and both declaration destinations compare its sid (the assignment also refuses a
+  mismatched 9 B-or-more method / operator result, which it used to hand to the scalar store). An
+  exact-register struct FIELD (1/2/4/8 B) now goes through the same checks (`_fsc_src` used to
+  return before them). The guide's "not type-checked yet" limitation is gone.
+- **A struct destination assigned from a call returning a DIFFERENT struct stored one word (L5).**
+  `p = mkq()` (Q, 24 B, into a Pt) gave 91 on x86 / aarch64 / cx, as did `p = mkr()` (16 B);
+  `z = mkod2()` and `var z: Odd = mkod2()` (3 B) compiled clean, and the generic `s = mk(r.v)` into a
+  `Box<Pt>` (the field argument infers T = i64) gave 2. **Root cause:** `_try_struct_call_assign`
+  compared the sid only after its `cls == 0` and `n <= 1` exits, and on a mismatch returned to the
+  scalar store; PARSE_VAR compared it only on the retptr / pair receives. **Fix:** `_sca_mismatch`
+  runs before every exit, `_scv_call_check` covers the <= 8 B declaration, and `_gen_decl_check`
+  names the generic declaration (which failed as "expected ';', got '.'").
+- **`var y: Q = x;` from an address-passed by-value struct parameter aliased the caller's struct
+  (L6).** `y.a = 9` changed the caller's `q` (329 vs 321, x86 / aarch64 / PE; 16 B too) and
+  `return y;` returned garbage for the retptr and the pair class. **Root cause:**
+  `_try_struct_copy_init` bailed on every non-inline source into the scalar init — right for a
+  pointer-mode local (a rebind), wrong for the parameter. **Fix:** a `_local_is_sptr_param` source
+  takes the same addressed copy `y = x;` has had since 6.6.6.
+- Regression coverage: 18 new rows in `tests/tcyr/crossos/struct_field_value_copy.tcyr` (cross-OS)
+  and the new gate `tests/gates/frontend/struct_result_type_refused.sh` (24 refusals at 3 / 8 / 16 /
+  24 B, generic, field / assignment / declaration / top-level forms, plus 8 same-type acceptances
+  checked against field-by-field controls); both mutation-proven per fix.
+
 ## [6.6.10] — 2026-09-29
 
 The fourth batch release: the 6.6.8 review finds (groups B–G) and group H of the 6.6.9 finds, placed by
