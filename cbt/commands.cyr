@@ -3615,6 +3615,12 @@ fn _distlib_merge_names(names, masks, got, bit): i64 {
 
 # Fork the compile of `entry` for target `t` (stderr to `verr`); answers the child's pid, or -1.
 fn _distlib_target_spawn(entry, t, vout, verr): i64 {
+    # Unreachable on PE (`_distlib_verify_host_ok` refuses first), and `sys_fork` there is a -1
+    # stub that would read as a child — so the arm refuses by name rather than trusting that.
+    #ifdef CYRIUS_TARGET_WIN
+    _err("distlib: the per-target sidecar verify cannot run on Windows (no fork) — sidecar NOT written");
+    return 0 - 1;
+    #endif
     var pid = sys_fork();
     if (pid == 0) {
         # ⚠ _skip_deps = 1 is load-bearing: auto-prepend would put the whole declared stdlib
