@@ -27,6 +27,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and ecb (arm64) + ach (x86) macOS, where a fake `sha256sum` first on PATH is run 15 times by
   `cyrius deps` with the fix and never with the 6.6.10 CLI.
 
+- **Windows: `cyrius.exe` honours `CYRIUS_RESOLVED=1` and actually runs a pinned version.**
+  (B09: I3.) **Root cause:** `_cyrius_resolved` was set only by find_tools' /proc/self/environ scan,
+  which reads nothing on PE, so the documented escape from a pin was ignored (a project pinning an
+  uninstalled version exited 1 with it set). Behind it, the redirect could not succeed at all: it
+  looked for `versions/<pin>/bin/cyrius` (install.ps1 installs `cyrius.exe`) and then called
+  `sys_execve`, a -1 stub on PE — so on Windows every repo pinning another version could run NO
+  verb. **Fix:** find_tools' PE arm reads the flag through `_cbt_env_is_1`; the pinned path gets
+  `.exe`; and `_win_redirect_to_pinned` sets `CYRIUS_RESOLVED=1` on the CLI itself
+  (kernel32!SetEnvironmentVariableA via GetProcAddress + `callptr` — no new PE reroute), runs the
+  pinned `cyrius.exe` as a child through the CLI's CreateProcessW path (`_win_spawn_vec`, in a
+  job object), waits, and exits with the child's code. Default taken over "skip the redirect with
+  a warning": honouring the flag alone would leave pinned repos broken unless the user exports
+  it. New `toolchain/cli_pe_pinned_redirect.sh` (wine; exit 77 without it): an uninstalled pin
+  plus the flag exits 0 with the drift note, and without it exits 1 naming `bin/cyrius.exe`; a
+  probe in the pinned slot receives the verb, a spaced argument and the flag, and its exit code
+  (37) is `cyrius.exe`'s; the tree's own `cyrius.exe` in the slot runs the verb with no redirect
+  loop. Mutations: the find_tools line, the `.exe` suffix and the redirect call each FAIL it.
+  Verified on real Windows (cass): all four axes (0 / 1 naming `cyrius.exe` / 37 / 0).
+
 ## [6.6.10] — 2026-09-29
 
 The fourth batch release: the 6.6.8 review finds (groups B–G) and group H of the 6.6.9 finds, placed by

@@ -130,6 +130,38 @@ fn _pin_has_known_critical(pin): i64 {
     return 0;
 }
 
+# 6.6.11 (I3) — the Windows arm of the pin redirect. On PE `sys_execve` is a -1 stub, so
+# the POSIX re-exec below could never succeed: every repo pinning another version failed
+# every verb with "execve to pinned version failed" (and before that "not installed",
+# because the path had no .exe). Windows has no exec-in-place, so run the pinned
+# cyrius.exe as a CHILD through the CLI's own CreateProcessW path (`_win_spawn_vec`: its
+# job object ends the child if this process dies), wait, and return its exit code for the
+# caller to exit with. The child inherits this process's environment (lpEnvironment NULL),
+# so CYRIUS_RESOLVED=1 — the loop guard POSIX appends to envp — is set on OURSELVES first,
+# through kernel32!SetEnvironmentVariableA resolved by GetProcAddress (no PE reroute exists
+# for it) and called with `callptr`, which is Win64-ABI correct since v6.0.71.
+# CHANGELOG [6.6.11]
+#ifdef CYRIUS_TARGET_WIN
+fn _win_redirect_to_pinned(pinned_bin): i64 {
+    var k32 = syscall(0xF013, "kernel32.dll");                    # GetModuleHandleA
+    var set_env = 0;
+    if (k32 != 0) { set_env = syscall(0xF014, k32, "SetEnvironmentVariableA"); }   # GetProcAddress
+    var ok = 0;
+    if (set_env != 0) { ok = callptr(set_env, "CYRIUS_RESOLVED", "1") & 4294967295; }   # BOOL
+    if (ok == 0) {
+        sys_write(STDERR_FD, "error: could not set CYRIUS_RESOLVED for the pinned cyrius.exe\n", 63);
+        return 1;
+    }
+    var av = vec_new();
+    var i = 1;
+    while (i < argc()) {
+        vec_push(av, argv(i));
+        i = i + 1;
+    }
+    return _win_spawn_vec(pinned_bin, av);
+}
+#endif
+
 fn _try_redirect_to_pinned(): i64 {
     # ⛔ v6.5.37 — DO NOT DELEGATE A VENDOR WRITE INTO A SYMLINKED lib/.
     #
@@ -257,6 +289,9 @@ fn _try_redirect_to_pinned(): i64 {
     str_builder_add_cstr(sb, "/versions/");
     str_builder_add_cstr(sb, pin);
     str_builder_add_cstr(sb, "/bin/cyrius");
+    #ifdef CYRIUS_TARGET_WIN
+    str_builder_add_cstr(sb, ".exe");   # install.ps1 lays out versions\<v>\bin\cyrius.exe
+    #endif
     var pinned_bin = str_data(str_builder_build(sb));
 
     if (file_exists(pinned_bin) == 0) {
@@ -270,6 +305,9 @@ fn _try_redirect_to_pinned(): i64 {
         _cbt_exit(1);   # sweeps the private temp dir — CHANGELOG [6.6.6]
     }
 
+    #ifdef CYRIUS_TARGET_WIN
+    _cbt_exit(_win_redirect_to_pinned(pinned_bin));
+    #endif
     # Build new argv: [pinned_bin, original argv[1..]].
     var ac = argc();
     var nargv = alloc((ac + 1) * 8);

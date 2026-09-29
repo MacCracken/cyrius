@@ -811,6 +811,10 @@ fn find_tools(): i64 {
     #ifdef CYRIUS_TARGET_WIN
     proc_home = _win_getenv_into("USERPROFILE", &_win_home_buf);
     cyrius_home = _win_getenv_into("CYRIUS_HOME", &_win_chome_buf);
+    # 6.6.11 (I3): the loop guard too. The scan above is the only place `_cyrius_resolved`
+    # was set, and it reads nothing on PE — so `CYRIUS_RESOLVED=1`, the documented escape
+    # from a pin, was ignored by cyrius.exe. CHANGELOG [6.6.11]
+    if (_cbt_env_is_1("CYRIUS_RESOLVED") == 1) { _cyrius_resolved = 1; }
     #endif
     if (proc_home == 0) { proc_home = "/root"; }
     # CYRIUS_HOME overrides default ~/.cyrius
