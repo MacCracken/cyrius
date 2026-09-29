@@ -312,6 +312,16 @@ assert_eq(str_eq(toml_pair_key(tp), str_from("k")), 1, "pair key");
 assert_eq(str_eq(toml_pair_value(tp), str_from("v")), 1, "pair val");
 
 test_group("toml_parse_file");
+#ifdef CYRIUS_TARGET_AGNOS
+# 6.6.10: a named SKIP on agnos — the corpus cross-compile ratchet
+# (tests/gates/toolchain/tcyr_corpus_cross_compiles.sh).
+# The group below writes and reads its fixture with raw x86-Linux numbers (open 2, write 1,
+# close 3, read 0) and a 1-arg unlink; on agnos those numbers are other calls (#3 is spawn).
+# CHANGELOG [6.6.10]
+var _agnos_skip = "  SKIP (agnos): the toml_parse_file group writes its fixture with RAW Linux numbers (2/1/3/0)\n";
+sys_write(1, _agnos_skip, strlen(_agnos_skip));
+#endif
+#ifndef CYRIUS_TARGET_AGNOS
 # Write temp file using raw syscalls, then parse
 var path = _scratch("cyrius_toml_test", ".toml");
 var content = "[[entry]]\nid = \"1\"\ntag = \"test\"\n";
@@ -337,5 +347,6 @@ assert_eq(str_eq(ftag, str_from("test")), 1, "file tag");
 # NOTHING on ARM and left the fixtures behind. ESYSXLAT routes both now, but the
 # stdlib name is the spelling a test should model. CHANGELOG [6.6.5]
 sys_unlink(path);
+#endif
 
 var r = assert_summary();

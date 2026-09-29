@@ -133,7 +133,9 @@ var r_r_tag, r_r = file_read_all_r(_scratch("cyrius_v5_8_30_test", ""), &rb, 64)
 assert_eq(is_ok(r_r_tag), 1, "read_all_r Ok");
 assert_eq(r_r, msglen, "bytes_read = msglen");
 assert_eq(load8(&rb), 104, "first byte = 'h' (104)");
-sys_unlink(_scratch("cyrius_v5_8_30_test", ""));
+# 6.6.10: xunlink (lib/io.cyr), not the raw sys_unlink — agnos's is length-carrying, so the raw
+# call did not compile there (the corpus cross-compile ratchet). CHANGELOG [6.6.10]
+xunlink(_scratch("cyrius_v5_8_30_test", ""));
 
 test_group("file_read_all_r — Err on missing path");
 var rb2[16];
@@ -175,7 +177,7 @@ var jsrc = "{\"name\": \"cyrius\"}";
 file_write_all_r(_scratch("cyrius_v5_8_30_test", ".json"), jsrc, strlen(jsrc));
 var jok_tag, jok = bayan_json_parse_file_r(_scratch("cyrius_v5_8_30_test", ".json"));
 assert_eq(is_ok(jok_tag), 1, "synthetic JSON file Ok");
-sys_unlink(_scratch("cyrius_v5_8_30_test", ".json"));
+xunlink(_scratch("cyrius_v5_8_30_test", ".json"));
 
 # ---- bayan_toml_parse_file_r ----
 
@@ -189,7 +191,7 @@ var tsrc = "[[entries]]\nname = \"cyrius\"\n";
 file_write_all_r(_scratch("cyrius_v5_8_30_test", ".toml"), tsrc, strlen(tsrc));
 var tok_tag, tok = bayan_toml_parse_file_r(_scratch("cyrius_v5_8_30_test", ".toml"));
 assert_eq(is_ok(tok_tag), 1, "synthetic TOML file Ok");
-sys_unlink(_scratch("cyrius_v5_8_30_test", ".toml"));
+xunlink(_scratch("cyrius_v5_8_30_test", ".toml"));
 
 # ---- bayan_cyml_parse_file_r ----
 
@@ -203,7 +205,7 @@ var csrc = "title = \"hello\"\n---\n# Body markdown\n";
 file_write_all_r(_scratch("cyrius_v5_8_30_test", ".cyml"), csrc, strlen(csrc));
 var cok_tag, cok = bayan_cyml_parse_file_r(_scratch("cyrius_v5_8_30_test", ".cyml"));
 assert_eq(is_ok(cok_tag), 1, "synthetic CYML file Ok");
-sys_unlink(_scratch("cyrius_v5_8_30_test", ".cyml"));
-sys_unlink(_rs_fixture);
+xunlink(_scratch("cyrius_v5_8_30_test", ".cyml"));
+xunlink(_rs_fixture);
 
 var r = assert_summary();

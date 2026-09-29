@@ -1,7 +1,11 @@
 # regression_terminate_children.tcyr — CROSS-HOST: lib/regression.cyr's
 # `regression_terminate_children(grace_ms)` does what its contract says on EVERY target. Runs
 # on ecb (macOS arm64) + ach (Intel Mac) + pi (aarch64) through the release gate's cross-OS
-# leg; on Windows and agnos there is no fork and the file only reports its summary.
+# leg; on Windows (no fork) the file only reports its summary. agnos is not a cross-OS host and
+# its peer is a different implementation (proclist#99 + kill_tree(9), lib/regression_agnos.cyr),
+# pinned by tests/gates/platform/agnos_regression_spawn.sh axis 5 and run on agnos-qemu — so the
+# body is compiled out there too. (This line read "on Windows and agnos there is no fork"; agnos
+# has had fork#96 since 1.56.55. CHANGELOG [6.6.10])
 #
 # ⛔ WHY (6.6.8). The verb ends every descendant of the caller on Linux — it walks /proc. Its
 # comment promised that elsewhere it "reaps and returns 0", but the two wait loops ran on
@@ -55,6 +59,31 @@ fn main(): i64 {
     assert_eq(WIFEXITED(load32(&st)), 1, "off Linux: …it exited by itself, it was not signalled");
     assert_eq(WEXITSTATUS(load32(&st)), 7, "off Linux: …with its own status");
     #endif
+
+    # 6.6.10 — an ENDED child is not a "running" one. The count used to be every descendant
+    # /proc listed, zombies included, so the check driver's exit note blamed rows for leaving
+    # processes running that had long since exited (measured: 3 zombies counted as 3).
+    test_group("an ended child is reaped, and not counted as running (6.6.10)");
+    var zp = sys_fork();
+    if (zp == 0) { sys_exit(0); }
+    assert_eq(zp > 0, 1, "fork (a child that exits at once)");
+    syscall(7, 0, 0, 200);                       # it has ended; nobody has reaped it
+    var zn = regression_terminate_children(200);
+    assert_eq(zn, 0, "a zombie child is not counted as a running descendant");
+    assert_eq(sys_waitpid(zp, &st, 1) < 0, 1, "…and it was reaped");
+
+    test_group("regression_reap_orphans reaps what has ended, without waiting (6.6.10)");
+    var r1 = sys_fork();
+    if (r1 == 0) { sys_exit(0); }
+    var r2 = sys_fork();
+    if (r2 == 0) { syscall(7, 0, 0, 1500); sys_exit(0); }
+    syscall(7, 0, 0, 200);
+    var t1 = clock_now_ms();
+    assert_eq(regression_reap_orphans(), 1, "it reaped the one child that had ended");
+    assert_eq(clock_now_ms() - t1 < 1000, 1, "…without waiting for the live one");
+    assert_eq(sys_waitpid(r1, &st, 1) < 0, 1, "…and the ended one is gone");
+    sys_kill(r2, 9);
+    sys_waitpid(r2, &st, 0);
     #endif
     #endif
     var r = assert_summary();

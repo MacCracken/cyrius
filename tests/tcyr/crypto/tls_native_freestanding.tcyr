@@ -146,6 +146,16 @@ test_group("TLS 1.3 freestanding handshake over hooks (no socket / no getrandom 
 # -9 EBADF, and the test then dereferenced -9 and died with SIGSEGV. Exactly the divergence
 # lib/mmap.cyr:57 documents (and the one v6.5.11 fixed for mmap_anon). Use the peer's own
 # MAP_* constants rather than a literal so this cannot drift per platform again.
+#ifdef CYRIUS_TARGET_AGNOS
+# 6.6.10: a named SKIP on agnos — the corpus cross-compile ratchet
+# (tests/gates/toolchain/tcyr_corpus_cross_compiles.sh).
+# The run maps its loopback page with RAW Linux mmap (9 — agnos #9 is mkdir) and reaps with
+# the 3-arg waitpid; agnos's mmap#27 is anonymous-only (no MAP_SHARED) and its waitpid is 1-arg.
+# CHANGELOG [6.6.10]
+var _agnos_skip = "  SKIP (agnos): the fork + MAP_SHARED loopback run (raw Linux mmap 9; 1-arg waitpid)\n";
+sys_write(1, _agnos_skip, strlen(_agnos_skip));
+#endif
+#ifndef CYRIUS_TARGET_AGNOS
 _shm = syscall(9, 0, 16 + 2 * LB_CAP, 3, MAP_SHARED | MAP_ANONYMOUS, 0 - 1, 0);
 assert(_shm > 65536, "mmap MAP_SHARED loopback region");
 assert_eq(tls_native_set_transport(&_lb_read, &_lb_write, &_lb_now), TLS_OK, "install in-memory transport (read/write/now hooks)");
@@ -209,6 +219,7 @@ var stbuf[4];
 sys_waitpid(pid, &stbuf, 0);
 var code = (load64(&stbuf) >> 8) & 0xFF;
 assert_eq(code, 0, "server child: accept()+handshake+app-data over the loopback succeeded (exit 0)");
+#endif
 
 # restore the default transport/entropy — the corpus shares these module globals.
 tls_native_set_transport(0, 0, 0);

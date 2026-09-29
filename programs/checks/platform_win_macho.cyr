@@ -135,7 +135,7 @@ fn _cli_cross_compile_gate(): i64 {
     }
     var r_pe = _cli_cross_check("CYRIUS_TARGET_WIN=1", CC_PATH, 0x4D, 0x5A, "PE");      # MZ
     var r_mo = _cli_cross_check("CYRIUS_MACHO=1", CC_PATH, 0xCF, 0xFA, "Mach-O");        # CF FA ED FE
-    var r_a6 = _cli_cross_check(0, _root_path("build/cycc_aarch64"), 0x7F, 0x45, "aarch64-ELF");   # 7F 'E'
+    var r_a6 = _cli_cross_check(0, _tool("cycc_aarch64"), 0x7F, 0x45, "aarch64-ELF");   # 7F 'E'
     var fail = 0;
     var skipped = 0;
     if (r_pe > 0) { fail = fail + 1; }
@@ -238,8 +238,8 @@ fn _win_process_gate(): i64 {
 
 fn _macho_exit_gate(): i64 {
     var label = "Mach-O arm64 syscall(60,42) → exit 42 on ecb (pin v5.6.33)";
-    if (file_exists(CC_AARCH64_PATH) != 1) {
-        _skip(label, _cat2(CC_AARCH64_PATH, " not built (cross-compiler required)"));
+    if (file_exists(_tool("cycc_aarch64")) != 1) {
+        _skip(label, "build/cycc_aarch64 not built (cross-compiler required)");
         return 0;
     }
     var target = _ssh_target("SSH_TARGET_MACOS", "ecb");
@@ -255,7 +255,7 @@ fn _macho_exit_gate(): i64 {
     var src1 = _tmp_path("audit_macho_t1_src_");
     var bin1 = _tmp_path("audit_macho_t1_bin_");
     _write_file(src1, "syscall(60, 42);\n");
-    var rc1 = _self_host_pipe_env(src1, CC_AARCH64_PATH, bin1, env_kv);
+    var rc1 = _self_host_pipe_env(src1, _tool("cycc_aarch64"), bin1, env_kv);
     sys_unlink(src1);
     if (rc1 != 0) {
         sys_unlink(bin1);
@@ -298,7 +298,7 @@ fn _macho_exit_gate(): i64 {
     var src2 = _tmp_path("audit_macho_t2_src_");
     var bin2 = _tmp_path("audit_macho_t2_bin_");
     _write_file(src2, "syscall(1, 1, \"hello\\n\", 6);\nsyscall(60, 42);\n");
-    var rc2 = _self_host_pipe_env(src2, CC_AARCH64_PATH, bin2, env_kv);
+    var rc2 = _self_host_pipe_env(src2, _tool("cycc_aarch64"), bin2, env_kv);
     sys_unlink(src2);
     if (rc2 != 0) {
         sys_unlink(bin2);
@@ -351,7 +351,7 @@ fn _macho_exit_gate(): i64 {
     var src3 = _tmp_path("audit_macho_t3_src_");
     var bin3 = _tmp_path("audit_macho_t3_bin_");
     _write_file(src3, "fn add3(a, b, c) { return a + b + c; }\nsyscall(60, add3(10, 20, 12));\n");
-    var rc3 = _self_host_pipe_env(src3, CC_AARCH64_PATH, bin3, env_kv);
+    var rc3 = _self_host_pipe_env(src3, _tool("cycc_aarch64"), bin3, env_kv);
     sys_unlink(src3);
     if (rc3 != 0) {
         sys_unlink(bin3);
@@ -404,8 +404,8 @@ fn _macho_exit_gate(): i64 {
 
 fn _macho_derive_serialize_gate(): i64 {
     var label = "Mach-O arm64 #derive(Serialize) end-to-end on ecb (pin v5.9.39)";
-    if (file_exists(CC_AARCH64_PATH) != 1) {
-        _skip(label, _cat2(CC_AARCH64_PATH, " not built (cross-compiler required)"));
+    if (file_exists(_tool("cycc_aarch64")) != 1) {
+        _skip(label, "build/cycc_aarch64 not built (cross-compiler required)");
         return 0;
     }
     var target = _ssh_target("SSH_TARGET_MACOS", "ecb");
@@ -419,7 +419,7 @@ fn _macho_derive_serialize_gate(): i64 {
     var src = _tmp_path("audit_macho_derive_src_");
     var bin = _tmp_path("audit_macho_derive_bin_");
     _write_file(src, "include \"lib/syscalls.cyr\"\ninclude \"lib/string.cyr\"\ninclude \"lib/str.cyr\"\ninclude \"lib/alloc.cyr\"\ninclude \"lib/fmt.cyr\"\n\n#derive(Serialize)\nstruct point { x: i64; y: i64; }\n\nfn main() {\n    var p = point { x: 7, y: 35 };\n    var sb = str_builder_new();\n    if (sb == 0) { syscall(60, 1); }\n    point_to_json(&p, sb);\n    var len = load64(sb + 8);\n    syscall(60, len);\n}\n");
-    var rc = _self_host_pipe_env(src, CC_AARCH64_PATH, bin, env_kv);
+    var rc = _self_host_pipe_env(src, _tool("cycc_aarch64"), bin, env_kv);
     sys_unlink(src);
     if (rc != 0) {
         sys_unlink(bin);

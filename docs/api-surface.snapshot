@@ -2452,6 +2452,7 @@ regression::regression_pipe_to_bin/3
 regression::regression_pipe_to_bin_capture/4
 regression::regression_pipe_write_all/4
 regression::regression_print/1
+regression::regression_reap_orphans/0
 regression::regression_run_with_timeout/3
 regression::regression_scp_to/4
 regression::regression_section/1
@@ -2461,7 +2462,6 @@ regression::regression_ssh_skip_check/1
 regression::regression_ssh_target/2
 regression::regression_terminate_children/1
 regression_agnos::regression_codesign_remote/3
-regression_agnos::regression_deadline_kills/0
 regression_agnos::regression_exec_capture/4
 regression_agnos::regression_exec_capture_status/5
 regression_agnos::regression_exec_in_dir3/7
@@ -2471,11 +2471,11 @@ regression_agnos::regression_exec_with_arg_capture/5
 regression_agnos::regression_exec_with_arg_capture_both/5
 regression_agnos::regression_exec_with_arg_capture_both_status/6
 regression_agnos::regression_exec_with_arg_capture_status/6
-regression_agnos::regression_last_deadline_ms/0
 regression_agnos::regression_pipe_read_all/4
 regression_agnos::regression_pipe_to_bin/3
 regression_agnos::regression_pipe_to_bin_capture/4
 regression_agnos::regression_pipe_write_all/4
+regression_agnos::regression_reap_orphans/0
 regression_agnos::regression_run_with_timeout/3
 regression_agnos::regression_scp_to/4
 regression_agnos::regression_ssh_remote_exec_capture/4
@@ -4771,15 +4771,20 @@ syscalls_x86_64_agnos::sys_execwait/2
 syscalls_x86_64_agnos::sys_exit/1
 syscalls_x86_64_agnos::sys_exit_group/1
 syscalls_x86_64_agnos::sys_fbinfo/2
+syscalls_x86_64_agnos::sys_fchmod/2
 syscalls_x86_64_agnos::sys_fchownat/5
 syscalls_x86_64_agnos::sys_fcntl/3
+syscalls_x86_64_agnos::sys_fdatasync/1
 syscalls_x86_64_agnos::sys_flock/2
 syscalls_x86_64_agnos::sys_fork/0
 syscalls_x86_64_agnos::sys_fstat/2
 syscalls_x86_64_agnos::sys_fstatfs/2
+syscalls_x86_64_agnos::sys_fsync/1
 syscalls_x86_64_agnos::sys_ftruncate/2
 syscalls_x86_64_agnos::sys_getdents/3
+syscalls_x86_64_agnos::sys_getegid/0
 syscalls_x86_64_agnos::sys_geteuid/0
+syscalls_x86_64_agnos::sys_getgid/0
 syscalls_x86_64_agnos::sys_getpeername/3
 syscalls_x86_64_agnos::sys_getpid/0
 syscalls_x86_64_agnos::sys_getrandom/3
@@ -4841,6 +4846,8 @@ syscalls_x86_64_agnos::sys_readdir/3
 syscalls_x86_64_agnos::sys_readdir_at/4
 syscalls_x86_64_agnos::sys_readlink/4
 syscalls_x86_64_agnos::sys_reboot/4
+syscalls_x86_64_agnos::sys_recvfrom/6
+syscalls_x86_64_agnos::sys_recvmsg/3
 syscalls_x86_64_agnos::sys_rename/4
 syscalls_x86_64_agnos::sys_rmdir/2
 syscalls_x86_64_agnos::sys_sched_yield/0
@@ -4869,6 +4876,7 @@ syscalls_x86_64_agnos::sys_sock_listen/1
 syscalls_x86_64_agnos::sys_sock_peer/1
 syscalls_x86_64_agnos::sys_sock_recv/3
 syscalls_x86_64_agnos::sys_sock_send/3
+syscalls_x86_64_agnos::sys_socketpair/4
 syscalls_x86_64_agnos::sys_spawn/2
 syscalls_x86_64_agnos::sys_spawn_argv/5
 syscalls_x86_64_agnos::sys_spawn_limits/2

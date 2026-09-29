@@ -183,6 +183,13 @@ fn main(): i64 {
     # that COMPILES on five targets is not a wrapper that RUNS, and the release gate's
     # cross-OS leg only executes what is in this directory.
     test_group("sys_getpid + sys_access — Windows-visible (crossos)");
+    #ifdef CYRIUS_TARGET_AGNOS
+    # 6.6.10: a named SKIP on agnos, whose peer keeps its own ABI — the corpus cross-compile
+    # ratchet (tests/gates/toolchain/tcyr_corpus_cross_compiles.sh). CHANGELOG [6.6.10]
+    var _agnos_skip = "  SKIP (agnos): sys_access is a -1 stub; sys_open/sys_unlink are length-carrying\n";
+    sys_write(1, _agnos_skip, strlen(_agnos_skip));
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
 
     # getpid: assert a plausible pid, both directions. A stub returning 0 or -1 fails this,
     # which is the whole point — the Windows peer had no sys_getpid at all until .25.
@@ -214,6 +221,7 @@ fn main(): i64 {
         assert(sys_access(probe, 0) < 0,
             "sys_access is negative again once the file is unlinked");
     }
+    #endif
 
     var rc = assert_summary();
     return rc;

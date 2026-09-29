@@ -45,7 +45,7 @@ fn _compile_to_obj(src_path, obj_path): i64 {
 }
 
 fn _linker_gate(): i64 {
-    var cyrld = _root_path("build/cyrld");
+    var cyrld = _tool("cyrld");
     if (file_exists(cyrld) != 1) {
         _skip("cyrld cross-module link", "build/cyrld not present");
         return 0;
@@ -156,7 +156,7 @@ fn _linker_gate_cleanup(a, b, c, d): i64 {
 # compiling or starts failing (the cheapest half of VR-02).
 fn _fuzz_harness_gate(): i64 {
     var label = "cyrius fuzz: all fuzz/*.fcyr harnesses compile + pass (v6.2.29 VR-02)";
-    var cyrius_bin = _root_path("build/cyrius");
+    var cyrius_bin = _tool("cyrius");
     if (file_exists(cyrius_bin) != 1) {
         _skip(label, "build/cyrius not built");
         return 0;
@@ -180,7 +180,7 @@ fn _fuzz_harness_gate(): i64 {
 
 fn _smoke_discovery_gate(): i64 {
     var label = "cyrius smoke discovers .smcyr + fail-fast bailout (v5.7.38)";
-    var cyrius_bin = _root_path("build/cyrius");
+    var cyrius_bin = _tool("cyrius");
     if (file_exists(cyrius_bin) != 1) {
         _skip(label, "build/cyrius not built");
         return 0;
@@ -296,7 +296,7 @@ fn _smoke_discovery_gate(): i64 {
 
 fn _distlib_large_module_gate(): i64 {
     var label = "cyrius distlib bundles >64KB modules without truncation (mabda-surfaced; v5.7.36)";
-    var cyrius_bin = _root_path("build/cyrius");
+    var cyrius_bin = _tool("cyrius");
     if (file_exists(cyrius_bin) != 1) {
         _skip(label, "build/cyrius not built");
         return 0;
@@ -422,15 +422,14 @@ fn _lsp_frame(sb, json_body): i64 {
 
 fn _lsp_definition_gate(): i64 {
     var label = "cyrius-lsp definitionProvider + documentSymbol + hover + cross-file indexing (v5.7.39, hover v6.1.24)";
-    var lsp_path = _root_path("build/cyrius-lsp");
+    var lsp_path = _tool("cyrius-lsp");
     if (file_exists(lsp_path) != 1) {
         _p("  ");
         _p(ANSI_RED);
         _p("FAIL");
         _p(ANSI_RESET);
         _p(": ");
-        _p(lsp_path);
-        println(" not built");
+        println("build/cyrius-lsp not built");
         _check(label, 1);
         return 1;
     }
@@ -648,12 +647,12 @@ fn _lsp_check_substr(out_buf, n, needle, fail_msg): i64 {
 }
 
 fn _stdlib_doc_coverage_gate(): i64 {
-    if (CYRDOC_PATH == 0) {
+    if (_tool("cyrdoc") == 0) {
         _skip("every public fn in lib/*.cyr has a leading doc comment (cyrdoc --check; pinned post-v5.7.20)", "cyrdoc not built (cat programs/cyrdoc.cyr | build/cycc > build/cyrdoc)");
         return 0;
     }
-    if (file_exists(CYRDOC_PATH) != 1) {
-        _skip("every public fn in lib/*.cyr has a leading doc comment (cyrdoc --check; pinned post-v5.7.20)", _cat2(_cat2("cyrdoc not built (", CYRDOC_PATH), " missing)"));
+    if (file_exists(_tool("cyrdoc")) != 1) {
+        _skip("every public fn in lib/*.cyr has a leading doc comment (cyrdoc --check; pinned post-v5.7.20)", "cyrdoc not built (build/cyrdoc missing)");
         return 0;
     }
     var lib_dir = str_from(_root_path("lib"));
@@ -679,7 +678,7 @@ fn _stdlib_doc_coverage_gate(): i64 {
                     skipped = skipped + 1;
                 } else {
                     var args = vec_new();
-                    vec_push(args, CYRDOC_PATH);
+                    vec_push(args, _tool("cyrdoc"));
                     vec_push(args, "--check");
                     vec_push(args, str_data(full));
                     var n = exec_capture(args, buf, cap);
@@ -1603,10 +1602,10 @@ fn _install_shim_symlink_gate(): i64 {
 
 fn _api_surface_gate(): i64 {
     var label = "cyrius api-surface diff: snapshot match + add/remove detection (v5.7.33; auto-build at v5.8.44)";
-    var tool = _root_path("build/cyrius_api_surface");
+    var tool = _tool("cyrius_api_surface");
     var snapshot = _root_path("docs/api-surface.snapshot");
     if (file_exists(tool) != 1) {
-        _skip(label, _cat2(tool, " not built"));
+        _skip(label, "build/cyrius_api_surface not built");
         return 0;
     }
     if (file_exists(snapshot) != 1) {

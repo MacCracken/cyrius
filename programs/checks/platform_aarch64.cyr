@@ -56,8 +56,8 @@ fn _aarch64_codebuf_cap_gate(): i64 {
 
 fn _aarch64_syscalls_gate(): i64 {
     var label = "aarch64 syscall stdlib + post-clone trampoline (via ssh pi)";
-    if (file_exists(CC_AARCH64_PATH) != 1) {
-        _skip(label, _cat2(CC_AARCH64_PATH, " not built (cross-compiler required)"));
+    if (file_exists(_tool("cycc_aarch64")) != 1) {
+        _skip(label, "build/cycc_aarch64 not built (cross-compiler required)");
         return 0;
     }
     var target = _ssh_target("SSH_TARGET", "pi");
@@ -68,7 +68,7 @@ fn _aarch64_syscalls_gate(): i64 {
 
     var fix = _root_path("tests/fixtures/aarch64_cluster/syscalls_combined.cyr");
     var bin = _tmp_path("audit_aarch64_syscalls_");
-    var rc = _self_host_pipe(fix, CC_AARCH64_PATH, bin);
+    var rc = _self_host_pipe(fix, _tool("cycc_aarch64"), bin);
     if (rc != 0) {
         sys_unlink(bin);
         _p("  ");
@@ -157,8 +157,8 @@ fn _aarch64_syscalls_gate(): i64 {
 
 fn _aarch64_struct_byval_gate(): i64 {
     var label = "aarch64 struct-by-value round-trip (Phase 2b X8 / LDRB-STRB; via ssh pi)";
-    if (file_exists(CC_AARCH64_PATH) != 1) {
-        _skip(label, _cat2(CC_AARCH64_PATH, " not built (cross-compiler required)"));
+    if (file_exists(_tool("cycc_aarch64")) != 1) {
+        _skip(label, "build/cycc_aarch64 not built (cross-compiler required)");
         return 0;
     }
     var target = _ssh_target("SSH_TARGET", "pi");
@@ -169,7 +169,7 @@ fn _aarch64_struct_byval_gate(): i64 {
 
     var fix = _root_path("tests/fixtures/aarch64_cluster/struct_byval.cyr");
     var bin = _tmp_path("audit_aarch64_byval_");
-    var rc = _self_host_pipe(fix, CC_AARCH64_PATH, bin);
+    var rc = _self_host_pipe(fix, _tool("cycc_aarch64"), bin);
     if (rc != 0) {
         sys_unlink(bin);
         _p("  ");
@@ -242,8 +242,8 @@ fn _aarch64_struct_byval_gate(): i64 {
 
 fn _aarch64_sub_byte_field_load_gate(): i64 {
     var label = "aarch64 sub-byte struct field load via dot syntax (v5.9.27; agnosys 1.1.9; via ssh pi)";
-    if (file_exists(CC_AARCH64_PATH) != 1) {
-        _skip(label, _cat2(CC_AARCH64_PATH, " not built (cross-compiler required)"));
+    if (file_exists(_tool("cycc_aarch64")) != 1) {
+        _skip(label, "build/cycc_aarch64 not built (cross-compiler required)");
         return 0;
     }
     var target = _ssh_target("SSH_TARGET", "pi");
@@ -254,7 +254,7 @@ fn _aarch64_sub_byte_field_load_gate(): i64 {
 
     var fix = _root_path("tests/fixtures/aarch64_cluster/sub_byte_field_load.cyr");
     var bin = _tmp_path("audit_aarch64_subbyte_");
-    var rc = _self_host_pipe(fix, CC_AARCH64_PATH, bin);
+    var rc = _self_host_pipe(fix, _tool("cycc_aarch64"), bin);
     if (rc != 0) {
         sys_unlink(bin);
         _p("  ");
@@ -345,9 +345,9 @@ fn _aarch64_native_selfhost_gate(): i64 {
     # directly — that's an x86 binary that runs the aarch64
     # backend; we need a binary that is itself aarch64 ELF and
     # ALSO emits aarch64 code.)
-    var arch_cc_x86 = _root_path("build/cycc_aarch64");
+    var arch_cc_x86 = _tool("cycc_aarch64");
     if (file_exists(arch_cc_x86) != 1) {
-        _skip(label, _cat2(arch_cc_x86, " not built (cross-compiler required)"));
+        _skip(label, "build/cycc_aarch64 not built (cross-compiler required)");
         return 0;
     }
     var native_src = _root_path("src/main_aarch64_native.cyr");
@@ -447,8 +447,8 @@ fn _aarch64_native_selfhost_gate(): i64 {
 
 fn _aarch64_f64_basic_gate(): i64 {
     var label = "aarch64 f64 add/sub/mul/div/sqrt/neg/floor/ceil/round + int↔f64 bit-exact on Pi (v5.7.30)";
-    if (file_exists(CC_AARCH64_PATH) != 1) {
-        _skip(label, _cat2(CC_AARCH64_PATH, " not built (cross-compiler required)"));
+    if (file_exists(_tool("cycc_aarch64")) != 1) {
+        _skip(label, "build/cycc_aarch64 not built (cross-compiler required)");
         return 0;
     }
     var target = _ssh_target("SSH_TARGET", "pi");
@@ -459,7 +459,7 @@ fn _aarch64_f64_basic_gate(): i64 {
 
     var fix = _root_path("tests/fixtures/aarch64_f64/basic_ops.cyr");
     var bin = _tmp_path("audit_f64_basic_");
-    var rc = _self_host_pipe(fix, CC_AARCH64_PATH, bin);
+    var rc = _self_host_pipe(fix, _tool("cycc_aarch64"), bin);
     if (rc != 0) {
         sys_unlink(bin);
         _p("  ");
@@ -537,8 +537,8 @@ fn _aarch64_f64_basic_gate(): i64 {
 
 fn _aarch64_f64_polyfill_gate(): i64 {
     var label = "aarch64 f64_exp / f64_ln / f64_log2 / f64_exp2 polyfills within 1 ulp + IEEE specials on Pi (6.6.8)";
-    if (file_exists(CC_AARCH64_PATH) != 1) {
-        _skip(label, _cat2(CC_AARCH64_PATH, " not built (cross-compiler required)"));
+    if (file_exists(_tool("cycc_aarch64")) != 1) {
+        _skip(label, "build/cycc_aarch64 not built (cross-compiler required)");
         return 0;
     }
     var target = _ssh_target("SSH_TARGET", "pi");
@@ -549,7 +549,7 @@ fn _aarch64_f64_polyfill_gate(): i64 {
 
     var fix = _root_path("tests/fixtures/aarch64_f64/polyfill_ops.cyr");
     var bin = _tmp_path("audit_f64_poly_");
-    var rc = _self_host_pipe(fix, CC_AARCH64_PATH, bin);
+    var rc = _self_host_pipe(fix, _tool("cycc_aarch64"), bin);
     if (rc != 0) {
         sys_unlink(bin);
         _p("  ");

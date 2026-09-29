@@ -45,6 +45,44 @@
 # and answers -6 (-SPAWN_E_ARGS), as agnos 1.57.6+ does. Every other #43 is followed by a `blob`
 # line — its argv blob read out of the child, each NUL shown as `|` — and, when a3 is non-zero,
 # an `env` line for the env blob.
+# The rg* and as* modes (6.6.10) drive lib/regression_agnos.cyr and lib/async_agnos.cyr. They are
+# STATEFUL — answers depend on what the child did earlier in the run. In all of them the k-th
+# pipe#25 hands out DISTINCT fds (3 + 2k read, 4 + 2k write — a verb opens up to three pipes, in
+# the order stdin, stdout, stderr, so those are fds 3/4, 5/6 and 7/8), every #43 prints its `blob`
+# / `env` lines as in proc*, and #43 answers pid 2. Unless the mode says otherwise: exec_redirect#62,
+# kill#16 and sleep_ms#41 answer 0; write#1 on a fd >= 3 accepts the whole count; open#7 answers
+# 20, 21, … (files) and read#5 on a file answers min(len, 700) three times, then 0 (EOF); read#5 on
+# a pipe read end (an odd fd 3..15) answers min(len, 5) bytes ONCE — the bytes are written into the
+# child, each one 64 + fd ('E' for fd 5, 'G' for fd 7) — then 0 (EOF); waitpid#4 on pid 2 answers
+# -2 (alive) once, then status 7; and #4 WAIT-ANY (pid -1) answers -1 (no children).
+#   rg      — nothing else.
+#   rgsig   — #4 on pid 2 answers 265 (0x100 | SIGKILL) after its first -2.
+#   rghang  — a child that never ends by itself: pipe reads answer -2 for ever; #4 answers -2 until
+#             a #16 has been seen, then 265; uptime_us#95 advances 0.25 s per read, so a deadline
+#             fires (a 1 s bound is 5 reads, the 120 s default 481).
+#   rgold   — rghang on a pre-1.57.7 kernel: a #16 with the tree bit (a2 & 0x100) answers -1.
+#   rgbig   — a child that never stops talking: pipe reads fill the whole request, for ever; #4 as
+#             rghang; the clock advances as rghang.
+#   rgin    — a child that will not read more stdin until its stdout is drained: a write on the
+#             stdin pipe (fd 4) is accepted (min(len, 512)) only when fd 5 has been read since the
+#             last accepted write (logged `in <bytes>`), and answers 0 (full) otherwise; fd 5 answers 5 bytes once per
+#             accepted write and -2 otherwise, and 0 (EOF) once fd 4 has been closed and nothing
+#             is owed; fd 7 answers -2 until fd 4 is closed, then 0.
+#   rgwfail — write#1 on fd 20 (the first file opened: pipe_to_bin_capture's output file) answers -1.
+#   rgwshort — write#1 on fd 20 accepts min(count, 2) (a short write), logged `fw <count>`.
+#   rgtree  — for regression_terminate_children: getpid#2 answers 1; proclist#99 writes three
+#             records — {pid 2, RUNNING, ppid 1}, {pid 3, ZOMBIE, ppid 1}, {pid 4, RUNNING, ppid 2}
+#             (a grandchild) — and answers 3; #4 WAIT-ANY answers 0 (a reaped zombie) on its first
+#             call and -2 after it until a #16 has been seen, then 265 once and -1 after it.
+#   as      — fork#96 answers 5 (the PARENT side of async_timeout): read#5 on the result pipe
+#             (fd 3) answers 8 bytes holding the u64 4242 once, then 0; #4 on pid 5 answers 0.
+#   aschild — fork#96 answers 0 (the CHILD side): the body runs, and every write#1 on a fd >= 3 is
+#             logged as `wr <fd> <count> <the first u64 written>` and accepted in full.
+#   asslow  — fork#96 answers 5; pipe reads answer -2 for ever; #4 (any pid) answers -2 until a #16
+#             has been seen, then 265; the clock advances as rghang.
+#   asshort — fork#96 answers 5; the result pipe answers 3 bytes, then 0 (EOF): a body that died
+#             before it had written its whole result.
+# PTRACE_SYSEMU does not execute fork, so each run proves ONE side of it; only agnos-qemu runs both.
 # In every mode sock_recv#49 answers 0 (WOULD_BLOCK) unless the mode says otherwise,
 # sock_connect#47 / sock_listen#56 answer id 0, sock_peer#106 answers 127.0.0.1:8080 packed
 # ((0x7F000001 << 16) | 8080) and net_config#61 field 0 (net_ip) answers 10.0.2.15.
@@ -214,6 +252,216 @@ fn _st_blob(pid, tag, addr, len): i64 {
     return 0;
 }
 
+# ── rg* / as* (6.6.10): stateful answers ──
+var _rg_rdn: i64[64];        # reads answered so far, per fd (0..63)
+var _rg_pipes = 0;           # pipe#25 calls so far
+var _rg_opens = 0;           # open#7 calls so far
+var _rg_killed = 0;          # 1 once a kill#16 has been seen
+var _rg_owed = 0;            # rgin: 1 when fd 5 owes the reader its 5 bytes
+var _rg_in_closed = 0;       # rgin: 1 once the stdin write end (fd 4) is closed
+var _rg_anyn = 0;            # #4 WAIT-ANY calls so far
+
+# 1 iff `mode` starts with the two bytes `a` `b`.
+fn _st_pre2(mode, a, b): i64 {
+    if (load8(mode) != a) { return 0; }
+    if (load8(mode + 1) != b) { return 0; }
+    return 1;
+}
+
+# 1 iff `mode` is an rg* or as* mode.
+fn _st_is_rg(mode): i64 {
+    if (_st_pre2(mode, 114, 103) == 1) { return 1; }   # "rg"
+    if (_st_pre2(mode, 97, 115) == 1) { return 1; }    # "as"
+    return 0;
+}
+
+# 1 iff the rg/as mode advances the clock (the deadline must fire).
+fn _st_rg_clock(mode): i64 {
+    if (_st_mode_is(mode, "rghang") == 1) { return 1; }
+    if (_st_mode_is(mode, "rgold") == 1) { return 1; }
+    if (_st_mode_is(mode, "rgbig") == 1) { return 1; }
+    if (_st_mode_is(mode, "asslow") == 1) { return 1; }
+    return 0;
+}
+
+# 1 iff the rg/as mode's #4 answers -2 until a #16 (a child that never ends by itself).
+fn _st_rg_hangs(mode): i64 {
+    if (_st_rg_clock(mode) == 1) { return 1; }
+    return 0;
+}
+
+#ifdef CYRIUS_ARCH_X86
+# Write the u64 `v` into the child at `addr` (PTRACE_POKEDATA).
+fn _st_poke(pid, addr, v): i64 {
+    syscall(101, 5, pid, addr, v);
+    return 0;
+}
+
+# Write `n` (<= 16) copies of byte `c` into the child at `addr`, a word at a time — reading the
+# word first, so the bytes past `n` keep their value.
+fn _st_poke_bytes(pid, addr, c, n): i64 {
+    var i = 0;
+    while (i < n) {
+        var w[8];
+        store64(&w, 0);
+        syscall(101, 2, pid, addr + i, &w);        # PTRACE_PEEKDATA
+        var k = 0;
+        while (k < 8 && i + k < n) { store8(&w + k, c); k = k + 1; }
+        _st_poke(pid, addr + i, load64(&w));
+        i = i + 8;
+    }
+    return 0;
+}
+
+# The answer to a read#5 on a pipe read end `fd` (odd, 3..15), with any bytes poked into the
+# child at `buf`. `k` = the reads of this fd answered before.
+fn _st_rg_pipe_read(pid, mode, fd, buf, len, k): i64 {
+    if (_st_mode_is(mode, "rghang") == 1 || _st_mode_is(mode, "rgold") == 1) { return 0 - 2; }
+    if (_st_mode_is(mode, "asslow") == 1) { return 0 - 2; }
+    if (_st_mode_is(mode, "rgbig") == 1) { return len; }
+    if (_st_mode_is(mode, "rgin") == 1) {
+        if (fd == 5) {
+            if (_rg_owed == 1) { _rg_owed = 0; _st_poke_bytes(pid, buf, 64 + fd, 5); return 5; }
+            if (_rg_in_closed == 1) { return 0; }
+            return 0 - 2;
+        }
+        if (_rg_in_closed == 1) { return 0; }
+        return 0 - 2;
+    }
+    if (_st_pre2(mode, 97, 115) == 1) {              # as*: the async_timeout result pipe
+        if (k > 0) { return 0; }
+        if (_st_mode_is(mode, "asshort") == 1) { _st_poke_bytes(pid, buf, 9, 3); return 3; }
+        _st_poke(pid, buf, 4242);
+        return 8;
+    }
+    if (k > 0) { return 0; }
+    var n = len;
+    if (n > 5) { n = 5; }
+    _st_poke_bytes(pid, buf, 64 + fd, n);
+    return n;
+}
+
+# The answer to waitpid#4 with `a1`.
+fn _st_rg_wait(mode, a1): i64 {
+    if (_st_mode_is(mode, "rgtree") == 1) {
+        if (a1 != 0 - 1) { return 0 - 1; }
+        _rg_anyn = _rg_anyn + 1;
+        if (_rg_killed == 0) {
+            if (_rg_anyn == 1) { return 0; }
+            return 0 - 2;
+        }
+        if (_rg_killed == 1) { _rg_killed = 2; return 265; }
+        return 0 - 1;
+    }
+    if (a1 == 0 - 1) { return 0 - 1; }
+    if (_st_rg_hangs(mode) == 1) {
+        if (_rg_killed == 0) { return 0 - 2; }
+        return 265;
+    }
+    if (_st_mode_is(mode, "as") == 1 || _st_mode_is(mode, "asshort") == 1) {
+        if (a1 == 5) { return 0; }
+    }
+    if (a1 != 2) { return 0 - 1; }
+    _rg_anyn = _rg_anyn + 1;
+    if (_rg_anyn == 1) { return 0 - 2; }
+    if (_st_mode_is(mode, "rgsig") == 1) { return 265; }
+    return 7;
+}
+
+# The whole rg*/as* answer table for the stopped call (`regs` = its user_regs_struct); pokes the
+# child where the call writes into it. `k` = the calls of this number answered before.
+fn _st_rg_answer(pid, mode, nr, k, regs): i64 {
+    var a1 = load64(regs + 112);
+    var a2 = load64(regs + 104);
+    var a3 = load64(regs + 96);
+    if (nr == 95) {
+        if (_st_rg_clock(mode) == 1) { return 250000 * (k + 1); }
+        return 0 - 1;
+    }
+    if (nr == 46) { return 0; }
+    if (nr == 2) {
+        if (_st_mode_is(mode, "rgtree") == 1) { return 1; }
+        return 0;
+    }
+    if (nr == 25) {
+        var rfd = 3 + 2 * _rg_pipes;
+        _rg_pipes = _rg_pipes + 1;
+        _st_poke(pid, a1, rfd);
+        _st_poke(pid, a1 + 8, rfd + 1);
+        return 0;
+    }
+    if (nr == 43) {
+        if (a1 == 0) { return 0 - 6; }
+        return 2;
+    }
+    if (nr == 96) {
+        if (_st_mode_is(mode, "aschild") == 1) { return 0; }
+        return 5;
+    }
+    if (nr == 16) {
+        _rg_killed = 1;
+        if (_st_mode_is(mode, "rgold") == 1) { if ((a2 & 0x100) != 0) { return 0 - 1; } }
+        return 0;
+    }
+    if (nr == 6) {
+        if (a1 == 4) { _rg_in_closed = 1; }
+        return 0;
+    }
+    if (nr == 7) {
+        _rg_opens = _rg_opens + 1;
+        return 19 + _rg_opens;
+    }
+    if (nr == 1) {
+        if (a1 < 3) { return a3; }
+        if (_st_mode_is(mode, "aschild") == 1) {
+            var w[8];
+            store64(&w, 0);
+            syscall(101, 2, pid, a2, &w);               # the first u64 written
+            _st_line("wr", a1, a3, load64(&w), 0, 0);
+            return a3;
+        }
+        if (a1 == 20 && _st_mode_is(mode, "rgwfail") == 1) { return 0 - 1; }
+        if (a1 == 20 && _st_mode_is(mode, "rgwshort") == 1) {
+            var fw = a3;
+            if (fw > 2) { fw = 2; }
+            _st_line("fw", fw, 0, 0, 0, 0);
+            return fw;
+        }
+        if (_st_mode_is(mode, "rgin") == 1 && a1 == 4) {
+            if (_rg_owed == 1) { return 0; }
+            _rg_owed = 1;
+            var acc = a3;
+            if (acc > 512) { acc = 512; }
+            _st_line("in", acc, 0, 0, 0, 0);       # the bytes this write was ACCEPTED with
+            return acc;
+        }
+        return a3;
+    }
+    if (nr == 5) {
+        var kf = 0;
+        if (a1 >= 0 && a1 < 64) { kf = load64(&_rg_rdn + a1 * 8); store64(&_rg_rdn + a1 * 8, kf + 1); }
+        if (a1 >= 20) {
+            if (kf < 3) {
+                if (a3 < 700) { return a3; }
+                return 700;
+            }
+            return 0;
+        }
+        if (a1 >= 3 && a1 <= 15 && (a1 & 1) == 1) { return _st_rg_pipe_read(pid, mode, a1, a2, a3, kf); }
+        return 0;
+    }
+    if (nr == 4) { return _st_rg_wait(mode, a1); }
+    if (nr == 99) {
+        if (_st_mode_is(mode, "rgtree") == 0) { return 0 - 1; }
+        _st_poke(pid, a1, 2);        _st_poke(pid, a1 + 8, 2);   _st_poke(pid, a1 + 16, 1);
+        _st_poke(pid, a1 + 64, 3);   _st_poke(pid, a1 + 72, 7); _st_poke(pid, a1 + 80, 1);
+        _st_poke(pid, a1 + 128, 4);  _st_poke(pid, a1 + 136, 2); _st_poke(pid, a1 + 144, 2);
+        return 3;
+    }
+    return 0;
+}
+#endif
+
 fn main(): i64 {
     args_init();
     if (argc() < 3) {
@@ -263,6 +511,10 @@ fn main(): i64 {
             syscall(61, pid, &st, 0, 0);
             return 0;
         }
+        if (_st_is_rg(mode) == 1 && nr == 43 && load64(&regs + 112) != 0) {
+            _st_blob(pid, "blob", load64(&regs + 112), load64(&regs + 104) & 0xFFFF);
+            if (load64(&regs + 96) != 0) { _st_blob(pid, "env", load64(&regs + 96), load64(&regs + 56)); }
+        }
         if (_st_is_proc(mode) == 1) {
             var refused = 1;                  # a1 = 0: the peer's refusal #43 — no blob
             if (load64(&regs + 112) != 0) { refused = 0; }
@@ -279,7 +531,10 @@ fn main(): i64 {
         }
         var k = 0;
         if (nr >= 0) { if (nr < 128) { k = load64(&counts + nr * 8); store64(&counts + nr * 8, k + 1); } }
-        store64(&regs + 80, _st_answer(mode, nr, k, load64(&regs + 112), load64(&regs + 96)));
+        var ans = 0;
+        if (_st_is_rg(mode) == 1) { ans = _st_rg_answer(pid, mode, nr, k, &regs); }
+        else { ans = _st_answer(mode, nr, k, load64(&regs + 112), load64(&regs + 96)); }
+        store64(&regs + 80, ans);
         syscall(101, 13, pid, 0, &regs);    # PTRACE_SETREGS
         n = n + 1;
     }

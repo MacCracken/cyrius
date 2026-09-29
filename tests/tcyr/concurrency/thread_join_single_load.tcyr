@@ -36,8 +36,15 @@ fn _tj_worker(arg): i64 {
 fn main(): i64 {
     alloc_init();
 
+    #ifdef CYRIUS_TARGET_AGNOS
+    # 6.6.10: agnos has no futex (its threads are the serial thread_agnos peer), so the two
+    # deterministic cases cannot be expressed there; the join backstop below still runs.
+    var _sk = "  SKIP (agnos): the raw FUTEX_WAIT cases — agnos has no futex syscall\n";
+    sys_write(1, _sk, strlen(_sk));
+    #endif
     #ifndef CYRIUS_TARGET_WIN
     #ifndef CYRIUS_TARGET_MACOS
+    #ifndef CYRIUS_TARGET_AGNOS
     # A word standing in for the tid slot, already cleared to 0 — i.e. the worker has
     # exited and its one-shot wake is already spent. This is the state the joiner finds
     # itself in after losing the race; the only question is whether it parks.
@@ -61,6 +68,7 @@ fn main(): i64 {
     # argument, which is exactly why it was a permanent deadlock.
     var rb = syscall(SYS_FUTEX, &word, FUTEX_WAIT, 0, &ts, 0, 0);
     assert_eq(rb, 0 - 110, "FUTEX_WAIT with expected-val 0 PARKS (this was the deadlock)");
+    #endif
     #endif
     #endif
 

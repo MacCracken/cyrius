@@ -565,11 +565,18 @@ if [ "$blocking" != "0" ]; then printf '%s\n' "$blocking_lines" | sed 's/^/     
 # fork+pipe idiom. lib/process_win.cyr's `run_capture` has the same unbounded drain over a
 # Windows HANDLE with no fork in sight, and needs a PE mechanism (there is no poll(2)
 # there) — this row does not see it and does not claim to.
+# 6.6.10: a fork can go through a WRAPPER — lib/regression.cyr's `_regression_fork()` allocates
+# the deadline's walk buffers and then `return sys_fork();`. The wrappers are DERIVED (every fn
+# whose body is a `return sys_fork();`), and a call to one is a fork site like `sys_fork()`
+# itself; matching the literal alone made its 11 call sites vanish from both counts below.
+FORKW=$(awk '/^fn [A-Za-z_][A-Za-z0-9_]*\(/ { n = $2; sub(/\(.*/, "", n) }
+             /^[ \t]*return sys_fork\(\);/ { print n }' $FILES | LC_ALL=C sort -u | tr '\n' '|')
+FORKRE="(${FORKW}sys_fork)[(][)]"   # bracketed: the same regex for grep -E and awk -v
 pump_lines=$(for f in $FILES; do
-        awk -v F="$f" '
+        awk -v F="$f" -v FRE="$FORKRE" '
             /^fn / { infn = 1; forked = 0; np = 0 }
             { line = $0; sub(/^[ \t]*#.*$/, "", line) }
-            line ~ /sys_fork\(\)/ { forked = 1 }
+            line ~ FRE { forked = 1 }
             line ~ /sys_(read|write)\(/ {
                 if (prev ~ /while \(/) { pend[np] = F ":" FNR ": " line; np = np + 1 }
             }
@@ -583,7 +590,9 @@ pump_lines=$(for f in $FILES; do
 pumps=$(printf '%s\n' "$pump_lines" | grep -c . || true)
 check "unbounded pipe pumps left in the driver (loops inside forking fns)" 0 "$pumps"
 if [ "$pumps" != "0" ]; then printf '%s\n' "$pump_lines" | sed 's/^/        /'; fi
-nfork=$(grep -h 'sys_fork()' $FILES | grep -c 'var ' || true)
+nfork=$(grep -hE "$FORKRE" $FILES | grep -c 'var ' || true)
+check "premise: the fork wrapper(s) were derived (_regression_fork)" "yes" \
+    "$(case "|$FORKW" in *"|_regression_fork|"*) echo yes ;; *) echo no ;; esac)"
 nguard=$(grep -hE '_(regression|proc)_child_guard\(' $FILES | grep -vc '^fn ' || true)
 # ONE exemption, by MARKER rather than by file, so it is a line someone has to write and
 # justify: `spawn()` in lib/process.cyr, whose entire contract is that the child OUTLIVES the

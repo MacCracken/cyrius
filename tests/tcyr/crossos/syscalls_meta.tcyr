@@ -15,6 +15,13 @@ include "lib/io.cyr"
 
 fn main(): i64 {
     alloc_init();
+    #ifdef CYRIUS_TARGET_AGNOS
+    # 6.6.10: a named SKIP on agnos, whose peer keeps its own ABI — the corpus cross-compile
+    # ratchet (tests/gates/toolchain/tcyr_corpus_cross_compiles.sh). CHANGELOG [6.6.10]
+    var _agnos_skip = "  SKIP (agnos): the POSIX-shaped sys_mkdir/sys_open/sys_unlink; agnos's are length-carrying\n";
+    sys_write(1, _agnos_skip, strlen(_agnos_skip));
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
     test_group("sys_mkdir creates a directory (verified via is_dir)");
     # v6.6.6: PID-suffixed (test_scratch, lib/assert.cyr). The name was fixed and the check
     # driver's cwd is the REPO ROOT, so two check.sh runs in one checkout raced over the same
@@ -57,6 +64,7 @@ fn main(): i64 {
     var u = sys_unlink(mfile);
     assert_eq(u < 0, 0, "sys_unlink removed the file");
     assert_eq(is_dir(str_from(mfile)), 0, "the unlinked file is gone");
+    #endif
 
     var rc = assert_summary();
     return rc;

@@ -31,6 +31,15 @@ var key = hex_decode("308187020100301306072a8648ce3d020106082a8648ce3d030107046d
 # (routes to tls_native_set_verify under the native backend).
 fn vhook(hctx, handle): i64 { tls_set_verify(handle, 0, 0); return 0; }
 
+#ifdef CYRIUS_TARGET_AGNOS
+# 6.6.10: a named SKIP on agnos — the corpus cross-compile ratchet
+# (tests/gates/toolchain/tcyr_corpus_cross_compiles.sh). This end-to-end run is a socketpair + fork +
+# 3-arg waitpid; agnos has no socketpair (-ENOSYS) and its waitpid is the 1-arg #4 poll (own ABI, kept).
+# CHANGELOG [6.6.10]
+var _agnos_skip = "  SKIP (agnos): the socketpair + fork end-to-end run (no socketpair; 1-arg waitpid)\n";
+sys_write(1, _agnos_skip, strlen(_agnos_skip));
+#endif
+#ifndef CYRIUS_TARGET_AGNOS
 var fds[8];
 sys_socketpair(1, 1, 0, &fds);
 var fdp = load64(&fds);
@@ -64,4 +73,5 @@ var st[4];
 sys_waitpid(pid, &st, 0);
 assert_eq((load64(&st) >> 8) & 0xFF, 0, "wrapper client read+verify+close ok (child exit 0)");
 
+#endif
 var r = assert_summary();

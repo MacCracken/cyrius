@@ -20,6 +20,16 @@ include "lib/assert.cyr"
 
 test_group("v6.0.81 live real-peer HTTPS smoke (Cloudflare 1.1.1.1:443)");
 
+#ifdef CYRIUS_TARGET_AGNOS
+# 6.6.10: a named SKIP on agnos — the corpus cross-compile ratchet
+# (tests/gates/toolchain/tcyr_corpus_cross_compiles.sh).
+# agnos has no BSD socket()/connect(fd, sockaddr)/setsockopt: its sockets go through net.cyr's
+# tcp_socket + sock_connect adapter (#47), which the portable tests use.
+# CHANGELOG [6.6.10]
+var _agnos_skip = "  SKIP (agnos): BSD socket()/connect()/setsockopt() are not agnos surface (net.cyr tcp_socket is)\n";
+sys_write(1, _agnos_skip, strlen(_agnos_skip));
+#endif
+#ifndef CYRIUS_TARGET_AGNOS
 var fd = sys_socket(2, 1, 0);
 var sa[16];
 var i = 0;
@@ -66,4 +76,5 @@ if (sys_connect(fd, &sa, 16) != 0) {
     }
 }
 
+#endif
 var r = assert_summary();

@@ -9,7 +9,12 @@
 # (sit, bote, sandhi), so nothing broke — but a server ported from Linux that sets it once on
 # the listener waited 30 s per stalled client on agnos. The adapter now remembers which listen
 # slot each accepted conn_id came from (_agnos_accept_from, written by sys_sock_accept) and
-# _agnos_sock_bind copies that slot's timeouts; sys_sock_connect / sys_sock_close drop the mark.
+# _agnos_sock_bind copies that slot's timeouts; sys_sock_connect drops the mark, and that clear
+# is the load-bearing one this gate pins (the recycled-conn-id row below). sys_sock_close drops
+# it too, but only defensively: every path to a bind goes through an accept or a connect first,
+# so removing the close clear leaves this gate GREEN (measured by mutation, 6.6.10) and no
+# behaviour gate can see it. (This line read "sys_sock_connect / sys_sock_close drop the mark"
+# as though both were pinned. CHANGELOG [6.6.10])
 #
 # Runs against tests/fixtures/agnos_sctrace.cyr in its `us` / `send0` modes: #56 and #57 answer
 # id 0, #47 answers conn 0 (the SAME conn id — the recycling case), uptime_us#95 advances

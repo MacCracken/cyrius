@@ -129,6 +129,13 @@ fn main(): i64 {
     assert_eq(load64(st) != 0, 1, "…and does NOT report exit 0");
     assert_eq(_aw_run_verdict(str_from("x.cyr"), st, _aw_parse_lint_warnings(buf, mb), 0) != 0, 1,
       "…so the walker's verdict is an error");
+    #ifdef CYRIUS_TARGET_AGNOS
+    # 6.6.10: a named SKIP on agnos, whose peer keeps its own ABI — the corpus cross-compile
+    # ratchet (tests/gates/toolchain/tcyr_corpus_cross_compiles.sh). CHANGELOG [6.6.10]
+    var _agnos_skip = "  SKIP (agnos): proc_set_timeout_ms is POSIX/PE only (agnos's process peer has no deadline)\n";
+    sys_write(1, _agnos_skip, strlen(_agnos_skip));
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
 
     # ⛔ 6.6.8 — the deadline on EVERY target that has one (Windows gained it: a watchdog
     # thread for the capturing verbs, a bounded WaitForSingleObject for the rest). Before,
@@ -190,6 +197,7 @@ fn main(): i64 {
     assert_eq(usig, 0, "…and no invented signal death");
     assert_eq(tcode == 0 - 1 || tcode == 73, 1, "SIGCHLD ignored, timed: -1, never a guessed -2 deadline");
     assert_eq(tsig, 0, "…and no invented signal death");
+    #endif
     #endif
 
     var r = assert_summary();

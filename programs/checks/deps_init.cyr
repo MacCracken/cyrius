@@ -9,7 +9,7 @@
 fn _deps_downstream_src_main_gate(): i64 {
     var label = "cyrius deps resolves stdlib pins for downstream repos with src/main.cyr (v6.0.1; mkdir-before-find regression)";
 
-    var cyrius_bin = _root_path("build/cyrius");
+    var cyrius_bin = _tool("cyrius");
     if (file_exists(cyrius_bin) != 1) {
         _skip(label, "build/cyrius not built");
         return 0;
@@ -102,7 +102,7 @@ fn _lk_path(base, suffix): i64 {
 fn _deps_requires_gate(): i64 {
     var label = "cyrius deps resolves a named dep's `requires` stdlib leaves (transitive auto-resolve + dedup + fail-loud on missing) — v6.2.46 dependency-model lever 1 Phase A";
 
-    var cyrius_bin = _root_path("build/cyrius");
+    var cyrius_bin = _tool("cyrius");
     if (file_exists(cyrius_bin) != 1) {
         _skip(label, "build/cyrius not built");
         return 0;
@@ -171,7 +171,7 @@ fn _deps_requires_gate(): i64 {
 fn _deps_sidecar_gate(): i64 {
     var label = "cyrius distlib emits dist/<pkg>.deps + cyrius deps auto-resolves its leaves with no hand-authored `requires` — v6.2.47 dependency-model lever 1 Phase A (producer sidecar)";
 
-    var cyrius_bin = _root_path("build/cyrius");
+    var cyrius_bin = _tool("cyrius");
     if (file_exists(cyrius_bin) != 1) {
         _skip(label, "build/cyrius not built");
         return 0;
@@ -276,7 +276,7 @@ fn _deps_sidecar_gate(): i64 {
 fn _deps_std_group_gate(): i64 {
     var label = "cyrius deps: built-in `std` default group expands to the universal core; a manifest's own `std` overrides it — v6.3.32 dependency-model lever 1 Phase D";
 
-    var cyrius_bin = _root_path("build/cyrius");
+    var cyrius_bin = _tool("cyrius");
     if (file_exists(cyrius_bin) != 1) {
         _skip(label, "build/cyrius not built");
         return 0;
@@ -346,7 +346,7 @@ fn _deps_std_group_gate(): i64 {
 fn _deps_groups_gate(): i64 {
     var label = "cyrius deps expands [groups] in [deps].stdlib (nested + cycle-guarded) → members resolve — v6.2.49 dependency-model lever 1 Phase B";
 
-    var cyrius_bin = _root_path("build/cyrius");
+    var cyrius_bin = _tool("cyrius");
     if (file_exists(cyrius_bin) != 1) {
         _skip(label, "build/cyrius not built");
         return 0;
@@ -399,7 +399,7 @@ fn _deps_groups_gate(): i64 {
 fn _deps_modular_gate(): i64 {
     var label = "cyrius distlib --modular + consumer `modular=[...]` pulls EXACT sub-modules + transitive deps, not the whole fold — v6.2.50 dependency-model lever 1 Phase C";
 
-    var cyrius_bin = _root_path("build/cyrius");
+    var cyrius_bin = _tool("cyrius");
     if (file_exists(cyrius_bin) != 1) {
         _skip(label, "build/cyrius not built");
         return 0;
@@ -486,7 +486,7 @@ fn _deps_modular_gate(): i64 {
 fn _distlib_failloud_gate(): i64 {
     var label = "cyrius distlib --modular fails loud (non-zero) on duplicate basename + missing module — v6.2.52 closeout-deferred";
 
-    var cyrius_bin = _root_path("build/cyrius");
+    var cyrius_bin = _tool("cyrius");
     if (file_exists(cyrius_bin) != 1) {
         _skip(label, "build/cyrius not built");
         return 0;
@@ -560,7 +560,7 @@ fn _distlib_failloud_gate(): i64 {
 fn _deps_features_gate(): i64 {
     var label = "cyrius deps gates `optional = true` deps behind active [features] + `target = \"...\"` deps behind the build target (axes independent) — v6.3.1 dependency-model lever 2";
 
-    var cyrius_bin = _root_path("build/cyrius");
+    var cyrius_bin = _tool("cyrius");
     if (file_exists(cyrius_bin) != 1) {
         _skip(label, "build/cyrius not built");
         return 0;
@@ -639,7 +639,7 @@ fn _deps_features_gate(): i64 {
 fn _deps_modular_traversal_gate(): i64 {
     var label = "cyrius deps REJECTS a path-traversal sub-module name from a malicious dist/<pkg>/index.cyml — v6.2.51 closeout CVE-32 regression";
 
-    var cyrius_bin = _root_path("build/cyrius");
+    var cyrius_bin = _tool("cyrius");
     if (file_exists(cyrius_bin) != 1) {
         _skip(label, "build/cyrius not built");
         return 0;
@@ -692,7 +692,7 @@ fn _deps_modular_traversal_gate(): i64 {
 fn _deps_lock_gate(): i64 {
     var label = "cyrius deps --lock writes a non-empty recursive lock + --verify round-trips (v6.0.2; empty-lock-since-v5.11.8 regression)";
 
-    var cyrius_bin = _root_path("build/cyrius");
+    var cyrius_bin = _tool("cyrius");
     if (file_exists(cyrius_bin) != 1) {
         _skip(label, "build/cyrius not built");
         return 0;
@@ -778,12 +778,12 @@ fn _scaffold_init(scratch_dir, scaffolder, flag, name): i64 {
 
 fn _init_lib_bin_gate(): i64 {
     var label = "cyrius init --lib emits programs/smoke.cyr + [lib]; --bin/bare keep binary shape (v5.7.15)";
-    var init_script = _root_path("build/cyrius-init");
+    var init_script = _tool("cyrius-init");
     if (file_exists(init_script) != 1) {
-        _skip(label, _cat2(init_script, " missing"));
+        _skip(label, "build/cyrius-init missing");
         return 0;
     }
-    var cyrius_bin = _root_path("build/cyrius");
+    var cyrius_bin = _tool("cyrius");
     if (file_exists(cyrius_bin) != 1) {
         _skip(label, "build/cyrius not built");
         return 0;
@@ -966,7 +966,7 @@ fn _init_lib_bin_gate(): i64 {
 fn _init_doctree_gate(): i64 {
     var label = "cyrius init/port emit adr/architecture/guides/examples/development + CLAUDE.md (v5.7.16)";
     # v6.2.40: native scaffolder binary; port mode via --__mode=port.
-    var init_script = _root_path("build/cyrius-init");
+    var init_script = _tool("cyrius-init");
     if (file_exists(init_script) != 1) {
         _skip(label, "build/cyrius-init missing");
         return 0;
@@ -1097,7 +1097,7 @@ fn _init_doctree_gate(): i64 {
 
 fn _fuzz_deps_prepend_gate(): i64 {
     var label = "cyrius fuzz manifest-deps auto-prepend parity with test/bench (v5.7.21)";
-    var cyrius_bin = _root_path("build/cyrius");
+    var cyrius_bin = _tool("cyrius");
     if (file_exists(cyrius_bin) != 1) {
         _skip(label, "build/cyrius not built");
         return 0;
@@ -1183,7 +1183,7 @@ fn _fuzz_deps_prepend_gate(): i64 {
 
 fn _deps_transitive_gate(): i64 {
     var label = "cyrius deps walks [deps.X] transitively (3-level + diamond + cycle + rel-path; v5.7.14)";
-    var cyrius_bin = _root_path("build/cyrius");
+    var cyrius_bin = _tool("cyrius");
     if (file_exists(cyrius_bin) != 1) {
         _skip(label, "build/cyrius not built");
         return 0;

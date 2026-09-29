@@ -345,6 +345,223 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   frame part exactly, bounds the length (`WS_MAX_PAYLOAD`) and rejects the top 32 bits — its 2.6.9
   repair. (bite 14, premise-checked.) The fold table in `docs/ecosystem.md` names the three new fold
   commits (`fold_table_matches_vendored.sh` green).
+- **The test harness never stores through a refused allocation.** (bite 12)
+  **Root cause:** `test_scratch` (lib/assert.cyr, 6.6.6) did `var buf = alloc(bl + 32);
+  memcpy(buf, base, bl);` with no check — with `ALLOC_MAX = 0` that is rc 139 on x86 and
+  qemu-aarch64, a page fault writing `0x0` under wine, and on cx **no crash at all**: cxvm wrote
+  guest offset 0 and `test_scratch` returned 0, a fixture "name" at address 0. The same shape was
+  in `bench_new` (lib/bench.cyr) and in lib/regression.cyr: `_regression_tree_init` allocated the
+  deadline's three tree-walk buffers and tested only the pid list for idempotence (none for
+  failure), `_regression_termed`, the envp merge in `regression_exec_in_dir3_env`, and
+  `regression_pipe_to_bin_capture`'s source buffer. The refused-allocation sweeps of 6.6.7/6.6.8
+  had covered lib/io.cyr only. **Fix:** `test_scratch` PANICS by name (`panic: test_scratch: alloc
+  refused the fixture name`, exit 1 — a test has no name to fall back to); `bench_new` returns 0;
+  the tree init retries and checks all three buffers, and every forking regression verb gets them
+  through `_regression_fork`, which allocates them BEFORE the child exists — a refusal is that
+  verb's ordinary fork failure (-1, cleaned up by its existing `pid < 0` arm) instead of a fault
+  inside the deadline with a child left running; the envp merge, `_regression_termed` and the
+  source buffer return -1. **Gate:** `tests/gates/memory/harness_alloc_refused.sh` runs the
+  test_scratch panic and its served twin on x86, qemu-aarch64, wine and cxvm (each compiler built
+  fresh from `src/`), plus the regression rows on x86 Linux — including one fresh-process case per
+  walk buffer (`ALLOC_MAX` is a per-call size cap, so 40000 refuses only the 64 KB children
+  buffer; the pid list and the dirent buffer are refused alone by seeding the others first); each
+  check removed alone reddens it (ledger in the header — cx is the row that shows a silent guest
+  write). Verified on real ecb,
+  ach, pi and cass: exit 1 with the panic line.
+
+- **The check driver reaps adopted orphans between rows, and its exit note counts only
+  processes still RUNNING.** (bite 12) **Root cause:** the driver is a child subreaper (6.6.8)
+  but reaped only in its exit sweep, so every orphan a row left sat as a zombie for the rest of
+  the run; and `regression_terminate_children` returned the number of descendants `/proc`
+  listed, zombies included, so the exit line `note: N process(es) a row left running were ended
+  at exit` blamed rows for processes that had long since exited (measured: 3 zombies reported as
+  3). **Fix:** `_check` / `_skip` reap WNOHANG on Linux through the new public
+  `regression_reap_orphans()` (the invariant that makes it safe — no row holds a live child
+  across its `_check` — is written at the call), and `regression_terminate_children` reaps
+  first and returns the LIVE count. **Test:** `tests/tcyr/crossos/regression_terminate_children.tcyr`
+  gains a zombie row (0, not 1) and a `regression_reap_orphans` row (reaps the ended child,
+  never waits for the live one); green on x86, qemu-aarch64 and real ecb, ach, pi and cass.
+
+- **The check driver runs only tools it BUILT from the tree under test, in that run.** (bite 12)
+  **Root cause:** `programs/checks/` executed nine build products it never built — cyrfmt,
+  cyrlint, cyrdoc, cyrius_api_surface, cyrld, cyrius-init, cyrius-lsp, the cyrius CLI and
+  cycc_aarch64 — trusting whatever sat at `build/<tool>` on existence alone, and falling back to
+  the RELEASED store's `~/.cyrius/bin` for cyrfmt/cyrlint/cyrdoc. Those binaries are gitignored
+  and rebuilt only by `install.sh --refresh-only`, on an mtime rule that never looks at
+  build/cycc or src/, so a row's verdict could be about a binary from a different tree (v6.4.81
+  fixed exactly this for `cycc_win_cross` alone). **Fix:** `_tool(name)` builds each one with
+  build/cycc from its source (`programs/<t>.cyr`, `cbt/cyrius.cyr`, `src/main_aarch64.cyr`) the
+  first time a row asks — once per run, so a targeted run builds only what it uses — into the
+  run's private dir, laid out as a tree (`build/` beside links to `lib/`, `programs/`, `VERSION`
+  and the tree's `cycc`) because the CLI and cyrius-init find their compiler, sibling tools and
+  templates relative to their own path. A tool that does not compile is a FAIL row naming it.
+  The `~/.cyrius/bin` fallback is gone. A root with NO source for a tool (a gate's scratch root)
+  runs the `build/<tool>` it was given and prints a note saying so — that is how the fail-closed
+  gates inject their fakes. A new `--tool-path <name>` mode prints where a tool comes from.
+  **Gate:** `tests/gates/toolchain/check_driver_builds_its_tools.sh` plants a logging stub at
+  `build/<tool>` for all nine in a scratch tree and proves none runs (`--tool-path` for all nine,
+  then the linker/fmt/lint rows end to end), that a `$HOME/.cyrius/bin` copy is never consulted,
+  the injection note, the named FAIL for a broken `programs/cyrld.cyr`, and a static ratchet;
+  three mutations, each RED.
+
+- **`tests/tcyr/crossos/sandhi_platform_eagain.tcyr` binds ephemeral ports, and the fixed-port
+  detector sees a port passed through a helper.** (bite 12) **Root cause:** the test bound
+  loopback ports 39631/39632 through `_eg_listener(port)`, so concurrent runs collided (four at
+  once: three failed `loopback listener is up`), and `gates_never_write_tree.sh` axis 6 flagged a
+  bind only when its port was a non-zero LITERAL or a name assigned one in the file — a helper
+  PARAMETER was invisible. **Fix:** the listener binds `:0` and reads the port back with
+  `sys_getsockname`; axis 6 now flags any bind whose port is not the literal `0` (sock_bind's
+  third argument, the port bytes stored into a bound sockaddr, `sockaddr_in[6](a, P)`), with a
+  `PORT_ALLOW` escape hatch that fails when an entry matches nothing (empty), and self-tests the
+  helper-parameter and computed-port shapes. The old test file reddens it. Four concurrent runs:
+  4/4 green; real ecb, ach, pi and cass green.
+
+- **The stale "agnos has no fork / #96 is not minted / inbound TCP is Phase B" notes are
+  corrected.** (bite 13) **Root cause:** four agnos changes each updated only the lines they
+  touched — fork was minted in agnos 1.56.55 (cyrius v6.5.37), a forked child became a scheduled
+  process in 1.57.7, #43 argv/CLEANFD spawn arrived in 1.57.6 (cyrius 6.6.8), and inbound TCP
+  listen/accept in agnos 1.45.5/.6 (cyrius v6.2.22) — so ~25 comments in 13 files kept
+  describing the old kernel. **Fix:** the agnos peer's #96/#97 ledger (both minted; the highest
+  arm is #108, so the next free number is #109, not #98), its chan-band note and the sys_fork
+  "IF=0 foreground" caveat (false since 1.57.7) and WAIT-ANY "exit code" (a wait status);
+  `syscall_wrapper_pass.sh`'s header, which still described axis 5 as a do-not-mint assertion two
+  cuts after the axis was inverted, and its check-driver description; `lib/callback.cyr`'s reason
+  for guarding `fork_with_pre_exec` out on agnos (the reason is no execve, not no fork);
+  `lib/net.cyr`'s "Phase B / unreached on the client path" on sock_reuse / sock_listen /
+  sock_accept. Also the accept-mark lifecycle: the clear in `sys_sock_close` was described (peer
+  comment and `agnos_accept_timeout_inherit.sh`'s header) as though it were pinned, and mutation
+  shows it cannot be observed — the connect clear is the load-bearing one; both now say so. The
+  guide's AGNOS section (whose `SYS_WAITPID` row was factually wrong: #4 is a non-blocking poll
+  returning a WAIT STATUS, not "the exit code directly"), `lib/async.cyr`, `lib/process.cyr`,
+  `lib/async_win.cyr`, `lib/async_macos.cyr` and sigil's `sys_util.cyr` are corrected by the lanes
+  that own them.
+
+- **net.cyr, the agnos peer, args_agnos and thread_agnos check their allocations.** (bite 13)
+  The census's eight lane-T sites: `sockaddr_in` / `sockaddr_in6` return 0 on a refused
+  allocation (and `sock_bind` / `sock_connect` answer Err(12) instead of handing the kernel
+  address 0); `sock_reuse`, `sock_set_recv_timeout` and `sock_set_send_timeout` build their
+  setsockopt value ON THE STACK — the kernel copies it in, so there is no allocation to refuse, and
+  each call no longer leaks 4 or 16 bytes; agnos `sigset_new` and `chan_new` return 0, and
+  `_agnos_getenv` reads a refused copy as unset. The census allowlist loses the eight lines
+  (shrink-only), and restoring any one unchecked site fails it by name.
+
+- **`lib/regression.cyr`'s spawn, capture and deadline verbs run real children on agnos.**
+  (bite 13) **Root cause:** 6.6.8 rewrote `process_agnos` onto spawn_path#43, #62 redirects and
+  WAIT_BLOCK and left `regression_agnos`'s ten verbs as the v6.2.7 constant stubs (exec_run -1,
+  exec_capture 0 bytes, capture_status [-1, 0], …) — a probe calling all ten made ZERO #25 / #43
+  / #62 / #4 — and `regression_deadline_kills` / `regression_last_deadline_ms` /
+  `regression_terminate_children` answered 0, because the deadline knobs and counters sat inside
+  regression.cyr's `#ifndef CYRIUS_TARGET_AGNOS` region where the peer could not reach them.
+  **Fix:** the knobs, the counters and `_regression_store_status` are SHARED code now (same
+  CYRIUS_CHECK_TIMEOUT, same counters the check driver reads), and the agnos verbs spawn from
+  disk with a clean fd table, every child fd a pipe armed through #62. The port is not a
+  translation — agnos has no /dev/null, temp-file-friendly redirect or poll(2) — and four things
+  differ on purpose: outputs are DRAINED into a scratch buffer, never discarded through a closed
+  read end (the child's writes would fail where /dev/null's succeed); a FILE fd is never
+  redirected into the child (vfs_fd_inherit copies a FAT write entry by value and the parent's
+  close releases its block) — the parent writes the output file itself, continuing a short write
+  and returning -1 (never the child's exit code over a truncated file) when a write fails, a failure
+  the POSIX verb cannot have because its CHILD writes the file; ONE interleaved
+  non-blocking pump feeds stdin and drains stdout/stderr (a write-all-then-read pump deadlocks once
+  the child has written more than the 4080 B ring), streaming the source instead of the POSIX
+  verb's 1 MB buffer; and the deadline kill is `kill_tree(9)` at once (SIGTERM has no default
+  action on agnos), counted, with the wait polling #4 (WAIT_BLOCK has no timeout).
+  `regression_terminate_children` ends each running direct child found through proclist#99 and
+  reaps; `regression_reap_orphans` is a WAIT-ANY poll. exec_in_dir3 / ssh / scp / codesign stay
+  fail-closed (no cwd, no ssh). The argv/envp-to-blob, wait-with-deadline and kill-and-reap
+  helpers live in the agnos peer (`_agnos_blob_*`, `_agnos_wait_poll`, `_agnos_kill_reap`),
+  shared with the async port. Kernel floor 1.57.7 (1.57.9 for the stdin-feeding pipe_to_bin).
+  **Gate:** `tests/gates/platform/agnos_regression_spawn.sh` — 50 rows over the fake kernel's new
+  stateful rg* modes (distinct fds per pipe, a #4 that answers -2 until a #16, a child that won't
+  read stdin until its stdout is drained, a proclist table, an output file whose write fails or
+  comes up short); the pre-port tree fails 42 lines of it, and eight mutants (write-all-then-read
+  pump, closed read end, SIGTERM kill, uncounted kill, stderr captured, blocking reads, the
+  SPAWN_ARGC_MAX refusal dropped — an envp of 17 entries — and the output write's result ignored)
+  each redden it. Verified on agnos-qemu 1.57.10 at -smp 1 and 4.
+
+- **agnos `async_timeout` bounds its body; `async_run_process` / `async_spawn_process` run
+  children.** (bite 13) **Root cause:** the v6.2.3 / v6.4.36 serial fallback predated fork on
+  agnos, and 6.6.8 corrected the comments but left the code: `async_timeout(fp, arg, ms)` ran the
+  body INLINE and ignored `ms` (a 5 s body under a 100 ms bound traced `sc 41 5000` and returned
+  its value — silent), and the two subprocess verbs were the constants -1 / 0. **Fix:**
+  `async_timeout` forks (fork#96) and the child writes its u64 result into a pipe; the parent
+  reads with a deadline and only a WHOLE 8-byte read counts, so a body that crashed mid-way is -1,
+  never stale bytes; at the deadline the child's tree is SIGKILLed and reaped. `async_run_process`
+  spawns from disk (#43, CLEANFD, `path` as argv[0] — agnos opens argv[0], so the caller's argv[0]
+  is dropped) and polls #4 against its deadline (-2, tree killed); `async_spawn_process` is a
+  serial task around it. The header's "inbound TCP is Phase B — not reachable" rationale is gone
+  (sock_bind/listen/accept run on #56/#57 since v6.2.22). **Gate:**
+  `tests/gates/platform/agnos_async_process.sh` — 19 rows over the fake kernel's as* modes, which
+  answer fork with a pid (the parent's side) or 0 (the child's): PTRACE_SYSEMU runs neither, so
+  each trace proves one side. The pre-port tree fails 19 lines; six mutants redden it (inline
+  body, short read accepted, no kill, `ms` ignored, argv[0] sent, a signal death read as an exit
+  code instead of -1). ⚠ Documented, not fixed here: fork copies the fd table BY VALUE and reaping
+  the child flushes and releases its FAT/exFAT write entries — the block the caller's open fd
+  still names — so `async_timeout`'s doc says not to hold such a file open across the call; the
+  fix belongs in the agnos kernel. Both sides together on
+  agnos-qemu 1.57.10 at -smp 1 and 4: the value comes back from the forked child, the caller's
+  memory is untouched by it, a 5 s body under 300 ms is -1 with the child gone, a crashing body is
+  -1, and run_process returns 7 / -2 (child gone) / 7 through task_join.
+
+- **The .tcyr corpus compiles for agnos — the 31 files left after bite 14 — and
+  `crypto/tls_native_scaffold.tcyr` for PE.** (bite 13) **Root cause:** no gate cross-built the
+  non-crossos buckets, so 37 corpus files did not compile for agnos (bite 14 fixed the six it
+  owns and put the rest on its ratchet's agnos allowlist): Linux-arity calls into a peer that keeps
+  its own ABI (1-arg `sys_waitpid`, length-carrying `sys_unlink` / `sys_lstat` / `sys_rename`),
+  raw x86-Linux syscall numbers, Linux-only names (SYS_FUTEX, SYS_IOCTL, O_RDONLY, STAT_UID), and
+  eight portable wrappers the agnos peer simply lacked. **Fix**, per the 6.6.10 default (the peer's
+  arity is kept): the missing wrappers go INTO the agnos peer — `sys_socketpair`, `sys_recvfrom`,
+  `sys_recvmsg` (-ENOSYS declines, as `sys_sendmsg` / `sys_sendto`), `sys_fchmod` (a no-op, as
+  `sys_chmod`), `sys_getgid` / `sys_getegid` (0: no groups), `sys_fsync` / `sys_fdatasync`
+  (sync#12); a cleanup `sys_unlink` becomes the portable `xunlink` (and `fsync.tcyr` opens through
+  `xopen`), so those tests now genuinely build for agnos; and what is Linux / POSIX surface — raw
+  numbers, socketpair + fork + 3-arg waitpid end-to-end runs, POSIX modes / lstat / credentials,
+  `proc_set_timeout_ms` — gets a NAMED SKIP line on agnos (and, in tls_native_scaffold's four
+  socket/fork/exec groups, on Windows too). Every guard is `#ifdef`-only, so the other targets
+  compile the same code: all 29 touched files give identical pass counts on x86-Linux before and
+  after. With bite 14's files the agnos and PE allowlists of
+  `tests/gates/toolchain/tcyr_corpus_cross_compiles.sh` are EMPTY on the merged tree.
+
+### Added
+
+- **A census gate for unchecked first-party `alloc(` results, with a shrink-only allowlist.**
+  (bite 12) `tests/gates/memory/stdlib_alloc_checked_census.sh` flags a `v = alloc(` whose first
+  later mention in the same fn is not a zero check (or `return v;`), over `lib/*.cyr` and
+  `lib/*/*.cyr` minus the vendored folds read from `docs/ecosystem.md`'s fold table. At the slot's
+  open it found **131 unchecked sites of 246** across 39 files (the triage's hand heuristic had
+  said ~112); its per-file hit list, with the owning lane for each file, was published to every
+  6.6.10 lane before they started, so the ~130-site sweep is checked by a gate instead of a hand
+  count. The allowlist is keyed on file + fn + variable (not line), a NEW unchecked site fails by
+  name, and a FIXED site fails until its allowlist line is deleted — the list can only shrink. The
+  detector is self-tested on nine shapes (next-line check, a joint `a == 0 || b == 0`, `return v`,
+  a reassignment through `alloc_via`, `!v`, a use on the alloc line, a value escaping into a
+  global, a check that comes too late, a check-shaped string) and a mutation row deletes a live
+  check and requires the site to be flagged.
+
+- **Every lane's new gates are registered** (bite 13, lane T owns the registries): in
+  `scripts/check.sh` — `tcyr_corpus_cross_compiles.sh` and `stdlib_alloc_refusal_sentinels.sh`
+  (bite 14), `walkers_fail_closed_unreadable_dir.sh` and `lsp_indexes_every_decl_spelling.sh`
+  (bite 15), `toplevel_destructure_var_cap.sh` (bite 2); in `programs/checks/main.cyr` —
+  `cap_errors_stop_storing.sh`, `assert_enum_constants.sh`, `pe_unrouted_warning_names_site.sh`
+  (bite 2), `macos_peer_surface_parity.sh` (bite 3) and `lexer_errors_name_file_line.sh` (S2 bite 9,
+  CVE-52). `pp_flag_cap.sh`'s driver label no longer says "hard-errors" (a refusal since v6.4.62), and
+  the labels of `dx_multi_error.sh`, `cli_temp_dir_no_leak.sh` and `lexer_attribute_word_boundary.sh`
+  name what bite 9 changed in them. `check_gate_census.sh` reads every gate as registered exactly once
+  on a merge of every lane.
+
+### Downstream
+
+- **sandhi 1.10.2** (bite 13; committed on sandhi main as `16f19ea`, **not tagged**, **not
+  re-vendored** into cyrius this release — `lib/sandhi.cyr` stays the fold it was): the stale "inbound
+  TCP is agnos Phase B — `sock_listen` already returns Err" note in `src/server/mod.cyr` is corrected
+  (agnos listen/accept have been wired to #56/#57 since cyrius v6.2.22), and the pin moves 6.6.6 →
+  the released 6.6.9 (lib/ re-resolved from empty, all five dist bundles regenerated and idempotent,
+  four suites green, fuzz 8/8). Independent of the cyrius 6.6.10 tag.
+- **agnos** (bite 13; docs commit `4ac576de` on agnos main, no tag needed):
+  `docs/development/roadmap.md:14` said "syscalls 0–107, next free #108", "the ABI gate is red by
+  design until cyrius lands their peer" and "#96 fork remains unminted" — #108 shipped in 1.57.9,
+  `syscall-abi-check.sh` reads kernel 108 · abi-doc 108 · cyrius 108, and fork was minted in
+  1.56.55. The next free number is #109.
 
 ## [6.6.9] — 2026-09-28
 

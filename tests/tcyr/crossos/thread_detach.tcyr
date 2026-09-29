@@ -45,7 +45,10 @@ fn _td_body(a): i64 {
     return 0;
 }
 
-# Virtual size in pages, from /proc/self/statm field 1. Linux-only.
+# Virtual size in pages, from /proc/self/statm field 1. Linux-only — and compiled out on agnos
+# (no /proc, and O_RDONLY is a Linux flag there: the corpus cross-compile ratchet, 6.6.10). Its
+# only caller is already inside main's `#ifndef CYRIUS_TARGET_AGNOS` block.
+#ifndef CYRIUS_TARGET_AGNOS
 fn _td_vpages(): i64 {
     var fd = sys_open("/proc/self/statm", O_RDONLY, 0);
     if (fd < 0) { return 0 - 1; }
@@ -62,6 +65,7 @@ fn _td_vpages(): i64 {
     }
     return v;
 }
+#endif
 
 fn main(): i64 {
     alloc_init();
