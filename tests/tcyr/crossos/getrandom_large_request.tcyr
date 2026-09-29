@@ -1,0 +1,65 @@
+# getrandom_large_request.tcyr — 6.6.10: the CSPRNG answers requests above 256 bytes on every
+# target, as a Linux-shaped short read from sys_getrandom and a whole buffer from random_bytes.
+#
+# THE DEFECT (both Macs). The Mach-O backends translate getrandom to Darwin getentropy, which
+# REFUSES any request above 256 bytes with EINVAL rather than short-reading. sys_getrandom passed
+# `len` straight through, so sys_getrandom(buf, 257, 0) was -22 on ach and ecb, and
+# random_bytes(), which loops over short reads but returns on an error, failed for every size
+# above 256. Measured consumers: sigil's RSA blinding draws the modulus length (384 B for
+# RSA-3072, 512 B for RSA-4096) on every private-key operation, and LUKS keygen draws up to 1 KiB
+# — both failed closed on macOS. sys_getrandom now clamps to 256 there, so the answer is a short
+# read (1..257), which random_bytes already loops over.
+#
+# ⭐ WHY THE FILL IS CHECKED, NOT JUST THE COUNT. A wrapper that returned `len` without filling
+# (the 0 -> len normalisation applied to a failure) would pass a count-only assert. Each buffer
+# is pre-zeroed and its LAST 64 bytes must not all still be zero — the tail is the part a short
+# read or a single capped call would leave untouched (2^-512 odds of a false FAIL).
+include "lib/syscalls.cyr"
+include "lib/random.cyr"
+include "lib/assert.cyr"
+
+# Zero `len` bytes at `p`.
+fn _gr_zero(p, len): i64 {
+    var i = 0;
+    while (i < len) { store8(p + i, 0); i += 1; }
+    return 0;
+}
+
+# 1 when any of the 64 bytes ending at p + len is nonzero, else 0.
+fn _gr_tail_filled(p, len): i64 {
+    var i = len - 64;
+    while (i < len) {
+        if (load8(p + i) != 0) { return 1; }
+        i += 1;
+    }
+    return 0;
+}
+
+fn main(): i64 {
+    var buf[1024];
+    var p = &buf;
+
+    test_group("sys_getrandom: <= 256 bytes is filled whole");
+    _gr_zero(p, 256);
+    assert_eq(sys_getrandom(p, 256, 0), 256, "sys_getrandom(256) == 256");
+    assert_eq(_gr_tail_filled(p, 256), 1, "the 256-byte draw filled its tail");
+
+    test_group("sys_getrandom: > 256 bytes is a short read, never an error");
+    var n = sys_getrandom(p, 257, 0);
+    assert(n >= 1, "sys_getrandom(257) >= 1 (was -22 on both Macs: getentropy refuses > 256)");
+    assert(n <= 257, "sys_getrandom(257) <= 257");
+
+    test_group("random_bytes: a whole buffer above 256 bytes");
+    _gr_zero(p, 512);
+    assert_eq(random_bytes(p, 512), 512, "random_bytes(512) == 512 (the RSA-4096 blinding size)");
+    assert_eq(_gr_tail_filled(p, 512), 1, "the 512-byte draw filled its tail");
+    _gr_zero(p, 1000);
+    assert_eq(random_bytes(p, 1000), 1000, "random_bytes(1000) == 1000");
+    assert_eq(_gr_tail_filled(p, 1000), 1, "the 1000-byte draw filled its tail");
+    _gr_zero(p, 384);
+    assert_eq(random_bytes(p, 384), 384, "random_bytes(384) == 384 (the RSA-3072 blinding size)");
+    assert_eq(_gr_tail_filled(p, 384), 1, "the 384-byte draw filled its tail");
+    return assert_summary();
+}
+var r = main();
+syscall(60, r);
