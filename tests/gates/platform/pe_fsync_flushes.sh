@@ -76,11 +76,11 @@
 # inside a mktemp -d that is removed on exit.
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
-CC="$ROOT/build/cycc"
+CC=${CYCC:-"$ROOT/build/cycc"}
 SRC="$ROOT/tests/tcyr/crossos/fsync_flushes.tcyr"
 FLOOR=18
 
-[ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 0; }
+[ -x "$CC" ] || { echo "SKIP: $CC missing"; exit 0; }
 [ -f "$SRC" ] || { echo "  FAIL: $SRC is missing — the cross-OS companion for this gate is gone"; exit 1; }
 
 D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: mktemp"; exit 1; }

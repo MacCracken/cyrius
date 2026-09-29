@@ -101,6 +101,9 @@
 set -u
 cd "$(dirname "$0")/../../.." || exit 2
 ROOT=$(pwd)
+# 6.6.11 (K8): the compiler under test, overridable like every gate's — the six build sites
+# below used to run "$ROOT/build/cycc" inline, so a candidate binary could not be tested.
+CC=${CYCC:-"$ROOT/build/cycc"}
 TMP=$(mktemp -d) && [ -d "$TMP" ] || { echo "FAIL: bench_timer_floor_measured: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$TMP"' EXIT
 
@@ -306,7 +309,7 @@ var rc = main();
 syscall(60, rc);
 EOF
 cp "$TMP/p.cyr" "$TMP/probe.cyr"
-"$ROOT/build/cycc" < "$TMP/probe.cyr" > "$TMP/p" 2> "$TMP/p.err" || fail "probe build"
+"$CC" < "$TMP/probe.cyr" > "$TMP/p" 2> "$TMP/p.err" || fail "probe build"
 chmod +x "$TMP/p"
 prc=0
 "$TMP/p" > "$TMP/out" 2> "$TMP/run.err" || prc=$?
@@ -343,7 +346,7 @@ if cmp -s lib/bench.cyr "$TMP/mut/lib/bench.cyr"; then
 fi
 grep -q '^    return 1;$' "$TMP/mut/lib/bench.cyr" || fail "the chunk-1 mutant does not contain the forced return — the awk no longer matches lib/bench.cyr"
 cp "$TMP/probe.cyr" "$TMP/mut/probe.cyr"
-( cd "$TMP/mut" && "$ROOT/build/cycc" < probe.cyr > mut.bin 2> mut.err ) || fail "probe build against the chunk-1 stdlib"
+( cd "$TMP/mut" && "$CC" < probe.cyr > mut.bin 2> mut.err ) || fail "probe build against the chunk-1 stdlib"
 chmod +x "$TMP/mut/mut.bin"
 # `|| mrc=$?`, not a bare call: this mutant is EXPECTED to exit nonzero, and the bare
 # form aborts the gate under `bash -eo pipefail` before the assertion below runs.
@@ -645,7 +648,7 @@ fn main(): i64 {
 var rc = main();
 syscall(60, rc);
 EOF
-"$ROOT/build/cycc" < "$TMP/sc.cyr" > "$TMP/sc" 2> "$TMP/sc.err" || { cat "$TMP/sc.err"; fail "scripted-clock probe build"; }
+"$CC" < "$TMP/sc.cyr" > "$TMP/sc" 2> "$TMP/sc.err" || { cat "$TMP/sc.err"; fail "scripted-clock probe build"; }
 [ -s "$TMP/sc" ] || fail "the scripted-clock probe compiled to an EMPTY binary — an empty file runs with exit 0, so every mutant below would look killed and the baseline would look green"
 chmod +x "$TMP/sc"
 src=0
@@ -699,7 +702,7 @@ run_mut() {
     # the mutant run is EXPECTED to fail, and the bare form aborts the whole gate under
     # `bash -eo pipefail` before the bookkeeping runs (measured: exit 4). CHANGELOG [6.6.5].
     mbrc=0
-    ( cd "$md" && "$ROOT/build/cycc" < p.cyr > m.bin 2> m.err ) || mbrc=$?
+    ( cd "$md" && "$CC" < p.cyr > m.bin 2> m.err ) || mbrc=$?
     if [ "$mbrc" != "0" ]; then
         cat "$md/m.err" 2>/dev/null || true
         fail "mutant $mname does not COMPILE — it proves nothing about the axis, and counting it as killed is how a mutation ledger inflates itself"
@@ -867,7 +870,7 @@ fn main(): i64 { var b = bench_new("x"); bench_start(b); var r = bench_stop(b); 
 EOS
     fi
     erc=0
-    CYRIUS_TARGET_WIN=1 "$ROOT/build/cycc" < "$TMP/self_$mod.cyr" > "$TMP/self_$mod.exe" 2> "$TMP/self_$mod.err" || erc=$?
+    CYRIUS_TARGET_WIN=1 "$CC" < "$TMP/self_$mod.cyr" > "$TMP/self_$mod.exe" 2> "$TMP/self_$mod.err" || erc=$?
     [ "$erc" -eq 0 ] || { grep -E "^(error|warning: undefined)" "$TMP/self_$mod.err" | head -4 | sed 's/^/    /'
         fail "lib/$mod.cyr is no longer self-sufficient for PE: a consumer declaring only \"$mod\" cannot cross-build for Windows (rc $erc)"; }
     # An empty file "runs" with exit 0, so the size floor is not decoration.
@@ -900,7 +903,7 @@ EOS
     [ "$nqp" -ge 2 ] || fail "the PE build of the $mod-only consumer imports $nqp QueryPerformance* names (expected 2: Counter and Frequency) — the Windows clock arm is not in the binary, so this axis proved nothing"
     # And it must still build for the host, so a PE-only fix cannot pass here.
     lrc=0
-    "$ROOT/build/cycc" < "$TMP/self_$mod.cyr" > "$TMP/self_$mod.elf" 2> "$TMP/self_$mod.lerr" || lrc=$?
+    "$CC" < "$TMP/self_$mod.cyr" > "$TMP/self_$mod.elf" 2> "$TMP/self_$mod.lerr" || lrc=$?
     [ "$lrc" -eq 0 ] || { grep -E '^error' "$TMP/self_$mod.lerr" | head -3 | sed 's/^/    /'
         fail "the ELF build of the $mod-only consumer failed (rc $lrc)"; }
 done
