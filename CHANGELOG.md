@@ -28,6 +28,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   macOS); a refused settime closes the fd and fails; `async_interval` returns no handle for
   `ms <= 0`, as macOS does. Rows: `async_timeout_result.tcyr` "zero" group (each call bounded inside
   `async_timeout`, so a regression FAILs rather than hangs; 7 RED on the old lib).
+- **The macOS kqueue reactor spun after a normal wake (P2).** `_async_kev_register` added
+  EVFILT_READ/WRITE with plain `EV_ADD` — level-triggered and persistent — and the wake path never
+  removed it, so an fd that stayed readable made every later `kevent()` return at once, wake nobody
+  and loop. **Fix:** the registrations are `EV_ADD | EV_ONESHOT` (a wake already wakes every waiter on
+  the (ident, filter); a later park re-adds). Row: `async_macos_verbs.tcyr` "a normal wake leaves no
+  read filter armed" — RED against the pre-fix lib on ecb and ach, green with it.
 
 ## [6.6.10] — 2026-09-29
 

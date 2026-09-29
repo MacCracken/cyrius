@@ -307,9 +307,8 @@ fn async_select(rt, handles, n): i64 {
 # reactor never re-runs it, and take its registrations out of the kqueue. A read/write filter is
 # deleted only when no OTHER parked task still waits on it (kqueue keys by (ident, filter), so
 # deleting it would silently drop that waiter too); a timer the task armed is always deleted.
-# ⚠ Leaving them armed is not harmless: a level-triggered fd registration nobody waits on makes
-# every later kevent() return at once, so the reactor spins instead of sleeping. No-op on a DONE
-# task.
+# ⚠ Leaving them armed is not harmless: an fd registration nobody waits on would be delivered to
+# nobody (a one-shot one once; a timer on every period). No-op on a DONE task.
 fn _async_retire(rt, t): i64 {
     if (t == 0) { return 0; }
     if (load64(t + 16) == TASK_DONE) { return 0; }
@@ -612,14 +611,21 @@ fn async_await_readable(fd): i64 {
 # ⭐ kqueue needs NO union mask and NO modify-on-conflict: it keys by (ident, filter), so read and
 # write are independent registrations and repeated EV_ADD of the same pair is an idempotent
 # update, not an error (the -EEXIST the epoll backend fixed at v6.5.26 cannot happen).
+# ⛔ 6.6.11 — EV_ONESHOT. A plain EV_ADD is level-triggered and PERSISTENT, and the wake path never
+# removed it, so after a normal wake on an fd that stayed readable every later kevent() returned
+# that event at once, woke nobody, and the reactor SPUN instead of sleeping. The epoll twin
+# deletes or modifies its registration after each wake. A wake already wakes EVERY waiter on
+# (ident, filter), so one delivery is all a registration is for; a later park re-adds it.
+# CHANGELOG [6.6.11]
 fn _async_kev_register(rt, fd, events): i64 {
     var cur = load64(rt + 40);
     if (cur == 0) { return 0 - 1; }
     var kq = load64(rt);
     var rc = 0;
-    if ((events & _KEV_READ) != 0) { rc = _async_kev_change(kq, fd, _KEVF_READ, _EV_ADD, 0, 0); }
+    var fl = _EV_ADD | _EV_ONESHOT;
+    if ((events & _KEV_READ) != 0) { rc = _async_kev_change(kq, fd, _KEVF_READ, fl, 0, 0); }
     if (rc >= 0) {
-        if ((events & _KEV_WRITE) != 0) { rc = _async_kev_change(kq, fd, _KEVF_WRITE, _EV_ADD, 0, 0); }
+        if ((events & _KEV_WRITE) != 0) { rc = _async_kev_change(kq, fd, _KEVF_WRITE, fl, 0, 0); }
     }
     if (rc < 0) { return 0 - 1; }   # not parked: a caller that sees -1 can fall back to blocking I/O
     return _async_kev_park(rt, fd, events);
