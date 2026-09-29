@@ -449,7 +449,8 @@ check "⭐ and the build's own temp directory is gone afterwards" 0 "$survivors"
 # on a shared box cannot be counted. MUTATION (6.6.10, run): `proc_kill_tree(pid, …)` ->
 # `sys_kill(pid, 9)` + waitpid on both kill paths of `_run_wait_timed` AND `_run_end_leftovers`
 # made a no-op -> axes 5, 6 and 7 RED (the sleep survives at PPID=1; the pipe hangs to the
-# 30 s backstop); axis 8 stays GREEN.
+# 30 s backstop); axis 8 stays GREEN. `_proc_sr_had` returning 0 -> axis 8 exit 3; dropping the
+# `_proc_sr_open` guard from `_proc_subreap_end` -> axis 8 exit 4.
 N5=$(( 41000 + $$ % 9000 ))
 N6=$(( N5 + 9000 ))
 survivor() {   # pids of `/bin/sleep $1` still running (a zombie is not "running")
@@ -512,6 +513,14 @@ var found = _proc_subreap_end();
 var rc = 0;
 if (found != 1) { rc = rc + 1; }                # the orphaned sleep 31 was adopted and ended
 if (sys_kill(pp, 0) != 0) { rc = rc + 2; }      # the pre-existing sleep 30 is still alive
+# An end with NO window open (begin never ran again, or failed) touches nothing: the
+# snapshot of the previous window is stale, and "every child not in it" is every child.
+var late = sys_fork();
+if (late == 0) { _exec3("/bin/sleep", "32", 0); }
+_proc_subreap_end();
+if (sys_kill(late, 0) != 0) { rc = rc + 4; }
+sys_kill(late, 9);
+sys_waitpid(late, &st, 0);
 sys_kill(pp, 9);
 sys_waitpid(pp, &st, 0);
 sys_exit(rc);
@@ -521,7 +530,7 @@ rc=0
 if [ "$rc" = 0 ]; then
     chmod +x "$T/win"
     rc=0; timeout 60 "$T/win" || rc=$?
-    check "one child adopted and ended, the pre-existing one untouched (exit 0)" 0 "$rc"
+    check "one child adopted and ended, the pre-existing one untouched, and an end with no window open ends nothing (exit 0)" 0 "$rc"
 else
     check "the window probe compiles" 0 "$rc"; sed -n 1,3p "$T/win.err"
 fi
