@@ -51,6 +51,60 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   wine with a UTF-8 locale); its whole-gate SKIP exits 77. Mutation ledger in the gate header.
 - Verified off-host: the ach (Intel-Mac) self-host fixpoint, ecb and pi native self-hosts, and the
   path/fs `.tcyr` rows on ecb, ach, pi and in the agnosticos container.
+- **Windows: lib/net.cyr's sockets work, so `http_*` works (B07, item I4).** **Root cause:** every
+  verb in `lib/net.cyr` issued the Linux socket numbers (41/42/43/48/49/50/54), none of them routed on
+  PE, so `tcp_socket` / `udp_socket` / bind / connect / listen / accept / shutdown / setsockopt all
+  returned -38 (-ENOSYS), and send/recv/close went through WriteFile/ReadFile/CloseHandle — measured
+  under wine, `tcp_socket()` was `Err(38)` and `http_get` against a live local server returned
+  `HTTP_ERROR` (the native build got the server's 404). sandhi's v4 path rides the same verbs.
+  **Fix:** each verb's OS call lives in one per-OS primitive (`_net_os_socket` … `_net_os_close`),
+  with a ws2_32 arm on Windows: a one-time WSAStartup, WSASocketW (overlapped + no-inherit: measured on
+  cass and under wine, a NON-overlapped socket ignores `SO_RCVTIMEO` and a timed read hangs forever),
+  bind / connect / listen / setsockopt / closesocket, and six new reroutes **0xF045-0xF04A** — accept,
+  shutdown, send, recv, ioctlsocket (FIONBIO) and WSAPoll (`EACCEPT_PE` … `EWSAPOLL_PE`,
+  `src/backend/x86/emit.cyr` + `src/backend/pe/emit.cyr`; the five `int` results sign-extended). The
+  SOCKET is the fd; SOCKET_ERROR becomes `-WSAGetLastError`, with WSAEWOULDBLOCK (and, for send/recv,
+  WSAETIMEDOUT) reported as -EAGAIN as on Linux. Winsock constants per target (`SOL_SOCKET` 0xFFFF,
+  `SO_RCVTIMEO` a DWORD of ms rounded UP so 500 us never becomes "forever", `AF_INET6` 23, the
+  9-13 multicast numbers); `sock_reuse` sets **SO_EXCLUSIVEADDRUSE** on Windows, because Windows'
+  SO_REUSEADDR lets another socket take the port. `net_connect_sa_nb` is FIONBIO + WSAPoll + SO_ERROR,
+  and `sock_set_nonblocking` / `sock_clear_nonblocking` are FIONBIO. `lib/http.cyr` closes every
+  socket with `sock_close` (it called `sys_close`, i.e. CloseHandle, on a SOCKET). The parser's route
+  table for 0xF045-0xF04A (`_PE_ROUTE_SOCK`, `src/frontend/parse_expr.cyr`) lands as its own commit
+  from lane F. New `tests/tcyr/crossos/net_loopback_tcp.tcyr` (a loopback TCP pair, non-blocking
+  accept and connect, UDP, the socket options, and `http_get` against a one-shot server — a thread on
+  Windows, a child elsewhere — that checks the request it receives) and
+  `tests/gates/platform/pe_socket_reroutes_routed.sh` (routed at arity, named in the note, imported,
+  and no unrouted literal left in net.cyr / http.cyr on PE; exit 77 when it cannot run). Mutation:
+  reverting `_net_os_accept`'s Windows arm fails 6 loopback rows under wine and on cass.
+- **Windows: `net_resolve_ipv4` is the system resolver and never reads a drive-relative `/etc`
+  (B07, item I5; security — see the notes for the CVE).** **Root cause:** the resolver read
+  `/etc/hosts` and `/etc/resolv.conf` on every target, and on Windows a rooted path is DRIVE-RELATIVE:
+  `/etc/hosts` is `C:\etc\hosts`, which any authenticated user may create, so one local user could
+  redirect every other user's lookups; with no resolv.conf it fell back to 127.0.0.1:53, and port 53
+  is not privileged there. `_net_dns_id`'s `/dev/urandom` fallback had the same shape. **Fix:** after
+  the literal and `*.localhost` steps the Windows arm is getaddrinfo (the real
+  `%SystemRoot%\System32\drivers\etc\hosts` and the adapters' DNS); a non-ASCII name, and a name the
+  resolver would read as an ADDRESS although `net_parse_ipv4` refused it (`010.0.0.1`, `127.1`,
+  `0x7f000001` — probed with AI_NUMERICHOST), are refused before any lookup; no `/dev/urandom` on
+  Windows. New `tests/tcyr/crossos/net_resolve_pe.tcyr` plants `C:\etc\hosts` when it is absent and
+  asserts it is ignored (wine maps a rooted path to the unix root, so only real Windows shows this).
+  Mutation, measured on cass: with the POSIX steps restored the planted 10.9.8.7 came back.
+- **`lib/http.cyr`: the Host header carries a non-default port (B07, item J1).**
+  `_http_build_request(method, host, path)` took no port, so `http://localhost:8080/x` sent
+  `Host: localhost` — and `tests/tcyr/crossos/http_connect_by_name.tcyr` expected exactly that for its
+  ephemeral-port listener, pinning the defect. The builder is now `(method, host, port, path)` and
+  appends `:port` unless it is 80, counted toward the CVE-50 cap before the buffer exists;
+  `_http_prepare` gains the port and its three callers pass it. Rows: `:80` has no suffix, `:8080`,
+  1- and 5-digit ports, the cap edge counts the suffix, and the live test builds its expected Host
+  from the bound port.
+- **`lib/http.cyr`: every control byte is refused in a URL (B07, item J2).** The check promised
+  "any byte < 0x20 or == 0x7F" but tested only CR, LF, TAB and SPACE, so 29 control bytes reached the
+  Host header and request line. It now refuses 0x01-0x20 and 0x7F across the whole URL;
+  `tests/tcyr/formats/http_crlf.tcyr` walks all 32 low bytes in the host and the path, plus DEL.
+- Verified (B07): the fixpoint and seed-derive; self-hosts on ecb, ach, pi and cass (PE, with the
+  route hunk applied); the five net/http `.tcyr` files on ecb, ach, pi, cass, under wine and in the
+  agnosticos container.
 
 ## [6.6.10] — 2026-09-29
 
