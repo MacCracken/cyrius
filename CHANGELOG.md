@@ -6,6 +6,72 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.10] — 2026-09-28
 
+### Fixed
+
+- **macOS: `sys_getdents64` declines (-78) instead of letting xnu write 8 bytes through a stale
+  register.** (bite 3.) **Root cause:** both Mach-O backends route getdents64 to Darwin
+  `getdirentries64(fd, buf, nbytes, off_t *basep)` — one parameter more than Linux, and an
+  OUT-pointer — and the 3-arg shared wrapper never passed it, so xnu wrote the seek position to
+  whatever r10 / x3 held. Measured on ach AND ecb: with the register primed to `&sentinel` (a
+  failing 4-arg openat), `sys_getdents64(open("."), buf, 4096)` returned 136 and zeroed the
+  sentinel; the records were Darwin's, not the `linux_dirent64` the doc promises (d_type @20 /
+  d_name @21, not @18 / @19). The same stale-register out-pointer class as bite 1's clock write
+  (CVE-51). **Fix:** `#ifdef CYRIUS_TARGET_MACOS return 0 - 78;`, no syscall — lib/fs.cyr's
+  `dir_list` already has the Darwin lister that passes basep. Default taken: decline, not
+  translate. Pinned in `crossos/darwin_unrouted_syscall_faults.tcyr` (sentinel primed, -78 and
+  intact asserted; the old wrapper FAILS both on both Macs).
+- **macOS: `sys_getrandom` short-reads above 256 bytes, so `random_bytes()` works at any size.**
+  (bite 3.) Darwin `getentropy` — what the Mach-O backends translate getrandom to — REFUSES a
+  request above 256 bytes (EINVAL) rather than short-reading, and `sys_getrandom` passed `len`
+  through: `sys_getrandom(buf, 257, 0)` was -22 on both Macs and `random_bytes()` failed for every
+  size above 256. ⛔ **That failed sigil's RSA-3072/4096 blinding draw (384/512 B, on every
+  private-key operation) and LUKS keygen above 256 B closed on macOS.** **Fix:** clamp `len` to
+  256 under `CYRIUS_TARGET_MACOS`; the existing 0 -> len normalisation then gives a Linux-shaped
+  short read that `random_bytes` (and cxvm guests) already loop over — no sigil change. New
+  `crossos/getrandom_large_request.tcyr` (257 short-reads; 384/512/1000 whole, tails filled):
+  green on x86_64, aarch64 (qemu), PE (wine), cx, the agnosticos container and real ach + ecb;
+  7 of 10 FAIL on both Macs without the clamp. Stale "256 is ample for TLS" comments corrected
+  (lib/syscalls_linux_common.cyr, lib/random.cyr; the aarch64 emitter's copy is bite 1's).
+- **macOS: `sys_kill` passes Darwin's third argument (`posix`) explicitly as 0.** (bite 3.) Darwin
+  `kill(pid, signum, posix)` took `posix` from whatever rdx / x2 held. It decides whether a
+  broadcast skips the caller and whether a group with nothing signalable answers EPERM or ESRCH —
+  measured on ach and ecb, `kill(-pgid, 0)` of a zombie-only group returned -3 or -1 depending on
+  the previous call's third argument. Not memory-unsafe; nondeterministic, in the group kill a
+  deadline ends with (bite 11). New `crossos/darwin_kill_posix_explicit.tcyr` (FAILS 3/3 runs on
+  both Macs with the old wrapper). ⚠ The x86 backend's Linux arity table warned on the 3-arg form;
+  the structural skip is parse_expr.cyr's (S1 hand-in from bite 3).
+- **The x86-macOS syscall peer declares the arm64-macOS surface.** (bite 3.) arm64-macOS resolves
+  the aarch64-LINUX peer; x86-macOS resolves lib/syscalls_macos.cyr, and nothing compared them —
+  6.6.8 added the -ENOSYS epoll/inotify declines to the arm peer only. Portable source using
+  `sys_inotify_add_watch(fd, p, IN_MODIFY)`, `MS_BIND`, `sigset_new` or `timerspec_new` built on
+  Apple Silicon and failed on Intel-Mac ("undefined variable 'IN_MODIFY'", "reachable undefined
+  function(s)"). Added: `sys_epoll_wait` and `sys_inotify_init/_add_watch/_rm_watch` declining
+  -78 with no syscall number; the pure helpers `sigset_new/add/has`, `epoll_event_new` (the x86
+  PACKED layout, data @4), `timerspec_new`, `timerfd_drain` (constructors refuse a failed alloc);
+  `enum InotifyEvent`, `enum MsFlag`; `SYS_FLOCK` (routed), `SYS_DUP3`, `SYS_FACCESSAT`,
+  `SYS_SYSINFO`, `SYS_INOTIFY_*` (unrouted on Darwin, as on arm64-macOS; macho_route_parity.sh
+  carries a reason for each). `darwin_unrouted_syscall_faults.tcyr`'s epoll/inotify asserts leave
+  their `#ifdef CYRIUS_ARCH_AARCH64`, so ach asserts them (38/38 on ach and ecb).
+
+### Added
+
+- **`tests/gates/platform/macos_peer_surface_parity.sh`** (bite 3): every fn, enum and enum
+  member on the arm64-macOS surface exists on x86-macOS or carries an allow-list reason (six do),
+  with parse floors and a stale-allow-list check; and an x86-macOS build using that surface is
+  warning-free. Mutation-proven seven ways, incl. a revert of lib/syscalls_macos.cyr to 6.6.9.
+
+### Downstream
+
+- **kriya 1.7.2** (`a110dba`, not tagged; independent of the cyrius tag, not vendored): the
+  syscall layer issues the call it names on aarch64. Filed as "raw x86 90/91/97/21 misroute";
+  premise-checked, it was **24** sites — `access` ran epoll_ctl, `fchmod` capset, `getrlimit`
+  unshare, `fchownat` wait4, and `fchown` 93 is aarch64 **exit**. Stdlib wrappers or named aarch64
+  numbers now; new `tests/kriya-syscalls.tcyr` fails on the 1.7.1 layer on aarch64 (qemu + pi) and
+  is 33/33 on 1.7.2. Pin 6.6.6 → 6.6.9.
+- Notice (no change needed): crab's host directory walk (`src/app.cyr:4077`) now fails cleanly
+  (-1) on a macOS host build instead of misparsing Darwin records and taking the stray basep
+  write; sigil's RSA-3072/4096 signing and LUKS keygen work on macOS through the getrandom fix.
+
 ## [6.6.9] — 2026-09-28
 
 The third batch release (roadmap.md, *The 6.6.7 → 6.6.10 batch*): twelve bites in six worktree lanes —
