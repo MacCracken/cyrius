@@ -1502,6 +1502,11 @@ _chk_gate "$ROOT/tests/gates/toolchain/check_driver_skip_is_not_pass.sh"
 # once (tests/tcyr/CORPUS_FLOOR); every CI self-host step uses cross-os-selfhost.sh's fork.
 _chk_gate "$ROOT/tests/gates/toolchain/ci_steps_delegate_to_driver.sh"
 
+# 6.6.10 (bite 12) — the harness never stores through a refused allocation: test_scratch
+# panics by name on x86, qemu-aarch64, wine and cxvm; bench_new returns 0; the regression verbs
+# return -1 before any fork. Mutation ledger in the header.
+_chk_gate "$ROOT/tests/gates/memory/harness_alloc_refused.sh"
+
 # 6.6.10 (bite 12) — every first-party `alloc(` result is zero-checked before its first use:
 # a census against a SHRINK-ONLY allowlist (a new unchecked site fails, a fixed site fails
 # until its allowlist line is deleted), with a self-tested detector and a mutation row.

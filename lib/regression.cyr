@@ -351,12 +351,27 @@ var _REGRESSION_TREE_CAP = 4096;
 var _regression_tree_dbuf = 0;    # getdents64 buffer
 var _regression_tree_cbuf = 0;    # a task's `children` file
 
+# 0 once all THREE walk buffers exist, -1 if any allocation was refused. Each is retried until
+# it succeeds: the idempotence test used to be on the pid list alone, and nothing was checked,
+# so a refused allocation made the deadline's tree walk write through address 0. CHANGELOG [6.6.10]
 fn _regression_tree_init(): i64 {
-    if (_regression_tree_pids != 0) { return 0; }
-    _regression_tree_pids = alloc(_REGRESSION_TREE_CAP * 8);
-    _regression_tree_dbuf = alloc(4096);
-    _regression_tree_cbuf = alloc(65536);
+    if (_regression_tree_pids == 0) { _regression_tree_pids = alloc(_REGRESSION_TREE_CAP * 8); }
+    if (_regression_tree_dbuf == 0) { _regression_tree_dbuf = alloc(4096); }
+    if (_regression_tree_cbuf == 0) { _regression_tree_cbuf = alloc(65536); }
+    if (_regression_tree_pids == 0 || _regression_tree_dbuf == 0) { return 0 - 1; }
+    if (_regression_tree_cbuf == 0) { return 0 - 1; }
     return 0;
+}
+
+# sys_fork for every timed verb here: on Linux the deadline walks the child's tree, so the walk
+# buffers are allocated BEFORE the child exists — a refused allocation is then this verb's
+# ordinary fork failure (-ENOMEM; each caller's `pid < 0` arm cleans up and returns its error)
+# instead of a fault inside the deadline with a child left running. CHANGELOG [6.6.10]
+fn _regression_fork(): i64 {
+    #ifdef CYRIUS_TARGET_LINUX
+    if (_regression_tree_init() < 0) { return 0 - 12; }
+    #endif
+    return sys_fork();
 }
 
 # Decimal `v` (>= 0) at `p`; returns the byte after it.
@@ -460,7 +475,7 @@ fn _regression_tree_add_children(pid, n): i64 {
 # (0 elsewhere — there is no /proc to walk).
 fn _regression_tree_collect(root): i64 {
     #ifdef CYRIUS_TARGET_LINUX
-    _regression_tree_init();
+    if (_regression_tree_init() < 0) { return 0; }   # no buffers: nothing can be walked
     var n = _regression_tree_add_children(root, 0);
     var i = 0;
     while (i < n) {
@@ -582,6 +597,8 @@ var _regression_termed_n = 0;
 fn _regression_term_children_once(): i64 {
     #ifdef CYRIUS_TARGET_LINUX
     if (_regression_termed == 0) { _regression_termed = alloc(_REGRESSION_TREE_CAP * 8); }
+    if (_regression_termed == 0) { return 0 - 1; }                   # CHANGELOG [6.6.10]
+    if (_regression_tree_init() < 0) { return 0 - 1; }
     var k = _regression_tree_add_children(sys_getpid(), 0);
     var i = 0;
     while (i < k) {
@@ -756,6 +773,7 @@ fn regression_pipe_read_all(fd, buf, cap, timeout_ms): i64 {
 fn regression_pipe_to_bin_capture(bin_path, src_path, out_path, envp): i64 {
     var src_cap = 1048576;
     var src_buf = alloc(src_cap);
+    if (src_buf == 0) { return 0 - 1; }                              # CHANGELOG [6.6.10]
     var src_n = file_read_all(src_path, src_buf, src_cap);
     if (src_n < 0) { src_n = 0; }
 
@@ -774,7 +792,7 @@ fn regression_pipe_to_bin_capture(bin_path, src_path, out_path, envp): i64 {
     var wfd = load32(&pipefd + 4);
 
     var _rg_ppid = sys_getpid();
-    var pid = sys_fork();
+    var pid = _regression_fork();
     if (pid < 0) {
         sys_close(rfd); sys_close(wfd); sys_close(out_fd);
         return 0 - 1;
@@ -833,7 +851,7 @@ fn regression_pipe_to_bin(bin_path, src_path, envp): i64 {
 #   -2         timeout (child SIGKILL'd)
 fn regression_run_with_timeout(bin_path, timeout_ms, envp): i64 {
     var _rg_ppid = sys_getpid();
-    var pid = sys_fork();
+    var pid = _regression_fork();
     if (pid < 0) { return 0 - 1; }
     if (pid == 0) {
         _regression_child_guard(_rg_ppid);
@@ -906,7 +924,7 @@ fn regression_exec_capture_status(bin_path, buf, buflen, envp, status_out): i64 
     var out_fd = sys_open(out_path, 577, 420);
     if (out_fd < 0) { store64(status_out, 0 - 1); store64(status_out + 8, 0); return 0; }
     var _rg_ppid = sys_getpid();
-    var pid = sys_fork();
+    var pid = _regression_fork();
     if (pid < 0) {
         sys_close(out_fd); sys_unlink(out_path);
         store64(status_out, 0 - 1); store64(status_out + 8, 0);
@@ -948,7 +966,7 @@ fn regression_exec_capture(bin_path, buf, buflen, envp): i64 {
 # WEXITSTATUS or 128+sig.
 fn regression_exec_run(bin_path, envp): i64 {
     var _rg_ppid = sys_getpid();
-    var pid = sys_fork();
+    var pid = _regression_fork();
     if (pid < 0) { return 0 - 1; }
     if (pid == 0) {
         _regression_child_guard(_rg_ppid);
@@ -999,7 +1017,7 @@ fn regression_exec_with_arg_capture_status(bin_path, arg, buf, buflen, envp, sta
     var out_fd = sys_open(out_path, 577, 420);
     if (out_fd < 0) { return 0; }
     var _rg_ppid = sys_getpid();
-    var pid = sys_fork();
+    var pid = _regression_fork();
     if (pid < 0) { sys_close(out_fd); sys_unlink(out_path); return 0; }
     if (pid == 0) {
         _regression_child_guard(_rg_ppid);
@@ -1049,7 +1067,7 @@ fn regression_exec_with_arg_capture_both_status(bin_path, arg, buf, buflen, envp
     var out_fd = sys_open(out_path, 577, 420);
     if (out_fd < 0) { return 0; }
     var _rg_ppid = sys_getpid();
-    var pid = sys_fork();
+    var pid = _regression_fork();
     if (pid < 0) { sys_close(out_fd); sys_unlink(out_path); return 0; }
     if (pid == 0) {
         _regression_child_guard(_rg_ppid);
@@ -1139,7 +1157,7 @@ fn regression_ssh_target(env_name, default_name): i64 {
 #ifndef CYRIUS_TARGET_AGNOS
 fn regression_ssh_skip_check(target): i64 {
     var _rg_ppid = sys_getpid();
-    var pid = sys_fork();
+    var pid = _regression_fork();
     if (pid < 0) { return 0; }
     if (pid == 0) {
         _regression_child_guard(_rg_ppid);
@@ -1180,7 +1198,7 @@ fn regression_ssh_skip_check(target): i64 {
 fn regression_scp_to(target, local_path, remote_path, envp): i64 {
     var dest = _regression_join3(target, ":", remote_path);
     var _rg_ppid = sys_getpid();
-    var pid = sys_fork();
+    var pid = _regression_fork();
     if (pid < 0) { return 0 - 1; }
     if (pid == 0) {
         _regression_child_guard(_rg_ppid);
@@ -1209,7 +1227,7 @@ fn regression_scp_to(target, local_path, remote_path, envp): i64 {
 # exit code.
 fn regression_ssh_remote_exit(target, command, envp): i64 {
     var _rg_ppid = sys_getpid();
-    var pid = sys_fork();
+    var pid = _regression_fork();
     if (pid < 0) { return 0 - 1; }
     if (pid == 0) {
         _regression_child_guard(_rg_ppid);
@@ -1242,7 +1260,7 @@ fn regression_ssh_remote_exec_capture(target, command, out_path, envp): i64 {
     var out_fd = sys_open(out_path, 577, 420);
     if (out_fd < 0) { return 0 - 1; }
     var _rg_ppid = sys_getpid();
-    var pid = sys_fork();
+    var pid = _regression_fork();
     if (pid < 0) { sys_close(out_fd); return 0 - 1; }
     if (pid == 0) {
         _regression_child_guard(_rg_ppid);
@@ -1301,7 +1319,7 @@ fn regression_exec_in_dir3(work_dir, bin_path, arg1, arg2, arg3, out_path, envp)
     }
     if (out_fd < 0) { return 0 - 1; }
     var _rg_ppid = sys_getpid();
-    var pid = sys_fork();
+    var pid = _regression_fork();
     if (pid < 0) { sys_close(out_fd); return 0 - 1; }
     if (pid == 0) {
         _regression_child_guard(_rg_ppid);
@@ -1346,6 +1364,7 @@ fn regression_exec_in_dir3_env(work_dir, bin_path, arg1, arg2, arg3, env_extras_
     }
     var extra_n = vec_len(env_extras_vec);
     var merged = alloc((base_n + extra_n + 1) * 8);
+    if (merged == 0) { return 0 - 1; }       # refused: fail before the fork. CHANGELOG [6.6.10]
     var mi = 0;
     var ei = 0;
     while (ei < extra_n) {

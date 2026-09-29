@@ -6,6 +6,29 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.10] — 2026-09-28
 
+### Fixed
+
+- **The test harness never stores through a refused allocation.** (bite 12)
+  **Root cause:** `test_scratch` (lib/assert.cyr, 6.6.6) did `var buf = alloc(bl + 32);
+  memcpy(buf, base, bl);` with no check — with `ALLOC_MAX = 0` that is rc 139 on x86 and
+  qemu-aarch64, a page fault writing `0x0` under wine, and on cx **no crash at all**: cxvm wrote
+  guest offset 0 and `test_scratch` returned 0, a fixture "name" at address 0. The same shape was
+  in `bench_new` (lib/bench.cyr) and in lib/regression.cyr: `_regression_tree_init` allocated the
+  deadline's three tree-walk buffers and tested only the pid list for idempotence (none for
+  failure), `_regression_termed`, the envp merge in `regression_exec_in_dir3_env`, and
+  `regression_pipe_to_bin_capture`'s source buffer. The refused-allocation sweeps of 6.6.7/6.6.8
+  had covered lib/io.cyr only. **Fix:** `test_scratch` PANICS by name (`panic: test_scratch: alloc
+  refused the fixture name`, exit 1 — a test has no name to fall back to); `bench_new` returns 0;
+  the tree init retries and checks all three buffers, and every forking regression verb gets them
+  through `_regression_fork`, which allocates them BEFORE the child exists — a refusal is that
+  verb's ordinary fork failure (-1, cleaned up by its existing `pid < 0` arm) instead of a fault
+  inside the deadline with a child left running; the envp merge, `_regression_termed` and the
+  source buffer return -1. **Gate:** `tests/gates/memory/harness_alloc_refused.sh` runs the
+  test_scratch panic and its served twin on x86, qemu-aarch64, wine and cxvm (each compiler built
+  fresh from `src/`), plus the regression rows on x86 Linux; each check removed alone reddens it
+  (ledger in the header — cx is the row that shows a silent guest write). Verified on real ecb,
+  ach, pi and cass: exit 1 with the panic line.
+
 ### Added
 
 - **A census gate for unchecked first-party `alloc(` results, with a shrink-only allowlist.**

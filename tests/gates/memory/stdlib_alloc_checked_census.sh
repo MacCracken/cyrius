@@ -32,8 +32,9 @@
 #
 # ALLOWLIST FORMAT: `<file> <fn> <var>`, one per unchecked site (a repeat = two sites). Keyed
 # on the fn and variable, not the line, so unrelated edits do not churn it. 6.6.10 bite 12
-# set it at the 131 hits on 6d12c1e6; every lane removes its own lines as it fixes them, and
-# the list is re-derived on the merged tree — it may only shrink.
+# set it at the 131 hits on 6d12c1e6, and removed the 8 it then fixed (lib/assert.cyr,
+# bench.cyr, regression.cyr); every lane removes its own lines as it fixes them, and the
+# list is re-derived on the merged tree — it may only shrink.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -173,7 +174,6 @@ while read -r f; do [ -f "$f" ] || _fail "axis 2: the fold table names $f, which
 echo "axis 3: the census against the shrink-only allowlist"
 cat > "$W/allow" <<'ALLOW'
 lib/args_agnos.cyr _agnos_getenv res
-lib/assert.cyr test_scratch buf
 lib/async_win.cyr _asw_wcmdline wbuf
 lib/async_win.cyr _asw_wenvblock wbuf
 lib/audit_walk.cyr _aw_is_generated buf
@@ -183,7 +183,6 @@ lib/audit_walk.cyr audit_fmt_walk orig_buf
 lib/audit_walk.cyr audit_fmt_walk fmt_buf
 lib/audit_walk.cyr audit_lint_walk lint_buf
 lib/audit_walk.cyr audit_doc_walk doc_buf
-lib/bench.cyr bench_new b
 lib/boxed.cyr boxed_new b
 lib/cffi.cyr cffi_struct_new layout
 lib/chrono.cyr dur_new d
@@ -243,12 +242,6 @@ lib/regex.cyr _re_m_lazy_init _re_m_lastgen
 lib/regex.cyr regex_compile nfa
 lib/regex.cyr _re_pike_run saves_scratch
 lib/regex.cyr _re_pike_run match_saves
-lib/regression.cyr _regression_tree_init _regression_tree_pids
-lib/regression.cyr _regression_tree_init _regression_tree_dbuf
-lib/regression.cyr _regression_tree_init _regression_tree_cbuf
-lib/regression.cyr _regression_term_children_once _regression_termed
-lib/regression.cyr regression_pipe_to_bin_capture src_buf
-lib/regression.cyr regression_exec_in_dir3_env merged
 lib/sha1.cyr sha1 buf
 lib/sha1.cyr sha1 w
 lib/str.cyr str_from_buf buf
