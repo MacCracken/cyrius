@@ -49,10 +49,11 @@ Unary minus flips the **sign bit** of a float the compiler can see is a float: a
 literal, a value typed `f64` / `f32`, or a direct call to a float-returning builtin
 (`-f64_sqrt(v)`, `-f64_exp(v)`, `-f32_from(v)`, …). So `-1.5` is -1.5, `-0.0` is negative
 zero and `-x` negates an `f64` exactly (6.6.8; before it, `-1.0` evaluated to -4.0 and
-`-0.0` to +0, silently). It does NOT cover an **untyped** variable or a struct field holding
-float bits, or a parenthesised operand whose own type is untyped (`-(f64_exp(u))` with
-`u` untyped, `-(a + b)` over untyped vars) — those are `i64` as far as the compiler
-knows, and `-v` is integer negation of the bits. Negate them with `f64_neg(v)`.
+`-0.0` to +0, silently). A struct or union field declared `f64` / `f32` counts as typed too
+(6.6.10 — see [Field types](#field-types-v6610)). It does NOT cover an **untyped** variable,
+an untyped field holding float bits, or a parenthesised operand whose own type is untyped
+(`-(f64_exp(u))` with `u` untyped, `-(a + b)` over untyped vars) — those are `i64` as far
+as the compiler knows, and `-v` is integer negation of the bits. Negate them with `f64_neg(v)`.
 
 ⚠ Binary operators are typed by their LEFT operand. `0 - 1.5` is an INTEGER subtraction
 of 1.5's bit pattern (it is -3.0), and `2 * x` with `x: f64` multiplies x's bits. Write
@@ -271,6 +272,50 @@ var r = Rect { 0, 0, 10, 5 };
 var w = r.br.x - r.tl.x;   # 10
 ```
 
+### Field types (v6.6.10)
+
+A field is untyped (`x;`, 8 bytes, i64) or annotated `x: T`, where `T` is one of:
+
+| `T` | Bytes | Notes |
+|-----|-------|-------|
+| `i8` / `i16` / `i32` | 1 / 2 / 4 | Narrow and **signed**: `p.x` sign-extends. |
+| `i64` | 8 | The same as no annotation. |
+| `u8` / `u16` / `u32` / `u64` | **8 each** | ⚠ Not narrow. The name is accepted but the field is a full word, so `struct { a: u8; b: u8; }` is 16 bytes, not 2. For a binary layout, use `i8` / `i16` / `i32` and mask the value. |
+| `f64` | 8 | **Typed** — `p.x + p.y`, `p.x * 2.0`, `-p.x` and `p.x < p.y` are float operations. |
+| `f32` | **8** | Typed (single-precision arithmetic), stored in the low 32 bits of a full word. |
+| `cstring`, `Result`, `Option`, `Tagged`, an enum | 8 | An enum may be declared before or after the struct. |
+| a struct or union | its size | Stored **inline**. It must be declared ABOVE the struct that uses it. |
+| `Vec` / `Vec<T>` | 8 | A handle. |
+| a type parameter of the struct being declared (`struct Box<T> { v: T; }`) | per instance | |
+
+⚠ The field widths are layout (and ABI). `u8`..`u32` and `f32` have always taken 8 bytes;
+v6.6.10 documents that rather than changing it.
+
+Anything else is a **compile error that names the type**. Before v6.6.10 an unknown name was
+silently an 8-byte i64, and three cases were silent miscompiles:
+
+* `a: Nonexist` compiled (a typo, or a missing `include`).
+* A struct used as a field type **above** its own declaration got a different layout than the
+  same text below it: `struct A { b: B; x; }` written before `struct B { p; q; }` made A 16
+  bytes instead of 24, and `a.b` read 8 bytes of a 16-byte value. It now reports
+  `struct field type 'B' is declared after its use; declare it before 'A'`.
+* `v: i16v8` (a vector type) registered as a 2-byte `i16` field. A vector cannot be a field
+  type.
+
+A struct cannot contain itself (`struct Node { next: Node; }` crashed the compiler before
+v6.6.10); a link to another node is an `i64` (pointer) field.
+
+**f64 fields are typed; `#derive(accessors)` getters are not.** For
+`struct P { x: f64; y: f64; }`, `p.x + p.y` is a float add. Before v6.6.10 every operator on
+such a field was an INTEGER operation on the bit pattern (`p.x + p.y` read as NaN for 1.5 + 2.0,
+`p.x * p.y` as 0) with no warning, and correct code like `2.0 * p.x` drew a false
+`f64 arithmetic with a non-f64 right operand` warning. A generated getter is `load64(...)` and
+stays **untyped** on purpose, so `P_x(&p) + P_y(&p)` is still an integer add: code in the
+ecosystem compares getter results bit-for-bit (`==` on the bit pattern), and a typed getter
+would turn those into float compares with different NaN and ±0 answers. When you want float
+arithmetic on a getter's result, hold it in an `f64` variable (`var x: f64 = P_x(&p);`) or use
+the field directly.
+
 ### Where a struct lives (v6.6.5)
 
 A struct declared inside a fn — `var p = Point { 1, 2 };`, `var p: Point;`, `var p: Point = q;`
@@ -341,6 +386,15 @@ look reasonable:
   give it an out-pointer and have it store the lanes —
   `var v: f64v2; var ig = callptr(fp, &v, 41, 7); return v;` — which carries both lanes
   correctly.
+
+⚠ **A struct-typed FIELD is a copy destination too (v6.6.10).** With `struct Box { v: P3; n; }`,
+`b.v = p` copies the whole struct into the field. So does a call, method or operator that
+returns a `P3` (`b.v = mk(1)`, `b.v = a.mk(1)`, `b.v = a + c`), a by-value `P3` parameter, a
+pointer-mode `P3` local (the struct it points at, not the pointer), a global, and another `P3`
+field (`b.v = o.b.v`). A struct of a different type is a compile error naming it. Before v6.6.10
+every one of these stored ONE word: `b.v.y` kept its old value, and from a parameter the stored
+word was the parameter's address. A source that is not a struct (an integer, an untyped
+pointer) still stores one word, as before.
 
 ⚠ **A copy moves one struct into a variable of that SAME struct type.** `p = q` and
 `var p: P3 = q` between two DIFFERENT struct types are a compile error since v6.6.6
