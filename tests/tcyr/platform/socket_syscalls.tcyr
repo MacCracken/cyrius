@@ -37,9 +37,17 @@ var SOCK_CLOEXEC = 0;
 var SOCK_CLOEXEC = 524288;
 #endif
 
+# 6.6.10: this file did not COMPILE for PE or agnos (the corpus cross-compile ratchet,
+# tests/gates/toolchain/tcyr_corpus_cross_compiles.sh). The BSD-fd socket calls run where the
+# kernel has them (Linux, macOS); PE's peer DECLINES BSD fds by design (ws2_32 SOCKETs come
+# from lib/net.cyr) and is asserted to decline, and agnos has its own connection-id socket
+# ABI, whose surface is checked instead. PE gained sys_listen (0xF033) this release, so the
+# four wrappers it has are callable there too. CHANGELOG [6.6.10]
 fn main(): i64 {
     alloc_init();
 
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_AGNOS
     test_group("sys_socket — AF_UNIX/SOCK_DGRAM round-trip");
     # AF_UNIX + SOCK_DGRAM + SOCK_CLOEXEC, protocol 0 (default).
     # Returns a valid fd >= 0, or -errno. On aarch64 with a
@@ -49,6 +57,31 @@ fn main(): i64 {
     assert(fd >= 0, "sys_socket(AF_UNIX, SOCK_DGRAM|SOCK_CLOEXEC, 0) returns fd >= 0");
     sys_close(fd);
 
+    test_group("compile-time callability — the POSIX-only wrappers");
+    var fp_recvmsg = &sys_recvmsg;
+    var fp_accept4 = &sys_accept4;
+    assert(fp_recvmsg != 0, "sys_recvmsg defined");
+    assert(fp_accept4 != 0, "sys_accept4 defined");
+    #endif
+    #endif
+
+    #ifdef CYRIUS_TARGET_WIN
+    test_group("PE — the BSD-fd socket peer declines");
+    var sk = "  SKIP: the AF_UNIX round-trip needs BSD socket fds; the PE peer declines them\n";
+    sys_write(1, sk, strlen(sk));
+    assert_eq(sys_socket(AF_UNIX, SOCK_DGRAM, 0), 0 - 38, "sys_socket declines with -ENOSYS (not a silent fd)");
+    #endif
+
+    #ifdef CYRIUS_TARGET_AGNOS
+    test_group("agnos — the connection-id socket ABI");
+    var ska = "  SKIP: agnos has no BSD socket fds; its own socket calls are checked instead\n";
+    sys_write(1, ska, strlen(ska));
+    assert(&sys_sock_connect != 0, "sys_sock_connect defined");
+    assert(&sys_sock_listen != 0, "sys_sock_listen defined");
+    assert(&sys_sock_accept != 0, "sys_sock_accept defined");
+    #endif
+
+    #ifndef CYRIUS_TARGET_AGNOS
     test_group("compile-time callability of remaining wrappers");
     # &fn reference — linker / fixup catches missing fns. Not
     # invoked because each has socket-state side effects that
@@ -57,14 +90,11 @@ fn main(): i64 {
     var fp_listen = &sys_listen;
     var fp_connect = &sys_connect;
     var fp_recvfrom = &sys_recvfrom;
-    var fp_recvmsg = &sys_recvmsg;
-    var fp_accept4 = &sys_accept4;
     assert(fp_bind != 0, "sys_bind defined");
     assert(fp_listen != 0, "sys_listen defined");
     assert(fp_connect != 0, "sys_connect defined");
     assert(fp_recvfrom != 0, "sys_recvfrom defined");
-    assert(fp_recvmsg != 0, "sys_recvmsg defined");
-    assert(fp_accept4 != 0, "sys_accept4 defined");
+    #endif
 
     var r = assert_summary();
     return r;

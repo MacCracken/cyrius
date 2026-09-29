@@ -26,7 +26,13 @@ enum Col { Red = 1; Green = 2; }
 fn pick(): i64 { return 3; }
 fn after_two(): i64 { return 4; }
 #endif
+# 6.6.10: the non-Linux arm carries the SAME derive, so every target runs the case in a taken
+# block (an `#ifndef` here). It used to be a derive-free fallback, and the file failed to compile
+# for both Mach-O targets and PE — `Green` and Col_to_json exist only where the enum does — so
+# the full macOS corpus run on ecb and ach reported it red. CHANGELOG [6.6.10]
 #ifndef CYRIUS_TARGET_LINUX
+#derive(Serialize)
+enum Col { Red = 1; Green = 2; }
 fn pick(): i64 { return 3; }
 fn after_two(): i64 { return 4; }
 #endif

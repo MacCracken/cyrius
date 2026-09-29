@@ -674,6 +674,76 @@ CI container, aarch64 (qemu and real pi), Mach-O arm64 (ecb), Mach-O x86_64 (ach
 and real cass).
 ---
 
+## CVE-53 — `lib/ws.cyr`'s `ws_recv_frame` let a remote peer choose its allocation size and read frames it had not received
+
+*Appended 2026-09-28 (cyrius 6.6.10, bite 14), found by the 6.6.8 review of the agnos userland
+(the unchecked-read shape of `async_timeout`, grepped across the stdlib). Not part of the
+2026-09-03 sweep: recorded here because this is the live ledger. The id was pre-assigned by the
+6.6.10 plan; the counter lines above are reconciled at integration, not by this bite.*
+
+| | |
+|---|---|
+| **Severity** | **High (P1)** — a remote WebSocket peer controls the size of an allocation and, when it fails, a write through the failed pointer; silent (frames are reported complete when they are not) |
+| **Affected** | `lib/ws.cyr` `ws_recv_frame` (and `ws_recv`, which calls it) since the module's first version, through cyrius 6.6.9; the same reader shape in `lib/ws_server.cyr` `ws_server_recv_frame` (fail-closed, not memory-unsafe — see below); every consumer that vendors either file |
+| **Fixed** | 6.6.10 |
+
+**Vector.** The client reads a frame the server sends, so the bytes are the remote peer's.
+`ws_recv_frame` took the 16-bit and 64-bit extended length, the mask and the payload each with
+ONE unchecked `sys_read`. (1) A short read — routine for any frame larger than one TCP segment —
+left stale stack bytes as the length or the mask, and a short payload read was reported as the
+whole payload with the declared `plen`. (2) The 64-bit length kept only its low 32 bits, so
+`0x80000000_00000005` read as 5. (3) `alloc(plen + 1)` took the peer's length with no bound and
+no check, and then `sys_read(fd, payload, plen)` and `store8(payload + plen, 0)` ran through
+the result.
+
+**Impact.** A peer declaring a ~4 GiB payload makes the client attempt a 4 GiB allocation; when
+`alloc` returns 0 the NUL store lands at address `plen` — a SIGSEGV for any peer that wants the
+process gone, i.e. a remote crash of any cyrius WebSocket client (yantra's CDP driver reads
+Chromium's frames through it). A peer that simply sends
+a large frame in several segments gets its message silently truncated and padded with stale
+bytes — data corruption with no error. Measured on this tree (the test rows below, against the
+6.6.9 reader): a 300-byte frame truncated to 10 bytes came back as a 300-byte payload; a frame
+whose declared length has its top bit set came back as a 5-byte payload; a frame delivered in
+nine pieces was dropped at its 1-byte first read.
+
+**Also in the same file (no separate id).** `_ws_handshake_request` `memcpy`d the path and host
+into a fixed `alloc(512)` with no length check — the CVE-50 shape: after building a request for
+a 2048-byte path the NEXT `alloc(64)` came back full of the path's bytes. `ws_connect` compared
+bytes 9-11 of a response it may have read fewer than 12 bytes of. `ws_new` and the frame sender's
+masking buffer used `alloc` unchecked.
+
+**`lib/ws_server.cyr`.** `ws_server_recv_frame` bounded the length (`len > max`,
+`WS_MAX_PAYLOAD`) and read the payload in a loop, but the header, extended-length and mask reads
+treated a short read as a dead connection (a healthy client whose frame was split was dropped),
+and a 64-bit length with its MSB set composed to a NEGATIVE `len` that passed both bounds and was
+returned as the "length" (`ws_server_recv` treats any negative as a close, so it was not
+memory-unsafe there).
+
+**Fix.** Every frame part goes through a read-exactly loop (`_ws_recv_exact` /
+`_wss_recv_exact`; EINTR retried, EOF or an error is a failure). A 64-bit length with any of its
+top 32 bits set is refused (RFC 6455 §5.2 requires the MSB to be 0, and nothing that large fits
+a cap), as is any length above `WS_RECV_MAX_PAYLOAD` (16 MiB, a public var the caller may set)
+— before any allocation. The allocation is checked. A refused or short frame returns 0 with
+`len_out` 0 and marks the connection CLOSED (the stream position is unknown after it). The
+handshake request is sized from its inputs; a response shorter than 12 bytes is not OPEN; the
+server reader refuses the negative length by name.
+
+**Sibling copies.** `majra`'s `majra_ws_recv_frame` (src/ws.cyr) was already correct — its
+2.6.9 repair reads exactly, bounds the length and rejects the top 32 bits — so it needs no fix.
+yantra has no reader of its own: its CDP driver calls this `ws_recv`, and the 52 sibling repos that
+vendor `lib/ws.cyr` / `lib/ws_server.cyr` pick the fix up at their next stdlib re-vendor on 6.6.10.
+
+**Verified.** `tests/tcyr/stdlib/ws_recv_frame_short_reads.tcyr` (30 rows): complete frames
+still read; a truncated payload, extended length, mask and header each return 0 and CLOSE; the
+top-bit, >4 GiB and cap+1 lengths are refused; a lowered cap refuses a 5-byte frame; a 2048-byte
+path builds a complete request and the next allocation holds none of its bytes; a frame a forked
+child writes in nine pieces arrives whole. `tests/tcyr/stdlib/ws_server_recv_frame_exact.tcyr`
+covers the server reader (top-bit length is -1, a split frame is received). Mutation: the 6.6.9
+`lib/ws.cyr` turns 17 of the 30 rows red (every truncation, bound and next-allocation row); the
+6.6.9 `lib/ws_server.cyr` turns 3 of 7 red.
+
+---
+
 ## Hardening, 6.6.9 bite 9 (no CVE): the CLI's temp base honours `$TMPDIR`, and a temp dir it cannot write is never read as a verdict
 
 Not a CVE: every site below already FAILED CLOSED — nothing untrusted was accepted — but each

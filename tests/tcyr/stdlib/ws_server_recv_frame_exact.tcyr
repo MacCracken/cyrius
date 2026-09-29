@@ -1,0 +1,124 @@
+# ws_server_recv_frame_exact.tcyr — 6.6.10 (the CVE-53 sweep): lib/ws_server.cyr's frame
+# reader reads every part EXACTLY and refuses a 64-bit length with its top bits set.
+#
+# The server twin of ws_recv_frame_short_reads.tcyr (a separate file because lib/ws.cyr and
+# lib/ws_server.cyr both define the WS_OP_* names). ws_server_recv_frame took ONE read for the
+# header, the extended length and the mask, and a short one dropped the connection — so a
+# healthy client whose frame arrived split across segments was disconnected. And a 64-bit
+# length with its MSB set composed to a NEGATIVE len that passed both `len > max` bounds and
+# came back as a negative "length". CHANGELOG [6.6.10]
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/tagged.cyr"
+include "lib/net.cyr"
+include "lib/io.cyr"
+include "lib/bayan.cyr"
+include "lib/chrono.cyr"
+
+# ws_server_handshake's header helper, which this file never reaches (the frame reader is
+# what is tested); lib/sandhi.cyr would drag the whole TLS stack in for one symbol.
+fn sandhi_server_find_header(buf, blen, name): i64 { return 0; }
+
+include "lib/ws_server.cyr"
+include "lib/assert.cyr"
+
+var _wx_path = 0;
+
+fn _wx_ws(bytes, n): i64 {
+    if (file_write_all(_wx_path, bytes, n) != n) { return 0; }
+    var fd = file_open(_wx_path, O_RDONLY, 0);
+    if (fd < 0) { return 0; }
+    return ws_server_new(fd);
+}
+
+#ifndef CYRIUS_TARGET_WIN
+#ifndef CYRIUS_TARGET_AGNOS
+fn _wx_cut(i, n): i64 {
+    if (i == 0) { return 1; }                  # half the header
+    if (i == 1) { return 3; }                  # the rest + half the 16-bit length
+    if (i == 2) { return 4; }
+    if (i == 3) { return 6; }                  # half the mask
+    if (i == 4) { return 8; }
+    if (i == 5) { return 100; }
+    return n;
+}
+
+fn _wx_trickle(fd, buf, n): i64 {
+    var off = 0;
+    var i = 0;
+    while (i < 7) {
+        var end = _wx_cut(i, n);
+        if (sock_send_all(fd, buf + off, end - off) != end - off) { return 1; }
+        off = end;
+        sleep_ms(20);
+        i = i + 1;
+    }
+    return 0;
+}
+#endif
+#endif
+
+fn main(): i64 {
+    alloc_init();
+    _wx_path = test_scratch("ws_server_recv_frame_exact");
+    var buf = alloc(512);
+    var pay = alloc(1024);
+    var op[8];
+
+    test_group("6.6.10 — a masked client frame reads");
+    store8(buf, 0x81); store8(buf + 1, 0x80 | 3);
+    store8(buf + 2, 1); store8(buf + 3, 2); store8(buf + 4, 3); store8(buf + 5, 4);
+    store8(buf + 6, 0x61 ^ 1); store8(buf + 7, 0x62 ^ 2); store8(buf + 8, 0x63 ^ 3);
+    var ws = _wx_ws(buf, 9);
+    assert_eq(ws_server_recv_frame(ws, pay, 1024, &op), 3, "3 payload bytes");
+    assert_eq(load8(pay + 2), 0x63, "unmasked");
+    sys_close(ws_server_fd(ws));
+
+    test_group("6.6.10 — a 64-bit length with its top bit set is refused, not negative");
+    store8(buf, 0x82); store8(buf + 1, 0x80 | 127);
+    store8(buf + 2, 0x80);
+    var k = 3;
+    while (k < 10) { store8(buf + k, 0); k = k + 1; }
+    store8(buf + 9, 5);
+    ws = _wx_ws(buf, 20);
+    assert_eq(ws_server_recv_frame(ws, pay, 1024, &op), 0 - 1, "-1 (it returned the negative length itself)");
+    sys_close(ws_server_fd(ws));
+
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_AGNOS
+    test_group("6.6.10 — a frame split across reads is received, not dropped");
+    var sp[16];
+    assert_eq(sys_socketpair(1, 1, 0, &sp), 0, "socketpair");
+    var sa = load32(&sp);
+    var sb = load32(&sp + 4);
+    var fr = alloc(512);
+    store8(fr, 0x82); store8(fr + 1, 0x80 | 126);
+    store8(fr + 2, 0); store8(fr + 3, 200);
+    store8(fr + 4, 7); store8(fr + 5, 7); store8(fr + 6, 7); store8(fr + 7, 7);
+    k = 0;
+    while (k < 200) { store8(fr + 8 + k, (k & 0xFF) ^ 7); k = k + 1; }
+    var pid = sys_fork();
+    if (pid == 0) {
+        sys_close(sa);
+        syscall(60, _wx_trickle(sb, fr, 208));
+    }
+    sys_close(sb);
+    var wt = ws_server_new(sa);
+    assert_eq(ws_server_recv_frame(wt, pay, 1024, &op), 200, "200 bytes (a short header read used to drop the client)");
+    assert_eq(load8(pay + 199), 199, "last byte unmasked");
+    var st[8];
+    store64(&st, 0);
+    sys_waitpid(pid, &st, 0);
+    assert_eq(WEXITSTATUS(load32(&st)), 0, "the writer child sent every piece");
+    sys_close(sa);
+    #endif
+    #endif
+
+    xunlink(_wx_path);
+    return assert_summary();
+}
+var ec = main();
+syscall(60, ec);

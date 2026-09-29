@@ -1,0 +1,266 @@
+# ws_recv_frame_short_reads.tcyr — 6.6.10 (CVE-53): lib/ws.cyr's ws_recv_frame reads every
+# frame part EXACTLY and bounds the length a peer declares.
+#
+# ⛔ THE DEFECT. The extended-length, mask and payload reads were single unchecked sys_read
+# calls. A short read — routine for any frame larger than one TCP segment — left stale stack
+# bytes as the length or the mask, and the payload was reported complete when it was not; a
+# 1-byte header read closed the connection. The 64-bit length dropped its high 32 bits, and
+# `alloc(plen + 1)` took the peer's length unchecked, so a remote peer chose this process's
+# allocation size and a failed alloc was written through at `payload + plen`.
+#
+# HOW IT IS FORCED. Group 1 (every target) reads frames out of a FILE, so EOF lands exactly
+# where the test puts it: a truncated payload, a truncated extended length, a length with its top
+# 32 bits set, a length above the cap. Group 2 (Linux / macOS) has a forked child write one valid
+# frame to a socketpair in pieces, with a pause between each, so every read the parent makes
+# returns short — the old reader closed the connection at the 1-byte header. CHANGELOG [6.6.10]
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/syscalls.cyr"
+include "lib/tagged.cyr"
+include "lib/io.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/net.cyr"
+include "lib/bayan.cyr"
+include "lib/ws.cyr"
+include "lib/chrono.cyr"
+include "lib/assert.cyr"
+
+var _wr_path = 0;
+
+# Put `n` bytes in the scratch file and return a ws handle reading it (state OPEN).
+fn _wr_ws(bytes, n): i64 {
+    if (file_write_all(_wr_path, bytes, n) != n) { return 0; }
+    var fd = file_open(_wr_path, O_RDONLY, 0);
+    if (fd < 0) { return 0; }
+    var ws = ws_new(fd);
+    store64(ws + 8, WS_OPEN);                   # skip the handshake: framing is what is tested
+    return ws;
+}
+
+fn _wr_done(ws): i64 {
+    sys_close(ws_fd(ws));
+    return 0;
+}
+
+# A frame header: FIN|op, then the 7-bit length byte (no mask bit — a server frame).
+fn _wr_hdr(buf, op, len7): i64 {
+    store8(buf, 0x80 | op);
+    store8(buf + 1, len7);
+    return 2;
+}
+
+#ifndef CYRIUS_TARGET_WIN
+#ifndef CYRIUS_TARGET_AGNOS
+# Child: write `n` bytes of `buf` to `fd` in the given cut points, pausing between pieces so
+# the reader's sys_read returns each piece on its own.
+# The end offset of piece i: half the 2-byte header, the rest, half the 16-bit extended length,
+# the rest, half the mask, the rest, one payload byte, then the payload in two parts.
+fn _wr_cut(i, n): i64 {
+    if (i == 0) { return 1; }
+    if (i == 1) { return 2; }
+    if (i == 2) { return 3; }
+    if (i == 3) { return 4; }
+    if (i == 4) { return 6; }
+    if (i == 5) { return 8; }
+    if (i == 6) { return 9; }
+    if (i == 7) { return 150; }
+    return n;
+}
+
+fn _wr_trickle(fd, buf, n): i64 {
+    var off = 0;
+    var i = 0;
+    while (i < 9) {
+        var end = _wr_cut(i, n);
+        if (sock_send_all(fd, buf + off, end - off) != end - off) { return 1; }
+        off = end;
+        sleep_ms(20);
+        i = i + 1;
+    }
+    return 0;
+}
+#endif
+#endif
+
+fn main(): i64 {
+    alloc_init();
+    _wr_path = test_scratch("ws_recv_frame_short_reads");
+    var buf = alloc(512);
+    var op[8];
+    var ln[8];
+
+    test_group("6.6.10 — a complete frame still reads");
+    var p = _wr_hdr(buf, 1, 0x80 | 5);         # masked TEXT, 5 bytes
+    store8(buf + 2, 1); store8(buf + 3, 2); store8(buf + 4, 3); store8(buf + 5, 4);
+    var hi = "hello";
+    var k = 0;
+    while (k < 5) { store8(buf + 6 + k, load8(hi + k) ^ ((k & 3) + 1)); k = k + 1; }
+    var ws = _wr_ws(buf, 11);
+    var d = ws_recv_frame(ws, &op, &ln);
+    assert(d != 0, "a masked 5-byte text frame is returned");
+    assert_eq(load64(&ln), 5, "len_out = 5");
+    assert_eq(load64(&op), 1, "opcode TEXT");
+    assert_eq(streq(d, "hello"), 1, "unmasked to \"hello\"");
+    assert_eq(ws_state(ws), WS_OPEN, "the connection stays OPEN");
+    _wr_done(ws);
+
+    p = _wr_hdr(buf, 2, 126);                  # BINARY, 16-bit length 300
+    store8(buf + 2, 1); store8(buf + 3, 44);
+    k = 0;
+    while (k < 300) { store8(buf + 4 + k, k & 0xFF); k = k + 1; }
+    ws = _wr_ws(buf, 304);
+    d = ws_recv_frame(ws, &op, &ln);
+    assert(d != 0, "a 300-byte frame with a 16-bit extended length is returned");
+    assert_eq(load64(&ln), 300, "len_out = 300");
+    assert_eq(load8(d + 299), 299 & 0xFF, "its last byte is the last byte sent");
+    _wr_done(ws);
+
+    test_group("6.6.10 — a frame the stream does not finish is refused, not reported complete");
+    p = _wr_hdr(buf, 2, 126);                  # declares 300, carries 10, then EOF
+    store8(buf + 2, 1); store8(buf + 3, 44);
+    ws = _wr_ws(buf, 14);
+    d = ws_recv_frame(ws, &op, &ln);
+    assert_eq(d, 0, "a truncated payload returns 0 (it used to return the buffer as 300 bytes)");
+    assert_eq(load64(&ln), 0, "len_out = 0");
+    assert_eq(ws_state(ws), WS_CLOSED, "and the connection is CLOSED");
+    _wr_done(ws);
+
+    p = _wr_hdr(buf, 2, 126);                  # the 16-bit length itself is cut after 1 byte
+    store8(buf + 2, 1);
+    ws = _wr_ws(buf, 3);
+    assert_eq(ws_recv_frame(ws, &op, &ln), 0, "a truncated extended length returns 0 (it used a stale stack byte)");
+    assert_eq(ws_state(ws), WS_CLOSED, "CLOSED");
+    _wr_done(ws);
+
+    p = _wr_hdr(buf, 2, 0x80 | 3);             # masked, but the mask is cut after 2 bytes
+    store8(buf + 2, 9); store8(buf + 3, 9);
+    ws = _wr_ws(buf, 4);
+    assert_eq(ws_recv_frame(ws, &op, &ln), 0, "a truncated mask returns 0");
+    _wr_done(ws);
+
+    store8(buf, 0x82);                         # only 1 header byte, then EOF
+    ws = _wr_ws(buf, 1);
+    assert_eq(ws_recv_frame(ws, &op, &ln), 0, "a 1-byte header at EOF returns 0");
+    _wr_done(ws);
+
+    test_group("6.6.10 — the peer does not choose the allocation size");
+    p = _wr_hdr(buf, 2, 127);                  # 64-bit length 0x80000000_00000005
+    store8(buf + 2, 0x80);
+    k = 3;
+    while (k < 9) { store8(buf + k, 0); k = k + 1; }
+    store8(buf + 9, 5);
+    memcpy(buf + 10, "abcde", 5);
+    ws = _wr_ws(buf, 15);
+    assert_eq(ws_recv_frame(ws, &op, &ln), 0, "a 64-bit length with its top bit set is refused (it used to read as 5)");
+    assert_eq(ws_state(ws), WS_CLOSED, "CLOSED");
+    _wr_done(ws);
+
+    p = _wr_hdr(buf, 2, 127);                  # 64-bit length 0x00000001_00000005 (> 4 GiB)
+    k = 2;
+    while (k < 10) { store8(buf + k, 0); k = k + 1; }
+    store8(buf + 5, 1);
+    store8(buf + 9, 5);
+    memcpy(buf + 10, "abcde", 5);
+    ws = _wr_ws(buf, 15);
+    assert_eq(ws_recv_frame(ws, &op, &ln), 0, "a length above 4 GiB is refused (its high 32 bits used to be dropped)");
+    _wr_done(ws);
+
+    p = _wr_hdr(buf, 2, 127);                  # WS_RECV_MAX_PAYLOAD + 1
+    var over = WS_RECV_MAX_PAYLOAD + 1;
+    k = 2;
+    while (k < 10) { store8(buf + k, 0); k = k + 1; }
+    store8(buf + 6, (over >> 24) & 0xFF);
+    store8(buf + 7, (over >> 16) & 0xFF);
+    store8(buf + 8, (over >> 8) & 0xFF);
+    store8(buf + 9, over & 0xFF);
+    ws = _wr_ws(buf, 10);
+    assert_eq(ws_recv_frame(ws, &op, &ln), 0, "a length one above WS_RECV_MAX_PAYLOAD is refused before any allocation");
+    assert_eq(ws_state(ws), WS_CLOSED, "CLOSED");
+    _wr_done(ws);
+
+    var saved = WS_RECV_MAX_PAYLOAD;
+    WS_RECV_MAX_PAYLOAD = 4;
+    p = _wr_hdr(buf, 1, 5);
+    memcpy(buf + 2, "hello", 5);
+    ws = _wr_ws(buf, 7);
+    assert_eq(ws_recv_frame(ws, &op, &ln), 0, "the cap is the caller's: at 4, a 5-byte frame is refused");
+    _wr_done(ws);
+    WS_RECV_MAX_PAYLOAD = saved;
+
+    test_group("6.6.10 — the handshake request is sized from its inputs");
+    var lp = alloc(2049);
+    memset(lp, 0x61, 2048);
+    store8(lp, 47);
+    store8(lp + 2048, 0);
+    var key[32];
+    var req = _ws_handshake_request(lp, "example.test", &key);
+    assert(req != 0, "a 2048-byte path builds a request (it overran a fixed 512-byte buffer)");
+    assert_eq(strlen(req), 114 + 2048 + 12 + strlen(&key), "the request is complete: fixed text + path + host + key");
+    # The overrun wrote into memory the allocator had not handed out yet, so the NEXT allocation
+    # came back already holding path bytes (0x61) — memory cyrius code treats as fresh.
+    var nx = alloc(64);
+    var dirty = 0;
+    k = 0;
+    while (k < 64) {
+        if (load8(nx + k) == 0x61) { dirty = dirty + 1; }
+        k = k + 1;
+    }
+    assert_eq(dirty, 0, "the next allocation holds none of the path's bytes (it used to be full of them)");
+
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_AGNOS
+    test_group("6.6.10 — every read returns short: the frame still arrives whole");
+    var sp[16];
+    assert_eq(sys_socketpair(1, 1, 0, &sp), 0, "socketpair");
+    var sa = load32(&sp);
+    var sb = load32(&sp + 4);
+    var fr = alloc(512);
+    _wr_hdr(fr, 2, 0x80 | 126);                # masked BINARY, 16-bit length 300
+    store8(fr + 2, 1); store8(fr + 3, 44);
+    store8(fr + 4, 0x11); store8(fr + 5, 0x22); store8(fr + 6, 0x33); store8(fr + 7, 0x44);
+    k = 0;
+    while (k < 300) {
+        var mb = 0x11;
+        if ((k & 3) == 1) { mb = 0x22; }
+        if ((k & 3) == 2) { mb = 0x33; }
+        if ((k & 3) == 3) { mb = 0x44; }
+        store8(fr + 8 + k, (k & 0xFF) ^ mb);
+        k = k + 1;
+    }
+    var pid = sys_fork();
+    if (pid == 0) {
+        sys_close(sa);
+        var rc = _wr_trickle(sb, fr, 308);
+        syscall(60, rc);
+    }
+    sys_close(sb);
+    var wt = ws_new(sa);
+    store64(wt + 8, WS_OPEN);
+    var dt = ws_recv_frame(wt, &op, &ln);
+    assert(dt != 0, "a frame delivered in nine pieces is returned (the old reader closed at the 1-byte header)");
+    assert_eq(load64(&ln), 300, "len_out = 300");
+    var okb = 0;
+    if (dt != 0) {
+        okb = 1;
+        k = 0;
+        while (k < 300) {
+            if (load8(dt + k) != (k & 0xFF)) { okb = 0; }
+            k = k + 1;
+        }
+    }
+    assert_eq(okb, 1, "every byte unmasked correctly — no stale mask or length byte");
+    assert_eq(ws_state(wt), WS_OPEN, "the connection stays OPEN");
+    var st[8];
+    store64(&st, 0);
+    sys_waitpid(pid, &st, 0);
+    assert_eq(WEXITSTATUS(load32(&st)), 0, "the writer child sent every piece");
+    sys_close(sa);
+    #endif
+    #endif
+
+    xunlink(_wr_path);
+    return assert_summary();
+}
+var ec = main();
+syscall(60, ec);

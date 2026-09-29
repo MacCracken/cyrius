@@ -58,14 +58,20 @@ include "lib/assert.cyr"
 # run of the suite (two check.sh at once), so one run deleted or rewrote another's file
 # mid-assert. The pid is taken once, so a forked child names the same files. CHANGELOG [6.6.6]
 var _scratch_pid = 0;
-fn _scratch(name, suffix): i64 {   # "/tmp/<name>.<pid><suffix>", NUL-terminated
+# 6.6.10: Windows has no /tmp — there the name is cwd-relative (the PE runner's cwd is per-run),
+# so the DynlibBadElf probe's fixture is actually written. CHANGELOG [6.6.10]
+fn _scratch(name, suffix): i64 {   # "/tmp/<name>.<pid><suffix>" (PE: "<name>.<pid><suffix>")
     if (_scratch_pid == 0) { _scratch_pid = sys_getpid(); }
     var nl = strlen(name);
     var sl = strlen(suffix);
     var p = alloc(nl + sl + 32);
+    var o = 0;
+    #ifndef CYRIUS_TARGET_WIN
     memcpy(p, "/tmp/", 5);
-    memcpy(p + 5, name, nl);
-    var o = 5 + nl;
+    o = 5;
+    #endif
+    memcpy(p + o, name, nl);
+    o = o + nl;
     store8(p + o, 46);
     o = o + 1;
     var d[24];
@@ -110,6 +116,16 @@ assert_eq(is_err_result(sm_null_tag), 1, "null handle is Err");
 assert_eq(sm_null, DynlibNotFound, "payload = DynlibNotFound");
 
 # ---- pwd ----
+# 6.6.10: the pwd / grp / shadow / pam groups read the POSIX account databases (/etc/passwd,
+# /etc/group, /etc/shadow, unix_chkpwd) and need sys_getuid, which the PE peer does not define —
+# so the file did not COMPILE for PE (the corpus cross-compile ratchet,
+# tests/gates/toolchain/tcyr_corpus_cross_compiles.sh). On PE they are compiled out with a named
+# SKIP; the Result groups above run everywhere. CHANGELOG [6.6.10]
+#ifdef CYRIUS_TARGET_WIN
+var _skw = "  SKIP: pwd/grp/shadow/pam read POSIX account databases — not on Windows\n";
+sys_write(1, _skw, strlen(_skw));
+#endif
+#ifndef CYRIUS_TARGET_WIN
 
 # Get the calling uid via the portable sys_getuid() wrapper. (The old hardcoded
 # syscall(102) is the x86_64 getuid number; aarch64 getuid is 174 — the bare
@@ -225,5 +241,6 @@ assert_eq(chain_ok, lookup_uid, "chain returns the uid it looked up");
 var chain_err_tag, chain_err = _self_uid_via_chain(2147483647, &pw_q, &sb_q, 1024);
 assert_eq(is_err_result(chain_err_tag), 1, "chain on bogus uid is Err");
 assert_eq(chain_err, PwdNotFound, "chain payload = PwdNotFound");
+#endif
 
 var r = assert_summary();

@@ -189,6 +189,162 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`cbt/srcscan.cyr`** (bite 15): the source-scanning section of `cbt/core.cyr` moved to its own file,
   included by `cbt/core.cyr` and by `programs/cyrius-lsp.cyr` — one declaration reader for coverage,
   header, distlib and the LSP. `_src_refs_ident` (the per-name scan) is removed, unreferenced.
+### Security
+
+- **CVE-53 (P1): `lib/ws.cyr`'s `ws_recv_frame` let a remote peer choose its allocation size and
+  read frames it had not received.** (bite 14; entry in `docs/audit/2026-09-03-security-audit.md`.)
+  **Root cause:** the extended-length, mask and payload reads were single unchecked `sys_read`
+  calls — a short read (any frame larger than one TCP segment) left stale stack bytes as the
+  length or mask and reported a partial payload as complete; the 64-bit length dropped its high 32
+  bits; and `alloc(plen + 1)` took the peer's length unbounded and unchecked, so a peer declaring
+  ~4 GiB crashed the client through the failed allocation. **Fix:** read-exactly loops for every
+  frame part (EINTR retried); a 64-bit length with any top-32 bit set, or above the new public
+  `WS_RECV_MAX_PAYLOAD` (16 MiB), is refused before any allocation; the allocation is checked; a
+  refused or short frame returns 0 with `len_out` 0 and marks the connection CLOSED. Same file:
+  `_ws_handshake_request` overran its fixed 512-byte buffer with a long path (the CVE-50 shape —
+  the next `alloc` came back full of path bytes), `ws_connect` read status bytes past a short
+  response, and `ws_new` / the sender's mask buffer used `alloc` unchecked. `lib/ws_server.cyr`'s
+  reader gets the same exact reads (a split frame used to drop a healthy client) and refuses the
+  top-bit length that composed to a NEGATIVE `len` past both bounds; its unchecked allocs are
+  checked. majra's own reader was already correct (its 2.6.9 repair); yantra reads through this
+  `ws_recv`. **Proof:** `tests/tcyr/stdlib/ws_recv_frame_short_reads.tcyr` (30 rows, incl. a
+  forked writer delivering one frame in nine pieces) — the 6.6.9 reader fails 17;
+  `tests/tcyr/stdlib/ws_server_recv_frame_exact.tcyr` — the 6.6.9 server reader fails 3 of 7. The
+  "allocation is checked" half is pinned by `tests/gates/memory/stdlib_alloc_refusal_sentinels.sh`'s
+  ws rows: a refused payload alloc on a ZERO-length frame (the only shape where the unchecked
+  reader writes through — a non-empty one gets EFAULT reading into 0 and closes by accident) must
+  return 0 with `len_out` 0 and the connection CLOSED; without the check it is rc 139.
+
+### Fixed
+
+- **The hash seed's getrandom-failure fallback has nanosecond resolution — it had one-second
+  resolution, and on agnos it was a constant.** (bite 14.) **Root cause:** the 6.6.4 port from
+  time(2) to clock_gettime kept the scalar shape `syscall(228, 0, &ts) + load64(&ts)`, which
+  reads only `tv_sec` from a Linux or cx timespec; the agnos arm called #46 (time_unix), which
+  is unminted on exactly the pre-1.45 kernels where #45 getrandom can fail, so it read -1 and
+  the seed was always 1096857192450. Measured with getrandom denied by seccomp: every process
+  started in the same second drew the SAME seed. **Fix:** `_hm_seed_time_mix()` in
+  `lib/hashseed.cyr` = `clock_epoch_ns() ^ clock_now_ns()*golden ^ <stack address>`, taken from
+  `lib/chrono.cyr` (now included), whose clocks already carry every target's contract; the raw
+  228 and the #46 arm are gone. **Proof:** `tests/tcyr/crossos/hashseed_os_rng_source.tcyr`
+  forks two children that deny getrandom with their own seccomp filter (the denial is asserted),
+  and requires src == 2 and different seeds — restoring `+ load64(&ts)` makes them identical
+  (mutation-proven); qemu-user SKIPs by name, real pi runs it. Every host runs a mix row, and
+  `hash_seed_flood_resistance.sh` axis 4 statically refuses `load64(&ts)` / `SYS_TIME_UNIX`, and
+  axis 5 runs the AGNOS build under the fake agnos kernel (`tests/fixtures/agnos_sctrace.cyr`,
+  whose getrandom answers 0) with the address layout pinned (`setarch -R`, since the mix's stack
+  address alone makes two runs differ under ASLR): src == 2, the same probe twice draws the SAME
+  seed (control), and a probe whose #95 read comes second draws a DIFFERENT one — so the clock,
+  alone, moves the seed. The 6.6.9 arm drew the published constant 1099511628211 every time; an
+  agnos-only `clock_epoch_ns() ^ &here` (no #95 clock) passed a plain two-run row and fails 5b. The seccomp row ran on real pi (and a mutant with
+  the old shape failed there) and inside the agnosticos CI container.
+  ⚠ Every hashmap consumer now also includes `lib/chrono.cyr` (its globals `CLOCK_REALTIME` /
+  `CLOCK_MONOTONIC`; a consumer redeclaring them — shakti — still compiles). cycc is unaffected.
+- **The whole `.tcyr` corpus runs green on both Macs — three files failed OUTSIDE `crossos/`.**
+  (bite 14; the 6.6.10 backlog item.) A full-corpus run on real ecb (Mach-O arm64) and ach (Intel
+  Mac) at bite start reported ecb 372/3, ach 373/2 — none of it platform breakage, all of it
+  test-side: `derive/derive_enum_inside_ifdef.tcyr` did not COMPILE for either Mach-O target (or
+  PE — `Green` / `Col_to_json` existed only under `CYRIUS_TARGET_LINUX`; the non-Linux arm now
+  carries the same derive in a taken `#ifndef`, so every target runs the case);
+  `math/math_inverse_trig.tcyr` compiled to ZERO assertions on aarch64 behind a stale
+  `#ifdef CYRIUS_ARCH_X86` that matched ganita ≤1.0.2 (the functions have been on every arch
+  since; 17/17 now on aarch64); `platform/dynlib_init.tcyr`'s SKIP path printed a 0-assertion
+  summary, which the cross-OS runner rightly scores as "ran nothing". It now asserts what can
+  fail: the decline is code 1 (loader not opened — 2/3 mean found-but-broken), and on x86_64 that
+  `/lib64/ld-linux-x86-64.so.2` really is absent (aarch64 declines by design). Both exits now carry
+  the failure count — `syscall(60, 0)` had scored every FAIL in the file, main path included, as
+  a pass (mutation: a forced return of 2 was green, now exits 2).
+- **The whole `.tcyr` corpus compiles for PE, both Mach-O targets and agnos — a ratchet gate keeps
+  it that way.** (bite 14.) Nothing cross-compiled `tests/tcyr` outside `crossos/`: on the 6.6.10
+  tree 9 files failed for PE, 1 for both Mach-O targets and 37 for agnos, every one a missing guard
+  or a missing wrapper. Fixed in the files: `platform/net_v6_connect.tcyr` (it reached the PRIVATE
+  `_fd_o_nonblock` and raw `SYS_BIND` / `SYS_LISTEN` / x86 `51`; the nonblocking group is now
+  Linux/macOS, the loopback group Linux through `sys_bind` / `sys_listen` / `sys_getsockname` /
+  `sys_accept4`, named SKIP elsewhere), `platform/fs.tcyr` (`xmkdir` / `xunlink` / `xrmdir`, and no
+  `/tmp` on Windows), `platform/socket_syscalls.tcyr`, `platform/sandbox_syscalls.tcyr`,
+  `platform/syscalls_at_family.tcyr`, `platform/regression_wait_unobserved.tcyr` (PE asserts the
+  fork-less verbs report "not observed", never an invented status) and
+  `stdlib/result_stdlib_pass2.tcyr`. PE gains `sys_listen` (0xF033) and `sys_rmdir` (0xF03B), whose
+  reroutes existed without wrappers (lane S2's `lib/syscalls_windows.cyr`; bite 14's hand-off),
+  pinned on real hosts by the new `tests/tcyr/crossos/listen_rmdir_wrappers.tcyr`.
+  `tests/gates/toolchain/tcyr_corpus_cross_compiles.sh` builds the PE and aarch64 cross compilers
+  from the tree and compiles all 378 files per leg against SHRINK-ONLY allowlists (PE 1, Mach-O 0,
+  agnos 31 — lane T's agnos pass empties that one): a failure not on the list is a FAIL, and so is
+  an allowlisted file that compiles; an empty or wrong-magic output is a failure; axis 0 proves every
+  leg can see a failure; a 350-file floor. Mutation: restoring the 6.6.9 `net_v6_connect.tcyr` and
+  `derive_enum_inside_ifdef.tcyr` gives six FAIL rows.
+- **cx prose tells the truth, `lib/alloc_cx.cyr` drops a workaround for a fixed defect, and cxvm's
+  guest contract is written down.** (bite 14.) Four sites said cxvm serves only
+  read/write/open/close/lseek/exit — false since 6.6.8 added host-served getrandom(318) /
+  clock_gettime(228) — and `lib/vec.cyr` (a cycc input; byte-identical, fixpoint + seed-derive
+  green) and `docs/platform-status.md` said cx has no indirect call, false since v6.5.13's
+  `callind` (re-verified: `callptr` / `fncall2` return 42 on cxvm, `vec_sort_by` sorts; the
+  archived issue reads RESOLVED, not "still OPEN"). `lib/alloc_cx.cyr` kept `_CX_HEAP_BYTES` to
+  dodge a "`global * <power of two>` corrupts the next call" defect whose real cause, cx ESETCC
+  `<=` / `>=`, 6.6.6 bite 21a fixed; one enum slot count now sizes `_cx_heap_buf` and bounds the
+  heap. **New:** `docs/platform-status.md` § *cyrius-x guest contract* — cxvm runs TRUSTED
+  bytecode and is NOT a sandbox: no guest-address bounds checks on any load/store, unchecked
+  data/call stacks, negative jump targets decode host memory, and every syscall but the eight
+  served ones reaches the host kernel with the guest's raw arguments, so an untrusted `.cyx` is a
+  native binary with cxvm's privileges. (The matching `programs/cxvm.cyr` header line is lane
+  S2's bite 10.)
+- **A refused `alloc()` in the first-party stdlib returns the fn's error sentinel — ~70 sites wrote
+  through it.** (bite 14; lane T's census, the files no other lane owns.) `boxed_new`,
+  `cffi_struct_new`, chrono's `dur_new` / month table / `epoch_to_date` / `iso8601` / `dt_format`,
+  dynlib's `_parse_dynamic` / `dynlib_open` (unmaps on failure), `lib/http.cyr`'s URL parse, request
+  build, response parse and every error-response / slot / receive buffer (`http_get_r` returns
+  `Err(HttpOther)`), regex's `str_glob` / `str_replace` / `regex_compile` and the matcher's lazy
+  buffers (`_re_m_lazy_init` is now a status fn; a refused init is "no match", never a store at 0),
+  `sha1` (now returns -1 with the digest untouched; `ws_server_handshake` refuses the upgrade),
+  `str_from_buf` / `str_cstr`, `str_lower_cstr` / `str_upper_cstr`, every `mutex_new`, the Linux peers'
+  `sigset_new` / `epoll_event_new` / `timerspec_new`, `thread_create` / `chan_new` on Linux, macOS and
+  Windows, `_tlocal_win_block`, the TLS ctx / key cells (freeing the SSL objects they would have
+  owned), the trait vtables, and unicode casefold / normalize — normalize's recursive decompose helpers
+  returned the unchanged offset on a refused step buffer, so the character "decomposed to nothing"
+  and `str_normalize` returned a SHORTER string as a success; they now return -1 up every
+  recursion level and `str_normalize` returns 0 (niyama's fuzzy matcher, the one outside caller,
+  loops `k < n` and treats -1 like 0, as before). **Proof:**
+  `tests/gates/memory/stdlib_alloc_refusal_sentinels.sh` — fault injection over a copy of `lib/` whose
+  `alloc` refuses exactly the k-th call, 90 rows (67 + 12 over `lib/ws.cyr` + 11 over
+  `lib/ws_server.cyr`, in their own probes — the two declare the same `WS_*` names): each fn returns
+  its sentinel for every k, the k-th call is REACHED, and k = count + 1 succeeds. Removing one check
+  gives rc 139 (boxed_new, sha1, sigset_new, and each of the ten ws / ws_server checks) or rc 1
+  (chan_new, normalize's step check or its -1 propagation); the pre-6.6.10 lib/ dies at the first
+  row.
+
+### Downstream
+
+- ⛔ **patra 1.15.1 must be TAGGED by the user before cyrius 6.6.10 is tagged** — `lib/patra.cyr` is
+  folded byte-identical from patra commit `589d226` (`dist/patra.cyr`, "1.15.1 — the CSPRNG-failure
+  fallback separates two processes in one second"; pin 6.6.9). (bite 14.) patra's `_pt_rand64` /
+  `_wal_gen_salts` fallback was `clock_epoch_secs() * k + counter` with a per-process counter that
+  starts at 0, so two processes falling back in the same second drew the same database id and WAL
+  salts; it is now the same ns-resolution mix as `lib/hashseed.cyr`, pinned by a two-child fork row
+  in patra's suite (1,305 assertions). The refused `_pt_alloc(8)` takes the fallback explicitly.
+- ⛔ **bayan 1.5.8 must be TAGGED by the user before cyrius 6.6.10 is tagged** — `lib/bayan.cyr` is
+  folded byte-identical from bayan commit `07c96a3` (`dist/bayan.cyr`; pin 6.6.9). (bite 14.) Its
+  FlateDecode loop said `callptr` "is a hard compile error on one backend" — cx, false since v6.5.13;
+  comment-only, plus bayan's previously unreleased issue-archive path-string moves (8 comment paths).
+- ⛔ **yantra 1.0.6 must be TAGGED by the user before cyrius 6.6.10 is tagged** — `lib/yantra.cyr` is
+  folded byte-identical from yantra commit `2be8a37` (`dist/yantra.cyr`; pin 6.6.9). (bite 14; the
+  roadmap's "yantra drops sock_send's count" item, premise-checked: `src/protocol/cdp.cyr:235`.)
+  `_cdp_http_get` sent the CDP discovery request with `sock_send` and ignored the count, then parsed
+  a "response" to a request that never went out; it now uses `sock_send_all` and returns 0, pinned
+  by yantra's new offline `tests/cdp_http_short_send.tcyr` (seccomp-denied write; the old code
+  returned the canned body). yantra reads WS frames through this stdlib's `ws_recv`, so CVE-53
+  reaches it through `lib/ws.cyr`; its Chromium/CDP e2e smoke passes 11/11 against the 6.6.10
+  reader (live Chromium 153).
+- ⛔ **majra 2.9.2 must be TAGGED by the user** — commit `53dfc94` on majra main, untagged. Independent
+  of the cyrius tag (majra is not vendored here). No src/ change: toolchain pin 6.6.6 → 6.6.9;
+  `tests/test.sh` runs the real bench (it built a `benches/bench_all.cyr` renamed to `.bcyr` long
+  ago and printed FAILED on every run); `docs/development/cyrius-quirks.md` #6 gains a forward note
+  that cyrius 6.6.10 corrects the inverted "(call site may be unreachable)" suffix. ⚠ That note
+  depends on S2 bite 10 landing the suffix wording in 6.6.10 — confirm it on the merged tree
+  before tagging majra, and revise the note if it did not land. (bite 14.)
+- **majra needs no WebSocket fix**: `majra_ws_recv_frame` (majra `src/ws.cyr`) already reads every
+  frame part exactly, bounds the length (`WS_MAX_PAYLOAD`) and rejects the top 32 bits — its 2.6.9
+  repair. (bite 14, premise-checked.) The fold table in `docs/ecosystem.md` names the three new fold
+  commits (`fold_table_matches_vendored.sh` green).
 
 ## [6.6.9] — 2026-09-28
 

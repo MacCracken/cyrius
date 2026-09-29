@@ -16,6 +16,12 @@
 # verb they now use, and its merged capture must still end with stdout's trailer.
 #
 # Self-spawning: argv(1) = "say", or CY_RWU_CHILD in the environment for the no-arg verbs.
+#
+# 6.6.10: the file used not to COMPILE for PE (SIGCHLD; the corpus cross-compile ratchet,
+# tests/gates/toolchain/tcyr_corpus_cross_compiles.sh). lib/regression.cyr's exec verbs are
+# fork-based, and PE's sys_fork declines, so on PE the file asserts the honest answer instead —
+# "not observed" (-1) and nothing captured, never a fabricated exit code — and SKIPs the rest by
+# name. CHANGELOG [6.6.10]
 include "lib/assert.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -50,6 +56,7 @@ fn _ok_or_unobserved(code): i64 {
 # `_regression_timeout_ms` reads the process environment, so it cannot be flipped in-process).
 fn _sigign_rows(tag, buf, st, envp, noenv): i64 {
     test_group(tag);
+    #ifndef CYRIUS_TARGET_WIN
     signal_ignore(SIGCHLD);
     regression_exec_with_arg_capture_both_status(argv(0), "say", buf, 4096, noenv, st);
     var c1 = load64(st);
@@ -64,6 +71,7 @@ fn _sigign_rows(tag, buf, st, envp, noenv): i64 {
     assert_eq(_ok_or_unobserved(c2), 1, "capture_status: -1 or the real 73");
     assert_eq(s2, 0, "…no invented signal death");
     assert_eq(_ok_or_unobserved(c3), 1, "exec_run: -1 or the real 73, never -2");
+    #endif
     return 0;
 }
 
@@ -80,6 +88,17 @@ fn main(): i64 {
     store64(envp + 8, 0);
     var noenv = alloc(8);
     store64(noenv, 0);
+
+    #ifdef CYRIUS_TARGET_WIN
+    test_group("PE — no fork: the verbs report 'not observed', never an invented status");
+    var skw = "  SKIP: the capture and SIG_IGN rows need fork (PE's sys_fork declines)\n";
+    sys_write(1, skw, strlen(skw));
+    var nw = regression_exec_with_arg_capture_both_status(argv(0), "say", buf, 4096, noenv, st);
+    assert_eq(load64(st), 0 - 1, "capture_both_status reports -1 (not observed)");
+    assert_eq(load64(st + 8), 0, "…and no signal death");
+    assert_eq(nw, 0, "…and captured nothing");
+    return assert_summary();
+    #endif
 
     if (getenv("CY_RWU_SUB") != 0) {
         _sigign_rows("SIGCHLD = SIG_IGN, untimed (CYRIUS_CHECK_TIMEOUT=0)", buf, st, envp, noenv);
