@@ -224,6 +224,19 @@ case "$HOST" in
     # v6.4.22 cx: the NATIVE macho cycc_cx (r1r, which hardcodes CYRIUS_TARGET_MACOS)
     # compiles a .cyr → .cyx that the native cxvm runs to exit 42. Guards the
     # main_cx.cyr per-target arena (mmap on macho, not brk — the fault this fixed).
+    # 6.6.11 (J6) — a CLI child sees the user's environment. `load_environ` opened
+    # /proc/self/environ unconditionally, so on macOS `_envp` was EMPTY and every child the CLI
+    # execs (cycc, git, the hasher, test binaries) ran with no PATH/HOME/TMPDIR/CYRIUS_*; only
+    # execvp's default /usr/bin:/bin hid it. The NATIVE CLI runs `cyrius deps` under `env -i`
+    # with a fake `sha256sum` FIRST on PATH: the hasher child (`/usr/bin/env sha256sum`) must run
+    # it. With an empty envp it resolves the real tool (or `shasum`) and never touches the fake.
+    ssh $SSHO ecb "cd ~/$RD && "'cat cbt/cyrius.cyr | CYRIUS_MACHO_ARM=1 ./r1r > cyrius_native && chmod +x cyrius_native && codesign -s - -f cyrius_native \
+      && D=$PWD && V=$(cat VERSION) && mkdir -p _envh/versions/$V _envfb _envp && cp -R lib _envh/versions/$V/lib \
+      && printf "#!/bin/sh\necho hit >> \"\$0.hit\"\nexec shasum -a 256 \"\$@\"\n" > _envfb/sha256sum && chmod +x _envfb/sha256sum \
+      && printf "[package]\nname = \"envp\"\nversion = \"0.1.0\"\ncyrius = \"%s\"\n\n[deps]\nstdlib = [\"syscalls\", \"string\", \"alloc\"]\n" "$V" > _envp/cyrius.cyml \
+      && (cd _envp && env -i PATH="$D/_envfb:/usr/bin:/bin" HOME="$HOME" CYRIUS_HOME="$D/_envh" CYRIUS_RESOLVED=1 "$D/cyrius_native" deps > "$D/_env.log" 2>&1) \
+      && test -s _envfb/sha256sum.hit' \
+      || { echo "ENV_FAIL: ecb — a CLI child did not inherit PATH (the fake sha256sum first on PATH never ran; ~/$RD/_env.log)"; exit 1; }
     ;;
   ach)
     # x86 ELF cycc told to emit Mach-O builds the x86 Mach-O cycc (its driver
@@ -244,6 +257,19 @@ case "$HOST" in
       && printf "fn main() { return 42; }" > _ec.cyr \
       && cat _ec.cyr | ./r1 > _ec && chmod +x _ec \
       && (_rc=0; ./_ec || _rc=$?; [ $_rc -eq 42 ])'
+    # 6.6.11 (J6), as on ecb — a CLI child sees the user's environment. `load_environ` opened
+    # /proc/self/environ unconditionally, so on macOS `_envp` was EMPTY and every child the CLI
+    # execs (cycc, git, the hasher, test binaries) ran with no PATH/HOME/TMPDIR/CYRIUS_*; only
+    # execvp's default /usr/bin:/bin hid it. The NATIVE CLI runs `cyrius deps` under `env -i`
+    # with a fake `sha256sum` FIRST on PATH: the hasher child (`/usr/bin/env sha256sum`) must run
+    # it. With an empty envp it resolves the real tool (or `shasum`) and never touches the fake.
+    ssh $SSHO ach "cd ~/$RD && "'cat cbt/cyrius.cyr | ./r1 > cyrius_native && chmod +x cyrius_native \
+      && D=$PWD && V=$(cat VERSION) && mkdir -p _envh/versions/$V _envfb _envp && cp -R lib _envh/versions/$V/lib \
+      && printf "#!/bin/sh\necho hit >> \"\$0.hit\"\nexec shasum -a 256 \"\$@\"\n" > _envfb/sha256sum && chmod +x _envfb/sha256sum \
+      && printf "[package]\nname = \"envp\"\nversion = \"0.1.0\"\ncyrius = \"%s\"\n\n[deps]\nstdlib = [\"syscalls\", \"string\", \"alloc\"]\n" "$V" > _envp/cyrius.cyml \
+      && (cd _envp && env -i PATH="$D/_envfb:/usr/bin:/bin" HOME="$HOME" CYRIUS_HOME="$D/_envh" CYRIUS_RESOLVED=1 "$D/cyrius_native" deps > "$D/_env.log" 2>&1) \
+      && test -s _envfb/sha256sum.hit' \
+      || { echo "ENV_FAIL: ach — a CLI child did not inherit PATH (the fake sha256sum first on PATH never ran; ~/$RD/_env.log)"; exit 1; }
     ;;
   pi)
     # x86 ELF -> aarch64-emitting cross-compiler -> NATIVE aarch64 cycc.
