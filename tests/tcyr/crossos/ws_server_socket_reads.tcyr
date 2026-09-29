@@ -1,0 +1,113 @@
+# ws_server_socket_reads.tcyr — 6.6.11: lib/ws_server.cyr's frame reader READS a real TCP socket
+# on every host target, Windows included.
+#
+# ⛔ WHY. _wss_recv_exact read every frame part with sys_read. On Windows sys_read is ReadFile,
+# and the sockets lib/net.cyr makes there are overlapped Winsock sockets; ReadFile with no
+# OVERLAPPED on one returns 0 while data is waiting — measured on cass — so a Windows server read
+# a false EOF at the first frame and dropped every client. It reads through lib/net.cyr's
+# _net_os_recv now (recv on Windows, sys_read elsewhere).
+#
+# The client is a plain loopback socket in this process: its writes land in the kernel buffer
+# before the server reads, so no thread or child is needed. (A separate file from the client's
+# twin because lib/ws.cyr and lib/ws_server.cyr both define the WS_OP_* names.)
+#
+# MUTATION (6.6.11): _wss_recv_exact back to sys_read fails the frame rows on cass and under wine.
+# CHANGELOG [6.6.11]
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/tagged.cyr"
+include "lib/net.cyr"
+include "lib/io.cyr"
+include "lib/bayan.cyr"
+include "lib/chrono.cyr"
+
+# ws_server_handshake's header helper, which this file never reaches (the frame reader is
+# what is tested); lib/sandhi.cyr would drag the whole TLS stack in for one symbol.
+fn sandhi_server_find_header(buf, blen, name): i64 { return 0; }
+
+include "lib/ws_server.cyr"
+include "lib/assert.cyr"
+
+#ifndef CYRIUS_TARGET_AGNOS
+# The port (host order) socket `fd` is bound to, or -1.
+fn _ws_port(fd): i64 {
+    var sa[16];
+    var sl[8];
+    store64(&sl, 16);
+    if (sys_getsockname(fd, &sa, &sl) != 0) { return 0 - 1; }
+    return ((load8(&sa + 2) & 0xFF) << 8) | (load8(&sa + 3) & 0xFF);
+}
+
+# A MASKED client frame (FIN | `op`) carrying `n` < 126 bytes of `data`, at out. Returns its size.
+fn _ws_masked(out, op, data, n): i64 {
+    store8(out, 0x80 | op);
+    store8(out + 1, 0x80 | n);
+    store8(out + 2, 0x11);
+    store8(out + 3, 0x22);
+    store8(out + 4, 0x33);
+    store8(out + 5, 0x44);
+    var i = 0;
+    while (i < n) {
+        store8(out + 6 + i, load8(data + i) ^ load8(out + 2 + i % 4));
+        i = i + 1;
+    }
+    return 6 + n;
+}
+
+fn _ws_group(): i64 {
+    test_group("6.6.11 — the WebSocket server reads a loopback TCP socket");
+    var lt, lfd = tcp_socket();
+    assert_eq(is_err_result(lt), 0, "listener tcp_socket");
+    var bt, bv = sock_bind(lfd, INADDR_LOOPBACK(), 0);
+    assert_eq(is_err_result(bt), 0, "bind 127.0.0.1:0");
+    var st, sv = sock_listen(lfd, 4);
+    assert_eq(is_err_result(st), 0, "listen");
+    var ct, cfd = tcp_socket();
+    var kt, kv = sock_connect(cfd, INADDR_LOOPBACK(), _ws_port(lfd));
+    assert_eq(is_err_result(kt), 0, "connect");
+    var at, afd = sock_accept(lfd);
+    assert_eq(is_err_result(at), 0, "accept");
+    if (is_err_result(at) == 1) { return 0; }
+    # Bound every read, so a broken read fails a row instead of hanging the suite.
+    sock_set_recv_timeout(cfd, 5, 0);
+    sock_set_recv_timeout(afd, 5, 0);
+    var ws = ws_server_new(afd);
+    assert(ws != 0, "ws_server_new");
+
+    var fr = alloc(256);
+    var n = _ws_masked(fr, WS_OP_TEXT, "hello", 5);
+    assert_eq(sock_send_all(cfd, fr, n), n, "the client sends a masked text frame");
+    var buf = alloc(256);
+    var op[8];
+    store64(&op, 0 - 1);
+    assert_eq(ws_server_recv_frame(ws, buf, 255, &op), 5, "ws_server_recv_frame reads it: 5 bytes (a false EOF on Windows)");
+    assert_eq(load64(&op), WS_OP_TEXT, "…TEXT");
+    assert_eq(memeq(buf, "hello", 5), 1, "…unmasked to 'hello'");
+
+    n = _ws_masked(fr, WS_OP_BINARY, "ping-pong", 9);
+    assert_eq(sock_send_all(cfd, fr, n), n, "the client sends a second frame");
+    var m = ws_server_recv(ws);
+    assert(m != 0, "ws_server_recv returns it");
+    if (m != 0) { assert_eq(streq(m, "ping-pong"), 1, "…'ping-pong'"); }
+
+    # A client close is still an EOF.
+    sock_close(cfd);
+    assert_eq(ws_server_recv_frame(ws, buf, 255, &op), 0 - 1, "after the client closes, the read is -1");
+    sock_close(afd);
+    sock_close(lfd);
+    return 0;
+}
+#endif
+
+fn main(): i64 {
+    alloc_init();
+    #ifndef CYRIUS_TARGET_AGNOS
+    _ws_group();
+    #endif
+    return assert_summary();
+}
+var ec = main();
+syscall(60, ec);

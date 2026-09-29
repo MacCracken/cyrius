@@ -1,0 +1,122 @@
+# ws_client_socket_reads.tcyr — 6.6.11: lib/ws.cyr's client READS a real TCP socket on every
+# host target, Windows included.
+#
+# ⛔ WHY. ws_connect read the 101 and _ws_recv_exact read every frame part with sys_read. On
+# Windows sys_read is ReadFile, and the sockets tcp_socket makes there are overlapped Winsock
+# sockets (a non-overlapped one ignores SO_RCVTIMEO); ReadFile with no OVERLAPPED on one returns 0
+# while data is waiting — measured on cass — so once 6.6.11 made tcp_socket work on Windows the
+# client connected, read a false EOF, and closed. Both reads now go through lib/net.cyr's
+# _net_os_recv (recv on Windows, sys_read elsewhere).
+#
+# The peer is a plain loopback socket in this process: every write it makes lands in the kernel
+# buffer before the client reads, so no thread or child is needed. (A separate file from the
+# server's twin because lib/ws.cyr and lib/ws_server.cyr both define the WS_OP_* names.)
+#
+# MUTATION (6.6.11): either read back to sys_read fails the handshake / frame rows on cass and
+# under wine. CHANGELOG [6.6.11]
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/tagged.cyr"
+include "lib/io.cyr"
+include "lib/net.cyr"
+include "lib/bayan.cyr"
+include "lib/ws.cyr"
+include "lib/assert.cyr"
+
+#ifndef CYRIUS_TARGET_AGNOS
+# The port (host order) socket `fd` is bound to, or -1.
+fn _wc_port(fd): i64 {
+    var sa[16];
+    var sl[8];
+    store64(&sl, 16);
+    if (sys_getsockname(fd, &sa, &sl) != 0) { return 0 - 1; }
+    return ((load8(&sa + 2) & 0xFF) << 8) | (load8(&sa + 3) & 0xFF);
+}
+
+# Read until the peer's request ends in CRLFCRLF (bounded). 1 when it did.
+fn _wc_drain_request(fd): i64 {
+    var buf = alloc(1024);
+    var got = 0;
+    while (got < 1023) {
+        var rt, rn = sock_recv(fd, buf + got, 1023 - got);
+        if (is_err_result(rt) == 1) { return 0; }
+        if (rn <= 0) { return 0; }
+        got = got + rn;
+        if (got >= 4 && memeq(buf + got - 4, "\r\n\r\n", 4) == 1) { return 1; }
+    }
+    return 0;
+}
+
+fn _wc_group(): i64 {
+    test_group("6.6.11 — the WebSocket client reads a loopback TCP socket");
+    var lt, lfd = tcp_socket();
+    assert_eq(is_err_result(lt), 0, "listener tcp_socket");
+    var bt, bv = sock_bind(lfd, INADDR_LOOPBACK(), 0);
+    assert_eq(is_err_result(bt), 0, "bind 127.0.0.1:0");
+    var st, sv = sock_listen(lfd, 4);
+    assert_eq(is_err_result(st), 0, "listen");
+    var ct, cfd = tcp_socket();
+    var kt, kv = sock_connect(cfd, INADDR_LOOPBACK(), _wc_port(lfd));
+    assert_eq(is_err_result(kt), 0, "connect");
+    var at, afd = sock_accept(lfd);
+    assert_eq(is_err_result(at), 0, "accept");
+    if (is_err_result(at) == 1) { return 0; }
+    # Bound every read, so a broken read fails a row instead of hanging the suite.
+    sock_set_recv_timeout(cfd, 5, 0);
+    sock_set_recv_timeout(afd, 5, 0);
+
+    var r101 = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n";
+    assert_eq(sock_send_all(afd, r101, strlen(r101)), strlen(r101), "the peer's 101 is queued");
+    var ws = ws_connect(cfd, "/ws", "localhost");
+    assert(ws != 0, "ws_connect returns a handle");
+    assert_eq(ws_state(ws), WS_OPEN, "ws_connect read the 101: OPEN (it read a false EOF on Windows)");
+    assert_eq(_wc_drain_request(afd), 1, "the peer received the upgrade request");
+
+    # An unmasked server frame, FIN|TEXT "hello" — then a 300-byte BINARY one (16-bit length).
+    var fr = alloc(512);
+    store8(fr, 0x81);
+    store8(fr + 1, 5);
+    memcpy(fr + 2, "hello", 5);
+    assert_eq(sock_send_all(afd, fr, 7), 7, "the peer sends a text frame");
+    var m = 0;
+    if (ws_state(ws) == WS_OPEN) { m = ws_recv(ws); }
+    assert(m != 0, "ws_recv returns the frame");
+    if (m != 0) { assert_eq(streq(m, "hello"), 1, "…'hello'"); }
+    store8(fr, 0x82);
+    store8(fr + 1, 126);
+    store8(fr + 2, 1);
+    store8(fr + 3, 44);                          # 0x012C = 300
+    memset(fr + 4, 0x5A, 300);
+    assert_eq(sock_send_all(afd, fr, 304), 304, "the peer sends a 300-byte binary frame");
+    var op[8];
+    var ln[8];
+    var p = 0;
+    if (ws_state(ws) == WS_OPEN) { p = ws_recv_frame(ws, &op, &ln); }
+    assert(p != 0, "ws_recv_frame reads the extended-length frame");
+    assert_eq(load64(&ln), 300, "…all 300 bytes");
+    if (p != 0) { assert_eq(load8(p + 299) & 0xFF, 0x5A, "…intact to the last byte"); }
+    assert_eq(ws_state(ws), WS_OPEN, "the connection is still OPEN");
+
+    # A peer close is still an EOF: the next read ends the connection.
+    sock_close(afd);
+    var q = ws_recv_frame(ws, &op, &ln);
+    assert_eq(q, 0, "after the peer closes, ws_recv_frame returns 0");
+    assert_eq(ws_state(ws), WS_CLOSED, "…and marks the connection CLOSED");
+    sock_close(cfd);
+    sock_close(lfd);
+    return 0;
+}
+#endif
+
+fn main(): i64 {
+    alloc_init();
+    #ifndef CYRIUS_TARGET_AGNOS
+    _wc_group();
+    #endif
+    return assert_summary();
+}
+var ec = main();
+syscall(60, ec);

@@ -137,10 +137,12 @@ fn ws_server_handshake(cfd, req_buf, req_len): i64 {
 
 # Read EXACTLY n bytes into buf. Returns 0, or -1 on EOF / a read error (EINTR is retried).
 # A TCP read returns what has arrived, so even the 2-byte header can come back short.
+# ⛔ Through lib/net.cyr's _net_os_recv, never sys_read: on Windows sys_read is ReadFile, which
+# returns 0 (a false EOF) on an overlapped Winsock socket with data waiting. CHANGELOG [6.6.11]
 fn _wss_recv_exact(fd, buf, n): i64 {
     var got = 0;
     while (got < n) {
-        var r = sys_read(fd, buf + got, n - got);
+        var r = _net_os_recv(fd, buf + got, n - got);
         if (r == 0 - 4) { continue; }
         if (r <= 0) { return 0 - 1; }
         got = got + r;
