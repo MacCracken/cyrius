@@ -421,7 +421,10 @@ fn _tests_walk_d(dir, depth): i64 {
         sys_write(STDERR_FD, "\n", 1);
         return 0;
     }
-    var entries = dir_list(str_from(dir));
+    # 6.6.10: a directory that cannot be listed is a FAILED run, by name — `dir_list` read it
+    # as empty, so its tests silently did not run and the verdict stayed green. CHANGELOG [6.6.10]
+    var entries = _cbt_list_dir(dir, "its tests were NOT run (counted as a failure)");
+    if (entries == 0) { _fail = _fail + 1; return 1; }
     var ei = 0;
     while (ei < vec_len(entries)) {
         var name = vec_get(entries, ei);
@@ -453,6 +456,9 @@ fn cmd_tests(dir): i64 {
         return 1;
     }
     _tests_walk(dir);
+    # 6.6.10: nothing found BECAUSE a directory could not be listed is that failure (already
+    # named), not "no tests".
+    if (_tests_found == 0 && _fail > 0) { return 1; }
     if (_tests_found == 0) {
         sys_write(STDOUT_FD, "No .tcyr files found under ", 27);
         sys_write(STDOUT_FD, dir, strlen(dir));
@@ -460,8 +466,12 @@ fn cmd_tests(dir): i64 {
         return 1;
     }
     # v6.6.5 — a dry run has no verdict to report; printing "0 passed, 0 failed"
-    # would be a result for work that was never done.
-    if (_dry_run == 1) { return 0; }
+    # would be a result for work that was never done. (6.6.10: an unlistable directory is
+    # still a failure — the dry run could not say what it would have run.)
+    if (_dry_run == 1) {
+        if (_fail > 0) { return 1; }
+        return 0;
+    }
     sys_write(STDOUT_FD, "\n", 1);
     fmt_int(_pass);
     sys_write(STDOUT_FD, " passed, ", 9);
@@ -517,8 +527,16 @@ fn _fuzz_walk_dir_d(dir, passcnt_ptr, failcnt_ptr, found_ptr, depth): i64 {
         sys_write(STDERR_FD, "warning: fuzz walk depth cap (64) hit — symlink loop? subtree skipped\n", 72);
         return 0;
     }
-    if (file_exists(dir) == 0) { return 0; }
-    var entries = dir_list(str_from(dir));
+    # 6.6.10: an ABSENT dir is nothing to run (fuzz/ is optional); one that exists and cannot
+    # be listed is a failure by name. `file_exists` is an open(), which fails on a mode-000
+    # directory, so it answered "absent" for exactly the case that must fail. CHANGELOG [6.6.10]
+    if (is_dir(str_from(dir)) == 0) { return 0; }
+    var entries = _cbt_list_dir(dir, "its harnesses were NOT run (counted as a failure)");
+    if (entries == 0) {
+        store64(found_ptr, 1);
+        store64(failcnt_ptr, load64(failcnt_ptr) + 1);
+        return 0;
+    }
     var fi = 0;
     var n = 0;
     while (fi < vec_len(entries)) {
@@ -561,7 +579,9 @@ fn cmd_fuzz(source): i64 {
     store64(&found_store, 0);
     # v6.5.7: an explicit file or SUBFOLDER argument, symmetric with bench/tests.
     if (source != 0) {
-        if (file_exists(source) == 0) {
+        # 6.6.10: `file_exists` is an open(), which fails on a directory the user cannot read —
+        # that is not "no such file", it is a walk that fails (by name) below.
+        if (file_exists(source) == 0 && is_dir(str_from(source)) == 0) {
             _err_ctx("no such file or directory", source);
             return 1;
         }
@@ -646,8 +666,14 @@ fn _bench_walk_dir_d(dir, passcnt_ptr, failcnt_ptr, found_ptr, depth): i64 {
         sys_write(STDERR_FD, "warning: bench walk depth cap (64) hit — symlink loop? subtree skipped\n", 73);
         return 0;
     }
-    if (file_exists(dir) == 0) { return 0; }
-    var entries = dir_list(str_from(dir));
+    # 6.6.10: as _fuzz_walk_dir_d — absent is nothing to run, unlistable is a failure.
+    if (is_dir(str_from(dir)) == 0) { return 0; }
+    var entries = _cbt_list_dir(dir, "its benchmarks were NOT run (counted as a failure)");
+    if (entries == 0) {
+        store64(found_ptr, 1);
+        store64(failcnt_ptr, load64(failcnt_ptr) + 1);
+        return 0;
+    }
     var fi = 0;
     var n = 0;
     while (fi < vec_len(entries)) {
@@ -693,7 +719,7 @@ fn cmd_bench(source): i64 {
     # over zero benchmarks. A path that does not exist is refused rather than
     # silently building the auto-prepended stdlib into a do-nothing program.
     if (source != 0) {
-        if (file_exists(source) == 0) {
+        if (file_exists(source) == 0 && is_dir(str_from(source)) == 0) {   # 6.6.10: see cmd_fuzz
             _err_ctx("no such file or directory", source);
             return 1;
         }
@@ -1016,8 +1042,9 @@ fn _libsync_copy_pkg(src_dir, name): i64 {
     str_builder_add_cstr(s_sb, src_dir);
     str_builder_add_cstr(s_sb, "/");
     str_builder_add_cstr(s_sb, name);
-    var pkg_src = str_builder_build(s_sb);          # Str — dir_list takes a Str
-    var entries = dir_list(pkg_src);
+    var pkg_src = str_builder_build(s_sb);          # Str
+    # 6.6.10: unlistable is named (and counted in _err_count, which cmd_lib_sync checks).
+    var entries = _cbt_list_dir(str_data(pkg_src), "the family was NOT copied");
     if (entries == 0) { return 0; }
     var pkg_src_c = str_data(pkg_src);
     var dst_dir = make_path("lib", name);
@@ -1303,7 +1330,10 @@ fn cmd_lib_sync(): i64 {
         declared = _libsync_declared_mods();
         if (declared != 0) { if (vec_len(declared) == 0) { declared = 0; } }
     }
-    var entries = dir_list(str_from(src_dir));
+    # 6.6.10: an unlistable snapshot is an error by name, not "copied 0 files".
+    var _ls_e0 = _err_count;
+    var entries = _cbt_list_dir(src_dir, "nothing was copied");
+    if (entries == 0) { return 1; }
     var li = 0;
     var copied = 0;
     # v6.5.12: per-declared-module SATISFIED flags. Without this, a declared module
@@ -1417,6 +1447,8 @@ fn cmd_lib_sync(): i64 {
             return 1;
         }
     }
+    # 6.6.10: a family directory that could not be listed (named above) fails the sync.
+    if (_err_count > _ls_e0) { return 1; }
     if (_dry_run == 1) {
         sys_write(STDOUT_FD, "dry-run: would sync ", 20);
     } else {
@@ -1439,7 +1471,8 @@ fn cmd_clean(): i64 {
         println("nothing to clean");
         return 0;
     }
-    var entries = dir_list(str_from("build"));
+    var entries = _cbt_list_dir("build", "nothing was cleaned");   # 6.6.10: not "removed 0"
+    if (entries == 0) { return 1; }
     var ci = 0;
     var cleaned = 0;
     while (ci < vec_len(entries)) {
@@ -2631,7 +2664,10 @@ fn cmd_soak(iters): i64 {
         # success — soak was never brought along by the v6.5.7 bench/fuzz pass.
         # find_files returns full paths (path_join → str_builder_build, NUL-terminated).
         if (iter_ok == 1) {
-            var tent = find_files(str_from("tests/tcyr"), str_from(".tcyr"));
+            # 6.6.10: an unlistable test directory fails the iteration, by name.
+            var _sk_e0 = _err_count;
+            var tent = _cbt_find_files("tests/tcyr", ".tcyr", "its tests were NOT run");
+            if (_err_count > _sk_e0) { iter_ok = 0; }
             var ti = 0;
             while (ti < vec_len(tent)) {
                 var tpath = vec_get(tent, ti);
@@ -2697,7 +2733,9 @@ fn cmd_soak(iters): i64 {
             # v6.5.11: RECURSIVE. Was a depth-1 dir_list, so tests/scyr/<sub>/x.scyr
             # never ran and cmd_soak still reported success — the same defect the
             # v6.5.7 pass fixed for bench/fuzz without bringing scyr/smcyr along.
-            var sentries = find_files(str_from(sdir), str_from(".scyr"));
+            var _sc_e0 = _err_count;   # 6.6.10: an unlistable directory is a failed harness run
+            var sentries = _cbt_find_files(sdir, ".scyr", "its harnesses were NOT run (counted as a failure)");
+            if (_err_count > _sc_e0) { scyr_fail = scyr_fail + 1; }
             var sei = 0;
             while (sei < vec_len(sentries)) {
                 var spath_s = vec_get(sentries, sei);
@@ -2772,7 +2810,9 @@ fn cmd_smoke(): i64 {
             # path is now dir-relative rather than a bare basename; the smoke gate
             # (programs/checks/services.cyr) matches on a SUBSTRING, so the
             # basename it looks for is still present.
-            var entries = find_files(str_from(sdir), str_from(".smcyr"));
+            var _sm_e0 = _err_count;   # 6.6.10: an unlistable directory fails the smoke run
+            var entries = _cbt_find_files(sdir, ".smcyr", "its smoke harnesses were NOT run");
+            if (_err_count > _sm_e0) { return 1; }
             var ei = 0;
             while (ei < vec_len(entries)) {
                 var name = vec_get(entries, ei);
@@ -3090,8 +3130,10 @@ fn _distlib_mirror_mkdir(d): i64 {
 # stdlib's family leaves) likewise. 0, or -1.
 fn _distlib_mirror_copy_dir(from, to, depth): i64 {
     if (_distlib_mirror_mkdir(to) != 0) { return 0 - 1; }
-    var ents = dir_list(str_from(from));
-    if (ents == 0) { return 0; }
+    # 6.6.10: an unlistable snapshot directory fails the mirror (it read as empty, so the
+    # verify compiled against a partial stdlib). CHANGELOG [6.6.10]
+    var ents = _cbt_list_dir(from, "the sidecar verify cannot mirror it");
+    if (ents == 0) { return 0 - 1; }
     var i = 0;
     while (i < vec_len(ents)) {
         var e = str_data(vec_get(ents, i));
@@ -3158,7 +3200,8 @@ fn _distlib_unit_leaf(esb, m, lf): i64 {
         return 0;
     }
     if (is_dir(str_from(lbase)) == 0) { return 0; }
-    var fents = dir_list(str_from(lbase));
+    # 6.6.10: named and counted in _err_count (the verify then fails) — it read as empty.
+    var fents = _cbt_list_dir(lbase, "the sidecar verify cannot include that family");
     if (fents == 0) { return 0; }
     vec_sort_by(fents, &_dep_name_cmp);   # v6.5.37 (A8): deterministic family order
     var fi = 0;

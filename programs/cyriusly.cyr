@@ -103,7 +103,15 @@ fn _cmd_list(): i64 {
         syscall(1, 1, "  (none — install with `cyriusly install <ver>`)\n", 51);
         return 0;
     }
-    var entries = dir_list(str_from(versions_dir));
+    # 6.6.10: CHECKED — an unreadable versions/ printed "(none — install with …)", telling the
+    # user nothing was installed. CHANGELOG [6.6.10]
+    var entries = vec_new();
+    if (dir_list_checked(str_from(versions_dir), entries) < 0) {
+        syscall(1, 2, "error: cannot list ", 19);
+        syscall(1, 2, versions_dir, strlen(versions_dir));
+        syscall(1, 2, "\n", 1);
+        return 1;
+    }
     var ec = vec_len(entries);
     if (ec == 0) {
         syscall(1, 1, "  (none — install with `cyriusly install <ver>`)\n", 51);

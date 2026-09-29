@@ -217,6 +217,51 @@ fn _err_ctx(msg, ctx): i64 {
     return 0;
 }
 
+# List directory `dir` (a cstr) for a caller whose RESULT depends on seeing all of it — a
+# test run, an audit, a coverage count, a lock, a copy. Returns the vec of entry names, or 0
+# after naming the failure: "error: cannot list directory: <dir> (error N) — <what>". It
+# counts in _err_count, so a verb can sample that around a walk and fail on it.
+# ⛔ 6.6.10 — `dir_list` answers an EMPTY vec for a directory it cannot read, so every walker
+# here passed over an unreadable subtree in silence: `chmod 000 tests/bad` made `cyrius test`
+# report "1 passed, 0 failed", `cyrius audit` "ok: lint clean", `cyrius coverage` 100 % for a
+# 50 % tree. `what` says what the failure cost ("its tests were NOT run"). CHANGELOG [6.6.10]
+fn _cbt_list_dir(dir, what): i64 {
+    var v = vec_new();
+    var r = dir_list_checked(str_from(dir), v);
+    if (r >= 0) { return v; }
+    _progress_close();
+    _err_count = _err_count + 1;
+    sys_write(STDERR_FD, "error: cannot list directory: ", 30);
+    sys_write(STDERR_FD, dir, strlen(dir));
+    sys_write(STDERR_FD, " (error ", 8);
+    fmt_int_fd(STDERR_FD, 0 - r);
+    sys_write(STDERR_FD, ") — ", 6);
+    sys_write(STDERR_FD, what, strlen(what));
+    sys_write(STDERR_FD, "\n", 1);
+    return 0;
+}
+
+# `find_files_checked` for a walker whose verdict depends on seeing every file: the matching
+# paths, with every directory the walk could not list named as _cbt_list_dir names one (and
+# counted in _err_count — sample it around the call). CHANGELOG [6.6.10]
+fn _cbt_find_files(dir, ext, what): i64 {
+    var failed = vec_new();
+    var m = find_files_checked(str_from(dir), str_from(ext), failed);
+    var i = 0;
+    while (i < vec_len(failed)) {
+        var d = vec_get(failed, i);
+        _progress_close();
+        _err_count = _err_count + 1;
+        sys_write(STDERR_FD, "error: cannot list directory: ", 30);
+        sys_write(STDERR_FD, str_data(d), str_len(d));
+        sys_write(STDERR_FD, " — ", 5);
+        sys_write(STDERR_FD, what, strlen(what));
+        sys_write(STDERR_FD, "\n", 1);
+        i = i + 1;
+    }
+    return m;
+}
+
 # Warning: prints to stderr unless --quiet
 fn _warn(msg): i64 {
     if (_quiet == 1) { return 0; }

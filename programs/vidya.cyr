@@ -165,12 +165,15 @@ fn vidya_load_concept(r, path): i64 {
     return 1;
 }
 
-# Load all content from a vidya content directory.
-# Scans for: topic/concept.toml and cyrius/*.toml
 # Load all content from a vidya content directory (pass a Str path).
+# Scans for: topic/concept.toml and cyrius/*.toml. Returns the number of entries loaded, or
+# -1 (after naming it on stderr) when a directory could not be listed — 6.6.10: it read as
+# empty, so a partial corpus was reported as the whole one. CHANGELOG [6.6.10]
 fn vidya_load_dir(r, content_path): i64 {
     var total = 0;
-    var dirs = dir_list(content_path);
+    var dirs = vec_new();
+    var unl = vec_new();
+    if (dir_list_checked(content_path, dirs) < 0) { vec_push(unl, content_path); }
     var ndirs = vec_len(dirs);
     var i = 0;
     while (i < ndirs) {
@@ -183,7 +186,7 @@ fn vidya_load_dir(r, content_path): i64 {
                 total = total + vidya_load_concept(r, str_data(concept));
             }
             # Check for *.toml files with [[entries]]
-            var files = find_files(dpath, str_from(".toml"));
+            var files = find_files_checked(dpath, str_from(".toml"), unl);
             var nf = vec_len(files);
             var fi = 0;
             while (fi < nf) {
@@ -197,6 +200,15 @@ fn vidya_load_dir(r, content_path): i64 {
         }
         i = i + 1;
     }
+    var ui = 0;
+    while (ui < vec_len(unl)) {
+        var ud = vec_get(unl, ui);
+        syscall(1, 2, "vidya: cannot list directory: ", 30);
+        syscall(1, 2, str_data(ud), str_len(ud));
+        syscall(1, 2, "\n", 1);
+        ui = ui + 1;
+    }
+    if (vec_len(unl) > 0) { return 0 - 1; }
     return total;
 }
 
