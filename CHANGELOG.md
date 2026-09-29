@@ -6,6 +6,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.11] — 2026-09-29
 
+### Fixed
+
+- **A CLI child inherits the WHOLE environment — Linux dropped everything past 8 KB, macOS passed
+  none of it.** (B09: J4, J6.) **Root cause:** `load_environ` (cbt/core.cyr) builds `_envp`, the
+  envp of every POSIX `sys_execve` the CLI makes (cycc, test binaries, git, the hasher, /bin/sh,
+  ssh). It read /proc/self/environ into a fixed 8,192-byte buffer, so on Linux every variable past
+  8 KB was silently absent in the child and the one straddling the cut truncated (measured: a
+  `cyrius run` child's environ was exactly 8,192 bytes with a trailing sentinel gone). macOS has no
+  /proc, so the open failed and `_envp` was the EMPTY vector: children ran with no PATH, HOME,
+  TMPDIR, SSH_AUTH_SOCK or CYRIUS_* — only execvp's default `/usr/bin:/bin` let git and the
+  hasher resolve. **Fix:** Linux reads to EOF into a growing buffer; macOS sets `_envp` to the
+  kernel's own entry-stack envp through `_macho_envp()`, factored out of `_macho_fill_environ`
+  (NULL-terminated, live for the whole process, no copy, no cap). The cross-OS driver's private
+  32 KB copy (`_co_build_envp`, justified by a comment saying "the default _envp is empty") is
+  gone — `_co_run_sh` passes `_envp`. New `toolchain/cli_child_env_complete.sh`: a `cyrius run`
+  child's environ must be byte-identical to `env -0` under a 40,000-byte variable and a trailing
+  sentinel (the 8191 cap and a non-growing buffer both FAIL; exit 77 with no /proc). Verified on
+  real hardware: pi (aarch64 Linux, the gate green; the 6.6.10 `load_environ` red at 8,192 bytes),
+  and ecb (arm64) + ach (x86) macOS, where a fake `sha256sum` first on PATH is run 15 times by
+  `cyrius deps` with the fix and never with the 6.6.10 CLI.
+
 ## [6.6.10] — 2026-09-29
 
 The fourth batch release: the 6.6.8 review finds (groups B–G) and group H of the 6.6.9 finds, placed by
