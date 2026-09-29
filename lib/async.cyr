@@ -1222,6 +1222,16 @@ fn future_force(fut): i64 {
     return v;
 }
 
+# 1 when `fut` is a coroutine Future that has not completed yet, else 0 (a plain or
+# hand-built Future is complete once forced). A coroutine's `await inner(..)` of a
+# coroutine Future re-suspends while this is 1, so the nested body is driven to its value.
+fn future_pending(fut): i64 {
+    if (fut == 0) { return 0; }
+    if ((load64(fut + 8) & FUT_CORO) == 0) { return 0; }
+    if (load64(fut + 24) == 0 - 1) { return 0; }   # C[state] == DONE (parse.cyr _coro_mark_done)
+    return 1;
+}
+
 # Call a Future's impl `fp` with its `argc` bundled arguments (fut+16 …). Split out of
 # future_force so the memo path calls the SAME ladder with the unmarked arity.
 fn _future_call(fp, argc, fut): i64 {

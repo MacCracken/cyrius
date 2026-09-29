@@ -686,6 +686,78 @@ fn _PE_ROUTE_FILEHANDLE(S, sc_num, argc): i64 {
 # operand descends straight back into this tier. Guarding PEXPR/PARSE_TERM/PARSE_FACTOR
 # together covers the whole expression ladder named in this file's header comment.
 # See _rd_enter (src/common/util.cyr).
+# 6.6.10 — WHAT `await e` YIELDS INSIDE A COROUTINE. The suspend used to keep nothing: the
+# operand was evaluated, the state stamped, and at the landing rax held whatever the resume
+# dispatch left there — C[state], the suspend INDEX. `var s = await five();` x3 returned 123 for
+# 555, and `var v = await inner(a);` never ran inner's body at all.
+# The operand now goes to a coroutine-frame word (which survives the suspend) and the landing
+# reloads it. What the landing does with it depends on the operand's SHAPE:
+#   * a call to an `async fn` (`await inner(a)`), or a bare variable (`await F` — the operand of
+#     `await` is a Future by definition, as it is outside a coroutine): FORCE it with
+#     future_force, and while it is a coroutine Future that has not completed (future_pending),
+#     suspend again at the same point, so a nested coroutine is driven to its value;
+#   * anything else — a call to a plain fn, the park idiom `await async_wait_fd(rt, fd)`: the
+#     operand's own value.
+# Pass 1 marks every `async fn` (`_prescan_fn_sig`), so a callee defined later still classifies.
+fn _await_operand_is_future(S, ti0): i64 {
+    if (TOKTYP(S, ti0) != 2) { return 0; }
+    if (GTI(S) == ti0 + 1) { return 1; }                  # a bare variable
+    if (TOKTYP(S, ti0 + 1) != 10) { return 0; }           # not `name(`
+    if (TOKTYP(S, GTI(S) - 1) != 11) { return 0; }        # the factor is more than the call
+    var fi = FINDFN(S, TOKVAL(S, ti0));
+    if (fi < 0) { return 0; }
+    return GFAS(S, fi);
+}
+# The suspend and its landing. rax = the operand on entry; rax = the `await` value on exit.
+fn _await_coro_suspend(S, sk, fut): i64 {
+    var ff = 0;
+    var fpend = 0;
+    if (fut == 1) {
+        ff = _FINDFN_CSTR(S, "future_force", 12);
+        fpend = _FINDFN_CSTR(S, "future_pending", 14);
+        if (ff < 0 || fpend < 0) {
+            ERR_MSG(S, "await needs include \"lib/async.cyr\" for future_force and future_pending", 71);
+            return 0;
+        }
+    }
+    var slot = _HTEMP(S);                 # a coroutine-frame word: it survives the suspend
+    EFLSTORE(S, slot);
+    EFLLOAD(S, _coro_base);               # rax = C (slot < _coro_lo: the stack path)
+    EADDRA_IMM(S, _CORO_STATE_OFF);
+    EPUSHR(S);
+    EMOVI(S, sk);
+    EPOPC(S);
+    ESTORE64(S);                          # C[state] = sk
+    var again = GCP(S);                   # a still-pending coroutine Future suspends from here
+    EMOVI(S, 0);                          # a suspended task returns 0
+    _coro_suspend_jmp(S, sk);             # jump to the fn end, past the defer walker (6.6.7)
+    S64(&_coro_rcp + sk * 8, GCP(S));     # the resume label for state sk
+    _coro_nsusp = sk;
+    EFLLOAD(S, slot);
+    if (fut == 0) { return 0; }
+    _await_call1(S, ff);                  # rax = future_force(operand)
+    var vslot = _HTEMP(S);
+    EFLSTORE(S, vslot);
+    EFLLOAD(S, slot);
+    _await_call1(S, fpend);               # rax = future_pending(operand)
+    EPUSHR(S);
+    EMOVI(S, 0);
+    EPOPC(S);
+    ECMPR(S);
+    var done = EJCC(S, 0x84);             # je -> completed
+    EJMP(S, again);
+    EPATCH(S, done);
+    EFLLOAD(S, vslot);
+    return 0;
+}
+fn _await_call1(S, fi): i64 {
+    EPUSHR(S);
+    ECALLPOPS(S, 1);
+    ECALLFIX(S, fi);
+    ECALLCLEAN(S, 1);
+    return 0;
+}
+
 fn PARSE_FACTOR(S): i64 {
     _rd_enter(S);
     var _xd0 = _xdepth;
@@ -2386,6 +2458,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         # object, and return through the shared epilogue. The landing pad recorded here is
         # where the fn-end dispatch will send the next entry. CHANGELOG [6.5.69]
         if (_cur_fn_coro == 1) {
+            var _aw_ti = GTI(S);
             PARSE_FACTOR(S);                      # evaluate the operand
             var _sk = _coro_nsusp + 1;
             if (_sk >= _CORO_MAX_SUSP) {
@@ -2394,16 +2467,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                 ERR_MSG(S, "too many `await` suspend points in one `async fn` (max 63)", 58);
                 return 0;
             }
-            EFLLOAD(S, _coro_base);               # rax = C (slot < _coro_lo: the stack path)
-            EADDRA_IMM(S, _CORO_STATE_OFF);
-            EPUSHR(S);
-            EMOVI(S, _sk);
-            EPOPC(S);
-            ESTORE64(S);                          # C[state] = _sk
-            EMOVI(S, 0);                          # a suspended task returns 0
-            _coro_suspend_jmp(S, _sk);            # jump to the fn end, past the defer walker (6.6.7)
-            S64(&_coro_rcp + _sk * 8, GCP(S));    # the resume label for state _sk
-            _coro_nsusp = _sk;
+            _await_coro_suspend(S, _sk, _await_operand_is_future(S, _aw_ti));
             return 0;
         }
         var _aw_ff = _FINDFN_CSTR(S, "future_force", 12);

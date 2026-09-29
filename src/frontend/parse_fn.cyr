@@ -4276,7 +4276,8 @@ fn _prescan_params(S, fi): i64 {
 # `_mod_name_intern` answers the pool question (mint once, reuse from either pass), so
 # the guard is gone and EVERY definition kind is stamped here. CHANGELOG [6.6.5]
 fn _prescan_fn_sig(S): i64 {
-    if (PEEKT(S) == 134) { STI(S, GTI(S) + 1); }   # v6.3.11: consume optional `async` prefix
+    var _pasync = 0;
+    if (PEEKT(S) == 134) { STI(S, GTI(S) + 1); _pasync = 1; }   # v6.3.11: consume optional `async` prefix
     var start_ti = GTI(S);
     STI(S, GTI(S) + 1);                 # consume FN
     if (PEEKT(S) == 2) {
@@ -4309,6 +4310,9 @@ fn _prescan_fn_sig(S): i64 {
         # 1". The v6.5.38 identity rule now runs in BOTH passes, from one place.
         var fi = _fn_def_slot(S, noff, _pfid, _ppriv);
         if (_ptp != 0) { SFTP(S, fi, _ptp); }   # v6.3.9: forward-ref generic sig
+        # 6.6.10 — mark `async fn` HERE, so a coroutine's `await f(..)` classifies a callee
+        # defined further down (`_await_operand_is_future`). CHANGELOG [6.6.10]
+        if (_pasync == 1) { SFAS(S, fi, 1); }
         # 6.6.5 — def-start for EVERY prescanned fn, not just generics. It is how pass 2
         # finds the entry THIS definition owns (_fn_by_defti), and it is what lets a
         # forward `f<i32>(x)` instantiate (GFDS was pass-2-only, so the instantiator

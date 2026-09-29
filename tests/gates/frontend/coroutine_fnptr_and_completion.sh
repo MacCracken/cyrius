@@ -15,7 +15,8 @@
 # entry with it and runs nothing.
 #
 # ⚠ `async`/`await` are gated behind CYRIUS_ASYNC=1, which is why this is a SHELL gate and not a
-# `.tcyr` (the tcyr runner cannot set an env var). x86 family only, like the transform itself.
+# `.tcyr` (the tcyr runner cannot set an env var). The coroutine rows are x86 family only, like
+# the transform itself; the plain-Future rows also run on aarch64 (qemu) and cx (cxvm).
 #
 #   A  fncall1(&fn, 10) between two awaits            -> 132 (was SIGSEGV)
 #   B  a fn pointer taken BEFORE an await, called after with fncall2, and callptr -> 1030
@@ -25,10 +26,26 @@
 #   F  a TAIL-SHAPED `return helper(x);`, no defer, forced 6 times -> 0 0 12 12 12 12; helper ran
 #      ONCE (a tail call's `jmp` skipped the epilogue that marks the coroutine done, so every later
 #      force re-ran the tail; coroutines no longer tail-call)
+#   G  a 0-parameter coroutine                          -> 0 7 7 7 7 (was SIGSEGV)       6.6.10
+#   H  a 9-parameter coroutine                          -> 0 49 x4 (was exit 70)          6.6.10
+#   I1-I4 a body that falls off its end (after an await, ending in one, on one path, with a
+#      defer) completes with 0, its defer once (was a hang)                                6.6.10
+#   J1 `await five()` x3 -> 555 (was 123, the suspend indices); J2 `await inner(21)` forces the
+#      Future (was 1002, inner never ran); J3 a nested coroutine re-suspends until it is done, a
+#      Future in a variable is forced and then answered from the memo; both callees are defined
+#      BELOW the caller (pass 1 marks async fns)                                           6.6.10
+#   K  a plain Future forced 3 times runs its body once (was 103 203 303)                 6.6.10
+#   L  a plain async fn with 9 parameters is refused by name; 8 compiles                  6.6.10
+#   PE (wine) G H I1 J3 K, aarch64 (qemu) K, cx (cxvm) K + L + the coroutine refusal (the cx leg
+#   says PENDING until the cx compiler reads CYRIUS_ASYNC, S2 bite 10).
 #
 # Mutations: remove the coroutine branch of ECALLIND -> A, B, C RED (139). Remove
 # `_coro_mark_done` -> D, E, F RED (the tail and the defer re-run). Remove `_coro_done_check` ->
 # D, E, F RED. Drop the `_cur_fn_coro` line of `_tc_frame_divert` -> F RED (helper ran 4 times).
+# 6.6.10: coroutine argc word = pc -> G, H RED (PE G 0xC0000005, H exit 70). Drop the fall-off
+# `jmp` -> I1-I4 RED (timeout). Never force an awaited Future -> J2, J3 RED. future_pending
+# always 0 -> J3 RED. Drop the pass-1 `SFAS` -> J3 RED. Drop the memo hit in future_force -> K
+# (x86, PE, aarch64) and J3 RED. Raise the arity cap -> L RED.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -265,6 +282,81 @@ fo i2 '    g_t = g_t + 1; var s = await nopark();' '0 0 0 0 1' "I2: the body END
 fo i3 '    var s = await nopark(); if (a > 5) { return 9; } g_t = g_t + 1;' '0 0 0 0 1' "I3: falls off on one path"
 fo i4 '    defer { g_t = g_t + 100; } var s = await nopark(); g_t = g_t + 1;' '0 0 0 0 101' "I4: falls off with a defer (the defer runs once)"
 
+# J — what `await e` yields inside a coroutine. It was the suspend INDEX (J1: 123 for 555), and
+# an awaited Future was never forced (inner's body never ran).
+cat > "$T/j1.cyr" <<EOF
+$PRE
+fn five(): i64 { return 5; }
+async fn co(a): i64 {
+    var s = await five();
+    var t = await five();
+    var u = await five();
+    return s * 100 + t * 10 + u;
+}
+fn main(): i64 {
+    alloc_init();
+    var C = co(1);
+    var n = 0;
+    while (n < 5) { fmt_int(future_force(C)); syscall(1, 1, " ", 1); n = n + 1; }
+    return 0;
+}
+var e = main();
+syscall(60, 0);
+EOF
+run j1 '0 0 0 555 555 ' "J1: await of a plain call yields its value (was 123, the suspend indices)"
+
+cat > "$T/j2.cyr" <<EOF
+$PRE
+var g_ran = 0;
+async fn inner(k): i64 { g_ran = g_ran + 1; return k * 2; }
+async fn outer(a): i64 {
+    var s = await nopark();
+    var v = await inner(21);
+    return v + 1000;
+}
+fn main(): i64 {
+    alloc_init();
+    var C = outer(1);
+    var n = 0;
+    while (n < 4) { fmt_int(future_force(C)); syscall(1, 1, " ", 1); n = n + 1; }
+    fmt_int(g_ran);
+    return 0;
+}
+var e = main();
+syscall(60, 0);
+EOF
+run j2 '0 0 1042 1042 1' "J2: await of an async fn call forces it (inner ran once; was 1002 and never ran)"
+
+# J3 — a nested COROUTINE is driven to its value (re-suspending while it is pending), a Future
+# held in a variable is forced, and forcing it again answers from the memo. `inner` and `later`
+# are defined BELOW `outer`, so `await inner(a)` can only classify as a Future through pass 1.
+cat > "$T/j3.cyr" <<EOF
+$PRE
+var g_in = 0;
+var g_lt = 0;
+async fn outer(a): i64 {
+    var F = later(a);
+    var v = await inner(a);
+    var w = await F;
+    var x = await F;
+    var p = await nopark();
+    return v * 1000 + w * 10 + x + p;
+}
+async fn later(k): i64 { g_lt = g_lt + 1; return k + 5; }
+async fn inner(k): i64 { g_in = g_in + 1; var s = await nopark(); var t = await nopark(); return k * 3; }
+fn main(): i64 {
+    alloc_init();
+    var C = outer(7);
+    var n = 0;
+    while (n < 8) { fmt_int(future_force(C)); syscall(1, 1, " ", 1); n = n + 1; }
+    fmt_int(g_in); fmt_int(g_lt);
+    return 0;
+}
+var e = main();
+syscall(60, 0);
+EOF
+run j3 '0 0 0 0 0 0 21132 21132 11' "J3: a nested coroutine, a forward async fn in a variable, awaited twice"
+
 # K — a PLAIN (no-await) async fn's Future runs its body ONCE however often it is forced (it
 # re-ran on every force), a 0-parameter one too.
 cat > "$T/k.cyr" <<EOF
@@ -304,5 +396,58 @@ if [ "$rc" -ne 1 ]; then bad "L: a 9-parameter plain async fn compiled (rc $rc),
 elif grep -q 'async fn `a9` takes 9 parameters' "$T/l.err" && ! grep -q '`a8`' "$T/l.err"; then ok "L: a9 refused by name, a8 accepted"
 else bad "L: the refusal did not name a9 (or named a8): $(grep -m1 '^error' "$T/l.err")"; fi
 
+# ── the same rows on PE (wine) and, for the plain-Future row, aarch64 (qemu) ──────────────────
+# CYRIUS_ASYNC is a compiler env knob, so async rows exist only as shell gates; these legs are what
+# exercises the lockstep lib/async.cyr + constructor off the x86_64-Linux path.
+xrun() {    # <runner> <compiler> <tag> <want> <what>
+    rc=0
+    CYRIUS_ASYNC=1 "$2" < "$T/$3.cyr" > "$T/$3.x" 2> "$T/$3.xerr" || rc=$?
+    if [ "$rc" -ne 0 ]; then bad "$5: rc $rc: $(grep '^error' "$T/$3.xerr" | head -1)"; return; fi
+    chmod +x "$T/$3.x"
+    got=$( (ulimit -c 0; timeout 60 "$1" "$T/$3.x") 2>/dev/null); e=$?
+    if [ "$e" -ne 0 ]; then bad "$5: exit $e (output '$got')"
+    elif [ "$got" = "$4" ]; then ok "$5: $got"
+    else bad "$5: printed '$got', want '$4'"; fi
+}
+if command -v wine > /dev/null 2>&1; then
+    WCC="$T/wcc.sh"; printf '#!/bin/sh\nCYRIUS_TARGET_WIN=1 exec "%s"\n' "$CC" > "$WCC"; chmod +x "$WCC"
+    WRUN="$T/wrun.sh"
+    printf '#!/bin/sh\nWINEPREFIX="%s" WINEDEBUG=-all WINEDLLOVERRIDES="winemenubuilder.exe=d;mscoree=d;mshtml=d" exec wine "$1"\n' "$T/wp" > "$WRUN"; chmod +x "$WRUN"
+    xrun "$WRUN" "$WCC" g '0 7 7 7 7 ' "PE G: 0-parameter coroutine"
+    xrun "$WRUN" "$WCC" h '0 49 49 49 49 ' "PE H: 9-parameter coroutine"
+    xrun "$WRUN" "$WCC" i1 '0 0 0 0 1' "PE I1: fall-off completes"
+    xrun "$WRUN" "$WCC" j3 '0 0 0 0 0 0 21132 21132 11' "PE J3: await values"
+    xrun "$WRUN" "$WCC" k '103 103 103 7 7 11' "PE K: a plain Future runs once"
+else echo "  SKIP: PE leg (wine not installed)"; fi
+if command -v qemu-aarch64 > /dev/null 2>&1; then
+    if "$CC" < "$ROOT/src/main_aarch64.cyr" > "$T/cc_a64" 2>/dev/null && chmod +x "$T/cc_a64"; then
+        xrun qemu-aarch64 "$T/cc_a64" k '103 103 103 7 7 11' "aarch64 K: a plain Future runs once"
+    else bad "aarch64 leg: src/main_aarch64.cyr did not build"; fi
+else echo "  SKIP: aarch64 leg (qemu-aarch64 not installed)"; fi
+
+# ── cx: the plain-Future memo runs under cxvm, and the 9-parameter and coroutine refusals name
+# themselves. ⚠ Until the cx compiler reads CYRIUS_ASYNC (S2 bite 10 wires cx `_read_env`) every
+# cx compile stops at "requires CYRIUS_ASYNC=1"; the leg says PENDING instead of passing.
+if "$CC" < "$ROOT/src/main_cx.cyr" > "$T/cc_cx" 2>/dev/null && chmod +x "$T/cc_cx" \
+   && "$CC" < "$ROOT/programs/cxvm.cyr" > "$T/cxvm" 2>/dev/null && chmod +x "$T/cxvm"; then
+    rc=0; CYRIUS_ASYNC=1 "$T/cc_cx" < "$T/k.cyr" > "$T/k.cyx" 2> "$T/k.cxerr" || rc=$?
+    if grep -q 'requires CYRIUS_ASYNC=1' "$T/k.cxerr"; then
+        echo "  PENDING cx leg: the cx compiler cannot read CYRIUS_ASYNC yet (S2 bite 10)"
+    else
+        if [ "$rc" -ne 0 ]; then bad "cx K: rc $rc: $(grep -m1 '^error' "$T/k.cxerr")"
+        else
+            got=$( (ulimit -c 0; timeout 60 "$T/cxvm" < "$T/k.cyx") 2>/dev/null)
+            if [ "$got" = '103 103 103 7 7 11' ]; then ok "cx K: a plain Future runs once under cxvm: $got"
+            else bad "cx K: printed '$got', want '103 103 103 7 7 11'"; fi
+        fi
+        rc=0; CYRIUS_ASYNC=1 "$T/cc_cx" < "$T/l.cyr" > /dev/null 2> "$T/l.cxerr" || rc=$?
+        if [ "$rc" -ne 0 ] && grep -q 'async fn `a9` takes 9 parameters' "$T/l.cxerr"; then ok "cx L: a9 refused by name"
+        else bad "cx L: rc $rc, $(grep -m1 '^error' "$T/l.cxerr")"; fi
+        rc=0; CYRIUS_ASYNC=1 "$T/cc_cx" < "$T/g.cyr" > /dev/null 2> "$T/g.cxerr" || rc=$?
+        if [ "$rc" -ne 0 ] && grep -q 'cx backend has no coroutine frame' "$T/g.cxerr"; then ok "cx G: a coroutine is refused, naming the cx backend"
+        else bad "cx G: rc $rc, $(grep -m1 '^error' "$T/g.cxerr")"; fi
+    fi
+else bad "cx leg: could not build src/main_cx.cyr / programs/cxvm.cyr"; fi
+
 if [ "$fails" -ne 0 ]; then echo "FAIL: coroutine_fnptr_and_completion — $fails axis(es) red"; exit 1; fi
-echo "PASS: coroutine_fnptr_and_completion — fncallN / callptr / closure calls inside a coroutine reach their callee (A-C); a completed coroutine answers with its value and runs nothing again (D-F); 0- and 9-parameter coroutines (G-H); a fall-off completes (I1-I4); a plain Future runs once (K); 9+ plain parameters refused (L)"
+echo "PASS: coroutine_fnptr_and_completion — fncallN / callptr / closure calls inside a coroutine reach their callee (A-C); a completed coroutine answers with its value and runs nothing again (D-F); 0- and 9-parameter coroutines (G-H); a fall-off completes (I1-I4); await yields its value and forces Futures (J1-J3); a plain Future runs once (K); 9+ plain parameters refused (L); PE / aarch64 / cx legs"
