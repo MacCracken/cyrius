@@ -1869,6 +1869,22 @@ fn _lint_prepass_tmp_fail(file, en): i64 {
     return 1;
 }
 
+# The compiler FAILED and wrote something, but no `error:` line (a crash after a warning, an
+# abort with its own wording). ⛔ 6.6.11 (B10 review) — this was "could not tell, linting
+# anyway": a warning line, then `0 warnings`, rc 0, over a file the compiler had refused or
+# died on — the fail-open shape O4 closed for error lines. Now a refusal by name, with what
+# the compiler DID and everything it wrote. (An EMPTY capture keeps its own path above.)
+# CHANGELOG [6.6.11]
+fn _lint_refuse_no_error_line(file, buf, n): i64 {
+    _err_ctx("the compiler failed on it without an error line, so lint checks were NOT run", file);
+    if (_cc_last_exit < 0) { _ew("  the compiler did not exit normally (killed by a signal?)"); }
+    else { _ew("  the compiler exited "); fmt_int_fd(STDERR_FD, _cc_last_exit); }
+    _ew("; everything it wrote:\n");
+    sys_write(STDERR_FD, buf, n);
+    if (load8(buf + n - 1) != 10) { sys_write(STDERR_FD, "\n", 1); }
+    return 1;
+}
+
 # 0 = parses (or we could not tell) -> run the line checks exactly as before.
 # 1 = a syntax error was reported -> the caller must not pretend to have linted.
 fn _lint_syntax_prepass(file): i64 {
@@ -1927,12 +1943,7 @@ fn _lint_syntax_prepass(file): i64 {
     store8(buf + n, 0);
     var verdict = _lint_capture_verdict(buf, n);
     if (verdict == 0) { return 0; }   # only context-dependent errors -> lint
-    if (verdict == 2) {
-        _ew("warning: ");
-        _ew(file);
-        _ew(": the syntax pre-pass could not tell whether it compiles (the compiler failed with no error line); linting anyway\n");
-        return 0;
-    }
+    if (verdict == 2) { return _lint_refuse_no_error_line(file, buf, n); }
     _err_ctx("does not parse or compile, so lint checks were NOT run", file);
     _info("  cyrlint is a line-based scanner with no parser, so its \"0 warnings\" would");
     _info("  describe its own rules rather than the file. The compiler reports:");

@@ -105,7 +105,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   struct from a sibling module as a `.field` target, a field type or a `sizeof`) or lint fails and
   forwards the diagnostic. **Measured** (read-only, lint's own flags): 2,837 sibling-repo source
   files lint exactly as at 6.6.10; in-repo lib/, cbt/, programs/: 0 refusals.
-  `lint_reports_unparseable.sh` axes 10-11.
+  `lint_reports_unparseable.sh` axes 10-11. **The same fail-open without an error line** (review):
+  a compiler that failed after writing only a warning, or aborted in its own words, got "could not
+  tell, linting anyway" — `0 warnings`, rc 0. It is now a refusal that says what the compiler did
+  (killed / `exited N`) and forwards everything it wrote; an EMPTY capture keeps its own path.
+  Re-measured over the 2,837 files: none reaches this branch, verdicts unchanged. Axis 12.
 
 - **`cyrius coverage` does not count the entry point `main`.** (B10: S7.) No test can name it, so
   it held ganita at 139/141 and bayan at 501/503 with nothing else missing (now 139/139, 501/501).

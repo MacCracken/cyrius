@@ -70,6 +70,8 @@
 # which no context can fix) moved from axis 5's lint-anyway set into axis 10.
 # MUTATION (6.6.11): `_lint_capture_verdict` back to "refuse only on a syntax-class message"
 # -> axis 10 RED (derive rows + u3), axes 1-9, 11 green.
+# MUTATION (6.6.11, B10 review): `_lint_syntax_prepass`'s no-error-line branch back to
+# "warn and lint anyway" (return 0) -> axis 12 RED (10 rows; its 2 ANTI-VACUOUS rows green), every other axis green.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -450,6 +452,38 @@ done
 printf 'fn gsin(x): i64 { return f64_sin(x); }\nfn a() { var x = 1; var x = 2; return x; }\nvar r = gsin(0);\n' > "$T/w/c_mixed.cyr"
 rc=$(lint c_mixed.cyr)
 check "a context error beside a real refusal is still refused" "yes" "$([ "$rc" != 0 ] && echo yes || echo no)"
+
+# ── AXIS 12 (6.6.11, B10 review) — a compiler that FAILS after writing something that is not an
+# `error:` line (a crash after a warning; an abort in its own words) is a refusal, not "could not
+# tell, linting anyway" — which printed a warning, then `0 warnings`, rc 0, the fail-open shape
+# axis 10 closed for error lines. Stub compilers in a private home that also holds the CLI: the
+# CLI resolves the compiler beside ITSELF first, so `$ROOT/build/cyrius` would run build/cycc.
+# The empty-capture path (a failure that writes nothing) is deliberately not this axis.
+echo "axis 12 — a compiler that fails with no error line (crash, own-worded abort) is a refusal:"
+mkdir -p "$T/sh/bin"
+cp "$CYRIUS" "$T/sh/bin/cyrius" && cp "$ROOT/build/cyrlint" "$T/sh/bin/cyrlint"
+printf '#!/bin/sh\necho "warning: something" >&2\nkill -SEGV $$\n' > "$T/sh/segv"
+printf '#!/bin/sh\necho "cycc: internal table full" >&2\nexit 3\n' > "$T/sh/ex3"
+printf 'var x = 1;\n' > "$T/w/stubbed.cyr"
+for stub in segv ex3; do
+    cp "$T/sh/$stub" "$T/sh/bin/cycc" && chmod +x "$T/sh/bin/cycc" "$T/sh/bin/cyrius" "$T/sh/bin/cyrlint"
+    rc=0
+    ( cd "$T/w" && CYRIUS_HOME="$T/sh" timeout 300 "$T/sh/bin/cyrius" lint stubbed.cyr > "$T/o" 2> "$T/e" ) || rc=$?
+    check "$stub: refused (exit non-zero)" "yes" "$([ "$rc" != 0 ] && echo yes || echo no)"
+    check "$stub: no bare '0 warnings'" 0 "$(grep -c '^0 warnings' "$T/o" || true)"
+    check "$stub: says lint checks were NOT run" 1 "$(grep -c 'without an error line, so lint checks were NOT run' "$T/e" || true)"
+    check "$stub: forwards what the compiler wrote" 1 "$(grep -cE '^(warning: something|cycc: internal table full)$' "$T/e" || true)"
+done
+check "segv: says the compiler did not exit normally" 1 \
+    "$(cp "$T/sh/segv" "$T/sh/bin/cycc"; ( cd "$T/w" && CYRIUS_HOME="$T/sh" timeout 300 "$T/sh/bin/cyrius" lint stubbed.cyr > /dev/null 2> "$T/e" ); grep -c 'did not exit normally' "$T/e" || true)"
+check "ex3: quotes the compiler's exit status" 1 \
+    "$(cp "$T/sh/ex3" "$T/sh/bin/cycc"; ( cd "$T/w" && CYRIUS_HOME="$T/sh" timeout 300 "$T/sh/bin/cyrius" lint stubbed.cyr > /dev/null 2> "$T/e" ); grep -c 'the compiler exited 3' "$T/e" || true)"
+# ANTI-VACUOUS: the same private home with the REAL compiler lints the same file clean.
+cp "$ROOT/build/cycc" "$T/sh/bin/cycc"
+rc=0
+( cd "$T/w" && CYRIUS_HOME="$T/sh" timeout 300 "$T/sh/bin/cyrius" lint stubbed.cyr > "$T/o" 2> "$T/e" ) || rc=$?
+check "ANTI-VACUOUS: the real compiler in the same home lints it (exit 0)" 0 "$rc"
+check "ANTI-VACUOUS: …and reports 0 warnings" 1 "$(grep -c '^0 warnings' "$T/o" || true)"
 
 echo ""
 if [ "$fails" = "0" ]; then
