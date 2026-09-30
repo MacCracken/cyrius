@@ -1305,39 +1305,52 @@ fn EMACHO_CLOCK_ARM(S): i64 {
 # bench.cyr, sakshi.cyr and sigil's cert-window clock all work unchanged, with no lib
 # edit and no cross-repo coordination.
 #
-# ⚠ HONEST LIMITATION: gettimeofday is the REALTIME clock, so on Intel-Mac only,
-# clock_now_ns() is wall-clock-backed rather than monotonic and can step under NTP.
-# (This note used to say mach_absolute_time is "not reachable through a syscall". It is:
-# Darwin's gettimeofday takes a THIRD argument, `uint64_t *mach_absolute_time`, and copies
-# mach time out through it — see below. Using it as the monotonic source is a separate
-# change; this emitter passes NULL there.)
+# 6.6.12 — THE CLOCK ID IS HONOURED. Until 6.6.12 this emitter dropped clock_id and returned
+# the gettimeofday composition for EVERY id, so on Intel-Mac clock_now_ns() (id 4,
+# CLOCK_MONOTONIC_RAW) was the REALTIME clock — epoch-scale and stepping under NTP — with no
+# error (measured on ach: ids 4 and 0 agreed to within 1 ms). Darwin's gettimeofday takes a
+# THIRD argument, `uint64_t *mach_absolute_time`, and copies mach time out through it, so the
+# monotonic source was one out-slot away. Now:
+#   id 0 (CLOCK_REALTIME)  the timeval composition below, unchanged: chrono's clock_epoch_*,
+#                          tls_native_conn's cert clock and through them sigil's cert window
+#                          all spell syscall(228, 0, …) on macOS and need WALL time.
+#   any other id           the mach time the kernel wrote into an 8-byte stack slot, which is
+#                          ns on Intel (timebase 1:1; ach measured Δmach/Δµs ≈ 1000).
+# One syscall either way; the id only picks which result goes back in rax.
 #
-# ⛔ rdx MUST BE ZEROED. Darwin's syscall is gettimeofday(tp, tzp, uint64_t *mach_abs): the
-# third argument is an OUT-pointer, and xnu writes 8 bytes of mach time through whatever rdx
-# holds. Until 6.6.10 nothing here wrote rdx, so every clock_now_* on Intel-Mac since v6.5.16
-# stored mach time at the address the PREVIOUS code left in rdx — usually the last call's third
-# argument — into an image whose single __TEXT segment is rwx (code, literals and globals all
-# writable). Silent: when rdx was not a writable address copyout failed with EFAULT, which this
-# sequence never checks. It was the "garbled assert message on ach" (an assert label's bytes
-# overwritten mid-test). lib/sys.cyr's _macos_gettimeofday documents the same hazard and always
-# passed an explicit 0; the emitter never did. CVE-51; gated by
-# tests/tcyr/crossos/darwin_clock_no_stray_write.tcyr. CHANGELOG [6.6.10]
+# ⛔ rdx IS NEVER NULL-OR-STALE: it points at that stack slot on every call. Darwin's syscall is
+# gettimeofday(tp, tzp, uint64_t *mach_abs): the third argument is an OUT-pointer and xnu writes
+# 8 bytes through whatever rdx holds. Until 6.6.10 nothing here wrote rdx, so every clock_now_*
+# on Intel-Mac since v6.5.16 stored mach time at the address the PREVIOUS code left in rdx into
+# an image whose single __TEXT segment is rwx (the "garbled assert message on ach"). 6.6.10
+# zeroed it; 6.6.12 points it at the slot, which is equally safe and is what makes the
+# monotonic read possible. The slot is pushed as 0, so a failed copyout returns 0, not garbage.
+# CVE-51; both halves gated by tests/tcyr/crossos/darwin_clock_no_stray_write.tcyr.
+# CHANGELOG [6.6.10] [6.6.12]
 #
 # Stack top-down on entry (argc==3): [arg2=&tv][arg1=clock_id][sc_num=228].
 # The 16-byte `var ts[16]` every caller passes is exactly Darwin's struct timeval
-# (i64 tv_sec @0, i32 tv_usec @8). Live-probed on ach: rdi=&tv, rsi=0, rax=0x2000074
-# → rc 0, tv_sec matching libc gettimeofday exactly, and the qword at +8 clean in its
-# high half — the 32-bit load below is correct regardless of the padding word.
+# (i64 tv_sec @0, i32 tv_usec @8), and the kernel fills it for every id (so no caller may read
+# it — the raw-228 contract is "returns the value"). Live-probed on ach: rdi=&tv, rsi=0,
+# rax=0x2000074 → rc 0, tv_sec matching libc gettimeofday exactly, and the qword at +8 clean in
+# its high half — the 32-bit load below is correct regardless of the padding word.
 fn EMACHO_CLOCK_X86(S): i64 {
     EB(S, 0x5F);                                          # pop rdi         (&tv)
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x10);   # add rsp, 16     (drop clock_id + sc_num)
+    EB(S, 0x58);                                          # pop rax         (clock_id)
+    EB(S, 0x59);                                          # pop rcx         (drop sc_num)
     EB(S, 0x57);                                          # push rdi        (save &tv across the call)
+    EB(S, 0x50);                                          # push rax        (save clock_id; rcx dies in syscall)
+    EB(S, 0x6A); EB(S, 0x00);                             # push 0          (mach-time out-slot)
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xE2);                # mov rdx, rsp    (mach_abs out-ptr = the slot)
     EB(S, 0x31); EB(S, 0xF6);                             # xor esi, esi    (tzp = NULL)
-    EB(S, 0x31); EB(S, 0xD2);                             # xor edx, edx    (mach_abs out-ptr = NULL)
     EB(S, 0x48); EB(S, 0xC7); EB(S, 0xC0);                # mov rax, 0x2000074 (BSD gettimeofday,
     EB(S, 0x74); EB(S, 0x00); EB(S, 0x00); EB(S, 0x02);   #   Unix class prefix NOT optional)
     EB(S, 0x0F); EB(S, 0x05);                             # syscall
+    EB(S, 0x58);                                          # pop rax         (mach time, ns on Intel)
+    EB(S, 0x59);                                          # pop rcx         (clock_id)
     EB(S, 0x5F);                                          # pop rdi         (restore &tv)
+    EB(S, 0x48); EB(S, 0x85); EB(S, 0xC9);                # test rcx, rcx
+    EB(S, 0x75); EB(S, 0x17);                             # jnz +23         (id != 0: keep mach time)
     EB(S, 0x48); EB(S, 0x8B); EB(S, 0x07);                # mov rax, [rdi]      tv_sec
     EB(S, 0x48); EB(S, 0x69); EB(S, 0xC0);                # imul rax, rax, 1000000000
     EB(S, 0x00); EB(S, 0xCA); EB(S, 0x9A); EB(S, 0x3B);

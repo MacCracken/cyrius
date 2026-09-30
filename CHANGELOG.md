@@ -85,6 +85,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   O_CLOEXEC = -78 and no fd 51 created; `sys_dup2(1, 50)` = 50 with FD_CLOEXEC clear; the 6.6.11
   compiler gives 51 on ecb).
 
+- **x86-macOS: `clock_now_ns()` was the wall clock (B07, item Q4).** **Root cause:**
+  `EMACHO_CLOCK_X86` dropped the clock id and composed ns from the gettimeofday timeval for EVERY id,
+  so the monotonic read (id 4) was epoch-scale REALTIME that steps under NTP (ach: ids 4 and 0 agreed
+  to within 1 ms). **Fix:** the emitter keeps the id, points gettimeofday's third argument (the
+  `mach_absolute_time` out-pointer) at an 8-byte stack slot pushed as 0, and returns that mach time
+  for every id but 0 — ns at Intel's 1:1 timebase (ach: Δmach/Δµs ≈ 1000). Id 0 keeps the timeval
+  path, which `clock_epoch_*`, `tls_native_conn` and sigil's cert window depend on. rdx is never
+  NULL-or-stale (CVE-51 stays closed). **Held by** `darwin_clock_no_stray_write.tcyr`, which now also
+  asserts on every target that `clock_now_ns()` is not epoch-scale while `clock_epoch_ns()` is and
+  that both advance at the same rate across a 200 ms sleep, and on Darwin that raw `syscall(228, 4)`
+  is not epoch-scale (the 6.6.11 compiler fails both on ach); `macho_clock_buffer_contract.sh`'s
+  second property is now "rdx = the emitter's own zeroed slot, before the syscall" (hand-off to H).
+
 ## [6.6.11] — 2026-09-29
 
 The fifth batch release: the 6.6.9 review finds I–K and the 6.6.10 finds that produce wrong results
