@@ -1774,6 +1774,7 @@ fn ESEND_PE(S): i64 { return 0; }        # 6.6.11 ws2_32!send (0xF047)
 fn ERECV_PE(S): i64 { return 0; }        # 6.6.11 ws2_32!recv (0xF048)
 fn EIOCTLSOCK_PE(S): i64 { return 0; }   # 6.6.11 ws2_32!ioctlsocket (0xF049)
 fn EWSAPOLL_PE(S): i64 { return 0; }     # 6.6.11 ws2_32!WSAPoll (0xF04A)
+fn EGETLASTERR_PE(S): i64 { return 0; }  # 6.6.12 kernel32!GetLastError (0xF04B)
 fn EINITSRW_PE(S): i64 { return 0; }
 fn ELOCALFREE_PE(S): i64 { return 0; }
 fn ELSEEK_PE(S): i64 { return 0; }

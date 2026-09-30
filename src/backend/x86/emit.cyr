@@ -1941,14 +1941,25 @@ fn EGETENV_PE(S): i64 {
 }
 
 # v6.1.18 — directory enumeration reroutes for lib/fs_win.cyr (the Windows
-# dir_list/is_dir port). All kernel32, marshalled through the existing aligned
-# helpers (no new asm). syscall(0xF016, wpattern, &finddata) → FindFirstFileW
-# (2 args), syscall(0xF017, hFind, &finddata) → FindNextFileW (2 args),
-# syscall(0xF018, hFind) → FindClose (1 arg), syscall(0xF019, wpath) →
+# dir_list/is_dir port). All kernel32. syscall(0xF016, pattern, &finddata) →
+# FindFirstFileW (2 args), syscall(0xF017, hFind, &finddata) → FindNextFileW (2 args),
+# syscall(0xF018, hFind) → FindClose (1 arg), syscall(0xF019, path) →
 # GetFileAttributesW (1 arg). See CHANGELOG [6.1.18].
+#
+# ⛔ 6.6.12 — 0xF016 and 0xF019 take a NARROW UTF-8 path, like open/mkdir/unlink, and widen it
+# through `_pe_widen_path` (`_pe_path_call1`). They took a path the stdlib had widened itself,
+# with no `\\?\` prefix, so Windows applied MAX_PATH: on real Windows `is_dir` of an existing
+# 272-byte directory said 0 and `dir_list` was empty, while mkdir/open (widened here since
+# 6.6.11) worked on the same path. Wine does not enforce MAX_PATH, so only real Windows shows it.
+# One decoder and one long-path rule for every path reroute. CHANGELOG [6.6.12]
 fn EFINDFIRST_PE(S): i64 {
     _pe_ensure_findfirst(S);
-    return _pe_call_2arg_aligned(S, _pe_findfirst_get());
+    EB(S, 0x58);                                        # pop rax (&finddata)
+    EB(S, 0x49); EB(S, 0x89); EB(S, 0xC2);              # mov r10, rax
+    EB(S, 0x58);                                        # pop rax (UTF-8 pattern)
+    EB(S, 0x49); EB(S, 0x89); EB(S, 0xC3);              # mov r11, rax
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
+    return _pe_path_call1(S, _pe_findfirst_get(), 1, 0);
 }
 fn EFINDNEXT_PE(S): i64 {
     _pe_ensure_findnext(S);
@@ -1960,7 +1971,22 @@ fn EFINDCLOSE_PE(S): i64 {
 }
 fn EGETFATTR_PE(S): i64 {
     _pe_ensure_getfattr(S);
-    return _pe_srw_call_1arg(S, _pe_getfattr_get());
+    EB(S, 0x58);                                        # pop rax (UTF-8 path)
+    EB(S, 0x49); EB(S, 0x89); EB(S, 0xC3);              # mov r11, rax
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
+    return _pe_path_call1(S, _pe_getfattr_get(), 0, 1);
+}
+
+# 6.6.12 — syscall(0xF04B) → kernel32!GetLastError() (0 args; the DWORD, zero-extended). The
+# kernel32 peer of 0xF024 WSAGetLastError. Read it IMMEDIATELY after the call it explains:
+# cyrius code between the two makes no API call, but another reroute would overwrite it.
+# lib/fs_win.cyr uses it after FindNextFileW returns 0 (ERROR_NO_MORE_FILES = 18 is the end;
+# anything else is a failed listing). CHANGELOG [6.6.12]
+fn EGETLASTERR_PE(S): i64 {
+    _pe_ensure_getlasterr(S);
+    _pe_call_0arg_aligned(S, _pe_getlasterr_get());
+    EB(S, 0x89); EB(S, 0xC0);                           # mov eax, eax (DWORD → zero-extended)
+    return 0;
 }
 
 # 3-arg kernel32 reroute, 16-byte aligned (rbx-anchored, same rationale as the
@@ -2997,6 +3023,39 @@ fn _pe_path_bool1(S, idx, zrdx): i64 {
     _pe_path_unframe(S);
     EB(S, 0x48); EB(S, 0xFF); EB(S, 0xC8);              # dec rax
     EB(S, 0x48); EB(S, 0xC1); EB(S, 0xF8); EB(S, 0x3F); # sar rax, 63 (BOOL->0/-1)
+    return 0;
+}
+
+# One narrow path → one kernel32 call that returns a VALUE (not a BOOL): FindFirstFileW (a
+# HANDLE; `two` = 1, r10 = &finddata → rdx) and GetFileAttributesW (a DWORD; `dword` = 1).
+# r11 = the UTF-8 path. A refused path skips the call and answers what the API answers for a
+# path it cannot find: INVALID_HANDLE_VALUE (-1) / INVALID_FILE_ATTRIBUTES (0xFFFFFFFF).
+# Same probed rbx-anchored frame as `_pe_path_bool1`; r10 is parked at [rsp+0x40] because the
+# widen clobbers r8-r11. CHANGELOG [6.6.12]
+fn _pe_path_call1(S, idx, two, dword): i64 {
+    _pe_path_frame(S, _PE_PATH_FRAME1);
+    if (two == 1) {
+        EB(S, 0x4C); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x40); # mov [rsp+0x40], r10
+    }
+    EB(S, 0x4C); EB(S, 0x89); EB(S, 0xDE);              # mov rsi, r11
+    _pe_widen_path(S, 0x80, 0x10080);
+    if (dword == 1) {
+        EB(S, 0xB8); EDISP32(S, 0 - 1);                 # mov eax, 0xFFFFFFFF (refused)
+    } else {
+        EB(S, 0x48); EB(S, 0xC7); EB(S, 0xC0); EDISP32(S, 0 - 1); # mov rax, -1 (refused)
+    }
+    EB(S, 0x48); EB(S, 0x85); EB(S, 0xFF);              # test rdi, rdi
+    var out = _pe_j(S, 0x84);                           # jz out
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xF9);              # mov rcx, rdi (wide path)
+    if (two == 1) {
+        EB(S, 0x48); EB(S, 0x8B); EB(S, 0x54); EB(S, 0x24); EB(S, 0x40); # mov rdx, [rsp+0x40]
+    }
+    EB(S, 0xFF); EB(S, 0x15);                           # call [rip+api]
+    _pe_iat_fixup_add(S, GCP(S), idx);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    if (dword == 1) { EB(S, 0x89); EB(S, 0xC0); }       # mov eax, eax (DWORD → zero-extended)
+    _pe_j_land(S, out);
+    _pe_path_unframe(S);
     return 0;
 }
 

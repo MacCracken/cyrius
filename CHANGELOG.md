@@ -98,6 +98,49 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   is not epoch-scale (the 6.6.11 compiler fails both on ach); `macho_clock_buffer_contract.sh`'s
   second property is now "rdx = the emitter's own zeroed slot, before the syscall" (hand-off to H).
 
+- **Windows: `is_dir`, `dir_list`, `is_symlink`, `sys_access` and `xmkdir_p` refused long paths, and
+  `dir_list_into` had no Windows arm (B08, item S-B3).** **Root cause:** 6.6.11 gave the narrow-path
+  reroutes (open, mkdir, unlink, rename, rmdir) one shared `_pe_widen_path` — CP_UTF8 decode, then
+  GetFullPathNameW and a `\\?\` prefix at 248+ units — but GetFileAttributesW (0xF019) and
+  FindFirstFileW (0xF016) still took a path the STDLIB had widened, unprefixed, so Windows applied
+  MAX_PATH. Measured on real cass: for an existing 272-byte directory (created by mkdir, listed by
+  PowerShell) `is_dir` = 0, `dir_list_checked` = -1, `dir_list` empty, `sys_access` = -1 and
+  `xmkdir_p` = -1 (its idempotence gone); wine does not enforce MAX_PATH, so only real Windows showed
+  it. `dir_list_into` (lib/fs.cyr) had only the agnos and open + getdents64 arms, so on PE it answered
+  -1 for every directory, `.` included. And an EMPTY path listed as `\*` — the drive root (20 entries
+  on cass). **Fix:** 0xF016 and 0xF019 take the NARROW UTF-8 path and widen it through
+  `_pe_widen_path` (`_pe_path_call1`, `src/backend/x86/emit.cyr`), like open; lib/fs_win.cyr builds
+  FindFirstFileW's `<path>\*` in UTF-8 (`_fs_zpath`: exactly the Str's bytes, an embedded NUL or an
+  empty path refused) and the 509/511/519/260/512-byte caps and the five stdlib widens are gone
+  (`_fs_widen` is removed; `sys_symlink` builds its target-kind probe path narrow). `dir_list_into`
+  gains a Windows arm (`_dir_list_into_win`: FindFirstFileW/FindNextFileW into the caller's buffers,
+  the WIN32_FIND_DATAW in `scratch`, the same -1/-2/-3/-4 contract, nothing allocated). **Held by**
+  `tests/tcyr/crossos/pe_path_utf8_long.tcyr` (long-path is_dir, dir_list, dir_list_into, sys_access,
+  xmkdir_p idempotence, and a symlink at the long path on POSIX; the 6.6.11 compiler + stdlib FAIL 6
+  rows on cass), `tests/tcyr/crossos/fs_dirlist.tcyr` (dir_list_into's contract and the empty path
+  on every target; 6.6.11 FAILS 9 rows on cass), and `pe_open_posix_semantics.sh` axis 2b, which now
+  counts GetFileAttributesW and FindFirstFileW as narrow paths (hand-off to H; reverting either
+  emitter reddens it). The cass PE self-host is byte-identical (the include opens share the widen).
+
+- **Windows: a directory listing that failed part-way came back complete (B08, item Q5).** **Root
+  cause:** FindNextFileW returns 0 both at the end of a directory and on a failure, and only
+  GetLastError tells them apart; the PE backend had no reroute for it (only ws2_32's WSAGetLastError,
+  0xF024), so `_dir_list_into_vec` (lib/fs_win.cyr) treated every 0 as the end and returned success
+  with a shorter listing, which dir_walk, find_files and `cyrius test` then trusted. **Fix:** a new
+  reroute, `syscall(0xF04B)` → kernel32!GetLastError (argc 1; `EGETLASTERR_PE`, return-0 stubs on the
+  aarch64 and cx backends), routed at the end of `_PE_ROUTE_SOCK` so `_PARSE_FACTOR_IMPL` gains no
+  reference (cybs's per-function limit), and named in the routed-number note — whose hand-kept byte
+  count is corrected with it (1550 → 1584; left alone it silently cut the new entry off). Both
+  FindNextFileW loops read it BEFORE FindClose and answer -1 unless it is ERROR_NO_MORE_FILES (18),
+  the fail-closed answer 6.6.10 gave a FindFirstFileW failure. 0xF04B is used by no other 0xF0xx
+  table. **Held by** the new `tests/gates/platform/pe_last_error_reroute.sh` (routed at argc 1 and
+  reported at argc 2, the note printed whole, the import, every FindNextFileW loop reading
+  GetLastError then FindClose then testing 18, no stdlib-widened buffer handed to 0xF016/0xF019, and
+  fs_dirlist.tcyr under wine; mutation ledger in its header) and `fs_dirlist.tcyr`'s Windows rows
+  (GetLastError after a missing name is 2, after a missing parent 3; a listable directory's
+  `dir_list_checked` is 0). No row can make FindNextFileW fail part-way, on wine or on cass: the
+  gate's static axis pins the error branch.
+
 ### Changed
 
 - **`file_read_whole` passes the errno through `*len_out` (B08, item S2).** **Root cause:** the

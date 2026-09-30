@@ -245,16 +245,13 @@ fn _xdir_exists(path): i64 {
     # directly, the same way fs_win.cyr's `is_dir` does. Without this arm `xmkdir_p`
     # loses its idempotence on Windows: CreateDirectoryW fails on an existing directory
     # and nothing else can tell "already there" from "could not create".
-    # ⚠ The 0xF019 reroute takes an ALREADY-WIDE path, unlike the mkdir/unlink reroutes
-    # which widen in the emitter — hence the widen here, through the Windows peer's one
-    # UTF-8 decoder. ⛔ 6.6.11: this was a byte-per-unit copy that STOPPED at 510 units, so a
-    # longer path was answered for its own prefix and a non-ASCII one as Latin-1; a path that
-    # cannot be widened whole is now "not a directory". A STACK buffer (v6.6.8): it was
-    # alloc(1024) stored through unchecked, so a refused allocation wrote to address 0.
-    var wbuf[1024];
-    var wp = &wbuf;
-    if (_win_widen(wp, path, 512) < 0) { return 0; }
-    var attrs = syscall(61465, wp);             # GetFileAttributesW
+    # The 0xF019 reroute takes the NARROW UTF-8 path and widens it in the emitter, like the
+    # mkdir/unlink reroutes: invalid UTF-8 is "not a directory", and a path of 248+ units is
+    # `\\?\`-prefixed. ⛔ 6.6.12: the path was widened HERE with no prefix (and capped at 512
+    # units), so on real Windows an existing long directory answered 0 and `xmkdir_p` of it
+    # returned -1 — its idempotence lost exactly where CreateDirectoryW had just learned long
+    # paths (6.6.11). CHANGELOG [6.6.11], [6.6.12]
+    var attrs = syscall(61465, path);           # GetFileAttributesW
     if (attrs == 4294967295) { return 0; }      # INVALID_FILE_ATTRIBUTES
     if ((attrs & 16) != 0) { return 1; }        # FILE_ATTRIBUTE_DIRECTORY
     return 0;
