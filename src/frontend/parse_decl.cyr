@@ -377,29 +377,40 @@ fn _agc_copy_bytes(S, dli, dgv, sli, sgv, nb): i64 {
 var _rlf_off = 0;
 var _rlf_si = 0;
 var _rlf_fi = 0;
+# 1 = the chain continues: the current field is a struct (`ft > 0`) and `.ident` follows, not a
+# `..` range and not a `.method(` call on the nested field. CHANGELOG [6.6.12]
+fn _rlf_more(S, ft): i64 {
+    if (ft <= 0) { return 0; }
+    if (PEEKT(S) != 41) { return 0; }
+    if (TOKTYP(S, GTI(S) + 1) != 2) { return 0; }
+    if (TOKTYP(S, GTI(S) + 2) == 10) { return 0; }
+    return 1;
+}
 fn _resolve_leaf_field(S, si, fi, off): i64 {
     _rlf_si = si;
     _rlf_fi = fi;
     var ft = GETFTYPE(S, si, fi);
-    if (ft > 0) { if (PEEKT(S) == 41) {
-            STI(S, GTI(S) + 1);
-            if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
-            var ifnoff = PEEKV(S);
-            STI(S, GTI(S) + 1);
-            var isi = ft - 1;
-            var ifi = FINDFIELD(S, isi, ifnoff);
-            # v6.5.19: a resolution failure, not a syntax one — see ERR_IDENT in
-            # src/common/util.cyr for why the message class is load-bearing.
-            if (ifi < 0) {
-                ERR_IDENT(S, "unknown field ", ifnoff, " on struct ", L64(S + 0x1A6018 + isi * 8));
-                _rlf_off = off;
-                return ft;
-            }
-            off = off + FIELDOFF(S, isi, ifi);
-            ft = GETFTYPE(S, isi, ifi);
-            _rlf_si = isi;
-            _rlf_fi = ifi;
-        } }
+    # 6.6.12: a `while`, not an `if` — every nested level (`n.v.v.x`), not only the first. The
+    # token guards leave a `..` range and a `.method(` on a nested field to their own paths.
+    while (_rlf_more(S, ft) == 1) {
+        STI(S, GTI(S) + 1);
+        if (PEEKT(S) != 2) { ERR_EXPECT(S, 2); }
+        var ifnoff = PEEKV(S);
+        STI(S, GTI(S) + 1);
+        var isi = ft - 1;
+        var ifi = FINDFIELD(S, isi, ifnoff);
+        # v6.5.19: a resolution failure, not a syntax one — see ERR_IDENT in
+        # src/common/util.cyr for why the message class is load-bearing.
+        if (ifi < 0) {
+            ERR_IDENT(S, "unknown field ", ifnoff, " on struct ", L64(S + 0x1A6018 + isi * 8));
+            _rlf_off = off;
+            return ft;
+        }
+        off = off + FIELDOFF(S, isi, ifi);
+        ft = GETFTYPE(S, isi, ifi);
+        _rlf_si = isi;
+        _rlf_fi = ifi;
+    }
     _rlf_off = off;
     return ft;
 }

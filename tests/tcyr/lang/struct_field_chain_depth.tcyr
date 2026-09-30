@@ -1,0 +1,125 @@
+# struct_field_chain_depth.tcyr — 6.6.12 B04 (R7): a field chain reaches ANY nesting depth.
+#
+# ⛔ `_resolve_leaf_field` (src/frontend/parse_decl.cyr) descended exactly ONE nested level (an
+# `if`, not a loop), and it serves both the field load and the field store. So the two-level
+# `n.v.x` worked and every three-level chain was a syntax error: `n.v.v.x = 3;` "expected '=',
+# got '.'", `var r = n.v.v.x;` "expected ';', got '.'" — through a local, a global (inline and
+# pointer-mode) and a by-value or `*T` parameter alike. Loud, never silent: this file did not
+# build on 6.6.11.
+#
+# The rows use PACKED narrow fields at every level (i8 / i16 / i32 leaves, odd offsets), so a
+# chain that stopped one level early or summed one offset twice reads a different field, and
+# they check the raw bytes through load8/load32/load64 on the backing storage, so a write that
+# landed at the wrong offset is caught even when the read path shares the error.
+#
+# The loop's token guards are covered too: a `..` range after a deep chain stays a range, and a
+# two-level chain (the old path) is the control.
+#
+# MUTATION: `_resolve_leaf_field`'s `while (_rlf_more(..))` (src/frontend/parse_decl.cyr) back to
+# the old single-level `if` makes this file fail to build ("expected ';', got '.'").
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+
+struct Pt { x; y: i32; }                 # 12 B: x @0, y @8
+struct B1 { t: i8; v: Pt; n: i16; }      # 15 B: t @0, v @1 (v.x @1, v.y @9), n @13
+struct B2 { m: i16; v: B1; k; }          # 25 B: m @0, v @2 (v.v.x @3, v.v.y @11, v.n @15), k @17
+struct B3 { z: i8; w: B2; }              # 26 B: z @0, w @1 (w.v.v.x @4, w.v.v.y @12, w.k @18)
+struct F1 { a: f64; b: f64; }
+struct F2 { s: i8; f: F1; }
+struct F3 { g: F2; }
+
+var gbuf: i64[5];
+var GP: B2 = &gbuf;                      # a pointer-mode global
+var GI = B2 { 0, 0, 0, 0, 0, 0 };        # an inline global (m, v.t, v.v.x, v.v.y, v.n, k)
+
+fn sum3(p: B2): i64 { return p.v.v.x + p.v.v.y * 10 + p.v.n * 100 + p.k * 1000; }
+fn sum3p(q: *B2): i64 { return q.v.v.x + q.v.v.y * 10 + q.v.n * 100 + q.k * 1000; }
+fn set3p(q: *B2, a): i64 { q.v.v.x = a; q.v.v.y = a + 1; return 0; }
+fn sum4(r: B3): i64 { return r.w.v.v.x + r.w.v.v.y * 10 + r.w.k * 100 + r.z * 1000; }
+fn take_pt(p: Pt): i64 { return p.x * 10 + p.y; }
+
+fn run_local(): i64 {
+    test_group("three and four levels through a local");
+    var n: B2;
+    n.m = 0; n.v.t = 0; n.k = 0;
+    n.v.v.x = 3;
+    n.v.v.y = 0 - 4;
+    n.v.n = 5;
+    n.k = 6;
+    assert_eq(n.v.v.x, 3, "R7: n.v.v.x written and read (was a syntax error)");
+    assert_eq(n.v.v.y, 0 - 4, "R7: n.v.v.y, an i32 leaf three levels down, sign-extended");
+    assert_eq(n.v.n, 5, "control: the two-level n.v.n");
+    assert_eq(load64(&n + 3), 3, "R7: n.v.v.x landed at byte 3");
+    assert_eq(load32(&n + 11), 0xFFFFFFFC, "R7: n.v.v.y landed at byte 11, four bytes wide");
+    assert_eq(load8(&n + 15), 5, "R7: n.v.n still at byte 15 (the i32 write did not spill)");
+    var h: B3;
+    h.z = 9; h.w.m = 0; h.w.v.t = 0; h.w.v.n = 0;
+    h.w.v.v.x = 7;
+    h.w.v.v.y = 8;
+    h.w.k = 2;
+    assert_eq(h.w.v.v.x + h.w.v.v.y * 10, 87, "R7: h.w.v.v.x / .y, four levels");
+    assert_eq(load64(&h + 4), 7, "R7: h.w.v.v.x landed at byte 4");
+    assert_eq(load32(&h + 12), 8, "R7: h.w.v.v.y landed at byte 12");
+    assert_eq(load64(&h + 18), 2, "R7: h.w.k landed at byte 18");
+    assert_eq(load8(&h), 9, "R7: h.z untouched");
+    assert_eq(sum4(h), 9287, "R7: a by-value four-level parameter reads the same");
+    var q: Pt = n.v.v;
+    assert_eq(q.x * 10 + q.y, 26, "R7: `var q: Pt = n.v.v;`, a whole struct three levels down");
+    assert_eq(take_pt(h.w.v.v), 78, "R7: `take_pt(h.w.v.v)`, a deep struct-typed field as a by-value argument");
+    var p: Pt; p.x = 11; p.y = 12;
+    h.w.v.v = p;
+    assert_eq(h.w.v.v.x * 100 + h.w.v.v.y, 1112, "R7: `h.w.v.v = p;`, a whole-struct store four levels down");
+    assert_eq(load8(&h + 18), 2, "R7: ... and h.w.k after it untouched");
+    var s = 0;
+    for i in n.v.v.x..n.k { s = s + i; }
+    assert_eq(s, 12, "R7: `for i in n.v.v.x..n.k` — a `..` after a deep chain stays a range");
+    var f: F3;
+    f.g.s = 1;
+    f.g.f.a = 1.5;
+    f.g.f.b = 2.25;
+    var fs = f.g.f.a + f.g.f.b;
+    assert_eq(f64_to(f64_mul(fs, 100.0)), 375, "R7: f.g.f.a + f.g.f.b is a float add three levels down");
+    return 0;
+}
+
+fn run_globals(): i64 {
+    test_group("three levels through a global");
+    GP.v.v.x = 3;
+    GP.v.v.y = 4;
+    GP.v.n = 5;
+    GP.k = 6;
+    assert_eq(GP.v.v.x + GP.v.v.y * 10, 43, "R7: GP.v.v.x on a pointer-mode global (was a syntax error)");
+    assert_eq(load64(&gbuf + 3), 3, "R7: GP.v.v.x landed in the pointee at byte 3");
+    assert_eq(load32(&gbuf + 11), 4, "R7: GP.v.v.y landed in the pointee at byte 11");
+    assert_eq(load64(&gbuf + 17), 6, "R7: GP.k in the pointee at byte 17");
+    GI.v.v.x = 21;
+    GI.v.v.y = 22;
+    GI.v.n = 23;
+    GI.k = 24;
+    assert_eq(GI.v.v.x + GI.v.v.y * 100, 2221, "R7: GI.v.v.x on an inline global");
+    assert_eq(load64(&GI + 3), 21, "R7: GI.v.v.x landed at byte 3 of the global");
+    assert_eq(sum3(GI), 26541, "R7: the inline global as a by-value argument, read three levels down");
+    return 0;
+}
+
+fn run_params(): i64 {
+    test_group("three levels through a parameter");
+    var n: B2;
+    n.m = 0; n.v.t = 0;
+    n.v.v.x = 1; n.v.v.y = 2; n.v.n = 3; n.k = 4;
+    assert_eq(sum3(n), 4321, "R7: p.v.v.x in a by-value B2 parameter");
+    assert_eq(sum3p(&n), 4321, "R7: q.v.v.x in a `*B2` parameter");
+    set3p(&n, 7);
+    assert_eq(n.v.v.x * 10 + n.v.v.y, 78, "R7: `q.v.v.x = a;` through a `*B2` parameter writes the caller's struct");
+    assert_eq(n.v.n, 3, "R7: ... and leaves n.v.n");
+    return 0;
+}
+
+alloc_init();
+run_local();
+run_globals();
+run_params();
+var r = assert_summary();
+syscall(60, r);
