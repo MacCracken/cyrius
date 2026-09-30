@@ -2,7 +2,7 @@
 
 **Scope:** the untrusted-source-input surface. Previous full audit:
 `docs/audit/2026-07-27-security-audit.md` (CVE-32…CVE-36) at cycc 6.4.82.
-**Next free identifier after this document: CVE-57.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
+**Next free identifier after this document: CVE-58.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
 document are **withdrawn** but still consume their ids.) CVE-43 was consumed at 6.6.5,
 **CVE-44 and CVE-45 at 6.6.6** — the release installer's fixed `/tmp` staging, and a forged `#@file` from an included file —
 **CVE-46, CVE-47 and CVE-48 at 6.6.7** (a `secret var` inside a closure was never zeroised; a `secret var` in a
@@ -13,10 +13,10 @@ predictable shared `/tmp` names; `lib/http.cyr` wrote a long URL past its 2048-b
 `rdx`; the lexer silently dropped any `@` that did not spell `@unsafe`; `lib/ws.cyr`'s `ws_recv_frame` let a
 remote peer choose its allocation size and read frames it had not received), and **CVE-54 and CVE-55 at 6.6.11**
 (on Windows, `net_resolve_ipv4` read a drive-relative `C:\etc\hosts` that any local user can plant; a multi-line
-string literal shifted file attribution, so a call to another file's `private` fn compiled); **CVE-56 at 6.6.12** (`lib/log.cyr`'s `log_info_kv` / `log_info_int` built a log line past a 512-byte stack buffer); all thirteen are appended below.
+string literal shifted file attribution, so a call to another file's `private` fn compiled); **CVE-56 at 6.6.12** (`lib/log.cyr`'s `log_info_kv` / `log_info_int` built a log line past a 512-byte stack buffer); **CVE-57 at 6.6.12** (on Windows, the folded sandhi resolver read a drive-relative `C:\etc\resolv.conf` any local user can plant); all thirteen are appended below.
 ⚠ **This line read "next free: CVE-42" while CLAUDE.md read "the next CVE number is 43" and this document ran 39-41.**
 Two authorities, two answers, and nothing reconciled them. CLAUDE.md is the one every closeout reads, so **42 is
-retired unused** and CVE-43 is the entry appended below. Anything below 57 now collides.
+retired unused** and CVE-43 is the entry appended below. Anything below 58 now collides.
 
 Run as part of the band K closeout, as nine parallel audit dimensions over the v6.5.x minor with
 an adversarial verification pass over the highest-severity findings. Everything recorded here was
@@ -1058,3 +1058,60 @@ so the number itself is never cut.
 with the sink seeing exactly 511 bytes, the head intact and the `...` mark; the 511/512 boundary;
 and `i64::MIN` surviving a 4 KB msg. It passes on x86_64 and qemu-aarch64 and exits 139 against the
 6.6.11 `lib/log.cyr`.
+
+## CVE-57 — on Windows, the folded sandhi resolver read a DRIVE-RELATIVE `/etc/resolv.conf` any local user can plant
+
+*Appended 2026-09-30 (cyrius 6.6.12, bite B15 item SA11). This is the CVE-54 class, reached
+through a fold instead of `lib/net.cyr`: the vulnerable code is sandhi's own resolver, shipped in
+cyrius as `lib/sandhi.cyr`.*
+
+| | |
+|---|---|
+| **Severity** | **High (P1)**. A local, unprivileged user chooses the DNS server for every other user's sandhi lookups on the same Windows machine, including `sandhi_http_get` by hostname. |
+| **Affected** | PE (Windows) programs that resolve through the folded sandhi: `sandhi_resolve_ipv4[_a]` / `sandhi_resolve_ipv6[_a]`, and every `sandhi_http_*` / discovery / rpc call given a hostname with no `sandhi_client_set_resolver` hook installed. `lib/sandhi.cyr` has built for PE since 6.6.7 (sandhi 1.10.1), and the file read ran there from then on. The query reached the planted server once 6.6.11 gave PE working Winsock UDP. **Exploitable in released cyrius 6.6.11** (fold sandhi 1.10.3), confirmed on cass. |
+| **Fixed** | 6.6.12 (sandhi 1.10.4, commit `88115b3`, re-vendored byte-identical) |
+
+**Vector.** `_sandhi_resolve_read_resolv_conf_a` (sandhi `src/net/resolve.cyr`) opened
+`"/etc/resolv.conf"` on every target, and both lookups (`_sandhi_resolve_ipv4_query_a` /
+`_sandhi_resolve_ipv6_query_a`) fell back to 8.8.8.8 without one. On Windows a rooted path is
+drive-relative, so the reader opened `C:\etc\resolv.conf`, and any authenticated user may create a
+folder at the root of the system drive. `net_resolve_ipv4`'s own fix at 6.6.11 (CVE-54) did not
+cover this: sandhi has its own resolver and does not call `net_resolve_ipv4`.
+
+**Impact.** One local user plants `C:\etc\resolv.conf` with `nameserver <their address>`, and every
+other user's sandhi-based program on that machine sends its DNS queries there and trusts the
+answers (a matching TXID is all it checks). That redirects `sandhi_http_*` traffic by hostname.
+When no file exists, the 8.8.8.8 fallback bypasses the machine's configured resolver and its hosts
+file. Confirmed on cass (real Windows) against the 6.6.11 fold (sandhi 1.10.3), with a planted
+`nameserver 127.0.9.7`:
+- the reader returned the planted address (118030463 = 127.0.9.7);
+- the lookups of the machine's own name and of `localhost` were sent to the planted server, which
+  answered nothing, so both failed (5 of 15 rows of the new test fail).
+
+**Fix (at the source, sandhi 1.10.4).** On `CYRIUS_TARGET_WIN`:
+- the A lookup is `net_resolve_ipv4(host)`, i.e. getaddrinfo, which reads the real
+  `%SystemRoot%\System32\drivers\etc\hosts` and the adapters' DNS;
+- the AAAA lookup answers 0, so the client stays on v4, the only family the PE socket surface can dial;
+- the reader returns -1 without opening anything;
+- 8.8.8.8 is never used.
+
+The consumer resolve hook still runs first. The v6 connect paths keep declining on PE, with a
+corrected comment: dialling v6 needs a public AF_INET6 socket in `lib/net.cyr`, which is a feature.
+sandhi's CI gained a structural row that keeps every `"/etc/"` literal and 8.8.8.8 fallback in
+`src/` inside `#ifndef CYRIUS_TARGET_WIN`. It names all three 1.10.3 sites.
+
+**Verified.** `tests/tcyr/crossos/sandhi_pe_resolver_no_etc_path.tcyr` runs on cass in the release
+gate's cross-OS leg. On real Windows it plants `C:\etc\resolv.conf` and asserts the plant, so a
+pre-existing file or a failed write fails a named row. It then asserts:
+- the reader returns -1;
+- the machine's own name resolves through the system resolver, to the address `net_resolve_ipv4` gives;
+- the AAAA lookup answers 0, and `localhost` and a `.invalid` name behave.
+
+Measured results:
+- **cass:** 15/15 with the 1.10.4 fold, and 5 of 15 fail with the 1.10.3 fold. The plant was removed
+  and `C:\etc` does not exist afterwards.
+- **wine:** 13/13 with the fix. The 1.10.3 fold fails 3 of 13, because its reader returned the
+  Linux host's 127.0.0.53: wine maps a rooted path to the unix root, so only real Windows shows
+  the plant.
+- **Other targets:** the every-target rows pass on x86_64, aarch64 (qemu), ecb, ach and the
+  agnosticos container.
