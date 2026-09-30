@@ -21,9 +21,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   store, `_asg_store_slot(S, idx, g)` (`src/frontend/parse.cyr`), for the statement arm and the for step,
   so the two cannot drift again (it carries the narrowing warning, as the statement always did); the
   compound load loads a narrow local or global at its width, sign-extended when signed, exactly as a read
-  of it in an expression does. **Verification:** new `tests/tcyr/crossos/narrow_slot_width.tcyr` (53
-  rows; every neighbour initialised non-zero and checked; the 6.6.11 compiler fails 19-20, each
-  mutation alone fails its own rows), green on x86, aarch64 (qemu) and PE (wine), and on real ecb, ach, pi and cass
+  of it in an expression does. **Verification:** new `tests/tcyr/crossos/narrow_slot_width.tcyr` (58
+  rows; every neighbour initialised non-zero and checked; the 6.6.11 compiler fails 23-24). Each half
+  of the fix is mutation-proven on its own: the global step store (19 rows), the local step store (two
+  rows that read a wrap-exited u8 local's whole frame slot with `load64` — 256, not 0), the compound
+  load (its rows), and the signed-global sign extension (`/= 2` on an i8 global -8 — 124, not -4). Green on x86, aarch64 (qemu) and PE (wine), and on real ecb, ach, pi and cass
   after a byte-identical self-host there. cx's narrow store/load emitters are 8 bytes too — fixed and
   gated by B06 (`cx_tailcall_and_vm_traps.sh`, cx-narrow axis).
 
