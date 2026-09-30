@@ -138,6 +138,73 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (axes 5-7) and `lexer_attribute_word_boundary.sh` (F4 now scored against the compiler; its root-host
   F6 skip exits 77 instead of passing). Each is mutation-proven against its fix.
 
+### Fixed — float typing: compound assignment on globals and in the `for` step, f32 operand checks, typed copies, re-judged assignments (B04)
+
+- **Compound assignment on an f64 / f32 GLOBAL was integer arithmetic, silently (M1).** `var G:
+  f64 = 1.5; G += 1.0;` left G = 9216616637413720064 (0x3FF8.. + 0x3FF0.. added as integers);
+  `G -= 0.5` and `G *= 2.0` gave 0, and an f32 global was garbage the same way — at top level and
+  inside a fn, identically on x86 and aarch64. On an f64 LOCAL the same statement was right, and
+  `t += 1` there compiled with no warning while adding a subnormal. **Root cause:** the compound
+  arm of `_PARSE_STMT_IMPL` set its float routing from `GLTYPE` only when `FINDLOCAL` hit; the
+  global branch never read `GVTYPE`, and no branch looked at the right operand. **Fix:** the arm is
+  now `_asg_compound_load` (local or global, returns the slot type) + `_asg_compound_op`
+  (src/frontend/parse.cyr), which routes `+= -= *= /=` on either kind of float slot to the float
+  emitters and checks the right operand as `x = x op y` does — kind 1 for f64, kind 5 (below) for
+  f32. Kept out of the cybs-sensitive `_PARSE_STMT_IMPL` body.
+- **A classic-`for` step was a float-blind copy of the compound arm.**
+  `for (var x: f64 = 0.0; x < 1.0; x += 0.25)` ran 2 iterations instead of 4, and `y /= 2.0`
+  from 8.0 ran once instead of 3 times. **Root cause:** the step replay (src/frontend/parse_ctrl.cyr)
+  carried its own integer-only copy, which also knew five of the ten compound operators (`i <<= 1`
+  as a step was `expected '='`). **Fix:** the step calls the same `_asg_compound_tok` /
+  `_asg_compound_load` / `_asg_compound_op` as the statement, so the two cannot drift again; a
+  step now takes all ten operators.
+- **An f32 `+ - * /` never checked its right operand (M2).** `EMIT_F32_BINOP` takes the right
+  operand's LOW 32 BITS, so with `x: f32`, `x * 2.0` was 0, `x + 1.0` was `x` and
+  `f32_from(u) + 1.0` dropped the 1.0 — with no warning, while the f64 arm on the line above
+  warned. **Fix:** the four f32 arms (src/frontend/parse_expr.cyr) warn **kind 5**, `f32
+  arithmetic with a non-f32 right operand`, when the right operand is not f32. Warn-only, the
+  ADR-002 posture of kind 1; `CYRIUS_TYPE_CHECK=0` silences it. An f64 literal is not narrowed.
+- **An untyped `var` copied from a declared f64 / f32 value stayed i64 (M3).** With
+  `struct P { x: f64; y: f64; }`, `var t = p.y; t + t` was an INTEGER add (f64_to gave 0) while
+  `p.y + p.y` was 5.0; the same for `var t1 = y` with `y: f64` a local or parameter, and for a
+  global copy. Only `-t` noticed, as a kind-3 warning. **Root cause:** PARSE_VAR typed an
+  unannotated local only from a peeked call's declared return (v6.5.21); the initialiser's own
+  type was recorded as the kind-3 flag and nothing else. **Fix (narrow, the default taken):**
+  `_decl_float_copy` (src/frontend/parse_decl.cyr) types the local — or a global declared after
+  the first top-level statement — when the initialiser is exactly `IDENT` or `IDENT(.IDENT)+`
+  and its value is typed f64 / f32; `_gv_float_copy` makes the same judgement for a leading-block
+  global at registration, by shape (`= G ;` or `= G.f(.f)* ;` through a struct global). A literal
+  (`var z = 0.0;`), a float builtin and any arithmetic stay untyped, so `==` / `<` on existing
+  code do not become float compares. Surveyed before landing (below).
+- **The kind-3 flag was judged at the declaration only (M4).** `var g = 0; g = 1.5; var a = -g;`
+  was a silent integer negation of 1.5's bits, and `var h = 1.5; h = 7; -h` warned about a
+  correct -7 — locals and globals alike. **Fix:** a plain assignment into an untyped slot
+  rewrites the flag from its right-hand side (`_asg_rejudge`, src/frontend/parse.cyr; the value
+  is captured in `_pcmpe_struct_assign` right after its PCMPE, while `_FBR_KIND` is valid). A
+  compound assignment keeps the flag — including when a closure in its right operand assigns a
+  float to one of its own variables, which a first cut got wrong. Flow-insensitive: the last
+  assignment compiled wins. Warning-only; codegen is unchanged.
+- **Tests.** New `tests/tcyr/crossos/f64_compound_assign.tcyr` (f64 / f32 × local / global ×
+  `+= -= *= /=`, top-level statements, four `for` steps including an f64 global and an f32
+  local, `<<=` as a step, integer ops unchanged): on the pre-fix compiler the `<<=` step does not
+  compile, and without it 14 of the 25 rows are red.
+  `tests/tcyr/crossos/f64_struct_fields.tcyr` gains the copy-inference rows (field, chain, typed
+  local, f64 param, global, leading-block global from a global and from a field, f32 field; a
+  literal stays untyped): 9 red before. `tests/gates/diagnostics/f64_int_mix_warn.sh` gains
+  axes 10-13 (kind 5; compound right operands; re-judged flags; typed copies), each red on the
+  pre-fix compiler and each mutation-proven. Verified on real hardware: both tcyrs plus
+  f64_negation / f32_scalar pass, and the compiler built from this tree self-hosts, on pi
+  (aarch64), ecb (macOS arm64), ach (macOS x86_64) and cass (Windows PE); also under qemu-aarch64
+  and wine.
+- **Downstream survey (read-only).** Every main build and every tcyr / bcyr / fcyr of the 125
+  `~/Repos` consumers (1,652 compiles, ganita / hisab / ranga / dhvani among them) was run through
+  the pre- and post-B04 compiler: **no output binary changed** (no consumer has a float compound
+  global, a float `for` step or a typed copy today), and exactly one new diagnostic
+  appeared — kind 5 at ranga `src/blend.cyr:143`, `one - ganita_f32_min(..)`, where the callee is
+  declared `: i64` and returns f32 bits. The value is right at runtime; the warning is the same
+  posture as kind 1 on an `: i64`-declared call, and binding the call to a `var m: f32` first
+  silences it. No sibling change is required.
+
 ## [6.6.10] — 2026-09-29
 
 The fourth batch release: the 6.6.8 review finds (groups B–G) and group H of the 6.6.9 finds, placed by

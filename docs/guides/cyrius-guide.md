@@ -61,15 +61,24 @@ or in parentheses (`-f64_sqrt(v)`, `-(f64_exp(v))`, `-f32_from(v)`, …). So `-1
 `-0.0` is negative zero and `-x` negates an `f64` exactly (6.6.8; before it, `-1.0`
 evaluated to -4.0 and `-0.0` to +0, silently; the parenthesised builtin form was integer
 negation until 6.6.10). A struct or union field declared `f64` / `f32` counts as typed too
-(6.6.10 — see [Field types](#field-types-v6610)). It does NOT cover an **untyped** variable,
-an untyped field holding float bits, or an untyped expression (`-(a + b)` over untyped vars)
-— those are `i64` as far as the compiler knows, and `-v` is integer negation of the bits.
-Negate them with `f64_neg(v)`, or declare the variable `: f64`. Since 6.6.10 an untyped
-variable whose declaration was initialised from a float (`var c = 1.5;`, `var z = 0.0;`,
-`var x = f64_sqrt(u);`, or a copy of such a variable) WARNS when negated: `unary minus on an
-untyped variable holding a float is integer negation (declare it f64)`. `-c` of 1.5 is -3.0,
-`-z` of 0.0 is +0 and `-n` of -2.5 is 1.75. The judgement is made at the declaration; a later
-assignment does not change it.
+(6.6.10 — see [Field types](#field-types-v6610)), and since 6.6.11 so does a `var` with no
+annotation that is a pure **copy** of a declared float: `var t = p.y;` (an `f64` field, or a
+chain `o.i.x`), `var u = y;` (an `f64` / `f32` local or parameter) and `var g = G;` (a typed
+global) type `t`, `u` and `g` the same way, so `t + t` is a float add and `-t` a float
+negation. Before 6.6.11 the copy stayed `i64` and `t + t` added the bit patterns. Only a
+bare name or a field chain counts — the same rule as `var x = f();` with `fn f(): f64`
+(v6.5.21), which types `x` from the declared return. It does NOT cover an **untyped**
+variable, an untyped field holding float bits, or an untyped expression (`-(a + b)` over
+untyped vars, `var z = 0.0;`, `var t = p.y * 2.0;`) — those are `i64` as far as the compiler
+knows, and `-v` is integer negation of the bits. Negate them with `f64_neg(v)`, or declare
+the variable `: f64`. Since 6.6.10 an untyped variable initialised from a float (`var c = 1.5;`,
+`var z = 0.0;`, `var x = f64_sqrt(u);`, or a copy of such a variable) WARNS when negated:
+`unary minus on an untyped variable holding a float is integer negation (declare it f64)`.
+`-c` of 1.5 is -3.0, `-z` of 0.0 is +0 and `-n` of -2.5 is 1.75. Since 6.6.11 every plain
+assignment re-judges it: `var g = 0; g = 1.5; -g` warns and `var h = 1.5; h = 7; -h` does not
+(a compound assignment such as `h += 1` leaves the judgement as it was). The judgement is not
+flow-sensitive: it is whatever the last assignment the compiler READ said — source order
+inside a fn, and for a global, source order across fns — not what happens to run last.
 
 **Float builtin results in arithmetic (6.6.10).** The result of a float-returning builtin
 (`f64_sqrt`, `f64_add`, `f64_sin`, `f64_exp`, `f32_from`, … — every `f64_*` / `f32_*` that
@@ -98,8 +107,20 @@ of 1.5's bit pattern (it is -3.0), and `2 * x` with `x: f64` multiplies x's bits
 the left operand as a float — `0.0 - x`, `2.0 * x`, or just `-x`. Both directions warn:
 an f64 left with a non-f64 right (`f64 arithmetic with a non-f64 right operand`) and,
 since 6.6.8, an integer left with an f64 right (`integer arithmetic with an f64 right
-operand`). They are warnings, not errors (ADR-002: the untyped `i64`-boxed float idiom
-stays legal); `CYRIUS_TYPE_CHECK=0` silences them.
+operand`). An **f32** left takes the LOW 32 BITS of its right operand, so an `f64` literal
+or an integer there is reinterpreted, not converted — with `x: f32`, `x * 2.0` is 0 and
+`x + 1.0` is `x`. Since 6.6.11 it warns too (`f32 arithmetic with a non-f32 right operand`);
+write `x * f32_from(2.0)`. They are warnings, not errors (ADR-002: the untyped `i64`-boxed
+float idiom stays legal); `CYRIUS_TYPE_CHECK=0` silences them.
+
+**Compound assignment on a float (6.6.11).** `x += y`, `-=`, `*=` and `/=` on an `f64` /
+`f32` variable are float operations — for a local, a **global**, a top-level statement and a
+`for` step alike — and the right operand is checked exactly as in `x = x + y` (`t += 1` on
+an `f64` warns: 1's bits are a subnormal, write `t += 1.0`). Until 6.6.11 only a local got
+the float arithmetic: `G += 1.0` on an `f64` global added the two bit patterns as integers,
+and `for (var x: f64 = 0.0; x < 1.0; x += 0.25)` ran twice instead of four times, silently.
+`%=`, `&=`, `|=`, `^=`, `<<=` and `>>=` are integer operations on any variable. A `for`
+step accepts all ten compound operators (it used to accept five).
 
 ## Variables
 
@@ -362,7 +383,8 @@ stays **untyped** on purpose, so `P_x(&p) + P_y(&p)` is still an integer add: co
 ecosystem compares getter results bit-for-bit (`==` on the bit pattern), and a typed getter
 would turn those into float compares with different NaN and ±0 answers. When you want float
 arithmetic on a getter's result, hold it in an `f64` variable (`var x: f64 = P_x(&p);`) or use
-the field directly.
+the field directly. Since 6.6.11 a plain copy of the field is typed as well: `var t = p.y;`
+makes `t` an `f64`, where it used to be an untyped `i64` holding the bits.
 
 ### Where a struct lives (v6.6.5)
 
