@@ -108,11 +108,15 @@ fn clock_now_ns(): i64 {
     # in the return register — it does NOT fill the `&ts` timespec. So take the
     # return value (ns) with the Darwin id; `&ts` is just the 3rd-arg placeholder
     # the route expects.
-    # x86-macOS takes this SAME arm and is not "dead": since v6.5.16 EMACHO_CLOCK_X86 composes
-    # ns from BSD gettimeofday and returns them in rax — the same return-value contract (it is
-    # the REALTIME clock at µs resolution there, and it ALSO writes a timeval into `&ts`, which
-    # is why nothing may read the buffer). This line read "x86-macOS does not route 228 → clock
-    # stays dead there; HELD" until 6.6.8; lib/bench.cyr's twin was corrected at 6.6.5.
+    # x86-macOS takes this SAME arm and is not "dead": since v6.5.16 EMACHO_CLOCK_X86 issues
+    # BSD gettimeofday and returns ns in rax — the same return-value contract. For clock id 0
+    # it is the timeval composed to ns (wall time, µs resolution); for EVERY other id, since
+    # 6.6.12, it is the mach_absolute_time gettimeofday copies out through its third argument,
+    # which is ns at Intel's 1:1 timebase — so this id-4 read is monotonic there too (until
+    # 6.6.12 the id was ignored and it was the REALTIME clock). It ALSO writes a timeval into
+    # `&ts` for every id, which is why nothing may read the buffer. This line read "x86-macOS
+    # does not route 228 → clock stays dead there; HELD" until 6.6.8; lib/bench.cyr's twin was
+    # corrected at 6.6.5.
     # ⚠ The raw-228 contract across the reroutes is "returns the value; the buffer is
     # unspecified": ns in the return register on both Macs (ms on PE, GetTickCount64), with
     # arm64-macOS and PE never touching the buffer and x86-macOS filling a timeval. Portable
