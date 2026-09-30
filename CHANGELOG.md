@@ -18,6 +18,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (a 4 KB value, msg or key: rc 0, the sink sees exactly 511 bytes, head intact, `...` mark; the 511/512
   boundary; i64::MIN survives a 4 KB msg). Mutation: the 6.6.11 `log.cyr` exits 139.
 
+### Fixed
+
+- **cbt: `_macho_fill_environ` wrote each entry's NUL past its buffer on macOS (B10, item S-B1).**
+  **Root cause:** the v6.0.34 loop bounded an entry's payload bytes but stored its terminator
+  unconditionally, so an environment larger than the buffer returned `pos > cap`, and all four callers
+  (`_cbt_env_is_1`, `_cbt_env_int`, `_cbt_env_str`, `find_tools`) then wrote their own NUL at
+  `buf + pos`. **Fix:** returns at most `cap - 1`; an entry that does not fit with its NUL is dropped whole
+  (never a matchable `HOME=/Us` prefix) and the scan continues, so a HOME after one huge variable still
+  resolves. **Verified on ecb (arm64) and ach (Intel)** with a native CLI built from each tree under a
+  40,000-byte `BIG` plus 50 more variables: 6.6.11's CLI SEGFAULTS (`which`, rc 139) when `BIG` precedes
+  HOME / CYRIUS_HOME and fails `cyrius build` under the user's environment plus `BIG` (CYRIUS_HOME lost);
+  the fixed CLI resolves both and builds a manifest project whose binary exits 42.
+  **Gate:** `tests/gates/toolchain/macho_fill_environ_bounded.sh` (the fn extracted into an x86 logic
+  probe: 40 × 25-byte entries into cap 64 behind a canary, whole-entry, drop-not-truncate and boundary
+  axes; three mutants recorded in its ledger).
+
 ## [6.6.11] — 2026-09-29
 
 The fifth batch release: the 6.6.9 review finds I–K and the 6.6.10 finds that produce wrong results
