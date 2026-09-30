@@ -86,6 +86,9 @@
 #      THREADS_CONCURRENT is 0 and the channel ring works single-threaded — and issues NO
 #      SYS_FUTEX: a harness copy of cxvm exits 140 on guest syscall 202 (a Darwin host SIGSYS-
 #      kills cxvm there; Linux answers EFAULT, which is why the plain run cannot see it).
+#      6.6.12: thread_join on a NONZERO handle (a fake tid) returns -1 at once on cx — no thread
+#      can exist there, so it must neither spin nor issue FUTEX_WAIT (the one futex site 6.6.11
+#      left unguarded).
 #
 # MUTATION LEDGER (6.6.6, each by editing a COPY or reverting in a scratch tree)
 #   a. lib/fmt.cyr's two includes removed      -> axes 1 and 4 FAIL ('strlen', 'vec_get')
@@ -134,6 +137,10 @@
 #      axis 7 FAIL: chan_send's WAKE, _chan_wake and chan_recv's WAKE via the probe (140, not
 #      255); chan_send's WAIT and chan_recv's WAIT via the blocking probes (140, not timeout's
 #      124). All five removed on real hardware: ecb and ach cxvm exit 140 (the cross-OS fixture).
+# MUTATION LEDGER (6.6.12 B06, measured against this file)
+#   z. lib/thread.cyr's cx `return 0 - 1` in thread_join removed -> axis 7 FAIL (the join probe:
+#      the instrumented cxvm exits 140 — FUTEX_WAIT on the fake tid — and the plain cxvm spins
+#      into timeout's 124; the guarded tree returns 7 on both at once)
 # Real tree (with 6.6.9 bites 2, 5 and 12 merged) -> PASS.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -620,6 +627,18 @@ if [ -x "$D/cxvm" ] && [ -s "$D/w7/thr.cyx" ]; then
             # The two WAIT sites: a blocking recv on an empty open channel and a blocking send
             # on a full one. With one guest thread both must SPIN (timeout 124); reaching the
             # futex exits 140 at once.
+            # thread_join on a nonzero fake handle: no thread exists on cx, so -1 at once — not
+            # FUTEX_WAIT (140 here) and not a spin (the plain cxvm below would reach timeout's
+            # 124). CHANGELOG [6.6.12]
+            printf 'include "lib/thread.cyr";\nfn main(): i64 { alloc_init(); var t = alloc(THREAD_SIZE); store64(t, 12345); store64(t + 8, 0); store64(t + 16, 0); if (thread_join(t) == 0 - 1) { return 7; } return 3; }\nvar r = main();\nsyscall(60, r);\n' > "$D/w7/join.cyr"
+            if "$CXCC" < "$D/w7/join.cyr" > "$D/w7/join.cyx" 2> "$D/w7/join.err"; then
+                timeout 5 "$D/cxvm_nf" < "$D/w7/join.cyx" > /dev/null 2>&1; jrc=$?
+                [ "$jrc" = 7 ] || { fail "axis 7: thread_join(nonzero fake handle) on cx exited $jrc under the no-futex cxvm, expected 7 (-1 at once; 140 = FUTEX_WAIT issued, 124 = it spun)"; x=1; }
+                timeout 5 "$D/cxvm" < "$D/w7/join.cyx" > /dev/null 2>&1; jrc=$?
+                [ "$jrc" = 7 ] || { fail "axis 7: thread_join(nonzero fake handle) on cx exited $jrc under the plain cxvm, expected 7 (124 = it spun on the host futex)"; x=1; }
+            else
+                fail "axis 7: the thread_join probe does not compile for cx: $(grep -v '^note' "$D/w7/join.err" | head -3 | tr '\n' ' ')"; x=1
+            fi
             for bw in recv send; do
                 if [ "$bw" = recv ]; then bb='chan_recv(ch);'; else bb='chan_try_send(ch, 1); chan_send(ch, 2);'; fi
                 printf 'include "lib/thread.cyr";\nfn main(): i64 { alloc_init(); var ch = chan_new(1); %s return 0; }\nvar r = main();\nsyscall(60, r);\n' "$bb" > "$D/w7/blk_$bw.cyr"
@@ -635,7 +654,7 @@ if [ -x "$D/cxvm" ] && [ -s "$D/w7/thr.cyx" ]; then
         fi
     fi
 fi
-[ "$x" = 0 ] && echo "  ok: axis 7: cx refuses $CX_OUT_OF_SCOPE by name; lib/thread.cyr runs on cxvm (mutex no-op, thread_create fails honestly, no SYS_FUTEX)"
+[ "$x" = 0 ] && echo "  ok: axis 7: cx refuses $CX_OUT_OF_SCOPE by name; lib/thread.cyr runs on cxvm (mutex no-op, thread_create fails honestly, thread_join declines, no SYS_FUTEX)"
 
 [ "$FAIL" = 0 ] || exit 1
 echo "PASS: stdlib_modules_self_sufficient (8 axes)"

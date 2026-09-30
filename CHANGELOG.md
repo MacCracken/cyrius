@@ -6,6 +6,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.12] — 2026-09-30
 
+### Fixed
+
+- **cx: `thread_join` issued FUTEX_WAIT for a nonzero handle (B06, item S-B4).** **Root cause:** 6.6.11
+  guarded `thread_create`, `thread_create_detached`, `gettid` and the five channel futex sites for cx,
+  but not `thread_join`, whose loop hands `SYS_FUTEX` a guest offset whenever the handle's tid word is
+  nonzero — a spin on a Linux host (measured: `timeout 5` fired, rc 124), SIGSYS on a Darwin host.
+  **Fix:** `#ifdef CYRIUS_TARGET_CX return -1` at the top of `thread_join` (no thread can exist on cx,
+  so this also skips `munmap_stack`). **Held by** `stdlib_modules_self_sufficient.sh` axis 7's new
+  join probe (7 under both the instrumented and the plain cxvm; mutant z: guard removed -> 140 / 124).
+  The cx self-sufficiency floor is unchanged at 69/108.
+
 ## [6.6.11] — 2026-09-29
 
 The fifth batch release: the 6.6.9 review finds I–K and the 6.6.10 finds that produce wrong results
