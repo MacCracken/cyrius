@@ -235,17 +235,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and the flag rode the pool top into every later struct's field base (the signed 8192 test never
   true). **Fix:** the three mask the count and store `raw + 1`, keeping the flag. Compiled output is
   unchanged (the addresses were equal mod 2^64).
-- **A `#derive`d struct redefined at a different size built, and its accessors wrote past the
-  first definition** (premise-S d2.cyr). Two derived `A`s of 48 and 64 B built rc 0 with only
+- **A `#derive`d struct redefined with a different layout built, and its accessors ran against
+  the first definition** (premise-S d2.cyr). Two derived `A`s of 48 and 64 B built rc 0 with only
   warnings, and `A_set_m` stored at offset 56 of the 48 B struct the parser kept, while the same
-  redefinition of a NON-derived `A` failed the 6.6.7 layout backstop. **Root cause:** the backstop
-  was deliberately not armed for a name an earlier `#derive` declared, for the older kavach
-  vendored with two `struct SpawnedProcess`; every consumer now pins kavach 3.13.1, which has one.
-  **Fix:** a redefined name arms it too (src/frontend/lex_pp.cyr), with its own message: "#derive:
-  a second definition of this struct with a different size -- the FIRST one is the layout used, so
-  these accessors would read and write the wrong bytes". The check is size-only, so the
+  redefinition of a NON-derived `A` failed the 6.6.7 layout backstop. At the SAME size it was just
+  as wrong: `{ x; y; }` then `{ y; x; }` built rc 0 and every setter wrote the other field (75
+  where 57 was meant). **Root cause:** the backstop was deliberately not armed for a name an
+  earlier `#derive` declared, for the older kavach vendored with two `struct SpawnedProcess`;
+  every consumer now pins kavach 3.13.1, which has one. **Fix** (src/frontend/lex_pp.cyr): the
+  first definition of a derived name keeps a copy of its field names and offsets
+  (`PP_DERIVE_LAY_SAVE`), and a redefinition is compared with it field by field and by size
+  (`PP_DERIVE_LAY_DIFFERS`); any difference is refused by name — "#derive: struct 'A' is defined
+  again with different field names, order or size -- the FIRST definition is the layout used, so
+  these accessors would read and write the wrong bytes". Names, offsets and size pin every
+  field's bytes (the derive packs with no padding); field TYPES are not compared, so the
   redefinitions still live in the ecosystem keep building: agnosys + sigil vendored side by side
-  in nine repos (14 identical structs) and garjan + prani's `DcBlocker` (24 B both).
+  in nine repos (14 identical structs) and garjan + prani's `DcBlocker` (the same names at the
+  same offsets, `f64` in one and `i64` in the other). (The first cut compared the size only;
+  review found the same-size swap.)
 - **Tests.** `tests/gates/frontend/generic_type_arg_unknown_refused.sh` axis Q: the refusal before
   and after the first statement (inferred, explicit and non-generic), the bare `var gr: W1<Pt>;`
   (now the uninitialised-variable refusal, not a parse error at `gr.v.x`), an address-holding
@@ -254,18 +261,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   globals). `tests/gates/diagnostics/cap_errors_stop_storing.sh` gains a 300-field union row, a
   union-first pool row and a union/struct layout row; its aarch64 and cx await rows now require the
   named "x86-only" refusal or the cap instead of a bare rc 1, and it exits 77 when it cannot run.
-  `tests/gates/diagnostics/derive_layout_backstop.sh` axis F now expects the refusal, plus two
-  same-size controls (G). Every new row fails on the pre-B03 compiler, and each of the four L9
-  changes and the redefinition size check was reverted alone on a scratch tree and turned its rows
-  red. Verified on real hardware: the
+  `tests/gates/diagnostics/derive_layout_backstop.sh` axis F now expects the refusal naming the
+  struct, for a different size (two rows), a same-size swap, a narrower last field and a moved
+  field, plus two same-layout controls (G). Every new row fails on the pre-B03 compiler, and each
+  of the four L9 changes and the redefinition check's size, name and offset comparisons was
+  reverted alone on a scratch tree and turned its rows red. Verified on real hardware: the
   compiler built from this tree self-hosts, and generic_struct_inference.tcyr and structs.tcyr pass,
   on pi (aarch64), ecb (macOS arm64), ach (macOS x86_64) and cass (Windows PE); also under
   qemu-aarch64, wine and cxvm.
 - **Downstream survey (read-only).** The main build and every tcyr / bcyr / fcyr of the `~/Repos`
   consumers (1,371 compiles) through the pre- and post-B03 compiler: no exit status changed, no
   output size changed, and no warning or error appeared or disappeared. No consumer has a leading-
-  block pair-returning global initialiser, a union past either cap or a differently-sized derived
-  redefinition; every kavach pin is 3.13.1. Two H-owned gates asserted the old derive exemption
+  block pair-returning global initialiser, a union past either cap or a differently laid-out
+  derived redefinition; every kavach pin is 3.13.1. Two H-owned gates asserted the old derive exemption
   (`derive_layout_backstop.sh` F, `redefinition_layout_and_enum_over_var.sh` `sp_derive`) and are
   updated by lane H.
 

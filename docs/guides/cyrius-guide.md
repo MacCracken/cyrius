@@ -807,13 +807,14 @@ an `i8` field, both `P_x(p)` and `p.x` are `-1` (a bare `load8` would give 255).
 reads the body the way the parser does — comments, blank lines, `a : T` spacing, `;`-less fields
 and `,`-separated enum members are all fine — and the build FAILS if its field offsets disagree
 with the struct's real layout, which today means a field typed with a struct that is not itself
-`#derive`d: derive the inner struct too. A struct NAME `#derive`d twice is checked the same way
-(v6.6.11): the parser keeps the FIRST layout, so a second definition of a different size is a
-compile error (`#derive: a second definition of this struct with a different size`) — its
-accessors would read and write the first layout's bytes. Before v6.6.11 that second definition
-built with only warnings, and its setters wrote past the first's `sizeof`. The same name at the
-same size still builds (an identical copy, e.g. one struct vendored by two libraries; the parser
-warns when the field names or types differ).
+`#derive`d: derive the inner struct too. A struct NAME `#derive`d twice is checked too
+(v6.6.11): the parser keeps the FIRST layout, so a second definition whose field names, order or
+size differ is a compile error (`#derive: struct 'A' is defined again with different field names,
+order or size`) — its accessors would read and write the first layout's bytes. Before v6.6.11
+that second definition built with only warnings: a larger one's setters wrote past the first's
+`sizeof`, and `{ x; y; }` redefined as `{ y; x; }` had every setter write the other field. The
+same field names at the same offsets still build — an identical copy (one struct vendored by two
+libraries), or one whose field TYPES differ at the same width (`f64` in one, `i64` in the other).
 
 A preprocessor directive (`#ifdef`, `#ifndef`, `#if`, `#elif`, `#else`, `#endif`, `#ifplat`,
 `#endplat`, `#define`) **inside** a `#derive`d declaration, or between the `#derive(...)` line
