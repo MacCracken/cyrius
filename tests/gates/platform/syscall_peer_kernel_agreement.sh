@@ -190,13 +190,20 @@ namb=$(wc -l < "$D/amb" | tr -d ' ')
 # The reasoned ambiguous set. Each line is "<x86 name> <x86 number> <aarch64 name that owns
 # it natively>". Adding to this list is a claim that the collision is UNAVOIDABLE — that the
 # aarch64 peer genuinely needs the native number and no private alias will do.
+# 6.6.12 added three, all from NEW x86-side names (no row existed before, so none was deleted):
+# x86 fchown 93 is aarch64 exit, x86 lremovexattr 198 / fremovexattr 199 are aarch64 socket /
+# socketpair. exit, socket and socketpair must stay native, and the aarch64 side of the three new
+# calls already takes the private alias band (1055, 1015, 1016). CHANGELOG [6.6.12]
 cat > "$D/amb_want" <<'EOF'
 SYS_CHDIR 80 SYS_FSTAT
 SYS_CLONE 56 SYS_OPENAT
 SYS_EXECVE 59 SYS_PIPE2
+SYS_FCHOWN 93 SYS_EXIT
 SYS_FCHOWNAT 260 SYS_WAIT4
+SYS_FREMOVEXATTR 199 SYS_SOCKETPAIR
 SYS_GETPEERNAME 52 SYS_FCHMOD
 SYS_KILL 62 SYS_LSEEK
+SYS_LREMOVEXATTR 198 SYS_SOCKET
 SYS_PRCTL 157 SYS_SETSID
 SYS_SCHED_YIELD 24 SYS_DUP3
 SYS_SOCKETPAIR 53 SYS_FCHMODAT
@@ -204,7 +211,7 @@ SYS_UNAME 63 SYS_READ
 SYS_WAIT4 61 SYS_GETDENTS64
 EOF
 if ! diff -u "$D/amb_want" "$D/amb" > "$D/amb.diff"; then
-    echo "  FAIL  the AMBIGUOUS set moved (expected 11 entries, found $namb):"
+    echo "  FAIL  the AMBIGUOUS set moved (expected 14 entries, found $namb):"
     sed 's/^/        /' "$D/amb.diff"
     echo "        A LINE ADDED here means a new aarch64 declaration just DELETED a row from"
     echo "        src/common/syscall_xlat.cyr — raw use of that x86 number on ELF-aarch64 is now"
