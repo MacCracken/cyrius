@@ -525,7 +525,9 @@ global, or `var G: P3 = BX.v;` from a global's field, in the leading declaration
 the first statement — gives `B` its own STRUCTSZ bytes and copies them. Before v6.6.12 `B` got one
 8-byte slot holding `A`'s first word, and `B.x` SIGSEGV'd. A pointer-mode source
 (`var p: P3 = mk();`, or a global initialised that way) still binds a second pointer to the same
-struct, exactly as in a fn.
+struct, exactly as in a fn. The source must be declared ABOVE the copy: `var B: P3 = A;` before
+`var A = P3 { .. };` is refused (`cannot copy-init 'B' from a global declared below it`), since
+globals are initialised in declaration order and `A` has not been initialised when `B` copies it.
 
 ⚠ **A by-value struct PARAMETER over 8 bytes is address-passed** — the parameter's slot holds
 the caller's address, which is why writing `q.z = 5` inside the callee is visible to the caller.

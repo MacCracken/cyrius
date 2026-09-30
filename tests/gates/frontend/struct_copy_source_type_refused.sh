@@ -14,6 +14,9 @@
 #       and a source of ANOTHER struct type is refused by name — in the leading declaration
 #       block (pass 1 + the EMIT_GVAR_INITS replay) and after the first statement (PARSE_VAR),
 #       from a named global and from a field, at every width (the 8 B row too).
+#       A whole source declared BELOW the destination in the leading block is refused by name:
+#       pass 1 cannot see it (a pointer-mode slot) while the replay can (a whole struct), and the
+#       value store that disagreement fell back to still put the first word in the slot (139).
 #
 # Refusal rows are checked on the MESSAGE, that it is the ONLY error, and that no binary was
 # written. Acceptance rows are checked against the exit code AND a field-by-field CONTROL.
@@ -27,6 +30,8 @@
 #   `_psid_scan` (pass 1) skips `_psid_note`         -> RED R1b
 #   `_gci_init` skips `_AGG_ASSIGN_TYPE_ERR`        -> RED R5 R6 R9
 #   `_gci_toplevel` skips `_AGG_ASSIGN_TYPE_ERR`    -> RED R7 R8
+#   `_gci_init` returns 0 (value store) instead of  -> RED R10 R11 (compiled clean; the
+#     `_gci_below` when pass 1 saw no inline source      binaries SIGSEGV)
 #   real tree                                       -> GREEN
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
@@ -41,6 +46,7 @@ trap 'rm -rf "$D"' EXIT
 
 MA="to a by-value parameter of a different struct type in a call to"
 MV="into a variable of a different struct/vector type"
+MB="from a global declared below it"
 pass=0; fail=0; nrefuse=0; naccept=0
 
 refuse() {  # $1 label  $2 expected message  $3 source — the message must be the ONE error
@@ -129,6 +135,12 @@ refuse "R8 after a statement, a global's field" "$MV" \
     "${T}var GR = RB { 1, 2, 3, 4, 5, 6 }; syscall(1, 1, \"\", 0); var G: Pt = GR.q; syscall(60, G.x);"
 refuse "R9 leading block, an 8 B struct" "$MV" \
     "${T}var GQ8 = Q8 { 1, 2 }; var G: P8 = GQ8; syscall(60, G.x);"
+
+echo "=== a leading-block copy-init from a source declared BELOW it (pass 1 cannot see it) ==="
+refuse "R10 a named global declared below" "cannot copy-init 'B' $MB (declare the source first): 'A'" \
+    "${T}var B: Pt = A; var A = Pt { 3, 4 }; fn go(): i64 { return B.x * 10 + B.y; } syscall(60, go());"
+refuse "R11 a field of a global declared below" "cannot copy-init 'G' $MB (declare the source first): 'BX'" \
+    "${T}var G: Pt = BX.v; var BX = RB { 3, 4, 9, 0, 0, 0 }; fn go(): i64 { return G.x * 10 + G.y; } syscall(60, go());"
 
 echo "=== the same shapes with the declared type (no false refusal) ==="
 accept "A1 take(r.v), gen<Pt>(r.v), p.plus(r.v)" \

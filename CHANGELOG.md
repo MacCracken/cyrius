@@ -98,17 +98,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   global, or a field chain whose leaf is that struct — registers the global INLINE (STRUCTSZ bytes,
   `SVPM 2`, as a literal global) and byte-copies it at init; a source of another struct type is refused
   by name (`_AGG_ASSIGN_TYPE_ERR`), at every width; a pointer-mode source (`var p: Pt = mk();`, a
-  pointer-mode global) keeps the pointer copy, as in a fn. **Verification:**
+  pointer-mode global) keeps the pointer copy, as in a fn. A whole source declared BELOW the
+  destination in the leading block (`var B: Pt = A; var A = Pt { 3, 4 };`, or `= BX.v;` likewise) is
+  refused by name (`cannot copy-init 'B' from a global declared below it (declare the source first):
+  'A'`, `_gci_below`): pass 1 cannot see it yet and registers the pointer-mode slot, the replay sees a
+  whole `Pt`, and the value store that disagreement fell back to was the V4 crash again (rc 139 on x86
+  and aarch64, 5 on PE). A global initialised at run time is initialised in declaration order, so even
+  an inline copy would have read the source before its init. **Verification:**
   `tests/tcyr/crossos/struct_field_value_copy.tcyr` gains two groups (15 field-argument rows — local,
   global, parameter, pointer-mode, generic, middle argument, 24 B, 12 B byte-exact, two-level chain,
   method, the copy's independence, three at top level — and 11 copy-init rows: leading block and after
   a statement, from a global and a field, 24 B, a 12 B copy with a canary after it, independence from a
   later write, and the pointer-mode source); mutations: drop the `_fla_want` arming (the argument group,
   SIGSEGV), `_gci_src` returns 0 (the copy-init group, SIGSEGV). New gate
-  `tests/gates/frontend/struct_copy_source_type_refused.sh`: 10 refusals on the message (each the ONLY
+  `tests/gates/frontend/struct_copy_source_type_refused.sh`: 12 refusals on the message (each the ONLY
   error, no binary) — a free call in a fn, a callee defined after the call (pass 1's record), top
   level, a generic instance, a method, and copy-init from a named global and a field on both
-  declaration paths plus an 8 B pair — and 2 acceptances against field-by-field controls; every
+  declaration paths plus an 8 B pair, and a named global and a field declared below the destination —
+  and 2 acceptances against field-by-field controls; every
   refusal compiled clean on 6.6.11; mutation ledger in its header. The tcyr is 94/94 on x86, aarch64
   (qemu) and PE (wine), and on real pi, ecb, ach and cass; the no-lib cx rows
   (`B03-cx-rows.cyr`, exit 128 = all right) are 128 on cxvm and every native target, 127 on the
