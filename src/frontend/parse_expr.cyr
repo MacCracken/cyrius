@@ -580,8 +580,8 @@ fn _pe_warn_unrouted(S, sc_num, argc): i64 {
     if (_pe_unrouted_noted == 1) { return 0; }
     _pe_unrouted_noted = 1;
     syscall(SYS_WRITE, 2,
-      "  note: CYRIUS_TARGET_WIN=1 routes, each at its own arity, n=0,1,2,3,8,9,35,60,74,75,83,87,228 + 0xF001-0xF005 (process creation) + 0xF006 (cmdline) + 0xF007-0xF00A (threading) + 0xF00B-0xF00E (thread-local) + 0xF00F (sleep) + 0xF010-0xF011 (CommandLineToArgvW/LocalFree) + 0xF012 (CreateDXGIFactory1) + 0xF013-0xF015 (GetModuleHandleA/GetProcAddress/GetEnvironmentVariableA) + 0xF016-0xF019 (FindFirstFileW/FindNextFileW/FindClose/GetFileAttributesW) + 0xF01A (ProcessPrng CSPRNG) + 0xF01B (GetSystemTimeAsFileTime) + 0xF01C (GetCurrentProcessId) + 0xF01D (TerminateProcess) + 0xF01E (WSAStartup) + 0xF01F-0xF021 (IOCP: CreateIoCompletionPort/GetQueuedCompletionStatus/PostQueuedCompletionStatus) + 0xF022-0xF02C (ws2_32: WSASocketW/closesocket/WSAGetLastError/bind/getsockopt/WSAIoctl/connect/WSARecv/WSASend/getaddrinfo/freeaddrinfo) + 0xF02D-0xF032 (kernel32/ws2_32: RegisterWaitForSingleObject/CreateWaitableTimerW/SetWaitableTimer/UnregisterWaitEx/CancelIoEx/setsockopt) + 0xF033 (ws2_32: listen) + 0xF034 (kernel32: MoveFileExW) + 0xF035 (kernel32: DeleteFileW) + 0xF036-0xF037 (ws2_32: getpeername/getsockname) + 0xF038-0xF039 (kernel32: QueryPerformanceCounter/QueryPerformanceFrequency) + 0xF03A-0xF03B (kernel32: GetModuleFileNameW/RemoveDirectoryW) + 0xF03D-0xF03F (kernel32: GetFileInformationByHandleEx/CreateSymbolicLinkW/SetEndOfFile) + 0xF040-0xF044 (kernel32: CreateJobObjectW/AssignProcessToJobObject/TerminateJobObject/ResumeThread/SetInformationJobObject) + 0xF045-0xF04A (ws2_32: accept/shutdown/send/recv/ioctlsocket/WSAPoll).\n",
-      1550);
+      "  note: CYRIUS_TARGET_WIN=1 routes, each at its own arity, n=0,1,2,3,8,9,35,60,74,75,83,87,228 + 0xF001-0xF005 (process creation) + 0xF006 (cmdline) + 0xF007-0xF00A (threading) + 0xF00B-0xF00E (thread-local) + 0xF00F (sleep) + 0xF010-0xF011 (CommandLineToArgvW/LocalFree) + 0xF012 (CreateDXGIFactory1) + 0xF013-0xF015 (GetModuleHandleA/GetProcAddress/GetEnvironmentVariableA) + 0xF016-0xF019 (FindFirstFileW/FindNextFileW/FindClose/GetFileAttributesW) + 0xF01A (ProcessPrng CSPRNG) + 0xF01B (GetSystemTimeAsFileTime) + 0xF01C (GetCurrentProcessId) + 0xF01D (TerminateProcess) + 0xF01E (WSAStartup) + 0xF01F-0xF021 (IOCP: CreateIoCompletionPort/GetQueuedCompletionStatus/PostQueuedCompletionStatus) + 0xF022-0xF02C (ws2_32: WSASocketW/closesocket/WSAGetLastError/bind/getsockopt/WSAIoctl/connect/WSARecv/WSASend/getaddrinfo/freeaddrinfo) + 0xF02D-0xF032 (kernel32/ws2_32: RegisterWaitForSingleObject/CreateWaitableTimerW/SetWaitableTimer/UnregisterWaitEx/CancelIoEx/setsockopt) + 0xF033 (ws2_32: listen) + 0xF034 (kernel32: MoveFileExW) + 0xF035 (kernel32: DeleteFileW) + 0xF036-0xF037 (ws2_32: getpeername/getsockname) + 0xF038-0xF039 (kernel32: QueryPerformanceCounter/QueryPerformanceFrequency) + 0xF03A-0xF03B (kernel32: GetModuleFileNameW/RemoveDirectoryW) + 0xF03D-0xF03F (kernel32: GetFileInformationByHandleEx/CreateSymbolicLinkW/SetEndOfFile) + 0xF040-0xF044 (kernel32: CreateJobObjectW/AssignProcessToJobObject/TerminateJobObject/ResumeThread/SetInformationJobObject) + 0xF045-0xF04A (ws2_32: accept/shutdown/send/recv/ioctlsocket/WSAPoll) + 0xF04B (kernel32: GetLastError).\n",
+      1584);
     return 0;
 }
 
@@ -740,6 +740,10 @@ fn _PE_ROUTE_SOCK(S, sc_num, argc): i64 {
     if (sc_num == 61512) { if (argc == 5) { ERECV_PE(S); return 1; } }
     if (sc_num == 61513) { if (argc == 4) { EIOCTLSOCK_PE(S); return 1; } }
     if (sc_num == 61514) { if (argc == 4) { EWSAPOLL_PE(S); return 1; } }
+    # 6.6.12: 0xF04B kernel32!GetLastError() → argc 1, the kernel32 peer of 0xF024 (lib/fs_win.cyr
+    # reads it after FindNextFileW returns 0). Routed HERE, at the end of the chain, so the inline
+    # chain in `_PARSE_FACTOR_IMPL` gains no reference (cybs's per-function limit). CHANGELOG [6.6.12]
+    if (sc_num == 61515) { if (argc == 1) { EGETLASTERR_PE(S); return 1; } }
     return 0;
 }
 
@@ -2680,7 +2684,9 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             # v6.1.18: directory enumeration for lib/fs_win.cyr (dir_list/is_dir
             # on Windows). 0xF016 FindFirstFileW(pattern,&data) / 0xF017
             # FindNextFileW(h,&data) are 2-arg (argc==3); 0xF018 FindClose(h) /
-            # 0xF019 GetFileAttributesW(path) are 1-arg (argc==2).
+            # 0xF019 GetFileAttributesW(path) are 1-arg (argc==2). 6.6.12: the
+            # pattern / path of 0xF016 / 0xF019 is NARROW UTF-8 (widened by the
+            # emitter, long paths included), no longer a stdlib-widened one.
             if (sc_num == 61462) {
                 if (argc == 3) {
                     EFINDFIRST_PE(S);
