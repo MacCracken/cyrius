@@ -815,6 +815,13 @@ _chk_gate "$ROOT/tests/gates/codegen/stack_enum_no_alloc.sh"
 # byte-identically. This gate pins the PROPERTY on known-colliding pairs instead.
 _chk_gate "$ROOT/tests/gates/frontend/lexid_prefix_exact.sh"
 
+# 6.6.11 (B05, L8 + the mulh64x premise find): `sizeof(T)` and `mulh64` match WHOLE names.
+# Both sizeof sites (expression + #assert) sized a scalar by a byte PREFIX, so sizeof(i16v8)
+# was 2, sizeof(i8zz) 1, and `#assert sizeof(i16v8) == 2` passed; PARSE_FACTOR matched
+# `mulh64` by a 6-byte prefix, so a user fn `mulh64x(a, b)` compiled as the intrinsic (0 for
+# small args). 7 refusal rows, 3 anti-vacuous sizing rows, 3 mulh64x/intrinsic rows.
+_chk_gate "$ROOT/tests/gates/frontend/sizeof_whole_name.sh"
+
 # v6.5.56: `private fn h()` must be rejected rather than silently privatising the whole file
 # (twelve releases live, no diagnostic). Axes 2-3 keep the fix honest: the own-line and
 # `private;` forms are the legitimate spellings and must keep working.
@@ -929,6 +936,18 @@ _chk_gate "$ROOT/tests/gates/toolchain/ci_tcyr_loops_require_summary.sh"
 # Acceptance rows are checked against field-by-field CONTROL programs, and the pointer-bind and
 # scalar-source paths are pinned so a future tightening cannot quietly take them out.
 _chk_gate "$ROOT/tests/gates/frontend/struct_copy_type_checked.sh"
+
+# 6.6.11 (B02, L4+L5+L1): a struct RESULT is type-checked against its struct destination. A <= 8 B
+# struct result from a method or overloaded operator was never recorded (`_sc_post` returned early
+# for class 0), so `h.o = y.same()`, `z = y.same()`, `var z: Odd = y + y` stored an Od2 into an Odd
+# silently; `p = mkq()` / `p = mkr()` / `z = mkod2()` / generic `s = mk(r.v)` stored one word of a
+# DIFFERENT struct (the sid test sat after `_try_struct_call_assign`'s early exits); an 8 B struct
+# FIELD skipped every check; `var p: Pt = h.q` from a field of another type SIGSEGV'd; a top-level /
+# leading-block global took a mismatched struct result silently (16 B: SIGSEGV). 30 refusal rows
+# (3/8/16/24 B, generic, field/assign/declaration, fn / top level / leading block) checked on the
+# MESSAGE, 11 same-type acceptances each checked against a field-by-field control. Mutation-proven
+# (ledger in header).
+_chk_gate "$ROOT/tests/gates/frontend/struct_result_type_refused.sh"
 
 # 6.6.6: a vector-returning fn `return`s only what the vector return ABI can carry. PARSE_RETURN
 # handled exactly `return IDENT;` for a local of the matching class and fell through to the
@@ -1599,6 +1618,12 @@ _chk_gate "$ROOT/tests/gates/codegen/x86_trig_calls_polyfill.sh"
 # 6.6.9 (bite 5) — O_NOFOLLOW / O_DIRECTORY / O_CREAT|O_EXCL mean on PE what they mean on Linux
 # (CreateFileW resolved a final reparse point for EVERY disposition: O_EXCL over a dangling link
 # created its target, O_NOFOLLOW|O_TRUNC truncated a link's target, O_DIRECTORY opened files).
+# 6.6.11 (B06, I1+I2) — and a path is used under ITS OWN NAME: the seven narrow-path reroutes
+# widened one BYTE per WCHAR and cut at 260 units (a 288-byte O_CREAT open wrote the file at its
+# 260-unit prefix; café.txt failed). Axis 2b pins the one shared MultiByteToWideChar(CP_UTF8,
+# MB_ERR_INVALID_CHARS) + GetFullPathNameW `\\?\` sequence and its page probe per call site; axis 4
+# runs tests/tcyr/crossos/pe_path_utf8_long.tcyr natively (POSIX oracle) and under wine (UTF-8
+# locale). Whole-gate SKIP is exit 77. Runtime ~12 s with wine.
 _chk_gate "$ROOT/tests/gates/platform/pe_open_posix_semantics.sh"
 # 6.6.9 (bite 5) — agnos file_create_exclusive is one atomic AO_EXCL create (was a file_exists
 # pre-check + plain create), a refusal classified -EEXIST by lstat#102.
@@ -1689,4 +1714,14 @@ _chk_gate "$ROOT/tests/gates/platform/cx_compiler_reads_env.sh"
 _chk_gate "$ROOT/tests/gates/platform/object_mode_non_elf_refused.sh"
 _chk_gate "$ROOT/tests/gates/platform/pe_hosted_elf_object.sh"
 _chk_gate "$ROOT/tests/gates/platform/pe_job_reroutes_routed.sh"
+
+# 6.6.11 (B07, I4) — lib/net.cyr's socket verbs reach ws2_32 on PE. Every verb issued the Linux
+# socket numbers, none routed on CYRIUS_TARGET_WIN, so each returned -38 and http_* could not work
+# on Windows. Axes: 0xF045-0xF04A (accept/shutdown/send/recv/ioctlsocket/WSAPoll) routed at their
+# arity and warned one short, named in the routed-number note, imported; and a PE build of every
+# net.cyr/http.cyr verb leaves no unrouted literal syscall attributed to either file. Compile-only
+# (~2 s); behaviour is tests/tcyr/crossos/net_loopback_tcp.tcyr + net_resolve_pe.tcyr on cass.
+# Whole-gate SKIP is exit 77.
+_chk_gate "$ROOT/tests/gates/platform/pe_socket_reroutes_routed.sh"
+
 _chk_gate "$ROOT/tests/gates/platform/process_errno_constants_every_target.sh"
