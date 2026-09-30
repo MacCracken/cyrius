@@ -2264,11 +2264,62 @@ fn _asg_compound_tok(S): i64 {
     return 0;
 }
 # Loads the left side (a local, else a global) into rax; returns its slot type.
+# ⛔ 6.6.12 — AT THE SLOT'S WIDTH, as a read of it in an expression loads it. This loaded 8
+# bytes, so `a >>= 1` on a u8 global followed by `var b: u8 = 1;` shifted b's byte down into a:
+# 130 where 2 is right. A narrow local is its own 8-byte frame slot, so the full-width load
+# read whatever an earlier full-width store had left above the low byte. CHANGELOG [6.6.12]
 fn _asg_compound_load(S, noff): i64 {
     var li = FINDLOCAL(S, noff);
-    if (li >= 0) { EFLLOAD(S, li); return GLTYPE(S, li); }
+    if (li >= 0) {
+        var lt = GLTYPE(S, li);
+        if (lt > 0) { if (lt < 8) {
+                var lw = lt;
+                if (GSLICE_W(S, li) < 0) { lw = 0 - lt; }   # signed: movsx (parse_expr.cyr)
+                EFLLOAD_W(S, li, lw);
+                return lt;
+            } }
+        EFLLOAD(S, li);
+        return lt;
+    }
     var gi = FINDVAR(S, noff);
-    if (gi >= 0) { EVLOAD(S, gi); return GVTYPE(S, gi); }
+    if (gi >= 0) {
+        var gsz = L64(_vars_base + gi * 8);
+        if (gsz < 8) {
+            var gw = gsz;
+            if (GVSGN(S, gi) == 1) { gw = 0 - gsz; }
+            EVLOAD_W(S, gi, gw);
+            return GVTYPE(S, gi);
+        }
+        EVLOAD(S, gi);
+        return GVTYPE(S, gi);
+    }
+    return 0;
+}
+
+# ⛔ 6.6.12 — THE STORE OF AN ASSIGNMENT, at the slot's width: a local (g == 0) or a global
+# (g == 1, then SLVAR) takes rax. ONE implementation for the statement arm (_PARSE_STMT_IMPL)
+# and the classic-for step replay (parse_ctrl.cyr), which had its own 8-byte copy: `for (a = 250;
+# a != 252; a = a + 1)` on a u8 global zeroed the seven packed globals after it, and `a += 1`
+# carried 255 -> 0 into the next one. Warns on a narrowing store, as the statement always did.
+fn _asg_store_slot(S, idx, g): i64 {
+    var ew = GEXW(S);
+    if (g == 0) {
+        var lt = GLTYPE(S, idx);
+        if (lt > 0) { if (lt <= 8) {
+                if (ew > lt) { WARN(S, "narrowing assignment (value may truncate)", 41); }
+                EFLSTORE_W(S, idx, lt);
+                return 0;
+            } }
+        EFLSTORE(S, idx);
+        return 0;
+    }
+    var avsz = L64(_vars_base + idx * 8);
+    if (avsz < 8) {
+        if (ew > avsz) { WARN(S, "narrowing assignment (value may truncate)", 41); }
+        EVSTORE_W(S, idx, avsz);
+    }
+    else { EVSTORE(S, idx); }
+    SLVAR(S, idx);
     return 0;
 }
 # The float emitter op for `cop` on a slot of type `lt`: 0-3 for + - * / on f64/f32, else -1.
@@ -3190,16 +3241,9 @@ fn _PARSE_STMT_IMPL(S): i64 {
         }
         if (idx >= 0) {
             var lt = GLTYPE(S, idx);
-            var ew = GEXW(S);
             _IFS_CHECK(S, _IFS_K(lt), _asg_ti);   # 6.6.10: `t = 1` into an f64 / f32 local
             _asg_rejudge(S, idx, lt, 0);            # 6.6.11
-            if (lt > 0) {
-                if (lt <= 8) {
-                    if (ew > lt) { WARN(S, "narrowing assignment (value may truncate)", 41); }
-                    EFLSTORE_W(S, idx, lt);
-                } else { EFLSTORE(S, idx); }
-            }
-            else { EFLSTORE(S, idx); }
+            _asg_store_slot(S, idx, 0);             # 6.6.12: shared with the for step
         }
         else {
             idx = FINDVAR(S, noff);
@@ -3229,16 +3273,9 @@ fn _PARSE_STMT_IMPL(S): i64 {
             if (vt < 0) {
                 if (aps == 0) { WARN(S, "assigning non-pointer to typed pointer", 38); }
             }
-            var avsz = L64(_vars_base + idx * 8);
-            var ew = GEXW(S);
             _IFS_CHECK(S, _IFS_K(vt), _asg_ti);   # 6.6.10: `G = 1` into an f64 / f32 global
             _asg_rejudge(S, idx, vt, 1);            # 6.6.11
-            if (avsz < 8) {
-                if (ew > avsz) { WARN(S, "narrowing assignment (value may truncate)", 41); }
-                EVSTORE_W(S, idx, avsz);
-            }
-            else { EVSTORE(S, idx); }
-            SLVAR(S, idx);
+            _asg_store_slot(S, idx, 1);             # 6.6.12: shared with the for step
         }
         if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
         STI(S, GTI(S) + 1);

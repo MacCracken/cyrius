@@ -6,6 +6,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.12] — 2026-09-30
 
+### Fixed
+
+- **A narrow variable was written, and a compound operator read it, at 8 bytes (B01, item V1 + the
+  premise-found compound load).** **Root cause:** the classic-`for` step replay
+  (`src/frontend/parse_ctrl.cyr`) kept its own copy of the assignment store and it was always
+  `EFLSTORE` / `EVSTORE`, while the statement arm dispatched on the slot's width. On a u8 global,
+  `for (a = 250; a != 252; a = a + 1)` zeroed the seven packed globals after `a`, and `a += 1` carried
+  255 → 0 into the next one (7 → 8); a narrow local kept 257 in its frame slot, which the narrow read hid
+  until the next compound op (`i >>= 1` gave 128, not 0). The compound operator's load
+  (`_asg_compound_load`) was the same defect on the read side: `a >>= 1` on a u8 global followed by a u8
+  `b = 1` shifted b's byte into a — 130, not 2 — and a signed narrow local was not sign-extended
+  (`c /= 2` on an i8 -8 gave 124). Every native backend (x86, aarch64, PE, both Mach-O). **Fix:** one
+  store, `_asg_store_slot(S, idx, g)` (`src/frontend/parse.cyr`), for the statement arm and the for step,
+  so the two cannot drift again (it carries the narrowing warning, as the statement always did); the
+  compound load loads a narrow local or global at its width, sign-extended when signed, exactly as a read
+  of it in an expression does. **Verification:** new `tests/tcyr/crossos/narrow_slot_width.tcyr` (53
+  rows; every neighbour initialised non-zero and checked; the 6.6.11 compiler fails 19-20, each
+  mutation alone fails its own rows), green on x86, aarch64 (qemu) and PE (wine), and on real ecb, ach, pi and cass
+  after a byte-identical self-host there. cx's narrow store/load emitters are 8 bytes too — fixed and
+  gated by B06 (`cx_tailcall_and_vm_traps.sh`, cx-narrow axis).
+
 ## [6.6.11] — 2026-09-29
 
 The fifth batch release: the 6.6.9 review finds I–K and the 6.6.10 finds that produce wrong results

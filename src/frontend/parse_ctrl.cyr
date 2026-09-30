@@ -532,10 +532,11 @@ fn PARSE_FOR(S): i64 {
     }
     var idx = 0 - 1;
     if (GINFN(S) == 1) { idx = FINDLOCAL(S, noff); }
-    if (idx >= 0) { EFLSTORE(S, idx); _asg_rejudge(S, idx, GLTYPE(S, idx), 0); }
+    # 6.6.12: the statement arm's width-dispatched store (_asg_store_slot), not an 8-byte copy.
+    if (idx >= 0) { _asg_store_slot(S, idx, 0); _asg_rejudge(S, idx, GLTYPE(S, idx), 0); }
     else {
         idx = FINDVAR(S, noff);
-        if (idx >= 0) { EVSTORE(S, idx); SLVAR(S, idx); _asg_rejudge(S, idx, GVTYPE(S, idx), 1); }
+        if (idx >= 0) { _asg_store_slot(S, idx, 1); _asg_rejudge(S, idx, GVTYPE(S, idx), 1); }
     }
     STI(S, sti);
     EJMP(S, ltop);
