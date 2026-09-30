@@ -1,0 +1,97 @@
+# log_kv_bounded.tcyr — 6.6.12 (CVE-56). log_info_kv / log_info_int build their line in a
+# 512-byte STACK scratch; every copy into it is bounded at 511 and a cut line ends "...".
+#
+# ⛔ THE DEFECT: the msg / key / val copies had no bound, so a logged caller-controlled
+# value longer than the scratch overwrote the fn's own locals and return address. A 4 KB
+# value exited 139 before the sink was reached. The sink here is a recording stub (the
+# real one is lib/sakshi.cyr, which log.cyr leaves to its caller), so this file checks
+# exactly what the sink was handed: its length, its prefix and its "..." mark.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/assert.cyr"
+
+var _sink_len = 0 - 1;
+var _sink_calls = 0;
+var _sink_buf[1024];
+fn _sink(msg, len): i64 {
+    _sink_calls = _sink_calls + 1;
+    _sink_len = len;
+    var i = 0;
+    while (i < len && i < 1023) { store8(&_sink_buf + i, load8(msg + i)); i = i + 1; }
+    store8(&_sink_buf + i, 0);
+    return 0;
+}
+fn sakshi_set_level(l): i64 { return 0; }
+fn sakshi_error(m, n): i64 { return _sink(m, n); }
+fn sakshi_warn(m, n): i64 { return _sink(m, n); }
+fn sakshi_info(m, n): i64 { return _sink(m, n); }
+fn sakshi_debug(m, n): i64 { return _sink(m, n); }
+fn sakshi_trace(m, n): i64 { return _sink(m, n); }
+
+include "lib/log.cyr"
+
+# A fresh NUL-terminated run of n copies of byte c.
+fn _run(n, c): i64 {
+    var p = alloc(n + 1);
+    memset(p, c, n);
+    store8(p + n, 0);
+    return p;
+}
+
+fn _sink_at(i): i64 { return load8(&_sink_buf + i); }
+
+fn main(): i64 {
+    alloc_init();
+    log_init(LOG_INFO);
+
+    # an ordinary line is untouched
+    assert_eq(log_info_kv("req", "path", "/x"), 0, "short kv: rc 0");
+    assert_eq(_sink_len, 11, "short kv: the sink sees all 11 bytes");
+    assert_eq(streq(&_sink_buf, "req path=/x"), 1, "short kv: the line is exact");
+
+    # a 4 KB value: rc 0, the sink sees 511 bytes, the head is intact, the tail is "..."
+    var canary = 0x5A5A5A5A5A5A5A5A;
+    var big = _run(4096, 65);
+    assert_eq(log_info_kv("msg", "key", big), 0, "4 KB value: rc 0 (it was SIGSEGV)");
+    assert_eq(canary, 0x5A5A5A5A5A5A5A5A, "4 KB value: the caller's locals survive");
+    assert(_sink_len <= 511, "4 KB value: the sink sees <= 511 bytes");
+    assert_eq(_sink_len, 511, "4 KB value: the line is cut at exactly 511");
+    assert_eq(memeq(&_sink_buf, "msg key=AAAA", 12), 1, "4 KB value: the head is intact");
+    assert_eq(_sink_at(508), 46, "4 KB value: the cut line ends '...' (1)");
+    assert_eq(_sink_at(510), 46, "4 KB value: the cut line ends '...' (3)");
+    assert_eq(_sink_at(507), 65, "4 KB value: only the last 3 bytes are the mark");
+
+    # a 4 KB msg and a 4 KB key cut the same way
+    assert_eq(log_info_kv(big, "k", "v"), 0, "4 KB msg: rc 0");
+    assert_eq(_sink_len, 511, "4 KB msg: 511 bytes");
+    assert_eq(log_info_kv("m", big, "v"), 0, "4 KB key: rc 0");
+    assert_eq(_sink_len, 511, "4 KB key: 511 bytes");
+
+    # exactly 511 fits and carries no mark; 512 is cut
+    var v508 = _run(508, 66);   # "m k=" is 4 bytes -> 512
+    var v507 = _run(507, 66);   # -> 511
+    assert_eq(log_info_kv("m", "k", v507), 0, "511-byte line: rc 0");
+    assert_eq(_sink_len, 511, "511-byte line: all of it");
+    assert_eq(_sink_at(510), 66, "511-byte line: no truncation mark");
+    assert_eq(log_info_kv("m", "k", v508), 0, "512-byte line: rc 0");
+    assert_eq(_sink_len, 511, "512-byte line: cut at 511");
+    assert_eq(_sink_at(510), 46, "512-byte line: marked");
+
+    # log_info_int: a 4 KB msg is cut, the number survives whole
+    var mn = 0 - 9223372036854775807 - 1;
+    assert_eq(log_info_int(big, "n", mn), 0, "int, 4 KB msg: rc 0 (it was SIGSEGV)");
+    assert(_sink_len <= 511, "int, 4 KB msg: the sink sees <= 511 bytes");
+    var tail = &_sink_buf + _sink_len - 21;
+    assert_eq(memeq(tail, "=-9223372036854775808", 21), 1, "int, 4 KB msg: i64::MIN survives whole");
+    assert_eq(load8(tail - 1), 46, "int, 4 KB msg: the cut prefix ends '...'");
+    assert_eq(log_info_int("a", big, 42), 0, "int, 4 KB key: rc 0");
+    assert(_sink_len <= 511, "int, 4 KB key: <= 511 bytes");
+    assert_eq(memeq(&_sink_buf + _sink_len - 3, "=42", 3), 1, "int, 4 KB key: the value survives");
+    assert_eq(log_info_int("n", "count", 7), 0, "short int: rc 0");
+    assert_eq(streq(&_sink_buf, "n count=7"), 1, "short int: the line is exact");
+    var rc = assert_summary();
+    return rc;
+}
+var ec = main();
+syscall(60, ec);

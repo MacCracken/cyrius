@@ -6,6 +6,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.12] — 2026-09-30
 
+### Security
+
+- **CVE-56 (P1): `lib/log.cyr`'s `log_info_kv` / `log_info_int` wrote a caller-controlled string past
+  their 512-byte STACK scratch (B10, item S-B2; the CVE-50 class).** **Root cause:** both fns built
+  `"msg key=val"` in `var buf[512]` by copying `strlen(msg)`, `strlen(key)` and `strlen(val)` bytes with no
+  bound, so a logged request value longer than the scratch overwrote the fn's own locals and its return
+  address — a 4 KB value exited 139 before the sink was reached. **Fix:** every copy goes through one
+  bounded helper (`_log_cat`, limit 511) and a cut line ends `...`; `log_info_int` reserves 22 bytes for
+  `=`, the sign and 19 digits, so the number is never cut. **Test:** `tests/tcyr/stdlib/log_kv_bounded.tcyr`
+  (a 4 KB value, msg or key: rc 0, the sink sees exactly 511 bytes, head intact, `...` mark; the 511/512
+  boundary; i64::MIN survives a 4 KB msg). Mutation: the 6.6.11 `log.cyr` exits 139.
+
 ## [6.6.11] — 2026-09-29
 
 The fifth batch release: the 6.6.9 review finds I–K and the 6.6.10 finds that produce wrong results
