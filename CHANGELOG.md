@@ -23,7 +23,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   per name per platform, plus the kernel's own `-ENOTEMPTY`) was cross-built for Mach-O and passes
   26/0 on ecb and ach, where 3.13.4's `sys_error.cyr` fails 9 of 26; its `capture_bounded.tcyr`
   drives the refusal (SIGSEGV without the fix). The pin stays 6.6.9.
-- **bayan 1.5.9 folded (`lib/bayan.cyr`, bayan commit `b5b1ea1`) — a refused alloc returns 0 in
+- **bayan 1.5.9 folded (`lib/bayan.cyr`, bayan commit `821a1d0`) — a refused alloc returns 0 in
   base64 and the TOML array parser.** (B13, items SA2 + SA10 + SA12.) **Root cause:**
   `bayan_base64_encode` stored into its unchecked output alloc (an oversize length was a SIGSEGV,
   although `lib/ws.cyr` and `lib/ws_server.cyr` already test its result for 0);
