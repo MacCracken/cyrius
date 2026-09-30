@@ -38,6 +38,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (sigil at its 6.6.9 pin, bayan at 6.6.11). ⛔ **sigil 3.13.5 and bayan 1.5.9 must be TAGGED before
   cyrius 6.6.12 is**; the folds were copied byte-identical from those commits' `dist/`, and
   `docs/ecosystem.md`'s two fold rows name the commits.
+- **vani 1.2.8 folded (`lib/vani.cyr`, vani commit `4ab53a7`) — `vani_drain` / `vani_drop` /
+  `vani_state` return a Result on every path; `_sk_emit_err` is `_vani_sk_emit_err`.** (B14, items
+  SA8 + SA9.) **Root cause (SA8):** each returned `Err(VANI_ERR_DEVICE_INVALID)` on its `d == 0`
+  guard but the raw `audio_drain` / `audio_drop` / `audio_get_state` integer on the live path, so a
+  two-value bind read that integer as the TAG and the payload as garbage: a device in state SETUP
+  (1) read as `Err`, and so did any non-zero drain/drop status. The compiler reported all three
+  (`returns a : stack pair on another path but a SINGLE value here`, `lib/vani.cyr:2113/2118/2123`).
+  **Fix, at the source:** drain/drop return `Ok(d)` or `Err(VANI_ERR_DRAIN / VANI_ERR_DROP)` (new
+  codes 23 / 24) and state returns `Ok(raw state)`, -1 when the STATUS query failed. vani's new
+  live-path rows bind `var t, v =` on a non-null bad-fd handle (4 fail against 1.2.7's
+  `device.cyr`), and its CI fails on any mixed-return warning. **Root cause (SA9):** vani and mabda
+  both named a private helper `_sk_emit_err`, so with both folds in scope the last definition won
+  program-wide (`duplicate fn '_sk_emit_err'`). Renamed on both sides (mabda below). The pin stays
+  6.6.6; no public fn changed.
 
 ## [6.6.11] — 2026-09-29
 
