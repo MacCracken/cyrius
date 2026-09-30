@@ -1,0 +1,30 @@
+# The folded ganita's f32 sin / cos are correct for every finite f32, including |x| >= 2^63.
+#
+# ⛔ THE DEFECT (ganita 1.2.x through 1.2.8, folded through 6.6.10): ganita_f32_sin / _cos
+# returned NaN for |x| >= 2^63, behind a guard written against the pre-6.6.9 f64_sin, which
+# reduced only within the i64 range and returned its argument past it. 6.6.9 made f64_sin /
+# f64_cos within 1 ulp for every finite argument, so the guard threw away a correct value
+# (sin(2^70) was NaN; the answer is 0xBF7F88AF). ganita 1.2.9 drops it. Inputs and expected
+# values are f32 bit patterns; the reference is libm on the exact f32 input, rounded to f32.
+# CHANGELOG [6.6.11]
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+include "lib/math.cyr"
+include "lib/ganita.cyr"
+
+test_group("ganita fold: f32 sin/cos past 2^63");
+assert_eq(ganita_f32_sin(0x62800000), 0xBF7F88AF, "f32_sin(2^70) = -0.99817944 (was NaN)");
+assert_eq(ganita_f32_cos(0x62800000), 0x3D770CB4, "f32_cos(2^70) = 0.06031485 (was NaN)");
+assert_eq(ganita_f32_sin(0xE2800000), 0x3F7F88AF, "f32_sin(-2^70) = -f32_sin(2^70)");
+assert_eq(ganita_f32_sin(0x5F000000), 0x3F7FFB70, "f32_sin(2^63), the old guard's boundary");
+assert_eq(ganita_f32_cos(0x5F000000), 0x3C41551C, "f32_cos(2^63)");
+assert_eq(ganita_f32_sin(0x7F7FFFFF), 0xBF0599B3, "f32_sin(FLT_MAX)");
+assert_eq(ganita_f32_cos(0x7F7FFFFF), 0x3F5A5F96, "f32_cos(FLT_MAX)");
+# Below the old boundary nothing changed, and there is still no sine of infinity.
+assert_eq(ganita_f32_sin(0x3F800000), 0x3F576AA4, "f32_sin(1) unchanged");
+assert_eq(ganita_f32_sin(0x7F800000) & 0x7FC00000, 0x7FC00000, "f32_sin(+inf) -> NaN");
+assert_eq(ganita_f32_cos(0xFF800000) & 0x7FC00000, 0x7FC00000, "f32_cos(-inf) -> NaN");
+
+var r = assert_summary();

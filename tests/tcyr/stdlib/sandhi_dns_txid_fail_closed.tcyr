@@ -1,0 +1,64 @@
+# The folded sandhi's DNS TXID fails CLOSED when getrandom fails (CVE-19).
+#
+# ⛔ THE DEFECT (sandhi <= 1.10.2, folded through 6.6.10): when sys_getrandom returned fewer
+# than 2 bytes, `_sandhi_resolve_random_u16` fell back to `(clock_now_ns() ^ (ns >> 16)) &
+# 0xFFFF` and both resolvers sent the query with it — a TXID an off-path attacker can
+# estimate from the query time, re-opening the Kaminsky window the TXID exists to close.
+# CVE-19's fix (d4b24c76, 2026-06-11) was applied to THIS fold only and the next re-vendor
+# (d6032e26) brought the fallback back, because sandhi's source never had it. sandhi 1.10.3
+# fixes it at the source; this file is the cyrius-side tripwire for a re-vendor that loses it
+# again. The failure arm is driven through the helpers sandhi split out for it, since forcing
+# the kernel CSPRNG to fail is not possible from a test. CHANGELOG [6.6.11]
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/result.cyr"
+include "lib/str.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/hashmap.cyr"
+include "lib/io.cyr"
+include "lib/fs.cyr"
+include "lib/fnptr.cyr"
+include "lib/tagged.cyr"
+include "lib/mmap.cyr"
+include "lib/net.cyr"
+include "lib/ws.cyr"
+include "lib/math.cyr"
+include "lib/chrono.cyr"
+include "lib/random.cyr"
+include "lib/thread.cyr"
+include "lib/thread_local.cyr"
+include "lib/process.cyr"
+include "lib/dynlib.cyr"
+include "lib/fdlopen.cyr"
+include "lib/tls.cyr"
+include "lib/sakshi.cyr"
+include "lib/sigil.cyr"
+include "lib/bayan.cyr"
+include "lib/sandhi.cyr"
+include "lib/async.cyr"
+include "lib/assert.cyr"
+
+test_group("sandhi fold: DNS TXID fails closed (CVE-19)");
+var tb[2];
+store8(&tb, 0xAB);
+store8(&tb + 1, 0xCD);
+assert_eq(_sandhi_resolve_txid_from(2, &tb), 0xABCD, "2 random bytes -> their u16");
+assert_eq(_sandhi_resolve_txid_from(0, &tb), 0 - 1, "a 0-byte read -> -1, never a clock value");
+assert_eq(_sandhi_resolve_txid_from(1, &tb), 0 - 1, "a 1-byte short read -> -1");
+assert_eq(_sandhi_resolve_txid_from(0 - 38, &tb), 0 - 1, "a -errno (ENOSYS) -> -1");
+
+# Both lookups refuse a missing TXID before resolv.conf, the allocator or a socket: an arena
+# that stays at 0 bytes proves nothing past the guard ran.
+var ar = arena_allocator(4096);
+assert_eq(_sandhi_resolve_ipv4_query_a(ar, "example.com", 0 - 1), 0 - 1, "ipv4 with no TXID -> -1");
+assert_eq(arena_used(allocator_state(ar)), 0, "ipv4 refused before any allocation");
+assert_eq(_sandhi_resolve_ipv6_query_a(ar, "example.com", 0 - 1), 0, "ipv6 with no TXID -> 0");
+assert_eq(arena_used(allocator_state(ar)), 0, "ipv6 refused before any allocation");
+
+var rt = _sandhi_resolve_random_u16();
+assert_eq(rt >= 0, 1, "a working CSPRNG yields a TXID");
+assert_eq(rt <= 0xFFFF, 1, "the TXID is a u16");
+
+var r = assert_summary();
