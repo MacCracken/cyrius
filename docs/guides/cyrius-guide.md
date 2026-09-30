@@ -1480,7 +1480,7 @@ cyrius smoke                             # tests/smcyr/*.smcyr fail-fast (v5.7.3
 cyrius distlib [profile]                 # bundle src/ modules into dist/{name}.cyr
 cyrius distlib --all                     # regenerate the base bundle AND every [lib.X] profile (v6.5.8)
 cyrius distlib --check                   # verify bundles are current — compares BYTES, writes nothing (v6.5.8)
-cyrius coverage [--full] [--min <pct>]   # reference coverage of src/ (--min 0..100 gates CI; -v or a failed --min names the misses, 6.6.8)
+cyrius coverage [--full] [--min <pct>]   # reference coverage of src/ (--min 0..100 gates CI; -v or a failed --min names the misses, 6.6.8; `main` is not counted, 6.6.11)
 cyrius capacity [--check] [src]          # report compiler capacity / CI gate; no arg = THIS HOST's fork (v6.6.6)
 cyrius pulsar                            # x86-64 LINUX ONLY: rebuild cycc + cross bins + tools, then install
 cyrius lsp                               # build + install cyrius-lsp into ~/.cyrius/bin/
@@ -1511,6 +1511,33 @@ cyrius lsp                               # build + install cyrius-lsp into ~/.cy
 > problem that is about the verb; it now refuses by name, before printing any progress, and
 > names the fork this host's compiler IS built from. Pinned by
 > `tests/gates/toolchain/pulsar_is_x86_linux_host_verb.sh`.
+
+> ⚠ **`coverage` does not count the entry point `main`** (v6.6.11). Coverage counts a public
+> fn as covered only when a test NAMES it, and a program's depth-0 `main` is invoked by its own
+> file's `syscall(60, main())` (or the epilogue's auto-call), never by a test — so it could never
+> count, and a project with an entry point could not reach 100 % (ganita read 139/141 and bayan
+> 501/503 with `main` the only misses). It is excluded by the same rule `cyrius header` uses
+> (`_src_is_entry_fn`, `cbt/srcscan.cyr`); only the exact name — `mainx` and `domain` still
+> count. A `src/` whose only public fn is `main` has nothing to measure and gets the
+> "no public functions found … not a pass" error. Pinned by
+> `tests/gates/toolchain/coverage_corpus_and_failopen.sh` axis 20.
+>
+> ⚠ **`distlib` regenerates and `--check`s sidecars on an x86-64 Linux host only** (v6.6.11).
+> The `.deps` sidecar is compile-verified against EVERY target — x86-64 Linux, Windows and
+> macOS, aarch64 Linux and macOS — and records the union, so it no longer depends on the host
+> that ran it (it used to be the host's `#ifdef` arms only, and `--check` drifted between a Mac
+> and Linux CI). Only an x86-64 Linux CLI has a compiler per target (`cycc` by environment, plus
+> `cycc_aarch64`), so on macOS, Windows and aarch64 `distlib` refuses by name instead of
+> publishing a host-shaped sidecar. A verify that does not converge in 6 rounds is a refusal,
+> not a "compile-verified" sidecar. `-v` prints each leaf a round adds and why.
+>
+> ⚠ **`cyrius test` / `tests` grade the assert summary, not the exit code alone** (v6.6.11).
+> When a `.tcyr` calls `assert_summary(`, the LAST stdout line starting `N passed, M failed`
+> must exist with N >= 1 and M == 0, on top of exit 0 — the rule every `.tcyr` reader applies.
+> A test that dies before its summary with exit 0, runs its body twice (a defined `main` plus a
+> top-level `main();` — the epilogue calls it again) or asserts nothing now FAILS, by name. The
+> test's stdout is captured and echoed back. A test with a `main` returns `assert_summary()`
+> from it and ends `syscall(60, main());`; one without ends `var r = assert_summary();`.
 
 **The argument rule (v6.6.5), for every verb.** Flags may appear in any position
 (`cyrius lint f.cyr --strict` == `cyrius lint --strict f.cyr`); a `-`-prefixed token the verb
