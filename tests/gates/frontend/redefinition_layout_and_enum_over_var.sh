@@ -5,8 +5,12 @@
 # (1) A second `struct X` / `union X` with a DIFFERENT layout. REGSTRUCT appended and FINDSTRUCT
 #     returned the first match, so the second definition was registered and never read: sizeof
 #     and every field offset came from the first, with no diagnostic. Two `#derive(accessors)`
-#     structs `SP` of 5 and 3 fields built rc 0 with sizeof(SP) = 40. The shape is live in the
-#     older kavach that several repos still vendor (two `struct SpawnedProcess`).
+#     structs `SP` of 5 and 3 fields built rc 0 with sizeof(SP) = 40. (6.6.11: a derived
+#     redefinition with other field names, order or size is now a build error — the derive
+#     layout backstop, tests/gates/diagnostics/derive_layout_backstop.sh F — so `sp_derive`
+#     redefines SP with the same names at the same offsets and another field TYPE — the garjan +
+#     prani DcBlocker shape; an 8-byte struct type, because f64 / i64 / untyped do not differ to
+#     the parser — which still builds and warns, now at line 5.)
 # (2) An ENUM constant declared after a global of the same name whose value is ZERO or COMPUTED
 #     (`var A = 0;`, `var A = f();`, `var A = "s";`). CHK_ENUM_SHADOW refuses the opposite
 #     order and CHKDUPVAL compares two literals, but this pairing was silent. Every later use
@@ -33,10 +37,11 @@ _bad() { echo "  FAIL: $1"; fail=$((fail + 1)); }
 
 fx() { printf '%s\n' "$2" > "$T/$1.cyr"; }
 # (1) struct / union redefinition
-fx sp_derive '#derive(accessors)
+fx sp_derive 'struct W { v; }
+#derive(accessors)
 struct SP { a; b; c; d; e; }
 #derive(accessors)
-struct SP { x; y; z; }
+struct SP { a: W; b; c; d; e; }
 syscall(60, sizeof(SP));'
 fx sp_width 'struct SP { a; b: i32; }
 struct SP { a; b; }
@@ -99,9 +104,9 @@ for c in x86 aarch64; do
   expect "$c" ev_literal   "redefined with conflicting value" 1
   expect "$c" ev_literal   "$EOV" 0
 done
-# the warning names the redefinition's line (line 4, the second `struct SP`)
+# the warning names the redefinition's line (line 5, the second `struct SP`)
 "$T/x86" < "$T/sp_derive.cyr" > "$T/o" 2>"$T/e"
-if grep -q "^warning:<source>:4:.*struct 'SP' $LAY" "$T/e"; then pass=$((pass + 1)); else _bad "sp_derive: the warning does not point at the second definition"; grep "$LAY" "$T/e" | head -1; fi
+if grep -q "^warning:<source>:5:.*struct 'SP' $LAY" "$T/e"; then pass=$((pass + 1)); else _bad "sp_derive: the warning does not point at the second definition"; grep "$LAY" "$T/e" | head -1; fi
 
 if [ "$fail" -ne 0 ]; then echo "FAIL redefinition_layout_and_enum_over_var: $fail row(s) red, $pass green"; exit 1; fi
 echo "PASS redefinition_layout_and_enum_over_var: $pass rows — a re-laid-out struct/union and an enum over a zero/computed global are reported on x86 and aarch64, the benign shapes stay silent"
