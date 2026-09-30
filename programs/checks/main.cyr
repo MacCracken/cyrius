@@ -1397,9 +1397,14 @@ fn main(): i64 {
     # CHANGELOG [6.6.8]
     # `--doc-stamp-row`: the doc-stamp currency row alone, over the root — how a gate proves
     # the roadmap stamp is read by its exact token. CHANGELOG [6.6.8]
+    # ⚠ Every one-row mode below runs `_run_tmp_cleanup()` before it returns, as the full run
+    # does: a row that asked for the run's private dir (`_tmp_path`, `_tool`) otherwise left an
+    # empty $TMPDIR/cyrcheck.<pid>.N behind on every call. Gate:
+    # tests/gates/toolchain/check_driver_bounded.sh axis 4f. CHANGELOG [6.6.12]
     if (argc() > sel_idx) {
         if (streq(argv(sel_idx), "--doc-stamp-row") == 1) {
             _doc_stamp_currency_gate();
+            _run_tmp_cleanup();
             return G_FAIL;
         }
     }
@@ -1417,6 +1422,7 @@ fn main(): i64 {
             var grc = _gate_run(gabs);
             _gate_score(gp, grc);
             regression_terminate_children(_RG_GRACE_MS);
+            _run_tmp_cleanup();
             return G_FAIL;
         }
         # `--tool-path <name>`: build ONE of the tools the rows run, exactly as a row would get
@@ -1438,6 +1444,7 @@ fn main(): i64 {
             var ob = argv(sel_idx + 1);
             _expected_output_gate(ob, ob, ob);
             regression_terminate_children(_RG_GRACE_MS);
+            _run_tmp_cleanup();
             return G_FAIL;
         }
     }
