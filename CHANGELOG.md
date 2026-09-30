@@ -52,6 +52,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   both named a private helper `_sk_emit_err`, so with both folds in scope the last definition won
   program-wide (`duplicate fn '_sk_emit_err'`). Renamed on both sides (mabda below). The pin stays
   6.6.6; no public fn changed.
+- **mabda 4.1.6 folded (`lib/mabda.cyr`, mabda commit `97679dc`) — `WGPU_VENDOR_ID_AMD` and
+  `_mabda_sk_emit_err`.** (B14, items SB4 + SA9.) **Root cause (SB4):** mabda declared the AMD/ATI
+  GPU vendor id (0x1002, what `WGPUAdapterInfo.vendorID` reports) as `var PCI_VENDOR_AMD`, the name
+  yukti's `PciVendor` enum gives the PCI-SIG AMD id 0x1022. With both folds in scope cycc warned
+  `duplicate symbol 'PCI_VENDOR_AMD' redefined with conflicting value (last definition wins)` and
+  whichever library came first compared against the other's value (mabda's AMD-wgpu deprecation
+  guard, or yukti's PCI vendor match). **Fix, at the source:** mabda's is `WGPU_VENDOR_ID_AMD` (the
+  `NV_PCI_VENDOR_NVIDIA` precedent); yukti keeps its name and 0x1022. No consumer in `~/Repos` named
+  mabda's constant (ai-hwaccel defines its own). **SA9:** its `_sk_emit_err` is `_mabda_sk_emit_err`.
+  The pin stays 6.6.6.
 
 ## [6.6.11] — 2026-09-29
 
