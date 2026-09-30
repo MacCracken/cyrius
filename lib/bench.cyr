@@ -254,12 +254,12 @@ fn now_ns(): i64 {
     # ⚠ x86-macho takes this SAME arm, and it is not unrouted. This line read "(x86-macho
     # 228 unrouted → HELD.)" until the 6.6.5 review; v6.5.16 gave ach `EMACHO_CLOCK_X86`
     # (src/backend/x86/emit.cyr), which composes ns from BSD `gettimeofday` and returns
-    # them in rax — the same contract. Two consequences for a bench on ach and neither is
-    # a bug here: it is the REALTIME clock (it can step under NTP; Darwin exposes no
-    # monotonic clock through the x86 syscall table), and gettimeofday's resolution is a
-    # MICROSECOND, so `bench_clock_tick_ns()` measures 1,000 there against a ~570 ns read.
-    # The resolution rule already sizes for floor PLUS tick, which is what makes that host
-    # measurable at all.
+    # them in rax — the same contract. Since 6.6.12 that emitter honours the id: for this
+    # id-4 read it returns the mach_absolute_time gettimeofday copies out through its third
+    # argument (ns at Intel's 1:1 timebase, monotonic), not the timeval. Until 6.6.12 it
+    # was the REALTIME clock at MICROSECOND resolution on ach (it could step under NTP, and
+    # `bench_clock_tick_ns()` measured 1,000 there against a ~570 ns read); the resolution
+    # rule sizes for floor PLUS tick either way.
     #
     # ⚠ id **4** (CLOCK_MONOTONIC_RAW → mach_continuous_time), not 6. Darwin's
     # CLOCK_MONOTONIC (6) is `gettimeofday - boottime` in Apple's Libc
