@@ -27,6 +27,11 @@
 # half is tests/tcyr/crossos/darwin_clock_no_stray_write.tcyr, which only ach can run; this
 # source check fails on the Linux build host the moment the `xor edx, edx` is dropped.
 # MUTATION: delete `EB(S, 0x31); EB(S, 0xD2);` from EMACHO_CLOCK_X86 → FAIL (measured).
+# 6.6.12 (Q4): the property is now "rdx points at the emitter's OWN 8-byte stack slot", not
+# "rdx is NULL" — the monotonic clock ids read the mach time xnu copies out through it, and a
+# slot the emitter just pushed is exactly as safe as NULL. The slot is pushed as 0 (`push 0`,
+# so a failed copyout reads 0), then `mov rdx, rsp`, both before the syscall.
+# MUTATION: delete `EB(S, 0x48); EB(S, 0x89); EB(S, 0xE2);` → FAIL (measured).
 set -e
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 fail() { echo "FAIL macho_clock_buffer_contract: $1" >&2; exit 1; }
@@ -41,11 +46,11 @@ grep -A20 'fn EMACHO_CLOCK_X86' "$ROOT/src/backend/x86/emit.cyr" | grep -q '0x8B
 # closer together.
 CLOCK_BODY=$(awk '/^fn EMACHO_CLOCK_X86\(S\)/{s=1} s{print} s&&/^\}/{exit}' "$ROOT/src/backend/x86/emit.cyr")
 [ -n "$CLOCK_BODY" ] || fail "fn EMACHO_CLOCK_X86 not found in src/backend/x86/emit.cyr"
-echo "$CLOCK_BODY" | grep -q 'EB(S, 0x31); EB(S, 0xD2);' \
-  || fail "EMACHO_CLOCK_X86 no longer zeroes rdx (xor edx, edx) before gettimeofday — xnu writes mach_absolute_time through the third argument register, so a stale rdx is an 8-byte write to an arbitrary address (CVE-51)"
-# ...and it must precede the syscall, not follow it.
-echo "$CLOCK_BODY" | awk '/EB\(S, 0x31\); EB\(S, 0xD2\);/{x=NR} /EB\(S, 0x0F\); EB\(S, 0x05\);/{if(!sc)sc=NR} END{exit !(x && sc && x < sc)}' \
-  || fail "EMACHO_CLOCK_X86's xor edx, edx is not before its syscall"
+echo "$CLOCK_BODY" | grep -q 'EB(S, 0x48); EB(S, 0x89); EB(S, 0xE2);' \
+  || fail "EMACHO_CLOCK_X86 no longer points rdx at its own stack slot (mov rdx, rsp) before gettimeofday — xnu writes mach_absolute_time through the third argument register, so a stale rdx is an 8-byte write to an arbitrary address (CVE-51)"
+# ...the slot is pushed (as 0) first, and both precede the syscall, not follow it.
+echo "$CLOCK_BODY" | awk '/EB\(S, 0x6A\); EB\(S, 0x00\);/{if(!p)p=NR} /EB\(S, 0x48\); EB\(S, 0x89\); EB\(S, 0xE2\);/{if(!x)x=NR} /EB\(S, 0x0F\); EB\(S, 0x05\);/{if(!sc)sc=NR} END{exit !(p && x && sc && p < x && x < sc)}' \
+  || fail "EMACHO_CLOCK_X86's push 0 / mov rdx, rsp are not both before its syscall"
 
 BAD=$(find "$ROOT/src" "$ROOT/lib" -name '*.cyr' -print0 2>/dev/null | xargs -0 awk '
   /^[[:space:]]*#ifdef CYRIUS_TARGET_WIN/ { win = 1 }
@@ -61,4 +66,4 @@ if [ -n "$BAD" ]; then
   echo "$BAD" | sed 's/^/  /' >&2
   fail "syscall(228, _, 0) outside a CYRIUS_TARGET_WIN guard — NULL is dereferenced by EMACHO_CLOCK_X86 on Intel-Mac. Pass a real 16-byte buffer; both other routes ignore it."
 fi
-echo "PASS macho_clock_buffer_contract: every reachable syscall(228) passes a real buffer, and the x86 reroute passes NULL for mach time"
+echo "PASS macho_clock_buffer_contract: every reachable syscall(228) passes a real buffer, and the x86 reroute passes its own stack slot for mach time"
