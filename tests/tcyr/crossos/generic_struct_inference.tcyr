@@ -59,6 +59,13 @@
 # base). Mutation: PARSE_GVAR_REG's `_gen_ann_sid` back to SKIP_GENERICS -> this file does not
 # build. The initialiser refusals are in tests/gates/frontend/generic_type_arg_unknown_refused.sh (Q).
 #
+# LIT (6.6.12) rows `run_literals` + the GL* globals: a GENERIC struct literal, `Box<Pt> { p, 5 }` /
+# `Box<i64> { 7, 5 }` / `Box<Pt> { 1, 2, 5 }`, fn-local, in the leading declaration block and after
+# the first top-level statement. Every head (PARSE_VAR, PARSE_GVAR_REG's lookahead, the
+# EMIT_GVAR_INITS replay) committed only on `Name {`, so each was "undefined variable 'Box'".
+# Mutation: make `_lit_head` (src/frontend/parse_decl.cyr) return 0 on `<` -> this file does not
+# build. The mismatched-annotation refusals are in tests/gates/frontend/struct_literal_type_refused.sh.
+#
 # CROSS-HOST because each instance is a by-value struct-param fn emitted inline (jumped over) by
 # every backend, and struct returns take the per-target retptr / register-pair ABI.
 include "lib/assert.cyr"
@@ -82,6 +89,11 @@ var gws: Pt = Pt { 2, 5 };
 var gbs: P3 = P3 { 1, 2, 3 };
 var GW: W1<Pt> = &gws;
 var GB: Box<Pt> = &gbs;
+# LIT (6.6.12): generic struct literals in the leading declaration block.
+var GLP: Box<Pt> = Box<Pt> { gws, 6 };
+var GLF = Box<Pt> { 3, 4, 7 };
+var GLI = Box<i64> { 7, 5 };
+var GLW = W1<Pt> { 8, 9 };
 
 # A loop, so it is never inlined (the old dead-stub path).
 fn g<T>(p: T): i64 { var s = 0; var i = 0; while (i < 2) { s = s + p.y; i = i + 1; } return s + p.x; }
@@ -155,6 +167,27 @@ fn run_globals(): i64 {
     assert_eq(box_sum(GB), 231, "L9: box_sum(GB), a 24 B Box<Pt> global (v.x 1, v.y 2, n 3)");
     GB.n = 5;
     assert_eq(GB.n * 10 + GB.v.y, 52, "L9: GB.n written and read, GB.v.y read");
+    return 0;
+}
+
+fn lit_local(a): i64 { var p: Pt; p.x = a; p.y = 4; var b: Box<Pt> = Box<Pt> { p, 5 }; p.x = 0; return box_sum(b); }
+fn lit_flat(): i64 { var b: Box<Pt> = Box<Pt> { 1, 2, 5 }; return box_sum(b); }
+fn lit_i64(): i64 { var b = Box<i64> { 7, 5 }; return b.n + b.v * 10; }
+fn lit_w1(a): i64 { var p: Pt; p.x = a; p.y = 20; var w = W1<Pt> { p }; return w1s(w); }
+fn lit_nested(): i64 { var p: Pt; p.x = 1; p.y = 2; var g = Box<Pt> { p, 5 }; var b = Box<Box<Pt>> { g, 9 }; return load64(&b) + load64(&b + 8) * 10 + load64(&b + 16) * 100 + b.n * 1000; }
+fn lit_m2(): i64 { var m = M2<i32> { 3, 4 }; return m.a + m.b * 10 + load32(&m + 4) * 100; }
+fn run_literals(): i64 {
+    test_group("a generic struct literal is the instance (6.6.12)");
+    assert_eq(lit_local(3), 453, "LIT: `var b: Box<Pt> = Box<Pt> { p, 5 };` fn-local (was 'undefined variable Box')");
+    assert_eq(lit_flat(), 251, "LIT: `Box<Pt> { 1, 2, 5 }`, the flattened form");
+    assert_eq(lit_i64(), 75, "LIT: `Box<i64> { 7, 5 }`, the base instance");
+    assert_eq(lit_w1(6), 26, "LIT: `W1<Pt> { p }`, an instance of a different size class than its base");
+    assert_eq(lit_nested(), 9521, "LIT: `Box<Box<Pt>> { g, 9 }`, a nested instance");
+    assert_eq(lit_m2(), 443, "LIT: `M2<i32> { 3, 4 }`, i32 fields 4 bytes apart");
+    assert_eq(box_sum(GLP), 562, "LIT: leading-block `var GLP: Box<Pt> = Box<Pt> { gws, 6 };`");
+    assert_eq(box_sum(GLF), 473, "LIT: leading-block `Box<Pt> { 3, 4, 7 }`");
+    assert_eq(GLI.v + GLI.n * 10, 57, "LIT: leading-block `Box<i64> { 7, 5 }`");
+    assert_eq(w1s(GLW), 17, "LIT: leading-block `W1<Pt> { 8, 9 }`");
     return 0;
 }
 
@@ -270,6 +303,7 @@ fn run_paths(): i64 {
 fn main(): i64 {
     alloc_init();
     run_globals();
+    run_literals();
     run_calls(2);
     run_params();
     #ifndef CYRIUS_TARGET_CX
@@ -289,6 +323,11 @@ fn main(): i64 {
     return 0;
 }
 var _m = main();
+# LIT (6.6.12): generic literals after the first top-level statement (PARSE_VAR's global arm).
+var GLQ: Box<Pt> = Box<Pt> { gws, 8 };
+var GLQI = Box<i64> { 4, 3 };
+assert_eq(box_sum(GLQ), 584, "LIT: top-level `var GLQ: Box<Pt> = Box<Pt> { gws, 8 };` after a statement (gws.x is 4 by now)");
+assert_eq(GLQI.v + GLQI.n * 10, 34, "LIT: top-level `Box<i64> { 4, 3 }` after a statement");
 var r = assert_summary();
 # ⚠ The explicit exit is load-bearing: with `fn main` defined, the entry auto-calls it AGAIN after
 # the top level, and that second run's 0 would be the exit code — a failed row then exits 0.

@@ -339,7 +339,25 @@ p.x = 42;               # Field assignment
 struct Rect { tl: Point; br: Point; }
 var r = Rect { 0, 0, 10, 5 };
 var w = r.br.x - r.tl.x;   # 10
+var a = Point { 1, 2 };
+var r2 = Rect { a, 10, 5 };  # a nested field also takes a whole struct value (v6.6.12)
 ```
+
+A positional literal fills the **leaves** of the struct in declaration order, descending into
+every nested struct field (at any depth), and writes each leaf at its own offset and width. For
+a nested struct field it also takes a whole struct **value** of that field's type — a local, a
+parameter, a global, a struct-typed field (`b.v`), or a call, method or operator returning it —
+copied byte for byte. A value whose type is the FIRST field of the nested struct fills that
+inner struct (`struct Outer { t; b: Box; }` with `struct Box { v: Point; n; }`:
+`Outer { 1, a, 4 }`), and a struct of any other type is a compile error naming both. At top
+level a call returning a 9-16 byte struct has no frame to land in and is refused by name (call
+it inside a fn).
+
+⚠ Before v6.6.12 a nested field was flattened at **8 bytes per inner field**, whatever the inner
+fields' widths, and never descended further: `struct HO { o: Odd; t: i8; u: i32; }` with
+`struct Odd { a: i8; b: i16; }` (8 bytes) had its literal write 13 bytes past the object — over
+the next global, or the calling fn's frame — and a struct nested two levels deep took the wrong
+number of values. Both were silent, on every target.
 
 ### Field types (v6.6.10)
 
@@ -2573,6 +2591,13 @@ fn run(): i64 {
 The type argument may itself be a struct (`Box<Point>`) — the instance's field
 is laid out at the concrete type's size, so a following field lands at the right
 offset. Each distinct `Struct<type-args>` mints one deduped instance.
+
+A **literal** of a generic struct names its type arguments the same way — `Box<Point> { p, 5 }`,
+`Box<Point> { 1, 2, 5 }`, `Pair<i32> { 40, 2 }` — in a fn, in the leading declaration block and
+after the first top-level statement (6.6.12; before it every one was
+`undefined variable 'Box'`). It is the same instance an annotation names, so
+`var b: Box<Point> = Box<i64> { 1, 2 };` is a compile error, and `Box { .. }` with no
+arguments is the base (all-i64) struct.
 
 A **global** takes the instance too, wherever it is declared: `var G: W1<Pt> =
 alloc(16);` ahead of the first top-level statement reads and writes `G.v.x` and passes

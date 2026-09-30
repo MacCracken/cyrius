@@ -24,6 +24,23 @@
 #     address-passed parameter; `var p: Pt = b.v;`) copied one word, and the declaration SIGSEGV'd
 #     reading `p.x` through that word. Mutation: make `_fla_arm` (src/frontend/parse_decl.cyr)
 #     return before arming — the "from a struct-typed field" group goes red (x86: SIGSEGV).
+#
+# 6.6.12 rows — the positional LITERAL of a struct with a nested struct field:
+#   * a nested field was flattened as 8 bytes per inner field, never at the inner fields' own
+#     FIELDOFF/FIELDSZ, and never recursed: `HO { 0x11, 0x2222, 0x33, 0x44444444 }` (8 B) wrote
+#     13 bytes past its object — over the next global, or the fn's frame — and read back wrong on
+#     every backend; a struct nested TWO levels deep took the wrong number of values. The row
+#     that stood at the odd-width group (`var GHO = HO { 0, 0, 0, 0 };`) passed only by layout.
+#     The rows check every field, and a canary after the object where one can be placed: a
+#     global in the leading declaration block (the canary is static data, in place before the
+#     literal runs) and a fn-local (canaries on both sides). The global after the first
+#     statement is checked field by field.
+#     Mutation: make `_spi_nested` (src/frontend/parse_decl.cyr) flatten 8 bytes per inner field
+#     instead of recursing — the HO rows go red and the two-level literals stop compiling.
+#   * a nested struct field takes a whole struct VALUE (`Box { p, 5 }`): a local, a parameter, a
+#     global, a struct-typed field, a call (>16 B retptr, 9-16 B rax:rdx, <= 8 B rax), a method, an
+#     operator; a value of a type on the field's first-field chain fills that inner struct.
+#     Before 6.6.12 each of these was a compile error ("unexpected '}'").
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/assert.cyr"
@@ -36,6 +53,7 @@ struct Outer { t; b: Box; }
 struct Odd { a: i8; b: i16; }
 struct HasOdd { o: Odd; tail: i8; }
 struct HO { o: Odd; t: i8; u: i32; }
+struct HH { h: HO; z: i8; }
 struct S5 { a: i32; b: i8; }
 struct S6 { a: i16; b: i16; c: i16; }
 struct S7 { a: i32; b: i16; c: i8; }
@@ -46,6 +64,16 @@ union UB { v: Pt; raw: i64; }
 
 var GB = Box { 0, 0, 0 };
 var GP = Pt { 50, 60 };
+# 6.6.12: literals in the leading declaration block (replayed by EMIT_GVAR_INITS), each followed
+# by constant canaries — static data, in place before the literal's stores run.
+var GHOD = HO { 0x11, 0x2222, 0x33, 0x44444444 };
+var GHOD_C1 = 0x5A5A5A5A5A5A5A5A;
+var GHOD_C2 = 0x5A5A5A5A5A5A5A5A;
+var GOUD = Outer { 1, 2, 3, 4 };
+var GOUD_C = 0x5A5A5A5A5A5A5A5A;
+var GHHD = HH { 1, 2, 3, 4, 5 };
+var GHHD_C = 0x5A5A5A5A5A5A5A5A;
+var GBOXD = Box { GP, 7 };
 
 fn mkpt(a): Pt { var p: Pt; p.x = a; p.y = a + 1; return p; }
 fn mkbig(a): Big { var p: Big; p.a = a; p.b = a + 1; p.c = a + 2; return p; }
@@ -132,6 +160,43 @@ fn fl_assign_24(): i64 { var b: BQ; b.k = 8; b.q.a = 4; b.q.b = 5; b.q.c = 6; va
 fn fl_odd(): i64 { var h: HO; h.o.a = 3; h.o.b = 700; h.t = 5; h.u = 9; var z: Odd = h.o; var w: Odd; w.a = 0; w.b = 0; w = h.o; return z.a + z.b * 10 + w.a * 10000 + w.b * 100000; }
 fn fl_p8(): i64 { var b: B8; b.v.x = 3; b.v.y = 4; b.n = 9; var p: P8 = b.v; var q: P8; q.x = 0; q.y = 0; q = b.v; return p.x * 10 + p.y + q.x * 1000 + q.y * 100; }
 
+# ── 6.6.12: positional literals of structs with nested struct fields ───────────────────────────
+# HO = { o: Odd @0 = { a: i8 @0; b: i16 @1 }; t: i8 @3; u: i32 @4 } — 8 bytes.
+fn ho4(h): i64 { return load8(h) + load16(h + 1) * 10 + load8(h + 3) * 100 + load32(h + 4) * 1000; }
+# Outer = { t @0; b: Box @8 = { v: Pt @8 = { x @8; y @16 }; n @24 } }.
+fn ou4(o): i64 { return load64(o) + load64(o + 8) * 10 + load64(o + 16) * 100 + load64(o + 24) * 1000; }
+# HH = { h: HO @0; z: i8 @8 } — two levels, narrow throughout.
+fn hh5(h): i64 { return ho4(h) + load8(h + 8) * 10000; }
+var HO_ALL = 0x44444444 * 1000 + 0x33 * 100 + 0x2222 * 10 + 0x11;
+# Each returns 1 only when every field is right AND the canaries on both sides are intact.
+fn lit_ho_local(): i64 {
+    var c0 = 0x5A5A5A5A5A5A5A5A;
+    var h = HO { 0x11, 0x2222, 0x33, 0x44444444 };
+    var c1 = 0x5A5A5A5A5A5A5A5A;
+    if (c0 != 0x5A5A5A5A5A5A5A5A) { return 0; }
+    if (c1 != 0x5A5A5A5A5A5A5A5A) { return 0; }
+    return ho4(&h) == HO_ALL;
+}
+fn lit_outer_local(): i64 { var c0 = 7; var o = Outer { 1, 2, 3, 4 }; var c1 = 8; return ou4(&o) + c0 * 10000 + c1 * 100000; }
+fn lit_hh_local(): i64 { var c0 = 7; var h = HH { 1, 2, 3, 4, 5 }; var c1 = 8; return hh5(&h) + c0 * 100000 + c1 * 1000000; }
+fn lit_scalar_exprs(): i64 { var k = 3; var b = Box { k + 1, k * 2, 9 }; return pack(b); }
+# a whole struct value for a nested struct field
+fn lv_local(): i64 { var p: Pt; p.x = 1; p.y = 2; var b = Box { p, 5 }; p.x = 9; return pack(b); }
+fn lv_param(p: Pt): i64 { var b = Box { p, 5 }; return pack(b); }
+fn lv_global(): i64 { var b = Box { GP, 5 }; return b.v.x + b.v.y + b.n; }
+fn lv_field(): i64 { var a: Box; a.v.x = 6; a.v.y = 8; a.n = 1; var b = Box { a.v, 2 }; return pack(b); }
+fn lv_call(): i64 { var b = Box { mkpt(4), 3 }; return pack(b); }
+fn lv_method(): i64 { var p: Pt; p.x = 3; p.y = 4; var b = Box { p.twice(), 1 }; return pack(b); }
+fn lv_bigcall(): i64 { var b = BB { 9, mkbig(1) }; return b.w.a + b.w.b * 10 + b.w.c * 100 + b.k * 1000; }
+fn lv_operator(): i64 { var a: Big; a.a = 1; a.b = 2; a.c = 3; var c: Big; c.a = 10; c.b = 20; c.c = 30; var b = BB { 4, a + c }; return b.w.a + b.w.b + b.w.c + b.k * 1000; }
+fn lv_oddcall(): i64 { var h = HasOdd { mkodd(2), 5 }; return h.o.a + h.o.b * 10 + h.tail * 10000; }
+fn lv_oddlocal(): i64 { var o: Odd; o.a = 3; o.b = 700; var h = HasOdd { o, 5 }; return h.o.a + h.o.b * 10 + h.tail * 10000; }
+fn lv_oddmethod(): i64 { var x: Odd; x.a = 1; x.b = 2; var h = HO { x.twice(), 5, 9 }; return h.o.a + h.o.b * 10 + h.t * 100 + h.u * 1000; }
+fn lv_chain(): i64 { var p: Pt; p.x = 2; p.y = 3; var o = Outer { 1, p, 4 }; return ou4(&o); }
+fn lv_whole2(): i64 { var b: Box; b.v.x = 2; b.v.y = 3; b.n = 4; var o = Outer { 1, b }; return ou4(&o); }
+fn lv_chain_field(): i64 { var b: Box; b.v.x = 2; b.v.y = 3; b.n = 9; var o = Outer { 1, b.v, 4 }; return ou4(&o); }
+fn lv_chain_call(): i64 { var o = Outer { 1, mkpt(2), 4 }; return ou4(&o); }
+
 test_group("a struct value assigned into a struct-typed field copies the whole struct");
 var gp: Pt = alloc(16);
 gp.x = 3; gp.y = 4;
@@ -159,7 +224,10 @@ assert_eq(s6_operator(), 77642, "an overloaded operator into a 6-byte field");
 assert_eq(s5_call(), 4376, "a free call into a 5-byte field");
 assert_eq(s7_call(), 8321, "a free call into a 7-byte field");
 assert_eq(odd_integer(), 17201, "a plain integer into a 3-byte field writes three bytes");
-var GHO = HO { 0, 0, 0, 0 };
+var GHO = HO { 0x11, 0x2222, 0x33, 0x44444444 };
+# (no canary here: a global declared after this point is stored in program order, AFTER the
+# literal, and would hide an overrun — the leading-block GHOD rows below carry the canaries)
+assert_eq(ho4(&GHO), HO_ALL, "top-level literal of a struct with a 3-byte nested field: every field");
 GHO.t = 5; GHO.u = 9;
 GHO.o = mkodd(2);
 assert_eq(GHO.o.a + GHO.o.b * 10 + GHO.t * 10000 + GHO.u * 100000, 952002, "a free call into a 3-byte field at top level");
@@ -188,5 +256,38 @@ assert_eq(fl_decl_24(), 8321, "var y: Q = b.q (24 B)");
 assert_eq(fl_assign_24(), 654, "y = b.q (24 B)");
 assert_eq(fl_odd(), 70037003, "a 3-byte struct from a field, both forms");
 assert_eq(fl_p8(), 3434, "an 8-byte struct from a field, both forms");
+
+test_group("a positional literal lays a nested struct out at its real offsets (6.6.12)");
+assert_eq(ho4(&GHOD), HO_ALL, "leading-block literal, a 3-byte nested field: every field");
+assert_eq(GHOD_C1, 0x5A5A5A5A5A5A5A5A, "... the global after it is untouched");
+assert_eq(GHOD_C2, 0x5A5A5A5A5A5A5A5A, "... and the one after that");
+assert_eq(lit_ho_local(), 1, "fn-local literal: every field, both neighbours intact");
+assert_eq(ou4(&GOUD), 4321, "a struct nested two levels deep takes four values");
+assert_eq(GOUD_C, 0x5A5A5A5A5A5A5A5A, "... the global after it is untouched");
+assert_eq(lit_outer_local(), 874321, "... fn-local, neighbours intact");
+assert_eq(hh5(&GHHD), 54321, "two levels, narrow throughout");
+assert_eq(GHHD_C, 0x5A5A5A5A5A5A5A5A, "... the global after it is untouched");
+assert_eq(lit_hh_local(), 8754321, "... fn-local, neighbours intact");
+assert_eq(lit_scalar_exprs(), 946, "expressions still flatten into the nested leaves");
+
+test_group("a nested struct field takes a whole struct value (6.6.12)");
+assert_eq(lv_local(), 512, "from a local, copied (a later write to it does not show)");
+var gp3: Pt = alloc(16);
+gp3.x = 3; gp3.y = 4;
+assert_eq(lv_param(gp3), 534, "from an address-passed parameter (not the pointer)");
+assert_eq(lv_global(), 115, "from a global");
+assert_eq(GBOXD.v.x + GBOXD.v.y * 10 + GBOXD.n * 100, 1350, "from a global, in the leading block");
+assert_eq(lv_field(), 268, "from a struct-typed field");
+assert_eq(lv_call(), 345, "from a 9-16 B call (rax:rdx)");
+assert_eq(lv_method(), 168, "from a method");
+assert_eq(lv_bigcall(), 9321, "from a >16 B call (retptr)");
+assert_eq(lv_operator(), 4066, "from an overloaded operator");
+assert_eq(lv_oddcall(), 52002, "a 3-byte struct from a call (rax), byte-exact");
+assert_eq(lv_oddlocal(), 57003, "a 3-byte struct from a local");
+assert_eq(lv_oddmethod(), 9542, "a 3-byte struct from a method, the narrow fields after it intact");
+assert_eq(lv_chain(), 4321, "a value of the nested field's first-field type fills it");
+assert_eq(lv_whole2(), 4321, "a whole two-level value");
+assert_eq(lv_chain_field(), 4321, "a first-field-type value from a field");
+assert_eq(lv_chain_call(), 4321, "a first-field-type value from a call");
 
 var r = assert_summary();

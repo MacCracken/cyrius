@@ -28,6 +28,47 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   load (its rows), and the signed-global sign extension (`/= 2` on an i8 global -8 — 124, not -4). Green on x86, aarch64 (qemu) and PE (wine), and on real ecb, ach, pi and cass
   after a byte-identical self-host there. cx's narrow store/load emitters are 8 bytes too — fixed and
   gated by B06 (`cx_tailcall_and_vm_traps.sh`, cx-narrow axis).
+- **A positional struct literal wrote a nested struct field at 8 bytes per inner field, past its
+  object (B02, item V2 + the premise-found two-level case).** **Root cause:**
+  `_emit_struct_positional_init` (`src/frontend/parse_decl.cyr`) flattened a nested struct field as one
+  8-byte store per inner field, whatever the inner fields' widths, and never recursed. For
+  `struct HO { o: Odd; t: i8; u: i32; }` (`Odd = { a: i8; b: i16; }`, 8 bytes) the literal
+  `HO { 0x11, 0x2222, 0x33, 0x44444444 }` wrote at +0, +8, +16 and +17 — 13 bytes past the object: over
+  the next global (a string's bytes, which is how it surfaced as a NUL in
+  `struct_field_value_copy.tcyr`), or, fn-local, over the caller's own frame — and every field but the
+  first read back wrong. A struct nested two levels deep (`Outer { t; b: Box { v: Pt; n; } }`) was never
+  descended, so it took the wrong NUMBER of values and stored the last one over its neighbour. Silent,
+  and frontend-only, so on every backend (measured wrong on x86, aarch64, PE and cx). **Fix:** the literal walks the struct's leaves
+  recursively (`_spi_fields`), each written at its real `FIELDOFF` and `FIELDSZ` (a Str field stays one
+  8-byte handle). Byte-identical output for an all-i64 nesting, which is why the fixpoint never moved.
+  **Verification:** `tests/tcyr/crossos/struct_field_value_copy.tcyr` — the literal that passed only by
+  layout is replaced by rows checking every field AND a canary after the object (a leading-block global
+  and a fn-local, which also checks a canary before it), plus the two-level rows (i64 and narrow, global
+  and fn-local) and a scalar-expression row; mutation (flatten instead of recurse): the canary rows go
+  red and the two-level literals stop compiling.
+- **A generic struct literal (`Box<Pt> { p, 5 }`) did not parse, and a nested struct field did not
+  take a struct value (B02, item R1).** **Root cause:** all three literal heads — `PARSE_VAR`,
+  `PARSE_GVAR_REG`'s lookahead and the `EMIT_GVAR_INITS` replay — committed only on `Name {`, so
+  `Box<Pt> { .. }` / `Box<i64> { 7, 5 }` parsed as an expression and failed with
+  `undefined variable 'Box'`, in a fn and at top level alike. Resolving the head alone would only have
+  moved the error: a positional literal never accepted a struct VALUE for a nested struct field
+  (`B2 { p, 5 }` with `p: Pt` was `unexpected '}'`; only the flattened `B2 { 1, 2, 5 }` worked).
+  **Fix:** one head recogniser, `_lit_head`, used by all three: `Name<args> {` resolves the INSTANCE
+  with `_gen_ann_sid`, the annotation's own resolver, so `var b: Box<Pt> = Box<Pt> { .. }` agrees and
+  `var b: Box<Pt> = Box<i64> { .. }` is refused by name (`_lit_ann_check`). The leading declaration
+  block now compares a literal with its annotation at all — `var G: Pt = Q { .. }` compiled before. A
+  nested struct field takes a whole struct value of its type from a local, a parameter, a global, a
+  struct-typed field, a call (retptr, rax:rdx, or a <= 8 B struct in rax), a method or an operator,
+  copied byte-exact (`_spi_src` over the 6.6.10 field-store source record `_fsc_*`); a value whose type
+  is on the field's first-field chain fills that inner struct; another struct type is refused by name;
+  at top level a 9-16 B call has no frame and is refused by name; anything else is the first leaf, as
+  before. **Verification:** `tests/tcyr/crossos/generic_struct_inference.tcyr` gains the LIT group
+  (fn-local, leading block and after a statement; `Box<Pt> { p, 5 }`, `{ 1, 2, 5 }`, `Box<i64>`,
+  `W1<Pt>`, `Box<Box<Pt>>`, `M2<i32>`); `struct_field_value_copy.tcyr` gains 16 whole-value rows; new
+  gate `tests/gates/frontend/struct_literal_type_refused.sh` (12 refusals on the message, 4 acceptances
+  against field-by-field controls; mutation ledger in its header). Both tcyrs and the inline cx rows
+  green on x86, aarch64 (qemu), PE (wine) and cx, and on real ecb, ach, pi and cass. The guide
+  (`docs/guides/cyrius-guide.md`, Structs and Generic structs) documents the literal forms.
 
 ## [6.6.11] — 2026-09-29
 
