@@ -250,7 +250,7 @@ var _cyrius_path = 0;
 # didOpen / didChange / didSave triggers `lsp_index_file(path)`,
 # which scans the file for top-level fn/var/enum/struct decls and
 # recursively walks `include "..."` directives. A path is indexed
-# at most once per LSP session (tracked via `_lsp_indexed_paths`)
+# at most once per LSP session (tracked by the indexed-path set, `_lsp_indexed_off`)
 # to keep cost bounded.
 #
 # Sizing: every table GROWS (6.6.12). The six row arrays, the names buffer, the indexed-path
