@@ -168,6 +168,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and on real ecb, ach, pi and cass, compiled there by a compiler that self-hosted byte-identical on
   that host. The guide (`docs/guides/cyrius-guide.md`, Structs) documents both. Fixpoint and
   seed-derive green; cycc 1,453,864 → 1,458,120 B.
+- **A string literal still open at end of file was accepted silently by the lexer (B05, item R5).**
+  **Root cause:** LEX's string loop (`src/frontend/lex.cyr`) treated EOF as a closing quote
+  (`if (p >= bl) { sgo = 0; }`), unlike the char-literal path, so the error surfaced later and
+  elsewhere: `var s = "abc` said `expected ';', got end of file`, a bare `"abc` said `unexpected
+  string`, and a literal opened on line 2 and running to EOF was reported at the LAST line; a `\` as
+  the very last byte read one byte past the source as its escape. The exit status was never 0.
+  **Fix:** `_lex_unterm_str` restores the literal's opening line and reports `unterminated string
+  literal` at the opening quote's `<file>:<line>:<col>`; a trailing `\` escapes nothing, so it reaches
+  the same report. **Verification:** four new rows in
+  `tests/gates/frontend/lexer_errors_name_file_line.sh` (single-line, multi-line naming the opening
+  line, trailing backslash, bare statement; the 6.6.11 compiler fails all four; each of the three
+  parts mutation-proven, listed in its header).
 
 ## [6.6.11] — 2026-09-29
 

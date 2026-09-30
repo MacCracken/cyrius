@@ -1796,6 +1796,16 @@ fn _lex_die(S, p, msg): i64 {
     return 0;
 }
 
+# A string literal still open at EOF: report it at its opening quote `p`, on the line
+# the literal STARTED (`sline`) -- the loop has already counted any LFs inside it, and
+# `_lex_err_head` reads the current line. Kept out of LEX (the cybs per-fn cap).
+# CHANGELOG [6.6.12]
+fn _lex_unterm_str(S, p, sline): i64 {
+    SCLINE(S, sline);
+    _lex_die(S, p, "unterminated string literal");
+    return 0;
+}
+
 # Byte `c` as two lowercase hex digits on stderr.
 fn _lex_hex2(c): i64 {
     var b = 0;
@@ -2317,7 +2327,10 @@ fn LEX(S): i64 {
                                                                                                                                     var sline = GCLINE(S);   # the token keeps its OPENING line; LFs inside count after it
                                                                                                                                     var sgo = 1;
                                                                                                                                     while (sgo == 1) {
-                                                                                                                                        if (p >= bl) { sgo = 0; }
+                                                                                                                                        # EOF before the closing quote is an ERROR (it ended the string silently, so the
+                                                                                                                                        # parser reported a misleading `expected ';'` at a later line). Named at the OPENING
+                                                                                                                                        # quote's file:line:col. CHANGELOG [6.6.12]
+                                                                                                                                        if (p >= bl) { _lex_unterm_str(S, _tok_start, sline); }
                                                                                                                                         # CVE-06: bounds check str_data (2MB at 0x21A000; v5.8.59 was 256KB at 0x14A000)
                                                                                                                                         if (spos >= 2097152) {
                                                                                                                                             syscall(SYS_WRITE, 2, "error: string data overflow (2MB limit)\n", 40);
@@ -2327,7 +2340,9 @@ fn LEX(S): i64 {
                                                                                                                                             var sc = load8(S + 0x459D000 + p);
                                                                                                                                             if (sc == 34) { p = p + 1; sgo = 0; }
                                                                                                                                             else {
-                                                                                                                                                if (sc == 92) {
+                                                                                                                                                # A `\` that is the LAST byte escapes nothing: kept raw, so the EOF check above
+                                                                                                                                                # reports the unterminated string instead of reading past the buffer. CHANGELOG [6.6.12]
+                                                                                                                                                if (sc == 92 && p + 1 < bl) {
                                                                                                                                                     var esc = p;   # the backslash: where an escape diagnostic points. CHANGELOG [6.6.10]
                                                                                                                                                     p = p + 1;
                                                                                                                                                     var ec = load8(S + 0x459D000 + p);

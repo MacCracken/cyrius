@@ -24,6 +24,9 @@
 #     (ml_undef/ml_dollar/ml_inc1/ml_private); drop the `ec == 10` arm's SCLINE -> ml_bslf RED;
 #     drop the `SCLINE(S, sline)` before the string's ADDTOK -> ml_strtok RED; restore the
 #     escape fallthrough `store8(.., ec)` -> str_bad_esc/str_bad_esc2/ml_esc RED.
+#   * (6.6.12) restore `if (p >= bl) { sgo = 0; }` at the head of LEX's string loop
+#     -> str_unterm* RED; drop `SCLINE(S, sline)` from `_lex_unterm_str` -> str_unterm_ml
+#     RED (names line 4); drop `&& p + 1 < bl` from the escape arm -> str_unterm_bs RED.
 # AXIS 4 — the char/string-literal error sites, each by file:line:col (6.6.11: plus the
 #   unknown string escape, and the accepted `\<LF>` / `\<CR><LF>` escapes).
 # AXIS 6 — a newline inside a string literal advances the line (6.6.11).
@@ -98,6 +101,15 @@ refused u_surr        "${L}var t = \"\\\\uD800\";\n"        "error:<source>:2:10
 # compiled to "abq"). Only the escapes in the guide's table are accepted.
 refused str_bad_esc   "${L}var t = \"ab\\\\q\";\n"          "error:<source>:2:12: unknown string escape"
 refused str_bad_esc2  "${L}var t = \"\\\\{\";\n"            "error:<source>:2:10: unknown string escape"
+# 6.6.12 — a string literal still open at EOF ended SILENTLY, and the parser then said
+# `expected ';', got end of file` (or `unexpected string`) at the CURRENT line: a literal
+# opened on line 2 and running to EOF on line 4 was reported at 4. It is refused at the
+# opening quote, on the line the literal started; a `\` as the very last byte escapes
+# nothing (it used to read past the end of the source).
+refused str_unterm    "${L}var t = \"abc"                  "error:<source>:2:9: unterminated string literal"
+refused str_unterm_ml "${L}var t = \"ab\ncd\nef"           "error:<source>:2:9: unterminated string literal"
+refused str_unterm_bs "${L}var t = \"abc\\\\"            "error:<source>:2:9: unterminated string literal"
+refused str_unterm_bare "${L}\"abc"                         "error:<source>:2:1: unterminated string literal"
 # ANTI-VACUOUS: `\<LF>` is an escape that KEEPS its LF (the v6.5.18 contract pinned by
 # tests/gates/toolchain/cyrfmt_string_continuation.sh), and `\<CR><LF>` keeps both bytes.
 printf 'var s = "ab\\\ncd";\nsyscall(60, load8(s + 2) + load8(s + 3));\n' > "$T/bslf.cyr"
