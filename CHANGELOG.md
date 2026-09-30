@@ -6,6 +6,30 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.12] — 2026-09-30
 
+### Security
+
+- **CVE-57 (P1) — on Windows, the folded sandhi resolver read a drive-relative, plantable
+  `C:\etc\resolv.conf`.** (B15, item SA11.) **Root cause:** sandhi's own DNS resolver
+  (`src/net/resolve.cyr`, folded as `lib/sandhi.cyr`) opened `"/etc/resolv.conf"` on every target,
+  and both lookups fell back to 8.8.8.8 without one. On Windows a rooted path is drive-relative,
+  and any authenticated user may create folders at the root of the system drive. So a local user
+  could choose the nameserver that every other user's sandhi lookups went to, `sandhi_http_get`
+  included. 6.6.11 gave PE working Winsock UDP, which made the path live end to end. It is the
+  CVE-54 class, which 6.6.11 closed in the stdlib's own `net_resolve_ipv4`, reached through a
+  fold. **Fix, at the source (sandhi 1.10.4):** on `CYRIUS_TARGET_WIN` the A lookup is
+  `net_resolve_ipv4` (getaddrinfo: the real hosts file and the adapters' DNS), the AAAA lookup
+  answers 0, the reader returns -1 without opening anything, and 8.8.8.8 is never used. The v6
+  connect paths keep declining on PE, with their comment corrected: dialling v6 there needs a
+  public AF_INET6 socket in `lib/net.cyr`, which is a feature. **New crossos row
+  `tests/tcyr/crossos/sandhi_pe_resolver_no_etc_path.tcyr`**, modelled on `net_resolve_pe.tcyr`.
+  On real Windows it plants `C:\etc\resolv.conf` (`nameserver 127.0.9.7`), and a pre-existing
+  file or a failed plant is a named failure. It asserts that the reader returns -1 and that the
+  machine's own name and `localhost` resolve through the system resolver. Measured on cass: the
+  1.10.3 fold fails 5 of 15 rows (it read the planted server, then failed the lookups against it),
+  and the 1.10.4 fold passes 15/15. Under wine the reader rows also bite (the 1.10.3 reader
+  returned the Linux host's 127.0.0.53; 3 of 13 fail). The every-target rows pass on x86_64,
+  aarch64 (qemu), ecb, ach and in the agnosticos container.
+
 ### Downstream
 
 - **sigil 3.13.5 folded (`lib/sigil.cyr`, sigil commit `497ac4b`) — Darwin errno values per target;
@@ -77,6 +101,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `CYRIUS_HOME` at their 6.6.6 pin. ⛔ **vani 1.2.8, mabda 4.1.6 and sakshi 2.5.6 must be TAGGED
   before cyrius 6.6.12 is**; the folds were copied byte-identical from those commits' `dist/`, and
   `docs/ecosystem.md`'s three fold rows name the commits.
+- **sandhi 1.10.4 folded (`lib/sandhi.cyr`, sandhi commit `c1c36f6`) — CVE-57 above; a
+  stop-enabled server wakes on macOS; the suites run on macOS.** (B15, items SA11 + SA6.) **SA6:**
+  sandhi's four suites had never run on macOS. At this release they were run on ecb and ach with the
+  6.6.11 release tarballs in a per-run directory, and ecb hung. **Root cause:** the four blocking
+  serve loops re-read their stop flag because the listen fd carries 100 ms of `SO_RCVTIMEO`, but
+  XNU's `accept(2)` ignores `SO_RCVTIMEO`. So on macOS an idle stop-enabled server
+  (`sandhi_server_options_stop_flag`) never saw the flag, and `test_server_stop_wakes_blocked_accept`
+  hung until the runner killed it. A 100 ms-armed listener never returned on either Mac. **Fix, at
+  the source:** the loops accept through `_sandhi_server_accept`. With a flag on macOS, it polls the
+  listener for the interval and reports a timeout as `Err(_SANDHI_EAGAIN)`, which the accept policy
+  retries. New sandhi row `test_server_accept_surfaces_when_idle` hangs on both ecb and ach with the
+  macOS arm removed. After the fix all four suites pass on ecb and ach (781 / 1,691 / 352 / 63).
+  sandhi's CI gains a `macos-14` job and a structural row that keeps every `"/etc/"` literal and
+  8.8.8.8 fallback inside `#ifndef CYRIUS_TARGET_WIN`. The pin moves 6.6.10 → 6.6.11.
+- sandhi ran its full CI in a clean `git archive` copy with a throwaway `CYRIUS_HOME` at 6.6.11.
+  ⛔ **sandhi 1.10.4 must be TAGGED before cyrius 6.6.12 is**; the fold is byte-identical to that
+  commit's `dist/sandhi.cyr`, and `docs/ecosystem.md`'s fold row names the commit.
 
 ## [6.6.11] — 2026-09-29
 
