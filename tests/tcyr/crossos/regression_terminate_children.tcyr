@@ -43,6 +43,13 @@ fn _rtc_read_pid(path): i64 {
 fn main(): i64 {
     alloc_init();
     test_group("regression_terminate_children keeps its contract on this target");
+    #ifdef CYRIUS_TARGET_WIN
+    # 6.6.11: the Windows skip ASSERTS its premise. Every .tcyr reader requires N >= 1 in the
+    # summary when the source calls assert_summary (a summary with no assertions cannot be told
+    # from a body that was compiled away), and this row goes red the day PE grows a fork — the
+    # signal to un-skip the body below. CHANGELOG [6.6.11]
+    assert_eq(sys_fork(), 0 - 1, "premise: PE has no fork (sys_fork fails closed), so there is no POSIX child to end");
+    #endif
     #ifndef CYRIUS_TARGET_WIN
     #ifndef CYRIUS_TARGET_AGNOS
     # A live child that ends BY ITSELF (exit 7) after ~1.5 s, unless it is signalled first.
