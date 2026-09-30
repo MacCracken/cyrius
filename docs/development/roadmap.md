@@ -155,7 +155,7 @@ cross-lane hunk travelled as a named hand-off patch. ⚠ Remaining merge lesson:
 (the cross-compile allowlist, the alloc census, the gate census) cannot run inside a lane that works in
 parallel with the lanes it measures — it is an integration step, and it is now done there.
 
-### 6.6.11 — CLOSED 2026-09-29 (awaiting the tags)
+### 6.6.11 — SHIPPED 2026-09-30 (tag `6.6.11` @ `a6aa3375`)
 
 All fourteen bites shipped; detail in `CHANGELOG.md` [6.6.11]. **CVE-54** (on Windows the resolver read a
 drive-relative `C:\etc\hosts`) and **CVE-55** (a multi-line string literal defeated `private`); the next
