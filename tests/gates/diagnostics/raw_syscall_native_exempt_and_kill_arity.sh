@@ -13,7 +13,8 @@
 #   of CYRIUS_ARCH_AARCH64 or the undefined side of CYRIUS_ARCH_X86, the frame rule
 #   tests/gates/platform/raw_syscall_literals_routed.sh applies to lib/. Rows: `#ifdef`, the
 #   enum spelling, `#ifndef CYRIUS_ARCH_X86`, the `#else` of `#ifdef CYRIUS_ARCH_X86`,
-#   `#ifplat aarch64`, and a whole INCLUDED file under `#ifdef CYRIUS_ARCH_AARCH64` whose own
+#   `#ifplat aarch64`, a call whose next token lies past its `#endif` (the scan is anchored on
+#   the call's own `)`), and a whole INCLUDED file under `#ifdef CYRIUS_ARCH_AARCH64` whose own
 #   `#ifdef CYRIUS_ARCH_X86` block closes before the literal (its blocks are expanded by a later
 #   preprocessor pass with a fresh depth counter; the markers nest).
 # AXIS 2 — ANTI-VACUOUS: the same literals OUTSIDE such a region still warn, each on its own
@@ -44,7 +45,8 @@
 #   PP_A64_NATIVE_AT without the string-state check                         -> RED 1 (the string row)
 #   `_sc_arity_skip`'s kill skip without `_TARGET_MACHO == 1` (rebuilt $CC) -> RED 1 (x86-Linux)
 #   `_sc_arity_skip` without the kill skip at all (rebuilt $CC)             -> RED 1 (x86-macOS)
-#   real tree                                                               -> GREEN, 18 of 18
+#   `_sysx_meant_here` scanning to the cursor, not the call's `)`            -> RED 1 (lines 38-40)
+#   real tree                                                               -> GREEN, 19 of 19
 # ⚠ Axes 1-2 BUILD the aarch64 compiler from the WORKING-TREE src/ with $CC, so a source revert
 # reddens them even under the installed compiler; axis 3 runs $CC itself.
 #
@@ -109,7 +111,14 @@ var s_marker = "x
 #@a+
 ";
 fn after_str(): i64 { return syscall(291, 0); }
-var r = native() + ib() + ia() + ia_out() + forged() + after_str();
+fn edge(): i64 {
+#ifdef CYRIUS_ARCH_AARCH64
+    var e1 = syscall(291, 0, 0, 0, 0, 0)
+#endif
+    ;
+    return 0;
+}
+var r = native() + ib() + ia() + ia_out() + forged() + after_str() + edge();
 EOF
 ( cd "$D" && "$A64" < "$D/n.cyr" > "$D/n.bin" 2> "$D/n.err" ); nrc=$?
 [ "$nrc" = 0 ] || { bad "the axis 1/2 probe compiles on aarch64 (rc $nrc: $(grep -v '^note' "$D/n.err" | head -1))"; }
@@ -122,6 +131,8 @@ for row in "4 8 #ifdef CYRIUS_ARCH_AARCH64" "5 291 #ifdef CYRIUS_ARCH_AARCH64" "
     set -- $row; ln=$1; num=$2; shift 2
     if [ "$(warned "<source>:$ln" "$num")" = no ]; then ok "line $ln ($*): silent"; else bad "line $ln ($*): flagged"; fi
 done
+if [ "$(warned "<source>:3[89]" 291)" = no ] && [ "$(warned "<source>:40" 291)" = no ]; then ok "lines 38-40: a native call whose next token lies past its #endif: silent"
+else bad "lines 38-40: the native call was judged at the token AFTER its #endif"; fi
 if [ "$(warned "inc/native_file.cyr:4" 8)" = no ]; then ok "an included file under #ifdef CYRIUS_ARCH_AARCH64, after its own X86 block: silent"
 else bad "an included file under #ifdef CYRIUS_ARCH_AARCH64: flagged (the markers do not nest across passes)"; fi
 
@@ -150,7 +161,7 @@ grep -q '^warning:<source>:2:[0-9]*: syscall arity mismatch' "$D/km.err" && ok "
     || bad "x86-macOS: a 1-arg kill did not warn"
 
 echo "raw_syscall_native_exempt_and_kill_arity: $pass passed, $fail failed"
-[ "$pass" -ge 18 ] || { echo "FAIL: raw_syscall_native_exempt_and_kill_arity — only $pass of the 18 rows passed"; exit 1; }
+[ "$pass" -ge 19 ] || { echo "FAIL: raw_syscall_native_exempt_and_kill_arity — only $pass of the 19 rows passed"; exit 1; }
 [ "$fail" = 0 ] || { echo "FAIL: raw_syscall_native_exempt_and_kill_arity"; exit 1; }
 echo "PASS: raw_syscall_native_exempt_and_kill_arity"
 exit 0

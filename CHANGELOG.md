@@ -220,12 +220,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Output is byte-identical: x86 on `tests/tcyr/crossos` + `programs/` (235 files), aarch64 on the
   crossos corpus (150).
   The guide's aarch64 syscall rules say so (rule 2). **Verification:** new gate
-  `tests/gates/diagnostics/raw_syscall_native_exempt_and_kill_arity.sh` (18 rows: seven native
+  `tests/gates/diagnostics/raw_syscall_native_exempt_and_kill_arity.sh` (19 rows: eight native
   shapes silent — `#ifdef`, an enum constant, `#ifndef CYRIUS_ARCH_X86`, the `#else` of
-  `#ifdef CYRIUS_ARCH_X86`, `#ifplat aarch64`, a whole included file under the guard; six
+  `#ifdef CYRIUS_ARCH_X86`, `#ifplat aarch64`, a call whose next token lies past its `#endif` (the
+  scan is anchored on the call's own `)`), a whole included file under the guard; six
   anti-vacuous rows still warn — after a block, a neutral `#ifdef CYRIUS_TARGET_LINUX`, after an
   included file's block closes, a forged marker, a marker in a string; the 3-arg kill warns on
-  x86-Linux and PE and is silent on x86-macOS, whose 1-arg control still warns; eight mutations,
+  x86-Linux and PE and is silent on x86-macOS, whose 1-arg control still warns; nine mutations,
   each RED, in its header). ⚠ cybs refuses a CALL with more than six arguments (a bare `syntax
   error` at seed-derive step 3, measured): `_pp_a64_open` packs its kind and state into one.
 - **Dead code: `FLIT_DEN` and the float-literal table's unused denominator slot (B05, item T8a).**

@@ -1240,7 +1240,9 @@ fn _sc_arity_skip(sc_num, got): i64 {
 fn _sysx_meant_here(S, n): i64 {
     var m = _SYSX_MEANT(n);
     if (m == 0) { return 0; }
-    if (PP_A64_NATIVE_AT(S, GTOFF(S, GTI(S))) == 1) { return 0; }
+    # The call's own closing `)` (the cursor is one past it): the token after it may sit
+    # beyond the `#endif` that closes the region.
+    if (PP_A64_NATIVE_AT(S, GTOFF(S, GTI(S) - 1)) == 1) { return 0; }
     return m;
 }
 
