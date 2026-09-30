@@ -953,8 +953,12 @@ fn _defer_zero_flags(S): i64 {
 fn _defer_emit_init(S, init_jmp, body_cp): i64 {
     var dc = L64(S + 0x1AC020);
     if (dc > _defer_base) {
-        vec_push(rp_vec, EJMP0(S));
+        # The body's fall-through jumps round the trampoline to the return landing. Only a
+        # plain fn / closure needs it: a coroutine's body end is already routed there (PARSE_FN_DEF),
+        # and the resume dispatch before this ends in an unconditional jmp, so the jmp was
+        # unreachable (`e9 00000000`). CHANGELOG [6.6.12]
         if (_cur_fn_coro == 0) {
+            vec_push(rp_vec, EJMP0(S));
             EPATCH(S, init_jmp);
             _defer_zero_flags(S);
             EJMP(S, body_cp);

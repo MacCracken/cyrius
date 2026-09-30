@@ -236,6 +236,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   self-compile). Output byte-identical on x86, aarch64 and cx (213 / 163 / 163 files including
   `tests/tcyr/math`); `float_literal_precision.tcyr` and the `_FLIT_CAP` row of
   `integer_literal_overflow_refused.sh` exercise the new stride.
+- **Dead code: an unreachable `jmp +0` after every coroutine's resume dispatch (B05, item T8b).**
+  **Root cause:** `_defer_emit_init` (`src/frontend/parse.cyr`) pushed the body's fall-through
+  `jmp` for every fn with defers before testing `_cur_fn_coro`; for a coroutine it runs right after
+  the resume dispatch, which ends in an unconditional `jmp` to the body top, and the coroutine's
+  body end is already routed to the return landing — so an `async fn` with a `defer` carried a dead
+  `e9 00000000`. **Fix:** the jmp is pushed only on the plain-fn / closure path, where the flag
+  trampoline actually follows the body. x86-family only (aarch64 and cx refuse a mid-body
+  suspend). **Verification:** axis M of `tests/gates/frontend/coroutine_fnptr_and_completion.sh`
+  (hand-off to lane H: the byte pattern "backward rel32 jmp, then `jmp +0`" must not occur in a
+  defer + await coroutine; RED on the pre-fix compiler); both coroutine gates green; output of
+  every non-coroutine program byte-identical (279 files).
 
 ## [6.6.11] — 2026-09-29
 
