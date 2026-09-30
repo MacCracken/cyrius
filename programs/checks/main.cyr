@@ -1316,6 +1316,27 @@ fn _perr(cstr): i64 {
     return 0;
 }
 
+# `--tool-path <name>` for a name the driver has no tool for: neither its source nor a
+# build/<name> exists, so `_tool` answers 0 without a row of its own. Say so on stderr, naming
+# both places looked in — this path used to exit 1 with nothing on either stream. A KNOWN
+# tool that fails to compile is not this case: its FAIL row is already printed by
+# `_tool_build`. Gate: tests/gates/toolchain/check_driver_builds_its_tools.sh axis 7.
+# CHANGELOG [6.6.12]
+fn _tool_path_unknown(name): i64 {
+    var src = _tool_src(name);
+    if (file_exists(_root_path(src)) == 1) { return 0; }
+    var bp = _cat2("build/", name);
+    if (file_exists(_root_path(bp)) == 1) { return 0; }
+    _perr("error: --tool-path: no tool named '");
+    _perr(name);
+    _perr("' (neither ");
+    _perr(src);
+    _perr(" nor ");
+    _perr(bp);
+    _perr(" exists)\n");
+    return 0;
+}
+
 fn _suite_unknown(name): i64 {
     _perr("error: unknown check suite '");
     _perr(name);
@@ -1426,7 +1447,8 @@ fn main(): i64 {
             return G_FAIL;
         }
         # `--tool-path <name>`: build ONE of the tools the rows run, exactly as a row would get
-        # it (`_tool`), print `<name> <path>` and exit 0 — or exit 1 when it is unavailable.
+        # it (`_tool`), print `<name> <path>` and exit 0 — or exit 1 when it is unavailable
+        # (an UNKNOWN name is said so on stderr, `_tool_path_unknown`; CHANGELOG [6.6.12]).
         # How tests/gates/toolchain/check_driver_builds_its_tools.sh proves all nine come from
         # this run's private dir, never from build/ or ~/.cyrius/bin. CHANGELOG [6.6.10]
         if (streq(argv(sel_idx), "--tool-path") == 1) {
@@ -1434,7 +1456,10 @@ fn main(): i64 {
             var tp = _tool(tn);
             if (tp != 0) { _p(tn); _p(" "); println(tp); }
             _run_tmp_cleanup();
-            if (tp == 0) { return 1; }
+            if (tp == 0) {
+                _tool_path_unknown(tn);
+                return 1;
+            }
             return G_FAIL;
         }
         # `--output-row <name>`: one output-comparison row (`_expected_output_gate`) over
