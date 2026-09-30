@@ -6,6 +6,31 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.12] — 2026-09-30
 
+### Security
+
+- **CVE-58: cxvm guest bytecode could write cxvm's host memory (B06, item Q6).** **Root cause:**
+  `programs/cxvm.cyr` checked nothing a guest controls. Every load/store was `_cx_mem + reg`, so a
+  guest address past the 1 MB data segment (or negative) read and wrote cxvm's own heap — the register
+  file, the stacks, the loaded code — and guest address 0, the in-memory copy of the bytecode, stored
+  silently (`store64(0, 5)` exited 9 on cxvm, 139 on x86). The 1024-entry call stack had no bound, so
+  the 513th nested frame overwrote the loaded code (non-tail depth 1000 gave rc 231, 5000 gave 135); the
+  data stack likewise. `read`/`write`/`getrandom`/`clock_gettime` buffers were translated with no
+  range check, so `read(0, buf, n)` with `buf + n` past 1 MB had the HOST kernel write cxvm's heap. An
+  unknown opcode was a silent no-op (no trailing arm), and a negative pc decoded host memory as code.
+  **Fix:** every load/store goes through `_cx_addr`, which traps unless the whole access lies in
+  `[8, _CX_MEM_SIZE)`; the translated syscall buffers are range-checked for their full length (a path up
+  to its NUL) and answer `-EFAULT` without reaching the host; both VM stacks trap on overflow and
+  underflow and hold 65536 entries (512 KiB each), so the guest's own 1 MB, not the host arrays, bounds
+  recursion (depth 1000 and 5000 now return the right value); `sub sp` traps before the guest stack
+  reaches the loaded image (its globals and `lib/alloc_cx.cyr` heap); a negative pc traps; an unknown
+  opcode traps. Each trap prints `cxvm: <what> <value> at pc <N>` (`cxvm: unknown opcode 0xNN at pc
+  <N>`) and exits 1. No `.cyx` format bump (default taken): a newer `.cyx` on an older cxvm is refused
+  only by the new cxvm's trap. The syscall opcode still passes every other number to the host raw, so
+  cxvm stays "not a sandbox"; `docs/platform-status.md` "cyrius-x guest contract" is restated. **Held
+  by** `tests/gates/codegen/cx_tailcall_and_vm_traps.sh` axes B, C and D (24 rows with A and E; every
+  trap reddened by its own revert, and with the call-stack bound removed the overflow row reports
+  `unknown opcode 0x04` — the stack writing the loaded code, the CVE in one row).
+
 ### Fixed
 
 - **cx: `thread_join` issued FUTEX_WAIT for a nonzero handle (B06, item S-B4).** **Root cause:** 6.6.11
