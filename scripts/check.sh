@@ -1503,6 +1503,9 @@ _chk_gate "$ROOT/tests/gates/toolchain/walkers_fail_closed_unreadable_dir.sh"
 # `_src_decls` (the reader coverage and distlib use): pub/public, attributes, indentation,
 # fn<TAB>, generics, pub/secret var, destructures, enums + members, structs — and nothing in a
 # comment, a string or a fn body; files read whole (past 1 MiB). The 6.6.9 LSP fails 15 of 25.
+# 6.6.12 (B11, S3), axis 5: the symbol index has no silent cap — the last of 6000 long-named fns
+# in one include, a fn in the 300th included file and sigil's last fn all resolve (the 6.6.11
+# LSP's fixed row / names / paths / file caps answered null past the cut).
 _chk_gate "$ROOT/tests/gates/toolchain/lsp_indexes_every_decl_spelling.sh"
 
 # 6.6.7 (bite 10) — the NEXT version-bump can rewrite every document anchor in the live tree.
