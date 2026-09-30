@@ -196,6 +196,38 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   not build, passing `pair = 0` dies rc 139); `tests/gates/frontend/call_result_field.sh` gains
   G1-G3 (the top-level struct-returning refusal, with and without a field, and the `#must_use`
   warning; 6.6.11 fails all three; 15 → 18 rows).
+- **A wrong 3-arg `kill` compiled silently on x86-Linux, and the ELF-aarch64 raw-literal warning
+  flagged a correct native number (B05, item Q2).** **Root cause (arity):** the 6.6.10 skip for
+  Darwin's `kill(pid, sig, posix)` (`if (sc_num == 62) { if (got == 3) ..`) had no target check,
+  and the Linux arity table runs on every non-aarch64 backend, so `syscall(62, pid, sig, x)` lost
+  its `syscall arity mismatch` warning on x86-Linux from 6.6.10 on (6.6.9 warned). **Fix:** the
+  skips move into `_sc_arity_skip(sc_num, got)` (`src/frontend/parse_expr.cyr`, out of
+  `_PARSE_FACTOR_IMPL` for the cybs per-fn cap) and the kill skip is `_TARGET_MACHO == 1` only.
+  **Root cause (native literal):** the raw-literal warning (`_SYSX_MEANT`, v6.5.51) runs in the
+  parser, after the preprocessor has dropped the `#ifdef`, so `syscall(8, ..)` /
+  `syscall(291, ..)` under `#ifdef CYRIUS_ARCH_AARCH64` — getxattr and statx there — was told to
+  "use SYS_LSEEK", and an `enum` spelling folded to the same literal, so there was no way to mark
+  a number native (kriya's `k_statx` and getxattr sites). **Fix:** the preprocessor
+  (`src/frontend/lex_pp.cyr`, both `#ifdef` passes) writes the fact into the stream — the blank
+  line that replaces a directive becomes `#@a+` where a TAKEN branch whose condition implies
+  aarch64 opens (`#ifdef CYRIUS_ARCH_AARCH64`, `#ifplat aarch64`, `#ifndef CYRIUS_ARCH_X86`, the
+  `#else` of their opposites) and `#@a-` where it closes; relative markers, so an included file's
+  own blocks (expanded by a later pass) nest inside an outer region; a marker is never longer than
+  the directive it replaces, so the stream stays line-for-line with the source. `_sysx_meant_here`
+  skips the warning for a call inside a region (`PP_A64_NATIVE_AT`, a scan run only when the
+  warning would otherwise print). Source text spelling a marker is neutralised by `PP_NEUT_FMARK`
+  like a forged `#@file`. Same frame rule as `tests/gates/platform/raw_syscall_literals_routed.sh`.
+  Output is byte-identical: x86 on `tests/tcyr/crossos` + `programs/` (235 files), aarch64 on the
+  crossos corpus (150).
+  The guide's aarch64 syscall rules say so (rule 2). **Verification:** new gate
+  `tests/gates/diagnostics/raw_syscall_native_exempt_and_kill_arity.sh` (18 rows: seven native
+  shapes silent — `#ifdef`, an enum constant, `#ifndef CYRIUS_ARCH_X86`, the `#else` of
+  `#ifdef CYRIUS_ARCH_X86`, `#ifplat aarch64`, a whole included file under the guard; six
+  anti-vacuous rows still warn — after a block, a neutral `#ifdef CYRIUS_TARGET_LINUX`, after an
+  included file's block closes, a forged marker, a marker in a string; the 3-arg kill warns on
+  x86-Linux and PE and is silent on x86-macOS, whose 1-arg control still warns; eight mutations,
+  each RED, in its header). ⚠ cybs refuses a CALL with more than six arguments (a bare `syntax
+  error` at seed-derive step 3, measured): `_pp_a64_open` packs its kind and state into one.
 
 ## [6.6.11] — 2026-09-29
 

@@ -3800,6 +3800,12 @@ The rules, in order:
    \`inotify_init1\`; on ELF-aarch64 that number is …`), *provided both Linux peers declare a
    `SYS_*` for it*. An UNNAMED number gets no diagnostic at all — that is the gap v6.6.5
    closed, and it is why rule 1 comes first.
+   Since v6.6.12 the report is **not** made for a call inside a region compiled only for
+   aarch64 — the taken side of `#ifdef CYRIUS_ARCH_AARCH64` / `#ifplat aarch64`, of
+   `#ifndef CYRIUS_ARCH_X86`, or the `#else` of their opposites — because a number there is
+   the native one by construction (`syscall(8, ..)` IS getxattr), whether spelled as a
+   literal or through an `enum` constant. That silences a wrong "use SYS_LSEEK"; it does not
+   make such a number safe — rule 3 still applies.
 3. **Never write the aarch64-native number under an `#ifdef CYRIUS_ARCH_AARCH64`.** It looks
    like the careful thing to do and it is the fragile one: a compat row matches a NUMBER and
    cannot tell your native number from the x86 number it is chasing, so a routing row added

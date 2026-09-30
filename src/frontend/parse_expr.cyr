@@ -1182,6 +1182,68 @@ fn _explicit_generic_call(S, noff, fi): i64 {
     return 0;
 }
 
+# 1 = `syscall(sc_num, ..)` with `got` user arguments is a KNOWN cross-target shape, not an
+# arity mismatch: the Linux x86_64 arity table below cannot see which peer a wrapper belongs
+# to. Split out of _PARSE_FACTOR_IMPL (6.6.12) so the target gate on the kill shape costs that
+# body no global reference.
+fn _sc_arity_skip(sc_num, got): i64 {
+    # Skip the warning when this is the cross-arch
+    # openat shape: syscall(SYS_OPEN=2, AT_FDCWD, path,
+    # flags, mode) — 4 user args instead of open()'s 3.
+    # Source: arch-conditional wrappers in
+    # lib/syscalls_*_linux.cyr and src/frontend/lex.cyr
+    # keep both open()/openat() shapes for cross-arch
+    # source compatibility; the dead branch on the
+    # running arch is not a bug. Open() is never called
+    # legitimately with 4 user args, so the structural
+    # match is unambiguous.
+    var skip_warn = 0;
+    if (sc_num == 2) { if (got == 4) { skip_warn = 1; } }
+    # v5.8.54: same cross-arch number-reuse pattern as
+    # SYS_OPEN above. Linux x86_64 SYS_SETUID = 113 (1
+    # arg); Linux aarch64 SYS_CLOCK_GETTIME = 113 (2
+    # args: clock_id + timespec_ptr — `syscall(113, 1,
+    # &ts)` in cyrius syntax = 3 cyrius-args, got=2).
+    # Surfaced by `src/backend/aarch64/fixup.cyr`'s
+    # `_prof_clock_ns()` helper; warning fired on every
+    # aarch64 cross-build. setuid is never legitimately
+    # called with 2 user args, so the structural match
+    # is unambiguous (same logic as the SYS_OPEN skip).
+    if (sc_num == 113) { if (got == 2) { skip_warn = 1; } }
+    # 6.6.10: Darwin's kill is kill(pid, sig, posix). lib's sys_kill passes
+    # posix = 0 explicitly on macOS (a stale third register made kill(-pgid)
+    # answer EPERM or ESRCH at random), and this Linux table then warned on
+    # every x86-macOS build. Linux kill never takes 3 user args, so the
+    # structural match is unambiguous (the 113 shape). CHANGELOG [6.6.10]
+    # ⛔ 6.6.12: DARWIN ONLY. The skip had no target check, and this arity check runs on every
+    # non-aarch64 backend, so a wrong 3-arg kill compiled SILENTLY on x86-Linux and PE from
+    # 6.6.10 on (6.6.9 warned). arm64-macOS never reaches here (_AARCH64_BACKEND).
+    if (_TARGET_MACHO == 1) { if (sc_num == 62) { if (got == 3) { skip_warn = 1; } } }
+    # v6.0.48: agnos uses NATIVE syscall numbers (0-33) that
+    # collide with Linux numbers at different arities (agnos
+    # getpid=2 vs Linux open=2/3-args; agnos exit=0 vs Linux
+    # read=0/3-args; ...). This arity table is Linux-only, so
+    # it false-positives on every agnos syscall;
+    # lib/syscalls_x86_64_agnos.cyr is the authority.
+    if (_TARGET_AGNOS == 1) { skip_warn = 1; }
+    return skip_warn;
+}
+
+# `_SYSX_MEANT(n)` — the x86_64 name of a raw number that means something else on
+# ELF-aarch64 — unless the call sits inside a native-aarch64 region (`#ifdef
+# CYRIUS_ARCH_AARCH64`, `#ifndef CYRIUS_ARCH_X86`, ...), where the number is the native one
+# by construction: the preprocessor marks those regions (PP_A64_NATIVE_AT,
+# src/frontend/lex_pp.cyr). Same frame rule as tests/gates/platform/
+# raw_syscall_literals_routed.sh applies to lib/. The table is a `return 0` stub off the
+# aarch64 backend, so the scan runs only where a warning would otherwise print.
+# CHANGELOG [6.6.12]
+fn _sysx_meant_here(S, n): i64 {
+    var m = _SYSX_MEANT(n);
+    if (m == 0) { return 0; }
+    if (PP_A64_NATIVE_AT(S, GTOFF(S, GTI(S))) == 1) { return 0; }
+    return m;
+}
+
 fn _PARSE_FACTOR_IMPL(S): i64 {
     var typ = PEEKT(S);
     SPSC(S, 0);
@@ -1794,7 +1856,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         # its own routing diagnostic above.
         if (_TARGET_MACHO == 0) {
             if (sc_num >= 0) {
-                var sxm = _SYSX_MEANT(sc_num);
+                var sxm = _sysx_meant_here(S, sc_num);   # 6.6.12: 0 inside a native aarch64 #ifdef
                 if (sxm != 0) {
                     syscall(SYS_WRITE, 2, "warning:", 8);
                     _err_head(S);
@@ -2642,43 +2704,9 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                 if (expect >= 0) {
                     var got = argc - 1;
                     if (got != expect) {
-                        # Skip the warning when this is the cross-arch
-                        # openat shape: syscall(SYS_OPEN=2, AT_FDCWD, path,
-                        # flags, mode) — 4 user args instead of open()'s 3.
-                        # Source: arch-conditional wrappers in
-                        # lib/syscalls_*_linux.cyr and src/frontend/lex.cyr
-                        # keep both open()/openat() shapes for cross-arch
-                        # source compatibility; the dead branch on the
-                        # running arch is not a bug. Open() is never called
-                        # legitimately with 4 user args, so the structural
-                        # match is unambiguous.
-                        var skip_warn = 0;
-                        if (sc_num == 2) { if (got == 4) { skip_warn = 1; } }
-                        # v5.8.54: same cross-arch number-reuse pattern as
-                        # SYS_OPEN above. Linux x86_64 SYS_SETUID = 113 (1
-                        # arg); Linux aarch64 SYS_CLOCK_GETTIME = 113 (2
-                        # args: clock_id + timespec_ptr — `syscall(113, 1,
-                        # &ts)` in cyrius syntax = 3 cyrius-args, got=2).
-                        # Surfaced by `src/backend/aarch64/fixup.cyr`'s
-                        # `_prof_clock_ns()` helper; warning fired on every
-                        # aarch64 cross-build. setuid is never legitimately
-                        # called with 2 user args, so the structural match
-                        # is unambiguous (same logic as the SYS_OPEN skip).
-                        if (sc_num == 113) { if (got == 2) { skip_warn = 1; } }
-                        # 6.6.10: Darwin's kill is kill(pid, sig, posix). lib's sys_kill passes
-                        # posix = 0 explicitly on macOS (a stale third register made kill(-pgid)
-                        # answer EPERM or ESRCH at random), and this Linux table then warned on
-                        # every x86-macOS build. Linux kill never takes 3 user args, so the
-                        # structural match is unambiguous (the 113 shape). CHANGELOG [6.6.10]
-                        if (sc_num == 62) { if (got == 3) { skip_warn = 1; } }
-                        # v6.0.48: agnos uses NATIVE syscall numbers (0-33) that
-                        # collide with Linux numbers at different arities (agnos
-                        # getpid=2 vs Linux open=2/3-args; agnos exit=0 vs Linux
-                        # read=0/3-args; ...). This arity table is Linux-only, so
-                        # it false-positives on every agnos syscall;
-                        # lib/syscalls_x86_64_agnos.cyr is the authority.
-                        if (_TARGET_AGNOS == 1) { skip_warn = 1; }
-                        if (skip_warn == 0) {
+                        # The cross-arch number-reuse shapes that are not a mismatch: see
+                        # _sc_arity_skip (out of this fn: the cybs per-fn cap). CHANGELOG [6.6.12]
+                        if (_sc_arity_skip(sc_num, got) == 0) {
                             WARN(S, "syscall arity mismatch", 22);
                         }
                     }
