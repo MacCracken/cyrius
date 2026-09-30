@@ -38,9 +38,9 @@ unscheduled 6.x backlog. Whole-cycle framing plus v6.7.x/v6.8.x live in
 
 ## Where we are
 
-**Current head: v6.6.12** (2026-09-30) — cycc **1,437,168 B** (`.text` **1,265,408**) ·
-seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi · self_compile **849 ms** ·
-**403** `.tcyr` (**149** in `crossos/`) · **104** `lib/*.cyr` · **305** shell gates under
+**Current head: v6.6.12** (2026-09-30) — cycc **1,470,944 B** (`.text` **1,297,064**) ·
+seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi · self_compile **839 ms** ·
+**410** `.tcyr` (**153** in `crossos/`) · **104** `lib/*.cyr` · **316** shell gates under
 `tests/gates/<bucket>/` · **0 open issues** · **6 open proposals**.
 
 > ⚠ **Every figure above was DERIVED on the day, not carried** (re-derived 2026-09-27 at the 6.6.7 open).
@@ -56,161 +56,12 @@ window: 6.6.1 closed the issue queue, 6.6.2/6.6.3 repaired what the ecosystem sw
 27-bite follow-on (five lanes; see CHANGELOG). **The repair window is CLOSED.** Per-release detail is in the
 CHANGELOG; do not re-add shipped slots here.
 
----
-
-## The 6.6.7 → 6.6.12 batch (planned 2026-09-27; 6.6.10–6.6.12 added by the user 2026-09-28/29; CLOSED at 6.6.12)
-
-After the 6.6.6 tag the ecosystem filed **28 new issues** in a week (agnodrm, agnostik, kybernet, daimon,
-patra, sigil, kavach, tyche, hisab, samay, sakshi, vani, libro, aethersafha, agnos), on top of the two
-6.6.6 left open and the ten-item tail it deliberately did not pack. **The user split that track across three
-releases so each batch stays small** (6.6.6 was 27 bites and 193 commits — too big).
-
-Every item was premise-checked against live code at `99a03056` and then adversarially re-verified by a
-second, independent agent (15 themed clusters). That pass confirmed all 30 filings still open, and it
-also turned up **~40 defects of the SAME classes at sites nobody had filed**: a nested-fn emitter that
-drops the enclosing fn's pending returns, `-1.0` evaluating to `-4.0`, an unrouted arm64-macOS syscall that
-re-runs a stale `x16`, and lint walkers that score a crashed tool as clean. Under *"an audit's output is
-fixes, not a backlog"* those are placed INTO the bite that owns their class, not filed. Six items were
-found already shipped or wholly a sibling's (see *Not placed*).
-
-### Rules for these releases
-
-- ⛔ **Releases are strictly sequential.** 6.6.8 does not start until 6.6.7 is tagged, and the same for
-  6.6.9. **Parallelism happens only INSIDE a release**: independent bites run in git-worktree **lanes**, and
-  each lane owns its files outright (one owner per shared file per release, listed below).
-- **One implementer + one reviewer per bite, reviewing THE BITE.** ⛔ Since 2026-09-29 (user: "6.6.x is not
-  just find all the bugs when fixing bugs"): a reviewer's out-of-scope find goes to the *Potential backlog*,
-  never automatically into a later release — only the user promotes it. Agents do not sweep the tree for
-  unrelated defects; they report a severe one met in passing (security, silent corruption) in one line.
-- **At most two `src/` lanes per release, and only ONE of them commits `build/cycc`.** The other commits
-  source only; the binary is rebuilt once, at the merge, with fixpoint + seed-derive.
-  `build/cycc-native-aarch64` is regenerated ONCE on the merged tree (`cyrius pulsar`, release-gate
-  step 1b).
-- **A per-lane green is not a merged green** (the 6.6.6 lesson: five green lanes merged into four
-  failures). `check.sh`, seed-derive, ARM lockstep, cross-OS on ecb/ach/cass/pi, agnos-qemu where named,
-  and the bench all run on the MERGED tree, with the box quiet (`check.sh` goes RED under load until
-  6.6.8 bite 8 makes deadline kills say so).
-- **CVE ids**: 6.6.7 spends **CVE-46** (bite 1 — a `secret var` in a closure body was never
-  zeroised), **CVE-47** (bite 2) and **CVE-48** (bite 4); 6.6.9 spent **CVE-49** (bite 10) and **CVE-50** (bite 12, the `lib/http.cyr` request overflow); 6.6.10 spends **CVE-51**, **CVE-52** and **CVE-53**. Each
-  bite bumps the CLAUDE.md counter in the same commit. *(This line first planned CVE-46 for bite 2;
-  bite 1's audit finding spent it first, so every later id moved up one.)*
-
-### 6.6.7 — SHIPPED 2026-09-28 (tag `6.6.7` @ `f07395ce`)
-
-All ten bites shipped as planned, in six worktree lanes merged into main; detail is in
-`CHANGELOG.md` [6.6.7]. The twelve filed issues it fixed are archived (the daimon clock one by
-its bite); each filed repro was re-run on the merged tree. It spent **three** CVE ids, not two:
-**CVE-46** (a closure's `secret var` was never zeroised — bite 1), **CVE-47** (a `secret var`
-skipped on a tail return — bite 2), **CVE-48** (on agnos a 127.0.0.1 server listened on the
-network — bite 4); 6.6.9's planned CVE is therefore **CVE-49**.
-
-⚠ **The merge again found what no lane could** (the 6.6.6 lesson, repeated): each lane's
-`check.sh` was green, and the merged tree went red three ways — bite 7 sized an array by an enum
-that the fold lane's larger bundles pushed past var index 1024 (6.6.8 bite 1's cap), bite 7's
-new derived clock axis caught bite 4's unchecked #95 read, and bite 7's gate expected a
-`syscall` adjacent to its number where bite 4 now zeroes `r10` in between.
-
-**⛔ Sibling releases the fold took, by commit — tag each at that commit BEFORE the cyrius 6.6.7
-tag:** sandhi **1.10.1** `f93d035` (cut during the fold: macOS EAGAIN is 35, and PE had been
-borrowing yukti's `SYS_SOCKET`), vani **1.2.7** `5cdd402`, sigil **3.13.3** `92a5042`, yukti
-**2.3.13** `ff97eec`, mabda **4.1.5** `2a9f67c`. sakshi 2.5.5, patra 1.15.0, niyama 1.0.12 and
-bayan 1.5.7 were folded from their existing tags.
-
-### 6.6.8 — SHIPPED 2026-09-28 (tag `6.6.8` @ `68eb2661`, a re-cut after CI's Test (AGNOS) job went red on the first tag)
-
-All eleven bites shipped (bite 1b — the nested-emitter and derive follow-ups — included), in six
-worktree lanes merged into main; detail in `CHANGELOG.md` [6.6.8]. The seven filed issues it fixed
-are archived by their bites. No CVE was spent. **Sibling releases the fold took, by commit — tag
-each BEFORE the cyrius 6.6.8 tag:** yukti **2.3.14** `bcc8cb0` (ppoll declines on macOS) and
-ganita **1.2.7** `3c15403` (`pow` follows C99 Annex F).
-
-⚠ **The merge found two more lane interactions, again invisible per lane:** bite 7's new
-`agnos_process_peer_parity` gate required agnos peers for five host verbs bite 8 added in another
-lane, and bite 8's new `check_gate_census` ratchet (gates hard-coding `CC`, measured at 74 on its
-own lane) saw 80 once six other lanes' new gates arrived — converted to `${CYCC:-…}` rather than
-raising a ratchet that only goes down.
-
-⚠ **aarch64 size tax measured at the merge:** `build/cycc-native-aarch64` `.text` +82,952 B — bite 3's
-nine ESYSXLAT rows copied into each of 605 syscall sites (backlog: a shared translation stub).
-
-### 6.6.9 — SHIPPED 2026-09-28 (tag `6.6.9` @ `a5f6691e`)
-
-All twelve bites shipped (bite 12 — `lib/http.cyr`, CVE-50 — added by the user from the 6.6.8 review
-finds); detail in `CHANGELOG.md` [6.6.9]. The last ten filed issues are fixed and archived — the open
-issue queue is empty. **CVE-49** (bite 10) and **CVE-50** (bite 12); the next free id is 51. No sibling
-release. self_compile −17 % (bite 1's global-name index).
-
-⚠ **Merge lessons, third release running:** bite 7 (stdlib self-sufficiency) needed two small hunks in
-files lane S2 owned, which S2's bite never picked up — the lane handed over a verified patch instead of
-crossing its ownership line, applied at integration; and that same self-sufficiency made a gate's
-"file that cannot resolve" fixture (a copy of `lib/fs.cyr`) resolve. When a plan gives one lane's
-bite a dependency on another lane's file, name the hand-off in BOTH lanes' specs.
-
-### 6.6.10 — SHIPPED 2026-09-29 (tag `6.6.10` @ `20240fd8`)
-
-All seventeen bites shipped; detail in `CHANGELOG.md` [6.6.10]. **CVE-51** (x86-macOS clock stray write),
-**CVE-52** (stray `@`), **CVE-53** (`ws_recv_frame`); the next free id is 54. Nine sibling patch releases
-(tag list in `state.md`). The merge had no conflicts — one lane owned every gate registration and every
-cross-lane hunk travelled as a named hand-off patch. ⚠ Remaining merge lesson: a ratchet's "final pass"
-(the cross-compile allowlist, the alloc census, the gate census) cannot run inside a lane that works in
-parallel with the lanes it measures — it is an integration step, and it is now done there.
-
-### 6.6.11 — SHIPPED 2026-09-30 (tag `6.6.11` @ `a6aa3375`)
-
-All fourteen bites shipped; detail in `CHANGELOG.md` [6.6.11]. **CVE-54** (on Windows the resolver read a
-drive-relative `C:\etc\hosts`) and **CVE-55** (a multi-line string literal defeated `private`); the next
-free id is 56. Sibling releases: sandhi 1.10.3 and ganita 1.2.9 folded; stiva 3.0.21, mehman 1.0.4, libro
-2.10.4, bote 3.3.14, dhvani 2.2.5 and agnosai 2.1.1 not vendored (commits and tag order in `state.md`).
-J5b took the smaller option: `tls` / `tls_native` / `sigil` are refused by name on cx. The merge had one
-conflict (two lanes' additions to the same cross-OS leg, both kept), and one integration fix: a driver
-description carried a `\<LF>` example that B05's own escape rule refuses. The lanes' out-of-scope finds
-went to the backlog below and to the sibling follow-ups — not into 6.6.12.
-
-### 6.6.12 — CLOSED 2026-09-30 (awaiting the tags); the repair batch ENDS here
-
-All twenty bites shipped; detail in `CHANGELOG.md` [6.6.12]. **CVE-56** (`log_info_kv` stack overflow),
-**CVE-57** (the folded sandhi resolver read a plantable `C:\etc\resolv.conf` on Windows) and **CVE-58**
-(cxvm guest bytecode wrote the interpreter's own memory); the next free id is 59. Seventeen sibling patch
-releases — seven folded, ten consumers (commits and the tag order in `state.md`). R4 shipped (typed-array
-subscripts); its remainder is Phase 3 item 3. Not placed: R6, T2, T5, SA3 and SA5 (already fixed or false);
-the agnos fork item is handed to agnos. The merge had no conflicts. ⚠ Process lesson: a reviewer
-hand-extracting a sibling CI step ran its "Install Cyrius toolchain" block against the live `~/.cyrius`
-(the active version flipped to 6.6.10 for a minute; reverted, the slot still equals its tag) — sibling CI
-now runs only through the runner, with `HOME` and `CYRIUS_HOME` pointed at throwaway dirs. The lanes'
-out-of-scope finds went to the backlog below, not into a release. **From 6.6.13 the minor returns to
-Phase 2 (proposals) and Phase 3 (committed ergonomics).**
-
-### Sibling follow-ups found at the 6.6.12 releases (each is that repo's next patch release)
-
-- ⚠ kriya `k_isatty` does TCGETS into a 16-byte `var tio[16]` (termios is 36 B): a stack overrun on
-  every tty probe, a crash on aarch64 (`cp -i`, `mv -i`, `ls` on a terminal) — recorded for kriya 1.7.4,
-  which also adopts 6.6.12's aarch64 wrappers after the cyrius tag.
-- bayan `_toml_unescape_span_a` answers a refused allocation with `str_from("")` from the DEFAULT
-  allocator, so its value arms report an empty string as success.
-- mabda still names `_sk_info_cstr` in sakshi's `_sk_` namespace (no collision today).
-- sakshi's "Run under qemu" step calls `qemu-aarch64-static`, which exists only after its apt step.
-- bote still commits live `path = "../libro"` / `"../majra"` lines (the dhvani/libro shape 6.6.12 removed).
-- aethersafha: 21 files not `cyrius fmt`-clean on 6.6.11 (its CI has no fmt step); duplicate-fn warnings
-  between sigil and the agnostik / agnodrm bundles (`_hex_nibble`, `result_print_err`, …).
-- sankhya's README / CLAUDE.md name varna 2.1.0 / itihas 2.4.0 / avatara 2.9.0; its 3.0.2 lock pins
-  2.4.1 / 2.5.0 / 2.14.8.
-
-### Not placed in 6.6.7–6.6.9
-
-- **Already shipped** (their roadmap bullets are removed below): lexer attribute prefix (6.6.6 bite 5),
-  preprocessor directives in strings (6.6.6 bite 4), top-level block closure (6.6.6 bite 3), `cyrius-init`
-  on Windows (6.6.6 bite 6), distlib leaf OOM (6.6.3).
-- **DCE compaction on PE / x86 Mach-O / aarch64** — the XL arc below (formerly repair slot `.4`–`.5`).
-  **Default: the anchor `src` lane of the release after 6.6.9.**
-- **The two 2026-09-20 proposals** (coverage over run programs; fuzz poison through an allocator seam) — Phase 2
-  (P5, P6). Their prerequisite defects ship in 6.6.8 bite 9 and 6.6.7 bite 8.
-- **ESYSXLAT emits its whole translation chain INLINE at every aarch64 syscall site** — measured at the 6.6.8
-  merge: `build/cycc-native-aarch64` `.text` 1,495,592 → 1,578,544 B (+82,952 over 605 `svc` sites, ~137 B
-  per site) because 6.6.8 bite 3 added nine rows and every row is copied into every site. Every aarch64
-  program pays it, and each new row makes it worse. A shared translation stub (one call per site) would
-  cut it to a few bytes a site. Correct today; a size tax, so it is placed here rather than in a release.
-- **Fold bundles that are raw-includable** — an XL cross-repo campaign (a distlib change released first, then
-  ten sibling regenerations, then a re-vendor); backlog, below.
+**v6.6.7–v6.6.12 were the repair batch** (2026-09-27 → 2026-09-30, CLOSED): the 30 issues filed after
+6.6.6, split by the user across three releases, then each release's own review finds, which the user
+placed into 6.6.10–6.6.12 — and 6.6.12 also took the backlog's repair items and every sibling follow-up.
+It spent **CVE-46 … CVE-58** (the next free id is 59) and shipped each release together with the sibling
+patch releases it needed. Per-release detail is in the CHANGELOG; the process rules it settled are in
+*Standing notes* below. **From 6.6.13 the minor returns to Phase 2 and Phase 3.**
 
 ---
 
@@ -219,8 +70,8 @@ Phase 2 (proposals) and Phase 3 (committed ergonomics).**
 | Phase | Slots | What goes here |
 |---|---|---|
 | **1 — Repair window** | `.2` – `.6` | ✅ **CLOSED at 6.6.6.** |
-| **1b — the consumer batch** | `.7` – `.9` | The 6.6.7 → 6.6.9 batch above. |
-| **2 — Proposals** | after the batch | The open proposals, sequenced by their own stated prerequisites. |
+| **1b — the repair batch** | `.7` – `.12` | ✅ **CLOSED at 6.6.12** (summary in *Where we are*). |
+| **2 — Proposals** | from `.13` | The open proposals, sequenced by their own stated prerequisites. |
 | **3 — Committed ergonomics** | after proposals | The v6.6.x "best of the best" language-import list, carried in from `roadmap_6.md`. |
 
 ---
@@ -397,6 +248,26 @@ the trust model and the single-pass design), a general const-eval VM, exceptions
 
 ---
 
+## Sibling follow-ups — open (each is that repo's next patch release)
+
+Found at the 6.6.12 releases. A sibling's fix ships as that repo's own patch release, pinned to a released
+cyrius; a folded stdlib is then re-vendored into `lib/` byte-identical from its tag.
+
+- ⚠ kriya `k_isatty` does TCGETS into a 16-byte `var tio[16]` (termios is 36 B): a stack overrun on
+  every tty probe, a crash on aarch64 (`cp -i`, `mv -i`, `ls` on a terminal) — recorded for kriya 1.7.4,
+  which also adopts 6.6.12's aarch64 wrappers after the cyrius tag.
+- bayan `_toml_unescape_span_a` answers a refused allocation with `str_from("")` from the DEFAULT
+  allocator, so its value arms report an empty string as success.
+- mabda still names `_sk_info_cstr` in sakshi's `_sk_` namespace (no collision today).
+- sakshi's "Run under qemu" step calls `qemu-aarch64-static`, which exists only after its apt step.
+- bote still commits live `path = "../libro"` / `"../majra"` lines (the dhvani/libro shape 6.6.12 removed).
+- aethersafha: 21 files not `cyrius fmt`-clean on 6.6.11 (its CI has no fmt step); duplicate-fn warnings
+  between sigil and the agnostik / agnodrm bundles (`_hex_nibble`, `result_print_err`, …).
+- sankhya's README / CLAUDE.md name varna 2.1.0 / itihas 2.4.0 / avatara 2.9.0; its 3.0.2 lock pins
+  2.4.1 / 2.5.0 / 2.14.8.
+
+---
+
 ## Potential backlog — 6.x-cycle, unscheduled (NOT parked to 7.x)
 
 Real 6.x-line work without a committed slot; pulled into a release the moment a consumer or
@@ -445,6 +316,11 @@ priority surfaces. **These are technical items → they stay in the 6.x cycle, n
     fstat, 55 → getsockopt). Unchanged from 6.6.11 (the raw-literal warning only covers untranslated
     numbers); the native spelling is the 1000+N alias (6.6.12 B09). A region-aware warning for translated
     rows is open.
+- **ESYSXLAT emits its whole translation chain INLINE at every aarch64 syscall site** — measured at the 6.6.8
+  merge: `build/cycc-native-aarch64` `.text` 1,495,592 → 1,578,544 B (+82,952 over 605 `svc` sites, ~137 B
+  per site) because 6.6.8 bite 3 added nine rows and every row is copied into every site. Every aarch64
+  program pays it, and each new row makes it worse. A shared translation stub (one call per site) would
+  cut it to a few bytes a site. Correct today; a size tax, so it is placed here rather than in a release.
 - **`lib/net.cyr` §4 — per-arch socket syscall peers.** The issue is ARCHIVED (`✅ RESOLVED
   v6.5.7 + v6.5.11`) and was closed deliberately without its §4, so the sharp edge is gone but
   the work is unshipped: `lib/net.cyr` still carries bare x86 numbers with `grep -c CYRIUS_ARCH`
@@ -552,6 +428,28 @@ this section had carried it as "never built" for thirty releases.)*
 
 ## Standing notes — traps this minor must not re-learn
 
+- **How a batched release runs (settled across 6.6.5–6.6.12).** Releases are strictly sequential;
+  parallelism happens only INSIDE one, in git-worktree lanes where each file has exactly one owning lane
+  and every cross-lane hunk travels as a named hand-off patch that lands at a named merge step. At most
+  two `src/` lanes, and only one commits `build/cycc`; the binary is rebuilt once on the merged tree
+  (fixpoint + seed-derive), `build/cycc-native-aarch64` once with `cyrius pulsar`. Ratchet and census
+  final passes (`CORPUS_FLOOR`, `CYCC_CEIL`, the alloc census, the cross-compile allowlist, the
+  self-sufficiency floors) are integration steps — a lane working in parallel cannot see the lanes it
+  measures. **A per-lane green is not a merged green**: the full gate runs on the merged tree.
+- **Fixing bugs is not hunting bugs** (user, 2026-09-29). One implementer + one reviewer per bite,
+  reviewing THE BITE; an out-of-scope find goes to the *Potential backlog*, never automatically into a
+  later release — only the user promotes. A severe find met in passing (security, silent corruption) is
+  reported in one line, not swept for.
+- **A CVE id is spent in the commit that records it**, and that commit moves BOTH counters (the
+  September audit file's header and `CLAUDE.md`). 6.6.5's did not, and three reviewers had to report it.
+- **Text handed into a cyrius string literal obeys the 6.6.11 lexer.** A driver `_gate("…")`
+  description carrying a bare `"` or an unknown escape (`\<LF>`, `\q`) stops `programs/checks` compiling —
+  it happened at the 6.6.11 merge. Hand-off text for descriptions must avoid both.
+- **A sibling's CI runs isolated, never by hand-extracted steps.** Use a clean `git archive` copy with
+  `path` deps commented out, a throwaway `CYRIUS_HOME` (a copy of the pinned slot, an EMPTY dep cache) and
+  a throwaway `HOME`. At 6.6.12 a reviewer cut the wrong block out of bote's workflow and ran its
+  "Install Cyrius toolchain" step against the live `~/.cyrius` (the active version flipped to 6.6.10 for a
+  minute). Run the steps with GitHub's shell semantics: `bash -e` unless the workflow says `shell: bash`.
 - **The `PARSE_RETURN` tail path has skipped a `PARSE_FNCALL` transformation FOUR times**:
   v6.3.36 (plain-struct params), v6.4.53 (value-form SIMD params), v6.5.1 (overload dispatch),
   v6.5.2 (the cstring-literal check). Each fixed with the same narrow divert — the `_cfo`
