@@ -42,6 +42,7 @@
 #     cp the tree to $M; edit $M/src/...; build/cycc < $M/src/main.cyr > mut_cycc   (from $M)
 #     CYCC=mut_cycc sh $M/tests/gates/codegen/cx_crossos_rows_run.sh
 # or, against the real tree: CYCC=mut_cycc CYCC_CX=mut_cycc_cx sh tests/gates/codegen/...
+# (relative CYCC / CYCC_CX / CXVM are resolved against the CALLER's directory before the cd)
 # (mut_cycc_cx = build/cycc < $M/src/main_cx.cyr, built from inside $M).
 #
 # MUTATION LEDGER (6.6.12, measured on the merged tree, each in a scratch copy; real tree 12/12)
@@ -65,6 +66,13 @@
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
+# The gate cd's to $ROOT before it runs anything, so a RELATIVE compiler path (the mutation
+# recipe above) is resolved against the caller's CWD here — else it fails as a harness error that
+# reads RED without the mutant ever running: a false catch.
+_abs() { case $1 in /*|'') printf '%s' "$1" ;; *) printf '%s/%s' "$(pwd)" "$1" ;; esac; }
+CC=$(_abs "$CC")
+CYCC_CX=$(_abs "${CYCC_CX:-}")
+CXVM=$(_abs "${CXVM:-}")
 [ -x "$CC" ] || { echo "SKIP: cx_crossos_rows_run — no compiler at $CC (exit 77: a SKIP, not a PASS)"; exit 77; }
 command -v timeout >/dev/null 2>&1 || { echo "SKIP: cx_crossos_rows_run — no timeout(1) (exit 77: a SKIP, not a PASS)"; exit 77; }
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: cx_crossos_rows_run — mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
