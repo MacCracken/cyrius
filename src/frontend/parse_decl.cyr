@@ -2060,6 +2060,72 @@ fn _gv_ufv(S, sti, typed): i64 {
     if (_gfi_base == 0) { return 0; }
     return load8(_gfi_base + vi);
 }
+# ⛔ 6.6.11 — AN UNTYPED `var` COPIED FROM A DECLARED f64 / f32 VALUE STAYED i64. `var t = p.y;`
+# (p.y an f64 field), `var t = y;` (y an f64 local or param) and `var t = G;` (G an f64 global)
+# left `t` untyped, so `t + t` was an INTEGER add of two bit patterns — silent; only `-t` drew
+# kind 3. The v6.5.21 rule (`var t = f();` with f `: f64` types t) now reaches a pure COPY of a
+# declared float: the initialiser is exactly `IDENT` or `IDENT(.IDENT)+` and its value is typed
+# F64/F32. Deliberately NARROW: a literal (`var z = 0.0;`), a float builtin (`f64_sqrt(u)`) and
+# any arithmetic stay untyped — inferring those would turn `==` / `<` on existing code into
+# float compares (NaN, ±0). Returns the type to stamp, else 0. CHANGELOG [6.6.11]
+fn _decl_float_copy(S, ti, end): i64 {
+    var t = GESTYPE(S);
+    if (t != F64_TYID) { if (t != F32_TYID) { return 0; } }
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    ti = ti + 1;
+    while (ti < end) {
+        if (TOKTYP(S, ti) != 41) { return 0; }
+        if (TOKTYP(S, ti + 1) != 2) { return 0; }
+        ti = ti + 2;
+    }
+    if (ti != end) { return 0; }
+    return t;
+}
+# The same judgement for a global at REGISTRATION, where no code has been emitted and the shape
+# decides: `= G ;` with G an f64 / f32 global, or `= G.f(.f)* ;` through a struct global whose
+# leaf field is declared f64 / f32. Stamps the type (and clears the untyped-float flag) on a
+# NEW slot only — a redeclaration keeps the slot it folded onto. CHANGELOG [6.6.11]
+fn _gv_float_copy(S, gvi, sti, typed): i64 {
+    if (typed != 0) { return 0; }
+    if (gvi != GVCNT(S)) { return 0; }
+    if (TOKTYP(S, sti + 2) != 4) { return 0; }
+    var ti = sti + 3;
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    var vi = _findvar_core(S, TOKVAL(S, ti));
+    if (vi < 0) { return 0; }
+    var t = GVTYPE(S, vi);
+    if (TOKTYP(S, ti + 1) == 41) { t = _gv_field_chain(S, vi, ti + 1); ti = _gfc_end; }
+    else { ti = ti + 1; }
+    if (TOKTYP(S, ti) != 5) { return 0; }
+    if (t != F64_TYID) { if (t != F32_TYID) { return 0; } }
+    SVTYPE(S, gvi, t);
+    SGFI(S, gvi, 0);
+    return 0;
+}
+# `.f(.f)*` from token `ti` on struct global `vi`: the leaf's float type (F64_TYID / F32_TYID)
+# or 0; `_gfc_end` is the token after the chain.
+var _gfc_end = 0;
+fn _gv_field_chain(S, vi, ti): i64 {
+    _gfc_end = ti;
+    if (GVPM(S, vi) == 0) { return 0; }
+    var si = GVTYPE(S, vi) - 1;
+    if (si < 0) { return 0; }
+    var k = 0;
+    while (TOKTYP(S, ti) == 41) {
+        if (TOKTYP(S, ti + 1) != 2) { return 0; }
+        if (k != 0) { return 0; }   # a float field is a leaf
+        if (si < 0) { return 0; }
+        var fi = FINDFIELD(S, si, TOKVAL(S, ti + 1));
+        if (fi < 0) { return 0; }
+        k = GFFK(S, si, fi);
+        si = GETFTYPE(S, si, fi) - 1;
+        ti = ti + 2;
+    }
+    _gfc_end = ti;
+    if (k == 1) { return F64_TYID; }
+    if (k == 2) { return F32_TYID; }
+    return 0;
+}
 # 6.6.10 — `var G: f64 = 1;` at registration: the same integer-constant judgement as a local
 # (_IFS_CHECK), over `= <expr> ;`, reported at the initialiser. The cursor is restored.
 fn _gv_ifs(S, sti, ann_float): i64 {
@@ -2319,6 +2385,7 @@ fn PARSE_GVAR_REG(S): i64 {
     var gvi = _gv_fold(S, vcnt, sti);   # 6.6.6: a redeclaration reuses the global's slot
     _GVAR_VIS(S, gvi, sti);
     SGFI(S, gvi, _gv_ufv(S, sti, psc + ann_sid + ann_scalar + ann_float));   # 6.6.10
+    _gv_float_copy(S, gvi, sti, psc + ann_sid + ann_scalar + ann_float);     # 6.6.11
     if (ann_float != 0) { _gv_ifs(S, sti, ann_float); }                      # 6.6.10
     if (gvi == vcnt) {
         SVCNT(S, vcnt + 1);
@@ -3827,6 +3894,8 @@ fn PARSE_VAR(S): i64 {
     if (pscale == 0) { if (scalar_type == 0) { if (lfloat == 0) { if (slice_elt_w == 0) { if (_ti_inferred_sid == 0) {
                         ufv = _UFV_IS_FLOAT(S);
                     } } } } }
+    var dfc = 0;   # 6.6.11: a pure copy of a declared f64 / f32 value types the var (_decl_float_copy)
+    if (ufv == 1) { dfc = _decl_float_copy(S, scv_start, GTI(S)); if (dfc != 0) { ufv = 0; } }
     # Type check: warn if pointer/scalar mismatch
     var expr_ps = GPSC(S);
     if (pscale > 0) {
@@ -3966,6 +4035,8 @@ fn PARSE_VAR(S): i64 {
                     # downstream arithmetic. F64_TYID is 0x40000001, not a small
                     # positive width, so it cannot reach that path.
                     SLTYPE(S, li, F64_TYID);
+                } elif (dfc != 0) {
+                    SLTYPE(S, li, dfc);   # 6.6.11: `var t = p.y;` — see _decl_float_copy
                 } else {
                     SLTYPE(S, li, pscale);
                 }
@@ -4014,6 +4085,7 @@ fn PARSE_VAR(S): i64 {
         } else {
             S64(_vars_base + vcnt * 8, 8);
             if (pscale > 0) { SVTYPE(S, vcnt, 0 - pscale); }
+            if (dfc != 0) { SVTYPE(S, vcnt, dfc); }   # 6.6.11: see _decl_float_copy
             # 6.6.5 — a STRUCT-annotated global declared on the PARSE_PROG path (any `var`
             # after the first top-level statement) recorded no type at all, so `G.y` was
             # refused with "no struct type in scope for 'G'" — a diagnostic blaming a missing

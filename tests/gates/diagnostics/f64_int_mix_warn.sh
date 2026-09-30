@@ -45,6 +45,9 @@
 #           compound assignment keeps the flag, even when a closure in its right operand
 #           assigns a float to one of its own variables. Red on 6.6.10 (3 warnings, two on the
 #           wrong lines).
+#   axis 13 (6.6.11) `var t = p.y;` / `var u = y;` (a declared f64 field / local) are typed, so
+#           `-t` / `-u` are float negations and draw no kind 3; `var c = 1.5; -c` still does.
+#           Red on 6.6.10 (3 warnings, want 1).
 # Mutation-proven: with the four `_INT_F64_MIX` calls removed, axis 1 reads 0 of 4 and fails.
 # (6.6.10) with PARSE_INTRIN's `_FBR_MARK` call removed axis 6 fails; with the unary-minus
 # `_FLT_TYPE_WARN(S, 3)` removed, or _cl_restore_locals' flag copy removed, axis 7 fails; with SFLC's `_lfi_clear` call removed
@@ -52,7 +55,8 @@
 # returning early axis 8 fails.
 # (6.6.11) with the four `_FLT_TYPE_WARN(S, 5)` calls in the f32 arms removed axis 10 fails;
 # with _asg_compound_float's two checks removed axis 11 fails; with `_asg_rejudge` returning
-# early axis 12 fails.
+# early axis 12 fails; with `_decl_float_copy` returning 0 axis 13 fails (the SLTYPE stamp
+# itself is pinned by tests/tcyr/crossos/f64_struct_fields.tcyr).
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -372,5 +376,27 @@ for want in 8 13 18; do
     grep "$K3" "$W/e" | grep -q ">:$want:" || bad "axis 12: no kind-3 warning at line $want"
 done
 
+# --- axis 13 (6.6.11): a copy of a declared f64 value is typed ---
+cat > "$W/a13.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct P { x: f64; y: f64; }
+fn main(): i64 {
+    var p: P;
+    p.y = 2.5;
+    var y: f64 = 1.5;
+    var t = p.y;
+    var u = y;
+    var c = 1.5;
+    var a = -t;
+    var b = -u;
+    var d = -c;
+    return a + b + d;
+}
+var r = main();
+syscall(60, r & 255);
+EOF
+build "$W/a13.cyr"
+n=$(count "$K3"); [ "$n" = 1 ] || { bad "axis 13: kind-3 warning count $n, want 1 (-c only; t and u are typed f64)"; sed -n 1,8p "$W/e"; }
+
 [ "$fail" = 0 ] || exit 1
-echo "PASS: f64_int_mix_warn (4 int-left ops warn; no false positives; kind 1 intact; TYPE_CHECK=0 silences; f64 fields and builtin results typed; kinds 3 + 4; kind 5, compound operands, re-judged flags)"
+echo "PASS: f64_int_mix_warn (4 int-left ops warn; no false positives; kind 1 intact; TYPE_CHECK=0 silences; f64 fields and builtin results typed; kinds 3 + 4; kind 5, compound operands, re-judged flags, typed copies)"

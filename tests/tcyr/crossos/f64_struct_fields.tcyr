@@ -83,8 +83,46 @@ fn union_f32_generic(): i64 {
     return 0;
 }
 
+# 6.6.11 — an untyped `var` that is a pure COPY of a declared f64 / f32 value (a field chain, a
+# typed local or param, a typed global) takes that type, so `t + t` is a float add. It was an
+# INTEGER add of the bit patterns (`var t = p.y; t + t` was 0 after f64_to). A literal and any
+# arithmetic stay untyped, by design. Mutation: drop the `elif (dfc != 0)` stamp in PARSE_VAR
+# (src/frontend/parse_decl.cyr) — every copy row fails.
+var GC: f64 = 1.25;
+var GC2 = GC;
+var GPC = P { 0.5, 3.0 };
+var GPY = GPC.y;
+fn f64_param_copy(v: f64) { var t = v; return t + t; }
+fn copy_inference(): i64 {
+    var p: P;
+    p.x = 1.5; p.y = 2.5;
+    var t = p.y;
+    assert_eq(bits(t + t), 5.0, "var t = p.y: t + t is a float add");
+    assert_eq(bits(-t), 0.0 - 2.5, "var t = p.y: -t is a float negation");
+    var o: O;
+    o.i.x = 1.25;
+    var c = o.i.x;
+    assert_eq(bits(c * c), 1.5625, "var c = o.i.x (chain): c * c is a float mul");
+    var y: f64 = 0.75;
+    var u = y;
+    assert_eq(bits(u + u), 1.5, "var u = y (typed local): u + u is a float add");
+    assert_eq(bits(f64_param_copy(1.5)), 3.0, "var t = v (f64 param): t + t is a float add");
+    var g = GC;
+    assert_eq(bits(g + g), 2.5, "var g = G (f64 global): g + g is a float add");
+    assert_eq(bits(GC2 + GC2), 2.5, "global var G2 = G: G2 + G2 is a float add");
+    assert_eq(bits(GPY + GPY), 6.0, "global var GY = GP.y: GY + GY is a float add");
+    var f: F;
+    f.a = f32_from(6.0);
+    var a = f.a;
+    assert_eq(f64_to(f32_to(a + a)), 12, "var a = f.a (f32 field): a + a is addss");
+    var lit = 1.5;
+    assert_eq(lit + lit, 0x3FF8000000000000 * 2, "var lit = 1.5 stays untyped (integer add)");
+    return 0;
+}
+
 test_group("f64 / f32 struct fields load typed");
 local_ops();
 param_global_chain();
 union_f32_generic();
+copy_inference();
 var r = assert_summary();
