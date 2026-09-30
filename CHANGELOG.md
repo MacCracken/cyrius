@@ -144,6 +144,52 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `dir_list_checked` is 0). No row can make FindNextFileW fail part-way, on wine or on cass: the
   gate's static axis pins the error branch.
 
+- **ELF-aarch64: the xattr family, fchown and statx could not be reached by number, and no peer
+  named them (B09, item Q1).** **Root cause:** in `ESYSXLAT`'s aarch64-Linux arm
+  (`src/backend/aarch64/emit.cyr`) the x86-compat rows claim native aarch64 numbers as row SOURCES
+  — fstat 5, lstat 6, poll 7, mmap 9, mprotect 10, munmap 11, brk 12, ioctl 16, getsockopt 55 — so a
+  native-numbered call was rewritten before the `svc`. Measured under `qemu-aarch64 -strace`: raw 5
+  (setxattr) ran fstat, 6 newfstatat, 7 ppoll, 9 (lgetxattr) mmap, 10 (fgetxattr) mprotect, 11
+  munmap, 12 brk, 16 (fremovexattr) ioctl, 55 (fchown) getsockopt. Neither Linux peer declared a
+  name for any of them, so consumers wrote numbers: kriya returned -ENOSYS by hand from its four
+  aarch64 xattr calls and routed fchown through fchownat. **Fix:** fifteen wrappers —
+  `sys_{,l,f}setxattr`, `sys_{,l,f}getxattr`, `sys_{,l,f}listxattr`, `sys_{,l,f}removexattr`,
+  `sys_fchown`, `sys_statx`, `sys_getrlimit` — in `lib/syscalls_linux_common.cyr`, with -38 stubs
+  in the PE and agnos peers and `SYS_*` names in the x86_64, aarch64, x86-macOS and Windows peers.
+  The aarch64 peer spells the xattr family, fchown and statx through the **private alias band**
+  (1005..1016, 1055, 1291 = 1000 + native), renumbered by fourteen pure rows at the TAIL of the ELF
+  chain, each below the compat row its product would re-match. getxattr 8, flistxattr 13,
+  removexattr 14, lremovexattr 15 and statx 291 are not row sources, but take the band too:
+  `programs/gen_syscall_xlat.cyr`'s `is_native_a64` drops the raw-literal warning row for any
+  number the aarch64 peer declares below 1000, so a native `SYS_GETXATTR = 8` would have silenced
+  the "raw x86 lseek (8)" warning and `SYS_STATX = 291` the "raw x86 epoll_create1 (291)" one.
+  getrlimit takes its native 163 (neither a row source nor a product). **Darwin:** `sys_fchown`
+  and `sys_getrlimit` are real on both Macs — `_esx_arm` rows 1055→123 and 163→194, `_msx` rows
+  93→123 and 97→194 (numbers read off ecb's SDK `sys/syscall.h`); the xattr calls and `sys_statx`
+  decline with -78, because Darwin's xattr calls take two extra arguments (position, options) and
+  Darwin has no statx. `src/common/syscall_xlat.cyr` is regenerated: twelve new raw-literal
+  warning rows (x86 188..197 for the xattr calls, 332 statx, 97 getrlimit — raw 97 on aarch64 is
+  unshare). `docs/api-surface.snapshot` gains the 45 public fns. **Held by** the new
+  `tests/tcyr/crossos/xattr_statx_rlimit_fchown_wrappers.tcyr` (Linux: every xattr call's ENOENT
+  and EBADF, a user.* round trip through fd, path and symlink — the l* variants told apart where
+  the kernel refuses user.* on the link — statx agreeing with `sys_stat`, fchown(fd, -1, -1) = 0,
+  getrlimit filling struct rlimit; macOS: the -78 declines plus real fchown/getrlimit; PE and
+  agnos: -38 for all fifteen). Green on the x86 host, qemu-aarch64, wine, pi, ecb, ach, cass and
+  the agnosticos container (and the agnos build under the fake-kernel tracer, which records no
+  syscall from the stubs). Deleting the fourteen ELF rows fails 49 of its 62 rows under
+  qemu-aarch64; deleting the x86 fchown `_msx` row kills it with SIGSYS on ach. Also held by
+  `esysxlat_row_order.sh` (new: every alias the aarch64 peer declares has its `1NNN→NNN` row, with
+  the two Darwin-only aliases 1116/1202 exempt by reason — deleting the statx row or moving
+  1009→9 above mmap 9→222 reddens it), `macos_peer_surface_parity.sh` axis B (the x86-macOS probe
+  now calls the new wrappers and stays warning-free; deleting the fchown `_msx` row or taking
+  `sys_statx` out of its macOS decline reddens it), `macho_route_parity.sh` (the xattr family and
+  statx allow-listed on both Macs with the reason) and `syscall_peer_kernel_agreement.sh`'s pinned
+  ambiguous set (14: x86 fchown 93 is aarch64 exit, lremovexattr 198 / fremovexattr 199 aarch64
+  socket / socketpair — hand-off to H). A native `SYS_GETXATTR = 8` in the aarch64 peer reddens
+  that gate (`SYS_LSEEK 8 SYS_GETXATTR`). **Follow-up (post-tag):** kriya 1.7.4 swaps its
+  aarch64 declines, the k_fchown fchownat workaround and its raw 8/291/163 numbers for these
+  wrappers once cyrius 6.6.12 is tagged.
+
 ### Changed
 
 - **`file_read_whole` passes the errno through `*len_out` (B08, item S2).** **Root cause:** the

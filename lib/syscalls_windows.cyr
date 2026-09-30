@@ -83,6 +83,24 @@ enum SysNr {
     SYS_PROCESS_VM_READV = 310;
     SYS_PROCESS_VM_WRITEV = 311;
     SYS_MKNODAT = 259;
+    # 6.6.12 — the xattr family, fchown, statx and getrlimit: the same "the constant exists so
+    # cross-platform source COMPILES" contract, NOT rerouted — Windows has no extended-attribute,
+    # POSIX-owner, statx or rlimit syscall. The stubs below decline explicitly. CHANGELOG [6.6.12]
+    SYS_SETXATTR = 188;
+    SYS_LSETXATTR = 189;
+    SYS_FSETXATTR = 190;
+    SYS_GETXATTR = 191;
+    SYS_LGETXATTR = 192;
+    SYS_FGETXATTR = 193;
+    SYS_LISTXATTR = 194;
+    SYS_LLISTXATTR = 195;
+    SYS_FLISTXATTR = 196;
+    SYS_REMOVEXATTR = 197;
+    SYS_LREMOVEXATTR = 198;
+    SYS_FREMOVEXATTR = 199;
+    SYS_FCHOWN = 93;
+    SYS_STATX = 332;
+    SYS_GETRLIMIT = 97;
 }
 
 # File descriptors mirror Linux convention. GetStdHandle maps
@@ -779,6 +797,41 @@ fn sys_process_vm_readv(pid, local_iov, liovcnt, remote_iov, riovcnt, flags): i6
 fn sys_process_vm_writev(pid, local_iov, liovcnt, remote_iov, riovcnt, flags): i64 { return 0 - 38; }
 # Create a filesystem node (FIFO / device). Declines: Windows named pipes live in \\.\pipe\.
 fn sys_mknodat(dirfd, path, mode, dev): i64 { return 0 - 38; }
+# ── 6.6.12: PE peers for the xattr / fchown / statx / getrlimit wrappers in
+# lib/syscalls_linux_common.cyr. Windows has none of them as a syscall (alternate data
+# streams, security descriptors and job-object limits are different object models, not
+# renumbers), so each declines with -38/-ENOSYS; the caller's `r < 0` fires. Present so a
+# portable consumer (kriya) BUILDS for PE. CHANGELOG [6.6.12]
+# Set an extended attribute. Declines: NTFS alternate data streams are a different object model.
+fn sys_setxattr(path, name, value, size, flags): i64 { return 0 - 38; }
+# Set an extended attribute on a symlink itself. Declines, same reason as sys_setxattr.
+fn sys_lsetxattr(path, name, value, size, flags): i64 { return 0 - 38; }
+# Set an extended attribute by descriptor. Declines, same reason as sys_setxattr.
+fn sys_fsetxattr(fd, name, value, size, flags): i64 { return 0 - 38; }
+# Read an extended attribute. Declines, same reason as sys_setxattr.
+fn sys_getxattr(path, name, value, size): i64 { return 0 - 38; }
+# Read an extended attribute of a symlink itself. Declines, same reason as sys_setxattr.
+fn sys_lgetxattr(path, name, value, size): i64 { return 0 - 38; }
+# Read an extended attribute by descriptor. Declines, same reason as sys_setxattr.
+fn sys_fgetxattr(fd, name, value, size): i64 { return 0 - 38; }
+# List extended attribute names. Declines, same reason as sys_setxattr.
+fn sys_listxattr(path, list, size): i64 { return 0 - 38; }
+# List a symlink's own extended attribute names. Declines, same reason as sys_setxattr.
+fn sys_llistxattr(path, list, size): i64 { return 0 - 38; }
+# List extended attribute names by descriptor. Declines, same reason as sys_setxattr.
+fn sys_flistxattr(fd, list, size): i64 { return 0 - 38; }
+# Remove an extended attribute. Declines, same reason as sys_setxattr.
+fn sys_removexattr(path, name): i64 { return 0 - 38; }
+# Remove a symlink's own extended attribute. Declines, same reason as sys_setxattr.
+fn sys_lremovexattr(path, name): i64 { return 0 - 38; }
+# Remove an extended attribute by descriptor. Declines, same reason as sys_setxattr.
+fn sys_fremovexattr(fd, name): i64 { return 0 - 38; }
+# Change a descriptor's owner and group. Declines: Windows ownership lives in a security descriptor, not a uid/gid pair.
+fn sys_fchown(fd, uid, gid): i64 { return 0 - 38; }
+# Extended stat. Declines: Windows has no statx.
+fn sys_statx(dirfd, path, flags, mask, buf): i64 { return 0 - 38; }
+# Read a resource limit. Declines: Windows has no rlimits; per-process limits are job-object settings.
+fn sys_getrlimit(resource, rlim): i64 { return 0 - 38; }
 # ── v6.6.8: PE peers for the fcntl surface in lib/syscalls_linux_common.cyr. Windows has no
 # fcntl (non-blocking I/O is ioctlsocket(FIONBIO) on a SOCKET, or OVERLAPPED on a HANDLE —
 # different object models, not a renumber), so all three decline with -38/-ENOSYS. A caller

@@ -1236,6 +1236,12 @@ fn EMACHO_SYSXLAT(S): i64 {
     # unrouted 92 reached Darwin unprefixed and SIGSYS'd. io.cyr now issues the x86-Linux
     # flock number 73 on macOS so a single source serves both Mach-O backends.
     _msx(S, 73, 0x2000083);   # flock 73 → 131
+    # 6.6.12: fchown + getrlimit, the two of the new wrappers Darwin has as pure renumbers
+    # (the arm64 twin routes the aarch64 peer's 1055 / 163). The xattr and statx wrappers
+    # decline under CYRIUS_TARGET_MACOS rather than route: Darwin xattr calls take two extra
+    # arguments and Darwin has no statx. CHANGELOG [6.6.12]
+    _msx(S, 93, 0x200007B);   # fchown    93 → 123
+    _msx(S, 97, 0x20000C2);   # getrlimit 97 → 194
     _msx_tail(S);
     return 0;
 }
