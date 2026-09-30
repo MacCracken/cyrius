@@ -575,8 +575,8 @@ fn _pe_warn_unrouted(S, sc_num, argc): i64 {
     if (_pe_unrouted_noted == 1) { return 0; }
     _pe_unrouted_noted = 1;
     syscall(SYS_WRITE, 2,
-      "  note: CYRIUS_TARGET_WIN=1 routes, each at its own arity, n=0,1,2,3,8,9,35,60,74,75,83,87,228 + 0xF001-0xF005 (process creation) + 0xF006 (cmdline) + 0xF007-0xF00A (threading) + 0xF00B-0xF00E (thread-local) + 0xF00F (sleep) + 0xF010-0xF011 (CommandLineToArgvW/LocalFree) + 0xF012 (CreateDXGIFactory1) + 0xF013-0xF015 (GetModuleHandleA/GetProcAddress/GetEnvironmentVariableA) + 0xF016-0xF019 (FindFirstFileW/FindNextFileW/FindClose/GetFileAttributesW) + 0xF01A (ProcessPrng CSPRNG) + 0xF01B (GetSystemTimeAsFileTime) + 0xF01C (GetCurrentProcessId) + 0xF01D (TerminateProcess) + 0xF01E (WSAStartup) + 0xF01F-0xF021 (IOCP: CreateIoCompletionPort/GetQueuedCompletionStatus/PostQueuedCompletionStatus) + 0xF022-0xF02C (ws2_32: WSASocketW/closesocket/WSAGetLastError/bind/getsockopt/WSAIoctl/connect/WSARecv/WSASend/getaddrinfo/freeaddrinfo) + 0xF02D-0xF032 (kernel32/ws2_32: RegisterWaitForSingleObject/CreateWaitableTimerW/SetWaitableTimer/UnregisterWaitEx/CancelIoEx/setsockopt) + 0xF033 (ws2_32: listen) + 0xF034 (kernel32: MoveFileExW) + 0xF035 (kernel32: DeleteFileW) + 0xF036-0xF037 (ws2_32: getpeername/getsockname) + 0xF038-0xF039 (kernel32: QueryPerformanceCounter/QueryPerformanceFrequency) + 0xF03A-0xF03B (kernel32: GetModuleFileNameW/RemoveDirectoryW) + 0xF03D-0xF03F (kernel32: GetFileInformationByHandleEx/CreateSymbolicLinkW/SetEndOfFile) + 0xF040-0xF044 (kernel32: CreateJobObjectW/AssignProcessToJobObject/TerminateJobObject/ResumeThread/SetInformationJobObject).\n",
-      1478);
+      "  note: CYRIUS_TARGET_WIN=1 routes, each at its own arity, n=0,1,2,3,8,9,35,60,74,75,83,87,228 + 0xF001-0xF005 (process creation) + 0xF006 (cmdline) + 0xF007-0xF00A (threading) + 0xF00B-0xF00E (thread-local) + 0xF00F (sleep) + 0xF010-0xF011 (CommandLineToArgvW/LocalFree) + 0xF012 (CreateDXGIFactory1) + 0xF013-0xF015 (GetModuleHandleA/GetProcAddress/GetEnvironmentVariableA) + 0xF016-0xF019 (FindFirstFileW/FindNextFileW/FindClose/GetFileAttributesW) + 0xF01A (ProcessPrng CSPRNG) + 0xF01B (GetSystemTimeAsFileTime) + 0xF01C (GetCurrentProcessId) + 0xF01D (TerminateProcess) + 0xF01E (WSAStartup) + 0xF01F-0xF021 (IOCP: CreateIoCompletionPort/GetQueuedCompletionStatus/PostQueuedCompletionStatus) + 0xF022-0xF02C (ws2_32: WSASocketW/closesocket/WSAGetLastError/bind/getsockopt/WSAIoctl/connect/WSARecv/WSASend/getaddrinfo/freeaddrinfo) + 0xF02D-0xF032 (kernel32/ws2_32: RegisterWaitForSingleObject/CreateWaitableTimerW/SetWaitableTimer/UnregisterWaitEx/CancelIoEx/setsockopt) + 0xF033 (ws2_32: listen) + 0xF034 (kernel32: MoveFileExW) + 0xF035 (kernel32: DeleteFileW) + 0xF036-0xF037 (ws2_32: getpeername/getsockname) + 0xF038-0xF039 (kernel32: QueryPerformanceCounter/QueryPerformanceFrequency) + 0xF03A-0xF03B (kernel32: GetModuleFileNameW/RemoveDirectoryW) + 0xF03D-0xF03F (kernel32: GetFileInformationByHandleEx/CreateSymbolicLinkW/SetEndOfFile) + 0xF040-0xF044 (kernel32: CreateJobObjectW/AssignProcessToJobObject/TerminateJobObject/ResumeThread/SetInformationJobObject) + 0xF045-0xF04A (ws2_32: accept/shutdown/send/recv/ioctlsocket/WSAPoll).\n",
+      1550);
     return 0;
 }
 
@@ -711,6 +711,30 @@ fn _PE_ROUTE_JOB(S, sc_num, argc): i64 {
     if (sc_num == 61506) { if (argc == 3) { ETERMJOB_PE(S); return 1; } }
     if (sc_num == 61507) { if (argc == 2) { ERESUMETHREAD_PE(S); return 1; } }
     if (sc_num == 61508) { if (argc == 5) { ESETJOBINFO_PE(S); return 1; } }
+    # 6.6.11: the ws2_32 socket table is reached THROUGH this helper, so the inline chain in
+    # `_PARSE_FACTOR_IMPL` gains no reference (cybs's per-function limit — see
+    # _PE_ROUTE_PERFCOUNTER). Held in a var, not `return f(...)`: cybs miscompiles a tail call.
+    var sk = _PE_ROUTE_SOCK(S, sc_num, argc);
+    return sk;
+}
+
+# 6.6.11 — the blocking ws2_32 verbs behind lib/net.cyr's PE arms (before them every net.cyr
+# socket verb returned -38 on Windows, so http_* and sandhi's v4 path could not work):
+#   0xF045 accept(s, addr, addrlen)       → argc 4
+#   0xF046 shutdown(s, how)               → argc 3
+#   0xF047 send(s, buf, len, flags)       → argc 5
+#   0xF048 recv(s, buf, len, flags)       → argc 5
+#   0xF049 ioctlsocket(s, cmd, argp)      → argc 4
+#   0xF04A WSAPoll(fds, nfds, timeout)    → argc 4
+# Literal-only, like every 0xF0xx id. The emitters are EACCEPT_PE … EWSAPOLL_PE
+# (x86/emit.cyr; stubs on the aarch64 and cx backends). CHANGELOG [6.6.11]
+fn _PE_ROUTE_SOCK(S, sc_num, argc): i64 {
+    if (sc_num == 61509) { if (argc == 4) { EACCEPT_PE(S); return 1; } }
+    if (sc_num == 61510) { if (argc == 3) { ESHUTDOWN_PE(S); return 1; } }
+    if (sc_num == 61511) { if (argc == 5) { ESEND_PE(S); return 1; } }
+    if (sc_num == 61512) { if (argc == 5) { ERECV_PE(S); return 1; } }
+    if (sc_num == 61513) { if (argc == 4) { EIOCTLSOCK_PE(S); return 1; } }
+    if (sc_num == 61514) { if (argc == 4) { EWSAPOLL_PE(S); return 1; } }
     return 0;
 }
 
