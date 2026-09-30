@@ -24,10 +24,27 @@
 # below. GetTickCount64 is coarse but independent, and 15 ms of coarseness is small
 # against a 200 ms interval.
 #
-# Mutations this file is proved against (applied to a scratch tree, each RED):
-#   - point 0xF038 at GetTickCount64 (the tick assertion fails: 15 ms is not sub-ms);
-#   - drop the `t % hz` term from the ns conversion (the 200 ms agreement fails);
-#   - return the raw count instead of ns (agreement fails by ~7 orders of magnitude).
+# ⚠ THE AGREEMENT IS BEST-OF-3, EDGE-ALIGNED (6.6.12, T6). The first cut read t0 at an
+# arbitrary phase inside GetTickCount64's ~15.6 ms quantum and required ONE interval to agree
+# within 20 ms. Measured on a QUIET cass, 12 runs of that exact method: d = -3, -13, -3, 1, 1,
+# 2, 1, 1, 1, 1, 2, 2 — 13 of the 20 ms budget already spent with no load, so one preemption
+# between the tick read and the QPC read flaked it (it exited nonzero once on cass). Each
+# interval now starts ON a tick edge (spin until GetTickCount64 changes, then read QPC), and
+# three intervals are taken: any one agreeing within 20 ms passes. The budget is NOT widened —
+# every mutant below misses by far more than 20 ms on every interval, so best-of-3 cannot
+# rescue one.
+#
+# Mutations this file is proved against (applied to a scratch tree, each RED). Re-proved on
+# real cass at 6.6.12 with the best-of-3 agreement, per-interval |d| in brackets:
+#   - EQPC_PE pointed at the GetTickCount64 import: the buffer is never written, QPC reads 0
+#     -> [204, 203, 203], 5 failed (agreement, raw count, QPC advances, tick measured, ...);
+#   - drop the `t % hz` term from sys_qpc_ns: whole seconds only -> [204, 219, 203], 2 failed;
+#   - return the raw count instead of ns: 100 ns units read as ns, 100x short
+#     -> [201, 201, 201], 1 failed.
+# ⚠ The last line used to read "fails by ~7 orders of magnitude" — the raw count of a
+#   10 MHz counter is 100x short of ns, not 10^7. Measured, not reasoned.
+# The unmutated file on the same host: 20 quiet runs and 10 runs with all 4 cores busy, all
+# GREEN; the worst single interval was 15 ms, the worst best-of-3 was 2 ms.
 #
 # The non-Windows axes are not filler: they assert the same two properties — monotonic,
 # and a tick finer than a millisecond — on ecb, ach, pi and Linux, which is what the
@@ -122,15 +139,21 @@ fn test_qpc_frequency_and_monotonicity() {
     assert_eq(moved, 1, "QPC actually advances over 1000 reads (anti-vacuous: not a frozen counter)");
 }
 
-fn test_qpc_agrees_with_an_independent_clock() {
-    test_group("windows: the QPC-derived interval agrees with GetTickCount64");
-    if (_wq_is_win() == 0) {
-        assert_eq(1, 1, "SKIPPED off Windows");
-        return;
-    }
-    # One interval, two clocks. The loop is bounded by the INDEPENDENT clock so the
-    # measurement cannot be circular.
-    var t0 = _wq_ticks_ms();
+fn _wq_out(s): i64 {
+    syscall(1, 1, s, strlen(s));
+    return 0;
+}
+
+# ONE interval measured by both clocks; returns |QPC ms - GetTickCount64 ms|, or -1 when the
+# independent clock did not really advance 200 ms. The loop is bounded by the INDEPENDENT
+# clock so the measurement cannot be circular, and it STARTS on a tick edge: spin until
+# GetTickCount64 changes, then read QPC, so t0 is not read at an arbitrary phase inside the
+# ~15.6 ms quantum (that phase alone cost up to ~16 ms of the budget). Prints the value, so a
+# red run on cass shows how far off each interval was.
+fn _wq_one_interval_disagreement_ms(): i64 {
+    var e = _wq_ticks_ms();
+    var t0 = e;
+    while (t0 == e) { t0 = _wq_ticks_ms(); }
     var q0 = _wq_qpc_ns();
     var t1 = t0;
     while (t1 - t0 < 200) { t1 = _wq_ticks_ms(); }
@@ -139,14 +162,40 @@ fn test_qpc_agrees_with_an_independent_clock() {
     var qms = (q1 - q0) / 1000000;
     var d = qms - tms;
     if (d < 0) { d = 0 - d; }
-    # 20 ms covers GetTickCount64's own 15 ms quantum plus scheduling slop; it does NOT
-    # cover a missing `t % hz` term, a raw count, or a route pointed at the wrong import.
+    _wq_out("    interval: GetTickCount64 ");
+    print_num(tms);
+    _wq_out(" ms, QPC ");
+    print_num(qms);
+    _wq_out(" ms, |d| ");
+    print_num(d);
+    println(" ms");
+    if (tms < 200) { return 0 - 1; }
+    return d;
+}
+
+fn test_qpc_agrees_with_an_independent_clock() {
+    test_group("windows: the QPC-derived interval agrees with GetTickCount64");
+    if (_wq_is_win() == 0) {
+        assert_eq(1, 1, "SKIPPED off Windows");
+        return;
+    }
+    # Up to three intervals, two clocks each (see the header: best-of-3, edge-aligned).
     var agree = 0;
-    if (d <= 20) { agree = 1; }
-    assert_eq(agree, 1, "QPC and GetTickCount64 agree within 20ms over a ~200ms interval");
-    var tms_real = 0;
-    if (tms >= 200) { tms_real = 1; }
-    assert_eq(tms_real, 1, "the independent clock really advanced 200ms (anti-vacuous)");
+    var tms_real = 1;
+    var k = 0;
+    while (k < 3) {
+        var d = _wq_one_interval_disagreement_ms();
+        if (d < 0) { tms_real = 0; }
+        if (d >= 0) {
+            if (d <= 20) { agree = 1; }
+        }
+        k = k + 1;
+    }
+    # 20 ms covers GetTickCount64's own 15 ms quantum plus scheduling slop; it does NOT
+    # cover a missing `t % hz` term, a raw count, or a route pointed at the wrong import —
+    # on any of the three intervals.
+    assert_eq(agree, 1, "QPC and GetTickCount64 agree within 20ms over a ~200ms interval (best of 3)");
+    assert_eq(tms_real, 1, "the independent clock really advanced 200ms on every interval (anti-vacuous)");
 }
 
 # ── The portable half: every host, including the two Macs and pi ────
