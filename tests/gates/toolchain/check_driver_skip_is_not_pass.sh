@@ -344,20 +344,39 @@ skip0() {
     awk '
     /SKIP/ && /exit 0([^0-9]|$)/ && $0 !~ /^[ \t]*#/ { print FILENAME ":" FNR; prev = ""; next }
     prev != "" && /^[ \t]*exit 0[ \t]*;?[ \t]*$/ { print FILENAME ":" FNR }
-    { prev = ($0 ~ /^[ \t]*echo .*SKIP/) ? $0 : "" }' "$@"
+    { prev = ($0 ~ /^[ \t]*echo .*SKIP/ && $0 !~ /^[ \t]*echo[ \t]+["'"'"']?(PASS|FAIL)/) ? $0 : "" }' "$@"
 }
-printf 'x || { echo "SKIP a"; exit 0; }\n    echo "SKIP: b"\n    exit 0\n    echo "SKIP c"; exit 77\n# SKIP then exit 0 in prose\n' > "$D/skip0.sh"
+printf 'x || { echo "SKIP a"; exit 0; }\n    echo "SKIP: b"\n    exit 0\n    echo "SKIP c"; exit 77\n# SKIP then exit 0 in prose\necho "PASS: g (0 SKIP rows)"\nexit 0\n' > "$D/skip0.sh"
 N10=$(skip0 "$D/skip0.sh" | grep -c . || true)
-[ "$N10" = 2 ] || _fail "axis 10: the detector found $N10 of the 2 planted SKIP-then-exit-0 shapes (and must not flag exit 77 or a comment)"
+[ "$N10" = 2 ] || _fail "axis 10: the detector found $N10 of the 2 planted SKIP-then-exit-0 shapes (and must not flag exit 77, a comment, or a PASS line that mentions SKIP)"
 SG=$(grep -oE '^_chk_gate "\$ROOT/scripts/[^"]+"' "$ROOT/scripts/check.sh" | sed 's|^_chk_gate "\$ROOT/||; s|"$||')
 [ -n "$SG" ] || _fail "axis 10: check.sh registers no scripts/ gate — the scan read nothing"
 for _g in $SG; do skip0 "$ROOT/$_g"; done > "$D/a10hits"
 [ ! -s "$D/a10hits" ] || { _fail "axis 10: a registered scripts/ gate prints SKIP and exits 0:"; sed 's/^/      /' "$D/a10hits"; }
+
+# 6.6.11 (B11 part 2): the same rule over EVERY tests/gates script, now that each owner converted
+# its whole-gate skips to exit 77. Two line shapes are not gate control flow and are skipped by
+# rule: a `printf '...'` that WRITES a fixture (this gate's own and gates_never_write_tree.sh's
+# planted skip0.sh), and the detector's awk pattern itself.
+echo "axis 11: no tests/gates script prints SKIP and then exits 0"
+find "$ROOT/tests/gates" -name '*.sh' | sort > "$D/a11files"
+N11=$(grep -c . "$D/a11files" || true)
+[ "$N11" -ge 290 ] || _fail "axis 11: found only $N11 gate scripts under tests/gates (floor 290) — the scan read too little"
+: > "$D/a11hits"
+for _g in $(cat "$D/a11files"); do skip0 "$_g"; done | while IFS=: read -r _f _n; do
+    _l=$(sed -n "${_n}p" "$_f")
+    case "$_l" in
+        *"printf '"*) continue ;;
+        *'/SKIP/ &&'*) continue ;;
+    esac
+    echo "$_f:$_n: $_l"
+done > "$D/a11hits"
+[ ! -s "$D/a11hits" ] || { _fail "axis 11: a tests/gates script prints SKIP and exits 0 (a skip must be exit 77):"; sed "s|^$ROOT/|      |" "$D/a11hits"; }
 
 echo ""
 if [ "$FAILS" -gt 0 ]; then
     echo "FAIL: $NAME — $FAILS check(s) failed"
     exit 1
 fi
-echo "PASS: $NAME (a missing prerequisite is a SKIP row and a SKIP count, a FAIL under CYRIUS_CHECK_NO_SKIP=1, $NSK skip sites, 0 scored as passes; a shell gate's exit 77 is a SKIP in both the driver and check.sh; the driver's SKIPs reach check.sh's verdict; an empty selection fails)"
+echo "PASS: $NAME (a missing prerequisite is a SKIP row and a SKIP count, a FAIL under CYRIUS_CHECK_NO_SKIP=1, $NSK skip sites, 0 scored as passes; a shell gate's exit 77 is a SKIP in both the driver and check.sh; the driver's SKIPs reach check.sh's verdict; an empty selection fails; no scripts/ or tests/gates script prints SKIP then exits 0)"
 exit 0
