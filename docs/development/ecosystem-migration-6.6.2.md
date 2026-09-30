@@ -1,6 +1,14 @@
 # Ecosystem migration worklist — the v6.6.0 value-form flip
 
-> **Status:** OPEN — the sweep runs *after* v6.6.2 ships. Tick the boxes as repos land; this file
+> **Status: CLOSED 2026-09-12** (`docs/development/state.md`). Re-derived 2026-09-30: every one of the
+> 125 sibling `cyrius.cyml` manifests under `~/Repos` pins 6.6.2 or later (58 on 6.6.2, 10 on 6.6.3, 1 on
+> 6.6.4, 38 on 6.6.6, 1 on 6.6.7, 4 on 6.6.9, 5 on 6.6.10, 8 on 6.6.11), no first-party source calls the
+> retired `payload` (only comments name it), and agnostik's and agnova's `tagged_new` calls resolve to
+> `lib/boxed.cyr`, where 6.6.2 restored it. **Kept in place as history**, because
+> `docs/retired-symbols.allow` (read by `tests/gates/toolchain/removed_symbol_census.sh`) and the
+> `lib/boxed.cyr` / `lib/tagged.cyr` comments cite this path. What follows is the campaign's original text.
+>
+> *Original status line:* OPEN — the sweep runs *after* v6.6.2 ships. Tick the boxes as repos land; this file
 > is the review artifact for the campaign, so leave the unticked ones visible rather than deleting
 > them.
 >
@@ -546,7 +554,7 @@ the user tags and pushes.
 | kavach | **3.12.5** | 6.5.35 → 6.6.2 | **43** | ⏳ awaiting tag |
 | aethersafha | **0.16.23** | 6.5.33 → 6.6.2 | **7** | ⏳ blocked on kavach 3.12.5 |
 
-### ⚠ STATUS AS OF 2026-09-10 — THE SWEEP IS ~11% DONE, DO NOT ARCHIVE THIS FILE
+### STATUS AS OF 2026-09-10 (historical — superseded by the CLOSED status at the top): the sweep was ~11% done
 
 Measured live, not read off the checkboxes above:
 
