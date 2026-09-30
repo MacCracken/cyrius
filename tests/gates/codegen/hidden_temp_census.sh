@@ -145,12 +145,16 @@ fi
 # GINFN != 1 (top level — inside a fn it is a frame slot), and the loop's SCOPE_POP takes the
 # name out of scope (tests/gates/frontend/toplevel_for_in.sh pins both).
 #
+# 6.6.12: `_gci_toplevel` (parse_decl.cyr) is a top-level struct copy-init after the first
+# statement (`var G: Pt = A;` / `= X.f;`), registered INLINE. Reached only from
+# `_try_struct_copy_init` under GINFN != 1 — top level, never inside a fn.
+#
 # The ONE arm that legitimately runs inside a fn is PARSE_ARRAY's static-array fallback (an
 # array over the per-fn frame budget, or any array under CYRIUS_STACK_ARRAYS=0). It is safe
 # because `_fs_push` (parse.cyr) scopes the NAME to the block — that scoping is what
 # `tests/gates/codegen/fn_local_storage_class.sh` axes 2/3/4/9 assert behaviourally, which is
 # the other, non-textual half of this axis.
-VN_SPEC="PARSE_VAR:4 PARSE_GVAR_REG:1 _gv_reg8:1 PARSE_STRUCT_INIT:1 PARSE_GVAR_ARR:1 PARSE_ENUM_DEF:1 PARSE_ARRAY:1 _HTEMP:1 _HTNAMED:1"
+VN_SPEC="PARSE_VAR:4 PARSE_GVAR_REG:1 _gv_reg8:1 PARSE_STRUCT_INIT:1 PARSE_GVAR_ARR:1 PARSE_ENUM_DEF:1 PARSE_ARRAY:1 _HTEMP:1 _HTNAMED:1 _gci_toplevel:1"
 vn_attr=$(for f in $(find src/frontend src/common src/backend -name '*.cyr'); do
     awk '/^fn /{fn=$2; sub(/\(.*/,"",fn)} /S64\(_varn_base/{print fn}' "$f"
 done | sort | uniq -c | awk '{print $2":"$1}')
