@@ -148,7 +148,12 @@ fn _cl_cap_find(esl): i64 {
 # snapshot out as [names | depths | types | slice_widths], each `n` words.
 fn _cl_snap_span(esl): i64 {
     if (_cl_snap == 0) { return 0; }
-    return L64(_cl_snap + _cl_snap_n * 8 + esl * 8) >> 32;
+    return (L64(_cl_snap + _cl_snap_n * 8 + esl * 8) >> 32) & 0xFFFF;
+}
+# The enclosing slot's array ELEMENT descriptor (util.cyr GLAEW), from the same word. 6.6.12
+fn _cl_snap_aew(esl): i64 {
+    if (_cl_snap == 0) { return 0; }
+    return (L64(_cl_snap + _cl_snap_n * 8 + esl * 8) >> 48) & 0xFF;
 }
 fn _cl_snap_type(esl): i64 {
     if (_cl_snap == 0) { return 0; }
@@ -1068,6 +1073,66 @@ fn _IFS_K(t): i64 {
     return 0;
 }
 
+# ⛔ 6.6.12 — A `.field` ON A CALL RESULT (`f(mk(p).n)`, `var r = mkp(3).y;`, `mk(p).v.x + 1`)
+# parsed nowhere: the factor returned straight after the call and the `.` was a syntax error in
+# every expression position. Cursor just past the callee IDENT; 1 = the call and its whole field
+# tail are consumed (the value in rax, typed like any field load), 0 = not that shape (cursor
+# untouched). In a fn the result lands in a frame temp — the retptr / rax:rdx / rax store of
+# `_struct_call_emit`, a `Str` handle in a pointer-mode slot — and the field is loaded from it
+# through PARSE_FIELD_LOAD's own body (`_field_load_on`), so chains, widths, signedness, float
+# kinds, a method on the result and a struct-typed field as a whole-struct source all match a
+# named receiver. At top level there is no frame: refused by name. CHANGELOG [6.6.12]
+fn _call_field(S): i64 {
+    var ti = GTI(S) - 1;
+    if (_call_dotted(S, ti) == 0) { return 0; }
+    var fi = _gen_resolve_call(S, ti);
+    if (fi < 0) { if (_syntax_only == 0) { return 0; } }   # an undefined callee reports itself
+    var sid = 0;
+    if (fi >= 0) { sid = GFRS(S, fi); }
+    if (sid <= 0 || GINFN(S) != 1) {
+        # --syntax-only: a return type from a sibling file reads as a scalar, so stay silent.
+        if (_syntax_only == 0) {
+            if (sid <= 0) { ERR_IDENT(S, "cannot take a field of the result of ", TOKVAL(S, ti), ": it does not return a struct", 0 - 1); }
+            else { _refuse_toplevel_struct_call(S, TOKVAL(S, ti)); }
+        }
+        # --syntax-only still parses a plain call's arguments, for the grammar errors in them.
+        if (_syntax_only == 1 && TOKTYP(S, ti + 1) == 10) { PARSE_FNCALL(S, TOKVAL(S, ti)); }
+        else { STI(S, _call_close(S, _gcall_open(S, ti)) + 1); }
+        _synonly_skip_chain(S);
+        # a method on the refused result: its arguments too, or `(` is a second error
+        if (PEEKT(S) == 10) { STI(S, _call_close(S, GTI(S)) + 1); }
+        _cfo = 0;
+        return 1;
+    }
+    STI(S, ti);
+    var h = 0;
+    if (_ret_agg_class(S, fi) == 0) { if (STRUCTSZ(S, sid - 1) > 8) { h = 1; } }
+    _struct_call_into(S, h);
+    var t = _sci_t;
+    STI(S, GTI(S) + 1);                 # consume `.`
+    var fnoff = PEEKV(S);
+    STI(S, GTI(S) + 1);                 # consume the field name
+    _field_load_on(S, TOKVAL(S, ti), fnoff, ti, 0 - 2 - t, sid);
+    # AFTER the call: a literal argument (`mkp(3)`) left itself foldable, and `mkp(3).y + 1`
+    # then folded to 4 by rewriting the code from that literal — the call and the load with it.
+    _cfo = 0;
+    return 1;
+}
+
+# 6.6.12 — the STATEMENT form, `mk(3).total();` / `mk(3).n;`. PARSE_STMT sends `IDENT (` straight
+# to PARSE_FNCALL and never reaches the factor, so `_call_field` above did not run there and the
+# `.` was "expected ';'" while `var t = mk(3).total();` worked. Cursor just past the callee IDENT;
+# 1 = the statement is consumed through its `;`. One call in PARSE_STMT: that body is near cybs's
+# per-function reference limit. A field of a temporary is not an lvalue: refused by name.
+# CHANGELOG [6.6.12]
+fn _stmt_call_field(S): i64 {
+    if (_call_field(S) == 0) { return 0; }
+    if (PEEKT(S) == 4) { ERR_MSG(S, "cannot assign to a field of a call result: the result is a temporary", 68); }
+    else { if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } }
+    STI(S, GTI(S) + 1);
+    return 1;
+}
+
 # v6.3.10 (explicit): `foo<i64>(x)` / `foo<Pt>(p)` — cursor on the `<`. Out of
 # `_PARSE_FACTOR_IMPL` since 6.6.10: that body is near cybs's per-function reference limit, and
 # this path grew the stub refusal.
@@ -1120,6 +1185,202 @@ fn _explicit_generic_call(S, noff, fi): i64 {
     if (_spec >= 0) { PARSE_FNCALL(S, L64(_fnt_names + _spec * 8)); }
     else { PARSE_FNCALL(S, noff); }
     return 0;
+}
+
+# 1 = `syscall(sc_num, ..)` with `got` user arguments is a KNOWN cross-target shape, not an
+# arity mismatch: the Linux x86_64 arity table below cannot see which peer a wrapper belongs
+# to. Split out of _PARSE_FACTOR_IMPL (6.6.12) so the target gate on the kill shape costs that
+# body no global reference.
+fn _sc_arity_skip(sc_num, got): i64 {
+    # Skip the warning when this is the cross-arch
+    # openat shape: syscall(SYS_OPEN=2, AT_FDCWD, path,
+    # flags, mode) — 4 user args instead of open()'s 3.
+    # Source: arch-conditional wrappers in
+    # lib/syscalls_*_linux.cyr and src/frontend/lex.cyr
+    # keep both open()/openat() shapes for cross-arch
+    # source compatibility; the dead branch on the
+    # running arch is not a bug. Open() is never called
+    # legitimately with 4 user args, so the structural
+    # match is unambiguous.
+    var skip_warn = 0;
+    if (sc_num == 2) { if (got == 4) { skip_warn = 1; } }
+    # v5.8.54: same cross-arch number-reuse pattern as
+    # SYS_OPEN above. Linux x86_64 SYS_SETUID = 113 (1
+    # arg); Linux aarch64 SYS_CLOCK_GETTIME = 113 (2
+    # args: clock_id + timespec_ptr — `syscall(113, 1,
+    # &ts)` in cyrius syntax = 3 cyrius-args, got=2).
+    # Surfaced by `src/backend/aarch64/fixup.cyr`'s
+    # `_prof_clock_ns()` helper; warning fired on every
+    # aarch64 cross-build. setuid is never legitimately
+    # called with 2 user args, so the structural match
+    # is unambiguous (same logic as the SYS_OPEN skip).
+    if (sc_num == 113) { if (got == 2) { skip_warn = 1; } }
+    # 6.6.10: Darwin's kill is kill(pid, sig, posix). lib's sys_kill passes
+    # posix = 0 explicitly on macOS (a stale third register made kill(-pgid)
+    # answer EPERM or ESRCH at random), and this Linux table then warned on
+    # every x86-macOS build. Linux kill never takes 3 user args, so the
+    # structural match is unambiguous (the 113 shape). CHANGELOG [6.6.10]
+    # ⛔ 6.6.12: DARWIN ONLY. The skip had no target check, so a wrong 3-arg kill compiled
+    # SILENTLY on x86-Linux from 6.6.10 on (6.6.9 warned). PE never prints this arity warning
+    # (its unrouted-number warning names the call, unchanged), and arm64-macOS never reaches
+    # here (_AARCH64_BACKEND).
+    if (_TARGET_MACHO == 1) { if (sc_num == 62) { if (got == 3) { skip_warn = 1; } } }
+    # v6.0.48: agnos uses NATIVE syscall numbers (0-33) that
+    # collide with Linux numbers at different arities (agnos
+    # getpid=2 vs Linux open=2/3-args; agnos exit=0 vs Linux
+    # read=0/3-args; ...). This arity table is Linux-only, so
+    # it false-positives on every agnos syscall;
+    # lib/syscalls_x86_64_agnos.cyr is the authority.
+    if (_TARGET_AGNOS == 1) { skip_warn = 1; }
+    return skip_warn;
+}
+
+# `_SYSX_MEANT(n)` — the x86_64 name of a raw number that means something else on
+# ELF-aarch64 — unless the call sits inside a native-aarch64 region (`#ifdef
+# CYRIUS_ARCH_AARCH64`, `#ifndef CYRIUS_ARCH_X86`, ...), where the number is the native one
+# by construction: the preprocessor marks those regions (PP_A64_NATIVE_AT,
+# src/frontend/lex_pp.cyr). Same frame rule as tests/gates/platform/
+# raw_syscall_literals_routed.sh applies to lib/. The table is a `return 0` stub off the
+# aarch64 backend, so the scan runs only where a warning would otherwise print.
+# CHANGELOG [6.6.12]
+fn _sysx_meant_here(S, n): i64 {
+    var m = _SYSX_MEANT(n);
+    if (m == 0) { return 0; }
+    # The call's own closing `)` (the cursor is one past it): the token after it may sit
+    # beyond the `#endif` that closes the region.
+    if (PP_A64_NATIVE_AT(S, GTOFF(S, GTI(S) - 1)) == 1) { return 0; }
+    return m;
+}
+
+# ⛔ 6.6.12 — THE ARRAY SUBSCRIPT, `a[i]`, `a[i] = v` and `a[i] OP= v`, on an INTEGER
+# element-typed array `var a: T[N]` (T = i8..i64 / u8..u64), local or global, in any fn, at
+# top level, in a closure (on its captured copy) and in an `async fn`. The language had no
+# subscript at all: `return a[1];` was `expected ';', got '['` and `a[i] = 5;` was
+# `expected '=', got '['`, so the only spelling was `store64(&a + i * 8, v)`. `a[i]` IS
+# that: the element at `&a + i * sizeof(T)`, loaded sign- or zero-extended by T, stored at
+# T's width. No bounds check (the opt-in checked mode is a separate item). A bare `var a[N]`
+# states no element width (bytes in a fn, slots at top level), so its subscript is REFUSED by
+# name rather than guessed, as is a float, bool or struct element (it records no integer
+# descriptor, so it reads as bare); a slice local keeps its own bounds-checked `s[i]` (below,
+# in the factor). CHANGELOG [6.6.12]
+#
+# Cursor at `[` after NAME: consumes `[ idx ]` and leaves rax = &NAME[idx]. Returns the element
+# width, NEGATIVE for a signed element (the EFIELD_LOAD_W convention); 0 after a diagnostic.
+# The base is resolved as `&NAME` resolves it: a local, a closure capture, then a global.
+fn _arr_sub_addr(S, noff): i64 {
+    var k = 0;
+    var ix = 0 - 1;
+    var d = 0;
+    if (GINFN(S) == 1) {
+        ix = FINDLOCAL(S, noff);
+        if (ix >= 0) { k = 1; d = GLAEW(S, ix); }
+    }
+    if (k == 0) { if (_cl_capturing == 1) { if (_cl_env_lidx >= 0) {
+                var esl = _cl_snap_find(S, noff);
+                if (esl >= 0) {
+                    ix = _cl_cap_find(esl);
+                    if (ix >= 0) { k = 2; d = _cl_snap_aew(esl); }
+                }
+            } } }
+    if (k == 0) {
+        ix = FINDVAR(S, noff);
+        if (ix >= 0) { k = 3; d = _arr_gdesc(S, ix); }
+    }
+    var aw = d & 0x3F;
+    if (k == 0) {
+        if (_syntax_only == 0) {
+            ERR_IDENT(S, "undefined variable ", noff, " (missing include or enum?)", 0 - 1);
+            _gv_note_blockscoped(S, noff);
+        }
+        aw = 0;
+    } elif (aw == 0) {
+        ERR_IDENT(S, "cannot subscript ", noff, ": `a[i]` needs an integer element-typed array `var a: T[N]` with T one of i8..i64, u8..u64 - a bare `var a[N]` states no element width, an f64, f32, bool or struct element is not supported, and a pointer or scalar is not an array; use load/store at an explicit byte offset", 0 - 1);
+    } elif (aw > 8) {
+        ERR_IDENT(S, "cannot subscript ", noff, ": a u128 element does not fit one register - use load64/store64 on its two halves", 0 - 1);
+        aw = 0;
+    }
+    STI(S, GTI(S) + 1);   # consume [
+    PCMPE(S);             # rax = the index
+    if (PEEKT(S) != 29) { ERR_EXPECT(S, 29); }
+    STI(S, GTI(S) + 1);   # consume ]
+    if (aw == 0) { return 0; }
+    EPTR_SCALE(S, aw);    # rax = index * sizeof(T)
+    EPUSHR(S);
+    # The frame and capture bases are raw bytes on x86 (no IR node of their own); mark them so
+    # a CYRIUS_IR pass cannot take rax for the scaled index across them. EVADDR records itself.
+    if (k != 3) { _IR_REC0(S, IR_RAW_EMIT); }
+    if (k == 1) { EFLADDR(S, ix); }
+    elif (k == 2) { _CL_CAP_WORDS_RA(S, ix); }
+    else { EVADDR(S, ix); }
+    EPOPC(S);
+    EADDR(S);             # rax = &NAME + index * sizeof(T)
+    if ((d & 0x40) != 0) { aw = 0 - aw; }
+    return aw;
+}
+# Width-correct element load: rax = the element at the address in rax. `w` from _arr_sub_addr.
+fn _arr_sub_load(S, w): i64 {
+    EMOVCA(S);
+    # x86's EFIELD_LOAD_W records its raw bytes for widths 1/2/4 only, so a signed (negative)
+    # width reached the IR unrecorded and CYRIUS_IR=3 rewrote around it (`b[2]` of an i8 read
+    # wrong). Record it here; a second record for the other backends is harmless.
+    if (w < 0) { _IR_REC0(S, IR_RAW_EMIT); }
+    EFIELD_LOAD_W(S, w);
+    # EADDR left `_flags_reflect_rax` set and a load does not write the flags: without this a
+    # following `if (a[i])` would branch on the ADDRESS (see parse_ctrl.cyr ETESTAZ).
+    _flags_reflect_rax = 0;
+    return 0;
+}
+# The factor: `NAME[idx]` as a value. 0 when the cursor is not at `[`, or NAME is a slice
+# local (the bounds-checked slice subscript below handles it); 1 when consumed.
+fn _arr_sub_read(S, noff): i64 {
+    if (PEEKT(S) != 28) { return 0; }
+    if (GINFN(S) == 1) {
+        var sl = FINDLOCAL(S, noff);
+        if (sl >= 0) { if (GSLICE_W(S, sl) > 0) { return 0; } }
+    }
+    var w = _arr_sub_addr(S, noff);
+    if (w != 0) { _arr_sub_load(S, w); }
+    else { EMOVI(S, 0); }
+    var aw = w;
+    if (aw < 0) { aw = 0 - aw; }
+    SPSC(S, 0);
+    SESTYPE(S, 0);
+    SEXW(S, aw);
+    _cfo = 0;
+    return 1;
+}
+# The assignment: `NAME[idx] = v` or `NAME[idx] OP= v` (the compound pair of _asg_compound_tok),
+# stored at the element's width. Does NOT consume the `;` — the statement arm and the classic-for
+# step replay (parse_ctrl.cyr) share it. 0 when the cursor is not at `[`.
+fn _arr_sub_assign(S, noff): i64 {
+    if (PEEKT(S) != 28) { return 0; }
+    var w = _arr_sub_addr(S, noff);
+    EPUSHR(S);            # the element address
+    var cop = _asg_compound_tok(S);
+    if (cop == 0) {
+        if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
+        STI(S, GTI(S) + 1);
+        PCMPE(S);
+    } else {
+        if (w != 0) { _arr_sub_load(S, w); }
+        _asg_compound_op(S, cop, 0);
+    }
+    var aw = w;
+    if (aw < 0) { aw = 0 - aw; }
+    if (aw > 0) { if (GEXW(S) > aw) { WARN(S, "narrowing assignment (value may truncate)", 41); } }
+    EPOPC(S);             # rcx = the element address, rax = the value
+    if (aw == 1) { ESTORE8(S); }
+    elif (aw == 2) { ESTORE16(S); }
+    elif (aw == 4) { ESTORE32(S); }
+    else { ESTORE64(S); }
+    return 1;
+}
+# The statement arm (_PARSE_STMT_IMPL): the assignment and its `;`.
+fn _arr_sub_stmt(S, noff): i64 {
+    if (_arr_sub_assign(S, noff) == 0) { return 0; }
+    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
+    STI(S, GTI(S) + 1);
+    return 1;
 }
 
 fn _PARSE_FACTOR_IMPL(S): i64 {
@@ -1283,6 +1544,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         # IDENT — variable load or function call
         var noff = PEEKV(S);
         STI(S, GTI(S) + 1);
+        if (_call_field(S) == 1) { return 0; }   # 6.6.12: `f(..).field` / `f<T>(..).field`
         # v6.3.10 (explicit): `foo<i64>(x)` explicit type-arguments. Gated on the
         # monomorph flag AND a generic-fn callee AND the `foo<...>(` lookahead shape,
         # so `a < b`, chained comparisons, and calls to non-generic fns are never
@@ -1366,6 +1628,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             _cfo = 0;
             return 0;
         }
+        if (_arr_sub_read(S, noff) == 1) { return 0; }   # 6.6.12: `a[i]` (see _arr_sub_addr)
         # Variable load — check local first if in function
         SPSC(S, 0);
         if (GINFN(S) == 1) {
@@ -1733,7 +1996,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         # its own routing diagnostic above.
         if (_TARGET_MACHO == 0) {
             if (sc_num >= 0) {
-                var sxm = _SYSX_MEANT(sc_num);
+                var sxm = _sysx_meant_here(S, sc_num);   # 6.6.12: 0 inside a native aarch64 #ifdef
                 if (sxm != 0) {
                     syscall(SYS_WRITE, 2, "warning:", 8);
                     _err_head(S);
@@ -2581,43 +2844,9 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
                 if (expect >= 0) {
                     var got = argc - 1;
                     if (got != expect) {
-                        # Skip the warning when this is the cross-arch
-                        # openat shape: syscall(SYS_OPEN=2, AT_FDCWD, path,
-                        # flags, mode) — 4 user args instead of open()'s 3.
-                        # Source: arch-conditional wrappers in
-                        # lib/syscalls_*_linux.cyr and src/frontend/lex.cyr
-                        # keep both open()/openat() shapes for cross-arch
-                        # source compatibility; the dead branch on the
-                        # running arch is not a bug. Open() is never called
-                        # legitimately with 4 user args, so the structural
-                        # match is unambiguous.
-                        var skip_warn = 0;
-                        if (sc_num == 2) { if (got == 4) { skip_warn = 1; } }
-                        # v5.8.54: same cross-arch number-reuse pattern as
-                        # SYS_OPEN above. Linux x86_64 SYS_SETUID = 113 (1
-                        # arg); Linux aarch64 SYS_CLOCK_GETTIME = 113 (2
-                        # args: clock_id + timespec_ptr — `syscall(113, 1,
-                        # &ts)` in cyrius syntax = 3 cyrius-args, got=2).
-                        # Surfaced by `src/backend/aarch64/fixup.cyr`'s
-                        # `_prof_clock_ns()` helper; warning fired on every
-                        # aarch64 cross-build. setuid is never legitimately
-                        # called with 2 user args, so the structural match
-                        # is unambiguous (same logic as the SYS_OPEN skip).
-                        if (sc_num == 113) { if (got == 2) { skip_warn = 1; } }
-                        # 6.6.10: Darwin's kill is kill(pid, sig, posix). lib's sys_kill passes
-                        # posix = 0 explicitly on macOS (a stale third register made kill(-pgid)
-                        # answer EPERM or ESRCH at random), and this Linux table then warned on
-                        # every x86-macOS build. Linux kill never takes 3 user args, so the
-                        # structural match is unambiguous (the 113 shape). CHANGELOG [6.6.10]
-                        if (sc_num == 62) { if (got == 3) { skip_warn = 1; } }
-                        # v6.0.48: agnos uses NATIVE syscall numbers (0-33) that
-                        # collide with Linux numbers at different arities (agnos
-                        # getpid=2 vs Linux open=2/3-args; agnos exit=0 vs Linux
-                        # read=0/3-args; ...). This arity table is Linux-only, so
-                        # it false-positives on every agnos syscall;
-                        # lib/syscalls_x86_64_agnos.cyr is the authority.
-                        if (_TARGET_AGNOS == 1) { skip_warn = 1; }
-                        if (skip_warn == 0) {
+                        # The cross-arch number-reuse shapes that are not a mismatch: see
+                        # _sc_arity_skip (out of this fn: the cybs per-fn cap). CHANGELOG [6.6.12]
+                        if (_sc_arity_skip(sc_num, got) == 0) {
                             WARN(S, "syscall arity mismatch", 22);
                         }
                     }

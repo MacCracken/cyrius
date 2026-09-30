@@ -230,6 +230,303 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   started on a tick edge; any one within 20 ms passes (budget unchanged). Real cass: 20 quiet + 10
   fully-loaded runs GREEN (worst best-of-3 2 ms); the three mutants re-proved RED on all three
   intervals, and the ledger's "~7 orders of magnitude" for the raw-count mutant corrected to 100x.
+### Fixed
+
+- **A narrow variable was written, and a compound operator read it, at 8 bytes (B01, item V1 + the
+  premise-found compound load).** **Root cause:** the classic-`for` step replay
+  (`src/frontend/parse_ctrl.cyr`) kept its own copy of the assignment store and it was always
+  `EFLSTORE` / `EVSTORE`, while the statement arm dispatched on the slot's width. On a u8 global,
+  `for (a = 250; a != 252; a = a + 1)` zeroed the seven packed globals after `a`, and `a += 1` carried
+  255 → 0 into the next one (7 → 8); a narrow local kept 257 in its frame slot, which the narrow read hid
+  until the next compound op (`i >>= 1` gave 128, not 0). The compound operator's load
+  (`_asg_compound_load`) was the same defect on the read side: `a >>= 1` on a u8 global followed by a u8
+  `b = 1` shifted b's byte into a — 130, not 2 — and a signed narrow local was not sign-extended
+  (`c /= 2` on an i8 -8 gave 124). Every native backend (x86, aarch64, PE, both Mach-O). **Fix:** one
+  store, `_asg_store_slot(S, idx, g)` (`src/frontend/parse.cyr`), for the statement arm and the for step,
+  so the two cannot drift again (it carries the narrowing warning, as the statement always did); the
+  compound load loads a narrow local or global at its width, sign-extended when signed, exactly as a read
+  of it in an expression does. **Verification:** new `tests/tcyr/crossos/narrow_slot_width.tcyr` (58
+  rows; every neighbour initialised non-zero and checked; the 6.6.11 compiler fails 23-24). Each half
+  of the fix is mutation-proven on its own: the global step store (19 rows), the local step store (two
+  rows that read a wrap-exited u8 local's whole frame slot with `load64` — 256, not 0), the compound
+  load (its rows), and the signed-global sign extension (`/= 2` on an i8 global -8 — 124, not -4). Green on x86, aarch64 (qemu) and PE (wine), and on real ecb, ach, pi and cass
+  after a byte-identical self-host there. cx's narrow store/load emitters are 8 bytes too — fixed and
+  gated by B06 (`cx_tailcall_and_vm_traps.sh`, cx-narrow axis).
+- **A positional struct literal wrote a nested struct field at 8 bytes per inner field, past its
+  object (B02, item V2 + the premise-found two-level case).** **Root cause:**
+  `_emit_struct_positional_init` (`src/frontend/parse_decl.cyr`) flattened a nested struct field as one
+  8-byte store per inner field, whatever the inner fields' widths, and never recursed. For
+  `struct HO { o: Odd; t: i8; u: i32; }` (`Odd = { a: i8; b: i16; }`, 8 bytes) the literal
+  `HO { 0x11, 0x2222, 0x33, 0x44444444 }` wrote at +0, +8, +16 and +17 — 13 bytes past the object: over
+  the next global (a string's bytes, which is how it surfaced as a NUL in
+  `struct_field_value_copy.tcyr`), or, fn-local, over the caller's own frame — and every field but the
+  first read back wrong. A struct nested two levels deep (`Outer { t; b: Box { v: Pt; n; } }`) was never
+  descended, so it took the wrong NUMBER of values and stored the last one over its neighbour. Silent,
+  and frontend-only, so on every backend (measured wrong on x86, aarch64, PE and cx). **Fix:** the literal walks the struct's leaves
+  recursively (`_spi_fields`), each written at its real `FIELDOFF` and `FIELDSZ` (a Str field stays one
+  8-byte handle). Byte-identical output for an all-i64 nesting, which is why the fixpoint never moved.
+  **Verification:** `tests/tcyr/crossos/struct_field_value_copy.tcyr` — the literal that passed only by
+  layout is replaced by rows checking every field AND a canary after the object (a leading-block global
+  and a fn-local, which also checks a canary before it), plus the two-level rows (i64 and narrow, global
+  and fn-local) and a scalar-expression row; mutation (flatten instead of recurse): the canary rows go
+  red and the two-level literals stop compiling.
+- **A generic struct literal (`Box<Pt> { p, 5 }`) did not parse, and a nested struct field did not
+  take a struct value (B02, item R1).** **Root cause:** all three literal heads — `PARSE_VAR`,
+  `PARSE_GVAR_REG`'s lookahead and the `EMIT_GVAR_INITS` replay — committed only on `Name {`, so
+  `Box<Pt> { .. }` / `Box<i64> { 7, 5 }` parsed as an expression and failed with
+  `undefined variable 'Box'`, in a fn and at top level alike. Resolving the head alone would only have
+  moved the error: a positional literal never accepted a struct VALUE for a nested struct field
+  (`B2 { p, 5 }` with `p: Pt` was `unexpected '}'`; only the flattened `B2 { 1, 2, 5 }` worked).
+  **Fix:** one head recogniser, `_lit_head`, used by all three: `Name<args> {` resolves the INSTANCE
+  with `_gen_ann_sid`, the annotation's own resolver, so `var b: Box<Pt> = Box<Pt> { .. }` agrees and
+  `var b: Box<Pt> = Box<i64> { .. }` is refused by name (`_lit_ann_check`). The leading declaration
+  block now compares a literal with its annotation at all — `var G: Pt = Q { .. }` compiled before. A
+  nested struct field takes a whole struct value of its type from a local, a parameter, a global, a
+  struct-typed field, a call (retptr, rax:rdx, or a <= 8 B struct in rax), a method or an operator,
+  copied byte-exact (`_spi_src` over the 6.6.10 field-store source record `_fsc_*`); a value whose type
+  is on the field's first-field chain fills that inner struct; another struct type is refused by name;
+  at top level a struct call with no frame (a 9-16 B call, or a > 16 B free, method or operator call)
+  is refused by name and taken as the WHOLE field, so that refusal is the only error — the first cut
+  carried it as a leaf and descended, reporting an invented `unexpected '}'` for the values it was then
+  short (review fix: `_spi_took`, kind 4, and `_sc_rbeg`/`_sc_rend`, the span of a call `_sc_pre`
+  refused); anything else is the first leaf, as before. **Verification:** `tests/tcyr/crossos/generic_struct_inference.tcyr` gains the LIT group
+  (fn-local, leading block and after a statement; `Box<Pt> { p, 5 }`, `{ 1, 2, 5 }`, `Box<i64>`,
+  `W1<Pt>`, `Box<Box<Pt>>`, `M2<i32>`); `struct_field_value_copy.tcyr` gains 16 whole-value rows; new
+  gate `tests/gates/frontend/struct_literal_type_refused.sh` (16 refusals on the message — the five
+  top-level ones also required to be the ONLY error — and 4 acceptances against field-by-field
+  controls; mutation ledger in its header). Both tcyrs and the inline cx rows
+  green on x86, aarch64 (qemu), PE (wine) and cx, and on real ecb, ach, pi and cass. The guide
+  (`docs/guides/cyrius-guide.md`, Structs and Generic structs) documents the literal forms.
+- **A struct-typed field passed as a by-value struct argument, and a top-level struct copy-init,
+  used the source's first word as the struct's address — SIGSEGV (B03, items V3 + V4).** **Root
+  cause (V3):** `take(r.v)` into a `: Pt` parameter over 8 B (address-passed) reached
+  `_push_struct_expr_arg` (`src/frontend/parse_fn.cyr`), which armed only the method/operator record,
+  so the field's FIRST WORD was pushed as the pointer the callee dereferenced: rc 139 on x86 and
+  aarch64, a page fault reading 0x3 on PE, 0 on cx — from a local, a global, a by-value parameter and
+  a pointer-mode base, and through `mk<Pt>(r.v)`; the 6.6.10/6.6.11 whole-field record (`_fla_want` /
+  `_fla_take`) was never armed there and accepted only `;` as its end. **Root cause (V4):**
+  `_try_struct_copy_init` returned at `GINFN != 1`, and pass 1 (`PARSE_GVAR_REG`) knew only the literal
+  form as inline, so `var B: Pt = A;` / `var G: Pt = BX.v;` at top level got ONE 8-byte pointer-mode
+  slot holding the source's first word, and `B.x` dereferenced 3 — rc 139 on x86 and aarch64, rc 5 on
+  PE, 0 on cx; in the leading declaration block (the `EMIT_GVAR_INITS` replay) and after the first
+  statement (`PARSE_VAR`) alike. **Fix (V3):** `_push_struct_expr_arg` arms the whole-field record,
+  which now also ends at `,` or `)` (`_fla_arg`); `_fla_push_arg` checks the field's struct against
+  the PARAMETER's — recorded per fn in a new lazily-allocated table, `SFPSID` / `GFPSID`
+  (`src/common/util.cyr`), by pass 1 and by the definition, the only writer for a generic INSTANCE —
+  and refuses a mismatch by name (`cannot pass 'q' to a by-value parameter of a different struct type
+  in a call to 'take'`). In a fn the callee gets a byte-exact COPY in a frame temp, so a write through
+  the parameter does not reach the caller's field; at top level (no frame) it gets the field's own
+  address, as a named global argument does. **Fix (V4):** one token predicate, `_gci_src`
+  (`src/frontend/parse_decl.cyr`), asked by pass 1 (`_gci_inline`), the replay (`_gci_init`) and
+  PARSE_VAR's top-level arm (`_gci_toplevel`): a WHOLE source of the declared struct — a named inline
+  global, or a field chain whose leaf is that struct — registers the global INLINE (STRUCTSZ bytes,
+  `SVPM 2`, as a literal global) and byte-copies it at init; a source of another struct type is refused
+  by name (`_AGG_ASSIGN_TYPE_ERR`), at every width; a pointer-mode source (`var p: Pt = mk();`, a
+  pointer-mode global) keeps the pointer copy, as in a fn. A whole source declared BELOW the
+  destination in the leading block (`var B: Pt = A; var A = Pt { 3, 4 };`, or `= BX.v;` likewise) is
+  refused by name (`cannot copy-init 'B' from a global declared below it (declare the source first):
+  'A'`, `_gci_below`): pass 1 cannot see it yet and registers the pointer-mode slot, the replay sees a
+  whole `Pt`, and the value store that disagreement fell back to was the V4 crash again (rc 139 on x86
+  and aarch64, 5 on PE). A global initialised at run time is initialised in declaration order, so even
+  an inline copy would have read the source before its init. **Verification:**
+  `tests/tcyr/crossos/struct_field_value_copy.tcyr` gains two groups (15 field-argument rows — local,
+  global, parameter, pointer-mode, generic, middle argument, 24 B, 12 B byte-exact, two-level chain,
+  method, the copy's independence, three at top level — and 11 copy-init rows: leading block and after
+  a statement, from a global and a field, 24 B, a 12 B copy with a canary after it, independence from a
+  later write, and the pointer-mode source); mutations: drop the `_fla_want` arming (the argument group,
+  SIGSEGV), `_gci_src` returns 0 (the copy-init group, SIGSEGV). New gate
+  `tests/gates/frontend/struct_copy_source_type_refused.sh`: 12 refusals on the message (each the ONLY
+  error, no binary) — a free call in a fn, a callee defined after the call (pass 1's record), top
+  level, a generic instance, a method, and copy-init from a named global and a field on both
+  declaration paths plus an 8 B pair, and a named global and a field declared below the destination —
+  and 2 acceptances against field-by-field controls; every
+  refusal compiled clean on 6.6.11; mutation ledger in its header. The tcyr is 94/94 on x86, aarch64
+  (qemu) and PE (wine), and on real pi, ecb, ach and cass; the no-lib cx rows
+  (`B03-cx-rows.cyr`, exit 128 = all right) are 128 on cxvm and every native target, 127 on the
+  pre-B03 cx compiler. Fixpoint and seed-derive green.
+- **A field chain stopped after two levels, and no expression accepted a `.field` on a call result
+  (B04, items R7 + R3).** Both were loud — syntax errors, nothing compiled wrong. **Root cause
+  (R7):** `_resolve_leaf_field` (`src/frontend/parse_decl.cyr`), which serves both the field load
+  and the field store, descended exactly ONE nested level (an `if`), so `n.v.v.x = 3;` was
+  `expected '=', got '.'` and `var r = n.v.v.x;` `expected ';', got '.'` through a local, a global
+  (inline and pointer-mode) and a by-value or `*T` parameter alike. **Fix:** a `while`, guarded by
+  `_rlf_more` so a `..` range and a `.method(` on a nested field keep their own paths. **Root cause
+  (R3):** `_PARSE_FACTOR_IMPL` (`src/frontend/parse_expr.cyr`) returned straight after the call
+  (`PARSE_FNCALL`, `_explicit_generic_call`) — no postfix-dot arm — so `f(mk(p).n)`,
+  `var r = mkp(3).y;` and `mk(p).v.x + 1` were syntax errors, generic or not, at every return class;
+  and PARSE_VAR's lookaheads read a call followed by `.` as a whole-struct receive, so
+  `var s = mkp(3).y + 1;` typed `s` as `Pt` and dispatched `+` to an undefined `Pt_add`. **Fix:**
+  `_call_field` (parse_expr.cyr), called before both call arms: inside a fn the call lands in a
+  frame temp (`_struct_call_into`, `src/frontend/parse_fn.cyr` — `_struct_call_emit` gains the
+  missing class-0 store, rax into the temp; a `Str` handle, the one class-0 struct over 8 B, goes
+  into a pointer-mode slot, `_ptr_temp`) and the field is loaded through PARSE_FIELD_LOAD's own body,
+  split out as `_field_load_on(S, noff, fnoff, beg, idx, sid)`, so chains, widths, sign-extension,
+  f64 typing, a method on the result (`mkpt(3).psum()`) and a struct-typed field taken whole (`var q:
+  Pt = mk(p).v;`, `q = ..`, `d.p = ..`, a by-value argument) behave as for a named receiver. The
+  literal-fold flag is cleared AFTER the call: cleared before it, `mk8(4).a * 10` folded from the
+  argument literal and dropped the call. At top level there is no frame: refused by name for every
+  return class; a callee returning no struct is refused by name; under `--syntax-only` a field of an
+  unresolved call is silent and its arguments are still parsed. `_var_rhs_call` (PARSE_VAR's two call
+  lookaheads, now one helper) skips a call followed by `.field`, and `_try_push_struct_addr_arg`,
+  `_return_struct_call`, `_pair_ret_call_ok` and `_refuse_toplevel_pair_init` step aside for one
+  (`_call_dotted`) — without the last-but-one step-aside `return mkpt(1).x;` from a `: Pt` fn
+  compiled SILENTLY, taking the call whole. The BARE STATEMENT takes the same path through
+  `_stmt_call_field` (parse_expr.cyr, one call in PARSE_STMT's IDENT arm): PARSE_STMT sends
+  `IDENT (` straight to PARSE_FNCALL and never reaches the factor, so `mk(3).total();` and
+  `mk(3).n;` stayed `expected ';', got '.'` while `var t = mk(3).total();` worked (review find);
+  `mk(3).n = 5;` is refused by name (a field of a temporary is not an lvalue), and a refused
+  top-level call skips a method's `(..)` too rather than reporting it again. **Verification:** new
+  `tests/tcyr/lang/struct_field_chain_depth.tcyr` (29 rows: 3- and 4-level read and write through a
+  local, an inline and a pointer-mode global, by-value and `*T` parameters, packed i8/i16/i32 leaves
+  checked through `load8/32/64` on the storage, a whole deep struct copied and passed, a `..` range
+  after a deep chain, an f64 leaf; 6.6.11 does not build it; mutation `while` → `if`: does not
+  build); `tests/tcyr/crossos/generic_struct_inference.tcyr` gains the CF group (30 rows: argument,
+  var-init, expression, chain and bare statement for a 5 B rax, 16 B rax:rdx and 24/32 B retptr result, inferred and
+  explicit generics, `W1<Pt>`, a method on the result, a struct-typed field whole into a `var`, an
+  assignment, a field and a by-value argument, a `Str` handle, f64 fields; the rax:rdx rows off on
+  cx, which has no register-pair struct return; seven mutations each RED, listed in its header); new
+  gate `tests/gates/frontend/call_result_field.sh` (15 rows on the message: seven top-level
+  refusals, five required to be the ONLY error, two of them a method on the result; the assignment
+  to a result's field; the non-struct callee; two struct-type mismatches; two struct-return
+  diagnostics; two `--syntax-only` rows; 6.6.11 fails 14 of 15; mutation ledger in its header). Both tcyrs green on x86, aarch64 (qemu), PE (wine) and cx (cxvm, 29/29 and 63/63),
+  and on real ecb, ach, pi and cass, compiled there by a compiler that self-hosted byte-identical on
+  that host. The guide (`docs/guides/cyrius-guide.md`, Structs) documents both. Fixpoint and
+  seed-derive green; cycc 1,453,864 → 1,458,120 B.
+- **A string literal still open at end of file was accepted silently by the lexer (B05, item R5).**
+  **Root cause:** LEX's string loop (`src/frontend/lex.cyr`) treated EOF as a closing quote
+  (`if (p >= bl) { sgo = 0; }`), unlike the char-literal path, so the error surfaced later and
+  elsewhere: `var s = "abc` said `expected ';', got end of file`, a bare `"abc` said `unexpected
+  string`, and a literal opened on line 2 and running to EOF was reported at the LAST line; a `\` as
+  the very last byte read one byte past the source as its escape. The exit status was never 0. In an
+  INCLUDED file — the usual shape in a `cyrius build` project — the literal did not reach EOF at
+  all: it ran on into the preprocessor's `#@file "<parent>" N` resume marker, closed on the marker's
+  own quote, and every later quote then paired wrongly, so the error named the main file (a bare
+  `error:6:16: undefined variable 'source'`, or a VALID literal after the include).
+  **Fix:** `_lex_unterm_str` restores the literal's opening line and reports `unterminated string
+  literal` at the opening quote's `<file>:<line>:<col>`; a trailing `\` escapes nothing, so it reaches
+  the same report. A LF inside a literal followed by a whole marker line in `PP_FMARK`'s exact shape
+  (`_lex_str_lf` / `_lex_fmark_line`) is the end of an included file and reports the same way,
+  naming the included file; the whole line is matched, so a valid string closed right after
+  `#@file ` on its own line still compiles. **Verification:** eight new rows in
+  `tests/gates/frontend/lexer_errors_name_file_line.sh` (single-line, multi-line naming the opening
+  line, trailing backslash, bare statement, and four in an included file — with a valid literal
+  after the include, with plain lines after it, ending in `\<LF>`, ending with no newline), plus two
+  anti-vacuous rows; the 6.6.11 compiler fails all eight, and each part is mutation-proven, listed in
+  its header.
+- **An explicit generic call as a bare statement (`id<i32>(4);`) was a syntax error (B05, item R2).**
+  Loud — nothing compiled wrong. **Root cause:** the IDENT arm of `_PARSE_STMT_IMPL`
+  (`src/frontend/parse.cyr`) sent only `IDENT (` to PARSE_FNCALL; `IDENT <` fell into the assignment
+  path, `expected '=', got '<'`, in a fn and at top level alike, while the inferred `id(4);` and the
+  expression `var r = id<i32>(4);` worked. **Fix:** `_stmt_explicit_generic`, one call in the arm,
+  behind the factor arm's own guards (the monomorph flag, a generic callee, the `name<..>(`
+  lookahead, so `a < b;` never gets there), with the `IDENT (` arm's behaviour: a `.field` /
+  `.method()` on the result, the `#must_use` warning (now `_must_use_warn`, shared) and a postfix
+  `?` (the statement desugar moved out of `_PARSE_STMT_IMPL` into `_stmt_qmark`, one copy for both
+  forms, so `g<i32>(..)?;` on a `Result` generic propagates both halves). **Verification:**
+  `tests/tcyr/crossos/generic_struct_inference.tcyr` gains the SG rows (scalar, 5 B rax, 16 B
+  rax:rdx, 24 B retptr and struct-type-argument results dropped, a field and a method on the result,
+  `?` Ok and Err, and a top-level scalar statement; 6.6.11 does not build it; dropping the call does
+  not build, passing `pair = 0` dies rc 139); `tests/gates/frontend/call_result_field.sh` gains
+  G1-G3 (the top-level struct-returning refusal, with and without a field, and the `#must_use`
+  warning; 6.6.11 fails all three; 15 → 18 rows).
+- **A wrong 3-arg `kill` compiled silently on x86-Linux, and the ELF-aarch64 raw-literal warning
+  flagged a correct native number (B05, item Q2).** **Root cause (arity):** the 6.6.10 skip for
+  Darwin's `kill(pid, sig, posix)` (`if (sc_num == 62) { if (got == 3) ..`) had no target check,
+  and the Linux arity table runs on every non-aarch64 backend, so `syscall(62, pid, sig, x)` lost
+  its `syscall arity mismatch` warning on x86-Linux from 6.6.10 on (6.6.9 warned). **Fix:** the
+  skips move into `_sc_arity_skip(sc_num, got)` (`src/frontend/parse_expr.cyr`, out of
+  `_PARSE_FACTOR_IMPL` for the cybs per-fn cap) and the kill skip is `_TARGET_MACHO == 1` only.
+  **Root cause (native literal):** the raw-literal warning (`_SYSX_MEANT`, v6.5.51) runs in the
+  parser, after the preprocessor has dropped the `#ifdef`, so `syscall(8, ..)` /
+  `syscall(291, ..)` under `#ifdef CYRIUS_ARCH_AARCH64` — getxattr and statx there — was told to
+  "use SYS_LSEEK", and an `enum` spelling folded to the same literal, so there was no way to mark
+  a number native (kriya's `k_statx` and getxattr sites). **Fix:** the preprocessor
+  (`src/frontend/lex_pp.cyr`, both `#ifdef` passes) writes the fact into the stream — the blank
+  line that replaces a directive becomes `#@a+` where a TAKEN branch whose condition implies
+  aarch64 opens (`#ifdef CYRIUS_ARCH_AARCH64`, `#ifplat aarch64`, `#ifndef CYRIUS_ARCH_X86`, the
+  `#else` of their opposites) and `#@a-` where it closes; relative markers, so an included file's
+  own blocks (expanded by a later pass) nest inside an outer region; a marker is never longer than
+  the directive it replaces, so the stream stays line-for-line with the source. `_sysx_meant_here`
+  skips the warning for a call inside a region (`PP_A64_NATIVE_AT`, a scan run only when the
+  warning would otherwise print). Source text spelling a marker is neutralised by `PP_NEUT_FMARK`
+  like a forged `#@file`. Same frame rule as `tests/gates/platform/raw_syscall_literals_routed.sh`.
+  Output is byte-identical: x86 on `tests/tcyr/crossos` + `programs/` (235 files), aarch64 on the
+  crossos corpus (150).
+  The guide's aarch64 syscall rules say so (rule 2). **Verification:** new gate
+  `tests/gates/diagnostics/raw_syscall_native_exempt_and_kill_arity.sh` (19 rows: eight native
+  shapes silent — `#ifdef`, an enum constant, `#ifndef CYRIUS_ARCH_X86`, the `#else` of
+  `#ifdef CYRIUS_ARCH_X86`, `#ifplat aarch64`, a call whose next token lies past its `#endif` (the
+  scan is anchored on the call's own `)`), a whole included file under the guard; six
+  anti-vacuous rows still warn — after a block, a neutral `#ifdef CYRIUS_TARGET_LINUX`, after an
+  included file's block closes, a forged marker, a marker in a string; the 3-arg kill warns on
+  x86-Linux and is silent on x86-macOS, whose 1-arg control still warns, with a PE control row
+  (PE never prints the arity warning; its unrouted-number warning names the call, unchanged); nine mutations,
+  each RED, in its header). ⚠ cybs refuses a CALL with more than six arguments (a bare `syntax
+  error` at seed-derive step 3, measured): `_pp_a64_open` packs its kind and state into one.
+- **Dead code: `FLIT_DEN` and the float-literal table's unused denominator slot (B05, item T8a).**
+  Since 6.6.10 the lexer stores a literal's correctly rounded binary64 bits in slot @0, which left
+  slot @8 and its only reader dead. `FLIT_ADD(bits)` (`src/common/util.cyr`) now takes one
+  argument and the table is 8 bytes per literal (lazily allocated, so no heap-map change);
+  `FLIT_DEN` is deleted. **Unreachable-fn floor 74 → 73** (`note: 73 unreachable fns` on the
+  self-compile). Output byte-identical on x86, aarch64 and cx (213 / 163 / 163 files including
+  `tests/tcyr/math`); `float_literal_precision.tcyr` and the `_FLIT_CAP` row of
+  `integer_literal_overflow_refused.sh` exercise the new stride.
+- **Dead code: an unreachable `jmp +0` after every coroutine's resume dispatch (B05, item T8b).**
+  **Root cause:** `_defer_emit_init` (`src/frontend/parse.cyr`) pushed the body's fall-through
+  `jmp` for every fn with defers before testing `_cur_fn_coro`; for a coroutine it runs right after
+  the resume dispatch, which ends in an unconditional `jmp` to the body top, and the coroutine's
+  body end is already routed to the return landing — so an `async fn` with a `defer` carried a dead
+  `e9 00000000`. **Fix:** the jmp is pushed only on the plain-fn / closure path, where the flag
+  trampoline actually follows the body. x86-family only (aarch64 and cx refuse a mid-body
+  suspend). **Verification:** axis M of `tests/gates/frontend/coroutine_fnptr_and_completion.sh`
+  (hand-off to lane H: the byte pattern "backward rel32 jmp, then `jmp +0`" must not occur in a
+  defer + await coroutine; RED on the pre-fix compiler); both coroutine gates green; output of
+  every non-coroutine program byte-identical (279 files).
+
+### Added
+
+- **Array subscripts: `a[i]`, `a[i] = v` and `a[i] OP= v` on an integer element-typed array
+  `var a: T[N]`, T = i8..i64 / u8..u64 (B20, items R4 + R6).** The language had no subscript, read or write: `return a[1];` was
+  `expected ';', got '['` and `a[i] = 5;` was `expected '=', got '['` — local or global, in a fn or
+  at top level, on 6.6.10 and 6.6.11 alike — so `store64(&a + i * 8, v)` was the only spelling.
+  (R6, "`var c: i64[4];` inside a fn is refused", was this same diagnostic misattributed to the
+  declaration; the declaration always compiled.) **Root cause:** no postfix `[` arm existed for an
+  array name in the factor or the statement, and `PARSE_ARRAY` / `PARSE_GVAR_ARR` recorded the
+  array's byte size but not its element type, so there was nothing to scale or load by.
+  **Fix:** the declaration records a one-byte element descriptor (width 1/2/4/8/16 | 0x40 signed):
+  a stack array local above the span in its depth word (`SLAEW`/`GLAEW`, `src/common/util.cyr`;
+  `GLSPAN` and the closure snapshot's span now mask to their 16 bits), a global — and a fn-local
+  array that fell back to static storage — in the per-var sign table as `0x100 | desc`, a range
+  disjoint from that table's scalar 0/1 (no heap-map change). `_arr_sub_addr`
+  (`src/frontend/parse_expr.cyr`) resolves the base as `&a` does — a local, a closure capture, a
+  global — and computes `&a + i * sizeof(T)`; the factor (`_arr_sub_read`) loads it sign- or
+  zero-extended by T, and the statement arm (`_arr_sub_stmt`) and the classic-for step
+  (`_arr_sub_assign`, the step's existing body moved out of `PARSE_FOR` into `_for_step_assign`)
+  store at T's width, with all ten compound operators through the shared `_asg_compound_op`. No
+  bounds check. A **bare** `var a[N]` (and `stack var a[N]`) states no element width — bytes in a
+  fn, slots at top level — so its subscript is **refused by name** (`cannot subscript 'a': ...`),
+  as are a scalar, a pointer, a `u128` element and an f64 / f32 / bool / struct element — the
+  last named as such (`an f64, f32, bool or struct element is not supported`), since that shape IS
+  a `var a: T[N]` and the bare/scalar explanation alone misdescribed it; a `slice<T>` local keeps its bounds-checked
+  `s[i]`. `*T` pointer subscripts, slice writes and the opt-in bounds-checked mode are not part of
+  this. Two traps closed on the way: the element load must clear `_flags_reflect_rax` (the address
+  add set it, so `if (a[i])` branched on the ADDRESS on x86), and a signed element load records
+  itself for the IR (x86's `EFIELD_LOAD_W` records widths 1/2/4 only; under `CYRIUS_IR=3` an `i8`
+  element read wrong). **Verification:** new `tests/tcyr/crossos/typed_array_subscript.tcyr`
+  (69 rows: every width u8/i8/u16/i16/u32/i32/i64/u64 local and global, sign extension, store
+  truncation, a canary after every array and before/after the locals, the ten compound operators,
+  index expressions including a nested subscript and a call, `if`/`while` on an element, the for
+  step, a closure capture, a top-level statement and an array declared after the first top-level
+  statement; green on x86, `CYRIUS_IR=3`, aarch64 (qemu), PE (wine) and cx, and on the real hosts
+  with each host's own compiler — pi, ecb, ach and cass; each of five mutations listed in its
+  header reddens it); new gate `tests/gates/frontend/array_subscript_forms.sh`
+  (fifteen refusals — four bare shapes, a scalar, a pointer, a `stack var`, a `u128` element, an
+  unknown name, and six f64 / f32 / bool / struct element rows local and global, each naming the
+  element shape; four typed controls; the runtime file by default and under
+  `CYRIUS_IR=3`; `--syntax-only` clean; the slice subscript untouched; RED on 6.6.11 with 22
+  failures, and each of five mutations in its header RED). The guide documents the form beside the
+  `store64` idiom (`docs/guides/cyrius-guide.md`, "Subscripts"). Every other program compiles
+  byte-identical (490 files: `tests/tcyr/**` + `programs/`); the unreachable-fn floor stays 73.
 
 ## [6.6.11] — 2026-09-29
 

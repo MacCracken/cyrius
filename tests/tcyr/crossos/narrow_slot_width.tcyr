@@ -1,0 +1,212 @@
+# narrow_slot_width.tcyr — 6.6.12 — a narrow (1/2/4-byte) variable is written AND read at its own
+# width by every assignment form, on every backend: the statement, the classic-for step (plain
+# and compound), and a compound operator's load.
+#
+# The for-step replay (src/frontend/parse_ctrl.cyr) had its own copy of the assignment store and
+# it was always 8 bytes: `for (a = 250; a != 252; a = a + 1)` on a u8 global zeroed the seven
+# packed globals after it, and `a += 1` carried 255 -> 0 into the next one. A narrow LOCAL kept
+# 257 in its 8-byte frame slot after `for (i = 254; i != 1; i += 1)`; the narrow read hid it and
+# the next compound op (`i >>= 1`) exposed it — 128, not 0. The compound op's LOAD was the same
+# defect on the adjacent path: 8 bytes, so `a >>= 1` on a u8 global followed by a u8 `b = 1`
+# shifted b's byte into a (130, not 2). Now one store (_asg_store_slot) and a width-correct
+# load (_asg_compound_load), both in src/frontend/parse.cyr.
+#
+# Every neighbour is initialised NON-zero on purpose (a zero-initialised narrow global is a
+# different, separately tracked path) and every one is checked after the loop.
+#
+# Mutations that redden this file (each alone; the 6.6.11 compiler fails 23-24 of the 58 rows —
+# the i8-local row reads whatever stale byte sits above the slot in the frame):
+#   * route the GLOBAL for step back to EVSTORE in parse_ctrl.cyr — every narrow-global for-step
+#     row and the top-level rows fail (19);
+#   * route the LOCAL for step back to EFLSTORE — the two "whole frame slot" rows fail (256): the
+#     loop exits on the wrapping store, which an 8-byte store keeps as 256 under a narrow read of 0;
+#   * make _asg_compound_load use EFLLOAD / EVLOAD for every slot — the "compound load" rows fail;
+#   * drop the sign extension of a signed narrow GLOBAL in _asg_compound_load — the i8 global `/=`
+#     row fails (124). (The u8/u16 local `>>=` rows need both fixes: a narrow compound load masks
+#     an 8-byte step store that did not exit on the wrap.)
+# cx: its narrow store emitters are 8 bytes too (B06's fix, gated by cx_tailcall_and_vm_traps.sh).
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+# Row set 1: a plain for step on a u8 global, three packed u8 neighbours and an i64 after them.
+var P_A: u8 = 5;
+var P_B: u8 = 7;
+var P_C: u8 = 9;
+var P_D: u8 = 13;
+var P_W: i64 = 0x1122334455667788;
+
+# Row set 2: compound for steps across the 255 -> 0 carry.
+var K_A: u8 = 5;
+var K_B: u8 = 7;
+var K_C: u8 = 11;
+var K_W: i64 = 0x0102030405060708;
+
+# Row set 3: wider narrow globals (u16, i32) under a for step.
+var H_A: u16 = 3;
+var H_B: u16 = 0x1234;
+var H_C: u16 = 0x5678;
+var I_A: i32 = 1;
+var I_B: i32 = 0x01020304;
+var I_W: i64 = 77;
+
+# Row set 4: compound operators on narrow globals, each with a non-zero neighbour.
+var S_A: u8 = 4;
+var S_B: u8 = 1;
+var S_C: u8 = 200;
+var S_D: u8 = 3;
+var S_E: i8 = 0 - 4;
+var S_F: i8 = 0 - 1;
+var S_G: u16 = 0x0100;
+var S_H: u16 = 0x0302;
+var S_Z: u8 = 9;
+var S_S: i8 = 0 - 8;
+var S_T: i8 = 5;
+
+# Row set 5: a top-level for step (no fn around it) on a u8 global with neighbours.
+var T_A: u8 = 1;
+var T_B: u8 = 21;
+var T_C: u8 = 22;
+var T_N = 0;
+for (T_A = 252; T_A != 3; T_A = T_A + 1) { T_N = T_N + 1; }
+
+fn for_step_plain_global(): i64 {
+    var n = 0;
+    for (P_A = 250; P_A != 252; P_A = P_A + 1) { n = n + 1; }
+    assert_eq(n, 2, "for step plain u8 global: iterations");
+    assert_eq(P_A, 252, "for step plain u8 global: value");
+    assert_eq(P_B, 7, "for step plain u8 global: neighbour +1");
+    assert_eq(P_C, 9, "for step plain u8 global: neighbour +2");
+    assert_eq(P_D, 13, "for step plain u8 global: neighbour +3");
+    assert_eq(P_W, 0x1122334455667788, "for step plain u8 global: i64 after the u8 run");
+    # The plain step across 255 -> 0.
+    n = 0;
+    for (P_A = 254; P_A != 2; P_A = P_A + 1) { n = n + 1; }
+    assert_eq(n, 4, "for step plain u8 global 255->0: iterations");
+    assert_eq(P_A, 2, "for step plain u8 global 255->0: value");
+    assert_eq(P_B, 7, "for step plain u8 global 255->0: neighbour +1");
+    assert_eq(P_C, 9, "for step plain u8 global 255->0: neighbour +2");
+    assert_eq(P_D, 13, "for step plain u8 global 255->0: neighbour +3");
+    assert_eq(P_W, 0x1122334455667788, "for step plain u8 global 255->0: i64 after");
+    return 0;
+}
+
+fn for_step_compound_global(): i64 {
+    var n = 0;
+    for (K_A = 254; K_A != 1; K_A += 1) { n = n + 1; }
+    assert_eq(n, 3, "for step += u8 global 255->0: iterations");
+    assert_eq(K_A, 1, "for step += u8 global 255->0: value");
+    assert_eq(K_B, 7, "for step += u8 global 255->0: carry not in neighbour");
+    assert_eq(K_C, 11, "for step += u8 global 255->0: neighbour +2");
+    assert_eq(K_W, 0x0102030405060708, "for step += u8 global 255->0: i64 after");
+    n = 0;
+    for (K_A = 3; K_A != 250; K_A -= 1) { n = n + 1; }
+    assert_eq(n, 9, "for step -= u8 global 0->255: iterations");
+    assert_eq(K_A, 250, "for step -= u8 global 0->255: value");
+    assert_eq(K_B, 7, "for step -= u8 global 0->255: borrow not in neighbour");
+    assert_eq(K_C, 11, "for step -= u8 global 0->255: neighbour +2");
+    return 0;
+}
+
+fn for_step_wide_narrow_globals(): i64 {
+    var n = 0;
+    for (H_A = 0xFFFE; H_A != 1; H_A += 1) { n = n + 1; }
+    assert_eq(n, 3, "for step += u16 global: iterations");
+    assert_eq(H_A, 1, "for step += u16 global: value");
+    assert_eq(H_B, 0x1234, "for step += u16 global: neighbour +1");
+    assert_eq(H_C, 0x5678, "for step += u16 global: neighbour +2");
+    n = 0;
+    for (I_A = 0 - 2; I_A != 2; I_A = I_A + 1) { n = n + 1; }
+    assert_eq(n, 4, "for step plain i32 global: iterations");
+    assert_eq(I_A, 2, "for step plain i32 global: value");
+    assert_eq(I_B, 0x01020304, "for step plain i32 global: neighbour");
+    assert_eq(I_W, 77, "for step plain i32 global: i64 after");
+    return 0;
+}
+
+fn for_step_narrow_local(): i64 {
+    var i: u8 = 5;
+    for (i = 254; i != 1; i += 1) { }
+    assert_eq(i, 1, "for step += u8 local: value");
+    i >>= 1;
+    assert_eq(i, 0, "for step += u8 local then >>=");
+    var j: u8 = 5;
+    for (j = 250; j != 3; j = j + 1) { }
+    j += 0;
+    assert_eq(j, 3, "for step plain u8 local then += 0");
+    var k: u16 = 1;
+    for (k = 0xFFFF; k != 2; k += 1) { }
+    k >>= 1;
+    assert_eq(k, 1, "for step += u16 local then >>=");
+    # The loop exits on the store that wraps (256 -> 0), so an 8-byte step store leaves 256 in the
+    # frame slot while every narrow read says 0: look at the whole slot (zeroed first, so its
+    # upper bytes are known; `&q` also keeps q out of a register).
+    var q: u8 = 5;
+    store64(&q, 0);
+    for (q = 254; q != 0; q += 1) { }
+    assert_eq(q, 0, "for step += u8 local exiting on the wrap: value");
+    assert_eq(load64(&q), 0, "for step += u8 local exiting on the wrap: the whole frame slot");
+    store64(&q, 0);
+    for (q = 250; q != 0; q = q + 1) { }
+    assert_eq(load64(&q), 0, "for step plain u8 local exiting on the wrap: the whole frame slot");
+    var n = 0;
+    for (var m: u8 = 253; m != 2; m = m + 1) { n = n + 1; }
+    assert_eq(n, 5, "for (var u8) plain step across 255->0: iterations");
+    return 0;
+}
+
+fn compound_load_globals(): i64 {
+    S_A >>= 1;
+    assert_eq(S_A, 2, "compound load u8 global >>= (neighbour 1)");
+    assert_eq(S_B, 1, "compound load u8 global >>=: neighbour");
+    S_C += 100;
+    assert_eq(S_C, 44, "compound load u8 global += across 255");
+    assert_eq(S_D, 3, "compound load u8 global +=: neighbour");
+    S_E += 1;
+    assert_eq(S_E, 0 - 3, "compound load i8 global += (signed)");
+    assert_eq(S_F, 0 - 1, "compound load i8 global +=: neighbour");
+    S_E *= 2;
+    assert_eq(S_E, 0 - 6, "compound load i8 global *= (signed)");
+    S_G >>= 8;
+    assert_eq(S_G, 1, "compound load u16 global >>=");
+    assert_eq(S_H, 0x0302, "compound load u16 global >>=: neighbour");
+    S_G |= 0x10;
+    assert_eq(S_G, 0x11, "compound load u16 global |=");
+    assert_eq(S_Z, 9, "compound load: u8 after the run");
+    S_S /= 2;
+    assert_eq(S_S, 0 - 4, "compound load i8 global /= (sign-extended load)");
+    assert_eq(S_T, 5, "compound load i8 global /=: neighbour");
+    return 0;
+}
+
+fn compound_load_locals(): i64 {
+    var a: u8 = 4;
+    var b: u8 = 1;
+    a >>= 1;
+    assert_eq(a, 2, "compound load u8 local >>=");
+    b += 255;
+    assert_eq(b, 0, "compound load u8 local += across 255");
+    b >>= 1;
+    assert_eq(b, 0, "compound load u8 local >>= after the carry");
+    var c: i8 = 0 - 8;
+    c /= 2;
+    assert_eq(c, 0 - 4, "compound load i8 local /= (signed)");
+    return 0;
+}
+
+fn top_level_for(): i64 {
+    assert_eq(T_N, 7, "top-level for step u8 global: iterations");
+    assert_eq(T_A, 3, "top-level for step u8 global: value");
+    assert_eq(T_B, 21, "top-level for step u8 global: neighbour +1");
+    assert_eq(T_C, 22, "top-level for step u8 global: neighbour +2");
+    return 0;
+}
+
+for_step_plain_global();
+for_step_compound_global();
+for_step_wide_narrow_globals();
+for_step_narrow_local();
+compound_load_globals();
+compound_load_locals();
+top_level_for();
+var r = assert_summary();

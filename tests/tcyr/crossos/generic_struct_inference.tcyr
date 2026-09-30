@@ -59,6 +59,45 @@
 # base). Mutation: PARSE_GVAR_REG's `_gen_ann_sid` back to SKIP_GENERICS -> this file does not
 # build. The initialiser refusals are in tests/gates/frontend/generic_type_arg_unknown_refused.sh (Q).
 #
+# LIT (6.6.12) rows `run_literals` + the GL* globals: a GENERIC struct literal, `Box<Pt> { p, 5 }` /
+# `Box<i64> { 7, 5 }` / `Box<Pt> { 1, 2, 5 }`, fn-local, in the leading declaration block and after
+# the first top-level statement. Every head (PARSE_VAR, PARSE_GVAR_REG's lookahead, the
+# EMIT_GVAR_INITS replay) committed only on `Name {`, so each was "undefined variable 'Box'".
+# Mutation: make `_lit_head` (src/frontend/parse_decl.cyr) return 0 on `<` -> this file does not
+# build. The mismatched-annotation refusals are in tests/gates/frontend/struct_literal_type_refused.sh.
+#
+# CF (6.6.12, R3) rows `run_call_fields` / `run_call_fields_pair`: a `.field` on a CALL RESULT,
+# `f(mk(p).n)`, `var r = mkp(3).y;`, `mk(p).v.x + 1`. The factor returned straight after the call,
+# so every expression position was a syntax error ("expected ')', got '.'" / "expected ';', got
+# '.'"), and `var s = mkp(3).y + 1;` also typed `s` as the struct and dispatched `+` to an undefined
+# `Pt_add`. Rows cover the argument, the var-init, the expression and a chain, for each return
+# class: rax (a 5 B `P8`), rax:rdx (the 16 B `Pt`, `W1<Pt>`; off on cx, which has no register-pair
+# struct return) and the retptr (`P3`, `BB`, `BP`, `Box<Pt>`), plus a `Str` handle, a method on
+# the result, a struct-typed field taken whole, a BARE STATEMENT (`mk8(5).bump();`, `mk3(4).c;`,
+# `mkpt(3).phit();` — PARSE_STMT sent `IDENT (` straight to PARSE_FNCALL, so the `.` stayed
+# "expected ';', got '.'" after the factor learned it; the 6.6.12 review find), and a literal argument (`mk8(4).a * 10`, which
+# folded to a constant and dropped the call on the first cut). The top-level refusals are in
+# tests/gates/frontend/call_result_field.sh. MUTATIONS (scratch trees), each RED here: no
+# `_call_field` call in `_PARSE_FACTOR_IMPL` (the file does not build); `_struct_call_emit`
+# without its class-0 store (C0 rows); `_struct_call_into` ignoring `handle` (the Str row);
+# `_var_rhs_call` not asking `_call_dotted` (the file does not build: `var r2 = mk3(4).c;` is
+# received as the struct); `_call_field` not clearing `_cfo` after the call (C0x and the `+ 1`
+# rows); `_try_push_struct_addr_arg` without its `_call_dotted` route (`ptv(mkbp(5).p)` pushes
+# the field's first word as the struct's address: rc 139); no `_stmt_call_field` call in PARSE_STMT
+# (src/frontend/parse.cyr; the file does not build: `mk8(5).bump();`).
+#
+# SG (6.6.12, R2) rows `run_stmt_generics` + the top-level SG rows: an EXPLICIT generic call as a
+# BARE STATEMENT, `id<i32>(4);`. The IDENT arm of PARSE_STMT sent only `IDENT (` to PARSE_FNCALL,
+# so `IDENT <` fell into the assignment path: "expected '=', got '<'" in a fn and at top level,
+# for every return class (the inferred `id(4);` worked). Rows: scalar, rax (5 B `P8`), rax:rdx
+# (16 B `Pt`, off on cx) and retptr (24 B `P3`) results dropped, a `.field` and a method on the
+# result, and a postfix `?` on a pair-returning (`Result`) generic — Ok falls through, Err
+# propagates both halves. The top-level struct refusal and the #must_use warning are in
+# tests/gates/frontend/call_result_field.sh (G rows). Mutation: no `_stmt_explicit_generic` call
+# in PARSE_STMT (src/frontend/parse.cyr) -> this file does not build; `_stmt_explicit_generic`
+# passing `pair = 0` to `_stmt_qmark` -> the SG `?` Err row dies (rc 139: the tag read as a
+# pointer).
+#
 # CROSS-HOST because each instance is a by-value struct-param fn emitted inline (jumped over) by
 # every backend, and struct returns take the per-target retptr / register-pair ABI.
 include "lib/assert.cyr"
@@ -67,6 +106,7 @@ include "lib/string.cyr"
 include "lib/fmt.cyr"
 include "lib/str.cyr"
 include "lib/vec.cyr"
+include "lib/result.cyr"
 
 struct Pt { x; y; }
 struct Box<T> { v: T; n; }
@@ -82,6 +122,11 @@ var gws: Pt = Pt { 2, 5 };
 var gbs: P3 = P3 { 1, 2, 3 };
 var GW: W1<Pt> = &gws;
 var GB: Box<Pt> = &gbs;
+# LIT (6.6.12): generic struct literals in the leading declaration block.
+var GLP: Box<Pt> = Box<Pt> { gws, 6 };
+var GLF = Box<Pt> { 3, 4, 7 };
+var GLI = Box<i64> { 7, 5 };
+var GLW = W1<Pt> { 8, 9 };
 
 # A loop, so it is never inlined (the old dead-stub path).
 fn g<T>(p: T): i64 { var s = 0; var i = 0; while (i < 2) { s = s + p.y; i = i + 1; } return s + p.x; }
@@ -140,6 +185,21 @@ fn use_fwd(p: Pt): i64 { var r: Box<Pt> = mkq(p); return r.n * 10 + r.v.x + r.v.
 fn mkq(x: Pt): Box<Pt> { var b: Box<Pt>; b.v = x; b.n = 5; return b; }
 #endif
 
+# CF (6.6.12): struct-returning fns whose RESULT's field is taken, one per return class.
+struct P8 { a: i32; b: i8; }            # 5 B: returned in rax
+struct BB { q: P3; k; }                 # 32 B: retptr, a struct field of a struct field
+struct BP { p: Pt; k; }                 # 24 B: retptr, a Pt-typed field
+fn mk8(a): P8 { var p: P8; p.a = a; p.b = 0 - 3; return p; }
+fn P8_tot(self: P8): i64 { return self.a + self.b; }
+var cf_hits = 0;
+fn P8_bump(self: P8): i64 { cf_hits = cf_hits + self.a; return cf_hits; }
+fn P3_bump(self: P3): i64 { cf_hits = cf_hits + self.c * 100; return cf_hits; }
+fn mk3(a): P3 { var r: P3; r.a = a; r.b = a + 1; r.c = a + 2; return r; }
+fn mkbb(a): BB { var b: BB; b.q.a = a; b.q.b = a * 2; b.q.c = a * 3; b.k = 9; return b; }
+fn mkbp(a): BP { var b: BP; b.p.x = a; b.p.y = a + 1; b.k = 7; return b; }
+fn plus1(a): i64 { return a + 1; }
+fn ptv(p: Pt): i64 { return p.x * 10 + p.y; }
+
 fn box_sum(r: Box<Pt>): i64 { return r.n * 10 + r.v.x + r.v.y * 100; }
 # A parameter typed with an instance whose size class differs from its base's, called before
 # its definition (pass 1 must record the address-passed bit from the INSTANCE) and after.
@@ -157,6 +217,139 @@ fn run_globals(): i64 {
     assert_eq(GB.n * 10 + GB.v.y, 52, "L9: GB.n written and read, GB.v.y read");
     return 0;
 }
+
+fn lit_local(a): i64 { var p: Pt; p.x = a; p.y = 4; var b: Box<Pt> = Box<Pt> { p, 5 }; p.x = 0; return box_sum(b); }
+fn lit_flat(): i64 { var b: Box<Pt> = Box<Pt> { 1, 2, 5 }; return box_sum(b); }
+fn lit_i64(): i64 { var b = Box<i64> { 7, 5 }; return b.n + b.v * 10; }
+fn lit_w1(a): i64 { var p: Pt; p.x = a; p.y = 20; var w = W1<Pt> { p }; return w1s(w); }
+fn lit_nested(): i64 { var p: Pt; p.x = 1; p.y = 2; var g = Box<Pt> { p, 5 }; var b = Box<Box<Pt>> { g, 9 }; return load64(&b) + load64(&b + 8) * 10 + load64(&b + 16) * 100 + b.n * 1000; }
+fn lit_m2(): i64 { var m = M2<i32> { 3, 4 }; return m.a + m.b * 10 + load32(&m + 4) * 100; }
+fn run_literals(): i64 {
+    test_group("a generic struct literal is the instance (6.6.12)");
+    assert_eq(lit_local(3), 453, "LIT: `var b: Box<Pt> = Box<Pt> { p, 5 };` fn-local (was 'undefined variable Box')");
+    assert_eq(lit_flat(), 251, "LIT: `Box<Pt> { 1, 2, 5 }`, the flattened form");
+    assert_eq(lit_i64(), 75, "LIT: `Box<i64> { 7, 5 }`, the base instance");
+    assert_eq(lit_w1(6), 26, "LIT: `W1<Pt> { p }`, an instance of a different size class than its base");
+    assert_eq(lit_nested(), 9521, "LIT: `Box<Box<Pt>> { g, 9 }`, a nested instance");
+    assert_eq(lit_m2(), 443, "LIT: `M2<i32> { 3, 4 }`, i32 fields 4 bytes apart");
+    assert_eq(box_sum(GLP), 562, "LIT: leading-block `var GLP: Box<Pt> = Box<Pt> { gws, 6 };`");
+    assert_eq(box_sum(GLF), 473, "LIT: leading-block `Box<Pt> { 3, 4, 7 }`");
+    assert_eq(GLI.v + GLI.n * 10, 57, "LIT: leading-block `Box<i64> { 7, 5 }`");
+    assert_eq(w1s(GLW), 17, "LIT: leading-block `W1<Pt> { 8, 9 }`");
+    return 0;
+}
+
+fn run_call_fields(): i64 {
+    test_group("a field of a call result (R3): rax, retptr and Str");
+    assert_eq(mk8(4).a * 10 + mk8(4).b, 37, "CF C0x: `mk8(4).a * 10 + mk8(4).b`, a 5 B rax result in an expression");
+    var r0 = mk8(6).b;
+    assert_eq(r0, 0 - 3, "CF C0: `var r0 = mk8(6).b;`, an i8 field sign-extended");
+    assert_eq(plus1(mk8(7).a), 8, "CF C0: `plus1(mk8(7).a)` as an argument (was \"expected ')'\")");
+    assert_eq(id1(mk8(7).a), 8, "CF C0: `id1(mk8(7).a)`, a generic: the field binds T = i64");
+    assert_eq(mk8(5).tot(), 2, "CF C0: `mk8(5).tot()`, a method on the result (a <= 8 B self by value)");
+    var r2 = mk3(4).c;
+    assert_eq(r2, 6, "CF C2: `var r2 = mk3(4).c;`, a 24 B retptr result");
+    var s2 = mk3(4).b + 1;
+    assert_eq(s2, 6, "CF C2: `var s2 = mk3(4).b + 1;` is an integer (was typed P3: undefined P3_add)");
+    assert_eq(plus1(mk3(2).c), 5, "CF C2: `plus1(mk3(2).c)` as an argument");
+    assert_eq(mkbb(2).q.c, 6, "CF C2: `mkbb(2).q.c`, a chain on the result");
+    assert_eq(mkbb(2).k + mkbb(3).q.b, 15, "CF C2: two chained results in one expression");
+    assert_eq(plus1(mk3(mk8(2).a).b), 4, "CF: a call result's field as the argument of a call whose result's field is taken");
+    var q: Pt = mkbp(3).p;
+    assert_eq(q.x * 10 + q.y, 34, "CF: `var q: Pt = mkbp(3).p;`, a struct-typed field taken whole");
+    var q2: Pt; q2.x = 0; q2.y = 0;
+    q2 = mkbp(4).p;
+    assert_eq(q2.x * 10 + q2.y, 45, "CF: `q2 = mkbp(4).p;`");
+    assert_eq(ptv(mkbp(5).p), 56, "CF: `ptv(mkbp(5).p)`, the field as a by-value struct argument");
+    var d: BP; d.k = 1; d.p.x = 0; d.p.y = 0;
+    d.p = mkbp(6).p;
+    assert_eq(d.p.x * 10 + d.p.y + d.k * 100, 167, "CF: `d.p = mkbp(6).p;`, into a struct field");
+    assert_eq(str_from("abcd").len, 4, "CF Str: `str_from(\"abcd\").len`, a heap-handle result");
+    cf_hits = 0;
+    mk8(5).bump();
+    assert_eq(cf_hits, 5, "CF stmt C0: `mk8(5).bump();`, a method on the result as a bare statement");
+    mk3(4).bump();
+    assert_eq(cf_hits, 605, "CF stmt C2: `mk3(4).bump();`, a retptr result's method as a statement");
+    mk8(9).a;
+    mkbb(2).q.c;
+    assert_eq(cf_hits, 605, "CF stmt: `mk8(9).a;` / `mkbb(2).q.c;`, a field (and chain) as a statement is evaluated and dropped");
+    return 0;
+}
+
+#ifndef CYRIUS_TARGET_CX
+fn Pt_psum(self: Pt): i64 { return self.x + self.y; }
+fn Pt_phit(self: Pt): i64 { cf_hits = cf_hits + self.x * 10 + self.y; return cf_hits; }
+struct F2 { x: f64; y: f64; }
+fn mkf2(): F2 { var f: F2; f.x = 1.5; f.y = 2.25; return f; }
+fn run_call_fields_pair(): i64 {
+    var p: Pt; p.x = 1; p.y = 2;
+    test_group("a field of a call result (R3): rax:rdx and generic instances");
+    assert_eq(mkpt(3).y, 5, "CF C1: `mkpt(3).y`, a 16 B register-pair result");
+    var r1 = mkpt(3).x;
+    assert_eq(r1, 3, "CF C1: `var r1 = mkpt(3).x;` (was \"expected ';'\")");
+    var s1 = mkpt(3).y + 1;
+    assert_eq(s1, 6, "CF C1: `var s1 = mkpt(3).y + 1;` is an integer (was typed Pt: undefined Pt_add)");
+    assert_eq(plus1(mkpt(8).x), 9, "CF C1: `plus1(mkpt(8).x)` as an argument");
+    assert_eq(mkpt(3).psum(), 8, "CF C1: `mkpt(3).psum()`, a method on the result");
+    cf_hits = 0;
+    mkpt(3).phit();
+    mkpt(3).y;
+    assert_eq(cf_hits, 35, "CF stmt C1: `mkpt(3).phit();` as a bare statement, and `mkpt(3).y;`");
+    assert_eq(mk(p).v.x + mk(p).v.y * 10, 21, "CF: `mk(p).v.x`, a chain on an inferred generic's Box<Pt>");
+    assert_eq(mk<Pt>(p).v.y + mk<Pt>(p).n * 10, 52, "CF: `mk<Pt>(p).v.y`, the explicit form");
+    assert_eq(mkw(p).v.y, 2, "CF: `mkw(p).v.y`, a W1<Pt> (16 B) instance whose base is 8 B");
+    var qq: Pt = mk(p).v;
+    assert_eq(qq.x * 10 + qq.y, 12, "CF: `var qq: Pt = mk(p).v;` from a generic's result");
+    var fx = mkf2().x + mkf2().y;
+    assert_eq(f64_to(f64_mul(fx, 100.0)), 375, "CF: `mkf2().x + mkf2().y` is a float add");
+    return 0;
+}
+#endif
+
+# SG (6.6.12, R2): explicit generic calls as bare statements; every instance adds to sg_hits.
+var sg_hits = 0;
+fn sgid<T>(x: T): T { sg_hits = sg_hits + x; return x; }
+fn sgp8<T>(x: T): P8 { sg_hits = sg_hits + x * 1000; var p: P8; p.a = x; p.b = 1; return p; }
+fn sgp3<T>(x: T): P3 { sg_hits = sg_hits + x * 10; var r: P3; r.a = x; r.b = x + 1; r.c = x + 2; return r; }
+fn sgdiv<T>(n: T, d: T) { sg_hits = sg_hits + 1; if (d == 0) { return Err(99); } return Ok(n / d); }
+fn sgq(n, d) { sgdiv<i32>(n, d)?; return Ok(7); }
+fn run_stmt_generics(): i64 {
+    test_group("an explicit generic call as a bare statement (R2)");
+    sg_hits = 0;
+    sgid<i32>(4);
+    sgid<i64>(3);
+    assert_eq(sg_hits, 7, "SG: `sgid<i32>(4); sgid<i64>(3);` in a fn (was \"expected '=', got '<'\")");
+    sgp3<i32>(3);
+    sgp3<i64>(1);
+    assert_eq(sg_hits, 47, "SG: `sgp3<i32>(3);`, a 24 B retptr result dropped, and the i64 base");
+    sgp8<i32>(2);
+    assert_eq(sg_hits, 2047, "SG: `sgp8<i32>(2);`, a 5 B rax result dropped");
+    sg_hits = 0;
+    cf_hits = 0;
+    sgp3<i32>(5).c;
+    sgp3<i32>(1).bump();
+    assert_eq(sg_hits * 1000 + cf_hits, 60300, "SG: `sgp3<i32>(5).c;` and `sgp3<i32>(1).bump();`, a field and a method on the result");
+    sg_hits = 0;
+    var t1, v1 = sgq(6, 2);
+    assert_eq(t1 * 100 + v1 + sg_hits * 1000, 1007, "SG: `sgdiv<i32>(6, 2)?;` Ok falls through (Ok(7))");
+    var t2, v2 = sgq(6, 0);
+    assert_eq(t2 * 100 + v2 + sg_hits * 1000, 2199, "SG: `sgdiv<i32>(6, 0)?;` Err propagates both halves (Err(99))");
+    return 0;
+}
+#ifndef CYRIUS_TARGET_CX
+fn sgpt<T>(x: T): Pt { sg_hits = sg_hits + x; var p: Pt; p.x = x; p.y = 5; return p; }
+fn run_stmt_generics_pair(): i64 {
+    var p: Pt; p.x = 1; p.y = 2;
+    sg_hits = 0;
+    sgpt<i32>(6);
+    sgpt<i32>(2).y;
+    assert_eq(sg_hits, 8, "SG: `sgpt<i32>(6);`, a 16 B rax:rdx result dropped, and `.y` on one");
+    mk<Pt>(p);
+    mkw<Pt>(p);
+    assert_eq(mk<Pt>(p).n, 5, "SG: `mk<Pt>(p);` / `mkw<Pt>(p);`, struct type arguments, as statements");
+    return 0;
+}
+#endif
 
 fn run_calls(a): i64 {
     var p: Pt; p.x = a; p.y = 5;
@@ -270,11 +463,16 @@ fn run_paths(): i64 {
 fn main(): i64 {
     alloc_init();
     run_globals();
+    run_literals();
     run_calls(2);
     run_params();
+    run_call_fields();
+    run_stmt_generics();
     #ifndef CYRIUS_TARGET_CX
     run_returns();
     run_paths();
+    run_call_fields_pair();
+    run_stmt_generics_pair();
     #endif
     test_group("scalar generics and controls");
     assert_eq(sm(5), 35, "RG: for i in n..10 over a T-typed n (was 0: read as a field access)");
@@ -289,6 +487,16 @@ fn main(): i64 {
     return 0;
 }
 var _m = main();
+# LIT (6.6.12): generic literals after the first top-level statement (PARSE_VAR's global arm).
+var GLQ: Box<Pt> = Box<Pt> { gws, 8 };
+var GLQI = Box<i64> { 4, 3 };
+assert_eq(box_sum(GLQ), 584, "LIT: top-level `var GLQ: Box<Pt> = Box<Pt> { gws, 8 };` after a statement (gws.x is 4 by now)");
+assert_eq(GLQI.v + GLQI.n * 10, 34, "LIT: top-level `Box<i64> { 4, 3 }` after a statement");
+# SG (6.6.12, R2): the bare explicit-generic statement at top level (was "expected '=', got '<'").
+sg_hits = 0;
+sgid<i32>(100);
+sgid<i64>(20);
+assert_eq(sg_hits, 120, "SG: top-level `sgid<i32>(100); sgid<i64>(20);`");
 var r = assert_summary();
 # ⚠ The explicit exit is load-bearing: with `fn main` defined, the entry auto-calls it AGAIN after
 # the top level, and that second run's 0 would be the exit code — a failed row then exits 0.

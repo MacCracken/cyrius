@@ -24,6 +24,12 @@
 #     (ml_undef/ml_dollar/ml_inc1/ml_private); drop the `ec == 10` arm's SCLINE -> ml_bslf RED;
 #     drop the `SCLINE(S, sline)` before the string's ADDTOK -> ml_strtok RED; restore the
 #     escape fallthrough `store8(.., ec)` -> str_bad_esc/str_bad_esc2/ml_esc RED.
+#   * (6.6.12) restore `if (p >= bl) { sgo = 0; }` at the head of LEX's string loop
+#     -> str_unterm* RED; drop `SCLINE(S, sline)` from `_lex_unterm_str` -> str_unterm_ml
+#     RED (names line 4); drop `&& p + 1 < bl` from the escape arm -> str_unterm_bs RED.
+#     Make `_lex_str_lf` skip its `_lex_fmark_line` test -> str_unterm_inc* RED (the
+#     literal runs on into the resume marker and the error names the main file); make
+#     `_lex_fmark_line` match only the `#@file "` prefix -> the fmark_str rows RED.
 # AXIS 4 — the char/string-literal error sites, each by file:line:col (6.6.11: plus the
 #   unknown string escape, and the accepted `\<LF>` / `\<CR><LF>` escapes).
 # AXIS 6 — a newline inside a string literal advances the line (6.6.11).
@@ -98,6 +104,34 @@ refused u_surr        "${L}var t = \"\\\\uD800\";\n"        "error:<source>:2:10
 # compiled to "abq"). Only the escapes in the guide's table are accepted.
 refused str_bad_esc   "${L}var t = \"ab\\\\q\";\n"          "error:<source>:2:12: unknown string escape"
 refused str_bad_esc2  "${L}var t = \"\\\\{\";\n"            "error:<source>:2:10: unknown string escape"
+# 6.6.12 — a string literal still open at EOF ended SILENTLY, and the parser then said
+# `expected ';', got end of file` (or `unexpected string`) at the CURRENT line: a literal
+# opened on line 2 and running to EOF on line 4 was reported at 4. It is refused at the
+# opening quote, on the line the literal started; a `\` as the very last byte escapes
+# nothing (it used to read past the end of the source).
+refused str_unterm    "${L}var t = \"abc"                  "error:<source>:2:9: unterminated string literal"
+refused str_unterm_ml "${L}var t = \"ab\ncd\nef"           "error:<source>:2:9: unterminated string literal"
+refused str_unterm_bs "${L}var t = \"abc\\\\"            "error:<source>:2:9: unterminated string literal"
+refused str_unterm_bare "${L}\"abc"                         "error:<source>:2:1: unterminated string literal"
+# ...and one left open at the end of an INCLUDED file, the usual shape in a `cyrius build`
+# project. It ran on into the preprocessor's `#@file "<parent>" N` resume marker, closed
+# on the marker's own quote, and the error then named the MAIN file -- with no file at
+# all, or at a VALID literal after the include. It names the included file, at the
+# opening quote, whether the body ends in a LF, in `\<LF>`, or in no newline at all.
+printf 'var q = 2;\nvar s = "abc\n\n' > "$T/inc/unterm_inc.cyr"
+printf 'var q = 2;\nvar s = "abc\\\n' > "$T/inc/unterm_bs.cyr"
+printf 'var q = 2;\nvar s = "abc' > "$T/inc/unterm_nolf.cyr"
+refused str_unterm_inc    'include "inc/unterm_inc.cyr"\nvar m = "hello";\nsyscall(60, 0);\n' "error:inc/unterm_inc.cyr:2:9: unterminated string literal"
+refused str_unterm_inc2   'include "inc/unterm_inc.cyr"\nvar z = 1;\nvar w = 3;\n'            "error:inc/unterm_inc.cyr:2:9: unterminated string literal"
+refused str_unterm_inc_bs 'include "inc/unterm_bs.cyr"\nvar m = "x";\n'                     "error:inc/unterm_bs.cyr:2:9: unterminated string literal"
+refused str_unterm_inc_nl 'include "inc/unterm_nolf.cyr"\nvar m = "x";\n'                   "error:inc/unterm_nolf.cyr:2:9: unterminated string literal"
+# ANTI-VACUOUS: a VALID multi-line string whose second line is `#@file ` and its closing
+# quote is not a marker line, and still compiles (35 = '#').
+printf 'var s = "ab\n#@file ";\nsyscall(60, load8(s + 3));\n' > "$T/fmark_str.cyr"
+rc=0; "$CC" < "$T/fmark_str.cyr" > "$T/fmark_str" 2> "$T/fmark_str.err" || rc=$?
+check "a string closed right after '#@file ' compiles" 0 "$rc"
+chmod +x "$T/fmark_str"; rc=0; "$T/fmark_str" || rc=$?
+check "...and keeps its bytes (load8 = '#' = 35)" 35 "$rc"
 # ANTI-VACUOUS: `\<LF>` is an escape that KEEPS its LF (the v6.5.18 contract pinned by
 # tests/gates/toolchain/cyrfmt_string_continuation.sh), and `\<CR><LF>` keeps both bytes.
 printf 'var s = "ab\\\ncd";\nsyscall(60, load8(s + 2) + load8(s + 3));\n' > "$T/bslf.cyr"

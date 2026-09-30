@@ -169,6 +169,9 @@ fn PP_NEUT_FMARK(base, n): i64 {
                         store8(base + i + 1, 32);
                     }
                 }
+                # 6.6.12: and a forged native-aarch64 region marker (`#@a+` / `#@a-`, see
+                # _pp_a64_open), which would only have silenced a warning.
+                if (PP_A64_MARK(base, i, n) != 0) { store8(base + i + 1, 32); }
             }
         }
         st = PP_LEXST(st, c);
@@ -185,6 +188,136 @@ fn PP_NEUT_FMARK(base, n): i64 {
 # neutralise the bytes they just read. CHANGELOG [6.6.6]
 fn PP_NEUT_PASS(S): i64 {
     return PP_NEUT_FMARK(S + _SRCB, GBL(S));
+}
+
+# ⛔ 6.6.12 — NATIVE-AARCH64 REGION MARKERS. The ELF-aarch64 raw-literal warning
+# (`_sysx_meant_here`, src/frontend/parse_expr.cyr) flagged a CORRECT native number too:
+# `syscall(8, ..)` under `#ifdef CYRIUS_ARCH_AARCH64` IS getxattr there, and naming it
+# through an enum constant still warned, because the parser runs after the #ifdef is gone.
+# So the preprocessor writes the fact into the stream: the blank line that replaces a
+# directive becomes `#@a+` where a TAKEN branch whose condition implies aarch64 opens, and
+# `#@a-` where it closes (`#else`, `#elif`, `#endif`). Native = the defined side of
+# CYRIUS_ARCH_AARCH64 (`#ifdef`, `#ifplat aarch64`, the `#else` of `#ifndef`) or the
+# undefined side of CYRIUS_ARCH_X86 (`#ifndef`, the `#else` of `#ifdef` / `#ifplat x86`) —
+# the rule tests/gates/platform/raw_syscall_literals_routed.sh applies to lib/. `#if <expr>`
+# and an `#elif` are neutral. Relative +/- rather than a state, so an included file's own
+# blocks (expanded by a LATER pass with a fresh depth counter) nest inside an outer region.
+# A marker is still one line (4 bytes + LF, never longer than the directive it replaces), so
+# the stream stays line-for-line with the source; to the lexer it is a comment. Source text
+# spelling a marker is neutralised by PP_NEUT_FMARK. CHANGELOG [6.6.12]
+#
+# 1 = `#@a+`, 2 = `#@a-` at `base + i` (a whole line), else 0.
+fn PP_A64_MARK(base, i, n): i64 {
+    if (i + 3 >= n) { return 0; }
+    if (load8(base + i) != 35) { return 0; }
+    if (load8(base + i + 1) != 64) { return 0; }
+    if (load8(base + i + 2) != 97) { return 0; }
+    if (i + 4 < n) { if (load8(base + i + 4) != 10) { return 0; } }
+    var m = load8(base + i + 3);
+    if (m == 43) { return 1; }
+    if (m == 45) { return 2; }
+    return 0;
+}
+
+# The replacement for a directive line: `#@a<m>` then LF, or a bare LF when m == 0.
+fn _pp_a64_line(out, op, m): i64 {
+    if (m != 0) {
+        store8(out + op, 35); store8(out + op + 1, 64); store8(out + op + 2, 97); store8(out + op + 3, m);
+        op = op + 4;
+    }
+    store8(out + op, 10);
+    return op + 1;
+}
+
+# 1 iff the symbol at `base + pos` is `name` (whole word).
+fn _pp_a64_sym(base, pos, name): i64 {
+    var k = 0;
+    while (load8(name + k) != 0) {
+        if (load8(base + pos + k) != load8(name + k)) { return 0; }
+        k = k + 1;
+    }
+    var c = load8(base + pos + k);
+    if (c == 32 || c == 10 || c == 13 || c == 9 || c == 0) { return 1; }
+    return 0;
+}
+
+# A block just opened at level `d`. `ks` = kind * 8 + st: `kind` 0 #ifdef, 1 #ifndef,
+# 2 #ifplat, 3 #if (its operand at `base + pos`), `st` its PP state (0 = the if-side emits).
+# Packed because cybs (the seed's compiler) refuses a CALL with more than six arguments.
+# Writes the directive's line.
+fn _pp_a64_open(base, pos, ks, d, out, op): i64 {
+    var kind = ks >> 3;
+    var st = ks & 7;
+    if (d < 0 || d > 62) { return _pp_a64_line(out, op, 0); }
+    var b = 1 << d;
+    var ni = 0;
+    var ne = 0;
+    if (kind == 2) {
+        while (load8(base + pos) == 32) { pos = pos + 1; }
+        if (_pp_a64_sym(base, pos, "aarch64") == 1) { ni = 1; }
+        if (_pp_a64_sym(base, pos, "x86") == 1) { ne = 1; }
+    }
+    if (kind < 2) {
+        var a = _pp_a64_sym(base, pos, "CYRIUS_ARCH_AARCH64");
+        var x = _pp_a64_sym(base, pos, "CYRIUS_ARCH_X86");
+        if (kind == 1) { var t = a; a = x; x = t; }
+        if (a == 1) { ni = 1; }
+        if (x == 1) { ne = 1; }
+    }
+    _pp_a64_nif = _pp_a64_nif & (0 - 1 - b);
+    _pp_a64_nel = _pp_a64_nel & (0 - 1 - b);
+    _pp_a64_on = _pp_a64_on & (0 - 1 - b);
+    if (ne == 1) { _pp_a64_nel = _pp_a64_nel | b; }
+    if (ni == 1) {
+        _pp_a64_nif = _pp_a64_nif | b;
+        if (st == 0) { _pp_a64_on = _pp_a64_on | b; return _pp_a64_line(out, op, 43); }
+    }
+    return _pp_a64_line(out, op, 0);
+}
+
+# `ev` 0 #else, 1 #elif, 2 #endif / #endplat at level `d` (for #else / #elif AFTER the state
+# flip, read back from the PP state stack). Writes its line.
+fn _pp_a64_close(S, ev, d, out, op): i64 {
+    if (d < 0 || d > 62) { return _pp_a64_line(out, op, 0); }
+    var b = 1 << d;
+    if ((_pp_a64_on & b) != 0) {
+        _pp_a64_on = _pp_a64_on & (0 - 1 - b);
+        if (ev == 1) { _pp_a64_nel = _pp_a64_nel & (0 - 1 - b); }
+        return _pp_a64_line(out, op, 45);
+    }
+    if (ev == 1) { _pp_a64_nel = _pp_a64_nel & (0 - 1 - b); }
+    if (ev == 0) {
+        if ((_pp_a64_nel & b) != 0) {
+            if (load8(S + 0x197F10 + d) == 0) { _pp_a64_on = _pp_a64_on | b; return _pp_a64_line(out, op, 43); }
+        }
+    }
+    return _pp_a64_line(out, op, 0);
+}
+
+# 1 iff expanded-source offset `off` lies inside a native-aarch64 region: the `#@a+` /
+# `#@a-` lines before it (outside string literals) leave a positive depth. Linear, and
+# called only when the raw-literal warning would otherwise fire. CHANGELOG [6.6.12]
+fn PP_A64_NATIVE_AT(S, off): i64 {
+    var base = S + 0x459D000;
+    var n = GBL(S);
+    if (off > n) { off = n; }
+    var i = 0;
+    var st = 0;
+    var bol = 1;
+    var dep = 0;
+    while (i < off) {
+        var c = load8(base + i);
+        if (bol == 1 && c == 35 && PP_LEXST_INSTR(st) == 0) {
+            var m = PP_A64_MARK(base, i, n);
+            if (m == 1) { dep = dep + 1; }
+            if (m == 2) { if (dep > 0) { dep = dep - 1; } }
+        }
+        st = PP_LEXST(st, c);
+        if (c == 10) { bol = 1; } else { bol = 0; }
+        i = i + 1;
+    }
+    if (dep > 0) { return 1; }
+    return 0;
 }
 
 fn ISIFDEF(S, pos, bl): i64 {
@@ -482,6 +615,12 @@ var _pp_curfile_base = 1;
 var _pp_srcline_bias = 0;
 # v6.5.24 — honour-once latch for `#@srcline` (see ISSRCLINE + its PP_PASS call site).
 var _pp_srcline_seen = 0;
+# 6.6.12 — per-nesting-level bits (bit d = level d) for the native-aarch64 region markers;
+# see _pp_a64_open. nif / nel: the level's if-side / else-side is native aarch64; on: the
+# level wrote `#@a+` and owes the matching `#@a-`.
+var _pp_a64_nif = 0;
+var _pp_a64_nel = 0;
+var _pp_a64_on = 0;
 
 # v6.5.24 — bare-metal forbidden-module check (bare-metal deliverable #4, filed
 # 2026-06-28 as never-built and restored from `archived/` 2026-08-11 after being
@@ -3777,7 +3916,7 @@ fn PP_PASS(S): i64 {
                     store8(S + 0x197F10 + pp_depth, _s);
                     pp_depth = pp_depth + 1;
                     if (_s != 0) { skip_depth = skip_depth + 1; }
-                    ip = PP_SKIPLINE(S + _SRCB, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
+                    ip = PP_SKIPLINE(S + _SRCB, ip, bl); op = _pp_a64_open(S + _SRCB, dip + 7, 0 * 8 + _s, pp_depth - 1, out, op); bol = 1; handled = 1;
                 } }
             if (handled == 0) { if (ISIFNDEF(S + _SRCB, dip, bl) == 1) {
                     var _s = 3;
@@ -3788,7 +3927,7 @@ fn PP_PASS(S): i64 {
                     store8(S + 0x197F10 + pp_depth, _s);
                     pp_depth = pp_depth + 1;
                     if (_s != 0) { skip_depth = skip_depth + 1; }
-                    ip = PP_SKIPLINE(S + _SRCB, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
+                    ip = PP_SKIPLINE(S + _SRCB, ip, bl); op = _pp_a64_open(S + _SRCB, dip + 8, 1 * 8 + _s, pp_depth - 1, out, op); bol = 1; handled = 1;
                 } }
             # #ifplat PLAT (v5.4.19) — sugar for #ifdef CYRIUS_ARCH_<UPPER>.
             # Must come before ISIF so "#ifp..." doesn't match the 4-byte
@@ -3803,7 +3942,7 @@ fn PP_PASS(S): i64 {
                     store8(S + 0x197F10 + pp_depth, _s);
                     pp_depth = pp_depth + 1;
                     if (_s != 0) { skip_depth = skip_depth + 1; }
-                    ip = PP_SKIPLINE(S + _SRCB, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
+                    ip = PP_SKIPLINE(S + _SRCB, ip, bl); op = _pp_a64_open(S + _SRCB, dip + 8, 2 * 8 + _s, pp_depth - 1, out, op); bol = 1; handled = 1;
                 } }
             if (handled == 0) { if (ISIF(S + _SRCB, dip, bl) == 1) {
                     var _s = 3;
@@ -3814,7 +3953,7 @@ fn PP_PASS(S): i64 {
                     store8(S + 0x197F10 + pp_depth, _s);
                     pp_depth = pp_depth + 1;
                     if (_s != 0) { skip_depth = skip_depth + 1; }
-                    ip = PP_SKIPLINE(S + _SRCB, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
+                    ip = PP_SKIPLINE(S + _SRCB, ip, bl); op = _pp_a64_open(S + _SRCB, dip + 4, 3 * 8 + _s, pp_depth - 1, out, op); bol = 1; handled = 1;
                 } }
             # #else (v5.6.1) — flip current level's state.
             #   0 → 2 (was emit; done-skip now)           skip_depth++
@@ -3830,7 +3969,7 @@ fn PP_PASS(S): i64 {
                         if (_s == 0) { store8(S + 0x197F10 + pp_depth - 1, 2); skip_depth = skip_depth + 1; }
                         elif (_s == 1) { store8(S + 0x197F10 + pp_depth - 1, 0); skip_depth = skip_depth - 1; }
                     }
-                    ip = PP_SKIPLINE(S + _SRCB, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
+                    ip = PP_SKIPLINE(S + _SRCB, ip, bl); op = _pp_a64_close(S, 0, pp_depth - 1, out, op); bol = 1; handled = 1;
                 } }
             # #elif COND (v5.6.1) — transition like #else for states 0/2/3
             # but state 1 evaluates COND: if true, flip 1→0 (emit now);
@@ -3846,7 +3985,7 @@ fn PP_PASS(S): i64 {
                             }
                         }
                     }
-                    ip = PP_SKIPLINE(S + _SRCB, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
+                    ip = PP_SKIPLINE(S + _SRCB, ip, bl); op = _pp_a64_close(S, 1, pp_depth - 1, out, op); bol = 1; handled = 1;
                 } }
             # v6.5.24 — `#@srcline`: set the `<source>` line bias from THIS marker's own
             # position, so every cbt prepend above it stops shifting diagnostics. See
@@ -3891,7 +4030,7 @@ fn PP_PASS(S): i64 {
                         if (_s != 0) { skip_depth = skip_depth - 1; }
                         pp_depth = pp_depth - 1;
                     }
-                    ip = PP_SKIPLINE(S + _SRCB, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
+                    ip = PP_SKIPLINE(S + _SRCB, ip, bl); op = _pp_a64_close(S, 2, pp_depth, out, op); bol = 1; handled = 1;
                 } }
             # #endplat — semantically identical to #endif, visually pairs
             # with #ifplat. Must come after ISENDIF because "#endp" would
@@ -3902,7 +4041,7 @@ fn PP_PASS(S): i64 {
                         if (_s != 0) { skip_depth = skip_depth - 1; }
                         pp_depth = pp_depth - 1;
                     }
-                    ip = PP_SKIPLINE(S + _SRCB, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
+                    ip = PP_SKIPLINE(S + _SRCB, ip, bl); op = _pp_a64_close(S, 2, pp_depth, out, op); bol = 1; handled = 1;
                 } }
             # v6.5.20 — `#derive` is now LINE-EXACT and carries NO marker. v6.5.19 had it
             # re-anchor here, because the expansion added lines and could not be padded;
@@ -4242,7 +4381,7 @@ fn PP_IFDEF_PASS(S): i64 {
                         store8(S + 0x197F10 + pp_depth, _s);
                         pp_depth = pp_depth + 1;
                         if (_s != 0) { skip_depth = skip_depth + 1; }
-                        ip = PP_SKIPLINE(tmp, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
+                        ip = PP_SKIPLINE(tmp, ip, bl); op = _pp_a64_open(tmp, dip + 7, 0 * 8 + _s, pp_depth - 1, out, op); bol = 1; handled = 1;
                     } }
                 if (handled == 0) { if (ISIFNDEF(tmp, dip, bl) == 1) {
                         var _s = 3;
@@ -4253,7 +4392,7 @@ fn PP_IFDEF_PASS(S): i64 {
                         store8(S + 0x197F10 + pp_depth, _s);
                         pp_depth = pp_depth + 1;
                         if (_s != 0) { skip_depth = skip_depth + 1; }
-                        ip = PP_SKIPLINE(tmp, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
+                        ip = PP_SKIPLINE(tmp, ip, bl); op = _pp_a64_open(tmp, dip + 8, 1 * 8 + _s, pp_depth - 1, out, op); bol = 1; handled = 1;
                     } }
                 if (handled == 0) { if (ISIF(tmp, dip, bl) == 1) {
                         var _s = 3;
@@ -4264,7 +4403,7 @@ fn PP_IFDEF_PASS(S): i64 {
                         store8(S + 0x197F10 + pp_depth, _s);
                         pp_depth = pp_depth + 1;
                         if (_s != 0) { skip_depth = skip_depth + 1; }
-                        ip = PP_SKIPLINE(tmp, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
+                        ip = PP_SKIPLINE(tmp, ip, bl); op = _pp_a64_open(tmp, dip + 4, 3 * 8 + _s, pp_depth - 1, out, op); bol = 1; handled = 1;
                     } }
                 if (handled == 0) { if (ISELSE(tmp, dip, bl) == 1) {
                         if (pp_depth > 0) {
@@ -4272,7 +4411,7 @@ fn PP_IFDEF_PASS(S): i64 {
                             if (_s == 0) { store8(S + 0x197F10 + pp_depth - 1, 2); skip_depth = skip_depth + 1; }
                             elif (_s == 1) { store8(S + 0x197F10 + pp_depth - 1, 0); skip_depth = skip_depth - 1; }
                         }
-                        ip = PP_SKIPLINE(tmp, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
+                        ip = PP_SKIPLINE(tmp, ip, bl); op = _pp_a64_close(S, 0, pp_depth - 1, out, op); bol = 1; handled = 1;
                     } }
                 if (handled == 0) { if (ISELIF(tmp, dip, bl) == 1) {
                         if (pp_depth > 0) {
@@ -4285,7 +4424,7 @@ fn PP_IFDEF_PASS(S): i64 {
                                 }
                             }
                         }
-                        ip = PP_SKIPLINE(tmp, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
+                        ip = PP_SKIPLINE(tmp, ip, bl); op = _pp_a64_close(S, 1, pp_depth - 1, out, op); bol = 1; handled = 1;
                     } }
                 if (handled == 0) { if (ISENDIF(tmp, dip, bl) == 1) {
                         if (pp_depth > 0) {
@@ -4293,7 +4432,7 @@ fn PP_IFDEF_PASS(S): i64 {
                             if (_s != 0) { skip_depth = skip_depth - 1; }
                             pp_depth = pp_depth - 1;
                         }
-                        ip = PP_SKIPLINE(tmp, ip, bl); store8(out + op, 10); op = op + 1; bol = 1; handled = 1;
+                        ip = PP_SKIPLINE(tmp, ip, bl); op = _pp_a64_close(S, 2, pp_depth, out, op); bol = 1; handled = 1;
                     } }
                 # v6.5.20 — line-exact, no marker; see the PP_PASS twin. This is the pass
                 # that sees derives inside INCLUDED files, which is where all 93 of

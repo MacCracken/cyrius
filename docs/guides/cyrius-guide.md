@@ -128,6 +128,7 @@ step accepts all ten compound operators (it used to accept five).
 var x = 10;            # Global or local (context-dependent)
 var buf[256];          # Bare array — see byte-vs-slot note below
 var slots: i64[256];   # Element-typed array — 256 i64 SLOTS (2048 bytes), anywhere
+slots[3] = 7;          # Subscript (element-typed arrays only, since 6.6.12)
 x = x + 1;             # Reassignment
 ```
 
@@ -167,6 +168,44 @@ with `'Foo' is not an enum`, and `Other.BUF` with `'BUF' is not a variant of
 'Other'` — before 6.6.11 the qualifier was ignored. When two enums share a
 variant name, `A.X` and `B.X` each read their own enum's value (the bare `X`
 keeps "last definition wins", with its warning).
+
+### Subscripts: `a[i]` (6.6.12)
+
+An integer element-typed array `var a: T[N]` (T one of `i8`..`i64`,
+`u8`..`u64`) takes a subscript — read, assignment and every compound
+operator — in a function, at top level, in a `for` step and inside a
+closure:
+
+```
+var t: i16[8];
+t[i] = 0 - 5;          # stores 2 bytes
+t[i] += 1;             # all ten compound operators (+= -= *= /= %= &= |= ^= <<= >>=)
+var v = t[i];          # -4: an i8/i16/i32 element is sign-extended, u8/u16/u32 zero-extended
+if (t[0]) { ... }      # tests the element
+```
+
+`a[i]` is exactly the element at `&a + i * sizeof(T)`, loaded and stored at
+T's width — the same bytes as `load16(&t + i * 2)` / `store16(&t + i * 2, v)`,
+which stay valid (and are what `var a: i64[N]` code wrote before 6.6.12:
+`store64(&a + i * 8, v)`). A store truncates to the element as `store8/16/32`
+do. There is **no bounds check**. Inside a capturing closure the subscript
+reads and writes the closure's captured COPY, as `&a` there does.
+
+Refused, by name (`cannot subscript 'a': ...`):
+
+- a **bare** `var a[N]` (and `stack var a[N]`) — it states no element width
+  (bytes in a function, slots at top level), so a subscript would be a guess;
+  declare `var a: u8[N]` or `var a: i64[N]`, or keep `load*`/`store*` at an
+  explicit byte offset;
+- a **float, bool or struct element** (`var a: f64[N]`, `f32[N]`,
+  `bool[N]`, `Pt[N]`) — the subscript is integer-element only; keep
+  `load*`/`store*` at `&a + i * sizeof(T)`;
+- a scalar or a pointer (`var p: *i64`) — pointer subscripts are not in the
+  language;
+- a `u128` element, which does not fit one register (use `load64`/`store64`
+  on its two halves).
+
+A `slice<T>` local keeps its own bounds-checked `s[i]` (`lib/slice.cyr`).
 
 ## Functions
 
@@ -339,7 +378,58 @@ p.x = 42;               # Field assignment
 struct Rect { tl: Point; br: Point; }
 var r = Rect { 0, 0, 10, 5 };
 var w = r.br.x - r.tl.x;   # 10
+var a = Point { 1, 2 };
+var r2 = Rect { a, 10, 5 };  # a nested field also takes a whole struct value (v6.6.12)
 ```
+
+A positional literal fills the **leaves** of the struct in declaration order, descending into
+every nested struct field (at any depth), and writes each leaf at its own offset and width. For
+a nested struct field it also takes a whole struct **value** of that field's type — a local, a
+parameter, a global, a struct-typed field (`b.v`), or a call, method or operator returning it —
+copied byte for byte. A value whose type is the FIRST field of the nested struct fills that
+inner struct (`struct Outer { t; b: Box; }` with `struct Box { v: Point; n; }`:
+`Outer { 1, a, 4 }`), and a struct of any other type is a compile error naming both. At top
+level a call returning a 9-16 byte struct has no frame to land in and is refused by name (call
+it inside a fn).
+
+⚠ Before v6.6.12 a nested field was flattened at **8 bytes per inner field**, whatever the inner
+fields' widths, and never descended further: `struct HO { o: Odd; t: i8; u: i32; }` with
+`struct Odd { a: i8; b: i16; }` (8 bytes) had its literal write 13 bytes past the object — over
+the next global, or the calling fn's frame — and a struct nested two levels deep took the wrong
+number of values. Both were silent, on every target.
+
+### Field chains and call results (v6.6.12)
+
+A field chain reaches any depth, for reading and writing, through a local, a global, a by-value
+parameter or a `*T` parameter alike: `n.v.v.x = 3;`, `var r = h.w.v.v.y;`. A `.field` also
+applies to a **call** that returns a struct, in any expression position and as a bare
+statement, and chains on from there:
+
+```
+struct Pt { x; y; }
+struct Box { v: Pt; n; }
+fn mk(a): Box { var b: Box; b.v.x = a; b.v.y = a + 1; b.n = 5; return b; }
+fn take(p: Pt): i64 { return p.x + p.y; }
+fn demo(): i64 {
+    var y = mk(3).v.y;         # 4
+    var s = mk(3).n + 1;       # 6, an integer
+    var q: Pt = mk(7).v;       # a struct-typed field, copied whole
+    return y + s + take(mk(1).v) + q.x;
+}
+```
+
+Inside a fn the result lands in a frame temporary and the field is read from it, exactly as for
+a named struct: the same widths, sign-extension and `f64` typing. A method applies to the result
+itself (`mk(3).total()` calls `Box_total`, as a value or as the statement `mk(3).total();`); as
+for a named struct, not to a nested field (`mk(3).v.sum()`, like `b.v.sum()`, is a syntax error). At top level there is no frame:
+`var G = mk(3).n;` is refused by name — call it inside a fn. A field of a call to a fn that
+does not return a struct is refused too, and so is an assignment to a result's field
+(`mk(3).n = 5;`): the result is a temporary.
+
+⚠ Before v6.6.12 a chain stopped after two levels — `n.v.v.x` was the syntax error
+`expected ';', got '.'` — and a `.field` after a call was `expected ')', got '.'` in every
+position; `var s = mk(3).n + 1;` also typed `s` as `Box` and looked for an undefined `Box_add`.
+All of these were loud: nothing compiled wrong.
 
 ### Field types (v6.6.10)
 
@@ -493,6 +583,23 @@ call whose inferred instance differs (`s = mk(r.v)` into a `Box<Pt>`: a FIELD ar
 `var p: Pt = r.v; s = mk(p);`). The same holds for a struct-typed **global**, at top level and in
 the leading declaration block: `var G: Odd = mkod2();` is refused wherever it appears. Before
 v6.6.11 each of those stored one word, silently.
+
+Two more field / global sources became copies in v6.6.12. **A struct-typed FIELD passed as a
+by-value struct argument** (`take(r.v)` into a `: P3` parameter over 8 bytes), from any base (a
+local, a global, a by-value parameter, a pointer-mode local), and through a generic instance
+(`mk<P3>(r.v)`). Inside a fn the callee gets a COPY of the field, so writing through the
+parameter does not reach `r.v` — unlike a NAMED struct argument, which is address-passed (see
+below). At top level there is no frame, so the callee gets the field itself. A field of a
+different struct type is refused (`cannot pass 'q' to a by-value parameter of a different struct
+type in a call to 'take'`). Before v6.6.12 the field's first word was passed as the struct's
+address, and the callee SIGSEGV'd. **A top-level copy-init** — `var B: P3 = A;` from an inline
+global, or `var G: P3 = BX.v;` from a global's field, in the leading declaration block or after
+the first statement — gives `B` its own STRUCTSZ bytes and copies them. Before v6.6.12 `B` got one
+8-byte slot holding `A`'s first word, and `B.x` SIGSEGV'd. A pointer-mode source
+(`var p: P3 = mk();`, or a global initialised that way) still binds a second pointer to the same
+struct, exactly as in a fn. The source must be declared ABOVE the copy: `var B: P3 = A;` before
+`var A = P3 { .. };` is refused (`cannot copy-init 'B' from a global declared below it`), since
+globals are initialised in declaration order and `A` has not been initialised when `B` copies it.
 
 ⚠ **A by-value struct PARAMETER over 8 bytes is address-passed** — the parameter's slot holds
 the caller's address, which is why writing `q.z = 5` inside the callee is visible to the caller.
@@ -2574,6 +2681,13 @@ The type argument may itself be a struct (`Box<Point>`) — the instance's field
 is laid out at the concrete type's size, so a following field lands at the right
 offset. Each distinct `Struct<type-args>` mints one deduped instance.
 
+A **literal** of a generic struct names its type arguments the same way — `Box<Point> { p, 5 }`,
+`Box<Point> { 1, 2, 5 }`, `Pair<i32> { 40, 2 }` — in a fn, in the leading declaration block and
+after the first top-level statement (6.6.12; before it every one was
+`undefined variable 'Box'`). It is the same instance an annotation names, so
+`var b: Box<Point> = Box<i64> { 1, 2 };` is a compile error, and `Box { .. }` with no
+arguments is the base (all-i64) struct.
+
 A **global** takes the instance too, wherever it is declared: `var G: W1<Pt> =
 alloc(16);` ahead of the first top-level statement reads and writes `G.v.x` and passes
 `G` where a `W1<Pt>` is expected (6.6.11; before it a global declared in that leading
@@ -3725,6 +3839,12 @@ The rules, in order:
    \`inotify_init1\`; on ELF-aarch64 that number is …`), *provided both Linux peers declare a
    `SYS_*` for it*. An UNNAMED number gets no diagnostic at all — that is the gap v6.6.5
    closed, and it is why rule 1 comes first.
+   Since v6.6.12 the report is **not** made for a call inside a region compiled only for
+   aarch64 — the taken side of `#ifdef CYRIUS_ARCH_AARCH64` / `#ifplat aarch64`, of
+   `#ifndef CYRIUS_ARCH_X86`, or the `#else` of their opposites — because a number there is
+   the native one by construction (`syscall(8, ..)` IS getxattr), whether spelled as a
+   literal or through an `enum` constant. That silences a wrong "use SYS_LSEEK"; it does not
+   make such a number safe — rule 3 still applies.
 3. **Never write the aarch64-native number under an `#ifdef CYRIUS_ARCH_AARCH64`.** It looks
    like the careful thing to do and it is the fragile one: a compat row matches a NUMBER and
    cannot tell your native number from the x86 number it is chasing, so a routing row added

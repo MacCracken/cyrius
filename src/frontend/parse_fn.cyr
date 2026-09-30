@@ -1467,6 +1467,8 @@ fn _try_push_struct_addr_arg(S, fi, argc): i64 {
     var o = 0 - 1;
     if (GINFN(S) == 1) { o = _gcall_open(S, GTI(S)); }
     if (o >= 0) {
+        # 6.6.12: `take(mk(p).v)` — the argument is a FIELD of the result, taken like `take(b.v)`.
+        if (_call_dotted(S, GTI(S)) == 1) { return _push_struct_expr_arg(S, fi, argc); }
         if (_ret_agg_class(S, _gen_resolve_call(S, GTI(S))) == 0) { return 0; }   # 6.6.10: the instance's class
         if (_call_is_whole_arg(S, o - 1) == 0) { return 0; }
         EFLADDR(S, _struct_call_into_temp(S));
@@ -1475,7 +1477,7 @@ fn _try_push_struct_addr_arg(S, fi, argc): i64 {
     }
     # 6.6.6 (bite 14 review): any other expression — a method call or an operator returning the
     # struct takes its temp's address; everything else is pushed as its value. CHANGELOG [6.6.6]
-    if (nx != 31) { if (nx != 11) { return _push_struct_expr_arg(S); } }
+    if (nx != 31) { if (nx != 11) { return _push_struct_expr_arg(S, fi, argc); } }
     var li = 0 - 1;
     if (GINFN(S) == 1) { li = FINDLOCAL(S, PEEKV(S)); }
     if (li < 0) { return _push_struct_addr_global(S); }
@@ -1840,12 +1842,23 @@ fn _struct_call_emit(S, fi, noff, dst): i64 {
     else { ECALLFIX(S, fi); }
     ECALLCLEAN(S, n);
     if (cls == 1) { EFLSTORE_STRUCT_INT_PAIR(S, dst); }
+    # 6.6.12: a struct result in rax — a <= 8 B struct's bytes (`dst` inline), or a `Str` handle
+    # (`dst` pointer-mode, see `_struct_call_into`). Only `_call_field` asks for this class.
+    if (cls == 0) { if (GFRS(S, fi) > 0) { EFLSTORE(S, dst); } }
     return 0;
 }
 
 # `IDENT ( args )` at the cursor, for a callee `_ret_agg_class` accepts: allocate a temp, emit
 # the call into it, return the temp's field-0 slot. CHANGELOG [6.6.6]
 fn _struct_call_into_temp(S): i64 {
+    _struct_call_into(S, 0);
+    return _sci_t;
+}
+# 6.6.12: `handle` = 1 for a struct returned as a HEAP HANDLE in rax (`Str` — the one class-0
+# struct over 8 B): the temp is one POINTER-mode slot that holds it, as `var s = str_from(..)`
+# does, not an inline aggregate the handle would be stored into. The slot is left in `_sci_t`.
+var _sci_t = 0;
+fn _struct_call_into(S, handle): i64 {
     var noff = PEEKV(S);
     var o = _gcall_open(S, GTI(S));          # 6.6.10: also `name<..>(`
     if (o < 0) { o = GTI(S) + 1; }
@@ -1854,9 +1867,23 @@ fn _struct_call_into_temp(S): i64 {
     _gen_own_call_check(S, fi, noff);
     _vis_check(S, fi, noff);
     _DEPRECATED_WARN(S, fi, noff);
-    var t = _agg_temp(S, GFRS(S, fi));
+    var t = 0;
+    if (handle == 1) { t = _ptr_temp(S, GFRS(S, fi)); }
+    else { t = _agg_temp(S, GFRS(S, fi)); }
     STI(S, o + 1);   # consume IDENT [<..>] `(`
     _struct_call_emit(S, fi, noff, t);
+    _sci_t = t;
+    return 0;
+}
+
+# An anonymous POINTER-mode struct slot (the slot holds the struct's address). CHANGELOG [6.6.12]
+fn _ptr_temp(S, sid): i64 {
+    var t = GFLC(S);
+    S64(S + 0x5D9D000 + t * 8, 0 - 1);
+    SLDEP(S, t, GSDEP(S));
+    SLTYPE(S, t, 0 - sid);
+    SFLC(S, t + 1);
+    if (t + 1 > _flc_hwm) { _flc_hwm = t + 1; }
     return t;
 }
 
@@ -1873,6 +1900,31 @@ fn _call_follow(S, ti): i64 {
     return TOKTYP(S, k + 1);
 }
 
+# The `)` closing the call whose `(` is token `o`. CHANGELOG [6.6.12]
+fn _call_close(S, o): i64 {
+    var k = o + 1;
+    var d = 1;
+    while (k < GTCNT(S)) {
+        var t = TOKTYP(S, k);
+        if (t == 10) { d = d + 1; }
+        if (t == 11) { d = d - 1; if (d == 0) { return k; } }
+        k = k + 1;
+    }
+    return k;
+}
+
+# 1 = the call `name(..)` / `name<..>(..)` at token `ti` is followed by `.field` — its result is
+# not the value (a `..` range is not a field). The receives that size a destination from the
+# callee's return skip such a call. CHANGELOG [6.6.12]
+fn _call_dotted(S, ti): i64 {
+    var o = _gcall_open(S, ti);
+    if (o < 0) { return 0; }
+    var c = _call_close(S, o);
+    if (TOKTYP(S, c + 1) != 41) { return 0; }
+    if (TOKTYP(S, c + 2) != 2) { return 0; }
+    return 1;
+}
+
 # Is the call at `ti` the WHOLE argument (followed by `,` or `)`)? A call inside a larger
 # expression (`f(a) + 1`) is left to the ordinary value path.
 fn _call_is_whole_arg(S, ti): i64 {
@@ -1886,6 +1938,7 @@ fn _call_is_whole_arg(S, ti): i64 {
 # temp (returned), or -1 when the return expression is not that shape. CHANGELOG [6.6.6]
 fn _return_struct_call(S): i64 {
     if (_gcall_open(S, GTI(S)) < 0) { return 0 - 1; }   # 6.6.10: `name(` or `name<..>(`
+    if (_call_dotted(S, GTI(S)) == 1) { return 0 - 1; }   # 6.6.12: a field of the result
     var fi = _gen_resolve_call(S, GTI(S));   # 6.6.10: a generic's instance, not its base
     if (fi < 0) { return 0 - 1; }
     if (GFRS(S, fi) != _cur_fn_ret_sid) { return 0 - 1; }
@@ -1904,6 +1957,7 @@ fn _return_struct_call(S): i64 {
 fn _refuse_toplevel_pair_init(S, pscale, ti): i64 {
     if (pscale >= 0) { return 0; }
     if (_gcall_open(S, ti) < 0) { return 0; }
+    if (_call_dotted(S, ti) == 1) { return 0; }   # 6.6.12: `_call_field` refuses a field of it
     var fi = _gen_resolve_call(S, ti);
     if (fi < 0) { return 0; }
     if (_grc_err < 0) { return 0; }   # a failed instantiation: the call refuses itself, once
@@ -1969,7 +2023,11 @@ fn _sc_post(S, fi, noff, beg, t): i64 {
         else { EFLLOAD(S, t); SESTYPE(S, 0); }
     } else {
         if (GINFN(S) == 1) { return 0; }   # a 9-16 B result nobody asked to store: rax:rdx as ever
-        if (cls == 2) { return 0; }        # top level: `_sc_pre` already refused it
+        if (cls == 2) {                    # top level: `_sc_pre` already refused it
+            _sc_rbeg = beg;
+            _sc_rend = GTI(S);
+            return 0;
+        }
     }
     _sc_beg = beg;
     _sc_end = GTI(S);
@@ -2109,14 +2167,53 @@ fn _sc_global_mismatch(S, pscale, start): i64 {
 # call returning a struct, the callee gets the temp's ADDRESS — the result's storage — where it
 # used to get the first word. Anything else pushes the value, which is exactly what the caller's
 # own PCMPE + EPUSHR would push. Returns 1: the argument is consumed. CHANGELOG [6.6.6]
-fn _push_struct_expr_arg(S): i64 {
+# ⛔ 6.6.12 — A STRUCT-TYPED FIELD AS THE WHOLE ARGUMENT (`take(r.v)`) PUSHED ITS FIRST WORD, and
+# the callee dereferenced that word as the struct's address: SIGSEGV on x86 and aarch64, a page
+# fault on PE, 0 on cx — from a local, global, by-value parameter or pointer-mode base alike, and
+# through a generic instance. The whole-field record (`_fla_want` / `_fla_take`) is armed here
+# too, ending at `,` or `)`; see `_fla_push_arg`. CHANGELOG [6.6.12]
+fn _push_struct_expr_arg(S, fi, argc): i64 {
     var st = GTI(S);
     var w = _sc_arm(S);
+    var fw = _fla_want;
+    var fa = _fla_arg;
+    _fla_want = st;
+    _fla_arg = st;
+    _fla_hit = 0;
     PCMPE(S);
     _sc_want = w;
+    _fla_want = fw;
+    _fla_arg = fa;
+    if (_fla_hit == 1) { return _fla_push_arg(S, fi, argc); }
     var t = _sc_whole(S, st);
     if (t >= 0) { EFLADDR(S, t); }
     if (t == 0 - 1) { _refuse_toplevel_struct_call(S, _sc_fn); }
+    EPUSHR(S);
+    return 1;
+}
+
+# The recorded field source as by-value argument `argc` of `fn`: checked against the parameter's
+# struct (SFPSID — the instance's for a generic) and refused by name when it differs. In a fn the
+# callee gets a COPY (a frame temp), so a write through its parameter cannot reach the caller's
+# field — the by-value contract. At top level there is no frame, and the field's own address is
+# passed, as a named global argument's is (`_push_struct_addr_global`). Returns 1. CHANGELOG [6.6.12]
+fn _fla_push_arg(S, fi, argc): i64 {
+    _fla_hit = 0;
+    var ps = GFPSID(S, fi, argc);
+    if (ps > 0) { if (ps != _fla_ft) {
+            ERR_IDENT(S, "cannot pass ", _fla_name, " to a by-value parameter of a different struct type in a call to ", L64(_fnt_names + fi * 8));
+            EPUSHR(S);   # keeps the argument count; no binary is written
+            return 1;
+        } }
+    if (GINFN(S) == 1) {
+        var t = _agg_temp(S, _fla_ft);
+        _agc_copy_bytes(S, t, 0 - 1, 0 - 2, 0 - 1, STRUCTSZ(S, _fla_ft - 1));
+        EFLADDR(S, t);
+    } else {
+        _fsc_src_x1(S, 0);
+        EMOVI(S, 0);
+        EADDR(S);            # rax = x1
+    }
     EPUSHR(S);
     return 1;
 }
@@ -2155,6 +2252,7 @@ fn _return_struct_expr(S): i64 {
 # CHANGELOG [6.6.6]
 fn _pair_ret_call_ok(S): i64 {
     if (_gcall_open(S, GTI(S)) < 0) { return 0; }   # 6.6.10: `name(` or `name<..>(`
+    if (_call_dotted(S, GTI(S)) == 1) { return 0; }   # 6.6.12: a field of the result
     # 6.6.10 (bite 7 review): the fn the call REACHES — `return mkw(p);` from a `: W1<Pt>` fn was
     # compared against the base's 8 B `W1` and refused (6.6.9 compiled it).
     var fi = _gen_resolve_call(S, GTI(S));
@@ -4772,6 +4870,22 @@ fn _fn_self_byval(fi): i64 {
     return (L64(_fnt_structmask + fi * 8) >> 62) & 1;
 }
 
+# 6.6.12 — record the struct id of an ADDRESS-passed struct parameter (see SFPSID, util.cyr).
+fn _psid_note(S, fi, pc, sid, mask): i64 {
+    if (((mask >> pc) & 1) == 0) { return 0; }
+    return SFPSID(S, fi, pc, sid);
+}
+# Pass 1's half: a parameter typed with struct `base` — its address-passed bit follows the
+# instance (`_gtype_param_mask`), and the sid is recorded. Returns the instance sid; the updated
+# mask is the second return, `_psid_mask` (read it immediately).
+var _psid_mask = 0;
+fn _psid_scan(S, fi, pc, base, mask): i64 {
+    var inst = _gtype_sid(S, fi, base);
+    _psid_mask = _gtype_param_mask(S, mask, pc, base, inst);
+    _psid_note(S, fi, pc, inst, _psid_mask);
+    return inst;
+}
+
 # Scan the param list `( ... )` for fn `fi`, computing the per-fn ABI masks the
 # same way PARSE_FN_DEF's param loop does (shared _classify_param_type → first
 # match sets one mask at bit `pc`; SIMD uses 2 bits at pc*2), plus the param
@@ -4820,7 +4934,7 @@ fn _prescan_params(S, fi): i64 {
                         if (_param_wants_struct_ptr(S, PEEKV(S)) == 1) { struct_mask = struct_mask | (1 << pc); }
                         # 6.6.10: `r: Box<Pt>` — the instance's size decides (see _gtype_sid).
                         var _pb = FINDSTRUCT(S, PEEKV(S));
-                        if (_pb > 0) { struct_mask = _gtype_param_mask(S, struct_mask, pc, _pb, _gtype_sid(S, fi, _pb)); }
+                        if (_pb > 0) { _pb = _psid_scan(S, fi, pc, _pb, struct_mask); struct_mask = _psid_mask; }
                         STI(S, GTI(S) + 1);                  # consume type name
                         SKIP_GENERICS(S);                    # `: Vec<i64>` etc.
                     }
@@ -6732,6 +6846,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                 # `-pt_sid` only if explicitly annotated.
                 SLTYPE(S, li, 0);
                 if (pt_sid > 0) { SLTYPE(S, li, 0 - pt_sid); }
+                _psid_note(S, fi, pc, pt_sid, struct_mask);   # 6.6.12: see SFPSID (util.cyr)
                 # v6.4.57 (Gap A) — a scalar f64/f32 param gets the same positive
                 # F64_TYID/F32_TYID tag a `var y: f64` local gets, so parse_expr's
                 # local-load (lt == F64_TYID/F32_TYID) routes ops to the float

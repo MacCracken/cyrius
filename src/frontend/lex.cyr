@@ -1235,7 +1235,7 @@ fn LEXDEC(S, p): i64 {
                         # BITS (FLIT_NUM); the backends load them as one 64-bit immediate. See
                         # the block above _bn_muladd for what the i64 numer/denom pair did.
                         var bits = _flit_bits(S, p0, p, fd, nd + fd);
-                        var fidx = FLIT_ADD(bits, 0);
+                        var fidx = FLIT_ADD(bits);
                         if (fidx < 0) {
                             _lex_die(S, p0, "too many distinct float literals (raise _FLIT_CAP in src/common/util.cyr)");
                         }
@@ -1796,6 +1796,51 @@ fn _lex_die(S, p, msg): i64 {
     return 0;
 }
 
+# A string literal still open at EOF: report it at its opening quote `p`, on the line
+# the literal STARTED (`sline`) -- the loop has already counted any LFs inside it, and
+# `_lex_err_head` reads the current line. Kept out of LEX (the cybs per-fn cap).
+# CHANGELOG [6.6.12]
+fn _lex_unterm_str(S, p, sline): i64 {
+    SCLINE(S, sline);
+    _lex_die(S, p, "unterminated string literal");
+    return 0;
+}
+
+# 1 iff offset `q` starts a WHOLE preprocessor file-marker line, in PP_FMARK's exact
+# shape: `#@file "<name>" <digits>` then LF. The whole line, not just the `#@file "`
+# prefix FM_BUILD keys on: a string that is CLOSED by a `"` right after `#@file ` on its
+# own line is valid source, and must not be refused as unterminated. CHANGELOG [6.6.12]
+fn _lex_fmark_line(S, q): i64 {
+    var bl = GBL(S);
+    if (q + 11 >= bl) { return 0; }
+    var b = S + 0x459D000;
+    if (load8(b + q) != 35 || load8(b + q + 1) != 64 || load8(b + q + 2) != 102 || load8(b + q + 3) != 105) { return 0; }
+    if (load8(b + q + 4) != 108 || load8(b + q + 5) != 101 || load8(b + q + 6) != 32 || load8(b + q + 7) != 34) { return 0; }
+    var e = q + 8;
+    while (e < bl && load8(b + e) != 34 && load8(b + e) != 10) { e = e + 1; }
+    if (e == q + 8 || e + 2 >= bl) { return 0; }
+    if (load8(b + e) != 34 || load8(b + e + 1) != 32) { return 0; }
+    e = e + 2;
+    var d = e;
+    while (e < bl && load8(b + e) >= 48 && load8(b + e) <= 57) { e = e + 1; }
+    if (e == d || e >= bl) { return 0; }
+    if (load8(b + e) != 10) { return 0; }
+    return 1;
+}
+
+# A LF inside a string literal: count the line, and refuse the literal if the next line
+# (offset `q`) is a preprocessor file marker. Inside a string that marker can only be the
+# one PP_FMARK writes where an INCLUDED file ends, so the literal was still open at the
+# end of its file -- unterminated exactly as one open at EOF is. It used to run on into
+# the marker, close on the marker's own quote and pair every later quote wrongly, so the
+# error named the main file, or a VALID literal in it. Kept out of LEX (the cybs per-fn
+# cap). CHANGELOG [6.6.12]
+fn _lex_str_lf(S, q, sline): i64 {
+    SCLINE(S, GCLINE(S) + 1);
+    if (_lex_fmark_line(S, q) == 1) { _lex_unterm_str(S, _tok_start, sline); }
+    return 0;
+}
+
 # Byte `c` as two lowercase hex digits on stderr.
 fn _lex_hex2(c): i64 {
     var b = 0;
@@ -2317,7 +2362,10 @@ fn LEX(S): i64 {
                                                                                                                                     var sline = GCLINE(S);   # the token keeps its OPENING line; LFs inside count after it
                                                                                                                                     var sgo = 1;
                                                                                                                                     while (sgo == 1) {
-                                                                                                                                        if (p >= bl) { sgo = 0; }
+                                                                                                                                        # EOF before the closing quote is an ERROR (it ended the string silently, so the
+                                                                                                                                        # parser reported a misleading `expected ';'` at a later line). Named at the OPENING
+                                                                                                                                        # quote's file:line:col. CHANGELOG [6.6.12]
+                                                                                                                                        if (p >= bl) { _lex_unterm_str(S, _tok_start, sline); }
                                                                                                                                         # CVE-06: bounds check str_data (2MB at 0x21A000; v5.8.59 was 256KB at 0x14A000)
                                                                                                                                         if (spos >= 2097152) {
                                                                                                                                             syscall(SYS_WRITE, 2, "error: string data overflow (2MB limit)\n", 40);
@@ -2327,7 +2375,9 @@ fn LEX(S): i64 {
                                                                                                                                             var sc = load8(S + 0x459D000 + p);
                                                                                                                                             if (sc == 34) { p = p + 1; sgo = 0; }
                                                                                                                                             else {
-                                                                                                                                                if (sc == 92) {
+                                                                                                                                                # A `\` that is the LAST byte escapes nothing: kept raw, so the EOF check above
+                                                                                                                                                # reports the unterminated string instead of reading past the buffer. CHANGELOG [6.6.12]
+                                                                                                                                                if (sc == 92 && p + 1 < bl) {
                                                                                                                                                     var esc = p;   # the backslash: where an escape diagnostic points. CHANGELOG [6.6.10]
                                                                                                                                                     p = p + 1;
                                                                                                                                                     var ec = load8(S + 0x459D000 + p);
@@ -2417,11 +2467,11 @@ fn LEX(S): i64 {
                                                                                                                                                     # continuation.sh) and counts the line; `\<CR><LF>` keeps both bytes, the LF counted
                                                                                                                                                     # by the plain arm below. Any other byte after `\` is refused: it used to be stored
                                                                                                                                                     # verbatim with the backslash dropped (`"\q"` was "q"). CHANGELOG [6.6.11]
-                                                                                                                                                    elif (ec == 10) { SCLINE(S, GCLINE(S) + 1); store8(S + 0x21A000 + spos, 10); spos = spos + 1; }
+                                                                                                                                                    elif (ec == 10) { _lex_str_lf(S, p, sline); store8(S + 0x21A000 + spos, 10); spos = spos + 1; }
                                                                                                                                                     elif (ec == 13 && load8(S + 0x459D000 + p) == 10) { store8(S + 0x21A000 + spos, 13); spos = spos + 1; }
                                                                                                                                                     else { _lex_die(S, esc, "unknown string escape"); }
                                                                                                                                                 } else {
-                                                                                                                                                    if (sc == 10) { SCLINE(S, GCLINE(S) + 1); }   # a raw LF in a string is a line. CHANGELOG [6.6.11]
+                                                                                                                                                    if (sc == 10) { _lex_str_lf(S, p + 1, sline); }   # a raw LF in a string is a line. CHANGELOG [6.6.11]
                                                                                                                                                     store8(S + 0x21A000 + spos, sc);
                                                                                                                                                     spos = spos + 1;
                                                                                                                                                     p = p + 1;
