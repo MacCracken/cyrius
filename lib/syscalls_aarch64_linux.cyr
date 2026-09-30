@@ -659,9 +659,18 @@ fn sys_stat(path, buf): i64 {
     return syscall(SYS_NEWFSTATAT, AT_FDCWD, path, buf, 0);
 }
 
-# Duplicate fd oldfd to newfd. Translates to dup3(oldfd, newfd, 0).
+# Duplicate fd oldfd to newfd. Translates to dup3(oldfd, newfd, 0) on Linux.
+# ⚠ On arm64-macOS it issues the x86 dup2 number 33 (ESYSXLAT routes 33 → BSD dup2 90):
+# Darwin has no dup3, and the Mach-O arm deliberately has no 24 row — the one it had
+# (24 → 90) silently dropped dup3's flags, so dup3(…, O_CLOEXEC) left FD_CLOEXEC clear.
+# CHANGELOG [6.6.12]
 fn sys_dup2(oldfd, newfd): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    return syscall(33, oldfd, newfd);
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
     return syscall(SYS_DUP3, oldfd, newfd, 0);
+    #endif
 }
 
 # Create a directory at path with given mode.

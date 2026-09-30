@@ -1048,6 +1048,12 @@ fn EMACHO_SYSXLAT(S): i64 {
     _msx(S, 60, 0x2000001);   # exit     60 → 1
     _msx(S, 260, 0x20001D4);  # fchownat 260 → 468 (Darwin number read off ecb + ach,
     # $(xcrun --show-sdk-path)/usr/include/sys/syscall.h; v6.5.7)
+    # 6.6.12: faccessat 269 → 466, the twin of the arm64 row (aarch64/emit.cyr, `269→466`). A
+    # pure renumber: Linux faccessat(dirfd, path, mode, flags) matches Darwin's, and AT_FDCWD
+    # is already Darwin's -2 on macOS. 6.6.10 declared SYS_FACCESSAT on this peer for surface
+    # parity but left the number unrouted, so a raw syscall(SYS_FACCESSAT, …) on Intel-Mac
+    # SIGSYS'd (rc 140 on ach) while the same source worked on ecb. 269 > 127, hence _msx32.
+    _msx32(S, 269, 0x20001D2); # faccessat 269 → 466
     _msx(S, 231, 0x2000001);  # exit_group 231 → 1 (Darwin exit() ends the whole task;
     # v6.5.6: untranslated 231 reached Darwin unclassed → SIGSYS)
     _msx(S, 80, 0x200000C);   # chdir    80 → 12 (v6.5.7: sys_chdir was added to the shared

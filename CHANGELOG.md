@@ -65,6 +65,26 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   u32/i8 globals, a narrow local seen through its address; each = native). With B01 applied, B01's
   `tests/tcyr/crossos/narrow_slot_width.tcyr` runs 53/53 on cxvm.
 
+- **x86-macOS: `faccessat` was unrouted (SIGSYS) (B07, item Q3).** **Root cause:** `EMACHO_SYSXLAT`
+  (`src/backend/x86/emit.cyr`) had no 269 row, although 6.6.10 declared `SYS_FACCESSAT` on the x86
+  peer and arm64-macOS has routed `269 → 466` for years; `syscall(SYS_FACCESSAT, AT_FDCWD, "/", 0, 0)`
+  died with SIGSYS on ach (rc 140) while the same source worked on ecb. **Fix:** `_msx32(S, 269,
+  0x20001D2)`, a pure renumber (AT_FDCWD is already Darwin's -2 on macOS). `macho_route_parity.sh`
+  drops the `SYS_FACCESSAT` allow-list row. **Held by**
+  `tests/tcyr/crossos/darwin_unrouted_syscall_faults.tcyr` (faccessat on `/` = 0 and on a missing
+  path = -ENOENT; the 6.6.11 compiler gives -78/-78 on ach).
+
+- **arm64-macOS: `dup3` silently dropped its flags (B07, item Q3).** **Root cause:** ESYSXLAT's Mach-O
+  arm renumbered dup3 24 to dup2 90 unconditionally; Darwin has no dup3 and dup2 ignores x2, so
+  `dup3(1, 51, O_CLOEXEC)` returned fd 51 with FD_CLOEXEC clear (measured on ecb). **Fix:** the 24 row
+  is gone, so a raw dup3 fails as it does on x86-macOS (292, unrouted): SIGSYS, or -ENOSYS with
+  SIGSYS ignored. The arm peer's `sys_dup2` (`lib/syscalls_aarch64_linux.cyr`) issues x86 dup2 33
+  under `#ifdef CYRIUS_TARGET_MACOS` (routed 33 → 90); the CLI's fork/exec plumbing (`cbt/build.cyr`)
+  was re-verified on ecb (`cyrius build` / `cyrius run`). `macho_route_parity.sh` re-scopes
+  `SYS_DUP3` to both backends. **Held by** `darwin_unrouted_syscall_faults.tcyr` (dup3 with
+  O_CLOEXEC = -78 and no fd 51 created; `sys_dup2(1, 50)` = 50 with FD_CLOEXEC clear; the 6.6.11
+  compiler gives 51 on ecb).
+
 ## [6.6.11] — 2026-09-29
 
 The fifth batch release: the 6.6.9 review finds I–K and the 6.6.10 finds that produce wrong results

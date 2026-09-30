@@ -83,6 +83,7 @@ allow_reason() {
                       echo "both|Darwin has no timerfd; timers are kqueue EVFILT_TIMER, a different API" ;;
     SYS_SIGNALFD4)    echo "both|Darwin has no signalfd (kqueue EVFILT_SIGNAL). NOTE the arm peer's SYS_SIGNALFD4=74 collides with the fsync row 74->95, so it LOOKS routed; it is not a route for this capability" ;;
     SYS_UTIMENSAT)    echo "both|Darwin has no utimensat; the wrapper returns -ENOSYS on macOS (see the v6.1.20 at-family note)" ;;
+    SYS_DUP3)         echo "both|Darwin has no dup3, and a renumber to dup2 would silently DROP the flags argument: arm64-macOS carried exactly that row (24 -> 90) until 6.6.12, so dup3(old, new, O_CLOEXEC) returned the fd with FD_CLOEXEC clear (measured on ecb). Both peers now implement sys_dup2 via x86 dup2 33 (routed -> 90 on both backends; the arm peer under #ifdef CYRIUS_TARGET_MACOS), so neither Mac emits a dup3 number and a raw one fails with SIGSYS / -ENOSYS on both" ;;
     SYS_EXECVEAT)     echo "both|Darwin has no execveat; execve(59) is routed and is what the macOS paths use" ;;
     SYS_MOUNT|SYS_UMOUNT2|SYS_REBOOT)
                       echo "both|admin syscalls with incompatible Darwin ABIs, unreachable from the macOS builds. NOTE the arm peer's SYS_UMOUNT2=39 collides with the x86-getpid row 39->20, so it LOOKS routed" ;;
@@ -107,8 +108,6 @@ allow_reason() {
                       echo "both|Darwin has no setresuid/setresgid; the closest peers (setreuid/setregid) have different semantics, so a row would silently change behaviour" ;;
     # ---- same capability, different spelling: routed under the OTHER name ----
     SYS_CLONE)        echo "x86|the x86 peer implements sys_fork via bare SYS_FORK=57 (routed ->2); only the arm peer spells fork as clone(220). Same capability" ;;
-    SYS_DUP3)         echo "x86|the x86 peer implements sys_dup2 via bare SYS_DUP2=33 (routed ->90); only the arm peer, which has no dup2, spells it dup3(old, new, 0) (24 ->90). Same capability. Darwin has no dup3, so there is no x86 row to add: a 292 -> dup2 row would silently drop the flags argument (6.6.10 declared the name for surface parity)" ;;
-    SYS_FACCESSAT)    echo "x86|the x86 peer implements sys_access via bare SYS_ACCESS=21 (routed ->33); only the arm peer, which has no access(2), spells it faccessat (269 ->466). Same capability. A raw syscall(SYS_FACCESSAT, ...) on Intel-Mac is unrouted (SIGSYS, -78 with SIGSYS ignored) until an EMACHO_SYSXLAT 269 -> 466 row exists (6.6.10 declared the name for surface parity)" ;;
     *) echo "" ;;
     esac
 }

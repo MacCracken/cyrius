@@ -883,7 +883,12 @@ fn ESYSXLAT(S): i64 {
         _esx_arm_shift(S, 56, 5, 3);
         # ── v6.0.34: wrapper (cbt) process + fs syscalls ──
         _esx_arm(S, 221, 59);  # execve 221→59
-        _esx_arm(S, 24, 90);  # dup3 24→dup2 90
+        # 6.6.12: NO dup3 row. It used to renumber 24 → dup2 90 unconditionally, and Darwin
+        # has no dup3 while dup2 ignores x2 — so dup3(old, new, O_CLOEXEC) returned the fd
+        # with FD_CLOEXEC CLEAR (measured on ecb), a silently dropped flag. The peer's
+        # sys_dup2 issues x86 dup2 33 on macOS instead (routed 33 → 90 below), and a raw
+        # dup3 falls to the chain head's 0xFFFF: SIGSYS, or -ENOSYS with SIGSYS ignored —
+        # the answer x86-macOS gives for its own dup3 (292, unrouted). CHANGELOG [6.6.12]
         _esx_arm(S, 260, 7);  # wait4 260→7
         _esx_arm(S, 220, 2);  # clone 220→fork 2 (x1-fixup post-svc)
         # mkdirat 34 → mkdir 136 (arg-shift x0=path,x1=mode; b.ne +16)
