@@ -4002,7 +4002,7 @@ fn _PARSE_TERM_IMPL(S): i64 {
             var mulst = _FBR_ST(S);   # 6.6.10: a float builtin's result is a float left operand
             STI(S, GTI(S) + 1);
             if (mulst == F64_TYID) { ESPILL(S); PARSE_FACTOR(S); if (_FBR_ST(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } EMIT_F64_BINOP(S, 2); SESTYPE(S, F64_TYID); _cfo = 0; }
-            elif (mulst == F32_TYID) { ESPILL(S); PARSE_FACTOR(S); EMIT_F32_BINOP(S, 2); SESTYPE(S, F32_TYID); _cfo = 0; }
+            elif (mulst == F32_TYID) { ESPILL(S); PARSE_FACTOR(S); if (_FBR_ST(S) != F32_TYID) { _FLT_TYPE_WARN(S, 5); } EMIT_F32_BINOP(S, 2); SESTYPE(S, F32_TYID); _cfo = 0; }
             elif (mulst > 0) { EMIT_OP_DISPATCH(S, mulst, "mul", 3, _tbeg); _cfo = 0; }
             else {
                 # Constant fold: NUM * NUM where both and result are small positive
@@ -4063,7 +4063,7 @@ fn _PARSE_TERM_IMPL(S): i64 {
                 var divst = _FBR_ST(S);   # 6.6.10: a float builtin's result is a float left operand
                 STI(S, GTI(S) + 1);
                 if (divst == F64_TYID) { ESPILL(S); PARSE_FACTOR(S); if (_FBR_ST(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } EMIT_F64_BINOP(S, 3); SESTYPE(S, F64_TYID); _cfo = 0; }
-                elif (divst == F32_TYID) { ESPILL(S); PARSE_FACTOR(S); EMIT_F32_BINOP(S, 3); SESTYPE(S, F32_TYID); _cfo = 0; }
+                elif (divst == F32_TYID) { ESPILL(S); PARSE_FACTOR(S); if (_FBR_ST(S) != F32_TYID) { _FLT_TYPE_WARN(S, 5); } EMIT_F32_BINOP(S, 3); SESTYPE(S, F32_TYID); _cfo = 0; }
                 elif (divst > 0) { EMIT_OP_DISPATCH(S, divst, "div", 3, _tbeg); _cfo = 0; }
                 else {
                     if (_cfo == 1) { if (PEEKT(S) == 1) {
@@ -4397,7 +4397,7 @@ fn _PEXPR_IMPL(S): i64 {
             var addst = _FBR_ST(S);   # 6.6.10: a float builtin's result is a float left operand
             STI(S, GTI(S) + 1);
             if (addst == F64_TYID) { ESPILL(S); PARSE_TERM(S); if (_FBR_ST(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } EMIT_F64_BINOP(S, 0); SESTYPE(S, F64_TYID); _cfo = 0; }
-            elif (addst == F32_TYID) { ESPILL(S); PARSE_TERM(S); EMIT_F32_BINOP(S, 0); SESTYPE(S, F32_TYID); _cfo = 0; }
+            elif (addst == F32_TYID) { ESPILL(S); PARSE_TERM(S); if (_FBR_ST(S) != F32_TYID) { _FLT_TYPE_WARN(S, 5); } EMIT_F32_BINOP(S, 0); SESTYPE(S, F32_TYID); _cfo = 0; }
             elif (addst > 0) { EMIT_OP_DISPATCH(S, addst, "add", 3, _xbeg); _cfo = 0; }
             else {
                 # Fold only if right side is a plain literal (not followed by * / % << >>)
@@ -4426,7 +4426,7 @@ fn _PEXPR_IMPL(S): i64 {
                 var subst = _FBR_ST(S);   # 6.6.10: a float builtin's result is a float left operand
                 STI(S, GTI(S) + 1);
                 if (subst == F64_TYID) { ESPILL(S); PARSE_TERM(S); if (_FBR_ST(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); } EMIT_F64_BINOP(S, 1); SESTYPE(S, F64_TYID); _cfo = 0; }
-                elif (subst == F32_TYID) { ESPILL(S); PARSE_TERM(S); EMIT_F32_BINOP(S, 1); SESTYPE(S, F32_TYID); _cfo = 0; }
+                elif (subst == F32_TYID) { ESPILL(S); PARSE_TERM(S); if (_FBR_ST(S) != F32_TYID) { _FLT_TYPE_WARN(S, 5); } EMIT_F32_BINOP(S, 1); SESTYPE(S, F32_TYID); _cfo = 0; }
                 elif (subst > 0) { EMIT_OP_DISPATCH(S, subst, "sub", 3, _xbeg); _cfo = 0; }
                 else {
                     var sub_can_fold = 0;
@@ -4578,7 +4578,9 @@ fn _PEXPR_IMPL(S): i64 {
 # / `if (x > y)` DO (5's int bits ≠ 5.0's f64 bits — a denormal compare). stderr (fd 2).
 # kind 2 (6.6.8) is the int-left mirror of kind 1 (see _INT_F64_MIX); kinds 3 and 4 (6.6.10)
 # are unary minus on an untyped float variable (_UFV_L) and an integer constant stored into an
-# f64 / f32 slot (_IFS_CHECK).
+# f64 / f32 slot (_IFS_CHECK). kind 5 (6.6.11) is kind 1 for the f32 arms: EMIT_F32_BINOP takes
+# the right operand's LOW 32 BITS, so an f64 literal (`x * 2.0` → 0) or an integer is silently
+# reinterpreted. Warn-only, the same ADR-002 posture as kind 1. CHANGELOG [6.6.11]
 fn _FLT_TYPE_WARN(S, kind): i64 {
     if (_TYPE_CHECK_ENABLED() != 1) { return 0; }
     syscall(SYS_WRITE, 2, "warning:", 8);
@@ -4591,6 +4593,8 @@ fn _FLT_TYPE_WARN(S, kind): i64 {
         syscall(SYS_WRITE, 2, ": unary minus on an untyped variable holding a float is integer negation (declare it f64)\n", 90);
     } elif (kind == 4) {
         syscall(SYS_WRITE, 2, ": an integer stored into an f64/f32 slot keeps its integer bits (write a float literal)\n", 88);
+    } elif (kind == 5) {
+        syscall(SYS_WRITE, 2, ": f32 arithmetic with a non-f32 right operand\n", 46);
     } else {
         syscall(SYS_WRITE, 2, ": f64 arithmetic with a non-f64 right operand\n", 46);
     }

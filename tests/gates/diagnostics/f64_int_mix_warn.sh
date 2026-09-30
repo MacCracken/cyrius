@@ -32,11 +32,16 @@
 #           assignment, field store, struct literal, global) warns once each; 0, an IEEE bit
 #           pattern in hex (>= 2^52), a float literal and a runtime value do not.
 #   axis 9  CYRIUS_TYPE_CHECK=0 silences kinds 3 and 4.
+#   axis 10 (6.6.11) kind 5: an f32 `+ - * /` whose right operand is not f32 (an f64 literal, an
+#           integer) warns once each — EMIT_F32_BINOP takes its LOW 32 BITS, so `x * 2.0` was 0,
+#           silently; f32/f32, an f32_from(..) right and a typed f32 field are clean, and
+#           CYRIUS_TYPE_CHECK=0 silences it. Red on 6.6.10 (0 of 9).
 # Mutation-proven: with the four `_INT_F64_MIX` calls removed, axis 1 reads 0 of 4 and fails.
 # (6.6.10) with PARSE_INTRIN's `_FBR_MARK` call removed axis 6 fails; with the unary-minus
 # `_FLT_TYPE_WARN(S, 3)` removed, or _cl_restore_locals' flag copy removed, axis 7 fails; with SFLC's `_lfi_clear` call removed
 # axis 7 reads 9 (neg2's `-a` inherits clos()'s slot-0 flag) and fails; with `_IFS_CHECK`
 # returning early axis 8 fails.
+# (6.6.11) with the four `_FLT_TYPE_WARN(S, 5)` calls in the f32 arms removed axis 10 fails.
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -255,5 +260,42 @@ n=$(count "$K3"); [ "$n" = 0 ] || bad "axis 9: CYRIUS_TYPE_CHECK=0 still printed
 CYRIUS_TYPE_CHECK=0 "$CC" < "$W/a8.cyr" > "$W/o" 2> "$W/e" || true
 n=$(count "$K4"); [ "$n" = 0 ] || bad "axis 9: CYRIUS_TYPE_CHECK=0 still printed $n kind-4 warning(s)"
 
+# --- axis 10 (6.6.11): kind 5, an f32 arm with a non-f32 right operand ---
+K5="f32 arithmetic with a non-f32 right operand"
+cat > "$W/a10.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct F { a: f32; }
+fn main(): i64 {
+    var u = 2.5;
+    var x: f32 = f32_from(2.5);
+    var y: f32 = f32_from(0.5);
+    var f: F;
+    f.a = f32_from(1.0);
+    var w1 = f32_from(u) + 1.0;
+    var w2 = x + 1.0;
+    var w3 = x - 1;
+    var w4 = x * 2.0;
+    var w5 = x / 2;
+    var w6 = x + 1;
+    var w7 = x - 0.5;
+    var w8 = x * 3;
+    var w9 = x / 4.0;
+    var c1 = x + y;
+    var c2 = x - f32_from(1.0);
+    var c3 = x * f.a;
+    var c4 = x / y + y * x - y;
+    var c5 = f.a + x;
+    return 0;
+}
+var r = main();
+syscall(60, r);
+EOF
+build "$W/a10.cyr"
+n=$(count "$K5"); [ "$n" = 9 ] || { bad "axis 10: kind-5 warning count $n, want 9 (w1..w9; not c1..c5)"; sed -n 1,12p "$W/e"; }
+if grep "$K5" "$W/e" | grep -q ">:1[89]:\|>:2[0-2]:"; then bad "axis 10: kind 5 fired on an f32/f32 row (c1..c5)"; fi
+n=$(count "$K1"); [ "$n" = 0 ] || bad "axis 10: $n kind-1 warning(s) on f32 arithmetic (the f32 arms are kind 5)"
+CYRIUS_TYPE_CHECK=0 "$CC" < "$W/a10.cyr" > "$W/o" 2> "$W/e" || true
+n=$(count "$K5"); [ "$n" = 0 ] || bad "axis 10: CYRIUS_TYPE_CHECK=0 still printed $n kind-5 warning(s)"
+
 [ "$fail" = 0 ] || exit 1
-echo "PASS: f64_int_mix_warn (4 int-left ops warn; no false positives; kind 1 intact; TYPE_CHECK=0 silences; f64 fields and builtin results typed; kinds 3 + 4)"
+echo "PASS: f64_int_mix_warn (4 int-left ops warn; no false positives; kind 1 intact; TYPE_CHECK=0 silences; f64 fields and builtin results typed; kinds 3 + 4; kind 5)"
