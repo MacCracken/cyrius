@@ -146,23 +146,28 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   lookaheads, now one helper) skips a call followed by `.field`, and `_try_push_struct_addr_arg`,
   `_return_struct_call`, `_pair_ret_call_ok` and `_refuse_toplevel_pair_init` step aside for one
   (`_call_dotted`) — without the last-but-one step-aside `return mkpt(1).x;` from a `: Pt` fn
-  compiled SILENTLY, taking the call whole. **Verification:** new
+  compiled SILENTLY, taking the call whole. The BARE STATEMENT takes the same path through
+  `_stmt_call_field` (parse_expr.cyr, one call in PARSE_STMT's IDENT arm): PARSE_STMT sends
+  `IDENT (` straight to PARSE_FNCALL and never reaches the factor, so `mk(3).total();` and
+  `mk(3).n;` stayed `expected ';', got '.'` while `var t = mk(3).total();` worked (review find);
+  `mk(3).n = 5;` is refused by name (a field of a temporary is not an lvalue), and a refused
+  top-level call skips a method's `(..)` too rather than reporting it again. **Verification:** new
   `tests/tcyr/lang/struct_field_chain_depth.tcyr` (29 rows: 3- and 4-level read and write through a
   local, an inline and a pointer-mode global, by-value and `*T` parameters, packed i8/i16/i32 leaves
   checked through `load8/32/64` on the storage, a whole deep struct copied and passed, a `..` range
   after a deep chain, an f64 leaf; 6.6.11 does not build it; mutation `while` → `if`: does not
-  build); `tests/tcyr/crossos/generic_struct_inference.tcyr` gains the CF group (26 rows: argument,
-  var-init, expression and chain for a 5 B rax, 16 B rax:rdx and 24/32 B retptr result, inferred and
+  build); `tests/tcyr/crossos/generic_struct_inference.tcyr` gains the CF group (30 rows: argument,
+  var-init, expression, chain and bare statement for a 5 B rax, 16 B rax:rdx and 24/32 B retptr result, inferred and
   explicit generics, `W1<Pt>`, a method on the result, a struct-typed field whole into a `var`, an
   assignment, a field and a by-value argument, a `Str` handle, f64 fields; the rax:rdx rows off on
-  cx, which has no register-pair struct return; six mutations each RED, listed in its header); new
-  gate `tests/gates/frontend/call_result_field.sh` (12 rows on the message: five top-level
-  refusals, three required to be the ONLY error; the non-struct callee; two struct-type mismatches;
-  two struct-return diagnostics; two `--syntax-only` rows; 6.6.11 fails 11 of 12; mutation ledger in
-  its header). Both tcyrs green on x86, aarch64 (qemu), PE (wine) and cx (cxvm, 29/29 and 60/60),
+  cx, which has no register-pair struct return; seven mutations each RED, listed in its header); new
+  gate `tests/gates/frontend/call_result_field.sh` (15 rows on the message: seven top-level
+  refusals, five required to be the ONLY error, two of them a method on the result; the assignment
+  to a result's field; the non-struct callee; two struct-type mismatches; two struct-return
+  diagnostics; two `--syntax-only` rows; 6.6.11 fails 14 of 15; mutation ledger in its header). Both tcyrs green on x86, aarch64 (qemu), PE (wine) and cx (cxvm, 29/29 and 63/63),
   and on real ecb, ach, pi and cass, compiled there by a compiler that self-hosted byte-identical on
   that host. The guide (`docs/guides/cyrius-guide.md`, Structs) documents both. Fixpoint and
-  seed-derive green; cycc 1,453,864 → 1,458,048 B.
+  seed-derive green; cycc 1,453,864 → 1,458,120 B.
 
 ## [6.6.11] — 2026-09-29
 

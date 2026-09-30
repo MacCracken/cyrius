@@ -363,8 +363,8 @@ number of values. Both were silent, on every target.
 
 A field chain reaches any depth, for reading and writing, through a local, a global, a by-value
 parameter or a `*T` parameter alike: `n.v.v.x = 3;`, `var r = h.w.v.v.y;`. A `.field` also
-applies to a **call** that returns a struct, in any expression position, and chains on from
-there:
+applies to a **call** that returns a struct, in any expression position and as a bare
+statement, and chains on from there:
 
 ```
 struct Pt { x; y; }
@@ -381,10 +381,11 @@ fn demo(): i64 {
 
 Inside a fn the result lands in a frame temporary and the field is read from it, exactly as for
 a named struct: the same widths, sign-extension and `f64` typing. A method applies to the result
-itself (`mk(3).total()` calls `Box_total`); as for a named struct, not to a nested field
-(`mk(3).v.sum()`, like `b.v.sum()`, is a syntax error). At top level there is no frame:
+itself (`mk(3).total()` calls `Box_total`, as a value or as the statement `mk(3).total();`); as
+for a named struct, not to a nested field (`mk(3).v.sum()`, like `b.v.sum()`, is a syntax error). At top level there is no frame:
 `var G = mk(3).n;` is refused by name — call it inside a fn. A field of a call to a fn that
-does not return a struct is refused too.
+does not return a struct is refused too, and so is an assignment to a result's field
+(`mk(3).n = 5;`): the result is a temporary.
 
 ⚠ Before v6.6.12 a chain stopped after two levels — `n.v.v.x` was the syntax error
 `expected ';', got '.'` — and a `.field` after a call was `expected ')', got '.'` in every

@@ -1094,6 +1094,8 @@ fn _call_field(S): i64 {
         if (_syntax_only == 1 && TOKTYP(S, ti + 1) == 10) { PARSE_FNCALL(S, TOKVAL(S, ti)); }
         else { STI(S, _call_close(S, _gcall_open(S, ti)) + 1); }
         _synonly_skip_chain(S);
+        # a method on the refused result: its arguments too, or `(` is a second error
+        if (PEEKT(S) == 10) { STI(S, _call_close(S, GTI(S)) + 1); }
         _cfo = 0;
         return 1;
     }
@@ -1109,6 +1111,20 @@ fn _call_field(S): i64 {
     # AFTER the call: a literal argument (`mkp(3)`) left itself foldable, and `mkp(3).y + 1`
     # then folded to 4 by rewriting the code from that literal — the call and the load with it.
     _cfo = 0;
+    return 1;
+}
+
+# 6.6.12 — the STATEMENT form, `mk(3).total();` / `mk(3).n;`. PARSE_STMT sends `IDENT (` straight
+# to PARSE_FNCALL and never reaches the factor, so `_call_field` above did not run there and the
+# `.` was "expected ';'" while `var t = mk(3).total();` worked. Cursor just past the callee IDENT;
+# 1 = the statement is consumed through its `;`. One call in PARSE_STMT: that body is near cybs's
+# per-function reference limit. A field of a temporary is not an lvalue: refused by name.
+# CHANGELOG [6.6.12]
+fn _stmt_call_field(S): i64 {
+    if (_call_field(S) == 0) { return 0; }
+    if (PEEKT(S) == 4) { ERR_MSG(S, "cannot assign to a field of a call result: the result is a temporary", 68); }
+    else { if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } }
+    STI(S, GTI(S) + 1);
     return 1;
 }
 

@@ -14,6 +14,12 @@
 #          the leading declaration block (`var G = mk3(2).b;` before the first statement) and a
 #          struct-typed initialiser (`var G: Pt = mkpt(1).x;`). T3-T5 must be the ONLY error: on
 #          6.6.11 T4 and T5 were refused too, but by the call itself, followed by the syntax error.
+#   T6/T7  a METHOD on the result at top level — as a bare statement (`mk8(2).bump();`) and as
+#          an initialiser (`var G = mk8(2).bump();`) — is refused once: the method's `(..)` is
+#          skipped with the refused call, not reported again as "expected ';', got '('". T6 is
+#          also the statement position itself, which PARSE_STMT sent to PARSE_FNCALL, so the `.`
+#          was "expected ';', got '.'" (the 6.6.12 review find, `_stmt_call_field`).
+#   A1     `mk8(1).a = 5;` in a fn: a field of a temporary is not an lvalue — named, exactly once.
 #   N1     the callee returns no struct (`plain(3).y`): named, not a syntax error.
 #   M1/M2  a struct-typed field of the result into a destination of a DIFFERENT struct type: a
 #          `var q: Pt` declaration and a by-value `ptv(p: Pt)` argument, refused by name like the
@@ -26,7 +32,7 @@
 #          grammar error inside them is still reported (S2).
 #
 # MUTATION LEDGER (6.6.12, scratch trees, each rebuilt with the one change):
-#   base 6.6.11 build/cycc                                  -> RED, 11 of 12 (S2 was already right)
+#   base 6.6.11 build/cycc                                  -> RED, 14 of 15 (S2 was already right)
 #   `_call_field` without its top-level refusal             -> RED T1..T5 (a binary is emitted)
 #   `_call_field` returning 0 for an unresolved callee      -> RED S1
 #     under --syntax-only
@@ -37,6 +43,9 @@
 #   `_pair_ret_call_ok` without it                          -> RED R2 — and SILENT: the pair
 #     return took `mkpt(1)` whole and a binary was emitted
 #   `_refuse_toplevel_pair_init` without it                 -> RED T5 (two errors)
+#   no `_stmt_call_field` call in PARSE_STMT (src/frontend/ -> RED T6, A1 ("expected ';', got '.'")
+#     parse.cyr)
+#   `_call_field`'s refusal not skipping a method's `(..)`   -> RED T6, T7 (two errors)
 #   real tree                                               -> GREEN
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
@@ -90,6 +99,7 @@ fn mkbq(a): BQ { var b: BQ; b.q.z = a; b.k = 1; b.w = 2; return b; }
 fn plus1(a): i64 { return a + 1; }
 fn plain(a): i64 { return a; }
 fn ptv(p: Pt): i64 { return p.x; }
+fn P8_bump(self: P8): i64 { return self.a; }
 '
 
 echo "top level — no frame for the result:"
@@ -111,7 +121,18 @@ refuse T5 "'mkpt' $MT" "${T}var G: Pt = mkpt(1).x;
 var r = 0; syscall(60, r);
 " "" one
 
+refuse T6 "'mk8' $MT" "${T}var r = 0;
+mk8(2).bump();
+syscall(60, r);
+" "" one
+refuse T7 "'mk8' $MT" "${T}var G = mk8(2).bump();
+var r = 0; syscall(60, r);
+" "" one
+
 echo "in a fn — named refusals:"
+refuse A1 "cannot assign to a field of a call result: the result is a temporary" "${T}fn m(): i64 { mk8(1).a = 5; return 0; }
+var r = m(); syscall(60, r);
+" "" one
 refuse N1 "cannot take a field of the result of 'plain': it does not return a struct" "${T}fn m(): i64 { var r = plain(3).y; return r; }
 var r = m(); syscall(60, r);
 "
@@ -155,5 +176,5 @@ else
 fi
 
 echo "call_result_field: $pass passed, $fail failed"
-[ "$pass" -ge 12 ] || { echo "FAIL: call_result_field: only $pass of the 12 rows passed"; exit 1; }
+[ "$pass" -ge 15 ] || { echo "FAIL: call_result_field: only $pass of the 15 rows passed"; exit 1; }
 [ "$fail" -eq 0 ]

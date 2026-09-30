@@ -73,7 +73,9 @@
 # `Pt_add`. Rows cover the argument, the var-init, the expression and a chain, for each return
 # class: rax (a 5 B `P8`), rax:rdx (the 16 B `Pt`, `W1<Pt>`; off on cx, which has no register-pair
 # struct return) and the retptr (`P3`, `BB`, `BP`, `Box<Pt>`), plus a `Str` handle, a method on
-# the result, a struct-typed field taken whole, and a literal argument (`mk8(4).a * 10`, which
+# the result, a struct-typed field taken whole, a BARE STATEMENT (`mk8(5).bump();`, `mk3(4).c;`,
+# `mkpt(3).phit();` — PARSE_STMT sent `IDENT (` straight to PARSE_FNCALL, so the `.` stayed
+# "expected ';', got '.'" after the factor learned it; the 6.6.12 review find), and a literal argument (`mk8(4).a * 10`, which
 # folded to a constant and dropped the call on the first cut). The top-level refusals are in
 # tests/gates/frontend/call_result_field.sh. MUTATIONS (scratch trees), each RED here: no
 # `_call_field` call in `_PARSE_FACTOR_IMPL` (the file does not build); `_struct_call_emit`
@@ -81,7 +83,8 @@
 # `_var_rhs_call` not asking `_call_dotted` (the file does not build: `var r2 = mk3(4).c;` is
 # received as the struct); `_call_field` not clearing `_cfo` after the call (C0x and the `+ 1`
 # rows); `_try_push_struct_addr_arg` without its `_call_dotted` route (`ptv(mkbp(5).p)` pushes
-# the field's first word as the struct's address: rc 139).
+# the field's first word as the struct's address: rc 139); no `_stmt_call_field` call in PARSE_STMT
+# (src/frontend/parse.cyr; the file does not build: `mk8(5).bump();`).
 #
 # CROSS-HOST because each instance is a by-value struct-param fn emitted inline (jumped over) by
 # every backend, and struct returns take the per-target retptr / register-pair ABI.
@@ -175,6 +178,9 @@ struct BB { q: P3; k; }                 # 32 B: retptr, a struct field of a stru
 struct BP { p: Pt; k; }                 # 24 B: retptr, a Pt-typed field
 fn mk8(a): P8 { var p: P8; p.a = a; p.b = 0 - 3; return p; }
 fn P8_tot(self: P8): i64 { return self.a + self.b; }
+var cf_hits = 0;
+fn P8_bump(self: P8): i64 { cf_hits = cf_hits + self.a; return cf_hits; }
+fn P3_bump(self: P3): i64 { cf_hits = cf_hits + self.c * 100; return cf_hits; }
 fn mk3(a): P3 { var r: P3; r.a = a; r.b = a + 1; r.c = a + 2; return r; }
 fn mkbb(a): BB { var b: BB; b.q.a = a; b.q.b = a * 2; b.q.c = a * 3; b.k = 9; return b; }
 fn mkbp(a): BP { var b: BP; b.p.x = a; b.p.y = a + 1; b.k = 7; return b; }
@@ -246,11 +252,20 @@ fn run_call_fields(): i64 {
     d.p = mkbp(6).p;
     assert_eq(d.p.x * 10 + d.p.y + d.k * 100, 167, "CF: `d.p = mkbp(6).p;`, into a struct field");
     assert_eq(str_from("abcd").len, 4, "CF Str: `str_from(\"abcd\").len`, a heap-handle result");
+    cf_hits = 0;
+    mk8(5).bump();
+    assert_eq(cf_hits, 5, "CF stmt C0: `mk8(5).bump();`, a method on the result as a bare statement");
+    mk3(4).bump();
+    assert_eq(cf_hits, 605, "CF stmt C2: `mk3(4).bump();`, a retptr result's method as a statement");
+    mk8(9).a;
+    mkbb(2).q.c;
+    assert_eq(cf_hits, 605, "CF stmt: `mk8(9).a;` / `mkbb(2).q.c;`, a field (and chain) as a statement is evaluated and dropped");
     return 0;
 }
 
 #ifndef CYRIUS_TARGET_CX
 fn Pt_psum(self: Pt): i64 { return self.x + self.y; }
+fn Pt_phit(self: Pt): i64 { cf_hits = cf_hits + self.x * 10 + self.y; return cf_hits; }
 struct F2 { x: f64; y: f64; }
 fn mkf2(): F2 { var f: F2; f.x = 1.5; f.y = 2.25; return f; }
 fn run_call_fields_pair(): i64 {
@@ -263,6 +278,10 @@ fn run_call_fields_pair(): i64 {
     assert_eq(s1, 6, "CF C1: `var s1 = mkpt(3).y + 1;` is an integer (was typed Pt: undefined Pt_add)");
     assert_eq(plus1(mkpt(8).x), 9, "CF C1: `plus1(mkpt(8).x)` as an argument");
     assert_eq(mkpt(3).psum(), 8, "CF C1: `mkpt(3).psum()`, a method on the result");
+    cf_hits = 0;
+    mkpt(3).phit();
+    mkpt(3).y;
+    assert_eq(cf_hits, 35, "CF stmt C1: `mkpt(3).phit();` as a bare statement, and `mkpt(3).y;`");
     assert_eq(mk(p).v.x + mk(p).v.y * 10, 21, "CF: `mk(p).v.x`, a chain on an inferred generic's Box<Pt>");
     assert_eq(mk<Pt>(p).v.y + mk<Pt>(p).n * 10, 52, "CF: `mk<Pt>(p).v.y`, the explicit form");
     assert_eq(mkw(p).v.y, 2, "CF: `mkw(p).v.y`, a W1<Pt> (16 B) instance whose base is 8 B");

@@ -3020,6 +3020,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
         var noff = PEEKV(S);
         STI(S, GTI(S) + 1);
         if (PEEKT(S) == 10) {
+            if (_stmt_call_field(S) == 1) { return 0; }   # 6.6.12: `mk(3).total();`
             # v5.6.3: #must_use — warn when a fn marked #must_use is
             # called as a bare expression statement (result dropped).
             # The check happens BEFORE PARSE_FNCALL so the diagnostic
