@@ -588,7 +588,7 @@ fn FINDLOCAL(S, noff): i64 {
 # ================================================================
 
 # ⭐ 6.6.7 — THE TAIL ARM'S DIVERT LIST, IN ONE PLACE. `return IDENT(args);` is lowered to
-# epilogue + `jmp` (ETAILJMP; call + inline epilogue on cx), which reaches NOTHING the normal
+# epilogue + `jmp` (ETAILJMP; the same shape on cx since 6.6.12), which reaches NOTHING the normal
 # return does: not the return landing, not the defer walker, not PARSE_FNCALL. Every obligation
 # PARSE_FNCALL or the epilogue carries therefore had to be re-discovered here, one silent wrong
 # value at a time, and bolted on as its own `tc_has_addr = 1` line — fifteen diverts by 6.6.7

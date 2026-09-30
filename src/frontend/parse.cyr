@@ -224,16 +224,14 @@ fn _pair_prescan(S): i64 {
 # every fn has its final flag — the propagation pass above is order-dependent and a mid-parse
 # verdict would be wrong for exactly the forward-reference case that motivated it.
 #
-# ⛔ IT HAS A REAL FALSE-POSITIVE CLASS, AND SILENCING IT COST A REGRESSION. A fn may return
-# `Err(code)` on one path and a RAW SIGNED STATUS on another *by design*, with callers using
-# `is_ok(f(x))` for the first (argument 1 receives rax, which is the tag) and a sign test for the
-# second. vani's `vani_drain` / `vani_drop` / `vani_state` are exactly that, pinned from both
-# sides by its suite: `assert_eq(is_ok(vani_drain(0)), 0)` AND
-# `assert_lt(vani_drain(bad_fd), 0, "drain propagates the raw negative")`. Wrapping the raw path
-# in `Ok(...)` to quiet this warning broke three of those tests (`got 0, expected -1`) and had to
-# be reverted. **Read the callers before acting on this warning — it reports a SHAPE, and the
-# shape is only a bug when every path is meant to be a Result.** In yukti it was (19 real
-# defects); in vani it was not.
+# ⛔ READ THE CALLERS BEFORE ACTING ON IT — it reports a SHAPE, and the fix is at the callers as
+# much as at the return. vani's `vani_drain` / `vani_drop` / `vani_state` returned `Err(code)` on
+# the null guard and the RAW status on the live path, and were kept that way through vani 1.2.7 as
+# a supposed false positive (callers `is_ok(f(x))` the guard, sign-test the status). It was a real
+# defect: a two-value bind of the live path read the status as the TAG, so a device in state
+# SETUP (1) read as Err. vani 1.2.8 returns a Result on every path (CHANGELOG [6.6.12]). Wrapping
+# the raw path in `Ok(...)` ALONE had broken three of vani's tests in 1.2.4 because the tests
+# pinned the raw value; those rows had to change with it. In yukti it was 19 real defects too.
 var _mixed_warned = 0;
 
 # Is the `return IDENT …` at token `t` a whole variant value (returns 0 = not plain) or a

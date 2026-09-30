@@ -2097,9 +2097,11 @@ binding it one-wide there is caught too.
 caller that value AS ITS TAG and a stale payload, so it is warned (*"returns a `: stack` pair on
 another path but a SINGLE value here"*, v6.6.0). Any constructor of the enum is a whole value,
 including a **nullary** one: `return None();` (or `return None;`) beside `return Some(v);` is
-correct and silent (v6.6.9; it used to warn and suggest `Err`). A fn that deliberately returns a
-raw status on one path, such as vani's `vani_drain`, still sees the warning, so read the callers
-before acting on it.
+correct and silent (v6.6.9; it used to warn and suggest `Err`). A fn that returns a raw status on
+one path still sees the warning even when its callers only sign-test that path, and it is still a
+defect: vani's `vani_drain` / `vani_state` were kept that way through vani 1.2.7, and a two-value
+bind read a device in state SETUP as `Err` (fixed in vani 1.2.8). Read the callers before acting
+on it: they change with the return.
 
 ⚠ **A COLLECTION of Results is two parallel slots, not one.** `store64(&arr + i * 8, f())` was
 the shape that silently half-stored, and it is how every array of Results was written. Store the
@@ -3435,8 +3437,15 @@ durability on Windows was told it had it.
 - `dir_walk(path, results)` — recursive enumeration (appends file paths to the `results` vec)
 
 These reroute to `FindFirstFileW`, `FindNextFileW`, `FindClose` (0xF016–0xF018),
-and `GetFileAttributesW` (0xF019) on Windows. Paths are converted to UTF-16LE
-with `/` translated to `\` for Windows naming. Results come back as UTF-8 Str.
+and `GetFileAttributesW` (0xF019) on Windows. Since 6.6.12 the path goes to the
+reroute as UTF-8 and is widened the way `open`/`mkdir` widen theirs: invalid UTF-8
+is refused, and a path of 248 units or more is made absolute and `\\?\`-prefixed,
+so `is_dir`, `dir_list`, `is_symlink`, `sys_access` and `xmkdir_p` work on long
+paths too. Results come back as UTF-8 Str. A listing that fails part-way is an
+error, not a short directory: after `FindNextFileW` returns 0 the lister reads
+`GetLastError` (0xF04B) and only `ERROR_NO_MORE_FILES` ends it. `dir_list_into`
+(the caller-owned-buffer lister) has a Windows arm as well, with the same
+-1/-2/-3/-4 contract.
 
 **Environment**
 - `getenv(name)` → pointer to value, or 0
@@ -3866,6 +3875,21 @@ The rules, in order:
    (41) were unreachable behind the socket compat rows, and the x86 numbers ran sethostname,
    getpgid, kcmp and the scheduler priority queries. The seccomp arch tag is
    `AUDIT_ARCH_NATIVE` in the Linux (and x86-macOS) peers.
+   ⭐ 6.6.12 named the extended-attribute family, `fchown`, `statx` and `getrlimit`:
+   `sys_{,l,f}setxattr`, `sys_{,l,f}getxattr`, `sys_{,l,f}listxattr`, `sys_{,l,f}removexattr`,
+   `sys_fchown`, `sys_statx` and `sys_getrlimit`. Neither the native nor the x86 number was
+   usable for most of them — native 5/6/7/9/10/11/12/16 and 55 are compat-row SOURCES (raw
+   lgetxattr 9 ran mmap, fchown 55 getsockopt) and x86 198/199 are aarch64's own socket /
+   socketpair — so the aarch64 peer spells them through the **private alias band**: a source
+   number **≥ 1000** that no OS will ever mint, written `1000 + the native number`
+   (`SYS_SETXATTR` 1005 … `SYS_FREMOVEXATTR` 1016, `SYS_FCHOWN` 1055, `SYS_STATX` 1291) and
+   renumbered by rows at the very END of `ESYSXLAT`'s chain, below every compat row whose
+   source their product would match (`tests/gates/platform/esysxlat_row_order.sh` checks the
+   order, and that every alias the peer declares has its row). `getrlimit` needed no alias:
+   its native 163 is neither a row source nor a row product. On macOS `sys_fchown` and
+   `sys_getrlimit` are real (Darwin 123 / 194 — but `RLIMIT_NOFILE` is 8 there, not 7), and the
+   xattr calls and `sys_statx` return -78: Darwin's xattr calls take two extra arguments and
+   Darwin has no statx. PE and agnos decline all fifteen with -38.
    In-tree all three shapes — a `SYS_*` declaration, any identifier assigned a literal that is
    then a syscall's first argument, and a bare `syscall(<literal>)` — are enforced by
    `tests/gates/platform/aarch64_syscall_shadow.sh` (axes 2 and 3), across `src/`, `lib/`,
