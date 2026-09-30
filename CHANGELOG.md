@@ -33,6 +33,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   **Gate:** `tests/gates/toolchain/macho_fill_environ_bounded.sh` (the fn extracted into an x86 logic
   probe: 40 × 25-byte entries into cap 64 behind a canary, whole-entry, drop-not-truncate and boundary
   axes; three mutants recorded in its ledger).
+- **stdlib: `lib/bench.cyr` and `lib/chrono.cyr` dereferenced a refused (0) allocation (B10, item S1).**
+  6.6.10 taught `bench_new` and `epoch_to_date` to return 0 and updated none of their consumers:
+  `bench_iterations(bench_new(..))` and `dt_year(..)` under a refused alloc exited 139. Every public bench
+  fn now takes `b == 0` and returns 0 (a refused bench runs no op), `bench_report(0)` prints
+  `(bench_new refused)` (no ` avg`, so no row parser takes it for a row), and the three header examples
+  check the result. `dt_year` … `dt_second` decode through a new non-allocating `_epoch_to_date_into`
+  into a stack buffer — they no longer leak 48 B per call and, once the month table exists, cannot fail;
+  they return -1 only if the table itself could never be allocated (0 is a valid hour/minute/second).
+  **Test:** `tests/tcyr/stdlib/bench_chrono_refused_alloc.tcyr` (ALLOC_MAX = 0); either 6.6.11 file
+  reverted exits 139.
 
 ## [6.6.11] — 2026-09-29
 
