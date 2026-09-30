@@ -173,13 +173,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (`if (p >= bl) { sgo = 0; }`), unlike the char-literal path, so the error surfaced later and
   elsewhere: `var s = "abc` said `expected ';', got end of file`, a bare `"abc` said `unexpected
   string`, and a literal opened on line 2 and running to EOF was reported at the LAST line; a `\` as
-  the very last byte read one byte past the source as its escape. The exit status was never 0.
+  the very last byte read one byte past the source as its escape. The exit status was never 0. In an
+  INCLUDED file — the usual shape in a `cyrius build` project — the literal did not reach EOF at
+  all: it ran on into the preprocessor's `#@file "<parent>" N` resume marker, closed on the marker's
+  own quote, and every later quote then paired wrongly, so the error named the main file (a bare
+  `error:6:16: undefined variable 'source'`, or a VALID literal after the include).
   **Fix:** `_lex_unterm_str` restores the literal's opening line and reports `unterminated string
   literal` at the opening quote's `<file>:<line>:<col>`; a trailing `\` escapes nothing, so it reaches
-  the same report. **Verification:** four new rows in
+  the same report. A LF inside a literal followed by a whole marker line in `PP_FMARK`'s exact shape
+  (`_lex_str_lf` / `_lex_fmark_line`) is the end of an included file and reports the same way,
+  naming the included file; the whole line is matched, so a valid string closed right after
+  `#@file ` on its own line still compiles. **Verification:** eight new rows in
   `tests/gates/frontend/lexer_errors_name_file_line.sh` (single-line, multi-line naming the opening
-  line, trailing backslash, bare statement; the 6.6.11 compiler fails all four; each of the three
-  parts mutation-proven, listed in its header).
+  line, trailing backslash, bare statement, and four in an included file — with a valid literal
+  after the include, with plain lines after it, ending in `\<LF>`, ending with no newline), plus two
+  anti-vacuous rows; the 6.6.11 compiler fails all eight, and each part is mutation-proven, listed in
+  its header.
 - **An explicit generic call as a bare statement (`id<i32>(4);`) was a syntax error (B05, item R2).**
   Loud — nothing compiled wrong. **Root cause:** the IDENT arm of `_PARSE_STMT_IMPL`
   (`src/frontend/parse.cyr`) sent only `IDENT (` to PARSE_FNCALL; `IDENT <` fell into the assignment
@@ -226,7 +235,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   scan is anchored on the call's own `)`), a whole included file under the guard; six
   anti-vacuous rows still warn — after a block, a neutral `#ifdef CYRIUS_TARGET_LINUX`, after an
   included file's block closes, a forged marker, a marker in a string; the 3-arg kill warns on
-  x86-Linux and PE and is silent on x86-macOS, whose 1-arg control still warns; nine mutations,
+  x86-Linux and is silent on x86-macOS, whose 1-arg control still warns, with a PE control row
+  (PE never prints the arity warning; its unrouted-number warning names the call, unchanged); nine mutations,
   each RED, in its header). ⚠ cybs refuses a CALL with more than six arguments (a bare `syntax
   error` at seed-derive step 3, measured): `_pp_a64_open` packs its kind and state into one.
 - **Dead code: `FLIT_DEN` and the float-literal table's unused denominator slot (B05, item T8a).**

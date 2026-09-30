@@ -1215,9 +1215,10 @@ fn _sc_arity_skip(sc_num, got): i64 {
     # answer EPERM or ESRCH at random), and this Linux table then warned on
     # every x86-macOS build. Linux kill never takes 3 user args, so the
     # structural match is unambiguous (the 113 shape). CHANGELOG [6.6.10]
-    # ⛔ 6.6.12: DARWIN ONLY. The skip had no target check, and this arity check runs on every
-    # non-aarch64 backend, so a wrong 3-arg kill compiled SILENTLY on x86-Linux and PE from
-    # 6.6.10 on (6.6.9 warned). arm64-macOS never reaches here (_AARCH64_BACKEND).
+    # ⛔ 6.6.12: DARWIN ONLY. The skip had no target check, so a wrong 3-arg kill compiled
+    # SILENTLY on x86-Linux from 6.6.10 on (6.6.9 warned). PE never prints this arity warning
+    # (its unrouted-number warning names the call, unchanged), and arm64-macOS never reaches
+    # here (_AARCH64_BACKEND).
     if (_TARGET_MACHO == 1) { if (sc_num == 62) { if (got == 3) { skip_warn = 1; } } }
     # v6.0.48: agnos uses NATIVE syscall numbers (0-33) that
     # collide with Linux numbers at different arities (agnos

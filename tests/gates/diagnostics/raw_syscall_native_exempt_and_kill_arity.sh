@@ -28,11 +28,12 @@
 #   from `_SYSX_MEANT`, do not delete the axis.
 # AXIS 3 — a 3-arg kill WARNS again off Darwin. 6.6.10 skipped the arity warning for
 #   `syscall(62, pid, sig, posix)` (Darwin's kill) with no target check, and this arity table
-#   runs on every non-aarch64 backend, so a wrong 3-arg kill compiled SILENTLY on x86-Linux
-#   from 6.6.10 on (6.6.9 warned). The skip is `_TARGET_MACHO == 1` only now (`_sc_arity_skip`).
-#   Rows: x86-Linux warns `syscall arity mismatch`; PE warns (there the unrouted-number
-#   warning names the call); x86-macOS is silent for the 3-arg form and still warns for a
-#   1-arg one.
+#   runs on the x86 ELF and Mach-O backends, so a wrong 3-arg kill compiled SILENTLY on
+#   x86-Linux from 6.6.10 on (6.6.9 warned). The skip is `_TARGET_MACHO == 1` only now
+#   (`_sc_arity_skip`). Rows: x86-Linux warns `syscall arity mismatch` (the Q2b regression
+#   row); x86-macOS is silent for the 3-arg form and still warns for a 1-arg one. The PE row
+#   is a CONTROL, not a Q2b row: PE never prints the arity warning — its unrouted-number
+#   warning names the call, on 6.6.11 as now — so no Q2b mutation can turn it red.
 #
 # MUTATION LEDGER (6.6.12, measured; the src/ mutations run under the fixed $CC, see below):
 #   CYCC = the installed 6.6.11 cycc                                        -> RED 1 (x86-Linux kill)
@@ -152,8 +153,8 @@ grep -q '^warning:<source>:1:[0-9]*: syscall arity mismatch' "$D/k.err" && ok "x
 grep -q '^warning:<source>:2:[0-9]*: syscall arity mismatch' "$D/k.err" && ok "x86-Linux: a 1-arg kill warns (control)" \
     || bad "x86-Linux: a 1-arg kill did not warn"
 CYRIUS_TARGET_WIN=1 "$CC" < "$D/k.cyr" > "$D/kw.bin" 2> "$D/kw.err"
-grep -q '^warning:<source>:1:[0-9]*: syscall 62 with 3 argument' "$D/kw.err" && ok "PE: syscall(62, 0, 0, 5) warns" \
-    || bad "PE: a 3-arg kill compiled silently"
+grep -q '^warning:<source>:1:[0-9]*: syscall 62 with 3 argument' "$D/kw.err" && ok "PE (control): syscall(62, 0, 0, 5) still warns unrouted" \
+    || bad "PE (control): the unrouted-number warning no longer names a 3-arg kill"
 CYRIUS_MACHO=1 "$CC" < "$D/k.cyr" > "$D/km.bin" 2> "$D/km.err"
 if grep -q '^warning:<source>:1:' "$D/km.err"; then bad "x86-macOS: Darwin's 3-arg kill warned: $(grep '^warning:<source>:1:' "$D/km.err" | head -1)"
 else ok "x86-macOS: Darwin's kill(pid, sig, posix) is silent"; fi
