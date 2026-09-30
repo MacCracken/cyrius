@@ -43,8 +43,8 @@
 #   axis 12 (6.6.11) a plain assignment RE-JUDGES an untyped variable's kind-3 flag: `g = 0;
 #           g = 1.5; -g` warns and `h = 1.5; h = 7; -h` does not, for locals and globals; a
 #           compound assignment keeps the flag, even when a closure in its right operand
-#           assigns a float to one of its own variables. Red on 6.6.10 (3 warnings, two on the
-#           wrong lines).
+#           assigns a float to one of its own variables; a plain for STEP (`g = 1.5`, `G4 = 7`)
+#           re-judges like the statement. Red on 6.6.10 (3 warnings, two on the wrong lines).
 #   axis 13 (6.6.11) `var t = p.y;` / `var u = y;` (a declared f64 field / local) are typed, so
 #           `-t` / `-u` are float negations and draw no kind 3; `var c = 1.5; -c` still does.
 #           Red on 6.6.10 (3 warnings, want 1).
@@ -55,8 +55,9 @@
 # returning early axis 8 fails.
 # (6.6.11) with the four `_FLT_TYPE_WARN(S, 5)` calls in the f32 arms removed axis 10 fails;
 # with _asg_compound_float's two checks removed axis 11 fails; with `_asg_rejudge` returning
-# early axis 12 fails; with `_decl_float_copy` returning 0 axis 13 fails (the SLTYPE stamp
-# itself is pinned by tests/tcyr/crossos/f64_struct_fields.tcyr).
+# early axis 12 fails; with the for step's two `_asg_rejudge` calls removed axis 12's step
+# program fails (it misses -g / -G3 and flags -h / -G4); with `_decl_float_copy` returning 0
+# axis 13 fails (the SLTYPE stamp itself is pinned by tests/tcyr/crossos/f64_struct_fields.tcyr).
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -374,6 +375,34 @@ build "$W/a12.cyr"
 n=$(count "$K3"); [ "$n" = 3 ] || { bad "axis 12: kind-3 warning count $n, want 3 (-g, -G1, -k; not -h, -G2, -m)"; sed -n 1,8p "$W/e"; }
 for want in 8 13 18; do
     grep "$K3" "$W/e" | grep -q ">:$want:" || bad "axis 12: no kind-3 warning at line $want"
+done
+# the for-step replay re-judges too (parse_ctrl.cyr's plain-step `_asg_rejudge` calls), for a
+# local and a global: a float step flags `-g` / `-G3`, an int step clears `-h` / `-G4`.
+cat > "$W/a12s.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+var G3 = 0;
+var G4 = 1.5;
+fn main(): i64 {
+    var g = 0;
+    var h = 1.5;
+    var i = 0;
+    for (i = 0; i < 1; g = 1.5) { i = 1; }
+    var a = -g;
+    for (i = 0; i < 1; h = 7) { i = 1; }
+    var b = -h;
+    for (i = 0; i < 1; G3 = 1.5) { i = 1; }
+    var c = -G3;
+    for (i = 0; i < 1; G4 = 7) { i = 1; }
+    var d = -G4;
+    return a + b + c + d;
+}
+var r = main();
+syscall(60, r & 255);
+EOF
+build "$W/a12s.cyr"
+n=$(count "$K3"); [ "$n" = 2 ] || { bad "axis 12 (for step): kind-3 warning count $n, want 2 (-g, -G3; not -h, -G4)"; sed -n 1,8p "$W/e"; }
+for want in 9 13; do
+    grep "$K3" "$W/e" | grep -q ">:$want:" || bad "axis 12 (for step): no kind-3 warning at line $want"
 done
 
 # --- axis 13 (6.6.11): a copy of a declared f64 value is typed ---

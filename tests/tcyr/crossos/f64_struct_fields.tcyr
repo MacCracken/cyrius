@@ -125,4 +125,16 @@ local_ops();
 param_global_chain();
 union_f32_generic();
 copy_inference();
+
+# The same copies declared AFTER the first top-level statement take PARSE_VAR's path, not
+# _gv_float_copy at registration. Mutation: drop PARSE_VAR's `if (dfc != 0) { SVTYPE(..) }`
+# (src/frontend/parse_decl.cyr) — all four rows below fail (integer adds of the bit patterns).
+var GL3 = GC;
+var GL4 = GPC.y;
+assert_eq(bits(GL3 + GL3), 2.5, "late global var G3 = G: G3 + G3 is a float add (top level)");
+assert_eq(bits(GL4 + GL4), 6.0, "late global var G4 = GP.y: G4 + G4 is a float add (top level)");
+fn late_copy_sum3(): i64 { return bits(GL3 + GL3); }
+fn late_copy_sum4(): i64 { return bits(GL4 + GL4); }
+assert_eq(late_copy_sum3(), 2.5, "late global var G3 = G: G3 + G3 is a float add (in a fn)");
+assert_eq(late_copy_sum4(), 6.0, "late global var G4 = GP.y: G4 + G4 is a float add (in a fn)");
 var r = assert_summary();

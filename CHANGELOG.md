@@ -190,9 +190,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   compile, and without it 14 of the 25 rows are red.
   `tests/tcyr/crossos/f64_struct_fields.tcyr` gains the copy-inference rows (field, chain, typed
   local, f64 param, global, leading-block global from a global and from a field, f32 field; a
-  literal stays untyped): 9 red before. `tests/gates/diagnostics/f64_int_mix_warn.sh` gains
-  axes 10-13 (kind 5; compound right operands; re-judged flags; typed copies), each red on the
-  pre-fix compiler and each mutation-proven. Verified on real hardware: both tcyrs plus
+  literal stays untyped): 9 red before; plus four rows for globals declared AFTER the first
+  top-level statement (a copy of an f64 global and of a struct-global field, used at top level
+  and in a fn), which take PARSE_VAR's stamp rather than registration's — all four red with that
+  stamp removed. `tests/gates/diagnostics/f64_int_mix_warn.sh` gains axes 10-13 (kind 5;
+  compound right operands; re-judged flags, including a plain `for` step into a local and a
+  global; typed copies), each red on the pre-fix compiler and each mutation-proven. Verified on real hardware: both tcyrs plus
   f64_negation / f32_scalar pass, and the compiler built from this tree self-hosts, on pi
   (aarch64), ecb (macOS arm64), ach (macOS x86_64) and cass (Windows PE); also under qemu-aarch64
   and wine.
