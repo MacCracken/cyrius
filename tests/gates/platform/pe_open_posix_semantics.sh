@@ -77,7 +77,10 @@
 #   axis 2b PATH-ENCODING SHAPE (always, needs objdump), on the PE build of
 #           tests/tcyr/crossos/pe_path_utf8_long.tcyr, which reaches all seven emitters. Every
 #           call through the IAT slot of CreateFileW / CreateDirectoryW / DeleteFileW /
-#           RemoveDirectoryW (and TWICE per MoveFileExW call) must be fed by one widen, and every
+#           RemoveDirectoryW (and TWICE per MoveFileExW call) — and, since 6.6.12, of
+#           GetFileAttributesW / FindFirstFileW (0xF019 / 0xF016 take a NARROW path now; they took
+#           a stdlib-widened, unprefixed one and so still hit MAX_PATH) — must be fed by one
+#           widen, and every
 #           widen must carry the three things that ARE the fix: CP_UTF8 (`mov $0xfde9,%ecx`)
 #           followed by MB_ERR_INVALID_CHARS (`mov $0x8,%edx`), and the long-path branch
 #           (`cmp $0xf8,%eax`); each path frame carries its page probe (`test %rsp,(%rsp)`), and
@@ -95,6 +98,11 @@
 #   the page probe dropped (one bare sub rsp,size)      FAIL     PASS                CRASH 0xC0000005
 #   the 6.6.10 compiler (the cut-at-260 byte loop)      FAIL     FAIL, 12 rows       FAIL, 17 rows (6.6.10 stdlib too)
 #   the 6.6.10 stdlib widens, new emitter               PASS     FAIL, 2 rows        -
+# 6.6.12 (lane P, bite B08), BUILT AND RUN 2026-09-30, same method (axis 3 also reddens: its
+# is_symlink rows go through the same two reroutes):
+#   EGETFATTR_PE back to the wide-input 1-arg call      FAIL     FAIL, 4 rows        -
+#   EFINDFIRST_PE back to the wide-input 2-arg call     FAIL     FAIL, 10 rows       -
+#   the 6.6.11 compiler + stdlib (pe_path_utf8_long.exe) -       -                   FAIL, 6 rows
 # wine enforces no MAX_PATH and commits the whole stack, so the long-path branch and the probe are
 # invisible to it: for those two, axis 2b is the only LOCAL guard and cass the hardware one.
 #
@@ -251,16 +259,17 @@ else
     }
     ncf=$(calls_to CreateFileW); ncd=$(calls_to CreateDirectoryW); ndf=$(calls_to DeleteFileW)
     nrd=$(calls_to RemoveDirectoryW); nmv=$(calls_to MoveFileExW)
-    want_w=$((ncf + ncd + ndf + nrd + 2 * nmv))
-    frames=$((ncf + ncd + ndf + nrd + nmv))
+    nga=$(calls_to GetFileAttributesW); nff=$(calls_to FindFirstFileW)   # narrow since 6.6.12
+    want_w=$((ncf + ncd + ndf + nrd + nga + nff + 2 * nmv))
+    frames=$((ncf + ncd + ndf + nrd + nga + nff + nmv))
     nw=$(grep -cE 'mov[[:space:]]+\$0xfde9,%ecx' "$D/pdis")
     n8=$(awk '/mov[[:space:]]+\$0xfde9,%ecx/ {p=1; next} p && /mov[[:space:]]+\$0x8,%edx/ {n++} {p=0} END {print n+0}' "$D/pdis")
     nlong=$(grep -cE 'cmp[[:space:]]+\$0xf8,%eax' "$D/pdis")
     nprobe=$(grep -cE 'test[[:space:]]+%rsp,\(%rsp\)' "$D/pdis")
     nloop=$(grep -cE 'mov[[:space:]]+%ax,\(%rdi,%rcx,2\)|cmp[[:space:]]+\$0x104,%ecx' "$D/pdis")
     nimp=$(grep -cE '[[:space:]](MultiByteToWideChar|GetFullPathNameW)$' "$D/pimp")
-    if [ "$ncf" -lt 1 ] || [ "$ncd" -lt 1 ] || [ "$ndf" -lt 1 ] || [ "$nrd" -lt 1 ] || [ "$nmv" -lt 1 ]; then
-        echo "  FAIL axis 2b (anti-vacuous): the PE build does not reach every narrow-path reroute (CreateFileW $ncf, CreateDirectoryW $ncd, DeleteFileW $ndf, RemoveDirectoryW $nrd, MoveFileExW $nmv call site(s))"
+    if [ "$ncf" -lt 1 ] || [ "$ncd" -lt 1 ] || [ "$ndf" -lt 1 ] || [ "$nrd" -lt 1 ] || [ "$nmv" -lt 1 ] || [ "$nga" -lt 1 ] || [ "$nff" -lt 1 ]; then
+        echo "  FAIL axis 2b (anti-vacuous): the PE build does not reach every narrow-path reroute (CreateFileW $ncf, CreateDirectoryW $ncd, DeleteFileW $ndf, RemoveDirectoryW $nrd, MoveFileExW $nmv, GetFileAttributesW $nga, FindFirstFileW $nff call site(s))"
         fail=1
     elif [ "$nimp" != "2" ]; then
         echo "  FAIL axis 2b: MultiByteToWideChar / GetFullPathNameW are not both imported ($nimp of 2)"
