@@ -55,6 +55,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   indexing. **Gate:** `tests/gates/toolchain/lsp_indexes_every_decl_spelling.sh` axis 5 (the last of 6000
   long-named fns in one include, a fn in the 300th included file, and sigil's last fn); the 6.6.11 LSP
   fails all three rows, and two mutants are recorded in its ledger.
+- **lib/async_agnos.cyr: a state description read as an untracked deferral (B11, item T9b).**
+  `_async_step`'s comment said it returns "the count of tasks not yet DONE", and cyrlint's `not yet` needle
+  drew an untracked-deferral note on the stdlib itself. The comment now says "tasks whose state is not
+  DONE" — comment only, the rule is unchanged. **Gate:** the same axis 15 lints the file under
+  `--strict-deferrals` and expects exit 0 and no note; the old comment exits 2.
 
 ## [6.6.11] — 2026-09-29
 
