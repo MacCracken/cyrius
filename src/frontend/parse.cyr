@@ -3217,6 +3217,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
             PARSE_FIELD_STORE(S, noff);
             return 0;
         }
+        if (_arr_sub_stmt(S, noff) == 1) { return 0; }   # 6.6.12: `a[i] = v;` (parse_expr.cyr)
         # assignment or compound assignment: already consumed IDENT
         # Check for +=, -=, *=, /=, %=, &=, |=, ^=, <<=, >>=
         var compound_op = _asg_compound_tok(S);

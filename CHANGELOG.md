@@ -259,6 +259,48 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   defer + await coroutine; RED on the pre-fix compiler); both coroutine gates green; output of
   every non-coroutine program byte-identical (279 files).
 
+### Added
+
+- **Array subscripts: `a[i]`, `a[i] = v` and `a[i] OP= v` on an element-typed array `var a: T[N]`
+  (B20, items R4 + R6).** The language had no subscript, read or write: `return a[1];` was
+  `expected ';', got '['` and `a[i] = 5;` was `expected '=', got '['` — local or global, in a fn or
+  at top level, on 6.6.10 and 6.6.11 alike — so `store64(&a + i * 8, v)` was the only spelling.
+  (R6, "`var c: i64[4];` inside a fn is refused", was this same diagnostic misattributed to the
+  declaration; the declaration always compiled.) **Root cause:** no postfix `[` arm existed for an
+  array name in the factor or the statement, and `PARSE_ARRAY` / `PARSE_GVAR_ARR` recorded the
+  array's byte size but not its element type, so there was nothing to scale or load by.
+  **Fix:** the declaration records a one-byte element descriptor (width 1/2/4/8/16 | 0x40 signed):
+  a stack array local above the span in its depth word (`SLAEW`/`GLAEW`, `src/common/util.cyr`;
+  `GLSPAN` and the closure snapshot's span now mask to their 16 bits), a global — and a fn-local
+  array that fell back to static storage — in the per-var sign table as `0x100 | desc`, a range
+  disjoint from that table's scalar 0/1 (no heap-map change). `_arr_sub_addr`
+  (`src/frontend/parse_expr.cyr`) resolves the base as `&a` does — a local, a closure capture, a
+  global — and computes `&a + i * sizeof(T)`; the factor (`_arr_sub_read`) loads it sign- or
+  zero-extended by T, and the statement arm (`_arr_sub_stmt`) and the classic-for step
+  (`_arr_sub_assign`, the step's existing body moved out of `PARSE_FOR` into `_for_step_assign`)
+  store at T's width, with all ten compound operators through the shared `_asg_compound_op`. No
+  bounds check. A **bare** `var a[N]` (and `stack var a[N]`) states no element width — bytes in a
+  fn, slots at top level — so its subscript is **refused by name** (`cannot subscript 'a': ...`),
+  as are a scalar, a pointer and a `u128` element; a `slice<T>` local keeps its bounds-checked
+  `s[i]`. `*T` pointer subscripts, slice writes and the opt-in bounds-checked mode are not part of
+  this. Two traps closed on the way: the element load must clear `_flags_reflect_rax` (the address
+  add set it, so `if (a[i])` branched on the ADDRESS on x86), and a signed element load records
+  itself for the IR (x86's `EFIELD_LOAD_W` records widths 1/2/4 only; under `CYRIUS_IR=3` an `i8`
+  element read wrong). **Verification:** new `tests/tcyr/crossos/typed_array_subscript.tcyr`
+  (69 rows: every width u8/i8/u16/i16/u32/i32/i64/u64 local and global, sign extension, store
+  truncation, a canary after every array and before/after the locals, the ten compound operators,
+  index expressions including a nested subscript and a call, `if`/`while` on an element, the for
+  step, a closure capture, a top-level statement and an array declared after the first top-level
+  statement; green on x86, `CYRIUS_IR=3`, aarch64 (qemu), PE (wine) and cx, and on the real hosts
+  with each host's own compiler — pi, ecb, ach and cass; each of five mutations listed in its
+  header reddens it); new gate `tests/gates/frontend/array_subscript_forms.sh`
+  (nine refusals by file:line:col — four bare shapes, a scalar, a pointer, a `stack var`, a
+  `u128` element, an unknown name; four typed controls; the runtime file by default and under
+  `CYRIUS_IR=3`; `--syntax-only` clean; the slice subscript untouched; RED on 6.6.11 with 22
+  failures, and each of five mutations in its header RED). The guide documents the form beside the
+  `store64` idiom (`docs/guides/cyrius-guide.md`, "Subscripts"). Every other program compiles
+  byte-identical (490 files: `tests/tcyr/**` + `programs/`); the unreachable-fn floor stays 73.
+
 ## [6.6.11] — 2026-09-29
 
 The fifth batch release: the 6.6.9 review finds I–K and the 6.6.10 finds that produce wrong results

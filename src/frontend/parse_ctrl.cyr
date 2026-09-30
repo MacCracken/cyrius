@@ -248,6 +248,36 @@ fn PARSE_WHILE(S): i64 {
     return 0;
 }
 
+# The classic-for step `x = v` / `x OP= v` on a named variable (cursor past the name).
+# Compound assignment in the step: 6.6.11 — the statement arm's implementation, not a copy
+# of it. The copy that stood here had no float routing (`x += 0.25` on an f64 added bit
+# patterns: 2 iterations, not 4) and knew five of the ten ops. See _asg_compound_tok.
+# 6.6.12: out of PARSE_FOR, next to the subscript step (cybs per-fn reference cap).
+fn _for_step_assign(S, noff): i64 {
+    var step_cop = _asg_compound_tok(S);
+    if (step_cop == 0) {
+        if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
+        STI(S, GTI(S) + 1);
+    }
+    if (step_cop != 0) {
+        var step_lt = _asg_compound_load(S, noff);
+        _asg_compound_op(S, step_cop, step_lt);
+        _asg_ufv = 0 - 1;   # a compound step keeps the kind-3 flag (see _asg_rejudge)
+    } else {
+        PCMPE(S);
+        _asg_ufv = _UFV_IS_FLOAT(S);   # 6.6.11: a plain step re-judges, as the statement does
+    }
+    var idx = 0 - 1;
+    if (GINFN(S) == 1) { idx = FINDLOCAL(S, noff); }
+    # 6.6.12: the statement arm's width-dispatched store (_asg_store_slot), not an 8-byte copy.
+    if (idx >= 0) { _asg_store_slot(S, idx, 0); _asg_rejudge(S, idx, GLTYPE(S, idx), 0); }
+    else {
+        idx = FINDVAR(S, noff);
+        if (idx >= 0) { _asg_store_slot(S, idx, 1); _asg_rejudge(S, idx, GVTYPE(S, idx), 1); }
+    }
+    return 0;
+}
+
 fn PARSE_FOR(S): i64 {
     STI(S, GTI(S) + 1);
     var slv = GLVAR(S);
@@ -514,30 +544,8 @@ fn PARSE_FOR(S): i64 {
     STI(S, sst);
     var noff = PEEKV(S);
     STI(S, GTI(S) + 1);
-    # Compound assignment in the step: 6.6.11 — the statement arm's implementation, not a copy
-    # of it. The copy that stood here had no float routing (`x += 0.25` on an f64 added bit
-    # patterns: 2 iterations, not 4) and knew five of the ten ops. See _asg_compound_tok.
-    var step_cop = _asg_compound_tok(S);
-    if (step_cop == 0) {
-        if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
-        STI(S, GTI(S) + 1);
-    }
-    if (step_cop != 0) {
-        var step_lt = _asg_compound_load(S, noff);
-        _asg_compound_op(S, step_cop, step_lt);
-        _asg_ufv = 0 - 1;   # a compound step keeps the kind-3 flag (see _asg_rejudge)
-    } else {
-        PCMPE(S);
-        _asg_ufv = _UFV_IS_FLOAT(S);   # 6.6.11: a plain step re-judges, as the statement does
-    }
-    var idx = 0 - 1;
-    if (GINFN(S) == 1) { idx = FINDLOCAL(S, noff); }
-    # 6.6.12: the statement arm's width-dispatched store (_asg_store_slot), not an 8-byte copy.
-    if (idx >= 0) { _asg_store_slot(S, idx, 0); _asg_rejudge(S, idx, GLTYPE(S, idx), 0); }
-    else {
-        idx = FINDVAR(S, noff);
-        if (idx >= 0) { _asg_store_slot(S, idx, 1); _asg_rejudge(S, idx, GVTYPE(S, idx), 1); }
-    }
+    # 6.6.12: `a[i] = v` / `a[i] OP= v` is a step too, as it is a statement (_arr_sub_assign).
+    if (_arr_sub_assign(S, noff) == 0) { _for_step_assign(S, noff); }
     STI(S, sti);
     EJMP(S, ltop);
     PATCHXP(S);

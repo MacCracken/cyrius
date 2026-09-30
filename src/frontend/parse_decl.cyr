@@ -34,7 +34,35 @@ fn _synonly_skip_chain(S): i64 {
     return 0;
 }
 
-fn PARSE_ARRAY(S, noff, ew): i64 {
+# ⛔ 6.6.12 — A TYPED ARRAY RECORDS ITS ELEMENT TYPE. `var a: T[N]` sized N*sizeof(T) since
+# v6.2.1 but kept no record of T, so there was nothing a subscript could scale or load by and
+# the language had no `a[i]` at all (read or write): `store64(&a + i*8, v)` was the only
+# spelling. The descriptor is one byte: the element width (1/2/4/8, 16 for u128) | 0x40 for a
+# signed element; 0 for a bare `var a[N]`, whose element width is not stated (bytes in a fn,
+# slots at top level) and whose subscript is therefore refused rather than guessed. A local
+# keeps it above the span in its depth word (util.cyr SLAEW); a global — and a fn-local array
+# that fell back to static storage — in the per-var sign table, as `0x100 | desc`, a range
+# disjoint from that table's scalar 0/1 (every scalar reader tests `== 1`). CHANGELOG [6.6.12]
+fn _arr_desc(ew, sgn): i64 {
+    if (ew <= 0) { return 0; }
+    if (sgn == 1) { return ew | 0x40; }
+    return ew;
+}
+fn _arr_gsgn(ew, sgn): i64 {
+    if (ew <= 0) { return 0; }
+    var d = _arr_desc(ew, sgn);
+    return 0x100 | d;
+}
+# A global's element descriptor, 0 when it is not an element-typed array.
+fn _arr_gdesc(S, vi): i64 {
+    var g = GVSGN(S, vi);
+    if (g < 0x100) { return 0; }
+    return g & 0xFF;
+}
+
+# `sgn` = 1 for a signed element type (i8/i16/i32). 6.6.12: `ew` and `sgn` are also RECORDED
+# as the array's element descriptor, which is what `a[i]` scales and loads by (_arr_desc).
+fn PARSE_ARRAY(S, noff, ew, sgn): i64 {
     var _pa_decl_ti = GTI(S);   # v6.6.4: the `[` token — `]` and `;` are consumed below, so by the stamp the cursor may already sit in the NEXT file
     STI(S, GTI(S) + 1);  # consume [
     # v5.10.48: accept either NUM literal OR an IDENT that resolves
@@ -166,6 +194,7 @@ fn PARSE_ARRAY(S, noff, ew): i64 {
         S64(S + 0x5D9D000 + sa_named * 8, noff);
         SLDEP(S, sa_named, GSDEP(S));
         SLAGG(S, sa_named, sa_nslots);   # 6.6.5: the slots ARE the array
+        SLAEW(S, sa_named, _arr_desc(ew, sgn));   # 6.6.12: after SLAGG (see util.cyr SLAEW)
         SLTYPE(S, sa_named, 0);
         SFLC(S, sa_named + 1);
         return 0;
@@ -173,6 +202,7 @@ fn PARSE_ARRAY(S, noff, ew): i64 {
     var vcnt = GVCNT(S);
     S64(_varn_base + vcnt * 8, noff);
     S64(_vars_base + vcnt * 8, aligned);
+    SVSGN(S, vcnt, _arr_gsgn(ew, sgn));   # 6.6.12: the element descriptor (see _arr_gsgn)
     # 6.6.5 — a fn-local STATIC array is scoped to its block, not stamped as a file global.
     # The v6.6.4 stamp is what turned this shape's cross-file collision into an error naming
     # the CONSUMER's variable; scoping the name removes the collision instead of renaming it.
@@ -1738,7 +1768,7 @@ fn _STRUCT_LIT_LOCAL(S, noff, sid): i64 {
     return 0;
 }
 
-fn PARSE_GVAR_ARR(S, noff, sti, ew): i64 {
+fn PARSE_GVAR_ARR(S, noff, sti, ew, sgn): i64 {
     STI(S, GTI(S) + 1);
     # v5.10.48: top-level array-size NUM-or-enum-const-ident — same
     # rule as the in-fn PARSE_ARRAY above. Closes the var-bracket
@@ -1785,6 +1815,7 @@ fn PARSE_GVAR_ARR(S, noff, sti, ew): i64 {
     var vc0 = GVCNT(S);
     S64(_varn_base + vc0 * 8, noff);
     S64(_vars_base + vc0 * 8, sz);
+    SVSGN(S, vc0, _arr_gsgn(ew, sgn));   # 6.6.12: before the fold, so a redeclaration compares it
     var vc = _gv_fold(S, vc0, sti);   # 6.6.6: a redeclaration reuses the global's slot
     SLVAR(S, vc);
     # v6.6.4: stamp visibility here too. PARSE_GVAR_REG returns into this fn BEFORE its
@@ -2567,7 +2598,7 @@ fn PARSE_GVAR_REG(S): i64 {
     # gvar_toks so EMIT_GVAR_INITS replays it at top-level emit time
     # (pass-1 emits get skipped by the entry-jmp patch).
     if (PEEKT(S) == 28) {
-        PARSE_GVAR_ARR(S, noff, sti, ann_scalar);
+        PARSE_GVAR_ARR(S, noff, sti, ann_scalar, ann_signed);
         return 0;
     }
     # Check for struct init after =: var p = StructName { ... }
@@ -4260,7 +4291,7 @@ fn PARSE_VAR(S): i64 {
     # element width via scalar_type so i64[N] reserves N slots, etc.;
     # bare `var buf[N]` has scalar_type==0 → legacy byte sizing.)
     if (PEEKT(S) == 28) {
-        PARSE_ARRAY(S, noff, scalar_type);
+        PARSE_ARRAY(S, noff, scalar_type, scalar_signed);
         return 0;
     }
     # expect EQ

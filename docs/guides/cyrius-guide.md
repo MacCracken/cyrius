@@ -128,6 +128,7 @@ step accepts all ten compound operators (it used to accept five).
 var x = 10;            # Global or local (context-dependent)
 var buf[256];          # Bare array — see byte-vs-slot note below
 var slots: i64[256];   # Element-typed array — 256 i64 SLOTS (2048 bytes), anywhere
+slots[3] = 7;          # Subscript (element-typed arrays only, since 6.6.12)
 x = x + 1;             # Reassignment
 ```
 
@@ -167,6 +168,40 @@ with `'Foo' is not an enum`, and `Other.BUF` with `'BUF' is not a variant of
 'Other'` — before 6.6.11 the qualifier was ignored. When two enums share a
 variant name, `A.X` and `B.X` each read their own enum's value (the bare `X`
 keeps "last definition wins", with its warning).
+
+### Subscripts: `a[i]` (6.6.12)
+
+An element-typed array takes a subscript — read, assignment and every
+compound operator — in a function, at top level, in a `for` step and inside
+a closure:
+
+```
+var t: i16[8];
+t[i] = 0 - 5;          # stores 2 bytes
+t[i] += 1;             # all ten compound operators (+= -= *= /= %= &= |= ^= <<= >>=)
+var v = t[i];          # -4: an i8/i16/i32 element is sign-extended, u8/u16/u32 zero-extended
+if (t[0]) { ... }      # tests the element
+```
+
+`a[i]` is exactly the element at `&a + i * sizeof(T)`, loaded and stored at
+T's width — the same bytes as `load16(&t + i * 2)` / `store16(&t + i * 2, v)`,
+which stay valid (and are what `var a: i64[N]` code wrote before 6.6.12:
+`store64(&a + i * 8, v)`). A store truncates to the element as `store8/16/32`
+do. There is **no bounds check**. Inside a capturing closure the subscript
+reads and writes the closure's captured COPY, as `&a` there does.
+
+Refused, by name (`cannot subscript 'a': ...`):
+
+- a **bare** `var a[N]` (and `stack var a[N]`) — it states no element width
+  (bytes in a function, slots at top level), so a subscript would be a guess;
+  declare `var a: u8[N]` or `var a: i64[N]`, or keep `load*`/`store*` at an
+  explicit byte offset;
+- a scalar or a pointer (`var p: *i64`) — pointer subscripts are not in the
+  language;
+- a `u128` element, which does not fit one register (use `load64`/`store64`
+  on its two halves).
+
+A `slice<T>` local keeps its own bounds-checked `s[i]` (`lib/slice.cyr`).
 
 ## Functions
 

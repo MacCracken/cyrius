@@ -1209,7 +1209,18 @@ fn SLDEP(S, li, v): i64 { S64(S + 0x5DBD000 + li * 8, v); return 0; }
 fn SLAGG(S, li, n): i64 { S64(S + 0x5DBD000 + li * 8, (L64(S + 0x5DBD000 + li * 8) & 0xFFFFFFFF) | (n << 32)); return 0; }
 fn GLSPAN(S, li): i64 {
     if (li < 0) { return 0; }
-    return L64(S + 0x5DBD000 + li * 8) >> 32;
+    return (L64(S + 0x5DBD000 + li * 8) >> 32) & 0xFFFF;
+}
+# 6.6.12 — a typed array local's ELEMENT descriptor, bits 48..55 of the same word, above the
+# span (16 bits: a span is at most the 16384-slot frame table): width in bytes (1/2/4/8/16)
+# | 0x40 when signed; 0 = no element type (a bare `var a[N]`, a `stack var`, any non-array).
+# Written after SLAGG (which rewrites the high half), and it clears itself on slot reuse like
+# the span, because every registration writes SLDEP first. Read by the `a[i]` subscript
+# (_arr_sub_addr, parse_expr.cyr). CHANGELOG [6.6.12]
+fn SLAEW(S, li, d): i64 { S64(S + 0x5DBD000 + li * 8, L64(S + 0x5DBD000 + li * 8) | ((d & 0xFF) << 48)); return 0; }
+fn GLAEW(S, li): i64 {
+    if (li < 0) { return 0; }
+    return (L64(S + 0x5DBD000 + li * 8) >> 48) & 0xFF;
 }
 fn GLAGG(S, li): i64 {
     if (GLSPAN(S, li) == 0) { return 0; }

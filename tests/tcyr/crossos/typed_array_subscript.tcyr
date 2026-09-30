@@ -1,0 +1,229 @@
+# typed_array_subscript.tcyr — 6.6.12 — `a[i]`, `a[i] = v` and `a[i] OP= v` on an element-typed
+# array `var a: T[N]`, local and global, at every integer width, on every backend.
+#
+# Before 6.6.12 the language had no subscript at all: `return a[1];` was `expected ';', got '['`
+# and `a[i] = 5;` was `expected '=', got '['` (read or write, local or global, in a fn or at top
+# level). The only spelling was `store64(&a + i * 8, v)`. `a[i]` IS that: the element at
+# `&a + i * sizeof(T)`, loaded sign- or zero-extended by T and stored at T's width. The element
+# type is now recorded at the declaration (PARSE_ARRAY / PARSE_GVAR_ARR, src/frontend/
+# parse_decl.cyr) and read by _arr_sub_addr (src/frontend/parse_expr.cyr).
+#
+# Every array is flanked by canaries — a scalar declared before it and one after (locals), a
+# global declared after it (globals) — and every canary is checked after the writes, so a
+# wrong scale or a wrong store width cannot pass. The refusals (a bare `var a[N]`, a scalar, a
+# u128 element) are compile errors and live in tests/gates/frontend/array_subscript_forms.sh,
+# which also runs this file under CYRIUS_IR=3.
+#
+# Mutations that redden this file (each alone):
+#   * scale by 8 whatever the element (EPTR_SCALE(S, 8) in _arr_sub_addr) — every narrow row;
+#   * store 8 bytes whatever the element (ESTORE64 only in _arr_sub_assign) — the canary rows;
+#   * drop the sign flag (never negate `aw`) — the i8/i16/i32 sign-extension rows;
+#   * drop `_flags_reflect_rax = 0` in _arr_sub_load — the `if (a[i])` rows on x86 (the branch
+#     tests the ADDRESS's flags from the add, not the element; the `while` is bounded so that
+#     mutation fails the row instead of hanging).
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/assert.cyr"
+
+# ---- globals: one array per width, each followed by a canary ----
+var G_U8: u8[5];
+var G_U8_CAN = 0x5A5A5A5A5A5A5A5A;
+var G_I8: i8[5];
+var G_I8_CAN = 0x1111111111111111;
+var G_U16: u16[3];
+var G_U16_CAN = 0x2222222222222222;
+var G_I16: i16[3];
+var G_I16_CAN = 0x3333333333333333;
+var G_U32: u32[3];
+var G_U32_CAN = 0x4444444444444444;
+var G_I32: i32[3];
+var G_I32_CAN = 0x5555555555555555;
+var G_I64: i64[4];
+var G_I64_CAN = 0x6666666666666666;
+var G_U64: u64[2];
+var G_U64_CAN = 0x7777777777777777;
+
+fn globals_every_width(): i64 {
+    var i = 0;
+    while (i < 5) { G_U8[i] = 250 + i; G_I8[i] = 0 - 1 - i; i = i + 1; }
+    assert_eq(G_U8[0], 250, "global u8: element 0");
+    assert_eq(G_U8[4], 254, "global u8: element 4, the last");
+    assert_eq(load8(&G_U8 + 3), 253, "global u8: byte-scaled (element 3 is byte 3)");
+    assert_eq(G_I8[0], 0 - 1, "global i8: sign-extended -1");
+    assert_eq(G_I8[4], 0 - 5, "global i8: sign-extended -5, the last");
+    G_U16[2] = 0xFFFF;
+    G_I16[2] = 0 - 30000;
+    G_U32[2] = 0xFFFFFFFF;
+    G_I32[2] = 0 - 2000000000;
+    G_I64[3] = 0 - 123456789012;
+    G_U64[1] = 0x7FFFFFFFFFFFFFFF;
+    assert_eq(G_U16[2], 0xFFFF, "global u16: zero-extended");
+    assert_eq(load16(&G_U16 + 4), 0xFFFF, "global u16: element 2 is at byte 4");
+    assert_eq(G_I16[2], 0 - 30000, "global i16: sign-extended");
+    assert_eq(G_U32[2], 0xFFFFFFFF, "global u32: zero-extended");
+    assert_eq(G_I32[2], 0 - 2000000000, "global i32: sign-extended");
+    assert_eq(G_I64[3], 0 - 123456789012, "global i64: full width");
+    assert_eq(load64(&G_I64 + 24), 0 - 123456789012, "global i64: element 3 is at byte 24");
+    assert_eq(G_U64[1], 0x7FFFFFFFFFFFFFFF, "global u64: full width");
+    assert_eq(G_U8_CAN, 0x5A5A5A5A5A5A5A5A, "global u8: canary after the array");
+    assert_eq(G_I8_CAN, 0x1111111111111111, "global i8: canary after the array");
+    assert_eq(G_U16_CAN, 0x2222222222222222, "global u16: canary after the array");
+    assert_eq(G_I16_CAN, 0x3333333333333333, "global i16: canary after the array");
+    assert_eq(G_U32_CAN, 0x4444444444444444, "global u32: canary after the array");
+    assert_eq(G_I32_CAN, 0x5555555555555555, "global i32: canary after the array");
+    assert_eq(G_I64_CAN, 0x6666666666666666, "global i64: canary after the array");
+    assert_eq(G_U64_CAN, 0x7777777777777777, "global u64: canary after the array");
+    return 0;
+}
+
+# A store truncates to the element, exactly as store8/16/32 do.
+fn globals_store_truncates(): i64 {
+    G_U8[1] = 0x1FF;
+    G_I8[1] = 200;
+    G_U16[0] = 0x12345;
+    G_I32[0] = 0x80000000;
+    assert_eq(G_U8[1], 0xFF, "global u8: a 9-bit value stores its low byte");
+    assert_eq(G_U8[2], 252, "global u8: the neighbour element is untouched");
+    assert_eq(G_I8[1], 0 - 56, "global i8: 200 reads back as -56");
+    assert_eq(G_U16[0], 0x2345, "global u16: a 17-bit value stores its low half");
+    assert_eq(G_I32[0], 0 - 2147483648, "global i32: 0x80000000 reads back negative");
+    return 0;
+}
+
+fn locals_every_width(): i64 {
+    var before = 0x0BEF0BEF0BEF0BEF;
+    var a8: u8[5];
+    var s8: i8[3];
+    var a16: u16[3];
+    var s16: i16[3];
+    var a32: u32[3];
+    var s32: i32[3];
+    var a64: i64[4];
+    var after = 0x0AF70AF70AF70AF7;
+    var i = 0;
+    while (i < 5) { a8[i] = 0xF0 + i; i = i + 1; }
+    s8[2] = 0 - 128;
+    a16[1] = 60000;
+    s16[1] = 0 - 1;
+    a32[2] = 3000000000;
+    s32[2] = 0 - 7;
+    a64[0] = 1; a64[3] = 0 - 9;
+    assert_eq(a8[0], 0xF0, "local u8: element 0");
+    assert_eq(a8[4], 0xF4, "local u8: element 4, the last");
+    assert_eq(load8(&a8 + 2), 0xF2, "local u8: byte-scaled");
+    assert_eq(s8[2], 0 - 128, "local i8: sign-extended");
+    assert_eq(a16[1], 60000, "local u16: zero-extended");
+    assert_eq(s16[1], 0 - 1, "local i16: sign-extended");
+    assert_eq(a32[2], 3000000000, "local u32: zero-extended");
+    assert_eq(s32[2], 0 - 7, "local i32: sign-extended");
+    assert_eq(a64[0], 1, "local i64: element 0");
+    assert_eq(a64[3], 0 - 9, "local i64: element 3, the last");
+    assert_eq(load64(&a64 + 24), 0 - 9, "local i64: element 3 is at byte 24");
+    assert_eq(before, 0x0BEF0BEF0BEF0BEF, "local: canary declared before the arrays");
+    assert_eq(after, 0x0AF70AF70AF70AF7, "local: canary declared after the arrays");
+    return 0;
+}
+
+fn compound_operators(): i64 {
+    var c: i32[3];
+    var can = 99;
+    c[0] = 0; c[2] = 0;   # a stack array is not zero-initialised
+    c[1] = 100;
+    c[1] += 5;   assert_eq(c[1], 105, "compound +=");
+    c[1] -= 10;  assert_eq(c[1], 95, "compound -=");
+    c[1] *= 3;   assert_eq(c[1], 285, "compound *=");
+    c[1] /= 4;   assert_eq(c[1], 71, "compound /=");
+    c[1] %= 10;  assert_eq(c[1], 1, "compound %=");
+    c[1] <<= 4;  assert_eq(c[1], 16, "compound <<=");
+    c[1] >>= 2;  assert_eq(c[1], 4, "compound >>=");
+    c[1] |= 3;   assert_eq(c[1], 7, "compound |=");
+    c[1] &= 5;   assert_eq(c[1], 5, "compound &=");
+    c[1] ^= 6;   assert_eq(c[1], 3, "compound ^=");
+    c[1] -= 10;  assert_eq(c[1], 0 - 7, "compound -= below zero on an i32 element");
+    assert_eq(c[0], 0, "compound: element 0 untouched");
+    assert_eq(c[2], 0, "compound: element 2 untouched");
+    assert_eq(can, 99, "compound: canary");
+    G_U8[3] = 255;
+    G_U8[3] += 2;
+    assert_eq(G_U8[3], 1, "compound += on a u8 global element wraps at the element");
+    assert_eq(G_U8[4], 254, "compound: the next u8 element is not carried into");
+    return 0;
+}
+
+fn idx_three(): i64 { return 3; }
+
+fn index_expressions(): i64 {
+    var a: i64[6];
+    var k = 0;
+    while (k < 6) { a[k] = k * 10; k = k + 1; }
+    assert_eq(a[1 + 1], 20, "index: an arithmetic expression");
+    assert_eq(a[idx_three()], 30, "index: a call");
+    a[0] = 4;
+    assert_eq(a[a[0]], 40, "index: a subscript");
+    a[a[0] - 3] = 77;
+    assert_eq(a[1], 77, "index: a subscript on the left of `=`");
+    assert_eq(a[2] * a[1] - a[5], 20 * 77 - 50, "subscripts as operands");
+    return 0;
+}
+
+# `if (a[i])` must test the ELEMENT: the address add sets the flags on x86, and the element load
+# does not, so a leftover flags-reflect mark branched on the (never zero) address.
+fn conditions(): i64 {
+    var z: u8[2];
+    z[0] = 0;
+    z[1] = 3;
+    var n = 0;
+    if (z[0]) { n = n + 100; }
+    if (z[1]) { n = n + 1; }
+    var spins = 0;
+    while (z[0]) { n = n + 1000; z[0] = 0; spins = spins + 1; if (spins > 2) { break; } }
+    assert_eq(n, 1, "condition: a zero element is false, a non-zero one true");
+    var g = 0;
+    if (G_I64[1]) { g = 1; }
+    assert_eq(g, 0, "condition: a zero global element is false");
+    return 0;
+}
+
+# The classic-for step takes a subscript assignment, as a statement does.
+fn for_step(): i64 {
+    var t: i16[4];
+    var hits: i64[1];
+    hits[0] = 0;
+    for (var i = 0; i < 4; hits[0] += 1) { t[i] = 0 - i; i = i + 1; }
+    assert_eq(hits[0], 4, "for step: `hits[0] += 1` ran every iteration");
+    assert_eq(t[3], 0 - 3, "for step: the body's i16 stores");
+    for (var j = 0; j < 4; t[j - 1] = 5) { j = j + 1; }
+    assert_eq(t[0] + t[1] + t[2] + t[3], 20, "for step: `t[j - 1] = 5`");
+    return 0;
+}
+
+# A capturing closure reads the captured COPY of an enclosing array (as `&a` in the body does).
+fn closure_capture(): i64 {
+    var a: i16[4];
+    a[0] = 0 - 5;
+    a[3] = 300;
+    var cl = |x| a[0] + a[3] + x;
+    assert_eq(fncall1(cl, 5), 300, "closure: reads the captured i16 elements, sign-extended");
+    return 0;
+}
+
+globals_every_width();
+globals_store_truncates();
+locals_every_width();
+compound_operators();
+index_expressions();
+conditions();
+for_step();
+closure_capture();
+
+# ---- top level: a statement subscript, and an array declared AFTER the first statement ----
+G_I64[2] = 41;
+G_I64[2] += 1;
+assert_eq(G_I64[2], 42, "top level: `G[i] = v` and `G[i] += v` as statements");
+var T_LATE: i16[3];
+var T_LATE_CAN = 0x0123456789ABCDEF;
+T_LATE[2] = 0 - 2;
+assert_eq(T_LATE[2], 0 - 2, "top level: an i16 array declared after the first statement");
+assert_eq(T_LATE_CAN, 0x0123456789ABCDEF, "top level: its canary");
+var r = assert_summary();
