@@ -6,6 +6,26 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.12] — 2026-09-30
 
+The sixth and last release of the repair batch: the Q–U overflow of the 6.6.10 finds, the backlog's
+repair items (the 6.6.11 lanes' finds, bayan's TOML parse, sankhya's DCE pin — promoted by the user)
+and every sibling follow-up. Every item was premise-checked on the tree first; five were already fixed
+or false and dropped (R6's "`var c: i64[4]` is refused" was really R4's subscript). Twenty bites in
+seven worktree lanes, merged with **no conflicts** — every cross-lane hunk travelled as a named hand-off
+patch. Three CVEs: **CVE-56** (`log_info_kv` wrote past a 512-byte stack buffer), **CVE-57** (on
+Windows the folded sandhi resolver read a plantable `C:\etc\resolv.conf`) and **CVE-58** (cxvm let guest
+bytecode write the interpreter's own memory). Narrow variables are stored and read at their width
+everywhere; nested struct literals, struct copies from fields and globals, and field chains of any
+depth are correct; typed arrays take subscripts; cx gets real tail calls; macOS, Windows and
+aarch64 each lose a silent platform defect. Seventeen sibling patch releases: seven folded (sigil,
+bayan, vani, mabda, sakshi, sandhi, yantra) and ten consumers.
+
+**Bench:** cycc **1,437,168 → 1,470,944 B** (+33,776, +2.4 %; `.text` 1,265,408 → 1,297,064) — the
+release's frontend content (narrow slots, struct literals and copies, field chains, call-result fields,
+typed-array subscripts, the diagnostics) and the x86 halves of the Mach-O / PE fixes; unreachable fns 74 → 73.
+`build/cycc-native-aarch64` 1,775,144 → 1,907,528 B (B09's rows are emitted inline at every syscall site).
+self_compile **839 ms** (6.6.11's run: 849 ms); same-box A/B, three rounds of five compiles of the 6.6.12
+tree: 6.6.11's compiler ~841 ms, 6.6.12's ~845 ms — flat.
+
 ### Security
 
 - **CVE-56 (P1): `lib/log.cyr`'s `log_info_kv` / `log_info_int` wrote a caller-controlled string past
@@ -17,55 +37,6 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `=`, the sign and 19 digits, so the number is never cut. **Test:** `tests/tcyr/stdlib/log_kv_bounded.tcyr`
   (a 4 KB value, msg or key: rc 0, the sink sees exactly 511 bytes, head intact, `...` mark; the 511/512
   boundary; i64::MIN survives a 4 KB msg). Mutation: the 6.6.11 `log.cyr` exits 139.
-
-### Fixed
-
-- **cbt: `_macho_fill_environ` wrote each entry's NUL past its buffer on macOS (B10, item S-B1).**
-  **Root cause:** the v6.0.34 loop bounded an entry's payload bytes but stored its terminator
-  unconditionally, so an environment larger than the buffer returned `pos > cap`, and all four callers
-  (`_cbt_env_is_1`, `_cbt_env_int`, `_cbt_env_str`, `find_tools`) then wrote their own NUL at
-  `buf + pos`. **Fix:** returns at most `cap - 1`; an entry that does not fit with its NUL is dropped whole
-  (never a matchable `HOME=/Us` prefix) and the scan continues, so a HOME after one huge variable still
-  resolves. **Verified on ecb (arm64) and ach (Intel)** with a native CLI built from each tree under a
-  40,000-byte `BIG` plus 50 more variables: 6.6.11's CLI SEGFAULTS (`which`, rc 139) when `BIG` precedes
-  HOME / CYRIUS_HOME and fails `cyrius build` under the user's environment plus `BIG` (CYRIUS_HOME lost);
-  the fixed CLI resolves both and builds a manifest project whose binary exits 42.
-  **Gate:** `tests/gates/toolchain/macho_fill_environ_bounded.sh` (the fn extracted into an x86 logic
-  probe: 40 × 25-byte entries into cap 64 behind a canary, whole-entry, drop-not-truncate and boundary
-  axes; three mutants recorded in its ledger).
-- **stdlib: `lib/bench.cyr` and `lib/chrono.cyr` dereferenced a refused (0) allocation (B10, item S1).**
-  6.6.10 taught `bench_new` and `epoch_to_date` to return 0 and updated none of their consumers:
-  `bench_iterations(bench_new(..))` and `dt_year(..)` under a refused alloc exited 139. Every public bench
-  fn now takes `b == 0` and returns 0 (a refused bench runs no op), `bench_report(0)` prints
-  `(bench_new refused)` (no ` avg`, so no row parser takes it for a row), and the three header examples
-  check the result. `dt_year` … `dt_second` decode through a new non-allocating `_epoch_to_date_into`
-  into a stack buffer — they no longer leak 48 B per call and, once the month table exists, cannot fail;
-  they return -1 only if the table itself could never be allocated (0 is a valid hour/minute/second).
-  **Test:** `tests/tcyr/stdlib/bench_chrono_refused_alloc.tcyr` (ALLOC_MAX = 0); either 6.6.11 file
-  reverted exits 139.
-- **cyrius-lsp: the symbol index stopped SILENTLY at three fixed caps (B11, item S3).** Go-to-definition
-  of sigil's last fn (`sv_verify_boot_chain`, `lib/sigil.cyr:30735`) through `include "lib/sigil.cyr"`
-  answered `null`, and so did the 4095th fn of a 5000-fn include. **Root cause:** the table had fixed caps
-  — 4096 rows, a 256 KB names buffer, a 32 KB paths buffer and 256 indexed files — `_lsp_add_symbol`
-  returned -1 when any was full and `lsp_index_decls` ignored it; and the path string was re-interned for
-  EVERY symbol, so the 32 KB paths buffer bound first (~2,300 symbols for `lib/x.cyr` paths, ~500 for a
-  60-byte absolute path). **Fix:** each file's path is interned once, by `_lsp_mark_indexed`, and every
-  row stores that offset; the six row arrays, the names buffer, the indexed-path set and its string
-  buffer all double on demand through one helper (`_lsp_grow`), so only a refused allocation stops
-  indexing. **Gate:** `tests/gates/toolchain/lsp_indexes_every_decl_spelling.sh` axis 5 (the last of 6000
-  long-named fns in one include, a fn in the 300th included file, and sigil's last fn); the 6.6.11 LSP
-  fails all three rows, and two mutants are recorded in its ledger.
-- **cyrlint: the 120-column rule counted BYTES (B11, item S4).** A 93-column comment of 91 `─` (U+2500,
-  3 bytes each) warned "line exceeds 120 characters". **Fix:** the rule counts code points — every byte
-  that is not a UTF-8 continuation byte (`(b & 0xC0) != 0x80`, `_lint_cols`); the byte span stays what the
-  other rules index with. **Gate:** `tests/gates/toolchain/cyrlint_cross_line.sh` axis 15 (93- and
-  120-column box lines and a 120-column ASCII line are silent; the 121-column box and ASCII lines warn);
-  the byte rule restored fails it.
-- **lib/async_agnos.cyr: a state description read as an untracked deferral (B11, item T9b).**
-  `_async_step`'s comment said it returns "the count of tasks not yet DONE", and cyrlint's `not yet` needle
-  drew an untracked-deferral note on the stdlib itself. The comment now says "tasks whose state is not
-  DONE" — comment only, the rule is unchanged. **Gate:** the same axis 15 lints the file under
-  `--strict-deferrals` and expects exit 0 and no note; the old comment exits 2.
 - **CVE-57 (P1) — on Windows, the folded sandhi resolver read a drive-relative, plantable
   `C:\etc\resolv.conf`.** (B15, item SA11.) **Root cause:** sandhi's own DNS resolver
   (`src/net/resolve.cyr`, folded as `lib/sandhi.cyr`) opened `"/etc/resolv.conf"` on every target,
@@ -87,150 +58,32 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and the 1.10.4 fold passes 15/15. Under wine the reader rows also bite (the 1.10.3 reader
   returned the Linux host's 127.0.0.53; 3 of 13 fail). The every-target rows pass on x86_64,
   aarch64 (qemu), ecb, ach and in the agnosticos container.
+- **CVE-58: cxvm guest bytecode could write cxvm's host memory (B06, item Q6).** **Root cause:**
+  `programs/cxvm.cyr` checked nothing a guest controls. Every load/store was `_cx_mem + reg`, so a
+  guest address past the 1 MB data segment (or negative) read and wrote cxvm's own heap — the register
+  file, the stacks, the loaded code — and guest address 0, the in-memory copy of the bytecode, stored
+  silently (`store64(0, 5)` exited 9 on cxvm, 139 on x86). The 1024-entry call stack had no bound, so
+  the 513th nested frame overwrote the loaded code (non-tail depth 1000 gave rc 231, 5000 gave 135); the
+  data stack likewise. `read`/`write`/`getrandom`/`clock_gettime` buffers were translated with no
+  range check, so `read(0, buf, n)` with `buf + n` past 1 MB had the HOST kernel write cxvm's heap. An
+  unknown opcode was a silent no-op (no trailing arm), and a negative pc decoded host memory as code.
+  **Fix:** every load/store goes through `_cx_addr`, which traps unless the whole access lies in
+  `[8, _CX_MEM_SIZE)`; the translated syscall buffers are range-checked for their full length (a path up
+  to its NUL) and answer `-EFAULT` without reaching the host; both VM stacks trap on overflow and
+  underflow and hold 65536 entries (512 KiB each), so the guest's own 1 MB, not the host arrays, bounds
+  recursion (depth 1000 and 5000 now return the right value); `sub sp` traps before the guest stack
+  reaches the loaded image (its globals and `lib/alloc_cx.cyr` heap); a negative pc traps; an unknown
+  opcode traps. Each trap prints `cxvm: <what> <value> at pc <N>` (`cxvm: unknown opcode 0xNN at pc
+  <N>`) and exits 1. No `.cyx` format bump (default taken): a newer `.cyx` on an older cxvm is refused
+  only by the new cxvm's trap. The syscall opcode still passes every other number to the host raw, so
+  cxvm stays "not a sandbox"; `docs/platform-status.md` "cyrius-x guest contract" is restated. **Held
+  by** `tests/gates/codegen/cx_tailcall_and_vm_traps.sh` axes B, C and D (24 rows with A and E; every
+  trap reddened by its own revert, and with the call-stack bound removed the overflow row reports
+  `unknown opcode 0x04` — the stack writing the loaded code, the CVE in one row).
 
-### Downstream
-
-- **sigil 3.13.5 folded (`lib/sigil.cyr`, sigil commit `497ac4b`) — Darwin errno values per target;
-  the subprocess helpers' argv/envp allocs are checked.** (B13, items SA4 + SA1.) **Root cause
-  (SA4):** sigil's `src/sys_error.cyr` declared `ENOSYS`, `ENOTEMPTY`, `ENODATA`, `EOVERFLOW`,
-  `EOPNOTSUPP`, `EADDRINUSE`, `ECONNREFUSED` and `ETIMEDOUT` with their Linux values on every
-  target, and `lib/syscalls_macos.cyr` declares none of them, so on macOS the fold supplied them
-  program-wide: every consumer reading those names got the Linux number (ENOSYS 38 is Darwin's
-  `ENOTSOCK`; ENODATA 61 is Darwin's `ECONNREFUSED`), and `sigil_err_from_errno` misclassified a real
-  Darwin ENOSYS. **Fix, at the source:** the eight are declared per target with the BSD values
-  under `CYRIUS_TARGET_MACOS` (the 3.13.3 `EAGAIN` precedent); Linux, Windows and agnos values are
-  unchanged. **Root cause (SA1):** `agnosys_run_capture_timeout` / `agnosys_run_checked_timeout`
-  stored through an unchecked argv/envp alloc, so a refusal was a SIGSEGV. **Fix:** both allocs are
-  checked before the pipe and the fork and return an ENOMEM Err. sigil's `errno_peer.tcyr` (one row
-  per name per platform, plus the kernel's own `-ENOTEMPTY`) was cross-built for Mach-O and passes
-  26/0 on ecb and ach, where 3.13.4's `sys_error.cyr` fails 9 of 26; its `capture_bounded.tcyr`
-  drives the refusal (SIGSEGV without the fix). The pin stays 6.6.9.
-- **bayan 1.5.9 folded (`lib/bayan.cyr`, bayan commit `821a1d0`) — a refused alloc returns 0 in
-  base64 and the TOML array parser.** (B13, items SA2 + SA10 + SA12.) **Root cause:**
-  `bayan_base64_encode` stored into its unchecked output alloc (an oversize length was a SIGSEGV,
-  although `lib/ws.cyr` and `lib/ws_server.cyr` already test its result for 0);
-  `bayan_toml_array_parse_a` used `vec_new_a`'s result unchecked, and its element flush ignored a
-  refused Str and a refused push, so a later refusal handed back a short vec as success. **Fix, at
-  the source:** the encoder returns 0; the flush returns -1 on either refusal and the parser returns
-  0, never a partial vec. Both premise repros (`bayan_base64_encode(&buf, 1<<62)` and
-  `bayan_toml_array_parse_a` on a refuse-everything allocator, each rc=139 on the 1.5.8 fold) now
-  return 0. bayan's pin moves 6.6.9 → 6.6.11 and its CI coverage floor goes back to 100 in the same
-  commit (6.6.11's `cyrius coverage` excludes `main`; 501/501).
-- Both siblings ran their full CI in a clean `git archive` copy with a throwaway `CYRIUS_HOME`
-  (sigil at its 6.6.9 pin, bayan at 6.6.11). ⛔ **sigil 3.13.5 and bayan 1.5.9 must be TAGGED before
-  cyrius 6.6.12 is**; the folds were copied byte-identical from those commits' `dist/`, and
-  `docs/ecosystem.md`'s two fold rows name the commits.
-- **vani 1.2.8 folded (`lib/vani.cyr`, vani commit `4ab53a7`) — `vani_drain` / `vani_drop` /
-  `vani_state` return a Result on every path; `_sk_emit_err` is `_vani_sk_emit_err`.** (B14, items
-  SA8 + SA9.) **Root cause (SA8):** each returned `Err(VANI_ERR_DEVICE_INVALID)` on its `d == 0`
-  guard but the raw `audio_drain` / `audio_drop` / `audio_get_state` integer on the live path, so a
-  two-value bind read that integer as the TAG and the payload as garbage: a device in state SETUP
-  (1) read as `Err`, and so did any non-zero drain/drop status. The compiler reported all three
-  (`returns a : stack pair on another path but a SINGLE value here`, `lib/vani.cyr:2113/2118/2123`).
-  **Fix, at the source:** drain/drop return `Ok(d)` or `Err(VANI_ERR_DRAIN / VANI_ERR_DROP)` (new
-  codes 23 / 24) and state returns `Ok(raw state)`, -1 when the STATUS query failed. vani's new
-  live-path rows bind `var t, v =` on a non-null bad-fd handle (4 fail against 1.2.7's
-  `device.cyr`), and its CI fails on any mixed-return warning. **Root cause (SA9):** vani and mabda
-  both named a private helper `_sk_emit_err`, so with both folds in scope the last definition won
-  program-wide (`duplicate fn '_sk_emit_err'`). Renamed on both sides (mabda below). The pin stays
-  6.6.6; no public fn changed.
-- **mabda 4.1.6 folded (`lib/mabda.cyr`, mabda commit `97679dc`) — `WGPU_VENDOR_ID_AMD` and
-  `_mabda_sk_emit_err`.** (B14, items SB4 + SA9.) **Root cause (SB4):** mabda declared the AMD/ATI
-  GPU vendor id (0x1002, what `WGPUAdapterInfo.vendorID` reports) as `var PCI_VENDOR_AMD`, the name
-  yukti's `PciVendor` enum gives the PCI-SIG AMD id 0x1022. With both folds in scope cycc warned
-  `duplicate symbol 'PCI_VENDOR_AMD' redefined with conflicting value (last definition wins)` and
-  whichever library came first compared against the other's value (mabda's AMD-wgpu deprecation
-  guard, or yukti's PCI vendor match). **Fix, at the source:** mabda's is `WGPU_VENDOR_ID_AMD` (the
-  `NV_PCI_VENDOR_NVIDIA` precedent); yukti keeps its name and 0x1022. No consumer in `~/Repos` named
-  mabda's constant (ai-hwaccel defines its own). **SA9:** its `_sk_emit_err` is `_mabda_sk_emit_err`.
-  The pin stays 6.6.6.
-- **sakshi 2.5.6 folded (`lib/sakshi.cyr`, sakshi commit `9218130`) — comment-only.** (B14, item SA7.)
-  Three agnos clock comments in `src/clock.cyr` described `#95` as calibrated "against the live tick"
-  (agnos 1.57.6 calibrates it against the ACPI PM timer, live LAPIC ticks the fallback) and said agnos
-  reads `uptime_ms` directly (since 2.5.1 it reads `#95` first, `#40` only when `#95` answers -1).
-  The fold differs from 2.5.5 only in those comments and the version stamp. The pin stays 6.6.6.
-- **New gate `tests/gates/toolchain/fold_namespace_collisions.sh`** (B14): yukti + mabda + vani +
-  sakshi compiled together, in both yukti/mabda orders, must report no `duplicate fn`, no
-  conflicting `duplicate symbol` and no mixed-return warning located in those folds, and the run
-  must keep yukti's `PCI_VENDOR_AMD` at 0x1022 and mabda's `WGPU_VENDOR_ID_AMD` at 0x1002.
-  Mutation-proven: the 6.6.11 `lib/mabda.cyr` + `lib/vani.cyr` report the `PCI_VENDOR_AMD` conflict,
-  the `_sk_emit_err` duplicate and the three mixed-return warnings in both orders.
-- vani, mabda and sakshi ran their full CI in a clean `git archive` copy with a throwaway
-  `CYRIUS_HOME` at their 6.6.6 pin. ⛔ **vani 1.2.8, mabda 4.1.6 and sakshi 2.5.6 must be TAGGED
-  before cyrius 6.6.12 is**; the folds were copied byte-identical from those commits' `dist/`, and
-  `docs/ecosystem.md`'s three fold rows name the commits.
-- **sandhi 1.10.4 folded (`lib/sandhi.cyr`, sandhi commit `88115b3`) — CVE-57 above; a
-  stop-enabled server wakes on macOS; the suites run on macOS.** (B15, items SA11 + SA6.) **SA6:**
-  sandhi's four suites had never run on macOS. At this release they were run on ecb and ach with the
-  6.6.11 release tarballs in a per-run directory, and ecb hung. **Root cause:** the four blocking
-  serve loops re-read their stop flag because the listen fd carries 100 ms of `SO_RCVTIMEO`, but
-  XNU's `accept(2)` ignores `SO_RCVTIMEO`. So on macOS an idle stop-enabled server
-  (`sandhi_server_options_stop_flag`) never saw the flag, and `test_server_stop_wakes_blocked_accept`
-  hung until the runner killed it. A 100 ms-armed listener never returned on either Mac. **Fix, at
-  the source:** the loops accept through `_sandhi_server_accept`. With a flag on macOS, it polls the
-  listener for the interval and reports a timeout as `Err(_SANDHI_EAGAIN)`, which the accept policy
-  retries. New sandhi row `test_server_accept_surfaces_when_idle` hangs on both ecb and ach with the
-  macOS arm removed. The accept that follows a readable poll could still park — a peer that resets
-  between the two is dropped from a BSD accept queue, and a blocking accept then waits for the next
-  client (found in this release's review) — so on macOS the armed listener is also `O_NONBLOCK`,
-  and `_sandhi_server_accept` clears the `O_NONBLOCK` a BSD `accept(2)` copies onto the new socket.
-  Two more sandhi rows, mutation-proven on ecb and ach: a direct accept on an armed idle listener
-  hangs without the `O_NONBLOCK`, and the accepted fd reads back non-blocking without the clear.
-  After the fix all four suites pass on Linux, ecb and ach (787 / 1,691 / 352 / 63).
-  sandhi's CI gains a `macos-14` job and a structural row that keeps every `"/etc/"` literal and
-  8.8.8.8 fallback inside `#ifndef CYRIUS_TARGET_WIN`. The pin moves 6.6.10 → 6.6.11.
-- **yantra 1.0.7 folded (`lib/yantra.cyr`, yantra commit `1095e5e`) — `_cdp_set_nodelay` through
-  `sys_setsockopt`; yantra's own build picks up the CVE-53 reader fix.** (B15, items SB2 + SB3.)
-  **Root cause (SB2):** a raw `syscall(54, ...)`, the x86-Linux setsockopt number, whose option cell
-  came from a leaked `alloc(4)` on every CDP connect. The PE build warned on it, and on agnos 54 is
-  `SYS_UDP_UNBIND`. **Fix, at the source:** `sys_setsockopt(fd, 6, 1, &one, 4)` with a stack cell;
-  on agnos, whose stdlib peer has no setsockopt, it declines with -38 and issues no syscall. yantra's
-  new `tests/cdp_nodelay.tcyr` shows 16 calls allocate nothing (1.0.6: 128 bytes). **SB3:** yantra
-  is the only repo whose own code reaches the `lib/ws.cyr` client reader that CVE-53 fixed. The fold
-  has carried the fixed reader since 6.6.10, but yantra's standalone build at pin 6.6.9 did not. The
-  pin moves to 6.6.11 and `cyrius.lock` is regenerated. Its Chromium/CDP e2e smoke is 11/11 and its
-  chromedriver e2e 9/9 against live browsers. yantra's `dist/` is untracked, so the fold is
-  `cyrius distlib` at that commit (a second run is byte-identical). Of the other vendored copies of
-  `ws.cyr` / `ws_server.cyr` in the ecosystem, no repo's own code calls either reader; they pick up
-  the fix at their next re-vendor.
-- sandhi and yantra ran their full CI in a clean `git archive` copy with a throwaway `CYRIUS_HOME` at
-  6.6.11. ⛔ **sandhi 1.10.4 and yantra 1.0.7 must be TAGGED before cyrius 6.6.12 is**; the folds are
-  byte-identical to those commits' `dist/` output, and `docs/ecosystem.md`'s two fold rows name the
-  commits.
 ### Fixed
 
-- **B12 (T3): the check driver's one-row modes left an empty private run dir behind on every
-  call.** **Root cause:** `--gate-row`, `--output-row` and `--doc-stamp-row` returned before
-  `_run_tmp_cleanup()`, which only the full run and `--tool-path` called, and
-  `_expected_output_gate` creates the dir lazily, so each `--output-row` left an empty
-  `$TMPDIR/cyrcheck.<pid>.N` — two in /tmp per run of `check_driver_bounded.sh`. **Fix:** all three
-  arms clean up before returning; the gate runs its driver calls with TMPDIR inside its own
-  trap-removed dir and axis 4f asserts none is left (mutation: the --output-row cleanup removed →
-  RED, 2 leftovers).
-- **B12 (S5): `cyrius_check --tool-path <unknown>` exited 1 with nothing on either stream.**
-  **Root cause:** `_tool_build` returns 0 silently when neither `programs/<name>.cyr` nor
-  `build/<name>` exists. **Fix:** the arm now writes `error: --tool-path: no tool named '<n>'
-  (neither <src> nor build/<n> exists)` to stderr; `check_driver_builds_its_tools.sh` axis 7 pins
-  exit 1 + the exact line + empty stdout, with a known-name control.
-- **B12 (T7): `deps_relock_refused.sh` axis A5 (a pre-6.6.4 wrapper still verifies a trailer
-  lock) could never run.** **Root cause:** it searched `${CYRIUS_HOME:-…}` AFTER the gate exported
-  its own throwaway home, which holds only the tree's version — a permanent SKIP (exit 77) that
-  read as coverage. **Fix:** the caller's home is captured as `OUTER_HOME` before the export and A5
-  searches it; measured 13 passed + SKIP (77) → 14 passed (0) with the live store's 6.6.3 wrapper.
-  CI installs no old wrapper, so there it stays an honest SKIP.
-- **B12 (T4): `text/unicode_normconf.tcyr` died of SIGSEGV after its own FAIL when run outside the
-  repo root.** **Root cause:** a failed corpus read returns -ENOENT and the terminator store
-  `store8(corpus + corpus_len, 0)` wrote 2 bytes before the buffer. **Fix:** a negative length is
-  clamped to 0 — `1 passed, 2 failed`, exit 2 (from the root: 320547 passed, unchanged). New gate
-  `tests/gates/toolchain/tcyr_missing_corpus_is_a_count.sh` runs it from an empty dir (mutation: the
-  guard deleted → rc 139, no summary, RED).
-- **B12 (T6): `crossos/win_qpc_clock.tcyr`'s QPC-vs-GetTickCount64 agreement flaked on cass.**
-  **Root cause:** t0 was read at an arbitrary phase of the ~15.6 ms tick, costing up to ~16 of the
-  20 ms budget before any load (measured quiet: up to 13 ms). **Fix:** three intervals, each
-  started on a tick edge; any one within 20 ms passes (budget unchanged). Real cass: 20 quiet + 10
-  fully-loaded runs GREEN (worst best-of-3 2 ms); the three mutants re-proved RED on all three
-  intervals, and the ledger's "~7 orders of magnitude" for the raw-count mutant corrected to 100x.
-### Fixed
+#### Narrow slots, struct literals and copies, field chains (B01–B04)
 
 - **A narrow variable was written, and a compound operator read it, at 8 bytes (B01, item V1 + the
   premise-found compound load).** **Root cause:** the classic-`for` step replay
@@ -392,6 +245,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and on real ecb, ach, pi and cass, compiled there by a compiler that self-hosted byte-identical on
   that host. The guide (`docs/guides/cyrius-guide.md`, Structs) documents both. Fixpoint and
   seed-derive green; cycc 1,453,864 → 1,458,120 B.
+
+#### Frontend diagnostics and dead code (B05)
+
 - **A string literal still open at end of file was accepted silently by the lexer (B05, item R5).**
   **Root cause:** LEX's string loop (`src/frontend/lex.cyr`) treated EOF as a closing quote
   (`if (p >= bl) { sgo = 0; }`), unlike the char-literal path, so the error surfaced later and
@@ -483,74 +339,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   defer + await coroutine; RED on the pre-fix compiler); both coroutine gates green; output of
   every non-coroutine program byte-identical (279 files).
 
-### Added
-
-- **Array subscripts: `a[i]`, `a[i] = v` and `a[i] OP= v` on an integer element-typed array
-  `var a: T[N]`, T = i8..i64 / u8..u64 (B20, items R4 + R6).** The language had no subscript, read or write: `return a[1];` was
-  `expected ';', got '['` and `a[i] = 5;` was `expected '=', got '['` — local or global, in a fn or
-  at top level, on 6.6.10 and 6.6.11 alike — so `store64(&a + i * 8, v)` was the only spelling.
-  (R6, "`var c: i64[4];` inside a fn is refused", was this same diagnostic misattributed to the
-  declaration; the declaration always compiled.) **Root cause:** no postfix `[` arm existed for an
-  array name in the factor or the statement, and `PARSE_ARRAY` / `PARSE_GVAR_ARR` recorded the
-  array's byte size but not its element type, so there was nothing to scale or load by.
-  **Fix:** the declaration records a one-byte element descriptor (width 1/2/4/8/16 | 0x40 signed):
-  a stack array local above the span in its depth word (`SLAEW`/`GLAEW`, `src/common/util.cyr`;
-  `GLSPAN` and the closure snapshot's span now mask to their 16 bits), a global — and a fn-local
-  array that fell back to static storage — in the per-var sign table as `0x100 | desc`, a range
-  disjoint from that table's scalar 0/1 (no heap-map change). `_arr_sub_addr`
-  (`src/frontend/parse_expr.cyr`) resolves the base as `&a` does — a local, a closure capture, a
-  global — and computes `&a + i * sizeof(T)`; the factor (`_arr_sub_read`) loads it sign- or
-  zero-extended by T, and the statement arm (`_arr_sub_stmt`) and the classic-for step
-  (`_arr_sub_assign`, the step's existing body moved out of `PARSE_FOR` into `_for_step_assign`)
-  store at T's width, with all ten compound operators through the shared `_asg_compound_op`. No
-  bounds check. A **bare** `var a[N]` (and `stack var a[N]`) states no element width — bytes in a
-  fn, slots at top level — so its subscript is **refused by name** (`cannot subscript 'a': ...`),
-  as are a scalar, a pointer, a `u128` element and an f64 / f32 / bool / struct element — the
-  last named as such (`an f64, f32, bool or struct element is not supported`), since that shape IS
-  a `var a: T[N]` and the bare/scalar explanation alone misdescribed it; a `slice<T>` local keeps its bounds-checked
-  `s[i]`. `*T` pointer subscripts, slice writes and the opt-in bounds-checked mode are not part of
-  this. Two traps closed on the way: the element load must clear `_flags_reflect_rax` (the address
-  add set it, so `if (a[i])` branched on the ADDRESS on x86), and a signed element load records
-  itself for the IR (x86's `EFIELD_LOAD_W` records widths 1/2/4 only; under `CYRIUS_IR=3` an `i8`
-  element read wrong). **Verification:** new `tests/tcyr/crossos/typed_array_subscript.tcyr`
-  (69 rows: every width u8/i8/u16/i16/u32/i32/i64/u64 local and global, sign extension, store
-  truncation, a canary after every array and before/after the locals, the ten compound operators,
-  index expressions including a nested subscript and a call, `if`/`while` on an element, the for
-  step, a closure capture, a top-level statement and an array declared after the first top-level
-  statement; green on x86, `CYRIUS_IR=3`, aarch64 (qemu), PE (wine) and cx, and on the real hosts
-  with each host's own compiler — pi, ecb, ach and cass; each of five mutations listed in its
-  header reddens it); new gate `tests/gates/frontend/array_subscript_forms.sh`
-  (fifteen refusals — four bare shapes, a scalar, a pointer, a `stack var`, a `u128` element, an
-  unknown name, and six f64 / f32 / bool / struct element rows local and global, each naming the
-  element shape; four typed controls; the runtime file by default and under
-  `CYRIUS_IR=3`; `--syntax-only` clean; the slice subscript untouched; RED on 6.6.11 with 22
-  failures, and each of five mutations in its header RED). The guide documents the form beside the
-  `store64` idiom (`docs/guides/cyrius-guide.md`, "Subscripts"). Every other program compiles
-  byte-identical (490 files: `tests/tcyr/**` + `programs/`); the unreachable-fn floor stays 73.
-- **CVE-58: cxvm guest bytecode could write cxvm's host memory (B06, item Q6).** **Root cause:**
-  `programs/cxvm.cyr` checked nothing a guest controls. Every load/store was `_cx_mem + reg`, so a
-  guest address past the 1 MB data segment (or negative) read and wrote cxvm's own heap — the register
-  file, the stacks, the loaded code — and guest address 0, the in-memory copy of the bytecode, stored
-  silently (`store64(0, 5)` exited 9 on cxvm, 139 on x86). The 1024-entry call stack had no bound, so
-  the 513th nested frame overwrote the loaded code (non-tail depth 1000 gave rc 231, 5000 gave 135); the
-  data stack likewise. `read`/`write`/`getrandom`/`clock_gettime` buffers were translated with no
-  range check, so `read(0, buf, n)` with `buf + n` past 1 MB had the HOST kernel write cxvm's heap. An
-  unknown opcode was a silent no-op (no trailing arm), and a negative pc decoded host memory as code.
-  **Fix:** every load/store goes through `_cx_addr`, which traps unless the whole access lies in
-  `[8, _CX_MEM_SIZE)`; the translated syscall buffers are range-checked for their full length (a path up
-  to its NUL) and answer `-EFAULT` without reaching the host; both VM stacks trap on overflow and
-  underflow and hold 65536 entries (512 KiB each), so the guest's own 1 MB, not the host arrays, bounds
-  recursion (depth 1000 and 5000 now return the right value); `sub sp` traps before the guest stack
-  reaches the loaded image (its globals and `lib/alloc_cx.cyr` heap); a negative pc traps; an unknown
-  opcode traps. Each trap prints `cxvm: <what> <value> at pc <N>` (`cxvm: unknown opcode 0xNN at pc
-  <N>`) and exits 1. No `.cyx` format bump (default taken): a newer `.cyx` on an older cxvm is refused
-  only by the new cxvm's trap. The syscall opcode still passes every other number to the host raw, so
-  cxvm stays "not a sandbox"; `docs/platform-status.md` "cyrius-x guest contract" is restated. **Held
-  by** `tests/gates/codegen/cx_tailcall_and_vm_traps.sh` axes B, C and D (24 rows with A and E; every
-  trap reddened by its own revert, and with the call-stack bound removed the overflow row reports
-  `unknown opcode 0x04` — the stack writing the loaded code, the CVE in one row).
-
-### Fixed
+#### cx: guest memory, tail calls, narrow stores (B06)
 
 - **cx: `thread_join` issued FUTEX_WAIT for a nonzero handle (B06, item S-B4).** **Root cause:** 6.6.11
   guarded `thread_create`, `thread_create_detached`, `gettid` and the five channel futex sites for cx,
@@ -560,7 +349,6 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   so this also skips `munmap_stack`). **Held by** `stdlib_modules_self_sufficient.sh` axis 7's new
   join probe (7 under both the instrumented and the plain cxvm; mutant z: guard removed -> 140 / 124).
   The cx self-sufficiency floor is unchanged at 69/108.
-
 - **cx: `return f(args);` is a real tail call (B06, item Q6).** **Root cause:** cx `ETAILJMP`
   (`src/backend/cx/emit.cyr`) emitted a normal call + epilogue, under a comment claiming a jmp broke
   when the arguments contain nested calls. They do not: the shared tail path (`parse_fn.cyr`
@@ -572,7 +360,6 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   change was needed, so no `parse_fn.cyr` hand-off. **Held by**
   `tests/gates/codegen/cx_tailcall_and_vm_traps.sh` axis A (a 2M-deep self tail recursion, mutual
   recursion, nested-call arguments, a >6-arg call and a thin/wide frame ping-pong, each = native).
-
 - **cx: a store to a narrow slot wrote 8 bytes (B06, item V1-cx — V1's cx half; B01 is the frontend
   half).** **Root cause:** cx `EVSTORE_W` / `EFLSTORE_W` ignored the width and emitted `store64`, so a
   store to a packed narrow global (`var a: u8; var b: u8;` puts `b` at `a + 1`) wrote over its
@@ -584,6 +371,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   u32/i8 globals, a narrow local seen through its address; each = native). With B01 applied, B01's
   `tests/tcyr/crossos/narrow_slot_width.tcyr` runs 53/53 on cxvm.
 
+#### macOS routes and clock (B07)
+
 - **x86-macOS: `faccessat` was unrouted (SIGSYS) (B07, item Q3).** **Root cause:** `EMACHO_SYSXLAT`
   (`src/backend/x86/emit.cyr`) had no 269 row, although 6.6.10 declared `SYS_FACCESSAT` on the x86
   peer and arm64-macOS has routed `269 → 466` for years; `syscall(SYS_FACCESSAT, AT_FDCWD, "/", 0, 0)`
@@ -592,7 +381,6 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   drops the `SYS_FACCESSAT` allow-list row. **Held by**
   `tests/tcyr/crossos/darwin_unrouted_syscall_faults.tcyr` (faccessat on `/` = 0 and on a missing
   path = -ENOENT; the 6.6.11 compiler gives -78/-78 on ach).
-
 - **arm64-macOS: `dup3` silently dropped its flags (B07, item Q3).** **Root cause:** ESYSXLAT's Mach-O
   arm renumbered dup3 24 to dup2 90 unconditionally; Darwin has no dup3 and dup2 ignores x2, so
   `dup3(1, 51, O_CLOEXEC)` returned fd 51 with FD_CLOEXEC clear (measured on ecb). **Fix:** the 24 row
@@ -603,7 +391,6 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `SYS_DUP3` to both backends. **Held by** `darwin_unrouted_syscall_faults.tcyr` (dup3 with
   O_CLOEXEC = -78 and no fd 51 created; `sys_dup2(1, 50)` = 50 with FD_CLOEXEC clear; the 6.6.11
   compiler gives 51 on ecb).
-
 - **x86-macOS: `clock_now_ns()` was the wall clock (B07, item Q4).** **Root cause:**
   `EMACHO_CLOCK_X86` dropped the clock id and composed ns from the gettimeofday timeval for EVERY id,
   so the monotonic read (id 4) was epoch-scale REALTIME that steps under NTP (ach: ids 4 and 0 agreed
@@ -616,6 +403,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   that both advance at the same rate across a 200 ms sleep, and on Darwin that raw `syscall(228, 4)`
   is not epoch-scale (the 6.6.11 compiler fails both on ach); `macho_clock_buffer_contract.sh`'s
   second property is now "rdx = the emitter's own zeroed slot, before the syscall" (hand-off to H).
+
+#### Windows long paths and listings (B08)
 
 - **Windows: `is_dir`, `dir_list`, `is_symlink`, `sys_access` and `xmkdir_p` refused long paths, and
   `dir_list_into` had no Windows arm (B08, item S-B3).** **Root cause:** 6.6.11 gave the narrow-path
@@ -643,7 +432,6 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   on every target; 6.6.11 FAILS 9 rows on cass), and `pe_open_posix_semantics.sh` axis 2b, which now
   counts GetFileAttributesW and FindFirstFileW as narrow paths (hand-off to H; reverting either
   emitter reddens it). The cass PE self-host is byte-identical (the include opens share the widen).
-
 - **Windows: a directory listing that failed part-way came back complete (B08, item Q5).** **Root
   cause:** FindNextFileW returns 0 both at the end of a directory and on a failure, and only
   GetLastError tells them apart; the PE backend had no reroute for it (only ws2_32's WSAGetLastError,
@@ -662,6 +450,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (GetLastError after a missing name is 2, after a missing parent 3; a listable directory's
   `dir_list_checked` is 0). No row can make FindNextFileW fail part-way, on wine or on cass: the
   gate's static axis pins the error branch.
+
+#### ELF-aarch64 native syscall reach (B09)
 
 - **ELF-aarch64: the xattr family, fchown and statx could not be reached by number, and no peer
   named them (B09, item Q1).** **Root cause:** in `ESYSXLAT`'s aarch64-Linux arm
@@ -714,6 +504,141 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   aarch64 declines, the k_fchown fchownat workaround and its raw 8/291/163 numbers for these
   wrappers once cyrius 6.6.12 is tagged.
 
+#### Stdlib and tools (B10, B11)
+
+- **cbt: `_macho_fill_environ` wrote each entry's NUL past its buffer on macOS (B10, item S-B1).**
+  **Root cause:** the v6.0.34 loop bounded an entry's payload bytes but stored its terminator
+  unconditionally, so an environment larger than the buffer returned `pos > cap`, and all four callers
+  (`_cbt_env_is_1`, `_cbt_env_int`, `_cbt_env_str`, `find_tools`) then wrote their own NUL at
+  `buf + pos`. **Fix:** returns at most `cap - 1`; an entry that does not fit with its NUL is dropped whole
+  (never a matchable `HOME=/Us` prefix) and the scan continues, so a HOME after one huge variable still
+  resolves. **Verified on ecb (arm64) and ach (Intel)** with a native CLI built from each tree under a
+  40,000-byte `BIG` plus 50 more variables: 6.6.11's CLI SEGFAULTS (`which`, rc 139) when `BIG` precedes
+  HOME / CYRIUS_HOME and fails `cyrius build` under the user's environment plus `BIG` (CYRIUS_HOME lost);
+  the fixed CLI resolves both and builds a manifest project whose binary exits 42.
+  **Gate:** `tests/gates/toolchain/macho_fill_environ_bounded.sh` (the fn extracted into an x86 logic
+  probe: 40 × 25-byte entries into cap 64 behind a canary, whole-entry, drop-not-truncate and boundary
+  axes; three mutants recorded in its ledger).
+- **stdlib: `lib/bench.cyr` and `lib/chrono.cyr` dereferenced a refused (0) allocation (B10, item S1).**
+  6.6.10 taught `bench_new` and `epoch_to_date` to return 0 and updated none of their consumers:
+  `bench_iterations(bench_new(..))` and `dt_year(..)` under a refused alloc exited 139. Every public bench
+  fn now takes `b == 0` and returns 0 (a refused bench runs no op), `bench_report(0)` prints
+  `(bench_new refused)` (no ` avg`, so no row parser takes it for a row), and the three header examples
+  check the result. `dt_year` … `dt_second` decode through a new non-allocating `_epoch_to_date_into`
+  into a stack buffer — they no longer leak 48 B per call and, once the month table exists, cannot fail;
+  they return -1 only if the table itself could never be allocated (0 is a valid hour/minute/second).
+  **Test:** `tests/tcyr/stdlib/bench_chrono_refused_alloc.tcyr` (ALLOC_MAX = 0); either 6.6.11 file
+  reverted exits 139.
+- **cyrius-lsp: the symbol index stopped SILENTLY at three fixed caps (B11, item S3).** Go-to-definition
+  of sigil's last fn (`sv_verify_boot_chain`, `lib/sigil.cyr:30735`) through `include "lib/sigil.cyr"`
+  answered `null`, and so did the 4095th fn of a 5000-fn include. **Root cause:** the table had fixed caps
+  — 4096 rows, a 256 KB names buffer, a 32 KB paths buffer and 256 indexed files — `_lsp_add_symbol`
+  returned -1 when any was full and `lsp_index_decls` ignored it; and the path string was re-interned for
+  EVERY symbol, so the 32 KB paths buffer bound first (~2,300 symbols for `lib/x.cyr` paths, ~500 for a
+  60-byte absolute path). **Fix:** each file's path is interned once, by `_lsp_mark_indexed`, and every
+  row stores that offset; the six row arrays, the names buffer, the indexed-path set and its string
+  buffer all double on demand through one helper (`_lsp_grow`), so only a refused allocation stops
+  indexing. **Gate:** `tests/gates/toolchain/lsp_indexes_every_decl_spelling.sh` axis 5 (the last of 6000
+  long-named fns in one include, a fn in the 300th included file, and sigil's last fn); the 6.6.11 LSP
+  fails all three rows, and two mutants are recorded in its ledger.
+- **cyrlint: the 120-column rule counted BYTES (B11, item S4).** A 93-column comment of 91 `─` (U+2500,
+  3 bytes each) warned "line exceeds 120 characters". **Fix:** the rule counts code points — every byte
+  that is not a UTF-8 continuation byte (`(b & 0xC0) != 0x80`, `_lint_cols`); the byte span stays what the
+  other rules index with. **Gate:** `tests/gates/toolchain/cyrlint_cross_line.sh` axis 15 (93- and
+  120-column box lines and a 120-column ASCII line are silent; the 121-column box and ASCII lines warn);
+  the byte rule restored fails it.
+- **lib/async_agnos.cyr: a state description read as an untracked deferral (B11, item T9b).**
+  `_async_step`'s comment said it returns "the count of tasks not yet DONE", and cyrlint's `not yet` needle
+  drew an untracked-deferral note on the stdlib itself. The comment now says "tasks whose state is not
+  DONE" — comment only, the rule is unchanged. **Gate:** the same axis 15 lints the file under
+  `--strict-deferrals` and expects exit 0 and no note; the old comment exits 2.
+
+#### Check harness and tests (B12)
+
+- **B12 (T3): the check driver's one-row modes left an empty private run dir behind on every
+  call.** **Root cause:** `--gate-row`, `--output-row` and `--doc-stamp-row` returned before
+  `_run_tmp_cleanup()`, which only the full run and `--tool-path` called, and
+  `_expected_output_gate` creates the dir lazily, so each `--output-row` left an empty
+  `$TMPDIR/cyrcheck.<pid>.N` — two in /tmp per run of `check_driver_bounded.sh`. **Fix:** all three
+  arms clean up before returning; the gate runs its driver calls with TMPDIR inside its own
+  trap-removed dir and axis 4f asserts none is left (mutation: the --output-row cleanup removed →
+  RED, 2 leftovers).
+- **B12 (S5): `cyrius_check --tool-path <unknown>` exited 1 with nothing on either stream.**
+  **Root cause:** `_tool_build` returns 0 silently when neither `programs/<name>.cyr` nor
+  `build/<name>` exists. **Fix:** the arm now writes `error: --tool-path: no tool named '<n>'
+  (neither <src> nor build/<n> exists)` to stderr; `check_driver_builds_its_tools.sh` axis 7 pins
+  exit 1 + the exact line + empty stdout, with a known-name control.
+- **B12 (T7): `deps_relock_refused.sh` axis A5 (a pre-6.6.4 wrapper still verifies a trailer
+  lock) could never run.** **Root cause:** it searched `${CYRIUS_HOME:-…}` AFTER the gate exported
+  its own throwaway home, which holds only the tree's version — a permanent SKIP (exit 77) that
+  read as coverage. **Fix:** the caller's home is captured as `OUTER_HOME` before the export and A5
+  searches it; measured 13 passed + SKIP (77) → 14 passed (0) with the live store's 6.6.3 wrapper.
+  CI installs no old wrapper, so there it stays an honest SKIP.
+- **B12 (T4): `text/unicode_normconf.tcyr` died of SIGSEGV after its own FAIL when run outside the
+  repo root.** **Root cause:** a failed corpus read returns -ENOENT and the terminator store
+  `store8(corpus + corpus_len, 0)` wrote 2 bytes before the buffer. **Fix:** a negative length is
+  clamped to 0 — `1 passed, 2 failed`, exit 2 (from the root: 320547 passed, unchanged). New gate
+  `tests/gates/toolchain/tcyr_missing_corpus_is_a_count.sh` runs it from an empty dir (mutation: the
+  guard deleted → rc 139, no summary, RED).
+- **B12 (T6): `crossos/win_qpc_clock.tcyr`'s QPC-vs-GetTickCount64 agreement flaked on cass.**
+  **Root cause:** t0 was read at an arbitrary phase of the ~15.6 ms tick, costing up to ~16 of the
+  20 ms budget before any load (measured quiet: up to 13 ms). **Fix:** three intervals, each
+  started on a tick edge; any one within 20 ms passes (budget unchanged). Real cass: 20 quiet + 10
+  fully-loaded runs GREEN (worst best-of-3 2 ms); the three mutants re-proved RED on all three
+  intervals, and the ledger's "~7 orders of magnitude" for the raw-count mutant corrected to 100x.
+- **cx half of V1-V4 now checked on cxvm** (B12). New gate `tests/gates/codegen/cx_crossos_rows_run.sh`. The narrow-slot, nested/generic struct-literal, field-argument and top-level copy-init fixes all reproduced wrong on cx, but no runner executed a crossos `.tcyr` on cxvm, so the cx half would have shipped as a false green. The gate builds cycc_cx and cxvm from the tree (`CYCC_CX` / `CXVM` override them) and runs each row set natively as the oracle and on cxvm:
+  - B01/B02/B03 inline rows: exit 0/0/128, plus a marker printed only on success.
+  - `narrow_slot_width.tcyr`: 58/58.
+  - `generic_struct_inference.tcyr`: 113 native, 70 on cx, counts derived from the source.
+  - `struct_field_value_copy.tcyr`: full natively; its cx refusal (the 16 B pair-return limit) pinned as the only kind of error.
+  - 12 rows, count checked; exit 77 when it cannot run.
+  - Mutation-proven: cx `EVSTORE_W`/`EFLSTORE_W` back to 8-byte stores (R1 cx exit 191, R4 cx 24/34), B02's positional-init recursion reverted, B03's `_fla_want` arming or `_gci_src` reverted. Each is RED.
+
+### Added
+
+- **Array subscripts: `a[i]`, `a[i] = v` and `a[i] OP= v` on an integer element-typed array
+  `var a: T[N]`, T = i8..i64 / u8..u64 (B20, items R4 + R6).** The language had no subscript, read or write: `return a[1];` was
+  `expected ';', got '['` and `a[i] = 5;` was `expected '=', got '['` — local or global, in a fn or
+  at top level, on 6.6.10 and 6.6.11 alike — so `store64(&a + i * 8, v)` was the only spelling.
+  (R6, "`var c: i64[4];` inside a fn is refused", was this same diagnostic misattributed to the
+  declaration; the declaration always compiled.) **Root cause:** no postfix `[` arm existed for an
+  array name in the factor or the statement, and `PARSE_ARRAY` / `PARSE_GVAR_ARR` recorded the
+  array's byte size but not its element type, so there was nothing to scale or load by.
+  **Fix:** the declaration records a one-byte element descriptor (width 1/2/4/8/16 | 0x40 signed):
+  a stack array local above the span in its depth word (`SLAEW`/`GLAEW`, `src/common/util.cyr`;
+  `GLSPAN` and the closure snapshot's span now mask to their 16 bits), a global — and a fn-local
+  array that fell back to static storage — in the per-var sign table as `0x100 | desc`, a range
+  disjoint from that table's scalar 0/1 (no heap-map change). `_arr_sub_addr`
+  (`src/frontend/parse_expr.cyr`) resolves the base as `&a` does — a local, a closure capture, a
+  global — and computes `&a + i * sizeof(T)`; the factor (`_arr_sub_read`) loads it sign- or
+  zero-extended by T, and the statement arm (`_arr_sub_stmt`) and the classic-for step
+  (`_arr_sub_assign`, the step's existing body moved out of `PARSE_FOR` into `_for_step_assign`)
+  store at T's width, with all ten compound operators through the shared `_asg_compound_op`. No
+  bounds check. A **bare** `var a[N]` (and `stack var a[N]`) states no element width — bytes in a
+  fn, slots at top level — so its subscript is **refused by name** (`cannot subscript 'a': ...`),
+  as are a scalar, a pointer, a `u128` element and an f64 / f32 / bool / struct element — the
+  last named as such (`an f64, f32, bool or struct element is not supported`), since that shape IS
+  a `var a: T[N]` and the bare/scalar explanation alone misdescribed it; a `slice<T>` local keeps its bounds-checked
+  `s[i]`. `*T` pointer subscripts, slice writes and the opt-in bounds-checked mode are not part of
+  this. Two traps closed on the way: the element load must clear `_flags_reflect_rax` (the address
+  add set it, so `if (a[i])` branched on the ADDRESS on x86), and a signed element load records
+  itself for the IR (x86's `EFIELD_LOAD_W` records widths 1/2/4 only; under `CYRIUS_IR=3` an `i8`
+  element read wrong). **Verification:** new `tests/tcyr/crossos/typed_array_subscript.tcyr`
+  (69 rows: every width u8/i8/u16/i16/u32/i32/i64/u64 local and global, sign extension, store
+  truncation, a canary after every array and before/after the locals, the ten compound operators,
+  index expressions including a nested subscript and a call, `if`/`while` on an element, the for
+  step, a closure capture, a top-level statement and an array declared after the first top-level
+  statement; green on x86, `CYRIUS_IR=3`, aarch64 (qemu), PE (wine) and cx, and on the real hosts
+  with each host's own compiler — pi, ecb, ach and cass; each of five mutations listed in its
+  header reddens it); new gate `tests/gates/frontend/array_subscript_forms.sh`
+  (fifteen refusals — four bare shapes, a scalar, a pointer, a `stack var`, a `u128` element, an
+  unknown name, and six f64 / f32 / bool / struct element rows local and global, each naming the
+  element shape; four typed controls; the runtime file by default and under
+  `CYRIUS_IR=3`; `--syntax-only` clean; the slice subscript untouched; RED on 6.6.11 with 22
+  failures, and each of five mutations in its header RED). The guide documents the form beside the
+  `store64` idiom (`docs/guides/cyrius-guide.md`, "Subscripts"). Every other program compiles
+  byte-identical (490 files: `tests/tcyr/**` + `programs/`); the unreachable-fn floor stays 73.
+
 ### Changed
 
 - **`file_read_whole` passes the errno through `*len_out` (B08, item S2).** **Root cause:** the
@@ -732,6 +657,168 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `tests/tcyr/crossos/file_read_whole_bounded.tcyr` (a missing file: 0 and `n < 0`) and
   `tests/gates/toolchain/manifest_read_whole_file.sh` axes 5 and 6 (a directory and `/dev/zero` under
   `ulimit -v`: `n >= 0` is RED); restoring the overwrite reddens all three.
+- **Integration ratchets.** `CORPUS_FLOOR` 259 → **407** — the merged corpus of 410 minus 3 (B19,
+  item T1: at 250 / 259 against ~400 files a reader that went blind could lose a third of the corpus
+  before the floor fired). The unreachable-fn floor is **73** (was 74; T8a removed `FLIT_DEN`). Already at
+  their floor on the merged tree: the unchecked-allocation census (0 of 242 sites), the cross-compile
+  allowlists (pe 0 / agnos 1), `CYCC_CEIL` 67 (every new gate honours `$CYCC`) and the self-sufficiency
+  floors (cx 69 / agnos 74). The PE reroute table's 74 route numbers are distinct, 0xF04B included.
+
+### Downstream
+
+#### Folded — ⛔ each tagged BEFORE cyrius 6.6.12
+
+- **sigil 3.13.5 folded (`lib/sigil.cyr`, sigil commit `497ac4b`) — Darwin errno values per target;
+  the subprocess helpers' argv/envp allocs are checked.** (B13, items SA4 + SA1.) **Root cause
+  (SA4):** sigil's `src/sys_error.cyr` declared `ENOSYS`, `ENOTEMPTY`, `ENODATA`, `EOVERFLOW`,
+  `EOPNOTSUPP`, `EADDRINUSE`, `ECONNREFUSED` and `ETIMEDOUT` with their Linux values on every
+  target, and `lib/syscalls_macos.cyr` declares none of them, so on macOS the fold supplied them
+  program-wide: every consumer reading those names got the Linux number (ENOSYS 38 is Darwin's
+  `ENOTSOCK`; ENODATA 61 is Darwin's `ECONNREFUSED`), and `sigil_err_from_errno` misclassified a real
+  Darwin ENOSYS. **Fix, at the source:** the eight are declared per target with the BSD values
+  under `CYRIUS_TARGET_MACOS` (the 3.13.3 `EAGAIN` precedent); Linux, Windows and agnos values are
+  unchanged. **Root cause (SA1):** `agnosys_run_capture_timeout` / `agnosys_run_checked_timeout`
+  stored through an unchecked argv/envp alloc, so a refusal was a SIGSEGV. **Fix:** both allocs are
+  checked before the pipe and the fork and return an ENOMEM Err. sigil's `errno_peer.tcyr` (one row
+  per name per platform, plus the kernel's own `-ENOTEMPTY`) was cross-built for Mach-O and passes
+  26/0 on ecb and ach, where 3.13.4's `sys_error.cyr` fails 9 of 26; its `capture_bounded.tcyr`
+  drives the refusal (SIGSEGV without the fix). The pin stays 6.6.9.
+- **bayan 1.5.9 folded (`lib/bayan.cyr`, bayan commit `821a1d0`) — a refused alloc returns 0 in
+  base64 and the TOML array parser.** (B13, items SA2 + SA10 + SA12.) **Root cause:**
+  `bayan_base64_encode` stored into its unchecked output alloc (an oversize length was a SIGSEGV,
+  although `lib/ws.cyr` and `lib/ws_server.cyr` already test its result for 0);
+  `bayan_toml_array_parse_a` used `vec_new_a`'s result unchecked, and its element flush ignored a
+  refused Str and a refused push, so a later refusal handed back a short vec as success. **Fix, at
+  the source:** the encoder returns 0; the flush returns -1 on either refusal and the parser returns
+  0, never a partial vec. Both premise repros (`bayan_base64_encode(&buf, 1<<62)` and
+  `bayan_toml_array_parse_a` on a refuse-everything allocator, each rc=139 on the 1.5.8 fold) now
+  return 0. bayan's pin moves 6.6.9 → 6.6.11 and its CI coverage floor goes back to 100 in the same
+  commit (6.6.11's `cyrius coverage` excludes `main`; 501/501).
+- Both siblings ran their full CI in a clean `git archive` copy with a throwaway `CYRIUS_HOME`
+  (sigil at its 6.6.9 pin, bayan at 6.6.11). ⛔ **sigil 3.13.5 and bayan 1.5.9 must be TAGGED before
+  cyrius 6.6.12 is**; the folds were copied byte-identical from those commits' `dist/`, and
+  `docs/ecosystem.md`'s two fold rows name the commits.
+- **vani 1.2.8 folded (`lib/vani.cyr`, vani commit `4ab53a7`) — `vani_drain` / `vani_drop` /
+  `vani_state` return a Result on every path; `_sk_emit_err` is `_vani_sk_emit_err`.** (B14, items
+  SA8 + SA9.) **Root cause (SA8):** each returned `Err(VANI_ERR_DEVICE_INVALID)` on its `d == 0`
+  guard but the raw `audio_drain` / `audio_drop` / `audio_get_state` integer on the live path, so a
+  two-value bind read that integer as the TAG and the payload as garbage: a device in state SETUP
+  (1) read as `Err`, and so did any non-zero drain/drop status. The compiler reported all three
+  (`returns a : stack pair on another path but a SINGLE value here`, `lib/vani.cyr:2113/2118/2123`).
+  **Fix, at the source:** drain/drop return `Ok(d)` or `Err(VANI_ERR_DRAIN / VANI_ERR_DROP)` (new
+  codes 23 / 24) and state returns `Ok(raw state)`, -1 when the STATUS query failed. vani's new
+  live-path rows bind `var t, v =` on a non-null bad-fd handle (4 fail against 1.2.7's
+  `device.cyr`), and its CI fails on any mixed-return warning. **Root cause (SA9):** vani and mabda
+  both named a private helper `_sk_emit_err`, so with both folds in scope the last definition won
+  program-wide (`duplicate fn '_sk_emit_err'`). Renamed on both sides (mabda below). The pin stays
+  6.6.6; no public fn changed.
+- **mabda 4.1.6 folded (`lib/mabda.cyr`, mabda commit `97679dc`) — `WGPU_VENDOR_ID_AMD` and
+  `_mabda_sk_emit_err`.** (B14, items SB4 + SA9.) **Root cause (SB4):** mabda declared the AMD/ATI
+  GPU vendor id (0x1002, what `WGPUAdapterInfo.vendorID` reports) as `var PCI_VENDOR_AMD`, the name
+  yukti's `PciVendor` enum gives the PCI-SIG AMD id 0x1022. With both folds in scope cycc warned
+  `duplicate symbol 'PCI_VENDOR_AMD' redefined with conflicting value (last definition wins)` and
+  whichever library came first compared against the other's value (mabda's AMD-wgpu deprecation
+  guard, or yukti's PCI vendor match). **Fix, at the source:** mabda's is `WGPU_VENDOR_ID_AMD` (the
+  `NV_PCI_VENDOR_NVIDIA` precedent); yukti keeps its name and 0x1022. No consumer in `~/Repos` named
+  mabda's constant (ai-hwaccel defines its own). **SA9:** its `_sk_emit_err` is `_mabda_sk_emit_err`.
+  The pin stays 6.6.6.
+- **sakshi 2.5.6 folded (`lib/sakshi.cyr`, sakshi commit `9218130`) — comment-only.** (B14, item SA7.)
+  Three agnos clock comments in `src/clock.cyr` described `#95` as calibrated "against the live tick"
+  (agnos 1.57.6 calibrates it against the ACPI PM timer, live LAPIC ticks the fallback) and said agnos
+  reads `uptime_ms` directly (since 2.5.1 it reads `#95` first, `#40` only when `#95` answers -1).
+  The fold differs from 2.5.5 only in those comments and the version stamp. The pin stays 6.6.6.
+- **New gate `tests/gates/toolchain/fold_namespace_collisions.sh`** (B14): yukti + mabda + vani +
+  sakshi compiled together, in both yukti/mabda orders, must report no `duplicate fn`, no
+  conflicting `duplicate symbol` and no mixed-return warning located in those folds, and the run
+  must keep yukti's `PCI_VENDOR_AMD` at 0x1022 and mabda's `WGPU_VENDOR_ID_AMD` at 0x1002.
+  Mutation-proven: the 6.6.11 `lib/mabda.cyr` + `lib/vani.cyr` report the `PCI_VENDOR_AMD` conflict,
+  the `_sk_emit_err` duplicate and the three mixed-return warnings in both orders.
+- vani, mabda and sakshi ran their full CI in a clean `git archive` copy with a throwaway
+  `CYRIUS_HOME` at their 6.6.6 pin. ⛔ **vani 1.2.8, mabda 4.1.6 and sakshi 2.5.6 must be TAGGED
+  before cyrius 6.6.12 is**; the folds were copied byte-identical from those commits' `dist/`, and
+  `docs/ecosystem.md`'s three fold rows name the commits.
+- **sandhi 1.10.4 folded (`lib/sandhi.cyr`, sandhi commit `88115b3`) — CVE-57 above; a
+  stop-enabled server wakes on macOS; the suites run on macOS.** (B15, items SA11 + SA6.) **SA6:**
+  sandhi's four suites had never run on macOS. At this release they were run on ecb and ach with the
+  6.6.11 release tarballs in a per-run directory, and ecb hung. **Root cause:** the four blocking
+  serve loops re-read their stop flag because the listen fd carries 100 ms of `SO_RCVTIMEO`, but
+  XNU's `accept(2)` ignores `SO_RCVTIMEO`. So on macOS an idle stop-enabled server
+  (`sandhi_server_options_stop_flag`) never saw the flag, and `test_server_stop_wakes_blocked_accept`
+  hung until the runner killed it. A 100 ms-armed listener never returned on either Mac. **Fix, at
+  the source:** the loops accept through `_sandhi_server_accept`. With a flag on macOS, it polls the
+  listener for the interval and reports a timeout as `Err(_SANDHI_EAGAIN)`, which the accept policy
+  retries. New sandhi row `test_server_accept_surfaces_when_idle` hangs on both ecb and ach with the
+  macOS arm removed. The accept that follows a readable poll could still park — a peer that resets
+  between the two is dropped from a BSD accept queue, and a blocking accept then waits for the next
+  client (found in this release's review) — so on macOS the armed listener is also `O_NONBLOCK`,
+  and `_sandhi_server_accept` clears the `O_NONBLOCK` a BSD `accept(2)` copies onto the new socket.
+  Two more sandhi rows, mutation-proven on ecb and ach: a direct accept on an armed idle listener
+  hangs without the `O_NONBLOCK`, and the accepted fd reads back non-blocking without the clear.
+  After the fix all four suites pass on Linux, ecb and ach (787 / 1,691 / 352 / 63).
+  sandhi's CI gains a `macos-14` job and a structural row that keeps every `"/etc/"` literal and
+  8.8.8.8 fallback inside `#ifndef CYRIUS_TARGET_WIN`. The pin moves 6.6.10 → 6.6.11.
+- **yantra 1.0.7 folded (`lib/yantra.cyr`, yantra commit `1095e5e`) — `_cdp_set_nodelay` through
+  `sys_setsockopt`; yantra's own build picks up the CVE-53 reader fix.** (B15, items SB2 + SB3.)
+  **Root cause (SB2):** a raw `syscall(54, ...)`, the x86-Linux setsockopt number, whose option cell
+  came from a leaked `alloc(4)` on every CDP connect. The PE build warned on it, and on agnos 54 is
+  `SYS_UDP_UNBIND`. **Fix, at the source:** `sys_setsockopt(fd, 6, 1, &one, 4)` with a stack cell;
+  on agnos, whose stdlib peer has no setsockopt, it declines with -38 and issues no syscall. yantra's
+  new `tests/cdp_nodelay.tcyr` shows 16 calls allocate nothing (1.0.6: 128 bytes). **SB3:** yantra
+  is the only repo whose own code reaches the `lib/ws.cyr` client reader that CVE-53 fixed. The fold
+  has carried the fixed reader since 6.6.10, but yantra's standalone build at pin 6.6.9 did not. The
+  pin moves to 6.6.11 and `cyrius.lock` is regenerated. Its Chromium/CDP e2e smoke is 11/11 and its
+  chromedriver e2e 9/9 against live browsers. yantra's `dist/` is untracked, so the fold is
+  `cyrius distlib` at that commit (a second run is byte-identical). Of the other vendored copies of
+  `ws.cyr` / `ws_server.cyr` in the ecosystem, no repo's own code calls either reader; they pick up
+  the fix at their next re-vendor.
+- sandhi and yantra ran their full CI in a clean `git archive` copy with a throwaway `CYRIUS_HOME` at
+  6.6.11. ⛔ **sandhi 1.10.4 and yantra 1.0.7 must be TAGGED before cyrius 6.6.12 is**; the folds are
+  byte-identical to those commits' `dist/` output, and `docs/ecosystem.md`'s two fold rows name the
+  commits.
+
+#### Consumers
+
+- **Consumer sibling releases (not vendored; each pins a released cyrius and needs no cyrius 6.6.12
+  tag).**
+  - **kriya 1.7.3** (`bbbb459`, pin 6.6.9 → 6.6.11; B16, SB1) — aarch64 was unusable: `FS_O_DIRECTORY` /
+    `FS_O_NOFOLLOW` and ten more open-flag literals were x86 values (the ADR-0003 no-follow walk
+    followed symlinks on aarch64), and `k_stat` handed callers the kernel's generic `struct stat`
+    where every reader expects the x86_64 layout (`ls -l`, `stat`, `which`, `xargs`, `cp -p` read
+    garbage on pi). Flags now come from the stdlib's per-target constants; `_k_stat_to_x86` normalises
+    the layout behind all five stat sites. `cyrius.lock` re-locked in full, with a CI step that
+    verifies it covers the pinned snapshot.
+  - **mirshi 1.11.3** (`028514b`, pin 6.6.2; B16, SB5) — the agnos emulator now emulates `uptime_us`
+    (#95) from `CLOCK_MONOTONIC` on #40's epoch instead of running Linux umask, and `sysinfo` (#35)
+    writes exactly the kernel's tier for the caller's length (40 / 104 / 200 / 208 B), per-core band
+    from the host's `/proc/stat`.
+  - **agnostic 0.1.6** (`c842000`, pin 6.6.6 → 6.6.11; B17, SB7) — re-vendors agnosai 2.1.1, whose
+    `KavachBackend` spellings 6.6.11's qualified-enum check requires, and applies the 6.6.11 B05 patch
+    to `tests/deps_symbols.tcyr` (it asserted that an enum qualifier is cosmetic).
+  - **aethersafha 0.16.28** (`aace9b5`, pin 6.6.6 → 6.6.11; B17, SB8 + S6) — re-vendors mehman 1.0.4
+    (the same N4 spellings), and its `src/main.cyr` no longer splits a loop head's brace across
+    complementary `#ifdef`/`#ifndef` arms, which ended the depth-0 declaration reader at line 793 so
+    `cyrius coverage` and `header` missed every later declaration. New `tests/brace_balance.tcyr`.
+  - **dhvani 2.2.6** (`5aeda9c`; B18, SB9) — all 17 `path = "../<x>"` lines removed, so a local resolve
+    equals CI's.
+  - **libro 2.10.5** (`1631e83`; B18, SB10 + SB11) — `[deps.patra]` 1.14.3 → 1.15.1 (the fold's copy),
+    its three `path` lines removed, and the "No raw syscalls" step no longer fails under `pipefail`
+    when it finds nothing.
+  - **bote 3.3.15** (`3a6979e`; B18, SB11) — the aarch64 raw-syscall denylist step is `pipefail`-safe.
+  - **sankhya 3.0.2** (`2d551bd`, pin 6.6.2 → 6.6.11; B18, SB6) — `CYRIUS_DCE=1` restored on its CI bench
+    build (the 6.6.3 DCE fix is in the pin), stale lock discarded and re-locked, version strings and
+    docs caught up to 3.0.2.
+  - **ganita 1.2.10** (`97e922b`, pin 6.6.10 → 6.6.11; B18, SA12) — `cyrius coverage --min 100`, now
+    reachable because coverage excludes `main` (6.6.11).
+  - **stiva 3.0.22** (`21e2abf`; B18, SB12) — its roadmap no longer restates stale pins.
+  - bayan 1.5.9's coverage floor moved to 100 in the same release as its fold fix (above).
+- **Post-tag follow-ups.** kriya 1.7.4 adopts B09's `sys_*xattr` / `sys_statx` / `sys_fchown` /
+  `sys_getrlimit` wrappers once cyrius 6.6.12 is tagged (it retires its aarch64 declines, the
+  `k_fchown` fchownat workaround and the raw 8 / 291 / 163 sites). The ~6 ecosystem bundles K5's
+  per-target sidecar rule touches regenerate their `.deps` in the commit that moves each repo's pin
+  to ≥ 6.6.11 — no dedicated sweep (measured at 6.6.11: no sidecar changes today). CVE-53's `lib/ws.cyr`
+  reader: 50 repos vendor `ws.cyr` and 52 `ws_server.cyr`, but only yantra's own code reaches the
+  client reader — fixed by yantra 1.0.7 above; bote 3.3.14 already vendors the fixed server reader.
+
 
 ## [6.6.11] — 2026-09-29
 
