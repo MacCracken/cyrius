@@ -350,7 +350,7 @@ done
 # merged tree with bite 2's aarch64 compiler — if a count comes in HIGHER, raise its floor;
 # a count LOWER than these is a regression in the merge, not a floor to relax. 6.6.7's single
 # x86 floor was 27 of 104.
-FLOORS="linux:73 agnos:73 pe:73 macho:74 cx:68 aarch64:72"
+FLOORS="linux:73 agnos:74 pe:73 macho:74 cx:69 aarch64:72"   # 6.6.11: cx 69 (B08 — thread.cyr compiles on cx), agnos 74 as measured on the merged tree
 x=0; summary=""
 for tf in $FLOORS; do
     t=${tf%%:*}; fl=${tf#*:}
