@@ -3093,15 +3093,18 @@ fn _gci_inline(S, sid): i64 {
     if (_gci_src(S, GTI(S)) != sid) { return 0; }
     return 1;
 }
-# The copy into the inline global `dgv`, cursor on the RHS that `_gci_src` classified as a whole
-# `sid`; consumed up to the `;`.
-fn _gci_copy(S, dgv, sid): i64 {
-    var nb = STRUCTSZ(S, sid - 1);
+# Record the RHS that `_gci_src` classified as a whole `sid` as the copy SOURCE (`_fsc_*`, read by
+# `_agc_copy_bytes`'s `-2` source): a named global is resolved (FINDVAR, so its visibility is
+# checked), a field chain is parsed with the whole-field record armed and emits nothing. Cursor
+# left on the `;`. 1 = recorded. Nothing is registered or emitted, so a caller can register the
+# destination AFTER the source is resolved (`var A: Pt = A;` copies the earlier A).
+fn _gci_take(S, sid): i64 {
     if (TOKTYP(S, GTI(S) + 1) == 5) {
         var sgv = FINDVAR(S, PEEKV(S));
         STI(S, GTI(S) + 1);
-        _agc_copy_bytes(S, 0 - 1, dgv, 0 - 1, sgv, nb);
-        return 0;
+        _fsc_reset();
+        _fsc_gv = sgv;
+        return 1;
     }
     _fla_arm(GTI(S), 0 - sid);
     PCMPE(S);
@@ -3111,8 +3114,7 @@ fn _gci_copy(S, dgv, sid): i64 {
         return 0;
     }
     _fla_hit = 0;
-    _agc_copy_bytes(S, 0 - 1, dgv, 0 - 2, 0 - 1, nb);
-    return 0;
+    return 1;
 }
 # The init of a struct-annotated global (`gps` = `0 - sid`), cursor on the RHS, for the
 # EMIT_GVAR_INITS replay: 1 = copied (cursor on `;`), 0 = the value store as before (a source of
@@ -3126,12 +3128,13 @@ fn _gci_init(S, dgv, gps, dnoff): i64 {
     if (dgv < 0) { return 0; }
     if (GVPM(S, dgv) != 2) { return 0; }
     if (STRUCTSZ(S, ss - 1) <= 8) { return 0; }
-    _gci_copy(S, dgv, ss);
+    if (_gci_take(S, ss) == 1) { _agc_copy_bytes(S, 0 - 1, dgv, 0 - 2, 0 - 1, STRUCTSZ(S, ss - 1)); }
     _gv_slvar(S, dgv);
     return 1;
 }
-# PARSE_VAR's top-level arm (a `var` after the first statement), cursor on `=`: the inline global
-# registered and copied (1, `;` consumed), else 0 for the arm's value store.
+# PARSE_VAR's top-level arm (a `var` after the first statement), cursor on `=`: the source taken,
+# then the inline global registered and the copy emitted (1, `;` consumed), else 0 for the arm's
+# value store. Registered AFTER the source, in PARSE_VAR's own order.
 fn _gci_toplevel(S, noff, pscale): i64 {
     if (pscale <= 0 - 2048) { return 0; }
     var sid = 0 - pscale;
@@ -3139,17 +3142,18 @@ fn _gci_toplevel(S, noff, pscale): i64 {
     if (ss == 0) { return 0; }
     if (_AGG_ASSIGN_TYPE_ERR(S, pscale, 0 - ss, noff, _gci_nm) == 1) { return 0; }
     if (STRUCTSZ(S, sid - 1) <= 8) { return 0; }
+    STI(S, GTI(S) + 1);   # consume '='
+    var took = _gci_take(S, sid);
     var vcnt = GVCNT(S);
     S64(_varn_base + vcnt * 8, noff);
     S64(_vars_base + vcnt * 8, STRUCTSZ(S, sid - 1));
     SVTYPE(S, vcnt, sid);
     SVPM(S, vcnt, 2);
-    STI(S, GTI(S) + 1);   # consume '='
-    _gci_copy(S, vcnt, sid);
     SLVAR(S, vcnt);
     SGFI(S, vcnt, 0);
     _GVAR_VIS(S, vcnt, GTI(S));
     SVCNT(S, vcnt + 1);
+    if (took == 1) { _agc_copy_bytes(S, 0 - 1, vcnt, 0 - 2, 0 - 1, STRUCTSZ(S, sid - 1)); }
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
     STI(S, GTI(S) + 1);   # consume ';'
     return 1;
