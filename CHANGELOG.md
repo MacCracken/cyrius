@@ -6,6 +6,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.12] — 2026-09-30
 
+### Downstream
+
+- **sigil 3.13.5 folded (`lib/sigil.cyr`, sigil commit `497ac4b`) — Darwin errno values per target;
+  the subprocess helpers' argv/envp allocs are checked.** (B13, items SA4 + SA1.) **Root cause
+  (SA4):** sigil's `src/sys_error.cyr` declared `ENOSYS`, `ENOTEMPTY`, `ENODATA`, `EOVERFLOW`,
+  `EOPNOTSUPP`, `EADDRINUSE`, `ECONNREFUSED` and `ETIMEDOUT` with their Linux values on every
+  target, and `lib/syscalls_macos.cyr` declares none of them, so on macOS the fold supplied them
+  program-wide: every consumer reading those names got the Linux number (ENOSYS 38 is Darwin's
+  `ENOTSOCK`; ENODATA 61 is Darwin's `ECONNREFUSED`), and `sigil_err_from_errno` misclassified a real
+  Darwin ENOSYS. **Fix, at the source:** the eight are declared per target with the BSD values
+  under `CYRIUS_TARGET_MACOS` (the 3.13.3 `EAGAIN` precedent); Linux, Windows and agnos values are
+  unchanged. **Root cause (SA1):** `agnosys_run_capture_timeout` / `agnosys_run_checked_timeout`
+  stored through an unchecked argv/envp alloc, so a refusal was a SIGSEGV. **Fix:** both allocs are
+  checked before the pipe and the fork and return an ENOMEM Err. sigil's `errno_peer.tcyr` (one row
+  per name per platform, plus the kernel's own `-ENOTEMPTY`) was cross-built for Mach-O and passes
+  26/0 on ecb and ach, where 3.13.4's `sys_error.cyr` fails 9 of 26; its `capture_bounded.tcyr`
+  drives the refusal (SIGSEGV without the fix). The pin stays 6.6.9.
+- sigil ran its full CI in a clean `git archive` copy with a throwaway `CYRIUS_HOME` at its 6.6.9
+  pin. ⛔ **sigil 3.13.5 must be TAGGED before cyrius 6.6.12 is**; the fold was copied byte-identical
+  from that commit's `dist/`, and `docs/ecosystem.md`'s fold row names the commit.
+
 ## [6.6.11] — 2026-09-29
 
 The fifth batch release: the 6.6.9 review finds I–K and the 6.6.10 finds that produce wrong results
