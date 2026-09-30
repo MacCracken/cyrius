@@ -35,6 +35,8 @@
 #   2. move unlinkat 263→35 ABOVE nanosleep 35→101      -> FAIL (35→101 re-captures 263→35)
 #   3. swap sendmsg 46→211 and ftruncate 77→46          -> FAIL (46→211 re-captures 77→46)
 #   4. delete every EW() row (empty chain)              -> FAIL on the floor, not "0 found"
+#   5. (6.6.12) delete the statx row 1291→291           -> FAIL "MISSING … alias 1291"
+#   6. (6.6.12) move the 1009→9 row ABOVE mmap 9→222    -> FAIL (9→222 re-captures 1009→9)
 # Behaviourally, mutation 3 also fails **12** assertions in
 # tests/tcyr/crossos/syscall_shm_fd_passing.tcyr — MEASURED, not estimated: swap the pair,
 # rebuild the aarch64 fork, run under qemu-aarch64 -> "40 passed, 12 failed", exit 12.
@@ -122,4 +124,45 @@ if [ -n "${first_alias:-}" ] && [ "$first_alias" -lt "$last_compat" ]; then
     exit 1
 fi
 
-echo "PASS esysxlat_row_order: $nrows ESYSXLAT ELF rows, 0 re-captures, alias band last"
+# ── every Linux-side alias the aarch64 peer declares has its renumber row (6.6.12) ──────
+# An alias with NO ELF row reaches the kernel verbatim — `svc` with x8=1009 — and answers
+# -ENOSYS on every aarch64 Linux host, with a clean build and no diagnostic. The two rules above
+# only judge rows that EXIST, so they are blind to a missing one. 6.6.12 added fourteen aliases
+# at once (the xattr family 1005..1016, fchown 1055, statx 1291), which is what made the
+# declaration-to-row check worth writing: it reads the peer's `SYS_* = 1NNN;` constants and
+# requires the decoded row `1NNN -> NNN` for each (the band's spelling is 1000 + native).
+PEER=lib/syscalls_aarch64_linux.cyr
+[ -f "$PEER" ] || { echo "FAIL: esysxlat_row_order: $PEER missing"; exit 1; }
+# Darwin-only occupants: spelled 1000 + the DARWIN number, issued only under
+# #ifdef CYRIUS_TARGET_MACOS, so they have no Linux arm by design (the peer's own comment says so).
+darwin_only() {
+    case "$1" in
+    1116) echo "gettimeofday — 1000 + Darwin 116; lib/sys.cyr's macOS sysinfo arm only" ;;
+    1202) echo "sysctl — 1000 + Darwin 202; lib/sys.cyr's macOS uname/sysinfo arms only" ;;
+    *) echo "" ;;
+    esac
+}
+ALIASES=$(grep -oE 'SYS_[A-Z0-9_]+ = 1[0-9][0-9][0-9];' "$PEER" | sed -E 's/.* = ([0-9]+);/\1/' | sort -n -u)
+nal=$(printf '%s\n' "$ALIASES" | grep -c '^[0-9]' || true)
+if [ "$nal" -lt 20 ]; then
+    echo "FAIL: esysxlat_row_order: read only $nal private-alias constants from $PEER (floor 20, ~90 % of the 22 at 6.6.12) — the scan is broken, not the peer."
+    exit 1
+fi
+amiss=0
+for a in $ALIASES; do
+    if [ -n "$(darwin_only "$a")" ]; then continue; fi
+    want="$a $((a - 1000))"
+    if ! printf '%s\n' "$ROWS" | grep -qx "$want"; then
+        echo "    MISSING  $PEER declares the alias $a, and ESYSXLAT's ELF arm has no row $a->$((a - 1000))."
+        amiss=$((amiss + 1))
+    fi
+done
+for a in 1116 1202; do
+    printf '%s\n' "$ALIASES" | grep -qx "$a" || { echo "FAIL: esysxlat_row_order: Darwin-only exemption $a matches no alias in $PEER — remove it"; exit 1; }
+done
+if [ "$amiss" -ne 0 ]; then
+    echo "FAIL: esysxlat_row_order: $amiss alias(es) with no renumber row — each reaches the aarch64 kernel verbatim and answers -ENOSYS."
+    exit 1
+fi
+
+echo "PASS esysxlat_row_order: $nrows ESYSXLAT ELF rows, 0 re-captures, alias band last, all $nal peer aliases renumbered (2 Darwin-only)"
