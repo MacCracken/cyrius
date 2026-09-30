@@ -53,7 +53,8 @@
 # always 0 -> J3 RED. Drop the pass-1 `SFAS` -> J3 RED. Drop the memo hit in future_force -> K
 # (x86, PE, aarch64) and J3 RED. Raise the arity cap -> L RED. Spill no pending pushes in
 # `_await_coro_suspend` (d = 0) -> J4 and PE J4 RED. Drop the parenthesis look-through in
-# `_await_operand_is_future` -> J5 RED.
+# `_await_operand_is_future` -> J5 RED. 6.6.12: push `_defer_emit_init`'s fall-through jmp for a
+# coroutine again -> M RED.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -202,6 +203,18 @@ var e = main();
 syscall(60, 0);
 EOF
 run e '0 0 0 7 7 7 7 7 7 7 1' "E: a finished loop coroutine does not resume; its defer ran once"
+# M (6.6.12, B05 T8b) — no UNREACHABLE `jmp +0` after the resume dispatch. `_defer_emit_init`
+# (src/frontend/parse.cyr) pushed the body's fall-through `jmp` for every fn with defers, but a
+# coroutine's body end is already routed to the return landing and its dispatch ends in an
+# unconditional `jmp` to the body top, so a coroutine with a defer carried a dead `e9 00000000`
+# right after that backward jmp. Pinned on E's binary (a defer + awaits): the byte pattern
+# "backward rel32 jmp, then jmp +0" must not occur. Mutation: push the jmp before the
+# `_cur_fn_coro` test again -> M RED (1 occurrence).
+if [ -s "$T/e.bin" ]; then
+    mdead=$(od -An -v -tx1 "$T/e.bin" | tr -d '\n' | grep -o 'e9 [0-9a-f][0-9a-f] [0-9a-f][0-9a-f] [0-9a-f][0-9a-f] ff e9 00 00 00 00' | wc -l | tr -d ' ')
+    if [ "$mdead" = 0 ]; then ok "M: no dead jmp +0 after a coroutine's resume dispatch"
+    else bad "M: $mdead dead \`jmp +0\` after a backward jmp in E's coroutine (the unreachable fall-through jmp is back)"; fi
+else bad "M: E's binary is missing, so the dead-jmp check could not look"; fi
 
 cat > "$T/f.cyr" <<EOF
 $PRE
@@ -518,4 +531,4 @@ else bad "cx leg: could not build src/main_cx.cyr / programs/cxvm.cyr"; fi
 if [ "$fails" -ne 0 ]; then echo "FAIL: coroutine_fnptr_and_completion — $fails axis(es) red"; exit 1; fi
 # 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
 if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: coroutine_fnptr_and_completion — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
-echo "PASS: coroutine_fnptr_and_completion — fncallN / callptr / closure calls inside a coroutine reach their callee (A-C); a completed coroutine answers with its value and runs nothing again (D-F); 0- and 9-parameter coroutines (G-H); a fall-off completes (I1-I4); await yields its value and forces Futures, inside any expression (J1-J5); a plain Future runs once (K); 9+ plain parameters refused (L); PE / aarch64 / cx legs"
+echo "PASS: coroutine_fnptr_and_completion — fncallN / callptr / closure calls inside a coroutine reach their callee (A-C); a completed coroutine answers with its value and runs nothing again (D-F); 0- and 9-parameter coroutines (G-H); a fall-off completes (I1-I4); await yields its value and forces Futures, inside any expression (J1-J5); a plain Future runs once (K); 9+ plain parameters refused (L); no dead jmp after the resume dispatch (M); PE / aarch64 / cx legs"
