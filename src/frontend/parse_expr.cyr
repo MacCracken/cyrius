@@ -1068,6 +1068,50 @@ fn _IFS_K(t): i64 {
     return 0;
 }
 
+# ⛔ 6.6.12 — A `.field` ON A CALL RESULT (`f(mk(p).n)`, `var r = mkp(3).y;`, `mk(p).v.x + 1`)
+# parsed nowhere: the factor returned straight after the call and the `.` was a syntax error in
+# every expression position. Cursor just past the callee IDENT; 1 = the call and its whole field
+# tail are consumed (the value in rax, typed like any field load), 0 = not that shape (cursor
+# untouched). In a fn the result lands in a frame temp — the retptr / rax:rdx / rax store of
+# `_struct_call_emit`, a `Str` handle in a pointer-mode slot — and the field is loaded from it
+# through PARSE_FIELD_LOAD's own body (`_field_load_on`), so chains, widths, signedness, float
+# kinds, a method on the result and a struct-typed field as a whole-struct source all match a
+# named receiver. At top level there is no frame: refused by name. CHANGELOG [6.6.12]
+fn _call_field(S): i64 {
+    var ti = GTI(S) - 1;
+    if (_call_dotted(S, ti) == 0) { return 0; }
+    var fi = _gen_resolve_call(S, ti);
+    if (fi < 0) { if (_syntax_only == 0) { return 0; } }   # an undefined callee reports itself
+    var sid = 0;
+    if (fi >= 0) { sid = GFRS(S, fi); }
+    if (sid <= 0 || GINFN(S) != 1) {
+        # --syntax-only: a return type from a sibling file reads as a scalar, so stay silent.
+        if (_syntax_only == 0) {
+            if (sid <= 0) { ERR_IDENT(S, "cannot take a field of the result of ", TOKVAL(S, ti), ": it does not return a struct", 0 - 1); }
+            else { _refuse_toplevel_struct_call(S, TOKVAL(S, ti)); }
+        }
+        # --syntax-only still parses a plain call's arguments, for the grammar errors in them.
+        if (_syntax_only == 1 && TOKTYP(S, ti + 1) == 10) { PARSE_FNCALL(S, TOKVAL(S, ti)); }
+        else { STI(S, _call_close(S, _gcall_open(S, ti)) + 1); }
+        _synonly_skip_chain(S);
+        _cfo = 0;
+        return 1;
+    }
+    STI(S, ti);
+    var h = 0;
+    if (_ret_agg_class(S, fi) == 0) { if (STRUCTSZ(S, sid - 1) > 8) { h = 1; } }
+    _struct_call_into(S, h);
+    var t = _sci_t;
+    STI(S, GTI(S) + 1);                 # consume `.`
+    var fnoff = PEEKV(S);
+    STI(S, GTI(S) + 1);                 # consume the field name
+    _field_load_on(S, TOKVAL(S, ti), fnoff, ti, 0 - 2 - t, sid);
+    # AFTER the call: a literal argument (`mkp(3)`) left itself foldable, and `mkp(3).y + 1`
+    # then folded to 4 by rewriting the code from that literal — the call and the load with it.
+    _cfo = 0;
+    return 1;
+}
+
 # v6.3.10 (explicit): `foo<i64>(x)` / `foo<Pt>(p)` — cursor on the `<`. Out of
 # `_PARSE_FACTOR_IMPL` since 6.6.10: that body is near cybs's per-function reference limit, and
 # this path grew the stub refusal.
@@ -1283,6 +1327,7 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
         # IDENT — variable load or function call
         var noff = PEEKV(S);
         STI(S, GTI(S) + 1);
+        if (_call_field(S) == 1) { return 0; }   # 6.6.12: `f(..).field` / `f<T>(..).field`
         # v6.3.10 (explicit): `foo<i64>(x)` explicit type-arguments. Gated on the
         # monomorph flag AND a generic-fn callee AND the `foo<...>(` lookahead shape,
         # so `a < b`, chained comparisons, and calls to non-generic fns are never

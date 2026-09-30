@@ -120,6 +120,49 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (qemu) and PE (wine), and on real pi, ecb, ach and cass; the no-lib cx rows
   (`B03-cx-rows.cyr`, exit 128 = all right) are 128 on cxvm and every native target, 127 on the
   pre-B03 cx compiler. Fixpoint and seed-derive green.
+- **A field chain stopped after two levels, and no expression accepted a `.field` on a call result
+  (B04, items R7 + R3).** Both were loud — syntax errors, nothing compiled wrong. **Root cause
+  (R7):** `_resolve_leaf_field` (`src/frontend/parse_decl.cyr`), which serves both the field load
+  and the field store, descended exactly ONE nested level (an `if`), so `n.v.v.x = 3;` was
+  `expected '=', got '.'` and `var r = n.v.v.x;` `expected ';', got '.'` through a local, a global
+  (inline and pointer-mode) and a by-value or `*T` parameter alike. **Fix:** a `while`, guarded by
+  `_rlf_more` so a `..` range and a `.method(` on a nested field keep their own paths. **Root cause
+  (R3):** `_PARSE_FACTOR_IMPL` (`src/frontend/parse_expr.cyr`) returned straight after the call
+  (`PARSE_FNCALL`, `_explicit_generic_call`) — no postfix-dot arm — so `f(mk(p).n)`,
+  `var r = mkp(3).y;` and `mk(p).v.x + 1` were syntax errors, generic or not, at every return class;
+  and PARSE_VAR's lookaheads read a call followed by `.` as a whole-struct receive, so
+  `var s = mkp(3).y + 1;` typed `s` as `Pt` and dispatched `+` to an undefined `Pt_add`. **Fix:**
+  `_call_field` (parse_expr.cyr), called before both call arms: inside a fn the call lands in a
+  frame temp (`_struct_call_into`, `src/frontend/parse_fn.cyr` — `_struct_call_emit` gains the
+  missing class-0 store, rax into the temp; a `Str` handle, the one class-0 struct over 8 B, goes
+  into a pointer-mode slot, `_ptr_temp`) and the field is loaded through PARSE_FIELD_LOAD's own body,
+  split out as `_field_load_on(S, noff, fnoff, beg, idx, sid)`, so chains, widths, sign-extension,
+  f64 typing, a method on the result (`mkpt(3).psum()`) and a struct-typed field taken whole (`var q:
+  Pt = mk(p).v;`, `q = ..`, `d.p = ..`, a by-value argument) behave as for a named receiver. The
+  literal-fold flag is cleared AFTER the call: cleared before it, `mk8(4).a * 10` folded from the
+  argument literal and dropped the call. At top level there is no frame: refused by name for every
+  return class; a callee returning no struct is refused by name; under `--syntax-only` a field of an
+  unresolved call is silent and its arguments are still parsed. `_var_rhs_call` (PARSE_VAR's two call
+  lookaheads, now one helper) skips a call followed by `.field`, and `_try_push_struct_addr_arg`,
+  `_return_struct_call`, `_pair_ret_call_ok` and `_refuse_toplevel_pair_init` step aside for one
+  (`_call_dotted`) — without the last-but-one step-aside `return mkpt(1).x;` from a `: Pt` fn
+  compiled SILENTLY, taking the call whole. **Verification:** new
+  `tests/tcyr/lang/struct_field_chain_depth.tcyr` (29 rows: 3- and 4-level read and write through a
+  local, an inline and a pointer-mode global, by-value and `*T` parameters, packed i8/i16/i32 leaves
+  checked through `load8/32/64` on the storage, a whole deep struct copied and passed, a `..` range
+  after a deep chain, an f64 leaf; 6.6.11 does not build it; mutation `while` → `if`: does not
+  build); `tests/tcyr/crossos/generic_struct_inference.tcyr` gains the CF group (26 rows: argument,
+  var-init, expression and chain for a 5 B rax, 16 B rax:rdx and 24/32 B retptr result, inferred and
+  explicit generics, `W1<Pt>`, a method on the result, a struct-typed field whole into a `var`, an
+  assignment, a field and a by-value argument, a `Str` handle, f64 fields; the rax:rdx rows off on
+  cx, which has no register-pair struct return; six mutations each RED, listed in its header); new
+  gate `tests/gates/frontend/call_result_field.sh` (12 rows on the message: five top-level
+  refusals, three required to be the ONLY error; the non-struct callee; two struct-type mismatches;
+  two struct-return diagnostics; two `--syntax-only` rows; 6.6.11 fails 11 of 12; mutation ledger in
+  its header). Both tcyrs green on x86, aarch64 (qemu), PE (wine) and cx (cxvm, 29/29 and 60/60),
+  and on real ecb, ach, pi and cass, compiled there by a compiler that self-hosted byte-identical on
+  that host. The guide (`docs/guides/cyrius-guide.md`, Structs) documents both. Fixpoint and
+  seed-derive green; cycc 1,453,864 → 1,458,048 B.
 
 ## [6.6.11] — 2026-09-29
 

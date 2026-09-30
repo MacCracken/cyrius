@@ -359,6 +359,38 @@ fields' widths, and never descended further: `struct HO { o: Odd; t: i8; u: i32;
 the next global, or the calling fn's frame — and a struct nested two levels deep took the wrong
 number of values. Both were silent, on every target.
 
+### Field chains and call results (v6.6.12)
+
+A field chain reaches any depth, for reading and writing, through a local, a global, a by-value
+parameter or a `*T` parameter alike: `n.v.v.x = 3;`, `var r = h.w.v.v.y;`. A `.field` also
+applies to a **call** that returns a struct, in any expression position, and chains on from
+there:
+
+```
+struct Pt { x; y; }
+struct Box { v: Pt; n; }
+fn mk(a): Box { var b: Box; b.v.x = a; b.v.y = a + 1; b.n = 5; return b; }
+fn take(p: Pt): i64 { return p.x + p.y; }
+fn demo(): i64 {
+    var y = mk(3).v.y;         # 4
+    var s = mk(3).n + 1;       # 6, an integer
+    var q: Pt = mk(7).v;       # a struct-typed field, copied whole
+    return y + s + take(mk(1).v) + q.x;
+}
+```
+
+Inside a fn the result lands in a frame temporary and the field is read from it, exactly as for
+a named struct: the same widths, sign-extension and `f64` typing. A method applies to the result
+itself (`mk(3).total()` calls `Box_total`); as for a named struct, not to a nested field
+(`mk(3).v.sum()`, like `b.v.sum()`, is a syntax error). At top level there is no frame:
+`var G = mk(3).n;` is refused by name — call it inside a fn. A field of a call to a fn that
+does not return a struct is refused too.
+
+⚠ Before v6.6.12 a chain stopped after two levels — `n.v.v.x` was the syntax error
+`expected ';', got '.'` — and a `.field` after a call was `expected ')', got '.'` in every
+position; `var s = mk(3).n + 1;` also typed `s` as `Box` and looked for an undefined `Box_add`.
+All of these were loud: nothing compiled wrong.
+
 ### Field types (v6.6.10)
 
 A field is untyped (`x;`, 8 bytes, i64) or annotated `x: T`, where `T` is one of:

@@ -836,6 +836,16 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
         }
         else { sid = GVTYPE(S, idx); }
     }
+    _field_load_on(S, noff, fnoff, pfl_beg, idx, sid);
+    return 0;
+}
+
+# PARSE_FIELD_LOAD past the base: the receiver resolved to (idx, sid) in PARSE_FIELD_LOAD's
+# encoding, the cursor just past `.name` (`fnoff`). A method call, or the field and any nested
+# chain loaded at the leaf's width and signedness. `noff` names the receiver in diagnostics and
+# `pfl_beg` is its first token. 6.6.12: a separate entry so a CALL RESULT's field (`mk(p).v.x`,
+# `_call_field`) takes the same body from its frame temp. CHANGELOG [6.6.12]
+fn _field_load_on(S, noff, fnoff, pfl_beg, idx, sid): i64 {
     var si = 0;
     if (sid > 0) { si = sid - 1; }
 
@@ -3357,6 +3367,22 @@ fn _try_vector_call_assign(S, noff): i64 {
     return 1;
 }
 
+# The right-hand side at token `ti` is a call — `IDENT (` or a generic `IDENT < .. > (` — whose
+# RESULT is the value, i.e. not followed by `.field`. PARSE_VAR sizes a struct receive and infers
+# an untyped local's struct type from such a call; a field of the result (`var r = mkp(3).y;`)
+# is the field's value, not the struct. CHANGELOG [6.6.12]
+fn _var_rhs_call(S, ti): i64 {
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    var c = 0;
+    if (TOKTYP(S, ti + 1) == 10) { c = 1; }
+    if (c == 0) { if (_MONOMORPH_OK == 1) { if (TOKTYP(S, ti + 1) == 19) {
+                var gfi = FINDFN(S, TOKVAL(S, ti));
+                if (gfi >= 0) { if (GFTP(S, gfi) != 0) { c = 1; } }
+            } } }
+    if (c == 1) { if (_call_dotted(S, ti) == 1) { c = 0; } }
+    return c;
+}
+
 # Parse: var IDENT = expr ;
 fn PARSE_VAR(S): i64 {
     STI(S, GTI(S) + 1);  # consume VAR
@@ -4010,12 +4036,8 @@ fn PARSE_VAR(S): i64 {
             # plain `IDENT (` and the monomorph generic `IDENT < ... > (` shapes. The
             # RHS-consume path (parse_expr.cyr:375) already handles the generic call;
             # only this LHS receive-type inference needed the `<`-token widening.
-            var _look_iscall = 0;
-            if (TOKTYP(S, _look_ti + 1) == 10) { _look_iscall = 1; }
-            if (_look_iscall == 0) { if (_MONOMORPH_OK == 1) { if (TOKTYP(S, _look_ti + 1) == 19) {
-                        var _look_gfi0 = FINDFN(S, TOKVAL(S, _look_ti));
-                        if (_look_gfi0 >= 0) { if (GFTP(S, _look_gfi0) != 0) { _look_iscall = 1; } }
-                    } } }
+            # 6.6.12: `_var_rhs_call` — and not a call followed by `.field` (`mkp(3).y`).
+            var _look_iscall = _var_rhs_call(S, _look_ti);
             if (_look_iscall == 1) {
                 # ⛔ 6.6.10: the callee the call REACHES — a generic's instance for explicit
                 # type args or an inferred struct argument — not the base FINDFN names. The
@@ -4305,12 +4327,8 @@ fn PARSE_VAR(S): i64 {
                 # v6.3.37 (B2): infer the local's struct type from BOTH a plain `IDENT (`
                 # and a monomorph generic `IDENT < ... > (` call — so `var b = mk<i32>(...)`
                 # types `b` as the struct (its GFRS return sid) and `b.x`/`b.w` parse.
-                var _ti_iscall = 0;
-                if (TOKTYP(S, GTI(S) + 1) == 10) { _ti_iscall = 1; }
-                if (_ti_iscall == 0) { if (_MONOMORPH_OK == 1) { if (TOKTYP(S, GTI(S) + 1) == 19) {
-                            var _ti_gfi = FINDFN(S, PEEKV(S));
-                            if (_ti_gfi >= 0) { if (GFTP(S, _ti_gfi) != 0) { _ti_iscall = 1; } }
-                        } } }
+                # 6.6.12: `var s = mkp(3).y + 1;` typed `s` as Pt (and dispatched `+` to Pt_add).
+                var _ti_iscall = _var_rhs_call(S, GTI(S));
                 if (_ti_iscall == 1) {
                     var _ti_fi = _gen_resolve_call(S, GTI(S));   # 6.6.10: the instance's return
                     if (_ti_fi >= 0) {

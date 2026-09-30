@@ -66,6 +66,23 @@
 # Mutation: make `_lit_head` (src/frontend/parse_decl.cyr) return 0 on `<` -> this file does not
 # build. The mismatched-annotation refusals are in tests/gates/frontend/struct_literal_type_refused.sh.
 #
+# CF (6.6.12, R3) rows `run_call_fields` / `run_call_fields_pair`: a `.field` on a CALL RESULT,
+# `f(mk(p).n)`, `var r = mkp(3).y;`, `mk(p).v.x + 1`. The factor returned straight after the call,
+# so every expression position was a syntax error ("expected ')', got '.'" / "expected ';', got
+# '.'"), and `var s = mkp(3).y + 1;` also typed `s` as the struct and dispatched `+` to an undefined
+# `Pt_add`. Rows cover the argument, the var-init, the expression and a chain, for each return
+# class: rax (a 5 B `P8`), rax:rdx (the 16 B `Pt`, `W1<Pt>`; off on cx, which has no register-pair
+# struct return) and the retptr (`P3`, `BB`, `BP`, `Box<Pt>`), plus a `Str` handle, a method on
+# the result, a struct-typed field taken whole, and a literal argument (`mk8(4).a * 10`, which
+# folded to a constant and dropped the call on the first cut). The top-level refusals are in
+# tests/gates/frontend/call_result_field.sh. MUTATIONS (scratch trees), each RED here: no
+# `_call_field` call in `_PARSE_FACTOR_IMPL` (the file does not build); `_struct_call_emit`
+# without its class-0 store (C0 rows); `_struct_call_into` ignoring `handle` (the Str row);
+# `_var_rhs_call` not asking `_call_dotted` (the file does not build: `var r2 = mk3(4).c;` is
+# received as the struct); `_call_field` not clearing `_cfo` after the call (C0x and the `+ 1`
+# rows); `_try_push_struct_addr_arg` without its `_call_dotted` route (`ptv(mkbp(5).p)` pushes
+# the field's first word as the struct's address: rc 139).
+#
 # CROSS-HOST because each instance is a by-value struct-param fn emitted inline (jumped over) by
 # every backend, and struct returns take the per-target retptr / register-pair ABI.
 include "lib/assert.cyr"
@@ -152,6 +169,18 @@ fn use_fwd(p: Pt): i64 { var r: Box<Pt> = mkq(p); return r.n * 10 + r.v.x + r.v.
 fn mkq(x: Pt): Box<Pt> { var b: Box<Pt>; b.v = x; b.n = 5; return b; }
 #endif
 
+# CF (6.6.12): struct-returning fns whose RESULT's field is taken, one per return class.
+struct P8 { a: i32; b: i8; }            # 5 B: returned in rax
+struct BB { q: P3; k; }                 # 32 B: retptr, a struct field of a struct field
+struct BP { p: Pt; k; }                 # 24 B: retptr, a Pt-typed field
+fn mk8(a): P8 { var p: P8; p.a = a; p.b = 0 - 3; return p; }
+fn P8_tot(self: P8): i64 { return self.a + self.b; }
+fn mk3(a): P3 { var r: P3; r.a = a; r.b = a + 1; r.c = a + 2; return r; }
+fn mkbb(a): BB { var b: BB; b.q.a = a; b.q.b = a * 2; b.q.c = a * 3; b.k = 9; return b; }
+fn mkbp(a): BP { var b: BP; b.p.x = a; b.p.y = a + 1; b.k = 7; return b; }
+fn plus1(a): i64 { return a + 1; }
+fn ptv(p: Pt): i64 { return p.x * 10 + p.y; }
+
 fn box_sum(r: Box<Pt>): i64 { return r.n * 10 + r.v.x + r.v.y * 100; }
 # A parameter typed with an instance whose size class differs from its base's, called before
 # its definition (pass 1 must record the address-passed bit from the INSTANCE) and after.
@@ -190,6 +219,60 @@ fn run_literals(): i64 {
     assert_eq(w1s(GLW), 17, "LIT: leading-block `W1<Pt> { 8, 9 }`");
     return 0;
 }
+
+fn run_call_fields(): i64 {
+    test_group("a field of a call result (R3): rax, retptr and Str");
+    assert_eq(mk8(4).a * 10 + mk8(4).b, 37, "CF C0x: `mk8(4).a * 10 + mk8(4).b`, a 5 B rax result in an expression");
+    var r0 = mk8(6).b;
+    assert_eq(r0, 0 - 3, "CF C0: `var r0 = mk8(6).b;`, an i8 field sign-extended");
+    assert_eq(plus1(mk8(7).a), 8, "CF C0: `plus1(mk8(7).a)` as an argument (was \"expected ')'\")");
+    assert_eq(id1(mk8(7).a), 8, "CF C0: `id1(mk8(7).a)`, a generic: the field binds T = i64");
+    assert_eq(mk8(5).tot(), 2, "CF C0: `mk8(5).tot()`, a method on the result (a <= 8 B self by value)");
+    var r2 = mk3(4).c;
+    assert_eq(r2, 6, "CF C2: `var r2 = mk3(4).c;`, a 24 B retptr result");
+    var s2 = mk3(4).b + 1;
+    assert_eq(s2, 6, "CF C2: `var s2 = mk3(4).b + 1;` is an integer (was typed P3: undefined P3_add)");
+    assert_eq(plus1(mk3(2).c), 5, "CF C2: `plus1(mk3(2).c)` as an argument");
+    assert_eq(mkbb(2).q.c, 6, "CF C2: `mkbb(2).q.c`, a chain on the result");
+    assert_eq(mkbb(2).k + mkbb(3).q.b, 15, "CF C2: two chained results in one expression");
+    assert_eq(plus1(mk3(mk8(2).a).b), 4, "CF: a call result's field as the argument of a call whose result's field is taken");
+    var q: Pt = mkbp(3).p;
+    assert_eq(q.x * 10 + q.y, 34, "CF: `var q: Pt = mkbp(3).p;`, a struct-typed field taken whole");
+    var q2: Pt; q2.x = 0; q2.y = 0;
+    q2 = mkbp(4).p;
+    assert_eq(q2.x * 10 + q2.y, 45, "CF: `q2 = mkbp(4).p;`");
+    assert_eq(ptv(mkbp(5).p), 56, "CF: `ptv(mkbp(5).p)`, the field as a by-value struct argument");
+    var d: BP; d.k = 1; d.p.x = 0; d.p.y = 0;
+    d.p = mkbp(6).p;
+    assert_eq(d.p.x * 10 + d.p.y + d.k * 100, 167, "CF: `d.p = mkbp(6).p;`, into a struct field");
+    assert_eq(str_from("abcd").len, 4, "CF Str: `str_from(\"abcd\").len`, a heap-handle result");
+    return 0;
+}
+
+#ifndef CYRIUS_TARGET_CX
+fn Pt_psum(self: Pt): i64 { return self.x + self.y; }
+struct F2 { x: f64; y: f64; }
+fn mkf2(): F2 { var f: F2; f.x = 1.5; f.y = 2.25; return f; }
+fn run_call_fields_pair(): i64 {
+    var p: Pt; p.x = 1; p.y = 2;
+    test_group("a field of a call result (R3): rax:rdx and generic instances");
+    assert_eq(mkpt(3).y, 5, "CF C1: `mkpt(3).y`, a 16 B register-pair result");
+    var r1 = mkpt(3).x;
+    assert_eq(r1, 3, "CF C1: `var r1 = mkpt(3).x;` (was \"expected ';'\")");
+    var s1 = mkpt(3).y + 1;
+    assert_eq(s1, 6, "CF C1: `var s1 = mkpt(3).y + 1;` is an integer (was typed Pt: undefined Pt_add)");
+    assert_eq(plus1(mkpt(8).x), 9, "CF C1: `plus1(mkpt(8).x)` as an argument");
+    assert_eq(mkpt(3).psum(), 8, "CF C1: `mkpt(3).psum()`, a method on the result");
+    assert_eq(mk(p).v.x + mk(p).v.y * 10, 21, "CF: `mk(p).v.x`, a chain on an inferred generic's Box<Pt>");
+    assert_eq(mk<Pt>(p).v.y + mk<Pt>(p).n * 10, 52, "CF: `mk<Pt>(p).v.y`, the explicit form");
+    assert_eq(mkw(p).v.y, 2, "CF: `mkw(p).v.y`, a W1<Pt> (16 B) instance whose base is 8 B");
+    var qq: Pt = mk(p).v;
+    assert_eq(qq.x * 10 + qq.y, 12, "CF: `var qq: Pt = mk(p).v;` from a generic's result");
+    var fx = mkf2().x + mkf2().y;
+    assert_eq(f64_to(f64_mul(fx, 100.0)), 375, "CF: `mkf2().x + mkf2().y` is a float add");
+    return 0;
+}
+#endif
 
 fn run_calls(a): i64 {
     var p: Pt; p.x = a; p.y = 5;
@@ -306,9 +389,11 @@ fn main(): i64 {
     run_literals();
     run_calls(2);
     run_params();
+    run_call_fields();
     #ifndef CYRIUS_TARGET_CX
     run_returns();
     run_paths();
+    run_call_fields_pair();
     #endif
     test_group("scalar generics and controls");
     assert_eq(sm(5), 35, "RG: for i in n..10 over a T-typed n (was 0: read as a field access)");

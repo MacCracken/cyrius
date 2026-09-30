@@ -1467,6 +1467,8 @@ fn _try_push_struct_addr_arg(S, fi, argc): i64 {
     var o = 0 - 1;
     if (GINFN(S) == 1) { o = _gcall_open(S, GTI(S)); }
     if (o >= 0) {
+        # 6.6.12: `take(mk(p).v)` — the argument is a FIELD of the result, taken like `take(b.v)`.
+        if (_call_dotted(S, GTI(S)) == 1) { return _push_struct_expr_arg(S, fi, argc); }
         if (_ret_agg_class(S, _gen_resolve_call(S, GTI(S))) == 0) { return 0; }   # 6.6.10: the instance's class
         if (_call_is_whole_arg(S, o - 1) == 0) { return 0; }
         EFLADDR(S, _struct_call_into_temp(S));
@@ -1840,12 +1842,23 @@ fn _struct_call_emit(S, fi, noff, dst): i64 {
     else { ECALLFIX(S, fi); }
     ECALLCLEAN(S, n);
     if (cls == 1) { EFLSTORE_STRUCT_INT_PAIR(S, dst); }
+    # 6.6.12: a struct result in rax — a <= 8 B struct's bytes (`dst` inline), or a `Str` handle
+    # (`dst` pointer-mode, see `_struct_call_into`). Only `_call_field` asks for this class.
+    if (cls == 0) { if (GFRS(S, fi) > 0) { EFLSTORE(S, dst); } }
     return 0;
 }
 
 # `IDENT ( args )` at the cursor, for a callee `_ret_agg_class` accepts: allocate a temp, emit
 # the call into it, return the temp's field-0 slot. CHANGELOG [6.6.6]
 fn _struct_call_into_temp(S): i64 {
+    _struct_call_into(S, 0);
+    return _sci_t;
+}
+# 6.6.12: `handle` = 1 for a struct returned as a HEAP HANDLE in rax (`Str` — the one class-0
+# struct over 8 B): the temp is one POINTER-mode slot that holds it, as `var s = str_from(..)`
+# does, not an inline aggregate the handle would be stored into. The slot is left in `_sci_t`.
+var _sci_t = 0;
+fn _struct_call_into(S, handle): i64 {
     var noff = PEEKV(S);
     var o = _gcall_open(S, GTI(S));          # 6.6.10: also `name<..>(`
     if (o < 0) { o = GTI(S) + 1; }
@@ -1854,9 +1867,23 @@ fn _struct_call_into_temp(S): i64 {
     _gen_own_call_check(S, fi, noff);
     _vis_check(S, fi, noff);
     _DEPRECATED_WARN(S, fi, noff);
-    var t = _agg_temp(S, GFRS(S, fi));
+    var t = 0;
+    if (handle == 1) { t = _ptr_temp(S, GFRS(S, fi)); }
+    else { t = _agg_temp(S, GFRS(S, fi)); }
     STI(S, o + 1);   # consume IDENT [<..>] `(`
     _struct_call_emit(S, fi, noff, t);
+    _sci_t = t;
+    return 0;
+}
+
+# An anonymous POINTER-mode struct slot (the slot holds the struct's address). CHANGELOG [6.6.12]
+fn _ptr_temp(S, sid): i64 {
+    var t = GFLC(S);
+    S64(S + 0x5D9D000 + t * 8, 0 - 1);
+    SLDEP(S, t, GSDEP(S));
+    SLTYPE(S, t, 0 - sid);
+    SFLC(S, t + 1);
+    if (t + 1 > _flc_hwm) { _flc_hwm = t + 1; }
     return t;
 }
 
@@ -1873,6 +1900,31 @@ fn _call_follow(S, ti): i64 {
     return TOKTYP(S, k + 1);
 }
 
+# The `)` closing the call whose `(` is token `o`. CHANGELOG [6.6.12]
+fn _call_close(S, o): i64 {
+    var k = o + 1;
+    var d = 1;
+    while (k < GTCNT(S)) {
+        var t = TOKTYP(S, k);
+        if (t == 10) { d = d + 1; }
+        if (t == 11) { d = d - 1; if (d == 0) { return k; } }
+        k = k + 1;
+    }
+    return k;
+}
+
+# 1 = the call `name(..)` / `name<..>(..)` at token `ti` is followed by `.field` — its result is
+# not the value (a `..` range is not a field). The receives that size a destination from the
+# callee's return skip such a call. CHANGELOG [6.6.12]
+fn _call_dotted(S, ti): i64 {
+    var o = _gcall_open(S, ti);
+    if (o < 0) { return 0; }
+    var c = _call_close(S, o);
+    if (TOKTYP(S, c + 1) != 41) { return 0; }
+    if (TOKTYP(S, c + 2) != 2) { return 0; }
+    return 1;
+}
+
 # Is the call at `ti` the WHOLE argument (followed by `,` or `)`)? A call inside a larger
 # expression (`f(a) + 1`) is left to the ordinary value path.
 fn _call_is_whole_arg(S, ti): i64 {
@@ -1886,6 +1938,7 @@ fn _call_is_whole_arg(S, ti): i64 {
 # temp (returned), or -1 when the return expression is not that shape. CHANGELOG [6.6.6]
 fn _return_struct_call(S): i64 {
     if (_gcall_open(S, GTI(S)) < 0) { return 0 - 1; }   # 6.6.10: `name(` or `name<..>(`
+    if (_call_dotted(S, GTI(S)) == 1) { return 0 - 1; }   # 6.6.12: a field of the result
     var fi = _gen_resolve_call(S, GTI(S));   # 6.6.10: a generic's instance, not its base
     if (fi < 0) { return 0 - 1; }
     if (GFRS(S, fi) != _cur_fn_ret_sid) { return 0 - 1; }
@@ -1904,6 +1957,7 @@ fn _return_struct_call(S): i64 {
 fn _refuse_toplevel_pair_init(S, pscale, ti): i64 {
     if (pscale >= 0) { return 0; }
     if (_gcall_open(S, ti) < 0) { return 0; }
+    if (_call_dotted(S, ti) == 1) { return 0; }   # 6.6.12: `_call_field` refuses a field of it
     var fi = _gen_resolve_call(S, ti);
     if (fi < 0) { return 0; }
     if (_grc_err < 0) { return 0; }   # a failed instantiation: the call refuses itself, once
@@ -2198,6 +2252,7 @@ fn _return_struct_expr(S): i64 {
 # CHANGELOG [6.6.6]
 fn _pair_ret_call_ok(S): i64 {
     if (_gcall_open(S, GTI(S)) < 0) { return 0; }   # 6.6.10: `name(` or `name<..>(`
+    if (_call_dotted(S, GTI(S)) == 1) { return 0; }   # 6.6.12: a field of the result
     # 6.6.10 (bite 7 review): the fn the call REACHES — `return mkw(p);` from a `: W1<Pt>` fn was
     # compared against the base's 8 B `W1` and refused (6.6.9 compiled it).
     var fi = _gen_resolve_call(S, GTI(S));
