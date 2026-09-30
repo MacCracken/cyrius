@@ -55,6 +55,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   indexing. **Gate:** `tests/gates/toolchain/lsp_indexes_every_decl_spelling.sh` axis 5 (the last of 6000
   long-named fns in one include, a fn in the 300th included file, and sigil's last fn); the 6.6.11 LSP
   fails all three rows, and two mutants are recorded in its ledger.
+- **cyrlint: the 120-column rule counted BYTES (B11, item S4).** A 93-column comment of 91 `─` (U+2500,
+  3 bytes each) warned "line exceeds 120 characters". **Fix:** the rule counts code points — every byte
+  that is not a UTF-8 continuation byte (`(b & 0xC0) != 0x80`, `_lint_cols`); the byte span stays what the
+  other rules index with. **Gate:** `tests/gates/toolchain/cyrlint_cross_line.sh` axis 15 (93- and
+  120-column box lines and a 120-column ASCII line are silent; the 121-column box and ASCII lines warn);
+  the byte rule restored fails it.
 - **lib/async_agnos.cyr: a state description read as an untracked deferral (B11, item T9b).**
   `_async_step`'s comment said it returns "the count of tasks not yet DONE", and cyrlint's `not yet` needle
   drew an untracked-deferral note on the stdlib itself. The comment now says "tasks whose state is not
