@@ -230,6 +230,276 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   ⛔ **sandhi 1.10.3 and ganita 1.2.9 must be TAGGED before cyrius 6.6.11 is**; the folds were
   copied byte-identical from those commits' `dist/`. `docs/ecosystem.md`'s two fold rows updated
   (`fold_table_matches_vendored.sh` green).
+### Fixed — struct value copies and struct-result type checks (B02)
+
+- **A struct variable copied from a struct-typed field copied one word, and the declaration
+  SIGSEGV'd (L1).** With `struct Box { v: Pt; n; }`, `q = b.v` left `q.y` stale (30 where 34 is
+  right) into a local, a global and an address-passed parameter alike, and `var p: Pt = b.v`
+  stored that word into a slot typed `Pt` that was not inline, so `p.x` dereferenced it (rc 139 on
+  x86 and aarch64, a page fault on PE, garbage on cx). **Root cause:** 6.6.10's field-source record
+  (`_fla_want` / `_fla_take`) was armed only for a field DESTINATION; `_try_aggregate_copy_assign`
+  and `_try_struct_copy_init` require `IDENT ;`, so a `b.v` source fell to the scalar store/init.
+  **Fix:** `_pcmpe_struct_assign` (src/frontend/parse.cyr) and PARSE_VAR's initialiser (`_scv_arm`)
+  arm the record when the destination is a struct; a hit is copied byte-exact through
+  `_agc_copy_bytes`' new `-2` source (the recorded field), a field of a different struct type is
+  refused by name.
+- **A method whose `self: T` is a struct of 8 B or less received the receiver's address (L3).**
+  `x.sum()` with `fn Odd_sum(self: Odd)` returned -23905 / 11130 / 4047 on x86 / aarch64 / cx
+  (want 3), where `Odd_sum(x)` was right. **Root cause:** the method arm of PARSE_FIELD_LOAD pushed
+  `&x` for every `self`, and nothing recorded that param 0 of such a fn is by value. **Fix:** bit
+  62 of `_fnt_structmask` (`_selfbv_bit`, set from param 0's tokens by both passes, masked out of
+  the whole-mask readers by `_smask_args`) — no brk-layout change; the method arm then loads the
+  receiver's value (`_self_value_ra`), for a local, a global, a captured and a forward-called one.
+- **A struct result of 8 B or less from a method or operator was never type-checked (L4).**
+  `h.o = y.same()`, `h.o = y + y`, `var z: Odd = y.same()`, `var z: Odd = y + y`, `h.p = y.mq()`,
+  `var z: P8 = y.mq()` stored an Od2 / Q8 into an Odd / P8 with no diagnostic. **Root cause:**
+  `_sc_post` returned before recording a class-0 result, and the scalar operator dispatch never
+  called it. **Fix:** `_sc_post_small` records it with `_sc_tmp = -3` ("in rax, no temp"); the field,
+  assignment and both declaration destinations compare its sid (the assignment also refuses a
+  mismatched 9 B-or-more method / operator result, which it used to hand to the scalar store). An
+  exact-register struct FIELD (1/2/4/8 B) now goes through the same checks (`_fsc_src` used to
+  return before them). The guide's "not type-checked yet" limitation is gone.
+- **A struct destination assigned from a call returning a DIFFERENT struct stored one word (L5).**
+  `p = mkq()` (Q, 24 B, into a Pt) gave 91 on x86 / aarch64 / cx, as did `p = mkr()` (16 B);
+  `z = mkod2()` and `var z: Odd = mkod2()` (3 B) compiled clean, and the generic `s = mk(r.v)` into a
+  `Box<Pt>` (the field argument infers T = i64) gave 2. **Root cause:** `_try_struct_call_assign`
+  compared the sid only after its `cls == 0` and `n <= 1` exits, and on a mismatch returned to the
+  scalar store; PARSE_VAR compared it only on the retptr / pair receives. **Fix:** `_sca_mismatch`
+  runs before every exit, `_scv_call_check` covers the <= 8 B declaration, and `_gen_decl_check`
+  names the generic declaration (which failed as "expected ';', got '.'"). **At top level** the
+  same mismatch compiled clean at 9-16 B too — `var GZ: Pt = mkr()` and `var GZ: Pt = GQ.mr()`
+  SIGSEGV'd reading `GZ.x`, no frame meaning no receive compared the sid — and the LEADING
+  declaration block (replayed by `EMIT_GVAR_INITS`, not PARSE_VAR) checked nothing at any size:
+  `_scv_call_check` now checks a 9-16 B free call at top level, `_sc_global_mismatch` a method /
+  operator result of either class, and `_gvi_ann` / `_gvi_expr` give the leading block the same
+  arming and checks. A >16 B call at top level is still refused as needing a frame.
+- **`var y: Q = x;` from an address-passed by-value struct parameter aliased the caller's struct
+  (L6).** `y.a = 9` changed the caller's `q` (329 vs 321, x86 / aarch64 / PE; 16 B too) and
+  `return y;` returned garbage for the retptr and the pair class. **Root cause:**
+  `_try_struct_copy_init` bailed on every non-inline source into the scalar init — right for a
+  pointer-mode local (a rebind), wrong for the parameter. **Fix:** a `_local_is_sptr_param` source
+  takes the same addressed copy `y = x;` has had since 6.6.6.
+- Regression coverage: 18 new rows in `tests/tcyr/crossos/struct_field_value_copy.tcyr` (cross-OS)
+  and the new gate `tests/gates/frontend/struct_result_type_refused.sh` (30 refusals at 3 / 8 / 16 /
+  24 B, generic, field / assignment / declaration forms, in a fn, at top level and in the leading
+  declaration block, plus 11 same-type acceptances, each checked against a control that builds the
+  same struct field by field); both mutation-proven per fix.
+
+### Fixed — lexer line accounting and string escapes; `#assert`, enum and intrinsic resolution; the async constructor jmp (B05)
+
+- **A newline inside a string literal was not counted as a line (N1, N3).** After any multi-line
+  string every later token was lexed one line HIGH per newline: `var s = "a<LF>b<LF>c";` then an
+  undefined name on line 5 reported line 3; line 1 of the next `include` landed on its own `#@file`
+  marker line and printed a bare `error:4:12:` with no file; and `FM_FILEID`, which reads the token
+  line, attributed code to the WRONG FILE, so a call to another file's `private` fn **compiled** and
+  the error landed on an innocent name. The "diagnostics in `backend/x86/fixup.cyr` are one line
+  high" report (N3) is this defect, triggered by the one raw-newline literal in
+  `src/frontend/parse_expr.cyr`; the `#@file` bookkeeping was correct and is untouched. **Root
+  cause:** LEX's string loop stored a raw LF (and a `\<LF>`) without bumping the line counter.
+  **Fix:** both bump it; the string token keeps its opening line (matching the column its
+  diagnostic head prints).
+- **An unknown string escape was stored verbatim with the backslash dropped (N2).** `"ab\q"`
+  compiled to `abq`; the char-literal ladder already refused. **Fix:** any byte after `\` other
+  than the documented escapes is `unknown string escape`, at the backslash. `\` + newline keeps its
+  line feed (the v6.5.18 contract `cyrfmt_string_continuation.sh` pins) and `\` + CR LF keeps both
+  bytes; both are now in the guide's escape table. A comment/char/string-aware scan of every cyrius
+  source under `~/Repos` and `~/.cyrius` found no other escape in use, so nothing downstream breaks.
+- **`sizeof(i16v8)` was 2 and `sizeof(i8zz)` 1, and `#assert sizeof(i16v8) == 2` passed (L8).**
+  Both sizeof sites used the prefix-only `_scalar_name_width`; 6.6.10 fixed only the field ladders.
+  **Fix:** `_field_scalar_width` (the whole name) at both; a non-scalar name is `unknown type`.
+- **A user fn named `mulh64x(a, b)` compiled as the `mulh64` intrinsic** (found in premise): the
+  PARSE_FACTOR tests for `sizeof` / `mulh64` matched a 6-byte prefix. **Fix:** whole-word
+  `_is_mulh64_word` next to `_is_sizeof_word`.
+- **`return mulh64(a, b);` and `return sizeof(i64);` were compiled as tail calls to undefined fns
+  (N7)** and refused on every backend, while the same expression through a local worked. **Fix:**
+  `_tc_callee_divert` sends an IDENT-spelled intrinsic (`_is_ident_intrinsic`) to the normal path.
+- **A qualified enum access never checked its enum (N4).** `Foo.EB` (no enum `Foo`) and `E2.EB`
+  (EB belongs to E1) compiled in expressions, `#assert` and array sizes, `Nope.gz` loaded the plain
+  global `gz`, and when two enums share a variant name `A.X` read the LAST one's value. **Fix:** one
+  resolver, `_enum_qual_resolve`, for all three sites: the base must name an enum and the variant
+  is looked up in an enum of THAT NAME (an enum name may be declared more than once — the
+  `lib/syscalls*.cyr` files each declare `Signal`); otherwise `'Foo' is not an enum` /
+  `'EB' is not a variant of 'E2'`, once.
+  ⚠ **Downstream: this refusal breaks four consumers the moment they re-pin 6.6.11.** Every site is
+  a stale spelling that compiled only because the qualifier was ignored. kavach renamed `enum
+  Backend` to `KavachBackend`, and its error enum's members are `KAVACH_ERR_*`:
+  - **agnosai** — `Backend.NOOP/WASM/PROCESS/OCI` in `src/sandbox/kavach_bridge.cyr:90-94`,
+    `src/sandbox/wasm.cyr:168,365` and `tests/sandbox_kavach_bridge.tcyr` (7 sites), plus
+    `dist/agnosai.cyr`.
+  - **mehman** — `Backend.PROCESS` at `src/sandbox.cyr:93,97` and `KavachError.OK` at `:128`.
+    That one read whichever global named `OK` came last; it is `KavachError.KAVACH_ERR_OK`.
+  - **agnostic** — its vendored `lib/agnosai.cyr`, and `tests/deps_symbols.tcyr:70`, which asserted
+    that "an enum qualifier is cosmetic".
+  - **aethersafha** — its vendored `lib/mehman_sandbox.cyr` (mehman 1.0.3).
+
+  **How it was measured.** Every target (entry, tests, benches, fuzz) of the 125 `cyrius.cyml`
+  repos in `~/Repos` was built through `cyrius build` with deps composed, and each composed unit
+  went to both the pre-B05 and the B05 compiler: 1,685 builds. Results:
+  - 1,655 builds reached the compiler.
+  - 1,650 compile on the pre-B05 compiler. On B05, 1,557 of them are byte-identical and the other
+    93 are these N4 refusals.
+  - The 5 that fail on both give the same diagnostics.
+  - The 30 that failed before compiling (an unpublished dep tag, sibling path deps, no build
+    entry) were compiled from raw includes instead. Nothing changed, except two agnosai benches
+    that hit the same `Backend.X` refusal.
+  - The agnos kernel, composed the way its `scripts/build.sh` does it, is byte-identical.
+- **`#assert 1 == 1` with no `;` swallowed the NEXT line (N5)** — `return 42;` was dropped and the
+  fn returned garbage, rc 0, on every backend. **Root cause:** `_assert_tail` took the line of the
+  token at the cursor, which is already the next line's. **Fix:** the last consumed token's line,
+  unless a string (the message) sits at the cursor, so `#assert X,<LF> "msg";` still works.
+- **A failing `#assert` hid an earlier syntax error (N6).** `var x = ;` then a failing top-level
+  assert printed only the assert: the assert exited in the declaration phase, before PARSE_PROG
+  parsed the `var`. **Fix:** it records the error and continues (EMITELF refuses on it); each
+  assert reports once even in an `#inline` body replayed per call, and several failing asserts
+  are now all reported.
+- **DCE never reported the fn defined right after an `async fn` as dead (N8).** The constructor
+  began with a redundant skip-`jmp` that sat in no fn's range, which the DCE seed pass took as a
+  root for the next fn. **Fix:** the jmp is gone (5 B less per async fn on x86); the async and
+  coroutine gates and fixtures pass on x86, qemu-aarch64 and wine.
+- Regression coverage: new `tests/gates/frontend/sizeof_whole_name.sh` and cross-OS
+  `tests/tcyr/crossos/return_intrinsic_values.tcyr`; new rows in `lexer_errors_name_file_line.sh`
+  (axis 6 and the escape rows), `assert_enum_constants.sh` (N4), `resolution_excerpt_and_assert_skip.sh`
+  (axes 5-7) and `lexer_attribute_word_boundary.sh` (F4 now scored against the compiler; its root-host
+  F6 skip exits 77 instead of passing). Each is mutation-proven against its fix.
+
+### Fixed — float typing: compound assignment on globals and in the `for` step, f32 operand checks, typed copies, re-judged assignments (B04)
+
+- **Compound assignment on an f64 / f32 GLOBAL was integer arithmetic, silently (M1).** `var G:
+  f64 = 1.5; G += 1.0;` left G = 9216616637413720064 (0x3FF8.. + 0x3FF0.. added as integers);
+  `G -= 0.5` and `G *= 2.0` gave 0, and an f32 global was garbage the same way — at top level and
+  inside a fn, identically on x86 and aarch64. On an f64 LOCAL the same statement was right, and
+  `t += 1` there compiled with no warning while adding a subnormal. **Root cause:** the compound
+  arm of `_PARSE_STMT_IMPL` set its float routing from `GLTYPE` only when `FINDLOCAL` hit; the
+  global branch never read `GVTYPE`, and no branch looked at the right operand. **Fix:** the arm is
+  now `_asg_compound_load` (local or global, returns the slot type) + `_asg_compound_op`
+  (src/frontend/parse.cyr), which routes `+= -= *= /=` on either kind of float slot to the float
+  emitters and checks the right operand as `x = x op y` does — kind 1 for f64, kind 5 (below) for
+  f32. Kept out of the cybs-sensitive `_PARSE_STMT_IMPL` body.
+- **A classic-`for` step was a float-blind copy of the compound arm.**
+  `for (var x: f64 = 0.0; x < 1.0; x += 0.25)` ran 2 iterations instead of 4, and `y /= 2.0`
+  from 8.0 ran once instead of 3 times. **Root cause:** the step replay (src/frontend/parse_ctrl.cyr)
+  carried its own integer-only copy, which also knew five of the ten compound operators (`i <<= 1`
+  as a step was `expected '='`). **Fix:** the step calls the same `_asg_compound_tok` /
+  `_asg_compound_load` / `_asg_compound_op` as the statement, so the two cannot drift again; a
+  step now takes all ten operators.
+- **An f32 `+ - * /` never checked its right operand (M2).** `EMIT_F32_BINOP` takes the right
+  operand's LOW 32 BITS, so with `x: f32`, `x * 2.0` was 0, `x + 1.0` was `x` and
+  `f32_from(u) + 1.0` dropped the 1.0 — with no warning, while the f64 arm on the line above
+  warned. **Fix:** the four f32 arms (src/frontend/parse_expr.cyr) warn **kind 5**, `f32
+  arithmetic with a non-f32 right operand`, when the right operand is not f32. Warn-only, the
+  ADR-002 posture of kind 1; `CYRIUS_TYPE_CHECK=0` silences it. An f64 literal is not narrowed.
+- **An untyped `var` copied from a declared f64 / f32 value stayed i64 (M3).** With
+  `struct P { x: f64; y: f64; }`, `var t = p.y; t + t` was an INTEGER add (f64_to gave 0) while
+  `p.y + p.y` was 5.0; the same for `var t1 = y` with `y: f64` a local or parameter, and for a
+  global copy. Only `-t` noticed, as a kind-3 warning. **Root cause:** PARSE_VAR typed an
+  unannotated local only from a peeked call's declared return (v6.5.21); the initialiser's own
+  type was recorded as the kind-3 flag and nothing else. **Fix (narrow, the default taken):**
+  `_decl_float_copy` (src/frontend/parse_decl.cyr) types the local — or a global declared after
+  the first top-level statement — when the initialiser is exactly `IDENT` or `IDENT(.IDENT)+`
+  and its value is typed f64 / f32; `_gv_float_copy` makes the same judgement for a leading-block
+  global at registration, by shape (`= G ;` or `= G.f(.f)* ;` through a struct global). A literal
+  (`var z = 0.0;`), a float builtin and any arithmetic stay untyped, so `==` / `<` on existing
+  code do not become float compares. Surveyed before landing (below).
+- **The kind-3 flag was judged at the declaration only (M4).** `var g = 0; g = 1.5; var a = -g;`
+  was a silent integer negation of 1.5's bits, and `var h = 1.5; h = 7; -h` warned about a
+  correct -7 — locals and globals alike. **Fix:** a plain assignment into an untyped slot
+  rewrites the flag from its right-hand side (`_asg_rejudge`, src/frontend/parse.cyr; the value
+  is captured in `_pcmpe_struct_assign` right after its PCMPE, while `_FBR_KIND` is valid). A
+  compound assignment keeps the flag — including when a closure in its right operand assigns a
+  float to one of its own variables, which a first cut got wrong. Flow-insensitive: the last
+  assignment compiled wins. Warning-only; codegen is unchanged.
+- **Tests.** New `tests/tcyr/crossos/f64_compound_assign.tcyr` (f64 / f32 × local / global ×
+  `+= -= *= /=`, top-level statements, four `for` steps including an f64 global and an f32
+  local, `<<=` as a step, integer ops unchanged): on the pre-fix compiler the `<<=` step does not
+  compile, and without it 14 of the 25 rows are red.
+  `tests/tcyr/crossos/f64_struct_fields.tcyr` gains the copy-inference rows (field, chain, typed
+  local, f64 param, global, leading-block global from a global and from a field, f32 field; a
+  literal stays untyped): 9 red before; plus four rows for globals declared AFTER the first
+  top-level statement (a copy of an f64 global and of a struct-global field, used at top level
+  and in a fn), which take PARSE_VAR's stamp rather than registration's — all four red with that
+  stamp removed. `tests/gates/diagnostics/f64_int_mix_warn.sh` gains axes 10-13 (kind 5;
+  compound right operands; re-judged flags, including a plain `for` step into a local and a
+  global; typed copies), each red on the pre-fix compiler and each mutation-proven. Verified on real hardware: both tcyrs plus
+  f64_negation / f32_scalar pass, and the compiler built from this tree self-hosts, on pi
+  (aarch64), ecb (macOS arm64), ach (macOS x86_64) and cass (Windows PE); also under qemu-aarch64
+  and wine.
+- **Downstream survey (read-only).** Every main build and every tcyr / bcyr / fcyr of the 125
+  `~/Repos` consumers (1,652 compiles, ganita / hisab / ranga / dhvani among them) was run through
+  the pre- and post-B04 compiler: **no output binary changed** (no consumer has a float compound
+  global, a float `for` step or a typed copy today), and exactly one new diagnostic
+  appeared — kind 5 at ranga `src/blend.cyr:143`, `one - ganita_f32_min(..)`, where the callee is
+  declared `: i64` and returns f32 bits. The value is right at runtime; the warning is the same
+  posture as kind 1 on an `: i64`-declared call, and binding the call to a `var m: f32` first
+  silences it. No sibling change is required.
+
+### Fixed — declaration-zone struct globals, the union field-count flag, a re-derived struct (B03)
+
+- **A global typed with a generic struct instance, declared before the first top-level statement,
+  was the 8 B base (L9, type half).** `var G: W1<Pt> = …` read `G.v.x` as "expected ')', got '.'"
+  and `w1s(G)` read the wrong storage (204, want 52). **Root cause:** PARSE_GVAR_REG registered the
+  annotation with FINDSTRUCT + SKIP_GENERICS and never instantiated it the way PARSE_VAR does, so
+  GVTYPE was the base `W1` (`v: T` an i64). **Fix:** `_gen_ann_sid` (src/frontend/parse_decl.cyr)
+  is PARSE_VAR's instantiation, lifted out unchanged and shared by both; the leading block's replay
+  (`_gvi_ann`) reads the recorded instance back instead of returning 0, so a generic global's
+  initialiser is type-checked too.
+- **A 9-16 B struct call initialising a global before the first top-level statement compiled and
+  crashed (L9, init half).** `var G: Pt = mkp(2);` there built clean and SIGSEGV'd on `G.x`, generic
+  or not; after a statement the 6.6.6 refusal resolved the callee with FINDFN, the generic's 8 B base
+  (class 0), so `var G: W1<Pt> = mkw(gp)` built there too (rc 139). **Root cause:** the leading
+  block is replayed by EMIT_GVAR_INITS, which never reached `_refuse_toplevel_pair_init`.
+  **Fix:** `_refuse_toplevel_pair_init` (src/frontend/parse_fn.cyr) takes the callee token and
+  resolves it as the call reaches it (`_gcall_open` + `_gen_resolve_call`), and `_gvi_expr` runs it
+  for the replay. Both are now "'mkw' returns a struct by value, and a struct result needs storage
+  in a fn's frame — call it inside a fn", as the retptr class already was in both places.
+- **After any `union`, the 256-field and 8192-entry struct field-pool caps never fired (L7).** A
+  300-field union compiled rc 0, and 40 structs of 250 fields after a leading `union U0 { a; b; }`
+  wrote past the field pool and reported "passing integer literal 8 to 'alloc'" from lib/. **Root
+  cause:** PARSE_UNION_DEF keeps the union flag in bit 63 of the field count; ADDFIELD,
+  ADDFIELDTYPED and ADDFIELDFK used that count raw, so it was negative (the 256 test never true)
+  and the flag rode the pool top into every later struct's field base (the signed 8192 test never
+  true). **Fix:** the three mask the count and store `raw + 1`, keeping the flag. Compiled output is
+  unchanged (the addresses were equal mod 2^64).
+- **A `#derive`d struct redefined with a different layout built, and its accessors ran against
+  the first definition** (premise-S d2.cyr). Two derived `A`s of 48 and 64 B built rc 0 with only
+  warnings, and `A_set_m` stored at offset 56 of the 48 B struct the parser kept, while the same
+  redefinition of a NON-derived `A` failed the 6.6.7 layout backstop. At the SAME size it was just
+  as wrong: `{ x; y; }` then `{ y; x; }` built rc 0 and every setter wrote the other field (75
+  where 57 was meant). **Root cause:** the backstop was deliberately not armed for a name an
+  earlier `#derive` declared, for the older kavach vendored with two `struct SpawnedProcess`;
+  every consumer now pins kavach 3.13.1, which has one. **Fix** (src/frontend/lex_pp.cyr): the
+  first definition of a derived name keeps a copy of its field names and offsets
+  (`PP_DERIVE_LAY_SAVE`), and a redefinition is compared with it field by field and by size
+  (`PP_DERIVE_LAY_DIFFERS`); any difference is refused by name — "#derive: struct 'A' is defined
+  again with different field names, order or size -- the FIRST definition is the layout used, so
+  these accessors would read and write the wrong bytes". Names, offsets and size pin every
+  field's bytes (the derive packs with no padding); field TYPES are not compared, so the
+  redefinitions still live in the ecosystem keep building: agnosys + sigil vendored side by side
+  in nine repos (14 identical structs) and garjan + prani's `DcBlocker` (the same names at the
+  same offsets, `f64` in one and `i64` in the other). (The first cut compared the size only;
+  review found the same-size swap.)
+- **Tests.** `tests/gates/frontend/generic_type_arg_unknown_refused.sh` axis Q: the refusal before
+  and after the first statement (inferred, explicit and non-generic), the bare `var gr: W1<Pt>;`
+  (now the uninitialised-variable refusal, not a parse error at `gr.v.x`), an address-holding
+  `W1<Pt>` global written, read and passed, and an 8 B instance control.
+  `tests/tcyr/crossos/generic_struct_inference.tcyr` gains `run_globals` (`W1<Pt>` and `Box<Pt>`
+  globals). `tests/gates/diagnostics/cap_errors_stop_storing.sh` gains a 300-field union row, a
+  union-first pool row and a union/struct layout row; its aarch64 and cx await rows now require the
+  named "x86-only" refusal or the cap instead of a bare rc 1, and it exits 77 when it cannot run.
+  `tests/gates/diagnostics/derive_layout_backstop.sh` axis F now expects the refusal naming the
+  struct, for a different size (two rows), a same-size swap, a narrower last field and a moved
+  field, plus two same-layout controls (G). Every new row fails on the pre-B03 compiler, and each
+  of the four L9 changes and the redefinition check's size, name and offset comparisons was
+  reverted alone on a scratch tree and turned its rows red. Verified on real hardware: the
+  compiler built from this tree self-hosts, and generic_struct_inference.tcyr and structs.tcyr pass,
+  on pi (aarch64), ecb (macOS arm64), ach (macOS x86_64) and cass (Windows PE); also under
+  qemu-aarch64, wine and cxvm.
+- **Downstream survey (read-only).** The main build and every tcyr / bcyr / fcyr of the `~/Repos`
+  consumers (1,371 compiles) through the pre- and post-B03 compiler: no exit status changed, no
+  output size changed, and no warning or error appeared or disappeared. No consumer has a leading-
+  block pair-returning global initialiser, a union past either cap or a differently laid-out
+  derived redefinition; every kavach pin is 3.13.1. Two H-owned gates asserted the old derive exemption
+  (`derive_layout_backstop.sh` F, `redefinition_layout_and_enum_over_var.sh` `sp_derive`) and are
+  updated by lane H.
 
 ## [6.6.10] — 2026-09-29
 

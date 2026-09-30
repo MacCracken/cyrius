@@ -61,15 +61,24 @@ or in parentheses (`-f64_sqrt(v)`, `-(f64_exp(v))`, `-f32_from(v)`, …). So `-1
 `-0.0` is negative zero and `-x` negates an `f64` exactly (6.6.8; before it, `-1.0`
 evaluated to -4.0 and `-0.0` to +0, silently; the parenthesised builtin form was integer
 negation until 6.6.10). A struct or union field declared `f64` / `f32` counts as typed too
-(6.6.10 — see [Field types](#field-types-v6610)). It does NOT cover an **untyped** variable,
-an untyped field holding float bits, or an untyped expression (`-(a + b)` over untyped vars)
-— those are `i64` as far as the compiler knows, and `-v` is integer negation of the bits.
-Negate them with `f64_neg(v)`, or declare the variable `: f64`. Since 6.6.10 an untyped
-variable whose declaration was initialised from a float (`var c = 1.5;`, `var z = 0.0;`,
-`var x = f64_sqrt(u);`, or a copy of such a variable) WARNS when negated: `unary minus on an
-untyped variable holding a float is integer negation (declare it f64)`. `-c` of 1.5 is -3.0,
-`-z` of 0.0 is +0 and `-n` of -2.5 is 1.75. The judgement is made at the declaration; a later
-assignment does not change it.
+(6.6.10 — see [Field types](#field-types-v6610)), and since 6.6.11 so does a `var` with no
+annotation that is a pure **copy** of a declared float: `var t = p.y;` (an `f64` field, or a
+chain `o.i.x`), `var u = y;` (an `f64` / `f32` local or parameter) and `var g = G;` (a typed
+global) type `t`, `u` and `g` the same way, so `t + t` is a float add and `-t` a float
+negation. Before 6.6.11 the copy stayed `i64` and `t + t` added the bit patterns. Only a
+bare name or a field chain counts — the same rule as `var x = f();` with `fn f(): f64`
+(v6.5.21), which types `x` from the declared return. It does NOT cover an **untyped**
+variable, an untyped field holding float bits, or an untyped expression (`-(a + b)` over
+untyped vars, `var z = 0.0;`, `var t = p.y * 2.0;`) — those are `i64` as far as the compiler
+knows, and `-v` is integer negation of the bits. Negate them with `f64_neg(v)`, or declare
+the variable `: f64`. Since 6.6.10 an untyped variable initialised from a float (`var c = 1.5;`,
+`var z = 0.0;`, `var x = f64_sqrt(u);`, or a copy of such a variable) WARNS when negated:
+`unary minus on an untyped variable holding a float is integer negation (declare it f64)`.
+`-c` of 1.5 is -3.0, `-z` of 0.0 is +0 and `-n` of -2.5 is 1.75. Since 6.6.11 every plain
+assignment re-judges it: `var g = 0; g = 1.5; -g` warns and `var h = 1.5; h = 7; -h` does not
+(a compound assignment such as `h += 1` leaves the judgement as it was). The judgement is not
+flow-sensitive: it is whatever the last assignment the compiler READ said — source order
+inside a fn, and for a global, source order across fns — not what happens to run last.
 
 **Float builtin results in arithmetic (6.6.10).** The result of a float-returning builtin
 (`f64_sqrt`, `f64_add`, `f64_sin`, `f64_exp`, `f32_from`, … — every `f64_*` / `f32_*` that
@@ -98,8 +107,20 @@ of 1.5's bit pattern (it is -3.0), and `2 * x` with `x: f64` multiplies x's bits
 the left operand as a float — `0.0 - x`, `2.0 * x`, or just `-x`. Both directions warn:
 an f64 left with a non-f64 right (`f64 arithmetic with a non-f64 right operand`) and,
 since 6.6.8, an integer left with an f64 right (`integer arithmetic with an f64 right
-operand`). They are warnings, not errors (ADR-002: the untyped `i64`-boxed float idiom
-stays legal); `CYRIUS_TYPE_CHECK=0` silences them.
+operand`). An **f32** left takes the LOW 32 BITS of its right operand, so an `f64` literal
+or an integer there is reinterpreted, not converted — with `x: f32`, `x * 2.0` is 0 and
+`x + 1.0` is `x`. Since 6.6.11 it warns too (`f32 arithmetic with a non-f32 right operand`);
+write `x * f32_from(2.0)`. They are warnings, not errors (ADR-002: the untyped `i64`-boxed
+float idiom stays legal); `CYRIUS_TYPE_CHECK=0` silences them.
+
+**Compound assignment on a float (6.6.11).** `x += y`, `-=`, `*=` and `/=` on an `f64` /
+`f32` variable are float operations — for a local, a **global**, a top-level statement and a
+`for` step alike — and the right operand is checked exactly as in `x = x + y` (`t += 1` on
+an `f64` warns: 1's bits are a subnormal, write `t += 1.0`). Until 6.6.11 only a local got
+the float arithmetic: `G += 1.0` on an `f64` global added the two bit patterns as integers,
+and `for (var x: f64 = 0.0; x < 1.0; x += 0.25)` ran twice instead of four times, silently.
+`%=`, `&=`, `|=`, `^=`, `<<=` and `>>=` are integer operations on any variable. A `for`
+step accepts all ten compound operators (it used to accept five).
 
 ## Variables
 
@@ -140,7 +161,12 @@ is best reserved for byte buffers:
 `enum Sz { BUF = 16; }` then `var b[BUF]`, `var b[Sz.BUF]` or
 `var a: i64[Sz.BUF]`, in a function or at top level (the qualified form
 since 6.6.10). A plain `var` is not a constant and is refused as a size, as is
-a negative enum value.
+a negative enum value. The qualifier must be the constant's OWN enum (since
+6.6.11, here and in every expression): `Foo.BUF` with no enum `Foo` is refused
+with `'Foo' is not an enum`, and `Other.BUF` with `'BUF' is not a variant of
+'Other'` — before 6.6.11 the qualifier was ignored. When two enums share a
+variant name, `A.X` and `B.X` each read their own enum's value (the bare `X`
+keeps "last definition wins", with its warning).
 
 ## Functions
 
@@ -163,6 +189,11 @@ var r = add(20, 22);   # r = 42
   the dot form supplies a receiver the method never declared. Call it by its mangled name
   (`Type_method(args)`), which is how the constructor idiom `fn new(a, b)` inside an `impl` is
   written anyway. Forward calls are exempt from the check — the callee has no body yet.
+- **`x.m()` passes `self` exactly as `T_m(x)` would.** An untyped `self` (the `impl` form) is
+  the receiver's address. A typed `self: T` follows the parameter rule: a struct over 8 bytes is
+  address-passed, one of **8 bytes or less is passed by value** — so `fn Odd_sum(self: Odd)`
+  sees a copy, and writing `self.a` inside it does not change `x`. Before v6.6.11 the dot form
+  pushed `&x` for a small typed `self` too and the method read its fields out of the address.
 
 **Reserved words are a CLASS, not a short list.** `TOKNAME_BUILTIN` in
 `src/common/util.cyr` is the single source of truth — **76** builtin/intrinsic names
@@ -352,7 +383,8 @@ stays **untyped** on purpose, so `P_x(&p) + P_y(&p)` is still an integer add: co
 ecosystem compares getter results bit-for-bit (`==` on the bit pattern), and a typed getter
 would turn those into float compares with different NaN and ±0 answers. When you want float
 arithmetic on a getter's result, hold it in an `f64` variable (`var x: f64 = P_x(&p);`) or use
-the field directly.
+the field directly. Since 6.6.11 a plain copy of the field is typed as well: `var t = p.y;`
+makes `t` an `f64`, where it used to be an untyped `i64` holding the bits.
 
 ### Where a struct lives (v6.6.5)
 
@@ -429,8 +461,8 @@ look reasonable:
 `b.v = p` copies the whole struct into the field. So does a call, method or operator that
 returns a `P3` (`b.v = mk(1)`, `b.v = a.mk(1)`, `b.v = a + c`), a by-value `P3` parameter, a
 pointer-mode `P3` local (the struct it points at, not the pointer), a global, and another `P3`
-field (`b.v = o.b.v`). A struct of a different type is a compile error naming it — except a
-method or operator result of 8 bytes or less, which is not type-checked yet. Before v6.6.10
+field (`b.v = o.b.v`). A struct of a different type is a compile error naming it, at every
+size — a method or operator result of 8 bytes or less included (v6.6.11). Before v6.6.10
 every one of these stored ONE word: `b.v.y` kept its old value, and from a parameter the stored
 word was the parameter's address. A source that is not a struct (an integer, an untyped
 pointer) still stores one word, capped at the field's size. An odd-sized struct field (3, 5, 6
@@ -448,13 +480,29 @@ of `p` stale, and the declaration stored `q`'s *address* into a struct-typed slo
 back a stack address. The struct-*literal* form (`var p: P3 = Q3{..}`) has been an error since
 v6.6.5. A source that is **not** a struct or vector still binds as a pointer, unchanged.
 
+The other direction is a copy too (v6.6.11): a struct **variable** taken from a struct-typed
+FIELD — `q = b.v`, `var p: P3 = b.v`, into a local, a global or a by-value parameter — copies the
+whole struct, byte-exact, and `p` is its own copy. Before v6.6.11 the assignment copied one word
+and the declaration stored that word into a slot typed `P3`, so the next `p.x` SIGSEGV'd. A
+struct-valued **call** assigned to a struct variable must return that struct, at every size and
+through every call form: `p = mkq()` with `mkq` returning a different struct is refused
+(`cannot copy 'mkq' into a variable of a different struct/vector type: 'p'`) as
+`var p: P3 = mkq()` already was, and so are `z = y.same()`, `var z: Odd = y + y` and a generic
+call whose inferred instance differs (`s = mk(r.v)` into a `Box<Pt>`: a FIELD argument infers
+`T = i64`, so the call reaches `Box<i64>` — copy the field into a `Pt` variable first,
+`var p: Pt = r.v; s = mk(p);`). The same holds for a struct-typed **global**, at top level and in
+the leading declaration block: `var G: Odd = mkod2();` is refused wherever it appears. Before
+v6.6.11 each of those stored one word, silently.
+
 ⚠ **A by-value struct PARAMETER over 8 bytes is address-passed** — the parameter's slot holds
 the caller's address, which is why writing `q.z = 5` inside the callee is visible to the caller.
 Since v6.6.6 every path that copies or returns such a parameter goes through that address:
 `q = r`, `q = mk(..)`, `q = b.mk(..)`, `q = a + b`, `q = G`, `r = q`, `G = q`, `q = w` (a copy,
 not an alias) and `return q;` all move the whole struct. Before v6.6.6 they moved the POINTER
 instead — `q = r` overwrote it and the next `q.z` SIGSEGV'd, `r = q` put the pointer in `r`'s
-first field, and `return q;` returned the address as the value, silently. `Str` (and `Result` /
+first field, and `return q;` returned the address as the value, silently. The declaration
+`var y: P3 = q;` joined the list at v6.6.11 — before, it bound `y` as a second pointer to the
+CALLER's struct, so `y.a = 9` changed the caller and `return y;` returned garbage. `Str` (and `Result` /
 `Option` / `Tagged`) are unaffected: they are heap handles passed by value, so `a = b` between
 two of them is still a rebind.
 
@@ -472,8 +520,12 @@ parameter denotes the caller's struct.
 
 ⚠ At TOP LEVEL there is no frame to hold the result, so a struct-valued call there
 (`mk(1);`, `var g: P3 = mk(1);`, `g = mk(1);`, `take(mk(1))` — and the method and operator
-forms alike) is a compile error naming the fn — call it inside a fn. An untyped
-`var g = pair_fn(..)` of a 9-16 B struct still yields its first word.
+forms alike) is a compile error naming the fn — call it inside a fn. That includes a global
+declared ahead of the first top-level statement, generic calls (`var G: W1<Pt> = mkw(p);`)
+and non-generic ones (`var G: Pt = mkp(2);`) alike: before v6.6.11 that leading block was
+never checked, so both compiled and `G.x` SIGSEGV'd, and after a statement the generic form
+was checked against its 8-byte base and built too. An untyped `var g = pair_fn(..)` of a
+9-16 B struct still yields its first word.
 Before v6.6.6 a struct result had storage only in the two declaration forms inside a fn —
 `var p: T = f(..)` and the inferred `var p = f(..)` — and only for a plain fn call. Every other
 form, at top level or not, compiled clean and crashed (a >16 B result was written through the
@@ -546,6 +598,18 @@ syscall(1, 1, "hello\n", 6);   # Write to stdout
 | `\x##`         | one byte       | exactly 2 hex digits, e.g. `\x1b`    |
 | `\u####`       | 1-3 UTF-8 b    | exactly 4 hex digits (BMP)           |
 | `\u{...}`      | 1-4 UTF-8 b    | 1..6 hex digits, up to `\u{10FFFF}`  |
+| `\` + newline  | `0x0A`         | KEEPS the newline (not a C splice)   |
+
+That is the whole list. **Any other byte after a `\` is a lex error**
+(`unknown string escape`, pointing at the backslash) since v6.6.11;
+before that it was stored with the backslash dropped, so `"ab\q"`
+compiled to `abq`. A `\` at the end of a line inside a string is an
+escape that keeps its line feed (`\` + CR LF keeps both bytes): the
+string still contains the newline, it is not joined to the next line.
+A newline inside a string, raw or escaped, is counted as a source
+line, so diagnostics after a multi-line string name the right line
+(and the right file) — before v6.6.11 every later token was reported
+one line high per newline.
 
 `\u` codepoints in the surrogate range `D800..DFFF` and any
 `\u{...}` codepoint > `U+10FFFF` are lex errors. Malformed
@@ -743,9 +807,14 @@ an `i8` field, both `P_x(p)` and `p.x` are `-1` (a bare `load8` would give 255).
 reads the body the way the parser does — comments, blank lines, `a : T` spacing, `;`-less fields
 and `,`-separated enum members are all fine — and the build FAILS if its field offsets disagree
 with the struct's real layout, which today means a field typed with a struct that is not itself
-`#derive`d: derive the inner struct too. The one exception is a struct NAME declared twice: the
-parser keeps the first layout, the check is not armed for the second, and that redefinition is a
-defect of its own (tracked separately).
+`#derive`d: derive the inner struct too. A struct NAME `#derive`d twice is checked too
+(v6.6.11): the parser keeps the FIRST layout, so a second definition whose field names, order or
+size differ is a compile error (`#derive: struct 'A' is defined again with different field names,
+order or size`) — its accessors would read and write the first layout's bytes. Before v6.6.11
+that second definition built with only warnings: a larger one's setters wrote past the first's
+`sizeof`, and `{ x; y; }` redefined as `{ y; x; }` had every setter write the other field. The
+same field names at the same offsets still build — an identical copy (one struct vendored by two
+libraries), or one whose field TYPES differ at the same width (`f64` in one, `i64` in the other).
 
 A preprocessor directive (`#ifdef`, `#ifndef`, `#if`, `#elif`, `#else`, `#endif`, `#ifplat`,
 `#endplat`, `#define`) **inside** a `#derive`d declaration, or between the `#derive(...)` line
@@ -1341,7 +1410,13 @@ skipped unchecked, so a false `#assert E.EB * 2 == 9;` compiled clean. An
 operand that is none of
 these is reported once, by name (`expected a number, sizeof(T) or an enum
 constant`), and `sizeof` must be the whole word — `sizeofzz(P)` is refused,
-not read as `sizeof`.
+not read as `sizeof`. So must its TYPE (since 6.6.11, in `#assert` and in
+expressions alike): `sizeof(i16v8)` and `sizeof(i8zz)` are `unknown type`, not
+2 and 1. An `#assert` with no message and no `;` ends at the end of its line —
+before 6.6.11 it swallowed the whole NEXT line (`#assert 1 == 1` then
+`return 42;` dropped the return). A failing `#assert` no longer stops the
+compile on the spot: every failing assert and any other error in the file is
+reported, and no binary is written.
 
 ```
 enum Wire { HDR = 16; }
@@ -1414,7 +1489,7 @@ cyrius smoke                             # tests/smcyr/*.smcyr fail-fast (v5.7.3
 cyrius distlib [profile]                 # bundle src/ modules into dist/{name}.cyr
 cyrius distlib --all                     # regenerate the base bundle AND every [lib.X] profile (v6.5.8)
 cyrius distlib --check                   # verify bundles are current — compares BYTES, writes nothing (v6.5.8)
-cyrius coverage [--full] [--min <pct>]   # reference coverage of src/ (--min 0..100 gates CI; -v or a failed --min names the misses, 6.6.8)
+cyrius coverage [--full] [--min <pct>]   # reference coverage of src/ (--min 0..100 gates CI; -v or a failed --min names the misses, 6.6.8; `main` is not counted, 6.6.11)
 cyrius capacity [--check] [src]          # report compiler capacity / CI gate; no arg = THIS HOST's fork (v6.6.6)
 cyrius pulsar                            # x86-64 LINUX ONLY: rebuild cycc + cross bins + tools, then install
 cyrius lsp                               # build + install cyrius-lsp into ~/.cyrius/bin/
@@ -1445,6 +1520,33 @@ cyrius lsp                               # build + install cyrius-lsp into ~/.cy
 > problem that is about the verb; it now refuses by name, before printing any progress, and
 > names the fork this host's compiler IS built from. Pinned by
 > `tests/gates/toolchain/pulsar_is_x86_linux_host_verb.sh`.
+
+> ⚠ **`coverage` does not count the entry point `main`** (v6.6.11). Coverage counts a public
+> fn as covered only when a test NAMES it, and a program's depth-0 `main` is invoked by its own
+> file's `syscall(60, main())` (or the epilogue's auto-call), never by a test — so it could never
+> count, and a project with an entry point could not reach 100 % (ganita read 139/141 and bayan
+> 501/503 with `main` the only misses). It is excluded by the same rule `cyrius header` uses
+> (`_src_is_entry_fn`, `cbt/srcscan.cyr`); only the exact name — `mainx` and `domain` still
+> count. A `src/` whose only public fn is `main` has nothing to measure and gets the
+> "no public functions found … not a pass" error. Pinned by
+> `tests/gates/toolchain/coverage_corpus_and_failopen.sh` axis 20.
+>
+> ⚠ **`distlib` regenerates and `--check`s sidecars on an x86-64 Linux host only** (v6.6.11).
+> The `.deps` sidecar is compile-verified against EVERY target — x86-64 Linux, Windows and
+> macOS, aarch64 Linux and macOS — and records the union, so it no longer depends on the host
+> that ran it (it used to be the host's `#ifdef` arms only, and `--check` drifted between a Mac
+> and Linux CI). Only an x86-64 Linux CLI has a compiler per target (`cycc` by environment, plus
+> `cycc_aarch64`), so on macOS, Windows and aarch64 `distlib` refuses by name instead of
+> publishing a host-shaped sidecar. A verify that does not converge in 6 rounds is a refusal,
+> not a "compile-verified" sidecar. `-v` prints each leaf a round adds and why.
+>
+> ⚠ **`cyrius test` / `tests` grade the assert summary, not the exit code alone** (v6.6.11).
+> When a `.tcyr` calls `assert_summary(`, the LAST stdout line starting `N passed, M failed`
+> must exist with N >= 1 and M == 0, on top of exit 0 — the rule every `.tcyr` reader applies.
+> A test that dies before its summary with exit 0, runs its body twice (a defined `main` plus a
+> top-level `main();` — the epilogue calls it again) or asserts nothing now FAILS, by name. The
+> test's stdout is captured and echoed back. A test with a `main` returns `assert_summary()`
+> from it and ends `syscall(60, main());`; one without ends `var r = assert_summary();`.
 
 **The argument rule (v6.6.5), for every verb.** Flags may appear in any position
 (`cyrius lint f.cyr --strict` == `cyrius lint --strict f.cyr`); a `-`-prefixed token the verb
@@ -2472,6 +2574,12 @@ The type argument may itself be a struct (`Box<Point>`) — the instance's field
 is laid out at the concrete type's size, so a following field lands at the right
 offset. Each distinct `Struct<type-args>` mints one deduped instance.
 
+A **global** takes the instance too, wherever it is declared: `var G: W1<Pt> =
+alloc(16);` ahead of the first top-level statement reads and writes `G.v.x` and passes
+`G` where a `W1<Pt>` is expected (6.6.11; before it a global declared in that leading
+block was typed as the base `W1`, where `v: T` is an i64 — `G.v.x` failed to parse and
+`w1s(G)` read the wrong storage). A global declared after a statement already did.
+
 **Status & limits (6.6.10).** Generic functions and structs are supported over
 i64, narrow scalars (`i32`/`i16`/`i8`), and struct type arguments, inferred or
 explicit, with any body (a small straight-line body is inlined at its call sites;
@@ -2574,14 +2682,16 @@ earlier call arguments, an address — is kept in the coroutine frame across the
 suspend (6.6.10; it used to be lost, so `b + await five()` gave 5 and the
 `store64` form crashed).
 
-**Under the reactor.** `async_spawn_future(rt, co(..))` + `async_run(rt)` drives
-coroutines that PARK before they suspend (`await async_wait_fd(rt, fd)` /
-`async_wait_writable`): each parked task sleeps until its fd is ready and
-resumes where it stopped, interleaved with the others. A task that returns
-without having parked is finished as far as the reactor is concerned, so a
-coroutine whose `await` did not park (an `await` of a Future, or of a call that
-does not park) ends there with 0 when run by `async_run`; force such a coroutine
-yourself with `future_force` until it completes.
+**Under the reactor.** `async_spawn_future(rt, co(..))` + `async_run(rt)` (or
+`task_join(rt, h)`) drives a coroutine to its value. A coroutine that PARKS
+before it suspends (`await async_wait_fd(rt, fd)` / `async_wait_writable`)
+sleeps until its fd is ready and resumes where it stopped, interleaved with the
+others. A coroutine whose `await` did not park — an `await` of a Future, or of a
+call that does not park — stays runnable and is resumed on the reactor's next
+step; while one does, the reactor still polls (without blocking) for the fds,
+timers and deadline sentinels other tasks are parked on, so neither side starves.
+(Until 6.6.11 every backend finished such a coroutine with the 0 its suspend
+returned, and this guide told you to force it yourself with `future_force`.)
 
 **Other limits.** `async` generic fns are not yet supported, nor is a value-form vector
 PARAMETER (`async fn f(v: f64v2)`) — an `async fn` captures each argument as one

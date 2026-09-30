@@ -1931,14 +1931,26 @@ fn PARSE_MATCH(S): i64 {
     return 0;
 }
 
+# The highest token index whose failing #assert was reported. Now that a failure no longer
+# exits, the replays of the same tokens (an #inline body re-parsed at every call site) must
+# not report it again: in pass 2 the cursor only moves forward except in such a replay.
+# CHANGELOG [6.6.11]
+var _assert_rep_ti = 0 - 1;
+
 # The tail of an #assert, from wherever its operands and `,` ended: the rest of THAT line
 # (the message string), then one `;`. Shared by PARSE_STMT's arm and the pass-1 skip
 # (_tl_assert), so both passes stop on the same token. CHANGELOG [6.6.9]
 # ⛔ v6.5.39 — the newline stop is load-bearing: testing only `;` (5) and EOF (12) let a
 # `#assert` with no trailing `;` skip across the following `fn` header and eat its first
 # statement — silent wrong code, no diagnostic.
+# ⛔ 6.6.11 — the line is the LAST CONSUMED token's (an operand or the `,`), not the cursor's:
+# with no `,`, message or `;`, the cursor already sits on the NEXT line, and taking its line
+# ate that whole line — `#assert 1 == 1<LF> return 42;` dropped the return, silently. A
+# string AT the cursor is this assert's message wherever it sits (`#assert X,<LF> "msg";`),
+# which is also what the failure printer reads. CHANGELOG [6.6.11]
 fn _assert_tail(S): i64 {
-    var ln = GTLINE(S, GTI(S));
+    var ln = GTLINE(S, GTI(S) - 1);
+    if (PEEKT(S) == 30) { ln = GTLINE(S, GTI(S)); }
     while (PEEKT(S) != 5 && PEEKT(S) != 12) {
         if (GTLINE(S, GTI(S)) != ln) { break; }
         STI(S, GTI(S) + 1);
@@ -1979,8 +1991,10 @@ fn _enum_atom_idx(S): i64 {
         if (TOKTYP(S, ti + 2) != 2) { return 0 - 1; }
         if (GINFN(S) == 1) { if (FINDLOCAL(S, vn) >= 0) { return 0 - 1; } }
         if (FINDVAR(S, vn) >= 0) { return 0 - 1; }
-        vn = TOKVAL(S, ti + 2);
-        ti = ti + 2;
+        var qvi = _enum_qual_resolve(S, ti);
+        if (qvi < 0) { return 0 - 1; }
+        STI(S, ti + 3);
+        return qvi;
     }
     var vi = FINDVAR(S, vn);
     if (GVECP(S, vi) != 1) { return 0 - 1; }
@@ -1988,11 +2002,70 @@ fn _enum_atom_idx(S): i64 {
     return vi;
 }
 
+# ⛔ 6.6.11 — `Base.NAME` resolved NAME alone and never looked at Base: `Foo.EB` (no such
+# enum) and `E2.EB` (EB belongs to E1) compiled in expressions, #assert and array sizes,
+# `Nope.gz` loaded the plain global gz, and with a variant name shared by two enums `A.X`
+# read B's X. ONE resolver for all three sites. Base is known not to be a variable (that
+# is a field access). Returns NAME's slot IN Base's enum; when NAME is a global but Base is
+# not an enum, or not NAME's enum, reports it and returns FINDVAR's slot (the caller goes on
+# as before, no cascade); -1 when NAME is no global at all (the caller's own path, as
+# before). CHANGELOG [6.6.11]
+fn _enum_qual_resolve(S, bti): i64 {
+    var bnoff = TOKVAL(S, bti);
+    var vn = TOKVAL(S, bti + 2);
+    var vi = _enum_variant_in(S, bnoff, vn);
+    if (vi >= 0) { _vis_check_var(S, vi, vn); return vi; }
+    var any = FINDVAR(S, vn);
+    if (any < 0) { return 0 - 1; }
+    var sv = GTI(S);
+    if (_enum_id_of(S, bnoff) == 0) {
+        STI(S, bti);
+        ERR_IDENT(S, "", bnoff, " is not an enum", 0 - 1);
+    } else {
+        STI(S, bti + 2);
+        ERR_IDENT(S, "", vn, " is not a variant of ", bnoff);
+    }
+    STI(S, sv);
+    return any;
+}
+
+# The slot of the enum constant `vn` declared in an enum NAMED `bnoff`, or -1. Walks every
+# global of that name (FINDVAR returns only the LAST) and compares the parent's NAME, not
+# its id: an enum name may be declared more than once (lib/syscalls*.cyr each declare
+# `Signal`, and a program may declare its own). CHANGELOG [6.6.11]
+fn _enum_variant_in(S, bnoff, vn): i64 {
+    var e = _fvh_head(S, vn);
+    while (e != 0) {
+        var vi = e - 1;
+        if (GVECP(S, vi) == 1) {
+            var pe = GVENUMID(S, vi);
+            if (pe > 0) { if (STREQ(S, GENUMNM(S, pe - 1), bnoff) == 1) { return vi; } }
+        }
+        e = _fvh_next(vi);
+    }
+    return 0 - 1;
+}
+
 # `sizeof` as a whole identifier: the 6 letters AND the NUL after them (7 bytes). A 6-byte
 # prefix test took `sizeofzz(P)` for sizeof. Also used by pass 1's _assert_skip_atom.
 fn _is_sizeof_word(S, noff): i64 {
     if (L64(S + 0xEC00000 + noff) & 0xFFFFFFFFFFFFFF == 0x666F657A6973) { return 1; }
     return 0;
+}
+
+# `mulh64` as a whole identifier, the same 7-byte test. PARSE_FACTOR's 6-byte prefix test
+# compiled a user fn `mulh64x(a, b)` as the intrinsic. CHANGELOG [6.6.11]
+fn _is_mulh64_word(S, noff): i64 {
+    if (L64(S + 0xEC00000 + noff) & 0xFFFFFFFFFFFFFF == 0x3436686C756D) { return 1; }
+    return 0;
+}
+
+# An IDENT-spelled intrinsic that PARSE_FACTOR lowers inline: `sizeof(..)`, `mulh64(..)`.
+# Neither is a fn, so `return sizeof(i64);` must not take the tail-call path, which
+# jumped to an undefined fn of that name. CHANGELOG [6.6.11]
+fn _is_ident_intrinsic(S, noff): i64 {
+    if (_is_sizeof_word(S, noff) == 1) { return 1; }
+    return _is_mulh64_word(S, noff);
 }
 
 # Evaluate a single constant atom for #assert: number literal, sizeof(T), or an enum
@@ -2019,7 +2092,7 @@ fn _EVAL_CONST_ATOM(S): i64 {
                 var szn = PEEKV(S);
                 STI(S, GTI(S) + 1);
                 var szname = L64(S + 0xEC00000 + szn);
-                szval = _scalar_name_width(szname);
+                szval = _field_scalar_width(szname);   # whole name: `i16v8` is not i16. CHANGELOG [6.6.11]
                 if (szval == 0) {
                     var szsid = FINDSTRUCT(S, szn);
                     if (szsid > 0) { szval = STRUCTSZ(S, szsid - 1); }
@@ -2111,10 +2184,16 @@ fn _try_struct_call_assign(S, noff): i64 {
     var o = _gcall_open(S, GTI(S));
     if (o < 0) { return 0; }
     var fi = _gen_resolve_call(S, GTI(S));
-    var cls = _ret_agg_class(S, fi);
-    if (cls == 0) { return 0; }
     if (_call_follow(S, o - 1) != 5) { return 0; }
     var n = _agc_operand(S, noff);
+    # ⛔ 6.6.11 — THE TYPE CHECK COMES BEFORE EVERY EXIT. `p = mkq();` (Q into a Pt) returned 0 at
+    # the sid test below and the scalar store kept one word, silently; a <= 8 B result had already
+    # left at `cls == 0`, and a one-slot destination at `n <= 1`. The declaration form refuses
+    # all of these. A generic call is compared as the instance it reaches, so `s = mk(r.v)` into
+    # a `Box<Pt>` (the field argument infers T = i64) is refused by name. CHANGELOG [6.6.11]
+    if (_sca_mismatch(S, fi, noff) == 1) { return 0; }
+    var cls = _ret_agg_class(S, fi);
+    if (cls == 0) { return 0; }
     if (n <= 1) { return 0; }
     if (_agc_t != 0 - GFRS(S, fi)) { return 0; }
     if (GINFN(S) != 1) {
@@ -2129,6 +2208,16 @@ fn _try_struct_call_assign(S, noff): i64 {
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
     STI(S, GTI(S) + 1);   # consume ';'
     return 1;
+}
+
+# `x = f(..);` — x a struct operand (`_agc_operand` just ran) and f returning a DIFFERENT struct:
+# refused by name (1). Reads `_agc_t`. CHANGELOG [6.6.11]
+fn _sca_mismatch(S, fi, noff): i64 {
+    if (fi < 0) { return 0; }
+    if (_grc_err < 0) { return 0; }   # a failed instantiation: the call refuses itself, once
+    var rs = GFRS(S, fi);
+    if (rs <= 0) { return 0; }
+    return _AGG_ASSIGN_TYPE_ERR(S, _agc_t, 0 - rs, noff, PEEKV(S));
 }
 
 # The copy both struct-call assignments end with: temp `t` (field-0 slot, `n` slots of struct
@@ -2155,6 +2244,91 @@ fn _agc_from_temp(S, t, dli, dgv, n, sid): i64 {
     return 0;
 }
 
+# ⛔ 6.6.11 — COMPOUND ASSIGNMENT is ONE implementation, shared by the statement arm
+# (_PARSE_STMT_IMPL) and the classic-for step replay (parse_ctrl.cyr). They were two copies and
+# both were wrong about floats: the statement arm took its float routing from a LOCAL's type
+# only, so `G += 1.0` on an f64 GLOBAL added the two bit patterns as integers, and the step copy
+# had no float routing at all — `for (var x: f64 = 0.0; x < 1.0; x += 0.25)` ran 2 iterations,
+# not 4. Neither checked the right operand, so `t += 1` on an f64 silently added a subnormal.
+# Out of _PARSE_STMT_IMPL on purpose: cybs miscompiles that body SILENTLY past its per-fn
+# reference limit. CHANGELOG [6.6.11]
+# The `op =` pair at the cursor: consumes both and returns the op token, else 0.
+fn _asg_compound_tok(S): i64 {
+    var ct = PEEKT(S);
+    if (ct == 6 || ct == 7 || ct == 8 || ct == 9 || ct == 34 || ct == 27 || ct == 35 || ct == 36 || ct == 38 || ct == 39) {
+        var tn = GTI(S) + 1;
+        if (tn < GTCNT(S)) {
+            if (TOKTYP(S, tn) == 4) { STI(S, GTI(S) + 2); return ct; }
+        }
+    }
+    return 0;
+}
+# Loads the left side (a local, else a global) into rax; returns its slot type.
+fn _asg_compound_load(S, noff): i64 {
+    var li = FINDLOCAL(S, noff);
+    if (li >= 0) { EFLLOAD(S, li); return GLTYPE(S, li); }
+    var gi = FINDVAR(S, noff);
+    if (gi >= 0) { EVLOAD(S, gi); return GVTYPE(S, gi); }
+    return 0;
+}
+# The float emitter op for `cop` on a slot of type `lt`: 0-3 for + - * / on f64/f32, else -1.
+fn _asg_float_fop(cop, lt): i64 {
+    if (lt != F64_TYID) { if (lt != F32_TYID) { return 0 - 1; } }
+    if (cop == 6) { return 0; }
+    if (cop == 7) { return 1; }
+    if (cop == 8) { return 2; }
+    if (cop == 9) { return 3; }
+    return 0 - 1;
+}
+# Stack = x, rax = the right operand — EMIT_F{64,32}_BINOP's convention. Warns when the right
+# operand is not the slot's kind (kind 1 for f64, kind 5 for f32), as `x = x + <rhs>` does.
+fn _asg_compound_float(S, fop, lt): i64 {
+    if (lt == F64_TYID) {
+        if (_FBR_ST(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); }
+        EMIT_F64_BINOP(S, fop);
+        return 0;
+    }
+    if (_FBR_ST(S) != F32_TYID) { _FLT_TYPE_WARN(S, 5); }
+    EMIT_F32_BINOP(S, fop);
+    return 0;
+}
+# `x OP= <expr>` with rax = x (from _asg_compound_load, whose slot type is `lt`): leaves the
+# combined value in rax for the caller's store. %, &, |, ^, <<, >> on a float slot take the
+# integer arm, as they always have.
+fn _asg_compound_op(S, cop, lt): i64 {
+    EPUSHR(S);
+    PCMPE(S);
+    var fop = _asg_float_fop(cop, lt);
+    if (fop >= 0) { return _asg_compound_float(S, fop, lt); }
+    EMOVCA(S);   # rcx = expr; pop rax = x; rax = x OP rcx
+    EPOPR(S);
+    if (cop == 6) { EADDR(S); }
+    elif (cop == 7) { ESUBR(S); }
+    elif (cop == 8) { EIMUL(S); }
+    elif (cop == 9) { ECQO(S); EIDIV(S); }
+    elif (cop == 34) { ECQO(S); EIDIV(S); EMOVDR(S); }
+    elif (cop == 27) { EANDR(S); }
+    elif (cop == 35) { EORR(S); }
+    elif (cop == 36) { EXORR(S); }
+    elif (cop == 38) { ESHLCL(S); }
+    elif (cop == 39) { ESHRCL(S); }
+    return 0;
+}
+
+# ⛔ 6.6.11 — RE-JUDGE AN UNTYPED VARIABLE AT EVERY PLAIN ASSIGNMENT. The kind-3 flag (unary
+# minus on an untyped float, _UFV_L / _UFV_G) was written only at the declaration, so
+# `var g = 0; g = 1.5; -g` was a silent integer negation of 1.5's bits and `var h = 1.5; h = 7;
+# -h` warned about a correct -7. A plain store into an untyped slot (`t` == 0) now rewrites the
+# flag from its RHS (`_asg_ufv`). Flow-insensitive: the flag is whatever the last assignment
+# COMPILED said — source order within a fn, and across fns for a global. Compound assignment
+# keeps the flag (`_asg_ufv` -1). `g` = 1 for a global slot. CHANGELOG [6.6.11]
+fn _asg_rejudge(S, idx, t, g): i64 {
+    if (_asg_ufv < 0) { return 0; }
+    if (t != 0) { return 0; }
+    if (g == 1) { SGFI(S, idx, _asg_ufv); } else { SLFI(S, idx, _asg_ufv); }
+    return 0;
+}
+
 # ⛔ 6.6.6 (bite 14 review) — `x = <expr>;` where <expr> is one whole METHOD call or OVERLOADED
 # OPERATOR returning x's struct (`r = b.mk(5)`, `q = b.mp(3)`, `c = a + b`): the same temp-then-
 # copy as `_try_struct_call_assign`, which can only see a free fn's name. The method/operator
@@ -2162,14 +2336,25 @@ fn _agc_from_temp(S, t, dli, dgv, n, sid): i64 {
 # replaces the statement's PCMPE and takes that temp when the record spans the whole right-hand
 # side. `r = b.mk(5)` SIGSEGV'd, `q = b.mp(3)` kept rax only. Returns 1 when the statement is done
 # (`;` consumed); 0 leaves the ordinary store to run, exactly as after a plain PCMPE.
+# 6.6.11: also arms the struct-typed FIELD source (`q = b.v;`, see `_fla_arm`) when the destination
+# is a struct, and type-checks every recorded struct result against it — a <= 8 B one (`_sc_tmp`
+# -3, value in rax) included — before any exit. CHANGELOG [6.6.11]
 fn _pcmpe_struct_assign(S, noff): i64 {
     var st = GTI(S);
+    _agc_operand(S, noff);
+    _fla_arm(st, _agc_t);
     var w = _sc_arm(S);
     PCMPE(S);
+    _asg_ufv = _UFV_IS_FLOAT(S);   # 6.6.11: here, while _FBR_KIND is still valid (see _asg_rejudge)
     _sc_want = w;
+    _fla_want = 0 - 1;
+    if (_fla_hit == 1) { return _fla_assign(S, noff); }
     var t = _sc_whole(S, st);
     if (t == 0 - 2) { return 0; }
     var n = _agc_operand(S, noff);
+    if (t == 0 - 3) { _asg_ret_sid = _sc_sid; }   # a <= 8 B struct VALUE: not a pointer mismatch
+    if (_AGG_ASSIGN_TYPE_ERR(S, _agc_t, 0 - _sc_sid, noff, _sc_fn) == 1) { return 0; }
+    if (t == 0 - 3) { return 0; }
     if (n <= 1) { return 0; }
     if (_agc_t != 0 - _sc_sid) { return 0; }
     if (t < 0) { _refuse_toplevel_struct_call(S, _sc_fn); return 0; }
@@ -2452,21 +2637,26 @@ fn _PARSE_STMT_IMPL(S): i64 {
         # this assert's own latch counts — an earlier, unresynced error must not swallow an
         # independent failing #assert. CHANGELOG [6.6.10]
         if (as_p0 == 0) { if (_panic == 1) { lhs = 1; } }
-        if (lhs == 0) {
-            syscall(SYS_WRITE, 2, "error:", 6);
-            _err_head(S);
-            syscall(SYS_WRITE, 2, ": #assert failed", 16);
-            if (PEEKT(S) == 30) {
-                # String token value is (offset << 32) | length
-                var sv = PEEKV(S);
-                var soff = sv >> 32;
-                var slen = sv & 0xFFFFFFFF;
-                syscall(SYS_WRITE, 2, ": ", 2);
-                syscall(SYS_WRITE, 2, S + 0x21A000 + soff, slen);
-            }
-            syscall(SYS_WRITE, 2, "\n", 1);
-            syscall(SYS_EXIT, 1);
-        }
+        if (lhs == 0) { if (GTI(S) > _assert_rep_ti) {
+                _assert_rep_ti = GTI(S);
+                syscall(SYS_WRITE, 2, "error:", 6);
+                _err_head(S);
+                syscall(SYS_WRITE, 2, ": #assert failed", 16);
+                if (PEEKT(S) == 30) {
+                    # String token value is (offset << 32) | length
+                    var sv = PEEKV(S);
+                    var soff = sv >> 32;
+                    var slen = sv & 0xFFFFFFFF;
+                    syscall(SYS_WRITE, 2, ": ", 2);
+                    syscall(SYS_WRITE, 2, S + 0x21A000 + soff, slen);
+                }
+                syscall(SYS_WRITE, 2, "\n", 1);
+                # 6.6.11: record, don't exit. A top-level #assert runs in the declaration phase,
+                # BEFORE PARSE_PROG parses the top-level `var` initialisers, so exiting here lost
+                # an earlier syntax error (`var x = ;` then a failing assert printed only the
+                # assert). Every fork's EMITELF refuses on _had_error and main exits with it.
+                _had_error = 1;
+            } }
         _assert_tail(S);
         return 0;
     }
@@ -2923,67 +3113,20 @@ fn _PARSE_STMT_IMPL(S): i64 {
         }
         # assignment or compound assignment: already consumed IDENT
         # Check for +=, -=, *=, /=, %=, &=, |=, ^=, <<=, >>=
-        var compound_op = 0;
-        var ct = PEEKT(S);
-        if (ct == 6 || ct == 7 || ct == 8 || ct == 9 || ct == 34 || ct == 27 || ct == 35 || ct == 36 || ct == 38 || ct == 39) {
-            var ti_next = GTI(S) + 1;
-            if (ti_next < GTCNT(S)) {
-                if (TOKTYP(S, ti_next) == 4) {
-                    compound_op = ct;
-                    STI(S, GTI(S) + 2);
-                }
-            }
-        }
+        var compound_op = _asg_compound_tok(S);
         _asg_ti = 0 - 1;
+        _asg_ufv = 0 - 1;
         if (compound_op == 0) {
             if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
             STI(S, GTI(S) + 1);
             _asg_ti = GTI(S);   # 6.6.10: the RHS's first token, for _IFS_CHECK below
         }
         if (compound_op != 0) {
-            # Compound: x += expr → load x, push, eval expr, then x OP expr
-            var cidx = FINDLOCAL(S, noff);
-            var cltype = 0;
-            if (cidx >= 0) { EFLLOAD(S, cidx); cltype = GLTYPE(S, cidx); }
-            else {
-                var gidx = FINDVAR(S, noff);
-                if (gidx >= 0) { EVLOAD(S, gidx); }
-            }
-            EPUSHR(S);
-            PCMPE(S);
-            # v6.4.57 (scalar-float, Gap B): when the LHS local is f64/f32-typed,
-            # `x += y` must FLOAT-add, not integer-add on the raw bit pattern. Stack =
-            # x (LHS), rax = expr (RHS) — exactly EMIT_F{64,32}_BINOP's convention, so
-            # route through the same emitters the `x = x + y` path uses. fop 0/1/2/3 maps
-            # to compound_op 6/7/8/9; %,&,|,^,<<,>> on a float fall through to the integer
-            # arms. cycc has no `: f64`/`: f32` locals → this arm never emits on the
-            # self-host input (byte-identical). See issue 2026-07-11-scalar-float-param-*.
-            var f_fop = 0 - 1;
-            if (cltype == F64_TYID || cltype == F32_TYID) {
-                if (compound_op == 6) { f_fop = 0; }
-                if (compound_op == 7) { f_fop = 1; }
-                if (compound_op == 8) { f_fop = 2; }
-                if (compound_op == 9) { f_fop = 3; }
-            }
-            if (f_fop >= 0) {
-                if (cltype == F64_TYID) { EMIT_F64_BINOP(S, f_fop); }
-                else { EMIT_F32_BINOP(S, f_fop); }
-            }
-            else {
-                # Stack = x, rax = expr. For x OP expr: mov rcx,rax; pop rax; OP
-                EMOVCA(S);
-                EPOPR(S);
-                if (compound_op == 6) { EADDR(S); }
-                elif (compound_op == 7) { ESUBR(S); }
-                elif (compound_op == 8) { EIMUL(S); }
-                elif (compound_op == 9) { ECQO(S); EIDIV(S); }
-                elif (compound_op == 34) { ECQO(S); EIDIV(S); EMOVDR(S); }
-                elif (compound_op == 27) { EANDR(S); }
-                elif (compound_op == 35) { EORR(S); }
-                elif (compound_op == 36) { EXORR(S); }
-                elif (compound_op == 38) { ESHLCL(S); }
-                elif (compound_op == 39) { ESHRCL(S); }
-            }   # close the v6.4.57 non-float (integer-op) else
+            # x OP= expr — load x, combine; the store below is shared with `x = expr`. 6.6.11:
+            # one implementation with the for-step replay (see _asg_compound_tok).
+            var cltype = _asg_compound_load(S, noff);
+            _asg_compound_op(S, compound_op, cltype);
+            _asg_ufv = 0 - 1;   # after the RHS: a statement nested in it (a closure body) set it
         } else {
             # v6.5.28 — capture the callee's DECLARED return sid BEFORE the RHS is consumed.
             # The declaration path already does this (parse_decl.cyr:2352-2362: peek
@@ -3049,6 +3192,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
             var lt = GLTYPE(S, idx);
             var ew = GEXW(S);
             _IFS_CHECK(S, _IFS_K(lt), _asg_ti);   # 6.6.10: `t = 1` into an f64 / f32 local
+            _asg_rejudge(S, idx, lt, 0);            # 6.6.11
             if (lt > 0) {
                 if (lt <= 8) {
                     if (ew > lt) { WARN(S, "narrowing assignment (value may truncate)", 41); }
@@ -3088,6 +3232,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
             var avsz = L64(_vars_base + idx * 8);
             var ew = GEXW(S);
             _IFS_CHECK(S, _IFS_K(vt), _asg_ti);   # 6.6.10: `G = 1` into an f64 / f32 global
+            _asg_rejudge(S, idx, vt, 1);            # 6.6.11
             if (avsz < 8) {
                 if (ew > avsz) { WARN(S, "narrowing assignment (value may truncate)", 41); }
                 EVSTORE_W(S, idx, avsz);

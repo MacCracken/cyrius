@@ -20,6 +20,16 @@
 # One shared recogniser (_enum_atom_idx, parse.cyr) now serves #assert and both
 # array-size parsers; pass 1 (_assert_skip_atom) steps over the 1- and 3-token forms.
 # CHANGELOG [6.6.10]
+#
+# 6.6.11 (N4): the qualified form never checked its BASE. `Foo.EB` (no enum Foo) and
+# `F.EB` (EB belongs to E) compiled in expressions, #assert and array sizes, `Nope.gz`
+# loaded the plain global gz, and with a variant name shared by two enums `A.X` read the
+# LAST X. One resolver (_enum_qual_resolve, parse.cyr) serves all three sites now: the
+# base must be an enum and the variant must be ITS variant, looked up in that enum.
+# An enum NAME may be declared more than once, so the parent is matched by NAME, not id.
+# Mutation: make _enum_qual_resolve `return FINDVAR(S, vn);` -> every N4 refusal compiles
+# (rc 0) and the shared-name row exits 22 (want 12); match the parent by the FIRST enum of
+# that name only -> the re-declared-enum row is refused (`'SB' is not a variant of 'Sig'`).
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -32,6 +42,8 @@ fail=0
 bad() { echo "FAIL: assert_enum_constants: $*"; fail=1; }
 
 HDR='enum E { EA = 1; EB = 4; }
+enum F { FC = 5; }
+var gz = 9;
 struct P { x; y; }'
 
 # ok LABEL WANT_EXIT SOURCE — must compile and exit WANT_EXIT
@@ -96,6 +108,59 @@ syscall(60, 7);'
 no "a bad atom followed by arithmetic still reports once" 'expected a number, sizeof(T) or an enum constant' '#assert foo * 2 == 1;
 syscall(60, 7);'
 
+# N4 (6.6.11): the base of `Base.NAME` must be NAME's own enum, at every site.
+NE="'Foo' is not an enum"
+NV="'EB' is not a variant of 'F'"
+no "expr: an unknown base"                "$NE" 'var a = Foo.EB;
+syscall(60, a);'
+no "expr: another enum's variant"         "$NV" 'var b = F.EB;
+syscall(60, b);'
+no "expr: another enum's variant, in a fn" "$NV" 'fn f(): i64 { return F.EB; }
+syscall(60, f());'
+no "expr: a plain global through a non-enum" "'Nope' is not an enum" 'var c = Nope.gz;
+syscall(60, c);'
+no "expr: a plain global through an enum" "'gz' is not a variant of 'E'" 'var c = E.gz;
+syscall(60, c);'
+no "#assert: an unknown base"             "$NE" '#assert Foo.EB == 4, "x";
+syscall(60, 7);'
+no "#assert: another enum's variant"      "$NV" '#assert F.EB == 4;
+syscall(60, 7);'
+no "array size: another enum's variant"   "$NV" 'var arr[F.EB];
+syscall(60, 7);'
+no "typed array size: an unknown base"    "$NE" 'var arr: i64[Foo.EB];
+syscall(60, 7);'
+no "fn-local array size: another enum's variant" "$NV" 'fn f(): i64 { var b[F.EB]; return 0; }
+syscall(60, f());'
+# ANTI-VACUOUS: each enum's own variants, at every site.
+ok "expr + #assert + array size through the right enums" 9 'var arr[F.FC];
+#assert F.FC == 5;
+fn f(): i64 { var b[F.FC]; #assert E.EB == 4; return F.FC + E.EB; }
+syscall(60, f());'
+# A variant name shared by two enums: each qualified access reads ITS enum's constant (the
+# bare name keeps "last definition wins", with its warning).
+printf '%s\n' 'enum A { X = 1; }' 'enum B { X = 2; }' '#assert A.X == 1;' '#assert B.X == 2;' \
+    'var q[A.X];' 'syscall(60, A.X * 10 + B.X);' > "$D/dup.cyr"
+if "$CC" < "$D/dup.cyr" > "$D/dup" 2> "$D/dup.err"; then
+    chmod +x "$D/dup"; rc=0; "$D/dup" || rc=$?
+    [ "$rc" = 12 ] || bad "shared variant name: exit $rc, want 12 (A.X read B's X)"
+else
+    bad "shared variant name: refused:"; grep '^error' "$D/dup.err" | head -3
+fi
+
+# An enum NAME may be declared more than once (lib/syscalls*.cyr each declare `Signal`): a
+# qualified variant resolves through ANY enum of that name, and only a name in none is refused.
+printf '%s\n' 'enum Sig { SA = 1; }' 'enum Sig { SB = 2; }' '#assert Sig.SB == 2;' 'var q[Sig.SA];' \
+    'syscall(60, Sig.SA * 10 + Sig.SB);' > "$D/dupenum.cyr"
+if "$CC" < "$D/dupenum.cyr" > "$D/dupenum" 2> "$D/dupenum.err"; then
+    chmod +x "$D/dupenum"; rc=0; "$D/dupenum" || rc=$?
+    [ "$rc" = 12 ] || bad "a re-declared enum name: exit $rc, want 12"
+else
+    bad "a re-declared enum name: refused:"; grep '^error' "$D/dupenum.err" | head -3
+fi
+printf '%s\n' 'enum Sig { SA = 1; }' 'enum Sig { SB = 2; }' 'enum T { SC = 3; }' 'syscall(60, Sig.SC);' > "$D/dupenum2.cyr"
+if "$CC" < "$D/dupenum2.cyr" > /dev/null 2> "$D/dupenum2.err"; then bad "a re-declared enum name: Sig.SC compiled, want refused"
+else grep -q "'SC' is not a variant of 'Sig'" "$D/dupenum2.err" || bad "a re-declared enum name: Sig.SC refused for another reason: $(head -1 "$D/dupenum2.err")"; fi
+
 # An earlier, unresynced error must not swallow an independent failing #assert: both report.
 printf '%s\n%s\n' "$HDR" 'struct Q { a; b: ; }
 #assert 1 == 2, "real2";
@@ -134,6 +199,11 @@ for fork in main_aarch64 main_cx; do
     if "$CC" < "src/$fork.cyr" > "$D/cc_$fork" 2>/dev/null; then
         chmod +x "$D/cc_$fork"
         "$D/cc_$fork" < "$D/x.cyr" > "$D/x_$fork" 2> "$D/x_$fork.err" || { bad "$fork: qualified forms refused:"; grep '^error' "$D/x_$fork.err" | head -2; }
+        # 6.6.11 (N4): and the wrong-enum form is refused there too
+        printf '%s\n%s\n' "$HDR" 'fn f(): i64 { return F.EB; }
+syscall(60, f());' > "$D/xw.cyr"
+        if "$D/cc_$fork" < "$D/xw.cyr" > /dev/null 2> "$D/xw_$fork.err"; then bad "$fork: F.EB compiled, want refused"
+        else grep -q "'EB' is not a variant of 'F'" "$D/xw_$fork.err" || bad "$fork: F.EB refused for another reason: $(head -1 "$D/xw_$fork.err")"; fi
     else
         bad "$fork: cross-compiler build failed"
     fi

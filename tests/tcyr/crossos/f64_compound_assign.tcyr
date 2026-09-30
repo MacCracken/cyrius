@@ -1,0 +1,130 @@
+# f64_compound_assign.tcyr — 6.6.11 — `x op= y` on an f64 / f32 slot is FLOAT arithmetic, for a
+# local, a global, a top-level statement and a classic-for step, on every backend.
+#
+# The statement arm took its float routing from a LOCAL's type only, so on an f64 GLOBAL
+# `G += 1.0` added the two bit patterns as integers (G = 9216616637413720064, f64_to saturates)
+# and `G -= 0.5` / `G *= 2.0` gave 0; the f32 global was garbage the same way. The for-step
+# replay was a separate, float-blind copy: `for (var x: f64 = 0.0; x < 1.0; x += 0.25)` ran 2
+# iterations, not 4. Both are now one implementation (_asg_compound_op, src/frontend/parse.cyr).
+# Values are compared as BIT PATTERNS (assert_eq on an untyped result), so the float literal on
+# the right is exact.
+#
+# Mutations that redden this file: drop the `return GVTYPE(S, gi);` in _asg_compound_load (every
+# global row fails), or route the for step back through the integer arm (the step rows fail).
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+var G: f64 = 1.5;
+var H: f32 = f32_from(1.5);
+var TL: f64 = 1.0;
+var TS: f32 = f32_from(1.0);
+var GX: f64 = 0.0;
+
+# Top-level statements: the compound arm with no fn around it.
+TL += 2.5;
+TL *= 2.0;
+TS += f32_from(0.5);
+
+fn bits(v) { return v; }
+
+fn local_f64(): i64 {
+    var t: f64 = 1.5;
+    t += 1.0;
+    assert_eq(bits(t), 2.5, "f64 local +=");
+    t -= 0.5;
+    assert_eq(bits(t), 2.0, "f64 local -=");
+    t *= 3.0;
+    assert_eq(bits(t), 6.0, "f64 local *=");
+    t /= 4.0;
+    assert_eq(bits(t), 1.5, "f64 local /=");
+    var u: f64 = 0.5;
+    t += u;
+    assert_eq(bits(t), 2.0, "f64 local += f64 local");
+    return 0;
+}
+
+fn global_f64(): i64 {
+    G = 1.5;
+    G += 1.0;
+    assert_eq(bits(G), 2.5, "f64 global +=");
+    G -= 0.5;
+    assert_eq(bits(G), 2.0, "f64 global -=");
+    G *= 3.0;
+    assert_eq(bits(G), 6.0, "f64 global *=");
+    G /= 4.0;
+    assert_eq(bits(G), 1.5, "f64 global /=");
+    return 0;
+}
+
+fn local_f32(): i64 {
+    var x: f32 = f32_from(1.5);
+    x += f32_from(1.0);
+    assert_eq(f64_to(f32_to(x) * 10.0), 25, "f32 local +=");
+    x -= f32_from(0.5);
+    assert_eq(f64_to(f32_to(x) * 10.0), 20, "f32 local -=");
+    x *= f32_from(3.0);
+    assert_eq(f64_to(f32_to(x) * 10.0), 60, "f32 local *=");
+    x /= f32_from(4.0);
+    assert_eq(f64_to(f32_to(x) * 10.0), 15, "f32 local /=");
+    return 0;
+}
+
+fn global_f32(): i64 {
+    H = f32_from(1.5);
+    H += f32_from(1.0);
+    assert_eq(f64_to(f32_to(H) * 10.0), 25, "f32 global +=");
+    H -= f32_from(0.5);
+    assert_eq(f64_to(f32_to(H) * 10.0), 20, "f32 global -=");
+    H *= f32_from(3.0);
+    assert_eq(f64_to(f32_to(H) * 10.0), 60, "f32 global *=");
+    H /= f32_from(4.0);
+    assert_eq(f64_to(f32_to(H) * 10.0), 15, "f32 global /=");
+    return 0;
+}
+
+fn top_level(): i64 {
+    assert_eq(bits(TL), 7.0, "top-level f64 global: (1.0 + 2.5) * 2.0");
+    assert_eq(f64_to(f32_to(TS) * 10.0), 15, "top-level f32 global +=");
+    return 0;
+}
+
+fn for_step(): i64 {
+    var n = 0;
+    for (var x: f64 = 0.0; x < 1.0; x += 0.25) { n = n + 1; if (n > 100) { break; } }
+    assert_eq(n, 4, "for step x += 0.25 on an f64 local: 4 iterations");
+    n = 0;
+    for (var y: f64 = 8.0; y > 1.0; y /= 2.0) { n = n + 1; if (n > 100) { break; } }
+    assert_eq(n, 3, "for step y /= 2.0 on an f64 local: 3 iterations");
+    n = 0;
+    for (GX = 0.0; GX < 1.0; GX += 0.25) { n = n + 1; if (n > 100) { break; } }
+    assert_eq(n, 4, "for step GX += 0.25 on an f64 global: 4 iterations");
+    n = 0;
+    for (var z: f32 = f32_from(0.0); z < f32_from(1.0); z += f32_from(0.25)) { n = n + 1; if (n > 100) { break; } }
+    assert_eq(n, 4, "for step z += f32 0.25 on an f32 local: 4 iterations");
+    # The step now knows every compound op the statement does (it used to know five).
+    n = 0;
+    for (var i = 1; i < 256; i <<= 1) { n = n + 1; if (n > 100) { break; } }
+    assert_eq(n, 8, "for step i <<= 1: 8 iterations");
+    return 0;
+}
+
+fn integer_unchanged(): i64 {
+    var i = 7;
+    i += 3; i -= 1; i *= 4; i /= 6; i %= 4;
+    assert_eq(i, 2, "integer compound ops unchanged");
+    var m = 0xF0;
+    m &= 0x3C; m |= 1; m ^= 0x11; m >>= 1;
+    assert_eq(m, 0x10, "integer bitwise compound ops unchanged");
+    return 0;
+}
+
+test_group("compound assignment on f64 / f32 slots");
+local_f64();
+global_f64();
+local_f32();
+global_f32();
+top_level();
+for_step();
+integer_unchanged();
+var r = assert_summary();

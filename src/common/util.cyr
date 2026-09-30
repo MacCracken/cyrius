@@ -468,6 +468,10 @@ var _asg_ret_sid = 0;
 # 6.6.10 — the first token of a plain assignment's RHS (-1 for a compound one), so an integer
 # constant stored into an f64 / f32 variable warns (_IFS_CHECK, src/frontend/parse_expr.cyr).
 var _asg_ti = 0 - 1;
+# 6.6.11 — whether a plain assignment's RHS was a float (_UFV_IS_FLOAT, captured right after its
+# PCMPE); -1 when there is no plain RHS to judge. Re-judges an untyped variable's kind-3 flag
+# at the store (_asg_rejudge, src/frontend/parse.cyr).
+var _asg_ufv = 0 - 1;
 var _flit_base = 0;
 var _flit_n = 0;
 var _FLIT_CAP = 16384;

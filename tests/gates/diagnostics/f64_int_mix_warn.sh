@@ -32,11 +32,32 @@
 #           assignment, field store, struct literal, global) warns once each; 0, an IEEE bit
 #           pattern in hex (>= 2^52), a float literal and a runtime value do not.
 #   axis 9  CYRIUS_TYPE_CHECK=0 silences kinds 3 and 4.
+#   axis 10 (6.6.11) kind 5: an f32 `+ - * /` whose right operand is not f32 (an f64 literal, an
+#           integer) warns once each — EMIT_F32_BINOP takes its LOW 32 BITS, so `x * 2.0` was 0,
+#           silently; f32/f32, an f32_from(..) right and a typed f32 field are clean, and
+#           CYRIUS_TYPE_CHECK=0 silences it. Red on 6.6.10 (0 of 9).
+#   axis 11 (6.6.11) compound assignment checks its right operand like `x = x op y`: `t += 1` on
+#           an f64 local, `G -= 2` on an f64 global and `x += 1` in a for step warn kind 1,
+#           `h *= 2.0` on an f32 kind 5; `+= 1.0`, `-= f64_sqrt(u)`, `+= f32_from(..)` and `%=`
+#           do not. Red on 6.6.10 (0 of 3 kind 1, 0 of 1 kind 5).
+#   axis 12 (6.6.11) a plain assignment RE-JUDGES an untyped variable's kind-3 flag: `g = 0;
+#           g = 1.5; -g` warns and `h = 1.5; h = 7; -h` does not, for locals and globals; a
+#           compound assignment keeps the flag, even when a closure in its right operand
+#           assigns a float to one of its own variables; a plain for STEP (`g = 1.5`, `G4 = 7`)
+#           re-judges like the statement. Red on 6.6.10 (3 warnings, two on the wrong lines).
+#   axis 13 (6.6.11) `var t = p.y;` / `var u = y;` (a declared f64 field / local) are typed, so
+#           `-t` / `-u` are float negations and draw no kind 3; `var c = 1.5; -c` still does.
+#           Red on 6.6.10 (3 warnings, want 1).
 # Mutation-proven: with the four `_INT_F64_MIX` calls removed, axis 1 reads 0 of 4 and fails.
 # (6.6.10) with PARSE_INTRIN's `_FBR_MARK` call removed axis 6 fails; with the unary-minus
 # `_FLT_TYPE_WARN(S, 3)` removed, or _cl_restore_locals' flag copy removed, axis 7 fails; with SFLC's `_lfi_clear` call removed
 # axis 7 reads 9 (neg2's `-a` inherits clos()'s slot-0 flag) and fails; with `_IFS_CHECK`
 # returning early axis 8 fails.
+# (6.6.11) with the four `_FLT_TYPE_WARN(S, 5)` calls in the f32 arms removed axis 10 fails;
+# with _asg_compound_float's two checks removed axis 11 fails; with `_asg_rejudge` returning
+# early axis 12 fails; with the for step's two `_asg_rejudge` calls removed axis 12's step
+# program fails (it misses -g / -G3 and flags -h / -G4); with `_decl_float_copy` returning 0
+# axis 13 fails (the SLTYPE stamp itself is pinned by tests/tcyr/crossos/f64_struct_fields.tcyr).
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -255,5 +276,156 @@ n=$(count "$K3"); [ "$n" = 0 ] || bad "axis 9: CYRIUS_TYPE_CHECK=0 still printed
 CYRIUS_TYPE_CHECK=0 "$CC" < "$W/a8.cyr" > "$W/o" 2> "$W/e" || true
 n=$(count "$K4"); [ "$n" = 0 ] || bad "axis 9: CYRIUS_TYPE_CHECK=0 still printed $n kind-4 warning(s)"
 
+# --- axis 10 (6.6.11): kind 5, an f32 arm with a non-f32 right operand ---
+K5="f32 arithmetic with a non-f32 right operand"
+cat > "$W/a10.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct F { a: f32; }
+fn main(): i64 {
+    var u = 2.5;
+    var x: f32 = f32_from(2.5);
+    var y: f32 = f32_from(0.5);
+    var f: F;
+    f.a = f32_from(1.0);
+    var w1 = f32_from(u) + 1.0;
+    var w2 = x + 1.0;
+    var w3 = x - 1;
+    var w4 = x * 2.0;
+    var w5 = x / 2;
+    var w6 = x + 1;
+    var w7 = x - 0.5;
+    var w8 = x * 3;
+    var w9 = x / 4.0;
+    var c1 = x + y;
+    var c2 = x - f32_from(1.0);
+    var c3 = x * f.a;
+    var c4 = x / y + y * x - y;
+    var c5 = f.a + x;
+    return 0;
+}
+var r = main();
+syscall(60, r);
+EOF
+build "$W/a10.cyr"
+n=$(count "$K5"); [ "$n" = 9 ] || { bad "axis 10: kind-5 warning count $n, want 9 (w1..w9; not c1..c5)"; sed -n 1,12p "$W/e"; }
+if grep "$K5" "$W/e" | grep -q ">:1[89]:\|>:2[0-2]:"; then bad "axis 10: kind 5 fired on an f32/f32 row (c1..c5)"; fi
+n=$(count "$K1"); [ "$n" = 0 ] || bad "axis 10: $n kind-1 warning(s) on f32 arithmetic (the f32 arms are kind 5)"
+CYRIUS_TYPE_CHECK=0 "$CC" < "$W/a10.cyr" > "$W/o" 2> "$W/e" || true
+n=$(count "$K5"); [ "$n" = 0 ] || bad "axis 10: CYRIUS_TYPE_CHECK=0 still printed $n kind-5 warning(s)"
+
+# --- axis 11 (6.6.11): compound assignment checks its right operand ---
+cat > "$W/a11.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+var G: f64 = 1.5;
+fn main(): i64 {
+    var t: f64 = 1.5;
+    var h: f32 = f32_from(1.5);
+    var u = 4.0;
+    t += 1;
+    G -= 2;
+    h *= 2.0;
+    for (var x: f64 = 0.0; x < 3.0; x += 1) { }
+    t += 1.0;
+    t -= f64_sqrt(u);
+    G *= t;
+    h += f32_from(1.0);
+    h /= h;
+    var i = 7;
+    i %= 3;
+    for (var z: f64 = 0.0; z < 1.0; z += 0.25) { }
+    return i;
+}
+var r = main();
+syscall(60, r);
+EOF
+build "$W/a11.cyr"
+n=$(count "$K1"); [ "$n" = 3 ] || { bad "axis 11: kind-1 warning count $n, want 3 (t += 1, G -= 2, the step x += 1)"; sed -n 1,8p "$W/e"; }
+n=$(count "$K5"); [ "$n" = 1 ] || { bad "axis 11: kind-5 warning count $n, want 1 (h *= 2.0)"; sed -n 1,8p "$W/e"; }
+n=$(count "$K4"); [ "$n" = 0 ] || bad "axis 11: kind 4 fired on a compound assignment ($n); kind 1 is its warning"
+
+# --- axis 12 (6.6.11): a plain assignment re-judges the kind-3 flag ---
+cat > "$W/a12.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+var G1 = 0;
+var G2 = 1.5;
+fn main(): i64 {
+    var g = 0;
+    g = 1.5;
+    var a = -g;
+    var h = 1.5;
+    h = 7;
+    var b = -h;
+    G1 = 1.5;
+    var c = -G1;
+    G2 = 7;
+    var d = -G2;
+    var k = 1.5;
+    k += 1;
+    var e = -k;
+    var m = 1;
+    m += fncall1(|v| { var q = 0; q = 1.5; return v; }, 2);
+    var f = -m;
+    return a + b + c + d + e + f;
+}
+var r = main();
+syscall(60, r & 255);
+EOF
+build "$W/a12.cyr"
+n=$(count "$K3"); [ "$n" = 3 ] || { bad "axis 12: kind-3 warning count $n, want 3 (-g, -G1, -k; not -h, -G2, -m)"; sed -n 1,8p "$W/e"; }
+for want in 8 13 18; do
+    grep "$K3" "$W/e" | grep -q ">:$want:" || bad "axis 12: no kind-3 warning at line $want"
+done
+# the for-step replay re-judges too (parse_ctrl.cyr's plain-step `_asg_rejudge` calls), for a
+# local and a global: a float step flags `-g` / `-G3`, an int step clears `-h` / `-G4`.
+cat > "$W/a12s.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+var G3 = 0;
+var G4 = 1.5;
+fn main(): i64 {
+    var g = 0;
+    var h = 1.5;
+    var i = 0;
+    for (i = 0; i < 1; g = 1.5) { i = 1; }
+    var a = -g;
+    for (i = 0; i < 1; h = 7) { i = 1; }
+    var b = -h;
+    for (i = 0; i < 1; G3 = 1.5) { i = 1; }
+    var c = -G3;
+    for (i = 0; i < 1; G4 = 7) { i = 1; }
+    var d = -G4;
+    return a + b + c + d;
+}
+var r = main();
+syscall(60, r & 255);
+EOF
+build "$W/a12s.cyr"
+n=$(count "$K3"); [ "$n" = 2 ] || { bad "axis 12 (for step): kind-3 warning count $n, want 2 (-g, -G3; not -h, -G4)"; sed -n 1,8p "$W/e"; }
+for want in 9 13; do
+    grep "$K3" "$W/e" | grep -q ">:$want:" || bad "axis 12 (for step): no kind-3 warning at line $want"
+done
+
+# --- axis 13 (6.6.11): a copy of a declared f64 value is typed ---
+cat > "$W/a13.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+struct P { x: f64; y: f64; }
+fn main(): i64 {
+    var p: P;
+    p.y = 2.5;
+    var y: f64 = 1.5;
+    var t = p.y;
+    var u = y;
+    var c = 1.5;
+    var a = -t;
+    var b = -u;
+    var d = -c;
+    return a + b + d;
+}
+var r = main();
+syscall(60, r & 255);
+EOF
+build "$W/a13.cyr"
+n=$(count "$K3"); [ "$n" = 1 ] || { bad "axis 13: kind-3 warning count $n, want 1 (-c only; t and u are typed f64)"; sed -n 1,8p "$W/e"; }
+
 [ "$fail" = 0 ] || exit 1
-echo "PASS: f64_int_mix_warn (4 int-left ops warn; no false positives; kind 1 intact; TYPE_CHECK=0 silences; f64 fields and builtin results typed; kinds 3 + 4)"
+echo "PASS: f64_int_mix_warn (4 int-left ops warn; no false positives; kind 1 intact; TYPE_CHECK=0 silences; f64 fields and builtin results typed; kinds 3 + 4; kind 5, compound operands, re-judged flags, typed copies)"

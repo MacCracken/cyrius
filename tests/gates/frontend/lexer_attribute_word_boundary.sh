@@ -134,6 +134,11 @@
 #   M16 `_asf_attr_bound` forced to 1 → 1 FAIL: F5 (a comment's `{` counted)
 #   M17 the depth clamp removed, attribute skip in the brace scan reverted to comment-to-EOL
 #       → 2 FAIL: F2, F3 (the later fns vanish again)
+#   6.6.11: F4 scored against the compiler too (it used a literal list while DCE never
+#   reported the fn after an async fn), F4b anti-vacuous; F6 on a root host is a SKIP
+#   (the gate exits 77 unless an axis failed), no longer a pass.
+#   M18 the EJMP0/EPATCH pair restored in _async_emit_constructor (parse_fn.cyr)
+#       → 2 FAIL: F4, F4b (the compiler's list loses f_after)
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
@@ -141,7 +146,7 @@ CC=${CYRIUS_CC:-"$ROOT/build/cycc"}
 D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: mktemp"; exit 1; }
 trap 'rm -rf "$D"' EXIT
 
-pass=0; fail=0
+pass=0; fail=0; skipped=""
 ulimit -c 0 2>/dev/null || true
 
 # Compile $D/<name>.cyr. Sets `rc`; fails the axis loudly on an empty binary.
@@ -674,18 +679,20 @@ if [ -x "$D/cyrius_api_surface" ] || build_tool cyrius_api_surface; then
     faxis F2 'a MULTI-LINE #inline fn no longer drops every later fn' "$(femit F2 "$F2")" "$(fsnap F2 "$F2")"
     F3='fn f_before() { return 0; }\n#naked fn f_nk() {\n    return 1;\n}\n#deprecated("x") fn f_dep(a) {\n    return a;\n}\nfn f_after() { return 2; }\n'
     faxis F3 'multi-line #naked and #deprecated("x") fns, then a later fn' "$(femit F3 "$F3")" "$(fsnap F3 "$F3")"
-    # The compiler's dead list is not the oracle here: it never reports the fn AFTER an
-    # async fn as dead (a DCE quirk outside this gate). Premise instead: the fixture
-    # compiles with CYRIUS_ASYNC=1 and emits f_fut; the expected list is then literal.
-    # The fixture's `include "lib/alloc.cyr"` resolves from $D: link the TREE's lib there.
-    # Without the link it fell through to $HOME/.cyrius/versions/<VERSION>/lib — the live
-    # store — so F4a tested the installed stdlib and failed on any host lacking that slot.
+    # 6.6.11: the compiler is the oracle here too. Until 6.6.11 the dead list never named the
+    # fn AFTER an async fn: `_async_emit_constructor` emitted a skip-jmp outside every fn's
+    # range, which the DCE seed pass took as a root for the next fn, so this axis carried a
+    # literal list. The jmp is gone; the fixture's `include "lib/alloc.cyr"` adds lib fns
+    # to the dead list, so only `f_*` is compared. The include resolves from $D: link the
+    # TREE's lib there (without it, it fell through to the live store's lib).
+    # Mutation: restore the EJMP0/EPATCH pair in _async_emit_constructor -> F4 RED
+    # (the compiler's list loses f_after).
     ln -sfn "$ROOT/lib" "$D/lib"
     F4='include "lib/alloc.cyr"\nfn f_before() { return 0; }\nasync fn f_fut(a) {\n    return a;\n}\nfn f_after() { return 2; }\n'
-    faxis F4a 'premise: the async fixture compiles and emits f_fut' "f_fut" \
-        "$(femit F4 "$F4" CYRIUS_ASYNC=1 | tr ' ' '\n' | grep -x 'f_fut')"
+    F4E=$(femit F4 "$F4" CYRIUS_ASYNC=1 | tr ' ' '\n' | grep '^f_' | paste -sd' ' -)
     rm -f "$D/lib"
-    faxis F4 'an async fn is public surface' "f_after f_before f_fut" "$(fsnap F4 'fn f_before() { return 0; }\nasync fn f_fut(a) {\n    return a;\n}\nfn f_after() { return 2; }\n')"
+    faxis F4 'an async fn and the fn after it are public surface' "$F4E" "$(fsnap F4 'fn f_before() { return 0; }\nasync fn f_fut(a) {\n    return a;\n}\nfn f_after() { return 2; }\n')"
+    faxis F4b 'ANTI-VACUOUS: the compiler emits all three f_ fns' "f_after f_before f_fut" "$F4E"
     # ANTI-VACUOUS: a COMMENT that only starts like an attribute still hides its `{` — the
     # attribute skip must not turn `#ioctl notes {` into code (depth 1 would drop f_after).
     F5='fn f_before() { return 0; }\n#ioctl notes {\n#io(fd) reads {\nfn f_after() { return 2; }\n'
@@ -696,8 +703,8 @@ if [ -x "$D/cyrius_api_surface" ] || build_tool cyrius_api_surface; then
     printf 'fn f_y() { return 0; }\n' > "$D/apir/src/y.cyr"
     chmod 000 "$D/apir/src/y.cyr"
     if [ -r "$D/apir/src/y.cyr" ]; then
-        printf '  ok: axis F6 — SKIPPED by name: running as a user who can read a mode-000 file (root)\n'
-        pass=$((pass+1))
+        printf '  skip: axis F6 — could not run: this user can read a mode-000 file (root)\n'
+        skipped="F6 (root can read a mode-000 file)"
     else
         frc=0
         ( cd "$D/apir" && "$D/cyrius_api_surface" --update --scope=project --snapshot="$D/F6.snap" ) > "$D/F6.out" 2>&1 || frc=$?
@@ -713,5 +720,10 @@ fi
 if [ "$fail" -gt 0 ]; then
     printf 'FAIL: lexer-attribute-word-boundary — %s of %s axes failed\n' "$fail" "$((pass+fail))"
     exit 1
+fi
+# 6.6.11: an axis that could not run is a SKIP (exit 77), not a pass — a failure still wins.
+if [ -n "$skipped" ]; then
+    printf 'SKIP: lexer-attribute-word-boundary — %s/%s axes green, not run: %s\n' "$pass" "$pass" "$skipped"
+    exit 77
 fi
 printf 'PASS: lexer-attribute-word-boundary — %s/%s axes green\n' "$pass" "$pass"

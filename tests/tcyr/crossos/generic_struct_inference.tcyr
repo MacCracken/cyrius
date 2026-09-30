@@ -54,6 +54,11 @@
 # after the top level, and that run's 0 was the exit code — so on the first cut of this file a
 # failing row still exited 0 (the header's "RED" above then meant "a FAIL line on stderr").
 #
+# L9 (6.6.11) rows `run_globals`: a declaration-zone global typed `W1<Pt>` / `Box<Pt>` reads and
+# writes `G.v.x` and passes as that instance (was a parse error; PARSE_GVAR_REG registered the
+# base). Mutation: PARSE_GVAR_REG's `_gen_ann_sid` back to SKIP_GENERICS -> this file does not
+# build. The initialiser refusals are in tests/gates/frontend/generic_type_arg_unknown_refused.sh (Q).
+#
 # CROSS-HOST because each instance is a by-value struct-param fn emitted inline (jumped over) by
 # every backend, and struct returns take the per-target retptr / register-pair ABI.
 include "lib/assert.cyr"
@@ -70,6 +75,13 @@ struct M2<T> { a: T; b: T; }    # the base is 16 B (a register pair); M2<i32> is
 struct P3 { a; b; c; }          # 24 B: the retptr class
 
 var gp: Pt = Pt { 2, 5 };
+# L9 (6.6.11): declaration-zone globals TYPED with a generic instance, each holding the address of
+# storage laid out as that instance (W1<Pt> is {v: Pt}, 16 B; Box<Pt> is {v: Pt, n}, 24 B). They
+# were registered as the 8 B BASE: `GW.v.x` did not parse and `w1s(GW)` read the wrong storage.
+var gws: Pt = Pt { 2, 5 };
+var gbs: P3 = P3 { 1, 2, 3 };
+var GW: W1<Pt> = &gws;
+var GB: Box<Pt> = &gbs;
 
 # A loop, so it is never inlined (the old dead-stub path).
 fn g<T>(p: T): i64 { var s = 0; var i = 0; while (i < 2) { s = s + p.y; i = i + 1; } return s + p.x; }
@@ -133,6 +145,18 @@ fn box_sum(r: Box<Pt>): i64 { return r.n * 10 + r.v.x + r.v.y * 100; }
 # its definition (pass 1 must record the address-passed bit from the INSTANCE) and after.
 fn use_w1(a): i64 { var w: W1<Pt>; w.v.x = a; w.v.y = 20; return w1s(w); }
 fn w1s(w: W1<Pt>): i64 { return w.v.x + w.v.y; }
+
+fn run_globals(): i64 {
+    test_group("a global typed with a generic struct instance (L9)");
+    assert_eq(GW.v.x + GW.v.y * 10, 52, "L9: GW.v.x on a declaration-zone W1<Pt> global (was a parse error)");
+    assert_eq(w1s(GW), 7, "L9: w1s(GW), the global as a W1<Pt> argument");
+    GW.v.x = 4;
+    assert_eq(gws.x, 4, "L9: GW.v.x = 4 writes through to the storage");
+    assert_eq(box_sum(GB), 231, "L9: box_sum(GB), a 24 B Box<Pt> global (v.x 1, v.y 2, n 3)");
+    GB.n = 5;
+    assert_eq(GB.n * 10 + GB.v.y, 52, "L9: GB.n written and read, GB.v.y read");
+    return 0;
+}
 
 fn run_calls(a): i64 {
     var p: Pt; p.x = a; p.y = 5;
@@ -245,6 +269,7 @@ fn run_paths(): i64 {
 
 fn main(): i64 {
     alloc_init();
+    run_globals();
     run_calls(2);
     run_params();
     #ifndef CYRIUS_TARGET_CX

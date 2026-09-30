@@ -17,14 +17,17 @@
 #   PP_PREDEFINE the same cap (builtin-only callers: a source-premise row)
 # Each behavioural row FAILS on the pre-6.6.10 compiler. CHANGELOG [6.6.10]
 #
-# ⚠ The cx await row passes vacuously until the cx compiler reads CYRIUS_ASYNC (6.6.10
-# bite 10): today it refuses `async` at rc 1 before reaching the cap. On the merged
-# tree it is a real check.
+# The aarch64 and cx await rows cannot reach the cap: both targets refuse a mid-body
+# `await` BY NAME ("x86-only so far") before the suspend table fills. Each row asserts
+# that refusal OR the cap — never a bare rc 1, which any unrelated error would satisfy.
+# (This header used to call the cx row a vacuous pass; 6.6.11 made both rows real.)
+#
+# Exit 77 (SKIP, 6.6.11) only when the gate cannot run at all (no compiler, no temp dir).
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
-[ -x "$CC" ] || { echo "FAIL: cap_errors_stop_storing: no build/cycc"; exit 1; }
-D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: cap_errors_stop_storing: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
+[ -x "$CC" ] || { echo "SKIP: cap_errors_stop_storing: no compiler at $CC"; exit 77; }
+D=$(mktemp -d) && [ -d "$D" ] || { echo "SKIP: cap_errors_stop_storing: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 77; }
 trap 'rm -rf "$D"' EXIT
 cd "$ROOT"
 
@@ -59,13 +62,16 @@ comp() {
 comp "$CC" "$D/aw.cyr"
 [ "$rc" = 1 ] || bad "await x86: rc $rc, want 1 (139 = the _coro_rcp overflow)"
 grep -q 'too many `await` suspend points' "$D/err" || bad "await x86: cap message missing"
+AWAIT_STOP='too many `await` suspend points\|mid-body suspend is x86-only'
 if [ -x "$D/cc_aa" ]; then
     comp "$D/cc_aa" "$D/aw.cyr"
     [ "$rc" = 1 ] || bad "await aarch64: rc $rc, want 1"
+    grep -q "$AWAIT_STOP" "$D/err" || bad "await aarch64: neither the cap nor the named x86-only refusal"
 fi
 if [ -x "$D/cc_cx" ]; then
     comp "$D/cc_cx" "$D/aw.cyr"
     [ "$rc" = 1 ] || bad "await cx: rc $rc, want 1"
+    grep -q "$AWAIT_STOP" "$D/err" || bad "await cx: neither the cap nor the named x86-only refusal"
 fi
 
 # ── continue: 400 in one for-loop (cap 8), then a real error in a later fn ─────────
@@ -84,7 +90,7 @@ grep -q 'too many continue statements' "$D/err" || bad "continue: cap message mi
 grep -q "cap_marker_after_continues" "$D/err" || bad "continue: the later error was not reported (state corrupted?)"
 
 # ── REGSTRUCT: 1100 structs (cap 1024), then a union and a struct past the cap ─────
-# The two callers must SKIP a refused body: indexing it with sid - 1 = -1 writes the union
+# The two callers must skip a refused body: indexing it with sid - 1 = -1 writes the union
 # flag over struct 1023's name slot and reads a garbage field count for the struct.
 {
     awk 'BEGIN { for (i = 0; i < 1100; i++) printf "struct S%d { a; }\n", i }'
@@ -131,6 +137,44 @@ comp "$CC" "$D/pool.cyr"
 grep -q 'struct field pool exhausted' "$D/err" || bad "pool: cap message missing"
 grep -q '#assert failed' "$D/err" && bad "pool: entries past 8192 were stored (over the field-name pool)"
 
+# ── union flag: a union keeps bit 63 in its field count (6.6.11) ────────────────────
+# Read raw, that count was negative, so a union's 256 cap never fired, and the flag rode the
+# pool top into every later struct, so the 8192 pool cap never fired for anything after a
+# union — the writes ran on past the pool and corrupted the compiler's own tables (the pool
+# row below reported "passing integer literal 8 to 'alloc'" from lib/). CHANGELOG [6.6.11]
+{
+    echo 'union UBig {'
+    awk 'BEGIN { for (i = 0; i < 300; i++) printf "  f%d;\n", i }'
+    echo '}'
+    echo 'syscall(60, 0);'
+} > "$D/ufl.cyr"
+comp "$CC" "$D/ufl.cyr"
+[ "$rc" = 1 ] || bad "union fields: rc $rc, want 1 (0 = the 256 cap never fires on a union)"
+grep -q 'too many struct fields' "$D/err" || bad "union fields: cap message missing"
+{
+    echo 'include "lib/syscalls.cyr"'
+    echo 'union U0 { a; b; }'
+    awk 'BEGIN { for (s = 0; s < 40; s++) { printf "struct T%d {\n", s; for (i = 0; i < 250; i++) printf "  f%d;\n", i; print "}" } }'
+    echo 'struct TPast { a; b; }'
+    echo '#assert sizeof(TPast) == 0;'
+    echo 'syscall(60, 0);'
+} > "$D/upool.cyr"
+comp "$CC" "$D/upool.cyr"
+[ "$rc" = 1 ] || bad "union-first pool: rc $rc, want 1"
+grep -q 'struct field pool exhausted' "$D/err" || bad "union-first pool: cap message missing (the union flag disabled the 8192 cap)"
+grep -q '#assert failed' "$D/err" && bad "union-first pool: entries past 8192 were stored"
+{
+    echo 'union UA { a; b: i64; }'
+    echo 'struct SB { x; y; z; }'
+    echo 'union UC { p; q; r; s; }'
+    echo '#assert sizeof(UA) == 8;'
+    echo '#assert sizeof(SB) == 24;'
+    echo '#assert sizeof(UC) == 8;'
+    echo 'syscall(60, 0);'
+} > "$D/ulay.cyr"
+comp "$CC" "$D/ulay.cyr"
+[ "$rc" = 0 ] || { bad "union layout: rc $rc, want 0 (a masked count must keep the union flag)"; head -3 "$D/err"; }
+
 # ── PP_DEFINE: 20 user #defines (table of 16 incl. builtins) ──────────────────────
 {
     awk 'BEGIN { for (i = 0; i < 20; i++) printf "#define D%d %d\n", i, i }'
@@ -153,4 +197,4 @@ awk '/^fn PP_DEFINE\(/ { f = 1 } f && /_pp_flag_count >= 16/ { print; exit }' sr
     || bad "pp define: the cap in PP_DEFINE does not return after ERR_MSG"
 
 [ "$fail" = 0 ] || exit 1
-echo "PASS: every report-then-store cap stops storing (await x86/aarch64/cx, continue, REGSTRUCT, ADDFIELD, pool, PP_DEFINE/PREDEFINE; 6.6.10)"
+echo "PASS: every report-then-store cap stops storing (await x86 + aarch64/cx named refusal, continue, REGSTRUCT, ADDFIELD, pool, union count + union-first pool, PP_DEFINE/PREDEFINE; 6.6.10/6.6.11)"

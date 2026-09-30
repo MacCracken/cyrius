@@ -335,8 +335,12 @@ fn _resolve_field_base_addr(S, idx, sid): i64 {
 # real slot is >= 0, "no local" is -1, and slots cap well below 1000. Same encode-in-the-index
 # convention `_resolve_field_base_addr` uses for captures. CHANGELOG [6.6.6]
 fn _AGC_DREF(li): i64 { return 0 - 1000 - li; }
+# 6.6.11 — `li == -2` is a FOURTH source: the struct-typed FIELD recorded by `_fla_take`, so a
+# variable destination (`q = b.v;`, `var p: Pt = b.v;`) takes this same byte-exact copy. `-2` is
+# free: a slot is >= 0, "none" is -1 and the dereferenced band starts at -1000. CHANGELOG [6.6.11]
 fn _agc_addr_x1(S, li, gv, boff): i64 {
     if (gv >= 0) { EVADDR_X1(S, gv); }
+    elif (li == 0 - 2) { _fsc_src_x1(S, boff); return 0; }
     elif (li <= 0 - 1000) { EFLLOAD(S, 0 - 1000 - li); EMOVCA(S); }
     else { EFLADDR_X1(S, li); }
     if (boff > 0) { EADDIMM_X1(S, boff); }
@@ -559,6 +563,8 @@ fn _fsc_expr(S, ft, fnoff): i64 {
     _fla_want = sv;
     var t = _sc_whole(S, st);
     if (t >= 0 || t == 0 - 1) { return _fsc_from_call(S, t, ft, fnoff); }
+    # 6.6.11: a <= 8 B struct result (rax, no temp) is type-checked too, then stored. See `_sc_post`.
+    if (t == 0 - 3) { if (_sc_sid != ft) { _fsc_type_err(S, _sc_fn, fnoff); } return 2; }
     if (_fla_hit == 1) {
         _fla_hit = 0;
         if (_fla_ft != ft) { _fsc_type_err(S, _fla_name, fnoff); return 2; }
@@ -576,16 +582,17 @@ fn _fsc_from_call(S, t, ft, fnoff): i64 {
 
 # The dispatch, cursor on the right-hand side of `x.f = `: 0 = not a struct copy (nothing
 # parsed), 1 = the source is recorded for `_fsc_copy`, 2 = the RHS is parsed and its value is
-# in rax. A named source is taken at every width; the others only when the field is not one
-# exact register store (1/2/4/8 B), where the one-word path was already right.
+# in rax. Every source shape is taken at every width.
+# ⛔ 6.6.11 — an exact-register field (1/2/4/8 B) used to return 0 here, before the call and
+# expression arms, because its one-word store was already the right COPY. It was not the right
+# TYPE CHECK: `h.p = y.mq()` and `h.p = mkq8()` stored a Q8 into a P8 field with no diagnostic.
+# The arms below store through the same width ladder (2) when the value is in rax. CHANGELOG [6.6.11]
 fn _fsc_src(S, ft, fnoff): i64 {
     if (ft <= 0) { return 0; }
     if (IS_STR_FIELD(S, ft) == 1) { return 0; }
     if (PEEKT(S) == 2) {
         if (TOKTYP(S, GTI(S) + 1) == 5) { return _fsc_name(S, ft, fnoff); }
     }
-    var sz = STRUCTSZ(S, ft - 1);
-    if (sz == 8 || sz == 4 || sz == 2 || sz == 1) { return 0; }
     if (PEEKT(S) == 2) {
         var r = _fsc_call(S, ft, fnoff);
         if (r != 0) { return r; }
@@ -647,6 +654,64 @@ fn _fla_take(S, idx, sid, off, ft): i64 {
     _fsc_fsid = sid;
     _fsc_foff = off;
     return 1;
+}
+
+# ⛔ 6.6.11 — A STRUCT VARIABLE ASSIGNED FROM A STRUCT-TYPED FIELD COPIED ONE WORD (`q = b.v;`,
+# a local, a global and an address-passed parameter alike), and the DECLARATION `var p: Pt = b.v;`
+# stored that word into a slot typed `Pt` that was not inline, so `p.x` dereferenced it: SIGSEGV
+# on x86 and aarch64, a page fault on PE. 6.6.10 taught the FIELD destination (`b.v = a.v`) to
+# record such a source instead of loading it (`_fla_take`); the variable destinations now arm the
+# same record and copy from it byte-exact (`_agc_copy_bytes` with the `-2` source). A field of a
+# DIFFERENT struct type is refused by name, as the variable-to-variable copy has been since 6.6.6.
+# Armed only when the destination IS a struct, so a scalar `x = b.v;` keeps its one-word load.
+# CHANGELOG [6.6.11]
+fn _fla_arm(st, dt): i64 {
+    _fla_hit = 0;
+    if (dt >= 0) { return 0; }
+    if (dt <= 0 - 2048) { return 0; }
+    _fla_want = st;
+    return 0;
+}
+
+# `q = b.v;` after the armed PCMPE recorded the field: 1 = copied (`;` consumed).
+fn _fla_assign(S, noff): i64 {
+    _fla_hit = 0;
+    _agc_operand(S, noff);
+    if (_AGG_ASSIGN_TYPE_ERR(S, _agc_t, 0 - _fla_ft, noff, _fla_name) == 1) { return 0; }
+    var dli = _agc_li;
+    if (_agc_pp == 1) { dli = _AGC_DREF(dli); }
+    _agc_copy_bytes(S, dli, _agc_gvi, 0 - 2, 0 - 1, STRUCTSZ(S, _fla_ft - 1));
+    if (_agc_gvi >= 0) { SLVAR(S, _agc_gvi); }
+    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
+    STI(S, GTI(S) + 1);   # consume ';'
+    return 1;
+}
+
+# `var p: S = b.v;` in a fn: an inline `S` named `p`, filled from the recorded field. 1 = declared.
+fn _fla_var_receive(S, noff, pscale): i64 {
+    _fla_hit = 0;
+    if (_AGG_ASSIGN_TYPE_ERR(S, pscale, 0 - _fla_ft, noff, _fla_name) == 1) { return 0; }
+    var t = _agg_temp(S, _fla_ft);
+    _agc_copy_bytes(S, t, 0 - 1, 0 - 2, 0 - 1, STRUCTSZ(S, _fla_ft - 1));
+    S64(S + 0x5D9D000 + t * 8, noff);
+    SSLICE_W(S, t, 0);
+    return 1;
+}
+
+# ⛔ 6.6.11 — rax = the receiver's VALUE, for a method whose `self: T` is a struct of 8 B or less.
+# Such a `self` is passed BY VALUE (`_param_wants_struct_ptr` leaves it out of the structmask), so
+# the free call `Odd_sum(x)` pushes x's value; the method arm below pushed `&x` for every `self`,
+# and the callee read its fields out of the address: `x.sum()` returned garbage on every backend.
+# Loaded through the same base-address resolution the field access uses, at the struct's width
+# rounded up to a load (3 -> 4, 5..7 -> 8); the callee reads only the declared fields. CHANGELOG [6.6.11]
+fn _self_value_ra(S, idx, sid): i64 {
+    _resolve_field_base_addr(S, idx, sid);
+    var sz = STRUCTSZ(S, sid - 1);
+    var w = 8;
+    if (sz <= 4) { w = 4; }
+    if (sz <= 2) { w = sz; }
+    EFIELD_LOAD_W(S, w);
+    return 0;
 }
 
 # Load a struct field: ident.field → emit load from var_addr + field_offset
@@ -809,7 +874,9 @@ fn PARSE_FIELD_LOAD(S, noff): i64 {
         # or <=8 B on non-cx: the slot IS the struct — pass its address). This path
         # loaded the slot unconditionally, so `p.m()` on an inline stack struct handed
         # the method p's FIRST FIELD as `self` and `load64(self)` SIGSEGV'd (rc=139).
-        if (idx <= 0 - 1000000) {
+        if (_fn_self_byval(mfi) == 1) {
+            _self_value_ra(S, idx, sid);                   # 6.6.11: a <= 8 B `self: T` is by value
+        } elif (idx <= 0 - 1000000) {
             _CL_CAP_BASE_RA(S, 0 - 1000000 - idx, sid);   # 6.6.5: `self` from a closure capture
         } elif (idx < 0 - 1) {
             var mli = 0 - idx - 2;
@@ -1993,6 +2060,72 @@ fn _gv_ufv(S, sti, typed): i64 {
     if (_gfi_base == 0) { return 0; }
     return load8(_gfi_base + vi);
 }
+# ⛔ 6.6.11 — AN UNTYPED `var` COPIED FROM A DECLARED f64 / f32 VALUE STAYED i64. `var t = p.y;`
+# (p.y an f64 field), `var t = y;` (y an f64 local or param) and `var t = G;` (G an f64 global)
+# left `t` untyped, so `t + t` was an INTEGER add of two bit patterns — silent; only `-t` drew
+# kind 3. The v6.5.21 rule (`var t = f();` with f `: f64` types t) now reaches a pure COPY of a
+# declared float: the initialiser is exactly `IDENT` or `IDENT(.IDENT)+` and its value is typed
+# F64/F32. Deliberately NARROW: a literal (`var z = 0.0;`), a float builtin (`f64_sqrt(u)`) and
+# any arithmetic stay untyped — inferring those would turn `==` / `<` on existing code into
+# float compares (NaN, ±0). Returns the type to stamp, else 0. CHANGELOG [6.6.11]
+fn _decl_float_copy(S, ti, end): i64 {
+    var t = GESTYPE(S);
+    if (t != F64_TYID) { if (t != F32_TYID) { return 0; } }
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    ti = ti + 1;
+    while (ti < end) {
+        if (TOKTYP(S, ti) != 41) { return 0; }
+        if (TOKTYP(S, ti + 1) != 2) { return 0; }
+        ti = ti + 2;
+    }
+    if (ti != end) { return 0; }
+    return t;
+}
+# The same judgement for a global at REGISTRATION, where no code has been emitted and the shape
+# decides: `= G ;` with G an f64 / f32 global, or `= G.f(.f)* ;` through a struct global whose
+# leaf field is declared f64 / f32. Stamps the type (and clears the untyped-float flag) on a
+# NEW slot only — a redeclaration keeps the slot it folded onto. CHANGELOG [6.6.11]
+fn _gv_float_copy(S, gvi, sti, typed): i64 {
+    if (typed != 0) { return 0; }
+    if (gvi != GVCNT(S)) { return 0; }
+    if (TOKTYP(S, sti + 2) != 4) { return 0; }
+    var ti = sti + 3;
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    var vi = _findvar_core(S, TOKVAL(S, ti));
+    if (vi < 0) { return 0; }
+    var t = GVTYPE(S, vi);
+    if (TOKTYP(S, ti + 1) == 41) { t = _gv_field_chain(S, vi, ti + 1); ti = _gfc_end; }
+    else { ti = ti + 1; }
+    if (TOKTYP(S, ti) != 5) { return 0; }
+    if (t != F64_TYID) { if (t != F32_TYID) { return 0; } }
+    SVTYPE(S, gvi, t);
+    SGFI(S, gvi, 0);
+    return 0;
+}
+# `.f(.f)*` from token `ti` on struct global `vi`: the leaf's float type (F64_TYID / F32_TYID)
+# or 0; `_gfc_end` is the token after the chain.
+var _gfc_end = 0;
+fn _gv_field_chain(S, vi, ti): i64 {
+    _gfc_end = ti;
+    if (GVPM(S, vi) == 0) { return 0; }
+    var si = GVTYPE(S, vi) - 1;
+    if (si < 0) { return 0; }
+    var k = 0;
+    while (TOKTYP(S, ti) == 41) {
+        if (TOKTYP(S, ti + 1) != 2) { return 0; }
+        if (k != 0) { return 0; }   # a float field is a leaf
+        if (si < 0) { return 0; }
+        var fi = FINDFIELD(S, si, TOKVAL(S, ti + 1));
+        if (fi < 0) { return 0; }
+        k = GFFK(S, si, fi);
+        si = GETFTYPE(S, si, fi) - 1;
+        ti = ti + 2;
+    }
+    _gfc_end = ti;
+    if (k == 1) { return F64_TYID; }
+    if (k == 2) { return F32_TYID; }
+    return 0;
+}
 # 6.6.10 — `var G: f64 = 1;` at registration: the same integer-constant judgement as a local
 # (_IFS_CHECK), over `= <expr> ;`, reported at the initialiser. The cursor is restored.
 fn _gv_ifs(S, sti, ann_float): i64 {
@@ -2006,6 +2139,38 @@ fn _gv_ifs(S, sti, ann_float): i64 {
     _IFS_CHECK(S, _IFS_K(ann_float), ti);
     STI(S, g);
     return 0;
+}
+
+# The token after a struct annotation's name: `<...>` on a GENERIC struct is parsed and the
+# instance `Box$ty` instantiated (deduped), and its sid returned; the base `sid` when every arg
+# is i64 or unresolved (the base IS the all-i64 instance), or when there is no `<`, or when the
+# struct is not generic (SKIP_GENERICS). `sid` <= 0 skips the args and returns it.
+# v6.3.10 in PARSE_VAR; ⛔ 6.6.11 PARSE_GVAR_REG and the EMIT_GVAR_INITS replay share it — the
+# declaration-zone global registered `var G: W1<Pt>` as the 8 B BASE, so `G.v.x` did not parse
+# and `w1s(G)` read the wrong storage. CHANGELOG [6.6.11]
+fn _gen_ann_sid(S, sid): i64 {
+    if (_MONOMORPH_OK != 1) { SKIP_GENERICS(S); return sid; }
+    if (sid <= 0) { SKIP_GENERICS(S); return sid; }
+    if (PEEKT(S) != 19) { return sid; }
+    if (GSTP(S, sid - 1) == 0) { SKIP_GENERICS(S); return sid; }
+    STI(S, GTI(S) + 1);                 # consume `<`
+    _ta_pending_gt = 0;
+    # v6.3.33: conc0 [, conc1] via _parse_one_type_arg (a NESTED generic type-arg is
+    # instantiated → its instance sid).
+    var c0 = _parse_one_type_arg(S);
+    var c1 = 0;
+    if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); c1 = _parse_one_type_arg(S); }  # `,`
+    _consume_gt(S);                       # the closing `>` (or `>>` tail)
+    # v6.3.37 (B1 half-A): c0 == 0 is an UNRESOLVED type parameter (`var p: Pair<T>` in a
+    # generic body) = the base all-i64 instance, as the return-type classification treats it,
+    # so the local keeps the base sid and matches _cur_fn_ret_sid. -8 is i64.
+    var inst = 0;
+    if (c0 != 0 - 8) { if (c0 != 0) { inst = 1; } }
+    if (c1 != 0) { if (c1 != 0 - 8) { inst = 1; } }
+    if (inst == 0) { return sid; }
+    var g = _instantiate_generic_struct(S, sid - 1, c0, c1);
+    if (g > 0) { return g; }
+    return sid;
 }
 
 fn PARSE_GVAR_REG(S): i64 {
@@ -2083,7 +2248,8 @@ fn PARSE_GVAR_REG(S): i64 {
                 elif (ann_tn & 0xFFFFFFFF == 0x38323175) { ann_scalar = 16; }
                 else { ann_sid = FINDSTRUCT(S, ann_sn); }
             }
-            STI(S, GTI(S) + 1); SKIP_GENERICS(S);
+            STI(S, GTI(S) + 1);
+            ann_sid = _gen_ann_sid(S, ann_sid);   # 6.6.11: `W1<Pt>` is the instance, not the base
         }
     }
     # Array: register with size. v5.11.51 — when the array has a
@@ -2252,6 +2418,7 @@ fn PARSE_GVAR_REG(S): i64 {
     var gvi = _gv_fold(S, vcnt, sti);   # 6.6.6: a redeclaration reuses the global's slot
     _GVAR_VIS(S, gvi, sti);
     SGFI(S, gvi, _gv_ufv(S, sti, psc + ann_sid + ann_scalar + ann_float));   # 6.6.10
+    _gv_float_copy(S, gvi, sti, psc + ann_sid + ann_scalar + ann_float);     # 6.6.11
     if (ann_float != 0) { _gv_ifs(S, sti, ann_float); }                      # 6.6.10
     if (gvi == vcnt) {
         SVCNT(S, vcnt + 1);
@@ -2303,6 +2470,46 @@ fn PARSE_GVAR_REG(S): i64 {
 }
 
 # Emit deferred global var inits (replays saved token positions)
+# The leading declaration block's `: Type` annotation, consumed. Returns `0 - sid` for a struct
+# name, else 0 (a pointer, a scalar: not checked here). `slot` is the global the entry declared.
+# ⛔ 6.6.11: a generic `W1<Pt>` is the INSTANCE pass 1 recorded on the slot (_gen_ann_sid), read
+# back rather than re-parsed (a bad type argument is reported once, by pass 1). It returned 0, so
+# no generic global's initialiser was checked. CHANGELOG [6.6.11]
+fn _gvi_ann(S, slot): i64 {
+    STI(S, GTI(S) + 1);   # consume :
+    var ps = 0;
+    if (PEEKT(S) == 8) { STI(S, GTI(S) + 1); ps = 1; }
+    var sid = 0;
+    if (PEEKT(S) == 2) { sid = FINDSTRUCT(S, PEEKV(S)); }
+    STI(S, GTI(S) + 1);
+    var gen = 0;
+    if (PEEKT(S) == 19) { gen = 1; }
+    SKIP_GENERICS(S);
+    if (ps == 1) { return 0; }
+    if (sid <= 0) { return 0; }
+    if (gen == 1) {
+        if (slot < 0) { return 0; }
+        if (GVTYPE(S, slot) <= 0) { return 0; }
+        return 0 - GVTYPE(S, slot);
+    }
+    return 0 - sid;
+}
+
+# ⛔ 6.6.11 — a leading-block initialiser, replayed here rather than parsed by PARSE_VAR, so a
+# struct-typed global's whole call / method result was never type-checked (`var G: Odd = mk2();`
+# compiled silently where the same line after a statement was refused). The same arming and
+# check PARSE_VAR's top-level arm makes. CHANGELOG [6.6.11]
+fn _gvi_expr(S, gps): i64 {
+    if (gps == 0) { PCMPE(S); return 0; }
+    var st = GTI(S);
+    _refuse_toplevel_pair_init(S, gps, st);   # 6.6.11: a rax:rdx result has no storage here
+    var w = _scv_arm(S, gps);
+    PCMPE(S);
+    _scv_disarm(w);
+    _sc_global_mismatch(S, gps, st);
+    return 0;
+}
+
 fn EMIT_GVAR_INITS(S): i64 {
     if (_TARGET_CX == 1) { _gv_cx_prestore(S); }   # 6.6.6: see _gv_cx_prestore
     _gv_hide_program(S, 1);   # 6.6.6: a kernel replay reads declaration-zone globals (FINDVAR)
@@ -2354,7 +2561,8 @@ fn EMIT_GVAR_INITS(S): i64 {
             gi = gi + 1;
             continue;
         }
-        if (PEEKT(S) == 49) { STI(S, GTI(S) + 1); if (PEEKT(S) == 8) { STI(S, GTI(S) + 1); } STI(S, GTI(S) + 1); SKIP_GENERICS(S); }
+        var gps = 0;
+        if (PEEKT(S) == 49) { gps = _gvi_ann(S, _gv_ent_slot(S, gi, 0, noff)); }
         # v5.11.51: byte-array literal `var foo[N] = { 0x.., ... };`
         # After IDENT (+ optional `:type`) the next token is `[` for
         # array-typed gvar inits. PARSE_GVAR_ARR registered the var in
@@ -2464,7 +2672,7 @@ fn EMIT_GVAR_INITS(S): i64 {
             }
         }
         if (did_struct == 0) {
-            PCMPE(S);
+            _gvi_expr(S, gps);
             if (idx >= 0) { EVSTORE(S, idx); _gv_slvar(S, idx); }
             if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
             STI(S, GTI(S) + 1);
@@ -2519,6 +2727,22 @@ fn _sci_gsrc_type(S, snoff): i64 {
     return 0 - gt;
 }
 
+# ⛔ 6.6.11 — `var s: Box<Pt> = mk(r.v);` — a generic call whose instance (here Box<i64>: the
+# field argument infers T = i64) is not the declared one. The receive below resets `pscale` to
+# re-derive the layout from the callee, so the declared type was dropped without a word and the
+# first `s.v.x` failed as "expected ';', got '.'". Compared first, as the instance the call
+# REACHES (`_gen_resolve_call`), the same comparison the assignment form makes. 1 = refused, and
+# the declared type is kept so the statement parses on without a cascade. A call that failed to
+# instantiate (`_grc_err`, or a stub base) is the call's own refusal to make, once, and is left
+# to it. CHANGELOG [6.6.11]
+fn _gen_decl_check(S, pscale, fi): i64 {
+    if (_grc_err < 0) { return 0; }
+    if (_gen_stub(S, fi) != 0) { return 0; }
+    var rs = GFRS(S, fi);
+    if (rs <= 0) { return 0; }
+    return _sc_decl_mismatch(S, pscale, rs);
+}
+
 fn _try_struct_copy_init(S, noff, pscale): i64 {
     if (pscale >= 0) { return 0; }
     if (PEEKT(S) != 4) { return 0; }
@@ -2559,7 +2783,16 @@ fn _try_struct_copy_init(S, noff, pscale): i64 {
         # `b.y` read 99 (the neighbour) where 22 was right. Same class as the v6.6.0 P0, on the
         # declaration path. A pointer source now falls through to the scalar init, which binds b as
         # a second pointer to the same struct — the C semantics of `P *b = a`. CHANGELOG [6.6.5]
-        if (GLAGG(S, src_li) == 0) { return 0; }
+        # ⛔ 6.6.11 — ...BUT AN ADDRESS-PASSED BY-VALUE STRUCT PARAMETER IS NOT A POINTER-MODE LOCAL.
+        # Its slot holds the CALLER's struct's address too, so this bail bound `y` as a second
+        # pointer to the caller's struct: `var y: Q = x; y.a = 9;` changed the caller's `q`, and
+        # `return y;` copied the pointer slot as if it were the struct. `y = x;` has copied through
+        # since 6.6.6 (`_agc_operand`); the declaration now takes the same addressed copy.
+        # CHANGELOG [6.6.11]
+        if (GLAGG(S, src_li) == 0) {
+            if (_local_is_sptr_param(S, src_li) == 0) { return 0; }
+            src_li = _AGC_DREF(src_li);
+        }
     }
     # v6.5.57 — VECTORS TAKE THIS PATH TOO, and used to fall out of it. A `pscale` in the
     # descriptor band (<= -2048) is a vector, not a struct sid, so `STRUCTSZ` returned nothing
@@ -2601,12 +2834,13 @@ fn _try_struct_copy_init(S, noff, pscale): i64 {
     # Word-by-word copy: a's word i → b's word i (slot named - i). A LOCAL source is named at
     # its deepest slot so its word i is `src_li - i`; a GLOBAL's fields ascend from its named
     # slot so its word i is `_sci_gsrc + i`.
-    if (_sci_gsrc >= 0) {
+    if (_sci_gsrc >= 0 || src_li <= 0 - 1000) {
         # A global source is addressed and byte-exact — its slot index is not a word index
         # and reading `ceil(sz/8)` words would run past its neighbour. See `_agc_copy_bytes`.
+        # 6.6.11: so is an address-passed parameter (`src_li` in the `_AGC_DREF` band).
         var gnb = nslots * 8;
         if (pscale > 0 - 2048) { gnb = STRUCTSZ(S, (0 - pscale) - 1); }
-        _agc_copy_bytes(S, named, 0 - 1, 0 - 1, _sci_gsrc, gnb);
+        _agc_copy_bytes(S, named, 0 - 1, src_li, _sci_gsrc, gnb);
     }
     else {
         var i = 0;
@@ -3038,39 +3272,10 @@ fn PARSE_VAR(S): i64 {
                 }
             }
             STI(S, GTI(S) + 1);
-            # v6.3.10 (generic structs): `var x: Box<conc>` — if Box is a generic
-            # struct and `<...>` follows with a non-i64 type-arg, instantiate `Box$ty`
-            # (deduped) and retarget the local to the instance sid. i64 / non-generic
-            # → the existing SKIP_GENERICS (the base struct IS the i64 instance).
-            if (_MONOMORPH_OK == 1 && _gs_sid > 0 && PEEKT(S) == 19 && GSTP(S, _gs_sid - 1) != 0) {
-                STI(S, GTI(S) + 1);                 # consume `<`
-                _ta_pending_gt = 0;
-                # v6.3.33: parse conc0 [, conc1] via _parse_one_type_arg (handles a
-                # NESTED generic type-arg by instantiating it → its instance sid).
-                var _gstc = _parse_one_type_arg(S);
-                var _gstc1 = 0;
-                if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); _gstc1 = _parse_one_type_arg(S); }  # `,`
-                _consume_gt(S);                       # consume the closing `>` (or `>>` tail)
-                # Use the base (the all-i64 instance) only when EVERY arg is i64; any
-                # non-i64 arg (incl. a distinct second param) needs a real instance.
-                var _do_inst = 0;
-                # v6.3.37 (B1 half-A): _gstc==0 = an UNRESOLVED type-parameter (`var p:
-                # Pair<T>` inside a generic body emitted base-as-i64) — it is the base
-                # all-i64 instance, exactly as the return-type classification treats it,
-                # so the local keeps the base struct sid and matches _cur_fn_ret_sid (the
-                # int-pair/retptr return path then fires). Without this, `_gstc==0 != -8`
-                # instantiated a bogus struct → local sid != ret sid → struct-return
-                # silently degraded to scalar-rax → caller SIGSEGV. (_gstc1==0 is already
-                # excluded by its `!= 0` guard below — same "unresolved = base" rule.)
-                if (_gstc != 0 - 8 && _gstc != 0) { _do_inst = 1; }
-                if (_gstc1 != 0 && _gstc1 != 0 - 8) { _do_inst = 1; }
-                if (_do_inst == 1) {
-                    var _ginst = _instantiate_generic_struct(S, _gs_sid - 1, _gstc, _gstc1);
-                    if (_ginst > 0) { pscale = 0 - _ginst; }
-                }
-            } else {
-                SKIP_GENERICS(S);
-            }
+            # v6.3.10 (generic structs): `var x: Box<conc>` retargets the local to the instance
+            # sid; see _gen_ann_sid (6.6.11: shared with the declaration-zone global path).
+            var _gi = _gen_ann_sid(S, _gs_sid);
+            if (_gi != _gs_sid) { pscale = 0 - _gi; }
         }
     }
     # v6.5.61 — INFER THE VECTOR TYPE FROM THE CALLEE'S RETURN TYPE WHEN THE VAR HAS NONE.
@@ -3395,7 +3600,7 @@ fn PARSE_VAR(S): i64 {
                     # i64 case re-derives to the same base sid (no behavior change). Default
                     # (flag-off) byte-identical.
                     if (_MONOMORPH_OK == 1) { if (pscale < 0) {
-                            if (GFTP(S, _look_fi) != 0) { pscale = 0; }
+                            if (GFTP(S, _look_fi) != 0) { if (_gen_decl_check(S, pscale, _look_fi) == 0) { pscale = 0; } }
                         } }
                     # v6.3.16: inferred `var p = mk();` (no type annotation → pscale==0)
                     # from a struct-returning callee. Infer the local's struct type so
@@ -3447,7 +3652,7 @@ fn PARSE_VAR(S): i64 {
             }
         }
     }
-    if (GINFN(S) == 0) { if (pscale < 0) { if (PEEKT(S) == 4) { _refuse_toplevel_pair_init(S, pscale); } } }   # 6.6.6
+    if (GINFN(S) == 0) { if (pscale < 0) { if (PEEKT(S) == 4) { _refuse_toplevel_pair_init(S, pscale, GTI(S) + 1); } } }   # 6.6.6
     if (asv_try == 1) {
         var asv_sid = 0 - pscale;
         var asv_sz = STRUCTSZ(S, asv_sid - 1);
@@ -3693,9 +3898,9 @@ fn PARSE_VAR(S): i64 {
     # 6.6.6 (bite 14 review): armed, so a method / operator returning a struct stores it in a temp
     # this declaration can take — see `_sc_var_receive`. CHANGELOG [6.6.6]
     var scv_start = GTI(S);
-    var scv_prev = _sc_arm(S);
+    var scv_prev = _scv_arm(S, pscale);   # 6.6.11: + the field source and the <= 8 B call check
     PCMPE(S);
-    _sc_want = scv_prev;
+    _scv_disarm(scv_prev);
     # 6.6.10: an integer constant into an `f64` / `f32` declaration warns (_IFS_CHECK), and an
     # UNTYPED declaration records whether its initialiser was a float (_UFV_*).
     _IFS_CHECK(S, _IFS_K(lfloat), scv_start);
@@ -3703,6 +3908,8 @@ fn PARSE_VAR(S): i64 {
     if (pscale == 0) { if (scalar_type == 0) { if (lfloat == 0) { if (slice_elt_w == 0) { if (_ti_inferred_sid == 0) {
                         ufv = _UFV_IS_FLOAT(S);
                     } } } } }
+    var dfc = 0;   # 6.6.11: a pure copy of a declared f64 / f32 value types the var (_decl_float_copy)
+    if (ufv == 1) { dfc = _decl_float_copy(S, scv_start, GTI(S)); if (dfc != 0) { ufv = 0; } }
     # Type check: warn if pointer/scalar mismatch
     var expr_ps = GPSC(S);
     if (pscale > 0) {
@@ -3842,6 +4049,8 @@ fn PARSE_VAR(S): i64 {
                     # downstream arithmetic. F64_TYID is 0x40000001, not a small
                     # positive width, so it cannot reach that path.
                     SLTYPE(S, li, F64_TYID);
+                } elif (dfc != 0) {
+                    SLTYPE(S, li, dfc);   # 6.6.11: `var t = p.y;` — see _decl_float_copy
                 } else {
                     SLTYPE(S, li, pscale);
                 }
@@ -3890,6 +4099,7 @@ fn PARSE_VAR(S): i64 {
         } else {
             S64(_vars_base + vcnt * 8, 8);
             if (pscale > 0) { SVTYPE(S, vcnt, 0 - pscale); }
+            if (dfc != 0) { SVTYPE(S, vcnt, dfc); }   # 6.6.11: see _decl_float_copy
             # 6.6.5 — a STRUCT-annotated global declared on the PARSE_PROG path (any `var`
             # after the first top-level statement) recorded no type at all, so `G.y` was
             # refused with "no struct type in scope for 'G'" — a diagnostic blaming a missing

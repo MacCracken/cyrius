@@ -13,6 +13,17 @@
 # operator, a free call at top level — and a plain integer arrive in rax, and a 3/5/6/7-byte field
 # took the width ladder's 8-byte ESTOC, overwriting the fields after it. Each row checks the
 # neighbours. Mutation: make `_fst_odd_sz` return 0 — every odd-width row goes red.
+#
+# 6.6.11 rows — the reverse direction and its neighbours:
+#   * `var y: Q = x;` from an address-passed by-value PARAMETER bound a second pointer to the
+#     caller's struct: writes through `y` changed the caller, `return y;` returned garbage.
+#     Mutation: restore `return 0` for a non-inline source in `_try_struct_copy_init`.
+#   * a method whose `self: T` is a struct of 8 B or less was handed `&x` where the free call
+#     passes x's value. Mutation: make `_fn_self_byval` (src/frontend/parse_fn.cyr) return 0.
+#   * a struct VARIABLE copied FROM a struct-typed field (`q = b.v;` into a local, a global and an
+#     address-passed parameter; `var p: Pt = b.v;`) copied one word, and the declaration SIGSEGV'd
+#     reading `p.x` through that word. Mutation: make `_fla_arm` (src/frontend/parse_decl.cyr)
+#     return before arming — the "from a struct-typed field" group goes red (x86: SIGSEGV).
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/assert.cyr"
@@ -80,6 +91,47 @@ fn s7_call(): i64 { var h: H7; h.t = 8; h.s = mks7(1); return h.s.a + h.s.b * 10
 fn odd_integer(): i64 { var h: HO; h.t = 5; h.u = 9; h.o = 0x030201; return h.o.a + h.o.b * 10 + h.t * 100 + h.u * 1000; }
 fn keep_neighbours(): i64 { var b: Box; b.n = 42; var p: Pt; p.x = 1; p.y = 1; b.v = p; return b.n; }
 
+# ── 6.6.11: copy-init from an address-passed struct parameter ──────────────────────────────────
+struct Q { a; b; c; }
+fn pc_mod16(x: Pt): i64 { var y: Pt = x; y.x = 9; return y.x; }
+fn pc_mod24(x: Q): i64 { var y: Q = x; y.a = 9; return y.a; }
+fn pc_id16(x: Pt): Pt { var y: Pt = x; return y; }
+fn pc_id24(x: Q): Q { var y: Q = x; return y; }
+fn pc_caller16(): i64 { var p: Pt; p.x = 1; p.y = 2; var m = pc_mod16(p); return p.x + p.y * 10 + m * 100; }
+fn pc_caller24(): i64 { var q: Q; q.a = 1; q.b = 2; q.c = 3; var m = pc_mod24(q); return q.a + q.b * 10 + q.c * 100 + m * 1000; }
+fn pc_ret16(): i64 { var p: Pt; p.x = 1; p.y = 2; var r: Pt = pc_id16(p); return r.x + r.y * 10; }
+fn pc_ret24(): i64 { var q: Q; q.a = 1; q.b = 2; q.c = 3; var r: Q = pc_id24(q); return r.a + r.b * 10 + r.c * 100; }
+
+# ── 6.6.11: a method's by-value `self` of 8 B or less ──────────────────────────────────────────
+struct P8 { x: i32; y: i32; }
+fn P8_sum(self: P8): i64 { return self.x + self.y * 10; }
+fn Odd_sum(self: Odd): i64 { return self.a + self.b * 10; }
+fn Odd_dbl(self: Odd): Odd { var r: Odd; r.a = self.a * 2; r.b = self.b * 2; return r; }
+fn P8_twice(self: P8): P8 { var r: P8; r.x = self.x * 2; r.y = self.y * 2; return r; }
+var GP8 = P8 { 3, 4 };
+var GODD = Odd { 1, 2 };
+fn sb_local(): i64 { var x: Odd; x.a = 1; x.b = 2; var y: P8; y.x = 3; y.y = 4; return x.sum() + y.sum() * 100; }
+fn sb_global(): i64 { return GODD.sum() + GP8.sum() * 100; }
+fn sb_result(): i64 { var x: Odd; x.a = 1; x.b = 2; var z: Odd = x.dbl(); var y: P8; y.x = 3; y.y = 4; var w: P8; w.x = 0; w.y = 0; w = y.twice(); return z.a + z.b * 10 + w.x * 100 + w.y * 1000; }
+fn sb_capture(): i64 { var x: P8; x.x = 2; x.y = 3; var f = || x.sum(); return callptr(f); }
+fn sb_forward(): i64 { var x: P8; x.x = 4; x.y = 5; return x.later(); }
+fn P8_later(self: P8): i64 { return self.x * self.y; }
+
+# ── 6.6.11: a struct variable copied FROM a struct-typed field ─────────────────────────────────
+struct B8 { v: P8; n; }
+struct BQ { k; q: Q; }
+var GQ = Pt { 0, 0 };
+var GBX = Box { 5, 6, 7 };
+fn fl_assign_local(): i64 { var b: Box; b.v.x = 3; b.v.y = 4; b.n = 9; var q: Pt; q.x = 0; q.y = 0; q = b.v; return q.x * 10 + q.y + b.n * 100; }
+fn fl_decl_local(): i64 { var b: Box; b.v.x = 3; b.v.y = 4; b.n = 9; var p: Pt = b.v; p.x = 7; return p.x * 10 + p.y + b.v.x * 100; }
+fn fl_assign_global(): i64 { var b: Box; b.v.x = 3; b.v.y = 4; GQ = b.v; return GQ.x * 10 + GQ.y; }
+fn fl_assign_param(q: Pt): i64 { var b: Box; b.v.x = 3; b.v.y = 4; q = b.v; return q.x * 10 + q.y; }
+fn fl_decl_global_src(): i64 { var q: Pt = GBX.v; return q.x * 10 + q.y; }
+fn fl_decl_24(): i64 { var b: BQ; b.k = 8; b.q.a = 1; b.q.b = 2; b.q.c = 3; var y: Q = b.q; return y.a + y.b * 10 + y.c * 100 + b.k * 1000; }
+fn fl_assign_24(): i64 { var b: BQ; b.k = 8; b.q.a = 4; b.q.b = 5; b.q.c = 6; var y: Q; y.a = 0; y.b = 0; y.c = 0; y = b.q; return y.a + y.b * 10 + y.c * 100; }
+fn fl_odd(): i64 { var h: HO; h.o.a = 3; h.o.b = 700; h.t = 5; h.u = 9; var z: Odd = h.o; var w: Odd; w.a = 0; w.b = 0; w = h.o; return z.a + z.b * 10 + w.a * 10000 + w.b * 100000; }
+fn fl_p8(): i64 { var b: B8; b.v.x = 3; b.v.y = 4; b.n = 9; var p: P8 = b.v; var q: P8; q.x = 0; q.y = 0; q = b.v; return p.x * 10 + p.y + q.x * 1000 + q.y * 100; }
+
 test_group("a struct value assigned into a struct-typed field copies the whole struct");
 var gp: Pt = alloc(16);
 gp.x = 3; gp.y = 4;
@@ -111,5 +163,30 @@ var GHO = HO { 0, 0, 0, 0 };
 GHO.t = 5; GHO.u = 9;
 GHO.o = mkodd(2);
 assert_eq(GHO.o.a + GHO.o.b * 10 + GHO.t * 10000 + GHO.u * 100000, 952002, "a free call into a 3-byte field at top level");
+
+test_group("var y: T = x from an address-passed struct parameter is a copy (6.6.11)");
+assert_eq(pc_caller16(), 921, "writing y leaves the caller's 16 B struct intact");
+assert_eq(pc_caller24(), 9321, "writing y leaves the caller's 24 B struct intact");
+assert_eq(pc_ret16(), 21, "copy-init then return y (rax:rdx)");
+assert_eq(pc_ret24(), 321, "copy-init then return y (retptr)");
+
+test_group("a method whose self is a struct of 8 B or less gets the VALUE (6.6.11)");
+assert_eq(sb_local(), 4321, "x.sum() on a 3 B and an 8 B local");
+assert_eq(sb_global(), 4321, "G.sum() on a 3 B and an 8 B global");
+assert_eq(sb_result(), 8642, "x.dbl() / y.twice() returning the struct");
+assert_eq(sb_capture(), 32, "a captured receiver");
+assert_eq(sb_forward(), 20, "a method defined after its call");
+
+test_group("a struct variable copied FROM a struct-typed field takes the whole struct (6.6.11)");
+assert_eq(fl_assign_local(), 934, "q = b.v into a local");
+assert_eq(fl_decl_local(), 374, "var p: Pt = b.v (was SIGSEGV), and it is a copy");
+assert_eq(fl_assign_global(), 34, "GQ = b.v into a global");
+var gq2: Pt = alloc(16);
+assert_eq(fl_assign_param(gq2), 34, "q = b.v into an address-passed parameter");
+assert_eq(fl_decl_global_src(), 56, "var q: Pt = GBX.v from a global's field");
+assert_eq(fl_decl_24(), 8321, "var y: Q = b.q (24 B)");
+assert_eq(fl_assign_24(), 654, "y = b.q (24 B)");
+assert_eq(fl_odd(), 70037003, "a 3-byte struct from a field, both forms");
+assert_eq(fl_p8(), 3434, "an 8-byte struct from a field, both forms");
 
 var r = assert_summary();

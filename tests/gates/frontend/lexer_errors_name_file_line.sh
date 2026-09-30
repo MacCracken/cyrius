@@ -20,7 +20,13 @@
 #     -> axes 1, 3 and 4 RED on every row.
 #   * in lex_pp.cyr PP_DEFINE, pass `ERR_MSG(S, ...)` back instead of `_pp_err_at`
 #     -> axis 5 RED (`error:0:1:` is back).
-# AXIS 4 — the 16 char/string-literal error sites, each by file:line:col.
+#   * (6.6.11) drop the `if (sc == 10) SCLINE(...)` in LEX's string loop -> axis 6 RED
+#     (ml_undef/ml_dollar/ml_inc1/ml_private); drop the `ec == 10` arm's SCLINE -> ml_bslf RED;
+#     drop the `SCLINE(S, sline)` before the string's ADDTOK -> ml_strtok RED; restore the
+#     escape fallthrough `store8(.., ec)` -> str_bad_esc/str_bad_esc2/ml_esc RED.
+# AXIS 4 — the char/string-literal error sites, each by file:line:col (6.6.11: plus the
+#   unknown string escape, and the accepted `\<LF>` / `\<CR><LF>` escapes).
+# AXIS 6 — a newline inside a string literal advances the line (6.6.11).
 # AXIS 5 — the preprocessor's flag-table cap printed `error:0:1:` (ERR_MSG reads the token
 # cursor, and no token exists yet); it names the #define's file:line:col now.
 set -u
@@ -88,6 +94,41 @@ refused u4_short      "${L}var t = \"\\\\u12"               "error:<source>:2:10
 refused u4_bad        "${L}var t = \"\\\\u12Z4\";\n"        "error:<source>:2:10: \\u escape: bad hex digit"
 refused u_big         "${L}var t = \"\\\\u{110000}\";\n"    "error:<source>:2:10: \\u escape: codepoint > U+10FFFF"
 refused u_surr        "${L}var t = \"\\\\uD800\";\n"        "error:<source>:2:10: \\u escape: surrogate codepoint not allowed"
+# 6.6.11 — any other byte after `\` was stored verbatim with the backslash dropped (`"ab\q"`
+# compiled to "abq"). Only the escapes in the guide's table are accepted.
+refused str_bad_esc   "${L}var t = \"ab\\\\q\";\n"          "error:<source>:2:12: unknown string escape"
+refused str_bad_esc2  "${L}var t = \"\\\\{\";\n"            "error:<source>:2:10: unknown string escape"
+# ANTI-VACUOUS: `\<LF>` is an escape that KEEPS its LF (the v6.5.18 contract pinned by
+# tests/gates/toolchain/cyrfmt_string_continuation.sh), and `\<CR><LF>` keeps both bytes.
+printf 'var s = "ab\\\ncd";\nsyscall(60, load8(s + 2) + load8(s + 3));\n' > "$T/bslf.cyr"
+rc=0; "$CC" < "$T/bslf.cyr" > "$T/bslf" 2> "$T/bslf.err" || rc=$?
+check "\\<LF> in a string compiles" 0 "$rc"
+chmod +x "$T/bslf"; rc=0; "$T/bslf" || rc=$?
+check "\\<LF> keeps its LF (10 + 'c' = 109)" 109 "$rc"
+printf 'var s = "ab\\\r\ncd";\nsyscall(60, load8(s + 2) + load8(s + 3));\n' > "$T/bscrlf.cyr"
+rc=0; "$CC" < "$T/bscrlf.cyr" > "$T/bscrlf" 2> "$T/bscrlf.err" || rc=$?
+check "\\<CR><LF> in a string compiles" 0 "$rc"
+chmod +x "$T/bscrlf"; rc=0; "$T/bscrlf" || rc=$?
+check "\\<CR><LF> keeps CR LF (13 + 10 = 23)" 23 "$rc"
+
+echo "axis 6 — a newline INSIDE a string literal is a line (6.6.11):"
+# The string loop stored a raw LF (and `\<LF>`) without bumping the line counter, so every
+# later token was lexed one line HIGH per newline: diagnostics named the wrong line, then
+# the wrong FILE (line 1 of the next include landed on its own marker line and printed a
+# bare `error:4:12:`), and FM_FILEID — which reads the line — attributed a call to the
+# wrong file, so a `private` fn was callable from outside it. src/frontend/parse_expr.cyr
+# carried such a literal, which put every diagnostic in backend/x86/fixup.cyr one line high.
+refused ml_undef   'var s = "a\nb\nc";\nvar t = 1;\nvar u = zzz_undefined;\n'       "error:<source>:5:22: undefined variable 'zzz_undefined'"
+refused ml_dollar  'var s = "a\nb";\nvar b = $;\n'                                    'error:<source>:3:9: unexpected character (0x24)'
+refused ml_bslf    'var s = "a\\\nb";\nvar u = zzz;\n'                              "error:<source>:3:12: undefined variable 'zzz'"
+refused ml_esc     'var s = "a\nb\\q";\n'                                          'error:<source>:2:2: unknown string escape'
+# the string token itself keeps its OPENING line, matching the column the head prints
+refused ml_strtok  'var s = 1 "a\nb";\n'                                             "error:<source>:1:11: expected ';', got string"
+printf 'var q = zzq;\n' > "$T/inc/ml_one.cyr"
+refused ml_inc1    'var s = "a\nb";\ninclude "inc/ml_one.cyr"\n'                      "error:inc/ml_one.cyr:1:12: undefined variable 'zzq'"
+printf 'private\nvar ms = "1\n2\n3\n4\n5";\nfn sec(): i64 { return 7; }\n' > "$T/inc/ml_priv.cyr"
+printf 'var got = sec();\n' > "$T/inc/ml_user.cyr"
+refused ml_private 'include "inc/ml_priv.cyr"\ninclude "inc/ml_user.cyr"\nsyscall(60, got);\n' "error:inc/ml_user.cyr:1:15: 'sec' is private to its file"
 
 echo "axis 5 — the preprocessor flag-table cap names the #define, not \`error:0:1:\`:"
 # 16 slots shared with the builtin predefines, so 20 user #defines overflow on every

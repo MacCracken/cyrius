@@ -645,11 +645,13 @@ fn _tc_frame_divert(S): i64 {
 fn _tc_callee_divert(S, cfi): i64 {
     # v6.5.17 — fncall0..8 are INDIRECT calls; `jmp fncallN` skipped the closure dispatch.
     if (_IS_FNCALL_NAME(S, PEEKV(S)) == 1) { return 1; }
+    # 6.6.11 — `sizeof` / `mulh64` are lowered inline by PARSE_FACTOR; there is no fn to jump to.
+    if (_is_ident_intrinsic(S, PEEKV(S)) == 1) { return 1; }
     # 6.6.6 — a >16 B struct-returning callee writes through a retptr the tail path never passes.
     if (_ret_agg_class(S, cfi) == 2) { return 1; }
     if (cfi < 0) { return 0; }
     # v6.3.36 — plain-struct params are ADDRESS-passed: pointers into the frame the jmp frees.
-    if (L64(_fnt_structmask + cfi * 8) != 0) { return 1; }
+    if (_smask_args(cfi) != 0) { return 1; }
     # v6.4.53 — value-form SIMD params travel in vector registers; the tail path loads only the
     # integer ones (`return f32v4_add(v, v)` returned v).
     if (L64(_fnt_simdmask + cfi * 8) != 0) { return 1; }
@@ -1894,11 +1896,17 @@ fn _return_struct_call(S): i64 {
 # `var G: S = f(..)` at top level, `f` returning `S` in rax:rdx: the global is not an inline
 # aggregate there (no receive path exists outside a fn), so `G.x` dereferenced the returned
 # first word — SIGSEGV. Refused by name, like the retptr form PARSE_FNCALL refuses. CHANGELOG [6.6.6]
-fn _refuse_toplevel_pair_init(S, pscale): i64 {
-    var ti = GTI(S) + 1;
-    if (TOKTYP(S, ti) != 2) { return 0; }
-    if (TOKTYP(S, ti + 1) != 10) { return 0; }
-    var fi = FINDFN(S, TOKVAL(S, ti));
+# `ti` is the callee's name token. ⛔ 6.6.11: resolved as the call REACHES it (`_gcall_open` +
+# `_gen_resolve_call`) — FINDFN read the generic BASE, whose 8 B `W1<T>` is class 0, so
+# `var G: W1<Pt> = mkw(gp)` was never refused (rc 139) — and also run by the declaration-zone
+# replay (`_gvi_expr`), which never reached it at all: a `var G: Pt = mkp(2);` before the first
+# top-level statement compiled clean and SIGSEGV'd on `G.x`. CHANGELOG [6.6.11]
+fn _refuse_toplevel_pair_init(S, pscale, ti): i64 {
+    if (pscale >= 0) { return 0; }
+    if (_gcall_open(S, ti) < 0) { return 0; }
+    var fi = _gen_resolve_call(S, ti);
+    if (fi < 0) { return 0; }
+    if (_grc_err < 0) { return 0; }   # a failed instantiation: the call refuses itself, once
     if (_ret_agg_class(S, fi) != 1) { return 0; }
     if (GFRS(S, fi) != 0 - pscale) { return 0; }
     _refuse_toplevel_struct_call(S, TOKVAL(S, ti));
@@ -1955,7 +1963,7 @@ fn _sc_x8(S, fi, t): i64 {
 
 fn _sc_post(S, fi, noff, beg, t): i64 {
     var cls = _ret_agg_class(S, fi);
-    if (cls == 0) { return 0; }
+    if (cls == 0) { return _sc_post_small(S, fi, noff, beg); }
     if (t >= 0) {
         if (cls == 1) { EFLSTORE_STRUCT_INT_PAIR(S, t); }
         else { EFLLOAD(S, t); SESTYPE(S, 0); }
@@ -1968,6 +1976,72 @@ fn _sc_post(S, fi, noff, beg, t): i64 {
     _sc_tmp = t;
     _sc_sid = GFRS(S, fi);
     _sc_fn = noff;
+    return 0;
+}
+
+# ⛔ 6.6.11 — A STRUCT RESULT OF 8 B OR LESS WAS NEVER RECORDED, so no destination could compare its
+# type: `h.o = y.same()`, `z = y.same()`, `var z: Odd = y + y` stored an Od2 into an Odd silently
+# (only the free-call FIELD form was refused). Recorded now with `_sc_tmp = -3`: "the value is in
+# rax, there is no temp". Every `_sc_whole` consumer either type-checks it (`_fsc_expr`,
+# `_pcmpe_struct_assign`, both var receives) or keeps ignoring it (-3 is neither -1 nor a slot).
+# Str (16 B, a handle in rax) is not a <= 8 B struct and stays unrecorded. The scalar operator
+# dispatch (parse_expr.cyr) calls this directly. CHANGELOG [6.6.11]
+fn _sc_post_small(S, fi, noff, beg): i64 {
+    if (fi < 0) { return 0; }
+    var sid = GFRS(S, fi);
+    if (sid <= 0) { return 0; }
+    if (STRUCTSZ(S, sid - 1) > 8) { return 0; }
+    _sc_beg = beg;
+    _sc_end = GTI(S);
+    _sc_tmp = 0 - 3;
+    _sc_sid = sid;
+    _sc_fn = noff;
+    return 0;
+}
+
+# A struct-typed declaration (`pscale` = `0 - sid`) initialised from a recorded struct call of a
+# different struct: refused (1). CHANGELOG [6.6.11]
+fn _sc_decl_mismatch(S, pscale, sid): i64 {
+    if (pscale >= 0) { return 0; }
+    if (pscale <= 0 - 2048) { return 0; }
+    if (pscale == 0 - sid) { return 0; }
+    ERR_MSG(S, "fn return struct-id differs from declared var type", 50);
+    return 1;
+}
+
+# ⛔ 6.6.11 — PARSE_VAR's initialiser arming, for a struct-typed declaration: the struct-typed
+# FIELD source (`var p: Pt = b.v`, see `_fla_arm`) in a fn, and the type check of a whole free
+# call returning a struct of 8 B or less (`var z: Odd = mkod2()`), which comes back in rax and so
+# never reached the retptr / rax:rdx receives, the only ones that compared the sid. Returns the
+# previous `_sc_want`, for `_scv_disarm`. CHANGELOG [6.6.11]
+fn _scv_arm(S, pscale): i64 {
+    if (pscale < 0) { if (pscale > 0 - 2048) {
+            _scv_call_check(S, pscale);
+            if (GINFN(S) == 1) { _fla_arm(GTI(S), pscale); }
+        } }
+    return _sc_arm(S);
+}
+fn _scv_disarm(w): i64 {
+    _sc_want = w;
+    _fla_want = 0 - 1;
+    return 0;
+}
+fn _scv_call_check(S, pscale): i64 {
+    var o = _gcall_open(S, GTI(S));
+    if (o < 0) { return 0; }
+    if (_call_follow(S, o - 1) != 5) { return 0; }
+    var fi = _gen_resolve_call(S, GTI(S));
+    if (fi < 0) { return 0; }
+    if (_grc_err < 0) { return 0; }   # a failed instantiation: the call refuses itself, once
+    var rs = GFRS(S, fi);
+    if (rs <= 0) { return 0; }
+    if (STRUCTSZ(S, rs - 1) > 8) {
+        # In a fn the retptr / rax:rdx receives compare the sid; at top level there are none, so
+        # a 9-16 B result is checked here (a >16 B one refuses itself: no frame). CHANGELOG [6.6.11]
+        if (GINFN(S) == 1) { return 0; }
+        if (_ret_agg_class(S, fi) != 1) { return 0; }
+    }
+    _sc_decl_mismatch(S, pscale, rs);
     return 0;
 }
 
@@ -1994,14 +2068,15 @@ fn _sc_whole(S, start): i64 {
 # untyped, the same inference). `ext` != 0 = a scalar/float/slice annotation: the first word, as
 # ever. Returns 1 when `p` is declared. CHANGELOG [6.6.6]
 fn _sc_var_receive(S, noff, pscale, ext, start): i64 {
+    if (_fla_hit == 1) { return _fla_var_receive(S, noff, pscale); }   # 6.6.11: `var p: S = b.v`
     var t = _sc_whole(S, start);
+    if (t == 0 - 3) { _sc_decl_mismatch(S, pscale, _sc_sid); return 0; }   # 6.6.11: <= 8 B, in rax
     if (t < 0) { return 0; }
     if (pscale == 0) {
         if (ext != 0) { return 0; }
+    } elif (_sc_decl_mismatch(S, pscale, _sc_sid) == 1) {
+        return 0;
     } elif (pscale != 0 - _sc_sid) {
-        if (pscale < 0) { if (pscale > 0 - 2048) {
-                ERR_MSG(S, "fn return struct-id differs from declared var type", 50);
-            } }
         return 0;
     }
     S64(S + 0x5D9D000 + t * 8, noff);
@@ -2012,10 +2087,21 @@ fn _sc_var_receive(S, noff, pscale, ext, start): i64 {
 # `var G: S = <expr>` at top level: no frame, so a 9-16 B method/operator result is refused by name
 # (a >16 B one already was, in `_sc_pre`). Untyped `var g = ..` keeps the first word.
 fn _sc_global_receive(S, pscale, start): i64 {
+    if (_sc_global_mismatch(S, pscale, start) != 0) { return 0; }
     if (_sc_whole(S, start) != 0 - 1) { return 0; }
     if (pscale != 0 - _sc_sid) { return 0; }
     _refuse_toplevel_struct_call(S, _sc_fn);
     return 0;
+}
+
+# A top-level struct-typed destination given a whole method/operator result of another struct —
+# <= 8 B (-3, in rax) or 9-16 B (-1, no frame) — refused by name (1). CHANGELOG [6.6.11]
+fn _sc_global_mismatch(S, pscale, start): i64 {
+    var t = _sc_whole(S, start);
+    if (t != 0 - 3) { if (t != 0 - 1) { return 0; } }
+    if (pscale >= 0) { return 0; }
+    if (pscale == 0 - _sc_sid) { return 0; }
+    return _sc_decl_mismatch(S, pscale, _sc_sid);
 }
 
 # A by-value struct parameter given an expression that is neither a bare name nor a free-fn call
@@ -2712,7 +2798,7 @@ fn PARSE_FNCALL(S, noff): i64 {
     # struct-ptr / retptr path (handled in parse_decl + PARSE_FNCALL below).
     var _pe_no_inline = 0;
     if (_TARGET_PE == 1) {
-        if (L64(_fnt_structmask + fi * 8) != 0) { _pe_no_inline = 1; }
+        if (_smask_args(fi) != 0) { _pe_no_inline = 1; }
         if (_is_simd_any(S, GFRS(S, fi)) == 1) { _pe_no_inline = 1; }
     }
     if (GFINL(S, fi) != 0) { if (GIDEP(S) < 3) { if (GINFN(S) == 1) { if (_pe_no_inline == 0) {
@@ -4099,10 +4185,16 @@ fn _refuse_type_arg_name(S, noff): i64 {
     return 0;
 }
 fn _is_enum_name(S, noff): i64 {
+    if (_enum_id_of(S, noff) > 0) { return 1; }
+    return 0;
+}
+
+# The 1-based id of the enum named `noff` (the GVENUMID of its variants), or 0. CHANGELOG [6.6.11]
+fn _enum_id_of(S, noff): i64 {
     var n = GENUMC(S);
     var i = 0;
     while (i < n) {
-        if (STREQ(S, GENUMNM(S, i), noff) == 1) { return 1; }
+        if (STREQ(S, GENUMNM(S, i), noff) == 1) { return i + 1; }
         i = i + 1;
     }
     return 0;
@@ -4654,6 +4746,32 @@ fn _param_wants_struct_ptr(S, tnoff): i64 {
     return 1;
 }
 
+# ⛔ 6.6.11 — BIT 62 OF `_fnt_structmask`: "param 0 is a declared plain struct of 8 B or less,
+# passed BY VALUE". The method-call arm (PARSE_FIELD_LOAD) needs it to push the receiver's value
+# where it pushes `&x` for an untyped `self` (which IS a pointer) and for a > 8 B one (address-
+# passed); without it `x.sum()` with `self: Odd` handed the callee an address. Read from the
+# tokens of param 0 by BOTH passes (`_prescan_params`, PARSE_FN_DEF), so they cannot disagree.
+# A spare bit, not a new table, so the brk layout does not move; the per-param readers test
+# `1 << argc` and the whole-mask readers go through `_smask_args`. A generic `self: Box<T>` is
+# left unflagged. `lp` = the `(` token. CHANGELOG [6.6.11]
+fn _selfbv_bit(S, lp): i64 {
+    if (TOKTYP(S, lp + 1) != 2) { return 0; }
+    if (TOKTYP(S, lp + 2) != 49) { return 0; }
+    if (TOKTYP(S, lp + 3) != 2) { return 0; }
+    if (TOKTYP(S, lp + 4) == 19) { return 0; }
+    var tnoff = TOKVAL(S, lp + 3);
+    if (_classify_param_type(S, tnoff) != 0) { return 0; }
+    var sid = FINDSTRUCT(S, tnoff);
+    if (sid <= 0) { return 0; }
+    if (STRUCTSZ(S, sid - 1) > 8) { return 0; }
+    return 1 << 62;
+}
+fn _smask_args(fi): i64 { return L64(_fnt_structmask + fi * 8) & ((1 << 62) - 1); }
+fn _fn_self_byval(fi): i64 {
+    if (fi < 0) { return 0; }
+    return (L64(_fnt_structmask + fi * 8) >> 62) & 1;
+}
+
 # Scan the param list `( ... )` for fn `fi`, computing the per-fn ABI masks the
 # same way PARSE_FN_DEF's param loop does (shared _classify_param_type → first
 # match sets one mask at bit `pc`; SIMD uses 2 bits at pc*2), plus the param
@@ -4669,7 +4787,7 @@ fn _prescan_params(S, fi): i64 {
     var option_mask = 0;
     var tagged_mask = 0;
     var simd_mask = 0;
-    var struct_mask = 0;
+    var struct_mask = _selfbv_bit(S, GTI(S) - 1);   # 6.6.11: bit 62, see there
     if (PEEKT(S) != 11) {
         var pgo = 1;
         while (pgo == 1) {
@@ -5397,7 +5515,10 @@ fn _async_emit_constructor(S, noff_f, fi_impl, pc): i64 {
     # list drifted; the shared snapshot is what stops the next one drifting.) CHANGELOG [6.6.7]
     var st = _fnst_save(S);
     _cur_fn_ix = fi_f;
-    var jmp = EJMP0(S);
+    # 6.6.11: no skip-jmp before the constructor. Every caller is either unreachable by
+    # fall-through here (the previous byte is f$impl's `ret`) or already jumps over the whole
+    # definition (PARSE_PROG's fn_skip, the generic re-emit). The jmp sat in no fn's range,
+    # so the DCE seed pass took it as a root and kept the NEXT fn alive. CHANGELOG [6.6.11]
     S64(_fnt_offsets + fi_f * 8, GCP(S));
     EFNPRO(S);
     # params p0..p{pc-1} → anonymous local slots 0..pc-1
@@ -5520,7 +5641,6 @@ fn _async_emit_constructor(S, noff_f, fi_impl, pc): i64 {
     var fsz = (GFLC(S) * 8 + 15) & (0 - 16);
     EPATCHFRAME(S, frame_patch, fsz);
     SFNE(S, fi_f, GCP(S));
-    EPATCH(S, jmp);
     # --- restore enclosing state ---
     _fnst_restore(S, st);
     return 0;
@@ -6393,7 +6513,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
     _stkp_reset();   # 6.6.6: this fn's deferred stack-param homes (see _stkp_defer)
     var option_mask = 0;
     var tagged_mask = 0;
-    var struct_mask = 0;   # v6.3.36 (issue [5]): bit N = plain struct >8 B param
+    var struct_mask = _selfbv_bit(S, GTI(S) - 1);   # v6.3.36: bit N = plain struct >8 B param; 6.6.11: bit 62
     # v6.3.39 (B3): for a specialized INSTANCE re-emit, bind T -> the concrete type(s)
     # BEFORE the param loop so a type-param-typed param `p: T` resolves to the concrete
     # struct (p becomes a by-value struct param → `p.x` in the body lays out + reads

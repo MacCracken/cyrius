@@ -27,11 +27,24 @@
 # its residual count (7, re-stamped to 8) was 1 on live code; its "_ends_guard added a site"
 # is false (that site recovers); and its "R2 must land before R1" dependency is contradicted
 # by the CHANGELOG of the release that shipped both.
+#
+# (C) 6.6.11 — the v6.5.39 newline stop took the line of the token AT THE CURSOR. With no
+# `,`, message or `;`, that token is already the NEXT line's first, so the stop never fired
+# and `#assert 1 == 1<LF> return 42;` ate the return: the fn returned garbage, rc 0. The line
+# is now the last consumed token's, unless a string (the message) sits at the cursor.
+# Axes 5-6. Mutation: `GTLINE(S, GTI(S) - 1)` back to `GTLINE(S, GTI(S))` in _assert_tail
+# -> axis 5 RED (5, want 42).
+# (D) 6.6.11 — a failing #assert EXITED. A top-level one runs in the declaration phase,
+# before PARSE_PROG parses the top-level `var` initialisers, so `var x = ;` followed by a
+# failing assert printed only the assert. It now records _had_error and continues; an
+# #inline body replayed at each call site reports its failure once. Axis 7. Mutation: put
+# back `syscall(SYS_EXIT, 1)` -> axis 7 RED (the `unexpected ';'` line is missing); drop the
+# `_assert_rep_ti` test -> axis 7 RED (the #inline failure is reported 3 times).
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
-CC="$ROOT/build/cycc"
-[ -x "$CC" ] || { echo "FAIL: resolution_excerpt_and_assert_skip: build/cycc missing"; exit 1; }
+CC=${CYCC:-"$ROOT/build/cycc"}
+[ -x "$CC" ] || { echo "FAIL: resolution_excerpt_and_assert_skip: $CC missing"; exit 1; }
 WORK=$(mktemp -d) && [ -d "$WORK" ] || { echo "FAIL: resolution_excerpt_and_assert_skip: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$WORK"' EXIT
 fail() { echo "FAIL: resolution_excerpt_and_assert_skip: $1"; exit 1; }
 
@@ -97,5 +110,58 @@ set +e
 ( cd "$ROOT" && cat "$WORK/syn.cyr" | "$CC" > /dev/null ) 2> "$WORK/serr"
 set -e
 grep -q '\^' "$WORK/serr" || fail "axis 4 anti-vacuous: even a plain SYNTAX error has no caret — _err_excerpt is broken generally, not just at the resolution sites"
+
+# ── axis 5: no `;`, no message — the NEXT line is a statement, not the assert's tail ──
+# asrt_run <name> <want-exit>: compile $WORK/<name>.cyr from $ROOT and run it
+asrt_run() {
+    set +e
+    ( cd "$ROOT" && cat "$WORK/$1.cyr" | "$CC" > "$WORK/$1.out" ) 2> "$WORK/$1.err"; _rc=$?
+    set -e
+    [ "$_rc" -eq 0 ] || fail "$1: did not compile ($(head -1 "$WORK/$1.err"))"
+    chmod +x "$WORK/$1.out"
+    set +e
+    "$WORK/$1.out"; _rc=$?
+    set -e
+    [ "$_rc" -eq "$2" ] || fail "$1: exit $_rc, expected $2 — the #assert swallowed the following line (6.6.10 returned the garbage 5)"
+}
+printf 'fn f(): i64 { var x = 5; #assert 1 == 1\n return 42; }\nsyscall(60, f());\n' > "$WORK/nosemi.cyr"
+asrt_run nosemi 42
+printf 'fn f(): i64 { var x = 5; #assert 1 == 1,\n return 42; }\nsyscall(60, f());\n' > "$WORK/commanl.cyr"
+asrt_run commanl 42
+printf '#assert 1 == 1\nvar y = 9;\nsyscall(60, y);\n' > "$WORK/topnosemi.cyr"
+asrt_run topnosemi 9
+
+# ── axis 6: ANTI-VACUOUS — the message may still sit on the next line ──────────────
+printf 'fn f(): i64 { var x = 5; #assert 1 == 1,\n "wrapped msg";\n return 42; }\nsyscall(60, f());\n' > "$WORK/wrapped.cyr"
+asrt_run wrapped 42
+printf 'fn f(): i64 { var x = 5; #assert 1 == 1, "multi\nline"\n return 42; }\nsyscall(60, f());\n' > "$WORK/mlmsg.cyr"
+asrt_run mlmsg 42
+# and a FAILING wrapped assert still prints its next-line message
+printf 'fn f(): i64 { #assert 1 == 2,\n "wrapped fail";\n return 42; }\nsyscall(60, f());\n' > "$WORK/wrapfail.cyr"
+set +e
+( cd "$ROOT" && cat "$WORK/wrapfail.cyr" | "$CC" > /dev/null ) 2> "$WORK/wrapfail.err"; _rc=$?
+set -e
+[ "$_rc" -eq 1 ] || fail "axis 6: a failing wrapped #assert exited $_rc, expected 1"
+grep -q '#assert failed: wrapped fail' "$WORK/wrapfail.err" || fail "axis 6: the wrapped message was not printed: $(cat "$WORK/wrapfail.err")"
+
+# ── axis 7: a failing #assert does not hide an earlier error, and reports once ─────
+printf 'var x = ;\n#assert 1 == 2;\n' > "$WORK/both.cyr"
+set +e
+( cd "$ROOT" && cat "$WORK/both.cyr" | "$CC" > "$WORK/both.out" ) 2> "$WORK/both.err"; _rc=$?
+set -e
+[ "$_rc" -eq 1 ] || fail "axis 7: exit $_rc, expected 1"
+[ ! -s "$WORK/both.out" ] || fail "axis 7: a binary was emitted despite the errors"
+grep -q "error:<source>:2:15: #assert failed" "$WORK/both.err" || fail "axis 7: the failing #assert was not reported: $(cat "$WORK/both.err")"
+grep -q "error:<source>:1:9: unexpected ';'" "$WORK/both.err" \
+    || fail "axis 7: the syntax error on line 1 was lost behind the failing #assert (6.6.10 exited at the assert): $(cat "$WORK/both.err")"
+printf '#inline\nfn h(): i64 { #assert 1 == 2, "inl"; return 1; }\nfn g(): i64 { return h() + h(); }\n#assert 3 == 4, "top";\nsyscall(60, g());\n' > "$WORK/inl.cyr"
+set +e
+( cd "$ROOT" && cat "$WORK/inl.cyr" | "$CC" > "$WORK/inl.out" ) 2> "$WORK/inl.err"; _rc=$?
+set -e
+[ "$_rc" -eq 1 ] || fail "axis 7: #inline fixture exit $_rc, expected 1"
+[ ! -s "$WORK/inl.out" ] || fail "axis 7: #inline fixture emitted a binary"
+n=$(grep -c '#assert failed: inl' "$WORK/inl.err" || true)
+[ "$n" -eq 1 ] || fail "axis 7: the failing assert in an #inline body was reported $n times, expected once"
+grep -q '#assert failed: top' "$WORK/inl.err" || fail "axis 7: a second, independent failing #assert was not reported"
 
 echo "PASS: resolution_excerpt_and_assert_skip (resolution errors carry excerpt+caret, all are reported, and #assert no longer eats the following statement)"

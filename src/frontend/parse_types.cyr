@@ -140,26 +140,32 @@ fn FINDSTRUCT(S, noff): i64 {
 }
 
 # Add field to struct (0-based struct index si), ftype = struct_id or 0 for scalar
+# 6.6.11: a union keeps its flag in bit 63 of the count (PARSE_UNION_DEF), so the count is
+# MASKED for the 256 cap, the pool entry and the pool top, and raw + 1 is stored back. Read raw,
+# a union's count was negative (the cap never fired), and the flag rode `pooltop` into every
+# later struct's field_base, so the signed 8192 test never tripped either. CHANGELOG [6.6.11]
 fn ADDFIELD(S, si, fnoff): i64 {
-    var fc = L64(S + 0x1A8018 + si * 8);
+    var raw = L64(S + 0x1A8018 + si * 8);
+    var fc = raw & 0x7FFFFFFFFFFFFFFF;
     if (fc >= 256) { ERR_MSG(S, "too many struct fields (max 256)", 32); return 0; }   # 6.6.10: stop, don't store
     var ent = L64(S + 0x1AA018 + si * 8) + fc;   # packed pool: field_base[si] + fc
     if (ent >= 8192) { ERR_MSG(S, "struct field pool exhausted (8192 max)", 38); return 0; }
     S64(S + 0x92A000 + ent * 8, fnoff);
     S64(S + 0x91A000 + ent * 8, 0);
-    S64(S + 0x1A8018 + si * 8, fc + 1);
+    S64(S + 0x1A8018 + si * 8, raw + 1);
     S64(S + 0x1AC018, ent + 1);   # pooltop = ent + 1 (sequential per-struct fill)
     return 0;
 }
 
 fn ADDFIELDTYPED(S, si, fnoff, ftype): i64 {
-    var fc = L64(S + 0x1A8018 + si * 8);
+    var raw = L64(S + 0x1A8018 + si * 8);   # masked as in ADDFIELD (union flag, bit 63)
+    var fc = raw & 0x7FFFFFFFFFFFFFFF;
     if (fc >= 256) { ERR_MSG(S, "too many struct fields (max 256)", 32); return 0; }   # 6.6.10: stop, don't store
     var ent = L64(S + 0x1AA018 + si * 8) + fc;   # packed pool: field_base[si] + fc
     if (ent >= 8192) { ERR_MSG(S, "struct field pool exhausted (8192 max)", 38); return 0; }
     S64(S + 0x92A000 + ent * 8, fnoff);
     S64(S + 0x91A000 + ent * 8, ftype);
-    S64(S + 0x1A8018 + si * 8, fc + 1);
+    S64(S + 0x1A8018 + si * 8, raw + 1);
     S64(S + 0x1AC018, ent + 1);   # pooltop = ent + 1 (sequential per-struct fill)
     return 0;
 }
@@ -168,7 +174,7 @@ fn ADDFIELDTYPED(S, si, fnoff, ftype): i64 {
 # The entry is computed the way ADDFIELD computes it, and marked only when ADDFIELD actually
 # stored (a refused field leaves the pool top where it was). See SFFK. CHANGELOG [6.6.10]
 fn ADDFIELDFK(S, si, fnoff, k): i64 {
-    var ent = L64(S + 0x1AA018 + si * 8) + L64(S + 0x1A8018 + si * 8);
+    var ent = L64(S + 0x1AA018 + si * 8) + (L64(S + 0x1A8018 + si * 8) & 0x7FFFFFFFFFFFFFFF);
     var top = L64(S + 0x1AC018);
     ADDFIELD(S, si, fnoff);
     if (k == 0) { return 0; }

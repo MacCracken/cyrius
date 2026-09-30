@@ -1007,6 +1007,7 @@ var _pp_derive_count = 0;
 var _pp_enum_helper_done = 0;
 var _pp_derive_sizes = 0;   # alloc(512*8)  lazily on first #derive registration
 var _pp_derive_names = 0;   # alloc(512*32) ditto
+var _pp_derive_lays = 0;    # alloc(512*8) ditto: a FIRST definition's layout record (6.6.11, PP_DERIVE_LAY_SAVE)
 # v6.5.20 — FLATTEN mode for PP_EMIT_STR: newline -> space. Set only around the
 # `#derive` BODY emitters (the generated fns), never around the struct copy.
 #
@@ -1154,7 +1155,7 @@ fn PP_COPY_TAIL(src_base, ip, bl, out, op): i64 {
 var _pp_dndir = 0;
 var _pp_dlen = 0;
 var _pp_dbadc = 0;
-# The layout backstop's armed flag and size — see PP_DERIVE_EMIT_CHK.
+# The layout backstop's armed flag (1; 2 = on a redefined name, 6.6.11) and size — see PP_DERIVE_EMIT_CHK.
 var _pp_dchk_pending = 0;
 var _pp_dchk_size = 0;
 # 1 iff the last PP_DERIVE_FIELDS walk reached the closing `}` (0: it stopped on a shape the
@@ -1739,9 +1740,12 @@ fn PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op): i64 {
     if (_pp_derive_sizes == 0) {
         _pp_derive_sizes = alloc(512 * 8);
         _pp_derive_names = alloc(512 * 32);
+        _pp_derive_lays = alloc(512 * 8);
     }
     var seen = PP_DERIVE_SEEN(S);
     var dsi = _pp_derive_count;
+    store64(_pp_derive_lays + dsi * 8, 0);
+    if (seen == 0) { store64(_pp_derive_lays + dsi * 8, PP_DERIVE_LAY_SAVE(S, fc)); }
     var ri = 0;
     while (load8(S + 0x197020 + ri) != 0) { store8(_pp_derive_names + dsi * 32 + ri, load8(S + 0x197020 + ri)); ri = ri + 1; }
     store8(_pp_derive_names + dsi * 32 + ri, 0);
@@ -1750,18 +1754,21 @@ fn PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op): i64 {
     store64(S + 0x197008, op);
     store64(S + 0x197010, fc);
     store64(S + 0x197018, cumul);
-    # Arm the layout backstop (PP_DERIVE_EMIT_CHK) for a struct with fields — unless an
-    # earlier `#derive` already declared this NAME. A second `struct X` is a redefinition: the
-    # parser keeps the FIRST layout (`sizeof(X)` is the first one's), so the check would judge
-    # this declaration against a different struct. That duplicate is a defect of its own, but
-    # it builds today (with `duplicate fn` warnings for the accessors) and it is live in the
-    # older kavach copies vendored by mehman, stiva, aethersafha, agnosai and agnostic — so the
-    # backstop must not be what turns it into a build failure.
+    # Arm the layout backstop (PP_DERIVE_EMIT_CHK) for a struct with fields. ⛔ 6.6.11: a NAME an
+    # earlier `#derive` declared is judged against THAT definition's field names, offsets and size
+    # (2 = they differ: refused, by name). The parser keeps the FIRST layout, so this declaration's
+    # accessors run against it: two derived `A`s of 48 and 64 B built rc 0 and `A_set_m` stored at
+    # offset 56 of a 48 B struct, and `{ x; y; }` then `{ y; x; }` (same size) built rc 0 with every
+    # setter writing the other field. 6.6.7 exempted a redefined name for the older kavach (two
+    # `struct SpawnedProcess`); every consumer now vendors kavach 3.13.1, which has one. The
+    # duplicates still live (agnosys + sigil, garjan + prani's DcBlocker) have the same names at the
+    # same offsets (field TYPES may differ: DcBlocker is f64 in one, i64 in the other), so they pass.
     _pp_dchk_pending = 0;
     if (_pp_decl_is_enum == 0) {
         if (fc > 0) {
             if (_pp_dfull == 1) {
-                if (seen == 0) { _pp_dchk_pending = 1; _pp_dchk_size = cumul; }
+                _pp_dchk_pending = 1; _pp_dchk_size = cumul;
+                if (seen > 0) { _pp_dchk_pending = 2 * PP_DERIVE_LAY_DIFFERS(S, seen - 1, fc, cumul); }
             }
         }
     }
@@ -1783,33 +1790,83 @@ fn PP_PARSE_STRUCT_DEF(S, src_base, ip, bl, out, op): i64 {
 # no code; an inlined accessor re-evaluates it at each call site, also emitting nothing. The
 # message is ONE fixed string so the string table carries it once per program.
 # CHANGELOG [6.6.7]
-# 1 iff the name at S+0x197020 was already registered by an earlier `#derive` this run.
+# The FIRST earlier `#derive` registration of the name at S+0x197020 this run, 1-based (0: none).
 fn PP_DERIVE_SEEN(S): i64 {
     var di = 0;
     while (di < _pp_derive_count) {
-        var ci = 0;
-        var eq = 1;
-        while (eq == 1) {
-            var a = load8(S + 0x197020 + ci);
-            if (a != load8(_pp_derive_names + di * 32 + ci)) { eq = 0; }
-            elif (a == 0) { return 1; }
-            ci = ci + 1;
-        }
+        if (PP_CSEQ(S + 0x197020, _pp_derive_names + di * 32) == 1) { return di + 1; }
         di = di + 1;
+    }
+    return 0;
+}
+
+# 1 iff the NUL-terminated strings at a and b are equal.
+fn PP_CSEQ(a, b): i64 {
+    var ci = 0;
+    while (load8(a + ci) == load8(b + ci)) {
+        if (load8(a + ci) == 0) { return 1; }
+        ci = ci + 1;
+    }
+    return 0;
+}
+
+# 6.6.11 — a FIRST definition's layout, kept so a redefinition of the name can be judged against
+# the layout the parser keeps: [fc][fc x (32-byte field name, 8-byte offset)]. Names and offsets
+# with the size pin every field's bytes (the derive packs fields with no padding, so each width is
+# the gap to the next offset); field TYPES are deliberately not compared.
+fn PP_DERIVE_LAY_SAVE(S, fc): i64 {
+    var rec = alloc(8 + fc * 40);
+    store64(rec, fc);
+    var fi = 0;
+    while (fi < fc) {
+        var e = rec + 8 + fi * 40;
+        var k = 0;
+        while (k < 32) { store64(e + k, load64(S + 0x1FC000 + fi * 32 + k)); k = k + 8; }
+        store64(e + 32, load64(S + 0x200000 + fi * 8));
+        fi = fi + 1;
+    }
+    return rec;
+}
+
+# 1 iff this definition (field table, `fc` fields, `size` B) differs from registration `di`'s.
+fn PP_DERIVE_LAY_DIFFERS(S, di, fc, size): i64 {
+    if (load64(_pp_derive_sizes + di * 8) != size) { return 1; }
+    var rec = load64(_pp_derive_lays + di * 8);
+    if (rec == 0) { return 1; }
+    if (load64(rec) != fc) { return 1; }
+    var fi = 0;
+    while (fi < fc) {
+        var e = rec + 8 + fi * 40;
+        if (load64(e + 32) != load64(S + 0x200000 + fi * 8)) { return 1; }
+        if (PP_CSEQ(e, S + 0x1FC000 + fi * 32) == 0) { return 1; }
+        fi = fi + 1;
     }
     return 0;
 }
 
 fn PP_DERIVE_EMIT_CHK(S, out, op): i64 {
     if (_pp_dchk_pending == 0) { return op; }
-    _pp_dchk_pending = 0;
+    if (_pp_dchk_pending == 2) { return op + PP_DERIVE_REDEF_MSG(S, out, op); }
     op = op + PP_EMIT_STR(out, op, "#assert sizeof(");
     op = op + PP_EMIT_STR(out, op, S + 0x197020);
     op = op + PP_EMIT_STR(out, op, ") == ");
     op = op + PP_EMIT_INT(out, op, _pp_dchk_size);
+    _pp_dchk_pending = 0;
     op = op + PP_EMIT_STR(out, op, ", \"#derive: field offsets disagree with the struct layout");
     op = op + PP_EMIT_STR(out, op, " (is a field typed with a struct that is not itself #derive'd?)\"; ");
     return op;
+}
+
+# The redefinition's refusal (6.6.11, see the arming in PP_DERIVE_FIELDS): the preprocessor has
+# already compared the two layouts, so it is an unconditional `#assert` naming the struct.
+# Returns bytes written.
+fn PP_DERIVE_REDEF_MSG(S, out, op): i64 {
+    _pp_dchk_pending = 0;
+    var n = PP_EMIT_STR(out, op, "#assert 0 == 1, \"#derive: struct '");
+    n = n + PP_EMIT_STR(out, op + n, S + 0x197020);
+    n = n + PP_EMIT_STR(out, op + n, "' is defined again with different field names, order or size");
+    n = n + PP_EMIT_STR(out, op + n, " -- the FIRST definition is the layout used, so these accessors would read and write the wrong bytes\"; ");
+    return n;
 }
 
 # v6.4.x Pin 2 R2 — classify the element type of a `#derive` field whose type
