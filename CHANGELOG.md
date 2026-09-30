@@ -500,6 +500,174 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   derived redefinition; every kavach pin is 3.13.1. Two H-owned gates asserted the old derive exemption
   (`derive_layout_backstop.sh` F, `redefinition_layout_and_enum_over_var.sh` `sp_derive`) and are
   updated by lane H.
+### Fixed
+
+- **PE: a path is opened, created, renamed and removed under ITS OWN NAME — real UTF-8, no silent
+  truncation, long paths (B06, item I2).** **Root cause:** every narrow-path Windows reroute —
+  `EOPEN_PE`, `ECREATEDIR_PE`, `EDELETEF_PE`, `EDELETEFILEW_PE`, `EREMOVEDIRW_PE` and both paths of
+  `EMOVEFILEEX_PE` (`src/backend/x86/emit.cyr`) — carried its own inline 24-byte loop that copied one
+  UTF-8 BYTE into one WCHAR and, at 260 units, stopped and forced a NUL. So `open("café.txt",
+  O_CREAT)` failed outright, and a 288-byte relative `O_CREAT` open returned a **valid handle** for
+  the name cut to 260 units (measured under wine at 6.6.10) — a silent write to the WRONG file; a
+  caller's `\\?\` path does the same on real Windows. **Fix:** one shared emitted sequence,
+  `_pe_widen_path`: kernel32!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS) — invalid UTF-8 or
+  no room is REFUSED (the API is not called; open returns -1, the BOOL reroutes -1), never guessed
+  or cut — then a verbatim `\\?\` / `\\.\` path is passed as given, and a path whose
+  GetFullPathNameW form is 248+ units (CreateDirectoryW's MAX_PATH-12, so all seven share one rule)
+  is handed over as `\\?\<full>` / `\\?\UNC\server\share…`; shorter paths keep their original form.
+  The buffers are 32768 units (the `\\?\` limit), so the three former fixed-frame reroutes now use
+  the rbx-anchored `and rsp,-16` frame, probed a page at a time (a 128 KB `sub rsp` that skips the
+  stack guard page faults on real Windows — measured, `0xC0000005`). Two new kernel32 imports
+  (`src/backend/pe/emit.cyr`). **Verified on real cass:** `tests/tcyr/crossos/pe_path_utf8_long.tcyr`
+  37/37 (the 6.6.10 compiler and stdlib: 17 rows fail), the cass PE self-host fixpoint (its own
+  `include` opens go through the new EOPEN_PE) and the five `tests/win` exit-42 guards; the full
+  143-file `tests/tcyr/crossos` set on cass is unchanged against 6.6.10 apart from the two fixed
+  files.
+- **The stdlib's own path widens decode UTF-8 and are bounded by the Str's length (B06, item I1).**
+  **Root cause:** `lib/fs_win.cyr`'s `_fs_widen(dst, src)` read to a NUL and zero-extended each byte
+  (Latin-1), and its callers bounded on `strlen`, never `str_len` — so `is_dir(str_sub(str_from
+  ("dirA"), 0, 3))` answered 1 for a missing `dir` and `dir_list_checked` listed dirA; the same
+  Latin-1 copy sat in `is_symlink`'s PE arm, `sys_access`, `_win_widen` (which also CUT
+  `sys_symlink`'s paths at 518 units) and `lib/io.cyr`'s `_xdir_exists` (cut at 510). The POSIX arms
+  gave the same wrong answer: `is_dir`, `_dir_list_into_vec`, `dir_list_into` and `is_symlink`
+  handed `str_data(path)` to stat/open/readlink as a C string. **Fix:** one decoder,
+  `_win_widen_n(dst, src, n, cap)` in `lib/syscalls_windows.cyr` (exactly `n` bytes; surrogate pairs;
+  -1 for an embedded NUL, invalid UTF-8 or no room), which `_fs_widen(dst, src, n)`, `_win_widen`,
+  `is_symlink` and `_xdir_exists` all call; the POSIX arms copy exactly the Str's bytes into a
+  bounded NUL-terminated buffer (`_fs_cpath`, PATH_MAX) and refuse an embedded NUL. The new
+  `tests/tcyr/crossos/fs_dirlist.tcyr` rows run unguarded on every target (5 fail on 6.6.10 on x86
+  Linux, under wine and on real cass). ⚠ The wide-path reroutes the stdlib widens feed
+  (GetFileAttributesW, FindFirstFileW) are still not long-path-aware: past ~259 units `is_dir` /
+  `dir_list` REFUSE (answer "not a directory" / -1) rather than answer for a cut path.
+- `tests/gates/platform/pe_open_posix_semantics.sh` gains axis 2b (every narrow path handed to
+  kernel32 goes through one widen carrying CP_UTF8 + MB_ERR_INVALID_CHARS + the long-path branch, every
+  path frame probed, the cut-at-260 loop gone) and axis 4 (`pe_path_utf8_long.tcyr` natively and under
+  wine with a UTF-8 locale); its whole-gate SKIP exits 77. Mutation ledger in the gate header.
+- Verified off-host: the ach (Intel-Mac) self-host fixpoint, ecb and pi native self-hosts, and the
+  path/fs `.tcyr` rows on ecb, ach, pi and in the agnosticos container.
+- **Windows: lib/net.cyr's sockets work, so `http_*` works (B07, item I4).** **Root cause:** every
+  verb in `lib/net.cyr` issued the Linux socket numbers (41/42/43/48/49/50/54), none of them routed on
+  PE, so `tcp_socket` / `udp_socket` / bind / connect / listen / accept / shutdown / setsockopt all
+  returned -38 (-ENOSYS), and send/recv/close went through WriteFile/ReadFile/CloseHandle — measured
+  under wine, `tcp_socket()` was `Err(38)` and `http_get` against a live local server returned
+  `HTTP_ERROR` (the native build got the server's 404). sandhi's v4 path rides the same verbs.
+  **Fix:** each verb's OS call lives in one per-OS primitive (`_net_os_socket` … `_net_os_close`),
+  with a ws2_32 arm on Windows: a one-time WSAStartup, WSASocketW (overlapped + no-inherit: measured on
+  cass and under wine, a NON-overlapped socket ignores `SO_RCVTIMEO` and a timed read hangs forever),
+  bind / connect / listen / setsockopt / closesocket, and six new reroutes **0xF045-0xF04A** — accept,
+  shutdown, send, recv, ioctlsocket (FIONBIO) and WSAPoll (`EACCEPT_PE` … `EWSAPOLL_PE`,
+  `src/backend/x86/emit.cyr` + `src/backend/pe/emit.cyr`; the five `int` results sign-extended). The
+  SOCKET is the fd; SOCKET_ERROR becomes `-WSAGetLastError`, with WSAEWOULDBLOCK (and, for send/recv,
+  WSAETIMEDOUT) reported as -EAGAIN as on Linux. Winsock constants per target (`SOL_SOCKET` 0xFFFF,
+  `SO_RCVTIMEO` a DWORD of ms rounded UP so 500 us never becomes "forever", `AF_INET6` 23, the
+  9-13 multicast numbers); `sock_reuse` sets **SO_EXCLUSIVEADDRUSE** on Windows, because Windows'
+  SO_REUSEADDR lets another socket take the port. `net_connect_sa_nb` is FIONBIO + WSAPoll + SO_ERROR,
+  and `sock_set_nonblocking` / `sock_clear_nonblocking` are FIONBIO. `lib/http.cyr` closes every
+  socket with `sock_close` (it called `sys_close`, i.e. CloseHandle, on a SOCKET). The parser's route
+  table for 0xF045-0xF04A (`_PE_ROUTE_SOCK`, `src/frontend/parse_expr.cyr`) lands as its own commit
+  from lane F. New `tests/tcyr/crossos/net_loopback_tcp.tcyr` (a loopback TCP pair, non-blocking
+  accept and connect, UDP, the socket options, and `http_get` against a one-shot server — a thread on
+  Windows, a child elsewhere — that checks the request it receives) and
+  `tests/gates/platform/pe_socket_reroutes_routed.sh` (routed at arity, named in the note, imported,
+  and no unrouted literal left in net.cyr / http.cyr on PE; exit 77 when it cannot run). Mutation:
+  reverting `_net_os_accept`'s Windows arm fails 6 loopback rows under wine and on cass. A Windows-only
+  group pins the port-hijack defence: with `sock_reuse` set before bind, a second socket asking to
+  share the port (`sock_reuseport`) cannot bind it — `_NET_SO_REUSE = 0x0004` (SO_REUSEADDR) fails it
+  on cass (wine's socket layer refuses that bind either way, so only real Windows shows it).
+  **`lib/ws.cyr` / `lib/ws_server.cyr` read sockets through `_net_os_recv`.** `ws_connect`'s 101 read
+  and both `_ws_recv_exact` / `_wss_recv_exact` called `sys_read` — ReadFile on Windows, which with no
+  OVERLAPPED returns 0 on the overlapped sockets `tcp_socket` now makes there, so the WebSocket client
+  and server would connect and then read a false EOF (measured on cass). Off Windows `_net_os_recv` is
+  `sys_read`, so file-fd frame tests are unchanged. New `tests/tcyr/crossos/ws_client_socket_reads.tcyr`
+  and `ws_server_socket_reads.tcyr` (a loopback pair in one process: the 101, a text frame, a 16-bit
+  length frame, a peer-close EOF); with `sys_read` back they fail 5 and 4 rows on cass (wine's
+  ReadFile tolerates it).
+- **Windows: `net_resolve_ipv4` is the system resolver and never reads a drive-relative `/etc`
+  (B07, item I5; security — see the notes for the CVE).** **Root cause:** the resolver read
+  `/etc/hosts` and `/etc/resolv.conf` on every target, and on Windows a rooted path is DRIVE-RELATIVE:
+  `/etc/hosts` is `C:\etc\hosts`, which any authenticated user may create, so one local user could
+  redirect every other user's lookups; with no resolv.conf it fell back to 127.0.0.1:53, and port 53
+  is not privileged there. `_net_dns_id`'s `/dev/urandom` fallback had the same shape. **Fix:** after
+  the literal and `*.localhost` steps the Windows arm is getaddrinfo (the real
+  `%SystemRoot%\System32\drivers\etc\hosts` and the adapters' DNS); a non-ASCII name, and a name the
+  resolver would read as an ADDRESS although `net_parse_ipv4` refused it (`010.0.0.1`, `127.1`,
+  `0x7f000001` — probed with AI_NUMERICHOST), are refused before any lookup; no `/dev/urandom` on
+  Windows. New `tests/tcyr/crossos/net_resolve_pe.tcyr` plants `C:\etc\hosts` and asserts it is
+  ignored (wine maps a rooted path to the unix root, so only real Windows shows this). On real Windows
+  — wine is told apart by ntdll's `wine_get_version` export — the plant itself is asserted: a
+  `C:\etc\hosts` already present or a failed write fails a named row instead of leaving "the planted
+  name does not resolve" to pass vacuously (measured on cass with a pre-existing file: 1 row fails).
+  Mutation, measured on cass: with the POSIX steps restored the planted 10.9.8.7 came back.
+- **`lib/http.cyr`: the Host header carries a non-default port (B07, item J1).**
+  `_http_build_request(method, host, path)` took no port, so `http://localhost:8080/x` sent
+  `Host: localhost` — and `tests/tcyr/crossos/http_connect_by_name.tcyr` expected exactly that for its
+  ephemeral-port listener, pinning the defect. The builder is now `(method, host, port, path)` and
+  appends `:port` unless it is 80, counted toward the CVE-50 cap before the buffer exists;
+  `_http_prepare` gains the port and its three callers pass it. Rows: `:80` has no suffix, `:8080`,
+  1- and 5-digit ports, the cap edge counts the suffix, and the live test builds its expected Host
+  from the bound port.
+- **`lib/http.cyr`: every control byte is refused in a URL (B07, item J2).** The check promised
+  "any byte < 0x20 or == 0x7F" but tested only CR, LF, TAB and SPACE, so 29 control bytes reached the
+  Host header and request line. It now refuses 0x01-0x20 and 0x7F across the whole URL;
+  `tests/tcyr/formats/http_crlf.tcyr` walks all 32 low bytes in the host and the path, plus DEL.
+- Verified (B07): the fixpoint and seed-derive; self-hosts on ecb, ach, pi and cass (PE, with the
+  route hunk applied); the five net/http `.tcyr` files and the two ws socket files on ecb, ach, pi,
+  cass, under wine and in the agnosticos container.
+- **cx: `lib/thread.cyr` compiles and fails HONESTLY; `lib/sync.cyr` has a cx arm (B08, item J5a).**
+  **Root cause:** cx predefines only `CYRIUS_TARGET_CX` (not `TARGET_LINUX`), and `lib/sync.cyr` had
+  arms for Windows, macOS, Linux and agnos — so on cx `mutex_*` were undefined and
+  `include "lib/thread.cyr"` was refused (`undefined function(s) called (cx backend): mutex_new,
+  mutex_lock`). With a sync arm alone, `thread_create` walked the Linux spawn path: cxvm hands a
+  guest mmap to the HOST kernel, which succeeds, and the stores that follow go through a host address
+  as if it were a guest offset — cxvm SIGSEGVs; and the channels' raw FUTEX wakes killed cxvm with
+  SIGSYS on a Darwin host (measured on ecb and ach). **Fix:** sync.cyr gains the agnos no-op contract
+  as a cx arm (one guest thread, never a contender; listed in its BACKENDS header). thread.cyr on cx:
+  `thread_create` / `thread_create_detached` return 0 before touching the spawn path (the heap lock is
+  not armed), `THREADS_CONCURRENT` is 0, `gettid()` is 1, and no `SYS_FUTEX` is issued (the channel
+  ring works single-threaded). Other targets compile byte-identically: every direct includer of the
+  touched modules, on linux, aarch64, x86-macho, agnos, PE and Mach-O, cmp'd against the pre-bite tree
+  (only `programs/vidya.cyr`, J8, differs).
+- **cx: `lib/tls.cyr`, `lib/tls_native.cyr` and `lib/sigil.cyr` are refused BY NAME (B08, item J5b).**
+  They compile to several MB of cx bytecode (cx runs ~3.2x x86; tls is ~1.6 MB as an x86 ELF) against
+  cx's fixed 512 KiB code buffer and cxvm's 1 MB caps, and died mid-emit with a bare
+  `error: codebuf overflow` naming nothing. They are declared OUT of cx scope rather than growing the
+  compiler and the VM: `src/main_cx.cyr` checks the file map right after preprocessing
+  (`_cx_scope_refused`, `src/backend/cx/emit.cyr`) and prints
+  `error: lib/tls.cyr is outside the cx target's scope ...` for each one included, exit 1. Neither
+  file is in cycc's image (fixpoint and seed-derive unchanged).
+- **The PENDING stdlib tier carries its first-party includes (B08, item J7).** `lib/log.cyr` included
+  nothing (undefined `strlen`), `lib/ws.cyr` nothing (`alloc`, `memcpy`, `strlen`, `sock_send_all`,
+  `sys_getrandom`, `sys_read`, `_net_os_recv`), and `lib/ws_server.cyr` only `sha1.cyr`
+  (`sock_close`, `str_builder_*`, `str_data`, ...). They now include syscalls / alloc / string / str /
+  net as they use them, so what stays undefined on linux, agnos, PE, Mach-O and aarch64 is fold names
+  only: `sakshi_*` (log), `base64_encode` (ws) and `+ sandhi_server_find_header` (ws_server) — the
+  "raw-includable fold bundles" backlog item. Their `Requires:` headers are corrected.
+- **`programs/vidya.cyr` includes its definers (B08, item J8).** It included nothing, so
+  `include "programs/vidya.cyr"` alone left 26 fns undefined (the roadmap said 25), and its header named
+  `lib/toml.cyr`, which was folded into bayan. It now includes syscalls, alloc, string, fmt, vec, str,
+  hashmap, io, fs, fnptr, then bayan (after io, for the bundle's `file_*` sidecar). Its four includers
+  (`large_input`, `large_source`, `preprocessor_past_cap` and the walkers gate's probe) build
+  byte-identical binaries.
+- `lib/syscalls_x86_64_linux.cyr`'s header gave a stale reason for its enum constants (the
+  `gvar_toks` 4096 cap, lifted in 6.6.9); it now gives the real one (compile-time literals, which the
+  per-target syscall routing needs) (B08, item K10).
+- `tests/gates/toolchain/stdlib_modules_self_sufficient.sh`: axis 2 holds each PENDING module's
+  residual on every host target to the fold-ONLY names (defined in a fold bundle and in no first-party
+  lib file), so a first-party gap cannot hide behind PENDING again; axis 4's cx leg leaves the named
+  `CX_OUT_OF_SCOPE` list out (cx 69/108 here); axis 6 adds `programs/vidya.cyr`; new axis 7 asserts the
+  by-name cx refusal and runs `lib/thread.cyr` on cxvm (exit 255, one bit per behaviour). Axis 7 also
+  holds the five futex guards on Linux: a harness copy of cxvm (in the gate's temp dir; `programs/cxvm.cyr`
+  is unchanged) exits 140 on guest syscall 202 — Darwin's SIGSYS verdict — and runs the probe (the WAKE
+  sites, 255) plus a blocking `chan_recv` / `chan_send` (the WAIT sites, which must spin: `timeout` 124).
+  Each guard removed alone fails the gate. Mutation ledger t-y in the header.
+- `scripts/cross-os-selfhost.sh` (hand-off to lane H): the same thread probe as a portable `.cyx`,
+  run by each host's native cxvm, must exit 255 — ach's leg builds a cxvm for it (it had none). With
+  the guards removed, ecb and ach exit 140; pi and cass stay 255 (their hosts answer EFAULT / ENOSYS).
+- Verified (B08): the fixpoint and seed-derive (formality — no cycc-image file changed); on ecb, ach,
+  pi and cass a natively built `cycc_cx` refuses tls / tls_native / sigil by name and compiles the
+  thread probe, which the host's native cxvm runs to 255 (ecb and ach exited 140, SIGSYS, before the
+  futex guards — re-measured with a cxvm built from the tree by the leg's own compiler chain; a cxvm
+  built by an older installed cycc need not reproduce it on ecb).
 
 ## [6.6.10] — 2026-09-29
 

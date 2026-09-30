@@ -1,0 +1,100 @@
+# net_resolve_pe.tcyr — 6.6.11: net_resolve_ipv4 on Windows is the SYSTEM resolver, and never
+# reads the POSIX configuration paths.
+#
+# ⛔ WHY. net_resolve_ipv4 read "/etc/hosts" and "/etc/resolv.conf" on every target. On Windows a
+# rooted path is DRIVE-RELATIVE — "/etc/hosts" opens C:\etc\hosts — and any authenticated user
+# may create folders at the root of the system drive, so an unprivileged local user could plant
+# a hosts file that every other user's cyrius program honoured; with no resolv.conf the lookup
+# fell back to 127.0.0.1:53, and port 53 is not privileged on Windows. The Windows arm is now
+# getaddrinfo (the real %SystemRoot%\System32\drivers\etc\hosts and the adapters' DNS).
+#
+# ⚠ WINE CANNOT SHOW THE PLANT: it maps a rooted path to the unix root, so "/etc/hosts" is the
+# LINUX file there and this test leaves it alone (wine is detected by ntdll's wine_get_version
+# export). The plant rows bite on real Windows (cass, the release gate's cross-OS leg), and there
+# the plant is ASSERTED: a C:\etc\hosts already present, or a mkdir/write that failed, fails a
+# named row instead of letting "the planted name does not resolve" pass without a plant.
+#
+# MUTATION (6.6.11, measured): restoring the POSIX steps on Windows (dropping the
+# _net_resolve_win arm) fails the planted-name rows on cass — the planted 10.9.8.7 came back.
+# Dropping the AI_NUMERICHOST refusal fails the three legacy-numeric rows under wine (its
+# getaddrinfo is glibc's, which reads "127.1" as 127.0.0.1); cass's own getaddrinfo already
+# refuses them, so there that refusal is defence in depth. CHANGELOG [6.6.11]
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/io.cyr"
+include "lib/net.cyr"
+include "lib/assert.cyr"
+
+# Pack a.b.c.d the way sock_connect wants it (network byte order in memory).
+fn _rp_ip(a, b, c, d): i64 { return a | (b << 8) | (c << 16) | (d << 24); }
+
+#ifdef CYRIUS_TARGET_WIN
+# 1 under wine: its ntdll exports wine_get_version, which no Windows ntdll has.
+fn _rp_is_wine(): i64 {
+    var nt = syscall(0xF013, "ntdll.dll");
+    if (nt == 0) { return 0; }
+    if (syscall(0xF014, nt, "wine_get_version") != 0) { return 1; }
+    return 0;
+}
+
+fn _rp_windows_group(): i64 {
+    test_group("6.6.11 — Windows: a planted C:\\etc\\hosts is NOT honoured");
+    var planted = _rp_ip(10, 9, 8, 7);
+    var made_dir = 0;
+    var made_file = 0;
+    var wine = _rp_is_wine();
+    if (wine == 0) {
+        # Real Windows: the plant MUST happen, or the rows below pass without testing anything. A
+        # C:\etc\hosts that is already there is not this file's to overwrite or remove — it fails
+        # here by name instead.
+        assert_eq(file_exists("/etc/hosts"), 0, "no C:\\etc\\hosts exists yet (remove it to run the plant)");
+    }
+    if (wine == 0 && file_exists("/etc/hosts") == 0) {
+        if (sys_mkdir("/etc", 493) == 0) { made_dir = 1; }
+        var line = "10.9.8.7 cyrprobe-planted.invalid\r\n";
+        if (file_write_all("/etc/hosts", line, strlen(line)) == strlen(line)) { made_file = 1; }
+        assert_eq(made_file, 1, "the hosts file is planted at C:\\etc\\hosts (else the rows below are vacuous)");
+    }
+    var got = net_resolve_ipv4("cyrprobe-planted.invalid");
+    assert_neq(got, planted, "the name planted in the drive-root etc\\hosts does not resolve to it");
+    assert_eq(got, 0 - 1, "…it does not resolve at all (.invalid never does, RFC 6761)");
+    if (made_file == 1) { sys_unlink("/etc/hosts"); }
+    if (made_dir == 1) { sys_rmdir("/etc"); }
+
+    test_group("6.6.11 — Windows: forms getaddrinfo reads as an ADDRESS stay refused");
+    # net_parse_ipv4 refuses these; the system resolver would read each as a number. The strict
+    # rule must hold one layer down, with no lookup.
+    assert_eq(net_resolve_ipv4("010.0.0.1"), 0 - 1, "a leading-zero part (octal to inet_aton)");
+    assert_eq(net_resolve_ipv4("127.1"), 0 - 1, "two-part shorthand");
+    assert_eq(net_resolve_ipv4("0x7f000001"), 0 - 1, "a hex address");
+    var nb = alloc(16);
+    memcpy(nb, "caf", 3);
+    store8(nb + 3, 0xC3);
+    store8(nb + 4, 0xA9);
+    memcpy(nb + 5, ".invalid", 9);
+    assert_eq(net_resolve_ipv4(nb), 0 - 1, "a non-ASCII name is refused (no code-page guessing)");
+
+    test_group("6.6.11 — Windows: the system resolver answers");
+    # The machine's own name always resolves locally (no DNS), through the getaddrinfo walk.
+    var me = getenv("COMPUTERNAME");
+    assert(me != 0, "COMPUTERNAME is set");
+    if (me != 0) { assert_neq(net_resolve_ipv4(me), 0 - 1, "this computer's name resolves"); }
+    return 0;
+}
+#endif
+
+fn main(): i64 {
+    alloc_init();
+    test_group("6.6.11 — every target: literals and localhost resolve without I/O");
+    assert_eq(net_resolve_ipv4("10.1.2.3"), _rp_ip(10, 1, 2, 3), "a literal");
+    assert_eq(net_resolve_ipv4("localhost"), INADDR_LOOPBACK(), "localhost");
+    assert_eq(net_resolve_ipv4("x.localhost."), INADDR_LOOPBACK(), "*.localhost");
+    assert_eq(net_resolve_ipv4(""), 0 - 1, "empty");
+    #ifdef CYRIUS_TARGET_WIN
+    _rp_windows_group();
+    #endif
+    return assert_summary();
+}
+var ec = main();
+syscall(60, ec);

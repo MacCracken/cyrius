@@ -1451,7 +1451,12 @@ fn EMACHO_NANOSLEEP_X86(S): i64 {
 # syscall's own arguments, including the syscall number — because those pops are raw and
 # `_xdepth` still counts them here.
 #
-# ⛔ The seed and these six call sites MUST land together. The seed alone is what
+# 6.6.11: EOPEN_PE, ECREATEDIR_PE and EDELETEF_PE left this list — their path widen needs a
+# ~128 KB probed frame, so they use the rbx-anchored one (`_pe_path_frame`). Four fixed
+# frames remain: three `_pe_fixed_frame` callers (EWRITE_PE, EREAD_PE, ELSEEK_PE) plus
+# EEXIT's hard-coded one.
+#
+# ⛔ The seed and these fixed frames MUST land together. The seed alone is what
 # "destabilised cycc" at v6.0.71: with the base corrected and the frames still carrying
 # their hidden +8, cycc_win faults inside kernelbase's own `movaps` in CreateFileW.
 # CHANGELOG [6.6.5]
@@ -2215,6 +2220,52 @@ fn EGETSOCKOPT_PE(S): i64 {
     return _pe_call_5arg_aligned(S, _pe_getsockopt_get());
 }
 
+# 6.6.11 — the blocking ws2_32 verbs behind lib/net.cyr's PE arms (before them every socket
+# verb there returned -38 on Windows, so http_* could not work). All go through the
+# rbx-anchored aligned callers, so each is correct at any expression depth.
+#   syscall(0xF045, s, addr, addrlen)     → accept (argc 4) — a SOCKET, returned whole
+#                                           (INVALID_SOCKET is all ones, i.e. -1)
+#   syscall(0xF046, s, how)               → shutdown (argc 3)
+#   syscall(0xF047, s, buf, len, flags)   → send (argc 5)
+#   syscall(0xF048, s, buf, len, flags)   → recv (argc 5)
+#   syscall(0xF049, s, cmd, argp)         → ioctlsocket (argc 4) — FIONBIO
+#   syscall(0xF04A, fds, nfds, timeout)   → WSAPoll (argc 4)
+# The five `int` results are SIGN-extended (`movsxd rax, eax`), so SOCKET_ERROR reads as -1
+# and a byte count as itself; only eax is defined by the callee. CHANGELOG [6.6.11]
+fn _pe_sx_eax(S): i64 {
+    EB(S, 0x48); EB(S, 0x63); EB(S, 0xC0);              # movsxd rax, eax (int → i64)
+    return 0;
+}
+fn EACCEPT_PE(S): i64 {
+    _pe_ensure_accept(S);
+    return _pe_call_3arg_aligned(S, _pe_accept_get());
+}
+fn ESHUTDOWN_PE(S): i64 {
+    _pe_ensure_shutdown(S);
+    _pe_call_2arg_aligned(S, _pe_shutdown_get());
+    return _pe_sx_eax(S);
+}
+fn ESEND_PE(S): i64 {
+    _pe_ensure_send(S);
+    _pe_call_4arg_aligned(S, _pe_send_get());
+    return _pe_sx_eax(S);
+}
+fn ERECV_PE(S): i64 {
+    _pe_ensure_recv(S);
+    _pe_call_4arg_aligned(S, _pe_recv_get());
+    return _pe_sx_eax(S);
+}
+fn EIOCTLSOCK_PE(S): i64 {
+    _pe_ensure_ioctlsock(S);
+    _pe_call_3arg_aligned(S, _pe_ioctlsock_get());
+    return _pe_sx_eax(S);
+}
+fn EWSAPOLL_PE(S): i64 {
+    _pe_ensure_wsapoll(S);
+    _pe_call_3arg_aligned(S, _pe_wsapoll_get());
+    return _pe_sx_eax(S);
+}
+
 # syscall(0xF012, &iid, &ppFactory) → dxgi!CreateDXGIFactory1. 2 args
 # (REFIID riid → rcx, void** ppFactory → rdx). Returns HRESULT (0=S_OK) in
 # rax/eax; *ppFactory receives the IDXGIFactory1*. v6.0.70 §0 — dxgi.dll is
@@ -2738,6 +2789,198 @@ fn EPE_SYSCALL_DYNAMIC(S, argc): i64 {
     return 2;
 }
 
+# ================================================================
+# 6.6.11 — THE ONE UTF-8 → UTF-16 PATH SEQUENCE of the narrow-path PE reroutes
+# (EOPEN_PE, ECREATEDIR_PE, EDELETEF_PE, EDELETEFILEW_PE, EREMOVEDIRW_PE, EMOVEFILEEX_PE x2).
+#
+# ⛔ WHAT IT REPLACES. Each of those seven sites carried its own inline 24-byte loop that
+# copied one UTF-8 BYTE into one WCHAR and, at 260 units, STOPPED AND NUL-TERMINATED. So a
+# non-ASCII name was zero-extended as Latin-1 (`caf\xC3\xA9.txt` became a different name, or
+# failed), and a longer path was CUT: under wine a 288-byte O_CREAT open returned a VALID
+# handle for the name truncated to exactly 260 units — a silent write to the WRONG file. A
+# caller-supplied `\\?\` path does the same on real Windows.
+#
+# NOW, at run time (rsi = the UTF-8 path; rdi = the wide path to hand the API, or 0 = REFUSED):
+#   1. MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, src, -1, W, 32768). 0 means invalid
+#      UTF-8 or no room: refused — the caller skips the API and fails, it never truncates.
+#   2. A `\\?\` or `\\.\` path is already verbatim: used as given.
+#   3. GetFullPathNameW(W, 32768, F+12, NULL) = m. 0 or m >= 32768: refused. m < 248: the
+#      ORIGINAL W is used (short-path semantics unchanged — device names, relative names).
+#   4. m >= 248 (CreateDirectoryW's MAX_PATH-12 limit, so every reroute shares one rule):
+#      the full path gets `\\?\` (drive) or `\\?\UNC\` (a `\\server\share` path) prefixed in
+#      place, from the room left before F+12. GetFullPathNameW has already done what `\\?\`
+#      turns off — '/' → '\', `.` and `..`, trailing dots — so the meaning is unchanged.
+# The buffers are 32768 units each (the `\\?\` limit), so the frame is ~128 KB per path and is
+# PROBED a page at a time (the Windows stack grows through one guard page; an unprobed 128 KB
+# `sub rsp` skips it). The frame is rbx-anchored + `and rsp,-16` — alignment-agnostic, so the
+# three former FIXED-FRAME reroutes no longer depend on `_pe_fixed_frame`'s depth parity.
+# The jumps are RAW rel32 bytes patched inside this blob (not EJCC/EPATCH, which feed the
+# per-function jump tables and the IR). CHANGELOG [6.6.11]
+# ================================================================
+var _PE_PATH_FRAME1 = 0x200A0;   # 0x80 slots + W (0x10000) + F (0x10020)
+var _PE_PATH_FRAME2 = 0x400C0;   # two of the above (MoveFileExW's old + new)
+
+# Raw forward jump: `jmp rel32` for cc == 0, else `0F cc rel32`. Returns the offset just past
+# the rel32, for `_pe_j_land`.
+fn _pe_j(S, cc): i64 {
+    if (cc == 0) { EB(S, 0xE9); } else { EB(S, 0x0F); EB(S, cc); }
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    return GCP(S);
+}
+
+# Point the raw jump ending at `after` HERE.
+fn _pe_j_land(S, after): i64 {
+    store32(_codebuf_base + after - 4, GCP(S) - after);
+    return 0;
+}
+
+# push rbx; mov rbx,rsp; and rsp,-16; then carve `size` bytes (a multiple of 16) one page at a
+# time, touching each page, so the guard page is always the next one hit.
+fn _pe_path_frame(S, size): i64 {
+    EB(S, 0x53);                                        # push rbx
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);              # mov rbx, rsp
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0); # and rsp, -16
+    EB(S, 0xB8); EDISP32(S, size >> 12);                # mov eax, pages
+    EB(S, 0x48); EB(S, 0x81); EB(S, 0xEC); EDISP32(S, 0x1000); # probe: sub rsp, 0x1000
+    EB(S, 0x48); EB(S, 0x85); EB(S, 0x24); EB(S, 0x24); #        test [rsp], rsp
+    EB(S, 0xFF); EB(S, 0xC8);                           #        dec eax
+    EB(S, 0x75); EB(S, 0xF1);                           #        jnz probe (-15)
+    EB(S, 0x48); EB(S, 0x81); EB(S, 0xEC); EDISP32(S, size & 0xFFF); # sub rsp, remainder
+    return 0;
+}
+
+# mov rsp, rbx; pop rbx — undoes `_pe_path_frame`.
+fn _pe_path_unframe(S): i64 {
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);              # mov rsp, rbx
+    EB(S, 0x5B);                                        # pop rbx
+    return 0;
+}
+
+# Is the wide string at rdi a verbatim `\\?\` / `\\.\` path? Falls through when it is NOT;
+# the two "it is" jumps are returned through `pa` / `pb`.
+fn _pe_wp_verbatim(S, pa, pb): i64 {
+    EB(S, 0x81); EB(S, 0x3F); EDISP32(S, 0x005C005C);   # cmp dword [rdi], "\\"
+    var n1 = _pe_j(S, 0x85);                            # jne not
+    EB(S, 0x66); EB(S, 0x83); EB(S, 0x7F); EB(S, 0x06); EB(S, 0x5C); # cmp word [rdi+6], '\'
+    var n2 = _pe_j(S, 0x85);                            # jne not
+    EB(S, 0x0F); EB(S, 0xB7); EB(S, 0x47); EB(S, 0x04); # movzx eax, word [rdi+4]
+    EB(S, 0x83); EB(S, 0xF8); EB(S, 0x3F);              # cmp eax, '?'
+    store64(pa, _pe_j(S, 0x84));                        # je verbatim
+    EB(S, 0x83); EB(S, 0xF8); EB(S, 0x2E);              # cmp eax, '.'
+    store64(pb, _pe_j(S, 0x84));                        # je verbatim
+    _pe_j_land(S, n1);
+    _pe_j_land(S, n2);
+    return 0;
+}
+
+# Step 1: MultiByteToWideChar into W. Leaves rdi = W; returns the "refused" jump.
+fn _pe_wp_decode(S, woff): i64 {
+    EB(S, 0xB9); EDISP32(S, 65001);                     # mov ecx, CP_UTF8
+    EB(S, 0xBA); EDISP32(S, 8);                         # mov edx, MB_ERR_INVALID_CHARS
+    EB(S, 0x49); EB(S, 0x89); EB(S, 0xF0);              # mov r8, rsi (src)
+    EB(S, 0x49); EB(S, 0xC7); EB(S, 0xC1); EDISP32(S, 0 - 1); # mov r9, -1 (NUL-terminated)
+    EB(S, 0x48); EB(S, 0x8D); EB(S, 0x84); EB(S, 0x24); EDISP32(S, woff); # lea rax, [rsp+W]
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0x44); EB(S, 0x24); EB(S, 0x20); # mov [rsp+0x20], rax
+    EB(S, 0x48); EB(S, 0xC7); EB(S, 0x44); EB(S, 0x24); EB(S, 0x28); EDISP32(S, 0x8000); # cchWideChar
+    EB(S, 0xFF); EB(S, 0x15);                           # call [rip+MultiByteToWideChar]
+    _pe_iat_fixup_add(S, GCP(S), _pe_mbtowc_get());
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    EB(S, 0x48); EB(S, 0x8D); EB(S, 0xBC); EB(S, 0x24); EDISP32(S, woff); # lea rdi, [rsp+W]
+    EB(S, 0x85); EB(S, 0xC0);                           # test eax, eax
+    return _pe_j(S, 0x84);                              # jz refused
+}
+
+# Step 3: GetFullPathNameW(rdi, 32768, F+12, NULL). rdi (callee-saved) still = W after the
+# call. Returns the "use W as given" jump; the two "refused" jumps go through `pr1` / `pr2`.
+fn _pe_wp_full(S, foff, pr1, pr2): i64 {
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xF9);              # mov rcx, rdi
+    EB(S, 0xBA); EDISP32(S, 0x8000);                    # mov edx, 32768
+    EB(S, 0x4C); EB(S, 0x8D); EB(S, 0x84); EB(S, 0x24); EDISP32(S, foff + 12); # lea r8, [rsp+F+12]
+    EB(S, 0x45); EB(S, 0x31); EB(S, 0xC9);              # xor r9d, r9d
+    EB(S, 0xFF); EB(S, 0x15);                           # call [rip+GetFullPathNameW]
+    _pe_iat_fixup_add(S, GCP(S), _pe_fullpath_get());
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    EB(S, 0x85); EB(S, 0xC0);                           # test eax, eax
+    store64(pr1, _pe_j(S, 0x84));                       # jz refused
+    EB(S, 0x3D); EDISP32(S, 0x8000);                    # cmp eax, 32768
+    store64(pr2, _pe_j(S, 0x83));                       # jae refused (did not fit)
+    EB(S, 0x3D); EDISP32(S, 248);                       # cmp eax, 248
+    var sj = _pe_j(S, 0x82);                            # jb done (rdi = W, unchanged)
+    EB(S, 0x48); EB(S, 0x8D); EB(S, 0xBC); EB(S, 0x24); EDISP32(S, foff + 12); # lea rdi, [rsp+F+12]
+    return sj;
+}
+
+# Step 4: prefix the full path at rdi in place. Returns the two "done" jumps packed as
+# (first << 32) | second.
+fn _pe_wp_prefix(S): i64 {
+    EB(S, 0x81); EB(S, 0x3F); EDISP32(S, 0x005C005C);   # cmp dword [rdi], "\\"
+    var unc = _pe_j(S, 0x84);                           # je unc
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEF); EB(S, 0x08); # sub rdi, 8
+    EB(S, 0xC7); EB(S, 0x07); EDISP32(S, 0x005C005C);   # "\\"
+    EB(S, 0xC7); EB(S, 0x47); EB(S, 0x04); EDISP32(S, 0x005C003F); # "?\"
+    var d1 = _pe_j(S, 0);                               # jmp done
+    _pe_j_land(S, unc);
+    EB(S, 0x66); EB(S, 0xC7); EB(S, 0x07); EB(S, 0x43); EB(S, 0x00); # full[0] = 'C'
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xEF); EB(S, 0x0C); # sub rdi, 12
+    EB(S, 0xC7); EB(S, 0x07); EDISP32(S, 0x005C005C);   # "\\"
+    EB(S, 0xC7); EB(S, 0x47); EB(S, 0x04); EDISP32(S, 0x005C003F); # "?\"
+    EB(S, 0xC7); EB(S, 0x47); EB(S, 0x08); EDISP32(S, 0x004E0055); # "UN" -> "\\?\UNC\server..."
+    var d2 = _pe_j(S, 0);                               # jmp done
+    return (d1 << 32) | d2;
+}
+
+# The whole sequence. rsi = UTF-8 path in; rdi = wide path out, or 0 when refused. W at
+# [rsp+woff] (0x10000 B), F at [rsp+foff] (0x10020 B). Clobbers rax, rcx, rdx, r8-r11 and
+# [rsp+0x20..0x2F]; rbx, rsi and every other slot survive.
+fn _pe_widen_path(S, woff, foff): i64 {
+    _pe_ensure_widen(S);
+    var va = 0;
+    var vb = 0;
+    var vc = 0;
+    var vd = 0;
+    var r1 = 0;
+    var r2 = 0;
+    var r0 = _pe_wp_decode(S, woff);
+    _pe_wp_verbatim(S, &va, &vb);                       # the caller's own \\?\ path
+    var sj = _pe_wp_full(S, foff, &r1, &r2);
+    _pe_wp_verbatim(S, &vc, &vd);                       # a full path that came back verbatim
+    var ds = _pe_wp_prefix(S);
+    _pe_j_land(S, r0);
+    _pe_j_land(S, r1);
+    _pe_j_land(S, r2);
+    EB(S, 0x31); EB(S, 0xFF);                           # refused: xor edi, edi
+    _pe_j_land(S, va);
+    _pe_j_land(S, vb);
+    _pe_j_land(S, vc);
+    _pe_j_land(S, vd);
+    _pe_j_land(S, sj);
+    _pe_j_land(S, ds >> 32);
+    _pe_j_land(S, ds & 0xFFFFFFFF);
+    return 0;
+}
+
+# One narrow path → one BOOL kernel32 call (CreateDirectoryW, DeleteFileW, RemoveDirectoryW).
+# r11 = the UTF-8 path. rcx = the wide path; `zrdx` also zeroes rdx (CreateDirectoryW's
+# lpSecurityAttributes). A refused path is FALSE without the call. BOOL → 0 / -1 (dec+sar).
+fn _pe_path_bool1(S, idx, zrdx): i64 {
+    _pe_path_frame(S, _PE_PATH_FRAME1);
+    EB(S, 0x4C); EB(S, 0x89); EB(S, 0xDE);              # mov rsi, r11
+    _pe_widen_path(S, 0x80, 0x10080);
+    EB(S, 0x31); EB(S, 0xC0);                           # xor eax, eax (FALSE if refused)
+    EB(S, 0x48); EB(S, 0x85); EB(S, 0xFF);              # test rdi, rdi
+    var out = _pe_j(S, 0x84);                           # jz out
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xF9);              # mov rcx, rdi
+    if (zrdx == 1) { EB(S, 0x31); EB(S, 0xD2); }        # xor edx, edx
+    EB(S, 0xFF); EB(S, 0x15);                           # call [rip+api]
+    _pe_iat_fixup_add(S, GCP(S), idx);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    _pe_j_land(S, out);
+    _pe_path_unframe(S);
+    EB(S, 0x48); EB(S, 0xFF); EB(S, 0xC8);              # dec rax
+    EB(S, 0x48); EB(S, 0xC1); EB(S, 0xF8); EB(S, 0x3F); # sar rax, 63 (BOOL->0/-1)
+    return 0;
+}
+
 # v5.11.23: emit Win64 mkdir: `syscall(83, path, mode)` →
 # CreateDirectoryW(lpPathName, lpSecurityAttributes). Drops `mode`
 # (Windows uses ACLs, not POSIX mode bits). Returns 0 on success,
@@ -2745,130 +2988,47 @@ fn EPE_SYSCALL_DYNAMIC(S, argc): i64 {
 #
 # Stack on entry (top→bottom): [mode] [path] [sc_nr=83].
 #
-# FRAME 0x250 + parity (6.6.5; a FIXED 0x258 from v5.11.23 to 6.6.4).
-# Win64 ABI requires RSP 16-aligned at CALL. Wine tolerates a
-# misaligned one; real Windows kernel32 path APIs detect it in
-# ntdll!+0x41912 and access-violate, which is what v5.11.22's bisect
-# hit and what the hard +8 was added for: cyrius's pre-syscall RSP
-# was 16k+8 (the loader's CALL into the entry pushed 8 bytes and
-# nothing re-aligned), so 0x258 landed the call on 16 and the
-# arithmetically-obvious 0x250 did not.
-#
-# ⚠ 6.6.5 INVERTS THAT PREMISE. The landing now seeds `sub rsp,8`
-# (src/main.cyr / src/main_win.cyr), so the base is 16-aligned like
-# every other target and the +8 is owed only when the enclosing
-# EXPRESSION has an odd number of values pending — which is what
-# `_pe_fixed_frame` computes. With the old constant, `open(...)`
-# nested in an argument faulted inside kernelbase's own `movaps`
-# in CreateFileW (wine exit 5, measured).
-# See CHANGELOG [5.11.23] and [6.6.5].
+# The path goes through `_pe_widen_path` in its probed, rbx-anchored `and rsp,-16` frame
+# (`_pe_path_bool1`), which is 16-aligned at the CALL whatever the caller's alignment — Win64
+# requires that, and real Windows kernel32 path APIs access-violate without it (v5.11.22's
+# bisect; wine tolerates it). Until 6.6.11 this was a FIXED frame whose +8 pad had to track the
+# expression depth (`_pe_fixed_frame`, 6.6.5). CHANGELOG [5.11.23], [6.6.5], [6.6.11]
 fn ECREATEDIR_PE(S): i64 {
-    var _xfr = _pe_fixed_frame(0x250, 3);   # 6.6.5: was a fixed 0x258 (see _pe_fixed_frame)
     _pe_ensure_createdir(S);
     var cd_idx = _pe_createdir_get();
-
     EB(S, 0x58);                                        # pop rax (mode, ignored)
     EB(S, 0x58);                                        # pop rax (path ptr)
     EB(S, 0x49); EB(S, 0x89); EB(S, 0xC3);              # mov r11, rax (stash path)
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
-
-    # Frame 0x258 — aligns RSP at call; UTF-16 buffer at +0x38.
-    EB(S, 0x48); EB(S, 0x81); EB(S, 0xEC);
-    EB(S, _xfr & 0xFF); EB(S, (_xfr >> 8) & 0xFF); EB(S, 0x00); EB(S, 0x00);
-
-    EB(S, 0x4C); EB(S, 0x89); EB(S, 0xDE);              # mov rsi, r11
-    EB(S, 0x48); EB(S, 0x8D); EB(S, 0x7C); EB(S, 0x24); EB(S, 0x38); # lea rdi, [rsp+0x38]
-    EB(S, 0x31); EB(S, 0xC9);                           # xor ecx, ecx
-
-    # widen_loop (ASCII-only round-trip; non-ASCII WIP).
-    EB(S, 0x0F); EB(S, 0xB6); EB(S, 0x04); EB(S, 0x0E); # movzx eax, byte [rsi+rcx]
-    EB(S, 0x66); EB(S, 0x89); EB(S, 0x04); EB(S, 0x4F); # mov word [rdi+rcx*2], ax
-    EB(S, 0x85); EB(S, 0xC0);                           # test eax, eax
-    EB(S, 0x74); EB(S, 0x0C);                           # jz widen_done
-    EB(S, 0xFF); EB(S, 0xC1);                           # inc ecx
-    EB(S, 0x81); EB(S, 0xF9); EB(S, 0x04); EB(S, 0x01); EB(S, 0x00); EB(S, 0x00); # cmp ecx, 260
-    EB(S, 0x73); EB(S, 0x02);                           # jae widen_done
-    EB(S, 0xEB); EB(S, 0xE8);                           # jmp widen_loop (-24)
-    EB(S, 0x66); EB(S, 0xC7); EB(S, 0x04); EB(S, 0x4F); EB(S, 0x00); EB(S, 0x00); # force NUL
-
-    # CreateDirectoryW(rsp+0x38, NULL).
-    EB(S, 0x48); EB(S, 0x8D); EB(S, 0x4C); EB(S, 0x24); EB(S, 0x38); # lea rcx, [rsp+0x38]
-    EB(S, 0x48); EB(S, 0x31); EB(S, 0xD2);                           # xor rdx, rdx
-
-    EB(S, 0xFF); EB(S, 0x15);                           # call [rip+CreateDirectoryW]
-    _pe_iat_fixup_add(S, GCP(S), cd_idx);
-    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
-
-    EB(S, 0x48); EB(S, 0x81); EB(S, 0xC4);              # add rsp, 0x258
-    EB(S, _xfr & 0xFF); EB(S, (_xfr >> 8) & 0xFF); EB(S, 0x00); EB(S, 0x00);
-
-    # BOOL → Linux mkdir rc: 0 success, -1 failure.
-    EB(S, 0x48); EB(S, 0xFF); EB(S, 0xC8);              # dec rax
-    EB(S, 0x48); EB(S, 0xC1); EB(S, 0xF8); EB(S, 0x3F); # sar rax, 63
+    _pe_path_bool1(S, cd_idx, 1);                       # CreateDirectoryW(wide, NULL) (6.6.11)
     return 0;
 }
 
 # v5.11.23: emit Win64 unlink: `syscall(87, path)` →
 # DeleteFileW(lpFileName). Stack on entry: [path] [sc_nr=87].
-# Same widening + alignment story as ECREATEDIR_PE.
-#
-# 2-arg syscall (sc_nr + path = 2 pushes = 16 B), 1 pop + drop = 16 B
-# consumed, so the frame is carved from the caller's own rsp.
-# Frame 0x250 + depth parity, same as ECREATEDIR_PE (6.6.5; a fixed
-# 0x258 before, tuned to the un-seeded PE base — see _pe_fixed_frame).
+# Same widening + frame as ECREATEDIR_PE (`_pe_path_bool1`, 6.6.11).
 fn EDELETEF_PE(S): i64 {
-    var _xfr = _pe_fixed_frame(0x250, 2);   # 6.6.5: was a fixed 0x258 (see _pe_fixed_frame)
     _pe_ensure_deletef(S);
     var df_idx = _pe_deletef_get();
-
     EB(S, 0x58);                                        # pop rax (path ptr)
     EB(S, 0x49); EB(S, 0x89); EB(S, 0xC3);              # mov r11, rax (stash path)
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
-
-    EB(S, 0x48); EB(S, 0x81); EB(S, 0xEC);              # sub rsp, 0x258
-    EB(S, _xfr & 0xFF); EB(S, (_xfr >> 8) & 0xFF); EB(S, 0x00); EB(S, 0x00);
-
-    EB(S, 0x4C); EB(S, 0x89); EB(S, 0xDE);              # mov rsi, r11
-    EB(S, 0x48); EB(S, 0x8D); EB(S, 0x7C); EB(S, 0x24); EB(S, 0x38); # lea rdi, [rsp+0x38]
-    EB(S, 0x31); EB(S, 0xC9);                           # xor ecx, ecx
-
-    EB(S, 0x0F); EB(S, 0xB6); EB(S, 0x04); EB(S, 0x0E);
-    EB(S, 0x66); EB(S, 0x89); EB(S, 0x04); EB(S, 0x4F);
-    EB(S, 0x85); EB(S, 0xC0);
-    EB(S, 0x74); EB(S, 0x0C);
-    EB(S, 0xFF); EB(S, 0xC1);
-    EB(S, 0x81); EB(S, 0xF9); EB(S, 0x04); EB(S, 0x01); EB(S, 0x00); EB(S, 0x00);
-    EB(S, 0x73); EB(S, 0x02);
-    EB(S, 0xEB); EB(S, 0xE8);
-    EB(S, 0x66); EB(S, 0xC7); EB(S, 0x04); EB(S, 0x4F); EB(S, 0x00); EB(S, 0x00); # NUL
-
-    EB(S, 0x48); EB(S, 0x8D); EB(S, 0x4C); EB(S, 0x24); EB(S, 0x38); # lea rcx, [rsp+0x38]
-
-    EB(S, 0xFF); EB(S, 0x15);                           # call [rip+DeleteFileW]
-    _pe_iat_fixup_add(S, GCP(S), df_idx);
-    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
-
-    EB(S, 0x48); EB(S, 0x81); EB(S, 0xC4);              # add rsp, 0x258
-    EB(S, _xfr & 0xFF); EB(S, (_xfr >> 8) & 0xFF); EB(S, 0x00); EB(S, 0x00);
-
-    EB(S, 0x48); EB(S, 0xFF); EB(S, 0xC8);              # dec rax
-    EB(S, 0x48); EB(S, 0xC1); EB(S, 0xF8); EB(S, 0x3F); # sar rax, 63
+    _pe_path_bool1(S, df_idx, 0);                       # DeleteFileW(wide) (6.6.11)
     return 0;
 }
 
 # v6.4.57: MoveFileExW(lpExistingFileName, lpNewFileName, dwFlags)
 # — the Windows half of lib/io.cyr's portable file_rename (POSIX rename(2) / AGNOS
 # 4-arg sys_rename). syscall(0xF034, old, new): stack on entry (top->bottom):
-# [new] [old] [sc_nr=0xF034]. BOTH paths are widened inline UTF-8->UTF-16LE (ASCII
-# fast path, same widener as EOPEN_PE/ECREATEDIR_PE) into two 528-byte frame
-# buffers, then rcx=old_wide, rdx=new_wide, r8d=9 and kernel32!MoveFileExW is called.
+# [new] [old] [sc_nr=0xF034]. BOTH paths go through `_pe_widen_path` (6.6.11) into their
+# own W/F buffers, then rcx=old_wide, rdx=new_wide, r8d=9 and kernel32!MoveFileExW is called;
+# either path refused is FALSE without the call.
 # dwFlags = MOVEFILE_REPLACE_EXISTING (1) | MOVEFILE_WRITE_THROUGH (8): the call does
 # not return until the rename is on disk — the Windows analogue of the directory fsync
 # that makes a POSIX write-temp/fsync/rename durable. Without it file_write_atomic was
 # atomic but not durable on Windows (a crash could lose the rename). BOOL result ->
-# 0 (success) / -1 (fail) via the EDELETEF_PE dec+sar idiom. Frame (rbx-anchored +
-# and rsp,-16, so alignment-agnostic): 0x460 = 32 shadow + 528 old + 528 new + 32
-# slack, 16-aligned at CALL. CHANGELOG [6.6.7]
+# 0 (success) / -1 (fail) via the EDELETEF_PE dec+sar idiom. Frame: `_PE_PATH_FRAME2`
+# (two W/F pairs, probed, rbx-anchored). CHANGELOG [6.6.7], [6.6.11]
 fn EMOVEFILEEX_PE(S): i64 {
     _pe_ensure_movefileex(S);
     var mv_idx = _pe_movefileex_get();
@@ -2879,52 +3039,31 @@ fn EMOVEFILEEX_PE(S): i64 {
     EB(S, 0x49); EB(S, 0x89); EB(S, 0xC2);              # mov r10, rax (stash old)
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
 
-    # anchor + align (rbx-preserved; alignment-agnostic)
-    EB(S, 0x53);                                        # push rbx
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);              # mov rbx, rsp
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0); # and rsp, -16
-    EB(S, 0x48); EB(S, 0x81); EB(S, 0xEC);              # sub rsp, 0x460
-    EB(S, 0x60); EB(S, 0x04); EB(S, 0x00); EB(S, 0x00);
+    _pe_path_frame(S, _PE_PATH_FRAME2);
+    EB(S, 0x4C); EB(S, 0x89); EB(S, 0x5C); EB(S, 0x24); EB(S, 0x48); # mov [rsp+0x48], r11 (new; the API calls clobber r11)
+    EB(S, 0x4C); EB(S, 0x89); EB(S, 0xD6);              # mov rsi, r10 (old)
+    _pe_widen_path(S, 0x80, 0x10080);
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0x7C); EB(S, 0x24); EB(S, 0x40); # mov [rsp+0x40], rdi (old wide, or 0)
+    EB(S, 0x48); EB(S, 0x8B); EB(S, 0x74); EB(S, 0x24); EB(S, 0x48); # mov rsi, [rsp+0x48] (new)
+    _pe_widen_path(S, _PE_PATH_FRAME1, _PE_PATH_FRAME1 + 0x10000);
 
-    # widen old (r10) -> [rsp+0x20]
-    EB(S, 0x4C); EB(S, 0x89); EB(S, 0xD6);              # mov rsi, r10
-    EB(S, 0x48); EB(S, 0x8D); EB(S, 0x7C); EB(S, 0x24); EB(S, 0x20); # lea rdi, [rsp+0x20]
-    EB(S, 0x31); EB(S, 0xC9);                           # xor ecx, ecx
-    EB(S, 0x0F); EB(S, 0xB6); EB(S, 0x04); EB(S, 0x0E); # movzx eax, byte [rsi+rcx]
-    EB(S, 0x66); EB(S, 0x89); EB(S, 0x04); EB(S, 0x4F); # mov [rdi+rcx*2], ax
-    EB(S, 0x85); EB(S, 0xC0);                           # test eax, eax
-    EB(S, 0x74); EB(S, 0x0C);                           # jz old_done (+12)
-    EB(S, 0xFF); EB(S, 0xC1);                           # inc ecx
-    EB(S, 0x81); EB(S, 0xF9); EB(S, 0x04); EB(S, 0x01); EB(S, 0x00); EB(S, 0x00); # cmp ecx, 260
-    EB(S, 0x73); EB(S, 0x02);                           # jae old_done (+2)
-    EB(S, 0xEB); EB(S, 0xE8);                           # jmp widen_old (-24)
-    EB(S, 0x66); EB(S, 0xC7); EB(S, 0x04); EB(S, 0x4F); EB(S, 0x00); EB(S, 0x00); # old_done: NUL WCHAR
-
-    # widen new (r11) -> [rsp+0x230]
-    EB(S, 0x4C); EB(S, 0x89); EB(S, 0xDE);              # mov rsi, r11
-    EB(S, 0x48); EB(S, 0x8D); EB(S, 0xBC); EB(S, 0x24); EB(S, 0x30); EB(S, 0x02); EB(S, 0x00); EB(S, 0x00); # lea rdi, [rsp+0x230]
-    EB(S, 0x31); EB(S, 0xC9);                           # xor ecx, ecx
-    EB(S, 0x0F); EB(S, 0xB6); EB(S, 0x04); EB(S, 0x0E); # movzx eax, byte [rsi+rcx]
-    EB(S, 0x66); EB(S, 0x89); EB(S, 0x04); EB(S, 0x4F); # mov [rdi+rcx*2], ax
-    EB(S, 0x85); EB(S, 0xC0);                           # test eax, eax
-    EB(S, 0x74); EB(S, 0x0C);                           # jz new_done (+12)
-    EB(S, 0xFF); EB(S, 0xC1);                           # inc ecx
-    EB(S, 0x81); EB(S, 0xF9); EB(S, 0x04); EB(S, 0x01); EB(S, 0x00); EB(S, 0x00); # cmp ecx, 260
-    EB(S, 0x73); EB(S, 0x02);                           # jae new_done (+2)
-    EB(S, 0xEB); EB(S, 0xE8);                           # jmp widen_new (-24)
-    EB(S, 0x66); EB(S, 0xC7); EB(S, 0x04); EB(S, 0x4F); EB(S, 0x00); EB(S, 0x00); # new_done: NUL WCHAR
-
-    # args: rcx = old_wide, rdx = new_wide, r8d = REPLACE_EXISTING | WRITE_THROUGH
-    EB(S, 0x48); EB(S, 0x8D); EB(S, 0x4C); EB(S, 0x24); EB(S, 0x20); # lea rcx, [rsp+0x20]
-    EB(S, 0x48); EB(S, 0x8D); EB(S, 0x94); EB(S, 0x24); EB(S, 0x30); EB(S, 0x02); EB(S, 0x00); EB(S, 0x00); # lea rdx, [rsp+0x230]
+    # args: rcx = old_wide, rdx = new_wide, r8d = REPLACE_EXISTING | WRITE_THROUGH. Either path
+    # refused -> FALSE without the call.
+    EB(S, 0x31); EB(S, 0xC0);                           # xor eax, eax
+    EB(S, 0x48); EB(S, 0x8B); EB(S, 0x4C); EB(S, 0x24); EB(S, 0x40); # mov rcx, [rsp+0x40]
+    EB(S, 0x48); EB(S, 0x85); EB(S, 0xC9);              # test rcx, rcx
+    var o1 = _pe_j(S, 0x84);                            # jz out
+    EB(S, 0x48); EB(S, 0x85); EB(S, 0xFF);              # test rdi, rdi
+    var o2 = _pe_j(S, 0x84);                            # jz out
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xFA);              # mov rdx, rdi
     EB(S, 0x41); EB(S, 0xB8); EB(S, 0x09); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); # mov r8d, 9
-
     EB(S, 0xFF); EB(S, 0x15);                           # call [rip+MoveFileExW]
     _pe_iat_fixup_add(S, GCP(S), mv_idx);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    _pe_j_land(S, o1);
+    _pe_j_land(S, o2);
 
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);              # mov rsp, rbx
-    EB(S, 0x5B);                                        # pop rbx
+    _pe_path_unframe(S);
     EB(S, 0x48); EB(S, 0xFF); EB(S, 0xC8);              # dec rax
     EB(S, 0x48); EB(S, 0xC1); EB(S, 0xF8); EB(S, 0x3F); # sar rax, 63 (BOOL->0/-1)
     return 0;
@@ -2932,64 +3071,23 @@ fn EMOVEFILEEX_PE(S): i64 {
 
 # v6.4.58: DeleteFileW(lpFileName) — the Windows temp-cleanup half of lib/io.cyr's
 # xunlink / file_write_atomic on-failure unlink. syscall(0xF035, path): stack on
-# entry (top->bottom): [path] [sc_nr=0xF035]. The single UTF-8 path is widened
-# inline to UTF-16LE (ASCII fast path, same widener as EOPEN_PE/EMOVEFILEEX_PE)
-# into a 528-byte frame buffer, then rcx=path_wide and kernel32!DeleteFileW is
-# called. BOOL result -> 0/-1 via dec+sar. rbx-anchored + and rsp,-16 (alignment-
-# agnostic, safe from a deep/contended context) like EMOVEFILEEX_PE, unlike the
-# older syscall(87) EDELETEF_PE fixed-frame path. Reuses the same DeleteFileW IAT
-# import. Frame 0x240 = 32 shadow + 528 path + 16 slack. Issue
-# 2026-07-12-windows-atomic-write-residuals.md, B.
+# entry (top->bottom): [path] [sc_nr=0xF035]. Since 6.6.11 the same code as EDELETEF_PE
+# (`_pe_path_bool1`: the shared widen, then DeleteFileW, BOOL -> 0/-1); both numbers stay
+# routed. Issue 2026-07-12-windows-atomic-write-residuals.md, B.
 fn EDELETEFILEW_PE(S): i64 {
     _pe_ensure_deletef(S);
     var df_idx = _pe_deletef_get();
-
     EB(S, 0x58);                                        # pop rax (path ptr)
-    EB(S, 0x49); EB(S, 0x89); EB(S, 0xC2);              # mov r10, rax (stash path)
+    EB(S, 0x49); EB(S, 0x89); EB(S, 0xC3);              # mov r11, rax (stash path)
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
-
-    # anchor + align (rbx-preserved; alignment-agnostic)
-    EB(S, 0x53);                                        # push rbx
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);              # mov rbx, rsp
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0); # and rsp, -16
-    EB(S, 0x48); EB(S, 0x81); EB(S, 0xEC);              # sub rsp, 0x240
-    EB(S, 0x40); EB(S, 0x02); EB(S, 0x00); EB(S, 0x00);
-
-    # widen path (r10) -> [rsp+0x20]
-    EB(S, 0x4C); EB(S, 0x89); EB(S, 0xD6);              # mov rsi, r10
-    EB(S, 0x48); EB(S, 0x8D); EB(S, 0x7C); EB(S, 0x24); EB(S, 0x20); # lea rdi, [rsp+0x20]
-    EB(S, 0x31); EB(S, 0xC9);                           # xor ecx, ecx
-    EB(S, 0x0F); EB(S, 0xB6); EB(S, 0x04); EB(S, 0x0E); # movzx eax, byte [rsi+rcx]
-    EB(S, 0x66); EB(S, 0x89); EB(S, 0x04); EB(S, 0x4F); # mov [rdi+rcx*2], ax
-    EB(S, 0x85); EB(S, 0xC0);                           # test eax, eax
-    EB(S, 0x74); EB(S, 0x0C);                           # jz path_done (+12)
-    EB(S, 0xFF); EB(S, 0xC1);                           # inc ecx
-    EB(S, 0x81); EB(S, 0xF9); EB(S, 0x04); EB(S, 0x01); EB(S, 0x00); EB(S, 0x00); # cmp ecx, 260
-    EB(S, 0x73); EB(S, 0x02);                           # jae path_done (+2)
-    EB(S, 0xEB); EB(S, 0xE8);                           # jmp widen_path (-24)
-    EB(S, 0x66); EB(S, 0xC7); EB(S, 0x04); EB(S, 0x4F); EB(S, 0x00); EB(S, 0x00); # path_done: NUL WCHAR
-
-    # arg: rcx = path_wide
-    EB(S, 0x48); EB(S, 0x8D); EB(S, 0x4C); EB(S, 0x24); EB(S, 0x20); # lea rcx, [rsp+0x20]
-
-    EB(S, 0xFF); EB(S, 0x15);                           # call [rip+DeleteFileW]
-    _pe_iat_fixup_add(S, GCP(S), df_idx);
-    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
-
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);              # mov rsp, rbx
-    EB(S, 0x5B);                                        # pop rbx
-    EB(S, 0x48); EB(S, 0xFF); EB(S, 0xC8);              # dec rax
-    EB(S, 0x48); EB(S, 0xC1); EB(S, 0xF8); EB(S, 0x3F); # sar rax, 63 (BOOL->0/-1)
+    _pe_path_bool1(S, df_idx, 0);                       # DeleteFileW(wide) (6.6.11)
     return 0;
 }
 
 # v6.6.6: RemoveDirectoryW(lpPathName) — `syscall(0xF03B, path)`, the reroute behind
 # lib/io.cyr's `xrmdir` on PE. EDELETEFILEW_PE above with a different kernel32 import:
-# same 1-argument shape ([path] [sc_nr] on entry), same inline UTF-8 -> UTF-16LE widener
-# into a 528-byte frame buffer, same BOOL -> 0/-1 dec+sar, same rbx-anchored
-# `and rsp,-16` frame (alignment-agnostic, so it is safe from a deep or contended
-# expression — NOT the older fixed-frame shape of the syscall(84)-style reroutes, whose
-# alignment premise 6.6.5 had to invert). Frame 0x240 = 32 shadow + 528 path + 16 slack.
+# same 1-argument shape ([path] [sc_nr] on entry), same `_pe_path_bool1` (the shared widen,
+# BOOL -> 0/-1, the probed rbx-anchored frame; 6.6.11).
 #
 # WHY IT EXISTS: `xrmdir` returned -1 on Windows with no reroute wired, so the CLI's
 # private temp directory (`<TEMP>/cyrius-<pid>-t<nonce>`, created on every run since
@@ -2998,43 +3096,10 @@ fn EDELETEFILEW_PE(S): i64 {
 fn EREMOVEDIRW_PE(S): i64 {
     _pe_ensure_removedir(S);
     var rd_idx = _pe_removedir_get();
-
     EB(S, 0x58);                                        # pop rax (path ptr)
-    EB(S, 0x49); EB(S, 0x89); EB(S, 0xC2);              # mov r10, rax (stash path)
+    EB(S, 0x49); EB(S, 0x89); EB(S, 0xC3);              # mov r11, rax (stash path)
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
-
-    # anchor + align (rbx-preserved; alignment-agnostic)
-    EB(S, 0x53);                                        # push rbx
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xE3);              # mov rbx, rsp
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xE4); EB(S, 0xF0); # and rsp, -16
-    EB(S, 0x48); EB(S, 0x81); EB(S, 0xEC);              # sub rsp, 0x240
-    EB(S, 0x40); EB(S, 0x02); EB(S, 0x00); EB(S, 0x00);
-
-    # widen path (r10) -> [rsp+0x20]
-    EB(S, 0x4C); EB(S, 0x89); EB(S, 0xD6);              # mov rsi, r10
-    EB(S, 0x48); EB(S, 0x8D); EB(S, 0x7C); EB(S, 0x24); EB(S, 0x20); # lea rdi, [rsp+0x20]
-    EB(S, 0x31); EB(S, 0xC9);                           # xor ecx, ecx
-    EB(S, 0x0F); EB(S, 0xB6); EB(S, 0x04); EB(S, 0x0E); # movzx eax, byte [rsi+rcx]
-    EB(S, 0x66); EB(S, 0x89); EB(S, 0x04); EB(S, 0x4F); # mov [rdi+rcx*2], ax
-    EB(S, 0x85); EB(S, 0xC0);                           # test eax, eax
-    EB(S, 0x74); EB(S, 0x0C);                           # jz path_done (+12)
-    EB(S, 0xFF); EB(S, 0xC1);                           # inc ecx
-    EB(S, 0x81); EB(S, 0xF9); EB(S, 0x04); EB(S, 0x01); EB(S, 0x00); EB(S, 0x00); # cmp ecx, 260
-    EB(S, 0x73); EB(S, 0x02);                           # jae path_done (+2)
-    EB(S, 0xEB); EB(S, 0xE8);                           # jmp widen_path (-24)
-    EB(S, 0x66); EB(S, 0xC7); EB(S, 0x04); EB(S, 0x4F); EB(S, 0x00); EB(S, 0x00); # path_done: NUL WCHAR
-
-    # arg: rcx = path_wide
-    EB(S, 0x48); EB(S, 0x8D); EB(S, 0x4C); EB(S, 0x24); EB(S, 0x20); # lea rcx, [rsp+0x20]
-
-    EB(S, 0xFF); EB(S, 0x15);                           # call [rip+RemoveDirectoryW]
-    _pe_iat_fixup_add(S, GCP(S), rd_idx);
-    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
-
-    EB(S, 0x48); EB(S, 0x89); EB(S, 0xDC);              # mov rsp, rbx
-    EB(S, 0x5B);                                        # pop rbx
-    EB(S, 0x48); EB(S, 0xFF); EB(S, 0xC8);              # dec rax
-    EB(S, 0x48); EB(S, 0xC1); EB(S, 0xF8); EB(S, 0x3F); # sar rax, 63 (BOOL->0/-1)
+    _pe_path_bool1(S, rd_idx, 0);                       # RemoveDirectoryW(wide) (6.6.11)
     return 0;
 }
 
@@ -3132,8 +3197,8 @@ fn _pe_open_flags(S): i64 {
 # target (measured on real cass, CHANGELOG [6.6.6]). Split out of `_pe_open_flags` for the
 # cybs per-function limit, and it runs FIRST: it only PEEKS the flag word at [rsp+8] (stack
 # top→bottom: [mode] [flags] [path] [sc_nr]) before `_pe_open_flags` pops it. r8 survives
-# `_pe_open_flags` (rax/rcx/rdx/r9/r10) and the widen loop (rax/rcx/rsi/rdi); EOPEN_PE
-# stores it at [rsp+0x28] before it reuses r8d for dwShareMode.
+# `_pe_open_flags` (rax/rcx/rdx/r9/r10); EOPEN_PE parks it in a frame slot before the path
+# widen's API calls and stores it at [rsp+0x28] before it reuses r8d for dwShareMode.
 #   base                    FILE_ATTRIBUTE_NORMAL          0x00000080
 #   O_NOFOLLOW (0x20000)    | FILE_FLAG_OPEN_REPARSE_POINT 0x00200000
 #   O_DIRECTORY (0x10000)   | FILE_FLAG_BACKUP_SEMANTICS   0x02000000 (only way to open a dir)
@@ -3166,10 +3231,10 @@ fn _pe_open_attr_flags(S): i64 {
 # Stack on entry (top→bottom): [mode] [flags] [path] [sc_nr=2].
 #
 # v5.5.1 simplifications (document in CHANGELOG):
-#  1. `path` is widened inline from UTF-8 to UTF-16LE assuming
-#     ASCII bytes (copy each byte as a WCHAR). Non-ASCII paths
-#     will not round-trip correctly; proper UTF-8→UTF-16 is a
-#     v5.5.x+ refinement when Windows filesystem tests need it.
+#  1. `path` was widened one BYTE per WCHAR and cut at 260 units — ⛔ FIXED AT 6.6.11
+#     for the same reason as 2/3 below: it was not a refinement but a silent write to the
+#     WRONG file (a 288-byte O_CREAT open returned a valid handle for its 260-unit prefix).
+#     It now goes through `_pe_widen_path` (real UTF-8, refusal, `\\?\` long paths).
 #  2. `dwDesiredAccess` was hardcoded to GENERIC_READ|GENERIC_WRITE
 #     (0xC0000000) regardless of O_RDONLY / O_WRONLY / O_RDWR, and
 #  3. `dwCreationDisposition` derived from the O_CREAT bit only:
@@ -3185,31 +3250,20 @@ fn _pe_open_attr_flags(S): i64 {
 #     rewrite-then-rename. `_pe_open_flags` below now derives BOTH words
 #     from the flags. CHANGELOG [6.6.6]
 #
-# Frame layout (0x250 = 592 B, plus an 8 B pad at odd expression depth):
+# Frame layout (`_PE_PATH_FRAME1`, probed, rbx-anchored `and rsp,-16` — 16-aligned at the
+# CALL whatever the caller's alignment; 6.6.11):
 #   [rsp+0x000..0x01F]  shadow space (32 B, Win64 ABI)
 #   [rsp+0x020]         dwCreationDisposition stack arg (8 B)
 #   [rsp+0x028]         dwFlagsAndAttributes stack arg (8 B; from `_pe_open_attr_flags`, 6.6.9)
 #   [rsp+0x030]         hTemplateFile stack arg (8 B, = 0)
-#   [rsp+0x038..0x247]  widened UTF-16 path buffer (528 B ≈ 264 WCHARs)
-#   [rsp+0x248..0x24F]  8 B tail pad
-#
-# v5.11.23 made this a FIXED 0x258 because the CALL was landing 8 off:
-# Win64 requires 16-aligned RSP at CALL, and cyrius's PE base was 16k+8
-# (the loader's CALL into the entry pushed 8 and nothing re-aligned), so
-# 0x250 preserved the misalignment. kernel32 path APIs detect it in
-# ntdll!+0x41912 and access-violate — wine 11.8 tolerated it, cass
-# (Win11 26200) did not, and `_pe_exit_gate` only ran exit42 +
-# hello-world, so it went unseen for an unknown number of minors.
-#
-# ⚠ 6.6.5 REMOVES THE PREMISE, NOT THE FIX. The landing now seeds
-# `sub rsp,8`, so the base is 16-aligned and the hard +8 became the
-# misalignment: `f(0, open(path))` faulted in kernelbase's `movaps`
-# inside CreateFileW under wine. The pad is now the enclosing
-# expression's depth parity (`_pe_fixed_frame`), which is 0 at
-# statement level — the position `_pe_path_apis_gate` exercises, so
-# that gate still locks exactly what it locked.
+#   [rsp+0x038..0x04F]  the three decoded flag words, parked across the widen
+#   [rsp+0x080]         W: the widened path (32768 WCHARs)
+#   [rsp+0x10080]       F: GetFullPathNameW's output, with room for the `\\?\UNC\` prefix
+# Until 6.6.11 this was a FIXED 0x250 frame (0x258 from v5.11.23, whose +8 6.6.5 turned into
+# the expression's depth parity, `_pe_fixed_frame`): kernel32 path APIs access-violate on a
+# misaligned CALL on real Windows and wine tolerates it. A refused path returns
+# INVALID_HANDLE_VALUE (-1) without calling CreateFileW. CHANGELOG [5.11.23], [6.6.5], [6.6.11]
 fn EOPEN_PE(S): i64 {
-    var _xfr = _pe_fixed_frame(0x250, 4);   # 6.6.5: was a fixed 0x258 (see _pe_fixed_frame)
     _pe_ensure_createf(S);
     var cf_idx = _pe_createf_get();
 
@@ -3219,33 +3273,27 @@ fn EOPEN_PE(S): i64 {
     EB(S, 0x49); EB(S, 0x89); EB(S, 0xC3);              # mov r11, rax (stash path)
     EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
 
-    # Allocate frame 0x258 (16-aligns RSP at the call — v5.11.23 fix).
-    EB(S, 0x48); EB(S, 0x81); EB(S, 0xEC);
-    EB(S, _xfr & 0xFF); EB(S, (_xfr >> 8) & 0xFF); EB(S, 0x00); EB(S, 0x00);
-
-    # rsi = r11 (source UTF-8); rdi = rsp+0x38 (dest UTF-16).
+    # 6.6.11: the probed, rbx-anchored path frame (see `_pe_widen_path`); the three decoded
+    # words are parked in slots because MultiByteToWideChar / GetFullPathNameW clobber r8-r11.
+    _pe_path_frame(S, _PE_PATH_FRAME1);
+    EB(S, 0x4C); EB(S, 0x89); EB(S, 0x44); EB(S, 0x24); EB(S, 0x38); # mov [rsp+0x38], r8 (attributes)
+    EB(S, 0x4C); EB(S, 0x89); EB(S, 0x4C); EB(S, 0x24); EB(S, 0x40); # mov [rsp+0x40], r9 (access)
+    EB(S, 0x4C); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x48); # mov [rsp+0x48], r10 (disposition)
     EB(S, 0x4C); EB(S, 0x89); EB(S, 0xDE);              # mov rsi, r11
-    EB(S, 0x48); EB(S, 0x8D); EB(S, 0x7C); EB(S, 0x24); EB(S, 0x38); # lea rdi, [rsp+0x38]
-    EB(S, 0x31); EB(S, 0xC9);                           # xor ecx, ecx
+    _pe_widen_path(S, 0x80, 0x10080);
+    EB(S, 0x48); EB(S, 0xC7); EB(S, 0xC0); EDISP32(S, 0 - 1); # mov rax, -1 (INVALID_HANDLE_VALUE if refused)
+    EB(S, 0x48); EB(S, 0x85); EB(S, 0xFF);              # test rdi, rdi
+    var out = _pe_j(S, 0x84);                           # jz out
 
-    # widen_loop: 24 bytes total.
-    EB(S, 0x0F); EB(S, 0xB6); EB(S, 0x04); EB(S, 0x0E); # movzx eax, byte [rsi+rcx]
-    EB(S, 0x66); EB(S, 0x89); EB(S, 0x04); EB(S, 0x4F); # mov [rdi+rcx*2], ax
-    EB(S, 0x85); EB(S, 0xC0);                           # test eax, eax
-    EB(S, 0x74); EB(S, 0x0C);                           # jz widen_done (skip next 12 B)
-    EB(S, 0xFF); EB(S, 0xC1);                           # inc ecx
-    EB(S, 0x81); EB(S, 0xF9); EB(S, 0x04); EB(S, 0x01); EB(S, 0x00); EB(S, 0x00); # cmp ecx, 260
-    EB(S, 0x73); EB(S, 0x02);                           # jae widen_done (skip next 2 B)
-    EB(S, 0xEB); EB(S, 0xE8);                           # jmp widen_loop (-24)
-    # widen_done: force NUL WCHAR terminator in case we hit the cap.
-    EB(S, 0x66); EB(S, 0xC7); EB(S, 0x04); EB(S, 0x4F); EB(S, 0x00); EB(S, 0x00); # mov word [rdi+rcx*2], 0
-
-    # Set up CreateFileW args.
-    EB(S, 0x48); EB(S, 0x8D); EB(S, 0x4C); EB(S, 0x24); EB(S, 0x38); # lea rcx, [rsp+0x38]
+    # CreateFileW args.
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xF9);              # mov rcx, rdi (wide path)
+    EB(S, 0x4C); EB(S, 0x8B); EB(S, 0x4C); EB(S, 0x24); EB(S, 0x40); # mov r9, [rsp+0x40]
     EB(S, 0x44); EB(S, 0x89); EB(S, 0xCA);                           # mov edx, r9d (dwDesiredAccess — 6.6.6, was a hardcoded 0xC0000000)
+    EB(S, 0x4C); EB(S, 0x8B); EB(S, 0x44); EB(S, 0x24); EB(S, 0x38); # mov r8, [rsp+0x38]
     EB(S, 0x4C); EB(S, 0x89); EB(S, 0x44); EB(S, 0x24); EB(S, 0x28); # mov [rsp+0x28], r8 (dwFlagsAndAttributes — 6.6.9, was a fixed 0x80)
     EB(S, 0x41); EB(S, 0xB8); EB(S, 0x03); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); # mov r8d, 3 (FILE_SHARE_READ|WRITE)
     EB(S, 0x4D); EB(S, 0x31); EB(S, 0xC9);                           # xor r9, r9
+    EB(S, 0x4C); EB(S, 0x8B); EB(S, 0x54); EB(S, 0x24); EB(S, 0x48); # mov r10, [rsp+0x48]
     EB(S, 0x4C); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x20); # mov [rsp+0x20], r10 (dwCreationDisposition)
     EB(S, 0x48); EB(S, 0xC7); EB(S, 0x44); EB(S, 0x24); EB(S, 0x30); # mov qword [rsp+0x30], 0 (hTemplateFile)
     EB(S, 0x00); EB(S, 0x00); EB(S, 0x00); EB(S, 0x00);
@@ -3253,9 +3301,8 @@ fn EOPEN_PE(S): i64 {
     EB(S, 0xFF); EB(S, 0x15);                           # call [rip+CreateFileW]
     _pe_iat_fixup_add(S, GCP(S), cf_idx);
     EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
-
-    EB(S, 0x48); EB(S, 0x81); EB(S, 0xC4);              # add rsp, 0x258
-    EB(S, _xfr & 0xFF); EB(S, (_xfr >> 8) & 0xFF); EB(S, 0x00); EB(S, 0x00);
+    _pe_j_land(S, out);
+    _pe_path_unframe(S);
     return 0;
 }
 

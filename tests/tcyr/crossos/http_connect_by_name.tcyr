@@ -192,8 +192,14 @@ fn _cb_http_group(): i64 {
     while (k < 3) {
         if (_cb_serve_one(lfd, seen) == 0) { ok = ok + 1; }
         if (k == 0) {
-            var want = "GET /by-name HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n";
-            assert_eq(streq(seen, want), 1, "the request line and Host header name the URL");
+            # 6.6.11: the listener is on an ephemeral port, never 80, so Host carries it. This
+            # row expected a bare "Host: localhost" — it pinned the dropped-port defect as the
+            # expected value. CHANGELOG [6.6.11]
+            var want = alloc(128);
+            var we = _cb_cat(want, "GET /by-name HTTP/1.0\r\nHost: localhost:");
+            we = _cb_dec(we, port);
+            _cb_cat(we, "\r\nConnection: close\r\n\r\n");
+            assert_eq(streq(seen, want), 1, "the request line and Host header (with its port) name the URL");
         }
         k = k + 1;
     }
@@ -398,39 +404,49 @@ fn main(): i64 {
     memset(fits, 65, 1900);
     store8(fits, 47);
     store8(fits + 1900, 0);
-    assert(_http_build_request("GET", "h", fits) != 0, "a 1.9 KB path still builds");
+    assert(_http_build_request("GET", "h", 80, fits) != 0, "a 1.9 KB path still builds");
     var longp = alloc(4096);
     memset(longp, 65, 4000);
     store8(longp, 47);
     store8(longp + 4000, 0);
-    var req = _http_build_request("GET", "h", longp);
+    var req = _http_build_request("GET", "h", 80, longp);
     var next = alloc(64);
     assert_eq(req, 0, "a 4000-byte path is refused");
     assert_neq(load8(next + 32), 65, "…and the NEXT allocation holds none of its bytes (the old overrun)");
     var longh = alloc(4096);
     memset(longh, 104, 2100);
     store8(longh + 2100, 0);
-    assert_eq(_http_build_request("GET", longh, "/"), 0, "an over-long Host is refused too");
+    assert_eq(_http_build_request("GET", longh, 80, "/"), 0, "an over-long Host is refused too");
     # Exactly at the cap: GET + SP + path + 17 + host(1) + 23 + NUL == 2048 -> path of 2002.
     var edge = alloc(2048);
     memset(edge, 66, 2002);
     store8(edge, 47);
     store8(edge + 2002, 0);
-    var er = _http_build_request("GET", "h", edge);
+    var er = _http_build_request("GET", "h", 80, edge);
     assert(er != 0, "a request of exactly 2048 bytes with its NUL builds");
     if (er != 0) { assert_eq(strlen(er), 2047, "…and is 2047 bytes long"); }
     store8(edge + 2002, 66);
     store8(edge + 2003, 0);
-    assert_eq(_http_build_request("GET", "h", edge), 0, "one byte more is refused");
+    assert_eq(_http_build_request("GET", "h", 80, edge), 0, "one byte more is refused");
+    # 6.6.11: a non-default port's ":NNNN" counts toward the cap. The 2002-byte path fits at
+    # port 80 exactly; with ":8080" (5 more bytes) the same request is over, and a path 5 bytes
+    # shorter fits again. CHANGELOG [6.6.11]
+    store8(edge + 2002, 0);
+    assert(_http_build_request("GET", "h", 80, edge) != 0, "control: the 2048-byte request at :80");
+    assert_eq(_http_build_request("GET", "h", 8080, edge), 0, "…is refused at :8080 (the suffix counts)");
+    store8(edge + 1997, 0);
+    var ep = _http_build_request("GET", "h", 8080, edge);
+    assert(ep != 0, "…and 5 bytes shorter fits at :8080");
+    if (ep != 0) { assert_eq(strlen(ep), 2047, "…at exactly 2047 bytes"); }
     # The refusal comes BEFORE the lookup. _http_prepare writes the address slot only after a
     # lookup ran, so a sentinel left there proves none did (http_get / _a used to resolve first,
     # reading /etc/hosts + /etc/resolv.conf and sending a DNS query for a URL they then refused).
     # `localhost` resolves with no I/O, so the control rows are exact on every host.
     var slot = alloc(16);
     store64(slot + 8, 0x5A5A);
-    assert_eq(_http_prepare("localhost", longp, slot), 1, "_http_prepare: an over-long request is 1");
+    assert_eq(_http_prepare("localhost", 80, longp, slot), 1, "_http_prepare: an over-long request is 1");
     assert_eq(load64(slot + 8), 0x5A5A, "…and no lookup ran (the address slot is untouched)");
-    assert_eq(_http_prepare("localhost", "/p", slot), 0, "control: a short request by name is 0");
+    assert_eq(_http_prepare("localhost", 80, "/p", slot), 0, "control: a short request by name is 0");
     assert_eq(load64(slot + 8), INADDR_LOOPBACK(), "…and was resolved (127.0.0.1)");
     assert(load64(slot) != 0, "…with its request stored");
     # By NAME: a host that only DNS could answer, refused before any lookup.

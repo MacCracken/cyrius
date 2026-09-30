@@ -538,6 +538,24 @@ fn _pe_ensure_removedir(S): i64 {
 }
 fn _pe_removedir_get(): i64 { return _pe_removedir_idx; }
 
+# 6.6.11 — the two kernel32 imports behind `_pe_widen_path` (x86/emit.cyr), the one
+# UTF-8 → UTF-16 path sequence every narrow-path reroute shares: MultiByteToWideChar
+# (CP_UTF8 + MB_ERR_INVALID_CHARS decodes and REFUSES invalid UTF-8) and GetFullPathNameW
+# (a path of 248+ units is made absolute and handed over with a `\\?\` prefix instead of
+# being cut at MAX_PATH). CHANGELOG [6.6.11]
+var _pe_mbtowc_ready      = 0;
+var _pe_mbtowc_idx        = 0;
+var _pe_fullpath_idx      = 0;
+fn _pe_ensure_widen(S): i64 {
+    if (_pe_mbtowc_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_mbtowc_idx, "MultiByteToWideChar");
+    _pe_register_kernel32(S, &_pe_fullpath_idx, "GetFullPathNameW");
+    _pe_mbtowc_ready = 1;
+    return 0;
+}
+fn _pe_mbtowc_get(): i64 { return _pe_mbtowc_idx; }
+fn _pe_fullpath_get(): i64 { return _pe_fullpath_idx; }
+
 # v6.6.7: FlushFileBuffers auto-import for the Linux fsync(74) / fdatasync(75)
 # reroute (EFLUSHFB_PE). kernel32!FlushFileBuffers(HANDLE->rcx) returns BOOL. Before
 # it existed, both numbers fell to the honest -38 and lib/io.cyr's xfsync hard-coded
@@ -1180,6 +1198,66 @@ fn _pe_ensure_setsockopt(S): i64 {
     return 0;
 }
 fn _pe_setsockopt_get(): i64 { return _pe_setsockopt_idx; }
+
+# 6.6.11 — the BLOCKING socket verbs lib/net.cyr's PE arms need beyond the async reactor's
+# overlapped set (dll_id 4 = ws2_32): accept(s, addr, addrlen), shutdown(s, how),
+# send(s, buf, len, flags), recv(s, buf, len, flags), ioctlsocket(s, cmd, argp) for FIONBIO,
+# and WSAPoll(fds, nfds, timeout) for net_connect_sa_nb. Reroutes 0xF045-0xF04A
+# (src/backend/x86/emit.cyr EACCEPT_PE ... EWSAPOLL_PE). CHANGELOG [6.6.11]
+var _pe_accept_ready = 0;
+var _pe_accept_idx   = 0;
+fn _pe_ensure_accept(S): i64 {
+    if (_pe_accept_ready == 1) { return 0; }
+    _pe_register_import(S, &_pe_accept_idx, "accept", 4);
+    _pe_accept_ready = 1;
+    return 0;
+}
+fn _pe_accept_get(): i64 { return _pe_accept_idx; }
+var _pe_shutdown_ready = 0;
+var _pe_shutdown_idx   = 0;
+fn _pe_ensure_shutdown(S): i64 {
+    if (_pe_shutdown_ready == 1) { return 0; }
+    _pe_register_import(S, &_pe_shutdown_idx, "shutdown", 4);
+    _pe_shutdown_ready = 1;
+    return 0;
+}
+fn _pe_shutdown_get(): i64 { return _pe_shutdown_idx; }
+var _pe_send_ready = 0;
+var _pe_send_idx   = 0;
+fn _pe_ensure_send(S): i64 {
+    if (_pe_send_ready == 1) { return 0; }
+    _pe_register_import(S, &_pe_send_idx, "send", 4);
+    _pe_send_ready = 1;
+    return 0;
+}
+fn _pe_send_get(): i64 { return _pe_send_idx; }
+var _pe_recv_ready = 0;
+var _pe_recv_idx   = 0;
+fn _pe_ensure_recv(S): i64 {
+    if (_pe_recv_ready == 1) { return 0; }
+    _pe_register_import(S, &_pe_recv_idx, "recv", 4);
+    _pe_recv_ready = 1;
+    return 0;
+}
+fn _pe_recv_get(): i64 { return _pe_recv_idx; }
+var _pe_ioctlsock_ready = 0;
+var _pe_ioctlsock_idx   = 0;
+fn _pe_ensure_ioctlsock(S): i64 {
+    if (_pe_ioctlsock_ready == 1) { return 0; }
+    _pe_register_import(S, &_pe_ioctlsock_idx, "ioctlsocket", 4);
+    _pe_ioctlsock_ready = 1;
+    return 0;
+}
+fn _pe_ioctlsock_get(): i64 { return _pe_ioctlsock_idx; }
+var _pe_wsapoll_ready = 0;
+var _pe_wsapoll_idx   = 0;
+fn _pe_ensure_wsapoll(S): i64 {
+    if (_pe_wsapoll_ready == 1) { return 0; }
+    _pe_register_import(S, &_pe_wsapoll_idx, "WSAPoll", 4);
+    _pe_wsapoll_ready = 1;
+    return 0;
+}
+fn _pe_wsapoll_get(): i64 { return _pe_wsapoll_idx; }
 
 # v6.2.13 — kernel32!GetSystemTimeAsFileTime for the Windows wall-clock
 # (chrono.clock_epoch_secs/ns). `void GetSystemTimeAsFileTime(LPFILETIME)` fills

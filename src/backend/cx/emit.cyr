@@ -1118,6 +1118,46 @@ fn _cx_mode_refused(S): i64 {
     syscall(SYS_WRITE, 2, "` is not supported by the cx bytecode backend (a .cyx is a cxvm program; there is no kernel image or shared object to emit)\n", 124);
     return 1;
 }
+# 6.6.11 — modules OUTSIDE the cx target's scope, refused BY NAME before anything is lexed.
+# lib/tls.cyr, lib/tls_native.cyr and the lib/sigil.cyr fold compile to several MB of cx
+# bytecode (cx output runs ~3.2x x86: tls is ~1.6 MB as an x86 ELF) against the fixed
+# 512 KiB code buffer here and cxvm's 1 MB code/guest caps, so they died mid-emit with a
+# bare "codebuf overflow" that named nothing. cx is a single-threaded test VM; the TLS stack
+# and the crypto bundle are declared out of its scope rather than growing both halves.
+# `p` is one NUL-terminated #@file name (the include path as written); it matches `suf` when
+# it IS `suf` or ends in "/" + `suf`. CHANGELOG [6.6.11]
+fn _cx_path_is(p, n, suf, sl): i64 {
+    if (n < sl) { return 0; }
+    if (n > sl) { if (load8(p + n - sl - 1) != 47) { return 0; } }
+    var i = 0;
+    while (i < sl) { if (load8(p + n - sl + i) != load8(suf + i)) { return 0; } i = i + 1; }
+    return 1;
+}
+fn _cx_out_of_scope(p, n): i64 {
+    if (_cx_path_is(p, n, "lib/tls.cyr", 11) == 1) { return 1; }
+    if (_cx_path_is(p, n, "lib/tls_native.cyr", 18) == 1) { return 1; }
+    if (_cx_path_is(p, n, "lib/sigil.cyr", 13) == 1) { return 1; }
+    return 0;
+}
+# Walks FM_BUILD's name table (one entry per distinct file). A map that overflowed its
+# 1024 entries drops later names; such a build still stops at the codebuf cap.
+fn _cx_scope_refused(S): i64 {
+    var nm = S + 0x721000;
+    var pos = 0;
+    var bad = 0;
+    while (pos < _fm_str_pos) {
+        var n = 0;
+        while (load8(nm + pos + n) != 0) { n = n + 1; }
+        if (_cx_out_of_scope(nm + pos, n) == 1) {
+            syscall(SYS_WRITE, 2, "error: ", 7);
+            PRSTR(nm + pos);
+            syscall(SYS_WRITE, 2, " is outside the cx target's scope (the TLS stack and the sigil bundle compile to several MB of bytecode; a .cyx holds 512 KiB) — build it for a native target\n", 160);
+            bad = 1;
+        }
+        pos = pos + n + 1;
+    }
+    return bad;
+}
 fn _cx_float_unsupported(S): i64 {
     ERR_MSG(S, "this float op is not yet supported on the cx bytecode target", 60);
     return 0;
@@ -1650,6 +1690,12 @@ fn EASSIGNJOB_PE(S): i64 { return 0; }    # 6.6.10 kernel32!AssignProcessToJobOb
 fn ETERMJOB_PE(S): i64 { return 0; }      # 6.6.10 kernel32!TerminateJobObject (0xF042)
 fn ERESUMETHREAD_PE(S): i64 { return 0; } # 6.6.10 kernel32!ResumeThread (0xF043)
 fn ESETJOBINFO_PE(S): i64 { return 0; }   # 6.6.10 kernel32!SetInformationJobObject (0xF044)
+fn EACCEPT_PE(S): i64 { return 0; }      # 6.6.11 ws2_32!accept (0xF045)
+fn ESHUTDOWN_PE(S): i64 { return 0; }    # 6.6.11 ws2_32!shutdown (0xF046)
+fn ESEND_PE(S): i64 { return 0; }        # 6.6.11 ws2_32!send (0xF047)
+fn ERECV_PE(S): i64 { return 0; }        # 6.6.11 ws2_32!recv (0xF048)
+fn EIOCTLSOCK_PE(S): i64 { return 0; }   # 6.6.11 ws2_32!ioctlsocket (0xF049)
+fn EWSAPOLL_PE(S): i64 { return 0; }     # 6.6.11 ws2_32!WSAPoll (0xF04A)
 fn EINITSRW_PE(S): i64 { return 0; }
 fn ELOCALFREE_PE(S): i64 { return 0; }
 fn ELSEEK_PE(S): i64 { return 0; }

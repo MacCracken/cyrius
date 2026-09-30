@@ -65,6 +65,39 @@
 # CREATE_NEW mutant; measured, wine creates the target just as cass did. Predictions are not
 # ledger rows.
 #
+# 6.6.11 — THE PATH IS OPENED UNDER ITS OWN NAME (items I1/I2). EOPEN_PE and the other six
+# narrow-path reroutes (ECREATEDIR_PE, EDELETEF_PE, EDELETEFILEW_PE, EREMOVEDIRW_PE, and
+# EMOVEFILEEX_PE's two paths) widened UTF-8 one BYTE per UTF-16 unit and stopped at 260 units with
+# a forced NUL: `café.txt` failed to open, and a 288-byte relative O_CREAT open returned a VALID
+# handle for the name cut to 260 units (wine, measured at 6.6.10) — a silent write to the wrong
+# file. They now share ONE sequence (`_pe_widen_path`): MultiByteToWideChar(CP_UTF8,
+# MB_ERR_INVALID_CHARS) — refuse, never guess — then GetFullPathNameW + a `\\?\` prefix at 248+
+# units, in a probed frame. The stdlib's own widens (`_win_widen_n`) decode the same way and are
+# bounded by the Str's length. Two more axes:
+#   axis 2b PATH-ENCODING SHAPE (always, needs objdump), on the PE build of
+#           tests/tcyr/crossos/pe_path_utf8_long.tcyr, which reaches all seven emitters. Every
+#           call through the IAT slot of CreateFileW / CreateDirectoryW / DeleteFileW /
+#           RemoveDirectoryW (and TWICE per MoveFileExW call) must be fed by one widen, and every
+#           widen must carry the three things that ARE the fix: CP_UTF8 (`mov $0xfde9,%ecx`)
+#           followed by MB_ERR_INVALID_CHARS (`mov $0x8,%edx`), and the long-path branch
+#           (`cmp $0xf8,%eax`); each path frame carries its page probe (`test %rsp,(%rsp)`), and
+#           the truncating loop (`mov %ax,(%rdi,%rcx,2)`, `cmp $0x104,%ecx`) is GONE.
+#   axis 4  BEHAVIOUR of that .tcyr — natively (POSIX is the oracle: Linux takes a 300-byte path
+#           and a UTF-8 name as they are) and under wine with a UTF-8 locale (wine maps a WCHAR
+#           name to a Unix name through the locale; under LANG=C it cannot store `é` at all,
+#           which is wine's limit, not the emitter's). Floor 33 native rows.
+#
+# MUTATION LEDGER, 6.6.11 — every mutant BUILT AND RUN 2026-09-29 (x86_64 Linux + wine 11.17,
+# the gate run with CYCC=<mutant cycc>; the cass column is pe_path_utf8_long.exe on real Windows):
+#   mutant                                              axis 2b  axis 4 (wine)       cass
+#   MB_ERR_INVALID_CHARS dropped (edx = 0)              FAIL     FAIL, 4 rows        -
+#   the long-path branch dropped (threshold 32768)      FAIL     PASS                FAIL, 7 rows
+#   the page probe dropped (one bare sub rsp,size)      FAIL     PASS                CRASH 0xC0000005
+#   the 6.6.10 compiler (the cut-at-260 byte loop)      FAIL     FAIL, 12 rows       FAIL, 17 rows (6.6.10 stdlib too)
+#   the 6.6.10 stdlib widens, new emitter               PASS     FAIL, 2 rows        -
+# wine enforces no MAX_PATH and commits the whole stack, so the long-path branch and the probe are
+# invisible to it: for those two, axis 2b is the only LOCAL guard and cass the hardware one.
+#
 # Nothing is written inside the tree: the .tcyr's native build names /tmp/<name>.<pid> and the
 # PE build names cwd-relative files; both runs happen inside a mktemp -d removed on exit.
 
@@ -72,9 +105,13 @@ ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
 SRC="$ROOT/tests/tcyr/crossos/open_flags_per_target.tcyr"
 FLOOR=44
+PSRC="$ROOT/tests/tcyr/crossos/pe_path_utf8_long.tcyr"
+PFLOOR=33
 
-[ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 0; }
+# 77 = SKIP: this gate could not run at all (never 0, which would read as a pass).
+[ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 77; }
 [ -f "$SRC" ] || { echo "  FAIL: $SRC is missing — the cross-OS companion for this fix is gone"; exit 1; }
+[ -f "$PSRC" ] || { echo "  FAIL: $PSRC is missing — the cross-OS companion for the path-encoding fix is gone"; exit 1; }
 
 D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: mktemp"; exit 1; }
 trap 'rm -rf "$D"' EXIT
@@ -82,7 +119,8 @@ fail=0
 
 # Static expectation: assert_* sites outside any CYRIUS_TARGET_WIN guard count for both builds;
 # those under `#ifdef CYRIUS_TARGET_WIN` count for PE only, `#ifndef` for native only.
-counts=$(grep -vE '^[[:space:]]*#([^a-z]|$)' "$SRC" | awk '
+static_counts() {   # $1 = .tcyr -> "<native rows> <PE rows>"
+grep -vE '^[[:space:]]*#([^a-z]|$)' "$1" | awk '
     /^[[:space:]]*#ifdef CYRIUS_TARGET_WIN/  { st[++n] = "w"; next }
     /^[[:space:]]*#ifndef CYRIUS_TARGET_WIN/ { st[++n] = "n"; next }
     /^[[:space:]]*#ifn?def /                 { st[++n] = "o"; next }
@@ -91,7 +129,9 @@ counts=$(grep -vE '^[[:space:]]*#([^a-z]|$)' "$SRC" | awk '
         k = "c"; for (i = 1; i <= n; i++) if (st[i] != "o") k = st[i]
         c[k]++
     }
-    END { printf "%d %d\n", c["c"] + c["n"], c["c"] + c["w"] }')
+    END { printf "%d %d\n", c["c"] + c["n"], c["c"] + c["w"] }'
+}
+counts=$(static_counts "$SRC")
 want_elf=${counts% *}
 want_pe=${counts#* }
 if [ "$want_elf" -lt "$FLOOR" ]; then
@@ -192,8 +232,107 @@ else
     rm -rf "$D/wp"
 fi
 
+# --- axis 2b: the path-encoding shape (6.6.11) ---
+CYRIUS_TARGET_WIN=1 "$CC" < "$PSRC" > "$D/p.exe" 2> "$D/p.err" || true
+if [ ! -s "$D/p.exe" ]; then
+    echo "  FAIL axis 2b: the PE build of pe_path_utf8_long.tcyr produced no binary"
+    grep -m3 "^error" "$D/p.err" | sed 's/^/      /'
+    fail=1
+elif ! command -v objdump > /dev/null 2>&1; then
+    echo "  SKIP axis 2b: objdump not available"
+else
+    objdump -d "$D/p.exe" > "$D/pdis" 2>/dev/null
+    objdump -p "$D/p.exe" > "$D/pimp" 2>/dev/null
+    calls_to() {   # $1 = kernel32 import name -> call sites through its IAT slot
+        slot=$(awk -v n="$1" '$NF == n {print $1; exit}' "$D/pimp")
+        [ -n "$slot" ] || { echo 0; return; }
+        va=$(printf '0x%x' $((0x140000000 + 0x$slot)))
+        grep -cE "call[[:space:]]+\*0x[0-9a-f]+\(%rip\)[[:space:]]+# $va\$" "$D/pdis"
+    }
+    ncf=$(calls_to CreateFileW); ncd=$(calls_to CreateDirectoryW); ndf=$(calls_to DeleteFileW)
+    nrd=$(calls_to RemoveDirectoryW); nmv=$(calls_to MoveFileExW)
+    want_w=$((ncf + ncd + ndf + nrd + 2 * nmv))
+    frames=$((ncf + ncd + ndf + nrd + nmv))
+    nw=$(grep -cE 'mov[[:space:]]+\$0xfde9,%ecx' "$D/pdis")
+    n8=$(awk '/mov[[:space:]]+\$0xfde9,%ecx/ {p=1; next} p && /mov[[:space:]]+\$0x8,%edx/ {n++} {p=0} END {print n+0}' "$D/pdis")
+    nlong=$(grep -cE 'cmp[[:space:]]+\$0xf8,%eax' "$D/pdis")
+    nprobe=$(grep -cE 'test[[:space:]]+%rsp,\(%rsp\)' "$D/pdis")
+    nloop=$(grep -cE 'mov[[:space:]]+%ax,\(%rdi,%rcx,2\)|cmp[[:space:]]+\$0x104,%ecx' "$D/pdis")
+    nimp=$(grep -cE '[[:space:]](MultiByteToWideChar|GetFullPathNameW)$' "$D/pimp")
+    if [ "$ncf" -lt 1 ] || [ "$ncd" -lt 1 ] || [ "$ndf" -lt 1 ] || [ "$nrd" -lt 1 ] || [ "$nmv" -lt 1 ]; then
+        echo "  FAIL axis 2b (anti-vacuous): the PE build does not reach every narrow-path reroute (CreateFileW $ncf, CreateDirectoryW $ncd, DeleteFileW $ndf, RemoveDirectoryW $nrd, MoveFileExW $nmv call site(s))"
+        fail=1
+    elif [ "$nimp" != "2" ]; then
+        echo "  FAIL axis 2b: MultiByteToWideChar / GetFullPathNameW are not both imported ($nimp of 2)"
+        fail=1
+    elif [ "$nloop" != "0" ]; then
+        echo "  FAIL axis 2b: $nloop instruction(s) of the byte-per-unit, cut-at-260 widen loop are back"
+        fail=1
+    elif [ "$nw" != "$want_w" ]; then
+        echo "  FAIL axis 2b: $want_w narrow path(s) handed to kernel32 but $nw CP_UTF8 widen(s) — a reroute bypasses the shared sequence"
+        fail=1
+    elif [ "$n8" != "$nw" ]; then
+        echo "  FAIL axis 2b: $nw widen(s) but $n8 pass MB_ERR_INVALID_CHARS — invalid UTF-8 would be GUESSED at, not refused"
+        fail=1
+    elif [ "$nlong" != "$nw" ]; then
+        echo "  FAIL axis 2b: $nw widen(s) but $nlong long-path (248-unit) branch(es) — a long path would hit MAX_PATH again"
+        fail=1
+    elif [ "$nprobe" != "$frames" ]; then
+        echo "  FAIL axis 2b: $frames path frame(s) but $nprobe page probe(s) — a ~128 KB frame skipping the stack guard page faults on real Windows"
+        fail=1
+    else
+        echo "  ok axis 2b: $want_w narrow path(s) over $frames frame(s), each through CP_UTF8 + MB_ERR_INVALID_CHARS + the long-path branch, every frame probed, no cut-at-260 loop"
+    fi
+fi
+
+# --- axis 4: the path-encoding rows — POSIX oracle natively, then PE under wine ---
+pcounts=$(static_counts "$PSRC")
+pwant_elf=${pcounts% *}
+pwant_pe=${pcounts#* }
+if [ "$pwant_elf" -lt "$PFLOOR" ]; then
+    echo "  FAIL axis 4 floor: pe_path_utf8_long.tcyr carries only $pwant_elf native assertions, floor is $PFLOOR"
+    fail=1
+fi
+"$CC" < "$PSRC" > "$D/pelf" 2> "$D/pelf.err" || true
+if [ ! -s "$D/pelf" ]; then
+    echo "  FAIL axis 4: the ELF build of pe_path_utf8_long.tcyr produced no binary"
+    fail=1
+else
+    chmod +x "$D/pelf"
+    mkdir -p "$D/pn"
+    ( cd "$D/pn" && ulimit -c 0; ../pelf > "$D/pelf.out" 2>&1 ); rc=$?
+    got=$(ran_count "$D/pelf.out")
+    if [ "$rc" != "0" ] || [ "$got" != "$pwant_elf" ]; then
+        echo "  FAIL axis 4 (POSIX oracle): native run exited $rc, reported '$got' of $pwant_elf rows"
+        grep -hm5 "FAIL:" "$D/pelf.out" | sed 's/^/      /'
+        fail=1
+    else
+        echo "  ok axis 4: $got of $pwant_elf path rows hold against the Linux kernel"
+    fi
+fi
+if [ ! -s "$D/p.exe" ]; then
+    :
+elif ! command -v wine > /dev/null 2>&1; then
+    echo "  SKIP axis 4 (wine): wine absent — the PE rows are covered only by the cass leg"
+else
+    mkdir -p "$D/pw" && cp "$D/p.exe" "$D/pw/p.exe"
+    ( cd "$D/pw" && ulimit -c 0; LANG=C.UTF-8 LC_ALL=C.UTF-8 WINEPREFIX="$D/wp" WINEDEBUG=-all \
+        WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree=d;mshtml=d' \
+        wine p.exe > "$D/p.out" 2> "$D/p.err2" ); rc=$?
+    got=$(ran_count "$D/p.out")
+    if [ "$rc" != "0" ] || [ "$got" != "$pwant_pe" ]; then
+        echo "  FAIL axis 4 (wine): PE run exited $rc, reported '$got' of $pwant_pe path rows"
+        grep -hm8 "FAIL:" "$D/p.out" "$D/p.err2" | sed 's/^/      /'
+        fail=1
+    else
+        echo "  ok axis 4: $got of $pwant_pe path rows hold on PE under wine (hardware: the cass cross-OS leg)"
+    fi
+    WINEPREFIX="$D/wp" wineserver -k > /dev/null 2>&1 || true
+    rm -rf "$D/wp"
+fi
+
 if [ "$fail" = "0" ]; then
-    echo "PASS: O_NOFOLLOW / O_DIRECTORY / O_CREAT|O_EXCL have their POSIX meaning on PE ($want_elf native / $want_pe PE rows)"
+    echo "PASS: O_NOFOLLOW / O_DIRECTORY / O_CREAT|O_EXCL have their POSIX meaning on PE ($want_elf native / $want_pe PE rows), and a path is used under its own UTF-8 name at any length ($pwant_elf / $pwant_pe rows)"
     exit 0
 fi
 echo "FAIL: PE open POSIX semantics"

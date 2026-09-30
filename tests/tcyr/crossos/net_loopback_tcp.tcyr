@@ -1,0 +1,389 @@
+# net_loopback_tcp.tcyr — 6.6.11: lib/net.cyr's socket verbs WORK on every host target,
+# Windows included, against a loopback client/server this file owns.
+#
+# ⛔ WHY. Every verb in lib/net.cyr issued the Linux socket numbers directly, and on PE none of
+# them is routed: tcp_socket / udp_socket / bind / connect / listen / accept / shutdown /
+# setsockopt all returned -38 (-ENOSYS), send/recv/close went through ReadFile / WriteFile /
+# CloseHandle, and so http_get / http_get_r / http_get_a could not reach anything on Windows —
+# measured under wine: tcp_socket() = Err(38), and http_get against a live local server returned
+# HTTP_ERROR while the native build of the same file got a 404 from it. Each verb now has a
+# ws2_32 arm (the per-OS primitives in lib/net.cyr, over reroutes 0xF022-0xF04A).
+#
+# THE GROUPS (every target except agnos, whose sockets are the kernel's conn table):
+#   A. TCP: listen on 127.0.0.1:0, connect, accept, send both ways, a half-close read as EOF, an
+#      SO_RCVTIMEO read that expires as an error (not a hang), close.
+#   B. non-blocking: an accept with nothing pending is EAGAIN, net_connect_nb to the listener is
+#      connected, the pending connection is then accepted; net_connect_nb to a closed port is not.
+#   C. UDP: two connected datagram sockets exchange a datagram; the multicast setters and
+#      sock_reuseport succeed.
+#   D. http_get against a one-shot HTTP server on the listener — in a thread on Windows, a forked
+#      child elsewhere — which checks the request it receives, Host header and port included.
+#
+#   E. (Windows only) sock_reuse before bind keeps the port exclusive: a second socket asking to
+#      share it (sock_reuseport) cannot bind it.
+#
+# MUTATION (6.6.11): reverting ONE Windows arm — _net_os_accept's to `syscall(SYS_ACCEPT, ...)` —
+# fails groups A, B and D under wine and on cass. `_NET_SO_REUSE = 0x0004` (Windows' SO_REUSEADDR
+# instead of SO_EXCLUSIVEADDRUSE) fails group E on cass. CHANGELOG [6.6.11]
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/tagged.cyr"
+include "lib/io.cyr"
+include "lib/net.cyr"
+include "lib/http.cyr"
+#ifdef CYRIUS_TARGET_WIN
+include "lib/thread.cyr"
+#endif
+include "lib/assert.cyr"
+
+#ifndef CYRIUS_TARGET_AGNOS
+# NUL-terminated decimal of `v` (>= 0) at p; returns the new end.
+fn _lb_dec(p, v): i64 {
+    var tmp[24];
+    var n = 0;
+    if (v == 0) { store8(&tmp, 48); n = 1; }
+    while (v > 0) { store8(&tmp + n, 48 + v % 10); v = v / 10; n = n + 1; }
+    var i = 0;
+    while (i < n) { store8(p + i, load8(&tmp + n - 1 - i)); i = i + 1; }
+    store8(p + n, 0);
+    return p + n;
+}
+
+# Copy the NUL-terminated `s` to p; returns the new end (at the NUL).
+fn _lb_cat(p, s): i64 {
+    var n = strlen(s);
+    memcpy(p, s, n);
+    store8(p + n, 0);
+    return p + n;
+}
+
+# Sleep `ms` milliseconds.
+fn _lb_sleep(ms): i64 {
+    var ts[16];
+    store64(&ts, ms / 1000);
+    store64(&ts + 8, (ms % 1000) * 1000000);
+    sys_nanosleep(&ts, 0);
+    return 0;
+}
+
+# The port (host order) socket `fd` is bound to, or -1.
+fn _lb_port(fd): i64 {
+    var sa[16];
+    var sl[8];
+    store64(&sl, 16);
+    if (sys_getsockname(fd, &sa, &sl) != 0) { return 0 - 1; }
+    return ((load8(&sa + 2) & 0xFF) << 8) | (load8(&sa + 3) & 0xFF);
+}
+
+# A socket of `type` bound to 127.0.0.1 on a port the kernel picks. Stores the fd at out[0] and
+# the port at out[8]; returns 0 or -1.
+fn _lb_bound(type, out): i64 {
+    var fd = 0 - 1;
+    if (type == SOCK_STREAM) {
+        var tt, tv = tcp_socket();
+        if (is_err_result(tt) == 1) { return 0 - 1; }
+        fd = tv;
+    } else {
+        var ut, uv = udp_socket();
+        if (is_err_result(ut) == 1) { return 0 - 1; }
+        fd = uv;
+    }
+    var bt, bv = sock_bind(fd, INADDR_LOOPBACK(), 0);
+    if (is_err_result(bt) == 1) { sock_close(fd); return 0 - 1; }
+    store64(out, fd);
+    store64(out + 8, _lb_port(fd));
+    return 0;
+}
+
+# Read exactly `n` bytes into buf (bounded retries). Returns the count read.
+fn _lb_recv_n(fd, buf, n): i64 {
+    var got = 0;
+    var tries = 0;
+    while (got < n && tries < 64) {
+        var rt, rv = sock_recv(fd, buf + got, n - got);
+        if (is_err_result(rt) == 1) { return got; }
+        if (rv <= 0) { return got; }
+        got = got + rv;
+        tries = tries + 1;
+    }
+    return got;
+}
+
+fn _lb_tcp_group(): i64 {
+    test_group("6.6.11 — TCP over loopback: listen, connect, accept, send, recv, shutdown, close");
+    var l = alloc(16);
+    assert_eq(_lb_bound(SOCK_STREAM, l), 0, "tcp_socket + sock_bind(127.0.0.1:0)");
+    var lfd = load64(l);
+    var port = load64(l + 8);
+    assert(port > 0, "the bound port reads back");
+    var lt, lv = sock_listen(lfd, 4);
+    assert_eq(is_err_result(lt), 0, "sock_listen");
+    var ct, cfd = tcp_socket();
+    assert_eq(is_err_result(ct), 0, "client tcp_socket");
+    var kt, kv = sock_connect(cfd, INADDR_LOOPBACK(), port);
+    assert_eq(is_err_result(kt), 0, "sock_connect to the listener");
+    # Bound every read in this group, so a broken verb fails it instead of hanging the suite.
+    sock_set_recv_timeout(cfd, 5, 0);
+    var at, afd = sock_accept(lfd);
+    assert_eq(is_err_result(at), 0, "sock_accept");
+    if (is_err_result(at) == 1) {
+        sock_close(cfd);
+        sock_close(lfd);
+        return 0;
+    }
+    sock_set_recv_timeout(afd, 5, 0);
+    assert_eq(sock_send_all(cfd, "ping", 4), 4, "sock_send_all: client -> server");
+    var buf = alloc(64);
+    assert_eq(_lb_recv_n(afd, buf, 4), 4, "sock_recv: the server reads all 4 bytes");
+    assert_eq(memeq(buf, "ping", 4), 1, "…and they are the bytes sent");
+    var st, sv = sock_send(afd, "pong!", 5);
+    assert_eq(is_err_result(st), 0, "sock_send: server -> client");
+    assert_eq(sv, 5, "…all 5 bytes");
+    assert_eq(_lb_recv_n(cfd, buf, 5), 5, "the client reads them");
+    assert_eq(memeq(buf, "pong!", 5), 1, "…unchanged");
+    assert_eq(sock_shutdown(cfd, 1), 0, "sock_shutdown(write) on the client");
+    var et, ev = sock_recv(afd, buf, 64);
+    assert_eq(is_err_result(et), 0, "after the half-close the server's read succeeds");
+    assert_eq(ev, 0, "…with 0 bytes: EOF");
+    # The server never writes again, so this read can only end by SO_RCVTIMEO.
+    assert_eq(sock_set_recv_timeout(cfd, 0, 300000), 0, "sock_set_recv_timeout(0.3 s)");
+    var rt, rv = sock_recv(cfd, buf, 64);
+    assert_eq(is_err_result(rt), 1, "an expired SO_RCVTIMEO read is an error, not a hang");
+    #ifndef CYRIUS_TARGET_MACOS
+    assert_eq(rv, _NET_EAGAIN, "…EAGAIN (Windows' WSAETIMEDOUT is folded onto it)");
+    #endif
+    assert_eq(sock_set_send_timeout(cfd, 1, 0), 0, "sock_set_send_timeout");
+    assert_eq(sock_reuse(lfd), 0, "sock_reuse on a bound socket");
+    assert_eq(sock_close(afd), 0, "sock_close (accepted)");
+    assert_eq(sock_close(cfd), 0, "sock_close (client)");
+    assert_eq(sock_close(lfd), 0, "sock_close (listener)");
+    return 0;
+}
+
+fn _lb_nonblocking_group(): i64 {
+    test_group("6.6.11 — non-blocking accept and net_connect_nb");
+    var l = alloc(16);
+    assert_eq(_lb_bound(SOCK_STREAM, l), 0, "listener bound");
+    var lfd = load64(l);
+    var port = load64(l + 8);
+    var lt, lv = sock_listen(lfd, 4);
+    assert_eq(is_err_result(lt), 0, "sock_listen");
+    var saved = sock_set_nonblocking(lfd);
+    assert(saved >= 0, "sock_set_nonblocking");
+    var at, av = sock_accept(lfd);
+    assert_eq(is_err_result(at), 1, "an accept with nothing pending fails at once");
+    #ifndef CYRIUS_TARGET_MACOS
+    assert_eq(av, _NET_EAGAIN, "…with EAGAIN (Windows' WSAEWOULDBLOCK is folded onto it)");
+    #endif
+    var ct, cfd = tcp_socket();
+    assert_eq(net_connect_nb(cfd, INADDR_LOOPBACK(), port, 5000), 0, "net_connect_nb to the listener");
+    var got = 0;
+    var afd = 0 - 1;
+    var k = 0;
+    while (got == 0 && k < 200) {
+        var bt, bv = sock_accept(lfd);
+        if (is_err_result(bt) == 0) { got = 1; afd = bv; } else { _lb_sleep(10); }
+        k = k + 1;
+    }
+    assert_eq(got, 1, "…and the listener then accepts it");
+    assert(sock_clear_nonblocking(lfd, saved) >= 0, "sock_clear_nonblocking");
+    # net_connect_nb left the client BLOCKING: a round trip on it works.
+    if (got == 1) {
+        sock_clear_nonblocking(afd, saved);
+        sock_set_recv_timeout(afd, 5, 0);
+        assert_eq(sock_send_all(cfd, "nb", 2), 2, "the nb-connected client sends");
+        var b = alloc(8);
+        assert_eq(_lb_recv_n(afd, b, 2), 2, "…and the server reads it");
+        sock_close(afd);
+    }
+    sock_close(cfd);
+    # A port with no listener: bind one, note it, close it, then dial it.
+    var d = alloc(16);
+    assert_eq(_lb_bound(SOCK_STREAM, d), 0, "a throwaway socket bound");
+    var dead = load64(d + 8);
+    sock_close(load64(d));
+    var xt, xfd = tcp_socket();
+    assert(net_connect_nb(xfd, INADDR_LOOPBACK(), dead, 5000) != 0, "net_connect_nb to a closed port is not connected");
+    sock_close(xfd);
+    sock_close(lfd);
+    return 0;
+}
+
+fn _lb_udp_group(): i64 {
+    test_group("6.6.11 — UDP over loopback, and the socket options");
+    var a = alloc(16);
+    var b = alloc(16);
+    assert_eq(_lb_bound(SOCK_DGRAM, a), 0, "udp_socket A bound");
+    assert_eq(_lb_bound(SOCK_DGRAM, b), 0, "udp_socket B bound");
+    var afd = load64(a);
+    var bfd = load64(b);
+    var ct, cv = sock_connect(afd, INADDR_LOOPBACK(), load64(b + 8));
+    assert_eq(is_err_result(ct), 0, "A connects to B");
+    var dt, dv = sock_connect(bfd, INADDR_LOOPBACK(), load64(a + 8));
+    assert_eq(is_err_result(dt), 0, "B connects to A");
+    assert_eq(sock_send_all(afd, "dgram", 5), 5, "A sends a datagram");
+    sock_set_recv_timeout(bfd, 5, 0);
+    var buf = alloc(64);
+    var rt, rv = sock_recv(bfd, buf, 64);
+    assert_eq(is_err_result(rt), 0, "B receives it");
+    assert_eq(rv, 5, "…whole");
+    assert_eq(memeq(buf, "dgram", 5), 1, "…unchanged");
+    assert_eq(net_set_multicast_ttl(afd, 1), 0, "net_set_multicast_ttl");
+    assert_eq(net_set_multicast_loop(afd, 1), 0, "net_set_multicast_loop");
+    assert_eq(net_set_multicast_if(afd, 0), 0, "net_set_multicast_if(INADDR_ANY)");
+    var ut, ufd = udp_socket();
+    assert_eq(sock_reuseport(ufd), 0, "sock_reuseport on a fresh socket");
+    sock_close(ufd);
+    sock_close(afd);
+    sock_close(bfd);
+    return 0;
+}
+
+#ifdef CYRIUS_TARGET_WIN
+# ⛔ Windows' SO_REUSEADDR lets ANOTHER socket bind a port already in use — a local port hijack —
+# so sock_reuse sets SO_EXCLUSIVEADDRUSE there instead. Set before bind, it must make a second
+# socket's bind of the same port fail even when that socket asks to share (sock_reuseport, which
+# is Windows' SO_REUSEADDR).
+fn _lb_exclusive_group(): i64 {
+    test_group("6.6.11 — Windows: sock_reuse is SO_EXCLUSIVEADDRUSE, so a bound port cannot be taken");
+    var at, a = tcp_socket();
+    assert_eq(is_err_result(at), 0, "socket A");
+    assert_eq(sock_reuse(a), 0, "sock_reuse(A) before bind");
+    var bt, bv = sock_bind(a, INADDR_LOOPBACK(), 0);
+    assert_eq(is_err_result(bt), 0, "A binds 127.0.0.1:0");
+    # A's own address, as the kernel assigned it (an ephemeral port, never a fixed one).
+    var sa[16];
+    var sl[8];
+    store64(&sl, 16);
+    assert_eq(sys_getsockname(a, &sa, &sl), 0, "A's address reads back");
+    var lt, lv = sock_listen(a, 4);
+    assert_eq(is_err_result(lt), 0, "A listens");
+    var ct, c = tcp_socket();
+    assert_eq(is_err_result(ct), 0, "socket B");
+    assert_eq(sock_reuseport(c), 0, "sock_reuseport(B): B asks to share the port");
+    # Bind B to exactly that sockaddr, through the same primitive sock_bind uses.
+    assert(_net_os_bind(c, &sa, 16) < 0, "B cannot bind A's address (with SO_REUSEADDR it could: the hijack)");
+    sock_close(c);
+    sock_close(a);
+    return 0;
+}
+#endif
+
+# The one-shot HTTP server: accept one client on the non-blocking listener `lfd` (up to ~10 s),
+# read its request, answer 200 "hello". Returns 0 when the request was exactly the one http_get
+# must send for http://localhost:<port>/lb, 1 when no client came, 2 when it differed. It CLOSES
+# the listener either way: a client left in the backlog of an abandoned listener would wait for
+# a response forever, and http_get has no read timeout.
+fn _lb_serve(lfd, port): i64 {
+    var saved = sock_set_nonblocking(lfd);
+    var cfd = 0 - 1;
+    var k = 0;
+    while (cfd < 0 && k < 1000) {
+        var at, av = sock_accept(lfd);
+        if (is_err_result(at) == 0) { cfd = av; } else { _lb_sleep(10); }
+        k = k + 1;
+    }
+    sock_close(lfd);
+    if (cfd < 0) { return 1; }
+    sock_clear_nonblocking(cfd, saved);          # Windows: an accepted socket inherits FIONBIO
+    sock_set_recv_timeout(cfd, 10, 0);
+    var buf = alloc(2048);
+    var got = 0;
+    var go = 1;
+    while (go == 1 && got < 2047) {
+        var rt, rn = sock_recv(cfd, buf + got, 2047 - got);
+        if (is_err_result(rt) == 1) { go = 0; }
+        elif (rn <= 0) { go = 0; }
+        else {
+            got = got + rn;
+            if (got >= 4 && memeq(buf + got - 4, "\r\n\r\n", 4) == 1) { go = 0; }
+        }
+    }
+    store8(buf + got, 0);
+    var resp = "HTTP/1.0 200 OK\r\nContent-Length: 5\r\n\r\nhello";
+    sock_send_all(cfd, resp, strlen(resp));
+    sock_close(cfd);
+    var want = alloc(128);
+    var we = _lb_cat(want, "GET /lb HTTP/1.0\r\nHost: localhost:");
+    we = _lb_dec(we, port);
+    _lb_cat(we, "\r\nConnection: close\r\n\r\n");
+    if (streq(buf, want) != 1) { return 2; }
+    return 0;
+}
+
+#ifdef CYRIUS_TARGET_WIN
+# Thread body: ctx = { lfd, port, result }.
+fn _lb_server_thread(ctx): i64 {
+    store64(ctx + 16, _lb_serve(load64(ctx), load64(ctx + 8)));
+    return 0;
+}
+#endif
+
+fn _lb_http_group(): i64 {
+    test_group("6.6.11 — http_get against a loopback server (a thread on Windows, a child elsewhere)");
+    var l = alloc(16);
+    assert_eq(_lb_bound(SOCK_STREAM, l), 0, "listener bound");
+    var lfd = load64(l);
+    var port = load64(l + 8);
+    var lt, lv = sock_listen(lfd, 4);
+    assert_eq(is_err_result(lt), 0, "sock_listen");
+    var url = alloc(64);
+    var e = _lb_cat(url, "http://localhost:");
+    e = _lb_dec(e, port);
+    _lb_cat(e, "/lb");
+    #ifdef CYRIUS_TARGET_WIN
+    var ctx = alloc(24);
+    store64(ctx, lfd);
+    store64(ctx + 8, port);
+    store64(ctx + 16, 0 - 1);
+    var th = thread_create(&_lb_server_thread, ctx);
+    assert(th != 0, "thread_create (the server)");
+    var r = http_get(url);
+    thread_join(th);
+    assert_eq(http_status(r), 200, "http_get: status 200");
+    assert_eq(http_body_len(r), 5, "…a 5-byte body");
+    if (http_body_len(r) == 5) { assert_eq(memeq(http_body(r), "hello", 5), 1, "…'hello'"); }
+    assert_eq(load64(ctx + 16), 0, "the server saw exactly GET /lb with Host: localhost:<port>");
+    return 0;
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    var pid = sys_fork();
+    if (pid == 0) { sys_exit(_lb_serve(lfd, port)); }
+    sock_close(lfd);                             # the child's copy is the listener now
+    if (pid < 0) {
+        assert(0 == 1, "fork (EAGAIN / ENOMEM / a seccomp denial)");
+        return 0;
+    }
+    var r = http_get(url);
+    assert_eq(http_status(r), 200, "http_get: status 200");
+    assert_eq(http_body_len(r), 5, "…a 5-byte body");
+    if (http_body_len(r) == 5) { assert_eq(memeq(http_body(r), "hello", 5), 1, "…'hello'"); }
+    var stw[8];
+    store64(&stw, 0);
+    sys_waitpid(pid, &stw, 0);
+    var ec = 0 - 1;
+    if (WIFEXITED(load32(&stw)) == 1) { ec = WEXITSTATUS(load32(&stw)); }
+    assert_eq(ec, 0, "the server saw exactly GET /lb with Host: localhost:<port>");
+    #endif
+    return 0;
+}
+#endif
+
+fn main(): i64 {
+    alloc_init();
+    #ifndef CYRIUS_TARGET_AGNOS
+    _lb_tcp_group();
+    _lb_nonblocking_group();
+    _lb_udp_group();
+    #ifdef CYRIUS_TARGET_WIN
+    _lb_exclusive_group();
+    #endif
+    _lb_http_group();
+    #endif
+    return assert_summary();
+}
+var ec = main();
+syscall(60, ec);
