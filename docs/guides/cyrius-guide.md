@@ -171,9 +171,10 @@ keeps "last definition wins", with its warning).
 
 ### Subscripts: `a[i]` (6.6.12)
 
-An element-typed array takes a subscript — read, assignment and every
-compound operator — in a function, at top level, in a `for` step and inside
-a closure:
+An integer element-typed array `var a: T[N]` (T one of `i8`..`i64`,
+`u8`..`u64`) takes a subscript — read, assignment and every compound
+operator — in a function, at top level, in a `for` step and inside a
+closure:
 
 ```
 var t: i16[8];
@@ -196,6 +197,9 @@ Refused, by name (`cannot subscript 'a': ...`):
   (bytes in a function, slots at top level), so a subscript would be a guess;
   declare `var a: u8[N]` or `var a: i64[N]`, or keep `load*`/`store*` at an
   explicit byte offset;
+- a **float, bool or struct element** (`var a: f64[N]`, `f32[N]`,
+  `bool[N]`, `Pt[N]`) — the subscript is integer-element only; keep
+  `load*`/`store*` at `&a + i * sizeof(T)`;
 - a scalar or a pointer (`var p: *i64`) — pointer subscripts are not in the
   language;
 - a `u128` element, which does not fit one register (use `load64`/`store64`

@@ -12,7 +12,9 @@
 # AXIS 1 — the REFUSALS, each by name at file:line:col, exit 1, no binary. A bare `var a[N]`
 #   states no element width (N bytes in a fn, N slots at top level), so its subscript is refused
 #   rather than guessed; a scalar, a pointer and a `stack var` buffer are not element-typed
-#   arrays; a u128 element does not fit one register. An unknown name is `undefined variable`.
+#   arrays; a u128 element does not fit one register; an f64 / f32 / bool / struct element
+#   array is refused NAMING that shape (it is a `var a: T[N]`, so the bare/scalar explanation
+#   alone would misdescribe it). An unknown name is `undefined variable`.
 # AXIS 2 — ANTI-VACUOUS: the typed spelling of every refused shape compiles and runs.
 # AXIS 3 — the runtime file under CYRIUS_IR=3 (the IR passes rewrite around unrecorded raw
 #   bytes: a signed element load read wrong there until it recorded itself) and by default.
@@ -26,6 +28,8 @@
 #   * make `_arr_desc` answer 8 for `ew <= 0` (a bare array read as i64 slots)
 #     -> axis 1's four bare rows RED (they compile).
 #   * drop `if (w < 0) { _IR_REC0(S, IR_RAW_EMIT); }` in _arr_sub_load -> axis 3's IR=3 row RED.
+#   * drop ", an f64, f32, bool or struct element is not supported" from the refusal text in
+#     _arr_sub_addr -> axis 1's four float/bool/struct naming rows RED.
 #   * drop the slice guard in _arr_sub_read -> axis 5 RED (the slice is refused as not an array).
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -58,7 +62,10 @@ runs() {
     check "$1: exits $3" "$3" "$rc"
 }
 
-NOTARR="cannot subscript 'a': \`a[i]\` needs an element-typed array"
+NOTARR="cannot subscript 'a': \`a[i]\` needs an integer element-typed array"
+# A float, bool or struct element array IS `var a: T[N]`, so the refusal must name that shape
+# rather than explain it away as a bare array or a scalar (6.6.12 B20 review).
+NOTINT="an f64, f32, bool or struct element is not supported"
 echo "axis 1 — the refusals, by name:"
 refused bare_local_write 'fn f(): i64 {\n    var a[16];\n    a[1] = 5;\n    return 0;\n}\nsyscall(60, f());\n' \
     "error:<source>:3:6: $NOTARR"
@@ -76,6 +83,18 @@ refused stack_var        'fn f(): i64 {\n    stack var a[16];\n    a[0] = 1;\n  
     "error:<source>:3:6: $NOTARR"
 refused u128_element     'fn f(): i64 {\n    var a: u128[2];\n    return a[0];\n}\nsyscall(60, f());\n' \
     "error:<source>:3:13: cannot subscript 'a': a u128 element does not fit one register"
+refused f64_global       'var a: f64[4];\nfn f(): i64 { a[1] = 1; return 0; }\nsyscall(60, f());\n' \
+    "error:<source>:2:16: $NOTARR"
+refused f64_global_names 'var a: f64[4];\nfn f(): i64 { a[1] = 1; return 0; }\nsyscall(60, f());\n' \
+    "$NOTINT"
+refused f32_local        'fn f(): i64 {\n    var a: f32[4];\n    return a[0];\n}\nsyscall(60, f());\n' \
+    "$NOTINT"
+refused bool_global      'var a: bool[4];\nfn f(): i64 { return a[1]; }\nsyscall(60, f());\n' \
+    "error:<source>:2:23: $NOTARR"
+refused struct_local     'struct Pt { x; y; }\nfn f(): i64 {\n    var a: Pt[4];\n    return a[1];\n}\nsyscall(60, f());\n' \
+    "$NOTINT"
+refused struct_global    'struct Pt { x; y; }\nvar a: Pt[4];\nfn f(): i64 { return a[1]; }\nsyscall(60, f());\n' \
+    "$NOTINT"
 refused undefined_name   'fn f(): i64 { return nope[1]; }\nsyscall(60, f());\n' \
     "undefined variable 'nope'"
 
@@ -112,5 +131,5 @@ if [ "$fails" -ne 0 ]; then
     echo "FAIL: array_subscript_forms — $fails check(s) failed"
     exit 1
 fi
-echo "PASS: array_subscript_forms — 9 refusals named, 4 typed controls run, the runtime file green by default and under CYRIUS_IR=3, --syntax-only clean, the slice subscript untouched"
+echo "PASS: array_subscript_forms — 15 refusals named, 4 typed controls run, the runtime file green by default and under CYRIUS_IR=3, --syntax-only clean, the slice subscript untouched"
 exit 0

@@ -1252,15 +1252,17 @@ fn _sysx_meant_here(S, n): i64 {
     return m;
 }
 
-# ⛔ 6.6.12 — THE ARRAY SUBSCRIPT, `a[i]`, `a[i] = v` and `a[i] OP= v`, on an element-typed
-# array `var a: T[N]` (T = i8..i64 / u8..u64), local or global, in any fn, at top level, in a
-# closure (on its captured copy) and in an `async fn`. The language had no subscript at all:
-# `return a[1];` was `expected ';', got '['` and `a[i] = 5;` was `expected '=', got '['`, so
-# the only spelling was `store64(&a + i * 8, v)`. `a[i]` IS that: the element at
-# `&a + i * sizeof(T)`, loaded sign- or zero-extended by T, stored at T's width. No bounds
-# check (the opt-in checked mode is a separate item). A bare `var a[N]` states no element width
-# (bytes in a fn, slots at top level), so its subscript is REFUSED by name rather than guessed;
-# a slice local keeps its own bounds-checked `s[i]` (below, in the factor). CHANGELOG [6.6.12]
+# ⛔ 6.6.12 — THE ARRAY SUBSCRIPT, `a[i]`, `a[i] = v` and `a[i] OP= v`, on an INTEGER
+# element-typed array `var a: T[N]` (T = i8..i64 / u8..u64), local or global, in any fn, at
+# top level, in a closure (on its captured copy) and in an `async fn`. The language had no
+# subscript at all: `return a[1];` was `expected ';', got '['` and `a[i] = 5;` was
+# `expected '=', got '['`, so the only spelling was `store64(&a + i * 8, v)`. `a[i]` IS
+# that: the element at `&a + i * sizeof(T)`, loaded sign- or zero-extended by T, stored at
+# T's width. No bounds check (the opt-in checked mode is a separate item). A bare `var a[N]`
+# states no element width (bytes in a fn, slots at top level), so its subscript is REFUSED by
+# name rather than guessed, as is a float, bool or struct element (it records no integer
+# descriptor, so it reads as bare); a slice local keeps its own bounds-checked `s[i]` (below,
+# in the factor). CHANGELOG [6.6.12]
 #
 # Cursor at `[` after NAME: consumes `[ idx ]` and leaves rax = &NAME[idx]. Returns the element
 # width, NEGATIVE for a signed element (the EFIELD_LOAD_W convention); 0 after a diagnostic.
@@ -1292,7 +1294,7 @@ fn _arr_sub_addr(S, noff): i64 {
         }
         aw = 0;
     } elif (aw == 0) {
-        ERR_IDENT(S, "cannot subscript ", noff, ": `a[i]` needs an element-typed array `var a: T[N]` with T one of i8..i64, u8..u64 - a bare `var a[N]` states no element width, and a pointer or scalar is not an array; use load/store at an explicit byte offset", 0 - 1);
+        ERR_IDENT(S, "cannot subscript ", noff, ": `a[i]` needs an integer element-typed array `var a: T[N]` with T one of i8..i64, u8..u64 - a bare `var a[N]` states no element width, an f64, f32, bool or struct element is not supported, and a pointer or scalar is not an array; use load/store at an explicit byte offset", 0 - 1);
     } elif (aw > 8) {
         ERR_IDENT(S, "cannot subscript ", noff, ": a u128 element does not fit one register - use load64/store64 on its two halves", 0 - 1);
         aw = 0;

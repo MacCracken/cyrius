@@ -261,8 +261,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- **Array subscripts: `a[i]`, `a[i] = v` and `a[i] OP= v` on an element-typed array `var a: T[N]`
-  (B20, items R4 + R6).** The language had no subscript, read or write: `return a[1];` was
+- **Array subscripts: `a[i]`, `a[i] = v` and `a[i] OP= v` on an integer element-typed array
+  `var a: T[N]`, T = i8..i64 / u8..u64 (B20, items R4 + R6).** The language had no subscript, read or write: `return a[1];` was
   `expected ';', got '['` and `a[i] = 5;` was `expected '=', got '['` — local or global, in a fn or
   at top level, on 6.6.10 and 6.6.11 alike — so `store64(&a + i * 8, v)` was the only spelling.
   (R6, "`var c: i64[4];` inside a fn is refused", was this same diagnostic misattributed to the
@@ -281,7 +281,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   store at T's width, with all ten compound operators through the shared `_asg_compound_op`. No
   bounds check. A **bare** `var a[N]` (and `stack var a[N]`) states no element width — bytes in a
   fn, slots at top level — so its subscript is **refused by name** (`cannot subscript 'a': ...`),
-  as are a scalar, a pointer and a `u128` element; a `slice<T>` local keeps its bounds-checked
+  as are a scalar, a pointer, a `u128` element and an f64 / f32 / bool / struct element — the
+  last named as such (`an f64, f32, bool or struct element is not supported`), since that shape IS
+  a `var a: T[N]` and the bare/scalar explanation alone misdescribed it; a `slice<T>` local keeps its bounds-checked
   `s[i]`. `*T` pointer subscripts, slice writes and the opt-in bounds-checked mode are not part of
   this. Two traps closed on the way: the element load must clear `_flags_reflect_rax` (the address
   add set it, so `if (a[i])` branched on the ADDRESS on x86), and a signed element load records
@@ -294,8 +296,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   statement; green on x86, `CYRIUS_IR=3`, aarch64 (qemu), PE (wine) and cx, and on the real hosts
   with each host's own compiler — pi, ecb, ach and cass; each of five mutations listed in its
   header reddens it); new gate `tests/gates/frontend/array_subscript_forms.sh`
-  (nine refusals by file:line:col — four bare shapes, a scalar, a pointer, a `stack var`, a
-  `u128` element, an unknown name; four typed controls; the runtime file by default and under
+  (fifteen refusals — four bare shapes, a scalar, a pointer, a `stack var`, a `u128` element, an
+  unknown name, and six f64 / f32 / bool / struct element rows local and global, each naming the
+  element shape; four typed controls; the runtime file by default and under
   `CYRIUS_IR=3`; `--syntax-only` clean; the slice subscript untouched; RED on 6.6.11 with 22
   failures, and each of five mutations in its header RED). The guide documents the form beside the
   `store64` idiom (`docs/guides/cyrius-guide.md`, "Subscripts"). Every other program compiles
