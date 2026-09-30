@@ -115,9 +115,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   macOS arm removed. After the fix all four suites pass on ecb and ach (781 / 1,691 / 352 / 63).
   sandhi's CI gains a `macos-14` job and a structural row that keeps every `"/etc/"` literal and
   8.8.8.8 fallback inside `#ifndef CYRIUS_TARGET_WIN`. The pin moves 6.6.10 → 6.6.11.
-- sandhi ran its full CI in a clean `git archive` copy with a throwaway `CYRIUS_HOME` at 6.6.11.
-  ⛔ **sandhi 1.10.4 must be TAGGED before cyrius 6.6.12 is**; the fold is byte-identical to that
-  commit's `dist/sandhi.cyr`, and `docs/ecosystem.md`'s fold row names the commit.
+- **yantra 1.0.7 folded (`lib/yantra.cyr`, yantra commit `1095e5e`) — `_cdp_set_nodelay` through
+  `sys_setsockopt`; yantra's own build picks up the CVE-53 reader fix.** (B15, items SB2 + SB3.)
+  **Root cause (SB2):** a raw `syscall(54, ...)`, the x86-Linux setsockopt number, whose option cell
+  came from a leaked `alloc(4)` on every CDP connect. The PE build warned on it, and on agnos 54 is
+  `SYS_UDP_UNBIND`. **Fix, at the source:** `sys_setsockopt(fd, 6, 1, &one, 4)` with a stack cell;
+  on agnos, whose stdlib peer has no setsockopt, it declines with -38 and issues no syscall. yantra's
+  new `tests/cdp_nodelay.tcyr` shows 16 calls allocate nothing (1.0.6: 128 bytes). **SB3:** yantra
+  is the only repo whose own code reaches the `lib/ws.cyr` client reader that CVE-53 fixed. The fold
+  has carried the fixed reader since 6.6.10, but yantra's standalone build at pin 6.6.9 did not. The
+  pin moves to 6.6.11 and `cyrius.lock` is regenerated. Its Chromium/CDP e2e smoke is 11/11 and its
+  chromedriver e2e 9/9 against live browsers. yantra's `dist/` is untracked, so the fold is
+  `cyrius distlib` at that commit (a second run is byte-identical). Of the other vendored copies of
+  `ws.cyr` / `ws_server.cyr` in the ecosystem, no repo's own code calls either reader; they pick up
+  the fix at their next re-vendor.
+- sandhi and yantra ran their full CI in a clean `git archive` copy with a throwaway `CYRIUS_HOME` at
+  6.6.11. ⛔ **sandhi 1.10.4 and yantra 1.0.7 must be TAGGED before cyrius 6.6.12 is**; the folds are
+  byte-identical to those commits' `dist/` output, and `docs/ecosystem.md`'s two fold rows name the
+  commits.
 
 ## [6.6.11] — 2026-09-29
 
