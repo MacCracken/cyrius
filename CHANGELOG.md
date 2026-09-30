@@ -86,6 +86,125 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   regression_* deadline ends the grandchild too" (RED on ecb and ach against the pre-fix lib), and
   `process_deadline_tree.tcyr`'s whole-tree assert is no longer Linux-only (it tests lib/process.cyr,
   which has ended the group on macOS since 6.6.10; green on ecb and ach).
+### Fixed
+
+- **A CLI child inherits the WHOLE environment — Linux dropped everything past 8 KB, macOS passed
+  none of it.** (B09: J4, J6.) **Root cause:** `load_environ` (cbt/core.cyr) builds `_envp`, the
+  envp of every POSIX `sys_execve` the CLI makes (cycc, test binaries, git, the hasher, /bin/sh,
+  ssh). It read /proc/self/environ into a fixed 8,192-byte buffer, so on Linux every variable past
+  8 KB was silently absent in the child and the one straddling the cut truncated (measured: a
+  `cyrius run` child's environ was exactly 8,192 bytes with a trailing sentinel gone). macOS has no
+  /proc, so the open failed and `_envp` was the EMPTY vector: children ran with no PATH, HOME,
+  TMPDIR, SSH_AUTH_SOCK or CYRIUS_* — only execvp's default `/usr/bin:/bin` let git and the
+  hasher resolve. **Fix:** Linux reads to EOF into a growing buffer; macOS sets `_envp` to the
+  kernel's own entry-stack envp through `_macho_envp()`, factored out of `_macho_fill_environ`
+  (NULL-terminated, live for the whole process, no copy, no cap). The cross-OS driver's private
+  32 KB copy (`_co_build_envp`, justified by a comment saying "the default _envp is empty") is
+  gone — `_co_run_sh` passes `_envp`. New `toolchain/cli_child_env_complete.sh`: a `cyrius run`
+  child's environ must be byte-identical to `env -0` under a 40,000-byte variable and a trailing
+  sentinel (the 8191 cap and a non-growing buffer both FAIL; exit 77 with no /proc). Verified on
+  real hardware: pi (aarch64 Linux, the gate green; the 6.6.10 `load_environ` red at 8,192 bytes),
+  and ecb (arm64) + ach (x86) macOS, where a fake `sha256sum` first on PATH is run 15 times by
+  `cyrius deps` with the fix and never with the 6.6.10 CLI.
+
+- **Windows: `cyrius.exe` honours `CYRIUS_RESOLVED=1` and actually runs a pinned version.**
+  (B09: I3.) **Root cause:** `_cyrius_resolved` was set only by find_tools' /proc/self/environ scan,
+  which reads nothing on PE, so the documented escape from a pin was ignored (a project pinning an
+  uninstalled version exited 1 with it set). Behind it, the redirect could not succeed at all: it
+  looked for `versions/<pin>/bin/cyrius` (install.ps1 installs `cyrius.exe`) and then called
+  `sys_execve`, a -1 stub on PE — so on Windows every repo pinning another version could run NO
+  verb. **Fix:** find_tools' PE arm reads the flag through `_cbt_env_is_1`; the pinned path gets
+  `.exe`; and `_win_redirect_to_pinned` sets `CYRIUS_RESOLVED=1` on the CLI itself
+  (kernel32!SetEnvironmentVariableA via GetProcAddress + `callptr` — no new PE reroute), runs the
+  pinned `cyrius.exe` as a child through the CLI's CreateProcessW path (`_win_spawn_vec`, in a
+  job object), waits, and exits with the child's code. Default taken over "skip the redirect with
+  a warning": honouring the flag alone would leave pinned repos broken unless the user exports
+  it. New `toolchain/cli_pe_pinned_redirect.sh` (wine; exit 77 without it): an uninstalled pin
+  plus the flag exits 0 with the drift note, and without it exits 1 naming `bin/cyrius.exe`; a
+  probe in the pinned slot receives the verb, a spaced argument and the flag, and its exit code
+  (37) is `cyrius.exe`'s; the tree's own `cyrius.exe` in the slot runs the verb with no redirect
+  loop. Mutations: the find_tools line, the `.exe` suffix and the redirect call each FAIL it.
+  Verified on real Windows (cass): all four axes (0 / 1 naming `cyrius.exe` / 37 / 0).
+
+- **cbt comments no longer say the symlinked-`lib/` guard is inert on Windows.** (B09: K12.) Four
+  comment blocks in `cbt/cyrius.cyr` and `cbt/deps.cyr` still read "`is_symlink` returns 0 on
+  Windows — no PE readlink wrapper" (one framed as an "HONEST LIMIT"); `is_symlink` has had a PE
+  arm since 6.6.9 (GetFileAttributesW's REPARSE_POINT bit, then FindFirstFileW's name-surrogate
+  tag). Comment-only.
+
+- **`cyrius distlib`'s sidecar no longer depends on the host that runs it — it is the union over
+  every target.** (B10: K5, K8.) **Root cause:** `_distlib_verify_rounds` compiled its verify unit
+  once, for the HOST target, so the recorded leaf set was whatever that host's `#ifdef` arms left
+  undefined and `distlib --check` could drift between a Mac or ARM box and Linux CI (15 of 60
+  ecosystem bundles have different undefined sets per target at 6.6.10). **Fix:** each round
+  compiles the unit for x86_64 Linux, Windows (CYRIUS_TARGET_WIN=1) and macOS (CYRIUS_MACHO=1),
+  and aarch64 Linux and macOS (cycc_aarch64, CYRIUS_MACHO_ARM=1) — concurrently, read back in
+  target order — and classifies the union. Only an x86_64-Linux CLI has a compiler per target;
+  macOS, Windows and aarch64 CLIs **refuse by name** ("only an x86_64 Linux CLI has a compiler for
+  each"), and a missing `cycc_aarch64` is named. A per-target compile gets the inherited
+  environment minus every target selector. A symbol undefined on only SOME targets is credited to
+  a declarer already in the unit (nothing added), else the one dispatcher whose peer declares it,
+  else the one non-peer declarer, else a **named refusal** — never the first snapshot file (mihi's
+  EINTR on PE would have recorded the sigil monolith). A PRIVATE peer of a peer
+  (`syscalls_linux_common`) belongs to its dispatcher. `-v` prints each leaf a round adds.
+  **Measured:** `distlib --all` over 74 ecosystem repos gives sidecars byte-identical to the
+  6.6.10 CLI's (the extra per-target symbols are all owned by recorded leaves); total 488 s vs
+  437 s. Verified on ecb, ach, pi and cass (the named refusal). New
+  `toolchain/distlib_sidecar_host_independent.sh`; every `distlib_*.sh` gate stages cycc and a
+  `cycc_aarch64` built from src/ beside a private copy of the CLI (exit 77 if it cannot).
+  K8: `distlib_profile_sidecar.sh` takes `CYRIUS_BIN` / `CYCC` and copies `$CC` into its fake home.
+
+- **`cyrius distlib`'s verify no longer calls running out of rounds "converged".** (B10: K6.)
+  **Root cause:** falling out of the 6-round loop returned `added_total`, the same answer as a
+  real fixpoint, so the last round's leaves were never compiled and an 8-leaf chain published 6
+  leaves as "compile-verified" at rc 0. **Fix:** a named refusal ("did not converge in 6 rounds
+  — sidecar NOT written"); not a bigger cap. Gate: `distlib_sidecar_verified.sh` axis 13 (the
+  8-leaf chain fails; a 5-leaf chain still converges).
+
+- **`cyrius test` / `cyrius tests` grade the assert summary, not the exit code alone.** (B10: O3,
+  the cmd_test half of B01's rule.) **Root cause:** cmd_test ran each binary exit-code-only and
+  never saw stdout, so a test that died before `assert_summary()` with exit 0, a body run twice
+  (`1 passed, 1 failed`, exit 0) and a test that asserted nothing all PASSED. **Fix:** the test's
+  stdout is captured (POSIX dup2 in the child; Windows `cmd /s /c` redirection), echoed back, and
+  graded: when the source calls `assert_summary(`, the LAST `N passed, M failed` line must exist
+  with N >= 1 and M == 0. Verified by lane H's `test_runner_bounded.sh` axis 9 and on pi, ecb, ach
+  and cass. ⚠ It finds one: in this repo `tests/tcyr/crossos/struct_field_value_copy.tcyr`, built
+  with the manifest's auto-prepend, prints `\0` where assert_summary's leading `\n` belongs.
+
+- **`cyrius soak` says what a failed self-host step did.** (B10: K7.) It printed
+  `step N exited ` + the raw `_self_host_step` status — `exited 1` for a SIGSEGV and for an empty
+  output, `exited -1` after macOS's own named refusal. It now uses `_raw_fail_describe` like
+  `cyrius self` ("was killed by signal 11", "exited 0 but wrote no output"). New
+  `toolchain/cyrius_soak_describes_failures.sh`; the macOS branch verified on ecb and ach.
+
+- **`cyrius lint` fails on every compiler refusal except a named context set.** (B10: O4.)
+  **Root cause:** the pre-pass linted anyway unless an error message began with a SYNTAX
+  allow-list entry, so `#derive(accessors)` on an enum, `#derive` on neither a struct nor an enum
+  and a duplicate variable all linted `0 warnings`, rc 0. **Fix:** inverted — every error must be
+  in `_lint_msg_is_context` (`… requires include "…"`, an array sized by another file's enum, a
+  struct from a sibling module as a `.field` target, a field type or a `sizeof`) or lint fails and
+  forwards the diagnostic. **Measured** (read-only, lint's own flags): 2,837 sibling-repo source
+  files lint exactly as at 6.6.10; in-repo lib/, cbt/, programs/: 0 refusals.
+  `lint_reports_unparseable.sh` axes 10-11. **The same fail-open without an error line** (review):
+  a compiler that failed after writing only a warning, or aborted in its own words, got "could not
+  tell, linting anyway" — `0 warnings`, rc 0. It is now a refusal that says what the compiler did
+  (killed / `exited N`) and forwards everything it wrote; an EMPTY capture keeps its own path.
+  Re-measured over the 2,837 files: none reaches this branch, verdicts unchanged. Axis 12.
+
+- **`cyrius coverage` does not count the entry point `main`.** (B10: S7.) No test can name it, so
+  it held ganita at 139/141 and bayan at 501/503 with nothing else missing (now 139/139, 501/501).
+  One helper, `_src_is_entry_fn`, shared with `cyrius header`. `coverage_corpus_and_failopen.sh`
+  axis 20.
+
+- **`cyrius deps` keeps the stdlib fold over a named dep's thin profile of the same package.**
+  (B10: S2, the cyrius half.) bote declares the stdlib leaf `sigil` and depends on libro, whose
+  `[deps.sigil]` is the thin `dist/sigil-mldsa.cyr` + `src/*.cyr`; both copies landed in one unit
+  (232 duplicate fns; at the 6.6.10 pin, five arity errors and a failed build). A named dep
+  `<leaf>`'s `<leaf>-<profile>.cyr` / `<leaf>_<x>.cyr` is now neither vendored nor auto-included
+  when `<leaf>` is a stdlib leaf the resolution copied (a stale copy is removed; one `note:` each).
+  Measured: bote 3.3.13 pinned to 6.6.10 builds with 0 duplicate fns and its 14 tests pass (6.6.10:
+  exit 1). New `toolchain/deps_stdlib_profile_not_vendored.sh`; `deps_stdlib_leaf_not_clobbered.sh`
+  axis 2b.
 
 ## [6.6.10] — 2026-09-29
 

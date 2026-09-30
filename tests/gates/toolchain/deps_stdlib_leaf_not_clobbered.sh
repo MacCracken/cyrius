@@ -31,8 +31,8 @@
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
-CC="$ROOT/build/cycc"
-[ -x "$CC" ] || { echo "FAIL: deps_stdlib_leaf_not_clobbered: build/cycc missing"; exit 1; }
+CC=${CYCC:-"$ROOT/build/cycc"}
+[ -x "$CC" ] || { echo "SKIP: deps_stdlib_leaf_not_clobbered: no compiler at $CC"; exit 77; }
 WORK=$(mktemp -d) && [ -d "$WORK" ] || { echo "FAIL: deps_stdlib_leaf_not_clobbered: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$WORK"' EXIT
 fail() { echo "FAIL: deps_stdlib_leaf_not_clobbered: $1"; exit 1; }
@@ -42,13 +42,13 @@ fail() { echo "FAIL: deps_stdlib_leaf_not_clobbered: $1"; exit 1; }
 # INSTALLED cyrius — which is the previous release. That is the same "the wrapper resolves the
 # installed toolchain" trap that produced four wrong results during v6.5.37, one level up.
 ( cd "$ROOT" && cat cbt/cyrius.cyr | "$CC" > "$WORK/cyrius" ) 2>/dev/null \
-    || fail "could not build cbt/cyrius.cyr with build/cycc"
+    || fail "could not build cbt/cyrius.cyr with $CC"
 chmod +x "$WORK/cyrius"
 CYRIUS="$WORK/cyrius"
 
 V=$(cat "$ROOT/VERSION")
 SNAP="${CYRIUS_HOME:-$HOME/.cyrius}/versions/$V/lib/sakshi.cyr"   # v6.6.4: the CLI copies from $CYRIUS_HOME — compare against the SAME store
-[ -f "$SNAP" ] || { echo "SKIP: no stdlib snapshot at $SNAP (install not refreshed for $V)"; exit 0; }
+[ -f "$SNAP" ] || { echo "SKIP: deps_stdlib_leaf_not_clobbered: no stdlib snapshot at $SNAP (install not refreshed for $V)"; exit 77; }
 
 SENTINEL="FAKE-SAKSHI-SENTINEL-deps-gate"
 
@@ -58,6 +58,11 @@ mk_tree() {   # mk_tree <root> <declare-sakshi-as-stdlib: yes|no>
     mkdir -p "$R/fakesakshi/dist" "$R/mydep/dist" "$R/consumer"
     printf '# %s\nfn fake_sakshi_marker(): i64 { return 424242; }\n' "$SENTINEL" > "$R/fakesakshi/dist/sakshi.cyr"
     printf '[package]\nname = "sakshi"\nversion = "9.9.9"\n' > "$R/fakesakshi/cyrius.cyml"
+    # 6.6.11 (S2): a THIN PROFILE of the same package, and a src/ module that vendors as
+    # lib/sakshi_<x>.cyr — the shapes the stem-equality refusal never saw.
+    mkdir -p "$R/fakesakshi/src"
+    printf '# %s thin\nfn fake_sakshi_thin(): i64 { return 7; }\n' "$SENTINEL" > "$R/fakesakshi/dist/sakshi-thin.cyr"
+    printf '# %s extra\nfn fake_sakshi_extra(): i64 { return 8; }\n' "$SENTINEL" > "$R/fakesakshi/src/extra.cyr"
     printf '# mydep\nfn mydep_hello(): i64 { return 1; }\n' > "$R/mydep/dist/mydep.cyr"
     cat > "$R/mydep/cyrius.cyml" <<EOF
 [package]
@@ -66,7 +71,7 @@ version = "0.1.0"
 
 [deps.sakshi]
 path = "../fakesakshi"
-modules = ["dist/sakshi.cyr"]
+modules = ["dist/sakshi.cyr", "dist/sakshi-thin.cyr", "src/extra.cyr"]
 EOF
     if [ "$2" = "yes" ]; then STDLIB='stdlib = ["syscalls", "alloc", "string", "sakshi"]'
     else                      STDLIB='stdlib = ["syscalls", "alloc", "string"]'; fi
@@ -106,6 +111,16 @@ echo "$OUT" | grep -q "refusing to overwrite stdlib leaf" \
 echo "$OUT" | grep -q "sakshi" || fail "axis 2: the warning does not name the leaf"
 echo "$OUT" | grep -q "skipped" || fail "axis 2: the warning does not name the artifact it skipped"
 
+# ── axis 2b (6.6.11, S2): nor is a THIN PROFILE of the same package vendored ───────────
+# `lib/sakshi-thin.cyr` and `lib/sakshi_extra.cyr` never collided with the leaf's own stem,
+# so they landed next to the stdlib fold — two copies of one library in one unit (bote's
+# sigil). The fold is the package: neither file is vendored, and the note names each.
+for f in sakshi-thin sakshi_extra; do
+    [ -f "$WORK/a/consumer/lib/$f.cyr" ] && fail "axis 2b: lib/$f.cyr was vendored beside the declared stdlib leaf 'sakshi'"
+done
+echo "$OUT" | grep -q "dist/sakshi-thin.cyr not vendored" || fail "axis 2b: the skipped thin profile is not named; got: $OUT"
+echo "$OUT" | grep -q "src/extra.cyr not vendored" || fail "axis 2b: the skipped src module is not named; got: $OUT"
+
 # ── axis 3: `lib sync` then `deps` must not revert — the filed acceptance criterion ──
 set +e
 ( cd "$WORK/a/consumer" && "$CYRIUS" lib sync ) >/dev/null 2>&1
@@ -128,6 +143,9 @@ set -e
     || fail "axis 4: a package dep NOT declared as stdlib got NO lib/sakshi.cyr — the guard is over-broad and keyed on the wrong test"
 grep -q "$SENTINEL" "$WORK/b/consumer/lib/sakshi.cyr" \
     || fail "axis 4: lib/sakshi.cyr exists but is not the dep's artifact — the undeclared case was silently served the snapshot instead"
+# …and so do its thin profile and src module (the S2 rule keys on the DECLARED leaf too).
+[ -f "$WORK/b/consumer/lib/sakshi-thin.cyr" ] && [ -f "$WORK/b/consumer/lib/sakshi_extra.cyr" ] \
+    || fail "axis 4: without a stdlib 'sakshi', the package's thin profile and src module must still land"
 
 # ── axis 5: anti-vacuous — the collision path was really exercised ──────────────────
 # If the fixture stopped producing a collision (a manifest key renamed, path deps changing
@@ -135,4 +153,4 @@ grep -q "$SENTINEL" "$WORK/b/consumer/lib/sakshi.cyr" \
 [ -f "$WORK/b/consumer/lib/mydep.cyr" ] \
     || fail "axis 5: the intermediate dep did not resolve at all — the fixture is not exercising the transitive path the defect lives on"
 
-echo "PASS: deps_stdlib_leaf_not_clobbered (declared leaf survives + refusal announced + lib-sync round-trip holds + undeclared package dep still lands)"
+echo "PASS: deps_stdlib_leaf_not_clobbered (declared leaf survives + refusal announced + no thin profile beside it + lib-sync round-trip holds + undeclared package dep still lands)"

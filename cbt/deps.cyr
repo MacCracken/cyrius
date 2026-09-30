@@ -54,8 +54,9 @@ fn _dep_refuse_symlinked_dest(path): i64 {
 # the v6.5.36 lesson verbatim — a gate that pins the mechanism rather than the property
 # passes while the mechanism is wrong — which is why the companion gate asserts BOTH.
 #
-# ⚠ Returns 0 on Windows for every path: `is_symlink` has no PE arm (no readlink wrapper;
-# junctions are tracked with the Windows fs surface). Stated rather than hidden.
+# Windows too: `is_symlink`'s PE arm (GetFileAttributesW's REPARSE_POINT bit, then
+# FindFirstFileW's name-surrogate tag — lib/fs.cyr) sees symlinks and junctions.
+# CHANGELOG [6.6.9]
 fn _dep_dest_is_linked(dst): i64 {
     var n = strlen(dst);
     var buf = alloc(n + 1);
@@ -247,9 +248,8 @@ fn _dep_copy_file(src, dst): i64 {
     # `return 1`, so every write path (stdlib leaves, `requires`, `.deps` sidecar, modules,
     # submodules) inherits it without a per-caller edit.
     #
-    # ⚠ HONEST LIMIT: `is_symlink` returns 0 on Windows — there is no PE readlink wrapper and
-    # junctions are tracked with the Windows fs surface — so this guard does not fire on PE.
-    # Stated rather than hidden; the Linux/macOS/aarch64/agnos arms all check.
+    # It fires on every target, PE included: `is_symlink` has a Windows arm since 6.6.9
+    # (GetFileAttributesW + FindFirstFileW's reparse tag, lib/fs.cyr). CHANGELOG [6.6.9]
     if (_dep_vendor_mode == 1) {
         var linked = _dep_dest_is_linked(dst);
         if (linked != 0) { return _dep_refuse_symlinked_dest(linked); }
@@ -766,6 +766,55 @@ fn _dep_refuse_stdlib_clobber(stem, src, dst): i64 {
     sys_write(STDERR_FD, src, strlen(src));
     sys_write(STDERR_FD, "\n  declare it in [deps] stdlib OR depend on the package, not both.\n", 67);
     return 0;
+}
+
+# ⭐ 6.6.11 (S2) — THE FOLD WINS OVER A THIN PROFILE OF THE SAME PACKAGE, TOO.
+# `_dep_refuse_stdlib_clobber` only ever caught a dep artifact whose stem EQUALS a declared
+# stdlib leaf. A named dep whose NAME is a stdlib leaf ships more than that: libro's `[deps.sigil]`
+# is the thin `dist/sigil-mldsa.cyr` plus `src/{sha_ni,sha256,hex}.cyr`, vendored as
+# `lib/sigil-mldsa.cyr` and `lib/sigil_*.cyr`. bote declares the stdlib leaf `sigil` (the
+# MONOLITH fold) and depends on libro, so both copies of sigil landed in one unit: 233
+# `duplicate fn` warnings while the two versions matched, and at the 6.6.10 pin (fold 3.13.4,
+# libro's thin 3.12.18) five arity errors and a failed build — correctness hung on libro's sigil
+# tag moving in lockstep with every cyrius fold. Now a module of a named dep `<leaf>` whose file is
+# `<leaf>-<profile>` or `<leaf>_<x>` is NOT vendored and NOT auto-included when `<leaf>` is a
+# stdlib leaf this resolution already copied: the fold is the package. (Dropped from BOTH lists:
+# vendored-but-not-included would still be hashed and locked, included-but-not-vendored is a
+# missing include.) A copy an earlier resolution vendored there is removed. CHANGELOG [6.6.11]
+fn _dep_is_leaf_profile(stem, leaf): i64 {
+    var ll = strlen(leaf);
+    if (strlen(stem) <= ll + 1) { return 0; }
+    if (memeq(stem, leaf, ll) == 0) { return 0; }
+    var c = load8(stem + ll);
+    if (c == 45 || c == 95) { return 1; }            # '-' or '_'
+    return 0;
+}
+
+# 1 when `dst` (lib/<stem>.cyr) is a thin profile module of the named dep `dep`, and `dep` is a
+# stdlib leaf already copied — the caller then skips it (see above). Removes a stale vendored
+# copy, through the symlink guard; -1 when that guard refuses.
+fn _dep_keep_fold_over_profile(dep, dst, mod_path): i64 {
+    var stem = _dep_lib_dst_stem(dst);
+    if (stem == 0) { return 0; }
+    if (_dep_stdlib_seen_has(dep) == 0) { return 0; }
+    if (_dep_is_leaf_profile(stem, dep) == 0) { return 0; }
+    if (file_exists(dst) == 1) {
+        if (_dep_vendor_mode == 1) {
+            var lk = _dep_dest_is_linked(dst);
+            if (lk != 0) { _dep_refuse_symlinked_dest(lk); return 0 - 1; }
+        }
+        sys_unlink(dst);
+    }
+    _ew("note: [deps.");
+    _ew(dep);
+    _ew("] ");
+    _ew(mod_path);
+    _ew(" not vendored — '");
+    _ew(dep);
+    _ew("' is a stdlib leaf here, and its fold lib/");
+    _ew(dep);
+    _ew(".cyr is the package\n");
+    return 1;
 }
 
 fn _dep_copy_stdlib_recursive(stdlib_dir, mod_name, is_top): i64 {
@@ -1702,6 +1751,10 @@ fn _dep_pull_submodule(dep_src, pkg, submod, stdlib_dir, seen): i64 {
     str_builder_add_cstr(df_sb, submod);
     str_builder_add_cstr(df_sb, ".cyr");
     var dst_full = str_data(str_builder_build(df_sb));
+    # 6.6.11 (S2): a modular sub-module of a package that is a stdlib leaf here.
+    var _kf = _dep_keep_fold_over_profile(pkg, dst_full, submod);
+    if (_kf < 0) { return errs + 1; }
+    if (_kf == 1) { return errs; }
     # v6.5.37 (A0) — refuse BEFORE the unlink. A symlinked destination must not be
     # deleted either: unlink on a link removes the link, but the guard exists so a
     # vendoring run cannot touch a shared target at all, and a delete-then-refuse
@@ -2321,6 +2374,14 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                     # symlink guard above: a delete-then-refuse would leave the tree worse
                     # than either outcome, and here the file being deleted IS the snapshot
                     # copy we are defending.
+                    # 6.6.11 (S2): a thin profile of a package that is a stdlib leaf here.
+                    var _kf = _dep_keep_fold_over_profile(dep_name, dst, mod_path);
+                    if (_kf < 0) { return 1; }
+                    if (_kf == 1) {
+                        dep_had_success = 1;
+                        mi = mi + 1;
+                        continue;
+                    }
                     var _cl_stem = _dep_lib_dst_stem(dst);
                     if (_cl_stem != 0) {
                         if (_dep_stdlib_seen_has(_cl_stem) == 1) {

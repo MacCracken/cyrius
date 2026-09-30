@@ -35,6 +35,15 @@ check() {
 }
 
 [ -x "$CY" ] || { echo "  FAIL: build/cyrius missing"; exit 1; }
+# 6.6.11 (K5): the sidecar verify compiles for EVERY target, so the CLI needs cycc AND
+# cycc_aarch64 beside it (it resolves its tools from its own directory). Stage a private tool
+# dir from this tree; a staging failure means the gate could not run (77), never a FAIL.
+CC=${CYCC:-"$ROOT/build/cycc"}
+mkdir -p "$D/tools" && cp "$CY" "$D/tools/cyrius" && cp "$CC" "$D/tools/cycc" \
+    && ( cd "$ROOT" && "$CC" < src/main_aarch64.cyr > "$D/tools/cycc_aarch64" 2>/dev/null ) \
+    && chmod +x "$D/tools/cyrius" "$D/tools/cycc" "$D/tools/cycc_aarch64" \
+    || { echo "SKIP: distlib_all_profiles: could not stage cycc + cycc_aarch64 beside the CLI"; exit 77; }
+CY="$D/tools/cyrius"
 
 mkdir -p "$D/p/src" "$D/p/dist"
 cd "$D/p" || exit 2

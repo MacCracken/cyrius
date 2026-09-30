@@ -209,8 +209,13 @@ fn cmd_coverage(full, min_pct, root_arg): i64 {
             if (depth == 0) { ns = _src_public_fn_at(lbuf, pos, le, fpriv); }
             depth = depth + _src_brace_delta(lbuf, pos, le);
             if (depth < 0) { depth = 0; }
+            var fname_len = 0;
+            if (ns >= 0) { fname_len = _src_ident_end(lbuf, ns, le) - ns; }
+            # ⛔ 6.6.11: a depth-0 `main` is the ENTRY POINT (_src_is_entry_fn) — no test can name
+            # it, so counting it held ganita at 139/141 and bayan at 501/503 with nothing else
+            # missing. An `if`, NOT a `continue`: `pos = le + 1` below is the loop's only advance.
+            if (ns >= 0 && _src_is_entry_fn(lbuf, ns, fname_len) == 1) { ns = 0 - 1; }
             if (ns >= 0) {
-                var fname_len = _src_ident_end(lbuf, ns, le) - ns;
                 pub_fns = pub_fns + 1;
                 total_fns = total_fns + 1;
                 # ⛔ 6.6.8: a WHOLE-IDENTIFIER match over a corpus whose comments, strings and
@@ -619,7 +624,7 @@ fn cmd_header(arg): i64 {
         var fname_len = _src_ident_end(hbuf, fname_start, le) - fname_start;
         # A program's `fn main` is its entry point, not FFI surface — its prototype would
         # collide with the C host's own `int main`. CHANGELOG [6.6.8]
-        if (fname_len == 4) { if (memeq(hbuf + fname_start, "main", 4) == 1) { continue; } }
+        if (_src_is_entry_fn(hbuf, fname_start, fname_len) == 1) { continue; }
         var ne = _src_skip_ws(hbuf, fname_start + fname_len, le);
         if (ne >= le) { continue; }
         if (load8(hbuf + ne) != 40) { continue; }

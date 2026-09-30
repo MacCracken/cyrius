@@ -34,16 +34,26 @@
 # check removed (`raw == 0` → continue) → 16 FAIL.
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
-CLI="$ROOT/build/cyrius"
+# 6.6.11 (K8): a candidate CLI / compiler can be tested — CYRIUS_BIN / CYCC, as every gate takes.
+CLI=${CYRIUS_BIN:-"$ROOT/build/cyrius"}
 [ -x "$CLI" ] || CLI="$HOME/.cyrius/bin/cyrius"
-[ -x "$CLI" ] || { echo "SKIP: cyrius CLI missing"; exit 0; }
+[ -x "$CLI" ] || { echo "SKIP: distlib_profile_sidecar: cyrius CLI missing"; exit 77; }
+CC=${CYCC:-"$ROOT/build/cycc"}
+[ -x "$CC" ] || { echo "SKIP: distlib_profile_sidecar: no compiler at $CC"; exit 77; }
 W=$(mktemp -d) && [ -d "$W" ] || { echo "FAIL: distlib_profile_sidecar: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$W"' EXIT
 mkdir -p "$W/pkg/src" "$W/pkg/lib" "$W/pkg/dist" "$W/home/bin"
 # A hermetic CYRIUS_HOME needs BOTH bin/cycc and a real lib/: `_auto_deps()` resolves the
 # manifest's [deps].stdlib out of CYRIUS_HOME/lib, and a home with only bin/ dies with
 # `cannot find cyrius stdlib` — which would make every axis below pass vacuously on a
 # package that never built. (Same trap test_runner_bounded.sh documents at its axis 4.)
-cp "$ROOT/build/cycc" "$W/home/bin/cycc"; chmod +x "$W/home/bin/cycc"
+# ⚠ The CLI resolves its tools from ITS OWN directory, so it is copied in too — run from
+# build/, it used build/cycc and this home's bin/ was never read. 6.6.11 (K5): the sidecar
+# verify compiles for every target, so bin/ also holds a cycc_aarch64 built from this tree.
+cp "$CC" "$W/home/bin/cycc" && cp "$CLI" "$W/home/bin/cyrius" \
+    && ( cd "$ROOT" && "$CC" < src/main_aarch64.cyr > "$W/home/bin/cycc_aarch64" 2>/dev/null ) \
+    && chmod +x "$W/home/bin/cycc" "$W/home/bin/cyrius" "$W/home/bin/cycc_aarch64" \
+    || { echo "SKIP: distlib_profile_sidecar: could not stage cycc + cycc_aarch64 into the fake home"; exit 77; }
+CLI="$W/home/bin/cyrius"
 cp -R "$ROOT/lib" "$W/home/lib"
 CYRIUS_HOME="$W/home"; export CYRIUS_HOME
 cd "$W/pkg"

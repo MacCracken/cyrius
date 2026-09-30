@@ -978,6 +978,51 @@ fn _cbt_exit(code): i64 {
 # (stay quiet and lint anyway), and it must not spray either onto the user's terminal.
 var _cc_stderr_to = 0;
 
+# 6.6.11 — the distlib sidecar verify compiles ONE unit for every target, so it needs to pick
+# the compiler and the target per compile. When `_cc_override` is non-zero compile() runs that
+# binary instead of current_cc(); when `_cc_target_env` is non-zero the child's environment is
+# ours MINUS every target selector (CYRIUS_TARGET_WIN/EFI/AGNOS, CYRIUS_MACHO, CYRIUS_MACHO_ARM),
+# PLUS `_cc_target_env` itself unless it is "". Stripping is the point: B09 made every child
+# inherit the whole environment, so a CYRIUS_TARGET_WIN=1 left in a shell would otherwise turn
+# the "x86_64-linux" compile into a PE one. Both are opt-in and reset by the caller. POSIX
+# arm only — the verify refuses to run on any other host. CHANGELOG [6.6.11]
+var _cc_override = 0;
+var _cc_target_env = 0;
+
+# 1 when the cstr `e` begins with the cstr `p`.
+fn _cc_pfx(e, p): i64 {
+    var pl = strlen(p);
+    if (strlen(e) < pl) { return 0; }
+    return memeq(e, p, pl);
+}
+
+# 1 when the env entry `e` (a cstr) sets one of the target selectors above.
+fn _cc_env_is_target(e): i64 {
+    if (_cc_pfx(e, "CYRIUS_TARGET_WIN=") == 1) { return 1; }
+    if (_cc_pfx(e, "CYRIUS_TARGET_EFI=") == 1) { return 1; }
+    if (_cc_pfx(e, "CYRIUS_TARGET_AGNOS=") == 1) { return 1; }
+    if (_cc_pfx(e, "CYRIUS_MACHO=") == 1) { return 1; }
+    if (_cc_pfx(e, "CYRIUS_MACHO_ARM=") == 1) { return 1; }
+    return 0;
+}
+
+# `_envp` without its target selectors, plus `tv` when it is not "". A fresh NULL-terminated array.
+fn _cc_env_retarget(tv): i64 {
+    var n = 0;
+    while (load64(_envp + n * 8) != 0) { n = n + 1; }
+    var out = alloc((n + 2) * 8);
+    var o = 0;
+    var i = 0;
+    while (i < n) {
+        var e = load64(_envp + i * 8);
+        if (_cc_env_is_target(e) == 0) { store64(out + o * 8, e); o = o + 1; }
+        i = i + 1;
+    }
+    if (strlen(tv) > 0) { store64(out + o * 8, tv); o = o + 1; }
+    store64(out + o * 8, 0);
+    return out;
+}
+
 # The Windows twin of the child-side dup2 below. lib/process_win.cyr's
 # `_win_compile_spawn` builds `cmd /s /c ""cc" < "src" > "out""` and leaves stderr on
 # the console; this adds the `2> "err"` leg. Kept HERE rather than in lib/ so the
@@ -1067,6 +1112,7 @@ fn _compile_fail_hint(): i64 {
 fn compile(source, output): i64 {
     _cc_last_exit = 0 - 1;
     var cc = current_cc();
+    if (_cc_override != 0) { cc = _cc_override; }   # 6.6.11: the distlib per-target verify
     # v6.2.27: --target=aarch64-bare-metal-elf routes to the aarch64
     # cross-compiler (the same env knobs apply — kernel_mode + ELF64 kernel).
     # HARD-ERROR if cycc_aarch64 is absent (review P1) — never silently fall
@@ -1254,6 +1300,11 @@ fn compile(source, output): i64 {
             ax = ax + 1;
         }
         store64(&argv + ax * 8, 0);
+        # 6.6.11: a per-target compile (the distlib verify) gets its target and nothing else's.
+        if (_cc_target_env != 0) {
+            sys_execve(cc, &argv, _cc_env_retarget(_cc_target_env));
+            sys_exit(127);
+        }
         # v5.11.58: when --strict-pin is set, augment envp with
         # CYRIUS_STRICT_PIN=1 so cycc's pin-drift check (added
         # v5.11.57) exits non-zero on mismatch. CI gating path.
@@ -1489,6 +1540,15 @@ fn _run_sleep_ms(ms): i64 {
     #endif
 }
 
+# 6.6.11 (O3) — when non-zero, run_binary_timed sends the child's STDOUT to this path instead
+# of ours, so `cyrius test` can READ the assert summary it grades on (cmd_test echoes the capture
+# back). Opt-in and reset by the caller, like `_cc_stderr_to`. The caller CREATES the file, fresh
+# and empty (so an unwritable temp is named there, and nothing is ever truncated); the child only
+# opens it for writing, and a child that cannot exits 126 and the test fails — it never runs with
+# its output unseen. POSIX: dup2 in the child. Windows: cmd.exe
+# redirects it (`_win_run_timed`), the pattern `_win_compile_spawn` uses. CHANGELOG [6.6.11]
+var _run_stdout_to = 0;
+
 fn run_binary_timed(path, timeout_ms, args): i64 {
     #ifdef CYRIUS_TARGET_WIN
     return _win_run_timed(path, timeout_ms, args);
@@ -1535,11 +1595,24 @@ fn run_binary_timed(path, timeout_ms, args): i64 {
         # Apple-Silicon `cyrius test` failure). Gate it OUT on macOS — exec directly.
         #ifndef CYRIUS_TARGET_MACOS
         if (_arch == ARCH_AARCH64) {
+            if (_run_stdout_to != 0) {
+                var qfd = sys_open(_run_stdout_to, O_WRONLY, 0);
+                if (qfd < 0) { sys_exit(126); }
+                sys_dup2(qfd, 1);
+                sys_close(qfd);
+            }
             var qav = _run_argv(path, args, "/usr/bin/qemu-aarch64");
             sys_execve("/usr/bin/qemu-aarch64", qav, _envp);
             sys_exit(127);
         }
         #endif
+        # 6.6.11: `cyrius test` reads the child's stdout (see `_run_stdout_to`).
+        if (_run_stdout_to != 0) {
+            var cfd = sys_open(_run_stdout_to, O_WRONLY, 0);
+            if (cfd < 0) { sys_exit(126); }
+            sys_dup2(cfd, 1);
+            sys_close(cfd);
+        }
         var nav = _run_argv(path, args, 0);
         sys_execve(path, nav, _envp);
         sys_exit(127);
@@ -1984,6 +2057,22 @@ fn _win_run_cx(vm, cyx): i64 {
     return _win_wait_close(&pi);
 }
 
+# 6.6.11 (O3) — `cmd /s /c ""<path>" > "<cap>""`: the program with its stdout redirected by
+# cmd.exe (Win32 has no dup2), the shape `_win_compile_spawn` uses; `/s` strips only the outer
+# quote pair, and cmd's exit status is the program's. Only `cyrius test` asks for it, with no
+# program arguments. The job and the deadline apply to cmd.exe and the program under it alike.
+fn _win_cmdline_cap(path, cap): i64 {
+    var wbuf = alloc((strlen(path) + strlen(cap) + 32) * 2);
+    var o = 0;
+    o = _w_append_cstr(wbuf, o, "cmd /s /c \"\"");
+    o = _w_append_cstr(wbuf, o, path);
+    o = _w_append_cstr(wbuf, o, "\" > \"");
+    o = _w_append_cstr(wbuf, o, cap);
+    o = _w_append_cstr(wbuf, o, "\"\"");
+    _w_terminate(wbuf, o);
+    return wbuf;
+}
+
 # v6.6.5 (round-3 review) — the Windows arm of run_binary_timed. The POSIX body is
 # fork/execve/waitpid, and on PE `sys_fork` is a -1 stub, so `cyrius run/test/tests/
 # bench/fuzz/soak/smoke/doctest` NEVER RAN THE PROGRAM on Windows: the parent
@@ -1998,7 +2087,9 @@ fn _win_run_cx(vm, cyx): i64 {
 # outlives it" (see run_binary_timed). It used TerminateProcess on the child alone.
 # `cyrius run` (0) keeps `_win_wait_close`: the program owns what it starts.
 fn _win_run_timed(path, timeout_ms, args): i64 {
-    var wbuf = _win_cmdline(path, args);
+    var wbuf = 0;
+    if (_run_stdout_to != 0) { wbuf = _win_cmdline_cap(path, _run_stdout_to); }
+    else { wbuf = _win_cmdline(path, args); }
     if (wbuf == 0) { return 1; }
     var pi[24];
     if (_win_create_process(wbuf, 0, 0, &pi) == 0) {
@@ -2275,52 +2366,23 @@ fn run_script(script, arg1, arg2): i64 {
 }
 
 # ── Cross-OS self-host gate support (v6.0.33) ──
-# The default _envp (cbt/core.cyr) is empty, so an execve'd `ssh` would
-# lack HOME / SSH_AUTH_SOCK and fail to reach the verification hosts.
-# Reconstruct the real environment from /proc/self/environ so ssh/scp
-# behave exactly as they would in the user's shell.
-var _co_env_buf[32768];     # 32 KB of NUL-separated NAME=VALUE pairs
-var _co_env_ptrs[8192];     # 1024 char* slots (8 bytes each)
-
-# Build a NULL-terminated char** of the current environment. Returns
-# &_co_env_ptrs, or 0 on failure (then callers fall back to _envp).
-fn _co_build_envp(): i64 {
-    var fd = sys_open("/proc/self/environ", 0, 0);
-    if (fd < 0) { return 0; }
-    var n = sys_read(fd, &_co_env_buf, 32767);
-    sys_close(fd);
-    if (n <= 0) { return 0; }
-    store8(&_co_env_buf + n, 0);
-    var pc = 0;
-    store64(&_co_env_ptrs, &_co_env_buf);   # first entry starts at byte 0
-    pc = 1;
-    var i = 0;
-    while (i < n) {
-        if (load8(&_co_env_buf + i) == 0) {
-            if (i + 1 < n) {
-                if (pc < 1023) {
-                    store64(&_co_env_ptrs + pc * 8, &_co_env_buf + i + 1);
-                    pc = pc + 1;
-                }
-            }
-        }
-        i = i + 1;
-    }
-    store64(&_co_env_ptrs + pc * 8, 0);      # NULL-terminate the vector
-    return &_co_env_ptrs;
-}
+# The execve'd `ssh`/`scp` need the user's HOME / SSH_AUTH_SOCK to reach the verification
+# hosts, so they get the real environment: `_envp` (cbt/core.cyr `load_environ`), which is
+# the WHOLE environment since 6.6.11. This used to say "the default _envp is empty" and
+# rebuilt a private copy here from /proc/self/environ, capped at 32 KB and 1,023 entries;
+# `_envp` was never empty on Linux (it was capped at 8 KB), and it is uncapped now.
+# CHANGELOG [6.6.11]
 
 # Run `/bin/sh -c <cmd>` with the real environment. Returns the shell
 # exit status (0 = success). Used by the cross-OS self-host gate so the
 # proven ssh/scp self-host sequence runs with full env.
 fn _co_run_sh(cmd): i64 {
-    # v6.6.6 — PE arm: refuse by name. This driver reads /proc/self/environ and shells
+    # v6.6.6 — PE arm: refuse by name. This driver forks /bin/sh and shells
     # out to ssh/scp; cass is one of the hosts it connects TO. CHANGELOG [6.6.6].
     #ifdef CYRIUS_TARGET_WIN
     return _win_co_run_refuse(cmd);
     #endif
-    var envp = _co_build_envp();
-    if (envp == 0) { envp = _envp; }
+    var envp = _envp;
     var pid = sys_fork();
     if (pid == 0) {
         var argv[32];                         # 4 char* slots

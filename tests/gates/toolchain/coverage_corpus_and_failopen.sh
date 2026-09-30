@@ -92,6 +92,7 @@
 #   M18 (6.6.10) coverage back on unchecked dir_walk                     → axes 16, 17 FAIL
 #   M19 (6.6.10) _src_ids_add stops growing and answers PRESENT when full → axis 18 FAIL
 #   M20 (6.6.10) the per-fn corpus scan restored (the 6.6.9 CLI: 38 s)    → axis 19 FAIL
+#   M21 (6.6.11) the entry-point exclusion removed from cmd_coverage      → axis 20 FAIL
 #   real tree → every axis green
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -337,8 +338,10 @@ check "14: no method is named as a miss" 0 "$(grep -cE ': (norm|get)$' "$D/o18" 
 # ── AXES 15-17 (6.6.10): an unreadable test, test directory or source directory FAILS,
 # by name. The fixture reads 50 % when readable, so a dropped test LOWERS it and a dropped
 # source directory RAISES it (the fail-open direction) — the verdict must be an error.
+ROOTSKIP=0
 if [ "$(id -u)" = "0" ]; then
     echo "  SKIP: axes 15-17 — running as root (uid 0 reads a mode-000 file or directory)"
+    ROOTSKIP=1
 else
     echo "axes 15-17 — an unreadable test / tests dir / src dir is an ERROR, not a percentage:"
     mkdir -p "$D/ur/src/sub" "$D/ur/tests/sub" && cd "$D/ur" || exit 2
@@ -398,8 +401,38 @@ EL=$(( $(date +%s) - T0 ))
 check "19 the report is right (1500/3000)" 1 "$(grep -c 'Functions referenced: 1500/3000 (50%)' "$D/o24" || true)"
 check "19 …in under 10 s (took ${EL} s)" 1 "$([ "$EL" -lt 10 ] && echo 1 || echo 0)"
 
+# ── AXIS 20 (6.6.11, S7): the ENTRY POINT is not in the denominator. A depth-0 `main` is
+# invoked by its own file's `syscall(60, main())`, never named by a test, so it could never
+# count: ganita read 139/141 and bayan 501/503 with `main` the only misses, and both held
+# their CI floors below 100. `cyrius header` has skipped it since 6.6.8 (the same helper,
+# `_src_is_entry_fn`). ⚠ The loop advances only at its bottom, so a `continue` there would
+# spin forever — the timeout is part of the axis.
+echo "axis 20 — coverage does not count the entry point 'main':"
+mkdir -p "$D/ent/src" "$D/ent/tests" && cd "$D/ent" || exit 2
+printf '[package]\nname = "ent"\nversion = "0.1.0"\n' > cyrius.cyml
+printf 'fn helper(): i64 { return 1; }\nfn main(): i64 { return helper(); }\nsyscall(60, main());\n' > src/main.cyr
+printf 'var a = helper();\n' > tests/t.tcyr
+timeout 60 "$CY" coverage --min 100 > "$D/o25" 2>&1; rc25=$?
+check "20a main + a referenced helper reads 1/1 (100%)" 1 "$(grep -c 'Functions referenced: 1/1 (100%)' "$D/o25" || true)"
+check "20b …and --min 100 passes" 0 "$rc25"
+check "20c …and main is not named as a miss" 0 "$(grep -c ': main$' "$D/o25" || true)"
+# Only the exact name: `mainx` and `domain` are ordinary fns and still count (and miss).
+printf 'fn helper(): i64 { return 1; }\nfn mainx(): i64 { return 2; }\nfn domain(): i64 { return 3; }\nfn main(): i64 { return helper(); }\n' > src/main.cyr
+timeout 60 "$CY" -v coverage > "$D/o26" 2>&1
+check "20d mainx and domain are still counted (1/3)" 1 "$(grep -c 'Functions referenced: 1/3' "$D/o26" || true)"
+check "20e …and named as misses" 2 "$(grep -cE '^  src/main.cyr: (mainx|domain)$' "$D/o26" || true)"
+# A src/ whose only public fn is main has nothing to measure — the existing error, not 100%.
+printf 'fn main(): i64 { return 0; }\nsyscall(60, main());\n' > src/main.cyr
+timeout 60 "$CY" coverage > "$D/o27" 2>&1; rc27=$?
+check "20f only main: 'no public functions found', exit 1" "1 1" "$(grep -c 'no public functions found' "$D/o27") $rc27"
+
 cd "$ROOT" || exit 2
 echo ""
+# 6.6.11: axes that could not run make the verdict a SKIP (exit 77), never a PASS.
+if [ "$fails" = "0" ] && [ "$ROOTSKIP" = "1" ]; then
+    echo "SKIP: coverage-corpus-and-failopen — every axis that ran is green; axes 15-17 cannot run as root"
+    exit 77
+fi
 if [ "$fails" = "0" ]; then
     echo "PASS: coverage-corpus-and-failopen — whole corpus + whole sources, code-only whole-identifier refs, every spelling + the private rule, no nested prune, misses named, empty measurement fails"
     exit 0

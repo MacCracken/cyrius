@@ -38,8 +38,17 @@ SNAP="$HOMEDIR/versions/$VER/lib"
 WORK=$(mktemp -d) && [ -d "$WORK" ] || { echo "FAIL: distlib_sidecar_stdlib_only: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$WORK"' EXIT
 fail() { echo "FAIL: distlib_sidecar_stdlib_only: $1"; exit 1; }
+# 6.6.11 (K5): the sidecar verify compiles for EVERY target, so the CLI needs cycc AND
+# cycc_aarch64 beside it (it resolves its tools from its own directory). Stage a private tool
+# dir from this tree; a staging failure means the gate could not run (77), never a FAIL.
+CC=${CYCC:-"$ROOT/build/cycc"}
+mkdir -p "$WORK/tools" && cp "$CYRIUS" "$WORK/tools/cyrius" && cp "$CC" "$WORK/tools/cycc" \
+    && ( cd "$ROOT" && "$CC" < src/main_aarch64.cyr > "$WORK/tools/cycc_aarch64" 2>/dev/null ) \
+    && chmod +x "$WORK/tools/cyrius" "$WORK/tools/cycc" "$WORK/tools/cycc_aarch64" \
+    || { echo "SKIP: distlib_sidecar_stdlib_only: could not stage cycc + cycc_aarch64 beside the CLI"; exit 77; }
+CYRIUS="$WORK/tools/cyrius"
 
-[ -d "$SNAP" ] || { echo "  SKIPPED: no stdlib snapshot at $SNAP"; exit 0; }
+[ -d "$SNAP" ] || { echo "SKIP: distlib_sidecar_stdlib_only: no stdlib snapshot at $SNAP"; exit 77; }
 [ -f "$SNAP/alloc.cyr" ] || fail "fixture premise: $SNAP/alloc.cyr missing"
 # The directory-family leaf. If the tree ever stops shipping one, axis 3 must be re-pointed
 # rather than dropped — it is the axis that fails a flat-file-only check.
@@ -95,7 +104,7 @@ grep -qx 'alloc' "$DEPS" || fail "axis 2: 'alloc' is missing — the validator i
 if [ -n "$FAMILY" ]; then
     grep -qx "$FAMILY" "$DEPS" || fail "axis 3: directory-family leaf '$FAMILY' was dropped — the check tests only the flat <leaf>.cyr form"
 else
-    echo "  axis 3 SKIPPED: no directory-family leaf in $SNAP to test with"
+    echo "  axis 3 SKIP: no directory-family leaf in $SNAP to test with"
 fi
 
 # ── axis 4: every leaf the sidecar names actually resolves ─────────────────────────────
@@ -105,4 +114,6 @@ while IFS= read -r l; do
     [ -f "$SNAP/$l.cyr" ] || [ -d "$SNAP/$l" ] || fail "axis 4: sidecar names '$l', which does not resolve in $SNAP"
 done < "$DEPS"
 
+# An axis that could not run is not a pass (6.6.11: exit 77, the gate SKIP protocol).
+[ -n "$FAMILY" ] || { echo "SKIP: distlib_sidecar_stdlib_only: axes 1, 2 and 4 green, axis 3 not run (no directory-family leaf)"; exit 77; }
 echo "PASS: distlib_sidecar_stdlib_only (vendored leaf rejected, stdlib kept, family kept, all leaves resolve)"
