@@ -68,6 +68,11 @@
 #     PPID=1)`; with PDEATHSIG `child 1985627 died too`.
 #   * make `_cbt_env_int` return its default for a well-formed value -> axis 1 RED
 #     (the 5 s override stops applying and the elapsed check hits the ceiling).
+#   * 6.6.11 B01, axis 9 (run against runner shims, since B10's capture lands in lane T):
+#     a runner that just `exit 1`s -> the four grading rows GREEN (the vacuous pass the
+#     review named) but both controls and all seven "RAN" rows RED; a runner whose build
+#     fails for every file but fine.tcyr -> the controls GREEN, the seven "RAN" rows RED;
+#     a runner that grades the last summary line -> every axis-9 row GREEN.
 set -u
 # The CLI's temp base, derived exactly as cbt/build.cyr::_cbt_tmpbase derives it (6.6.9 bite
 # 9): an ABSOLUTE $TMPDIR with trailing slashes dropped, else /tmp. A fixed /tmp here would
@@ -184,10 +189,11 @@ include "lib/assert.cyr"
 
 fn main(): i64 {
     var a = assert_eq(2 + 2, 4, "the runner still runs real assertions");
-    return 0;
+    return assert_summary();
 }
-var m = main();
-var r = assert_summary();
+# Not `var m = main(); var r = assert_summary();` — a defined main is auto-called AGAIN by the
+# epilogue, so that shape runs the body twice (6.6.11; tests/gates/toolchain/tcyr_epilogue_shape.sh).
+syscall(60, main());
 FINE
 
 # ── AXIS 0 — ANTI-VACUOUS. A well-behaved test still passes, exits 0, and is not
@@ -534,6 +540,84 @@ if [ "$rc" = 0 ]; then
 else
     check "the window probe compiles" 0 "$rc"; sed -n 1,3p "$T/win.err"
 fi
+
+# ── AXIS 9 (6.6.11 B01 / B10, O3): `cyrius test` grades by the assert summary. `cmd_test` ran
+# each binary through the exit-code-only `run_binary_timed`, so a test that died before
+# assert_summary() and exited 0 — or ran its body twice (fn main + a top-level `main();`, the
+# epilogue auto-calls a defined main again) and exited 0 with `1 failed` printed — scored PASS
+# on `cyrius test`, `cyrius tests <dir>` and bare `cyrius test`. The rule is the one every
+# .tcyr reader applies (programs/checks/selfhost.cyr `_tcyr_grade`): when the SOURCE calls
+# assert_summary(, the LAST `N passed, M failed` line must exist with N >= 1 and M == 0, and the
+# exit code must be 0. The capture lives in cbt (lane T, B10); these rows are RED against a CLI
+# without it — MEASURED against the 6.6.10 build/cyrius: die_early, main_twice and zero all rc 0.
+echo "axis 9 — 'cyrius test' fails a test whose assert summary is missing, empty or failing:"
+# ANTI-VACUOUS (review of b20b36a3): "nonzero rc" alone is satisfied by ANY failure — a compile
+# or include error, a crash, a usage error — so once B10 turned these rows green nothing would
+# pin that the SUMMARY GRADING is what failed them. Three things close that:
+#   (a) a PREMISE per fixture: compiled with build/cycc and run bare, it exits 0 — so the only
+#       way `cyrius test` can score it nonzero is by reading its output;
+#   (b) a POSITIVE CONTROL in the same staged dir, through the same verb: fine.tcyr exits 0 and
+#       its `1 passed, 0 failed` reaches the user — the dir, the includes and the runner work;
+#   (c) every failing row also requires the fixture's OWN output (its FAIL line or its summary)
+#       in what the runner printed — the binary compiled and RAN before it was failed.
+# Output is read from stdout+stderr together: assert.cyr prints FAIL lines to stderr and the
+# summary to stdout, and which channel a capturing runner echoes on is the runner's choice.
+mkdir -p "$T/sum" "$T/sumok"
+printf 'include "lib/assert.cyr"\nassert_eq(1, 2, "dies before its summary");\nsyscall(60, 0);\nvar r = assert_summary();\n' > "$T/sum/die_early.tcyr"
+printf 'include "lib/assert.cyr"\nfn main() {\n    assert_eq(1, 1, "right");\n    assert_eq(1, 2, "wrong");\n    return 0;\n}\nmain();\nvar r = assert_summary();\n' > "$T/sum/main_twice.tcyr"
+printf 'include "lib/assert.cyr"\nvar r = assert_summary();\nsyscall(60, r);\n' > "$T/sum/zero.tcyr"
+cp "$T/fine.tcyr" "$T/sum/fine.tcyr"
+cp "$T/fine.tcyr" "$T/sumok/fine.tcyr"
+# The marker each fixture prints when it actually runs.
+sum_marker() {
+    case "$1" in
+        die_early) echo 'FAIL: dies before its summary' ;;
+        main_twice) echo '1 passed, 1 failed' ;;
+        zero) echo '0 passed, 0 failed' ;;
+    esac
+}
+# (a) premise: bare, each fixture exits 0 and prints its marker. Compiled from $T, where the
+# raw `include "lib/..."` resolves against $T/lib.
+for n in die_early main_twice zero; do
+    rc=0
+    ( cd "$T" && "$ROOT/build/cycc" < "$T/sum/$n.tcyr" > "$T/sum_$n.bin" 2> /dev/null ) || rc=$?
+    if [ "$rc" = 0 ]; then
+        chmod +x "$T/sum_$n.bin"
+        ( cd "$T" && timeout 60 "$T/sum_$n.bin" > "$T/sum_$n.bare" 2>&1 ) || rc=$?
+    fi
+    check "premise: $n.tcyr compiles and exits 0 when run bare (only the summary can fail it)" 0 "$rc"
+    check "premise: $n.tcyr prints its marker when run bare" 1 \
+        "$(grep -c "$(sum_marker "$n")" "$T/sum_$n.bare" || true)"
+done
+# (b) positive control, single-file verb, same staged dir.
+rc=0
+( cd "$T" && CYRIUS_TEST_TIMEOUT=60 timeout 300 "$CY" test "$T/sum/fine.tcyr" > "$T/sum_fine.out" 2> "$T/sum_fine.err" ) || rc=$?
+check "control: cyrius test sum/fine.tcyr passes (exit)" 0 "$rc"
+# The capture must not swallow the output: the passing test's summary still reaches the user.
+check "control: the captured output is echoed back (sum/fine's summary is visible)" 1 \
+    "$(cat "$T/sum_fine.out" "$T/sum_fine.err" | grep -c '^1 passed, 0 failed' || true)"
+# (c) the failing rows: nonzero, not by timeout, and the fixture demonstrably ran.
+for n in die_early main_twice zero; do
+    rc=0
+    ( cd "$T" && CYRIUS_TEST_TIMEOUT=60 timeout 300 "$CY" test "$T/sum/$n.tcyr" > "$T/sum_$n.out" 2> "$T/sum_$n.err" ) || rc=$?
+    check "cyrius test $n.tcyr is a FAILURE" "yes" "$([ "$rc" != 0 ] && [ "$rc" != 124 ] && echo yes || echo no)"
+    check "cyrius test $n.tcyr: the fixture RAN (its own output is in the runner's)" "yes" \
+        "$(cat "$T/sum_$n.out" "$T/sum_$n.err" | grep -q "$(sum_marker "$n")" && echo yes || echo no)"
+done
+# The directory verb: its positive control (fine alone passes) ...
+rc=0
+( cd "$T" && CYRIUS_TEST_TIMEOUT=60 timeout 300 "$CY" tests "$T/sumok" > "$T/sumok_dir.out" 2> "$T/sumok_dir.err" ) || rc=$?
+check "control: cyrius tests <dir> with only fine.tcyr passes (exit)" 0 "$rc"
+# ... and the same verb over the three beside that pass: nonzero, not by timeout, every file ran.
+rc=0
+( cd "$T" && CYRIUS_TEST_TIMEOUT=60 timeout 300 "$CY" tests "$T/sum" > "$T/sum_dir.out" 2> "$T/sum_dir.err" ) || rc=$?
+check "cyrius tests <dir> with those three is a FAILURE" "yes" "$([ "$rc" != 0 ] && [ "$rc" != 124 ] && echo yes || echo no)"
+for n in die_early main_twice zero; do
+    check "cyrius tests <dir>: $n.tcyr RAN" "yes" \
+        "$(cat "$T/sum_dir.out" "$T/sum_dir.err" | grep -q "$(sum_marker "$n")" && echo yes || echo no)"
+done
+check "cyrius tests <dir>: fine.tcyr RAN and passed" "yes" \
+    "$(cat "$T/sum_dir.out" "$T/sum_dir.err" | grep -q '^1 passed, 0 failed' && echo yes || echo no)"
 
 echo ""
 if [ "$fails" = "0" ]; then

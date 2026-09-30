@@ -94,7 +94,9 @@ GOTD=$(printf '%s' "$OUT" | head -1 | awk '{print $2}')
 [ "$GOTD" = "$VER" ] || fail "axis 2: repo named 'cyrius' reported '$GOTD', expected the running $VER"
 
 if [ -z "$OTHER" ]; then
-    echo "PASS: pin_redirect_honours_manifest (axis 2 only — no second version installed)"
+    # 6.6.11 (K1): axes 1+3 could not run — a SKIP (77), never a PASS.
+    echo "SKIP: pin_redirect_honours_manifest — axes 1+3 need a second installed cyrius version (axis 2 passed; exit 77: a SKIP, not a PASS)"
+    exit 77
 else
     echo "PASS: pin_redirect_honours_manifest (4 axes: pin honoured with src/main.cyr, control, exact-name, cyrius-repo exempt)"
 fi

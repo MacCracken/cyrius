@@ -362,6 +362,7 @@ fi
 echo "axis 4 — ⭐ the affected verbs under wine (SKIP when wine is absent — NOT hardware):"
 if ! command -v wine > /dev/null 2>&1 || ! command -v winepath > /dev/null 2>&1; then
     echo "  SKIP: wine/winepath not installed — this leg is covered on real cass only"
+    GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 elif [ ! -s "$T/cc_win" ]; then
     echo "  FAIL: axis 4 cannot run — the PE compiler was not built in axis 3"; fails=$((fails + 1))
 else
@@ -645,6 +646,8 @@ check "  …and does not count a fn that never appends" 2 "$(grep -c ':' "$T/bld
 
 echo ""
 if [ "$fails" = "0" ]; then
+    # 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
+    if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: cbt_fork_sites_have_pe_arm — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
     echo "PASS: cbt-fork-sites-have-pe-arm — $NSITE fork sites, every one armed and named"
     exit 0
 fi

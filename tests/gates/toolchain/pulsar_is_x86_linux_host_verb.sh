@@ -133,6 +133,7 @@ if command -v qemu-aarch64 >/dev/null 2>&1; then
   fi
 else
   echo "  SKIP axis 2 — qemu-aarch64 not installed. (install qemu-user; axis 2 is what"
+  GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
   echo "       proves the refusal actually fires rather than merely being written down)"
 fi
 
@@ -185,6 +186,8 @@ if [ "$fail" -ne 0 ]; then
   echo "FAIL pulsar_is_x86_linux_host_verb"
   exit 1
 fi
+# 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
+if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: pulsar_is_x86_linux_host_verb — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 if [ "$HAVE_A64" -eq 1 ]; then
   echo "PASS pulsar_is_x86_linux_host_verb: check is first and derives from _self_host_src(); $nstage x86 build stages; aarch64 CLI refuses by name with no progress line; x86-64 Linux CLI still starts (qemu, not hardware)"
 else

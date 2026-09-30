@@ -114,7 +114,7 @@ if command -v qemu-aarch64 > /dev/null 2>&1; then
     (cd "$T" && timeout 60 qemu-aarch64 ./as.a > /dev/null 2>&1); r=$?
     [ "$r" -eq 0 ] && ok "a64: async fn tail return runs its defer" || bad "a64: async fn rows exit $r"
   else bad "a64: could not build src/main_aarch64.cyr"; fi
-else echo "  SKIP: a64 leg — qemu-aarch64 not installed"; fi
+else echo "  SKIP: a64 leg — qemu-aarch64 not installed"; GATE_SKIPS=$((${GATE_SKIPS:-0} + 1)); fi
 
 # ---- PE (wine) -----------------------------------------------------------------------------
 if command -v wine > /dev/null 2>&1; then
@@ -123,7 +123,7 @@ if command -v wine > /dev/null 2>&1; then
     (cd "$T" && timeout 180 wine ./tc.exe > "$T/tc.wout" 2>/dev/null); r=$?
     [ "$r" -eq 0 ] && ok "pe: crossos defer tcyr under wine ($(tail -1 "$T/tc.wout" | tr -d '\r'))" || { bad "pe: crossos defer tcyr exit $r"; grep FAIL "$T/tc.wout" | head -5; }
   else bad "pe: crossos defer tcyr did not compile"; fi
-else echo "  SKIP: pe leg — wine not installed"; fi
+else echo "  SKIP: pe leg — wine not installed"; GATE_SKIPS=$((${GATE_SKIPS:-0} + 1)); fi
 
 # ---- cx ------------------------------------------------------------------------------------
 cat > "$T/cx.cyr" <<'EOF'
@@ -192,5 +192,7 @@ if "$T/stage1" < "$R/src/main_cx.cyr" > "$T/cc_cx" 2>/dev/null && [ -s "$T/cc_cx
 else bad "cx: could not build src/main_cx.cyr / programs/cxvm.cyr"; fi
 
 echo "  $pass ok, $fail failed"
+# 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
+if [ "$fail" -eq 0 ] && [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: defer_every_return_path — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 [ "$fail" -eq 0 ] && { echo "PASS: defer_every_return_path"; exit 0; }
 echo "FAIL: defer_every_return_path"; exit 1

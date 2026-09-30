@@ -130,7 +130,10 @@ if command -v qemu-aarch64 > /dev/null 2>&1; then
     else bad "axis D: src/main_aarch64.cyr did not build a cross compiler"; fi
 else
     echo "  SKIP: fcntl_wrapper_only axis D (aarch64) — qemu-aarch64 not installed"
+    GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 fi
 
+# 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
+if [ "$FAIL" = 0 ] && [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: fcntl_wrapper_only — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 if [ "$FAIL" = 0 ]; then echo "PASS: fcntl_wrapper_only"; exit 0; fi
 exit 1

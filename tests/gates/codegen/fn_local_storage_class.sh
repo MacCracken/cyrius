@@ -308,6 +308,7 @@ if command -v qemu-aarch64 >/dev/null 2>&1; then
 else
     note "SKIP: qemu-aarch64 not installed (aarch64 leg)"
     a64_skipped=1
+    GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 fi
 "$CC" < "$ROOT/src/main_cx.cyr" > "$D/cc_cx" 2>/dev/null
 "$CC" < "$ROOT/programs/cxvm.cyr" > "$D/cxvm" 2>/dev/null
@@ -486,4 +487,6 @@ if [ "$fail" -ne 0 ]; then
     echo "FAIL fn_local_storage_class: $fail of $total rows failed"
     exit 1
 fi
+# 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
+if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: fn_local_storage_class — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS fn_local_storage_class: $pass of $want_rows rows — a fn-local struct literal and an over-budget / opted-out array local are scoped to their fn (two files, private and public, rename-invariant), the first lexed word is not a hidden temporary, secret over the budget still zeroises, and the recorded-layout legs agree on aarch64 (qemu) and cx (cxvm)"

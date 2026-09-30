@@ -49,15 +49,15 @@ uname_s=$(uname -s 2>/dev/null || echo unknown)
 uname_m=$(uname -m 2>/dev/null || echo unknown)
 if [ "$uname_s" != "Linux" ] || [ "$uname_m" != "x86_64" ]; then
     echo "SKIP: extern-C fncallN gate is Linux/x86_64 only (host: $uname_s/$uname_m)"
-    exit 0
+    exit 77
 fi
 if ! command -v gcc >/dev/null 2>&1; then
     echo "SKIP: gcc not available (needed to build the stack-protected C .so)"
-    exit 0
+    exit 77
 fi
 if [ ! -x "$CYCC" ]; then
     echo "SKIP: build/cycc not built"
-    exit 0
+    exit 77
 fi
 
 TMP=$(mktemp -d) && [ -d "$TMP" ] || { echo "FAIL: ffi_stack_protected_extern_c: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
@@ -77,7 +77,7 @@ if ! gcc -O2 -fstack-protector-all -fno-omit-frame-pointer -shared -fPIC \
         -o "$TMP/libextc.so" "$TMP/extc.c" 2>"$TMP/gcc.err"; then
     echo "SKIP: gcc could not build the stack-protected .so"
     sed 's/^/  /' "$TMP/gcc.err" 2>/dev/null | head -5
-    exit 0
+    exit 77
 fi
 
 # cyrius driver: bootstrap glibc TLS, dlopen, call sum4/5/6/7 via fncallN, assert.
@@ -133,7 +133,7 @@ rc=$?
 set -e
 if [ "$rc" = "77" ]; then
     echo "SKIP: no glibc on host (dynlib_bootstrap_cpu_features failed)"
-    exit 0
+    exit 77
 fi
 if [ "$rc" != "0" ]; then
     echo "FAIL(A): stack-protected extern-C via fncallN returned exit $rc (expected 0)"
@@ -254,7 +254,7 @@ rc3=$?
 set -e
 if [ "$rc3" = "77" ]; then
     echo "SKIP(C): no glibc on host"
-    exit 0
+    exit 77
 fi
 if [ "$rc3" = "139" ]; then
     echo "FAIL(C): SIGSEGV — a stack-protected extern-C callee was entered with rsp 8 bytes"

@@ -64,4 +64,4 @@ if (avail == 0) {
 }
 
 var r = assert_summary();
-syscall(60, 0);
+syscall(60, r);

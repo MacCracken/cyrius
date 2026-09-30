@@ -110,14 +110,28 @@ for t in $(find "$ROOT" -name '*.tcyr' | sort); do
         # ⚠ N >= 1, not "N equals the assertion count": a test may legitimately assert inside a
         # loop or behind a platform guard. The claim being enforced is "user code ran and
         # reported", which is precisely what a dropped program cannot fake.
+        #
+        # ⛔ 6.6.11 — AND THE SUMMARY MUST SAY `0 failed`. The check above read N and ignored M,
+        # so a test that PRINTED `23 passed, 1 failed` and then exited 0 scored PASS here.
+        # That is not hypothetical either: crossos/derive_accessor_widths.tcyr called `main();`
+        # at top level while the executable epilogue auto-calls a defined `main` too, so the
+        # body ran twice and the process exited with the second run's `return 0` — measured
+        # rc 0 with `1 failed` on x86_64, aarch64 and PE. The rule, applied identically in
+        # every tcyr reader (check.sh driver, ci.yml loops, this runner, the cass leg): when
+        # the source calls assert_summary, the LAST `N passed, M failed` line must exist with
+        # N >= 1 and M == 0, and the exit code must be 0. CHANGELOG [6.6.11]
         if [ "$ok" = "1" ] && grep -q 'assert_summary(' "$t" 2>/dev/null; then
-            _np=$(sed -n 's/^\([0-9][0-9]*\) passed,.*/\1/p' _ltout 2>/dev/null | tail -1)
-            if [ -z "$_np" ]; then
+            _sl=$(grep -E '^[0-9]+ passed, [0-9]+ failed' _ltout 2>/dev/null | tail -1)
+            _np=$(printf '%s\n' "$_sl" | sed -n 's/^\([0-9][0-9]*\) passed,.*/\1/p')
+            _nf=$(printf '%s\n' "$_sl" | sed -n 's/^[0-9][0-9]* passed, \([0-9][0-9]*\) failed.*/\1/p')
+            if [ -z "$_np" ] || [ -z "$_nf" ]; then
                 ok=0
                 b="${b}(exit 0 but the binary printed NO assert summary — it ran nothing;"
                 b="${b} see the 6.6.6 note in cross-os-libtest-runner.sh)"
             elif [ "$_np" -lt 1 ]; then
                 ok=0; b="${b}(assert summary reports $_np assertions)"
+            elif [ "$_nf" -ne 0 ]; then
+                ok=0; b="${b}(exit 0 but the assert summary reports $_nf failed)"
             fi
         fi
         # ⛔ 6.6.5 — ARGV-LENGTH SWEEP, for a test that asks for it with `@rerun-argv-parity`.

@@ -190,6 +190,7 @@ fi
 # NEGATIVE control: the aarch64-Linux CLI, under qemu (an EMULATOR — not hardware).
 if ! command -v qemu-aarch64 >/dev/null 2>&1; then
   echo "  axis4: SKIP the aarch64 negative control — qemu-aarch64 not installed."
+  GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
   echo "         (install qemu-user; this axis is what proves the refusal actually fires)"
 else
   cat src/main_aarch64.cyr | "$CC" > "$D/cc_a64" 2>"$D/cc_a64.err"
@@ -233,5 +234,7 @@ if [ "$fail" -ne 0 ]; then
   echo "FAIL emit_js_refused_off_x86_linux"
   exit 1
 fi
+# 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
+if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: emit_js_refused_off_x86_linux — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS emit_js_refused_off_x86_linux: TS front end in src/main.cyr alone; 5 hosts evaluated; x86-64 Linux emits JS, aarch64 refuses by name (qemu, not hardware)"
 exit 0

@@ -486,8 +486,11 @@ if command -v qemu-aarch64 > /dev/null 2>&1; then
     fi
 else
     echo "  SKIP: qemu-aarch64 not installed (the crossos tcyr covers pi hardware)"
+    GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 fi
 
 [ "$FAIL" = 0 ] || exit 1
+# 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
+if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: statfs_family_routed — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS: statfs_family_routed (ELF rows ordered below the compat rows they produce, both"
 echo "      Mach-O backends agree, 4 peers name the pair, and the call RUNS on x86 + aarch64)"

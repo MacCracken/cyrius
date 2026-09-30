@@ -24,7 +24,7 @@
 # `_PE_ROUTE_JOB` accepting any arity FAILS axis 2. CHANGELOG [6.6.10]
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
-[ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 0; }
+[ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 77; }
 
 D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: pe_job_reroutes_routed: mktemp -d failed"; exit 1; }
 trap 'rm -rf "$D"' EXIT INT TERM
@@ -81,9 +81,12 @@ if objdump -p "$D/g61504.exe" > "$D/imp.txt" 2>/dev/null && grep -q 'DLL Name' "
     done
 else
     echo "  SKIP: axis 4 (no objdump that reads PE)"
+    GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 fi
 
 echo "$pass passed, $fail failed"
 [ "$pass" -ge 10 ] || { echo "FAIL: pe_job_reroutes_routed: only $pass rows ran (floor 10)"; exit 1; }
 if [ "$fail" -ne 0 ]; then echo "FAIL: pe_job_reroutes_routed"; exit 1; fi
+# 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
+if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: pe_job_reroutes_routed — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS: pe_job_reroutes_routed — 0xF040-0xF044 are routed at their arity, named in the note, imported"

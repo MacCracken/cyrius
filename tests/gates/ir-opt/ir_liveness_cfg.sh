@@ -22,9 +22,9 @@ CYCC="$ROOT/build/cycc"
 uname_s=$(uname -s 2>/dev/null || echo unknown)
 uname_m=$(uname -m 2>/dev/null || echo unknown)
 if [ "$uname_s" != "Linux" ] || [ "$uname_m" != "x86_64" ]; then
-    echo "SKIP: IR liveness gate is Linux/x86_64 only (host: $uname_s/$uname_m)"; exit 0
+    echo "SKIP: IR liveness gate is Linux/x86_64 only (host: $uname_s/$uname_m)"; exit 77
 fi
-if [ ! -x "$CYCC" ]; then echo "SKIP: build/cycc not built"; exit 0; fi
+if [ ! -x "$CYCC" ]; then echo "SKIP: build/cycc not built"; exit 77; fi
 
 TMP=$(mktemp -d) && [ -d "$TMP" ] || { echo "FAIL: ir_liveness_cfg: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$TMP"' EXIT
 

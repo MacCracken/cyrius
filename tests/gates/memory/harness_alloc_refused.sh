@@ -115,10 +115,10 @@ build_run() {  # $1 target, $2 probe → sets RRC, $W/<probe>.<t>.out / .err ; r
     case "$t" in
         x86)     "$CC" < "$W/$p.cyr" > "$o.bin" 2>/dev/null || { _fail "$t: $p did not compile"; return 1; }
                  chmod +x "$o.bin"; ( cd "$W" && timeout 60 "$o.bin" ) > "$o.out" 2> "$o.err" || RRC=$? ;;
-        aarch64) [ "$HAVE_QEMU" = 1 ] || { echo "  SKIP: $t $p — qemu-aarch64 not installed (pi covers the hardware)"; return 1; }
+        aarch64) [ "$HAVE_QEMU" = 1 ] || { echo "  SKIP: $t $p — qemu-aarch64 not installed (pi covers the hardware)"; GATE_SKIPS=$((${GATE_SKIPS:-0} + 1)); return 1; }
                  "$W/cca" < "$W/$p.cyr" > "$o.bin" 2>/dev/null || { _fail "$t: $p did not compile"; return 1; }
                  chmod +x "$o.bin"; ( cd "$W" && timeout 60 qemu-aarch64 "$o.bin" ) > "$o.out" 2> "$o.err" || RRC=$? ;;
-        pe)      [ "$HAVE_WINE" = 1 ] || { echo "  SKIP: $t $p — wine not installed (cass covers the hardware)"; return 1; }
+        pe)      [ "$HAVE_WINE" = 1 ] || { echo "  SKIP: $t $p — wine not installed (cass covers the hardware)"; GATE_SKIPS=$((${GATE_SKIPS:-0} + 1)); return 1; }
                  CYRIUS_TARGET_WIN=1 "$CC" < "$W/$p.cyr" > "$o.exe" 2>/dev/null || { _fail "$t: $p did not compile"; return 1; }
                  ( cd "$W" && WINEDEBUG=-all timeout 120 wine "$o.exe" ) > "$o.out" 2> "$o.err" || RRC=$? ;;
         cx)      "$W/cccx" < "$W/$p.cyr" > "$o.cyx" 2>/dev/null || { _fail "$t: $p did not compile"; return 1; }
@@ -264,7 +264,7 @@ CYR
     tree_case pids  "_regression_tree_cbuf = alloc(65536);" 20000
     tree_case dbuf  "_regression_tree_pids = alloc(_REGRESSION_TREE_CAP * 8); _regression_tree_cbuf = alloc(65536);" 0
     ;;
-*) echo "  SKIP: row 3 — x86_64 Linux only (it forks and walks /proc)" ;;
+*) echo "  SKIP: row 3 — x86_64 Linux only (it forks and walks /proc)"; GATE_SKIPS=$((${GATE_SKIPS:-0} + 1)) ;;
 esac
 
 echo ""
@@ -272,4 +272,6 @@ if [ "$FAILS" -gt 0 ]; then
     echo "FAIL: $NAME — $FAILS check(s) failed"
     exit 1
 fi
+# 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
+if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: harness_alloc_refused — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS: $NAME (test_scratch panics by name on $NT target(s); bench_new and the regression verbs refuse cleanly)"

@@ -271,6 +271,8 @@ if [ "$checked" -lt 10 ]; then
 fi
 
 if [ "$fails" = "0" ]; then
+    # 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
+    if [ "$skipped" != "0" ]; then echo "SKIP: folds_agnos_parity — $skipped fold(s) above could not be built in this harness; every fold that was checked passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
     echo "PASS: folds-agnos-parity — $checked/$NFOLDS folded stdlibs build for BOTH Linux and agnos, each against the leaves plus its OWN declared fold deps only ($skipped skipped)"
     exit 0
 fi

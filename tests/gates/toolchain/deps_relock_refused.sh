@@ -49,7 +49,7 @@ ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
 CC="$ROOT/build/cycc"
 [ -x "$CC" ] || { echo "FAIL: deps_relock_refused: build/cycc missing"; exit 1; }
-command -v git >/dev/null 2>&1 || { echo "SKIP: deps_relock_refused: git not found"; exit 0; }
+command -v git >/dev/null 2>&1 || { echo "SKIP: deps_relock_refused: git not found"; exit 77; }
 W=$(mktemp -d) && [ -d "$W" ] || { echo "FAIL: deps_relock_refused: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$W"' EXIT
 pass=0; fail=0
 ok()  { echo "  ok: $1"; pass=$((pass+1)); }
@@ -189,6 +189,7 @@ if [ -n "$OLDCY" ]; then
     else bad "A5 (rc=$rc): $(tail -1 "$W/a5.out")"; fi
 else
     echo "  SKIP A5: no pre-6.6.4 wrapper installed under ${CYRIUS_HOME:-$HOME/.cyrius}/versions — old-reader tolerance not exercised"
+    GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 fi
 
 # ── A5b: no hasher on PATH → the guard fails CLOSED (like --verify), nothing rewritten ────
@@ -227,4 +228,6 @@ if [ "$rc" -ne 0 ] && grep -q 'DISAGREE' "$W/a8.out" && [ "$rc2" -eq 0 ] && grep
 else bad "A8 (deps rc=$rc relock+verify rc=$rc2): $(tail -1 "$W/a8v.out")"; fi
 
 echo "deps_relock_refused: $pass passed, $fail failed"
+# 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
+if [ "$fail" -eq 0 ] && [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: deps_relock_refused — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 [ "$fail" -eq 0 ]

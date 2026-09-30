@@ -684,13 +684,17 @@ fn _capacity_gate(): i64 {
     # now 21 % and no longer trips. Tripping fn_table again would need 111,412 fns — MEASURED
     # at 2 m 17 s to compile, against ~8 s for the old one, because compile time is
     # SUPERLINEAR in fn count (4x the fns cost 17x the time). string_data's cap (2 MB) is
-    # untouched by the limits cascade and 1600 unique 1000-char literals reach 1,909,818 /
-    # 2,097,152 = 91 % in ~3 s.
+    # untouched by the limits cascade, and ~1000-char UNIQUE literals fill it in ~3 s (1900 of
+    # them in this gate's manifest-free scratch dir — see the sizing note below; 1600 was the
+    # in-repo figure the first cut measured, 1,909,818 / 2,097,152 = 91 %).
     # ⚠ The literals must be UNIQUE — string_data DEDUPLICATES, so 1600 copies of the same
-    # string store 1001 bytes, not 1.6 MB, and the trip silently never fires.
-    # ⚠ Stay well under 100 %: at 1850 literals the compile hits the hard "string data
+    # string store 1001 bytes, not 1.9 MB, and the trip silently never fires.
+    # ⚠ Stay well under 100 %: too many literals and the compile hits the hard "string data
     # overflow (2MB limit)" error instead, which exits 1 for the WRONG reason and would not
-    # print the ">=85%" line this test greps for. The usable window is roughly 1500-1800.
+    # print the ">=85%" line this test greps for. WHERE that window sits depends on whether a
+    # manifest auto-prepends the stdlib (in-repo ~1500-1800, a bare dir higher) — the note
+    # above the loop derives the 1900 used here. (6.6.11: this block said 1600 literals and a
+    # 1500-1800 window while the loop below used 1900. CHANGELOG [6.6.11])
     # What this test asserts is unchanged: the >=85% trip fires and --check exits 1. That the
     # DENOMINATORS themselves are correct is pinned separately by
     # tests/gates/memory/capacity_meter_denominators.sh — three of them have been stale at
@@ -780,7 +784,7 @@ fn _capacity_gate(): i64 {
         fail = fail + 1;
     }
 
-    # Test 3: --check on 28000-fn trip.cyr rc=1 + "table(s) at >=85%".
+    # Test 3: --check on the string_data trip.cyr (1900 unique literals) rc=1 + "table(s) at >=85%".
     var ec_t3 = _exec_in_dir3(scratch, cyrius_shim, "capacity", "--check", trip_path, out3);
     if (ec_t3 != 1) {
         _p("    ");
@@ -894,7 +898,7 @@ fn _capacity_gate(): i64 {
         _p(ANSI_GREEN);
         _p("PASS");
         _p(ANSI_RESET);
-        println(": 7 sub-cases (default / --check ok+fail@28000fns / 7000-fn compile / --json / no-args)");
+        println(": 7 sub-cases (default / --check ok+fail@string_data>=85% / 7000-fn compile / --json / no-args)");
     }
     _check(label, fail);
     return fail;

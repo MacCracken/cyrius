@@ -181,7 +181,7 @@ NX=0
 if command -v qemu-aarch64 > /dev/null 2>&1; then
     if build "$CC" "$ROOT/src/main_aarch64.cyr" "$WORK/cc_a64"; then cross_leg aarch64 "$WORK/cc_a64" qemu-aarch64
     else bad "aarch64 leg: src/main_aarch64.cyr did not build"; fi
-else echo "  SKIP: aarch64 leg (qemu-aarch64 not installed)"; fi
+else echo "  SKIP: aarch64 leg (qemu-aarch64 not installed)"; GATE_SKIPS=$((${GATE_SKIPS:-0} + 1)); fi
 if command -v wine > /dev/null 2>&1; then
     # CYRIUS_TARGET_WIN=1 makes the host compiler emit PE32+ directly; the binaries run under
     # wine in a PRIVATE prefix (never the user's ~/.wine).
@@ -190,7 +190,7 @@ if command -v wine > /dev/null 2>&1; then
     WRUN="$WORK/wrun.sh"
     printf '#!/bin/sh\nWINEPREFIX="%s" WINEDEBUG=-all WINEDLLOVERRIDES="winemenubuilder.exe=d;mscoree=d;mshtml=d" exec wine "$1"\n' "$WORK/wp" > "$WRUN"; chmod +x "$WRUN"
     cross_leg pe "$WCC" "$WRUN"
-else echo "  SKIP: PE leg (wine not installed)"; fi
+else echo "  SKIP: PE leg (wine not installed)"; GATE_SKIPS=$((${GATE_SKIPS:-0} + 1)); fi
 
 HOSTROWS=$(grep -cE "^(_row|_refuse) [A-Z]" "$0")
 [ "$NROWS" -ge "$HOSTROWS" ] || bad "only $NROWS rows ran; this file spells $HOSTROWS host rows"
@@ -199,5 +199,7 @@ if [ "$NFAIL" -gt 0 ]; then
     echo "FAIL: toplevel_for_in: $NFAIL of $NROWS rows"
     exit 1
 fi
+# 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
+if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: toplevel_for_in — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS: toplevel_for_in ($NROWS rows: host + $NX under qemu/wine)"
 exit 0

@@ -142,11 +142,13 @@ _row F 9 'var cfa = 5;\nvar cfb = cfa;\nvar cfa = 9;\nsyscall(60, cfb);\n' \
 WANT=$(grep -cE '^_row [A-Z] ' "$0")
 [ "$NROWS" -eq "$WANT" ] || bad "only $NROWS rows ran; this file spells $WANT"
 [ "$NCX" -eq "$WANT" ] || bad "the cx leg ran $NCX of $WANT rows"
-if [ -z "$A64" ]; then echo "  SKIP: aarch64 leg (qemu-aarch64 or the aarch64 fork unavailable)"; fi
+if [ -z "$A64" ]; then echo "  SKIP: aarch64 leg (qemu-aarch64 or the aarch64 fork unavailable)"; GATE_SKIPS=$((${GATE_SKIPS:-0} + 1)); fi
 
 if [ "$NFAIL" -gt 0 ]; then
     echo "FAIL: cx_forward_read_constant_global: $NFAIL checks over $NROWS rows"
     exit 1
 fi
+# 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
+if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: cx_forward_read_constant_global — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS: a forward-read constant global reads its value on cx as on every other target ($NROWS host + $NCX cx + $NA64 aarch64-under-qemu)"
 exit 0

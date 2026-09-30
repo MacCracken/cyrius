@@ -14,7 +14,9 @@ set -e
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 
-command -v openssl >/dev/null 2>&1 || { echo "  SKIP sign-efi-gate: openssl not available"; exit 0; }
+# Exit 77 when openssl is absent: the gate could not run its check, and 77 is a SKIP result in
+# check.sh (never a pass). CHANGELOG [6.6.11]
+command -v openssl >/dev/null 2>&1 || { echo "  SKIP sign-efi-gate: openssl not available"; exit 77; }
 
 TMP=$(mktemp -d) && [ -d "$TMP" ] || { echo "FAIL: sign-efi-gate: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$TMP"' EXIT

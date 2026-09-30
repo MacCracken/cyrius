@@ -153,6 +153,7 @@ if command -v qemu-aarch64 >/dev/null 2>&1; then
   fi
 else
   echo "  SKIP the aarch64 halves of axes 2/3 — qemu-aarch64 not installed."
+  GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
   echo "       (install qemu-user; they are what prove the per-target default actually fires)"
 fi
 
@@ -254,6 +255,8 @@ if [ "$fail" -ne 0 ]; then
   echo "FAIL capacity_meters_host_fork"
   exit 1
 fi
+# 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
+if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: capacity_meters_host_fork — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 if [ "$HAVE_A64" -eq 1 ]; then
   echo "PASS capacity_meters_host_fork: the dispatch delegates and _capacity_default_src asks _self_host_src() first; aarch64 CLI meters its own fork where x86-64 refuses; both still meter a plain src/main.cyr project (qemu, not hardware)"
 else

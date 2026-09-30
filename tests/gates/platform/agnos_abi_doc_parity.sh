@@ -31,9 +31,9 @@ PEER="$ROOT/lib/syscalls_x86_64_agnos.cyr"
 # ⚠ agnos is a SIBLING repo and may legitimately be absent (CI, a fresh clone). Surface that
 # rather than passing quietly — a cross-repo check that skips in silence is indistinguishable
 # from one that passed, which is the failure this repo has been bitten by before.
-[ -f "$ABI" ] || { echo "SKIP: agnos ABI contract not found at $ABI — cyrius/agnos ABI parity NOT verified this run"; exit 0; }
+[ -f "$ABI" ] || { echo "SKIP: agnos ABI contract not found at $ABI — cyrius/agnos ABI parity NOT verified this run"; exit 77; }
 [ -f "$PEER" ] || { echo "FAIL: agnos_abi_doc_parity: $PEER missing"; exit 1; }
-command -v python3 >/dev/null 2>&1 || { echo "SKIP: python3 unavailable"; exit 0; }
+command -v python3 >/dev/null 2>&1 || { echo "SKIP: python3 unavailable"; exit 77; }
 
 python3 - "$ABI" "$PEER" <<'PY'
 import re, sys

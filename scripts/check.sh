@@ -107,6 +107,23 @@ MISSING $_gn"
     if [ "$_grc" = 0 ]; then
         _CHK_RESULTS="$_CHK_RESULTS
 PASS $_gn"
+    elif [ "$_grc" = 77 ]; then
+        # ⛔ 6.6.11: 77 is the gate saying it could NOT run its check (a missing tool, host or
+        # fixture — its own SKIP line above says which). It used to have no way to say so but
+        # `exit 0`, and was scored PASS. A SKIP is its own result and its own count, never a
+        # pass; under CYRIUS_CHECK_NO_SKIP=1 it is a FAIL — the same rule the driver's rows
+        # follow (`_gate_score` in programs/checks/main.cyr). CHANGELOG [6.6.11]
+        if [ "$_CHK_NO_SKIP" = 1 ]; then
+            echo "  ^^ SKIP REFUSED (CYRIUS_CHECK_NO_SKIP=1 — a gate that could not run is a FAIL): $_gn"
+            _CHK_RESULTS="$_CHK_RESULTS
+FAIL $_gn"
+            _CHK_FAILS=$((_CHK_FAILS + 1))
+        else
+            echo "  ^^ SKIP (exit 77 — the gate could not run its check; NOT a pass): $_gn"
+            _CHK_RESULTS="$_CHK_RESULTS
+SKIP $_gn"
+            _CHK_SKIPS=$((_CHK_SKIPS + 1))
+        fi
     elif [ "$_grc" = 124 ]; then
         # 124 from --run-gate is its deadline and nothing else (a gate's own 124 is reported
         # as 1 — programs/checks/run_gate.cyr). A timeout is a failure, and says it was one.
@@ -128,6 +145,26 @@ FAIL $_gn"
 _CHK_DONE=0
 _CHK_SIGNAL=""
 _CHK_TIMEOUTS=0
+_CHK_SKIPS=0
+_CHK_DRV_SKIPS=0        # of _CHK_SKIPS, the driver's own SKIP rows (its --skip-report)
+_CHK_DRV_SKIPS_F=""
+_CHK_DRV_SKIPS_RM=""    # the private dir holding it, when no staged home did
+_CHK_NO_SKIP=0
+# CYRIUS_CHECK_NO_SKIP: "1" = a gate that exits 77 (could not run) is a FAIL; unset, empty or
+# "0" = it is reported and counted as a SKIP. Anything else is REFUSED (exit 2) — `=true` or
+# `=yes` silently meaning "off" would make the strict mode a no-op. The SAME contract as the
+# driver's `_read_no_skip` (programs/checks/main.cyr), which reads the same variable for its
+# own rows; this file used to read it not at all. Called only once a RUN is about to start
+# (`--list` / `--resolve` / `--registry` run nothing and ignore it). CHANGELOG [6.6.11]
+_chk_read_no_skip() {
+    case "${CYRIUS_CHECK_NO_SKIP:-}" in
+        ''|0) _CHK_NO_SKIP=0 ;;
+        1)    _CHK_NO_SKIP=1 ;;
+        *)    printf "error: CYRIUS_CHECK_NO_SKIP must be 1 (a SKIP gate fails) or 0/unset; got '%s'\n" \
+                  "$CYRIUS_CHECK_NO_SKIP" >&2
+              exit 2 ;;
+    esac
+}
 _chk_finish() {
     _xrc=$?
     # INT/TERM handlers `exit`, which re-enters via the EXIT trap in some shells.
@@ -139,6 +176,7 @@ _chk_finish() {
         HUP)  _xrc=129 ;;
     esac
     if [ -n "$_CHK_STAGED_DIR" ]; then rm -rf "$_CHK_STAGED_DIR"; fi
+    if [ -n "$_CHK_DRV_SKIPS_RM" ]; then rm -rf "$_CHK_DRV_SKIPS_RM"; fi
     if [ "$_CHK_STARTED" != "1" ]; then exit "$_xrc"; fi
 
     # Everything THIS run is supposed to have produced a result for (the full registered
@@ -149,7 +187,7 @@ _chk_finish() {
     _nnot=0
     for _m in $_manifest; do
         if ! printf '%s\n' "$_CHK_RESULTS" | grep -qx "PASS $_m"; then
-            if ! printf '%s\n' "$_CHK_RESULTS" | grep -qxE "(FAIL|MISSING) $_m"; then
+            if ! printf '%s\n' "$_CHK_RESULTS" | grep -qxE "(FAIL|MISSING|SKIP) $_m"; then
                 _notrun="$_notrun $_m"
                 _nnot=$((_nnot + 1))
             fi
@@ -161,9 +199,12 @@ _chk_finish() {
     # from the tally) and gates with no result (counted from the manifest). If they do not
     # sum to the registered total, this bookkeeping is itself broken — say so rather than
     # printing a self-consistent lie, which is the failure mode this whole block exists for.
-    _res_n=$(printf '%s\n' "$_CHK_RESULTS" | grep -cE '^(PASS|FAIL|MISSING) (tests/gates|scripts)/' || true)
+    _res_n=$(printf '%s\n' "$_CHK_RESULTS" | grep -cE '^(PASS|FAIL|MISSING|SKIP) (tests/gates|scripts)/' || true)
     printf '  shell gates: %s of %s produced a result, %s NOT RUN\n' "$_res_n" "$_total" "$_nnot"
     printf '  failures:    %s (the check binary counts as one row here)\n' "$_CHK_FAILS"
+    printf '  skipped:     %s (%s shell gate(s) exited 77 + %s driver row(s) — could not run their check; NOT passes%s)\n' \
+        "$_CHK_SKIPS" "$((_CHK_SKIPS - _CHK_DRV_SKIPS))" "$_CHK_DRV_SKIPS" \
+        "$( [ "$_CHK_NO_SKIP" = 1 ] && echo '' || echo '; CYRIUS_CHECK_NO_SKIP=1 makes them failures' )"
     if [ "$_CHK_TIMEOUTS" != "0" ]; then
         printf '  timeouts:    %s of those failures were a gate killed at its deadline (CYRIUS_CHECK_LONG_TIMEOUT) — see the TIMEOUT lines\n' "$_CHK_TIMEOUTS"
     fi
@@ -175,12 +216,22 @@ _chk_finish() {
         echo "  FAILED:"
         printf '%s\n' "$_CHK_RESULTS" | grep -E '^(FAIL|MISSING) ' | sed 's/^/    /'
     fi
+    if [ "$_CHK_SKIPS" != "0" ]; then
+        echo "  SKIPPED — these ran but could not check anything, and are NOT passes:"
+        printf '%s\n' "$_CHK_RESULTS" | grep -E '^SKIP ' | sed 's/^SKIP /    /'
+        printf '%s\n' "$_CHK_RESULTS" | grep -E '^DSKIP ' | sed 's/^DSKIP /    (driver row) /'
+    fi
     if [ "$_nnot" != "0" ]; then
         echo "  NOT RUN — these did NOT execute and are NOT passes:"
         for _m in $_notrun; do echo "    $_m"; done
     fi
     if [ -n "$_CHK_SIGNAL" ]; then
         echo "  INTERRUPTED by SIG$_CHK_SIGNAL — the running child was sent SIGTERM and waited for"
+        echo "────────────────────────────────────────────────────────────────────"
+        exit "$_xrc"
+    fi
+    if [ "$_CHK_FAILS" = "0" ] && [ "$_nnot" = "0" ] && [ "$_CHK_SKIPS" != "0" ]; then
+        echo "  GREEN, with $_CHK_SKIPS gate(s) SKIPPED — no failure, but not everything was checked"
         echo "────────────────────────────────────────────────────────────────────"
         exit "$_xrc"
     fi
@@ -607,6 +658,7 @@ if [ $# -gt 0 ]; then
         exit 2
     fi
     _chk_resolve "$1" || exit 2
+    _chk_read_no_skip
 
     _chk_stage_home
     if [ "$_CHK_KIND" = "suite" ]; then
@@ -631,6 +683,7 @@ if [ $# -gt 0 ]; then
     exit 0    # _chk_finish turns the tally into the verdict
 fi
 
+_chk_read_no_skip
 _chk_stage_home
 
 # ⛔ v6.6.6: RECORD the driver's verdict, do NOT abort on it. `"$CHECK_BIN"` used to be a
@@ -638,8 +691,27 @@ _chk_stage_home
 # header. The shell gates cover things the binary cannot, and a red doc stamp is no reason to
 # stop looking at them.
 _CHK_STARTED=1
-_chk_run_bg "$CHECK_BIN"
+# ⛔ 6.6.11: the driver's own SKIP rows reach THIS verdict. The driver exits 0 over a SKIP (it
+# is not a failure), so its rc alone recorded `PASS` for a run in which ~30 driver-registered
+# gates could not run, and the summary said ALL GREEN. `--skip-report` has it append each
+# SKIP row to a file; every line is a result here and a SKIP in the count. CHANGELOG [6.6.11]
+if [ -n "$_CHK_STAGED_DIR" ]; then
+    _CHK_DRV_SKIPS_D="$_CHK_STAGED_DIR"
+else
+    _CHK_DRV_SKIPS_D=$(mktemp -d "${TMPDIR:-/tmp}/cyrius-check-skips.XXXXXX") && [ -d "$_CHK_DRV_SKIPS_D" ] || { printf "error: mktemp -d failed for the driver's skip report (TMPDIR=%s)\n" "${TMPDIR:-/tmp}" >&2; exit 1; }
+    _CHK_DRV_SKIPS_RM="$_CHK_DRV_SKIPS_D"
+fi
+_CHK_DRV_SKIPS_F="$_CHK_DRV_SKIPS_D/.driver-skips"
+: > "$_CHK_DRV_SKIPS_F"
+_chk_run_bg "$CHECK_BIN" --skip-report "$_CHK_DRV_SKIPS_F"
 _CHK_DRIVER_RC=$_CHK_RC
+while IFS= read -r _dsk || [ -n "$_dsk" ]; do
+    [ -n "$_dsk" ] || continue
+    _CHK_RESULTS="$_CHK_RESULTS
+DSKIP $_dsk"
+    _CHK_DRV_SKIPS=$((_CHK_DRV_SKIPS + 1))
+done < "$_CHK_DRV_SKIPS_F"
+_CHK_SKIPS=$((_CHK_SKIPS + _CHK_DRV_SKIPS))
 if [ "$_CHK_DRIVER_RC" = "0" ]; then
     _CHK_RESULTS="$_CHK_RESULTS
 PASS $_CHK_DRIVER"
@@ -833,6 +905,22 @@ _chk_gate "$ROOT/tests/gates/codegen/cx_forward_read_constant_global.sh"
 # printed nothing and exited 0: a PASS over the preprocessor defect it is named for. The runner
 # now requires the binary's own "N passed" line for any test whose source calls assert_summary.
 _chk_gate "$ROOT/tests/gates/toolchain/crossos_runner_rejects_a_silent_binary.sh"
+# 6.6.11 B01: no .tcyr may end in a shape that exits 0 after an assertion failed. A file that
+# defines `fn main` AND calls `main();` at top level without exiting runs the body twice (the
+# epilogue auto-calls a defined main) and exits with the second run's `return 0` —
+# crossos/derive_accessor_widths.tcyr printed `1 failed` and exited 0 on x86, aarch64 and PE.
+# The other shape is `assert_summary();` then a literal `syscall(60, 0)` (platform/pwd_grp).
+_chk_gate "$ROOT/tests/gates/toolchain/tcyr_epilogue_shape.sh"
+# 6.6.11 B01: the check driver's .tcyr reader requires the assert summary. It scored
+# `failed == 0 && ec == 0` off the FIRST " failed" substring of stdout, so a test that died
+# before assert_summary (its FAIL rows go to stderr, never captured) and exited 0, or printed
+# `0 passed, 0 failed`, read PASS. Now: the LAST `N passed, M failed` line, N >= 1, M == 0, ec 0.
+_chk_gate "$ROOT/tests/gates/toolchain/check_driver_requires_summary.sh"
+# 6.6.11 B01: ci.yml's three full-corpus .tcyr loops (ubuntu, AGNOS container, native arm64)
+# grade by the same rule. They passed `ec == 0` plus an optional `N failed` count, so a test
+# that died before its summary and exited 0 had no count to read and scored PASS. Each step's
+# own `tcyr_verdict` is extracted and run under bash -eo pipefail over 9 cases, plus a mutant.
+_chk_gate "$ROOT/tests/gates/toolchain/ci_tcyr_loops_require_summary.sh"
 # 6.6.6: copying between two DIFFERENT struct (or vector) types is an error, not an 8-byte
 # store. Both copy paths answered a type mismatch with `return 0`, which falls through to the
 # generic scalar store: `p = q` between a P3 and a Q3 copied ONE word of three and left the
@@ -1520,6 +1608,27 @@ _chk_gate "$ROOT/tests/gates/platform/agnos_create_exclusive_atomic.sh"
 # distlib's verify was inert and `distlib --check` always STALE), and cyrius.exe finds the tools
 # in its own bin/ (GetModuleFileNameW, not a '/'-only argv(0) scan). Wine axes SKIP without wine.
 _chk_gate "$ROOT/tests/gates/toolchain/cli_pe_file_size_and_sibling_tools.sh"
+
+# 6.6.11 (B09: J4/J6) — a CLI child inherits the WHOLE environment. `load_environ` read
+# /proc/self/environ into a fixed 8 KB buffer (every variable past it dropped in every child) and,
+# on macOS, left `_envp` EMPTY. Linux/aarch64 axis here; the macOS half is the ecb/ach row in
+# cross-os-selfhost.sh. Exit 77 with no /proc/self/environ or no compiler.
+_chk_gate "$ROOT/tests/gates/toolchain/cli_child_env_complete.sh"
+# 6.6.11 (B09: I3) — cyrius.exe honours CYRIUS_RESOLVED=1 and runs a pinned versions/<pin>/bin/
+# cyrius.exe as a child (sys_execve is a -1 stub on PE), propagating its exit code. Wine; 77 without.
+_chk_gate "$ROOT/tests/gates/toolchain/cli_pe_pinned_redirect.sh"
+# 6.6.11 (B10: K7) — `cyrius soak` says what a failed self-host step DID (signal, empty output,
+# a real status) through `_raw_fail_describe`, never the raw `_self_host_step` return as an
+# "exit". Exit 77 with no compiler or CLI.
+_chk_gate "$ROOT/tests/gates/toolchain/cyrius_soak_describes_failures.sh"
+# 6.6.11 (B10: S2) — a named dep's THIN PROFILE of a package the consumer declares as a stdlib
+# leaf (bote → libro → sigil-mldsa) is neither vendored nor auto-included; the fold is the
+# package and the build succeeds on it alone. Exit 77 with no compiler, CLI or lib/sigil.cyr.
+_chk_gate "$ROOT/tests/gates/toolchain/deps_stdlib_profile_not_vendored.sh"
+# 6.6.11 (B10: K5/K8) — a distlib `.deps` sidecar is the UNION over every target, identical
+# whichever host / target env runs it, with a named owner rule for target-partial symbols.
+# Exit 77 with no compiler or CLI, or when cycc_aarch64 does not build from src/.
+_chk_gate "$ROOT/tests/gates/toolchain/distlib_sidecar_host_independent.sh"
 
 # 6.6.9 (bite 9) — a temp dir the CLI cannot write is named as that: the dep-cache check says
 # "could NOT be verified" (reason 10) instead of calling a healthy cache tampered, the hasher

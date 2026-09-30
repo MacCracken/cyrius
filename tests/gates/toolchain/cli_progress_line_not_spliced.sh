@@ -185,6 +185,7 @@ if command -v qemu-aarch64 >/dev/null 2>&1; then
   fi
 else
   echo "  SKIP axis 1 — qemu-aarch64 not installed (the aarch64 --target=js refusal)."
+  GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 fi
 
 # ── axis 2 — the cx arm's own named failure ──────────────────────────────────────────
@@ -339,6 +340,7 @@ if unshare -rm true >/dev/null 2>&1 && unshare -rpf --mount-proc true >/dev/null
   fi
 else
   echo "  SKIP axis 10 — unprivileged user/PID namespaces unavailable (the fail-closed"
+  GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
   echo "       temp-directory diagnostic; axis 11 still asserts it structurally)."
 fi
 
@@ -369,5 +371,7 @@ if [ "$fail" -ne 0 ]; then
   echo "FAIL cli_progress_line_not_spliced"
   exit 1
 fi
+# 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
+if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: cli_progress_line_not_spliced — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS cli_progress_line_not_spliced: 7 named-failure paths (build x4, fuzz, smoke, fail-closed tmpdir), none spliced into an open header; $pad_with_compile of $pad_total padded headers mark the line open, $tdclose of $tdexits _cbt_tmpdir exits close it; native + js + fuzz results still land ON the header line"
 exit 0

@@ -50,7 +50,7 @@ check() {
 }
 
 [ -x "$CC" ] || { echo "FAIL: recursion-depth-bounded — build/cycc not built"; exit 1; }
-command -v python3 >/dev/null 2>&1 || { echo "SKIP: python3 unavailable"; exit 0; }
+command -v python3 >/dev/null 2>&1 || { echo "SKIP: python3 unavailable"; exit 77; }
 
 # The whole gate is one python run: it needs signal-vs-exit fidelity, which the shell
 # cannot give (the shell maps a signal to 128+N and cannot distinguish it from a real

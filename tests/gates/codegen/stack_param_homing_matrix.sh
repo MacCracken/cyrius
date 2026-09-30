@@ -386,7 +386,7 @@ if command -v qemu-aarch64 > /dev/null 2>&1; then
     if [ ! -s "$T/cc_a64" ]; then echo "  FAIL: [aarch64] could not build the aarch64 cross-compiler"; fail=1
     else "$T/cc_a64" < "$T/probe.cyr" > "$T/p.a64" 2> /dev/null || true; chmod +x "$T/p.a64"
          qa() { timeout 60 qemu-aarch64 "$1"; }; run_leg aarch64-qemu "$T/p.a64" "$(cat "$T/rows")" qa; fi
-else echo "  SKIP: qemu-aarch64 not installed (aarch64 leg — pi/ecb hardware legs still cover it)"; fi
+else echo "  SKIP: qemu-aarch64 not installed (aarch64 leg — pi/ecb hardware legs still cover it)"; GATE_SKIPS=$((${GATE_SKIPS:-0} + 1)); fi
 
 # ── cx (cxvm) ─────────────────────────────────────────────────────────────────────────────
 "$CC" < "$ROOT/src/main_cx.cyr" > "$T/cc_cx" 2> /dev/null && chmod +x "$T/cc_cx" || true
@@ -406,7 +406,7 @@ if command -v wine > /dev/null 2>&1; then
          else wr_() { timeout 180 wine "$1"; }; run_leg win64-wine "$T/p.exe" "$(cat "$T/rows")" wr_; fi
          wineserver -k > /dev/null 2>&1 || true
     fi
-else echo "  SKIP: wine not installed (Win64 leg — the cass hardware leg still covers it)"; fi
+else echo "  SKIP: wine not installed (Win64 leg — the cass hardware leg still covers it)"; GATE_SKIPS=$((${GATE_SKIPS:-0} + 1)); fi
 
 # ── refusals — every gap is a diagnostic, never a quiet miscompile ───────────────────────
 # Run against EVERY compiler above (x86 native, aarch64, Win64 — whichever built). Each probe
@@ -666,4 +666,6 @@ if [ "$nrefuse" -lt "$REFUSE_FLOOR" ]; then echo "  FAIL: only $nrefuse refusal 
 echo "  ok:   refusals — $nrefuse compiler x probe cases named their diagnostic"
 
 if [ "$fail" != 0 ]; then echo "FAIL stack_param_homing_matrix"; exit 1; fi
+# 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
+if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: stack_param_homing_matrix — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS stack_param_homing_matrix: $(cat "$T/rows") generated rows ($ROWS_CX on cx) — 4 vector classes x 3 positions x 5..9 int args, 2 vectors + 7 ints, struct return x 5..9, vector args into struct-valued var receives, enum variants of 6..10 fields, struct-valued calls outside a var initializer, method calls and overloaded operators returning a struct — bind every argument on every leg that ran; $nrefuse refusal cases named, $naccept compilers accepted the legal 9-16 B return shapes and the correct-arity operators"

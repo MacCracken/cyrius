@@ -23,7 +23,7 @@ set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CLI="$ROOT/build/cyrius"
 [ -x "$CLI" ] || CLI="$HOME/.cyrius/bin/cyrius"
-[ -x "$CLI" ] || { echo "SKIP: cyrius CLI missing"; exit 0; }
+[ -x "$CLI" ] || { echo "SKIP: cyrius CLI missing"; exit 77; }
 cd "$ROOT"
 D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: poison_mode_observable: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }; trap 'rm -rf "$D"' EXIT
 fail=0

@@ -162,6 +162,7 @@ if command -v qemu-aarch64 > /dev/null 2>&1; then
     fi
 else
     echo "  SKIP: qemu-aarch64 not installed (the pi hardware leg still covers it)"
+    GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 fi
 
 # ---- Win64 PE leg (wine, NOT hardware) — the PE fork carries its own pass-2 skip ----
@@ -179,6 +180,7 @@ if command -v wine > /dev/null 2>&1; then
     wineserver -k > /dev/null 2>&1 || true
 else
     echo "  SKIP: wine not installed (the cass hardware leg still covers it)"
+    GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 fi
 
 # Derived floor: 7 rows x (host + cx) + M + S = 16 even with qemu and wine absent.
@@ -187,4 +189,6 @@ if [ "$NFAIL" -ne 0 ]; then
     echo "FAIL: toplevel_decl_block_closure ($NFAIL of $NROWS rows)"
     exit 1
 fi
+# 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
+if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: toplevel_decl_block_closure — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS: toplevel_decl_block_closure ($NROWS rows)"

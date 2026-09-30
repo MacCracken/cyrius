@@ -40,7 +40,7 @@ fail() { echo "FAIL agnos_sysinfo_tail_parity: $1" >&2; exit 1; }
 # agnos is a SIBLING repo and may be absent — SKIP loudly rather than pass quietly.
 if [ ! -f "$ABI" ]; then
   echo "SKIP agnos_sysinfo_tail_parity: agnos ABI contract not found at $ABI (sibling repo absent)"
-  exit 0
+  exit 77
 fi
 
 # ── the contract side ────────────────────────────────────────────────────────────────
@@ -155,10 +155,12 @@ EOF
     krc=0; ( cd "$T" && "$MIRSHI" ./k.out > /dev/null 2>&1 ) || krc=$?
     case "$krc" in
         0) RT="mirshi (base struct only): sys_sched_kicks = -1, not stack residue" ;;
-        9) RT="SKIP runtime axis by name: this mirshi fills sched_kicks, so the pre-1.57.9 path is unreachable here" ;;
+        9) RT="SKIP runtime axis by name: this mirshi fills sched_kicks, so the pre-1.57.9 path is unreachable here"; GATE_SKIPS=$((${GATE_SKIPS:-0} + 1)) ;;
         7) fail "sys_sched_kicks returned STACK RESIDUE under mirshi (which leaves +$OKICK unwritten, like agnos < 1.57.9) — the pre-fill is missing" ;;
         *) fail "sys_sched_kicks probe under mirshi exited $krc (expected 0: -1 from a kernel that did not write the field)" ;;
     esac
 fi
 
+# 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
+if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: agnos_sysinfo_tail_parity — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS agnos_sysinfo_tail_parity (#35 tiers $TIERS— SYSINFO_SIZE/_CPU/…/_FULL $BASE/$CPU/$FULL, cpu band +$OCPU, block band +$OBLK, sched_kicks +$OKICK — all match the agnos §4.4 contract · $RT)"

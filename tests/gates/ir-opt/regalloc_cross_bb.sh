@@ -99,8 +99,23 @@ for t in keccak sha1 fmt_i64_min thread_safety large_input chrono_datetime; do
     if [ -z "$src" ]; then check "$t (source found)" "yes" "no"; continue; fi
     "$CC" < "$src" > "$D/$t.bin" 2>/dev/null || { check "$t compiles" 0 1; continue; }
     chmod +x "$D/$t.bin"
-    timeout 90 "$D/$t.bin" >/dev/null 2>&1
-    check "$t" 0 "$?"
+    # 6.6.11: graded by the ONE tcyr rule, not the exit code alone — a miscompile that skips
+    # or truncates the body (or prints `1 failed` and exits 0) must not read as correct. When
+    # the source calls assert_summary(, the LAST `N passed, M failed` line must exist with
+    # N >= 1 and M == 0, and the exit code must be 0.
+    ec=0; timeout 90 "$D/$t.bin" > "$D/$t.out" 2>&1 || ec=$?
+    sl=$(grep -E '^[0-9]+ passed, [0-9]+ failed' "$D/$t.out" | tail -1)
+    np=$(printf '%s\n' "$sl" | sed -n 's/^\([0-9][0-9]*\) passed,.*/\1/p')
+    nf=$(printf '%s\n' "$sl" | sed -n 's/^[0-9][0-9]* passed, \([0-9][0-9]*\) failed.*/\1/p')
+    v="ok"
+    if [ "$ec" != 0 ]; then v="exit $ec"
+    elif grep -q 'assert_summary(' "$src"; then
+        if [ -z "$np" ] || [ -z "$nf" ]; then v="no assert summary"
+        elif [ "$np" -lt 1 ]; then v="0 assertions"
+        elif [ "$nf" -ne 0 ]; then v="$nf failed"
+        fi
+    fi
+    check "$t" "ok" "$v"
 done
 
 # ── AXIS 3: a loop that reuses a register inside its body — the v5.6.22 shape, reduced.

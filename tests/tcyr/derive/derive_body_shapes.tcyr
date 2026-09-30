@@ -217,8 +217,10 @@ fn main() {
 
     sb = str_builder_new(); EStack_to_json(S_B, sb);
     cstr_is(json_of_sb(sb), "\"S_B\"", "enum : stack: Serialize");
-    return 0;
+    return assert_summary();
 }
 
-main();
-var r = assert_summary();
+# main() is auto-called by the executable epilogue when defined, so a
+# top-level `main();` would run the body twice and exit with the second
+# run's value. Exit here with the summary instead (CHANGELOG [6.6.11]).
+syscall(60, main());

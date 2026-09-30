@@ -22,7 +22,7 @@
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC="$ROOT/build/cycc"
-[ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 0; }
+[ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 77; }
 cd "$ROOT"
 T=$(mktemp --suffix=.cyr) && [ -f "$T" ] || { echo "FAIL: typed_pointer_warn_sign: mktemp --suffix=.cyr failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 E=$(mktemp) && [ -f "$E" ] || { echo "FAIL: typed_pointer_warn_sign: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }

@@ -24,13 +24,13 @@
 # for exactly this and matches `[package].name` exactly. Third occurrence of this shape.
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
-command -v cyrius >/dev/null 2>&1 || { echo "SKIP: cyrius CLI not on PATH"; exit 0; }
+command -v cyrius >/dev/null 2>&1 || { echo "SKIP: cyrius CLI not on PATH"; exit 77; }
 PIN=$(cat "$ROOT/VERSION")
 SNAP="${CYRIUS_HOME:-$HOME/.cyrius}/versions/$PIN/lib"   # v6.6.4: check.sh stages CYRIUS_HOME from the tree
-[ -d "$SNAP" ] || { echo "SKIP: pinned snapshot $SNAP not installed"; exit 0; }
+[ -d "$SNAP" ] || { echo "SKIP: pinned snapshot $SNAP not installed"; exit 77; }
 # Two real stdlib leaves that the filing itself names.
 for m in bench test; do
-    [ -f "$SNAP/$m.cyr" ] || { echo "SKIP: $SNAP/$m.cyr absent — cannot test snapshot resolution"; exit 0; }
+    [ -f "$SNAP/$m.cyr" ] || { echo "SKIP: $SNAP/$m.cyr absent — cannot test snapshot resolution"; exit 77; }
 done
 W=$(mktemp -d) && [ -d "$W" ] || { echo "FAIL: deps_stdlib_dir_not_consumer_lib: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$W"' EXIT

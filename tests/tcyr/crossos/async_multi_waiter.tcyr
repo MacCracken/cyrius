@@ -164,6 +164,12 @@ fn main(): i64 {
     test_group("async reactor: multiple waiters, including two on one fd (v6.5.26)");
     #ifdef CYRIUS_TARGET_WIN
     println("    SKIP: Windows has no sys_pipe and async_win.cyr is IOCP (completion, not readiness) - no waiter registry to exercise");
+    # 6.6.11: the skip ASSERTS its premise. Every .tcyr reader requires N >= 1 in the summary
+    # when the source calls assert_summary (a summary with no assertions cannot be told from a
+    # body that was compiled away), and this row goes red the day PE grows an anonymous pipe —
+    # the signal to un-skip the axes below. CHANGELOG [6.6.11]
+    var wfds[16];
+    assert_eq(sys_pipe(&wfds), 0 - 1, "premise: PE has no anonymous pipe (sys_pipe fails closed), so there is no readiness fd to wait on");
     #endif
     #ifndef CYRIUS_TARGET_WIN
 

@@ -39,13 +39,15 @@ ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
 NAME=check_driver_builds_its_tools
 [ -x "$CC" ] || { echo "FAIL: $NAME — no compiler at $CC"; exit 1; }
-case "$(uname -s)" in Linux) : ;; *) echo "SKIP: $NAME — the check driver is a Linux program"; exit 0 ;; esac
+case "$(uname -s)" in Linux) : ;; *) echo "SKIP: $NAME — the check driver is a Linux program"; exit 77 ;; esac
 D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: $NAME — mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$D"' EXIT
 FAILS=0
 _fail() { echo "  FAIL: $1"; FAILS=$((FAILS + 1)); }
 strip_ansi() { sed 's/\x1b\[[0-9;]*m//g'; }
-TOOLS="cyrfmt cyrlint cyrdoc cyrius_api_surface cyrld cyrius-init cyrius-lsp cyrius cycc_aarch64"
+# 6.6.11 (K2): + cc_win, the main_win.cyr PE driver the cli-cross row builds cyrsign with.
+TOOLS="cyrfmt cyrlint cyrdoc cyrius_api_surface cyrld cyrius-init cyrius-lsp cyrius cycc_aarch64 cc_win"
+NTOOLS=$(echo $TOOLS | wc -w)
 
 ( cd "$ROOT" && cat programs/checks/main.cyr | "$CC" > "$D/drv" 2>"$D/drv.err" ) \
     || { cat "$D/drv.err"; echo "FAIL: $NAME — the check driver does not compile"; exit 1; }
@@ -77,7 +79,7 @@ done
 cp "$CC" "$T/build/cycc"
 for t in $TOOLS; do stub "$T/build/$t"; done
 
-echo "axis 1: --tool-path builds all nine into the run's private dir"
+echo "axis 1: --tool-path builds all $NTOOLS into the run's private dir"
 NOK=0
 for t in $TOOLS; do
     drive "$T" "$D/a1_$t" --tool-path "$t"
@@ -90,7 +92,7 @@ for t in $TOOLS; do
     esac
     [ "$DRC" = 0 ] || _fail "axis 1: --tool-path $t exited $DRC"
 done
-[ "$NOK" = 9 ] || _fail "axis 1: $NOK of 9 tools came from the run's private dir"
+[ "$NOK" = "$NTOOLS" ] || _fail "axis 1: $NOK of $NTOOLS tools came from the run's private dir"
 [ -s "$LOG" ] && { _fail "axis 1: a planted build/ stub RAN:"; sed 's/^/      /' "$LOG"; }
 [ -z "$(ls -A "$D/rt")" ] || _fail "axis 1: --tool-path left its run dir behind: $(ls "$D/rt")"
 
@@ -147,7 +149,7 @@ drive "$B" "$D/a5" linker
 grep -q '^  FAIL: the check driver builds cyrld from programs/cyrld.cyr$' "$D/a5" \
     || _fail "axis 5: no FAIL row naming cyrld: $(grep -E 'PASS|FAIL|SKIP' "$D/a5" | head -3)"
 
-echo "axis 6: no row names one of the nine as build/<tool>, and nothing builds a .cyrius/bin path"
+echo "axis 6: no row names one of the $NTOOLS as build/<tool>, and nothing builds a .cyrius/bin path"
 NH=0
 for t in $TOOLS; do
     h=$(grep -n "_root_path(\"build/$t\")" "$ROOT"/programs/checks/*.cyr || true)
@@ -165,4 +167,4 @@ if [ "$FAILS" -gt 0 ]; then
     echo "FAIL: $NAME — $FAILS check(s) failed"
     exit 1
 fi
-echo "PASS: $NAME (9 tools built per run from the tree, stubs ignored, no ~/.cyrius/bin fallback, a broken tool is a named FAIL)"
+echo "PASS: $NAME ($NTOOLS tools built per run from the tree, stubs ignored, no ~/.cyrius/bin fallback, a broken tool is a named FAIL)"

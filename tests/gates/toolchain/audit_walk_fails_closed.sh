@@ -235,6 +235,7 @@ walk doc "$T/cyrdoc" "$E" 0
 check "   real cyrdoc --check on it: clean" "TOTAL=0 ERRORS=0" "$(counts)"
 if [ "$(id -u)" = "0" ]; then
     echo "  SKIP: C4 unreadable-file rows — running as root (uid 0 reads a mode-000 file)"
+    GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 else
     U="$T/unread"; mkdir -p "$U"; printf 'fn u(): i64 { return 0; }\n' > "$U/u.cyr"; chmod 000 "$U/u.cyr"
     walk fmt "$T/cyrfmt_real" "$U" 0
@@ -400,5 +401,7 @@ if [ "$fails" -gt 0 ]; then
     echo "FAIL: $NAME — $fails of $checks checks failed"
     exit 1
 fi
+# 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
+if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: audit_walk_fails_closed — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS: $NAME — $checks checks"
 exit 0

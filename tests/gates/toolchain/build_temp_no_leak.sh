@@ -142,7 +142,8 @@ echo "axis 2 — 'cannot write output' leaves no temp behind:"
 mkdir -p "$T/ro" && chmod 500 "$T/ro"
 if [ -w "$T/ro" ]; then
     # Running as root defeats the permission bit; the axis cannot be posed.
-    echo "  ok: SKIP axis 2 — \$T/ro is writable anyway (running as root?) (skip)"
+    echo "  SKIP axis 2 — \$T/ro is writable anyway (running as root?) — the axis cannot be posed"
+    GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 else
         r2=0
     ( cd "$T/proj" && run_cli "$T/pid2" build src/main.cyr "$T/ro/out" > "$T/o2" 2>&1 ) || r2=$?
@@ -162,6 +163,8 @@ check "…and leaks NO preprocessed temp" 0 "$(new_temps "$T/pid3")"
 
 echo ""
 if [ "$fails" = "0" ]; then
+    # 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
+    if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: build_temp_no_leak — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
     echo "PASS: build-temp-no-leak — no exit path leaves a preprocessed source behind"
     exit 0
 fi

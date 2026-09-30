@@ -89,12 +89,13 @@ fn _check_macho_magic_fail(b0, b1, b2, b3): i64 {
 # CLI-reachable lib turns this red here, not in a downstream Windows CI run.
 # Returns 0 = ok, 1 = failed, -1 = the cross-compiler is not built (a SKIPPED case — the row
 # reports it as a SKIP rather than a PASS; CHANGELOG [6.6.9]).
-fn _cli_cross_check(env_kv, cc_path, m0, m1, tname): i64 {
+# `src_rel` is the program compiled (cbt/cyrius.cyr for the three CLI cases).
+fn _cli_cross_check(env_kv, cc_path, src_rel, m0, m1, tname): i64 {
     if (file_exists(cc_path) != 1) {
         _p("    skip "); _p(tname); println(": compiler not built");
         return 0 - 1;
     }
-    var src = _root_path("cbt/cyrius.cyr");
+    var src = _root_path(src_rel);
     var out = _tmp_path("audit_cli_cross_");
     var rc = 0;
     if (env_kv == 0) { rc = _self_host_pipe(src, cc_path, out); }
@@ -127,23 +128,33 @@ fn _cli_cross_check(env_kv, cc_path, m0, m1, tname): i64 {
     return 0;
 }
 
+# 6.6.11 (K2): the fourth case is CI's old inline extra, folded in so that delegating CI's
+# "CLI cross-compile" step to this row (`cyrius_check cli-cross`) drops no coverage: the
+# main_win.cyr PE DRIVER (a Linux-hosted compiler that emits PE — CI's `cc_win`) compiling
+# programs/cyrsign.cyr. v6.2.31's Windows tarball broke on exactly that path (main_win.cyr had
+# dropped the annotation tokens, so cyrsign -> bayan hit "unexpected enum" only via cc_win),
+# which the CYRIUS_TARGET_WIN=1 case above never reaches — it uses the x86 front end.
 fn _cli_cross_compile_gate(): i64 {
-    var label = "CLI (cbt/cyrius.cyr) cross-compiles clean: PE / Mach-O / aarch64 (v6.2.29 — the .25-class gate)";
+    var label = "CLI (cbt/cyrius.cyr) cross-compiles clean: PE / Mach-O / aarch64, and the main_win.cyr PE driver builds cyrsign (v6.2.29 — the .25-class gate)";
     if (file_exists(CC_PATH) != 1) {
         _skip(label, "build/cycc not built");
         return 0;
     }
-    var r_pe = _cli_cross_check("CYRIUS_TARGET_WIN=1", CC_PATH, 0x4D, 0x5A, "PE");      # MZ
-    var r_mo = _cli_cross_check("CYRIUS_MACHO=1", CC_PATH, 0xCF, 0xFA, "Mach-O");        # CF FA ED FE
-    var r_a6 = _cli_cross_check(0, _tool("cycc_aarch64"), 0x7F, 0x45, "aarch64-ELF");   # 7F 'E'
+    var cli = "cbt/cyrius.cyr";
+    var r_pe = _cli_cross_check("CYRIUS_TARGET_WIN=1", CC_PATH, cli, 0x4D, 0x5A, "PE");      # MZ
+    var r_mo = _cli_cross_check("CYRIUS_MACHO=1", CC_PATH, cli, 0xCF, 0xFA, "Mach-O");        # CF FA ED FE
+    var r_a6 = _cli_cross_check(0, _tool("cycc_aarch64"), cli, 0x7F, 0x45, "aarch64-ELF");   # 7F 'E'
+    var r_cs = _cli_cross_check(0, _tool("cc_win"), "programs/cyrsign.cyr", 0x4D, 0x5A, "cyrsign-via-cc_win");
     var fail = 0;
     var skipped = 0;
     if (r_pe > 0) { fail = fail + 1; }
     if (r_mo > 0) { fail = fail + 1; }
     if (r_a6 > 0) { fail = fail + 1; }
+    if (r_cs > 0) { fail = fail + 1; }
     if (r_pe < 0) { skipped = skipped + 1; }
     if (r_mo < 0) { skipped = skipped + 1; }
     if (r_a6 < 0) { skipped = skipped + 1; }
+    if (r_cs < 0) { skipped = skipped + 1; }
     # 6.6.9: a target whose cross-compiler is missing was not checked — a green row over it
     # would claim all three. A real failure still wins over the skip. CHANGELOG [6.6.9]
     if (fail == 0 && skipped > 0) {

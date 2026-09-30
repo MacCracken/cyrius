@@ -427,6 +427,7 @@ if command -v setsid > /dev/null 2>&1; then
     _kill_survivors
 else
     echo "  SKIP: no setsid(1) on this host"
+    GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 fi
 
 echo "axis 9: a gate that exits leaving a background process behind leaves nothing running"
@@ -470,7 +471,7 @@ if command -v setsid > /dev/null 2>&1; then
         _dflt=""
         if [ "$_sig" = INT ]; then
             if env --default-signal=INT true > /dev/null 2>&1; then _dflt="--default-signal=INT"
-            else echo "  SKIP (INT half): env(1) has no --default-signal on this host"; continue; fi
+            else echo "  SKIP (INT half): env(1) has no --default-signal on this host"; GATE_SKIPS=$((${GATE_SKIPS:-0} + 1)); continue; fi
         fi
         ( cd "$R11" && exec setsid env $_dflt -u CYRIUS_HOME HOME="$R11/home" TMPDIR="$R11/tmp" \
             sh scripts/check.sh zzsleeper ) > "$R11/out" 2>&1 &
@@ -498,6 +499,7 @@ if command -v setsid > /dev/null 2>&1; then
     done
 else
     echo "  SKIP: no setsid(1) on this host"
+    GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 fi
 
 # Axis 12 — 124 is the supervisor's deadline and NOTHING else, with or without a deadline
@@ -522,6 +524,8 @@ fi
 
 echo ""
 if [ "$FAILS" = "0" ]; then
+    # 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
+    if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: check_driver_dies_with_check_sh — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
     echo "PASS: the check driver dies with the run that started it"
     exit 0
 fi

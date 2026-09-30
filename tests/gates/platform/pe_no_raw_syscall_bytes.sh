@@ -26,9 +26,9 @@
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC="$ROOT/build/cycc"
-[ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 0; }
+[ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 77; }
 cd "$ROOT"
-command -v objdump >/dev/null 2>&1 || { echo "SKIP: objdump not available (a raw byte scan is NOT an acceptable substitute — see raw_syscalls)"; exit 0; }
+command -v objdump >/dev/null 2>&1 || { echo "SKIP: objdump not available (a raw byte scan is NOT an acceptable substitute — see raw_syscalls)"; exit 77; }
 T=$(mktemp --suffix=.cyr) && [ -f "$T" ] || { echo "FAIL: pe_no_raw_syscall_bytes: mktemp --suffix=.cyr failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 B=$(mktemp) && [ -f "$B" ] || { echo "FAIL: pe_no_raw_syscall_bytes: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 E=$(mktemp) && [ -f "$E" ] || { echo "FAIL: pe_no_raw_syscall_bytes: mktemp failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }

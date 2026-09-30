@@ -27,8 +27,9 @@
 #           build, so a peer sys_fsync would otherwise pad the count and hide an xfsync
 #           revert). xfsync's arm must also call SOME flush (a direct syscall, or the peer's
 #           sys_fsync/sys_fdatasync) — an arm with none fails axis 2 by name, with no wine,
-#           which is what CI has. And (c) load `mov $0x9,%r8d` after EVERY MoveFileExW
-#           argument setup (`lea 0x230(%rsp),%rdx`), at least once. (c) is the ONLY guard on
+#           which is what CI has. And (c) load `mov $0x9,%r8d` immediately before EVERY call
+#           through MoveFileExW's IAT slot, at least once (6.6.11: was anchored on the argument
+#           setup `lea 0x230(%rsp),%rdx`, which the widened-path frame no longer has). (c) is the ONLY guard on
 #           the write-through bit anywhere: no run on wine or on real Windows can observe
 #           durability, so the flag's presence in the bytes is what there is to check.
 #           (d) 6.6.9 — a VAR-HELD 74/75 reaches EPE_SYSCALL_DYNAMIC's argc-2 runtime switch
@@ -76,11 +77,11 @@
 # inside a mktemp -d that is removed on exit.
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
-CC="$ROOT/build/cycc"
+CC=${CYCC:-"$ROOT/build/cycc"}
 SRC="$ROOT/tests/tcyr/crossos/fsync_flushes.tcyr"
 FLOOR=18
 
-[ -x "$CC" ] || { echo "SKIP: build/cycc missing"; exit 0; }
+[ -x "$CC" ] || { echo "SKIP: $CC missing"; exit 77; }
 [ -f "$SRC" ] || { echo "  FAIL: $SRC is missing — the cross-OS companion for this gate is gone"; exit 1; }
 
 D=$(mktemp -d) && [ -d "$D" ] || { echo "FAIL: mktemp"; exit 1; }
@@ -130,6 +131,7 @@ if [ ! -s "$D/ff.exe" ]; then
     fail=1
 elif ! command -v objdump > /dev/null 2>&1; then
     echo "  SKIP axis 2: objdump not available — the write-through bit then has NO local guard"
+    GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 else
     objdump -x "$D/ff.exe" 2>/dev/null | sed -n '/DLL Name/,$p' > "$D/imp"
     objdump -dw "$D/ff.exe" > "$D/dis" 2>/dev/null
@@ -147,8 +149,17 @@ else
     ncf=$(grep -c 'CreateFileW' "$D/imp")
     nfb=$(grep -c 'FlushFileBuffers' "$D/imp")
     ntail=$(awk '/cmp[[:space:]]+\$0x1,%eax/ {p=1; next} p && /sbb[[:space:]]+%rax,%rax/ {n++} {p=0} END {print n+0}' "$D/dis")
-    nmv=$(grep -cE 'lea[[:space:]]+0x230\(%rsp\),%rdx' "$D/dis")
-    nwt=$(awk '/lea[[:space:]]+0x230\(%rsp\),%rdx/ {p=1; next} p && /mov[[:space:]]+\$0x9,%r8d/ {n++} {p=0} END {print n+0}' "$D/dis")
+    # MoveFileExW call sites, found by the IAT slot they call through (6.6.11: the argument
+    # setup that used to anchor this — `lea 0x230(%rsp),%rdx` — went away when the path widen
+    # moved into a probed frame; the call target is register- and frame-independent).
+    mvslot=$(objdump -p "$D/ff.exe" 2>/dev/null | awk '$NF == "MoveFileExW" {print $1; exit}')
+    mvva=""
+    [ -n "$mvslot" ] && mvva=$(printf '0x%x' $((0x140000000 + 0x$mvslot)))
+    nmv=0; nwt=0
+    if [ -n "$mvva" ]; then
+        nmv=$(grep -cE "call[[:space:]]+\*0x[0-9a-f]+\(%rip\)[[:space:]]+# $mvva\$" "$D/dis")
+        nwt=$(awk -v va="$mvva" '/mov[[:space:]]+\$0x9,%r8d/ {p=1; next} p && $NF == va && /call/ {n++} {p=0} END {print n+0}' "$D/dis")
+    fi
     # (d): "<switches> <74 candidates> <75 candidates> <74 arms that flush> <75 arms that flush>"
     dyn=$(awk '
         /48 3d 57 00 00 00[[:space:]]+cmp/ {sw++; cur=0; p=0; next}
@@ -196,6 +207,7 @@ if [ ! -s "$D/ff.exe" ]; then
     :
 elif ! command -v wine > /dev/null 2>&1; then
     echo "  SKIP axis 3: wine absent — the PE behaviour of these rows is covered only by the cass leg"
+    GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 else
     mkdir -p "$D/w" && cp "$D/ff.exe" "$D/w/ff.exe"
     ( cd "$D/w" && ulimit -c 0; WINEPREFIX="$D/wp" WINEDEBUG=-all \
@@ -213,6 +225,8 @@ else
 fi
 
 if [ "$fail" = "0" ]; then
+    # 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
+    if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: pe_fsync_flushes — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
     echo "PASS: fsync/fdatasync flush on PE and file_rename is write-through ($want rows)"
     exit 0
 fi

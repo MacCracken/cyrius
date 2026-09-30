@@ -59,20 +59,23 @@ fn _tcyr_relay_gate(gate_name, inner_label, tcyr_basename): i64 {
     var out_n = _exec_capture_clean(bin_path, out_buf, out_cap);
     sys_unlink(bin_path);
 
-    # CO-02: also fail when the fixture crashed / exited nonzero (even if it
-    # printed "0 failed" or nothing) — _last_exec_ec is its real exit status.
-    var failed = _tcyr_parse_failed(out_buf, out_n);
-    if (failed != 0 || _last_exec_ec != 0) {
+    # CO-02 + 6.6.11: graded by the ONE tcyr rule (`_tcyr_grade`): exit 0 AND, when the source
+    # calls assert_summary(, a last `N passed, M failed` line with N >= 1 and M == 0. This gate
+    # used to print PASS "(0 assertions)" for a binary that printed nothing and exited 0.
+    var sm[16];
+    var verdict = _tcyr_grade(tcyr_path, out_buf, out_n, &sm);
+    if (verdict != 0) {
         _p("  ");
         _p(ANSI_RED);
         _p("FAIL");
         _p(ANSI_RESET);
         _p(": ");
-        println(inner_label);
+        _p(inner_label);
+        _p(" — ");
+        println(_tcyr_grade_why(verdict));
         _check(gate_name, 1);
         return 1;
     }
-    var passed = _tcyr_parse_passed(out_buf, out_n);
     _p("  ");
     _p(ANSI_GREEN);
     _p("PASS");
@@ -80,31 +83,104 @@ fn _tcyr_relay_gate(gate_name, inner_label, tcyr_basename): i64 {
     _p(": ");
     _p(inner_label);
     _p(" (");
-    print_num(passed);
+    print_num(load64(&sm));
     println(" assertions)");
     _check(gate_name, 0);
     return 0;
 }
 
-fn _tcyr_parse_passed(buf, n): i64 {
-    var needle = " passed";
-    var nlen = strlen(needle);
-    var i = 0;
-    while (i + nlen <= n) {
-        if (_buf_eq(buf + i, needle, nlen) == 1) {
-            var end = i;
-            var start = end;
-            while (start > 0) {
-                var c = load8(buf + start - 1);
-                if (c < 48) { return _aw_parse_leading_int(buf + start, end - start); }
-                if (c > 57) { return _aw_parse_leading_int(buf + start, end - start); }
-                start = start - 1;
-            }
-            return _aw_parse_leading_int(buf + start, end - start);
+# Parse the decimal digits at buf[p..n) into *valp; return the index after them (== p when
+# there are none).
+fn _tcyr_num_at(buf, n, p, valp): i64 {
+    var v = 0;
+    var going = 1;
+    while (going == 1) {
+        if (p >= n) { going = 0; }
+        else {
+            var c = load8(buf + p);
+            if (c >= 48 && c <= 57) {
+                v = v * 10 + (c - 48);
+                p = p + 1;
+            } else { going = 0; }
         }
-        i = i + 1;
     }
+    store64(valp, v);
+    return p;
+}
+
+# 6.6.11: the LAST line of a .tcyr's stdout that STARTS with `N passed, M failed` — the shape
+# lib/assert.cyr's assert_summary prints. Stores N at out+0 and M at out+8 and returns 1, or
+# returns 0 when there is no such line. The LAST one, anchored at a line start: a test may
+# print "failed" in its own messages, and a body that runs twice prints two summaries (the
+# 6.6.11 main-twice shape); the first `" failed"` substring anywhere, which this replaces, read
+# whichever came first.
+fn _tcyr_last_summary(buf, n, out): i64 {
+    var found = 0;
+    var np[8];
+    var nf[8];
+    var ls = 0;
+    while (ls < n) {
+        var p = _tcyr_num_at(buf, n, ls, &np);
+        if (p > ls) {
+            if (p + 9 <= n) {
+                if (_buf_eq(buf + p, " passed, ", 9) == 1) {
+                    var q = _tcyr_num_at(buf, n, p + 9, &nf);
+                    if (q > p + 9) {
+                        if (q + 7 <= n) {
+                            if (_buf_eq(buf + q, " failed", 7) == 1) {
+                                store64(out, load64(&np));
+                                store64(out + 8, load64(&nf));
+                                found = 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        var going = 1;
+        while (going == 1) {
+            if (ls >= n) { going = 0; }
+            elif (load8(buf + ls) == 10) { going = 0; }
+            else { ls = ls + 1; }
+        }
+        ls = ls + 1;
+    }
+    return found;
+}
+
+# ⛔ 6.6.11 — ONE RULE FOR EVERY .tcyr READER. This driver, ci.yml's three full-corpus loops,
+# scripts/cross-os-libtest-runner.sh, the cass leg of scripts/cross-os-selfhost.sh and
+# `cyrius test` all apply it: when the SOURCE calls assert_summary(, the LAST
+# `N passed, M failed` line must exist with N >= 1 and M == 0, AND the exit code must be 0.
+# The requirement is derived from the source text, so tests/tcyr/frontend/
+# struct_sid_20_21_field.tcyr (no assert_summary) is graded on its exit code alone.
+# Before it, this driver passed `failed == 0 && ec == 0` on the FIRST " failed" substring: a
+# binary that died before its summary (its FAIL row goes to stderr, which is not captured,
+# then exit 0) or ran nothing at all read PASS.
+# Returns 0 (pass), M > 0 (the summary's failed count), or a negative reason for
+# `_tcyr_grade_why`: -3 no summary, -4 a summary with 0 assertions, -5 a nonzero exit or a
+# signal. `sm` receives N/M when a summary was found (else 0/0). CHANGELOG [6.6.11]
+fn _tcyr_grade(src_path, buf, n, sm): i64 {
+    store64(sm, 0);
+    store64(sm + 8, 0);
+    var have = _tcyr_last_summary(buf, n, sm);
+    if (have == 1) {
+        if (load64(sm + 8) > 0) { return load64(sm + 8); }
+    }
+    if (_file_contains_substr(src_path, "assert_summary(") == 1) {
+        if (have == 0) { return 0 - 3; }
+        if (load64(sm) < 1) { return 0 - 4; }
+    }
+    if (_last_exec_ec != 0 || _last_exec_sig != 0) { return 0 - 5; }
     return 0;
+}
+
+fn _tcyr_grade_why(verdict): i64 {
+    if (verdict == 0 - 3) { return "no assert summary: the binary stopped before assert_summary() or ran nothing"; }
+    if (verdict == 0 - 4) { return "the assert summary reports 0 assertions"; }
+    if (verdict == 0 - 5) { return "the summary is clean but the process exited nonzero or was killed"; }
+    if (verdict > 0) { return "the assert summary reports failures"; }
+    return "pass";
 }
 
 fn _expected_output_gate(gate_name, inner_label, fixture_basename): i64 {
@@ -984,27 +1060,6 @@ fn _heapmap_gate(): i64 {
     return 0;
 }
 
-fn _tcyr_parse_failed(buf, n): i64 {
-    var needle = " failed";
-    var nlen = strlen(needle);
-    var i = 0;
-    while (i + nlen <= n) {
-        if (_buf_eq(buf + i, needle, nlen) == 1) {
-            var end = i;
-            var start = end;
-            while (start > 0) {
-                var c = load8(buf + start - 1);
-                if (c < 48) { return _aw_parse_leading_int(buf + start, end - start); }
-                if (c > 57) { return _aw_parse_leading_int(buf + start, end - start); }
-                start = start - 1;
-            }
-            return _aw_parse_leading_int(buf + start, end - start);
-        }
-        i = i + 1;
-    }
-    return 0;
-}
-
 fn _tcyr_compile_and_run(src_path): i64 {
     var bin_path = _tmp_path("audit_t_");
     var rc1 = _self_host_pipe(src_path, CC_PATH, bin_path);
@@ -1042,12 +1097,11 @@ fn _tcyr_compile_and_run(src_path): i64 {
         return 1;
     }
 
-    # CO-02: a tcyr that crashed (signal) or exited nonzero WITHOUT printing
-    # " failed" was recorded as PASS (parse_failed==0). Treat a nonzero exit as
-    # a failure — matches the `$ec`-AND-count check of ci.yml's (independent) .tcyr loop.
-    var failed = _tcyr_parse_failed(out_buf, out_n);
-    if (failed == 0 && _last_exec_ec != 0) { return 1; }
-    return failed;
+    # CO-02 + 6.6.11: the ONE tcyr rule — see `_tcyr_grade`. A crash or nonzero exit is a
+    # failure (CO-02), and so is a missing, empty or failing assert summary (6.6.11).
+    # Returns M > 0, or -3 / -4 / -5 (the caller names each with `_tcyr_grade_why`).
+    var sm[16];
+    return _tcyr_grade(src_path, out_buf, out_n, &sm);
 }
 
 # ⛔ NO SILENT CAPS. A corpus that SHRINKS is the failure the .tcyr gates exist to catch,
@@ -1115,8 +1169,16 @@ fn _testsuite_gate(): i64 {
             print_num(_regression_timeout_ms() / 1000);
             println("s)");
             fail_count = fail_count + 1;
-        } elif (failed < 0) {
+        } elif (failed == 0 - 1) {
             println("FAIL (compile)");
+            fail_count = fail_count + 1;
+        } elif (failed < 0) {
+            # 6.6.11: -3 / -4 / -5 from `_tcyr_grade` — say WHICH rule failed, with the exit code.
+            _p("FAIL (");
+            _p(_tcyr_grade_why(failed));
+            _p("; exit ");
+            print_num(_last_exec_ec);
+            println(")");
             fail_count = fail_count + 1;
         } elif (failed > 0) {
             _p("FAIL (");

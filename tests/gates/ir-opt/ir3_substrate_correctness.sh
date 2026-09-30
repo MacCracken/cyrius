@@ -163,7 +163,7 @@ if [ "${CYRIUS_IR3_FULL:-0}" = "1" ]; then
     done
     check "full-corpus divergences (of $total)" 0 "$div"
 else
-    echo "axis 5 — full-corpus sweep SKIPPED (set CYRIUS_IR3_FULL=1; ~8 min, 281 files)"
+    echo "axis 5 — full-corpus sweep is OPT-IN and was not requested (set CYRIUS_IR3_FULL=1; ~8 min, 281 files) — the default run does not claim it"
 fi
 
 echo ""

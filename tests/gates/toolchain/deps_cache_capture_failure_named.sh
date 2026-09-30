@@ -280,6 +280,7 @@ if [ "$NS" = 1 ]; then
     [ "$x" = 0 ] && echo "  ok: axis 4: with /tmp starved (3, 2 inodes) lint refuses by name instead of passing a file that does not parse"
 else
     echo "  SKIP axes 0-4 — unprivileged user+mount namespaces (or a bind target outside /tmp) are unavailable; the starved-/tmp runs need them"
+    GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 fi
 
 # ── axis 5: TMPDIR is read, trailing slashes dropped, a relative value ignored ──────────
@@ -376,4 +377,6 @@ grep -q 'if (pr < 0) { _sha_tool = 0; }' "$W/sf.body" || { fail "axis 9: _sha256
 [ "$x" = 0 ] && echo "  ok: axis 9: the cache verdict is judged before the verify's temps are removed; the hasher is re-probed after a run that never started"
 
 [ "$FAIL" = 0 ] || exit 1
+# 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
+if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: deps_cache_capture_failure_named — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS: deps_cache_capture_failure_named (a temp dir the CLI cannot write is named as that — no tamper, no missing-hasher, no clean lint — and an absolute TMPDIR routes around it)"

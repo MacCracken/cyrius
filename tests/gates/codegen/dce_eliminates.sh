@@ -82,7 +82,7 @@ fn main(): i64 {
 }
 var e = main();
 EOF
-"$T/stage1" < "$T/a3.cyr" > "$T/a3p" 2>/dev/null || { echo "SKIP dce_eliminates axis3: float probe needs fmt_float"; exit 0; }
+"$T/stage1" < "$T/a3.cyr" > "$T/a3p" 2>/dev/null || { echo "SKIP dce_eliminates axis3: float probe needs fmt_float"; exit 77; }
 chmod +x "$T/a3p"; "$T/a3p" >/dev/null 2>&1; want=$?
 CYRIUS_DCE=1 "$T/stage1" < "$T/a3.cyr" > "$T/a3d" 2>"$T/a3.err" || {
   echo "FAIL dce_eliminates axis3: a float-formatting program stopped compiling under DCE."

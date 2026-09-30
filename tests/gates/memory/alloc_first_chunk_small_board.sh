@@ -57,7 +57,7 @@ CC=${CYCC:-"$ROOT/build/cycc"}
 [ -x "$CC" ] || { echo "FAIL: alloc_first_chunk_small_board: build/cycc missing"; exit 1; }
 case "$(uname -s)-$(uname -m)" in
     Linux-x86_64) : ;;
-    *) echo "SKIP: alloc_first_chunk_small_board: x86_64 Linux only"; exit 0 ;;
+    *) echo "SKIP: alloc_first_chunk_small_board: x86_64 Linux only"; exit 77 ;;
 esac
 W=$(mktemp -d) && [ -d "$W" ] || { echo "FAIL: alloc_first_chunk_small_board: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 trap 'rm -rf "$W"' EXIT
@@ -215,7 +215,7 @@ else echo "  row 3: a refused 400 MB request returns 0 and keeps the 256 MB grai
 
 # ── row 4 (opt-in): the starved-VM PID-1 recipe ─────────────────────────────────────
 if [ "${CYRIUS_ALLOC_VM:-0}" != "1" ]; then
-    echo "  row 4: SKIP (the starved-VM PID-1 boot is opt-in: CYRIUS_ALLOC_VM=1)"
+    echo "  row 4: OPT-IN, not requested (the starved-VM PID-1 boot runs under CYRIUS_ALLOC_VM=1) — the default run does not claim it"
 else
     K="${CYRIUS_VM_KERNEL:-/boot/vmlinuz-linux}"
     if [ ! -r "$K" ] || ! command -v cpio >/dev/null 2>&1 || ! command -v qemu-system-x86_64 >/dev/null 2>&1; then

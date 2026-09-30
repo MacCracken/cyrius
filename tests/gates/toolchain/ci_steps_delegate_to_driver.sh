@@ -14,7 +14,7 @@
 #
 # THE FIX. The steps run the driver's rows by name (`CYRIUS_CHECK_NO_SKIP=1 ./build/cyrius_check
 # <row>`): fmt and lint, and the four rows made selectable for exactly this (object-init,
-# linker, shared-dlopen, capacity — `--list-selectable-only`). CYRIUS_CHECK_NO_SKIP=1 because a
+# linker, shared-dlopen, capacity — `--list-selectable-only` — and cli-cross since 6.6.11). CYRIUS_CHECK_NO_SKIP=1 because a
 # driver row whose tool is missing reports SKIP (6.6.9, check_driver_skip_is_not_pass.sh), and
 # the inline copies FAILED on a missing tool — delegation without it would be a silent pass.
 # The .tcyr loop stays a DELIBERATELY INDEPENDENT implementation (CO-02 was caught because the
@@ -46,6 +46,9 @@
 #      (and the same fork swapped on the scripts/cross-os-selfhost.sh side -> axis 5)
 #   N7 a step runs `cyrius_check nosuchrow`                             -> axis 3
 #   N8 the driver's floor hard-coded to 250 while the file says 251     -> axis 4
+#   N9 (6.6.11, K2) CI's inline "CLI cross-compile" run: block restored  -> axes 2, 3
+#      (a cross-target cbt/cyrius.cyr compile and /tmp/cc_win outside the driver; no step
+#      runs `cyrius_check cli-cross`)
 set -e
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -115,13 +118,16 @@ sig_of() {
         capacity)      echo '(^|[^A-Za-z0-9_-])capacity([^A-Za-z0-9_-]|$)' ;;
         shared-dlopen) echo 'dlopen' ;;
         object-init)   echo '_cyrius_init|readelf' ;;
+        # 6.6.11 (K2): a cross-target compile of the CLI, or the main_win.cyr driver (`cc_win`).
+        # NOT a bare `cbt/cyrius\.cyr` — every job builds its native CLI from that file.
+        cli-cross)     echo '(CYRIUS_TARGET_WIN=1|CYRIUS_MACHO=1|cycc_aarch64)[^;&|]*cbt/cyrius\.cyr|(^|[^A-Za-z0-9_])cc_win' ;;
         *)             echo '' ;;
     esac
 }
 "$D/drv" --list-suites > "$D/suites" 2>&1 || _fail "cyrius_check --list-suites exited non-zero"
 "$D/drv" --list-selectable-only > "$D/selonly" 2>&1 || _fail "cyrius_check --list-selectable-only exited non-zero"
 NSO=$(grep -c . "$D/selonly" || true)
-[ "$NSO" -ge 4 ] || _fail "the driver lists $NSO selectable-only row(s); expected >= 4 (object-init, linker, shared-dlopen, capacity)"
+[ "$NSO" -ge 5 ] || _fail "the driver lists $NSO selectable-only row(s); expected >= 5 (object-init, linker, shared-dlopen, capacity, cli-cross)"
 DELEGATED="$FULL_RUN_DELEGATED $(tr '\n' ' ' < "$D/selonly")"
 
 # A code line with the build of a tool, a chmod of it, redirections, a source path and the

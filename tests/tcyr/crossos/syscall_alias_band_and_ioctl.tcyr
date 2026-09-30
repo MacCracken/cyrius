@@ -125,6 +125,10 @@ test_group("macOS: signalfd SKIPPED — Darwin has no signalfd (kqueue EVFILT_SI
 #endif
 #ifdef CYRIUS_TARGET_WIN
 test_group("Windows: signalfd + ioctl SKIPPED — PE has neither; the reroute layer covers neither capability");
+# 6.6.11: the skip ASSERTS its premise, so the summary reports >= 1 assertion on PE (every .tcyr
+# reader requires it when the source calls assert_summary) and this goes red if PE ever grows an
+# ioctl — the signal to un-skip the rows above. signalfd is not called: it is unrouted on PE.
+assert_eq(sys_ioctl(0, 0, 0), 0 - 38, "premise: PE has no ioctl surface — sys_ioctl declines with -ENOSYS");
 #endif
 #ifdef CYRIUS_TARGET_AGNOS
 test_group("agnos: signalfd + ioctl SKIPPED — the agnos peer is standalone and mints neither");

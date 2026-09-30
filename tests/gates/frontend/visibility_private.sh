@@ -30,7 +30,7 @@ CC="${CC:-$ROOT/build/cycc}"
 
 if [ ! -x "$CC" ]; then
     printf "  SKIP: visibility-private — %s not built\n" "$CC"
-    exit 0
+    exit 77
 fi
 
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: visibility_private: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }

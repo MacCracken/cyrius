@@ -260,6 +260,7 @@ if command -v qemu-aarch64 > /dev/null 2>&1; then
     fi
 else
     echo "  SKIP: aarch64 leg (qemu-aarch64 not installed)"
+    GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 fi
 
 # Floor, DERIVED from this file: every host row that was declared must have run.
@@ -272,5 +273,7 @@ if [ "$NFAIL" -ne 0 ]; then
     echo "FAIL: global_redeclaration_one_definition: $NFAIL check(s) failed"
     exit 1
 fi
+# 6.6.11 (K1): an axis that could not run makes the gate a SKIP (77), never a PASS.
+if [ "${GATE_SKIPS:-0}" -gt 0 ]; then echo "SKIP: global_redeclaration_one_definition — $GATE_SKIPS axis/leg(s) above could not run; every one that ran passed (exit 77: a SKIP, not a PASS)"; exit 77; fi
 echo "PASS: a redeclared top-level global is ONE global and the last definition wins ($NROWS host rows, $NCX cx, $NA64 aarch64-under-qemu) (6.6.6)"
 exit 0
