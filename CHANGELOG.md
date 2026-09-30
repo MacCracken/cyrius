@@ -66,6 +66,137 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   drew an untracked-deferral note on the stdlib itself. The comment now says "tasks whose state is not
   DONE" — comment only, the rule is unchanged. **Gate:** the same axis 15 lints the file under
   `--strict-deferrals` and expects exit 0 and no note; the old comment exits 2.
+- **CVE-57 (P1) — on Windows, the folded sandhi resolver read a drive-relative, plantable
+  `C:\etc\resolv.conf`.** (B15, item SA11.) **Root cause:** sandhi's own DNS resolver
+  (`src/net/resolve.cyr`, folded as `lib/sandhi.cyr`) opened `"/etc/resolv.conf"` on every target,
+  and both lookups fell back to 8.8.8.8 without one. On Windows a rooted path is drive-relative,
+  and any authenticated user may create folders at the root of the system drive. So a local user
+  could choose the nameserver that every other user's sandhi lookups went to, `sandhi_http_get`
+  included. 6.6.11 gave PE working Winsock UDP, which made the path live end to end. It is the
+  CVE-54 class, which 6.6.11 closed in the stdlib's own `net_resolve_ipv4`, reached through a
+  fold. **Fix, at the source (sandhi 1.10.4):** on `CYRIUS_TARGET_WIN` the A lookup is
+  `net_resolve_ipv4` (getaddrinfo: the real hosts file and the adapters' DNS), the AAAA lookup
+  answers 0, the reader returns -1 without opening anything, and 8.8.8.8 is never used. The v6
+  connect paths keep declining on PE, with their comment corrected: dialling v6 there needs a
+  public AF_INET6 socket in `lib/net.cyr`, which is a feature. **New crossos row
+  `tests/tcyr/crossos/sandhi_pe_resolver_no_etc_path.tcyr`**, modelled on `net_resolve_pe.tcyr`.
+  On real Windows it plants `C:\etc\resolv.conf` (`nameserver 127.0.9.7`), and a pre-existing
+  file or a failed plant is a named failure. It asserts that the reader returns -1 and that the
+  machine's own name and `localhost` resolve through the system resolver. Measured on cass: the
+  1.10.3 fold fails 5 of 15 rows (it read the planted server, then failed the lookups against it),
+  and the 1.10.4 fold passes 15/15. Under wine the reader rows also bite (the 1.10.3 reader
+  returned the Linux host's 127.0.0.53; 3 of 13 fail). The every-target rows pass on x86_64,
+  aarch64 (qemu), ecb, ach and in the agnosticos container.
+
+### Downstream
+
+- **sigil 3.13.5 folded (`lib/sigil.cyr`, sigil commit `497ac4b`) — Darwin errno values per target;
+  the subprocess helpers' argv/envp allocs are checked.** (B13, items SA4 + SA1.) **Root cause
+  (SA4):** sigil's `src/sys_error.cyr` declared `ENOSYS`, `ENOTEMPTY`, `ENODATA`, `EOVERFLOW`,
+  `EOPNOTSUPP`, `EADDRINUSE`, `ECONNREFUSED` and `ETIMEDOUT` with their Linux values on every
+  target, and `lib/syscalls_macos.cyr` declares none of them, so on macOS the fold supplied them
+  program-wide: every consumer reading those names got the Linux number (ENOSYS 38 is Darwin's
+  `ENOTSOCK`; ENODATA 61 is Darwin's `ECONNREFUSED`), and `sigil_err_from_errno` misclassified a real
+  Darwin ENOSYS. **Fix, at the source:** the eight are declared per target with the BSD values
+  under `CYRIUS_TARGET_MACOS` (the 3.13.3 `EAGAIN` precedent); Linux, Windows and agnos values are
+  unchanged. **Root cause (SA1):** `agnosys_run_capture_timeout` / `agnosys_run_checked_timeout`
+  stored through an unchecked argv/envp alloc, so a refusal was a SIGSEGV. **Fix:** both allocs are
+  checked before the pipe and the fork and return an ENOMEM Err. sigil's `errno_peer.tcyr` (one row
+  per name per platform, plus the kernel's own `-ENOTEMPTY`) was cross-built for Mach-O and passes
+  26/0 on ecb and ach, where 3.13.4's `sys_error.cyr` fails 9 of 26; its `capture_bounded.tcyr`
+  drives the refusal (SIGSEGV without the fix). The pin stays 6.6.9.
+- **bayan 1.5.9 folded (`lib/bayan.cyr`, bayan commit `821a1d0`) — a refused alloc returns 0 in
+  base64 and the TOML array parser.** (B13, items SA2 + SA10 + SA12.) **Root cause:**
+  `bayan_base64_encode` stored into its unchecked output alloc (an oversize length was a SIGSEGV,
+  although `lib/ws.cyr` and `lib/ws_server.cyr` already test its result for 0);
+  `bayan_toml_array_parse_a` used `vec_new_a`'s result unchecked, and its element flush ignored a
+  refused Str and a refused push, so a later refusal handed back a short vec as success. **Fix, at
+  the source:** the encoder returns 0; the flush returns -1 on either refusal and the parser returns
+  0, never a partial vec. Both premise repros (`bayan_base64_encode(&buf, 1<<62)` and
+  `bayan_toml_array_parse_a` on a refuse-everything allocator, each rc=139 on the 1.5.8 fold) now
+  return 0. bayan's pin moves 6.6.9 → 6.6.11 and its CI coverage floor goes back to 100 in the same
+  commit (6.6.11's `cyrius coverage` excludes `main`; 501/501).
+- Both siblings ran their full CI in a clean `git archive` copy with a throwaway `CYRIUS_HOME`
+  (sigil at its 6.6.9 pin, bayan at 6.6.11). ⛔ **sigil 3.13.5 and bayan 1.5.9 must be TAGGED before
+  cyrius 6.6.12 is**; the folds were copied byte-identical from those commits' `dist/`, and
+  `docs/ecosystem.md`'s two fold rows name the commits.
+- **vani 1.2.8 folded (`lib/vani.cyr`, vani commit `4ab53a7`) — `vani_drain` / `vani_drop` /
+  `vani_state` return a Result on every path; `_sk_emit_err` is `_vani_sk_emit_err`.** (B14, items
+  SA8 + SA9.) **Root cause (SA8):** each returned `Err(VANI_ERR_DEVICE_INVALID)` on its `d == 0`
+  guard but the raw `audio_drain` / `audio_drop` / `audio_get_state` integer on the live path, so a
+  two-value bind read that integer as the TAG and the payload as garbage: a device in state SETUP
+  (1) read as `Err`, and so did any non-zero drain/drop status. The compiler reported all three
+  (`returns a : stack pair on another path but a SINGLE value here`, `lib/vani.cyr:2113/2118/2123`).
+  **Fix, at the source:** drain/drop return `Ok(d)` or `Err(VANI_ERR_DRAIN / VANI_ERR_DROP)` (new
+  codes 23 / 24) and state returns `Ok(raw state)`, -1 when the STATUS query failed. vani's new
+  live-path rows bind `var t, v =` on a non-null bad-fd handle (4 fail against 1.2.7's
+  `device.cyr`), and its CI fails on any mixed-return warning. **Root cause (SA9):** vani and mabda
+  both named a private helper `_sk_emit_err`, so with both folds in scope the last definition won
+  program-wide (`duplicate fn '_sk_emit_err'`). Renamed on both sides (mabda below). The pin stays
+  6.6.6; no public fn changed.
+- **mabda 4.1.6 folded (`lib/mabda.cyr`, mabda commit `97679dc`) — `WGPU_VENDOR_ID_AMD` and
+  `_mabda_sk_emit_err`.** (B14, items SB4 + SA9.) **Root cause (SB4):** mabda declared the AMD/ATI
+  GPU vendor id (0x1002, what `WGPUAdapterInfo.vendorID` reports) as `var PCI_VENDOR_AMD`, the name
+  yukti's `PciVendor` enum gives the PCI-SIG AMD id 0x1022. With both folds in scope cycc warned
+  `duplicate symbol 'PCI_VENDOR_AMD' redefined with conflicting value (last definition wins)` and
+  whichever library came first compared against the other's value (mabda's AMD-wgpu deprecation
+  guard, or yukti's PCI vendor match). **Fix, at the source:** mabda's is `WGPU_VENDOR_ID_AMD` (the
+  `NV_PCI_VENDOR_NVIDIA` precedent); yukti keeps its name and 0x1022. No consumer in `~/Repos` named
+  mabda's constant (ai-hwaccel defines its own). **SA9:** its `_sk_emit_err` is `_mabda_sk_emit_err`.
+  The pin stays 6.6.6.
+- **sakshi 2.5.6 folded (`lib/sakshi.cyr`, sakshi commit `9218130`) — comment-only.** (B14, item SA7.)
+  Three agnos clock comments in `src/clock.cyr` described `#95` as calibrated "against the live tick"
+  (agnos 1.57.6 calibrates it against the ACPI PM timer, live LAPIC ticks the fallback) and said agnos
+  reads `uptime_ms` directly (since 2.5.1 it reads `#95` first, `#40` only when `#95` answers -1).
+  The fold differs from 2.5.5 only in those comments and the version stamp. The pin stays 6.6.6.
+- **New gate `tests/gates/toolchain/fold_namespace_collisions.sh`** (B14): yukti + mabda + vani +
+  sakshi compiled together, in both yukti/mabda orders, must report no `duplicate fn`, no
+  conflicting `duplicate symbol` and no mixed-return warning located in those folds, and the run
+  must keep yukti's `PCI_VENDOR_AMD` at 0x1022 and mabda's `WGPU_VENDOR_ID_AMD` at 0x1002.
+  Mutation-proven: the 6.6.11 `lib/mabda.cyr` + `lib/vani.cyr` report the `PCI_VENDOR_AMD` conflict,
+  the `_sk_emit_err` duplicate and the three mixed-return warnings in both orders.
+- vani, mabda and sakshi ran their full CI in a clean `git archive` copy with a throwaway
+  `CYRIUS_HOME` at their 6.6.6 pin. ⛔ **vani 1.2.8, mabda 4.1.6 and sakshi 2.5.6 must be TAGGED
+  before cyrius 6.6.12 is**; the folds were copied byte-identical from those commits' `dist/`, and
+  `docs/ecosystem.md`'s three fold rows name the commits.
+- **sandhi 1.10.4 folded (`lib/sandhi.cyr`, sandhi commit `88115b3`) — CVE-57 above; a
+  stop-enabled server wakes on macOS; the suites run on macOS.** (B15, items SA11 + SA6.) **SA6:**
+  sandhi's four suites had never run on macOS. At this release they were run on ecb and ach with the
+  6.6.11 release tarballs in a per-run directory, and ecb hung. **Root cause:** the four blocking
+  serve loops re-read their stop flag because the listen fd carries 100 ms of `SO_RCVTIMEO`, but
+  XNU's `accept(2)` ignores `SO_RCVTIMEO`. So on macOS an idle stop-enabled server
+  (`sandhi_server_options_stop_flag`) never saw the flag, and `test_server_stop_wakes_blocked_accept`
+  hung until the runner killed it. A 100 ms-armed listener never returned on either Mac. **Fix, at
+  the source:** the loops accept through `_sandhi_server_accept`. With a flag on macOS, it polls the
+  listener for the interval and reports a timeout as `Err(_SANDHI_EAGAIN)`, which the accept policy
+  retries. New sandhi row `test_server_accept_surfaces_when_idle` hangs on both ecb and ach with the
+  macOS arm removed. The accept that follows a readable poll could still park — a peer that resets
+  between the two is dropped from a BSD accept queue, and a blocking accept then waits for the next
+  client (found in this release's review) — so on macOS the armed listener is also `O_NONBLOCK`,
+  and `_sandhi_server_accept` clears the `O_NONBLOCK` a BSD `accept(2)` copies onto the new socket.
+  Two more sandhi rows, mutation-proven on ecb and ach: a direct accept on an armed idle listener
+  hangs without the `O_NONBLOCK`, and the accepted fd reads back non-blocking without the clear.
+  After the fix all four suites pass on Linux, ecb and ach (787 / 1,691 / 352 / 63).
+  sandhi's CI gains a `macos-14` job and a structural row that keeps every `"/etc/"` literal and
+  8.8.8.8 fallback inside `#ifndef CYRIUS_TARGET_WIN`. The pin moves 6.6.10 → 6.6.11.
+- **yantra 1.0.7 folded (`lib/yantra.cyr`, yantra commit `1095e5e`) — `_cdp_set_nodelay` through
+  `sys_setsockopt`; yantra's own build picks up the CVE-53 reader fix.** (B15, items SB2 + SB3.)
+  **Root cause (SB2):** a raw `syscall(54, ...)`, the x86-Linux setsockopt number, whose option cell
+  came from a leaked `alloc(4)` on every CDP connect. The PE build warned on it, and on agnos 54 is
+  `SYS_UDP_UNBIND`. **Fix, at the source:** `sys_setsockopt(fd, 6, 1, &one, 4)` with a stack cell;
+  on agnos, whose stdlib peer has no setsockopt, it declines with -38 and issues no syscall. yantra's
+  new `tests/cdp_nodelay.tcyr` shows 16 calls allocate nothing (1.0.6: 128 bytes). **SB3:** yantra
+  is the only repo whose own code reaches the `lib/ws.cyr` client reader that CVE-53 fixed. The fold
+  has carried the fixed reader since 6.6.10, but yantra's standalone build at pin 6.6.9 did not. The
+  pin moves to 6.6.11 and `cyrius.lock` is regenerated. Its Chromium/CDP e2e smoke is 11/11 and its
+  chromedriver e2e 9/9 against live browsers. yantra's `dist/` is untracked, so the fold is
+  `cyrius distlib` at that commit (a second run is byte-identical). Of the other vendored copies of
+  `ws.cyr` / `ws_server.cyr` in the ecosystem, no repo's own code calls either reader; they pick up
+  the fix at their next re-vendor.
+- sandhi and yantra ran their full CI in a clean `git archive` copy with a throwaway `CYRIUS_HOME` at
+  6.6.11. ⛔ **sandhi 1.10.4 and yantra 1.0.7 must be TAGGED before cyrius 6.6.12 is**; the folds are
+  byte-identical to those commits' `dist/` output, and `docs/ecosystem.md`'s two fold rows name the
+  commits.
 
 ## [6.6.11] — 2026-09-29
 

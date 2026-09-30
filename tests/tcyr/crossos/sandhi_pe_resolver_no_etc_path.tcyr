@@ -1,0 +1,136 @@
+# sandhi_pe_resolver_no_etc_path.tcyr — 6.6.12 (CVE-57): the folded sandhi resolver never
+# reads the POSIX configuration path on Windows; it asks the SYSTEM resolver.
+#
+# ⛔ WHY. sandhi's own DNS resolver (src/net/resolve.cyr, folded as lib/sandhi.cyr) read
+# "/etc/resolv.conf" on every target and fell back to 8.8.8.8. On Windows a rooted path is
+# DRIVE-RELATIVE — "/etc/resolv.conf" opens C:\etc\resolv.conf — and any authenticated user may
+# create folders at the root of the system drive, so an unprivileged local user could plant a
+# nameserver that every other user's sandhi lookups (sandhi_http_get included) were sent to.
+# 6.6.11 gave PE working Winsock UDP, so a PE program reached that path end to end. The class
+# is CVE-54's, which 6.6.11 closed in the stdlib's own net_resolve_ipv4. sandhi 1.10.4: on
+# Windows the A lookup IS net_resolve_ipv4 (getaddrinfo), the AAAA lookup answers 0 (the PE
+# socket surface is AF_INET only), and the resolv.conf reader returns -1 without opening
+# anything.
+#
+# ⚠ WINE CANNOT SHOW THE PLANT: it maps a rooted path to the unix root, so "/etc/resolv.conf"
+# is the LINUX file there and this test leaves it alone (wine is detected by ntdll's
+# wine_get_version export, as in net_resolve_pe.tcyr). The reader row still bites under wine —
+# the pre-fix reader returned the Linux host's nameserver — and the plant rows bite on real
+# Windows (cass, the release gate's cross-OS leg), where the plant is ASSERTED: a
+# C:\etc\resolv.conf already present, or a mkdir/write that failed, fails a named row instead
+# of letting "the planted nameserver is not used" pass without a plant.
+#
+# MUTATION (6.6.12, measured with the sandhi 1.10.3 fold): under wine 3 of 13 rows fail — the
+# reader rows (it returned 127.0.0.53, the Linux host's resolver) and the AAAA row; on cass 5 of
+# 15 fail — the reader read the planted 127.0.9.7, and the lookups of this computer's name and of
+# localhost went to that planted loopback nameserver, which answers nothing. CHANGELOG [6.6.12]
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/result.cyr"
+include "lib/str.cyr"
+include "lib/fmt.cyr"
+include "lib/vec.cyr"
+include "lib/hashmap.cyr"
+include "lib/io.cyr"
+include "lib/fs.cyr"
+include "lib/fnptr.cyr"
+include "lib/tagged.cyr"
+include "lib/mmap.cyr"
+include "lib/net.cyr"
+include "lib/ws.cyr"
+include "lib/math.cyr"
+include "lib/chrono.cyr"
+include "lib/random.cyr"
+include "lib/thread.cyr"
+include "lib/thread_local.cyr"
+include "lib/process.cyr"
+include "lib/dynlib.cyr"
+include "lib/fdlopen.cyr"
+include "lib/tls.cyr"
+include "lib/sakshi.cyr"
+include "lib/sigil.cyr"
+include "lib/bayan.cyr"
+include "lib/sandhi.cyr"
+include "lib/async.cyr"
+include "lib/assert.cyr"
+
+# Pack a.b.c.d the way sock_connect wants it (network byte order in memory).
+fn _spr_ip(a, b, c, d): i64 { return a | (b << 8) | (c << 16) | (d << 24); }
+
+#ifdef CYRIUS_TARGET_WIN
+# 1 under wine: its ntdll exports wine_get_version, which no Windows ntdll has.
+fn _spr_is_wine(): i64 {
+    var nt = syscall(0xF013, "ntdll.dll");
+    if (nt == 0) { return 0; }
+    if (syscall(0xF014, nt, "wine_get_version") != 0) { return 1; }
+    return 0;
+}
+
+fn _spr_windows_group(): i64 {
+    test_group("6.6.12 — Windows: the resolv.conf reader opens nothing");
+    # Under wine the pre-fix reader returned the Linux host's nameserver; on Windows, whatever
+    # a local user planted. -1 is "no nameserver", the only right answer on this target.
+    assert_eq(_sandhi_resolve_read_resolv_conf(), 0 - 1, "the reader answers -1 without a file");
+
+    test_group("6.6.12 — Windows: a planted C:\\etc\\resolv.conf is NOT honoured");
+    # A LOOPBACK nameserver: with nothing listening, a query sent to it fails fast (ICMP port
+    # unreachable) rather than waiting on a routed address, so the pre-fix build FAILS the
+    # rows below instead of hanging.
+    var planted = _spr_ip(127, 0, 9, 7);
+    var made_dir = 0;
+    var made_file = 0;
+    var wine = _spr_is_wine();
+    if (wine == 0) {
+        # Real Windows: the plant MUST happen, or the rows below pass without testing anything. A
+        # C:\etc\resolv.conf that is already there is not this file's to overwrite or remove — it
+        # fails here by name instead.
+        assert_eq(file_exists("/etc/resolv.conf"), 0,
+          "no C:\\etc\\resolv.conf exists yet (remove it to run the plant)");
+    }
+    if (wine == 0 && file_exists("/etc/resolv.conf") == 0) {
+        if (sys_mkdir("/etc", 493) == 0) { made_dir = 1; }
+        var line = "nameserver 127.0.9.7\r\n";
+        if (file_write_all("/etc/resolv.conf", line, strlen(line)) == strlen(line)) { made_file = 1; }
+        assert_eq(made_file, 1,
+          "the nameserver is planted at C:\\etc\\resolv.conf (else the rows below are vacuous)");
+    }
+    assert_neq(_sandhi_resolve_read_resolv_conf(), planted, "the planted nameserver is not read");
+    assert_eq(_sandhi_resolve_read_resolv_conf(), 0 - 1, "…nothing is read at all");
+
+    # The machine's own name always resolves locally (no DNS), through getaddrinfo. Pre-fix it was
+    # a UDP query to the planted nameserver, which answers nothing.
+    var me = getenv("COMPUTERNAME");
+    assert(me != 0, "COMPUTERNAME is set");
+    if (me != 0) {
+        var got = sandhi_resolve_ipv4(me);
+        assert_neq(got, 0 - 1, "sandhi resolves this computer's name through the system resolver");
+        assert_eq(got, net_resolve_ipv4(me), "…to the address net_resolve_ipv4 gives");
+        assert_eq(sandhi_resolve_ipv6(me), 0, "the AAAA lookup answers 0 (v6 is declined on PE)");
+    }
+    assert_eq(sandhi_resolve_ipv4("cyrprobe-planted.invalid"), 0 - 1,
+      "a .invalid name does not resolve (RFC 6761)");
+    assert_eq(sandhi_resolve_ipv4("localhost"), INADDR_LOOPBACK(), "localhost");
+    if (made_file == 1) { sys_unlink("/etc/resolv.conf"); }
+    if (made_dir == 1) { sys_rmdir("/etc"); }
+    return 0;
+}
+#endif
+
+fn main(): i64 {
+    alloc_init();
+    test_group("6.6.12 — every target: literals, and the lookups' refusals, need no I/O");
+    assert_eq(sandhi_net_parse_ipv4("10.1.2.3"), _spr_ip(10, 1, 2, 3), "a literal parses");
+    assert_eq(sandhi_net_parse_ipv4("cyrprobe.invalid"), 0 - 1, "a name is not a literal");
+    # A negative TXID is a failed getrandom: both lookups refuse before any file or socket.
+    assert_eq(_sandhi_resolve_ipv4_query_a(default_alloc(), "cyrprobe.invalid", 0 - 1), 0 - 1,
+      "A: a failed TXID is refused");
+    assert_eq(_sandhi_resolve_ipv6_query_a(default_alloc(), "cyrprobe.invalid", 0 - 1), 0,
+      "AAAA: a failed TXID is refused");
+    #ifdef CYRIUS_TARGET_WIN
+    _spr_windows_group();
+    #endif
+    return assert_summary();
+}
+var ec = main();
+syscall(60, ec);
