@@ -197,6 +197,39 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   6.6.11. ⛔ **sandhi 1.10.4 and yantra 1.0.7 must be TAGGED before cyrius 6.6.12 is**; the folds are
   byte-identical to those commits' `dist/` output, and `docs/ecosystem.md`'s two fold rows name the
   commits.
+### Fixed
+
+- **B12 (T3): the check driver's one-row modes left an empty private run dir behind on every
+  call.** **Root cause:** `--gate-row`, `--output-row` and `--doc-stamp-row` returned before
+  `_run_tmp_cleanup()`, which only the full run and `--tool-path` called, and
+  `_expected_output_gate` creates the dir lazily, so each `--output-row` left an empty
+  `$TMPDIR/cyrcheck.<pid>.N` — two in /tmp per run of `check_driver_bounded.sh`. **Fix:** all three
+  arms clean up before returning; the gate runs its driver calls with TMPDIR inside its own
+  trap-removed dir and axis 4f asserts none is left (mutation: the --output-row cleanup removed →
+  RED, 2 leftovers).
+- **B12 (S5): `cyrius_check --tool-path <unknown>` exited 1 with nothing on either stream.**
+  **Root cause:** `_tool_build` returns 0 silently when neither `programs/<name>.cyr` nor
+  `build/<name>` exists. **Fix:** the arm now writes `error: --tool-path: no tool named '<n>'
+  (neither <src> nor build/<n> exists)` to stderr; `check_driver_builds_its_tools.sh` axis 7 pins
+  exit 1 + the exact line + empty stdout, with a known-name control.
+- **B12 (T7): `deps_relock_refused.sh` axis A5 (a pre-6.6.4 wrapper still verifies a trailer
+  lock) could never run.** **Root cause:** it searched `${CYRIUS_HOME:-…}` AFTER the gate exported
+  its own throwaway home, which holds only the tree's version — a permanent SKIP (exit 77) that
+  read as coverage. **Fix:** the caller's home is captured as `OUTER_HOME` before the export and A5
+  searches it; measured 13 passed + SKIP (77) → 14 passed (0) with the live store's 6.6.3 wrapper.
+  CI installs no old wrapper, so there it stays an honest SKIP.
+- **B12 (T4): `text/unicode_normconf.tcyr` died of SIGSEGV after its own FAIL when run outside the
+  repo root.** **Root cause:** a failed corpus read returns -ENOENT and the terminator store
+  `store8(corpus + corpus_len, 0)` wrote 2 bytes before the buffer. **Fix:** a negative length is
+  clamped to 0 — `1 passed, 2 failed`, exit 2 (from the root: 320547 passed, unchanged). New gate
+  `tests/gates/toolchain/tcyr_missing_corpus_is_a_count.sh` runs it from an empty dir (mutation: the
+  guard deleted → rc 139, no summary, RED).
+- **B12 (T6): `crossos/win_qpc_clock.tcyr`'s QPC-vs-GetTickCount64 agreement flaked on cass.**
+  **Root cause:** t0 was read at an arbitrary phase of the ~15.6 ms tick, costing up to ~16 of the
+  20 ms budget before any load (measured quiet: up to 13 ms). **Fix:** three intervals, each
+  started on a tick edge; any one within 20 ms passes (budget unchanged). Real cass: 20 quiet + 10
+  fully-loaded runs GREEN (worst best-of-3 2 ms); the three mutants re-proved RED on all three
+  intervals, and the ledger's "~7 orders of magnitude" for the raw-count mutant corrected to 100x.
 
 ## [6.6.11] — 2026-09-29
 

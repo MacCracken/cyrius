@@ -64,6 +64,11 @@ cp -r "$ROOT/lib/." "$H/versions/$V/lib/"
 cp "$W/cyrius" "$H/versions/$V/bin/cyrius"; cp "$CC" "$H/versions/$V/bin/cycc"; chmod +x "$H/versions/$V/bin/"*
 printf '%s\n' "$V" > "$H/current"; ln -s "$H/versions/$V/bin" "$H/bin"; ln -s "$H/versions/$V/lib" "$H/lib"
 CY="$H/versions/$V/bin/cyrius"
+# The CALLER's home, captured BEFORE it is replaced: A5 looks for an installed pre-6.6.4
+# wrapper there. 6.6.12 (T7): A5 used to search ${CYRIUS_HOME:-…} AFTER this export, i.e.
+# the throwaway home above, which holds only $V (and later $V2) — so A5 could never find an
+# old wrapper anywhere, and its SKIP read as coverage in every run.
+OUTER_HOME="${CYRIUS_HOME:-$HOME/.cyrius}"
 export CYRIUS_HOME="$H"
 
 # ── a local git dep (file://, tagged) so a lock is written and commit-pinned ────────────
@@ -174,9 +179,11 @@ sed -i "s/^cyrius = \"$V2\"$/cyrius = \"$V\"/" "$P2/cyrius.cyml"
 #    consumer's pin differs from its own version, i.e. from the very next version-bump on,
 #    and the axis would measure the code under test (bite-5 review). The floor on the
 #    verified count keeps `0 verified, 0 failed` from reading as green. Older slots are
-#    read from ${CYRIUS_HOME:-$HOME/.cyrius} — under check.sh's staging they are aliased.
+#    read from $OUTER_HOME (the caller's home, captured before the export above) — under
+#    check.sh's staging they are aliased from the live store. CI installs no pre-6.6.4
+#    wrapper, so there A5 is an honest SKIP (77). CHANGELOG [6.6.12]
 OLDCY=""
-for d in "${CYRIUS_HOME:-$HOME/.cyrius}"/versions/*/bin/cyrius; do
+for d in "$OUTER_HOME"/versions/*/bin/cyrius; do
     [ -x "$d" ] || continue
     ov=$(basename "$(dirname "$(dirname "$d")")")
     case "$ov" in 6.6.0|6.6.1|6.6.2|6.6.3) OLDCY="$d"; OLDV="$ov" ;; esac
@@ -188,7 +195,7 @@ if [ -n "$OLDCY" ]; then
         ok "A5 the pre-6.6.4 wrapper ($OLDV, no re-exec) verifies a trailer lock: 0 failed"
     else bad "A5 (rc=$rc): $(tail -1 "$W/a5.out")"; fi
 else
-    echo "  SKIP A5: no pre-6.6.4 wrapper installed under ${CYRIUS_HOME:-$HOME/.cyrius}/versions — old-reader tolerance not exercised"
+    echo "  SKIP A5: no pre-6.6.4 wrapper installed under $OUTER_HOME/versions — old-reader tolerance not exercised"
     GATE_SKIPS=$((${GATE_SKIPS:-0} + 1))
 fi
 

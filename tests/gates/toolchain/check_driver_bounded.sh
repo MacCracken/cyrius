@@ -626,6 +626,10 @@ if ! "$ROOT/build/cycc" < programs/checks/main.cyr > "$T/drv" 2> "$T/drv.err"; t
 fi
 chmod +x "$T/drv"
 strip_ansi() { sed 's/\x1b\[[0-9;]*m//g'; }
+# Every driver call in this axis runs with TMPDIR inside the gate's own trap-removed dir, so a
+# private run dir the driver fails to remove lands HERE (and is counted by 4f) rather than in
+# the caller's /tmp. 6.6.12 (T3): `--output-row` left an empty cyrcheck.<pid>.N on every call.
+DTMP="$T/drvtmp"; mkdir -p "$DTMP"
 
 # 4a: a spinning .tcyr under CYRIUS_CHECK_TIMEOUT=1 -> a TIMEOUT row naming the setting, the
 # row RED, and the final line counting it.
@@ -633,7 +637,7 @@ R4="$T/r4"; mkdir -p "$R4/build" "$R4/tests/tcyr/zz"
 ln -s "$ROOT/build/cycc" "$R4/build/cycc"
 ln -s "$ROOT/lib" "$R4/lib"
 cp "$T/spin.cyr" "$R4/tests/tcyr/zz/spin.tcyr"
-( cd "$R4" && CYRIUS_CHECK_TIMEOUT=1 timeout 60 "$T/drv" tcyr ) > "$T/a4a.out" 2>&1
+( cd "$R4" && TMPDIR="$DTMP" CYRIUS_CHECK_TIMEOUT=1 timeout 60 "$T/drv" tcyr ) > "$T/a4a.out" 2>&1
 strip_ansi < "$T/a4a.out" > "$T/a4a.txt"
 check "4a a spinning .tcyr prints a TIMEOUT row naming CYRIUS_CHECK_TIMEOUT=1s" "yes" \
     "$(grep -q '^  TIMEOUT: test suite (1 files) — a child was killed at the deadline (CYRIUS_CHECK_TIMEOUT=1s)$' "$T/a4a.txt" && echo yes || echo no)"
@@ -651,12 +655,12 @@ printf 'fn main(): i64 { var w = syscall(1, 1, "exact-bytes\\n", 12); var i = 0;
 printf 'exact-bytes\n' > "$R4B/tests/fixtures/zz_hang.expected"
 printf 'fn main(): i64 { var w = syscall(1, 1, "exact-bytes\\n", 12); return 152; }\nvar r = main();\nsyscall(60, r);\n' > "$R4B/tests/fixtures/zz_ok.cyr"
 printf 'exact-bytes\n' > "$R4B/tests/fixtures/zz_ok.expected"
-( cd "$R4B" && CYRIUS_CHECK_TIMEOUT=1 timeout 60 "$T/drv" --output-row zz_hang ) > "$T/a4b.out" 2>&1
+( cd "$R4B" && TMPDIR="$DTMP" CYRIUS_CHECK_TIMEOUT=1 timeout 60 "$T/drv" --output-row zz_hang ) > "$T/a4b.out" 2>&1
 strip_ansi < "$T/a4b.out" > "$T/a4b.txt"
 check "4b a print-then-hang output fixture is RED" "yes" "$(grep -q '^  FAIL: zz_hang$' "$T/a4b.txt" && echo yes || echo no)"
 check "   …and says the child was killed at the deadline (not a crash, not a pass)" "yes" \
     "$(grep -q 'zz_hang — killed at the deadline (CYRIUS_CHECK_TIMEOUT)' "$T/a4b.txt" && echo yes || echo no)"
-( cd "$R4B" && CYRIUS_CHECK_TIMEOUT=10 timeout 60 "$T/drv" --output-row zz_ok ) > "$T/a4b2.out" 2>&1
+( cd "$R4B" && TMPDIR="$DTMP" CYRIUS_CHECK_TIMEOUT=10 timeout 60 "$T/drv" --output-row zz_ok ) > "$T/a4b2.out" 2>&1
 check "   …control: the same bytes from a fixture that EXITS (152) still pass" "yes" \
     "$(strip_ansi < "$T/a4b2.out" | grep -q '^  PASS: zz_ok$' && echo yes || echo no)"
 
@@ -712,7 +716,7 @@ ln -s "$ROOT/build/cycc" "$R4D/build/cycc"
 ln -s "$ROOT/tests" "$R4D/tests"
 printf '# one\nfn one(): i64 { return 1; }\n' > "$R4D/lib/one.cyr"
 printf '#!/bin/sh\nexec sleep 30\n' > "$R4D/build/cyrlint"; chmod +x "$R4D/build/cyrlint"
-( cd "$R4D" && HOME="$T/nohome" CYRIUS_CHECK_TIMEOUT=1 timeout 120 "$T/drv" lint ) > "$T/a4d.out" 2>&1
+( cd "$R4D" && HOME="$T/nohome" TMPDIR="$DTMP" CYRIUS_CHECK_TIMEOUT=1 timeout 120 "$T/drv" lint ) > "$T/a4d.out" 2>&1
 strip_ansi < "$T/a4d.out" > "$T/a4d.txt"
 check "4d a cyrlint killed at the deadline: 'lint (stdlib)' is RED" "yes" "$(grep -q '^  FAIL: lint (stdlib)' "$T/a4d.txt" && echo yes || echo no)"
 check "   …with a TIMEOUT row naming CYRIUS_CHECK_TIMEOUT=1s" "yes" \
@@ -732,6 +736,17 @@ check "4e no driver site tests the crash flag without the exit code (deadline -2
 [ -s "$T/sigonly" ] && sed 's/^/        /' "$T/sigonly"
 check "   …premise: the helper that does it right exists and is used" "yes" \
     "$([ "$(grep -c '_exec_unfinished() == 1' programs/checks/*.cyr | awk -F: '{s+=$2} END {print s}')" -ge 3 ] && echo yes || echo no)"
+
+# 4f: 6.6.12 (T3) — no driver call leaves its private run dir behind. The one-row modes
+# (`--output-row`, `--gate-row`, `--doc-stamp-row`) returned before `_run_tmp_cleanup()`, which
+# only the full run and `--tool-path` called, and `_expected_output_gate` creates the dir
+# lazily (`_tmp_path`), so every `--output-row` above left an empty cyrcheck.<pid>.N — two per
+# run of this gate, in the caller's /tmp. MUTATION: the cleanup call removed from the
+# --output-row arm of programs/checks/main.cyr -> this row RED (2 leftovers: 4b and its control).
+check "4f every driver call above removed its private run dir (TMPDIR=\$T/drvtmp is empty)" "0" \
+    "$(find "$DTMP" -mindepth 1 -maxdepth 1 -name 'cyrcheck.*' | wc -l | tr -d ' ')"
+check "   …premise: the axis-4 driver calls ran (4b and its control wrote their rows)" "yes" \
+    "$([ -s "$T/a4b.out" ] && [ -s "$T/a4b2.out" ] && echo yes || echo no)"
 
 echo ""
 if [ "$fails" = "0" ]; then

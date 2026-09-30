@@ -923,6 +923,11 @@ _chk_gate "$ROOT/tests/gates/toolchain/tcyr_epilogue_shape.sh"
 # before assert_summary (its FAIL rows go to stderr, never captured) and exited 0, or printed
 # `0 passed, 0 failed`, read PASS. Now: the LAST `N passed, M failed` line, N >= 1, M == 0, ec 0.
 _chk_gate "$ROOT/tests/gates/toolchain/check_driver_requires_summary.sh"
+# 6.6.12 B12 (T4): a .tcyr whose data file is missing fails WITH A COUNT, never a signal.
+# text/unicode_normconf.tcyr run outside the repo root printed its FAIL, then stored its
+# terminator at corpus + (-ENOENT) — 2 bytes before a fresh mapping — and died of SIGSEGV
+# (139), so the tally never printed. The negative length is now clamped: rc 2, `1 passed, 2 failed`.
+_chk_gate "$ROOT/tests/gates/toolchain/tcyr_missing_corpus_is_a_count.sh"
 # 6.6.11 B01: ci.yml's three full-corpus .tcyr loops (ubuntu, AGNOS container, native arm64)
 # grade by the same rule. They passed `ec == 0` plus an optional `N failed` count, so a test
 # that died before its summary and exited 0 had no count to read and scored PASS. Each step's
@@ -1639,6 +1644,12 @@ _chk_gate "$ROOT/tests/gates/toolchain/cli_pe_file_size_and_sibling_tools.sh"
 # on macOS, left `_envp` EMPTY. Linux/aarch64 axis here; the macOS half is the ecb/ach row in
 # cross-os-selfhost.sh. Exit 77 with no /proc/self/environ or no compiler.
 _chk_gate "$ROOT/tests/gates/toolchain/cli_child_env_complete.sh"
+# 6.6.12 (B10: S-B1) — cbt `_macho_fill_environ` returns <= cap - 1 and keeps only WHOLE entries.
+# Its per-entry NUL was stored unconditionally, so a macOS environment larger than the buffer
+# returned pos > cap and every caller's `store8(eb + en, 0)` landed past its allocation. The
+# macOS-only fn is extracted into an x86 logic probe (40 x 25-byte entries, cap 64, canary);
+# the ecb/ach half was verified by hand and is in the CHANGELOG. Exit 77 with no compiler.
+_chk_gate "$ROOT/tests/gates/toolchain/macho_fill_environ_bounded.sh"
 # 6.6.11 (B09: I3) — cyrius.exe honours CYRIUS_RESOLVED=1 and runs a pinned versions/<pin>/bin/
 # cyrius.exe as a child (sys_execve is a -1 stub on PE), propagating its exit code. Wine; 77 without.
 _chk_gate "$ROOT/tests/gates/toolchain/cli_pe_pinned_redirect.sh"

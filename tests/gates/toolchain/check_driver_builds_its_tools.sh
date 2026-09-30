@@ -29,11 +29,15 @@
 #   5  a tool that does not compile is a FAIL row naming it (a broken programs/cyrld.cyr)
 #   6  STATIC ratchet: programs/checks/*.cyr names none of the nine as `_root_path("build/<t>")`
 #      and never builds a `.cyrius/bin` path
+#   7  6.6.12 (S5): `--tool-path <unknown>` exits 1 AND says so on stderr, naming the tool and
+#      both places it looked (it used to exit 1 with both streams empty); stdout stays empty,
+#      and a KNOWN name in the same root still answers 0 (anti-vacuous)
 #
 # MUTATIONS (each RED, measured when this gate was written):
 #   M1 `_tool_build` returns build/<name> whenever it exists (the old trust)   -> axes 1, 2
 #   M2 the ~/.cyrius/bin fallback restored in `_tool_build`                   -> axis 3
 #   M3 a failed compile returns 0 silently (no FAIL row)                     -> axis 5
+#   M4 the `_tool_path_unknown(tn)` call dropped from the --tool-path arm     -> axis 7
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -162,9 +166,27 @@ h=$(grep -nE '"/?\.cyrius/bin/?"' "$ROOT"/programs/checks/*.cyr | grep -vE '^[^:
 NT=$(grep -hcE '_tool\("' "$ROOT"/programs/checks/*.cyr | awk '{s+=$1} END {print s+0}')
 [ "$NT" -ge 20 ] || _fail "axis 6: only $NT _tool(\"…\") uses in programs/checks (floor 20) — the rows stopped asking the driver"
 
+echo "axis 7: --tool-path <unknown> exits 1 and names the tool on stderr"
+U=zz_no_such_tool
+URC=0
+( cd "$T" && HOME="$D/nohome" TMPDIR="$D/rt" timeout 120 "$D/drv" --tool-path "$U" ) \
+    > "$D/a7.out" 2> "$D/a7.err" || URC=$?
+[ "$URC" = 1 ] || _fail "axis 7: --tool-path $U exited $URC, expected 1"
+grep -qF "error: --tool-path: no tool named '$U' (neither programs/$U.cyr nor build/$U exists)" "$D/a7.err" \
+    || _fail "axis 7: stderr does not name '$U' and where it looked: '$(head -2 "$D/a7.err")'"
+[ -s "$D/a7.out" ] && _fail "axis 7: stdout is not empty for an unknown tool: '$(head -2 "$D/a7.out")'"
+[ -z "$(ls -A "$D/rt")" ] || _fail "axis 7: --tool-path $U left its run dir behind: $(ls "$D/rt")"
+# Anti-vacuous: the message is for UNKNOWN names only — a known one in the same root answers 0
+# with nothing on stderr.
+KRC=0
+( cd "$T" && HOME="$D/nohome" TMPDIR="$D/rt" timeout 300 "$D/drv" --tool-path cyrld ) \
+    > "$D/a7k.out" 2> "$D/a7k.err" || KRC=$?
+[ "$KRC" = 0 ] || _fail "axis 7: control --tool-path cyrld exited $KRC"
+[ -s "$D/a7k.err" ] && _fail "axis 7: control --tool-path cyrld wrote stderr: '$(head -2 "$D/a7k.err")'"
+
 echo ""
 if [ "$FAILS" -gt 0 ]; then
     echo "FAIL: $NAME — $FAILS check(s) failed"
     exit 1
 fi
-echo "PASS: $NAME ($NTOOLS tools built per run from the tree, stubs ignored, no ~/.cyrius/bin fallback, a broken tool is a named FAIL)"
+echo "PASS: $NAME ($NTOOLS tools built per run from the tree, stubs ignored, no ~/.cyrius/bin fallback, a broken tool is a named FAIL, an unknown one is named on stderr)"
