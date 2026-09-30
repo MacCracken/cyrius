@@ -116,8 +116,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   gains a Windows arm (`_dir_list_into_win`: FindFirstFileW/FindNextFileW into the caller's buffers,
   the WIN32_FIND_DATAW in `scratch`, the same -1/-2/-3/-4 contract, nothing allocated). **Held by**
   `tests/tcyr/crossos/pe_path_utf8_long.tcyr` (long-path is_dir, dir_list, dir_list_into, sys_access,
-  xmkdir_p idempotence, and a symlink at the long path on POSIX; the 6.6.11 compiler + stdlib FAIL 6
-  rows on cass), `tests/tcyr/crossos/fs_dirlist.tcyr` (dir_list_into's contract and the empty path
+  xmkdir_p idempotence, a symlink at the long path on POSIX, and on EVERY target a link moved onto the
+  long path (`is_symlink` = 1) and a directory link to the long directory (`is_dir` = 1: on Windows
+  `sys_symlink`'s kind probe saw the target); the 6.6.11 compiler + stdlib FAIL 10 rows on cass, and
+  reverting only `is_symlink`'s PE arm or only the narrow kind probe fails 2 rows each on cass and
+  wine), `tests/tcyr/crossos/fs_dirlist.tcyr` (dir_list_into's contract and the empty path
   on every target; 6.6.11 FAILS 9 rows on cass), and `pe_open_posix_semantics.sh` axis 2b, which now
   counts GetFileAttributesW and FindFirstFileW as narrow paths (hand-off to H; reverting either
   emitter reddens it). The cass PE self-host is byte-identical (the include opens share the widen).
