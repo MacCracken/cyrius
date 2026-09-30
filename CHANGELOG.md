@@ -23,9 +23,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   per name per platform, plus the kernel's own `-ENOTEMPTY`) was cross-built for Mach-O and passes
   26/0 on ecb and ach, where 3.13.4's `sys_error.cyr` fails 9 of 26; its `capture_bounded.tcyr`
   drives the refusal (SIGSEGV without the fix). The pin stays 6.6.9.
-- sigil ran its full CI in a clean `git archive` copy with a throwaway `CYRIUS_HOME` at its 6.6.9
-  pin. ⛔ **sigil 3.13.5 must be TAGGED before cyrius 6.6.12 is**; the fold was copied byte-identical
-  from that commit's `dist/`, and `docs/ecosystem.md`'s fold row names the commit.
+- **bayan 1.5.9 folded (`lib/bayan.cyr`, bayan commit `b5b1ea1`) — a refused alloc returns 0 in
+  base64 and the TOML array parser.** (B13, items SA2 + SA10 + SA12.) **Root cause:**
+  `bayan_base64_encode` stored into its unchecked output alloc (an oversize length was a SIGSEGV,
+  although `lib/ws.cyr` and `lib/ws_server.cyr` already test its result for 0);
+  `bayan_toml_array_parse_a` used `vec_new_a`'s result unchecked, and its element flush ignored a
+  refused Str and a refused push, so a later refusal handed back a short vec as success. **Fix, at
+  the source:** the encoder returns 0; the flush returns -1 on either refusal and the parser returns
+  0, never a partial vec. Both premise repros (`bayan_base64_encode(&buf, 1<<62)` and
+  `bayan_toml_array_parse_a` on a refuse-everything allocator, each rc=139 on the 1.5.8 fold) now
+  return 0. bayan's pin moves 6.6.9 → 6.6.11 and its CI coverage floor goes back to 100 in the same
+  commit (6.6.11's `cyrius coverage` excludes `main`; 501/501).
+- Both siblings ran their full CI in a clean `git archive` copy with a throwaway `CYRIUS_HOME`
+  (sigil at its 6.6.9 pin, bayan at 6.6.11). ⛔ **sigil 3.13.5 and bayan 1.5.9 must be TAGGED before
+  cyrius 6.6.12 is**; the folds were copied byte-identical from those commits' `dist/`, and
+  `docs/ecosystem.md`'s two fold rows name the commits.
 
 ## [6.6.11] — 2026-09-29
 
