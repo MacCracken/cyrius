@@ -2,7 +2,7 @@
 
 **Scope:** the untrusted-source-input surface. Previous full audit:
 `docs/audit/2026-07-27-security-audit.md` (CVE-32…CVE-36) at cycc 6.4.82.
-**Next free identifier after this document: CVE-56.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
+**Next free identifier after this document: CVE-57.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
 document are **withdrawn** but still consume their ids.) CVE-43 was consumed at 6.6.5,
 **CVE-44 and CVE-45 at 6.6.6** — the release installer's fixed `/tmp` staging, and a forged `#@file` from an included file —
 **CVE-46, CVE-47 and CVE-48 at 6.6.7** (a `secret var` inside a closure was never zeroised; a `secret var` in a
@@ -13,10 +13,10 @@ predictable shared `/tmp` names; `lib/http.cyr` wrote a long URL past its 2048-b
 `rdx`; the lexer silently dropped any `@` that did not spell `@unsafe`; `lib/ws.cyr`'s `ws_recv_frame` let a
 remote peer choose its allocation size and read frames it had not received), and **CVE-54 and CVE-55 at 6.6.11**
 (on Windows, `net_resolve_ipv4` read a drive-relative `C:\etc\hosts` that any local user can plant; a multi-line
-string literal shifted file attribution, so a call to another file's `private` fn compiled); all thirteen are appended below.
+string literal shifted file attribution, so a call to another file's `private` fn compiled); **CVE-56 at 6.6.12** (`lib/log.cyr`'s `log_info_kv` / `log_info_int` built a log line past a 512-byte stack buffer); all thirteen are appended below.
 ⚠ **This line read "next free: CVE-42" while CLAUDE.md read "the next CVE number is 43" and this document ran 39-41.**
 Two authorities, two answers, and nothing reconciled them. CLAUDE.md is the one every closeout reads, so **42 is
-retired unused** and CVE-43 is the entry appended below. Anything below 56 now collides.
+retired unused** and CVE-43 is the entry appended below. Anything below 57 now collides.
 
 Run as part of the band K closeout, as nine parallel audit dimensions over the v6.5.x minor with
 an adversarial verification pass over the highest-severity findings. Everything recorded here was
@@ -1027,3 +1027,34 @@ and is untouched. Fixpoint and `seed → cybs → cycc` hold.
 **Verified.** `tests/gates/frontend/lexer_errors_name_file_line.sh` axis 6 pins, after a
 multi-line string, the diagnostic's line, the include's file name, and the `private` refusal of a
 cross-file call (which compiled on 6.6.10). Axis 4 pins the escape rules that landed with it.
+
+## CVE-56 — `lib/log.cyr`'s `log_info_kv` / `log_info_int` built a log line past a 512-byte stack buffer
+
+*Appended 2026-09-30 (cyrius 6.6.12, bite B10 item S-B2), found in passing by the 6.6.11 lanes and
+promoted from the backlog by the user. Not part of the 2026-09-03 sweep: recorded here because this is
+the live ledger. 6.6.12 also spends CVE-57 and CVE-58.*
+
+| | |
+|---|---|
+| **Severity** | **High (P1)** — a stack buffer overflow reachable from any string a program logs; the same class as CVE-50 |
+| **Affected** | every target: `lib/log.cyr` `log_info_kv(msg, key, val)` and `log_info_int(msg, key, val)` from their introduction (v3.4.9, 2026-04-11) through cyrius 6.6.11, and every consumer that includes `lib/log.cyr` (vendored copies too) until it re-vendors 6.6.12 |
+| **Fixed** | 6.6.12 |
+
+**Vector.** Both functions assemble the line `msg key=val` in a `var buf[512]` stack buffer by
+copying `strlen(msg) + strlen(key) + strlen(val)` bytes with no bound. A program that logs a string
+an attacker influences — a request header, a path, a query value — through either function (as
+`val`, `key` or `msg`; `log_info_int` as `msg` or `key`) overruns the buffer as soon as the fields
+together exceed 511 bytes.
+
+**Impact.** The copy overwrites the function's own locals and its return address. A 4 KB value
+crashes the process with SIGSEGV (rc 139) before the sink is reached — a remote denial of service at
+minimum, and with attacker-chosen bytes a potential control-flow hijack.
+
+**Fix.** Every copy goes through one bounded helper, `_log_cat(buf, off, s, lim)`, with `lim = 511`;
+a line that is cut ends in `...`. `log_info_int` reserves 22 bytes for `=`, the sign and 19 digits,
+so the number itself is never cut.
+
+**Verified.** `tests/tcyr/stdlib/log_kv_bounded.tcyr`: a 4 KB value, msg and key each return rc 0
+with the sink seeing exactly 511 bytes, the head intact and the `...` mark; the 511/512 boundary;
+and `i64::MIN` surviving a 4 KB msg. It passes on x86_64 and qemu-aarch64 and exits 139 against the
+6.6.11 `lib/log.cyr`.
