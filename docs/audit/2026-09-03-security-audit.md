@@ -2,7 +2,7 @@
 
 **Scope:** the untrusted-source-input surface. Previous full audit:
 `docs/audit/2026-07-27-security-audit.md` (CVE-32…CVE-36) at cycc 6.4.82.
-**Next free identifier after this document: CVE-54.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
+**Next free identifier after this document: CVE-56.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
 document are **withdrawn** but still consume their ids.) CVE-43 was consumed at 6.6.5,
 **CVE-44 and CVE-45 at 6.6.6** — the release installer's fixed `/tmp` staging, and a forged `#@file` from an included file —
 **CVE-46, CVE-47 and CVE-48 at 6.6.7** (a `secret var` inside a closure was never zeroised; a `secret var` in a
@@ -11,10 +11,12 @@ listened on the network), and **CVE-49 and CVE-50 at 6.6.9** (`cyrius self` stag
 predictable shared `/tmp` names; `lib/http.cyr` wrote a long URL past its 2048-byte request buffer), and
 **CVE-51, CVE-52 and CVE-53 at 6.6.10** (on Intel-Mac, reading the clock wrote mach time through a stale
 `rdx`; the lexer silently dropped any `@` that did not spell `@unsafe`; `lib/ws.cyr`'s `ws_recv_frame` let a
-remote peer choose its allocation size and read frames it had not received); all eleven are appended below.
+remote peer choose its allocation size and read frames it had not received), and **CVE-54 and CVE-55 at 6.6.11**
+(on Windows, `net_resolve_ipv4` read a drive-relative `C:\etc\hosts` that any local user can plant; a multi-line
+string literal shifted file attribution, so a call to another file's `private` fn compiled); all thirteen are appended below.
 ⚠ **This line read "next free: CVE-42" while CLAUDE.md read "the next CVE number is 43" and this document ran 39-41.**
 Two authorities, two answers, and nothing reconciled them. CLAUDE.md is the one every closeout reads, so **42 is
-retired unused** and CVE-43 is the entry appended below. Anything below 54 now collides.
+retired unused** and CVE-43 is the entry appended below. Anything below 56 now collides.
 
 Run as part of the band K closeout, as nine parallel audit dimensions over the v6.5.x minor with
 an adversarial verification pass over the highest-severity findings. Everything recorded here was
@@ -956,3 +958,72 @@ stray-`@` shapes (6.6.9: `0 warnings`, rc 0). The two vacuous gates are repaired
 `cli_temp_dir_no_leak.sh` axis 3 now requires rc != 0 and the compiler's own diagnostic (RED on
 6.6.9), and `dx_multi_error.sh` case 2 drops `@@@` and proves its diagnostic comes from the
 parser, not the lexer.
+
+## CVE-54 — on Windows, `net_resolve_ipv4` read a DRIVE-RELATIVE `/etc/hosts` any local user can plant
+
+*Appended 2026-09-29 (cyrius 6.6.11, bite B07 item I5), found by the 6.6.9 review finds (group I).
+Not part of the 2026-09-03 sweep: recorded here because this is the live ledger. 6.6.11 also spends
+CVE-55.*
+
+| | |
+|---|---|
+| **Severity** | **High (P1)** — a local, unprivileged user redirects every other user's name lookups on the same Windows machine; with 6.6.11's working sockets it also chooses their nameserver |
+| **Affected** | PE (Windows) programs that call `net_resolve_ipv4` or `_net_dns_id` (`lib/net.cyr`) — the hosts step worked on PE through `file_open` in released cyrius through 6.6.10 (confirmed on cass) |
+| **Fixed** | 6.6.11 |
+
+**Vector.** `net_resolve_ipv4` read `"/etc/hosts"` and `"/etc/resolv.conf"` on every target. On
+Windows a rooted path is DRIVE-RELATIVE, so `"/etc/hosts"` is `C:\etc\hosts` — and any
+authenticated user may create a folder at the root of the system drive. With no resolv.conf the
+lookup fell back to `127.0.0.1:53`, and port 53 is not privileged on Windows, so once sockets work
+(6.6.11 item I4) the nameserver was whoever bound it first. `_net_dns_id`'s `/dev/urandom` fallback
+for the DNS transaction id had the same shape (`C:\dev\urandom`).
+
+**Impact.** One local user plants `C:\etc\hosts` and every other user's cyrius program on that
+machine resolves the planted names to the planter's addresses. Confirmed on cass (real Windows)
+against released 6.6.10: a PE program's `net_resolve_ipv4` honoured a planted `C:\etc\hosts`.
+
+**Fix.** After the literal and `*.localhost` steps the Windows arm is `_net_resolve_win` —
+`getaddrinfo`, the system resolver (the real `%SystemRoot%\System32\drivers\etc\hosts` and the
+adapters' DNS), walking `AF_INET` results and freeing them. Refused before any lookup: a byte that
+is not printable ASCII (`getaddrinfo` reads an ANSI code-page string), and a name the resolver
+would read as an ADDRESS although `net_parse_ipv4` refused it (`010.0.0.1`, `127.1`,
+`0x7f000001` — probed with `AI_NUMERICHOST`). The POSIX steps and the `/dev/urandom` fallback are
+compiled out on Windows.
+
+**Verified.** `tests/tcyr/crossos/net_resolve_pe.tcyr` plants `C:\etc\hosts` and asserts it is
+ignored. Wine maps a rooted path to the unix root, so only real Windows shows the plant; there
+(wine is told apart by ntdll's `wine_get_version` export) the plant itself is asserted, so a
+pre-existing file or a failed write fails a named row instead of passing vacuously. Mutation,
+measured on cass: with the POSIX steps restored the planted `10.9.8.7` came back.
+
+## CVE-55 — a multi-line string literal shifted file attribution, so a call to another file's `private` fn COMPILED
+
+*Appended 2026-09-29 (cyrius 6.6.11, bite B05 item N1), found by the 6.6.10 review finds (group N).
+Not part of the 2026-09-03 sweep: recorded here because this is the live ledger. The same impact
+as CVE-45 (a forged `#@file` defeating `private`) through a different vector.*
+
+| | |
+|---|---|
+| **Severity** | **Medium (P2)** — a compile-time visibility bypass, not a memory-safety defect: code that the language says cannot call a `private` fn compiles and calls it |
+| **Affected** | every target: `src/frontend/lex.cyr`'s string loop, from the v6.5.0 visibility work (`private` enforced through the file map) through cyrius 6.6.10 |
+| **Fixed** | 6.6.11 |
+
+**Vector.** LEX's string loop stored a raw LF (and a `\<LF>`) without bumping the line counter, so
+after any multi-line string every later token was lexed one line HIGH per newline. `FM_FILEID`
+maps a token to its file by that line, so the tokens after a multi-line string near an `include`
+boundary were attributed to the WRONG FILE — and `private` is enforced through the file map.
+
+**Impact.** A file that included another file's `private` fn could call it once a multi-line
+string sat ahead of the call: the call was attributed to the defining file, and it compiled. The
+same miscount put every later diagnostic on the wrong line (an undefined name on line 5 reported
+line 3), and line 1 of the next `include` landed on its `#@file` marker line and printed a bare
+`error:4:12:` with no file name. The "diagnostics in `backend/x86/fixup.cyr` are one line high"
+report (N3) was this defect.
+
+**Fix.** Both the raw-LF and the `\<LF>` paths bump the line counter; the string token keeps its
+opening line, matching the column its diagnostic head prints. The `#@file` bookkeeping was correct
+and is untouched. Fixpoint and `seed → cybs → cycc` hold.
+
+**Verified.** `tests/gates/frontend/lexer_errors_name_file_line.sh` axis 6 pins, after a
+multi-line string, the diagnostic's line, the include's file name, and the `private` refusal of a
+cross-file call (which compiled on 6.6.10). Axis 4 pins the escape rules that landed with it.
