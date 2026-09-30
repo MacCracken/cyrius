@@ -166,7 +166,48 @@ conflict (two lanes' additions to the same cross-OS leg, both kept), and one int
 description carried a `\<LF>` example that B05's own escape rule refuses. The lanes' out-of-scope finds
 went to the backlog below and to the sibling follow-ups — not into 6.6.12.
 
-### 6.6.12 — the overflow (by the user, 2026-09-29); the batch ENDS here
+### 6.6.12 — the overflow + the backlog's repair items + follow-ups (by the user, 2026-09-29/30); the batch ENDS here
+
+**Plan (2026-09-30).** The user widened 6.6.12 to "cleaning up backlogged repair items, and follow-ups": the
+Q–U overflow below, the backlog's repair items (the 6.6.11 lanes' finds, bayan's `toml_array_parse_a`,
+sankhya's DCE pin) and every sibling follow-up. Non-repair backlog items stay in the backlog (the ESYSXLAT
+inline size tax, DCE compaction, raw-includable folds, net.cyr §4, AF_UNIX, DWARF, …). Premise-checked on the
+tree: 58 of 63 items open. Not placed: R6 (premise false — `var c: i64[4];` in a fn compiles; the error was the
+subscript on the next line, which is R4), T2 and T5 (landed in 6.6.10/6.6.11), SA3 (majra 2.9.2 tagged), SA5
+(fixed in patra 1.15.0); the agnos fork item is handed to agnos. **20 bites in seven lanes** — F frontend (the
+only `build/cycc` committer: B01→B02→B03→B04→B05→B20, then P's hand-in), P backend + platform stdlib (source
+only: B06→B07→B08→B09), L stdlib + tools (B10→B11), H harness (B12 part 1; part 2 = the cx crossos-rows gate on
+the merged tree), E fold siblings (B13→B14→B15), C consumer siblings (B16, B17, B18 in parallel), and
+integration (B19, ratchets, docs). **R4 (typed-array subscripts) is IN** — the user placed it here. CVE ids are
+spent in merge order: 56 (B10, `log_info_kv` stack overflow), 57 (B15, sandhi's PE resolver reading a plantable
+`C:\etc\resolv.conf`), 58 (B06, cxvm guest writes reaching host memory). ⛔ Tag order: sigil 3.13.5, bayan
+1.5.9, vani 1.2.8, mabda 4.1.6, sakshi 2.5.6, sandhi 1.10.4 and yantra 1.0.7 BEFORE cyrius 6.6.12; kriya 1.7.4
+(adopting B09's wrappers) after it.
+
+| # | Bite | Lane | src | Size |
+|---|---|---|---|---|
+| B01 | Narrow slots written and read at full width: the for-step store and the compound-op load | F | ✔ | M |
+| B02 | Positional struct literals: real nested layout, whole-struct values for nested fields, generic literal heads | F | ✔ | M |
+| B03 | Struct copies whose source is a field or a global: by-value struct arguments and top-level copy-init | F | ✔ | M |
+| B04 | Field-chain access: arbitrary nesting depth and `.field` on a call result | F | ✔ | M |
+| B05 | Frontend diagnostics and dead code: unterminated string, bare explicit-generic statement, raw-syscall native exemption and kill arity, FLIT_DEN, the dead coroutine jmp | F | ✔ | M |
+| B20 | Typed-array subscripts: `a[i]` read, `a[i] = v` and compound write on `var a: T[N]`, local and global (subject to the one fork) | F | ✔ | L |
+| B06 | cx: guest memory bounds, VM traps, real tail calls, width-correct narrow stores, thread_join decline | P | ✔ | M |
+| B07 | Mach-O routing: x86-macOS faccessat, arm64-macOS dup3 flags, x86-macOS monotonic clock | P | ✔ | S |
+| B08 | Filesystem calls that report their real failure: Windows long paths, FindNextFileW errors via GetLastError, dir_list_into on PE, file_read_whole errno | P | ✔ | M |
+| B09 | Native aarch64 xattr/statx/getrlimit/fchown: private alias band, wrappers on every peer | P | ✔ | M |
+| B10 | Out-of-bounds writes and refused-allocation dereferences in stdlib and CLI: log_info_kv stack overflow (CVE-56), Mach-O environ NUL past the buffer, bench/chrono on a refused alloc | L | — | S |
+| B11 | Tool accuracy: LSP symbol index caps, cyrlint code-point line length, the async_agnos 'not yet' false positive | L | — | M |
+| B12 | Check harness and test honesty: one-row driver modes, --tool-path names the tool, deps_relock A5 reads the real home, normconf and QPC flakes, the cx crossos-rows gate; lands every lane's gate registrations | H | — | M |
+| B13 | Fold correctness, sigil and bayan: unchecked argv/envp allocs, Darwin errno values, base64 and TOML refused allocs, coverage floor 100 | E | — | M |
+| B14 | Fold namespace and Result hygiene: vani Result mix, _sk_emit_err collision, PCI_VENDOR_AMD collision, sakshi clock comments | E | — | S |
+| B15 | Network folds: sandhi PE resolver never reads a plantable C:\etc\resolv.conf (CVE-57) plus macOS CI; yantra setsockopt wrapper and CVE-53 re-vendor | E | — | M |
+| B16 | Consumer ABI correctness: kriya aarch64 open flags and stat layout, mirshi agnos uptime_us and sysinfo tiers | C | — | M |
+| B17 | N4 re-vendors that unblock re-pinning: agnostic takes agnosai 2.1.1, aethersafha takes mehman 1.0.4 and a single loop head | C | — | S |
+| B18 | Consumer manifest and CI hygiene: dhvani/libro path deps, libro patra pin, pipefail-safe denylists, sankhya DCE bench, ganita coverage 100, stiva stale pins | C | — | S |
+
+The group text below is the item reference the bite specs were built from.
+
 
 The real 6.6.10 finds that do not produce wrong results: platform surface, language-surface gaps that are
 already loud, stdlib/tool and gate hygiene, the sibling patches, and one line of stale text. This release
@@ -479,7 +520,7 @@ the trust model and the single-pass design), a general const-eval VM, exceptions
 Real 6.x-line work without a committed slot; pulled into a release the moment a consumer or
 priority surfaces. **These are technical items → they stay in the 6.x cycle, never 7.x.**
 
-- **Found by the 6.6.11 lanes (2026-09-29; backlog, not placed — only the user promotes).** Each was met
+- **Found by the 6.6.11 lanes (2026-09-29) — ⤴ PROMOTED to 6.6.12 by the user 2026-09-30 (bites B01–B20; `var c: i64[4]` turned out to be R4).** Each was met
   in passing, not swept for; ⚠ marks silent memory corruption.
   - ⚠ A `for` step stores a narrow slot at full width: `src/frontend/parse_ctrl.cyr`'s step store uses
     `EFLSTORE` / `EVSTORE` where the statement arm uses the `_W` forms, so `for (var i: u8 …; i += 1)`
