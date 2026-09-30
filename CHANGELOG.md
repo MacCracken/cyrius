@@ -67,6 +67,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (agnos 1.57.6 calibrates it against the ACPI PM timer, live LAPIC ticks the fallback) and said agnos
   reads `uptime_ms` directly (since 2.5.1 it reads `#95` first, `#40` only when `#95` answers -1).
   The fold differs from 2.5.5 only in those comments and the version stamp. The pin stays 6.6.6.
+- **New gate `tests/gates/toolchain/fold_namespace_collisions.sh`** (B14): yukti + mabda + vani +
+  sakshi compiled together, in both yukti/mabda orders, must report no `duplicate fn`, no
+  conflicting `duplicate symbol` and no mixed-return warning located in those folds, and the run
+  must keep yukti's `PCI_VENDOR_AMD` at 0x1022 and mabda's `WGPU_VENDOR_ID_AMD` at 0x1002.
+  Mutation-proven: the 6.6.11 `lib/mabda.cyr` + `lib/vani.cyr` report the `PCI_VENDOR_AMD` conflict,
+  the `_sk_emit_err` duplicate and the three mixed-return warnings in both orders.
+- vani, mabda and sakshi ran their full CI in a clean `git archive` copy with a throwaway
+  `CYRIUS_HOME` at their 6.6.6 pin. ⛔ **vani 1.2.8, mabda 4.1.6 and sakshi 2.5.6 must be TAGGED
+  before cyrius 6.6.12 is**; the folds were copied byte-identical from those commits' `dist/`, and
+  `docs/ecosystem.md`'s three fold rows name the commits.
 
 ## [6.6.11] — 2026-09-29
 
