@@ -29,6 +29,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `tests/gates/codegen/cx_tailcall_and_vm_traps.sh` axis A (a 2M-deep self tail recursion, mutual
   recursion, nested-call arguments, a >6-arg call and a thin/wide frame ping-pong, each = native).
 
+- **cx: a store to a narrow slot wrote 8 bytes (B06, item V1-cx — V1's cx half; B01 is the frontend
+  half).** **Root cause:** cx `EVSTORE_W` / `EFLSTORE_W` ignored the width and emitted `store64`, so a
+  store to a packed narrow global (`var a: u8; var b: u8;` puts `b` at `a + 1`) wrote over its
+  neighbours — `A = 250` zeroed `B`, and on B01's row shapes cxvm exited 59 where every native target
+  exits 0. The width-aware loads read 8 bytes and masked: the right value, but reaching past the slot.
+  **Fix:** both directions use the sized cxvm opcodes (`load8/16/32`, `store8/16/32`), and a signed
+  load sign-extends after them — the x86 `ESTORE8/16/32` and `movzx`/`movsx` shape. **Held by**
+  `cx_tailcall_and_vm_traps.sh` axis E (B01's rows inlined, statement-arm stores on packed u8/u16/
+  u32/i8 globals, a narrow local seen through its address; each = native). With B01 applied, B01's
+  `tests/tcyr/crossos/narrow_slot_width.tcyr` runs 53/53 on cxvm.
+
 ## [6.6.11] — 2026-09-29
 
 The fifth batch release: the 6.6.9 review finds I–K and the 6.6.10 finds that produce wrong results

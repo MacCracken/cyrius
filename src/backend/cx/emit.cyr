@@ -957,10 +957,62 @@ fn _CX_NARROW(S, width): i64 {
     EANDR(S);
     return 0;
 }
-fn EVLOAD_W(S, idx, width): i64 { EVLOAD(S, idx); _CX_NARROW(S, width); return 0; }
-fn EVSTORE_W(S, idx, width): i64 { EVSTORE(S, idx); return 0; }
-fn EFLLOAD_W(S, idx, width): i64 { EFLLOAD(S, idx); _CX_NARROW(S, width); return 0; }
-fn EFLSTORE_W(S, idx, width): i64 { EFLSTORE(S, idx); return 0; }
+# ⛔ 6.6.12 — THE WIDTH-AWARE STORES WERE 8-BYTE STORES. A narrow slot is only `|width|` bytes
+# wide: typed narrow GLOBALS are packed (`var a: u8; var b: u8;` puts b at a+1), so EVSTORE_W's
+# store64 to `a` wrote over the 7 bytes after it — every x86/aarch64/PE store is width-correct
+# (x86 EVSTORE_W's ESTORE8/16/32), so the same source gave b = 7 natively and 0 on cx (V1's cx
+# half). The loads read 8 bytes and masked, which gave the right value but reached 7 bytes past
+# the slot — past the end of the data segment for a slot in its last 7 bytes, which cxvm now
+# refuses (CVE-58). So both directions use the sized cxvm opcodes (load8/16/32 0x40/0x44/0x45,
+# store8/16/32 0x42/0x46/0x47), and a signed load sign-extends after the zero-extending load.
+# `width` is the shared convention: the byte count, negative = signed. CHANGELOG [6.6.12]
+fn _cx_width_abs(width): i64 {
+    if (width < 0) { return 0 - width; }
+    return width;
+}
+# load{w} r0, [areg]; a width outside 1/2/4 is a full 8-byte load.
+fn _CX_LOAD_W(S, areg, width): i64 {
+    var aw = _cx_width_abs(width);
+    if (aw == 1) { CX_EMIT(S, 64, 0, areg, 0); }
+    elif (aw == 2) { CX_EMIT(S, 68, 0, areg, 0); }
+    elif (aw == 4) { CX_EMIT(S, 69, 0, areg, 0); }
+    else { CX_EMIT(S, 65, 0, areg, 0); return 0; }
+    if (width < 0) { _CX_NARROW(S, width); }
+    return 0;
+}
+# store{w} [areg], r0; a width outside 1/2/4 is a full 8-byte store.
+fn _CX_STORE_W(S, areg, width): i64 {
+    var aw = _cx_width_abs(width);
+    if (aw == 1) { CX_EMIT(S, 66, areg, 0, 0); }
+    elif (aw == 2) { CX_EMIT(S, 70, areg, 0, 0); }
+    elif (aw == 4) { CX_EMIT(S, 71, areg, 0, 0); }
+    else { CX_EMIT(S, 67, areg, 0, 0); }
+    return 0;
+}
+fn EVLOAD_W(S, idx, width): i64 {
+    EVADDR_X1(S, idx);              # r1 = &global (movi + fixup + movhi, as EVLOAD)
+    _CX_LOAD_W(S, 1, width);
+    return 0;
+}
+fn EVSTORE_W(S, idx, width): i64 {
+    EVADDR_X1(S, idx);
+    _CX_STORE_W(S, 1, width);
+    return 0;
+}
+fn EFLLOAD_W(S, idx, width): i64 {
+    CX_EMIT(S, 2, 14, 253, 0);      # mov r14, fp
+    CX_MOVI(S, 15, _cx_ldisp(idx));
+    CX_EMIT(S, 17, 14, 14, 15);     # sub r14, r14, r15
+    _CX_LOAD_W(S, 14, width);
+    return 0;
+}
+fn EFLSTORE_W(S, idx, width): i64 {
+    CX_EMIT(S, 2, 14, 253, 0);      # mov r14, fp
+    CX_MOVI(S, 15, _cx_ldisp(idx));
+    CX_EMIT(S, 17, 14, 14, 15);     # sub r14, r14, r15
+    _CX_STORE_W(S, 14, width);
+    return 0;
+}
 
 # v5.9.40 — sub-byte struct field load (parse_decl.cyr:252).
 # Field-base ptr is in r1; emit width-correct load into r0.
