@@ -186,7 +186,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   statx allow-listed on both Macs with the reason) and `syscall_peer_kernel_agreement.sh`'s pinned
   ambiguous set (14: x86 fchown 93 is aarch64 exit, lremovexattr 198 / fremovexattr 199 aarch64
   socket / socketpair — hand-off to H). A native `SYS_GETXATTR = 8` in the aarch64 peer reddens
-  that gate (`SYS_LSEEK 8 SYS_GETXATTR`). **Follow-up (post-tag):** kriya 1.7.4 swaps its
+  that gate (`SYS_LSEEK 8 SYS_GETXATTR`). **Size cost (expected, not a regression):** ESYSXLAT's
+  rows are emitted inline at every syscall site, constant number or not, so the fourteen new ELF
+  rows add 14 × 12 B = **168 B per ELF-aarch64 syscall site** — the native aarch64 compiler grows
+  ~66 KB (1,775,144 → 1,841,016 B, +3.7 %, `main_aarch64_native.cyr` cross-built at d54df0c8^ vs
+  B09's head), which shows up when `build/cycc-native-aarch64` is regenerated. The x86 `cycc`
+  the release bench measures is unaffected by these rows. **Follow-up (post-tag):** kriya 1.7.4 swaps its
   aarch64 declines, the k_fchown fchownat workaround and its raw 8/291/163 numbers for these
   wrappers once cyrius 6.6.12 is tagged.
 
