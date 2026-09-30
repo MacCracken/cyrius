@@ -62,6 +62,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `NV_PCI_VENDOR_NVIDIA` precedent); yukti keeps its name and 0x1022. No consumer in `~/Repos` named
   mabda's constant (ai-hwaccel defines its own). **SA9:** its `_sk_emit_err` is `_mabda_sk_emit_err`.
   The pin stays 6.6.6.
+- **sakshi 2.5.6 folded (`lib/sakshi.cyr`, sakshi commit `9218130`) — comment-only.** (B14, item SA7.)
+  Three agnos clock comments in `src/clock.cyr` described `#95` as calibrated "against the live tick"
+  (agnos 1.57.6 calibrates it against the ACPI PM timer, live LAPIC ticks the fallback) and said agnos
+  reads `uptime_ms` directly (since 2.5.1 it reads `#95` first, `#40` only when `#95` answers -1).
+  The fold differs from 2.5.5 only in those comments and the version stamp. The pin stays 6.6.6.
 
 ## [6.6.11] — 2026-09-29
 
