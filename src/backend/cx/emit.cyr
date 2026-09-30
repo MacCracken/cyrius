@@ -1068,14 +1068,40 @@ fn EADDIMM_X1(S, val): i64 {
     return 0;
 }
 
-# Tail call (same as regular call for bytecode)
+# Tail call: `return f(args);` → tear down THIS frame, then `jmp f` — the x86 shape (`mov rsp,rbp;
+# pop rbp; jmp`), with cx's frame ops: `mov sp, fp; popc fp; jmp`. The callee's own prologue
+# (`pushc fp; mov fp, sp`) then builds its frame where ours was, and its `ret` pops OUR caller's
+# return address, which the jmp left on the call stack — so a tail recursion runs in constant
+# call-stack and guest-stack space.
+#
+# By the time this is called the shared tail path (parse_fn.cyr PARSE_RETURN) has evaluated every
+# argument onto the data stack and ECALLPOPS has popped them into r3.. — the data stack is
+# balanced and nothing of this frame is read after the jmp, so a nested call among the arguments
+# needs no special handling. Until 6.6.12 this emitted a normal call + epilogue under a comment
+# claiming exactly that interleave broke a jmp; the cost was that every tail recursion grew both
+# VM stacks, a 20M-deep one that runs on x86 died on cxvm, and past depth 512 it overwrote cxvm's
+# loaded code (the call stack had no bound — see programs/cxvm.cyr, CVE-58). CHANGELOG [6.6.12]
+#
+# The jmp (0x50) takes its target from the same ftype-2 fixup ECALLFIX records: main_cx.cyr
+# patches bytes 1-3 with `(target - coff) / 4` and keeps byte 0, which is the jmp encoding too.
 fn ETAILJMP(S, fnidx): i64 {
-    # Disable tail call in bytecode — the tail call path in parse.cyr
-    # evaluates args then jumps without call/ret, which breaks when
-    # args include nested calls (data stack interleaving).
-    # Instead: normal call, then epilogue to return result to our caller.
-    ECALLFIX(S, fnidx);
-    EFNEPI(S);
+    if (fnidx < 0) {
+        if (_had_error == 0) { ERR_MSG(S, "internal: a call was emitted for an unresolved function (index < 0)", 67); }
+        return 0;
+    }
+    CX_EMIT(S, 2, 254, 253, 0);   # mov sp, fp
+    CX_EMIT(S, 0x63, 253, 0, 0);  # popc fp (from call stack)
+    var poff = GCP(S);
+    CX_EMIT(S, 80, 0, 0, 0);      # jmp +0 (placeholder, patched by the ftype-2 fixup)
+    var fc = GFCNT(S);
+    if (fc >= 1048576) {
+        syscall(SYS_WRITE, 2, "error: fixup table full (1048576)\n", 34);
+        syscall(SYS_EXIT, 1);
+    }
+    var faddr = S + 0x150B000 + fc * 16;
+    S64(faddr, poff);
+    S64(faddr + 8, (2 << 56) | fnidx);
+    SFCNT(S, fc + 1);
     return 0;
 }
 

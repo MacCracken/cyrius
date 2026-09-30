@@ -17,6 +17,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   join probe (7 under both the instrumented and the plain cxvm; mutant z: guard removed -> 140 / 124).
   The cx self-sufficiency floor is unchanged at 69/108.
 
+- **cx: `return f(args);` is a real tail call (B06, item Q6).** **Root cause:** cx `ETAILJMP`
+  (`src/backend/cx/emit.cyr`) emitted a normal call + epilogue, under a comment claiming a jmp broke
+  when the arguments contain nested calls. They do not: the shared tail path (`parse_fn.cyr`
+  PARSE_RETURN) has popped every argument into r3.. before `ETAILJMP`, so the data stack is balanced.
+  Every tail recursion therefore grew both VM stacks: `tr(n - 1, acc + 1)` gave rc 0 at depth 512 and
+  a garbage rc 1 at 513, 1000 and 20,000,000 (the same source exits 0 on x86). **Fix:** `mov sp, fp;
+  popc fp; jmp f` — the x86 `mov rsp, rbp; pop rbp; jmp` shape — with the jmp patched by the same
+  ftype-2 fixup as a call. The 20M premise repro exits 0 on cxvm (29 s, interpreted). No frontend
+  change was needed, so no `parse_fn.cyr` hand-off. **Held by**
+  `tests/gates/codegen/cx_tailcall_and_vm_traps.sh` axis A (a 2M-deep self tail recursion, mutual
+  recursion, nested-call arguments, a >6-arg call and a thin/wide frame ping-pong, each = native).
+
 ## [6.6.11] — 2026-09-29
 
 The fifth batch release: the 6.6.9 review finds I–K and the 6.6.10 finds that produce wrong results
