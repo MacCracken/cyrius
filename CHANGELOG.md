@@ -6,231 +6,60 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.11] — 2026-09-29
 
-### Fixed — async runtime and process-tree lifetime (B12)
+The fifth batch release: the 6.6.9 review finds I–K and the 6.6.10 finds that produce wrong results
+(L–P), placed by the user, plus the sibling items and `cyrius coverage` excluding `main`. Every item was
+premise-checked on the tree before planning (L2 was already fixed at 6.6.10 and dropped). Fourteen bites
+in six worktree lanes; cross-lane hunks travelled as named hand-off patches and the merge had one
+conflict (two lanes' additions to the same cross-OS leg, both kept). Two CVEs: **CVE-54** (on Windows,
+`net_resolve_ipv4` read a drive-relative `C:\etc\hosts` that any local user can plant) and **CVE-55** (a
+multi-line string literal shifted file attribution, so a call to another file's `private` fn compiled).
+Windows gains working sockets, so `http_*` runs there; struct results are type-checked against their
+destination; a qualified enum access must name its own enum; every `.tcyr` reader grades the LAST assert
+summary; and a gate that cannot run exits 77 — a SKIP that check.sh counts and reports, never a pass.
+Sibling releases: sandhi 1.10.3 and ganita 1.2.9 folded; stiva 3.0.21, mehman 1.0.4, libro 2.10.4, bote
+3.3.14, dhvani 2.2.5 and agnosai 2.1.1 not vendored.
 
-- **The reactor ended a coroutine whose `await` did not park with 0 (P1).** Every backend's
-  `_async_step` (lib/async.cyr, async_macos.cyr, async_win.cyr, async_agnos.cyr) marked a task that
-  returned still-READY as DONE. A coroutine suspending at `await inner(a)` (a plain async fn) or at an
-  `await` of a call that does not park returns 0 from that suspend while READY, so under
-  `async_spawn_future` + `async_run` it was finished with 0 and never resumed (measured: 0, state DONE,
-  where `future_force` gave 41). The guide wrote the defect down as a rule ("force such a coroutine
-  yourself"). **Fix:** the shared `_async_coro_pending(t)` keeps a `future_force` task READY while its
-  Future is a pending coroutine; and when one was kept, the Linux/macOS/Windows reactors poll their
-  epfd / kqueue / IOCP WITHOUT blocking, because a coroutine that keeps awaiting non-parking work runs
-  every step and fd-parked tasks — and `async_with_timeout`'s deadline sentinel — otherwise starve until
-  it finishes. Gate: `coroutine_midbody_suspend.sh` axis 10 (async_run, task_join, a parked waiter that
-  must wake a spinning coroutine, a deadline over a coroutine that never finishes). Verified on x86_64
-  Linux, ach (x86_64 macOS) and cass (Windows PE) against a pre-fix control (exit 1 → 42).
-- **Linux `async_with_timeout(.., 0)`, `async_interval(.., 0, ..)` and `async_sleep_ms(0)` — and
-  their negative forms — waited for ever (P4).** `_async_timerfd` wrote `value_ms` straight into
-  `it_value`: all-zero DISARMS a timerfd and a negative value is EINVAL, and the `timerfd_settime`
-  return was unchecked. **Fix:** `value_ms <= 0` arms 1 ns (a deadline that has already passed, as on
-  macOS); a refused settime closes the fd and fails; `async_interval` returns no handle for
-  `ms <= 0`, as macOS does. Rows: `async_timeout_result.tcyr` "zero" group (each call bounded inside
-  `async_timeout`, so a regression FAILs rather than hangs; 7 RED on the old lib).
-- **The macOS kqueue reactor spun after a normal wake (P2).** `_async_kev_register` added
-  EVFILT_READ/WRITE with plain `EV_ADD` — level-triggered and persistent — and the wake path never
-  removed it, so an fd that stayed readable made every later `kevent()` return at once, wake nobody
-  and loop. **Fix:** the registrations are `EV_ADD | EV_ONESHOT` (a wake already wakes every waiter on
-  the (ident, filter); a later park re-adds). Row: `async_macos_verbs.tcyr` "a normal wake leaves no
-  read filter armed" — RED against the pre-fix lib on ecb and ach, green with it.
-- **macOS `async_run` never closed the runtime's kqueue — one fd leaked per runtime (P3).** Its
-  comment recorded the leak ("the kqueue stays open") instead of fixing it. **Fix:** closed after the
-  pump, single-use like the epoll backend. Row: `async_macos_verbs.tcyr` "async_run closes the
-  runtime's kqueue" (F_GETFD after the run) — RED on ecb and ach against the pre-fix lib.
-- **`async_run_process`'s deadline stalled the whole reactor for up to 5 s (P5), and
-  `async_with_timeout` on an `async_spawn_process` handle left the child running and unreaped (P6),
-  on Linux and macOS.** The deadline called the BLOCKING `proc_kill_tree` — TERM, then a 10 ms
-  sleep-poll for up to `_PROC_GRACE_MS` in which no task ran (measured: a TERM-ignoring child held a
-  sibling 10 ms interval for 5,234 ms); and `_async_retire` knew nothing about the child a process
-  task forked, so a direct `async_with_timeout(rt, h, 100)` returned 0 with `/bin/sleep 7` still
-  running (it outlived the caller) and, on Linux, its pidfd leaked. **Fix:** lib/process.cyr's kill
-  is split into `_proc_kill_begin` / `_proc_kill_step` (one non-blocking look) / `_proc_kill_finish`
-  (and `_proc_kill_wait`, the blocking remainder), with `proc_kill_tree` unchanged on top of them.
-  Both reactors' `_async_retire` now ends a process task's child: it TERMs the tree (Linux, /proc
-  snapshot — copied, since other tasks may snapshot during the grace) or the group (macOS, the child
-  alone when it leads none) and spawns a kill task that parks on a 10 ms timerfd / EVFILT_TIMER and
-  takes one look per tick until nothing is left or the grace runs out, then KILLs, reaps and (Linux)
-  closes the pidfd. `async_with_timeout` pumps that task to DONE before returning — other tasks keep
-  running — and `async_run_process`'s own kill is gone (the Windows shape). If no task can be made
-  (a refused allocation or timer) the kill completes inline, blocking, as before. Return-value
-  change: on Linux `async_run_process` now returns -1 (was -2, a deadline that never fired) when the
-  deadline could not be armed, as on macOS, and the unrun handle is retired. Rows:
-  `async_timeout_result.tcyr` "grace" / "loser", `async_macos_verbs.tcyr` the same two, and the
-  `async_process` fixture's row 4 — RED against the pre-fix lib on x86_64 Linux, pi, ecb and ach.
-- **Linux `async_timeout`'s deadline SIGKILLed only the forked body; its children outlived the
-  deadline (P7).** Measured: a body that forked `/bin/sleep 8` and hung left the sleep running at
-  PPID 1. **Fix:** a timed-out (or result-less) body is ended with `proc_kill_tree` — TERM the tree,
-  grace, KILL — which reaps it. A body that already EXITED without a result has had its children
-  reparented before the /proc walk, so that case is not reachable from here. Row:
-  `async_timeout_result.tcyr` "forker" (RED on the pre-fix lib; green on x86_64 and pi).
-- **Linux capture verbs: a child that exited while its grandchild held the pipe reported -2 and left
-  the grandchild running at PPID 1 (P8).** `_proc_child_guard` called `setsid()` only on macOS and
-  `_proc_end_cut_group` was a no-op off macOS, so after the child was reaped and its orphan
-  reparented, nothing could reach it (measured: `sleep 9 & echo hi` under a 300 ms deadline).
-  **Fix:** on Linux too the child calls `setsid()` when a deadline is in force, and
-  `_proc_end_cut_group` is unconditional, calling `_proc_kill_group` directly (never
-  `proc_kill_tree`, whose Linux arm walks /proc from an already-reaped pid). Accepted side effect: a
-  Linux child run under a deadline has no controlling terminal; PR_SET_PDEATHSIG still ends it when
-  its parent dies. Row: `deadline_ends_grandchild.tcyr`'s grandchild assert is no longer macOS-only —
-  RED against the pre-fix lib on x86_64 and pi; green on x86_64, pi, ecb, ach and the agnosticos
-  container.
-- **`lib/regression.cyr`'s deadline ended only the pid off Linux (P9).** `_regression_tree_collect`
-  returns nothing without /proc, so `_regression_kill_tree` signalled the child alone, and
-  `_regression_child_guard` had no `setsid()`, so there was no group to reach: the 6.6.10 macOS port
-  of lib/process.cyr's group kill never reached its twin. **Fix:** on macOS the child calls
-  `setsid()` (unconditionally — every verb here runs its child under a deadline, and a deadline
-  means no controlling terminal, the rule lib/process.cyr applies; so `ssh` / `scp` run by these
-  verbs on macOS cannot prompt for a host key or passphrase), and `_regression_kill_tree` targets `-pid` when that group exists: one TERM,
-  the grace, one KILL (`_proc_kill_group`'s shape). Rows: `regression_terminate_children.tcyr` "a
-  regression_* deadline ends the grandchild too" (RED on ecb and ach against the pre-fix lib), and
-  `process_deadline_tree.tcyr`'s whole-tree assert is no longer Linux-only (it tests lib/process.cyr,
-  which has ended the group on macOS since 6.6.10; green on ecb and ach).
+**Bench:** cycc **1,424,272 → 1,437,168 B** (+12,896, +0.9 %; `.text` 1,251,248 → 1,265,408) — the
+release's content (struct-result checks, string / enum / `sizeof` resolution, float typing, the PE path and
+ws2_32 emitters). self_compile **849 ms** (6.6.10's run: 833 ms); same-box A/B, three rounds of five
+compiles of the 6.6.11 tree: 6.6.10's compiler ~854 ms, 6.6.11's ~853 ms — flat, so the 833 → 849 is box
+drift.
+
+### Security
+
+- **CVE-54 (P1): on Windows, `net_resolve_ipv4` read a DRIVE-RELATIVE `/etc/hosts` that any local
+  user can plant (B07, item I5; entry in `docs/audit/2026-09-03-security-audit.md`).** **Root cause:** the resolver read
+  `/etc/hosts` and `/etc/resolv.conf` on every target, and on Windows a rooted path is DRIVE-RELATIVE:
+  `/etc/hosts` is `C:\etc\hosts`, which any authenticated user may create, so one local user could
+  redirect every other user's lookups; with no resolv.conf it fell back to 127.0.0.1:53, and port 53
+  is not privileged there. `_net_dns_id`'s `/dev/urandom` fallback had the same shape. **Fix:** after
+  the literal and `*.localhost` steps the Windows arm is getaddrinfo (the real
+  `%SystemRoot%\System32\drivers\etc\hosts` and the adapters' DNS); a non-ASCII name, and a name the
+  resolver would read as an ADDRESS although `net_parse_ipv4` refused it (`010.0.0.1`, `127.1`,
+  `0x7f000001` — probed with AI_NUMERICHOST), are refused before any lookup; no `/dev/urandom` on
+  Windows. New `tests/tcyr/crossos/net_resolve_pe.tcyr` plants `C:\etc\hosts` and asserts it is
+  ignored (wine maps a rooted path to the unix root, so only real Windows shows this). On real Windows
+  — wine is told apart by ntdll's `wine_get_version` export — the plant itself is asserted: a
+  `C:\etc\hosts` already present or a failed write fails a named row instead of leaving "the planted
+  name does not resolve" to pass vacuously (measured on cass with a pre-existing file: 1 row fails).
+  Mutation, measured on cass: with the POSIX steps restored the planted 10.9.8.7 came back.
+- **CVE-55 (P2): a multi-line string literal shifted file attribution, so a call to another file's
+  `private` fn COMPILED (B05, items N1, N3; entry in the audit).** A newline inside a string literal
+  was not counted as a line. After any multi-line
+  string every later token was lexed one line HIGH per newline: `var s = "a<LF>b<LF>c";` then an
+  undefined name on line 5 reported line 3; line 1 of the next `include` landed on its own `#@file`
+  marker line and printed a bare `error:4:12:` with no file; and `FM_FILEID`, which reads the token
+  line, attributed code to the WRONG FILE, so a call to another file's `private` fn **compiled** and
+  the error landed on an innocent name. The "diagnostics in `backend/x86/fixup.cyr` are one line
+  high" report (N3) is this defect, triggered by the one raw-newline literal in
+  `src/frontend/parse_expr.cyr`; the `#@file` bookkeeping was correct and is untouched. **Root
+  cause:** LEX's string loop stored a raw LF (and a `\<LF>`) without bumping the line counter.
+  **Fix:** both bump it; the string token keeps its opening line (matching the column its
+  diagnostic head prints).
+
 ### Fixed
 
-- **A CLI child inherits the WHOLE environment — Linux dropped everything past 8 KB, macOS passed
-  none of it.** (B09: J4, J6.) **Root cause:** `load_environ` (cbt/core.cyr) builds `_envp`, the
-  envp of every POSIX `sys_execve` the CLI makes (cycc, test binaries, git, the hasher, /bin/sh,
-  ssh). It read /proc/self/environ into a fixed 8,192-byte buffer, so on Linux every variable past
-  8 KB was silently absent in the child and the one straddling the cut truncated (measured: a
-  `cyrius run` child's environ was exactly 8,192 bytes with a trailing sentinel gone). macOS has no
-  /proc, so the open failed and `_envp` was the EMPTY vector: children ran with no PATH, HOME,
-  TMPDIR, SSH_AUTH_SOCK or CYRIUS_* — only execvp's default `/usr/bin:/bin` let git and the
-  hasher resolve. **Fix:** Linux reads to EOF into a growing buffer; macOS sets `_envp` to the
-  kernel's own entry-stack envp through `_macho_envp()`, factored out of `_macho_fill_environ`
-  (NULL-terminated, live for the whole process, no copy, no cap). The cross-OS driver's private
-  32 KB copy (`_co_build_envp`, justified by a comment saying "the default _envp is empty") is
-  gone — `_co_run_sh` passes `_envp`. New `toolchain/cli_child_env_complete.sh`: a `cyrius run`
-  child's environ must be byte-identical to `env -0` under a 40,000-byte variable and a trailing
-  sentinel (the 8191 cap and a non-growing buffer both FAIL; exit 77 with no /proc). Verified on
-  real hardware: pi (aarch64 Linux, the gate green; the 6.6.10 `load_environ` red at 8,192 bytes),
-  and ecb (arm64) + ach (x86) macOS, where a fake `sha256sum` first on PATH is run 15 times by
-  `cyrius deps` with the fix and never with the 6.6.10 CLI.
-
-- **Windows: `cyrius.exe` honours `CYRIUS_RESOLVED=1` and actually runs a pinned version.**
-  (B09: I3.) **Root cause:** `_cyrius_resolved` was set only by find_tools' /proc/self/environ scan,
-  which reads nothing on PE, so the documented escape from a pin was ignored (a project pinning an
-  uninstalled version exited 1 with it set). Behind it, the redirect could not succeed at all: it
-  looked for `versions/<pin>/bin/cyrius` (install.ps1 installs `cyrius.exe`) and then called
-  `sys_execve`, a -1 stub on PE — so on Windows every repo pinning another version could run NO
-  verb. **Fix:** find_tools' PE arm reads the flag through `_cbt_env_is_1`; the pinned path gets
-  `.exe`; and `_win_redirect_to_pinned` sets `CYRIUS_RESOLVED=1` on the CLI itself
-  (kernel32!SetEnvironmentVariableA via GetProcAddress + `callptr` — no new PE reroute), runs the
-  pinned `cyrius.exe` as a child through the CLI's CreateProcessW path (`_win_spawn_vec`, in a
-  job object), waits, and exits with the child's code. Default taken over "skip the redirect with
-  a warning": honouring the flag alone would leave pinned repos broken unless the user exports
-  it. New `toolchain/cli_pe_pinned_redirect.sh` (wine; exit 77 without it): an uninstalled pin
-  plus the flag exits 0 with the drift note, and without it exits 1 naming `bin/cyrius.exe`; a
-  probe in the pinned slot receives the verb, a spaced argument and the flag, and its exit code
-  (37) is `cyrius.exe`'s; the tree's own `cyrius.exe` in the slot runs the verb with no redirect
-  loop. Mutations: the find_tools line, the `.exe` suffix and the redirect call each FAIL it.
-  Verified on real Windows (cass): all four axes (0 / 1 naming `cyrius.exe` / 37 / 0).
-
-- **cbt comments no longer say the symlinked-`lib/` guard is inert on Windows.** (B09: K12.) Four
-  comment blocks in `cbt/cyrius.cyr` and `cbt/deps.cyr` still read "`is_symlink` returns 0 on
-  Windows — no PE readlink wrapper" (one framed as an "HONEST LIMIT"); `is_symlink` has had a PE
-  arm since 6.6.9 (GetFileAttributesW's REPARSE_POINT bit, then FindFirstFileW's name-surrogate
-  tag). Comment-only.
-
-- **`cyrius distlib`'s sidecar no longer depends on the host that runs it — it is the union over
-  every target.** (B10: K5, K8.) **Root cause:** `_distlib_verify_rounds` compiled its verify unit
-  once, for the HOST target, so the recorded leaf set was whatever that host's `#ifdef` arms left
-  undefined and `distlib --check` could drift between a Mac or ARM box and Linux CI (15 of 60
-  ecosystem bundles have different undefined sets per target at 6.6.10). **Fix:** each round
-  compiles the unit for x86_64 Linux, Windows (CYRIUS_TARGET_WIN=1) and macOS (CYRIUS_MACHO=1),
-  and aarch64 Linux and macOS (cycc_aarch64, CYRIUS_MACHO_ARM=1) — concurrently, read back in
-  target order — and classifies the union. Only an x86_64-Linux CLI has a compiler per target;
-  macOS, Windows and aarch64 CLIs **refuse by name** ("only an x86_64 Linux CLI has a compiler for
-  each"), and a missing `cycc_aarch64` is named. A per-target compile gets the inherited
-  environment minus every target selector. A symbol undefined on only SOME targets is credited to
-  a declarer already in the unit (nothing added), else the one dispatcher whose peer declares it,
-  else the one non-peer declarer, else a **named refusal** — never the first snapshot file (mihi's
-  EINTR on PE would have recorded the sigil monolith). A PRIVATE peer of a peer
-  (`syscalls_linux_common`) belongs to its dispatcher. `-v` prints each leaf a round adds.
-  **Measured:** `distlib --all` over 74 ecosystem repos gives sidecars byte-identical to the
-  6.6.10 CLI's (the extra per-target symbols are all owned by recorded leaves); total 488 s vs
-  437 s. Verified on ecb, ach, pi and cass (the named refusal). New
-  `toolchain/distlib_sidecar_host_independent.sh`; every `distlib_*.sh` gate stages cycc and a
-  `cycc_aarch64` built from src/ beside a private copy of the CLI (exit 77 if it cannot).
-  K8: `distlib_profile_sidecar.sh` takes `CYRIUS_BIN` / `CYCC` and copies `$CC` into its fake home.
-
-- **`cyrius distlib`'s verify no longer calls running out of rounds "converged".** (B10: K6.)
-  **Root cause:** falling out of the 6-round loop returned `added_total`, the same answer as a
-  real fixpoint, so the last round's leaves were never compiled and an 8-leaf chain published 6
-  leaves as "compile-verified" at rc 0. **Fix:** a named refusal ("did not converge in 6 rounds
-  — sidecar NOT written"); not a bigger cap. Gate: `distlib_sidecar_verified.sh` axis 13 (the
-  8-leaf chain fails; a 5-leaf chain still converges).
-
-- **`cyrius test` / `cyrius tests` grade the assert summary, not the exit code alone.** (B10: O3,
-  the cmd_test half of B01's rule.) **Root cause:** cmd_test ran each binary exit-code-only and
-  never saw stdout, so a test that died before `assert_summary()` with exit 0, a body run twice
-  (`1 passed, 1 failed`, exit 0) and a test that asserted nothing all PASSED. **Fix:** the test's
-  stdout is captured (POSIX dup2 in the child; Windows `cmd /s /c` redirection), echoed back, and
-  graded: when the source calls `assert_summary(`, the LAST `N passed, M failed` line must exist
-  with N >= 1 and M == 0. Verified by lane H's `test_runner_bounded.sh` axis 9 and on pi, ecb, ach
-  and cass. ⚠ It finds one: in this repo `tests/tcyr/crossos/struct_field_value_copy.tcyr`, built
-  with the manifest's auto-prepend, prints `\0` where assert_summary's leading `\n` belongs.
-
-- **`cyrius soak` says what a failed self-host step did.** (B10: K7.) It printed
-  `step N exited ` + the raw `_self_host_step` status — `exited 1` for a SIGSEGV and for an empty
-  output, `exited -1` after macOS's own named refusal. It now uses `_raw_fail_describe` like
-  `cyrius self` ("was killed by signal 11", "exited 0 but wrote no output"). New
-  `toolchain/cyrius_soak_describes_failures.sh`; the macOS branch verified on ecb and ach.
-
-- **`cyrius lint` fails on every compiler refusal except a named context set.** (B10: O4.)
-  **Root cause:** the pre-pass linted anyway unless an error message began with a SYNTAX
-  allow-list entry, so `#derive(accessors)` on an enum, `#derive` on neither a struct nor an enum
-  and a duplicate variable all linted `0 warnings`, rc 0. **Fix:** inverted — every error must be
-  in `_lint_msg_is_context` (`… requires include "…"`, an array sized by another file's enum, a
-  struct from a sibling module as a `.field` target, a field type or a `sizeof`) or lint fails and
-  forwards the diagnostic. **Measured** (read-only, lint's own flags): 2,837 sibling-repo source
-  files lint exactly as at 6.6.10; in-repo lib/, cbt/, programs/: 0 refusals.
-  `lint_reports_unparseable.sh` axes 10-11. **The same fail-open without an error line** (review):
-  a compiler that failed after writing only a warning, or aborted in its own words, got "could not
-  tell, linting anyway" — `0 warnings`, rc 0. It is now a refusal that says what the compiler did
-  (killed / `exited N`) and forwards everything it wrote; an EMPTY capture keeps its own path.
-  Re-measured over the 2,837 files: none reaches this branch, verdicts unchanged. Axis 12.
-
-- **`cyrius coverage` does not count the entry point `main`.** (B10: S7.) No test can name it, so
-  it held ganita at 139/141 and bayan at 501/503 with nothing else missing (now 139/139, 501/501).
-  One helper, `_src_is_entry_fn`, shared with `cyrius header`. `coverage_corpus_and_failopen.sh`
-  axis 20.
-
-- **`cyrius deps` keeps the stdlib fold over a named dep's thin profile of the same package.**
-  (B10: S2, the cyrius half.) bote declares the stdlib leaf `sigil` and depends on libro, whose
-  `[deps.sigil]` is the thin `dist/sigil-mldsa.cyr` + `src/*.cyr`; both copies landed in one unit
-  (232 duplicate fns; at the 6.6.10 pin, five arity errors and a failed build). A named dep
-  `<leaf>`'s `<leaf>-<profile>.cyr` / `<leaf>_<x>.cyr` is now neither vendored nor auto-included
-  when `<leaf>` is a stdlib leaf the resolution copied (a stale copy is removed; one `note:` each).
-  Measured: bote 3.3.13 pinned to 6.6.10 builds with 0 duplicate fns and its 14 tests pass (6.6.10:
-  exit 1). New `toolchain/deps_stdlib_profile_not_vendored.sh`; `deps_stdlib_leaf_not_clobbered.sh`
-  axis 2b.
-### Downstream
-
-- **sandhi 1.10.3 folded (`lib/sandhi.cyr`, sandhi commit `fba0433`) — the DNS TXID fails CLOSED
-  again (CVE-19 residual; no new CVE).** (bite 14.) **Root cause:** CVE-19's fail-closed TXID
-  (d4b24c76, 2026-06-11) was applied to THIS fold only; the next re-vendor (d6032e26) brought back
-  sandhi's clock-ns fallback, so since then a failed `sys_getrandom` sent the query with
-  `(clock_now_ns() ^ (ns >> 16)) & 0xFFFF` — a TXID an off-path attacker can estimate. **Fix, at
-  the source:** sandhi 1.10.3's `_sandhi_resolve_txid_from` maps a short or failed read to -1, and
-  `_sandhi_resolve_ipv4_query_a` / `_ipv6_query_a` (the `_impl_a` entry points delegate to them)
-  refuse a negative TXID before reading resolv.conf, allocating or opening a socket. No public
-  signature changes. `tests/tcyr/stdlib/sandhi_dns_txid_fail_closed.tcyr` is the cyrius-side
-  tripwire for a re-vendor that loses it again (fails on the 1.10.2 fold, on a clock-fallback
-  mutant and on a dropped caller guard).
-- **ganita 1.2.9 folded (`lib/ganita.cyr`, ganita commit `a59e30e`) — `ganita_f32_sin` / `_cos`
-  are correct past 2^63.** (bite 14.) **Root cause:** a NaN guard for |x| ≥ 2^63 written against
-  the pre-6.6.9 `f64_sin`, which returned its argument there; 6.6.9 made `f64_sin` / `f64_cos`
-  within 1 ulp for every finite argument, so the guard discarded a correct value (`sin(2^70)` was
-  NaN, is `0xBF7F88AF`). The guard is gone upstream. The fold's headers also stop naming the
-  retired `lib/matrix.cyr` / `lib/linalg.cyr` (fixed in ganita's `src/`, not here).
-  `tests/tcyr/math/ganita_f32_trig_large.tcyr` pins the correctly rounded bits (7 rows fail on
-  the 1.2.8 fold).
-- Both siblings pin the released cyrius 6.6.10 and ran their full CI in a clean copy.
-  ⛔ **sandhi 1.10.3 and ganita 1.2.9 must be TAGGED before cyrius 6.6.11 is**; the folds were
-  copied byte-identical from those commits' `dist/`. `docs/ecosystem.md`'s two fold rows updated
-  (`fold_table_matches_vendored.sh` green).
-### Fixed — struct value copies and struct-result type checks (B02)
+#### Struct value copies and struct-result type checks (B02)
 
 - **A struct variable copied from a struct-typed field copied one word, and the declaration
   SIGSEGV'd (L1).** With `struct Box { v: Pt; n; }`, `q = b.v` left `q.y` stale (30 where 34 is
@@ -285,19 +114,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   declaration block, plus 11 same-type acceptances, each checked against a control that builds the
   same struct field by field); both mutation-proven per fix.
 
-### Fixed — lexer line accounting and string escapes; `#assert`, enum and intrinsic resolution; the async constructor jmp (B05)
+#### Lexer line accounting and string escapes; `#assert`, enum and intrinsic resolution; the async constructor jmp (B05)
 
-- **A newline inside a string literal was not counted as a line (N1, N3).** After any multi-line
-  string every later token was lexed one line HIGH per newline: `var s = "a<LF>b<LF>c";` then an
-  undefined name on line 5 reported line 3; line 1 of the next `include` landed on its own `#@file`
-  marker line and printed a bare `error:4:12:` with no file; and `FM_FILEID`, which reads the token
-  line, attributed code to the WRONG FILE, so a call to another file's `private` fn **compiled** and
-  the error landed on an innocent name. The "diagnostics in `backend/x86/fixup.cyr` are one line
-  high" report (N3) is this defect, triggered by the one raw-newline literal in
-  `src/frontend/parse_expr.cyr`; the `#@file` bookkeeping was correct and is untouched. **Root
-  cause:** LEX's string loop stored a raw LF (and a `\<LF>`) without bumping the line counter.
-  **Fix:** both bump it; the string token keeps its opening line (matching the column its
-  diagnostic head prints).
 - **An unknown string escape was stored verbatim with the backslash dropped (N2).** `"ab\q"`
   compiled to `abq`; the char-literal ladder already refused. **Fix:** any byte after `\` other
   than the documented escapes is `unknown string escape`, at the backslash. `\` + newline keeps its
@@ -362,7 +180,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (axes 5-7) and `lexer_attribute_word_boundary.sh` (F4 now scored against the compiler; its root-host
   F6 skip exits 77 instead of passing). Each is mutation-proven against its fix.
 
-### Fixed — float typing: compound assignment on globals and in the `for` step, f32 operand checks, typed copies, re-judged assignments (B04)
+#### Float typing: compound assignment on globals and in the `for` step, f32 operand checks, typed copies, re-judged assignments (B04)
 
 - **Compound assignment on an f64 / f32 GLOBAL was integer arithmetic, silently (M1).** `var G:
   f64 = 1.5; G += 1.0;` left G = 9216616637413720064 (0x3FF8.. + 0x3FF0.. added as integers);
@@ -432,7 +250,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   posture as kind 1 on an `: i64`-declared call, and binding the call to a `var m: f32` first
   silences it. No sibling change is required.
 
-### Fixed — declaration-zone struct globals, the union field-count flag, a re-derived struct (B03)
+#### Declaration-zone struct globals, the union field-count flag, a re-derived struct (B03)
 
 - **A global typed with a generic struct instance, declared before the first top-level statement,
   was the 8 B base (L9, type half).** `var G: W1<Pt> = …` read `G.v.x` as "expected ')', got '.'"
@@ -500,7 +318,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   derived redefinition; every kavach pin is 3.13.1. Two H-owned gates asserted the old derive exemption
   (`derive_layout_backstop.sh` F, `redefinition_layout_and_enum_over_var.sh` `sp_derive`) and are
   updated by lane H.
-### Fixed
+
+#### Windows paths, sockets and HTTP; cx threads; stdlib includes (B06, B07, B08)
 
 - **PE: a path is opened, created, renamed and removed under ITS OWN NAME — real UTF-8, no silent
   truncation, long paths (B06, item I2).** **Root cause:** every narrow-path Windows reroute —
@@ -582,22 +401,6 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and `ws_server_socket_reads.tcyr` (a loopback pair in one process: the 101, a text frame, a 16-bit
   length frame, a peer-close EOF); with `sys_read` back they fail 5 and 4 rows on cass (wine's
   ReadFile tolerates it).
-- **Windows: `net_resolve_ipv4` is the system resolver and never reads a drive-relative `/etc`
-  (B07, item I5; security — see the notes for the CVE).** **Root cause:** the resolver read
-  `/etc/hosts` and `/etc/resolv.conf` on every target, and on Windows a rooted path is DRIVE-RELATIVE:
-  `/etc/hosts` is `C:\etc\hosts`, which any authenticated user may create, so one local user could
-  redirect every other user's lookups; with no resolv.conf it fell back to 127.0.0.1:53, and port 53
-  is not privileged there. `_net_dns_id`'s `/dev/urandom` fallback had the same shape. **Fix:** after
-  the literal and `*.localhost` steps the Windows arm is getaddrinfo (the real
-  `%SystemRoot%\System32\drivers\etc\hosts` and the adapters' DNS); a non-ASCII name, and a name the
-  resolver would read as an ADDRESS although `net_parse_ipv4` refused it (`010.0.0.1`, `127.1`,
-  `0x7f000001` — probed with AI_NUMERICHOST), are refused before any lookup; no `/dev/urandom` on
-  Windows. New `tests/tcyr/crossos/net_resolve_pe.tcyr` plants `C:\etc\hosts` and asserts it is
-  ignored (wine maps a rooted path to the unix root, so only real Windows shows this). On real Windows
-  — wine is told apart by ntdll's `wine_get_version` export — the plant itself is asserted: a
-  `C:\etc\hosts` already present or a failed write fails a named row instead of leaving "the planted
-  name does not resolve" to pass vacuously (measured on cass with a pre-existing file: 1 row fails).
-  Mutation, measured on cass: with the POSIX steps restored the planted 10.9.8.7 came back.
 - **`lib/http.cyr`: the Host header carries a non-default port (B07, item J1).**
   `_http_build_request(method, host, path)` took no port, so `http://localhost:8080/x` sent
   `Host: localhost` — and `tests/tcyr/crossos/http_connect_by_name.tcyr` expected exactly that for its
@@ -623,7 +426,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   SIGSYS on a Darwin host (measured on ecb and ach). **Fix:** sync.cyr gains the agnos no-op contract
   as a cx arm (one guest thread, never a contender; listed in its BACKENDS header). thread.cyr on cx:
   `thread_create` / `thread_create_detached` return 0 before touching the spawn path (the heap lock is
-  not armed), `THREADS_CONCURRENT` is 0, `gettid()` is 1, and no `SYS_FUTEX` is issued (the channel
+  not armed), `THREADS_CONCURRENT` is 0, `gettid()` is 1, and the channels issue no `SYS_FUTEX` (the
   ring works single-threaded). Other targets compile byte-identically: every direct includer of the
   touched modules, on linux, aarch64, x86-macho, agnos, PE and Mach-O, cmp'd against the pre-bite tree
   (only `programs/vidya.cyr`, J8, differs).
@@ -668,6 +471,276 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   thread probe, which the host's native cxvm runs to 255 (ecb and ach exited 140, SIGSYS, before the
   futex guards — re-measured with a cxvm built from the tree by the leg's own compiler chain; a cxvm
   built by an older installed cycc need not reproduce it on ecb).
+
+#### The CLI: child environment, distlib sidecars, test grading, lint, coverage, deps (B09, B10)
+
+- **A CLI child inherits the WHOLE environment — Linux dropped everything past 8 KB, macOS passed
+  none of it.** (B09: J4, J6.) **Root cause:** `load_environ` (cbt/core.cyr) builds `_envp`, the
+  envp of every POSIX `sys_execve` the CLI makes (cycc, test binaries, git, the hasher, /bin/sh,
+  ssh). It read /proc/self/environ into a fixed 8,192-byte buffer, so on Linux every variable past
+  8 KB was silently absent in the child and the one straddling the cut truncated (measured: a
+  `cyrius run` child's environ was exactly 8,192 bytes with a trailing sentinel gone). macOS has no
+  /proc, so the open failed and `_envp` was the EMPTY vector: children ran with no PATH, HOME,
+  TMPDIR, SSH_AUTH_SOCK or CYRIUS_* — only execvp's default `/usr/bin:/bin` let git and the
+  hasher resolve. **Fix:** Linux reads to EOF into a growing buffer; macOS sets `_envp` to the
+  kernel's own entry-stack envp through `_macho_envp()`, factored out of `_macho_fill_environ`
+  (NULL-terminated, live for the whole process, no copy, no cap). The cross-OS driver's private
+  32 KB copy (`_co_build_envp`, justified by a comment saying "the default _envp is empty") is
+  gone — `_co_run_sh` passes `_envp`. New `toolchain/cli_child_env_complete.sh`: a `cyrius run`
+  child's environ must be byte-identical to `env -0` under a 40,000-byte variable and a trailing
+  sentinel (the 8191 cap and a non-growing buffer both FAIL; exit 77 with no /proc). Verified on
+  real hardware: pi (aarch64 Linux, the gate green; the 6.6.10 `load_environ` red at 8,192 bytes),
+  and ecb (arm64) + ach (x86) macOS, where a fake `sha256sum` first on PATH is run 15 times by
+  `cyrius deps` with the fix and never with the 6.6.10 CLI.
+- **Windows: `cyrius.exe` honours `CYRIUS_RESOLVED=1` and actually runs a pinned version.**
+  (B09: I3.) **Root cause:** `_cyrius_resolved` was set only by find_tools' /proc/self/environ scan,
+  which reads nothing on PE, so the documented escape from a pin was ignored (a project pinning an
+  uninstalled version exited 1 with it set). Behind it, the redirect could not succeed at all: it
+  looked for `versions/<pin>/bin/cyrius` (install.ps1 installs `cyrius.exe`) and then called
+  `sys_execve`, a -1 stub on PE — so on Windows every repo pinning another version could run NO
+  verb. **Fix:** find_tools' PE arm reads the flag through `_cbt_env_is_1`; the pinned path gets
+  `.exe`; and `_win_redirect_to_pinned` sets `CYRIUS_RESOLVED=1` on the CLI itself
+  (kernel32!SetEnvironmentVariableA via GetProcAddress + `callptr` — no new PE reroute), runs the
+  pinned `cyrius.exe` as a child through the CLI's CreateProcessW path (`_win_spawn_vec`, in a
+  job object), waits, and exits with the child's code. Default taken over "skip the redirect with
+  a warning": honouring the flag alone would leave pinned repos broken unless the user exports
+  it. New `toolchain/cli_pe_pinned_redirect.sh` (wine; exit 77 without it): an uninstalled pin
+  plus the flag exits 0 with the drift note, and without it exits 1 naming `bin/cyrius.exe`; a
+  probe in the pinned slot receives the verb, a spaced argument and the flag, and its exit code
+  (37) is `cyrius.exe`'s; the tree's own `cyrius.exe` in the slot runs the verb with no redirect
+  loop. Mutations: the find_tools line, the `.exe` suffix and the redirect call each FAIL it.
+  Verified on real Windows (cass): all four axes (0 / 1 naming `cyrius.exe` / 37 / 0).
+- **cbt comments no longer say the symlinked-`lib/` guard is inert on Windows.** (B09: K12.) Four
+  comment blocks in `cbt/cyrius.cyr` and `cbt/deps.cyr` still read "`is_symlink` returns 0 on
+  Windows — no PE readlink wrapper" (one framed as an "HONEST LIMIT"); `is_symlink` has had a PE
+  arm since 6.6.9 (GetFileAttributesW's REPARSE_POINT bit, then FindFirstFileW's name-surrogate
+  tag). Comment-only.
+- **`cyrius distlib`'s sidecar no longer depends on the host that runs it — it is the union over
+  every target.** (B10: K5, K8.) **Root cause:** `_distlib_verify_rounds` compiled its verify unit
+  once, for the HOST target, so the recorded leaf set was whatever that host's `#ifdef` arms left
+  undefined and `distlib --check` could drift between a Mac or ARM box and Linux CI (15 of 60
+  ecosystem bundles have different undefined sets per target at 6.6.10). **Fix:** each round
+  compiles the unit for x86_64 Linux, Windows (CYRIUS_TARGET_WIN=1) and macOS (CYRIUS_MACHO=1),
+  and aarch64 Linux and macOS (cycc_aarch64, CYRIUS_MACHO_ARM=1) — concurrently, read back in
+  target order — and classifies the union. Only an x86_64-Linux CLI has a compiler per target;
+  macOS, Windows and aarch64 CLIs **refuse by name** ("only an x86_64 Linux CLI has a compiler for
+  each"), and a missing `cycc_aarch64` is named. A per-target compile gets the inherited
+  environment minus every target selector. A symbol undefined on only SOME targets is credited to
+  a declarer already in the unit (nothing added), else the one dispatcher whose peer declares it,
+  else the one non-peer declarer, else a **named refusal** — never the first snapshot file (mihi's
+  EINTR on PE would have recorded the sigil monolith). A PRIVATE peer of a peer
+  (`syscalls_linux_common`) belongs to its dispatcher. `-v` prints each leaf a round adds.
+  **Measured:** `distlib --all` over 74 ecosystem repos gives sidecars byte-identical to the
+  6.6.10 CLI's (the extra per-target symbols are all owned by recorded leaves); total 488 s vs
+  437 s. Verified on ecb, ach, pi and cass (the named refusal). New
+  `toolchain/distlib_sidecar_host_independent.sh`; every `distlib_*.sh` gate stages cycc and a
+  `cycc_aarch64` built from src/ beside a private copy of the CLI (exit 77 if it cannot).
+  K8: `distlib_profile_sidecar.sh` takes `CYRIUS_BIN` / `CYCC` and copies `$CC` into its fake home.
+- **`cyrius distlib`'s verify no longer calls running out of rounds "converged".** (B10: K6.)
+  **Root cause:** falling out of the 6-round loop returned `added_total`, the same answer as a
+  real fixpoint, so the last round's leaves were never compiled and an 8-leaf chain published 6
+  leaves as "compile-verified" at rc 0. **Fix:** a named refusal ("did not converge in 6 rounds
+  — sidecar NOT written"); not a bigger cap. Gate: `distlib_sidecar_verified.sh` axis 13 (the
+  8-leaf chain fails; a 5-leaf chain still converges).
+- **`cyrius test` / `cyrius tests` grade the assert summary, not the exit code alone.** (B10: O3,
+  the cmd_test half of B01's rule.) **Root cause:** cmd_test ran each binary exit-code-only and
+  never saw stdout, so a test that died before `assert_summary()` with exit 0, a body run twice
+  (`1 passed, 1 failed`, exit 0) and a test that asserted nothing all PASSED. **Fix:** the test's
+  stdout is captured (POSIX dup2 in the child; Windows `cmd /s /c` redirection), echoed back, and
+  graded: when the source calls `assert_summary(`, the LAST `N passed, M failed` line must exist
+  with N >= 1 and M == 0. Verified by lane H's `test_runner_bounded.sh` axis 9 and on pi, ecb, ach
+  and cass. ⚠ It finds one: in this repo `tests/tcyr/crossos/struct_field_value_copy.tcyr`, built
+  with the manifest's auto-prepend, prints `\0` where assert_summary's leading `\n` belongs.
+- **`cyrius soak` says what a failed self-host step did.** (B10: K7.) It printed
+  `step N exited ` + the raw `_self_host_step` status — `exited 1` for a SIGSEGV and for an empty
+  output, `exited -1` after macOS's own named refusal. It now uses `_raw_fail_describe` like
+  `cyrius self` ("was killed by signal 11", "exited 0 but wrote no output"). New
+  `toolchain/cyrius_soak_describes_failures.sh`; the macOS branch verified on ecb and ach.
+- **`cyrius lint` fails on every compiler refusal except a named context set.** (B10: O4.)
+  **Root cause:** the pre-pass linted anyway unless an error message began with a SYNTAX
+  allow-list entry, so `#derive(accessors)` on an enum, `#derive` on neither a struct nor an enum
+  and a duplicate variable all linted `0 warnings`, rc 0. **Fix:** inverted — every error must be
+  in `_lint_msg_is_context` (`… requires include "…"`, an array sized by another file's enum, a
+  struct from a sibling module as a `.field` target, a field type or a `sizeof`) or lint fails and
+  forwards the diagnostic. **Measured** (read-only, lint's own flags): 2,837 sibling-repo source
+  files lint exactly as at 6.6.10; in-repo lib/, cbt/, programs/: 0 refusals.
+  `lint_reports_unparseable.sh` axes 10-11. **The same fail-open without an error line** (review):
+  a compiler that failed after writing only a warning, or aborted in its own words, got "could not
+  tell, linting anyway" — `0 warnings`, rc 0. It is now a refusal that says what the compiler did
+  (killed / `exited N`) and forwards everything it wrote; an EMPTY capture keeps its own path.
+  Re-measured over the 2,837 files: none reaches this branch, verdicts unchanged. Axis 12.
+- **`cyrius coverage` does not count the entry point `main`.** (B10: S7.) No test can name it, so
+  it held ganita at 139/141 and bayan at 501/503 with nothing else missing (now 139/139, 501/501).
+  One helper, `_src_is_entry_fn`, shared with `cyrius header`. `coverage_corpus_and_failopen.sh`
+  axis 20.
+- **`cyrius deps` keeps the stdlib fold over a named dep's thin profile of the same package.**
+  (B10: S2, the cyrius half.) bote declares the stdlib leaf `sigil` and depends on libro, whose
+  `[deps.sigil]` is the thin `dist/sigil-mldsa.cyr` + `src/*.cyr`; both copies landed in one unit
+  (232 duplicate fns; at the 6.6.10 pin, five arity errors and a failed build). A named dep
+  `<leaf>`'s `<leaf>-<profile>.cyr` / `<leaf>_<x>.cyr` is now neither vendored nor auto-included
+  when `<leaf>` is a stdlib leaf the resolution copied (a stale copy is removed; one `note:` each).
+  Measured: bote 3.3.13 pinned to 6.6.10 builds with 0 duplicate fns and its 14 tests pass (6.6.10:
+  exit 1). New `toolchain/deps_stdlib_profile_not_vendored.sh`; `deps_stdlib_leaf_not_clobbered.sh`
+  axis 2b.
+
+#### Async runtime and process-tree lifetime (B12)
+
+- **The reactor ended a coroutine whose `await` did not park with 0 (P1).** Every backend's
+  `_async_step` (lib/async.cyr, async_macos.cyr, async_win.cyr, async_agnos.cyr) marked a task that
+  returned still-READY as DONE. A coroutine suspending at `await inner(a)` (a plain async fn) or at an
+  `await` of a call that does not park returns 0 from that suspend while READY, so under
+  `async_spawn_future` + `async_run` it was finished with 0 and never resumed (measured: 0, state DONE,
+  where `future_force` gave 41). The guide wrote the defect down as a rule ("force such a coroutine
+  yourself"). **Fix:** the shared `_async_coro_pending(t)` keeps a `future_force` task READY while its
+  Future is a pending coroutine; and when one was kept, the Linux/macOS/Windows reactors poll their
+  epfd / kqueue / IOCP WITHOUT blocking, because a coroutine that keeps awaiting non-parking work runs
+  every step and fd-parked tasks — and `async_with_timeout`'s deadline sentinel — otherwise starve until
+  it finishes. Gate: `coroutine_midbody_suspend.sh` axis 10 (async_run, task_join, a parked waiter that
+  must wake a spinning coroutine, a deadline over a coroutine that never finishes). Verified on x86_64
+  Linux, ach (x86_64 macOS) and cass (Windows PE) against a pre-fix control (exit 1 → 42).
+- **Linux `async_with_timeout(.., 0)`, `async_interval(.., 0, ..)` and `async_sleep_ms(0)` — and
+  their negative forms — waited for ever (P4).** `_async_timerfd` wrote `value_ms` straight into
+  `it_value`: all-zero DISARMS a timerfd and a negative value is EINVAL, and the `timerfd_settime`
+  return was unchecked. **Fix:** `value_ms <= 0` arms 1 ns (a deadline that has already passed, as on
+  macOS); a refused settime closes the fd and fails; `async_interval` returns no handle for
+  `ms <= 0`, as macOS does. Rows: `async_timeout_result.tcyr` "zero" group (each call bounded inside
+  `async_timeout`, so a regression FAILs rather than hangs; 7 RED on the old lib).
+- **The macOS kqueue reactor spun after a normal wake (P2).** `_async_kev_register` added
+  EVFILT_READ/WRITE with plain `EV_ADD` — level-triggered and persistent — and the wake path never
+  removed it, so an fd that stayed readable made every later `kevent()` return at once, wake nobody
+  and loop. **Fix:** the registrations are `EV_ADD | EV_ONESHOT` (a wake already wakes every waiter on
+  the (ident, filter); a later park re-adds). Row: `async_macos_verbs.tcyr` "a normal wake leaves no
+  read filter armed" — RED against the pre-fix lib on ecb and ach, green with it.
+- **macOS `async_run` never closed the runtime's kqueue — one fd leaked per runtime (P3).** Its
+  comment recorded the leak ("the kqueue stays open") instead of fixing it. **Fix:** closed after the
+  pump, single-use like the epoll backend. Row: `async_macos_verbs.tcyr` "async_run closes the
+  runtime's kqueue" (F_GETFD after the run) — RED on ecb and ach against the pre-fix lib.
+- **`async_run_process`'s deadline stalled the whole reactor for up to 5 s (P5), and
+  `async_with_timeout` on an `async_spawn_process` handle left the child running and unreaped (P6),
+  on Linux and macOS.** The deadline called the BLOCKING `proc_kill_tree` — TERM, then a 10 ms
+  sleep-poll for up to `_PROC_GRACE_MS` in which no task ran (measured: a TERM-ignoring child held a
+  sibling 10 ms interval for 5,234 ms); and `_async_retire` knew nothing about the child a process
+  task forked, so a direct `async_with_timeout(rt, h, 100)` returned 0 with `/bin/sleep 7` still
+  running (it outlived the caller) and, on Linux, its pidfd leaked. **Fix:** lib/process.cyr's kill
+  is split into `_proc_kill_begin` / `_proc_kill_step` (one non-blocking look) / `_proc_kill_finish`
+  (and `_proc_kill_wait`, the blocking remainder), with `proc_kill_tree` unchanged on top of them.
+  Both reactors' `_async_retire` now ends a process task's child: it TERMs the tree (Linux, /proc
+  snapshot — copied, since other tasks may snapshot during the grace) or the group (macOS, the child
+  alone when it leads none) and spawns a kill task that parks on a 10 ms timerfd / EVFILT_TIMER and
+  takes one look per tick until nothing is left or the grace runs out, then KILLs, reaps and (Linux)
+  closes the pidfd. `async_with_timeout` pumps that task to DONE before returning — other tasks keep
+  running — and `async_run_process`'s own kill is gone (the Windows shape). If no task can be made
+  (a refused allocation or timer) the kill completes inline, blocking, as before. Return-value
+  change: on Linux `async_run_process` now returns -1 (was -2, a deadline that never fired) when the
+  deadline could not be armed, as on macOS, and the unrun handle is retired. Rows:
+  `async_timeout_result.tcyr` "grace" / "loser", `async_macos_verbs.tcyr` the same two, and the
+  `async_process` fixture's row 4 — RED against the pre-fix lib on x86_64 Linux, pi, ecb and ach.
+- **Linux `async_timeout`'s deadline SIGKILLed only the forked body; its children outlived the
+  deadline (P7).** Measured: a body that forked `/bin/sleep 8` and hung left the sleep running at
+  PPID 1. **Fix:** a timed-out (or result-less) body is ended with `proc_kill_tree` — TERM the tree,
+  grace, KILL — which reaps it. A body that already EXITED without a result has had its children
+  reparented before the /proc walk, so that case is not reachable from here. Row:
+  `async_timeout_result.tcyr` "forker" (RED on the pre-fix lib; green on x86_64 and pi).
+- **Linux capture verbs: a child that exited while its grandchild held the pipe reported -2 and left
+  the grandchild running at PPID 1 (P8).** `_proc_child_guard` called `setsid()` only on macOS and
+  `_proc_end_cut_group` was a no-op off macOS, so after the child was reaped and its orphan
+  reparented, nothing could reach it (measured: `sleep 9 & echo hi` under a 300 ms deadline).
+  **Fix:** on Linux too the child calls `setsid()` when a deadline is in force, and
+  `_proc_end_cut_group` is unconditional, calling `_proc_kill_group` directly (never
+  `proc_kill_tree`, whose Linux arm walks /proc from an already-reaped pid). Accepted side effect: a
+  Linux child run under a deadline has no controlling terminal; PR_SET_PDEATHSIG still ends it when
+  its parent dies. Row: `deadline_ends_grandchild.tcyr`'s grandchild assert is no longer macOS-only —
+  RED against the pre-fix lib on x86_64 and pi; green on x86_64, pi, ecb, ach and the agnosticos
+  container.
+- **`lib/regression.cyr`'s deadline ended only the pid off Linux (P9).** `_regression_tree_collect`
+  returns nothing without /proc, so `_regression_kill_tree` signalled the child alone, and
+  `_regression_child_guard` had no `setsid()`, so there was no group to reach: the 6.6.10 macOS port
+  of lib/process.cyr's group kill never reached its twin. **Fix:** on macOS the child calls
+  `setsid()` (unconditionally — every verb here runs its child under a deadline, and a deadline
+  means no controlling terminal, the rule lib/process.cyr applies; so `ssh` / `scp` run by these
+  verbs on macOS cannot prompt for a host key or passphrase), and `_regression_kill_tree` targets `-pid` when that group exists: one TERM,
+  the grace, one KILL (`_proc_kill_group`'s shape). Rows: `regression_terminate_children.tcyr` "a
+  regression_* deadline ends the grandchild too" (RED on ecb and ach against the pre-fix lib), and
+  `process_deadline_tree.tcyr`'s whole-tree assert is no longer Linux-only (it tests lib/process.cyr,
+  which has ended the group on macOS since 6.6.10; green on ecb and ach).
+
+### Changed
+
+#### Test grading and the SKIP protocol (B01, B11)
+
+- **Every `.tcyr` reader grades the LAST assert summary (B01: O1–O3).** When a source calls
+  `assert_summary(`, the last `N passed, M failed` line must exist with N ≥ 1 and M = 0, and the exit
+  code must be 0; a source without it is graded on its exit code alone. **Root cause:** the readers
+  graded differently — the check driver parsed the FIRST summary substring, the cross-OS runner
+  ignored M, and CI's three corpus loops and the cass leg read the exit code alone — so a test that ran
+  `main` twice (printing `1 failed`, then exiting 0), exited before its summary, or compiled every
+  assert out (`0 passed, 0 failed`) scored PASS. **Fix:** one rule in the driver (`_tcyr_grade`, shared
+  by the compile-and-run and relay paths; the first-substring parsers are gone), in
+  `scripts/cross-os-libtest-runner.sh`, in the cass leg (stdout read back over the same ssh and graded
+  locally), and in a pipefail-safe `tcyr_verdict` in all three ci.yml loops. Six corpus files had the
+  run-`main`-twice or explicit-`exit 0` epilogue (`lang/shift_right_arithmetic.tcyr` really ran its body
+  twice); four crossos files compiled every assert out on Windows and now assert the premise of their
+  skip (`sys_fork`, `sys_pipe`, `sys_ioctl` fail closed on PE). New gates:
+  `toolchain/tcyr_epilogue_shape.sh` (a lint over the corpus against `CORPUS_FLOOR`),
+  `check_driver_requires_summary.sh` and `ci_tcyr_loops_require_summary.sh` (each red against 6.6.10);
+  `test_runner_bounded.sh` axis 9 requires `cyrius test` / `cyrius tests` to fail each bad shape AND show
+  the fixture's own output.
+- **A gate that cannot run exits 77, and a SKIP is never a pass (B11: K1–K4, K8, K9, K13, J3).**
+  **Root cause:** 120 gate scripts printed SKIP and exited 0, so a missing prerequisite (wine, qemu, a
+  cross-compiler) scored PASS in check.sh and in the driver alike. **Fix:** the driver's `_gate_score`
+  and check.sh's `_chk_gate` score 77 as a SKIP row, and a FAIL under `CYRIUS_CHECK_NO_SKIP=1` (1 strict,
+  0 or unset off, anything else refused before a run); 141 whole-gate `exit 0` sites became `exit 77` and
+  58 axis-level skips count into `GATE_SKIPS`; the driver's own SKIP rows reach check.sh through
+  `--skip-report`; `scripts/sign-efi-gate.sh` and `scripts/qemu-boot-gate.sh` exit 77 too. A default run
+  with any skip ends **GREEN, with N gate(s) SKIPPED** (exit 0) instead of ALL GREEN. A selected suite
+  that ran no rows fails (K3); CI's CLI cross-compile step delegates to the driver's new `cli-cross` row
+  (K2); `check_driver_skip_is_not_pass.sh` axes 6–11 pin the protocol, and axis 11 holds every
+  `tests/gates` script to it. `_bench_record` books nothing for k ≤ 0 and `bench_min_resolved` refuses
+  mk ≤ 0 (J3).
+- **Integration ratchets.** `CORPUS_FLOOR` 250 → 259 (+9 new `.tcyr`); `check_gate_census.sh`
+  `CYCC_CEIL` 71 → 67 (four more gates honour `$CYCC`); `stdlib_modules_self_sufficient.sh` floors cx
+  68 → 69 (B08: `lib/thread.cyr` compiles on cx) and agnos 73 → 74. The unchecked-allocation census
+  stays at **0 of 241 sites** and the cross-compile allowlists at pe 0 / agnos 1.
+
+### Downstream
+
+- **sandhi 1.10.3 folded (`lib/sandhi.cyr`, sandhi commit `fba0433`) — the DNS TXID fails CLOSED
+  again (CVE-19 residual; no new CVE).** (bite 14.) **Root cause:** CVE-19's fail-closed TXID
+  (d4b24c76, 2026-06-11) was applied to THIS fold only; the next re-vendor (d6032e26) brought back
+  sandhi's clock-ns fallback, so since then a failed `sys_getrandom` sent the query with
+  `(clock_now_ns() ^ (ns >> 16)) & 0xFFFF` — a TXID an off-path attacker can estimate. **Fix, at
+  the source:** sandhi 1.10.3's `_sandhi_resolve_txid_from` maps a short or failed read to -1, and
+  `_sandhi_resolve_ipv4_query_a` / `_ipv6_query_a` (the `_impl_a` entry points delegate to them)
+  refuse a negative TXID before reading resolv.conf, allocating or opening a socket. No public
+  signature changes. `tests/tcyr/stdlib/sandhi_dns_txid_fail_closed.tcyr` is the cyrius-side
+  tripwire for a re-vendor that loses it again (fails on the 1.10.2 fold, on a clock-fallback
+  mutant and on a dropped caller guard).
+- **ganita 1.2.9 folded (`lib/ganita.cyr`, ganita commit `a59e30e`) — `ganita_f32_sin` / `_cos`
+  are correct past 2^63.** (bite 14.) **Root cause:** a NaN guard for |x| ≥ 2^63 written against
+  the pre-6.6.9 `f64_sin`, which returned its argument there; 6.6.9 made `f64_sin` / `f64_cos`
+  within 1 ulp for every finite argument, so the guard discarded a correct value (`sin(2^70)` was
+  NaN, is `0xBF7F88AF`). The guard is gone upstream. The fold's headers also stop naming the
+  retired `lib/matrix.cyr` / `lib/linalg.cyr` (fixed in ganita's `src/`, not here).
+  `tests/tcyr/math/ganita_f32_trig_large.tcyr` pins the correctly rounded bits (7 rows fail on
+  the 1.2.8 fold).
+- Both siblings pin the released cyrius 6.6.10 and ran their full CI in a clean copy.
+  ⛔ **sandhi 1.10.3 and ganita 1.2.9 must be TAGGED before cyrius 6.6.11 is**; the folds were
+  copied byte-identical from those commits' `dist/`. `docs/ecosystem.md`'s two fold rows updated
+  (`fold_table_matches_vendored.sh` green).
+- **N4's four consumers (B05).** The qualified-enum check refuses stale `Backend.X` / `KavachError.OK`
+  spellings that compiled only because the qualifier was ignored (see Fixed, B05). **mehman 1.0.4**
+  (`59bed0c`) and **agnosai 2.1.1** (`1c1ea74`, pin unchanged at 6.6.6, `dist/agnosai.cyr` regenerated)
+  carry the `KavachBackend` / `KAVACH_ERR_OK` spellings; each builds byte-identical binaries on its pinned
+  compiler and clean on 6.6.11. ⛔ **agnostic** (vendored `lib/agnosai.cyr`, and `tests/deps_symbols.tcyr`,
+  which asserted that a qualifier is cosmetic) and **aethersafha** (vendored `lib/mehman_sandbox.cyr`) must
+  NOT re-pin 6.6.11 until they re-vendor agnosai 2.1.1 / mehman 1.0.4 — post-tag follow-ups; the agnostic
+  test patch is ready.
+- **Consumer pin lockstep (B13).** stiva 3.0.21 (`bdd6f51`) and mehman 1.0.4 → kavach 3.13.1; libro 2.10.4
+  (`731aacd`) → sigil 3.13.4, then bote 3.3.14 (`802c90f`) → libro 2.10.4; dhvani 2.2.5 (`1d2d2b9`) drops
+  its `path = "../hisab"`, so a local resolve equals CI. All pin the released 6.6.10 and ran their full CI
+  in a clean copy; none is folded into cyrius. ⛔ **libro 2.10.4 must be tagged before bote 3.3.14**, whose
+  lock already names that tag — re-resolve it in a clean copy and re-run its CI once the tag exists.
+
 
 ## [6.6.10] — 2026-09-29
 
