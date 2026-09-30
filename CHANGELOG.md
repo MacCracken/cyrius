@@ -101,7 +101,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `CYRIUS_HOME` at their 6.6.6 pin. ⛔ **vani 1.2.8, mabda 4.1.6 and sakshi 2.5.6 must be TAGGED
   before cyrius 6.6.12 is**; the folds were copied byte-identical from those commits' `dist/`, and
   `docs/ecosystem.md`'s three fold rows name the commits.
-- **sandhi 1.10.4 folded (`lib/sandhi.cyr`, sandhi commit `c1c36f6`) — CVE-57 above; a
+- **sandhi 1.10.4 folded (`lib/sandhi.cyr`, sandhi commit `88115b3`) — CVE-57 above; a
   stop-enabled server wakes on macOS; the suites run on macOS.** (B15, items SA11 + SA6.) **SA6:**
   sandhi's four suites had never run on macOS. At this release they were run on ecb and ach with the
   6.6.11 release tarballs in a per-run directory, and ecb hung. **Root cause:** the four blocking
@@ -112,7 +112,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the source:** the loops accept through `_sandhi_server_accept`. With a flag on macOS, it polls the
   listener for the interval and reports a timeout as `Err(_SANDHI_EAGAIN)`, which the accept policy
   retries. New sandhi row `test_server_accept_surfaces_when_idle` hangs on both ecb and ach with the
-  macOS arm removed. After the fix all four suites pass on ecb and ach (781 / 1,691 / 352 / 63).
+  macOS arm removed. The accept that follows a readable poll could still park — a peer that resets
+  between the two is dropped from a BSD accept queue, and a blocking accept then waits for the next
+  client (found in this release's review) — so on macOS the armed listener is also `O_NONBLOCK`,
+  and `_sandhi_server_accept` clears the `O_NONBLOCK` a BSD `accept(2)` copies onto the new socket.
+  Two more sandhi rows, mutation-proven on ecb and ach: a direct accept on an armed idle listener
+  hangs without the `O_NONBLOCK`, and the accepted fd reads back non-blocking without the clear.
+  After the fix all four suites pass on Linux, ecb and ach (787 / 1,691 / 352 / 63).
   sandhi's CI gains a `macos-14` job and a structural row that keeps every `"/etc/"` literal and
   8.8.8.8 fallback inside `#ifndef CYRIUS_TARGET_WIN`. The pin moves 6.6.10 → 6.6.11.
 - **yantra 1.0.7 folded (`lib/yantra.cyr`, yantra commit `1095e5e`) — `_cdp_set_nodelay` through

@@ -13935,9 +13935,18 @@ fn _sandhi_server_stop_requested(ptr): i64 {
 #
 # ⚠ macOS: this arming is NOT enough there, because XNU's accept(2) ignores
 # SO_RCVTIMEO and sleeps until a connection arrives. `_sandhi_server_accept`
-# bounds the wait itself on that target.
+# bounds the wait itself on that target with poll(2), and the listen fd is made
+# O_NONBLOCK here as well: poll reporting the listener readable does not
+# guarantee a connection is still queued when accept runs (a peer that resets
+# in between is dropped from a BSD accept queue), and a BLOCKING accept would
+# then sleep until the next client arrived without re-reading the flag.
+# Non-blocking, that accept returns EAGAIN, which the policy retries.
+# CHANGELOG [1.10.4]
 fn _sandhi_server_arm_stop_poll(sfd, stop_ptr): i64 {
     if (stop_ptr == 0) { return 0; }
+    #ifdef CYRIUS_TARGET_MACOS
+    sock_set_nonblocking(sfd);
+    #endif
     return _sandhi_conn_set_timeout_ms(sfd, SANDHI_SERVER_STOP_POLL_MS,
       _SANDHI_SO_RCVTIMEO);
 }
@@ -13957,6 +13966,13 @@ fn _sandhi_server_arm_stop_poll(sfd, stop_ptr): i64 {
 # flag without walking toward SANDHI_ACCEPT_GIVEUP. A poll error is handed to
 # the same policy as its errno (EINTR retries; EBADF / EINVAL are fatal).
 #
+# The listener is O_NONBLOCK on macOS once armed (see
+# `_sandhi_server_arm_stop_poll`), so the accept after a readable poll cannot
+# park either. A BSD accept(2) hands the new socket the LISTENER's O_NONBLOCK,
+# and every connection handler reads with a blocking fd bounded by SO_RCVTIMEO,
+# so the accepted fd is put back in blocking mode before it is returned; if
+# that fails the connection is dropped and reported ECONNABORTED (RETRY).
+#
 # Without a flag this is exactly `sock_accept`, blocking. CHANGELOG [1.10.4]
 fn _sandhi_server_accept(sfd, stop_ptr) : Result {
     #ifdef CYRIUS_TARGET_MACOS
@@ -13968,10 +13984,30 @@ fn _sandhi_server_accept(sfd, stop_ptr) : Result {
         var pr = syscall(7, &pfd, 1, SANDHI_SERVER_STOP_POLL_MS);  # poll: 7 -> 230 on Darwin
         if (pr == 0) { return Err(_SANDHI_EAGAIN); }
         if (pr < 0) { return Err(0 - pr); }
+        var at, cfd = sock_accept(sfd);
+        if (is_err_result(at) == 1) { return Err(cfd); }
+        if (_sandhi_server_conn_blocking(cfd) < 0) {
+            sock_close(cfd);
+            return Err(_SANDHI_ERRNO_ECONNABORTED);
+        }
+        return Ok(cfd);
     }
     #endif
     return sock_accept(sfd);
 }
+
+# macOS: clear the O_NONBLOCK an accepted socket inherits from a stop-armed
+# listener (Darwin O_NONBLOCK = 4). Returns 0, or -errno from fcntl.
+#ifdef CYRIUS_TARGET_MACOS
+fn _sandhi_server_conn_blocking(cfd): i64 {
+    var fl = sys_fcntl(cfd, 3, 0);                       # F_GETFL
+    if (fl < 0) { return fl; }
+    if ((fl & 4) == 0) { return 0; }
+    var r = sock_clear_nonblocking(cfd, fl & (0 - 5));   # F_SETFL without O_NONBLOCK
+    if (r < 0) { return r; }
+    return 0;
+}
+#endif
 
 # Resolve the cap for the server about to start and publish it to `_hsv_req_max`
 # for the worker/task bodies. Called by every run_* entry point BEFORE any
