@@ -437,13 +437,13 @@ var _fnvar_base = 0;      # was 0x16A000 fn_variadic (1 = fn f(a, ...))
 var _fnflg_base = 0;      # was 0x17A000 fn_flags (must_use/deprecated/pure/io/alloc bits)
 var _fnvb_base = 0;       # was 0x1C8000 fn_var_bytes (per-fn array-bytes attribution)
 
-# v6.5.28 — FLOAT LITERAL side table. Two i64 slots per literal. Since 6.6.10 slot @0
-# (FLIT_NUM) holds the literal's correctly rounded binary64 BITS — the lexer converts the
-# digits exactly (_flit_bits in src/frontend/lex.cyr) and stores FLIT_ADD(bits, 0) — and slot
-# @8 is unused (FLIT_DEN has no caller). The three EMIT_FLOAT_LIT load FLIT_NUM as a 64-bit
-# immediate. The history below is why the table exists; the i64 numer/denom pair it describes
-# overflowed in its turn (past 18 fraction digits or a 2^63 digit string) and was double-rounded
-# by the runtime divide, both silently. CHANGELOG [6.6.10]
+# v6.5.28 — FLOAT LITERAL side table, one i64 slot per literal: its correctly rounded binary64
+# BITS (since 6.6.10 — the lexer converts the digits exactly, _flit_bits in
+# src/frontend/lex.cyr). The EMIT_FLOAT_LIT backends load FLIT_NUM as a 64-bit immediate. The
+# history below is why the table exists; the i64 numer/denom pair it describes overflowed in
+# its turn (past 18 fraction digits or a 2^63 digit string) and was double-rounded by the
+# runtime divide, both silently. CHANGELOG [6.6.10] (6.6.12: the unused denominator slot and
+# its reader FLIT_DEN are gone.)
 #
 # ⛔ WHY THIS EXISTS. A decimal float literal used to be packed into ONE token value as
 # `(denom << 32) | (numer & 0xFFFFFFFF)` — a 32/32 rational. Both halves overflowed silently
@@ -476,24 +476,20 @@ var _flit_base = 0;
 var _flit_n = 0;
 var _FLIT_CAP = 16384;
 
-# Intern a float literal (since 6.6.10: its binary64 bits in `numer`; `denom` unused), returning
-# its index (the token value). Fails CLOSED:
-# past the cap it returns -1 and the caller emits a hard error rather than aliasing slot 0,
-# which is the v6.4.75 fn_table lesson (index N aliasing index 0 of the neighbour was a SILENT
-# miscompile, and silence is exactly what this whole fix is removing).
-fn FLIT_ADD(numer, denom): i64 {
-    if (_flit_base == 0) { _flit_base = alloc(_FLIT_CAP * 16); }
+# Intern a float literal (its binary64 `bits`), returning its index (the token value). Fails
+# CLOSED: past the cap it returns -1 and the caller emits a hard error rather than aliasing
+# slot 0, which is the v6.4.75 fn_table lesson (index N aliasing index 0 of the neighbour was a
+# SILENT miscompile, and silence is exactly what this whole fix is removing).
+fn FLIT_ADD(bits): i64 {
+    if (_flit_base == 0) { _flit_base = alloc(_FLIT_CAP * 8); }
     if (_flit_n >= _FLIT_CAP) { return 0 - 1; }
     var i = _flit_n;
-    S64(_flit_base + i * 16, numer);
-    S64(_flit_base + i * 16 + 8, denom);
+    S64(_flit_base + i * 8, bits);
     _flit_n = i + 1;
     return i;
 }
-# Numerator of interned float literal `i`.
-fn FLIT_NUM(i): i64 { if (_flit_base == 0) { return 0; } return L64(_flit_base + i * 16); }
-# Denominator of interned float literal `i`.
-fn FLIT_DEN(i): i64 { if (_flit_base == 0) { return 1; } return L64(_flit_base + i * 16 + 8); }
+# The binary64 bits of interned float literal `i`.
+fn FLIT_NUM(i): i64 { if (_flit_base == 0) { return 0; } return L64(_flit_base + i * 8); }
 # v6.3.5 AR-01 — monomorphization substrate (gated proof). Opt-in flag that
 # re-enables the inline body-token CAPTURE (SFBS/SFBE/SFINL in PARSE_FN_DEF) so
 # the still-intact emit-time replay path (PARSE_FNCALL, GFINL!=0 branch) fires.

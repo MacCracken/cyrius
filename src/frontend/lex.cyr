@@ -1235,7 +1235,7 @@ fn LEXDEC(S, p): i64 {
                         # BITS (FLIT_NUM); the backends load them as one 64-bit immediate. See
                         # the block above _bn_muladd for what the i64 numer/denom pair did.
                         var bits = _flit_bits(S, p0, p, fd, nd + fd);
-                        var fidx = FLIT_ADD(bits, 0);
+                        var fidx = FLIT_ADD(bits);
                         if (fidx < 0) {
                             _lex_die(S, p0, "too many distinct float literals (raise _FLIT_CAP in src/common/util.cyr)");
                         }

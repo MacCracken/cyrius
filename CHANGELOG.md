@@ -228,6 +228,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   x86-Linux and PE and is silent on x86-macOS, whose 1-arg control still warns; eight mutations,
   each RED, in its header). ⚠ cybs refuses a CALL with more than six arguments (a bare `syntax
   error` at seed-derive step 3, measured): `_pp_a64_open` packs its kind and state into one.
+- **Dead code: `FLIT_DEN` and the float-literal table's unused denominator slot (B05, item T8a).**
+  Since 6.6.10 the lexer stores a literal's correctly rounded binary64 bits in slot @0, which left
+  slot @8 and its only reader dead. `FLIT_ADD(bits)` (`src/common/util.cyr`) now takes one
+  argument and the table is 8 bytes per literal (lazily allocated, so no heap-map change);
+  `FLIT_DEN` is deleted. **Unreachable-fn floor 74 → 73** (`note: 73 unreachable fns` on the
+  self-compile). Output byte-identical on x86, aarch64 and cx (213 / 163 / 163 files including
+  `tests/tcyr/math`); `float_literal_precision.tcyr` and the `_FLIT_CAP` row of
+  `integer_literal_overflow_refused.sh` exercise the new stride.
 
 ## [6.6.11] — 2026-09-29
 
