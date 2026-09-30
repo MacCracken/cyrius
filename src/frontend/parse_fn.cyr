@@ -1969,7 +1969,11 @@ fn _sc_post(S, fi, noff, beg, t): i64 {
         else { EFLLOAD(S, t); SESTYPE(S, 0); }
     } else {
         if (GINFN(S) == 1) { return 0; }   # a 9-16 B result nobody asked to store: rax:rdx as ever
-        if (cls == 2) { return 0; }        # top level: `_sc_pre` already refused it
+        if (cls == 2) {                    # top level: `_sc_pre` already refused it
+            _sc_rbeg = beg;
+            _sc_rend = GTI(S);
+            return 0;
+        }
     }
     _sc_beg = beg;
     _sc_end = GTI(S);

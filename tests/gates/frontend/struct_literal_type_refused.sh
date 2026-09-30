@@ -13,22 +13,31 @@
 #   R1b A nested struct field never took a struct VALUE (`Box { p, 5 }`: "unexpected '}'"). It
 #       does now, and a struct value of ANOTHER type is refused by name — a local, a global, a
 #       field, a free call, a method — not stored as a word. At top level a 9-16 B call has no frame
-#       to land in and is refused by name, like `var G: Pt = mkp();`.
+#       to land in and is refused by name, like `var G: Pt = mkp();` — and that refusal is the only
+#       error: the refused value is the whole nested field, not a leaf the walk descends past.
 #
 # Refusal rows are checked on the MESSAGE (and that no binary was written), so a row cannot pass
 # on an unrelated syntax error. Acceptance rows are checked against the exit code AND a CONTROL
 # that builds the same value field by field.
 #
 # MUTATION LEDGER (6.6.12, each mutant rebuilt from the fixed tree with the one change):
-#   base 6.6.11 build/cycc                          -> RED, 15 of 16: R1-R3/R10 "undefined variable
-#                                                      'GBx'", R4-R9 "unexpected '}'", R12 compiled,
+#   base 6.6.11 build/cycc                          -> RED, 19 of 20: R1-R3/R10 "undefined variable
+#                                                      'GBx'", R4-R9 R5c "unexpected '}'", R5b R5d
+#                                                      a refusal then "unexpected '}'", R5e
+#                                                      "undefined variable 'GBx'", R12 compiled,
 #                                                      every acceptance X. (R11, the non-generic
 #                                                      head, was already compared by 6.6.5's
 #                                                      PARSE_VAR check; it pins the shared helper.)
 #   `_lit_ann_check` returns 0                      -> RED R1 R2 R3 R11 R12
 #   `_lit_head` returns 0 on `<`                    -> RED R1 R2 R3 R10 A1 A2 A3
 #   `_spi_nested` skips its type test (descends)    -> RED R4 R6 R7 R8 R9 R10
-#   `_spi_call` never refuses at top level          -> RED R5
+#   `_spi_call` never refuses at top level          -> RED R5 R5e
+# (6.6.12 review) A top-level refusal was followed by an invented "unexpected '}'": the refused
+# value was carried as a scalar LEAF and the walk descended into the nested field, one value short.
+#   `_spi_call` returns 2 after a refusal (was 4)   -> RED R5 R5b R5e
+#   `_spi_expr`'s `t == -1` returns 2 (was 4)       -> RED R5c
+#   `_spi_refused` returns 0                        -> RED R5d
+#   6.6.12 B02 as first committed (d00d0d1c)        -> RED R5 R5b R5c R5d R5e
 # (The LAYOUT half of the fix — real offsets, recursion — is pinned by the crossos tcyrs
 # struct_field_value_copy.tcyr and generic_struct_inference.tcyr, not here.)
 #   real tree                                       -> GREEN
@@ -48,14 +57,19 @@ MF="into a struct field of a different struct type"
 MT="a struct result needs storage in a fn's frame"
 pass=0; fail=0; nrefuse=0; naccept=0
 
-refuse() {  # $1 label  $2 expected message  $3 source
+refuse() {  # $1 label  $2 expected message  $3 source  [$4 = only: it must be the ONE error]
     printf '%s' "$3" > "$D/r.cyr"
     rc=0
     cat "$D/r.cyr" | "$CC" > "$D/r.bin" 2>"$D/r.err" || rc=$?
     nrefuse=$((nrefuse+1))
+    nerr=$(grep -c '^error' "$D/r.err" 2>/dev/null || true)
     if grep -q "$2" "$D/r.err" 2>/dev/null; then
         if [ -s "$D/r.bin" ]; then
             printf '  FAIL: %-40s reported but still emitted a binary\n' "$1"; fail=$((fail+1))
+        elif [ "${4:-}" = only ] && [ "$nerr" != 1 ]; then
+            printf '  FAIL: %-40s refused, then %s invented error(s): %s\n' "$1" "$((nerr-1))" \
+                "$(grep '^error' "$D/r.err" | sed -n 2p)"
+            fail=$((fail+1))
         else
             printf '  ok(refused): %-34s\n' "$1"; pass=$((pass+1))
         fi
@@ -147,9 +161,31 @@ syscall(60, f());
 refuse "R10 a generic literal: GBx<Pt>{q, 1}" "$MF" "$T"'fn f(): i64 { var q: Q; var b = GBx<Pt> { q, 1 }; return b.n; }
 syscall(60, f());
 '
-refuse "R5 top level: Box { mkpt(1), 5 }" "$MT" "$T"'var G = Box { mkpt(1), 5 };
-syscall(60, G.n);
+# The top-level refusal is the ONLY error: the refused value is taken as the whole nested field, not
+# descended into (which reported the values it was then short as "unexpected '}'").
+T5="$T"'fn mkbig(a): Big { var p: Big; p.a = a; p.b = a + 1; p.c = a + 2; return p; }
+impl Mp for Pt { fn tw(self): Pt { var r: Pt; r.x = 1; r.y = 2; return r; } }
+impl Mb for Big { fn tw(self): Big { var r: Big; r.a = 1; return r; } }
+var P0 = Pt { 1, 2 };
+var B0 = Big { 1, 2, 3 };
 '
+refuse "R5 top level: Box { mkpt(1), 5 }" "$MT" "$T5"'var G = Box { mkpt(1), 5 };
+syscall(60, G.n);
+' only
+refuse "R5b top level, > 16 B: BB { 9, mkbig(1) }" "$MT" "$T5"'var G = BB { 9, mkbig(1) };
+syscall(60, G.k);
+' only
+refuse "R5c top level, a method: Box { P0.tw(), 5 }" "$MT" "$T5"'var G = Box { P0.tw(), 5 };
+syscall(60, G.n);
+' only
+refuse "R5d top level, > 16 B method: BB { 9, B0.tw() }" "$MT" "$T5"'var G = BB { 9, B0.tw() };
+syscall(60, G.k);
+' only
+refuse "R5e after a stmt: GBx<Pt> { mkpt(1), 5 }" "$MT" "$T5"'var z = 1;
+syscall(60, z - 1);
+var G = GBx<Pt> { mkpt(1), 5 };
+syscall(60, G.n);
+' only
 
 # ── acceptance: the same shapes with the right types ─────────────────────────────────────────────
 accept "A1 fn: var b: GBx<Pt> = GBx<Pt>{p, 5}" "$T"'fn f(): i64 { var p: Pt; p.x = 1; p.y = 2; var b: GBx<Pt> = GBx<Pt> { p, 5 }; return b.n + b.v.x * 10 + b.v.y * 100; }

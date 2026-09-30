@@ -729,6 +729,11 @@ var _sc_tmp = 0 - 1;    # its temp's field-0 slot; -1 at top level (no frame)
 var _sc_sid = 0;        # the struct it returned
 var _sc_fn = 0;         # the callee's name offset, for a top-level refusal
 var _sc_n0 = 0;         # 1 when `_sc_pre` pushed a retptr as int arg 0
+# The span of the last >16 B call `_sc_pre` REFUSED at top level (not recorded above, so no
+# destination re-refuses it): a positional literal's nested field takes it as the whole field,
+# instead of descending and reporting the values it is then short. CHANGELOG [6.6.12]
+var _sc_rbeg = 0 - 1;
+var _sc_rend = 0 - 1;
 
 # v5.10.28 — current fn's return-type scalar tag (negative encodings
 # from `_rt_scalar`: -1=i8, -2=i16, -4=i32, -8=i64, -16=Result,

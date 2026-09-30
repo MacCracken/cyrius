@@ -61,12 +61,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   struct-typed field, a call (retptr, rax:rdx, or a <= 8 B struct in rax), a method or an operator,
   copied byte-exact (`_spi_src` over the 6.6.10 field-store source record `_fsc_*`); a value whose type
   is on the field's first-field chain fills that inner struct; another struct type is refused by name;
-  at top level a 9-16 B call has no frame and is refused by name; anything else is the first leaf, as
-  before. **Verification:** `tests/tcyr/crossos/generic_struct_inference.tcyr` gains the LIT group
+  at top level a struct call with no frame (a 9-16 B call, or a > 16 B free, method or operator call)
+  is refused by name and taken as the WHOLE field, so that refusal is the only error — the first cut
+  carried it as a leaf and descended, reporting an invented `unexpected '}'` for the values it was then
+  short (review fix: `_spi_took`, kind 4, and `_sc_rbeg`/`_sc_rend`, the span of a call `_sc_pre`
+  refused); anything else is the first leaf, as before. **Verification:** `tests/tcyr/crossos/generic_struct_inference.tcyr` gains the LIT group
   (fn-local, leading block and after a statement; `Box<Pt> { p, 5 }`, `{ 1, 2, 5 }`, `Box<i64>`,
   `W1<Pt>`, `Box<Box<Pt>>`, `M2<i32>`); `struct_field_value_copy.tcyr` gains 16 whole-value rows; new
-  gate `tests/gates/frontend/struct_literal_type_refused.sh` (12 refusals on the message, 4 acceptances
-  against field-by-field controls; mutation ledger in its header). Both tcyrs and the inline cx rows
+  gate `tests/gates/frontend/struct_literal_type_refused.sh` (16 refusals on the message — the five
+  top-level ones also required to be the ONLY error — and 4 acceptances against field-by-field
+  controls; mutation ledger in its header). Both tcyrs and the inline cx rows
   green on x86, aarch64 (qemu), PE (wine) and cx, and on real ecb, ach, pi and cass. The guide
   (`docs/guides/cyrius-guide.md`, Structs and Generic structs) documents the literal forms.
 
