@@ -36,12 +36,17 @@
 #           integer) warns once each — EMIT_F32_BINOP takes its LOW 32 BITS, so `x * 2.0` was 0,
 #           silently; f32/f32, an f32_from(..) right and a typed f32 field are clean, and
 #           CYRIUS_TYPE_CHECK=0 silences it. Red on 6.6.10 (0 of 9).
+#   axis 11 (6.6.11) compound assignment checks its right operand like `x = x op y`: `t += 1` on
+#           an f64 local, `G -= 2` on an f64 global and `x += 1` in a for step warn kind 1,
+#           `h *= 2.0` on an f32 kind 5; `+= 1.0`, `-= f64_sqrt(u)`, `+= f32_from(..)` and `%=`
+#           do not. Red on 6.6.10 (0 of 3 kind 1, 0 of 1 kind 5).
 # Mutation-proven: with the four `_INT_F64_MIX` calls removed, axis 1 reads 0 of 4 and fails.
 # (6.6.10) with PARSE_INTRIN's `_FBR_MARK` call removed axis 6 fails; with the unary-minus
 # `_FLT_TYPE_WARN(S, 3)` removed, or _cl_restore_locals' flag copy removed, axis 7 fails; with SFLC's `_lfi_clear` call removed
 # axis 7 reads 9 (neg2's `-a` inherits clos()'s slot-0 flag) and fails; with `_IFS_CHECK`
 # returning early axis 8 fails.
-# (6.6.11) with the four `_FLT_TYPE_WARN(S, 5)` calls in the f32 arms removed axis 10 fails.
+# (6.6.11) with the four `_FLT_TYPE_WARN(S, 5)` calls in the f32 arms removed axis 10 fails;
+# with _asg_compound_float's two checks removed axis 11 fails.
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -297,5 +302,35 @@ n=$(count "$K1"); [ "$n" = 0 ] || bad "axis 10: $n kind-1 warning(s) on f32 arit
 CYRIUS_TYPE_CHECK=0 "$CC" < "$W/a10.cyr" > "$W/o" 2> "$W/e" || true
 n=$(count "$K5"); [ "$n" = 0 ] || bad "axis 10: CYRIUS_TYPE_CHECK=0 still printed $n kind-5 warning(s)"
 
+# --- axis 11 (6.6.11): compound assignment checks its right operand ---
+cat > "$W/a11.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+var G: f64 = 1.5;
+fn main(): i64 {
+    var t: f64 = 1.5;
+    var h: f32 = f32_from(1.5);
+    var u = 4.0;
+    t += 1;
+    G -= 2;
+    h *= 2.0;
+    for (var x: f64 = 0.0; x < 3.0; x += 1) { }
+    t += 1.0;
+    t -= f64_sqrt(u);
+    G *= t;
+    h += f32_from(1.0);
+    h /= h;
+    var i = 7;
+    i %= 3;
+    for (var z: f64 = 0.0; z < 1.0; z += 0.25) { }
+    return i;
+}
+var r = main();
+syscall(60, r);
+EOF
+build "$W/a11.cyr"
+n=$(count "$K1"); [ "$n" = 3 ] || { bad "axis 11: kind-1 warning count $n, want 3 (t += 1, G -= 2, the step x += 1)"; sed -n 1,8p "$W/e"; }
+n=$(count "$K5"); [ "$n" = 1 ] || { bad "axis 11: kind-5 warning count $n, want 1 (h *= 2.0)"; sed -n 1,8p "$W/e"; }
+n=$(count "$K4"); [ "$n" = 0 ] || bad "axis 11: kind 4 fired on a compound assignment ($n); kind 1 is its warning"
+
 [ "$fail" = 0 ] || exit 1
-echo "PASS: f64_int_mix_warn (4 int-left ops warn; no false positives; kind 1 intact; TYPE_CHECK=0 silences; f64 fields and builtin results typed; kinds 3 + 4; kind 5)"
+echo "PASS: f64_int_mix_warn (4 int-left ops warn; no false positives; kind 1 intact; TYPE_CHECK=0 silences; f64 fields and builtin results typed; kinds 3 + 4; kind 5, compound operands)"

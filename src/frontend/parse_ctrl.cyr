@@ -514,34 +514,17 @@ fn PARSE_FOR(S): i64 {
     STI(S, sst);
     var noff = PEEKV(S);
     STI(S, GTI(S) + 1);
-    # Check for compound assignment in step (+=, -=, etc.)
-    var step_cop = 0;
-    var step_ct = PEEKT(S);
-    if (step_ct == 6 || step_ct == 7 || step_ct == 8 || step_ct == 9 || step_ct == 34) {
-        var step_next = GTI(S) + 1;
-        if (step_next < GTCNT(S)) {
-            if (TOKTYP(S, step_next) == 4) {
-                step_cop = step_ct;
-                STI(S, GTI(S) + 2);
-            }
-        }
-    }
+    # Compound assignment in the step: 6.6.11 — the statement arm's implementation, not a copy
+    # of it. The copy that stood here had no float routing (`x += 0.25` on an f64 added bit
+    # patterns: 2 iterations, not 4) and knew five of the ten ops. See _asg_compound_tok.
+    var step_cop = _asg_compound_tok(S);
     if (step_cop == 0) {
         if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
         STI(S, GTI(S) + 1);
     }
     if (step_cop != 0) {
-        var step_idx = FINDLOCAL(S, noff);
-        if (step_idx >= 0) { EFLLOAD(S, step_idx); }
-        else { var step_gi = FINDVAR(S, noff); if (step_gi >= 0) { EVLOAD(S, step_gi); } }
-        EPUSHR(S);
-        PCMPE(S);
-        EMOVCA(S); EPOPR(S);
-        if (step_cop == 6) { EADDR(S); }
-        elif (step_cop == 7) { ESUBR(S); }
-        elif (step_cop == 8) { EIMUL(S); }
-        elif (step_cop == 9) { ECQO(S); EIDIV(S); }
-        elif (step_cop == 34) { ECQO(S); EIDIV(S); EMOVDR(S); }
+        var step_lt = _asg_compound_load(S, noff);
+        _asg_compound_op(S, step_cop, step_lt);
     } else {
         PCMPE(S);
     }

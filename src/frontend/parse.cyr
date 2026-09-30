@@ -2244,6 +2244,77 @@ fn _agc_from_temp(S, t, dli, dgv, n, sid): i64 {
     return 0;
 }
 
+# ⛔ 6.6.11 — COMPOUND ASSIGNMENT is ONE implementation, shared by the statement arm
+# (_PARSE_STMT_IMPL) and the classic-for step replay (parse_ctrl.cyr). They were two copies and
+# both were wrong about floats: the statement arm took its float routing from a LOCAL's type
+# only, so `G += 1.0` on an f64 GLOBAL added the two bit patterns as integers, and the step copy
+# had no float routing at all — `for (var x: f64 = 0.0; x < 1.0; x += 0.25)` ran 2 iterations,
+# not 4. Neither checked the right operand, so `t += 1` on an f64 silently added a subnormal.
+# Out of _PARSE_STMT_IMPL on purpose: cybs miscompiles that body SILENTLY past its per-fn
+# reference limit. CHANGELOG [6.6.11]
+# The `op =` pair at the cursor: consumes both and returns the op token, else 0.
+fn _asg_compound_tok(S): i64 {
+    var ct = PEEKT(S);
+    if (ct == 6 || ct == 7 || ct == 8 || ct == 9 || ct == 34 || ct == 27 || ct == 35 || ct == 36 || ct == 38 || ct == 39) {
+        var tn = GTI(S) + 1;
+        if (tn < GTCNT(S)) {
+            if (TOKTYP(S, tn) == 4) { STI(S, GTI(S) + 2); return ct; }
+        }
+    }
+    return 0;
+}
+# Loads the left side (a local, else a global) into rax; returns its slot type.
+fn _asg_compound_load(S, noff): i64 {
+    var li = FINDLOCAL(S, noff);
+    if (li >= 0) { EFLLOAD(S, li); return GLTYPE(S, li); }
+    var gi = FINDVAR(S, noff);
+    if (gi >= 0) { EVLOAD(S, gi); return GVTYPE(S, gi); }
+    return 0;
+}
+# The float emitter op for `cop` on a slot of type `lt`: 0-3 for + - * / on f64/f32, else -1.
+fn _asg_float_fop(cop, lt): i64 {
+    if (lt != F64_TYID) { if (lt != F32_TYID) { return 0 - 1; } }
+    if (cop == 6) { return 0; }
+    if (cop == 7) { return 1; }
+    if (cop == 8) { return 2; }
+    if (cop == 9) { return 3; }
+    return 0 - 1;
+}
+# Stack = x, rax = the right operand — EMIT_F{64,32}_BINOP's convention. Warns when the right
+# operand is not the slot's kind (kind 1 for f64, kind 5 for f32), as `x = x + <rhs>` does.
+fn _asg_compound_float(S, fop, lt): i64 {
+    if (lt == F64_TYID) {
+        if (_FBR_ST(S) != F64_TYID) { _FLT_TYPE_WARN(S, 1); }
+        EMIT_F64_BINOP(S, fop);
+        return 0;
+    }
+    if (_FBR_ST(S) != F32_TYID) { _FLT_TYPE_WARN(S, 5); }
+    EMIT_F32_BINOP(S, fop);
+    return 0;
+}
+# `x OP= <expr>` with rax = x (from _asg_compound_load, whose slot type is `lt`): leaves the
+# combined value in rax for the caller's store. %, &, |, ^, <<, >> on a float slot take the
+# integer arm, as they always have.
+fn _asg_compound_op(S, cop, lt): i64 {
+    EPUSHR(S);
+    PCMPE(S);
+    var fop = _asg_float_fop(cop, lt);
+    if (fop >= 0) { return _asg_compound_float(S, fop, lt); }
+    EMOVCA(S);   # rcx = expr; pop rax = x; rax = x OP rcx
+    EPOPR(S);
+    if (cop == 6) { EADDR(S); }
+    elif (cop == 7) { ESUBR(S); }
+    elif (cop == 8) { EIMUL(S); }
+    elif (cop == 9) { ECQO(S); EIDIV(S); }
+    elif (cop == 34) { ECQO(S); EIDIV(S); EMOVDR(S); }
+    elif (cop == 27) { EANDR(S); }
+    elif (cop == 35) { EORR(S); }
+    elif (cop == 36) { EXORR(S); }
+    elif (cop == 38) { ESHLCL(S); }
+    elif (cop == 39) { ESHRCL(S); }
+    return 0;
+}
+
 # ⛔ 6.6.6 (bite 14 review) — `x = <expr>;` where <expr> is one whole METHOD call or OVERLOADED
 # OPERATOR returning x's struct (`r = b.mk(5)`, `q = b.mp(3)`, `c = a + b`): the same temp-then-
 # copy as `_try_struct_call_assign`, which can only see a free fn's name. The method/operator
@@ -3027,17 +3098,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
         }
         # assignment or compound assignment: already consumed IDENT
         # Check for +=, -=, *=, /=, %=, &=, |=, ^=, <<=, >>=
-        var compound_op = 0;
-        var ct = PEEKT(S);
-        if (ct == 6 || ct == 7 || ct == 8 || ct == 9 || ct == 34 || ct == 27 || ct == 35 || ct == 36 || ct == 38 || ct == 39) {
-            var ti_next = GTI(S) + 1;
-            if (ti_next < GTCNT(S)) {
-                if (TOKTYP(S, ti_next) == 4) {
-                    compound_op = ct;
-                    STI(S, GTI(S) + 2);
-                }
-            }
-        }
+        var compound_op = _asg_compound_tok(S);
         _asg_ti = 0 - 1;
         if (compound_op == 0) {
             if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
@@ -3045,49 +3106,10 @@ fn _PARSE_STMT_IMPL(S): i64 {
             _asg_ti = GTI(S);   # 6.6.10: the RHS's first token, for _IFS_CHECK below
         }
         if (compound_op != 0) {
-            # Compound: x += expr → load x, push, eval expr, then x OP expr
-            var cidx = FINDLOCAL(S, noff);
-            var cltype = 0;
-            if (cidx >= 0) { EFLLOAD(S, cidx); cltype = GLTYPE(S, cidx); }
-            else {
-                var gidx = FINDVAR(S, noff);
-                if (gidx >= 0) { EVLOAD(S, gidx); }
-            }
-            EPUSHR(S);
-            PCMPE(S);
-            # v6.4.57 (scalar-float, Gap B): when the LHS local is f64/f32-typed,
-            # `x += y` must FLOAT-add, not integer-add on the raw bit pattern. Stack =
-            # x (LHS), rax = expr (RHS) — exactly EMIT_F{64,32}_BINOP's convention, so
-            # route through the same emitters the `x = x + y` path uses. fop 0/1/2/3 maps
-            # to compound_op 6/7/8/9; %,&,|,^,<<,>> on a float fall through to the integer
-            # arms. cycc has no `: f64`/`: f32` locals → this arm never emits on the
-            # self-host input (byte-identical). See issue 2026-07-11-scalar-float-param-*.
-            var f_fop = 0 - 1;
-            if (cltype == F64_TYID || cltype == F32_TYID) {
-                if (compound_op == 6) { f_fop = 0; }
-                if (compound_op == 7) { f_fop = 1; }
-                if (compound_op == 8) { f_fop = 2; }
-                if (compound_op == 9) { f_fop = 3; }
-            }
-            if (f_fop >= 0) {
-                if (cltype == F64_TYID) { EMIT_F64_BINOP(S, f_fop); }
-                else { EMIT_F32_BINOP(S, f_fop); }
-            }
-            else {
-                # Stack = x, rax = expr. For x OP expr: mov rcx,rax; pop rax; OP
-                EMOVCA(S);
-                EPOPR(S);
-                if (compound_op == 6) { EADDR(S); }
-                elif (compound_op == 7) { ESUBR(S); }
-                elif (compound_op == 8) { EIMUL(S); }
-                elif (compound_op == 9) { ECQO(S); EIDIV(S); }
-                elif (compound_op == 34) { ECQO(S); EIDIV(S); EMOVDR(S); }
-                elif (compound_op == 27) { EANDR(S); }
-                elif (compound_op == 35) { EORR(S); }
-                elif (compound_op == 36) { EXORR(S); }
-                elif (compound_op == 38) { ESHLCL(S); }
-                elif (compound_op == 39) { ESHRCL(S); }
-            }   # close the v6.4.57 non-float (integer-op) else
+            # x OP= expr — load x, combine; the store below is shared with `x = expr`. 6.6.11:
+            # one implementation with the for-step replay (see _asg_compound_tok).
+            var cltype = _asg_compound_load(S, noff);
+            _asg_compound_op(S, compound_op, cltype);
         } else {
             # v6.5.28 — capture the callee's DECLARED return sid BEFORE the RHS is consumed.
             # The declaration path already does this (parse_decl.cyr:2352-2362: peek
