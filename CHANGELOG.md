@@ -98,6 +98,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   is not epoch-scale (the 6.6.11 compiler fails both on ach); `macho_clock_buffer_contract.sh`'s
   second property is now "rdx = the emitter's own zeroed slot, before the syscall" (hand-off to H).
 
+### Changed
+
+- **`file_read_whole` passes the errno through `*len_out` (B08, item S2).** **Root cause:** the
+  unbounded wrapper (`lib/io.cyr`) overwrote the negative errno `file_read_whole_max` had stored with
+  0 (`if (buf == 0) { store64(len_out, 0); }`), so the one form with no bound to pick could not say
+  WHICH failure it was (a missing file, a directory, a refused allocation). A read error was never
+  mistakable for an empty file — the returned buffer tells them apart (0 vs a NUL-terminated buffer
+  with length 0) — only the errno was lost. **Fix:** the line is gone; on failure the wrapper returns
+  0 with `*len_out` = the negative errno, `file_read_whole_max`'s contract. **Survey:** all 24
+  in-tree callers (cbt, programs, `lib/regression.cyr`, the `lib/sigil.cyr` fold) test the buffer for
+  0 before reading the length, and so does every ecosystem caller outside the vendored `lib/` copies
+  (kavach's tests, sigil's `certpin_core.cyr` and three tests, cyrius-mine-cart's `main.cyr` and
+  `tools/film.cyr`, aethersafha's `brace_balance.tcyr`); the one test that loops on the length
+  without testing the buffer (sigil's `audit_log.tcyr`, `while (qi < la)`) runs zero times on a
+  negative as it did on 0. **Held by**
+  `tests/tcyr/crossos/file_read_whole_bounded.tcyr` (a missing file: 0 and `n < 0`) and
+  `tests/gates/toolchain/manifest_read_whole_file.sh` axes 5 and 6 (a directory and `/dev/zero` under
+  `ulimit -v`: `n >= 0` is RED); restoring the overwrite reddens all three.
+
 ## [6.6.11] — 2026-09-29
 
 The fifth batch release: the 6.6.9 review finds I–K and the 6.6.10 finds that produce wrong results

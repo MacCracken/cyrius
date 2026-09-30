@@ -550,8 +550,16 @@ fn file_write_all(path, buf, len): i64 {
 }
 
 # Read the WHOLE file into a fresh heap buffer, NUL-terminated. Returns the buffer and writes
-# the byte count through `len_out`; on ANY failure returns 0 with `*len_out = 0` (use
-# `file_read_whole_max` / `_a` / `_into` below to learn WHY, or to bound the read).
+# the byte count through `len_out`; on ANY failure returns 0 with `*len_out` = a NEGATIVE errno
+# (the open's / read's own, -ENOMEM, -EFBIG — `file_read_whole_max`'s contract). The BUFFER is
+# the success test: an empty file is a non-0 buffer with length 0, a failure is 0. Use
+# `file_read_whole_max` / `_a` / `_into` below to bound the read.
+#
+# ⛔ 6.6.12 — the errno is passed through. This wrapper overwrote it with 0, so "which failure"
+# (a missing file, a directory, a refused allocation) was lost to every caller of the one form
+# that has no bound to pick; every in-tree caller (and every ecosystem one surveyed) tests the
+# buffer for 0 before it reads the length, so a negative length reaches none of them.
+# CHANGELOG [6.6.12]
 #
 # ⛔ WHY: `file_read_all(path, buf, CAP)` with a hand-picked CAP returns exactly CAP on a larger
 # file and says nothing — the caller cannot tell "the whole file" from "the first CAP bytes",
@@ -569,7 +577,7 @@ fn file_write_all(path, buf, len): i64 {
 # i.e. the same silently-accepted partial I/O this helper exists to end, on the read side.
 # Measured: `file_read_whole("tests", &n)` on a DIRECTORY (open succeeds, read = -EISDIR)
 # returned a non-zero buffer with len 0 — "could not read" reported as "empty". A read error is
-# now the same answer as an open error: 0, len 0. CHANGELOG [6.6.6]
+# now the same answer as an open error: no buffer, and the errno. CHANGELOG [6.6.6]
 #
 # ⛔ 6.6.7 — EVERY ALLOCATION IS CHECKED AND GROWTH CLAMPS TO A CEILING. The growth alloc was
 # unchecked and pure doubling from 64 KiB asked for alloc(2^31 + 1) the moment a file reached
@@ -582,9 +590,7 @@ fn file_write_all(path, buf, len): i64 {
 # even for a 2-byte file — kybernet's PID 1 re-reads its config on every SIGHUP).
 # CHANGELOG [6.6.7]
 fn file_read_whole(path, len_out): i64 {
-    var buf = file_read_whole_max(path, ALLOC_MAX - 1, len_out);
-    if (buf == 0) { store64(len_out, 0); }
-    return buf;
+    return file_read_whole_max(path, ALLOC_MAX - 1, len_out);
 }
 
 # Read the whole file, but never more than `max` bytes. Returns the NUL-terminated buffer and

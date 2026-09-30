@@ -77,11 +77,13 @@ fn main(): i64 {
     n = 0 - 99;
     b = file_read_whole_max(big, 0 - 1, &n);
     assert_eq(n, 0 - 22, "negative max: -EINVAL");
-    # the unbounded wrapper keeps its 0 / len 0 contract on EVERY failure
+    # the unbounded wrapper returns 0 on EVERY failure and passes the errno through (6.6.12 —
+    # it overwrote it with 0, so "which failure" was lost; the buffer is the success test)
     n = 0 - 99;
     b = file_read_whole("_frw_does_not_exist_667", &n);
     assert_eq(b, 0, "missing file: file_read_whole returns 0");
-    assert_eq(n, 0, "missing file: file_read_whole len 0");
+    assert(n < 0, "missing file: file_read_whole reports a negative errno, not len 0");
+    assert(n != 0 - 99, "missing file: file_read_whole wrote len_out");
     n = 0 - 99;
     b = file_read_whole_max("_frw_does_not_exist_667", 100, &n);
     assert(n < 0, "missing file: file_read_whole_max reports a negative errno");
