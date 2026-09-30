@@ -40,13 +40,19 @@
 #           an f64 local, `G -= 2` on an f64 global and `x += 1` in a for step warn kind 1,
 #           `h *= 2.0` on an f32 kind 5; `+= 1.0`, `-= f64_sqrt(u)`, `+= f32_from(..)` and `%=`
 #           do not. Red on 6.6.10 (0 of 3 kind 1, 0 of 1 kind 5).
+#   axis 12 (6.6.11) a plain assignment RE-JUDGES an untyped variable's kind-3 flag: `g = 0;
+#           g = 1.5; -g` warns and `h = 1.5; h = 7; -h` does not, for locals and globals; a
+#           compound assignment keeps the flag, even when a closure in its right operand
+#           assigns a float to one of its own variables. Red on 6.6.10 (3 warnings, two on the
+#           wrong lines).
 # Mutation-proven: with the four `_INT_F64_MIX` calls removed, axis 1 reads 0 of 4 and fails.
 # (6.6.10) with PARSE_INTRIN's `_FBR_MARK` call removed axis 6 fails; with the unary-minus
 # `_FLT_TYPE_WARN(S, 3)` removed, or _cl_restore_locals' flag copy removed, axis 7 fails; with SFLC's `_lfi_clear` call removed
 # axis 7 reads 9 (neg2's `-a` inherits clos()'s slot-0 flag) and fails; with `_IFS_CHECK`
 # returning early axis 8 fails.
 # (6.6.11) with the four `_FLT_TYPE_WARN(S, 5)` calls in the f32 arms removed axis 10 fails;
-# with _asg_compound_float's two checks removed axis 11 fails.
+# with _asg_compound_float's two checks removed axis 11 fails; with `_asg_rejudge` returning
+# early axis 12 fails.
 set -eu
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -332,5 +338,39 @@ n=$(count "$K1"); [ "$n" = 3 ] || { bad "axis 11: kind-1 warning count $n, want 
 n=$(count "$K5"); [ "$n" = 1 ] || { bad "axis 11: kind-5 warning count $n, want 1 (h *= 2.0)"; sed -n 1,8p "$W/e"; }
 n=$(count "$K4"); [ "$n" = 0 ] || bad "axis 11: kind 4 fired on a compound assignment ($n); kind 1 is its warning"
 
+# --- axis 12 (6.6.11): a plain assignment re-judges the kind-3 flag ---
+cat > "$W/a12.cyr" <<'EOF'
+include "lib/syscalls.cyr"
+include "lib/fnptr.cyr"
+var G1 = 0;
+var G2 = 1.5;
+fn main(): i64 {
+    var g = 0;
+    g = 1.5;
+    var a = -g;
+    var h = 1.5;
+    h = 7;
+    var b = -h;
+    G1 = 1.5;
+    var c = -G1;
+    G2 = 7;
+    var d = -G2;
+    var k = 1.5;
+    k += 1;
+    var e = -k;
+    var m = 1;
+    m += fncall1(|v| { var q = 0; q = 1.5; return v; }, 2);
+    var f = -m;
+    return a + b + c + d + e + f;
+}
+var r = main();
+syscall(60, r & 255);
+EOF
+build "$W/a12.cyr"
+n=$(count "$K3"); [ "$n" = 3 ] || { bad "axis 12: kind-3 warning count $n, want 3 (-g, -G1, -k; not -h, -G2, -m)"; sed -n 1,8p "$W/e"; }
+for want in 8 13 18; do
+    grep "$K3" "$W/e" | grep -q ">:$want:" || bad "axis 12: no kind-3 warning at line $want"
+done
+
 [ "$fail" = 0 ] || exit 1
-echo "PASS: f64_int_mix_warn (4 int-left ops warn; no false positives; kind 1 intact; TYPE_CHECK=0 silences; f64 fields and builtin results typed; kinds 3 + 4; kind 5, compound operands)"
+echo "PASS: f64_int_mix_warn (4 int-left ops warn; no false positives; kind 1 intact; TYPE_CHECK=0 silences; f64 fields and builtin results typed; kinds 3 + 4; kind 5, compound operands, re-judged flags)"

@@ -525,15 +525,17 @@ fn PARSE_FOR(S): i64 {
     if (step_cop != 0) {
         var step_lt = _asg_compound_load(S, noff);
         _asg_compound_op(S, step_cop, step_lt);
+        _asg_ufv = 0 - 1;   # a compound step keeps the kind-3 flag (see _asg_rejudge)
     } else {
         PCMPE(S);
+        _asg_ufv = _UFV_IS_FLOAT(S);   # 6.6.11: a plain step re-judges, as the statement does
     }
     var idx = 0 - 1;
     if (GINFN(S) == 1) { idx = FINDLOCAL(S, noff); }
-    if (idx >= 0) { EFLSTORE(S, idx); }
+    if (idx >= 0) { EFLSTORE(S, idx); _asg_rejudge(S, idx, GLTYPE(S, idx), 0); }
     else {
         idx = FINDVAR(S, noff);
-        if (idx >= 0) { EVSTORE(S, idx); SLVAR(S, idx); }
+        if (idx >= 0) { EVSTORE(S, idx); SLVAR(S, idx); _asg_rejudge(S, idx, GVTYPE(S, idx), 1); }
     }
     STI(S, sti);
     EJMP(S, ltop);

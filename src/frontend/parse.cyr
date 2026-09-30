@@ -2315,6 +2315,20 @@ fn _asg_compound_op(S, cop, lt): i64 {
     return 0;
 }
 
+# ⛔ 6.6.11 — RE-JUDGE AN UNTYPED VARIABLE AT EVERY PLAIN ASSIGNMENT. The kind-3 flag (unary
+# minus on an untyped float, _UFV_L / _UFV_G) was written only at the declaration, so
+# `var g = 0; g = 1.5; -g` was a silent integer negation of 1.5's bits and `var h = 1.5; h = 7;
+# -h` warned about a correct -7. A plain store into an untyped slot (`t` == 0) now rewrites the
+# flag from its RHS (`_asg_ufv`). Flow-insensitive: the flag is whatever the last assignment
+# COMPILED said — source order within a fn, and across fns for a global. Compound assignment
+# keeps the flag (`_asg_ufv` -1). `g` = 1 for a global slot. CHANGELOG [6.6.11]
+fn _asg_rejudge(S, idx, t, g): i64 {
+    if (_asg_ufv < 0) { return 0; }
+    if (t != 0) { return 0; }
+    if (g == 1) { SGFI(S, idx, _asg_ufv); } else { SLFI(S, idx, _asg_ufv); }
+    return 0;
+}
+
 # ⛔ 6.6.6 (bite 14 review) — `x = <expr>;` where <expr> is one whole METHOD call or OVERLOADED
 # OPERATOR returning x's struct (`r = b.mk(5)`, `q = b.mp(3)`, `c = a + b`): the same temp-then-
 # copy as `_try_struct_call_assign`, which can only see a free fn's name. The method/operator
@@ -2331,6 +2345,7 @@ fn _pcmpe_struct_assign(S, noff): i64 {
     _fla_arm(st, _agc_t);
     var w = _sc_arm(S);
     PCMPE(S);
+    _asg_ufv = _UFV_IS_FLOAT(S);   # 6.6.11: here, while _FBR_KIND is still valid (see _asg_rejudge)
     _sc_want = w;
     _fla_want = 0 - 1;
     if (_fla_hit == 1) { return _fla_assign(S, noff); }
@@ -3100,6 +3115,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
         # Check for +=, -=, *=, /=, %=, &=, |=, ^=, <<=, >>=
         var compound_op = _asg_compound_tok(S);
         _asg_ti = 0 - 1;
+        _asg_ufv = 0 - 1;
         if (compound_op == 0) {
             if (PEEKT(S) != 4) { ERR_EXPECT(S, 4); }
             STI(S, GTI(S) + 1);
@@ -3110,6 +3126,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
             # one implementation with the for-step replay (see _asg_compound_tok).
             var cltype = _asg_compound_load(S, noff);
             _asg_compound_op(S, compound_op, cltype);
+            _asg_ufv = 0 - 1;   # after the RHS: a statement nested in it (a closure body) set it
         } else {
             # v6.5.28 — capture the callee's DECLARED return sid BEFORE the RHS is consumed.
             # The declaration path already does this (parse_decl.cyr:2352-2362: peek
@@ -3175,6 +3192,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
             var lt = GLTYPE(S, idx);
             var ew = GEXW(S);
             _IFS_CHECK(S, _IFS_K(lt), _asg_ti);   # 6.6.10: `t = 1` into an f64 / f32 local
+            _asg_rejudge(S, idx, lt, 0);            # 6.6.11
             if (lt > 0) {
                 if (lt <= 8) {
                     if (ew > lt) { WARN(S, "narrowing assignment (value may truncate)", 41); }
@@ -3214,6 +3232,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
             var avsz = L64(_vars_base + idx * 8);
             var ew = GEXW(S);
             _IFS_CHECK(S, _IFS_K(vt), _asg_ti);   # 6.6.10: `G = 1` into an f64 / f32 global
+            _asg_rejudge(S, idx, vt, 1);            # 6.6.11
             if (avsz < 8) {
                 if (ew > avsz) { WARN(S, "narrowing assignment (value may truncate)", 41); }
                 EVSTORE_W(S, idx, avsz);
