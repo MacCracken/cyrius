@@ -43,6 +43,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   they return -1 only if the table itself could never be allocated (0 is a valid hour/minute/second).
   **Test:** `tests/tcyr/stdlib/bench_chrono_refused_alloc.tcyr` (ALLOC_MAX = 0); either 6.6.11 file
   reverted exits 139.
+- **cyrius-lsp: the symbol index stopped SILENTLY at three fixed caps (B11, item S3).** Go-to-definition
+  of sigil's last fn (`sv_verify_boot_chain`, `lib/sigil.cyr:30735`) through `include "lib/sigil.cyr"`
+  answered `null`, and so did the 4095th fn of a 5000-fn include. **Root cause:** the table had fixed caps
+  — 4096 rows, a 256 KB names buffer, a 32 KB paths buffer and 256 indexed files — `_lsp_add_symbol`
+  returned -1 when any was full and `lsp_index_decls` ignored it; and the path string was re-interned for
+  EVERY symbol, so the 32 KB paths buffer bound first (~2,300 symbols for `lib/x.cyr` paths, ~500 for a
+  60-byte absolute path). **Fix:** each file's path is interned once, by `_lsp_mark_indexed`, and every
+  row stores that offset; the six row arrays, the names buffer, the indexed-path set and its string
+  buffer all double on demand through one helper (`_lsp_grow`), so only a refused allocation stops
+  indexing. **Gate:** `tests/gates/toolchain/lsp_indexes_every_decl_spelling.sh` axis 5 (the last of 6000
+  long-named fns in one include, a fn in the 300th included file, and sigil's last fn); the 6.6.11 LSP
+  fails all three rows, and two mutants are recorded in its ledger.
 
 ## [6.6.11] — 2026-09-29
 
