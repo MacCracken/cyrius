@@ -34,6 +34,9 @@
 # binaries with CWD = repo root, so the path resolves. Running the
 # compiled tcyr binary directly from a different CWD will fail the
 # read-corpus assertion below — start with `cd $(repo root)` first.
+# Since 6.6.12 that is an honest FAILED COUNT and a nonzero exit: a
+# failed read (file_read_all's -errno) used to reach the terminator
+# store below and write BEFORE the buffer — a SIGSEGV that hid the tally.
 
 include "lib/syscalls.cyr"
 include "lib/string.cyr"
@@ -141,6 +144,10 @@ assert_nonnull(corpus, "alloc corpus buffer");
 
 var corpus_len = file_read_all("tests/data/NormalizationTest.txt", corpus, BUF_CAP - 1);
 assert_gt(corpus_len, 0, "read tests/data/NormalizationTest.txt (corpus must exist; regenerate via build/gen_unicode_data — see programs/gen_unicode_data.cyr)");
+# A failed read returns -errno: clamp it, or the terminator lands before
+# the buffer (SIGSEGV after the FAIL line). The row loop then sees an empty
+# corpus and assert_summary reports the failure count. CHANGELOG [6.6.12]
+if (corpus_len < 0) { corpus_len = 0; }
 store8(corpus + corpus_len, 0);
 
 # Per-row scratch (reused across iterations to avoid per-row buffer churn).

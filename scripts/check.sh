@@ -923,6 +923,11 @@ _chk_gate "$ROOT/tests/gates/toolchain/tcyr_epilogue_shape.sh"
 # before assert_summary (its FAIL rows go to stderr, never captured) and exited 0, or printed
 # `0 passed, 0 failed`, read PASS. Now: the LAST `N passed, M failed` line, N >= 1, M == 0, ec 0.
 _chk_gate "$ROOT/tests/gates/toolchain/check_driver_requires_summary.sh"
+# 6.6.12 B12 (T4): a .tcyr whose data file is missing fails WITH A COUNT, never a signal.
+# text/unicode_normconf.tcyr run outside the repo root printed its FAIL, then stored its
+# terminator at corpus + (-ENOENT) — 2 bytes before a fresh mapping — and died of SIGSEGV
+# (139), so the tally never printed. The negative length is now clamped: rc 2, `1 passed, 2 failed`.
+_chk_gate "$ROOT/tests/gates/toolchain/tcyr_missing_corpus_is_a_count.sh"
 # 6.6.11 B01: ci.yml's three full-corpus .tcyr loops (ubuntu, AGNOS container, native arm64)
 # grade by the same rule. They passed `ec == 0` plus an optional `N failed` count, so a test
 # that died before its summary and exited 0 had no count to read and scored PASS. Each step's
