@@ -1,0 +1,92 @@
+# bench_chrono_refused_alloc.tcyr — 6.6.12. The consumers of a REFUSED allocation take the
+# 0 instead of dereferencing it: every public lib/bench.cyr fn given b == 0, and the
+# lib/chrono.cyr DateTime field accessors under a refused alloc.
+#
+# ⛔ THE DEFECT: 6.6.10 taught `bench_new` and `epoch_to_date` to return 0 when alloc()
+# refuses, and updated none of their consumers. `bench_iterations(bench_new(..))` and
+# `dt_year(..)` then exited 139. The accessors also leaked 48 B per call: each was
+# `load64(epoch_to_date(..) + off)` over a never-freed alloc(48). They now decode into a
+# stack buffer, so once the month table exists they cannot fail at all — which is what
+# "they keep answering under ALLOC_MAX = 0" below proves.
+#
+# The refusal is driven with ALLOC_MAX = 0 (alloc() refuses every size > 0): bench uses
+# alloc() directly, not an Allocator, so this is the one lever that reaches it.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/bench.cyr"
+include "lib/chrono.cyr"
+include "lib/assert.cyr"
+
+var _calls = 0;
+fn _op(): i64 { _calls = _calls + 1; return 0; }
+fn _op1(a): i64 { _calls = _calls + 1; return 0; }
+fn _op2(a, b): i64 { _calls = _calls + 1; return 0; }
+
+fn main(): i64 {
+    alloc_init();
+    var saved = ALLOC_MAX;
+
+    # ---- chrono, month table never allocated: -1, never a SIGSEGV ----
+    ALLOC_MAX = 0;
+    var dt = dt_from_epoch_secs(1756512000 + 3 * 3600 + 25 * 60 + 9);   # 2025-08-30 03:25:09Z
+    assert_eq(dt_year(dt), 0 - 1, "no month table: dt_year is -1 (it was SIGSEGV)");
+    assert_eq(dt_second(dt), 0 - 1, "no month table: dt_second is -1");
+    assert_eq(epoch_to_date(0), 0, "no month table: epoch_to_date still reports 0");
+    ALLOC_MAX = saved;
+
+    # ---- chrono, table present, every later alloc refused: the accessors still answer ----
+    assert_eq(dt_year(dt_from_epoch_secs(0)), 1970, "the month table builds");
+    ALLOC_MAX = 0;
+    assert_eq(alloc(8), 0, "ALLOC_MAX = 0 refuses alloc");
+    assert_eq(epoch_to_date(0), 0, "epoch_to_date reports the refused alloc(48)");
+    assert_eq(dt_year(dt), 2025, "refused alloc: dt_year decodes (it was SIGSEGV)");
+    assert_eq(dt_month(dt), 8, "refused alloc: dt_month");
+    assert_eq(dt_day(dt), 30, "refused alloc: dt_day");
+    assert_eq(dt_hour(dt), 3, "refused alloc: dt_hour");
+    assert_eq(dt_minute(dt), 25, "refused alloc: dt_minute");
+    assert_eq(dt_second(dt), 9, "refused alloc: dt_second");
+    assert_eq(dt_day(dt_from_epoch_secs(951782400)), 29, "refused alloc: 2000-02-29 is a leap day");
+
+    # ---- bench: bench_new refused, every public fn takes the 0 ----
+    var b = bench_new("refused");
+    assert_eq(b, 0, "ALLOC_MAX = 0: bench_new returns 0");
+    ALLOC_MAX = saved;
+    assert_eq(bench_name(b), 0, "bench_name(0)");
+    assert_eq(bench_start(b), 0, "bench_start(0)");
+    assert_eq(bench_stop(b), 0, "bench_stop(0)");
+    assert_eq(bench_iterations(b), 0, "bench_iterations(0) (it was SIGSEGV)");
+    assert_eq(bench_windows(b), 0, "bench_windows(0)");
+    assert_eq(bench_total_ns(b), 0, "bench_total_ns(0)");
+    assert_eq(bench_avg_ps(b), 0, "bench_avg_ps(0)");
+    assert_eq(bench_avg_ns(b), 0, "bench_avg_ns(0)");
+    assert_eq(bench_sub_floor(b), 0, "bench_sub_floor(0)");
+    assert_eq(bench_windows_eligible(b), 0, "bench_windows_eligible(0)");
+    assert_eq(bench_min_resolved(b), 0, "bench_min_resolved(0)");
+    assert_eq(bench_min_ps(b), 0, "bench_min_ps(0)");
+    assert_eq(bench_max_ps(b), 0, "bench_max_ps(0)");
+    assert_eq(bench_min_ns(b), 0, "bench_min_ns(0)");
+    assert_eq(bench_max_ns(b), 0, "bench_max_ns(0)");
+    assert_eq(bench_run(b, &_op, 100), 0, "bench_run(0, ..)");
+    assert_eq(bench_run_batch(b, &_op, 10, 3), 0, "bench_run_batch(0, ..)");
+    assert_eq(bench_run_batch1(b, &_op1, 7, 10, 3), 0, "bench_run_batch1(0, ..)");
+    assert_eq(bench_run_batch2(b, &_op2, 7, 8, 10, 3), 0, "bench_run_batch2(0, ..)");
+    assert_eq(_calls, 0, "a refused bench runs no op");
+    assert_eq(bench_batch_start(b), 0, "bench_batch_start(0)");
+    assert_eq(bench_batch_stop(b, 10), 0, "bench_batch_stop(0, ..)");
+    assert_eq(_bench_record(b, 100, 1, 1, 1), 0, "_bench_record(0, ..)");
+    assert_eq(_bench_report_ps(b), 0, "_bench_report_ps(0)");
+    assert_eq(bench_report(b), 0, "bench_report(0) prints '(bench_new refused)'");
+
+    # ---- and a served bench is unchanged ----
+    var ok = bench_new("served");
+    assert(ok != 0, "bench_new is served again");
+    bench_run_batch(ok, &_op, 10, 3);
+    assert_eq(_calls, 30, "a served bench runs its op");
+    assert_eq(bench_iterations(ok), 30, "a served bench counts its iterations");
+
+    var rc = assert_summary();
+    return rc;
+}
+var ec = main();
+syscall(60, ec);

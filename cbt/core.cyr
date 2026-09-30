@@ -603,19 +603,35 @@ fn _macho_envp(): i64 {
 
 # Flatten the entry-stack envp into buf as NUL-separated NAME=VALUE so
 # find_tools' scan works unchanged. Returns total bytes written. v6.0.34.
+#
+# ⛔ Returns at most cap - 1, and every entry in buf is WHOLE: the callers write their own
+# terminator at `buf + returned`, so that byte must be inside the buffer. An entry that
+# does not fit with its NUL is dropped (pos rewinds to its start) and the scan goes on, so
+# a truncated "HOME=/Us" is never matched and a smaller HOME after one huge variable still
+# is. Through 6.6.11 only the payload bytes were bounded: each entry's NUL was stored
+# unconditionally, so a >32 KB environment returned pos > cap and every caller's
+# `store8(eb + en, 0)` landed past its allocation. CHANGELOG [6.6.12]
 fn _macho_fill_environ(buf, cap): i64 {
     var envp = _macho_envp();
     if (envp == 0) { return 0; }
+    if (cap < 1) { return 0; }
     var pos = 0;
     var i = 0;
     var e = load64(envp);
     while (e != 0) {
+        var start = pos;
         var k = 0;
-        while (load8(e + k) != 0) {
-            if (pos < cap - 1) { store8(buf + pos, load8(e + k)); pos = pos + 1; }
+        while (load8(e + k) != 0 && pos < cap - 1) {
+            store8(buf + pos, load8(e + k));
+            pos = pos + 1;
             k = k + 1;
         }
-        store8(buf + pos, 0); pos = pos + 1;
+        if (load8(e + k) != 0 || pos >= cap - 1) {
+            pos = start;                     # no room for all of it plus its NUL: drop it
+        } else {
+            store8(buf + pos, 0);
+            pos = pos + 1;
+        }
         i = i + 1;
         e = load64(envp + i * 8);
     }

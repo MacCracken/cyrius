@@ -250,23 +250,27 @@ var _cyrius_path = 0;
 # didOpen / didChange / didSave triggers `lsp_index_file(path)`,
 # which scans the file for top-level fn/var/enum/struct decls and
 # recursively walks `include "..."` directives. A path is indexed
-# at most once per LSP session (tracked via `_lsp_indexed_paths`)
+# at most once per LSP session (tracked by the indexed-path set, `_lsp_indexed_off`)
 # to keep cost bounded.
 #
-# Sizing: 4096 symbols × ~80B/row ≈ 320 KB. Backing-buf caps at 256
-# KB for names and 32 KB for paths; if either exceeds, indexing
-# silently truncates rather than aborting (LSP soft-degrade > hard
-# fail). Future polish: dynamic vec if a real consumer hits the cap.
+# Sizing: every table GROWS (6.6.12). The six row arrays, the names buffer, the indexed-path
+# set and its string buffer start small and double on demand through `_lsp_grow`; only a
+# refused allocation stops indexing. Each file's path is interned ONCE, by
+# `_lsp_mark_indexed`, and every symbol row stores that offset into `_lsp_indexed_buf`.
+# ⛔ These were fixed caps that truncated SILENTLY — 4096 rows, 256 KB of names, 32 KB of
+# paths, 256 files — and `_lsp_add_symbol` re-interned the path string for every symbol, so
+# the 32 KB paths buffer bound first (~2,300 symbols for `lib/x.cyr` paths, ~500 for a
+# 60-byte absolute path): definition() of sigil's last fn came back null. CHANGELOG [6.6.12]
 
-var _LSP_SYMTAB_CAP = 4096;
-var _LSP_NAMES_BUF_CAP = 262144;
-var _LSP_PATHS_BUF_CAP = 32768;
-var _LSP_INDEXED_CAP = 256;
+var _lsp_symtab_cap = 1024;
+var _lsp_names_cap = 65536;
+var _lsp_paths_cap = 8192;
+var _lsp_indexed_cap = 64;
 
-# Per-symbol parallel arrays (fixed cap; allocated in main()):
+# Per-symbol parallel arrays (grown together by `_lsp_add_symbol`; allocated in main()):
 #   _sym_name_off   — offset into _sym_names_buf (start of name)
 #   _sym_name_len   — length of the name in bytes
-#   _sym_path_off   — offset into _sym_paths_buf (start of cstring file path)
+#   _sym_path_off   — offset into _lsp_indexed_buf (the file's path, interned once)
 #   _sym_line       — 0-based line where the decl starts
 #   _sym_col        — 0-based column where the IDENT starts
 #   _sym_kind       — 1=fn, 2=var, 3=enum, 4=struct, 5=enum-member
@@ -278,14 +282,12 @@ var _sym_col = 0;
 var _sym_kind = 0;
 var _sym_count = 0;
 
-# Backing buffers
+# Backing buffer for the names
 var _sym_names_buf = 0;
 var _sym_names_used = 0;
-var _sym_paths_buf = 0;
-var _sym_paths_used = 0;
 
 # Per-path indexed-set: cstring offsets into _lsp_indexed_buf (poor-man's
-# string-set; linear scan).
+# string-set; linear scan). The same offsets are the symbol rows' `_sym_path_off`.
 var _lsp_indexed_off = 0;
 var _lsp_indexed_count = 0;
 var _lsp_indexed_buf = 0;
@@ -307,20 +309,18 @@ var _lsp_local_count = 0;
 
 # Alloc the symbol-table backing buffers once at startup.
 fn lsp_index_init(): i64 {
-    _sym_name_off = alloc(_LSP_SYMTAB_CAP * 8);
-    _sym_name_len = alloc(_LSP_SYMTAB_CAP * 8);
-    _sym_path_off = alloc(_LSP_SYMTAB_CAP * 8);
-    _sym_line     = alloc(_LSP_SYMTAB_CAP * 8);
-    _sym_col      = alloc(_LSP_SYMTAB_CAP * 8);
-    _sym_kind     = alloc(_LSP_SYMTAB_CAP * 8);
+    _sym_name_off = alloc(_lsp_symtab_cap * 8);
+    _sym_name_len = alloc(_lsp_symtab_cap * 8);
+    _sym_path_off = alloc(_lsp_symtab_cap * 8);
+    _sym_line     = alloc(_lsp_symtab_cap * 8);
+    _sym_col      = alloc(_lsp_symtab_cap * 8);
+    _sym_kind     = alloc(_lsp_symtab_cap * 8);
     _sym_count    = 0;
-    _sym_names_buf = alloc(_LSP_NAMES_BUF_CAP);
+    _sym_names_buf = alloc(_lsp_names_cap);
     _sym_names_used = 0;
-    _sym_paths_buf = alloc(_LSP_PATHS_BUF_CAP);
-    _sym_paths_used = 0;
-    _lsp_indexed_off = alloc(_LSP_INDEXED_CAP * 8);
+    _lsp_indexed_off = alloc(_lsp_indexed_cap * 8);
     _lsp_indexed_count = 0;
-    _lsp_indexed_buf = alloc(_LSP_PATHS_BUF_CAP);
+    _lsp_indexed_buf = alloc(_lsp_paths_cap);
     _lsp_indexed_used = 0;
     # v5.11.42 locals table — allocated once, reused per request.
     _lsp_local_off  = alloc(_LSP_LOCAL_CAP * 8);
@@ -356,11 +356,30 @@ fn _lsp_scan_id_end(buf, off, total): i64 {
     return total;
 }
 
-# Stash a cstring into a backing buffer; return the offset (or -1 if
-# the buffer would overflow). Inserts a trailing NUL.
-fn _lsp_intern(buf_addr, used_addr, cap, src, len): i64 {
+# Make the buffer at *buf_addr (cap bytes at *cap_addr) hold at least `need` bytes: double the
+# cap until it fits, copy the live bytes to a fresh allocation and publish both. Returns 0, or
+# -1 when the allocation is refused (the buffer is then left as it was). The old block is
+# abandoned — the bump allocator has no free — which bounds the waste to the final size.
+fn _lsp_grow(buf_addr, cap_addr, need): i64 {
+    var cap = load64(cap_addr);
+    if (need <= cap) { return 0; }
+    var ncap = cap;
+    if (ncap < 64) { ncap = 64; }
+    while (ncap < need) { ncap = ncap * 2; }
+    var nb = alloc(ncap);
+    if (nb == 0) { return 0 - 1; }
+    memcpy(nb, load64(buf_addr), cap);
+    store64(buf_addr, nb);
+    store64(cap_addr, ncap);
+    return 0;
+}
+
+# Stash a cstring into a growable backing buffer; return the offset (or -1 if the buffer
+# could not grow). Inserts a trailing NUL. Offsets stay valid across growth; pointers into
+# the buffer do not, so readers add the offset to the CURRENT buffer.
+fn _lsp_intern(buf_addr, used_addr, cap_addr, src, len): i64 {
     var used = load64(used_addr);
-    if (used + len + 1 >= cap) { return 0 - 1; }
+    if (_lsp_grow(buf_addr, cap_addr, used + len + 1) < 0) { return 0 - 1; }
     var off = used;
     var buf = load64(buf_addr);
     var i = 0;
@@ -374,7 +393,7 @@ fn _lsp_intern(buf_addr, used_addr, cap, src, len): i64 {
 }
 
 # Has this absolute path already been indexed? Linear scan over the
-# indexed set (cap 256, bounded growth so O(n) is fine).
+# indexed set (one row per included file, so O(n) is fine).
 fn _lsp_already_indexed(path): i64 {
     var plen = strlen(path);
     var i = 0;
@@ -387,30 +406,54 @@ fn _lsp_already_indexed(path): i64 {
     return 0;
 }
 
-# Record `path` as indexed. Returns 0 if added, -1 if cap full.
+# Record `path` as indexed. Returns the offset of its interned copy in _lsp_indexed_buf — the
+# `path_off` every symbol of the file stores — or -1 when an allocation is refused.
 fn _lsp_mark_indexed(path): i64 {
-    if (_lsp_indexed_count >= _LSP_INDEXED_CAP) { return 0 - 1; }
+    var ncap = _lsp_indexed_cap * 8;
+    if (_lsp_grow(&_lsp_indexed_off, &ncap, (_lsp_indexed_count + 1) * 8) < 0) { return 0 - 1; }
+    _lsp_indexed_cap = ncap / 8;
     var plen = strlen(path);
-    var off = _lsp_intern(&_lsp_indexed_buf, &_lsp_indexed_used, _LSP_PATHS_BUF_CAP, path, plen);
+    var off = _lsp_intern(&_lsp_indexed_buf, &_lsp_indexed_used, &_lsp_paths_cap, path, plen);
     if (off < 0) { return 0 - 1; }
     store64(_lsp_indexed_off + _lsp_indexed_count * 8, off);
     _lsp_indexed_count = _lsp_indexed_count + 1;
+    return off;
+}
+
+# Grow the six parallel symbol-row arrays together so row `_sym_count` fits. Returns 0, or -1
+# when an allocation is refused (the table is then left as it was: the arrays that did grow
+# keep their contents, and the cap only moves once all six have).
+fn _lsp_grow_rows(): i64 {
+    if (_sym_count < _lsp_symtab_cap) { return 0; }
+    var need = (_sym_count + 1) * 8;
+    var c0 = _lsp_symtab_cap * 8;
+    var c1 = c0;
+    var c2 = c0;
+    var c3 = c0;
+    var c4 = c0;
+    var c5 = c0;
+    if (_lsp_grow(&_sym_name_off, &c0, need) < 0) { return 0 - 1; }
+    if (_lsp_grow(&_sym_name_len, &c1, need) < 0) { return 0 - 1; }
+    if (_lsp_grow(&_sym_path_off, &c2, need) < 0) { return 0 - 1; }
+    if (_lsp_grow(&_sym_line, &c3, need) < 0) { return 0 - 1; }
+    if (_lsp_grow(&_sym_col, &c4, need) < 0) { return 0 - 1; }
+    if (_lsp_grow(&_sym_kind, &c5, need) < 0) { return 0 - 1; }
+    _lsp_symtab_cap = c0 / 8;
     return 0;
 }
 
 # Append a symbol to the table. `name_src` + `name_len` describe the
-# IDENT bytes; `path` is the absolute cstring path; line/col are
-# 0-based; kind ∈ {1,2,3,4,5}. Returns 0 on success, -1 on cap full.
-fn _lsp_add_symbol(name_src, name_len, path, line, col, kind): i64 {
-    if (_sym_count >= _LSP_SYMTAB_CAP) { return 0 - 1; }
-    var no = _lsp_intern(&_sym_names_buf, &_sym_names_used, _LSP_NAMES_BUF_CAP, name_src, name_len);
+# IDENT bytes; `path_off` is the file's offset in _lsp_indexed_buf (from
+# _lsp_mark_indexed); line/col are 0-based; kind ∈ {1,2,3,4,5}. Returns 0
+# on success, -1 when an allocation is refused.
+fn _lsp_add_symbol(name_src, name_len, path_off, line, col, kind): i64 {
+    if (_lsp_grow_rows() < 0) { return 0 - 1; }
+    var no = _lsp_intern(&_sym_names_buf, &_sym_names_used, &_lsp_names_cap, name_src, name_len);
     if (no < 0) { return 0 - 1; }
-    var po = _lsp_intern(&_sym_paths_buf, &_sym_paths_used, _LSP_PATHS_BUF_CAP, path, strlen(path));
-    if (po < 0) { return 0 - 1; }
     var i = _sym_count;
     store64(_sym_name_off + i * 8, no);
     store64(_sym_name_len + i * 8, name_len);
-    store64(_sym_path_off + i * 8, po);
+    store64(_sym_path_off + i * 8, path_off);
     store64(_sym_line     + i * 8, line);
     store64(_sym_col      + i * 8, col);
     store64(_sym_kind     + i * 8, kind);
@@ -435,7 +478,8 @@ fn _lsp_find_eol(buf, start, total): i64 {
 # no-op via _lsp_already_indexed. Returns 0 on success.
 fn lsp_index_file(path): i64 {
     if (_lsp_already_indexed(path) == 1) { return 0; }
-    if (_lsp_mark_indexed(path) < 0) { return 0; }    # cap full → soft-fail
+    var path_off = _lsp_mark_indexed(path);
+    if (path_off < 0) { return 0; }    # allocation refused → soft-fail
 
     # Read the WHOLE file (6.6.10). This was a fixed 1 MB read — "enough for cyrius's largest
     # source" — but the stdlib it indexes through `include` is larger: lib/mabda.cyr is
@@ -513,11 +557,12 @@ fn lsp_index_file(path): i64 {
         pos = eol + 1;
         line = line + 1;
     }
-    lsp_index_decls(buf, total, path);
+    lsp_index_decls(buf, total, path_off);
     return 0;
 }
 
-# Record every top-level declaration of buf[0, total) under `path`, through cbt/srcscan.cyr's
+# Record every top-level declaration of buf[0, total) under the file whose interned path is at
+# `path_off` in _lsp_indexed_buf, through cbt/srcscan.cyr's
 # `_src_decls` — the reader `cyrius coverage` and `cyrius distlib` use.
 # ⛔ 6.6.10: this was a SIXTH hand-rolled declaration reader, and it matched only `fn `, `var `,
 # `enum ` and `struct ` at COLUMN 0: no `pub`/`public`, no attribute (`#inline fn`), no
@@ -526,7 +571,7 @@ fn lsp_index_file(path): i64 {
 # lib/yukti.cyr among them. And it read comments and strings as code: a `fn x` inside a
 # multi-line string was indexed. It reads a blanked COPY (the include scan above needs the
 # raw paths), so a declaration in a comment or string is not one. CHANGELOG [6.6.10]
-fn lsp_index_decls(buf, total, path): i64 {
+fn lsp_index_decls(buf, total, path_off): i64 {
     var cb = alloc(total + 1);
     if (cb == 0) { return 0; }
     memcpy(cb, buf, total);
@@ -547,7 +592,7 @@ fn lsp_index_decls(buf, total, path): i64 {
             if (load8(buf + p) == 10) { line = line + 1; ls = p + 1; }
             p = p + 1;
         }
-        _lsp_add_symbol(buf + off, vec_get(lens, k), path, line, off - ls, vec_get(kinds, k));
+        _lsp_add_symbol(buf + off, vec_get(lens, k), path_off, line, off - ls, vec_get(kinds, k));
         k = k + 1;
     }
     return 0;
@@ -1337,7 +1382,7 @@ fn handle_definition(body): i64 {
                     resp_line = load64(_sym_line + idx * 8);
                     resp_col  = load64(_sym_col  + idx * 8);
                     var po = load64(_sym_path_off + idx * 8);
-                    resp_path = _sym_paths_buf + po;
+                    resp_path = _lsp_indexed_buf + po;
                 }
             }
         }
@@ -1365,7 +1410,7 @@ fn handle_definition(body): i64 {
         var end_col = resp_col + 1;
         while (idx2 < _sym_count) {
             var po2 = load64(_sym_path_off + idx2 * 8);
-            if (memeq(_sym_paths_buf + po2, resp_path, strlen(resp_path) + 1) == 1) {
+            if (memeq(_lsp_indexed_buf + po2, resp_path, strlen(resp_path) + 1) == 1) {
                 if (load64(_sym_line + idx2 * 8) == resp_line) {
                     if (load64(_sym_col + idx2 * 8) == resp_col) {
                         end_col = resp_col + load64(_sym_name_len + idx2 * 8);
@@ -1447,7 +1492,7 @@ fn handle_hover(body): i64 {
                     found = 1;
                     h_kind = load64(_sym_kind + idx * 8);
                     var po = load64(_sym_path_off + idx * 8);
-                    h_path = _sym_paths_buf + po;
+                    h_path = _lsp_indexed_buf + po;
                     h_line = load64(_sym_line + idx * 8);
                     h_name = buf + s;
                     h_name_len = nlen;
@@ -1514,7 +1559,7 @@ fn handle_document_symbol(body): i64 {
         var i = 0;
         while (i < _sym_count) {
             var po = load64(_sym_path_off + i * 8);
-            if (memeq(_sym_paths_buf + po, path, path_len + 1) == 1) {
+            if (memeq(_lsp_indexed_buf + po, path, path_len + 1) == 1) {
                 if (first == 0) { str_builder_add_cstr(sb, ","); }
                 first = 0;
                 var sym_line = load64(_sym_line + i * 8);

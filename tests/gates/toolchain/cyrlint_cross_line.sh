@@ -140,6 +140,9 @@
 #   CA  harness: the doc_huge write fails (awk > /dev/full) — named as a write    3+0
 #       failure, where the 6.6.7 gate showed only "premise … got [no]"
 #   (the whole 6.6.7 cyrlint: 10+0)
+# 6.6.12 (B11) — axis 15:
+#   L1  the length rule back on the byte span (linelen > 120)                     1+0
+#   L2  lib/async_agnos.cyr's "tasks not yet DONE" comment restored               1+0
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -600,6 +603,26 @@ check "  (the 1.3 MB doc_huge fixture was WRITTEN: awk rc 0 — non-zero means $
 check "  (premise: doc_huge is past cyrdoc's first 1 MB buffer)" yes "$([ "$(wc -c < "$T/doc_huge.cyr")" -gt 1048576 ] && echo yes || echo no)"
 doc_run "$T/doc_huge.cyr"
 check "  …and past the first 1 MB buffer (it grows; sigil's 1.1 MB bundle was judged on 6 %)" "30000 documented, 1 undocumented (30001 total)" "$(tail -n 1 "$T/do")"
+
+echo "axis 15 — line length is counted in code points, and a state description is no deferral (6.6.12)"
+# The 120-column rule measured BYTES: a 93-column box-drawing comment (91 x U+2500, 3 bytes
+# each) warned. And lib/async_agnos.cyr's "tasks not yet DONE" (a task's state, not a
+# deferral) drew an untracked 'not yet' note. Both are false positives on the tree itself.
+llen() {   # the "exceeds 120" warnings of one file, as their line numbers
+    lint_run "$1" || { echo "$LHARD"; return; }
+    cat "$T/lo" "$T/le" | sed -n 's/^  warn line \([0-9]*\): line exceeds 120 characters$/\1/p' | paste -sd' ' -
+}
+box() {   # $1 = how many U+2500 after "# "
+    i=0; printf '# '; while [ "$i" -lt "$1" ]; do printf '\342\224\200'; i=$((i + 1)); done; printf '\n'
+}
+asc() {   # $1 = how many columns of ASCII
+    i=0; while [ "$i" -lt "$1" ]; do printf 'x'; i=$((i + 1)); done; printf '\n'
+}
+{ box 91; box 118; box 119; asc 120; asc 121; } > "$T/cols.cyr"
+check "  (premise: the 93-column box line is 275 bytes and its newline)" 276 "$(sed -n 1p "$T/cols.cyr" | wc -c | tr -d ' ')"
+check "only the 121-column lines warn (box 121 cols on line 3, ASCII 121 on line 5)" "3 5" "$(llen "$T/cols.cyr")"
+lint_run --strict-deferrals "$ROOT/lib/async_agnos.cyr" || :
+check "lib/async_agnos.cyr: no untracked deferral (its _async_step comment describes task state)" "0 0 untracked deferrals" "$LRC $(grep 'untracked deferrals' "$T/lo" "$T/le" | sed 's/^[^:]*://')"
 
 echo ""
 nhard=$(wc -l < "$T/hard" | tr -d ' ')

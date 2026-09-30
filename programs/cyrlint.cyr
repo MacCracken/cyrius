@@ -1108,6 +1108,18 @@ fn _fn_kw_at(buf, p, eol): i64 {
     return 0 - 1;
 }
 
+# The column count of buf[pos, eol): every byte that is not a UTF-8 continuation byte
+# (10xxxxxx) starts one code point; a stray continuation byte counts as nothing.
+fn _lint_cols(buf, pos, eol): i64 {
+    var n = 0;
+    var i = pos;
+    while (i < eol) {
+        if ((load8(buf + i) & 0xC0) != 0x80) { n += 1; }
+        i += 1;
+    }
+    return n;
+}
+
 fn lint_file(buf, total): i64 {
     var lineno = 1;
     var pos = 0;
@@ -1215,7 +1227,11 @@ fn lint_file(buf, total): i64 {
             }
 
             # === Rule: line too long (>120 chars) ===
-            if (linelen > 120) { warn(lineno, "line exceeds 120 characters"); }
+            # Counted in code points, not bytes: a box-drawing rule is 3 bytes per column
+            # (CHANGELOG [6.6.12]). linelen stays the byte span the other rules index with.
+            if (linelen > 120) {
+                if (_lint_cols(buf, pos, eol) > 120) { warn(lineno, "line exceeds 120 characters"); }
+            }
 
             # === Rule: is_err naming clash (bote feedback #5) ===
             # If BOTH syscalls.cyr (is_err for raw ret<0) and tagged.cyr

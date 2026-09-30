@@ -6,6 +6,67 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.12] — 2026-09-30
 
+### Security
+
+- **CVE-56 (P1): `lib/log.cyr`'s `log_info_kv` / `log_info_int` wrote a caller-controlled string past
+  their 512-byte STACK scratch (B10, item S-B2; the CVE-50 class).** **Root cause:** both fns built
+  `"msg key=val"` in `var buf[512]` by copying `strlen(msg)`, `strlen(key)` and `strlen(val)` bytes with no
+  bound, so a logged request value longer than the scratch overwrote the fn's own locals and its return
+  address — a 4 KB value exited 139 before the sink was reached. **Fix:** every copy goes through one
+  bounded helper (`_log_cat`, limit 511) and a cut line ends `...`; `log_info_int` reserves 22 bytes for
+  `=`, the sign and 19 digits, so the number is never cut. **Test:** `tests/tcyr/stdlib/log_kv_bounded.tcyr`
+  (a 4 KB value, msg or key: rc 0, the sink sees exactly 511 bytes, head intact, `...` mark; the 511/512
+  boundary; i64::MIN survives a 4 KB msg). Mutation: the 6.6.11 `log.cyr` exits 139.
+
+### Fixed
+
+- **cbt: `_macho_fill_environ` wrote each entry's NUL past its buffer on macOS (B10, item S-B1).**
+  **Root cause:** the v6.0.34 loop bounded an entry's payload bytes but stored its terminator
+  unconditionally, so an environment larger than the buffer returned `pos > cap`, and all four callers
+  (`_cbt_env_is_1`, `_cbt_env_int`, `_cbt_env_str`, `find_tools`) then wrote their own NUL at
+  `buf + pos`. **Fix:** returns at most `cap - 1`; an entry that does not fit with its NUL is dropped whole
+  (never a matchable `HOME=/Us` prefix) and the scan continues, so a HOME after one huge variable still
+  resolves. **Verified on ecb (arm64) and ach (Intel)** with a native CLI built from each tree under a
+  40,000-byte `BIG` plus 50 more variables: 6.6.11's CLI SEGFAULTS (`which`, rc 139) when `BIG` precedes
+  HOME / CYRIUS_HOME and fails `cyrius build` under the user's environment plus `BIG` (CYRIUS_HOME lost);
+  the fixed CLI resolves both and builds a manifest project whose binary exits 42.
+  **Gate:** `tests/gates/toolchain/macho_fill_environ_bounded.sh` (the fn extracted into an x86 logic
+  probe: 40 × 25-byte entries into cap 64 behind a canary, whole-entry, drop-not-truncate and boundary
+  axes; three mutants recorded in its ledger).
+- **stdlib: `lib/bench.cyr` and `lib/chrono.cyr` dereferenced a refused (0) allocation (B10, item S1).**
+  6.6.10 taught `bench_new` and `epoch_to_date` to return 0 and updated none of their consumers:
+  `bench_iterations(bench_new(..))` and `dt_year(..)` under a refused alloc exited 139. Every public bench
+  fn now takes `b == 0` and returns 0 (a refused bench runs no op), `bench_report(0)` prints
+  `(bench_new refused)` (no ` avg`, so no row parser takes it for a row), and the three header examples
+  check the result. `dt_year` … `dt_second` decode through a new non-allocating `_epoch_to_date_into`
+  into a stack buffer — they no longer leak 48 B per call and, once the month table exists, cannot fail;
+  they return -1 only if the table itself could never be allocated (0 is a valid hour/minute/second).
+  **Test:** `tests/tcyr/stdlib/bench_chrono_refused_alloc.tcyr` (ALLOC_MAX = 0); either 6.6.11 file
+  reverted exits 139.
+- **cyrius-lsp: the symbol index stopped SILENTLY at three fixed caps (B11, item S3).** Go-to-definition
+  of sigil's last fn (`sv_verify_boot_chain`, `lib/sigil.cyr:30735`) through `include "lib/sigil.cyr"`
+  answered `null`, and so did the 4095th fn of a 5000-fn include. **Root cause:** the table had fixed caps
+  — 4096 rows, a 256 KB names buffer, a 32 KB paths buffer and 256 indexed files — `_lsp_add_symbol`
+  returned -1 when any was full and `lsp_index_decls` ignored it; and the path string was re-interned for
+  EVERY symbol, so the 32 KB paths buffer bound first (~2,300 symbols for `lib/x.cyr` paths, ~500 for a
+  60-byte absolute path). **Fix:** each file's path is interned once, by `_lsp_mark_indexed`, and every
+  row stores that offset; the six row arrays, the names buffer, the indexed-path set and its string
+  buffer all double on demand through one helper (`_lsp_grow`), so only a refused allocation stops
+  indexing. **Gate:** `tests/gates/toolchain/lsp_indexes_every_decl_spelling.sh` axis 5 (the last of 6000
+  long-named fns in one include, a fn in the 300th included file, and sigil's last fn); the 6.6.11 LSP
+  fails all three rows, and two mutants are recorded in its ledger.
+- **cyrlint: the 120-column rule counted BYTES (B11, item S4).** A 93-column comment of 91 `─` (U+2500,
+  3 bytes each) warned "line exceeds 120 characters". **Fix:** the rule counts code points — every byte
+  that is not a UTF-8 continuation byte (`(b & 0xC0) != 0x80`, `_lint_cols`); the byte span stays what the
+  other rules index with. **Gate:** `tests/gates/toolchain/cyrlint_cross_line.sh` axis 15 (93- and
+  120-column box lines and a 120-column ASCII line are silent; the 121-column box and ASCII lines warn);
+  the byte rule restored fails it.
+- **lib/async_agnos.cyr: a state description read as an untracked deferral (B11, item T9b).**
+  `_async_step`'s comment said it returns "the count of tasks not yet DONE", and cyrlint's `not yet` needle
+  drew an untracked-deferral note on the stdlib itself. The comment now says "tasks whose state is not
+  DONE" — comment only, the rule is unchanged. **Gate:** the same axis 15 lints the file under
+  `--strict-deferrals` and expects exit 0 and no note; the old comment exits 2.
+
 ## [6.6.11] — 2026-09-29
 
 The fifth batch release: the 6.6.9 review finds I–K and the 6.6.10 finds that produce wrong results

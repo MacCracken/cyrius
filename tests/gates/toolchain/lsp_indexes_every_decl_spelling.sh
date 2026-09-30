@@ -20,11 +20,18 @@
 #   2  …and NOT a fn in a comment, a fn in a multi-line string, or a fn-local var
 #   3  go-to-definition from another file resolves a `pub fn` across the include, to its line
 #   4  a declaration past the first MiB of an included file is indexed (whole-file read)
+#   5  (6.6.12) the symbol index has no silent cap: the LAST of 6000 long-named fns in one
+#      include (past the old 4096-row, 256 KB-names and 32 KB-paths caps), a fn in the 300th
+#      included file (past the old 256-file cap), and — a real row — sigil's last fn,
+#      sv_verify_boot_chain, through `include "lib/sigil.cyr"`, all resolve
 #
 # PROVEN RED (run by hand when written, LSP_BIN=<binary> runs the gate against another build):
 #   the 6.6.9 cyrius-lsp (programs/cyrius-lsp.cyr at 6d12c1e6)   15 of 25 checks FAIL —
 #       every non-column-0 spelling (axis 1), sp_in_string (axis 2), axes 3 and 4
 #   this tree with `_src_blank_noncode(cb, total)` removed      axis 2 FAIL (sp_in_string)
+#   the 6.6.11 cyrius-lsp (programs/cyrius-lsp.cyr at 2bc29059)  axis 5: all three rows FAIL
+#   6.6.12 with `_lsp_grow` returning -1 whenever it must grow    axis 5: all three rows FAIL
+#   6.6.12 with `_lsp_grow_rows` never growing (4096-row cap)     axis 5: the 6000-fn row FAILS
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -125,6 +132,46 @@ printf 'include "%s"\nfn v(): i64 {\n    return big_tail();\n}\n' "$B" > "$V"
 session "$INIT" "$(open_doc "$V")" \
   '{"jsonrpc":"2.0","id":5,"method":"textDocument/definition","params":{"textDocument":{"uri":"file://'"$V"'"},"position":{"line":2,"character":12}}}' "$DOWN"
 check "4 definition of big_tail() (past 1 MiB) resolves" yes "$(has "\"uri\":\"file://$B\"")"
+
+# ── 5: no silent cap on the symbol index ─────────────────────────────────────────────────
+M="$T/many_decls_with_a_deliberately_long_directory_name/many.cyr"
+mkdir -p "$(dirname "$M")"
+awk 'BEGIN { for (i = 0; i < 6000; i++)
+    printf "fn many_decls_a_fairly_long_function_name_to_fill_the_table_%05d(): i64 { return %d; }\n", i, i }' > "$M"
+W="$T/muser.cyr"
+printf 'include "%s"\nfn w(): i64 {\n    return many_decls_a_fairly_long_function_name_to_fill_the_table_05999();\n}\n' "$M" > "$W"
+session "$INIT" "$(open_doc "$W")" \
+  '{"jsonrpc":"2.0","id":6,"method":"textDocument/definition","params":{"textDocument":{"uri":"file://'"$W"'"},"position":{"line":2,"character":12}}}' "$DOWN"
+check "5 definition of the 6000th fn of one include resolves" yes "$(has "\"uri\":\"file://$M\"")"
+check "   …at its line (5999)" yes "$(has '"line":5999,"character":3')"
+
+D="$T/incs"
+mkdir -p "$D"
+i=0
+while [ "$i" -lt 300 ]; do
+    printf 'fn inc_file_fn_%03d(): i64 { return %d; }\n' "$i" "$i" > "$D/f$i.cyr"
+    i=$((i + 1))
+done
+X="$T/xuser.cyr"
+{ i=0; while [ "$i" -lt 300 ]; do printf 'include "%s/f%d.cyr"\n' "$D" "$i"; i=$((i + 1)); done
+  printf 'fn x(): i64 {\n    return inc_file_fn_299();\n}\n'; } > "$X"
+session "$INIT" "$(open_doc "$X")" \
+  '{"jsonrpc":"2.0","id":7,"method":"textDocument/definition","params":{"textDocument":{"uri":"file://'"$X"'"},"position":{"line":301,"character":12}}}' "$DOWN"
+check "5 definition of a fn in the 300th included file resolves" yes "$(has "\"uri\":\"file://$D/f299.cyr\"")"
+
+SG="$ROOT/lib/sigil.cyr"
+if [ -f "$SG" ]; then
+    SGL=$(grep -n '^fn sv_verify_boot_chain(' "$SG" | head -1 | cut -d: -f1)
+    check "5 premise: lib/sigil.cyr declares sv_verify_boot_chain" yes "$([ -n "$SGL" ] && echo yes || echo no)"
+    Y="$T/suser.cyr"
+    printf 'include "%s"\nfn y(): i64 {\n    return sv_verify_boot_chain(0, 0);\n}\n' "$SG" > "$Y"
+    session "$INIT" "$(open_doc "$Y")" \
+      '{"jsonrpc":"2.0","id":8,"method":"textDocument/definition","params":{"textDocument":{"uri":"file://'"$Y"'"},"position":{"line":2,"character":12}}}' "$DOWN"
+    check "5 definition of sigil's sv_verify_boot_chain resolves" yes "$(has "\"uri\":\"file://$SG\"")"
+    check "   …at its line ($((SGL - 1)))" yes "$(has "\"line\":$((SGL - 1)),\"character\":3")"
+else
+    check "5 premise: lib/sigil.cyr is vendored" yes no
+fi
 
 echo ""
 if [ "$fails" -gt 0 ]; then
