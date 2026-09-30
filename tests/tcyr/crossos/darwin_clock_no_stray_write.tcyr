@@ -8,8 +8,10 @@
 # stored mach time at whatever address rdx still held — normally the previous call's third
 # argument — into an image whose one __TEXT segment is rwx. Measured on ach: a sentinel passed as
 # the third argument of the call just before clock_now_ms() came back as the box's uptime in ns,
-# 3 runs of 3; it is also what garbled an assert message mid-test on ach at 6.6.8. The fix is
-# `xor edx, edx` (mach time out-pointer = NULL).
+# 3 runs of 3; it is also what garbled an assert message mid-test on ach at 6.6.8. 6.6.10 fixed
+# it with `xor edx, edx` (out-pointer = NULL); since 6.6.12 (Q4, below) the emitter instead points
+# rdx at its OWN zeroed 8-byte stack slot (`push 0; mov rdx, rsp`) and reads mach time back from
+# it — the out-pointer is never NULL-or-stale, and the only memory written is that slot.
 #
 # ⭐ WHY `_take3(0, 0, &sentinel)` FIRST. Priming rdx needs a call whose third argument is the
 # sentinel's address and which then leaves rdx alone; a cyrius call does exactly that (the
