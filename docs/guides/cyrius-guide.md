@@ -2640,14 +2640,16 @@ earlier call arguments, an address — is kept in the coroutine frame across the
 suspend (6.6.10; it used to be lost, so `b + await five()` gave 5 and the
 `store64` form crashed).
 
-**Under the reactor.** `async_spawn_future(rt, co(..))` + `async_run(rt)` drives
-coroutines that PARK before they suspend (`await async_wait_fd(rt, fd)` /
-`async_wait_writable`): each parked task sleeps until its fd is ready and
-resumes where it stopped, interleaved with the others. A task that returns
-without having parked is finished as far as the reactor is concerned, so a
-coroutine whose `await` did not park (an `await` of a Future, or of a call that
-does not park) ends there with 0 when run by `async_run`; force such a coroutine
-yourself with `future_force` until it completes.
+**Under the reactor.** `async_spawn_future(rt, co(..))` + `async_run(rt)` (or
+`task_join(rt, h)`) drives a coroutine to its value. A coroutine that PARKS
+before it suspends (`await async_wait_fd(rt, fd)` / `async_wait_writable`)
+sleeps until its fd is ready and resumes where it stopped, interleaved with the
+others. A coroutine whose `await` did not park — an `await` of a Future, or of a
+call that does not park — stays runnable and is resumed on the reactor's next
+step; while one does, the reactor still polls (without blocking) for the fds,
+timers and deadline sentinels other tasks are parked on, so neither side starves.
+(Until 6.6.11 every backend finished such a coroutine with the 0 its suspend
+returned, and this guide told you to force it yourself with `future_force`.)
 
 **Other limits.** `async` generic fns are not yet supported, nor is a value-form vector
 PARAMETER (`async fn f(v: f64v2)`) — an `async fn` captures each argument as one
