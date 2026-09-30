@@ -2,7 +2,7 @@
 
 **Scope:** the untrusted-source-input surface. Previous full audit:
 `docs/audit/2026-07-27-security-audit.md` (CVE-32…CVE-36) at cycc 6.4.82.
-**Next free identifier after this document: CVE-58.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
+**Next free identifier after this document: CVE-59.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
 document are **withdrawn** but still consume their ids.) CVE-43 was consumed at 6.6.5,
 **CVE-44 and CVE-45 at 6.6.6** — the release installer's fixed `/tmp` staging, and a forged `#@file` from an included file —
 **CVE-46, CVE-47 and CVE-48 at 6.6.7** (a `secret var` inside a closure was never zeroised; a `secret var` in a
@@ -13,10 +13,10 @@ predictable shared `/tmp` names; `lib/http.cyr` wrote a long URL past its 2048-b
 `rdx`; the lexer silently dropped any `@` that did not spell `@unsafe`; `lib/ws.cyr`'s `ws_recv_frame` let a
 remote peer choose its allocation size and read frames it had not received), and **CVE-54 and CVE-55 at 6.6.11**
 (on Windows, `net_resolve_ipv4` read a drive-relative `C:\etc\hosts` that any local user can plant; a multi-line
-string literal shifted file attribution, so a call to another file's `private` fn compiled); **CVE-56 at 6.6.12** (`lib/log.cyr`'s `log_info_kv` / `log_info_int` built a log line past a 512-byte stack buffer); **CVE-57 at 6.6.12** (on Windows, the folded sandhi resolver read a drive-relative `C:\etc\resolv.conf` any local user can plant); all thirteen are appended below.
+string literal shifted file attribution, so a call to another file's `private` fn compiled); **CVE-56 at 6.6.12** (`lib/log.cyr`'s `log_info_kv` / `log_info_int` built a log line past a 512-byte stack buffer); **CVE-57 at 6.6.12** (on Windows, the folded sandhi resolver read a drive-relative `C:\etc\resolv.conf` any local user can plant); **CVE-58 at 6.6.12** (cxvm let guest bytecode read and write the interpreter's own host memory); all sixteen are appended below.
 ⚠ **This line read "next free: CVE-42" while CLAUDE.md read "the next CVE number is 43" and this document ran 39-41.**
 Two authorities, two answers, and nothing reconciled them. CLAUDE.md is the one every closeout reads, so **42 is
-retired unused** and CVE-43 is the entry appended below. Anything below 58 now collides.
+retired unused** and CVE-43 is the entry appended below. Anything below 59 now collides.
 
 Run as part of the band K closeout, as nine parallel audit dimensions over the v6.5.x minor with
 an adversarial verification pass over the highest-severity findings. Everything recorded here was
@@ -1115,3 +1115,43 @@ Measured results:
   the plant.
 - **Other targets:** the every-target rows pass on x86_64, aarch64 (qemu), ecb, ach and the
   agnosticos container.
+
+## CVE-58 — cxvm let guest bytecode read and write the interpreter's own host memory
+
+*Appended 2026-09-30 (cyrius 6.6.12, bite B06 item Q6). Not part of the 2026-09-03 sweep: recorded
+here because this is the live ledger.*
+
+| | |
+|---|---|
+| **Severity** | **High (P1)** — guest bytecode corrupts the interpreter process that runs it. cxvm is documented as *not a sandbox* for syscalls, but ordinary buggy programs (a deep recursion, a stray pointer, a `read()` into a too-short buffer) silently corrupted cxvm's own heap and exited with garbage codes |
+| **Affected** | `programs/cxvm.cyr`, every version through cyrius 6.6.11, on every host cxvm runs on (x86_64 and aarch64 Linux, macOS arm64 and x86_64, Windows) |
+| **Fixed** | 6.6.12 |
+
+**Vector.** A `.cyx` whose guest code:
+- loads or stores at an address at or past the 1 MB guest memory (less the access width), or at a
+  negative address;
+- stores to guest addresses 0–7, which silently succeeded because guest 0 is the bytecode copy;
+- nests more than 512 calls, which overran the 1024-entry call stack into the next host allocation
+  (the loaded code), or pushes more than 1024 data-stack entries;
+- passes `read` / `write` / `getrandom` / `clock_gettime` a buffer that ends past 1 MB, so the HOST
+  kernel wrote cxvm's heap through the translated pointer;
+- jumps to a negative pc, so host memory was decoded as code.
+An unknown opcode was also a silent no-op, so an older cxvm ran a newer compiler's opcodes as identity.
+
+**Impact.** Silent corruption of cxvm's register file, stacks, loaded code and heap, and wrong exit
+codes: before the fix a non-tail recursion of depth 1000 exited 231 and depth 5000 exited 135, and
+`store64(0, 5)` exited 9 where the same program SIGSEGVs natively.
+
+**Fix.** Every load and store is bounds-checked at its full width against `[8, 1 MB)`; translated
+syscall buffers are range-checked and answer `-EFAULT`; the data and call stacks trap on overflow and
+underflow and grow to 65536 entries, so the guest's own 1 MB is the binding limit; `sub sp` traps
+before the guest stack reaches the loaded image (without it a runaway recursion overwrote the
+program's globals and heap before any other trap fired); a negative pc and an unknown opcode trap.
+Each trap prints `cxvm: <what> <value> at pc <N>` and exits 1. There is no `.cyx` format bump. The
+same bite gives cx real tail calls (`mov sp, fp; popc fp; jmp f`), so a 2,000,000-deep tail
+recursion runs in constant stack. The pass-through of every other syscall number is unchanged:
+cxvm is still not a sandbox (`docs/platform-status.md`, "cyrius-x guest contract").
+
+**Verified.** `tests/gates/codegen/cx_tailcall_and_vm_traps.sh` (24 rows, every trap
+mutation-proven); its 23 cxvm cases run 23/23 on real pi, ecb, ach and cass (a cxvm cross-built per
+host) and under qemu-aarch64 and wine.
