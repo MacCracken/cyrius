@@ -95,7 +95,8 @@ fi
 # real users — PER ENCLOSING FN, which is what makes losing ONE of them visible. The count is
 # attributed by walking `fn <name>` headers, i.e. computed from the source's own structure and
 # not from the number this file would like to see.
-#   PARSE_SWITCH 1 | PARSE_MATCH 1 | _PARSE_STMT_IMPL 3 (`?` as a statement, pair + scalar)
+#   PARSE_SWITCH 1 | PARSE_MATCH 1 | _stmt_qmark 3 (`?` as a statement, pair + scalar; moved out
+#   of _PARSE_STMT_IMPL at 6.6.12 so `f(..)?;` and `g<T>(..)?;` share ONE copy — parse.cyr)
 #   _PARSE_TERM_IMPL 3 (`?` in an expression) | PARSE_FOR 4 (collection, length, range end,
 #   and 6.6.8: the collection loop's hidden INDEX at top level — it was a frame slot there too,
 #   into a frame top-level code does not have; inside a fn it stays a frame slot)
@@ -104,7 +105,7 @@ fi
 #   _await_coro_suspend 1 | _await_coro_force 1 | _await_spill 1 (6.6.10: a coroutine `await`
 #   keeps its operand, a forced Future's value, and the enclosing expression's pending pushes in
 #   coroutine-frame words across the suspend — parse_expr.cyr)
-HT_SPEC="PARSE_SWITCH:1 PARSE_MATCH:1 _PARSE_STMT_IMPL:3 _PARSE_TERM_IMPL:3 PARSE_FOR:4 _gv_target:1 _await_coro_suspend:1 _await_coro_force:1 _await_spill:1"
+HT_SPEC="PARSE_SWITCH:1 PARSE_MATCH:1 _stmt_qmark:3 _PARSE_TERM_IMPL:3 PARSE_FOR:4 _gv_target:1 _await_coro_suspend:1 _await_coro_force:1 _await_spill:1"
 ht_attr=$(for f in $(find src/frontend src/common src/backend -name '*.cyr'); do
     awk '/^fn /{fn=$2; sub(/\(.*/,"",fn)} /_HTEMP\(S\)/{ if ($0 !~ /fn _HTEMP/) print fn }' "$f"
 done | sort | uniq -c | awk '{print $2":"$1}')
