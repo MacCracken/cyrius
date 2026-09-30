@@ -124,7 +124,7 @@ grep -q "is private to its file" "$WORK/err" || fail "axis 4: refused, but not w
 
 # ── axis 5: ANTI-VACUOUS — non-private duplicates still warn, unchanged ─────────────
 # Same-arity shadowing between two NON-private files is load-bearing across the ecosystem
-# (`_sk_emit_err` collides between lib/vani.cyr and lib/mabda.cyr in the corpus today).
+# (`_sk_emit_err` collided between lib/vani.cyr and lib/mabda.cyr until 6.6.12 renamed both).
 # The split is keyed on `private`, so nothing here may change.
 cat > "$WORK/a.cyr" <<'EOF'
 fn _helper(s) { return 1; }

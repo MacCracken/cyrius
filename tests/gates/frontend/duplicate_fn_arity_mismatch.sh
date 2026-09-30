@@ -76,8 +76,9 @@ grep -q "takes 3" "$WORK/out.err" || fail "axis 1: diagnostic does not state the
 
 # ── axis 2: SAME arity still only warns (scope statement, not an oversight) ─────────
 # Same-arity duplicates are usually intentional shadowing and are load-bearing across the
-# ecosystem — `_sk_emit_err` collides between lib/vani.cyr and lib/mabda.cyr in the corpus
-# today, at the same arity. Escalating those would be a different, much larger decision.
+# ecosystem (`_sk_emit_err` collided between lib/vani.cyr and lib/mabda.cyr at the same arity
+# until both were renamed in 6.6.12; tests/gates/toolchain/fold_namespace_collisions.sh now
+# guards that pair). Escalating those would be a different, much larger decision.
 cat "$ROOT/lib/syscalls.cyr" > "$WORK/same.cyr"
 cat >> "$WORK/same.cyr" <<'EOF'
 fn _dupb_h(x) { return 1; }
