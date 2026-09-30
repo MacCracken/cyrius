@@ -7,12 +7,16 @@
 # Registers: r0-r255 (64-bit), r0 = accumulator, r253 = fp, r254 = sp
 # Memory: 1 MB data segment (_CX_MEM_SIZE; it read "64KB" here after the v6.4.20 raise)
 #
-# ⚠ GUEST CONTRACT (6.6.10): cxvm runs TRUSTED bytecode — it is NOT a sandbox. Loads/stores
-#   compute `_cx_mem + reg` with NO bounds check (a guest can read/write host memory), the data
-#   and call stacks are unchecked, a jump to a negative offset decodes host memory, and the 0x70
-#   syscall opcode passes every number but 0/1/2/3/8/60/318/228 to the host kernel with the
-#   guest's raw arguments. Running an untrusted .cyx == running a native binary with cxvm's
-#   privileges. docs/platform-status.md "cyrius-x guest contract" is the full statement.
+# ⚠ GUEST CONTRACT: cxvm runs TRUSTED bytecode — it is NOT a sandbox. The 0x70 syscall opcode
+#   passes every number but 0/1/2/3/8/60/318/228 to the host kernel with the guest's raw
+#   arguments, so running an untrusted .cyx == running a native binary with cxvm's privileges.
+#   What cxvm DOES guarantee since 6.6.12 (CVE-58): a guest cannot reach the HOST's memory
+#   through the VM itself. Every load/store is checked against [8, _CX_MEM_SIZE) for its full
+#   width, the translated syscall buffers likewise (-EFAULT, as Linux answers), the data and
+#   call stacks trap on overflow/underflow, the guest stack traps before it reaches the loaded
+#   image, a negative pc traps, and an unknown opcode traps —
+#   each with a `cxvm: ...` line on stderr and exit 1. docs/platform-status.md "cyrius-x guest
+#   contract" is the full statement.
 #
 # OPCODES:
 #   0x00 = halt
@@ -92,10 +96,19 @@ include "lib/alloc.cyr"
 var _CX_REGS_BYTES = 2048;
 var _cx_regs = 0;        # r0-r255 (256 × 8 = 2048 bytes)
 var _cx_mem = 0;          # 1 MB data segment (_CX_MEM_SIZE; stack grows down from top)
-var _cx_dstack = 0;       # 1024 data stack entries (saved fp, expression spills)
+var _cx_dstack = 0;       # _CX_STACK_ENTRIES data stack entries (expression spills, call args)
 var _cx_dsp = 0;
-var _cx_cstack = 0;       # 1024 call stack entries (return addresses)
+var _cx_cstack = 0;       # _CX_STACK_ENTRIES call stack entries (return addresses + saved fp)
 var _cx_csp = 0;
+
+# Both VM stacks are host allocations with a hard bound: a push past the end or a pop below
+# the bottom traps (cx_push / cx_call_push). They held 1024 entries with NO check until
+# 6.6.12, so the 513th nested call (two entries per frame: the return address and the saved
+# fp) wrote into the next host allocation — the loaded code — and a deep recursion ended with
+# a garbage exit code instead of a diagnostic (CVE-58). 65536 entries (512 KiB each) makes
+# the guest's own 1 MB data segment, not these arrays, the binding limit on recursion depth.
+# CHANGELOG [6.6.12]
+var _CX_STACK_ENTRIES = 65536;
 var _cx_pc = 0;
 
 # Data segment = code + var-data + strings + downward stack, one flat region.
@@ -110,8 +123,8 @@ fn cx_init(): i64 {
     alloc_init();
     _cx_regs = alloc(_CX_REGS_BYTES); # 256 registers × 8
     _cx_mem = alloc(_CX_MEM_SIZE);    # data segment (see _CX_MEM_SIZE note)
-    _cx_dstack = alloc(8192);         # 1024 entries × 8
-    _cx_cstack = alloc(8192);         # 1024 entries × 8
+    _cx_dstack = alloc(_CX_STACK_ENTRIES * 8);
+    _cx_cstack = alloc(_CX_STACK_ENTRIES * 8);
     memset(_cx_regs, 0, _CX_REGS_BYTES);
     memset(_cx_mem, 0, _CX_MEM_SIZE);
     return 0;
@@ -129,8 +142,9 @@ fn _cx_host_getrandom(buf, len, flags): i64 {
 
 # clock_gettime(clk, ts) for the guest, with the LINUX contract the .cyx ABI promises (fill
 # `ts` = {sec, nsec}, return 0) on every host. The host's own syscall(228) does not keep that
-# contract: arm64-macOS routes it to _clock_gettime_nsec_np and x86-macOS composes it from
-# gettimeofday — both RETURN nanoseconds; arm64 leaves the timespec untouched (measured on
+# contract: arm64-macOS routes it to _clock_gettime_nsec_np and x86-macOS issues gettimeofday
+# (id 0: the timeval composed to ns; any other id: mach time, since 6.6.12) — both RETURN
+# nanoseconds; arm64 leaves the timespec untouched (measured on
 # ecb: rc 0, tv_sec 0) while x86 writes a struct TIMEVAL into it ({sec, usec}, not
 # {sec, nsec}; this note said "untouched" for both until 6.6.10) — and Windows routes it to
 # GetTickCount64, milliseconds since boot. Neither Mac leaves a Linux timespec. So read
@@ -149,24 +163,116 @@ fn _cx_host_clock_gettime(clk, ts): i64 {
 fn cx_reg_get(r): i64 { return load64(_cx_regs + r * 8); }
 fn cx_reg_set(r, v): i64 { store64(_cx_regs + r * 8, v); return 0; }
 
+# ── VM traps (6.6.12, CVE-58) ────────────────────────────────────────────────────────────
+# A guest fault is reported, never performed: `cxvm: <what> <value> at pc <N>` on stderr, exit
+# 1. `pc` is the byte offset of the faulting instruction in the bytecode (after the 8-byte
+# header), i.e. the same numbering `_cx_pc` and the backend's code offsets use.
+var _cx_fault_pc = 0;   # pc of the instruction being executed (set by cx_run's decode)
+# End of the loaded image (code + var data + strings, copied to guest [0, _cx_image_len)). The
+# guest stack grows down from _CX_MEM_SIZE and may not cross it: a frame that would reach the
+# image traps as a guest stack overflow rather than overwriting the program's globals and its
+# heap (lib/alloc_cx.cyr's heap is a static buffer inside the var data). Set before cx_run.
+var _cx_image_len = 0;
+
+fn _cx_put(s, n): i64 { syscall(1, 2, s, n); return 0; }
+fn _cx_put_dec(v): i64 {
+    var b[24];
+    var i = 23;
+    var neg = 0;
+    if (v < 0) { neg = 1; }
+    if (v == 0) { store8(&b + i, 48); i = i - 1; }
+    while (v != 0) {
+        var d = v % 10;
+        if (d < 0) { d = 0 - d; }
+        store8(&b + i, 48 + d);
+        i = i - 1;
+        v = v / 10;
+    }
+    if (neg == 1) { store8(&b + i, 45); i = i - 1; }
+    syscall(1, 2, &b + i + 1, 23 - i);
+    return 0;
+}
+fn _cx_put_hex2(v): i64 {
+    var b[4];
+    var hi = (v >> 4) & 15;
+    var lo = v & 15;
+    if (hi < 10) { store8(&b, 48 + hi); } else { store8(&b, 55 + hi); }
+    if (lo < 10) { store8(&b + 1, 48 + lo); } else { store8(&b + 1, 55 + lo); }
+    syscall(1, 2, &b, 2);
+    return 0;
+}
+# `what` names the fault; `v` is the offending value (an address, a depth), printed in decimal.
+fn _cx_fault(what, wlen, v): i64 {
+    _cx_put("cxvm: ", 6);
+    _cx_put(what, wlen);
+    _cx_put(" ", 1);
+    _cx_put_dec(v);
+    _cx_put(" at pc ", 7);
+    _cx_put_dec(_cx_fault_pc);
+    _cx_put("\n", 1);
+    syscall(60, 1);
+    return 0;
+}
+
+# Guest address -> host address for a `w`-byte access. The data segment is [0, _CX_MEM_SIZE);
+# [0, 8) is refused as the null page (guest 0 is the in-memory copy of the bytecode, so a
+# store through a null pointer used to succeed silently — x86 answers the same program with
+# SIGSEGV). The upper test is written `a > SIZE - w` so no guest value can overflow it. Before
+# 6.6.12 every load/store was `_cx_mem + reg` with no check, so a guest address past 1 MB read
+# and wrote cxvm's own heap — the register file, the stacks, the loaded code (CVE-58).
+fn _cx_addr(a, w): i64 {
+    if (a < 8) { _cx_fault("guest address out of range:", 27, a); }
+    if (a > _CX_MEM_SIZE - w) { _cx_fault("guest address out of range:", 27, a); }
+    return _cx_mem + a;
+}
+
+# A guest BUFFER handed to a translated syscall: 0 = in range (host address in *out), else the
+# -EFAULT Linux answers a bad buffer with. A null buffer stays null (the host answers EFAULT
+# itself, or a zero-length write succeeds), exactly as before. `n` is the byte count.
+fn _cx_sysbuf(a, n, out): i64 {
+    if (a == 0) { store64(out, 0); return 0; }
+    if (a < 8) { return 0 - 14; }
+    if (n < 0) { return 0 - 14; }
+    if (n > _CX_MEM_SIZE) { return 0 - 14; }
+    if (a > _CX_MEM_SIZE - n) { return 0 - 14; }
+    store64(out, _cx_mem + a);
+    return 0;
+}
+# A NUL-terminated guest path: in range up to and including its NUL.
+fn _cx_syspath(a, out): i64 {
+    if (a == 0) { store64(out, 0); return 0; }
+    if (a < 8) { return 0 - 14; }
+    if (a >= _CX_MEM_SIZE) { return 0 - 14; }
+    var i = a;
+    while (i < _CX_MEM_SIZE) {
+        if (load8(_cx_mem + i) == 0) { store64(out, _cx_mem + a); return 0; }
+        i = i + 1;
+    }
+    return 0 - 14;
+}
+
 # Data stack (push/pop for expression temps)
 fn cx_push(v): i64 {
+    if (_cx_dsp >= _CX_STACK_ENTRIES) { _cx_fault("data stack overflow, depth", 26, _cx_dsp); }
     store64(_cx_dstack + _cx_dsp * 8, v);
     _cx_dsp = _cx_dsp + 1;
     return 0;
 }
 fn cx_pop(): i64 {
+    if (_cx_dsp <= 0) { _cx_fault("data stack underflow, depth", 27, _cx_dsp); }
     _cx_dsp = _cx_dsp - 1;
     return load64(_cx_dstack + _cx_dsp * 8);
 }
 
 # Call stack (call/ret for return addresses)
 fn cx_call_push(v): i64 {
+    if (_cx_csp >= _CX_STACK_ENTRIES) { _cx_fault("call stack overflow, depth", 26, _cx_csp); }
     store64(_cx_cstack + _cx_csp * 8, v);
     _cx_csp = _cx_csp + 1;
     return 0;
 }
 fn cx_call_pop(): i64 {
+    if (_cx_csp <= 0) { _cx_fault("call stack underflow, depth", 27, _cx_csp); }
     _cx_csp = _cx_csp - 1;
     return load64(_cx_cstack + _cx_csp * 8);
 }
@@ -176,6 +282,9 @@ fn cx_run(code, code_len): i64 {
     var running = 1;
     while (running == 1) {
         if (_cx_pc >= code_len) { running = 0; break; }
+        # A negative pc would decode the host memory in front of the code. CHANGELOG [6.6.12]
+        if (_cx_pc < 0) { _cx_fault("jump to a negative code offset:", 31, _cx_pc); }
+        _cx_fault_pc = _cx_pc;
         # Decode 4-byte instruction (little-endian)
         var b0 = load8(code + _cx_pc);
         var b1 = load8(code + _cx_pc + 1);
@@ -201,7 +310,14 @@ fn cx_run(code, code_len): i64 {
 
         # arithmetic: add, sub, mul, div, mod
         elif (op == 16) { cx_reg_set(ra, cx_reg_get(rb) + cx_reg_get(rc)); }
-        elif (op == 17) { cx_reg_set(ra, cx_reg_get(rb) - cx_reg_get(rc)); }
+        elif (op == 17) {
+            cx_reg_set(ra, cx_reg_get(rb) - cx_reg_get(rc));
+            # `sub sp, sp, n` is how a frame is reserved (backend/cx/emit.cyr ESUBRSP, the only
+            # emitter that grows r254). CHANGELOG [6.6.12]
+            if (ra == 254) {
+                if (cx_reg_get(254) < _cx_image_len) { _cx_fault("guest stack overflow, sp", 24, cx_reg_get(254)); }
+            }
+        }
         elif (op == 18) { cx_reg_set(ra, cx_reg_get(rb) * cx_reg_get(rc)); }
         elif (op == 19) { cx_reg_set(ra, cx_reg_get(rb) / cx_reg_get(rc)); }
         elif (op == 20) { cx_reg_set(ra, cx_reg_get(rb) % cx_reg_get(rc)); }
@@ -257,20 +373,21 @@ fn cx_run(code, code_len): i64 {
         elif (op == 108) { cx_reg_set(ra, f64_round(cx_reg_get(rb))); } # 0x6C fround (ties to even)
         elif (op == 109) { cx_reg_set(ra, mulh64(cx_reg_get(rb), cx_reg_get(rc))); } # 0x6D mulhu
 
-        # memory: load8/16/32/64, store8/16/32/64
-        elif (op == 64) { cx_reg_set(ra, load8(_cx_mem + cx_reg_get(rb))); }
-        elif (op == 65) { cx_reg_set(ra, load64(_cx_mem + cx_reg_get(rb))); }
-        elif (op == 66) { store8(_cx_mem + cx_reg_get(ra), cx_reg_get(rb) & 0xFF); }
-        elif (op == 67) { store64(_cx_mem + cx_reg_get(ra), cx_reg_get(rb)); }
+        # memory: load8/16/32/64, store8/16/32/64. Every guest address goes through _cx_addr,
+        # which traps unless the WHOLE access lies in [8, _CX_MEM_SIZE). CHANGELOG [6.6.12]
+        elif (op == 64) { cx_reg_set(ra, load8(_cx_addr(cx_reg_get(rb), 1))); }
+        elif (op == 65) { cx_reg_set(ra, load64(_cx_addr(cx_reg_get(rb), 8))); }
+        elif (op == 66) { store8(_cx_addr(cx_reg_get(ra), 1), cx_reg_get(rb) & 0xFF); }
+        elif (op == 67) { store64(_cx_addr(cx_reg_get(ra), 8), cx_reg_get(rb)); }
         # v5.9.40 — sub-8-byte struct field load (parse_decl.cyr)
         # closes Phase 2c #2: cyrius core has only load8/load64
         # primitives, so wider loads compose from byte loads.
         elif (op == 68) {
-            var l16_addr = _cx_mem + cx_reg_get(rb);
+            var l16_addr = _cx_addr(cx_reg_get(rb), 2);
             cx_reg_set(ra, load8(l16_addr) | (load8(l16_addr + 1) << 8));
         }
         elif (op == 69) {
-            var l32_addr = _cx_mem + cx_reg_get(rb);
+            var l32_addr = _cx_addr(cx_reg_get(rb), 4);
             cx_reg_set(ra,
                 load8(l32_addr)
                 | (load8(l32_addr + 1) << 8)
@@ -278,13 +395,13 @@ fn cx_run(code, code_len): i64 {
                 | (load8(l32_addr + 3) << 24));
         }
         elif (op == 70) {
-            var s16_addr = _cx_mem + cx_reg_get(ra);
+            var s16_addr = _cx_addr(cx_reg_get(ra), 2);
             var s16_v = cx_reg_get(rb);
             store8(s16_addr,     s16_v & 0xFF);
             store8(s16_addr + 1, (s16_v >> 8) & 0xFF);
         }
         elif (op == 71) {
-            var s32_addr = _cx_mem + cx_reg_get(ra);
+            var s32_addr = _cx_addr(cx_reg_get(ra), 4);
             var s32_v = cx_reg_get(rb);
             store8(s32_addr,     s32_v & 0xFF);
             store8(s32_addr + 1, (s32_v >> 8) & 0xFF);
@@ -367,11 +484,16 @@ fn cx_run(code, code_len): i64 {
             # lib/hashseed.cyr is the stdlib's only caller of either on cx, and
             # its OS-RNG draw AND its clock fallback both failed, leaving every
             # cx process on the same published seed. CHANGELOG [6.6.8]
-            if (sn == 0) { if (s3 > 0) { s3 = _cx_mem + s3; } }
-            elif (sn == 1) { if (s3 > 0) { s3 = _cx_mem + s3; } }
-            elif (sn == 2) { if (s2 > 0) { s2 = _cx_mem + s2; } }
-            elif (sn == 318) { if (s2 > 0) { s2 = _cx_mem + s2; } }
-            elif (sn == 228) { if (s3 > 0) { s3 = _cx_mem + s3; } }
+            # 6.6.12 (CVE-58): each buffer is range-checked for its FULL length before it is
+            # translated — `read(fd, buf, n)` with buf + n past 1 MB had the host kernel write
+            # cxvm's own heap. An out-of-range buffer answers -EFAULT without reaching the host,
+            # which is what Linux answers a bad pointer with. CHANGELOG [6.6.12]
+            var sfault = 0;
+            var sx[1];
+            if (sn == 0 || sn == 1) { sfault = _cx_sysbuf(s3, s4, &sx); s3 = load64(&sx); }
+            elif (sn == 2) { sfault = _cx_syspath(s2, &sx); s2 = load64(&sx); }
+            elif (sn == 318) { sfault = _cx_sysbuf(s2, s3, &sx); s2 = load64(&sx); }
+            elif (sn == 228) { sfault = _cx_sysbuf(s3, 16, &sx); s3 = load64(&sx); }
             # --- arity-correct dispatch: issue the syscall with the guest's REAL
             # Linux arg-count so the PE arity-bucket router (EPE_SYSCALL_DYNAMIC:
             # argc4→read/write/open/lseek, argc2→close/exit) matches. cxvm's old
@@ -386,7 +508,8 @@ fn cx_run(code, code_len): i64 {
             # getrandom and clock_gettime are served by the host's stdlib (see
             # _cx_host_getrandom / _cx_host_clock_gettime) — the host's raw syscall does
             # not keep the guest's Linux contract on every host (v6.6.8).
-            if (sn == 318) { result = _cx_host_getrandom(s2, s3, s4); }
+            if (sfault != 0) { result = sfault; }
+            elif (sn == 318) { result = _cx_host_getrandom(s2, s3, s4); }
             elif (sn == 0 || sn == 1 || sn == 2 || sn == 8) { result = syscall(sn, s2, s3, s4); }
             elif (sn == 228) { result = _cx_host_clock_gettime(s2, s3); }
             elif (sn == 3 || sn == 60) { result = syscall(sn, s2); }
@@ -412,6 +535,17 @@ fn cx_run(code, code_len): i64 {
         elif (op == 253) {
             imm = rb | (rc << 8);
             cx_reg_set(ra, cx_reg_get(ra) | (imm << 48));
+        }
+        # An opcode this cxvm does not implement is a fault, not a no-op. The chain had no
+        # trailing arm until 6.6.12, so an older cxvm ran 6.6.10's 0x6A-0x6D as identity and
+        # a corrupt .cyx ran on silently. CHANGELOG [6.6.12]
+        else {
+            _cx_put("cxvm: unknown opcode 0x", 23);
+            _cx_put_hex2(op);
+            _cx_put(" at pc ", 7);
+            _cx_put_dec(_cx_fault_pc);
+            _cx_put("\n", 1);
+            syscall(60, 1);
         }
     }
 
@@ -475,6 +609,7 @@ var bytecode_and_data = _cx_code_len - 8;
 # Copy ALL of it into _cx_mem so any offset works as a memory address.
 var copy_len = bytecode_and_data;
 if (copy_len > _CX_MEM_SIZE) { copy_len = _CX_MEM_SIZE; }
+_cx_image_len = copy_len;
 var ci = 0;
 while (ci < copy_len) {
     store8(_cx_mem + ci, load8(_cx_code + 8 + ci));

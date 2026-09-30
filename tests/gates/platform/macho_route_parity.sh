@@ -83,6 +83,7 @@ allow_reason() {
                       echo "both|Darwin has no timerfd; timers are kqueue EVFILT_TIMER, a different API" ;;
     SYS_SIGNALFD4)    echo "both|Darwin has no signalfd (kqueue EVFILT_SIGNAL). NOTE the arm peer's SYS_SIGNALFD4=74 collides with the fsync row 74->95, so it LOOKS routed; it is not a route for this capability" ;;
     SYS_UTIMENSAT)    echo "both|Darwin has no utimensat; the wrapper returns -ENOSYS on macOS (see the v6.1.20 at-family note)" ;;
+    SYS_DUP3)         echo "both|Darwin has no dup3, and a renumber to dup2 would silently DROP the flags argument: arm64-macOS carried exactly that row (24 -> 90) until 6.6.12, so dup3(old, new, O_CLOEXEC) returned the fd with FD_CLOEXEC clear (measured on ecb). Both peers now implement sys_dup2 via x86 dup2 33 (routed -> 90 on both backends; the arm peer under #ifdef CYRIUS_TARGET_MACOS), so neither Mac emits a dup3 number and a raw one fails with SIGSYS / -ENOSYS on both" ;;
     SYS_EXECVEAT)     echo "both|Darwin has no execveat; execve(59) is routed and is what the macOS paths use" ;;
     SYS_MOUNT|SYS_UMOUNT2|SYS_REBOOT)
                       echo "both|admin syscalls with incompatible Darwin ABIs, unreachable from the macOS builds. NOTE the arm peer's SYS_UMOUNT2=39 collides with the x86-getpid row 39->20, so it LOOKS routed" ;;
@@ -95,6 +96,9 @@ allow_reason() {
                       echo "both|Darwin's cross-process copy is mach_vm_read/write on a task port, a Mach trap with a different object model, not a renumber. The wrappers decline with -78 on macOS (v6.6.8)" ;;
     SYS_CHROOT)       echo "both|Darwin has chroot(61), but no consumer needs it on macOS and it is not offered: sys_chroot declines with -78 there, so 161 is never emitted. A route is one _esx_arm row + one _msx row when a consumer asks (v6.6.8)" ;;
     SYS_MKNODAT)      echo "both|Darwin has no mknodat; its mknod(14)/mkfifo(132) take no dirfd, so a row would drop an argument silently. sys_mknodat declines with -78 on macOS (v6.6.8)" ;;
+    SYS_SETXATTR|SYS_LSETXATTR|SYS_FSETXATTR|SYS_GETXATTR|SYS_LGETXATTR|SYS_FGETXATTR|SYS_LISTXATTR|SYS_LLISTXATTR|SYS_FLISTXATTR|SYS_REMOVEXATTR|SYS_LREMOVEXATTR|SYS_FREMOVEXATTR)
+                      echo "both|Darwin HAS the xattr family, but not as a renumber: its getxattr/setxattr take two extra arguments (position, options) and its list/remove calls an options word, so a bare row would pass garbage in those slots. The wrappers decline with -78 under #ifdef CYRIUS_TARGET_MACOS, so neither Mac emits 188..199 / 1005..1016. An arg-extending route is the path if a consumer ever needs xattrs on macOS (6.6.12)" ;;
+    SYS_STATX)        echo "both|Darwin has no statx; sys_statx declines with -78 on macOS (sys_stat is the portable call), so 332/1291 are never emitted there (6.6.12)" ;;
     SYS_GETCWD)       echo "both|Darwin has no getcwd syscall (slot 326 is unused). The only issuer, programs/cyrius-init.cyr _cwd_path, takes an open(\".\") + fcntl(F_GETPATH) arm under #ifdef CYRIUS_TARGET_MACOS (as cbt/deps.cyr _abs_path has since 6.0.41), so neither Mac emits 79/17 — proven by compiling it in darwin_syscall_literals_routed.sh axis 2. Until 6.6.8 it did emit them: invisible here while this scan read lib/ only (v6.6.8)" ;;
     SYS_UNAME)        echo "both|Darwin has no uname(2); lib/sys.cyr reads the same fields via sysctl (routed as the private alias 1202->202)" ;;
     SYS_SYSINFO)      echo "both|Darwin has no sysinfo(2); lib/sys.cyr derives it from sysctl + gettimeofday (1202/1116, both routed). The x86 peer declares the name since 6.6.10, for the same portable-source reason as the arm peer" ;;
@@ -107,8 +111,6 @@ allow_reason() {
                       echo "both|Darwin has no setresuid/setresgid; the closest peers (setreuid/setregid) have different semantics, so a row would silently change behaviour" ;;
     # ---- same capability, different spelling: routed under the OTHER name ----
     SYS_CLONE)        echo "x86|the x86 peer implements sys_fork via bare SYS_FORK=57 (routed ->2); only the arm peer spells fork as clone(220). Same capability" ;;
-    SYS_DUP3)         echo "x86|the x86 peer implements sys_dup2 via bare SYS_DUP2=33 (routed ->90); only the arm peer, which has no dup2, spells it dup3(old, new, 0) (24 ->90). Same capability. Darwin has no dup3, so there is no x86 row to add: a 292 -> dup2 row would silently drop the flags argument (6.6.10 declared the name for surface parity)" ;;
-    SYS_FACCESSAT)    echo "x86|the x86 peer implements sys_access via bare SYS_ACCESS=21 (routed ->33); only the arm peer, which has no access(2), spells it faccessat (269 ->466). Same capability. A raw syscall(SYS_FACCESSAT, ...) on Intel-Mac is unrouted (SIGSYS, -78 with SIGSYS ignored) until an EMACHO_SYSXLAT 269 -> 466 row exists (6.6.10 declared the name for surface parity)" ;;
     *) echo "" ;;
     esac
 }

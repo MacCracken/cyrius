@@ -12,6 +12,16 @@
 # dir_list, is_symlink, access, xmkdir_p's directory probe) had the same Latin-1 copy, so a name
 # the emitter could open could not be listed or stat'ed. CHANGELOG [6.6.11]
 #
+# 6.6.12 — THE READ SIDE OF THE LONG PATH. The emitter's path reroutes learned `\\?\` at 6.6.11,
+# but GetFileAttributesW (0xF019) and FindFirstFileW (0xF016) still took a path the STDLIB had
+# widened, unprefixed, so real Windows applied MAX_PATH: measured on cass, for an existing
+# 272-byte directory `is_dir` = 0 and `dir_list_checked` = -1, and so `sys_access` = -1 and
+# `xmkdir_p` of it = -1 (its idempotence gone). Both reroutes now take the narrow path and widen
+# it like open does. Wine does NOT enforce MAX_PATH, so only real Windows reddens without the
+# fix; every POSIX target is the oracle. The same holds for is_symlink of a link on a long path
+# and for sys_symlink's file-or-directory probe of a long target (both rows run on Windows too).
+# CHANGELOG [6.6.12]
+#
 # Fixtures are per-pid names in the cwd, removed at the end — and REMOVING them is itself a row:
 # `xrmdir` of the deepest directory succeeds only if nothing (a truncated-name file) is left in it.
 include "lib/assert.cyr"
@@ -121,6 +131,51 @@ fn main(): i64 {
     assert_eq(xmkdir(d3, 493), 0, "mkdir level 3 (past MAX_PATH-12 on Windows)");
     assert_eq(file_write_all(lf, "long\n", 5), 5, "open(O_CREAT) + write at the long path");
     assert_eq(_reads_back(lf, "long\n", 5), 1, "it reads back at the long path");
+    assert_eq(is_dir(str_from(d3)), 1, "is_dir of the long directory is 1 (6.6.12)");
+    assert_eq(_count_named(d3, "target_file.txt"), 1, "dir_list of the long directory finds the file");
+    assert_eq(xmkdir_p(d3, 493), 0, "xmkdir_p of the EXISTING long directory is 0 (idempotent)");
+    var scr[4096];
+    var nm[256];
+    var ofs: i64[8];
+    assert_eq(dir_list_into(str_from(d3), &scr, 4096, &nm, 256, &ofs, 8), 1,
+      "dir_list_into of the long directory: 1 entry");
+    assert_eq(streq(&nm + load64(&ofs), "target_file.txt"), 1, "and it is target_file.txt");
+    #ifndef CYRIUS_TARGET_AGNOS
+    assert_eq(sys_access(lf, 0), 0, "access() of the long file is 0");
+    assert_lt(sys_access(_cat(d3, "/missing.txt"), 0), 0, "access() of a missing long path is -1");
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    var lnk = _cat(d3, "/link_to_target");
+    assert_eq(xsymlink("target_file.txt", lnk), 0, "a symlink at the long path");
+    assert_eq(is_symlink(str_from(lnk)), 1, "is_symlink of it is 1");
+    assert_eq(is_symlink(str_from(lf)), 0, "is_symlink of the long regular file is 0");
+    assert_eq(xunlink(lnk), 0, "the symlink is removed");
+    #endif
+    # Every target, Windows included: a link that ENDS UP on a long path. sys_symlink cannot create
+    # one there on Windows, so it is made short and MOVED in (MoveFileExW moves the link itself).
+    # On cass at 6.6.11 is_symlink of it was 0 — GetFileAttributesW/FindFirstFileW hit MAX_PATH.
+    var sl = _cat(root, "/short_link");
+    assert_eq(xsymlink("target_file.txt", sl), 0, "a short symlink to be moved onto the long path");
+    var ll = _cat(d3, "/moved_link");
+    assert_eq(file_rename(sl, ll), 0, "the symlink is moved onto the long path");
+    assert_eq(is_symlink(str_from(ll)), 1, "is_symlink of a link on a long path is 1 (6.6.12)");
+    assert_eq(is_symlink(str_from(lf)), 0, "is_symlink of the long regular file is 0");
+    assert_eq(_count_all(d3), 2, "dir_list of the long directory: the file and the link");
+    assert_eq(xunlink(ll), 0, "the moved symlink is removed");
+    # A DIRECTORY link whose target is the long directory. On Windows sys_symlink probes the target
+    # to pick SYMBOLIC_LINK_FLAG_DIRECTORY; at 6.6.11 the probe hit MAX_PATH, so it made a FILE link
+    # to a directory, which is_dir (GetFileAttributesW on the link, not followed) reports as 0. On
+    # POSIX is_dir follows the link: the target must resolve.
+    var dl = _cat(root, "_dir_link");                      # beside the root: d3 resolves from here
+    assert_eq(xsymlink(d3, dl), 0, "a symlink to the long directory");
+    assert_eq(is_symlink(str_from(dl)), 1, "it is a symlink");
+    assert_eq(is_dir(str_from(dl)), 1, "it is a DIRECTORY link (the kind probe saw the long target)");
+    #ifdef CYRIUS_TARGET_WIN
+    assert_eq(xrmdir(dl), 0, "the directory link is removed (RemoveDirectoryW)");
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    assert_eq(xunlink(dl), 0, "the directory link is removed");
+    #endif
     var cut[272];
     memcpy(&cut, lf, 260);
     store8(&cut + 260, 0);

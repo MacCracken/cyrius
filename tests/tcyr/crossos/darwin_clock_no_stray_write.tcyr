@@ -8,14 +8,23 @@
 # stored mach time at whatever address rdx still held — normally the previous call's third
 # argument — into an image whose one __TEXT segment is rwx. Measured on ach: a sentinel passed as
 # the third argument of the call just before clock_now_ms() came back as the box's uptime in ns,
-# 3 runs of 3; it is also what garbled an assert message mid-test on ach at 6.6.8. The fix is
-# `xor edx, edx` (mach time out-pointer = NULL).
+# 3 runs of 3; it is also what garbled an assert message mid-test on ach at 6.6.8. 6.6.10 fixed
+# it with `xor edx, edx` (out-pointer = NULL); since 6.6.12 (Q4, below) the emitter instead points
+# rdx at its OWN zeroed 8-byte stack slot (`push 0; mov rdx, rsp`) and reads mach time back from
+# it — the out-pointer is never NULL-or-stale, and the only memory written is that slot.
 #
 # ⭐ WHY `_take3(0, 0, &sentinel)` FIRST. Priming rdx needs a call whose third argument is the
 # sentinel's address and which then leaves rdx alone; a cyrius call does exactly that (the
 # probe that proved the defect used this shape). The raw-228 group then issues the syscall in
 # the SAME function straight after the priming call, so no intervening code can clear rdx by
 # accident and make the test pass for the wrong reason.
+# 6.6.12 (Q4) — THE MONOTONIC CLOCK IS MONOTONIC. The same emitter dropped the clock id and
+# returned the gettimeofday composition for EVERY id, so on Intel-Mac clock_now_ns() (id 4) was
+# the wall clock: epoch-scale, stepping under NTP (ach: ids 4 and 0 agreed to within 1 ms). It
+# now returns the mach time gettimeofday copies out through its third argument for every id but
+# 0. The groups below assert the portable shape of that promise: clock_now_ns() is NOT
+# epoch-scale while clock_epoch_ns() IS, and the two advance at the same rate across a sleep
+# (which also catches a mach timebase that is not the 1:1 ns the x86 reroute assumes).
 # ⭐ WHY EVERY TARGET RUNS IT. "Reading the clock writes nothing else" is a portable promise; on
 # the other targets the assertions simply hold. The raw 228 spelling is Darwin-only (it means
 # something else on agnos, and the PE route returns ms), so that group is guarded.
@@ -68,7 +77,33 @@ fn main(): i64 {
     assert(r > 0, "clock_now_ns() > 0");
     assert_eq(sentinel, 0x4141414141414141, "the local sentinel is untouched");
 
+    #ifndef CYRIUS_TARGET_AGNOS
+    # agnos' epoch clock is whole RTC seconds (or 0 = unknown), so neither assertion holds there.
+    test_group("clock_now_ns() is the monotonic clock, clock_epoch_ns() the wall clock");
+    var ep0 = clock_epoch_ns();
+    var mo0 = clock_now_ns();
+    assert(ep0 > 1500000000000000000, "clock_epoch_ns() is epoch-scale (after 2017)");
+    assert(mo0 < 1000000000000000000, "clock_now_ns() is NOT epoch-scale (was: wall time on x86-macOS)");
+    sleep_ms(200);
+    var ep1 = clock_epoch_ns();
+    var mo1 = clock_now_ns();
+    var dep = ep1 - ep0;
+    var dmo = mo1 - mo0;
+    assert(dmo >= 100000000, "clock_now_ns() advanced >= 100 ms across sleep_ms(200)");
+    assert(dmo < 5000000000, "and < 5 s (a wrong timebase scales it)");
+    assert(dmo * 2 > dep, "monotonic delta > half the wall delta");
+    assert(dep * 2 > dmo, "wall delta > half the monotonic delta");
+    #endif
+
     #ifdef CYRIUS_TARGET_MACOS
+    test_group("Darwin: raw syscall(228, 0/4) — id 0 is wall time, id 4 is not");
+    var tsr[16];
+    var w0 = syscall(228, 0, &tsr);
+    var m4 = syscall(228, 4, &tsr);
+    assert(w0 > 1500000000000000000, "syscall(228, 0) is epoch-scale ns");
+    assert(m4 > 0, "syscall(228, 4) > 0");
+    assert(m4 < 1000000000000000000, "syscall(228, 4) is NOT epoch-scale (was: == id 0 on x86-macOS)");
+
     test_group("Darwin: raw syscall(228, 4, &ts) straight after the priming call");
     _sent_g = 0x4141414141414141;
     var t1 = _primed_raw_228(&_sent_g);

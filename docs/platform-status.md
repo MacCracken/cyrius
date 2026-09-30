@@ -60,35 +60,39 @@ the per-test SSH connections into one).
 
 ## cyrius-x guest contract (cxvm)
 
-*Stated at 6.6.10 (the roadmap's "cxvm guest-address bounds" item); the matching one-line
-statement is in `programs/cxvm.cyr`'s header.*
+*Stated at 6.6.10 (the roadmap's "cxvm guest-address bounds" item), revised at 6.6.12 when cxvm
+gained its memory and stack traps; the matching statement is in `programs/cxvm.cyr`'s header.*
 
-**cxvm is an interpreter for TRUSTED bytecode. It is not a sandbox and gives a guest no
-isolation from the host process.** Concretely, as of 6.6.10:
+**cxvm is an interpreter for TRUSTED bytecode. It is not a sandbox: a guest can ask the host
+kernel for anything the cxvm process may do.** What it does and does not guarantee, as of 6.6.12:
 
-- **No guest-address bounds checks.** Every load and store (`load8/16/32/64`,
-  `store8/16/32/64`) computes `_cx_mem + <guest register>` and dereferences it with no range
-  check against the 1 MB data segment, so a guest address outside `[0, _CX_MEM_SIZE)` reads or
-  writes the HOST's memory — the register file, the call and data stacks, the loaded code,
-  cxvm's own heap. The guest's data/expression stack and call stack (1024 entries each) are not
-  bounds-checked either, so deep enough recursion walks off them the same way.
-- **The syscall opcode (0x70) is a pass-through.** The six translated calls add `_cx_mem` to
-  their pointer argument without checking it; `getrandom` / `clock_gettime` are host-served;
-  **every other number goes to the host kernel as-is, with the guest's raw register values** —
-  so a guest can issue any syscall the cxvm process may (open/unlink/execve/kill …) and pass it
-  host addresses.
-- **Control flow is only partly checked.** `callind` traps a non-positive target (v6.5.13) and
-  a program counter at or past the end of the code halts the run, but a `jmp` / `call` / `ret`
-  to a NEGATIVE offset is not refused — the interpreter then decodes host memory in front of the
-  code as instructions.
+- **The VM keeps a guest inside its own memory (6.6.12, CVE-58).** Every load and store
+  (`load8/16/32/64`, `store8/16/32/64`) is checked for its FULL width against the data segment
+  `[8, _CX_MEM_SIZE)`; `[0, 8)` is refused as the null page (guest 0 is the in-memory copy of the
+  bytecode, so a null store used to succeed silently). The data and call stacks (65536 entries
+  each) trap on overflow and underflow; the guest stack (`sub sp`, growing down from 1 MB) traps
+  before it reaches the loaded image — the program's globals and its `lib/alloc_cx.cyr` heap; a
+  negative program counter traps; an opcode cxvm does not implement traps. Each trap prints
+  `cxvm: <what> <value> at pc <N>` (or `cxvm: unknown opcode 0xNN at pc <N>`) and exits 1.
+  Before 6.6.12 none of this was checked: a guest address past 1 MB read and wrote cxvm's own heap
+  (the register file, the stacks, the loaded code), the 513th nested call overwrote the loaded
+  code, and an unknown opcode was a silent no-op.
+- **The syscall opcode (0x70) is a pass-through.** The translated calls (`read` 0, `write` 1,
+  `open` 2) check their buffer — the whole `[buf, buf + count)`, or a path up to its NUL — and
+  answer `-EFAULT` without reaching the host when it leaves the data segment (6.6.12);
+  `getrandom` (318) / `clock_gettime` (228) are host-served with the same check. **Every other
+  number goes to the host kernel as-is, with the guest's raw register values** — so a guest can
+  issue any syscall the cxvm process may (open/unlink/execve/kill …) and pass it host addresses.
+- **Control flow:** `callind` traps a non-positive target (v6.5.13), a negative pc traps (6.6.12),
+  and a program counter at or past the end of the image halts the run.
 
-**What that means for untrusted bytecode:** running a `.cyx` you did not build (or whose
-producer you do not trust) is equivalent to running a native binary with cxvm's privileges.
-Treat `.cyx` files like executables: verify their origin (e.g. a detached signature over the
-file) before running them, and run cxvm under the OS's own isolation (a separate user, a
-container, seccomp / sandbox-exec, a job object) when the input is not yours. The bytecode
-format has no verifier and none is planned for 6.x; a bounds-checked cxvm would be a new design
-(checked address translation on every memory op, a syscall allowlist), not a patch.
+**What that means for untrusted bytecode:** because of the syscall pass-through, running a `.cyx`
+you did not build (or whose producer you do not trust) is equivalent to running a native binary with
+cxvm's privileges. Treat `.cyx` files like executables: verify their origin (e.g. a detached
+signature over the file) before running them, and run cxvm under the OS's own isolation (a separate
+user, a container, seccomp / sandbox-exec, a job object) when the input is not yours. The bytecode
+format has no verifier and none is planned for 6.x; a syscall allowlist would be a new design, not a
+patch. `tests/gates/codegen/cx_tailcall_and_vm_traps.sh` holds every trap above.
 
 ## Closeout audit checklist
 

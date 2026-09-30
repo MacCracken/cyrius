@@ -527,6 +527,211 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   failures, and each of five mutations in its header RED). The guide documents the form beside the
   `store64` idiom (`docs/guides/cyrius-guide.md`, "Subscripts"). Every other program compiles
   byte-identical (490 files: `tests/tcyr/**` + `programs/`); the unreachable-fn floor stays 73.
+- **CVE-58: cxvm guest bytecode could write cxvm's host memory (B06, item Q6).** **Root cause:**
+  `programs/cxvm.cyr` checked nothing a guest controls. Every load/store was `_cx_mem + reg`, so a
+  guest address past the 1 MB data segment (or negative) read and wrote cxvm's own heap — the register
+  file, the stacks, the loaded code — and guest address 0, the in-memory copy of the bytecode, stored
+  silently (`store64(0, 5)` exited 9 on cxvm, 139 on x86). The 1024-entry call stack had no bound, so
+  the 513th nested frame overwrote the loaded code (non-tail depth 1000 gave rc 231, 5000 gave 135); the
+  data stack likewise. `read`/`write`/`getrandom`/`clock_gettime` buffers were translated with no
+  range check, so `read(0, buf, n)` with `buf + n` past 1 MB had the HOST kernel write cxvm's heap. An
+  unknown opcode was a silent no-op (no trailing arm), and a negative pc decoded host memory as code.
+  **Fix:** every load/store goes through `_cx_addr`, which traps unless the whole access lies in
+  `[8, _CX_MEM_SIZE)`; the translated syscall buffers are range-checked for their full length (a path up
+  to its NUL) and answer `-EFAULT` without reaching the host; both VM stacks trap on overflow and
+  underflow and hold 65536 entries (512 KiB each), so the guest's own 1 MB, not the host arrays, bounds
+  recursion (depth 1000 and 5000 now return the right value); `sub sp` traps before the guest stack
+  reaches the loaded image (its globals and `lib/alloc_cx.cyr` heap); a negative pc traps; an unknown
+  opcode traps. Each trap prints `cxvm: <what> <value> at pc <N>` (`cxvm: unknown opcode 0xNN at pc
+  <N>`) and exits 1. No `.cyx` format bump (default taken): a newer `.cyx` on an older cxvm is refused
+  only by the new cxvm's trap. The syscall opcode still passes every other number to the host raw, so
+  cxvm stays "not a sandbox"; `docs/platform-status.md` "cyrius-x guest contract" is restated. **Held
+  by** `tests/gates/codegen/cx_tailcall_and_vm_traps.sh` axes B, C and D (24 rows with A and E; every
+  trap reddened by its own revert, and with the call-stack bound removed the overflow row reports
+  `unknown opcode 0x04` — the stack writing the loaded code, the CVE in one row).
+
+### Fixed
+
+- **cx: `thread_join` issued FUTEX_WAIT for a nonzero handle (B06, item S-B4).** **Root cause:** 6.6.11
+  guarded `thread_create`, `thread_create_detached`, `gettid` and the five channel futex sites for cx,
+  but not `thread_join`, whose loop hands `SYS_FUTEX` a guest offset whenever the handle's tid word is
+  nonzero — a spin on a Linux host (measured: `timeout 5` fired, rc 124), SIGSYS on a Darwin host.
+  **Fix:** `#ifdef CYRIUS_TARGET_CX return -1` at the top of `thread_join` (no thread can exist on cx,
+  so this also skips `munmap_stack`). **Held by** `stdlib_modules_self_sufficient.sh` axis 7's new
+  join probe (7 under both the instrumented and the plain cxvm; mutant z: guard removed -> 140 / 124).
+  The cx self-sufficiency floor is unchanged at 69/108.
+
+- **cx: `return f(args);` is a real tail call (B06, item Q6).** **Root cause:** cx `ETAILJMP`
+  (`src/backend/cx/emit.cyr`) emitted a normal call + epilogue, under a comment claiming a jmp broke
+  when the arguments contain nested calls. They do not: the shared tail path (`parse_fn.cyr`
+  PARSE_RETURN) has popped every argument into r3.. before `ETAILJMP`, so the data stack is balanced.
+  Every tail recursion therefore grew both VM stacks: `tr(n - 1, acc + 1)` gave rc 0 at depth 512 and
+  a garbage rc 1 at 513, 1000 and 20,000,000 (the same source exits 0 on x86). **Fix:** `mov sp, fp;
+  popc fp; jmp f` — the x86 `mov rsp, rbp; pop rbp; jmp` shape — with the jmp patched by the same
+  ftype-2 fixup as a call. The 20M premise repro exits 0 on cxvm (29 s, interpreted). No frontend
+  change was needed, so no `parse_fn.cyr` hand-off. **Held by**
+  `tests/gates/codegen/cx_tailcall_and_vm_traps.sh` axis A (a 2M-deep self tail recursion, mutual
+  recursion, nested-call arguments, a >6-arg call and a thin/wide frame ping-pong, each = native).
+
+- **cx: a store to a narrow slot wrote 8 bytes (B06, item V1-cx — V1's cx half; B01 is the frontend
+  half).** **Root cause:** cx `EVSTORE_W` / `EFLSTORE_W` ignored the width and emitted `store64`, so a
+  store to a packed narrow global (`var a: u8; var b: u8;` puts `b` at `a + 1`) wrote over its
+  neighbours — `A = 250` zeroed `B`, and on B01's row shapes cxvm exited 59 where every native target
+  exits 0. The width-aware loads read 8 bytes and masked: the right value, but reaching past the slot.
+  **Fix:** both directions use the sized cxvm opcodes (`load8/16/32`, `store8/16/32`), and a signed
+  load sign-extends after them — the x86 `ESTORE8/16/32` and `movzx`/`movsx` shape. **Held by**
+  `cx_tailcall_and_vm_traps.sh` axis E (B01's rows inlined, statement-arm stores on packed u8/u16/
+  u32/i8 globals, a narrow local seen through its address; each = native). With B01 applied, B01's
+  `tests/tcyr/crossos/narrow_slot_width.tcyr` runs 53/53 on cxvm.
+
+- **x86-macOS: `faccessat` was unrouted (SIGSYS) (B07, item Q3).** **Root cause:** `EMACHO_SYSXLAT`
+  (`src/backend/x86/emit.cyr`) had no 269 row, although 6.6.10 declared `SYS_FACCESSAT` on the x86
+  peer and arm64-macOS has routed `269 → 466` for years; `syscall(SYS_FACCESSAT, AT_FDCWD, "/", 0, 0)`
+  died with SIGSYS on ach (rc 140) while the same source worked on ecb. **Fix:** `_msx32(S, 269,
+  0x20001D2)`, a pure renumber (AT_FDCWD is already Darwin's -2 on macOS). `macho_route_parity.sh`
+  drops the `SYS_FACCESSAT` allow-list row. **Held by**
+  `tests/tcyr/crossos/darwin_unrouted_syscall_faults.tcyr` (faccessat on `/` = 0 and on a missing
+  path = -ENOENT; the 6.6.11 compiler gives -78/-78 on ach).
+
+- **arm64-macOS: `dup3` silently dropped its flags (B07, item Q3).** **Root cause:** ESYSXLAT's Mach-O
+  arm renumbered dup3 24 to dup2 90 unconditionally; Darwin has no dup3 and dup2 ignores x2, so
+  `dup3(1, 51, O_CLOEXEC)` returned fd 51 with FD_CLOEXEC clear (measured on ecb). **Fix:** the 24 row
+  is gone, so a raw dup3 fails as it does on x86-macOS (292, unrouted): SIGSYS, or -ENOSYS with
+  SIGSYS ignored. The arm peer's `sys_dup2` (`lib/syscalls_aarch64_linux.cyr`) issues x86 dup2 33
+  under `#ifdef CYRIUS_TARGET_MACOS` (routed 33 → 90); the CLI's fork/exec plumbing (`cbt/build.cyr`)
+  was re-verified on ecb (`cyrius build` / `cyrius run`). `macho_route_parity.sh` re-scopes
+  `SYS_DUP3` to both backends. **Held by** `darwin_unrouted_syscall_faults.tcyr` (dup3 with
+  O_CLOEXEC = -78 and no fd 51 created; `sys_dup2(1, 50)` = 50 with FD_CLOEXEC clear; the 6.6.11
+  compiler gives 51 on ecb).
+
+- **x86-macOS: `clock_now_ns()` was the wall clock (B07, item Q4).** **Root cause:**
+  `EMACHO_CLOCK_X86` dropped the clock id and composed ns from the gettimeofday timeval for EVERY id,
+  so the monotonic read (id 4) was epoch-scale REALTIME that steps under NTP (ach: ids 4 and 0 agreed
+  to within 1 ms). **Fix:** the emitter keeps the id, points gettimeofday's third argument (the
+  `mach_absolute_time` out-pointer) at an 8-byte stack slot pushed as 0, and returns that mach time
+  for every id but 0 — ns at Intel's 1:1 timebase (ach: Δmach/Δµs ≈ 1000). Id 0 keeps the timeval
+  path, which `clock_epoch_*`, `tls_native_conn` and sigil's cert window depend on. rdx is never
+  NULL-or-stale (CVE-51 stays closed). **Held by** `darwin_clock_no_stray_write.tcyr`, which now also
+  asserts on every target that `clock_now_ns()` is not epoch-scale while `clock_epoch_ns()` is and
+  that both advance at the same rate across a 200 ms sleep, and on Darwin that raw `syscall(228, 4)`
+  is not epoch-scale (the 6.6.11 compiler fails both on ach); `macho_clock_buffer_contract.sh`'s
+  second property is now "rdx = the emitter's own zeroed slot, before the syscall" (hand-off to H).
+
+- **Windows: `is_dir`, `dir_list`, `is_symlink`, `sys_access` and `xmkdir_p` refused long paths, and
+  `dir_list_into` had no Windows arm (B08, item S-B3).** **Root cause:** 6.6.11 gave the narrow-path
+  reroutes (open, mkdir, unlink, rename, rmdir) one shared `_pe_widen_path` — CP_UTF8 decode, then
+  GetFullPathNameW and a `\\?\` prefix at 248+ units — but GetFileAttributesW (0xF019) and
+  FindFirstFileW (0xF016) still took a path the STDLIB had widened, unprefixed, so Windows applied
+  MAX_PATH. Measured on real cass: for an existing 272-byte directory (created by mkdir, listed by
+  PowerShell) `is_dir` = 0, `dir_list_checked` = -1, `dir_list` empty, `sys_access` = -1 and
+  `xmkdir_p` = -1 (its idempotence gone); wine does not enforce MAX_PATH, so only real Windows showed
+  it. `dir_list_into` (lib/fs.cyr) had only the agnos and open + getdents64 arms, so on PE it answered
+  -1 for every directory, `.` included. And an EMPTY path listed as `\*` — the drive root (20 entries
+  on cass). **Fix:** 0xF016 and 0xF019 take the NARROW UTF-8 path and widen it through
+  `_pe_widen_path` (`_pe_path_call1`, `src/backend/x86/emit.cyr`), like open; lib/fs_win.cyr builds
+  FindFirstFileW's `<path>\*` in UTF-8 (`_fs_zpath`: exactly the Str's bytes, an embedded NUL or an
+  empty path refused) and the 509/511/519/260/512-byte caps and the five stdlib widens are gone
+  (`_fs_widen` is removed; `sys_symlink` builds its target-kind probe path narrow). `dir_list_into`
+  gains a Windows arm (`_dir_list_into_win`: FindFirstFileW/FindNextFileW into the caller's buffers,
+  the WIN32_FIND_DATAW in `scratch`, the same -1/-2/-3/-4 contract, nothing allocated). **Held by**
+  `tests/tcyr/crossos/pe_path_utf8_long.tcyr` (long-path is_dir, dir_list, dir_list_into, sys_access,
+  xmkdir_p idempotence, a symlink at the long path on POSIX, and on EVERY target a link moved onto the
+  long path (`is_symlink` = 1) and a directory link to the long directory (`is_dir` = 1: on Windows
+  `sys_symlink`'s kind probe saw the target); the 6.6.11 compiler + stdlib FAIL 10 rows on cass, and
+  reverting only `is_symlink`'s PE arm or only the narrow kind probe fails 2 rows each on cass and
+  wine), `tests/tcyr/crossos/fs_dirlist.tcyr` (dir_list_into's contract and the empty path
+  on every target; 6.6.11 FAILS 9 rows on cass), and `pe_open_posix_semantics.sh` axis 2b, which now
+  counts GetFileAttributesW and FindFirstFileW as narrow paths (hand-off to H; reverting either
+  emitter reddens it). The cass PE self-host is byte-identical (the include opens share the widen).
+
+- **Windows: a directory listing that failed part-way came back complete (B08, item Q5).** **Root
+  cause:** FindNextFileW returns 0 both at the end of a directory and on a failure, and only
+  GetLastError tells them apart; the PE backend had no reroute for it (only ws2_32's WSAGetLastError,
+  0xF024), so `_dir_list_into_vec` (lib/fs_win.cyr) treated every 0 as the end and returned success
+  with a shorter listing, which dir_walk, find_files and `cyrius test` then trusted. **Fix:** a new
+  reroute, `syscall(0xF04B)` → kernel32!GetLastError (argc 1; `EGETLASTERR_PE`, return-0 stubs on the
+  aarch64 and cx backends), routed at the end of `_PE_ROUTE_SOCK` so `_PARSE_FACTOR_IMPL` gains no
+  reference (cybs's per-function limit), and named in the routed-number note — whose hand-kept byte
+  count is corrected with it (1550 → 1584; left alone it silently cut the new entry off). Both
+  FindNextFileW loops read it BEFORE FindClose and answer -1 unless it is ERROR_NO_MORE_FILES (18),
+  the fail-closed answer 6.6.10 gave a FindFirstFileW failure. 0xF04B is used by no other 0xF0xx
+  table. **Held by** the new `tests/gates/platform/pe_last_error_reroute.sh` (routed at argc 1 and
+  reported at argc 2, the note printed whole, the import, every FindNextFileW loop reading
+  GetLastError then FindClose then testing 18, no stdlib-widened buffer handed to 0xF016/0xF019, and
+  fs_dirlist.tcyr under wine; mutation ledger in its header) and `fs_dirlist.tcyr`'s Windows rows
+  (GetLastError after a missing name is 2, after a missing parent 3; a listable directory's
+  `dir_list_checked` is 0). No row can make FindNextFileW fail part-way, on wine or on cass: the
+  gate's static axis pins the error branch.
+
+- **ELF-aarch64: the xattr family, fchown and statx could not be reached by number, and no peer
+  named them (B09, item Q1).** **Root cause:** in `ESYSXLAT`'s aarch64-Linux arm
+  (`src/backend/aarch64/emit.cyr`) the x86-compat rows claim native aarch64 numbers as row SOURCES
+  — fstat 5, lstat 6, poll 7, mmap 9, mprotect 10, munmap 11, brk 12, ioctl 16, getsockopt 55 — so a
+  native-numbered call was rewritten before the `svc`. Measured under `qemu-aarch64 -strace`: raw 5
+  (setxattr) ran fstat, 6 newfstatat, 7 ppoll, 9 (lgetxattr) mmap, 10 (fgetxattr) mprotect, 11
+  munmap, 12 brk, 16 (fremovexattr) ioctl, 55 (fchown) getsockopt. Neither Linux peer declared a
+  name for any of them, so consumers wrote numbers: kriya returned -ENOSYS by hand from its four
+  aarch64 xattr calls and routed fchown through fchownat. **Fix:** fifteen wrappers —
+  `sys_{,l,f}setxattr`, `sys_{,l,f}getxattr`, `sys_{,l,f}listxattr`, `sys_{,l,f}removexattr`,
+  `sys_fchown`, `sys_statx`, `sys_getrlimit` — in `lib/syscalls_linux_common.cyr`, with -38 stubs
+  in the PE and agnos peers and `SYS_*` names in the x86_64, aarch64, x86-macOS and Windows peers.
+  The aarch64 peer spells the xattr family, fchown and statx through the **private alias band**
+  (1005..1016, 1055, 1291 = 1000 + native), renumbered by fourteen pure rows at the TAIL of the ELF
+  chain, each below the compat row its product would re-match. getxattr 8, flistxattr 13,
+  removexattr 14, lremovexattr 15 and statx 291 are not row sources, but take the band too:
+  `programs/gen_syscall_xlat.cyr`'s `is_native_a64` drops the raw-literal warning row for any
+  number the aarch64 peer declares below 1000, so a native `SYS_GETXATTR = 8` would have silenced
+  the "raw x86 lseek (8)" warning and `SYS_STATX = 291` the "raw x86 epoll_create1 (291)" one.
+  getrlimit takes its native 163 (neither a row source nor a product). **Darwin:** `sys_fchown`
+  and `sys_getrlimit` are real on both Macs — `_esx_arm` rows 1055→123 and 163→194, `_msx` rows
+  93→123 and 97→194 (numbers read off ecb's SDK `sys/syscall.h`); the xattr calls and `sys_statx`
+  decline with -78, because Darwin's xattr calls take two extra arguments (position, options) and
+  Darwin has no statx. `src/common/syscall_xlat.cyr` is regenerated: twelve new raw-literal
+  warning rows (x86 188..197 for the xattr calls, 332 statx, 97 getrlimit — raw 97 on aarch64 is
+  unshare). `docs/api-surface.snapshot` gains the 45 public fns. **Held by** the new
+  `tests/tcyr/crossos/xattr_statx_rlimit_fchown_wrappers.tcyr` (Linux: every xattr call's ENOENT
+  and EBADF, a user.* round trip through fd, path and symlink — the l* variants told apart where
+  the kernel refuses user.* on the link — statx agreeing with `sys_stat`, fchown(fd, -1, -1) = 0,
+  getrlimit filling struct rlimit; macOS: the -78 declines plus real fchown/getrlimit; PE and
+  agnos: -38 for all fifteen). Green on the x86 host, qemu-aarch64, wine, pi, ecb, ach, cass and
+  the agnosticos container (and the agnos build under the fake-kernel tracer, which records no
+  syscall from the stubs). Deleting the fourteen ELF rows fails 49 of its 62 rows under
+  qemu-aarch64; deleting the x86 fchown `_msx` row kills it with SIGSYS on ach. Also held by
+  `esysxlat_row_order.sh` (new: every alias the aarch64 peer declares has its `1NNN→NNN` row, with
+  the two Darwin-only aliases 1116/1202 exempt by reason — deleting the statx row or moving
+  1009→9 above mmap 9→222 reddens it), `macos_peer_surface_parity.sh` axis B (the x86-macOS probe
+  now calls the new wrappers and stays warning-free; deleting the fchown `_msx` row or taking
+  `sys_statx` out of its macOS decline reddens it), `macho_route_parity.sh` (the xattr family and
+  statx allow-listed on both Macs with the reason) and `syscall_peer_kernel_agreement.sh`'s pinned
+  ambiguous set (14: x86 fchown 93 is aarch64 exit, lremovexattr 198 / fremovexattr 199 aarch64
+  socket / socketpair — hand-off to H). A native `SYS_GETXATTR = 8` in the aarch64 peer reddens
+  that gate (`SYS_LSEEK 8 SYS_GETXATTR`). **Size cost (expected, not a regression):** ESYSXLAT's
+  rows are emitted inline at every syscall site, constant number or not, so the fourteen new ELF
+  rows add 14 × 12 B = **168 B per ELF-aarch64 syscall site** — the native aarch64 compiler grows
+  ~66 KB (1,775,144 → 1,841,016 B, +3.7 %, `main_aarch64_native.cyr` cross-built at d54df0c8^ vs
+  B09's head), which shows up when `build/cycc-native-aarch64` is regenerated. The x86 `cycc`
+  the release bench measures is unaffected by these rows. **Follow-up (post-tag):** kriya 1.7.4 swaps its
+  aarch64 declines, the k_fchown fchownat workaround and its raw 8/291/163 numbers for these
+  wrappers once cyrius 6.6.12 is tagged.
+
+### Changed
+
+- **`file_read_whole` passes the errno through `*len_out` (B08, item S2).** **Root cause:** the
+  unbounded wrapper (`lib/io.cyr`) overwrote the negative errno `file_read_whole_max` had stored with
+  0 (`if (buf == 0) { store64(len_out, 0); }`), so the one form with no bound to pick could not say
+  WHICH failure it was (a missing file, a directory, a refused allocation). A read error was never
+  mistakable for an empty file — the returned buffer tells them apart (0 vs a NUL-terminated buffer
+  with length 0) — only the errno was lost. **Fix:** the line is gone; on failure the wrapper returns
+  0 with `*len_out` = the negative errno, `file_read_whole_max`'s contract. **Survey:** all 24
+  in-tree callers (cbt, programs, `lib/regression.cyr`, the `lib/sigil.cyr` fold) test the buffer for
+  0 before reading the length, and so does every ecosystem caller outside the vendored `lib/` copies
+  (kavach's tests, sigil's `certpin_core.cyr` and three tests, cyrius-mine-cart's `main.cyr` and
+  `tools/film.cyr`, aethersafha's `brace_balance.tcyr`); the one test that loops on the length
+  without testing the buffer (sigil's `audit_log.tcyr`, `while (qi < la)`) runs zero times on a
+  negative as it did on 0. **Held by**
+  `tests/tcyr/crossos/file_read_whole_bounded.tcyr` (a missing file: 0 and `n < 0`) and
+  `tests/gates/toolchain/manifest_read_whole_file.sh` axes 5 and 6 (a directory and `/dev/zero` under
+  `ulimit -v`: `n >= 0` is RED); restoring the overwrite reddens all three.
 
 ## [6.6.11] — 2026-09-29
 

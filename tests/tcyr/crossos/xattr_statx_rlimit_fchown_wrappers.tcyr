@@ -1,0 +1,301 @@
+# xattr_statx_rlimit_fchown_wrappers.tcyr — 6.6.12: the twelve xattr wrappers, sys_fchown,
+# sys_statx and sys_getrlimit reach THE CALL THEIR NAME CLAIMS on every target that has it,
+# and decline honestly everywhere else.
+#
+# ⛔ WHY THIS FILE LIVES IN `crossos/`. None of these calls had a name in either Linux peer,
+# so consumers wrote numbers — and on ELF-aarch64 nine of the fourteen native numbers never
+# reached the kernel as themselves, because ESYSXLAT's x86-compat rows claim them as sources.
+# Measured under `qemu-aarch64 -strace` on the 6.6.12 slot-open tree:
+#
+#     syscall(5)  setxattr      → fstat(0, NULL)          syscall(9)  lgetxattr → mmap(NULL, 0, …)
+#     syscall(6)  lsetxattr     → newfstatat(…, NOFOLLOW) syscall(10) fgetxattr → mprotect(…)
+#     syscall(7)  fsetxattr     → ppoll(…)                syscall(11) listxattr → munmap(…)
+#     syscall(12) llistxattr    → brk(…)                  syscall(16) fremovexattr → ioctl(…)
+#     syscall(55) fchown        → getsockopt(-1, …)       syscall(1005) → "Unknown syscall 1005"
+#
+# kriya returned -ENOSYS by hand for its four aarch64 xattr calls and routed fchown through
+# fchownat. The aarch64 peer now spells the family through the private alias band
+# (1005..1016, 1055, 1291), renumbered at the tail of ESYSXLAT's ELF arm. Without those rows
+# every alias reaches the kernel verbatim and answers -ENOSYS, so every Linux row below that
+# pins a real errno or a real value fails on aarch64.
+#
+# ⚠ EVERY ASSERTION PINS A VALUE ONLY THE RIGHT CALL PRODUCES — never a bare "it failed":
+#   * a missing path is -ENOENT and a bad fd -EBADF for all twelve xattr calls (-ENOSYS without
+#     the rows; mmap/mprotect/brk answer neither);
+#   * a user.* attribute ROUND-TRIPS: set by fd, read back by path / link / fd, listed, removed,
+#     then -ENODATA — and the l* variants are told apart from the plain ones on a SYMLINK, where
+#     the kernel refuses user.* (set/remove -EPERM, get -ENODATA) while the plain calls follow;
+#   * fchown(fd, -1, -1) is a no-op 0 (getsockopt on a file answers -ENOTSOCK);
+#   * statx's stx_size / stx_uid / stx_mode agree with sys_stat and sys_lstat;
+#   * getrlimit fills struct rlimit (a sentinel-filled buffer is overwritten, cur <= max).
+# Darwin: fchown and getrlimit are real (routed to 123 / 194 on both Macs); the xattr family
+# and statx decline with -78. PE and agnos decline all fifteen with -38. CHANGELOG [6.6.12]
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/alloc.cyr"
+include "lib/syscalls.cyr"
+include "lib/assert.cyr"
+
+# The real-call helpers need a POSIX file API (sys_stat, sys_getuid, sys_symlink), which the PE
+# and agnos peers do not carry in this shape; those two targets only run _check_declines.
+#ifndef CYRIUS_TARGET_WIN
+#ifndef CYRIUS_TARGET_AGNOS
+var _scratch_pid = 0;
+# "<dir>/cyr_b09_<name>.<pid>", NUL-terminated — a per-process name, so concurrent runs of the
+# suite never share a file.
+fn _scratch(dir, name): i64 {
+    if (_scratch_pid == 0) { _scratch_pid = sys_getpid(); }
+    var dl = strlen(dir);
+    var nl = strlen(name);
+    var p = alloc(dl + nl + 48);
+    memcpy(p, dir, dl);
+    memcpy(p + dl, "/cyr_b09_", 9);
+    var o = dl + 9;
+    memcpy(p + o, name, nl);
+    o = o + nl;
+    store8(p + o, 46);
+    o = o + 1;
+    var d[24];
+    var n = 0;
+    var v = _scratch_pid;
+    while (n == 0 || v > 0) {
+        var q = v / 10;
+        store8(&d + n, 48 + v - q * 10);
+        n = n + 1;
+        v = q;
+    }
+    while (n > 0) {
+        n = n - 1;
+        store8(p + o, load8(&d + n));
+        o = o + 1;
+    }
+    store8(p + o, 0);
+    return p;
+}
+
+# 1 when the NUL-separated name list `buf[0..n)` contains the cstr `want`.
+fn _list_has(buf, n, want): i64 {
+    var wl = strlen(want);
+    var i = 0;
+    while (i < n) {
+        var e = i;
+        while (e < n && load8(buf + e) != 0) { e = e + 1; }
+        if (e - i == wl) {
+            if (memeq(buf + i, want, wl) == 1) { return 1; }
+        }
+        i = e + 1;
+    }
+    return 0;
+}
+
+# fchown and getrlimit, which are real on Linux AND both Macs.
+fn _check_fchown_getrlimit(dir): i64 {
+    test_group("6.6.12 — sys_fchown reaches fchown");
+    var path = _scratch(dir, "own");
+    sys_unlink(path);
+    var fd = sys_open(path, O_CREAT | O_RDWR | O_TRUNC, 420);
+    assert(fd >= 0, "scratch file for fchown opens");
+    assert_eq(sys_fchown(fd, 0 - 1, 0 - 1), 0,
+      "fchown(fd, -1, -1) is a permitted no-op (getsockopt on a file answers -ENOTSOCK)");
+    assert_eq(sys_fchown(fd, sys_getuid(), sys_getgid()), 0,
+      "fchown(fd, own uid, own gid) succeeds unprivileged");
+    assert_eq(sys_fchown(0 - 1, 0 - 1, 0 - 1), 0 - 9, "fchown(-1, …) is -EBADF");
+    sys_close(fd);
+    sys_unlink(path);
+
+    test_group("6.6.12 — sys_getrlimit reaches getrlimit");
+    var rl[16];
+    store64(&rl, 0x5A5A5A5A5A5A5A5A);
+    store64(&rl + 8, 0x5A5A5A5A5A5A5A5A);
+    assert_eq(sys_getrlimit(3, &rl), 0, "getrlimit(RLIMIT_STACK) is 0");
+    var cur = load64(&rl);
+    var mx = load64(&rl + 8);
+    assert(cur != 0x5A5A5A5A5A5A5A5A, "getrlimit wrote rlim_cur (the sentinel is gone)");
+    assert(mx != 0x5A5A5A5A5A5A5A5A, "getrlimit wrote rlim_max (the sentinel is gone)");
+    var ordered = 0;
+    if (mx == 0 - 1) { ordered = 1; }                 # Linux RLIM_INFINITY: all-ones
+    if (mx >= 0) { if (cur >= 0) { if (cur <= mx) { ordered = 1; } } }
+    assert_eq(ordered, 1, "rlim_cur <= rlim_max (unshare, raw x86 97 on aarch64, writes nothing)");
+    assert_eq(sys_getrlimit(9999, &rl), 0 - 22, "getrlimit(an unknown resource) is -EINVAL");
+    return 0;
+}
+
+# The Linux xattr + statx rows. `dir` is a directory whose filesystem stores user.* xattrs.
+fn _check_xattr_statx(dir): i64 {
+    var b[256];
+    test_group("6.6.12 — the twelve xattr wrappers reach the xattr calls (errno rows)");
+    var nx = "/cyr_no_such_path_6_6_12";
+    assert_eq(sys_setxattr(nx, "user.a", "v", 1, 0), 0 - 2, "setxattr(missing) is -ENOENT");
+    assert_eq(sys_lsetxattr(nx, "user.a", "v", 1, 0), 0 - 2, "lsetxattr(missing) is -ENOENT");
+    assert_eq(sys_fsetxattr(0 - 1, "user.a", "v", 1, 0), 0 - 9, "fsetxattr(-1) is -EBADF");
+    assert_eq(sys_getxattr(nx, "user.a", &b, 16), 0 - 2, "getxattr(missing) is -ENOENT");
+    assert_eq(sys_lgetxattr(nx, "user.a", &b, 16), 0 - 2, "lgetxattr(missing) is -ENOENT");
+    assert_eq(sys_fgetxattr(0 - 1, "user.a", &b, 16), 0 - 9, "fgetxattr(-1) is -EBADF");
+    assert_eq(sys_listxattr(nx, &b, 16), 0 - 2, "listxattr(missing) is -ENOENT");
+    assert_eq(sys_llistxattr(nx, &b, 16), 0 - 2, "llistxattr(missing) is -ENOENT");
+    assert_eq(sys_flistxattr(0 - 1, &b, 16), 0 - 9, "flistxattr(-1) is -EBADF");
+    assert_eq(sys_removexattr(nx, "user.a"), 0 - 2, "removexattr(missing) is -ENOENT");
+    assert_eq(sys_lremovexattr(nx, "user.a"), 0 - 2, "lremovexattr(missing) is -ENOENT");
+    assert_eq(sys_fremovexattr(0 - 1, "user.a"), 0 - 9, "fremovexattr(-1) is -EBADF");
+
+    var path = _scratch(dir, "xattr");
+    var link = _scratch(dir, "xlink");
+    sys_unlink(path);
+    sys_unlink(link);
+    var fd = sys_open(path, O_CREAT | O_RDWR | O_TRUNC, 420);
+    assert(fd >= 0, "scratch file for the xattr round trip opens");
+    assert_eq(sys_write(fd, "hello-b09", 9), 9, "scratch file gets 9 bytes");
+    assert_eq(sys_symlink(path, link), 0, "a symlink to the scratch file is created");
+
+    test_group("6.6.12 — a user.* attribute round-trips through fd, path and link");
+    var r = sys_fsetxattr(fd, "user.cyr_b09", "abc", 3, 0);
+    if (r == 0 - 95) {
+        # No filesystem candidate stored user.* xattrs (main() tried them in order). -EOPNOTSUPP
+        # is itself an answer only the xattr family gives; the round trip cannot run.
+        println("  note: this filesystem stores no user.* xattrs (-EOPNOTSUPP); round trip skipped");
+        assert_eq(sys_setxattr(path, "user.cyr_b09", "abc", 3, 0), 0 - 95,
+          "setxattr on the same file is -EOPNOTSUPP too");
+    }
+    if (r != 0 - 95) {
+        assert_eq(r, 0, "fsetxattr(fd, user.cyr_b09, abc) is 0");
+        memset(&b, 0, 256);
+        assert_eq(sys_fgetxattr(fd, "user.cyr_b09", &b, 16), 3, "fgetxattr reads 3 bytes back");
+        assert_eq(memeq(&b, "abc", 3), 1, "fgetxattr's bytes are the ones fsetxattr wrote");
+        assert_eq(sys_getxattr(path, "user.cyr_b09", 0, 0), 3, "getxattr(path, size 0) probes the length");
+        assert_eq(sys_getxattr(path, "user.cyr_b09", &b, 2), 0 - 34, "getxattr into 2 bytes is -ERANGE");
+        assert_eq(sys_getxattr(link, "user.cyr_b09", &b, 16), 3, "getxattr(symlink) FOLLOWS to the file");
+        assert_eq(sys_lgetxattr(path, "user.cyr_b09", &b, 16), 3, "lgetxattr(regular file) reads it");
+        assert_eq(sys_lgetxattr(link, "user.cyr_b09", &b, 16), 0 - 61,
+          "lgetxattr(symlink) reads the LINK: user.* is never on a symlink, -ENODATA");
+        assert_eq(sys_setxattr(path, "user.cyr_b09b", "wxyz", 4, 1), 0, "setxattr(XATTR_CREATE) adds a second name");
+        assert_eq(sys_setxattr(path, "user.cyr_b09b", "wxyz", 4, 1), 0 - 17, "setxattr(XATTR_CREATE) again is -EEXIST");
+        assert_eq(sys_lsetxattr(path, "user.cyr_b09c", "q", 1, 0), 0, "lsetxattr(regular file) adds a third name");
+        assert_eq(sys_lsetxattr(link, "user.cyr_b09d", "q", 1, 0), 0 - 1,
+          "lsetxattr(symlink) targets the LINK: user.* is refused there, -EPERM");
+        assert_eq(sys_setxattr(link, "user.cyr_b09d", "q", 1, 0), 0, "setxattr(symlink) FOLLOWS to the file");
+        var need = sys_listxattr(path, 0, 0);
+        assert(need >= 55, "listxattr(path, size 0) probes at least the four names' length");
+        memset(&b, 0, 256);
+        var n = sys_listxattr(path, &b, 256);
+        assert_eq(n, need, "listxattr returns the probed length");
+        assert_eq(_list_has(&b, n, "user.cyr_b09"), 1, "listxattr names user.cyr_b09");
+        assert_eq(_list_has(&b, n, "user.cyr_b09c"), 1, "listxattr names user.cyr_b09c");
+        assert_eq(sys_flistxattr(fd, &b, 256), n, "flistxattr(fd) lists the same bytes");
+        assert_eq(_list_has(&b, n, "user.cyr_b09d"), 1, "flistxattr names the attribute set through the link");
+        memset(&b, 0, 256);
+        var ln = sys_llistxattr(link, &b, 256);
+        assert(ln >= 0, "llistxattr(symlink) succeeds");
+        assert_eq(_list_has(&b, ln, "user.cyr_b09"), 0, "llistxattr(symlink) lists the LINK's names, not the file's");
+        assert_eq(sys_removexattr(path, "user.cyr_b09b"), 0, "removexattr removes the second name");
+        assert_eq(sys_removexattr(path, "user.cyr_b09b"), 0 - 61, "removexattr again is -ENODATA");
+        assert_eq(sys_lremovexattr(link, "user.cyr_b09c"), 0 - 1, "lremovexattr(symlink) targets the LINK: -EPERM");
+        assert_eq(sys_lremovexattr(path, "user.cyr_b09c"), 0, "lremovexattr(regular file) removes the third name");
+        assert_eq(sys_removexattr(link, "user.cyr_b09d"), 0, "removexattr(symlink) FOLLOWS to the file");
+        assert_eq(sys_fremovexattr(fd, "user.cyr_b09"), 0, "fremovexattr(fd) removes the first name");
+        assert_eq(sys_fgetxattr(fd, "user.cyr_b09", &b, 16), 0 - 61, "fgetxattr after removal is -ENODATA");
+    }
+
+    test_group("6.6.12 — sys_statx reaches statx and agrees with stat");
+    var sx[256];
+    memset(&sx, 0, 256);
+    var st[STAT_BUFSZ];
+    assert_eq(sys_stat(path, &st), 0, "sys_stat(scratch file) for the comparison");
+    assert_eq(sys_statx(0 - 100, path, 0, 0x7FF, &sx), 0, "statx(AT_FDCWD, path, 0, STATX_BASIC_STATS) is 0");
+    assert((load32(&sx) & 0x200) != 0, "stx_mask reports STATX_SIZE");
+    assert_eq(load64(&sx + 40), 9, "stx_size is the 9 bytes written");
+    assert_eq(load64(&sx + 40), load64(&st + STAT_SIZE), "stx_size agrees with sys_stat");
+    assert_eq(load32(&sx + 20), load32(&st + STAT_UID), "stx_uid agrees with sys_stat");
+    assert_eq(load16(&sx + 28) & 0xF000, 0x8000, "stx_mode is S_IFREG");
+    memset(&sx, 0, 256);
+    assert_eq(sys_statx(0 - 100, link, 0x100, 0x7FF, &sx), 0, "statx(link, AT_SYMLINK_NOFOLLOW) is 0");
+    assert_eq(load16(&sx + 28) & 0xF000, 0xA000, "statx(NOFOLLOW) on the link is S_IFLNK");
+    assert_eq(sys_statx(0 - 100, "/cyr_no_such_path_6_6_12", 0, 0x7FF, &sx), 0 - 2, "statx(missing) is -ENOENT");
+
+    sys_close(fd);
+    sys_unlink(link);
+    sys_unlink(path);
+    return 0;
+}
+
+# 1 when a file in `dir` takes a user.* xattr (fsetxattr returns 0).
+fn _dir_stores_xattrs(dir): i64 {
+    var p = _scratch(dir, "probe");
+    sys_unlink(p);
+    var fd = sys_open(p, O_CREAT | O_RDWR | O_TRUNC, 420);
+    if (fd < 0) { return 0; }
+    var r = sys_fsetxattr(fd, "user.cyr_b09_probe", "1", 1, 0);
+    sys_close(fd);
+    sys_unlink(p);
+    if (r == 0) { return 1; }
+    return 0;
+}
+
+# The first candidate directory whose filesystem stores user.* xattrs (tmpfs before Linux 6.6
+# does not), else /tmp — where the round trip then asserts -EOPNOTSUPP instead.
+fn _xattr_dir(): i64 {
+    if (_dir_stores_xattrs("/tmp") == 1) { return "/tmp"; }
+    if (_dir_stores_xattrs("/var/tmp") == 1) { return "/var/tmp"; }
+    if (_dir_stores_xattrs(".") == 1) { return "."; }
+    return "/tmp";
+}
+
+#endif
+#endif
+
+# All fifteen wrappers on a target that has none of these calls (fchown/getrlimit included
+# only where `all` is 1): each returns `want`.
+fn _check_declines(want, all, label): i64 {
+    var b[64];
+    assert_eq(sys_setxattr("cyr_nx", "user.a", "v", 1, 0), want, label);
+    assert_eq(sys_lsetxattr("cyr_nx", "user.a", "v", 1, 0), want, label);
+    assert_eq(sys_fsetxattr(0 - 1, "user.a", "v", 1, 0), want, label);
+    assert_eq(sys_getxattr("cyr_nx", "user.a", &b, 16), want, label);
+    assert_eq(sys_lgetxattr("cyr_nx", "user.a", &b, 16), want, label);
+    assert_eq(sys_fgetxattr(0 - 1, "user.a", &b, 16), want, label);
+    assert_eq(sys_listxattr("cyr_nx", &b, 16), want, label);
+    assert_eq(sys_llistxattr("cyr_nx", &b, 16), want, label);
+    assert_eq(sys_flistxattr(0 - 1, &b, 16), want, label);
+    assert_eq(sys_removexattr("cyr_nx", "user.a"), want, label);
+    assert_eq(sys_lremovexattr("cyr_nx", "user.a"), want, label);
+    assert_eq(sys_fremovexattr(0 - 1, "user.a"), want, label);
+    assert_eq(sys_statx(0 - 100, "cyr_nx", 0, 0x7FF, &b), want, label);
+    if (all == 1) {
+        assert_eq(sys_fchown(0 - 1, 0 - 1, 0 - 1), want, label);
+        assert_eq(sys_getrlimit(3, &b), want, label);
+    }
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+
+    #ifdef CYRIUS_TARGET_MACOS
+    test_group("6.6.12 — Darwin declines the xattr family and statx with -78 (ENOSYS)");
+    _check_declines(0 - 78, 0, "declines with -78 on macOS");
+    _check_fchown_getrlimit("/tmp");
+    #endif
+
+    #ifdef CYRIUS_TARGET_WIN
+    test_group("6.6.12 — PE declines all fifteen with -38 (ENOSYS)");
+    _check_declines(0 - 38, 1, "declines with -38 on Windows");
+    #endif
+
+    #ifdef CYRIUS_TARGET_AGNOS
+    test_group("6.6.12 — agnos declines all fifteen with -38 (ENOSYS)");
+    _check_declines(0 - 38, 1, "declines with -38 on agnos");
+    #endif
+
+    #ifndef CYRIUS_TARGET_MACOS
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_AGNOS
+    var dir = _xattr_dir();
+    _check_xattr_statx(dir);
+    _check_fchown_getrlimit(dir);
+    #endif
+    #endif
+    #endif
+
+    return assert_summary();
+}
+var ec = main();
+syscall(SYS_EXIT, ec);

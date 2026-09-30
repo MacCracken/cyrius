@@ -37,7 +37,8 @@
 #      pre-fix bodies.
 #   5. A FAILED READ IS NOT END-OF-FILE (added by the bite-17 review). RUNTIME: over a path that
 #      OPENS but cannot be READ — a directory, where read(2) is -EISDIR — `file_read_whole`
-#      returns 0/len 0 and `file_read_all` returns a NEGATIVE, neither of them a buffer; and
+#      returns 0 with a NEGATIVE length (the errno, passed through since 6.6.12 — it was
+#      overwritten with 0) and `file_read_all` returns a NEGATIVE, neither of them a buffer; and
 #      anti-vacuously a real file still comes back whole and byte-identical. STATIC: no
 #      accumulating read loop in lib/io.cyr exits on `n <= 0` — the negative branch is separate
 #      and comes first, in all five. Self-tested on the pre-fix body.
@@ -46,7 +47,7 @@
 #      unprivileged way to force one (RLIMIT_FSIZE is writes; a pipe/FIFO gives EOF, not an
 #      error; a pty needs a second process). Both cases are the SAME branch, so the static axis
 #      is what pins the partial one: re-fold `n <= 0` and it reddens.
-#   6. (6.6.7) BOUNDED AND CHECKED. RUNTIME: /dev/zero under `ulimit -v` is 0 / len 0 (was a
+#   6. (6.6.7) BOUNDED AND CHECKED. RUNTIME: /dev/zero under `ulimit -v` is 0 / errno (was a
 #      NULL write, rc 139) and -EFBIG under file_read_whole_max. STATIC: every allocation in the
 #      reader core `_io_read_whole` and in `_env_load` is tested against 0 before use.
 #
@@ -75,6 +76,8 @@
 #   l. (6.6.7) _env_load's growth alloc check removed   -> axis 6 FAIL (static)
 #   m. (6.6.7) the -EFBIG one-byte probe removed        -> axis 6 FAIL (runtime rc 3)
 #   n. (6.6.7) _env_load's open failure caches 0 again  -> axis 6 FAIL (runtime rc 2; static)
+#   o. (6.6.12) file_read_whole's `store64(len_out, 0)` -> axes 5 and 6 FAIL (runtime rc 2: the
+#      on failure restored                                 errno is overwritten with 0)
 # Real tree -> PASS.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 2
@@ -271,7 +274,7 @@ fn main(): i64 {
     var n = 1234;
     var b = file_read_whole("$D/a5/adir", &n);
     if (b != 0) { return 1; }
-    if (n != 0) { return 2; }
+    if (n >= 0) { return 2; }
     # anti-vacuous: a real file still comes back WHOLE
     var m = 1234;
     var c = file_read_whole("$D/a5/real.txt", &m);
@@ -294,7 +297,7 @@ x=0
 case "$prc" in
     0) ;;
     1) fail "axis 5: file_read_whole handed back a BUFFER for a path it could not read — a failed read is being reported as content"; x=1 ;;
-    2) fail "axis 5: file_read_whole reported a non-zero length for a path it could not read"; x=1 ;;
+    2) fail "axis 5: file_read_whole reported a length >= 0 for a path it could not read — the errno was dropped (6.6.12: it is passed through)"; x=1 ;;
     3) fail "axis 5: file_read_whole returned 0 for a readable file (anti-vacuous check)"; x=1 ;;
     4) fail "axis 5: file_read_whole did not return all $real_sz bytes of a readable file"; x=1 ;;
     5) fail "axis 5: file_read_all returned >= 0 for a path it could not read — a read error folded into end-of-file"; x=1 ;;
@@ -337,7 +340,7 @@ folds=$(_read_folds lib/io.cyr)
 nsites=$(awk '{ print $2 }' "$D/folds.n")
 [ -n "$folds" ] && { fail "axis 5: a read loop in lib/io.cyr treats a NEGATIVE read as end-of-file (check \`< 0\` first, separately from \`== 0\`):"; printf '%s\n' "$folds" | sed 's/^/      /'; x=1; }
 [ "${nsites:-0}" -ge 5 ] || { fail "axis 5: only ${nsites:-0} read sites found in lib/io.cyr (floor 5) — the scan read nothing"; x=1; }
-[ "$x" = 0 ] && echo "  ok: axis 5: a path that cannot be read yields 0/len 0 (file_read_whole) and a negative (file_read_all), a readable one all $real_sz bytes, and all $nsites read loops in lib/io.cyr keep a negative read distinct from EOF"
+[ "$x" = 0 ] && echo "  ok: axis 5: a path that cannot be read yields 0 and a negative errno (file_read_whole) and a negative (file_read_all), a readable one all $real_sz bytes, and all $nsites read loops in lib/io.cyr keep a negative read distinct from EOF"
 
 # ── axis 6 (6.6.7): the reader is BOUNDED and every allocation it makes is CHECKED ──
 # The growth alloc was unchecked and doubled with no ceiling: at 1 GiB it asked for
@@ -345,7 +348,7 @@ nsites=$(awk '{ print $2 }' "$D/folds.n")
 # more SIGSEGV'd (measured: 2^30 - 1 bytes read, 2^30 exactly rc 139; after the fix 2^30 reads
 # whole in ~6 s — too heavy for this gate, so the clamp is pinned at small sizes by
 # tests/tcyr/crossos/file_read_whole_bounded.tcyr). RUNTIME here, the filed repro: /dev/zero
-# under `ulimit -v 400000` must come back 0 / len 0 (was rc 139, a NULL write), and under a
+# under `ulimit -v 400000` must come back 0 / a negative errno (was rc 139, a NULL write), and under a
 # 1 MiB `file_read_whole_max` it is -EFBIG. STATIC: every `alloc(` / `alloc_via(` in the reader
 # core and in `_env_load` is tested against 0 on the next code line.
 mkdir -p "$D/a6"
@@ -361,7 +364,7 @@ fn main(): i64 {
     n = 0 - 99;
     b = file_read_whole("/dev/zero", &n);
     if (b != 0) { return 1; }
-    if (n != 0) { return 2; }
+    if (n >= 0) { return 2; }
     return 0;
 }
 var rc = main();
@@ -372,7 +375,7 @@ prc=0; ( ulimit -c 0; ulimit -v 400000 2>/dev/null; "$D/a6/probe" ) || prc=$?
 x=0
 case "$prc" in
     0) ;;
-    1|2) fail "axis 6: file_read_whole(\"/dev/zero\") under ulimit -v 400000 did not fail cleanly (rc $prc) — it must be 0 / len 0"; x=1 ;;
+    1|2) fail "axis 6: file_read_whole(\"/dev/zero\") under ulimit -v 400000 did not fail cleanly (rc $prc) — it must be 0 / a negative errno"; x=1 ;;
     3|4) fail "axis 6: file_read_whole_max(\"/dev/zero\", 1 MiB) is not -EFBIG (rc $prc)"; x=1 ;;
     *) fail "axis 6: the /dev/zero probe exited $prc (139 = the growth memcpy wrote through a refused alloc)"; x=1 ;;
 esac
@@ -435,7 +438,7 @@ cached=$(awk '/^fn _env_load\(/ { f = 1 } f && /^}/ { f = 0 }
     p && /_env_blk = buf;/ { p = 0 }
     p && /return 0;/ && !/_env_len = 0 - 1;/ { print "      " $0 }' lib/io.cyr)
 [ -n "$cached" ] && { fail "axis 6: an _env_load /proc failure path returns without unsetting the cache (it caches an empty environment):"; printf '%s\n' "$cached"; x=1; }
-[ "$x" = 0 ] && echo "  ok: axis 6: /dev/zero is 0/len 0 under a memory limit and -EFBIG under a 1 MiB max; all $asites allocations in the reader core and _env_load are checked; a failed /proc/self/environ open is retried, not cached"
+[ "$x" = 0 ] && echo "  ok: axis 6: /dev/zero is 0/errno under a memory limit and -EFBIG under a 1 MiB max; all $asites allocations in the reader core and _env_load are checked; a failed /proc/self/environ open is retried, not cached"
 
 [ "$FAIL" = 0 ] || exit 1
 echo "PASS: manifest_read_whole_file (6 axes)"

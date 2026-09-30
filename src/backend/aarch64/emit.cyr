@@ -198,6 +198,9 @@ fn ESEND_PE(S) { return 0; }
 fn ERECV_PE(S) { return 0; }
 fn EIOCTLSOCK_PE(S) { return 0; }
 fn EWSAPOLL_PE(S) { return 0; }
+# 6.6.12: EGETLASTERR_PE (kernel32!GetLastError, reroute 0xF04B — lib/fs_win.cyr's
+# FindNextFileW end check) — same x86/PE-only cohort, same stub reason. CHANGELOG [6.6.12].
+fn EGETLASTERR_PE(S) { return 0; }
 # v6.0.54: close the .23 stub gap. ECREATEDIR_PE (mkdir/83) +
 # EDELETEF_PE (unlink/87) shipped x86-only at v5.11.22-23 and never
 # got aarch64 stubs — they fired "undefined function" warnings on
@@ -883,7 +886,12 @@ fn ESYSXLAT(S): i64 {
         _esx_arm_shift(S, 56, 5, 3);
         # ── v6.0.34: wrapper (cbt) process + fs syscalls ──
         _esx_arm(S, 221, 59);  # execve 221→59
-        _esx_arm(S, 24, 90);  # dup3 24→dup2 90
+        # 6.6.12: NO dup3 row. It used to renumber 24 → dup2 90 unconditionally, and Darwin
+        # has no dup3 while dup2 ignores x2 — so dup3(old, new, O_CLOEXEC) returned the fd
+        # with FD_CLOEXEC CLEAR (measured on ecb), a silently dropped flag. The peer's
+        # sys_dup2 issues x86 dup2 33 on macOS instead (routed 33 → 90 below), and a raw
+        # dup3 falls to the chain head's 0xFFFF: SIGSYS, or -ENOSYS with SIGSYS ignored —
+        # the answer x86-macOS gives for its own dup3 (292, unrouted). CHANGELOG [6.6.12]
         _esx_arm(S, 260, 7);  # wait4 260→7
         _esx_arm(S, 220, 2);  # clone 220→fork 2 (x1-fixup post-svc)
         # mkdirat 34 → mkdir 136 (arg-shift x0=path,x1=mode; b.ne +16)
@@ -971,6 +979,14 @@ fn ESYSXLAT(S): i64 {
         # the alias arrives here too; without this row x16 is stale.
         # cmp x8,#1049 = 0xF110651F; movz x16,#12 = 0xD2800190 (aarch64-linux-gnu-as verified).
         _esx_arm(S, 1049, 12);  # chdir 1049→12
+        # 6.6.12: fchown via its alias 1055 and getrlimit via the native 163 — the aarch64
+        # peer's spellings, which macOS-arm64 resolves. Pure renumbers to Darwin fchown 123 /
+        # getrlimit 194 (argument layouts match; struct rlimit is two u64 on both). The
+        # xattr and statx wrappers decline under CYRIUS_TARGET_MACOS instead: Darwin's xattr
+        # calls take two extra arguments (position, options) and Darwin has no statx.
+        # CHANGELOG [6.6.12]
+        _esx_arm(S, 1055, 123);  # fchown    1055→123
+        _esx_arm(S, 163, 194);   # getrlimit  163→194
         # v6.5.7: symlinkat + readlinkat. The aarch64 peer's sys_symlink/sys_readlink have
         # always issued 36 / 78, and this branch never mapped either — so on macOS-arm64
         # they ran with a stale x16 and the compiler warned "syscall not routed" on every
@@ -1683,6 +1699,37 @@ fn ESYSXLAT(S): i64 {
     EW(S, 0xF1103D1F); EW(S, 0x54000041); EW(S, 0xD28004E8);  # umount2     1039→39
     # cmp x8,#1022 = 0xF10FF91F; movz x8,#22 = 0xD28002C8.
     EW(S, 0xF10FF91F); EW(S, 0x54000041); EW(S, 0xD28002C8);  # epoll_pwait 1022→22
+    # 6.6.12: the xattr family, fchown and statx via the PRIVATE ALIASES 1005..1016 / 1055 /
+    # 1291 → native 5..16 / 55 / 291. ⛔ NINE OF THE FOURTEEN NATIVE NUMBERS ARE COMPAT-ROW
+    # SOURCES ABOVE, so a native spelling never reached the kernel as itself. Measured under
+    # `qemu-aarch64 -strace` on the 6.6.11 tree: raw 5 ran fstat, 6 newfstatat, 7 ppoll, 9 mmap,
+    # 10 mprotect, 11 munmap, 12 brk, 16 ioctl, 55 getsockopt — kriya's aarch64 xattr wrappers
+    # returned -ENOSYS by hand for exactly this reason, and its k_fchown went through fchownat.
+    # 8 / 13 / 14 / 15 / 291 are NOT row sources and would pass through today, but they take the
+    # band too: `programs/gen_syscall_xlat.cyr`'s is_native_a64 drops the raw-literal warning
+    # row for any number the aarch64 peer declares below ALIAS_BASE, so a native
+    # SYS_GETXATTR = 8 would silence the "raw x86 lseek (8)" warning and SYS_STATX = 291 the
+    # "raw x86 epoll_create1 (291)" one. One family, one spelling. getrlimit needs no alias:
+    # its native 163 is neither a row source nor a row product.
+    # ⚠ SAME ORDERING RULE AS THE WHOLE BAND: each produces the value a compat row above
+    # compares against (5, 6, 7, 9, 10, 11, 12, 16, 55), so each stays BELOW it — here, last.
+    # Darwin: macOS-arm64 resolves the aarch64 peer, so 1055 arrives in the Mach-O branch too
+    # (routed →123 there); the xattr/statx wrappers decline under CYRIUS_TARGET_MACOS and never
+    # emit their alias. Words assembled with aarch64-linux-gnu-as. CHANGELOG [6.6.12]
+    EW(S, 0xF10FB51F); EW(S, 0x54000041); EW(S, 0xD28000A8);  # setxattr     1005→5
+    EW(S, 0xF10FB91F); EW(S, 0x54000041); EW(S, 0xD28000C8);  # lsetxattr    1006→6
+    EW(S, 0xF10FBD1F); EW(S, 0x54000041); EW(S, 0xD28000E8);  # fsetxattr    1007→7
+    EW(S, 0xF10FC11F); EW(S, 0x54000041); EW(S, 0xD2800108);  # getxattr     1008→8
+    EW(S, 0xF10FC51F); EW(S, 0x54000041); EW(S, 0xD2800128);  # lgetxattr    1009→9
+    EW(S, 0xF10FC91F); EW(S, 0x54000041); EW(S, 0xD2800148);  # fgetxattr    1010→10
+    EW(S, 0xF10FCD1F); EW(S, 0x54000041); EW(S, 0xD2800168);  # listxattr    1011→11
+    EW(S, 0xF10FD11F); EW(S, 0x54000041); EW(S, 0xD2800188);  # llistxattr   1012→12
+    EW(S, 0xF10FD51F); EW(S, 0x54000041); EW(S, 0xD28001A8);  # flistxattr   1013→13
+    EW(S, 0xF10FD91F); EW(S, 0x54000041); EW(S, 0xD28001C8);  # removexattr  1014→14
+    EW(S, 0xF10FDD1F); EW(S, 0x54000041); EW(S, 0xD28001E8);  # lremovexattr 1015→15
+    EW(S, 0xF10FE11F); EW(S, 0x54000041); EW(S, 0xD2800208);  # fremovexattr 1016→16
+    EW(S, 0xF1107D1F); EW(S, 0x54000041); EW(S, 0xD28006E8);  # fchown       1055→55
+    EW(S, 0xF1142D1F); EW(S, 0x54000041); EW(S, 0xD2802468);  # statx        1291→291
     return 0;
 }
 

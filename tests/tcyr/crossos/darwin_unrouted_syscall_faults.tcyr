@@ -40,6 +40,12 @@ include "lib/assert.cyr"
 
 var _nr = 0;
 fn _unrouted_nr(): i64 { return _nr; }
+# dup3 through a RUNTIME number: a literal SYS_DUP3 site is (correctly) warned as unrouted, and
+# darwin_syscall_literals_routed.sh allows exactly one deliberate literal in this file (4001).
+# Darwin-only: PE and agnos declare no SYS_DUP3.
+#ifdef CYRIUS_TARGET_MACOS
+fn _dup3_nr(): i64 { return SYS_DUP3; }
+#endif
 
 fn main(): i64 {
     #ifdef CYRIUS_TARGET_MACOS
@@ -83,6 +89,26 @@ fn main(): i64 {
     assert_eq(load64(&sent), 0x5A5A5A5A5A5A5A5A,
       "the sentinel the 4th-argument register pointed at is intact (was: zeroed)");
     sys_close(dfd);
+
+    # 6.6.12 (Q3). faccessat: x86-macOS had no 269 row, so this SIGSYS'd on ach (rc 140) while the
+    # same source worked on ecb; asserted with SIGSYS ignored, the regression reads -78 here.
+    # dup3: arm64-macOS renumbered 24 → dup2 90, and Darwin's dup2 ignores x2, so
+    # dup3(1, 51, O_CLOEXEC) handed back fd 51 with FD_CLOEXEC CLEAR (measured on ecb). There is
+    # no dup3 on Darwin, so the honest answer is the unrouted one — -ENOSYS and no fd — on both
+    # Macs; sys_dup2 issues x86 dup2 33 instead and must keep working.
+    test_group("Darwin: faccessat is routed on both Macs; dup3 never drops its flags");
+    assert_eq(syscall(SYS_FACCESSAT, AT_FDCWD, "/", 0, 0), 0, "faccessat(AT_FDCWD, \"/\") == 0 (was: SIGSYS on x86-macOS)");
+    assert_eq(syscall(SYS_FACCESSAT, AT_FDCWD, "/nonexistent-cyrius-6612", 0, 0), 0 - 2,
+      "faccessat on a missing path == -ENOENT");
+    assert_eq(sys_access("/", 0), 0, "sys_access(\"/\") == 0");
+    sys_close(50);
+    assert_eq(sys_dup2(1, 50), 50, "sys_dup2(1, 50) == 50 (x86 dup2 33 → BSD 90)");
+    assert_eq(sys_fcntl(50, F_GETFD, 0), 0, "the dup2'd fd has FD_CLOEXEC clear, as dup2 promises");
+    sys_close(50);
+    sys_close(51);
+    var d3 = syscall(_dup3_nr(), 1, 51, O_CLOEXEC);
+    assert_eq(d3, 0 - 78, "dup3(1, 51, O_CLOEXEC) == -ENOSYS (was: 51 with the flag dropped on arm64)");
+    assert(sys_fcntl(51, F_GETFD, 0) < 0, "and fd 51 was not created behind the caller's back");
 
     # The x86-macOS peer now has the arm64-macOS surface: the flag enums, the SYS_* names and the
     # pure helpers all resolve (this group did not COMPILE on ach before 6.6.10).

@@ -41,6 +41,10 @@
 #      every allow-list entry reported stale
 #   7. (in the tree) revert lib/syscalls_macos.cyr to 6.6.9      -> FAIL axis A (ten fns, two
 #      enums, thirteen members) AND axis B ("undefined variable 'IN_MODIFY'", rc 1)
+#   8. (6.6.12) delete the `_msx(S, 93, …)` fchown row from EMACHO_SYSXLAT -> FAIL axis B: the
+#      probe's sys_fchown prints "syscall 93 not routed" on the x86-macOS build
+#   9. (6.6.12) move sys_statx's `syscall(SYS_STATX, …)` out of its #ifndef CYRIUS_TARGET_MACOS
+#      arm -> FAIL axis B ("syscall 332 not routed") — the decline is what keeps it warning-free
 set -e
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
@@ -130,6 +134,9 @@ fn main(): i64 {
     t = t + sigset_has(ss, 15) + epoll_event_new(EPOLLIN, 1) + timerspec_new(1, 2) + timerfd_drain(0 - 1);
     t = t + MS_BIND + MS_RDONLY + SYS_FLOCK + SYS_DUP3 + SYS_FACCESSAT + SYS_SYSINFO + SYS_INOTIFY_INIT1;
     t = t + sys_getdents64(0 - 1, &evs, 64) + sys_kill(0 - 1, 0) + sys_getrandom(&evs, 8, 0);
+    t = t + sys_fchown(0 - 1, 0 - 1, 0 - 1) + sys_getrlimit(3, &evs) + sys_statx(0 - 100, ".", 0, 0x7FF, &evs);
+    t = t + sys_getxattr(".", "user.a", &evs, 8) + sys_flistxattr(0 - 1, &evs, 8) + sys_lremovexattr(".", "user.a");
+    t = t + SYS_FCHOWN + SYS_GETRLIMIT + SYS_STATX + SYS_SETXATTR + SYS_FREMOVEXATTR;
     return t & 0;
 }
 var r = main();

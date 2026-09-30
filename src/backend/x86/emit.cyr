@@ -1048,6 +1048,12 @@ fn EMACHO_SYSXLAT(S): i64 {
     _msx(S, 60, 0x2000001);   # exit     60 → 1
     _msx(S, 260, 0x20001D4);  # fchownat 260 → 468 (Darwin number read off ecb + ach,
     # $(xcrun --show-sdk-path)/usr/include/sys/syscall.h; v6.5.7)
+    # 6.6.12: faccessat 269 → 466, the twin of the arm64 row (aarch64/emit.cyr, `269→466`). A
+    # pure renumber: Linux faccessat(dirfd, path, mode, flags) matches Darwin's, and AT_FDCWD
+    # is already Darwin's -2 on macOS. 6.6.10 declared SYS_FACCESSAT on this peer for surface
+    # parity but left the number unrouted, so a raw syscall(SYS_FACCESSAT, …) on Intel-Mac
+    # SIGSYS'd (rc 140 on ach) while the same source worked on ecb. 269 > 127, hence _msx32.
+    _msx32(S, 269, 0x20001D2); # faccessat 269 → 466
     _msx(S, 231, 0x2000001);  # exit_group 231 → 1 (Darwin exit() ends the whole task;
     # v6.5.6: untranslated 231 reached Darwin unclassed → SIGSYS)
     _msx(S, 80, 0x200000C);   # chdir    80 → 12 (v6.5.7: sys_chdir was added to the shared
@@ -1230,6 +1236,12 @@ fn EMACHO_SYSXLAT(S): i64 {
     # unrouted 92 reached Darwin unprefixed and SIGSYS'd. io.cyr now issues the x86-Linux
     # flock number 73 on macOS so a single source serves both Mach-O backends.
     _msx(S, 73, 0x2000083);   # flock 73 → 131
+    # 6.6.12: fchown + getrlimit, the two of the new wrappers Darwin has as pure renumbers
+    # (the arm64 twin routes the aarch64 peer's 1055 / 163). The xattr and statx wrappers
+    # decline under CYRIUS_TARGET_MACOS rather than route: Darwin xattr calls take two extra
+    # arguments and Darwin has no statx. CHANGELOG [6.6.12]
+    _msx(S, 93, 0x200007B);   # fchown    93 → 123
+    _msx(S, 97, 0x20000C2);   # getrlimit 97 → 194
     _msx_tail(S);
     return 0;
 }
@@ -1299,39 +1311,52 @@ fn EMACHO_CLOCK_ARM(S): i64 {
 # bench.cyr, sakshi.cyr and sigil's cert-window clock all work unchanged, with no lib
 # edit and no cross-repo coordination.
 #
-# ⚠ HONEST LIMITATION: gettimeofday is the REALTIME clock, so on Intel-Mac only,
-# clock_now_ns() is wall-clock-backed rather than monotonic and can step under NTP.
-# (This note used to say mach_absolute_time is "not reachable through a syscall". It is:
-# Darwin's gettimeofday takes a THIRD argument, `uint64_t *mach_absolute_time`, and copies
-# mach time out through it — see below. Using it as the monotonic source is a separate
-# change; this emitter passes NULL there.)
+# 6.6.12 — THE CLOCK ID IS HONOURED. Until 6.6.12 this emitter dropped clock_id and returned
+# the gettimeofday composition for EVERY id, so on Intel-Mac clock_now_ns() (id 4,
+# CLOCK_MONOTONIC_RAW) was the REALTIME clock — epoch-scale and stepping under NTP — with no
+# error (measured on ach: ids 4 and 0 agreed to within 1 ms). Darwin's gettimeofday takes a
+# THIRD argument, `uint64_t *mach_absolute_time`, and copies mach time out through it, so the
+# monotonic source was one out-slot away. Now:
+#   id 0 (CLOCK_REALTIME)  the timeval composition below, unchanged: chrono's clock_epoch_*,
+#                          tls_native_conn's cert clock and through them sigil's cert window
+#                          all spell syscall(228, 0, …) on macOS and need WALL time.
+#   any other id           the mach time the kernel wrote into an 8-byte stack slot, which is
+#                          ns on Intel (timebase 1:1; ach measured Δmach/Δµs ≈ 1000).
+# One syscall either way; the id only picks which result goes back in rax.
 #
-# ⛔ rdx MUST BE ZEROED. Darwin's syscall is gettimeofday(tp, tzp, uint64_t *mach_abs): the
-# third argument is an OUT-pointer, and xnu writes 8 bytes of mach time through whatever rdx
-# holds. Until 6.6.10 nothing here wrote rdx, so every clock_now_* on Intel-Mac since v6.5.16
-# stored mach time at the address the PREVIOUS code left in rdx — usually the last call's third
-# argument — into an image whose single __TEXT segment is rwx (code, literals and globals all
-# writable). Silent: when rdx was not a writable address copyout failed with EFAULT, which this
-# sequence never checks. It was the "garbled assert message on ach" (an assert label's bytes
-# overwritten mid-test). lib/sys.cyr's _macos_gettimeofday documents the same hazard and always
-# passed an explicit 0; the emitter never did. CVE-51; gated by
-# tests/tcyr/crossos/darwin_clock_no_stray_write.tcyr. CHANGELOG [6.6.10]
+# ⛔ rdx IS NEVER NULL-OR-STALE: it points at that stack slot on every call. Darwin's syscall is
+# gettimeofday(tp, tzp, uint64_t *mach_abs): the third argument is an OUT-pointer and xnu writes
+# 8 bytes through whatever rdx holds. Until 6.6.10 nothing here wrote rdx, so every clock_now_*
+# on Intel-Mac since v6.5.16 stored mach time at the address the PREVIOUS code left in rdx into
+# an image whose single __TEXT segment is rwx (the "garbled assert message on ach"). 6.6.10
+# zeroed it; 6.6.12 points it at the slot, which is equally safe and is what makes the
+# monotonic read possible. The slot is pushed as 0, so a failed copyout returns 0, not garbage.
+# CVE-51; both halves gated by tests/tcyr/crossos/darwin_clock_no_stray_write.tcyr.
+# CHANGELOG [6.6.10] [6.6.12]
 #
 # Stack top-down on entry (argc==3): [arg2=&tv][arg1=clock_id][sc_num=228].
 # The 16-byte `var ts[16]` every caller passes is exactly Darwin's struct timeval
-# (i64 tv_sec @0, i32 tv_usec @8). Live-probed on ach: rdi=&tv, rsi=0, rax=0x2000074
-# → rc 0, tv_sec matching libc gettimeofday exactly, and the qword at +8 clean in its
-# high half — the 32-bit load below is correct regardless of the padding word.
+# (i64 tv_sec @0, i32 tv_usec @8), and the kernel fills it for every id (so no caller may read
+# it — the raw-228 contract is "returns the value"). Live-probed on ach: rdi=&tv, rsi=0,
+# rax=0x2000074 → rc 0, tv_sec matching libc gettimeofday exactly, and the qword at +8 clean in
+# its high half — the 32-bit load below is correct regardless of the padding word.
 fn EMACHO_CLOCK_X86(S): i64 {
     EB(S, 0x5F);                                          # pop rdi         (&tv)
-    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x10);   # add rsp, 16     (drop clock_id + sc_num)
+    EB(S, 0x58);                                          # pop rax         (clock_id)
+    EB(S, 0x59);                                          # pop rcx         (drop sc_num)
     EB(S, 0x57);                                          # push rdi        (save &tv across the call)
+    EB(S, 0x50);                                          # push rax        (save clock_id; rcx dies in syscall)
+    EB(S, 0x6A); EB(S, 0x00);                             # push 0          (mach-time out-slot)
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xE2);                # mov rdx, rsp    (mach_abs out-ptr = the slot)
     EB(S, 0x31); EB(S, 0xF6);                             # xor esi, esi    (tzp = NULL)
-    EB(S, 0x31); EB(S, 0xD2);                             # xor edx, edx    (mach_abs out-ptr = NULL)
     EB(S, 0x48); EB(S, 0xC7); EB(S, 0xC0);                # mov rax, 0x2000074 (BSD gettimeofday,
     EB(S, 0x74); EB(S, 0x00); EB(S, 0x00); EB(S, 0x02);   #   Unix class prefix NOT optional)
     EB(S, 0x0F); EB(S, 0x05);                             # syscall
+    EB(S, 0x58);                                          # pop rax         (mach time, ns on Intel)
+    EB(S, 0x59);                                          # pop rcx         (clock_id)
     EB(S, 0x5F);                                          # pop rdi         (restore &tv)
+    EB(S, 0x48); EB(S, 0x85); EB(S, 0xC9);                # test rcx, rcx
+    EB(S, 0x75); EB(S, 0x17);                             # jnz +23         (id != 0: keep mach time)
     EB(S, 0x48); EB(S, 0x8B); EB(S, 0x07);                # mov rax, [rdi]      tv_sec
     EB(S, 0x48); EB(S, 0x69); EB(S, 0xC0);                # imul rax, rax, 1000000000
     EB(S, 0x00); EB(S, 0xCA); EB(S, 0x9A); EB(S, 0x3B);
@@ -1922,14 +1947,25 @@ fn EGETENV_PE(S): i64 {
 }
 
 # v6.1.18 — directory enumeration reroutes for lib/fs_win.cyr (the Windows
-# dir_list/is_dir port). All kernel32, marshalled through the existing aligned
-# helpers (no new asm). syscall(0xF016, wpattern, &finddata) → FindFirstFileW
-# (2 args), syscall(0xF017, hFind, &finddata) → FindNextFileW (2 args),
-# syscall(0xF018, hFind) → FindClose (1 arg), syscall(0xF019, wpath) →
+# dir_list/is_dir port). All kernel32. syscall(0xF016, pattern, &finddata) →
+# FindFirstFileW (2 args), syscall(0xF017, hFind, &finddata) → FindNextFileW (2 args),
+# syscall(0xF018, hFind) → FindClose (1 arg), syscall(0xF019, path) →
 # GetFileAttributesW (1 arg). See CHANGELOG [6.1.18].
+#
+# ⛔ 6.6.12 — 0xF016 and 0xF019 take a NARROW UTF-8 path, like open/mkdir/unlink, and widen it
+# through `_pe_widen_path` (`_pe_path_call1`). They took a path the stdlib had widened itself,
+# with no `\\?\` prefix, so Windows applied MAX_PATH: on real Windows `is_dir` of an existing
+# 272-byte directory said 0 and `dir_list` was empty, while mkdir/open (widened here since
+# 6.6.11) worked on the same path. Wine does not enforce MAX_PATH, so only real Windows shows it.
+# One decoder and one long-path rule for every path reroute. CHANGELOG [6.6.12]
 fn EFINDFIRST_PE(S): i64 {
     _pe_ensure_findfirst(S);
-    return _pe_call_2arg_aligned(S, _pe_findfirst_get());
+    EB(S, 0x58);                                        # pop rax (&finddata)
+    EB(S, 0x49); EB(S, 0x89); EB(S, 0xC2);              # mov r10, rax
+    EB(S, 0x58);                                        # pop rax (UTF-8 pattern)
+    EB(S, 0x49); EB(S, 0x89); EB(S, 0xC3);              # mov r11, rax
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
+    return _pe_path_call1(S, _pe_findfirst_get(), 1, 0);
 }
 fn EFINDNEXT_PE(S): i64 {
     _pe_ensure_findnext(S);
@@ -1941,7 +1977,22 @@ fn EFINDCLOSE_PE(S): i64 {
 }
 fn EGETFATTR_PE(S): i64 {
     _pe_ensure_getfattr(S);
-    return _pe_srw_call_1arg(S, _pe_getfattr_get());
+    EB(S, 0x58);                                        # pop rax (UTF-8 path)
+    EB(S, 0x49); EB(S, 0x89); EB(S, 0xC3);              # mov r11, rax
+    EB(S, 0x48); EB(S, 0x83); EB(S, 0xC4); EB(S, 0x08); # add rsp, 8 (drop sc_nr)
+    return _pe_path_call1(S, _pe_getfattr_get(), 0, 1);
+}
+
+# 6.6.12 — syscall(0xF04B) → kernel32!GetLastError() (0 args; the DWORD, zero-extended). The
+# kernel32 peer of 0xF024 WSAGetLastError. Read it IMMEDIATELY after the call it explains:
+# cyrius code between the two makes no API call, but another reroute would overwrite it.
+# lib/fs_win.cyr uses it after FindNextFileW returns 0 (ERROR_NO_MORE_FILES = 18 is the end;
+# anything else is a failed listing). CHANGELOG [6.6.12]
+fn EGETLASTERR_PE(S): i64 {
+    _pe_ensure_getlasterr(S);
+    _pe_call_0arg_aligned(S, _pe_getlasterr_get());
+    EB(S, 0x89); EB(S, 0xC0);                           # mov eax, eax (DWORD → zero-extended)
+    return 0;
 }
 
 # 3-arg kernel32 reroute, 16-byte aligned (rbx-anchored, same rationale as the
@@ -2978,6 +3029,39 @@ fn _pe_path_bool1(S, idx, zrdx): i64 {
     _pe_path_unframe(S);
     EB(S, 0x48); EB(S, 0xFF); EB(S, 0xC8);              # dec rax
     EB(S, 0x48); EB(S, 0xC1); EB(S, 0xF8); EB(S, 0x3F); # sar rax, 63 (BOOL->0/-1)
+    return 0;
+}
+
+# One narrow path → one kernel32 call that returns a VALUE (not a BOOL): FindFirstFileW (a
+# HANDLE; `two` = 1, r10 = &finddata → rdx) and GetFileAttributesW (a DWORD; `dword` = 1).
+# r11 = the UTF-8 path. A refused path skips the call and answers what the API answers for a
+# path it cannot find: INVALID_HANDLE_VALUE (-1) / INVALID_FILE_ATTRIBUTES (0xFFFFFFFF).
+# Same probed rbx-anchored frame as `_pe_path_bool1`; r10 is parked at [rsp+0x40] because the
+# widen clobbers r8-r11. CHANGELOG [6.6.12]
+fn _pe_path_call1(S, idx, two, dword): i64 {
+    _pe_path_frame(S, _PE_PATH_FRAME1);
+    if (two == 1) {
+        EB(S, 0x4C); EB(S, 0x89); EB(S, 0x54); EB(S, 0x24); EB(S, 0x40); # mov [rsp+0x40], r10
+    }
+    EB(S, 0x4C); EB(S, 0x89); EB(S, 0xDE);              # mov rsi, r11
+    _pe_widen_path(S, 0x80, 0x10080);
+    if (dword == 1) {
+        EB(S, 0xB8); EDISP32(S, 0 - 1);                 # mov eax, 0xFFFFFFFF (refused)
+    } else {
+        EB(S, 0x48); EB(S, 0xC7); EB(S, 0xC0); EDISP32(S, 0 - 1); # mov rax, -1 (refused)
+    }
+    EB(S, 0x48); EB(S, 0x85); EB(S, 0xFF);              # test rdi, rdi
+    var out = _pe_j(S, 0x84);                           # jz out
+    EB(S, 0x48); EB(S, 0x89); EB(S, 0xF9);              # mov rcx, rdi (wide path)
+    if (two == 1) {
+        EB(S, 0x48); EB(S, 0x8B); EB(S, 0x54); EB(S, 0x24); EB(S, 0x40); # mov rdx, [rsp+0x40]
+    }
+    EB(S, 0xFF); EB(S, 0x15);                           # call [rip+api]
+    _pe_iat_fixup_add(S, GCP(S), idx);
+    EB(S, 0); EB(S, 0); EB(S, 0); EB(S, 0);
+    if (dword == 1) { EB(S, 0x89); EB(S, 0xC0); }       # mov eax, eax (DWORD → zero-extended)
+    _pe_j_land(S, out);
+    _pe_path_unframe(S);
     return 0;
 }
 

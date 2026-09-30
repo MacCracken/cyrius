@@ -46,6 +46,18 @@ fn _SYSX_MEANT(n): i64 {
     if (n == 318) { return "getrandom"; }
     if (n == 322) { return "execveat"; }
     if (n == 288) { return "accept4"; }
+    if (n == 188) { return "setxattr"; }
+    if (n == 189) { return "lsetxattr"; }
+    if (n == 190) { return "fsetxattr"; }
+    if (n == 191) { return "getxattr"; }
+    if (n == 192) { return "lgetxattr"; }
+    if (n == 193) { return "fgetxattr"; }
+    if (n == 194) { return "listxattr"; }
+    if (n == 195) { return "llistxattr"; }
+    if (n == 196) { return "flistxattr"; }
+    if (n == 197) { return "removexattr"; }
+    if (n == 332) { return "statx"; }
+    if (n == 97) { return "getrlimit"; }
     if (n == 292) { return "dup3"; }
     if (n == 294) { return "inotify_init1"; }
     if (n == 254) { return "inotify_add_watch"; }
@@ -94,6 +106,18 @@ fn _SYSX_USE(n): i64 {
     if (n == 318) { return "SYS_GETRANDOM"; }
     if (n == 322) { return "SYS_EXECVEAT"; }
     if (n == 288) { return "SYS_ACCEPT4"; }
+    if (n == 188) { return "SYS_SETXATTR"; }
+    if (n == 189) { return "SYS_LSETXATTR"; }
+    if (n == 190) { return "SYS_FSETXATTR"; }
+    if (n == 191) { return "SYS_GETXATTR"; }
+    if (n == 192) { return "SYS_LGETXATTR"; }
+    if (n == 193) { return "SYS_FGETXATTR"; }
+    if (n == 194) { return "SYS_LISTXATTR"; }
+    if (n == 195) { return "SYS_LLISTXATTR"; }
+    if (n == 196) { return "SYS_FLISTXATTR"; }
+    if (n == 197) { return "SYS_REMOVEXATTR"; }
+    if (n == 332) { return "SYS_STATX"; }
+    if (n == 97) { return "SYS_GETRLIMIT"; }
     if (n == 292) { return "SYS_DUP3"; }
     if (n == 294) { return "SYS_INOTIFY_INIT1"; }
     if (n == 254) { return "SYS_INOTIFY_ADD_WATCH"; }
@@ -151,6 +175,17 @@ fn _SYSX_ACTUALLY(n): i64 {
     if (n == 218) { return "request_key"; }
     if (n == 231) { return "munlockall"; }
     if (n == 288) { return "pkey_mprotect"; }
+    if (n == 188) { return "msgrcv"; }
+    if (n == 189) { return "msgsnd"; }
+    if (n == 190) { return "semget"; }
+    if (n == 191) { return "semctl"; }
+    if (n == 192) { return "semtimedop"; }
+    if (n == 193) { return "semop"; }
+    if (n == 194) { return "shmget"; }
+    if (n == 195) { return "shmctl"; }
+    if (n == 196) { return "shmat"; }
+    if (n == 197) { return "shmdt"; }
+    if (n == 97) { return "unshare"; }
     if (n == 292) { return "io_pgetevents"; }
     if (n == 294) { return "kexec_file_load"; }
     if (n == 264) { return "name_to_handle_at"; }

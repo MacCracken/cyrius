@@ -15,6 +15,14 @@
 # `is_dir` of a 3-byte prefix of "dirA" said 1 and `dir_list_checked` listed dirA. The rows below
 # run on every target, unguarded, because the POSIX arms had the same wrong answer. The fixture
 # directory ends in "_dir" so its one-byte-shorter prefix names nothing. CHANGELOG [6.6.11]
+#
+# 6.6.12 — `dir_list_into` (the caller-owned-buffer lister) had NO Windows arm: the POSIX open +
+# getdents64 body compiled for PE and answered -1 for every directory, `.` included. Its rows run
+# on every target (same -1/-2/-3/-4 contract everywhere). An EMPTY path is refused on every
+# target (on Windows "<empty>\*" was the drive root, which dir_list then listed). And on Windows
+# GetLastError (0xF04B) is routed — `_dir_list_into_vec` reads it after FindNextFileW returns 0 to
+# tell the end (ERROR_NO_MORE_FILES) from a failure part-way, which used to end the listing as if
+# it were complete; the Windows rows check the reroute returns the real last error. CHANGELOG [6.6.12]
 include "lib/assert.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -60,6 +68,10 @@ fn main(): i64 {
         i = i + 1;
     }
     assert_eq(found, 1, "dir_list found the file created in it, by name");
+    var cv = vec_new();
+    assert_eq(dir_list_checked(str_from(dir), cv), 0,
+      "dir_list_checked of it is 0 — the enumeration ENDED, it did not fail (6.6.12: GetLastError on PE)");
+    assert_eq(vec_len(cv), 1, "and holds its one entry");
     var c = dir_list(str_from("."));
     assert_eq(c != 0 && vec_len(c) > 0, 1, "dir_list found at least one entry in the CWD");
 
@@ -80,6 +92,38 @@ fn main(): i64 {
     assert_eq(is_dir(withnul), 0, "is_dir refuses a path with an embedded NUL");
     var nv = vec_new();
     assert_lt(dir_list_checked(withnul, nv), 0, "dir_list_checked refuses it too");
+
+    test_group("dir_list_into lists into caller buffers, on every target");
+    var scr[4096];
+    var nm[256];
+    var ofs: i64[16];
+    assert_eq(dir_list_into(str_from(dir), &scr, 4096, &nm, 256, &ofs, 16), 1,
+      "dir_list_into of the fixture: 1 entry");
+    assert_eq(streq(&nm + load64(&ofs), leaf), 1, "named member.txt, NUL-terminated at its offset");
+    assert_neq(dir_list_into(str_from("."), &scr, 4096, &nm, 256, &ofs, 16), 0 - 1,
+      "dir_list_into of the CWD is not -1 (a count, or -3/-4 for a big CWD)");
+    assert_eq(dir_list_into(str_from("no_such_dir_xyz"), &scr, 4096, &nm, 256, &ofs, 16), 0 - 1,
+      "dir_list_into of a missing path: -1");
+    assert_eq(dir_list_into(str_from(dir), &scr, 512, &nm, 256, &ofs, 16), 0 - 2,
+      "scratch under 1024: -2");
+    assert_eq(dir_list_into(str_from(dir), &scr, 4096, &nm, 5, &ofs, 16), 0 - 3,
+      "names buffer too small for member.txt: -3, not a short count");
+    assert_eq(dir_list_into(str_from(dir), &scr, 4096, &nm, 256, &ofs, 0), 0 - 4,
+      "no room in offs: -4");
+
+    test_group("an EMPTY path names nothing (not the drive root)");
+    var ev = vec_new();
+    assert_lt(dir_list_checked(str_from(""), ev), 0, "dir_list_checked of an empty path fails");
+    assert_eq(vec_len(ev), 0, "and lists nothing");
+    assert_eq(is_dir(str_from("")), 0, "is_dir of an empty path is 0");
+
+    #ifdef CYRIUS_TARGET_WIN
+    test_group("Windows: GetLastError (0xF04B) reports the real last error");
+    assert_eq(is_dir(str_from("no_such_dir_xyz")), 0, "premise: a missing name");
+    assert_eq(syscall(0xF04B), 2, "after it: ERROR_FILE_NOT_FOUND (2)");
+    assert_eq(is_dir(str_from("no_such_dir_xyz/child")), 0, "premise: a missing parent");
+    assert_eq(syscall(0xF04B), 3, "after it: ERROR_PATH_NOT_FOUND (3) — a live value, not a constant");
+    #endif
 
     xunlink(file);
     xrmdir(dir);

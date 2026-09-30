@@ -733,7 +733,9 @@ fn _pe_ensure_getproc(S): i64 {
 fn _pe_getproc_get(): i64 { return _pe_getproc_idx; }
 
 # v6.1.18 — directory enumeration for lib/fs.cyr's Windows branch
-# (lib/fs_win.cyr). kernel32!FindFirstFileW(LPCWSTR pattern→rcx,
+# (lib/fs_win.cyr). ⚠ Since 6.6.12 the 0xF016 / 0xF019 reroutes take a NARROW UTF-8 path and
+# widen it themselves (`_pe_widen_path`, x86/emit.cyr) before these wide APIs are called.
+# kernel32!FindFirstFileW(LPCWSTR pattern→rcx,
 # LPWIN32_FIND_DATAW→rdx)→HANDLE (INVALID_HANDLE_VALUE=-1 on fail);
 # FindNextFileW(HANDLE→rcx, LPWIN32_FIND_DATAW→rdx)→BOOL (0=end);
 # FindClose(HANDLE→rcx)→BOOL; GetFileAttributesW(LPCWSTR→rcx)→DWORD attrs
@@ -778,6 +780,20 @@ fn _pe_ensure_getfattr(S): i64 {
     return 0;
 }
 fn _pe_getfattr_get(): i64 { return _pe_getfattr_idx; }
+
+# 6.6.12 — kernel32!GetLastError() → DWORD, for `syscall(0xF04B)` (EGETLASTERR_PE). The
+# kernel32 peer of 0xF024 (ws2_32!WSAGetLastError): lib/fs_win.cyr reads it right after
+# FindNextFileW returns 0, to tell ERROR_NO_MORE_FILES (18) — the end — from a real failure,
+# which used to end the listing as if it were complete. CHANGELOG [6.6.12]
+var _pe_getlasterr_ready = 0;
+var _pe_getlasterr_idx   = 0;
+fn _pe_ensure_getlasterr(S): i64 {
+    if (_pe_getlasterr_ready == 1) { return 0; }
+    _pe_register_kernel32(S, &_pe_getlasterr_idx, "GetLastError");
+    _pe_getlasterr_ready = 1;
+    return 0;
+}
+fn _pe_getlasterr_get(): i64 { return _pe_getlasterr_idx; }
 
 # v6.0.54: GetCommandLineW auto-import for the Windows args.cyr branch
 # (lib/args_win.cyr) and cycc's own --version/--strict on Windows.
