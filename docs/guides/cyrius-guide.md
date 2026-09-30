@@ -520,8 +520,12 @@ parameter denotes the caller's struct.
 
 ⚠ At TOP LEVEL there is no frame to hold the result, so a struct-valued call there
 (`mk(1);`, `var g: P3 = mk(1);`, `g = mk(1);`, `take(mk(1))` — and the method and operator
-forms alike) is a compile error naming the fn — call it inside a fn. An untyped
-`var g = pair_fn(..)` of a 9-16 B struct still yields its first word.
+forms alike) is a compile error naming the fn — call it inside a fn. That includes a global
+declared ahead of the first top-level statement, generic calls (`var G: W1<Pt> = mkw(p);`)
+and non-generic ones (`var G: Pt = mkp(2);`) alike: before v6.6.11 that leading block was
+never checked, so both compiled and `G.x` SIGSEGV'd, and after a statement the generic form
+was checked against its 8-byte base and built too. An untyped `var g = pair_fn(..)` of a
+9-16 B struct still yields its first word.
 Before v6.6.6 a struct result had storage only in the two declaration forms inside a fn —
 `var p: T = f(..)` and the inferred `var p = f(..)` — and only for a plain fn call. Every other
 form, at top level or not, compiled clean and crashed (a >16 B result was written through the
@@ -803,9 +807,13 @@ an `i8` field, both `P_x(p)` and `p.x` are `-1` (a bare `load8` would give 255).
 reads the body the way the parser does — comments, blank lines, `a : T` spacing, `;`-less fields
 and `,`-separated enum members are all fine — and the build FAILS if its field offsets disagree
 with the struct's real layout, which today means a field typed with a struct that is not itself
-`#derive`d: derive the inner struct too. The one exception is a struct NAME declared twice: the
-parser keeps the first layout, the check is not armed for the second, and that redefinition is a
-defect of its own (tracked separately).
+`#derive`d: derive the inner struct too. A struct NAME `#derive`d twice is checked the same way
+(v6.6.11): the parser keeps the FIRST layout, so a second definition of a different size is a
+compile error (`#derive: a second definition of this struct with a different size`) — its
+accessors would read and write the first layout's bytes. Before v6.6.11 that second definition
+built with only warnings, and its setters wrote past the first's `sizeof`. The same name at the
+same size still builds (an identical copy, e.g. one struct vendored by two libraries; the parser
+warns when the field names or types differ).
 
 A preprocessor directive (`#ifdef`, `#ifndef`, `#if`, `#elif`, `#else`, `#endif`, `#ifplat`,
 `#endplat`, `#define`) **inside** a `#derive`d declaration, or between the `#derive(...)` line
@@ -2564,6 +2572,12 @@ fn run(): i64 {
 The type argument may itself be a struct (`Box<Point>`) — the instance's field
 is laid out at the concrete type's size, so a following field lands at the right
 offset. Each distinct `Struct<type-args>` mints one deduped instance.
+
+A **global** takes the instance too, wherever it is declared: `var G: W1<Pt> =
+alloc(16);` ahead of the first top-level statement reads and writes `G.v.x` and passes
+`G` where a `W1<Pt>` is expected (6.6.11; before it a global declared in that leading
+block was typed as the base `W1`, where `v: T` is an i64 — `G.v.x` failed to parse and
+`w1s(G)` read the wrong storage). A global declared after a statement already did.
 
 **Status & limits (6.6.10).** Generic functions and structs are supported over
 i64, narrow scalars (`i32`/`i16`/`i8`), and struct type arguments, inferred or

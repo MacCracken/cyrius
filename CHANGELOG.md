@@ -208,6 +208,67 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   posture as kind 1 on an `: i64`-declared call, and binding the call to a `var m: f32` first
   silences it. No sibling change is required.
 
+### Fixed — declaration-zone struct globals, the union field-count flag, a re-derived struct (B03)
+
+- **A global typed with a generic struct instance, declared before the first top-level statement,
+  was the 8 B base (L9, type half).** `var G: W1<Pt> = …` read `G.v.x` as "expected ')', got '.'"
+  and `w1s(G)` read the wrong storage (204, want 52). **Root cause:** PARSE_GVAR_REG registered the
+  annotation with FINDSTRUCT + SKIP_GENERICS and never instantiated it the way PARSE_VAR does, so
+  GVTYPE was the base `W1` (`v: T` an i64). **Fix:** `_gen_ann_sid` (src/frontend/parse_decl.cyr)
+  is PARSE_VAR's instantiation, lifted out unchanged and shared by both; the leading block's replay
+  (`_gvi_ann`) reads the recorded instance back instead of returning 0, so a generic global's
+  initialiser is type-checked too.
+- **A 9-16 B struct call initialising a global before the first top-level statement compiled and
+  crashed (L9, init half).** `var G: Pt = mkp(2);` there built clean and SIGSEGV'd on `G.x`, generic
+  or not; after a statement the 6.6.6 refusal resolved the callee with FINDFN, the generic's 8 B base
+  (class 0), so `var G: W1<Pt> = mkw(gp)` built there too (rc 139). **Root cause:** the leading
+  block is replayed by EMIT_GVAR_INITS, which never reached `_refuse_toplevel_pair_init`.
+  **Fix:** `_refuse_toplevel_pair_init` (src/frontend/parse_fn.cyr) takes the callee token and
+  resolves it as the call reaches it (`_gcall_open` + `_gen_resolve_call`), and `_gvi_expr` runs it
+  for the replay. Both are now "'mkw' returns a struct by value, and a struct result needs storage
+  in a fn's frame — call it inside a fn", as the retptr class already was in both places.
+- **After any `union`, the 256-field and 8192-entry struct field-pool caps never fired (L7).** A
+  300-field union compiled rc 0, and 40 structs of 250 fields after a leading `union U0 { a; b; }`
+  wrote past the field pool and reported "passing integer literal 8 to 'alloc'" from lib/. **Root
+  cause:** PARSE_UNION_DEF keeps the union flag in bit 63 of the field count; ADDFIELD,
+  ADDFIELDTYPED and ADDFIELDFK used that count raw, so it was negative (the 256 test never true)
+  and the flag rode the pool top into every later struct's field base (the signed 8192 test never
+  true). **Fix:** the three mask the count and store `raw + 1`, keeping the flag. Compiled output is
+  unchanged (the addresses were equal mod 2^64).
+- **A `#derive`d struct redefined at a different size built, and its accessors wrote past the
+  first definition** (premise-S d2.cyr). Two derived `A`s of 48 and 64 B built rc 0 with only
+  warnings, and `A_set_m` stored at offset 56 of the 48 B struct the parser kept, while the same
+  redefinition of a NON-derived `A` failed the 6.6.7 layout backstop. **Root cause:** the backstop
+  was deliberately not armed for a name an earlier `#derive` declared, for the older kavach
+  vendored with two `struct SpawnedProcess`; every consumer now pins kavach 3.13.1, which has one.
+  **Fix:** a redefined name arms it too (src/frontend/lex_pp.cyr), with its own message: "#derive:
+  a second definition of this struct with a different size -- the FIRST one is the layout used, so
+  these accessors would read and write the wrong bytes". The check is size-only, so the
+  redefinitions still live in the ecosystem keep building: agnosys + sigil vendored side by side
+  in nine repos (14 identical structs) and garjan + prani's `DcBlocker` (24 B both).
+- **Tests.** `tests/gates/frontend/generic_type_arg_unknown_refused.sh` axis Q: the refusal before
+  and after the first statement (inferred, explicit and non-generic), the bare `var gr: W1<Pt>;`
+  (now the uninitialised-variable refusal, not a parse error at `gr.v.x`), an address-holding
+  `W1<Pt>` global written, read and passed, and an 8 B instance control.
+  `tests/tcyr/crossos/generic_struct_inference.tcyr` gains `run_globals` (`W1<Pt>` and `Box<Pt>`
+  globals). `tests/gates/diagnostics/cap_errors_stop_storing.sh` gains a 300-field union row, a
+  union-first pool row and a union/struct layout row; its aarch64 and cx await rows now require the
+  named "x86-only" refusal or the cap instead of a bare rc 1, and it exits 77 when it cannot run.
+  `tests/gates/diagnostics/derive_layout_backstop.sh` axis F now expects the refusal, plus two
+  same-size controls (G). Every new row fails on the pre-B03 compiler, and each of the four L9
+  changes and the redefinition size check was reverted alone on a scratch tree and turned its rows
+  red. Verified on real hardware: the
+  compiler built from this tree self-hosts, and generic_struct_inference.tcyr and structs.tcyr pass,
+  on pi (aarch64), ecb (macOS arm64), ach (macOS x86_64) and cass (Windows PE); also under
+  qemu-aarch64, wine and cxvm.
+- **Downstream survey (read-only).** The main build and every tcyr / bcyr / fcyr of the `~/Repos`
+  consumers (1,371 compiles) through the pre- and post-B03 compiler: no exit status changed, no
+  output size changed, and no warning or error appeared or disappeared. No consumer has a leading-
+  block pair-returning global initialiser, a union past either cap or a differently-sized derived
+  redefinition; every kavach pin is 3.13.1. Two H-owned gates asserted the old derive exemption
+  (`derive_layout_backstop.sh` F, `redefinition_layout_and_enum_over_var.sh` `sp_derive`) and are
+  updated by lane H.
+
 ## [6.6.10] — 2026-09-29
 
 The fourth batch release: the 6.6.8 review finds (groups B–G) and group H of the 6.6.9 finds, placed by
