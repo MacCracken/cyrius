@@ -6,6 +6,87 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.11] — 2026-09-29
 
+### Fixed — async runtime and process-tree lifetime (B12)
+
+- **The reactor ended a coroutine whose `await` did not park with 0 (P1).** Every backend's
+  `_async_step` (lib/async.cyr, async_macos.cyr, async_win.cyr, async_agnos.cyr) marked a task that
+  returned still-READY as DONE. A coroutine suspending at `await inner(a)` (a plain async fn) or at an
+  `await` of a call that does not park returns 0 from that suspend while READY, so under
+  `async_spawn_future` + `async_run` it was finished with 0 and never resumed (measured: 0, state DONE,
+  where `future_force` gave 41). The guide wrote the defect down as a rule ("force such a coroutine
+  yourself"). **Fix:** the shared `_async_coro_pending(t)` keeps a `future_force` task READY while its
+  Future is a pending coroutine; and when one was kept, the Linux/macOS/Windows reactors poll their
+  epfd / kqueue / IOCP WITHOUT blocking, because a coroutine that keeps awaiting non-parking work runs
+  every step and fd-parked tasks — and `async_with_timeout`'s deadline sentinel — otherwise starve until
+  it finishes. Gate: `coroutine_midbody_suspend.sh` axis 10 (async_run, task_join, a parked waiter that
+  must wake a spinning coroutine, a deadline over a coroutine that never finishes). Verified on x86_64
+  Linux, ach (x86_64 macOS) and cass (Windows PE) against a pre-fix control (exit 1 → 42).
+- **Linux `async_with_timeout(.., 0)`, `async_interval(.., 0, ..)` and `async_sleep_ms(0)` — and
+  their negative forms — waited for ever (P4).** `_async_timerfd` wrote `value_ms` straight into
+  `it_value`: all-zero DISARMS a timerfd and a negative value is EINVAL, and the `timerfd_settime`
+  return was unchecked. **Fix:** `value_ms <= 0` arms 1 ns (a deadline that has already passed, as on
+  macOS); a refused settime closes the fd and fails; `async_interval` returns no handle for
+  `ms <= 0`, as macOS does. Rows: `async_timeout_result.tcyr` "zero" group (each call bounded inside
+  `async_timeout`, so a regression FAILs rather than hangs; 7 RED on the old lib).
+- **The macOS kqueue reactor spun after a normal wake (P2).** `_async_kev_register` added
+  EVFILT_READ/WRITE with plain `EV_ADD` — level-triggered and persistent — and the wake path never
+  removed it, so an fd that stayed readable made every later `kevent()` return at once, wake nobody
+  and loop. **Fix:** the registrations are `EV_ADD | EV_ONESHOT` (a wake already wakes every waiter on
+  the (ident, filter); a later park re-adds). Row: `async_macos_verbs.tcyr` "a normal wake leaves no
+  read filter armed" — RED against the pre-fix lib on ecb and ach, green with it.
+- **macOS `async_run` never closed the runtime's kqueue — one fd leaked per runtime (P3).** Its
+  comment recorded the leak ("the kqueue stays open") instead of fixing it. **Fix:** closed after the
+  pump, single-use like the epoll backend. Row: `async_macos_verbs.tcyr` "async_run closes the
+  runtime's kqueue" (F_GETFD after the run) — RED on ecb and ach against the pre-fix lib.
+- **`async_run_process`'s deadline stalled the whole reactor for up to 5 s (P5), and
+  `async_with_timeout` on an `async_spawn_process` handle left the child running and unreaped (P6),
+  on Linux and macOS.** The deadline called the BLOCKING `proc_kill_tree` — TERM, then a 10 ms
+  sleep-poll for up to `_PROC_GRACE_MS` in which no task ran (measured: a TERM-ignoring child held a
+  sibling 10 ms interval for 5,234 ms); and `_async_retire` knew nothing about the child a process
+  task forked, so a direct `async_with_timeout(rt, h, 100)` returned 0 with `/bin/sleep 7` still
+  running (it outlived the caller) and, on Linux, its pidfd leaked. **Fix:** lib/process.cyr's kill
+  is split into `_proc_kill_begin` / `_proc_kill_step` (one non-blocking look) / `_proc_kill_finish`
+  (and `_proc_kill_wait`, the blocking remainder), with `proc_kill_tree` unchanged on top of them.
+  Both reactors' `_async_retire` now ends a process task's child: it TERMs the tree (Linux, /proc
+  snapshot — copied, since other tasks may snapshot during the grace) or the group (macOS, the child
+  alone when it leads none) and spawns a kill task that parks on a 10 ms timerfd / EVFILT_TIMER and
+  takes one look per tick until nothing is left or the grace runs out, then KILLs, reaps and (Linux)
+  closes the pidfd. `async_with_timeout` pumps that task to DONE before returning — other tasks keep
+  running — and `async_run_process`'s own kill is gone (the Windows shape). If no task can be made
+  (a refused allocation or timer) the kill completes inline, blocking, as before. Return-value
+  change: on Linux `async_run_process` now returns -1 (was -2, a deadline that never fired) when the
+  deadline could not be armed, as on macOS, and the unrun handle is retired. Rows:
+  `async_timeout_result.tcyr` "grace" / "loser", `async_macos_verbs.tcyr` the same two, and the
+  `async_process` fixture's row 4 — RED against the pre-fix lib on x86_64 Linux, pi, ecb and ach.
+- **Linux `async_timeout`'s deadline SIGKILLed only the forked body; its children outlived the
+  deadline (P7).** Measured: a body that forked `/bin/sleep 8` and hung left the sleep running at
+  PPID 1. **Fix:** a timed-out (or result-less) body is ended with `proc_kill_tree` — TERM the tree,
+  grace, KILL — which reaps it. A body that already EXITED without a result has had its children
+  reparented before the /proc walk, so that case is not reachable from here. Row:
+  `async_timeout_result.tcyr` "forker" (RED on the pre-fix lib; green on x86_64 and pi).
+- **Linux capture verbs: a child that exited while its grandchild held the pipe reported -2 and left
+  the grandchild running at PPID 1 (P8).** `_proc_child_guard` called `setsid()` only on macOS and
+  `_proc_end_cut_group` was a no-op off macOS, so after the child was reaped and its orphan
+  reparented, nothing could reach it (measured: `sleep 9 & echo hi` under a 300 ms deadline).
+  **Fix:** on Linux too the child calls `setsid()` when a deadline is in force, and
+  `_proc_end_cut_group` is unconditional, calling `_proc_kill_group` directly (never
+  `proc_kill_tree`, whose Linux arm walks /proc from an already-reaped pid). Accepted side effect: a
+  Linux child run under a deadline has no controlling terminal; PR_SET_PDEATHSIG still ends it when
+  its parent dies. Row: `deadline_ends_grandchild.tcyr`'s grandchild assert is no longer macOS-only —
+  RED against the pre-fix lib on x86_64 and pi; green on x86_64, pi, ecb, ach and the agnosticos
+  container.
+- **`lib/regression.cyr`'s deadline ended only the pid off Linux (P9).** `_regression_tree_collect`
+  returns nothing without /proc, so `_regression_kill_tree` signalled the child alone, and
+  `_regression_child_guard` had no `setsid()`, so there was no group to reach: the 6.6.10 macOS port
+  of lib/process.cyr's group kill never reached its twin. **Fix:** on macOS the child calls
+  `setsid()` (unconditionally — every verb here runs its child under a deadline, and a deadline
+  means no controlling terminal, the rule lib/process.cyr applies; so `ssh` / `scp` run by these
+  verbs on macOS cannot prompt for a host key or passphrase), and `_regression_kill_tree` targets `-pid` when that group exists: one TERM,
+  the grace, one KILL (`_proc_kill_group`'s shape). Rows: `regression_terminate_children.tcyr` "a
+  regression_* deadline ends the grandchild too" (RED on ecb and ach against the pre-fix lib), and
+  `process_deadline_tree.tcyr`'s whole-tree assert is no longer Linux-only (it tests lib/process.cyr,
+  which has ended the group on macOS since 6.6.10; green on ecb and ach).
+
 ## [6.6.10] — 2026-09-29
 
 The fourth batch release: the 6.6.8 review finds (groups B–G) and group H of the 6.6.9 finds, placed by

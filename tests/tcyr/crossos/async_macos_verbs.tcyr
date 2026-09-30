@@ -95,6 +95,19 @@ fn _sp_writer(rt): i64 {
     return 22;
 }
 
+# ---- a woken read registration is not left armed (6.6.11) ----
+var _pr[2];              # pipe R: written once and never drained
+var _rw_step = 0;
+fn _park_on_r(rt): i64 {
+    if (_rw_step == 0) {
+        _rw_step = 1;
+        if (async_wait_fd(rt, load32(&_pr)) < 0) { return 0 - 1; }
+        return 0;
+    }
+    return 13;           # woken; the byte is deliberately NOT read, so R stays readable
+}
+fn _write_r(arg): i64 { sys_write(load32(&_pr + 4), "r", 1); return 0; }
+
 # ---- async_interval ----
 var _ticks = 0;
 var _tok = 0;
@@ -126,6 +139,8 @@ fn _argv3b(a, b, c): i64 {
 }
 var _counter_ran = 0;
 fn _counter(arg): i64 { _counter_ran = 1; return 0; }
+var _gticks = 0;
+fn _gtick(arg): i64 { _gticks = _gticks + 1; return 0; }
 
 fn _read_pid(path): i64 {
     var b[32];
@@ -247,6 +262,38 @@ fn main(): i64 {
     assert_eq(sys_waitpid(0 - 1, &zs9, 1), 0 - 10, "...and no zombie is left behind");
     #endif
 
+    test_group("a normal wake leaves no read filter armed (6.6.11)");
+    #ifndef CYRIUS_TARGET_MACOS
+    println("    SKIP: the macOS kqueue backend (lib/async_macos.cyr) only - not this target");
+    #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    # ⛔ The READ/WRITE registrations were plain EV_ADD — level-triggered and persistent — and the
+    # wake path never removed them. After a normal wake on an fd that stays readable, every
+    # later kevent() returned that event at once and woke nobody: the reactor spun.
+    assert_eq(sys_pipe(&_pr), 0, "pipe R created");
+    var rtw = async_new();
+    _rw_step = 0;
+    var hw = async_spawn(rtw, &_park_on_r, rtw);
+    async_spawn(rtw, &_write_r, 0);
+    assert_eq(task_join(rtw, hw), 13, "the READ waiter on R woke");
+    assert_eq(_kq_pending(load64(rtw)), 0,
+      "...and R, still readable, queues nothing: its EVFILT_READ was not left armed (it spun the reactor)");
+    sys_close(load32(&_pr)); sys_close(load32(&_pr + 4));
+    #endif
+
+    test_group("async_run closes the runtime's kqueue (6.6.11)");
+    #ifndef CYRIUS_TARGET_MACOS
+    println("    SKIP: the macOS kqueue backend (lib/async_macos.cyr) only - not this target");
+    #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    var rtc = async_new();
+    var kqc = load64(rtc);
+    assert(sys_fcntl(kqc, 1, 0) >= 0, "premise: the new runtime's kqueue is open (F_GETFD)");
+    async_spawn(rtc, &_ret5, 0);
+    async_run(rtc);
+    assert(sys_fcntl(kqc, 1, 0) < 0, "after async_run it is closed: one fd no longer leaks per runtime");
+    #endif
+
     test_group("async_interval: a periodic EVFILT_TIMER");
     #ifndef CYRIUS_TARGET_MACOS
     println("    SKIP: the macOS kqueue backend (lib/async_macos.cyr) only - not this target");
@@ -335,6 +382,56 @@ fn main(): i64 {
     assert_eq(gone, 1, "the shell's own child was ended too (its process group)");
     if (gone == 0) { if (bg > 0) { sys_kill(bg, 9); } }
     sys_unlink(bgp);
+    #endif
+
+    test_group("the deadline's grace does not stall the reactor (6.6.11)");
+    #ifndef CYRIUS_TARGET_MACOS
+    println("    SKIP: the macOS kqueue backend (lib/async_macos.cyr) only - not this target");
+    #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    # ⛔ The deadline called the BLOCKING proc_kill_tree: TERM, then a 10 ms sleep-poll for up to
+    # _PROC_GRACE_MS, during which no task ran. A TERM-ignoring child held every sibling for the
+    # whole grace. The kill is now a task on the same reactor.
+    var prevg = _PROC_GRACE_MS;
+    _PROC_GRACE_MS = 1000;                        # the shape is the same at 5 s; keep the row short
+    var rtk = async_new();
+    var tokk = cancel_token_new();
+    _gticks = 0;
+    assert(async_interval(rtk, &_gtick, 0, 10, tokk) != 0, "premise: a 10 ms interval on the runtime");
+    t0 = clock_now_ms();
+    var rgr = async_run_process(rtk, "/bin/sh", _argv3("/bin/sh", "-c", "trap '' TERM; sleep 30"), &_envp, 200);
+    el = clock_now_ms() - t0;
+    var gt = _gticks;
+    cancel_token_signal(tokk);
+    async_run(rtk);
+    _PROC_GRACE_MS = prevg;
+    assert_eq(rgr, 0 - 2, "a TERM-ignoring child at the deadline: -2");
+    assert_gte(el, 1000, "...it was given its grace before the KILL");
+    assert_lt(el, 6000, "...and then KILLed");
+    assert_gte(gt, 40, "a sibling 10 ms interval kept ticking through the grace (was ~20: none during it)");
+    #endif
+
+    test_group("async_with_timeout on a process handle ends and reaps its child (6.6.11)");
+    #ifndef CYRIUS_TARGET_MACOS
+    println("    SKIP: the macOS kqueue backend (lib/async_macos.cyr) only - not this target");
+    #endif
+    #ifdef CYRIUS_TARGET_MACOS
+    # ⛔ The retire only deleted the EVFILT_PROC filter: the child kept running, unreaped, and
+    # outlived the caller.
+    var rtl = async_new();
+    var hl2 = async_spawn_process(rtl, "/bin/sleep", _argv3("/bin/sleep", "30", 0), &_envp);
+    t0 = clock_now_ms();
+    var wl = async_with_timeout(rtl, hl2, 100);
+    el = clock_now_ms() - t0;
+    var lpid = load64(load64(hl2 + 8) + 32);
+    assert_eq(wl, 0, "the deadline won: 0");
+    assert(lpid > 0, "premise: the child was forked");
+    var lst[8];
+    assert_eq(sys_waitpid(lpid, &lst, 1), 0 - 10, "the child was reaped before the call returned (was: still running)");
+    assert(sys_kill(lpid, 0) != 0, "...and it is gone");
+    assert_lt(el, 3000, "sleep honoured the TERM; no grace was waited out");
+    if (lpid > 0) { if (sys_kill(lpid, 0) == 0) { sys_kill(lpid, 9); sys_waitpid(lpid, &lst, 0); } }
+    async_run(rtl);
     #endif
 
     test_group("a refused allocation is reported, never stored through");

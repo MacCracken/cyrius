@@ -26,6 +26,19 @@
 #                                                            containers run as root)
 #   tree      async_run_process under a 400 ms deadline: the shell's background child is ended
 #             too (bite 11 — it SIGKILLed the shell's pid alone and left the child running)
+#   forker    (6.6.11) async_timeout's deadline ends what the BODY started: a body that forks
+#             `/bin/sleep 8` and then hangs. It SIGKILLed the body's pid alone and the grandchild
+#             ran on at PPID 1.
+#   grace     (6.6.11) async_run_process's deadline on a TERM-ignoring child: a sibling 10 ms
+#             interval keeps ticking through the grace. The kill was a blocking 10 ms sleep-poll
+#             for up to _PROC_GRACE_MS, during which no task ran (measured 5,234 ms, 0 ticks).
+#   loser     (6.6.11) async_with_timeout on an async_spawn_process handle: the child is ended,
+#             reaped and its pidfd closed before the call returns. It was left running (it
+#             outlived the parent), unreaped, and the pidfd leaked.
+#   zero      (6.6.11) async_with_timeout / async_interval / async_sleep_ms with ms 0 and -5
+#             return at once. An all-zero itimerspec DISARMS a timerfd and a negative one is
+#             EINVAL, so all six waited for ever. Each runs inside async_timeout's own bound, so
+#             a regression is a FAIL (-1), not a hung test.
 
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
@@ -80,6 +93,151 @@ fn _at_stain_stack(fd): i64 {
     var k = 0;
     while (k < 1024) { store64(&junk + k, (fd << 32) | fd); k = k + 8; }
     return load64(&junk + 512);
+}
+
+# ---- zero / negative timers (6.6.11). Each body returns a code the row checks; a body that
+# hangs is ended by async_timeout's bound and reads -1.
+var _at_pfd: i64[2];
+var _at_pstep = 0;
+fn _at_park(rt): i64 {
+    if (_at_pstep == 0) { _at_pstep = 1; async_wait_fd(rt, load32(&_at_pfd)); return 0; }
+    return 99;                                    # woken: the pipe is never written
+}
+fn _at_wt(ms): i64 {
+    if (sys_pipe(&_at_pfd) < 0) { return 0 - 7; }
+    _at_pstep = 0;
+    var rt = async_new();
+    var h = async_spawn(rt, &_at_park, rt);
+    return 100 + async_with_timeout(rt, h, ms);   # 100: the deadline won
+}
+fn _at_nop(a): i64 { return 0; }
+fn _at_iv(ms): i64 {
+    var rt = async_new();
+    var h = async_interval(rt, &_at_nop, 0, ms, cancel_token_new());
+    async_run(rt);
+    if (h == 0) { return 200; }                   # 200: no period, no handle
+    return 201;
+}
+fn _at_sl(ms): i64 { async_sleep_ms(ms); return 300; }
+
+# ---- the deadline's kill runs as a reactor task (6.6.11) ----
+var _at_ticks = 0;
+fn _at_tick(a): i64 { _at_ticks = _at_ticks + 1; return 0; }
+fn _at_argv(a0, a1, a2): i64 {
+    var av = alloc(32);
+    store64(av, a0);
+    store64(av + 8, a1);
+    store64(av + 16, a2);
+    store64(av + 24, 0);
+    return av;
+}
+
+fn _at_kill_rows(): i64 {
+    var ev = alloc(8);
+    store64(ev, 0);
+    var st[8];
+
+    test_group("async_run_process: the grace does not stall the reactor (6.6.11)");
+    var prevg = _PROC_GRACE_MS;
+    _PROC_GRACE_MS = 1000;                        # keep the row short; the shape is the same at 5 s
+    var rt = async_new();
+    var tok = cancel_token_new();
+    _at_ticks = 0;
+    assert_eq(async_interval(rt, &_at_tick, 0, 10, tok) != 0, 1, "premise: a 10 ms interval on the runtime");
+    var t0 = clock_now_ms();
+    var r = async_run_process(rt, "/bin/sh", _at_argv("/bin/sh", "-c", "trap '' TERM; sleep 30"), ev, 200);
+    var el = clock_now_ms() - t0;
+    var ticks = _at_ticks;
+    cancel_token_signal(tok);
+    async_run(rt);
+    _PROC_GRACE_MS = prevg;
+    assert_eq(r, 0 - 2, "grace: the deadline fired (-2)");
+    assert_eq(el >= 1000, 1, "grace: the TERM-ignoring child was given its grace before the KILL");
+    assert_eq(el < 6000, 1, "grace: ...and then KILLed");
+    assert_eq(ticks >= 40, 1, "grace: the sibling interval kept ticking through the grace (was ~20: none during it)");
+    assert_eq(sys_waitpid(0 - 1, &st, 1), 0 - 10, "grace: no child is left unreaped");
+
+    test_group("async_with_timeout on a process handle ends and reaps its child (6.6.11)");
+    var rt2 = async_new();
+    var h = async_spawn_process(rt2, "/bin/sleep", _at_argv("/bin/sleep", "30", 0), ev);
+    t0 = clock_now_ms();
+    var w = async_with_timeout(rt2, h, 100);
+    el = clock_now_ms() - t0;
+    var pid = load64(load64(h + 8) + 32);
+    var pfd = load64(load64(h + 8) + 40);
+    assert_eq(w, 0, "loser: the deadline won (0)");
+    assert_eq(pid > 0, 1, "loser: premise — the child was forked");
+    assert_eq(sys_waitpid(pid, &st, 1), 0 - 10,
+      "loser: the child was reaped before the call returned (was: still running)");
+    assert_eq(sys_kill(pid, 0) != 0, 1, "loser: ...and it is gone");
+    assert_eq(sys_fcntl(pfd, 1, 0) < 0, 1, "loser: its pidfd was closed (was: leaked)");
+    assert_eq(el < 3000, 1, "loser: sleep honoured the TERM; no grace was waited out");
+    if (pid > 0) { if (sys_kill(pid, 0) == 0) { sys_kill(pid, 9); sys_waitpid(pid, &st, 0); } }
+    async_run(rt2);
+    return 0;
+}
+
+# ---- async_timeout ends the body's children too (6.6.11) ----
+var _at_gpath = 0;
+fn _at_forker(a): i64 {
+    var g = sys_fork();
+    if (g == 0) {
+        var av[24];
+        store64(&av, "/bin/sleep");
+        store64(&av + 8, "8");
+        store64(&av + 16, 0);
+        var ev[8];
+        store64(&ev, 0);
+        sys_execve("/bin/sleep", &av, &ev);
+        sys_exit(127);
+    }
+    var b[24];
+    var n = 0;
+    var t[24];
+    var v = g;
+    while (v > 0) { store8(&t + n, 48 + v % 10); v = v / 10; n = n + 1; }
+    var i = 0;
+    while (i < n) { store8(&b + i, load8(&t + n - 1 - i)); i = i + 1; }
+    var fd = sys_open(_at_gpath, 577, 420);
+    if (fd >= 0) { sys_write(fd, &b, n); sys_close(fd); }
+    _at_hang(0);
+    return 7;
+}
+
+fn _at_forker_rows(): i64 {
+    test_group("async_timeout: the deadline ends what the body started (6.6.11)");
+    _at_gpath = test_scratch("cyrius_at_gc");
+    sys_unlink(_at_gpath);
+    assert_eq(async_timeout(&_at_forker, 0, 300), 0 - 1, "forker: the deadline fired (-1)");
+    var gc = _at_read_num(_at_gpath);
+    assert_eq(gc > 0, 1, "forker: premise — the body recorded its child");
+    var gone = 0;
+    var k = 0;
+    while (k < 150 && gone == 0) {
+        if (gc <= 0) { gone = 1; }
+        elif (sys_kill(gc, 0) != 0) { gone = 1; }
+        elif (_proc_zombie(gc) == 1) { gone = 1; }
+        else { sleep_ms(20); }
+        k = k + 1;
+    }
+    assert_eq(gone, 1, "forker: the body's own child did not outlive the deadline (it ran on at PPID 1)");
+    if (gc > 0) { sys_kill(gc, 9); }
+    sys_unlink(_at_gpath);
+    return 0;
+}
+
+fn _at_zero_rows(): i64 {
+    test_group("a zero or negative timer is a deadline that has passed, not a disarmed one (6.6.11)");
+    var t0 = clock_now_ms();
+    assert_eq(async_timeout(&_at_wt, 0, 3000), 100, "async_with_timeout(rt, h, 0): 0 at once");
+    assert_eq(async_timeout(&_at_wt, 0 - 5, 3000), 100, "async_with_timeout(rt, h, -5): 0 at once");
+    assert_eq(async_timeout(&_at_iv, 0, 3000), 200, "async_interval(.., 0, ..): no handle, and async_run returns");
+    assert_eq(async_timeout(&_at_iv, 0 - 5, 3000), 200, "async_interval(.., -5, ..): no handle");
+    assert_eq(async_timeout(&_at_sl, 0, 3000), 300, "async_sleep_ms(0) returns");
+    assert_eq(async_timeout(&_at_sl, 0 - 5, 3000), 300, "async_sleep_ms(-5) returns");
+    assert_eq(async_timeout(&_at_wt, 30, 3000), 100, "control: a 30 ms deadline still fires");
+    assert_eq(clock_now_ms() - t0 < 2500, 1, "all of them promptly (a hang costs each row 3 s)");
+    return 0;
 }
 
 fn _at_rows(): i64 {
@@ -199,6 +357,9 @@ fn main(): i64 {
     #ifdef CYRIUS_TARGET_LINUX
     _at_rows();
     _at_tree_rows();
+    _at_zero_rows();
+    _at_kill_rows();
+    _at_forker_rows();
     #endif
     #ifndef CYRIUS_TARGET_LINUX
     println("    SKIP: async_timeout forks only on Linux; this target runs the body inline (no pipe, no fork, no stale result to read)");

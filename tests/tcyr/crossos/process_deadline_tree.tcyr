@@ -1,8 +1,10 @@
 # process_deadline_tree.tcyr — CROSS-HOST: when lib/process.cyr's deadline
 # (`proc_set_timeout_ms`) ends a child, it asks first (SIGTERM, a grace period, then SIGKILL),
-# and on Linux it ends the child's whole tree. Runs on ecb (macOS arm64) + ach (Intel Mac) +
-# pi (aarch64) through the release gate's cross-OS leg; on Windows and agnos there is no
-# POSIX deadline to test and the file only reports its summary.
+# and it ends the child's whole tree — Linux by walking /proc, macOS through the child's process
+# group (the tree row ran on Linux only until 6.6.11; macOS has ended the group since 6.6.10).
+# Runs on ecb (macOS arm64) + ach (Intel Mac) + pi (aarch64) through the release gate's
+# cross-OS leg; on Windows and agnos there is no POSIX deadline to test and the file only
+# reports its summary.
 #
 # ⛔ WHY (6.6.8). The deadline killed the child alone, with SIGKILL. SIGKILL runs no cleanup,
 # so a `/bin/sh -c` child's trap never removed what it made (the check driver's OVMF boot
@@ -70,8 +72,8 @@ fn main(): i64 {
     assert_eq(el < 5000, 1, "…and it was not held for the grace period once it had gone");
     var bg = _read_pid(bgp);
     assert_eq(bg > 0, 1, "the shell's background child was recorded");
-    #ifdef CYRIUS_TARGET_LINUX
-    # Linux walks /proc: the orphan the shell left got its own SIGTERM within the grace.
+    # Linux walks /proc: the orphan the shell left got its own SIGTERM within the grace. macOS
+    # ends the child's process group (the child called setsid() under the deadline).
     var gone = 0;
     var k = 0;
     while (k < 50 && gone == 0) {
@@ -81,8 +83,7 @@ fn main(): i64 {
         else { syscall(7, 0, 0, 20); }
         k = k + 1;
     }
-    assert_eq(gone, 1, "the child's own child was ended too (the whole tree, Linux)");
-    #endif
+    assert_eq(gone, 1, "the child's own child was ended too (the whole tree)");
     if (bg > 0) { sys_kill(bg, 9); }
     sys_unlink(flag);
     sys_unlink(bgp);

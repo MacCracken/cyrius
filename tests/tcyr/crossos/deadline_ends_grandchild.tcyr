@@ -2,12 +2,11 @@
 # catches a LIVE child ends the child's WHOLE TREE on every host that has one — Linux (/proc
 # walk), macOS (the child's process group) and Windows (a Job object) — so a grandchild can
 # neither outlive the deadline nor hold a capture pipe open past it. And a child that exits on
-# its own is NOT a deadline: what it left running is left alone. The one place the peers differ:
-# a child that EXITED at once while its grandchild kept the capture pipe open. Every host cuts
-# the drain at the deadline and reports -2; macOS and Windows also end the grandchild (its group
-# / its job), Linux does not — a library verb has no process group to end there and opening an
-# adoption window would change who reaps the caller's orphans, so that grandchild is only cut
-# off from the pipe (the capture-leftover row below says so). Runs on ecb (macOS arm64), ach
+# its own is NOT a deadline: what it left running is left alone. A child that EXITED at once
+# while its grandchild kept the capture pipe open: every host cuts the drain at the deadline,
+# reports -2 and ends the grandchild — its job on Windows, its process group on macOS and, since
+# 6.6.11, on Linux too (the child calls setsid() under a deadline there as well; before, Linux only
+# cut the grandchild off from the pipe and left it running at PPID 1). Runs on ecb (macOS arm64), ach
 # (Intel Mac), cass (Windows) and pi (aarch64) through the release gate's cross-OS leg. agnos
 # has no deadline (process_agnos.cyr), so there the file only reports its summary.
 #
@@ -127,9 +126,9 @@ fn main(): i64 {
 
     test_group("a child that exits at once while its grandchild holds the capture pipe");
     # The child is reaped normally; only the drain is waiting, for a grandchild the child left on
-    # the pipe. The verb must still come back at the deadline and report it, and on macOS and
-    # Windows that grandchild must be ENDED, not merely abandoned: a cut with no kill left it
-    # running at PPID 1 on macOS (the capture verbs ended a group only for a LIVE child).
+    # the pipe. The verb must still come back at the deadline and report it, and that grandchild
+    # must be ENDED, not merely abandoned: a cut with no kill left it running at PPID 1 on macOS
+    # (6.6.10) and on Linux (6.6.11).
     prev = proc_set_timeout_ms(700);
     t0 = clock_now_ms();
     #ifdef CYRIUS_TARGET_WIN
@@ -146,10 +145,7 @@ fn main(): i64 {
     var gp4 = _num(buf, n4);
     assert_eq(gp4 > 0, 1, "premise: the shell reported its background child's pid");
     if (gp4 > 0) {
-        #ifdef CYRIUS_TARGET_MACOS
         assert_eq(_ended(gp4), 1, "the grandchild itself was ended (the child's process group)");
-        #endif
-        # Linux: not ended by the verb (see the header) — end it here so the run leaves nothing.
         sys_kill(gp4, 9);
     }
     #endif
