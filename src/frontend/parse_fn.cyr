@@ -1475,7 +1475,7 @@ fn _try_push_struct_addr_arg(S, fi, argc): i64 {
     }
     # 6.6.6 (bite 14 review): any other expression — a method call or an operator returning the
     # struct takes its temp's address; everything else is pushed as its value. CHANGELOG [6.6.6]
-    if (nx != 31) { if (nx != 11) { return _push_struct_expr_arg(S); } }
+    if (nx != 31) { if (nx != 11) { return _push_struct_expr_arg(S, fi, argc); } }
     var li = 0 - 1;
     if (GINFN(S) == 1) { li = FINDLOCAL(S, PEEKV(S)); }
     if (li < 0) { return _push_struct_addr_global(S); }
@@ -2113,14 +2113,53 @@ fn _sc_global_mismatch(S, pscale, start): i64 {
 # call returning a struct, the callee gets the temp's ADDRESS — the result's storage — where it
 # used to get the first word. Anything else pushes the value, which is exactly what the caller's
 # own PCMPE + EPUSHR would push. Returns 1: the argument is consumed. CHANGELOG [6.6.6]
-fn _push_struct_expr_arg(S): i64 {
+# ⛔ 6.6.12 — A STRUCT-TYPED FIELD AS THE WHOLE ARGUMENT (`take(r.v)`) PUSHED ITS FIRST WORD, and
+# the callee dereferenced that word as the struct's address: SIGSEGV on x86 and aarch64, a page
+# fault on PE, 0 on cx — from a local, global, by-value parameter or pointer-mode base alike, and
+# through a generic instance. The whole-field record (`_fla_want` / `_fla_take`) is armed here
+# too, ending at `,` or `)`; see `_fla_push_arg`. CHANGELOG [6.6.12]
+fn _push_struct_expr_arg(S, fi, argc): i64 {
     var st = GTI(S);
     var w = _sc_arm(S);
+    var fw = _fla_want;
+    var fa = _fla_arg;
+    _fla_want = st;
+    _fla_arg = st;
+    _fla_hit = 0;
     PCMPE(S);
     _sc_want = w;
+    _fla_want = fw;
+    _fla_arg = fa;
+    if (_fla_hit == 1) { return _fla_push_arg(S, fi, argc); }
     var t = _sc_whole(S, st);
     if (t >= 0) { EFLADDR(S, t); }
     if (t == 0 - 1) { _refuse_toplevel_struct_call(S, _sc_fn); }
+    EPUSHR(S);
+    return 1;
+}
+
+# The recorded field source as by-value argument `argc` of `fn`: checked against the parameter's
+# struct (SFPSID — the instance's for a generic) and refused by name when it differs. In a fn the
+# callee gets a COPY (a frame temp), so a write through its parameter cannot reach the caller's
+# field — the by-value contract. At top level there is no frame, and the field's own address is
+# passed, as a named global argument's is (`_push_struct_addr_global`). Returns 1. CHANGELOG [6.6.12]
+fn _fla_push_arg(S, fi, argc): i64 {
+    _fla_hit = 0;
+    var ps = GFPSID(S, fi, argc);
+    if (ps > 0) { if (ps != _fla_ft) {
+            ERR_IDENT(S, "cannot pass ", _fla_name, " to a by-value parameter of a different struct type in a call to ", L64(_fnt_names + fi * 8));
+            EPUSHR(S);   # keeps the argument count; no binary is written
+            return 1;
+        } }
+    if (GINFN(S) == 1) {
+        var t = _agg_temp(S, _fla_ft);
+        _agc_copy_bytes(S, t, 0 - 1, 0 - 2, 0 - 1, STRUCTSZ(S, _fla_ft - 1));
+        EFLADDR(S, t);
+    } else {
+        _fsc_src_x1(S, 0);
+        EMOVI(S, 0);
+        EADDR(S);            # rax = x1
+    }
     EPUSHR(S);
     return 1;
 }
@@ -4776,6 +4815,22 @@ fn _fn_self_byval(fi): i64 {
     return (L64(_fnt_structmask + fi * 8) >> 62) & 1;
 }
 
+# 6.6.12 — record the struct id of an ADDRESS-passed struct parameter (see SFPSID, util.cyr).
+fn _psid_note(S, fi, pc, sid, mask): i64 {
+    if (((mask >> pc) & 1) == 0) { return 0; }
+    return SFPSID(S, fi, pc, sid);
+}
+# Pass 1's half: a parameter typed with struct `base` — its address-passed bit follows the
+# instance (`_gtype_param_mask`), and the sid is recorded. Returns the instance sid; the updated
+# mask is the second return, `_psid_mask` (read it immediately).
+var _psid_mask = 0;
+fn _psid_scan(S, fi, pc, base, mask): i64 {
+    var inst = _gtype_sid(S, fi, base);
+    _psid_mask = _gtype_param_mask(S, mask, pc, base, inst);
+    _psid_note(S, fi, pc, inst, _psid_mask);
+    return inst;
+}
+
 # Scan the param list `( ... )` for fn `fi`, computing the per-fn ABI masks the
 # same way PARSE_FN_DEF's param loop does (shared _classify_param_type → first
 # match sets one mask at bit `pc`; SIMD uses 2 bits at pc*2), plus the param
@@ -4824,7 +4879,7 @@ fn _prescan_params(S, fi): i64 {
                         if (_param_wants_struct_ptr(S, PEEKV(S)) == 1) { struct_mask = struct_mask | (1 << pc); }
                         # 6.6.10: `r: Box<Pt>` — the instance's size decides (see _gtype_sid).
                         var _pb = FINDSTRUCT(S, PEEKV(S));
-                        if (_pb > 0) { struct_mask = _gtype_param_mask(S, struct_mask, pc, _pb, _gtype_sid(S, fi, _pb)); }
+                        if (_pb > 0) { _pb = _psid_scan(S, fi, pc, _pb, struct_mask); struct_mask = _psid_mask; }
                         STI(S, GTI(S) + 1);                  # consume type name
                         SKIP_GENERICS(S);                    # `: Vec<i64>` etc.
                     }
@@ -6736,6 +6791,7 @@ fn _PARSE_FN_DEF_IMPL(S): i64 {
                 # `-pt_sid` only if explicitly annotated.
                 SLTYPE(S, li, 0);
                 if (pt_sid > 0) { SLTYPE(S, li, 0 - pt_sid); }
+                _psid_note(S, fi, pc, pt_sid, struct_mask);   # 6.6.12: see SFPSID (util.cyr)
                 # v6.4.57 (Gap A) — a scalar f64/f32 param gets the same positive
                 # F64_TYID/F32_TYID tag a `var y: f64` local gets, so parse_expr's
                 # local-load (lt == F64_TYID/F32_TYID) routes ops to the float

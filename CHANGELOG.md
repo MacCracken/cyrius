@@ -73,6 +73,46 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   controls; mutation ledger in its header). Both tcyrs and the inline cx rows
   green on x86, aarch64 (qemu), PE (wine) and cx, and on real ecb, ach, pi and cass. The guide
   (`docs/guides/cyrius-guide.md`, Structs and Generic structs) documents the literal forms.
+- **A struct-typed field passed as a by-value struct argument, and a top-level struct copy-init,
+  used the source's first word as the struct's address — SIGSEGV (B03, items V3 + V4).** **Root
+  cause (V3):** `take(r.v)` into a `: Pt` parameter over 8 B (address-passed) reached
+  `_push_struct_expr_arg` (`src/frontend/parse_fn.cyr`), which armed only the method/operator record,
+  so the field's FIRST WORD was pushed as the pointer the callee dereferenced: rc 139 on x86 and
+  aarch64, a page fault reading 0x3 on PE, 0 on cx — from a local, a global, a by-value parameter and
+  a pointer-mode base, and through `mk<Pt>(r.v)`; the 6.6.10/6.6.11 whole-field record (`_fla_want` /
+  `_fla_take`) was never armed there and accepted only `;` as its end. **Root cause (V4):**
+  `_try_struct_copy_init` returned at `GINFN != 1`, and pass 1 (`PARSE_GVAR_REG`) knew only the literal
+  form as inline, so `var B: Pt = A;` / `var G: Pt = BX.v;` at top level got ONE 8-byte pointer-mode
+  slot holding the source's first word, and `B.x` dereferenced 3 — rc 139 on x86 and aarch64, rc 5 on
+  PE, 0 on cx; in the leading declaration block (the `EMIT_GVAR_INITS` replay) and after the first
+  statement (`PARSE_VAR`) alike. **Fix (V3):** `_push_struct_expr_arg` arms the whole-field record,
+  which now also ends at `,` or `)` (`_fla_arg`); `_fla_push_arg` checks the field's struct against
+  the PARAMETER's — recorded per fn in a new lazily-allocated table, `SFPSID` / `GFPSID`
+  (`src/common/util.cyr`), by pass 1 and by the definition, the only writer for a generic INSTANCE —
+  and refuses a mismatch by name (`cannot pass 'q' to a by-value parameter of a different struct type
+  in a call to 'take'`). In a fn the callee gets a byte-exact COPY in a frame temp, so a write through
+  the parameter does not reach the caller's field; at top level (no frame) it gets the field's own
+  address, as a named global argument does. **Fix (V4):** one token predicate, `_gci_src`
+  (`src/frontend/parse_decl.cyr`), asked by pass 1 (`_gci_inline`), the replay (`_gci_init`) and
+  PARSE_VAR's top-level arm (`_gci_toplevel`): a WHOLE source of the declared struct — a named inline
+  global, or a field chain whose leaf is that struct — registers the global INLINE (STRUCTSZ bytes,
+  `SVPM 2`, as a literal global) and byte-copies it at init; a source of another struct type is refused
+  by name (`_AGG_ASSIGN_TYPE_ERR`), at every width; a pointer-mode source (`var p: Pt = mk();`, a
+  pointer-mode global) keeps the pointer copy, as in a fn. **Verification:**
+  `tests/tcyr/crossos/struct_field_value_copy.tcyr` gains two groups (15 field-argument rows — local,
+  global, parameter, pointer-mode, generic, middle argument, 24 B, 12 B byte-exact, two-level chain,
+  method, the copy's independence, three at top level — and 11 copy-init rows: leading block and after
+  a statement, from a global and a field, 24 B, a 12 B copy with a canary after it, independence from a
+  later write, and the pointer-mode source); mutations: drop the `_fla_want` arming (the argument group,
+  SIGSEGV), `_gci_src` returns 0 (the copy-init group, SIGSEGV). New gate
+  `tests/gates/frontend/struct_copy_source_type_refused.sh`: 10 refusals on the message (each the ONLY
+  error, no binary) — a free call in a fn, a callee defined after the call (pass 1's record), top
+  level, a generic instance, a method, and copy-init from a named global and a field on both
+  declaration paths plus an 8 B pair — and 2 acceptances against field-by-field controls; every
+  refusal compiled clean on 6.6.11; mutation ledger in its header. The tcyr is 94/94 on x86, aarch64
+  (qemu) and PE (wine), and on real pi, ecb, ach and cass; the no-lib cx rows
+  (`B03-cx-rows.cyr`, exit 128 = all right) are 128 on cxvm and every native target, 127 on the
+  pre-B03 cx compiler. Fixpoint and seed-derive green.
 
 ## [6.6.11] — 2026-09-29
 

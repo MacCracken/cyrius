@@ -512,6 +512,21 @@ call whose inferred instance differs (`s = mk(r.v)` into a `Box<Pt>`: a FIELD ar
 the leading declaration block: `var G: Odd = mkod2();` is refused wherever it appears. Before
 v6.6.11 each of those stored one word, silently.
 
+Two more field / global sources became copies in v6.6.12. **A struct-typed FIELD passed as a
+by-value struct argument** (`take(r.v)` into a `: P3` parameter over 8 bytes), from any base (a
+local, a global, a by-value parameter, a pointer-mode local), and through a generic instance
+(`mk<P3>(r.v)`). Inside a fn the callee gets a COPY of the field, so writing through the
+parameter does not reach `r.v` — unlike a NAMED struct argument, which is address-passed (see
+below). At top level there is no frame, so the callee gets the field itself. A field of a
+different struct type is refused (`cannot pass 'q' to a by-value parameter of a different struct
+type in a call to 'take'`). Before v6.6.12 the field's first word was passed as the struct's
+address, and the callee SIGSEGV'd. **A top-level copy-init** — `var B: P3 = A;` from an inline
+global, or `var G: P3 = BX.v;` from a global's field, in the leading declaration block or after
+the first statement — gives `B` its own STRUCTSZ bytes and copies them. Before v6.6.12 `B` got one
+8-byte slot holding `A`'s first word, and `B.x` SIGSEGV'd. A pointer-mode source
+(`var p: P3 = mk();`, or a global initialised that way) still binds a second pointer to the same
+struct, exactly as in a fn.
+
 ⚠ **A by-value struct PARAMETER over 8 bytes is address-passed** — the parameter's slot holds
 the caller's address, which is why writing `q.z = 5` inside the callee is visible to the caller.
 Since v6.6.6 every path that copies or returns such a parameter goes through that address:

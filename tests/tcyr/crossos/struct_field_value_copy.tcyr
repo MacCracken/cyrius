@@ -41,6 +41,20 @@
 #     global, a struct-typed field, a call (>16 B retptr, 9-16 B rax:rdx, <= 8 B rax), a method, an
 #     operator; a value of a type on the field's first-field chain fills that inner struct.
 #     Before 6.6.12 each of these was a compile error ("unexpected '}'").
+#
+# 6.6.12 rows — a struct copy whose SOURCE is a field or a global (B03):
+#   * a struct-typed FIELD passed as a by-value (address-passed, > 8 B) struct argument pushed
+#     the field's FIRST WORD and the callee dereferenced it: SIGSEGV on x86 and aarch64, a page
+#     fault on PE, 0 on cx — from a local, a global, a by-value parameter and a pointer-mode base,
+#     and through a generic instance. In a fn the callee now gets a copy (a write through its
+#     parameter does not reach the caller's field); at top level, the field's address.
+#     Mutation: in `_push_struct_expr_arg` (src/frontend/parse_fn.cyr) drop the `_fla_want = st;`
+#     arming — the "field as a by-value argument" group goes red (x86: SIGSEGV).
+#   * a TOP-LEVEL copy-init `var B: Pt = A;` / `var G: Pt = BX.v;` gave B one 8-byte pointer-mode
+#     slot holding the source's first word, so `B.x` dereferenced it (SIGSEGV) — in the leading
+#     declaration block and after the first statement alike. It is now an inline copy.
+#     Mutation: make `_gci_src` (src/frontend/parse_decl.cyr) return 0 — the "top-level
+#     copy-init" group goes red (x86: SIGSEGV).
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/assert.cyr"
@@ -196,6 +210,83 @@ fn lv_chain(): i64 { var p: Pt; p.x = 2; p.y = 3; var o = Outer { 1, p, 4 }; ret
 fn lv_whole2(): i64 { var b: Box; b.v.x = 2; b.v.y = 3; b.n = 4; var o = Outer { 1, b }; return ou4(&o); }
 fn lv_chain_field(): i64 { var b: Box; b.v.x = 2; b.v.y = 3; b.n = 9; var o = Outer { 1, b.v, 4 }; return ou4(&o); }
 fn lv_chain_call(): i64 { var o = Outer { 1, mkpt(2), 4 }; return ou4(&o); }
+
+# ── 6.6.12 (B03): a struct copy whose source is a field or a global ────────────────────────────
+struct T12 { a: i32; b: i32; c: i32; }
+struct HT12 { t: T12; k: i32; z: i32; }
+struct RQ { q: Q; n; }
+fn fa_take(p: Pt): i64 { var r = p.x * 10 + p.y; p.x = 99; return r; }
+fn fa_mid(k, p: Pt, j): i64 { return k * 1000 + p.x * 10 + p.y + j * 100; }
+fn fa_q(q: Q): i64 { return q.a + q.b * 10 + q.c * 100; }
+fn fa_t12(t: T12): i64 { return t.a + t.b * 10 + t.c * 100; }
+fn fa_gen<T>(p: T): i64 { return p.x * 10 + p.y; }
+impl Mk for Box { fn plus(self, q: Pt): i64 { return load64(self + 16) * 100 + q.x * 10 + q.y; } }
+var GFA = Box { 3, 4, 9 };
+var GFQ = RQ { 1, 2, 3, 4 };
+var GFO = Outer { 1, 3, 4, 5 };
+fn fa_local(): i64 { var r: Box; r.v.x = 3; r.v.y = 4; r.n = 9; return fa_take(r.v); }
+fn fa_global(): i64 { return fa_take(GFO.b.v) * 0 + fa_mid(0, GFA.v, 0); }
+fn fa_param(r: Box): i64 { return fa_mid(0, r.v, 0); }
+fn fa_ptr(): i64 { var r: Box = alloc(24); r.v.x = 3; r.v.y = 4; r.n = 9; return fa_take(r.v); }
+fn fa_generic(): i64 { var r: Box; r.v.x = 3; r.v.y = 4; r.n = 9; return fa_gen<Pt>(r.v); }
+fn fa_middle(): i64 { var r: Box; r.v.x = 3; r.v.y = 4; r.n = 9; return fa_mid(5, r.v, 6); }
+fn fa_24(): i64 { var r: RQ; r.q.a = 1; r.q.b = 2; r.q.c = 3; r.n = 4; return fa_q(r.q); }
+fn fa_chain(): i64 { var o: Outer; o.t = 1; store64(&o + 8, 3); store64(&o + 16, 4); o.b.n = 5; return fa_take(o.b.v); }
+fn fa_copy(): i64 { var r: Box; r.v.x = 3; r.v.y = 4; r.n = 9; var a = fa_take(r.v); return a + r.v.x * 100 + r.v.y * 1000; }
+fn fa_odd12(): i64 { var h: HT12; h.t.a = 1; h.t.b = 2; h.t.c = 3; h.k = 7; h.z = 8; return fa_t12(h.t) + h.k * 1000 + h.z * 10000; }
+fn fa_method(): i64 { var b: Box; b.n = 2; var r: Box; r.v.x = 3; r.v.y = 4; r.n = 9; return b.plus(r.v); }
+fn fa_twice(): i64 { var r: Box; r.v.x = 3; r.v.y = 4; r.n = 9; var o: Outer; store64(&o + 8, 5); store64(&o + 16, 6); return fa_take(r.v) * 100 + fa_take(o.b.v); }
+
+# Top-level copy-init in the leading declaration block (pass 1 + the EMIT_GVAR_INITS replay).
+var GCA = Pt { 3, 4 };
+var GCB: Pt = GCA;
+var GCF: Pt = GFA.v;
+var GCC: Pt = GFO.b.v;
+var GCQ: Q = GFQ.q;
+var GCT = HT12 { 1, 2, 3, 7, 8 };
+var GCT12: T12 = GCT.t;
+var GCT12_C = 0x5A5A5A5A5A5A5A5A;
+
+test_group("a struct-typed field passed as a by-value struct argument (6.6.12)");
+assert_eq(fa_local(), 34, "from a local's field (was SIGSEGV)");
+assert_eq(fa_global(), 34, "from a global's field");
+var gfa_p: Box = alloc(24);
+gfa_p.v.x = 3; gfa_p.v.y = 4; gfa_p.n = 9;
+assert_eq(fa_param(gfa_p), 34, "from an address-passed parameter's field");
+assert_eq(fa_ptr(), 34, "from a pointer-mode local's field");
+assert_eq(fa_generic(), 34, "through a generic instance, fa_gen<Pt>(r.v)");
+assert_eq(fa_middle(), 5634, "as a middle argument (ends at ',')");
+assert_eq(fa_24(), 321, "a 24 B struct field");
+assert_eq(fa_chain(), 34, "from a two-level field chain, o.b.v");
+assert_eq(fa_copy(), 4334, "the callee gets a copy: its write does not reach the caller's field");
+assert_eq(fa_odd12(), 87321, "a 12 B struct field, byte-exact (the fields after it intact)");
+assert_eq(fa_method(), 234, "as a method argument, b.plus(r.v)");
+assert_eq(fa_twice(), 3456, "two field arguments in one expression, each its own copy");
+assert_eq(fa_mid(1, GFA.v, 2), 1234, "at top level, from a global's field");
+assert_eq(fa_q(GFQ.q), 321, "at top level, a 24 B global field");
+assert_eq(fa_gen<Pt>(GFA.v), 34, "at top level, through a generic instance");
+
+test_group("a top-level struct copy-init is a copy (6.6.12)");
+assert_eq(GCB.x * 10 + GCB.y, 34, "var GCB: Pt = GCA; in the leading block (was SIGSEGV)");
+assert_eq(GCF.x * 10 + GCF.y, 34, "var GCF: Pt = GFA.v; a global's field");
+assert_eq(GCC.x * 10 + GCC.y, 34, "var GCC: Pt = GFO.b.v; a two-level chain");
+assert_eq(GCQ.a + GCQ.b * 10 + GCQ.c * 100, 321, "var GCQ: Q = GFQ.q; 24 B");
+assert_eq(GCT12.a + GCT12.b * 10 + GCT12.c * 100, 321, "a 12 B struct from a field");
+assert_eq(GCT12_C, 0x5A5A5A5A5A5A5A5A, "... copied byte-exact: the global after it is untouched");
+assert_eq(&GCB - &GCA, 16, "GCB owns its 16 bytes");
+GCA.x = 9; GFA.v.y = 8;
+assert_eq(GCB.x * 10 + GCB.y + GCF.x * 1000 + GCF.y * 100, 3434, "independent: a later write to the source does not show");
+var GPA: Pt = GCA;
+var GPF: Pt = GFA.v;
+GCA.y = 0;
+assert_eq(GPA.x * 10 + GPA.y + GPF.x * 1000 + GPF.y * 100, 3894, "after the first statement (PARSE_VAR), from a global and a field");
+var GPQ: Q = GFQ.q;
+assert_eq(GPQ.a + GPQ.b * 10 + GPQ.c * 100, 321, "after the first statement, 24 B from a field");
+var gpm_src: Pt = alloc(16);
+gpm_src.x = 1; gpm_src.y = 2;
+var GPM: Pt = gpm_src;
+gpm_src.x = 6;
+assert_eq(GPM.x * 10 + GPM.y, 62, "a pointer-mode source keeps the pointer copy (C `P *b = a`)");
 
 test_group("a struct value assigned into a struct-typed field copies the whole struct");
 var gp: Pt = alloc(16);
