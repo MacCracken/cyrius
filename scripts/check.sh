@@ -954,6 +954,50 @@ _chk_gate "$ROOT/tests/gates/frontend/struct_copy_type_checked.sh"
 # (ledger in header).
 _chk_gate "$ROOT/tests/gates/frontend/struct_result_type_refused.sh"
 
+# 6.6.12 (B02, R1): a struct LITERAL is type-checked at its head and at each nested struct field.
+# A generic literal `Box<Pt> { p, 5 }` failed at all three heads (PARSE_VAR, PARSE_GVAR_REG's
+# lookahead, the EMIT_GVAR_INITS replay) with "undefined variable 'Box'"; `_lit_head` now resolves
+# the instance with the annotation's own resolver, so a mismatched annotation is refused by name —
+# in a fn, in the leading declaration block (which never compared a literal with its annotation:
+# `var G: Pt = Q { .. }` compiled) and after a statement. A nested struct field now takes a whole
+# struct value, and a value of another struct type is refused by name (local, global, field, call,
+# method); a struct call with no frame at top level is refused, as the ONLY error. 16 refusal rows on
+# the MESSAGE, 4 acceptances each against a field-by-field control. Mutation-proven (ledger in header).
+_chk_gate "$ROOT/tests/gates/frontend/struct_literal_type_refused.sh"
+
+# 6.6.12 (B03, V3 + V4): a struct copy whose SOURCE is a field or a global is type-checked. A
+# struct-typed field passed as a by-value struct argument (`take(r.v)`) is checked against the
+# parameter's struct (recorded per fn, SFPSID — the instance's for a generic) and refused by name
+# when it differs: in a fn, a callee defined after the call, top level, a generic instance, a
+# method. A top-level copy-init (`var G: Pt = A;` / `= X.f;`) from a source of another struct type
+# is refused by name in the leading declaration block and after a statement, at every width, and a
+# leading-block source declared BELOW the destination is refused by name (pass 1 cannot see it). 12
+# refusal rows on the MESSAGE (each the only error), 2 acceptances against field-by-field controls.
+# Mutation-proven (ledger in header). The copy/layout half is struct_field_value_copy.tcyr (crossos).
+_chk_gate "$ROOT/tests/gates/frontend/struct_copy_source_type_refused.sh"
+
+# 6.6.12 (B04, R3): a `.field` on a CALL RESULT is refused by name wherever it cannot compile — at
+# top level for every return class (no frame to hold the result; each the only error, including
+# the leading declaration block and a struct-typed initialiser), on a callee that returns no
+# struct, and for a struct-typed field of the result into a destination of a different struct type
+# (a `var` and a by-value argument). A `return f(..).x;` from a struct-returning fn gets the struct-
+# return diagnostic (without the step-aside the pair form compiled SILENTLY). Under --syntax-only a
+# field of an unresolved call is not a syntax error, and the call's arguments are still parsed.
+# Mutation ledger in its header. The acceptance rows are the CF group of
+# tests/tcyr/crossos/generic_struct_inference.tcyr. (6.6.12 B05, R2) G1-G2: an EXPLICIT generic
+# call as a bare top-level statement, struct-returning (`mkg<i32>(1);`, with and without `.a`), is
+# refused by name like `mk3(1);` (was `expected '=', got '<'`); G3: `mu<i32>(3);` on a #must_use
+# generic warns. 18 rows.
+_chk_gate "$ROOT/tests/gates/frontend/call_result_field.sh"
+
+# 6.6.12 (B20, R4): array subscripts `a[i]`, `a[i] = v`, `a[i] OP= v` on `var a: T[N]`. Before
+# 6.6.12 the language had no subscript at all (`expected ';', got '['`). Axis 1: fifteen refusals by
+# name (four bare `var a[N]` shapes, a scalar, a pointer, a `stack var`, a u128 element, an
+# unknown name, six f64/f32/bool/struct element rows naming that shape - B20 review fix). Axis 2: four typed controls run. Axis 3: the crossos runtime file by default
+# and under CYRIUS_IR=3. Axis 4: --syntax-only clean. Axis 5: a slice local's bounds-checked s[i]
+# untouched. RED on 6.6.11 (22 failures); five mutations in its header, each RED.
+_chk_gate "$ROOT/tests/gates/frontend/array_subscript_forms.sh"
+
 # 6.6.6: a vector-returning fn `return`s only what the vector return ABI can carry. PARSE_RETURN
 # handled exactly `return IDENT;` for a local of the matching class and fell through to the
 # SCALAR path for everything else, so `fn bad(): f64v2 { return 5; }` compiled clean and handed
@@ -1111,6 +1155,14 @@ _chk_gate "$ROOT/tests/gates/codegen/dce_eliminates.sh"
 # bundles deliberately do not carry their own stdlib deps. Reports its own coverage: 11/12
 # today, niyama skipped and named.
 _chk_gate "$ROOT/tests/gates/platform/folds_agnos_parity.sh"
+
+# 6.6.12 (B14: SA8, SA9, SB4) — yukti + mabda + vani + sakshi compile together with no
+# cross-fold collision. One global namespace and a duplicate only WARNS (last definition wins),
+# so mabda's `var PCI_VENDOR_AMD = 0x1002` and yukti's enum `PCI_VENDOR_AMD = 0x1022` re-routed
+# each other by include order, and mabda's and vani's `_sk_emit_err` did the same; vani's
+# drain/drop/state returned a raw integer beside Err, read as the tag. Both yukti/mabda orders;
+# each build also RUNS and must keep both vendor ids. Red on the 6.6.11 folds in both orders.
+_chk_gate "$ROOT/tests/gates/toolchain/fold_namespace_collisions.sh"
 
 # v6.5.2: ir_const_fold must not erase a following jump. EJCC/EJMP0 were the only two
 # x86 emitters that recorded their IR node AFTER emitting bytes, so the node's CP was the
@@ -1451,6 +1503,9 @@ _chk_gate "$ROOT/tests/gates/toolchain/walkers_fail_closed_unreadable_dir.sh"
 # `_src_decls` (the reader coverage and distlib use): pub/public, attributes, indentation,
 # fn<TAB>, generics, pub/secret var, destructures, enums + members, structs — and nothing in a
 # comment, a string or a fn body; files read whole (past 1 MiB). The 6.6.9 LSP fails 15 of 25.
+# 6.6.12 (B11, S3), axis 5: the symbol index has no silent cap — the last of 6000 long-named fns
+# in one include, a fn in the 300th included file and sigil's last fn all resolve (the 6.6.11
+# LSP's fixed row / names / paths / file caps answered null past the cut).
 _chk_gate "$ROOT/tests/gates/toolchain/lsp_indexes_every_decl_spelling.sh"
 
 # 6.6.7 (bite 10) — the NEXT version-bump can rewrite every document anchor in the live tree.
@@ -1479,6 +1534,7 @@ _chk_gate "$ROOT/tests/gates/frontend/generic_type_arg_unknown_refused.sh"
 # 6.6.8 (bite 1b) — inside a coroutine `async fn`: fncallN / callptr / a closure call through the
 # HEAP-frame slot (ECALLIND called the stack slot: SIGSEGV), and a completed coroutine answers a
 # later force with its value instead of resuming its last suspend. Mutation-proven in the header.
+# 6.6.12 (B05, T8b): axis M — no dead jmp +0 after a coroutine's resume dispatch.
 _chk_gate "$ROOT/tests/gates/frontend/coroutine_fnptr_and_completion.sh"
 
 # 6.6.8 (bite 2) — every syscall a macOS build reaches is ROUTED on both Macs: each literal site
@@ -1734,5 +1790,15 @@ _chk_gate "$ROOT/tests/gates/platform/pe_job_reroutes_routed.sh"
 # (~2 s); behaviour is tests/tcyr/crossos/net_loopback_tcp.tcyr + net_resolve_pe.tcyr on cass.
 # Whole-gate SKIP is exit 77.
 _chk_gate "$ROOT/tests/gates/platform/pe_socket_reroutes_routed.sh"
+
+# 6.6.12 (B08, Q5 + S-B3) — kernel32!GetLastError is routed on PE (0xF04B) and lib/fs_win.cyr
+# reads it after FindNextFileW returns 0: that 0 is both the end and a failure part-way, and with
+# no reroute every 0 was the end, so a listing that failed half-way came back as a complete,
+# shorter directory. Axes: 0xF04B routed at argc 1 and warned at argc 2, named in the
+# routed-number note (printed whole — its byte count was hand-kept), imported; every FindNextFileW
+# loop reads GetLastError, then FindClose, then tests 18; no lib/ module hands 0xF016/0xF019 a
+# stdlib-widened buffer (narrow UTF-8 since 6.6.12, for the long-path fix); fs_dirlist.tcyr under
+# wine. Hardware: the same .tcyr + pe_path_utf8_long.tcyr on cass. Whole-gate SKIP is exit 77.
+_chk_gate "$ROOT/tests/gates/platform/pe_last_error_reroute.sh"
 
 _chk_gate "$ROOT/tests/gates/platform/process_errno_constants_every_target.sh"
