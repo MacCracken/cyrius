@@ -180,6 +180,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `tests/gates/frontend/lexer_errors_name_file_line.sh` (single-line, multi-line naming the opening
   line, trailing backslash, bare statement; the 6.6.11 compiler fails all four; each of the three
   parts mutation-proven, listed in its header).
+- **An explicit generic call as a bare statement (`id<i32>(4);`) was a syntax error (B05, item R2).**
+  Loud — nothing compiled wrong. **Root cause:** the IDENT arm of `_PARSE_STMT_IMPL`
+  (`src/frontend/parse.cyr`) sent only `IDENT (` to PARSE_FNCALL; `IDENT <` fell into the assignment
+  path, `expected '=', got '<'`, in a fn and at top level alike, while the inferred `id(4);` and the
+  expression `var r = id<i32>(4);` worked. **Fix:** `_stmt_explicit_generic`, one call in the arm,
+  behind the factor arm's own guards (the monomorph flag, a generic callee, the `name<..>(`
+  lookahead, so `a < b;` never gets there), with the `IDENT (` arm's behaviour: a `.field` /
+  `.method()` on the result, the `#must_use` warning (now `_must_use_warn`, shared) and a postfix
+  `?` (the statement desugar moved out of `_PARSE_STMT_IMPL` into `_stmt_qmark`, one copy for both
+  forms, so `g<i32>(..)?;` on a `Result` generic propagates both halves). **Verification:**
+  `tests/tcyr/crossos/generic_struct_inference.tcyr` gains the SG rows (scalar, 5 B rax, 16 B
+  rax:rdx, 24 B retptr and struct-type-argument results dropped, a field and a method on the result,
+  `?` Ok and Err, and a top-level scalar statement; 6.6.11 does not build it; dropping the call does
+  not build, passing `pair = 0` dies rc 139); `tests/gates/frontend/call_result_field.sh` gains
+  G1-G3 (the top-level struct-returning refusal, with and without a field, and the `#must_use`
+  warning; 6.6.11 fails all three; 15 → 18 rows).
 
 ## [6.6.11] — 2026-09-29
 

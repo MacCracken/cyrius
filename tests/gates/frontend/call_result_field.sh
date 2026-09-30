@@ -30,6 +30,11 @@
 #   S1/S2  --syntax-only (the `cyrius lint` pre-pass): a field of a call to a fn it cannot
 #          resolve is NOT a syntax error (S1), and the call's arguments are still parsed, so a
 #          grammar error inside them is still reported (S2).
+#   G1/G2  (R2) an EXPLICIT generic call as a bare statement at top level, struct-returning
+#          (`mkg<i32>(1);`, `mkg<i32>(1).a;`), is refused by name exactly as `mk3(1);` is — it was
+#          "expected '=', got '<'" plus two follow-on errors on 6.6.11.
+#   G3     (R2) `mu<i32>(3);` on a `#must_use` generic warns that the result is discarded, as the
+#          `IDENT (` statement does — and still compiles.
 #
 # MUTATION LEDGER (6.6.12, scratch trees, each rebuilt with the one change):
 #   base 6.6.11 build/cycc                                  -> RED, 14 of 15 (S2 was already right)
@@ -46,6 +51,8 @@
 #   no `_stmt_call_field` call in PARSE_STMT (src/frontend/ -> RED T6, A1 ("expected ';', got '.'")
 #     parse.cyr)
 #   `_call_field`'s refusal not skipping a method's `(..)`   -> RED T6, T7 (two errors)
+#   no `_stmt_explicit_generic` call in PARSE_STMT          -> RED G1, G2, G3
+#   `_stmt_explicit_generic` without `_must_use_warn`       -> RED G3
 #   real tree                                               -> GREEN
 #
 # Exit 77 = could not run (the SKIP protocol): no compiler, or no scratch directory.
@@ -100,6 +107,7 @@ fn plus1(a): i64 { return a + 1; }
 fn plain(a): i64 { return a; }
 fn ptv(p: Pt): i64 { return p.x; }
 fn P8_bump(self: P8): i64 { return self.a; }
+fn mkg<T>(a: T): P3 { var r: P3; r.a = a; r.b = 1; r.c = 2; return r; }
 '
 
 echo "top level — no frame for the result:"
@@ -128,6 +136,28 @@ syscall(60, r);
 refuse T7 "'mk8' $MT" "${T}var G = mk8(2).bump();
 var r = 0; syscall(60, r);
 " "" one
+
+echo "top level — an explicit generic call as a bare statement (R2):"
+refuse G1 "'mkg\$i32' $MT" "${T}var r = 0;
+mkg<i32>(1);
+syscall(60, r);
+" "" one
+refuse G2 "'mkg' $MT" "${T}var r = 0;
+mkg<i32>(1).a;
+syscall(60, r);
+" "" one
+printf '%s' "${T}#must_use
+fn mu<T>(x: T): T { return x; }
+fn m(): i64 { mu<i32>(3); return 0; }
+var r = m(); syscall(60, r);
+" > "$D/g3.cyr"
+rc=0; cat "$D/g3.cyr" | "$CC" > "$D/g3.bin" 2>"$D/g3.err" || rc=$?
+if [ "$rc" = 0 ] && grep -q "^warning:<source>:17:17: #must_use result of 'mu' is discarded" "$D/g3.err"; then
+    printf '  ok(warned): G3\n'; pass=$((pass+1))
+else
+    printf '  FAIL: G3     no #must_use warning on `mu<i32>(3);` (rc=%s, first line: %s)\n' "$rc" "$(head -1 "$D/g3.err")"
+    fail=$((fail+1))
+fi
 
 echo "in a fn — named refusals:"
 refuse A1 "cannot assign to a field of a call result: the result is a temporary" "${T}fn m(): i64 { mk8(1).a = 5; return 0; }
@@ -176,5 +206,5 @@ else
 fi
 
 echo "call_result_field: $pass passed, $fail failed"
-[ "$pass" -ge 15 ] || { echo "FAIL: call_result_field: only $pass of the 15 rows passed"; exit 1; }
+[ "$pass" -ge 18 ] || { echo "FAIL: call_result_field: only $pass of the 18 rows passed"; exit 1; }
 [ "$fail" -eq 0 ]

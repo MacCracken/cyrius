@@ -2621,6 +2621,133 @@ fn _PARSE_DEFER(S): i64 {
     EPATCH(S, djmp);
     return 0;
 }
+# v5.6.3: #must_use — warn when the fn `noff` names is marked #must_use and is called as a
+# bare expression statement (result dropped). Called BEFORE the call is parsed, so the line
+# is the call site's, not the trailing ';'. Shared by the `IDENT (` statement arm and the
+# bare explicit-generic statement (`_stmt_explicit_generic`). CHANGELOG [6.6.12]
+fn _must_use_warn(S, noff): i64 {
+    var _mu_fi = FINDFN(S, noff);
+    if (_mu_fi >= 0) {
+        var _mu_flags = GFLG(S, _mu_fi);
+        if (_mu_flags & 1 != 0) {
+            syscall(SYS_WRITE, 2, "warning:", 8);
+            _err_head(S);
+            syscall(SYS_WRITE, 2, ": #must_use result of '", 23);
+            PRSTR(S + 0xEC00000 + noff);
+            syscall(SYS_WRITE, 2, "' is discarded\n", 15);
+        }
+    }
+    return 0;
+}
+
+# v5.8.31 — postfix `?` on a bare fncall-statement
+# (`expr?;` form). v5.8.29 added `?` in PARSE_TERM but
+# this path bypasses PARSE_TERM entirely (PARSE_STMT
+# dispatches IDENT+LPAREN straight to PARSE_FNCALL),
+# so the `?` was unhandled and the next token check
+# for `;` reported "expected ';', got unknown" (token
+# 124 has no TOKNAME entry). Same desugar shape as the
+# PARSE_TERM hook: tag-check + early-return on Err +
+# payload-load on Ok. The unwrapped value lands in rax
+# and is dropped by the bare-statement convention.
+# 6.6.12: one copy for both statement forms, `f(..)?;` and `g<T>(..)?;`, out of
+# _PARSE_STMT_IMPL (the cybs per-fn cap). `pair` = the callee is pair-returning, read by name
+# BEFORE the call was parsed. Cursor on the token after the call; no-op unless it is `?`.
+fn _stmt_qmark(S, pair): i64 {
+    if (PEEKT(S) == 124) {
+        STI(S, GTI(S) + 1);
+        if (GINFN(S) == 0) {
+            ERR_MSG(S, "?: '?' propagation operator only valid inside a fn body", 55);
+        }
+        # ⛔ v6.6.0 — THE VALUE-FORM PATH, AND WHY IT IS HERE TWICE. This block is a
+        # SECOND, PARALLEL COPY of the `?` desugar: PARSE_STMT dispatches IDENT+LPAREN
+        # straight to PARSE_FNCALL and never reaches `_PARSE_TERM_IMPL`, so v5.8.31 had
+        # to repeat the lowering. When v6.6.0 taught `?` the pair form it was fixed in
+        # the OTHER copy only, and this one kept dereferencing the operand — reading the
+        # TAG (0 or 1) as a pointer. `look(n)?;` as a bare statement compiled clean and
+        # SIGSEGV'd while `var x = look(n)?;` was correct. Same parallel-copy class as
+        # the global-init REPLAY that had to take the v6.3.44 struct fix separately.
+        # ⭐ The Err path re-emits BOTH halves, exactly as the expression copy does:
+        # propagating out of the enclosing fn means RETURNING a pair, so restoring only
+        # rax would hand the caller a correct tag with a stale payload.
+        if (pair == 1) {
+            var qstag = _HTEMP(S);
+            var qsval = _HTEMP(S);
+            _HTSTORE(S, qstag);           # tag (rax as returned)
+            EMOVRA_RDX(S);                # rax = rdx = payload
+            _HTSTORE(S, qsval);
+            _HTLOAD(S, qstag);
+            EPUSHR(S);
+            EMOVI(S, 0);
+            EMOVCA(S);                    # rcx = 0 (Ok)
+            EPOPR(S);                     # rax = tag
+            ECMPR(S);
+            var qspj = EJCC(S, 0x84);     # JE -> Ok, skip the propagate
+            _HTLOAD(S, qsval);
+            EMOVRDXRAX(S);                # rdx = payload
+            _HTLOAD(S, qstag);            # rax = tag
+            var qsprp = EJMP0(S);
+            vec_push(rp_vec, qsprp);
+            EPATCH(S, qspj);
+            _HTLOAD(S, qsval);            # Ok path: rax = payload (dropped by the
+            # bare-statement convention)
+            if (_cur_fn_ix >= 0) { SFLG(S, _cur_fn_ix, GFLG(S, _cur_fn_ix) | 256); }
+        } else {
+            var qsidx = _HTEMP(S);
+            _HTSTORE(S, qsidx);
+            _HTLOAD(S, qsidx);
+            ELOAD64(S);
+            EPUSHR(S);
+            EMOVI(S, 0);
+            EMOVCA(S);
+            EPOPR(S);
+            ECMPR(S);
+            var qsjcc = EJCC(S, 0x84);
+            _HTLOAD(S, qsidx);
+            var qsrp = EJMP0(S);
+            vec_push(rp_vec, qsrp);
+            EPATCH(S, qsjcc);
+            _HTLOAD(S, qsidx);
+            EPUSHR(S);
+            EMOVI(S, 8);
+            EMOVCA(S);
+            EPOPR(S);
+            EADDR(S);
+            ELOAD64(S);
+        }
+    }
+    return 0;
+}
+
+# ⛔ 6.6.12 — AN EXPLICIT GENERIC CALL AS A BARE STATEMENT (`id<i32>(4);`) was "expected '=',
+# got '<'": the IDENT arm of _PARSE_STMT_IMPL sent only `IDENT (` to PARSE_FNCALL, so `IDENT <`
+# fell into the assignment path. Same guards as the factor's arm (parse_expr.cyr: the monomorph
+# flag, a generic callee, the `name<..>(` lookahead), so `a < b;` and a non-generic `<` never
+# get here. Parity with the `IDENT (` arm: a `.field` / `.method()` on the result
+# (`_stmt_call_field`), the #must_use warning and a postfix `?`. Cursor just past the callee
+# IDENT; 1 = the statement is consumed through its `;`, 0 = not that shape (cursor untouched).
+# One call in _PARSE_STMT_IMPL: that body is near cybs's per-function reference limit.
+# CHANGELOG [6.6.12]
+fn _stmt_explicit_generic(S, noff): i64 {
+    if (PEEKT(S) != 19) { return 0; }
+    if (_MONOMORPH_OK != 1) { return 0; }
+    var fi = FINDFN(S, noff);
+    if (fi < 0) { return 0; }
+    if (GFTP(S, fi) == 0) { return 0; }
+    if (LOOKAHEAD_IS_TYPE_ARG_CALL(S) != 1) { return 0; }
+    if (_stmt_call_field(S) == 1) { return 1; }
+    _must_use_warn(S, noff);
+    _ensure_pair_flags(S);
+    var pair = 0;
+    if ((GFLG(S, fi) & 256) != 0) { pair = 1; }
+    _explicit_generic_call(S, noff, fi);
+    _cfo = 0;
+    _stmt_qmark(S, pair);
+    if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
+    STI(S, GTI(S) + 1);
+    return 1;
+}
+
 fn PARSE_STMT(S): i64 {
     var before = GTI(S);
     # v6.5.19 (CVE-40): this wrapper is already the one place every statement descent
@@ -3019,23 +3146,12 @@ fn _PARSE_STMT_IMPL(S): i64 {
         # Could be assignment or fn call as statement
         var noff = PEEKV(S);
         STI(S, GTI(S) + 1);
+        if (_stmt_explicit_generic(S, noff) == 1) { return 0; }   # 6.6.12: `id<i32>(4);`
         if (PEEKT(S) == 10) {
             if (_stmt_call_field(S) == 1) { return 0; }   # 6.6.12: `mk(3).total();`
-            # v5.6.3: #must_use — warn when a fn marked #must_use is
-            # called as a bare expression statement (result dropped).
-            # The check happens BEFORE PARSE_FNCALL so the diagnostic
-            # line number matches the call site, not the trailing ';'.
+            # v5.6.3: #must_use — warned BEFORE PARSE_FNCALL, so the line is the call's.
             var _mu_fi = FINDFN(S, noff);
-            if (_mu_fi >= 0) {
-                var _mu_flags = GFLG(S, _mu_fi);
-                if (_mu_flags & 1 != 0) {
-                    syscall(SYS_WRITE, 2, "warning:", 8);
-                    _err_head(S);
-                    syscall(SYS_WRITE, 2, ": #must_use result of '", 23);
-                    PRSTR(S + 0xEC00000 + noff);
-                    syscall(SYS_WRITE, 2, "' is discarded\n", 15);
-                }
-            }
+            _must_use_warn(S, noff);
             # fn call statement
             # v6.6.0 — is the callee pair-returning? Read the flag BEFORE PARSE_FNCALL consumes
             # the call, so the `?` desugar below can take the value-form path. Read from the fn
@@ -3069,78 +3185,7 @@ fn _PARSE_STMT_IMPL(S): i64 {
             } else {
                 PARSE_FNCALL(S, noff);
             }
-            # v5.8.31 — postfix `?` on a bare fncall-statement
-            # (`expr?;` form). v5.8.29 added `?` in PARSE_TERM but
-            # this path bypasses PARSE_TERM entirely (PARSE_STMT
-            # dispatches IDENT+LPAREN straight to PARSE_FNCALL),
-            # so the `?` was unhandled and the next token check
-            # for `;` reported "expected ';', got unknown" (token
-            # 124 has no TOKNAME entry). Same desugar shape as the
-            # PARSE_TERM hook: tag-check + early-return on Err +
-            # payload-load on Ok. The unwrapped value lands in rax
-            # and is dropped by the bare-statement convention.
-            if (PEEKT(S) == 124) {
-                STI(S, GTI(S) + 1);
-                if (GINFN(S) == 0) {
-                    ERR_MSG(S, "?: '?' propagation operator only valid inside a fn body", 55);
-                }
-                # ⛔ v6.6.0 — THE VALUE-FORM PATH, AND WHY IT IS HERE TWICE. This block is a
-                # SECOND, PARALLEL COPY of the `?` desugar: PARSE_STMT dispatches IDENT+LPAREN
-                # straight to PARSE_FNCALL and never reaches `_PARSE_TERM_IMPL`, so v5.8.31 had
-                # to repeat the lowering. When v6.6.0 taught `?` the pair form it was fixed in
-                # the OTHER copy only, and this one kept dereferencing the operand — reading the
-                # TAG (0 or 1) as a pointer. `look(n)?;` as a bare statement compiled clean and
-                # SIGSEGV'd while `var x = look(n)?;` was correct. Same parallel-copy class as
-                # the global-init REPLAY that had to take the v6.3.44 struct fix separately.
-                # ⭐ The Err path re-emits BOTH halves, exactly as the expression copy does:
-                # propagating out of the enclosing fn means RETURNING a pair, so restoring only
-                # rax would hand the caller a correct tag with a stale payload.
-                if (_qs_pair == 1) {
-                    var qstag = _HTEMP(S);
-                    var qsval = _HTEMP(S);
-                    _HTSTORE(S, qstag);           # tag (rax as returned)
-                    EMOVRA_RDX(S);                # rax = rdx = payload
-                    _HTSTORE(S, qsval);
-                    _HTLOAD(S, qstag);
-                    EPUSHR(S);
-                    EMOVI(S, 0);
-                    EMOVCA(S);                    # rcx = 0 (Ok)
-                    EPOPR(S);                     # rax = tag
-                    ECMPR(S);
-                    var qspj = EJCC(S, 0x84);     # JE -> Ok, skip the propagate
-                    _HTLOAD(S, qsval);
-                    EMOVRDXRAX(S);                # rdx = payload
-                    _HTLOAD(S, qstag);            # rax = tag
-                    var qsprp = EJMP0(S);
-                    vec_push(rp_vec, qsprp);
-                    EPATCH(S, qspj);
-                    _HTLOAD(S, qsval);            # Ok path: rax = payload (dropped by the
-                    # bare-statement convention)
-                    if (_cur_fn_ix >= 0) { SFLG(S, _cur_fn_ix, GFLG(S, _cur_fn_ix) | 256); }
-                } else {
-                    var qsidx = _HTEMP(S);
-                    _HTSTORE(S, qsidx);
-                    _HTLOAD(S, qsidx);
-                    ELOAD64(S);
-                    EPUSHR(S);
-                    EMOVI(S, 0);
-                    EMOVCA(S);
-                    EPOPR(S);
-                    ECMPR(S);
-                    var qsjcc = EJCC(S, 0x84);
-                    _HTLOAD(S, qsidx);
-                    var qsrp = EJMP0(S);
-                    vec_push(rp_vec, qsrp);
-                    EPATCH(S, qsjcc);
-                    _HTLOAD(S, qsidx);
-                    EPUSHR(S);
-                    EMOVI(S, 8);
-                    EMOVCA(S);
-                    EPOPR(S);
-                    EADDR(S);
-                    ELOAD64(S);
-                }
-            }
+            _stmt_qmark(S, _qs_pair);   # postfix `?` on the call: see _stmt_qmark
             if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
             STI(S, GTI(S) + 1);
             return 0;

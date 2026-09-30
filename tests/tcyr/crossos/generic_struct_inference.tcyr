@@ -86,6 +86,18 @@
 # the field's first word as the struct's address: rc 139); no `_stmt_call_field` call in PARSE_STMT
 # (src/frontend/parse.cyr; the file does not build: `mk8(5).bump();`).
 #
+# SG (6.6.12, R2) rows `run_stmt_generics` + the top-level SG rows: an EXPLICIT generic call as a
+# BARE STATEMENT, `id<i32>(4);`. The IDENT arm of PARSE_STMT sent only `IDENT (` to PARSE_FNCALL,
+# so `IDENT <` fell into the assignment path: "expected '=', got '<'" in a fn and at top level,
+# for every return class (the inferred `id(4);` worked). Rows: scalar, rax (5 B `P8`), rax:rdx
+# (16 B `Pt`, off on cx) and retptr (24 B `P3`) results dropped, a `.field` and a method on the
+# result, and a postfix `?` on a pair-returning (`Result`) generic — Ok falls through, Err
+# propagates both halves. The top-level struct refusal and the #must_use warning are in
+# tests/gates/frontend/call_result_field.sh (G rows). Mutation: no `_stmt_explicit_generic` call
+# in PARSE_STMT (src/frontend/parse.cyr) -> this file does not build; `_stmt_explicit_generic`
+# passing `pair = 0` to `_stmt_qmark` -> the SG `?` Err row dies (rc 139: the tag read as a
+# pointer).
+#
 # CROSS-HOST because each instance is a by-value struct-param fn emitted inline (jumped over) by
 # every backend, and struct returns take the per-target retptr / register-pair ABI.
 include "lib/assert.cyr"
@@ -94,6 +106,7 @@ include "lib/string.cyr"
 include "lib/fmt.cyr"
 include "lib/str.cyr"
 include "lib/vec.cyr"
+include "lib/result.cyr"
 
 struct Pt { x; y; }
 struct Box<T> { v: T; n; }
@@ -293,6 +306,51 @@ fn run_call_fields_pair(): i64 {
 }
 #endif
 
+# SG (6.6.12, R2): explicit generic calls as bare statements; every instance adds to sg_hits.
+var sg_hits = 0;
+fn sgid<T>(x: T): T { sg_hits = sg_hits + x; return x; }
+fn sgp8<T>(x: T): P8 { sg_hits = sg_hits + x * 1000; var p: P8; p.a = x; p.b = 1; return p; }
+fn sgp3<T>(x: T): P3 { sg_hits = sg_hits + x * 10; var r: P3; r.a = x; r.b = x + 1; r.c = x + 2; return r; }
+fn sgdiv<T>(n: T, d: T) { sg_hits = sg_hits + 1; if (d == 0) { return Err(99); } return Ok(n / d); }
+fn sgq(n, d) { sgdiv<i32>(n, d)?; return Ok(7); }
+fn run_stmt_generics(): i64 {
+    test_group("an explicit generic call as a bare statement (R2)");
+    sg_hits = 0;
+    sgid<i32>(4);
+    sgid<i64>(3);
+    assert_eq(sg_hits, 7, "SG: `sgid<i32>(4); sgid<i64>(3);` in a fn (was \"expected '=', got '<'\")");
+    sgp3<i32>(3);
+    sgp3<i64>(1);
+    assert_eq(sg_hits, 47, "SG: `sgp3<i32>(3);`, a 24 B retptr result dropped, and the i64 base");
+    sgp8<i32>(2);
+    assert_eq(sg_hits, 2047, "SG: `sgp8<i32>(2);`, a 5 B rax result dropped");
+    sg_hits = 0;
+    cf_hits = 0;
+    sgp3<i32>(5).c;
+    sgp3<i32>(1).bump();
+    assert_eq(sg_hits * 1000 + cf_hits, 60300, "SG: `sgp3<i32>(5).c;` and `sgp3<i32>(1).bump();`, a field and a method on the result");
+    sg_hits = 0;
+    var t1, v1 = sgq(6, 2);
+    assert_eq(t1 * 100 + v1 + sg_hits * 1000, 1007, "SG: `sgdiv<i32>(6, 2)?;` Ok falls through (Ok(7))");
+    var t2, v2 = sgq(6, 0);
+    assert_eq(t2 * 100 + v2 + sg_hits * 1000, 2199, "SG: `sgdiv<i32>(6, 0)?;` Err propagates both halves (Err(99))");
+    return 0;
+}
+#ifndef CYRIUS_TARGET_CX
+fn sgpt<T>(x: T): Pt { sg_hits = sg_hits + x; var p: Pt; p.x = x; p.y = 5; return p; }
+fn run_stmt_generics_pair(): i64 {
+    var p: Pt; p.x = 1; p.y = 2;
+    sg_hits = 0;
+    sgpt<i32>(6);
+    sgpt<i32>(2).y;
+    assert_eq(sg_hits, 8, "SG: `sgpt<i32>(6);`, a 16 B rax:rdx result dropped, and `.y` on one");
+    mk<Pt>(p);
+    mkw<Pt>(p);
+    assert_eq(mk<Pt>(p).n, 5, "SG: `mk<Pt>(p);` / `mkw<Pt>(p);`, struct type arguments, as statements");
+    return 0;
+}
+#endif
+
 fn run_calls(a): i64 {
     var p: Pt; p.x = a; p.y = 5;
     test_group("inferred struct T: the instance on every call path");
@@ -409,10 +467,12 @@ fn main(): i64 {
     run_calls(2);
     run_params();
     run_call_fields();
+    run_stmt_generics();
     #ifndef CYRIUS_TARGET_CX
     run_returns();
     run_paths();
     run_call_fields_pair();
+    run_stmt_generics_pair();
     #endif
     test_group("scalar generics and controls");
     assert_eq(sm(5), 35, "RG: for i in n..10 over a T-typed n (was 0: read as a field access)");
@@ -432,6 +492,11 @@ var GLQ: Box<Pt> = Box<Pt> { gws, 8 };
 var GLQI = Box<i64> { 4, 3 };
 assert_eq(box_sum(GLQ), 584, "LIT: top-level `var GLQ: Box<Pt> = Box<Pt> { gws, 8 };` after a statement (gws.x is 4 by now)");
 assert_eq(GLQI.v + GLQI.n * 10, 34, "LIT: top-level `Box<i64> { 4, 3 }` after a statement");
+# SG (6.6.12, R2): the bare explicit-generic statement at top level (was "expected '=', got '<'").
+sg_hits = 0;
+sgid<i32>(100);
+sgid<i64>(20);
+assert_eq(sg_hits, 120, "SG: top-level `sgid<i32>(100); sgid<i64>(20);`");
 var r = assert_summary();
 # ⚠ The explicit exit is load-bearing: with `fn main` defined, the entry auto-calls it AGAIN after
 # the top level, and that second run's 0 would be the exit code — a failed row then exits 0.
