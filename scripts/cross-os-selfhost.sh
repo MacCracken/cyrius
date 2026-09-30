@@ -177,6 +177,40 @@ cat src/main.cyr | ./build/cycc > "$CO_TMP"/_co_l && chmod +x "$CO_TMP"/_co_l
 cat src/main_cx.cyr | ./build/cycc > "$CO_TMP"/_co_ccx && chmod +x "$CO_TMP"/_co_ccx
 printf 'fn main(): i64 { var A[24]; var B[16]; var R[16]; store64(&A + 0, f64_from(10)); store64(&A + 8, f64_from(20)); store64(&B + 0, f64_from(3)); store64(&B + 8, f64_from(4)); f64v_add(&R, &A, &B, 2); if (f64_to(load64(&R + 0)) != 13) { return 1; } if (f64_to(load64(&R + 8)) != 24) { return 2; } store64(&A + 0, f64_from(9)); store64(&A + 8, f64_from(16)); f64v_sqrt(&R, &A, 2); if (f64_to(load64(&R + 0)) != 3) { return 3; } if (f64_to(load64(&R + 8)) != 4) { return 4; } var w = syscall(1, 1, "cx-simd-ok\\n", 10); if (w == 10) { return 42; } return 5; }\nvar e = main();\nsyscall(60, e);\n' > "$CO_TMP"/_co_cx.cyr
 cat "$CO_TMP"/_co_cx.cyr | "$CO_TMP"/_co_ccx > "$CO_TMP"/_co_cx.cyx
+# 6.6.11 B08 (J5a): the cx THREAD fixture — lib/thread.cyr on each host's native cxvm must exit
+# 255 (one bit per check; the probe is tests/gates/toolchain/stdlib_modules_self_sufficient.sh's
+# axis-7 probe). cxvm passes an unknown guest syscall to the HOST kernel, so a SYS_FUTEX that
+# thread.cyr's `#ifndef CYRIUS_TARGET_CX` guards let through is EFAULT on Linux (invisible) and
+# SIGSYS on Darwin: measured with the guards removed, ecb and ach exit 140. The local gate holds
+# it with an instrumented cxvm; this is the same hold on the hardware. CHANGELOG [6.6.11]
+cat > "$CO_TMP"/_co_cxt.cyr <<'CXT'
+include "lib/thread.cyr";
+var _t7_cell = 0;
+fn _t7_body(arg): i64 { _t7_cell = arg; return 0; }
+fn main(): i64 {
+    alloc_init();
+    var s = 0;
+    var m = mutex_new();
+    mutex_lock(m);
+    mutex_unlock(m);
+    if (m != 0) { s = s + 1; }
+    # _threads_active stays 0: the failure returns BEFORE the Linux spawn path arms the heap
+    # lock (lib/atomic.cyr) or asks cxvm for an mmap — it does not merely fail by accident there.
+    if (thread_create(&_t7_body, 9) == 0 && _t7_cell == 0 && _threads_active == 0) { s = s + 2; }
+    if (thread_create_detached(&_t7_body, 9) == 0 && _t7_cell == 0 && _threads_active == 0) { s = s + 4; }
+    if (THREADS_CONCURRENT == 0) { s = s + 8; }
+    var ch = chan_new(2);
+    if (chan_try_send(ch, 5) == 0 && chan_send(ch, 6) == 0 && chan_try_send(ch, 7) == 0 - 2) { s = s + 16; }
+    if (chan_try_recv(ch) == 5 && chan_recv(ch) == 6) { s = s + 32; }
+    chan_close(ch);
+    if (chan_try_send(ch, 1) == 0 - 1 && chan_recv(ch) == 0) { s = s + 64; }
+    if (gettid() == 1) { s = s + 128; }
+    return s;
+}
+var r = main();
+syscall(60, r);
+CXT
+cat "$CO_TMP"/_co_cxt.cyr | "$CO_TMP"/_co_ccx > "$CO_TMP"/_co_cxt.cyx
 # tests/win: v6.0.71 callptr→real-Win64 regression (cass leg). tests/tcyr +
 # lib/assert.cyr only ride along when the lib-test fallback is triggered.
 #
@@ -203,7 +237,7 @@ case "$HOST" in
     cat src/main_aarch64_macho.cyr | CYRIUS_MACHO_ARM=1 "$CO_TMP"/_co_x > "$CO_TMP"/_co_m
     _co_reap_stale ecb
     ssh $SSHO ecb "rm -rf ~/$RD && mkdir ~/$RD"
-    scp -q $SSHO "$CO_TMP"/_co.tgz "$CO_TMP"/_co_m "$CO_TMP"/_co_cx.cyx "$CO_TMP"/_co_cx.cyr "ecb:~/$RD/"
+    scp -q $SSHO "$CO_TMP"/_co.tgz "$CO_TMP"/_co_m "$CO_TMP"/_co_cx.cyx "$CO_TMP"/_co_cx.cyr "$CO_TMP"/_co_cxt.cyx "ecb:~/$RD/"
     # Self-host twice + cmp, then the v6.0.37 exit-code-propagation guard
     # (fn main(){return 42;} must exit 42 — catches the rot-class where
     # main() is never called and the program exits with argc). Then cx C:
@@ -220,6 +254,7 @@ case "$HOST" in
       && (_rc=0; ./_ec || _rc=$?; [ $_rc -eq 42 ]) \
       && cat programs/cxvm.cyr | CYRIUS_MACHO_ARM=1 ./r1r > cxvm && chmod +x cxvm && codesign -s - -f cxvm \
       && (_cxrc=0; ./cxvm < _co_cx.cyx > /dev/null || _cxrc=$?; [ $_cxrc -eq 42 ]) \
+      && (_ctrc=0; ./cxvm < _co_cxt.cyx > /dev/null || _ctrc=$?; [ $_ctrc -eq 255 ]) \
       && cat src/main_cx.cyr | ./r1r > cycc_cx && chmod +x cycc_cx && codesign -s - -f cycc_cx \
       && cat _co_cx.cyr | ./cycc_cx > _nat.cyx \
       && (_nrc=0; ./cxvm < _nat.cyx > /dev/null || _nrc=$?; [ $_nrc -eq 42 ])'
@@ -246,7 +281,7 @@ case "$HOST" in
     cat src/main_x86_macho.cyr | CYRIUS_MACHO=1 "$CO_TMP"/_co_l > "$CO_TMP"/_co_mx
     _co_reap_stale ach
     ssh $SSHO ach "rm -rf ~/$RD && mkdir ~/$RD"
-    scp -q $SSHO "$CO_TMP"/_co.tgz "$CO_TMP"/_co_mx "ach:~/$RD/"
+    scp -q $SSHO "$CO_TMP"/_co.tgz "$CO_TMP"/_co_mx "$CO_TMP"/_co_cxt.cyx "ach:~/$RD/"
     # NO codesign (see header — unsigned x86_64 Mach-O runs on Intel 13.7.8).
     # Self-host twice + cmp, then the v6.0.37 exit-code-propagation guard
     # (fn main(){return 42;} must exit 42 — catches the rot-class where main()
@@ -258,7 +293,11 @@ case "$HOST" in
       && cmp r1 r2 \
       && printf "fn main() { return 42; }" > _ec.cyr \
       && cat _ec.cyr | ./r1 > _ec && chmod +x _ec \
-      && (_rc=0; ./_ec || _rc=$?; [ $_rc -eq 42 ])'
+      && (_rc=0; ./_ec || _rc=$?; [ $_rc -eq 42 ]) \
+      && cat programs/cxvm.cyr | ./r1 > cxvm && chmod +x cxvm \
+      && (_ctrc=0; ./cxvm < _co_cxt.cyx > /dev/null || _ctrc=$?; [ $_ctrc -eq 255 ])'
+    # 6.6.11 B08: the cx thread fixture (see its build above) — this leg had no cxvm at all.
+    # Here, as on ecb, a futex lib/thread.cyr lets through on cx kills cxvm with SIGSYS (140).
     # 6.6.11 (J6), as on ecb — a CLI child sees the user's environment. `load_environ` opened
     # /proc/self/environ unconditionally, so on macOS `_envp` was EMPTY and every child the CLI
     # execs (cycc, git, the hasher, test binaries) ran with no PATH/HOME/TMPDIR/CYRIUS_*; only
@@ -289,7 +328,7 @@ case "$HOST" in
     cat src/main_aarch64.cyr | "$CO_TMP"/_co_x  > "$CO_TMP"/_co_a64 && chmod +x "$CO_TMP"/_co_a64
     _co_reap_stale pi
     ssh $SSHO pi "rm -rf ~/$RD && mkdir ~/$RD"
-    scp -q $SSHO "$CO_TMP"/_co.tgz "$CO_TMP"/_co_a64 "$CO_TMP"/_co_cx.cyx "$CO_TMP"/_co_cx.cyr "pi:~/$RD/"
+    scp -q $SSHO "$CO_TMP"/_co.tgz "$CO_TMP"/_co_a64 "$CO_TMP"/_co_cx.cyx "$CO_TMP"/_co_cx.cyr "$CO_TMP"/_co_cxt.cyx "pi:~/$RD/"
     # Self-host twice + cmp, then cx C: build a NATIVE aarch64 cxvm with r1 and
     # run the portable .cyx I/O fixture — proves ESYSXLAT translates the guest's
     # runtime syscall number (incl. open→openat AT_FDCWD shift). Must exit 42.
@@ -302,6 +341,7 @@ case "$HOST" in
       && cmp n1 n2 \
       && cat programs/cxvm.cyr | ./r1 > cxvm && chmod +x cxvm \
       && (_cxrc=0; ./cxvm < _co_cx.cyx > /dev/null || _cxrc=$?; [ $_cxrc -eq 42 ]) \
+      && (_ctrc=0; ./cxvm < _co_cxt.cyx > /dev/null || _ctrc=$?; [ $_ctrc -eq 255 ]) \
       && cat src/main_cx.cyr | ./r1 > cycc_cx && chmod +x cycc_cx \
       && cat _co_cx.cyr | ./cycc_cx > _nat.cyx \
       && (_nrc=0; ./cxvm < _nat.cyx > /dev/null || _nrc=$?; [ $_nrc -eq 42 ]) \
@@ -345,6 +385,7 @@ case "$HOST" in
     scp -q $SSHO "$CO_TMP"/_co_ec.cyr "cass:$WRDS"/_ec.cyr
     scp -q $SSHO "$CO_TMP"/_co_cx.cyx "cass:$WRDS"/_co_cx.cyx
     scp -q $SSHO "$CO_TMP"/_co_cx.cyr "cass:$WRDS"/_co_cx.cyr
+    scp -q $SSHO "$CO_TMP"/_co_cxt.cyx "cass:$WRDS"/_co_cxt.cyx
     # cmd.exe for `<` redirection. The &&-chain stops at the first failure and
     # cmd /c returns that command's exit code, which ssh propagates back, so a
     # broken cycc.exe (emits 0 code today) fails the gate for the right reason.
@@ -373,8 +414,9 @@ case "$HOST" in
       && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\'"$RD"' && c2.exe < tests\win\dir_list_pe.cyr > dlp.exe && dlp.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
       && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\'"$RD"' && c2.exe < tests\win\async_iocp_pe.cyr > aip.exe && aip.exe & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
       && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\'"$RD"' && c2.exe < programs\cxvm.cyr > cxvm.exe && cxvm.exe < _co_cx.cyx > nul & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"' \
+      && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\'"$RD"' && cxvm.exe < _co_cxt.cyx > nul & if !errorlevel! NEQ 255 (exit 1) else (exit 0)"' \
       && ssh $SSHO cass 'cmd /v /c "cd /d C:\cyrius-tests\'"$RD"' && c2.exe < src\main_cx.cyr > cycc_cx.exe && cycc_cx.exe < _co_cx.cyr > nat.cyx && cxvm.exe < nat.cyx > nul & if !errorlevel! NEQ 42 (exit 1) else (exit 0)"'; then
-      :   # all cass legs passed (self-host fixpoint + the 5 exit-42 guards + cx-C portable-.cyx I/O + v6.4.22 native cycc_cx compile→run round-trip)
+      :   # all cass legs passed (self-host fixpoint + the 5 exit-42 guards + cx-C portable-.cyx I/O + the 6.6.11 cx thread fixture + v6.4.22 native cycc_cx compile→run round-trip)
     else
       echo "SELFHOST_FAIL: cass — Windows self-host fixpoint (fc /b c2.exe c3.exe) or an exit-code guard FAILED (rc=$?). NOT SELFHOST_OK."
       exit 1
