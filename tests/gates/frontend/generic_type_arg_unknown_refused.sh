@@ -73,8 +73,8 @@
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
-[ -x "$CC" ] || { echo "FAIL: generic_type_arg_unknown_refused: no compiler at $CC"; exit 1; }
-T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: generic_type_arg_unknown_refused: mktemp -d failed"; exit 1; }
+[ -x "$CC" ] || { echo "SKIP: generic_type_arg_unknown_refused: no compiler at $CC"; exit 77; }
+T=$(mktemp -d) && [ -d "$T" ] || { echo "SKIP: generic_type_arg_unknown_refused: mktemp -d failed"; exit 77; }
 trap 'rm -rf "$T"' EXIT
 cd "$ROOT"
 fails=0
@@ -215,6 +215,36 @@ exits o2 1 "O: f(pp) - pp for a \`pp: *Pt\` parameter runs the i64 base"
 printf '%s\nstruct W1<T> { v: T; }\nfn mkw<T>(x: T): W1<T> { var w: W1<T>; w.v = x; return w; }\nfn w1s(w: W1<Pt>): i64 { return w.v.x + w.v.y * 10; }\nvar gp: Pt = Pt { 2, 5 };\nsyscall(60, w1s(mkw(gp)));\n' "$PT" > "$T/p1.cyr"
 build_refused_by p1 "'mkw' returns a struct by value, and a struct result needs storage in a fn's frame" "P: w1s(mkw(gp)) at top level, a W1<Pt> pair instance"
 
+# Q (6.6.11, L9) — A GLOBAL TYPED WITH A GENERIC STRUCT INSTANCE. A declaration-zone global
+# (before the first top-level statement) is registered by PARSE_GVAR_REG, which took `W1<Pt>` as
+# the 8 B BASE: `G.v.x` did not parse and `w1s(G)` read the wrong storage (204, want 52). Its
+# initialiser is replayed by EMIT_GVAR_INITS, which never reached the rax:rdx refusal, so even a
+# NON-generic `var G: Pt = mkp(2);` there built and SIGSEGV'd on `G.x`; after a statement the
+# refusal resolved the callee with FINDFN (the 8 B base's class 0), so the generic form built too.
+MKW='struct W1<T> { v: T; }
+fn mkw<T>(x: T): W1<T> { var w: W1<T>; w.v = x; return w; }
+fn w1s(w: W1<Pt>): i64 { return w.v.x + w.v.y * 10; }
+var gp: Pt = Pt { 2, 5 };'
+MKPP='fn mkp(a): Pt { var w: Pt; w.x = a; w.y = 5; return w; }'
+PAIR="returns a struct by value, and a struct result needs storage in a fn's frame"
+printf '%s\n%s\nvar G: W1<Pt> = mkw(gp);\nsyscall(60, w1s(G));\n' "$PT" "$MKW" > "$T/q1.cyr"
+build_refused_by q1 "'mkw' $PAIR" "Q: var G: W1<Pt> = mkw(gp) before the first statement (was 204)"
+printf '%s\n%s\nvar k = 0;\nk = 1;\nvar G: W1<Pt> = mkw(gp);\nsyscall(60, w1s(G));\n' "$PT" "$MKW" > "$T/q2.cyr"
+build_refused_by q2 "'mkw' $PAIR" "Q: the same after a statement (was rc 139)"
+printf '%s\n%s\nvar G: W1<Pt> = mkw<Pt>(gp);\nsyscall(60, w1s(G));\n' "$PT" "$MKW" > "$T/q3.cyr"
+build_refused_by q3 "'mkw' $PAIR" "Q: the explicit mkw<Pt>(gp) before the first statement"
+printf '%s\n%s\nvar G: Pt = mkp(2);\nsyscall(60, G.x + G.y * 10);\n' "$PT" "$MKPP" > "$T/q4.cyr"
+build_refused_by q4 "'mkp' $PAIR" "Q: a NON-generic var G: Pt = mkp(2) before the first statement (was SIGSEGV)"
+printf '%s\n%s\nvar gr: W1<Pt>;\nfn f(): i64 { gr.v.x = 2; return gr.v.x; }\nsyscall(60, f());\n' "$PT" "$MKW" > "$T/q5.cyr"
+build_refused_by q5 "uninitialized variable not allowed" "Q: a bare var gr: W1<Pt>; is the uninitialised refusal"
+grep -q "expected '=', got '.'" "$T/q5.err" && bad "Q: gr.v.x on a bare var gr: W1<Pt>; did not parse (the global was the 8 B base)"
+printf 'include "lib/alloc.cyr"\n%s\n%s\nvar G: W1<Pt> = alloc(16);\nfn f(): i64 { G.v.x = 2; G.v.y = 5; return w1s(G); }\nvar r = f();\nsyscall(60, r + G.v.x);\n' "$PT" "$MKW" > "$T/q6.cyr"
+exits q6 54 "Q: a W1<Pt> global holding an address: G.v.x written in a fn, read at top level, w1s(G)"
+printf 'include "lib/alloc.cyr"\n%s\n%s\nvar k = 0;\nk = 1;\nvar G: W1<Pt> = alloc(16);\nG.v.x = 3; G.v.y = 4;\nsyscall(60, w1s(G) + G.v.y);\n' "$PT" "$MKW" > "$T/q7.cyr"
+exits q7 47 "Q: control: the same after a statement (PARSE_VAR already instantiated)"
+printf 'struct B1<T> { v: T; }\nfn mkb<T>(x: T): B1<T> { var b: B1<T>; b.v = x; return b; }\nvar B: B1<i32> = mkb<i32>(7);\nsyscall(60, B.v);\n' > "$T/q8.cyr"
+exits q8 7 "Q: control: an 8 B instance global from its call (rax, no pair)"
+
 printf 'fn cnt<T>(n: T, acc: T): T { if (n == 0) { return acc; } return cnt(n - 1, acc + 1); }\nfn main(): i64 { return cnt(20000001, 0) & 127; }\nsyscall(60, main());\n' > "$T/m1.cyr"
 exits m1 1 "M: a 20,000,001-deep scalar generic tail recursion"
 printf '%s\n%s\nfn main(): i64 { return 3; }\nsyscall(60, main());\n' "$PT" "$GL" > "$T/m2.cyr"
@@ -242,4 +272,4 @@ elif [ "$nerr" -ne 1 ]; then bad "N: var a = idv<f64v2>(v): the refusal printed 
 else ok "N: var a = idv<f64v2>(v): refused once"; fi
 
 if [ "$fails" -ne 0 ]; then echo "FAIL: generic_type_arg_unknown_refused — $fails axis(es) red"; exit 1; fi
-echo "PASS: generic_type_arg_unknown_refused — a type-arg naming no type is refused by name (A-B); a forwarded type parameter resolves to its binding (C-D); scalar and struct type-args unchanged (E); an enum or an unlisted scalar name is refused by name (F-G); a generic using T as a struct is refused at every scalar call, tail call, forwarding generic and &g (H-J, L), two inferred struct type args are refused on every path (K), a \`*Pt\` parameter binds i64 (O), a top-level pair instance argument is refused (P), scalar tail recursion and the struct calls still run (M), and a bad type argument in a receive is reported once (N)"
+echo "PASS: generic_type_arg_unknown_refused — a type-arg naming no type is refused by name (A-B); a forwarded type parameter resolves to its binding (C-D); scalar and struct type-args unchanged (E); an enum or an unlisted scalar name is refused by name (F-G); a generic using T as a struct is refused at every scalar call, tail call, forwarding generic and &g (H-J, L), two inferred struct type args are refused on every path (K), a \`*Pt\` parameter binds i64 (O), a top-level pair instance argument is refused (P), a global typed with a generic instance is the instance and a top-level pair initialiser is refused in either zone (Q), scalar tail recursion and the struct calls still run (M), and a bad type argument in a receive is reported once (N)"

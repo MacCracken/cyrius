@@ -2141,6 +2141,38 @@ fn _gv_ifs(S, sti, ann_float): i64 {
     return 0;
 }
 
+# The token after a struct annotation's name: `<...>` on a GENERIC struct is parsed and the
+# instance `Box$ty` instantiated (deduped), and its sid returned; the base `sid` when every arg
+# is i64 or unresolved (the base IS the all-i64 instance), or when there is no `<`, or when the
+# struct is not generic (SKIP_GENERICS). `sid` <= 0 skips the args and returns it.
+# v6.3.10 in PARSE_VAR; ⛔ 6.6.11 PARSE_GVAR_REG and the EMIT_GVAR_INITS replay share it — the
+# declaration-zone global registered `var G: W1<Pt>` as the 8 B BASE, so `G.v.x` did not parse
+# and `w1s(G)` read the wrong storage. CHANGELOG [6.6.11]
+fn _gen_ann_sid(S, sid): i64 {
+    if (_MONOMORPH_OK != 1) { SKIP_GENERICS(S); return sid; }
+    if (sid <= 0) { SKIP_GENERICS(S); return sid; }
+    if (PEEKT(S) != 19) { return sid; }
+    if (GSTP(S, sid - 1) == 0) { SKIP_GENERICS(S); return sid; }
+    STI(S, GTI(S) + 1);                 # consume `<`
+    _ta_pending_gt = 0;
+    # v6.3.33: conc0 [, conc1] via _parse_one_type_arg (a NESTED generic type-arg is
+    # instantiated → its instance sid).
+    var c0 = _parse_one_type_arg(S);
+    var c1 = 0;
+    if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); c1 = _parse_one_type_arg(S); }  # `,`
+    _consume_gt(S);                       # the closing `>` (or `>>` tail)
+    # v6.3.37 (B1 half-A): c0 == 0 is an UNRESOLVED type parameter (`var p: Pair<T>` in a
+    # generic body) = the base all-i64 instance, as the return-type classification treats it,
+    # so the local keeps the base sid and matches _cur_fn_ret_sid. -8 is i64.
+    var inst = 0;
+    if (c0 != 0 - 8) { if (c0 != 0) { inst = 1; } }
+    if (c1 != 0) { if (c1 != 0 - 8) { inst = 1; } }
+    if (inst == 0) { return sid; }
+    var g = _instantiate_generic_struct(S, sid - 1, c0, c1);
+    if (g > 0) { return g; }
+    return sid;
+}
+
 fn PARSE_GVAR_REG(S): i64 {
     var sti = GTI(S);
     STI(S, GTI(S) + 1);  # consume VAR
@@ -2216,7 +2248,8 @@ fn PARSE_GVAR_REG(S): i64 {
                 elif (ann_tn & 0xFFFFFFFF == 0x38323175) { ann_scalar = 16; }
                 else { ann_sid = FINDSTRUCT(S, ann_sn); }
             }
-            STI(S, GTI(S) + 1); SKIP_GENERICS(S);
+            STI(S, GTI(S) + 1);
+            ann_sid = _gen_ann_sid(S, ann_sid);   # 6.6.11: `W1<Pt>` is the instance, not the base
         }
     }
     # Array: register with size. v5.11.51 — when the array has a
@@ -2437,19 +2470,28 @@ fn PARSE_GVAR_REG(S): i64 {
 }
 
 # Emit deferred global var inits (replays saved token positions)
-# The leading declaration block's `: Type` annotation, consumed. Returns `0 - sid` for a plain
-# struct name, else 0 (a pointer, a scalar, a generic instance: not checked here).
-fn _gvi_ann(S): i64 {
+# The leading declaration block's `: Type` annotation, consumed. Returns `0 - sid` for a struct
+# name, else 0 (a pointer, a scalar: not checked here). `slot` is the global the entry declared.
+# ⛔ 6.6.11: a generic `W1<Pt>` is the INSTANCE pass 1 recorded on the slot (_gen_ann_sid), read
+# back rather than re-parsed (a bad type argument is reported once, by pass 1). It returned 0, so
+# no generic global's initialiser was checked. CHANGELOG [6.6.11]
+fn _gvi_ann(S, slot): i64 {
     STI(S, GTI(S) + 1);   # consume :
     var ps = 0;
     if (PEEKT(S) == 8) { STI(S, GTI(S) + 1); ps = 1; }
     var sid = 0;
     if (PEEKT(S) == 2) { sid = FINDSTRUCT(S, PEEKV(S)); }
     STI(S, GTI(S) + 1);
-    if (PEEKT(S) == 19) { ps = 1; }
+    var gen = 0;
+    if (PEEKT(S) == 19) { gen = 1; }
     SKIP_GENERICS(S);
     if (ps == 1) { return 0; }
     if (sid <= 0) { return 0; }
+    if (gen == 1) {
+        if (slot < 0) { return 0; }
+        if (GVTYPE(S, slot) <= 0) { return 0; }
+        return 0 - GVTYPE(S, slot);
+    }
     return 0 - sid;
 }
 
@@ -2460,6 +2502,7 @@ fn _gvi_ann(S): i64 {
 fn _gvi_expr(S, gps): i64 {
     if (gps == 0) { PCMPE(S); return 0; }
     var st = GTI(S);
+    _refuse_toplevel_pair_init(S, gps, st);   # 6.6.11: a rax:rdx result has no storage here
     var w = _scv_arm(S, gps);
     PCMPE(S);
     _scv_disarm(w);
@@ -2519,7 +2562,7 @@ fn EMIT_GVAR_INITS(S): i64 {
             continue;
         }
         var gps = 0;
-        if (PEEKT(S) == 49) { gps = _gvi_ann(S); }
+        if (PEEKT(S) == 49) { gps = _gvi_ann(S, _gv_ent_slot(S, gi, 0, noff)); }
         # v5.11.51: byte-array literal `var foo[N] = { 0x.., ... };`
         # After IDENT (+ optional `:type`) the next token is `[` for
         # array-typed gvar inits. PARSE_GVAR_ARR registered the var in
@@ -3229,39 +3272,10 @@ fn PARSE_VAR(S): i64 {
                 }
             }
             STI(S, GTI(S) + 1);
-            # v6.3.10 (generic structs): `var x: Box<conc>` — if Box is a generic
-            # struct and `<...>` follows with a non-i64 type-arg, instantiate `Box$ty`
-            # (deduped) and retarget the local to the instance sid. i64 / non-generic
-            # → the existing SKIP_GENERICS (the base struct IS the i64 instance).
-            if (_MONOMORPH_OK == 1 && _gs_sid > 0 && PEEKT(S) == 19 && GSTP(S, _gs_sid - 1) != 0) {
-                STI(S, GTI(S) + 1);                 # consume `<`
-                _ta_pending_gt = 0;
-                # v6.3.33: parse conc0 [, conc1] via _parse_one_type_arg (handles a
-                # NESTED generic type-arg by instantiating it → its instance sid).
-                var _gstc = _parse_one_type_arg(S);
-                var _gstc1 = 0;
-                if (PEEKT(S) == 31) { STI(S, GTI(S) + 1); _gstc1 = _parse_one_type_arg(S); }  # `,`
-                _consume_gt(S);                       # consume the closing `>` (or `>>` tail)
-                # Use the base (the all-i64 instance) only when EVERY arg is i64; any
-                # non-i64 arg (incl. a distinct second param) needs a real instance.
-                var _do_inst = 0;
-                # v6.3.37 (B1 half-A): _gstc==0 = an UNRESOLVED type-parameter (`var p:
-                # Pair<T>` inside a generic body emitted base-as-i64) — it is the base
-                # all-i64 instance, exactly as the return-type classification treats it,
-                # so the local keeps the base struct sid and matches _cur_fn_ret_sid (the
-                # int-pair/retptr return path then fires). Without this, `_gstc==0 != -8`
-                # instantiated a bogus struct → local sid != ret sid → struct-return
-                # silently degraded to scalar-rax → caller SIGSEGV. (_gstc1==0 is already
-                # excluded by its `!= 0` guard below — same "unresolved = base" rule.)
-                if (_gstc != 0 - 8 && _gstc != 0) { _do_inst = 1; }
-                if (_gstc1 != 0 && _gstc1 != 0 - 8) { _do_inst = 1; }
-                if (_do_inst == 1) {
-                    var _ginst = _instantiate_generic_struct(S, _gs_sid - 1, _gstc, _gstc1);
-                    if (_ginst > 0) { pscale = 0 - _ginst; }
-                }
-            } else {
-                SKIP_GENERICS(S);
-            }
+            # v6.3.10 (generic structs): `var x: Box<conc>` retargets the local to the instance
+            # sid; see _gen_ann_sid (6.6.11: shared with the declaration-zone global path).
+            var _gi = _gen_ann_sid(S, _gs_sid);
+            if (_gi != _gs_sid) { pscale = 0 - _gi; }
         }
     }
     # v6.5.61 — INFER THE VECTOR TYPE FROM THE CALLEE'S RETURN TYPE WHEN THE VAR HAS NONE.
@@ -3638,7 +3652,7 @@ fn PARSE_VAR(S): i64 {
             }
         }
     }
-    if (GINFN(S) == 0) { if (pscale < 0) { if (PEEKT(S) == 4) { _refuse_toplevel_pair_init(S, pscale); } } }   # 6.6.6
+    if (GINFN(S) == 0) { if (pscale < 0) { if (PEEKT(S) == 4) { _refuse_toplevel_pair_init(S, pscale, GTI(S) + 1); } } }   # 6.6.6
     if (asv_try == 1) {
         var asv_sid = 0 - pscale;
         var asv_sz = STRUCTSZ(S, asv_sid - 1);

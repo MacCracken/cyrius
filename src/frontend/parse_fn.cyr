@@ -1896,11 +1896,17 @@ fn _return_struct_call(S): i64 {
 # `var G: S = f(..)` at top level, `f` returning `S` in rax:rdx: the global is not an inline
 # aggregate there (no receive path exists outside a fn), so `G.x` dereferenced the returned
 # first word — SIGSEGV. Refused by name, like the retptr form PARSE_FNCALL refuses. CHANGELOG [6.6.6]
-fn _refuse_toplevel_pair_init(S, pscale): i64 {
-    var ti = GTI(S) + 1;
-    if (TOKTYP(S, ti) != 2) { return 0; }
-    if (TOKTYP(S, ti + 1) != 10) { return 0; }
-    var fi = FINDFN(S, TOKVAL(S, ti));
+# `ti` is the callee's name token. ⛔ 6.6.11: resolved as the call REACHES it (`_gcall_open` +
+# `_gen_resolve_call`) — FINDFN read the generic BASE, whose 8 B `W1<T>` is class 0, so
+# `var G: W1<Pt> = mkw(gp)` was never refused (rc 139) — and also run by the declaration-zone
+# replay (`_gvi_expr`), which never reached it at all: a `var G: Pt = mkp(2);` before the first
+# top-level statement compiled clean and SIGSEGV'd on `G.x`. CHANGELOG [6.6.11]
+fn _refuse_toplevel_pair_init(S, pscale, ti): i64 {
+    if (pscale >= 0) { return 0; }
+    if (_gcall_open(S, ti) < 0) { return 0; }
+    var fi = _gen_resolve_call(S, ti);
+    if (fi < 0) { return 0; }
+    if (_grc_err < 0) { return 0; }   # a failed instantiation: the call refuses itself, once
     if (_ret_agg_class(S, fi) != 1) { return 0; }
     if (GFRS(S, fi) != 0 - pscale) { return 0; }
     _refuse_toplevel_struct_call(S, TOKVAL(S, ti));
