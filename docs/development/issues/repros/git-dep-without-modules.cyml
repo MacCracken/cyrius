@@ -1,0 +1,27 @@
+# Repro for 2026-10-01-git-dep-without-modules-silently-inert.md
+#
+#   mkdir -p repro/src && cp git-dep-without-modules.cyml repro/cyrius.cyml
+#   printf 'fn main(): i64 { return 0; }\nvar _r = main();\nsyscall(60, _r);\n' > repro/src/main.cyr
+#   cd repro && cyrius lib sync --full && cyrius deps
+#
+# Observed (6.6.12, empty dep cache): exit 0, output "cyrius.lock: 111 deps locked" and
+# nothing else — no clone, no lib/tyche.cyr, no commit pin, no word about [deps.tyche].
+# Uncomment the `modules` line and the same command prints "1 deps resolved", clones the
+# tag, vendors lib/tyche.cyr and pins the commit.
+[package]
+name = "repro"
+version = "0.0.1"
+license = "GPL-3.0-only"
+language = "cyrius"
+cyrius = "6.6.12"
+
+[build]
+entry = "src/main.cyr"
+
+[deps]
+stdlib = ["syscalls", "alloc"]
+
+[deps.tyche]
+git = "https://github.com/MacCracken/tyche.git"
+tag = "1.1.0"
+# modules = ["dist/tyche.cyr"]

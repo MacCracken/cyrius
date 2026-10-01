@@ -1,0 +1,30 @@
+# Repro for 2026-10-01-typed-array-globals-not-padded-aarch64-atomics-sigbus.md
+#
+# A typed-array global is laid out at its exact byte size, so the next global lands
+# at an address that is not 8-aligned. Any atomic on that global uses ldaxr/stlxr
+# (or ldar/stlr) on aarch64, which faults on a misaligned address.
+#
+#   cyrius build src/main.cyr out-x86            # prints "8 363 3 1"   — misaligned, CAS ok
+#   cyrius build --aarch64 src/main.cyr out-a64  # on aarch64: "8 363 3 " then SIGBUS (rc 135)
+#
+# Measured on cyrius 6.6.12, Raspberry Pi 4 (Cortex-A72). Swap the typed declaration for
+# the untyped `var _tr[363];` — documented as rounded to 8 — to compare.
+# Manifest stdlib: ["syscalls", "alloc", "fmt", "atomic"].
+var _head = 0;
+var _tr: u8[363];
+var _lock = 0;
+
+fn main(): i64 {
+    fmt_int(&_tr - &_head);
+    sys_write(1, " ", 1);
+    fmt_int(&_lock - &_tr);
+    sys_write(1, " ", 1);
+    fmt_int(&_lock % 8);
+    sys_write(1, " ", 1);
+    fmt_int(atomic_cas(&_lock, 0, 1));
+    sys_write(1, "\n", 1);
+    return 0;
+}
+
+var _rc = main();
+sys_exit_group(_rc);
