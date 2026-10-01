@@ -2218,10 +2218,16 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                 var _head = 0;
                 var _gx = _git_exec_available();
                 if (_gx == 0) {
-                    _ew("warning: dep '");
-                    _ew(dep_name);
-                    _ew("': its cached checkout was NOT verified — git cannot be run on this\n");
-                    _ew("         platform (no fork), so the cached bytes are vendored as they are.\n");
+                    # 6.6.13 (I10): only when there IS a cache. With none, the clone above
+                    # was refused by name (`dep_pin_ok == 0`) and this line claimed bytes
+                    # were being vendored that did not exist — measured on cass for a
+                    # modules-less git dep, which reaches here since I10a.
+                    if (dep_pin_ok == 1 && is_dir(str_from(clone_dir)) == 1) {
+                        _ew("warning: dep '");
+                        _ew(dep_name);
+                        _ew("': its cached checkout was NOT verified — git cannot be run on this\n");
+                        _ew("         platform (no fork), so the cached bytes are vendored as they are.\n");
+                    }
                 } elif (_git_has_repo(clone_dir) == 1) { _git_cap_errno = 0; _head = _git_head_sha(clone_dir); }
                 if (_gx == 0) {
                     dep_path = clone_dir;   # unchanged from above: vendor the cache as found

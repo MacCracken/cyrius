@@ -48,7 +48,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `[deps.daimon]` (no `modules`, daimon ships no `dist/`) warns on every build from 6.6.13 and
   is cloned in CI — add `modules = []` before pinning ≥ 6.6.13. On native Windows a
   modules-less git dep with no usable `path` now reports the existing "needs a git clone, which
-  cyrius cannot run on this platform" error where it used to be silently dropped.
+  cyrius cannot run on this platform" error where it used to be silently dropped — and only that:
+  the follow-on `its cached checkout was NOT verified … the cached bytes are vendored as they are`
+  warning used to print even when the clone had just been refused and no cache existed (a claim
+  about bytes that were not there); it now prints only for a real pre-populated cache. Measured
+  on cass with the PE CLI: no cache → the one error, rc 1, no lock (6.6.12: rc 0, silent); a
+  pre-populated `deps\tyche\1.1.0` → `1 deps resolved`, the unverified-cache warning, and
+  `lib\tyche.cyr` byte-identical (`fc /b`) to the cache's `dist\tyche.cyr`.
   The filed repro (`repros/git-dep-without-modules.cyml`, pin edited to the tree) now
   prints `1 deps resolved`, vendors `lib/tyche.cyr` byte-identical to `git show
   1.1.0:dist/tyche.cyr` and pins `tyche 1.1.0`. Pinned by the new
