@@ -6,6 +6,29 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.13] — 2026-10-01
 
+### Downstream
+
+#### Folded — ⛔ each tagged BEFORE cyrius 6.6.13
+
+- **sigil 3.13.6 folded (`lib/sigil.cyr`, sigil commit `6a586c4`) — first use is thread-safe; X.509
+  takes the trust-store roots it used to refuse.** The sigil half of I3 and I2 (e). **Root cause
+  (I3):** sigil's lazy initialisers were check-then-set — two threads arriving at a cold table both
+  built it, and one could read it half-written — and `crypto_tls_main_init` gave bank 0 to whichever
+  thread called first, so a worker that warmed TLS before main left main without a block (SIGSEGV).
+  **Fix, at the source:** all 31 flag-guarded initialisers claim and publish through one 0 → 1 → 2
+  atomic (`_sigil_once_*`, an acquire fence on aarch64), the 15 lazily allocated scratch pointers are
+  CAS-published, and `crypto_tls_main_init` installs a thread-local block only on a thread that has
+  none (thread pointer: `TPIDR_EL0` on aarch64; `rdfsbase` on x86 when `AT_HWCAP2` reports
+  FSGSBASE; `gettid == getpid` otherwise). **Root cause (I2 e):** `x509_parse` refused a
+  certificate on its own signature algorithm, so seven current self-signed RSA roots in
+  `/etc/ssl/cert.pem` (three sha1WithRSA, four sha512WithRSA) never installed, although a trust
+  anchor's self-signature is never verified (RFC 5280 §6.1). **Fix:** sha512WithRSA is parsed and
+  verified (PKCS#1 v1.5 with the SHA-512 DigestInfo); sha1WithRSA is parsed and refused at every
+  verification. P-521 stays refused (a curve is a feature, on sigil's roadmap). sigil's full CI ran
+  isolated at its 6.6.9 pin (17/17); the new `lazy_init_race.tcyr` and `cbank_main_lane.tcyr` fail
+  on 3.13.5. The cyrius halves (`tls_native_set_ca_system`'s cache, `tls_init_main()`, the skipped
+  count) are bites I3 and I2 below.
+
 ## [6.6.12] — 2026-09-30
 
 The sixth and last release of the repair batch: the Q–U overflow of the 6.6.10 finds, the backlog's
