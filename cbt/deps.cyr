@@ -2013,8 +2013,22 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                     errors = errors + _dep_pull_leaves(rq_dir, dep_name, dep_requires);
                 }
             }
+            # 6.6.13 (I10a): a block with NO `modules` and NO `modular` key means
+            # `modules = ["dist/<name>.cyr"]` when the tag (or path) ships that file —
+            # probed below, after the clone and its CVE-21 pin. It used to be silently
+            # inert: never cloned, vendored, pinned or marked visited, so a TRANSITIVE
+            # `[deps.<name>]` resolved in its place (agnostic 0.1.7). An explicit
+            # `modules = []` parses to a non-zero empty vec, so it is NOT defaulted —
+            # it stays the "declared, not linked" spelling. The name is already
+            # validated (CVE-TBD(I10d) above), so it is safe to build a path from.
+            var dep_mod_default = 0;
+            if (dep_modules == 0 && dep_modular == 0 && (dep_git != 0 || dep_path != 0)) {
+                dep_mod_default = 1;
+            }
             var need_clone = 0;
-            if (dep_git != 0 && dep_modules != 0) {
+            # I10a/I10c: a defaulted block and a `modular`-only block are cloned too —
+            # the guard used to be `dep_modules != 0` alone, so both were dropped here.
+            if (dep_git != 0 && (dep_modules != 0 || dep_modular != 0 || dep_mod_default == 1)) {
                 if (dep_path == 0) {
                     need_clone = 1;
                 } elif (is_dir(str_from(dep_path)) == 0) {
@@ -2272,20 +2286,45 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                     }
                 }
             }
+            # 6.6.13 (I10a): the default probe — strictly `dist/<name>.cyr`, no `lib/`
+            # fallback. On a hit the block resolves exactly as if it had listed it: the
+            # copy loop below runs the `.deps` sidecar pull, the stdlib-clobber and
+            # symlink guards, and marks the dep visited (closest-wins) + queued. A failed
+            # or refused clone (`dep_pin_ok == 0`) has already been reported.
+            if (dep_mod_default == 1 && dep_path != 0 && dep_pin_ok == 1) {
+                var dm_sb = str_builder_new();
+                str_builder_add_cstr(dm_sb, "dist/");
+                str_builder_add_cstr(dm_sb, dep_name);
+                str_builder_add_cstr(dm_sb, ".cyr");
+                var dm_rel = str_data(str_builder_build(dm_sb));
+                if (file_exists(_dep_join_path(dep_path, dm_rel)) == 1) {
+                    dep_modules = vec_new();
+                    vec_push(dep_modules, dm_rel);
+                }
+            }
             # v6.2.50 Phase C: pull declared modular sub-modules from the dep's
             # `dist/<name>/` (each + its transitive index deps + lib leaves, in
             # topological order). A per-dep `seen` set dedups + breaks cycles.
+            var sm_errs = 0;
             if (dep_modular != 0 && dep_path != 0 && dep_pin_ok == 1) {
                 if (_dep_stdlib_seen == 0) { _dep_stdlib_seen_init(); }
                 var sm_dir = _dep_find_stdlib_dir();
                 var sm_seen = vec_new();
                 var smi = 0;
                 while (smi < vec_len(dep_modular)) {
-                    errors = errors + _dep_pull_submodule(dep_path, dep_name, vec_get(dep_modular, smi), sm_dir, sm_seen);
+                    sm_errs = sm_errs + _dep_pull_submodule(dep_path, dep_name, vec_get(dep_modular, smi), sm_dir, sm_seen);
                     smi = smi + 1;
                 }
+                errors = errors + sm_errs;
             }
             var dep_had_success = 0;
+            # 6.6.13 (I10c): a `modular` pull that vendored cleanly resolves the dep —
+            # visited (closest-wins), queued, counted, so its clone's commit pin reaches
+            # cyrius.lock. Before, nothing marked it, so even a cloned modular-only dep
+            # vendored with no lock written and no line of output.
+            if (dep_modular != 0 && dep_path != 0 && dep_pin_ok == 1) {
+                if (vec_len(dep_modular) > 0 && sm_errs == 0) { dep_had_success = 1; }
+            }
             if (dep_path != 0 && dep_modules != 0 && dep_pin_ok == 1) {
                 var mi = 0;
                 while (mi < vec_len(dep_modules)) {
