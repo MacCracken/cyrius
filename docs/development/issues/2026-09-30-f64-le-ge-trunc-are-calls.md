@@ -1,7 +1,8 @@
 # `f64_le`, `f64_ge` and `f64_trunc` are function calls, 2–3× the cost of the builtins they wrap
 
 **Status:** 🟡 **OPEN** — found by abaco 2.4.9 benchmarking; not repaired.
-**Placement:** unpinned — 6.x-line backlog.
+**Placement:** **6.6.13**, bite I5 (memory fixes + reported-issue repair, set by the user 2026-10-01) —
+see `roadmap.md` § 6.6.13. Builtins, after an ecosystem survey for local definitions of the three names.
 **Discovered:** 2026-09-30, abaco 2.4.9 (its `f64_round_half_away` doubled in cost, 8 → 15 ns,
 when it moved to `f64_trunc` + `f64_ge`).
 **Severity:** Low — performance only; results are correct. (Not > 2× on whole consumer paths,

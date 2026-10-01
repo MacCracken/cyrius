@@ -1,7 +1,9 @@
 # `f64_parse` is not correctly rounded: 1 ulp off on ~23% of short decimals, Inf / 0 at the range ends
 
 **Status:** 🟡 **OPEN** — found by abaco 2.4.9's project audit; not repaired.
-**Placement:** unpinned — 6.x-line backlog.
+**Placement:** **6.6.13**, bite I4 (memory fixes + reported-issue repair, set by the user 2026-10-01) —
+see `roadmap.md` § 6.6.13. Default fix: port bayan 1.5.7's parser (`bayan/src/dtoa.cyr`, correctly rounded
+for every input) rather than the Clinger + double-double sketch below.
 **Discovered:** 2026-09-30, abaco 2.4.9 project audit (finding `ai-nl-parse-f64-inexact`: abaco's
 natural-language and currency-rate paths read numbers with `f64_parse`).
 **Severity:** Medium — silent wrong values for valid input; consumers can work around it with

@@ -1,6 +1,6 @@
 # Cyrius Development Roadmap — v6.7.x and beyond
 
-**Scope — FORWARD ONLY: v6.7.x/v6.8.x and the shape of what follows v6.x.**
+**Scope — FORWARD ONLY: v6.7.x (the language arc), v6.8.x/v6.9.x (RISC-V rv64), and the shape of what follows v6.x.**
 This file is deliberately *not* a record of shipped work and *not* a spec for the current
 minor. Re-scoped 2026-07-29: it previously carried full per-minor detail for v6.0.x through
 v6.4.x plus a duplicate v6.5.x specification, which made it 1,592 lines of mostly-history and
@@ -32,7 +32,7 @@ gave the v6.5.x plan two homes that had already drifted apart.
 
 ## See also
 
-- [roadmap.md](roadmap.md) — the **current active minor** (v6.5.x), slot-by-slot. Rotates at
+- [roadmap.md](roadmap.md) — the **current active minor** (v6.6.x), slot-by-slot. Rotates at
   every minor cut; it is the authority for anything in flight.
 - [cycle-discipline.md](cycle-discipline.md) — durable operating principles (slot acceptance,
   bottom-to-top priority, premise-check, cross-host smoke, cycle-close shape).
@@ -89,7 +89,7 @@ minor actually closed at **v6.4.86**, which is exactly the failure a second copy
 | v6.3.x | Language refinements | **v6.3.45** |
 | v6.4.x | Staging minor → long reactive minor | **v6.4.86** (closeout cut at .85; .86 was the post-closeout sandhi fold) |
 | v6.5.x | Perf / quality: IR substrate, regalloc, SIMD register residency, `: stack` enums | **v6.5.73** (there is no `.74` — that number was cut in error and re-cut as v6.6.0) |
-| v6.6.x | **ACTIVE** — value-form `Result` + language ergonomics; see [roadmap.md](roadmap.md) | — (head **v6.6.1**, 2026-09-08) |
+| v6.6.x | **ACTIVE** — value-form `Result`, then repair; its tail is tooling (its language list moved to v6.7.x on 2026-10-01); see [roadmap.md](roadmap.md) | — (head **v6.6.12**, 2026-09-30) |
 
 Every close number above was verified against `CHANGELOG.md` on 2026-07-29 (the per-minor max
 `## [6.Y.N]` heading), not carried over from the previous text, re-verified 2026-08-07, and the
@@ -118,8 +118,131 @@ anywhere. One authority per active minor.
 
 **When v6.6.x closes:** add one row to the table above, and do not copy its detail back here.
 
+**Re-planned 2026-10-01 (user):** the ergonomics list that moved into roadmap.md on 2026-09-08 (its
+"Phase 3"), together with proposal P3 `const fn`, moved on again — to **v6.7.x, below**. v6.6.x finishes
+with 6.6.13 (memory fixes and the reported issues) and then the tooling proposals.
 
-## v6.7.x or v6.8.x — Platform: RISC-V rv64
+---
+
+## v6.7.x — Language: real traits, the missing common features, and the carried 6.6.x list
+
+**Set 2026-10-01 (user):** *"6.7.0 become the real trait arc and missing common features arc and
+improvements and updates to language features previous planned for 6.6.x get merged into 6.7.x; push
+anything in 6.7.0 back a minor or two."* So v6.7.x opens as the language minor, and RISC-V moves back to
+v6.8.x/v6.9.x (below). Nothing here starts before v6.6.x closes. The identity rule carries over from the
+v6.6.x list: **no GC, no hidden control flow you cannot disassemble.** Still not imported (decided
+2026-07-07): borrow-checker lifetimes, a general const-eval VM, exceptions of any kind.
+
+This is a spec for a minor that is not active yet. When v6.7.x opens it MOVES to roadmap.md, and this
+file keeps only a pointer: one authority per active minor.
+
+### Premise — what cycc 6.6.12 does today (measured 2026-10-01 with `build/cycc`; re-run at the open)
+
+| Shape | cycc 6.6.12 |
+|---|---|
+| `class Foo { … }` / `trait Show { … }` | No such keyword: a parse error. |
+| `impl Show for Point { fn sum(self: Point) … }`, then `p.sum()` | Works. The method is `Point_sum` (ADR-004 naming). |
+| `impl NoSuchTrait for Point { … }` | Compiles. `PARSE_IMPL` (`src/frontend/parse_fn.cyr:3279`) skips the trait name unread. |
+| Two traits each give `Point` a `size` method | Both become `Point_size`. A duplicate-fn warning, and the last one wins: `p.size()` returned 7 where the first trait's method meant 12. |
+| `impl Point { … }` (no trait) | `expected for` |
+| An untyped `self`, then `self.x` | `no struct type in scope for 'self'`. An untyped `self` is a bare address, so every ecosystem impl reads `load64(self)`. |
+| `b.v.sum()` (a method on a nested field) | Syntax error (documented in the guide). |
+| `fn f<T: Show>(x: T)` | `Show` is captured as a SECOND type parameter (`_capture_tparams`). `f(21)` compiles with the bound ignored; `f(p)` on a struct fails with "a STRUCT type-argument alongside a second type argument". |
+| `V2_add` declared, then `a + b` on two `V2`s | Works (operator overloading by name). |
+| `const LIMIT = 7;` | No keyword. |
+| `bool` / `true` / `false` | None: `undefined variable 'true'`. |
+| `c ? a : b` | Parse error. |
+| `var t = (1, 2);` | Parse error. Only multi-return exists: `var a, b = f();`, arity 2–3. |
+| `loop { … }` / `do { … } while (c);` | Parse errors. |
+| `fn f(a, b = 2)` | Parse error. |
+| `u8` / `u16` / `u32` / `f32` struct fields | A full 8-byte word each (the guide's field table). |
+
+### A — Real traits (opens the minor)
+
+1. **`trait` declarations, checked.** `trait Show { fn show(self): i64; }` declares a method set, and
+   `impl Show for T` is checked against it. A missing method, an extra one, a wrong arity or an
+   undeclared trait is a compile error naming the trait. A method with a body in the trait is a
+   **default**: it is instantiated into every impl that does not supply its own.
+2. **Trait-qualified names.** This is the collision fix ADR-004 planned (`Point_Display_format`) and never
+   shipped. ⚠ Compatibility: code calls impl methods by their mangled name. The guide's constructor idiom
+   is `Type_new(..)`, and the tests and the ecosystem do the same. So `T_m` must keep resolving whenever
+   only one trait (or an inherent impl) provides `m`. Only a real collision changes: `p.m()` becomes an
+   ambiguity error naming both traits, with a qualified spelling to choose one (spelling chosen at the
+   open).
+3. **Inherent `impl T { … }`**: methods with no trait.
+4. **`self` typed by its impl.** An untyped `self` inside `impl … for T` becomes `self: *T`. That is still
+   the receiver's ADDRESS, so every `load64(self)` body keeps working, and `self.x` reads through it the
+   way a `pp: *Pt` parameter does. ⚠ It must NOT be `self: T`. Under that spelling a struct of 8 bytes or
+   less is passed BY VALUE (6.6.11), which would silently break every small-struct impl that does
+   `load64(self)` (`tests/tcyr/crossos/method_self_inline_struct.tcyr`'s `P1` is one).
+5. **Methods on nested fields and chains**: `b.v.sum()`, `mk(3).v.sum()`.
+6. **Dispatch stays static (ADR-004).** Trait objects remain the `lib/trait.cyr` library pattern: a
+   vtable + data fat pointer, called through `fncall`. Compiler-native `dyn` would amend ADR-004. That is
+   the one design question to settle at the open, and the default is no.
+
+### B — The missing common features
+
+⚠ **Every new keyword is a new reserved word** (`IS_KEYWORD_TOK`), and it breaks any consumer that uses
+the word as an identifier. Survey the ecosystem ONCE at the open for all of them, not per feature:
+`trait`, `const`, `bool`, `true`, `false`, `loop`, `do`, and whatever qualified-call spelling A2 picks.
+
+1. **`const` declarations.** `const LIMIT = 7;` is a compile-time value with no storage, folded like an
+   enum constant. It lands with C1, so a `const` can be initialised by a `const fn`. Today people use
+   `enum`, `#define` or a `var`.
+2. **`bool`, `true`, `false`.** 0 and 1 underneath (ADR-002 keeps i64 the core). This is a type for
+   intent, typechecks and `#derive`, not a new representation.
+3. **A conditional expression.** ⚠ C's `c ? a : b` collides with the postfix `?` that propagates a
+   `Result` (v5.8.29): `x ? -1 : 2` parses two ways. Default: an if-expression
+   (`var v = if (c) { a } else { b };`). The C spelling only if the grammar is shown to be unambiguous.
+4. **Tuples as values.** `var t = (1, 2); t.0`. Default: sugar over an anonymous struct, so the struct
+   layout and ABI rules apply unchanged, and multi-return keeps its register pair.
+5. **`loop { … }` and `do { … } while (c);`.** A `continue` in a `do … while` goes to the condition.
+6. **Default and named arguments.** `fn f(a, b = 2)` and `f(a: 1, b: 2)`; the v6.5.1 arity check becomes
+   a min..max check. Overloading by arity stays out: it would reverse v6.5.1's rule that a count mismatch
+   is never intentional.
+7. **Narrow unsigned and `f32` struct fields.** `u8` / `u16` / `u32` / `f32` fields take a full word
+   today. Narrowing them changes the LAYOUT of every struct that declares one, which is an ABI change
+   across the ecosystem. So it ships with a survey and a migration, never silently.
+
+### C — Carried from v6.6.x (its former Phase 3 and proposal P3; moved 2026-10-01)
+
+1. **`const fn`** ([`proposals/2026-07-05-const-eval-comptime.md`](proposals/2026-07-05-const-eval-comptime.md)).
+   The rung was chosen 2026-07-07: option 1 `const fn` is primary, option 3 `#phf` is the fallback, and
+   option 4 (a general const-eval VM) is declined. ⚠ It reuses the `ir_const_fold` fixpoint
+   (`src/common/ir.cyr`), so it lands after any work that rewrites that pass, or the churn is paid twice.
+2. **Opt-in bounds-checked memory mode** (`CYRIUS_BOUNDS` / `#bounds`). It was designed in the v6.3.x
+   plan and never shipped: `CYRIUS_BOUNDS`, `#bounds` and `_bounds_check` had **0** hits in `src/` at
+   6.6.12 (re-check at the open). **OFF by default**: raw stores stay raw in release builds. 6.6.12
+   shipped the unchecked half for integer-element `var a: T[N]` (R4). Still to do: `*T` pointer
+   subscripts, slice writes, and the checked mode itself.
+3. **Trait-bounded generics.** No longer demand-gated: A is its prerequisite, and it is the minor's
+   theme. `<T: Show>` parses as a bound (today it mints a second type parameter named `Show`), and an
+   instantiation whose `T` has no `impl Show` is an error. ⚠ Fix the **multi-type-param struct-type-arg
+   residual** first: today a struct type argument works only on a one-parameter generic, and
+   `g<Pt, i64>` is refused.
+
+### Shape and the open
+
+- **Order (default):**
+  1. A opens 6.7.0.
+  2. C3 follows directly, because it needs A.
+  3. B and C1/C2 interleave by size, with B1 `const` landing beside C1 `const fn`.
+
+  Each arc is one or two releases with its phases as bites (CLAUDE.md Release & Slot Discipline, rule 2). Expect a large minor.
+- **At the open, before code:**
+  - an ADR for traits (amend ADR-004, or write ADR-007), and the vidya entries;
+  - the one ecosystem survey: new reserved words, `impl` blocks and direct `T_m` calls, narrow struct fields, and any name that becomes a builtin;
+  - re-run the premise table above.
+- **Every new syntax ships with** a `tests/tcyr/crossos/` file (it runs on ecb / ach / cass / pi), a guide
+  section and a vidya entry.
+
+
+## v6.8.x or v6.9.x — Platform: RISC-V rv64
+
+**Re-homed again 2026-10-01 (user)** — from v6.7.x/v6.8.x back *"a minor or two"*, because v6.7.x
+became the language minor (above). This is the third deferral of the same shape (v6.2.x → v6.6.x →
+v6.7/6.8 → v6.8/6.9), and again a deferral of worry, not intent: the hardware is in hand. **Whether it
+takes 6.8 or 6.9 is decided at the v6.7.x close.** The history below is kept as written.
 
 **Theme**: the 4th platform peer — first-class RISC-V 64-bit. **Re-homed here
 from v6.6.x at the 2026-07-07 horizon session** (user: hardware in hand, *"can
@@ -130,9 +253,9 @@ work"*) — the second deliberate deferral of the same shape as the first
 [I] don't want to worry about another platform until some of the other items in
 the minors get ironed out"*). A **deferral of worry, not intent** — the point is
 to let the v6.5.x perf-quality + v6.6.x ergonomics minors land before adding a
-7th backend. Whether it takes 6.7 or 6.8 is decided at v6.6.x close (consumer
-pressure may claim 6.7 first); the cycle is explicitly allowed to grow past 6
-minors (see "What comes after v6.x" below).
+7th backend. *(This sentence read "whether it takes 6.7 or 6.8 is decided at
+v6.6.x close"; the 2026-10-01 re-home above superseded it.)* The cycle is
+explicitly allowed to grow past 6 minors (see "What comes after v6.x" below).
 
 First-class RISC-V 64-bit target — the 4th platform peer after
 x86_64 / aarch64 / PE-x86_64. Substrate prerequisites already landed:
@@ -168,8 +291,8 @@ landed first in v6.2.x).
    non-negotiable cross-OS self-host gate, on real silicon.
 5. `[release].cross_bins` in `cyrius.cyml` gets a `cycc_riscv64` entry.
 
-> **Sequencing note**: v6.6.x is the *current tail pin* — the v6.3.x–v6.5.x
-> arcs may surface consumer pressure or perf findings that re-order what
+> **Sequencing note**: the v6.7.x language arc sits ahead of it — that arc
+> may surface consumer pressure or findings that re-order what
 > lands first, and only the user pivots focus
 > ([[feedback_priority_bottom_to_top]] / slot discipline). Premise-check the
 > rv64 substrate at arc entry per [[feedback_premise_check_at_slot_entry]].
@@ -180,11 +303,12 @@ landed first in v6.2.x).
 
 **v6.x is not capped at 6 minors.** Per user direction 2026-06-11, the cycle
 **grows further before any major bump** — v6.4.x (CLOSED at **.86**) → v6.5.x
-(CLOSED at **.73**) → **v6.6.x (ACTIVE at .1: the value-form `Result`/`Option`/`Either`
-flip SHIPPED at v6.6.0 with the 8-repo ecosystem migration; `.1` closed the entire open
-issue queue and folded five stdlibs; `.2`–`.6` are a reserved repair window, then
-proposals, then the ergonomics list — see [roadmap.md](roadmap.md))** → **v6.7.x/v6.8.x
-(RISC-V rv64, re-homed there 2026-07-07)** are the current pins, and more v6.x
+(CLOSED at **.73**) → **v6.6.x (ACTIVE at .12: the value-form `Result`/`Option`/`Either`
+flip SHIPPED at v6.6.0 with the 8-repo ecosystem migration, then a repair window and a repair
+batch through `.12`; `.13` repairs memory and the reported issues, and tooling closes the minor —
+see [roadmap.md](roadmap.md))** → **v6.7.x (the language arc: real traits, the missing common
+features, `const fn`, the bounds-checked mode, trait-bounded generics; set 2026-10-01)** →
+**v6.8.x/v6.9.x (RISC-V rv64, re-homed there 2026-10-01)** are the current pins, and more v6.x
 minors can still follow (consumer pressure, language refinements, platform work)
 before v7.0.0. v7 is *further out* than the original
 "6 minors" framing implied; don't treat the tail as the cycle's hard end.

@@ -1,8 +1,8 @@
 # Cyrius Development Roadmap — v6.6.x (active minor)
 
 **Scope** — the **current active minor only** (v6.6.x). This is the slot-pinning working
-artifact: the repair window, the proposal queue, the committed ergonomics list, and the
-unscheduled 6.x backlog. Whole-cycle framing plus v6.7.x/v6.8.x live in
+artifact: the 6.6.13 repair release, the tooling proposals that round out the minor, and the
+unscheduled 6.x backlog. Whole-cycle framing, the v6.7.x language arc and v6.8.x/v6.9.x RISC-V live in
 [roadmap_6.md](roadmap_6.md); the unpinned watching list is
 [roadmap-future.md](roadmap-future.md); per-release history is
 [CHANGELOG.md](../../CHANGELOG.md) and [completed-phases.md](completed-phases.md).
@@ -21,8 +21,9 @@ unscheduled 6.x backlog. Whole-cycle framing plus v6.7.x/v6.8.x live in
 
 ## See also
 
-- [roadmap_6.md](roadmap_6.md) — the **v6.x cycle** beyond this minor: v6.7.x/v6.8.x RISC-V
-  rv64, cycle budgeting, and the shape of what follows v6.x.
+- [roadmap_6.md](roadmap_6.md) — the **v6.x cycle** beyond this minor: the v6.7.x language arc
+  (real traits, the missing common features, and the language list this minor used to carry),
+  v6.8.x/v6.9.x RISC-V rv64, cycle budgeting, and the shape of what follows v6.x.
 - [roadmap-future.md](roadmap-future.md) — unpinned / speculative watching list with explicit
   unpin conditions (128-bit div-mod, Phase 3-full varargs, effect tracking, HKTs/GATs).
 - [cycle-discipline.md](cycle-discipline.md) — durable operating principles **and the runnable
@@ -41,7 +42,7 @@ unscheduled 6.x backlog. Whole-cycle framing plus v6.7.x/v6.8.x live in
 **Current head: v6.6.12** (2026-09-30) — cycc **1,470,944 B** (`.text` **1,297,064**) ·
 seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi · self_compile **839 ms** ·
 **410** `.tcyr` (**153** in `crossos/`) · **104** `lib/*.cyr` · **316** shell gates under
-`tests/gates/<bucket>/` · **0 open issues** · **6 open proposals**.
+`tests/gates/<bucket>/` · **5 open issues** · **6 open proposals**.
 
 > ⚠ **Every figure above was DERIVED on the day, not carried** (re-derived 2026-09-27 at the 6.6.7 open).
 > `version-bump.sh` rewrites the version token, replaces the `(…)` after it with the bump date, and
@@ -61,7 +62,12 @@ CHANGELOG; do not re-add shipped slots here.
 placed into 6.6.10–6.6.12 — and 6.6.12 also took the backlog's repair items and every sibling follow-up.
 It spent **CVE-46 … CVE-58** (the next free id is 59) and shipped each release together with the sibling
 patch releases it needed. Per-release detail is in the CHANGELOG; the process rules it settled are in
-*Standing notes* below. **From 6.6.13 the minor returns to Phase 2 and Phase 3.**
+*Standing notes* below.
+
+**Re-planned 2026-10-01 (user).** 6.6.13 is a repair release — the three silent memory-corruption finds
+that led the backlog, and the five open issues. After it the minor finishes on **tooling** (the proposals).
+The language list that was Phase 3 moved to **v6.7.x**, which RISC-V vacates for v6.8.x/v6.9.x. See
+*The shape of v6.6.x*.
 
 ---
 
@@ -71,8 +77,103 @@ patch releases it needed. Per-release detail is in the CHANGELOG; the process ru
 |---|---|---|
 | **1 — Repair window** | `.2` – `.6` | ✅ **CLOSED at 6.6.6.** |
 | **1b — the repair batch** | `.7` – `.12` | ✅ **CLOSED at 6.6.12** (summary in *Where we are*). |
-| **2 — Proposals** | from `.13` | The open proposals, sequenced by their own stated prerequisites. |
-| **3 — Committed ergonomics** | after proposals | The v6.6.x "best of the best" language-import list, carried in from `roadmap_6.md`. |
+| **1c — memory + reported-issue repair** | `.13` | The three silent memory-corruption finds, the five open issues, and the ganita / bayan / sigil folds. ⛔ **No `src/` or `lib/` work until ganita and bayan have released** (user, 2026-10-01). See *6.6.13* below. |
+| **2 — Tooling round-out** | after `.13`, to the minor's close | The tooling proposals P1, P2, P4, P5, P6, alongside the DCE compaction arc and, last, macOS concurrency ordering (*Open questions* 3). Then the closeout pass. |
+| ~~**3 — Committed ergonomics**~~ | — | **Moved to v6.7.x** with P3 `const fn` (user, 2026-10-01) — see [roadmap_6.md](roadmap_6.md). |
+
+---
+
+## 6.6.13 — memory fixes + reported-issue repair (planned 2026-10-01, NOT started)
+
+**Set by the user 2026-10-01**: the three silent memory-corruption finds that led the backlog, and every
+open issue in [`issues/`](issues/). ⛔ **No `src/` or `lib/` work starts until ganita and bayan have
+released**: this release folds their repaired stdlibs.
+
+**Before it opens: three sibling releases.** Each repo fixes its own source, and cyrius refolds
+byte-identical from the tag (CLAUDE.md: fix the SOURCE repo, not the fold).
+
+| Sibling | Folded in cyrius now | Open in that repo at planning time |
+|---|---|---|
+| **ganita** | 1.2.9 (1.2.10 is tagged) | six issues filed 2026-09-30 / 10-01: `f64_tan` missing; `atan2` with infinite arguments; `atan2` signed zero and NaN; the hyperbolic + `asin` cancellation band; the `sinh` / `cosh` overflow band; `binomial` refusing representable values |
+| **bayan** | 1.5.9 | `json_parse_flat` mis-associates values; u64 `mulmod` always takes the wide path on aarch64; the agnosai `json_obj_get` cstring / `Str` key mismatch; and the open sibling follow-up below (`_toml_unescape_span_a`) |
+| **sigil** ⚠ *found while planning; the 2026-10-01 instruction named only ganita and bayan* | 3.13.5 | I3's lazy initialisers and main-thread TLS block, and I2 (e)'s rejected roots, are **sigil source** (`lib/sigil.cyr` is its fold) — see I2 and I3 |
+
+**Bites.** Premise-checked 2026-10-01 against the 6.6.12 tree; re-run at the open rather than trust this.
+
+*Memory corruption (compiler; the `src` lane):*
+
+- **M1 — a zero-initialised narrow global clobbers the next one.** `var a: u8 = 0; var b: u8 = 7;
+  syscall(60, b);` exits **0** (want 7). The 6.6.12 lanes saw it on x86, aarch64 and PE. Site: the
+  narrow-global INIT path in `parse_decl.cyr` (6.6.12 B01 fixed only the `for`-step and compound paths).
+  Acceptance: a `crossos/` test over every narrow width, zero and non-zero initialisers, adjacent pairs
+  in both orders.
+- **M2 — arrays of a float or struct element are under-sized.** Measured: inside a fn, `var a: f64[4]`
+  and `var a: Pt[2]` reserve **8 bytes** (`&x - &a` = 8, where `var a: i64[4]` gets 32). PARSE_VAR passes
+  `scalar_type = 0` for those elements, so PARSE_ARRAY sizes them like a bare `var a[N]`. At top level
+  `f64[4]` is right (32), but **`Pt[2]` gets 16** (N × 8, not N × sizeof). Size by element everywhere.
+  ⚠ The first probe missed it: the neighbouring local was held in a register (regalloc), so the
+  acceptance test must check through an address-taken neighbour.
+- **M3 — a captured struct copied into a field inside a closure stores its address.**
+  `var g = || { var b: Box; b.v = p; return b.v.x * 10 + b.v.y; };` with a captured `Pt p` = (3, 4)
+  returns **80** (want 34). Cause: `_fsc_name_src` does not resolve captures (since 6.6.10's field-store
+  copy).
+
+*The five open issues:*
+
+- **I1 — 🔴 the libssl backend never verifies the server hostname**
+  ([issue](issues/2026-09-30-tls-libssl-backend-no-hostname-verification.md)). A man-in-the-middle: any
+  chain-valid certificate for any name is accepted, on every `-D CYRIUS_TLS_LIBSSL` build and after
+  `tls_set_backend(TLS_BACKEND_LIBSSL)`. Fix as the issue proposes:
+  - resolve `SSL_set1_host` / `X509_VERIFY_PARAM_set1_ip_asc` as REQUIRED (if missing, `tls_available()` is 0 and connects fail closed);
+  - refuse `host == 0`;
+  - put the repro in the TLS suite under both backends;
+  - state the hostname binding in the contract.
+
+  CVE-class, as CVE-18 was for the native backend: it takes the next id (59 at planning time), spent in
+  the commit that records it.
+- **I2 — the native client's memory and alert gaps**
+  ([issue](issues/2026-09-30-tls-client-memory-and-alert-gaps.md)), all five parts:
+  - (a) `tls_ctx_load_verify_locations` retains 1 MiB per call.
+  - (b) There is no allocator-aware client connect. Add `tls_connect_alloc_in` / `tls_native_new_client_in`, and parse the system store once into a shared, immutable root set.
+  - (c) Every alert reads as EOF; a fatal alert must return `TLS_ERR_ALERT`.
+  - (d) Re-pin `lib-tls-contract.md`, and drop `tls_native.cyr`'s stale KNOWN-HOLES block.
+  - (e) **Diagnosed while planning**: the 8 roots skipped out of `/etc/ssl/cert.pem`'s 121 are:
+    - three self-signed with sha1WithRSA;
+    - four self-signed with sha512WithRSA — Certum ×2 and **D-TRUST BR / EV Root CA 2 2023**, current roots;
+    - one ECDSA P-521 (Microsec).
+
+    sigil's `x509_parse` refuses each on the root's OWN signature algorithm or curve. A trust anchor's self-signature is never verified (RFC 5280 §6.1), so the seven RSA roots should install. The parser fix is sigil's; cyrius exposes the skipped count (`tls_native_ca_skipped(ctx)`). P-521 stays counted and skipped until sigil has the curve — adding a curve is a feature for sigil's roadmap, not this repair.
+- **I3 — first TLS use from two threads poisons the process; worker-then-main SIGSEGVs**
+  ([issue](issues/2026-09-30-tls-first-use-thread-race.md)). Split by owner:
+  - **sigil**: convert every check-then-set lazy init to the 0 → 1 → 2 atomic publish its AES / SHA-512 / Ed25519 inits already use; stop `crypto_tls_main_init` giving bank 0 to whichever thread arrives first.
+  - **cyrius**: publish `tls_native_set_ca_system`'s bundle cache the same way; add the idempotent `tls_init_main()` warm verb to `lib/tls.cyr`; write the thread-safety contract.
+
+  The repro's A / B / C checks can pass only once the sigil fold is in.
+- **I4 — `f64_parse` is not correctly rounded**
+  ([issue](issues/2026-09-30-f64-parse-not-correctly-rounded.md)). Default: port **bayan 1.5.7's parser**
+  into `lib/math.cyr`, rather than the issue's Clinger + double-double sketch (99.74 %). bayan's parser
+  is `bayan_f64_parse` in `bayan/src/dtoa.cyr`: a Clinger fast path, cached 64-bit powers of ten and an
+  exact tier for near-halfway inputs — correctly rounded for EVERY input. That leaves one correctly-rounded
+  algorithm in the ecosystem; bayan delegating to the stdlib afterwards is a bayan follow-up.
+  `f64_parse_ok` shares the parser. Acceptance: the repro exits 0, and bayan's parse corpus is bit-exact.
+- **I5 — `f64_le`, `f64_ge` and `f64_trunc` are calls**
+  ([issue](issues/2026-09-30-f64-le-ge-trunc-are-calls.md)). Make them builtins like `f64_lt` /
+  `f64_floor`, with NaN semantics unchanged (`f64_le` is false when either side is NaN). `f64_trunc`
+  lowers to `roundsd $3` on x86 — `f64_floor` already uses `roundsd`, so SSE4.1 is not a new baseline —
+  `frintz` on aarch64, and a cx form. ⚠ A builtin name becomes RESERVED: survey the ecosystem for local
+  definitions of the three names before switching (the 6.6.0 `tagged_new` lesson). `lib/math.cyr`'s
+  wrappers retire in the same bite.
+
+**Once the siblings have tagged:**
+1. Fold ganita, bayan and sigil byte-identical from their tags.
+2. Open the lanes, minding the two shared files:
+   - `lib/tls.cyr` is touched by I1, I2 and I3: one TLS lane, with its bites in sequence.
+   - `lib/math.cyr` is touched by I4 and I5. I5's compiler half sits in the `src` lane, and its `lib/math.cyr` hunk goes to the math lane as a named hand-off.
+3. One `src` lane (M1–M3 and I5's builtins) commits `build/cycc`.
+4. Gate as always: `release-gate.sh` GREEN on the merged tree, cross-OS on ecb / ach / cass / pi, bench recorded.
+
+**Not promoted** (still in the backlog): the nearest to this release's theme are `var v = g<i32>(..)?;`
+exiting 139 and cyrius-lsp's silent 1 MB document buffer.
 
 ---
 
@@ -117,11 +218,17 @@ gate header still say "line 123"); the ftype=4 IAT disp32 is baked at `:295-300`
 (`src/common/ir.cyr:1634`), so arm64 Mach-O and aarch64 ELF never compact either — the same arc, taken
 together. Until it lands, the declined-path note should say it declined and why.
 
+**Re-placed 2026-10-01**: 6.6.10–6.6.12 did not take it. It stays in v6.6.x and runs in the tail beside the
+tooling proposals (Phase 2). It is backend work, not language work, so it did not move to v6.7.x.
+
 ---
 
-## Phase 2 — the proposal queue
+## Phase 2 — the tooling round-out (after 6.6.13, to the minor's close)
 
-Six open proposals, sequenced by their own stated prerequisites rather than by size.
+**Set 2026-10-01 (user): v6.6.x finishes on tooling.** Five of the six open proposals are tooling and
+stay here, sequenced by their own stated prerequisites rather than by size. P3 `const fn` is language,
+so it moved to v6.7.x with the rest of the language list. The DCE compaction arc (above) and macOS
+concurrency ordering (*Open questions* 3) are the minor's other open items.
 
 ### P1 — `cyrius.cyml` as the build tool's actual configuration
 [`proposals/2026-09-04-build-tool-manifest-integration.md`](proposals/2026-09-04-build-tool-manifest-integration.md)
@@ -150,17 +257,12 @@ agnosai ships its own generator, so nothing is blocked. **Its prerequisite has c
 onto the following source line) or it shifts every `<source>` diagnostic by one — a 1-for-1 line
 replacement is **not** line-neutral.
 
-### P3 — Compile-time evaluation (`const fn` / const-eval)
+### ~~P3 — Compile-time evaluation (`const fn`)~~ → moved to v6.7.x (2026-10-01)
 [`proposals/2026-07-05-const-eval-comptime.md`](proposals/2026-07-05-const-eval-comptime.md)
 
-**The rung was already chosen 2026-07-07** — option 1 `const fn` primary, option 3 `#phf`
-fallback, option 4 (a general const-eval VM) declined. No maintainer decision is outstanding, and
-a first triage pass that labelled this "blocked on maintainer" was refuted on re-check. This is
-also **item 2 of the committed ergonomics list below** — the proposal and the roadmap row are the
-same work, which is why it sits at the phase 2/3 boundary rather than being listed twice.
-
-⚠ It reuses the `ir_const_fold` fixpoint (`src/common/ir.cyr`), so it must land **after** any
-work that rewrites that pass, or the churn is paid twice.
+It is language, not tooling, so it moved with the rest of the language list. Its spec — the rung
+chosen 2026-07-07 and the `ir_const_fold` ordering constraint — is now [roadmap_6.md](roadmap_6.md)
+§ v6.7.x, item C1.
 
 ### P4 — test-only stdlib leaves, instead of hiding them from the umbrella scan
 [`proposals/2026-09-16-declare-test-only-stdlib-leaves-instead-of-hiding-them-from-the-umbrella-scan.md`](proposals/2026-09-16-declare-test-only-stdlib-leaves-instead-of-hiding-them-from-the-umbrella-scan.md)
@@ -212,39 +314,14 @@ faulting) is the proposal's. Size: M.
 
 ---
 
-## Phase 3 — the committed ergonomics list
+## ~~Phase 3 — the committed ergonomics list~~ → v6.7.x (moved 2026-10-01)
 
-**Theme set 2026-07-07 (user, horizon session).** RISC-V rv64 — previously this minor's theme —
-was re-homed to v6.7.x/v6.8.x: hardware is in hand, but a 7th platform is deliberately held while
-*"still heavy quality and ergonomic improvements [are] on the horizon."* v6.6.x instead takes the
-modern-language feature imports that fit the assembly-up identity — **no GC, no hidden control
-flow you cannot disassemble.**
-
-1. ✅ **SHIPPED v6.6.0 — `Result` / `Option` / `Either` are the value form.** The one breaking
-   change in the minor, at the front of it because everything else is additive. Detail in the
-   CHANGELOG; do not re-plan it.
-2. **`const fn` — the const-eval ladder, option 1.** See **P3** above; same work, listed there
-   with its sequencing constraint.
-3. **Opt-in bounds-checked memory mode** (`CYRIUS_BOUNDS` / `#bounds`) — designed in the v6.3.x
-   plan, never shipped. Verified live: `CYRIUS_BOUNDS`, `#bounds` and `_bounds_check` find **0**
-   hits in `src/`. The sanitizer story that makes footguns findable at their source. **OFF by
-   default** — assembly-up: raw stores stay raw in release builds. Premise-check the 0-hit count
-   at slot entry rather than trusting this line.
-   6.6.12 shipped the unchecked half: `a[i]`, `a[i] = v` and `a[i] OP= v` on an integer
-   element-typed `var a: T[N]` (R4). What remains here: `*T` pointer subscripts, slice writes, and this
-   checked mode.
-4. **Trait-bounded generics** — the post-monomorphization ceiling. **DEMAND-GATED tail**: pulls
-   in only if consumer pressure materialises by the time the slot opens. Fix the
-   **multi-type-param struct-type-arg residual** first (single-tparam struct type-args shipped
-   v6.3.38–.39; the residual is only the mixed multi-tparam combo).
-
-~~`defer` / scope-exit~~ and ~~per-block scoping + shadowing~~ were struck 2026-07-29: **both
-already shipped** (`defer` at v3.8.0; block scoping verified by running the compiler). They sat
-here as pending work for features that had existed for majors. What remains of the scoping row —
-that a **same-scope** redeclaration is a hard error — is the documented rule, not a footgun.
-
-**Explicitly NOT imported** (decided 2026-07-07): borrow-checker-style lifetimes (wrong fit for
-the trust model and the single-pass design), a general const-eval VM, exceptions of any kind.
+The user moved the language list out of this minor on 2026-10-01: `const fn`, the opt-in
+bounds-checked mode and trait-bounded generics now open v6.7.x, together with a real-traits arc and the
+missing common features. The spec lives in [roadmap_6.md](roadmap_6.md) § v6.7.x — one authority per
+minor, so it is not repeated here. Of this list, item 1 (the value-form `Result` / `Option` / `Either`)
+shipped at v6.6.0, and `defer` and per-block scoping had long since shipped when they were struck on
+2026-07-29.
 
 ---
 
@@ -274,16 +351,8 @@ Real 6.x-line work without a committed slot; pulled into a release the moment a 
 priority surfaces. **These are technical items → they stay in the 6.x cycle, never 7.x.**
 
 - **Found by the 6.6.12 premise check and lanes (2026-09-30; backlog, not placed — only the user promotes).**
-  Met in passing, not swept for; ⚠ marks silent memory corruption.
-  - ⚠ A zero-initialised narrow global clobbers the next narrow global: `var a: u8 = 0; var b: u8 = 7;`
-    reads `b` = 0 on x86, aarch64 and PE (the narrow global INIT path in `parse_decl.cyr`; B01 fixed the
-    `for`-step and compound paths only).
-  - ⚠ Inside a fn, `var a: f64[N]` and `var a: Pt[N]` reserve only N bytes: PARSE_VAR passes
-    `scalar_type = 0` for a float or struct element, so PARSE_ARRAY sizes it like a bare `var a[N]`
-    (measured: a store at `&a + 16` of an `f64[4]` overwrites a neighbouring local). Top level sizes N*8.
-  - ⚠ A captured struct copied into a field inside a closure stores the pointer: `var g = || { var b: Box;
-    b.v = p; ... };` with a captured `Pt p` stores p's address into `b.v` (`_fsc_name_src` does not
-    resolve captures; pre-existing since 6.6.10's field-store copy).
+  Met in passing, not swept for. Its three ⚠ silent-memory-corruption items were promoted to **6.6.13**
+  (M1–M3) on 2026-10-01.
   - `var v = g<i32>(..)?;` exits 139 on a generic returning a `Result` pair: the expression-side
     `_callee_returns_pair` recognises only `name (`, not `name<T>(`. The statement form (6.6.12 R2) is right.
   - A named >8 B struct argument aliases the caller (`take(q)` passes the address; the guide documents it),
@@ -311,11 +380,6 @@ priority surfaces. **These are technical items → they stay in the 6.x cycle, n
     `uptime_us` (#95), `agnos_sysinfo_tail_parity`'s runtime axis and `agnos_monotonic_clock_rdtsc`'s axis 5
     SKIP by name — the pre-1.57.9 `sched_kicks` pre-fill and the refused-calibration fallback in the stdlib
     no longer run on this box. They need an older-kernel mode (e.g. a mirshi switch) to be exercised again.
-  - Inside an aarch64 region (6.6.12 B05's `#@a+` markers) a raw literal that HAS an ESYSXLAT x86-compat
-    row is still translated with no warning: `syscall(9, ..)` meant as native lgetxattr runs mmap (also 5 →
-    fstat, 55 → getsockopt). Unchanged from 6.6.11 (the raw-literal warning only covers untranslated
-    numbers); the native spelling is the 1000+N alias (6.6.12 B09). A region-aware warning for translated
-    rows is open.
 - **ESYSXLAT emits its whole translation chain INLINE at every aarch64 syscall site** — measured at the 6.6.8
   merge: `build/cycc-native-aarch64` `.text` 1,495,592 → 1,578,544 B (+82,952 over 605 `svc` sites, ~137 B
   per site) because 6.6.8 bite 3 added nine rows and every row is copied into every site. Every aarch64
