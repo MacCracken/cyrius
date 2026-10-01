@@ -924,6 +924,7 @@ ganita::f64_cosh/1
 ganita::f64_hypot/2
 ganita::f64_pow/2
 ganita::f64_sinh/1
+ganita::f64_tan/1
 ganita::f64_tanh/1
 ganita::fibonacci/1
 ganita::ganita_binomial/2
@@ -957,6 +958,7 @@ ganita::ganita_f32_sign/1
 ganita::ganita_f32_sin/1
 ganita::ganita_f32_sqrt/1
 ganita::ganita_f32_sub/2
+ganita::ganita_f32_tan/1
 ganita::ganita_f32_trunc/1
 ganita::ganita_f64_acos/1
 ganita::ganita_f64_acosh/1
@@ -969,6 +971,7 @@ ganita::ganita_f64_cosh/1
 ganita::ganita_f64_hypot/2
 ganita::ganita_f64_pow/2
 ganita::ganita_f64_sinh/1
+ganita::ganita_f64_tan/1
 ganita::ganita_f64_tanh/1
 ganita::ganita_fibonacci/1
 ganita::ganita_mat_add/2

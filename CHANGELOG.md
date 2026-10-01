@@ -28,6 +28,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   isolated at its 6.6.9 pin (17/17); the new `lazy_init_race.tcyr` and `cbank_main_lane.tcyr` fail
   on 3.13.5. The cyrius halves (`tls_native_set_ca_system`'s cache, `tls_init_main()`, the skipped
   count) are bites I3 and I2 below.
+- **ganita 1.2.11 folded (`lib/ganita.cyr`, ganita commit `6788e28`; 1.2.10 was never folded) — six
+  filings closed, `tan` added.** `ganita_binomial` returns −1 exactly when C(n, k) > i64_MAX (it
+  refused representable values since 1.2.3); `atan2` gets signed zeros, a NaN `y` at `x = ±0` and
+  the four infinities right; sinh / tanh / atanh / asinh / acosh / asin no longer cancel just above
+  their small-argument cutoffs (worst errors from ~10^7 ulp to ≤ 2.18); sinh / cosh were up to 496
+  ulp off for 709 < |x| ≤ 710.48. New `ganita_f64_tan`, `ganita_f32_tan` and the alias `f64_tan`.
+  Pin 6.6.12.
 
 ## [6.6.12] — 2026-09-30
 
