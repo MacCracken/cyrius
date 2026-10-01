@@ -232,6 +232,7 @@ bayan::bayan_json_last_error_pos/0
 bayan::bayan_json_pair_new/2
 bayan::bayan_json_pair_new_a/3
 bayan::bayan_json_parse/1
+bayan::bayan_json_parse_a/2
 bayan::bayan_json_parse_file/1
 bayan::bayan_json_parse_file_r/1
 bayan::bayan_json_parse_state_size/0
@@ -270,6 +271,7 @@ bayan::bayan_json_v_is_str/1
 bayan::bayan_json_v_null/0
 bayan::bayan_json_v_null_a/1
 bayan::bayan_json_v_obj_get/2
+bayan::bayan_json_v_obj_get_by_cstr/2
 bayan::bayan_json_v_obj_get_by_str/2
 bayan::bayan_json_v_obj_key/2
 bayan::bayan_json_v_obj_len/1

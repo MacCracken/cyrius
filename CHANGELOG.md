@@ -35,6 +35,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   their small-argument cutoffs (worst errors from ~10^7 ulp to ≤ 2.18); sinh / cosh were up to 496
   ulp off for 709 < |x| ≤ 710.48. New `ganita_f64_tan`, `ganita_f32_tan` and the alias `f64_tan`.
   Pin 6.6.12.
+- **bayan 1.5.10 folded (`lib/bayan.cyr`, bayan commit `f880e35`) — the flat JSON parser pairs keys
+  with their own values.** ⚠ `bayan_json_parse` changes what it returns for VALID input: a nested
+  object or array is one value (its raw source span), TAB and CR end a bare value, malformed input
+  stops the parse, and a refused allocation returns 0 rather than a partial vec. `bayan_u64_mulmod`
+  is one asm block on aarch64 (~600× faster) and no longer returns 0 on cx; `bayan_u64_powmod`
+  handles exponents ≥ 2^63; a null key no longer crashes an object lookup. New
+  `bayan_json_v_obj_get_by_cstr` and `bayan_json_parse_a`; `bayan_json_v_obj_get` and
+  `json_v_obj_get` are `#deprecated` (same answers; the call site now names the replacement). Pin
+  6.6.12. Still open in bayan (sibling follow-up): `_toml_unescape_span_a` answers a refused
+  allocation with `str_from("")` from the default allocator.
 
 ## [6.6.12] — 2026-09-30
 
