@@ -6,6 +6,38 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.13] — 2026-10-01
 
+### Security
+
+- **CVE-TBD(I7) (P3) — the native TLS client verified an IP-literal host against dNSName SAN
+  entries, wildcards included.** (I7.) A certificate whose only SAN was `DNS:127.0.0.1`, or
+  `DNS:*.0.0.1`, verified `https://127.0.0.1`. RFC 9525 §6.3, the rule CVE-18 cites, compares an IP
+  literal with iPAddress entries only. **Root cause:** `_tn_cert_san_match`
+  (`lib/tls_native_conn.cyr`) ran `_tn_host_match` on every dNSName whatever the host was, and
+  parsed the host as an address only inside the iPAddress branch. Three parser defects fed the same
+  function: `_tn_parse_ipv4` took leading zeros (`010.0.0.1`), which `net_parse_ipv4` — the
+  resolver's rule — refuses and sends to DNS as a name; a `:`-bearing host that failed the IPv6
+  parse (`[::1]`, `fe80::1%eth0`, and `::ffff:1.2.3.4`, whose embedded-IPv4 form was not parsed)
+  fell through to dNSName matching; and the IPv6 parser took a trailing `:`, a `::` standing for no
+  group and 5-digit groups (`1:2:3:4::5:6:7:8`, `00001::`). **Fix:** the host is classified once, up
+  front. A DNS name meets dNSName entries only, an IP literal iPAddress entries only, and a
+  `:`-bearing host that is no well-formed IPv6 literal matches nothing (no DNS name holds a `:`).
+  `_tn_parse_ipv4` refuses leading zeros exactly as `net_parse_ipv4` does. IPv6 literals follow
+  RFC 4291 §2.2: 1-4 hex digits per group, `::` for at least one group, an optional dotted-quad
+  tail — so `::ffff:1.2.3.4` now verifies against its iPAddress entry. ⚠ **Behaviour change:** a
+  client that connects by IP to a server whose certificate spells that IP only as a dNSName (some
+  self-signed development certs) now fails with `TLS_ERR_CERT_HOSTNAME_MISMATCH`; reissue the
+  certificate with an `IP:` SAN. Exploiting the defect needs a CA the client trusts to issue such a
+  dNSName, which public CAs may not do, so private and enterprise CAs are the exposure. abaco
+  2.4.12's consumer-side IP-SAN post-check becomes redundant. **Tests:** the filed repro
+  `docs/development/issues/repros/2026-10-01-tls-ip-literal-dnsname.sh` exits 0 (2 on 6.6.12). A new
+  group in `tests/tcyr/crypto/tls_native_scaffold.tcyr` adds 83 assertions: six self-signed leaves
+  (DNS-spelled IPv4 and IPv6, a wildcard over an address, a mixed IP/DNS leaf and its IP-only twin,
+  and a leaf whose dNSName entries spell each malformed host verbatim while its iPAddress entries
+  hold what a lax parser reads them as), the literal classifier, and `_tn_parse_ipv4` against
+  `net_parse_ipv4` over ten inputs. 41 of them fail on 6.6.12; the file passes 532/532 on x86_64 and
+  on aarch64 under qemu. The native client still sends an IP literal as SNI (RFC 6066 §3); that is
+  backlogged separately.
+
 ### Downstream
 
 #### Folded — ⛔ each tagged BEFORE cyrius 6.6.13

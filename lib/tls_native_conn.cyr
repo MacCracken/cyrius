@@ -3,8 +3,10 @@
 # ================================================================
 # sigil's x509 parser doesn't surface the SubjectAltName, so the client
 # walks the cert DER for the SAN extension (OID 2.5.29.17) and matches
-# its dNSName entries against the SNI host. Modern, SAN-only (the
-# legacy subject-CN fallback is deprecated by RFC 6125 §6.4.4).
+# the host against it: a DNS name against the dNSName entries, an IP
+# literal against the iPAddress entries, never across (RFC 9525 §6.3).
+# Modern, SAN-only (the legacy subject-CN fallback is deprecated by
+# RFC 6125 §6.4.4).
 
 # Read a DER TLV header at `pos`. Stores the content start in *out_cpos
 # and content length in *out_clen; returns the tag byte, or -1 on a
@@ -86,6 +88,9 @@ fn _tn_hexval(c): i64 {
 # CVE-18 (v6.1.36): parse an IPv4 dotted-decimal literal (`host`/`host_len`)
 # into 4 network-order bytes at `out`. Returns 4 on success, 0 if not a
 # well-formed IPv4 literal. Used for iPAddress-SAN matching of IP connects.
+# The rule is net_parse_ipv4's (lib/net.cyr), leading zeros refused: a host the
+# resolver sends to DNS as a name must not verify as an address.
+# CHANGELOG [6.6.13] (CVE-TBD(I7)).
 fn _tn_parse_ipv4(host, host_len, out): i64 {
     var octet = 0;
     var digits = 0;
@@ -103,6 +108,7 @@ fn _tn_parse_ipv4(host, host_len, out): i64 {
         } else {
             if (c < 0x30) { return 0; }
             if (c > 0x39) { return 0; }
+            if (digits == 1) { if (octet == 0) { return 0; } }   # "00", "010": leading zero
             octet = octet * 10 + (c - 0x30);
             if (octet > 255) { return 0; }
             digits = digits + 1;
@@ -116,44 +122,69 @@ fn _tn_parse_ipv4(host, host_len, out): i64 {
     return 4;
 }
 
-# Parse colon-separated 16-bit hex groups of an IPv6 literal segment into
-# `out` (network order, max `max_bytes`). Returns bytes written or -1.
-fn _tn_ipv6_groups(s, slen, out, max_bytes): i64 {
+# Parse one colon-separated run of an IPv6 literal (`s`/`slen`: the whole
+# address, or one side of its "::") into `out`, network order, at most
+# `max_bytes`. RFC 4291 §2.2: every group is 1-4 hex digits, so an empty
+# group, a trailing ':' and a 5-digit "00001" are refused. With `allow_v4`
+# the run may END in a dotted quad (form 3, "::ffff:1.2.3.4"), parsed by the
+# strict _tn_parse_ipv4 into the next 4 bytes. Returns the bytes written, or
+# -1. CHANGELOG [6.6.13] (CVE-TBD(I7)).
+fn _tn_ipv6_groups(s, slen, out, max_bytes, allow_v4): i64 {
+    # A '.' after the last ':' marks a dotted-quad tail; the hex groups end there.
+    var last_colon = 0 - 1;
+    var dotted = 0;
+    var j = 0;
+    while (j < slen) {
+        var cj = load8(s + j) & 0xFF;
+        if (cj == 0x3A) { last_colon = j; dotted = 0; }
+        if (cj == 0x2E) { dotted = 1; }
+        j = j + 1;
+    }
+    var hex_end = slen;
+    if (dotted == 1) {
+        if (allow_v4 == 0) { return 0 - 1; }
+        hex_end = last_colon + 1;               # through the ':' that closes the last group
+    }
     var written = 0;
     var group = 0;
-    var ghas = 0;
+    var nd = 0;                                 # hex digits in the open group
     var i = 0;
-    while (i < slen) {
+    while (i < hex_end) {
         var c = load8(s + i) & 0xFF;
-        if (c == 0x3A) {                        # ':'
-            if (ghas == 0) { return 0 - 1; }
+        if (c == 0x3A) {                        # ':' closes a group
+            if (nd == 0) { return 0 - 1; }      # empty group
             if (written + 2 > max_bytes) { return 0 - 1; }
             store8(out + written, (group >> 8) & 0xFF);
             store8(out + written + 1, group & 0xFF);
             written = written + 2;
             group = 0;
-            ghas = 0;
+            nd = 0;
         } else {
             var hv = _tn_hexval(c);
             if (hv < 0) { return 0 - 1; }
+            nd = nd + 1;
+            if (nd > 4) { return 0 - 1; }
             group = (group << 4) | hv;
-            if (group > 0xFFFF) { return 0 - 1; }
-            ghas = 1;
         }
         i = i + 1;
     }
-    if (ghas == 1) {
-        if (written + 2 > max_bytes) { return 0 - 1; }
-        store8(out + written, (group >> 8) & 0xFF);
-        store8(out + written + 1, group & 0xFF);
-        written = written + 2;
+    if (dotted == 1) {
+        if (written + 4 > max_bytes) { return 0 - 1; }
+        if (_tn_parse_ipv4(s + hex_end, slen - hex_end, out + written) != 4) { return 0 - 1; }
+        return written + 4;
     }
-    return written;
+    if (nd == 0) { return 0 - 1; }              # empty run, or a trailing ':'
+    if (written + 2 > max_bytes) { return 0 - 1; }
+    store8(out + written, (group >> 8) & 0xFF);
+    store8(out + written + 1, group & 0xFF);
+    return written + 2;
 }
 
-# CVE-18: parse an IPv6 literal into 16 bytes at `out`. Supports one `::`
-# zero-compression. Returns 16 on success, 0 otherwise. (Embedded-IPv4 form
-# `::ffff:1.2.3.4` is not handled — vanishingly rare in iPAddress SANs.)
+# CVE-18: parse an IPv6 literal into 16 bytes at `out`, per RFC 4291 §2.2:
+# eight groups, or fewer around ONE "::" that stands for at least one zero
+# group, the last 32 bits optionally a dotted quad ("::ffff:1.2.3.4").
+# Returns 16 on success, 0 otherwise. Brackets and zone ids ("[::1]",
+# "fe80::1%eth0") are not literals here. CHANGELOG [6.6.13] (CVE-TBD(I7)).
 fn _tn_parse_ipv6(host, host_len, out): i64 {
     var z = 0;
     while (z < 16) { store8(out + z, 0); z = z + 1; }
@@ -169,24 +200,26 @@ fn _tn_parse_ipv6(host, host_len, out): i64 {
         i = i + 1;
     }
     if (dpos < 0) {
-        if (_tn_ipv6_groups(host, host_len, out, 16) != 16) { return 0; }
+        if (_tn_ipv6_groups(host, host_len, out, 16, 1) != 16) { return 0; }
         return 16;
     }
+    # "::" covers at least one group, so the two sides hold at most 14 bytes;
+    # a dotted quad may only end the address, i.e. sit on the tail side.
     var head_len = dpos;
     var tail_start = dpos + 2;
     var tail_len = host_len - tail_start;
     var hb = 0;
     if (head_len > 0) {
-        hb = _tn_ipv6_groups(host, head_len, out, 16);
+        hb = _tn_ipv6_groups(host, head_len, out, 14, 0);
         if (hb < 0) { return 0; }
     }
     var tailbuf[16];
     var tb = 0;
     if (tail_len > 0) {
-        tb = _tn_ipv6_groups(host + tail_start, tail_len, &tailbuf, 16 - hb);
+        tb = _tn_ipv6_groups(host + tail_start, tail_len, &tailbuf, 14 - hb, 1);
         if (tb < 0) { return 0; }
     }
-    if (hb + tb > 16) { return 0; }
+    if (hb + tb > 14) { return 0; }
     var k = 0;
     while (k < tb) {
         store8(out + (16 - tb) + k, load8(&tailbuf + k) & 0xFF);
@@ -195,8 +228,12 @@ fn _tn_parse_ipv6(host, host_len, out): i64 {
     return 16;
 }
 
-# CVE-18: parse `host` as an IP literal into `out`. Returns the byte length
-# (4 for IPv4, 16 for IPv6) or 0 if `host` is a domain name, not an IP.
+# CVE-18: classify `host`, parsing an IP literal into `out` (16 bytes).
+# Returns 4 / 16 for an IPv4 / IPv6 literal, 0 for a DNS name, and -1 for a
+# host that holds a ':' but is no well-formed IPv6 literal ("[::1]",
+# "fe80::1%eth0", "1:2:3:4:5:6:7:8:"). No DNS name holds a ':', so a -1 host
+# has no reference identity and matches nothing. CHANGELOG [6.6.13]
+# (CVE-TBD(I7)).
 fn _tn_parse_ip_literal(host, host_len, out): i64 {
     var has_colon = 0;
     var i = 0;
@@ -204,14 +241,24 @@ fn _tn_parse_ip_literal(host, host_len, out): i64 {
         if ((load8(host + i) & 0xFF) == 0x3A) { has_colon = 1; i = host_len; }
         else { i = i + 1; }
     }
-    if (has_colon == 1) { return _tn_parse_ipv6(host, host_len, out); }
+    if (has_colon == 1) {
+        if (_tn_parse_ipv6(host, host_len, out) != 16) { return 0 - 1; }
+        return 16;
+    }
     return _tn_parse_ipv4(host, host_len, out);
 }
 
-# Walk a cert DER to its SubjectAltName extension and match `host` against the
-# dNSName entries (RFC 6125), and — CVE-18 (v6.1.36) — the iPAddress entries
-# when `host` is an IP literal. Returns 1 on a match, 0 otherwise.
+# Walk a cert DER to its SubjectAltName extension and match `host` against it.
+# The host is classified ONCE, up front (RFC 9525 §6.3, RFC 6125 §6.2.1): a DNS
+# name is compared with the dNSName entries only (exact or single-label
+# wildcard), an IP literal with the iPAddress entries only (CVE-18, octet for
+# octet), and a ':'-bearing non-literal with nothing — so neither DNS:127.0.0.1
+# nor DNS:*.0.0.1 verifies 127.0.0.1. CHANGELOG [6.6.13] (CVE-TBD(I7)).
+# Returns 1 on a match, 0 otherwise.
 fn _tn_cert_san_match(der, der_len, host, host_len): i64 {
+    var ipb[16];                                 # 16 BYTES (local-array rule)
+    var iplen = _tn_parse_ip_literal(host, host_len, &ipb);
+    if (iplen < 0) { return 0; }
     var cp = 0;
     var cl = 0;
     if (_tn_der_hdr(der, der_len, 0, &cp, &cl) != 0x30) { return 0; }   # Certificate
@@ -270,13 +317,13 @@ fn _tn_cert_san_match(der, der_len, host, host_len): i64 {
                                 var ntag = _tn_der_hdr(der, der_len, np, &ncp, &ncl);
                                 if (ntag < 0) { return 0; }
                                 if (ntag == 0x82) {
-                                    if (_tn_host_match(der + ncp, ncl, host, host_len) == 1) { return 1; }
+                                    # dNSName: a DNS-ID only — never an IP literal.
+                                    if (iplen == 0) {
+                                        if (_tn_host_match(der + ncp, ncl, host, host_len) == 1) { return 1; }
+                                    }
                                 }
                                 if (ntag == 0x87) {
-                                    # iPAddress SAN (CVE-18): match the raw 4/16
-                                    # octets when `host` is an IP literal.
-                                    var ipb[16];
-                                    var iplen = _tn_parse_ip_literal(host, host_len, &ipb);
+                                    # iPAddress (CVE-18): the raw 4/16 octets, IP-ID only.
                                     if (iplen > 0) {
                                         if (ncl == iplen) {
                                             if (_tn_ct_eq(der + ncp, &ipb, iplen) == 1) { return 1; }
@@ -297,8 +344,10 @@ fn _tn_cert_san_match(der, der_len, host, host_len): i64 {
 }
 
 # Client: verify the SNI host against the server cert's SubjectAltName
-# (.30). Returns TLS_OK on a match, TLS_ERR_CERT_HOSTNAME_MISMATCH if
-# no dNSName matches (or the cert has no SAN), or TLS_ERR_* on bad args.
+# (.30). Returns TLS_OK on a match, TLS_ERR_CERT_HOSTNAME_MISMATCH if no
+# SAN entry of the host's own type matches (dNSName for a DNS name,
+# iPAddress for an IP literal) or the cert has no SAN, or TLS_ERR_* on
+# bad args.
 fn tls_native_client_verify_hostname(ctx): i64 {
     if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
     var cert = load64(ctx + TLS_CTX_OFF_SERVER_CERT);
