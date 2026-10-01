@@ -1697,6 +1697,19 @@ modules = ["src/types.cyr", "src/error.cyr"]
 Named deps are namespaced: `lib/{depname}_{basename}`. Stdlib is unprefixed.
 Includes are auto-prepended by the build tool — source files only need project includes.
 
+**A `[deps.X]` with no `modules` (6.6.13).** A block that lists neither `modules` nor
+`modular` means `modules = ["dist/X.cyr"]` when the tag (or `path`) ships that file — which
+every `cyrius distlib` bundle does — so it is cloned, vendored as `lib/X.cyr` and
+commit-pinned like any other, and the closest declaration wins. When the file is absent,
+`cyrius deps` warns by name (`warning: [deps.X] declares no modules and tag '…' ships no
+dist/X.cyr — nothing vendored; a transitive [deps.X] will resolve instead …`) and counts it
+in the summary (`0 deps resolved, 1 vendored nothing`); the exit status stays 0. Write
+`modules = []` for a dep that is **declared but not linked** (a binary, say): it is cloned
+and pinned, nothing is vendored, and nothing is printed. Before 6.6.13 a modules-less block
+was silently dropped and a transitive declaration of the same name resolved in its place. A
+`[deps.NAME]` whose NAME contains `/` or `..` is refused — it would make the clone directory a
+path outside the dep cache.
+
 **`cyrius.lock` is a contract, not a cache (v6.6.4).** The resolver writes `cyrius.lock`:
 one `commit	…` line per git dep (a repointed tag is refused against it), one
 `<sha256>  lib/<file>` line per vendored file (sorted), and a `cyrius	<pin>` trailer naming

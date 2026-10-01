@@ -51,7 +51,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   cyrius cannot run on this platform" error where it used to be silently dropped.
   The filed repro (`repros/git-dep-without-modules.cyml`, pin edited to the tree) now
   prints `1 deps resolved`, vendors `lib/tyche.cyr` byte-identical to `git show
-  1.1.0:dist/tyche.cyr` and pins `tyche 1.1.0`.
+  1.1.0:dist/tyche.cyr` and pins `tyche 1.1.0`. Pinned by the new
+  `tests/gates/toolchain/deps_modules_default_or_warned.sh` (D1–D8, hermetic file:// origins,
+  every expected byte and commit taken from the origin; mutation ledger in the file — the
+  6.6.12 resolver reds D1 D2 D3 D3b D4 D6 D8). Documented in the guide's *Dependencies*
+  section, with `modules = []` as the declared-not-linked opt-out.
 
 ### Downstream
 
