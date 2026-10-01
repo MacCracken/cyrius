@@ -43,9 +43,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the last globals being written, which pins `_pe_layout` against FIXUP). The 6.6.12 compiler fails
   19 rows on x86 and PE and dies with SIGBUS on pi and ecb; dropping `_GV_ALIGN` from `_pe_layout`
   alone fails the three literal rows on PE. `aggregate_storage_class.tcyr` and
-  `struct_field_value_copy.tcyr` each gain an i32 guard directly after their 12-byte struct global —
-  under natural alignment the i64 guard they had now sits after 4 bytes of padding, where a 16-byte
-  over-copy would no longer reach it. The whole tcyr corpus (411 files) gives the same result on the
+  `struct_field_value_copy.tcyr` each gain an i32 guard directly after their 12-byte struct global,
+  and `typed_array_subscript.tcyr` one directly after its `u32[3]` and `i32[3]` globals — under
+  natural alignment the i64 guard they had now sits after 4 bytes of padding, where a 16-byte
+  over-copy or an 8-byte store to element [2] would no longer reach it. The whole tcyr corpus (411 files) gives the same result on the
   old and new compiler on x86 and under qemu-aarch64, except `global_alignment.tcyr` itself; x86
   object mode linked against a C `main` reads the aligned offsets and the static-init values.
   Self-host fixpoint and seed-derive green; cycc self-hosts byte-identical on real pi, ecb, ach and
