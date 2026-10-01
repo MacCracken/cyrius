@@ -1827,6 +1827,20 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
             memcpy(dep_name, buf + name_start, dep_name_len);
             store8(dep_name + dep_name_len, 0);
             si = name_end + 1;
+            # CVE-TBD(I10d) (6.6.13): the header NAME becomes a path — the clone dir
+            # `<home>/deps/<name>/<tag>` (mkdir + git clone), the `lib/<name>_<base>`
+            # destination, and the `dist/<name>.cyr` default. CVE-32 (v6.2.51) guarded
+            # the sub-module / index / package names and never this one, so a manifest
+            # — the consumer's or any TRANSITIVE dep's — naming `[deps.../../x]` made
+            # `cyrius deps` mkdir and clone OUTSIDE `<home>/deps`. Refused before any
+            # path is derived; the rest of the section is skipped by the outer scan.
+            if (_dep_reject_unsafe_name(dep_name) == 1) {
+                _ew("error: [deps.");
+                _ew(dep_name);
+                _ew("] is not a usable dep name (a `/` or `..` would make it a path) — section refused\n");
+                errors = errors + 1;
+                continue;
+            }
             # v5.7.14: closest-wins skip. Walk si past this section without
             # re-resolving.
             if (_dep_name_visited(dep_name) == 1) {

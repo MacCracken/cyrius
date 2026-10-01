@@ -6,6 +6,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.13] — 2026-10-01
 
+### Security
+
+- **CVE-TBD(I10d) — a `[deps.NAME]` header with `/` or `..` cloned OUTSIDE the dep cache
+  (`cbt/deps.cyr` `_process_named_deps`).** **Root cause:** the header name becomes a path — the
+  clone dir `<home>/deps/<name>/<tag>` (mkdir + `git clone`) and the `lib/<name>_<base>`
+  destination — and the v6.2.51 traversal guard `_dep_reject_unsafe_name` was applied to modular
+  sub-module, index-leaf and package names, never to this one. Measured on 6.6.12:
+  `[deps.../../esc/x]` with `git` + `tag` + `modules` made `cyrius deps` create and clone into
+  `<home>/../esc/x/<tag>`; only the later `lib/` destination guard stopped the copy, after the
+  write. A TRANSITIVE dep's own `cyrius.cyml` reached the same code, so any dependency could plant
+  a checkout at a path of its choosing on the consumer's machine. **Fix:** the name is validated
+  as soon as it is read, before the closest-wins lookup, the clone or any path is built; a refused
+  section is named, counted as an error (exit 1, no lock written) and skipped, in the root
+  manifest and in every transitive one. Pinned by `deps_modules_default_or_warned.sh` D8 (root and
+  transitive).
+
 ### Downstream
 
 #### Folded — ⛔ each tagged BEFORE cyrius 6.6.13
