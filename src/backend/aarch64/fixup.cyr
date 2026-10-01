@@ -123,7 +123,11 @@ fn FIXUP(S): i64 {
     # v5.11.64: also populate the stable gvar_byte_off mirror so the
     # EMIT_* paths can patch static-init literal values at the correct
     # offset (see _EMIT_GVAR_STATIC_INITS in src/common/util.cyr).
+    # 6.6.13: each global starts at its natural alignment (_GV_ALIGN, util.cyr). Summed
+    # flat, a `u8[363]` left every later i64 misaligned and ldaxr/stlxr on it raised
+    # SIGBUS (Pi 4, Apple M5). The var-address patch below reads this offset via GVOFF.
     while (vi < vcnt) {
+        totvar = _GV_ALIGN(totvar, L64(_vars_base + vi * 8));
         S64(_vgoff_base + vi * 8, totvar);
         totvar = totvar + L64(_vars_base + vi * 8);
         vi = vi + 1;
@@ -238,12 +242,7 @@ fn FIXUP(S): i64 {
                             else { FIXUP_ADRP_LDR(S, coff, got_addr); }
                         }
                         else {
-                            var cumul = 0;
-                            vi = 0;
-                            while (vi < idx) {
-                                cumul = cumul + L64(_vars_base + vi * 8);
-                                vi = vi + 1;
-                            }
+                            var cumul = GVOFF(S, idx);   # 6.6.13: the aligned offset, never a re-sum
                             # Variable address: Linux flat layout vs Mach-O ARM __DATA segment.
                             # Mach-O arm64 layout (v5.5.12+):
                             #   page 0              headers

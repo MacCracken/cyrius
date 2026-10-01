@@ -481,7 +481,14 @@ SCP(S, cp);
 var vcnt = GVCNT(S);
 var totvar = 0;
 var vi = 0;
-while (vi < vcnt) { totvar = totvar + L64(_vars_base + vi * 8); vi = vi + 1; }
+# 6.6.13: each global at its natural alignment (_GV_ALIGN, util.cyr), recorded in the
+# gvar_byte_off mirror so the var-address patch below reads it via GVOFF.
+while (vi < vcnt) {
+    totvar = _GV_ALIGN(totvar, L64(_vars_base + vi * 8));
+    S64(_vgoff_base + vi * 8, totvar);
+    totvar = totvar + L64(_vars_base + vi * 8);
+    vi = vi + 1;
+}
 var spos = GSPOS(S);
 # Data base = cp (data starts right after bytecode in the loaded .cyx)
 var dbase = cp;
@@ -594,10 +601,8 @@ while (fi < fcnt) {
         }
     }
     else {
-        # Variable address → dbase + cumulative offset
-        var cumul = 0;
-        vi = 0;
-        while (vi < idx) { cumul = cumul + L64(_vars_base + vi * 8); vi = vi + 1; }
+        # Variable address → dbase + its aligned offset (6.6.13: GVOFF, never a re-sum)
+        var cumul = GVOFF(S, idx);
         var addr = dbase + cumul;
         store8(S + 0x54A000 + coff - 2, addr & 0xFF);
         store8(S + 0x54A000 + coff - 1, (addr >> 8) & 0xFF);

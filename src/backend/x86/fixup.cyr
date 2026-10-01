@@ -126,10 +126,11 @@ fn FIXUP(S): i64 {
         while (vi < vcnt) {
             # v5.11.64: also populate gvar_byte_off so EMITELF_OBJ's
             # .data write can drop in static-init literal values at the
-            # correct offsets. Object-mode totvar uses flat-packed bytes
-            # (no m128 alignment padding); .data symbols come out of the
-            # symtab the linker reads, so values land at the same offset
-            # the consumer's relocation resolves to.
+            # correct offsets. Object-mode totvar has no m128 padding, but
+            # each global still starts at its natural alignment (6.6.13,
+            # _GV_ALIGN — .data's sh_addralign is 8), and EMITELF_OBJ's var
+            # relocation reads the same offset back through GVOFF.
+            totvar = _GV_ALIGN(totvar, L64(_vars_base + vi * 8));
             S64(_vgoff_base + vi * 8, totvar);
             totvar = totvar + L64(_vars_base + vi * 8);
             vi = vi + 1;
@@ -168,6 +169,11 @@ fn FIXUP(S): i64 {
     # copy stays the hot reader for the fixup loop below.
     while (vi < vcnt) {
         var vsize = L64(_vars_base + vi * 8);
+        # 6.6.13: natural alignment first (_GV_ALIGN, util.cyr) — 8 for anything not
+        # 1/2/4 bytes, so no odd-sized global misaligns the ones after it. The m128 pad
+        # below then lifts a >8-byte global from 8- to 16-alignment. _pe_layout mirrors
+        # both steps in this order.
+        totvar = _GV_ALIGN(totvar, vsize);
         # v5.5.21: arrays (size > 8) used as SSE m128 memory operands —
         # PXOR xmm, m128 / MOVDQA / MOVAPS / AESENC m128 form / etc. —
         # require 16-byte alignment of the memory operand. 8-byte-aligned
@@ -2180,12 +2186,9 @@ fn EMITELF_OBJ(S): i64 {
         }
         else {
             # Variable address → R_X86_64_PC32 against .data section (PIC-safe)
-            var cumul = 0;
-            var vi = 0;
-            while (vi < idx) {
-                cumul = cumul + L64(_vars_base + vi * 8);
-                vi = vi + 1;
-            }
+            # 6.6.13: FIXUP's object-mode loop recorded the aligned offset — read it, never
+            # re-sum the sizes (a re-sum drops the alignment padding).
+            var cumul = GVOFF(S, idx);
             S64(rp, coff);
             S64(rp + 8, (2 << 32) | 2);                 # sym=.data(2), type=R_X86_64_PC32
             S64(rp + 16, cumul - 4);                     # r_addend = var offset - 4 (PC-relative)

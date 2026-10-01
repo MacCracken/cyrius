@@ -347,6 +347,28 @@ var v = load32(&buf);
 var v = load64(&buf);
 ```
 
+### Where globals land: natural alignment (6.6.13)
+
+A global occupies exactly its own size — `var a: u8[363]` has 363 usable bytes, a
+`var x: u8` one — and **every global starts at its natural alignment**:
+
+| Global, by its size                                    | Starts at a multiple of |
+|--------------------------------------------------------|-------------------------|
+| 1 byte (`u8` / `i8` scalar, or a 1-byte struct)        | 1                       |
+| 2 bytes (`u16` / `i16` scalar, or a 2-byte struct)     | 2                       |
+| 4 bytes (`u32` / `i32` scalar, or a 4-byte struct)     | 4                       |
+| anything else — i64, pointers, f64, `u128`, every array, every other struct | 8 |
+
+So `var a: u8[363]; var lock = 0;` puts `lock` at `&a + 368`, not `&a + 363`, and
+`atomic_cas(&lock, 0, 1)` is safe on aarch64. Before 6.6.13 globals were packed at their exact
+size: the global after a `u8[363]`, a narrow scalar, an `i32[3]` or a 12-byte struct was
+misaligned, and the first atomic on it (`ldaxr`/`stlxr`) died with SIGBUS on a Raspberry Pi 4
+and on Apple Silicon (x86 tolerated it). Adjacent narrow globals stay **packed**
+(`var a: u8; var b: u8;` puts `b` at `&a + 1`), on purpose: an atomic needs only natural
+alignment, and a store wider than its global still lands on the neighbour, where a test can
+see it, instead of vanishing into padding. Do not reach a global by adding an offset to the
+address of the one declared before it; the gap between them is the compiler's.
+
 ## Pointers
 
 ```

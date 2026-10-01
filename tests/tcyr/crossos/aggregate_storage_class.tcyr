@@ -166,14 +166,16 @@ fn copy_assign_literal() { var p = P { 1, 2 }; var q = P { 9, 9 }; q = p; return
 # ever reach the multi-word copy: `GB = GA;` left `GB.y` at its old value, silently, at top
 # level and inside a fn alike. Four combinations, because each one is a different arm:
 # global<-global, local<-global (declaration), local<-global (assignment), global<-local.
-# ⭐ NARROW FIELDS ARE THE SHARP ROW. Globals are packed by EXACT byte size (no round-up
-# below 8), so a word-granular copy of a 12-byte struct would clobber 4 bytes of the NEXT
-# global — `gn_guard` is that neighbour and it must still read 4242.
+# ⭐ NARROW FIELDS ARE THE SHARP ROW. A word-granular copy of a 12-byte struct writes 16
+# bytes, 4 past its end. Since 6.6.13 every global starts at its natural alignment, so an i64
+# after GNB sits at +16 and those 4 bytes land in padding — the i32 `gn_guard32` packs at
+# +12, directly after GNB, and must still read 4242 (as must the i64 `gn_guard` after it).
 struct N3 { a: i32; b: i32; c: i32; }
 var GA = P { 1, 2 };
 var GB = P { 3, 4 };
 var GNA = N3 { 1, 2, 3 };
 var GNB = N3 { 7, 8, 9 };
+var gn_guard32: i32 = 4242;
 var gn_guard = 4242;
 fn g_assign_gg() { GB = GA; return GB.x * 10 + GB.y; }
 fn g_copy_init() { var b: P = GA; return b.x * 10 + b.y; }
@@ -254,7 +256,9 @@ assert_eq(g_assign_gg(), 12, "GB = GA between two globals copies BOTH words");
 assert_eq(GB.y, 2, "the filed shape: global B = A leaves B.y == A.y");
 assert_eq(g_narrow_gg(), 123, "a 12-byte (narrow-field) global copy is byte-exact");
 assert_eq(g_narrow_gg(), g_narrow_ctl(), "it agrees with the typed-local control");
-assert_eq(gn_guard, 4242, "and it did NOT overrun into the next global");
+assert_eq(&gn_guard32 - &GNB, 12, "the i32 guard sits directly after the 12-byte GNB");
+assert_eq(gn_guard32, 4242, "and it did NOT overrun into the next global");
+assert_eq(gn_guard, 4242, "nor into the i64 after it");
 
 test_group("operator dispatch agrees wherever the operand lives");
 assert_eq(op_lit_small(), 102, "literal local dispatches Num_add");

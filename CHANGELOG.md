@@ -6,6 +6,51 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.13] — 2026-10-01
 
+### Fixed
+
+- **A global after an odd-sized one was misaligned, and an atomic on it died with SIGBUS on aarch64
+  (I9).** Filed by agnostic 0.1.7: its aarch64 release binary and 12 of its 27 suites died at
+  startup on a Raspberry Pi 4. **Root cause:** no layout pass aligned a global's start. x86 FIXUP
+  (both its loops), aarch64 FIXUP, PE `_pe_layout` and main_cx each summed `_vars_base` at the exact
+  byte size, so the global after a `u8[363]` sat at +363 (`% 8 == 3`), and the same after a narrow
+  scalar (`var x: u8 / i16 / i32`), an `i32[3]` or a 12-byte struct. `atomic_cas` /
+  `atomic_fetch_add` are `ldaxr`/`stlxr` on aarch64, which fault on a misaligned address: the filed
+  repro printed `8 363 3 ` and died with rc 135 on pi and rc 138 on ecb (Apple M5 Pro — not only the
+  Cortex-A72). x86 tolerates the misaligned `lock cmpxchg`, which is why it stayed silent. sankoch's
+  three `u8` arrays (630 B) misaligned 1,101 of agnostic's 1,962 globals, sigil's atomic init flags
+  among them. **Fix:** one rule, `_GV_ALIGN` (`src/common/util.cyr`), applied by every layout pass
+  before it records an offset: a 1/2/4-byte global starts at a multiple of 1/2/4, everything else at a
+  multiple of 8; x86 and PE then keep their v5.5.21 m128 pad, in the same order. ⚠ This is natural
+  alignment, not the roadmap's "pad after an odd-sized typed array so every global starts 8-aligned",
+  deliberately: an atomic needs only natural alignment, and keeping narrow globals PACKED keeps an
+  over-width store into one landing on its neighbour, where `narrow_slot_width.tcyr` and
+  `aggregate_storage_class.tcyr` can see it — 8-aligning everything would hide such a store in
+  padding. The size in `_vars_base` is unchanged (it is also the load/store width), so `u8[N]` still
+  has exactly N usable bytes; only the gap after it changed. The three O(n) re-sums of the sizes (x86
+  object-mode relocation, the aarch64 var-address patch, cx's var fixup) now read the recorded offset
+  through `GVOFF` — a re-sum would drop the padding — and main_cx fills `_vgoff_base` for that.
+  Every compiler's own globals are multiples of 8, so cycc, cycc_aarch64, the native aarch64 and
+  Mach-O arm64 compilers, cycc_win, cycc_cx and the x86 Mach-O compiler are each byte-identical
+  whether built by the old or the new rule. ⚠ A user binary with a narrow or odd-sized global gets new
+  offsets (at most 7 bytes of padding per such global); code that reaches a global by adding an offset
+  to the address of the one before it was never valid and now breaks (the guide's new "Where globals
+  land" section says so). **Verification:** the filed repro prints `8 368 0 1` and exits 0 natively on
+  pi and on ecb (Mach-O arm64), on ach (x86 Mach-O), on cass (PE), on x86 and under qemu-aarch64. New
+  `tests/tcyr/crossos/global_alignment.tcyr` (61 rows: an i64 after `u8[3]`, `u8[363]`, `i16[3]`,
+  `i32[3]`, a u8, an i32, an i16 and a 12-byte struct is 8-aligned and takes `atomic_cas` /
+  `atomic_fetch_add` / `atomic_load` / `atomic_store`; all 363 bytes of the array are writable and
+  its neighbours untouched; narrow globals still pack at +1/+2/+4; the first string literal survives
+  the last globals being written, which pins `_pe_layout` against FIXUP). The 6.6.12 compiler fails
+  19 rows on x86 and PE and dies with SIGBUS on pi and ecb; dropping `_GV_ALIGN` from `_pe_layout`
+  alone fails the three literal rows on PE. `aggregate_storage_class.tcyr` and
+  `struct_field_value_copy.tcyr` each gain an i32 guard directly after their 12-byte struct global —
+  under natural alignment the i64 guard they had now sits after 4 bytes of padding, where a 16-byte
+  over-copy would no longer reach it. The whole tcyr corpus (411 files) gives the same result on the
+  old and new compiler on x86 and under qemu-aarch64, except `global_alignment.tcyr` itself; x86
+  object mode linked against a C `main` reads the aligned offsets and the static-init values.
+  Self-host fixpoint and seed-derive green; cycc self-hosts byte-identical on real pi, ecb, ach and
+  cass, and all 154 `tests/tcyr/crossos/` files pass on each.
+
 ### Downstream
 
 #### Folded — ⛔ each tagged BEFORE cyrius 6.6.13

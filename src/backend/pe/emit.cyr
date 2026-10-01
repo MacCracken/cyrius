@@ -1620,6 +1620,9 @@ fn _pe_layout(S): i64 {
     var rvi = 0;
     while (rvi < vcnt) {
         var vsize = L64(_vars_base + rvi * 8);
+        # 6.6.13: mirror FIXUP's natural alignment (_GV_ALIGN) FIRST, then its m128 pad —
+        # same two steps, same order, or this offset and FIXUP's `&gvar` disagree.
+        totvar = _GV_ALIGN(totvar, vsize);
         # Mirror FIXUP's m128 padding (arrays > 8 bytes 16-align their VA).
         if (vsize > 8) {
             var va = 0x140000000 + _pe_rdata_rva + totvar;

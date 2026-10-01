@@ -1,0 +1,190 @@
+# global_alignment.tcyr — 6.6.13 — every global starts at its NATURAL alignment: 1/2/4 for a
+# 1/2/4-byte global (narrow scalars and tiny structs stay packed), 8 for everything else.
+#
+# ⛔ THE DEFECT. Each layout pass summed `_vars_base` at the exact byte size, so a global
+# declared after an odd-sized one sat at whatever offset the sum reached: after a `u8[363]` an
+# i64 was at +363 (`% 8 == 3`), and the same after a narrow scalar (`var x: u8`), an `i32[3]`
+# (12 B) or a 12-byte struct. x86 tolerates the misaligned `lock cmpxchg`; aarch64 does not —
+# `ldaxr`/`stlxr` on a misaligned address is an alignment fault, SIGBUS on a Raspberry Pi 4
+# (Cortex-A72) and on Apple Silicon alike. sankoch's three `u8` arrays (630 B) misaligned
+# 1,101 of agnostic's 1,962 globals, sigil's atomic init flags among them, so anything that
+# hashed died at startup on the Pi.
+# Filed: docs/development/issues/2026-10-01-typed-array-globals-not-padded-aarch64-atomics-sigbus.md
+#
+# What each group pins:
+#   * an i64 after every odd shape is 8-aligned, and the atomics (the SIGBUS path) work on it;
+#   * the odd-sized global keeps exactly its bytes — all 363 of a `u8[363]` are writable and
+#     the global after it is untouched (only the GAP after it changed);
+#   * narrow globals are still PACKED at their natural alignment, so an over-width store into
+#     one still lands on its neighbour where narrow_slot_width / aggregate_storage_class see it
+#     (aligning everything to 8 would hide such a store in padding);
+#   * the FIRST string literal is intact after the last globals are written in full — on PE the
+#     var area's size is computed twice (FIXUP for `&global`, `_pe_layout` for where .rdata's
+#     strings start), and if the two disagree on the padding, the last globals' bytes overrun
+#     the first strings. The m128 pad before a >8-byte global re-synchronises the two sums, so
+#     the tail is an i64/u8/i64 run AFTER the last array, and the literal checked is the first
+#     one in the compile unit — it is declared above the includes for exactly that reason.
+#
+# Every alignment row is asserted BEFORE any atomic runs: on a broken compiler the atomics
+# kill the process on aarch64, and the FAIL lines above the fault say which global it was.
+# Mutations that redden this file (measured): the 6.6.12 layout (no `_GV_ALIGN`) fails 19 rows
+# on x86 and PE, and on pi and ecb the first atomic SIGBUSes; dropping `_GV_ALIGN` from
+# `_pe_layout` alone (src/backend/pe/emit.cyr) fails the three literal rows on PE.
+var GA_FIRST_LITERAL = "global-alignment-first-literal";
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/atomic.cyr"
+include "lib/assert.cyr"
+
+struct GaI3 { a: i32; b: i32; c: i32; }
+
+# Each odd shape is followed by an i64 holding a distinct sentinel. Every narrow global is
+# initialised NON-zero (a zero-initialised narrow global is replayed through a different,
+# separately tracked store path).
+var GA_HEAD = 0x0101010101010101;
+var GA_U8_3: u8[3];
+var GA_L1 = 0x1111111111111111;
+var GA_U8_363: u8[363];
+var GA_L2 = 0x2222222222222222;
+var GA_I16_3: i16[3];
+var GA_L3 = 0x3333333333333333;
+var GA_I32_3: i32[3];
+var GA_L4 = 0x4444444444444444;
+var GA_N8: u8 = 0x5A;
+var GA_L5 = 0x5555555555555555;
+var GA_N32: i32 = 0x1234567;
+var GA_L6 = 0x6666666666666666;
+var GA_S12 = GaI3 { 1, 2, 3 };
+var GA_L7 = 0x7777777777777777;
+var GA_N16: i16 = 0x2345;
+var GA_L8 = 0x0808080808080808;
+
+# Natural alignment keeps narrow globals packed. The i64 before the run is 8-aligned and
+# 8 bytes long, so the run starts 8-aligned and every offset below is exact.
+var GA_P1: u8 = 0x11;
+var GA_P2: u8 = 0x22;
+var GA_P3: i16 = 0x3333;
+var GA_P4: i32 = 0x44444444;
+var GA_P5 = 0x5555555555555555;
+var GA_Q1: u8 = 0x61;
+var GA_Q2: i32 = 0x62626262;
+var GA_Q3: u8 = 0x63;
+var GA_Q4: i16 = 0x6464;
+var GA_Q5: u8 = 0x65;
+var GA_Q6 = 0x6666666666666666;
+# A 12-byte struct followed directly by an i32: natural alignment puts the i32 at +12, so a
+# 16-byte (word-granular) copy into the struct would still be caught by it.
+var GA_R12 = GaI3 { 4, 5, 6 };
+var GA_R32: i32 = 0x0BADCAFE;
+var GA_R64 = 0x7A7A7A7A7A7A7A7A;
+
+# The LAST globals in the var area (every included module's globals come first): a narrow
+# scalar and an odd-sized array, then an i64 / u8 / i64 run with NO wider global after it, so
+# its alignment gaps are the last thing before the strings. All of it is overwritten below.
+var GA_T8: u8 = 0x71;
+var GA_TAIL: u8[37];
+var GA_Z64A = 0x1A1A1A1A1A1A1A1A;
+var GA_Z8: u8 = 0x2B;
+var GA_Z64B = 0x3C3C3C3C3C3C3C3C;
+
+test_group("an i64 after every odd-sized global is 8-aligned");
+assert_eq(&GA_HEAD % 8, 0, "the first i64");
+assert_eq(&GA_L1 % 8, 0, "after u8[3]");
+assert_eq(&GA_L2 % 8, 0, "after u8[363] (the filed shape)");
+assert_eq(&GA_L3 % 8, 0, "after i16[3]");
+assert_eq(&GA_L4 % 8, 0, "after i32[3] (12 B)");
+assert_eq(&GA_L5 % 8, 0, "after a u8 scalar");
+assert_eq(&GA_L6 % 8, 0, "after an i32 scalar");
+assert_eq(&GA_L7 % 8, 0, "after a 12-byte struct literal");
+assert_eq(&GA_L8 % 8, 0, "after an i16 scalar");
+assert_eq(&GA_P5 % 8, 0, "after a packed u8/u8/i16/i32 run");
+assert_eq(&GA_Q6 % 8, 0, "after an odd u8/i32/u8/i16/u8 run");
+assert_eq(&GA_R64 % 8, 0, "after a 12-byte struct and an i32");
+assert_eq(&GA_U8_363 % 8, 0, "an odd-sized array itself starts 8-aligned");
+assert_eq(&GA_S12 % 8, 0, "a 12-byte struct global starts 8-aligned");
+assert_eq(&GA_TAIL % 8, 0, "an array after a u8 starts 8-aligned");
+assert_eq(&GA_Z64A % 8, 0, "after an odd 37-byte array");
+assert_eq(&GA_Z64B % 8, 0, "the last global, after a u8");
+
+test_group("an odd-sized global keeps exactly its own bytes");
+assert_eq(&GA_L2 - &GA_U8_363, 368, "u8[363]: 363 bytes + 5 of padding, not 363");
+assert_eq(&GA_L7 - &GA_S12, 16, "a 12-byte struct: 12 bytes + 4 of padding");
+var ga_i = 0;
+while (ga_i < 363) { store8(&GA_U8_363 + ga_i, 0xA5); ga_i = ga_i + 1; }
+assert_eq(load8(&GA_U8_363 + 362), 0xA5, "all 363 bytes of u8[363] are writable");
+assert_eq(GA_L2, 0x2222222222222222, "and the i64 after it is untouched");
+assert_eq(GA_L1, 0x1111111111111111, "and the i64 before it is untouched");
+store16(&GA_I16_3 + 4, 0x7FFF);
+assert_eq(GA_L3, 0x3333333333333333, "i16[3]'s last element does not reach the next global");
+store32(&GA_I32_3 + 8, 0x7FFFFFFF);
+assert_eq(GA_L4, 0x4444444444444444, "i32[3]'s last element does not reach the next global");
+assert_eq(GA_N8, 0x5A, "a u8 scalar keeps its value");
+assert_eq(GA_N32, 0x1234567, "an i32 scalar keeps its value");
+assert_eq(GA_N16, 0x2345, "an i16 scalar keeps its value");
+assert_eq(GA_S12.a + GA_S12.b * 10 + GA_S12.c * 100, 321, "the struct literal keeps its fields");
+
+test_group("narrow globals stay packed at their natural alignment");
+assert_eq(&GA_P1 % 8, 0, "the run starts 8-aligned");
+assert_eq(&GA_P2 - &GA_P1, 1, "u8 after u8: packed (+1)");
+assert_eq(&GA_P3 - &GA_P1, 2, "i16 after u8,u8: 2-aligned (+2)");
+assert_eq(&GA_P4 - &GA_P1, 4, "i32 after u8,u8,i16: 4-aligned (+4)");
+assert_eq(&GA_P5 - &GA_P1, 8, "i64 after the 8 packed bytes: no padding (+8)");
+assert_eq(&GA_Q2 - &GA_Q1, 4, "i32 after a u8 is 4-aligned (+4, not +1 or +8)");
+assert_eq(&GA_Q3 - &GA_Q1, 8, "u8 after the i32: packed (+8)");
+assert_eq(&GA_Q4 - &GA_Q1, 10, "i16 after a u8 is 2-aligned (+10, not +9)");
+assert_eq(&GA_Q5 - &GA_Q1, 12, "u8 after the i16: packed (+12)");
+assert_eq(&GA_Q6 - &GA_Q1, 16, "i64 after the run: 8-aligned (+16)");
+assert_eq(&GA_R32 - &GA_R12, 12, "an i32 directly after a 12-byte struct sits at +12");
+assert_eq(GA_P1 + GA_P2 * 256, 0x2211, "the packed u8 pair reads back");
+assert_eq(GA_P3, 0x3333, "the packed i16 reads back");
+assert_eq(GA_P4, 0x44444444, "the packed i32 reads back");
+assert_eq(GA_Q2, 0x62626262, "the 4-aligned i32 reads back");
+assert_eq(GA_Q3 + GA_Q4 * 256 + GA_Q5 * 16777216, 0x65646463, "u8/i16/u8 read back");
+assert_eq(GA_R32, 0x0BADCAFE, "the i32 after the struct reads back");
+
+# ⚠ THE SIGBUS PATH. ldaxr/stlxr (atomic_cas, atomic_fetch_add) fault on a misaligned address
+# on aarch64; on a broken compiler the process dies here on pi and ecb.
+fn ga_atomics(p, v0): i64 {
+    var r = 0;
+    if (atomic_load(p) == v0) { r = r + 1; }
+    if (atomic_cas(p, v0, v0 + 1) == 1) { r = r + 2; }
+    if (atomic_cas(p, v0, 0) == 0) { r = r + 4; }
+    if (atomic_fetch_add(p, 10) == v0 + 1) { r = r + 8; }
+    atomic_store(p, v0 + 100);
+    if (load64(p) == v0 + 100) { r = r + 16; }
+    atomic_store(p, v0);
+    return r;
+}
+
+test_group("atomics on each of those i64 globals");
+assert_eq(ga_atomics(&GA_L1, 0x1111111111111111), 31, "after u8[3]");
+assert_eq(ga_atomics(&GA_L2, 0x2222222222222222), 31, "after u8[363]");
+assert_eq(ga_atomics(&GA_L3, 0x3333333333333333), 31, "after i16[3]");
+assert_eq(ga_atomics(&GA_L4, 0x4444444444444444), 31, "after i32[3]");
+assert_eq(ga_atomics(&GA_L5, 0x5555555555555555), 31, "after a u8 scalar");
+assert_eq(ga_atomics(&GA_L6, 0x6666666666666666), 31, "after an i32 scalar");
+assert_eq(ga_atomics(&GA_L7, 0x7777777777777777), 31, "after a 12-byte struct");
+assert_eq(ga_atomics(&GA_L8, 0x0808080808080808), 31, "after an i16 scalar");
+assert_eq(ga_atomics(&GA_Q6, 0x6666666666666666), 31, "after an odd narrow run");
+assert_eq(ga_atomics(&GA_R64, 0x7A7A7A7A7A7A7A7A), 31, "after a 12-byte struct and an i32");
+assert_eq(GA_N8 + GA_N16 * 256, 0x23455A, "the narrow neighbours survived the atomics");
+
+test_group("the first string literal survives the last globals being written");
+var ga_j = 0;
+while (ga_j < 37) { store8(&GA_TAIL + ga_j, 0xEE); ga_j = ga_j + 1; }
+GA_Z64A = 0 - 1;
+GA_Z8 = 0xFF;
+GA_Z64B = 0 - 1;
+assert_eq(GA_T8, 0x71, "filling the last array did not reach back");
+assert_eq(GA_Z64A + GA_Z8 + GA_Z64B, 253, "the tail globals read back");
+var ga_k = 0;
+var ga_sum = 0;
+while (load8(GA_FIRST_LITERAL + ga_k) != 0) {
+    ga_sum = ga_sum + load8(GA_FIRST_LITERAL + ga_k);
+    ga_k = ga_k + 1;
+}
+assert_eq(ga_k, 30, "the first literal keeps its 30 bytes");
+assert_eq(ga_sum, 3020, "and every one of them (byte sum)");
+assert_eq(load8(GA_FIRST_LITERAL) + load8(GA_FIRST_LITERAL + 29) * 256, 0x6C67, "first 'g', last 'l'");
+
+var r = assert_summary();
