@@ -1,0 +1,345 @@
+# narrow_global_init_width.tcyr — 6.6.13 (M1) — a narrow (1/2/4-byte) global in the leading
+# declaration block is INITIALISED at its own width, on every backend.
+#
+# `var a: u8 = 0; var b: u8 = 7; syscall(60, b);` exited 0 (want 7) on x86, aarch64, PE and both
+# Mach-O targets. A leading-block global takes the static file-image path only when its
+# initialiser folds to a NON-zero constant; a `= 0`, any non-constant expression and a call are
+# stored at startup instead, by EMIT_GVAR_INITS's replay (src/frontend/parse_decl.cyr), whose
+# scalar arm stored with the 8-byte EVSTORE whatever the slot's width. Narrow globals are packed,
+# so that store wrote the value's upper bytes over the next 7/6/4 bytes of globals — and a
+# neighbour whose value was already in the image lost it. Now _gv_store stores at the slot's
+# width (exact 1/2/4; anything else keeps the 8-byte store). cx's constant prestore had the same
+# 8-byte store; its row is in tests/gates/codegen/cx_tailcall_and_vm_traps.sh (axis E).
+#
+# Every row is a SAME-WIDTH narrow-narrow pair (or triple), never narrow-then-i64: global
+# alignment pads before a wider global, so an 8-byte store landing in padding would pass whether
+# or not it is width-correct. Each width covers three initialiser kinds — `= 0`, a non-constant
+# global copy (`= SRC_WIDE`) and a call (`= wide()`) — in both orders (the narrow one first, then
+# a neighbour; a neighbour, the narrow one, a neighbour), plus a signed negative from a call. The
+# wide value has the top bit of every narrow width set, so each row also checks the truncation and
+# the sign extension the load applies. Reads happen inside a fn (check_<w>) and at top level; the
+# `pp_` rows after the first top-level statement go through the PARSE_PROG declaration path,
+# which was always width-correct — a control.
+#
+# Mutation ledger: the 6.6.13-open compiler (EMIT_GVAR_INITS's 8-byte EVSTORE) fails 76 of the
+# 135 rows here, at every width and for every initialiser kind; the rows it passes are the ones
+# no 8-byte store reaches (the value itself, a neighbour declared BEFORE it) and the pp_ controls.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/assert.cyr"
+
+# Bit 7 / 15 / 31 of every narrow width is set, so a truncated value also reads back negative at
+# the signed widths: u8 136, i8 -120, u16 63368, i16 -2168, u32 3588683656, i32 -706283640.
+var SRC_WIDE = 0x11223344D5E6F788;
+fn wide(): i64 { return 0x11223344D5E6F788; }
+fn neg3(): i64 { return 0 - 3; }
+
+# u8
+var zn_u8_a: u8 = 0;
+var zn_u8_b: u8 = 7;
+var nzn_u8_a: u8 = 7;
+var nzn_u8_b: u8 = 0;
+var nzn_u8_c: u8 = 9;
+var gn_u8_a: u8 = SRC_WIDE;
+var gn_u8_b: u8 = 7;
+var ngn_u8_a: u8 = 7;
+var ngn_u8_b: u8 = SRC_WIDE;
+var ngn_u8_c: u8 = 9;
+var cn_u8_a: u8 = wide();
+var cn_u8_b: u8 = 7;
+var ncn_u8_a: u8 = 7;
+var ncn_u8_b: u8 = wide();
+var ncn_u8_c: u8 = 9;
+var sn_u8_a: u8 = neg3();
+var sn_u8_b: u8 = 7;
+var nsn_u8_a: u8 = 7;
+var nsn_u8_b: u8 = neg3();
+var nsn_u8_c: u8 = 9;
+
+# i8
+var zn_i8_a: i8 = 0;
+var zn_i8_b: i8 = 7;
+var nzn_i8_a: i8 = 7;
+var nzn_i8_b: i8 = 0;
+var nzn_i8_c: i8 = 9;
+var gn_i8_a: i8 = SRC_WIDE;
+var gn_i8_b: i8 = 7;
+var ngn_i8_a: i8 = 7;
+var ngn_i8_b: i8 = SRC_WIDE;
+var ngn_i8_c: i8 = 9;
+var cn_i8_a: i8 = wide();
+var cn_i8_b: i8 = 7;
+var ncn_i8_a: i8 = 7;
+var ncn_i8_b: i8 = wide();
+var ncn_i8_c: i8 = 9;
+var sn_i8_a: i8 = neg3();
+var sn_i8_b: i8 = 7;
+var nsn_i8_a: i8 = 7;
+var nsn_i8_b: i8 = neg3();
+var nsn_i8_c: i8 = 9;
+
+# u16
+var zn_u16_a: u16 = 0;
+var zn_u16_b: u16 = 7;
+var nzn_u16_a: u16 = 7;
+var nzn_u16_b: u16 = 0;
+var nzn_u16_c: u16 = 9;
+var gn_u16_a: u16 = SRC_WIDE;
+var gn_u16_b: u16 = 7;
+var ngn_u16_a: u16 = 7;
+var ngn_u16_b: u16 = SRC_WIDE;
+var ngn_u16_c: u16 = 9;
+var cn_u16_a: u16 = wide();
+var cn_u16_b: u16 = 7;
+var ncn_u16_a: u16 = 7;
+var ncn_u16_b: u16 = wide();
+var ncn_u16_c: u16 = 9;
+var sn_u16_a: u16 = neg3();
+var sn_u16_b: u16 = 7;
+var nsn_u16_a: u16 = 7;
+var nsn_u16_b: u16 = neg3();
+var nsn_u16_c: u16 = 9;
+
+# i16
+var zn_i16_a: i16 = 0;
+var zn_i16_b: i16 = 7;
+var nzn_i16_a: i16 = 7;
+var nzn_i16_b: i16 = 0;
+var nzn_i16_c: i16 = 9;
+var gn_i16_a: i16 = SRC_WIDE;
+var gn_i16_b: i16 = 7;
+var ngn_i16_a: i16 = 7;
+var ngn_i16_b: i16 = SRC_WIDE;
+var ngn_i16_c: i16 = 9;
+var cn_i16_a: i16 = wide();
+var cn_i16_b: i16 = 7;
+var ncn_i16_a: i16 = 7;
+var ncn_i16_b: i16 = wide();
+var ncn_i16_c: i16 = 9;
+var sn_i16_a: i16 = neg3();
+var sn_i16_b: i16 = 7;
+var nsn_i16_a: i16 = 7;
+var nsn_i16_b: i16 = neg3();
+var nsn_i16_c: i16 = 9;
+
+# u32
+var zn_u32_a: u32 = 0;
+var zn_u32_b: u32 = 7;
+var nzn_u32_a: u32 = 7;
+var nzn_u32_b: u32 = 0;
+var nzn_u32_c: u32 = 9;
+var gn_u32_a: u32 = SRC_WIDE;
+var gn_u32_b: u32 = 7;
+var ngn_u32_a: u32 = 7;
+var ngn_u32_b: u32 = SRC_WIDE;
+var ngn_u32_c: u32 = 9;
+var cn_u32_a: u32 = wide();
+var cn_u32_b: u32 = 7;
+var ncn_u32_a: u32 = 7;
+var ncn_u32_b: u32 = wide();
+var ncn_u32_c: u32 = 9;
+var sn_u32_a: u32 = neg3();
+var sn_u32_b: u32 = 7;
+var nsn_u32_a: u32 = 7;
+var nsn_u32_b: u32 = neg3();
+var nsn_u32_c: u32 = 9;
+
+# i32
+var zn_i32_a: i32 = 0;
+var zn_i32_b: i32 = 7;
+var nzn_i32_a: i32 = 7;
+var nzn_i32_b: i32 = 0;
+var nzn_i32_c: i32 = 9;
+var gn_i32_a: i32 = SRC_WIDE;
+var gn_i32_b: i32 = 7;
+var ngn_i32_a: i32 = 7;
+var ngn_i32_b: i32 = SRC_WIDE;
+var ngn_i32_c: i32 = 9;
+var cn_i32_a: i32 = wide();
+var cn_i32_b: i32 = 7;
+var ncn_i32_a: i32 = 7;
+var ncn_i32_b: i32 = wide();
+var ncn_i32_c: i32 = 9;
+var sn_i32_a: i32 = neg3();
+var sn_i32_b: i32 = 7;
+var nsn_i32_a: i32 = 7;
+var nsn_i32_b: i32 = neg3();
+var nsn_i32_c: i32 = 9;
+
+fn check_u8(): i64 {
+    assert_eq(zn_u8_a, 0, "u8 = 0 then 7: the zero");
+    assert_eq(zn_u8_b, 7, "u8 = 0 then 7: its neighbour");
+    assert_eq(nzn_u8_a, 7, "u8 7, = 0, 9: the first");
+    assert_eq(nzn_u8_b, 0, "u8 7, = 0, 9: the zero");
+    assert_eq(nzn_u8_c, 9, "u8 7, = 0, 9: the neighbour after the zero");
+    assert_eq(gn_u8_a, 136, "u8 = <global> then 7: truncated to the width");
+    assert_eq(gn_u8_b, 7, "u8 = <global> then 7: its neighbour");
+    assert_eq(ngn_u8_a, 7, "u8 7, = <global>, 9: the first");
+    assert_eq(ngn_u8_b, 136, "u8 7, = <global>, 9: truncated to the width");
+    assert_eq(ngn_u8_c, 9, "u8 7, = <global>, 9: the neighbour after it");
+    assert_eq(cn_u8_a, 136, "u8 = f() then 7: truncated to the width");
+    assert_eq(cn_u8_b, 7, "u8 = f() then 7: its neighbour");
+    assert_eq(ncn_u8_a, 7, "u8 7, = f(), 9: the first");
+    assert_eq(ncn_u8_b, 136, "u8 7, = f(), 9: truncated to the width");
+    assert_eq(ncn_u8_c, 9, "u8 7, = f(), 9: the neighbour after it");
+    assert_eq(sn_u8_a, 253, "u8 = neg3() then 7: -3 at the width");
+    assert_eq(sn_u8_b, 7, "u8 = neg3() then 7: its neighbour");
+    assert_eq(nsn_u8_a, 7, "u8 7, = neg3(), 9: the first");
+    assert_eq(nsn_u8_b, 253, "u8 7, = neg3(), 9: -3 at the width");
+    assert_eq(nsn_u8_c, 9, "u8 7, = neg3(), 9: the neighbour after it");
+    return 0;
+}
+
+fn check_i8(): i64 {
+    assert_eq(zn_i8_a, 0, "i8 = 0 then 7: the zero");
+    assert_eq(zn_i8_b, 7, "i8 = 0 then 7: its neighbour");
+    assert_eq(nzn_i8_a, 7, "i8 7, = 0, 9: the first");
+    assert_eq(nzn_i8_b, 0, "i8 7, = 0, 9: the zero");
+    assert_eq(nzn_i8_c, 9, "i8 7, = 0, 9: the neighbour after the zero");
+    assert_eq(gn_i8_a, 0 - 120, "i8 = <global> then 7: truncated to the width");
+    assert_eq(gn_i8_b, 7, "i8 = <global> then 7: its neighbour");
+    assert_eq(ngn_i8_a, 7, "i8 7, = <global>, 9: the first");
+    assert_eq(ngn_i8_b, 0 - 120, "i8 7, = <global>, 9: truncated to the width");
+    assert_eq(ngn_i8_c, 9, "i8 7, = <global>, 9: the neighbour after it");
+    assert_eq(cn_i8_a, 0 - 120, "i8 = f() then 7: truncated to the width");
+    assert_eq(cn_i8_b, 7, "i8 = f() then 7: its neighbour");
+    assert_eq(ncn_i8_a, 7, "i8 7, = f(), 9: the first");
+    assert_eq(ncn_i8_b, 0 - 120, "i8 7, = f(), 9: truncated to the width");
+    assert_eq(ncn_i8_c, 9, "i8 7, = f(), 9: the neighbour after it");
+    assert_eq(sn_i8_a, 0 - 3, "i8 = neg3() then 7: -3 at the width");
+    assert_eq(sn_i8_b, 7, "i8 = neg3() then 7: its neighbour");
+    assert_eq(nsn_i8_a, 7, "i8 7, = neg3(), 9: the first");
+    assert_eq(nsn_i8_b, 0 - 3, "i8 7, = neg3(), 9: -3 at the width");
+    assert_eq(nsn_i8_c, 9, "i8 7, = neg3(), 9: the neighbour after it");
+    return 0;
+}
+
+fn check_u16(): i64 {
+    assert_eq(zn_u16_a, 0, "u16 = 0 then 7: the zero");
+    assert_eq(zn_u16_b, 7, "u16 = 0 then 7: its neighbour");
+    assert_eq(nzn_u16_a, 7, "u16 7, = 0, 9: the first");
+    assert_eq(nzn_u16_b, 0, "u16 7, = 0, 9: the zero");
+    assert_eq(nzn_u16_c, 9, "u16 7, = 0, 9: the neighbour after the zero");
+    assert_eq(gn_u16_a, 63368, "u16 = <global> then 7: truncated to the width");
+    assert_eq(gn_u16_b, 7, "u16 = <global> then 7: its neighbour");
+    assert_eq(ngn_u16_a, 7, "u16 7, = <global>, 9: the first");
+    assert_eq(ngn_u16_b, 63368, "u16 7, = <global>, 9: truncated to the width");
+    assert_eq(ngn_u16_c, 9, "u16 7, = <global>, 9: the neighbour after it");
+    assert_eq(cn_u16_a, 63368, "u16 = f() then 7: truncated to the width");
+    assert_eq(cn_u16_b, 7, "u16 = f() then 7: its neighbour");
+    assert_eq(ncn_u16_a, 7, "u16 7, = f(), 9: the first");
+    assert_eq(ncn_u16_b, 63368, "u16 7, = f(), 9: truncated to the width");
+    assert_eq(ncn_u16_c, 9, "u16 7, = f(), 9: the neighbour after it");
+    assert_eq(sn_u16_a, 65533, "u16 = neg3() then 7: -3 at the width");
+    assert_eq(sn_u16_b, 7, "u16 = neg3() then 7: its neighbour");
+    assert_eq(nsn_u16_a, 7, "u16 7, = neg3(), 9: the first");
+    assert_eq(nsn_u16_b, 65533, "u16 7, = neg3(), 9: -3 at the width");
+    assert_eq(nsn_u16_c, 9, "u16 7, = neg3(), 9: the neighbour after it");
+    return 0;
+}
+
+fn check_i16(): i64 {
+    assert_eq(zn_i16_a, 0, "i16 = 0 then 7: the zero");
+    assert_eq(zn_i16_b, 7, "i16 = 0 then 7: its neighbour");
+    assert_eq(nzn_i16_a, 7, "i16 7, = 0, 9: the first");
+    assert_eq(nzn_i16_b, 0, "i16 7, = 0, 9: the zero");
+    assert_eq(nzn_i16_c, 9, "i16 7, = 0, 9: the neighbour after the zero");
+    assert_eq(gn_i16_a, 0 - 2168, "i16 = <global> then 7: truncated to the width");
+    assert_eq(gn_i16_b, 7, "i16 = <global> then 7: its neighbour");
+    assert_eq(ngn_i16_a, 7, "i16 7, = <global>, 9: the first");
+    assert_eq(ngn_i16_b, 0 - 2168, "i16 7, = <global>, 9: truncated to the width");
+    assert_eq(ngn_i16_c, 9, "i16 7, = <global>, 9: the neighbour after it");
+    assert_eq(cn_i16_a, 0 - 2168, "i16 = f() then 7: truncated to the width");
+    assert_eq(cn_i16_b, 7, "i16 = f() then 7: its neighbour");
+    assert_eq(ncn_i16_a, 7, "i16 7, = f(), 9: the first");
+    assert_eq(ncn_i16_b, 0 - 2168, "i16 7, = f(), 9: truncated to the width");
+    assert_eq(ncn_i16_c, 9, "i16 7, = f(), 9: the neighbour after it");
+    assert_eq(sn_i16_a, 0 - 3, "i16 = neg3() then 7: -3 at the width");
+    assert_eq(sn_i16_b, 7, "i16 = neg3() then 7: its neighbour");
+    assert_eq(nsn_i16_a, 7, "i16 7, = neg3(), 9: the first");
+    assert_eq(nsn_i16_b, 0 - 3, "i16 7, = neg3(), 9: -3 at the width");
+    assert_eq(nsn_i16_c, 9, "i16 7, = neg3(), 9: the neighbour after it");
+    return 0;
+}
+
+fn check_u32(): i64 {
+    assert_eq(zn_u32_a, 0, "u32 = 0 then 7: the zero");
+    assert_eq(zn_u32_b, 7, "u32 = 0 then 7: its neighbour");
+    assert_eq(nzn_u32_a, 7, "u32 7, = 0, 9: the first");
+    assert_eq(nzn_u32_b, 0, "u32 7, = 0, 9: the zero");
+    assert_eq(nzn_u32_c, 9, "u32 7, = 0, 9: the neighbour after the zero");
+    assert_eq(gn_u32_a, 3588683656, "u32 = <global> then 7: truncated to the width");
+    assert_eq(gn_u32_b, 7, "u32 = <global> then 7: its neighbour");
+    assert_eq(ngn_u32_a, 7, "u32 7, = <global>, 9: the first");
+    assert_eq(ngn_u32_b, 3588683656, "u32 7, = <global>, 9: truncated to the width");
+    assert_eq(ngn_u32_c, 9, "u32 7, = <global>, 9: the neighbour after it");
+    assert_eq(cn_u32_a, 3588683656, "u32 = f() then 7: truncated to the width");
+    assert_eq(cn_u32_b, 7, "u32 = f() then 7: its neighbour");
+    assert_eq(ncn_u32_a, 7, "u32 7, = f(), 9: the first");
+    assert_eq(ncn_u32_b, 3588683656, "u32 7, = f(), 9: truncated to the width");
+    assert_eq(ncn_u32_c, 9, "u32 7, = f(), 9: the neighbour after it");
+    assert_eq(sn_u32_a, 4294967293, "u32 = neg3() then 7: -3 at the width");
+    assert_eq(sn_u32_b, 7, "u32 = neg3() then 7: its neighbour");
+    assert_eq(nsn_u32_a, 7, "u32 7, = neg3(), 9: the first");
+    assert_eq(nsn_u32_b, 4294967293, "u32 7, = neg3(), 9: -3 at the width");
+    assert_eq(nsn_u32_c, 9, "u32 7, = neg3(), 9: the neighbour after it");
+    return 0;
+}
+
+fn check_i32(): i64 {
+    assert_eq(zn_i32_a, 0, "i32 = 0 then 7: the zero");
+    assert_eq(zn_i32_b, 7, "i32 = 0 then 7: its neighbour");
+    assert_eq(nzn_i32_a, 7, "i32 7, = 0, 9: the first");
+    assert_eq(nzn_i32_b, 0, "i32 7, = 0, 9: the zero");
+    assert_eq(nzn_i32_c, 9, "i32 7, = 0, 9: the neighbour after the zero");
+    assert_eq(gn_i32_a, 0 - 706283640, "i32 = <global> then 7: truncated to the width");
+    assert_eq(gn_i32_b, 7, "i32 = <global> then 7: its neighbour");
+    assert_eq(ngn_i32_a, 7, "i32 7, = <global>, 9: the first");
+    assert_eq(ngn_i32_b, 0 - 706283640, "i32 7, = <global>, 9: truncated to the width");
+    assert_eq(ngn_i32_c, 9, "i32 7, = <global>, 9: the neighbour after it");
+    assert_eq(cn_i32_a, 0 - 706283640, "i32 = f() then 7: truncated to the width");
+    assert_eq(cn_i32_b, 7, "i32 = f() then 7: its neighbour");
+    assert_eq(ncn_i32_a, 7, "i32 7, = f(), 9: the first");
+    assert_eq(ncn_i32_b, 0 - 706283640, "i32 7, = f(), 9: truncated to the width");
+    assert_eq(ncn_i32_c, 9, "i32 7, = f(), 9: the neighbour after it");
+    assert_eq(sn_i32_a, 0 - 3, "i32 = neg3() then 7: -3 at the width");
+    assert_eq(sn_i32_b, 7, "i32 = neg3() then 7: its neighbour");
+    assert_eq(nsn_i32_a, 7, "i32 7, = neg3(), 9: the first");
+    assert_eq(nsn_i32_b, 0 - 3, "i32 7, = neg3(), 9: -3 at the width");
+    assert_eq(nsn_i32_c, 9, "i32 7, = neg3(), 9: the neighbour after it");
+    return 0;
+}
+
+# Top-level reads (the filed shape and its reverse) — the first statement ends the leading block.
+assert_eq(zn_u8_b, 7, "top level: u8 = 0 then 7: its neighbour");
+assert_eq(nzn_u8_c, 9, "top level: u8 7, = 0, 9: the neighbour after the zero");
+assert_eq(zn_i8_b, 7, "top level: i8 = 0 then 7: its neighbour");
+assert_eq(nzn_i8_c, 9, "top level: i8 7, = 0, 9: the neighbour after the zero");
+assert_eq(zn_u16_b, 7, "top level: u16 = 0 then 7: its neighbour");
+assert_eq(nzn_u16_c, 9, "top level: u16 7, = 0, 9: the neighbour after the zero");
+assert_eq(zn_i16_b, 7, "top level: i16 = 0 then 7: its neighbour");
+assert_eq(nzn_i16_c, 9, "top level: i16 7, = 0, 9: the neighbour after the zero");
+assert_eq(zn_u32_b, 7, "top level: u32 = 0 then 7: its neighbour");
+assert_eq(nzn_u32_c, 9, "top level: u32 7, = 0, 9: the neighbour after the zero");
+assert_eq(zn_i32_b, 7, "top level: i32 = 0 then 7: its neighbour");
+assert_eq(nzn_i32_c, 9, "top level: i32 7, = 0, 9: the neighbour after the zero");
+
+# Control: declared after a top-level statement, so PARSE_VAR's top-level arm stores these (it
+# always used EVSTORE_W).
+var pp_u8_a: u8 = 0;
+var pp_u8_b: u8 = 7;
+var pp_i16_a: i16 = 0;
+var pp_i16_b: i16 = 1234;
+var pp_u32_a: u32 = 0;
+var pp_u32_b: u32 = 9;
+assert_eq(pp_u8_b, 7, "PARSE_PROG path: u8 = 0 then 7: its neighbour");
+assert_eq(pp_i16_b, 1234, "PARSE_PROG path: i16 = 0 then 1234: its neighbour");
+assert_eq(pp_u32_b, 9, "PARSE_PROG path: u32 = 0 then 9: its neighbour");
+
+check_u8();
+check_i8();
+check_u16();
+check_i16();
+check_u32();
+check_i32();
+var r = assert_summary();

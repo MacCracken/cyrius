@@ -37,6 +37,9 @@
 #      on packed narrow globals and a narrow local seen through its address; each equals native.
 #      ⚠ The B01 rows need F's B01 frontend fix too (the for step / compound load) — on a tree
 #      without it they are RED natively as well, and the row says so.
+#      6.6.13 (M1b): cx's constant PRESTORE (_gv_cx_prestore, parse_decl.cyr) stored 8 bytes too,
+#      so before the next narrow global's own initialiser ran, a forward read of it saw the
+#      prestored constant's upper bytes (E4: 255 where native gives 0; E5: every width).
 #
 # MUTATION LEDGER (6.6.12 B06, each by editing the tree and re-running this gate; measured with
 # F's B01 frontend applied, since E1 needs it — 24/24 on the real tree)
@@ -54,6 +57,7 @@
 #                                                       overwritten the globals and the heap)
 #   the negative-pc check removed                  -> D10 RED (decodes host memory: "... at pc -8")
 #   cx EVSTORE_W / EFLSTORE_W back to 8-byte stores -> E1 (59) + E2 (15) + E3 (1) RED
+#   (6.6.13) _gv_cx_prestore back to EVSTORE         -> E4 (255) + E5 (7) RED; native stays 0
 #   (the narrow LOADS are width-correct too, but a wide masked load gives the same value except at
 #   the very end of the data segment, which no compiled row can place a global at — not a row.)
 set -u
@@ -284,6 +288,32 @@ both "E3 a narrow local store writes only its own width" 'fn go(): i64 {
     return 0;
 }
 syscall(60, go());
+' 0
+both "E4 cx prestore of a constant narrow global keeps the next one (a forward read sees its own init)" 'fn getb(): i64 { return b; }
+var a: i8 = 0 - 1;
+var c: u8 = getb();
+var b: u8 = 0;
+syscall(60, c);
+' 0
+both "E5 cx prestore at every narrow width: the reader before the pair, the pair intact" 'fn get8(): i64 { return B8; }
+fn get16(): i64 { return B16; }
+fn get32(): i64 { return B32; }
+var C8: u8 = get8();
+var A8: i8 = 0 - 1;
+var B8: u8 = 0;
+var S8 = 0x0102030405060708;
+var C16: u16 = get16();
+var A16: i16 = 0 - 1;
+var B16: u16 = 0;
+var S16 = 0x0102030405060708;
+var C32: u32 = get32();
+var A32: i32 = 0 - 1;
+var B32: u32 = 0;
+var r = 0;
+if (C8 != 0 || A8 != 0 - 1 || B8 != 0) { r = r | 1; }
+if (C16 != 0 || A16 != 0 - 1 || B16 != 0) { r = r | 2; }
+if (C32 != 0 || A32 != 0 - 1 || B32 != 0) { r = r | 4; }
+syscall(60, r);
 ' 0
 
 echo "cx_tailcall_and_vm_traps: $pass passed, $fail failed"

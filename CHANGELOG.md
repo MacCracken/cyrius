@@ -6,6 +6,30 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.13] — 2026-10-01
 
+### Fixed
+
+- **M1 — a narrow global initialised to zero, to a non-constant or to a call no longer clobbers
+  the globals after it.** `var a: u8 = 0; var b: u8 = 7; syscall(60, b);` exited **0** (want 7) on
+  x86, aarch64, PE and both Mach-O targets. **Root cause:** a leading-block global takes the static
+  file-image path only when its initialiser folds to a NON-zero constant; `= 0`, any non-constant
+  expression and a call are deferred and replayed at startup by `EMIT_GVAR_INITS`
+  (`src/frontend/parse_decl.cyr`), whose scalar arm stored with the 8-byte `EVSTORE` whatever the
+  slot's width. Narrow scalar globals are packed, so the store wrote the value's upper bytes over the
+  next 7 / 6 / 4 bytes of globals, and any neighbour whose value was already in the image lost it
+  (6.6.12 B01 fixed the assignment statement, the for step and the compound load; this declaration
+  replay was never routed through them). cx's constant PRESTORE (`_gv_cx_prestore`) had the same
+  8-byte store, so on cx a forward read of the next narrow global saw the prestored constant's high
+  bytes (255 where native gives 0). **Fix:** one helper, `_gv_store`, stores at the slot's width —
+  exactly 1 / 2 / 4 through `EVSTORE_W`, anything else (i64, u128, an odd-sized inline struct) keeps
+  the full store — and both sites use it. **Verified:** the new
+  `tests/tcyr/crossos/narrow_global_init_width.tcyr` (135 rows: every narrow width × `= 0`, a
+  non-constant global copy, a call wider than the width and a negative call, in both orders, read in
+  a fn and at top level; same-width narrow-narrow neighbours only, so global padding cannot mask an
+  over-width store) fails 76 rows on the 6.6.13-open compiler and passes on x86, qemu-aarch64, wine,
+  and on real pi, cass, ecb and ach; `cx_tailcall_and_vm_traps.sh` gains axis-E rows E4 / E5 for the
+  prestore (255 / 7 before). Self-host fixpoint and seed → cybs → cycc GREEN; `build/cycc` stays
+  1,470,944 B (`.text` +328 B, inside the page padding).
+
 ### Downstream
 
 #### Folded — ⛔ each tagged BEFORE cyrius 6.6.13

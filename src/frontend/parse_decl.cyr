@@ -2251,6 +2251,22 @@ fn _gv_hide_program(S, on): i64 {
     return 0;
 }
 
+# The store of a replayed global initializer (and of cx's prestore), at the slot's width.
+# Narrow scalar globals are PACKED in the var area, so the 8-byte EVSTORE both sites used
+# wrote the value's upper bytes over the next 7/6/4 bytes of globals: `var a: u8 = 0;
+# var b: u8 = 7;` read b as 0, because b's image value was laid down before the program ran
+# and a's replayed store then zeroed it. Exact 1/2/4 — not `< 8` — because an inline struct
+# global can be 3/5/6/7 bytes, and those keep the full store EVSTORE_W would fall back to
+# anyway. Sign does not matter here; the load side sign-extends (GVSGN). Not
+# _asg_store_slot: that warns on narrowing, which a declaration does not, and SLVARs again.
+# CHANGELOG [6.6.13]
+fn _gv_store(S, vi): i64 {
+    var w = L64(_vars_base + vi * 8);
+    if (w == 1 || w == 2 || w == 4) { EVSTORE_W(S, vi, w); return 0; }
+    EVSTORE(S, vi);
+    return 0;
+}
+
 # cx has no file image to bake a value into, so a CONSTANT global is stored FIRST, ahead of
 # every deferred initializer — the same "from program start" the image gives every other
 # target.
@@ -2279,7 +2295,7 @@ fn _gv_cx_prestore(S): i64 {
     var vi = 0;
     while (vi < n) {
         var v = L64(_vgsi_base + vi * 8);
-        if (v != 0) { EMOVI(S, v); EVSTORE(S, vi); }
+        if (v != 0) { EMOVI(S, v); _gv_store(S, vi); }
         vi = vi + 1;
     }
     return 0;
@@ -3018,7 +3034,7 @@ fn EMIT_GVAR_INITS(S): i64 {
         if (did_struct == 0) {
             if (_gci_init(S, idx, gps, noff) == 0) {   # 6.6.12: a whole struct source is copied
                 _gvi_expr(S, gps);
-                if (idx >= 0) { EVSTORE(S, idx); _gv_slvar(S, idx); }
+                if (idx >= 0) { _gv_store(S, idx); _gv_slvar(S, idx); }   # 6.6.13: at its width
             }
             if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
             STI(S, GTI(S) + 1);
