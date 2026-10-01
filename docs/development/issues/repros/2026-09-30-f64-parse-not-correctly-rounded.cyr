@@ -1,0 +1,47 @@
+# f64_parse is not correctly rounded: it accumulates digits in f64 and scales by
+# repeated *10, so ~23% of two-decimal literals land 1 ulp off, an exponent whose
+# 10^k overflows gives Inf for a finite value, and subnormals flush to 0.
+#
+# Self-proving: the exit code is the number of rows whose bits differ from the
+# correctly rounded double (Python float(), i.e. strtod). The last three rows
+# are controls and pass today.
+#
+#   cyrius build docs/development/issues/repros/2026-09-30-f64-parse-not-correctly-rounded.cyr /tmp/f64p
+#   /tmp/f64p; echo "exit=$?"      # -> 9 on cyrius 6.6.12
+
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/math.cyr"
+
+fn out(s) { syscall(1, 1, s, strlen(s)); return 0; }
+
+fn row(s, want) {
+    var got = f64_parse(s);
+    if (got == want) { out("  ok    "); } else { out("  WRONG "); }
+    out(s); out("  got "); fmt_hex0x(got); out("  want "); fmt_hex0x(want); out("\n");
+    if (got == want) { return 0; }
+    return 1;
+}
+
+fn main() {
+    alloc_init();
+    var r = 0;
+    r = r + row("0.3", 0x3FD3333333333333);
+    r = r + row("0.12", 0x3FBEB851EB851EB8);
+    r = r + row("0.15", 0x3FC3333333333333);
+    r = r + row("9.95", 0x4023E66666666666);
+    r = r + row("2.2250738585072014e-308", 0x0010000000000000);
+    r = r + row("8.98846567431158e307", 0x7FE0000000000000);
+    r = r + row("0.0001e310", 0x7F76C8E5CA239029);
+    r = r + row("123e-310", 0x0008D83AFF3E96B1);
+    r = r + row("5e-324", 0x0000000000000001);
+    r = r + row("1.5", 0x3FF8000000000000);
+    r = r + row("100", 0x4059000000000000);
+    r = r + row("0.5", 0x3FE0000000000000);
+    out("rows wrong: "); fmt_int(r); out("\n");
+    return r;
+}
+var rc = main();
+syscall(SYS_EXIT, rc);
