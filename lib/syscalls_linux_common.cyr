@@ -1203,6 +1203,9 @@ fn fd_restore_flags(fd, saved): i64 {
 # timeout passed first, or -errno (-4 EINTR: the caller re-checks its clock and waits again;
 # -9 EBADF for an fd that is not open, which poll reports as POLLNVAL rather than an error).
 # `timeout_ms` < 0 waits indefinitely; a value above INT_MAX is clamped to it.
+# A negative fd (a failed socket()/accept() result) or one past INT_MAX is -9 EBADF at once:
+# poll(2) IGNORES an entry whose fd is < 0 (revents 0), so passed through it would read as a
+# timeout — or, with timeout_ms < 0, never return — and store32 would truncate a wide one.
 # One raw poll(2) (7): ESYSXLAT makes it ppoll(73) with a timespec on aarch64-Linux and BSD
 # poll(230) on both Mach-O backends; POLLIN 1 / POLLOUT 4 / POLLNVAL 0x20 are the same on Linux
 # and Darwin. Literals, not names: a program-wide enum can redefine a public constant.
@@ -1210,6 +1213,8 @@ fn fd_restore_flags(fd, saved): i64 {
 # read-only and private, net.cyr's WSAPoll is the Windows connect wait, and
 # async_await_readable_ms needs a coroutine. CHANGELOG [6.6.13]
 fn fd_wait_ready(fd, want_write, timeout_ms): i64 {
+    if (fd < 0) { return 0 - 9; }                   # EBADF — poll would skip it silently
+    if (fd > 0x7FFFFFFF) { return 0 - 9; }          # not an int fd
     var ms = timeout_ms;
     if (ms < 0) { ms = 0 - 1; }
     if (ms > 0x7FFFFFFF) { ms = 0x7FFFFFFF; }

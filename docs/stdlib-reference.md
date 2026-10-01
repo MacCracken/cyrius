@@ -759,7 +759,7 @@ Readiness wait (every peer, v6.6.13):
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `fd_wait_ready` | `fd_wait_ready(fd, want_write, timeout_ms) → 1/0/-errno` | Wait until `fd` is readable (`want_write` = 0) or writable (≠ 0) for at most `timeout_ms` (< 0 = indefinitely). 1 = ready, **including an error or hang-up** (the next read/write reports it); 0 = timed out; -errno (-4 EINTR — re-check your clock and wait again; -9 EBADF / Windows -10038 WSAENOTSOCK for an fd that is not open). poll(2) on Linux and macOS (any fd); WSAPoll on Windows (**sockets only**); agnos declines with -38 |
+| `fd_wait_ready` | `fd_wait_ready(fd, want_write, timeout_ms) → 1/0/-errno` | Wait until `fd` is readable (`want_write` = 0) or writable (≠ 0) for at most `timeout_ms` (< 0 = indefinitely). 1 = ready, **including an error or hang-up** (the next read/write reports it); 0 = timed out; -errno (-4 EINTR — re-check your clock and wait again; -9 EBADF / Windows -10038 WSAENOTSOCK for an fd that is not open or is negative — never a silent timeout). poll(2) on Linux and macOS (any fd); WSAPoll on Windows (**sockets only**); agnos declines with -38 |
 
 **agnos-only additions (`lib/syscalls_x86_64_agnos.cyr`, v6.5.9 / v6.6.7)** — the agnos
 peer is standalone, so these exist on no other target:

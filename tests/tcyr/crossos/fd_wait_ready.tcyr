@@ -17,7 +17,8 @@
 # ROWS: an empty socket times out (0, after about the timeout, not at once and not for ever);
 # a connected socket is writable (1); data makes it readable (1); a negative timeout with data
 # ready returns at once; a peer that closed reads as ready (1) and the read then returns EOF;
-# a closed socket is an error (< 0), never "ready" or a hang.
+# a closed socket is an error (< 0), never "ready" or a hang; so is a negative fd (a failed
+# socket()/accept() result), which poll(2) and WSAPoll would otherwise skip and report as a timeout.
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -120,6 +121,22 @@ fn _fw_socket_rows(): i64 {
     return 0;
 }
 
+# A negative fd — what a failed socket()/accept() hands back — is an error at once. poll(2) and
+# WSAPoll both IGNORE an entry with fd < 0, so without the guard this row timed out after 2 s
+# (and an indefinite wait never returned).
+fn _fw_negative_fd_rows(): i64 {
+    test_group("6.6.13 — fd_wait_ready: a negative fd is an error, never a timeout");
+    var t0 = clock_now_ns();
+    var nr = fd_wait_ready(0 - 1, 0, 2000);
+    assert(nr < 0, "fd -1, read: negative (EBADF / WSAENOTSOCK)");
+    assert(_fw_ms_since(t0) < 1000, "…at once (< 1 s), not after the timeout");
+    t0 = clock_now_ns();
+    nr = fd_wait_ready(0 - 1, 1, 0 - 1);
+    assert(nr < 0, "fd -1, write, indefinite timeout: negative, and it returns");
+    assert(_fw_ms_since(t0) < 1000, "…at once (< 1 s)");
+    return 0;
+}
+
 #ifndef CYRIUS_TARGET_WIN
 # POSIX: the wait is not socket-only — a pipe works the same way.
 fn _fw_pipe_rows(): i64 {
@@ -147,6 +164,7 @@ fn main(): i64 {
     #endif
     #ifndef CYRIUS_TARGET_AGNOS
     _fw_socket_rows();
+    _fw_negative_fd_rows();
     #ifndef CYRIUS_TARGET_WIN
     _fw_pipe_rows();
     #endif
