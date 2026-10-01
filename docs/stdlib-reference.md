@@ -755,6 +755,12 @@ one fn so the `#ifdef`-blind static checker sees a single definition):
 | `signal_ignore` | `signal_ignore(signum) → 0/-errno` | Set the disposition to `SIG_IGN` |
 | `signal_default` | `signal_default(signum) → 0/-errno` | v6.5.7 — set it back to `SIG_DFL`. **Not optional alongside `signal_ignore`**: `SIG_IGN` is *inherited across `execve`* (a handler is reset, an ignore is not), so a process that ignores a signal then fork+execve's a child hands that child a disposition its own code never chose. Call it in the child between fork and execve |
 
+Readiness wait (every peer, v6.6.13):
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `fd_wait_ready` | `fd_wait_ready(fd, want_write, timeout_ms) → 1/0/-errno` | Wait until `fd` is readable (`want_write` = 0) or writable (≠ 0) for at most `timeout_ms` (< 0 = indefinitely). 1 = ready, **including an error or hang-up** (the next read/write reports it); 0 = timed out; -errno (-4 EINTR — re-check your clock and wait again; -9 EBADF / Windows -10038 WSAENOTSOCK for an fd that is not open). poll(2) on Linux and macOS (any fd); WSAPoll on Windows (**sockets only**); agnos declines with -38 |
+
 **agnos-only additions (`lib/syscalls_x86_64_agnos.cyr`, v6.5.9 / v6.6.7)** — the agnos
 peer is standalone, so these exist on no other target:
 
