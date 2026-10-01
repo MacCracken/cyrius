@@ -1,0 +1,66 @@
+# Repro: lib/tls.cyr's libssl backend never binds the certificate to the
+# hostname. A chain-valid cert whose SAN is only `localhost` is accepted when
+# the client connects as `www.example.com`. The native backend refuses it.
+#
+# Driven by 2026-09-30-tls-libssl-no-hostname-verification.sh (it makes the
+# CA + server cert and runs `openssl s_server`). Standalone:
+#   <binary> <port> <ca.crt> <other-ca.crt>
+# Exit code = number of failing checks.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/net.cyr"
+include "lib/args.cyr"
+include "lib/tls.cyr"
+
+var FAILS = 0;
+
+fn _check(ok, msg): i64 {
+    if (ok == 1) { println("PASS"); } else { println("FAIL"); FAILS = FAILS + 1; }
+    println(msg);
+    return 0;
+}
+
+# Hook: trust only `cafile` (works on the SSL_CTX* or the native ctx).
+fn _hook(cafile, handle): i64 {
+    if (tls_ctx_load_verify_locations(handle, cafile, 0) != 1) { return 1; }
+    return 0;
+}
+
+# 1 = handshake accepted the server cert for `host`, 0 = refused, -1 = no TCP.
+fn _try(port, host, cafile): i64 {
+    var st, fd = tcp_socket();
+    if (is_err_result(st) != 0) { return 0 - 1; }
+    var cs, cv = sock_connect(fd, INADDR_LOOPBACK(), port);
+    if (is_err_result(cs) != 0) { sock_close(fd); return 0 - 1; }
+    var t = tls_connect_with_ctx_hook(fd, host, &_hook, cafile);
+    var ok = 0;
+    if (t != 0) { ok = 1; tls_close(t); }
+    sock_close(fd);
+    return ok;
+}
+
+fn main(): i64 {
+    alloc_init();
+    args_init();
+    var port = atoi(argv(1));
+    var ca = argv(2);
+    var other = argv(3);
+#ifndef CYRIUS_TLS_LIBSSL
+    tls_set_backend(TLS_BACKEND_NATIVE);
+    _check(_try(port, "localhost", ca), "native: SAN name accepted (control)");
+    _check(_try(port, "www.example.com", ca) == 0, "native: name outside the SAN refused (control)");
+#endif
+    if (tls_set_backend(TLS_BACKEND_LIBSSL) != 0 || tls_available() != 1) {
+        println("FAIL\nlibssl backend unavailable (needs ~/.cyrius/dlopen-helper + libssl.so.3)");
+        return FAILS + 1;
+    }
+    _check(_try(port, "localhost", ca), "libssl: SAN name accepted (control)");
+    _check(_try(port, "localhost", other) == 0, "libssl: chain to an untrusted CA refused (control)");
+    _check(_try(port, "www.example.com", ca) == 0, "libssl: name outside the SAN refused  <-- BUG");
+    return FAILS;
+}
+var r = main();
+syscall(SYS_EXIT_GROUP, r);

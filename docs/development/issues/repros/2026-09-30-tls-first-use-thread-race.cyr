@@ -1,0 +1,149 @@
+# Repro: the first native-TLS use in a process is not thread-safe.
+#   A/B: two threads that make their first TLS connects concurrently poison
+#        the process -- their handshakes fail, and so does every later one
+#        (a third thread started after both joined).
+#   C:   first TLS use on a worker thread, then on the main thread -> SIGSEGV.
+#   D:   control -- the same as A/B after warming sigil on the main thread
+#        (crypto_tls_main_init + ecdsa_p256_warm + ecdsa_p384_warm): all OK.
+# Each scenario runs in a fresh fork() so it starts with cold lazy inits.
+#
+# Driven by 2026-09-30-tls-first-use-thread-race.sh (P-256 CA + server cert,
+# two `openssl s_server`s). Standalone: <binary> <port> <port2> <ca.crt>
+# Exit code = number of failing checks.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/net.cyr"
+include "lib/args.cyr"
+include "lib/thread.cyr"
+include "lib/tls.cyr"
+
+enum ReproK { KPER = 5; }
+var PORT = 0;     # set before the first fork, read-only after
+var PORT2 = 0;    # a second server, so the two threads' handshakes overlap
+var CA = 0;
+var FAILS = 0;
+
+fn _hook(cafile, handle): i64 {
+    if (tls_ctx_load_verify_locations(handle, cafile, 0) != 1) { return 1; }
+    return 0;
+}
+
+# One HTTPS GET over a fresh connection. 1 = handshake + response OK.
+fn _fetch(port): i64 {
+    var st, fd = tcp_socket();
+    if (is_err_result(st) != 0) { return 0; }
+    var cs, cv = sock_connect(fd, INADDR_LOOPBACK(), port);
+    if (is_err_result(cs) != 0) { sock_close(fd); return 0; }
+    var t = tls_connect_with_ctx_hook(fd, "localhost", &_hook, CA);
+    var ok = 0;
+    if (t != 0) {
+        var req = "GET / HTTP/1.0\r\n\r\n";
+        var buf[512];
+        tls_write(t, req, strlen(req));
+        if (tls_read(t, &buf, 512) > 0) { ok = 1; }
+        tls_close(t);
+    }
+    sock_close(fd);
+    return ok;
+}
+
+# KPER fetches against port load64(arg + 8); stores the number that failed at arg.
+fn _worker(arg): i64 {
+    var bad = 0;
+    var k = 0;
+    while (k < KPER) {
+        if (_fetch(load64(arg + 8)) != 1) { bad = bad + 1; }
+        k = k + 1;
+    }
+    store64(arg, bad);
+    return 0;
+}
+
+# Child body for A/B and D: two concurrent first-use threads, then a third.
+# Exit code = 16 * (failed fetches of the pair) + (failed fetches of the third).
+fn _pair_then_third(warm): i64 {
+    if (warm == 1) { crypto_tls_main_init(); ecdsa_p256_warm(); ecdsa_p384_warm(); }
+    var s1 = alloc(16); var s2 = alloc(16); var s3 = alloc(16);
+    store64(s1, 99); store64(s2, 99); store64(s3, 99);
+    store64(s1 + 8, PORT); store64(s2 + 8, PORT2); store64(s3 + 8, PORT);
+    var t1 = thread_create(&_worker, s1);
+    var t2 = thread_create(&_worker, s2);
+    thread_join(t1);
+    thread_join(t2);
+    var t3 = thread_create(&_worker, s3);
+    thread_join(t3);
+    return 16 * (load64(s1) + load64(s2)) + load64(s3);
+}
+
+# Child body for C: worker thread first, then the main thread.
+fn _worker_then_main(): i64 {
+    var s1 = alloc(16); var sm = alloc(16);
+    store64(s1, 99); store64(sm, 99);
+    store64(s1 + 8, PORT); store64(sm + 8, PORT);
+    var t1 = thread_create(&_worker, s1);
+    thread_join(t1);
+    _worker(sm);          # SIGSEGVs on 6.6.12
+    return load64(sm);
+}
+
+# Fork, run scenario `which` in the child, return the raw wait status.
+fn _run(which): i64 {
+    var pid = sys_fork();
+    if (pid == 0) {
+        var rc = 0;
+        if (which == 1) { rc = _pair_then_third(0); }
+        if (which == 2) { rc = _worker_then_main(); }
+        if (which == 3) { rc = _pair_then_third(1); }
+        syscall(SYS_EXIT_GROUP, rc);
+    }
+    var wst[8];
+    store64(&wst, 0);
+    sys_waitpid(pid, &wst, 0);
+    return load64(&wst) & 0xFFFF;
+}
+
+fn _check(ok, msg): i64 {
+    if (ok == 1) { println("PASS"); } else { println("FAIL"); FAILS = FAILS + 1; }
+    println(msg);
+    return 0;
+}
+
+# Print a child's outcome: the signal that killed it, or its failed-fetch counts.
+fn _detail(ws, pair_mode): i64 {
+    var sig = ws & 0x7F;
+    var code = (ws >> 8) & 0xFF;
+    if (sig != 0) { println("  child killed by signal:"); fmt_int(sig); println(""); return 0; }
+    if (pair_mode == 1) {
+        println("  failed fetches -- concurrent pair (of 10), later third thread (of 5):");
+        fmt_int(code / 16); println(""); fmt_int(code % 16); println("");
+        return 0;
+    }
+    println("  failed fetches (of 5):"); fmt_int(code); println("");
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    args_init();
+    PORT = atoi(argv(1));
+    PORT2 = atoi(argv(2));
+    CA = argv(3);
+    var a = _run(1);
+    var asig = a & 0x7F;
+    var acode = (a >> 8) & 0xFF;
+    _check(asig == 0 && acode / 16 == 0, "A: two threads, concurrent first TLS use -- all 10 fetches OK");
+    _check(asig == 0 && acode % 16 == 0, "B: a third thread after both joined -- all 5 fetches OK");
+    _detail(a, 1);
+    var c = _run(2);
+    _check(c == 0, "C: first TLS use on a worker, then on main -- no crash, all OK");
+    _detail(c, 0);
+    var d = _run(3);
+    _check(d == 0, "D: control, sigil warmed on main first -- all OK");
+    _detail(d, 1);
+    return FAILS;
+}
+var r = main();
+syscall(SYS_EXIT_GROUP, r);

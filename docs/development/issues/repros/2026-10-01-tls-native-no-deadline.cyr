@@ -1,0 +1,119 @@
+# repro: lib/tls.cyr native client — no deadline, unbounded ChangeCipherSpec skip.
+# argv: <cert.der> <key.der> <ca.pem>. Forks its own servers on 127.0.0.1.
+# Each case: a client with SO_RCVTIMEO = 2 s, killed after 10 s. Exit code =
+# cases still blocked at 10 s (each read stays under the 2 s timeout).
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/net.cyr"
+include "lib/args.cyr"
+include "lib/tls.cyr"
+
+var _ca = 0;
+var _ca_len = 0;
+
+fn _hook(ctx, handle) {
+    if (tls_native_set_ca_bundle(handle, _ca, _ca_len, 0) != TLS_OK) { return 1; }
+    return 0;
+}
+
+# CCS records, 14 03 03 00 01 01, one per 500 ms for 30 s.
+fn _ccs_drip(fd) {
+    var r = alloc(8);
+    store8(r, 20); store8(r + 1, 3); store8(r + 2, 3); store8(r + 3, 0); store8(r + 4, 1); store8(r + 5, 1);
+    var k = 0;
+    while (k < 60) {
+        if (sys_write(fd, r, 6) != 6) { return 0; }
+        sleep_ms(500);
+        k = k + 1;
+    }
+    return 0;
+}
+
+# mode 1: no TLS — read the ClientHello, then CCS records.
+# mode 2: a real TLS 1.3 handshake (tls_accept), read the request, then CCS records.
+fn _server(lfd, mode, cert, clen, key, klen) {
+    signal_ignore(SIGPIPE);
+    var at, cfd = sock_accept(lfd);
+    if (is_err_result(at) == 1) { return 0; }
+    if (mode == 1) {
+        var b = alloc(4096);
+        sys_read(cfd, b, 4096);
+        _ccs_drip(cfd);
+        return 0;
+    }
+    var tc = tls_accept(cfd, cert, clen, key, klen);
+    if (tc == 0) { return 0; }
+    var q = alloc(256);
+    tls_read(tc, q, 256);
+    _ccs_drip(cfd);
+    return 0;
+}
+
+fn _client(port, mode) {
+    var st, fd = tcp_socket();
+    sock_set_recv_timeout(fd, 2, 0);
+    var ct, cv = sock_connect(fd, INADDR_LOOPBACK(), port);
+    if (is_err_result(ct) == 1) { return 3; }
+    var tc = tls_connect_with_ctx_hook(fd, "localhost", &_hook, 0);
+    if (tc == 0) { return 4; }                       # handshake failed (mode 1 would land here if bounded)
+    tls_write(tc, "GET / HTTP/1.0\r\n\r\n", 18);
+    var b = alloc(256);
+    tls_read(tc, b, 256);
+    return 5;                                        # a read returned
+}
+
+fn _case(mode, cert, clen, key, klen) {
+    var lt, lfd = tcp_socket();
+    sock_reuse(lfd);
+    sock_bind(lfd, INADDR_LOOPBACK(), 0);
+    sock_listen(lfd, 4);
+    var sa[16];
+    var sl[8];
+    store64(&sl, 16);
+    sys_getsockname(lfd, &sa, &sl);
+    var port = load8(&sa + 2) * 256 + load8(&sa + 3);
+    var sp = sys_fork();
+    if (sp == 0) { _server(lfd, mode, cert, clen, key, klen); sys_exit(0); }
+    var cp = sys_fork();
+    if (cp == 0) { sys_exit(_client(port, mode)); }
+    var wst[8];
+    var t = 0;
+    var done = 0;
+    while (t < 200 && done == 0) {
+        if (sys_waitpid(cp, &wst, 1) == cp) { done = 1; }
+        else { sleep_ms(50); t = t + 1; }
+    }
+    if (done == 0) { sys_kill(cp, 9); sys_waitpid(cp, &wst, 0); }
+    sys_kill(sp, 9);
+    sys_waitpid(sp, &wst, 0);
+    sock_close(lfd);
+    if (mode == 1) { print("CCS / 500 ms in the handshake: ", 31); }
+    else { print("CCS / 500 ms after the handshake: ", 34); }
+    if (done == 0) { println("client still blocked after 10 s (SO_RCVTIMEO 2 s)"); return 1; }
+    print("client returned, code ", 22);
+    print_num((load64(&wst) >> 8) & 255);
+    println("");
+    return 0;
+}
+
+fn main() {
+    alloc_init();
+    args_init();
+    crypto_tls_main_init();
+    ecdsa_p256_warm();
+    ecdsa_p384_warm();
+    var cert = alloc(4096);
+    var clen = file_read_all(argv(1), cert, 4096);
+    var key = alloc(4096);
+    var klen = file_read_all(argv(2), key, 4096);
+    _ca = alloc(8192);
+    _ca_len = file_read_all(argv(3), _ca, 8192);
+    var bad = _case(1, cert, clen, key, klen);
+    bad = bad + _case(2, cert, clen, key, klen);
+    return bad;
+}
+var r = main();
+syscall(SYS_EXIT, r);

@@ -1,0 +1,63 @@
+# Repro: tls_ctx_load_verify_locations' native path allocates a fresh 1 MiB
+# read buffer on EVERY call and never frees or caches it (no-free bump heap),
+# the per-call twin of the system-bundle leak 6.5.36 fixed in
+# tls_native_set_ca_system. Also prints (info, not checked) the per-call heap
+# cost of re-parsing the system store and how many of its PEM blocks sigil
+# actually installed as roots.
+#
+# Driven by 2026-09-30-tls-load-verify-locations-1mib-per-call.sh (makes a
+# small CA file). Standalone: <binary> <ca.crt>
+# Exit code = number of failing checks.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/args.cyr"
+include "lib/tls.cyr"
+
+enum ReproN { CALLS = 20; LIMIT = 65536; }
+
+fn main(): i64 {
+    alloc_init();
+    args_init();
+    var ca = argv(1);
+    var fails = 0;
+    # warm: the first call may legitimately cache something
+    var w = tls_native_new_client("localhost", 9);
+    tls_ctx_load_verify_locations(w, ca, 0);
+    tls_native_set_ca_system(w);
+    var u0 = alloc_used();
+    var k = 0;
+    while (k < CALLS) {
+        var c = tls_native_new_client("localhost", 9);
+        if (tls_ctx_load_verify_locations(c, ca, 0) != 1) { println("load_verify_locations failed"); }
+        k = k + 1;
+    }
+    var per = (alloc_used() - u0) / CALLS;
+    if (per < LIMIT) { println("PASS"); } else { println("FAIL"); fails = fails + 1; }
+    println("tls_ctx_load_verify_locations (one small CA): heap bytes retained per call");
+    fmt_int(per); println("");
+    # info: system store re-parsed into every native client ctx
+    var u1 = alloc_used();
+    k = 0;
+    while (k < CALLS) {
+        var d = tls_native_new_client("localhost", 9);
+        tls_native_set_ca_system(d);
+        k = k + 1;
+    }
+    println("info: tls_native_set_ca_system heap bytes per call (cached read, re-parse):");
+    fmt_int((alloc_used() - u1) / CALLS); println("");
+    var blocks = 0;
+    var i = 0;
+    while (i + 27 <= _tn_ca_len) {
+        if (memeq(_tn_ca_buf + i, "-----BEGIN CERTIFICATE-----", 27) == 1) { blocks = blocks + 1; }
+        i = i + 1;
+    }
+    println("info: PEM certificate blocks in the system bundle / roots installed:");
+    fmt_int(blocks); println("");
+    fmt_int(load64(load64(w + TLS_CTX_OFF_CA_ROOT))); println("");
+    return fails;
+}
+var r = main();
+syscall(SYS_EXIT_GROUP, r);
