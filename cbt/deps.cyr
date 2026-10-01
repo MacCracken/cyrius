@@ -2300,6 +2300,29 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
                 if (file_exists(_dep_join_path(dep_path, dm_rel)) == 1) {
                     dep_modules = vec_new();
                     vec_push(dep_modules, dm_rel);
+                } else {
+                    # 6.6.13 (I10b): SAY so, and count it. Not marked visited — that is
+                    # what the warning tells the reader — and the clone's verified commit
+                    # pin is kept, as for `modules = []`. A warning, not an error: exit 0.
+                    _ew("warning: [deps.");
+                    _ew(dep_name);
+                    _ew("] declares no modules and ");
+                    if (need_clone == 1 && dep_tag != 0) {
+                        _ew("tag '");
+                        _ew(dep_tag);
+                        _ew("'");
+                    } elif (need_clone == 1) {
+                        _ew(dep_git);
+                    } else {
+                        _ew(dep_path);
+                    }
+                    _ew(" ships no ");
+                    _ew(dm_rel);
+                    _ew(" — nothing vendored; a transitive [deps.");
+                    _ew(dep_name);
+                    _ew("] will resolve instead (list modules, or modules = []");
+                    _ew(" for a dep that is declared but not linked)\n");
+                    _dep_inert = _dep_inert + 1;
                 }
             }
             # v6.2.50 Phase C: pull declared modular sub-modules from the dep's
@@ -2571,6 +2594,7 @@ fn cmd_deps(): i64 {
     # queue = abs dirs of resolved deps whose own cyrius.cyml needs walking.
     _dep_visited = vec_new();
     _dep_queue = vec_new();
+    _dep_inert = 0;                  # 6.6.13 (I10b): modules-less deps that vendored nothing
     _dep_commit_lines = vec_new();   # CVE-21 (v6.2.30): git-dep commit pins
     _dep_lock_load();                # v6.6.4: the inherited lock, read BEFORE any copy (stdlib-leaf guard)
     _dep_parse_groups(buf, n);       # v6.2.49 Phase B: [groups] (buf is the TOML header, CYML body already stripped)
@@ -2689,12 +2713,19 @@ fn cmd_deps(): i64 {
     # v6.6.4: leaves the lock guard refused are errors — no lock write, non-zero exit.
     errors = errors + _dep_lock_refused;
 
-    # Summary (only print if something was copied or errored)
-    if (copied > 0 || errors > 0) {
+    # Summary (only print if something was copied, errored, or — 6.6.13 I10b — a
+    # modules-less dep vendored nothing: that count is printed even at 0 resolved).
+    if (copied > 0 || errors > 0 || _dep_inert > 0) {
         var nb[24];
         var nl = fmt_int_buf(copied, &nb);
         sys_write(STDOUT_FD, &nb, nl);
         sys_write(STDOUT_FD, " deps resolved", 14);
+        if (_dep_inert > 0) {
+            sys_write(STDOUT_FD, ", ", 2);
+            nl = fmt_int_buf(_dep_inert, &nb);
+            sys_write(STDOUT_FD, &nb, nl);
+            sys_write(STDOUT_FD, " vendored nothing", 17);
+        }
         if (errors > 0) {
             sys_write(STDOUT_FD, ", ", 2);
             nl = fmt_int_buf(errors, &nb);

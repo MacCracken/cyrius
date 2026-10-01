@@ -38,7 +38,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the "declared, not linked" spelling (clone + pin, nothing vendored, no warning). A
   `modular`-only git block is now cloned, and a clean modular pull marks the dep resolved, so its
   commit pin reaches `cyrius.lock` (before, even a path-resolved modular dep wrote no lock and no
-  output). The filed repro (`repros/git-dep-without-modules.cyml`, pin edited to the tree) now
+  output). When the tag or path ships no `dist/X.cyr`, `cyrius deps` now SAYS so — `warning:
+  [deps.X] declares no modules and tag '<tag>' ships no dist/X.cyr — nothing vendored; a
+  transitive [deps.X] will resolve instead (list modules, or modules = [] for a dep that is
+  declared but not linked)` — and counts it in the summary (`0 deps resolved, 1 vendored
+  nothing`, printed even when nothing resolved); exit status stays 0, the dep is not marked
+  visited (as the warning says), and the clone's verified commit pin is kept, as for `modules =
+  []`. `optional` / `target`-gated blocks still skip silently. ⚠ crab's deliberately unlinked
+  `[deps.daimon]` (no `modules`, daimon ships no `dist/`) warns on every build from 6.6.13 and
+  is cloned in CI — add `modules = []` before pinning ≥ 6.6.13. On native Windows a
+  modules-less git dep with no usable `path` now reports the existing "needs a git clone, which
+  cyrius cannot run on this platform" error where it used to be silently dropped.
+  The filed repro (`repros/git-dep-without-modules.cyml`, pin edited to the tree) now
   prints `1 deps resolved`, vendors `lib/tyche.cyr` byte-identical to `git show
   1.1.0:dist/tyche.cyr` and pins `tyche 1.1.0`.
 
