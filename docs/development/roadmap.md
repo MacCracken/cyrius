@@ -42,7 +42,7 @@ unscheduled 6.x backlog. Whole-cycle framing, the v6.7.x language arc and v6.8.x
 **Current head: v6.6.12** (2026-09-30) — cycc **1,470,944 B** (`.text` **1,297,064**) ·
 seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi · self_compile **839 ms** ·
 **410** `.tcyr` (**153** in `crossos/`) · **104** `lib/*.cyr` · **316** shell gates under
-`tests/gates/<bucket>/` · **5 open issues** · **6 open proposals**.
+`tests/gates/<bucket>/` · **8 open issues** (6 placed in 6.6.13) · **6 open proposals**.
 
 > ⚠ **Every figure above was DERIVED on the day, not carried** (re-derived 2026-09-27 at the 6.6.7 open).
 > `version-bump.sh` rewrites the version token, replaces the `(…)` after it with the bump date, and
@@ -65,7 +65,7 @@ patch releases it needed. Per-release detail is in the CHANGELOG; the process ru
 *Standing notes* below.
 
 **Re-planned 2026-10-01 (user).** 6.6.13 is a repair release — the three silent memory-corruption finds
-that led the backlog, and the five open issues. After it the minor finishes on **tooling** (the proposals).
+that led the backlog, and the open issues (I1–I6). After it the minor finishes on **tooling** (the proposals).
 The language list that was Phase 3 moved to **v6.7.x**, which RISC-V vacates for v6.8.x/v6.9.x. See
 *The shape of v6.6.x*.
 
@@ -77,7 +77,7 @@ The language list that was Phase 3 moved to **v6.7.x**, which RISC-V vacates for
 |---|---|---|
 | **1 — Repair window** | `.2` – `.6` | ✅ **CLOSED at 6.6.6.** |
 | **1b — the repair batch** | `.7` – `.12` | ✅ **CLOSED at 6.6.12** (summary in *Where we are*). |
-| **1c — memory + reported-issue repair** | `.13` | The three silent memory-corruption finds, the five open issues, and the ganita / bayan / sigil folds. ⛔ **No `src/` or `lib/` work until ganita and bayan have released** (user, 2026-10-01). See *6.6.13* below. |
+| **1c — memory + reported-issue repair** | `.13` | The three silent memory-corruption finds, the open issues I1–I6, and the ganita / bayan / sigil folds. ⛔ **No `src/` or `lib/` work until ganita and bayan have released** (user, 2026-10-01). See *6.6.13* below. |
 | **2 — Tooling round-out** | after `.13`, to the minor's close | The tooling proposals P1, P2, P4, P5, P6, alongside the DCE compaction arc and, last, macOS concurrency ordering (*Open questions* 3). Then the closeout pass. |
 | ~~**3 — Committed ergonomics**~~ | — | **Moved to v6.7.x** with P3 `const fn` (user, 2026-10-01) — see [roadmap_6.md](roadmap_6.md). |
 
@@ -118,7 +118,7 @@ byte-identical from the tag (CLAUDE.md: fix the SOURCE repo, not the fold).
   returns **80** (want 34). Cause: `_fsc_name_src` does not resolve captures (since 6.6.10's field-store
   copy).
 
-*The five open issues:*
+*The open issues (I1–I5 at planning; I6 added 2026-10-01):*
 
 - **I1 — 🔴 the libssl backend never verifies the server hostname**
   ([issue](issues/2026-09-30-tls-libssl-backend-no-hostname-verification.md)). A man-in-the-middle: any
@@ -163,13 +163,26 @@ byte-identical from the tag (CLAUDE.md: fix the SOURCE repo, not the fold).
   `frintz` on aarch64, and a cx form. ⚠ A builtin name becomes RESERVED: survey the ecosystem for local
   definitions of the three names before switching (the 6.6.0 `tagged_new` lesson). `lib/math.cyr`'s
   wrappers retire in the same bite.
+- **I6 — arm64 macOS: a thread created in a `fork()` child kills the child**
+  ([issue](issues/2026-10-01-macos-arm64-thread-create-in-fork-child-sigsegv.md); added 2026-10-01 at the
+  user's request, found while preparing sigil 3.13.6). SIGSEGV inside `thread_create`, before it returns;
+  fork itself works, and Linux is unaffected. The likely cause: `sys_fork` there is the aarch64 peer's
+  `clone`, translated to Darwin's raw BSD `fork`, so libSystem's child-side fork handling never runs before
+  `pthread_create`. Default fix: route the arm64-macOS `sys_fork` through libSystem's `fork()` via `__got`, a
+  Mach-O writer change. Acceptance:
+  - the repro exits 0 on ecb;
+  - a new `tests/tcyr/crossos/` fork-then-thread test runs on the ecb leg.
+
+**Filed 2026-10-01, not yet placed** (the user decides): `issues/2026-10-01-tls-ip-literal-dnsname.md` and
+`issues/2026-10-01-tls-native-no-deadline.md`, which arrived after this plan was written.
 
 **Once the siblings have tagged:**
 1. Fold ganita, bayan and sigil byte-identical from their tags.
 2. Open the lanes, minding the two shared files:
    - `lib/tls.cyr` is touched by I1, I2 and I3: one TLS lane, with its bites in sequence.
    - `lib/math.cyr` is touched by I4 and I5. I5's compiler half sits in the `src` lane, and its `lib/math.cyr` hunk goes to the math lane as a named hand-off.
-3. One `src` lane (M1–M3 and I5's builtins) commits `build/cycc`.
+3. One `src` lane (M1–M3, I5's builtins and I6's Mach-O `__got` entry) commits `build/cycc`. I6's
+   `lib/syscalls_aarch64_linux.cyr` arm rides with it; verify it on ecb.
 4. Gate as always: `release-gate.sh` GREEN on the merged tree, cross-OS on ecb / ach / cass / pi, bench recorded.
 
 **Not promoted** (still in the backlog): the nearest to this release's theme are `var v = g<i32>(..)?;`
