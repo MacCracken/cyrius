@@ -1,6 +1,8 @@
 # A `[deps.X]` with `git` + `tag` but no `modules` is silently ignored — 🟡 OPEN
 
 **Status:** 🟡 **OPEN** — found by agnostic 0.1.7; not repaired. Consumer-side stopgap in place.
+**Placement:** **6.6.13**, bite I10 (2026-10-01, with the other open issues) — see `roadmap.md` § 6.6.13.
+`cbt/deps.cyr` only: a tooling lane.
 **Discovered:** 2026-10-01, agnostic 0.1.7 (moving four dep tags in `cyrius.cyml` changed nothing in
 `cyrius.lock`).
 **Severity:** Medium — no wrong code is built, but a declared dependency is dropped without a word,

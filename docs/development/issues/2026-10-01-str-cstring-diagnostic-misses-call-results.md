@@ -4,7 +4,9 @@
 **6.6.12 release** toolchain, x86_64 and `--aarch64` (run under qemu-aarch64), with
 `repros/2026-10-01-str-cstring-diagnostic-misses-call-results.cyr`: warnings and run output
 byte-identical on both targets.
-**Placement:** unpinned — 6.x-line backlog (a frontend diagnostic; never 7.x).
+**Placement:** **6.6.13**, bite I11 (2026-10-01, with the other open issues; this filing had put it in the
+backlog) — see `roadmap.md` § 6.6.13. The *Related* `#deprecated` gaps are a separate defect, recorded in
+roadmap.md's Potential backlog.
 **Discovered:** 2026-10-01, bayan 1.5.10 (re-measuring the diagnostic bayan 1.4.1 armed by
 annotating `bayan_json_v_obj_get(v, key: cstring)`).
 **Severity:** Low — missing warnings and a misleading one; the code generated is right. The code

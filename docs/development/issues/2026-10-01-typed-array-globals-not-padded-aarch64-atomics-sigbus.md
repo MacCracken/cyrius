@@ -2,6 +2,8 @@
 
 **Status:** 🔴 **OPEN** — found by agnostic 0.1.7 on real hardware; not repaired. No consumer-side
 work-around is sane (see the end).
+**Placement:** **6.6.13**, bite I9 (2026-10-01, with the other open issues) — see `roadmap.md` § 6.6.13. A
+global-layout fix: it rides in the `src` lane with M1–M3.
 **Discovered:** 2026-10-01, agnostic 0.1.7 — its aarch64 release binary dies with SIGBUS at startup on
 a Raspberry Pi 4, and 12 of its 27 suites die the same way. agnostic 0.1.6 (cyrius 6.6.11) is
 identical, so this predates 6.6.12; agnostic recorded it as "SIGBUS under qemu, needs real hardware"

@@ -42,7 +42,7 @@ unscheduled 6.x backlog. Whole-cycle framing, the v6.7.x language arc and v6.8.x
 **Current head: v6.6.12** (2026-09-30) — cycc **1,470,944 B** (`.text` **1,297,064**) ·
 seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi · self_compile **839 ms** ·
 **410** `.tcyr` (**153** in `crossos/`) · **104** `lib/*.cyr` · **316** shell gates under
-`tests/gates/<bucket>/` · **8 open issues**, all placed in 6.6.13 · **6 open proposals**.
+`tests/gates/<bucket>/` · **11 open issues**, all placed in 6.6.13 · **6 open proposals**.
 
 > ⚠ **Every figure above was DERIVED on the day, not carried** (re-derived 2026-09-27 at the 6.6.7 open).
 > `version-bump.sh` rewrites the version token, replaces the `(…)` after it with the bump date, and
@@ -65,7 +65,7 @@ patch releases it needed. Per-release detail is in the CHANGELOG; the process ru
 *Standing notes* below.
 
 **Re-planned 2026-10-01 (user).** 6.6.13 is a repair release — the three silent memory-corruption finds
-that led the backlog, and the open issues (I1–I8). After it the minor finishes on **tooling** (the proposals).
+that led the backlog, and the open issues (I1–I11). After it the minor finishes on **tooling** (the proposals).
 The language list that was Phase 3 moved to **v6.7.x**, which RISC-V vacates for v6.8.x/v6.9.x. See
 *The shape of v6.6.x*.
 
@@ -77,13 +77,13 @@ The language list that was Phase 3 moved to **v6.7.x**, which RISC-V vacates for
 |---|---|---|
 | **1 — Repair window** | `.2` – `.6` | ✅ **CLOSED at 6.6.6.** |
 | **1b — the repair batch** | `.7` – `.12` | ✅ **CLOSED at 6.6.12** (summary in *Where we are*). |
-| **1c — memory + reported-issue repair** | `.13` | The three silent memory-corruption finds, the open issues I1–I8, and the ganita / bayan / sigil folds. ⛔ **No `src/` or `lib/` work until ganita and bayan have released** (user, 2026-10-01). See *6.6.13* below. |
+| **1c — memory + reported-issue repair** | `.13` | The three silent memory-corruption finds, the open issues I1–I11, and the ganita / bayan / sigil folds. ✅ ganita 1.2.11, bayan 1.5.10 and sigil 3.13.6 are tagged (2026-10-01): the release is open. See *6.6.13* below. |
 | **2 — Tooling round-out** | after `.13`, to the minor's close | The tooling proposals P1, P2, P4, P5, P6, alongside the DCE compaction arc and, last, macOS concurrency ordering (*Open questions* 3). Then the closeout pass. |
 | ~~**3 — Committed ergonomics**~~ | — | **Moved to v6.7.x** with P3 `const fn` (user, 2026-10-01) — see [roadmap_6.md](roadmap_6.md). |
 
 ---
 
-## 6.6.13 — memory fixes + reported-issue repair (planned 2026-10-01, NOT started)
+## 6.6.13 — memory fixes + reported-issue repair (planned 2026-10-01, OPEN)
 
 **Set by the user 2026-10-01**: the three silent memory-corruption finds that led the backlog, and every
 open issue in [`issues/`](issues/). ⛔ **No `src/` or `lib/` work starts until ganita and bayan have
@@ -118,7 +118,7 @@ byte-identical from the tag (CLAUDE.md: fix the SOURCE repo, not the fold).
   returns **80** (want 34). Cause: `_fsc_name_src` does not resolve captures (since 6.6.10's field-store
   copy).
 
-*The open issues (I1–I5 at planning; I6–I8 added 2026-10-01):*
+*The open issues (I1–I5 at planning; I6–I11 added 2026-10-01):*
 
 - **I1 — 🔴 the libssl backend never verifies the server hostname**
   ([issue](issues/2026-09-30-tls-libssl-backend-no-hostname-verification.md)). A man-in-the-middle: any
@@ -197,6 +197,39 @@ byte-identical from the tag (CLAUDE.md: fix the SOURCE repo, not the fold).
   (b) is new public API. ⚠ It shares `tls_native_read` with I2 (c), where alerts read as EOF: take the two in
   sequence, with one error-mapping table. Acceptance: the repro exits 0 (both cases fail fast instead of
   blocking).
+- **I9 — a typed-array global leaves every later global misaligned; an atomic on one SIGBUSes on aarch64**
+  ([issue](issues/2026-10-01-typed-array-globals-not-padded-aarch64-atomics-sigbus.md); filed by agnostic
+  0.1.7, placed 2026-10-01). `var a: u8[N]` reserves exactly `N` bytes and the next global lands at
+  `&a + N`, so for `N % 8 != 0` every later 64-bit global is misaligned until some other odd size shifts
+  it back. x86 tolerates it; the Pi 4's `ldaxr`/`ldar` fault. The folded sankoch's three `u8` arrays
+  (630 B) misalign 1,101 of agnostic's 1,962 globals, among them a dozen of sigil's atomic init flags.
+  A memory-layout fix, so it rides with M1–M3. Fix: pad after an odd-sized typed array so every global
+  starts 8-aligned, on every backend (a `u8[N]` keeps its `N` usable bytes). Acceptance:
+  - the repro exits 0 natively on pi;
+  - a new `crossos/` row asserts `&g % 8 == 0` for a 64-bit global declared after `u8[3]`, `u8[363]`,
+    `i16[3]` and `i32[3]` globals, and runs `atomic_cas` on it.
+- **I10 — a `[deps.X]` with `git` + `tag` but no `modules` is silently ignored**
+  ([issue](issues/2026-10-01-git-dep-without-modules-silently-inert.md); filed by agnostic 0.1.7, placed
+  2026-10-01). `cbt/deps.cyr` clones a named dep only when it lists `modules`, so the block is never
+  cloned, vendored or locked. It is not reported either, and a transitive declaration of the same name
+  resolves in its place. Default fix: take both of the issue's options. A missing `modules` means
+  `["dist/<name>.cyr"]` when the tag ships that file; otherwise `cyrius deps` warns and counts the dep in
+  its summary. Acceptance: the repro `.cyml` vendors and locks the dep, and a gate pins the warning.
+- **I11 — the Str → `: cstring` diagnostic types only a named local, and its `str_data` hint is wrong**
+  ([issue](issues/2026-10-01-str-cstring-diagnostic-misses-call-results.md); filed by bayan 1.5.10, which
+  had put it in the backlog — placed in 6.6.13 with the other open issues, 2026-10-01). The check sees
+  only an argument whose first token is a `Str` local or param. It is silent for a call result, a global,
+  a `: Str` field, a tail call and a method call (W2–W9). It reports `s.data` as the `Str` itself, and its
+  hint recommends `str_data(x)`, which turns a warned bug into a silent one (F2). Fix as the issue
+  proposes:
+  - one helper, called from all three argument loops (PARSE_FNCALL, `_call_arg_one` and the tail loop);
+  - type single primaries only (`IDENT`, `IDENT (…)` via `GFRS`, `IDENT . field`);
+  - give a declared global's positive struct id, and an inferred global's initializer `GFRS`;
+  - hints that never suggest `str_data`.
+
+  Warning text only: every binary stays byte-identical. Acceptance: the repro warns on W1–W9, F1 and F2,
+  and no others. The issue's *Related* `#deprecated` gaps are a separate defect, and go to the backlog
+  below.
 
 **Once the siblings have tagged:**
 1. Fold ganita, bayan and sigil byte-identical from their tags.
@@ -204,8 +237,10 @@ byte-identical from the tag (CLAUDE.md: fix the SOURCE repo, not the fold).
    - `lib/tls.cyr` and the `lib/tls_native_*.cyr` files are touched by I1, I2, I3, I7 and I8: one TLS lane,
      with its bites in sequence (I2 (c) and I8 back to back).
    - `lib/math.cyr` is touched by I4 and I5. I5's compiler half sits in the `src` lane, and its `lib/math.cyr` hunk goes to the math lane as a named hand-off.
-3. One `src` lane (M1–M3, I5's builtins and I6's Mach-O `__got` entry) commits `build/cycc`. I6's
-   `lib/syscalls_aarch64_linux.cyr` arm rides with it; verify it on ecb.
+3. One `src` lane commits `build/cycc`: M1–M3, I9's global padding, I5's builtins, I11's diagnostic
+   and I6's Mach-O `__got` entry. I6's `lib/syscalls_aarch64_linux.cyr` arm rides with it; verify it on
+   ecb, and verify I9 natively on pi.
+   - I10 is `cbt/deps.cyr` only, so it goes in a tooling lane.
 4. Gate as always: `release-gate.sh` GREEN on the merged tree, cross-OS on ecb / ach / cass / pi, bench recorded.
 
 **Not promoted** (still in the backlog): the nearest to this release's theme are `var v = g<i32>(..)?;`
@@ -386,6 +421,12 @@ cyrius; a folded stdlib is then re-vendored into `lib/` byte-identical from its 
 Real 6.x-line work without a committed slot; pulled into a release the moment a consumer or
 priority surfaces. **These are technical items → they stay in the 6.x cycle, never 7.x.**
 
+- **`#deprecated` gaps (measured by bayan 1.5.10 on the 6.6.12 release, recorded in I11's issue as a
+  *Related* separate defect; backlog, not placed).**
+  - Silent: a call through `&f` (`fncall1(&old_f, 1)`), a method-dot call `o.m()` whose `T_m` is
+    `#deprecated`, and a call parsed before the deprecated definition.
+  - Mislocated on a tail call: PARSE_RETURN warns (`_DEPRECATED_WARN`, `parse_fn.cyr:790`) after the `)`
+    and `;` are consumed, so `return old_f(x);` is reported at the NEXT token's line.
 - **Found by the 6.6.12 premise check and lanes (2026-09-30; backlog, not placed — only the user promotes).**
   Met in passing, not swept for. Its three ⚠ silent-memory-corruption items were promoted to **6.6.13**
   (M1–M3) on 2026-10-01.
