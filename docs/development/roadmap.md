@@ -406,6 +406,14 @@ cyrius; a folded stdlib is then re-vendored into `lib/` byte-identical from its 
   which also adopts 6.6.12's aarch64 wrappers after the cyrius tag.
 - bayan `_toml_unescape_span_a` answers a refused allocation with `str_from("")` from the DEFAULT
   allocator, so its value arms report an empty string as success.
+- bayan 1.5.11 (cut for cyrius 6.6.13, ⛔ tagged BEFORE it): `src/pdf.cyr` passes `str_data(name)` to a
+  `: cstring` parameter, which I11's rule warns on in every build including bayan or TLS — pass the
+  NUL-terminated buffer it already builds; plus `_toml_unescape_span_a` above, and `_d_init_tables`
+  (`src/dtoa.cyr`), a check-then-set lazy init with no publish barrier (on aarch64 a second thread can
+  parse against zero significands — I3's class).
+- crab: `[deps.daimon]` has no `modules`, so from 6.6.13 (I10) it warns on every build and CI clones daimon —
+  add `modules = []` before pinning ≥ 6.6.13.
+- sigil can drop its in-process cold-trial workaround for arm64 macOS once it pins ≥ 6.6.13 (I6).
 - mabda still names `_sk_info_cstr` in sakshi's `_sk_` namespace (no collision today).
 - sakshi's "Run under qemu" step calls `qemu-aarch64-static`, which exists only after its apt step.
 - bote still commits live `path = "../libro"` / `"../majra"` lines (the dhvani/libro shape 6.6.12 removed).
@@ -421,6 +429,32 @@ cyrius; a folded stdlib is then re-vendored into `lib/` byte-identical from its 
 Real 6.x-line work without a committed slot; pulled into a release the moment a consumer or
 priority surfaces. **These are technical items → they stay in the 6.x cycle, never 7.x.**
 
+- **Found by the 6.6.13 premise check (2026-10-01; backlog, not placed — only the user promotes).** Met in
+  passing while planning M1–M3 and I1–I11, not swept for. ⚠ (a)–(c) are silent miscompiles.
+  - (a) A pointer-mode struct local assigned into an inline struct stores its address
+    (`var a: Pt = alloc(16); var q: Pt; q = a;`): `_try_aggregate_copy_assign` (`parse.cyr` ~2457) gets 0
+    from `_agc_operand` for a non-parameter pointer-mode local and falls to the 8-byte store.
+  - (b) A callee writing to its by-value struct parameter mutates the caller's named-local argument
+    (`bump(p)` twice gives 4 then 5): `_try_push_struct_addr_arg` pushes `&local` with no copy, while
+    `_fla_push_arg` copies a field argument. The same decision as the 6.6.12 item below ("does the named
+    form copy too?").
+  - (c) The overload dispatcher compares a global's `GVTYPE` against the LOCAL encoding `0 - sid`
+    (`parse_fn.cyr` ~2757), so a `: Str` global is never routed to its `_str` sibling: `println(gs)` prints
+    the header's pointer bytes. I11 fixes the same sign in the diagnostic only (I11 is warning-only).
+  - (d) The native TLS client sends an IP-literal host as SNI (RFC 6066 §3 forbids it); I1 stops it on libssl.
+  - (e) `tls_ctx_use_certificate_file` / `tls_ctx_use_private_key_file` retain 64 KiB per call (I2 (a)'s
+    shape, in the server-side loaders).
+  - (f) A libssl-backend client dies of SIGPIPE when libssl writes an alert to a peer-closed socket.
+  - (g) `sizeof(f64)`, `sizeof(f32)`, `sizeof(u64)`, `sizeof(bool)`, `sizeof(ptr)` fail with
+    `sizeof: unknown type` — loud, not silent.
+  - (h) `EMACHO_PTHREAD_CREATE_ARM` takes `pthread_create`'s `int` result without sign-extending it
+    (harmless: `thread_create` tests only `!= 0`).
+  - (i) The libssl backend SIGSEGVs or hangs when used from a `thread_create` worker (raw clone threads
+    carry no pthread state), even after `_tls_init` ran on main. A fail-closed off-main guard was designed
+    for I3 and not taken; I3's contract states the limit.
+  - (j) Native TLS cannot run over `net.cyr` sockets on Windows: the default transport's `sys_read` /
+    `sys_write` (ReadFile/WriteFile) return 0 on a Winsock socket, so `tls_native_connect` fails `TLS_ERR_IO`
+    in ~8 ms (measured on cass). No `crossos/` test covers TLS. I8's Windows rows SKIP by name until it lands.
 - **`#deprecated` gaps (measured by bayan 1.5.10 on the 6.6.12 release, recorded in I11's issue as a
   *Related* separate defect; backlog, not placed).**
   - Silent: a call through `&f` (`fncall1(&old_f, 1)`), a method-dot call `o.m()` whose `T_m` is
