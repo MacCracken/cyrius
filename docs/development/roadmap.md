@@ -42,7 +42,7 @@ unscheduled 6.x backlog. Whole-cycle framing, the v6.7.x language arc and v6.8.x
 **Current head: v6.6.12** (2026-09-30) — cycc **1,470,944 B** (`.text` **1,297,064**) ·
 seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi · self_compile **839 ms** ·
 **410** `.tcyr` (**153** in `crossos/`) · **104** `lib/*.cyr` · **316** shell gates under
-`tests/gates/<bucket>/` · **8 open issues** (6 placed in 6.6.13) · **6 open proposals**.
+`tests/gates/<bucket>/` · **8 open issues**, all placed in 6.6.13 · **6 open proposals**.
 
 > ⚠ **Every figure above was DERIVED on the day, not carried** (re-derived 2026-09-27 at the 6.6.7 open).
 > `version-bump.sh` rewrites the version token, replaces the `(…)` after it with the bump date, and
@@ -65,7 +65,7 @@ patch releases it needed. Per-release detail is in the CHANGELOG; the process ru
 *Standing notes* below.
 
 **Re-planned 2026-10-01 (user).** 6.6.13 is a repair release — the three silent memory-corruption finds
-that led the backlog, and the open issues (I1–I6). After it the minor finishes on **tooling** (the proposals).
+that led the backlog, and the open issues (I1–I8). After it the minor finishes on **tooling** (the proposals).
 The language list that was Phase 3 moved to **v6.7.x**, which RISC-V vacates for v6.8.x/v6.9.x. See
 *The shape of v6.6.x*.
 
@@ -77,7 +77,7 @@ The language list that was Phase 3 moved to **v6.7.x**, which RISC-V vacates for
 |---|---|---|
 | **1 — Repair window** | `.2` – `.6` | ✅ **CLOSED at 6.6.6.** |
 | **1b — the repair batch** | `.7` – `.12` | ✅ **CLOSED at 6.6.12** (summary in *Where we are*). |
-| **1c — memory + reported-issue repair** | `.13` | The three silent memory-corruption finds, the open issues I1–I6, and the ganita / bayan / sigil folds. ⛔ **No `src/` or `lib/` work until ganita and bayan have released** (user, 2026-10-01). See *6.6.13* below. |
+| **1c — memory + reported-issue repair** | `.13` | The three silent memory-corruption finds, the open issues I1–I8, and the ganita / bayan / sigil folds. ⛔ **No `src/` or `lib/` work until ganita and bayan have released** (user, 2026-10-01). See *6.6.13* below. |
 | **2 — Tooling round-out** | after `.13`, to the minor's close | The tooling proposals P1, P2, P4, P5, P6, alongside the DCE compaction arc and, last, macOS concurrency ordering (*Open questions* 3). Then the closeout pass. |
 | ~~**3 — Committed ergonomics**~~ | — | **Moved to v6.7.x** with P3 `const fn` (user, 2026-10-01) — see [roadmap_6.md](roadmap_6.md). |
 
@@ -118,7 +118,7 @@ byte-identical from the tag (CLAUDE.md: fix the SOURCE repo, not the fold).
   returns **80** (want 34). Cause: `_fsc_name_src` does not resolve captures (since 6.6.10's field-store
   copy).
 
-*The open issues (I1–I5 at planning; I6 added 2026-10-01):*
+*The open issues (I1–I5 at planning; I6–I8 added 2026-10-01):*
 
 - **I1 — 🔴 the libssl backend never verifies the server hostname**
   ([issue](issues/2026-09-30-tls-libssl-backend-no-hostname-verification.md)). A man-in-the-middle: any
@@ -173,13 +173,36 @@ byte-identical from the tag (CLAUDE.md: fix the SOURCE repo, not the fold).
   - the repro exits 0 on ecb;
   - a new `tests/tcyr/crossos/` fork-then-thread test runs on the ecb leg.
 
-**Filed 2026-10-01, not yet placed** (the user decides): `issues/2026-10-01-tls-ip-literal-dnsname.md` and
-`issues/2026-10-01-tls-native-no-deadline.md`, which arrived after this plan was written.
+- **I7 — the native TLS client matches an IP-literal host against dNSName SAN entries, wildcards included**
+  ([issue](issues/2026-10-01-tls-ip-literal-dnsname.md); placed by the user 2026-10-01). A certificate
+  whose only SAN is `DNS:127.0.0.1` or `DNS:*.0.0.1` is accepted for `https://127.0.0.1`. RFC 9525 §6.3,
+  the rule CVE-18 cites, matches an IP literal against iPAddress entries only. Fix:
+  - `_tn_cert_san_match` (`lib/tls_native_conn.cyr:214`) parses the host once, and for an IP literal
+    compares `0x87` entries only;
+  - `_tn_parse_ipv4` (`:89`) refuses leading zeros, as `net_parse_ipv4` (`lib/net.cyr:1114`) does — or the
+    two share one parser.
+
+  Severity Low: exploiting it needs a trusted CA to issue such a dNSName. Acceptance: the repro exits 0.
+- **I8 — the native TLS client has no deadline, and skips plaintext ChangeCipherSpec records without limit**
+  ([issue](issues/2026-10-01-tls-native-no-deadline.md); placed by the user 2026-10-01). Any on-path box can
+  hold a client thread forever by injecting a CCS record more often than the read timeout; a 1-byte drip does
+  the same inside one record. All three parts:
+  - (a) accept at most one CCS, and only before the peer's Finished (RFC 8446 §5; one per direction in TLS
+    1.2), anything else failing with `TLS_ERR_PROTOCOL` and an `unexpected_message` alert;
+  - (b) a per-connection deadline — `tls_native_set_deadline(ctx, abs_ns)` plus a `tls_set_deadline` on the
+    shim, honoured by `_tn_sock_read_full` / `_tn_sock_write_all` by polling with the time left, and failing
+    with a distinct `TLS_ERR_TIMEOUT`;
+  - (c) pass the record-read error through instead of collapsing it to `TLS_ERR_IO`.
+
+  (b) is new public API. ⚠ It shares `tls_native_read` with I2 (c), where alerts read as EOF: take the two in
+  sequence, with one error-mapping table. Acceptance: the repro exits 0 (both cases fail fast instead of
+  blocking).
 
 **Once the siblings have tagged:**
 1. Fold ganita, bayan and sigil byte-identical from their tags.
 2. Open the lanes, minding the two shared files:
-   - `lib/tls.cyr` is touched by I1, I2 and I3: one TLS lane, with its bites in sequence.
+   - `lib/tls.cyr` and the `lib/tls_native_*.cyr` files are touched by I1, I2, I3, I7 and I8: one TLS lane,
+     with its bites in sequence (I2 (c) and I8 back to back).
    - `lib/math.cyr` is touched by I4 and I5. I5's compiler half sits in the `src` lane, and its `lib/math.cyr` hunk goes to the math lane as a named hand-off.
 3. One `src` lane (M1–M3, I5's builtins and I6's Mach-O `__got` entry) commits `build/cycc`. I6's
    `lib/syscalls_aarch64_linux.cyr` arm rides with it; verify it on ecb.
