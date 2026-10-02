@@ -15,7 +15,8 @@
 # its refusal value, and "made no libssl call" — a verb whose refusal value happens to equal what
 # libssl would have answered is still caught. After the join main checks that the worker claimed no
 # libssl latch (the introspection resolve) and that its own connection still answers, SPKI included.
-# A forked child's main thread still passes the guard.
+# A second warm scenario keeps the measured 6.6.13 shape with REAL libssl underneath and no spies
+# (a worker's fetch: was SIGSEGV). A forked child's main thread still passes the guard.
 # libssl is a Linux x86_64 fdlopen bridge: a named SKIP elsewhere or without it.
 include "lib/assert.cyr"
 include "lib/alloc.cyr"
