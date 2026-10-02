@@ -1918,18 +1918,22 @@ fn _tn_w_oid_server(o, l): i64 {
     return 0;
 }
 
-# 1 when the DER SEQUENCE OF OBJECT IDENTIFIER at p[0..n) — an enhanced-key-usage property — names
-# serverAuth or anyExtendedKeyUsage; 0 otherwise, a malformed value included.
+# The DER SEQUENCE OF OBJECT IDENTIFIER at p[0..n) — a purpose-list property: 1 when it names
+# serverAuth or anyExtendedKeyUsage, 0 when it is well formed and names neither, -1 when it is
+# MALFORMED (not one SEQUENCE filling exactly n bytes, or an element that is not a short-form,
+# non-empty OID). Three answers because the callers fail closed in OPPOSITE directions: for the
+# allow-list (prop 9) malformed is "cannot tell it is a TLS root", for a distrust scope (122, 127)
+# it is "cannot tell the distrust spares TLS". CHANGELOG [6.6.14]
 fn _tn_w_eku_server(p, n): i64 {
-    if (n < 2) { return 0; }
-    if ((load8(p) & 0xFF) != 0x30) { return 0; }
+    if (n < 2) { return 0 - 1; }
+    if ((load8(p) & 0xFF) != 0x30) { return 0 - 1; }
     var len = load8(p + 1) & 0xFF;
     var i = 2;
     if (len >= 0x80) {                  # long form: 1 or 2 length bytes (no property is longer)
         var nb = len & 0x7F;
-        if (nb < 1) { return 0; }
-        if (nb > 2) { return 0; }
-        if (2 + nb > n) { return 0; }
+        if (nb < 1) { return 0 - 1; }
+        if (nb > 2) { return 0 - 1; }
+        if (2 + nb > n) { return 0 - 1; }
         len = 0;
         var k = 0;
         while (k < nb) {
@@ -1939,17 +1943,19 @@ fn _tn_w_eku_server(p, n): i64 {
         i = 2 + nb;
     }
     var end = i + len;
-    if (end > n) { return 0; }
+    if (end != n) { return 0 - 1; }
+    var found = 0;
     while (i < end) {
-        if (i + 2 > end) { return 0; }
-        if ((load8(p + i) & 0xFF) != 0x06) { return 0; }
+        if (i + 2 > end) { return 0 - 1; }
+        if ((load8(p + i) & 0xFF) != 0x06) { return 0 - 1; }
         var l = load8(p + i + 1) & 0xFF;
-        if (l >= 0x80) { return 0; }
-        if (i + 2 + l > end) { return 0; }
-        if (_tn_w_oid_server(p + i + 2, l) == 1) { return 1; }
+        if (l == 0) { return 0 - 1; }
+        if (l >= 0x80) { return 0 - 1; }
+        if (i + 2 + l > end) { return 0 - 1; }
+        if (_tn_w_oid_server(p + i + 2, l) == 1) { found = 1; }
         i = i + 2 + l;
     }
-    return 0;
+    return found;
 }
 
 # 1 when the store certificate `cc` carries the dated distrust `date_id` and its purpose scope
@@ -1968,13 +1974,14 @@ fn _tn_w_dated(fns, cc, date_id, eku_id): i64 {
     store64(&cb, 512);
     r = callptr(prop, cc, eku_id, &b, &cb) & 0xFFFFFFFF;
     if (r == 0) { return 1; }           # absent: the date applies to every purpose
-    if (_tn_w_eku_server(&b, load32(&cb)) == 1) { return 1; }
+    if (_tn_w_eku_server(&b, load32(&cb)) != 0) { return 1; }  # names TLS, or malformed
     return 0;
 }
 
 # How Windows trusts the store certificate `cc` (a PCCERT_CONTEXT) for TLS server authentication:
 # 1 = as an anchor, 0 = not at all (its purposes leave serverAuth out), 2 = refused (a dated
-# distrust covers TLS). Any failure other than "property absent" fails closed.
+# distrust covers TLS, or a property is malformed). Any failure other than "property absent" fails
+# closed.
 fn _tn_w_policy(fns, cc): i64 {
     var b[512];
     var cb[8];
@@ -1985,7 +1992,9 @@ fn _tn_w_policy(fns, cc): i64 {
         if ((syscall(0xF04B) & 0xFFFFFFFF) != _TN_W_NOT_FOUND) { return 0; }
     }
     if (r != 0) {
-        if (_tn_w_eku_server(&b, load32(&cb)) == 0) { return 0; }
+        var e = _tn_w_eku_server(&b, load32(&cb));
+        if (e < 0) { return 2; }        # malformed: it cannot be judged, so refused and counted
+        if (e == 0) { return 0; }
     }
     if (_tn_w_dated(fns, cc, _TN_W_PROP_DISABLE, _TN_W_PROP_DISABLE_EKU) == 1) { return 2; }
     if (_tn_w_dated(fns, cc, _TN_W_PROP_NOTBEFORE, _TN_W_PROP_NOTBEFORE_EKU) == 1) { return 2; }

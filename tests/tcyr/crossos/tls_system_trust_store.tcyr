@@ -263,25 +263,67 @@ fn _ts_names_server(n): i64 {
     return 0;
 }
 
+# 1 when _ts_pbuf[0..n) is one well-formed DER SEQUENCE OF OBJECT IDENTIFIER filling it exactly —
+# the test's own reading: header first, then each element as a non-empty short-form OID.
+fn _ts_eku_ok(n): i64 {
+    if (n < 2) { return 0; }
+    if ((load8(_ts_pbuf) & 0xFF) != 0x30) { return 0; }
+    var b1 = load8(_ts_pbuf + 1) & 0xFF;
+    var hl = 0;
+    var body = 0;
+    if (b1 < 0x80) {
+        hl = 2;
+        body = b1;
+    }
+    if (b1 == 0x81) {
+        if (n >= 3) {
+            hl = 3;
+            body = load8(_ts_pbuf + 2) & 0xFF;
+        }
+    }
+    if (b1 == 0x82) {
+        if (n >= 4) {
+            hl = 4;
+            body = ((load8(_ts_pbuf + 2) & 0xFF) << 8) | (load8(_ts_pbuf + 3) & 0xFF);
+        }
+    }
+    if (hl == 0) { return 0; }
+    if (hl + body != n) { return 0; }
+    var i = hl;
+    while (i < n) {
+        if (n - i < 2) { return 0; }
+        if ((load8(_ts_pbuf + i) & 0xFF) != 6) { return 0; }
+        var l = load8(_ts_pbuf + i + 1) & 0xFF;
+        if (l < 1) { return 0; }
+        if (l > 127) { return 0; }
+        if (n - i - 2 < l) { return 0; }
+        i = i + 2 + l;
+    }
+    return 1;
+}
+
 # 1 when `cc` carries the dated distrust property `d` (104 Disable, 126 NotBefore) and its purpose
-# scope `e` (122, 127) is absent — every purpose — or names serverAuth / anyExtendedKeyUsage.
+# scope `e` (122, 127) is absent — every purpose — malformed, or names serverAuth /
+# anyExtendedKeyUsage.
 fn _ts_dated(fns, cc, d, e): i64 {
     var nd = _ts_prop(fns, cc, d);
     if (nd == 0 - 1) { return 0; }
     if (nd == 0 - 2) { return 1; }
     var ne = _ts_prop(fns, cc, e);
     if (ne < 0) { return 1; }
+    if (_ts_eku_ok(ne) == 0) { return 1; }
     if (_ts_names_server(ne) == 1) { return 1; }
     return 0;
 }
 
 # What Windows' root-program properties say about `cc` for TLS: 1 an anchor, 0 not a TLS root,
-# 2 distrusted by a date that covers TLS — Disable (104 / 122) or NotBefore (126 / 127) — which the
-# library refuses.
+# 2 refused by the library — distrusted by a date that covers TLS (Disable 104 / 122 or NotBefore
+# 126 / 127), or a purpose list it cannot read.
 fn _ts_expect(fns, cc): i64 {
     var n = _ts_prop(fns, cc, 9);
     if (n == 0 - 2) { return 0; }
     if (n >= 0) {
+        if (_ts_eku_ok(n) == 0) { return 2; }
         if (_ts_names_server(n) == 0) { return 0; }
     }
     if (_ts_dated(fns, cc, 104, 122) == 1) { return 2; }
@@ -518,6 +560,19 @@ fn test_policy_rows(): i64 {
     _tm_with(9, _TM_CS);
     _tm_with(104, _TM_DATE);
     assert_eq(_tm_run(&fns, 0, cap), 0, "not a TLS root AND a disable date: excluded, not counted");
+    # A malformed purpose list cannot be judged: refused and counted, never taken.
+    _tm_with(9, "3100");
+    assert_eq(_tm_run(&fns, 0, cap), 2, "purposes with the wrong tag: refused, counted");
+    _tm_with(9, "3005060300");
+    assert_eq(_tm_run(&fns, 0, cap), 2, "purposes truncated: refused");
+    _tm_with(9, "300a06082b0601050507030100");
+    assert_eq(_tm_run(&fns, 0, cap), 2, "purposes [serverAuth] plus a trailing byte: refused");
+    _tm_with(9, "3002060030");
+    assert_eq(_tm_run(&fns, 0, cap), 2, "purposes with an empty OID: refused");
+    _tm_with(9, "3003068101");
+    assert_eq(_tm_run(&fns, 0, cap), 2, "purposes with a long-form OID length: refused");
+    _tm_with(9, "");
+    assert_eq(_tm_run(&fns, 0, cap), 2, "purposes present but EMPTY: refused");
     # The disable date (prop 104), scoped by prop 122.
     _tm_with(104, _TM_DATE);
     assert_eq(_tm_run(&fns, 0, cap), 2, "a disable date for every purpose: refused, counted");
@@ -532,6 +587,12 @@ fn test_policy_rows(): i64 {
     _tm_with(104, _TM_DATE);
     _tm_with(122, _TM_CS);
     assert_eq(_tm_run(&fns, 0, cap), 1, "a disable date for [codeSigning] only: exported");
+    _tm_with(104, _TM_DATE);
+    _tm_with(122, "3100");
+    assert_eq(_tm_run(&fns, 0, cap), 2, "a disable date with a MALFORMED scope: refused (fails closed)");
+    _tm_with(104, _TM_DATE);
+    _tm_with(122, "300a06082b06010505070303ff");
+    assert_eq(_tm_run(&fns, 0, cap), 2, "a disable date for [codeSigning] plus a trailing byte: refused");
     _tm_with(122, _TM_SA);
     assert_eq(_tm_run(&fns, 0, cap), 1, "a purpose scope with no date carries no distrust: exported");
     _tm_with(104, _TM_DATE);
@@ -553,6 +614,12 @@ fn test_policy_rows(): i64 {
     _tm_with(126, _TM_DATE);
     _tm_with(127, _TM_CS);
     assert_eq(_tm_run(&fns, 0, cap), 1, "a NotBefore date for [codeSigning] only (DigiCert G2's shape): exported");
+    _tm_with(126, _TM_DATE);
+    _tm_with(127, "3005060300");
+    assert_eq(_tm_run(&fns, 0, cap), 2, "a NotBefore date with a MALFORMED scope: refused (fails closed)");
+    _tm_with(126, _TM_DATE);
+    _tm_with(127, "");
+    assert_eq(_tm_run(&fns, 0, cap), 2, "a NotBefore date with an EMPTY scope value: refused");
     _tm_with(127, _TM_SA);
     assert_eq(_tm_run(&fns, 0, cap), 1, "a NotBefore scope with no date carries no distrust: exported");
     _tm_with(104, _TM_DATE);
