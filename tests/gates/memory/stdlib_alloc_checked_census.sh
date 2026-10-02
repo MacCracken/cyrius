@@ -21,7 +21,10 @@
 #
 # AXES
 #   1  the detector, self-tested on a fixture with every shape above (exact hit set)
-#   2  anti-vacuous floors: folds excluded >= 10, files scanned >= 80, alloc sites >= 200
+#   2  anti-vacuous floors: folds excluded >= 10, files scanned >= 80, alloc sites >= 150
+#      (200 until 6.6.13, when the native TLS client's 45 raw `alloc(` sites moved to the
+#      ctx-allocator choke point `_tn_alloc(` — still zero-checked, no longer this census's
+#      shape: 238 -> 193. The floor guards a scan that silently matches nothing, not the count.)
 #   3  the census: every hit must be on the ALLOWLIST (a NEW unchecked alloc fails, named), and
 #      every allowlist entry must still be a hit — a fixed site FAILS until its line is deleted
 #      here, so the list can only SHRINK
@@ -169,7 +172,7 @@ echo "axis 2: anti-vacuous floors"
 [ "$NF" -ge 10 ] || _fail "axis 2: only $NF vendored folds read from docs/ecosystem.md (floor 10) — the fold table moved?"
 while read -r f; do [ -f "$f" ] || _fail "axis 2: the fold table names $f, which is not in lib/"; done < "$W/folds"
 [ "$NS" -ge 80 ] || _fail "axis 2: only $NS first-party lib files scanned (floor 80)"
-[ "$NA" -ge 200 ] || _fail "axis 2: only $NA alloc sites in the scanned files (floor 200)"
+[ "$NA" -ge 150 ] || _fail "axis 2: only $NA alloc sites in the scanned files (floor 150)"
 
 echo "axis 3: the census against the shrink-only allowlist"
 cat > "$W/allow" <<'ALLOW'

@@ -359,12 +359,13 @@ fn tls_native_connect(ctx, sock_fd): i64 {
         return tls_native_connect_12(ctx, sock_fd);
     }
     store64(ctx + TLS_CTX_OFF_SOCK_FD, sock_fd);
-    # Send ClientHello as a plaintext handshake record.
-    var ch = alloc(2048);
+    # Send ClientHello as a plaintext handshake record. Every buffer of the handshake comes from
+    # the ctx's allocator (6.6.13), so an arena-backed client gives it back on reset_via.
+    var ch = _tn_alloc(ctx, 2048);
     if (ch == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var chn = tls_native_client_build_hello(ctx, ch, 2048);
     if (chn < 0) { return chn; }
-    var chrec = alloc(chn + TLS_RECORD_HEADER_LEN);
+    var chrec = _tn_alloc(ctx, chn + TLS_RECORD_HEADER_LEN);
     if (chrec == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     tls_native_record_write_header(chrec, TLS_CT_HANDSHAKE, 0x0303, chn);
     memcpy(chrec + TLS_RECORD_HEADER_LEN, ch, chn);
@@ -373,7 +374,7 @@ fn tls_native_connect(ctx, sock_fd): i64 {
     }
     # Read the ServerHello (plaintext handshake record; skip any CCS).
     var cap = TLS_RECORD_MAX_CIPHERTEXT + TLS_RECORD_HEADER_LEN;
-    var inbuf = alloc(cap);
+    var inbuf = _tn_alloc(ctx, cap);
     if (inbuf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var rl = _tn_sock_read_record_skip_ccs(sock_fd, inbuf, cap);
     if (rl < 0) { return _tn_ctx_fail(ctx, TLS_ERR_IO); }
@@ -388,7 +389,7 @@ fn tls_native_connect(ctx, sock_fd): i64 {
     # Verify the server Finished + send the client second flight. v6.2.8: this
     # may include the client Certificate + CertificateVerify (mTLS client-auth)
     # ahead of the Finished, so size for a cert chain (was 256 — Finished-only).
-    var fin = alloc(20480);
+    var fin = _tn_alloc(ctx, 20480);
     if (fin == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var finn = tls_native_client_finish(ctx, fin, 20480);
     if (finn < 0) { return finn; }
@@ -586,6 +587,23 @@ fn tls_native_accept(ctx, sock_fd): i64 {
     return tls_native_server_recv_client_finished(ctx, finmsg, fin_len);
 }
 
+# The ctx's record buffers, allocated once, on first use, from the ctx's allocator. READ: one
+# ciphertext record [0, TLS_RECORD_MAX_CIPHERTEXT + header) followed by its decrypt scratch
+# (TLS_RECORD_MAX_CIPHERTEXT — see tls_native_read). WRITE: one sealed record of up to
+# TLS_RECORD_MAX_PLAINTEXT bytes (+ header, inner type, explicit nonce and tag < 64).
+# ⛔ 6.6.13 — WHY. tls_native_read and tls_native_write allocated a fresh record buffer on EVERY
+# call (33,424 B per read/write/close round, measured), so a long-lived stream grew the no-free
+# heap without bound and an arena handed to a client filled on a long body. A connection's
+# footprint is now constant in the number of reads and writes.
+# Issue 2026-09-30-tls-client-memory-and-alert-gaps (b); CHANGELOG [6.6.13].
+fn _tn_ctx_buf(ctx, off, n): i64 {
+    var b = load64(ctx + off);
+    if (b != 0) { return b; }
+    b = _tn_alloc(ctx, n);
+    if (b != 0) { store64(ctx + off, b); }
+    return b;
+}
+
 # Send `len` bytes from `buf` over the connected ctx. Returns bytes
 # written (>=0) or a negative TLS_ERR_*. Partial writes return the
 # actual count; callers must loop on short writes.
@@ -594,7 +612,7 @@ fn tls_native_write(ctx, buf, len): i64 {
     if (load64(ctx + TLS_CTX_OFF_STATE) != TLS_STATE_CONNECTED) { return TLS_ERR_PROTOCOL; }
     if (len > TLS_RECORD_MAX_PLAINTEXT) { return TLS_ERR_INVALID_PARAM; }   # caller fragments
     var fd = load64(ctx + TLS_CTX_OFF_SOCK_FD);
-    var rec = _tn_alloc(ctx, len + 64);
+    var rec = _tn_ctx_buf(ctx, TLS_CTX_OFF_WRITE_BUF, TLS_RECORD_MAX_PLAINTEXT + 64);
     if (rec == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var rn = tls_native_seal_app(ctx, buf, len, rec, len + 64);
     if (rn < 0) { return rn; }
@@ -642,13 +660,14 @@ fn tls_native_read(ctx, buf, maxlen): i64 {
     }
     var fd = load64(ctx + TLS_CTX_OFF_SOCK_FD);
     var cap = TLS_RECORD_MAX_CIPHERTEXT + TLS_RECORD_HEADER_LEN;
-    # One allocation holds the ciphertext [0..cap) AND a decrypt scratch [cap..)
+    # The ctx's READ buffer (allocated by the first read, reused by every later
+    # one — 6.6.13) holds the ciphertext [0..cap) AND a decrypt scratch [cap..)
     # for one record's TLSInnerPlaintext (`content ‖ inner_content_type ‖
     # padding`, RFC 8446 §5.2). A MAX-size record decrypts to content(2^14) + the
     # type byte = 2^14+1 — ABOVE TLS_RECORD_MAX_PLAINTEXT — and a padded record
     # reaches the TLSCiphertext ceiling, so the scratch (and _tn_open_record's
     # out_max) must be TLS_RECORD_MAX_CIPHERTEXT, not TLS_RECORD_MAX_PLAINTEXT.
-    var inbuf = _tn_alloc(ctx, cap + TLS_RECORD_MAX_CIPHERTEXT);
+    var inbuf = _tn_ctx_buf(ctx, TLS_CTX_OFF_READ_BUF, cap + TLS_RECORD_MAX_CIPHERTEXT);
     if (inbuf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var plain = inbuf + cap;
     var guard = 0;
@@ -702,10 +721,12 @@ fn tls_native_read(ctx, buf, maxlen): i64 {
 # Returns TLS_OK regardless of close_notify success (best-effort, per the
 # contract). Idempotent — a second call is a no-op.
 #
-# Memory note: the ctx is bump-allocated (no per-object free), so this does
-# NOT free the ctx storage — that is reclaimed at arena/process teardown. The
-# caller owns the socket fd (TLS_CTX_OFF_SOCK_FD) and closes it after this
-# returns. The lib/tls.cyr wrapper frees its own shim struct.
+# Memory note: nothing is freed here — the ctx and everything it allocated came
+# from its allocator (the no-free global heap, or the Allocator given to an `_in`
+# constructor, which reset_via reclaims after this returns). Sealing the
+# close_notify allocates nothing: the record (at most 31 bytes, TLS 1.2's) is
+# built on the stack. The caller owns the socket fd (TLS_CTX_OFF_SOCK_FD) and
+# closes it after this returns.
 fn tls_native_close(ctx): i64 {
     if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
     var state = load64(ctx + TLS_CTX_OFF_STATE);
@@ -715,12 +736,10 @@ fn tls_native_close(ctx): i64 {
         var alert[2];
         store8(&alert, TLS_ALERT_WARNING);              # level (ignored in 1.3)
         store8(&alert + 1, 0);                          # description 0 = close_notify
-        var rec = _tn_alloc(ctx, 64);
-        if (rec != 0) {
-            var rn = _tn_seal_ct(ctx, TLS_CT_ALERT, &alert, 2, rec, 64);
-            if (rn > 0) {
-                _tn_sock_write_all(load64(ctx + TLS_CTX_OFF_SOCK_FD), rec, rn);
-            }
+        var rec[64];
+        var rn = _tn_seal_ct(ctx, TLS_CT_ALERT, &alert, 2, &rec, 64);
+        if (rn > 0) {
+            _tn_sock_write_all(load64(ctx + TLS_CTX_OFF_SOCK_FD), &rec, rn);
         }
     }
     store64(ctx + TLS_CTX_OFF_STATE, TLS_STATE_CLOSED);

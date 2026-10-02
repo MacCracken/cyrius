@@ -150,6 +150,52 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Mutants (the old 1 MiB read; the count never stored; the parse on the global heap) each turn it
   RED.
 
+- **Native TLS client: every connect re-parsed the system trust store, every read and write
+  allocated a fresh record buffer, and nothing a client allocated could be given back** (I2 part
+  (b), issue `2026-09-30-tls-client-memory-and-alert-gaps`). Measured on 6.6.13 before the fix, all
+  on the global no-free heap: 271,928 B per connect for the ctx and a full re-parse of the system
+  store into it (`tls_native_set_ca_system` cached the file's bytes, not the parse), 86-108 KB of
+  handshake state, and **33,424 B per `tls_read` / `tls_write` / `tls_close` CALL** — so a
+  long-lived stream grew without bound — with no allocator-aware client connect to reclaim any of
+  it (the server has had `tls_accept_alloc_in` since 6.2.25). **Fix:** (1) one immutable root set
+  per process: the claim holder of I3's `_tn_ca_state` 0 → 1 → 2 publish parses the bundle
+  (`_tn_ca_parse_set(0, 0, …)`) onto the GLOBAL heap — never a caller's allocator, since it must
+  outlive any `reset_via` — and publishes it with the bytes; `tls_native_set_ca_system` then
+  stores the pointer (and its skipped count) and allocates nothing. An OOM in the parse rolls the
+  claim back like the read's; an unusable bundle is cached as `TLS_ERR_CERT_INVALID`. (2) Per-ctx
+  record buffers (`TLS_CTX_OFF_READ_BUF` +512, `TLS_CTX_OFF_WRITE_BUF` +520), allocated on first
+  use from the ctx's allocator and reused; `tls_native_close` seals its close_notify on the stack.
+  (3) Every client handshake allocation goes through the ctx's allocator — the 1.3 hello,
+  ServerHello (transcript and key schedule via their `_in` forms), server flight (leaf and
+  intermediates via `x509_cert_alloc_into` / `x509_parse_into(…, _tn_arena(ctx))`, the record buffer
+  hoisted out of the reassembly loop), Finished and `tls_native_connect`; the 1.2 hello,
+  ServerHello, Certificate, ServerKeyExchange, flight transcript and `tls_native_connect_12`;
+  `tls_native_set_alpn`, the stored ALPN selection and `tls_native_set_client_cert`'s PEM decode
+  (`pem_decode_certs_into`, its pool from the ctx). Results: the filed repro's set_ca_system info
+  line drops from 271,888 to **592 B per call — the fresh ctx alone** (121 blocks / 120 roots,
+  exit 0); `tls_connect_alloc` (a == 0) costs **1,016 B** on a warm process, and reads, writes, EOF
+  and close after the first retain **0 B**; on an arena a connection is 175,208 B (TLS 1.3) /
+  153,128 B (1.2), constant, with **0 B of global heap** from the second connect on; live against
+  1.1.1.1 with the shared system roots, 158,824 B per connection and 0 B of global heap while
+  reading 57 KB. **Test:** `tests/tcyr/crypto/tls_client_alloc_in.tcyr` (153 assertions; socketpair
+  + fork against a native server, verification ON — the hook trusts the server's self-signed CA,
+  SAN `DNS:localhost`, through the ctx's allocator and offers ALPN): 5 arena connects per version,
+  each with 21 writes and 200 one-byte reads — writes and reads after the first cost 0 B of arena,
+  `reset_via` rewinds the arena to its base, global heap flat from connect 2; the a == 0 path
+  (reads/writes/EOF/close 0 B, connect_alloc < 8 KiB); the system set shared by every ctx, 0 B per
+  further install, and still intact after the arena of the ctx that FIRST installed it is reset
+  and overwritten; a PEM client certificate decoded with 0 B of global heap; and the libssl arm of
+  `tls_connect_alloc_in` in a forked child under a 30 s bound. x86, qemu-aarch64 and natively on
+  pi, ecb and ach (libssl absent there: the row's named note). Mutants, each RED: per-call read or
+  write buffer, a heap close record, the host copy / shim / ctor / server-flight buffer / leaf /
+  key schedule / 1.2 flight buffer, transcript, server random, peer key / ALPN offer / ALPN
+  selection / PEM pool on the global heap, the per-ctx store re-parse (81 failures), the set built
+  in its first caller's arena (4), and the libssl arm calling the a == 0 wrapper (a HANG, caught by
+  the bound). `tests/tcyr/crossos/tls_ca_store.tcyr` gains the "second ctx: 0 B, the same set" rows
+  (ecb, ach 128 = 128 + 0, pi 121 = 120 + 1; cass has no store). The 45 converted `alloc(` sites
+  take `tests/gates/memory/stdlib_alloc_checked_census.sh`'s anti-vacuous alloc-site floor from
+  200 to 150 (238 → 193 sites; they are still zero-checked, through `_tn_alloc`).
+
 ### Added
 
 - **`tls_init_main()` (`lib/tls.cyr`) — warm the TLS stack once, on the main thread** (I3). Returns
@@ -176,6 +222,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `TLS_ERR_CERT_INVALID` it is that bundle's count. Returns >= 0 (0 before any install), or
   `TLS_ERR_INVALID_PARAM` for ctx 0. A P-521 root is counted and skipped; adding the curve is
   sigil's. `docs/stdlib-reference.md` row; api-surface snapshot `+tls_native_hs12::tls_native_ca_skipped/1`.
+
+- **`tls_connect_alloc_in(a, sock, host, hook_fp, hook_ctx)` (`lib/tls.cyr`) and
+  `tls_native_new_client_in(a, host, host_len)` (`lib/tls_native_ctx.cyr`) — the allocator-aware
+  client connect, the mirror of `tls_accept_alloc_in`** (I2 (b)). On the native backend the ctx,
+  the 40-byte shim, the handshake, a hook's trust store and ALPN list, and the per-ctx record
+  buffers all come from Allocator `a`, so a long-lived client reclaims a whole connection with
+  `tls_close(c); reset_via(a);`. `a` must be an `arena_allocator`, created once (sigil's X.509 parse
+  takes the raw arena behind it — the same rule as the server side), sized for one connection
+  (175,208 B for TLS 1.3 against a one-certificate P-256 server). `tls_connect_alloc` and
+  `tls_native_new_client` are now the a == 0 wrappers, behaviour unchanged. On the libssl backend
+  `a` does not apply: `tls_connect_alloc_in` runs the libssl body directly
+  (`_tls_libssl_connect_alloc`), NOT the a == 0 wrapper, which would call it back forever.
+  `tls_close`'s comment now says what it does on native (frees nothing; `reset_via` does).
+  `docs/stdlib-reference.md` rows; api-surface snapshot `+tls::tls_connect_alloc_in/5`,
+  `+tls_native_ctx::tls_native_new_client_in/3`.
 
 ### Downstream
 

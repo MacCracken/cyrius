@@ -277,7 +277,7 @@ fn tls_native_12_build_client_hello(ctx, out, out_max): i64 {
     if (load64(ctx + TLS_CTX_OFF_ROLE) != TLS_ROLE_CLIENT) {
         return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL);
     }
-    var crand = alloc(TLS_RANDOM_LEN);
+    var crand = _tn_alloc(ctx, TLS_RANDOM_LEN);
     if (crand == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     if (_tn_rand_bytes(crand, TLS_RANDOM_LEN) != TLS_RANDOM_LEN) {
         return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL);
@@ -355,7 +355,7 @@ fn tls_native_12_build_client_hello(ctx, out, out_max): i64 {
         _tn_be16_w(p, apl); p = p + 2;                  # ProtocolNameList length
         memcpy(p, alpn + 2, apl); p = p + apl;          # offered protocols
     }
-    var chbuf = alloc(total);
+    var chbuf = _tn_alloc(ctx, total);
     if (chbuf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     memcpy(chbuf, out, total);
     store64(ctx + TLS_CTX_OFF_CH_BUF, chbuf);
@@ -489,7 +489,7 @@ fn tls_native_client_parse_server_hello_12(ctx, sh, sh_len): i64 {
     # 1.3, so there is no downgrade to detect — and a 1.3-capable peer that
     # legitimately negotiates 1.2 sets the sentinel, so checking it would
     # wrongly abort conformant servers.
-    var srand = alloc(TLS_RANDOM_LEN);
+    var srand = _tn_alloc(ctx, TLS_RANDOM_LEN);
     if (srand == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     memcpy(srand, rnd, 32);
     store64(ctx + TLS_CTX_OFF_SERVER_RANDOM, srand);
@@ -599,9 +599,9 @@ fn _tn_parse_certificate_12(ctx, body, blen): i64 {
     if (cert_len == 0) { return TLS_ERR_CERT_INVALID; }
     if (cert_len > list_len - 3) { return TLS_ERR_BAD_HANDSHAKE; }
     if (cp + cert_len > blen) { return TLS_ERR_BAD_HANDSHAKE; }
-    var leaf = x509_cert_alloc();
+    var leaf = x509_cert_alloc_into(_tn_arena(ctx));
     if (leaf == 0) { return TLS_ERR_OOM; }
-    if (x509_parse(body + cp, cert_len, leaf) != 1) { return TLS_ERR_CERT_INVALID; }
+    if (x509_parse_into(body + cp, cert_len, leaf, _tn_arena(ctx)) != 1) { return TLS_ERR_CERT_INVALID; }
     store64(ctx + TLS_CTX_OFF_SERVER_CERT, leaf);
     return TLS_OK;
 }
@@ -692,7 +692,7 @@ fn _tn_12_parse_server_kex(ctx, body, body_len): i64 {
     if (_tn_be16_r(body + 1) != TLS_GROUP_X25519) { return TLS_ERR_HANDSHAKE_FAILED; }
     var point_len = load8(body + 3) & 0xFF;
     if (point_len != 32) { return TLS_ERR_HANDSHAKE_FAILED; }
-    var peer = alloc(32);
+    var peer = _tn_alloc(ctx, 32);
     if (peer == 0) { return TLS_ERR_OOM; }
     memcpy(peer, body + 4, 32);
     store64(ctx + TLS_CTX_OFF_PEER_PUB, peer);
@@ -700,7 +700,7 @@ fn _tn_12_parse_server_kex(ctx, body, body_len): i64 {
     var sig_len = _tn_be16_r(body + 38);
     if (40 + sig_len > body_len) { return TLS_ERR_BAD_HANDSHAKE; }
     var sig = body + 40;
-    var content = alloc(100);
+    var content = _tn_alloc(ctx, 100);
     if (content == 0) { return TLS_ERR_OOM; }
     memcpy(content,      load64(ctx + TLS_CTX_OFF_CLIENT_RANDOM), 32);
     memcpy(content + 32, load64(ctx + TLS_CTX_OFF_SERVER_RANDOM), 32);
@@ -1154,7 +1154,7 @@ fn _tn_12_client_consume_flight(ctx, flight, flight_len): i64 {
     var pr = tls_native_client_parse_server_hello_12(ctx, flight, sh_len);
     if (pr != TLS_OK) { return pr; }
     var identity = load64(ctx + TLS_CTX_OFF_CIPHER);
-    var ts = tls_native_transcript_init(tls_native_cipher_hash_algo(identity));
+    var ts = tls_native_transcript_init_in(load64(ctx + TLS_CTX_OFF_ALLOC), tls_native_cipher_hash_algo(identity));
     if (ts == 0) { return TLS_ERR_INTERNAL; }
     store64(ctx + TLS_CTX_OFF_TRANSCRIPT, ts);
     var chbuf = load64(ctx + TLS_CTX_OFF_CH_BUF);
@@ -1202,11 +1202,11 @@ fn _tn_12_client_consume_flight(ctx, flight, flight_len): i64 {
 fn tls_native_connect_12(ctx, sock_fd): i64 {
     if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
     store64(ctx + TLS_CTX_OFF_SOCK_FD, sock_fd);
-    var ch = alloc(2048);
+    var ch = _tn_alloc(ctx, 2048);
     if (ch == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var chn = tls_native_12_build_client_hello(ctx, ch, 2048);
     if (chn < 0) { return chn; }
-    var chrec = alloc(chn + TLS_RECORD_HEADER_LEN);
+    var chrec = _tn_alloc(ctx, chn + TLS_RECORD_HEADER_LEN);
     if (chrec == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     tls_native_record_write_header(chrec, TLS_CT_HANDSHAKE, 0x0303, chn);
     memcpy(chrec + TLS_RECORD_HEADER_LEN, ch, chn);
@@ -1214,13 +1214,13 @@ fn tls_native_connect_12(ctx, sock_fd): i64 {
         return _tn_ctx_fail(ctx, TLS_ERR_IO);
     }
     var cap = TLS_RECORD_MAX_CIPHERTEXT + TLS_RECORD_HEADER_LEN;
-    var inbuf = alloc(cap);
+    var inbuf = _tn_alloc(ctx, cap);
     if (inbuf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     # The 1.2 server flight (ServerHello, Certificate, ServerKeyExchange,
     # ServerHelloDone) is plaintext, but a real server fragments it across
     # records (a large RSA Certificate especially). Reassemble the handshake
     # bytes until ServerHelloDone (type 14), then consume. See CHANGELOG [6.0.83].
-    var fbuf = alloc(65536);
+    var fbuf = _tn_alloc(ctx, 65536);
     if (fbuf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var flen = 0;
     var fdone = 0;
@@ -1241,7 +1241,7 @@ fn tls_native_connect_12(ctx, sock_fd): i64 {
     if (cf != TLS_OK) { return _tn_ctx_fail(ctx, cf); }
     var er = _tn_gen_ephemeral_x25519_pub_only(ctx);
     if (er != TLS_OK) { return _tn_ctx_fail(ctx, er); }
-    var pm = alloc(32);
+    var pm = _tn_alloc(ctx, 32);
     if (pm == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var pr = tls_native_12_compute_premaster(ctx, load64(ctx + TLS_CTX_OFF_PEER_PUB), pm);
     if (pr != TLS_OK) { return _tn_ctx_fail(ctx, pr); }
@@ -1251,7 +1251,7 @@ fn tls_native_connect_12(ctx, sock_fd): i64 {
     # record-wrap + socket-send stay below (the wire bytes are order-independent).
     # The server (_tn_12_server_drive) already feeds CKE before deriving — it
     # needs no reorder.
-    var cke = alloc(64);
+    var cke = _tn_alloc(ctx, 64);
     if (cke == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var cken = tls_native_12_build_client_key_exchange(load64(ctx + TLS_CTX_OFF_EPH_PUB), cke, 64);
     if (cken < 0) { return _tn_ctx_fail(ctx, cken); }
@@ -1259,29 +1259,29 @@ fn tls_native_connect_12(ctx, sock_fd): i64 {
     tls_native_transcript_update(ts, cke, cken);
     var dk = tls_native_12_derive_keys(ctx, pm, 32);
     if (dk != TLS_OK) { return _tn_ctx_fail(ctx, dk); }
-    var ckerec = alloc(cken + TLS_RECORD_HEADER_LEN);
+    var ckerec = _tn_alloc(ctx, cken + TLS_RECORD_HEADER_LEN);
     if (ckerec == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     tls_native_record_write_header(ckerec, TLS_CT_HANDSHAKE, 0x0303, cken);
     memcpy(ckerec + TLS_RECORD_HEADER_LEN, cke, cken);
     if (_tn_sock_write_all(sock_fd, ckerec, cken + TLS_RECORD_HEADER_LEN) < 0) {
         return _tn_ctx_fail(ctx, TLS_ERR_IO);
     }
-    var ccs = alloc(8);
+    var ccs = _tn_alloc(ctx, 8);
     if (ccs == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var ccsn = tls_native_ccs_record_write(ccs);
     if (_tn_sock_write_all(sock_fd, ccs, ccsn) < 0) { return _tn_ctx_fail(ctx, TLS_ERR_IO); }
-    var fin = alloc(64);
+    var fin = _tn_alloc(ctx, 64);
     if (fin == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var finn = tls_native_12_build_finished(ctx, "client finished", fin, 64);
     if (finn < 0) { return _tn_ctx_fail(ctx, finn); }
-    var finrec = alloc(finn + 64);
+    var finrec = _tn_alloc(ctx, finn + 64);
     if (finrec == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var finreclen = tls_native_12_seal(ctx, TLS_CT_HANDSHAKE, fin, finn, finrec, finn + 64);
     if (finreclen < 0) { return _tn_ctx_fail(ctx, finreclen); }
     if (_tn_sock_write_all(sock_fd, finrec, finreclen) < 0) { return _tn_ctx_fail(ctx, TLS_ERR_IO); }
     var srl = _tn_sock_read_record_skip_ccs(sock_fd, inbuf, cap);
     if (srl < 0) { return _tn_ctx_fail(ctx, TLS_ERR_IO); }
-    var sfin = alloc(64);
+    var sfin = _tn_alloc(ctx, 64);
     if (sfin == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var sct = 0;
     var sfinlen = tls_native_12_open(ctx, inbuf, srl, sfin, 64, &sct);
@@ -1486,7 +1486,7 @@ fn tls_native_set_alpn(ctx, protos, protos_len): i64 {
     # Store a length-prefixed copy [be16 protos_len][protos] so the CH builder
     # can emit it without re-counting. The protos bytes are the wire-format
     # ProtocolNameList contents (1-byte-len-prefixed protocol names).
-    var buf = alloc(2 + protos_len);
+    var buf = _tn_alloc(ctx, 2 + protos_len);
     if (buf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     _tn_be16_w(buf, protos_len);
     memcpy(buf + 2, protos, protos_len);
@@ -1506,7 +1506,7 @@ fn _tn_store_alpn_selected(ctx, ext_data, ext_len): i64 {
     var plen = load8(ext_data + 2) & 0xFF;
     if (plen == 0) { return TLS_OK; }
     if (plen + 1 > list_len) { return TLS_OK; }
-    var sel = alloc(1 + plen);
+    var sel = _tn_alloc(ctx, 1 + plen);
     if (sel == 0) { return TLS_OK; }
     store8(sel, plen);
     memcpy(sel + 1, ext_data + 3, plen);
@@ -1669,8 +1669,7 @@ fn tls_native_ca_skipped(ctx): i64 {
 # every snapshot back to 6.2.23. A long-lived client leaked a megabyte per connect.
 #
 # The bundle is a file on disk that does not change under a running process, so the read and
-# the buffer are both cacheable. Only the *parse into this ctx* has to repeat, because the
-# anchors are installed into the caller's ctx.
+# the buffer are both cacheable — and so is the parse (6.6.13, below).
 #
 # ⚠ THE FAILURE IS CACHED TOO, DELIBERATELY. `_tn_ca_len == -1` means "we looked and there is
 # no readable bundle", which is a different state from "not looked yet" (0). Without that, a
@@ -1686,17 +1685,30 @@ fn tls_native_ca_skipped(ctx): i64 {
 # and the read of it are fenced.
 # `_tn_ca_buf` / `_tn_ca_len` are DATA, valid only once the state reads 2.
 # Issue 2026-09-30-tls-first-use-thread-race; CHANGELOG [6.6.13].
+#
+# ⛔ 6.6.13 — ONE ROOT SET PER PROCESS, SHARED BY EVERY CTX (`_tn_ca_sys_set`). The bytes were
+# cached but every ctx re-parsed them: 271,888 B of no-free heap per call on Arch's 121-block
+# store, and _tls_native_alloc made that call on EVERY native connect. The claim holder now parses
+# the bundle ONCE, onto the GLOBAL heap — never through a caller's allocator, because the set must
+# outlive any arena's reset_via — and publishes it with the bytes, under the same 0 -> 1 -> 2
+# state; tls_native_set_ca_system then stores the pointer and allocates nothing. The set is
+# IMMUTABLE: verify_chain and sigil's _x509_verify_link only read a root, and a later install
+# (set_ca_bundle, load_verify_locations) replaces the ctx's pointer, never the set it points at.
+# Issue 2026-09-30-tls-client-memory-and-alert-gaps (b); CHANGELOG [6.6.13].
 var _tn_ca_state = 0;    # 0 = not loaded · 1 = one thread loading · 2 = published
 var _tn_ca_buf = 0;      # cached bundle bytes                              } valid only
 var _tn_ca_len = 0;      # >0 = bytes · -1 = looked, none readable (cached) } at state 2
+var _tn_ca_sys_set = 0;      # the shared root set [count][roots...], or a negative TLS_ERR_* } valid only
+var _tn_ca_sys_skipped = 0;  # blocks of the bundle the set could not use                    } at state 2
 
-# Load the bundle once per process: returns TLS_OK once `_tn_ca_buf`/`_tn_ca_len` are published
-# (a cached "none readable" included), or TLS_ERR_OOM, which is NOT cached — the claim is rolled
-# back to 0 so a later caller tries again. Safe from any thread.
+# Load and parse the bundle once per process: returns TLS_OK once `_tn_ca_buf`/`_tn_ca_len` and
+# the shared root set are published (a cached "none readable" and a cached unusable bundle
+# included), or TLS_ERR_OOM, which is NOT cached — the claim is rolled back to 0 so a later caller
+# tries again. Safe from any thread.
 #
 # ⚠ Nothing between the claim and the publish may `return`: the state would stay 1 and every later
-# connect would spin forever. The build lives in `_tn_ca_read`; the only exit here is the OOM
-# rollback, which releases the claim itself.
+# connect would spin forever. The build lives in `_tn_ca_read` and `_tn_ca_parse_set`; the only
+# exits here are the two OOM rollbacks, each of which releases the claim itself.
 fn _tn_ca_load(): i64 {
     var s = atomic_load(&_tn_ca_state);
     while (s != 2) {
@@ -1709,9 +1721,21 @@ fn _tn_ca_load(): i64 {
                     return TLS_ERR_OOM;
                 }
                 var total = _tn_ca_read(buf, cap);
+                var set = 0;
+                var skipped = 0;
+                if (total > 0) {
+                    # Global heap (arena 0, allocator 0): the set outlives every ctx that shares it.
+                    set = _tn_ca_parse_set(0, 0, buf, total, 0, &skipped);
+                    if (set == TLS_ERR_OOM) {
+                        atomic_store(&_tn_ca_state, 0);
+                        return TLS_ERR_OOM;
+                    }
+                }
                 _tn_ca_buf = buf;
                 _tn_ca_len = total;
-                # Release half: the bytes, the pointer and the length before the 2. aarch64 only
+                _tn_ca_sys_set = set;
+                _tn_ca_sys_skipped = skipped;
+                # Release half: the bytes, the set, the pointer and the length before the 2. aarch64 only
                 # — x86 (TSO) keeps store order, so a fence there is pure tax (lib/freelist.cyr).
                 #ifdef CYRIUS_ARCH_AARCH64
                 atomic_fence();
@@ -1722,21 +1746,28 @@ fn _tn_ca_load(): i64 {
         }
         s = atomic_load(&_tn_ca_state);
     }
-    # Acquire half: on aarch64 the loads of `_tn_ca_buf`/`_tn_ca_len` and the bundle bytes must
-    # not be satisfied before the state load that saw 2. x86 (TSO) never reorders loads.
+    # Acquire half: on aarch64 the loads of `_tn_ca_buf`/`_tn_ca_len`, the set and the bytes behind
+    # them must not be satisfied before the state load that saw 2. x86 (TSO) never reorders loads.
     #ifdef CYRIUS_ARCH_AARCH64
     atomic_fence();
     #endif
     return TLS_OK;
 }
 
-# Install the platform's system CA bundle (cached per process) — see the block above.
+# Install the platform's system CA bundle — the process-wide root set, parsed once (see the block
+# above): after the first call this stores a pointer and allocates nothing, from the global heap or
+# the ctx's allocator. Records the set's skipped count for tls_native_ca_skipped. A bundle with no
+# usable root is TLS_ERR_CERT_INVALID every time (the ctx keeps any set it had), as
+# tls_native_set_ca_bundle answers it.
 fn tls_native_set_ca_system(ctx): i64 {
     if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
     var lr = _tn_ca_load();
     if (lr != TLS_OK) { return lr; }
     if (_tn_ca_len < 0) { return TLS_ERR_IO; }
-    return tls_native_set_ca_bundle(ctx, _tn_ca_buf, _tn_ca_len, 0);
+    store64(ctx + TLS_CTX_OFF_CA_SKIPPED, _tn_ca_sys_skipped);
+    if (_tn_ca_sys_set < 0) { return _tn_ca_sys_set; }
+    store64(ctx + TLS_CTX_OFF_CA_ROOT, _tn_ca_sys_set);
+    return TLS_OK;
 }
 
 # Read the first readable system bundle into `buf` (`cap` bytes). Returns the byte count, or -1
@@ -1785,9 +1816,11 @@ fn tls_native_set_client_cert(ctx, cert, cert_len, is_der): i64 {
     var dlen = cert_len;
     if (is_der == 0) {
         # PEM → first (leaf) DER cert.
-        var chain = alloc(TLS_CA_MAX_ROOTS * 16);
+        var chain = _tn_alloc(ctx, TLS_CA_MAX_ROOTS * 16);
         if (chain == 0) { return TLS_ERR_OOM; }
-        var n = pem_decode_certs(cert, cert_len, chain, TLS_CA_MAX_ROOTS);
+        var pool = _tn_alloc(ctx, cert_len);          # DER <= 3/4 of its base64
+        if (pool == 0) { return TLS_ERR_OOM; }
+        var n = pem_decode_certs_into(cert, cert_len, chain, TLS_CA_MAX_ROOTS, pool, cert_len);
         if (n < 1) { return TLS_ERR_CERT_INVALID; }
         der = load64(chain);
         dlen = load64(chain + 8);

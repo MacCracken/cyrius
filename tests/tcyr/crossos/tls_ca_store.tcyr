@@ -188,7 +188,7 @@ fn test_sized_read(path, pem, plen): i64 {
 }
 
 fn test_system_store(): i64 {
-    test_group("tls_native_set_ca_system: installed + skipped == the store's PEM blocks");
+    test_group("tls_native_set_ca_system: installed + skipped == the store's PEM blocks, one shared set");
     var c = tls_native_new_client("localhost", 9);
     var rc = tls_native_set_ca_system(c);
     if (rc == TLS_OK) {
@@ -205,7 +205,10 @@ fn test_system_store(): i64 {
         assert_gt(inst, 0, "the store installs at least one root");
         assert_eq(inst + sk, blocks, "installed + skipped == PEM blocks in the store");
         var d = tls_native_new_client("localhost", 9);
+        var u0 = alloc_used();
         assert_eq(tls_native_set_ca_system(d), TLS_OK, "a second ctx installs too");
+        assert_eq(alloc_used() - u0, 0, "and allocates nothing: the root set is parsed once, shared");
+        assert_eq(load64(d + TLS_CTX_OFF_CA_ROOT), load64(c + TLS_CTX_OFF_CA_ROOT), "the same set");
         assert_eq(tls_native_ca_skipped(d), sk, "with the same skipped count");
         return 0;
     }

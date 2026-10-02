@@ -119,8 +119,8 @@ var TLS_CTX_OFF_READ_HOLD_LEN  = 496; # total valid held bytes (0 = nothing held
 var TLS_CTX_OFF_READ_HOLD_OFF  = 504; # held bytes already delivered to the caller
 # 6.6.13 — TLS_CTX_LEN 512 -> 576. The offsets of +512..+568 are ALLOCATED here, each `var` is
 # added by the change that first uses it, so no offset can be handed out twice:
-#   +512 READ_BUF    — per-ctx record read buffer, allocated on first read
-#   +520 WRITE_BUF   — per-ctx record seal buffer
+var TLS_CTX_OFF_READ_BUF       = 512; # record read buffer + its decrypt scratch, allocated on the first read
+var TLS_CTX_OFF_WRITE_BUF      = 520; # record seal buffer, allocated on the first write
 #   +528 PEER_CLOSED — 1 once close_notify was read (EOF is sticky)
 var TLS_CTX_OFF_CA_SKIPPED     = 536; # blocks the last trust-root install could not use (tls_native_ca_skipped)
 #   +544..+568       — reserved: the read/write deadline and the CCS / peer-Finished state
@@ -284,15 +284,23 @@ fn tls_native_available(): i64 {
 # length excluding the NUL; pass 0 to derive via strlen.
 # Returns: ctx handle (>0) on success, 0 on OOM. The ctx is NOT yet
 # connected — call tls_native_set_* hooks then tls_native_connect.
-fn tls_native_new_client(host, host_len): i64 {
-    var ctx = _tn_ctx_new(TLS_ROLE_CLIENT);
+# 6.6.13: `a` is an Allocator handle (lib/alloc.cyr; 0 = the global bump heap). The ctx, the host
+# copy and every allocation the connection makes afterwards — the handshake, the trust roots a
+# hook installs, the per-ctx record buffers — come from `a`, so a client loop gives a whole
+# connection back with tls_native_close + reset_via(a). A non-zero `a` MUST be an
+# arena_allocator: sigil's X.509 parse takes the raw arena behind it (_tn_arena), as on the
+# server side (tls_native_new_server_in). The system root set (tls_native_set_ca_system) is
+# shared and lives on the global heap, never in `a`. tls_native_new_client is the a == 0 wrapper.
+# Issue 2026-09-30-tls-client-memory-and-alert-gaps (b); CHANGELOG [6.6.13].
+fn tls_native_new_client_in(a, host, host_len): i64 {
+    var ctx = _tn_ctx_new_in(a, TLS_ROLE_CLIENT);
     if (ctx == 0) { return 0; }
     store64(ctx + TLS_CTX_OFF_VERIFY, TLS_VERIFY_PEER);   # clients verify by default
     if (host != 0) {
         var hl = host_len;
         if (hl == 0) { hl = strlen(host); }
         if (hl > 0) {
-            var hbuf = alloc(hl + 1);
+            var hbuf = _tn_alloc(ctx, hl + 1);
             if (hbuf == 0) { return 0; }
             memcpy(hbuf, host, hl);
             store8(hbuf + hl, 0);
@@ -301,5 +309,10 @@ fn tls_native_new_client(host, host_len): i64 {
         }
     }
     return ctx;
+}
+
+# Global-heap client ctor (the a == 0 case of tls_native_new_client_in).
+fn tls_native_new_client(host, host_len): i64 {
+    return tls_native_new_client_in(0, host, host_len);
 }
 

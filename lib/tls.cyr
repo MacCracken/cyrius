@@ -351,10 +351,13 @@ fn _tls_init(): i64 {
 # ---- Native-backend client path (.80, Mini-arc E bite 4) ----
 # Shim ctx for the native backend: [native_ctx@0, 0@8, sock@16, NATIVE@24].
 # Mirrors the libssl shim's +0/+8/+16 so the per-ctx ops dispatch uniformly.
-fn _tls_native_alloc(sock, host, hook_fp, hook_ctx): i64 {
+# 6.6.13: `a` (Allocator handle, 0 = the global heap) backs the native ctx, every allocation of the
+# connection and this 40-B shim — see tls_connect_alloc_in. The system roots are the shared
+# process-wide set (0 B per connect after the first); a hook's own trust store comes from `a`.
+fn _tls_native_alloc_in(a, sock, host, hook_fp, hook_ctx): i64 {
     var hl = 0;
     if (host != 0) { hl = strlen(host); }
-    var nctx = tls_native_new_client(host, hl);
+    var nctx = tls_native_new_client_in(a, host, hl);
     if (nctx == 0) { return 0; }
     tls_native_set_verify(nctx, TLS_VERIFY_PEER);     # default: verify the peer
     tls_native_set_ca_system(nctx);                   # against the OS trust store
@@ -363,7 +366,7 @@ fn _tls_native_alloc(sock, host, hook_fp, hook_ctx): i64 {
     if (hook_fp != 0) {
         if (fncall2(hook_fp, hook_ctx, nctx) != 0) { return 0; }
     }
-    var ctx = alloc(40);
+    var ctx = _tn_alloc_a(a, 40);
     if (ctx == 0) { return 0; }
     store64(ctx, nctx);
     store64(ctx + 8, 0);
@@ -864,10 +867,48 @@ fn _tls_libssl_bind_host(ssl, host): i64 {
 # an IP-literal host is matched against iPAddress SANs and sends no
 # SNI. The binding lives in alloc, so the staged path
 # (alloc -> tls_set_session -> complete) is bound too.
+# 6.6.13: the a == 0 wrapper over tls_connect_alloc_in (the global heap).
 fn tls_connect_alloc(sock, host, hook_fp, hook_ctx): i64 {
+    return tls_connect_alloc_in(0, sock, host, hook_fp, hook_ctx);
+}
+
+# 6.6.13 — allocator-aware client connect, the mirror of tls_accept_alloc_in. `a` is an Allocator
+# handle (lib/alloc.cyr; 0 = the global no-free heap, = tls_connect_alloc). On the native backend
+# the ctx, the shim, the handshake and the connection's record buffers all draw from `a`, so a
+# long-lived client gives each connection back with one reset_via(a):
+#
+#   var a = arena_allocator(262144);            # once, NOT per connection
+#   while (fetching) {
+#       var c = tls_connect_alloc_in(a, sock, host, hook, 0);
+#       if (c != 0) {
+#           if (tls_connect_complete(c) == 1) { ...tls_write / tls_read...; }
+#           tls_close(c);
+#       }
+#       reset_via(a);                            # the whole connection, back
+#   }
+#
+# ⚠ A non-zero `a` MUST be an arena_allocator (sigil's X.509 parse takes the raw arena behind it),
+# created ONCE — not per connection — and reset with reset_via, not alloc_reset, between
+# connections; its capacity must cover one connection — the handshake plus the two per-ctx record
+# buffers: 175,208 B for TLS 1.3 and 153,128 B for 1.2 against a one-certificate P-256 server
+# (measured, 6.6.13), more for a longer chain. Reads and writes after the first allocate nothing.
+# The system root set the default verification uses is parsed once per process on the global heap
+# and shared, never placed in `a`; a hook's own trust store (tls_ctx_load_verify_locations) is
+# drawn from `a`.
+# The libssl backend manages its own memory: `a` does not apply, and the call runs the same libssl
+# body tls_connect_alloc runs. Issue 2026-09-30-tls-client-memory-and-alert-gaps (b);
+# CHANGELOG [6.6.13].
+fn tls_connect_alloc_in(a, sock, host, hook_fp, hook_ctx): i64 {
     #ifndef CYRIUS_TLS_LIBSSL
-    if (_tls_backend == 1) { return _tls_native_alloc(sock, host, hook_fp, hook_ctx); }
+    if (_tls_backend == 1) { return _tls_native_alloc_in(a, sock, host, hook_fp, hook_ctx); }
     #endif
+    # ⚠ The libssl BODY, never tls_connect_alloc: that is the a == 0 wrapper over this fn, and the
+    # two would call each other forever (tail calls: a hang, not a stack overflow).
+    return _tls_libssl_connect_alloc(sock, host, hook_fp, hook_ctx);
+}
+
+# tls_connect_alloc's libssl backend (see its comment): SSL_CTX + SSL + hook + host binding + fd.
+fn _tls_libssl_connect_alloc(sock, host, hook_fp, hook_ctx): i64 {
     _tls_init();
     if (_tls_ok == 0) { return 0; }
 
@@ -1001,7 +1042,7 @@ fn _tls_native_accept_alloc_in(a, sock, creds, hook_fp, hook_ctx): i64 {
     if (tls_native_server_load_creds(nctx) != TLS_OK) { return 0; }
     # Hook fires on the native ctx (opaque handle) post-setup / pre-accept —
     # the home for tls_set_alpn / client-cert-verify config, exactly as the
-    # client hook fires on nctx in _tls_native_alloc.
+    # client hook fires on nctx in _tls_native_alloc_in.
     if (hook_fp != 0) {
         if (fncall2(hook_fp, hook_ctx, nctx) != 0) { return 0; }
     }
@@ -1165,7 +1206,10 @@ fn tls_read(ctx, buf, maxlen): i64 {
     return fncall3(_fn_SSL_read, ssl, buf, maxlen);
 }
 
-# Close TLS session and free resources
+# Close the TLS session. libssl: SSL_shutdown, then frees the SSL and the SSL_CTX. Native: sends
+# close_notify and frees NOTHING — the native ctx and its shim live in the allocator they came
+# from: the Allocator given to tls_connect_alloc_in / tls_accept_alloc_in (reset_via(a) after this
+# reclaims the whole connection) or the no-free global heap (a == 0). Returns 0.
 fn tls_close(ctx): i64 {
     if (ctx == 0) { return 0; }
     #ifndef CYRIUS_TLS_LIBSSL

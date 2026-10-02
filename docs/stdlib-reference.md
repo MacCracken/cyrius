@@ -1459,9 +1459,10 @@ TLS client façade. Default backend wraps `libssl.so.3` (loaded via `fdlopen`-bo
 | `tls_get_backend` | `tls_get_backend() → backend` | Active backend |
 | `tls_connect` | `tls_connect(sock, host) → ctx/0` | Wrap a connected socket in a TLS session (SNI = host) |
 | `tls_connect_with_ctx_hook` | `tls_connect_with_ctx_hook(sock, host, hook_fp, hook_ctx) → ctx/0` | Connect with a pre-handshake hook (ALPN / verify customization) |
+| `tls_connect_alloc_in` | `tls_connect_alloc_in(a, sock, host, hook_fp, hook_ctx) → ctx/0` | Staged connect drawing the native ctx, shim, handshake and record buffers from Allocator `a` (an `arena_allocator`), so `tls_close` + `reset_via(a)` reclaims a connection (6.6.13); `a == 0` is `tls_connect_alloc`; libssl ignores `a` |
 | `tls_write` | `tls_write(ctx, buf, len) → n/-1` | Write plaintext through TLS |
 | `tls_read` | `tls_read(ctx, buf, maxlen) → n/-1` | Read plaintext from TLS |
-| `tls_close` | `tls_close(ctx) → 0` | Shut down and free the session |
+| `tls_close` | `tls_close(ctx) → 0` | Shut down the session (libssl frees it; native frees nothing — its ctx lives in the allocator it came from, see `tls_connect_alloc_in`) |
 | `tls_set_alpn` | `tls_set_alpn(handle, protos, len) → 0/-1` | Set ALPN advertise list (OpenSSL wire format; call in the hook) |
 | `tls_set_verify` | `tls_set_verify(handle, mode, cb) → 0/-1` | Override peer-verification mode |
 | `tls_get_alpn_selected` | `tls_get_alpn_selected(ctx, buf, max) → len` | Negotiated ALPN protocol |
@@ -1479,6 +1480,7 @@ Sovereign TLS 1.2 + 1.3 stack — no OpenSSL. ECDSA (P-256/P-384) / RSA (PSS, PK
 |----------|-----------|-------------|
 | `tls_native_available` | `tls_native_available() → 1` | Capability check (compile-time available) |
 | `tls_native_new_client` | `tls_native_new_client(host, host_len) → ctx` | Client context (SNI + hostname verification) |
+| `tls_native_new_client_in` | `tls_native_new_client_in(a, host, host_len) → ctx` | Client context whose ctx and every connection allocation come from Allocator `a` (an `arena_allocator`; 0 = global heap) — reclaim with `reset_via(a)` (6.6.13) |
 | `tls_native_new_server` | `tls_native_new_server(cert_chain, cert_len, key, key_len) → ctx` | Server context (cert chain + private key) |
 | `tls_native_connect` | `tls_native_connect(ctx, fd) → TLS_OK/err` | TLS 1.3 client handshake |
 | `tls_native_connect_12` | `tls_native_connect_12(ctx, fd) → TLS_OK/err` | TLS 1.2 client handshake |
@@ -1495,7 +1497,7 @@ Sovereign TLS 1.2 + 1.3 stack — no OpenSSL. ECDSA (P-256/P-384) / RSA (PSS, PK
 | `tls_native_set_alpn` | `tls_native_set_alpn(ctx, protos, len) → TLS_OK/err` | ALPN advertise list (OpenSSL wire format) |
 | `tls_native_set_verify` | `tls_native_set_verify(ctx, mode) → TLS_OK/err` | Peer-verification mode (`TLS_VERIFY_NONE`/`PEER`) |
 | `tls_native_set_ca_bundle` | `tls_native_set_ca_bundle(ctx, pem, len, is_der) → TLS_OK/err` | Install a custom CA bundle (PEM or DER) |
-| `tls_native_set_ca_system` | `tls_native_set_ca_system(ctx) → TLS_OK/err` | Load the system CA trust store |
+| `tls_native_set_ca_system` | `tls_native_set_ca_system(ctx) → TLS_OK/err` | Install the system CA trust store — one immutable root set per process, parsed once and shared (6.6.13: 0 B per further ctx) |
 | `tls_native_ca_skipped` | `tls_native_ca_skipped(ctx) → count/err` | Certificate blocks the last trust-root install could not use (6.6.13): installed + skipped == the bundle's PEM block count; 0 before any install |
 | `tls_native_set_version_range` | `tls_native_set_version_range(ctx, min, max) → TLS_OK/err` | Constrain negotiated version to [min, max] |
 

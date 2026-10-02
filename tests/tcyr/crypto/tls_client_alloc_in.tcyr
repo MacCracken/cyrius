@@ -1,0 +1,381 @@
+# tls_client_alloc_in.tcyr — 6.6.13: a native TLS client's footprint is bounded and reclaimable.
+#
+# Issue 2026-09-30-tls-client-memory-and-alert-gaps, part (b). Before 6.6.13 every native connect
+# landed on the global no-free bump heap: the ctx and handshake state, a full re-parse of the system
+# trust store into the new ctx (~272 KB per connect on Arch), and 33,424 B per tls_read / tls_write
+# / tls_close CALL (a fresh record buffer each time), so a long-lived stream grew without bound and
+# an arena handed to a client would fill on a long body. Now:
+#   - tls_connect_alloc_in(a, ...) / tls_native_new_client_in(a, ...): the ctx, the shim and every
+#     handshake allocation come from Allocator `a`, so tls_close + reset_via(a) gives a connection
+#     back whole (tls_connect_alloc is the a == 0 wrapper);
+#   - tls_native_read / tls_native_write reuse ONE per-ctx record buffer each, so reads and writes
+#     after the first allocate nothing;
+#   - the system root set is parsed ONCE per process onto the global heap and shared, so
+#     tls_native_set_ca_system on a further ctx allocates nothing.
+# Socketpair + fork against a native server; verification stays ON (the hook trusts the server's
+# self-signed P-256 CA, SAN DNS:localhost, through the ctx's own allocator), TLS 1.3 and 1.2.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/io.cyr"
+include "lib/tls.cyr"
+
+enum ClientAllocIn {
+    CA_CONNECTS = 5;            # connects per version on the arena
+    CA_WRITES = 20;             # small writes after the first
+    CA_RECS = 20;               # server records of CA_REC_LEN bytes
+    CA_REC_LEN = 10;
+    CA_READS = 200;             # 1-byte reads: CA_RECS * CA_REC_LEN
+    CA_ARENA = 262144;
+}
+
+var _ca_cert = 0;              # DER, self-signed P-256, CN = SAN DNS = localhost, CA:TRUE
+var _ca_cert_len = 406;
+var _ca_key = 0;               # PKCS#8 DER
+var _ca_key_len = 138;
+var _ca_ver12 = 0;             # 1: the hook pins the client to TLS 1.2
+
+# The consumer's pre-handshake hook: keep verification ON, trust the test CA and offer ALPN. The
+# root set and the ALPN list it installs come from the ctx's allocator (the arena, on the _in path),
+# and so does the server's ALPN choice the client stores (1.3: EncryptedExtensions; 1.2: ServerHello).
+fn _ca_hook(hctx, handle): i64 {
+    if (tls_native_set_ca_bundle(handle, _ca_cert, _ca_cert_len, 1) != TLS_OK) { return 1; }
+    if (tls_set_alpn(handle, "\x02h2\x08http/1.1", 12) != 0) { return 1; }
+    if (_ca_ver12 == 1) { tls_native_set_version_range(handle, TLS_VERSION_1_2, TLS_VERSION_1_2); }
+    return 0;
+}
+
+#ifdef CYRIUS_TARGET_AGNOS
+# A named SKIP on agnos (the corpus cross-compile ratchet): this is a socketpair + fork + 3-arg
+# waitpid run; agnos has no socketpair (-ENOSYS) and its waitpid is the 1-arg #4 poll.
+var _agnos_skip = "  SKIP (agnos): the socketpair + fork end-to-end run (no socketpair; 1-arg waitpid)\n";
+sys_write(1, _agnos_skip, strlen(_agnos_skip));
+#endif
+#ifndef CYRIUS_TARGET_AGNOS
+# The forked server: read the client's 2 + CA_WRITES * 5 bytes, answer with CA_RECS records,
+# close_notify, then hold the socket open until the client closes its end (so the client's own
+# close_notify never meets a closed peer). Exit 0 / a code naming the step that failed.
+fn _ca_serve(sfd): i64 {
+    var srv = tls_native_new_server(_ca_cert, _ca_cert_len, _ca_key, _ca_key_len);
+    if (tls_native_server_load_creds(srv) != TLS_OK) { return 2; }
+    tls_native_set_alpn(srv, "\x08http/1.1", 9);
+    if (tls_native_accept(srv, sfd) != TLS_OK) { return 3; }
+    var want = 2 + CA_WRITES * 5;
+    var got = 0;
+    var rb[256];
+    var guard = 0;
+    while (got < want) {
+        var n = tls_native_read(srv, &rb, 256);
+        if (n <= 0) { return 4; }
+        got = got + n;
+        guard = guard + 1;
+        if (guard > 64) { return 5; }
+    }
+    if (got != want) { return 6; }
+    var rec[16];
+    var i = 0;
+    while (i < CA_RECS) {
+        var j = 0;
+        while (j < CA_REC_LEN) { store8(&rec + j, 48 + ((i + j) % 10)); j = j + 1; }
+        if (tls_native_write(srv, &rec, CA_REC_LEN) != CA_REC_LEN) { return 7; }
+        i = i + 1;
+    }
+    tls_native_close(srv);
+    var drain[64];
+    while (sys_read(sfd, &drain, 64) > 0) { }
+    return 0;
+}
+
+# The byte the server sends at stream offset k.
+fn _ca_expect(k): i64 {
+    var i = k / CA_REC_LEN;
+    var j = k % CA_REC_LEN;
+    return 48 + ((i + j) % 10);
+}
+
+# Per-connection observations: [arena after the handshake, arena after the first write, after the
+# writes, after the first read, after the reads, global after the first read, global after the
+# reads + EOF + close, global connect_alloc cost, reads ok, writes ok, eof rc, child status,
+# ALPN selected (1 = "http/1.1")].
+var _ca_obs: i64[13];
+
+fn _ca_arena_used(a): i64 {
+    if (a == 0) { return 0; }
+    return arena_used(allocator_state(a));
+}
+
+# One connection over a fresh socketpair. `a` = 0 drives the global-heap path (tls_connect_alloc).
+# Returns 1 if the handshake completed.
+fn _ca_one(a): i64 {
+    var i = 0;
+    while (i < 13) { _ca_obs[i] = 0 - 1; i = i + 1; }
+    var fds[8];
+    sys_socketpair(1, 1, 0, &fds);
+    var fdp = load64(&fds);
+    var sfd = fdp & 0xFFFFFFFF;
+    var cfd = (fdp >> 32) & 0xFFFFFFFF;
+    var pid = sys_fork();
+    if (pid == 0) {
+        sys_close(cfd);
+        sys_exit(_ca_serve(sfd));
+    }
+    sys_close(sfd);
+    var g0 = alloc_used();
+    var c = 0;
+    if (a == 0) {
+        c = tls_connect_alloc(cfd, "localhost", &_ca_hook, 0);
+    } else {
+        c = tls_connect_alloc_in(a, cfd, "localhost", &_ca_hook, 0);
+    }
+    _ca_obs[7] = alloc_used() - g0;
+    var ok = 0;
+    if (c != 0) {
+        if (tls_connect_complete(c) == 1) { ok = 1; }
+    }
+    if (ok == 1) {
+        var ab[16];
+        _ca_obs[12] = 0;
+        if (tls_get_alpn_selected(c, &ab, 16) == 8) {
+            if (memeq(&ab, "http/1.1", 8) == 1) { _ca_obs[12] = 1; }
+        }
+        _ca_obs[0] = _ca_arena_used(a);
+        var w = 0;
+        if (tls_write(c, "go", 2) == 2) { w = 1; }
+        _ca_obs[1] = _ca_arena_used(a);
+        var gw = alloc_used();
+        i = 0;
+        while (i < CA_WRITES) {
+            if (tls_write(c, "12345", 5) != 5) { w = 0; }
+            i = i + 1;
+        }
+        _ca_obs[2] = _ca_arena_used(a);
+        if (alloc_used() != gw) { w = 0; }   # writes after the first: 0 B of global heap
+        _ca_obs[9] = w;
+        var b[8];
+        var r = 0;
+        if (tls_read(c, &b, 1) == 1) {
+            if ((load8(&b) & 0xFF) == _ca_expect(0)) { r = 1; }
+        }
+        _ca_obs[3] = _ca_arena_used(a);
+        var g1 = alloc_used();
+        _ca_obs[5] = g1;
+        var k = 1;
+        while (k < CA_READS) {
+            if (tls_read(c, &b, 1) != 1) { r = 0; }
+            if ((load8(&b) & 0xFF) != _ca_expect(k)) { r = 0; }
+            k = k + 1;
+        }
+        _ca_obs[4] = _ca_arena_used(a);
+        _ca_obs[8] = r;
+        _ca_obs[10] = tls_read(c, &b, 1);    # the server's close_notify
+        tls_close(c);
+        _ca_obs[6] = alloc_used() - g1;
+    } else {
+        if (c != 0) { tls_close(c); }
+    }
+    sys_close(cfd);
+    var st[4];
+    sys_waitpid(pid, &st, 0);
+    _ca_obs[11] = load64(&st) & 0xFFFF;
+    return ok;
+}
+
+fn test_shared_system_roots(): i64 {
+    test_group("tls_native_set_ca_system: one process-wide root set, 0 B per further ctx");
+    # The process's FIRST system-roots install is from an arena ctx: the set it builds must not land
+    # in that arena, or the reset_via + scrub below would destroy every other ctx's roots.
+    var a = arena_allocator(1048576);           # room for a whole store, were it parsed into `a`
+    var c0 = tls_native_new_client_in(a, "localhost", 9);
+    var rc = tls_native_set_ca_system(c0);
+    var set = load64(c0 + TLS_CTX_OFF_CA_ROOT);
+    var sk = tls_native_ca_skipped(c0);
+    var c1 = tls_native_new_client("localhost", 9);
+    var c2 = tls_native_new_client("localhost", 9);
+    var c3 = tls_native_new_client_in(a, "localhost", 9);
+    var g0 = alloc_used();
+    var u0 = _ca_arena_used(a);
+    var rc1 = tls_native_set_ca_system(c1);
+    var rc2 = tls_native_set_ca_system(c2);
+    var rc3 = tls_native_set_ca_system(c3);
+    assert_eq(alloc_used() - g0, 0, "set_ca_system on further ctxs: 0 B of global heap");
+    assert_eq(_ca_arena_used(a) - u0, 0, "and 0 B of an arena ctx's arena");
+    assert_eq(rc1, rc, "the same result for every ctx");
+    assert_eq(rc2, rc, "the same result for every ctx (2)");
+    assert_eq(rc3, rc, "the same result on an arena ctx");
+    if (rc == TLS_OK) {
+        var n = 0;
+        if (set != 0) { n = load64(set); }
+        assert_gt(n, 0, "the system set holds roots");
+        assert_eq(load64(c1 + TLS_CTX_OFF_CA_ROOT), set, "every ctx shares the one set");
+        assert_eq(load64(c2 + TLS_CTX_OFF_CA_ROOT), set, "every ctx shares the one set (2)");
+        assert_eq(load64(c3 + TLS_CTX_OFF_CA_ROOT), set, "an arena ctx shares it too");
+        assert_eq(tls_native_ca_skipped(c2), sk, "with the same skipped count");
+        reset_via(a);
+        var scrub = alloc_via(a, 4096);          # overwrite the whole arena the first caller lived in
+        while (scrub != 0) {
+            memset(scrub, 0, 4096);
+            scrub = alloc_via(a, 4096);
+        }
+        var n2 = 0;
+        var r0 = 0;
+        if (set != 0) { n2 = load64(set); r0 = load64(set + 8); }
+        assert_eq(n2, n, "the set outlives reset_via of the arena ctx that built it");
+        assert_eq(load64(c1 + TLS_CTX_OFF_CA_ROOT), set, "and the other ctxs still hold it");
+        # r0: the first root, an X509Cert (DER ptr @0, len @8)
+        var dp = 0;
+        var dl = 0;
+        if (r0 != 0) { dp = load64(r0); dl = load64(r0 + 8); }
+        var b0 = 0;
+        if (dp != 0) { b0 = load8(dp) & 0xFF; }
+        assert_gt(dl, 0, "its first root is intact (DER length)");
+        assert_eq(b0, 48, "its first root is intact (a DER SEQUENCE)");
+    } else {
+        assert_eq(rc, TLS_ERR_IO, "no system store: TLS_ERR_IO");
+    }
+    return 0;
+}
+
+fn _ca_name(n13, n12): i64 {
+    if (_ca_ver12 == 1) { test_group(n12); return 0; }
+    test_group(n13);
+    return 0;
+}
+
+fn test_arena_connects(): i64 {
+    _ca_name("tls_connect_alloc_in (TLS 1.3): the arena holds the connection, reset_via gives it back",
+      "tls_connect_alloc_in (TLS 1.2): the arena holds the connection, reset_via gives it back");
+    var a = arena_allocator(CA_ARENA);
+    assert_neq(a, 0, "arena_allocator");
+    var base = _ca_arena_used(a);
+    var k = 0;
+    while (k < CA_CONNECTS) {
+        var g0 = alloc_used();
+        assert_eq(_ca_one(a), 1, "the handshake completes, verification on");
+        assert_eq(_ca_obs[11], 0, "the server saw every byte (child exit 0)");
+        assert_eq(_ca_obs[9], 1, "every write is delivered");
+        assert_eq(_ca_obs[8], 1, "every byte read is the byte sent");
+        assert_eq(_ca_obs[10], 0, "close_notify reads as 0");
+        assert_eq(_ca_obs[12], 1, "ALPN: the server's choice, http/1.1, is stored");
+        assert_gt(_ca_obs[0], 65536, "the handshake's allocations are in the arena");
+        assert_eq(_ca_obs[2], _ca_obs[1], "writes after the first: 0 B of arena");
+        assert_eq(_ca_obs[4], _ca_obs[3], "199 reads after the first: 0 B of arena");
+        reset_via(a);
+        assert_eq(_ca_arena_used(a), base, "reset_via rewinds the arena");
+        if (k > 0) {
+            assert_eq(alloc_used() - g0, 0, "a connect after the first: 0 B of global heap");
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+
+fn test_global_connects(): i64 {
+    _ca_name("tls_connect_alloc, a == 0 (TLS 1.3): reads and writes after the first retain nothing",
+      "tls_connect_alloc, a == 0 (TLS 1.2): reads and writes after the first retain nothing");
+    var k = 0;
+    while (k < 2) {
+        assert_eq(_ca_one(0), 1, "the handshake completes, verification on");
+        assert_eq(_ca_obs[11], 0, "the server saw every byte (child exit 0)");
+        assert_eq(_ca_obs[9], 1, "writes after the first are delivered and retain 0 B");
+        assert_eq(_ca_obs[8], 1, "every byte read is the byte sent");
+        assert_eq(_ca_obs[6], 0, "reads after the first, EOF and close: 0 B retained");
+        if (k > 0) {
+            # A ctx, the shim and the hook's one-root set — no re-parse of the system store.
+            assert_lt(_ca_obs[7], 8192, "tls_connect_alloc no longer re-parses the system store");
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+
+# A PEM client certificate (mTLS): the chain scratch and the DER pool it decodes into are the ctx's,
+# as is the parsed leaf. Before 6.6.13 the first two came from the global heap on every call.
+fn test_client_cert_pem(): i64 {
+    test_group("tls_native_set_client_cert (PEM): decoded into the ctx's allocator");
+    var pem = "-----BEGIN CERTIFICATE-----\nMIIBkjCCATmgAwIBAgIUN0FgSN+YtJ/VsnjbAOvQ4fh7bUAwCgYIKoZIzj0EAwIwFDESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTI2MDEwMTAwMDAwMFoXDTM2MDEwMTAwMDAwMFowFDESMBAGA1UEAwwJbG9jYWxob3N0MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEDXpGvDB1EfJKU9z5c+Df4gWNtI19uLOUH6gBdmQa142hK4AaEklNSTEr9bCsMS89ULyiKCEm/d0DZSATv4tJxaNpMGcwHQYDVR0OBBYEFDvdbC1If4VIUfQINW5miAN1vWdDMB8GA1UdIwQYMBaAFDvdbC1If4VIUfQINW5miAN1vWdDMA8GA1UdEwEB/wQFMAMBAf8wFAYDVR0RBA0wC4IJbG9jYWxob3N0MAoGCCqGSM49BAMCA0cAMEQCIDZb0RL5uPrsUMm0os9+xIfMQkkBhwuBVrNJ26FeHN6BAiAMHsf27v7FvJl29VpwYIsH1mnHgYP6COmoYzcNF+Od8w==\n-----END CERTIFICATE-----\n";
+    var a = arena_allocator(65536);
+    var c = tls_native_new_client_in(a, "localhost", 9);
+    var g0 = alloc_used();
+    var u0 = _ca_arena_used(a);
+    assert_eq(tls_native_set_client_cert(c, pem, strlen(pem), 0), TLS_OK, "a PEM client certificate installs");
+    assert_eq(alloc_used() - g0, 0, "0 B of global heap");
+    assert_gt(_ca_arena_used(a) - u0, _ca_cert_len, "the DER pool and the leaf are in the arena");
+    assert_eq(load64(c + TLS_CTX_OFF_CERT_LEN), _ca_cert_len, "the leaf decodes to its DER length");
+    assert_eq(memeq(load64(c + TLS_CTX_OFF_CERT_CHAIN), _ca_cert, _ca_cert_len), 1, "byte for byte");
+    reset_via(a);
+    return 0;
+}
+
+# tls_connect_alloc is the a == 0 wrapper over tls_connect_alloc_in; the libssl arm of _in must
+# call the libssl BODY, or the two recurse forever (a tail call: the mutant HANGS, it does not
+# overflow). So the call runs in a forked child under a bounded wait. Child exit: 0 = libssl
+# loaded and the ctx is its 24-byte shim on this socket, 10 = libssl absent and the answer was 0,
+# anything else = the step that failed.
+fn _ca_libssl_child(cfd): i64 {
+    tls_set_backend(TLS_BACKEND_LIBSSL);
+    var a = arena_allocator(4096);
+    var c = tls_connect_alloc_in(a, cfd, "localhost", 0, 0);
+    if (tls_available() == 1) {
+        if (c == 0) { return 2; }
+        if (load64(c + 16) != cfd) { return 3; }
+        if (load64(c + 8) == 0) { return 4; }
+        tls_close(c);
+        return 0;
+    }
+    if (c != 0) { return 5; }
+    return 10;
+}
+
+fn test_libssl_arm(): i64 {
+    test_group("tls_connect_alloc_in on the libssl backend: no recursion through the a == 0 wrapper");
+    var fds[8];
+    sys_socketpair(1, 1, 0, &fds);
+    var fdp = load64(&fds);
+    var sfd = fdp & 0xFFFFFFFF;
+    var cfd = (fdp >> 32) & 0xFFFFFFFF;
+    var pid = sys_fork();
+    if (pid == 0) { sys_exit(_ca_libssl_child(cfd)); }
+    var st[4];
+    store64(&st, 0);
+    var done = 0;
+    var waited = 0;
+    while (done == 0) {
+        if (sys_waitpid(pid, &st, 1) == pid) { done = 1; }      # WNOHANG
+        if (done == 0) {
+            if (waited >= 3000) { break; }                       # 30 s
+            sleep_ms(10);
+            waited = waited + 1;
+        }
+    }
+    if (done == 0) {
+        sys_kill(pid, 9);
+        sys_waitpid(pid, &st, 0);
+    }
+    assert_eq(done, 1, "tls_connect_alloc_in returned (within 30 s)");
+    var code = load64(&st) & 0xFFFF;
+    if (code == 10 * 256) {
+        sys_write(1, "  note: libssl.so.3 absent here: the libssl arm answered 0\n", 59);
+        code = 0;
+    }
+    assert_eq(code, 0, "libssl loaded: the ctx is the libssl shim on this socket (child exit 0)");
+    sys_close(sfd);
+    sys_close(cfd);
+    return 0;
+}
+
+alloc_init();
+_ca_cert = hex_decode("3082019230820139a003020102021437416048df98b49fd5b278db00ebd0e1f87b6d40300a06082a8648ce3d04030230143112301006035504030c096c6f63616c686f7374301e170d3236303130313030303030305a170d3336303130313030303030305a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d030107034200040d7a46bc307511f24a53dcf973e0dfe2058db48d7db8b3941fa80176641ad78da12b801a12494d49312bf5b0ac312f3d50bca2282126fddd03652013bf8b49c5a3693067301d0603551d0e041604143bdd6c2d487f854851f408356e66880375bd6743301f0603551d230418301680143bdd6c2d487f854851f408356e66880375bd6743300f0603551d130101ff040530030101ff30140603551d11040d300b82096c6f63616c686f7374300a06082a8648ce3d04030203470030440220365bd112f9b8faec50c9b4a2cf7ec487cc424901870b8156b349dba15e1cde8102200c1ec7f6eefec5bc9976f55a70608b07d669c78183fa08e9a863370d17e39df3", 812);
+_ca_key = hex_decode("308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420666340f5e33734c31438ae0abd2370b72da193b44565625051bbc79a344535dda144034200040d7a46bc307511f24a53dcf973e0dfe2058db48d7db8b3941fa80176641ad78da12b801a12494d49312bf5b0ac312f3d50bca2282126fddd03652013bf8b49c5", 276);
+test_shared_system_roots();
+test_client_cert_pem();
+_ca_ver12 = 0;
+test_arena_connects();
+_ca_ver12 = 1;
+test_arena_connects();
+_ca_ver12 = 0;
+test_global_connects();
+_ca_ver12 = 1;
+test_global_connects();
+test_libssl_arm();
+#endif
+var r = assert_summary();

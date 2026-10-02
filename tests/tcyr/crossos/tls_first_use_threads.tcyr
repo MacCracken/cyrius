@@ -119,6 +119,8 @@ fn _ft_ca_forget(): i64 {
     _tn_ca_state = 0;
     _tn_ca_buf = 0;
     _tn_ca_len = 0;
+    _tn_ca_sys_set = 0;       # 6.6.13: the shared root set is part of the same load
+    _tn_ca_sys_skipped = 0;
     return 0;
 }
 

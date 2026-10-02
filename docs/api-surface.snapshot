@@ -5081,6 +5081,7 @@ tls::tls_available/0
 tls::tls_close/1
 tls::tls_connect/2
 tls::tls_connect_alloc/4
+tls::tls_connect_alloc_in/5
 tls::tls_connect_complete/1
 tls::tls_connect_with_ctx_hook/4
 tls::tls_ctx_load_verify_locations/3
@@ -5129,6 +5130,7 @@ tls_native_conn::tls_native_set_version_range/3
 tls_native_conn::tls_native_write/3
 tls_native_ctx::tls_native_available/0
 tls_native_ctx::tls_native_new_client/2
+tls_native_ctx::tls_native_new_client_in/3
 tls_native_ctx::tls_native_server_transition/2
 tls_native_ctx::tls_native_set_alloc/2
 tls_native_hs12::tls_native_12_build_client_hello/3
