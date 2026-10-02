@@ -3942,13 +3942,15 @@ The rules, in order:
    the PREVIOUS syscall with the new arguments and returned a plausible answer. cycc reports
    every such number at compile time — `warning: syscall N not routed by the Mach-O …
    translation` — and in this repo `tests/gates/platform/darwin_syscall_literals_routed.sh`
-   fails on one. Three numbers are rerouted at PARSE time rather than by a table row, and
+   fails on one. Four numbers are rerouted at PARSE time rather than by a table row, and
    only at one arity: **228** (the clock; ns in the return register, the buffer argument
    unspecified — x86-macOS happens to fill a timeval, arm64-macOS never touches it; PE
    returns ms) and **35** (nanosleep, x86-macOS) need the number plus exactly 2 arguments,
-   **1700** (pthread_create, arm64-macOS) the number plus 4. Any other arity is reported by
-   name (`syscall 228 not routed at this arity`). Portable code calls `clock_now_ns()` /
-   `sleep_ms()` / `thread_create()` instead.
+   **1700** (pthread_create, arm64-macOS) the number plus 4, and **1701** (libSystem
+   `fork()`, arm64-macOS, v6.6.13 — the child runs the atfork handlers, so it can create
+   threads) the number alone. Any other arity is reported by name (`syscall 228 not routed
+   at this arity`). Portable code calls `clock_now_ns()` / `sleep_ms()` /
+   `thread_create()` / `sys_fork()` instead.
 7. **Set O_NONBLOCK with `fd_set_nonblocking(fd)` / `fd_restore_flags(fd, saved)`, and every
    other fcntl with `sys_fcntl(fd, cmd, arg)` (v6.6.8) — never a raw `syscall(SYS_FCNTL, …)`
    and never `fl | 2048`.** 2048 is Linux's O_NONBLOCK and Darwin's O_EXCL, which F_SETFL
