@@ -23,9 +23,10 @@
 #   N  default build, native backend               — the reference answers
 #   B  default build, tls_set_backend(LIBSSL)      — libssl through the runtime switch
 #   L  `#define CYRIUS_TLS_LIBSSL` build            — the libssl-only build (no native stack)
-#   S  libssl rows against s_server -servername sni.invalid -servername_fatal: an IP host sends
-#      no SNI (the handshake survives), a DNS host does (the fatal alert refuses it — the control
-#      that shows the leg can see an SNI). Native's IP-literal SNI is backlogged, not asserted.
+#   S  native and libssl rows against s_server -servername sni.invalid -servername_fatal: an IP
+#      host sends no SNI (the handshake survives), a DNS host does (the fatal alert refuses it —
+#      the control that shows the leg can see an SNI). Native rows since 6.6.14: its ClientHello
+#      builders sent an IP literal as SNI until then (RFC 6066 3; lib/tls_hostid.cyr _tn_sni_len).
 #   P  libssl rows where the hook pins a name / an IP on the SSL_CTX's X509_VERIFY_PARAM: the
 #      binding REPLACES a pin of host's own kind and keeps a pin of the other kind (documented
 #      in lib-tls-contract.md "Server identity"; pass the name to verify as `host`).
@@ -46,6 +47,9 @@
 #   MI4 SSL_set1_host-style binding (no shared classifier; the name routed by OpenSSL's own
 #       IP parse) -> the [::1] rows
 #   MI5 SNI set for every host again -> S 127.0.0.1 / ::1
+# 6.6.14:
+#   MI6 the native ClientHello builders before _tn_sni_len (SNI for every host) -> the three
+#       native S rows for 127.0.0.1 / ::1 (the fatal-on-mismatch server refuses the literal)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 1
@@ -265,8 +269,9 @@ row() {
         NLIB=$((NLIB + 2))
     fi
 }
-# srow <host> <verify> <want libssl> <label> — libssl legs only (the S leg)
+# srow <host> <verify> <want> <label> — the S leg: native and both libssl builds answer alike
 srow() {
+    one S "$T/pd" native "$1" "$2" "$T/ca.crt" "$3" "$4 (native)"; NNAT=$((NNAT + 1))
     if [ "$LIBSSL" = 1 ]; then
         one S "$T/pd" libssl "$1" "$2" "$T/ca.crt" "$3" "$4"
         one S "$T/pl" libssl "$1" "$2" "$T/ca.crt" "$3" "$4 (libssl-only build)"
@@ -342,7 +347,7 @@ serve ip10
 row 010.0.0.1       peer "$CA"            R  R  "010.0.0.1 never reaches the iPAddress 10.0.0.1"
 row 10.0.0.1        peer "$CA"            A  A  "10.0.0.1: the iPAddress SAN"
 stop
-echo "SNI (libssl): s_server -servername sni.invalid -servername_fatal"
+echo "SNI (native + libssl): s_server -servername sni.invalid -servername_fatal"
 serve ip -servername sni.invalid -servername_fatal -cert2 "$T/ip.crt" -key2 "$T/ip.key"
 srow 127.0.0.1 peer A "127.0.0.1 sends no SNI (RFC 6066 3) - the fatal-on-mismatch server lets it through"
 srow 127.0.0.1 none A "127.0.0.1 after tls_set_verify(h, 0, 0) sends no SNI either"
@@ -402,7 +407,8 @@ if [ "$LIBSSL" = 1 ]; then
 fi
 
 echo "rows: $NNAT native, $NLIB libssl"
-[ "$NNAT" -ge 24 ] || { echo "  FAIL: only $NNAT native rows ran (floor 24)"; FAILS=$((FAILS + 1)); }
+# 24 rows + 5 SNI rows (6.6.14)
+[ "$NNAT" -ge 29 ] || { echo "  FAIL: only $NNAT native rows ran (floor 29)"; FAILS=$((FAILS + 1)); }
 if [ "$LIBSSL" = 1 ]; then
     # 24 rows x 2 libssl legs (B, L) + 5 SNI rows x 2 builds + 4 pin rows x 2 builds
     # + 5 required-symbol legs

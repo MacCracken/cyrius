@@ -6,6 +6,7 @@
 # build that carries no native stack. `_tn_parse_ip_literal` is the one entry point:
 # 4 / 16 an IPv4 / IPv6 literal (compared with iPAddress SANs only), 0 a DNS name
 # (dNSName SANs only), -1 a ':'-bearing host that is no literal (no identity at all).
+# `_tn_sni_len` asks it whether the host goes out as SNI (a DNS name only; 6.6.14).
 # Builtins only (load8 / store8), no includes. The `_tn_` names are the native stack's,
 # kept so its callers and tests did not move. CHANGELOG [6.6.13] (CVE-63, CVE-59).
 
@@ -178,4 +179,18 @@ fn _tn_parse_ip_literal(host, host_len, out): i64 {
         return 16;
     }
     return _tn_parse_ipv4(host, host_len, out);
+}
+
+# How many bytes of `host` go out as the ClientHello's server_name (SNI): host_len when the
+# classifier calls it a DNS name, 0 otherwise. RFC 6066 §3: "Literal IPv4 and IPv6 addresses
+# are not permitted in HostName" — and a host with no reference identity (-1) is no HostName
+# either. The libssl binder (lib/tls.cyr _tls_libssl_bind_host) sets SNI under the same rule,
+# so the two backends send the same ClientHello name. The host still binds the certificate
+# (an IP literal against iPAddress SANs). CHANGELOG [6.6.14]
+fn _tn_sni_len(host, host_len): i64 {
+    if (host == 0) { return 0; }
+    if (host_len <= 0) { return 0; }
+    var ipb[16];                                 # 16 BYTES (local-array rule)
+    if (_tn_parse_ip_literal(host, host_len, &ipb) != 0) { return 0; }
+    return host_len;
 }
