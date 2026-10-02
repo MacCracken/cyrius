@@ -121,7 +121,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `tls_available()`'s verdict. Native: `crypto_tls_main_init()` (only a thread without a block gets
   one), then every lazy table a handshake reaches — SHA-256/-512, AES-GCM, Ed25519,
   `ecdsa_p256_warm`/`ecdsa_p384_warm`, the X.509 OID and PEM tables through their public entry
-  points — and the CA bundle cache, under its own 0 → 1 → 2 latch: idempotent, a warmed call
+  points, the X.509 validity-date table (`_x509_init_mdays`) — and the CA bundle cache, under its own 0 → 1 → 2 latch: idempotent, a warmed call
   allocates nothing, harmless on a worker. Recommended, not required: since sigil 3.13.6 first use
   is race-free; the verb moves about 1.3 MB of table builds and the bundle read off the first
   handshake and ends sigil's per-`cbank()` thread-pointer probe until main's block exists. The

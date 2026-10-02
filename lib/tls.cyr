@@ -392,6 +392,9 @@ fn _tls_native_warm(): i64 {
     var c = x509_cert_alloc();
     if (c != 0) { x509_parse(&junk, 2, c); }
     pem_decode_certs_into(&junk, 0, &junk, 1, &junk, 0);
+    # The validity-date table: a real certificate's parse reaches it (x509_parse_into ->
+    # _x509_parse_time -> _x509_date_to_epoch), the junk parse above stops before it.
+    _x509_init_mdays();
     _tn_ca_load();
     return 0;
 }

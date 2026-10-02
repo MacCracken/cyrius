@@ -194,11 +194,16 @@ fn test_init_main(recs): i64 {
     var r = recs;
     memset(r, 0, FT_REC);
     store64(r + 24, thread_local_alloc());
+    # Forget sigil's X.509 validity-date table too (the system-roots loads above built it), so the
+    # row below measures the warm and not an earlier test. Single-threaded here; the 96-byte table
+    # it rebuilds is leaked on purpose. Same test-only reach as _ft_ca_forget.
+    _x509_mdays_inited = 0;
     var t = thread_create(&_ft_init_on_worker, r);
     thread_join(t);
     assert_eq(load64(r), 1, "tls_init_main on a worker returns 1 (native backend)");
     assert_eq(load64(r + 8), 0x5A5A, "it installed no thread-local block over the worker's own");
     assert_eq(load64(r + 16), 2, "it loaded the CA bundle cache");
+    assert_eq(atomic_load(&_x509_mdays_inited), 2, "it built the X.509 validity-date table a handshake reaches");
     assert_eq(tls_init_main(), 1, "tls_init_main on the main thread returns 1");
     var a0 = alloc_used();
     assert_eq(tls_init_main(), 1, "a second call returns 1");
