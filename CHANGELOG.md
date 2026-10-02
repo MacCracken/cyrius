@@ -127,7 +127,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   never says `str_data`: it names a `_str` overload or a `<stem>_cstr` → `<stem>_str` sibling (bayan's
   `_by_cstr` / `_by_str`) when its param is `: Str`, then `str_cstr(x)` for a NUL-terminated copy, then
   annotating the param `: Str`. A method call names its registered fn (`T_lk`). An inferred global's
-  initializer callee lives in a new DIAGNOSTIC-ONLY per-global table, `GVDSID` / `SVDSID` (util.cyr,
+  initializer callee is recorded on BOTH global registration paths — `PARSE_GVAR_REG` (a global above
+  the first top-level statement) and `PARSE_VAR`'s global arm (any `var` after one, such as the
+  `alloc_init();` 139 tcyr files open with) — in a new DIAGNOSTIC-ONLY per-global table, `GVDSID` / `SVDSID` (util.cyr,
   lazily allocated, 8 B per global for the var table's hard cap of 1,048,576 and bound-checked on both
   sides, so no index past it is written), never in GVTYPE, which drives codegen. **Warning text
   only:** the 537-file corpus (tests/tcyr, programs, benches, fuzz) builds byte-identical old vs new
@@ -151,11 +153,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - the TYPE_CHECK=0/1 byte-identity;
   - rows for sibling hints, a global initialised from a later fn, struct-literal and `self: T`
     fields, a method call with a call argument, the left-alone shapes, a redeclaration clearing the
-    inferred record, and an `i32` global whose width equals Str's struct id.
+    inferred record, globals declared after a top-level statement (inferred, annotated, from a later
+    fn; an `i64` one and a redeclared one stay silent), and an `i32` global whose width equals Str's
+    struct id.
 
-  The pre-fix compiler fails 14 of its 19 checks. Three mutations each turn it red: dropping the
+  The pre-fix compiler fails 16 of its 21 checks. Three mutations each turn it red: dropping the
   `GVPM` gate, keeping a stale inferred record, and losing the `str_data` arm. Self-host fixpoint and
-  seed-derive green (cycc 1,475,080 → 1,479,360 B), and cycc's own self-compile output is unchanged.
+  seed-derive green (cycc 1,475,080 → 1,483,456 B), and cycc's own self-compile output is unchanged.
 
 ### Changed
 

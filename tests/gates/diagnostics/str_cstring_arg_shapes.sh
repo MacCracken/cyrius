@@ -253,6 +253,25 @@ fn main(): i64 { alloc_init(); var r = foo(0, gr); return r; }
 var rc = main();' > "$T/row.cyr"
 row "a redeclaration folded onto the slot clears the inferred record" 0
 
+# A global declared AFTER the first top-level statement (`alloc_init();` — 139 tcyr files open with
+# one) is registered by PARSE_VAR's global arm, never PARSE_GVAR_REG: the inferred record must be
+# written on that path too. The first cut wrote it only in PARSE_GVAR_REG, so `g` here was silent
+# while the annotated `g3` beside it warned.
+printf '%s\n%s\n' "$HDR" 'alloc_init();
+var g = str_from("x");
+var g3: Str = str_from("y");
+var gn = strlen("x");
+var gq = str_from("x");
+var gq = 5;
+var gm = mkm();
+fn mkm(): Str { return str_from("q"); }
+fn main(): i64 { var r = foo(0, g); r = r + foo(0, g3); r = r + foo(0, gn); r = r + foo(0, gq); r = r + foo(0, gm); return r; }
+var rc = main();' > "$T/row.cyr"
+row "globals after a top-level statement: inferred g, annotated g3, forward-fn gm warn; i64 gn, redeclared gq do not" 3
+if grep -q "passing Str-typed 'g' " "$T/row.cyr.err" && grep -q "passing Str-typed 'gm' " "$T/row.cyr.err"; then
+    _ok "axis 4 after-statement globals: the inferred g and gm are among the warnings"
+else _bad "axis 4 after-statement globals: an inferred global on the PARSE_PROG path is silent"; grep "$NEEDLE" "$T/row.cyr.err" || true; fi
+
 # GVTYPE's positive range is shared with scalar WIDTHS: an `i32` global stores 4. With `Str` as
 # the 4th struct its sid is 4 too, so an ungated positive compare reads the i32 as a Str.
 cat > "$T/row.cyr" <<'EOF'

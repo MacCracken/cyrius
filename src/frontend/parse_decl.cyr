@@ -4598,6 +4598,11 @@ fn PARSE_VAR(S): i64 {
         }
         SLVAR(S, vcnt);
         SGFI(S, vcnt, ufv);   # 6.6.10: see _UFV_G
+        # 6.6.13 I11: an untyped `var g = f(..);` here records f for the Str -> cstring diagnostic,
+        # as PARSE_GVAR_REG does for a global above the first statement (_gv_diag_sid).
+        var gdc = 0;
+        if (pscale == 0 && scalar_type == 0 && lfloat == 0 && slice_elt_w == 0 && dfc == 0) { gdc = _gv_rhs_call_sid(S, scv_start); }
+        SVDSID(S, vcnt, gdc);
         _GVAR_VIS(S, vcnt, GTI(S));   # v6.6.4: stamp visibility — a global registered on the PARSE_PROG path (any `var` after the FIRST top-level statement) skipped PARSE_GVAR_REG entirely and was never private
         SVCNT(S, vcnt + 1);
     }

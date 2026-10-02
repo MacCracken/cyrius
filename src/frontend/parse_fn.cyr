@@ -1730,12 +1730,19 @@ fn _gv_diag_sid(S, gvi, sti, typed): i64 {
 }
 fn _gv_init_call_sid(S, sti): i64 {
     if (TOKTYP(S, sti + 2) != 4) { return 0; }
-    if (TOKTYP(S, sti + 3) != 2) { return 0; }
-    if (TOKTYP(S, sti + 4) != 10) { return 0; }
-    var e = _tok_close_paren(S, sti + 4);
+    var cn = _gv_rhs_call_sid(S, sti + 3);
+    return cn;
+}
+# The same record from the initializer's first token `ri`: `f(..);` gives f's name offset + 1,
+# anything else 0. PARSE_VAR's global arm (a `var` after the first top-level statement, which
+# never reaches PARSE_GVAR_REG) writes it from here.
+fn _gv_rhs_call_sid(S, ri): i64 {
+    if (TOKTYP(S, ri) != 2) { return 0; }
+    if (TOKTYP(S, ri + 1) != 10) { return 0; }
+    var e = _tok_close_paren(S, ri + 1);
     if (e < 0) { return 0; }
     if (TOKTYP(S, e + 1) != 5) { return 0; }
-    return TOKVAL(S, sti + 3) + 1;
+    return TOKVAL(S, ri) + 1;
 }
 
 # The struct id a NAMED value carries, for the diagnostic only, 0 when untyped. A local decides
