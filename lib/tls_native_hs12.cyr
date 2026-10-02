@@ -2084,7 +2084,12 @@ fn tls_native_set_ca_system(ctx): i64 {
     if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
     var lr = _tn_ca_load();
     if (lr != TLS_OK) { return lr; }
-    if (_tn_ca_len < 0) { return TLS_ERR_IO; }
+    if (_tn_ca_len < 0) {
+        # No bundle. On Windows that includes a store whose every TLS root was refused: report those
+        # through tls_native_ca_skipped, or the reason the ctx has no roots is invisible. CHANGELOG [6.6.14]
+        if (_tn_ca_sys_skipped > 0) { store64(ctx + TLS_CTX_OFF_CA_SKIPPED, _tn_ca_sys_skipped); }
+        return TLS_ERR_IO;
+    }
     store64(ctx + TLS_CTX_OFF_CA_SKIPPED, _tn_ca_sys_skipped);
     if (_tn_ca_sys_set < 0) { return _tn_ca_sys_set; }
     store64(ctx + TLS_CTX_OFF_CA_ROOT, _tn_ca_sys_set);

@@ -684,6 +684,29 @@ fn test_policy_rows(): i64 {
 }
 #endif
 
+# Every target: a system load that found no usable bundle because the store refused every root
+# (Windows: _tn_ca_read_win returns -1 with refusals counted) still reports those refusals through
+# tls_native_ca_skipped. The published once-state is injected and restored, so this runs last.
+fn test_all_refused_counted(): i64 {
+    test_group("a system store whose every root was refused: TLS_ERR_IO, and the refusals are counted");
+    var s0 = _tn_ca_state;
+    var l0 = _tn_ca_len;
+    var set0 = _tn_ca_sys_set;
+    var k0 = _tn_ca_sys_skipped;
+    _tn_ca_state = 2;
+    _tn_ca_len = 0 - 1;
+    _tn_ca_sys_set = 0;
+    _tn_ca_sys_skipped = 7;
+    var ctx = tls_native_new_client("localhost", 9);
+    assert_eq(tls_native_set_ca_system(ctx), TLS_ERR_IO, "no usable bundle: TLS_ERR_IO");
+    assert_eq(tls_native_ca_skipped(ctx), 7, "the 7 refused roots are reported, not 0");
+    _tn_ca_state = s0;
+    _tn_ca_len = l0;
+    _tn_ca_sys_set = set0;
+    _tn_ca_sys_skipped = k0;
+    return 0;
+}
+
 fn main(): i64 {
     alloc_init();
     _ts_p256 = hex_decode("3082017d30820123a0030201020214561cee528775ffec8d05834b308f1ad80d7e7dbe300a06082a8648ce3d04030230143112301006035504030c096c6f63616c686f7374301e170d3236303630313138343930365a170d3336303532393138343930365a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d030107034200049167a2981f570fdbd8d94bf20fb4f5c89d77aa5b58cf4ed416bafa0256a2561a04f1e71d57537fc532fc87ca980eb8ba1f8f8704fc7f6a793ba6598b97bb3275a3533051301d0603551d0e04160414e6e9022c5ba23153aa7b2a0004574c417dfbf42e301f0603551d23041830168014e6e9022c5ba23153aa7b2a0004574c417dfbf42e300f0603551d130101ff040530030101ff300a06082a8648ce3d04030203480030450220274b9132990767c26d383d8712024a2c8cdb63e38af642893d1a59ab44a29758022100a57e61df420d2425c712ad284d0ad53ef9c8cdbfd07ba65c952eaead0dc13729", 770);
@@ -699,6 +722,7 @@ fn main(): i64 {
     test_store_policy();
     test_policy_rows();
     #endif
+    test_all_refused_counted();
     return assert_summary();
 }
 var ec = main();
