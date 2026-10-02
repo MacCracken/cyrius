@@ -65,7 +65,8 @@ command -v openssl >/dev/null 2>&1 || {
 
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: $G: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
 SP=0
-trap '[ "$SP" -ne 0 ] && kill "$SP" 2>/dev/null; rm -rf "$T"' EXIT
+FSP=0   # S0's foreign server: the trap ends it too, if the gate exits inside S0
+trap '[ "$SP" -ne 0 ] && kill "$SP" 2>/dev/null; [ "$FSP" -ne 0 ] && kill "$FSP" 2>/dev/null; rm -rf "$T"' EXIT
 FAILS=0
 NLIB=0
 NNAT=0
@@ -334,7 +335,7 @@ else
     FAILS=$((FAILS + 1))
 fi
 row 127.0.0.1       peer "$CA"            A  A  "S0: 127.0.0.1 reaches the IP leaf, not the listener that held the port"
-kill "$FSP" 2>/dev/null || true; wait "$FSP" 2>/dev/null || true
+kill "$FSP" 2>/dev/null || true; wait "$FSP" 2>/dev/null || true; FSP=0
 stop
 echo "leaf DNS:localhost"
 serve dns
