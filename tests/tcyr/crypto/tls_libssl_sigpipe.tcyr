@@ -1,0 +1,482 @@
+# tls_libssl_sigpipe.tcyr — 6.6.14 (CVE-66, the libssl half): a libssl-backend client or server
+# whose peer has gone reads TLS_ERR_IO; it is not killed by SIGPIPE.
+#
+# ⛔ THE DEFECT. libssl writes to its socket with write(2), not send(MSG_NOSIGNAL). A write to a
+# peer that had closed raised SIGPIPE, whose DEFAULT action terminates the process: the first
+# tls_write after the peer closed killed a libssl client (measured on 6.6.13: exit 141), and so
+# could tls_close (SSL_shutdown's close_notify), a server's tls_write, and a server's handshake
+# answering a ClientHello whose sender had already left — a remote peer could kill a server by
+# connecting and hanging up. The fix holds SIGPIPE off in the CALLING thread around every libssl
+# call that can write (lib/tls.cyr _tls_ssl_call: rt_sigprocmask, then rt_sigpending, and a
+# zero-timeout rt_sigtimedwait for a SIGPIPE the call itself raised) — libpq's pattern — and never
+# changes the process-wide disposition.
+#
+# Every case runs in a forked child with SIGPIPE at its DEFAULT disposition, so a regression is a
+# child killed by signal 13 — a FAILED row here, not a dead test. Each child also checks that the
+# disposition is still SIG_DFL, that its signal mask is what it was, and that no SIGPIPE was left
+# pending. One case pre-blocks SIGPIPE with one already pending: that one is the caller's and must
+# still be pending afterwards. Two more cover the deadline loop (_tls_ssl_io, CVE-61's path) and a
+# client handshake whose server has already gone. libssl is a Linux x86_64 fdlopen bridge: these
+# live cases are a named SKIP elsewhere, or without libssl.so.3 / the dlopen-helper.
+#
+# A structural group needs no libssl at all, so it also runs in check.sh (whose empty environment
+# has no dlopen helper): spies stand in for every libssl entry point that can write — SSL_connect,
+# SSL_accept, SSL_read, SSL_write (each with and without a deadline), SSL_shutdown and the 0-RTT
+# pair — behind a fake shim, and each records whether SIGPIPE was blocked in the calling thread
+# WHILE it ran. A call site that bypasses _tls_ssl_call is a failed row there, the 0-RTT pair
+# included (no live case reaches it: it needs a resumable session and a 0-RTT server).
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/io.cyr"
+include "lib/net.cyr"
+include "lib/chrono.cyr"
+include "lib/tls.cyr"
+
+var _sp_cert = 0;          # DER, self-signed P-256, CN = SAN DNS = localhost
+var _sp_key = 0;
+
+#ifdef CYRIUS_TARGET_LINUX
+#ifdef CYRIUS_ARCH_X86
+
+# The calling thread's signal mask (rt_sigprocmask with no new set).
+fn _sp_mask(): i64 {
+    var m[8];
+    store64(&m, 0);
+    syscall(SYS_RT_SIGPROCMASK, 0, 0, &m, 8);
+    return load64(&m);
+}
+
+# 1 when SIGPIPE is pending for this thread or the process.
+fn _sp_pending(): i64 {
+    var p[8];
+    store64(&p, 0);
+    syscall(127, &p, 8);
+    if ((load64(&p) & 0x1000) != 0) { return 1; }
+    return 0;
+}
+
+# SIGPIPE's disposition handler word (0 = SIG_DFL, 1 = SIG_IGN).
+fn _sp_disposition(): i64 {
+    var old[32];
+    memset(&old, 0, 32);
+    syscall(13, 13, 0, &old, 8);
+    return load64(&old);
+}
+
+fn _sp_write_all(fd, buf, n): i64 {
+    var off = 0;
+    while (off < n) {
+        var w = sys_write(fd, buf + off, n - off);
+        if (w <= 0) { return 0 - 1; }
+        off = off + w;
+    }
+    return n;
+}
+
+fn _sp_pair(out): i64 {
+    var fds[8];
+    sys_socketpair(1, 1, 0, &fds);
+    var fdp = load64(&fds);
+    store64(out, fdp & 0xFFFFFFFF);
+    store64(out + 8, (fdp >> 32) & 0xFFFFFFFF);
+    return 0;
+}
+
+fn _sp_noverify(h, handle): i64 {
+    tls_set_verify(handle, 0, 0);
+    return 0;
+}
+
+# Run `fp(arg)` in a forked child; its wait status (0 = exited 0).
+fn _sp_child(fp, arg): i64 {
+    var pid = sys_fork();
+    if (pid == 0) { sys_exit(fncall1(fp, arg)); }
+    var st[8];
+    sys_waitpid(pid, &st, 0);
+    return load64(&st) & 0xFFFF;
+}
+
+fn _sp_wait(pid): i64 {
+    var st[8];
+    sys_waitpid(pid, &st, 0);
+    return load64(&st) & 0xFFFF;
+}
+
+# A native server on `sfd`: accept, read the client's "g", then close everything.
+fn _sp_native_server(sfd): i64 {
+    var srv = tls_native_new_server(_sp_cert, 406, _sp_key, 138);
+    if (tls_native_server_load_creds(srv) != TLS_OK) { return 2; }
+    if (tls_native_accept(srv, sfd) != TLS_OK) { return 3; }
+    var g[8];
+    if (tls_native_read(srv, &g, 1) != 1) { return 4; }
+    sys_close(sfd);
+    return 0;
+}
+
+# The post-condition every case checks: disposition, mask and nothing left pending.
+fn _sp_clean(mask0): i64 {
+    if (_sp_disposition() != 0) { return 60; }
+    if (_sp_mask() != mask0) { return 61; }
+    if (_sp_pending() != 0) { return 62; }
+    return 0;
+}
+
+# Case: a libssl client writes after the peer closed; `mode` 1 = tls_write, 2 = tls_close only
+# (SSL_shutdown's close_notify is the write), 3 = a KeyUpdate request read (TLS 1.3).
+fn _sp_client_case(mode): i64 {
+    var mask0 = _sp_mask();
+    var pr: i64[2];
+    _sp_pair(&pr);
+    var pid = sys_fork();
+    if (pid == 0) {
+        sys_close(pr[1]);
+        if (mode == 3) {
+            var srv = tls_native_new_server(_sp_cert, 406, _sp_key, 138);
+            if (tls_native_server_load_creds(srv) != TLS_OK) { sys_exit(2); }
+            if (tls_native_accept(srv, pr[0]) != TLS_OK) { sys_exit(3); }
+            var g[8];
+            if (tls_native_read(srv, &g, 1) != 1) { sys_exit(4); }
+            # KeyUpdate(update_requested): the client must answer with its own KeyUpdate.
+            var ku[8];
+            store8(&ku, 24); store8(&ku + 1, 0); store8(&ku + 2, 0); store8(&ku + 3, 1); store8(&ku + 4, 1);
+            var rec[64];
+            var n = _tn_seal_ct(srv, TLS_CT_HANDSHAKE, &ku, 5, &rec, 64);
+            if (_sp_write_all(pr[0], &rec, n) != n) { sys_exit(5); }
+            sys_close(pr[0]);
+            sys_exit(0);
+        }
+        sys_exit(_sp_native_server(pr[0]));
+    }
+    sys_close(pr[0]);
+    sock_set_recv_timeout(pr[1], 10, 0);
+    var c = tls_connect_with_ctx_hook(pr[1], "localhost", &_sp_noverify, 0);
+    if (c == 0) { return 10; }
+    if (tls_write(c, "g", 1) != 1) { return 11; }
+    if (_sp_wait(pid) != 0) { return 12; }          # the peer has read "g" and closed
+    if (mode == 1) {
+        if (tls_write(c, "x", 1) != TLS_ERR_IO) { return 13; }
+    }
+    if (mode == 3) {
+        var b[16];
+        if (tls_read(c, &b, 16) >= 0) { return 14; }   # the answer cannot be written: an error
+    }
+    tls_close(c);
+    sys_close(pr[1]);
+    return _sp_clean(mask0);
+}
+
+# Case: SIGPIPE already blocked by the caller, with one already PENDING (raised by a plain write
+# to a closed pipe). The libssl write to a closed peer must leave it pending — it is the caller's —
+# and leave SIGPIPE blocked.
+fn _sp_prepending_case(arg): i64 {
+    var set[8];
+    store64(&set, 0x1000);
+    syscall(SYS_RT_SIGPROCMASK, 0, &set, 0, 8);    # SIG_BLOCK SIGPIPE
+    var mask0 = _sp_mask();
+    var pp[8];
+    sys_pipe(&pp);
+    sys_close(load32(&pp));
+    sys_write(load32(&pp + 4), "z", 1);              # EPIPE: SIGPIPE now pending (blocked)
+    if (_sp_pending() != 1) { return 20; }
+    var pr: i64[2];
+    _sp_pair(&pr);
+    var pid = sys_fork();
+    if (pid == 0) { sys_close(pr[1]); sys_exit(_sp_native_server(pr[0])); }
+    sys_close(pr[0]);
+    sock_set_recv_timeout(pr[1], 10, 0);
+    var c = tls_connect_with_ctx_hook(pr[1], "localhost", &_sp_noverify, 0);
+    if (c == 0) { return 21; }
+    if (tls_write(c, "g", 1) != 1) { return 22; }
+    if (_sp_wait(pid) != 0) { return 23; }
+    if (tls_write(c, "x", 1) != TLS_ERR_IO) { return 24; }
+    tls_close(c);
+    if (_sp_mask() != mask0) { return 25; }         # still blocked
+    if (_sp_pending() != 1) { return 26; }          # the caller's SIGPIPE was not consumed
+    var ts[16];
+    memset(&ts, 0, 16);
+    syscall(128, &set, 0, &ts, 8);                   # take it ourselves
+    if (_sp_pending() != 0) { return 27; }
+    return 0;
+}
+
+# Case: a libssl SERVER. `mode` 1 = tls_write after the client closed; 2 = the handshake answers a
+# ClientHello whose sender has already closed (SSL_accept's write).
+fn _sp_server_case(mode): i64 {
+    var mask0 = _sp_mask();
+    var pr: i64[2];
+    _sp_pair(&pr);
+    var pid = sys_fork();
+    if (pid == 0) {
+        sys_close(pr[0]);
+        if (mode == 2) {
+            var cc = tls_native_new_client("localhost", 9);
+            var hb = alloc(2048);
+            var hn = tls_native_client_build_hello(cc, hb + 5, 2000);
+            if (hn <= 0) { sys_exit(30); }
+            store8(hb, 22); store8(hb + 1, 3); store8(hb + 2, 1);
+            store8(hb + 3, (hn >> 8) & 0xFF); store8(hb + 4, hn & 0xFF);
+            if (_sp_write_all(pr[1], hb, hn + 5) != hn + 5) { sys_exit(31); }
+            sys_close(pr[1]);
+            sys_exit(0);
+        }
+        var c = tls_native_new_client("localhost", 9);
+        tls_native_set_verify(c, TLS_VERIFY_NONE);
+        if (tls_native_connect(c, pr[1]) != TLS_OK) { sys_exit(32); }
+        if (tls_native_write(c, "g", 1) != 1) { sys_exit(33); }
+        sys_close(pr[1]);
+        sys_exit(0);
+    }
+    sys_close(pr[1]);
+    sock_set_recv_timeout(pr[0], 10, 0);
+    var creds: i64[4];
+    creds[0] = _sp_cert; creds[1] = 406; creds[2] = _sp_key; creds[3] = 138;
+    var s = tls_accept_alloc(pr[0], &creds, 0, 0);
+    if (s == 0) { return 40; }
+    if (mode == 2) {
+        if (_sp_wait(pid) != 0) { return 41; }       # the ClientHello is in, its sender gone
+        if (tls_accept_complete(s) != 0) { return 42; }
+    } else {
+        if (tls_accept_complete(s) != 1) { return 43; }
+        var g[8];
+        if (tls_read(s, &g, 1) != 1) { return 44; }
+        if (_sp_wait(pid) != 0) { return 45; }
+        if (tls_write(s, "x", 1) != TLS_ERR_IO) { return 46; }
+    }
+    tls_close(s);
+    sys_close(pr[0]);
+    return _sp_clean(mask0);
+}
+
+# Case: the deadline loop (_tls_ssl_io). A libssl client with a deadline set writes after the peer
+# closed: the SSL_write the loop drives is held too (CVE-61's path).
+fn _sp_deadline_case(arg): i64 {
+    var mask0 = _sp_mask();
+    var pr: i64[2];
+    _sp_pair(&pr);
+    var pid = sys_fork();
+    if (pid == 0) { sys_close(pr[1]); sys_exit(_sp_native_server(pr[0])); }
+    sys_close(pr[0]);
+    sock_set_recv_timeout(pr[1], 10, 0);
+    var c = tls_connect_with_ctx_hook(pr[1], "localhost", &_sp_noverify, 0);
+    if (c == 0) { return 10; }
+    if (tls_set_deadline(c, clock_now_ns() + 5000000000) != 0) { return 15; }
+    if (tls_write(c, "g", 1) != 1) { return 11; }
+    if (_sp_wait(pid) != 0) { return 12; }          # the peer has read "g" and closed
+    if (tls_write(c, "x", 1) != TLS_ERR_IO) { return 13; }
+    tls_close(c);
+    sys_close(pr[1]);
+    return _sp_clean(mask0);
+}
+
+# Case: a client handshake whose server end closed before the ClientHello — SSL_connect's write.
+fn _sp_connect_case(arg): i64 {
+    var mask0 = _sp_mask();
+    var pr: i64[2];
+    _sp_pair(&pr);
+    sys_close(pr[0]);
+    var c = tls_connect_alloc(pr[1], "localhost", &_sp_noverify, 0);
+    if (c == 0) { return 10; }
+    if (tls_connect_complete(c) != 0) { return 11; }
+    tls_close(c);
+    sys_close(pr[1]);
+    return _sp_clean(mask0);
+}
+
+fn _sp_row(st, label): i64 {
+    if ((st & 0x7F) == 13) {
+        assert_eq(st, 0, label);
+        println("    (killed by SIGPIPE)");
+        return 0;
+    }
+    assert_eq(st, 0, label);
+    return 0;
+}
+
+fn test_sigpipe(): i64 {
+    test_group("libssl backend: a closed peer is TLS_ERR_IO, never a SIGPIPE death");
+    assert_eq(_sp_disposition(), 0, "precondition: SIGPIPE is at its default disposition (SIG_DFL)");
+    _sp_row(_sp_child(&_sp_client_case, 1), "client: tls_write after the peer closed -> TLS_ERR_IO, alive (was exit 141)");
+    _sp_row(_sp_child(&_sp_client_case, 2), "client: tls_close after the peer closed (close_notify) -> alive");
+    _sp_row(_sp_child(&_sp_client_case, 3), "client: tls_read answering a KeyUpdate to a gone peer -> an error, alive");
+    _sp_row(_sp_child(&_sp_server_case, 1), "server: tls_write after the client closed -> TLS_ERR_IO, alive");
+    _sp_row(_sp_child(&_sp_server_case, 2), "server: the handshake answers a ClientHello whose sender left -> 0, alive");
+    _sp_row(_sp_child(&_sp_deadline_case, 0), "client under a deadline: tls_write after the peer closed -> TLS_ERR_IO, alive");
+    _sp_row(_sp_child(&_sp_connect_case, 0), "client: the handshake to a server that already closed -> 0, alive");
+    _sp_row(_sp_child(&_sp_prepending_case, 0), "a SIGPIPE the caller already had pending (blocked) is left pending, the mask kept");
+    assert_eq(_sp_disposition(), 0, "the disposition is still SIG_DFL: the fix never ignores SIGPIPE process-wide");
+    assert_eq(_sp_pending(), 0, "and nothing is pending in the parent");
+    return 0;
+}
+
+# The structural group. Spies replace the libssl entry points that can write; each records, per
+# _TLS_IO_* op, how often it ran and how often SIGPIPE was blocked in this thread WHILE it ran,
+# and answers success so the verb completes. No libssl is loaded: the pointers are the test's.
+var _sx_calls: i64[8];
+var _sx_held: i64[8];
+var _sx_save: i64[11];
+
+fn _sx_note(op): i64 {
+    _sx_calls[op] = _sx_calls[op] + 1;
+    if ((_sp_mask() & 0x1000) != 0) { _sx_held[op] = _sx_held[op] + 1; }
+    return 0;
+}
+fn _sx_connect(ssl): i64 { _sx_note(_TLS_IO_CONNECT); return 1; }
+fn _sx_accept(ssl): i64 { _sx_note(_TLS_IO_ACCEPT); return 1; }
+fn _sx_read(ssl, buf, n): i64 { _sx_note(_TLS_IO_READ); return 3; }
+fn _sx_write(ssl, buf, n): i64 { _sx_note(_TLS_IO_WRITE); return n; }
+fn _sx_shutdown(ssl): i64 { _sx_note(_TLS_IO_SHUTDOWN); return 1; }
+fn _sx_write_early(ssl, buf, n, out): i64 {
+    _sx_note(_TLS_IO_WRITE_EARLY);
+    store64(out, n);
+    return 1;
+}
+fn _sx_read_early(ssl, buf, n, out): i64 {
+    _sx_note(_TLS_IO_READ_EARLY);
+    store64(out, 3);
+    return SSL_READ_EARLY_DATA_SUCCESS;
+}
+fn _sx_get_error(ssl, r): i64 { return 5; }        # present so a deadline is accepted; never reached
+fn _sx_free(p): i64 { return 0; }
+
+fn _sx_install(): i64 {
+    _sx_save[0] = _fn_SSL_connect;            _fn_SSL_connect = &_sx_connect;
+    _sx_save[1] = _fn_SSL_accept;             _fn_SSL_accept = &_sx_accept;
+    _sx_save[2] = _fn_SSL_read;               _fn_SSL_read = &_sx_read;
+    _sx_save[3] = _fn_SSL_write;              _fn_SSL_write = &_sx_write;
+    _sx_save[4] = _fn_SSL_shutdown;           _fn_SSL_shutdown = &_sx_shutdown;
+    _sx_save[5] = _fn_SSL_write_early_data;   _fn_SSL_write_early_data = &_sx_write_early;
+    _sx_save[6] = _fn_SSL_read_early_data;    _fn_SSL_read_early_data = &_sx_read_early;
+    _sx_save[7] = _fn_SSL_get_error;          _fn_SSL_get_error = &_sx_get_error;
+    _sx_save[8] = _fn_SSL_free;               _fn_SSL_free = &_sx_free;
+    _sx_save[9] = _fn_SSL_CTX_free;           _fn_SSL_CTX_free = &_sx_free;
+    _sx_save[10] = _fn_ERR_clear_error;       _fn_ERR_clear_error = 0;
+    return 0;
+}
+
+fn _sx_restore(): i64 {
+    _fn_SSL_connect = _sx_save[0];
+    _fn_SSL_accept = _sx_save[1];
+    _fn_SSL_read = _sx_save[2];
+    _fn_SSL_write = _sx_save[3];
+    _fn_SSL_shutdown = _sx_save[4];
+    _fn_SSL_write_early_data = _sx_save[5];
+    _fn_SSL_read_early_data = _sx_save[6];
+    _fn_SSL_get_error = _sx_save[7];
+    _fn_SSL_free = _sx_save[8];
+    _fn_SSL_CTX_free = _sx_save[9];
+    _fn_ERR_clear_error = _sx_save[10];
+    return 0;
+}
+
+# A fake libssl shim on a real socket (the deadline loop makes it non-blocking); the SSL* is a
+# token the spies never dereference. `dl` 1 = with a deadline 5 s out (set by tls_set_deadline).
+fn _sx_shim(fd, dl): i64 {
+    var c = alloc(_TLS_LIBSSL_SHIM_LEN);
+    memset(c, 0, _TLS_LIBSSL_SHIM_LEN);
+    store64(c + 8, 1);
+    store64(c + 16, fd);
+    if (dl == 1) {
+        if (tls_set_deadline(c, clock_now_ns() + 5000000000) != 0) { return 0; }
+    }
+    return c;
+}
+
+# One verb's row: it returned `got` (== `want`, the spy's success), reached the spy for `op`
+# exactly once, and that call ran with SIGPIPE blocked in this thread.
+fn _sx_check(op, got, want, label): i64 {
+    var f0 = _assert_fail;
+    assert_eq(got, want, label);
+    assert_eq(_sx_calls[op], 1, "  ... reached its libssl call exactly once");
+    assert_eq(_sx_held[op], 1, "  ... and that call ran with SIGPIPE blocked in this thread");
+    if (_assert_fail != f0) {
+        syscall(1, 2, "    (row: ", 10);
+        syscall(1, 2, label, strlen(label));
+        syscall(1, 2, ")\n", 2);
+    }
+    _sx_calls[op] = 0;
+    _sx_held[op] = 0;
+    return 0;
+}
+
+fn test_sigpipe_held_everywhere(): i64 {
+    test_group("every libssl call that can write runs with SIGPIPE held (spies, no libssl needed)");
+    var mask0 = _sp_mask();
+    assert_eq(mask0 & 0x1000, 0, "precondition: SIGPIPE is not blocked in this thread");
+    var i = 0;
+    while (i < 8) { _sx_calls[i] = 0; _sx_held[i] = 0; i = i + 1; }
+    var pr: i64[2];
+    _sp_pair(&pr);
+    tls_set_backend(TLS_BACKEND_LIBSSL);
+    _sx_install();
+    var c = _sx_shim(pr[0], 0);
+    var cd = _sx_shim(pr[0], 1);
+    assert_neq(cd, 0, "a deadline is accepted on the fake shim");
+    var b[16];
+    _sx_check(_TLS_IO_CONNECT, tls_connect_complete(c), 1, "SSL_connect: tls_connect_complete -> 1");
+    _sx_check(_TLS_IO_CONNECT, tls_connect_complete(cd), 1, "SSL_connect under a deadline (_tls_ssl_io) -> 1");
+    _sx_check(_TLS_IO_ACCEPT, tls_accept_complete(c), 1, "SSL_accept: tls_accept_complete -> 1");
+    _sx_check(_TLS_IO_ACCEPT, tls_accept_complete(cd), 1, "SSL_accept under a deadline (_tls_ssl_io) -> 1");
+    _sx_check(_TLS_IO_READ, tls_read(c, &b, 16), 3, "SSL_read: tls_read -> 3");
+    _sx_check(_TLS_IO_READ, tls_read(cd, &b, 16), 3, "SSL_read under a deadline (_tls_ssl_io) -> 3");
+    _sx_check(_TLS_IO_WRITE, tls_write(c, "abcd", 4), 4, "SSL_write: tls_write -> 4");
+    _sx_check(_TLS_IO_WRITE, tls_write(cd, "abcd", 4), 4, "SSL_write under a deadline (_tls_ssl_io) -> 4");
+    _sx_check(_TLS_IO_WRITE_EARLY, tls_write_early_data(c, "e", 1), 1, "SSL_write_early_data: tls_write_early_data -> 1");
+    _sx_check(_TLS_IO_READ_EARLY, tls_read_early_data(c, &b, 16), 3, "SSL_read_early_data: tls_read_early_data -> 3");
+    _sx_check(_TLS_IO_SHUTDOWN, tls_close(c), 0, "SSL_shutdown (close_notify): tls_close -> 0");
+    _sx_check(_TLS_IO_SHUTDOWN, tls_close(cd), 0, "SSL_shutdown on a shim with a deadline: tls_close -> 0");
+    _sx_restore();
+    sys_close(pr[0]);
+    sys_close(pr[1]);
+    assert_eq(_sp_mask(), mask0, "the thread's mask is the caller's again");
+    assert_eq(_sp_pending(), 0, "nothing is left pending");
+    assert_eq(_sp_disposition(), 0, "and the disposition was never touched");
+    return 0;
+}
+
+#endif
+#endif
+
+alloc_init();
+_sp_cert = hex_decode("3082019230820139a003020102021437416048df98b49fd5b278db00ebd0e1f87b6d40300a06082a8648ce3d04030230143112301006035504030c096c6f63616c686f7374301e170d3236303130313030303030305a170d3336303130313030303030305a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d030107034200040d7a46bc307511f24a53dcf973e0dfe2058db48d7db8b3941fa80176641ad78da12b801a12494d49312bf5b0ac312f3d50bca2282126fddd03652013bf8b49c5a3693067301d0603551d0e041604143bdd6c2d487f854851f408356e66880375bd6743301f0603551d230418301680143bdd6c2d487f854851f408356e66880375bd6743300f0603551d130101ff040530030101ff30140603551d11040d300b82096c6f63616c686f7374300a06082a8648ce3d04030203470030440220365bd112f9b8faec50c9b4a2cf7ec487cc424901870b8156b349dba15e1cde8102200c1ec7f6eefec5bc9976f55a70608b07d669c78183fa08e9a863370d17e39df3", 812);
+_sp_key = hex_decode("308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420666340f5e33734c31438ae0abd2370b72da193b44565625051bbc79a344535dda144034200040d7a46bc307511f24a53dcf973e0dfe2058db48d7db8b3941fa80176641ad78da12b801a12494d49312bf5b0ac312f3d50bca2282126fddd03652013bf8b49c5", 276);
+# Runs everywhere, libssl or not: the hold / release pair itself. On Linux x86_64 the hold blocks
+# SIGPIPE in this thread and the release restores the mask exactly; elsewhere both do nothing.
+fn test_hold_release(): i64 {
+    test_group("_tls_sigpipe_hold / _tls_sigpipe_release: the caller's mask round-trips");
+    var sp[16];
+    #ifdef CYRIUS_TARGET_LINUX
+    #ifdef CYRIUS_ARCH_X86
+    var m0 = _sp_mask();
+    _tls_sigpipe_hold(&sp);
+    assert_eq(_sp_mask() & 0x1000, 0x1000, "held: SIGPIPE is blocked in this thread");
+    assert_eq(load64(&sp + 8) & 1, 1, "held: the mask is marked for restore");
+    _tls_sigpipe_release(&sp);
+    assert_eq(_sp_mask(), m0, "released: the mask is exactly the caller's again");
+    assert_eq(_sp_disposition(), 0, "and the disposition was never touched");
+    return 0;
+    #endif
+    #endif
+    _tls_sigpipe_hold(&sp);
+    assert_eq(load64(&sp + 8), 0, "no libssl on this target: the hold changes nothing");
+    _tls_sigpipe_release(&sp);
+    return 0;
+}
+
+test_hold_release();
+var _sp_ran = 0;
+#ifdef CYRIUS_TARGET_LINUX
+#ifdef CYRIUS_ARCH_X86
+test_sigpipe_held_everywhere();                 # before libssl loads: the pointers are the test's
+tls_set_backend(TLS_BACKEND_LIBSSL);
+if (tls_available() == 1) {
+    test_sigpipe();
+    _sp_ran = 1;
+}
+#endif
+#endif
+if (_sp_ran == 0) {
+    var _skip = "  SKIP: libssl.so.3 or the fdlopen helper ($HOME/.cyrius/dlopen-helper) is not available (libssl runs on Linux x86_64 only)\n";
+    sys_write(1, _skip, strlen(_skip));
+}
+var r = assert_summary();

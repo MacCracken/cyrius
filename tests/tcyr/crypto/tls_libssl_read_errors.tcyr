@@ -11,6 +11,16 @@
 # TLS_ERR_IO (socket error / EOF with no close_notify), TLS_ERR_ALERT (a received alert),
 # TLS_ERR_PROTOCOL (any other libssl failure, a bad record MAC included).
 #
+# 6.6.14 — and a failed connection STAYS failed (CVE-60's "Not covered"): after a fatal alert a
+# second SSL_read reported SSL_ERROR_ZERO_RETURN (OpenSSL sets RECEIVED_SHUTDOWN, warn_alert 0 =
+# close_notify), so the re-read was 0 — a clean end — where native keeps TLS_ERR_ALERT. The shim
+# now keeps the first failure at +32: every later tls_read returns it, every later tls_write
+# returns TLS_ERR_PROTOCOL (native's rule), neither calls SSL — counted here by spies interposed
+# on the resolved SSL_read / SSL_write / SSL_shutdown pointers — and tls_close skips SSL_shutdown.
+# Every row runs twice per protocol version: as is, and with a deadline set (tls_set_deadline), since
+# a deadline routes tls_read / tls_write through their own branch (_tls_ssl_io, CVE-61's loop) and
+# the stored error must hold there too.
+#
 # A libssl-backend client (this process) against a forked native server that misbehaves on cue.
 # A named SKIP when libssl.so.3 or the fdlopen helper is missing. SIGPIPE is ignored here: the
 # tls_write row writes to a closed peer on purpose, and libssl's own SIGPIPE exposure is a separate
@@ -20,6 +30,7 @@ include "lib/alloc.cyr"
 include "lib/string.cyr"
 include "lib/io.cyr"
 include "lib/net.cyr"
+include "lib/chrono.cyr"
 include "lib/tls.cyr"
 
 #ifdef CYRIUS_TARGET_AGNOS
@@ -48,6 +59,8 @@ var _lr_cert_len = 406;
 var _lr_key = 0;
 var _lr_key_len = 138;
 var _lr_ver12 = 0;
+var _lr_deadline = 0;          # 1 = every row's connection has a deadline 5 s out
+var _lr_dl_rc = 0 - 99;        # what tls_set_deadline answered on the last row
 
 fn _lr_write_all(fd, buf, n): i64 {
     var off = 0;
@@ -111,8 +124,38 @@ fn _lr_noverify(hctx, handle): i64 {
     return 0;
 }
 
-# [r1, r2, write after, child status, connected, would-block read, stale errors planted]
-var _lr_obs: i64[7];
+# [r1, r2, write after, child status, connected, would-block read, stale errors planted,
+#  r3, SSL_read + SSL_write calls after the first failure, SSL_shutdown calls in tls_close,
+#  a second write (the closed-peer row), a read after the failed write (the closed-peer row)]
+var _lr_obs: i64[12];
+
+# Spies on the resolved libssl pointers: count the calls, then make the real one.
+var _lr_real_read = 0;
+var _lr_real_write = 0;
+var _lr_real_shutdown = 0;
+var _lr_n_io = 0;
+var _lr_n_shut = 0;
+fn _lr_spy_read(ssl, buf, n): i64 {
+    _lr_n_io = _lr_n_io + 1;
+    return fncall3(_lr_real_read, ssl, buf, n);
+}
+fn _lr_spy_write(ssl, buf, n): i64 {
+    _lr_n_io = _lr_n_io + 1;
+    return fncall3(_lr_real_write, ssl, buf, n);
+}
+fn _lr_spy_shutdown(ssl): i64 {
+    _lr_n_shut = _lr_n_shut + 1;
+    return fncall1(_lr_real_shutdown, ssl);
+}
+fn _lr_install_spies(): i64 {
+    _lr_real_read = _fn_SSL_read;
+    _lr_real_write = _fn_SSL_write;
+    _lr_real_shutdown = _fn_SSL_shutdown;
+    _fn_SSL_read = &_lr_spy_read;
+    _fn_SSL_write = &_lr_spy_write;
+    _fn_SSL_shutdown = &_lr_spy_shutdown;
+    return 0;
+}
 
 # Leave a libcrypto error queued on this thread, as any earlier failed libssl call does — here one
 # that reads as a received handshake_failure alert (lib SSL, reason 1000 + 40), pushed with
@@ -137,7 +180,7 @@ fn _lr_plant_stale(): i64 {
 
 fn _lr_row(script): i64 {
     var i = 0;
-    while (i < 7) { _lr_obs[i] = 0 - 99; i = i + 1; }
+    while (i < 12) { _lr_obs[i] = 0 - 99; i = i + 1; }
     var fds[8];
     sys_socketpair(1, 1, 0, &fds);
     var fdp = load64(&fds);
@@ -160,6 +203,8 @@ fn _lr_row(script): i64 {
         _lr_obs[6] = _lr_plant_stale();
         _lr_obs[5] = tls_read(c, &b, LR_MAXLEN);
         fd_restore_flags(cfd, saved);
+        # After the would-block row: under a deadline the loop waits where libssl would block.
+        if (_lr_deadline == 1) { _lr_dl_rc = tls_set_deadline(c, clock_now_ns() + 5000000000); }
         if (tls_write(c, "g", 1) == 1) {
             if (script == LS_CLOSE) {
                 var st0[4];
@@ -168,14 +213,23 @@ fn _lr_row(script): i64 {
                 pid = 0;
                 _lr_obs[6] = _lr_obs[6] + _lr_plant_stale();
                 _lr_obs[2] = tls_write(c, "x", 1);
+                var w0 = _lr_n_io;
+                _lr_obs[10] = tls_write(c, "y", 1);
+                _lr_obs[11] = tls_read(c, &b, LR_MAXLEN);
+                _lr_obs[8] = _lr_n_io - w0;
             } else {
                 _lr_obs[0] = tls_read(c, &b, LR_MAXLEN);
+                var n0 = _lr_n_io;
                 _lr_obs[1] = tls_read(c, &b, LR_MAXLEN);
+                _lr_obs[7] = tls_read(c, &b, LR_MAXLEN);
                 _lr_obs[6] = _lr_obs[6] + _lr_plant_stale();
                 _lr_obs[2] = tls_write(c, "x", 1);
+                _lr_obs[8] = _lr_n_io - n0;
             }
         }
+        var s0 = _lr_n_shut;
         tls_close(c);
+        _lr_obs[9] = _lr_n_shut - s0;
     }
     sys_close(cfd);
     if (pid != 0) {
@@ -187,51 +241,72 @@ fn _lr_row(script): i64 {
 }
 
 fn _lr_v(): i64 {
-    if (_lr_ver12 == 1) { println("  (TLS 1.2)"); return 0; }
-    println("  (TLS 1.3)");
+    if (_lr_ver12 == 1) { syscall(1, 1, "  (TLS 1.2", 10); } else { syscall(1, 1, "  (TLS 1.3", 10); }
+    if (_lr_deadline == 1) { println(", under a deadline: _tls_ssl_io)"); return 0; }
+    println(")");
     return 0;
 }
 
 fn test_libssl_reads(): i64 {
     test_group("tls_read / tls_write on the libssl backend: the native backend's codes");
     _lr_v();
+    _lr_dl_rc = 0 - 99;
     _lr_row(LS_FATAL_ALERT);
     assert_eq(_lr_obs[4], 1, "the handshake completes");
+    if (_lr_deadline == 1) { assert_eq(_lr_dl_rc, 0, "the deadline is set on the connection (tls_set_deadline -> 0)"); }
     assert_eq(_lr_obs[6], 2,
       "a stale libcrypto error (a handshake_failure alert) is queued before the read and the write");
     assert_eq(_lr_obs[5], TLS_ERR_WOULD_BLOCK,
       "a read with nothing to read on a non-blocking socket: TLS_ERR_WOULD_BLOCK, not the stale error");
     assert_eq(_lr_obs[0], TLS_ERR_ALERT, "a sealed fatal alert: TLS_ERR_ALERT (was 0, a clean EOF)");
-    # libssl answers a read after a fatal alert with SSL_ERROR_ZERO_RETURN (it sets
-    # RECEIVED_SHUTDOWN and leaves warn_alert at 0 = close_notify), so the re-read is 0, not the
-    # native backend's sticky TLS_ERR_ALERT — but the record behind the alert is never delivered.
-    assert_lte(_lr_obs[1], 0, "a re-read never delivers the record behind the alert");
+    # libssl itself answers a read after a fatal alert with SSL_ERROR_ZERO_RETURN (it sets
+    # RECEIVED_SHUTDOWN and leaves warn_alert at 0 = close_notify): the re-read was 0 until 6.6.14.
+    assert_eq(_lr_obs[1], TLS_ERR_ALERT, "a re-read stays TLS_ERR_ALERT, as on native (was 0, a clean EOF)");
+    assert_eq(_lr_obs[7], TLS_ERR_ALERT, "and the next one");
     assert_eq(_lr_obs[2], TLS_ERR_PROTOCOL,
       "tls_write after the fatal alert: TLS_ERR_PROTOCOL (was +4294967295; never 0)");
+    assert_eq(_lr_obs[8], 0, "none of them called SSL_read / SSL_write");
+    assert_eq(_lr_obs[9], 0, "tls_close sent no SSL_shutdown on the failed connection");
     assert_eq(_lr_obs[3], 0, "the server sent the row (child exit 0)");
 
     _lr_row(LS_CLOSE_NOTIFY);
     assert_eq(_lr_obs[0], 0, "close_notify: 0");
     assert_eq(_lr_obs[1], 0, "re-read with an app record behind it on the wire: still 0");
+    assert_eq(_lr_obs[7], 0, "and again: close_notify is an end, not a failure");
     assert_eq(_lr_obs[2], 1, "tls_write after the peer's close_notify: libssl still sends (half-close)");
+    assert_eq(_lr_obs[9], 1, "a connection that did not fail gets its SSL_shutdown");
     assert_eq(_lr_obs[3], 0, "the server sent the row (child exit 0)");
 
     _lr_row(LS_BITFLIP);
     assert_lt(_lr_obs[0], 0, "a tampered record: negative (was +4294967295)");
     assert_lte(_lr_obs[0], LR_MAXLEN, "never more than maxlen");
     assert_eq(_lr_obs[0], TLS_ERR_PROTOCOL, "TLS_ERR_PROTOCOL");
+    assert_eq(_lr_obs[1], TLS_ERR_PROTOCOL, "the re-read stays TLS_ERR_PROTOCOL");
+    assert_eq(_lr_obs[2], TLS_ERR_PROTOCOL, "a write after it: TLS_ERR_PROTOCOL");
+    assert_eq(_lr_obs[8], 0, "without calling SSL_read / SSL_write");
+    assert_eq(_lr_obs[9], 0, "and no SSL_shutdown at tls_close");
     assert_eq(_lr_obs[3], 0, "the server sent the row (child exit 0)");
 
     _lr_row(LS_TRUNCATED);
     assert_eq(_lr_obs[0], TLS_ERR_IO, "a record cut short, then FIN: TLS_ERR_IO (was 0, a clean EOF)");
+    assert_eq(_lr_obs[1], TLS_ERR_IO, "the re-read stays TLS_ERR_IO");
+    assert_eq(_lr_obs[8], 0, "without calling SSL_read / SSL_write");
 
     _lr_row(LS_FIN);
     assert_eq(_lr_obs[0], TLS_ERR_IO, "FIN with no close_notify: TLS_ERR_IO (was 0, a clean EOF)");
+    assert_eq(_lr_obs[1], TLS_ERR_IO, "the re-read stays TLS_ERR_IO");
+    assert_eq(_lr_obs[2], TLS_ERR_PROTOCOL, "a write after it: TLS_ERR_PROTOCOL");
+    assert_eq(_lr_obs[8], 0, "without calling SSL_read / SSL_write");
+    assert_eq(_lr_obs[9], 0, "and no SSL_shutdown at tls_close");
 
     _lr_row(LS_CLOSE);
     assert_eq(_lr_obs[3], 0, "the server read \"g\" and closed (child exit 0)");
     assert_eq(_lr_obs[6], 2, "stale libcrypto errors are queued before the read and the write");
     assert_eq(_lr_obs[2], TLS_ERR_IO, "tls_write to a closed peer: TLS_ERR_IO (was +4294967295)");
+    assert_eq(_lr_obs[10], TLS_ERR_PROTOCOL, "the next write: TLS_ERR_PROTOCOL, the connection has failed");
+    assert_eq(_lr_obs[11], TLS_ERR_IO, "a read after the failed write: the code that failed it");
+    assert_eq(_lr_obs[8], 0, "neither called SSL_write / SSL_read");
+    assert_eq(_lr_obs[9], 0, "and no SSL_shutdown at tls_close (it would write to the closed peer)");
     return 0;
 }
 
@@ -261,10 +336,15 @@ if (tls_available() != 1) {
     sys_write(1, _skip, strlen(_skip));
 } else {
     signal_ignore(SIGPIPE);
-    _lr_ver12 = 0;
-    test_libssl_reads();
-    _lr_ver12 = 1;
-    test_libssl_reads();
+    _lr_install_spies();
+    _lr_deadline = 0;
+    while (_lr_deadline < 2) {
+        _lr_ver12 = 0;
+        test_libssl_reads();
+        _lr_ver12 = 1;
+        test_libssl_reads();
+        _lr_deadline = _lr_deadline + 1;
+    }
 }
 #endif
 var r = assert_summary();

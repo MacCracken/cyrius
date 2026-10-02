@@ -2,8 +2,8 @@
 # TLS 1.3 client — ClientHello (.24, RFC 8446 §4.1.2)
 # ================================================================
 # Build a ClientHello into `out`: generate the client's x25519
-# ephemeral keypair + random, serialize the message (SNI when a host
-# was given, supported_versions=1.3, supported_groups=x25519,
+# ephemeral keypair + random, serialize the message (SNI when the host
+# is a DNS name, supported_versions=1.3, supported_groups=x25519,
 # signature_algorithms ECDSA/Ed25519, key_share x25519), and buffer
 # the message — the transcript hash can't be initialised until the
 # ServerHello reveals the cipher (hence the hash), so .25 replays the
@@ -30,11 +30,11 @@ fn tls_native_client_build_hello(ctx, out, out_max): i64 {
     }
     store64(ctx + TLS_CTX_OFF_CLIENT_RANDOM, crand);
     var host = load64(ctx + TLS_CTX_OFF_HOST);
-    var host_len = load64(ctx + TLS_CTX_OFF_HOST_LEN);
+    # SNI only for a DNS name: an IP literal is not a HostName (RFC 6066 §3). The host still binds
+    # the certificate (tls_native_client_verify_hostname). CHANGELOG [6.6.14]
+    var host_len = _tn_sni_len(host, load64(ctx + TLS_CTX_OFF_HOST_LEN));
     var sni_ext = 0;
-    if (host != 0) {
-        if (host_len > 0) { sni_ext = 4 + 2 + 1 + 2 + host_len; }
-    }
+    if (host_len > 0) { sni_ext = 4 + 2 + 1 + 2 + host_len; }
     var alpn = load64(ctx + TLS_CTX_OFF_ALPN_OFFER);
     var apl = 0;
     var alpn_ext = 0;

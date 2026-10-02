@@ -1,0 +1,130 @@
+# tls_client_hello_sni.tcyr — 6.6.14: the native TLS client sends server_name (SNI) for a DNS name
+# only, in both ClientHello builders.
+#
+# ⛔ THE DEFECT. tls_native_client_build_hello (TLS 1.3, lib/tls_native_hs13.cyr) and
+# tls_native_12_build_client_hello (TLS 1.2, lib/tls_native_hs12.cyr) wrote the host into a
+# server_name extension whenever one was set — "127.0.0.1", "::1", even "[::1]". RFC 6066 §3:
+# "Literal IPv4 and IPv6 addresses are not permitted in HostName." A server that answers an
+# unknown name fatally (OpenSSL's -servername_fatal) refused the connection, and the libssl backend
+# had stopped sending it at 6.6.13 (CVE-59's binder), so the two backends sent different
+# ClientHellos for one host. Both builders now ask the shared classifier (lib/tls_hostid.cyr,
+# _tn_sni_len): SNI for a DNS name, none for an IP literal or a host with no identity. The host
+# still binds the certificate (iPAddress SANs for a literal).
+#
+# Pure functions — no socket, no peer — so it runs on every cross-OS host. Each hello is walked
+# end to end (every length field must close exactly), so dropping the extension without fixing
+# the block length would fail here too.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/io.cyr"
+include "lib/tls.cyr"
+
+# Walk a ClientHello message (4-byte handshake header first). Returns the byte offset of the
+# server_name extension's DATA, 0 when there is none, or -1 when any length field fails to close.
+fn _sn_find(m, mlen): i64 {
+    if (mlen < 4 + 2 + 32 + 1) { return 0 - 1; }
+    if ((load8(m) & 0xFF) != 1) { return 0 - 1; }                  # client_hello
+    var blen = ((load8(m + 1) & 0xFF) << 16) | _tn_be16_r(m + 2);
+    if (blen + 4 != mlen) { return 0 - 1; }
+    var p = 4 + 2 + 32;
+    p = p + 1 + (load8(m + p) & 0xFF);                               # legacy_session_id
+    if (p + 2 > mlen) { return 0 - 1; }
+    p = p + 2 + _tn_be16_r(m + p);                                   # cipher_suites
+    if (p + 1 > mlen) { return 0 - 1; }
+    p = p + 1 + (load8(m + p) & 0xFF);                               # compression
+    if (p + 2 > mlen) { return 0 - 1; }
+    var end = p + 2 + _tn_be16_r(m + p);
+    if (end != mlen) { return 0 - 1; }
+    p = p + 2;
+    var found = 0;
+    while (p < end) {
+        if (p + 4 > end) { return 0 - 1; }
+        var t = _tn_be16_r(m + p);
+        var l = _tn_be16_r(m + p + 2);
+        if (p + 4 + l > end) { return 0 - 1; }
+        if (t == 0) {
+            if (found != 0) { return 0 - 1; }                        # two server_name extensions
+            found = p + 4;
+        }
+        p = p + 4 + l;
+    }
+    return found;
+}
+
+# The name carried in the server_name extension at `d` equals host[0..hl).
+fn _sn_names(m, d, host, hl): i64 {
+    if (_tn_be16_r(m + d - 2) != 2 + 1 + 2 + hl) { return 0; }       # extension_data length
+    if (_tn_be16_r(m + d) != 1 + 2 + hl) { return 0; }               # server_name_list length
+    if ((load8(m + d + 2) & 0xFF) != 0) { return 0; }                # host_name(0)
+    if (_tn_be16_r(m + d + 3) != hl) { return 0; }
+    return memeq(m + d + 5, host, hl);
+}
+
+var _sn_buf = 0;
+
+# One host through both builders. `want` 1 = SNI carrying the host, 0 = no server_name at all.
+fn _sn_row(host, want, label): i64 {
+    var hl = 0;
+    if (host != 0) { hl = strlen(host); }
+    var c13 = tls_native_new_client(host, hl);
+    var n13 = tls_native_client_build_hello(c13, _sn_buf, 4096);
+    assert_gt(n13, 0, label);
+    var d13 = _sn_find(_sn_buf, n13);
+    assert_gte(d13, 0, "  TLS 1.3 hello: every length field closes");
+    if (want == 1) {
+        assert_gt(d13, 0, "  TLS 1.3 hello carries server_name");
+        if (d13 > 0) { assert_eq(_sn_names(_sn_buf, d13, host, hl), 1, "  …naming the host"); }
+    } else {
+        assert_eq(d13, 0, "  TLS 1.3 hello carries NO server_name");
+    }
+    var c12 = tls_native_new_client(host, hl);
+    var n12 = tls_native_12_build_client_hello(c12, _sn_buf, 4096);
+    assert_gt(n12, 0, "  TLS 1.2 hello builds");
+    var d12 = _sn_find(_sn_buf, n12);
+    assert_gte(d12, 0, "  TLS 1.2 hello: every length field closes");
+    if (want == 1) {
+        assert_gt(d12, 0, "  TLS 1.2 hello carries server_name");
+        if (d12 > 0) { assert_eq(_sn_names(_sn_buf, d12, host, hl), 1, "  …naming the host"); }
+    } else {
+        assert_eq(d12, 0, "  TLS 1.2 hello carries NO server_name");
+    }
+    # The identity is untouched: the ctx keeps the host for certificate verification.
+    if (host != 0) {
+        assert_eq(load64(c12 + TLS_CTX_OFF_HOST_LEN), hl, "  the ctx keeps the host for verification");
+    }
+    return 0;
+}
+
+fn test_sni_by_host_kind(): i64 {
+    test_group("native ClientHello: server_name for a DNS name only (RFC 6066 3)");
+    _sn_row("example.com", 1, "example.com: a DNS name");
+    _sn_row("LOCALHOST", 1, "LOCALHOST: a DNS name, sent as given");
+    _sn_row("010.0.0.1", 1, "010.0.0.1: no literal has a leading zero, so it is a name");
+    _sn_row("127.0.0.1", 0, "127.0.0.1: an IPv4 literal");
+    _sn_row("10.0.0.1", 0, "10.0.0.1: an IPv4 literal");
+    _sn_row("::1", 0, "::1: an IPv6 literal");
+    _sn_row("2001:db8::1", 0, "2001:db8::1: an IPv6 literal");
+    _sn_row("::ffff:1.2.3.4", 0, "::ffff:1.2.3.4: an IPv6 literal with a dotted tail");
+    _sn_row("[::1]", 0, "[::1]: no identity (bracketed), so no HostName either");
+    _sn_row("fe80::1%eth0", 0, "fe80::1%eth0: no identity (zone id)");
+    _sn_row(0, 0, "host 0: nothing to send");
+    return 0;
+}
+
+fn test_sni_len_helper(): i64 {
+    test_group("_tn_sni_len: the one rule both backends follow");
+    assert_eq(_tn_sni_len("example.com", 11), 11, "a DNS name: its length");
+    assert_eq(_tn_sni_len("127.0.0.1", 9), 0, "an IPv4 literal: 0");
+    assert_eq(_tn_sni_len("::1", 3), 0, "an IPv6 literal: 0");
+    assert_eq(_tn_sni_len("[::1]", 5), 0, "no identity: 0");
+    assert_eq(_tn_sni_len(0, 5), 0, "host 0: 0");
+    assert_eq(_tn_sni_len("example.com", 0), 0, "length 0: 0");
+    return 0;
+}
+
+alloc_init();
+_sn_buf = alloc(4096);
+test_sni_len_helper();
+test_sni_by_host_kind();
+var r = assert_summary();

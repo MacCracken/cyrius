@@ -100,8 +100,8 @@ corresponding `tls_set_*` / `tls_ctx_*` verb):
 handshake), from the hook's final verify mode:
 
 - The leaf certificate bound to `host` — see "Server identity" below
-- SNI set from `host` (libssl: for a DNS-name host only — never for an IP literal
-  or a host with no identity; native: from `host`, an IP literal included — see the SNI bullet below)
+- SNI set from `host` for a DNS-name host only — never for an IP literal or a host with no
+  identity, on both backends (native since 6.6.14) — see the SNI bullet below
 
 #### Server identity (hostname binding) — 6.6.13, CVE-59
 
@@ -115,8 +115,8 @@ RFC 9525 §6.3):
 | `host` | Matched against | Examples |
 |---|---|---|
 | An IP literal: a dotted-quad IPv4 address with no leading zeros, or an RFC 4291 IPv6 address (`::` compression and a dotted-quad tail allowed) | iPAddress SANs only, octet for octet | `127.0.0.1`, `::1`, `::ffff:1.2.3.4` |
-| Any other host without a `:` — a DNS name | dNSName SANs only, RFC 6125: ASCII case-insensitive; a wildcard only as the whole leftmost label (`*.example.com` matches `a.example.com`, not `example.com` or `a.b.example.com`); no partial wildcard (`f*.example.com`); no fallback to the subject CN | `localhost`, `LOCALHOST`; `010.0.0.1` and `127.1` are names, as the resolver (`net_parse_ipv4`) treats them |
-| `0`, `""`, or a `:`-bearing host that is no literal | nothing: there is no reference identity | `[::1]`, `fe80::1%eth0` |
+| Any other host without a `:` — a DNS name | dNSName SANs only, RFC 6125 as OpenSSL implements it (`X509_check_host` with `NO_PARTIAL_WILDCARDS`): ASCII case-insensitive; a dNSName is a wildcard only as `*.` followed by two or more labels of `[A-Za-z0-9-]` (none empty or hyphen-edged, no second `*`, no trailing dot), and its star stands for exactly one non-empty label of `[A-Za-z0-9-]` (`*.example.com` matches `a.example.com`, not `example.com`, `a.b.example.com` or `a_b.example.com`); any other dNSName — `*.com`, `*.example.com.`, `f*.example.com` — is compared literally; no fallback to the subject CN; no public-suffix list (`*.co.uk` matches `a.co.uk`) | `localhost`, `LOCALHOST`; `010.0.0.1` and `127.1` are names, as the resolver (`net_parse_ipv4`) treats them |
+| `0`, `""`, a `:`-bearing host that is no literal, or a host starting with `.` (6.6.14) | nothing: there is no reference identity (OpenSSL would read `.example.com` as "any subdomain") | `[::1]`, `fe80::1%eth0`, `.example.com` |
 
 - **No identity under `SSL_VERIFY_PEER` (the default) is refused.** On libssl
   `tls_connect_alloc` returns 0 and no handshake runs; on native the handshake
@@ -137,9 +137,10 @@ RFC 9525 §6.3):
   DNS-name `host`, a name under an IP-literal `host`) is kept and must match as
   well. To verify a different name, pass it as `host`. (Measured with OpenSSL
   3.6.5; pinned by the gate's P rows.)
-- **SNI — libssl:** sent for a DNS-name host only; an IP-literal host sends no
-  SNI (RFC 6066 §3). The native backend still sends an IP literal as SNI (a
-  backlogged item), so this rule is libssl-only until that lands.
+- **SNI — both backends:** sent for a DNS-name host only; an IP-literal host, or
+  one with no identity, sends no SNI (RFC 6066 §3). Native followed it from
+  6.6.14 (`_tn_sni_len`, the classifier's verdict); until then its ClientHello
+  carried an IP literal too.
 - **libssl requires the binding symbols** `SSL_get0_param`,
   `SSL_get_verify_mode`, `X509_VERIFY_PARAM_set1_host`,
   `X509_VERIFY_PARAM_set_hostflags` and `X509_VERIFY_PARAM_set1_ip_asc` (every
@@ -148,9 +149,13 @@ RFC 9525 §6.3):
   deliberately not used, because from OpenSSL 3.0 it re-parses the name as an
   IP address with OpenSSL's own parser, which would let the libssl version
   decide the classification.
-- **Known divergence:** native accepts a wildcard directly over a single label
-  (`*.com` for `a.com`); libssl refuses it.
-- Pinned by `tests/gates/platform/tls_libssl_hostname_binding.sh` (both
+- **The backends agree, row for row (6.6.14, CVE-67).** Until 6.6.14 native took
+  any `*.` dNSName as a wildcard over the host's first label (`*.com` verified
+  `a.com`; `*.example.com.`, `*.a_b.com`, `*.*.example.com` and a non-LDH first
+  label matched too), where libssl refuses. `tests/tcyr/crossos/tls_hostname_verdicts.tcyr`
+  runs one SAN / host table through the native matcher on every host and through
+  OpenSSL's `X509_check_host` / `X509_check_ip_asc` wherever libssl loads.
+- Pinned end to end by `tests/gates/platform/tls_libssl_hostname_binding.sh` (both
   backends against OpenSSL's `s_server`).
 
 ### Connect — staged (resumption-aware, allocator-aware)
@@ -259,7 +264,7 @@ CertificateRequest is sent — while native is never looser than asked and reque
 |------|-----------|---------|----------|
 | `tls_write(ctx, buf, len)` | (i64, i64, i64) → i64 | `len`, 0, or a negative `TLS_ERR_*` | Encrypts and sends `len` bytes. See "What a read or a write returns" below. Native fragments into records of at most 16,384 bytes and returns `len` once every record is out. |
 | `tls_read(ctx, buf, maxlen)` | (i64, i64, i64) → i64 | bytes, 0, or a negative `TLS_ERR_*` | Delivers up to `maxlen` (> 0) bytes of application data. See the table below. Native delivers at most one record's plaintext per call and HOLDS the rest of an over-long record for the next calls, so sub-record reads lose nothing; it drains post-handshake NewSessionTicket / KeyUpdate records itself (32 records with no application data in one call fail with `TLS_ERR_PROTOCOL`). |
-| `tls_close(ctx)` | (i64) → i64 | 0 | No-op on a null ctx. libssl: `SSL_shutdown` if the symbol resolved (best-effort), then frees the `SSL` and the `SSL_CTX`; safe on a pre- or post-handshake ctx. Native: sends close_notify if the connection is up (best-effort, under the deadline if one is set) and frees NOTHING — the ctx and its shim live in the allocator they came from (see "Memory"). Neither backend waits for the peer's close_notify, and neither closes the socket: that is the caller's, after `tls_close`. |
+| `tls_close(ctx)` | (i64) → i64 | 0 | No-op on a null ctx. libssl: `SSL_shutdown` if the symbol resolved (best-effort) and no read or write has failed (6.6.14), then frees the `SSL` and the `SSL_CTX`; safe on a pre- or post-handshake ctx. Native: sends close_notify if the connection is up (best-effort, under the deadline if one is set) and frees NOTHING — the ctx and its shim live in the allocator they came from (see "Memory"). Neither backend waits for the peer's close_notify, and neither closes the socket: that is the caller's, after `tls_close`. |
 
 #### What a read or a write returns
 
@@ -282,6 +287,7 @@ above `_tn_read_fail` in `lib/tls_native_conn.cyr` (native) and `_tls_ssl_io_ret
 | `TLS_ERR_PROTOCOL` | -19 | Native: a ChangeCipherSpec after the handshake (see "ChangeCipherSpec"); 32 records with no application data in one read; a read or write on a ctx that was never connected or is closed, and a write on a failed one. libssl: any libssl failure not above — a bad record MAC and a protocol violation included — and a write after the peer shut down. | both |
 | `TLS_ERR_DECRYPT` | -15 | A record failed authentication (bad_record_mac: tampered or misdirected). libssl reports it as `TLS_ERR_PROTOCOL`. | native |
 | `TLS_ERR_BAD_RECORD` | -3 | A malformed record: a header declaring more than the 16,640-byte ciphertext ceiling (record_overflow), a frame too short to open, an alert that is not exactly 2 bytes. | native |
+| `TLS_ERR_WRONG_THREAD` | -23 | The call came from a thread other than the main thread (6.6.14). It was refused without touching libssl and the connection is unchanged: make it on the main thread (see "Thread safety"). Not a connection failure. | libssl |
 | `TLS_ERR_WOULD_BLOCK` | -9 | A non-blocking socket had nothing ready (`WANT_READ` / `WANT_WRITE`) and no deadline is set: call again. The native backend needs a BLOCKING socket — there `EAGAIN` reads as `TLS_ERR_IO` and fails the connection; bound a native read with `tls_set_deadline` instead. | libssl |
 | `TLS_ERR_OOM` | -11 | The ctx's record buffer could not be allocated (the first read or write, from an exhausted arena). | native |
 | `TLS_ERR_INVALID_PARAM` | -10 | `tls_read` with `maxlen <= 0` (does not fail the ctx). | native |
@@ -293,11 +299,16 @@ socket I/O failed, leave the ctx FAILED — every later `tls_read` returns the s
 alert stays `TLS_ERR_ALERT`), and `tls_write` returns `TLS_ERR_PROTOCOL`. Three negatives leave the
 ctx's state as it was: `TLS_ERR_INVALID_PARAM`; the `TLS_ERR_PROTOCOL` a ctx that is not connected
 (never connected, closed, or already failed) answers with; and a write whose record could not be
-sealed, which returns the sealer's code. None of them makes the connection usable again. libssl: OpenSSL may answer a SECOND
-read after a fatal alert with 0 (it reports `SSL_ERROR_ZERO_RETURN` once it has seen the peer's
-shutdown) — stop at the first negative. Either way: `tls_close`. A libssl-only build
+sealed, which returns the sealer's code. None of them makes the connection usable again. libssl
+(6.6.14): the same rule — the first negative other than `TLS_ERR_WOULD_BLOCK` is kept on the ctx,
+every later `tls_read` returns it, every later `tls_write` returns `TLS_ERR_PROTOCOL`, neither calls
+libssl again, and `tls_close` sends no close_notify (OpenSSL forbids `SSL_shutdown` after a fatal
+error). Until 6.6.14 a SECOND libssl read after a fatal alert returned 0 — OpenSSL reports
+`SSL_ERROR_ZERO_RETURN` once it has seen the peer's shutdown — so the re-read looked like a clean
+end. Either way: `tls_close`. A libssl-only build
 (`-D CYRIUS_TLS_LIBSSL`) defines only the codes its backend returns — `TLS_ERR_NOT_IMPLEMENTED`,
-`_WOULD_BLOCK`, `_INVALID_PARAM`, `_IO`, `_ALERT`, `_PROTOCOL`, `_TIMEOUT` — with the same values;
+`_WOULD_BLOCK`, `_INVALID_PARAM`, `_IO`, `_ALERT`, `_PROTOCOL`, `_TIMEOUT`, `_WRONG_THREAD` — with
+the same values;
 a consumer naming any other code compiles against the default build only.
 
 #### ChangeCipherSpec (native, 6.6.13)
@@ -352,6 +363,18 @@ writer makes: on Linux a socket is written with `sendto(2)` (44 on x86_64, 206 o
 permits `write` but not `sendto` kills the process on its first record write. (A deadline adds
 `fcntl` and `poll`, as it has since 6.6.13.)
 
+#### SIGPIPE on the libssl backend (6.6.14)
+
+A libssl call that writes to a peer that has closed — `tls_write`, `tls_read` (an alert or a
+KeyUpdate answer), the handshake in `tls_connect_complete` / `tls_accept_complete`, the
+close_notify in `tls_close`, the 0-RTT pair — fails like any other socket error: `tls_read` /
+`tls_write` return `TLS_ERR_IO`, the `*_complete` verbs 0. It does not raise SIGPIPE: around each
+such call `lib/tls.cyr` blocks SIGPIPE in the CALLING thread only, consumes a SIGPIPE that call
+itself raised (`rt_sigpending`, then a zero-timeout `rt_sigtimedwait`), and restores the caller's
+mask — libpq's pattern. The process-wide disposition is never changed, a SIGPIPE the caller already
+had pending is left pending, and other threads are untouched. Until 6.6.14 libssl's `write(2)` to a
+closed peer raised SIGPIPE, whose default action killed the process (CVE-66, the libssl half).
+
 ### Trust store and client certificates (v6.2.8)
 
 Backend-agnostic replacements for the `tls_dlsym("SSL_CTX_*")` trust-store and mTLS calls. They
@@ -362,8 +385,8 @@ failure, -1 = null handle or an unresolved libssl symbol.
 |------|-----------|---------|----------|
 | `tls_ctx_load_verify_locations(handle, cafile, capath)` | (i64, cstr, cstr) → i64 | 1 / 0 / -1 | Trust the PEM bundle at `cafile`. libssl: `SSL_CTX_load_verify_locations`, which ADDS to the store (the system roots stay trusted), `capath` honoured. Native: REPLACES the ctx's roots with the file's (the shared system set itself is never modified), `capath` ignored; the file (at most 16 MiB, `TLS_CAFILE_MAX`) is read into a buffer of exactly its size from the ctx's allocator, so an arena-backed ctx returns it on `reset_via`, and a global-heap ctx retains about twice the file's size plus 272 B per root (6.6.13; it was a megabyte per call). 0 when the file cannot be read or holds no usable certificate. `tls_native_ca_skipped(handle)` (native) then counts the blocks it could not use: after a success, installed + skipped == the bundle's PEM block count. |
 | `tls_ctx_set_verify_paths(handle)` | (i64) → i64 | 1 / 0 / -1 | Trust the OS default store: `SSL_CTX_set_default_verify_paths`, or native's shared system root set — on Windows the CurrentUser `ROOT` store since 6.6.14 (0 where there is no store). |
-| `tls_ctx_use_certificate_file(handle, path, type)` | (i64, cstr, i64) → i64 | 1 / 0 / -1 | mTLS: the certificate the CLIENT presents when a server asks. `type` 1 = PEM, 2 = DER (`SSL_FILETYPE_*`). Native: client contexts only (0 on a server ctx); reads at most 64 KiB, into a fresh global-heap buffer per call. |
-| `tls_ctx_use_private_key_file(handle, path, type)` | (i64, cstr, i64) → i64 | 1 / 0 / -1 | mTLS: the client's private key. Native auto-detects PEM or DER (`type` ignored); client contexts only, and the same 64 KiB read, as above. |
+| `tls_ctx_use_certificate_file(handle, path, type)` | (i64, cstr, i64) → i64 | 1 / 0 / -1 | mTLS: the certificate the CLIENT presents when a server asks. `type` 1 = PEM, 2 = DER (`SSL_FILETYPE_*`). Native: client contexts only (0 on a server ctx, before anything is read); the file (at most 1 MiB, `TLS_CREDFILE_MAX`) is read into a buffer of exactly its size from the ctx's allocator, so an arena-backed ctx returns it on `reset_via`; a larger file is refused (0), never cut short. Before 6.6.14 each call kept a 64 KiB global-heap buffer and a longer file was parsed truncated. |
+| `tls_ctx_use_private_key_file(handle, path, type)` | (i64, cstr, i64) → i64 | 1 / 0 / -1 | mTLS: the client's private key. Native auto-detects PEM or DER (`type` ignored); client contexts only, and the same read as above (the key stays referenced from that buffer). |
 
 ### Hook-time configuration (typed wrappers)
 
@@ -446,7 +469,7 @@ libssl's session-cache state machine; this is acknowledged technical debt, not a
   - the shared system root set lives on the global heap, never in `a`, so resetting `a` never
     disturbs another connection's roots.
 - **libssl** — OpenSSL's own heap: `tls_close` frees the `SSL` and the `SSL_CTX`; `a` does not
-  apply; the 32-byte shim is on the global heap.
+  apply; the 40-byte shim is on the global heap.
 
 ```
 var a = arena_allocator(262144);              # once
@@ -550,18 +573,33 @@ libssl rule is a limit, not a guarantee.
   Reuse workers rather than retiring them, or cap the pool.
 
 **libssl backend (`-D CYRIUS_TLS_LIBSSL`, or `tls_set_backend(TLS_BACKEND_LIBSSL)`): MAIN THREAD
-ONLY.**
+ONLY, and it FAILS CLOSED off it (6.6.14).**
 
-- Every libssl call — first use, connect, accept, read, write, close — must be made on the main
-  thread, and a libssl ctx must not migrate to a worker. The glibc that `fdlopen` bootstraps
-  needs a glibc TCB; a cyrius `thread_create` worker's thread pointer holds cyrius's own
-  thread-local block instead. Measured on x86_64 at 6.6.13: `_tls_init` on main then one fetch
-  from a worker is a SIGSEGV; a worker's cold first use hangs; the threaded repro under libssl
-  aborts with `*** stack smashing detected ***`. A main-thread-only program is unaffected.
-- **Not guarded in 6.6.13**: the verbs do not detect an off-main call and do not fail closed
-  there — the program crashes or hangs. Tracked in the roadmap backlog (libssl from worker
-  threads). `_tls_init` is an attempt latch, not a once-guard, so libssl first use must also be
-  single-threaded.
+- Every libssl call — first use, connect, accept, read, write, close, the hook-time config verbs,
+  introspection, sessions and 0-RTT, `tls_dlsym` — must be made on the main thread, and a libssl
+  ctx must not migrate to a worker. The glibc that `fdlopen` bootstraps needs a glibc TCB; a cyrius
+  `thread_create` worker's thread pointer holds cyrius's own thread-local block instead.
+- **Off the main thread every libssl verb refuses, without touching libssl**, with its own failure
+  value: `tls_read` / `tls_write` / `tls_set_deadline` return `TLS_ERR_WRONG_THREAD` (-23);
+  `tls_available` / `tls_init_main` / `tls_connect_alloc(_in)` / `tls_connect` /
+  `tls_accept_alloc(_in)` / `tls_accept` / the `*_complete` verbs / `tls_dlsym` /
+  `tls_get_alpn_selected` / `tls_get_peer_spki_der` / the session and cache verbs return 0;
+  `tls_set_alpn` / `tls_set_verify` / `tls_ctx_load_verify_locations` / `tls_ctx_set_verify_paths` /
+  `tls_ctx_use_*_file` / `tls_write_early_data` / `tls_read_early_data` return -1;
+  `tls_get_early_data_status` returns `TLS_EARLY_DATA_NOT_SENT`; `tls_close` returns 0 and frees
+  nothing (the `SSL` and `SSL_CTX` leak — close the ctx on the main thread). A refusal changes no
+  state: the same call made on the main thread afterwards works, and a worker's first use does not
+  claim the one-time initialisation. Through 6.6.13 the call crashed or hung instead (measured on
+  x86_64: `tls_available()` on main then one fetch on a worker was a SIGSEGV; a worker's cold first
+  use hung).
+- "The main thread" is the thread whose id is the process id (`gettid() == getpid()`, two syscalls
+  per libssl call, read fresh — a cached pid is wrong in a forked child): a forked child's main
+  thread is one. The cost, measured on x86_64 Linux with the kernel's speculation mitigations on
+  (~0.3 µs a syscall): 0.6–0.8 µs per libssl call. With the SIGPIPE hold (three more syscalls, see
+  "SIGPIPE on the libssl backend") a 16-byte `tls_write` goes from 2.1 to 3.8 µs and a 16 KiB one
+  from 7.3 to 9.0 µs; the native backend pays neither.
+- `_tls_init` and the introspection-symbol resolution are 0 → 1 → 2 claim / publish latches (one
+  caller resolves, the others wait), so a concurrent first use cannot read a half-resolved table.
 
 ## Escape hatch (non-contract)
 
@@ -592,8 +630,8 @@ surface: a change that breaks any of the documented return semantics or lifecycl
 is a contract amendment — it amends this file in the same patch and says so in its CHANGELOG
 entry.
 
-Internal implementation details — the shim's layout (32 bytes on libssl: `SSL_CTX*`, `SSL*`,
-socket, deadline; 40 bytes on native), the native ctx layout (`TLS_CTX_LEN`, 584 bytes at 6.6.14),
+Internal implementation details — the shim's layout (40 bytes on libssl: `SSL_CTX*`, `SSL*`,
+socket, deadline, the sticky error; 40 bytes on native), the native ctx layout (`TLS_CTX_LEN`, 584 bytes at 6.6.14),
 the `_fn_*` symbol cache, `_tls_libssl_handle`, the fdlopen bootstrap sequence — are NOT contract.
 Stdlib maintainers may restructure them freely so long as the public behaviour above is preserved.
 
