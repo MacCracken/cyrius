@@ -6,6 +6,63 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.13] — 2026-10-01
 
+### Security
+
+- **CVE-TBD(I10d) — a `[deps.NAME]` header with `/` or `..` cloned OUTSIDE the dep cache
+  (`cbt/deps.cyr` `_process_named_deps`).** **Root cause:** the header name becomes a path — the
+  clone dir `<home>/deps/<name>/<tag>` (mkdir + `git clone`) and the `lib/<name>_<base>`
+  destination — and the v6.2.51 traversal guard `_dep_reject_unsafe_name` was applied to modular
+  sub-module, index-leaf and package names, never to this one. Measured on 6.6.12:
+  `[deps.../../esc/x]` with `git` + `tag` + `modules` made `cyrius deps` create and clone into
+  `<home>/../esc/x/<tag>`; only the later `lib/` destination guard stopped the copy, after the
+  write. A TRANSITIVE dep's own `cyrius.cyml` reached the same code, so any dependency could plant
+  a checkout at a path of its choosing on the consumer's machine. **Fix:** the name is validated
+  as soon as it is read, before the closest-wins lookup, the clone or any path is built; a refused
+  section is named, counted as an error (exit 1, no lock written) and skipped, in the root
+  manifest and in every transitive one. Pinned by `deps_modules_default_or_warned.sh` D8 (root and
+  transitive).
+
+### Fixed
+
+- **I10 — a `[deps.X]` with `git` + `tag` but no `modules` was silently inert (`cbt/deps.cyr`
+  `_process_named_deps`; filed by agnostic 0.1.7).** **Root cause:** the clone guard was
+  `dep_git != 0 && dep_modules != 0` and a dep was marked visited only when a module was copied, so
+  a block without `modules` was never cloned, vendored, commit-pinned, counted or reported — and
+  because it was never visited, closest-wins did not apply: a TRANSITIVE `[deps.X]` resolved at
+  ITS tag instead (agnostic's root tags moved ahead of agnosai's and the lock kept agnosai's). A
+  `modular`-only git block hit the same guard. **Fix:** a block with neither `modules` nor
+  `modular` now means `modules = ["dist/X.cyr"]` when the tag (or path) ships that file — probed
+  after the clone and its CVE-21 pin, then vendored through the ordinary copy path (sidecar pull,
+  stdlib-clobber and symlink guards, visited + queued), so the root's tag wins and the lock pins
+  it. The probe is strictly `dist/X.cyr`. An explicit `modules = []` is NOT defaulted: it stays
+  the "declared, not linked" spelling (clone + pin, nothing vendored, no warning). A
+  `modular`-only git block is now cloned, and a clean modular pull marks the dep resolved, so its
+  commit pin reaches `cyrius.lock` (before, even a path-resolved modular dep wrote no lock and no
+  output). When the tag or path ships no `dist/X.cyr`, `cyrius deps` now SAYS so — `warning:
+  [deps.X] declares no modules and tag '<tag>' ships no dist/X.cyr — nothing vendored; a
+  transitive [deps.X] will resolve instead (list modules, or modules = [] for a dep that is
+  declared but not linked)` — and counts it in the summary (`0 deps resolved, 1 vendored
+  nothing`, printed even when nothing resolved); exit status stays 0, the dep is not marked
+  visited (as the warning says), and the clone's verified commit pin is kept, as for `modules =
+  []`. `optional` / `target`-gated blocks still skip silently. ⚠ crab's deliberately unlinked
+  `[deps.daimon]` (no `modules`, daimon ships no `dist/`) warns on every build from 6.6.13 and
+  is cloned in CI — add `modules = []` before pinning ≥ 6.6.13. On native Windows a
+  modules-less git dep with no usable `path` now reports the existing "needs a git clone, which
+  cyrius cannot run on this platform" error where it used to be silently dropped — and only that:
+  the follow-on `its cached checkout was NOT verified … the cached bytes are vendored as they are`
+  warning used to print even when the clone had just been refused and no cache existed (a claim
+  about bytes that were not there); it now prints only for a real pre-populated cache. Measured
+  on cass with the PE CLI: no cache → the one error, rc 1, no lock (6.6.12: rc 0, silent); a
+  pre-populated `deps\tyche\1.1.0` → `1 deps resolved`, the unverified-cache warning, and
+  `lib\tyche.cyr` byte-identical (`fc /b`) to the cache's `dist\tyche.cyr`.
+  The filed repro (`repros/git-dep-without-modules.cyml`, pin edited to the tree) now
+  prints `1 deps resolved`, vendors `lib/tyche.cyr` byte-identical to `git show
+  1.1.0:dist/tyche.cyr` and pins `tyche 1.1.0`. Pinned by the new
+  `tests/gates/toolchain/deps_modules_default_or_warned.sh` (D1–D8, hermetic file:// origins,
+  every expected byte and commit taken from the origin; mutation ledger in the file — the
+  6.6.12 resolver reds D1 D2 D3 D3b D4 D6 D8). Documented in the guide's *Dependencies*
+  section, with `modules = []` as the declared-not-linked opt-out.
+
 ### Downstream
 
 #### Folded — ⛔ each tagged BEFORE cyrius 6.6.13

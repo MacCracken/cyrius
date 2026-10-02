@@ -47,6 +47,10 @@ var _dep_nd_leaves = 0;
 #               sections still need to be walked. BFS drain in cmd_deps.
 var _dep_visited = 0;
 var _dep_queue = 0;
+# 6.6.13 (I10b): count of [deps.X] blocks that declare no `modules` / `modular` and whose
+# tag or path ships no `dist/<X>.cyr` — each is warned by name and counted in the
+# `deps resolved` summary (`, N vendored nothing`). Reset per cmd_deps.
+var _dep_inert = 0;
 # CVE-21 (v6.2.30): vec<cstr> of resolved git-dep commit pins accumulated
 # during cmd_deps. Each entry: "commit\t<40hex>\t<name>\t<git>\t<tag>".
 # cmd_deps_lock appends them to cyrius.lock (after the per-file hash lines);
