@@ -60,9 +60,180 @@ fn _arr_gdesc(S, vi): i64 {
     return g & 0xFF;
 }
 
+# ⛔ 6.6.13 (M2) — THE BYTES OF ONE ELEMENT, the SIZE of `var a: T[N]`. The descriptor above
+# (`ew`/`sgn`) is the integer subscript's, and it was also the array's only size input, so
+# every element it does not describe was sized like a bare `var a[N]`: N BYTES in a fn
+# (`var a: f64[4]` and `var a: Pt[2]` held 8 bytes), N slots at top level (`Pt[2]` held 16 of
+# 32), and the declaration zone's prefix ladder read `i8v16` as an i8. A write inside the
+# declared bounds ran over the next local or global, silently. The size is its own value now:
+#   ew > 0: i8..u64 1/2/4/8, u128 16, a slice 16 (unchanged)
+#   f64 8; f32 4 (packed, as f32v4 lanes and interop buffers lay it out)
+#   a vector 16/32; a struct, union or generic instance STRUCTSZ (= sizeof(T)); `*T` 8
+#   bool, cstring, an enum, and the enclosing generic fn's own `T` (its i64 base) 8
+#   0: a bare `var a[N]` (no annotation, ann_ti 0), which keeps its legacy sizing.
+# Any other name is refused by name: `var g: P3[2];` above `struct P3` was 8 per element.
+# The subscript stays integer-only, so a non-integer element keeps descriptor 0 and `a[i]` is
+# refused — its stride cannot disagree with this size. CHANGELOG [6.6.13]
+fn _arr_ebytes(S, ew, flt, tsc, ann_ti): i64 {
+    if (ann_ti == 0) { return 0; }
+    if (_arr_prefix_wrong(S, ew, flt, ann_ti) == 1) { return _arr_whole_ebytes(S, ann_ti); }
+    if (ew > 0) { return ew; }
+    if (flt == F64_TYID) { return 8; }
+    if (flt == F32_TYID) { return 4; }
+    if (tsc <= 0 - 2048) {
+        _vec_desc(S, tsc);
+        return GVEC_NSLOTS(S) * 8;
+    }
+    if (tsc < 0) { return STRUCTSZ(S, 0 - tsc - 1); }
+    if (tsc > 0) { return 8; }
+    return _arr_name_ebytes(S, ann_ti);
+}
+# The annotation at `ti` named no type the ladders know: 8 for bool, cstring, an enum (declared
+# on either side — its values are i64) or a type parameter of the enclosing generic fn; else
+# refused by name, reported at the name and recovered (8), so each bad array is reported.
+# `--syntax-only` resolves nothing, so there it is 8 too (see `_syntax_only`, util.cyr).
+fn _arr_name_ebytes(S, ti): i64 {
+    if (_syntax_only == 1) { return 8; }
+    var noff = TOKVAL(S, ti);
+    if (TOKTYP(S, ti) == 2) {
+        if ((L64(S + 0xEC00000 + noff) & 0xFFFFFFFFFF) == 0x6C6F6F62) { return 8; }   # bool
+        if (_classify_return_type(S, noff) == 0 - 19) { return 8; }                 # cstring
+        if (_is_enum_name(S, noff) == 1) { return 8; }
+        if (_declared_later(S, noff, 60, 60) == 1) { return 8; }
+        if (_arr_fn_tparam(S, ti, noff) == 1) { return 8; }
+    }
+    if (_panic == 1) { return 8; }
+    var sv = GTI(S);
+    STI(S, ti);
+    if (TOKTYP(S, ti) != 2) {
+        ERR_MSG(S, "unknown array element type", 26);
+    } elif (_declared_later(S, noff, 40, 101) == 1) {
+        ERR_IDENT(S, "array element type ", noff, " is declared after the array; declare it above the array", 0 - 1);
+    } else {
+        ERR_IDENT(S, "unknown array element type ", noff, 0, 0 - 1);
+        PRSTR("  note: an element is i8..i64, u8..u64, u128, f32, f64, bool, cstring, an enum, *T, a vector type, a slice, or a struct or union declared above the array\n");
+    }
+    STI(S, sv);
+    _panic = 0;
+    return 8;
+}
+# Both annotation ladders match a scalar by its name's PREFIX (`ltname & 0xFFFF == "i8"`) and ask
+# FINDSTRUCT only after, so `struct u8pair` / `struct f64pair` arrived as u8 / f64 and an array
+# of it was sized 1 or 8 per element (in a fn `u8pair[2]` held 8 of 32 bytes, with a 1-byte
+# subscript stride). In the ARRAY path the WHOLE name decides: 1 when the ladder's integer width
+# `ew` or float `flt` came from a prefix of a longer name. A type parameter the default build
+# bound to its argument (`_tp_resolve`) is the ladder's own answer and stands. The callers also
+# drop the integer descriptor then, so `a[i]` is refused like any non-integer element.
+fn _arr_prefix_wrong(S, ew, flt, ti): i64 {
+    if (ti == 0) { return 0; }
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    var want = 0;
+    if (flt != 0) { want = 3; }
+    elif (ew == 1) { want = 2; }
+    elif (ew == 2 || ew == 4 || ew == 8) { want = 3; }
+    if (want == 0) { return 0; }
+    var noff = TOKVAL(S, ti);
+    if (_tp_c0 != 0) { if (_tp_resolve(S, noff) != 0) { return 0; } }
+    if (load8(S + 0xEC00000 + noff + want) == 0) { return 0; }
+    return 1;
+}
+# The element a prefix-matched name really spells: a struct or union (a generic one through its
+# instance, built as _gen_ann_sid builds it from the `<..>` after the name), else the by-name
+# resolution above (an enum, a type declared after the array, or refused).
+fn _arr_whole_ebytes(S, ti): i64 {
+    var sid = FINDSTRUCT(S, TOKVAL(S, ti));
+    if (sid > 0) {
+        if (TOKTYP(S, ti + 1) == 19) {
+            var sv = GTI(S);
+            var sv_gt = _ta_pending_gt;
+            STI(S, ti + 1);
+            sid = _gen_ann_sid(S, sid);
+            STI(S, sv);
+            _ta_pending_gt = sv_gt;
+        }
+        return STRUCTSZ(S, sid - 1);
+    }
+    return _arr_name_ebytes(S, ti);
+}
+# Is `noff` a type parameter of the generic fn whose body holds token `ti`? The default build binds
+# every T (to i64 in the base, to its argument in an instance) and PARSE_VAR's ladder resolves it,
+# so this is CYRIUS_MONOMORPH=0's case, where nothing is captured or bound: read from the tokens,
+# as _is_own_tparam (parse_types.cyr) does for a struct. The enclosing fn is the nearest `fn`
+# before `ti` whose body spans it.
+fn _arr_fn_tparam(S, ti, noff): i64 {
+    if (GINFN(S) != 1) { return 0; }
+    var k = ti - 1;
+    while (k >= 0) {
+        if (TOKTYP(S, k) == 32) {
+            if (_tok_body_spans(S, k, ti) == 1) {
+                if (TOKTYP(S, k + 2) != 19) { return 0; }   # `fn name <`
+                var j = k + 3;
+                var t = TOKTYP(S, j);
+                while (t != 20 && t != 10 && t != 12) {
+                    if (t == 2) { if (STREQ(S, TOKVAL(S, j), noff) == 1) { return 1; } }
+                    j = j + 1;
+                    t = TOKTYP(S, j);
+                }
+                return 0;
+            }
+        }
+        k = k - 1;
+    }
+    return 0;
+}
+# Does the `{ .. }` body of the fn whose `fn` keyword is token `k` contain token `ti`?
+fn _tok_body_spans(S, k, ti): i64 {
+    var j = k + 1;
+    while (j < ti && TOKTYP(S, j) != 13) { j = j + 1; }
+    if (j >= ti) { return 0; }
+    var n = GTCNT(S);
+    var d = 0;
+    while (j < n) {
+        var t = TOKTYP(S, j);
+        if (t == 13) { d = d + 1; }
+        if (t == 14) {
+            d = d - 1;
+            if (d == 0) {
+                if (j > ti) { return 1; }
+                return 0;
+            }
+        }
+        j = j + 1;
+    }
+    return 1;
+}
+# A declaration-zone global's element size (PARSE_GVAR_REG). That ladder tests name PREFIXES, so a
+# vector element (`i8v16`, `u32v4`, `i64v2`, `f64v2`, `f32v8`, ..) arrived as the scalar it starts
+# with; the WHOLE name decides here, through the vocabulary a return type uses
+# (`_classify_return_type`, the same vector sentinels as PARSE_VAR's ladder). PARSE_GVAR_ARR then
+# drops the integer descriptor the prefix gave it (its width is not the element's size).
+fn _gvar_ebytes(S, ew, flt, sid, psc, ann_ti): i64 {
+    var tsc = psc;
+    if (sid > 0) { tsc = 0 - sid; }
+    if (ann_ti > 0) {
+        if (TOKTYP(S, ann_ti) == 2) {
+            var vs = _classify_return_type(S, TOKVAL(S, ann_ti));
+            if (vs <= 0 - 2048) { return _arr_ebytes(S, 0, 0, vs, ann_ti); }
+        }
+    }
+    return _arr_ebytes(S, ew, flt, tsc, ann_ti);
+}
+# ⛔ 6.6.13 (M2) — N * the element size must not wrap: a wrapped product is the same silent
+# under-size. Over 2 GiB is refused (no backend addresses a static that large). `em` is the
+# bytes per element the caller multiplies by. Returns the size to use (0 after the error).
+fn _arr_size_ok(S, asz, em): i64 {
+    if (em < 1) { em = 1; }
+    if (asz < 0 || asz > 0x7FFFFFFF / em) {
+        ERR_MSG(S, "array too large: N * sizeof(T) must stay under 2 GiB", 52);
+        return 0;
+    }
+    return asz;
+}
+
 # `sgn` = 1 for a signed element type (i8/i16/i32). 6.6.12: `ew` and `sgn` are also RECORDED
 # as the array's element descriptor, which is what `a[i]` scales and loads by (_arr_desc).
-fn PARSE_ARRAY(S, noff, ew, sgn): i64 {
+# 6.6.13: `eb` is the bytes per element (_arr_ebytes), 0 for a bare `var a[N]`.
+fn PARSE_ARRAY(S, noff, ew, sgn, eb): i64 {
     var _pa_decl_ti = GTI(S);   # v6.6.4: the `[` token — `]` and `;` are consumed below, so by the stamp the cursor may already sit in the NEXT file
     STI(S, GTI(S) + 1);  # consume [
     # v5.10.48: accept either NUM literal OR an IDENT that resolves
@@ -98,6 +269,9 @@ fn PARSE_ARRAY(S, noff, ew, sgn): i64 {
             ERR_EXPECT(S, 1);
         }
     }
+    var _pa_em = eb;   # 6.6.13 (M2): the bytes per element the size below multiplies by
+    if (_pa_em < 1) { if (GINFN(S) != 1) { _pa_em = 8; } }
+    asz = _arr_size_ok(S, asz, _pa_em);
     if (PEEKT(S) != 29) { ERR_EXPECT(S, 29); }
     STI(S, GTI(S) + 1);  # consume ]
     if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
@@ -114,8 +288,13 @@ fn PARSE_ARRAY(S, noff, ew, sgn): i64 {
     # spelling that fixes the address-taken-local slot-idiom footgun
     # (issue 2026-06-11; daimon). All backends inherit the byte size
     # from this 0x12A000 table. See CHANGELOG [6.2.1].
+    # 6.6.13 (M2): sized by `eb`, the bytes per element (_arr_ebytes), not by the integer
+    # descriptor `ew` — which is 0 for f64/f32/struct/`*T`/vector/bool/enum elements and sized
+    # them like a bare array. For an integer element eb == ew, so those sizes are unchanged.
+    # The integer descriptor stands only for an element of exactly that width (as PARSE_GVAR_ARR).
+    if (eb != ew) { ew = 0; sgn = 0; }
     var aligned = (asz + 7) & (0 - 8);
-    if (ew > 0) { aligned = (asz * ew + 7) & (0 - 8); }
+    if (eb > 0) { aligned = (asz * eb + 7) & (0 - 8); }
     # v6.4.10 (P1 fix, kernel blocker) — a BARE top-level `var X[N]` (ew==0, NOT a
     # function-local) must size N×8 to match PARSE_GVAR_ARR (the pass-1 declaration path,
     # parse_decl.cyr ~700 `ar_ew` defaults to 8). Otherwise the IDENTICAL decl is N×8 when
@@ -548,12 +727,44 @@ fn _fsc_global_src(S, gv): i64 {
     if (pm == 1) { _fsc_gdr = 1; }
     return 0 - gt;
 }
+# ⛔ 6.6.13 — A CAPTURED STRUCT COPIED INSIDE A CLOSURE STORED ITS ADDRESS. The three name-based
+# copy-source resolvers (this one, `_agc_src_operand` in parse.cyr, `_try_struct_copy_init`) went
+# local, then global, with no rung for a closure CAPTURE — an enclosing local is neither inside the
+# closure body — so each fell back to the capture's scalar VALUE. For an inline (multi-word)
+# capture that value is `&env[woff]`, and for a one-word capture of a struct over 8 B (a
+# pointer-mode local, an address-passed by-value parameter) it is the pointer: `b.v = p;` put the
+# env address in `b.v.x` (80 where 34 is right), `q = p;` likewise, and `var q: Pt = p;` bound q
+# INTO the env (its writes persisted across calls) or into the caller's by-value argument.
+# A capture is recorded here in the FIELD form, capture-encoded index, offset 0, so every byte-exact
+# copy loop addresses it through `_resolve_field_base_addr` -> `_CL_CAP_BASE_RA` — the base the
+# closure's own `p.x` reads use, so a copy cannot disagree with a field read. A vector (sid 0) is
+# always inline and is never loaded through. Returns the capture's type (`0 - sid`, or the vector
+# descriptor) or 0 when `noff` is not a captured aggregate. Sits between the local and the global
+# rung, in PARSE_FACTOR's order. CHANGELOG [6.6.13]
+fn _fsc_cap_src(S, noff): i64 {
+    if (_cl_capturing != 1) { return 0; }
+    if (_cl_env_lidx < 0) { return 0; }
+    var esl = _cl_snap_find(S, noff);
+    if (esl < 0) { return 0; }
+    var capi = _cl_cap_find(esl);
+    if (capi < 0) { return 0; }
+    var t = _cl_snap_type(esl);
+    if (t >= 0) { return 0; }
+    _fsc_reset();
+    _fsc_fidx = 0 - 1000000 - capi;
+    _fsc_fsid = 0;
+    if (t > 0 - 2048) { _fsc_fsid = 0 - t; }
+    _fsc_foff = 0;
+    return t;
+}
 fn _fsc_name_src(S, noff): i64 {
     _fsc_reset();
     if (GINFN(S) == 1) {
         var li = FINDLOCAL(S, noff);
         if (li >= 0) { return _fsc_local_src(S, li); }
     }
+    var ct = _fsc_cap_src(S, noff);   # 6.6.13: a closure capture, before the global
+    if (ct != 0) { return ct; }
     var gv = FINDVAR(S, noff);
     if (gv < 0) { return 0; }
     return _fsc_global_src(S, gv);
@@ -1768,7 +1979,8 @@ fn _STRUCT_LIT_LOCAL(S, noff, sid): i64 {
     return 0;
 }
 
-fn PARSE_GVAR_ARR(S, noff, sti, ew, sgn): i64 {
+# 6.6.13 (M2): `eb` is the bytes per element (_arr_ebytes), 0 for a bare `var g[N]`.
+fn PARSE_GVAR_ARR(S, noff, sti, ew, sgn, eb): i64 {
     STI(S, GTI(S) + 1);
     # v5.10.48: top-level array-size NUM-or-enum-const-ident — same
     # rule as the in-fn PARSE_ARRAY above. Closes the var-bracket
@@ -1806,8 +2018,14 @@ fn PARSE_GVAR_ARR(S, noff, sti, ew, sgn): i64 {
     # keep the legacy N-i64-SLOTS top-level convention (ew=8). So
     # `var g: u8[N]` = N bytes, `var g: i64[N]` = 8N, bare = 8N.
     # The byte-list `= {..}` cap below stays in bytes (= sz).
-    var ar_ew = ew;
+    # 6.6.13 (M2): the size multiplies by `eb`, not the integer descriptor `ew` — an f32 / struct
+    # / vector element was 8 bytes (`Pt[2]` 16 of 32, `i8v16[2]` 8 of 32). The 8-byte floor stays.
+    var ar_ew = eb;
     if (ar_ew < 1) { ar_ew = 8; }
+    # The integer descriptor stands only for an element of exactly that width: a vector element
+    # the prefix ladder read as its leading scalar (`i8v16` as i8) has none, so `g[i]` is refused.
+    if (eb != ew) { ew = 0; sgn = 0; }
+    sz_raw = _arr_size_ok(S, sz_raw, ar_ew);
     var sz = sz_raw * ar_ew;
     if (sz < 8) { sz = 8; }
     if (PEEKT(S) != 29) { ERR_EXPECT(S, 29); }
@@ -2251,6 +2469,22 @@ fn _gv_hide_program(S, on): i64 {
     return 0;
 }
 
+# The store of a replayed global initializer (and of cx's prestore), at the slot's width.
+# Narrow scalar globals are PACKED in the var area, so the 8-byte EVSTORE both sites used
+# wrote the value's upper bytes over the next 7/6/4 bytes of globals: `var a: u8 = 0;
+# var b: u8 = 7;` read b as 0, because b's image value was laid down before the program ran
+# and a's replayed store then zeroed it. Exact 1/2/4 — not `< 8` — because an inline struct
+# global can be 3/5/6/7 bytes, and those keep the full store EVSTORE_W would fall back to
+# anyway. Sign does not matter here; the load side sign-extends (GVSGN). Not
+# _asg_store_slot: that warns on narrowing, which a declaration does not, and SLVARs again.
+# CHANGELOG [6.6.13]
+fn _gv_store(S, vi): i64 {
+    var w = L64(_vars_base + vi * 8);
+    if (w == 1 || w == 2 || w == 4) { EVSTORE_W(S, vi, w); return 0; }
+    EVSTORE(S, vi);
+    return 0;
+}
+
 # cx has no file image to bake a value into, so a CONSTANT global is stored FIRST, ahead of
 # every deferred initializer — the same "from program start" the image gives every other
 # target.
@@ -2279,7 +2513,7 @@ fn _gv_cx_prestore(S): i64 {
     var vi = 0;
     while (vi < n) {
         var v = L64(_vgsi_base + vi * 8);
-        if (v != 0) { EMOVI(S, v); EVSTORE(S, vi); }
+        if (v != 0) { EMOVI(S, v); _gv_store(S, vi); }
         vi = vi + 1;
     }
     return 0;
@@ -2565,8 +2799,10 @@ fn PARSE_GVAR_REG(S): i64 {
     var ann_scalar = 0;
     var ann_signed = 0;  # v6.4.23: 1 for a SIGNED sub-i64 (i8/i16/i32) global scalar → sign-extend on load
     var ann_float = 0;   # v6.2.19 math arc: F64_TYID / F32_TYID for `var x: f64`/`f32`
+    var ann_ti = 0;      # 6.6.13 (M2): the annotation's type token (an array's element size)
     if (PEEKT(S) == 49) {
         STI(S, GTI(S) + 1);
+        ann_ti = GTI(S);
         if (PEEKT(S) == 8) { STI(S, GTI(S) + 1); psc = 8; STI(S, GTI(S) + 1); SKIP_GENERICS(S); }
         elif (PEEKT(S) == 105) { ann_scalar = 16; STI(S, GTI(S) + 1); }
         else {
@@ -2598,7 +2834,9 @@ fn PARSE_GVAR_REG(S): i64 {
     # gvar_toks so EMIT_GVAR_INITS replays it at top-level emit time
     # (pass-1 emits get skipped by the entry-jmp patch).
     if (PEEKT(S) == 28) {
-        PARSE_GVAR_ARR(S, noff, sti, ann_scalar, ann_signed);
+        var ann_eb = _gvar_ebytes(S, ann_scalar, ann_float, ann_sid, psc, ann_ti);   # 6.6.13 (M2)
+        if (_arr_prefix_wrong(S, ann_scalar, ann_float, ann_ti) == 1) { ann_scalar = 0; ann_signed = 0; }
+        PARSE_GVAR_ARR(S, noff, sti, ann_scalar, ann_signed, ann_eb);
         return 0;
     }
     # Check for struct init after =: var p = StructName { ... }
@@ -3018,7 +3256,7 @@ fn EMIT_GVAR_INITS(S): i64 {
         if (did_struct == 0) {
             if (_gci_init(S, idx, gps, noff) == 0) {   # 6.6.12: a whole struct source is copied
                 _gvi_expr(S, gps);
-                if (idx >= 0) { EVSTORE(S, idx); _gv_slvar(S, idx); }
+                if (idx >= 0) { _gv_store(S, idx); _gv_slvar(S, idx); }   # 6.6.13: at its width
             }
             if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); }
             STI(S, GTI(S) + 1);
@@ -3057,6 +3295,26 @@ fn _sci_global_src(S, snoff, pscale): i64 {
     if (GVPM(S, gvi) != 2) { return 0 - 1; }
     if (GVTYPE(S, gvi) != 0 - pscale) { return 0 - 1; }
     return gvi;
+}
+
+# ⛔ 6.6.13 — `var q: T = <capture>;` inside a closure. With no capture rung this fell to the
+# scalar init, which bound q as a POINTER to the capture's words: into the env for an inline
+# capture (`q.x = q.x + 1` persisted from one call to the next, 4 then 5) and into the CALLER's
+# struct for a captured address-passed by-value parameter (the closure wrote the caller's `p.x`).
+# 0 = not a captured aggregate (the global rung runs); 1 = copy it (recorded as the `-2` source);
+# 2 = leave it to the scalar init — a type mismatch (refused by name first), or a one-word capture
+# of a POINTER-mode local or handle, which keeps the pointer bind the local form has
+# (`P *b = a`, CHANGELOG [6.6.5]). A captured address-passed parameter is told from those by the
+# enclosing fn's parameter span (`_cl_snap_is_sptr`), as `_local_is_sptr_param` tells it outside.
+# CHANGELOG [6.6.13]
+fn _sci_cap_src(S, snoff, dnoff, pscale): i64 {
+    var t = _fsc_cap_src(S, snoff);
+    if (t == 0) { return 0; }
+    if (t != pscale) { _AGG_ASSIGN_TYPE_ERR(S, pscale, t, dnoff, snoff); return 2; }
+    var esl = _cl_snap_find(S, snoff);
+    if (_cl_snap_span(esl) >= 1) { return 1; }
+    if (_cl_snap_is_sptr(S, esl) == 1) { return 1; }
+    return 2;
 }
 
 # 6.6.6 — the recorded aggregate type of a GLOBAL source name in the local `0 - sid`
@@ -3238,7 +3496,11 @@ fn _try_struct_copy_init(S, noff, pscale): i64 {
     # assignment form of the same hole; this is the declaration form. `_sci_gsrc` is the
     # global's slot, or -1 for the local source. CHANGELOG [6.6.5]
     _sci_gsrc = 0 - 1;
-    if (src_li < 0) {
+    var _cs = 0;
+    if (src_li < 0) { _cs = _sci_cap_src(S, TOKVAL(S, ci_ti), noff, pscale); }   # 6.6.13
+    if (_cs == 2) { return 0; }
+    if (_cs == 1) { src_li = 0 - 2; }
+    elif (src_li < 0) {
         var _gs = _sci_global_src(S, TOKVAL(S, ci_ti), pscale);
         if (_gs < 0) {
             # 6.6.6 — a struct-typed GLOBAL source of a DIFFERENT type is a type error, not a
@@ -3314,10 +3576,11 @@ fn _try_struct_copy_init(S, noff, pscale): i64 {
     # Word-by-word copy: a's word i → b's word i (slot named - i). A LOCAL source is named at
     # its deepest slot so its word i is `src_li - i`; a GLOBAL's fields ascend from its named
     # slot so its word i is `_sci_gsrc + i`.
-    if (_sci_gsrc >= 0 || src_li <= 0 - 1000) {
+    if (_sci_gsrc >= 0 || src_li <= 0 - 1000 || src_li == 0 - 2) {
         # A global source is addressed and byte-exact — its slot index is not a word index
         # and reading `ceil(sz/8)` words would run past its neighbour. See `_agc_copy_bytes`.
         # 6.6.11: so is an address-passed parameter (`src_li` in the `_AGC_DREF` band).
+        # 6.6.13: and a closure capture (`src_li` -2, recorded by `_sci_cap_src`).
         var gnb = nslots * 8;
         if (pscale > 0 - 2048) { gnb = STRUCTSZ(S, (0 - pscale) - 1); }
         _agc_copy_bytes(S, named, 0 - 1, src_li, _sci_gsrc, gnb);
@@ -3572,8 +3835,10 @@ fn PARSE_VAR(S): i64 {
     var scalar_signed = 0;   # v6.3.35: 1 for a SIGNED sub-i64 (iN) local, 0 for uN/other
     var lfloat = 0;   # v6.2.19 math arc: F64_TYID / F32_TYID for local `var x: f64`/`f32`
     var slice_elt_w = 0;  # v5.8.14 §6: element width for slice<T>/[T] (0 = not a slice)
+    var ann_ti = 0;       # 6.6.13 (M2): the annotation's type token (an array's element size)
     if (PEEKT(S) == 49) {
         STI(S, GTI(S) + 1);  # consume :
+        ann_ti = GTI(S);
         if (PEEKT(S) == 8) {
             # Pointer type: *i64, *i32, *i16, *i8
             STI(S, GTI(S) + 1);  # consume *
@@ -4291,7 +4556,9 @@ fn PARSE_VAR(S): i64 {
     # element width via scalar_type so i64[N] reserves N slots, etc.;
     # bare `var buf[N]` has scalar_type==0 → legacy byte sizing.)
     if (PEEKT(S) == 28) {
-        PARSE_ARRAY(S, noff, scalar_type, scalar_signed);
+        var arr_eb = _arr_ebytes(S, scalar_type, lfloat, pscale, ann_ti);   # 6.6.13 (M2)
+        if (_arr_prefix_wrong(S, scalar_type, lfloat, ann_ti) == 1) { scalar_type = 0; scalar_signed = 0; }
+        PARSE_ARRAY(S, noff, scalar_type, scalar_signed, arr_eb);
         return 0;
     }
     # expect EQ

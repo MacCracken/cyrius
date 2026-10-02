@@ -2175,6 +2175,22 @@ fn _agc_operand(S, onoff): i64 {
     return gn;
 }
 
+# ⛔ 6.6.13 — the SOURCE operand of `dst = src;`: `_agc_operand`, plus a closure CAPTURE between the
+# local and the global rung (PARSE_FACTOR's order). Without it `q = p;` / `G = p;` / `w = v;`
+# inside a closure stored the capture's address as one word. A capture is recorded for
+# `_fsc_src_x1` (see `_fsc_cap_src`) and answered as the `-2` source. Never asked for the
+# DESTINATION, which must not touch that record. CHANGELOG [6.6.13]
+fn _agc_src_operand(S, onoff): i64 {
+    if (GINFN(S) == 1) { if (FINDLOCAL(S, onoff) >= 0) { return _agc_operand(S, onoff); } }
+    var t = _fsc_cap_src(S, onoff);
+    if (t == 0) { return _agc_operand(S, onoff); }
+    _agc_li = 0 - 2;
+    _agc_gvi = 0 - 1;
+    _agc_pp = 0;
+    _agc_t = t;
+    return AGG_NSLOTS(S, t);
+}
+
 # ⛔ 6.6.6 — `x = f(..);` where `x` is an inline struct (local or global) and `f` returns that
 # struct BY VALUE. The declaration form (`var x: S = f(..)`) always had a destination; this one
 # fell to the scalar store, so a >16 B return had no retptr at all (x86: SIGSEGV writing through
@@ -2445,7 +2461,7 @@ fn _try_aggregate_copy_assign(S, noff): i64 {
     var src_noff = TOKVAL(S, GTI(S));
     if (nslots <= 1) {
         if (dt < 0) {
-            _agc_operand(S, src_noff);
+            _agc_src_operand(S, src_noff);
             _AGG_ASSIGN_TYPE_ERR(S, dt, _agc_t, noff, src_noff);
         }
         return 0;
@@ -2454,7 +2470,7 @@ fn _try_aggregate_copy_assign(S, noff): i64 {
     if (_agc_pp == 1) { dst_li = _AGC_DREF(dst_li); }
     var dst_gv = _agc_gvi;
     var lt = _agc_t;
-    var snslots = _agc_operand(S, src_noff);
+    var snslots = _agc_src_operand(S, src_noff);   # 6.6.13: a closure capture too
     # 6.6.6 — this pair of tests USED to be the whole answer to a type mismatch, and the
     # answer was `return 0` = the generic 8-byte store. See `_AGG_ASSIGN_TYPE_ERR`.
     if (_AGG_ASSIGN_TYPE_ERR(S, lt, _agc_t, noff, src_noff) == 1) { return 0; }
@@ -2489,9 +2505,9 @@ fn _try_aggregate_copy_assign(S, noff): i64 {
     # parameter back into the 8-byte store this bite exists to remove.
     if (dst_li >= 0) { if (dst_li - nslots + 1 < 0) { return 0; } }
     if (src_li >= 0) { if (src_li - nslots + 1 < 0) { return 0; } }
-    if (dst_gv >= 0 || src_gv >= 0 || dst_li <= 0 - 1000 || src_li <= 0 - 1000) {
+    if (dst_gv >= 0 || src_gv >= 0 || dst_li <= 0 - 1000 || src_li <= 0 - 1000 || src_li == 0 - 2) {
         # A global or an address-passed parameter on either side: byte-exact, addressed.
-        # See `_agc_copy_bytes`.
+        # See `_agc_copy_bytes`. 6.6.13: so is a closure capture (`src_li` -2, `_agc_src_operand`).
         var nb = nslots * 8;
         if (lt < 0) { if (lt > 0 - 2048) { nb = STRUCTSZ(S, (0 - lt) - 1); } }
         _agc_copy_bytes(S, dst_li, dst_gv, src_li, src_gv, nb);

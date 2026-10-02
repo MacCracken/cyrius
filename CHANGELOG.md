@@ -117,6 +117,133 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and the cross-host `tests/tcyr/crossos/f64_parse_correctly_rounded.tcyr` (70 inline cases: the
   subnormal seam, DBL_MIN / DBL_MAX neighbours and the overflow tie, exact ties, inputs just off a
   tie, 800+-digit inputs past the exact tier's capacity; the legacy parser fails 31).
+### Fixed
+
+- **M1 — a narrow global initialised to zero, to a non-constant or to a call no longer clobbers
+  the globals after it.** `var a: u8 = 0; var b: u8 = 7; syscall(60, b);` exited **0** (want 7) on
+  x86, aarch64, PE and both Mach-O targets. **Root cause:** a leading-block global takes the static
+  file-image path only when its initialiser folds to a NON-zero constant; `= 0`, any non-constant
+  expression and a call are deferred and replayed at startup by `EMIT_GVAR_INITS`
+  (`src/frontend/parse_decl.cyr`), whose scalar arm stored with the 8-byte `EVSTORE` whatever the
+  slot's width. Narrow scalar globals are packed, so the store wrote the value's upper bytes over the
+  next 7 / 6 / 4 bytes of globals, and any neighbour whose value was already in the image lost it
+  (6.6.12 B01 fixed the assignment statement, the for step and the compound load; this declaration
+  replay was never routed through them). cx's constant PRESTORE (`_gv_cx_prestore`) had the same
+  8-byte store, so on cx a forward read of the next narrow global saw the prestored constant's high
+  bytes (255 where native gives 0). **Fix:** one helper, `_gv_store`, stores at the slot's width —
+  exactly 1 / 2 / 4 through `EVSTORE_W`, anything else (i64, u128, an odd-sized inline struct) keeps
+  the full store — and both sites use it. **Verified:** the new
+  `tests/tcyr/crossos/narrow_global_init_width.tcyr` (135 rows: every narrow width × `= 0`, a
+  non-constant global copy, a call wider than the width and a negative call, in both orders, read in
+  a fn and at top level; same-width narrow-narrow neighbours only, so global padding cannot mask an
+  over-width store) fails 76 rows on the 6.6.13-open compiler and passes on x86, qemu-aarch64, wine,
+  and on real pi, cass, ecb and ach; `cx_tailcall_and_vm_traps.sh` gains axis-E rows E4 / E5 for the
+  prestore (255 / 7 before). Self-host fixpoint and seed → cybs → cycc GREEN; `build/cycc` stays
+  1,470,944 B (`.text` +328 B, inside the page padding).
+- **M2 — `var a: T[N]` reserves `N * sizeof(T)` for every element type, not only integers.**
+  Measured through an address-taken neighbour: inside a fn `var a: f64[4]`, `f32[4]`, `Pt[2]`,
+  `P3[2]`, `*i64[4]`, `bool[4]`, an enum name and every vector type reserved **8 bytes**; at top
+  level `Pt[2]` got 16 of 32 and `P3[2]` 16 of 48; and in the leading declaration block a
+  vector-element array was read as the scalar its name starts with (`i8v16[2]` 8 bytes of 32,
+  `i16v8` as i16) — and given that integer subscript descriptor, so `g[1]` on it COMPILED. A write
+  inside the declared bounds overwrote the next local or global (`store64(&g + 16, 99)` into
+  `Pt[1]` changed the next global; a local fill zeroed an address-taken neighbour; under qemu an
+  `f64[4]` store overwrote a saved pointer and SIGSEGV'd). No diagnostic, every backend.
+  **Root cause:** the element SIZE and the integer subscript DESCRIPTOR were one value (`ew`), which
+  is non-zero only for i8..u64 / u128 / slices, so every other element was sized like a bare
+  `var a[N]` (N bytes in a fn, N slots at top level) — in `PARSE_ARRAY`, in `PARSE_GVAR_ARR`, and in
+  `PARSE_GVAR_REG`'s prefix ladder (`src/frontend/parse_decl.cyr`). **Fix:** size and descriptor are
+  separate. `_arr_ebytes` gives the bytes per element — f64 8, **f32 4** (packed, the layout `f32v4`
+  lanes and interop buffers use), a struct / union / generic instance `STRUCTSZ` (= `sizeof(T)`),
+  `*T` 8, a vector 16 / 32, bool / cstring / an enum 8 — and `PARSE_ARRAY` / `PARSE_GVAR_ARR` size
+  by it; the declaration block decides a vector element on the WHOLE name (the return-type
+  vocabulary's sentinels) and drops the integer descriptor the prefix gave it. The subscript stays
+  integer-only, so a non-integer element has no stride that could disagree with its new size. An
+  element type that names nothing is now refused by name (`unknown array element type 'Nope'`), as
+  is a struct used as the element of a top-level array declared above it (it was silently 8 bytes
+  per element); an enum may sit on either side. The scalar ladders match a name by its PREFIX
+  before they look for a struct, so `struct u8pair { a; b; }` arrived as a u8 (`u8pair[2]` held 8
+  of 32 bytes in a fn, with a 1-byte `a[i]` stride) and `struct f64pair` as an f64; in the array
+  path the WHOLE name now decides (`_arr_prefix_wrong`): such a name is sized as the struct, union,
+  generic instance (`u8box<P3>[2]`) or enum it names, its subscript is refused like any other
+  non-integer element, and a name that spells nothing (`i8x`, `f64thing`) or a struct declared
+  below the array is refused by name. A generic fn's own `var a: T[N]` keeps compiling —
+  sized by the type argument in an instance (`T = P3` gives `N * 24`), 8 per element in the i64
+  base, and under `CYRIUS_MONOMORPH=0` (which binds nothing) recognised as the enclosing fn's type
+  parameter from its tokens. `N * sizeof(T)` over 2 GiB is refused (`array too large`) instead of
+  wrapping to a small size; the decl-zone 8-byte floor stays. Integer and bare arrays are unchanged.
+  **Verified:** the new `tests/tcyr/crossos/typed_array_elem_size.tcyr` (279 assertions: every
+  element type in a fn, in the declaration block and after the first statement, each against an
+  address-taken sentinel directly above it and with a full byte fill; the generic fn's instances;
+  a fn-local array over the frame budget (static fallback); and `a[i]` filling exactly
+  `N * sizeof(T)` bytes for the integer elements; struct / enum elements named like a scalar)
+  fails 66 rows on the 6.6.13-open compiler and
+  passes on x86, qemu-aarch64 and wine, and natively on pi (cross and native forks), ecb, ach and
+  cass, each host also self-hosting its own fork from this tree; the new
+  `tests/gates/diagnostics/typed_array_elem_refusals.sh` (134 checks: the non-integer subscript
+  refusals in both global zones and in a fn, the unknown / later-declared element refusals with
+  every bad array reported, the size guard, and bool / enum-below / cstring / generic `T[N]` in both
+  monomorph modes compiling and running, a bound `T = i32` keeping its integer subscript) fails 70
+  on the open compiler; six mutants of the fix each turn their axis red. All 412 `tests/tcyr` files pass on x86 per file, unchanged except the new
+  one; under qemu-aarch64 407 pass and the other five are the same qemu-user failures (exec, wait,
+  namespaces, thread detach) the pre-M2 compiler shows; the new file also passes on cxvm. Self-host fixpoint and seed → cybs → cycc GREEN after the locals and again after the
+  declaration-block half (cybs refuses a call with more than six arguments — the first cut's
+  seven-argument helper failed seed-derive with a bare `syntax error`), and again after the
+  whole-name check. `build/cycc` 1,470,944 → **1,479,480 B** (`.text` 1,297,392 → 1,302,680,
+  +5,288 B); unreachable fns stay 73.
+- **M3 — inside a closure, copying a captured struct or vector copies its bytes; it used to store
+  the capture's ADDRESS.** `var p: Pt = Pt { 3, 4 }; var g = || { var b: Box; b.v = p; return
+  b.v.x * 10 + b.v.y; };` returned **80** on x86 and PE and **208** on aarch64 (want 34). The same
+  hole, measured on every backend: `b.v = p` for a 24 B struct, a pointer-mode `Pt = alloc(16)`
+  capture and a captured by-value parameter put an address in the field; `q = p;`, `GQ = p;`,
+  `q = a;` (a pointer-mode capture into an inline struct) and an `f32v4` `w = v;` stored the address
+  as one word; `var b = Box { p, 5 };` did not compile (`unexpected '}'`: the capture filled one
+  leaf); and `var q: Pt = p;` bound q as a pointer INTO the closure's env — `q.x = q.x + 1` returned
+  4 and then 5 across two calls — or, for a captured by-value parameter, into the CALLER's struct,
+  which the closure then wrote (`p.x` 3 became 9). A captured struct of a DIFFERENT type compiled to
+  that address store where the local form is refused by name. Silent wrong values, no out-of-bounds
+  write (every wrong store stayed inside its destination; neighbour fields were checked intact).
+  **Root cause:** the three name-based copy-source resolvers — `_fsc_name_src` (field store and a
+  struct literal's nested source), `_try_aggregate_copy_assign`'s source operand and
+  `_try_struct_copy_init` — went local, then global, with no rung for a closure capture, which is
+  neither; each fell back to the capture's scalar value, which is `&env[woff]` for an inline
+  (multi-word) capture and the struct's address for a one-word capture of a struct over 8 B. The
+  expression ladder (`PARSE_FACTOR`) has had the capture rung since 6.3.8; the field-store copy has
+  missed it since 6.6.10. **Fix:** one shared rung, `_fsc_cap_src` (`src/frontend/parse_decl.cyr`),
+  between the local and the global rung in all three resolvers (`_agc_src_operand` in
+  `src/frontend/parse.cyr` for the assignment, `_sci_cap_src` for the declaration). It records the
+  capture in the FIELD form with its capture-encoded index, so every byte-exact copy loop addresses
+  it through `_CL_CAP_BASE_RA` — the base the closure's own `p.x` reads use (the env words for an
+  inline capture, the loaded pointer for a one-word struct over 8 B). The declaration copies an
+  inline capture and a captured address-passed by-value PARAMETER, and keeps the pointer bind for a
+  captured POINTER-mode local or handle (`Str`, `Result` …), exactly as `var q: Pt = a;` does
+  outside a closure; the two one-word shapes are told apart by the enclosing fn's parameter span,
+  which `_cl_save_locals` now records in a trailer word of the closure's local snapshot
+  (`_cl_snap_is_sptr`, `src/frontend/parse_expr.cyr`) — the same discriminator
+  `_local_is_sptr_param` uses. A capture of another struct or vector type is refused by name in the
+  field store, the literal, the assignment and the declaration, as the local forms are; a global
+  named like an enclosing struct or vector local no longer wins over the capture in these copy
+  forms (a scalar capture named like a struct global still does — not a struct copy, not this fix). Two
+  non-closure shapes met on the way are separate defects and were not changed (backlogged at the
+  6.6.13 premise check, (a) a pointer-mode local assigned into an inline struct, (b) a callee
+  writing through its by-value parameter). **Verified:** the new
+  `tests/tcyr/crossos/closure_capture_struct_copy.tcyr` (40 assertions, each against a literal value
+  and, where the non-closure form is right, its non-closure control: the filed repro; field store at
+  16 / 24 / 8 / 3 B, from a pointer-mode capture, a captured parameter and into a captured
+  destination, with the neighbour field checked; the struct literal; local, global and
+  pointer-mode-into-inline assignment and `f32v4`; the declaration's two-call persistence, the
+  caller-unchanged parameter case, the pointer-mode parity, `f32v4`; and a same-named global) fails
+  16 rows plus the two 16 B literal rows (which do not compile) on the 6.6.13-open compiler, and passes
+  on x86, qemu-aarch64, wine and cxvm and natively on ecb, ach, cass and pi (cross and native forks),
+  each host also self-hosting its own fork from this tree; the new
+  `tests/gates/diagnostics/closure_capture_struct_copy_mismatch.sh` (41 checks: the by-name refusal
+  and no binary for an inline capture, a captured parameter, a pointer-mode capture and a vector, in
+  all four shapes; the same shapes with the right type compile and copy) fails 34 on the open
+  compiler. Removing the rung from any one of the three resolvers turns its rows red in both. All
+  413 `tests/tcyr` files pass on x86 per file; under qemu-aarch64 the same five qemu-user failures as
+  before. Self-host fixpoint and seed → cybs → cycc GREEN after each of the three sites.
+  `build/cycc` stays **1,479,480 B** (`.text` 1,302,680 → 1,304,992, +2,312 B, inside the page
+  padding); unreachable fns stay 73.
 
 ### Downstream
 

@@ -144,6 +144,36 @@ unambiguous, recommended form. The reserved size is `N * sizeof(T)`
 | `var a: i32[N]`   | `N * 4`             | packed 32-bit data            |
 | `var a: u8[N]`    | `N`                 | byte buffers (explicit)       |
 | `var a: u128[N]`  | `N * 16`            | 128-bit lanes                 |
+| `var a: f64[N]`   | `N * 8`             | doubles (`f64_*` bit patterns) |
+| `var a: f32[N]`   | `N * 4`             | **packed** singles — stride 4 (`store32(&a + i*4, …)`), the layout `f32v4` lanes and interop buffers use |
+| `var a: Pt[N]`    | `N * sizeof(Pt)`    | a struct, union or generic instance (`Box<Pt>[N]`) |
+| `var a: *T[N]`    | `N * 8`             | pointers (whatever `T` is)    |
+| `var a: f64v2[N]` | `N * 16` / `N * 32` | any vector type: 16 for the 128-bit ones (`i8v16` … `u64v2`, `f64v2`, `f32v4`), 32 for `f64v4` / `f32v8` |
+| `var a: bool[N]`  | `N * 8`             | `bool`, `cstring` and an enum name are 8 bytes each |
+
+Every element type sizes `N * sizeof(T)` in a function, in the leading
+declaration block and after the first top-level statement alike (since
+6.6.13 — before it, every element that is not an integer was sized like a
+bare `var a[N]`: a local `var a: f64[4]` or `var a: Pt[2]` held **8 bytes**,
+a top-level `Pt[2]` 16 of its 32, and a write inside the declared bounds ran
+over the next variable, silently). A struct element's stride is
+`sizeof(T)`, which is **unpadded**: `struct G { d: f64; c: i8; }` is 9 bytes,
+so `G[3]` is 27 (rounded up to 32) and its elements are not 8-aligned. An
+`f32` array element is 4 bytes while an `f32` struct FIELD (and an `f32`
+scalar) still occupies 8.
+
+An element type that names nothing is refused by name — `unknown array
+element type 'Nope'` — and so is a struct or union used as the element of a
+top-level array declared **above** it (`array element type 'P3' is declared
+after the array`; it was silently 8 bytes per element). An enum may be
+declared on either side (its values are i64). The element is the type
+the WHOLE name spells: `struct u8pair { a; b; }` is a 16-byte struct, so
+`u8pair[2]` is 32 bytes and refuses `a[i]` (before 6.6.13 its name's `u8`
+prefix made it a 1-byte element), and `i8x`, which names nothing, is
+refused rather than read as an `i8`. Inside a generic fn,
+`var a: T[N]` is sized by the type argument (`T = P3` gives `N * 24`; the
+`i64` base gives `N * 8`). `N * sizeof(T)` over 2 GiB is refused
+(`array too large`) rather than wrapped to a small size.
 
 The **bare** `var a[N]` keeps its historical, scope-dependent meaning and
 is best reserved for byte buffers:
@@ -197,9 +227,13 @@ Refused, by name (`cannot subscript 'a': ...`):
   (bytes in a function, slots at top level), so a subscript would be a guess;
   declare `var a: u8[N]` or `var a: i64[N]`, or keep `load*`/`store*` at an
   explicit byte offset;
-- a **float, bool or struct element** (`var a: f64[N]`, `f32[N]`,
-  `bool[N]`, `Pt[N]`) — the subscript is integer-element only; keep
-  `load*`/`store*` at `&a + i * sizeof(T)`;
+- a **float, bool, pointer, vector or struct element** (`var a: f64[N]`,
+  `f32[N]`, `bool[N]`, `*T[N]`, `i8v16[N]`, `Pt[N]`) — the subscript is
+  integer-element only; keep `load*`/`store*` at `&a + i * sizeof(T)` (8 for
+  f64, bool, an enum and a pointer, **4 for f32**, 16/32 for a vector). Before
+  6.6.13 a vector-element array in the leading declaration block was read as
+  the scalar its name starts with (`i8v16` as `i8`), so `g[i]` compiled there;
+  it is refused like every other non-integer element;
 - a scalar or a pointer (`var p: *i64`) — pointer subscripts are not in the
   language;
 - a `u128` element, which does not fit one register (use `load64`/`store64`

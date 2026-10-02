@@ -1,0 +1,380 @@
+# closure_capture_struct_copy.tcyr — 6.6.13 (M3) — inside a closure, COPYING a captured struct or
+# vector copies its bytes, exactly as the same statement does outside a closure.
+#
+# Before 6.6.13 the three name-based copy-source resolvers — the field store / struct-literal
+# source (`_fsc_name_src`), the assignment (`_try_aggregate_copy_assign`) and the declaration
+# copy-init (`_try_struct_copy_init`) — went local, then global, with no rung for a CAPTURE, so
+# each fell back to the capture's scalar VALUE. That value is `&env[woff]` for an inline
+# (multi-word) capture and the struct's address for a one-word capture of a struct over 8 B (a
+# pointer-mode local, an address-passed by-value parameter). Measured on the 6.6.13-open compiler:
+#   * `b.v = p;` stored the env address in `b.v.x` — the filed repro returned 80 (x86, PE) and
+#     208 (aarch64) where 34 is right; the same for a 24 B struct, a pointer-mode capture and a
+#     captured by-value parameter;
+#   * `var b = Box { p, 5 };` did not compile (`unexpected '}'`: the capture filled one leaf);
+#   * `q = p;`, `GQ = p;`, `q = h;` and the vector `w = v;` stored the address as one word;
+#   * `var q: Pt = p;` bound q as a pointer INTO the env, so `q.x = q.x + 1` persisted from one
+#     call to the next (4, then 5), and for a captured by-value PARAMETER it bound q to the
+#     CALLER's struct: the closure wrote the caller's `p.x`; `var w: f32v4 = v;` read garbage.
+#
+# Every row asserts a LITERAL expected value, and where the non-closure form is correct, the same
+# statement outside a closure as a control. Two non-closure controls are deliberately absent:
+# `q = a;` from a pointer-mode LOCAL into an inline struct, and a callee writing through its
+# by-value parameter, are separate defects (backlogged 2026-10-01, roadmap a2ece50f (a)/(b)) — a
+# control here would pin them. The closure rows of those shapes copy, and are asserted literally.
+#
+# A declaration from a captured POINTER-mode local stays a pointer bind — the C semantics of
+# `P *b = a` the local form has had since 6.6.5 — and is asserted equal to its control.
+#
+# CROSS-HOST: the env-base load and the per-chunk (8/4/2/1-byte) address + load/store are emitted
+# by each backend; the defect was measured on x86, aarch64 and PE. Vectors are initialised with
+# store32 and read with load32, so no value-form SIMD ABI is involved.
+include "lib/syscalls.cyr"
+include "lib/string.cyr"
+include "lib/alloc.cyr"
+include "lib/fnptr.cyr"
+include "lib/str.cyr"
+include "lib/assert.cyr"
+
+struct Pt { x; y; }
+struct Box { v: Pt; n; }
+struct P3 { x; y; z; }
+struct B3 { v: P3; n; }
+struct S1 { a; }
+struct B1 { w: S1; n; }
+struct Odd { a: i8; b: i16; }
+struct BO { o: Odd; n; }
+
+fn lanes(p): i64 { return load32(p) * 1000 + load32(p + 4) * 100 + load32(p + 8) * 10 + load32(p + 12); }
+
+# ── the filed repro (roadmap 6.6.13 M3), verbatim ───────────────────────────────────────────────
+fn repro(): i64 {
+    var p: Pt = Pt { 3, 4 };
+    var g = || { var b: Box; b.v = p; return b.v.x * 10 + b.v.y; };
+    return callptr(g);
+}
+
+# ── field store `b.v = <capture>` (and the neighbour field survives) ───────────────────────────
+fn fs16(): i64 {
+    var p: Pt = Pt { 3, 4 };
+    var g = || {
+        var b: Box;
+        b.n = 55;
+        b.v = p;
+        return b.v.x * 1000 + b.v.y * 100 + b.n;
+    };
+    return callptr(g);
+}
+fn fs16c(): i64 {
+    var p: Pt = Pt { 3, 4 };
+    var b: Box;
+    b.n = 55;
+    b.v = p;
+    return b.v.x * 1000 + b.v.y * 100 + b.n;
+}
+fn fs24(): i64 {
+    var p = P3 { 1, 2, 3 };
+    var g = || {
+        var b: B3;
+        b.n = 9;
+        b.v = p;
+        return b.v.x * 1000 + b.v.y * 100 + b.v.z * 10 + b.n;
+    };
+    return callptr(g);
+}
+fn fs24c(): i64 {
+    var p = P3 { 1, 2, 3 };
+    var b: B3;
+    b.n = 9;
+    b.v = p;
+    return b.v.x * 1000 + b.v.y * 100 + b.v.z * 10 + b.n;
+}
+fn fsptr(): i64 {
+    var h: Pt = alloc(16);
+    h.x = 3;
+    h.y = 4;
+    var g = || {
+        var b: Box;
+        b.n = 7;
+        b.v = h;
+        return b.v.x * 100 + b.v.y * 10 + b.n;
+    };
+    return callptr(g);
+}
+fn fsptrc(): i64 {
+    var h: Pt = alloc(16);
+    h.x = 3;
+    h.y = 4;
+    var b: Box;
+    b.n = 7;
+    b.v = h;
+    return b.v.x * 100 + b.v.y * 10 + b.n;
+}
+fn fsprmi(p: Pt): i64 {
+    var g = || {
+        var b: Box;
+        b.n = 6;
+        b.v = p;
+        return b.v.x * 100 + b.v.y * 10 + b.n;
+    };
+    return callptr(g);
+}
+fn fsprm(): i64 { var p = Pt { 3, 4 }; return fsprmi(p); }
+fn fsprmci(p: Pt): i64 { var b: Box; b.n = 6; b.v = p; return b.v.x * 100 + b.v.y * 10 + b.n; }
+fn fsprmc(): i64 { var p = Pt { 3, 4 }; return fsprmci(p); }
+fn fs8(): i64 {
+    var s = S1 { 34 };
+    var g = || { var b: B1; b.n = 5; b.w = s; return b.w.a * 10 + b.n; };
+    return callptr(g);
+}
+fn fs8c(): i64 { var s = S1 { 34 }; var b: B1; b.n = 5; b.w = s; return b.w.a * 10 + b.n; }
+fn fsodd(): i64 {
+    var o: Odd;
+    o.a = 3;
+    o.b = 4;
+    var g = || {
+        var b: BO;
+        b.n = 77;
+        b.o = o;
+        return b.o.a * 1000 + b.o.b * 100 + b.n;
+    };
+    return callptr(g);
+}
+fn fsoddc(): i64 {
+    var o: Odd;
+    o.a = 3;
+    o.b = 4;
+    var b: BO;
+    b.n = 77;
+    b.o = o;
+    return b.o.a * 1000 + b.o.b * 100 + b.n;
+}
+# the destination is itself a capture: copied into the env's own words, read back in the call
+fn fscap(): i64 {
+    var p: Pt = Pt { 3, 4 };
+    var o: Box;
+    o.n = 8;
+    var g = || { o.v = p; return o.v.x * 100 + o.v.y * 10 + o.n; };
+    return callptr(g);
+}
+
+# ── a struct literal's nested source `Box { <capture>, 5 }` ─────────────────────────────────────
+fn lit16(): i64 {
+    var p: Pt = Pt { 3, 4 };
+    var g = || { var b = Box { p, 5 }; return b.v.x * 100 + b.v.y * 10 + b.n; };
+    return callptr(g);
+}
+fn lit16c(): i64 { var p: Pt = Pt { 3, 4 }; var b = Box { p, 5 }; return b.v.x * 100 + b.v.y * 10 + b.n; }
+fn litprmi(p: Pt): i64 {
+    var g = || { var b = Box { p, 5 }; return b.v.x * 100 + b.v.y * 10 + b.n; };
+    return callptr(g);
+}
+fn litprm(): i64 { var p = Pt { 3, 4 }; return litprmi(p); }
+fn lit8(): i64 {
+    var s = S1 { 34 };
+    var g = || { var b = B1 { s, 5 }; return b.w.a * 10 + b.n; };
+    return callptr(g);
+}
+
+# ── assignment `dst = <capture>` ────────────────────────────────────────────────────────────────
+fn as16(): i64 {
+    var p: Pt = Pt { 3, 4 };
+    var g = || { var q: Pt; q.x = 0; q.y = 0; q = p; return q.x * 10 + q.y; };
+    return callptr(g);
+}
+fn as16c(): i64 { var p: Pt = Pt { 3, 4 }; var q: Pt; q.x = 0; q.y = 0; q = p; return q.x * 10 + q.y; }
+fn as24(): i64 {
+    var p = P3 { 1, 2, 3 };
+    var g = || { var q: P3; q = p; return q.x * 100 + q.y * 10 + q.z; };
+    return callptr(g);
+}
+var GQ = Pt { 0, 0 };
+fn asgl(): i64 {
+    var p: Pt = Pt { 3, 4 };
+    var g = || { GQ = p; return GQ.x * 10 + GQ.y; };
+    return callptr(g);
+}
+fn asglc(): i64 { var p: Pt = Pt { 5, 6 }; GQ = p; return GQ.x * 10 + GQ.y; }
+# a pointer-mode capture into an INLINE destination: a copy is the only answer an inline q has
+fn asptr(): i64 {
+    var a: Pt = alloc(16);
+    a.x = 3;
+    a.y = 4;
+    var g = || { var q: Pt; q.x = 0; q.y = 0; q = a; return q.x * 10 + q.y; };
+    return callptr(g);
+}
+fn asprmi(p: Pt): i64 {
+    var g = || { var q: Pt; q = p; q.x = 9; return q.x * 10 + q.y; };
+    return callptr(g);
+}
+fn asprm(): i64 { var p = Pt { 3, 4 }; var r = asprmi(p); return r * 10 + p.x; }
+fn asvec(): i64 {
+    var v: f32v4;
+    store32(&v, 1);
+    store32(&v + 4, 2);
+    store32(&v + 8, 3);
+    store32(&v + 12, 4);
+    var g = || {
+        var w: f32v4;
+        store32(&w, 9);
+        store32(&w + 4, 9);
+        store32(&w + 8, 9);
+        store32(&w + 12, 9);
+        w = v;
+        return lanes(&w);
+    };
+    return callptr(g);
+}
+fn asvecc(): i64 {
+    var v: f32v4;
+    store32(&v, 1);
+    store32(&v + 4, 2);
+    store32(&v + 8, 3);
+    store32(&v + 12, 4);
+    var w: f32v4;
+    store32(&w, 9);
+    store32(&w + 4, 9);
+    store32(&w + 8, 9);
+    store32(&w + 12, 9);
+    w = v;
+    return lanes(&w);
+}
+
+# ── declaration copy-init `var q: T = <capture>` is a COPY ───────────────────────────────────────
+# an inline capture: the write lands in q, never in the env — the second call sees 3 again
+fn dc16(): i64 {
+    var p: Pt = Pt { 3, 4 };
+    var g = || { var q: Pt = p; q.x = q.x + 1; return q.x; };
+    var r1 = callptr(g);
+    var r2 = callptr(g);
+    return r1 * 10 + r2;
+}
+fn dc16c(): i64 { var p: Pt = Pt { 3, 4 }; var q: Pt = p; q.x = q.x + 1; return q.x * 10 + p.x; }
+fn dc24(): i64 {
+    var p = P3 { 1, 2, 3 };
+    var g = || { var q: P3 = p; var z = q.z; q.z = 0; return q.x * 100 + q.y * 10 + z; };
+    var r1 = callptr(g);
+    var r2 = callptr(g);
+    return r1 * 1000 + r2;
+}
+# a captured by-value PARAMETER: the caller's struct is untouched
+fn dcprmi(p: Pt): i64 { var g = || { var q: Pt = p; q.x = 9; return q.x; }; return callptr(g); }
+fn dcprm(): i64 { var p = Pt { 3, 4 }; var r = dcprmi(p); return p.x * 10 + r; }
+fn dcprmci(p: Pt): i64 { var q: Pt = p; q.x = 9; return q.x; }
+fn dcprmc(): i64 { var p = Pt { 3, 4 }; var r = dcprmci(p); return p.x * 10 + r; }
+# a captured POINTER-mode local: still a pointer bind, as `var q: Pt = h;` is outside a closure
+fn dcptr(): i64 {
+    var h: Pt = alloc(16);
+    h.x = 3;
+    h.y = 4;
+    var g = || { var q: Pt = h; q.x = 7; return 0; };
+    callptr(g);
+    return h.x * 10 + h.y;
+}
+fn dcptrc(): i64 {
+    var h: Pt = alloc(16);
+    h.x = 3;
+    h.y = 4;
+    var q: Pt = h;
+    q.x = 7;
+    return h.x * 10 + h.y;
+}
+# <= 8 B structs take the one-word init, which loads the right word
+fn dc8(): i64 {
+    var s = S1 { 34 };
+    var g = || { var q: S1 = s; q.a = q.a + 1; return q.a; };
+    var r1 = callptr(g);
+    var r2 = callptr(g);
+    return r1 * 100 + r2;
+}
+fn dcodd(): i64 {
+    var o: Odd;
+    o.a = 3;
+    o.b = 4;
+    var g = || { var q: Odd = o; return q.a * 10 + q.b; };
+    return callptr(g);
+}
+fn dcvec(): i64 {
+    var v: f32v4;
+    store32(&v, 1);
+    store32(&v + 4, 2);
+    store32(&v + 8, 3);
+    store32(&v + 12, 4);
+    var g = || { var w: f32v4 = v; store32(&w, 8); return lanes(&w); };
+    var r1 = callptr(g);
+    var g2 = || { var w: f32v4 = v; return lanes(&w); };
+    return r1 * 10000 + callptr(g2);
+}
+fn dcvecc(): i64 {
+    var v: f32v4;
+    store32(&v, 1);
+    store32(&v + 4, 2);
+    store32(&v + 8, 3);
+    store32(&v + 12, 4);
+    var w: f32v4 = v;
+    return lanes(&w);
+}
+
+# ── the capture rung sits BEFORE the global rung: a global of the same name does not win ────────
+var sp = Pt { 8, 9 };
+fn shadow(): i64 {
+    var sp: Pt = Pt { 3, 4 };
+    var g = || {
+        var b: Box;
+        b.v = sp;
+        var q: Pt;
+        q = sp;
+        var r: Pt = sp;
+        return b.v.x * 100000 + b.v.y * 10000 + q.x * 1000 + q.y * 100 + r.x * 10 + r.y;
+    };
+    return callptr(g);
+}
+
+alloc_init();
+
+assert_eq(repro(), 34, "M3 repro: b.v = p inside a closure (was 80 on x86 and PE, 208 on aarch64)");
+
+assert_eq(fs16(), 3455, "field store, 16 B inline capture; neighbour b.n intact");
+assert_eq(fs16c(), 3455, "field store, 16 B: non-closure control");
+assert_eq(fs24(), 1239, "field store, 24 B capture; neighbour b.n intact");
+assert_eq(fs24c(), 1239, "field store, 24 B: non-closure control");
+assert_eq(fsptr(), 347, "field store, pointer-mode capture (Pt = alloc(16))");
+assert_eq(fsptrc(), 347, "field store, pointer-mode: non-closure control");
+assert_eq(fsprm(), 346, "field store, captured by-value parameter");
+assert_eq(fsprmc(), 346, "field store, by-value parameter: non-closure control");
+assert_eq(fs8(), 345, "field store, 8 B capture");
+assert_eq(fs8c(), 345, "field store, 8 B: non-closure control");
+assert_eq(fsodd(), 3477, "field store, odd 3 B capture; neighbour b.n intact");
+assert_eq(fsoddc(), 3477, "field store, odd 3 B: non-closure control");
+assert_eq(fscap(), 348, "field store into a captured destination");
+
+assert_eq(lit16(), 345, "struct literal Box { p, 5 } from a 16 B capture (was a parse error)");
+assert_eq(lit16c(), 345, "struct literal from a 16 B local: non-closure control");
+assert_eq(litprm(), 345, "struct literal from a captured by-value parameter");
+assert_eq(lit8(), 345, "struct literal B1 { s, 5 } from an 8 B capture");
+
+assert_eq(as16(), 34, "assign q = p, inline local destination");
+assert_eq(as16c(), 34, "assign q = p: non-closure control");
+assert_eq(as24(), 123, "assign q = p, 24 B");
+assert_eq(asgl(), 34, "assign GQ = p, global destination");
+assert_eq(asglc(), 56, "assign GQ = p: non-closure control");
+assert_eq(asptr(), 34, "assign q = a, pointer-mode capture into an inline destination");
+assert_eq(asprm(), 943, "assign q = p from a captured by-value parameter; the caller's p.x stays 3");
+assert_eq(asvec(), 1234, "assign w = v, f32v4 capture: lanes 1..4");
+assert_eq(asvecc(), 1234, "assign w = v, f32v4: non-closure control");
+
+assert_eq(dc16(), 44, "decl var q: Pt = p is a copy: 4 on the first AND the second call");
+assert_eq(dc16c(), 43, "decl copy: non-closure control (p.x stays 3)");
+assert_eq(dc24(), 123123, "decl var q: P3 = p is a copy: the second call reads z = 3, not the 0 the first wrote");
+assert_eq(dcprm(), 39, "decl from a captured by-value parameter leaves the caller's p.x at 3");
+assert_eq(dcprmc(), 39, "decl from a by-value parameter: non-closure control");
+assert_eq(dcptr(), 74, "decl from a captured pointer-mode local is a pointer bind (writes reach h)");
+assert_eq(dcptrc(), 74, "decl from a pointer-mode local: non-closure control");
+assert_eq(dcptr(), dcptrc(), "decl from a pointer-mode capture == its non-closure form");
+assert_eq(dc8(), 3535, "decl from an 8 B capture: 35 on both calls");
+assert_eq(dcodd(), 34, "decl from an odd 3 B capture");
+assert_eq(dcvec(), 82341234, "decl var w: f32v4 = v is a copy: lanes 1..4, a write does not persist");
+assert_eq(dcvecc(), 1234, "decl var w: f32v4 = v: non-closure control");
+
+assert_eq(shadow(), 343434, "a global named like the capture does not win: field store, assign, decl");
+
+var r = assert_summary();
