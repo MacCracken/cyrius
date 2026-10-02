@@ -1,0 +1,146 @@
+# f64_parse_correctly_rounded.tcyr — 6.6.13 (I4). The cross-host leg of f64_parse's
+# correct rounding: runs on ecb, ach, cass and pi in the release gate.
+#
+# lib/math.cyr's f64_parse is now a port of bayan 1.5.10's three-tier parser, and each
+# tier leans on a different piece of every backend:
+#   * tier 1 (Clinger) on IEEE single-rounded f64_mul / f64_div by an exact power of ten;
+#   * tier 2 (cached-power DiyFp) on logical `>>`, the u64-compare-by-sign-flip idiom and
+#     64-bit integer multiply wrap-around;
+#   * tier 3 (exact decimal) on i64 `/` digit arithmetic and on large stack
+#     locals (dg[800], tmp[832]) — the PE frame and the aarch64 frame both carry them.
+# The tcyr/math corpus test (tests/tcyr/math/f64_parse_rounding.tcyr) checks 8,064 vectors
+# but reads data files and runs on x86 only; this file is self-contained so the hosts run
+# it. Every expected value is Python float() (strtod), hard-coded: the filed rows of issue
+# 2026-09-30 (9 wrong + 3 controls on 6.6.12), the subnormal seam, both ends of the normal
+# range, exact ties, an input just above a tie, and inputs longer than tier 3's 800-digit
+# capacity, where only "is any nonzero digit dropped" decides the tie.
+
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/math.cyr"
+include "lib/assert.cyr"
+
+alloc_init();
+
+fn _fcr(s, want) { return assert_eq(f64_parse(s), want, s); }
+
+test_group("issue 2026-09-30: the nine wrong rows and three controls");
+_fcr("0.3", 0x3FD3333333333333);
+_fcr("0.12", 0x3FBEB851EB851EB8);
+_fcr("0.15", 0x3FC3333333333333);
+_fcr("9.95", 0x4023E66666666666);
+_fcr("2.2250738585072014e-308", 0x0010000000000000);
+_fcr("8.98846567431158e307", 0x7FE0000000000000);
+_fcr("0.0001e310", 0x7F76C8E5CA239029);
+_fcr("123e-310", 0x0008D83AFF3E96B1);
+_fcr("5e-324", 0x0000000000000001);
+_fcr("1.5", 0x3FF8000000000000);
+_fcr("100", 0x4059000000000000);
+_fcr("0.5", 0x3FE0000000000000);
+
+test_group("subnormal seam: 2^-1075 rounds up, below it rounds to 0");
+_fcr("2.4703282292062327e-324", 0x0000000000000000);
+_fcr("2.4703282292062328e-324", 0x0000000000000001);
+_fcr("4.9406564584124654e-324", 0x0000000000000001);
+_fcr("3e-324", 0x0000000000000001);
+_fcr("2e-324", 0x0000000000000000);
+_fcr("1e-400", 0x0000000000000000);
+
+test_group("DBL_MIN neighbours");
+_fcr("2.2250738585072011e-308", 0x000FFFFFFFFFFFFF);
+_fcr("2.2250738585072012e-308", 0x0010000000000000);
+_fcr("2.225073858507201136057409796709131975934819546351645648e-308", 0x000FFFFFFFFFFFFF);
+_fcr("4.4501477170144023e-308", 0x001FFFFFFFFFFFFF);
+_fcr("4.4501477170144028e-308", 0x0020000000000000);
+
+test_group("DBL_MAX and the overflow tie");
+_fcr("1.7976931348623157e308", 0x7FEFFFFFFFFFFFFF);
+_fcr("1.7976931348623158e308", 0x7FEFFFFFFFFFFFFF);
+_fcr("1.7976931348623159e308", 0x7FF0000000000000);
+_fcr("179769313486231580793728971405301e276", 0x7FEFFFFFFFFFFFFF);
+_fcr("1e400", 0x7FF0000000000000);
+_fcr("-1e400", 0xFFF0000000000000);
+
+test_group("Clinger range edges and tier 2");
+_fcr("1e22", 0x4480F0CF064DD592);
+_fcr("1e-22", 0x3B5E392010175EE6);
+_fcr("1e23", 0x44B52D02C7E14AF6);
+_fcr("9007199254740992e22", 0x47D0F0CF064DD592);
+_fcr("9007199254740991e-22", 0x3EAE392010175EE5);
+_fcr("8.589973e9", 0x42000004B0400000);
+_fcr("7.038531e-26", 0x3AB5C87FB0000000);
+_fcr("1448997445238699", 0x4314976C0803FEAC);
+_fcr("6.02214076e23", 0x44DFE185CA57C517);
+
+test_group("ties to even, and just off a tie");
+_fcr("9007199254740993", 0x4340000000000000);
+_fcr("9007199254740995", 0x4340000000000002);
+_fcr("4503599627370496.5", 0x4330000000000000);
+_fcr("4503599627370497.5", 0x4330000000000002);
+_fcr("1.00000000000000011102230246251565404236316680908203125", 0x3FF0000000000000);
+_fcr("1.00000000000000011102230246251565404236316680908203124", 0x3FF0000000000000);
+_fcr("1.00000000000000011102230246251565404236316680908203126", 0x3FF0000000000001);
+
+test_group("more than 19 significant digits");
+_fcr("9007199254740993.0000000000000000001", 0x4340000000000001);
+_fcr("12345678901234567890", 0x43E56A95319D63E1);
+_fcr("123456789012345678901234567890", 0x45F8EE90FF6C373E);
+
+test_group("short decimals and syntax");
+_fcr("0.1", 0x3FB999999999999A);
+_fcr("0.2", 0x3FC999999999999A);
+_fcr("0.7", 0x3FE6666666666666);
+_fcr("1.1", 0x3FF199999999999A);
+_fcr("3.14159", 0x400921F9F01B866E);
+_fcr("2.718281828459045", 0x4005BF0A8B145769);
+_fcr("123.456e-2", 0x3FF3C0C1FC8F3238);
+_fcr("+1.5", 0x3FF8000000000000);
+_fcr("  \t-2.5", 0xC004000000000000);
+_fcr("-0.0", 0x8000000000000000);
+_fcr("0.000000000000000000000000000000000000000000001e45", 0x3FF0000000000000);
+_fcr("nan", 0x7FF8000000000000);
+_fcr("-inf", 0xFFF0000000000000);
+_fcr("null", 0);
+_fcr("1e100000000", 0x7FF0000000000000);
+
+test_group("past tier 3's 800-digit capacity");
+# The exact midpoint between 1.0 and its successor, 1 + 2^-53, then `zeros` zeros, then
+# `tail` (a C string). Past 800 digits only "was a nonzero digit dropped" can tell the
+# exact tie (-> 1.0, even) from a value just above it (-> 1.0 + 1 ulp).
+fn _fcr_long(zeros, tail) {
+    var mid = "1.00000000000000011102230246251565404236316680908203125";
+    var ml = strlen(mid);
+    var tl = strlen(tail);
+    var buf = alloc(ml + zeros + tl + 1);
+    memcpy(buf, mid, ml);
+    var i = 0;
+    while (i < zeros) { store8(buf + ml + i, 48); i = i + 1; }
+    memcpy(buf + ml + zeros, tail, tl);
+    store8(buf + ml + zeros + tl, 0);
+    return f64_parse(buf);
+}
+assert_eq(_fcr_long(800, "1"), 0x3FF0000000000001, "tie + 800 zeros + 1 -> rounds up");
+assert_eq(_fcr_long(800, ""), 0x3FF0000000000000, "tie + 800 zeros -> exact tie, even");
+assert_eq(_fcr_long(2000, "0000"), 0x3FF0000000000000, "tie + 2004 zeros -> exact tie, even");
+
+# 0.(400 zeros)1e400 == 0.1: a long run of leading fraction zeros moves the point only.
+fn _fcr_lead_zeros() {
+    var buf = alloc(420);
+    store8(buf, 48);
+    store8(buf + 1, 46);
+    var i = 0;
+    while (i < 400) { store8(buf + 2 + i, 48); i = i + 1; }
+    memcpy(buf + 402, "1e400", 5);
+    store8(buf + 407, 0);
+    return f64_parse(buf);
+}
+assert_eq(_fcr_lead_zeros(), 0x3FB999999999999A, "0.(400 zeros)1e400 == 0.1");
+
+test_group("f64_parse_ok shares the parser");
+var _fcr_o = 0;
+assert_eq(f64_parse_ok("123e-310", &_fcr_o), 1, "ok: 123e-310");
+assert_eq(_fcr_o, 0x0008D83AFF3E96B1, "ok: 123e-310 bits");
+assert_eq(f64_parse_ok("x", &_fcr_o), 0, "ok: x refused");
+
+var r = assert_summary();

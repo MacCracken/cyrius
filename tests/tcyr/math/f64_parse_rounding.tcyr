@@ -1,0 +1,189 @@
+# f64_parse_rounding.tcyr — 6.6.13 (I4). f64_parse returns the CORRECTLY ROUNDED double.
+#
+# Until 6.6.13 lib/math.cyr's f64_parse accumulated digits in f64 and scaled by repeated
+# *10 / /10, so every digit and every power-of-ten step rounded: 2,270 of the 10,000
+# literals 0.00..99.99 came back 1 ulp off, `0.0001e310` overflowed to Inf, `123e-310`
+# and `5e-324` flushed to 0, and DBL_MIN read 2 ulp high. It is now a port of bayan
+# 1.5.10's three-tier parser (Clinger / cached-power DiyFp / exact decimal).
+#
+# ⭐ EVERY EXPECTED VALUE COMES FROM OUTSIDE THE CODE UNDER TEST:
+#   * the corpora are bayan 1.5.10's tests/fixtures/numeric/{f64parse,f64}.vec, copied
+#     verbatim to tests/data/f64parse/ — `<hexbits> <decimal text>` per line, bits from a
+#     strtod-class oracle. The legacy parser got 6,285 of f64parse.vec and 253 of f64.vec
+#     wrong; this file asserts 0.
+#   * the 10,000 two-decimal literals are checked against bayan_f64_parse in the SAME
+#     binary — a separate copy of the algorithm under different names (_d_* vs _f64p_*).
+#     Including lib/bayan.cyr beside lib/math.cyr also pins that the two copies coexist:
+#     shared names would compile with only a `duplicate fn` warning and the last-included
+#     copy's bodies would silently replace the other's.
+#   * the filed repro's rows and the front-matter cases carry hard-coded bits.
+# A corpus COUNT FLOOR guards the read: an unreadable or truncated file fails here, it
+# does not pass green with zero vectors checked.
+#
+# CWD = repo root (check.sh and `cyrius test` run there); the corpora are opened at the
+# relative path tests/data/f64parse/.
+
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/hashmap.cyr"
+include "lib/result.cyr"
+include "lib/fnptr.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/math.cyr"
+include "lib/bayan.cyr"
+include "lib/assert.cyr"
+
+alloc_init();
+
+fn _fpr_out(s) { syscall(SYS_WRITE, 1, s, strlen(s)); return 0; }
+
+var _fpr_ok_mismatch = 0;
+
+# Run one `<hexbits> <text>` corpus. Returns the number of vectors read; adds the
+# wrong ones to the assertion tally (the first three are printed with their bits).
+fn _fpr_corpus(path, floor) {
+    var cap = 1 << 20;
+    var buf = alloc(cap);
+    var len = file_read_all(path, buf, cap);
+    assert_gt(len, 0, path);
+    if (len <= 0) { return 0; }
+    assert_lt(len, cap, "corpus fits the read buffer");
+    var tb = alloc(1024);
+    var pos = 0;
+    var cnt = 0;
+    var bad = 0;
+    var bay = 0;
+    while (pos < len) {
+        var bits = 0;
+        while (pos < len) {
+            var c = load8(buf + pos);
+            var d = 0 - 1;
+            if (c >= 48 && c <= 57)  { d = c - 48; }
+            if (c >= 97 && c <= 102) { d = c - 87; }
+            if (d < 0) { break; }
+            bits = (bits << 4) | d;
+            pos = pos + 1;
+        }
+        if (pos < len && load8(buf + pos) == 32) { pos = pos + 1; }
+        var ts = pos;
+        while (pos < len && load8(buf + pos) != 10) { pos = pos + 1; }
+        var tlen = pos - ts;
+        pos = pos + 1;
+        if (tlen <= 0) { continue; }
+        if (tlen >= 1024) { bad = bad + 1; continue; }
+        memcpy(tb, buf + ts, tlen);
+        store8(tb + tlen, 0);
+        cnt = cnt + 1;
+        var got = f64_parse(tb);
+        var o = 0;
+        if (f64_parse_ok(tb, &o) != 1 || o != got) { _fpr_ok_mismatch = _fpr_ok_mismatch + 1; }
+        if (bayan_f64_parse(tb, tlen) != got) { bay = bay + 1; }
+        if (got != bits) {
+            if (bad < 3) {
+                _fpr_out("  WRONG "); _fpr_out(tb); _fpr_out(" got "); fmt_hex0x(got);
+                _fpr_out(" want "); fmt_hex0x(bits); _fpr_out("\n");
+            }
+            bad = bad + 1;
+        }
+    }
+    assert_eq(bad, 0, "corpus vectors wrong");
+    assert_eq(bay, 0, "corpus vectors where f64_parse and bayan_f64_parse disagree");
+    assert_gte(cnt, floor, "corpus vector count floor");
+    return cnt;
+}
+
+test_group("bayan 1.5.10 corpora, bit-exact");
+_fpr_corpus("tests/data/f64parse/f64parse.vec", 7700);
+_fpr_corpus("tests/data/f64parse/f64.vec", 328);
+assert_eq(_fpr_ok_mismatch, 0, "f64_parse_ok returns 1 and the f64_parse bits for every vector");
+
+test_group("the 10,000 literals 0.00 .. 99.99 against bayan_f64_parse");
+fn _fpr_two_decimals() {
+    var tb = alloc(16);
+    var bad = 0;
+    var n = 0;
+    while (n < 10000) {
+        var ip = n / 100;
+        var fp = n % 100;
+        var w = 0;
+        if (ip >= 10) { store8(tb + w, 48 + ip / 10); w = w + 1; }
+        store8(tb + w, 48 + ip % 10); w = w + 1;
+        store8(tb + w, 46); w = w + 1;
+        store8(tb + w, 48 + fp / 10); w = w + 1;
+        store8(tb + w, 48 + fp % 10); w = w + 1;
+        store8(tb + w, 0);
+        var got = f64_parse(tb);
+        if (got != bayan_f64_parse(tb, w)) {
+            if (bad < 3) { _fpr_out("  WRONG "); _fpr_out(tb); _fpr_out("\n"); }
+            bad = bad + 1;
+        }
+        n = n + 1;
+    }
+    assert_eq(bad, 0, "two-decimal literals that differ from bayan_f64_parse");
+    assert_eq(n, 10000, "two-decimal literal count");
+    return 0;
+}
+_fpr_two_decimals();
+
+test_group("the filed repro's rows (issue 2026-09-30)");
+fn _fpr_row(s, want) {
+    assert_eq(f64_parse(s), want, s);
+    assert_eq(bayan_f64_parse(s, strlen(s)), want, s);
+    return 0;
+}
+_fpr_row("0.3", 0x3FD3333333333333);
+_fpr_row("0.12", 0x3FBEB851EB851EB8);
+_fpr_row("0.15", 0x3FC3333333333333);
+_fpr_row("9.95", 0x4023E66666666666);
+_fpr_row("2.2250738585072014e-308", 0x0010000000000000);
+_fpr_row("8.98846567431158e307", 0x7FE0000000000000);
+_fpr_row("0.0001e310", 0x7F76C8E5CA239029);
+_fpr_row("123e-310", 0x0008D83AFF3E96B1);
+_fpr_row("5e-324", 0x0000000000000001);
+_fpr_row("1.5", 0x3FF8000000000000);
+_fpr_row("100", 0x4059000000000000);
+_fpr_row("0.5", 0x3FE0000000000000);
+
+test_group("front matter is unchanged");
+assert_eq(f64_parse("nan"), 0x7FF8000000000000, "nan");
+assert_eq(f64_parse("NaN"), 0x7FF8000000000000, "NaN");
+assert_eq(f64_parse("-nan"), 0x7FF8000000000000, "-nan (sign ignored, as before)");
+assert_eq(f64_parse("inf"), 0x7FF0000000000000, "inf");
+assert_eq(f64_parse("Infinity"), 0x7FF0000000000000, "Infinity (3-letter prefix)");
+assert_eq(f64_parse("-inf"), 0xFFF0000000000000, "-inf");
+assert_eq(f64_parse("null"), 0, "null is not a NaN here (bayan's core says NaN)");
+assert_eq(f64_parse("n"), 0, "n");
+assert_eq(f64_parse("in"), 0, "in");
+assert_eq(f64_parse("x"), 0, "x");
+assert_eq(f64_parse(""), 0, "empty");
+assert_eq(f64_parse("   "), 0, "whitespace only");
+assert_eq(f64_parse("-"), 0, "a bare sign");
+assert_eq(f64_parse("-."), 0, "a sign and a dot, no digits");
+assert_eq(f64_parse("-0"), 0x8000000000000000, "-0");
+assert_eq(f64_parse(" \t -1.5"), 0xBFF8000000000000, "leading spaces and tabs");
+assert_eq(f64_parse("+2"), 0x4000000000000000, "+2");
+assert_eq(f64_parse(".5"), 0x3FE0000000000000, ".5");
+assert_eq(f64_parse("5."), 0x4014000000000000, "5.");
+assert_eq(f64_parse("1e"), 0x3FF0000000000000, "1e (no exponent digits)");
+assert_eq(f64_parse("1.5xyz"), 0x3FF8000000000000, "stops at the first non-number byte");
+assert_eq(f64_parse("1e100000000"), 0x7FF0000000000000, "1e100000000 -> +Inf (saturated exponent)");
+assert_eq(f64_parse("-1e100000000"), 0xFFF0000000000000, "-1e100000000 -> -Inf");
+assert_eq(f64_parse("1e-100000000"), 0, "1e-100000000 -> 0");
+
+test_group("f64_parse_ok gate is unchanged");
+var _fpr_o = 7;
+assert_eq(f64_parse_ok("", &_fpr_o), 0, "ok: empty");
+assert_eq(f64_parse_ok("  \t", &_fpr_o), 0, "ok: whitespace only");
+assert_eq(f64_parse_ok("x1", &_fpr_o), 0, "ok: non-numeric start");
+assert_eq(f64_parse_ok("-x", &_fpr_o), 0, "ok: sign then non-numeric");
+assert_eq(_fpr_o, 7, "ok: out untouched on failure");
+assert_eq(f64_parse_ok("0.3", &_fpr_o), 1, "ok: 0.3");
+assert_eq(_fpr_o, 0x3FD3333333333333, "ok: 0.3 bits");
+assert_eq(f64_parse_ok("-inf", &_fpr_o), 1, "ok: -inf");
+assert_eq(_fpr_o, 0xFFF0000000000000, "ok: -inf bits");
+
+var r = assert_summary();

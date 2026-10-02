@@ -32,6 +32,36 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   overshoot by that much. Pinned by `tests/gates/platform/agnos_sock_send_deadline.sh` against the
   fake kernel (four mutations, each RED).
 
+### Fixed
+
+- **`f64_parse` (and `f64_parse_ok`) return the correctly rounded double (I4, issue
+  2026-09-30, found by abaco 2.4.9's audit).** **Root cause:** `lib/math.cyr` accumulated the
+  digits in f64 (`result * 10 + d`, then `digit * 0.1^k` for the fraction) and applied the
+  exponent by building 10^k with a `*10` loop and one multiply or divide — a rounding per digit and
+  per step, and the power of ten overflowed or underflowed before the mantissa was applied. 2,270
+  of the 10,000 literals `0.00`..`99.99` came back 1 ulp off (`0.3` → 0.30000000000000004),
+  `0.0001e310` gave +Inf, `123e-310` and `5e-324` gave 0, DBL_MIN read 2 ulp high; 6,285 of bayan's
+  7,736-vector parse corpus were wrong. **Fix:** a port of bayan 1.5.10's `bayan_f64_parse` —
+  Clinger's exact fast path, a DiyFp tier over 87 cached 64-bit powers of ten that answers only
+  outside a ±16-unit window, and Go strconv's 800-digit exact decimal for the rest — as the
+  internal `_f64_parse_n(s, n)`, which `f64_parse` calls after its own, unchanged front matter
+  (strict `nan` / `inf`; any other n/N/i/I start, no digits, empty → 0; `-0` → -0.0; the 6.4.69
+  exponent saturation, so `1e100000000` stays O(len)). The helpers carry a private
+  `_f64p_` / `_F64P_` prefix: lib/bayan.cyr folds the same algorithm as `_d_*`, and a shared name
+  would compile with only a `duplicate fn` warning and swap one copy's bodies for the other's. The
+  tables are read in place from hex literals and an if-chain of the 23 exact powers — no lazy
+  init, so nothing to race (bayan's copy fills its table on first use, unfenced). The exact tier
+  keeps 1,656 B of stack scratch, so the parser stays reentrant. No API change; values move by
+  ≤ 2 ulp to the right ones, so a golden text output may shift a last digit. Cost: about +14 KB in
+  a non-DCE binary that includes lib/math.cyr; short literals parse ~13–20 % slower (the fast path
+  now scans into an integer first). Pinned by `tests/tcyr/math/f64_parse_rounding.tcyr` — bayan's
+  `f64parse.vec` (7,736) and `f64.vec` (328), copied to `tests/data/f64parse/` with count floors,
+  bit-exact; the 10,000 two-decimal literals against `bayan_f64_parse` in the same binary; the
+  filed rows; the front matter (the legacy parser fails 15 of its 70 assertions, all on values) —
+  and the cross-host `tests/tcyr/crossos/f64_parse_correctly_rounded.tcyr` (70 inline cases: the
+  subnormal seam, DBL_MIN / DBL_MAX neighbours and the overflow tie, exact ties, inputs just off a
+  tie, 800+-digit inputs past the exact tier's capacity; the legacy parser fails 31).
+
 ### Downstream
 
 #### Folded — ⛔ each tagged BEFORE cyrius 6.6.13
