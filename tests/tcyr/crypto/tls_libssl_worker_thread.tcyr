@@ -10,9 +10,12 @@
 # tls_read / tls_write / tls_set_deadline, 0 / -1 / NOT_SENT from the rest.
 #
 # Each scenario runs in a forked child under a 30 s bound, so the pre-fix crash or hang is a
-# FAILED row, not a dead test. A worker's refusals use bogus handles where a real call would
-# dereference them (a session pointer of 1, a NULL SSL_CTX), so a call that reached libssl would
-# crash the child instead of passing. A forked child's main thread still passes the guard.
+# FAILED row, not a dead test. While the worker runs, a counting spy stands in for EVERY libssl
+# entry point lib/tls.cyr holds (each `_fn_*` slot, resolved or not), so each verb gets two rows:
+# its refusal value, and "made no libssl call" — a verb whose refusal value happens to equal what
+# libssl would have answered is still caught. After the join main checks that the worker claimed no
+# libssl latch (the introspection resolve) and that its own connection still answers, SPKI included.
+# A forked child's main thread still passes the guard.
 # libssl is a Linux x86_64 fdlopen bridge: a named SKIP elsewhere or without it.
 include "lib/assert.cyr"
 include "lib/alloc.cyr"
@@ -32,6 +35,103 @@ var _wt_fd = 0 - 1;        # a spare socket for the worker's connect / accept at
 var _wt_got = 0;           # what each worker call returned: 35 i64 slots in a MAP_SHARED page,
                            # so the parent reads them even if the child dies part-way
 var _wt_n = 0;
+
+# The MAP_SHARED page's other slots (i64 index): each row's libssl-call count, and what main saw
+# after the worker joined.
+enum WtPage {
+    WT_CALLS = 64;             # + row: libssl calls the row's verb made (the spy's count)
+    WT_INTRO_BEFORE = 100;     # _tls_introspect_state before the worker ran
+    WT_INTRO_AFTER = 101;      # ... and after it joined
+    WT_MAIN_SPKI = 102;        # main's tls_get_peer_spki_der length after the join
+    WT_FETCH_CONNECT = 110;    # the unspied fetch: the worker's tls_connect_with_ctx_hook
+    WT_FETCH_WRITE = 111;      # ... and its tls_write on main's connection
+}
+
+# The counting spy, and every libssl pointer slot lib/tls.cyr resolves into (all 48 `var _fn_*`,
+# the introspection `_v` six included). Installed for the worker's run only.
+var _wt_spy_n = 0;
+fn _wt_spy(): i64 {
+    _wt_spy_n = _wt_spy_n + 1;
+    return 0;
+}
+var _wt_slots: i64[64];
+var _wt_saved: i64[64];
+var _wt_nslots = 0;
+fn _wt_slot(a): i64 {
+    _wt_slots[_wt_nslots] = a;
+    _wt_nslots = _wt_nslots + 1;
+    return 0;
+}
+fn _wt_slots_init(): i64 {
+    _wt_nslots = 0;
+    _wt_slot(&_fn_TLS_client_method);
+    _wt_slot(&_fn_SSL_CTX_new);
+    _wt_slot(&_fn_SSL_CTX_free);
+    _wt_slot(&_fn_SSL_CTX_set_default_verify_paths);
+    _wt_slot(&_fn_SSL_CTX_set_verify);
+    _wt_slot(&_fn_SSL_CTX_set_alpn_protos);
+    _wt_slot(&_fn_SSL_CTX_load_verify_locations);
+    _wt_slot(&_fn_SSL_CTX_use_certificate_file);
+    _wt_slot(&_fn_SSL_CTX_use_PrivateKey_file);
+    _wt_slot(&_fn_TLS_server_method);
+    _wt_slot(&_fn_SSL_CTX_use_certificate_ASN1);
+    _wt_slot(&_fn_d2i_AutoPrivateKey);
+    _wt_slot(&_fn_SSL_CTX_use_PrivateKey);
+    _wt_slot(&_fn_SSL_accept);
+    _wt_slot(&_fn_SSL_new);
+    _wt_slot(&_fn_SSL_free);
+    _wt_slot(&_fn_SSL_set_fd);
+    _wt_slot(&_fn_SSL_ctrl);
+    _wt_slot(&_fn_SSL_connect);
+    _wt_slot(&_fn_SSL_write);
+    _wt_slot(&_fn_SSL_read);
+    _wt_slot(&_fn_SSL_shutdown);
+    _wt_slot(&_fn_SSL_get_error);
+    _wt_slot(&_fn_ERR_peek_last_error);
+    _wt_slot(&_fn_ERR_clear_error);
+    _wt_slot(&_fn_SSL_get0_param);
+    _wt_slot(&_fn_SSL_get_verify_mode);
+    _wt_slot(&_fn_X509_VERIFY_PARAM_set1_host);
+    _wt_slot(&_fn_X509_VERIFY_PARAM_set_hostflags);
+    _wt_slot(&_fn_X509_VERIFY_PARAM_set1_ip_asc);
+    _wt_slot(&_fn_SSL_get1_session);
+    _wt_slot(&_fn_SSL_set_session);
+    _wt_slot(&_fn_SSL_SESSION_free);
+    _wt_slot(&_fn_SSL_CTX_sess_set_new_cb);
+    _wt_slot(&_fn_SSL_CTX_sess_set_remove_cb);
+    _wt_slot(&_fn_SSL_CTX_sess_set_get_cb);
+    _wt_slot(&_fn_SSL_CTX_set_session_cache_mode);
+    _wt_slot(&_fn_SSL_CTX_set_max_early_data);
+    _wt_slot(&_fn_SSL_write_early_data);
+    _wt_slot(&_fn_SSL_read_early_data);
+    _wt_slot(&_fn_SSL_get_early_data_status);
+    _wt_slot(&_fn_SSL_SESSION_get_max_early_data);
+    _wt_slot(&_fn_SSL_get0_alpn_selected_v);
+    _wt_slot(&_fn_SSL_get1_peer_cert_v);
+    _wt_slot(&_fn_X509_get_pubkey_v);
+    _wt_slot(&_fn_i2d_PUBKEY_v);
+    _wt_slot(&_fn_X509_free_v);
+    _wt_slot(&_fn_EVP_PKEY_free_v);
+    return 0;
+}
+fn _wt_spies_on(): i64 {
+    var i = 0;
+    while (i < _wt_nslots) {
+        _wt_saved[i] = load64(_wt_slots[i]);
+        store64(_wt_slots[i], &_wt_spy);
+        i = i + 1;
+    }
+    _wt_spy_n = 0;
+    return 0;
+}
+fn _wt_spies_off(): i64 {
+    var i = 0;
+    while (i < _wt_nslots) {
+        store64(_wt_slots[i], _wt_saved[i]);
+        i = i + 1;
+    }
+    return 0;
+}
 
 fn _wt_noverify(h, handle): i64 {
     tls_set_verify(handle, 0, 0);
@@ -64,6 +164,8 @@ fn _wt_connect(): i64 {
 
 fn _wt_note(v): i64 {
     store64(_wt_got + _wt_n * 8, v);
+    store64(_wt_got + (WT_CALLS + _wt_n) * 8, _wt_spy_n);
+    _wt_spy_n = 0;
     _wt_n = _wt_n + 1;
     return 0;
 }
@@ -138,11 +240,19 @@ fn _wt_case_warm(arg): i64 {
     var sp[8];
     sys_socketpair(1, 1, 0, &sp);
     _wt_fd = load64(&sp) & 0xFFFFFFFF;
+    store64(_wt_got + WT_INTRO_BEFORE * 8, _tls_introspect_state);
+    _wt_slots_init();
+    _wt_spies_on();
     var t = thread_create(&_wt_worker_all, 0);
-    if (t == 0) { return 52; }
+    if (t == 0) { _wt_spies_off(); return 52; }
     thread_join(t);
+    _wt_spies_off();
+    store64(_wt_got + WT_INTRO_AFTER * 8, _tls_introspect_state);
     if (_wt_n != 35) { return 53; }
-    # The main thread's connection is intact: the worker touched none of it.
+    # The main thread's connection is intact: the worker touched none of it — and claimed no
+    # latch (a worker that resolved introspection would have latched every pointer to 0).
+    var sb[512];
+    store64(_wt_got + WT_MAIN_SPKI * 8, tls_get_peer_spki_der(_wt_ctx, &sb, 512));
     if (tls_write(_wt_ctx, "q", 1) != 1) { return 55; }
     var b[8];
     if (tls_read(_wt_ctx, &b, 1) != 1) { return 56; }
@@ -151,9 +261,37 @@ fn _wt_case_warm(arg): i64 {
     return 0;
 }
 
+# The measured 6.6.13 scenario with REAL libssl underneath (no spies): main initialises and
+# connects, then a worker fetches — a fresh connect and a write on main's connection. Was SIGSEGV.
+fn _wt_worker_fetch(arg): i64 {
+    store64(_wt_got + WT_FETCH_CONNECT * 8, tls_connect_with_ctx_hook(_wt_fd, "localhost", &_wt_noverify, 0));
+    store64(_wt_got + WT_FETCH_WRITE * 8, tls_write(_wt_ctx, "w", 1));
+    return 0;
+}
+
+fn _wt_case_fetch(arg): i64 {
+    if (tls_available() != 1) { return 80; }
+    _wt_ctx = _wt_connect();
+    if (_wt_ctx == 0) { return 81; }
+    var sp[8];
+    sys_socketpair(1, 1, 0, &sp);
+    _wt_fd = load64(&sp) & 0xFFFFFFFF;
+    sock_set_recv_timeout(_wt_fd, 5, 0);                 # no server on it: bound a real handshake
+    var t = thread_create(&_wt_worker_fetch, 0);
+    if (t == 0) { return 82; }
+    thread_join(t);
+    if (tls_write(_wt_ctx, "q", 1) != 1) { return 83; }
+    var b[8];
+    if (tls_read(_wt_ctx, &b, 1) != 1) { return 84; }
+    if (load8(&b) != 113) { return 85; }
+    tls_close(_wt_ctx);
+    return 0;
+}
+
 var _wt_cold_avail = 0 - 99;
 fn _wt_worker_cold(arg): i64 {
     _wt_cold_avail = tls_available();
+    _tls_init();                                         # the latch itself refuses a worker too
     return 0;
 }
 
@@ -227,16 +365,33 @@ fn _wt_report(st, label): i64 {
 fn test_worker_refused(): i64 {
     test_group("libssl backend off the main thread: every verb refuses, nothing crashes or hangs");
     var i = 0;
-    while (i < 35) { store64(_wt_got + i * 8, 0 - 99); i = i + 1; }
+    while (i < 512) { store64(_wt_got + i * 8, 0 - 99); i = i + 1; }
     _wt_report(_wt_bounded(&_wt_case_warm),
-      "warm: tls_available() on main, then every verb on a worker, then main's ctx still works (was SIGSEGV)");
+      "warm: tls_available() on main, then every verb on a worker (spied), then main's ctx still works");
     i = 0;
     while (i < 35) {
+        var f0 = _assert_fail;
         assert_eq(load64(_wt_got + i * 8), _wt_expect(i), _wt_name(i));
+        assert_eq(load64(_wt_got + (WT_CALLS + i) * 8), 0, "    ... and made no libssl call");
+        if (_assert_fail != f0) {
+            syscall(1, 2, "    (row: ", 10);
+            syscall(1, 2, _wt_name(i), strlen(_wt_name(i)));
+            syscall(1, 2, ")\n", 2);
+        }
         i = i + 1;
     }
+    assert_eq(load64(_wt_got + WT_INTRO_BEFORE * 8), 0, "precondition: libssl introspection is unresolved before the worker");
+    assert_eq(load64(_wt_got + WT_INTRO_AFTER * 8), 0,
+      "the worker claimed no libssl latch (introspection still unresolved after it)");
+    assert_gt(load64(_wt_got + WT_MAIN_SPKI * 8), 0,
+      "main's tls_get_peer_spki_der works after the worker (a worker's resolve would latch it to 0)");
+    _wt_report(_wt_bounded(&_wt_case_fetch),
+      "warm, real libssl: main connects, then a worker fetches -> refused, nothing crashes (was SIGSEGV)");
+    assert_eq(load64(_wt_got + WT_FETCH_CONNECT * 8), 0, "  worker fetch: tls_connect_with_ctx_hook -> 0");
+    assert_eq(load64(_wt_got + WT_FETCH_WRITE * 8), TLS_ERR_WRONG_THREAD,
+      "  worker fetch: tls_write on main's connection -> TLS_ERR_WRONG_THREAD");
     _wt_report(_wt_bounded(&_wt_case_cold),
-      "cold: a worker's first use -> tls_available() 0, nothing claimed; main still initialises (was a hang)");
+      "cold: a worker's first use -> tls_available() 0, _tls_init claims nothing; main still initialises (was a hang)");
     _wt_report(_wt_bounded(&_wt_case_fork), "a forked child's main thread passes the guard and connects");
     return 0;
 }
