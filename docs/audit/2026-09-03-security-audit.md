@@ -2,7 +2,7 @@
 
 **Scope:** the untrusted-source-input surface. Previous full audit:
 `docs/audit/2026-07-27-security-audit.md` (CVE-32…CVE-36) at cycc 6.4.82.
-**Next free identifier after this document: CVE-63.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
+**Next free identifier after this document: CVE-64.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
 document are **withdrawn** but still consume their ids.) CVE-43 was consumed at 6.6.5,
 **CVE-44 and CVE-45 at 6.6.6** — the release installer's fixed `/tmp` staging, and a forged `#@file` from an included file —
 **CVE-46, CVE-47 and CVE-48 at 6.6.7** (a `secret var` inside a closure was never zeroised; a `secret var` in a
@@ -13,10 +13,10 @@ predictable shared `/tmp` names; `lib/http.cyr` wrote a long URL past its 2048-b
 `rdx`; the lexer silently dropped any `@` that did not spell `@unsafe`; `lib/ws.cyr`'s `ws_recv_frame` let a
 remote peer choose its allocation size and read frames it had not received), and **CVE-54 and CVE-55 at 6.6.11**
 (on Windows, `net_resolve_ipv4` read a drive-relative `C:\etc\hosts` that any local user can plant; a multi-line
-string literal shifted file attribution, so a call to another file's `private` fn compiled); **CVE-56 at 6.6.12** (`lib/log.cyr`'s `log_info_kv` / `log_info_int` built a log line past a 512-byte stack buffer); **CVE-57 at 6.6.12** (on Windows, the folded sandhi resolver read a drive-relative `C:\etc\resolv.conf` any local user can plant); **CVE-58 at 6.6.12** (cxvm let guest bytecode read and write the interpreter's own host memory); **CVE-59 at 6.6.13** (the libssl TLS backend never bound the server's certificate to the host, so any chain-valid certificate verified any host); **CVE-60 at 6.6.13** (the libssl backend's `tls_read` / `tls_write` (and `tls_get_peer_spki_der`) returned a C `int` zero-extended, so a tampered record read as ~4 GiB read); **CVE-61 at 6.6.13** (the native TLS stack skipped plaintext ChangeCipherSpec records without limit and had no deadline, so anyone on the path held a thread for ever); **CVE-62 at 6.6.13** (a `[deps.NAME]` header holding `..` made `cyrius deps` create directories and git-clone outside the dep cache — a CVE-32 residual); all twenty are appended below.
+string literal shifted file attribution, so a call to another file's `private` fn compiled); **CVE-56 at 6.6.12** (`lib/log.cyr`'s `log_info_kv` / `log_info_int` built a log line past a 512-byte stack buffer); **CVE-57 at 6.6.12** (on Windows, the folded sandhi resolver read a drive-relative `C:\etc\resolv.conf` any local user can plant); **CVE-58 at 6.6.12** (cxvm let guest bytecode read and write the interpreter's own host memory); **CVE-59 at 6.6.13** (the libssl TLS backend never bound the server's certificate to the host, so any chain-valid certificate verified any host); **CVE-60 at 6.6.13** (the libssl backend's `tls_read` / `tls_write` (and `tls_get_peer_spki_der`) returned a C `int` zero-extended, so a tampered record read as ~4 GiB read); **CVE-61 at 6.6.13** (the native TLS stack skipped plaintext ChangeCipherSpec records without limit and had no deadline, so anyone on the path held a thread for ever); **CVE-62 at 6.6.13** (a `[deps.NAME]` header holding `..` made `cyrius deps` create directories and git-clone outside the dep cache — a CVE-32 residual); **CVE-63 at 6.6.13** (the native TLS client verified an IP-literal host against dNSName SAN entries, wildcards included); all twenty-one are appended below.
 ⚠ **This line read "next free: CVE-42" while CLAUDE.md read "the next CVE number is 43" and this document ran 39-41.**
 Two authorities, two answers, and nothing reconciled them. CLAUDE.md is the one every closeout reads, so **42 is
-retired unused** and CVE-43 is the entry appended below. Anything below 63 now collides.
+retired unused** and CVE-43 is the entry appended below. Anything below 64 now collides.
 
 Run as part of the band K closeout, as nine parallel audit dimensions over the v6.5.x minor with
 an adversarial verification pass over the highest-severity findings. Everything recorded here was
@@ -1247,3 +1247,27 @@ host) and under qemu-aarch64 and wine.
 **Fix.** `_dep_reject_unsafe_name(dep_name)` runs immediately after the header name is read, before the closest-wins lookup, the clone, or any path derivation; a refused section prints `error: [deps.<name>] is not a usable dep name …`, counts as an error (exit 1, no lock write) and is skipped. Applies to the root manifest and every transitive manifest (same function).
 
 **Verified.** `tests/gates/toolchain/deps_modules_default_or_warned.sh` axis D8: root `[deps.../x]` and a TRANSITIVE dep whose manifest declares `[deps.../../esc/x]` — both refused by name, exit 1, nothing created outside `$CYRIUS_HOME/deps` (filesystem check of the escape target).
+
+## CVE-63 — the native TLS client verified an IP-literal host against dNSName SAN entries, wildcards included
+
+*Appended 2026-10-01 (cyrius 6.6.13, bite I7). Found by: abaco 2.4.12 HTTPS review (2026-10-01); issue `docs/development/issues/2026-10-01-tls-ip-literal-dnsname.md`. The IPv6 parser defects were found by the 6.6.13 I7 premise check. Not part of the 2026-09-03 sweep: recorded here because this is the live ledger. 6.6.13 spends CVE-59 … CVE-63.*
+
+| | |
+|---|---|
+| **Severity** | P3 (Low) — certificate identity-verification flaw. Exploitation needs a CA the client trusts to issue a dNSName that spells an IP address (or a wildcard over one), which the CA/Browser Forum Baseline Requirements forbid public CAs to do; private / enterprise CAs and custom bundles are the realistic exposure. It breaks the documented CVE-18 rule (RFC 9525 §6.3). |
+| **Class** | Identity verification (RFC 9525 §6.3 / RFC 6125 §6.2.1: an IP-ID is compared with iPAddress SANs only; DNS-ID and wildcard rules apply to DNS names only). A CVE-18 residual. |
+| **Affected** | the native TLS client (`tls_connect*` under the native backend, `tls_native_connect`, `tls_native_client_verify_hostname`) from 6.0.30 (SAN matching; every dNSName tried for every host) through 6.6.12; the lax IPv6 literal parse from 6.1.36 (CVE-18's iPAddress matching) through 6.6.12. The libssl backend is a separate defect (I1). |
+| **Files** | `lib/tls_native_conn.cyr` — `_tn_cert_san_match` (the GeneralName loop), `_tn_parse_ipv4`, `_tn_ipv6_groups`, `_tn_parse_ipv6`, `_tn_parse_ip_literal` |
+| **Fixed** | 6.6.13 |
+
+**Vector.** A server presents a chain-valid leaf whose SAN holds `DNS:<the IP the client dialled>` (e.g. `DNS:127.0.0.1`), or a wildcard over it (`DNS:*.0.0.1`), or — for IPv6 / malformed hosts — a dNSName spelling the host verbatim (`DNS:::1`, `DNS:[::1]`, `DNS:fe80::1%eth0`) or an iPAddress entry a malformed host lax-parses to (host `1:2:3:4:5:6:7:8:` / `1:2:3:4::5:6:7:8` vs `IP:1:2:3:4:5:6:7:8`; `00001::` vs `IP:1::`; `::1:` vs `IP:::1`).
+
+**Impact.** The client accepts that certificate for the IP-literal host: a man-in-the-middle holding any such certificate from a trusted (private) CA impersonates the server. Also: `_tn_parse_ipv4` read a leading-zero host (`010.0.0.1`) as an address while the resolver (`net_parse_ipv4`) sends it to DNS as a name, so the verifier and the resolver disagreed on what the host was.
+
+**Fix.** `_tn_cert_san_match` classifies the host ONCE, before the walk — `_tn_parse_ip_literal` returns 4/16 (IP literal: compared with 0x87 entries only, octet for octet), 0 (DNS name: compared with 0x82 entries only) or -1 (a `:`-bearing host that is no well-formed IPv6 literal: matches nothing). `_tn_parse_ipv4` refuses a leading zero, mirroring `net_parse_ipv4`. `_tn_ipv6_groups` / `_tn_parse_ipv6` follow RFC 4291 §2.2: 1-4 hex digits per group, no empty group or trailing `:`, `::` stands for >= 1 group (the two sides hold <= 14 bytes), and an optional dotted-quad tail (`::ffff:1.2.3.4`) parsed by the strict IPv4 parser. No public API change.
+
+**Behaviour change.** A client connecting by IP to a server whose certificate spells that IP only as a dNSName now fails with `TLS_ERR_CERT_HOSTNAME_MISMATCH` (reissue with an `IP:` SAN). Bracketed hosts and hosts with a zone id verify against nothing.
+
+**Verified.** Filed repro `docs/development/issues/repros/2026-10-01-tls-ip-literal-dnsname.sh` exits 0 (2 on 6.6.12). `tests/tcyr/crypto/tls_native_scaffold.tcyr` group "RFC 9525 IP-ID vs DNS-ID (6.6.13)": 83 assertions over six self-signed P-256 leaves, the literal classifier and `_tn_parse_ipv4` vs `net_parse_ipv4` agreement; 41 fail against the 6.6.12 lib; 532/532 on x86_64 and aarch64 (qemu).
+
+**Not covered.** The native client still sends an IP literal as SNI (RFC 6066 §3) — backlogged (6.6.13 roadmap backlog item d).

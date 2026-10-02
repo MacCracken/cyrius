@@ -1855,7 +1855,7 @@ tls_native_set_ca_bundle(cv3, cert23, 385, 1);   # self-signed cert trusts itsel
 assert_eq(_tn_connect_verify(cv3), TLS_ERR_CERT_HOSTNAME_MISMATCH, "verify=PEER + chain OK + host==0 → reject (no identity to bind)");
 
 # ================================================================
-# 6.6.13 (CVE-TBD(I7)) — RFC 9525 §6.3: an IP-ID never meets a DNS-ID
+# 6.6.13 (CVE-63) — RFC 9525 §6.3: an IP-ID never meets a DNS-ID
 # ================================================================
 # _tn_cert_san_match classifies the host ONCE: a DNS name is compared with the
 # dNSName entries only, an IP literal with the iPAddress entries only, and a

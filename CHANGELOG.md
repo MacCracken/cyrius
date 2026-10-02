@@ -62,7 +62,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   every expected byte and commit taken from the origin; mutation ledger in the file — the
   6.6.12 resolver reds D1 D2 D3 D3b D4 D6 D8). Documented in the guide's *Dependencies*
   section, with `modules = []` as the declared-not-linked opt-out.
-- **CVE-TBD(I7) (P3) — the native TLS client verified an IP-literal host against dNSName SAN
+- **CVE-63 (P3) — the native TLS client verified an IP-literal host against dNSName SAN
   entries, wildcards included.** (I7.) A certificate whose only SAN was `DNS:127.0.0.1`, or
   `DNS:*.0.0.1`, verified `https://127.0.0.1`. RFC 9525 §6.3, the rule CVE-18 cites, compares an IP
   literal with iPAddress entries only. **Root cause:** `_tn_cert_san_match`

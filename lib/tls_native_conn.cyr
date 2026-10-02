@@ -86,7 +86,7 @@ fn _tn_host_match(dns, dns_len, host, host_len): i64 {
 # name is compared with the dNSName entries only (exact or single-label
 # wildcard), an IP literal with the iPAddress entries only (CVE-18, octet for
 # octet), and a ':'-bearing non-literal with nothing — so neither DNS:127.0.0.1
-# nor DNS:*.0.0.1 verifies 127.0.0.1. CHANGELOG [6.6.13] (CVE-TBD(I7)).
+# nor DNS:*.0.0.1 verifies 127.0.0.1. CHANGELOG [6.6.13] (CVE-63).
 # Returns 1 on a match, 0 otherwise.
 fn _tn_cert_san_match(der, der_len, host, host_len): i64 {
     var ipb[16];                                 # 16 BYTES (local-array rule)
