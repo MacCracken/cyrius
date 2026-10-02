@@ -40,7 +40,7 @@ unscheduled 6.x backlog. Whole-cycle framing, the v6.7.x language arc and v6.8.x
 ## Where we are
 
 **Current head: v6.6.13** (2026-10-01) — cycc **1,487,896 B** (`.text` **1,314,632**) ·
-seed-derive **GREEN** · cross-OS: the release gate is pending · self_compile: the bench is pending ·
+seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi · self_compile **846 ms** ·
 **427** `.tcyr` (**164** in `crossos/`) · **105** `lib/*.cyr` · **325** shell gates under
 `tests/gates/<bucket>/` · **0 open issues** · **6 open proposals**.
 
@@ -77,13 +77,13 @@ The language list that was Phase 3 moved to **v6.7.x**, which RISC-V vacates for
 |---|---|---|
 | **1 — Repair window** | `.2` – `.6` | ✅ **CLOSED at 6.6.6.** |
 | **1b — the repair batch** | `.7` – `.12` | ✅ **CLOSED at 6.6.12** (summary in *Where we are*). |
-| **1c — memory + reported-issue repair** | `.13` | ✅ **Merged 2026-10-01**: the three silent memory-corruption finds, the open issues I1–I11, and the ganita / bayan / sigil folds. The release gate is pending; see *6.6.13* below. |
+| **1c — memory + reported-issue repair** | `.13` | ✅ **Merged 2026-10-01, release gate GREEN**: the three silent memory-corruption finds, the open issues I1–I11, and the ganita / bayan / sigil folds; awaiting the tag. See *6.6.13* below. |
 | **2 — Tooling round-out** | after `.13`, to the minor's close | The tooling proposals P1, P2, P4, P5, P6, alongside the DCE compaction arc and, last, macOS concurrency ordering (*Open questions* 3). Then the closeout pass. |
 | ~~**3 — Committed ergonomics**~~ | — | **Moved to v6.7.x** with P3 `const fn` (user, 2026-10-01) — see [roadmap_6.md](roadmap_6.md). |
 
 ---
 
-## 6.6.13 — memory fixes + reported-issue repair (CLOSING 2026-10-01: merged, gate pending)
+## 6.6.13 — memory fixes + reported-issue repair (CLOSING 2026-10-01: merged, release gate GREEN, awaiting the tag)
 
 All fourteen items landed over six lanes and are merged on `main`. **Detail is in CHANGELOG [6.6.13]; the
 eleven issue files are archived.**

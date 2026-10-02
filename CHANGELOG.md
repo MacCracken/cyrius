@@ -11,6 +11,13 @@ memory-corruption finds that led the backlog (M1–M3) and the eleven open issue
 after the sigil 3.13.6 / ganita 1.2.11 / bayan 1.5.10 + 1.5.11 folds. It spends **CVE-59 … CVE-63**; the
 next free id is **64**. ⛔ bayan **1.5.11** is folded from its tag and was cut for this release.
 
+**Bench** (same box, best of 7): self_compile **851 ms** against 6.6.12's **835 ms** (+16 ms, +1.9 %;
+`bench-history.sh` reads 846 ms); cycc **1,487,896 B** (`.text` **1,314,632**), +16,952 B (+1.2 %) over
+6.6.12's 1,470,944 — growth tax spread over M2's element sizing, I11's classifier and the other
+compiler bites, no single dominant patch. **Gate:** `release-gate.sh` GREEN — fixpoint, ARM lockstep,
+seed-derive, check.sh (156/156 shell gates, 0 failures, the two known agnos-parity SKIPs), and
+cross-OS self-host + crossos tests on ecb, ach, cass and pi; the per-file `.tcyr` loop 427/427.
+
 ### Security
 
 - **CVE-59 (P1) — the libssl TLS backend never bound the server's certificate to the host:
