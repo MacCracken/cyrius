@@ -2027,6 +2027,35 @@ fn _tn_w_pem_put(buf, pos, cap, der, dlen): i64 {
     return o + 26;
 }
 
+# Walk the store `root` and write every certificate the policy takes — and `dis` (the Disallowed
+# store) does not hold — into buf[0..cap) as PEM. The byte count (0 when none qualified); the
+# number refused (policy 2, or a block that did not fit) is stored at `refused`. Takes the two
+# store handles so the policy can be exercised on stores built in memory
+# (tests/tcyr/crossos/tls_system_trust_store.tcyr). CHANGELOG [6.6.14]
+fn _tn_w_export(fns, root, dis, buf, cap, refused): i64 {
+    var en = load64(fns + 8);
+    var total = 0;
+    var nref = 0;
+    var c = callptr(en, root, 0);
+    while (c != 0) {
+        var der = load64(c + 8);
+        var dlen = load32(c + 16);
+        var pol = _tn_w_policy(fns, c);
+        if (pol != 0) {
+            if (_tn_w_in_store(fns, dis, der, dlen) == 1) { pol = 0; }
+        }
+        if (pol == 2) { nref = nref + 1; }
+        if (pol == 1) {
+            var np = _tn_w_pem_put(buf, total, cap, der, dlen);
+            if (np < 0) { nref = nref + 1; }
+            if (np >= 0) { total = np; }
+        }
+        c = callptr(en, root, c);
+    }
+    store64(refused, nref);
+    return total;
+}
+
 # The Windows system store for _tn_ca_read: every root Windows trusts as a TLS anchor, as a PEM
 # bundle in buf[0..cap). The byte count, or -1 for no store (crypt32 or a store would not open, or
 # no root qualified) — the caller caches that as TLS_ERR_IO. Sets `_tn_ca_sys_refused`.
@@ -2037,29 +2066,12 @@ fn _tn_ca_read_win(buf, cap): i64 {
     var root = _tn_w_open(&fns, "ROOT");
     if (root == 0) { return 0 - 1; }
     var dis = _tn_w_open(&fns, "Disallowed");
-    var en = load64(&fns + 8);
     var cl = load64(&fns + 16);
     if (dis == 0) {
         callptr(cl, root, 0);
         return 0 - 1;
     }
-    var total = 0;
-    var c = callptr(en, root, 0);
-    while (c != 0) {
-        var der = load64(c + 8);
-        var dlen = load32(c + 16);
-        var pol = _tn_w_policy(&fns, c);
-        if (pol != 0) {
-            if (_tn_w_in_store(&fns, dis, der, dlen) == 1) { pol = 0; }
-        }
-        if (pol == 2) { _tn_ca_sys_refused = _tn_ca_sys_refused + 1; }
-        if (pol == 1) {
-            var np = _tn_w_pem_put(buf, total, cap, der, dlen);
-            if (np < 0) { _tn_ca_sys_refused = _tn_ca_sys_refused + 1; }
-            if (np >= 0) { total = np; }
-        }
-        c = callptr(en, root, c);
-    }
+    var total = _tn_w_export(&fns, root, dis, buf, cap, &_tn_ca_sys_refused);
     callptr(cl, dis, 0);
     callptr(cl, root, 0);
     if (total <= 0) { return 0 - 1; }

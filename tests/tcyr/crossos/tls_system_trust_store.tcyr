@@ -372,6 +372,156 @@ fn test_store_policy(): i64 {
     assert_eq(_tn_ca_sys_refused, want_ref, "the date-distrusted roots are the refused count");
     return 0;
 }
+
+# ── The store policy on stores the test builds in memory ─────────────────────────────────────
+# The real ROOT store exercises only what the host happens to hold — cass's Disallowed store is
+# EMPTY, so a library that ignored Disallowed passed every row above. These rows build
+# CERT_STORE_PROV_MEMORY stores, add the fixture root with exactly the properties the row names, and
+# run the library's own walk (_tn_w_export) over them. Deterministic on any Windows host; no admin
+# rights; no machine trust state is touched.
+var _tm_add = 0;        # CertAddEncodedCertificateToStore
+var _tm_setp = 0;       # CertSetCertificateContextProperty
+var _tm_free = 0;       # CertFreeCertificateContext
+var _tm_props = 0;      # the row's properties: [id][ptr][len], up to 8
+var _tm_n = 0;
+var _tm_pem = 0;        # the fixture root as the PEM block the library must write
+var _tm_pem_len = 0;
+
+var _TM_SA = "300a06082b06010505070301";                            # [serverAuth]
+var _TM_CS = "300a06082b06010505070303";                            # [codeSigning]
+var _TM_CS_SA = "301406082b0601050507030306082b06010505070301";     # [codeSigning, serverAuth]
+var _TM_ANY = "30060604551d2500";                                   # [anyExtendedKeyUsage]
+var _TM_DATE = "0080e9e6f9c7d901";                                  # a FILETIME
+
+fn _tm_reset(): i64 {
+    _tm_n = 0;
+    return 0;
+}
+
+# Give the row's certificate property `id` = the bytes of `hex` ("" = present and EMPTY).
+fn _tm_with(id, hex): i64 {
+    var hl = strlen(hex);
+    var p = alloc(8);
+    if (hl > 0) { p = hex_decode(hex, hl); }
+    store64(_tm_props + _tm_n * 24, id);
+    store64(_tm_props + _tm_n * 24 + 8, p);
+    store64(_tm_props + _tm_n * 24 + 16, hl / 2);
+    _tm_n = _tm_n + 1;
+    return 0;
+}
+
+# ROOT (memory) holds the fixture root with the properties given since _tm_reset; Disallowed
+# (memory) holds nothing (dis 0), the fixture too (1), or a different certificate (2). Run
+# _tn_w_export into a `cap`-byte buffer and classify the result: 1 exported (exactly the fixture's
+# PEM, nothing refused), 0 excluded (nothing written, nothing counted), 2 refused (nothing written,
+# counted once), -1 anything else, -9 the stores could not be built as the row says.
+fn _tm_run(fns, dis_holds, cap): i64 {
+    var open = load64(fns);
+    var root = callptr(open, 2, 0, 0, 0, 0);            # CERT_STORE_PROV_MEMORY
+    var dis = callptr(open, 2, 0, 0, 0, 0);
+    if (root == 0) { return 0 - 9; }
+    if (dis == 0) { return 0 - 9; }
+    var ok = 1;
+    var cc[8];
+    store64(&cc, 0);
+    # X509_ASN_ENCODING, CERT_STORE_ADD_ALWAYS, and the store's context back.
+    if ((callptr(_tm_add, root, 1, _ts_p256, _ts_p256_len, 4, &cc) & 0xFFFFFFFF) == 0) { ok = 0; }
+    if (load64(&cc) == 0) { ok = 0; }
+    var i = 0;
+    while (i < _tm_n) {
+        var blob[16];                                    # CRYPT_DATA_BLOB { DWORD cbData; BYTE *pbData }
+        store64(&blob, load64(_tm_props + i * 24 + 16));
+        store64(&blob + 8, load64(_tm_props + i * 24 + 8));
+        if (ok == 1) {
+            if ((callptr(_tm_setp, load64(&cc), load64(_tm_props + i * 24), 0, &blob) & 0xFFFFFFFF) == 0) { ok = 0; }
+        }
+        i = i + 1;
+    }
+    if (dis_holds == 1) {
+        if ((callptr(_tm_add, dis, 1, _ts_p256, _ts_p256_len, 4, 0) & 0xFFFFFFFF) == 0) { ok = 0; }
+    }
+    if (dis_holds == 2) {
+        if ((callptr(_tm_add, dis, 1, _ts_mr, _ts_mr_len, 4, 0) & 0xFFFFFFFF) == 0) { ok = 0; }
+    }
+    if (load64(&cc) != 0) { callptr(_tm_free, load64(&cc)); }
+    var got = 0 - 9;
+    if (ok == 1) {
+        var buf = alloc(cap);
+        var nref[8];
+        store64(&nref, 0 - 1);
+        var total = _tn_w_export(fns, root, dis, buf, cap, &nref);
+        var r = load64(&nref);
+        got = 0 - 1;
+        if (total == 0) {
+            if (r == 0) { got = 0; }
+            if (r == 1) { got = 2; }
+        }
+        if (total == _tm_pem_len) {
+            if (r == 0) {
+                if (memeq(buf, _tm_pem, _tm_pem_len) == 1) { got = 1; }
+            }
+        }
+    }
+    callptr(load64(fns + 16), dis, 0);
+    callptr(load64(fns + 16), root, 0);
+    _tm_reset();
+    return got;
+}
+
+# Windows: each policy rule, one memory store per row.
+fn test_policy_rows(): i64 {
+    test_group("Windows: the store policy, row by row, on stores built in memory");
+    var fns[32];
+    assert_eq(_tn_w_crypt32(&fns), 1, "crypt32 loads and resolves");
+    var k = syscall(0xF013, "crypt32.dll");
+    _tm_add = syscall(0xF014, k, "CertAddEncodedCertificateToStore");
+    _tm_setp = syscall(0xF014, k, "CertSetCertificateContextProperty");
+    _tm_free = syscall(0xF014, k, "CertFreeCertificateContext");
+    assert_neq(_tm_add, 0, "CertAddEncodedCertificateToStore resolves");
+    assert_neq(_tm_setp, 0, "CertSetCertificateContextProperty resolves");
+    assert_neq(_tm_free, 0, "CertFreeCertificateContext resolves");
+    _tm_props = alloc(8 * 24);
+    _tm_pem = alloc(2048);
+    _tm_pem_len = _ts_pem(_tm_pem, _ts_p256, _ts_p256_len);
+    var cap = 4096;
+    # Control and Disallowed.
+    assert_eq(_tm_run(&fns, 0, cap), 1, "no property: exported");
+    assert_eq(_tm_run(&fns, 1, cap), 0, "also in Disallowed: excluded, not counted");
+    assert_eq(_tm_run(&fns, 2, cap), 1, "a DIFFERENT certificate in Disallowed: still exported");
+    # The purposes allow-list (prop 9).
+    _tm_with(9, _TM_CS);
+    assert_eq(_tm_run(&fns, 0, cap), 0, "purposes [codeSigning]: not a TLS root, not counted");
+    _tm_with(9, _TM_CS_SA);
+    assert_eq(_tm_run(&fns, 0, cap), 1, "purposes [codeSigning, serverAuth]: exported");
+    _tm_with(9, _TM_ANY);
+    assert_eq(_tm_run(&fns, 0, cap), 1, "purposes [anyExtendedKeyUsage]: exported");
+    _tm_with(9, "3000");
+    assert_eq(_tm_run(&fns, 0, cap), 0, "purposes [] (no purpose at all): not a TLS root");
+    _tm_with(9, _TM_CS);
+    _tm_with(104, _TM_DATE);
+    assert_eq(_tm_run(&fns, 0, cap), 0, "not a TLS root AND a disable date: excluded, not counted");
+    # The disable date (prop 104), scoped by prop 122.
+    _tm_with(104, _TM_DATE);
+    assert_eq(_tm_run(&fns, 0, cap), 2, "a disable date for every purpose: refused, counted");
+    _tm_with(104, "");
+    assert_eq(_tm_run(&fns, 0, cap), 2, "an EMPTY disable date (VeriSign Class 3 G5 has one): refused");
+    _tm_with(104, _TM_DATE);
+    _tm_with(122, _TM_SA);
+    assert_eq(_tm_run(&fns, 0, cap), 2, "a disable date for [serverAuth]: refused");
+    _tm_with(104, _TM_DATE);
+    _tm_with(122, _TM_ANY);
+    assert_eq(_tm_run(&fns, 0, cap), 2, "a disable date for [anyExtendedKeyUsage]: refused");
+    _tm_with(104, _TM_DATE);
+    _tm_with(122, _TM_CS);
+    assert_eq(_tm_run(&fns, 0, cap), 1, "a disable date for [codeSigning] only: exported");
+    _tm_with(122, _TM_SA);
+    assert_eq(_tm_run(&fns, 0, cap), 1, "a purpose scope with no date carries no distrust: exported");
+    _tm_with(104, _TM_DATE);
+    assert_eq(_tm_run(&fns, 1, cap), 0, "refused by date AND in Disallowed: excluded, not counted");
+    # A block that does not fit the buffer is refused and counted, never silently dropped.
+    assert_eq(_tm_run(&fns, 0, 300), 2, "a root that does not fit the buffer: refused, counted");
+    return 0;
+}
 #endif
 
 fn main(): i64 {
@@ -387,6 +537,7 @@ fn main(): i64 {
     test_real_chain();
     #ifdef CYRIUS_TARGET_WIN
     test_store_policy();
+    test_policy_rows();
     #endif
     return assert_summary();
 }
