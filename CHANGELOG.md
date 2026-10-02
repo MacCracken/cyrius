@@ -67,18 +67,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   hook which relaxes verification owns the consequence. ⚠ **Behaviour change (libssl only):** a
   consumer that passed `host == 0` under `SSL_VERIFY_PEER`, or relied on a CN-only or
   partial-wildcard certificate, now fails closed, as it always did on native; no IP-literal SNI is
-  sent. No ecosystem caller passes `host == 0` (hoosh, sandhi, abaco surveyed). **Tests:** the
+  sent; `host` is the identity, so a name (for a DNS-name host) or an IP (for a literal host) that
+  a hook pinned on the `SSL_CTX`'s `X509_VERIFY_PARAM` is replaced by it (a pin of the other kind
+  is kept and must match too) — to verify a different name, pass it as `host`. No ecosystem caller passes `host == 0` (hoosh, sandhi, abaco surveyed). **Tests:** the
   filed repro `docs/development/issues/repros/2026-09-30-tls-libssl-no-hostname-verification.sh`
   exits 0 under both builds (2 on 6.6.12). New gate
   `tests/gates/platform/tls_libssl_hostname_binding.sh` runs 24 rows against OpenSSL's `s_server`
   on native, on libssl via `tls_set_backend` and in a `CYRIUS_TLS_LIBSSL` build — DNS, IP and
   wildcard leaves, a CN-only leaf, a partial wildcard, an untrusted CA, the classifier's bait
   (`010.0.0.1` is a name, `[::1]` has no identity), `host == 0` / `""` and the verify-NONE hook —
-  plus five SNI rows (`-servername_fatal`: an IP host sends none, a DNS host does) and five
+  plus five SNI rows (`-servername_fatal`: an IP host sends none, a DNS host does), four hook-pin
+  rows (a same-kind pin is replaced, an other-kind pin is kept) and five
   required-symbol legs (a libssl-only build whose `lib/tls.cyr` asks `dlsym` for a bogus name in
   place of each symbol reads `tls_available()` 0 and `tls_connect_alloc` 0); named SKIP 77
-  without openssl, the dlopen-helper or libssl.so.3, anti-vacuous floors otherwise. All 87 rows
-  pass; against the pre-fix lib 38 are RED. Mutations, each RED: the bind call deleted (32
+  without openssl, the dlopen-helper or libssl.so.3, anti-vacuous floors otherwise. All 95 rows
+  pass; against the pre-fix lib 42 are RED. Mutations, each RED: the bind call deleted (36
   rows), the hostflags dropped (the CN-only and partial-wildcard rows), one bail line removed (its
   symbol's leg: available, then SIGSEGV), `SSL_set1_host`-style routing (the `[::1]` rows), SNI for
   every host (the IP SNI rows).

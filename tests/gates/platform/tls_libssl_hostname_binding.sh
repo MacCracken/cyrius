@@ -26,6 +26,9 @@
 #   S  libssl rows against s_server -servername sni.invalid -servername_fatal: an IP host sends
 #      no SNI (the handshake survives), a DNS host does (the fatal alert refuses it — the control
 #      that shows the leg can see an SNI). Native's IP-literal SNI is backlogged, not asserted.
+#   P  libssl rows where the hook pins a name / an IP on the SSL_CTX's X509_VERIFY_PARAM: the
+#      binding REPLACES a pin of host's own kind and keeps a pin of the other kind (documented
+#      in lib-tls-contract.md "Server identity"; pass the name to verify as `host`).
 #   X  bogus-symbol legs: L rebuilt against a lib/ copy whose lib/tls.cyr asks dlsym for a
 #      nonexistent name in place of each binder symbol in turn — tls_available() must be 0 and
 #      tls_connect_alloc must return 0 (fail closed). An unmutated copy must read available.
@@ -87,7 +90,8 @@ leaf bait bait-leaf "DNS:010.0.0.1,DNS:[::1],IP:10.0.0.1,IP:::1"
 leaf ip10 ip10-leaf "IP:10.0.0.1"
 
 # ── the probe ──
-# probe <native|libssl|libssl0> <port> <cafile> <host|@0|@empty> <peer|none>; probe tcp <port>;
+# probe <native|libssl|libssl0> <port> <cafile> <host|@0|@empty> <peer|none|pinhost N|pinip A>;
+# probe tcp <port>; pinhost/pinip = the hook pins a name / an IP on the SSL_CTX param (libssl);
 # probe avail. libssl0 = libssl with no tls_available() pre-check (tls_connect_alloc's own answer).
 # exit 10 accepted / 20 handshake refused / 30 tls_connect_alloc returned 0 / 40 no TCP /
 #      50 libssl unavailable / 60 backend not compiled in / 11|12 avail yes|no / 0 tcp ok
@@ -102,11 +106,31 @@ include "lib/tls.cyr"
 
 var G_CA = 0;
 var G_NONE = 0;
+var G_PINK = 0;    # 1 = the hook pins a NAME on the SSL_CTX param, 2 = an IP
+var G_PIN = 0;
 
 fn _hook(hctx, handle): i64 {
     if (tls_ctx_load_verify_locations(handle, G_CA, 0) != 1) { return 1; }
     if (G_NONE == 1) {
         if (tls_set_verify(handle, 0, 0) != 0) { return 1; }
+    }
+    if (G_PINK != 0) {
+        # libssl only: a consumer pinning an identity on the SSL_CTX's X509_VERIFY_PARAM
+        var gp = tls_dlsym("SSL_CTX_get0_param");
+        if (gp == 0) { return 1; }
+        var p = fncall1(gp, handle);
+        if (p == 0) { return 1; }
+        var pr = 0;
+        if (G_PINK == 1) {
+            var sh = tls_dlsym("X509_VERIFY_PARAM_set1_host");
+            if (sh == 0) { return 1; }
+            pr = fncall3(sh, p, G_PIN, strlen(G_PIN));
+        } else {
+            var si = tls_dlsym("X509_VERIFY_PARAM_set1_ip_asc");
+            if (si == 0) { return 1; }
+            pr = fncall2(si, p, G_PIN);
+        }
+        if ((pr & 0xFFFFFFFF) != 1) { return 1; }
     }
     return 0;
 }
@@ -143,6 +167,12 @@ fn main(): i64 {
     if (streq(host, "@0") == 1) { host = 0; }
     elif (streq(host, "@empty") == 1) { host = ""; }
     if (streq(argv(5), "none") == 1) { G_NONE = 1; }
+    elif (streq(argv(5), "pinhost") == 1) { G_PINK = 1; }
+    elif (streq(argv(5), "pinip") == 1) { G_PINK = 2; }
+    if (G_PINK != 0) {
+        if (argc() < 7) { sock_close(fd); return 2; }
+        G_PIN = argv(6);
+    }
     var ctx = tls_connect_alloc(fd, host, &_hook, 0);
     if (ctx == 0) { sock_close(fd); return 30; }
     var ok = tls_connect_complete(ctx);
@@ -244,6 +274,24 @@ srow() {
     fi
 }
 
+# prow <host> <pinhost|pinip> <pin> <want libssl> <label> — the P leg: a hook's pin on the
+# SSL_CTX's X509_VERIFY_PARAM. The binding goes on the per-SSL param and REPLACES a pin of the
+# SAME kind as `host` (a name for a DNS host, an IP for a literal); a pin of the OTHER kind
+# survives and must match too. Libssl only (native has no X509_VERIFY_PARAM).
+prow() {
+    if [ "$LIBSSL" = 1 ]; then
+        for pb in pd pl; do
+            $TO "$T/$pb" libssl "$PORT" "$T/ca.crt" "$1" "$2" "$3" >/dev/null 2>&1; rc=$?
+            if _want "$4" "$rc"; then echo "  ok: [P/$pb] $5 -> $4"
+            else
+                echo "  FAIL: [P/$pb] $5 — want $4, probe exit $rc (10 accepted, 20 handshake refused, 30 alloc refused)"
+                FAILS=$((FAILS + 1))
+            fi
+            NLIB=$((NLIB + 1))
+        done
+    fi
+}
+
 CA="$T/ca.crt"
 echo "leaf DNS:localhost"
 serve dns
@@ -256,6 +304,8 @@ row @empty          peer "$CA"            R  R0 "host \"\" under SSL_VERIFY_PEER
 row @0              none "$CA"            A  A  "host 0 after the hook's tls_set_verify(h, 0, 0)"
 row 127.0.0.1       none "$CA"            A  A  "127.0.0.1 after tls_set_verify(h, 0, 0): nothing is bound"
 row localhost       peer "$T/other.crt"   R  R  "localhost, trusting only an unrelated CA (chain control)"
+prow localhost pinhost other.name A "localhost, hook pinned the NAME other.name: replaced by host"
+prow localhost pinip 10.9.9.9     RH "localhost, hook pinned the IP 10.9.9.9: kept, and the leaf has no such IP"
 stop
 echo "leaf IP:127.0.0.1"
 serve ip
@@ -263,6 +313,8 @@ row 127.0.0.1       peer "$CA"            A  A  "127.0.0.1: the iPAddress SAN"
 row localhost       peer "$CA"            R  R  "localhost: a DNS name never matches an iPAddress"
 row 127.000.0.1     peer "$CA"            R  R  "127.000.0.1: leading zeros are no literal (I7)"
 row 127.1           peer "$CA"            R  R  "127.1: a short form is no literal"
+prow 127.0.0.1 pinip 10.9.9.9     A  "127.0.0.1, hook pinned the IP 10.9.9.9: replaced by host"
+prow 127.0.0.1 pinhost other.name RH "127.0.0.1, hook pinned the NAME other.name: kept, and the leaf has no such name"
 stop
 echo "leaf DNS:*.example.com"
 serve wc
@@ -308,7 +360,16 @@ stop
 # ── X: every binder symbol is REQUIRED ──
 if [ "$LIBSSL" = 1 ]; then
     echo "required symbols (a libssl-only build against a lib/ copy with one dlsym name broken)"
-    mkdir -p "$T/mut" && cp -R "$ROOT/lib" "$T/mut/lib" || { echo "FAIL: $G: cannot copy lib/"; exit 1; }
+    # lib/ is LINKED entry by entry (8+ MB copied into a busy /tmp flaked under check.sh load);
+    # only tls.cyr is a real copy — the sed below writes it, and must never write through a link.
+    mkdir -p "$T/mut/lib" || { echo "FAIL: $G: cannot make $T/mut/lib"; exit 1; }
+    for e in "$ROOT"/lib/* "$ROOT"/lib/.[!.]*; do
+        [ -e "$e" ] || continue
+        b=${e##*/}
+        [ "$b" = tls.cyr ] && continue
+        ln -s "$e" "$T/mut/lib/$b" || { echo "FAIL: $G: cannot link lib/$b"; exit 1; }
+    done
+    cp "$ROOT/lib/tls.cyr" "$T/mut/lib/tls.cyr" || { echo "FAIL: $G: cannot copy tls.cyr into $T/mut"; exit 1; }
     serve dns
     (cd "$T/mut" && { echo '#define CYRIUS_TLS_LIBSSL'; cat "$T/probe.cyr"; } | "$CC" > "$T/px" 2>/dev/null) && chmod +x "$T/px"
     $TO "$T/px" avail; rc=$?
@@ -343,8 +404,9 @@ fi
 echo "rows: $NNAT native, $NLIB libssl"
 [ "$NNAT" -ge 24 ] || { echo "  FAIL: only $NNAT native rows ran (floor 24)"; FAILS=$((FAILS + 1)); }
 if [ "$LIBSSL" = 1 ]; then
-    # 24 rows x 2 libssl legs (B, L) + 5 SNI rows x 2 builds + 5 required-symbol legs
-    [ "$NLIB" -ge 63 ] || { echo "  FAIL: only $NLIB libssl rows ran (floor 63)"; FAILS=$((FAILS + 1)); }
+    # 24 rows x 2 libssl legs (B, L) + 5 SNI rows x 2 builds + 4 pin rows x 2 builds
+    # + 5 required-symbol legs
+    [ "$NLIB" -ge 71 ] || { echo "  FAIL: only $NLIB libssl rows ran (floor 71)"; FAILS=$((FAILS + 1)); }
 fi
 if [ "$FAILS" -ne 0 ]; then echo "FAIL: $G: $FAILS row(s)"; exit 1; fi
 if [ "$LIBSSL" != 1 ]; then echo "SKIP: $G: the libssl legs could not run ($WHY); native rows PASS"; exit 77; fi

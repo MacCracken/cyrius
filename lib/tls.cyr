@@ -792,8 +792,9 @@ fn tls_connect_alloc(sock, host, hook_fp, hook_ctx): i64 {
 
     # 6.6.13 (CVE-TBD(I1)): bind the leaf to `host` and set SNI for a DNS name.
     # Here, after the hook and SSL_new: the hook's final verify mode is on the SSL,
-    # and the binding goes on the per-SSL param (hostflags replaced; a host or IP a
-    # hook put on the SSL_CTX's param can only add a constraint).
+    # and the binding goes on the per-SSL param. `host` IS the identity: set1_host /
+    # set1_ip_asc REPLACE a name / IP of the same kind a hook pinned on the SSL_CTX's
+    # param (hostflags too); only a pin of the other kind survives and must also match.
     if (_tls_libssl_bind_host(ssl, host) != 1) {
         if (_fn_SSL_free != 0) { fncall1(_fn_SSL_free, ssl); }
         fncall1(_fn_SSL_CTX_free, ssl_ctx);

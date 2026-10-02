@@ -105,10 +105,16 @@ RFC 9525 §6.3):
   `tls_set_verify(handle, 0, 0)` no identity is checked on either backend, and
   `host == 0` connects. On libssl, a hook that keeps `SSL_VERIFY_PEER` but
   installs a verify callback that accepts errors also accepts a wrong identity
-  (OpenSSL reports the mismatch through the callback). A host, IP or hostflags
-  a hook sets on the `SSL_CTX`'s `X509_VERIFY_PARAM` (via `tls_dlsym`) can only
-  add constraints: the binding is made on the per-`SSL` param and replaces the
-  hostflags.
+  (OpenSSL reports the mismatch through the callback).
+- **`host` is the identity; a hook's pin of the same kind is replaced.** The
+  binding is made on the per-`SSL` `X509_VERIFY_PARAM`, which inherits the
+  `SSL_CTX`'s. `X509_VERIFY_PARAM_set1_host` / `set1_ip_asc` REPLACE what was
+  inherited, so a name a hook pinned on the `SSL_CTX` param (via `tls_dlsym`) is
+  dropped for a DNS-name `host`, an IP it pinned is dropped for an IP-literal
+  `host`, and the hostflags are replaced. A pin of the OTHER kind (an IP under a
+  DNS-name `host`, a name under an IP-literal `host`) is kept and must match as
+  well. To verify a different name, pass it as `host`. (Measured with OpenSSL
+  3.6.5; pinned by the gate's P rows.)
 - **SNI — libssl:** sent for a DNS-name host only; an IP-literal host sends no
   SNI (RFC 6066 §3). The native backend still sends an IP literal as SNI (a
   backlogged item), so this rule is libssl-only until that lands.
