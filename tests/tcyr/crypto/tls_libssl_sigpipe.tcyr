@@ -64,6 +64,16 @@ fn _sp_disposition(): i64 {
     return load64(&old);
 }
 
+# Put SIGPIPE at SIG_DFL for this process before anything runs. ⚠ The disposition is INHERITED:
+# GitHub's runner starts its steps with SIGPIPE ignored, so every child of a CI step begins at
+# SIG_IGN — the "still SIG_DFL" rows then read 1 and the live rows cannot show a death at all
+# (an ignore passes them vacuously). The test owns its starting state instead of assuming it.
+fn _sp_set_default(): i64 {
+    var act[32];
+    memset(&act, 0, 32);                          # sa_handler = SIG_DFL (0)
+    return syscall(13, 13, &act, 0, 8);           # rt_sigaction(SIGPIPE, act, 0, 8)
+}
+
 fn _sp_write_all(fd, buf, n): i64 {
     var off = 0;
     while (off < n) {
@@ -463,6 +473,11 @@ fn test_hold_release(): i64 {
     return 0;
 }
 
+#ifdef CYRIUS_TARGET_LINUX
+#ifdef CYRIUS_ARCH_X86
+_sp_set_default();
+#endif
+#endif
 test_hold_release();
 var _sp_ran = 0;
 #ifdef CYRIUS_TARGET_LINUX
