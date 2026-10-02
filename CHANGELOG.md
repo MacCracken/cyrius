@@ -467,13 +467,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `tls_get_backend`); the native defaults beside libssl's (verify PEER, the OS store as one shared
   root set, the in-handshake hostname binding, CVE-17 / CVE-18); `tls_connect_alloc_in`; the
   server verbs and what native client-certificate checking does (possession, not a chain — an empty
-  Certificate passes under `tls_set_verify`); `tls_ctx_*` (native REPLACES the ctx's roots where
+  Certificate passes under `tls_set_verify` — and TLS 1.3 only: the native 1.2 server never requests
+  a certificate, so a client offering only 1.2 is accepted unauthenticated unless the hook pins the
+  server to 1.3 with `tls_native_set_version_range`, which the contract now says); `tls_ctx_*` (native REPLACES the ctx's roots where
   libssl ADDS, and `tls_native_ca_skipped`); ONE table of what `tls_read` / `tls_write` return on
   both backends and what a negative result leaves behind (a failed native ctx; libssl's second read
   after an alert is 0); the ChangeCipherSpec rule; `tls_set_deadline` / `tls_native_set_deadline`
   and how each transport bounds a call; the allocator lifecycle (`tls_close`, then `reset_via(a)`,
   with the measured capacities); a corrected Failure section (native frees nothing; `tls_close`
-  never closes the socket); and that the session / 0-RTT verbs are libssl-only and do not check the
+  never closes the socket). **Contract amendment:** `tls_close` is no longer documented idempotent —
+  the v5.10.42 row said it was, which was never true: a second call on the libssl backend frees the
+  `SSL` and `SSL_CTX` again (a double free); native's second call is a no-op only until
+  `reset_via(a)`. Call it once per ctx; and that the session / 0-RTT verbs are libssl-only and do not check the
   backend. The I1 "Server identity" and I3 "Thread safety" sections are carried verbatim.
   `lib/tls_native.cyr`'s header loses its KNOWN HOLES / IN PROGRESS / NOT YET DONE block (it
   listed `tls_native_set_alpn`, `_set_version_range` and `_close` as `TLS_ERR_NOT_IMPLEMENTED`, all

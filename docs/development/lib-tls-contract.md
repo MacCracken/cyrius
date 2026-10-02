@@ -37,7 +37,8 @@ Since the v6.1.21 native-default flip there are **two** transports behind one co
 
 1. **The sovereign native cyrius TLS stack** (`lib/tls_native.cyr`) — the **default** backend.
    No libssl/OpenSSL, no `ld.so`; crypto and X.509 are in-tree (sigil), so it is the only backend
-   on agnos and bare metal. TLS 1.3 and 1.2 (AEAD suites only), client and server, ALPN, mTLS, the
+   on agnos and bare metal. TLS 1.3 and 1.2 (AEAD suites only), client and server, ALPN, client
+   certificates (TLS 1.3 only, on both sides — see "Client certificates (mTLS) on a server"), the
    OS trust store with chain building, hostname binding. A hub plus six modules
    (`tls_native_{lowlevel,keysched,ctx,hs13,hs12,conn}.cyr`) and `lib/tls_hostid.cyr`, the host
    classifier both backends share (6.6.13).
@@ -191,6 +192,14 @@ mode, 0)` and a non-zero `mode`.
   `tls_native_set_verify(handle, TLS_VERIFY_FAIL_IF_NO_PEER_CERT)` on the hook's handle refuses an
   empty one. `tls_get_peer_spki_der` reads the SERVER's leaf, so on a native server ctx it returns
   0.
+- native (TLS 1.2): **no client certificate at all.** The 1.2 server sends no CertificateRequest
+  and never reads the verify mode, and a server ctx accepts TLS 1.2 by default (range 1.2–1.3), so
+  a client that offers only TLS 1.2 completes the handshake UNAUTHENTICATED whatever the hook set.
+  A native server that requires client certificates MUST also pin itself to TLS 1.3 in the hook —
+  `if (tls_get_backend() == TLS_BACKEND_NATIVE) { tls_native_set_version_range(handle,
+  TLS_VERSION_1_3, TLS_VERSION_1_3); }` — and a 1.3-only ctx then fails a 1.2 ClientHello with
+  `TLS_ERR_PROTOCOL`. The 1.2 client side is the mirror: it does not answer a CertificateRequest,
+  so a TLS 1.2 server that asks for one fails the native handshake (`TLS_ERR_BAD_HANDSHAKE`).
 
 ### I/O
 
@@ -227,9 +236,12 @@ above `_tn_read_fail` in `lib/tls_native_conn.cyr` (native) and `_tls_ssl_io_ret
 | `TLS_ERR_RECORD_OVERFLOW` | -22 | An authenticated record whose plaintext exceeds 2^14 bytes (RFC 8446 §5.4; `lib/tls_native_lowlevel.cyr`). Was -20 until 6.6.13, the value `TLS_ERR_TIMEOUT` now holds. | native |
 | other `TLS_ERR_*` | | Passed through from the record layer. Every `TLS_ERR_*` value is distinct (pinned by `tests/tcyr/crypto/tls_native_scaffold.tcyr`). | native |
 
-**After a negative result the connection is over.** Native: the ctx is FAILED (every code above
-except `TLS_ERR_INVALID_PARAM`) — every later `tls_read` returns the same code (a fatal alert stays
-`TLS_ERR_ALERT`), and `tls_write` returns `TLS_ERR_PROTOCOL`. libssl: OpenSSL may answer a SECOND
+**After a negative result the connection is over.** Native: a failed read, and a write whose
+socket I/O failed, leave the ctx FAILED — every later `tls_read` returns the same code (a fatal
+alert stays `TLS_ERR_ALERT`), and `tls_write` returns `TLS_ERR_PROTOCOL`. Three negatives leave the
+ctx's state as it was: `TLS_ERR_INVALID_PARAM`; the `TLS_ERR_PROTOCOL` a ctx that is not connected
+(never connected, closed, or already failed) answers with; and a write whose record could not be
+sealed, which returns the sealer's code. None of them makes the connection usable again. libssl: OpenSSL may answer a SECOND
 read after a fatal alert with 0 (it reports `SSL_ERROR_ZERO_RETURN` once it has seen the peer's
 shutdown) — stop at the first negative. Either way: `tls_close`. A libssl-only build
 (`-D CYRIUS_TLS_LIBSSL`) defines only the codes its backend returns — `TLS_ERR_NOT_IMPLEMENTED`,
