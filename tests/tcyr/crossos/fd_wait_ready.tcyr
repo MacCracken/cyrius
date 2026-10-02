@@ -1,0 +1,175 @@
+# fd_wait_ready.tcyr — 6.6.13: fd_wait_ready(fd, want_write, timeout_ms) answers 1 (ready —
+# including a hung-up peer), 0 (the timeout passed first) or -errno, on every host target,
+# against a loopback socket pair this file owns.
+#
+# ⛔ WHY. Native TLS reads and writes had no deadline (the 2026-10-01 tls-native-no-deadline
+# filing): a peer could pin a client thread for ever. Bounding them needs one wait on a
+# caller-owned fd that works on every target, and the stdlib had none — process.cyr's
+# _proc_poll_in is read-only and private, net.cyr's WSAPoll is the Windows connect wait, and
+# async_await_readable_ms needs a coroutine. Each peer's wrapper is a different mechanism:
+#   * Linux x86_64 — poll(7) itself;
+#   * aarch64-Linux — ESYSXLAT turns 7 into ppoll(73) and the int ms into a timespec;
+#   * macOS (arm64 and Intel) — 7 becomes BSD poll(230);
+#   * Windows — ws2_32!WSAPoll (0xF04A) over a WSAPOLLFD with POLLRDNORM / POLLWRNORM;
+#   * agnos — declines with -38 (its socket waits live inside the peer).
+# So only running it on each host proves it: a compile on five targets is not a wrapper that RUNS.
+#
+# ROWS: an empty socket times out (0, after about the timeout, not at once and not for ever);
+# a connected socket is writable (1); data makes it readable (1); a negative timeout with data
+# ready returns at once; a peer that closed reads as ready (1) and the read then returns EOF;
+# a closed socket is an error (< 0), never "ready" or a hang; so is a negative fd (a failed
+# socket()/accept() result), which poll(2) and WSAPoll would otherwise skip and report as a timeout.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/tagged.cyr"
+include "lib/io.cyr"
+include "lib/net.cyr"
+include "lib/chrono.cyr"
+include "lib/assert.cyr"
+
+#ifndef CYRIUS_TARGET_AGNOS
+# The port (host order) socket `fd` is bound to, or -1.
+fn _fw_port(fd): i64 {
+    var sa[16];
+    var sl[8];
+    store64(&sl, 16);
+    if (sys_getsockname(fd, &sa, &sl) != 0) { return 0 - 1; }
+    return ((load8(&sa + 2) & 0xFF) << 8) | (load8(&sa + 3) & 0xFF);
+}
+
+# A connected loopback TCP pair. Stores the client fd at out[0], the accepted fd at out[8];
+# returns 0, or -1 (and asserts what failed).
+fn _fw_pair(out): i64 {
+    var lt, lfd = tcp_socket();
+    assert_eq(is_err_result(lt), 0, "listener tcp_socket");
+    if (is_err_result(lt) == 1) { return 0 - 1; }
+    var bt, bv = sock_bind(lfd, INADDR_LOOPBACK(), 0);
+    assert_eq(is_err_result(bt), 0, "bind 127.0.0.1:0");
+    var st, sv = sock_listen(lfd, 4);
+    assert_eq(is_err_result(st), 0, "listen");
+    var port = _fw_port(lfd);
+    var ct, cfd = tcp_socket();
+    assert_eq(is_err_result(ct), 0, "client tcp_socket");
+    var kt, kv = sock_connect(cfd, INADDR_LOOPBACK(), port);
+    assert_eq(is_err_result(kt), 0, "connect to the listener");
+    if (is_err_result(kt) == 1) { sock_close(cfd); sock_close(lfd); return 0 - 1; }
+    var at, afd = sock_accept(lfd);
+    assert_eq(is_err_result(at), 0, "accept");
+    sock_close(lfd);
+    if (is_err_result(at) == 1) { sock_close(cfd); return 0 - 1; }
+    # A safety net: a broken wait must fail the test, not hang the read after it.
+    sock_set_recv_timeout(cfd, 5, 0);
+    sock_set_recv_timeout(afd, 5, 0);
+    store64(out, cfd);
+    store64(out + 8, afd);
+    return 0;
+}
+
+fn _fw_ms_since(t0): i64 { return (clock_now_ns() - t0) / 1000000; }
+
+fn _fw_socket_rows(): i64 {
+    var p = alloc(16);
+    if (_fw_pair(p) != 0) { return 0; }
+    var cfd = load64(p);
+    var afd = load64(p + 8);
+
+    test_group("6.6.13 — fd_wait_ready: a socket with nothing to read times out, then reads ready");
+    var t0 = clock_now_ns();
+    var r = fd_wait_ready(cfd, 0, 300);
+    var el = _fw_ms_since(t0);
+    assert_eq(r, 0, "an empty socket: 0 (timed out)");
+    # Windows' timer granularity is ~15.6 ms; a 300 ms wait may end a tick early.
+    assert(el >= 250, "…after about the timeout (>= 250 ms), not at once");
+    assert(el < 3000, "…and not much later (< 3 s)");
+    assert_eq(fd_wait_ready(cfd, 0, 0), 0, "timeout 0 polls: still 0, at once");
+
+    test_group("6.6.13 — fd_wait_ready: a connected socket is writable");
+    t0 = clock_now_ns();
+    assert_eq(fd_wait_ready(cfd, 1, 2000), 1, "want_write on a fresh connected socket: 1");
+    assert(_fw_ms_since(t0) < 1000, "…at once (< 1 s), not after the timeout");
+
+    test_group("6.6.13 — fd_wait_ready: data makes the peer readable");
+    assert_eq(sock_send_all(afd, "ready", 5), 5, "the server sends 5 bytes");
+    t0 = clock_now_ns();
+    assert_eq(fd_wait_ready(cfd, 0, 2000), 1, "the client is readable: 1");
+    assert(_fw_ms_since(t0) < 1000, "…at once (< 1 s)");
+    assert_eq(fd_wait_ready(cfd, 0, 0 - 1), 1, "a negative timeout (indefinite) with data ready: 1 at once");
+    var buf = alloc(16);
+    var rt, rv = sock_recv(cfd, buf, 16);
+    assert_eq(rv, 5, "the read after the wait returns the 5 bytes");
+    assert_eq(memeq(buf, "ready", 5), 1, "…unchanged");
+    assert_eq(fd_wait_ready(cfd, 0, 50), 0, "drained: 0 again");
+
+    test_group("6.6.13 — fd_wait_ready: a peer that closed reads as ready, and the read is EOF");
+    sock_close(afd);
+    t0 = clock_now_ns();
+    assert_eq(fd_wait_ready(cfd, 0, 2000), 1, "the peer closed: 1 (hang-up is ready)");
+    assert(_fw_ms_since(t0) < 1000, "…at once (< 1 s), not after the timeout");
+    var et, ev = sock_recv(cfd, buf, 16);
+    assert_eq(is_err_result(et), 0, "the read after it does not fail");
+    assert_eq(ev, 0, "…it returns 0: EOF");
+
+    test_group("6.6.13 — fd_wait_ready: a closed socket is an error, never ready");
+    sock_close(cfd);
+    t0 = clock_now_ns();
+    var cr = fd_wait_ready(cfd, 0, 2000);
+    assert(cr < 0, "a closed fd: negative (EBADF / WSAENOTSOCK)");
+    assert(_fw_ms_since(t0) < 1000, "…at once (< 1 s), not after the timeout");
+    return 0;
+}
+
+# A negative fd — what a failed socket()/accept() hands back — is an error at once. poll(2) and
+# WSAPoll both IGNORE an entry with fd < 0, so without the guard this row timed out after 2 s
+# (and an indefinite wait never returned).
+fn _fw_negative_fd_rows(): i64 {
+    test_group("6.6.13 — fd_wait_ready: a negative fd is an error, never a timeout");
+    var t0 = clock_now_ns();
+    var nr = fd_wait_ready(0 - 1, 0, 2000);
+    assert(nr < 0, "fd -1, read: negative (EBADF / WSAENOTSOCK)");
+    assert(_fw_ms_since(t0) < 1000, "…at once (< 1 s), not after the timeout");
+    t0 = clock_now_ns();
+    nr = fd_wait_ready(0 - 1, 1, 0 - 1);
+    assert(nr < 0, "fd -1, write, indefinite timeout: negative, and it returns");
+    assert(_fw_ms_since(t0) < 1000, "…at once (< 1 s)");
+    return 0;
+}
+
+#ifndef CYRIUS_TARGET_WIN
+# POSIX: the wait is not socket-only — a pipe works the same way.
+fn _fw_pipe_rows(): i64 {
+    test_group("6.6.13 — fd_wait_ready on a pipe (POSIX: any fd poll(2) accepts)");
+    var fds[8];
+    assert_eq(sys_pipe(&fds), 0, "pipe created");
+    var rfd = load32(&fds);
+    var wfd = load32(&fds + 4);
+    assert_eq(fd_wait_ready(rfd, 0, 50), 0, "an empty pipe: 0");
+    assert_eq(fd_wait_ready(wfd, 1, 50), 1, "the write end is writable: 1");
+    assert_eq(sys_write(wfd, "x", 1), 1, "one byte written");
+    assert_eq(fd_wait_ready(rfd, 0, 50), 1, "the read end is readable: 1");
+    sys_close(wfd);
+    sys_close(rfd);
+    return 0;
+}
+#endif
+#endif
+
+fn main(): i64 {
+    alloc_init();
+    #ifdef CYRIUS_TARGET_AGNOS
+    test_group("6.6.13 — agnos declines fd_wait_ready with -38 (no poll; socket waits live in the peer)");
+    assert_eq(fd_wait_ready(0, 0, 0), 0 - 38, "fd_wait_ready declines on agnos");
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    _fw_socket_rows();
+    _fw_negative_fd_rows();
+    #ifndef CYRIUS_TARGET_WIN
+    _fw_pipe_rows();
+    #endif
+    #endif
+    return assert_summary();
+}
+var r = main();
+syscall(60, r);

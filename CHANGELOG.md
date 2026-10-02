@@ -327,6 +327,31 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `tls_close`'s comment now says what it does on native (frees nothing; `reset_via` does).
   `docs/stdlib-reference.md` rows; api-surface snapshot `+tls::tls_connect_alloc_in/5`,
   `+tls_native_ctx::tls_native_new_client_in/3`.
+### Added
+
+- **`fd_wait_ready(fd, want_write, timeout_ms)` — one bounded readiness wait on a caller-owned fd,
+  on every target (I8, the wait primitive).** Returns 1 when the fd is readable (`want_write` == 0)
+  or writable (non-zero) — an error or hang-up counts as ready, so the next read or write reports
+  it — 0 when `timeout_ms` passed first, or -errno (-4 EINTR; -9 EBADF / -10038 WSAENOTSOCK for an
+  fd that is not open — or negative: poll(2) and WSAPoll silently skip an fd < 0, so a failed
+  socket()/accept() result would otherwise read as a timeout, or hang under an indefinite wait). `timeout_ms` < 0 waits indefinitely; above INT_MAX it is clamped. Linux and
+  both macOS peers issue one raw poll(7) from `lib/syscalls_linux_common.cyr` (ppoll with a timespec
+  on aarch64-Linux, BSD poll 230 on both Mach-O backends); Windows is ws2_32!WSAPoll (0xF04A,
+  POLLRDNORM / POLLWRNORM; sockets only); agnos declines with -38. Native TLS needs it to bound
+  reads and writes by a deadline (the 2026-10-01 tls-native-no-deadline filing), and none of the
+  existing waits fit a caller-owned fd: `lib/process.cyr`'s `_proc_poll_in` is read-only and
+  private to the subprocess drain, `lib/net.cyr`'s WSAPoll is the Windows-only connect wait, and
+  `async_await_readable_ms` needs a coroutine. Companion: `tests/tcyr/crossos/fd_wait_ready.tcyr`
+  (timeout, writable, readable, a closed peer reads ready then EOF, a closed fd and a negative fd
+  are errors returned at once; a pipe on POSIX), run on ecb, ach, cass and pi.
+- **agnos: `_agnos_sock_send_dl(conn, buf, n, tmo_us, rearm)` — a socket send bounded by the
+  caller's deadline.** agnos has no poll, so a deadline-bounded write has to live inside the peer's
+  send loop. `rearm` = 0 makes `tmo_us` a bound on the WHOLE transfer (never re-armed, the clock
+  read after each call that moved bytes too), so a peer ACKing a trickle cannot stretch it;
+  `rearm` = 1 is the 6.6.7 stall bound, and `_agnos_sock_send_all` — sys_write's socket route — is
+  now that form, unchanged. One sock_send#48 call can itself block ~8 s, so a rearm=0 deadline can
+  overshoot by that much. Pinned by `tests/gates/platform/agnos_sock_send_deadline.sh` against the
+  fake kernel (four mutations, each RED).
 
 ### Downstream
 

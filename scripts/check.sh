@@ -1479,6 +1479,11 @@ _chk_gate "$ROOT/tests/gates/platform/agnos_peer_fake_kernel.sh"
 # is -11, not EOF; a stalled send is retried. Fake-kernel tiers + a live mirshi TCP exchange.
 _chk_gate "$ROOT/tests/gates/platform/agnos_sock_recv_bound.sh"
 
+# 6.6.13 (I8-prim) — _agnos_sock_send_dl(rearm=0) bounds an agnos socket send by the CALLER's
+# deadline (the whole transfer, progress or not); rearm=1 — sys_write's route — keeps the 6.6.7
+# stall bound. agnos has no poll, so this is native TLS's write deadline there. Fake kernel.
+_chk_gate "$ROOT/tests/gates/platform/agnos_sock_send_deadline.sh"
+
 # 6.6.7 — a REFUSED MAPPING is 0 from fl_alloc (never a store through -ENOMEM), and PE
 # alloc_init aborts loudly on a refused VirtualAlloc like its Linux/macOS peers. Axis 2 is the
 # arena refill under `ulimit -v`, which the crossos .tcyr cannot reach portably.
