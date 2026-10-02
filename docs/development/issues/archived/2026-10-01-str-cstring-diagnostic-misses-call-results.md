@@ -1,9 +1,6 @@
 # The Str → `: cstring` diagnostic types only a named local, and its `str_data` hint is wrong
 
-**Status:** 🟡 **OPEN** — filed from bayan 1.5.10. Measured 2026-10-01 against the cyrius
-**6.6.12 release** toolchain, x86_64 and `--aarch64` (run under qemu-aarch64), with
-`repros/2026-10-01-str-cstring-diagnostic-misses-call-results.cyr`: warnings and run output
-byte-identical on both targets.
+**Status:** ✅ **RESOLVED v6.6.13** (bite I11) — one helper types call results, globals, fields, tail and method calls, `x.data` and `str_data(x)`; hints never suggest `str_data`. The *Related* `#deprecated` gaps are in roadmap.md's backlog. See CHANGELOG [6.6.13].
 **Placement:** **6.6.13**, bite I11 (2026-10-01, with the other open issues; this filing had put it in the
 backlog) — see `roadmap.md` § 6.6.13. The *Related* `#deprecated` gaps are a separate defect, recorded in
 roadmap.md's Potential backlog.

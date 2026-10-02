@@ -1,6 +1,6 @@
 # Native TLS: first use from two threads poisons the process; first use on a worker then on main SIGSEGVs
 
-**Status:** 🟡 **OPEN** — found by an abaco 2.4.9 TLS study; not repaired.
+**Status:** ✅ **RESOLVED v6.6.13** (bite I3) — sigil 3.13.6's atomic lazy inits (folded), the CA cache's 0 → 1 → 2 guard, `tls_init_main()`, and the contract's thread-safety section. See CHANGELOG [6.6.13].
 **Placement:** **6.6.13**, bite I3 (memory fixes + reported-issue repair, set by the user 2026-10-01) —
 see `roadmap.md` § 6.6.13. The lazy inits and the main-thread TLS block are **sigil source**: they are
 fixed in a sigil release and refolded (CLAUDE.md: fix the source repo, not the fold). The `lib/tls*.cyr`

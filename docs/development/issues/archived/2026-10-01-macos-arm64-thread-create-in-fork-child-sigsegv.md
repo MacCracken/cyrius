@@ -1,6 +1,6 @@
 # arm64 macOS: a thread created in a `fork()` child kills the child (SIGSEGV inside `thread_create`)
 
-**Status:** 🟡 **OPEN** — found while preparing sigil 3.13.6; not repaired.
+**Status:** ✅ **RESOLVED v6.6.13** (bite I6) — `sys_fork` on arm64 macOS calls libSystem's `fork()` through `__got`; `tests/tcyr/crossos/fork_then_thread.tcyr` runs on ecb. See CHANGELOG [6.6.13].
 **Placement:** **6.6.13** — the open-issue repairs (user, 2026-10-01; see `roadmap.md` § 6.6.13).
 **Discovered:** 2026-10-01, running sigil 3.13.6's new first-use threading tests on ecb. They fork a fresh
 process per trial and create threads in it; on ecb every trial died of SIGSEGV. A probe with no sigil code in

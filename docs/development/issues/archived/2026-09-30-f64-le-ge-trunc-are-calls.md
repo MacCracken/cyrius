@@ -1,6 +1,6 @@
 # `f64_le`, `f64_ge` and `f64_trunc` are function calls, 2–3× the cost of the builtins they wrap
 
-**Status:** 🟡 **OPEN** — found by abaco 2.4.9 benchmarking; not repaired.
+**Status:** ✅ **RESOLVED v6.6.13** (bite I5) — `f64_le`, `f64_ge` and `f64_trunc` are compiler builtins (x86 `roundsd $3`, aarch64 `frintz`, cx opcode 0x6E); the `lib/math.cyr` wrappers are retired and the three names are reserved. See CHANGELOG [6.6.13].
 **Placement:** **6.6.13**, bite I5 (memory fixes + reported-issue repair, set by the user 2026-10-01) —
 see `roadmap.md` § 6.6.13. Builtins, after an ecosystem survey for local definitions of the three names.
 **Discovered:** 2026-09-30, abaco 2.4.9 (its `f64_round_half_away` doubled in cost, 8 → 15 ns,

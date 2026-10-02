@@ -1,6 +1,6 @@
 # `lib/tls.cyr` libssl backend never verifies the server hostname: any chain-valid cert for any name is accepted
 
-**Status:** 🔴 **OPEN** — found by an abaco 2.4.9 TLS study; not repaired.
+**Status:** ✅ **RESOLVED v6.6.13** (bite I1, CVE-59) — the libssl backend binds the leaf to the host (`SSL_set1_host` / `X509_VERIFY_PARAM_set1_ip_asc` required, host 0 refused, no SNI for an IP literal). See CHANGELOG [6.6.13].
 **Placement:** **6.6.13**, bite I1 — the next 6.6.x patch, as the filing asked (set by the user
 2026-10-01; see `roadmap.md` § 6.6.13). CVE-class: it takes the next CVE id, spent in the commit that
 records it.

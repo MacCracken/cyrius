@@ -1158,7 +1158,7 @@ host) and under qemu-aarch64 and wine.
 
 ## CVE-59 — the libssl TLS backend never bound the server's certificate to the host: any chain-valid certificate verified any host
 
-*Appended 2026-10-01 (cyrius 6.6.13, bite I1). Found by: abaco 2.4.9 TLS study (2026-09-30); issue `docs/development/issues/2026-09-30-tls-libssl-backend-no-hostname-verification.md`. The CN-only / partial-wildcard / IP / NULL-host widening was found by the 6.6.13 I1 premise check. Not part of the 2026-09-03 sweep: recorded here because this is the live ledger. 6.6.13 spends CVE-59 … CVE-63.*
+*Appended 2026-10-01 (cyrius 6.6.13, bite I1). Found by: abaco 2.4.9 TLS study (2026-09-30); issue `docs/development/issues/archived/2026-09-30-tls-libssl-backend-no-hostname-verification.md`. The CN-only / partial-wildcard / IP / NULL-host widening was found by the 6.6.13 I1 premise check. Not part of the 2026-09-03 sweep: recorded here because this is the live ledger. 6.6.13 spends CVE-59 … CVE-63.*
 
 | | |
 |---|---|
@@ -1250,7 +1250,7 @@ host) and under qemu-aarch64 and wine.
 
 ## CVE-63 — the native TLS client verified an IP-literal host against dNSName SAN entries, wildcards included
 
-*Appended 2026-10-01 (cyrius 6.6.13, bite I7). Found by: abaco 2.4.12 HTTPS review (2026-10-01); issue `docs/development/issues/2026-10-01-tls-ip-literal-dnsname.md`. The IPv6 parser defects were found by the 6.6.13 I7 premise check. Not part of the 2026-09-03 sweep: recorded here because this is the live ledger. 6.6.13 spends CVE-59 … CVE-63.*
+*Appended 2026-10-01 (cyrius 6.6.13, bite I7). Found by: abaco 2.4.12 HTTPS review (2026-10-01); issue `docs/development/issues/archived/2026-10-01-tls-ip-literal-dnsname.md`. The IPv6 parser defects were found by the 6.6.13 I7 premise check. Not part of the 2026-09-03 sweep: recorded here because this is the live ledger. 6.6.13 spends CVE-59 … CVE-63.*
 
 | | |
 |---|---|

@@ -9,7 +9,7 @@
 # (Cortex-A72) and on Apple Silicon alike. sankoch's three `u8` arrays (630 B) misaligned
 # 1,101 of agnostic's 1,962 globals, sigil's atomic init flags among them, so anything that
 # hashed died at startup on the Pi.
-# Filed: docs/development/issues/2026-10-01-typed-array-globals-not-padded-aarch64-atomics-sigbus.md
+# Filed: docs/development/issues/archived/2026-10-01-typed-array-globals-not-padded-aarch64-atomics-sigbus.md
 #
 # What each group pins:
 #   * an i64 after every odd shape is 8-aligned, and the atomics (the SIGBUS path) work on it;

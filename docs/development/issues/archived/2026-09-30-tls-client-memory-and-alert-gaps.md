@@ -1,6 +1,6 @@
 # Native TLS client: 1 MiB retained per custom-CA load, no allocator-aware connect, alerts read as EOF, stale contract
 
-**Status:** 🟡 **OPEN** — found by an abaco 2.4.9 TLS study; not repaired.
+**Status:** ✅ **RESOLVED v6.6.13** (bite I2 (a)–(e), CVE-60) — the CA-file load retains nothing per call, `tls_connect_alloc_in` / `tls_native_new_client_in` and a shared system root set, one error table (a fatal alert is `TLS_ERR_ALERT`), the contract re-pinned, and `tls_native_ca_skipped`; the libssl `tls_read` / `tls_write` sign defect found here is CVE-60. See CHANGELOG [6.6.13].
 **Placement:** **6.6.13**, bite I2 (memory fixes + reported-issue repair, set by the user 2026-10-01) —
 see `roadmap.md` § 6.6.13. (e)'s parser half is sigil's: fixed in a sigil release, then refolded.
 **Discovered:** 2026-09-30, abaco 2.4.9 TLS study (a long-lived process doing periodic HTTPS

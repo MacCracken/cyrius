@@ -9,7 +9,7 @@
 # creates the child behind libSystem's back: no atfork handlers, no libpthread child
 # re-initialisation. thread_create on arm64 macOS IS libSystem pthread_create (__got[5]), and
 # in such a child it ran on libpthread state that still described the parent and died of
-# SIGSEGV (docs/development/issues/2026-10-01-macos-arm64-thread-create-in-fork-child-sigsegv.md).
+# SIGSEGV (docs/development/issues/archived/2026-10-01-macos-arm64-thread-create-in-fork-child-sigsegv.md).
 # The behaviour is held on real hardware by tests/tcyr/crossos/fork_then_thread.tcyr on the
 # release gate's ecb leg; this gate holds the couplings that leg cannot name:
 #

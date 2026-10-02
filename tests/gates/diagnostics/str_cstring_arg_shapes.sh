@@ -2,7 +2,7 @@
 # 6.6.13 (I11) — the Str -> `: cstring` warning reaches every shape that hands a Str to a
 # `: cstring` param, says what is wrong, and never hints `str_data`.
 #
-# Filed by bayan 1.5.10 (docs/development/issues/2026-10-01-str-cstring-diagnostic-misses-call-results.md).
+# Filed by bayan 1.5.10 (docs/development/issues/archived/2026-10-01-str-cstring-diagnostic-misses-call-results.md).
 # The check typed only an argument whose FIRST token was a `Str` local, on PARSE_FNCALL's path
 # alone. Silent: a call result `f(t, str_from("k"))` (W2) or `f(t, mk())` (W3), a global
 # declared `: Str` (W4 — compared against the LOCAL encoding `0 - sid`), an inferred global

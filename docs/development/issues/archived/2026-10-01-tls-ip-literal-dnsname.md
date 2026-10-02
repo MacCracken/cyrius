@@ -1,6 +1,6 @@
 # Native TLS client: an IP-literal host matches dNSName SAN entries, wildcards included
 
-**Status:** 🟡 **OPEN** — found by the abaco 2.4.12 HTTPS review; not repaired.
+**Status:** ✅ **RESOLVED v6.6.13** (bite I7, CVE-63) — an IP-literal host is compared with iPAddress SANs only, and `_tn_parse_ipv4` refuses leading zeros. See CHANGELOG [6.6.13].
 **Placement:** **6.6.13**, bite I7 (placed by the user 2026-10-01) — see `roadmap.md` § 6.6.13.
 **Discovered:** 2026-10-01, abaco 2.4.12 review (a certificate whose only SAN was
 `DNS:127.0.0.1`, or `DNS:*.0.0.1`, was accepted for `https://127.0.0.1`).

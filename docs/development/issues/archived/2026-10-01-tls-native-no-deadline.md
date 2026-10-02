@@ -1,6 +1,6 @@
 # Native TLS client: no deadline, and plaintext ChangeCipherSpec skipped without limit (handshake and after)
 
-**Status:** 🟡 **OPEN** — found by the abaco 2.4.12 HTTPS review; not repaired.
+**Status:** ✅ **RESOLVED v6.6.13** (bite I8, CVE-61) — at most one CCS, only before the peer's Finished; `tls_native_set_deadline` / `tls_set_deadline` and `TLS_ERR_TIMEOUT` (-22); record-read errors pass through. See CHANGELOG [6.6.13].
 **Placement:** **6.6.13**, bite I8 (placed by the user 2026-10-01) — see `roadmap.md` § 6.6.13. It shares
 `tls_native_read` with I2 (c), the alerts read as EOF: take the two in sequence in the TLS lane, with one
 error-mapping table.

@@ -1,7 +1,6 @@
 # A typed-array global leaves every later global misaligned — atomics on them SIGBUS on aarch64 — 🔴 OPEN
 
-**Status:** 🔴 **OPEN** — found by agnostic 0.1.7 on real hardware; not repaired. No consumer-side
-work-around is sane (see the end).
+**Status:** ✅ **RESOLVED v6.6.13** (bite I9) — every global starts at its natural alignment (8 for anything not 1, 2 or 4 bytes); verified natively on pi and ecb. See CHANGELOG [6.6.13].
 **Placement:** **6.6.13**, bite I9 (2026-10-01, with the other open issues) — see `roadmap.md` § 6.6.13. A
 global-layout fix: it rides in the `src` lane with M1–M3.
 **Discovered:** 2026-10-01, agnostic 0.1.7 — its aarch64 release binary dies with SIGBUS at startup on

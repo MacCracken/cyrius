@@ -83,168 +83,25 @@ The language list that was Phase 3 moved to **v6.7.x**, which RISC-V vacates for
 
 ---
 
-## 6.6.13 — memory fixes + reported-issue repair (planned 2026-10-01, OPEN)
+## 6.6.13 — memory fixes + reported-issue repair (CLOSING 2026-10-01: merged, gate pending)
 
-**Set by the user 2026-10-01**: the three silent memory-corruption finds that led the backlog, and every
-open issue in [`issues/`](issues/). ⛔ **No `src/` or `lib/` work starts until ganita and bayan have
-released**: this release folds their repaired stdlibs.
+All fourteen items landed over six lanes and are merged on `main`. **Detail is in CHANGELOG [6.6.13]; the
+eleven issue files are archived.**
+- Memory: M1 narrow-global init width, M2 arrays sized by element, M3 closure-captured struct copies, I9
+  natural global alignment.
+- Issues: I1 (CVE-59), I2 (with CVE-60), I3, I4, I5, I6, I7 (CVE-63), I8 (CVE-61), I10 (with CVE-62),
+  I11.
+- Folds: sigil 3.13.6, ganita 1.2.11, bayan 1.5.10, and **bayan 1.5.11** (cut for this release; tagged
+  first).
 
-**Before it opens: three sibling releases.** Each repo fixes its own source, and cyrius refolds
-byte-identical from the tag (CLAUDE.md: fix the SOURCE repo, not the fold).
+Defaults taken without asking (each recorded in the CHANGELOG):
+- two `src` lanes, only one committing `build/cycc`;
+- I9 aligns every global naturally, rather than padding only after typed arrays;
+- I3 dropped the libssl off-main guard (backlog (i));
+- I8 makes no Windows transport switch (backlog (j));
+- `TLS_ERR_TIMEOUT` is -22, so the released `TLS_ERR_RECORD_OVERFLOW` keeps -20.
 
-| Sibling | Folded in cyrius now | Open in that repo at planning time |
-|---|---|---|
-| **ganita** | 1.2.9 (1.2.10 is tagged) | six issues filed 2026-09-30 / 10-01: `f64_tan` missing; `atan2` with infinite arguments; `atan2` signed zero and NaN; the hyperbolic + `asin` cancellation band; the `sinh` / `cosh` overflow band; `binomial` refusing representable values |
-| **bayan** | 1.5.9 | `json_parse_flat` mis-associates values; u64 `mulmod` always takes the wide path on aarch64; the agnosai `json_obj_get` cstring / `Str` key mismatch; and the open sibling follow-up below (`_toml_unescape_span_a`) |
-| **sigil** ⚠ *found while planning; the 2026-10-01 instruction named only ganita and bayan* | 3.13.5 | I3's lazy initialisers and main-thread TLS block, and I2 (e)'s rejected roots, are **sigil source** (`lib/sigil.cyr` is its fold) — see I2 and I3 |
-
-**Bites.** Premise-checked 2026-10-01 against the 6.6.12 tree; re-run at the open rather than trust this.
-
-*Memory corruption (compiler; the `src` lane):*
-
-- **M1 — a zero-initialised narrow global clobbers the next one.** `var a: u8 = 0; var b: u8 = 7;
-  syscall(60, b);` exits **0** (want 7). The 6.6.12 lanes saw it on x86, aarch64 and PE. Site: the
-  narrow-global INIT path in `parse_decl.cyr` (6.6.12 B01 fixed only the `for`-step and compound paths).
-  Acceptance: a `crossos/` test over every narrow width, zero and non-zero initialisers, adjacent pairs
-  in both orders.
-- **M2 — arrays of a float or struct element are under-sized.** Measured: inside a fn, `var a: f64[4]`
-  and `var a: Pt[2]` reserve **8 bytes** (`&x - &a` = 8, where `var a: i64[4]` gets 32). PARSE_VAR passes
-  `scalar_type = 0` for those elements, so PARSE_ARRAY sizes them like a bare `var a[N]`. At top level
-  `f64[4]` is right (32), but **`Pt[2]` gets 16** (N × 8, not N × sizeof). Size by element everywhere.
-  ⚠ The first probe missed it: the neighbouring local was held in a register (regalloc), so the
-  acceptance test must check through an address-taken neighbour.
-- **M3 — a captured struct copied into a field inside a closure stores its address.**
-  `var g = || { var b: Box; b.v = p; return b.v.x * 10 + b.v.y; };` with a captured `Pt p` = (3, 4)
-  returns **80** (want 34). Cause: `_fsc_name_src` does not resolve captures (since 6.6.10's field-store
-  copy).
-
-*The open issues (I1–I5 at planning; I6–I11 added 2026-10-01):*
-
-- **I1 — 🔴 the libssl backend never verifies the server hostname**
-  ([issue](issues/2026-09-30-tls-libssl-backend-no-hostname-verification.md)). A man-in-the-middle: any
-  chain-valid certificate for any name is accepted, on every `-D CYRIUS_TLS_LIBSSL` build and after
-  `tls_set_backend(TLS_BACKEND_LIBSSL)`. Fix as the issue proposes:
-  - resolve `SSL_set1_host` / `X509_VERIFY_PARAM_set1_ip_asc` as REQUIRED (if missing, `tls_available()` is 0 and connects fail closed);
-  - refuse `host == 0`;
-  - put the repro in the TLS suite under both backends;
-  - state the hostname binding in the contract.
-
-  CVE-class, as CVE-18 was for the native backend: it takes the next id (59 at planning time), spent in
-  the commit that records it.
-- **I2 — the native client's memory and alert gaps**
-  ([issue](issues/2026-09-30-tls-client-memory-and-alert-gaps.md)), all five parts:
-  - (a) `tls_ctx_load_verify_locations` retains 1 MiB per call.
-  - (b) There is no allocator-aware client connect. Add `tls_connect_alloc_in` / `tls_native_new_client_in`, and parse the system store once into a shared, immutable root set.
-  - (c) Every alert reads as EOF; a fatal alert must return `TLS_ERR_ALERT`.
-  - (d) Re-pin `lib-tls-contract.md`, and drop `tls_native.cyr`'s stale KNOWN-HOLES block.
-  - (e) **Diagnosed while planning**: the 8 roots skipped out of `/etc/ssl/cert.pem`'s 121 are:
-    - three self-signed with sha1WithRSA;
-    - four self-signed with sha512WithRSA — Certum ×2 and **D-TRUST BR / EV Root CA 2 2023**, current roots;
-    - one ECDSA P-521 (Microsec).
-
-    sigil's `x509_parse` refuses each on the root's OWN signature algorithm or curve. A trust anchor's self-signature is never verified (RFC 5280 §6.1), so the seven RSA roots should install. The parser fix is sigil's; cyrius exposes the skipped count (`tls_native_ca_skipped(ctx)`). P-521 stays counted and skipped until sigil has the curve — adding a curve is a feature for sigil's roadmap, not this repair.
-- **I3 — first TLS use from two threads poisons the process; worker-then-main SIGSEGVs**
-  ([issue](issues/2026-09-30-tls-first-use-thread-race.md)). Split by owner:
-  - **sigil**: convert every check-then-set lazy init to the 0 → 1 → 2 atomic publish its AES / SHA-512 / Ed25519 inits already use; stop `crypto_tls_main_init` giving bank 0 to whichever thread arrives first.
-  - **cyrius**: publish `tls_native_set_ca_system`'s bundle cache the same way; add the idempotent `tls_init_main()` warm verb to `lib/tls.cyr`; write the thread-safety contract.
-
-  The repro's A / B / C checks can pass only once the sigil fold is in.
-- **I4 — `f64_parse` is not correctly rounded**
-  ([issue](issues/2026-09-30-f64-parse-not-correctly-rounded.md)). Default: port **bayan 1.5.7's parser**
-  into `lib/math.cyr`, rather than the issue's Clinger + double-double sketch (99.74 %). bayan's parser
-  is `bayan_f64_parse` in `bayan/src/dtoa.cyr`: a Clinger fast path, cached 64-bit powers of ten and an
-  exact tier for near-halfway inputs — correctly rounded for EVERY input. That leaves one correctly-rounded
-  algorithm in the ecosystem; bayan delegating to the stdlib afterwards is a bayan follow-up.
-  `f64_parse_ok` shares the parser. Acceptance: the repro exits 0, and bayan's parse corpus is bit-exact.
-- **I5 — `f64_le`, `f64_ge` and `f64_trunc` are calls**
-  ([issue](issues/2026-09-30-f64-le-ge-trunc-are-calls.md)). Make them builtins like `f64_lt` /
-  `f64_floor`, with NaN semantics unchanged (`f64_le` is false when either side is NaN). `f64_trunc`
-  lowers to `roundsd $3` on x86 — `f64_floor` already uses `roundsd`, so SSE4.1 is not a new baseline —
-  `frintz` on aarch64, and a cx form. ⚠ A builtin name becomes RESERVED: survey the ecosystem for local
-  definitions of the three names before switching (the 6.6.0 `tagged_new` lesson). `lib/math.cyr`'s
-  wrappers retire in the same bite.
-- **I6 — arm64 macOS: a thread created in a `fork()` child kills the child**
-  ([issue](issues/2026-10-01-macos-arm64-thread-create-in-fork-child-sigsegv.md); added 2026-10-01 at the
-  user's request, found while preparing sigil 3.13.6). SIGSEGV inside `thread_create`, before it returns;
-  fork itself works, and Linux is unaffected. The likely cause: `sys_fork` there is the aarch64 peer's
-  `clone`, translated to Darwin's raw BSD `fork`, so libSystem's child-side fork handling never runs before
-  `pthread_create`. Default fix: route the arm64-macOS `sys_fork` through libSystem's `fork()` via `__got`, a
-  Mach-O writer change. Acceptance:
-  - the repro exits 0 on ecb;
-  - a new `tests/tcyr/crossos/` fork-then-thread test runs on the ecb leg.
-
-- **I7 — the native TLS client matches an IP-literal host against dNSName SAN entries, wildcards included**
-  ([issue](issues/2026-10-01-tls-ip-literal-dnsname.md); placed by the user 2026-10-01). A certificate
-  whose only SAN is `DNS:127.0.0.1` or `DNS:*.0.0.1` is accepted for `https://127.0.0.1`. RFC 9525 §6.3,
-  the rule CVE-18 cites, matches an IP literal against iPAddress entries only. Fix:
-  - `_tn_cert_san_match` (`lib/tls_native_conn.cyr:214`) parses the host once, and for an IP literal
-    compares `0x87` entries only;
-  - `_tn_parse_ipv4` (`:89`) refuses leading zeros, as `net_parse_ipv4` (`lib/net.cyr:1114`) does — or the
-    two share one parser.
-
-  Severity Low: exploiting it needs a trusted CA to issue such a dNSName. Acceptance: the repro exits 0.
-- **I8 — the native TLS client has no deadline, and skips plaintext ChangeCipherSpec records without limit**
-  ([issue](issues/2026-10-01-tls-native-no-deadline.md); placed by the user 2026-10-01). Any on-path box can
-  hold a client thread forever by injecting a CCS record more often than the read timeout; a 1-byte drip does
-  the same inside one record. All three parts:
-  - (a) accept at most one CCS, and only before the peer's Finished (RFC 8446 §5; one per direction in TLS
-    1.2), anything else failing with `TLS_ERR_PROTOCOL` and an `unexpected_message` alert;
-  - (b) a per-connection deadline — `tls_native_set_deadline(ctx, abs_ns)` plus a `tls_set_deadline` on the
-    shim, honoured by `_tn_sock_read_full` / `_tn_sock_write_all` by polling with the time left, and failing
-    with a distinct `TLS_ERR_TIMEOUT`;
-  - (c) pass the record-read error through instead of collapsing it to `TLS_ERR_IO`.
-
-  (b) is new public API. ⚠ It shares `tls_native_read` with I2 (c), where alerts read as EOF: take the two in
-  sequence, with one error-mapping table. Acceptance: the repro exits 0 (both cases fail fast instead of
-  blocking).
-- **I9 — a typed-array global leaves every later global misaligned; an atomic on one SIGBUSes on aarch64**
-  ([issue](issues/2026-10-01-typed-array-globals-not-padded-aarch64-atomics-sigbus.md); filed by agnostic
-  0.1.7, placed 2026-10-01). `var a: u8[N]` reserves exactly `N` bytes and the next global lands at
-  `&a + N`, so for `N % 8 != 0` every later 64-bit global is misaligned until some other odd size shifts
-  it back. x86 tolerates it; the Pi 4's `ldaxr`/`ldar` fault. The folded sankoch's three `u8` arrays
-  (630 B) misalign 1,101 of agnostic's 1,962 globals, among them a dozen of sigil's atomic init flags.
-  A memory-layout fix, so it rides with M1–M3. Fix: pad after an odd-sized typed array so every global
-  starts 8-aligned, on every backend (a `u8[N]` keeps its `N` usable bytes). Acceptance:
-  - the repro exits 0 natively on pi;
-  - a new `crossos/` row asserts `&g % 8 == 0` for a 64-bit global declared after `u8[3]`, `u8[363]`,
-    `i16[3]` and `i32[3]` globals, and runs `atomic_cas` on it.
-- **I10 — a `[deps.X]` with `git` + `tag` but no `modules` is silently ignored**
-  ([issue](issues/2026-10-01-git-dep-without-modules-silently-inert.md); filed by agnostic 0.1.7, placed
-  2026-10-01). `cbt/deps.cyr` clones a named dep only when it lists `modules`, so the block is never
-  cloned, vendored or locked. It is not reported either, and a transitive declaration of the same name
-  resolves in its place. Default fix: take both of the issue's options. A missing `modules` means
-  `["dist/<name>.cyr"]` when the tag ships that file; otherwise `cyrius deps` warns and counts the dep in
-  its summary. Acceptance: the repro `.cyml` vendors and locks the dep, and a gate pins the warning.
-- **I11 — the Str → `: cstring` diagnostic types only a named local, and its `str_data` hint is wrong**
-  ([issue](issues/2026-10-01-str-cstring-diagnostic-misses-call-results.md); filed by bayan 1.5.10, which
-  had put it in the backlog — placed in 6.6.13 with the other open issues, 2026-10-01). The check sees
-  only an argument whose first token is a `Str` local or param. It is silent for a call result, a global,
-  a `: Str` field, a tail call and a method call (W2–W9). It reports `s.data` as the `Str` itself, and its
-  hint recommends `str_data(x)`, which turns a warned bug into a silent one (F2). Fix as the issue
-  proposes:
-  - one helper, called from all three argument loops (PARSE_FNCALL, `_call_arg_one` and the tail loop);
-  - type single primaries only (`IDENT`, `IDENT (…)` via `GFRS`, `IDENT . field`);
-  - give a declared global's positive struct id, and an inferred global's initializer `GFRS`;
-  - hints that never suggest `str_data`.
-
-  Warning text only: every binary stays byte-identical. Acceptance: the repro warns on W1–W9, F1 and F2,
-  and no others. The issue's *Related* `#deprecated` gaps are a separate defect, and go to the backlog
-  below.
-
-**Once the siblings have tagged:**
-1. Fold ganita, bayan and sigil byte-identical from their tags.
-2. Open the lanes, minding the two shared files:
-   - `lib/tls.cyr` and the `lib/tls_native_*.cyr` files are touched by I1, I2, I3, I7 and I8: one TLS lane,
-     with its bites in sequence (I2 (c) and I8 back to back).
-   - `lib/math.cyr` is touched by I4 and I5. I5's compiler half sits in the `src` lane, and its `lib/math.cyr` hunk goes to the math lane as a named hand-off.
-3. One `src` lane commits `build/cycc`: M1–M3, I9's global padding, I5's builtins, I11's diagnostic
-   and I6's Mach-O `__got` entry. I6's `lib/syscalls_aarch64_linux.cyr` arm rides with it; verify it on
-   ecb, and verify I9 natively on pi.
-   - I10 is `cbt/deps.cyr` only, so it goes in a tooling lane.
-4. Gate as always: `release-gate.sh` GREEN on the merged tree, cross-OS on ecb / ach / cass / pi, bench recorded.
-
-**Not promoted** (still in the backlog): the nearest to this release's theme are `var v = g<i32>(..)?;`
-exiting 139 and cyrius-lsp's silent 1 MB document buffer.
+The in-passing finds of the premise check and the lanes' reviews are in *Potential backlog* below.
 
 ---
 
