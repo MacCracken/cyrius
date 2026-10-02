@@ -4,6 +4,8 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.6.14] — 2026-10-02
+
 ## [6.6.13] — 2026-10-01
 
 The memory-fix and reported-issue release (re-planned by the user 2026-10-01): the three silent
