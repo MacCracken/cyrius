@@ -100,8 +100,8 @@ corresponding `tls_set_*` / `tls_ctx_*` verb):
 handshake), from the hook's final verify mode:
 
 - The leaf certificate bound to `host` — see "Server identity" below
-- SNI set from `host` (libssl: for a DNS-name host only — never for an IP literal
-  or a host with no identity; native: from `host`, an IP literal included — see the SNI bullet below)
+- SNI set from `host` for a DNS-name host only — never for an IP literal or a host with no
+  identity, on both backends (native since 6.6.14) — see the SNI bullet below
 
 #### Server identity (hostname binding) — 6.6.13, CVE-59
 
@@ -115,8 +115,8 @@ RFC 9525 §6.3):
 | `host` | Matched against | Examples |
 |---|---|---|
 | An IP literal: a dotted-quad IPv4 address with no leading zeros, or an RFC 4291 IPv6 address (`::` compression and a dotted-quad tail allowed) | iPAddress SANs only, octet for octet | `127.0.0.1`, `::1`, `::ffff:1.2.3.4` |
-| Any other host without a `:` — a DNS name | dNSName SANs only, RFC 6125: ASCII case-insensitive; a wildcard only as the whole leftmost label (`*.example.com` matches `a.example.com`, not `example.com` or `a.b.example.com`); no partial wildcard (`f*.example.com`); no fallback to the subject CN | `localhost`, `LOCALHOST`; `010.0.0.1` and `127.1` are names, as the resolver (`net_parse_ipv4`) treats them |
-| `0`, `""`, or a `:`-bearing host that is no literal | nothing: there is no reference identity | `[::1]`, `fe80::1%eth0` |
+| Any other host without a `:` — a DNS name | dNSName SANs only, RFC 6125 as OpenSSL implements it (`X509_check_host` with `NO_PARTIAL_WILDCARDS`): ASCII case-insensitive; a dNSName is a wildcard only as `*.` followed by two or more labels of `[A-Za-z0-9-]` (none empty or hyphen-edged, no second `*`, no trailing dot), and its star stands for exactly one non-empty label of `[A-Za-z0-9-]` (`*.example.com` matches `a.example.com`, not `example.com`, `a.b.example.com` or `a_b.example.com`); any other dNSName — `*.com`, `*.example.com.`, `f*.example.com` — is compared literally; no fallback to the subject CN; no public-suffix list (`*.co.uk` matches `a.co.uk`) | `localhost`, `LOCALHOST`; `010.0.0.1` and `127.1` are names, as the resolver (`net_parse_ipv4`) treats them |
+| `0`, `""`, a `:`-bearing host that is no literal, or a host starting with `.` (6.6.14) | nothing: there is no reference identity (OpenSSL would read `.example.com` as "any subdomain") | `[::1]`, `fe80::1%eth0`, `.example.com` |
 
 - **No identity under `SSL_VERIFY_PEER` (the default) is refused.** On libssl
   `tls_connect_alloc` returns 0 and no handshake runs; on native the handshake
@@ -137,9 +137,10 @@ RFC 9525 §6.3):
   DNS-name `host`, a name under an IP-literal `host`) is kept and must match as
   well. To verify a different name, pass it as `host`. (Measured with OpenSSL
   3.6.5; pinned by the gate's P rows.)
-- **SNI — libssl:** sent for a DNS-name host only; an IP-literal host sends no
-  SNI (RFC 6066 §3). The native backend still sends an IP literal as SNI (a
-  backlogged item), so this rule is libssl-only until that lands.
+- **SNI — both backends:** sent for a DNS-name host only; an IP-literal host, or
+  one with no identity, sends no SNI (RFC 6066 §3). Native followed it from
+  6.6.14 (`_tn_sni_len`, the classifier's verdict); until then its ClientHello
+  carried an IP literal too.
 - **libssl requires the binding symbols** `SSL_get0_param`,
   `SSL_get_verify_mode`, `X509_VERIFY_PARAM_set1_host`,
   `X509_VERIFY_PARAM_set_hostflags` and `X509_VERIFY_PARAM_set1_ip_asc` (every
@@ -148,9 +149,13 @@ RFC 9525 §6.3):
   deliberately not used, because from OpenSSL 3.0 it re-parses the name as an
   IP address with OpenSSL's own parser, which would let the libssl version
   decide the classification.
-- **Known divergence:** native accepts a wildcard directly over a single label
-  (`*.com` for `a.com`); libssl refuses it.
-- Pinned by `tests/gates/platform/tls_libssl_hostname_binding.sh` (both
+- **The backends agree, row for row (6.6.14, CVE-67).** Until 6.6.14 native took
+  any `*.` dNSName as a wildcard over the host's first label (`*.com` verified
+  `a.com`; `*.example.com.`, `*.a_b.com`, `*.*.example.com` and a non-LDH first
+  label matched too), where libssl refuses. `tests/tcyr/crossos/tls_hostname_verdicts.tcyr`
+  runs one SAN / host table through the native matcher on every host and through
+  OpenSSL's `X509_check_host` / `X509_check_ip_asc` wherever libssl loads.
+- Pinned end to end by `tests/gates/platform/tls_libssl_hostname_binding.sh` (both
   backends against OpenSSL's `s_server`).
 
 ### Connect — staged (resumption-aware, allocator-aware)
