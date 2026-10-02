@@ -91,9 +91,10 @@ answer depended on the ORDER of the arguments (`f64_add(p, u)` took the last arg
 type). The result is still not a typed *value*: `==`, `!=`, `<` … on builtin results remain
 INTEGER compares of the bit patterns (so `f64_neg(z) == z` is 0 for z = 0.0, and
 `f64_neg(a) < f64_neg(b)` is wrong for negative values — compare with `f64_lt` /
-`f64_gt` / `f64_eq`), and `var x = f64_sqrt(u);` declares an untyped `x` (declare it `: f64`
-to make later arithmetic on it float). Code that wants the integer ulp distance of two
-results goes through an untyped variable first: `var a = f64_atan(x); d = a - b;`.
+`f64_gt` / `f64_eq` / `f64_le` / `f64_ge`), and `var x = f64_sqrt(u);` declares an untyped
+`x` (declare it `: f64` to make later arithmetic on it float). Code that wants the integer
+ulp distance of two results goes through an untyped variable first:
+`var a = f64_atan(x); d = a - b;`.
 
 An integer CONSTANT stored into an `f64` / `f32` slot keeps its integer bits — `var t: f64 =
 1;`, `t = 1;`, `p.x = 1;` (an `f64` field) and `P { 1, 2 }` store `0x1`, a subnormal — and
@@ -269,9 +270,10 @@ var r = add(20, 22);   # r = 42
   pushed `&x` for a small typed `self` too and the method read its fields out of the address.
 
 **Reserved words are a CLASS, not a short list.** `TOKNAME_BUILTIN` in
-`src/common/util.cyr` is the single source of truth — **76** builtin/intrinsic names
-(re-derived at 6.6.5 with `sed -n '/fn TOKNAME_BUILTIN/,/^}/p' src/common/util.cyr |
-grep -c 'return "'`; this line said 67, which was the count when the diagnostic was added at
+`src/common/util.cyr` is the single source of truth — **79** builtin/intrinsic names
+(re-derived at 6.6.13 with `sed -n '/fn TOKNAME_BUILTIN/,/^}/p' src/common/util.cyr |
+grep -c 'return "'`, after `f64_le` / `f64_ge` / `f64_trunc` moved from `lib/math.cyr` fns to
+builtins; this line said 67 until 6.6.5, which was the count when the diagnostic was added at
 v6.4.77 and the table has grown since), plus the statement keywords. `IS_KEYWORD_TOK`
 *derives* from that table for the BUILTIN half — ⚠ but it enumerates the statement keywords
 SEPARATELY, so those two CAN drift; the table, not this paragraph, is the authority. It covers `syscall`, the `load8/16/32/64` + `store8/16/32/64` family, every
@@ -380,6 +382,28 @@ var v = load16(&buf);          # Corresponding reads
 var v = load32(&buf);
 var v = load64(&buf);
 ```
+
+### Where globals land: natural alignment (6.6.13)
+
+A global occupies exactly its own size — `var a: u8[363]` has 363 usable bytes, a
+`var x: u8` one — and **every global starts at its natural alignment**:
+
+| Global, by its size                                    | Starts at a multiple of |
+|--------------------------------------------------------|-------------------------|
+| 1 byte (`u8` / `i8` scalar, or a 1-byte struct)        | 1                       |
+| 2 bytes (`u16` / `i16` scalar, or a 2-byte struct)     | 2                       |
+| 4 bytes (`u32` / `i32` scalar, or a 4-byte struct)     | 4                       |
+| anything else — i64, pointers, f64, `u128`, every array, every other struct | 8 |
+
+So `var a: u8[363]; var lock = 0;` puts `lock` at `&a + 368`, not `&a + 363`, and
+`atomic_cas(&lock, 0, 1)` is safe on aarch64. Before 6.6.13 globals were packed at their exact
+size: the global after a `u8[363]`, a narrow scalar, an `i32[3]` or a 12-byte struct was
+misaligned, and the first atomic on it (`ldaxr`/`stlxr`) died with SIGBUS on a Raspberry Pi 4
+and on Apple Silicon (x86 tolerated it). Adjacent narrow globals stay **packed**
+(`var a: u8; var b: u8;` puts `b` at `&a + 1`), on purpose: an atomic needs only natural
+alignment, and a store wider than its global still lands on the neighbour, where a test can
+see it, instead of vanishing into padding. Do not reach a global by adding an offset to the
+address of the one declared before it; the gap between them is the compiler's.
 
 ## Pointers
 
@@ -3253,7 +3277,8 @@ offsets past the params.
 - At most 1,048,576 globals, enum members and top-level arrays per compilation unit
   (the var table). The separate 4096 cap on deferred initializers is gone since 6.6.9
   — see **Global Initializers**
-- **67** builtin/intrinsic names plus the statement keywords are reserved and cannot be used
+- **79** builtin/intrinsic names (re-derived at 6.6.13; this bullet still said 67, the v6.4.77
+  count) plus the statement keywords are reserved and cannot be used
   as identifiers — `TOKNAME_BUILTIN` in `src/common/util.cyr` is the list; see the
   reserved-word note under **Functions**. (This bullet used to name four of them, which is
   how the other sixty came as a surprise.)
@@ -3967,13 +3992,15 @@ The rules, in order:
    the PREVIOUS syscall with the new arguments and returned a plausible answer. cycc reports
    every such number at compile time — `warning: syscall N not routed by the Mach-O …
    translation` — and in this repo `tests/gates/platform/darwin_syscall_literals_routed.sh`
-   fails on one. Three numbers are rerouted at PARSE time rather than by a table row, and
+   fails on one. Four numbers are rerouted at PARSE time rather than by a table row, and
    only at one arity: **228** (the clock; ns in the return register, the buffer argument
    unspecified — x86-macOS happens to fill a timeval, arm64-macOS never touches it; PE
    returns ms) and **35** (nanosleep, x86-macOS) need the number plus exactly 2 arguments,
-   **1700** (pthread_create, arm64-macOS) the number plus 4. Any other arity is reported by
-   name (`syscall 228 not routed at this arity`). Portable code calls `clock_now_ns()` /
-   `sleep_ms()` / `thread_create()` instead.
+   **1700** (pthread_create, arm64-macOS) the number plus 4, and **1701** (libSystem
+   `fork()`, arm64-macOS, v6.6.13 — the child runs the atfork handlers, so it can create
+   threads) the number alone. Any other arity is reported by name (`syscall 228 not routed
+   at this arity`). Portable code calls `clock_now_ns()` / `sleep_ms()` /
+   `thread_create()` / `sys_fork()` instead.
 7. **Set O_NONBLOCK with `fd_set_nonblocking(fd)` / `fd_restore_flags(fd, saved)`, and every
    other fcntl with `sys_fcntl(fd, cmd, arg)` (v6.6.8) — never a raw `syscall(SYS_FCNTL, …)`
    and never `fl | 2048`.** 2048 is Linux's O_NONBLOCK and Darwin's O_EXCL, which F_SETFL

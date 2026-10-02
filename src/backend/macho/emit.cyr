@@ -307,16 +307,20 @@ fn EMITMACHO_ARM64(S): i64 {
     var TEXT_VMSIZE = (1 + text_content_pages) * PAGE;
 
     # __DATA_CONST follows __TEXT — 1 page for the __got. v5.5.14 grew
-    # it from 1 slot to 6; v5.6.6 grows it to 7: [0]=_exit, [1]=_write,
-    # [2]=_read, [3]=_malloc, [4]=_fopen, [5]=_pthread_create,
-    # [6]=_clock_gettime_nsec_np (CYRIUS_PROF macOS clock). Still fits
+    # it from 1 slot to 6; v5.6.6 grows it to 7; 6.6.13 to 9: [0]=_exit,
+    # [1]=_write, [2]=_read, [3]=_malloc, [4]=_fopen, [5]=_pthread_create,
+    # [6]=_clock_gettime_nsec_np (CYRIUS_PROF macOS clock), [7]=_fork,
+    # [8]=___error (sys_fork through libSystem; CHANGELOG [6.6.13]). New
+    # imports APPEND — a slot index is baked into its emitter. The parallel
+    # tables below (bind, symtab, strtab, indirect, LC_DYSYMTAB counts) are
+    # held against each other by tests/gates/platform/macos_arm64_libsystem_fork.sh. Still fits
     # one page; grows up to 512 entries before needing a second.
     var DATA_CONST_VMADDR = TEXT_BASE + TEXT_VMSIZE;
     var DATA_CONST_FILEOFF = TEXT_VMSIZE;
     var DATA_CONST_VMSIZE = PAGE;
     var GOT_VADDR = DATA_CONST_VMADDR;
     var GOT_FILEOFF = DATA_CONST_FILEOFF;
-    var GOT_SIZE = 56;                     # 7 entries × 8 bytes
+    var GOT_SIZE = 72;                     # 9 entries × 8 bytes
 
     # __DATA (globals) sits after __DATA_CONST when present.
     var DATA_VMADDR = DATA_CONST_VMADDR + DATA_CONST_VMSIZE;
@@ -361,28 +365,30 @@ fn EMITMACHO_ARM64(S): i64 {
     # v5.5.14 bind layout: 4-byte header (ordinal, type, seg/off, ULEB 0),
     # then per-symbol (0x40 + name\0 + 0x90 DO_BIND) auto-advancing by
     # pointer_size (8) between slots, then 0x00 DONE. v5.6.6 adds
-    # _clock_gettime_nsec_np (22 chars + \0 + BIND = 25 B):
+    # _clock_gettime_nsec_np (22 chars + \0 + BIND = 25 B); 6.6.13 adds
+    # _fork (8 B) and ___error (11 B):
     #   hdr (4) + _exit (8) + _write (9) + _read (8) + _malloc (10)
     #   + _fopen (9) + _pthread_create (18) + _clock_gettime_nsec_np (25)
-    #   + DONE (1) = 92 B, pad to 96.
-    var BIND_SIZE = 96;
+    #   + _fork (8) + ___error (11) + DONE (1) = 111 B, pad to 112.
+    var BIND_SIZE = 112;
     var EXPORTS_OFF = BIND_OFF + BIND_SIZE;
     var EXPORTS_SIZE = 49;                 # _main address ULEB
     var EXPORTS_PADDED = 56;               # 8-byte align
     var FNSTART_OFF = EXPORTS_OFF + EXPORTS_PADDED;
     var FNSTART_SIZE = 8;
     var SYMTAB_OFF = FNSTART_OFF + FNSTART_SIZE;
-    # v5.6.6 symtab: 2 defined (__mh_execute_header, _main) + 7 libSystem
+    # 6.6.13 symtab: 2 defined (__mh_execute_header, _main) + 9 libSystem
     # undefs (_exit, _write, _read, _malloc, _fopen, _pthread_create,
-    # _clock_gettime_nsec_np).
-    var SYMTAB_COUNT = 9;
-    var SYMTAB_SIZE = 144;                 # 9 × 16
+    # _clock_gettime_nsec_np, _fork, ___error).
+    var SYMTAB_COUNT = 11;
+    var SYMTAB_SIZE = 176;                 # 11 × 16
     var STRTAB_OFF = SYMTAB_OFF + SYMTAB_SIZE;
     # v5.6.6 strtab: v5.5.14's 78 B + "_clock_gettime_nsec_np\0" (23 B)
-    # = 101 B, pad to 104 (8-align).
-    var STRTAB_SIZE = 104;
+    # = 101 B; 6.6.13 adds "_fork\0" (6 B) + "___error\0" (9 B) = 116 B,
+    # pad to 120 (8-align).
+    var STRTAB_SIZE = 120;
     var INDIRECT_OFF = STRTAB_OFF + STRTAB_SIZE;
-    var INDIRECT_SIZE = 28;                # 7 indirect syms × 4 bytes
+    var INDIRECT_SIZE = 36;                # 9 indirect syms × 4 bytes
     var LINKEDIT_CONTENT_SIZE = INDIRECT_OFF + INDIRECT_SIZE - LINKEDIT_FILEOFF;
     var FILE_END = LINKEDIT_FILEOFF + LINKEDIT_CONTENT_SIZE;
 
@@ -552,19 +558,20 @@ fn EMITMACHO_ARM64(S): i64 {
     o = _macho_w32(O, o, STRTAB_OFF);
     o = _macho_w32(O, o, STRTAB_SIZE);
 
-    # LC_DYSYMTAB (80) — v5.6.6
-    # nextdefsym=2 (__mh_execute_header + _main), nundefsym=7 (libSystem
+    # LC_DYSYMTAB (80) — v5.6.6; 6.6.13 counts
+    # nextdefsym=2 (__mh_execute_header + _main), nundefsym=9 (libSystem
     # imports _exit, _write, _read, _malloc, _fopen, _pthread_create,
-    # _clock_gettime_nsec_np). nindirectsyms=7 — one per __got slot.
+    # _clock_gettime_nsec_np, _fork, ___error). nindirectsyms=9 — one per
+    # __got slot.
     o = _macho_w32(O, o, 0x0B);
     o = _macho_w32(O, o, 80);
     o = _macho_w32(O, o, 0); o = _macho_w32(O, o, 0);           # ilocal, nlocal
     o = _macho_w32(O, o, 0); o = _macho_w32(O, o, 2);           # iextdef=0, nextdef=2
-    o = _macho_w32(O, o, 2); o = _macho_w32(O, o, 7);           # iundef=2, nundef=7
+    o = _macho_w32(O, o, 2); o = _macho_w32(O, o, 9);           # iundef=2, nundef=9
     o = _macho_w32(O, o, 0); o = _macho_w32(O, o, 0);           # tocoff, ntoc
     o = _macho_w32(O, o, 0); o = _macho_w32(O, o, 0);           # modtaboff, nmodtab
     o = _macho_w32(O, o, 0); o = _macho_w32(O, o, 0);           # extrefsymoff, nextrefsyms
-    o = _macho_w32(O, o, INDIRECT_OFF); o = _macho_w32(O, o, 7); # indirectsymoff, nindirectsyms
+    o = _macho_w32(O, o, INDIRECT_OFF); o = _macho_w32(O, o, 9); # indirectsymoff, nindirectsyms
     o = _macho_w32(O, o, 0); o = _macho_w32(O, o, 0);           # extreloff, nextrel
     o = _macho_w32(O, o, 0); o = _macho_w32(O, o, 0);           # locreloff, nlocrel
 
@@ -667,7 +674,7 @@ fn EMITMACHO_ARM64(S): i64 {
     # ================================================================
 
     # bind opcodes — classic dyld-info binds of libSystem imports into
-    # __DATA_CONST.__got[0..5]. Segment index of __DATA_CONST is 2
+    # __DATA_CONST.__got[0..8]. Segment index of __DATA_CONST is 2
     # (PAGEZERO=0, TEXT=1, DATA_CONST=2 — holds whether __DATA follows
     # or not). Shared header sets ordinal=1 (libSystem), type=POINTER,
     # seg=2, offset=0; each DO_BIND auto-advances offset by 8 B so
@@ -686,6 +693,8 @@ fn EMITMACHO_ARM64(S): i64 {
     o = _macho_wbindsym(O, o, "_fopen");                 # __got[4]
     o = _macho_wbindsym(O, o, "_pthread_create");        # __got[5]
     o = _macho_wbindsym(O, o, "_clock_gettime_nsec_np"); # __got[6] (v5.6.6)
+    o = _macho_wbindsym(O, o, "_fork");                  # __got[7] (6.6.13)
+    o = _macho_wbindsym(O, o, "___error");               # __got[8] (6.6.13)
     store8(O + o, 0x00); o = o + 1;        # BIND_DONE
     while ((o - bind_start) < BIND_SIZE) { store8(O + o, 0); o = o + 1; }
 
@@ -720,7 +729,7 @@ fn EMITMACHO_ARM64(S): i64 {
     store8(O + o + 6, 0x00); store8(O + o + 7, 0x00);
     o = o + 8;
 
-    # symtab — v5.5.14: 8 × nlist_64 (128 bytes)
+    # symtab — 6.6.13: 11 × nlist_64 (176 bytes)
     # [0] __mh_execute_header: strx=2, type=0x0F, sect=1, desc=0x10, value=0x100000000
     o = _macho_w32(O, o, 2);
     store8(O + o, 0x0F); store8(O + o + 1, 0x01);
@@ -735,7 +744,7 @@ fn EMITMACHO_ARM64(S): i64 {
     o = o + 4;
     o = _macho_w64(O, o, TEXT_BASE + CODE_OFF);
 
-    # [2..8] libSystem undefs. strx values match the layout in the
+    # [2..10] libSystem undefs. strx values match the layout in the
     # strtab block below.
     o = _macho_wsymundef(O, o, 28);        # [2] _exit
     o = _macho_wsymundef(O, o, 34);        # [3] _write
@@ -744,8 +753,10 @@ fn EMITMACHO_ARM64(S): i64 {
     o = _macho_wsymundef(O, o, 55);        # [6] _fopen
     o = _macho_wsymundef(O, o, 62);        # [7] _pthread_create
     o = _macho_wsymundef(O, o, 78);        # [8] _clock_gettime_nsec_np (v5.6.6)
+    o = _macho_wsymundef(O, o, 101);       # [9] _fork (6.6.13)
+    o = _macho_wsymundef(O, o, 107);       # [10] ___error (6.6.13)
 
-    # strtab — v5.6.6 (101 B used, pad to 104 for 8-align). Offsets must
+    # strtab — 6.6.13 (116 B used, pad to 120 for 8-align). Offsets must
     # match the strx values above exactly; a one-byte drift is a
     # dyld-level "Symbol not found: _…" failure at load.
     #   0  " \0"                          (padding slot, must stay at strx=0)
@@ -758,6 +769,8 @@ fn EMITMACHO_ARM64(S): i64 {
     #  55  "_fopen\0"                     (7 B)
     #  62  "_pthread_create\0"            (16 B → ends at 78)
     #  78  "_clock_gettime_nsec_np\0"     (23 B → ends at 101; v5.6.6)
+    # 101  "_fork\0"                      (6 B → ends at 107; 6.6.13)
+    # 107  "___error\0"                   (9 B → ends at 116; 6.6.13)
     var strtab_start = o;
     o = _macho_wcstr(O, o, " ");
     o = _macho_wcstr(O, o, "__mh_execute_header");
@@ -769,9 +782,11 @@ fn EMITMACHO_ARM64(S): i64 {
     o = _macho_wcstr(O, o, "_fopen");
     o = _macho_wcstr(O, o, "_pthread_create");
     o = _macho_wcstr(O, o, "_clock_gettime_nsec_np");
+    o = _macho_wcstr(O, o, "_fork");
+    o = _macho_wcstr(O, o, "___error");
     while ((o - strtab_start) < STRTAB_SIZE) { store8(O + o, 0); o = o + 1; }
 
-    # indirect symtab (28) — 7 entries, one per __got slot:
+    # indirect symtab (36) — 9 entries, one per __got slot:
     # __got[i] → symtab[2 + i] (undef block starts at index 2).
     o = _macho_w32(O, o, 2);               # __got[0] → _exit
     o = _macho_w32(O, o, 3);               # __got[1] → _write
@@ -780,6 +795,8 @@ fn EMITMACHO_ARM64(S): i64 {
     o = _macho_w32(O, o, 6);               # __got[4] → _fopen
     o = _macho_w32(O, o, 7);               # __got[5] → _pthread_create
     o = _macho_w32(O, o, 8);               # __got[6] → _clock_gettime_nsec_np (v5.6.6)
+    o = _macho_w32(O, o, 9);               # __got[7] → _fork (6.6.13)
+    o = _macho_w32(O, o, 10);              # __got[8] → ___error (6.6.13)
 
     # Pad to FILE_END if not already there
     while (o < FILE_END) { store8(O + o, 0); o = o + 1; }

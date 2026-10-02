@@ -964,6 +964,29 @@ fn SVFI(S, vi, v): i64 { if (_var_fileid == 0) { _var_fileid = alloc(1048576 * 8
 var _var_ptrmode = 0;
 fn GVPM(S, vi): i64 { if (_var_ptrmode == 0) { return 0; } if (vi < 0) { return 0; } return load8(_var_ptrmode + vi); }
 fn SVPM(S, vi, v): i64 { if (_var_ptrmode == 0) { _var_ptrmode = alloc(1048576); } store8(_var_ptrmode + vi, v); return 0; }
+# 6.6.13 (I11) — per-global DIAGNOSTIC record: for an untyped `var g = f(..);`, f's name offset
+# + 1 (resolved to f's `: Struct` return when the check runs, so f may be defined after g). Read
+# ONLY by the Str -> `: cstring` warning. ⛔ Never put this in GVTYPE: GVTYPE drives codegen
+# (field access, the struct-copy init, the overload dispatcher), so typing an inferred global
+# there changes binaries. 8 bytes per global for the var table's HARD cap (1048576, _var_grow),
+# and bound-checked on both sides, so an index past the table is never written. CHANGELOG [6.6.13]
+var _var_dsid = 0;
+fn GVDSID(S, vi): i64 {
+    if (_var_dsid == 0) { return 0; }
+    if (vi < 0) { return 0; }
+    if (vi >= 1048576) { return 0; }
+    return L64(_var_dsid + vi * 8);
+}
+fn SVDSID(S, vi, v): i64 {
+    if (vi < 0) { return 0; }
+    if (vi >= 1048576) { return 0; }
+    if (_var_dsid == 0) {
+        if (v == 0) { return 0; }
+        _var_dsid = alloc(1048576 * 8);
+    }
+    S64(_var_dsid + vi * 8, v);
+    return 0;
+}
 var _var_dead = 0;
 fn GVDEAD(S, vi): i64 { if (_var_dead == 0) { return 0; } if (vi < 0) { return 0; } return load8(_var_dead + vi); }
 fn SVDEAD(S, vi, v): i64 { if (_var_dead == 0) { _var_dead = alloc(1048576); } store8(_var_dead + vi, v); return 0; }
@@ -1109,6 +1132,22 @@ fn GVSI(S, vi): i64 { return L64(_vgsi_base + vi * 8); }
 # the codebuf-fixup `pfx` scratch at `_output_base`+131072 (latter gets
 # clobbered once output writing passes 128 KB into output_buf).
 fn GVOFF(S, vi): i64 { return L64(_vgoff_base + vi * 8); }
+# ⛔ 6.6.13 — EVERY GLOBAL STARTS AT ITS NATURAL ALIGNMENT. The one rule every layout pass
+# applies before it records a global's offset: x86 FIXUP (both loops), aarch64 FIXUP, PE
+# `_pe_layout` and main_cx. Before it, globals were summed at their exact byte size, so a
+# `u8[363]`, a narrow scalar or a 12-byte struct left every later i64 misaligned, and the
+# first `atomic_cas` on one (ldaxr/stlxr) died with SIGBUS on aarch64 — Pi 4 and Apple M5
+# alike. A 1/2/4-byte global is a narrow scalar or a tiny struct (arrays are floored to 8 in
+# PARSE_GVAR_ARR) and keeps its own alignment, so adjacent narrow globals stay PACKED and an
+# over-width store into one still lands on its neighbour where a test can see it. Everything
+# else is 8-aligned. The SIZE in `_vars_base` is untouched — it is also the load/store
+# width. CHANGELOG [6.6.13]
+fn _GV_ALIGN(off, vsize): i64 {
+    if (vsize == 1) { return off; }
+    if (vsize == 2) { return (off + 1) & (0 - 2); }
+    if (vsize == 4) { return (off + 3) & (0 - 4); }
+    return (off + 7) & (0 - 8);
+}
 
 # v5.11.64 — apply gvar static-init values to the var area at the
 # given output offset `bss_o`. Called by each EMIT_* emit fn after
@@ -1629,6 +1668,9 @@ fn TOKNAME_BUILTIN(typ): i64 {
     if (typ == 160) { return "f64v256_scale"; }   # v6.5.38
     if (typ == 161) { return "f64v256_abs"; }     # v6.5.38
     if (typ == 162) { return "f64v256_sqrt"; }    # v6.5.38
+    if (typ == 164) { return "f64_le"; }          # 6.6.13 (was a lib/math.cyr fn)
+    if (typ == 165) { return "f64_ge"; }          # 6.6.13
+    if (typ == 166) { return "f64_trunc"; }       # 6.6.13
     return 0;
 }
 

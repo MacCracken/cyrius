@@ -29,7 +29,7 @@
 #      a runaway one traps LOUDLY ("cxvm: guest stack overflow") instead of overwriting the program's
 #      globals and heap; hand-made images hit the call-stack and data-stack overflow traps and both
 #      underflow traps.
-#   C. an unknown opcode traps and names itself and its pc: "cxvm: unknown opcode 0x6E at pc 4".
+#   C. an unknown opcode traps and names itself and its pc: "cxvm: unknown opcode 0xF0 at pc 4".
 #   D. guest memory: a store to 0 traps (native: SIGSEGV), a store/load reaching past 1 MB traps, a
 #      negative address traps, the last in-range byte works, a syscall buffer past 1 MB answers
 #      -EFAULT without reaching the host, and a negative pc traps.
@@ -172,8 +172,10 @@ trap_img "B5 call-stack underflow (ret on an empty stack)" '61000000' '^cxvm: ca
 trap_img "B6 data-stack underflow (pop on an empty stack)" '81000000' '^cxvm: data stack underflow, depth 0 at pc 0$'
 
 echo "C. unknown opcode"
-#               movi r0, 7; <0x6E>; <0xFA>; halt
-trap_img "C1 unknown opcode names itself and its pc" '01000700 6E000000 FA000000 00000000' '^cxvm: unknown opcode 0x6E at pc 4$'
+#               movi r0, 7; <0xF0>; <0xFA>; halt
+# The probe byte sits in the unallocated 0xF0-0xFC band, far from the growth frontier: it was
+# 0x6E until 6.6.13 made 0x6E ftrunc, and C1 then saw the NEXT unknown byte. CHANGELOG [6.6.13]
+trap_img "C1 unknown opcode names itself and its pc" '01000700 F0000000 FA000000 00000000' '^cxvm: unknown opcode 0xF0 at pc 4$'
 
 echo "D. guest memory"
 nat_run 'store64(0, 5);

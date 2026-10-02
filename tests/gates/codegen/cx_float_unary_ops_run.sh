@@ -1,6 +1,7 @@
 #!/bin/sh
 # cx_float_unary_ops_run.sh — 6.6.10. f64_sqrt / f64_floor / f64_ceil / f64_round and mulh64
-# compute on the cx bytecode target, and the two crossos .tcyr files that pin them RUN on cxvm.
+# compute on the cx bytecode target, and the crossos .tcyr files that pin them RUN on cxvm.
+# 6.6.13 adds f64_le / f64_ge / f64_trunc (builtins since; trunc is the new 0x6E ftrunc).
 #
 # THE DEFECT. The five cx emitters were `return 0` stubs (src/backend/cx/emit.cyr), so the
 # operand stayed in r0 and was the "result": sqrt(4.0) = 4.0, floor/ceil/round(2.5) = 2.5,
@@ -61,12 +62,14 @@ check() {
 }
 check tests/tcyr/crossos/cx_float_unary_ops.tcyr 28
 check tests/tcyr/crossos/f64_negation.tcyr 38
+# 6.6.13 — f64_le / f64_ge (fle / fge) and f64_trunc (0x6E ftrunc) became builtins.
+check tests/tcyr/crossos/f64_le_ge_trunc_builtins.tcyr 39
 
 # The cxvm opcode table documents what the VM executes.
-for op in 0x6A 0x6B 0x6C 0x6D; do
+for op in 0x6A 0x6B 0x6C 0x6D 0x6E; do
   if grep -q "^#   $op = " programs/cxvm.cyr; then pass=$((pass + 1)); else _bad "programs/cxvm.cyr: the header opcode table does not list $op"; fi
 done
 
 if [ "$fail" -ne 0 ]; then echo "FAIL cx_float_unary_ops_run: $fail row(s) red, $pass green"; exit 1; fi
-echo "PASS cx_float_unary_ops_run: $pass rows — f64_sqrt/floor/ceil/round + mulh64 compute on cxvm (both crossos files pass on cx AND natively, assertion counts derived from source), opcode table current"
+echo "PASS cx_float_unary_ops_run: $pass rows — f64_sqrt/floor/ceil/round/trunc, f64_le/ge + mulh64 compute on cxvm (the three crossos files pass on cx AND natively, assertion counts derived from source), opcode table current"
 exit 0

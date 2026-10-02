@@ -1179,7 +1179,8 @@ fn E8(S, v): i64 { var i = 0; while (i < 8) { EB(S, (v >> (i * 8)) & 0xFF); i = 
 # cx arc B: scalar f64 is REAL via the host-backed cxvm float opcodes (0x54-0x5F
 # fadd/fsub/fmul/fdiv, i2f/f2i, flt/fle/fgt/fge/feq/fne; 0x64/0x65 fneg/fabs;
 # 0x66/0x67 f32widen/f32narrow since v6.4.32; 0x68 fsqrt; 0x6A-0x6C ffloor/fceil/
-# fround and 0x6D mulhu since 6.6.10 — EF64SQRT/FLOOR/CEIL/ROUND and EMULH below).
+# fround and 0x6D mulhu since 6.6.10, 0x6E ftrunc since 6.6.13 — EF64SQRT/FLOOR/CEIL/
+# ROUND/TRUNC and EMULH below).
 # What still FAILS LOUD through the helper below is the transcendental family
 # (sin/cos/exp/ln/…): the VM has no libm opcodes. ⛔ Until 6.6.10 this comment said
 # sqrt/floor and f32 conversion failed loud too — f32 was already real, and sqrt,
@@ -1636,6 +1637,7 @@ fn EF64SQRT(S): i64 { CX_EMIT(S, 104, 0, 0, 0); return 0; }    # 0x68 fsqrt  r0,
 fn EF64FLOOR(S): i64 { CX_EMIT(S, 106, 0, 0, 0); return 0; }   # 0x6A ffloor r0, r0
 fn EF64CEIL(S): i64 { CX_EMIT(S, 107, 0, 0, 0); return 0; }    # 0x6B fceil  r0, r0
 fn EF64ROUND(S): i64 { CX_EMIT(S, 108, 0, 0, 0); return 0; }   # 0x6C fround r0, r0
+fn EF64TRUNC(S): i64 { CX_EMIT(S, 110, 0, 0, 0); return 0; }   # 0x6E ftrunc r0, r0 (6.6.13)
 # v5.9.40 — clean up cx-side undefined-fn warnings carried since
 # v5.9.39's Mach-O fix (EADRP/EADD_IMM12 added to aarch64/x86
 # but cx wasn't paired). Stubs for the dead cross-arch branches
@@ -1808,6 +1810,7 @@ fn EWAIT_PE(S): i64 { return 0; }
 fn EWRITE_PE(S): i64 { return 0; }
 fn _macho_x86_routes(n): i64 { return 1; }   # v6.5.43: not the x86 Mach-O backend — never warn from here.
 fn EMACHO_PTHREAD_CREATE_ARM(S): i64 { return 0; }   # v6.5.44: arm64-macOS only; parse_expr references it in every fork.
+fn EMACHO_FORK_ARM(S): i64 { return 0; }   # 6.6.13: arm64-macOS only (libSystem fork); same reason.
 fn _macho_arm_routes(n): i64 { return 0; }
 
 # v6.5.51 — the ELF-aarch64 raw-syscall-number diagnostic is aarch64-only; these stubs

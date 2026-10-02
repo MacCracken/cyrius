@@ -257,10 +257,11 @@ printf '%s' "$DERIV" | grep -q 'ESYSXLAT(' \
   || bad "_macho_arm_routes does not replay ESYSXLAT — it is a hand-mirrored list again, which is the v6.0.65 and v6.5.16 defect both at once"
 printf '%s' "$DERIV" | grep -q '_esx_qon' \
   || bad "_macho_arm_routes does not use the query mode, so its replay would EMIT into the code stream"
-# The only literals permitted are the __got reroutes parse_expr handles before ESYSXLAT sees them.
+# The only literals permitted are the __got reroutes parse_expr handles before ESYSXLAT sees them
+# (6.6.13: + 1701, libSystem fork through __got[7]).
 ALITS=$(printf '%s' "$DERIV" | grep -oE 'n == [0-9]+' | grep -oE '[0-9]+' | sort -n -u | tr '\n' ' ')
-if [ "$ALITS" = "228 1700 " ]; then ok "_macho_arm_routes derives from ESYSXLAT; only the two __got reroutes are literal"
-else bad "unexpected literal route list in _macho_arm_routes: '$ALITS' (expected exactly the two __got reroutes '228 1700 ')"; fi
+if [ "$ALITS" = "228 1700 1701 " ]; then ok "_macho_arm_routes derives from ESYSXLAT; only the three __got reroutes are literal"
+else bad "unexpected literal route list in _macho_arm_routes: '$ALITS' (expected exactly the three __got reroutes '228 1700 1701 ')"; fi
 
 echo ""
 echo "$pass passed, $fail failed"

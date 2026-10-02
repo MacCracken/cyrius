@@ -3160,6 +3160,9 @@ fn _PARSE_STMT_IMPL(S): i64 {
     # callptr GAINS statement position here: at 111 it hit the `stack var` parser and was a hard
     # error, which the filing recorded as diagnostics-only and was not.
     if (typ >= 136) { if (typ <= 137) { PCMPE(S); if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0; } }
+    # 6.6.13 — f64_le / f64_ge / f64_trunc (164-166). As lib calls they were legal statements;
+    # without this band the builtins would make `f64_trunc(x);` a syntax error (the f64_sqrt lesson).
+    if (typ >= 164) { if (typ <= 166) { PCMPE(S); if (PEEKT(S) != 5) { ERR_EXPECT(S, 5); } STI(S, GTI(S) + 1); return 0; } }
     if (typ == 2) {
         # Could be assignment or fn call as statement
         var noff = PEEKV(S);

@@ -1,0 +1,156 @@
+# f64_le_ge_trunc_builtins.tcyr — 6.6.13: f64_le, f64_ge and f64_trunc are compiler builtins,
+# with the results the retired lib/math.cyr wrappers returned, on EVERY backend.
+#
+# THE CHANGE. Until 6.6.13 the three were lib/math.cyr fns: f64_le / f64_ge called two builtins
+# (`f64_lt(a, b) == 1`, then `f64_eq`), and f64_trunc branched to f64_ceil or f64_floor. Each was a
+# call, 2-3x the cost of the builtins they wrap (issue 2026-09-30-f64-le-ge-trunc-are-calls). Now
+# f64_le / f64_ge lower through the `<=` / `>=` operator compare (x86 setbe + the setnp NaN fold /
+# setae, aarch64 cset ls / ge, cx fle / fge) and f64_trunc through x86 `roundsd imm 3`, aarch64
+# `frintz` and the cx opcode 0x6E ftrunc.
+#
+# WHAT THIS PINS. (1) Every row MOVES its operand or compares the sign bit, so an identity emitter
+# (or a floor / ceil / round wired in by mistake) cannot pass: trunc(-1.5) is -1.0 where floor and
+# round give -2.0, trunc(1.5) is 1.0 where ceil gives 2.0, and trunc(-0.5) must keep the sign of
+# -0. (2) NaN semantics are unchanged: le / ge are 0 when EITHER side is NaN. (3) A differential
+# run over a 24-value special set (both NaN signs, sNaN, both zeros, both infinities, halves,
+# 2^52 and its neighbours, both min subnormals, max finite, 1-ulp, 1.0) compares the builtins with
+# the retired wrapper bodies, bit for bit (NaN results by class), 24 trunc + 1,152 le/ge cases.
+# (4) f64_trunc carries the float-builtin result mark like f64_floor (`* 2.0` and unary minus are
+# float operations on it), while f64_le / f64_ge stay integer booleans. (5) All three still compile
+# in statement position, as the lib calls did.
+#
+# In crossos/ because each row runs three emitters (x86 SSE4.1, aarch64 FRINTZ / cset, cx 0x6E on
+# cxvm). tests/gates/codegen/cx_float_unary_ops_run.sh runs this file on cxvm and natively, and
+# requires the assertion count it derives from this source — so every assert line below runs
+# exactly ONCE (the differential loops count mismatches and assert the count).
+include "lib/assert.cyr"
+include "lib/syscalls.cyr"
+
+# Untyped params: the builtins see raw i64 bits, as the i64-boxed float idiom passes them.
+fn le(a, b) { return f64_le(a, b); }
+fn ge(a, b) { return f64_ge(a, b); }
+fn tr(x) { return f64_trunc(x); }
+
+# The retired lib/math.cyr bodies, verbatim but renamed — the reference the builtins must match.
+fn ref_le(a, b): i64 { if (f64_lt(a, b) == 1) { return 1; } return f64_eq(a, b); }
+fn ref_ge(a, b): i64 { if (f64_gt(a, b) == 1) { return 1; } return f64_eq(a, b); }
+fn ref_trunc(x): i64 { if (f64_lt(x, 0) == 1) { return f64_ceil(x); } return f64_floor(x); }
+
+fn is_nan(x): i64 {
+    if (((x >> 52) & 0x7FF) != 0x7FF) { return 0; }
+    if ((x & 0xFFFFFFFFFFFFF) == 0) { return 0; }
+    return 1;
+}
+
+fn main(): i64 {
+    var nan = 0x7FF8000000000000;
+    var five = 0x4014000000000000;
+
+    test_group("f64_trunc");
+    assert_eq(tr(0x400D99999999999A), 0x4008000000000000, "trunc(3.7) is 3.0");
+    assert_eq(tr(0xC00D99999999999A), 0xC008000000000000, "trunc(-3.7) is -3.0");
+    assert_eq(tr(0x3FF8000000000000), 0x3FF0000000000000, "trunc(1.5) is 1.0 (ceil gives 2.0)");
+    assert_eq(tr(0xBFF8000000000000), 0xBFF0000000000000, "trunc(-1.5) is -1.0 (floor and round give -2.0)");
+    assert_eq(tr(0xBFE0000000000000), 0x8000000000000000, "trunc(-0.5) is -0 (sign kept)");
+    assert_eq(tr(0x3FE0000000000000), 0, "trunc(0.5) is +0");
+    assert_eq(tr(0xBFEFFFFFFFFFFFFF), 0x8000000000000000, "trunc(-(1 - ulp)) is -0");
+    assert_eq(tr(0x8000000000000001), 0x8000000000000000, "trunc(-min subnormal) is -0");
+    assert_eq(tr(0x432FFFFFFFFFFFFF), 0x432FFFFFFFFFFFFE, "trunc(2^52 - 0.5) is 2^52 - 1");
+    assert_eq(tr(0x419D6F3457F2B021), 0x419D6F3454000000, "trunc(123456789.987) is 123456789.0");
+    assert_eq(tr(0x7FEFFFFFFFFFFFFF), 0x7FEFFFFFFFFFFFFF, "trunc(max finite) is itself");
+    assert_eq(tr(0x7FF0000000000000), 0x7FF0000000000000, "trunc(+inf) is +inf");
+    assert_eq(tr(0xFFF0000000000000), 0xFFF0000000000000, "trunc(-inf) is -inf");
+    assert_eq(is_nan(tr(nan)), 1, "trunc(NaN) is a NaN");
+
+    test_group("f64_le / f64_ge");
+    assert_eq(le(0x3FF0000000000000, 0x4000000000000000), 1, "le(1.0, 2.0) is 1");
+    assert_eq(le(0x4000000000000000, 0x3FF0000000000000), 0, "le(2.0, 1.0) is 0");
+    assert_eq(le(five, five), 1, "le(5.0, 5.0) is 1");
+    assert_eq(ge(0x4000000000000000, 0x3FF0000000000000), 1, "ge(2.0, 1.0) is 1");
+    assert_eq(ge(0x3FF0000000000000, 0x4000000000000000), 0, "ge(1.0, 2.0) is 0");
+    assert_eq(ge(five, five), 1, "ge(5.0, 5.0) is 1");
+    assert_eq(le(0xBFF0000000000000, 0x3FF0000000000000), 1, "le(-1.0, 1.0) is 1 (not an integer compare of the bits)");
+    assert_eq(ge(0xBFF0000000000000, 0x3FF0000000000000), 0, "ge(-1.0, 1.0) is 0 (not an integer compare of the bits)");
+    assert_eq(le(0x8000000000000000, 0), 1, "le(-0, +0) is 1");
+    assert_eq(ge(0, 0x8000000000000000), 1, "ge(+0, -0) is 1");
+    assert_eq(le(0xFFF0000000000000, 0x7FF0000000000000), 1, "le(-inf, +inf) is 1");
+    assert_eq(ge(0xFFF0000000000000, 0x7FF0000000000000), 0, "ge(-inf, +inf) is 0");
+    assert_eq(le(nan, five), 0, "le(NaN, 5.0) is 0");
+    assert_eq(le(five, nan), 0, "le(5.0, NaN) is 0");
+    assert_eq(ge(nan, five), 0, "ge(NaN, 5.0) is 0");
+    assert_eq(ge(five, nan), 0, "ge(5.0, NaN) is 0");
+    assert_eq(le(nan, nan), 0, "le(NaN, NaN) is 0");
+    assert_eq(ge(nan, nan), 0, "ge(NaN, NaN) is 0");
+    # Called directly (not through the wrappers): the same lowering in an expression context.
+    assert_eq(f64_le(nan, five) + f64_ge(five, nan), 0, "direct le / ge with a NaN side are 0");
+
+    test_group("result kinds");
+    # f64_le / f64_ge are integer booleans: `+ 1` adds 1, not 1.0's bits.
+    assert_eq(f64_le(0x3FF0000000000000, five) + 1, 2, "f64_le's result is an i64 boolean");
+    assert_eq(f64_ge(five, 0x3FF0000000000000) * 3, 3, "f64_ge's result is an i64 boolean");
+    # f64_trunc carries the float-builtin result mark, as f64_floor does.
+    var v = 0x400D99999999999A;
+    assert_eq(f64_trunc(v) * 2.0, 0x4018000000000000, "f64_trunc(3.7) * 2.0 is 6.0 (a float multiply)");
+    assert_eq(-f64_trunc(v), 0xC008000000000000, "-f64_trunc(3.7) is -3.0 (a sign flip)");
+
+    test_group("differential vs the retired wrappers (24 values)");
+    var s: i64[24];
+    s[0] = 0x7FF8000000000000;  # qNaN
+    s[1] = 0xFFF8000000000000;  # -qNaN
+    s[2] = 0;                   # +0
+    s[3] = 0x8000000000000000;  # -0
+    s[4] = 0x7FF0000000000000;  # +inf
+    s[5] = 0xFFF0000000000000;  # -inf
+    s[6] = 0x3FE0000000000000;  # 0.5
+    s[7] = 0xBFE0000000000000;  # -0.5
+    s[8] = 0x3FF8000000000000;  # 1.5
+    s[9] = 0xBFF8000000000000;  # -1.5
+    s[10] = 0x4004000000000000; # 2.5
+    s[11] = 0xC004000000000000; # -2.5
+    s[12] = 0x400D99999999999A; # 3.7
+    s[13] = 0xC00D99999999999A; # -3.7
+    s[14] = 0x4330000000000000; # 2^52
+    s[15] = 0x432FFFFFFFFFFFFF; # 2^52 - 0.5
+    s[16] = 0xC32FFFFFFFFFFFFF; # -(2^52 - 0.5)
+    s[17] = 1;                  # min subnormal
+    s[18] = 0x8000000000000001; # -min subnormal
+    s[19] = 0x7FEFFFFFFFFFFFFF; # max finite
+    s[20] = 0x3FEFFFFFFFFFFFFF; # 1 - ulp
+    s[21] = 0xBFEFFFFFFFFFFFFF; # -(1 - ulp)
+    s[22] = 0x3FF0000000000000; # 1.0
+    s[23] = 0x7FF4000000000000; # sNaN
+    var bad = 0;
+    var cases = 0;
+    var i = 0;
+    while (i < 24) {
+        var t1 = tr(s[i]);
+        var t0 = ref_trunc(s[i]);
+        if (is_nan(t0) == 1) {
+            if (is_nan(t1) != 1) { bad = bad + 1; }
+        } else {
+            if (t1 != t0) { bad = bad + 1; }
+        }
+        cases = cases + 1;
+        var j = 0;
+        while (j < 24) {
+            if (le(s[i], s[j]) != ref_le(s[i], s[j])) { bad = bad + 1; }
+            if (ge(s[i], s[j]) != ref_ge(s[i], s[j])) { bad = bad + 1; }
+            cases = cases + 2;
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    assert_eq(cases, 1176, "the matrix ran 24 trunc + 1,152 le/ge cases");
+    assert_eq(bad, 0, "the builtins equal the retired wrapper bodies on every case");
+
+    # Statement position: as lib calls these were legal statements, and they still are.
+    f64_trunc(v);
+    f64_le(v, five);
+    f64_ge(v, five);
+    return assert_summary();
+}
+# The exit status IS the summary: main returns it and the top level exits with it. A top-level
+# `main();` + trailing `var r = assert_summary();` would let cycc auto-call main a second time
+# at program end and exit with main's own return value (see src/main.cyr's note on the shape).
+var rc = main();
+syscall(60, rc);

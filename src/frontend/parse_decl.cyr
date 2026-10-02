@@ -526,10 +526,11 @@ fn _resolve_field_base_addr(S, idx, sid): i64 {
 #   * A GLOBAL SLOT INDEX IS NOT A WORD INDEX. `SVCNT` advances by ONE per variable while
 #     `_vars_base` holds its BYTE size, so `EVLOAD(gvi + 1)` reads the NEXT VARIABLE. Every
 #     other global-aggregate consumer already goes through `EVADDR + byte offset`.
-#   * GLOBALS ARE PACKED BY EXACT BYTE SIZE (x86/fixup.cyr sums `_vars_base` with no
-#     round-up below 8), so a 12-byte struct global is followed at +12. A word-granular copy
-#     of `ceil(sz/8)` words would clobber 4 bytes of its neighbour — the same overrun v5.9.36
-#     fixed for the literal's own field stores. The tail is copied at 4/2/1.
+#   * A GLOBAL OCCUPIES EXACTLY ITS BYTE SIZE, and since 6.6.13 the next one starts at ITS
+#     natural alignment (`_GV_ALIGN`, util.cyr: 1/2/4 for a 1/2/4-byte global, 8 otherwise), so
+#     an i32 after a 12-byte struct global packs at +12. A word-granular copy of `ceil(sz/8)`
+#     words would clobber 4 bytes of that neighbour — the same overrun v5.9.36 fixed for the
+#     literal's own field stores. The tail is copied at 4/2/1.
 # Locals address identically (`EFLADDR_X1(named) + off`), which is also what makes this work
 # unchanged inside a coroutine, where `_ECORO_LEA` supplies the heap-frame base.
 # CHANGELOG [6.6.5]
@@ -3002,6 +3003,7 @@ fn PARSE_GVAR_REG(S): i64 {
     _GVAR_VIS(S, gvi, sti);
     SGFI(S, gvi, _gv_ufv(S, sti, psc + ann_sid + ann_scalar + ann_float));   # 6.6.10
     _gv_float_copy(S, gvi, sti, psc + ann_sid + ann_scalar + ann_float);     # 6.6.11
+    _gv_diag_sid(S, gvi, sti, psc + ann_sid + ann_scalar + ann_float + is_struct);   # 6.6.13 I11
     if (ann_float != 0) { _gv_ifs(S, sti, ann_float); }                      # 6.6.10
     if (gvi == vcnt) {
         SVCNT(S, vcnt + 1);
@@ -4863,6 +4865,11 @@ fn PARSE_VAR(S): i64 {
         }
         SLVAR(S, vcnt);
         SGFI(S, vcnt, ufv);   # 6.6.10: see _UFV_G
+        # 6.6.13 I11: an untyped `var g = f(..);` here records f for the Str -> cstring diagnostic,
+        # as PARSE_GVAR_REG does for a global above the first statement (_gv_diag_sid).
+        var gdc = 0;
+        if (pscale == 0 && scalar_type == 0 && lfloat == 0 && slice_elt_w == 0 && dfc == 0) { gdc = _gv_rhs_call_sid(S, scv_start); }
+        SVDSID(S, vcnt, gdc);
         _GVAR_VIS(S, vcnt, GTI(S));   # v6.6.4: stamp visibility — a global registered on the PARSE_PROG path (any `var` after the FIRST top-level statement) skipped PARSE_GVAR_REG entirely and was never private
         SVCNT(S, vcnt + 1);
     }

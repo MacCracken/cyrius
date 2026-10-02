@@ -770,6 +770,7 @@ fn PARSE_RETURN(S): i64 {
                                             if (_tc_alt != 0 - 2125) { ERR_MSG(S, "value-form SIMD arg type mismatch (callee expects f64v4)", 56); }
                                         }
                                     }
+                                    _check_str_cstring_arg(S, _tc_prefi, tcargc, tcnoff);   # 6.6.13 I11
                                     PCMPE(S);
                                     EPUSHR(S);
                                     tcargc = tcargc + 1;
@@ -1666,6 +1667,270 @@ fn _tc_str_literal_arg(S, ti_open, fi): i64 {
     return 0;
 }
 
+# ⭐ 6.6.13 (I11) — THE Str -> `: cstring` WARNING. It typed only an argument whose FIRST token
+# was a `Str` local, on PARSE_FNCALL's path alone: a call result (`f(o, str_from("k"))`), a
+# global, a `: Str` field, a tail call and a method call all compiled silent, `s.data` was
+# reported as the Str itself, and the hint recommended `str_data(x)` — which a `: cstring`
+# param reads past the Str's length (a slice borrows its parent's bytes), so taking the hint
+# turned a warned bug into a silent one. Now ONE read-only helper serves every argument loop
+# (PARSE_FNCALL, `_call_arg_one` — method calls and the struct-valued own calls — and
+# PARSE_RETURN's tail loop) and types the argument only when it is a single primary that ends
+# it: `x`, `f(..)` (the callee's `: Struct` return) or `x.f` (the field's declared type).
+# Anything else (`s + 8`, `s.len`, `load64(p)`, an index, a chain) is left alone. Warning text
+# only: nothing here moves the cursor or emits code, and the inferred-global record it reads
+# (GVDSID) is diagnostic-only, so every binary is byte-identical. CHANGELOG [6.6.13]
+
+# The `)` matching the `(` at token `ti`, or -1 when the input ends first. Read-only.
+fn _tok_close_paren(S, ti): i64 {
+    var depth = 0;
+    var i = ti;
+    var n = GTCNT(S);
+    while (i < n) {
+        var t = TOKTYP(S, i);
+        if (t == 12) { return 0 - 1; }
+        if (t == 10) { depth = depth + 1; }
+        if (t == 11) {
+            depth = depth - 1;
+            if (depth == 0) { return i; }
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+# 1 when token `ti` ends an argument (`,` or `)`).
+fn _tok_ends_arg(S, ti): i64 {
+    var t = TOKTYP(S, ti);
+    if (t == 31) { return 1; }
+    if (t == 11) { return 1; }
+    return 0;
+}
+
+# 1 when the name at offset `noff` is exactly the `n`-byte text `lit`. (cycc does not include
+# lib/string.cyr, so this is the compare.)
+fn _noff_is(S, noff, lit, n): i64 {
+    var i = 0;
+    while (i < n) {
+        if (load8(S + 0xEC00000 + noff + i) != load8(lit + i)) { return 0; }
+        i = i + 1;
+    }
+    if (load8(S + 0xEC00000 + noff + n) != 0) { return 0; }
+    return 1;
+}
+
+# `var g = f(..);` at registration: f's name offset + 1 for the DIAGNOSTIC table (GVDSID), when
+# the declaration is untyped and its initializer is exactly one call; else 0. Always written, so
+# a redeclaration folded onto the slot clears a stale record. f's return is resolved when the
+# check runs, so an f defined after g counts too.
+fn _gv_diag_sid(S, gvi, sti, typed): i64 {
+    var cn = 0;
+    if (typed == 0) { cn = _gv_init_call_sid(S, sti); }
+    SVDSID(S, gvi, cn);
+    return 0;
+}
+fn _gv_init_call_sid(S, sti): i64 {
+    if (TOKTYP(S, sti + 2) != 4) { return 0; }
+    var cn = _gv_rhs_call_sid(S, sti + 3);
+    return cn;
+}
+# The same record from the initializer's first token `ri`: `f(..);` gives f's name offset + 1,
+# anything else 0. PARSE_VAR's global arm (a `var` after the first top-level statement, which
+# never reaches PARSE_GVAR_REG) writes it from here.
+fn _gv_rhs_call_sid(S, ri): i64 {
+    if (TOKTYP(S, ri) != 2) { return 0; }
+    if (TOKTYP(S, ri + 1) != 10) { return 0; }
+    var e = _tok_close_paren(S, ri + 1);
+    if (e < 0) { return 0; }
+    if (TOKTYP(S, e + 1) != 5) { return 0; }
+    return TOKVAL(S, ri) + 1;
+}
+
+# The struct id a NAMED value carries, for the diagnostic only, 0 when untyped. A local decides
+# by itself (`0 - GLTYPE`; an untyped local shadowing a `Str` global is 0, not the global's
+# type). A global: its positive GVTYPE, but only when GVPM marks it a struct — GVTYPE's positive
+# range is shared with scalar widths, so an `i32` global's 4 must not read as struct id 4. Else
+# an inferred global's initializer return (GVDSID). The old check compared a global against the
+# LOCAL encoding `0 - sid`, so a `var g: Str` global never matched.
+fn _diag_name_sid(S, noff): i64 {
+    if (GINFN(S) == 1) {
+        var li = FINDLOCAL(S, noff);
+        if (li >= 0) {
+            var lt = GLTYPE(S, li);
+            if (lt < 0) { if (lt > 0 - 2048) { return 0 - lt; } }
+            return 0;
+        }
+    }
+    var vi = _findvar_core(S, noff);
+    if (vi < 0) { return 0; }
+    var gt = GVTYPE(S, vi);
+    if (gt > 0) { if (GVPM(S, vi) != 0) { return gt; } }
+    var cn = GVDSID(S, vi);
+    if (cn <= 0) { return 0; }
+    var cfi = FINDFN(S, cn - 1);
+    if (cfi < 0) { return 0; }
+    var r = GFRS(S, cfi);
+    if (r < 0) { r = 0; }
+    return r;
+}
+
+var _sca_shape = 0;   # how the argument is written: 0 `x`, 1 `f(..)`, 2 `x.f`
+# What the hint wraps in str_cstr(..): 0 `..`, 1 the base IDENT (`x.data` -> x), 2 the argument
+# as written, 3 the IDENT inside `str_data(x)`.
+var _sca_op = 0;
+# What the argument at the cursor hands a `: cstring` param: 1 a Str, 2 a Str's data pointer
+# (`x.data`, `str_data(..)`), 0 not known — only a SINGLE primary that ends the argument is typed.
+fn _str_arg_kind(S, ssid): i64 {
+    var ti = GTI(S);
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    if (_tok_ends_arg(S, ti + 1) == 1) {
+        _sca_shape = 0;
+        _sca_op = 2;
+        if (_diag_name_sid(S, TOKVAL(S, ti)) == ssid) { return 1; }
+        return 0;
+    }
+    if (TOKTYP(S, ti + 1) == 10) {
+        var r = _str_call_kind(S, ti, ssid);
+        return r;
+    }
+    if (TOKTYP(S, ti + 1) != 41) { return 0; }
+    if (TOKTYP(S, ti + 2) != 2) { return 0; }
+    if (_tok_ends_arg(S, ti + 3) == 0) { return 0; }
+    _sca_shape = 2;
+    var bsid = _diag_name_sid(S, TOKVAL(S, ti));
+    if (bsid <= 0) { return 0; }
+    if (bsid == ssid) {
+        _sca_op = 1;
+        if (_noff_is(S, TOKVAL(S, ti + 2), "data", 4) == 1) { return 2; }
+        return 0;
+    }
+    _sca_op = 2;
+    var fx = FINDFIELD(S, bsid - 1, TOKVAL(S, ti + 2));
+    if (fx < 0) { return 0; }
+    if (GETFTYPE(S, bsid - 1, fx) == ssid) { return 1; }
+    return 0;
+}
+# `f(..)` at token `ti`: a Str when f is declared `: Str`, a data pointer when f is `str_data`.
+fn _str_call_kind(S, ti, ssid): i64 {
+    _sca_shape = 1;
+    _sca_op = 0;
+    var e = _tok_close_paren(S, ti + 1);
+    if (e < 0) { return 0; }
+    if (_tok_ends_arg(S, e + 1) == 0) { return 0; }
+    var cfi = FINDFN(S, TOKVAL(S, ti));
+    if (cfi < 0) { return 0; }
+    if (GFRS(S, cfi) == ssid) {
+        _sca_op = 2;
+        return 1;
+    }
+    if (_noff_is(S, TOKVAL(S, ti), "str_data", 8) == 0) { return 0; }
+    if (TOKTYP(S, ti + 2) == 2) { if (e == ti + 3) { _sca_op = 3; } }
+    return 2;
+}
+
+# The argument as written (`x`, `f(..)`, `x.f`), then what the hint wraps in str_cstr(..).
+fn _sca_print_arg(S): i64 {
+    var ti = GTI(S);
+    PRSTR(S + 0xEC00000 + TOKVAL(S, ti));
+    if (_sca_shape == 1) { _sca_print_call_args(S, ti); }
+    if (_sca_shape == 2) {
+        syscall(SYS_WRITE, 2, ".", 1);
+        PRSTR(S + 0xEC00000 + TOKVAL(S, ti + 2));
+    }
+    return 0;
+}
+# A call's argument list as the message shows it: `()`, `(x)` for one bare IDENT, else `(..)`.
+fn _sca_print_call_args(S, ti): i64 {
+    if (TOKTYP(S, ti + 2) == 11) {
+        syscall(SYS_WRITE, 2, "()", 2);
+        return 0;
+    }
+    if (TOKTYP(S, ti + 2) == 2) { if (TOKTYP(S, ti + 3) == 11) {
+            syscall(SYS_WRITE, 2, "(", 1);
+            PRSTR(S + 0xEC00000 + TOKVAL(S, ti + 2));
+            syscall(SYS_WRITE, 2, ")", 1);
+            return 0;
+        } }
+    syscall(SYS_WRITE, 2, "(..)", 4);
+    return 0;
+}
+fn _sca_print_op(S): i64 {
+    var ti = GTI(S);
+    if (_sca_op == 0) { syscall(SYS_WRITE, 2, "..", 2); }
+    if (_sca_op == 1) { PRSTR(S + 0xEC00000 + TOKVAL(S, ti)); }
+    if (_sca_op == 2) { _sca_print_arg(S); }
+    if (_sca_op == 3) { PRSTR(S + 0xEC00000 + TOKVAL(S, ti + 2)); }
+    return 0;
+}
+
+# A Str-taking sibling of callee `fi` at param `argc`: its `<base>_str` overload, else
+# `<stem>_str` for a callee named `<stem>_cstr` (bayan's `_by_cstr` / `_by_str` pair) — counted
+# only when that sibling's param `argc` is annotated `: Str`. -1 when there is none.
+fn _sca_sibling(S, fi, argc): i64 {
+    var sib = L64(_fnt_ovstr + fi * 8) - 1;
+    if (sib < 0) { sib = _sca_cstr_sibling(S, fi); }
+    if (sib < 0) { return 0 - 1; }
+    if ((L64(_fnt_strmask + sib * 8) & (1 << argc)) == 0) { return 0 - 1; }
+    return sib;
+}
+fn _sca_cstr_sibling(S, fi): i64 {
+    var noff = L64(_fnt_names + fi * 8);
+    var nm = S + 0xEC00000 + noff;
+    var n = 0;
+    while (load8(nm + n) != 0) { n = n + 1; }
+    if (n < 6) { return 0 - 1; }
+    if (n > 250) { return 0 - 1; }
+    if (_noff_is(S, noff + n - 5, "_cstr", 5) == 0) { return 0 - 1; }
+    var buf[256];
+    var j = 0;
+    while (j < n - 4) {
+        store8(&buf + j, load8(nm + j));
+        j = j + 1;
+    }
+    store8(&buf + n - 4, 115);
+    store8(&buf + n - 3, 116);
+    store8(&buf + n - 2, 114);
+    var r = _FINDFN_CSTR(S, &buf, n - 1);
+    return r;
+}
+
+# Warn when the argument at the cursor hands callee `fi`'s `: cstring` param `argc` a Str or a
+# Str's data pointer. Read-only: never moves the cursor, never emits code. The hint never says
+# `str_data` — that is the bug, not the fix.
+fn _check_str_cstring_arg(S, fi, argc, noff): i64 {
+    if (fi < 0) { return 0; }
+    if (_TYPE_CHECK_ENABLED() != 1) { return 0; }
+    if ((L64(_fnt_cstrmask + fi * 8) & (1 << argc)) == 0) { return 0; }
+    var ssid = _STR_SID(S);
+    if (ssid <= 0) { return 0; }
+    var k = _str_arg_kind(S, ssid);
+    if (k == 0) { return 0; }
+    syscall(SYS_WRITE, 2, "warning:", 8);
+    _err_head(S);
+    if (k == 1) { syscall(SYS_WRITE, 2, ": passing Str-typed '", 21); }
+    else { syscall(SYS_WRITE, 2, ": passing a Str's data pointer '", 32); }
+    _sca_print_arg(S);
+    syscall(SYS_WRITE, 2, "' to '", 6);
+    PRSTR(S + 0xEC00000 + noff);
+    syscall(SYS_WRITE, 2, "' which expects a cstring", 25);
+    if (k == 1) { syscall(SYS_WRITE, 2, " (a Str is a {data, len} header, not a char*)\n", 46); }
+    else { syscall(SYS_WRITE, 2, " (a Str's bytes are not NUL-terminated at its length)\n", 54); }
+    _sca_print_hint(S, fi, argc);
+    return 0;
+}
+fn _sca_print_hint(S, fi, argc): i64 {
+    syscall(SYS_WRITE, 2, "  hint: ", 8);
+    var sib = _sca_sibling(S, fi, argc);
+    if (sib >= 0) {
+        syscall(SYS_WRITE, 2, "call '", 6);
+        PRSTR(S + 0xEC00000 + L64(_fnt_names + sib * 8));
+        syscall(SYS_WRITE, 2, "', which takes a Str, or ", 25);
+    }
+    syscall(SYS_WRITE, 2, "pass str_cstr(", 14);
+    _sca_print_op(S);
+    syscall(SYS_WRITE, 2, ") for a NUL-terminated copy, or annotate the param `: Str`\n", 59);
+    return 0;
+}
+
 # ⭐ 6.6.5 — v6.5.3's integer-literal-into-`: cstring` HARD ERROR, extracted from
 # PARSE_FNCALL's argument loop so the method-call path runs it too. v6.5.3 escalated this
 # from a warning to an error precisely because the alternative is a runtime crash — the
@@ -1742,6 +2007,7 @@ fn _call_arg_one(S, fi, uarg, noff, tbl, st): i64 {
         return 0;
     }
     _check_int_lit_cstring_arg(S, fi, uarg, noff);
+    _check_str_cstring_arg(S, fi, uarg, noff);   # 6.6.13 I11
     if (_try_push_str_literal_arg(S, fi, uarg) == 0) {
         if (_try_push_struct_addr_arg(S, fi, uarg) == 0) { PCMPE(S); EPUSHR(S); }
     }
@@ -3115,34 +3381,13 @@ fn PARSE_FNCALL(S, noff): i64 {
                 else { argo = 0; }
                 continue;
             }
-            # v5.10.1 — type-check pass 1: warn when a Str-typed
-            # local/global is passed to a param the callee did NOT
-            # annotate `: Str`. Catches `var s: Str = ...; foo(s);`
-            # where foo's first param is cstring — the consumer-
-            # facing pain shape that ends up in agnosys 1.1.12
-            # (which the v5.10.4 close addresses end-to-end via
-            # the type-inference work landing at v5.10.3). Only
-            # checks IDENT args (FINDLOCAL/FINDVAR lookup); complex
-            # expressions skip until v5.10.3's inference lands.
-            # Gated on `CYRIUS_TYPE_CHECK=1` env (default off);
-            # default-on flips at v5.10.2 once stdlib `: Str`
-            # annotations remove the false-positive flood from
-            # legitimate `str_len(s: Str)` idioms etc.
-            # v5.10.5 — diagnostic hint catalog. The v5.10.3 overload
-            # dispatch routes well-known shapes (println(Str) →
-            # println_str, strlen(Str) → str_len, println(i64) →
-            # println_int) before the type-check fires. What's left
-            # is type-mismatch shapes with no auto-route — those
-            # land here with one-line hints pointing at the
-            # canonical fix:
-            #   - Str → cstring fn (no overload): suggest str_data /
-            #     str_println / annotate the param `: Str`
-            #   - i64 (annotated/inferred) → cstring fn: suggest
-            #     print_num / fmt_int_buf — the value is a NUMBER,
-            #     not a pointer
-            # Flipped default-on at v5.10.5 — the v5.10.4 stdlib
-            # param-side annotations + v5.10.5 overload dispatch
-            # remove the false-positive flood.
+            # The argument type checks (default ON since v5.10.5; `CYRIUS_TYPE_CHECK=0` opts out).
+            # The v5.10.3 overload dispatch above has already routed the well-known shapes
+            # (println(Str) -> println_str, strlen(Str) -> str_len, println(i64) -> println_int);
+            # what is left are mismatches with no route, gated on the callee's param being
+            # EXPLICITLY annotated `: cstring` (v5.10.24 — the old str_mask-cleared polarity
+            # flooded every untyped param that legitimately takes a Str-as-pointer).
+            #
             # v6.5.3 — an integer LITERAL passed to a param explicitly annotated
             # `: cstring` is unambiguously wrong. Unlike an i64 variable or a fn-call
             # result — which cyrius genuinely cannot distinguish from a pointer, per
@@ -3160,62 +3405,11 @@ fn PARSE_FNCALL(S, noff): i64 {
             # path in parse_decl.cyr — `w.pr(42)` into a `: cstring` param compiled clean
             # and SIGSEGV'd where the identical free fn was a hard error. CHANGELOG [6.6.5]
             _check_int_lit_cstring_arg(S, fi, argc, noff);
-            if (_TYPE_CHECK_ENABLED() == 1) { if (PEEKT(S) == 2) {
-                    # v5.10.24 — Phase 2: gate the warning on cstring_mask
-                    # being explicitly SET (param annotated `: cstring`)
-                    # instead of str_mask being CLEARED (the old polarity
-                    # caused the false-positive flood pinned at v5.10.5
-                    # — every untyped-i64 param that legitimately takes
-                    # a Str-as-pointer triggered a false warning). Now
-                    # the warning only fires when the param is EXPLICITLY
-                    # asking for cstring semantics.
-                    var _tc_cmask = L64(_fnt_cstrmask + fi * 8);
-                    if (_tc_cmask & (1 << argc)) {
-                        var _tc_arg_noff = PEEKV(S);
-                        var _tc_typ = 0;
-                        if (GINFN(S) == 1) {
-                            var _tc_lli = FINDLOCAL(S, _tc_arg_noff);
-                            if (_tc_lli >= 0) { _tc_typ = GLTYPE(S, _tc_lli); }
-                        }
-                        if (_tc_typ == 0) {
-                            var _tc_vi = FINDVAR(S, _tc_arg_noff);
-                            if (_tc_vi >= 0) { _tc_typ = GVTYPE(S, _tc_vi); }
-                        }
-                        var _tc_str_sid = _STR_SID(S);
-                        if (_tc_str_sid > 0) {
-                            if (_tc_typ == 0 - _tc_str_sid) {
-                                syscall(SYS_WRITE, 2, "warning:", 8);
-                                _err_head(S);
-                                syscall(SYS_WRITE, 2, ": passing Str-typed '", 21);
-                                PRSTR(S + 0xEC00000 + _tc_arg_noff);
-                                syscall(SYS_WRITE, 2, "' to '", 6);
-                                PRSTR(S + 0xEC00000 + noff);
-                                syscall(SYS_WRITE, 2, "' which expects a cstring\n  hint: use str_data(", 47);
-                                PRSTR(S + 0xEC00000 + _tc_arg_noff);
-                                syscall(SYS_WRITE, 2, ") for raw bytes, str_println(", 29);
-                                PRSTR(S + 0xEC00000 + _tc_arg_noff);
-                                syscall(SYS_WRITE, 2, ") for printing, or annotate the param `: Str`\n", 46);
-                            }
-                        }
-                    }
-                    # v5.10.24 — Result/Option/Tagged param checks.
-                    # Caller passes a value typed differently than the
-                    # param's annotation → warning. These three are all
-                    # i64-shape at runtime (heap pointer to tagged
-                    # union); the type system uses them for call-site
-                    # SAFETY, not for codegen.
-                    #
-                    # Mismatch shapes that surface:
-                    #   - Result-typed local passed to non-Result param
-                    #     → warn (caller probably forgot to unwrap)
-                    #   - Str-typed local passed to Result param
-                    #     → warn (probably wrong arg)
-                    # The check is conservative: only fires when the
-                    # callee param IS explicitly typed AND the arg has
-                    # a different explicit annotation. Untyped-i64 args
-                    # to Result-typed params don't warn (could be
-                    # `result_unwrap`-result-as-i64, valid pattern).
-                } }
+            # A Str (or a Str's data pointer) into a `: cstring` param: a warning, from the ONE
+            # helper every argument loop shares. Its hint never suggests `str_data(x)` — a Str's
+            # bytes are not NUL-terminated at its length, so that is the bug, not the fix.
+            # CHANGELOG [6.6.13]
+            _check_str_cstring_arg(S, fi, argc, noff);   # 6.6.13 I11
             # Auto-coercion: if this param is : Str and the arg is a string literal,
             # emit str_from(literal) instead of the raw cstr pointer.
             # 6.6.5: extracted to `_try_push_str_literal_arg`, shared with the method-call

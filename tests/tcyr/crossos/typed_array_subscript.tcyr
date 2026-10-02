@@ -35,9 +35,14 @@ var G_U16: u16[3];
 var G_U16_CAN = 0x2222222222222222;
 var G_I16: i16[3];
 var G_I16_CAN = 0x3333333333333333;
+# A 12-byte array is followed by 4 bytes of padding before an i64 (6.6.13: globals start at
+# their natural alignment), so an i32 canary sits directly after it, at +12, where an 8-byte
+# store to element [2] still lands; the i64 canary stays after that.
 var G_U32: u32[3];
+var G_U32_CAN32: i32 = 0x44444444;
 var G_U32_CAN = 0x4444444444444444;
 var G_I32: i32[3];
+var G_I32_CAN32: i32 = 0x55555555;
 var G_I32_CAN = 0x5555555555555555;
 var G_I64: i64[4];
 var G_I64_CAN = 0x6666666666666666;
@@ -70,6 +75,10 @@ fn globals_every_width(): i64 {
     assert_eq(G_I8_CAN, 0x1111111111111111, "global i8: canary after the array");
     assert_eq(G_U16_CAN, 0x2222222222222222, "global u16: canary after the array");
     assert_eq(G_I16_CAN, 0x3333333333333333, "global i16: canary after the array");
+    assert_eq(&G_U32_CAN32 - &G_U32, 12, "global u32: the i32 canary is directly after the array");
+    assert_eq(&G_I32_CAN32 - &G_I32, 12, "global i32: the i32 canary is directly after the array");
+    assert_eq(G_U32_CAN32, 0x44444444, "global u32: i32 canary directly after the array");
+    assert_eq(G_I32_CAN32, 0x55555555, "global i32: i32 canary directly after the array");
     assert_eq(G_U32_CAN, 0x4444444444444444, "global u32: canary after the array");
     assert_eq(G_I32_CAN, 0x5555555555555555, "global i32: canary after the array");
     assert_eq(G_I64_CAN, 0x6666666666666666, "global i64: canary after the array");

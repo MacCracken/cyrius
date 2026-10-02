@@ -1,0 +1,92 @@
+# fork_then_thread.tcyr — CROSS-HOST: a child made by `sys_fork()` can create and join a thread.
+# Runs on ecb (macOS arm64) + ach (Intel Mac) + pi (aarch64) + Linux x86_64 through the release
+# gate's cross-OS leg; on Windows it asserts its premise (no fork) and on agnos the body is
+# skipped.
+#
+# ⛔ WHY (6.6.13). On arm64 macOS the stdlib's sys_fork was the aarch64 peer's
+# `clone(SIGCHLD, ...)`, which the Mach-O syscall translation turns into Darwin's RAW BSD fork.
+# That creates the child behind libSystem's back: no atfork handlers, no libpthread child
+# re-initialisation. thread_create there IS libSystem `pthread_create` (__got[5]), and in such a
+# child it ran on libpthread state that still described the parent and died of SIGSEGV before
+# returning — every arm64-macOS fork-then-thread program, e.g. a daemon that forks and then
+# starts a worker pool, or a test harness that forks per trial. sys_fork now calls libSystem
+# `fork()` through the Mach-O __got (syscall(1701)). Cases 1 and 2 are the filed repro's
+# (docs/development/issues/repros/2026-10-01-macos-arm64-thread-create-in-fork-child-sigsegv.cyr):
+# on 6.6.12 ecb both read 111 (100 + SIGSEGV). CHANGELOG [6.6.13]
+#
+# The child never asserts — its verdict is its exit status, which the parent decodes, so a
+# crash reads as 100 + the signal number rather than as a missing summary line.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+include "lib/thread.cyr"
+
+var _ftt_word = 0;
+
+fn _ftt_body(arg): i64 {
+    _ftt_word = _ftt_word + arg;
+    return 0;
+}
+
+#ifndef CYRIUS_TARGET_WIN
+#ifndef CYRIUS_TARGET_AGNOS
+# The child's side. Exits 7 for the control; otherwise 0 only if thread_create returned a
+# handle (5 if not), the join succeeded (6 if not), and the body really ran (4 if not).
+fn _ftt_child(which): i64 {
+    if (which == 0) { sys_exit(7); }
+    _ftt_word = 0;
+    var th = thread_create(&_ftt_body, 5);
+    if (th == 0) { sys_exit(5); }
+    if (thread_join(th) != 0) { sys_exit(6); }
+    if (_ftt_word != 5) { sys_exit(4); }
+    sys_exit(0);
+    return 0;
+}
+
+# Fork; the child runs `which` and exits. Returns the child's exit code, 100 + the signal that
+# killed it, 99 if fork failed, or 98 if the wait failed.
+fn _ftt_case(which): i64 {
+    var pid = sys_fork();
+    if (pid < 0) { return 99; }
+    if (pid == 0) { _ftt_child(which); }
+    var st = 0;
+    if (sys_waitpid(pid, &st, 0) != pid) { return 98; }
+    if (WIFSIGNALED(st) == 1) { return 100 + WTERMSIG(st); }
+    return WEXITSTATUS(st);
+}
+#endif
+#endif
+
+fn main(): i64 {
+    alloc_init();
+    test_group("a fork child can create and join a thread");
+    #ifdef CYRIUS_TARGET_WIN
+    # The premise of the skip, asserted: this row goes red the day PE grows a fork, which is the
+    # signal to un-skip the body below.
+    assert_eq(sys_fork(), 0 - 1, "premise: PE has no fork (sys_fork fails closed), so there is no child to test");
+    #endif
+    #ifdef CYRIUS_TARGET_AGNOS
+    assert_eq(THREADS_CONCURRENT, 0, "agnos: thread bodies run inline, so a fork child never reaches a thread library");
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_AGNOS
+    assert_eq(_ftt_case(0), 7, "control: a child that only exits reports 7 (fork itself works)");
+    assert_eq(_ftt_case(1), 0, "the child creates and joins a thread, and the body runs (111 = killed by SIGSEGV)");
+
+    test_group("…also after the parent has run a thread of its own");
+    _ftt_word = 0;
+    var t = thread_create(&_ftt_body, 3);
+    assert_neq(t, 0, "the parent's thread_create returns a handle");
+    assert_eq(thread_join(t), 0, "the parent joins it");
+    assert_eq(_ftt_word, 3, "the parent's body ran");
+    assert_eq(_ftt_case(2), 0, "a child forked after that creates and joins a thread too");
+    assert_eq(_ftt_word, 3, "the child's thread wrote the child's copy, not the parent's");
+    #endif
+    #endif
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);

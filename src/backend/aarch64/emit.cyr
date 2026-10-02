@@ -1764,10 +1764,11 @@ fn _macho_arm_routes(n): i64 {
     # side after it drifted to 9 entries against ~40 real routes; this removes the second, larger
     # one rather than re-deriving it by hand a third time.
     if (n < 0) { return 1; }
-    # The two __got reroutes, handled in parse_expr BEFORE the number reaches ESYSXLAT, so they
+    # The three __got reroutes, handled in parse_expr BEFORE the number reaches ESYSXLAT, so they
     # are routed despite having no row. Same exemption the x86 twin lists for 35 / 228.
     if (n == 228) { return 1; }   # → EMACHO_CLOCK_ARM (__got[6] _clock_gettime_nsec_np)
     if (n == 1700) { return 1; }  # → EMACHO_PTHREAD_CREATE_ARM (__got[5] _pthread_create)
+    if (n == 1701) { return 1; }  # → EMACHO_FORK_ARM (__got[7] _fork, __got[8] ___error)
     _esx_qon = 1; _esx_q = n; _esx_hit = 0;
     ESYSXLAT(0);
     _esx_qon = 0;
@@ -1948,6 +1949,37 @@ fn EMACHO_PTHREAD_CREATE_ARM(S): i64 {
     EPOPARG(S, 0);                 # ldr x0, [sp], #16 — &pthread_t out
     EW(S, 0x910043FF);             # add sp, sp, #16 — discard sc_num
     _EMACHO_BLR_GOT(S, 5);         # __got[5] = _pthread_create; returns 0 / errno in x0
+    return 0;
+}
+
+# 6.6.13 — arm64-macOS `syscall(1701)` → libSystem `fork()` through __got[7], with errno read
+# through __got[8] `___error` on failure. lib/syscalls_aarch64_linux.cyr's sys_fork spells it
+# under CYRIUS_TARGET_MACOS; 1701 is in the 1700+ "__got-bound libSystem routine" sub-band.
+#
+# ⛔ WHY NOT THE RAW BSD fork (#2) THE clone ROW STILL TRANSLATES TO. A raw svc creates the child
+# behind libSystem's back: no atfork handlers run, and libpthread's child re-initialisation
+# (the thread list reset to the calling thread, per-process state such as the cached task port)
+# never happens. The child then runs on libpthread state that still describes the parent, and
+# its first `pthread_create` (thread_create, __got[5]) dies of SIGSEGV. Measured on ecb with a
+# C probe and no cyrius code at all: raw svc fork + pthread_create → SIGSEGV, libSystem fork()
+# + pthread_create → exit 0. libSystem fork() returns 0 in the child, so no x1 fixup is needed.
+#
+# ⚠ sxtw IS LOAD-BEARING. fork() returns pid_t, a 32-bit int, and AAPCS64 leaves the upper 32
+# bits of x0 unspecified for an int result: without the sign extension a -1 can read as
+# 4294967295, which the caller's `pid < 0` takes for a parent holding a child pid.
+# ⚠ The failure value stays -errno (cmn/b.ne skip the ___error call on success), the same shape
+# the raw path's csneg produced — lib/process.cyr's `Err(0 - pid)` relies on it (measured -35,
+# EAGAIN, under `ulimit -u 1` on ecb, before and after).
+# Stack on entry (argc==1): [sc_num]. Encodings produced by aarch64-linux-gnu-as.
+fn EMACHO_FORK_ARM(S): i64 {
+    EW(S, 0x910043FF);             # add sp, sp, #16 — discard sc_num
+    _EMACHO_BLR_GOT(S, 7);         # __got[7] = _fork; pid_t in w0
+    EW(S, 0x93407C00);             # sxtw x0, w0 — pid_t is int (see above)
+    EW(S, 0xB100041F);             # cmn x0, #1 — failed?
+    EW(S, 0x540000C1);             # b.ne +24 — no: skip the errno path (3 + 2 instructions)
+    _EMACHO_BLR_GOT(S, 8);         # __got[8] = ___error; int *errno in x0
+    EW(S, 0xB9800000);             # ldrsw x0, [x0] — errno
+    EW(S, 0xCB0003E0);             # neg x0, x0 — return -errno, as the raw path did
     return 0;
 }
 
@@ -3209,6 +3241,14 @@ fn EF64CEIL(S): i64 {
 fn EF64ROUND(S): i64 {
     EW(S, 0x9E670000);   # fmov d0, x0
     EW(S, 0x1E644000);   # frintn d0, d0
+    EW(S, 0x9E660000);   # fmov x0, d0
+    return 0;
+}
+
+# frintz d0, d0  (round toward zero) — the f64_trunc builtin (6.6.13)
+fn EF64TRUNC(S): i64 {
+    EW(S, 0x9E670000);   # fmov d0, x0
+    EW(S, 0x1E65C000);   # frintz d0, d0
     EW(S, 0x9E660000);   # fmov x0, d0
     return 0;
 }

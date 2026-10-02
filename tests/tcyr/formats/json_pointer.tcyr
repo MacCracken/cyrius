@@ -53,7 +53,7 @@ assert_eq(bayan_json_v_pointer_cstr(doc1, str_data(str_from("")), 0), doc1, "exp
 test_group("object key lookup");
 var doc2 = bayan_json_v_parse_buf("{\"name\":\"alice\",\"age\":30}", 25);
 assert_eq(bayan_json_v_int(bayan_json_v_pointer(doc2, str_from("/age"))), 30, "/age = 30");
-assert(streq(str_data(bayan_json_v_str(bayan_json_v_pointer(doc2, str_from("/name")))), "alice") == 1, "/name = alice");
+assert(str_eq_cstr(bayan_json_v_str(bayan_json_v_pointer(doc2, str_from("/name"))), "alice") == 1, "/name = alice");
 assert_eq(bayan_json_v_pointer(doc2, str_from("/missing")), 0, "missing key = 0");
 
 # ── Array index ─────────────────────────────────────────────────────
@@ -72,7 +72,7 @@ assert_eq(bayan_json_v_pointer(doc3, str_from("/abc")), 0, "/abc not a number");
 test_group("deep nested mixed");
 var doc4 = bayan_json_v_parse_buf("{\"users\":[{\"id\":1,\"name\":\"a\"},{\"id\":2,\"name\":\"b\"}]}", 51);
 assert_eq(bayan_json_v_int(bayan_json_v_pointer(doc4, str_from("/users/0/id"))), 1, "/users/0/id = 1");
-assert(streq(str_data(bayan_json_v_str(bayan_json_v_pointer(doc4, str_from("/users/0/name")))), "a") == 1, "/users/0/name = a");
+assert(str_eq_cstr(bayan_json_v_str(bayan_json_v_pointer(doc4, str_from("/users/0/name"))), "a") == 1, "/users/0/name = a");
 assert_eq(bayan_json_v_int(bayan_json_v_pointer(doc4, str_from("/users/1/id"))), 2, "/users/1/id = 2");
 assert_eq(bayan_json_v_pointer(doc4, str_from("/users/2/id")), 0, "OOB user = 0");
 assert_eq(bayan_json_v_pointer(doc4, str_from("/users/0/missing")), 0, "missing nested key = 0");
@@ -108,7 +108,7 @@ bayan_json_v_obj_set(rfc, str_from("m~n"), bayan_json_v_int_new(8));
 # Outliers — different shapes, kept inline:
 assert_eq(bayan_json_v_pointer(rfc, str_from("")), rfc, "\"\" = whole doc");
 assert_eq(bayan_json_v_pointer(rfc, str_from("/foo")), arr, "/foo = arr");
-assert(streq(str_data(bayan_json_v_str(bayan_json_v_pointer(rfc, str_from("/foo/0")))), "bar") == 1, "/foo/0 = bar");
+assert(str_eq_cstr(bayan_json_v_str(bayan_json_v_pointer(rfc, str_from("/foo/0"))), "bar") == 1, "/foo/0 = bar");
 
 # Homogeneous (path → int) cases — table-driven via test_each.
 # Demonstrates the v5.7.43 lib/test.cyr API on a real corpus that

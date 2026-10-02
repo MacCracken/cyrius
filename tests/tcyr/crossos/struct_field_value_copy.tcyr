@@ -245,6 +245,9 @@ var GCC: Pt = GFO.b.v;
 var GCQ: Q = GFQ.q;
 var GCT = HT12 { 1, 2, 3, 7, 8 };
 var GCT12: T12 = GCT.t;
+# 6.6.13: globals start at their natural alignment, so the i64 after a 12-byte global sits at
+# +16 and a 16-byte over-copy would land in padding. The i32 guard packs at +12, directly after.
+var GCT12_G: i32 = 0x5A5A5A5A;
 var GCT12_C = 0x5A5A5A5A5A5A5A5A;
 
 test_group("a struct-typed field passed as a by-value struct argument (6.6.12)");
@@ -272,7 +275,9 @@ assert_eq(GCF.x * 10 + GCF.y, 34, "var GCF: Pt = GFA.v; a global's field");
 assert_eq(GCC.x * 10 + GCC.y, 34, "var GCC: Pt = GFO.b.v; a two-level chain");
 assert_eq(GCQ.a + GCQ.b * 10 + GCQ.c * 100, 321, "var GCQ: Q = GFQ.q; 24 B");
 assert_eq(GCT12.a + GCT12.b * 10 + GCT12.c * 100, 321, "a 12 B struct from a field");
-assert_eq(GCT12_C, 0x5A5A5A5A5A5A5A5A, "... copied byte-exact: the global after it is untouched");
+assert_eq(&GCT12_G - &GCT12, 12, "... the i32 guard sits directly after the 12-byte global");
+assert_eq(GCT12_G, 0x5A5A5A5A, "... copied byte-exact: the global after it is untouched");
+assert_eq(GCT12_C, 0x5A5A5A5A5A5A5A5A, "... and the i64 after that");
 assert_eq(&GCB - &GCA, 16, "GCB owns its 16 bytes");
 GCA.x = 9; GFA.v.y = 8;
 assert_eq(GCB.x * 10 + GCB.y + GCF.x * 1000 + GCF.y * 100, 3434, "independent: a later write to the source does not show");
