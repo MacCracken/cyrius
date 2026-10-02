@@ -1,0 +1,521 @@
+# tls_native_client_auth.tcyr — 6.6.14 (CVE-64): a native server that asks for a client
+# certificate AUTHENTICATES the client, over TLS 1.3 and TLS 1.2 alike, on every host target.
+#
+# THE DEFECTS (premise-checked on 6.6.13):
+#   1. the TLS 1.2 server sent no CertificateRequest and never read the verify mode. A server ctx
+#      accepts 1.2 by default, so ANY client that offered only TLS 1.2 completed the handshake
+#      UNAUTHENTICATED against a server that required a certificate — and the 1.2 client failed
+#      every server that asked for one (TLS_ERR_BAD_HANDSHAKE).
+#   2. the TLS 1.3 server checked POSSESSION (the CertificateVerify against the presented leaf),
+#      never a chain: a self-signed, expired or foreign-CA leaf was an identity, and a server with
+#      no trust roots accepted every client.
+#   3. tls_set_verify mapped every non-zero OpenSSL mode to TLS_VERIFY_PEER, so
+#      SSL_VERIFY_FAIL_IF_NO_PEER_CERT never reached native.
+#   4. the native peer getters read the client-side slot, so a server could not see who connected.
+#
+# HOW IT RUNS EVERYWHERE, SINGLE-THREADED (threads run inline on cass and ach, and native TLS does
+# not run over Winsock sockets at all): both ends are the REAL drivers — tls_native_connect, and
+# lib/tls.cyr's tls_accept_alloc_in + tls_accept_complete with the consumer's hook calling
+# tls_set_verify — over an in-memory transport (tls_native_set_transport) with a deterministic
+# entropy source (tls_native_set_entropy) and a pinned clock. A row is REPLAYED to a fixed point:
+# each round runs the client from scratch against everything the server wrote last round, then the
+# server from scratch against everything the client just wrote; a read past the end of the log is
+# EOF. Determinism (seeded entropy per role, RFC 6979 ECDSA, PureEdDSA) makes every replay of a
+# side byte-identical on its common prefix, so each round moves the handshake one flight further,
+# and the row ends when neither log grows. The client then sends "ping" and the server answers
+# "pong", so a row that completes proves both ends hold the same keys.
+#
+# ROWS, each in TLS 1.3 and with the client pinned to TLS 1.2 (the server keeps 1.2..1.3): no
+# certificate under PEER (accepted, no identity) and under FAIL_IF_NO_PEER_CERT; P-256, Ed25519
+# and P-384 leaves from the trusted CA; refusals — an untrusted self-signed leaf, a foreign CA's
+# leaf, an expired leaf, a serverAuth-only leaf, the trusted leaf signed by another key, a server
+# with no roots; possession — the CertificateVerify removed by a tampering transport, and (1.2) an
+# unrequested CertificateVerify after an empty Certificate; and a server that does not ask.
+# MUTATIONS measured RED (6.6.14): the 1.2 CertificateRequest dropped (37 assertions), the chain
+# check dropped (40), tls_set_verify's FAIL bit dropped (6), the 1.2 client's CertificateRequest
+# branch disabled (37), the getters reading SERVER_CERT (12), the clientAuth EKU check dropped
+# (8), the 1.2 CertificateVerify verdict ignored (4), the 1.2 CertificateVerify not read (21), the
+# 1.2 leftover-message check dropped (1), the 1.2 FAIL_IF_NO_PEER_CERT check disabled (2). The
+# 6.6.13 lib fails 45 of the 193.
+#
+# The fixtures (P-256 CA "mtls-ca", every leaf valid 2025-01-01 .. 2049-12-31 except the expired
+# one, notAfter 2027-01-01) are read at a pinned clock of 2030-01-01, so no row is a time bomb.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/io.cyr"
+include "lib/tls.cyr"
+
+enum MxHandle { MX_CLIENT = 1; MX_SERVER = 2; }
+var MX_LOG_CAP = 262144;
+var MX_ROUNDS_MAX = 10;
+
+# The fixtures: DER certificates and their PKCS#8 keys (generated with openssl for this test).
+var _mx_ca = 0;
+var _mx_ca_n = 363;
+var _mx_ca_key = 0;
+var _mx_ca_key_n = 138;
+var _mx_srv = 0;
+var _mx_srv_n = 439;
+var _mx_srv_key = 0;
+var _mx_srv_key_n = 138;
+var _mx_cli = 0;
+var _mx_cli_n = 414;
+var _mx_cli_key = 0;
+var _mx_cli_key_n = 138;
+var _mx_cliEd = 0;
+var _mx_cliEd_n = 372;
+var _mx_cliEd_key = 0;
+var _mx_cliEd_key_n = 48;
+var _mx_cli384 = 0;
+var _mx_cli384_n = 445;
+var _mx_cli384_key = 0;
+var _mx_cli384_key_n = 185;
+var _mx_self = 0;
+var _mx_self_n = 399;
+var _mx_self_key = 0;
+var _mx_self_key_n = 138;
+var _mx_cliOther = 0;
+var _mx_cliOther_n = 420;
+var _mx_cliOther_key = 0;
+var _mx_cliOther_key_n = 138;
+var _mx_cliExp = 0;
+var _mx_cliExp_n = 419;
+var _mx_cliExp_key = 0;
+var _mx_cliExp_key_n = 138;
+var _mx_cliSrvEku = 0;
+var _mx_cliSrvEku_n = 427;
+var _mx_cliSrvEku_key = 0;
+var _mx_cliSrvEku_key_n = 138;
+
+fn _mx_fixtures(): i64 {
+    _mx_ca = hex_decode("308201673082010ea00302010202142d30966ec73d44673b1b19a05ddd4cb4e46e3379300a06082a8648ce3d04030230123110300e06035504030c076d746c732d6361301e170d3235303130313030303030305a170d3439313233313030303030305a30123110300e06035504030c076d746c732d63613059301306072a8648ce3d020106082a8648ce3d03010703420004431236818f70a0a845db41b1eacde77db534414353c6db5d825b2baab3e2b265ddd3f493b2b9b09e25a47e194ea086a3fbeb8a2649ba44af6f0002a9bfdb6b38a3423040300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106301d0603551d0e041604140974887636a5881b8b22a95ab5e91f30e1a6bd06300a06082a8648ce3d040302034700304402207ccbb84ac61e6f6a78fac625ce49a86c4da2eaad993f99591c75cfc154f5686b02203934af5b1e13cc0c07c2d93036ec92d2aa2bd50a19d968fa37e571b042283cc4", 726);
+    _mx_ca_key = hex_decode("308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420b40d8e0187d6a902e02b63c10c2f26eff674e0a302f2d2f94ba472bca461b2efa14403420004431236818f70a0a845db41b1eacde77db534414353c6db5d825b2baab3e2b265ddd3f493b2b9b09e25a47e194ea086a3fbeb8a2649ba44af6f0002a9bfdb6b38", 276);
+    _mx_srv = hex_decode("308201b330820158a003020102021455467366670d68f3ddcf3863ab923cb68bb65274300a06082a8648ce3d04030230123110300e06035504030c076d746c732d6361301e170d3235303130313030303030305a170d3439313233313030303030305a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d03010703420004a0e41eb7cb2a8d46dd7440fb89b5cec545b01100fb68a0372bb1f80151a15b16beb6d2718328b4ac9cef4a18f408677393ad858bebb5c6d897d235cce8b8f4b0a3818930818630090603551d1304023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b0601050507030130140603551d11040d300b82096c6f63616c686f7374301d0603551d0e0416041440e27d855342c23b0e788074331c8a5040ff7cfc301f0603551d230418301680140974887636a5881b8b22a95ab5e91f30e1a6bd06300a06082a8648ce3d0403020349003046022100ec1305f129caabfa468da2cdf004f4b60308d1154ea35edd9e01c2c1f55e904a02210099a5d1f34484c676a2e126720cf5534c1502ac98a6ef1fd188812ebdff4c6875", 878);
+    _mx_srv_key = hex_decode("308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420ed0735a3ad60be213f0651d7d5983db819d0623e9ad19828b5eb47fb282e719da14403420004a0e41eb7cb2a8d46dd7440fb89b5cec545b01100fb68a0372bb1f80151a15b16beb6d2718328b4ac9cef4a18f408677393ad858bebb5c6d897d235cce8b8f4b0", 276);
+    _mx_cli = hex_decode("3082019a30820141a003020102021455467366670d68f3ddcf3863ab923cb68bb6526f300a06082a8648ce3d04030230123110300e06035504030c076d746c732d6361301e170d3235303130313030303030305a170d3439313233313030303030305a30153113301106035504030c0a636c69656e742d6f6e653059301306072a8648ce3d020106082a8648ce3d03010703420004fc20cb7eca3b0cc1f675cc405a8c7b221bd0e166a21c727dfaff0a4a5fd5ff7a9a360a86edad70a4fea87b60b20729e28a4ae824400137f4fcfe2fbf3da78902a372307030090603551d1304023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b06010505070302301d0603551d0e0416041443be96c0addbff4bc1e3db7b3e0f27a52f0ec81d301f0603551d230418301680140974887636a5881b8b22a95ab5e91f30e1a6bd06300a06082a8648ce3d04030203470030440220695d693f37c21c5ce66e702b7777a66f1956454dce06d1f8a3adb22b33ebe5e602206adc0c91c7afa344abed20a7b51060600f9e3a43cc6d233bb173b8e2feccfa2b", 828);
+    _mx_cli_key = hex_decode("308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420a2d71eae357e92e6407daece9f031cbd064824d72b02b48f59debef30c84318ea14403420004fc20cb7eca3b0cc1f675cc405a8c7b221bd0e166a21c727dfaff0a4a5fd5ff7a9a360a86edad70a4fea87b60b20729e28a4ae824400137f4fcfe2fbf3da78902", 276);
+    _mx_cliEd = hex_decode("3082017030820116a003020102021455467366670d68f3ddcf3863ab923cb68bb65271300a06082a8648ce3d04030230123110300e06035504030c076d746c732d6361301e170d3235303130313030303030305a170d3439313233313030303030305a30193117301506035504030c0e636c69656e742d65643235353139302a300506032b6570032100c83b02549919519db06a58556e5c6a4e7ee2a17ab5ad3cb8cc17ff1e4d5d93b8a372307030090603551d1304023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b06010505070302301d0603551d0e041604147767ad434c059dacf3d41749cdef07e7606886db301f0603551d230418301680140974887636a5881b8b22a95ab5e91f30e1a6bd06300a06082a8648ce3d0403020348003045022100bd7c2c0e071dd117092706135b3fa5c35c490e50d82a94f48eb988bf4ddde95e02202db50974a778796d9ee543f3f633cec5411cd813502f71903f887f5ee7c14bf7", 744);
+    _mx_cliEd_key = hex_decode("302e020100300506032b65700422042057d8d63bdb4ba6d18d98f74f6ae8d180078043ed34ae450c058d18265ae7fa85", 96);
+    _mx_cli384 = hex_decode("308201b93082015fa003020102021455467366670d68f3ddcf3863ab923cb68bb65270300a06082a8648ce3d04030230123110300e06035504030c076d746c732d6361301e170d3235303130313030303030305a170d3439313233313030303030305a30163114301206035504030c0b636c69656e742d703338343076301006072a8648ce3d020106052b810400220362000498473d3342c6765b5696c5862d07e56810355863dd5d486fcdc9b8c64a022f7a74d774e779163424700554f4dd01e35e96ab5927ef632570d759fc22477ba47669dcc7a0796d188b72a64cfb0a7f8e0d383c5e1c888ffd60bb9d9d6d10f628fda372307030090603551d1304023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b06010505070302301d0603551d0e04160414be8bbe8a129376b254bb22965d19519731a248fe301f0603551d230418301680140974887636a5881b8b22a95ab5e91f30e1a6bd06300a06082a8648ce3d0403020348003045022100e91238a6d0ef6fef4840d178db99440019c341b3aa039994a674d11660540cfc0220563c44258ff46a3bb641368677268b6b93562bc339fe98b83ca66a4a9d8ddcac", 890);
+    _mx_cli384_key = hex_decode("3081b6020100301006072a8648ce3d020106052b8104002204819e30819b0201010430a4da9dfb6052c1a39f140e2624e83c5097550a0d805a3fd01b6496f6d34b855d46bd09d0c2173f003ddb19c345c120b6a1640362000498473d3342c6765b5696c5862d07e56810355863dd5d486fcdc9b8c64a022f7a74d774e779163424700554f4dd01e35e96ab5927ef632570d759fc22477ba47669dcc7a0796d188b72a64cfb0a7f8e0d383c5e1c888ffd60bb9d9d6d10f628fd", 370);
+    _mx_self = hex_decode("3082018b30820131a00302010202147d0d9d869cb5db3993980e27f9128540719505a9300a06082a8648ce3d040302301c311a301806035504030c11636c69656e742d73656c667369676e6564301e170d3235303130313030303030305a170d3439313233313030303030305a301c311a301806035504030c11636c69656e742d73656c667369676e65643059301306072a8648ce3d020106082a8648ce3d03010703420004cce65d3c7b71a3cbea1005fd156d20e73e2617b5d8e7e25c9633e6b59a810bbd353e56b0247c3c698e8c6c014e4bf6df20408c94828039a4192d25b6db3d7b39a351304f30090603551d1304023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b06010505070302301d0603551d0e041604146f3564ae9957540aa55a5219469242cf83ec9f4d300a06082a8648ce3d0403020348003045022100bc3785d30d472f182e44d66e86eace45c46bfc55b392a27291ca46e830c1643802201fc1bc60163c00c408216adce44b21fd57ed4fb98f4b1860512ffe4ff33740f6", 798);
+    _mx_self_key = hex_decode("308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104205f8c3bd97a39c81c6dd3f21ff59f919e9e3eae3e8c4865703e5af43efcdcc7c1a14403420004cce65d3c7b71a3cbea1005fd156d20e73e2617b5d8e7e25c9633e6b59a810bbd353e56b0247c3c698e8c6c014e4bf6df20408c94828039a4192d25b6db3d7b39", 276);
+    _mx_cliOther = hex_decode("308201a030820147a00302010202141764f0d0330e763094f8ffc428100a83c84490de300a06082a8648ce3d04030230133111300f06035504030c086f746865722d6361301e170d3235303130313030303030305a170d3439313233313030303030305a301a3118301606035504030c0f636c69656e742d6f746865722d63613059301306072a8648ce3d020106082a8648ce3d030107034200041e8449d986e26988432caef28cb146e20f780f9f7ea92d785c1d666cad746d0a5af48628a24141ee7373cb4194c3424a480c1169d7803ca9e7abd772eba8dc6ca372307030090603551d1304023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b06010505070302301d0603551d0e04160414fdf1c0eb537ba632a9b3738cc0c0b5b897f7134d301f0603551d23041830168014c6381ea38adfb1a946dce70595a837efea01892a300a06082a8648ce3d040302034700304402207e9d86f03da244bf0a863f456bf7112875485714b122cff8e08299aea45be9c5022041ca901cf39abdefadb3bbb0f6f8e8eaf50cca6d7fc352f0ebddd930b05ab82f", 840);
+    _mx_cliOther_key = hex_decode("308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104208a098bc8c428c36a7e8c442a701a4e59fe7518c3d014053a176f149ce823dd9aa144034200041e8449d986e26988432caef28cb146e20f780f9f7ea92d785c1d666cad746d0a5af48628a24141ee7373cb4194c3424a480c1169d7803ca9e7abd772eba8dc6c", 276);
+    _mx_cliExp = hex_decode("3082019f30820145a003020102021455467366670d68f3ddcf3863ab923cb68bb65272300a06082a8648ce3d04030230123110300e06035504030c076d746c732d6361301e170d3235303130313030303030305a170d3237303130313030303030305a30193117301506035504030c0e636c69656e742d657870697265643059301306072a8648ce3d020106082a8648ce3d03010703420004f8bbf7e94f5f926e5388899ff2328d0e300a95b520ea423be620f85fa819798f72b15ccb10a10d50f0cd6145ea1fe65962c3658faaee6794a6f7b2b9f2ec5a5ea372307030090603551d1304023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b06010505070302301d0603551d0e0416041420d371472941e204231bd5cb5507537b47e76d11301f0603551d230418301680140974887636a5881b8b22a95ab5e91f30e1a6bd06300a06082a8648ce3d040302034800304502207b3879faf8aaba40d5376024afa06e7f0c3e3124945b9eae51766db1d97918a7022100a3c17f1831a7f4a8548f9b5f87e877ac902150263b00af72da889eae4fb27a12", 838);
+    _mx_cliExp_key = hex_decode("308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104205a419c6ceae43d2d1e8dd6bd80e2a95f2109840962f5d8e9d610782f3b272176a14403420004f8bbf7e94f5f926e5388899ff2328d0e300a95b520ea423be620f85fa819798f72b15ccb10a10d50f0cd6145ea1fe65962c3658faaee6794a6f7b2b9f2ec5a5e", 276);
+    _mx_cliSrvEku = hex_decode("308201a73082014da003020102021455467366670d68f3ddcf3863ab923cb68bb65273300a06082a8648ce3d04030230123110300e06035504030c076d746c732d6361301e170d3235303130313030303030305a170d3439313233313030303030305a3021311f301d06035504030c16636c69656e742d736572766572617574682d6f6e6c793059301306072a8648ce3d020106082a8648ce3d030107034200046839f85c483605c8be06f05b4dca16474bfe3402741b5059c3722c7d7da01229549d3b1ddbce23fa64d16ced763b9aeb2a4ef1231c9d98ef416bc863023c81c1a372307030090603551d1304023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b06010505070301301d0603551d0e04160414fba19c5ee507a1d6af33496d702e5c06c828112a301f0603551d230418301680140974887636a5881b8b22a95ab5e91f30e1a6bd06300a06082a8648ce3d0403020348003045022100b7808a1ceac59f2482e1e43ea02b9d968516bc55952501b14d3c0f9b632ed6af02206fea1488752f54f7c81abbd9dab7e059e51dbd739bc93d81f5d6d0aa1191266c", 854);
+    _mx_cliSrvEku_key = hex_decode("308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420aecdc0a32f448bce07e2605ec4c75803f0c2085cae4b5a90e46f3e53107eebc7a144034200046839f85c483605c8be06f05b4dca16474bfe3402741b5059c3722c7d7da01229549d3b1ddbce23fa64d16ced763b9aeb2a4ef1231c9d98ef416bc863023c81c1", 276);
+    return 0;
+}
+
+# ---- the in-memory transport: two logs, each written by one side's latest run ----
+var _mx_cs = 0;          # client -> server bytes the server reads (the client's last run)
+var _mx_cs_len = 0;
+var _mx_cs_next = 0;     # what the running client writes
+var _mx_cs_next_len = 0;
+var _mx_sc = 0;          # server -> client
+var _mx_sc_len = 0;
+var _mx_sc_next = 0;
+var _mx_sc_next_len = 0;
+var _mx_cs_rd = 0;       # the server's read cursor into _mx_cs
+var _mx_sc_rd = 0;       # the client's read cursor into _mx_sc
+var _mx_overflow = 0;
+
+fn _mx_read(h, buf, n): i64 {
+    var src = _mx_sc;
+    var len = _mx_sc_len;
+    var cur = _mx_sc_rd;
+    if (h == MX_SERVER) {
+        src = _mx_cs;
+        len = _mx_cs_len;
+        cur = _mx_cs_rd;
+    }
+    var avail = len - cur;
+    if (avail <= 0) { return 0; }                       # EOF: the other side has not got here yet
+    var k = n;
+    if (k > avail) { k = avail; }
+    memcpy(buf, src + cur, k);
+    if (h == MX_SERVER) { _mx_cs_rd = cur + k; }
+    else { _mx_sc_rd = cur + k; }
+    return k;
+}
+
+# A tampering client (rows below): _MX_TAMPER_DROP_CV removes the client's CertificateVerify from
+# its flight — the 1.2 message from its plaintext handshake record, the middle one of the three
+# sealed 1.3 records (Certificate, CertificateVerify, Finished) — and _MX_TAMPER_ADD_CV (1.2) puts
+# an unrequested CertificateVerify after an empty Certificate and the ClientKeyExchange.
+enum MxTamper { _MX_TAMPER_NONE = 0; _MX_TAMPER_DROP_CV = 1; _MX_TAMPER_ADD_CV = 2; }
+var _mx_tamper = 0;
+var _mx_tbuf = 0;
+
+fn _mx_rec_len(p): i64 { return 5 + (((load8(p + 3) & 0xFF) << 8) | (load8(p + 4) & 0xFF)); }
+
+# The client's write `buf`/`n`, tampered into _mx_tbuf. Returns the tampered length.
+fn _mx_tamper_write(buf, n): i64 {
+    if (n < 5) { memcpy(_mx_tbuf, buf, n); return n; }
+    var ct = load8(buf) & 0xFF;
+    if (ct == TLS_CT_HANDSHAKE) {
+        if ((load8(buf + 5) & 0xFF) != TLS_HS_CERTIFICATE) { memcpy(_mx_tbuf, buf, n); return n; }
+        var rl = _mx_rec_len(buf);
+        var o = 5;
+        var pos = 5;
+        while (pos + 4 <= rl) {
+            var mt = load8(buf + pos) & 0xFF;
+            var ml = 4 + (((load8(buf + pos + 1) & 0xFF) << 16) | ((load8(buf + pos + 2) & 0xFF) << 8) | (load8(buf + pos + 3) & 0xFF));
+            var keep = 1;
+            if (_mx_tamper == _MX_TAMPER_DROP_CV) { if (mt == TLS_HS_CERTIFICATE_VERIFY) { keep = 0; } }
+            if (keep == 1) {
+                memcpy(_mx_tbuf + o, buf + pos, ml);
+                o = o + ml;
+            }
+            if (_mx_tamper == _MX_TAMPER_ADD_CV) {
+                if (mt == TLS_HS_CLIENT_KEY_EXCHANGE) {
+                    memcpy(_mx_tbuf + o, "\x0f\x00\x00\x04\x04\x03\x00\x00", 8);
+                    o = o + 8;
+                }
+            }
+            pos = pos + ml;
+        }
+        memcpy(_mx_tbuf, buf, 3);
+        store8(_mx_tbuf + 3, ((o - 5) >> 8) & 0xFF);
+        store8(_mx_tbuf + 4, (o - 5) & 0xFF);
+        memcpy(_mx_tbuf + o, buf + rl, n - rl);         # any record after it, as written
+        return o + n - rl;
+    }
+    if (ct == TLS_CT_APPLICATION_DATA) {
+        if (_mx_tamper == _MX_TAMPER_DROP_CV) {
+            var r1 = _mx_rec_len(buf);
+            if (r1 < n) {
+                var r2 = _mx_rec_len(buf + r1);
+                if (r1 + r2 < n) {
+                    var r3 = _mx_rec_len(buf + r1 + r2);
+                    if (r1 + r2 + r3 == n) {                # Certificate, CertificateVerify, Finished
+                        memcpy(_mx_tbuf, buf, r1);
+                        memcpy(_mx_tbuf + r1, buf + r1 + r2, r3);
+                        return r1 + r3;
+                    }
+                }
+            }
+        }
+    }
+    memcpy(_mx_tbuf, buf, n);
+    return n;
+}
+
+fn _mx_write(h, buf, n): i64 {
+    if (h == MX_CLIENT) {
+        if (_mx_tamper != _MX_TAMPER_NONE) {
+            var tn = _mx_tamper_write(buf, n);
+            if (_mx_cs_next_len + tn > MX_LOG_CAP) { _mx_overflow = 1; return 0 - 1; }
+            memcpy(_mx_cs_next + _mx_cs_next_len, _mx_tbuf, tn);
+            _mx_cs_next_len = _mx_cs_next_len + tn;
+            return n;
+        }
+    }
+    if (h == MX_SERVER) {
+        if (_mx_sc_next_len + n > MX_LOG_CAP) { _mx_overflow = 1; return 0 - 1; }
+        memcpy(_mx_sc_next + _mx_sc_next_len, buf, n);
+        _mx_sc_next_len = _mx_sc_next_len + n;
+        return n;
+    }
+    if (_mx_cs_next_len + n > MX_LOG_CAP) { _mx_overflow = 1; return 0 - 1; }
+    memcpy(_mx_cs_next + _mx_cs_next_len, buf, n);
+    _mx_cs_next_len = _mx_cs_next_len + n;
+    return n;
+}
+
+fn _mx_now(): i64 { return 1893456000; }                 # 2030-01-01 00:00 UTC
+
+# Deterministic entropy (xorshift64), reseeded at the start of every run of a side.
+var _mx_rng = 1;
+fn _mx_seed(s): i64 { _mx_rng = s; return 0; }
+fn _mx_rand(buf, n, fl): i64 {
+    var i = 0;
+    while (i < n) {
+        var x = _mx_rng;
+        x = x ^ (x << 13);
+        x = x ^ (x >> 7);
+        x = x ^ (x << 17);
+        _mx_rng = x;
+        store8(buf + i, (x >> 24) & 0xFF);
+        i = i + 1;
+    }
+    return n;
+}
+
+# ---- one row ----
+var _mx_ca_arena = 0;    # the client's Allocator, reset every run
+var _mx_sv_arena = 0;    # the server's
+# What the server's accept hook does (a consumer's hook: lib/tls.cyr verbs on the native handle).
+var _mx_h_mode = 0;      # the OpenSSL SSL_VERIFY_* mode passed to tls_set_verify
+var _mx_h_root = 0;      # a DER trust root, or 0 for none
+var _mx_h_root_n = 0;
+# Observations: [0] client tls_native_connect, [1] client read after "ping" (-99 when not run),
+# [2] server accept (TLS_OK or its LAST_ERR), [3] server read (-99), [4] tls_native_get_peer_cert_der
+# on the server, [5] tls_get_peer_spki_der on the server's shim, [6] rounds to the fixed point (0 =
+# never settled), [7] the client's TLS_CTX_OFF_CERT_REQUESTED.
+var _mx_obs: i64[8];
+
+fn _mx_srv_hook(hctx, handle): i64 {
+    if (tls_set_verify(handle, _mx_h_mode, 0) != 0) { return 1; }
+    if (_mx_h_root != 0) {
+        if (tls_native_set_ca_bundle(handle, _mx_h_root, _mx_h_root_n, 1) != TLS_OK) { return 1; }
+    }
+    return 0;
+}
+
+fn _mx_client_run(v12, ccert, cclen, ckey, cklen): i64 {
+    reset_via(_mx_ca_arena);
+    _mx_seed(0x2468ACE1);
+    _mx_sc_rd = 0;
+    _mx_cs_next_len = 0;
+    var c = tls_native_new_client_in(_mx_ca_arena, 0, 0);
+    tls_native_set_verify(c, TLS_VERIFY_NONE);            # the server's own chain is not under test
+    if (v12 == 1) { tls_native_set_version_range(c, TLS_VERSION_1_2, TLS_VERSION_1_2); }
+    if (ccert != 0) {
+        tls_native_set_client_cert(c, ccert, cclen, 1);
+        tls_native_set_client_key(c, ckey, cklen);
+    }
+    var rc = tls_native_connect(c, MX_CLIENT);
+    _mx_obs[0] = rc;
+    _mx_obs[1] = 0 - 99;
+    if (rc == TLS_OK) {
+        tls_native_write(c, "ping", 4);
+        var b[64];
+        store64(&b, 0);
+        var n = tls_native_read(c, &b, 64);
+        _mx_obs[1] = n;
+        if (n == 4) {
+            if (memeq(&b, "pong", 4) != 1) { _mx_obs[1] = 0 - 98; }
+        }
+    }
+    _mx_obs[7] = load64(c + TLS_CTX_OFF_CERT_REQUESTED);
+    var t = _mx_cs;
+    _mx_cs = _mx_cs_next;
+    _mx_cs_next = t;
+    _mx_cs_len = _mx_cs_next_len;
+    return 0;
+}
+
+fn _mx_server_run(): i64 {
+    reset_via(_mx_sv_arena);
+    _mx_seed(0x13579BDF);
+    _mx_cs_rd = 0;
+    _mx_sc_next_len = 0;
+    var creds: i64[4];
+    store64(&creds, _mx_srv);
+    store64(&creds + 8, _mx_srv_n);
+    store64(&creds + 16, _mx_srv_key);
+    store64(&creds + 24, _mx_srv_key_n);
+    var sh = tls_accept_alloc_in(_mx_sv_arena, MX_SERVER, &creds, &_mx_srv_hook, 0);
+    _mx_obs[2] = 0 - 999;
+    _mx_obs[3] = 0 - 99;
+    _mx_obs[4] = 0 - 99;
+    _mx_obs[5] = 0 - 99;
+    if (sh != 0) {
+        var nctx = load64(sh);
+        if (tls_accept_complete(sh) == 1) {
+            _mx_obs[2] = TLS_OK;
+            var b[64];
+            store64(&b, 0);
+            var n = tls_read(sh, &b, 64);
+            _mx_obs[3] = n;
+            if (n == 4) {
+                if (memeq(&b, "ping", 4) == 1) { tls_write(sh, "pong", 4); }
+                else { _mx_obs[3] = 0 - 98; }
+            }
+        } else {
+            var le = tls_native_get_last_error(nctx);
+            if (le == 0) { le = 0 - 777; }              # a failure with no error recorded never reads as TLS_OK
+            _mx_obs[2] = le;
+        }
+        var g = alloc(4096);
+        _mx_obs[4] = tls_native_get_peer_cert_der(nctx, g, 4096);
+        _mx_obs[5] = tls_get_peer_spki_der(sh, g, 4096);
+    }
+    var t = _mx_sc;
+    _mx_sc = _mx_sc_next;
+    _mx_sc_next = t;
+    _mx_sc_len = _mx_sc_next_len;
+    return 0;
+}
+
+# Replay one row to its fixed point. `v12` pins the CLIENT to TLS 1.2 (the server keeps its default
+# 1.2..1.3 range and routes on the ClientHello — the downgrade a 1.2-only client chooses).
+fn _mx_row(v12, ccert, cclen, ckey, cklen, smode, root, root_n): i64 {
+    _mx_h_mode = smode;
+    _mx_h_root = root;
+    _mx_h_root_n = root_n;
+    _mx_cs_len = 0;
+    _mx_sc_len = 0;
+    _mx_overflow = 0;
+    var pc = 0 - 1;
+    var ps = 0 - 1;
+    var r = 0;
+    var settled = 0;
+    while (settled == 0) {
+        if (r >= MX_ROUNDS_MAX) { settled = 2; }
+        if (settled == 0) {
+            _mx_client_run(v12, ccert, cclen, ckey, cklen);
+            _mx_server_run();
+            r = r + 1;
+            if (_mx_cs_len == pc) {
+                if (_mx_sc_len == ps) { settled = 1; }
+            }
+            pc = _mx_cs_len;
+            ps = _mx_sc_len;
+        }
+    }
+    _mx_obs[6] = 0;
+    if (settled == 1) { _mx_obs[6] = r; }
+    assert(_mx_obs[6] > 0, "  the replay settled (both logs stopped growing)");
+    assert_eq(_mx_overflow, 0, "  no log overflowed");
+    return 0;
+}
+
+fn _mx_v(v12): i64 {
+    if (v12 == 1) { println("  (client offers TLS 1.2 only; server default range 1.2..1.3)"); return 0; }
+    println("  (TLS 1.3)");
+    return 0;
+}
+
+# A row whose client is authenticated: the handshake completes, ping/pong flow, and the server's
+# getters name the client.
+fn _mx_ok(label, der_n): i64 {
+    assert_eq(_mx_obs[2], TLS_OK, label);
+    assert_eq(_mx_obs[0], TLS_OK, "  client connect: TLS_OK");
+    assert_eq(_mx_obs[3], 4, "  the server reads the client's \"ping\"");
+    assert_eq(_mx_obs[1], 4, "  the client reads the server's \"pong\"");
+    assert_eq(_mx_obs[4], der_n, "  tls_native_get_peer_cert_der on the server: the client's leaf");
+    if (der_n > 0) { assert(_mx_obs[5] > 0, "  tls_get_peer_spki_der on the server: the client's key"); }
+    else { assert_eq(_mx_obs[5], 0, "  tls_get_peer_spki_der on the server: none"); }
+    return 0;
+}
+
+# A row whose client is refused with `code`: the server fails, names nobody, and tells the client
+# (an alert: TLS 1.2 reads it in place of the server's CCS, TLS 1.3 on its first read).
+fn _mx_refused(v12, code, label): i64 {
+    assert_eq(_mx_obs[2], code, label);
+    assert_eq(_mx_obs[4], 0, "  the server's peer getter names nobody");
+    assert_eq(_mx_obs[5], 0, "  tls_get_peer_spki_der: none");
+    if (v12 == 1) {
+        assert_eq(_mx_obs[0], TLS_ERR_ALERT, "  the 1.2 client reads the server's alert in place of its CCS");
+    } else {
+        assert_eq(_mx_obs[0], TLS_OK, "  the 1.3 client finished its side");
+        assert_eq(_mx_obs[1], TLS_ERR_ALERT, "  …and reads the server's alert");
+    }
+    return 0;
+}
+
+fn test_matrix(v12): i64 {
+    var PEER = 1;
+    var PEER_FAIL = 3;
+    var FAIL_ALONE = 2;
+    var fail_mode = PEER_FAIL;
+    if (v12 == 1) { fail_mode = FAIL_ALONE; }
+
+    test_group("6.6.14 — a client that presents nothing");
+    _mx_v(v12);
+    _mx_row(v12, 0, 0, 0, 0, PEER, _mx_ca, _mx_ca_n);
+    _mx_ok("SSL_VERIFY_PEER, an empty Certificate: accepted with no identity", 0);
+    assert_eq(_mx_obs[7], 1, "  the server asked (the client saw a CertificateRequest)");
+    _mx_row(v12, 0, 0, 0, 0, fail_mode, _mx_ca, _mx_ca_n);
+    _mx_refused(v12, TLS_ERR_CERT_INVALID, "FAIL_IF_NO_PEER_CERT via tls_set_verify, an empty Certificate: CERT_INVALID");
+
+    test_group("6.6.14 — a certificate that chains to the server's root");
+    _mx_v(v12);
+    _mx_row(v12, _mx_cli, _mx_cli_n, _mx_cli_key, _mx_cli_key_n, PEER, _mx_ca, _mx_ca_n);
+    _mx_ok("P-256 leaf issued by the trusted CA: authenticated", _mx_cli_n);
+    _mx_row(v12, _mx_cliEd, _mx_cliEd_n, _mx_cliEd_key, _mx_cliEd_key_n, fail_mode, _mx_ca, _mx_ca_n);
+    _mx_ok("Ed25519 leaf, FAIL_IF_NO_PEER_CERT: authenticated", _mx_cliEd_n);
+    _mx_row(v12, _mx_cli384, _mx_cli384_n, _mx_cli384_key, _mx_cli384_key_n, PEER, _mx_ca, _mx_ca_n);
+    _mx_ok("P-384 leaf: authenticated", _mx_cli384_n);
+
+    test_group("6.6.14 — certificates the server must refuse");
+    _mx_v(v12);
+    _mx_row(v12, _mx_self, _mx_self_n, _mx_self_key, _mx_self_key_n, PEER, _mx_ca, _mx_ca_n);
+    _mx_refused(v12, TLS_ERR_CERT_INVALID, "an UNTRUSTED self-signed leaf: CERT_INVALID");
+    _mx_row(v12, _mx_cliOther, _mx_cliOther_n, _mx_cliOther_key, _mx_cliOther_key_n, PEER, _mx_ca, _mx_ca_n);
+    _mx_refused(v12, TLS_ERR_CERT_INVALID, "a leaf from another CA: CERT_INVALID");
+    _mx_row(v12, _mx_cliExp, _mx_cliExp_n, _mx_cliExp_key, _mx_cliExp_key_n, PEER, _mx_ca, _mx_ca_n);
+    _mx_refused(v12, TLS_ERR_CERT_INVALID, "an EXPIRED leaf from the trusted CA: CERT_INVALID");
+    _mx_row(v12, _mx_cliSrvEku, _mx_cliSrvEku_n, _mx_cliSrvEku_key, _mx_cliSrvEku_key_n, PEER, _mx_ca, _mx_ca_n);
+    _mx_refused(v12, TLS_ERR_CERT_INVALID, "a leaf whose extendedKeyUsage is serverAuth only: CERT_INVALID");
+    _mx_row(v12, _mx_cli, _mx_cli_n, _mx_self_key, _mx_self_key_n, PEER, _mx_ca, _mx_ca_n);
+    _mx_refused(v12, TLS_ERR_AUTHN, "the trusted leaf with ANOTHER key's CertificateVerify: AUTHN");
+    _mx_row(v12, _mx_cli, _mx_cli_n, _mx_cli_key, _mx_cli_key_n, PEER, 0, 0);
+    _mx_refused(v12, TLS_ERR_CERT_INVALID, "a server with NO trust roots refuses a presented leaf (fail closed)");
+
+    test_group("6.6.14 — a client that does not prove possession");
+    _mx_v(v12);
+    _mx_tamper = _MX_TAMPER_DROP_CV;
+    _mx_row(v12, _mx_cli, _mx_cli_n, _mx_cli_key, _mx_cli_key_n, PEER, _mx_ca, _mx_ca_n);
+    _mx_tamper = _MX_TAMPER_NONE;
+    if (v12 == 1) {
+        assert_eq(_mx_obs[2], TLS_ERR_PROTOCOL,
+          "the trusted leaf with its CertificateVerify REMOVED: refused (its CCS where the CV is due)");
+    } else {
+        assert_eq(_mx_obs[2], TLS_ERR_DECRYPT,
+          "the trusted leaf with its CertificateVerify REMOVED: refused (its Finished where the CV is due)");
+    }
+    assert_eq(_mx_obs[4], 0, "  …and the server names nobody");
+    if (v12 == 1) {
+        _mx_tamper = _MX_TAMPER_ADD_CV;
+        _mx_row(v12, 0, 0, 0, 0, PEER, _mx_ca, _mx_ca_n);
+        _mx_tamper = _MX_TAMPER_NONE;
+        assert_eq(_mx_obs[2], TLS_ERR_BAD_HANDSHAKE,
+          "an empty Certificate, then an unrequested CertificateVerify: BAD_HANDSHAKE");
+    }
+
+    test_group("6.6.14 — a server that does not ask");
+    _mx_v(v12);
+    _mx_row(v12, _mx_cli, _mx_cli_n, _mx_cli_key, _mx_cli_key_n, 0, _mx_ca, _mx_ca_n);
+    _mx_ok("SSL_VERIFY_NONE: no CertificateRequest, the client sends no certificate", 0);
+    assert_eq(_mx_obs[7], 0, "  the client saw no CertificateRequest");
+    return 0;
+}
+
+# A2 at the API: the OpenSSL bitmask -> native mode, never less strict than asked.
+fn test_set_verify_modes(): i64 {
+    test_group("6.6.14 — tls_set_verify maps SSL_VERIFY_FAIL_IF_NO_PEER_CERT through");
+    var s = tls_native_new_server(_mx_srv, _mx_srv_n, _mx_srv_key, _mx_srv_key_n);
+    assert_eq(tls_set_verify(s, 3, 0), 0, "tls_set_verify(PEER | FAIL_IF_NO_PEER_CERT)");
+    assert_eq(load64(s + TLS_CTX_OFF_VERIFY), TLS_VERIFY_FAIL_IF_NO_PEER_CERT, "  -> TLS_VERIFY_FAIL_IF_NO_PEER_CERT");
+    tls_set_verify(s, 2, 0);
+    assert_eq(load64(s + TLS_CTX_OFF_VERIFY), TLS_VERIFY_FAIL_IF_NO_PEER_CERT,
+      "FAIL_IF_NO_PEER_CERT alone -> FAIL (stricter than OpenSSL, which ignores it without PEER)");
+    tls_set_verify(s, 1, 0);
+    assert_eq(load64(s + TLS_CTX_OFF_VERIFY), TLS_VERIFY_PEER, "PEER -> TLS_VERIFY_PEER");
+    tls_set_verify(s, 5, 0);
+    assert_eq(load64(s + TLS_CTX_OFF_VERIFY), TLS_VERIFY_PEER, "PEER | CLIENT_ONCE -> TLS_VERIFY_PEER");
+    tls_set_verify(s, 8, 0);
+    assert_eq(load64(s + TLS_CTX_OFF_VERIFY), TLS_VERIFY_PEER, "POST_HANDSHAKE alone -> TLS_VERIFY_PEER (never looser)");
+    tls_set_verify(s, 0, 0);
+    assert_eq(load64(s + TLS_CTX_OFF_VERIFY), TLS_VERIFY_NONE, "0 -> TLS_VERIFY_NONE");
+    return 0;
+}
+
+fn _mx_all(): i64 {
+    alloc_init();
+    _mx_fixtures();
+    _mx_cs = alloc(MX_LOG_CAP);
+    _mx_cs_next = alloc(MX_LOG_CAP);
+    _mx_sc = alloc(MX_LOG_CAP);
+    _mx_sc_next = alloc(MX_LOG_CAP);
+    _mx_tbuf = alloc(MX_LOG_CAP);
+    _mx_ca_arena = arena_allocator(2097152);
+    _mx_sv_arena = arena_allocator(2097152);
+    tls_native_set_transport(&_mx_read, &_mx_write, &_mx_now);
+    tls_native_set_entropy(&_mx_rand);
+    test_set_verify_modes();
+    test_matrix(0);
+    test_matrix(1);
+    tls_native_set_entropy(0);
+    tls_native_set_transport(0, 0, 0);
+    return 0;
+}
+
+_mx_all();
+var r = assert_summary();
