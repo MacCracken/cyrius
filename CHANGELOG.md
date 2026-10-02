@@ -205,7 +205,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   where the 1.2 peer's CCS is due is that peer's alert (`TLS_ERR_ALERT`, not answered) — the 1.2 half
   of the "plaintext alert where an encrypted record is due" case I2 (c) left for the backlog. **(b) a
   per-connection deadline** — `tls_native_set_deadline(ctx, abs_ns)` / `tls_set_deadline(ctx, abs_ns)`
-  (Added, below; `TLS_ERR_TIMEOUT` = -20): on Linux and macOS each read waits for readiness with the
+  (Added, below; `TLS_ERR_TIMEOUT` = -22): on Linux and macOS each read waits for readiness with the
   time left (`fd_wait_ready`) and then reads once, so every byte costs a clock check, and a write runs
   the fd non-blocking for the call (EAGAIN 11 / Darwin 35 waits for writability; the fd's status
   flags are restored on every exit); on agnos a tagged socket's recv / send take the time left
@@ -219,12 +219,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `TLS_ERR_TIMEOUT` through; every record write site passes its writer's code through
   (`_tn_ctx_fail(ctx, w)`, no longer `TLS_ERR_IO`); the error table above `_tn_read_fail` gains the
   `TLS_ERR_TIMEOUT` and `TLS_ERR_PROTOCOL` rows. An expired `SO_RCVTIMEO` with no deadline set stays
-  `TLS_ERR_IO`. `TLS_ERR_RECORD_OVERFLOW` (`lib/tls_native_lowlevel.cyr`) moves from -20 to **-22**:
-  it had held -20 since the record layer landed, so with `TLS_ERR_TIMEOUT` at -20 an authenticated
-  record whose plaintext exceeds 2^14 bytes, passed through by `tls_native_read`, read as a deadline
-  expiry (in `tls_read` and in a failed handshake's last error). -21 is `TLS_ERR_KEY_UNSUPPORTED`;
-  `tls_native_scaffold.tcyr` now pins all 22 `TLS_ERR_*` values pairwise distinct. A consumer that
-  compares against the name is unaffected; one that hard-coded -20 for it was already wrong. ⚠ **Behaviour change:** a peer sending two CCS in TLS 1.3, or a 1.2 Finished with no
+  `TLS_ERR_IO`. `TLS_ERR_TIMEOUT` is **-22**: -20 has been `TLS_ERR_RECORD_OVERFLOW`
+  (`lib/tls_native_lowlevel.cyr`) since the record layer landed and keeps it, and -21 is
+  `TLS_ERR_KEY_UNSUPPORTED` — so an authenticated record whose plaintext exceeds 2^14 bytes, passed
+  through by `tls_native_read`, never reads as a deadline expiry. `tls_native_scaffold.tcyr` now pins
+  all 22 `TLS_ERR_*` values pairwise distinct. ⚠ **Behaviour change:** a peer sending two CCS in TLS 1.3, or a 1.2 Finished with no
   CCS, now fails where it used to pass (OpenSSL, BoringSSL and the native stack send exactly one —
   the `openssl s_server -tls1_3` / `-tls1_2` rows below); after `TLS_ERR_TIMEOUT` the native ctx is
   failed. ⚠ **Windows:** native TLS does not run over `net.cyr` sockets at all — the default
@@ -468,7 +467,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `+tls_native_ctx::tls_native_new_client_in/3`.
 
 - **`tls_native_set_deadline(ctx, abs_ns)` (`lib/tls_native_conn.cyr`), `tls_set_deadline(ctx,
-  abs_ns)` (`lib/tls.cyr`) and `TLS_ERR_TIMEOUT` (-20) — a per-connection deadline for the handshake
+  abs_ns)` (`lib/tls.cyr`) and `TLS_ERR_TIMEOUT` (-22) — a per-connection deadline for the handshake
   and every later read and write** (I8, CVE-TBD(I8) above). `abs_ns` is absolute, on lib/chrono's
   monotonic `clock_now_ns()` scale; 0 clears it; it may be set before connect / accept and changed
   between reads. Past it the read or write in progress returns `TLS_ERR_TIMEOUT` and the native ctx

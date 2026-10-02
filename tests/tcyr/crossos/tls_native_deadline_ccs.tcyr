@@ -299,7 +299,7 @@ fn _dc_param_rows(): i64 {
     assert_eq(tls_native_set_deadline(0, 1), TLS_ERR_INVALID_PARAM, "ctx 0: TLS_ERR_INVALID_PARAM");
     assert_eq(tls_native_set_deadline(c, 0 - 1), TLS_ERR_INVALID_PARAM, "abs_ns < 0: TLS_ERR_INVALID_PARAM");
     assert_eq(tls_native_set_deadline(c, 0), TLS_OK, "0 (clear): TLS_OK");
-    assert_eq(TLS_ERR_TIMEOUT, 0 - 20, "TLS_ERR_TIMEOUT is -20");
+    assert_eq(TLS_ERR_TIMEOUT, 0 - 22, "TLS_ERR_TIMEOUT is -22");
     return 0;
 }
 #endif

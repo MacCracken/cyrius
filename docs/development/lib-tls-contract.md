@@ -225,7 +225,7 @@ above `_tn_read_fail` in `lib/tls_native_conn.cyr` (native) and `_tls_ssl_io_ret
 | Code | Value | Meaning | Backend |
 |---|---|---|---|
 | `TLS_ERR_IO` | -12 | The socket failed, or it closed with no close_notify (truncation). An expired `SO_RCVTIMEO` / `SO_SNDTIMEO` is this row: `TLS_ERR_TIMEOUT` is only the caller's own deadline. | both (libssl: `SSL_ERROR_SYSCALL`, and an unexpected EOF) |
-| `TLS_ERR_TIMEOUT` | -20 | The deadline set with `tls_set_deadline` passed (see "Deadline"). | both |
+| `TLS_ERR_TIMEOUT` | -22 | The deadline set with `tls_set_deadline` passed (see "Deadline"). | both |
 | `TLS_ERR_ALERT` | -17 | The peer sent an alert: every alert that is not warning-level (a fatal close_notify included) and every description other than close_notify and user_canceled. A warning-level user_canceled is dropped and the read goes on (RFC 8446 §6.1). | both (libssl: a received alert, reason 1000 + description) |
 | `TLS_ERR_PROTOCOL` | -19 | Native: a ChangeCipherSpec after the handshake (see "ChangeCipherSpec"); 32 records with no application data in one read; a read or write on a ctx that was never connected or is closed, and a write on a failed one. libssl: any libssl failure not above — a bad record MAC and a protocol violation included — and a write after the peer shut down. | both |
 | `TLS_ERR_DECRYPT` | -15 | A record failed authentication (bad_record_mac: tampered or misdirected). libssl reports it as `TLS_ERR_PROTOCOL`. | native |
@@ -233,7 +233,7 @@ above `_tn_read_fail` in `lib/tls_native_conn.cyr` (native) and `_tls_ssl_io_ret
 | `TLS_ERR_WOULD_BLOCK` | -9 | A non-blocking socket had nothing ready (`WANT_READ` / `WANT_WRITE`) and no deadline is set: call again. The native backend needs a BLOCKING socket — there `EAGAIN` reads as `TLS_ERR_IO` and fails the connection; bound a native read with `tls_set_deadline` instead. | libssl |
 | `TLS_ERR_OOM` | -11 | The ctx's record buffer could not be allocated (the first read or write, from an exhausted arena). | native |
 | `TLS_ERR_INVALID_PARAM` | -10 | `tls_read` with `maxlen <= 0` (does not fail the ctx). | native |
-| `TLS_ERR_RECORD_OVERFLOW` | -22 | An authenticated record whose plaintext exceeds 2^14 bytes (RFC 8446 §5.4; `lib/tls_native_lowlevel.cyr`). Was -20 until 6.6.13, the value `TLS_ERR_TIMEOUT` now holds. | native |
+| `TLS_ERR_RECORD_OVERFLOW` | -20 | An authenticated record whose plaintext exceeds 2^14 bytes (RFC 8446 §5.4; `lib/tls_native_lowlevel.cyr`). | native |
 | other `TLS_ERR_*` | | Passed through from the record layer. Every `TLS_ERR_*` value is distinct (pinned by `tests/tcyr/crypto/tls_native_scaffold.tcyr`). | native |
 
 **After a negative result the connection is over.** Native: a failed read, and a write whose

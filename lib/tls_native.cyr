@@ -98,7 +98,7 @@ var TLS_ERR_AUTHN = 0 - 16;              # signature verification failed
 var TLS_ERR_ALERT = 0 - 17;              # peer sent a fatal alert
 var TLS_ERR_BUFFER_FULL = 0 - 18;        # output buffer too small
 var TLS_ERR_PROTOCOL = 0 - 19;           # state-machine violation
-var TLS_ERR_TIMEOUT = 0 - 20;            # the caller's deadline passed (tls_native_set_deadline, 6.6.13)
+var TLS_ERR_TIMEOUT = 0 - 22;            # the caller's deadline passed (tls_native_set_deadline, 6.6.13)
 
 # ================================================================
 # Record-layer types (RFC 8446 §5.1, RFC 5246 §6.2)

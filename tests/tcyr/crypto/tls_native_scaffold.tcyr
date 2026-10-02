@@ -66,11 +66,12 @@ assert_eq(TLS_OK, 0, "TLS_OK = 0");
 assert_eq(TLS_ERR_NOT_IMPLEMENTED, 0 - 1, "TLS_ERR_NOT_IMPLEMENTED = -1");
 assert_eq(TLS_ERR_PROTOCOL, 0 - 19, "TLS_ERR_PROTOCOL = -19 (last in ladder)");
 
-# 6.6.13: every TLS_ERR_* is its own value. TLS_ERR_RECORD_OVERFLOW sat at -20 when
-# TLS_ERR_TIMEOUT took -20, so a read could not tell an over-long record from a deadline.
-assert_eq(TLS_ERR_TIMEOUT, 0 - 20, "TLS_ERR_TIMEOUT = -20");
+# 6.6.13: every TLS_ERR_* is its own value. TLS_ERR_TIMEOUT first took -20, which
+# TLS_ERR_RECORD_OVERFLOW has held since the record layer landed, so a read could not
+# tell an over-long record from a deadline. The released value stays; the new code moved.
+assert_eq(TLS_ERR_RECORD_OVERFLOW, 0 - 20, "TLS_ERR_RECORD_OVERFLOW = -20");
 assert_eq(TLS_ERR_KEY_UNSUPPORTED, 0 - 21, "TLS_ERR_KEY_UNSUPPORTED = -21");
-assert_eq(TLS_ERR_RECORD_OVERFLOW, 0 - 22, "TLS_ERR_RECORD_OVERFLOW = -22");
+assert_eq(TLS_ERR_TIMEOUT, 0 - 22, "TLS_ERR_TIMEOUT = -22");
 var _errs: i64[22];
 _errs[0] = TLS_ERR_NOT_IMPLEMENTED;  _errs[1] = TLS_ERR_HANDSHAKE_FAILED;
 _errs[2] = TLS_ERR_BAD_RECORD;       _errs[3] = TLS_ERR_BAD_HANDSHAKE;

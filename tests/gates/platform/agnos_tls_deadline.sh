@@ -22,11 +22,11 @@
 # MUTATION LEDGER (each on the working tree, gate re-run, restored; all RED, 6.6.13):
 #   1. _tn_io_read_full never takes the agnos tagged-fd path (the between-calls clock check only)
 #        -> FAIL axis 1: -12 after 123 clock reads and 120 polls (the socket's 30 s default)
-#   2. _tn_agnos_read_full maps every -11 to TLS_ERR_IO             -> FAIL axis 1: -12, not -20
+#   2. _tn_agnos_read_full maps every -11 to TLS_ERR_IO             -> FAIL axis 1: -12, not -22
 #   3. _tn_agnos_write_all passes rearm=1                           -> FAIL axis 3: all 100 bytes, 34 calls
 #   4. _tn_io_write_all drops its expired-deadline check            -> FAIL axis 3: 3 sock_send#48 calls
 #      (axis 4 stays green: _tn_agnos_write_all's own time-left check also refuses an expired one)
-#   5. _tn_agnos_read_full maps EOF (0) to TLS_ERR_TIMEOUT          -> FAIL axis 2: -20, not -12
+#   5. _tn_agnos_read_full maps EOF (0) to TLS_ERR_TIMEOUT          -> FAIL axis 2: -22, not -12
 set -u
 R=$(cd "$(dirname "$0")/../../.." && pwd)
 T=$(mktemp -d) && [ -d "$T" ] || { echo "FAIL: agnos_tls_deadline: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp})"; exit 1; }
@@ -81,7 +81,7 @@ probe "$DL1 var r = _tn_io_read_full(&cx, fd, &big, 16);"
 trace us
 # #95: 1 set (0.25 -> deadline 1.25) · 2 the loop's check (0.5: 0.75 s left) · 3 recv's arm (0.75 ->
 # its own deadline 1.5) · 4, 5, 6 its polls (1.0, 1.25, 1.5 -> -11) · 7 the check that maps -11 (1.75)
-check "_tn_io_read_full returns TLS_ERR_TIMEOUT (-20)" "-20" "$(mark 1)"
+check "_tn_io_read_full returns TLS_ERR_TIMEOUT (-22)" "-22" "$(mark 1)"
 check "  …after 7 clock reads (the deadline), not the 30 s default's 120+" "7" "$(count 95)"
 check "  …polling sock_recv#49 3 times" "3" "$(count 49)"
 probe "var r = _tn_io_read_full(&cx, fd, &big, 16);"
@@ -101,11 +101,11 @@ echo "axis 3 — a write under a +1 s deadline stops at it, progress or not:"
 # 4 send's arm (1.0 -> its own deadline 1.5) · 5 after #48 call 1 (1.25) · 6 after call 2 (1.5: over)
 probe "$DL1 var r = _tn_io_write_all(&cx, fd, &big, 100);"
 trace send0
-check "no progress (#48 answers 0): TLS_ERR_TIMEOUT (-20)" "-20" "$(mark 1)"
+check "no progress (#48 answers 0): TLS_ERR_TIMEOUT (-22)" "-22" "$(mark 1)"
 check "  …after 2 sock_send#48 calls" "2" "$(count 48)"
 probe "$DL1 var r = _tn_io_write_all(&cx, fd, &big, 100);"
 trace send3
-check "a trickle (#48 takes 3 bytes a call) cannot stretch it: TLS_ERR_TIMEOUT (-20)" "-20" "$(mark 1)"
+check "a trickle (#48 takes 3 bytes a call) cannot stretch it: TLS_ERR_TIMEOUT (-22)" "-22" "$(mark 1)"
 check "  …after 2 sock_send#48 calls (6 of 100 bytes)" "2" "$(count 48)"
 probe "sock_set_send_timeout(fd, 1, 0); var r = _tn_io_write_all(&cx, fd, &big, 100);"
 trace send3
@@ -116,11 +116,11 @@ check "  …in 34 sock_send#48 calls (33 x 3 + 1)" "34" "$(count 48)"
 echo "axis 4 — an expired deadline fails before any socket call:"
 probe "tls_native_set_deadline(&cx, 1); var r = _tn_io_write_all(&cx, fd, &big, 100);"
 trace send3
-check "a write: TLS_ERR_TIMEOUT (-20)" "-20" "$(mark 1)"
+check "a write: TLS_ERR_TIMEOUT (-22)" "-22" "$(mark 1)"
 check "  …with no sock_send#48 call" "0" "$(count 48)"
 probe "tls_native_set_deadline(&cx, 1); var r = _tn_io_read_full(&cx, fd, &big, 16);"
 trace us
-check "a read: TLS_ERR_TIMEOUT (-20)" "-20" "$(mark 1)"
+check "a read: TLS_ERR_TIMEOUT (-22)" "-22" "$(mark 1)"
 check "  …with no sock_recv#49 call" "0" "$(count 49)"
 
 echo ""

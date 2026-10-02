@@ -84,7 +84,7 @@ var TLS_ERR_INVALID_PARAM = 0 - 10;
 var TLS_ERR_IO = 0 - 12;
 var TLS_ERR_ALERT = 0 - 17;
 var TLS_ERR_PROTOCOL = 0 - 19;
-var TLS_ERR_TIMEOUT = 0 - 20;
+var TLS_ERR_TIMEOUT = 0 - 22;
 #endif
 
 var TLS_BACKEND_LIBSSL = 0;
