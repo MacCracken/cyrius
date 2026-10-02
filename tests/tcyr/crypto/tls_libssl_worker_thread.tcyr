@@ -333,6 +333,18 @@ fn _wt_case_fork(arg): i64 {
     return (load64(&st) >> 8) & 0xFF;
 }
 
+# Child: a claim inherited through fork() from a parent whose main thread was mid-resolve (a worker
+# forked). Nothing in the child will ever publish it: its main thread must fail closed, not spin.
+# The inherited state is set by hand — the window cannot be hit on demand. CHANGELOG [6.6.14]
+fn _wt_case_orphan_claim(arg): i64 {
+    _tls_init_state = 1;
+    _tls_introspect_state = 1;
+    if (tls_available() != 0) { return 80; }
+    var b[8];
+    if (tls_get_alpn_selected(&b, &b, 8) != 0) { return 81; }
+    return 0;
+}
+
 # Run `fp` in a forked child under a 30 s bound: its wait status, or -1 if it had to be killed.
 fn _wt_bounded(fp): i64 {
     var pid = sys_fork();
@@ -394,6 +406,8 @@ fn test_worker_refused(): i64 {
     _wt_report(_wt_bounded(&_wt_case_cold),
       "cold: a worker's first use -> tls_available() 0, _tls_init claims nothing; main still initialises (was a hang)");
     _wt_report(_wt_bounded(&_wt_case_fork), "a forked child's main thread passes the guard and connects");
+    _wt_report(_wt_bounded(&_wt_case_orphan_claim),
+      "a latch claim inherited through fork() fails closed: tls_available() 0, introspection 0 (was a hang)");
     return 0;
 }
 

@@ -281,10 +281,15 @@ var _fn_SSL_SESSION_get_max_early_data = 0;
 # SSL_connect completes the handshake.
 #
 # 6.6.14: a 0 -> 1 -> 2 claim and publish (it was a plain attempt flag set before the work, so a
-# second caller could read _tls_ok while the first was still resolving): one caller claims and
-# resolves (_tls_init_resolve; no return between the claim and the publish), every other waits for
-# 2. Off the main thread it neither claims nor resolves — a worker's first use must not run the
-# fdlopen bootstrap on its own thread — and main can still initialise later.
+# second caller could read _tls_ok while the first was still resolving): the caller claims and
+# resolves (_tls_init_resolve; no return between the claim and the publish). Off the main thread it
+# neither claims nor resolves — a worker's first use must not run the fdlopen bootstrap on its own
+# thread — and main can still initialise later.
+# ⚠ Only the main thread gets past the guard, and it resolves synchronously, so it can never find
+# the claim held by someone else in its own process: a 1 here was inherited through fork() from a
+# parent whose main thread was mid-resolve (a worker forked). Nothing in this process will ever
+# publish it, so the caller fails closed (tls_available() 0, as before 6.6.14) instead of spinning
+# for ever on it. CHANGELOG [6.6.14]
 fn _tls_init(): i64 {
     if (atomic_load(&_tls_init_state) == 2) { return 0; }
     if (_tls_libssl_thread_ok() == 0) { return 0; }
@@ -292,7 +297,6 @@ fn _tls_init(): i64 {
         _tls_init_resolve();
         atomic_store(&_tls_init_state, 2);
     }
-    while (atomic_load(&_tls_init_state) != 2) { }
     return 0;
 }
 
@@ -768,15 +772,16 @@ var _tls_introspect_resolved     = 0;   # 1 = the pointers below are published
 var _tls_introspect_state        = 0;   # 0 / 1 resolving / 2 done (6.6.14)
 
 # Resolve the introspection symbols once: a 0 -> 1 -> 2 claim (6.6.14 — it was a check-then-set
-# flag), every other caller waiting for 2; `_tls_introspect_resolved` stays the published readiness
-# flag (fenced on aarch64) the fast path reads. Callers are the main-thread libssl arms.
+# flag); `_tls_introspect_resolved` stays the published readiness
+# flag (fenced on aarch64) the fast path reads. Callers are the main-thread libssl arms, so — as in
+# _tls_init — a claim held by someone else can only be one inherited through fork(): the caller does
+# not wait for it, and each arm's own null-pointer checks refuse whatever was left unresolved.
 fn _tls_resolve_introspect(): i64 {
     if (_tls_introspect_resolved == 1) { return 0; }
     if (atomic_cas(&_tls_introspect_state, 0, 1) == 1) {
         _tls_resolve_introspect_syms();             # no return between the claim and the publish
         atomic_store(&_tls_introspect_state, 2);
     }
-    while (atomic_load(&_tls_introspect_state) != 2) { }
     return 0;
 }
 
