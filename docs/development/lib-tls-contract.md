@@ -285,6 +285,16 @@ On a bare native ctx (no shim) the same verb is `tls_native_set_deadline(ctx, ab
 6.6.14 native TLS did not run over `lib/net.cyr` sockets on Windows at all (roadmap backlog j). A
 HANDLE that is not a socket still goes through `ReadFile` / `WriteFile`.
 
+**SIGPIPE, native (6.6.14, CVE-66):** a record write — `tls_write`, a handshake flight, the
+close_notify `tls_close` sends, a fatal alert — to a peer that has reset the connection fails with
+`TLS_ERR_IO`; it never raises SIGPIPE, so it cannot kill a process that has not ignored the signal.
+Linux sends with `MSG_NOSIGNAL`; macOS sets `SO_NOSIGPIPE` on the socket before the connection's
+first write (a socket that refuses it — xnu does once the connection is reset — fails the write
+with `TLS_ERR_IO` instead of writing); Windows and agnos raise no such signal. The process-wide
+signal disposition is never touched. A pipe or a file used as the transport keeps `write(2)`'s
+SIGPIPE — neither OS has a per-call flag for one — and so does a custom transport
+(`tls_native_set_transport`), whose writes are its own.
+
 ### Trust store and client certificates (v6.2.8)
 
 Backend-agnostic replacements for the `tls_dlsym("SSL_CTX_*")` trust-store and mTLS calls. They
@@ -526,7 +536,7 @@ is a contract amendment — it amends this file in the same patch and says so in
 entry.
 
 Internal implementation details — the shim's layout (32 bytes on libssl: `SSL_CTX*`, `SSL*`,
-socket, deadline; 40 bytes on native), the native ctx layout (`TLS_CTX_LEN`, 576 bytes at 6.6.13),
+socket, deadline; 40 bytes on native), the native ctx layout (`TLS_CTX_LEN`, 648 bytes at 6.6.14),
 the `_fn_*` symbol cache, `_tls_libssl_handle`, the fdlopen bootstrap sequence — are NOT contract.
 Stdlib maintainers may restructure them freely so long as the public behaviour above is preserved.
 

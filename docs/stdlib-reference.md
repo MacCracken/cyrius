@@ -1499,7 +1499,7 @@ Sovereign TLS 1.2 + 1.3 stack — no OpenSSL. ECDSA (P-256/P-384) / RSA (PSS, PK
 | `tls_native_connect_12` | `tls_native_connect_12(ctx, fd) → TLS_OK/err` | TLS 1.2 client handshake |
 | `tls_native_accept` | `tls_native_accept(ctx, fd) → TLS_OK/err` | TLS 1.3 server handshake |
 | `tls_native_accept_12` | `tls_native_accept_12(ctx, fd) → TLS_OK/err` | TLS 1.2 server handshake |
-| `tls_native_write` | `tls_native_write(ctx, buf, len) → n/err` | Send application data (plaintext → AEAD record) |
+| `tls_native_write` | `tls_native_write(ctx, buf, len) → n/err` | Send application data (plaintext → AEAD record). A peer that reset the connection is `TLS_ERR_IO`, never SIGPIPE (6.6.14: `MSG_NOSIGNAL` on Linux, `SO_NOSIGPIPE` on macOS) |
 | `tls_native_read` | `tls_native_read(ctx, buf, max) → n/err` | Receive application data (AEAD record → plaintext) |
 | `tls_native_close` | `tls_native_close(ctx) → TLS_OK/err` | Clean close handshake (sends close_notify alert) |
 

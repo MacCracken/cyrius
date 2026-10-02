@@ -1,10 +1,16 @@
 # tls_native_socket_transport.tcyr — 6.6.14: native TLS over REAL lib/net.cyr TCP sockets, on
-# every host target: a TLS 1.3 and a TLS 1.2 handshake + echo in both directions.
+# every host target: a TLS 1.3 and a TLS 1.2 handshake + echo in both directions, and a peer that
+# resets the connection under a native TLS writer that has NOT ignored SIGPIPE.
 #
-# ⛔ WHY — backlog j: on Windows the default transport's leaves were ReadFile / WriteFile, which
-# return 0 on a Winsock SOCKET, so native TLS could not run over a net.cyr socket at all
-# (tls_native_connect failed TLS_ERR_IO in ~8 ms on cass). No crossos test ran TLS over a socket,
-# so nothing off x86_64 Linux ever exercised the transport.
+# ⛔ WHY (two defects in the default transport, the one every native connection uses):
+#   (a) backlog j — on Windows the default transport's leaves were ReadFile / WriteFile, which
+#       return 0 on a Winsock SOCKET, so native TLS could not run over a net.cyr socket at all
+#       (tls_native_connect failed TLS_ERR_IO in ~8 ms on cass). No crossos test ran TLS over a
+#       socket, so nothing off x86_64 Linux ever exercised the transport.
+#   (b) CVE-66 (native half) — every record write was a flagless write(2). Writing to a peer that
+#       had reset the connection raised SIGPIPE and KILLED any native TLS client or server process
+#       that had not ignored it: a remote, unauthenticated kill. The writes are now
+#       send(MSG_NOSIGNAL) on Linux and SO_NOSIGPIPE on macOS, and such a write is TLS_ERR_IO.
 #
 # THE MECHANISM: the test spawns ITSELF (lib/process.cyr spawn — fork + execve on POSIX,
 # CreateProcessW on Windows), because threads run inline on cass and ach and a TLS handshake needs
@@ -13,7 +19,16 @@
 # the client trusts the test's self-signed P-256 root (SAN DNS:localhost). Every TLS ctx carries a
 # deadline and the parent's wait is bounded, so a regression fails a row instead of hanging the run.
 # The child prints nothing and answers with its exit code: 0 = its half held, 2..39 = the step
-# that failed.
+# that failed, and 141 (128 + SIGPIPE) = the kernel killed it — the pre-fix result of every reset row
+# on Linux and macOS.
+#
+# The reset rows (b): after the handshake the parent closes its socket (a FIN); the child waits for
+# it, then writes. Its first write reaches a closed socket, whose kernel answers with an RST; the
+# next write of the connection is the one that used to raise SIGPIPE. The child resets SIGPIPE to
+# SIG_DFL first, so an inherited "ignore" cannot make a row pass vacuously. Each row takes another
+# write path: a record write with and without a deadline (the deadline's non-blocking writer is a
+# separate loop), the close_notify tls_native_close sends, and a fatal alert (an unexpected_message
+# answering a ChangeCipherSpec the peer sent after the handshake).
 include "lib/assert.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -34,6 +49,7 @@ enum SockTransportTest {
     ST_DEADLINE_S = 20;        # every TLS ctx's deadline
     ST_ACCEPT_MS = 15000;      # the parent's accept wait
     ST_CHILD_MS = 60000;       # the parent's wait for the child
+    ST_RESET_TRIES = 200;      # writes (10 ms apart) before a reset row gives up
 }
 
 var _st_cert = 0;              # DER, self-signed P-256, CN = SAN DNS = localhost, CA:TRUE
@@ -142,7 +158,95 @@ fn _st_child_echo_client(fd, ver): i64 {
     return 0;
 }
 
+# Wait for the parent's FIN without consuming it through TLS (a TLS read would fail the ctx).
+fn _st_wait_fin(fd): i64 {
+    if (fd_wait_ready(fd, 0, ST_ACCEPT_MS) != 1) { return 0; }
+    sleep_ms(20);
+    return 1;
+}
+
+# Write records to the reset peer until one fails. The failing write's result, or 0 if every
+# write of ST_RESET_TRIES succeeded.
+fn _st_write_until_reset(ctx): i64 {
+    var i = 0;
+    while (i < ST_RESET_TRIES) {
+        var w = tls_native_write(ctx, "reset-probe", 11);
+        if (w != 11) { return w; }
+        sleep_ms(10);
+        i = i + 1;
+    }
+    return 0;
+}
+
+# The writer halves of the reset rows. `dl` = 1 keeps the deadline (the non-blocking writer),
+# 0 clears it (the plain write loop).
+fn _st_child_reset_writer(fd, ver, as_server, dl): i64 {
+    var x = 0;
+    if (as_server == 1) {
+        x = _st_server(ver);
+        if (x == 0) { return 2; }
+        if (tls_native_accept(x, fd) != TLS_OK) { return 3; }
+    } else {
+        x = _st_client(ver);
+        if (x == 0) { return 2; }
+        if (tls_native_connect(x, fd) != TLS_OK) { return 3; }
+    }
+    if (dl == 0) { tls_native_set_deadline(x, 0); }
+    if (_st_wait_fin(fd) != 1) { return 8; }
+    var w = _st_write_until_reset(x);
+    if (w != TLS_ERR_IO) { return 9; }
+    if (tls_native_get_last_error(x) != TLS_ERR_IO) { return 10; }
+    return 0;
+}
+
+# The close_notify row: one write reaches the closed socket (the RST comes back), then
+# tls_native_close sends its close_notify into the reset connection.
+fn _st_child_reset_close(fd, ver): i64 {
+    var c = _st_client(ver);
+    if (c == 0) { return 2; }
+    if (tls_native_connect(c, fd) != TLS_OK) { return 3; }
+    if (_st_wait_fin(fd) != 1) { return 8; }
+    tls_native_write(c, "reset-probe", 11);
+    sleep_ms(100);
+    if (tls_native_close(c) != TLS_OK) { return 11; }
+    return 0;
+}
+
+# The fatal-alert row: the parent sent a ChangeCipherSpec after the handshake and closed. One
+# write draws the RST; the read then finds the CCS, and the stack answers it with a fatal
+# unexpected_message alert, written into the reset connection.
+fn _st_child_reset_alert(fd, ver): i64 {
+    var s = _st_server(ver);
+    if (s == 0) { return 2; }
+    if (tls_native_accept(s, fd) != TLS_OK) { return 3; }
+    tls_native_set_deadline(s, 0);
+    if (_st_wait_fin(fd) != 1) { return 8; }
+    tls_native_write(s, "reset-probe", 11);
+    sleep_ms(100);
+    var one[8];
+    var r = tls_native_read(s, &one, 1);
+    if (r >= 0) { return 12; }
+    #ifndef CYRIUS_TARGET_WIN
+    # POSIX keeps the received CCS readable after the RST, so the alert path is the one taken.
+    # (Windows discards a reset connection's receive queue: the read is TLS_ERR_IO there.)
+    if (r != TLS_ERR_PROTOCOL) { return 13; }
+    #endif
+    return 0;
+}
+
+# A socket shut down both ways before the connection's first write — the state an RST leaves.
+# Linux: send(MSG_NOSIGNAL) answers EPIPE. macOS: xnu refuses SO_NOSIGPIPE on such a socket
+# (EINVAL), and the write is failed CLOSED rather than made unprotected. Windows: WSAESHUTDOWN.
+fn _st_child_shut_first(fd, ver): i64 {
+    var c = _st_client(ver);
+    if (c == 0) { return 2; }
+    sock_shutdown(fd, 2);                        # SHUT_RDWR / SD_BOTH
+    if (tls_native_connect(c, fd) != TLS_ERR_IO) { return 14; }
+    return 0;
+}
+
 fn _st_child(scn, port): i64 {
+    signal_default(SIGPIPE);                     # the default disposition: SIGPIPE kills
     _st_creds();
     var fd = _st_dial(port);
     if (fd < 0) { return 30; }
@@ -151,6 +255,11 @@ fn _st_child(scn, port): i64 {
     if (streq(scn, "hc13") == 1) { rc = _st_child_echo_client(fd, TLS_VERSION_1_3); }
     if (streq(scn, "hs12") == 1) { rc = _st_child_echo_server(fd, TLS_VERSION_1_2); }
     if (streq(scn, "hc12") == 1) { rc = _st_child_echo_client(fd, TLS_VERSION_1_2); }
+    if (streq(scn, "rc13") == 1) { rc = _st_child_reset_writer(fd, TLS_VERSION_1_3, 0, 0); }
+    if (streq(scn, "rs12") == 1) { rc = _st_child_reset_writer(fd, TLS_VERSION_1_2, 1, 1); }
+    if (streq(scn, "nc13") == 1) { rc = _st_child_reset_close(fd, TLS_VERSION_1_3); }
+    if (streq(scn, "as12") == 1) { rc = _st_child_reset_alert(fd, TLS_VERSION_1_2); }
+    if (streq(scn, "sd13") == 1) { rc = _st_child_shut_first(fd, TLS_VERSION_1_3); }
     sock_close(fd);
     return rc;
 }
@@ -247,9 +356,49 @@ fn _st_echo_rows(ver, vname): i64 {
     return 0;
 }
 
-# A file is not a socket: the default transport's leaves keep read(2) / write(2) on Linux and macOS
-# and fall back to ReadFile / WriteFile on Windows (send / recv / WSAPoll / FIONBIO answer
-# WSAENOTSOCK), with and without a deadline. A transport that only knew sockets would fail every row.
+# A reset row: the parent completes its half of the handshake (as `peer_role`) and closes;
+# `ccs` = 1 first sends a raw ChangeCipherSpec record. Returns the child's exit code.
+fn _st_reset_row(scn, ver, parent_is_server, ccs): i64 {
+    var fd = _st_start(scn);
+    if (fd < 0) { return 0 - 1; }
+    var hs = 0;
+    if (parent_is_server == 1) {
+        var s = _st_server(ver);
+        hs = tls_native_accept(s, fd);
+    } else {
+        var c = _st_client(ver);
+        hs = tls_native_connect(c, fd);
+    }
+    assert_eq(hs, TLS_OK, "  the parent's half of the handshake");
+    if (ccs == 1) { sock_send_all(fd, "\x14\x03\x03\x00\x01\x01", 6); }
+    sock_close(fd);                               # the FIN; the child's next write draws an RST
+    return _st_child_code();
+}
+
+fn _st_reset_rows(): i64 {
+    test_group("6.6.14 — a native TLS writer survives a peer that reset the connection (CVE-66)");
+    assert_eq(_st_reset_row("rc13", TLS_VERSION_1_3, 1, 0), 0,
+      "TLS 1.3 client, no deadline: the write fails TLS_ERR_IO and the process lives (141 = SIGPIPE)");
+    assert_eq(_st_reset_row("rs12", TLS_VERSION_1_2, 0, 0), 0,
+      "TLS 1.2 server, under a deadline: the write fails TLS_ERR_IO and the process lives");
+    assert_eq(_st_reset_row("nc13", TLS_VERSION_1_3, 1, 0), 0,
+      "TLS 1.3 client: tls_native_close's close_notify into the reset connection is survived");
+    assert_eq(_st_reset_row("as12", TLS_VERSION_1_2, 0, 1), 0,
+      "TLS 1.2 server: the fatal alert answering a late CCS, into the reset connection, is survived");
+    # The child shuts its own socket down before its ClientHello; the parent only accepts.
+    var fd = _st_start("sd13");
+    if (fd >= 0) {
+        assert_eq(_st_child_code(), 0,
+          "a socket shut down both ways before the first write: tls_native_connect is TLS_ERR_IO, no SIGPIPE");
+        sock_close(fd);
+    }
+    return 0;
+}
+
+# A file is not a socket: the default transport's leaves fall back to write(2) / read(2) on Linux
+# (sendto answers ENOTSOCK), keep them on macOS (SO_NOSIGPIPE answers ENOTSOCK) and fall back to
+# WriteFile / ReadFile on Windows (send / recv / WSAPoll / FIONBIO answer WSAENOTSOCK), with and
+# without a deadline. A transport that only knew sockets would fail every row.
 fn _st_file_rows(): i64 {
     test_group("6.6.14 — a file (not a socket) still goes through the default transport, with and without a deadline");
     var path = alloc(64);
@@ -289,6 +438,7 @@ fn main(): i64 {
     proc_set_timeout_ms(ST_CHILD_MS);
     _st_echo_rows(TLS_VERSION_1_3, "6.6.14 — native TLS 1.3 over net.cyr loopback TCP: handshake + 40000-byte echo, both roles");
     _st_echo_rows(TLS_VERSION_1_2, "6.6.14 — native TLS 1.2 over net.cyr loopback TCP: handshake + 40000-byte echo, both roles");
+    _st_reset_rows();
     _st_file_rows();
     #endif
     var r = assert_summary();

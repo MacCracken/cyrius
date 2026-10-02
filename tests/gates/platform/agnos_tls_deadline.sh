@@ -42,6 +42,13 @@ check() {
 "$CC" < tests/fixtures/agnos_sctrace.cyr > "$T/sct" 2>"$T/sct.err" && chmod +x "$T/sct" || {
     echo "FAIL agnos_tls_deadline: the fake-kernel tracer did not build"; head -3 "$T/sct.err"; exit 1; }
 
+# The probe's ctx is TLS_CTX_LEN bytes, read from the source rather than written here: a ctx that
+# grows (6.6.14: 576 -> 648) must not leave the probe a stack buffer shorter than the struct.
+CTXLEN=$(sed -n 's/^var TLS_CTX_LEN *= *\([0-9][0-9]*\);.*/\1/p' lib/tls_native_ctx.cyr)
+case "$CTXLEN" in
+    ''|*[!0-9]*) echo "FAIL agnos_tls_deadline: cannot read TLS_CTX_LEN from lib/tls_native_ctx.cyr"; exit 1 ;;
+esac
+
 # One probe: connect (#47 answers conn 0), a zeroed ctx (`cx`, TLS_CTX_LEN bytes) whose deadline
 # the statements set, then the statement under test, its result reported with syscall(999, 1, r).
 # A marker syscall(999, 0, 0) precedes the statements, so the counts start there.
@@ -54,7 +61,7 @@ include "lib/net.cyr"
 include "lib/tls_native.cyr"
 var fd_t, fd = tcp_socket();
 sock_connect(fd, INADDR_LOOPBACK(), 8080);
-var cx[576];
+var cx[$CTXLEN];
 var big[128];
 syscall(999, 0, 0);
 $1
@@ -70,8 +77,6 @@ mark() { awk -v t="$1" '$1 == "sc" && $2 == 999 && $3 == t { print $4; exit }' "
 # calls of syscall <nr> between marker 0 and marker 1
 count() { awk -v n="$1" '$1 == "sc" && $2 == 999 && $3 == 0 { on = 1; next } on && $1 == "sc" && $2 == 999 { exit } on && $1 == "sc" && $2 == n { c++ } END { print c + 0 }' "$T/run.log"; }
 
-[ "$(grep -c '^var TLS_CTX_LEN *= *576;' lib/tls_native_ctx.cyr)" = "1" ] || {
-    echo "FAIL agnos_tls_deadline: TLS_CTX_LEN is no longer 576 — resize the probe's cx[] to match"; exit 1; }
 
 DL1="tls_native_set_deadline(&cx, clock_now_ns() + 1000000000);"
 

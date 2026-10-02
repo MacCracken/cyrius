@@ -567,14 +567,20 @@ fn _tn_can_poll(): i64 {
 # The default transport's leaves (6.6.14)
 # ----------------------------------------------------------------
 # One read / one write of the default transport (no tls_native_set_transport), per target:
-#   Linux, macOS  read(2) / write(2)
-#   Windows       ws2_32 recv / send — ReadFile / WriteFile for a HANDLE that is not a socket
-#   agnos         read / write: the peer routes a tagged socket fd to sock_recv#49 / sock_send#48
+#   Linux    read(2); send(fd, buf, n, MSG_NOSIGNAL) — write(2) for an fd that is not a socket
+#   macOS    read(2) / write(2), the socket set SO_NOSIGPIPE once per connection (_tn_nosigpipe)
+#   Windows  ws2_32 recv / send — ReadFile / WriteFile for a HANDLE that is not a socket
+#   agnos    read / write: the peer routes a tagged socket fd to sock_recv#49 / sock_send#48, and
+#            agnos raises no signal for a dead connection (#48 answers -1)
 # Each returns the byte count, 0 (read: end of stream), or a negative error: -errno, or on
 # Windows -WSAGetLastError (_tn_eagain and _tn_is_notsock read those).
-# ⛔ 6.6.14 — WHY. The leaves were sys_read / sys_write on every target, and on Windows those are
-# ReadFile / WriteFile, which fail on a Winsock SOCKET: native TLS could not run over a lib/net.cyr
-# socket there at all (roadmap backlog j). CHANGELOG [6.6.14]
+# ⛔ 6.6.14 — WHY. (a) The leaves were sys_read / sys_write on every target, and on Windows those
+# are ReadFile / WriteFile, which fail on a Winsock SOCKET: native TLS could not run over a
+# lib/net.cyr socket there at all (roadmap backlog j). (b) A flagless write(2) to a peer that had
+# reset the connection raised SIGPIPE, which KILLED a native TLS client or server that had not
+# ignored it — any peer could end the process (CVE-66). The process-global signal disposition is
+# left alone: the protection is per write (Linux) or per socket (macOS). A pipe or a file keeps
+# write(2)'s SIGPIPE — neither OS has a per-call flag for one. CHANGELOG [6.6.14]
 
 # _tn_nb_write_all's answer for a Windows HANDLE that is not a socket (FIONBIO refused it): the
 # caller writes it through the between-calls loop instead. Private; no TLS_ERR_* value.
@@ -618,7 +624,7 @@ fn _tn_os_read(fd, buf, n): i64 {
     #endif
 }
 
-# Write up to `n` bytes to `fd`.
+# Write up to `n` bytes to `fd`, never raising SIGPIPE on a socket (see the block above).
 fn _tn_os_write(fd, buf, n): i64 {
     #ifdef CYRIUS_TARGET_WIN
     var len = n;
@@ -629,9 +635,39 @@ fn _tn_os_write(fd, buf, n): i64 {
     if (_tn_is_notsock(e) == 1) { return sys_write(fd, buf, n); }   # a pipe / file HANDLE
     return e;
     #endif
-    #ifndef CYRIUS_TARGET_WIN
-    return sys_write(fd, buf, n);
+    #ifdef CYRIUS_TARGET_LINUX
+    var s = sys_sendto(fd, buf, n, 0x4000, 0, 0);    # MSG_NOSIGNAL: EPIPE, never SIGPIPE
+    if (s == 0 - 88) { return sys_write(fd, buf, n); }   # ENOTSOCK: a pipe / file fd
+    return s;
     #endif
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_LINUX
+    return sys_write(fd, buf, n);                    # macOS (SO_NOSIGPIPE: _tn_nosigpipe), agnos
+    #endif
+    #endif
+}
+
+# macOS has no MSG_NOSIGNAL: SO_NOSIGPIPE (SOL_SOCKET 0xFFFF, 0x1022) makes every write on the
+# socket answer EPIPE instead of raising SIGPIPE. Set once per connection, before its first write
+# — the ctx remembers the fd it covered (TLS_CTX_OFF_NOSIGPIPE = fd + 1); a ctx-less write sets
+# it every time. Returns 0, or the setsockopt error: anything but ENOTSOCK (38: a pipe or a file,
+# which keeps write(2)'s SIGPIPE) fails the write CLOSED, because a socket we could not protect may
+# be written into a reset — xnu answers EINVAL for a socket already shut down both ways, which is
+# what an RST leaves. Every other target: 0, nothing to do.
+fn _tn_nosigpipe(ctx, fd): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    if (ctx != 0) {
+        if (load64(ctx + TLS_CTX_OFF_NOSIGPIPE) == fd + 1) { return 0; }
+    }
+    var one[8];
+    store64(&one, 1);
+    var r = sys_setsockopt(fd, 0xFFFF, 0x1022, &one, 4);    # SOL_SOCKET, SO_NOSIGPIPE
+    if (r < 0) {
+        if (r != 0 - 38) { return r; }               # ENOTSOCK is the only failure that is not one
+    }
+    if (ctx != 0) { store64(ctx + TLS_CTX_OFF_NOSIGPIPE, fd + 1); }
+    #endif
+    return 0;
 }
 
 # Read exactly `n` bytes from `fd` into `buf` (loops over partial reads) under ctx's deadline.
@@ -673,7 +709,7 @@ fn _tn_io_read_full(ctx, fd, buf, n): i64 {
 
 # Write all `len` bytes of `buf` to `fd` (loops over partial writes) under ctx's deadline.
 # Returns len, TLS_ERR_TIMEOUT when the deadline passes first (an expired one before any I/O), or
-# TLS_ERR_IO.
+# TLS_ERR_IO — a peer that reset the connection included (no SIGPIPE: _tn_os_write).
 fn _tn_io_write_all(ctx, fd, buf, len): i64 {
     var dl = _tn_deadline(ctx);
     var wf = _tn_tx_write;
@@ -681,6 +717,7 @@ fn _tn_io_write_all(ctx, fd, buf, len): i64 {
         if (clock_now_ns() >= dl) { return TLS_ERR_TIMEOUT; }
     }
     if (wf == 0) {
+        if (_tn_nosigpipe(ctx, fd) < 0) { return TLS_ERR_IO; }
         if (dl != 0) {
             #ifdef CYRIUS_TARGET_AGNOS
             if (_agnos_is_sock_fd(fd) == 1) { return _tn_agnos_write_all(fd, buf, len, dl); }
