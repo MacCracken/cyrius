@@ -309,8 +309,8 @@ fn test_client_cert_pem(): i64 {
 # tls_connect_alloc is the a == 0 wrapper over tls_connect_alloc_in; the libssl arm of _in must
 # call the libssl BODY, or the two recurse forever (a tail call: the mutant HANGS, it does not
 # overflow). So the call runs in a forked child under a bounded wait. Child exit: 0 = libssl
-# loaded and the ctx is its 24-byte shim on this socket, 10 = libssl absent and the answer was 0,
-# anything else = the step that failed.
+# loaded and the ctx is its libssl shim (_TLS_LIBSSL_SHIM_LEN bytes) on this socket, 10 = libssl
+# absent and the answer was 0, anything else = the step that failed.
 fn _ca_libssl_child(cfd): i64 {
     tls_set_backend(TLS_BACKEND_LIBSSL);
     var a = arena_allocator(4096);
