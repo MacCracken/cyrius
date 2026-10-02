@@ -1659,8 +1659,9 @@ fn tls_native_set_ca_bundle(ctx, pem_bundle, bundle_len, is_der): i64 {
 # install that failed TLS_ERR_CERT_INVALID it is that bundle's count (every block). Returns >= 0;
 # 0 before any install; TLS_ERR_INVALID_PARAM for ctx == 0.
 # Windows' system store (6.6.14) also counts the roots it refuses — a dated distrust (Disable or
-# NotBefore) covering TLS, which the native verifier cannot apply (cass: 12) — and any root that did
-# not fit the 1 MiB bundle: installed + skipped == the store's TLS roots (`_tn_ca_sys_refused`).
+# NotBefore) covering TLS or root-program name constraints, which the native verifier cannot apply, or
+# a property it cannot read (cass: 12) — and any root that did not fit the 1 MiB bundle: installed +
+# skipped == the store's TLS roots (`_tn_ca_sys_refused`).
 # Issue 2026-09-30-tls-client-memory-and-alert-gaps (e); CHANGELOG [6.6.13], [6.6.14].
 fn tls_native_ca_skipped(ctx): i64 {
     if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
@@ -1714,8 +1715,8 @@ var _tn_ca_buf = 0;      # cached bundle bytes                              } va
 var _tn_ca_len = 0;      # >0 = bytes · -1 = looked, none readable (cached) } at state 2
 var _tn_ca_sys_set = 0;      # the shared root set [count][roots...], or a negative TLS_ERR_* } valid only
 var _tn_ca_sys_skipped = 0;  # blocks of the bundle the set could not use                    } at state 2
-# Windows (6.6.14): store roots refused by policy (a dated distrust covering TLS) or that did not fit
-# the buffer — not in the bundle, counted into `_tn_ca_sys_skipped`. Always 0 elsewhere.
+# Windows (6.6.14): store roots refused by policy (see _tn_w_policy) or that did not fit the buffer —
+# not in the bundle, counted into `_tn_ca_sys_skipped`. Always 0 elsewhere.
 # Written by the claim holder only, in _tn_ca_read_win. CHANGELOG [6.6.14]
 var _tn_ca_sys_refused = 0;
 
@@ -1837,8 +1838,8 @@ fn _tn_ca_read(buf, cap): i64 {
 # process — and it is a LOGICAL store that already holds LocalMachine\ROOT, the third-party
 # (AuthRoot) roots and Group Policy / Enterprise roots (measured on cass: CurrentUser\ROOT 59 ⊇
 # LocalMachine\ROOT 59 ⊇ AuthRoot 47).
-# WHICH ROOTS: the ones Windows trusts for TLS server authentication, so the native client never
-# trusts MORE than Windows does:
+# WHICH ROOTS: the ones the root's own properties and the Disallowed store say Windows trusts for TLS
+# server authentication — the policy only ever REMOVES roots, and anything it cannot judge is refused:
 #   - a root whose root-program purposes (CERT_ENHKEY_USAGE_PROP_ID) leave out serverAuth is not a
 #     TLS anchor (cass: 6, e.g. Thawte Timestamping CA) — the analogue of the Mozilla trust bits the
 #     POSIX bundles are already filtered by;
@@ -1851,8 +1852,17 @@ fn _tn_ca_read(buf, cap): i64 {
 #     Baltimore, VeriSign G5; NotBefore — the three Entrust roots, SecureTrust CA, Certum CA, Class 3
 #     PCA). Refused roots, and any that would not fit `cap`, are counted in tls_native_ca_skipped
 #     (`_tn_ca_sys_refused`);
+#   - a root carrying root-program NAME CONSTRAINTS (CERT_ROOT_PROGRAM_NAME_CONSTRAINTS_PROP_ID 84)
+#     is refused the same way: Windows confines it to the names listed, the verifier has no per-root
+#     name constraint (none on cass today);
 #   - a certificate in the Disallowed store is never a root (Windows' explicit distrust); a Disallowed
 #     store that cannot be opened makes the whole store unusable rather than unfiltered.
+# ⚠ NOT "never trusts more than Windows". The chain engine also distrusts what this cannot see: the
+# auto-updated disallowed CTL (HKLM ...\AuthRoot\AutoUpdate\DisallowedCertEncodedCtl) is NOT
+# consulted — only the Disallowed STORE is (on cass the store is empty while the CTL holds ~97
+# hashes, none of them a ROOT certificate there) — and Disallowed is applied to ROOTS only, never to
+# the intermediates and leaves a server sends. The other way, roots Windows would fetch on demand
+# (automatic root update) are not in the store, so those servers fail closed here.
 # Each root is written into `buf` as a PEM block, so `_tn_ca_buf` is the same thing on every target
 # (the system bundle, PEM) and _tn_ca_parse_set counts what it cannot parse exactly as for a file.
 # HOW: crypt32 is loaded at first use with LoadLibraryExA(LOAD_LIBRARY_SEARCH_SYSTEM32), resolved
@@ -1864,6 +1874,7 @@ var _TN_W_SEARCH_SYSTEM32 = 0x800;      # LOAD_LIBRARY_SEARCH_SYSTEM32
 var _TN_W_PROV_SYSTEM_W = 10;           # CERT_STORE_PROV_SYSTEM_W
 var _TN_W_STORE_FLAGS = 0x1C000;        # CERT_SYSTEM_STORE_CURRENT_USER | READONLY | OPEN_EXISTING
 var _TN_W_PROP_EKU = 9;                 # CERT_ENHKEY_USAGE_PROP_ID
+var _TN_W_PROP_NAMES = 84;              # CERT_ROOT_PROGRAM_NAME_CONSTRAINTS_PROP_ID
 var _TN_W_PROP_DISABLE = 104;           # CERT_DISALLOWED_FILETIME_PROP_ID: not trusted after it
 var _TN_W_PROP_DISABLE_EKU = 122;       # CERT_DISALLOWED_ENHKEY_USAGE_PROP_ID: for these purposes
 var _TN_W_PROP_NOTBEFORE = 126;         # CERT_NOT_BEFORE_FILETIME_PROP_ID: issued after it, not trusted
@@ -1995,9 +2006,10 @@ fn _tn_w_dated(fns, cc, date_id, eku_id, scratch, scap): i64 {
 
 # How Windows trusts the store certificate `cc` (a PCCERT_CONTEXT) for TLS server authentication:
 # 1 = as an anchor, 0 = not at all (its purposes leave serverAuth out), 2 = refused (a dated
-# distrust covers TLS, or a property cannot be read or is malformed — it cannot be judged, so it is
-# refused and COUNTED). Any failure other than "property absent" fails closed. Property values are
-# read into scratch[0..scap) — the unused tail of the bundle buffer.
+# distrust covers TLS, it carries root-program name constraints, or a property cannot be read or is
+# malformed — it cannot be judged, so it is refused and COUNTED). Any failure other than "property
+# absent" fails closed. Property values are read into scratch[0..scap) — the unused tail of the
+# bundle buffer.
 fn _tn_w_policy(fns, cc, scratch, scap): i64 {
     var n = _tn_w_prop(fns, cc, _TN_W_PROP_EKU, scratch, scap);
     if (n == 0 - 2) { return 2; }
@@ -2006,6 +2018,7 @@ fn _tn_w_policy(fns, cc, scratch, scap): i64 {
         if (e < 0) { return 2; }
         if (e == 0) { return 0; }
     }
+    if (_tn_w_prop(fns, cc, _TN_W_PROP_NAMES, scratch, scap) != 0 - 1) { return 2; }
     if (_tn_w_dated(fns, cc, _TN_W_PROP_DISABLE, _TN_W_PROP_DISABLE_EKU, scratch, scap) == 1) { return 2; }
     if (_tn_w_dated(fns, cc, _TN_W_PROP_NOTBEFORE, _TN_W_PROP_NOTBEFORE_EKU, scratch, scap) == 1) { return 2; }
     return 1;

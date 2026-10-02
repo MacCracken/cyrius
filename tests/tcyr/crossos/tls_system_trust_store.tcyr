@@ -318,7 +318,7 @@ fn _ts_dated(fns, cc, d, e): i64 {
 
 # What Windows' root-program properties say about `cc` for TLS: 1 an anchor, 0 not a TLS root,
 # 2 refused by the library — distrusted by a date that covers TLS (Disable 104 / 122 or NotBefore
-# 126 / 127), or a purpose list it cannot read.
+# 126 / 127), confined by root-program name constraints (84), or a purpose list it cannot read.
 fn _ts_expect(fns, cc): i64 {
     var n = _ts_prop(fns, cc, 9);
     if (n == 0 - 2) { return 2; }    # unreadable: the library refuses and counts it
@@ -326,6 +326,7 @@ fn _ts_expect(fns, cc): i64 {
         if (_ts_eku_ok(n) == 0) { return 2; }
         if (_ts_names_server(n) == 0) { return 0; }
     }
+    if (_ts_prop(fns, cc, 84) != 0 - 1) { return 2; }
     if (_ts_dated(fns, cc, 104, 122) == 1) { return 2; }
     if (_ts_dated(fns, cc, 126, 127) == 1) { return 2; }
     return 1;
@@ -607,6 +608,14 @@ fn test_policy_rows(): i64 {
     assert_eq(_tm_run(&fns, 0, cap), 0, "a 694-byte purpose list without serverAuth: not a TLS root");
     _tm_with_bytes(9, _tm_long(1), 694);
     assert_eq(_tm_run(&fns, 0, 650), 2, "a purpose list too long for the buffer's free tail: refused, COUNTED");
+    # Root-program name constraints (prop 84): the verifier cannot confine a root to names, so refused.
+    _tm_with(84, "3000");
+    assert_eq(_tm_run(&fns, 0, cap), 2, "root-program name constraints: refused, counted");
+    _tm_with(84, "");
+    assert_eq(_tm_run(&fns, 0, cap), 2, "an EMPTY name-constraints property: refused");
+    _tm_with(9, _TM_CS);
+    _tm_with(84, "3000");
+    assert_eq(_tm_run(&fns, 0, cap), 0, "name constraints on a root that is not for TLS: excluded, not counted");
     # The disable date (prop 104), scoped by prop 122.
     _tm_with(104, _TM_DATE);
     assert_eq(_tm_run(&fns, 0, cap), 2, "a disable date for every purpose: refused, counted");
