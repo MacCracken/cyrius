@@ -328,6 +328,53 @@ kriya's was already there. Every repo that bumps to 6.6.13 must re-vendor `lib/m
 Real 6.x-line work without a committed slot; pulled into a release the moment a consumer or
 priority surfaces. **These are technical items → they stay in the 6.x cycle, never 7.x.**
 
+- **Found by the 6.6.14 lanes (2026-10-02; backlog, not placed — only the user promotes).** Met in passing or
+  left by a lane with its reason; not swept for.
+  - TLS — the native 1.2 client does ECDHE on x25519 only. An OpenSSL 1.2 server with an ECDSA P-256 / P-384
+    SERVER certificate answers "no shared cipher". And since CVE-64's fix, a native 1.2 client HOLDING a
+    P-256 / P-384 client certificate lists that curve (OpenSSL requires it), so a server ranking it above
+    X25519 by its own preference fails the handshake where 6.6.13 connected (pinned by
+    `tls_native_client_auth_openssl.sh`). Remedy: ECDHE on P-256 / P-384 in the 1.2 client, which wants a
+    constant-time ECDH primitive in sigil (its P-256 / P-384 scalar multiplications are public-scalar, non-CT).
+  - TLS — `_tn_verify_sig_scheme` (`lib/tls_native_hs13.cyr` ~284) calls `ed25519_verify` without checking
+    `sig_len == 64`, and binds the ECDSA curve to the scheme for the 1.2 ServerKeyExchange, where 1.2 allows a
+    P-384 key with SHA-256.
+  - TLS — capability limits listed in CVE-64's *Not covered*: no RSA client certificates natively; the native
+    client and the native server send their leaf only (no intermediates); an empty certificate_authorities;
+    the 1.3 server reads each client message from one record (a client Certificate of at most 8 KiB).
+  - TLS — the chain verifier checks only the LEAF's extendedKeyUsage, never a CA's own (Windows' chain engine
+    and OpenSSL both check it).
+  - TLS, Windows — the store: CurrentUser `ROOT` under the ProtectedRoots policy is unverified; the
+    auto-updated disallowed CTL is not read; a root with a dated distrust is refused whole (SecureTrust's
+    pre-2026-09-15 leaves fail here); roots Windows has not fetched yet are invisible (CVE-65's *Not covered*).
+  - TLS, Windows — an accepted socket inherits a non-blocking listener's `FIONBIO`, so native TLS with no
+    deadline on it fails `TLS_ERR_IO`.
+  - TLS, libssl — `tls_ctx_set_session_cache_mode` is a silent no-op (OpenSSL 3 makes
+    `SSL_CTX_set_session_cache_mode` a macro over `SSL_CTX_ctrl`; the dlsym finds nothing); a failed
+    `tls_*_complete` records no sticky error, so a contract-violating `tls_read` after it re-drives the
+    handshake.
+  - TLS, agnos — a native write can overshoot the caller's deadline by one `sock_send#48` stall (~8 s):
+    agnos's #48 hard-codes `TCP_PROGRESS_US`. It needs #48 to honour a time bound (`tcp_send_ex` already
+    takes one) — an agnos ABI change, then the stdlib passes the time left (CVE-61's *Not covered*).
+  - kavach — its `basic` seccomp profile allows `write` but not `sendto` (nor `poll` / `fcntl`), so a
+    sandboxed native TLS writer on Linux is killed (SIGSYS) from 6.6.14 (CVE-66's `MSG_NOSIGNAL`), and was
+    already whenever it set a deadline. Whether `basic` admits `sendto` (e.g. with a NULL destination only)
+    is kavach's call.
+  - `lib/net.cyr`'s plain writers (`sock_send`, `sock_send_all`, `lib/http.cyr`, `lib/ws.cyr`) are flagless
+    `write`s on Linux and macOS: a reset peer still raises SIGPIPE there (CVE-66's class for plain sockets).
+  - `lib/syscalls_windows.cyr` `fd_wait_ready` (~880, also ~949/955/965) returns `0 - WSAGetLastError`
+    without the 32-bit mask `net.cyr` applies.
+  - check.sh — `cli_pe_file_size_and_sibling_tools.sh` runs wine in the shared default prefix; with several
+    check.sh runs at once its axis 1 hung to its 300 s timeout (a plausible mechanism: the gate supervisor
+    reaping another run's wineserver). The `sit fsck` driver row always SKIPs in a worktree outside `~/Repos`.
+  - `lib/thread_win.cyr:36` says `THREADS_CONCURRENT = 0` is a "serial fallback (bodies run inline)", while
+    `thread_create` starts a real `CreateThread`.
+  - `tls_native_set_client_cert` sizes its decode at `TLS_CA_MAX_ROOTS` (300) entries; sigil 3.13.7's
+    `pem_count_cert_blocks` could size it exactly.
+  - sigil (its repo) — the TPM helpers probe `/dev/tpmrm0` and spawn `/usr/bin/tpm2_*` by rooted path,
+    drive-relative on Windows if reachable on PE (the CVE-65 class, an executable this time); its check.sh
+    builds at predictable `/tmp/sigil_{t,b,f}_$$` paths. sandhi (its repo): `lib/sandhi.cyr` ~1589 still
+    calls the tls ctx a 24-byte struct.
 - **Found by the 6.6.13 lanes' reviews (2026-10-01; backlog, not placed — only the user promotes).** The TLS
   finds are 6.6.14's scope (*6.6.14* above).
   - `cyrius deps` joins the `tag` value into `<home>/deps/<name>/<tag>` unchecked: `tag = "../../../x"`
