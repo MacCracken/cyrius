@@ -567,14 +567,32 @@ fn tls_set_alpn(handle, protos, protos_len): i64 {
 # behind this typed verb so consumers don't bind to libssl's
 # symbol name. Returns 0 on success, -1 on missing handle or
 # unresolved symbol.
+#
+# Native (6.6.14, CVE-64): the OpenSSL bitmask maps to a native mode that is never LESS strict
+# than the caller asked —
+#   0                                         -> TLS_VERIFY_NONE
+#   any mode with SSL_VERIFY_FAIL_IF_NO_PEER_CERT (2) set, SSL_VERIFY_PEER (1) or not
+#                                             -> TLS_VERIFY_FAIL_IF_NO_PEER_CERT
+#   any other non-zero mode (PEER; CLIENT_ONCE 4 and POST_HANDSHAKE 8, alone or with PEER)
+#                                             -> TLS_VERIFY_PEER
+# FAIL without PEER is STRICTER than OpenSSL, which ignores the bit unless PEER is set: a caller
+# that asked to refuse certificate-less clients gets that. On a client ctx FAIL and PEER verify
+# alike (a server always presents a certificate). `callback` is NOT run natively: there is no
+# verify callback, so a callback that would ACCEPT a peer OpenSSL rejects (a self-signed or
+# pinned peer) does not — the native handshake fails closed; install that peer's certificate or
+# CA as a trust root (tls_ctx_load_verify_locations) instead. A callback that would REJECT more
+# (a pin) is not run either; check the peer after the handshake with tls_get_peer_spki_der, which
+# answers on both backends and, natively, on a server ctx too.
 fn tls_set_verify(handle, mode, callback): i64 {
     if (handle == 0) { return 0 - 1; }
     #ifndef CYRIUS_TLS_LIBSSL
     if (_tls_backend == 1) {
-        # Native has no pluggable verify callback — map the OpenSSL mode
-        # bitmask to native PEER/NONE; the callback arg is ignored.
+        # ⛔ 6.6.14 (CVE-64) — WHY. Every non-zero mode became TLS_VERIFY_PEER, so OpenSSL's
+        # SSL_VERIFY_FAIL_IF_NO_PEER_CERT never reached native: a server that asked to refuse
+        # clients without a certificate accepted them. CHANGELOG [6.6.14]
         var nm = TLS_VERIFY_NONE;
         if (mode != 0) { nm = TLS_VERIFY_PEER; }
+        if ((mode & 2) != 0) { nm = TLS_VERIFY_FAIL_IF_NO_PEER_CERT; }
         return tls_native_set_verify(handle, nm);
     }
     #endif
