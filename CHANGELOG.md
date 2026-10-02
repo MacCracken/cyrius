@@ -221,6 +221,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   with no undefined `EF64TRUNC`; `removed_symbol_census.sh` is green against ~/Repos and red without
   the three ledger rows. Self-host fixpoint and seed-derive green (cycc 1,470,960 → 1,475,080 B);
   cycc self-hosts byte-identical on real pi, ecb, ach and cass.
+  **Two gates assumed the pre-I5 world** (found by the lane's full `check.sh`):
+  `cx_tailcall_and_vm_traps.sh` C1 hand-built an image whose "unknown" opcode was 0x6E, so cxvm now
+  ran it as ftrunc and trapped one word later — the probe is 0xF0, in the unallocated 0xF0-0xFC band.
+  `distlib_sidecar_verified.sh` verified against the home it staged, but cycc's include fallback reads
+  `$HOME/.cyrius/versions/<its VERSION>/lib` and never `CYRIUS_HOME`, so a re-added `math` leaf came
+  from the LIVE store's in-flight 6.6.13 slot (pre-I5, still defining `f64_le`) and failed to compile —
+  the gate now pins `HOME` to a throwaway whose `.cyrius` is the home under test.
 
 ### Downstream
 
