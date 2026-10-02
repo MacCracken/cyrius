@@ -1664,6 +1664,13 @@ _chk_gate "$ROOT/tests/gates/diagnostics/large_static_data_every_backend.sh"
 # SIGSEGV (rc 139) right after the diagnostic, decoding the -1 fn index as a var fixup.
 _chk_gate "$ROOT/tests/gates/diagnostics/missing_helper_error_exits_1.sh"
 
+# 6.6.13 (M2) — `var a: T[N]` is sized by its element (tests/tcyr/crossos/typed_array_elem_size.tcyr
+# runs the sizes on every host). This pins the compile-time half: a non-integer element's subscript
+# is refused (the decl-zone `i8v16[4]` one compiled), an unknown or later-declared element type is
+# refused by name, N * sizeof(T) cannot wrap, and bool / enum / cstring / a generic fn's own T[N]
+# (default and CYRIUS_MONOMORPH=0) keep compiling.
+_chk_gate "$ROOT/tests/gates/diagnostics/typed_array_elem_refusals.sh"
+
 # 6.6.9 (bite 3) — `return None();` (any nullary `: stack` variant) beside `return Some(v);` is
 # a whole variant, not a dropped tag: no mixed-return warning. The dropped-tag shapes still warn.
 _chk_gate "$ROOT/tests/gates/frontend/stack_enum_mixed_return_warning.sh"

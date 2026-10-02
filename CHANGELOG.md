@@ -29,6 +29,49 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and on real pi, cass, ecb and ach; `cx_tailcall_and_vm_traps.sh` gains axis-E rows E4 / E5 for the
   prestore (255 / 7 before). Self-host fixpoint and seed → cybs → cycc GREEN; `build/cycc` stays
   1,470,944 B (`.text` +328 B, inside the page padding).
+- **M2 — `var a: T[N]` reserves `N * sizeof(T)` for every element type, not only integers.**
+  Measured through an address-taken neighbour: inside a fn `var a: f64[4]`, `f32[4]`, `Pt[2]`,
+  `P3[2]`, `*i64[4]`, `bool[4]`, an enum name and every vector type reserved **8 bytes**; at top
+  level `Pt[2]` got 16 of 32 and `P3[2]` 16 of 48; and in the leading declaration block a
+  vector-element array was read as the scalar its name starts with (`i8v16[2]` 8 bytes of 32,
+  `i16v8` as i16) — and given that integer subscript descriptor, so `g[1]` on it COMPILED. A write
+  inside the declared bounds overwrote the next local or global (`store64(&g + 16, 99)` into
+  `Pt[1]` changed the next global; a local fill zeroed an address-taken neighbour; under qemu an
+  `f64[4]` store overwrote a saved pointer and SIGSEGV'd). No diagnostic, every backend.
+  **Root cause:** the element SIZE and the integer subscript DESCRIPTOR were one value (`ew`), which
+  is non-zero only for i8..u64 / u128 / slices, so every other element was sized like a bare
+  `var a[N]` (N bytes in a fn, N slots at top level) — in `PARSE_ARRAY`, in `PARSE_GVAR_ARR`, and in
+  `PARSE_GVAR_REG`'s prefix ladder (`src/frontend/parse_decl.cyr`). **Fix:** size and descriptor are
+  separate. `_arr_ebytes` gives the bytes per element — f64 8, **f32 4** (packed, the layout `f32v4`
+  lanes and interop buffers use), a struct / union / generic instance `STRUCTSZ` (= `sizeof(T)`),
+  `*T` 8, a vector 16 / 32, bool / cstring / an enum 8 — and `PARSE_ARRAY` / `PARSE_GVAR_ARR` size
+  by it; the declaration block decides a vector element on the WHOLE name (the return-type
+  vocabulary's sentinels) and drops the integer descriptor the prefix gave it. The subscript stays
+  integer-only, so a non-integer element has no stride that could disagree with its new size. An
+  element type that names nothing is now refused by name (`unknown array element type 'Nope'`), as
+  is a struct used as the element of a top-level array declared above it (it was silently 8 bytes
+  per element); an enum may sit on either side. A generic fn's own `var a: T[N]` keeps compiling —
+  sized by the type argument in an instance (`T = P3` gives `N * 24`), 8 per element in the i64
+  base, and under `CYRIUS_MONOMORPH=0` (which binds nothing) recognised as the enclosing fn's type
+  parameter from its tokens. `N * sizeof(T)` over 2 GiB is refused (`array too large`) instead of
+  wrapping to a small size; the decl-zone 8-byte floor stays. Integer and bare arrays are unchanged.
+  **Verified:** the new `tests/tcyr/crossos/typed_array_elem_size.tcyr` (240 assertions: every
+  element type in a fn, in the declaration block and after the first statement, each against an
+  address-taken sentinel directly above it and with a full byte fill; the generic fn's instances;
+  a fn-local array over the frame budget (static fallback); and `a[i]` filling exactly
+  `N * sizeof(T)` bytes for the integer elements) fails 53 rows on the 6.6.13-open compiler and
+  passes on x86, qemu-aarch64 and wine, and natively on pi (cross and native forks), ecb, ach and
+  cass, each host also self-hosting its own fork from this tree; the new
+  `tests/gates/diagnostics/typed_array_elem_refusals.sh` (104 checks: the non-integer subscript
+  refusals in both global zones and in a fn, the unknown / later-declared element refusals with
+  every bad array reported, the size guard, and bool / enum-below / cstring / generic `T[N]` in both
+  monomorph modes compiling and running) fails 45 on the open compiler; four mutants of the fix each
+  turn their axis red. All 412 `tests/tcyr` files pass on x86 per file, unchanged except the new
+  one; under qemu-aarch64 407 pass and the other five are the same qemu-user failures (exec, wait,
+  namespaces, thread detach) the pre-M2 compiler shows; the new file also passes on cxvm. Self-host fixpoint and seed → cybs → cycc GREEN after the locals and again after the
+  declaration-block half (cybs refuses a call with more than six arguments — the first cut's
+  seven-argument helper failed seed-derive with a bare `syntax error`). `build/cycc` 1,470,944 →
+  **1,475,384 B** (`.text` 1,297,392 → 1,301,240, +3,848 B); unreachable fns stay 73.
 
 ### Downstream
 

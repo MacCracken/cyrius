@@ -1,0 +1,314 @@
+# typed_array_elem_size.tcyr — 6.6.13 (M2) — `var a: T[N]` reserves N * sizeof(T) for EVERY
+# element type, in a fn, in the leading declaration block and after the first top-level
+# statement, on every backend.
+#
+# Before 6.6.13 the element SIZE was taken from the integer subscript descriptor, which exists
+# only for i8..u64 / u128 / slices. Every other element was sized like a bare `var a[N]`: N BYTES
+# in a fn (`var a: f64[4]` and `var a: Pt[2]` held 8 bytes, every vector element 8), N slots at
+# top level (`Pt[2]` 16 of 32, `P3[2]` 16 of 48, `f32[4]` 32), and the declaration block's prefix
+# ladder read `i8v16` as an i8 and `i16v8` as an i16 (8 bytes for 32). A write inside the declared
+# bounds ran over the next local or global, silently; on aarch64 the overrun hit a saved pointer.
+#
+# Every row puts an ADDRESS-TAKEN sentinel directly ABOVE the array — the local declared just
+# before it (a frame grows down, the array indexes up toward it), the global declared just after
+# it — and checks (1) the bytes between the array and the sentinel are >= N * sizeof(T), and only
+# then (2) that byte-filling all N * sizeof(T) bytes leaves the sentinel intact and reads back.
+# The neighbour must be address-taken: a register-allocated one has no slot to measure, which is
+# how the first probe of this defect missed it. A failed (1) skips (2), so an under-sized array
+# fails its row instead of smashing the frame and killing the rest of the file.
+#
+# The subscript is integer-only (non-integer elements are refused at compile time — see
+# tests/gates/diagnostics/typed_array_elem_refusals.sh), so the integer rows additionally fill the
+# array through `a[i]` and count the bytes it wrote: the stride the subscript uses and the size the
+# declaration reserves must agree. f32 is packed at 4 bytes (`store32(&a + i * 4, ..)`).
+#
+# Mutation ledger: the 6.6.13-open compiler fails 53 rows here on x86 — every local non-integer
+# element, the struct / union / generic-instance / vector rows of both global zones, the generic
+# fn's struct instances and the static fallback — and passes every integer control (plus the
+# global f64 / f32 / bool / enum / pointer rows, whose 8 bytes per element were right, or over,
+# by accident).
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/str.cyr"
+include "lib/assert.cyr"
+
+enum Color { RED = 0; GREEN = 1; BLUE = 2; }
+struct Pt { x; y; }
+struct P3 { a; b; c; }
+struct G9 { d: f64; c: i8; }   # 9 bytes: STRUCTSZ is unpadded, and so is the stride
+union U2 { a; b: Pt; }
+struct Box<T> { v: T; n; }
+
+var SENT = 0x5AC3A55A3CA55AC3;
+
+fn fillb(p, n, v): i64 {
+    var i = 0;
+    while (i < n) { store8(p + i, v); i = i + 1; }
+    return 0;
+}
+fn allb(p, n, v): i64 {
+    var i = 0;
+    while (i < n) {
+        if (load8(p + i) != v) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+# The bytes from `p` upward that hold `v`, stopping at the first that does not.
+fn runb(p, lim, v): i64 {
+    var i = 0;
+    while (i < lim) {
+        if (load8(p + i) != v) { return i; }
+        i = i + 1;
+    }
+    return lim;
+}
+
+# One row: the sentinel at `ps` lies at least `n` bytes above the array at `pa`, and filling the
+# array's n bytes neither reaches the sentinel nor loses a byte.
+fn row(ps, pa, n, what): i64 {
+    var ok = 0;
+    if (ps - pa >= n) { ok = 1; }
+    assert(ok, what);
+    if (ok == 0) { return 0; }
+    fillb(pa, n, 0xA5);
+    assert_eq(load64(ps), SENT, what);
+    assert_eq(allb(pa, n, 0xA5), 1, what);
+    return 0;
+}
+
+# ---- locals: the sentinel is declared immediately before the array ----
+fn l_f64(): i64 { var s = SENT; var a: f64[4]; return row(&s, &a, 4 * 8, "local f64[4] = 32 B"); }
+fn l_f32(): i64 { var s = SENT; var a: f32[5]; return row(&s, &a, 5 * 4, "local f32[5] = 20 B (packed 4)"); }
+fn l_pt(): i64 { var s = SENT; var a: Pt[2]; return row(&s, &a, 2 * sizeof(Pt), "local Pt[2] = 32 B"); }
+fn l_p3(): i64 { var s = SENT; var a: P3[2]; return row(&s, &a, 2 * sizeof(P3), "local P3[2] = 48 B"); }
+fn l_g9(): i64 { var s = SENT; var a: G9[3]; return row(&s, &a, 3 * sizeof(G9), "local G9[3] = 27 B (odd struct)"); }
+fn l_u2(): i64 { var s = SENT; var a: U2[3]; return row(&s, &a, 3 * sizeof(U2), "local U2[3] = 48 B (union)"); }
+fn l_str(): i64 { var s = SENT; var a: Str[2]; return row(&s, &a, 2 * sizeof(Str), "local Str[2] = 32 B"); }
+fn l_box(): i64 { var s = SENT; var a: Box<Pt>[2]; return row(&s, &a, 2 * (sizeof(Pt) + 8), "local Box<Pt>[2] = 48 B (generic instance)"); }
+fn l_pi64(): i64 { var s = SENT; var a: *i64[4]; return row(&s, &a, 4 * 8, "local *i64[4] = 32 B"); }
+fn l_pi8(): i64 { var s = SENT; var a: *i8[3]; return row(&s, &a, 3 * 8, "local *i8[3] = 24 B (a pointer, not its pointee)"); }
+fn l_ppt(): i64 { var s = SENT; var a: *Pt[3]; return row(&s, &a, 3 * 8, "local *Pt[3] = 24 B"); }
+fn l_bool(): i64 { var s = SENT; var a: bool[4]; return row(&s, &a, 4 * 8, "local bool[4] = 32 B"); }
+fn l_enum(): i64 { var s = SENT; var a: Color[4]; return row(&s, &a, 4 * 8, "local Color[4] = 32 B (enum)"); }
+fn l_cstr(): i64 { var s = SENT; var a: cstring[3]; return row(&s, &a, 3 * 8, "local cstring[3] = 24 B"); }
+fn l_f64v2(): i64 { var s = SENT; var a: f64v2[2]; return row(&s, &a, 2 * 16, "local f64v2[2] = 32 B"); }
+fn l_f64v4(): i64 { var s = SENT; var a: f64v4[2]; return row(&s, &a, 2 * 32, "local f64v4[2] = 64 B"); }
+fn l_f32v4(): i64 { var s = SENT; var a: f32v4[2]; return row(&s, &a, 2 * 16, "local f32v4[2] = 32 B"); }
+fn l_f32v8(): i64 { var s = SENT; var a: f32v8[2]; return row(&s, &a, 2 * 32, "local f32v8[2] = 64 B"); }
+fn l_i8v16(): i64 { var s = SENT; var a: i8v16[2]; return row(&s, &a, 2 * 16, "local i8v16[2] = 32 B"); }
+fn l_u8v16(): i64 { var s = SENT; var a: u8v16[2]; return row(&s, &a, 2 * 16, "local u8v16[2] = 32 B"); }
+fn l_i16v8(): i64 { var s = SENT; var a: i16v8[2]; return row(&s, &a, 2 * 16, "local i16v8[2] = 32 B"); }
+fn l_u16v8(): i64 { var s = SENT; var a: u16v8[2]; return row(&s, &a, 2 * 16, "local u16v8[2] = 32 B"); }
+fn l_i32v4(): i64 { var s = SENT; var a: i32v4[2]; return row(&s, &a, 2 * 16, "local i32v4[2] = 32 B"); }
+fn l_u32v4(): i64 { var s = SENT; var a: u32v4[2]; return row(&s, &a, 2 * 16, "local u32v4[2] = 32 B"); }
+fn l_i64v2(): i64 { var s = SENT; var a: i64v2[2]; return row(&s, &a, 2 * 16, "local i64v2[2] = 32 B"); }
+fn l_u64v2(): i64 { var s = SENT; var a: u64v2[2]; return row(&s, &a, 2 * 16, "local u64v2[2] = 32 B"); }
+# integer controls (unchanged sizes): the descriptor already sized these
+fn l_i64(): i64 { var s = SENT; var a: i64[4]; return row(&s, &a, 4 * 8, "control: local i64[4] = 32 B"); }
+fn l_u8(): i64 { var s = SENT; var a: u8[5]; return row(&s, &a, 5, "control: local u8[5] = 5 B"); }
+fn l_i32(): i64 { var s = SENT; var a: i32[3]; return row(&s, &a, 3 * 4, "control: local i32[3] = 12 B"); }
+fn l_u128(): i64 { var s = SENT; var a: u128[2]; return row(&s, &a, 2 * 16, "control: local u128[2] = 32 B"); }
+fn l_slice(): i64 { var s = SENT; var a: [u8][2]; return row(&s, &a, 2 * 16, "control: local [u8][2] = 32 B"); }
+fn l_bare(): i64 { var s = SENT; var a[12]; return row(&s, &a, 12, "control: local bare a[12] = 12 B"); }
+
+# ---- the generic fn's own `T[N]`: the instance is sized by its type argument ----
+fn gen_arr<T>(p: T, n, what): i64 { var s = SENT; var a: T[3]; return row(&s, &a, n, what); }
+
+# ---- a fn-local array over the frame budget falls back to static storage: sized the same.
+#      Both arrays fall back, so they are adjacent in the data region (a, then b). ----
+fn l_static(): i64 {
+    var a: P3[6000];
+    var b: i64[16000];
+    store64(&b, SENT);
+    var ok = 0;
+    if (&b - &a >= 6000 * sizeof(P3)) { ok = 1; }
+    assert(ok, "static fallback: P3[6000] = 144000 B");
+    if (ok == 0) { return 0; }
+    fillb(&a, 6000 * sizeof(P3), 0xA5);
+    assert_eq(load64(&b), SENT, "static fallback: P3[6000] fill leaves the next static intact");
+    return 0;
+}
+
+# ---- the subscript's stride equals the reserved element size (integer elements) ----
+fn l_sub_i8(): i64 {
+    var s = SENT; var a: i8[7];
+    fillb(&a, &s - &a, 0);   # up to the sentinel (rounding, alignment pad), so the count below stops at the array's end
+    var i = 0; while (i < 7) { a[i] = 0 - 1; i = i + 1; }
+    assert_eq(runb(&a, 64, 0xFF), 7, "local i8[7]: a[i] writes exactly 7 B");
+    assert_eq(load64(&s), SENT, "local i8[7]: sentinel after a[i] fill");
+    return 0;
+}
+fn l_sub_u16(): i64 {
+    var s = SENT; var a: u16[5];
+    fillb(&a, &s - &a, 0);   # up to the sentinel (rounding, alignment pad), so the count below stops at the array's end
+    var i = 0; while (i < 5) { a[i] = 0xFFFF; i = i + 1; }
+    assert_eq(runb(&a, 64, 0xFF), 10, "local u16[5]: a[i] writes exactly 10 B");
+    assert_eq(load64(&s), SENT, "local u16[5]: sentinel after a[i] fill");
+    return 0;
+}
+fn l_sub_i32(): i64 {
+    var s = SENT; var a: i32[3];
+    fillb(&a, &s - &a, 0);   # up to the sentinel (rounding, alignment pad), so the count below stops at the array's end
+    var i = 0; while (i < 3) { a[i] = 0 - 1; i = i + 1; }
+    assert_eq(runb(&a, 64, 0xFF), 12, "local i32[3]: a[i] writes exactly 12 B");
+    assert_eq(load64(&s), SENT, "local i32[3]: sentinel after a[i] fill");
+    return 0;
+}
+fn l_sub_u64(): i64 {
+    var s = SENT; var a: u64[3];
+    fillb(&a, &s - &a, 0);   # up to the sentinel (rounding, alignment pad), so the count below stops at the array's end
+    var i = 0; while (i < 3) { a[i] = 0 - 1; i = i + 1; }
+    assert_eq(runb(&a, 64, 0xFF), 24, "local u64[3]: a[i] writes exactly 24 B");
+    assert_eq(load64(&s), SENT, "local u64[3]: sentinel after a[i] fill");
+    return 0;
+}
+
+# ---- declaration-zone globals: each array is followed by its sentinel ----
+var d_f64: f64[4];
+var d_f64_s = 0x5AC3A55A3CA55AC3;
+var d_f32: f32[5];
+var d_f32_s = 0x5AC3A55A3CA55AC3;
+var d_pt: Pt[2];
+var d_pt_s = 0x5AC3A55A3CA55AC3;
+var d_p3: P3[2];
+var d_p3_s = 0x5AC3A55A3CA55AC3;
+var d_g9: G9[3];
+var d_g9_s = 0x5AC3A55A3CA55AC3;
+var d_u2: U2[3];
+var d_u2_s = 0x5AC3A55A3CA55AC3;
+var d_str: Str[2];
+var d_str_s = 0x5AC3A55A3CA55AC3;
+var d_box: Box<Pt>[2];
+var d_box_s = 0x5AC3A55A3CA55AC3;
+var d_pi8: *i8[3];
+var d_pi8_s = 0x5AC3A55A3CA55AC3;
+var d_bool: bool[4];
+var d_bool_s = 0x5AC3A55A3CA55AC3;
+var d_enum: Color[4];
+var d_enum_s = 0x5AC3A55A3CA55AC3;
+var d_late: Late[3];   # an enum declared BELOW: its values are i64 either way
+var d_late_s = 0x5AC3A55A3CA55AC3;
+var d_cstr: cstring[3];
+var d_cstr_s = 0x5AC3A55A3CA55AC3;
+var d_f64v2: f64v2[2];
+var d_f64v2_s = 0x5AC3A55A3CA55AC3;
+var d_f64v4: f64v4[2];
+var d_f64v4_s = 0x5AC3A55A3CA55AC3;
+var d_f32v4: f32v4[2];
+var d_f32v4_s = 0x5AC3A55A3CA55AC3;
+var d_f32v8: f32v8[2];
+var d_f32v8_s = 0x5AC3A55A3CA55AC3;
+var d_i8v16: i8v16[2];
+var d_i8v16_s = 0x5AC3A55A3CA55AC3;
+var d_u8v16: u8v16[2];
+var d_u8v16_s = 0x5AC3A55A3CA55AC3;
+var d_i16v8: i16v8[2];
+var d_i16v8_s = 0x5AC3A55A3CA55AC3;
+var d_u16v8: u16v8[2];
+var d_u16v8_s = 0x5AC3A55A3CA55AC3;
+var d_i32v4: i32v4[2];
+var d_i32v4_s = 0x5AC3A55A3CA55AC3;
+var d_u32v4: u32v4[2];
+var d_u32v4_s = 0x5AC3A55A3CA55AC3;
+var d_i64v2: i64v2[2];
+var d_i64v2_s = 0x5AC3A55A3CA55AC3;
+var d_u64v2: u64v2[2];
+var d_u64v2_s = 0x5AC3A55A3CA55AC3;
+var d_i64: i64[4];
+var d_i64_s = 0x5AC3A55A3CA55AC3;
+var d_u16: u16[5];
+var d_u16_s = 0x5AC3A55A3CA55AC3;
+var d_bare[3];
+var d_bare_s = 0x5AC3A55A3CA55AC3;
+enum Late { L0 = 0; L1 = 1; }
+
+fn check_decl_zone(): i64 {
+    row(&d_f64_s, &d_f64, 4 * 8, "decl-zone f64[4] = 32 B");
+    row(&d_f32_s, &d_f32, 5 * 4, "decl-zone f32[5] = 20 B (packed 4)");
+    row(&d_pt_s, &d_pt, 2 * sizeof(Pt), "decl-zone Pt[2] = 32 B");
+    row(&d_p3_s, &d_p3, 2 * sizeof(P3), "decl-zone P3[2] = 48 B");
+    row(&d_g9_s, &d_g9, 3 * sizeof(G9), "decl-zone G9[3] = 27 B (odd struct)");
+    row(&d_u2_s, &d_u2, 3 * sizeof(U2), "decl-zone U2[3] = 48 B (union)");
+    row(&d_str_s, &d_str, 2 * sizeof(Str), "decl-zone Str[2] = 32 B");
+    row(&d_box_s, &d_box, 2 * (sizeof(Pt) + 8), "decl-zone Box<Pt>[2] = 48 B (generic instance)");
+    row(&d_pi8_s, &d_pi8, 3 * 8, "decl-zone *i8[3] = 24 B");
+    row(&d_bool_s, &d_bool, 4 * 8, "decl-zone bool[4] = 32 B");
+    row(&d_enum_s, &d_enum, 4 * 8, "decl-zone Color[4] = 32 B (enum)");
+    row(&d_late_s, &d_late, 3 * 8, "decl-zone Late[3] = 24 B (enum declared below)");
+    row(&d_cstr_s, &d_cstr, 3 * 8, "decl-zone cstring[3] = 24 B");
+    row(&d_f64v2_s, &d_f64v2, 2 * 16, "decl-zone f64v2[2] = 32 B");
+    row(&d_f64v4_s, &d_f64v4, 2 * 32, "decl-zone f64v4[2] = 64 B");
+    row(&d_f32v4_s, &d_f32v4, 2 * 16, "decl-zone f32v4[2] = 32 B");
+    row(&d_f32v8_s, &d_f32v8, 2 * 32, "decl-zone f32v8[2] = 64 B");
+    row(&d_i8v16_s, &d_i8v16, 2 * 16, "decl-zone i8v16[2] = 32 B (was read as i8)");
+    row(&d_u8v16_s, &d_u8v16, 2 * 16, "decl-zone u8v16[2] = 32 B (was read as u8)");
+    row(&d_i16v8_s, &d_i16v8, 2 * 16, "decl-zone i16v8[2] = 32 B (was read as i16)");
+    row(&d_u16v8_s, &d_u16v8, 2 * 16, "decl-zone u16v8[2] = 32 B (was read as u16)");
+    row(&d_i32v4_s, &d_i32v4, 2 * 16, "decl-zone i32v4[2] = 32 B (was read as i32)");
+    row(&d_u32v4_s, &d_u32v4, 2 * 16, "decl-zone u32v4[2] = 32 B (was read as u32)");
+    row(&d_i64v2_s, &d_i64v2, 2 * 16, "decl-zone i64v2[2] = 32 B (was read as i64)");
+    row(&d_u64v2_s, &d_u64v2, 2 * 16, "decl-zone u64v2[2] = 32 B (was read as u64)");
+    row(&d_i64_s, &d_i64, 4 * 8, "control: decl-zone i64[4] = 32 B");
+    row(&d_u16_s, &d_u16, 5 * 2, "control: decl-zone u16[5] = 10 B");
+    row(&d_bare_s, &d_bare, 3 * 8, "control: decl-zone bare g[3] = 3 slots");
+    fillb(&d_u16, &d_u16_s - &d_u16, 0);
+    var i = 0; while (i < 5) { d_u16[i] = 0xFFFF; i = i + 1; }
+    assert_eq(runb(&d_u16, 10, 0xFF), 10, "decl-zone u16[5]: g[i] writes exactly 10 B");
+    assert_eq(d_u16_s, SENT, "decl-zone u16[5]: sentinel after g[i] fill");
+    return 0;
+}
+
+check_decl_zone();
+
+# ---- after the first top-level statement: PARSE_VAR's top-level arm registers these ----
+var p_f64: f64[4];
+var p_f64_s = 0x5AC3A55A3CA55AC3;
+var p_f32: f32[5];
+var p_f32_s = 0x5AC3A55A3CA55AC3;
+var p_pt: Pt[2];
+var p_pt_s = 0x5AC3A55A3CA55AC3;
+var p_p3: P3[2];
+var p_p3_s = 0x5AC3A55A3CA55AC3;
+var p_box: Box<Pt>[2];
+var p_box_s = 0x5AC3A55A3CA55AC3;
+var p_ppt: *Pt[3];
+var p_ppt_s = 0x5AC3A55A3CA55AC3;
+var p_bool: bool[4];
+var p_bool_s = 0x5AC3A55A3CA55AC3;
+var p_enum: Color[4];
+var p_enum_s = 0x5AC3A55A3CA55AC3;
+var p_f32v8: f32v8[2];
+var p_f32v8_s = 0x5AC3A55A3CA55AC3;
+var p_i8v16: i8v16[2];
+var p_i8v16_s = 0x5AC3A55A3CA55AC3;
+var p_i64v2: i64v2[2];
+var p_i64v2_s = 0x5AC3A55A3CA55AC3;
+var p_i32: i32[3];
+var p_i32_s = 0x5AC3A55A3CA55AC3;
+row(&p_f64_s, &p_f64, 4 * 8, "post-statement f64[4] = 32 B");
+row(&p_f32_s, &p_f32, 5 * 4, "post-statement f32[5] = 20 B (packed 4)");
+row(&p_pt_s, &p_pt, 2 * sizeof(Pt), "post-statement Pt[2] = 32 B");
+row(&p_p3_s, &p_p3, 2 * sizeof(P3), "post-statement P3[2] = 48 B");
+row(&p_box_s, &p_box, 2 * (sizeof(Pt) + 8), "post-statement Box<Pt>[2] = 48 B");
+row(&p_ppt_s, &p_ppt, 3 * 8, "post-statement *Pt[3] = 24 B");
+row(&p_bool_s, &p_bool, 4 * 8, "post-statement bool[4] = 32 B");
+row(&p_enum_s, &p_enum, 4 * 8, "post-statement Color[4] = 32 B");
+row(&p_f32v8_s, &p_f32v8, 2 * 32, "post-statement f32v8[2] = 64 B");
+row(&p_i8v16_s, &p_i8v16, 2 * 16, "post-statement i8v16[2] = 32 B");
+row(&p_i64v2_s, &p_i64v2, 2 * 16, "post-statement i64v2[2] = 32 B");
+row(&p_i32_s, &p_i32, 3 * 4, "control: post-statement i32[3] = 12 B");
+
+l_f64(); l_f32(); l_pt(); l_p3(); l_g9(); l_u2(); l_str(); l_box();
+l_pi64(); l_pi8(); l_ppt(); l_bool(); l_enum(); l_cstr();
+l_f64v2(); l_f64v4(); l_f32v4(); l_f32v8();
+l_i8v16(); l_u8v16(); l_i16v8(); l_u16v8(); l_i32v4(); l_u32v4(); l_i64v2(); l_u64v2();
+l_i64(); l_u8(); l_i32(); l_u128(); l_slice(); l_bare();
+gen_arr<P3>(0, 3 * sizeof(P3), "generic T[3], T = P3: 72 B (the instance)");
+gen_arr<Pt>(0, 3 * sizeof(Pt), "generic T[3], T = Pt: 48 B (the instance)");
+gen_arr<i32>(0, 3 * 4, "generic T[3], T = i32: 12 B");
+gen_arr<i64>(0, 3 * 8, "generic T[3], T = i64: 24 B");
+l_static();
+l_sub_i8(); l_sub_u16(); l_sub_i32(); l_sub_u64();
+
+var r = assert_summary();
