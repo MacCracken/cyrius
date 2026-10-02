@@ -8,7 +8,7 @@
 #       now reports it: installed + skipped == the bundle's PEM block count.
 # Cross-OS because the system store is a different file with different contents on every host
 # (Arch 121 blocks / 1 skipped, Intel-Mac 128 / 0; Windows, since 6.6.14, its CurrentUser ROOT
-# store exported as PEM — cass 47 blocks / 2 skipped + 6 refused by store policy, see
+# store exported as PEM — cass 41 blocks / 1 skipped + 12 refused by store policy, see
 # tls_system_trust_store.tcyr), and the sized read goes through each target's file_open / file_read.
 #
 # The fixture is two real roots: a self-signed P-256 CA (CN=localhost, the one

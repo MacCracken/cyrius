@@ -15,8 +15,11 @@
 # tls_native_scaffold.tcyr serves) at the exact path the reader opened — load the system roots,
 # and assert the planted root is not among them; then they remove only what they created. They
 # run first: the system set is loaded once per process. The store-policy rows re-derive, with
-# their own decoding, which ROOT-store certificates Windows trusts for TLS and compare that with
-# the bundle the library exported, certificate by certificate.
+# their own decoding, which ROOT-store certificates the policy takes for TLS and compare that with
+# the bundle the library exported, certificate by certificate. Because a real store holds only what
+# the host happens to hold (cass's Disallowed store is empty, no root there carries prop 84 or an
+# over-long or malformed property), the policy is then run rule by rule on stores the test builds in
+# MEMORY: the fixture root with exactly the properties each row names.
 # Every host verifies one real chain offline, at a fixed time: www.microsoft.com's (leaf, Microsoft
 # TLS G2 RSA CA OCSP 04, Microsoft TLS RSA Root G2) to DigiCert Global Root G2, which is in the
 # Windows store and in every POSIX bundle.
