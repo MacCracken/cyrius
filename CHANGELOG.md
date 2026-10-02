@@ -37,6 +37,51 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `net_parse_ipv4` over ten inputs. 41 of them fail on 6.6.12; the file passes 532/532 on x86_64 and
   on aarch64 under qemu. The native client still sends an IP literal as SNI (RFC 6066 §3); that is
   backlogged separately.
+- **CVE-TBD(I1) (P1) — the libssl TLS backend never bound the server's certificate to the host:
+  any chain-valid certificate verified any host.** (I1.) A certificate for `DNS:localhost` verified
+  `www.example.com`, `127.0.0.1` and `host == 0`; a CN-only leaf and a partial wildcard
+  (`f*.example.com`) verified too. Man-in-the-middle, silent: the handshake reported success. The
+  libssl twin of CVE-18. Reached by every `-D CYRIUS_TLS_LIBSSL` build (hoosh's remote HTTPS) and
+  by a default build after `tls_set_backend(TLS_BACKEND_LIBSSL)`. **Root cause:**
+  `tls_connect_alloc` (`lib/tls.cyr`) set `SSL_VERIFY_PEER` and SNI and nothing else.
+  `SSL_VERIFY_PEER` checks the chain; OpenSSL checks an identity only when one is put in the SSL's
+  `X509_VERIFY_PARAM`, and SNI is what the client asks for, not what the certificate is checked
+  against. `_tls_init` never resolved a binding symbol. **Fix:** `_tls_libssl_bind_host`, run in
+  `tls_connect_alloc` after the hook and `SSL_new` (so the hook's final verify mode is read and the
+  binding lands on the per-`SSL` param; the staged alloc → `tls_set_session` → complete path is
+  bound too). The host is classified by the native backend's OWN code — I7's classifier moves
+  unchanged from `lib/tls_native_conn.cyr` into a new peer module, `lib/tls_hostid.cyr`, included by
+  `lib/tls.cyr` and `lib/tls_native.cyr`, because a libssl-only build carries no native stack. An IP
+  literal is bound with `X509_VERIFY_PARAM_set1_ip_asc` and sends no SNI (RFC 6066 §3). A DNS name
+  gets hostflags `NO_PARTIAL_WILDCARDS | NEVER_CHECK_SUBJECT` (without them OpenSSL still took the
+  CN-only leaf and the partial wildcard native refuses), `X509_VERIFY_PARAM_set1_host` and SNI.
+  `host == 0`, `""` or a `:`-bearing non-literal (`[::1]`) makes `tls_connect_alloc` return 0
+  under `SSL_VERIFY_PEER`, as native refuses it; after a hook's `tls_set_verify(h, 0, 0)` nothing is
+  bound, as under native's `TLS_VERIFY_NONE`. `SSL_set1_host` is deliberately NOT used: from OpenSSL
+  3.0 it first re-parses the name as an IP address with OpenSSL's own parser, so the libssl version
+  would decide whether `010.0.0.1` is a name or an address. The five symbols (`SSL_get0_param`,
+  `SSL_get_verify_mode`, `X509_VERIFY_PARAM_set1_host`, `_set_hostflags`, `_set1_ip_asc`) are
+  REQUIRED: one missing leaves `tls_available()` 0 and every libssl connect returns 0. The int
+  returns are masked to 32 bits before `== 1`. `docs/development/lib-tls-contract.md` gains a
+  "Server identity" section stating the binding for both backends, the `host == 0` rule and that a
+  hook which relaxes verification owns the consequence. ⚠ **Behaviour change (libssl only):** a
+  consumer that passed `host == 0` under `SSL_VERIFY_PEER`, or relied on a CN-only or
+  partial-wildcard certificate, now fails closed, as it always did on native; no IP-literal SNI is
+  sent. No ecosystem caller passes `host == 0` (hoosh, sandhi, abaco surveyed). **Tests:** the
+  filed repro `docs/development/issues/repros/2026-09-30-tls-libssl-no-hostname-verification.sh`
+  exits 0 under both builds (2 on 6.6.12). New gate
+  `tests/gates/platform/tls_libssl_hostname_binding.sh` runs 24 rows against OpenSSL's `s_server`
+  on native, on libssl via `tls_set_backend` and in a `CYRIUS_TLS_LIBSSL` build — DNS, IP and
+  wildcard leaves, a CN-only leaf, a partial wildcard, an untrusted CA, the classifier's bait
+  (`010.0.0.1` is a name, `[::1]` has no identity), `host == 0` / `""` and the verify-NONE hook —
+  plus five SNI rows (`-servername_fatal`: an IP host sends none, a DNS host does) and five
+  required-symbol legs (a libssl-only build whose `lib/tls.cyr` asks `dlsym` for a bogus name in
+  place of each symbol reads `tls_available()` 0 and `tls_connect_alloc` 0); named SKIP 77
+  without openssl, the dlopen-helper or libssl.so.3, anti-vacuous floors otherwise. All 87 rows
+  pass; against the pre-fix lib 38 are RED. Mutations, each RED: the bind call deleted (32
+  rows), the hostflags dropped (the CN-only and partial-wildcard rows), one bail line removed (its
+  symbol's leg: available, then SIGSEGV), `SSL_set1_host`-style routing (the `[::1]` rows), SNI for
+  every host (the IP SNI rows).
 
 ### Downstream
 

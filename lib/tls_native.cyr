@@ -312,4 +312,5 @@ include "lib/tls_native_keysched.cyr"   # TLS 1.3 key schedule + 1.3/1.2 ciphers
 include "lib/tls_native_ctx.cyr"        # ctx layout + new_client/new_server + ctx public API
 include "lib/tls_native_hs13.cyr"       # TLS 1.3 client + server handshake + app-data + 1.3 record protection
 include "lib/tls_native_hs12.cyr"       # TLS 1.2 record + PRF + handshake driver
+include "lib/tls_hostid.cyr"            # host classifier, shared with lib/tls.cyr's libssl binder (6.6.13)
 include "lib/tls_native_conn.cyr"       # hostname verify + transport vtable + connect/accept + I/O + getters

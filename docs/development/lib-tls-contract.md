@@ -57,7 +57,7 @@ identical for both. Consumers MUST treat the transport as **opaque**:
 
 | Verb | Returns | Contract |
 |------|---------|----------|
-| `tls_available()` | 1 / 0 | Returns 1 once libssl has been successfully bootstrapped via fdlopen and the critical-symbol set has resolved. Idempotent; runs `_tls_init` lazily. Returns 0 forever within the process once init has failed (no retry). Safe to call before any other verb. |
+| `tls_available()` | 1 / 0 | Returns 1 once libssl has been successfully bootstrapped via fdlopen and the critical-symbol set has resolved — since 6.6.13 that set includes the five host-binding symbols (see "Server identity" below), so a libssl that cannot bind the leaf to `host` reads 0 rather than connecting unverified. Idempotent; runs `_tls_init` lazily. Returns 0 forever within the process once init has failed (no retry). Safe to call before any other verb. (Native backend: always 1.) |
 | `tls_supports_session_resumption()` | 1 / 0 | Returns 1 iff the linked libssl exposes `SSL_get1_session` + `SSL_set_session` + `SSL_SESSION_free` + `SSL_CTX_set_session_cache_mode`. Probe BEFORE installing session callbacks. |
 | `tls_supports_early_data()` | 1 / 0 | Returns 1 iff the linked libssl exposes the FULL 0-RTT client-correctness surface (write + read + max_early_data setter + get_early_data_status + SESSION_get_max_early_data). Probe BEFORE attempting any 0-RTT send/recv. |
 
@@ -66,14 +66,64 @@ identical for both. Consumers MUST treat the transport as **opaque**:
 | Verb | Signature | Returns | Contract |
 |------|-----------|---------|----------|
 | `tls_connect(sock, host)` | (i64, i64) → i64 | ctx or 0 | Thin wrapper over `tls_connect_with_ctx_hook(sock, host, 0, 0)`. Preserved verbatim for pre-v5.6.40 consumers; never gains new arguments. |
-| `tls_connect_with_ctx_hook(sock, host, hook_fp, hook_ctx)` | (i64, i64, fnptr, i64) → i64 | ctx or 0 | Fused alloc + complete with optional config hook. Hook fires post-stdlib-defaults, pre-`SSL_new`. Hook signature: `int hook_fp(hook_ctx, handle)`; non-zero return aborts connect (returns 0 and frees the partially-constructed handle). Pass `hook_fp == 0` to skip hook. |
+| `tls_connect_with_ctx_hook(sock, host, hook_fp, hook_ctx)` | (i64, i64, fnptr, i64) → i64 | ctx or 0 | Fused alloc + complete with optional config hook. Hook fires post-stdlib-defaults, pre-`SSL_new`. Hook signature: `int hook_fp(hook_ctx, handle)`; non-zero return aborts connect (returns 0 and frees the partially-constructed handle). Pass `hook_fp == 0` to skip hook. The server's leaf is verified against `host` (see "Server identity"); `host == 0` returns 0 unless the hook cleared verification. |
 
 **Stdlib-applied defaults BEFORE the hook fires** (consumers can
 override inside the hook by re-calling the corresponding `tls_set_*`):
 
 - System CA trust store loaded (`SSL_CTX_set_default_verify_paths`)
 - Peer verification enabled (`SSL_CTX_set_verify(..., SSL_VERIFY_PEER, 0)`)
-- SNI hostname set from `host` (post-`SSL_new`, before handshake)
+
+**Applied AFTER the hook** (post-`SSL_new`, before the handshake), from the
+hook's final verify mode:
+
+- The leaf certificate bound to `host` — see "Server identity" below
+- SNI set from `host` (libssl: for a DNS-name host only — never for an IP literal
+  or a host with no identity)
+
+#### Server identity (hostname binding) — 6.6.13, CVE-TBD(I1)
+
+Every client connect verifies the chain to a trusted root **and** binds the
+leaf certificate to `host`, on **both** backends, with the same answers. Before
+6.6.13 the libssl backend checked the chain only (`SSL_VERIFY_PEER` with no
+expected identity), so any chain-valid certificate verified any host. The host
+is classified once, by the same code on both backends (`lib/tls_hostid.cyr`;
+RFC 9525 §6.3):
+
+| `host` | Matched against | Examples |
+|---|---|---|
+| An IP literal: a dotted-quad IPv4 address with no leading zeros, or an RFC 4291 IPv6 address (`::` compression and a dotted-quad tail allowed) | iPAddress SANs only, octet for octet | `127.0.0.1`, `::1`, `::ffff:1.2.3.4` |
+| Any other host without a `:` — a DNS name | dNSName SANs only, RFC 6125: ASCII case-insensitive; a wildcard only as the whole leftmost label (`*.example.com` matches `a.example.com`, not `example.com` or `a.b.example.com`); no partial wildcard (`f*.example.com`); no fallback to the subject CN | `localhost`, `LOCALHOST`; `010.0.0.1` and `127.1` are names, as the resolver (`net_parse_ipv4`) treats them |
+| `0`, `""`, or a `:`-bearing host that is no literal | nothing: there is no reference identity | `[::1]`, `fe80::1%eth0` |
+
+- **No identity under `SSL_VERIFY_PEER` (the default) is refused.** On libssl
+  `tls_connect_alloc` returns 0 and no handshake runs; on native the handshake
+  fails and `tls_connect_complete` returns 0. `tls_connect` /
+  `tls_connect_with_ctx_hook` return 0 on both.
+- **A mismatch fails the handshake** (`tls_connect_complete` returns 0).
+- **A hook that relaxes verification owns the consequence.** After
+  `tls_set_verify(handle, 0, 0)` no identity is checked on either backend, and
+  `host == 0` connects. On libssl, a hook that keeps `SSL_VERIFY_PEER` but
+  installs a verify callback that accepts errors also accepts a wrong identity
+  (OpenSSL reports the mismatch through the callback). A host, IP or hostflags
+  a hook sets on the `SSL_CTX`'s `X509_VERIFY_PARAM` (via `tls_dlsym`) can only
+  add constraints: the binding is made on the per-`SSL` param and replaces the
+  hostflags.
+- **SNI — libssl:** sent for a DNS-name host only; an IP-literal host sends no
+  SNI (RFC 6066 §3). The native backend still sends an IP literal as SNI (a
+  backlogged item), so this rule is libssl-only until that lands.
+- **libssl requires the binding symbols** `SSL_get0_param`,
+  `SSL_get_verify_mode`, `X509_VERIFY_PARAM_set1_host`,
+  `X509_VERIFY_PARAM_set_hostflags` and `X509_VERIFY_PARAM_set1_ip_asc` (every
+  libssl.so.3 has them). If one is missing, `tls_available()` is 0 and every
+  libssl connect returns 0: the backend fails closed. `SSL_set1_host` is
+  deliberately not used, because from OpenSSL 3.0 it re-parses the name as an
+  IP address with OpenSSL's own parser, which would let the libssl version
+  decide the classification.
+- **Known divergence:** native accepts a wildcard directly over a single label
+  (`*.com` for `a.com`); libssl refuses it.
+- Pinned by `tests/gates/platform/tls_libssl_hostname_binding.sh` (both
+  backends against OpenSSL's `s_server`).
 
 ### Connect — staged (resumption-aware)
 
@@ -83,7 +133,7 @@ requires for client-side resumption.
 
 | Verb | Signature | Returns | Contract |
 |------|-----------|---------|----------|
-| `tls_connect_alloc(sock, host, hook_fp, hook_ctx)` | (i64, i64, fnptr, i64) → i64 | ctx-pre-handshake or 0 | Allocates SSL_CTX + SSL handle + binds fd + sets SNI + runs hook. Does NOT call `SSL_connect`. On success caller MUST follow with `tls_connect_complete` (handshake) OR `tls_close` (cleanup); the ctx owns kernel resources until then. Hook semantics identical to `tls_connect_with_ctx_hook`. |
+| `tls_connect_alloc(sock, host, hook_fp, hook_ctx)` | (i64, i64, fnptr, i64) → i64 | ctx-pre-handshake or 0 | Allocates SSL_CTX + SSL handle + runs hook + binds the leaf to `host` (and sets SNI for a DNS name; see "Server identity") + binds fd. Returns 0 on libssl for a host with no reference identity (`0`, `""`, `[::1]`) unless the hook cleared verification. Does NOT call `SSL_connect`. On success caller MUST follow with `tls_connect_complete` (handshake) OR `tls_close` (cleanup); the ctx owns kernel resources until then. Hook semantics identical to `tls_connect_with_ctx_hook`. |
 | `tls_connect_complete(ctx)` | (i64) → i64 | 1 / 0 | Runs `SSL_connect` on a ctx from `tls_connect_alloc`. Returns 1 on handshake success; 0 on failure. **On failure the ctx is NOT freed** — caller MUST call `tls_close` to release (typically after inspecting error state). Returns 0 on null ctx without crash. |
 
 ### I/O

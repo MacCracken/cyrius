@@ -827,6 +827,7 @@ fn _run_regression_gates(): i64 {
 
     _section("TLS live");
     _tls_live_gate();
+    _gate("the libssl TLS backend binds the leaf to the host, answering exactly as native against OpenSSL s_server (6.6.13, CVE-TBD(I1)). It used to check the CHAIN only: SSL_VERIFY_PEER with no expected identity in the X509_VERIFY_PARAM, so a DNS:localhost certificate verified www.example.com, 127.0.0.1 and host 0, and a CN-only leaf and a partial wildcard verified too. Rows run native, libssl via tls_set_backend and a CYRIUS_TLS_LIBSSL build: DNS, IP and wildcard SANs, the classifier bait (010.0.0.1 is a name, [::1] has no identity), host 0 refused at tls_connect_alloc under VERIFY_PEER and accepted after tls_set_verify(h, 0, 0), no SNI for an IP literal (servername_fatal), and each of the five binder symbols REQUIRED (a bogus dlsym name gives tls_available 0). Named SKIP 77 without openssl, the dlopen-helper or libssl.so.3; anti-vacuous floors on rows run", "tests/gates/platform/tls_libssl_hostname_binding.sh");
     println("");
 
     _section("TS lexer (cyrius-ts)");
