@@ -1114,17 +1114,22 @@ fn tls_native_read(ctx, buf, maxlen): i64 {
     return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL);   # too many post-handshake records
 }
 
-# Send a close_notify alert (RFC 5246 §7.2.1 / RFC 8446 §6.1), then mark the
-# context closed. After tls_native_close the handle MUST NOT be reused.
-# Returns TLS_OK regardless of close_notify success (best-effort, per the
-# contract). Idempotent — a second call is a no-op.
+# Send the peer a close_notify alert (RFC 5246 §7.2.1 / RFC 8446 §6.1), then
+# mark the context CLOSED; the handle MUST NOT be used for I/O again. Best
+# effort, per the contract: the alert is sent only from the CONNECTED state (a
+# failed ctx sends nothing), through the deadline-aware writer (an expired
+# tls_native_set_deadline sends nothing), and its result is ignored — TLS_OK
+# whatever happened on the wire (TLS_ERR_INVALID_PARAM for ctx 0). It does not
+# wait for the peer's close_notify. A second call is a no-op while the ctx's
+# memory is intact.
 #
-# Memory note: nothing is freed here — the ctx and everything it allocated came
-# from its allocator (the no-free global heap, or the Allocator given to an `_in`
-# constructor, which reset_via reclaims after this returns). Sealing the
-# close_notify allocates nothing: the record (at most 31 bytes, TLS 1.2's) is
-# built on the stack. The caller owns the socket fd (TLS_CTX_OFF_SOCK_FD) and
-# closes it after this returns.
+# Memory: nothing is freed here — the ctx and everything it allocated came from
+# its allocator (the no-free global heap, or the Allocator given to an `_in`
+# constructor, which reset_via reclaims; close FIRST, then reset). lib/tls.cyr's
+# tls_close calls this and frees nothing either: its shim lives in the same
+# allocator. Sealing the close_notify allocates nothing: the record (at most 31
+# bytes, TLS 1.2's) is built on the stack. The caller owns the socket fd
+# (TLS_CTX_OFF_SOCK_FD) and closes it after this returns. CHANGELOG [6.6.13]
 fn tls_native_close(ctx): i64 {
     if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
     var state = load64(ctx + TLS_CTX_OFF_STATE);

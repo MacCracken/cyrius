@@ -452,6 +452,36 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   overshoot by that much. Pinned by `tests/gates/platform/agnos_sock_send_deadline.sh` against the
   fake kernel (four mutations, each RED).
 
+### Changed
+
+- **`docs/development/lib-tls-contract.md` re-pinned to the 6.6.13 surface** (I2 part (d), issue
+  `2026-09-30-tls-client-memory-and-alert-gaps`, with the I8 rows). It had stayed pinned at
+  v5.10.42 for a whole major: libssl's defaults only, `tls_read` "bytes-read or -1", and none of
+  the 6.2.8 trust-store / mTLS verbs or the 6.2.24 / 6.2.25 server verbs. It now lists every public
+  `tls_*` verb in `lib/tls.cyr` (40, each grep >= 1): backend selection (`tls_set_backend`,
+  `tls_get_backend`); the native defaults beside libssl's (verify PEER, the OS store as one shared
+  root set, the in-handshake hostname binding, CVE-17 / CVE-18); `tls_connect_alloc_in`; the
+  server verbs and what native client-certificate checking does (possession, not a chain — an empty
+  Certificate passes under `tls_set_verify`); `tls_ctx_*` (native REPLACES the ctx's roots where
+  libssl ADDS, and `tls_native_ca_skipped`); ONE table of what `tls_read` / `tls_write` return on
+  both backends and what a negative result leaves behind (a failed native ctx; libssl's second read
+  after an alert is 0); the ChangeCipherSpec rule; `tls_set_deadline` / `tls_native_set_deadline`
+  and how each transport bounds a call; the allocator lifecycle (`tls_close`, then `reset_via(a)`,
+  with the measured capacities); a corrected Failure section (native frees nothing; `tls_close`
+  never closes the socket); and that the session / 0-RTT verbs are libssl-only and do not check the
+  backend. The I1 "Server identity" and I3 "Thread safety" sections are carried verbatim.
+  `lib/tls_native.cyr`'s header loses its KNOWN HOLES / IN PROGRESS / NOT YET DONE block (it
+  listed `tls_native_set_alpn`, `_set_version_range` and `_close` as `TLS_ERR_NOT_IMPLEMENTED`, all
+  three long implemented, and the TLS 1.2 backport as in progress) for one status paragraph; the
+  `tls_native_close` comment now says when the close_notify is sent (CONNECTED only, under the
+  deadline) and that `tls_close` frees nothing either, and `lib/tls_native_ctx.cyr`'s handle comment
+  no longer says closing frees the ctx. `docs/stdlib-reference.md`'s `tls_read` / `tls_write` rows
+  (`→ n/-1`) and its "libssl is the default backend" line are corrected and point at the contract.
+  ⚠ Found while re-pinning: `TLS_ERR_RECORD_OVERFLOW` (`lib/tls_native_lowlevel.cyr`, returned when
+  an authenticated record's plaintext exceeds 2^14 bytes) has been -20 since the record layer
+  landed, and 6.6.13's `TLS_ERR_TIMEOUT` took the same value, so a read cannot tell them apart; the
+  contract records it as a defect, not as part of the contract. Docs and comments only.
+
 ### Downstream
 
 #### Folded — ⛔ each tagged BEFORE cyrius 6.6.13

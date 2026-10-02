@@ -1,8 +1,8 @@
-# tls.cyr — TLS client via libssl.so.3 (fdlopen bridge)
+# tls.cyr — the TLS client + server surface: the native stack (default) or libssl.so.3 (fdlopen bridge)
 # Usage: include "lib/tls.cyr"
 # Includes its own definers: fdlopen.cyr (the libssl bridge, 6.6.9) and tls_native.cyr.
 #
-# Formal contract: `docs/development/lib-tls-contract.md` (v5.10.42).
+# Formal contract: `docs/development/lib-tls-contract.md` (pinned at 6.6.13).
 # That doc is the invariant layer — verb return semantics, lifecycle
 # ordering, and ABI guarantees. Changes to the per-fn docstrings below
 # MUST preserve those guarantees unless the contract is amended in
@@ -31,7 +31,7 @@
 # host == 0 refused under SSL_VERIFY_PEER — see _tls_libssl_bind_host.
 #
 # Interface:
-#   tls_available()            → 1 if libssl usable, 0 otherwise
+#   tls_available()            → 1 if the active backend is usable (native: always), 0 otherwise
 #   tls_init_main()            → warm the stack once, on the main thread (6.6.13) — 1 / 0
 #   tls_connect(sock, host)    → ctx on success, 0 on failure
 #   tls_write(ctx, buf, len)   → bytes written, or a negative TLS_ERR_* (-1 for ctx 0)

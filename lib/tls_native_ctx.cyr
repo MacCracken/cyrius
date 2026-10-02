@@ -1,12 +1,13 @@
 # ================================================================
 # Opaque context handle
 # ================================================================
-# Returned by tls_native_new_client / new_server; passed to every
-# stateful fn. Internally points to an alloc()'d struct laid out
-# below (.15). Callers MUST treat as opaque and free via
-# tls_native_close (which calls into the bump allocator's
-# no-individual-free path — the heap is reclaimed on alloc_reset,
-# not per-ctx).
+# Returned by tls_native_new_client / new_server (and their `_in` forms);
+# passed to every stateful fn. Internally points to a struct laid out below
+# (.15), drawn from the ctx's allocator. Callers MUST treat it as opaque and
+# end a connection with tls_native_close, which frees NOTHING: the ctx and
+# every allocation of its connection live in that allocator — the no-free
+# global heap (a == 0), or the Allocator given to an `_in` constructor, which
+# reset_via reclaims after the close. CHANGELOG [6.6.13]
 #
 # At the API boundary a context is an i64 handle. 0 means "alloc
 # failed / invalid"; positive means a valid pointer.
@@ -14,11 +15,11 @@
 # ================================================================
 # Connection context + server handshake state machine (.15)
 # ================================================================
-# The context is an alloc()'d struct; the API handle is its pointer
-# (>0). Shared by client (Mini-arc B) and server (Mini-arc C) — the
-# server path is wired first. Offsets +0..+128 are the handshake
-# control block; +136..+255 is reserved for the read/write key
-# material, sequence numbers, and I/O buffers Mini-arcs B-D append.
+# The context is a TLS_CTX_LEN-byte struct from the ctx's allocator
+# (_tn_ctx_new_in); the API handle is its pointer (>0). Shared by client
+# and server. Offsets +0..+128 are the handshake control block; the slots
+# after it hold the parsed credentials, the traffic keys and sequence
+# numbers, the record buffers and the 6.6.13 additions, up to TLS_CTX_LEN.
 
 # 576 = 72 i64 slots. 512 held +3 record partial-read hold buffer, +1 (v6.2.25) ALLOC,
 # +1 (v6.2.8) CERT_REQUESTED; 6.6.13 added +512..+568 (see the block after READ_HOLD_OFF).
