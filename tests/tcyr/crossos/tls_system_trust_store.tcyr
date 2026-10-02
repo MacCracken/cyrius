@@ -7,10 +7,19 @@
 #            anchors for every native TLS client on the box (measured on cass, 6.6.13: a planted
 #            cert.pem installed as the only root).
 #
+#   Windows: since 6.6.14 the CurrentUser ROOT store instead, through crypt32 — before it Windows
+#            had no system roots at all, so every verifying native connect failed. Only the roots
+#            Windows trusts for TLS server authentication are taken (see _tn_ca_read_win).
+#
 # The Windows rows plant that file THEMSELVES — the fixture P-256 CA (CN=localhost, the root
 # tls_native_scaffold.tcyr serves) at the exact path the reader opened — load the system roots,
 # and assert the planted root is not among them; then they remove only what they created. They
-# run first: the system set is loaded once per process.
+# run first: the system set is loaded once per process. The store-policy rows re-derive, with
+# their own decoding, which ROOT-store certificates Windows trusts for TLS and compare that with
+# the bundle the library exported, certificate by certificate.
+# Every host verifies one real chain offline, at a fixed time: www.microsoft.com's (leaf, Microsoft
+# TLS G2 RSA CA OCSP 04, Microsoft TLS RSA Root G2) to DigiCert Global Root G2, which is in the
+# Windows store and in every POSIX bundle.
 # Cross-OS because the store is a different thing on every host.
 include "lib/assert.cyr"
 include "lib/alloc.cyr"
@@ -22,6 +31,12 @@ include "lib/tls.cyr"
 var _ts_p256 = 0;          # DER, 385 bytes — the planted root (CN=localhost, 2026-06-01 .. 2036-05-29)
 var _ts_p256_len = 385;
 var _ts_now = 1790931739;  # 2026-10-02: inside every fixture's validity window
+var _ts_ms = 0;            # www.microsoft.com chain, DER: leaf (2026-01-22 .. 2027-01-17),
+var _ts_ms_len = 2478;
+var _ts_mi = 0;            # Microsoft TLS G2 RSA CA OCSP 04 (2025-08-01 .. 2029-06-03),
+var _ts_mi_len = 1980;
+var _ts_mr = 0;            # Microsoft TLS RSA Root G2, cross-signed by DigiCert Global Root G2
+var _ts_mr_len = 1421;
 
 # Base64 (RFC 4648) of src[0..n) into out; returns the length written.
 fn _ts_b64(src, n, out): i64 {
@@ -119,6 +134,8 @@ fn test_planted_bundle_ignored(): i64 {
     syscall(1, 1, ", ", 2);
     fmt_int(_ts_installed(c));
     syscall(1, 1, " roots installed\n", 17);
+    assert_eq(rc, TLS_OK, "the Windows ROOT store loads (TLS_OK, not TLS_ERR_IO)");
+    assert_gt(_ts_installed(c), 0, "and installs roots");
     # The planted root must not anchor anything: its own self-signed cert does not verify.
     var leaf = x509_cert_alloc();
     assert_eq(x509_parse(_ts_p256, _ts_p256_len, leaf), 1, "the planted root parses");
@@ -139,24 +156,237 @@ fn test_planted_bundle_ignored(): i64 {
     return 0;
 }
 
-# POSIX: the bundle at one of the four paths is the store, as before 6.6.14.
-fn test_posix_bundle(): i64 {
-    test_group("POSIX: the system bundle file is the store");
+# The test's own count of BEGIN markers — independent of the library's.
+fn _ts_blocks(pem, len): i64 {
+    var n = 0;
+    var i = 0;
+    while (i + 27 <= len) {
+        if (memeq(pem + i, "-----BEGIN CERTIFICATE-----", 27) == 1) { n = n + 1; }
+        i = i + 1;
+    }
+    return n;
+}
+
+# Every target: the system set loads, once, and its counts add up.
+fn test_system_roots(): i64 {
+    test_group("tls_native_set_ca_system: the system set loads and its counts add up");
     var c = tls_native_new_client("localhost", 9);
     assert_eq(tls_native_set_ca_system(c), TLS_OK, "tls_native_set_ca_system: TLS_OK");
-    assert_gt(_tn_ca_len, 0, "a bundle file was read");
-    assert_gt(_ts_installed(c), 0, "it installs roots");
+    assert_gt(_tn_ca_len, 0, "the system bundle has bytes");
+    var blocks = _ts_blocks(_tn_ca_buf, _tn_ca_len);
+    var inst = _ts_installed(c);
+    var sk = tls_native_ca_skipped(c);
+    syscall(1, 1, "  system bundle: ", 17);
+    fmt_int(blocks);
+    syscall(1, 1, " blocks, ", 9);
+    fmt_int(inst);
+    syscall(1, 1, " installed, ", 12);
+    fmt_int(sk);
+    syscall(1, 1, " skipped (", 10);
+    fmt_int(_tn_ca_sys_refused);
+    syscall(1, 1, " refused by store policy)\n", 26);
+    assert_gt(inst, 0, "it installs roots");
+    assert_eq(inst + sk, blocks + _tn_ca_sys_refused, "installed + skipped == PEM blocks + refused");
+    #ifndef CYRIUS_TARGET_WIN
+    assert_eq(_tn_ca_sys_refused, 0, "POSIX: nothing is refused outside the bundle");
+    #endif
+    var d = tls_native_new_client("localhost", 9);
+    var u0 = alloc_used();
+    assert_eq(tls_native_set_ca_system(d), TLS_OK, "a second ctx installs too");
+    assert_eq(alloc_used() - u0, 0, "and allocates nothing: the set is loaded once, shared");
+    assert_eq(load64(d + TLS_CTX_OFF_CA_ROOT), load64(c + TLS_CTX_OFF_CA_ROOT), "the same set");
     return 0;
 }
+
+# Parse a DER certificate the test embeds; 0 if it does not parse.
+fn _ts_cert(der, dlen): i64 {
+    var c = x509_cert_alloc();
+    if (x509_parse(der, dlen, c) != 1) { return 0; }
+    return c;
+}
+
+# Every target: a real public chain verifies against the system roots, offline, at a fixed time.
+fn test_real_chain(): i64 {
+    test_group("a real chain (www.microsoft.com -> DigiCert Global Root G2) verifies against the system roots");
+    var leaf = _ts_cert(_ts_ms, _ts_ms_len);
+    var ica = _ts_cert(_ts_mi, _ts_mi_len);
+    var xr = _ts_cert(_ts_mr, _ts_mr_len);
+    assert_neq(leaf, 0, "the leaf parses");
+    assert_neq(ica, 0, "the issuing CA parses");
+    assert_neq(xr, 0, "the cross-signed root parses");
+    var inters = alloc(24);
+    store64(inters, 2);
+    store64(inters + 8, ica);
+    store64(inters + 16, xr);
+    var c = tls_native_new_client("www.microsoft.com", 17);
+    assert_eq(tls_native_set_ca_system(c), TLS_OK, "the system set installs");
+    assert_eq(_ts_verify(c, leaf, inters, _ts_now), TLS_OK, "the chain verifies (TLS_OK)");
+    # Controls: the system set is what anchored it, and the time is honoured.
+    var d = tls_native_new_client("www.microsoft.com", 17);
+    assert_eq(tls_native_set_ca_bundle(d, _ts_p256, _ts_p256_len, 1), TLS_OK, "a set of only the fixture root");
+    assert_eq(_ts_verify(d, leaf, inters, _ts_now), TLS_ERR_CERT_INVALID, "does not anchor it");
+    var e = tls_native_new_client("www.microsoft.com", 17);
+    tls_native_set_ca_system(e);
+    assert_eq(_ts_verify(e, leaf, inters, x509_cert_not_after(leaf) + 86400), TLS_ERR_CERT_INVALID,
+      "after the leaf's notAfter it fails");
+    var f = tls_native_new_client("www.microsoft.com", 17);
+    tls_native_set_ca_system(f);
+    store64(inters, 1);                 # the cross-signed root left out: no path to an anchor
+    assert_eq(_ts_verify(f, leaf, inters, _ts_now), TLS_ERR_CERT_INVALID, "without its cross-signed root it fails");
+    return 0;
+}
+
+#ifdef CYRIUS_TARGET_WIN
+var _TS_NOT_FOUND = 0x80092004;     # CRYPT_E_NOT_FOUND
+var _ts_oid_sa = 0;                 # 06 08 2B 06 01 05 05 07 03 01 — serverAuth, as a whole TLV
+var _ts_oid_any = 0;                # 06 04 55 1D 25 00 — anyExtendedKeyUsage
+var _ts_pbuf = 0;                   # one property value
+
+# The test's own read of property `id` of the store certificate `cc` into _ts_pbuf: its length,
+# -1 when absent, -2 when the call failed for another reason.
+fn _ts_prop(fns, cc, id): i64 {
+    var cb[8];
+    store64(&cb, 4096);
+    var r = callptr(load64(fns + 24), cc, id, _ts_pbuf, &cb) & 0xFFFFFFFF;
+    if (r == 0) {
+        if ((syscall(0xF04B) & 0xFFFFFFFF) == _TS_NOT_FOUND) { return 0 - 1; }
+        return 0 - 2;
+    }
+    return load32(&cb);
+}
+
+# serverAuth or anyExtendedKeyUsage anywhere in a purpose list, as a whole TLV — a different
+# reading from the library's element walk.
+fn _ts_names_server(n): i64 {
+    if (_ts_contains(_ts_pbuf, n, _ts_oid_sa, 10) == 1) { return 1; }
+    if (_ts_contains(_ts_pbuf, n, _ts_oid_any, 6) == 1) { return 1; }
+    return 0;
+}
+
+# What Windows' root-program properties say about `cc` for TLS: 1 an anchor, 0 not a TLS root,
+# 2 trusted only for certificates issued before a date (the library refuses those).
+fn _ts_expect(fns, cc): i64 {
+    var n = _ts_prop(fns, cc, 9);
+    if (n == 0 - 2) { return 0; }
+    if (n >= 0) {
+        if (_ts_names_server(n) == 0) { return 0; }
+    }
+    var nb = _ts_prop(fns, cc, 104);
+    if (nb == 0 - 1) { return 1; }
+    if (nb == 0 - 2) { return 2; }
+    var ne = _ts_prop(fns, cc, 122);
+    if (ne < 0) { return 2; }
+    if (_ts_names_server(ne) == 1) { return 2; }
+    return 1;
+}
+
+# 1 when der[0..dlen) is one of the `nd` copied certificates at list ([ptr][len] pairs).
+fn _ts_listed(list, nd, der, dlen): i64 {
+    var i = 0;
+    while (i < nd) {
+        if (load64(list + i * 16 + 8) == dlen) {
+            if (memeq(load64(list + i * 16), der, dlen) == 1) { return 1; }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Windows: the exported bundle is exactly the ROOT store's TLS roots — re-derived here from the
+# store, certificate by certificate, with the test's own reading of the properties.
+fn test_store_policy(): i64 {
+    test_group("Windows: the bundle is exactly the ROOT store's TLS roots, re-derived here");
+    _ts_oid_sa = hex_decode("06082b06010505070301", 20);
+    _ts_oid_any = hex_decode("0604551d2500", 12);
+    _ts_pbuf = alloc(4096);
+    var fns[32];
+    assert_eq(_tn_w_crypt32(&fns), 1, "crypt32 loads from System32 and resolves");
+    var root = _tn_w_open(&fns, "ROOT");
+    var dis = _tn_w_open(&fns, "Disallowed");
+    assert_neq(root, 0, "CurrentUser ROOT opens");
+    assert_neq(dis, 0, "CurrentUser Disallowed opens");
+    var en = load64(&fns + 8);
+    # The Disallowed certificates, copied: the walk releases each context it returns.
+    var dlist = alloc(512 * 16);
+    var nd = 0;
+    var c = callptr(en, dis, 0);
+    while (c != 0) {
+        if (nd < 512) {
+            var l = load32(c + 16);
+            var cp = alloc(l);
+            memcpy(cp, load64(c + 8), l);
+            store64(dlist + nd * 16, cp);
+            store64(dlist + nd * 16 + 8, l);
+            nd = nd + 1;
+        }
+        c = callptr(en, dis, c);
+    }
+    var total = 0;
+    var want_in = 0;
+    var want_ref = 0;
+    var not_tls = 0;
+    var wrong = 0;
+    var pem = alloc(65536);
+    c = callptr(en, root, 0);
+    while (c != 0) {
+        total = total + 1;
+        var der = load64(c + 8);
+        var dlen = load32(c + 16);
+        var x = _ts_expect(&fns, c);
+        if (x != 0) {
+            if (_ts_listed(dlist, nd, der, dlen) == 1) { x = 0; }
+        }
+        if (x == 0) { not_tls = not_tls + 1; }
+        if (x == 1) { want_in = want_in + 1; }
+        if (x == 2) { want_ref = want_ref + 1; }
+        var got = 0;
+        if (dlen < 40000) {
+            var pl = _ts_pem(pem, der, dlen);
+            got = _ts_contains(_tn_ca_buf, _tn_ca_len, pem, pl);
+        }
+        if (x == 1) {
+            if (got != 1) { wrong = wrong + 1; }
+        }
+        if (x != 1) {
+            if (got != 0) { wrong = wrong + 1; }
+        }
+        c = callptr(en, root, c);
+    }
+    callptr(load64(&fns + 16), dis, 0);
+    callptr(load64(&fns + 16), root, 0);
+    syscall(1, 1, "  ROOT store: ", 14);
+    fmt_int(total);
+    syscall(1, 1, " certificates, ", 15);
+    fmt_int(want_in);
+    syscall(1, 1, " TLS roots, ", 12);
+    fmt_int(not_tls);
+    syscall(1, 1, " not for TLS, ", 14);
+    fmt_int(want_ref);
+    syscall(1, 1, " date-distrusted, ", 18);
+    fmt_int(nd);
+    syscall(1, 1, " in Disallowed\n", 15);
+    assert_gt(total, 0, "the ROOT store has certificates");
+    assert_gt(want_in, 0, "some are TLS roots");
+    assert_eq(wrong, 0, "each ROOT certificate is in the bundle exactly when Windows trusts it for TLS");
+    assert_eq(_ts_blocks(_tn_ca_buf, _tn_ca_len), want_in, "the bundle holds exactly those");
+    assert_eq(_tn_ca_sys_refused, want_ref, "the date-distrusted roots are the refused count");
+    return 0;
+}
+#endif
 
 fn main(): i64 {
     alloc_init();
     _ts_p256 = hex_decode("3082017d30820123a0030201020214561cee528775ffec8d05834b308f1ad80d7e7dbe300a06082a8648ce3d04030230143112301006035504030c096c6f63616c686f7374301e170d3236303630313138343930365a170d3336303532393138343930365a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d030107034200049167a2981f570fdbd8d94bf20fb4f5c89d77aa5b58cf4ed416bafa0256a2561a04f1e71d57537fc532fc87ca980eb8ba1f8f8704fc7f6a793ba6598b97bb3275a3533051301d0603551d0e04160414e6e9022c5ba23153aa7b2a0004574c417dfbf42e301f0603551d23041830168014e6e9022c5ba23153aa7b2a0004574c417dfbf42e300f0603551d130101ff040530030101ff300a06082a8648ce3d04030203480030450220274b9132990767c26d383d8712024a2c8cdb63e38af642893d1a59ab44a29758022100a57e61df420d2425c712ad284d0ad53ef9c8cdbfd07ba65c952eaead0dc13729", 770);
+    _ts_ms = hex_decode("308209aa30820792a003020102021343000253929e1c999055f04653000000025392300d06092a864886f70d01010c05003057310b3009060355040613025553311e301c060355040a13154d6963726f736f667420436f72706f726174696f6e312830260603550403131f4d6963726f736f667420544c5320473220525341204341204f435350203034301e170d3236303132323139353532315a170d3237303131373139353532315a3068310b3009060355040613025553310b30090603550408130257413110300e060355040713075265646d6f6e64311e301c060355040a13154d6963726f736f667420436f72706f726174696f6e311a3018060355040313117777772e6d6963726f736f66742e636f6d30820122300d06092a864886f70d01010105000382010f003082010a0282010100c182c8a381c46bbd1d574788af700850f3d425f3c8a4d3c5a1823427d663cdbb124d18c2f7441dd982441d0b184775fb8160619e133a19b677cf8cde1bda03fcd179ae6727bf928f38dad7a101af8983fbd4edc5549742839598c88ad1a26607cd4ef78910f8c02a5af8cfbcc7aec665d5238809c7dabad3423e83e6224b300743e06b8f94f7b1efc5937f49c29841391e34dbbc208e84795c1d6b2fff0c8a4a247b0ee7af82f5f7330123846d14525e447b9592cb08a196cb444970379507ffacde78113a99cda88b48c8b71b89a72ed8e04094bd5e4ad9f19ed2f4ef2b7f643ccc6133b2657ee978a58ae4f48bb1db15aee59b502d361dc76af8f091f73dfb0203010001a382055c308205583082017f060a2b06010401d6790204020482016f0482016b016900750044c2bd0ce9140e64a5c94a01930a5aa1bb35970e00ee111689682a1c44d7b5660000019be74fd2250000040300463044022069b43f39dcca47688cd4739e6a3636f1d7a40f139583f20b0126c02ff6fbae6c022034ab4e7fb41c762b278a705b7a575da0ce6533a92c004cc8c20e40d97559ebc90077001c9f682ce9faf0456950f81b968a87dddb3210d84ce6c8b2e382524ac4cf599f0000019be74fd20a0000040300483046022100da07cd98a5adbcfa707ec35cf5cc8960ce4cf2ac8b4151be09d025a637dab529022100f544180ac6206624fa201eec7bc7b2043ba6c992c27caa960bfa11563813f4ee007700d6d58da9d01753f36a4aa0c7574902afebc7dc2cd38cd9f764c80c89191e9f020000019be74fd1cb0000040300483046022100dabe9fd11acfa36c4e7bd1b4d19ebc0b5ded9b4ccd992d2b934c4a9bc7990a25022100c605090339d63e44b41d6076ce1eb743c1fb08aca2b2bc02286b89026dbd3adb301b06092b060104018237150a040e300c300a06082b06010505070301303c06092b0601040182371507042f302d06252b060104018237150887bdd71b81e7eb4682819d2e8ed00c87f0da1d5d81b5dd50859ffd750201640201213082010b06082b060105050701010481fe3081fb306106082b060105050730028655687474703a2f2f7777772e6d6963726f736f66742e636f6d2f706b696f70732f63657274732f4d6963726f736f6674253230544c53253230473225323052534125323043412532304f43535025323030342e637274306706082b06010505073002865b687474703a2f2f6361697373756572732e6d6963726f736f66742e636f6d2f706b696f70732f63657274732f4d6963726f736f6674253230544c53253230473225323052534125323043412532304f43535025323030342e637274302d06082b060105050730018621687474703a2f2f6f6e656f6373702e6d6963726f736f66742e636f6d2f6f637370301d0603551d0e0416041452c8583a1d6912533da5b7b08b5c79b934cf8e64300e0603551d0f0101ff0404030205a03081990603551d1104819130818e821377777771612e6d6963726f736f66742e636f6d82117777772e6d6963726f736f66742e636f6d8218737461746963766965772e6d6963726f736f66742e636f6d8211692e732d6d6963726f736f66742e636f6d820d6d6963726f736f66742e636f6d8211632e732d6d6963726f736f66742e636f6d8215707269766163792e6d6963726f736f66742e636f6d300c0603551d130101ff040230003081f10603551d1f0481e93081e63081e3a081e0a081dd866c687474703a2f2f7777772e6d6963726f736f66742e636f6d2f706b696f70732f63726c2f706172746974696f6e2f4d6963726f736f6674253230544c53253230473225323052534125323043412532304f43535025323030345f506172746974696f6e30303039332e63726c866d687474703a2f2f63726c322e6d6963726f736f66742e636f6d2f706b696f70732f63726c2f706172746974696f6e2f4d6963726f736f6674253230544c53253230473225323052534125323043412532304f43535025323030345f506172746974696f6e30303039332e63726c30660603551d20045f305d3051060c2b0601040182374c837d01013041303f06082b060105050702011633687474703a2f2f7777772e6d6963726f736f66742e636f6d2f706b696f70732f446f63732f5265706f7369746f72792e68746d3008060667810c010202301f0603551d23041830168014540cbcec18f77df103e284be34644467cf751f6530130603551d25040c300a06082b06010505070301300d06092a864886f70d01010c050003820201004d2e64bb7e6b4eef4a619c609e4d47c4e2506881a53257623e1370e23643ac56e6552b84d38ff27cd78c57cd7d92f103c7ca1b8c4ac8d9da0893825fbfb8f6f20881241547a2326dcbe19300a3cf840fa7fbc74ad4920d1cf53addde9f79e48046a4dbf536470ce338a19eb4b0b0d967e0a0337776013e17bd910622b3fcfddaa462e5a39ab5433cff36826c7dfe9c51fffbc256b4e5547c93409a636c541418fa5553c21aa08f0f0d61f8a7b4572bcd97e0dcc41731be2b7ccd6d9371175a9c7d81a93158fc49ccd6f30a1aaa56522ec980715bafd6178aa4d90114a466305bb72ad0628069447031e74df3e154d627bef605fef0b3f4712406f2cb04d44186ef72bd39f799dc4f67e8638b69a1d74f6be246d5ccdac4020609a01fe0e37e13629939aa79ee88b6d3ee827a0a2071592906a11e6e89213f430513048f167e8fcb11c6d44b3b497aaaaac6dbc6e0335e32a82e558f73fb4be1e3070a5f354fe759cf23400a78bc5fa527065fe1760aef6a017d7de3a3020c7681f5f622b99f25f4a9240ef0df5c2a177b6e9917daec5614c497a6823e0b7f97527fdb8636b345882313a8bb7f232e4068d248e07acc46a9d7307763303e2809f9c2e73bd7a386afe9de490b2b627b42c0afab5c3b26191eb5030dad5a950b2f4f90b2465fc11dace5b4b6ce7ad0126ccb1bd52656a0ea67e6b060c5d2a9227d441b78a17880c2", 4956);
+    _ts_mi = hex_decode("308207b8308205a0a0030201020213330000000b13e5667d4a9b558000000000000b300d06092a864886f70d01010c05003051310b3009060355040613025553311e301c060355040a13154d6963726f736f667420436f72706f726174696f6e31223020060355040313194d6963726f736f667420544c532052534120526f6f74204732301e170d3235303830313230303235395a170d3239303630333230303235395a3057310b3009060355040613025553311e301c060355040a13154d6963726f736f667420436f72706f726174696f6e312830260603550403131f4d6963726f736f667420544c5320473220525341204341204f43535020303430820222300d06092a864886f70d01010105000382020f003082020a02820201009c3a24085a1892f29ed560cde2e6fb8047db44ae2bdd6d107021154529aad2c7dce6c442b1a08d52e04f5c395506364d17c1586634e285529fe2a4fec6dec2c23b86bfcaad872906eb1d491d5f81dbb7a4ac561ad61287fd5f4049e2a00c6a84c64e6fdf24b89a95745a597fade93c13157840ccecdaef88364a90deea630794c3836a1aae98e6f164805a296704e856f421a6c5468dc8dd02abbc06f06c477823bb38b0bbfb4d71b0df22c37f1a7ef99daa412ad1de68dd9574253866c91611c5593d2ab168b9933b66e83ce1fca7ff2c6b50e0c0b9c8717393b177bfedaa4d0e0a55db139c72e069ad814cda23f906cb3fed428a868c0dd20c1525d08668eb7856aa2e5c08b34d33804eee353c2fc37a7dc16672606890f4ebf608ec13d789925f5c52f4879578b136e1b342536e3a373707c873751ebb5d6e67c99a7ccb4af3c6cdf04ef586fb143519463d97867264dd4336efd4578200220ca33aedb3657065f982a5bab8d2eac0688a3537a040f5fe028966a830f89447625747b27b9b8cc795bceb9af6c68c4489db16e61efde789fc81353530ea2f7d896452b3461934e33b574f0a182031efc5fdb9b127f6975935fb0ac244d6d0b2ed554d1d57487512d7f29860169ec4069cd4ae7e2e65c753e422251830636a9057c594b4f7e54d4c0d54c71fa93d4d0a460962d0232251e38e374cc5f40140990582d3a2b0530203010001a38202813082027d300e0603551d0f0101ff040403020186301006092b06010401823715010403020100301d0603551d0e04160414540cbcec18f77df103e284be34644467cf751f6530130603551d20040c300a3008060667810c01020230130603551d25040c300a06082b06010505070301301906092b0601040182371402040c1e0a0053007500620043004130120603551d130101ff040830060101ff020100301f0603551d23041830168014de918648b7a1315931f14b5f07a9dc8879daa8763081ab0603551d1f0481a33081a030819da0819aa081978649687474703a2f2f7777772e6d6963726f736f66742e636f6d2f706b696f70732f63726c2f4d6963726f736f6674253230544c53253230525341253230526f6f7425323047322e63726c864a687474703a2f2f63726c322e6d6963726f736f66742e636f6d2f706b696f70732f63726c2f4d6963726f736f6674253230544c53253230525341253230526f6f7425323047322e63726c3082011006082b06010505070101048201023081ff306306082b060105050730028657687474703a2f2f7777772e6d6963726f736f66742e636f6d2f706b696f70732f63657274732f4d6963726f736f6674253230544c53253230525341253230526f6f7425323047322532302d253230787369676e2e637274306906082b06010505073002865d687474703a2f2f6361697373756572732e6d6963726f736f66742e636f6d2f706b696f70732f63657274732f4d6963726f736f6674253230544c53253230525341253230526f6f7425323047322532302d253230787369676e2e637274302d06082b060105050730018621687474703a2f2f6f6e656f6373702e6d6963726f736f66742e636f6d2f6f637370300d06092a864886f70d01010c050003820201007c4871c2b6c045ab740fc63f49e2fc0fd675fdcd50d1e04bb3b3d1a8995ffe5d350d6c0bddd0ad6160188938e2f0b735d2b5213a0c0e5899387cd4d7dd024dd4dcf5ee90e37b6793a8acd41b50bbc54fe6d3f1b51ef0ff99bc2333b0c8a8a627d6d15bed6f14de4b071a0c50fd0edfbeeb4fb29810cb222ae61dd74ba7ae15d10136090b86434f4ee7c57e5ca36b832e493e9488998b52d3963f7198242f3782fa6c74f2bcdb0621bbb85067702415b60b228ff7b927e4037c8495b76604a99255c2bd11c7210a727f65c060a65049e9f62348203a8e9226a8178c98af14a73dce4cadc08e8c3c44f17ffb13f914d77b333d105e64e7273d0c4ce271d766ceaef74eb664ba542bb7fd03d798679837b20a6320e5b0fbd8a48d3a2e42229a22f42655833015c7a242b3bfd036c53652a773677a736e54acbce989d8a5eb1f6dac2750c4c8ebd41c54294dbbb6deabd7c7f11f1464ba7f473165ef797d14c4f019e48076e73b28009b446f2457f507dc8e5ab400589756b10bfa087571de1b53c8eebdf0ab224cbd6bba5d8a44593c246baabce97d8b5f4a4dd78c54b0ab769b80284d457465106021f98e795fda92fb178400dbc4ae8259813c27779e56f707c8bdbe3d91c5978ae69c0f591658486c7da41632ed16c92da796f5e4fdc5cf65a4ddd700e8c90ef49db2a40280cc1bf028ebb03177349ec3ccd7c89b36bbc525e2", 3960);
+    _ts_mr = hex_decode("3082058930820471a00302010202100b0c6b2c466917b04773c647d4afc0c8300d06092a864886f70d01010c05003061310b300906035504061302555331153013060355040a130c446967694365727420496e6331193017060355040b13107777772e64696769636572742e636f6d3120301e06035504031317446967694365727420476c6f62616c20526f6f74204732301e170d3235303532313030303030305a170d3239303631393233353935395a3051310b3009060355040613025553311e301c060355040a13154d6963726f736f667420436f72706f726174696f6e31223020060355040313194d6963726f736f667420544c532052534120526f6f7420473230820222300d06092a864886f70d01010105000382020f003082020a0282020100dfea8b9f47e1281071af41d619db9257de6babe62edead3a6083b71398ac5bb9320b7beb9f72276b5d40abbe180693b20dd212edb874f57f2feaa81794f63316578ade207c21ddb7daacde4e64b05acd4b75f3ef02644ded52daa38f04e891f8d7fb3f19fd4e45395ee829c3d6f267afb30094c18de1f04a189839fac009843341050305abf475e153a521925c444ce66057a4900297c7d5d89304324aed8551edd6c5baa03f368a2f6f4c39a8046922843b7514f7d93eb4a9d0074138817e46481de819e670b8a0aa18dd72bf7e7db56c4e19701184041381d462fd9c6bf11cddffeca7e0e6c78d314bbff26b33ccd18cb6feb11ba34aa85f0e7f3176383f07476c01a8aca514da82b05f1f6cbc891ac0122acb7b971f282e31168a534c7566f97d01d6c260aa658f319e72cbcc9b2de544199357ab6e8ec2d92e65b0722de7a1c3a17e491d5967d609d418126dc0954578c9f1606ae4f6ee06243b734a5a11c23e9761c078eeef13a730e24a382dee58171320b7362adf0b32b4c238b191dd12b045b67cc0b11d62a19ddd71121596019d0a09f5b1ddb3d9e0384234f669b6c3af1673fed443f843e458f94fb3f3ecd63d943a403815ab0c86d064ce1a63e8849455095ab604b6d13e9a15c7641180d01b820e4dff459eb26507251fdb9ac8c6ecd65b8550049f1ccb5d2082679e79e2dfe8f2e86fc420723086e59d7527350203010001a382014b30820147300f0603551d130101ff040530030101ff301d0603551d0e04160414de918648b7a1315931f14b5f07a9dc8879daa876301f0603551d230418301680144e2254201895e6e36ee60ffafab912ed06178f39300e0603551d0f0101ff04040302018630130603551d25040c300a06082b06010505070301307606082b06010505070101046a3068302406082b060105050730018618687474703a2f2f6f6373702e64696769636572742e636f6d304006082b060105050730028634687474703a2f2f636163657274732e64696769636572742e636f6d2f4469676943657274476c6f62616c526f6f7447322e63727430420603551d1f043b30393037a035a0338631687474703a2f2f63726c332e64696769636572742e636f6d2f4469676943657274476c6f62616c526f6f7447322e63726c30130603551d20040c300a3008060667810c010202300d06092a864886f70d01010c050003820101000bbcb42b3774c54ba7360236c6afe113cc8a9a971bfce3448cee5400e5e4411a46f00b7634ff99556235aaad8a9c0c5a62cc43c0cbea4a1dbd6b1dafb11925669cf7796e5b2580248185c7792d355f420978ed9fe265d5c4205082108f6a3aed188e4889aba609f8e180fc06751627255a8fb83a706c1847f063f4530ed9153520f3913d1301a0e2fa2408455677d167a93142d057ff1a26bec543d857a963ffaff33ad8f67b4b10a297a1cf66be676709f9b54ce7ab192bbf223d7ddec6f7ef63382cdd56c4f90952dadfe3886fd56d6bf708412f8e3e86319ff17c4af5d661a4464628ef57bab06f92d8d27725ed7ba629ce3b727911d4e0a7546d352ba47a", 2842);
     #ifdef CYRIUS_TARGET_WIN
     test_planted_bundle_ignored();
     #endif
-    #ifndef CYRIUS_TARGET_WIN
-    test_posix_bundle();
+    test_system_roots();
+    test_real_chain();
+    #ifdef CYRIUS_TARGET_WIN
+    test_store_policy();
     #endif
     return assert_summary();
 }

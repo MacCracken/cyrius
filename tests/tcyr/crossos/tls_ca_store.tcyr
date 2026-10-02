@@ -7,8 +7,9 @@
 #   (e) a root sigil cannot parse was dropped with no count anywhere. tls_native_ca_skipped(ctx)
 #       now reports it: installed + skipped == the bundle's PEM block count.
 # Cross-OS because the system store is a different file with different contents on every host
-# (Arch 121 blocks / 1 skipped, Intel-Mac 128 / 0, Windows has none), and the sized read goes
-# through each target's file_open / file_read.
+# (Arch 121 blocks / 1 skipped, Intel-Mac 128 / 0; Windows, since 6.6.14, its CurrentUser ROOT
+# store exported as PEM — cass 47 blocks / 2 skipped + 6 refused by store policy, see
+# tls_system_trust_store.tcyr), and the sized read goes through each target's file_open / file_read.
 #
 # The fixture is two real roots: a self-signed P-256 CA (CN=localhost, the one
 # tls_native_scaffold.tcyr serves) and the public Microsec "e-Szigno TLS Root CA 2023", a P-521
@@ -203,7 +204,8 @@ fn test_system_store(): i64 {
         fmt_int(sk);
         syscall(1, 1, " skipped\n", 9);
         assert_gt(inst, 0, "the store installs at least one root");
-        assert_eq(inst + sk, blocks, "installed + skipped == PEM blocks in the store");
+        # `_tn_ca_sys_refused`: Windows store roots kept out of the bundle by policy (0 elsewhere).
+        assert_eq(inst + sk, blocks + _tn_ca_sys_refused, "installed + skipped == PEM blocks in the store (+ refused)");
         var d = tls_native_new_client("localhost", 9);
         var u0 = alloc_used();
         assert_eq(tls_native_set_ca_system(d), TLS_OK, "a second ctx installs too");
@@ -212,7 +214,8 @@ fn test_system_store(): i64 {
         assert_eq(tls_native_ca_skipped(d), sk, "with the same skipped count");
         return 0;
     }
-    # No readable store (Windows): the failure is cached, and the skipped count stays 0.
+    # No readable store (a host with none — Windows had none before 6.6.14): the failure is
+    # cached, and the skipped count stays 0.
     assert_eq(rc, TLS_ERR_IO, "no system store: TLS_ERR_IO");
     var d2 = tls_native_new_client("localhost", 9);
     var u1 = alloc_used();

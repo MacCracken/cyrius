@@ -20,8 +20,9 @@
 # arm64-macOS) the workers park at the barrier and are released together, so their first uses
 # overlap. Every spin is BOUNDED so a broken barrier fails a test instead of hanging the leg.
 #
-# Hosts with no system bundle (cass) answer TLS_ERR_IO — consistently, from every caller; that
-# is the cached "looked, none readable" and is asserted as such, not skipped.
+# A host with no system bundle answers TLS_ERR_IO — consistently, from every caller; that is the
+# cached "looked, none readable" and is asserted as such, not skipped. (cass was that host until
+# 6.6.14; it now loads its CurrentUser ROOT store — tls_system_trust_store.tcyr.)
 include "lib/assert.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -89,6 +90,14 @@ fn _ft_init_on_worker(rec): i64 {
     return 0;
 }
 
+# One cold load, measured INSIDE a fresh worker. Record: +0 the bytes it allocated.
+fn _ft_ca_load_measured(rec): i64 {
+    var a0 = alloc_used();
+    _tn_ca_load();
+    store64(rec, alloc_used() - a0);
+    return 0;
+}
+
 # One round: K workers on `body`, released together where threads are real.
 fn _ft_round(body, recs): i64 {
     atomic_store(&_ft_arrived, 0);
@@ -126,7 +135,7 @@ fn _ft_ca_forget(): i64 {
 
 fn _ft_rc_ok(rc): i64 {
     if (rc == TLS_OK) { return 1; }
-    if (rc == TLS_ERR_IO) { return 1; }   # no system bundle on this host (cass)
+    if (rc == TLS_ERR_IO) { return 1; }   # no system bundle on this host
     return 0;
 }
 
@@ -180,11 +189,16 @@ fn test_bundle_loaded_once(recs): i64 {
     var b0 = alloc_used();
     _ft_round(&_ft_ca_only, recs);
     var warm = alloc_used() - b0;
-    # The cost of ONE load, measured alone on this thread.
+    # The cost of ONE load, measured alone — on a FRESH worker, the racing loader's conditions.
+    # ⚠ Not on this thread (6.6.14): a load parses the roots, and on Windows a thread's first
+    # crypto call allocates its 1024-byte thread-local block from the heap (lib/thread_local.cyr),
+    # so the main thread, whose block exists, measured 1024 B short of the same load on a worker.
+    # Before 6.6.14 Windows had no store and a load parsed nothing, so the two agreed.
     _ft_ca_forget();
-    var l0 = alloc_used();
-    _tn_ca_load();
-    var one = alloc_used() - l0;
+    memset(recs, 0, FT_REC);
+    var lt = thread_create(&_ft_ca_load_measured, recs);
+    thread_join(lt);
+    var one = load64(recs);
     assert_gt(one, 0, "a cold load allocates its buffer");
     assert_eq(cold - warm, one, "the racing round cost exactly one bundle load more than the warm round");
     return 0;
