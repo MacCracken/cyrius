@@ -39,10 +39,10 @@ unscheduled 6.x backlog. Whole-cycle framing, the v6.7.x language arc and v6.8.x
 
 ## Where we are
 
-**Current head: v6.6.13** (2026-10-01) — cycc **1,470,944 B** (`.text` **1,297,064**) ·
-seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi · self_compile **839 ms** ·
-**410** `.tcyr` (**153** in `crossos/`) · **104** `lib/*.cyr` · **316** shell gates under
-`tests/gates/<bucket>/` · **11 open issues**, all placed in 6.6.13 · **6 open proposals**.
+**Current head: v6.6.13** (2026-10-01) — cycc **1,487,896 B** (`.text` **1,314,632**) ·
+seed-derive **GREEN** · cross-OS: the release gate is pending · self_compile: the bench is pending ·
+**427** `.tcyr` (**164** in `crossos/`) · **105** `lib/*.cyr` · **325** shell gates under
+`tests/gates/<bucket>/` · **0 open issues** · **6 open proposals**.
 
 > ⚠ **Every figure above was DERIVED on the day, not carried** (re-derived 2026-09-27 at the 6.6.7 open).
 > `version-bump.sh` rewrites the version token, replaces the `(…)` after it with the bump date, and
@@ -77,7 +77,7 @@ The language list that was Phase 3 moved to **v6.7.x**, which RISC-V vacates for
 |---|---|---|
 | **1 — Repair window** | `.2` – `.6` | ✅ **CLOSED at 6.6.6.** |
 | **1b — the repair batch** | `.7` – `.12` | ✅ **CLOSED at 6.6.12** (summary in *Where we are*). |
-| **1c — memory + reported-issue repair** | `.13` | The three silent memory-corruption finds, the open issues I1–I11, and the ganita / bayan / sigil folds. ✅ ganita 1.2.11, bayan 1.5.10 and sigil 3.13.6 are tagged (2026-10-01): the release is open. See *6.6.13* below. |
+| **1c — memory + reported-issue repair** | `.13` | ✅ **Merged 2026-10-01**: the three silent memory-corruption finds, the open issues I1–I11, and the ganita / bayan / sigil folds. The release gate is pending; see *6.6.13* below. |
 | **2 — Tooling round-out** | after `.13`, to the minor's close | The tooling proposals P1, P2, P4, P5, P6, alongside the DCE compaction arc and, last, macOS concurrency ordering (*Open questions* 3). Then the closeout pass. |
 | ~~**3 — Committed ergonomics**~~ | — | **Moved to v6.7.x** with P3 `const fn` (user, 2026-10-01) — see [roadmap_6.md](roadmap_6.md). |
 
@@ -261,13 +261,6 @@ cyrius; a folded stdlib is then re-vendored into `lib/` byte-identical from its 
 - ⚠ kriya `k_isatty` does TCGETS into a 16-byte `var tio[16]` (termios is 36 B): a stack overrun on
   every tty probe, a crash on aarch64 (`cp -i`, `mv -i`, `ls` on a terminal) — recorded for kriya 1.7.4,
   which also adopts 6.6.12's aarch64 wrappers after the cyrius tag.
-- bayan `_toml_unescape_span_a` answers a refused allocation with `str_from("")` from the DEFAULT
-  allocator, so its value arms report an empty string as success.
-- bayan 1.5.11 (cut for cyrius 6.6.13, ⛔ tagged BEFORE it): `src/pdf.cyr` passes `str_data(name)` to a
-  `: cstring` parameter, which I11's rule warns on in every build including bayan or TLS — pass the
-  NUL-terminated buffer it already builds; plus `_toml_unescape_span_a` above, and `_d_init_tables`
-  (`src/dtoa.cyr`), a check-then-set lazy init with no publish barrier (on aarch64 a second thread can
-  parse against zero significands — I3's class).
 - bayan: `bayan_toml_escape_a` still answers a refused output buffer with `str_from("")` from the default
   allocator (1.5.11 fixed the unescape side), and `bayan_toml_parse` / `_inline_parse_a` leave their other
   refusals unchecked (`vec_new`, `section_new`, `pair_new`, `vec_push`, and the `str_builder` paths).
