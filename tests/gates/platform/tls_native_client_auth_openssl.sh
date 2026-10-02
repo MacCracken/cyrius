@@ -19,7 +19,8 @@
 #      tls_set_verify(handle, <OpenSSL mode>, 0) and tls_ctx_load_verify_locations(handle, ca))
 #      against `openssl s_client -tls1_3 | -tls1_2` with -cert/-key [-cert_chain]: a leaf from the
 #      trusted CA, a leaf behind an intermediate, Ed25519 and P-384 leaves, an untrusted
-#      self-signed leaf, an expired leaf, no certificate under PEER and under PEER|FAIL. The
+#      self-signed leaf, an expired leaf, a keyEncipherment-only leaf (its keyUsage permits no
+#      client signature), no certificate under PEER and under PEER|FAIL. The
 #      server reports its result, the client's identity through tls_get_peer_spki_der, and the
 #      "ping" s_client sends after the handshake.
 #   C  the native client (TLS 1.2, and 1.3 as the control) against `openssl s_server -Verify 1`
@@ -30,7 +31,7 @@
 #      certificate it reads s_server's alert (TLS_ERR_ALERT) — or completes when it was only asked.
 # SKIP (exit 77, named): openssl(1) missing. ANTI-VACUITY: the rows run are counted and floored.
 #
-# MUTATION LEDGER (6.6.14, each measured RED here; the pre-fix 6.6.13 lib fails 19 of the 22 rows):
+# MUTATION LEDGER (6.6.14, each measured RED here; the pre-fix 6.6.13 lib fails 21 of the 24 rows):
 #   MA1 the CertificateRequest dropped from tls_native_12_build_server_flight -> all 8 S 1.2 rows
 #   MA2 _tn_server_take_client_chain's _tn_verify_chain call removed -> the 4 untrusted / expired rows
 #   MA3 tls_set_verify's FAIL bit dropped -> the 2 PEER|FAIL no-certificate rows
@@ -39,6 +40,7 @@
 #   MA6 the 1.2 client signature checked as 1.3 (curve bound to the scheme) -> S 1.2 P-384
 #   MA7 the client certificate's curve left out of the 1.2 supported_groups -> C 1.2 P-256 / P-384
 #   MA8 the 1.2 server's FAIL_IF_NO_PEER_CERT check disabled -> S 1.2 PEER|FAIL no-certificate
+#   MA9 _tn_leaf_purpose_ok's keyUsage test skipped for the client purpose -> the 2 keyEncipherment rows
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 1
@@ -61,6 +63,7 @@ q() { "$@" >/dev/null 2>&1 || { echo "FAIL: $G: setup: $*"; exit 1; }; }
 printf 'basicConstraints=critical,CA:TRUE\nkeyUsage=critical,keyCertSign,cRLSign\n' > "$T/ca.ext"
 printf 'basicConstraints=critical,CA:TRUE,pathlen:0\nkeyUsage=critical,keyCertSign,cRLSign\n' > "$T/int.ext"
 printf 'basicConstraints=CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=clientAuth\n' > "$T/cli.ext"
+printf 'basicConstraints=CA:FALSE\nkeyUsage=critical,keyEncipherment\nextendedKeyUsage=clientAuth\n' > "$T/cliku.ext"
 printf 'basicConstraints=CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:localhost\n' > "$T/srv.ext"
 mkkey() {  # <name> <p256|p384|ed>
     case $2 in
@@ -98,6 +101,7 @@ mkcert cliint p256 client-via-int int cli.ext
 mkcert clied ed client-ed ca cli.ext
 mkcert cli384 p384 client-p384 ca cli.ext
 mkcert cliexp p256 client-expired ca cli.ext 20200101000000Z 20210101000000Z
+mkcert cliku p256 client-keyencipherment ca cliku.ext
 mkcert srv p256 localhost ca srv.ext
 mkcert srved ed localhost ca srv.ext
 selfsigned self client-self cli.ext
@@ -313,6 +317,7 @@ for V in 13 12; do
     srow "$V" 3 -      -   refused none "TLS 1.$(echo $V | cut -c2): PEER|FAIL_IF_NO_PEER_CERT, no certificate"
     srow "$V" 1 self   -   refused none "TLS 1.$(echo $V | cut -c2): PEER, an untrusted self-signed leaf"
     srow "$V" 1 cliexp -   refused none "TLS 1.$(echo $V | cut -c2): PEER, an expired leaf"
+    srow "$V" 1 cliku  -   refused none "TLS 1.$(echo $V | cut -c2): PEER, a keyEncipherment-only leaf (no digitalSignature)"
 done
 
 # crow <12|13> <-verify|-Verify> <cert|-> <want: ok|alert> "<label>"
@@ -370,7 +375,7 @@ crow 12 -Verify -      alert "TLS 1.2, REQUIRED, the native client has none: it 
 crow 12 -verify -      ok    "TLS 1.2, REQUESTED, none: the empty Certificate completes"
 crow 13 -Verify cli    ok    "TLS 1.3 control, REQUIRED: the native P-256 certificate"
 
-FLOOR=22
+FLOOR=24
 if [ "$NROWS" -lt "$FLOOR" ]; then
     echo "  FAIL: $G: only $NROWS rows ran (floor $FLOOR)"; FAILS=$((FAILS + 1)); fi
 if [ "$FAILS" -ne 0 ]; then echo "FAIL: $G: $FAILS failure(s) in $NROWS rows"; exit 1; fi

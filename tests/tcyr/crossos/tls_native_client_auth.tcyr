@@ -29,15 +29,16 @@
 # ROWS, each in TLS 1.3 and with the client pinned to TLS 1.2 (the server keeps 1.2..1.3): no
 # certificate under PEER (accepted, no identity) and under FAIL_IF_NO_PEER_CERT; P-256, Ed25519
 # and P-384 leaves from the trusted CA; refusals — an untrusted self-signed leaf, a foreign CA's
-# leaf, an expired leaf, a serverAuth-only leaf, the trusted leaf signed by another key, a server
-# with no roots; possession — the CertificateVerify removed by a tampering transport, and (1.2) an
-# unrequested CertificateVerify after an empty Certificate; and a server that does not ask.
+# leaf, an expired leaf, a serverAuth-only leaf, a keyEncipherment-only leaf (no digitalSignature
+# or keyAgreement), the trusted leaf signed by another key, a server with no roots; possession —
+# the CertificateVerify removed by a tampering transport, and (1.2) an unrequested
+# CertificateVerify after an empty Certificate; and a server that does not ask.
 # MUTATIONS measured RED (6.6.14): the 1.2 CertificateRequest dropped (37 assertions), the chain
 # check dropped (40), tls_set_verify's FAIL bit dropped (6), the 1.2 client's CertificateRequest
 # branch disabled (37), the getters reading SERVER_CERT (12), the clientAuth EKU check dropped
-# (8), the 1.2 CertificateVerify verdict ignored (4), the 1.2 CertificateVerify not read (21), the
-# 1.2 leftover-message check dropped (1), the 1.2 FAIL_IF_NO_PEER_CERT check disabled (2). The
-# 6.6.13 lib fails 45 of the 193.
+# (8), the client keyUsage check dropped (8), the 1.2 CertificateVerify verdict ignored (4), the
+# 1.2 CertificateVerify not read (21), the 1.2 leftover-message check dropped (1), the 1.2
+# FAIL_IF_NO_PEER_CERT check disabled (2). The 6.6.13 lib fails 49 of the 206.
 #
 # The fixtures (P-256 CA "mtls-ca", every leaf valid 2025-01-01 .. 2049-12-31 except the expired
 # one, notAfter 2027-01-01) are read at a pinned clock of 2030-01-01, so no row is a time bomb.
@@ -92,6 +93,10 @@ var _mx_cliSrvEku = 0;
 var _mx_cliSrvEku_n = 427;
 var _mx_cliSrvEku_key = 0;
 var _mx_cliSrvEku_key_n = 138;
+var _mx_cliKu = 0;
+var _mx_cliKu_n = 436;
+var _mx_cliKu_key = 0;
+var _mx_cliKu_key_n = 138;
 
 fn _mx_fixtures(): i64 {
     _mx_ca = hex_decode("308201673082010ea00302010202142d30966ec73d44673b1b19a05ddd4cb4e46e3379300a06082a8648ce3d04030230123110300e06035504030c076d746c732d6361301e170d3235303130313030303030305a170d3439313233313030303030305a30123110300e06035504030c076d746c732d63613059301306072a8648ce3d020106082a8648ce3d03010703420004431236818f70a0a845db41b1eacde77db534414353c6db5d825b2baab3e2b265ddd3f493b2b9b09e25a47e194ea086a3fbeb8a2649ba44af6f0002a9bfdb6b38a3423040300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106301d0603551d0e041604140974887636a5881b8b22a95ab5e91f30e1a6bd06300a06082a8648ce3d040302034700304402207ccbb84ac61e6f6a78fac625ce49a86c4da2eaad993f99591c75cfc154f5686b02203934af5b1e13cc0c07c2d93036ec92d2aa2bd50a19d968fa37e571b042283cc4", 726);
@@ -114,6 +119,8 @@ fn _mx_fixtures(): i64 {
     _mx_cliExp_key = hex_decode("308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104205a419c6ceae43d2d1e8dd6bd80e2a95f2109840962f5d8e9d610782f3b272176a14403420004f8bbf7e94f5f926e5388899ff2328d0e300a95b520ea423be620f85fa819798f72b15ccb10a10d50f0cd6145ea1fe65962c3658faaee6794a6f7b2b9f2ec5a5e", 276);
     _mx_cliSrvEku = hex_decode("308201a73082014da003020102021455467366670d68f3ddcf3863ab923cb68bb65273300a06082a8648ce3d04030230123110300e06035504030c076d746c732d6361301e170d3235303130313030303030305a170d3439313233313030303030305a3021311f301d06035504030c16636c69656e742d736572766572617574682d6f6e6c793059301306072a8648ce3d020106082a8648ce3d030107034200046839f85c483605c8be06f05b4dca16474bfe3402741b5059c3722c7d7da01229549d3b1ddbce23fa64d16ced763b9aeb2a4ef1231c9d98ef416bc863023c81c1a372307030090603551d1304023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b06010505070301301d0603551d0e04160414fba19c5ee507a1d6af33496d702e5c06c828112a301f0603551d230418301680140974887636a5881b8b22a95ab5e91f30e1a6bd06300a06082a8648ce3d0403020348003045022100b7808a1ceac59f2482e1e43ea02b9d968516bc55952501b14d3c0f9b632ed6af02206fea1488752f54f7c81abbd9dab7e059e51dbd739bc93d81f5d6d0aa1191266c", 854);
     _mx_cliSrvEku_key = hex_decode("308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420aecdc0a32f448bce07e2605ec4c75803f0c2085cae4b5a90e46f3e53107eebc7a144034200046839f85c483605c8be06f05b4dca16474bfe3402741b5059c3722c7d7da01229549d3b1ddbce23fa64d16ced763b9aeb2a4ef1231c9d98ef416bc863023c81c1", 276);
+    _mx_cliKu = hex_decode("308201b030820156a003020102021455467366670d68f3ddcf3863ab923cb68bb65276300a06082a8648ce3d04030230123110300e06035504030c076d746c732d6361301e170d3235303130313030303030305a170d3439313233313030303030305a302a3128302606035504030c1f636c69656e742d6b657975736167652d6b6579656e6369706865726d656e743059301306072a8648ce3d020106082a8648ce3d030107034200043857accde253b56837871ad25f7d69344ac2f9309c4c075f40ddda7ec525a998a3861be35b830a69a7fd436994385e038beaf17ca7a92f6972d4dbe43edab078a372307030090603551d1304023000300e0603551d0f0101ff04040302052030130603551d25040c300a06082b06010505070302301d0603551d0e04160414d94932ca9adb157c6c8c18bad351f3cb506e1b48301f0603551d230418301680140974887636a5881b8b22a95ab5e91f30e1a6bd06300a06082a8648ce3d040302034800304502206f95a566ae0962d8b754f02476e55c70fc137b8ee4b1033f1fda102d048add600221008fdbbf46b23d4880a9a0cdc7efe2f86bf800d42326e9eab810ad3ffd370e9624", 872);
+    _mx_cliKu_key = hex_decode("308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b020101042077f41035d9c7aac01991b2a0923d10ea4574595c2d156010d050ae4d68b81b6fa144034200043857accde253b56837871ad25f7d69344ac2f9309c4c075f40ddda7ec525a998a3861be35b830a69a7fd436994385e038beaf17ca7a92f6972d4dbe43edab078", 276);
     return 0;
 }
 
@@ -466,6 +473,8 @@ fn test_matrix(v12): i64 {
     _mx_refused(v12, TLS_ERR_CERT_INVALID, "an EXPIRED leaf from the trusted CA: CERT_INVALID");
     _mx_row(v12, _mx_cliSrvEku, _mx_cliSrvEku_n, _mx_cliSrvEku_key, _mx_cliSrvEku_key_n, PEER, _mx_ca, _mx_ca_n);
     _mx_refused(v12, TLS_ERR_CERT_INVALID, "a leaf whose extendedKeyUsage is serverAuth only: CERT_INVALID");
+    _mx_row(v12, _mx_cliKu, _mx_cliKu_n, _mx_cliKu_key, _mx_cliKu_key_n, PEER, _mx_ca, _mx_ca_n);
+    _mx_refused(v12, TLS_ERR_CERT_INVALID, "a leaf whose keyUsage is keyEncipherment only: CERT_INVALID");
     _mx_row(v12, _mx_cli, _mx_cli_n, _mx_self_key, _mx_self_key_n, PEER, _mx_ca, _mx_ca_n);
     _mx_refused(v12, TLS_ERR_AUTHN, "the trusted leaf with ANOTHER key's CertificateVerify: AUTHN");
     _mx_row(v12, _mx_cli, _mx_cli_n, _mx_cli_key, _mx_cli_key_n, PEER, 0, 0);
