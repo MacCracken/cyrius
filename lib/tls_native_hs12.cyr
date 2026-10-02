@@ -1543,6 +1543,8 @@ fn tls_native_connect_12(ctx, sock_fd): i64 {
     if (fw < 0) { return _tn_ctx_fail(ctx, fw); }
     var srl = _tn_read_rec(ctx, sock_fd, inbuf, cap, _TN_CCS_MUST);
     if (srl < 0) { return _tn_read_fail(ctx, srl); }
+    var pa_sfin = _tn_hs_plain_alert(ctx, inbuf, srl);
+    if (pa_sfin != TLS_OK) { return pa_sfin; }
     var sfin = _tn_alloc(ctx, 64);
     if (sfin == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var sct = 0;
@@ -1668,6 +1670,8 @@ fn _tn_12_server_drive(ctx, sock_fd, ch_msg, ch_len): i64 {
     if (hpos != hlen) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
     var crl = _tn_read_rec(ctx, sock_fd, inbuf, cap, _TN_CCS_MUST);
     if (crl < 0) { return _tn_read_fail(ctx, crl); }
+    var pa_cfin = _tn_hs_plain_alert(ctx, inbuf, crl);
+    if (pa_cfin != TLS_OK) { return pa_cfin; }
     var cfin = _tn_alloc(ctx, 64);
     if (cfin == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var fct = 0;

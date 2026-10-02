@@ -325,8 +325,10 @@ fn tls_native_client_recv_flight(ctx, record, record_len): i64 {
     var plain = _tn_alloc(ctx, pcap);
     if (plain == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var ct = 0;
+    var pa_first = _tn_hs_plain_alert(ctx, record, record_len);
+    if (pa_first != TLS_OK) { return pa_first; }
     var plen = tls_native_client_open_handshake(ctx, record, record_len, plain, pcap, &ct);
-    if (plen < 0) { return plen; }
+    if (plen < 0) { return _tn_ctx_fail(ctx, plen); }   # 6.6.14: every negative result fails the ctx
     var hx_ct = _tn_hs_expect_ct(ctx, ct, TLS_CT_HANDSHAKE);
     if (hx_ct != TLS_OK) { return hx_ct; }
     var fd = load64(ctx + TLS_CTX_OFF_SOCK_FD);
@@ -339,9 +341,11 @@ fn tls_native_client_recv_flight(ctx, record, record_len): i64 {
         if (inbuf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
         var rl = _tn_read_rec(ctx, fd, inbuf, rcap, _TN_CCS_MAY);
         if (rl < 0) { return _tn_read_fail(ctx, rl); }
+        var pa_more = _tn_hs_plain_alert(ctx, inbuf, rl);
+        if (pa_more != TLS_OK) { return pa_more; }
         var ct2 = 0;
         var more = tls_native_client_open_handshake(ctx, inbuf, rl, plain + plen, pcap - plen, &ct2);
-        if (more < 0) { return more; }
+        if (more < 0) { return _tn_ctx_fail(ctx, more); }
         var hx_ct2 = _tn_hs_expect_ct(ctx, ct2, TLS_CT_HANDSHAKE);
         if (hx_ct2 != TLS_OK) { return hx_ct2; }
         plen = plen + more;

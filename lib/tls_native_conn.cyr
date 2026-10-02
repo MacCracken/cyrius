@@ -424,9 +424,8 @@ fn tls_native_connect(ctx, sock_fd): i64 {
 #                       the peer was too slow, nothing was malformed (6.6.13)
 #   TLS_ERR_BAD_RECORD  a malformed record: a header declaring more than the record ceiling
 #                       (record_overflow — the record reader's own answer since 6.6.13), a frame
-#                       too short to open (a plaintext alert where an encrypted record is due is
-#                       one), an alert that is not exactly 2 bytes, or a non-alert record where a
-#                       handshake record is due
+#                       too short to open, an alert that is not exactly 2 bytes, or a non-alert
+#                       record where a handshake record is due
 #   TLS_ERR_PROTOCOL    a ChangeCipherSpec the read site does not allow — a second one, one before
 #                       the ClientHello or after the peer's Finished, one that is not exactly the
 #                       byte 1 — or a TLS 1.2 Finished with no CCS before it (_tn_read_rec; an
@@ -436,7 +435,8 @@ fn tls_native_connect(ctx, sock_fd): i64 {
 #                       (close_notify included), every description other than close_notify and
 #                       user_canceled, and any alert in place of a handshake record — a plaintext
 #                       one where the handshake is plaintext (the TLS 1.2 peer's CCS slot included,
-#                       6.6.13), an opened one where it is encrypted
+#                       6.6.13), an opened one where it is encrypted, and a plaintext one where it
+#                       is encrypted (6.6.14, _tn_hs_plain_alert)
 #   other TLS_ERR_*     passed through unchanged (RECORD_OVERFLOW, OOM, ...)
 #
 # A warning-level user_canceled is dropped and the read goes on (RFC 8446 §6.1: close_notify
@@ -483,6 +483,24 @@ fn _tn_hs_expect_ct(ctx, ct, want): i64 {
     if (ct == want) { return TLS_OK; }
     if (ct == TLS_CT_ALERT) { return _tn_ctx_fail(ctx, TLS_ERR_ALERT); }
     return _tn_ctx_fail(ctx, TLS_ERR_BAD_RECORD);
+}
+
+# A record (`rec`, `rl` bytes) read where an ENCRYPTED handshake record is due — the 1.3 client's
+# server flight, the 1.3 server's client flight, either TLS 1.2 peer's Finished after its CCS:
+# TLS_OK to go on and open it, or, when it is the peer's PLAINTEXT alert, the ctx failed with
+# TLS_ERR_ALERT. A plaintext alert is an alert record of exactly 2 bytes: a sealed record carries
+# a 16-byte tag, so no protected record is that short. Every other record goes on to be opened, and
+# a plaintext one fails there as before (TLS_ERR_BAD_RECORD or TLS_ERR_DECRYPT) — nothing
+# plaintext but this alert is answered. Any level aborts the handshake (as _tn_hs_expect_ct).
+# ⛔ 6.6.14 — WHY. A peer that sent its alert in the clear (it failed before its keys changed, or
+# does not seal its alerts) had the read site try to open it: TLS_ERR_BAD_RECORD, not the peer's
+# TLS_ERR_ALERT, at
+# exactly the points a refused handshake ends (a 1.3 server reading the client's second flight,
+# a 1.2 Finished in either direction). CHANGELOG [6.6.14]
+fn _tn_hs_plain_alert(ctx, rec, rl): i64 {
+    if ((load8(rec) & 0xFF) != TLS_CT_ALERT) { return TLS_OK; }
+    if (rl != TLS_RECORD_HEADER_LEN + 2) { return TLS_OK; }
+    return _tn_ctx_fail(ctx, TLS_ERR_ALERT);
 }
 
 # ----------------------------------------------------------------
@@ -948,11 +966,13 @@ fn tls_native_accept(ctx, sock_fd): i64 {
     if (load64(ctx + TLS_CTX_OFF_VERIFY) != TLS_VERIFY_NONE) {
         var ccrl = _tn_read_rec(ctx, sock_fd, inbuf, cap, _TN_CCS_MAY);
         if (ccrl < 0) { return _tn_read_fail(ctx, ccrl); }
+        var pa_cc = _tn_hs_plain_alert(ctx, inbuf, ccrl);
+        if (pa_cc != TLS_OK) { return pa_cc; }
         var cmsg = _tn_alloc(ctx, 8192);
         if (cmsg == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
         var ccct = 0;
         var cmsg_len = tls_native_server_open_handshake(ctx, inbuf, ccrl, cmsg, 8192, &ccct);
-        if (cmsg_len < 0) { return cmsg_len; }
+        if (cmsg_len < 0) { return _tn_ctx_fail(ctx, cmsg_len); }   # 6.6.14: an open error fails the ctx
         var hx_cc = _tn_hs_expect_ct(ctx, ccct, TLS_CT_HANDSHAKE);
         if (hx_cc != TLS_OK) { return hx_cc; }
         var rcc = tls_native_server_recv_client_certificate(ctx, cmsg, cmsg_len);
@@ -966,11 +986,13 @@ fn tls_native_accept(ctx, sock_fd): i64 {
         if (load64(ctx + TLS_CTX_OFF_CLIENT_CERT) != 0) {
             var cvrl = _tn_read_rec(ctx, sock_fd, inbuf, cap, _TN_CCS_MAY);
             if (cvrl < 0) { return _tn_read_fail(ctx, cvrl); }
+            var pa_cv = _tn_hs_plain_alert(ctx, inbuf, cvrl);
+            if (pa_cv != TLS_OK) { return pa_cv; }
             var cvmsg = _tn_alloc(ctx, 2048);
             if (cvmsg == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
             var cvct = 0;
             var cvmsg_len = tls_native_server_open_handshake(ctx, inbuf, cvrl, cvmsg, 2048, &cvct);
-            if (cvmsg_len < 0) { return cvmsg_len; }
+            if (cvmsg_len < 0) { return _tn_ctx_fail(ctx, cvmsg_len); }
             var hx_cv = _tn_hs_expect_ct(ctx, cvct, TLS_CT_HANDSHAKE);
             if (hx_cv != TLS_OK) { return hx_cv; }
             var rcv = tls_native_server_recv_client_certverify(ctx, cvmsg, cvmsg_len);
@@ -980,11 +1002,13 @@ fn tls_native_accept(ctx, sock_fd): i64 {
     # Read + open the client's (encrypted) Finished.
     var crl = _tn_read_rec(ctx, sock_fd, inbuf, cap, _TN_CCS_MAY);
     if (crl < 0) { return _tn_read_fail(ctx, crl); }
+    var pa_fin = _tn_hs_plain_alert(ctx, inbuf, crl);
+    if (pa_fin != TLS_OK) { return pa_fin; }
     var finmsg = _tn_alloc(ctx, 512);
     if (finmsg == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var finct = 0;
     var fin_len = tls_native_server_open_handshake(ctx, inbuf, crl, finmsg, 512, &finct);
-    if (fin_len < 0) { return fin_len; }
+    if (fin_len < 0) { return _tn_ctx_fail(ctx, fin_len); }
     var hx_fin = _tn_hs_expect_ct(ctx, finct, TLS_CT_HANDSHAKE);
     if (hx_fin != TLS_OK) { return hx_fin; }
     return tls_native_server_recv_client_finished(ctx, finmsg, fin_len);
