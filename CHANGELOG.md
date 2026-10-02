@@ -6,91 +6,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [6.6.13] — 2026-10-01
 
+The memory-fix and reported-issue release (re-planned by the user 2026-10-01): the three silent
+memory-corruption finds that led the backlog (M1–M3) and the eleven open issues (I1–I11), over six lanes,
+after the sigil 3.13.6 / ganita 1.2.11 / bayan 1.5.10 + 1.5.11 folds. It spends **CVE-59 … CVE-63**; the
+next free id is **64**. ⛔ bayan **1.5.11** is folded from its tag and was cut for this release.
+
 ### Security
 
-- **CVE-62 — a `[deps.NAME]` header with `/` or `..` cloned OUTSIDE the dep cache
-  (`cbt/deps.cyr` `_process_named_deps`).** **Root cause:** the header name becomes a path — the
-  clone dir `<home>/deps/<name>/<tag>` (mkdir + `git clone`) and the `lib/<name>_<base>`
-  destination — and the v6.2.51 traversal guard `_dep_reject_unsafe_name` was applied to modular
-  sub-module, index-leaf and package names, never to this one. Measured on 6.6.12:
-  `[deps.../../esc/x]` with `git` + `tag` + `modules` made `cyrius deps` create and clone into
-  `<home>/../esc/x/<tag>`; only the later `lib/` destination guard stopped the copy, after the
-  write. A TRANSITIVE dep's own `cyrius.cyml` reached the same code, so any dependency could plant
-  a checkout at a path of its choosing on the consumer's machine. **Fix:** the name is validated
-  as soon as it is read, before the closest-wins lookup, the clone or any path is built; a refused
-  section is named, counted as an error (exit 1, no lock written) and skipped, in the root
-  manifest and in every transitive one. Pinned by `deps_modules_default_or_warned.sh` D8 (root and
-  transitive).
-
-### Fixed
-
-- **I10 — a `[deps.X]` with `git` + `tag` but no `modules` was silently inert (`cbt/deps.cyr`
-  `_process_named_deps`; filed by agnostic 0.1.7).** **Root cause:** the clone guard was
-  `dep_git != 0 && dep_modules != 0` and a dep was marked visited only when a module was copied, so
-  a block without `modules` was never cloned, vendored, commit-pinned, counted or reported — and
-  because it was never visited, closest-wins did not apply: a TRANSITIVE `[deps.X]` resolved at
-  ITS tag instead (agnostic's root tags moved ahead of agnosai's and the lock kept agnosai's). A
-  `modular`-only git block hit the same guard. **Fix:** a block with neither `modules` nor
-  `modular` now means `modules = ["dist/X.cyr"]` when the tag (or path) ships that file — probed
-  after the clone and its CVE-21 pin, then vendored through the ordinary copy path (sidecar pull,
-  stdlib-clobber and symlink guards, visited + queued), so the root's tag wins and the lock pins
-  it. The probe is strictly `dist/X.cyr`. An explicit `modules = []` is NOT defaulted: it stays
-  the "declared, not linked" spelling (clone + pin, nothing vendored, no warning). A
-  `modular`-only git block is now cloned, and a clean modular pull marks the dep resolved, so its
-  commit pin reaches `cyrius.lock` (before, even a path-resolved modular dep wrote no lock and no
-  output). When the tag or path ships no `dist/X.cyr`, `cyrius deps` now SAYS so — `warning:
-  [deps.X] declares no modules and tag '<tag>' ships no dist/X.cyr — nothing vendored; a
-  transitive [deps.X] will resolve instead (list modules, or modules = [] for a dep that is
-  declared but not linked)` — and counts it in the summary (`0 deps resolved, 1 vendored
-  nothing`, printed even when nothing resolved); exit status stays 0, the dep is not marked
-  visited (as the warning says), and the clone's verified commit pin is kept, as for `modules =
-  []`. `optional` / `target`-gated blocks still skip silently. ⚠ crab's deliberately unlinked
-  `[deps.daimon]` (no `modules`, daimon ships no `dist/`) warns on every build from 6.6.13 and
-  is cloned in CI — add `modules = []` before pinning ≥ 6.6.13. On native Windows a
-  modules-less git dep with no usable `path` now reports the existing "needs a git clone, which
-  cyrius cannot run on this platform" error where it used to be silently dropped — and only that:
-  the follow-on `its cached checkout was NOT verified … the cached bytes are vendored as they are`
-  warning used to print even when the clone had just been refused and no cache existed (a claim
-  about bytes that were not there); it now prints only for a real pre-populated cache. Measured
-  on cass with the PE CLI: no cache → the one error, rc 1, no lock (6.6.12: rc 0, silent); a
-  pre-populated `deps\tyche\1.1.0` → `1 deps resolved`, the unverified-cache warning, and
-  `lib\tyche.cyr` byte-identical (`fc /b`) to the cache's `dist\tyche.cyr`.
-  The filed repro (`repros/git-dep-without-modules.cyml`, pin edited to the tree) now
-  prints `1 deps resolved`, vendors `lib/tyche.cyr` byte-identical to `git show
-  1.1.0:dist/tyche.cyr` and pins `tyche 1.1.0`. Pinned by the new
-  `tests/gates/toolchain/deps_modules_default_or_warned.sh` (D1–D8, hermetic file:// origins,
-  every expected byte and commit taken from the origin; mutation ledger in the file — the
-  6.6.12 resolver reds D1 D2 D3 D3b D4 D6 D8). Documented in the guide's *Dependencies*
-  section, with `modules = []` as the declared-not-linked opt-out.
-- **CVE-63 (P3) — the native TLS client verified an IP-literal host against dNSName SAN
-  entries, wildcards included.** (I7.) A certificate whose only SAN was `DNS:127.0.0.1`, or
-  `DNS:*.0.0.1`, verified `https://127.0.0.1`. RFC 9525 §6.3, the rule CVE-18 cites, compares an IP
-  literal with iPAddress entries only. **Root cause:** `_tn_cert_san_match`
-  (`lib/tls_native_conn.cyr`) ran `_tn_host_match` on every dNSName whatever the host was, and
-  parsed the host as an address only inside the iPAddress branch. Three parser defects fed the same
-  function: `_tn_parse_ipv4` took leading zeros (`010.0.0.1`), which `net_parse_ipv4` — the
-  resolver's rule — refuses and sends to DNS as a name; a `:`-bearing host that failed the IPv6
-  parse (`[::1]`, `fe80::1%eth0`, and `::ffff:1.2.3.4`, whose embedded-IPv4 form was not parsed)
-  fell through to dNSName matching; and the IPv6 parser took a trailing `:`, a `::` standing for no
-  group and 5-digit groups (`1:2:3:4::5:6:7:8`, `00001::`). **Fix:** the host is classified once, up
-  front. A DNS name meets dNSName entries only, an IP literal iPAddress entries only, and a
-  `:`-bearing host that is no well-formed IPv6 literal matches nothing (no DNS name holds a `:`).
-  `_tn_parse_ipv4` refuses leading zeros exactly as `net_parse_ipv4` does. IPv6 literals follow
-  RFC 4291 §2.2: 1-4 hex digits per group, `::` for at least one group, an optional dotted-quad
-  tail — so `::ffff:1.2.3.4` now verifies against its iPAddress entry. ⚠ **Behaviour change:** a
-  client that connects by IP to a server whose certificate spells that IP only as a dNSName (some
-  self-signed development certs) now fails with `TLS_ERR_CERT_HOSTNAME_MISMATCH`; reissue the
-  certificate with an `IP:` SAN. Exploiting the defect needs a CA the client trusts to issue such a
-  dNSName, which public CAs may not do, so private and enterprise CAs are the exposure. abaco
-  2.4.12's consumer-side IP-SAN post-check becomes redundant. **Tests:** the filed repro
-  `docs/development/issues/repros/2026-10-01-tls-ip-literal-dnsname.sh` exits 0 (2 on 6.6.12). A new
-  group in `tests/tcyr/crypto/tls_native_scaffold.tcyr` adds 83 assertions: six self-signed leaves
-  (DNS-spelled IPv4 and IPv6, a wildcard over an address, a mixed IP/DNS leaf and its IP-only twin,
-  and a leaf whose dNSName entries spell each malformed host verbatim while its iPAddress entries
-  hold what a lax parser reads them as), the literal classifier, and `_tn_parse_ipv4` against
-  `net_parse_ipv4` over ten inputs. 41 of them fail on 6.6.12; the file passes 532/532 on x86_64 and
-  on aarch64 under qemu. The native client still sends an IP literal as SNI (RFC 6066 §3); that is
-  backlogged separately.
 - **CVE-59 (P1) — the libssl TLS backend never bound the server's certificate to the host:
   any chain-valid certificate verified any host.** (I1.) A certificate for `DNS:localhost` verified
   `www.example.com`, `127.0.0.1` and `host == 0`; a CN-only leaf and a partial wildcard
@@ -139,6 +61,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   rows), the hostflags dropped (the CN-only and partial-wildcard rows), one bail line removed (its
   symbol's leg: available, then SIGSEGV), `SSL_set1_host`-style routing (the `[::1]` rows), SNI for
   every host (the IP SNI rows).
+
 - **CVE-60 (P1) — the libssl backend's `tls_read` / `tls_write` returned a C `int`
   zero-extended: one flipped bit on the wire read as ~4 GiB, and a fatal alert or a cut stream read
   as a clean end.** (I2 (c), issue `2026-09-30-tls-client-memory-and-alert-gaps`; found by its
@@ -266,7 +189,344 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   deadline makes no socket call; 5 mutants, each RED. The existing TLS suite stays green unchanged,
   OpenSSL `s_client` interop included (46 files, x86_64 and qemu-aarch64).
 
+- **CVE-62 — a `[deps.NAME]` header with `/` or `..` cloned OUTSIDE the dep cache
+  (`cbt/deps.cyr` `_process_named_deps`).** **Root cause:** the header name becomes a path — the
+  clone dir `<home>/deps/<name>/<tag>` (mkdir + `git clone`) and the `lib/<name>_<base>`
+  destination — and the v6.2.51 traversal guard `_dep_reject_unsafe_name` was applied to modular
+  sub-module, index-leaf and package names, never to this one. Measured on 6.6.12:
+  `[deps.../../esc/x]` with `git` + `tag` + `modules` made `cyrius deps` create and clone into
+  `<home>/../esc/x/<tag>`; only the later `lib/` destination guard stopped the copy, after the
+  write. A TRANSITIVE dep's own `cyrius.cyml` reached the same code, so any dependency could plant
+  a checkout at a path of its choosing on the consumer's machine. **Fix:** the name is validated
+  as soon as it is read, before the closest-wins lookup, the clone or any path is built; a refused
+  section is named, counted as an error (exit 1, no lock written) and skipped, in the root
+  manifest and in every transitive one. Pinned by `deps_modules_default_or_warned.sh` D8 (root and
+  transitive).
+
+- **CVE-63 (P3) — the native TLS client verified an IP-literal host against dNSName SAN
+  entries, wildcards included.** (I7.) A certificate whose only SAN was `DNS:127.0.0.1`, or
+  `DNS:*.0.0.1`, verified `https://127.0.0.1`. RFC 9525 §6.3, the rule CVE-18 cites, compares an IP
+  literal with iPAddress entries only. **Root cause:** `_tn_cert_san_match`
+  (`lib/tls_native_conn.cyr`) ran `_tn_host_match` on every dNSName whatever the host was, and
+  parsed the host as an address only inside the iPAddress branch. Three parser defects fed the same
+  function: `_tn_parse_ipv4` took leading zeros (`010.0.0.1`), which `net_parse_ipv4` — the
+  resolver's rule — refuses and sends to DNS as a name; a `:`-bearing host that failed the IPv6
+  parse (`[::1]`, `fe80::1%eth0`, and `::ffff:1.2.3.4`, whose embedded-IPv4 form was not parsed)
+  fell through to dNSName matching; and the IPv6 parser took a trailing `:`, a `::` standing for no
+  group and 5-digit groups (`1:2:3:4::5:6:7:8`, `00001::`). **Fix:** the host is classified once, up
+  front. A DNS name meets dNSName entries only, an IP literal iPAddress entries only, and a
+  `:`-bearing host that is no well-formed IPv6 literal matches nothing (no DNS name holds a `:`).
+  `_tn_parse_ipv4` refuses leading zeros exactly as `net_parse_ipv4` does. IPv6 literals follow
+  RFC 4291 §2.2: 1-4 hex digits per group, `::` for at least one group, an optional dotted-quad
+  tail — so `::ffff:1.2.3.4` now verifies against its iPAddress entry. ⚠ **Behaviour change:** a
+  client that connects by IP to a server whose certificate spells that IP only as a dNSName (some
+  self-signed development certs) now fails with `TLS_ERR_CERT_HOSTNAME_MISMATCH`; reissue the
+  certificate with an `IP:` SAN. Exploiting the defect needs a CA the client trusts to issue such a
+  dNSName, which public CAs may not do, so private and enterprise CAs are the exposure. abaco
+  2.4.12's consumer-side IP-SAN post-check becomes redundant. **Tests:** the filed repro
+  `docs/development/issues/repros/2026-10-01-tls-ip-literal-dnsname.sh` exits 0 (2 on 6.6.12). A new
+  group in `tests/tcyr/crypto/tls_native_scaffold.tcyr` adds 83 assertions: six self-signed leaves
+  (DNS-spelled IPv4 and IPv6, a wildcard over an address, a mixed IP/DNS leaf and its IP-only twin,
+  and a leaf whose dNSName entries spell each malformed host verbatim while its iPAddress entries
+  hold what a lax parser reads them as), the literal classifier, and `_tn_parse_ipv4` against
+  `net_parse_ipv4` over ten inputs. 41 of them fail on 6.6.12; the file passes 532/532 on x86_64 and
+  on aarch64 under qemu. The native client still sends an IP literal as SNI (RFC 6066 §3); that is
+  backlogged separately.
+
 ### Fixed
+
+#### Memory and global layout (M1–M3, I9)
+
+- **M1 — a narrow global initialised to zero, to a non-constant or to a call no longer clobbers
+  the globals after it.** `var a: u8 = 0; var b: u8 = 7; syscall(60, b);` exited **0** (want 7) on
+  x86, aarch64, PE and both Mach-O targets. **Root cause:** a leading-block global takes the static
+  file-image path only when its initialiser folds to a NON-zero constant; `= 0`, any non-constant
+  expression and a call are deferred and replayed at startup by `EMIT_GVAR_INITS`
+  (`src/frontend/parse_decl.cyr`), whose scalar arm stored with the 8-byte `EVSTORE` whatever the
+  slot's width. Narrow scalar globals are packed, so the store wrote the value's upper bytes over the
+  next 7 / 6 / 4 bytes of globals, and any neighbour whose value was already in the image lost it
+  (6.6.12 B01 fixed the assignment statement, the for step and the compound load; this declaration
+  replay was never routed through them). cx's constant PRESTORE (`_gv_cx_prestore`) had the same
+  8-byte store, so on cx a forward read of the next narrow global saw the prestored constant's high
+  bytes (255 where native gives 0). **Fix:** one helper, `_gv_store`, stores at the slot's width —
+  exactly 1 / 2 / 4 through `EVSTORE_W`, anything else (i64, u128, an odd-sized inline struct) keeps
+  the full store — and both sites use it. **Verified:** the new
+  `tests/tcyr/crossos/narrow_global_init_width.tcyr` (135 rows: every narrow width × `= 0`, a
+  non-constant global copy, a call wider than the width and a negative call, in both orders, read in
+  a fn and at top level; same-width narrow-narrow neighbours only, so global padding cannot mask an
+  over-width store) fails 76 rows on the 6.6.13-open compiler and passes on x86, qemu-aarch64, wine,
+  and on real pi, cass, ecb and ach; `cx_tailcall_and_vm_traps.sh` gains axis-E rows E4 / E5 for the
+  prestore (255 / 7 before). Self-host fixpoint and seed → cybs → cycc GREEN; `build/cycc` stays
+  1,470,944 B (`.text` +328 B, inside the page padding).
+
+- **M2 — `var a: T[N]` reserves `N * sizeof(T)` for every element type, not only integers.**
+  Measured through an address-taken neighbour: inside a fn `var a: f64[4]`, `f32[4]`, `Pt[2]`,
+  `P3[2]`, `*i64[4]`, `bool[4]`, an enum name and every vector type reserved **8 bytes**; at top
+  level `Pt[2]` got 16 of 32 and `P3[2]` 16 of 48; and in the leading declaration block a
+  vector-element array was read as the scalar its name starts with (`i8v16[2]` 8 bytes of 32,
+  `i16v8` as i16) — and given that integer subscript descriptor, so `g[1]` on it COMPILED. A write
+  inside the declared bounds overwrote the next local or global (`store64(&g + 16, 99)` into
+  `Pt[1]` changed the next global; a local fill zeroed an address-taken neighbour; under qemu an
+  `f64[4]` store overwrote a saved pointer and SIGSEGV'd). No diagnostic, every backend.
+  **Root cause:** the element SIZE and the integer subscript DESCRIPTOR were one value (`ew`), which
+  is non-zero only for i8..u64 / u128 / slices, so every other element was sized like a bare
+  `var a[N]` (N bytes in a fn, N slots at top level) — in `PARSE_ARRAY`, in `PARSE_GVAR_ARR`, and in
+  `PARSE_GVAR_REG`'s prefix ladder (`src/frontend/parse_decl.cyr`). **Fix:** size and descriptor are
+  separate. `_arr_ebytes` gives the bytes per element — f64 8, **f32 4** (packed, the layout `f32v4`
+  lanes and interop buffers use), a struct / union / generic instance `STRUCTSZ` (= `sizeof(T)`),
+  `*T` 8, a vector 16 / 32, bool / cstring / an enum 8 — and `PARSE_ARRAY` / `PARSE_GVAR_ARR` size
+  by it; the declaration block decides a vector element on the WHOLE name (the return-type
+  vocabulary's sentinels) and drops the integer descriptor the prefix gave it. The subscript stays
+  integer-only, so a non-integer element has no stride that could disagree with its new size. An
+  element type that names nothing is now refused by name (`unknown array element type 'Nope'`), as
+  is a struct used as the element of a top-level array declared above it (it was silently 8 bytes
+  per element); an enum may sit on either side. The scalar ladders match a name by its PREFIX
+  before they look for a struct, so `struct u8pair { a; b; }` arrived as a u8 (`u8pair[2]` held 8
+  of 32 bytes in a fn, with a 1-byte `a[i]` stride) and `struct f64pair` as an f64; in the array
+  path the WHOLE name now decides (`_arr_prefix_wrong`): such a name is sized as the struct, union,
+  generic instance (`u8box<P3>[2]`) or enum it names, its subscript is refused like any other
+  non-integer element, and a name that spells nothing (`i8x`, `f64thing`) or a struct declared
+  below the array is refused by name. A generic fn's own `var a: T[N]` keeps compiling —
+  sized by the type argument in an instance (`T = P3` gives `N * 24`), 8 per element in the i64
+  base, and under `CYRIUS_MONOMORPH=0` (which binds nothing) recognised as the enclosing fn's type
+  parameter from its tokens. `N * sizeof(T)` over 2 GiB is refused (`array too large`) instead of
+  wrapping to a small size; the decl-zone 8-byte floor stays. Integer and bare arrays are unchanged.
+  **Verified:** the new `tests/tcyr/crossos/typed_array_elem_size.tcyr` (279 assertions: every
+  element type in a fn, in the declaration block and after the first statement, each against an
+  address-taken sentinel directly above it and with a full byte fill; the generic fn's instances;
+  a fn-local array over the frame budget (static fallback); and `a[i]` filling exactly
+  `N * sizeof(T)` bytes for the integer elements; struct / enum elements named like a scalar)
+  fails 66 rows on the 6.6.13-open compiler and
+  passes on x86, qemu-aarch64 and wine, and natively on pi (cross and native forks), ecb, ach and
+  cass, each host also self-hosting its own fork from this tree; the new
+  `tests/gates/diagnostics/typed_array_elem_refusals.sh` (134 checks: the non-integer subscript
+  refusals in both global zones and in a fn, the unknown / later-declared element refusals with
+  every bad array reported, the size guard, and bool / enum-below / cstring / generic `T[N]` in both
+  monomorph modes compiling and running, a bound `T = i32` keeping its integer subscript) fails 70
+  on the open compiler; six mutants of the fix each turn their axis red. All 412 `tests/tcyr` files pass on x86 per file, unchanged except the new
+  one; under qemu-aarch64 407 pass and the other five are the same qemu-user failures (exec, wait,
+  namespaces, thread detach) the pre-M2 compiler shows; the new file also passes on cxvm. Self-host fixpoint and seed → cybs → cycc GREEN after the locals and again after the
+  declaration-block half (cybs refuses a call with more than six arguments — the first cut's
+  seven-argument helper failed seed-derive with a bare `syntax error`), and again after the
+  whole-name check. `build/cycc` 1,470,944 → **1,479,480 B** (`.text` 1,297,392 → 1,302,680,
+  +5,288 B); unreachable fns stay 73.
+
+- **M3 — inside a closure, copying a captured struct or vector copies its bytes; it used to store
+  the capture's ADDRESS.** `var p: Pt = Pt { 3, 4 }; var g = || { var b: Box; b.v = p; return
+  b.v.x * 10 + b.v.y; };` returned **80** on x86 and PE and **208** on aarch64 (want 34). The same
+  hole, measured on every backend: `b.v = p` for a 24 B struct, a pointer-mode `Pt = alloc(16)`
+  capture and a captured by-value parameter put an address in the field; `q = p;`, `GQ = p;`,
+  `q = a;` (a pointer-mode capture into an inline struct) and an `f32v4` `w = v;` stored the address
+  as one word; `var b = Box { p, 5 };` did not compile (`unexpected '}'`: the capture filled one
+  leaf); and `var q: Pt = p;` bound q as a pointer INTO the closure's env — `q.x = q.x + 1` returned
+  4 and then 5 across two calls — or, for a captured by-value parameter, into the CALLER's struct,
+  which the closure then wrote (`p.x` 3 became 9). A captured struct of a DIFFERENT type compiled to
+  that address store where the local form is refused by name. Silent wrong values, no out-of-bounds
+  write (every wrong store stayed inside its destination; neighbour fields were checked intact).
+  **Root cause:** the three name-based copy-source resolvers — `_fsc_name_src` (field store and a
+  struct literal's nested source), `_try_aggregate_copy_assign`'s source operand and
+  `_try_struct_copy_init` — went local, then global, with no rung for a closure capture, which is
+  neither; each fell back to the capture's scalar value, which is `&env[woff]` for an inline
+  (multi-word) capture and the struct's address for a one-word capture of a struct over 8 B. The
+  expression ladder (`PARSE_FACTOR`) has had the capture rung since 6.3.8; the field-store copy has
+  missed it since 6.6.10. **Fix:** one shared rung, `_fsc_cap_src` (`src/frontend/parse_decl.cyr`),
+  between the local and the global rung in all three resolvers (`_agc_src_operand` in
+  `src/frontend/parse.cyr` for the assignment, `_sci_cap_src` for the declaration). It records the
+  capture in the FIELD form with its capture-encoded index, so every byte-exact copy loop addresses
+  it through `_CL_CAP_BASE_RA` — the base the closure's own `p.x` reads use (the env words for an
+  inline capture, the loaded pointer for a one-word struct over 8 B). The declaration copies an
+  inline capture and a captured address-passed by-value PARAMETER, and keeps the pointer bind for a
+  captured POINTER-mode local or handle (`Str`, `Result` …), exactly as `var q: Pt = a;` does
+  outside a closure; the two one-word shapes are told apart by the enclosing fn's parameter span,
+  which `_cl_save_locals` now records in a trailer word of the closure's local snapshot
+  (`_cl_snap_is_sptr`, `src/frontend/parse_expr.cyr`) — the same discriminator
+  `_local_is_sptr_param` uses. A capture of another struct or vector type is refused by name in the
+  field store, the literal, the assignment and the declaration, as the local forms are; a global
+  named like an enclosing struct or vector local no longer wins over the capture in these copy
+  forms (a scalar capture named like a struct global still does — not a struct copy, not this fix). Two
+  non-closure shapes met on the way are separate defects and were not changed (backlogged at the
+  6.6.13 premise check, (a) a pointer-mode local assigned into an inline struct, (b) a callee
+  writing through its by-value parameter). **Verified:** the new
+  `tests/tcyr/crossos/closure_capture_struct_copy.tcyr` (40 assertions, each against a literal value
+  and, where the non-closure form is right, its non-closure control: the filed repro; field store at
+  16 / 24 / 8 / 3 B, from a pointer-mode capture, a captured parameter and into a captured
+  destination, with the neighbour field checked; the struct literal; local, global and
+  pointer-mode-into-inline assignment and `f32v4`; the declaration's two-call persistence, the
+  caller-unchanged parameter case, the pointer-mode parity, `f32v4`; and a same-named global) fails
+  16 rows plus the two 16 B literal rows (which do not compile) on the 6.6.13-open compiler, and passes
+  on x86, qemu-aarch64, wine and cxvm and natively on ecb, ach, cass and pi (cross and native forks),
+  each host also self-hosting its own fork from this tree; the new
+  `tests/gates/diagnostics/closure_capture_struct_copy_mismatch.sh` (41 checks: the by-name refusal
+  and no binary for an inline capture, a captured parameter, a pointer-mode capture and a vector, in
+  all four shapes; the same shapes with the right type compile and copy) fails 34 on the open
+  compiler. Removing the rung from any one of the three resolvers turns its rows red in both. All
+  413 `tests/tcyr` files pass on x86 per file; under qemu-aarch64 the same five qemu-user failures as
+  before. Self-host fixpoint and seed → cybs → cycc GREEN after each of the three sites.
+  `build/cycc` stays **1,479,480 B** (`.text` 1,302,680 → 1,304,992, +2,312 B, inside the page
+  padding); unreachable fns stay 73.
+
+- **A global after an odd-sized one was misaligned, and an atomic on it died with SIGBUS on aarch64
+  (I9).** Filed by agnostic 0.1.7: its aarch64 release binary and 12 of its 27 suites died at
+  startup on a Raspberry Pi 4. **Root cause:** no layout pass aligned a global's start. x86 FIXUP
+  (both its loops), aarch64 FIXUP, PE `_pe_layout` and main_cx each summed `_vars_base` at the exact
+  byte size, so the global after a `u8[363]` sat at +363 (`% 8 == 3`), and the same after a narrow
+  scalar (`var x: u8 / i16 / i32`), an `i32[3]` or a 12-byte struct. `atomic_cas` /
+  `atomic_fetch_add` are `ldaxr`/`stlxr` on aarch64, which fault on a misaligned address: the filed
+  repro printed `8 363 3 ` and died with rc 135 on pi and rc 138 on ecb (Apple M5 Pro — not only the
+  Cortex-A72). x86 tolerates the misaligned `lock cmpxchg`, which is why it stayed silent. sankoch's
+  three `u8` arrays (630 B) misaligned 1,101 of agnostic's 1,962 globals, sigil's atomic init flags
+  among them. **Fix:** one rule, `_GV_ALIGN` (`src/common/util.cyr`), applied by every layout pass
+  before it records an offset: a 1/2/4-byte global starts at a multiple of 1/2/4, everything else at a
+  multiple of 8; x86 and PE then keep their v5.5.21 m128 pad, in the same order. ⚠ This is natural
+  alignment, not the roadmap's "pad after an odd-sized typed array so every global starts 8-aligned",
+  deliberately: an atomic needs only natural alignment, and keeping narrow globals PACKED keeps an
+  over-width store into one landing on its neighbour, where `narrow_slot_width.tcyr` and
+  `aggregate_storage_class.tcyr` can see it — 8-aligning everything would hide such a store in
+  padding. The size in `_vars_base` is unchanged (it is also the load/store width), so `u8[N]` still
+  has exactly N usable bytes; only the gap after it changed. The three O(n) re-sums of the sizes (x86
+  object-mode relocation, the aarch64 var-address patch, cx's var fixup) now read the recorded offset
+  through `GVOFF` — a re-sum would drop the padding — and main_cx fills `_vgoff_base` for that.
+  Every compiler's own globals are multiples of 8, so cycc, cycc_aarch64, the native aarch64 and
+  Mach-O arm64 compilers, cycc_win, cycc_cx and the x86 Mach-O compiler are each byte-identical
+  whether built by the old or the new rule. ⚠ A user binary with a narrow or odd-sized global gets new
+  offsets (at most 7 bytes of padding per such global); code that reaches a global by adding an offset
+  to the address of the one before it was never valid and now breaks (the guide's new "Where globals
+  land" section says so). **Verification:** the filed repro prints `8 368 0 1` and exits 0 natively on
+  pi and on ecb (Mach-O arm64), on ach (x86 Mach-O), on cass (PE), on x86 and under qemu-aarch64. New
+  `tests/tcyr/crossos/global_alignment.tcyr` (61 rows: an i64 after `u8[3]`, `u8[363]`, `i16[3]`,
+  `i32[3]`, a u8, an i32, an i16 and a 12-byte struct is 8-aligned and takes `atomic_cas` /
+  `atomic_fetch_add` / `atomic_load` / `atomic_store`; all 363 bytes of the array are writable and
+  its neighbours untouched; narrow globals still pack at +1/+2/+4; the first string literal survives
+  the last globals being written, which pins `_pe_layout` against FIXUP). The 6.6.12 compiler fails
+  19 rows on x86 and PE and dies with SIGBUS on pi and ecb; dropping `_GV_ALIGN` from `_pe_layout`
+  alone fails the three literal rows on PE. `aggregate_storage_class.tcyr` and
+  `struct_field_value_copy.tcyr` each gain an i32 guard directly after their 12-byte struct global,
+  and `typed_array_subscript.tcyr` one directly after its `u32[3]` and `i32[3]` globals — under
+  natural alignment the i64 guard they had now sits after 4 bytes of padding, where a 16-byte
+  over-copy or an 8-byte store to element [2] would no longer reach it. The whole tcyr corpus (411 files) gives the same result on the
+  old and new compiler on x86 and under qemu-aarch64, except `global_alignment.tcyr` itself; x86
+  object mode linked against a C `main` reads the aligned offsets and the static-init values.
+  Self-host fixpoint and seed-derive green; cycc self-hosts byte-identical on real pi, ecb, ach and
+  cass, and all 154 `tests/tcyr/crossos/` files pass on each.
+
+#### Platform and diagnostics (I6, I11)
+
+- **arm64 macOS: a thread created in a `fork()` child killed the child with SIGSEGV (I6).** Found
+  preparing sigil 3.13.6, whose fork-per-trial tests died on every trial on ecb; a probe with no sigil
+  code reproduces it (`docs/development/issues/repros/2026-10-01-macos-arm64-thread-create-in-fork-child-sigsegv.cyr`:
+  the child prints "before thread_create" and never "thread_create returned"; cases 1 and 2 report
+  111 = 100 + SIGSEGV, exit 2). Affects every arm64-macOS program that forks without exec and then
+  creates a thread — a daemon that forks and starts a worker pool, a harness that forks per trial —
+  since 6.5.44 made `thread_create` a real libSystem `pthread_create`. **Root cause:** on arm64 macOS
+  the stdlib uses the aarch64 peer, whose `sys_fork` is `clone(SIGCHLD, ...)`; the Mach-O translation
+  turns that into Darwin's RAW BSD fork (`_esx_arm(S, 220, 2)` plus the x1 child fixup). That makes
+  the child behind libSystem's back: no atfork handlers and no libpthread child re-initialisation
+  (thread list reset to the caller, per-process state such as the cached task port), so the child's
+  first `pthread_create` (`__got[5]`) ran on state that still described the parent and faulted. A C
+  probe on ecb with no cyrius code shows the same split: raw `svc` fork + `pthread_create` → SIGSEGV,
+  libSystem `fork()` + `pthread_create` → exit 0. **Fix:** `sys_fork` spells `syscall(1701)` under
+  `CYRIUS_TARGET_MACOS` (`lib/syscalls_aarch64_linux.cyr`; real aarch64 Linux stays on `clone`), and
+  the compiler lowers 1701 at argc 1 — the second routine in the 1700+ "__got-bound libSystem routine"
+  sub-band, after `pthread_create` — to libSystem `fork()` (`EMACHO_FORK_ARM`, reroute in
+  `parse_expr.cyr`'s `_TARGET_MACHO == 2` block, `_macho_reroute_argc` and `_macho_arm_routes` claim
+  it, return-0 stubs on the x86 and cx backends). The Mach-O arm64 writer binds two more imports,
+  APPENDED so slots 0-6 keep their indices: `__got[7] = _fork`, `__got[8] = ___error` (GOT 56 → 72 B,
+  bind opcodes 96 → 112 B, symtab 9 → 11 entries, strtab 104 → 120 B, indirect table 7 → 9,
+  LC_DYSYMTAB nundefsym / nindirectsyms 7 → 9). The emitter sign-extends the `pid_t` (`sxtw x0, w0`:
+  AAPCS64 leaves the upper half of x0 unspecified for an `int`, and a -1 read as 4294967295 is a
+  "parent" with a bogus pid) and, on -1, returns `-errno` read through `___error`, so the failure
+  shape `lib/process.cyr`'s `Err(0 - pid)` relies on is unchanged (measured -35, EAGAIN, under
+  `ulimit -u 1` on ecb before and after). The raw clone → fork row and its x1 fixup stay for code that
+  spells the number itself (none in-tree). x86 macOS (ach) is untouched: its static no-libSystem
+  Mach-O has no `__got`, and its threads run inline. ⚠ Every arm64 Mach-O binary changes layout
+  (__LINKEDIT + 72 B); the native ecb self-host is a fixpoint on the new layout. **Verification:**
+  the filed repro, unmodified, exits 0 on ecb with "B: thread_create returned" in cases 1 and 2,
+  built both by the cross compiler and by `CYRIUS_MACHO_ARM=1 cyrius build --aarch64`; the same
+  binary from the pre-fix compiler still exits 2 there. New `tests/tcyr/crossos/fork_then_thread.tcyr`
+  (the repro's three cases as assertions, the child's verdict decoded from its wait status so a crash
+  reads as 100 + the signal; a Windows arm asserts the no-fork premise) fails 2 of 7 on ecb with the
+  pre-fix compiler and passes 7/7 after, and passes on x86, under qemu-aarch64 and wine. `otool`-style
+  listing (`llvm-objdump --macho --bind / --indirect-symbols`) shows all nine binds with `_fork` and
+  `___error` at `__got[7]` / `__got[8]`. New gate `tests/gates/platform/macos_arm64_libsystem_fork.sh`
+  holds the reroute guard and arity, the emitter's slots against the writer's bind order, the
+  writer's parallel tables against each other (every strx against the strtab offset of the name bound
+  at that slot — a one-byte drift is a dyld "Symbol not found"), the stubs, the route claim, both arms
+  of `sys_fork`, and the sxtw / -errno / branch-offset shape; each of its 28 mutations goes red.
+  `macho_route_parity.sh` axis 3 now expects the three `__got` literals `228 1700 1701`. ELF-aarch64,
+  x86 ELF, x86 Mach-O and PE output is byte-identical before and after for all 155
+  `tests/tcyr/crossos/` files (620 of 620). Self-host fixpoint and seed-derive green (cycc 1,470,944
+  → 1,470,960 B); cycc self-hosts byte-identical on real ecb, ach, pi and cass, and the 155
+  `tests/tcyr/crossos/` files pass on each.
+
+- **The Str → `: cstring` warning saw only a named `Str` local, and its hint recommended the bug
+  (I11).** Filed by bayan 1.5.10 (issue `2026-10-01-str-cstring-diagnostic-misses-call-results`),
+  which had armed the warning on `bayan_json_v_obj_get(v, key: cstring)` and found it silent for the
+  natural spelling `f(o, str_from("k"))`. **Root cause:** PARSE_FNCALL typed only the argument's FIRST
+  token, through `FINDLOCAL` / `FINDVAR`. So a call (`str_from(..)`, `mk()`), a `: Str` field
+  (`h.name`), a tail call (PARSE_RETURN's own argument loop) and a method call (`_call_arg_one`) were
+  all silent. A global declared `: Str` was compared against the LOCAL encoding `0 - sid` (globals
+  store the positive sid), and an inferred `var g = str_from(..)` recorded no type at all. `s.data`
+  was reported as "Str-typed 's'", and the fixed hint said `use str_data(x) for raw bytes`. That is
+  wrong for a `: cstring` param: a Str's bytes are not NUL-terminated at its length (`str_sub` and
+  `str_split` borrow their parent's), so the filed repro's `lookup(t, str_data(sl))` answered ANOTHER
+  key's value. And `str_data(..)` is a call the check could not type, so taking the hint silenced the
+  warning (F2). **Fix:** one read-only helper, `_check_str_cstring_arg`, called from all three
+  argument loops (PARSE_FNCALL, `_call_arg_one` — method calls and the struct-valued own calls — and
+  the tail loop). It types an argument only when it is a single primary that ends it:
+  - `x` — a local decides by itself, so an untyped local shadowing a Str global is silent;
+  - a global's positive sid, gated on `GVPM` — GVTYPE's positive range is shared with scalar widths, so
+    an `i32` global's 4 must not read as struct id 4;
+  - `f(..)` through the callee's `: Struct` return (`GFRS`), resolved at the check, so `f` may be
+    defined later;
+  - `x.f` through the field's declared type.
+
+  `x.data` on a Str and `str_data(..)` are reported as "a Str's data pointer … (a Str's bytes are
+  not NUL-terminated at its length)". Everything else is left alone, which also ends the old false
+  positives on `s + 8` and `s.len` (the first-token check called `s.len` "Str-typed 's'"). The hint
+  never says `str_data`: it names a `_str` overload or a `<stem>_cstr` → `<stem>_str` sibling (bayan's
+  `_by_cstr` / `_by_str`) when its param is `: Str`, then `str_cstr(x)` for a NUL-terminated copy, then
+  annotating the param `: Str`. A method call names its registered fn (`T_lk`). An inferred global's
+  initializer callee is recorded on BOTH global registration paths — `PARSE_GVAR_REG` (a global above
+  the first top-level statement) and `PARSE_VAR`'s global arm (any `var` after one, such as the
+  `alloc_init();` 139 tcyr files open with) — in a new DIAGNOSTIC-ONLY per-global table, `GVDSID` / `SVDSID` (util.cyr,
+  lazily allocated, 8 B per global for the var table's hard cap of 1,048,576 and bound-checked on both
+  sides, so no index past it is written), never in GVTYPE, which drives codegen. **Warning text
+  only:** the 537-file corpus (tests/tcyr, programs, benches, fuzz) builds byte-identical old vs new
+  on x86 and through the aarch64 cross compiler, and with `CYRIUS_TYPE_CHECK=0` vs `=1`; exit codes
+  are identical too. No warning disappeared; the only new ones were the F2 shape. The filed repro
+  warns exactly 11 times, at W1–W9, F1 and F2, and not at the `str_cstr` / literal controls. The
+  same 11 come out of the aarch64, cx, PE and Mach-O paths, all with binaries unchanged. The run
+  itself is unchanged: `exit=11`, since the warning fixes nothing by itself. **In-tree sites:**
+  the 40 `streq(str_data(x), ..)` / `strlen(str_data(s))` calls in 8 tests become `str_eq_cstr` /
+  `str_eq` / `str_len`, which compare length-bounded. All eight still pass (json_engine 71,
+  json_stream 65, json_pointer 36, json_pretty 18, derive_serialize_widths 14,
+  derive_serialize_signed 8, derive_accessors_over_deserialize 8, derive_serialize_roundtrip 4) on
+  x86 and under qemu-aarch64. The one stdlib site, `lib/bayan.cyr:14687`
+  (`bayan_pdf_obj_dict_set_a(.., str_data(name), ..)`), is bayan's to fix — upstream in
+  `src/pdf.cyr` (bayan 1.5.11), never in the fold. Until that tag is re-folded it warns in every
+  build that includes bayan, tls.cyr or tls_native.cyr. ⚠ Downstream code that writes
+  `streq(str_data(x), ..)` into a `: cstring` param now gets a warning; builds do not fail. New gate
+  `tests/gates/diagnostics/str_cstring_arg_shapes.sh` checks:
+  - the filed repro, carried verbatim: the 11 sites by line:col, no `str_data` hint, the data-pointer
+    wording, the unchanged run;
+  - the TYPE_CHECK=0/1 byte-identity;
+  - rows for sibling hints, a global initialised from a later fn, struct-literal and `self: T`
+    fields, a method call with a call argument, the left-alone shapes, a redeclaration clearing the
+    inferred record, globals declared after a top-level statement (inferred, annotated, from a later
+    fn; an `i64` one and a redeclared one stay silent), and an `i32` global whose width equals Str's
+    struct id.
+
+  The pre-fix compiler fails 16 of its 21 checks. Three mutations each turn it red: dropping the
+  `GVPM` gate, keeping a stale inferred record, and losing the `str_data` arm. Self-host fixpoint and
+  seed-derive green (cycc 1,475,080 → 1,483,456 B), and cycc's own self-compile output is unchanged.
+
+- **`cyrius distlib`'s snapshot cache compared two Str headers, not two paths** (found by I11's
+  widened diagnostic). `_distlib_snap_cache` tested `streq(str_from(_dl_snap_root), str_from(root))`:
+  two fresh Str HEADERS read as C strings — their data pointers' bytes — so the cache hit only for the
+  identical pointer and an equal path re-read the tree. Both are C strings; they are compared directly.
+  The CLI builds with no warnings again.
+
+#### Native TLS (I2, I3)
 
 - **Native TLS: concurrent first connects each loaded the system CA bundle, unordered on aarch64**
   (I3, issue `2026-09-30-tls-first-use-thread-race`). `tls_native_set_ca_system`
@@ -428,6 +688,75 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   old `_tn_open_record` alert arms, and `tls_native_open_app`'s alert row. x86_64 and aarch64 under
   qemu.
 
+#### Stdlib and toolchain (I4, I10)
+
+- **`f64_parse` (and `f64_parse_ok`) return the correctly rounded double (I4, issue
+  2026-09-30, found by abaco 2.4.9's audit).** **Root cause:** `lib/math.cyr` accumulated the
+  digits in f64 (`result * 10 + d`, then `digit * 0.1^k` for the fraction) and applied the
+  exponent by building 10^k with a `*10` loop and one multiply or divide — a rounding per digit and
+  per step, and the power of ten overflowed or underflowed before the mantissa was applied. 2,270
+  of the 10,000 literals `0.00`..`99.99` came back 1 ulp off (`0.3` → 0.30000000000000004),
+  `0.0001e310` gave +Inf, `123e-310` and `5e-324` gave 0, DBL_MIN read 2 ulp high; 6,285 of bayan's
+  7,736-vector parse corpus were wrong. **Fix:** a port of bayan 1.5.10's `bayan_f64_parse` —
+  Clinger's exact fast path, a DiyFp tier over 87 cached 64-bit powers of ten that answers only
+  outside a ±16-unit window, and Go strconv's 800-digit exact decimal for the rest — as the
+  internal `_f64_parse_n(s, n)`, which `f64_parse` calls after its own, unchanged front matter
+  (strict `nan` / `inf`; any other n/N/i/I start, no digits, empty → 0; `-0` → -0.0; the 6.4.69
+  exponent saturation, so `1e100000000` stays O(len)). The helpers carry a private
+  `_f64p_` / `_F64P_` prefix: lib/bayan.cyr folds the same algorithm as `_d_*`, and a shared name
+  would compile with only a `duplicate fn` warning and swap one copy's bodies for the other's. The
+  tables are read in place from hex literals and an if-chain of the 23 exact powers — no lazy
+  init, so nothing to race (bayan's copy fills its table on first use, unfenced). The exact tier
+  keeps 1,656 B of stack scratch, so the parser stays reentrant. No API change; values move by
+  ≤ 2 ulp to the right ones, so a golden text output may shift a last digit. Cost: about +14 KB in
+  a non-DCE binary that includes lib/math.cyr; short literals parse ~13–20 % slower (the fast path
+  now scans into an integer first). Pinned by `tests/tcyr/math/f64_parse_rounding.tcyr` — bayan's
+  `f64parse.vec` (7,736) and `f64.vec` (328), copied to `tests/data/f64parse/` with count floors,
+  bit-exact; the 10,000 two-decimal literals against `bayan_f64_parse` in the same binary; the
+  filed rows; the front matter (the legacy parser fails 15 of its 70 assertions, all on values) —
+  and the cross-host `tests/tcyr/crossos/f64_parse_correctly_rounded.tcyr` (70 inline cases: the
+  subnormal seam, DBL_MIN / DBL_MAX neighbours and the overflow tie, exact ties, inputs just off a
+  tie, 800+-digit inputs past the exact tier's capacity; the legacy parser fails 31).
+
+- **I10 — a `[deps.X]` with `git` + `tag` but no `modules` was silently inert (`cbt/deps.cyr`
+  `_process_named_deps`; filed by agnostic 0.1.7).** **Root cause:** the clone guard was
+  `dep_git != 0 && dep_modules != 0` and a dep was marked visited only when a module was copied, so
+  a block without `modules` was never cloned, vendored, commit-pinned, counted or reported — and
+  because it was never visited, closest-wins did not apply: a TRANSITIVE `[deps.X]` resolved at
+  ITS tag instead (agnostic's root tags moved ahead of agnosai's and the lock kept agnosai's). A
+  `modular`-only git block hit the same guard. **Fix:** a block with neither `modules` nor
+  `modular` now means `modules = ["dist/X.cyr"]` when the tag (or path) ships that file — probed
+  after the clone and its CVE-21 pin, then vendored through the ordinary copy path (sidecar pull,
+  stdlib-clobber and symlink guards, visited + queued), so the root's tag wins and the lock pins
+  it. The probe is strictly `dist/X.cyr`. An explicit `modules = []` is NOT defaulted: it stays
+  the "declared, not linked" spelling (clone + pin, nothing vendored, no warning). A
+  `modular`-only git block is now cloned, and a clean modular pull marks the dep resolved, so its
+  commit pin reaches `cyrius.lock` (before, even a path-resolved modular dep wrote no lock and no
+  output). When the tag or path ships no `dist/X.cyr`, `cyrius deps` now SAYS so — `warning:
+  [deps.X] declares no modules and tag '<tag>' ships no dist/X.cyr — nothing vendored; a
+  transitive [deps.X] will resolve instead (list modules, or modules = [] for a dep that is
+  declared but not linked)` — and counts it in the summary (`0 deps resolved, 1 vendored
+  nothing`, printed even when nothing resolved); exit status stays 0, the dep is not marked
+  visited (as the warning says), and the clone's verified commit pin is kept, as for `modules =
+  []`. `optional` / `target`-gated blocks still skip silently. ⚠ crab's deliberately unlinked
+  `[deps.daimon]` (no `modules`, daimon ships no `dist/`) warns on every build from 6.6.13 and
+  is cloned in CI — add `modules = []` before pinning ≥ 6.6.13. On native Windows a
+  modules-less git dep with no usable `path` now reports the existing "needs a git clone, which
+  cyrius cannot run on this platform" error where it used to be silently dropped — and only that:
+  the follow-on `its cached checkout was NOT verified … the cached bytes are vendored as they are`
+  warning used to print even when the clone had just been refused and no cache existed (a claim
+  about bytes that were not there); it now prints only for a real pre-populated cache. Measured
+  on cass with the PE CLI: no cache → the one error, rc 1, no lock (6.6.12: rc 0, silent); a
+  pre-populated `deps\tyche\1.1.0` → `1 deps resolved`, the unverified-cache warning, and
+  `lib\tyche.cyr` byte-identical (`fc /b`) to the cache's `dist\tyche.cyr`.
+  The filed repro (`repros/git-dep-without-modules.cyml`, pin edited to the tree) now
+  prints `1 deps resolved`, vendors `lib/tyche.cyr` byte-identical to `git show
+  1.1.0:dist/tyche.cyr` and pins `tyche 1.1.0`. Pinned by the new
+  `tests/gates/toolchain/deps_modules_default_or_warned.sh` (D1–D8, hermetic file:// origins,
+  every expected byte and commit taken from the origin; mutation ledger in the file — the
+  6.6.12 resolver reds D1 D2 D3 D3b D4 D6 D8). Documented in the guide's *Dependencies*
+  section, with `modules = []` as the declared-not-linked opt-out.
+
 ### Added
 
 - **`tls_init_main()` (`lib/tls.cyr`) — warm the TLS stack once, on the main thread** (I3). Returns
@@ -488,7 +817,6 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   new `_tn_io_*`. `tls_native_set_transport`'s comment states that a custom transport is bounded
   only between calls. `docs/stdlib-reference.md` rows; api-surface snapshot `+tls::tls_set_deadline/2`,
   `+tls_native_conn::tls_native_set_deadline/2`.
-### Added
 
 - **`fd_wait_ready(fd, want_write, timeout_ms)` — one bounded readiness wait on a caller-owned fd,
   on every target (I8, the wait primitive).** Returns 1 when the fd is readable (`want_write` == 0)
@@ -505,6 +833,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `async_await_readable_ms` needs a coroutine. Companion: `tests/tcyr/crossos/fd_wait_ready.tcyr`
   (timeout, writable, readable, a closed peer reads ready then EOF, a closed fd and a negative fd
   are errors returned at once; a pipe on POSIX), run on ecb, ach, cass and pi.
+
 - **agnos: `_agnos_sock_send_dl(conn, buf, n, tmo_us, rearm)` — a socket send bounded by the
   caller's deadline.** agnos has no poll, so a deadline-bounded write has to live inside the peer's
   send loop. `rearm` = 0 makes `tmo_us` a bound on the WHOLE transfer (never re-armed, the clock
@@ -513,317 +842,6 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   now that form, unchanged. One sock_send#48 call can itself block ~8 s, so a rearm=0 deadline can
   overshoot by that much. Pinned by `tests/gates/platform/agnos_sock_send_deadline.sh` against the
   fake kernel (four mutations, each RED).
-
-### Fixed
-
-- **`f64_parse` (and `f64_parse_ok`) return the correctly rounded double (I4, issue
-  2026-09-30, found by abaco 2.4.9's audit).** **Root cause:** `lib/math.cyr` accumulated the
-  digits in f64 (`result * 10 + d`, then `digit * 0.1^k` for the fraction) and applied the
-  exponent by building 10^k with a `*10` loop and one multiply or divide — a rounding per digit and
-  per step, and the power of ten overflowed or underflowed before the mantissa was applied. 2,270
-  of the 10,000 literals `0.00`..`99.99` came back 1 ulp off (`0.3` → 0.30000000000000004),
-  `0.0001e310` gave +Inf, `123e-310` and `5e-324` gave 0, DBL_MIN read 2 ulp high; 6,285 of bayan's
-  7,736-vector parse corpus were wrong. **Fix:** a port of bayan 1.5.10's `bayan_f64_parse` —
-  Clinger's exact fast path, a DiyFp tier over 87 cached 64-bit powers of ten that answers only
-  outside a ±16-unit window, and Go strconv's 800-digit exact decimal for the rest — as the
-  internal `_f64_parse_n(s, n)`, which `f64_parse` calls after its own, unchanged front matter
-  (strict `nan` / `inf`; any other n/N/i/I start, no digits, empty → 0; `-0` → -0.0; the 6.4.69
-  exponent saturation, so `1e100000000` stays O(len)). The helpers carry a private
-  `_f64p_` / `_F64P_` prefix: lib/bayan.cyr folds the same algorithm as `_d_*`, and a shared name
-  would compile with only a `duplicate fn` warning and swap one copy's bodies for the other's. The
-  tables are read in place from hex literals and an if-chain of the 23 exact powers — no lazy
-  init, so nothing to race (bayan's copy fills its table on first use, unfenced). The exact tier
-  keeps 1,656 B of stack scratch, so the parser stays reentrant. No API change; values move by
-  ≤ 2 ulp to the right ones, so a golden text output may shift a last digit. Cost: about +14 KB in
-  a non-DCE binary that includes lib/math.cyr; short literals parse ~13–20 % slower (the fast path
-  now scans into an integer first). Pinned by `tests/tcyr/math/f64_parse_rounding.tcyr` — bayan's
-  `f64parse.vec` (7,736) and `f64.vec` (328), copied to `tests/data/f64parse/` with count floors,
-  bit-exact; the 10,000 two-decimal literals against `bayan_f64_parse` in the same binary; the
-  filed rows; the front matter (the legacy parser fails 15 of its 70 assertions, all on values) —
-  and the cross-host `tests/tcyr/crossos/f64_parse_correctly_rounded.tcyr` (70 inline cases: the
-  subnormal seam, DBL_MIN / DBL_MAX neighbours and the overflow tie, exact ties, inputs just off a
-  tie, 800+-digit inputs past the exact tier's capacity; the legacy parser fails 31).
-### Fixed
-
-- **M1 — a narrow global initialised to zero, to a non-constant or to a call no longer clobbers
-  the globals after it.** `var a: u8 = 0; var b: u8 = 7; syscall(60, b);` exited **0** (want 7) on
-  x86, aarch64, PE and both Mach-O targets. **Root cause:** a leading-block global takes the static
-  file-image path only when its initialiser folds to a NON-zero constant; `= 0`, any non-constant
-  expression and a call are deferred and replayed at startup by `EMIT_GVAR_INITS`
-  (`src/frontend/parse_decl.cyr`), whose scalar arm stored with the 8-byte `EVSTORE` whatever the
-  slot's width. Narrow scalar globals are packed, so the store wrote the value's upper bytes over the
-  next 7 / 6 / 4 bytes of globals, and any neighbour whose value was already in the image lost it
-  (6.6.12 B01 fixed the assignment statement, the for step and the compound load; this declaration
-  replay was never routed through them). cx's constant PRESTORE (`_gv_cx_prestore`) had the same
-  8-byte store, so on cx a forward read of the next narrow global saw the prestored constant's high
-  bytes (255 where native gives 0). **Fix:** one helper, `_gv_store`, stores at the slot's width —
-  exactly 1 / 2 / 4 through `EVSTORE_W`, anything else (i64, u128, an odd-sized inline struct) keeps
-  the full store — and both sites use it. **Verified:** the new
-  `tests/tcyr/crossos/narrow_global_init_width.tcyr` (135 rows: every narrow width × `= 0`, a
-  non-constant global copy, a call wider than the width and a negative call, in both orders, read in
-  a fn and at top level; same-width narrow-narrow neighbours only, so global padding cannot mask an
-  over-width store) fails 76 rows on the 6.6.13-open compiler and passes on x86, qemu-aarch64, wine,
-  and on real pi, cass, ecb and ach; `cx_tailcall_and_vm_traps.sh` gains axis-E rows E4 / E5 for the
-  prestore (255 / 7 before). Self-host fixpoint and seed → cybs → cycc GREEN; `build/cycc` stays
-  1,470,944 B (`.text` +328 B, inside the page padding).
-- **M2 — `var a: T[N]` reserves `N * sizeof(T)` for every element type, not only integers.**
-  Measured through an address-taken neighbour: inside a fn `var a: f64[4]`, `f32[4]`, `Pt[2]`,
-  `P3[2]`, `*i64[4]`, `bool[4]`, an enum name and every vector type reserved **8 bytes**; at top
-  level `Pt[2]` got 16 of 32 and `P3[2]` 16 of 48; and in the leading declaration block a
-  vector-element array was read as the scalar its name starts with (`i8v16[2]` 8 bytes of 32,
-  `i16v8` as i16) — and given that integer subscript descriptor, so `g[1]` on it COMPILED. A write
-  inside the declared bounds overwrote the next local or global (`store64(&g + 16, 99)` into
-  `Pt[1]` changed the next global; a local fill zeroed an address-taken neighbour; under qemu an
-  `f64[4]` store overwrote a saved pointer and SIGSEGV'd). No diagnostic, every backend.
-  **Root cause:** the element SIZE and the integer subscript DESCRIPTOR were one value (`ew`), which
-  is non-zero only for i8..u64 / u128 / slices, so every other element was sized like a bare
-  `var a[N]` (N bytes in a fn, N slots at top level) — in `PARSE_ARRAY`, in `PARSE_GVAR_ARR`, and in
-  `PARSE_GVAR_REG`'s prefix ladder (`src/frontend/parse_decl.cyr`). **Fix:** size and descriptor are
-  separate. `_arr_ebytes` gives the bytes per element — f64 8, **f32 4** (packed, the layout `f32v4`
-  lanes and interop buffers use), a struct / union / generic instance `STRUCTSZ` (= `sizeof(T)`),
-  `*T` 8, a vector 16 / 32, bool / cstring / an enum 8 — and `PARSE_ARRAY` / `PARSE_GVAR_ARR` size
-  by it; the declaration block decides a vector element on the WHOLE name (the return-type
-  vocabulary's sentinels) and drops the integer descriptor the prefix gave it. The subscript stays
-  integer-only, so a non-integer element has no stride that could disagree with its new size. An
-  element type that names nothing is now refused by name (`unknown array element type 'Nope'`), as
-  is a struct used as the element of a top-level array declared above it (it was silently 8 bytes
-  per element); an enum may sit on either side. The scalar ladders match a name by its PREFIX
-  before they look for a struct, so `struct u8pair { a; b; }` arrived as a u8 (`u8pair[2]` held 8
-  of 32 bytes in a fn, with a 1-byte `a[i]` stride) and `struct f64pair` as an f64; in the array
-  path the WHOLE name now decides (`_arr_prefix_wrong`): such a name is sized as the struct, union,
-  generic instance (`u8box<P3>[2]`) or enum it names, its subscript is refused like any other
-  non-integer element, and a name that spells nothing (`i8x`, `f64thing`) or a struct declared
-  below the array is refused by name. A generic fn's own `var a: T[N]` keeps compiling —
-  sized by the type argument in an instance (`T = P3` gives `N * 24`), 8 per element in the i64
-  base, and under `CYRIUS_MONOMORPH=0` (which binds nothing) recognised as the enclosing fn's type
-  parameter from its tokens. `N * sizeof(T)` over 2 GiB is refused (`array too large`) instead of
-  wrapping to a small size; the decl-zone 8-byte floor stays. Integer and bare arrays are unchanged.
-  **Verified:** the new `tests/tcyr/crossos/typed_array_elem_size.tcyr` (279 assertions: every
-  element type in a fn, in the declaration block and after the first statement, each against an
-  address-taken sentinel directly above it and with a full byte fill; the generic fn's instances;
-  a fn-local array over the frame budget (static fallback); and `a[i]` filling exactly
-  `N * sizeof(T)` bytes for the integer elements; struct / enum elements named like a scalar)
-  fails 66 rows on the 6.6.13-open compiler and
-  passes on x86, qemu-aarch64 and wine, and natively on pi (cross and native forks), ecb, ach and
-  cass, each host also self-hosting its own fork from this tree; the new
-  `tests/gates/diagnostics/typed_array_elem_refusals.sh` (134 checks: the non-integer subscript
-  refusals in both global zones and in a fn, the unknown / later-declared element refusals with
-  every bad array reported, the size guard, and bool / enum-below / cstring / generic `T[N]` in both
-  monomorph modes compiling and running, a bound `T = i32` keeping its integer subscript) fails 70
-  on the open compiler; six mutants of the fix each turn their axis red. All 412 `tests/tcyr` files pass on x86 per file, unchanged except the new
-  one; under qemu-aarch64 407 pass and the other five are the same qemu-user failures (exec, wait,
-  namespaces, thread detach) the pre-M2 compiler shows; the new file also passes on cxvm. Self-host fixpoint and seed → cybs → cycc GREEN after the locals and again after the
-  declaration-block half (cybs refuses a call with more than six arguments — the first cut's
-  seven-argument helper failed seed-derive with a bare `syntax error`), and again after the
-  whole-name check. `build/cycc` 1,470,944 → **1,479,480 B** (`.text` 1,297,392 → 1,302,680,
-  +5,288 B); unreachable fns stay 73.
-- **M3 — inside a closure, copying a captured struct or vector copies its bytes; it used to store
-  the capture's ADDRESS.** `var p: Pt = Pt { 3, 4 }; var g = || { var b: Box; b.v = p; return
-  b.v.x * 10 + b.v.y; };` returned **80** on x86 and PE and **208** on aarch64 (want 34). The same
-  hole, measured on every backend: `b.v = p` for a 24 B struct, a pointer-mode `Pt = alloc(16)`
-  capture and a captured by-value parameter put an address in the field; `q = p;`, `GQ = p;`,
-  `q = a;` (a pointer-mode capture into an inline struct) and an `f32v4` `w = v;` stored the address
-  as one word; `var b = Box { p, 5 };` did not compile (`unexpected '}'`: the capture filled one
-  leaf); and `var q: Pt = p;` bound q as a pointer INTO the closure's env — `q.x = q.x + 1` returned
-  4 and then 5 across two calls — or, for a captured by-value parameter, into the CALLER's struct,
-  which the closure then wrote (`p.x` 3 became 9). A captured struct of a DIFFERENT type compiled to
-  that address store where the local form is refused by name. Silent wrong values, no out-of-bounds
-  write (every wrong store stayed inside its destination; neighbour fields were checked intact).
-  **Root cause:** the three name-based copy-source resolvers — `_fsc_name_src` (field store and a
-  struct literal's nested source), `_try_aggregate_copy_assign`'s source operand and
-  `_try_struct_copy_init` — went local, then global, with no rung for a closure capture, which is
-  neither; each fell back to the capture's scalar value, which is `&env[woff]` for an inline
-  (multi-word) capture and the struct's address for a one-word capture of a struct over 8 B. The
-  expression ladder (`PARSE_FACTOR`) has had the capture rung since 6.3.8; the field-store copy has
-  missed it since 6.6.10. **Fix:** one shared rung, `_fsc_cap_src` (`src/frontend/parse_decl.cyr`),
-  between the local and the global rung in all three resolvers (`_agc_src_operand` in
-  `src/frontend/parse.cyr` for the assignment, `_sci_cap_src` for the declaration). It records the
-  capture in the FIELD form with its capture-encoded index, so every byte-exact copy loop addresses
-  it through `_CL_CAP_BASE_RA` — the base the closure's own `p.x` reads use (the env words for an
-  inline capture, the loaded pointer for a one-word struct over 8 B). The declaration copies an
-  inline capture and a captured address-passed by-value PARAMETER, and keeps the pointer bind for a
-  captured POINTER-mode local or handle (`Str`, `Result` …), exactly as `var q: Pt = a;` does
-  outside a closure; the two one-word shapes are told apart by the enclosing fn's parameter span,
-  which `_cl_save_locals` now records in a trailer word of the closure's local snapshot
-  (`_cl_snap_is_sptr`, `src/frontend/parse_expr.cyr`) — the same discriminator
-  `_local_is_sptr_param` uses. A capture of another struct or vector type is refused by name in the
-  field store, the literal, the assignment and the declaration, as the local forms are; a global
-  named like an enclosing struct or vector local no longer wins over the capture in these copy
-  forms (a scalar capture named like a struct global still does — not a struct copy, not this fix). Two
-  non-closure shapes met on the way are separate defects and were not changed (backlogged at the
-  6.6.13 premise check, (a) a pointer-mode local assigned into an inline struct, (b) a callee
-  writing through its by-value parameter). **Verified:** the new
-  `tests/tcyr/crossos/closure_capture_struct_copy.tcyr` (40 assertions, each against a literal value
-  and, where the non-closure form is right, its non-closure control: the filed repro; field store at
-  16 / 24 / 8 / 3 B, from a pointer-mode capture, a captured parameter and into a captured
-  destination, with the neighbour field checked; the struct literal; local, global and
-  pointer-mode-into-inline assignment and `f32v4`; the declaration's two-call persistence, the
-  caller-unchanged parameter case, the pointer-mode parity, `f32v4`; and a same-named global) fails
-  16 rows plus the two 16 B literal rows (which do not compile) on the 6.6.13-open compiler, and passes
-  on x86, qemu-aarch64, wine and cxvm and natively on ecb, ach, cass and pi (cross and native forks),
-  each host also self-hosting its own fork from this tree; the new
-  `tests/gates/diagnostics/closure_capture_struct_copy_mismatch.sh` (41 checks: the by-name refusal
-  and no binary for an inline capture, a captured parameter, a pointer-mode capture and a vector, in
-  all four shapes; the same shapes with the right type compile and copy) fails 34 on the open
-  compiler. Removing the rung from any one of the three resolvers turns its rows red in both. All
-  413 `tests/tcyr` files pass on x86 per file; under qemu-aarch64 the same five qemu-user failures as
-  before. Self-host fixpoint and seed → cybs → cycc GREEN after each of the three sites.
-  `build/cycc` stays **1,479,480 B** (`.text` 1,302,680 → 1,304,992, +2,312 B, inside the page
-  padding); unreachable fns stay 73.
-### Fixed
-
-- **A global after an odd-sized one was misaligned, and an atomic on it died with SIGBUS on aarch64
-  (I9).** Filed by agnostic 0.1.7: its aarch64 release binary and 12 of its 27 suites died at
-  startup on a Raspberry Pi 4. **Root cause:** no layout pass aligned a global's start. x86 FIXUP
-  (both its loops), aarch64 FIXUP, PE `_pe_layout` and main_cx each summed `_vars_base` at the exact
-  byte size, so the global after a `u8[363]` sat at +363 (`% 8 == 3`), and the same after a narrow
-  scalar (`var x: u8 / i16 / i32`), an `i32[3]` or a 12-byte struct. `atomic_cas` /
-  `atomic_fetch_add` are `ldaxr`/`stlxr` on aarch64, which fault on a misaligned address: the filed
-  repro printed `8 363 3 ` and died with rc 135 on pi and rc 138 on ecb (Apple M5 Pro — not only the
-  Cortex-A72). x86 tolerates the misaligned `lock cmpxchg`, which is why it stayed silent. sankoch's
-  three `u8` arrays (630 B) misaligned 1,101 of agnostic's 1,962 globals, sigil's atomic init flags
-  among them. **Fix:** one rule, `_GV_ALIGN` (`src/common/util.cyr`), applied by every layout pass
-  before it records an offset: a 1/2/4-byte global starts at a multiple of 1/2/4, everything else at a
-  multiple of 8; x86 and PE then keep their v5.5.21 m128 pad, in the same order. ⚠ This is natural
-  alignment, not the roadmap's "pad after an odd-sized typed array so every global starts 8-aligned",
-  deliberately: an atomic needs only natural alignment, and keeping narrow globals PACKED keeps an
-  over-width store into one landing on its neighbour, where `narrow_slot_width.tcyr` and
-  `aggregate_storage_class.tcyr` can see it — 8-aligning everything would hide such a store in
-  padding. The size in `_vars_base` is unchanged (it is also the load/store width), so `u8[N]` still
-  has exactly N usable bytes; only the gap after it changed. The three O(n) re-sums of the sizes (x86
-  object-mode relocation, the aarch64 var-address patch, cx's var fixup) now read the recorded offset
-  through `GVOFF` — a re-sum would drop the padding — and main_cx fills `_vgoff_base` for that.
-  Every compiler's own globals are multiples of 8, so cycc, cycc_aarch64, the native aarch64 and
-  Mach-O arm64 compilers, cycc_win, cycc_cx and the x86 Mach-O compiler are each byte-identical
-  whether built by the old or the new rule. ⚠ A user binary with a narrow or odd-sized global gets new
-  offsets (at most 7 bytes of padding per such global); code that reaches a global by adding an offset
-  to the address of the one before it was never valid and now breaks (the guide's new "Where globals
-  land" section says so). **Verification:** the filed repro prints `8 368 0 1` and exits 0 natively on
-  pi and on ecb (Mach-O arm64), on ach (x86 Mach-O), on cass (PE), on x86 and under qemu-aarch64. New
-  `tests/tcyr/crossos/global_alignment.tcyr` (61 rows: an i64 after `u8[3]`, `u8[363]`, `i16[3]`,
-  `i32[3]`, a u8, an i32, an i16 and a 12-byte struct is 8-aligned and takes `atomic_cas` /
-  `atomic_fetch_add` / `atomic_load` / `atomic_store`; all 363 bytes of the array are writable and
-  its neighbours untouched; narrow globals still pack at +1/+2/+4; the first string literal survives
-  the last globals being written, which pins `_pe_layout` against FIXUP). The 6.6.12 compiler fails
-  19 rows on x86 and PE and dies with SIGBUS on pi and ecb; dropping `_GV_ALIGN` from `_pe_layout`
-  alone fails the three literal rows on PE. `aggregate_storage_class.tcyr` and
-  `struct_field_value_copy.tcyr` each gain an i32 guard directly after their 12-byte struct global,
-  and `typed_array_subscript.tcyr` one directly after its `u32[3]` and `i32[3]` globals — under
-  natural alignment the i64 guard they had now sits after 4 bytes of padding, where a 16-byte
-  over-copy or an 8-byte store to element [2] would no longer reach it. The whole tcyr corpus (411 files) gives the same result on the
-  old and new compiler on x86 and under qemu-aarch64, except `global_alignment.tcyr` itself; x86
-  object mode linked against a C `main` reads the aligned offsets and the static-init values.
-  Self-host fixpoint and seed-derive green; cycc self-hosts byte-identical on real pi, ecb, ach and
-  cass, and all 154 `tests/tcyr/crossos/` files pass on each.
-
-- **arm64 macOS: a thread created in a `fork()` child killed the child with SIGSEGV (I6).** Found
-  preparing sigil 3.13.6, whose fork-per-trial tests died on every trial on ecb; a probe with no sigil
-  code reproduces it (`docs/development/issues/repros/2026-10-01-macos-arm64-thread-create-in-fork-child-sigsegv.cyr`:
-  the child prints "before thread_create" and never "thread_create returned"; cases 1 and 2 report
-  111 = 100 + SIGSEGV, exit 2). Affects every arm64-macOS program that forks without exec and then
-  creates a thread — a daemon that forks and starts a worker pool, a harness that forks per trial —
-  since 6.5.44 made `thread_create` a real libSystem `pthread_create`. **Root cause:** on arm64 macOS
-  the stdlib uses the aarch64 peer, whose `sys_fork` is `clone(SIGCHLD, ...)`; the Mach-O translation
-  turns that into Darwin's RAW BSD fork (`_esx_arm(S, 220, 2)` plus the x1 child fixup). That makes
-  the child behind libSystem's back: no atfork handlers and no libpthread child re-initialisation
-  (thread list reset to the caller, per-process state such as the cached task port), so the child's
-  first `pthread_create` (`__got[5]`) ran on state that still described the parent and faulted. A C
-  probe on ecb with no cyrius code shows the same split: raw `svc` fork + `pthread_create` → SIGSEGV,
-  libSystem `fork()` + `pthread_create` → exit 0. **Fix:** `sys_fork` spells `syscall(1701)` under
-  `CYRIUS_TARGET_MACOS` (`lib/syscalls_aarch64_linux.cyr`; real aarch64 Linux stays on `clone`), and
-  the compiler lowers 1701 at argc 1 — the second routine in the 1700+ "__got-bound libSystem routine"
-  sub-band, after `pthread_create` — to libSystem `fork()` (`EMACHO_FORK_ARM`, reroute in
-  `parse_expr.cyr`'s `_TARGET_MACHO == 2` block, `_macho_reroute_argc` and `_macho_arm_routes` claim
-  it, return-0 stubs on the x86 and cx backends). The Mach-O arm64 writer binds two more imports,
-  APPENDED so slots 0-6 keep their indices: `__got[7] = _fork`, `__got[8] = ___error` (GOT 56 → 72 B,
-  bind opcodes 96 → 112 B, symtab 9 → 11 entries, strtab 104 → 120 B, indirect table 7 → 9,
-  LC_DYSYMTAB nundefsym / nindirectsyms 7 → 9). The emitter sign-extends the `pid_t` (`sxtw x0, w0`:
-  AAPCS64 leaves the upper half of x0 unspecified for an `int`, and a -1 read as 4294967295 is a
-  "parent" with a bogus pid) and, on -1, returns `-errno` read through `___error`, so the failure
-  shape `lib/process.cyr`'s `Err(0 - pid)` relies on is unchanged (measured -35, EAGAIN, under
-  `ulimit -u 1` on ecb before and after). The raw clone → fork row and its x1 fixup stay for code that
-  spells the number itself (none in-tree). x86 macOS (ach) is untouched: its static no-libSystem
-  Mach-O has no `__got`, and its threads run inline. ⚠ Every arm64 Mach-O binary changes layout
-  (__LINKEDIT + 72 B); the native ecb self-host is a fixpoint on the new layout. **Verification:**
-  the filed repro, unmodified, exits 0 on ecb with "B: thread_create returned" in cases 1 and 2,
-  built both by the cross compiler and by `CYRIUS_MACHO_ARM=1 cyrius build --aarch64`; the same
-  binary from the pre-fix compiler still exits 2 there. New `tests/tcyr/crossos/fork_then_thread.tcyr`
-  (the repro's three cases as assertions, the child's verdict decoded from its wait status so a crash
-  reads as 100 + the signal; a Windows arm asserts the no-fork premise) fails 2 of 7 on ecb with the
-  pre-fix compiler and passes 7/7 after, and passes on x86, under qemu-aarch64 and wine. `otool`-style
-  listing (`llvm-objdump --macho --bind / --indirect-symbols`) shows all nine binds with `_fork` and
-  `___error` at `__got[7]` / `__got[8]`. New gate `tests/gates/platform/macos_arm64_libsystem_fork.sh`
-  holds the reroute guard and arity, the emitter's slots against the writer's bind order, the
-  writer's parallel tables against each other (every strx against the strtab offset of the name bound
-  at that slot — a one-byte drift is a dyld "Symbol not found"), the stubs, the route claim, both arms
-  of `sys_fork`, and the sxtw / -errno / branch-offset shape; each of its 28 mutations goes red.
-  `macho_route_parity.sh` axis 3 now expects the three `__got` literals `228 1700 1701`. ELF-aarch64,
-  x86 ELF, x86 Mach-O and PE output is byte-identical before and after for all 155
-  `tests/tcyr/crossos/` files (620 of 620). Self-host fixpoint and seed-derive green (cycc 1,470,944
-  → 1,470,960 B); cycc self-hosts byte-identical on real ecb, ach, pi and cass, and the 155
-  `tests/tcyr/crossos/` files pass on each.
-
-- **The Str → `: cstring` warning saw only a named `Str` local, and its hint recommended the bug
-  (I11).** Filed by bayan 1.5.10 (issue `2026-10-01-str-cstring-diagnostic-misses-call-results`),
-  which had armed the warning on `bayan_json_v_obj_get(v, key: cstring)` and found it silent for the
-  natural spelling `f(o, str_from("k"))`. **Root cause:** PARSE_FNCALL typed only the argument's FIRST
-  token, through `FINDLOCAL` / `FINDVAR`. So a call (`str_from(..)`, `mk()`), a `: Str` field
-  (`h.name`), a tail call (PARSE_RETURN's own argument loop) and a method call (`_call_arg_one`) were
-  all silent. A global declared `: Str` was compared against the LOCAL encoding `0 - sid` (globals
-  store the positive sid), and an inferred `var g = str_from(..)` recorded no type at all. `s.data`
-  was reported as "Str-typed 's'", and the fixed hint said `use str_data(x) for raw bytes`. That is
-  wrong for a `: cstring` param: a Str's bytes are not NUL-terminated at its length (`str_sub` and
-  `str_split` borrow their parent's), so the filed repro's `lookup(t, str_data(sl))` answered ANOTHER
-  key's value. And `str_data(..)` is a call the check could not type, so taking the hint silenced the
-  warning (F2). **Fix:** one read-only helper, `_check_str_cstring_arg`, called from all three
-  argument loops (PARSE_FNCALL, `_call_arg_one` — method calls and the struct-valued own calls — and
-  the tail loop). It types an argument only when it is a single primary that ends it:
-  - `x` — a local decides by itself, so an untyped local shadowing a Str global is silent;
-  - a global's positive sid, gated on `GVPM` — GVTYPE's positive range is shared with scalar widths, so
-    an `i32` global's 4 must not read as struct id 4;
-  - `f(..)` through the callee's `: Struct` return (`GFRS`), resolved at the check, so `f` may be
-    defined later;
-  - `x.f` through the field's declared type.
-
-  `x.data` on a Str and `str_data(..)` are reported as "a Str's data pointer … (a Str's bytes are
-  not NUL-terminated at its length)". Everything else is left alone, which also ends the old false
-  positives on `s + 8` and `s.len` (the first-token check called `s.len` "Str-typed 's'"). The hint
-  never says `str_data`: it names a `_str` overload or a `<stem>_cstr` → `<stem>_str` sibling (bayan's
-  `_by_cstr` / `_by_str`) when its param is `: Str`, then `str_cstr(x)` for a NUL-terminated copy, then
-  annotating the param `: Str`. A method call names its registered fn (`T_lk`). An inferred global's
-  initializer callee is recorded on BOTH global registration paths — `PARSE_GVAR_REG` (a global above
-  the first top-level statement) and `PARSE_VAR`'s global arm (any `var` after one, such as the
-  `alloc_init();` 139 tcyr files open with) — in a new DIAGNOSTIC-ONLY per-global table, `GVDSID` / `SVDSID` (util.cyr,
-  lazily allocated, 8 B per global for the var table's hard cap of 1,048,576 and bound-checked on both
-  sides, so no index past it is written), never in GVTYPE, which drives codegen. **Warning text
-  only:** the 537-file corpus (tests/tcyr, programs, benches, fuzz) builds byte-identical old vs new
-  on x86 and through the aarch64 cross compiler, and with `CYRIUS_TYPE_CHECK=0` vs `=1`; exit codes
-  are identical too. No warning disappeared; the only new ones were the F2 shape. The filed repro
-  warns exactly 11 times, at W1–W9, F1 and F2, and not at the `str_cstr` / literal controls. The
-  same 11 come out of the aarch64, cx, PE and Mach-O paths, all with binaries unchanged. The run
-  itself is unchanged: `exit=11`, since the warning fixes nothing by itself. **In-tree sites:**
-  the 40 `streq(str_data(x), ..)` / `strlen(str_data(s))` calls in 8 tests become `str_eq_cstr` /
-  `str_eq` / `str_len`, which compare length-bounded. All eight still pass (json_engine 71,
-  json_stream 65, json_pointer 36, json_pretty 18, derive_serialize_widths 14,
-  derive_serialize_signed 8, derive_accessors_over_deserialize 8, derive_serialize_roundtrip 4) on
-  x86 and under qemu-aarch64. The one stdlib site, `lib/bayan.cyr:14687`
-  (`bayan_pdf_obj_dict_set_a(.., str_data(name), ..)`), is bayan's to fix — upstream in
-  `src/pdf.cyr` (bayan 1.5.11), never in the fold. Until that tag is re-folded it warns in every
-  build that includes bayan, tls.cyr or tls_native.cyr. ⚠ Downstream code that writes
-  `streq(str_data(x), ..)` into a `: cstring` param now gets a warning; builds do not fail. New gate
-  `tests/gates/diagnostics/str_cstring_arg_shapes.sh` checks:
-  - the filed repro, carried verbatim: the 11 sites by line:col, no `str_data` hint, the data-pointer
-    wording, the unchanged run;
-  - the TYPE_CHECK=0/1 byte-identity;
-  - rows for sibling hints, a global initialised from a later fn, struct-literal and `self: T`
-    fields, a method call with a call argument, the left-alone shapes, a redeclaration clearing the
-    inferred record, globals declared after a top-level statement (inferred, annotated, from a later
-    fn; an `i64` one and a redeclared one stay silent), and an `i32` global whose width equals Str's
-    struct id.
-
-  The pre-fix compiler fails 16 of its 21 checks. Three mutations each turn it red: dropping the
-  `GVPM` gate, keeping a stale inferred record, and losing the `str_data` arm. Self-host fixpoint and
-  seed-derive green (cycc 1,475,080 → 1,483,456 B), and cycc's own self-compile output is unchanged.
 
 ### Changed
 
@@ -892,7 +910,6 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `$HOME/.cyrius/versions/<its VERSION>/lib` and never `CYRIUS_HOME`, so a re-added `math` leaf came
   from the LIVE store's in-flight 6.6.13 slot (pre-I5, still defining `f64_le`) and failed to compile —
   the gate now pins `HOME` to a throwaway whose `.cyrius` is the home under test.
-### Changed
 
 - **`docs/development/lib-tls-contract.md` re-pinned to the 6.6.13 surface** (I2 part (d), issue
   `2026-09-30-tls-client-memory-and-alert-gaps`, with the I8 rows). It had stayed pinned at
@@ -946,6 +963,26 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   isolated at its 6.6.9 pin (17/17); the new `lazy_init_race.tcyr` and `cbank_main_lane.tcyr` fail
   on 3.13.5. The cyrius halves (`tls_native_set_ca_system`'s cache, `tls_init_main()`, the skipped
   count) are bites I3 and I2 below.
+
+- **ganita 1.2.11 folded (`lib/ganita.cyr`, ganita commit `6788e28`; 1.2.10 was never folded) — six
+  filings closed, `tan` added.** `ganita_binomial` returns −1 exactly when C(n, k) > i64_MAX (it
+  refused representable values since 1.2.3); `atan2` gets signed zeros, a NaN `y` at `x = ±0` and
+  the four infinities right; sinh / tanh / atanh / asinh / acosh / asin no longer cancel just above
+  their small-argument cutoffs (worst errors from ~10^7 ulp to ≤ 2.18); sinh / cosh were up to 496
+  ulp off for 709 < |x| ≤ 710.48. New `ganita_f64_tan`, `ganita_f32_tan` and the alias `f64_tan`.
+  Pin 6.6.12.
+
+- **bayan 1.5.10 folded (`lib/bayan.cyr`, bayan commit `f880e35`) — the flat JSON parser pairs keys
+  with their own values.** ⚠ `bayan_json_parse` changes what it returns for VALID input: a nested
+  object or array is one value (its raw source span), TAB and CR end a bare value, malformed input
+  stops the parse, and a refused allocation returns 0 rather than a partial vec. `bayan_u64_mulmod`
+  is one asm block on aarch64 (~600× faster) and no longer returns 0 on cx; `bayan_u64_powmod`
+  handles exponents ≥ 2^63; a null key no longer crashes an object lookup. New
+  `bayan_json_v_obj_get_by_cstr` and `bayan_json_parse_a`; `bayan_json_v_obj_get` and
+  `json_v_obj_get` are `#deprecated` (same answers; the call site now names the replacement). Pin
+  6.6.12. Still open in bayan (sibling follow-up): `_toml_unescape_span_a` answers a refused
+  allocation with `str_from("")` from the default allocator.
+
 - **bayan 1.5.11 folded (`lib/bayan.cyr`, bayan commit `aeb13d2`) — cut for this release.**
   `bayan_pdf_use_font` passed `str_data(name)` to a `key: cstring` parameter, which I11's rule (below)
   warns on in every build that includes bayan, `tls.cyr` or `tls_native.cyr`; the font now keeps the
@@ -957,23 +994,6 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   significands — and is now an atomic claim and publish (I3's class); the `.deps` sidecar lists
   `atomic` (every includer already has it through `lib/alloc.cyr`). bayan's full CI ran isolated
   (sibci rc=0, 33 ok); the 40 cyrius tests that include the fold pass. Pin stays 6.6.12.
-- **ganita 1.2.11 folded (`lib/ganita.cyr`, ganita commit `6788e28`; 1.2.10 was never folded) — six
-  filings closed, `tan` added.** `ganita_binomial` returns −1 exactly when C(n, k) > i64_MAX (it
-  refused representable values since 1.2.3); `atan2` gets signed zeros, a NaN `y` at `x = ±0` and
-  the four infinities right; sinh / tanh / atanh / asinh / acosh / asin no longer cancel just above
-  their small-argument cutoffs (worst errors from ~10^7 ulp to ≤ 2.18); sinh / cosh were up to 496
-  ulp off for 709 < |x| ≤ 710.48. New `ganita_f64_tan`, `ganita_f32_tan` and the alias `f64_tan`.
-  Pin 6.6.12.
-- **bayan 1.5.10 folded (`lib/bayan.cyr`, bayan commit `f880e35`) — the flat JSON parser pairs keys
-  with their own values.** ⚠ `bayan_json_parse` changes what it returns for VALID input: a nested
-  object or array is one value (its raw source span), TAB and CR end a bare value, malformed input
-  stops the parse, and a refused allocation returns 0 rather than a partial vec. `bayan_u64_mulmod`
-  is one asm block on aarch64 (~600× faster) and no longer returns 0 on cx; `bayan_u64_powmod`
-  handles exponents ≥ 2^63; a null key no longer crashes an object lookup. New
-  `bayan_json_v_obj_get_by_cstr` and `bayan_json_parse_a`; `bayan_json_v_obj_get` and
-  `json_v_obj_get` are `#deprecated` (same answers; the call site now names the replacement). Pin
-  6.6.12. Still open in bayan (sibling follow-up): `_toml_unescape_span_a` answers a refused
-  allocation with `str_from("")` from the default allocator.
 
 ## [6.6.12] — 2026-09-30
 
