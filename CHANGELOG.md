@@ -99,6 +99,67 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   → 1,470,960 B); cycc self-hosts byte-identical on real ecb, ach, pi and cass, and the 155
   `tests/tcyr/crossos/` files pass on each.
 
+### Changed
+
+- **`f64_le`, `f64_ge` and `f64_trunc` are compiler builtins, no longer `lib/math.cyr` calls (I5).**
+  Found by abaco 2.4.9 benchmarking (issue `2026-09-30-f64-le-ge-trunc-are-calls`): its
+  `f64_round_half_away` went from 8 to 15 ns when it moved to `f64_trunc` + `f64_ge`. `f64_lt` /
+  `f64_gt` / `f64_eq` / `f64_floor` were builtins; `f64_le` / `f64_ge` were fns that called two of
+  them (`f64_lt(a, b) == 1`, then `f64_eq`), and `f64_trunc` a fn that branched to `f64_ceil` or
+  `f64_floor` — a call frame each, 2-3× the builtins they wrap. **Fix:** three tokens, the first free
+  ids after `#inline` (163): 164 `f64_le`, 165 `f64_ge`, 166 `f64_trunc`, matched in `LEXKW_EXT` on
+  the exact length (so `f64_lerp`, `f64_get…` stay identifiers) and named in `TOKNAME_BUILTIN`, which
+  reserves them through `IS_KEYWORD_TOK` (the table is **79** names now, re-derived; the guide's two
+  counts said 76 and 67). `f64_le` / `f64_ge` lower through the operator `<=` / `>=` compare
+  (`PF64CMP` with tok 21 / 22: x86 `setbe` with the `setnp` NaN fold / `setae`, aarch64 `cset ls` /
+  `cset ge`, cx `fle` / `fge`), so no compare emitter changed. `f64_trunc` gets one new emitter per
+  backend: x86 `roundsd xmm0, xmm0, 3` (`66 0F 3A 0B C0 03` — ELF, PE and x86 Mach-O; SSE4.1 is
+  already `f64_floor`'s baseline), aarch64 `frintz d0, d0` (0x1E65C000 — Linux, Mach-O arm64 and the
+  native fork), and cx opcode **0x6E ftrunc**, host-backed in `programs/cxvm.cyr` (header row + arm;
+  a pre-6.6.13 cxvm faults on 0x6E by name rather than running it as a no-op). `f64_trunc` carries the
+  6.6.10 float-builtin result mark like `f64_floor` (`_NEG_INTRIN_KIND` 166 → 1), so
+  `f64_trunc(x) * 2.0` and `-f64_trunc(x)` are float operations; `f64_le` / `f64_ge` stay i64
+  booleans. `parse.cyr`'s statement bands gain 164..166, so `f64_trunc(x);` is still a legal statement
+  (without it the builtin would have made it a syntax error — the f64_sqrt-136 lesson).
+  **NaN semantics are unchanged**: `f64_le` / `f64_ge` are 0 when either side is NaN on every backend;
+  `f64_trunc` keeps -0 (`trunc(-0.5)` is -0) and passes ±inf and NaN. `lib/math.cyr` retires the three
+  wrappers in this same change (their NaN rationale becomes a two-line pointer; the header export list
+  drops them); `docs/stdlib-reference.md` moves them out of the math.cyr table into a builtin note,
+  `docs/api-surface.snapshot` loses exactly `math::f64_ge/2`, `math::f64_le/2`, `math::f64_trunc/1`,
+  and `docs/retired-symbols.allow` accounts for all three (moved, not deleted).
+  ⚠ **Reserving the names is a break for code that DEFINES them** — and the only definitions anywhere
+  under `~/Repos` are vendored `lib/math.cyr` copies: 71 sibling repos (49 tracked, 23 gitignored),
+  all pinned 6.6.2-6.6.12, so the pin redirect protects every one until it bumps. At its bump to
+  ≥ 6.6.13 a repo must re-vendor `lib/math.cyr` (`cyrius deps`); otherwise the build stops LOUDLY at
+  `lib/math.cyr:{771|458|437|267}` with `reserved keyword 'f64_le'`, never a silent change. The 1,040
+  repo-owned calls in 26 repos keep compiling unchanged. Worklist and census:
+  `docs/development/ecosystem-migration-6.6.13.md`.
+  **Measured** (the issue's timing loop, `CYRIUS_DCE=1`, 2×10^8 iterations, ns/iter with loop
+  overhead): `f64_le` 5.03 → 1.96, `f64_ge` 5.41 → 1.97, `f64_trunc` 4.15 → 1.49 — now level with
+  `f64_lt` (1.98) and `f64_floor` (1.49). A probe disassembles to no call for any of the three, with
+  `roundsd $0x3` on x86 (ELF, PE, x86 Mach-O), `frintz` + `cset ls` / `cset ge` on aarch64 (ELF and
+  Mach-O arm64) and opcode 0x6E on cx.
+  **Verification:** new `tests/tcyr/crossos/f64_le_ge_trunc_builtins.tcyr` (39 assertions) — rows that
+  MOVE the operand and check the sign bit (`trunc(-1.5)` is -1.0 where floor and round give -2.0,
+  `trunc(1.5)` 1.0 where ceil gives 2.0, `trunc(-0.5)` -0), NaN on each side of le / ge, the result
+  kinds, the three in statement position, and a differential run against the retired bodies over a
+  24-value special set (both NaN signs, sNaN, both zeros, both infinities, halves, 2^52 and its
+  neighbours, both min subnormals, max finite, 1 - ulp: 24 trunc + 1,152 le/ge cases, bit for bit,
+  NaN results by class). It passes on x86, under qemu-aarch64, on cxvm, and natively on pi, ecb,
+  ach and cass (all 156 `tests/tcyr/crossos/` files pass on each). Seven mutations each turn it red
+  (x86 imm 3 → 1, `frintz` → `frintm`, cx 0x6E → 0x6A, cxvm's 0x6E arm dropped, aarch64 `<=` back to
+  `cset le`, the statement band dropped, the `_NEG_INTRIN_KIND` row dropped).
+  `tests/gates/codegen/cx_float_unary_ops_run.sh` runs it on cxvm and natively with the assertion
+  count derived from the source, and requires 0x6E in cxvm's opcode table;
+  `programs/checks/lint_fmt.cyr` adds `var f64_le` / `var f64_ge` / `fn f64_trunc` (each must NAME
+  itself) and `var f64_lerp` (must stay an identifier). The whole tcyr corpus (413 files) passes on
+  x86; the 34 files that use the three names, `lib/math.cyr` or `lib/ganita.cyr` pass under
+  qemu-aarch64, and the crossos dir does too except four files that fail identically on the pre-change
+  compiler under qemu-user (exec / process_vm_writev / thread-residual). Every compiler fork builds
+  with no undefined `EF64TRUNC`; `removed_symbol_census.sh` is green against ~/Repos and red without
+  the three ledger rows. Self-host fixpoint and seed-derive green (cycc 1,470,960 → 1,475,080 B);
+  cycc self-hosts byte-identical on real pi, ecb, ach and cass.
+
 ### Downstream
 
 #### Folded — ⛔ each tagged BEFORE cyrius 6.6.13

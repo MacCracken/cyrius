@@ -943,6 +943,7 @@ fn _NEG_INTRIN_KIND(t): i64 {
     if (t == 132) { return 1; }                      # f32_to
     if (t == 136) { return 1; }                      # f64_sqrt
     if (t == 159) { return 1; }                      # f64v256_dot
+    if (t == 166) { return 1; }                      # f64_trunc (6.6.13; f64_le/ge are kind 0)
     if (t == 131) { return 2; }                      # f32_from
     if (t == 142) { return 2; }                      # f32v_dot
     if (t == 151) { return 2; }                      # f32v8_dot
@@ -3961,6 +3962,10 @@ fn _PARSE_INTRIN_IMPL(S, ptyp): i64 {
     if (ptyp == 66) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EI2F(S); EMOVQ_A_X0(S); SESTYPE(S, F64_TYID); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
     if (ptyp == 67) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EMOVQ_X0_A(S); EF2I(S); SESTYPE(S, 0); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
     if (ptyp >= 68) { if (ptyp <= 70) { PF64CMP(S, ptyp); return 1; } }
+    # 6.6.13 — f64_le / f64_ge lower through the `<=` / `>=` operator compare (tok 21 / 22),
+    # NaN-false on every backend; they were lib/math.cyr calls (lt, then eq). CHANGELOG [6.6.13]
+    if (ptyp == 164) { PF64CMP(S, 21); return 1; }
+    if (ptyp == 165) { PF64CMP(S, 22); return 1; }
     if (ptyp == 71) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); EF64_NEG(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
     # f64_sqrt(x) — sqrtsd xmm0, xmm0
     # v6.6.2: f64_sqrt 79 -> 136 (was double-assigned with `object`).
@@ -3975,6 +3980,8 @@ fn _PARSE_INTRIN_IMPL(S, ptyp): i64 {
     if (ptyp == 81) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EMOVQ_X0_A(S); EF64FLOOR(S); EMOVQ_A_X0(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
     # f64_ceil(x) — roundsd xmm0, xmm0, 2 (SSE4.1)
     if (ptyp == 82) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EMOVQ_X0_A(S); EF64CEIL(S); EMOVQ_A_X0(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
+    # f64_trunc(x) — roundsd xmm0, xmm0, 3 / frintz (toward zero). 6.6.13, was a lib/math.cyr fn.
+    if (ptyp == 166) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EMOVQ_X0_A(S); EF64TRUNC(S); EMOVQ_A_X0(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
     # f64_round(x) — roundsd xmm0, xmm0, 0 (round to nearest)
     if (ptyp == 92) { STI(S, GTI(S) + 1); if (PEEKT(S) != 10) { ERR_EXPECT(S, 10); } STI(S, GTI(S) + 1); PCMPE(S); _IR_REC0(S, IR_RAW_EMIT); EMOVQ_X0_A(S); EF64ROUND(S); EMOVQ_A_X0(S); if (PEEKT(S) != 11) { ERR_EXPECT(S, 11); } STI(S, GTI(S) + 1); return 1; }
     # f32_from(x): f64 → f32 bit pattern (cvtsd2ss). f32_to(x): f32 → f64 (cvtss2sd).

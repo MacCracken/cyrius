@@ -58,6 +58,7 @@
 #   0x6B = fceil  ra, rb          ra = f64-bits of ceil(f64(rb))       (6.6.10)
 #   0x6C = fround ra, rb          ra = f64-bits of round-half-even(f64(rb)) (6.6.10)
 #   0x6D = mulhu  ra, rb, rc      ra = high 64 bits of unsigned rb * rc (6.6.10)
+#   0x6E = ftrunc ra, rb          ra = f64-bits of trunc(f64(rb)), toward zero (6.6.13)
 #   0x40 = load8  ra, [rb]        ra = zero-extend byte at mem[rb]
 #   0x41 = load64 ra, [rb]        ra = 64-bit at mem[rb]
 #   0x42 = store8 [ra], rb        mem[ra] = low byte of rb
@@ -372,6 +373,7 @@ fn cx_run(code, code_len): i64 {
         elif (op == 107) { cx_reg_set(ra, f64_ceil(cx_reg_get(rb))); }  # 0x6B fceil
         elif (op == 108) { cx_reg_set(ra, f64_round(cx_reg_get(rb))); } # 0x6C fround (ties to even)
         elif (op == 109) { cx_reg_set(ra, mulh64(cx_reg_get(rb), cx_reg_get(rc))); } # 0x6D mulhu
+        elif (op == 110) { cx_reg_set(ra, f64_trunc(cx_reg_get(rb))); } # 0x6E ftrunc (6.6.13)
 
         # memory: load8/16/32/64, store8/16/32/64. Every guest address goes through _cx_addr,
         # which traps unless the WHOLE access lies in [8, _CX_MEM_SIZE). CHANGELOG [6.6.12]

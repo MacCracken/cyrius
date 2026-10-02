@@ -2135,15 +2135,12 @@ mabda::workgroups_2d/5
 main_aarch64_native::EMITMACHO_ARM64/1
 math::f64_clamp/3
 math::f64_fract/1
-math::f64_ge/2
-math::f64_le/2
 math::f64_lerp/3
 math::f64_max/2
 math::f64_min/2
 math::f64_parse/1
 math::f64_parse_ok/2
 math::f64_sign/1
-math::f64_trunc/1
 math::gcd/2
 math::lcm/2
 mmap::cyr_mmap/6

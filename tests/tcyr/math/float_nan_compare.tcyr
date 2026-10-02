@@ -4,11 +4,12 @@
 # IEEE rule: any comparison with a NaN operand is *unordered* — every ordered
 # compare (< <= > >= ==) returns FALSE, and only != returns TRUE. ±Inf is
 # ordered (normal results). Before v6.2.41 the x86 backend read CF/ZF without
-# the parity (unordered) flag, so f64_lt/f64_eq builtins, f64_le/f64_ge (built
-# from them in lib/math.cyr), and the `< <= == !=` operator sugar all gave the
-# wrong answer on NaN; aarch64's `<=` operator (cset le) had the same bug.
-# Covers builtins, the lib/math.cyr inclusive helpers, and operator sugar on
-# both arches (verified x86 native + aarch64 under qemu-user / pi).
+# the parity (unordered) flag, so f64_lt/f64_eq builtins, f64_le/f64_ge (then
+# built from them in lib/math.cyr), and the `< <= == !=` operator sugar all gave
+# the wrong answer on NaN; aarch64's `<=` operator (cset le) had the same bug.
+# Covers builtins, the inclusive f64_le/f64_ge (compiler builtins since 6.6.13,
+# lowered through the `<=` / `>=` compare; lib/math.cyr fns before), and operator
+# sugar on both arches (verified x86 native + aarch64 under qemu-user / pi).
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"

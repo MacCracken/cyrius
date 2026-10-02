@@ -100,6 +100,8 @@ fn EF64FLOOR(S): i64 { EB(S, 0x66); EB(S, 0x0F); EB(S, 0x3A); EB(S, 0x0B); EB(S,
 fn EF64CEIL(S): i64 { EB(S, 0x66); EB(S, 0x0F); EB(S, 0x3A); EB(S, 0x0B); EB(S, 0xC0); EB(S, 0x02); return 0; }
 # roundsd xmm0, xmm0, 0 (round to nearest) — SSE4.1
 fn EF64ROUND(S): i64 { EB(S, 0x66); EB(S, 0x0F); EB(S, 0x3A); EB(S, 0x0B); EB(S, 0xC0); EB(S, 0x00); return 0; }
+# roundsd xmm0, xmm0, 3 (truncate toward zero) — SSE4.1; the f64_trunc builtin (6.6.13)
+fn EF64TRUNC(S): i64 { EB(S, 0x66); EB(S, 0x0F); EB(S, 0x3A); EB(S, 0x0B); EB(S, 0xC0); EB(S, 0x03); return 0; }
 # f64_abs: clear sign bit (bit 63) via integer AND
 # No SSE needed — value is already in rax as bit pattern
 # push rax; movabs rax, 0x7FFF...; mov rcx, rax; pop rax; and rax, rcx

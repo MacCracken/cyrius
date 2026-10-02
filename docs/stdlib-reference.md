@@ -1033,16 +1033,22 @@ historical; the names are pinned by `tests/tcyr/crossos/f64_log_exp_polyfill.tcy
 bits. (Their internal helpers — `_f64_rem_pio2`, `_f64_k_sin`, `_f64_k_cos` and
 the `_f64_trig_*` fns — remain private.)
 
+> **`f64_le`, `f64_ge` and `f64_trunc` are compiler builtins since 6.6.13**, like
+> `f64_lt` / `f64_floor` — no include, and the names are reserved. `f64_le(a, b)` /
+> `f64_ge(a, b)` → i64 are the inclusive compares, 0 when either side is NaN;
+> `f64_trunc(x)` rounds toward zero (`trunc(-0.5)` is -0; ±inf and NaN pass through).
+> They were `lib/math.cyr` fns until 6.6.13, at 2-3× the cost of a builtin. A vendored
+> `lib/math.cyr` older than 6.6.13 no longer compiles under a 6.6.13 cycc
+> (`reserved keyword 'f64_le'`): re-vendor it with `cyrius deps`. Call sites are unchanged.
+> See `docs/development/ecosystem-migration-6.6.13.md`.
+
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `f64_clamp` | `f64_clamp(x, lo, hi) → i64` | Clamp x to [lo, hi] |
 | `f64_min` | `f64_min(a, b) → i64` | Minimum of two f64 values |
 | `f64_max` | `f64_max(a, b) → i64` | Maximum of two f64 values |
-| `f64_le` | `f64_le(a, b) → i64` | Less-than-or-equal (NaN-safe) |
-| `f64_ge` | `f64_ge(a, b) → i64` | Greater-than-or-equal (NaN-safe) |
 | `f64_lerp` | `f64_lerp(a, b, t) → i64` | Linear interpolation |
 | `f64_sign` | `f64_sign(x) → i64` | Sign: -1.0, 0.0, or 1.0 |
-| `f64_trunc` | `f64_trunc(x) → i64` | Truncate toward zero |
 | `f64_fract` | `f64_fract(x) → i64` | Fractional part |
 | `gcd` | `gcd(a, b) → i64` | Greatest common divisor |
 | `lcm` | `lcm(a, b) → i64` | Least common multiple |

@@ -3245,6 +3245,14 @@ fn EF64ROUND(S): i64 {
     return 0;
 }
 
+# frintz d0, d0  (round toward zero) — the f64_trunc builtin (6.6.13)
+fn EF64TRUNC(S): i64 {
+    EW(S, 0x9E670000);   # fmov d0, x0
+    EW(S, 0x1E65C000);   # frintz d0, d0
+    EW(S, 0x9E660000);   # fmov x0, d0
+    return 0;
+}
+
 # Binop contract (matches x86 path):
 #   in:  stack TOS = first arg bits (a); x0 = second arg bits (b)
 #   out: x0 = (a OP b) bit pattern; stack popped.

@@ -91,9 +91,10 @@ answer depended on the ORDER of the arguments (`f64_add(p, u)` took the last arg
 type). The result is still not a typed *value*: `==`, `!=`, `<` … on builtin results remain
 INTEGER compares of the bit patterns (so `f64_neg(z) == z` is 0 for z = 0.0, and
 `f64_neg(a) < f64_neg(b)` is wrong for negative values — compare with `f64_lt` /
-`f64_gt` / `f64_eq`), and `var x = f64_sqrt(u);` declares an untyped `x` (declare it `: f64`
-to make later arithmetic on it float). Code that wants the integer ulp distance of two
-results goes through an untyped variable first: `var a = f64_atan(x); d = a - b;`.
+`f64_gt` / `f64_eq` / `f64_le` / `f64_ge`), and `var x = f64_sqrt(u);` declares an untyped
+`x` (declare it `: f64` to make later arithmetic on it float). Code that wants the integer
+ulp distance of two results goes through an untyped variable first:
+`var a = f64_atan(x); d = a - b;`.
 
 An integer CONSTANT stored into an `f64` / `f32` slot keeps its integer bits — `var t: f64 =
 1;`, `t = 1;`, `p.x = 1;` (an `f64` field) and `P { 1, 2 }` store `0x1`, a subnormal — and
@@ -235,9 +236,10 @@ var r = add(20, 22);   # r = 42
   pushed `&x` for a small typed `self` too and the method read its fields out of the address.
 
 **Reserved words are a CLASS, not a short list.** `TOKNAME_BUILTIN` in
-`src/common/util.cyr` is the single source of truth — **76** builtin/intrinsic names
-(re-derived at 6.6.5 with `sed -n '/fn TOKNAME_BUILTIN/,/^}/p' src/common/util.cyr |
-grep -c 'return "'`; this line said 67, which was the count when the diagnostic was added at
+`src/common/util.cyr` is the single source of truth — **79** builtin/intrinsic names
+(re-derived at 6.6.13 with `sed -n '/fn TOKNAME_BUILTIN/,/^}/p' src/common/util.cyr |
+grep -c 'return "'`, after `f64_le` / `f64_ge` / `f64_trunc` moved from `lib/math.cyr` fns to
+builtins; this line said 67 until 6.6.5, which was the count when the diagnostic was added at
 v6.4.77 and the table has grown since), plus the statement keywords. `IS_KEYWORD_TOK`
 *derives* from that table for the BUILTIN half — ⚠ but it enumerates the statement keywords
 SEPARATELY, so those two CAN drift; the table, not this paragraph, is the authority. It covers `syscall`, the `load8/16/32/64` + `store8/16/32/64` family, every
@@ -3228,7 +3230,8 @@ offsets past the params.
 - At most 1,048,576 globals, enum members and top-level arrays per compilation unit
   (the var table). The separate 4096 cap on deferred initializers is gone since 6.6.9
   — see **Global Initializers**
-- **67** builtin/intrinsic names plus the statement keywords are reserved and cannot be used
+- **79** builtin/intrinsic names (re-derived at 6.6.13; this bullet still said 67, the v6.4.77
+  count) plus the statement keywords are reserved and cannot be used
   as identifiers — `TOKNAME_BUILTIN` in `src/common/util.cyr` is the list; see the
   reserved-word note under **Functions**. (This bullet used to name four of them, which is
   how the other sixty came as a surprise.)

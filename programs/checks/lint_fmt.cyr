@@ -434,6 +434,21 @@ fn _reserved_kw_diag_gate(): i64 {
     fail = fail + _stderr_match_subcase("var async",
         "include \"lib/syscalls.cyr\"\nvar async = 1;\nsyscall(60, 0);\n",
         "reserved keyword 'async'", 1);
+    # 6.6.13 — f64_le / f64_ge / f64_trunc moved from lib/math.cyr fns to builtins, so the names
+    # are reserved and each must name ITSELF (as a var and as a fn). f64_lerp is a lib fn whose
+    # spelling starts with f64_le: the lexer matches the exact length, so it stays an identifier.
+    fail = fail + _stderr_match_subcase("var f64_le",
+        "include \"lib/syscalls.cyr\"\nvar f64_le = 1;\nsyscall(60, 0);\n",
+        "reserved keyword 'f64_le'", 1);
+    fail = fail + _stderr_match_subcase("var f64_ge",
+        "include \"lib/syscalls.cyr\"\nvar f64_ge = 1;\nsyscall(60, 0);\n",
+        "reserved keyword 'f64_ge'", 1);
+    fail = fail + _stderr_match_subcase("fn f64_trunc",
+        "include \"lib/syscalls.cyr\"\nfn f64_trunc(x) { return x; }\nsyscall(60, 0);\n",
+        "reserved keyword 'f64_trunc'", 1);
+    fail = fail + _stderr_match_subcase("var f64_lerp stays an identifier",
+        "include \"lib/syscalls.cyr\"\nvar f64_lerp = 1;\nsyscall(60, f64_lerp - 1);\n",
+        "reserved keyword", 0);
     # ⛔ v6.6.2 — THESE TWO ASSERTIONS USED TO REQUIRE THE COLLISION, and would have gone RED on
     # the fix. They asserted the disjunction strings "'object'/'f64_sqrt'" and "'stack'/'callptr'",
     # which was right while the numbers were shared (v6.4.77 stopped the diagnostic naming the
@@ -475,7 +490,7 @@ fn _reserved_kw_diag_gate(): i64 {
         _p(ANSI_GREEN);
         _p("PASS");
         _p(ANSI_RESET);
-        println(": reserved keyword diagnostic (4 stmt-kw + 10 builtin/intrinsic + 2 collisions + hint + 2 negative controls)");
+        println(": reserved keyword diagnostic (4 stmt-kw + 13 builtin/intrinsic + 2 collisions + hint + 3 negative controls)");
     }
     _check("reserved-keyword diagnostic names the token: stmt keywords + all 51 builtin/intrinsic names (v6.4.77) + the 2 double-assigned tokens; never 'unknown'", fail);
     return fail;

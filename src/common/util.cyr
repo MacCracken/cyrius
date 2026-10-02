@@ -1645,6 +1645,9 @@ fn TOKNAME_BUILTIN(typ): i64 {
     if (typ == 160) { return "f64v256_scale"; }   # v6.5.38
     if (typ == 161) { return "f64v256_abs"; }     # v6.5.38
     if (typ == 162) { return "f64v256_sqrt"; }    # v6.5.38
+    if (typ == 164) { return "f64_le"; }          # 6.6.13 (was a lib/math.cyr fn)
+    if (typ == 165) { return "f64_ge"; }          # 6.6.13
+    if (typ == 166) { return "f64_trunc"; }       # 6.6.13
     return 0;
 }
 
