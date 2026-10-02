@@ -165,7 +165,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `TLS_ERR_TIMEOUT` through; every record write site passes its writer's code through
   (`_tn_ctx_fail(ctx, w)`, no longer `TLS_ERR_IO`); the error table above `_tn_read_fail` gains the
   `TLS_ERR_TIMEOUT` and `TLS_ERR_PROTOCOL` rows. An expired `SO_RCVTIMEO` with no deadline set stays
-  `TLS_ERR_IO`. ⚠ **Behaviour change:** a peer sending two CCS in TLS 1.3, or a 1.2 Finished with no
+  `TLS_ERR_IO`. `TLS_ERR_RECORD_OVERFLOW` (`lib/tls_native_lowlevel.cyr`) moves from -20 to **-22**:
+  it had held -20 since the record layer landed, so with `TLS_ERR_TIMEOUT` at -20 an authenticated
+  record whose plaintext exceeds 2^14 bytes, passed through by `tls_native_read`, read as a deadline
+  expiry (in `tls_read` and in a failed handshake's last error). -21 is `TLS_ERR_KEY_UNSUPPORTED`;
+  `tls_native_scaffold.tcyr` now pins all 22 `TLS_ERR_*` values pairwise distinct. A consumer that
+  compares against the name is unaffected; one that hard-coded -20 for it was already wrong. ⚠ **Behaviour change:** a peer sending two CCS in TLS 1.3, or a 1.2 Finished with no
   CCS, now fails where it used to pass (OpenSSL, BoringSSL and the native stack send exactly one —
   the `openssl s_server -tls1_3` / `-tls1_2` rows below); after `TLS_ERR_TIMEOUT` the native ctx is
   failed. ⚠ **Windows:** native TLS does not run over `net.cyr` sockets at all — the default
@@ -477,10 +482,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   deadline) and that `tls_close` frees nothing either, and `lib/tls_native_ctx.cyr`'s handle comment
   no longer says closing frees the ctx. `docs/stdlib-reference.md`'s `tls_read` / `tls_write` rows
   (`→ n/-1`) and its "libssl is the default backend" line are corrected and point at the contract.
-  ⚠ Found while re-pinning: `TLS_ERR_RECORD_OVERFLOW` (`lib/tls_native_lowlevel.cyr`, returned when
-  an authenticated record's plaintext exceeds 2^14 bytes) has been -20 since the record layer
-  landed, and 6.6.13's `TLS_ERR_TIMEOUT` took the same value, so a read cannot tell them apart; the
-  contract records it as a defect, not as part of the contract. Docs and comments only.
+  Docs and comments only.
 
 ### Downstream
 

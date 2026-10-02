@@ -224,7 +224,8 @@ above `_tn_read_fail` in `lib/tls_native_conn.cyr` (native) and `_tls_ssl_io_ret
 | `TLS_ERR_WOULD_BLOCK` | -9 | A non-blocking socket had nothing ready (`WANT_READ` / `WANT_WRITE`) and no deadline is set: call again. The native backend needs a BLOCKING socket — there `EAGAIN` reads as `TLS_ERR_IO` and fails the connection; bound a native read with `tls_set_deadline` instead. | libssl |
 | `TLS_ERR_OOM` | -11 | The ctx's record buffer could not be allocated (the first read or write, from an exhausted arena). | native |
 | `TLS_ERR_INVALID_PARAM` | -10 | `tls_read` with `maxlen <= 0` (does not fail the ctx). | native |
-| other `TLS_ERR_*` | | Passed through from the record layer. ⚠ In 6.6.13 one of them, `TLS_ERR_RECORD_OVERFLOW` (an authenticated record whose plaintext exceeds 2^14 bytes, RFC 8446 §5.4; `lib/tls_native_lowlevel.cyr`), has the value -20 — `TLS_ERR_TIMEOUT`'s — so a read cannot tell the two apart. That is a defect, not part of this contract: the two codes must differ. | native |
+| `TLS_ERR_RECORD_OVERFLOW` | -22 | An authenticated record whose plaintext exceeds 2^14 bytes (RFC 8446 §5.4; `lib/tls_native_lowlevel.cyr`). Was -20 until 6.6.13, the value `TLS_ERR_TIMEOUT` now holds. | native |
+| other `TLS_ERR_*` | | Passed through from the record layer. Every `TLS_ERR_*` value is distinct (pinned by `tests/tcyr/crypto/tls_native_scaffold.tcyr`). | native |
 
 **After a negative result the connection is over.** Native: the ctx is FAILED (every code above
 except `TLS_ERR_INVALID_PARAM`) — every later `tls_read` returns the same code (a fatal alert stays

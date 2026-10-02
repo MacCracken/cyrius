@@ -154,8 +154,9 @@ fn tls_native_record_aad(ct, version, length, aad_out5): i64 {
 # Add a missing error code referenced by record_read_header. (Most
 # callers will treat this as a BAD_RECORD class; spec-aligned name
 # kept distinct because §6 has a dedicated record_overflow alert at
-# wire value 22.)
-var TLS_ERR_RECORD_OVERFLOW = 0 - 20;
+# wire value 22.) -22, not -20: -20 is TLS_ERR_TIMEOUT (6.6.13), and a
+# read that passes this code through must not look like a deadline expiry.
+var TLS_ERR_RECORD_OVERFLOW = 0 - 22;
 
 # Server's private key (or its algorithm) can't be used: a recognized
 # but unsupported key type (e.g. RSA — sigil parses the label but the

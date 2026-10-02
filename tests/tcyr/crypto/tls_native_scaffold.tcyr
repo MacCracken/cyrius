@@ -66,6 +66,35 @@ assert_eq(TLS_OK, 0, "TLS_OK = 0");
 assert_eq(TLS_ERR_NOT_IMPLEMENTED, 0 - 1, "TLS_ERR_NOT_IMPLEMENTED = -1");
 assert_eq(TLS_ERR_PROTOCOL, 0 - 19, "TLS_ERR_PROTOCOL = -19 (last in ladder)");
 
+# 6.6.13: every TLS_ERR_* is its own value. TLS_ERR_RECORD_OVERFLOW sat at -20 when
+# TLS_ERR_TIMEOUT took -20, so a read could not tell an over-long record from a deadline.
+assert_eq(TLS_ERR_TIMEOUT, 0 - 20, "TLS_ERR_TIMEOUT = -20");
+assert_eq(TLS_ERR_KEY_UNSUPPORTED, 0 - 21, "TLS_ERR_KEY_UNSUPPORTED = -21");
+assert_eq(TLS_ERR_RECORD_OVERFLOW, 0 - 22, "TLS_ERR_RECORD_OVERFLOW = -22");
+var _errs: i64[22];
+_errs[0] = TLS_ERR_NOT_IMPLEMENTED;  _errs[1] = TLS_ERR_HANDSHAKE_FAILED;
+_errs[2] = TLS_ERR_BAD_RECORD;       _errs[3] = TLS_ERR_BAD_HANDSHAKE;
+_errs[4] = TLS_ERR_CIPHER_NOT_SUPPORTED; _errs[5] = TLS_ERR_CERT_INVALID;
+_errs[6] = TLS_ERR_CERT_HOSTNAME_MISMATCH; _errs[7] = TLS_ERR_PEER_CLOSED;
+_errs[8] = TLS_ERR_WOULD_BLOCK;      _errs[9] = TLS_ERR_INVALID_PARAM;
+_errs[10] = TLS_ERR_OOM;             _errs[11] = TLS_ERR_IO;
+_errs[12] = TLS_ERR_INTERNAL;        _errs[13] = TLS_ERR_VERSION;
+_errs[14] = TLS_ERR_DECRYPT;         _errs[15] = TLS_ERR_AUTHN;
+_errs[16] = TLS_ERR_ALERT;           _errs[17] = TLS_ERR_BUFFER_FULL;
+_errs[18] = TLS_ERR_PROTOCOL;        _errs[19] = TLS_ERR_TIMEOUT;
+_errs[20] = TLS_ERR_KEY_UNSUPPORTED; _errs[21] = TLS_ERR_RECORD_OVERFLOW;
+var _dup = 0;
+var _ei = 0;
+while (_ei < 22) {
+    var _ej = _ei + 1;
+    while (_ej < 22) {
+        if (_errs[_ei] == _errs[_ej]) { _dup = _dup + 1; }
+        _ej = _ej + 1;
+    }
+    _ei = _ei + 1;
+}
+assert_eq(_dup, 0, "the 22 TLS_ERR_* codes are pairwise distinct");
+
 # Record-layer wire values per RFC 8446 §5.1
 assert_eq(TLS_CT_CHANGE_CIPHER_SPEC, 20, "ContentType change_cipher_spec wire = 20");
 assert_eq(TLS_CT_ALERT, 21, "ContentType alert wire = 21");
