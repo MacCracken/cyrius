@@ -214,6 +214,25 @@ fn _am_hold(fd): i64 {
     return 0;
 }
 
+# A sealed alert and then a sealed app record ("late"), put on the wire in ONE write. ⚠ Two writes
+# raced the client: it reads the alert, fails (sticky — later reads never touch the socket) and
+# closes, so a server descheduled between the writes met a closed peer on the second. Before 6.6.14
+# that write raised SIGPIPE (a rare kill); since CVE-66 it is TLS_ERR_IO and the child exits 10 —
+# which GitHub's ARM runner and a loaded pi hit (4 of 20 runs). One write leaves no window: both
+# records are in the socket buffer before the client can read either. CHANGELOG [6.6.14]
+fn _am_seal_alert_then_data(srv, fd, level, desc): i64 {
+    var al[4];
+    store8(&al, level);
+    store8(&al + 1, desc);
+    var rec[160];
+    var rn = _tn_seal_ct(srv, TLS_CT_ALERT, &al, 2, &rec, 64);
+    if (rn <= 0) { return 1; }
+    var dn = tls_native_seal_app(srv, "late", 4, &rec + rn, 160 - rn);
+    if (dn <= 0) { return 1; }
+    if (_am_write_all(fd, &rec, rn + dn) != rn + dn) { return 1; }
+    return 0;
+}
+
 fn _am_seal_send(srv, fd, level, desc, len): i64 {
     var al[4];
     store8(&al, level);
@@ -237,10 +256,7 @@ fn _am_serve(sfd, script): i64 {
     if (script == AS_NONE) { _am_hold(sfd); return 0; }
     if (ar != TLS_OK) { return 3; }
     var bad = 0;
-    if (script == AS_ALERT_THEN_DATA) {
-        bad = _am_seal_send(srv, sfd, _am_level, _am_desc, 2);
-        if (tls_native_write(srv, "late", 4) != 4) { bad = 1; }
-    }
+    if (script == AS_ALERT_THEN_DATA) { bad = _am_seal_alert_then_data(srv, sfd, _am_level, _am_desc); }
     if (script == AS_UC_Y_CLOSE) {
         bad = _am_seal_send(srv, sfd, TLS_ALERT_WARNING, TLS_AD_USER_CANCELED, 2);
         if (tls_native_write(srv, "y", 1) != 1) { bad = 1; }
