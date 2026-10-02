@@ -62,6 +62,61 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   every expected byte and commit taken from the origin; mutation ledger in the file — the
   6.6.12 resolver reds D1 D2 D3 D3b D4 D6 D8). Documented in the guide's *Dependencies*
   section, with `modules = []` as the declared-not-linked opt-out.
+### Added
+
+- **`fd_wait_ready(fd, want_write, timeout_ms)` — one bounded readiness wait on a caller-owned fd,
+  on every target (I8, the wait primitive).** Returns 1 when the fd is readable (`want_write` == 0)
+  or writable (non-zero) — an error or hang-up counts as ready, so the next read or write reports
+  it — 0 when `timeout_ms` passed first, or -errno (-4 EINTR; -9 EBADF / -10038 WSAENOTSOCK for an
+  fd that is not open — or negative: poll(2) and WSAPoll silently skip an fd < 0, so a failed
+  socket()/accept() result would otherwise read as a timeout, or hang under an indefinite wait). `timeout_ms` < 0 waits indefinitely; above INT_MAX it is clamped. Linux and
+  both macOS peers issue one raw poll(7) from `lib/syscalls_linux_common.cyr` (ppoll with a timespec
+  on aarch64-Linux, BSD poll 230 on both Mach-O backends); Windows is ws2_32!WSAPoll (0xF04A,
+  POLLRDNORM / POLLWRNORM; sockets only); agnos declines with -38. Native TLS needs it to bound
+  reads and writes by a deadline (the 2026-10-01 tls-native-no-deadline filing), and none of the
+  existing waits fit a caller-owned fd: `lib/process.cyr`'s `_proc_poll_in` is read-only and
+  private to the subprocess drain, `lib/net.cyr`'s WSAPoll is the Windows-only connect wait, and
+  `async_await_readable_ms` needs a coroutine. Companion: `tests/tcyr/crossos/fd_wait_ready.tcyr`
+  (timeout, writable, readable, a closed peer reads ready then EOF, a closed fd and a negative fd
+  are errors returned at once; a pipe on POSIX), run on ecb, ach, cass and pi.
+- **agnos: `_agnos_sock_send_dl(conn, buf, n, tmo_us, rearm)` — a socket send bounded by the
+  caller's deadline.** agnos has no poll, so a deadline-bounded write has to live inside the peer's
+  send loop. `rearm` = 0 makes `tmo_us` a bound on the WHOLE transfer (never re-armed, the clock
+  read after each call that moved bytes too), so a peer ACKing a trickle cannot stretch it;
+  `rearm` = 1 is the 6.6.7 stall bound, and `_agnos_sock_send_all` — sys_write's socket route — is
+  now that form, unchanged. One sock_send#48 call can itself block ~8 s, so a rearm=0 deadline can
+  overshoot by that much. Pinned by `tests/gates/platform/agnos_sock_send_deadline.sh` against the
+  fake kernel (four mutations, each RED).
+
+### Fixed
+
+- **`f64_parse` (and `f64_parse_ok`) return the correctly rounded double (I4, issue
+  2026-09-30, found by abaco 2.4.9's audit).** **Root cause:** `lib/math.cyr` accumulated the
+  digits in f64 (`result * 10 + d`, then `digit * 0.1^k` for the fraction) and applied the
+  exponent by building 10^k with a `*10` loop and one multiply or divide — a rounding per digit and
+  per step, and the power of ten overflowed or underflowed before the mantissa was applied. 2,270
+  of the 10,000 literals `0.00`..`99.99` came back 1 ulp off (`0.3` → 0.30000000000000004),
+  `0.0001e310` gave +Inf, `123e-310` and `5e-324` gave 0, DBL_MIN read 2 ulp high; 6,285 of bayan's
+  7,736-vector parse corpus were wrong. **Fix:** a port of bayan 1.5.10's `bayan_f64_parse` —
+  Clinger's exact fast path, a DiyFp tier over 87 cached 64-bit powers of ten that answers only
+  outside a ±16-unit window, and Go strconv's 800-digit exact decimal for the rest — as the
+  internal `_f64_parse_n(s, n)`, which `f64_parse` calls after its own, unchanged front matter
+  (strict `nan` / `inf`; any other n/N/i/I start, no digits, empty → 0; `-0` → -0.0; the 6.4.69
+  exponent saturation, so `1e100000000` stays O(len)). The helpers carry a private
+  `_f64p_` / `_F64P_` prefix: lib/bayan.cyr folds the same algorithm as `_d_*`, and a shared name
+  would compile with only a `duplicate fn` warning and swap one copy's bodies for the other's. The
+  tables are read in place from hex literals and an if-chain of the 23 exact powers — no lazy
+  init, so nothing to race (bayan's copy fills its table on first use, unfenced). The exact tier
+  keeps 1,656 B of stack scratch, so the parser stays reentrant. No API change; values move by
+  ≤ 2 ulp to the right ones, so a golden text output may shift a last digit. Cost: about +14 KB in
+  a non-DCE binary that includes lib/math.cyr; short literals parse ~13–20 % slower (the fast path
+  now scans into an integer first). Pinned by `tests/tcyr/math/f64_parse_rounding.tcyr` — bayan's
+  `f64parse.vec` (7,736) and `f64.vec` (328), copied to `tests/data/f64parse/` with count floors,
+  bit-exact; the 10,000 two-decimal literals against `bayan_f64_parse` in the same binary; the
+  filed rows; the front matter (the legacy parser fails 15 of its 70 assertions, all on values) —
+  and the cross-host `tests/tcyr/crossos/f64_parse_correctly_rounded.tcyr` (70 inline cases: the
+  subnormal seam, DBL_MIN / DBL_MAX neighbours and the overflow tie, exact ties, inputs just off a
+  tie, 800+-digit inputs past the exact tier's capacity; the legacy parser fails 31).
 
 ### Downstream
 
