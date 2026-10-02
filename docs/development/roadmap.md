@@ -411,6 +411,9 @@ cyrius; a folded stdlib is then re-vendored into `lib/` byte-identical from its 
   NUL-terminated buffer it already builds; plus `_toml_unescape_span_a` above, and `_d_init_tables`
   (`src/dtoa.cyr`), a check-then-set lazy init with no publish barrier (on aarch64 a second thread can
   parse against zero significands — I3's class).
+- bayan: `bayan_toml_escape_a` still answers a refused output buffer with `str_from("")` from the default
+  allocator (1.5.11 fixed the unescape side), and `bayan_toml_parse` / `_inline_parse_a` leave their other
+  refusals unchecked (`vec_new`, `section_new`, `pair_new`, `vec_push`, and the `str_builder` paths).
 - crab: `[deps.daimon]` has no `modules`, so from 6.6.13 (I10) it warns on every build and CI clones daimon —
   add `modules = []` before pinning ≥ 6.6.13.
 - sigil can drop its in-process cold-trial workaround for arm64 macOS once it pins ≥ 6.6.13 (I6).
@@ -429,6 +432,32 @@ cyrius; a folded stdlib is then re-vendored into `lib/` byte-identical from its 
 Real 6.x-line work without a committed slot; pulled into a release the moment a consumer or
 priority surfaces. **These are technical items → they stay in the 6.x cycle, never 7.x.**
 
+- **Found by the 6.6.13 lanes' reviews (2026-10-01; backlog, not placed — only the user promotes).** ⚠ The
+  first two are security defects with no id yet (the next is CVE-64).
+  - ⚠ The native TLS 1.2 SERVER never sends a CertificateRequest and ignores `TLS_CTX_OFF_VERIFY`
+    (`_tn_12_server_drive`): a server that requires mTLS through `tls_set_verify` accepts an unauthenticated
+    client that offers only TLS 1.2 — an mTLS bypass by downgrade. Related: every non-zero OpenSSL mode
+    maps to `TLS_VERIFY_PEER`, so `SSL_VERIFY_FAIL_IF_NO_PEER_CERT` never reaches native and an empty client
+    Certificate is accepted; the 1.3 server checks possession, not a chain.
+  - ⚠ On Windows, `_tn_ca_read` (`lib/tls_native_hs12.cyr`) opens `/etc/ssl/cert.pem` and three sibling POSIX
+    paths, which resolve drive-relative (`C:\etc\ssl\cert.pem`): any local user can plant trust anchors —
+    CVE-54 / CVE-57's class. Not reachable through Winsock today (backlog (j) below), but live for a custom
+    transport.
+  - `cyrius deps` joins the `tag` value into `<home>/deps/<name>/<tag>` unchecked: `tag = "../../../x"`
+    exits 1 (git refuses the ref) but leaves an empty directory outside the dep cache — CVE-62's class on
+    the tag field.
+  - cycc's include fallback (`_init_cyrius_lib`, `src/frontend/lex.cyr`) reads
+    `$HOME/.cyrius/versions/<VERSION>/lib` and ignores `CYRIUS_HOME`, although its comment says otherwise,
+    so `cyrius distlib`'s verify can compile against a different stdlib than the one it attributes from
+    (`distlib_sidecar_verified.sh` pins HOME to work around it).
+  - Both annotation ladders PREFIX-match scalar type names: `var a: i8x` is silently `i8` (arrays and
+    scalars; only vector names are matched whole, in the array path).
+  - A nested `fn` inside a fn body compiles and SIGSEGVs at run time
+    (`fn outer(): i64 { fn inner(): i64 { return 3; } return inner(); }` → rc 139).
+  - `tests/tcyr/lang/element_typed_array.tcyr`'s sentinel sits BELOW the array, where an overrun cannot reach
+    it (the new `crossos/typed_array_elem_size.tcyr` covers the shape).
+  - The I7 repro and `tls_first_use_thread_race.sh` can flake on a random-port race (a fixed `sleep 0.5`; a
+    foreign listener on the port before `s_server` dies on bind).
 - **Found by the 6.6.13 premise check (2026-10-01; backlog, not placed — only the user promotes).** Met in
   passing while planning M1–M3 and I1–I11, not swept for. ⚠ (a)–(c) are silent miscompiles.
   - (a) A pointer-mode struct local assigned into an inline struct stores its address

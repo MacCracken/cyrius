@@ -423,7 +423,7 @@ per-session memory files so they survive environment changes.
   rule here tells you to work around codegen, treat the rule as the bug report.
 - **`var x[N]` local = N BYTES** (rounded to 8), not N slots — use `var a: i64[N]` for slots. Bare top-level arrays = N×8 (fixed v6.4.10).
 - **Reserved words are a CLASS, not a short list.** `TOKNAME_BUILTIN` (`src/common/util.cyr`) is
-  the single source of truth — **76** builtin/intrinsic names (DERIVED at v6.6.1; this line said 67, a `util.cyr` comment said 51) plus **26** statement keywords, and
+  the single source of truth — **79** builtin/intrinsic names (DERIVED at v6.6.13, when `f64_le` / `f64_ge` / `f64_trunc` became builtins; 76 at v6.6.1, when this line said 67 and a `util.cyr` comment said 51) plus **26** statement keywords, and
   `IS_KEYWORD_TOK` *derives* from it for the BUILTIN half only — ⚠ the statement keywords are
   enumerated separately in `IS_KEYWORD_TOK`, so those two CAN drift, and that function's own
   comment says so: "adding to one and not the other is exactly the drift that note claims is
@@ -435,7 +435,7 @@ per-session memory files so they survive environment changes.
   both from the v6.5.0 visibility work.) The
   parser rejects any of them as an identifier and (since v6.4.77) NAMES the one you hit.
   This line used to read "`secret`, `pub`, `shared` are reserved keywords" — three names for a
-  76-name class, which is structurally the same error as the retired "≤6 args" rule: a partial
+  79-name class, which is structurally the same error as the retired "≤6 args" rule: a partial
   observation written down as a language rule. Read the table, don't extend the list here — and DERIVE the count rather than quoting this line.
 - tcyr files MUST end `var r = assert_summary();` (or an explicit exit syscall) so success exits 0. Name tests topically, never temporally ("pass2"/"v3" — 20-yr QA pet peeve).
 - **cyrfmt continuation indent is a FORMATTER CONTRACT, not an authoring chore (v6.5.28).** A wrapped call's continuation lines are indented **2 spaces per open paren level** (canonical, what `cyrius fmt` emits); **4 per level is also accepted** by `--check`; anything deeper is rejected — accepting everything would stop it being a check. `cyrius fmt <file>` now **rewrites in place**; `--dry` reports without touching the file, `--verbose` writes and echoes, `--check` exits 1 **and says which line**. ⚠ This line used to read *"cyrfmt flattens multi-line call continuations to 4-space indent — write them that way up front"* — i.e. the tool's limitation written down as a rule for authors to pre-comply with, the same shape as the retired "≤6 args" rule. cyrfmt indented from BRACE depth only and never tracked parens; it does now.
