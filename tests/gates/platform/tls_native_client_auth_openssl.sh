@@ -320,9 +320,11 @@ crow() {
     NROWS=$((NROWS + 1))
     _rf=$FAILS
     rm -f "$T/ss.out" "$T/c.out"
-    (sleep 8 | $TO openssl s_server -accept 127.0.0.1:0 "-tls1_$(echo "$1" | cut -c2)" \
+    # -rev never reads stdin, so /dev/null does not end it early, and $! is s_server itself:
+    # killing it leaves nothing behind (a `sleep | s_server` subshell left its sleep running).
+    $TO openssl s_server -accept 127.0.0.1:0 "-tls1_$(echo "$1" | cut -c2)" \
         -cert "$T/srved.crt" -key "$T/srved.key" -CAfile "$T/ca.crt" "$2" 1 -naccept 1 -rev \
-        > "$T/ss.out" 2>&1) &
+        < /dev/null > "$T/ss.out" 2>&1 &
     _sp=$!
     BGP="$BGP $_sp"
     _w=0
