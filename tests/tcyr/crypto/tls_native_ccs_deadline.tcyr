@@ -97,11 +97,18 @@ fn _cd_split_flight(fd): i64 {
     return _cd_write_all(fd, &rec, na);
 }
 
+# ⚠ The injected CCS records and the record go out in ONE write. The end under test reads the CCS
+# that breaks its limit, refuses, sends its alert and closes; written separately, a hooked peer
+# descheduled between its writes met that closed socket on the next one — a SIGPIPE kill on 6.6.13
+# (or EPIPE under an inherited ignore, as on GitHub's runners), TLS_ERR_IO since CVE-66 — and the
+# row read the peer's exit code wrong (measured on a loaded pi: 3 of 3 runs). CHANGELOG [6.6.14]
 fn _cd_hook(fd, buf, n): i64 {
     _cd_writes = _cd_writes + 1;
     if (_cd_writes == _cd_hook_at || _cd_writes == _cd_hook_at2) {
         if (_cd_hook_mode == 0) { return n; }               # dropped
         if (_cd_hook_mode == CD_SPLIT) { _cd_split_flight(fd); return n; }
+        var out = alloc(n + 64);
+        var o = 0;
         if (_cd_hook_mode >= CD_AFTER) {
             var off = 0;
             var r = 0;
@@ -110,13 +117,17 @@ fn _cd_hook(fd, buf, n): i64 {
                 r = r + 1;
             }
             if (off > n) { off = n; }
-            if (off > 0) { _cd_write_all(fd, buf, off); }
-            _cd_ccs(fd);
-            if (n > off) { _cd_write_all(fd, buf + off, n - off); }
+            memcpy(out, buf, off);
+            memcpy(out + off, "\x14\x03\x03\x00\x01\x01", 6);
+            memcpy(out + off + 6, buf + off, n - off);
+            if (_cd_write_all(fd, out, n + 6) != n + 6) { return 0 - 1; }
             return n;
         }
         var k = 0;
-        while (k < _cd_hook_mode) { _cd_ccs(fd); k = k + 1; }
+        while (k < _cd_hook_mode) { memcpy(out + o, "\x14\x03\x03\x00\x01\x01", 6); o = o + 6; k = k + 1; }
+        memcpy(out + o, buf, n);
+        if (_cd_write_all(fd, out, o + n) != o + n) { return 0 - 1; }
+        return n;
     }
     return _cd_write_all(fd, buf, n);
 }
