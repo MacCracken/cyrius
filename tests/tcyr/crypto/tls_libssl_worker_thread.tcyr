@@ -23,6 +23,8 @@ include "lib/chrono.cyr"
 include "lib/thread.cyr"
 include "lib/tls.cyr"
 
+#ifdef CYRIUS_TARGET_LINUX
+#ifdef CYRIUS_ARCH_X86
 var _wt_cert = 0;          # DER, self-signed P-256, CN = SAN DNS = localhost
 var _wt_key = 0;
 var _wt_ctx = 0;           # a connected libssl shim the main thread made
@@ -239,6 +241,9 @@ fn test_worker_refused(): i64 {
     return 0;
 }
 
+#endif
+#endif
+
 # Runs everywhere: the guard itself, on the main thread and (where threads are real) on a worker.
 var _wt_guard_worker = 0 - 99;
 fn _wt_guard_body(arg): i64 {
@@ -262,6 +267,10 @@ fn test_guard(): i64 {
 }
 
 alloc_init();
+test_guard();
+var _wt_have = 0;
+#ifdef CYRIUS_TARGET_LINUX
+#ifdef CYRIUS_ARCH_X86
 _wt_got = cyr_mmap(0, 4096, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, 0 - 1, 0);
 _wt_names = alloc(35 * 8);
 var _wt_nm = "  worker: _tls_libssl_thread_ok|  worker: tls_available|  worker: tls_init_main|  worker: tls_dlsym|  worker: tls_connect_alloc|  worker: tls_connect_alloc_in|  worker: tls_connect|  worker: tls_accept_alloc|  worker: tls_accept_alloc_in|  worker: tls_connect_complete|  worker: tls_accept_complete|  worker: tls_read|  worker: tls_write|  worker: tls_set_deadline|  worker: tls_get_alpn_selected|  worker: tls_get_peer_spki_der|  worker: tls_set_alpn|  worker: tls_set_verify|  worker: tls_ctx_load_verify_locations|  worker: tls_ctx_set_verify_paths|  worker: tls_ctx_use_certificate_file|  worker: tls_ctx_use_private_key_file|  worker: tls_get_session|  worker: tls_set_session|  worker: tls_session_free|  worker: tls_ctx_set_session_new_cb|  worker: tls_ctx_set_session_remove_cb|  worker: tls_ctx_set_session_get_cb|  worker: tls_ctx_set_session_cache_mode|  worker: tls_ctx_set_max_early_data|  worker: tls_write_early_data|  worker: tls_read_early_data|  worker: tls_get_early_data_status|  worker: tls_session_get_max_early_data|  worker: tls_close";
@@ -280,22 +289,17 @@ while (_wt_k < 35) {
 }
 _wt_cert = hex_decode("3082019230820139a003020102021437416048df98b49fd5b278db00ebd0e1f87b6d40300a06082a8648ce3d04030230143112301006035504030c096c6f63616c686f7374301e170d3236303130313030303030305a170d3336303130313030303030305a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d030107034200040d7a46bc307511f24a53dcf973e0dfe2058db48d7db8b3941fa80176641ad78da12b801a12494d49312bf5b0ac312f3d50bca2282126fddd03652013bf8b49c5a3693067301d0603551d0e041604143bdd6c2d487f854851f408356e66880375bd6743301f0603551d230418301680143bdd6c2d487f854851f408356e66880375bd6743300f0603551d130101ff040530030101ff30140603551d11040d300b82096c6f63616c686f7374300a06082a8648ce3d04030203470030440220365bd112f9b8faec50c9b4a2cf7ec487cc424901870b8156b349dba15e1cde8102200c1ec7f6eefec5bc9976f55a70608b07d669c78183fa08e9a863370d17e39df3", 812);
 _wt_key = hex_decode("308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420666340f5e33734c31438ae0abd2370b72da193b44565625051bbc79a344535dda144034200040d7a46bc307511f24a53dcf973e0dfe2058db48d7db8b3941fa80176641ad78da12b801a12494d49312bf5b0ac312f3d50bca2282126fddd03652013bf8b49c5", 276);
-test_guard();
 tls_set_backend(TLS_BACKEND_LIBSSL);
 # The probe runs in a child, so the parent's own libssl state stays cold for the scenarios.
-var _wt_have = 0;
-#ifdef CYRIUS_TARGET_LINUX
-#ifdef CYRIUS_ARCH_X86
 var _wt_pp = sys_fork();
 if (_wt_pp == 0) { sys_exit(tls_available()); }
 var _wt_ps[8];
 sys_waitpid(_wt_pp, &_wt_ps, 0);
 if (((load64(&_wt_ps) >> 8) & 0xFF) == 1) { _wt_have = 1; }
+if (_wt_have == 1) { test_worker_refused(); }
 #endif
 #endif
-if (_wt_have == 1) {
-    test_worker_refused();
-} else {
+if (_wt_have == 0) {
     var _skip = "  SKIP: libssl.so.3 or the fdlopen helper ($HOME/.cyrius/dlopen-helper) is not available (libssl runs on Linux x86_64 only)\n";
     sys_write(1, _skip, strlen(_skip));
 }
