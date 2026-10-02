@@ -37,8 +37,8 @@ fn _st_arm(): i64 {
 
 fn _st_run(): i64 {
     _st_arm();
-    var ctx = alloc(32);
-    store64(ctx, 0);
+    var ctx = alloc(_TLS_LIBSSL_SHIM_LEN);              # the libssl shim's real size (40 B since 6.6.14)
+    memset(ctx, 0, _TLS_LIBSSL_SHIM_LEN);
     store64(ctx + 8, 0x3000);           # a non-zero SSL*: the stubs never dereference it
     var buf = alloc(256);
 
