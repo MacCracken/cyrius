@@ -289,7 +289,7 @@ fn tls_native_12_build_client_hello(ctx, out, out_max): i64 {
     if (host != 0) {
         if (host_len > 0) { sni_ext = 4 + 2 + 1 + 2 + host_len; }
     }
-    # ext_block = SNI + supported_groups(8) + ec_point_formats(6)
+    # ext_block = SNI + supported_groups(8, +2 for our certificate's curve) + ec_point_formats(6)
     #           + signature_algorithms(20, seven schemes — .83 added RSA PSS+PKCS1)
     #           + renegotiation_info(5, empty — RFC 5746 §3.4)
     #           + extended_master_secret(4, empty — RFC 7627 §5.1)
@@ -298,7 +298,23 @@ fn tls_native_12_build_client_hello(ctx, out, out_max): i64 {
     var apl = 0;
     var alpn_ext = 0;
     if (alpn != 0) { apl = _tn_be16_r(alpn); alpn_ext = 6 + apl; }
-    var ext_block = sni_ext + 8 + 6 + 20 + 5 + 4 + alpn_ext;
+    # 6.6.14 (CVE-64): a TLS 1.2 server checks that an ECDSA client certificate's curve is one the
+    # client listed in supported_groups (RFC 8422 §5.1.1; OpenSSL refuses it, "wrong curve"), so
+    # with a P-256 / P-384 client certificate installed that curve follows x25519. Our ECDHE stays
+    # x25519 alone: a server that picks the listed curve for the key exchange fails the
+    # ServerKeyExchange (TLS_ERR_HANDSHAKE_FAILED), and without a client certificate the hello is
+    # unchanged. CHANGELOG [6.6.14]
+    var cgroup = 0;
+    if (load64(ctx + TLS_CTX_OFF_CERT_CHAIN) != 0) {
+        if (load64(ctx + TLS_CTX_OFF_CREDS_LOADED) == 1) {
+            var ks = _tn_key_scheme(ctx);
+            if (ks == TLS_SIG_ECDSA_SECP256R1_SHA256) { cgroup = TLS_GROUP_SECP256R1; }
+            if (ks == TLS_SIG_ECDSA_SECP384R1_SHA384) { cgroup = TLS_GROUP_SECP384R1; }
+        }
+    }
+    var sg_extra = 0;
+    if (cgroup != 0) { sg_extra = 2; }
+    var ext_block = sni_ext + 8 + sg_extra + 6 + 20 + 5 + 4 + alpn_ext;
     # cipher_suites = 2-byte len + six supported suites (12 bytes; .83 added RSA + AES-128)
     var body_len = 2 + 32 + 1 + 2 + 12 + 2 + 2 + ext_block;
     var total = TLS_HANDSHAKE_HEADER_LEN + body_len;
@@ -326,9 +342,10 @@ fn tls_native_12_build_client_hello(ctx, out, out_max): i64 {
         memcpy(p, host, host_len); p = p + host_len;
     }
     _tn_be16_w(p, TLS_EXT_SUPPORTED_GROUPS); p = p + 2;
-    _tn_be16_w(p, 4); p = p + 2;
-    _tn_be16_w(p, 2); p = p + 2;                       # named_curve_list length
+    _tn_be16_w(p, 4 + sg_extra); p = p + 2;
+    _tn_be16_w(p, 2 + sg_extra); p = p + 2;            # named_curve_list length
     _tn_be16_w(p, TLS_GROUP_X25519); p = p + 2;
+    if (cgroup != 0) { _tn_be16_w(p, cgroup); p = p + 2; }
     _tn_be16_w(p, TLS_EXT_EC_POINT_FORMATS); p = p + 2;
     _tn_be16_w(p, 2); p = p + 2;
     store8(p, 1); p = p + 1;                           # ec_point_format_list length (1 BYTE)
@@ -739,6 +756,223 @@ fn tls_native_12_parse_client_key_exchange(msg, msg_len, peer_pub_out32): i64 {
     return TLS_OK;
 }
 
+# ----------------------------------------------------------------
+# TLS 1.2 client authentication (6.6.14, CVE-64)
+# ----------------------------------------------------------------
+# RFC 5246 §7.4.4 / §7.4.6 / §7.4.8. A server whose verify mode is not TLS_VERIFY_NONE sends a
+# CertificateRequest between its ServerKeyExchange and ServerHelloDone; the client answers with a
+# Certificate (empty when it has nothing acceptable to present), its ClientKeyExchange and — when
+# it presented a certificate — a CertificateVerify signing every handshake message before it. The
+# server verifies the chain (_tn_server_take_client_chain) and the signature
+# (_tn_verify_client_sig), as the 1.3 server does. The offer is the 1.3 server's: ecdsa_sign
+# certificates (RFC 8422 §5.5 — EdDSA included) signing with ecdsa_secp256r1_sha256 (a P-256 key),
+# ecdsa_secp384r1_sha384 (a P-384 key) or ed25519; certificate_authorities is empty, so a client
+# picks its certificate itself (OpenSSL's s_client sends what it was given).
+# ⛔ WHY. The 1.2 server sent no CertificateRequest and never read the verify mode: a server that
+# required client certificates completed the handshake with ANY client that offered only TLS 1.2,
+# unauthenticated, and the 1.2 client failed every server that asked (TLS_ERR_BAD_HANDSHAKE).
+# CHANGELOG [6.6.14]
+
+var TLS12_CERT_TYPE_ECDSA_SIGN = 64;   # ClientCertificateType ecdsa_sign (RFC 8422 §5.5)
+
+# Server: build the TLS 1.2 CertificateRequest: certificate_types { ecdsa_sign },
+# supported_signature_algorithms { ecdsa_secp256r1_sha256, ecdsa_secp384r1_sha384, ed25519 },
+# certificate_authorities empty. Returns the message length (16) or TLS_ERR_BUFFER_FULL.
+fn _tn_12_build_cert_request(out, out_max): i64 {
+    var body_len = 1 + 1 + 2 + 6 + 2;
+    var total = TLS_HANDSHAKE_HEADER_LEN + body_len;
+    if (total > out_max) { return TLS_ERR_BUFFER_FULL; }
+    tls_native_handshake_write_header(out, TLS_HS_CERTIFICATE_REQUEST, body_len);
+    var p = out + TLS_HANDSHAKE_HEADER_LEN;
+    store8(p, 1); p = p + 1;                           # certificate_types length
+    store8(p, TLS12_CERT_TYPE_ECDSA_SIGN); p = p + 1;
+    _tn_be16_w(p, 6); p = p + 2;                       # supported_signature_algorithms length
+    _tn_be16_w(p, TLS_SIG_ECDSA_SECP256R1_SHA256); p = p + 2;
+    _tn_be16_w(p, TLS_SIG_ECDSA_SECP384R1_SHA384); p = p + 2;
+    _tn_be16_w(p, TLS_SIG_ED25519); p = p + 2;
+    _tn_be16_w(p, 0);                                  # certificate_authorities: empty
+    return total;
+}
+
+# Client: parse a TLS 1.2 CertificateRequest body (header stripped). Records that the server asked
+# (TLS_CTX_OFF_CERT_REQUESTED = 1) and the SignatureScheme our CertificateVerify will use
+# (TLS_CTX_OFF_CLIENT_SIG_SCHEME): the scheme of our key (_tn_key_scheme) when a certificate and its
+# key are installed (tls_native_set_client_cert / _key), the server lists ecdsa_sign and that
+# scheme — else 0, and the client answers with an empty Certificate (RFC 5246 §7.4.6). Every
+# length is checked against the body, and the three fields must fill it exactly. Returns TLS_OK
+# or TLS_ERR_BAD_HANDSHAKE.
+fn _tn_12_parse_cert_request(ctx, body, blen): i64 {
+    if (blen < 1) { return TLS_ERR_BAD_HANDSHAKE; }
+    var nt = load8(body) & 0xFF;
+    if (nt < 1) { return TLS_ERR_BAD_HANDSHAKE; }       # certificate_types<1..2^8-1>
+    var pos = 1 + nt;
+    if (pos + 2 > blen) { return TLS_ERR_BAD_HANDSHAKE; }
+    var sl = _tn_be16_r(body + pos);
+    pos = pos + 2;
+    if (sl < 2) { return TLS_ERR_BAD_HANDSHAKE; }       # supported_signature_algorithms<2..2^16-2>
+    if ((sl & 1) != 0) { return TLS_ERR_BAD_HANDSHAKE; }
+    if (pos + sl > blen) { return TLS_ERR_BAD_HANDSHAKE; }
+    var sa = body + pos;
+    pos = pos + sl;
+    if (pos + 2 > blen) { return TLS_ERR_BAD_HANDSHAKE; }
+    var cal = _tn_be16_r(body + pos);                   # certificate_authorities<0..2^16-1>
+    pos = pos + 2;
+    if (pos + cal != blen) { return TLS_ERR_BAD_HANDSHAKE; }
+    store64(ctx + TLS_CTX_OFF_CERT_REQUESTED, 1);
+    store64(ctx + TLS_CTX_OFF_CLIENT_SIG_SCHEME, 0);
+    if (load64(ctx + TLS_CTX_OFF_CERT_CHAIN) == 0) { return TLS_OK; }
+    if (load64(ctx + TLS_CTX_OFF_CREDS_LOADED) != 1) { return TLS_OK; }
+    var want = _tn_key_scheme(ctx);
+    if (want == 0) { return TLS_OK; }
+    var type_ok = 0;
+    var i = 0;
+    while (i < nt) {
+        if ((load8(body + 1 + i) & 0xFF) == TLS12_CERT_TYPE_ECDSA_SIGN) { type_ok = 1; }
+        i = i + 1;
+    }
+    if (type_ok == 0) { return TLS_OK; }
+    var j = 0;
+    while (j < sl) {
+        if (_tn_be16_r(sa + j) == want) {
+            store64(ctx + TLS_CTX_OFF_CLIENT_SIG_SCHEME, want);
+            j = sl;
+        } else {
+            j = j + 2;
+        }
+    }
+    return TLS_OK;
+}
+
+# Client: the TLS 1.2 Certificate message with no certificate (RFC 5246 §7.4.6: an empty
+# certificate_list, never an omitted message). Returns 7 or TLS_ERR_BUFFER_FULL.
+fn _tn_12_build_empty_certificate(out, out_max): i64 {
+    if (out_max < TLS_HANDSHAKE_HEADER_LEN + 3) { return TLS_ERR_BUFFER_FULL; }
+    tls_native_handshake_write_header(out, TLS_HS_CERTIFICATE, 3);
+    _tn_be24_w(out + TLS_HANDSHAKE_HEADER_LEN, 0);
+    return TLS_HANDSHAKE_HEADER_LEN + 3;
+}
+
+# The three spans a TLS 1.2 CertificateVerify signs — every handshake message before it, in
+# order (RFC 5246 §7.4.8): `a` ‖ `b` ‖ `c`, copied into one buffer from the ctx's allocator (Ed25519
+# signs the messages themselves, so a running hash cannot stand in). Returns the buffer or 0 (OOM).
+fn _tn_12_cv_content(ctx, a, an, b, bn, c, cn): i64 {
+    var buf = _tn_alloc(ctx, an + bn + cn + 1);
+    if (buf == 0) { return 0; }
+    memcpy(buf, a, an);
+    memcpy(buf + an, b, bn);
+    memcpy(buf + an + bn, c, cn);
+    return buf;
+}
+
+# Client: build the TLS 1.2 CertificateVerify — `scheme` (TLS_CTX_OFF_CLIENT_SIG_SCHEME) and our
+# key's signature over `content` (_tn_12_cv_content). Returns the message length or a negative
+# TLS_ERR_* (TLS_ERR_KEY_UNSUPPORTED if the key cannot make `scheme`).
+fn _tn_12_build_cert_verify(ctx, scheme, content, content_len, out, out_max): i64 {
+    var sig = _tn_alloc(ctx, 128);
+    if (sig == 0) { return TLS_ERR_OOM; }
+    var made = 0;
+    var sig_len = _tn_sign(ctx, content, content_len, sig, 128, &made);
+    if (sig_len < 0) { return sig_len; }
+    if (made != scheme) { return TLS_ERR_KEY_UNSUPPORTED; }
+    var body_len = 2 + 2 + sig_len;
+    var total = TLS_HANDSHAKE_HEADER_LEN + body_len;
+    if (total > out_max) { return TLS_ERR_BUFFER_FULL; }
+    tls_native_handshake_write_header(out, TLS_HS_CERTIFICATE_VERIFY, body_len);
+    _tn_be16_w(out + TLS_HANDSHAKE_HEADER_LEN, scheme);
+    _tn_be16_w(out + TLS_HANDSHAKE_HEADER_LEN + 2, sig_len);
+    memcpy(out + TLS_HANDSHAKE_HEADER_LEN + 4, sig, sig_len);
+    return total;
+}
+
+# Wrap `n` bytes of handshake messages as plaintext handshake records into `out`, fragmenting at
+# 2^14 bytes per record (RFC 5246 §6.2.1). Returns the bytes written or TLS_ERR_BUFFER_FULL.
+fn _tn_hs_plain_records(msgs, n, out, out_max): i64 {
+    var done = 0;
+    var w = 0;
+    while (done < n) {
+        var frag = n - done;
+        if (frag > TLS_RECORD_MAX_PLAINTEXT) { frag = TLS_RECORD_MAX_PLAINTEXT; }
+        if (w + TLS_RECORD_HEADER_LEN + frag > out_max) { return TLS_ERR_BUFFER_FULL; }
+        tls_native_record_write_header(out + w, TLS_CT_HANDSHAKE, 0x0303, frag);
+        memcpy(out + w + TLS_RECORD_HEADER_LEN, msgs + done, frag);
+        w = w + TLS_RECORD_HEADER_LEN + frag;
+        done = done + frag;
+    }
+    return w;
+}
+
+# Server: the next whole handshake message of the client's TLS 1.2 flight before its
+# ChangeCipherSpec, reassembled in `hb` (`hcap` bytes; *hlenp bytes held, *hposp of them
+# consumed): reads plaintext handshake records — no CCS, which ends the flight and is read with the
+# Finished — until one more message is complete, however the client split or coalesced them
+# (RFC 5246 §6.2.1). Returns the message's length (header + body; it starts at hb + *hposp - len),
+# or a negative TLS_ERR_* with the ctx failed: the read path's codes (an alert in place of a
+# handshake record is TLS_ERR_ALERT), TLS_ERR_BAD_RECORD for an empty record, TLS_ERR_BAD_HANDSHAKE
+# for a flight past `hcap`.
+fn _tn_12_srv_next_msg(ctx, fd, rbuf, rcap, hb, hcap, hlenp, hposp): i64 {
+    var hl = load64(hlenp);
+    var hp = load64(hposp);
+    while (1 == 1) {
+        if (hp + TLS_HANDSHAKE_HEADER_LEN <= hl) {
+            var ml = TLS_HANDSHAKE_HEADER_LEN + _tn_be24_r(hb + hp + 1);
+            if (hp + ml <= hl) {
+                store64(hposp, hp + ml);
+                return ml;
+            }
+            if (hp + ml > hcap) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
+        }
+        var rl = _tn_read_rec(ctx, fd, rbuf, rcap, _TN_CCS_REFUSE);
+        if (rl < 0) { return _tn_read_fail(ctx, rl); }
+        var hx = _tn_hs_expect_ct(ctx, load8(rbuf) & 0xFF, TLS_CT_HANDSHAKE);
+        if (hx != TLS_OK) { return hx; }
+        var pl = rl - TLS_RECORD_HEADER_LEN;
+        if (pl <= 0) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_RECORD); }
+        if (hl + pl > hcap) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
+        memcpy(hb + hl, rbuf + TLS_RECORD_HEADER_LEN, pl);
+        hl = hl + pl;
+        store64(hlenp, hl);
+    }
+    return TLS_ERR_INTERNAL;
+}
+
+# Server: the client's TLS 1.2 Certificate message (`msg`, `ml` bytes). An empty certificate_list
+# is no identity: accepted under TLS_VERIFY_PEER, refused under TLS_VERIFY_FAIL_IF_NO_PEER_CERT
+# (TLS_ERR_CERT_INVALID, as the 1.3 server answers it). A non-empty one MUST verify
+# (_tn_server_take_client_chain), and its leaf is then at TLS_CTX_OFF_CLIENT_CERT. On failure the
+# client is told why (_tn_client_auth_alert) and the ctx fails. Returns TLS_OK or the failure.
+fn _tn_12_srv_client_cert(ctx, fd, msg, ml): i64 {
+    var blen = ml - TLS_HANDSHAKE_HEADER_LEN;
+    var body = msg + TLS_HANDSHAKE_HEADER_LEN;
+    if (blen < 3) { return _tn_client_auth_alert(ctx, fd, TLS_ERR_BAD_HANDSHAKE, 0, 0); }
+    var list_len = _tn_be24_r(body);
+    if (3 + list_len != blen) { return _tn_client_auth_alert(ctx, fd, TLS_ERR_BAD_HANDSHAKE, 0, 0); }
+    if (list_len == 0) {
+        if (load64(ctx + TLS_CTX_OFF_VERIFY) == TLS_VERIFY_FAIL_IF_NO_PEER_CERT) {
+            return _tn_client_auth_alert(ctx, fd, TLS_ERR_CERT_INVALID, 1, 0);
+        }
+        return TLS_OK;
+    }
+    var tr = _tn_server_take_client_chain(ctx, body + 3, list_len, 0);
+    if (tr != TLS_OK) { return _tn_client_auth_alert(ctx, fd, tr, 0, 0); }
+    return TLS_OK;
+}
+
+# Server: the client's TLS 1.2 CertificateVerify (`msg`, `ml` bytes) over `content` (every
+# handshake message before it). Returns TLS_OK, or the failure with the client told
+# (decrypt_error for a bad signature) and the ctx failed.
+fn _tn_12_srv_client_cv(ctx, fd, msg, ml, content, content_len): i64 {
+    var blen = ml - TLS_HANDSHAKE_HEADER_LEN;
+    var body = msg + TLS_HANDSHAKE_HEADER_LEN;
+    if (blen < 4) { return _tn_client_auth_alert(ctx, fd, TLS_ERR_BAD_HANDSHAKE, 0, 0); }
+    var scheme = _tn_be16_r(body);
+    var sig_len = _tn_be16_r(body + 2);
+    if (4 + sig_len != blen) { return _tn_client_auth_alert(ctx, fd, TLS_ERR_BAD_HANDSHAKE, 0, 0); }
+    var vr = _tn_verify_client_sig(scheme, load64(ctx + TLS_CTX_OFF_CLIENT_CERT), content,
+      content_len, body + 4, sig_len, 1);
+    if (vr != TLS_OK) { return _tn_client_auth_alert(ctx, fd, vr, 0, 0); }
+    return TLS_OK;
+}
+
 # Write a ChangeCipherSpec record (RFC 5246 §7.1): ContentType
 # change_cipher_spec(20), version 0x0303, a single 0x01 body byte =
 # `14 03 03 00 01 01`. CCS is NOT a handshake message — it is never
@@ -1078,8 +1312,9 @@ fn _tn_12_parse_client_hello(ctx, body, blen): i64 {
 }
 
 # Server: build the coalesced flight ServerHello ‖ Certificate ‖
-# ServerKeyExchange ‖ ServerHelloDone into `out`, feeding each raw
-# handshake message into the transcript. Requires the transcript
+# ServerKeyExchange [‖ CertificateRequest] ‖ ServerHelloDone into `out`, feeding each raw
+# handshake message into the transcript. The CertificateRequest is sent when the ctx's verify
+# mode is not TLS_VERIFY_NONE (6.6.14, CVE-64: it never was). Requires the transcript
 # initialized + the ClientHello already fed, plus CIPHER, SERVER_RANDOM,
 # EPH_PUB, and loaded creds. Returns the total length or a negative
 # TLS_ERR_*.
@@ -1099,6 +1334,12 @@ fn tls_native_12_build_server_flight(ctx, out, out_max): i64 {
     if (n < 0) { return n; }
     tls_native_transcript_update(ts, out + pos, n);
     pos = pos + n;
+    if (load64(ctx + TLS_CTX_OFF_VERIFY) != TLS_VERIFY_NONE) {
+        n = _tn_12_build_cert_request(out + pos, out_max - pos);
+        if (n < 0) { return n; }
+        tls_native_transcript_update(ts, out + pos, n);
+        pos = pos + n;
+    }
     n = tls_native_12_build_server_hello_done(out + pos, out_max - pos);
     if (n < 0) { return n; }
     tls_native_transcript_update(ts, out + pos, n);
@@ -1106,12 +1347,14 @@ fn tls_native_12_build_server_flight(ctx, out, out_max): i64 {
     return pos;
 }
 
-# Client: consume the coalesced server flight (one plaintext record's
-# worth of SH ‖ Cert ‖ SKE ‖ SHD). Parses the ServerHello (fixing the
+# Client: consume the server flight (SH ‖ Cert ‖ SKE [‖ CertificateRequest] ‖ SHD, reassembled
+# by the caller). Parses the ServerHello (fixing the
 # cipher), retroactively initializes the transcript and feeds the
 # buffered ClientHello + ServerHello, then parses + verifies the
-# Certificate (leaf), ServerKeyExchange (signature + ephemeral pub),
-# and ServerHelloDone, feeding each into the transcript. Returns TLS_OK
+# Certificate (leaf), ServerKeyExchange (signature + ephemeral pub), a
+# CertificateRequest when the server sent one (6.6.14, _tn_12_parse_cert_request)
+# and ServerHelloDone, feeding each into the transcript. Returns the number of
+# flight bytes those messages span (> 0; the CertificateVerify signs exactly them)
 # or a negative TLS_ERR_*.
 fn _tn_12_client_consume_flight(ctx, flight, flight_len): i64 {
     var ht = 0;
@@ -1158,12 +1401,23 @@ fn _tn_12_client_consume_flight(ctx, flight, flight_len): i64 {
     if (tls_native_handshake_read_header(flight + pos, flight_len - pos, &ht, &blen) < 0) {
         return TLS_ERR_BAD_HANDSHAKE;
     }
+    if (ht == TLS_HS_CERTIFICATE_REQUEST) {
+        var crq_msg_len = TLS_HANDSHAKE_HEADER_LEN + blen;
+        if (crq_msg_len > flight_len - pos) { return TLS_ERR_BAD_HANDSHAKE; }
+        var qr = _tn_12_parse_cert_request(ctx, flight + pos + TLS_HANDSHAKE_HEADER_LEN, blen);
+        if (qr != TLS_OK) { return qr; }
+        tls_native_transcript_update(ts, flight + pos, crq_msg_len);
+        pos = pos + crq_msg_len;
+        if (tls_native_handshake_read_header(flight + pos, flight_len - pos, &ht, &blen) < 0) {
+            return TLS_ERR_BAD_HANDSHAKE;
+        }
+    }
     var shd_msg_len = TLS_HANDSHAKE_HEADER_LEN + blen;
     if (shd_msg_len > flight_len - pos) { return TLS_ERR_BAD_HANDSHAKE; }
     var dr = tls_native_12_parse_server_hello_done(flight + pos, shd_msg_len);
     if (dr != TLS_OK) { return dr; }
     tls_native_transcript_update(ts, flight + pos, shd_msg_len);
-    return TLS_OK;
+    return pos + shd_msg_len;
 }
 
 # Client-side TLS 1.2 handshake driver over a connected socket. Sends a
@@ -1211,32 +1465,64 @@ fn tls_native_connect_12(ctx, sock_fd): i64 {
         fdone = _tn_flight_complete(fbuf, flen, TLS_HS_SERVER_HELLO_DONE);
     }
     var cf = _tn_12_client_consume_flight(ctx, fbuf, flen);
-    if (cf != TLS_OK) { return _tn_ctx_fail(ctx, cf); }
+    if (cf < 0) { return _tn_ctx_fail(ctx, cf); }
     var er = _tn_gen_ephemeral_x25519_pub_only(ctx);
     if (er != TLS_OK) { return _tn_ctx_fail(ctx, er); }
     var pm = _tn_alloc(ctx, 32);
     if (pm == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var pr = tls_native_12_compute_premaster(ctx, load64(ctx + TLS_CTX_OFF_PEER_PUB), pm);
     if (pr != TLS_OK) { return _tn_ctx_fail(ctx, pr); }
+    # Our flight before the CCS, as handshake messages in `hm`: [Certificate,] ClientKeyExchange
+    # [, CertificateVerify] (RFC 5246 §7.3). The Certificate answers a CertificateRequest
+    # (6.6.14, CVE-64): ours when _tn_12_parse_cert_request chose a scheme, else an empty one.
+    var creq = load64(ctx + TLS_CTX_OFF_CERT_REQUESTED);
+    var cscheme = load64(ctx + TLS_CTX_OFF_CLIENT_SIG_SCHEME);
+    var hcap = 512;
+    if (cscheme != 0) { hcap = hcap + load64(ctx + TLS_CTX_OFF_CERT_LEN); }
+    var hm = _tn_alloc(ctx, hcap);
+    if (hm == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    var hn = 0;
+    var ts = load64(ctx + TLS_CTX_OFF_TRANSCRIPT);
+    if (creq == 1) {
+        var cmn = 0;
+        if (cscheme != 0) { cmn = _tn_build_certificate_12(ctx, hm, hcap); }
+        else { cmn = _tn_12_build_empty_certificate(hm, hcap); }
+        if (cmn < 0) { return _tn_ctx_fail(ctx, cmn); }
+        tls_native_transcript_update(ts, hm, cmn);
+        hn = cmn;
+    }
     # Build the ClientKeyExchange + feed it into the transcript BEFORE deriving
     # keys, so the EMS session_hash (RFC 7627) covers CH..CKE. The legacy master
-    # ignores the transcript, so this reorder is safe in both modes; the CKE
+    # ignores the transcript, so this reorder is safe in both modes; the
     # record-wrap + socket-send stay below (the wire bytes are order-independent).
     # The server (_tn_12_server_drive) already feeds CKE before deriving — it
     # needs no reorder.
-    var cke = _tn_alloc(ctx, 64);
-    if (cke == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
-    var cken = tls_native_12_build_client_key_exchange(load64(ctx + TLS_CTX_OFF_EPH_PUB), cke, 64);
+    var cken = tls_native_12_build_client_key_exchange(load64(ctx + TLS_CTX_OFF_EPH_PUB), hm + hn, hcap - hn);
     if (cken < 0) { return _tn_ctx_fail(ctx, cken); }
-    var ts = load64(ctx + TLS_CTX_OFF_TRANSCRIPT);
-    tls_native_transcript_update(ts, cke, cken);
+    tls_native_transcript_update(ts, hm + hn, cken);
+    hn = hn + cken;
     var dk = tls_native_12_derive_keys(ctx, pm, 32);
     if (dk != TLS_OK) { return _tn_ctx_fail(ctx, dk); }
-    var ckerec = _tn_alloc(ctx, cken + TLS_RECORD_HEADER_LEN);
+    if (creq == 1) {
+        if (cscheme != 0) {
+            # The CertificateVerify signs every handshake message before it (RFC 5246 §7.4.8) —
+            # after the EMS session_hash, which ends at the ClientKeyExchange (RFC 7627 §3).
+            var cvc = _tn_12_cv_content(ctx, load64(ctx + TLS_CTX_OFF_CH_BUF), load64(ctx + TLS_CTX_OFF_CH_LEN),
+              fbuf, cf, hm, hn);
+            if (cvc == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+            var cvn = _tn_12_build_cert_verify(ctx, cscheme, cvc,
+              load64(ctx + TLS_CTX_OFF_CH_LEN) + cf + hn, hm + hn, hcap - hn);
+            if (cvn < 0) { return _tn_ctx_fail(ctx, cvn); }
+            tls_native_transcript_update(ts, hm + hn, cvn);
+            hn = hn + cvn;
+        }
+    }
+    var ckcap = hn + TLS_RECORD_HEADER_LEN * (1 + hn / TLS_RECORD_MAX_PLAINTEXT);
+    var ckerec = _tn_alloc(ctx, ckcap);
     if (ckerec == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
-    tls_native_record_write_header(ckerec, TLS_CT_HANDSHAKE, 0x0303, cken);
-    memcpy(ckerec + TLS_RECORD_HEADER_LEN, cke, cken);
-    var ckw = _tn_io_write_all(ctx, sock_fd, ckerec, cken + TLS_RECORD_HEADER_LEN);
+    var ckrn = _tn_hs_plain_records(hm, hn, ckerec, ckcap);
+    if (ckrn < 0) { return _tn_ctx_fail(ctx, ckrn); }
+    var ckw = _tn_io_write_all(ctx, sock_fd, ckerec, ckrn);
     if (ckw < 0) { return _tn_ctx_fail(ctx, ckw); }
     var ccs = _tn_alloc(ctx, 8);
     if (ccs == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
@@ -1321,26 +1607,65 @@ fn _tn_12_server_drive(ctx, sock_fd, ch_msg, ch_len): i64 {
     var cap = TLS_RECORD_MAX_CIPHERTEXT + TLS_RECORD_HEADER_LEN;
     var inbuf = _tn_alloc(ctx, cap);
     if (inbuf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
-    var rl = _tn_read_rec(ctx, sock_fd, inbuf, cap, _TN_CCS_REFUSE);
-    if (rl < 0) { return _tn_read_fail(ctx, rl); }
-    var hx_rec = _tn_hs_expect_ct(ctx, load8(inbuf) & 0xFF, TLS_CT_HANDSHAKE);
-    if (hx_rec != TLS_OK) { return hx_rec; }
-    var cke_msg = inbuf + TLS_RECORD_HEADER_LEN;
-    var cke_len = rl - TLS_RECORD_HEADER_LEN;
+    # The client's flight before its CCS — [Certificate,] ClientKeyExchange [, CertificateVerify]
+    # (RFC 5246 §7.3) — read one whole message at a time, however the client split its records.
+    # The Certificate and CertificateVerify come only when we asked (6.6.14, CVE-64): the three
+    # messages are bounded at 16 KiB (the 1.3 server reads a client Certificate of at most 8 KiB),
+    # which keeps an mTLS 1.2 handshake inside the 128 KiB arena an mTLS 1.3 one fits; without
+    # client auth the flight is the 37-byte ClientKeyExchange alone.
+    var mtls = 0;
+    if (load64(ctx + TLS_CTX_OFF_VERIFY) != TLS_VERIFY_NONE) { mtls = 1; }
+    var hcap = 512;
+    if (mtls == 1) { hcap = TLS_RECORD_MAX_PLAINTEXT; }
+    var hb = _tn_alloc(ctx, hcap);
+    if (hb == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    var hlen = 0;
+    var hpos = 0;
+    var mt = 0;
+    var mb = 0;
+    if (mtls == 1) {
+        var ccm = _tn_12_srv_next_msg(ctx, sock_fd, inbuf, cap, hb, hcap, &hlen, &hpos);
+        if (ccm < 0) { return ccm; }
+        var ccp = hb + hpos - ccm;
+        tls_native_handshake_read_header(ccp, ccm, &mt, &mb);
+        if (mt != TLS_HS_CERTIFICATE) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
+        var ccr = _tn_12_srv_client_cert(ctx, sock_fd, ccp, ccm);
+        if (ccr != TLS_OK) { return ccr; }
+        tls_native_transcript_update(ts, ccp, ccm);
+    }
+    var cke_len = _tn_12_srv_next_msg(ctx, sock_fd, inbuf, cap, hb, hcap, &hlen, &hpos);
+    if (cke_len < 0) { return cke_len; }
+    var cke_msg = hb + hpos - cke_len;
     var client_pub = _tn_alloc(ctx, 32);
     if (client_pub == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var cr2 = tls_native_12_parse_client_key_exchange(cke_msg, cke_len, client_pub);
     if (cr2 != TLS_OK) { return _tn_ctx_fail(ctx, cr2); }
-    # Feed the EXACT 37-byte ClientKeyExchange message (4-byte header +
-    # 33-byte body), not the record payload — a peer that pads/coalesces
-    # the record would otherwise desync the transcript vs the client.
-    tls_native_transcript_update(ts, cke_msg, TLS_HANDSHAKE_HEADER_LEN + 33);
+    tls_native_transcript_update(ts, cke_msg, cke_len);
     var pm = _tn_alloc(ctx, 32);
     if (pm == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var pr2 = tls_native_12_compute_premaster(ctx, client_pub, pm);
     if (pr2 != TLS_OK) { return _tn_ctx_fail(ctx, pr2); }
     var dk = tls_native_12_derive_keys(ctx, pm, 32);
     if (dk != TLS_OK) { return _tn_ctx_fail(ctx, dk); }
+    if (load64(ctx + TLS_CTX_OFF_CLIENT_CERT) != 0) {
+        # A presented (and verified) certificate: its CertificateVerify signs every handshake
+        # message before it — the ClientHello, our flight and the client's Certificate +
+        # ClientKeyExchange (RFC 5246 §7.4.8).
+        var cv_at = hpos;
+        var cvm = _tn_12_srv_next_msg(ctx, sock_fd, inbuf, cap, hb, hcap, &hlen, &hpos);
+        if (cvm < 0) { return cvm; }
+        var cvp = hb + hpos - cvm;
+        tls_native_handshake_read_header(cvp, cvm, &mt, &mb);
+        if (mt != TLS_HS_CERTIFICATE_VERIFY) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
+        var cvc = _tn_12_cv_content(ctx, ch_msg, TLS_HANDSHAKE_HEADER_LEN + blen, flight, fl, hb, cv_at);
+        if (cvc == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+        var cvr = _tn_12_srv_client_cv(ctx, sock_fd, cvp, cvm, cvc, TLS_HANDSHAKE_HEADER_LEN + blen + fl + cv_at);
+        if (cvr != TLS_OK) { return cvr; }
+        tls_native_transcript_update(ts, cvp, cvm);
+    }
+    # Nothing may follow the flight before the CCS: a message we did not ask for (an unrequested
+    # Certificate, a CertificateVerify with no certificate) is a protocol error.
+    if (hpos != hlen) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
     var crl = _tn_read_rec(ctx, sock_fd, inbuf, cap, _TN_CCS_MUST);
     if (crl < 0) { return _tn_read_fail(ctx, crl); }
     var cfin = _tn_alloc(ctx, 64);
