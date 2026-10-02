@@ -4198,7 +4198,10 @@ var _dl_snap_lostn = 0;   # vec of i64: their lengths
 # 0, or -1 after naming why the snapshot could not be read (an unlistable directory or an
 # unreadable file: attributing against a partial snapshot would miss symbols in silence).
 fn _distlib_snap_cache(root): i64 {
-    if (_dl_snap_root != 0) { if (streq(str_from(_dl_snap_root), str_from(root)) == 1) { return 0; } }
+    # Both are C strings. This compared two fresh Str HEADERS as C strings — the data pointers'
+    # bytes — so it hit only for the identical pointer and re-read the tree for an equal path.
+    # 6.6.13's Str -> cstring diagnostic (I11) named it. CHANGELOG [6.6.13]
+    if (_dl_snap_root != 0) { if (streq(_dl_snap_root, root) == 1) { return 0; } }
     var ents = _cbt_list_dir(root, "the sidecar verify cannot attribute symbols");
     if (ents == 0) { return 0 - 1; }
     _dl_snap_names = vec_new();
