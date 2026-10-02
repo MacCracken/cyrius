@@ -246,7 +246,7 @@ var _ts_pbuf = 0;                   # one property value
 # -1 when absent, -2 when the call failed for another reason.
 fn _ts_prop(fns, cc, id): i64 {
     var cb[8];
-    store64(&cb, 4096);
+    store64(&cb, 65536);
     var r = callptr(load64(fns + 24), cc, id, _ts_pbuf, &cb) & 0xFFFFFFFF;
     if (r == 0) {
         if ((syscall(0xF04B) & 0xFFFFFFFF) == _TS_NOT_FOUND) { return 0 - 1; }
@@ -321,7 +321,7 @@ fn _ts_dated(fns, cc, d, e): i64 {
 # 126 / 127), or a purpose list it cannot read.
 fn _ts_expect(fns, cc): i64 {
     var n = _ts_prop(fns, cc, 9);
-    if (n == 0 - 2) { return 0; }
+    if (n == 0 - 2) { return 2; }    # unreadable: the library refuses and counts it
     if (n >= 0) {
         if (_ts_eku_ok(n) == 0) { return 2; }
         if (_ts_names_server(n) == 0) { return 0; }
@@ -349,7 +349,7 @@ fn test_store_policy(): i64 {
     test_group("Windows: the bundle is exactly the ROOT store's TLS roots, re-derived here");
     _ts_oid_sa = hex_decode("06082b06010505070301", 20);
     _ts_oid_any = hex_decode("0604551d2500", 12);
-    _ts_pbuf = alloc(4096);
+    _ts_pbuf = alloc(65536);
     var fns[32];
     assert_eq(_tn_w_crypt32(&fns), 1, "crypt32 loads from System32 and resolves");
     var root = _tn_w_open(&fns, "ROOT");
@@ -419,7 +419,7 @@ fn test_store_policy(): i64 {
     fmt_int(not_tls);
     syscall(1, 1, " not for TLS, ", 14);
     fmt_int(want_ref);
-    syscall(1, 1, " refused by a date, ", 20);
+    syscall(1, 1, " refused by policy, ", 20);
     fmt_int(nd);
     syscall(1, 1, " in Disallowed; ", 16);
     fmt_int(nb_tls);
@@ -429,7 +429,7 @@ fn test_store_policy(): i64 {
     assert_eq(wrong, 0, "each ROOT certificate is in the bundle exactly when Windows trusts it for TLS");
     assert_eq(_ts_blocks(_tn_ca_buf, _tn_ca_len), want_in, "the bundle holds exactly those");
     assert_eq(nb_in, 0, "no root whose NotBefore distrust (126 / 127) covers TLS is in the bundle");
-    assert_eq(_tn_ca_sys_refused, want_ref, "the roots refused by a date are the refused count");
+    assert_eq(_tn_ca_sys_refused, want_ref, "the roots the policy refuses are the refused count");
     return 0;
 }
 
@@ -468,6 +468,33 @@ fn _tm_with(id, hex): i64 {
     store64(_tm_props + _tm_n * 24 + 16, hl / 2);
     _tm_n = _tm_n + 1;
     return 0;
+}
+
+# Give the row's certificate property `id` = p[0..n).
+fn _tm_with_bytes(id, p, n): i64 {
+    store64(_tm_props + _tm_n * 24, id);
+    store64(_tm_props + _tm_n * 24 + 8, p);
+    store64(_tm_props + _tm_n * 24 + 16, n);
+    _tm_n = _tm_n + 1;
+    return 0;
+}
+
+# A 694-byte purpose list — longer than any on cass (104 B) and than the 512-byte buffer the policy
+# once read into: 69 OIDs, codeSigning throughout, the last one serverAuth when `sa` is 1.
+fn _tm_long(sa): i64 {
+    var p = alloc(694);
+    store8(p, 0x30);
+    store8(p + 1, 0x82);
+    store8(p + 2, 0x02);
+    store8(p + 3, 0xB2);                # 690 = 69 * 10
+    var cs = hex_decode("06082b06010505070303", 20);
+    var i = 0;
+    while (i < 69) {
+        memcpy(p + 4 + i * 10, cs, 10);
+        i = i + 1;
+    }
+    if (sa == 1) { store8(p + 693, 0x01); }
+    return p;
 }
 
 # ROOT (memory) holds the fixture root with the properties given since _tm_reset; Disallowed
@@ -573,6 +600,13 @@ fn test_policy_rows(): i64 {
     assert_eq(_tm_run(&fns, 0, cap), 2, "purposes with a long-form OID length: refused");
     _tm_with(9, "");
     assert_eq(_tm_run(&fns, 0, cap), 2, "purposes present but EMPTY: refused");
+    # A purpose list of any length is read whole (size-queried), or refused and counted.
+    _tm_with_bytes(9, _tm_long(1), 694);
+    assert_eq(_tm_run(&fns, 0, cap), 1, "a 694-byte purpose list ending in serverAuth: read whole, exported");
+    _tm_with_bytes(9, _tm_long(0), 694);
+    assert_eq(_tm_run(&fns, 0, cap), 0, "a 694-byte purpose list without serverAuth: not a TLS root");
+    _tm_with_bytes(9, _tm_long(1), 694);
+    assert_eq(_tm_run(&fns, 0, 650), 2, "a purpose list too long for the buffer's free tail: refused, COUNTED");
     # The disable date (prop 104), scoped by prop 122.
     _tm_with(104, _TM_DATE);
     assert_eq(_tm_run(&fns, 0, cap), 2, "a disable date for every purpose: refused, counted");
@@ -620,6 +654,12 @@ fn test_policy_rows(): i64 {
     _tm_with(126, _TM_DATE);
     _tm_with(127, "");
     assert_eq(_tm_run(&fns, 0, cap), 2, "a NotBefore date with an EMPTY scope value: refused");
+    _tm_with(126, _TM_DATE);
+    _tm_with_bytes(127, _tm_long(0), 694);
+    assert_eq(_tm_run(&fns, 0, cap), 1, "a NotBefore date for a 694-byte [codeSigning ...] scope: read whole, exported");
+    _tm_with(126, _TM_DATE);
+    _tm_with_bytes(127, _tm_long(1), 694);
+    assert_eq(_tm_run(&fns, 0, cap), 2, "a NotBefore date for a 694-byte scope ending in serverAuth: refused");
     _tm_with(127, _TM_SA);
     assert_eq(_tm_run(&fns, 0, cap), 1, "a NotBefore scope with no date carries no distrust: exported");
     _tm_with(104, _TM_DATE);

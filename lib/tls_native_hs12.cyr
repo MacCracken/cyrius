@@ -1958,46 +1958,56 @@ fn _tn_w_eku_server(p, n): i64 {
     return found;
 }
 
-# 1 when the store certificate `cc` carries the dated distrust `date_id` and its purpose scope
-# `eku_id` covers TLS (an absent scope covers every purpose), or when either cannot be read; 0 when it
-# carries no such distrust.
-fn _tn_w_dated(fns, cc, date_id, eku_id): i64 {
-    var b[512];
+# Read property `id` of the store certificate `cc` into scratch[0..scap): its length, -1 when the
+# property is absent (CRYPT_E_NOT_FOUND), -2 when it cannot be read — any other failure, or a value
+# longer than `scap`. SIZE-QUERIED FIRST: a fixed 512-byte read failed ERROR_MORE_DATA on a longer
+# value, and the policy took that for "not a TLS root" — a root Windows trusts, dropped and counted
+# nowhere. CHANGELOG [6.6.14]
+fn _tn_w_prop(fns, cc, id, scratch, scap): i64 {
     var cb[8];
     var prop = load64(fns + 24);
     store64(&cb, 0);
-    var r = callptr(prop, cc, date_id, 0, &cb) & 0xFFFFFFFF;
+    var r = callptr(prop, cc, id, 0, &cb) & 0xFFFFFFFF;
     if (r == 0) {
-        if ((syscall(0xF04B) & 0xFFFFFFFF) != _TN_W_NOT_FOUND) { return 1; }
-        return 0;
+        if ((syscall(0xF04B) & 0xFFFFFFFF) == _TN_W_NOT_FOUND) { return 0 - 1; }
+        return 0 - 2;
     }
-    store64(&cb, 512);
-    r = callptr(prop, cc, eku_id, &b, &cb) & 0xFFFFFFFF;
-    if (r == 0) { return 1; }           # absent: the date applies to every purpose
-    if (_tn_w_eku_server(&b, load32(&cb)) != 0) { return 1; }  # names TLS, or malformed
+    var n = load32(&cb);
+    if (n == 0) { return 0; }
+    if (n > scap) { return 0 - 2; }
+    r = callptr(prop, cc, id, scratch, &cb) & 0xFFFFFFFF;
+    if (r == 0) { return 0 - 2; }
+    return load32(&cb);
+}
+
+# 1 when the store certificate `cc` carries the dated distrust `date_id` and its purpose scope
+# `eku_id` covers TLS (an absent scope covers every purpose; a malformed one may), or when either
+# cannot be read; 0 when it carries no such distrust.
+fn _tn_w_dated(fns, cc, date_id, eku_id, scratch, scap): i64 {
+    var n = _tn_w_prop(fns, cc, date_id, scratch, scap);
+    if (n == 0 - 1) { return 0; }
+    if (n == 0 - 2) { return 1; }
+    n = _tn_w_prop(fns, cc, eku_id, scratch, scap);
+    if (n < 0) { return 1; }            # absent: the date applies to every purpose
+    if (_tn_w_eku_server(scratch, n) != 0) { return 1; }   # names TLS, or malformed
     return 0;
 }
 
 # How Windows trusts the store certificate `cc` (a PCCERT_CONTEXT) for TLS server authentication:
 # 1 = as an anchor, 0 = not at all (its purposes leave serverAuth out), 2 = refused (a dated
-# distrust covers TLS, or a property is malformed). Any failure other than "property absent" fails
-# closed.
-fn _tn_w_policy(fns, cc): i64 {
-    var b[512];
-    var cb[8];
-    var prop = load64(fns + 24);
-    store64(&cb, 512);
-    var r = callptr(prop, cc, _TN_W_PROP_EKU, &b, &cb) & 0xFFFFFFFF;
-    if (r == 0) {
-        if ((syscall(0xF04B) & 0xFFFFFFFF) != _TN_W_NOT_FOUND) { return 0; }
-    }
-    if (r != 0) {
-        var e = _tn_w_eku_server(&b, load32(&cb));
-        if (e < 0) { return 2; }        # malformed: it cannot be judged, so refused and counted
+# distrust covers TLS, or a property cannot be read or is malformed — it cannot be judged, so it is
+# refused and COUNTED). Any failure other than "property absent" fails closed. Property values are
+# read into scratch[0..scap) — the unused tail of the bundle buffer.
+fn _tn_w_policy(fns, cc, scratch, scap): i64 {
+    var n = _tn_w_prop(fns, cc, _TN_W_PROP_EKU, scratch, scap);
+    if (n == 0 - 2) { return 2; }
+    if (n >= 0) {
+        var e = _tn_w_eku_server(scratch, n);
+        if (e < 0) { return 2; }
         if (e == 0) { return 0; }
     }
-    if (_tn_w_dated(fns, cc, _TN_W_PROP_DISABLE, _TN_W_PROP_DISABLE_EKU) == 1) { return 2; }
-    if (_tn_w_dated(fns, cc, _TN_W_PROP_NOTBEFORE, _TN_W_PROP_NOTBEFORE_EKU) == 1) { return 2; }
+    if (_tn_w_dated(fns, cc, _TN_W_PROP_DISABLE, _TN_W_PROP_DISABLE_EKU, scratch, scap) == 1) { return 2; }
+    if (_tn_w_dated(fns, cc, _TN_W_PROP_NOTBEFORE, _TN_W_PROP_NOTBEFORE_EKU, scratch, scap) == 1) { return 2; }
     return 1;
 }
 
@@ -2068,7 +2078,7 @@ fn _tn_w_export(fns, root, dis, buf, cap, refused): i64 {
     while (c != 0) {
         var der = load64(c + 8);
         var dlen = load32(c + 16);
-        var pol = _tn_w_policy(fns, c);
+        var pol = _tn_w_policy(fns, c, buf + total, cap - total);
         if (pol != 0) {
             if (_tn_w_in_store(fns, dis, der, dlen) == 1) { pol = 0; }
         }
