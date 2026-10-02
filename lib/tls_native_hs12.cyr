@@ -1854,31 +1854,14 @@ fn tls_native_set_verify(ctx, mode): i64 {
 # chain scratch is sized from its own block count (6.6.13, see _tn_ca_parse_set).
 var TLS_CA_MAX_ROOTS = 300;
 
-# The number of PEM certificate blocks in `pem[0..len)`: occurrences of the BEGIN marker sigil's
-# pem_decode_certs_into walks, so a decode that succeeds returns exactly this many.
-fn _tn_pem_block_count(pem, len): i64 {
-    var n = 0;
-    var i = 0;
-    while (i + 27 <= len) {
-        if (load8(pem + i) == 45) {
-            if (memeq(pem + i, "-----BEGIN CERTIFICATE-----", 27) == 1) {
-                n = n + 1;
-                i = i + 26;
-            }
-        }
-        i = i + 1;
-    }
-    return n;
-}
-
 # Parse a trust bundle into a root set [count][root ptrs...] — the layout verify_chain reads.
 # Every allocation comes from Allocator `alc` (0 = the global heap) and sigil's per-cert scratch
 # from the raw arena `arena` (0 = the global heap), so a ctx's roots live and die with the ctx.
-# PEM (`is_der == 0`): every block is decoded and parsed; a block sigil cannot parse (today: a
-# P-521 root) is SKIPPED, not fatal. DER: one certificate. Writes the skipped count through
-# `out_skipped` (blocks not installed: n - stored; 0 for a DER cert that parsed). Returns the set,
-# or a negative TLS_ERR_*: CERT_INVALID when nothing installs (the count is written first),
-# OOM, INVALID_PARAM.
+# PEM (`is_der == 0`): every block is decoded and parsed; a block sigil cannot decode (an
+# unmatched BEGIN, bad base64) or parse (today: a P-521 root) is SKIPPED, not fatal. DER: one
+# certificate. Writes the skipped count through `out_skipped` (blocks not installed:
+# blocks - stored; 0 for a DER cert that parsed). Returns the set, or a negative TLS_ERR_*:
+# CERT_INVALID when nothing installs (the count is written first), OOM, INVALID_PARAM.
 # ⛔ 6.6.13 — WHY THIS EXISTS. The loop lived inline in tls_native_set_ca_bundle, which counted
 # successes only: on Arch's /etc/ssl/cert.pem 8 of 121 roots were dropped (1 since sigil 3.13.6)
 # with no count anywhere, and a server chaining to one failed CERT_INVALID with nothing pointing
@@ -1902,15 +1885,21 @@ fn _tn_ca_parse_set(arena, alc, pem, len, is_der, out_skipped): i64 {
         store64(set1 + 8, root);
         return set1;
     }
-    var blocks = _tn_pem_block_count(pem, len);
+    # The BEGIN markers sigil's bundle walk visits: decoded + skipped == blocks (sigil 3.13.7).
+    var blocks = pem_count_cert_blocks(pem, len);
     if (blocks < 1) { return TLS_ERR_CERT_INVALID; }
     var chain = _tn_alloc_a(alc, blocks * 16);
     if (chain == 0) { return TLS_ERR_OOM; }
     var pool = _tn_alloc_a(alc, len);   # DER <= 3/4 of its base64; the bundle bounds the pool
     if (pool == 0) { return TLS_ERR_OOM; }
-    var n = pem_decode_certs_into(pem, len, chain, blocks, pool, len);
+    # ⛔ 6.6.14 — the LENIENT decode: a malformed block (an unmatched BEGIN, bad base64) is
+    # skipped and the rest decode. The strict pem_decode_certs_into failed the whole bundle on
+    # one, so one corrupt block in an OS store installed ZERO roots. Sized as above, the decode
+    # cannot run out of room, so n < 1 means every block was malformed. Its own skipped count is
+    # not needed (out_skipped 0): decoded + skipped == blocks, so blocks - stored below counts the
+    # decode's skips and the parse's together. CHANGELOG [6.6.14] (sigil 3.13.7).
+    var n = pem_decode_certs_lenient_into(pem, len, chain, blocks, pool, len, 0);
     if (n < 1) {
-        # A malformed block fails sigil's whole decode: nothing installs, every block is skipped.
         store64(out_skipped, blocks);
         return TLS_ERR_CERT_INVALID;
     }
@@ -1929,7 +1918,7 @@ fn _tn_ca_parse_set(arena, alc, pem, len, is_der, out_skipped): i64 {
         }
         i = i + 1;
     }
-    store64(out_skipped, n - stored);
+    store64(out_skipped, blocks - stored);   # decode-skipped (bad) + parse-skipped (n - stored)
     if (stored < 1) { return TLS_ERR_CERT_INVALID; }
     store64(set, stored);
     return set;
@@ -1957,7 +1946,9 @@ fn tls_native_set_ca_bundle(ctx, pem_bundle, bundle_len, is_der): i64 {
 # tls_native_set_ca_bundle / tls_native_set_ca_system / tls_ctx_load_verify_locations. After a
 # successful install, installed + skipped == the bundle's PEM block count; a server chaining to a
 # skipped root fails TLS_ERR_CERT_INVALID, and this is the count that points at the store (on
-# Arch's /etc/ssl/cert.pem: 1, the e-Szigno P-521 root, a curve sigil does not have). After an
+# Arch's /etc/ssl/cert.pem: 1, the e-Szigno P-521 root, a curve sigil does not have). Since 6.6.14
+# (sigil 3.13.7) a malformed block — an unmatched BEGIN, bad base64 — is counted here too and the
+# rest of the bundle installs; it used to fail the whole install. After an
 # install that failed TLS_ERR_CERT_INVALID it is that bundle's count (every block). Returns >= 0;
 # 0 before any install; TLS_ERR_INVALID_PARAM for ctx == 0.
 # Windows' system store (6.6.14) also counts the roots it refuses — a dated distrust (Disable or

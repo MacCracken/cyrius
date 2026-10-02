@@ -3821,8 +3821,10 @@ sigil::pcr_actual/1
 sigil::pcr_expected/1
 sigil::pcr_measurement_new/2
 sigil::pcr_set_actual/2
+sigil::pem_count_cert_blocks/2
 sigil::pem_decode_certs/4
 sigil::pem_decode_certs_into/6
+sigil::pem_decode_certs_lenient_into/7
 sigil::pem_decode_privkey/5
 sigil::policy_allow_unsigned/1
 sigil::policy_enforcement/1

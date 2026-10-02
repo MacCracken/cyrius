@@ -672,7 +672,8 @@ fn tls_set_verify(handle, mode, callback): i64 {
 # Native: the file buffer and the parsed roots come from the ctx's allocator, so a call retains
 # about twice the file's size plus 272 B per root — not the megabyte it kept per call before 6.6.13
 # — and an arena-backed ctx returns all of it on reset_via. tls_native_ca_skipped(handle) counts
-# the blocks it could not use. Returns 1/0/-1.
+# the blocks it could not use — a malformed block (6.6.14) among them, skipped while the rest
+# install. Returns 1/0/-1.
 fn tls_ctx_load_verify_locations(handle, cafile, capath): i64 {
     if (handle == 0) { return 0 - 1; }
     #ifndef CYRIUS_TLS_LIBSSL

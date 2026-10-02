@@ -114,15 +114,59 @@ fn test_skipped_counts(pem, plen, p521pem, p521len): i64 {
     rc = tls_native_set_ca_bundle(d, _cs_p521, _cs_p521_len, 1);
     assert_eq(rc, TLS_ERR_CERT_INVALID, "DER P-521 root is TLS_ERR_CERT_INVALID");
     assert_eq(tls_native_ca_skipped(d), 1, "DER: the refused cert is counted");
-    # A malformed block fails sigil's whole decode: nothing installs, every block is skipped.
-    var bad = alloc(plen + 128);
-    var bl = _cs_pem_append(bad, 0, _cs_p256, _cs_p256_len);
-    memcpy(bad + bl, "-----BEGIN CERTIFICATE-----\n!!!!\n-----END CERTIFICATE-----\n", 59);
-    bl = bl + 59;
-    var e = tls_native_new_client("localhost", 9);
-    assert_eq(tls_native_set_ca_bundle(e, bad, bl, 0), TLS_ERR_CERT_INVALID, "a malformed block refuses the bundle");
-    assert_eq(tls_native_ca_skipped(e), 2, "both blocks counted as skipped");
-    assert_eq(_cs_installed(e), 0, "nothing installed");
+    return 0;
+}
+
+# 6.6.14 (sigil 3.13.7): a malformed block is skipped and the rest of the bundle installs. It used
+# to fail sigil's whole decode, so one corrupt block in an OS store installed ZERO roots.
+# Malformed blocks first, directly before the root that installs, and last; through
+# set_ca_bundle and load_verify_locations.
+var _CS_BAD_B64 = "-----BEGIN CERTIFICATE-----\n!!!!\n-----END CERTIFICATE-----\n";   # 59 bytes
+var _CS_UNMATCHED = "-----BEGIN CERTIFICATE-----\nMIIB\n";                           # 33 bytes
+
+fn test_malformed_blocks_skipped(): i64 {
+    test_group("tls_native_set_ca_bundle: a malformed block is skipped, the rest of the bundle installs");
+    # [bad base64][unmatched BEGIN][P-256][P-521]: the unmatched BEGIN's body runs into the P-256
+    # root's BEGIN, where the strict decode failed. A decode that resumed after the END it ran
+    # into would lose the P-256 root — the one root here that installs — so the BEGIN sits
+    # directly before it. The two malformed blocks (sigil's decode) and the P-521 root (sigil's
+    # parse) are the 3 skipped.
+    var b = alloc(8192);
+    memcpy(b, _CS_BAD_B64, 59);
+    memcpy(b + 59, _CS_UNMATCHED, 33);
+    var bl = _cs_pem_append(b, 92, _cs_p256, _cs_p256_len);
+    bl = _cs_pem_append(b, bl, _cs_p521, _cs_p521_len);
+    var c = tls_native_new_client("localhost", 9);
+    assert_eq(tls_native_set_ca_bundle(c, b, bl, 0), TLS_OK, "a corrupt block no longer refuses the bundle");
+    assert_eq(_cs_installed(c), 1, "the P-256 root installs");
+    assert_eq(tls_native_ca_skipped(c), 3, "bad base64 + unmatched BEGIN + P-521: 3 skipped");
+    assert_eq(_cs_installed(c) + tls_native_ca_skipped(c), _cs_blocks(b, bl), "installed + skipped == PEM blocks");
+    # [P-256][bad base64]: the malformed block LAST.
+    var t = alloc(4096);
+    var tl = _cs_pem_append(t, 0, _cs_p256, _cs_p256_len);
+    memcpy(t + tl, _CS_BAD_B64, 59);
+    tl = tl + 59;
+    var d = tls_native_new_client("localhost", 9);
+    assert_eq(tls_native_set_ca_bundle(d, t, tl, 0), TLS_OK, "a corrupt last block: the bundle installs");
+    assert_eq(_cs_installed(d), 1, "a corrupt last block: the P-256 root installs");
+    assert_eq(tls_native_ca_skipped(d), 1, "a corrupt last block: 1 skipped");
+    # Every block malformed: nothing installs, every block is counted, the ctx keeps its set.
+    var set = load64(c + TLS_CTX_OFF_CA_ROOT);
+    var z = alloc(128);
+    memcpy(z, _CS_BAD_B64, 59);
+    memcpy(z + 59, _CS_UNMATCHED, 33);
+    assert_eq(tls_native_set_ca_bundle(c, z, 92, 0), TLS_ERR_CERT_INVALID, "an all-malformed bundle is TLS_ERR_CERT_INVALID");
+    assert_eq(tls_native_ca_skipped(c), 2, "an all-malformed bundle: both blocks counted");
+    assert_eq(load64(c + TLS_CTX_OFF_CA_ROOT), set, "an all-malformed bundle: the ctx keeps the set it had");
+    # The file path (tls_ctx_load_verify_locations) shares the parse.
+    var path = test_scratch("tls_ca_store_malformed.pem");
+    assert_eq(file_write_all(path, b, bl), bl, "the malformed-block fixture is written");
+    var w = tls_native_new_client("localhost", 9);
+    assert_eq(tls_ctx_load_verify_locations(w, path, 0), 1, "load_verify_locations: a corrupt block no longer refuses the file");
+    assert_eq(_cs_installed(w), 1, "load_verify_locations: the P-256 root installs");
+    assert_eq(tls_native_ca_skipped(w), 3, "load_verify_locations: 3 skipped");
+    xunlink(path);
+    assert_eq(file_exists(path), 0, "the malformed-block fixture is removed");
     return 0;
 }
 
@@ -237,6 +281,7 @@ fn main(): i64 {
     var path = test_scratch("tls_ca_store.pem");
     assert_eq(file_write_all(path, pem, plen), plen, "the fixture PEM is written");
     test_skipped_counts(pem, plen, p521pem, p521len);
+    test_malformed_blocks_skipped();
     test_sized_read(path, pem, plen);
     xunlink(path);
     assert_eq(file_exists(path), 0, "the fixture is removed");
