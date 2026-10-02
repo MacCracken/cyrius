@@ -17,6 +17,9 @@
 # now keeps the first failure at +32: every later tls_read returns it, every later tls_write
 # returns TLS_ERR_PROTOCOL (native's rule), neither calls SSL — counted here by spies interposed
 # on the resolved SSL_read / SSL_write / SSL_shutdown pointers — and tls_close skips SSL_shutdown.
+# Every row runs twice per protocol version: as is, and with a deadline set (tls_set_deadline), since
+# a deadline routes tls_read / tls_write through their own branch (_tls_ssl_io, CVE-61's loop) and
+# the stored error must hold there too.
 #
 # A libssl-backend client (this process) against a forked native server that misbehaves on cue.
 # A named SKIP when libssl.so.3 or the fdlopen helper is missing. SIGPIPE is ignored here: the
@@ -27,6 +30,7 @@ include "lib/alloc.cyr"
 include "lib/string.cyr"
 include "lib/io.cyr"
 include "lib/net.cyr"
+include "lib/chrono.cyr"
 include "lib/tls.cyr"
 
 #ifdef CYRIUS_TARGET_AGNOS
@@ -55,6 +59,8 @@ var _lr_cert_len = 406;
 var _lr_key = 0;
 var _lr_key_len = 138;
 var _lr_ver12 = 0;
+var _lr_deadline = 0;          # 1 = every row's connection has a deadline 5 s out
+var _lr_dl_rc = 0 - 99;        # what tls_set_deadline answered on the last row
 
 fn _lr_write_all(fd, buf, n): i64 {
     var off = 0;
@@ -197,6 +203,8 @@ fn _lr_row(script): i64 {
         _lr_obs[6] = _lr_plant_stale();
         _lr_obs[5] = tls_read(c, &b, LR_MAXLEN);
         fd_restore_flags(cfd, saved);
+        # After the would-block row: under a deadline the loop waits where libssl would block.
+        if (_lr_deadline == 1) { _lr_dl_rc = tls_set_deadline(c, clock_now_ns() + 5000000000); }
         if (tls_write(c, "g", 1) == 1) {
             if (script == LS_CLOSE) {
                 var st0[4];
@@ -233,16 +241,19 @@ fn _lr_row(script): i64 {
 }
 
 fn _lr_v(): i64 {
-    if (_lr_ver12 == 1) { println("  (TLS 1.2)"); return 0; }
-    println("  (TLS 1.3)");
+    if (_lr_ver12 == 1) { syscall(1, 1, "  (TLS 1.2", 10); } else { syscall(1, 1, "  (TLS 1.3", 10); }
+    if (_lr_deadline == 1) { println(", under a deadline: _tls_ssl_io)"); return 0; }
+    println(")");
     return 0;
 }
 
 fn test_libssl_reads(): i64 {
     test_group("tls_read / tls_write on the libssl backend: the native backend's codes");
     _lr_v();
+    _lr_dl_rc = 0 - 99;
     _lr_row(LS_FATAL_ALERT);
     assert_eq(_lr_obs[4], 1, "the handshake completes");
+    if (_lr_deadline == 1) { assert_eq(_lr_dl_rc, 0, "the deadline is set on the connection (tls_set_deadline -> 0)"); }
     assert_eq(_lr_obs[6], 2,
       "a stale libcrypto error (a handshake_failure alert) is queued before the read and the write");
     assert_eq(_lr_obs[5], TLS_ERR_WOULD_BLOCK,
@@ -326,10 +337,14 @@ if (tls_available() != 1) {
 } else {
     signal_ignore(SIGPIPE);
     _lr_install_spies();
-    _lr_ver12 = 0;
-    test_libssl_reads();
-    _lr_ver12 = 1;
-    test_libssl_reads();
+    _lr_deadline = 0;
+    while (_lr_deadline < 2) {
+        _lr_ver12 = 0;
+        test_libssl_reads();
+        _lr_ver12 = 1;
+        test_libssl_reads();
+        _lr_deadline = _lr_deadline + 1;
+    }
 }
 #endif
 var r = assert_summary();
