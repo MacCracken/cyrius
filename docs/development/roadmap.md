@@ -105,6 +105,39 @@ The in-passing finds of the premise check and the lanes' reviews are in *Potenti
 
 ---
 
+## 6.6.14 — candidates: the TLS follow-ups (to CONSIDER with the other 6.6.14 work)
+
+**User, 2026-10-02:** "for tls follow ups we will consider to pick up with other 6.6.14 work". These are the
+TLS finds from the 6.6.13 premise check and lane reviews — NOT committed to 6.6.14 yet. The user decides
+which ride along when 6.6.14 is planned. Two are security defects with no id yet (the next is **CVE-64**).
+
+- ⚠ The native TLS 1.2 SERVER never sends a CertificateRequest and ignores `TLS_CTX_OFF_VERIFY`
+  (`_tn_12_server_drive`): a server that requires mTLS through `tls_set_verify` accepts an unauthenticated
+  client that offers only TLS 1.2 — an mTLS bypass by downgrade. Related: every non-zero OpenSSL mode
+  maps to `TLS_VERIFY_PEER`, so `SSL_VERIFY_FAIL_IF_NO_PEER_CERT` never reaches native and an empty client
+  Certificate is accepted; the 1.3 server checks possession, not a chain.
+- ⚠ On Windows, `_tn_ca_read` (`lib/tls_native_hs12.cyr`) opens `/etc/ssl/cert.pem` and three sibling POSIX
+  paths, which resolve drive-relative (`C:\etc\ssl\cert.pem`): any local user can plant trust anchors —
+  CVE-54 / CVE-57's class. Not reachable through Winsock today (backlog (j) below), but live for a custom
+  transport.
+- (j) Native TLS cannot run over `net.cyr` sockets on Windows: the default transport's `sys_read` /
+  `sys_write` (ReadFile/WriteFile) return 0 on a Winsock socket, so `tls_native_connect` fails `TLS_ERR_IO`
+  in ~8 ms (measured on cass). No `crossos/` test covers TLS. I8's Windows rows SKIP by name until it lands.
+- (i) The libssl backend SIGSEGVs or hangs when used from a `thread_create` worker (raw clone threads
+  carry no pthread state), even after `_tls_init` ran on main. A fail-closed off-main guard was designed
+  for I3 and not taken; I3's contract states the limit.
+- (d) The native TLS client sends an IP-literal host as SNI (RFC 6066 §3 forbids it); I1 stops it on libssl.
+- (e) `tls_ctx_use_certificate_file` / `tls_ctx_use_private_key_file` retain 64 KiB per call (I2 (a)'s
+  shape, in the server-side loaders).
+- (f) A libssl-backend client dies of SIGPIPE when libssl writes an alert to a peer-closed socket.
+- Native TLS accepts a wildcard directly over a single label (`*.com` for `a.com`) where libssl refuses — a
+  remaining divergence between the backends, noted by the I1 review (CVE-59's register entry, *Not
+  covered*).
+- sigil's `pem_decode_certs_into` fails a whole bundle on one malformed block: recorded in sigil's own
+  roadmap (2026-10-02); 6.6.13 already counts each refused block (`tls_native_ca_skipped`).
+
+---
+
 ## Open arc — DCE cannot compact on PE, x86 Mach-O or aarch64 (the rip-relative repair)
 
 **Arrived from v6.6.1.** `CYRIUS_DCE=1` now declines the whole-program compaction on PE and x86
@@ -258,6 +291,12 @@ shipped at v6.6.0, and `defer` and per-block scoping had long since shipped when
 Found at the 6.6.12 releases. A sibling's fix ships as that repo's own patch release, pinned to a released
 cyrius; a folded stdlib is then re-vendored into `lib/` byte-identical from its tag.
 
+**Recorded in each repo's own roadmap on 2026-10-02**: bayan, crab, sigil, mabda, sakshi, bote, aethersafha
+and sankhya below, plus three 6.6.13 downstream notes — abaco (drop its TLS / tan workarounds), agnostic
+(the aarch64 SIGBUS is fixed by I9; rebuild on 6.6.13) and mneme (`f64_parse` values may move ≤ 2 ulp).
+kriya's was already there. Every repo that bumps to 6.6.13 must re-vendor `lib/math.cyr` in the same commit
+(I5 reserves `f64_le` / `f64_ge` / `f64_trunc`); each note says so.
+
 - ⚠ kriya `k_isatty` does TCGETS into a 16-byte `var tio[16]` (termios is 36 B): a stack overrun on
   every tty probe, a crash on aarch64 (`cp -i`, `mv -i`, `ls` on a terminal) — recorded for kriya 1.7.4,
   which also adopts 6.6.12's aarch64 wrappers after the cyrius tag.
@@ -282,17 +321,8 @@ cyrius; a folded stdlib is then re-vendored into `lib/` byte-identical from its 
 Real 6.x-line work without a committed slot; pulled into a release the moment a consumer or
 priority surfaces. **These are technical items → they stay in the 6.x cycle, never 7.x.**
 
-- **Found by the 6.6.13 lanes' reviews (2026-10-01; backlog, not placed — only the user promotes).** ⚠ The
-  first two are security defects with no id yet (the next is CVE-64).
-  - ⚠ The native TLS 1.2 SERVER never sends a CertificateRequest and ignores `TLS_CTX_OFF_VERIFY`
-    (`_tn_12_server_drive`): a server that requires mTLS through `tls_set_verify` accepts an unauthenticated
-    client that offers only TLS 1.2 — an mTLS bypass by downgrade. Related: every non-zero OpenSSL mode
-    maps to `TLS_VERIFY_PEER`, so `SSL_VERIFY_FAIL_IF_NO_PEER_CERT` never reaches native and an empty client
-    Certificate is accepted; the 1.3 server checks possession, not a chain.
-  - ⚠ On Windows, `_tn_ca_read` (`lib/tls_native_hs12.cyr`) opens `/etc/ssl/cert.pem` and three sibling POSIX
-    paths, which resolve drive-relative (`C:\etc\ssl\cert.pem`): any local user can plant trust anchors —
-    CVE-54 / CVE-57's class. Not reachable through Winsock today (backlog (j) below), but live for a custom
-    transport.
+- **Found by the 6.6.13 lanes' reviews (2026-10-01; backlog, not placed — only the user promotes).** The TLS
+  finds moved to *6.6.14 — candidates* above.
   - `cyrius deps` joins the `tag` value into `<home>/deps/<name>/<tag>` unchecked: `tag = "../../../x"`
     exits 1 (git refuses the ref) but leaves an empty directory outside the dep cache — CVE-62's class on
     the tag field.
@@ -309,7 +339,8 @@ priority surfaces. **These are technical items → they stay in the 6.x cycle, n
   - The I7 repro and `tls_first_use_thread_race.sh` can flake on a random-port race (a fixed `sleep 0.5`; a
     foreign listener on the port before `s_server` dies on bind).
 - **Found by the 6.6.13 premise check (2026-10-01; backlog, not placed — only the user promotes).** Met in
-  passing while planning M1–M3 and I1–I11, not swept for. ⚠ (a)–(c) are silent miscompiles.
+  passing while planning M1–M3 and I1–I11, not swept for. ⚠ (a)–(c) are silent miscompiles. The TLS finds
+  (d), (e), (f), (i), (j) moved to *6.6.14 — candidates* above; the letters are kept for reference.
   - (a) A pointer-mode struct local assigned into an inline struct stores its address
     (`var a: Pt = alloc(16); var q: Pt; q = a;`): `_try_aggregate_copy_assign` (`parse.cyr` ~2457) gets 0
     from `_agc_operand` for a non-parameter pointer-mode local and falls to the 8-byte store.
@@ -320,20 +351,10 @@ priority surfaces. **These are technical items → they stay in the 6.x cycle, n
   - (c) The overload dispatcher compares a global's `GVTYPE` against the LOCAL encoding `0 - sid`
     (`parse_fn.cyr` ~2757), so a `: Str` global is never routed to its `_str` sibling: `println(gs)` prints
     the header's pointer bytes. I11 fixes the same sign in the diagnostic only (I11 is warning-only).
-  - (d) The native TLS client sends an IP-literal host as SNI (RFC 6066 §3 forbids it); I1 stops it on libssl.
-  - (e) `tls_ctx_use_certificate_file` / `tls_ctx_use_private_key_file` retain 64 KiB per call (I2 (a)'s
-    shape, in the server-side loaders).
-  - (f) A libssl-backend client dies of SIGPIPE when libssl writes an alert to a peer-closed socket.
   - (g) `sizeof(f64)`, `sizeof(f32)`, `sizeof(u64)`, `sizeof(bool)`, `sizeof(ptr)` fail with
     `sizeof: unknown type` — loud, not silent.
   - (h) `EMACHO_PTHREAD_CREATE_ARM` takes `pthread_create`'s `int` result without sign-extending it
     (harmless: `thread_create` tests only `!= 0`).
-  - (i) The libssl backend SIGSEGVs or hangs when used from a `thread_create` worker (raw clone threads
-    carry no pthread state), even after `_tls_init` ran on main. A fail-closed off-main guard was designed
-    for I3 and not taken; I3's contract states the limit.
-  - (j) Native TLS cannot run over `net.cyr` sockets on Windows: the default transport's `sys_read` /
-    `sys_write` (ReadFile/WriteFile) return 0 on a Winsock socket, so `tls_native_connect` fails `TLS_ERR_IO`
-    in ~8 ms (measured on cass). No `crossos/` test covers TLS. I8's Windows rows SKIP by name until it lands.
 - **`#deprecated` gaps (measured by bayan 1.5.10 on the 6.6.12 release, recorded in I11's issue as a
   *Related* separate defect; backlog, not placed).**
   - Silent: a call through `&f` (`fncall1(&old_f, 1)`), a method-dot call `o.m()` whose `T_m` is
