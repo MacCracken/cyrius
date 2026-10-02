@@ -38,8 +38,8 @@ Since the v6.1.21 native-default flip there are **two** transports behind one co
 1. **The sovereign native cyrius TLS stack** (`lib/tls_native.cyr`) — the **default** backend.
    No libssl/OpenSSL, no `ld.so`; crypto and X.509 are in-tree (sigil), so it is the only backend
    on agnos and bare metal. TLS 1.3 and 1.2 (AEAD suites only), client and server, ALPN, client
-   certificates (TLS 1.3 only, on both sides — see "Client certificates (mTLS) on a server"), the
-   OS trust store with chain building, hostname binding. A hub plus six modules
+   certificates (TLS 1.3 and 1.2, on both sides — see "Client certificates (mTLS) on a server"),
+   the OS trust store with chain building, hostname binding. A hub plus six modules
    (`tls_native_{lowlevel,keysched,ctx,hs13,hs12,conn}.cyr`) and `lib/tls_hostid.cyr`, the host
    classifier both backends share (6.6.13).
 2. **libssl 3.x**, loaded through `lib/fdlopen.cyr` (it needs the dlopen-helper and
@@ -181,25 +181,58 @@ handshake: the caller keeps them alive through `tls_accept_complete`.
 | `tls_accept(sock, cert, cert_len, key, key_len)` | (i64, i64, i64, i64, i64) → i64 | ctx or 0 | Convenience: `tls_accept_alloc` (no hook) + `tls_accept_complete`; on a failed handshake it closes the ctx itself and returns 0. |
 
 **Client certificates (mTLS) on a server.** A hook asks for one with `tls_set_verify(handle,
-mode, 0)` and a non-zero `mode`.
+mode, 0)` and a non-zero `mode`, and installs the roots a client certificate must chain to
+(`tls_ctx_load_verify_locations`, or `tls_ctx_set_verify_paths` for the OS store). Both backends
+then authenticate the client the same way:
 
-- libssl: OpenSSL's semantics against the `SSL_CTX`'s store, which `tls_accept_alloc` leaves empty
-  — the hook loads one.
-- native (TLS 1.3): every non-zero `mode` becomes `TLS_VERIFY_PEER`. The server checks
-  POSSESSION (the client's CertificateVerify against its leaf), NOT a chain to a trusted CA: any
-  well-formed leaf, self-signed included, is accepted, and so is an empty Certificate message.
-  OpenSSL's `SSL_VERIFY_FAIL_IF_NO_PEER_CERT` bit does not reach native through `tls_set_verify`;
-  `tls_native_set_verify(handle, TLS_VERIFY_FAIL_IF_NO_PEER_CERT)` on the hook's handle refuses an
-  empty one. `tls_get_peer_spki_der` reads the SERVER's leaf, so on a native server ctx it returns
-  0.
-- native (TLS 1.2): **no client certificate at all.** The 1.2 server sends no CertificateRequest
-  and never reads the verify mode, and a server ctx accepts TLS 1.2 by default (range 1.2–1.3), so
-  a client that offers only TLS 1.2 completes the handshake UNAUTHENTICATED whatever the hook set.
-  A native server that requires client certificates MUST also pin itself to TLS 1.3 in the hook —
-  `if (tls_get_backend() == TLS_BACKEND_NATIVE) { tls_native_set_version_range(handle,
-  TLS_VERSION_1_3, TLS_VERSION_1_3); }` — and a 1.3-only ctx then fails a 1.2 ClientHello with
-  `TLS_ERR_PROTOCOL`. The 1.2 client side is the mirror: it does not answer a CertificateRequest,
-  so a TLS 1.2 server that asks for one fails the native handshake (`TLS_ERR_BAD_HANDSHAKE`).
+| `mode` (OpenSSL bits) | native mode | an empty client Certificate | a presented certificate |
+|---|---|---|---|
+| `0` | `TLS_VERIFY_NONE` | — (no CertificateRequest is sent) | — |
+| `SSL_VERIFY_PEER` (1), and any other mode without bit 2 | `TLS_VERIFY_PEER` | accepted, no identity | MUST verify |
+| any mode with `SSL_VERIFY_FAIL_IF_NO_PEER_CERT` (2) | `TLS_VERIFY_FAIL_IF_NO_PEER_CERT` | refused | MUST verify |
+
+- **What "verify" is (native, 6.6.14 — CVE-64).** The client's certificate_list — its leaf and any
+  intermediates it sends — must chain to a trusted, in-window CA root of the server ctx, with
+  keyUsage, extendedKeyUsage (clientAuth or anyExtendedKeyUsage) and pathLen honoured, and its
+  CertificateVerify must verify under the leaf's key. **A server with no trust roots refuses every
+  presented certificate** (fail closed, as OpenSSL does). No hostname is checked. The same rules
+  in TLS 1.3 and TLS 1.2: a server ctx accepts 1.2 by default, and the 1.2 server sends a
+  CertificateRequest too. The CertificateRequest offers ecdsa_sign certificates signing with
+  ecdsa_secp256r1_sha256, ecdsa_secp384r1_sha384 or ed25519, and an empty certificate_authorities
+  list — **an RSA client certificate is not accepted natively** (the client answers with an empty
+  Certificate; libssl accepts it).
+- **The refusal.** `tls_accept_complete` returns 0; `tls_native_get_last_error(handle)` is
+  `TLS_ERR_CERT_INVALID` (no certificate under FAIL, or one that does not verify) or
+  `TLS_ERR_AUTHN` (its CertificateVerify does not verify). The client is told with a fatal alert:
+  certificate_required (1.3) / handshake_failure (1.2) for a missing certificate, bad_certificate,
+  decrypt_error, illegal_parameter (a scheme not offered) or decode_error otherwise.
+- **The identity.** After a successful handshake `tls_get_peer_spki_der(ctx, …)` (and natively
+  `tls_native_get_peer_cert_der`) return the CLIENT's verified leaf on a server ctx; 0 when the
+  client presented none, and 0 on a ctx whose handshake failed.
+- **The `mode` mapping is never looser than asked.** `SSL_VERIFY_FAIL_IF_NO_PEER_CERT` without
+  `SSL_VERIFY_PEER` is FAIL natively — stricter than OpenSSL, which ignores the bit without PEER.
+  ⚠ Until 6.6.13 every non-zero mode became `TLS_VERIFY_PEER` (bit 2 was dropped), the 1.3 server
+  checked POSSESSION only (any self-signed, expired or foreign leaf was an identity, and a server
+  with no roots accepted every client), the 1.2 server sent no CertificateRequest at all (a client
+  offering only TLS 1.2 connected UNAUTHENTICATED), and `tls_get_peer_spki_der` read the server's
+  own empty slot on a server ctx. The TLS 1.3 pin that this section used to prescribe is no longer
+  needed.
+- **The callback.** Native has no verify callback: `callback` is not run. A callback that would
+  ACCEPT a peer OpenSSL rejects (a self-signed or pinned peer) does not — the native handshake
+  fails closed; install that certificate or its CA as a root instead. A callback that would REJECT
+  more (a pin) is not run either: check `tls_get_peer_spki_der` after the handshake, on either
+  backend.
+- **The client side.** A native client presents the certificate and key a hook installed
+  (`tls_ctx_use_certificate_file` / `_private_key_file`) when a TLS 1.3 OR TLS 1.2 server asks,
+  and an empty Certificate when it holds none (or none the server's CertificateRequest accepts).
+  It presents its leaf alone, not a chain. In TLS 1.2 a client holding a P-256 / P-384 certificate
+  lists that curve in supported_groups after x25519 (OpenSSL refuses an ECDSA client certificate
+  on a curve the client did not list); its key exchange stays x25519. Until 6.6.13 the 1.2 client
+  failed any server that asked (`TLS_ERR_BAD_HANDSHAKE`).
+- **Memory.** Measured at 6.6.14 (P-256 server, one-certificate client): an mTLS handshake fits
+  88,784 B of a server's arena in TLS 1.3 and 108,480 B in TLS 1.2 — both inside the 131,072 B
+  below. A client's three TLS 1.2 messages before its CCS are bounded at 16 KiB on the server, and
+  a 1.3 client Certificate at 8 KiB.
 
 ### I/O
 
@@ -306,14 +339,14 @@ an earlier `tls_dlsym` + `fncall*` call site. New consumers MUST use these in pr
 | Verb | Signature | Returns | Contract |
 |------|-----------|---------|----------|
 | `tls_set_alpn(handle, protos, protos_len)` | (i64, i64, i64) → i64 | 0 / non-0 | Sets ALPN protocols. **`protos` is OpenSSL wire format**: each protocol length-prefixed (`\x02h2\x07http/1.1` advertises `h2 + http/1.1`). `protos_len` is total bytes. **Return convention inverted from most OpenSSL fns: 0 = success, non-zero = failure** (matches `SSL_CTX_set_alpn_protos` man page). Returns -1 on null handle or unresolved symbol. Native: `protos_len` must be 1..255 (else `TLS_ERR_INVALID_PARAM`); the list is copied into the ctx's allocator. |
-| `tls_set_verify(handle, mode, callback)` | (i64, i64, fnptr) → i64 | 0 / -1 | Overrides stdlib's default `SSL_VERIFY_PEER`. `mode` is an OpenSSL `SSL_VERIFY_*` flags bitmask. `callback == 0` disables the cb (mode-only override). 0 = success; -1 = null handle or unresolved symbol. Native has no verify callback: `callback` is ignored, `mode == 0` is `TLS_VERIFY_NONE` (no chain, no identity), any other `mode` is `TLS_VERIFY_PEER`. On a server it requests a client certificate (see "Accept"). |
+| `tls_set_verify(handle, mode, callback)` | (i64, i64, fnptr) → i64 | 0 / -1 | Overrides stdlib's default `SSL_VERIFY_PEER`. `mode` is an OpenSSL `SSL_VERIFY_*` flags bitmask. `callback == 0` disables the cb (mode-only override). 0 = success; -1 = null handle or unresolved symbol. Native has no verify callback: `callback` is not run (see "Client certificates (mTLS) on a server" for what that means either way). Native mode (6.6.14): `0` is `TLS_VERIFY_NONE` (no chain, no identity); any mode with `SSL_VERIFY_FAIL_IF_NO_PEER_CERT` (2) set is `TLS_VERIFY_FAIL_IF_NO_PEER_CERT` (with PEER or without — never looser than asked); any other non-zero mode is `TLS_VERIFY_PEER`. On a client FAIL and PEER verify alike. On a server it requests a client certificate (see "Accept"). |
 
 ### Peer introspection (v6.0.82)
 
 | Verb | Signature | Returns | Contract |
 |------|-----------|---------|----------|
 | `tls_get_alpn_selected(ctx, buf, bufmax)` | (i64, i64, i64) → i64 | length / 0 | Copies the negotiated ALPN protocol into `buf`. 0 when none was negotiated, `bufmax` is too small, or ctx is null. Both backends. |
-| `tls_get_peer_spki_der(ctx, buf, bufmax)` | (i64, i64, i64) → i64 | length / 0 / `TLS_ERR_BUFFER_FULL` | Copies the server leaf's SubjectPublicKeyInfo DER — the HPKP pin target; consumers SHA-256 it. 0 on no certificate, a parse failure or a null ctx. A `bufmax` too small: 0 on libssl, `TLS_ERR_BUFFER_FULL` (-18) on native. |
+| `tls_get_peer_spki_der(ctx, buf, bufmax)` | (i64, i64, i64) → i64 | length / 0 / `TLS_ERR_BUFFER_FULL` | Copies the PEER leaf's SubjectPublicKeyInfo DER — the HPKP pin target; consumers SHA-256 it. On a client ctx the server's; on a server ctx the client's verified certificate (natively since 6.6.14: it read the server's own empty slot and answered 0; 0 also after a failed handshake). 0 on no certificate, a parse failure or a null ctx. A `bufmax` too small: 0 on libssl, `TLS_ERR_BUFFER_FULL` (-18) on native. |
 
 ### Session resumption (libssl only)
 
