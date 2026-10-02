@@ -72,12 +72,20 @@ mkkey() {  # <name> <p256|p384|ed>
         ed) q openssl genpkey -algorithm ed25519 -out "$T/$1.key" ;;
     esac
 }
-mkcert() {  # <name> <keytype> <CN> <issuer> <ext> [<not_before> <not_after>]
+# A certificate with a chosen validity window (the expired leaf) is issued by `openssl ca`, whose
+# -startdate / -enddate every OpenSSL 3.x has: `x509 -req -not_before / -not_after` exist only from
+# 3.4, and on 3.0 (Ubuntu 24.04, Debian 12) the setup step failed the whole gate.
+mkdir "$T/ca.new"
+: > "$T/ca.index"
+echo 1000 > "$T/ca.serial"
+printf '[ ca ]\ndefault_ca = gate\n[ gate ]\ndatabase = %s/ca.index\nnew_certs_dir = %s/ca.new\nserial = %s/ca.serial\ndefault_md = sha256\npolicy = gate_policy\nunique_subject = no\n[ gate_policy ]\ncommonName = supplied\n' \
+    "$T" "$T" "$T" > "$T/ca.cnf"
+mkcert() {  # <name> <keytype> <CN> <issuer> <ext> [<not_before> <not_after>, UTCTime YYMMDDHHMMSSZ]
     mkkey "$1" "$2"
     q openssl req -new -key "$T/$1.key" -subj "/CN=$3" -out "$T/$1.csr"
     if [ $# -ge 7 ]; then
-        q openssl x509 -req -in "$T/$1.csr" -CA "$T/$4.crt" -CAkey "$T/$4.key" -CAcreateserial \
-            -not_before "$6" -not_after "$7" -extfile "$T/$5" -out "$T/$1.crt"
+        q openssl ca -batch -config "$T/ca.cnf" -cert "$T/$4.crt" -keyfile "$T/$4.key" -in "$T/$1.csr" \
+            -notext -startdate "$6" -enddate "$7" -extfile "$T/$5" -out "$T/$1.crt"
     else
         q openssl x509 -req -in "$T/$1.csr" -CA "$T/$4.crt" -CAkey "$T/$4.key" -CAcreateserial \
             -days 2 -extfile "$T/$5" -out "$T/$1.crt"
@@ -100,7 +108,7 @@ mkcert cli p256 client-one ca cli.ext
 mkcert cliint p256 client-via-int int cli.ext
 mkcert clied ed client-ed ca cli.ext
 mkcert cli384 p384 client-p384 ca cli.ext
-mkcert cliexp p256 client-expired ca cli.ext 20200101000000Z 20210101000000Z
+mkcert cliexp p256 client-expired ca cli.ext 200101000000Z 210101000000Z
 mkcert cliku p256 client-keyencipherment ca cliku.ext
 mkcert srv p256 localhost ca srv.ext
 mkcert srved ed localhost ca srv.ext
