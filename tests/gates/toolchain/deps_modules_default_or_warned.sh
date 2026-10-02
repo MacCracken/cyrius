@@ -15,7 +15,7 @@
 # otherwise a named warning and `, N vendored nothing` in the summary, exit 0. An explicit
 # `modules = []` is the silent "declared, not linked" spelling.
 #
-# CVE-TBD(I10d): the header NAME becomes the clone dir `<home>/deps/<name>/<tag>` and the
+# CVE-62: the header NAME becomes the clone dir `<home>/deps/<name>/<tag>` and the
 # default `dist/<name>.cyr`; `[deps.../../esc/x]` cloned OUTSIDE the dep cache on 6.6.12 (the
 # v6.2.51 traversal guard covered sub-module / index / package names, never this one).
 #
@@ -239,7 +239,7 @@ if [ "$rc" -eq 0 ] && [ ! -s "$P.err" ] && ! grep -q 'vendored nothing' "$P.out"
     ok "D7 optional (no active feature) and target-mismatch blocks: silent, nothing cloned, nothing counted"
 else bad "D7 (rc=$rc deps=[$(ls -A "$H/deps" | tr '\n' ' ')]): $(cat "$P.out" "$P.err" | head -3)"; fi
 
-# ── D8: CVE-TBD(I10d) — a header NAME with `/` or `..` is refused, root and transitive ───
+# ── D8: CVE-62 — a header NAME with `/` or `..` is refused, root and transitive ───
 # The escape targets are measured on the FILESYSTEM: `[deps.../x]` resolves its clone dir to
 # $H/deps/../x = $H/x, `[deps.../../esc/x]` to $W/esc/x — exactly where 6.6.12 cloned.
 snapw() { ( cd "$W" && find . -path ./home/deps -prune -o -path './d8*' -prune -o -path ./o -prune -o -print | LC_ALL=C sort ); }

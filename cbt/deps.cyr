@@ -1827,7 +1827,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
             memcpy(dep_name, buf + name_start, dep_name_len);
             store8(dep_name + dep_name_len, 0);
             si = name_end + 1;
-            # CVE-TBD(I10d) (6.6.13): the header NAME becomes a path — the clone dir
+            # CVE-62 (6.6.13): the header NAME becomes a path — the clone dir
             # `<home>/deps/<name>/<tag>` (mkdir + git clone), the `lib/<name>_<base>`
             # destination, and the `dist/<name>.cyr` default. CVE-32 (v6.2.51) guarded
             # the sub-module / index / package names and never this one, so a manifest
@@ -2020,7 +2020,7 @@ fn _process_named_deps(buf, n, manifest_dir): i64 {
             # `[deps.<name>]` resolved in its place (agnostic 0.1.7). An explicit
             # `modules = []` parses to a non-zero empty vec, so it is NOT defaulted —
             # it stays the "declared, not linked" spelling. The name is already
-            # validated (CVE-TBD(I10d) above), so it is safe to build a path from.
+            # validated (CVE-62 above), so it is safe to build a path from.
             var dep_mod_default = 0;
             if (dep_modules == 0 && dep_modular == 0 && (dep_git != 0 || dep_path != 0)) {
                 dep_mod_default = 1;

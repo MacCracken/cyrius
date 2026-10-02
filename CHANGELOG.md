@@ -8,7 +8,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Security
 
-- **CVE-TBD(I10d) — a `[deps.NAME]` header with `/` or `..` cloned OUTSIDE the dep cache
+- **CVE-62 — a `[deps.NAME]` header with `/` or `..` cloned OUTSIDE the dep cache
   (`cbt/deps.cyr` `_process_named_deps`).** **Root cause:** the header name becomes a path — the
   clone dir `<home>/deps/<name>/<tag>` (mkdir + `git clone`) and the `lib/<name>_<base>`
   destination — and the v6.2.51 traversal guard `_dep_reject_unsafe_name` was applied to modular

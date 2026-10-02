@@ -2,7 +2,7 @@
 
 **Scope:** the untrusted-source-input surface. Previous full audit:
 `docs/audit/2026-07-27-security-audit.md` (CVE-32…CVE-36) at cycc 6.4.82.
-**Next free identifier after this document: CVE-62.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
+**Next free identifier after this document: CVE-63.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
 document are **withdrawn** but still consume their ids.) CVE-43 was consumed at 6.6.5,
 **CVE-44 and CVE-45 at 6.6.6** — the release installer's fixed `/tmp` staging, and a forged `#@file` from an included file —
 **CVE-46, CVE-47 and CVE-48 at 6.6.7** (a `secret var` inside a closure was never zeroised; a `secret var` in a
@@ -13,10 +13,10 @@ predictable shared `/tmp` names; `lib/http.cyr` wrote a long URL past its 2048-b
 `rdx`; the lexer silently dropped any `@` that did not spell `@unsafe`; `lib/ws.cyr`'s `ws_recv_frame` let a
 remote peer choose its allocation size and read frames it had not received), and **CVE-54 and CVE-55 at 6.6.11**
 (on Windows, `net_resolve_ipv4` read a drive-relative `C:\etc\hosts` that any local user can plant; a multi-line
-string literal shifted file attribution, so a call to another file's `private` fn compiled); **CVE-56 at 6.6.12** (`lib/log.cyr`'s `log_info_kv` / `log_info_int` built a log line past a 512-byte stack buffer); **CVE-57 at 6.6.12** (on Windows, the folded sandhi resolver read a drive-relative `C:\etc\resolv.conf` any local user can plant); **CVE-58 at 6.6.12** (cxvm let guest bytecode read and write the interpreter's own host memory); **CVE-59 at 6.6.13** (the libssl TLS backend never bound the server's certificate to the host, so any chain-valid certificate verified any host); **CVE-60 at 6.6.13** (the libssl backend's `tls_read` / `tls_write` (and `tls_get_peer_spki_der`) returned a C `int` zero-extended, so a tampered record read as ~4 GiB read); **CVE-61 at 6.6.13** (the native TLS stack skipped plaintext ChangeCipherSpec records without limit and had no deadline, so anyone on the path held a thread for ever); all nineteen are appended below.
+string literal shifted file attribution, so a call to another file's `private` fn compiled); **CVE-56 at 6.6.12** (`lib/log.cyr`'s `log_info_kv` / `log_info_int` built a log line past a 512-byte stack buffer); **CVE-57 at 6.6.12** (on Windows, the folded sandhi resolver read a drive-relative `C:\etc\resolv.conf` any local user can plant); **CVE-58 at 6.6.12** (cxvm let guest bytecode read and write the interpreter's own host memory); **CVE-59 at 6.6.13** (the libssl TLS backend never bound the server's certificate to the host, so any chain-valid certificate verified any host); **CVE-60 at 6.6.13** (the libssl backend's `tls_read` / `tls_write` (and `tls_get_peer_spki_der`) returned a C `int` zero-extended, so a tampered record read as ~4 GiB read); **CVE-61 at 6.6.13** (the native TLS stack skipped plaintext ChangeCipherSpec records without limit and had no deadline, so anyone on the path held a thread for ever); **CVE-62 at 6.6.13** (a `[deps.NAME]` header holding `..` made `cyrius deps` create directories and git-clone outside the dep cache — a CVE-32 residual); all twenty are appended below.
 ⚠ **This line read "next free: CVE-42" while CLAUDE.md read "the next CVE number is 43" and this document ran 39-41.**
 Two authorities, two answers, and nothing reconciled them. CLAUDE.md is the one every closeout reads, so **42 is
-retired unused** and CVE-43 is the entry appended below. Anything below 62 now collides.
+retired unused** and CVE-43 is the entry appended below. Anything below 63 now collides.
 
 Run as part of the band K closeout, as nine parallel audit dimensions over the v6.5.x minor with
 an adversarial verification pass over the highest-severity findings. Everything recorded here was
@@ -1227,3 +1227,23 @@ host) and under qemu-aarch64 and wine.
 **Verified.** `tests/tcyr/crossos/tls_native_deadline_ccs.tcyr` (39 assertions, single-threaded, preloaded loopback pairs; x86_64, qemu-aarch64, pi, ecb, ach 39/39; cass 8/8 with the socket rows SKIPped by name, backlog j). `tests/tcyr/crypto/tls_native_ccs_deadline.tcyr` (108 assertions, socketpair + fork with transport write hooks; the filed repro's two cases by code, every read site's policy, 1.3 and 1.2 both directions, mTLS sites, drips under `SO_RCVTIMEO`, write deadline, both shim backends, OpenSSL `s_server` 1.3 / 1.2; 45 of 108 fail on the pre-fix lib). `tests/gates/platform/agnos_tls_deadline.sh` (fake-kernel agnos read / write paths). 34 + 5 mutants, each RED. The filed repro `docs/development/issues/repros/2026-10-01-tls-native-no-deadline.sh` exits 0 unmodified (was 2): case 1's client returns 4 (handshake refused at the second CCS), case 2's returns 5 (`tls_read` → `TLS_ERR_PROTOCOL`), each well inside 10 s.
 
 **Not covered.** Windows: native TLS over `net.cyr` sockets (the transport leaves are `ReadFile` / `WriteFile`, which return 0 on Winsock) — backlog j; the deadline there is checked between calls. A custom transport is bounded only between its calls (documented on `tls_native_set_transport`). On agnos a write can overshoot the deadline by one `sock_send#48` stall (~8 s). Writing the fatal alert to a peer that already reset the connection can raise SIGPIPE in a process that does not ignore it — the same exposure every native TLS write (`tls_native_write`, `tls_native_close`'s close_notify, the handshake's own writes) already has.
+
+## CVE-62 — a `[deps.NAME]` header was used as a path unchecked: `cyrius deps` created directories and git-cloned outside the dep cache (a CVE-32 residual)
+
+*Appended 2026-10-01 (cyrius 6.6.13, bite I10d). Found by: the 6.6.13 I10 premise check (in passing, measuring the modules-less default that derives `dist/<name>.cyr` from the same name). Not part of the 2026-09-03 sweep: recorded here because this is the live ledger. 6.6.13 spends CVE-59 … CVE-63.*
+
+| | |
+|---|---|
+| **Severity** | P1 (High) — arbitrary-path directory creation + `git clone` driven by any manifest in the dep graph, including a transitive dependency's. Not P0: the write is a git checkout of a URL the same manifest names (no arbitrary bytes into an arbitrary existing file), and the `lib/` copy guard (CVE-04) still refuses the vendoring step. |
+| **Class** | Path traversal (a CVE-32 residual — the v6.2.51 dep-resolver traversal hardening, `_dep_reject_unsafe_name`, covered sub-module / index-leaf / package names but not the `[deps.NAME]` header) |
+| **Affected** | every cyrius with named git deps up to and including 6.6.12 |
+| **Files** | `cbt/deps.cyr` — `_process_named_deps` (name extraction, then the clone-dir build `<home>/deps/<name>/<tag>` + `sys_mkdir` + `git clone`) |
+| **Fixed** | 6.6.13 |
+
+**Vector.** A `cyrius.cyml` — the consumer's own, or the manifest of ANY transitive dependency, which `cyrius deps` / `cyrius build` (auto-deps) read in the Phase 3 BFS — declaring `[deps.../../<anything>]` with `git`, `tag` and `modules`.
+
+**Impact.** `cyrius deps` runs `mkdir <home>/deps/../../<anything>` and `git clone <url> <home>/deps/../../<anything>/<tag>`, i.e. creates directories and writes a full checkout at an attacker-chosen location relative to `$CYRIUS_HOME` (default `~/.cyrius`, so `../../x` lands in the user's home directory's parent tree) with the user's privileges. Measured on 6.6.12: `[deps.../../esc/x]` cloned into `<home>/../esc/x/2.0.0`; only the subsequent `lib/../../esc/x_foo.cyr` destination guard ("path traversal in dep destination") stopped the copy — after the clone had been written. With no `$CYRIUS_HOME` the same name escapes the per-run temp dir.
+
+**Fix.** `_dep_reject_unsafe_name(dep_name)` runs immediately after the header name is read, before the closest-wins lookup, the clone, or any path derivation; a refused section prints `error: [deps.<name>] is not a usable dep name …`, counts as an error (exit 1, no lock write) and is skipped. Applies to the root manifest and every transitive manifest (same function).
+
+**Verified.** `tests/gates/toolchain/deps_modules_default_or_warned.sh` axis D8: root `[deps.../x]` and a TRANSITIVE dep whose manifest declares `[deps.../../esc/x]` — both refused by name, exit 1, nothing created outside `$CYRIUS_HOME/deps` (filesystem check of the escape target).
