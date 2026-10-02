@@ -4557,6 +4557,7 @@ syscalls_linux_common::WIFSIGNALED/1
 syscalls_linux_common::WTERMSIG/1
 syscalls_linux_common::fd_restore_flags/2
 syscalls_linux_common::fd_set_nonblocking/1
+syscalls_linux_common::fd_wait_ready/3
 syscalls_linux_common::statfs_bsize/1
 syscalls_linux_common::sys_accept4/4
 syscalls_linux_common::sys_bind/3
@@ -4698,6 +4699,7 @@ syscalls_windows::WIFSIGNALED/1
 syscalls_windows::WTERMSIG/1
 syscalls_windows::fd_restore_flags/2
 syscalls_windows::fd_set_nonblocking/1
+syscalls_windows::fd_wait_ready/3
 syscalls_windows::statfs_bsize/1
 syscalls_windows::sys_access/2
 syscalls_windows::sys_bind/3
@@ -4785,6 +4787,7 @@ syscalls_x86_64_agnos::WIFSIGNALED/1
 syscalls_x86_64_agnos::WTERMSIG/1
 syscalls_x86_64_agnos::fd_restore_flags/2
 syscalls_x86_64_agnos::fd_set_nonblocking/1
+syscalls_x86_64_agnos::fd_wait_ready/3
 syscalls_x86_64_agnos::is_err/1
 syscalls_x86_64_agnos::proclist_cpu_ticks/1
 syscalls_x86_64_agnos::proclist_rss_pages/1
