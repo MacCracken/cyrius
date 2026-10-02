@@ -13,6 +13,16 @@ five lanes, cut from the slot bump `bcdd1818`. **CVE-64 … CVE-67**; the next f
 Folds **sigil 3.13.7** (tagged at `2c8edf8`, before this release): the lenient trust-bundle decode.
 No `src/` change: `build/cycc` differs from 6.6.13 only by its version string.
 
+**Bench** (same box, best of 7): self_compile **853 ms** against 6.6.13's **850 ms** (+3 ms, +0.4 % — noise;
+`bench-history.sh` reads 854 ms); cycc **1,487,896 B** (`.text` **1,314,632**), unchanged from 6.6.13 (no `src/`
+change; only the version string differs). **Gate:** `release-gate.sh` GREEN — fixpoint, ARM lockstep (the
+tracked `build/cycc-native-aarch64` regenerated for the version string), seed-derive, check.sh (156/156 shell
+gates, 0 failures, the two known agnos-parity SKIPs), and cross-OS self-host + crossos tests on ecb, ach, cass
+and pi; the per-file `.tcyr` loop 435/435. **End to end on real Windows (cass):** a default-verify native
+`tls_connect` to www.microsoft.com over `net.cyr`'s Winsock socket verified against the CurrentUser `ROOT`
+store and read an HTTP/1.1 status line, and the same connection under a wrong name (`wrong.example.org`) was
+refused — the Winsock transport and the Windows store, two lanes, working together.
+
 ### Security
 
 - **CVE-64 (P1) — a native TLS server that required client certificates authenticated nobody: any
@@ -626,6 +636,13 @@ No `src/` change: `build/cycc` differs from 6.6.13 only by its version string.
   only, and only for `VFS_SOCK` fds) and no non-blocking send. It needs agnos to honour a time
   bound in #48 — `tcp_send_ex` already takes the progress bound as a parameter. Documented on
   `tls_native_set_deadline` and in lib-tls-contract.md's deadline table.
+
+- **Filed in the sibling repos (user, 2026-10-02), not fixed here:** agnos —
+  `docs/development/issues/2026-10-02-sock-send-ignores-the-caller-deadline.md` (the #48 time bound the
+  bullet above needs); kavach — `docs/development/issues/2026-10-02-basic-seccomp-kills-native-tls-writes.md`
+  (the `basic` profile allows `write` but not `sendto`, so from this release a sandboxed native-TLS writer is
+  killed; CVE-66's behaviour change). The native 1.2 client's ECDHE on P-256 / P-384 (CVE-64's *Not covered*)
+  waits for a constant-time ECDH primitive in sigil, placed after this release for a 6.6.15 refold.
 
 ## [6.6.13] — 2026-10-01
 

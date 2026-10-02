@@ -40,8 +40,8 @@ unscheduled 6.x backlog. Whole-cycle framing, the v6.7.x language arc and v6.8.x
 ## Where we are
 
 **Current head: v6.6.14** (2026-10-02) — cycc **1,487,896 B** (`.text` **1,314,632**) ·
-seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi · self_compile **846 ms** ·
-**427** `.tcyr` (**164** in `crossos/`) · **105** `lib/*.cyr` · **325** shell gates under
+seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi · self_compile **854 ms** ·
+**435** `.tcyr` (**170** in `crossos/`) · **105** `lib/*.cyr` · **326** shell gates under
 `tests/gates/<bucket>/` · **0 open issues** · **6 open proposals**.
 
 > ⚠ **Every figure above was DERIVED on the day, not carried** (re-derived 2026-09-27 at the 6.6.7 open).
@@ -78,7 +78,7 @@ The language list that was Phase 3 moved to **v6.7.x**, which RISC-V vacates for
 | **1 — Repair window** | `.2` – `.6` | ✅ **CLOSED at 6.6.6.** |
 | **1b — the repair batch** | `.7` – `.12` | ✅ **CLOSED at 6.6.12** (summary in *Where we are*). |
 | **1c — memory + reported-issue repair** | `.13` | ✅ **SHIPPED 2026-10-02** (tag `6.6.13`): the three silent memory-corruption finds, the open issues I1–I11, and the ganita / bayan / sigil folds. See *6.6.13* below. |
-| **1d — the TLS follow-ups** | `.14` | Every remaining noted TLS issue (user, 2026-10-02) — see *6.6.14* below. |
+| **1d — the TLS follow-ups** | `.14` | ✅ **Merged 2026-10-02, release gate GREEN**: every remaining noted TLS issue (user, 2026-10-02) and the sigil 3.13.7 fold; awaiting the tag. See *6.6.14* below. |
 | **2 — Tooling round-out** | after `.14`, to the minor's close | The tooling proposals P1, P2, P4, P5, P6, alongside the DCE compaction arc and, last, macOS concurrency ordering (*Open questions* 3). Then the closeout pass. |
 | ~~**3 — Committed ergonomics**~~ | — | **Moved to v6.7.x** with P3 `const fn` (user, 2026-10-01) — see [roadmap_6.md](roadmap_6.md). |
 
@@ -106,7 +106,7 @@ The in-passing finds of the premise check and the lanes' reviews are in *Potenti
 
 ---
 
-## 6.6.14 — the TLS follow-ups (OPEN 2026-10-02)
+## 6.6.14 — the TLS follow-ups (MERGED 2026-10-02: release gate GREEN, awaiting the tag)
 
 **User, 2026-10-02:** "6.6.14 - all the remaining noted tls issues". That is every TLS item noted by 6.6.13 — the
 candidates this section listed, the *Not covered* lines of CVE-59 … CVE-63, the two TLS gaps the 6.6.13 CHANGELOG
@@ -139,9 +139,15 @@ reported for the backlog, and the TLS port-race flake from the lanes' reviews. F
 - **wintrust** — **CVE-65**: on Windows `_tn_ca_read` read four drive-relative POSIX paths (a plantable trust
   store). Windows gets its real ROOT store through crypt32. The only lane allowed to touch `src/` (a crypt32
   import, if the PE backend needs one).
-- **sigil** — `pem_decode_certs_into` failed a whole bundle on one malformed block. The fix lands in **sigil
-  3.13.7**: ⛔ the user tags it BEFORE cyrius 6.6.14. The cyrius side is folded at integration
-  (`_tn_ca_parse_set` takes the lenient decode; the skipped count becomes `blocks − stored`).
+- **sigil** — `pem_decode_certs_into` failed a whole bundle on one malformed block. Fixed in **sigil 3.13.7**
+  (tagged at `2c8edf8`) and folded: `_tn_ca_parse_set` takes the lenient decode; the skipped count is
+  `blocks − stored`.
+
+**Status 2026-10-02:** every item landed and is merged, CVE-64 … CVE-67 spent (next free id **68**), release gate
+GREEN, per-file `.tcyr` loop 435/435; detail in CHANGELOG [6.6.14]. Not fixed here: the agnos write bound (an
+agnos ABI change — filed in agnos) and kavach's `basic` seccomp profile (kavach's call — filed in kavach). The
+lanes' in-passing finds are in *Potential backlog*; the native 1.2 client's P-256 / P-384 ECDHE is placed for
+6.6.15 (user).
 
 ---
 
