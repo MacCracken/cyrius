@@ -134,7 +134,7 @@ assert_eq(_c_null, 1, "1 null event");
 _reset();
 assert_eq(bayan_json_stream_parse(str_data(str_from("\"hello\"")), 7, h), 0, "string parses");
 assert_eq(_c_str, 1, "1 string event");
-assert(streq(str_data(_last_str), "hello") == 1, "value = hello");
+assert(str_eq_cstr(_last_str, "hello") == 1, "value = hello");
 
 _reset();
 assert_eq(bayan_json_stream_parse(str_data(str_from("3.14")), 4, h), 0, "float parses");

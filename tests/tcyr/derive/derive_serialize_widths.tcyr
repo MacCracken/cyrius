@@ -62,7 +62,7 @@ var p32 = point_i32 { 100, 200, 300 };
 var sb1 = str_builder_new();
 point_i32_to_json(&p32, sb1);
 var s32 = str_builder_build(sb1);
-assert_eq(strlen(str_data(s32)), 25, "point_i32 emits 25-byte JSON");
+assert_eq(str_len(s32), 25, "point_i32 emits 25-byte JSON");
 var r32 = point_i32_from_json_str(str_data(s32));
 assert_eq(load32(r32 + 0), 100, "point_i32.x i32 round-trip");
 assert_eq(load32(r32 + 4), 200, "point_i32.y i32 round-trip");

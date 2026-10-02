@@ -43,7 +43,7 @@ assert_eq(ad_pt_y(p), 0 - 4, "ad_pt_set_y / ad_pt_y");
 var sb = str_builder_new();
 ad_pt_to_json(p, sb);
 var js = str_builder_build(sb);
-assert_eq(strlen(str_data(js)) > 0, 1, "ad_pt_to_json emits JSON");
+assert_eq(str_len(js) > 0, 1, "ad_pt_to_json emits JSON");
 
 # The decoder round-trips what the encoder wrote, and the accessors read the result.
 var q = ad_pt_from_json_str(str_data(js));

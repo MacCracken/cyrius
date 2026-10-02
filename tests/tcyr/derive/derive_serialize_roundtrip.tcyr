@@ -49,7 +49,7 @@ var p = point { 1, 42, 7 };
 var sb = str_builder_new();
 point_to_json(&p, sb);
 var s = str_builder_build(sb);
-assert_eq(strlen(str_data(s)), 20, "point_to_json emits 20 bytes for typed-i64 trio");
+assert_eq(str_len(s), 20, "point_to_json emits 20 bytes for typed-i64 trio");
 
 # v5.9.35 fix target: deserializer round-trip via str_to_int.
 # Pre-fix this called undefined `i64_from_json` and produced

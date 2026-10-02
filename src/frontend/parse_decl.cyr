@@ -2765,6 +2765,7 @@ fn PARSE_GVAR_REG(S): i64 {
     _GVAR_VIS(S, gvi, sti);
     SGFI(S, gvi, _gv_ufv(S, sti, psc + ann_sid + ann_scalar + ann_float));   # 6.6.10
     _gv_float_copy(S, gvi, sti, psc + ann_sid + ann_scalar + ann_float);     # 6.6.11
+    _gv_diag_sid(S, gvi, sti, psc + ann_sid + ann_scalar + ann_float + is_struct);   # 6.6.13 I11
     if (ann_float != 0) { _gv_ifs(S, sti, ann_float); }                      # 6.6.10
     if (gvi == vcnt) {
         SVCNT(S, vcnt + 1);

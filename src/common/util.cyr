@@ -964,6 +964,29 @@ fn SVFI(S, vi, v): i64 { if (_var_fileid == 0) { _var_fileid = alloc(1048576 * 8
 var _var_ptrmode = 0;
 fn GVPM(S, vi): i64 { if (_var_ptrmode == 0) { return 0; } if (vi < 0) { return 0; } return load8(_var_ptrmode + vi); }
 fn SVPM(S, vi, v): i64 { if (_var_ptrmode == 0) { _var_ptrmode = alloc(1048576); } store8(_var_ptrmode + vi, v); return 0; }
+# 6.6.13 (I11) — per-global DIAGNOSTIC record: for an untyped `var g = f(..);`, f's name offset
+# + 1 (resolved to f's `: Struct` return when the check runs, so f may be defined after g). Read
+# ONLY by the Str -> `: cstring` warning. ⛔ Never put this in GVTYPE: GVTYPE drives codegen
+# (field access, the struct-copy init, the overload dispatcher), so typing an inferred global
+# there changes binaries. 8 bytes per global for the var table's HARD cap (1048576, _var_grow),
+# and bound-checked on both sides, so an index past the table is never written. CHANGELOG [6.6.13]
+var _var_dsid = 0;
+fn GVDSID(S, vi): i64 {
+    if (_var_dsid == 0) { return 0; }
+    if (vi < 0) { return 0; }
+    if (vi >= 1048576) { return 0; }
+    return L64(_var_dsid + vi * 8);
+}
+fn SVDSID(S, vi, v): i64 {
+    if (vi < 0) { return 0; }
+    if (vi >= 1048576) { return 0; }
+    if (_var_dsid == 0) {
+        if (v == 0) { return 0; }
+        _var_dsid = alloc(1048576 * 8);
+    }
+    S64(_var_dsid + vi * 8, v);
+    return 0;
+}
 var _var_dead = 0;
 fn GVDEAD(S, vi): i64 { if (_var_dead == 0) { return 0; } if (vi < 0) { return 0; } return load8(_var_dead + vi); }
 fn SVDEAD(S, vi, v): i64 { if (_var_dead == 0) { _var_dead = alloc(1048576); } store8(_var_dead + vi, v); return 0; }

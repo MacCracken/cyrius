@@ -99,6 +99,64 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   → 1,470,960 B); cycc self-hosts byte-identical on real ecb, ach, pi and cass, and the 155
   `tests/tcyr/crossos/` files pass on each.
 
+- **The Str → `: cstring` warning saw only a named `Str` local, and its hint recommended the bug
+  (I11).** Filed by bayan 1.5.10 (issue `2026-10-01-str-cstring-diagnostic-misses-call-results`),
+  which had armed the warning on `bayan_json_v_obj_get(v, key: cstring)` and found it silent for the
+  natural spelling `f(o, str_from("k"))`. **Root cause:** PARSE_FNCALL typed only the argument's FIRST
+  token, through `FINDLOCAL` / `FINDVAR`. So a call (`str_from(..)`, `mk()`), a `: Str` field
+  (`h.name`), a tail call (PARSE_RETURN's own argument loop) and a method call (`_call_arg_one`) were
+  all silent. A global declared `: Str` was compared against the LOCAL encoding `0 - sid` (globals
+  store the positive sid), and an inferred `var g = str_from(..)` recorded no type at all. `s.data`
+  was reported as "Str-typed 's'", and the fixed hint said `use str_data(x) for raw bytes`. That is
+  wrong for a `: cstring` param: a Str's bytes are not NUL-terminated at its length (`str_sub` and
+  `str_split` borrow their parent's), so the filed repro's `lookup(t, str_data(sl))` answered ANOTHER
+  key's value. And `str_data(..)` is a call the check could not type, so taking the hint silenced the
+  warning (F2). **Fix:** one read-only helper, `_check_str_cstring_arg`, called from all three
+  argument loops (PARSE_FNCALL, `_call_arg_one` — method calls and the struct-valued own calls — and
+  the tail loop). It types an argument only when it is a single primary that ends it:
+  - `x` — a local decides by itself, so an untyped local shadowing a Str global is silent;
+  - a global's positive sid, gated on `GVPM` — GVTYPE's positive range is shared with scalar widths, so
+    an `i32` global's 4 must not read as struct id 4;
+  - `f(..)` through the callee's `: Struct` return (`GFRS`), resolved at the check, so `f` may be
+    defined later;
+  - `x.f` through the field's declared type.
+
+  `x.data` on a Str and `str_data(..)` are reported as "a Str's data pointer … (a Str's bytes are
+  not NUL-terminated at its length)". Everything else is left alone, which also ends the old false
+  positives on `s + 8` and `s.len` (the first-token check called `s.len` "Str-typed 's'"). The hint
+  never says `str_data`: it names a `_str` overload or a `<stem>_cstr` → `<stem>_str` sibling (bayan's
+  `_by_cstr` / `_by_str`) when its param is `: Str`, then `str_cstr(x)` for a NUL-terminated copy, then
+  annotating the param `: Str`. A method call names its registered fn (`T_lk`). An inferred global's
+  initializer callee lives in a new DIAGNOSTIC-ONLY per-global table, `GVDSID` / `SVDSID` (util.cyr,
+  lazily allocated, 8 B per global for the var table's hard cap of 1,048,576 and bound-checked on both
+  sides, so no index past it is written), never in GVTYPE, which drives codegen. **Warning text
+  only:** the 537-file corpus (tests/tcyr, programs, benches, fuzz) builds byte-identical old vs new
+  on x86 and through the aarch64 cross compiler, and with `CYRIUS_TYPE_CHECK=0` vs `=1`; exit codes
+  are identical too. No warning disappeared; the only new ones were the F2 shape. The filed repro
+  warns exactly 11 times, at W1–W9, F1 and F2, and not at the `str_cstr` / literal controls. The
+  same 11 come out of the aarch64, cx, PE and Mach-O paths, all with binaries unchanged. The run
+  itself is unchanged: `exit=11`, since the warning fixes nothing by itself. **In-tree sites:**
+  the 40 `streq(str_data(x), ..)` / `strlen(str_data(s))` calls in 8 tests become `str_eq_cstr` /
+  `str_eq` / `str_len`, which compare length-bounded. All eight still pass (json_engine 71,
+  json_stream 65, json_pointer 36, json_pretty 18, derive_serialize_widths 14,
+  derive_serialize_signed 8, derive_accessors_over_deserialize 8, derive_serialize_roundtrip 4) on
+  x86 and under qemu-aarch64. The one stdlib site, `lib/bayan.cyr:14687`
+  (`bayan_pdf_obj_dict_set_a(.., str_data(name), ..)`), is bayan's to fix — upstream in
+  `src/pdf.cyr` (bayan 1.5.11), never in the fold. Until that tag is re-folded it warns in every
+  build that includes bayan, tls.cyr or tls_native.cyr. ⚠ Downstream code that writes
+  `streq(str_data(x), ..)` into a `: cstring` param now gets a warning; builds do not fail. New gate
+  `tests/gates/diagnostics/str_cstring_arg_shapes.sh` checks:
+  - the filed repro, carried verbatim: the 11 sites by line:col, no `str_data` hint, the data-pointer
+    wording, the unchanged run;
+  - the TYPE_CHECK=0/1 byte-identity;
+  - rows for sibling hints, a global initialised from a later fn, struct-literal and `self: T`
+    fields, a method call with a call argument, the left-alone shapes, a redeclaration clearing the
+    inferred record, and an `i32` global whose width equals Str's struct id.
+
+  The pre-fix compiler fails 14 of its 19 checks. Three mutations each turn it red: dropping the
+  `GVPM` gate, keeping a stale inferred record, and losing the `str_data` arm. Self-host fixpoint and
+  seed-derive green (cycc 1,475,080 → 1,479,360 B), and cycc's own self-compile output is unchanged.
+
 ### Changed
 
 - **`f64_le`, `f64_ge` and `f64_trunc` are compiler builtins, no longer `lib/math.cyr` calls (I5).**

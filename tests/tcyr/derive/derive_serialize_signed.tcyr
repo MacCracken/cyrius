@@ -40,7 +40,7 @@ fn check(): i64 {
     assert_eq(sgn_c(p), 0 - 70000, "i32 field reads -70000");
     # ... and Serialize writes them as such (was {"a":255,"b":65236,"c":4294897296,...}).
     var s = json_of(p);
-    assert_eq(strlen(str_data(s)), strlen(src), "the JSON has the source's exact length");
+    assert_eq(str_len(s), strlen(src), "the JSON has the source's exact length");
     assert_eq(memeq(str_data(s), src, strlen(src)), 1, "negative narrow fields serialize as negatives");
     # Round-trip through the JSON again: stable.
     var q = sgn_from_json_str(str_data(s));
