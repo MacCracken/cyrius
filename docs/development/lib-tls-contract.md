@@ -238,6 +238,16 @@ CertificateRequest is sent — while native is never looser than asked and reque
   lists that curve in supported_groups after x25519 (OpenSSL refuses an ECDSA client certificate
   on a curve the client did not list); its key exchange stays x25519. Until 6.6.13 the 1.2 client
   failed any server that asked (`TLS_ERR_BAD_HANDSHAKE`).
+  ⚠ **The trade-off (6.6.14).** RFC 8422 reads that list as the curves the client can do ECDHE on
+  too, and the native 1.2 client cannot do ECDHE on P-256 / P-384. So a 1.2-pinned (or 1.2-only
+  server's) client holding a P-256 / P-384 certificate now FAILS with `TLS_ERR_HANDSHAKE_FAILED`
+  against a TLS 1.2 server that ranks that curve ABOVE X25519 for the key exchange (server
+  preference) — whether or not the server asks for a certificate; before 6.6.14 that connection
+  worked when it did not ask. A server that ranks X25519 first (OpenSSL's default list does), or
+  follows the client's order, connects; a client with no certificate, or an Ed25519 one, lists
+  x25519 alone as before. The remedy is ECDHE on P-256 / P-384 in the 1.2 client. Pinned by
+  `tests/gates/platform/tls_native_client_auth_openssl.sh` (`s_server -groups P-256:X25519
+  -serverpref`).
 - **Memory.** Measured at 6.6.14 (P-256 server, one-certificate client): an mTLS handshake fits
   88,784 B of a server's arena in TLS 1.3 and 108,480 B in TLS 1.2 — both inside the 131,072 B
   below. A client's three TLS 1.2 messages before its CCS are bounded at 16 KiB on the server, and

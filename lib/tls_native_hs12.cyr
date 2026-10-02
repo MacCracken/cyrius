@@ -302,8 +302,9 @@ fn tls_native_12_build_client_hello(ctx, out, out_max): i64 {
     # client listed in supported_groups (RFC 8422 §5.1.1; OpenSSL refuses it, "wrong curve"), so
     # with a P-256 / P-384 client certificate installed that curve follows x25519. Our ECDHE stays
     # x25519 alone: a server that picks the listed curve for the key exchange fails the
-    # ServerKeyExchange (TLS_ERR_HANDSHAKE_FAILED), and without a client certificate the hello is
-    # unchanged. CHANGELOG [6.6.14]
+    # ServerKeyExchange (TLS_ERR_HANDSHAKE_FAILED) — ⚠ a server ranking it above X25519 by its own
+    # preference, asked for a certificate or not, which connected before 6.6.14 — and without a
+    # client certificate the hello is unchanged. CHANGELOG [6.6.14]
     var cgroup = 0;
     if (load64(ctx + TLS_CTX_OFF_CERT_CHAIN) != 0) {
         if (load64(ctx + TLS_CTX_OFF_CREDS_LOADED) == 1) {
