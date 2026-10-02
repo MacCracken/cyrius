@@ -1,0 +1,164 @@
+# tls_system_trust_store.tcyr — 6.6.14 (CVE-65): where the native TLS client's SYSTEM trust roots
+# come from, on every target.
+#
+#   POSIX (Linux, macOS, aarch64): the first readable of the four bundle paths, as before.
+#   Windows: NEVER those paths. "/etc/ssl/cert.pem" is drive-relative there (C:\etc\ssl\cert.pem)
+#            and any local user may create C:\etc, so the bundle reader let one user plant trust
+#            anchors for every native TLS client on the box (measured on cass, 6.6.13: a planted
+#            cert.pem installed as the only root).
+#
+# The Windows rows plant that file THEMSELVES — the fixture P-256 CA (CN=localhost, the root
+# tls_native_scaffold.tcyr serves) at the exact path the reader opened — load the system roots,
+# and assert the planted root is not among them; then they remove only what they created. They
+# run first: the system set is loaded once per process.
+# Cross-OS because the store is a different thing on every host.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/tls.cyr"
+
+var _ts_p256 = 0;          # DER, 385 bytes — the planted root (CN=localhost, 2026-06-01 .. 2036-05-29)
+var _ts_p256_len = 385;
+var _ts_now = 1790931739;  # 2026-10-02: inside every fixture's validity window
+
+# Base64 (RFC 4648) of src[0..n) into out; returns the length written.
+fn _ts_b64(src, n, out): i64 {
+    var tbl = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    var i = 0;
+    var o = 0;
+    while (i + 3 <= n) {
+        var v = ((load8(src + i) & 0xFF) << 16) | ((load8(src + i + 1) & 0xFF) << 8) | (load8(src + i + 2) & 0xFF);
+        store8(out + o, load8(tbl + ((v >> 18) & 63)));
+        store8(out + o + 1, load8(tbl + ((v >> 12) & 63)));
+        store8(out + o + 2, load8(tbl + ((v >> 6) & 63)));
+        store8(out + o + 3, load8(tbl + (v & 63)));
+        i = i + 3;
+        o = o + 4;
+    }
+    var rem = n - i;
+    if (rem > 0) {
+        var w = (load8(src + i) & 0xFF) << 16;
+        if (rem == 2) { w = w | ((load8(src + i + 1) & 0xFF) << 8); }
+        store8(out + o, load8(tbl + ((w >> 18) & 63)));
+        store8(out + o + 1, load8(tbl + ((w >> 12) & 63)));
+        store8(out + o + 2, 61);
+        if (rem == 2) { store8(out + o + 2, load8(tbl + ((w >> 6) & 63))); }
+        store8(out + o + 3, 61);
+        o = o + 4;
+    }
+    return o;
+}
+
+# One PEM certificate block (64-column body) at buf; returns its length.
+fn _ts_pem(buf, der, dlen): i64 {
+    memcpy(buf, "-----BEGIN CERTIFICATE-----\n", 28);
+    var pos = 28;
+    var b = alloc(dlen * 2 + 8);
+    var bl = _ts_b64(der, dlen, b);
+    var i = 0;
+    while (i < bl) {
+        var k = bl - i;
+        if (k > 64) { k = 64; }
+        memcpy(buf + pos, b + i, k);
+        pos = pos + k;
+        store8(buf + pos, 10);
+        pos = pos + 1;
+        i = i + k;
+    }
+    memcpy(buf + pos, "-----END CERTIFICATE-----\n", 26);
+    return pos + 26;
+}
+
+# 1 when needle[0..nl) occurs in hay[0..hl).
+fn _ts_contains(hay, hl, needle, nl): i64 {
+    if (hay == 0) { return 0; }
+    var i = 0;
+    while (i + nl <= hl) {
+        if (memeq(hay + i, needle, nl) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn _ts_installed(ctx): i64 {
+    var set = load64(ctx + TLS_CTX_OFF_CA_ROOT);
+    if (set == 0) { return 0; }
+    return load64(set);
+}
+
+# Verify `leaf` (parsed) with intermediates `inters` ([count][ptrs], or 0) against `ctx`'s roots.
+fn _ts_verify(ctx, leaf, inters, now): i64 {
+    store64(ctx + TLS_CTX_OFF_SERVER_CERT, leaf);
+    store64(ctx + TLS_CTX_OFF_SERVER_INTERS, inters);
+    return tls_native_client_verify_chain(ctx, now);
+}
+
+# Windows: a planted C:\etc\ssl\cert.pem is NOT a trust root. Runs before anything else loads the
+# system set (it is loaded once per process, so this is the load).
+fn test_planted_bundle_ignored(): i64 {
+    test_group("Windows: a planted /etc/ssl/cert.pem (drive-relative, C: etc ssl) is not read");
+    var pem = alloc(2048);
+    var plen = _ts_pem(pem, _ts_p256, _ts_p256_len);
+    # Create only what is missing, and remember it: a host whose C:\etc already exists keeps it.
+    var made_etc = 0;
+    var made_ssl = 0;
+    var made_pem = 0;
+    if (xmkdir("/etc", 0x1ED) == 0) { made_etc = 1; }
+    if (xmkdir("/etc/ssl", 0x1ED) == 0) { made_ssl = 1; }
+    if (file_exists("/etc/ssl/cert.pem") == 0) {
+        if (file_write_all("/etc/ssl/cert.pem", pem, plen) == plen) { made_pem = 1; }
+    }
+    assert_eq(made_pem, 1, "the test planted /etc/ssl/cert.pem (it did not exist)");
+    assert_eq(file_exists("/etc/ssl/cert.pem"), 1, "the planted file is there to be read");
+    var c = tls_native_new_client("localhost", 9);
+    var rc = tls_native_set_ca_system(c);
+    syscall(1, 1, "  set_ca_system rc ", 19);
+    fmt_int(rc);
+    syscall(1, 1, ", ", 2);
+    fmt_int(_ts_installed(c));
+    syscall(1, 1, " roots installed\n", 17);
+    # The planted root must not anchor anything: its own self-signed cert does not verify.
+    var leaf = x509_cert_alloc();
+    assert_eq(x509_parse(_ts_p256, _ts_p256_len, leaf), 1, "the planted root parses");
+    var v = tls_native_new_client("localhost", 9);
+    store64(v + TLS_CTX_OFF_CA_ROOT, load64(c + TLS_CTX_OFF_CA_ROOT));
+    assert_eq(_ts_verify(v, leaf, 0, _ts_now), TLS_ERR_CERT_INVALID, "the planted root anchors nothing");
+    # And its bytes are not in the cached system bundle.
+    var b = alloc(1024);
+    var bl = _ts_b64(_ts_p256, 48, b);
+    var inbuf = 0;
+    if (_tn_ca_len > 0) { inbuf = _ts_contains(_tn_ca_buf, _tn_ca_len, b, bl); }
+    assert_eq(inbuf, 0, "the planted PEM is not in the cached system bundle");
+    # Remove only what this test created.
+    if (made_pem == 1) { assert_eq(xunlink("/etc/ssl/cert.pem"), 0, "the planted file is removed"); }
+    if (made_ssl == 1) { assert_eq(xrmdir("/etc/ssl"), 0, "the created /etc/ssl is removed"); }
+    if (made_etc == 1) { assert_eq(xrmdir("/etc"), 0, "the created /etc is removed"); }
+    assert_eq(file_exists("/etc/ssl/cert.pem"), 0, "nothing planted is left behind");
+    return 0;
+}
+
+# POSIX: the bundle at one of the four paths is the store, as before 6.6.14.
+fn test_posix_bundle(): i64 {
+    test_group("POSIX: the system bundle file is the store");
+    var c = tls_native_new_client("localhost", 9);
+    assert_eq(tls_native_set_ca_system(c), TLS_OK, "tls_native_set_ca_system: TLS_OK");
+    assert_gt(_tn_ca_len, 0, "a bundle file was read");
+    assert_gt(_ts_installed(c), 0, "it installs roots");
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    _ts_p256 = hex_decode("3082017d30820123a0030201020214561cee528775ffec8d05834b308f1ad80d7e7dbe300a06082a8648ce3d04030230143112301006035504030c096c6f63616c686f7374301e170d3236303630313138343930365a170d3336303532393138343930365a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d030107034200049167a2981f570fdbd8d94bf20fb4f5c89d77aa5b58cf4ed416bafa0256a2561a04f1e71d57537fc532fc87ca980eb8ba1f8f8704fc7f6a793ba6598b97bb3275a3533051301d0603551d0e04160414e6e9022c5ba23153aa7b2a0004574c417dfbf42e301f0603551d23041830168014e6e9022c5ba23153aa7b2a0004574c417dfbf42e300f0603551d130101ff040530030101ff300a06082a8648ce3d04030203480030450220274b9132990767c26d383d8712024a2c8cdb63e38af642893d1a59ab44a29758022100a57e61df420d2425c712ad284d0ad53ef9c8cdbfd07ba65c952eaead0dc13729", 770);
+    #ifdef CYRIUS_TARGET_WIN
+    test_planted_bundle_ignored();
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    test_posix_bundle();
+    #endif
+    return assert_summary();
+}
+var ec = main();
+syscall(60, ec);

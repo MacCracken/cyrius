@@ -1781,7 +1781,17 @@ fn tls_native_set_ca_system(ctx): i64 {
 
 # Read the first readable system bundle into `buf` (`cap` bytes). Returns the byte count, or -1
 # when no candidate is readable (the caller caches that). Called only by the claim holder.
+# ⛔ CVE-65 (6.6.14) — NEVER THE POSIX PATHS ON WINDOWS. There a rooted path is DRIVE-RELATIVE:
+# "/etc/ssl/cert.pem" is C:\etc\ssl\cert.pem, and any authenticated user may create folders at the
+# root of the system drive, so one local user could plant trust anchors every native TLS client on
+# the box then trusted (measured on cass: a planted cert.pem installed as the only root). Windows
+# reads its own store instead (_tn_ca_read_win) — CVE-54 / CVE-57's class. CHANGELOG [6.6.14]
 fn _tn_ca_read(buf, cap): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    var w = _tn_ca_read_win(buf, cap);
+    return w;
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
     # v6.2.23: open through io.cyr's `file_open` per-target bridge, NOT raw
     # `sys_open`. On CYRIUS_TARGET_AGNOS sys_open is (name, namelen, flags) —
     # a raw `sys_open(path, 0, 0)` reads the `0` as namelen=0, opens a
@@ -1806,7 +1816,15 @@ fn _tn_ca_read(buf, cap): i64 {
     sys_close(fd);
     if (total <= 0) { return 0 - 1; }
     return total;
+    #endif
 }
+
+#ifdef CYRIUS_TARGET_WIN
+# The Windows system store for _tn_ca_read. -1: no store (the caller caches it as TLS_ERR_IO).
+fn _tn_ca_read_win(buf, cap): i64 {
+    return 0 - 1;
+}
+#endif
 
 # v6.2.8: mTLS client-auth — install the CLIENT's own certificate so it can
 # present it when a server sends a CertificateRequest. The wire Certificate
