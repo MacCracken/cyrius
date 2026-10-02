@@ -60,7 +60,7 @@ CHANGELOG; do not re-add shipped slots here.
 **v6.6.7–v6.6.12 were the repair batch** (2026-09-27 → 2026-09-30, CLOSED): the 30 issues filed after
 6.6.6, split by the user across three releases, then each release's own review finds, which the user
 placed into 6.6.10–6.6.12 — and 6.6.12 also took the backlog's repair items and every sibling follow-up.
-It spent **CVE-46 … CVE-58** (the next free id is 67) and shipped each release together with the sibling
+It spent **CVE-46 … CVE-58** (the next free id is 68) and shipped each release together with the sibling
 patch releases it needed. Per-release detail is in the CHANGELOG; the process rules it settled are in
 *Standing notes* below.
 
@@ -111,7 +111,7 @@ The in-passing finds of the premise check and the lanes' reviews are in *Potenti
 **User, 2026-10-02:** "6.6.14 - all the remaining noted tls issues". That is every TLS item noted by 6.6.13 — the
 candidates this section listed, the *Not covered* lines of CVE-59 … CVE-63, the two TLS gaps the 6.6.13 CHANGELOG
 reported for the backlog, and the TLS port-race flake from the lanes' reviews. Five lanes, cut from the slot bump
-`bcdd1818`. CVE ids are reserved per lane and spent at integration (the next free id is **67**).
+`bcdd1818`. CVE ids are reserved per lane and spent at integration (the next free id is **68**).
 
 - **auth** — **CVE-64**, the mTLS bypass:
   - the native TLS 1.2 SERVER never sent a CertificateRequest and ignored `TLS_CTX_OFF_VERIFY`
