@@ -22,6 +22,8 @@
 #   MT1 lib/sigil.cyr from sigil 3.13.5 (6c05a2c6, the pre-fold tree) -> P-256 leg exit 3
 #       (FAIL A 10/10, FAIL B 5/5, FAIL C signal 11, PASS D) — the filing's exact numbers; the
 #       RSA-2048 and Ed25519 legs exit 1 (FAIL C, signal 11).
+#   MT2 (6.6.14) serve's 6.6.13 readiness (any TCP connect on the port) -> S0: the second server
+#       "comes up" on the held port, i.e. the repro's thread would talk to the first server.
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 1
@@ -43,29 +45,6 @@ cat "$REPRO" | "$CC" > "$T/client" 2> "$T/client.err" || {
     echo "FAIL: $G: the filed repro did not compile"; tail -3 "$T/client.err"; exit 1; }
 chmod +x "$T/client"
 
-# A TCP-connect probe, to wait until each s_server accepts (exit 0 = connected).
-cat > "$T/pd.cyr" <<'EOF'
-include "lib/syscalls.cyr"
-include "lib/alloc.cyr"
-include "lib/string.cyr"
-include "lib/io.cyr"
-include "lib/net.cyr"
-include "lib/args.cyr"
-fn main(): i64 {
-    alloc_init();
-    args_init();
-    var st, fd = tcp_socket();
-    if (is_err_result(st) != 0) { return 1; }
-    var cs, cv = sock_connect(fd, INADDR_LOOPBACK(), atoi(argv(1)));
-    sock_close(fd);
-    if (is_err_result(cs) != 0) { return 1; }
-    return 0;
-}
-var r = main();
-syscall(SYS_EXIT_GROUP, r);
-EOF
-cat "$T/pd.cyr" | "$CC" > "$T/pd" 2>/dev/null || { echo "FAIL: $G: the TCP probe did not compile"; exit 1; }
-chmod +x "$T/pd"
 
 q() { "$@" >/dev/null 2>&1 || { echo "FAIL: $G: setup: $*"; exit 1; }; }
 genkey() {  # <kind> <out>
@@ -76,26 +55,33 @@ genkey() {  # <kind> <out>
     esac
 }
 
-# serve <dir>: start one s_server on a random port, wait until it accepts; sets PORT.
+# serve <dir>: start one s_server on a random loopback port and wait for its own "ACCEPT" line,
+# which s_server prints only once ITS listen() has succeeded; a bind failure ends the process before
+# the line, and serve retries on another port. Sets PORT; adds the pid to SP.
+# ⛔ 6.6.14 — WHY. serve used to wait for ANY TCP connect to succeed on the port: a foreign listener
+# already holding it answered while s_server died on its bind, and the repro's thread then talked to
+# a stranger — a flake that read as a TLS failure. SERVE_FIRST_PORT forces the first port (S0).
 PORT=0
+SERVE_FIRST_PORT=
 serve() {
     tries=0
-    while [ $tries -lt 3 ]; do
-        PORT=$((20000 + $(od -An -N2 -tu2 /dev/urandom | tr -d ' ') % 20000))
-        openssl s_server -quiet -accept "$PORT" -cert "$1/srv.crt" -key "$1/srv.key" -www \
-            > "$1/sv.$PORT.log" 2>&1 &
+    while [ $tries -lt 5 ]; do
+        if [ -n "$SERVE_FIRST_PORT" ]; then PORT=$SERVE_FIRST_PORT; SERVE_FIRST_PORT=
+        else PORT=$((20000 + $(od -An -N2 -tu2 /dev/urandom | tr -d ' ') % 20000)); fi
+        openssl s_server -accept "127.0.0.1:$PORT" -cert "$1/srv.crt" -key "$1/srv.key" -www \
+            > "$1/sv.$PORT.log" 2>&1 < /dev/null &
         sp=$!
         i=0
-        while [ $i -lt 50 ]; do
-            if ! kill -0 "$sp" 2>/dev/null; then break; fi
-            if "$T/pd" "$PORT" >/dev/null 2>&1; then SP="$SP $sp"; return 0; fi
-            sleep 0.1
+        while [ $i -lt 200 ]; do
+            if grep -q '^ACCEPT' "$1/sv.$PORT.log" 2>/dev/null; then SP="$SP $sp"; return 0; fi
+            kill -0 "$sp" 2>/dev/null || break
+            sleep 0.05
             i=$((i + 1))
         done
         kill "$sp" 2>/dev/null || true; wait "$sp" 2>/dev/null || true
         tries=$((tries + 1))
     done
-    echo "FAIL: $G: s_server never accepted (3 ports tried)"; exit 1
+    echo "FAIL: $G: s_server never reached ACCEPT (5 ports tried)"; exit 1
 }
 
 FAILS=0
@@ -112,7 +98,20 @@ for KIND in p256 rsa ed25519; do
         -days 2 -extfile "$D/srv.ext" -out "$D/srv.crt"
     # s_server is serial, so each of the repro's two threads gets its own server.
     serve "$D"; P1=$PORT
+    if [ "$KIND" = p256 ]; then
+        # S0 (6.6.14): serve forced onto the port the first server holds must see its own s_server
+        # die on the bind and come up elsewhere — never settle on a port another process answers.
+        SERVE_FIRST_PORT=$P1
+    fi
     serve "$D"; P2=$PORT
+    if [ "$KIND" = p256 ]; then
+        if [ "$P2" != "$P1" ] && grep -q '^ACCEPT' "$D/sv.$P2.log"; then
+            echo "  ok: S0 — the held port $P1 was refused by the bind; the second server is up on $P2"
+        else
+            echo "  FAIL: S0 — the second server settled on $P2 (the held port was $P1): it would be a stranger"
+            FAILS=$((FAILS + 1))
+        fi
+    fi
     rc=0
     $TO "$T/client" "$P1" "$P2" "$D/ca.crt" > "$D/out.txt" 2>&1 || rc=$?
     kill $SP 2>/dev/null || true; wait 2>/dev/null || true; SP=""

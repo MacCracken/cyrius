@@ -52,6 +52,8 @@
 #       native S rows for 127.0.0.1 / ::1 (the fatal-on-mismatch server refuses the literal)
 #   MI7 the native matcher before _tn_wildcard_ok (any "*." a wildcard, any byte under the star)
 #       -> the N rows a_b.example.com, a.com and example.com vs *.com (CVE-67)
+#   MI8 serve's 6.6.13 readiness probe (any TCP connect on the port) with the first port held ->
+#       S0: serve settles on the held port, and the 127.0.0.1 rows meet the foreign DNS leaf
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 1
@@ -225,28 +227,43 @@ else
 fi
 
 # ── servers ──
+# serve <leaf> [extra s_server args...]: start ONE s_server on a random loopback port and wait for
+# its own "ACCEPT" line, which s_server prints only once ITS listen() has succeeded; a bind failure
+# ends the process before the line, and serve retries on another port. No row connects before then.
+# ⛔ 6.6.14 — WHY. serve used to wait for ANY TCP connect to succeed on the port: a foreign listener
+# already holding it answered the probe while s_server died on its bind, and the rows then ran
+# against a stranger (a flake that read as a TLS verdict). SERVE_FIRST_PORT forces the first port
+# tried (the S0 self-check below occupies one on purpose).
 PORT=0
-serve() {  # <leaf> [extra s_server args...]
+SERVE_FIRST_PORT=
+serve() {
     c=$1; shift
     tries=0
-    while [ $tries -lt 3 ]; do
-        PORT=$((20000 + $(od -An -N2 -tu2 /dev/urandom | tr -d ' ') % 20000))
-        openssl s_server -quiet -accept "$PORT" -cert "$T/$c.crt" -key "$T/$c.key" -www "$@" \
-            > "$T/sv.log" 2>&1 &
+    while [ $tries -lt 5 ]; do
+        if [ -n "$SERVE_FIRST_PORT" ]; then PORT=$SERVE_FIRST_PORT; SERVE_FIRST_PORT=
+        else PORT=$((20000 + $(od -An -N2 -tu2 /dev/urandom | tr -d ' ') % 20000)); fi
+        openssl s_server -accept "127.0.0.1:$PORT" -cert "$T/$c.crt" -key "$T/$c.key" -www "$@" \
+            > "$T/sv.log" 2>&1 < /dev/null &
         SP=$!
-        i=0
-        while [ $i -lt 50 ]; do
-            if ! kill -0 "$SP" 2>/dev/null; then break; fi
-            $TO "$T/pd" tcp "$PORT" >/dev/null 2>&1 && return 0
-            sleep 0.1
-            i=$((i + 1))
-        done
-        kill "$SP" 2>/dev/null; wait "$SP" 2>/dev/null || true; SP=0
+        if _serve_ready "$SP" "$T/sv.log"; then return 0; fi
+        kill "$SP" 2>/dev/null || true; wait "$SP" 2>/dev/null || true; SP=0
         tries=$((tries + 1))
     done
-    echo "FAIL: $G: s_server for leaf '$c' never accepted (3 ports tried)"; tail -3 "$T/sv.log"; exit 1
+    echo "FAIL: $G: s_server for leaf '$c' never reached ACCEPT (5 ports tried)"; tail -3 "$T/sv.log"; exit 1
 }
-stop() { [ "$SP" -ne 0 ] && { kill "$SP" 2>/dev/null; wait "$SP" 2>/dev/null || true; }; SP=0; }
+# _serve_ready <pid> <log>: 0 once <log> holds s_server's ACCEPT line; 1 when the process ends
+# first (its bind failed) or 10 s pass.
+_serve_ready() {
+    i=0
+    while [ $i -lt 200 ]; do
+        if grep -q '^ACCEPT' "$2" 2>/dev/null; then return 0; fi
+        kill -0 "$1" 2>/dev/null || return 1
+        sleep 0.05
+        i=$((i + 1))
+    done
+    return 1
+}
+stop() { [ "$SP" -ne 0 ] && { kill "$SP" 2>/dev/null || true; wait "$SP" 2>/dev/null || true; }; SP=0; }
 
 # A = accepted (10); R = refused, at alloc or handshake (30|20); R0 = tls_connect_alloc returned 0
 # without a handshake (30); RH = the handshake refused (20).
@@ -301,6 +318,24 @@ prow() {
 }
 
 CA="$T/ca.crt"
+# ── S0: serve's own readiness (6.6.14) — a port another listener holds is never connected to ──
+# A foreign s_server (leaf DNS:localhost) holds a port; serve is forced to try that port first for
+# the IP leaf. It must see its own s_server die on the bind and come up on ANOTHER port, and the
+# 127.0.0.1 row must then pass — against the foreign DNS leaf it would be refused.
+echo "S0: serve when the first port is already held"
+serve dns
+FPORT=$PORT; FSP=$SP; SP=0
+SERVE_FIRST_PORT=$FPORT
+serve ip
+if [ "$PORT" != "$FPORT" ] && kill -0 "$SP" 2>/dev/null; then
+    echo "  ok: [S0] the bind failure on $FPORT was seen; s_server is up on $PORT"
+else
+    echo "  FAIL: [S0] serve settled on port $PORT (the held port was $FPORT) — it would connect to a stranger"
+    FAILS=$((FAILS + 1))
+fi
+row 127.0.0.1       peer "$CA"            A  A  "S0: 127.0.0.1 reaches the IP leaf, not the listener that held the port"
+kill "$FSP" 2>/dev/null || true; wait "$FSP" 2>/dev/null || true
+stop
 echo "leaf DNS:localhost"
 serve dns
 row localhost       peer "$CA"            A  A  "localhost: the SAN name"
@@ -416,12 +451,12 @@ if [ "$LIBSSL" = 1 ]; then
 fi
 
 echo "rows: $NNAT native, $NLIB libssl"
-# 27 rows + 5 SNI rows (6.6.14)
-[ "$NNAT" -ge 32 ] || { echo "  FAIL: only $NNAT native rows ran (floor 32)"; FAILS=$((FAILS + 1)); }
+# 28 rows (the S0 row included) + 5 SNI rows (6.6.14)
+[ "$NNAT" -ge 33 ] || { echo "  FAIL: only $NNAT native rows ran (floor 33)"; FAILS=$((FAILS + 1)); }
 if [ "$LIBSSL" = 1 ]; then
-    # 27 rows x 2 libssl legs (B, L) + 5 SNI rows x 2 builds + 4 pin rows x 2 builds
+    # 28 rows x 2 libssl legs (B, L) + 5 SNI rows x 2 builds + 4 pin rows x 2 builds
     # + 5 required-symbol legs
-    [ "$NLIB" -ge 77 ] || { echo "  FAIL: only $NLIB libssl rows ran (floor 77)"; FAILS=$((FAILS + 1)); }
+    [ "$NLIB" -ge 79 ] || { echo "  FAIL: only $NLIB libssl rows ran (floor 79)"; FAILS=$((FAILS + 1)); }
 fi
 if [ "$FAILS" -ne 0 ]; then echo "FAIL: $G: $FAILS row(s)"; exit 1; fi
 if [ "$LIBSSL" != 1 ]; then echo "SKIP: $G: the libssl legs could not run ($WHY); native rows PASS"; exit 77; fi

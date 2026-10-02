@@ -688,25 +688,82 @@ fn _cd_openssl(av): i64 {
     return _cd_wait(pid);
 }
 
-# One s_server row: `flag` (-tls1_3 / -tls1_2) with the cert/key at `cert`/`key` in `form`.
-fn _cd_s_server_row(flag, cert, key, form, ver12, name): i64 {
-    var port = _cd_free_port();
-    var ps = alloc(16);
-    fmt_int_buf(port, ps);
-    var pid = sys_fork();
-    if (pid == 0) {
-        var nf = xopen("/dev/null", 2);
-        sys_dup2(nf, 0); sys_dup2(nf, 1); sys_dup2(nf, 2);
-        var av: i64[16];
-        av[0] = "openssl"; av[1] = "s_server"; av[2] = "-quiet"; av[3] = "-www";
-        av[4] = "-accept"; av[5] = ps; av[6] = "-cert"; av[7] = cert; av[8] = "-certform"; av[9] = form;
-        av[10] = "-key"; av[11] = key; av[12] = "-keyform"; av[13] = form; av[14] = flag; av[15] = 0;
-        var ev[8];
-        store64(&ev, 0);
-        sys_execve("/usr/bin/openssl", &av, &ev);
-        sys_exit(127);
+# 1 when the file at `path` holds a line starting "ACCEPT" (s_server's readiness line).
+fn _cd_log_ready(path): i64 {
+    var buf[4096];
+    var n = file_read_all(path, &buf, 4096);
+    var i = 0;
+    while (i + 6 <= n) {
+        if (i == 0 || load8(&buf + i - 1) == 10) {
+            if (memeq(&buf + i, "ACCEPT", 6) == 1) { return 1; }
+        }
+        i = i + 1;
     }
-    # Wait until s_server accepts (a probe connection of its own), up to 5 s.
+    return 0;
+}
+
+# Start `openssl s_server -www` on a loopback port and wait for ITS "ACCEPT" line (stdout to a log
+# file): s_server prints it only once its own listen() has succeeded, so the row's first connect
+# reaches it — never a listener that already held the port. A bind failure ends the child before
+# the line, and the start retries on another port. `first` forces the first port tried (0: a free
+# one). Returns the child's pid and writes the port through `out_port`, or returns 0.
+# ⛔ 6.6.14 — WHY. The row used to pick a free port, close it, start s_server and then probe-connect
+# until something answered: if anything took the port in that window, s_server died on its bind
+# and the probe connected to the stranger — a flake that read as a TLS failure.
+fn _cd_s_server_start(flag, cert, key, form, first, out_port): i64 {
+    var log = test_scratch("tls_ccs_deadline_s_server.log");
+    var tries = 0;
+    while (tries < 5) {
+        var port = first;
+        first = 0;
+        if (port == 0) { port = _cd_free_port(); }
+        var hp = alloc(32);
+        memcpy(hp, "127.0.0.1:", 10);
+        fmt_int_buf(port, hp + 10);
+        xunlink(log);
+        var pid = sys_fork();
+        if (pid == 0) {
+            var nf = xopen("/dev/null", 2);
+            var lf = file_open(log, O_WRONLY | O_CREAT | O_TRUNC, 384);
+            sys_dup2(nf, 0); sys_dup2(lf, 1); sys_dup2(lf, 2);
+            var av: i64[16];
+            av[0] = "openssl"; av[1] = "s_server"; av[2] = "-www";
+            av[3] = "-accept"; av[4] = hp; av[5] = "-cert"; av[6] = cert; av[7] = "-certform"; av[8] = form;
+            av[9] = "-key"; av[10] = key; av[11] = "-keyform"; av[12] = form; av[13] = flag; av[14] = 0;
+            var ev[8];
+            store64(&ev, 0);
+            sys_execve("/usr/bin/openssl", &av, &ev);
+            sys_exit(127);
+        }
+        var st[4];
+        var waited = 0;
+        var alive = 1;
+        while (waited < 100 && alive == 1) {
+            if (_cd_log_ready(log) == 1) {
+                store64(out_port, port);
+                xunlink(log);
+                return pid;
+            }
+            store64(&st, 0);
+            if (sys_waitpid(pid, &st, 1) == pid) { alive = 0; }     # WNOHANG: it exited (its bind failed)
+            else { sleep_ms(100); waited = waited + 1; }
+        }
+        if (alive == 1) { _cd_kill(pid); }
+        tries = tries + 1;
+    }
+    xunlink(log);
+    return 0;
+}
+
+# One s_server row: `flag` (-tls1_3 / -tls1_2) with the cert/key at `cert`/`key` in `form`.
+# `first` forces s_server's first port (0: any free one).
+fn _cd_s_server_row(flag, cert, key, form, ver12, first, name): i64 {
+    var port = 0;
+    var pid = _cd_s_server_start(flag, cert, key, form, first, &port);
+    assert_neq(pid, 0, name);
+    if (pid == 0) { return 0; }
+    if (first != 0) { assert_neq(port, first, "  the held port was refused by s_server's bind: it came up on another"); }
+    # OpenSSL prints ACCEPT after listen(); an older s_server that prints it first gets a few tries.
     var up = 0;
     var tries = 0;
     var fd = 0 - 1;
@@ -717,7 +774,7 @@ fn _cd_s_server_row(flag, cert, key, form, ver12, name): i64 {
         else { sock_close(f); sleep_ms(100); }
         tries = tries + 1;
     }
-    assert_eq(up, 1, name);
+    assert_eq(up, 1, "  the row connects to it");
     if (up == 1) {
         sock_set_recv_timeout(fd, CD_TIMEOUT_S, 0);
         var c = tls_native_new_client("localhost", 9);
@@ -751,8 +808,20 @@ fn test_openssl_peer(): i64 {
     var key = test_scratch("tls_ccs_deadline_key.der");
     file_write_all(cert, _cd_cert, _cd_cert_len);
     file_write_all(key, _cd_key, _cd_key_len);
-    _cd_s_server_row("-tls1_3", cert, key, "DER", 0,
-      "s_server -tls1_3 is up (one middlebox CCS after its ServerHello)");
+    # The 1.3 row starts s_server on a port this process already LISTENS on (and never accepts):
+    # s_server must die on its bind and come up on another, and the row must reach s_server, not
+    # this listener — a connect to it would succeed and then hang the handshake (6.6.14).
+    var ht, hfd = tcp_socket();
+    sock_bind(hfd, INADDR_LOOPBACK(), 0);
+    sock_listen(hfd, 4);
+    var hsa[16];
+    var hsl[8];
+    store64(&hsl, 16);
+    sys_getsockname(hfd, &hsa, &hsl);
+    var held = ((load8(&hsa + 2) & 0xFF) << 8) | (load8(&hsa + 3) & 0xFF);
+    _cd_s_server_row("-tls1_3", cert, key, "DER", 0, held,
+      "s_server -tls1_3 is up (one middlebox CCS after its ServerHello) — started on a held port first");
+    sock_close(hfd);
     xunlink(cert);
     xunlink(key);
     # TLS 1.2 against an RSA-2048 certificate: the native 1.2 client offers only x25519, and OpenSSL
@@ -766,7 +835,7 @@ fn test_openssl_peer(): i64 {
     # An X.509 v3 certificate: LibreSSL's req -x509 makes a v1 one (no extensions) without -addext.
     av[14] = "-addext"; av[15] = "basicConstraints=critical,CA:TRUE"; av[16] = 0;
     assert_eq(_cd_openssl(&av), 0, "openssl req made an RSA-2048 certificate");
-    _cd_s_server_row("-tls1_2", rcert, rkey, "PEM", 1, "s_server -tls1_2 is up (its CCS directly before its Finished)");
+    _cd_s_server_row("-tls1_2", rcert, rkey, "PEM", 1, 0, "s_server -tls1_2 is up (its CCS directly before its Finished)");
     xunlink(rcert);
     xunlink(rkey);
     return 0;
