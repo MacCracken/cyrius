@@ -1,4 +1,4 @@
-# tls_libssl_read_errors.tcyr — 6.6.13 (CVE-TBD(I2c)): the libssl backend's tls_read / tls_write
+# tls_libssl_read_errors.tcyr — 6.6.13 (CVE-60): the libssl backend's tls_read / tls_write
 # return the native backend's codes, and never a zero-extended C int.
 #
 # ⛔ THE DEFECT. lib/tls.cyr's libssl branch returned SSL_read / SSL_write's raw `int`. fncall3 hands

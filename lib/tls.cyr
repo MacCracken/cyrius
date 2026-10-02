@@ -197,7 +197,7 @@ var _fn_SSL_write = 0;
 var _fn_SSL_read = 0;
 var _fn_SSL_shutdown = 0;
 var _fn_SSL_get_error = 0;
-# 6.6.13 (CVE-TBD(I2c)) — libcrypto's error queue, which tells a received alert from a local
+# 6.6.13 (CVE-60) — libcrypto's error queue, which tells a received alert from a local
 # failure (_tls_ssl_io_ret). Optional: without them a failed read or write is TLS_ERR_PROTOCOL.
 var _fn_ERR_peek_last_error = 0;
 var _fn_ERR_clear_error = 0;
@@ -748,13 +748,18 @@ fn tls_get_peer_spki_der(ctx, buf, bufmax): i64 {
         return 0;
     }
     var ret = 0;
-    var size = fncall2(_fn_i2d_PUBKEY_v, pkey, 0);   # NULL → required size
+    # i2d_PUBKEY returns a C int: -1 arrives zero-extended as 4294967295, which passed `> 0`
+    # and was handed back as the SPKI length. Sign-extend both results (CVE-60's class, the
+    # same mapper's sibling site). CHANGELOG [6.6.13]
+    var size = fncall2(_fn_i2d_PUBKEY_v, pkey, 0) & 0xFFFFFFFF;   # NULL → required size
+    if (size > 0x7FFFFFFF) { size = size - 0x100000000; }
     if (size > 0) {
         if (size <= bufmax) {
             var pc[8];
             store64(&pc, buf);
-            var written = fncall2(_fn_i2d_PUBKEY_v, pkey, &pc);
-            if (written > 0) { ret = written; }
+            var written = fncall2(_fn_i2d_PUBKEY_v, pkey, &pc) & 0xFFFFFFFF;
+            if (written > 0x7FFFFFFF) { written = written - 0x100000000; }
+            if (written > 0) { if (written <= bufmax) { ret = written; } }
         }
     }
     if (_fn_EVP_PKEY_free_v != 0) { fncall1(_fn_EVP_PKEY_free_v, pkey); }
@@ -1276,7 +1281,7 @@ fn tls_read(ctx, buf, maxlen): i64 {
 # The libssl backend's answer for one SSL_read / SSL_write, in the native backend's terms: bytes
 # (> 0), 0 for the peer's close_notify, or a negative TLS_ERR_* (the read path's error table,
 # lib/tls_native_conn.cyr). `r` is the call's raw return.
-# ⛔ 6.6.13 (CVE-TBD(I2c)) — WHY. SSL_read / SSL_write return a C `int`, and fncall3 hands back
+# ⛔ 6.6.13 (CVE-60) — WHY. SSL_read / SSL_write return a C `int`, and fncall3 hands back
 # the whole register, which holds it ZERO-extended: -1 arrived as +4294967295, so a tampered
 # record (one bit flipped on the path, no key needed) made tls_read report ~4 GiB read, and a
 # caller doing `total = total + n` indexed past its buffer. And SSL_read's 0 is not only

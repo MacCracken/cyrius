@@ -1,0 +1,61 @@
+# tls_libssl_spki_int_return.tcyr — tls_get_peer_spki_der sign-extends libssl's C int.
+#
+# i2d_PUBKEY returns a C `int`; through fncall2 the -1 failure arrives zero-extended as
+# 4294967295, which passed the old `written > 0` test and came back as the SPKI LENGTH — a
+# caller copying or hashing that many bytes reads far past `buf` (CVE-60's class, the
+# introspection sibling of tls_read/tls_write). The libssl entry points are replaced by
+# cyrius stubs, so the row needs no libssl and no network. CHANGELOG [6.6.13]
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fnptr.cyr"
+include "lib/io.cyr"
+include "lib/net.cyr"
+include "lib/tls.cyr"
+
+var _st_second = 0 - 1;    # what the second i2d_PUBKEY call answers (a C int, zero-extended)
+var _st_need = 32;         # what the sizing call (pp == NULL) answers
+
+fn _st_peer_cert(ssl): i64 { return 0x1000; }
+fn _st_get_pubkey(x): i64 { return 0x2000; }
+fn _st_free(p): i64 { return 0; }
+fn _st_i2d(pkey, pp): i64 {
+    if (pp == 0) { return _st_need & 0xFFFFFFFF; }
+    return _st_second & 0xFFFFFFFF;
+}
+
+fn _st_arm(): i64 {
+    _tls_introspect_resolved = 1;
+    _fn_SSL_get1_peer_cert_v = &_st_peer_cert;
+    _fn_X509_get_pubkey_v = &_st_get_pubkey;
+    _fn_i2d_PUBKEY_v = &_st_i2d;
+    _fn_X509_free_v = &_st_free;
+    _fn_EVP_PKEY_free_v = &_st_free;
+    _tls_backend = TLS_BACKEND_LIBSSL;
+    return 0;
+}
+
+fn _st_run(): i64 {
+    _st_arm();
+    var ctx = alloc(32);
+    store64(ctx, 0);
+    store64(ctx + 8, 0x3000);           # a non-zero SSL*: the stubs never dereference it
+    var buf = alloc(256);
+
+    _st_second = 0 - 1;
+    assert_eq(tls_get_peer_spki_der(ctx, buf, 256), 0, "a failed i2d_PUBKEY (-1) is 0, not 4294967295");
+
+    _st_second = 32;
+    assert_eq(tls_get_peer_spki_der(ctx, buf, 256), 32, "a successful i2d_PUBKEY still returns its length");
+
+    _st_need = 0 - 1;
+    assert_eq(tls_get_peer_spki_der(ctx, buf, 256), 0, "a failed sizing call (-1) is 0");
+
+    _st_need = 512;
+    _st_second = 512;
+    assert_eq(tls_get_peer_spki_der(ctx, buf, 256), 0, "a key larger than bufmax is refused");
+    return 0;
+}
+
+var rr = _st_run();
+var r = assert_summary();

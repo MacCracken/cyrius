@@ -139,7 +139,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   rows), the hostflags dropped (the CN-only and partial-wildcard rows), one bail line removed (its
   symbol's leg: available, then SIGSEGV), `SSL_set1_host`-style routing (the `[::1]` rows), SNI for
   every host (the IP SNI rows).
-- **CVE-TBD(I2c) (P1) — the libssl backend's `tls_read` / `tls_write` returned a C `int`
+- **CVE-60 (P1) — the libssl backend's `tls_read` / `tls_write` returned a C `int`
   zero-extended: one flipped bit on the wire read as ~4 GiB, and a fatal alert or a cut stream read
   as a clean end.** (I2 (c), issue `2026-09-30-tls-client-memory-and-alert-gaps`; found by its
   premise check.) `SSL_read` / `SSL_write` return an `int`, and `fncall3` hands back the whole
@@ -177,6 +177,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   writes. 18 fail against the pre-fix lib. Mutants, each RED: no sign extension, the raw read, the
   raw write, no `ERR_clear_error` before the read or before the write, the alert-reason row, the
   unexpected-EOF row, `WANT_READ` → IO, `SYSCALL` → PROTOCOL, and a write's `ZERO_RETURN` read as 0.
+  The introspection sibling `tls_get_peer_spki_der` read `i2d_PUBKEY`'s C `int` the same way (a failed
+  second call came back as a 4294967295-byte SPKI length); both calls are sign-extended now and the
+  length is bounded by `bufmax` — `tests/tcyr/crypto/tls_libssl_spki_int_return.tcyr` (red on the 6.6.12
+  code, green on x86_64 and qemu-aarch64; found by the I2 (c) review).
 
 - **CVE-TBD(I8) (P2) — the native TLS stack skipped plaintext ChangeCipherSpec records without
   limit and took no deadline: anyone on the path, with no key, held a client for ever.** (I8, issue
