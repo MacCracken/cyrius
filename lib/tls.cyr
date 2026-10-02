@@ -1041,7 +1041,7 @@ fn tls_connect_complete(ctx): i64 {
     var ssl = load64(ctx + 8);
     if (ssl == 0) { return 0; }
     if (load64(ctx + 24) != 0) { return _tls_ssl_io(ctx, _TLS_IO_CONNECT, 0, 0); }
-    var r = fncall1(_fn_SSL_connect, ssl);
+    var r = _tls_ssl_call(_TLS_IO_CONNECT, ssl, 0, 0, 0);
     if (r != 1) { return 0; }
     return 1;
 }
@@ -1214,7 +1214,7 @@ fn tls_accept_complete(ctx): i64 {
     if (ssl == 0) { return 0; }
     if (_fn_SSL_accept == 0) { return 0; }   # client-only libssl: fail closed
     if (load64(ctx + 24) != 0) { return _tls_ssl_io(ctx, _TLS_IO_ACCEPT, 0, 0); }
-    if (fncall1(_fn_SSL_accept, ssl) != 1) { return 0; }
+    if (_tls_ssl_call(_TLS_IO_ACCEPT, ssl, 0, 0, 0) != 1) { return 0; }
     return 1;
 }
 
@@ -1287,7 +1287,7 @@ fn tls_write(ctx, buf, len): i64 {
         sw = _tls_ssl_io(ctx, _TLS_IO_WRITE, buf, len);
     } else {
         if (_fn_ERR_clear_error != 0) { fncall0(_fn_ERR_clear_error); }
-        sw = _tls_ssl_io_ret(ssl, fncall3(_fn_SSL_write, ssl, buf, len));
+        sw = _tls_ssl_io_ret(ssl, _tls_ssl_call(_TLS_IO_WRITE, ssl, buf, len, 0));
     }
     if (sw == 0) { sw = TLS_ERR_PROTOCOL; }     # a write never succeeds with 0 bytes: shut down
     return _tls_libssl_sticky(ctx, sw);
@@ -1306,7 +1306,7 @@ fn tls_read(ctx, buf, maxlen): i64 {
     if (load64(ctx + 24) != 0) { return _tls_libssl_sticky(ctx, _tls_ssl_io(ctx, _TLS_IO_READ, buf, maxlen)); }
     var ssl = load64(ctx + 8);
     if (_fn_ERR_clear_error != 0) { fncall0(_fn_ERR_clear_error); }
-    return _tls_libssl_sticky(ctx, _tls_ssl_io_ret(ssl, fncall3(_fn_SSL_read, ssl, buf, maxlen)));
+    return _tls_libssl_sticky(ctx, _tls_ssl_io_ret(ssl, _tls_ssl_call(_TLS_IO_READ, ssl, buf, maxlen, 0)));
 }
 
 # Record a libssl tls_read / tls_write result `r` on the shim and return it. A negative result
@@ -1371,19 +1371,96 @@ fn _tls_ssl_io_ret(ssl, r): i64 {
     return TLS_ERR_PROTOCOL;
 }
 
-# The four libssl calls the deadline loop drives. Private. CHANGELOG [6.6.13]
+# The libssl calls that can WRITE to the socket — every one goes through _tls_ssl_call. The first
+# four are the ones the deadline loop drives (6.6.13). Private.
 enum TlsSslIoOp {
     _TLS_IO_CONNECT = 0;
     _TLS_IO_ACCEPT = 1;
     _TLS_IO_READ = 2;
     _TLS_IO_WRITE = 3;
+    _TLS_IO_SHUTDOWN = 4;
+    _TLS_IO_WRITE_EARLY = 5;
+    _TLS_IO_READ_EARLY = 6;
 }
 
-fn _tls_ssl_call(op, ssl, buf, n): i64 {
-    if (op == _TLS_IO_CONNECT) { return fncall1(_fn_SSL_connect, ssl); }
-    if (op == _TLS_IO_ACCEPT) { return fncall1(_fn_SSL_accept, ssl); }
-    if (op == _TLS_IO_READ) { return fncall3(_fn_SSL_read, ssl, buf, n); }
-    return fncall3(_fn_SSL_write, ssl, buf, n);
+# One libssl call that may write to the socket — SSL_connect / SSL_accept (the handshake),
+# SSL_read (an alert, a KeyUpdate answer), SSL_write, SSL_shutdown (close_notify), the 0-RTT pair —
+# with SIGPIPE held off for this thread around it (_tls_sigpipe_hold / _tls_sigpipe_release). The
+# call's raw return; `out` is the early-data verbs' 4th argument.
+# ⛔ 6.6.14 (CVE-66, the libssl half) — WHY. libssl writes with write(2), not send(MSG_NOSIGNAL), so
+# a write to a peer that had closed raised SIGPIPE, whose default action kills the process: a
+# libssl client or server died on a closed peer (measured: exit 141 on the first tls_write after
+# the peer closed) instead of reading TLS_ERR_IO. CHANGELOG [6.6.14]
+fn _tls_ssl_call(op, ssl, buf, n, out): i64 {
+    var sp[16];                                 # 16 BYTES: the caller's mask + flags
+    _tls_sigpipe_hold(&sp);
+    var r = 0;
+    if (op == _TLS_IO_CONNECT) { r = fncall1(_fn_SSL_connect, ssl); }
+    if (op == _TLS_IO_ACCEPT) { r = fncall1(_fn_SSL_accept, ssl); }
+    if (op == _TLS_IO_READ) { r = fncall3(_fn_SSL_read, ssl, buf, n); }
+    if (op == _TLS_IO_WRITE) { r = fncall3(_fn_SSL_write, ssl, buf, n); }
+    if (op == _TLS_IO_SHUTDOWN) { r = fncall1(_fn_SSL_shutdown, ssl); }
+    if (op == _TLS_IO_WRITE_EARLY) { r = fncall4(_fn_SSL_write_early_data, ssl, buf, n, out); }
+    if (op == _TLS_IO_READ_EARLY) { r = fncall4(_fn_SSL_read_early_data, ssl, buf, n, out); }
+    _tls_sigpipe_release(&sp);
+    return r;
+}
+
+# SIGPIPE is bit 12 of a kernel sigset (signal 13).
+var _TLS_SIGPIPE_BIT = 0x1000;
+
+# Block SIGPIPE in the CALLING THREAD for one libssl call, libpq's pq_block_sigpipe pattern: the
+# process-wide disposition is never touched, so a consumer's own SIGPIPE handling, and every other
+# thread, are exactly as they were. `sp` (16 bytes) receives the caller's signal mask at +0 and, at
+# +8, bit 0 = the mask was changed (restore it), bit 1 = a SIGPIPE was ALREADY pending (it can be,
+# only if the caller had SIGPIPE blocked) — that one is the caller's, and is never consumed.
+# Linux x86_64 only: the libssl backend runs nowhere else; elsewhere both helpers do nothing.
+fn _tls_sigpipe_hold(sp): i64 {
+    store64(sp, 0);
+    store64(sp + 8, 0);
+    #ifdef CYRIUS_TARGET_LINUX
+    #ifdef CYRIUS_ARCH_X86
+    var set[8];
+    store64(&set, _TLS_SIGPIPE_BIT);
+    if (syscall(SYS_RT_SIGPROCMASK, 0, &set, sp, 8) != 0) { return 0; }   # SIG_BLOCK
+    var fl = 1;
+    if ((load64(sp) & _TLS_SIGPIPE_BIT) != 0) {
+        var pend[8];
+        store64(&pend, 0);
+        syscall(127, &pend, 8);                                          # rt_sigpending
+        if ((load64(&pend) & _TLS_SIGPIPE_BIT) != 0) { fl = fl | 2; }
+    }
+    store64(sp + 8, fl);
+    #endif
+    #endif
+    return 0;
+}
+
+# Undo _tls_sigpipe_hold: if the call raised a SIGPIPE (pending now, and none was before) take it
+# with a zero-timeout rt_sigtimedwait, so it is never delivered; then restore the caller's mask.
+# The failed write itself has already surfaced as SSL_ERROR_SYSCALL, i.e. TLS_ERR_IO.
+fn _tls_sigpipe_release(sp): i64 {
+    #ifdef CYRIUS_TARGET_LINUX
+    #ifdef CYRIUS_ARCH_X86
+    var fl = load64(sp + 8);
+    if ((fl & 1) == 0) { return 0; }
+    if ((fl & 2) == 0) {
+        var pend[8];
+        store64(&pend, 0);
+        syscall(127, &pend, 8);                                          # rt_sigpending
+        if ((load64(&pend) & _TLS_SIGPIPE_BIT) != 0) {
+            var set[8];
+            store64(&set, _TLS_SIGPIPE_BIT);
+            var ts[16];                                                  # 16 BYTES: {0 s, 0 ns}
+            store64(&ts, 0);
+            store64(&ts + 8, 0);
+            syscall(128, &set, 0, &ts, 8);                               # rt_sigtimedwait
+        }
+    }
+    syscall(SYS_RT_SIGPROCMASK, 2, sp, 0, 8);                            # SIG_SETMASK
+    #endif
+    #endif
+    return 0;
 }
 
 # The libssl backend under a deadline (shim +24, tls_set_deadline): one SSL_connect / SSL_accept /
@@ -1414,7 +1491,7 @@ fn _tls_ssl_io(ctx, op, buf, n): i64 {
             more = 0;
         } else {
             if (_fn_ERR_clear_error != 0) { fncall0(_fn_ERR_clear_error); }
-            var r = _tls_ssl_call(op, ssl, buf, n);
+            var r = _tls_ssl_call(op, ssl, buf, n, 0);
             var v = r & 0xFFFFFFFF;                     # the C int (see _tls_ssl_io_ret)
             if (v > 0x7FFFFFFF) { v = v - 0x100000000; }
             if (v > 0) {
@@ -1460,7 +1537,7 @@ fn tls_close(ctx): i64 {
     # No close_notify on a connection that failed (6.6.14): OpenSSL forbids SSL_shutdown after a
     # fatal error, and native sends one only while the connection is up.
     if (load64(ctx + _TLS_SHIM_OFF_ERR) == 0) {
-        if (_fn_SSL_shutdown != 0) { fncall1(_fn_SSL_shutdown, ssl); }
+        if (_fn_SSL_shutdown != 0) { _tls_ssl_call(_TLS_IO_SHUTDOWN, ssl, 0, 0, 0); }
     }
     if (_fn_SSL_free != 0) { fncall1(_fn_SSL_free, ssl); }
     if (_fn_SSL_CTX_free != 0) { fncall1(_fn_SSL_CTX_free, ssl_ctx); }
@@ -1592,7 +1669,7 @@ fn tls_write_early_data(ctx, buf, len): i64 {
     var ssl = load64(ctx + 8);
     var written[8];
     store64(&written, 0);
-    var rc = fncall4(_fn_SSL_write_early_data, ssl, buf, len, &written);
+    var rc = _tls_ssl_call(_TLS_IO_WRITE_EARLY, ssl, buf, len, &written);
     if (rc != 1) { return 0 - 1; }
     return load64(&written);
 }
@@ -1610,7 +1687,7 @@ fn tls_read_early_data(ctx, buf, maxlen): i64 {
     var ssl = load64(ctx + 8);
     var rdb[8];
     store64(&rdb, 0);
-    var status = fncall4(_fn_SSL_read_early_data, ssl, buf, maxlen, &rdb);
+    var status = _tls_ssl_call(_TLS_IO_READ_EARLY, ssl, buf, maxlen, &rdb);
     if (status == SSL_READ_EARLY_DATA_SUCCESS) { return load64(&rdb); }
     if (status == SSL_READ_EARLY_DATA_FINISH)  { return 0 - 2; }
     return 0 - 1;

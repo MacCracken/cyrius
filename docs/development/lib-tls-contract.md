@@ -288,6 +288,18 @@ On a bare native ctx (no shim) the same verb is `tls_native_set_deadline(ctx, ab
 socket, so native TLS does not run over `lib/net.cyr` sockets on Windows at all (roadmap backlog
 item j).
 
+#### SIGPIPE on the libssl backend (6.6.14)
+
+A libssl call that writes to a peer that has closed — `tls_write`, `tls_read` (an alert or a
+KeyUpdate answer), the handshake in `tls_connect_complete` / `tls_accept_complete`, the
+close_notify in `tls_close`, the 0-RTT pair — fails like any other socket error: `tls_read` /
+`tls_write` return `TLS_ERR_IO`, the `*_complete` verbs 0. It does not raise SIGPIPE: around each
+such call `lib/tls.cyr` blocks SIGPIPE in the CALLING thread only, consumes a SIGPIPE that call
+itself raised (`rt_sigpending`, then a zero-timeout `rt_sigtimedwait`), and restores the caller's
+mask — libpq's pattern. The process-wide disposition is never changed, a SIGPIPE the caller already
+had pending is left pending, and other threads are untouched. Until 6.6.14 libssl's `write(2)` to a
+closed peer raised SIGPIPE, whose default action killed the process (CVE-66, the libssl half).
+
 ### Trust store and client certificates (v6.2.8)
 
 Backend-agnostic replacements for the `tls_dlsym("SSL_CTX_*")` trust-store and mTLS calls. They
