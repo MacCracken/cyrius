@@ -1,0 +1,299 @@
+# tls_native_socket_transport.tcyr — 6.6.14: native TLS over REAL lib/net.cyr TCP sockets, on
+# every host target: a TLS 1.3 and a TLS 1.2 handshake + echo in both directions.
+#
+# ⛔ WHY — backlog j: on Windows the default transport's leaves were ReadFile / WriteFile, which
+# return 0 on a Winsock SOCKET, so native TLS could not run over a net.cyr socket at all
+# (tls_native_connect failed TLS_ERR_IO in ~8 ms on cass). No crossos test ran TLS over a socket,
+# so nothing off x86_64 Linux ever exercised the transport.
+#
+# THE MECHANISM: the test spawns ITSELF (lib/process.cyr spawn — fork + execve on POSIX,
+# CreateProcessW on Windows), because threads run inline on cass and ach and a TLS handshake needs
+# both ends running at once. The parent listens on 127.0.0.1:0, spawns `argv(0) <scenario> <port>`,
+# accepts, and plays one TLS role; the child connects and plays the other. Verification stays ON:
+# the client trusts the test's self-signed P-256 root (SAN DNS:localhost). Every TLS ctx carries a
+# deadline and the parent's wait is bounded, so a regression fails a row instead of hanging the run.
+# The child prints nothing and answers with its exit code: 0 = its half held, 2..39 = the step
+# that failed.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/tagged.cyr"
+include "lib/fmt.cyr"
+include "lib/syscalls.cyr"
+include "lib/io.cyr"
+include "lib/net.cyr"
+include "lib/chrono.cyr"
+include "lib/args.cyr"
+include "lib/process.cyr"
+include "lib/tls_native.cyr"
+
+enum SockTransportTest {
+    ST_PAYLOAD = 40000;        # three records: 16384 + 16384 + 7232
+    ST_DEADLINE_S = 20;        # every TLS ctx's deadline
+    ST_ACCEPT_MS = 15000;      # the parent's accept wait
+    ST_CHILD_MS = 60000;       # the parent's wait for the child
+}
+
+var _st_cert = 0;              # DER, self-signed P-256, CN = SAN DNS = localhost, CA:TRUE
+var _st_cert_len = 406;
+var _st_key = 0;               # PKCS#8 DER
+var _st_key_len = 138;
+
+fn _st_creds(): i64 {
+    _st_cert = hex_decode("3082019230820139a003020102021437416048df98b49fd5b278db00ebd0e1f87b6d40300a06082a8648ce3d04030230143112301006035504030c096c6f63616c686f7374301e170d3236303130313030303030305a170d3336303130313030303030305a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d030107034200040d7a46bc307511f24a53dcf973e0dfe2058db48d7db8b3941fa80176641ad78da12b801a12494d49312bf5b0ac312f3d50bca2282126fddd03652013bf8b49c5a3693067301d0603551d0e041604143bdd6c2d487f854851f408356e66880375bd6743301f0603551d230418301680143bdd6c2d487f854851f408356e66880375bd6743300f0603551d130101ff040530030101ff30140603551d11040d300b82096c6f63616c686f7374300a06082a8648ce3d04030203470030440220365bd112f9b8faec50c9b4a2cf7ec487cc424901870b8156b349dba15e1cde8102200c1ec7f6eefec5bc9976f55a70608b07d669c78183fa08e9a863370d17e39df3", 812);
+    _st_key = hex_decode("308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420666340f5e33734c31438ae0abd2370b72da193b44565625051bbc79a344535dda144034200040d7a46bc307511f24a53dcf973e0dfe2058db48d7db8b3941fa80176641ad78da12b801a12494d49312bf5b0ac312f3d50bca2282126fddd03652013bf8b49c5", 276);
+    return 0;
+}
+
+fn _st_deadline(): i64 { return clock_now_ns() + ST_DEADLINE_S * 1000000000; }
+
+# A verifying client (trusts the test root, host localhost) pinned to `ver`, with a deadline.
+fn _st_client(ver): i64 {
+    var c = tls_native_new_client("localhost", 9);
+    if (c == 0) { return 0; }
+    if (tls_native_set_ca_bundle(c, _st_cert, _st_cert_len, 1) != TLS_OK) { return 0; }
+    tls_native_set_version_range(c, ver, ver);
+    tls_native_set_deadline(c, _st_deadline());
+    return c;
+}
+
+# A server with the test credentials, pinned to `ver`, with a deadline.
+fn _st_server(ver): i64 {
+    var s = tls_native_new_server(_st_cert, _st_cert_len, _st_key, _st_key_len);
+    if (s == 0) { return 0; }
+    if (tls_native_server_load_creds(s) != TLS_OK) { return 0; }
+    tls_native_set_version_range(s, ver, ver);
+    tls_native_set_deadline(s, _st_deadline());
+    return s;
+}
+
+# The payload byte at offset i.
+fn _st_byte(i): i64 { return (i * 7 + 13) & 0xFF; }
+
+fn _st_fill(buf, n): i64 {
+    var i = 0;
+    while (i < n) { store8(buf + i, _st_byte(i)); i = i + 1; }
+    return 0;
+}
+
+# Write all `n` bytes of `buf` in records of at most 16384. 1, or 0 on a failed write.
+fn _st_write_all(ctx, buf, n): i64 {
+    var off = 0;
+    while (off < n) {
+        var k = n - off;
+        if (k > 16384) { k = 16384; }
+        if (tls_native_write(ctx, buf + off, k) != k) { return 0; }
+        off = off + k;
+    }
+    return 1;
+}
+
+# Read exactly `n` bytes into `buf`. 1, or 0 on EOF / an error first.
+fn _st_read_n(ctx, buf, n): i64 {
+    var got = 0;
+    while (got < n) {
+        var r = tls_native_read(ctx, buf + got, n - got);
+        if (r <= 0) { return 0; }
+        got = got + r;
+    }
+    return 1;
+}
+
+# ── the child ────────────────────────────────────────────────────────────────────────────────
+
+# Connect to the parent's listener on 127.0.0.1:`port`: the fd, or -1.
+fn _st_dial(port): i64 {
+    var t, fd = tcp_socket();
+    if (is_err_result(t) == 1) { return 0 - 1; }
+    var kt, kv = sock_connect(fd, INADDR_LOOPBACK(), port);
+    if (is_err_result(kt) == 1) { sock_close(fd); return 0 - 1; }
+    return fd;
+}
+
+# The echo server / client halves of the handshake rows.
+fn _st_child_echo_server(fd, ver): i64 {
+    var s = _st_server(ver);
+    if (s == 0) { return 2; }
+    if (tls_native_accept(s, fd) != TLS_OK) { return 3; }
+    if (tls_native_get_version(s) != ver) { return 4; }
+    var buf = alloc(ST_PAYLOAD);
+    if (_st_read_n(s, buf, ST_PAYLOAD) != 1) { return 5; }
+    if (_st_write_all(s, buf, ST_PAYLOAD) != 1) { return 6; }
+    var one[8];
+    if (tls_native_read(s, &one, 1) != 0) { return 7; }       # the client's close_notify
+    tls_native_close(s);
+    return 0;
+}
+
+fn _st_child_echo_client(fd, ver): i64 {
+    var c = _st_client(ver);
+    if (c == 0) { return 2; }
+    if (tls_native_connect(c, fd) != TLS_OK) { return 3; }
+    if (tls_native_get_version(c) != ver) { return 4; }
+    var out = alloc(ST_PAYLOAD);
+    var back = alloc(ST_PAYLOAD);
+    _st_fill(out, ST_PAYLOAD);
+    if (_st_write_all(c, out, ST_PAYLOAD) != 1) { return 5; }
+    if (_st_read_n(c, back, ST_PAYLOAD) != 1) { return 6; }
+    if (memeq(out, back, ST_PAYLOAD) != 1) { return 7; }
+    tls_native_close(c);
+    return 0;
+}
+
+fn _st_child(scn, port): i64 {
+    _st_creds();
+    var fd = _st_dial(port);
+    if (fd < 0) { return 30; }
+    var rc = 31;
+    if (streq(scn, "hs13") == 1) { rc = _st_child_echo_server(fd, TLS_VERSION_1_3); }
+    if (streq(scn, "hc13") == 1) { rc = _st_child_echo_client(fd, TLS_VERSION_1_3); }
+    if (streq(scn, "hs12") == 1) { rc = _st_child_echo_server(fd, TLS_VERSION_1_2); }
+    if (streq(scn, "hc12") == 1) { rc = _st_child_echo_client(fd, TLS_VERSION_1_2); }
+    sock_close(fd);
+    return rc;
+}
+
+# ── the parent ───────────────────────────────────────────────────────────────────────────────
+
+var _st_pid = 0;
+
+# The port (host order) socket `fd` is bound to, or -1.
+fn _st_port(fd): i64 {
+    var sa[16];
+    var sl[8];
+    store64(&sl, 16);
+    if (sys_getsockname(fd, &sa, &sl) != 0) { return 0 - 1; }
+    return ((load8(&sa + 2) & 0xFF) << 8) | (load8(&sa + 3) & 0xFF);
+}
+
+# Listen on 127.0.0.1:0, spawn the child for scenario `scn` and accept its connection: the
+# accepted fd, or -1 (each step asserted).
+fn _st_start(scn): i64 {
+    var lt, lfd = tcp_socket();
+    if (is_err_result(lt) == 1) { assert(0 == 1, "listener tcp_socket"); return 0 - 1; }
+    var bt, bv = sock_bind(lfd, INADDR_LOOPBACK(), 0);
+    var st, sv = sock_listen(lfd, 4);
+    var port = _st_port(lfd);
+    if (port <= 0) { assert(0 == 1, "the listener has a port"); sock_close(lfd); return 0 - 1; }
+    var pbuf[32];
+    fmt_int_buf(port, &pbuf);
+    var pt, pid = spawn(argv(0), scn, &pbuf);
+    if (is_err_result(pt) == 1) { assert(0 == 1, "spawn the child"); sock_close(lfd); return 0 - 1; }
+    _st_pid = pid;
+    if (fd_wait_ready(lfd, 0, ST_ACCEPT_MS) != 1) {
+        assert(0 == 1, "the child connected within 15 s");
+        sock_close(lfd);
+        return 0 - 1;
+    }
+    var at, afd = sock_accept(lfd);
+    sock_close(lfd);
+    if (is_err_result(at) == 1) { assert(0 == 1, "accept the child"); return 0 - 1; }
+    return afd;
+}
+
+# The child's exit code (-1 when it could not be waited for).
+fn _st_child_code(): i64 {
+    var wt, wv = wait_pid(_st_pid);
+    if (is_err_result(wt) == 1) { return 0 - 1; }
+    return wv;
+}
+
+fn _st_echo_rows(ver, vname): i64 {
+    test_group(vname);
+    # The parent is the CLIENT, the child the echo server.
+    var scn = "hs13";
+    if (ver == TLS_VERSION_1_2) { scn = "hs12"; }
+    var fd = _st_start(scn);
+    if (fd >= 0) {
+        var c = _st_client(ver);
+        assert_eq(tls_native_connect(c, fd), TLS_OK, "client: tls_native_connect over a net.cyr socket");
+        assert_eq(tls_native_get_version(c), ver, "  …at the pinned version");
+        var out = alloc(ST_PAYLOAD);
+        var back = alloc(ST_PAYLOAD);
+        _st_fill(out, ST_PAYLOAD);
+        assert_eq(_st_write_all(c, out, ST_PAYLOAD), 1, "  40000 bytes written (three records)");
+        assert_eq(_st_read_n(c, back, ST_PAYLOAD), 1, "  40000 bytes read back");
+        assert_eq(memeq(out, back, ST_PAYLOAD), 1, "  …byte for byte");
+        assert_eq(tls_native_close(c), TLS_OK, "  close_notify sent");
+        sock_close(fd);
+        assert_eq(_st_child_code(), 0, "  the child's server half held (exit 0)");
+    }
+    # The parent is the SERVER, the child the client.
+    scn = "hc13";
+    if (ver == TLS_VERSION_1_2) { scn = "hc12"; }
+    fd = _st_start(scn);
+    if (fd >= 0) {
+        var s = _st_server(ver);
+        assert_eq(tls_native_accept(s, fd), TLS_OK, "server: tls_native_accept over a net.cyr socket");
+        assert_eq(tls_native_get_version(s), ver, "  …at the pinned version");
+        var buf = alloc(ST_PAYLOAD);
+        assert_eq(_st_read_n(s, buf, ST_PAYLOAD), 1, "  40000 bytes read");
+        var ok = 1;
+        var i = 0;
+        while (i < ST_PAYLOAD) {
+            if ((load8(buf + i) & 0xFF) != _st_byte(i)) { ok = 0; i = ST_PAYLOAD; }
+            i = i + 1;
+        }
+        assert_eq(ok, 1, "  …the client's bytes");
+        assert_eq(_st_write_all(s, buf, ST_PAYLOAD), 1, "  echoed");
+        var one[8];
+        assert_eq(tls_native_read(s, &one, 1), 0, "  the client's close_notify reads as EOF");
+        tls_native_close(s);
+        sock_close(fd);
+        assert_eq(_st_child_code(), 0, "  the child's client half held (exit 0)");
+    }
+    return 0;
+}
+
+# A file is not a socket: the default transport's leaves keep read(2) / write(2) on Linux and macOS
+# and fall back to ReadFile / WriteFile on Windows (send / recv / WSAPoll / FIONBIO answer
+# WSAENOTSOCK), with and without a deadline. A transport that only knew sockets would fail every row.
+fn _st_file_rows(): i64 {
+    test_group("6.6.14 — a file (not a socket) still goes through the default transport, with and without a deadline");
+    var path = alloc(64);
+    memcpy(path, "_tls_st_file_", 13);
+    var pl = fmt_int_buf(getpid(), path + 13);
+    memcpy(path + 13 + pl, ".bin", 5);
+    xunlink(path);
+    var wfd = file_open(path, O_WRONLY | O_CREAT | O_TRUNC, 0x1A4);
+    assert(wfd >= 0, "create a scratch file");
+    if (wfd < 0) { return 0; }
+    var c = _st_client(TLS_VERSION_1_3);        # carries a 20 s deadline
+    assert_eq(_tn_io_write_all(0, wfd, "plain-", 6), 6, "no deadline: 6 bytes written");
+    assert_eq(_tn_io_write_all(c, wfd, "under-deadline", 14), 14, "under a deadline: 14 bytes written");
+    file_close(wfd);
+    var rfd = file_open(path, O_RDONLY, 0);
+    assert(rfd >= 0, "reopen it to read");
+    var b[32];
+    assert_eq(_tn_io_read_full(0, rfd, &b, 6), 6, "no deadline: 6 bytes read");
+    assert_eq(_tn_io_read_full(c, rfd, &b + 6, 14), 14, "under a deadline: 14 bytes read");
+    assert_eq(memeq(&b, "plain-under-deadline", 20), 1, "…the bytes written, in order");
+    file_close(rfd);
+    xunlink(path);
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    #ifdef CYRIUS_TARGET_AGNOS
+    # agnos: no host in the release gate to run on, and its process peer has no spawn deadline.
+    test_group("6.6.14 — agnos: SKIP the spawn-self loopback run (see tests/gates/platform/agnos_tls_deadline.sh)");
+    assert(1 == 1, "agnos: named SKIP");
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    args_init();
+    if (argc() > 2) { return _st_child(argv(1), atoi(argv(2))); }
+    _st_creds();
+    proc_set_timeout_ms(ST_CHILD_MS);
+    _st_echo_rows(TLS_VERSION_1_3, "6.6.14 — native TLS 1.3 over net.cyr loopback TCP: handshake + 40000-byte echo, both roles");
+    _st_echo_rows(TLS_VERSION_1_2, "6.6.14 — native TLS 1.2 over net.cyr loopback TCP: handshake + 40000-byte echo, both roles");
+    _st_file_rows();
+    #endif
+    var r = assert_summary();
+    return r;
+}
+
+var ec = main();
+syscall(60, ec);

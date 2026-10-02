@@ -275,14 +275,15 @@ On a bare native ctx (no shim) the same verb is `tls_native_set_deadline(ctx, ab
 
 | Transport | Bound |
 |---|---|
-| Native, default transport, Linux and macOS | A read waits for readiness with the time left (`fd_wait_ready`) and then reads once, so every byte costs a clock check; a write runs the fd non-blocking for the call and waits for writability, and the fd's status flags are restored on every exit. |
-| Native, agnos, a tagged socket | `sock_recv` / `sock_send` take the time left themselves; a send can overshoot by one `sock_send` stall (~8 s). |
-| Native, a custom transport (`tls_native_set_transport`), an agnos fd that is not a socket, Windows | Checked BETWEEN calls only: a single call is bounded by the transport itself. |
+| Native, default transport, Linux, macOS and Windows (6.6.14) | A read waits for readiness with the time left (`fd_wait_ready`: poll, or `WSAPoll` on Windows) and then reads once, so every byte costs a clock check; a write runs the socket non-blocking for the call (`O_NONBLOCK`, or `ioctlsocket(FIONBIO)` on Windows) and waits for writability, and the fd is restored on every exit — its status flags on Linux and macOS; a Windows socket is left **blocking**, the mode `lib/net.cyr` creates it in, because Windows cannot read `FIONBIO` back. |
+| Native, agnos, a tagged socket | `sock_recv` / `sock_send` take the time left themselves; a send can overshoot by one `sock_send` stall (~8 s): the kernel waits for each segment's ACK inside the call and `sock_send#48` takes no time bound, so closing it needs a bounded send in agnos. |
+| Native, a custom transport (`tls_native_set_transport`), an agnos fd that is not a socket, a Windows HANDLE that is not a socket (a pipe, a file) | Checked BETWEEN calls only: a single call is bounded by the transport itself. |
 | libssl | Every `SSL_connect` / `SSL_accept` / `SSL_read` / `SSL_write` runs with the socket non-blocking, driven by `SSL_get_error`'s `WANT_READ` / `WANT_WRITE` and `fd_wait_ready`; the socket's status flags are restored after each call. |
 
-⚠ **Windows, native:** the default transport's `ReadFile` / `WriteFile` return 0 on a Winsock
-socket, so native TLS does not run over `lib/net.cyr` sockets on Windows at all (roadmap backlog
-item j).
+**Windows, native (6.6.14):** the default transport reads and writes a Winsock socket with
+`ws2_32` `recv` / `send` — it used `ReadFile` / `WriteFile`, which fail on a socket, so until
+6.6.14 native TLS did not run over `lib/net.cyr` sockets on Windows at all (roadmap backlog j). A
+HANDLE that is not a socket still goes through `ReadFile` / `WriteFile`.
 
 ### Trust store and client certificates (v6.2.8)
 

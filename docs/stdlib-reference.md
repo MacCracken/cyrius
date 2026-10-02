@@ -1513,7 +1513,7 @@ Sovereign TLS 1.2 + 1.3 stack — no OpenSSL. ECDSA (P-256/P-384) / RSA (PSS, PK
 | `tls_native_set_ca_system` | `tls_native_set_ca_system(ctx) → TLS_OK/err` | Install the system CA trust store — one immutable root set per process, parsed once and shared (6.6.13: 0 B per further ctx) |
 | `tls_native_ca_skipped` | `tls_native_ca_skipped(ctx) → count/err` | Certificate blocks the last trust-root install could not use (6.6.13): installed + skipped == the bundle's PEM block count; 0 before any install |
 | `tls_native_set_version_range` | `tls_native_set_version_range(ctx, min, max) → TLS_OK/err` | Constrain negotiated version to [min, max] |
-| `tls_native_set_deadline` | `tls_native_set_deadline(ctx, abs_ns) → TLS_OK/err` | Absolute `clock_now_ns()` deadline for the handshake and every later read/write (0 clears; may change between reads); past it they fail `TLS_ERR_TIMEOUT` (-22) and the ctx fails (6.6.13). Linux/macOS poll before each read and write non-blocking (flags restored); agnos sockets take the time left; a custom transport and Windows are checked between calls |
+| `tls_native_set_deadline` | `tls_native_set_deadline(ctx, abs_ns) → TLS_OK/err` | Absolute `clock_now_ns()` deadline for the handshake and every later read/write (0 clears; may change between reads); past it they fail `TLS_ERR_TIMEOUT` (-22) and the ctx fails (6.6.13). Linux/macOS/Windows wait for readiness (poll / WSAPoll) before each read and write non-blocking (flags restored; a Windows socket is left blocking, 6.6.14); agnos sockets take the time left; a custom transport and a Windows HANDLE that is not a socket are checked between calls |
 
 **Introspection (post-handshake):**
 
