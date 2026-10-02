@@ -207,7 +207,7 @@ mode, 0)` and a non-zero `mode`.
 |------|-----------|---------|----------|
 | `tls_write(ctx, buf, len)` | (i64, i64, i64) → i64 | `len`, 0, or a negative `TLS_ERR_*` | Encrypts and sends `len` bytes. See "What a read or a write returns" below. Native fragments into records of at most 16,384 bytes and returns `len` once every record is out. |
 | `tls_read(ctx, buf, maxlen)` | (i64, i64, i64) → i64 | bytes, 0, or a negative `TLS_ERR_*` | Delivers up to `maxlen` (> 0) bytes of application data. See the table below. Native delivers at most one record's plaintext per call and HOLDS the rest of an over-long record for the next calls, so sub-record reads lose nothing; it drains post-handshake NewSessionTicket / KeyUpdate records itself (32 records with no application data in one call fail with `TLS_ERR_PROTOCOL`). |
-| `tls_close(ctx)` | (i64) → i64 | 0 | No-op on a null ctx. libssl: `SSL_shutdown` if the symbol resolved (best-effort), then frees the `SSL` and the `SSL_CTX`; safe on a pre- or post-handshake ctx. Native: sends close_notify if the connection is up (best-effort, under the deadline if one is set) and frees NOTHING — the ctx and its shim live in the allocator they came from (see "Memory"). Neither backend waits for the peer's close_notify, and neither closes the socket: that is the caller's, after `tls_close`. |
+| `tls_close(ctx)` | (i64) → i64 | 0 | No-op on a null ctx. libssl: `SSL_shutdown` if the symbol resolved (best-effort) and no read or write has failed (6.6.14), then frees the `SSL` and the `SSL_CTX`; safe on a pre- or post-handshake ctx. Native: sends close_notify if the connection is up (best-effort, under the deadline if one is set) and frees NOTHING — the ctx and its shim live in the allocator they came from (see "Memory"). Neither backend waits for the peer's close_notify, and neither closes the socket: that is the caller's, after `tls_close`. |
 
 #### What a read or a write returns
 
@@ -241,9 +241,13 @@ socket I/O failed, leave the ctx FAILED — every later `tls_read` returns the s
 alert stays `TLS_ERR_ALERT`), and `tls_write` returns `TLS_ERR_PROTOCOL`. Three negatives leave the
 ctx's state as it was: `TLS_ERR_INVALID_PARAM`; the `TLS_ERR_PROTOCOL` a ctx that is not connected
 (never connected, closed, or already failed) answers with; and a write whose record could not be
-sealed, which returns the sealer's code. None of them makes the connection usable again. libssl: OpenSSL may answer a SECOND
-read after a fatal alert with 0 (it reports `SSL_ERROR_ZERO_RETURN` once it has seen the peer's
-shutdown) — stop at the first negative. Either way: `tls_close`. A libssl-only build
+sealed, which returns the sealer's code. None of them makes the connection usable again. libssl
+(6.6.14): the same rule — the first negative other than `TLS_ERR_WOULD_BLOCK` is kept on the ctx,
+every later `tls_read` returns it, every later `tls_write` returns `TLS_ERR_PROTOCOL`, neither calls
+libssl again, and `tls_close` sends no close_notify (OpenSSL forbids `SSL_shutdown` after a fatal
+error). Until 6.6.14 a SECOND libssl read after a fatal alert returned 0 — OpenSSL reports
+`SSL_ERROR_ZERO_RETURN` once it has seen the peer's shutdown — so the re-read looked like a clean
+end. Either way: `tls_close`. A libssl-only build
 (`-D CYRIUS_TLS_LIBSSL`) defines only the codes its backend returns — `TLS_ERR_NOT_IMPLEMENTED`,
 `_WOULD_BLOCK`, `_INVALID_PARAM`, `_IO`, `_ALERT`, `_PROTOCOL`, `_TIMEOUT` — with the same values;
 a consumer naming any other code compiles against the default build only.
@@ -378,7 +382,7 @@ libssl's session-cache state machine; this is acknowledged technical debt, not a
   - the shared system root set lives on the global heap, never in `a`, so resetting `a` never
     disturbs another connection's roots.
 - **libssl** — OpenSSL's own heap: `tls_close` frees the `SSL` and the `SSL_CTX`; `a` does not
-  apply; the 32-byte shim is on the global heap.
+  apply; the 40-byte shim is on the global heap.
 
 ```
 var a = arena_allocator(262144);              # once
@@ -524,8 +528,8 @@ surface: a change that breaks any of the documented return semantics or lifecycl
 is a contract amendment — it amends this file in the same patch and says so in its CHANGELOG
 entry.
 
-Internal implementation details — the shim's layout (32 bytes on libssl: `SSL_CTX*`, `SSL*`,
-socket, deadline; 40 bytes on native), the native ctx layout (`TLS_CTX_LEN`, 576 bytes at 6.6.13),
+Internal implementation details — the shim's layout (40 bytes on libssl: `SSL_CTX*`, `SSL*`,
+socket, deadline, the sticky error; 40 bytes on native), the native ctx layout (`TLS_CTX_LEN`, 576 bytes at 6.6.13),
 the `_fn_*` symbol cache, `_tls_libssl_handle`, the fdlopen bootstrap sequence — are NOT contract.
 Stdlib maintainers may restructure them freely so long as the public behaviour above is preserved.
 

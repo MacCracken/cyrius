@@ -40,11 +40,14 @@
 #   tls_set_deadline(ctx, abs_ns) → bound the handshake and every read/write (6.6.13) — 0 / TLS_ERR_*
 #   tls_close(ctx)             → 0
 #
-# ctx layout (32 bytes libssl, 40 native):
+# ctx layout (40 bytes on both backends):
 #   +0   SSL_CTX*  (libssl)  /  native ctx (native backend)
 #   +8   SSL*      (libssl)  /  0          (native backend)
 #   +16  socket fd
 #   +24  deadline, clock_now_ns() scale, 0 = none (libssl, 6.6.13)  /  TLS_BACKEND_NATIVE (native)
+#   +32  the sticky error: 0, or the TLS_ERR_* the first failed tls_read / tls_write returned
+#        (libssl, 6.6.14 — _TLS_SHIM_OFF_ERR)  /  unused, never written (native: the native
+#        ctx keeps its own failure state)
 #
 # Backend (.80, Mini-arc E bite 4): lib/tls.cyr keeps BOTH transports.
 #
@@ -144,6 +147,12 @@ enum TlsConst {
     TLS_EARLY_DATA_NOT_SENT = 0;
     TLS_EARLY_DATA_REJECTED = 1;
     TLS_EARLY_DATA_ACCEPTED = 2;
+}
+
+# The libssl shim's size and its sticky-error slot (6.6.14; the layout is at the top of this file).
+enum TlsLibsslShim {
+    _TLS_SHIM_OFF_ERR = 32;
+    _TLS_LIBSSL_SHIM_LEN = 40;
 }
 
 var _tls_inited = 0;
@@ -371,7 +380,7 @@ fn _tls_init(): i64 {
 # Returns 1 if TLS support is available on this system
 #ifndef CYRIUS_TLS_LIBSSL
 # ---- Native-backend client path (.80, Mini-arc E bite 4) ----
-# Shim ctx for the native backend: [native_ctx@0, 0@8, sock@16, NATIVE@24].
+# Shim ctx for the native backend: [native_ctx@0, 0@8, sock@16, NATIVE@24] (+32 unused).
 # Mirrors the libssl shim's +0/+8/+16 so the per-ctx ops dispatch uniformly.
 # 6.6.13: `a` (Allocator handle, 0 = the global heap) backs the native ctx, every allocation of the
 # connection and this 40-B shim — see tls_connect_alloc_in. The system roots are the shared
@@ -1002,8 +1011,9 @@ fn _tls_libssl_connect_alloc(sock, host, hook_fp, hook_ctx): i64 {
     # post-handshake ctx (struct shape preserved across the
     # alloc → complete transition); tls_close handles either
     # state correctly via SSL_free which works on either
-    # connected or unconnected SSL handles. +24 is the deadline (6.6.13: 0 = none).
-    var ctx = alloc(32);
+    # connected or unconnected SSL handles. +24 is the deadline (6.6.13: 0 = none), +32 the
+    # sticky error (6.6.14: 0 = none yet).
+    var ctx = alloc(_TLS_LIBSSL_SHIM_LEN);
     if (ctx == 0) {
         if (_fn_SSL_free != 0) { fncall1(_fn_SSL_free, ssl); }
         fncall1(_fn_SSL_CTX_free, ssl_ctx);
@@ -1013,6 +1023,7 @@ fn _tls_libssl_connect_alloc(sock, host, hook_fp, hook_ctx): i64 {
     store64(ctx + 8, ssl);
     store64(ctx + 16, sock);
     store64(ctx + 24, 0);
+    store64(ctx + _TLS_SHIM_OFF_ERR, 0);
     return ctx;
 }
 
@@ -1136,8 +1147,8 @@ fn _tls_native_accept_complete(ctx): i64 {
 #endif
 
 # Phase 1: build a server ctx from DER cert/key (+ optional config hook), return
-# the standard backend shim (40B native [nctx,0,sock,NATIVE] / 32B libssl
-# [ssl_ctx,ssl,sock,deadline]) or 0. Configure ALPN/verify in the hook, then drive the
+# the standard backend shim (40B native [nctx,0,sock,NATIVE] / 40B libssl
+# [ssl_ctx,ssl,sock,deadline,sticky error]) or 0. Configure ALPN/verify in the hook, then drive the
 # handshake with tls_accept_complete.
 fn tls_accept_alloc(sock, creds, hook_fp, hook_ctx): i64 {
     #ifndef CYRIUS_TLS_LIBSSL
@@ -1178,7 +1189,7 @@ fn tls_accept_alloc(sock, creds, hook_fp, hook_ctx): i64 {
     var ssl = fncall1(_fn_SSL_new, ssl_ctx);
     if (ssl == 0) { fncall1(_fn_SSL_CTX_free, ssl_ctx); return 0; }
     fncall2(_fn_SSL_set_fd, ssl, sock);
-    var ctx = alloc(32);
+    var ctx = alloc(_TLS_LIBSSL_SHIM_LEN);
     if (ctx == 0) {
         if (_fn_SSL_free != 0) { fncall1(_fn_SSL_free, ssl); }
         fncall1(_fn_SSL_CTX_free, ssl_ctx);
@@ -1188,6 +1199,7 @@ fn tls_accept_alloc(sock, creds, hook_fp, hook_ctx): i64 {
     store64(ctx + 8, ssl);
     store64(ctx + 16, sock);
     store64(ctx + 24, 0);                       # deadline: none (6.6.13)
+    store64(ctx + _TLS_SHIM_OFF_ERR, 0);        # sticky error: none yet (6.6.14)
     return ctx;
 }
 
@@ -1266,6 +1278,9 @@ fn tls_write(ctx, buf, len): i64 {
     }
     #endif
     if (len == 0) { return 0; }                 # nothing to send (the native answer too)
+    # A failed connection stays failed: the write is refused without touching SSL, as native
+    # refuses a write on a failed ctx (6.6.14).
+    if (load64(ctx + _TLS_SHIM_OFF_ERR) != 0) { return TLS_ERR_PROTOCOL; }
     var ssl = load64(ctx + 8);
     var sw = 0;
     if (load64(ctx + 24) != 0) {
@@ -1274,8 +1289,8 @@ fn tls_write(ctx, buf, len): i64 {
         if (_fn_ERR_clear_error != 0) { fncall0(_fn_ERR_clear_error); }
         sw = _tls_ssl_io_ret(ssl, fncall3(_fn_SSL_write, ssl, buf, len));
     }
-    if (sw == 0) { return TLS_ERR_PROTOCOL; }   # a write never succeeds with 0 bytes: shut down
-    return sw;
+    if (sw == 0) { sw = TLS_ERR_PROTOCOL; }     # a write never succeeds with 0 bytes: shut down
+    return _tls_libssl_sticky(ctx, sw);
 }
 
 # Read from TLS session
@@ -1284,10 +1299,30 @@ fn tls_read(ctx, buf, maxlen): i64 {
     #ifndef CYRIUS_TLS_LIBSSL
     if (_tls_backend == 1) { return tls_native_read(load64(ctx), buf, maxlen); }
     #endif
-    if (load64(ctx + 24) != 0) { return _tls_ssl_io(ctx, _TLS_IO_READ, buf, maxlen); }
+    # A failed connection answers every later read with the code that failed it, without
+    # touching SSL (6.6.14) — see _tls_libssl_sticky.
+    var se = load64(ctx + _TLS_SHIM_OFF_ERR);
+    if (se != 0) { return se; }
+    if (load64(ctx + 24) != 0) { return _tls_libssl_sticky(ctx, _tls_ssl_io(ctx, _TLS_IO_READ, buf, maxlen)); }
     var ssl = load64(ctx + 8);
     if (_fn_ERR_clear_error != 0) { fncall0(_fn_ERR_clear_error); }
-    return _tls_ssl_io_ret(ssl, fncall3(_fn_SSL_read, ssl, buf, maxlen));
+    return _tls_libssl_sticky(ctx, _tls_ssl_io_ret(ssl, fncall3(_fn_SSL_read, ssl, buf, maxlen)));
+}
+
+# Record a libssl tls_read / tls_write result `r` on the shim and return it. A negative result
+# other than TLS_ERR_WOULD_BLOCK (a non-blocking socket with nothing ready: call again) ENDS the
+# connection: it is kept at +32, every later tls_read returns it and every later tls_write returns
+# TLS_ERR_PROTOCOL — the native backend's rule for a failed ctx — and neither calls SSL again;
+# tls_close then skips SSL_shutdown (OpenSSL: never after SSL_ERROR_SYSCALL / SSL_ERROR_SSL).
+# ⛔ 6.6.14 — WHY. After a fatal alert a SECOND SSL_read reported SSL_ERROR_ZERO_RETURN (OpenSSL
+# sets RECEIVED_SHUTDOWN and leaves warn_alert at 0 = close_notify), so the libssl backend read
+# an attacked stream as cleanly ended on the re-read, where native kept TLS_ERR_ALERT.
+# CVE-60's "Not covered"; CHANGELOG [6.6.14].
+fn _tls_libssl_sticky(ctx, r): i64 {
+    if (r < 0) {
+        if (r != TLS_ERR_WOULD_BLOCK) { store64(ctx + _TLS_SHIM_OFF_ERR, r); }
+    }
+    return r;
 }
 
 # The libssl backend's answer for one SSL_read / SSL_write, in the native backend's terms: bytes
@@ -1422,7 +1457,11 @@ fn tls_close(ctx): i64 {
     #endif
     var ssl_ctx = load64(ctx);
     var ssl = load64(ctx + 8);
-    if (_fn_SSL_shutdown != 0) { fncall1(_fn_SSL_shutdown, ssl); }
+    # No close_notify on a connection that failed (6.6.14): OpenSSL forbids SSL_shutdown after a
+    # fatal error, and native sends one only while the connection is up.
+    if (load64(ctx + _TLS_SHIM_OFF_ERR) == 0) {
+        if (_fn_SSL_shutdown != 0) { fncall1(_fn_SSL_shutdown, ssl); }
+    }
     if (_fn_SSL_free != 0) { fncall1(_fn_SSL_free, ssl); }
     if (_fn_SSL_CTX_free != 0) { fncall1(_fn_SSL_CTX_free, ssl_ctx); }
     return 0;
