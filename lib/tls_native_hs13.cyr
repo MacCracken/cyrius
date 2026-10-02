@@ -327,7 +327,8 @@ fn tls_native_client_recv_flight(ctx, record, record_len): i64 {
     var ct = 0;
     var plen = tls_native_client_open_handshake(ctx, record, record_len, plain, pcap, &ct);
     if (plen < 0) { return plen; }
-    if (ct != TLS_CT_HANDSHAKE) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_RECORD); }
+    var hx_ct = _tn_hs_expect_ct(ctx, ct, TLS_CT_HANDSHAKE);
+    if (hx_ct != TLS_OK) { return hx_ct; }
     var fd = load64(ctx + TLS_CTX_OFF_SOCK_FD);
     var rcap = TLS_RECORD_MAX_CIPHERTEXT + TLS_RECORD_HEADER_LEN;
     var rdone = _tn_flight_complete(plain, plen, TLS_HS_FINISHED);
@@ -337,11 +338,12 @@ fn tls_native_client_recv_flight(ctx, record, record_len): i64 {
         if (inbuf == 0) { inbuf = _tn_alloc(ctx, rcap); }
         if (inbuf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
         var rl = _tn_sock_read_record_skip_ccs(fd, inbuf, rcap);
-        if (rl < 0) { return _tn_ctx_fail(ctx, TLS_ERR_IO); }
+        if (rl < 0) { return _tn_read_fail(ctx, rl); }
         var ct2 = 0;
         var more = tls_native_client_open_handshake(ctx, inbuf, rl, plain + plen, pcap - plen, &ct2);
         if (more < 0) { return more; }
-        if (ct2 != TLS_CT_HANDSHAKE) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_RECORD); }
+        var hx_ct2 = _tn_hs_expect_ct(ctx, ct2, TLS_CT_HANDSHAKE);
+        if (hx_ct2 != TLS_OK) { return hx_ct2; }
         plen = plen + more;
         rdone = _tn_flight_complete(plain, plen, TLS_HS_FINISHED);
     }
@@ -707,14 +709,25 @@ fn tls_native_seal_app(ctx, buf, len, out, out_max): i64 {
     return _tn_seal_ct(ctx, TLS_CT_APPLICATION_DATA, buf, len, out, out_max);
 }
 
+# An opened alert record's disposition (the read path's error table, lib/tls_native_conn.cyr):
+# _TN_ALERT_EOF, _TN_ALERT_IGNORE or a negative TLS_ERR_*. Its two bytes are read only when it has
+# exactly two. CHANGELOG [6.6.13]
+fn _tn_open_alert(out, n): i64 {
+    if (n != 2) { return _tn_alert_disposition(0, 0, n); }
+    return _tn_alert_disposition(load8(out) & 0xFF, load8(out + 1) & 0xFF, n);
+}
+
 # Internal record-open: decrypt one peer record (with the PEER's
 # application-traffic key), write the decrypted inner content type to
 # `out_inner_ct` (0 to ignore), and return the decrypted plaintext length for
 # application data (inner ct 23) AND post-handshake handshake records (inner ct
-# 22 — NewSessionTicket / KeyUpdate), 0 for a close_notify alert (clean EOF),
-# `TLS_ERR_ALERT` for any other alert, or a negative error (TLS_ERR_DECRYPT on a
+# 22 — NewSessionTicket / KeyUpdate), or a negative error (TLS_ERR_DECRYPT on a
 # bad tag). v6.1.36 (CVE-30): surfacing the inner content type lets
 # tls_native_read drain post-handshake records instead of treating them as EOF.
+# An ALERT record (inner ct 21) returns its disposition instead of a length
+# (6.6.13, _tn_alert_disposition): _TN_ALERT_EOF (0) for a warning-level
+# close_notify, _TN_ALERT_IGNORE (1) for a warning-level user_canceled, and
+# TLS_ERR_ALERT / TLS_ERR_BAD_RECORD for every other alert.
 # The public tls_native_open_app/5 wrapper below preserves the original
 # "handshake → 0" contract so the stdlib surface is unchanged.
 fn _tn_open_record(ctx, record, record_len, out, out_max, out_inner_ct): i64 {
@@ -724,12 +737,7 @@ fn _tn_open_record(ctx, record, record_len, out, out_max, out_inner_ct): i64 {
         var n12 = tls_native_12_open(ctx, record, record_len, out, out_max, &oct12);
         if (n12 < 0) { return n12; }
         if (out_inner_ct != 0) { store64(out_inner_ct, oct12); }
-        if (oct12 == TLS_CT_ALERT) {
-            # close_notify (description byte 0) = clean shutdown → EOF (0); any
-            # other alert is an error.
-            if (n12 >= 2) { if ((load8(out + 1) & 0xFF) == 0) { return 0; } }
-            return TLS_ERR_ALERT;
-        }
+        if (oct12 == TLS_CT_ALERT) { return _tn_open_alert(out, n12); }
         return n12;
     }
     var key = load64(ctx + TLS_CTX_OFF_CLI_APP_KEY);
@@ -746,25 +754,21 @@ fn _tn_open_record(ctx, record, record_len, out, out_max, out_inner_ct): i64 {
       ctx + seqoff, record, record_len, out, out_max, &oct);
     if (n < 0) { return n; }
     if (out_inner_ct != 0) { store64(out_inner_ct, oct); }
-    if (oct == TLS_CT_ALERT) {
-        # close_notify (description byte 0) = clean shutdown → EOF (0); any
-        # other alert is an error.
-        if (n >= 2) { if ((load8(out + 1) & 0xFF) == 0) { return 0; } }
-        return TLS_ERR_ALERT;
-    }
+    if (oct == TLS_CT_ALERT) { return _tn_open_alert(out, n); }
     return n;
 }
 
 # Public 5-arg open: decrypt one peer record into `out`. Returns the
-# application-data length (inner ct 23), 0 for a close_notify OR a
-# post-handshake handshake record (the original EOF-ish contract), `TLS_ERR_ALERT`
-# for a fatal alert, or a negative TLS_ERR_*. v6.1.36: a thin wrapper over
+# application-data length (inner ct 23), 0 for a close_notify, a user_canceled
+# OR a post-handshake handshake record (the original EOF-ish contract),
+# `TLS_ERR_ALERT` for an error alert, or a negative TLS_ERR_*. v6.1.36: a thin wrapper over
 # _tn_open_record (which tls_native_read uses directly to distinguish the two and
 # drain post-handshake records). Kept at arity 5 — the stdlib surface is unchanged.
 fn tls_native_open_app(ctx, record, record_len, out, out_max): i64 {
     var ict = 0;
     var n = _tn_open_record(ctx, record, record_len, out, out_max, &ict);
-    if (n <= 0) { return n; }                    # error (<0) or close_notify (0)
+    if (n < 0) { return n; }                     # error, error alert included
+    if (ict == TLS_CT_ALERT) { return 0; }       # close_notify / user_canceled (6.6.13)
     if (ict == TLS_CT_HANDSHAKE) { return 0; }   # original: post-handshake → 0
     return n;                                      # application data
 }

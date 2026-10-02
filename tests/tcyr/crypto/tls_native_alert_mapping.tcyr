@@ -1,0 +1,608 @@
+# tls_native_alert_mapping.tcyr — 6.6.13: every native read reports through ONE error table.
+#
+# Issue 2026-09-30-tls-client-memory-and-alert-gaps, part (c). Before 6.6.13 the native stack read
+# alerts loosely: a sealed fatal alert returned TLS_ERR_ALERT once but left the ctx CONNECTED (the
+# next read went back to the socket and returned whatever came next), close_notify was not sticky
+# (a record appended after it was read), a fatal-level close_notify read as a clean EOF, a
+# warning-level user_canceled read as an error, an over-length record read as TLS_ERR_IO, and every
+# handshake read site reported the peer's alert as TLS_ERR_BAD_RECORD. Now (lib/tls_native_conn.cyr,
+# "The read path's error table"): _tn_alert_disposition decides an alert after the handshake,
+# _tn_hs_expect_ct decides a record at each of the 12 handshake sites, _tn_read_fail maps a failed
+# record read, and every negative result fails the ctx so a re-read returns the same code.
+#
+# Socketpair + fork against a native peer; the end under test reads with a 5 s receive timeout, so a
+# regression that waits for a record the peer never sends fails the row instead of hanging the run.
+# A peer that must misbehave mid-handshake runs the REAL native driver with a write hook
+# (tls_native_set_transport, in the child only) that replaces its Nth record write with the record
+# under test — a plaintext alert, an over-length header, or an alert sealed under the keys the
+# driver just used — so each of the 12 content-type sites and 13 record-read sites is reached by a
+# real handshake, TLS 1.3 and 1.2.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/io.cyr"
+include "lib/net.cyr"
+include "lib/tls.cyr"
+
+#ifdef CYRIUS_TARGET_AGNOS
+# A named SKIP on agnos (the corpus cross-compile ratchet): this is a socketpair + fork + 3-arg
+# waitpid run; agnos has no socketpair (-ENOSYS) and its waitpid is the 1-arg #4 poll.
+var _agnos_skip = "  SKIP (agnos): the socketpair + fork end-to-end run (no socketpair; 1-arg waitpid)\n";
+sys_write(1, _agnos_skip, strlen(_agnos_skip));
+#endif
+#ifndef CYRIUS_TARGET_AGNOS
+
+enum AlertMapLimits { AM_TIMEOUT_S = 5; }
+
+enum AlertMapKind {
+    AM_PLAIN_ALERT = 1;     # a plaintext alert record: 15 03 03 00 02 <level> <desc>
+    AM_OVERLONG = 2;        # a record header declaring TLS_RECORD_MAX_CIPHERTEXT + 1 bytes (after _am_keep records)
+    AM_SEALED13 = 3;        # an alert sealed under the peer's 1.3 handshake write keys
+    AM_SEALED12 = 4;        # an alert sealed under the peer's 1.2 write keys
+    AM_PARTIAL13 = 5;       # a sealed, incomplete handshake message, then AM_SEALED13
+}
+
+# What the server does once the handshake is done (client-under-test rows).
+enum AlertMapScript {
+    AS_NONE = 0;
+    AS_ALERT_THEN_DATA = 1;  # sealed alert <level, desc>, then a sealed "late" app record
+    AS_UC_Y_CLOSE = 2;       # sealed warning user_canceled, sealed "y", sealed close_notify
+    AS_ALERT3 = 3;           # a sealed alert record of 3 bytes
+    AS_OVERLONG = 4;         # an app-phase record header declaring 16641 bytes
+    AS_BITFLIP = 5;          # a sealed "hello" with one ciphertext bit flipped
+    AS_FIN = 6;              # close the socket: no close_notify
+    AS_UC_FIN = 7;           # sealed warning user_canceled, then close the socket
+    AS_OPEN_APP = 8;         # sealed user_canceled, fatal close_notify, warning close_notify
+}
+
+var _am_cert = 0;              # DER, self-signed P-256, CN = SAN DNS = localhost, CA:TRUE
+var _am_cert_len = 406;
+var _am_key = 0;               # PKCS#8 DER
+var _am_key_len = 138;
+
+var _am_ver12 = 0;             # 1: both ends pinned to TLS 1.2
+var _am_level = 2;             # the alert under test
+var _am_desc = 40;
+# The child's write hook.
+var _am_peer = 0;              # the child's native ctx (the hook seals with its keys)
+var _am_at = 0;                # which of its record writes to replace (1-based); 0 = none
+var _am_kind = 0;
+var _am_keep = 0;              # leading records of the replaced write kept (sealed + overlong kinds)
+var _am_then_overlong = 0;     # AM_PARTIAL13: an over-length header instead of the sealed alert
+var _am_writes = 0;
+
+# A client-under-test row's observations: [connect rc, read 1, read 2, read 3, state, last error,
+# first byte read, child status].
+var _am_obs: i64[8];
+
+fn _am_write_all(fd, buf, n): i64 {
+    var off = 0;
+    while (off < n) {
+        var w = sys_write(fd, buf + off, n - off);
+        if (w <= 0) { return 0 - 1; }
+        off = off + w;
+    }
+    return n;
+}
+
+fn _am_rec_len(rec): i64 { return TLS_RECORD_HEADER_LEN + _tn_be16_r(rec + 3); }
+
+# A record header declaring one byte past the ciphertext ceiling. By hand: the stdlib's
+# tls_native_record_write_header refuses that length (and writes nothing).
+fn _am_overlong_hdr(p, ct): i64 {
+    store8(p, ct);
+    _tn_be16_w(p + 1, 0x0303);
+    _tn_be16_w(p + 3, TLS_RECORD_MAX_CIPHERTEXT + 1);
+    return TLS_RECORD_HEADER_LEN;
+}
+
+# Replace one record write of the driver (`buf`, `n` bytes: one or more records) with the record
+# under test. The sealed kinds keep the first _am_keep records and seal the alert at the sequence
+# number the next record would have had.
+fn _am_substitute(fd, buf, n): i64 {
+    var al[2];
+    store8(&al, _am_level);
+    store8(&al + 1, _am_desc);
+    var rec[160];
+    if (_am_kind == AM_PLAIN_ALERT) {
+        tls_native_record_write_header(&rec, TLS_CT_ALERT, 0x0303, 2);
+        memcpy(&rec + TLS_RECORD_HEADER_LEN, &al, 2);
+        return _am_write_all(fd, &rec, 7);
+    }
+    var off = 0;
+    var k = 0;
+    while (k < _am_keep) {
+        off = off + _am_rec_len(buf + off);
+        k = k + 1;
+    }
+    if (off > n) { return 0 - 1; }
+    if (off > 0) { _am_write_all(fd, buf, off); }
+    if (_am_kind == AM_OVERLONG) {
+        _am_overlong_hdr(&rec, TLS_CT_HANDSHAKE);
+        return _am_write_all(fd, &rec, TLS_RECORD_HEADER_LEN);
+    }
+    var c = _am_peer;
+    var is_cli = 0;
+    if (load64(c + TLS_CTX_OFF_ROLE) == TLS_ROLE_CLIENT) { is_cli = 1; }
+    if (_am_kind == AM_SEALED12) {
+        var so12 = TLS_CTX_OFF_SRV_APP_SEQ;
+        if (is_cli == 1) { so12 = TLS_CTX_OFF_CLI_APP_SEQ; }
+        _tn_be64_w(c + so12, _am_keep);
+        var n12 = tls_native_12_seal(c, TLS_CT_ALERT, &al, 2, &rec, 160);
+        if (n12 <= 0) { return 0 - 1; }
+        return _am_write_all(fd, &rec, n12);
+    }
+    var key = load64(c + TLS_CTX_OFF_SRV_HS_KEY);
+    var iv = load64(c + TLS_CTX_OFF_SRV_HS_IV);
+    var so = TLS_CTX_OFF_SRV_SEQ;
+    if (is_cli == 1) {
+        key = load64(c + TLS_CTX_OFF_CLI_HS_KEY);
+        iv = load64(c + TLS_CTX_OFF_CLI_HS_IV);
+        so = TLS_CTX_OFF_CLI_SEQ;
+    }
+    _tn_be64_w(c + so, _am_keep);
+    var cipher = load64(c + TLS_CTX_OFF_CIPHER);
+    if (_am_kind == AM_PARTIAL13) {
+        var part[8];
+        store8(&part, TLS_HS_ENCRYPTED_EXTENSIONS);   # a 16-byte message, none of its body sent
+        store8(&part + 1, 0);
+        store8(&part + 2, 0);
+        store8(&part + 3, 16);
+        var np = tls_native_record_seal(cipher, key, iv, c + so, TLS_CT_HANDSHAKE, &part, 4, &rec, 160);
+        if (np <= 0) { return 0 - 1; }
+        _am_write_all(fd, &rec, np);
+        if (_am_then_overlong == 1) {
+            _am_overlong_hdr(&rec, TLS_CT_APPLICATION_DATA);
+            return _am_write_all(fd, &rec, TLS_RECORD_HEADER_LEN);
+        }
+    }
+    var ns = tls_native_record_seal(cipher, key, iv, c + so, TLS_CT_ALERT, &al, 2, &rec, 160);
+    if (ns <= 0) { return 0 - 1; }
+    return _am_write_all(fd, &rec, ns);
+}
+
+# The child's transport write: every record write passes through, except write number _am_at,
+# which is replaced; the writes after it are swallowed (the peer under test has failed and may
+# have closed — a real write could SIGPIPE the child).
+fn _am_write(fd, buf, n): i64 {
+    _am_writes = _am_writes + 1;
+    if (_am_writes < _am_at) { return _am_write_all(fd, buf, n); }
+    if (_am_writes == _am_at) { _am_substitute(fd, buf, n); }
+    return n;
+}
+
+fn _am_hold(fd): i64 {
+    var drain[64];
+    while (sys_read(fd, &drain, 64) > 0) { }
+    return 0;
+}
+
+fn _am_seal_send(srv, fd, level, desc, len): i64 {
+    var al[4];
+    store8(&al, level);
+    store8(&al + 1, desc);
+    store8(&al + 2, 0);
+    var rec[64];
+    var rn = _tn_seal_ct(srv, TLS_CT_ALERT, &al, len, &rec, 64);
+    if (rn <= 0) { return 1; }
+    if (_am_write_all(fd, &rec, rn) != rn) { return 1; }
+    return 0;
+}
+
+# The forked SERVER (client-under-test rows): accept, then run `script`. Exit 0 / the step that failed.
+fn _am_serve(sfd, script): i64 {
+    var srv = tls_native_new_server(_am_cert, _am_cert_len, _am_key, _am_key_len);
+    if (tls_native_server_load_creds(srv) != TLS_OK) { return 2; }
+    if (_am_ver12 == 1) { tls_native_set_version_range(srv, TLS_VERSION_1_2, TLS_VERSION_1_2); }
+    _am_peer = srv;
+    if (_am_at != 0) { tls_native_set_transport(0, &_am_write, 0); }
+    var ar = tls_native_accept(srv, sfd);
+    if (script == AS_NONE) { _am_hold(sfd); return 0; }
+    if (ar != TLS_OK) { return 3; }
+    var bad = 0;
+    if (script == AS_ALERT_THEN_DATA) {
+        bad = _am_seal_send(srv, sfd, _am_level, _am_desc, 2);
+        if (tls_native_write(srv, "late", 4) != 4) { bad = 1; }
+    }
+    if (script == AS_UC_Y_CLOSE) {
+        bad = _am_seal_send(srv, sfd, TLS_ALERT_WARNING, TLS_AD_USER_CANCELED, 2);
+        if (tls_native_write(srv, "y", 1) != 1) { bad = 1; }
+        if (_am_seal_send(srv, sfd, TLS_ALERT_WARNING, TLS_AD_CLOSE_NOTIFY, 2) != 0) { bad = 1; }
+    }
+    if (script == AS_ALERT3) { bad = _am_seal_send(srv, sfd, TLS_ALERT_WARNING, TLS_AD_CLOSE_NOTIFY, 3); }
+    if (script == AS_OVERLONG) {
+        var h[8];
+        _am_overlong_hdr(&h, TLS_CT_APPLICATION_DATA);
+        if (_am_write_all(sfd, &h, TLS_RECORD_HEADER_LEN) != TLS_RECORD_HEADER_LEN) { bad = 1; }
+    }
+    if (script == AS_BITFLIP) {
+        var rec[128];
+        var rn = tls_native_seal_app(srv, "hello", 5, &rec, 128);
+        if (rn <= 0) { bad = 1; }
+        store8(&rec + 8, load8(&rec + 8) ^ 1);
+        if (_am_write_all(sfd, &rec, rn) != rn) { bad = 1; }
+    }
+    if (script == AS_FIN) { sys_close(sfd); return 0; }
+    if (script == AS_UC_FIN) {
+        bad = _am_seal_send(srv, sfd, TLS_ALERT_WARNING, TLS_AD_USER_CANCELED, 2);
+        sys_close(sfd);
+        return bad;
+    }
+    if (script == AS_OPEN_APP) {
+        bad = _am_seal_send(srv, sfd, TLS_ALERT_WARNING, TLS_AD_USER_CANCELED, 2);
+        if (_am_seal_send(srv, sfd, TLS_ALERT_FATAL, TLS_AD_CLOSE_NOTIFY, 2) != 0) { bad = 1; }
+        if (_am_seal_send(srv, sfd, TLS_ALERT_WARNING, TLS_AD_CLOSE_NOTIFY, 2) != 0) { bad = 1; }
+    }
+    _am_hold(sfd);
+    return bad * 10;
+}
+
+fn _am_reset(): i64 {
+    _am_at = 0;
+    _am_kind = 0;
+    _am_keep = 0;
+    _am_writes = 0;
+    var i = 0;
+    while (i < 8) { _am_obs[i] = 0 - 99; i = i + 1; }
+    return 0;
+}
+
+fn _am_pair(out_sfd, out_cfd): i64 {
+    var fds[8];
+    sys_socketpair(1, 1, 0, &fds);
+    var fdp = load64(&fds);
+    store64(out_sfd, fdp & 0xFFFFFFFF);
+    store64(out_cfd, (fdp >> 32) & 0xFFFFFFFF);
+    return 0;
+}
+
+# One client-under-test row: fork the server, connect natively (verification off: the table is
+# under test, not the chain), then read three times. Fills _am_obs.
+fn _am_client_row(script): i64 {
+    var sfd = 0;
+    var cfd = 0;
+    _am_pair(&sfd, &cfd);
+    var pid = sys_fork();
+    if (pid == 0) {
+        sys_close(cfd);
+        sys_exit(_am_serve(sfd, script));
+    }
+    sys_close(sfd);
+    sock_set_recv_timeout(cfd, AM_TIMEOUT_S, 0);
+    var c = tls_native_new_client("localhost", 9);
+    tls_native_set_verify(c, TLS_VERIFY_NONE);
+    if (_am_ver12 == 1) { tls_native_set_version_range(c, TLS_VERSION_1_2, TLS_VERSION_1_2); }
+    _am_obs[0] = tls_native_connect(c, cfd);
+    var go = 0;
+    if (_am_obs[0] == TLS_OK) { go = 1; }
+    if (script == AS_NONE) { go = 0; }          # a handshake row: the server sends nothing more
+    if (go == 1) {
+        if (script != AS_OPEN_APP) {
+            var b[64];
+            store8(&b, 0);
+            _am_obs[1] = tls_native_read(c, &b, 64);
+            _am_obs[6] = load8(&b) & 0xFF;
+            _am_obs[2] = tls_native_read(c, &b, 64);
+            _am_obs[3] = tls_native_read(c, &b, 64);
+        } else {
+            # tls_native_open_app's public contract, one raw record at a time.
+            var cap = TLS_RECORD_MAX_CIPHERTEXT + TLS_RECORD_HEADER_LEN;
+            var rb = alloc(cap);
+            var ob = alloc(cap);
+            var k = 1;
+            while (k <= 3) {
+                var rl = _tn_sock_read_record(cfd, rb, cap);
+                if (rl > 0) { _am_obs[k] = tls_native_open_app(c, rb, rl, ob, cap); }
+                k = k + 1;
+            }
+        }
+    }
+    _am_obs[4] = tls_native_get_state(c);
+    _am_obs[5] = tls_native_get_last_error(c);
+    tls_native_close(c);
+    sys_close(cfd);
+    var st[4];
+    store64(&st, 0);
+    sys_waitpid(pid, &st, 0);
+    _am_obs[7] = load64(&st) & 0xFFFF;
+    return 0;
+}
+
+# The forked CLIENT (server-under-test rows): a native connect, its Nth write replaced.
+fn _am_client_peer(cfd, with_cert): i64 {
+    var c = tls_native_new_client("localhost", 9);
+    tls_native_set_verify(c, TLS_VERIFY_NONE);
+    if (_am_ver12 == 1) { tls_native_set_version_range(c, TLS_VERSION_1_2, TLS_VERSION_1_2); }
+    if (with_cert == 1) {
+        if (tls_native_set_client_cert(c, _am_cert, _am_cert_len, 1) != TLS_OK) { return 2; }
+        if (tls_native_set_client_key(c, _am_key, _am_key_len) != TLS_OK) { return 3; }
+    }
+    _am_peer = c;
+    if (_am_at != 0) { tls_native_set_transport(0, &_am_write, 0); }
+    tls_native_connect(c, cfd);
+    _am_hold(cfd);
+    return 0;
+}
+
+# One server-under-test row: returns the accept result; *out_le gets the ctx's last error.
+fn _am_server_row(verify, with_cert, use_accept12, out_le): i64 {
+    var sfd = 0;
+    var cfd = 0;
+    _am_pair(&sfd, &cfd);
+    var pid = sys_fork();
+    if (pid == 0) {
+        sys_close(sfd);
+        sys_exit(_am_client_peer(cfd, with_cert));
+    }
+    sys_close(cfd);
+    sock_set_recv_timeout(sfd, AM_TIMEOUT_S, 0);
+    var srv = tls_native_new_server(_am_cert, _am_cert_len, _am_key, _am_key_len);
+    tls_native_server_load_creds(srv);
+    tls_native_set_verify(srv, verify);
+    if (_am_ver12 == 1) { tls_native_set_version_range(srv, TLS_VERSION_1_2, TLS_VERSION_1_2); }
+    var rc = 0;
+    if (use_accept12 == 1) { rc = tls_native_accept_12(srv, sfd); }
+    else { rc = tls_native_accept(srv, sfd); }
+    store64(out_le, tls_native_get_last_error(srv));
+    sys_close(sfd);
+    var st[4];
+    sys_waitpid(pid, &st, 0);
+    return rc;
+}
+
+fn _am_v(): i64 {
+    if (_am_ver12 == 1) { println("  (TLS 1.2)"); return 0; }
+    println("  (TLS 1.3)");
+    return 0;
+}
+
+fn test_app_phase_alerts(): i64 {
+    test_group("tls_native_read: alerts after the handshake");
+    _am_v();
+    _am_reset();
+    _am_level = TLS_ALERT_FATAL;
+    _am_desc = TLS_AD_BAD_RECORD_MAC;
+    _am_client_row(AS_ALERT_THEN_DATA);
+    assert_eq(_am_obs[0], TLS_OK, "handshake");
+    assert_eq(_am_obs[1], TLS_ERR_ALERT, "a sealed fatal alert: TLS_ERR_ALERT");
+    assert_eq(_am_obs[2], TLS_ERR_ALERT, "re-read: TLS_ERR_ALERT again, the record after it unread");
+    assert_eq(_am_obs[3], TLS_ERR_ALERT, "and again");
+    assert_eq(_am_obs[4], TLS_STATE_ERROR, "the ctx is failed");
+    assert_eq(_am_obs[5], TLS_ERR_ALERT, "LAST_ERR = TLS_ERR_ALERT");
+    assert_eq(_am_obs[7], 0, "the server sent the row (child exit 0)");
+
+    _am_reset();
+    _am_level = TLS_ALERT_WARNING;
+    _am_desc = TLS_AD_CLOSE_NOTIFY;
+    _am_client_row(AS_ALERT_THEN_DATA);
+    assert_eq(_am_obs[1], 0, "close_notify: 0");
+    assert_eq(_am_obs[2], 0, "re-read with an app record behind it on the wire: still 0 (sticky)");
+    assert_eq(_am_obs[3], 0, "and still 0");
+    assert_eq(_am_obs[4], TLS_STATE_CONNECTED, "a clean close does not fail the ctx");
+    assert_eq(_am_obs[5], 0, "no LAST_ERR");
+    assert_eq(_am_obs[7], 0, "the server sent the row (child exit 0)");
+
+    _am_reset();
+    _am_level = TLS_ALERT_FATAL;
+    _am_desc = TLS_AD_CLOSE_NOTIFY;
+    _am_client_row(AS_ALERT_THEN_DATA);
+    assert_eq(_am_obs[1], TLS_ERR_ALERT, "a FATAL-level close_notify: TLS_ERR_ALERT, not EOF");
+    assert_eq(_am_obs[2], TLS_ERR_ALERT, "re-read: TLS_ERR_ALERT");
+    assert_eq(_am_obs[4], TLS_STATE_ERROR, "the ctx is failed");
+
+    _am_reset();
+    _am_level = 3;
+    _am_desc = TLS_AD_CLOSE_NOTIFY;
+    _am_client_row(AS_ALERT_THEN_DATA);
+    assert_eq(_am_obs[1], TLS_ERR_ALERT, "close_notify at an undefined level (3): TLS_ERR_ALERT");
+
+    _am_reset();
+    _am_level = TLS_ALERT_WARNING;
+    _am_desc = TLS_AD_UNRECOGNIZED_NAME;
+    _am_client_row(AS_ALERT_THEN_DATA);
+    assert_eq(_am_obs[1], TLS_ERR_ALERT, "any other description, even at warning level: TLS_ERR_ALERT");
+    assert_eq(_am_obs[2], TLS_ERR_ALERT, "re-read: TLS_ERR_ALERT");
+
+    _am_reset();
+    _am_client_row(AS_UC_Y_CLOSE);
+    assert_eq(_am_obs[1], 1, "user_canceled, then \"y\": the data is delivered");
+    assert_eq(_am_obs[6], 121, "the byte is \"y\"");
+    assert_eq(_am_obs[2], 0, "then close_notify: 0");
+    assert_eq(_am_obs[4], TLS_STATE_CONNECTED, "user_canceled does not fail the ctx");
+    assert_eq(_am_obs[7], 0, "the server sent the row (child exit 0)");
+
+    _am_reset();
+    _am_client_row(AS_UC_FIN);
+    assert_eq(_am_obs[1], TLS_ERR_IO, "user_canceled, then FIN with no close_notify: TLS_ERR_IO, never 0");
+
+    _am_reset();
+    _am_client_row(AS_ALERT3);
+    assert_eq(_am_obs[1], TLS_ERR_BAD_RECORD, "an alert record of 3 bytes: TLS_ERR_BAD_RECORD");
+    assert_eq(_am_obs[2], TLS_ERR_BAD_RECORD, "re-read: TLS_ERR_BAD_RECORD");
+    return 0;
+}
+
+fn test_app_phase_records(): i64 {
+    test_group("tls_native_read: records, truncation, the open path");
+    _am_v();
+    _am_reset();
+    _am_client_row(AS_OVERLONG);
+    assert_eq(_am_obs[1], TLS_ERR_BAD_RECORD, "a record header past the ceiling: TLS_ERR_BAD_RECORD, not IO");
+    assert_eq(_am_obs[2], TLS_ERR_BAD_RECORD, "re-read: TLS_ERR_BAD_RECORD");
+    assert_eq(_am_obs[4], TLS_STATE_ERROR, "the ctx is failed");
+
+    _am_reset();
+    _am_client_row(AS_BITFLIP);
+    assert_eq(_am_obs[1], TLS_ERR_DECRYPT, "a tampered record: TLS_ERR_DECRYPT");
+    assert_eq(_am_obs[4], TLS_STATE_ERROR, "an open error fails the ctx");
+    assert_eq(_am_obs[5], TLS_ERR_DECRYPT, "LAST_ERR = TLS_ERR_DECRYPT");
+    assert_eq(_am_obs[2], TLS_ERR_DECRYPT, "re-read: TLS_ERR_DECRYPT");
+
+    _am_reset();
+    _am_client_row(AS_FIN);
+    assert_eq(_am_obs[1], TLS_ERR_IO, "FIN with no close_notify: TLS_ERR_IO");
+    assert_eq(_am_obs[2], TLS_ERR_IO, "re-read: TLS_ERR_IO");
+
+    _am_reset();
+    _am_client_row(AS_OPEN_APP);
+    assert_eq(_am_obs[1], 0, "tls_native_open_app: user_canceled -> 0");
+    assert_eq(_am_obs[2], TLS_ERR_ALERT, "tls_native_open_app: fatal close_notify -> TLS_ERR_ALERT");
+    assert_eq(_am_obs[3], 0, "tls_native_open_app: close_notify -> 0");
+    return 0;
+}
+
+# One client-under-test handshake row: the server's write number `at` is replaced by `kind`.
+fn _am_hs_client(at, kind, keep, expect, label): i64 {
+    _am_reset();
+    _am_at = at;
+    _am_kind = kind;
+    _am_keep = keep;
+    _am_client_row(AS_NONE);
+    assert_eq(_am_obs[0], expect, label);
+    assert_eq(_am_obs[5], expect, "  ... and LAST_ERR says the same");
+    return 0;
+}
+
+fn test_client_handshake_sites(): i64 {
+    test_group("tls_native_connect: an alert in place of a handshake record is TLS_ERR_ALERT");
+    _am_v();
+    # The server's record writes: 1.3 #1 ServerHello, #2 its encrypted flight;
+    # 1.2 #1 the flight (SH..SHD), #2 ChangeCipherSpec, #3 its sealed Finished.
+    _am_level = TLS_ALERT_FATAL;
+    _am_desc = TLS_AD_HANDSHAKE_FAILURE;
+    _am_hs_client(1, AM_PLAIN_ALERT, 0, TLS_ERR_ALERT, "a plaintext handshake_failure in place of ServerHello");
+    assert_eq(_am_obs[4], TLS_STATE_ERROR, "the ctx is failed");
+    _am_level = TLS_ALERT_WARNING;
+    _am_desc = TLS_AD_UNRECOGNIZED_NAME;
+    _am_hs_client(1, AM_PLAIN_ALERT, 0, TLS_ERR_ALERT, "a WARNING-level alert aborts the handshake too");
+    _am_level = TLS_ALERT_FATAL;
+    _am_desc = TLS_AD_BAD_CERTIFICATE;
+    _am_hs_client(1, AM_OVERLONG, 0, TLS_ERR_BAD_RECORD,
+      "an over-length header in place of ServerHello: BAD_RECORD, not IO");
+    if (_am_ver12 == 0) {
+        _am_hs_client(2, AM_SEALED13, 0, TLS_ERR_ALERT, "an alert sealed in place of the server's flight");
+        _am_hs_client(2, AM_PARTIAL13, 0, TLS_ERR_ALERT, "an alert sealed after a partial flight record");
+        _am_hs_client(2, AM_OVERLONG, 0, TLS_ERR_BAD_RECORD,
+          "an over-length header in place of the flight: BAD_RECORD");
+        _am_then_overlong = 1;
+        _am_hs_client(2, AM_PARTIAL13, 0, TLS_ERR_BAD_RECORD,
+          "an over-length header after a partial flight record: BAD_RECORD");
+        _am_then_overlong = 0;
+    } else {
+        _am_hs_client(3, AM_SEALED12, 0, TLS_ERR_ALERT, "an alert sealed in place of the server's Finished");
+        _am_hs_client(3, AM_OVERLONG, 0, TLS_ERR_BAD_RECORD,
+          "an over-length header in place of the server's Finished: BAD_RECORD");
+    }
+    return 0;
+}
+
+# One server-under-test handshake row: the client's write number `at` is replaced by `kind`.
+fn _am_hs_server(at, kind, keep, verify, with_cert, use_accept12, expect, label): i64 {
+    _am_reset();
+    _am_at = at;
+    _am_kind = kind;
+    _am_keep = keep;
+    var le = 0;
+    assert_eq(_am_server_row(verify, with_cert, use_accept12, &le), expect, label);
+    assert_eq(le, expect, "  ... and LAST_ERR says the same");
+    return 0;
+}
+
+fn test_server_handshake_sites(): i64 {
+    test_group("tls_native_accept: an alert in place of a handshake record is TLS_ERR_ALERT");
+    _am_v();
+    # The client's record writes: 1.3 #1 ClientHello, #2 [Certificate, CertificateVerify,] Finished;
+    # 1.2 #1 ClientHello, #2 ClientKeyExchange, #3 ChangeCipherSpec, #4 its sealed Finished.
+    var vn = TLS_VERIFY_NONE;
+    var vp = TLS_VERIFY_PEER;
+    _am_level = TLS_ALERT_FATAL;
+    _am_desc = TLS_AD_PROTOCOL_VERSION;
+    _am_hs_server(1, AM_PLAIN_ALERT, 0, vn, 0, 0, TLS_ERR_ALERT, "a plaintext alert in place of ClientHello");
+    _am_hs_server(1, AM_OVERLONG, 0, vn, 0, 0, TLS_ERR_BAD_RECORD,
+      "an over-length header in place of ClientHello: BAD_RECORD, not IO");
+    _am_desc = TLS_AD_DECRYPT_ERROR;
+    if (_am_ver12 == 0) {
+        _am_hs_server(2, AM_SEALED13, 0, vn, 0, 0, TLS_ERR_ALERT, "an alert sealed in place of the client's Finished");
+        _am_hs_server(2, AM_OVERLONG, 0, vn, 0, 0, TLS_ERR_BAD_RECORD,
+          "an over-length header in place of the client's Finished: BAD_RECORD");
+        _am_hs_server(2, AM_SEALED13, 0, vp, 0, 0, TLS_ERR_ALERT,
+          "mTLS: an alert sealed in place of the client's Certificate");
+        _am_hs_server(2, AM_OVERLONG, 0, vp, 0, 0, TLS_ERR_BAD_RECORD,
+          "mTLS: an over-length header in place of the client's Certificate: BAD_RECORD");
+        _am_hs_server(2, AM_SEALED13, 1, vp, 1, 0, TLS_ERR_ALERT,
+          "mTLS: an alert sealed in place of the client's CertificateVerify");
+        _am_hs_server(2, AM_OVERLONG, 1, vp, 1, 0, TLS_ERR_BAD_RECORD,
+          "mTLS: an over-length header in place of the CertificateVerify: BAD_RECORD");
+    } else {
+        _am_hs_server(1, AM_PLAIN_ALERT, 0, vn, 0, 1, TLS_ERR_ALERT,
+          "tls_native_accept_12: a plaintext alert in place of ClientHello");
+        _am_hs_server(1, AM_OVERLONG, 0, vn, 0, 1, TLS_ERR_BAD_RECORD,
+          "tls_native_accept_12: an over-length header in place of ClientHello");
+        _am_hs_server(2, AM_PLAIN_ALERT, 0, vn, 0, 0, TLS_ERR_ALERT, "a plaintext alert in place of ClientKeyExchange");
+        _am_hs_server(2, AM_OVERLONG, 0, vn, 0, 0, TLS_ERR_BAD_RECORD,
+          "an over-length header in place of ClientKeyExchange: BAD_RECORD");
+        _am_hs_server(4, AM_SEALED12, 0, vn, 0, 0, TLS_ERR_ALERT, "an alert sealed in place of the client's Finished");
+        _am_hs_server(4, AM_OVERLONG, 0, vn, 0, 0, TLS_ERR_BAD_RECORD,
+          "an over-length header in place of the client's Finished: BAD_RECORD");
+    }
+    return 0;
+}
+
+# Through the lib/tls.cyr wrapper: tls_read is tls_native_read on the native backend.
+fn _am_noverify(hctx, handle): i64 {
+    tls_set_verify(handle, 0, 0);
+    if (_am_ver12 == 1) { tls_native_set_version_range(handle, TLS_VERSION_1_2, TLS_VERSION_1_2); }
+    return 0;
+}
+
+fn test_wrapper(): i64 {
+    test_group("tls_read (native backend): the same table");
+    _am_v();
+    _am_reset();
+    _am_level = TLS_ALERT_FATAL;
+    _am_desc = TLS_AD_BAD_RECORD_MAC;
+    var sfd = 0;
+    var cfd = 0;
+    _am_pair(&sfd, &cfd);
+    var pid = sys_fork();
+    if (pid == 0) {
+        sys_close(cfd);
+        sys_exit(_am_serve(sfd, AS_ALERT_THEN_DATA));
+    }
+    sys_close(sfd);
+    sock_set_recv_timeout(cfd, AM_TIMEOUT_S, 0);
+    tls_set_backend(TLS_BACKEND_NATIVE);
+    var c = tls_connect_alloc(cfd, "localhost", &_am_noverify, 0);
+    assert_neq(c, 0, "tls_connect_alloc");
+    var ok = 0;
+    if (c != 0) { ok = tls_connect_complete(c); }
+    assert_eq(ok, 1, "tls_connect_complete");
+    if (ok == 1) {
+        var b[16];
+        assert_eq(tls_read(c, &b, 16), TLS_ERR_ALERT, "tls_read: a sealed fatal alert is TLS_ERR_ALERT");
+        assert_eq(tls_read(c, &b, 16), TLS_ERR_ALERT, "tls_read again: TLS_ERR_ALERT");
+    }
+    if (c != 0) { tls_close(c); }
+    sys_close(cfd);
+    var st[4];
+    sys_waitpid(pid, &st, 0);
+    return 0;
+}
+
+alloc_init();
+_am_cert = hex_decode("3082019230820139a003020102021437416048df98b49fd5b278db00ebd0e1f87b6d40300a06082a8648ce3d04030230143112301006035504030c096c6f63616c686f7374301e170d3236303130313030303030305a170d3336303130313030303030305a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d030107034200040d7a46bc307511f24a53dcf973e0dfe2058db48d7db8b3941fa80176641ad78da12b801a12494d49312bf5b0ac312f3d50bca2282126fddd03652013bf8b49c5a3693067301d0603551d0e041604143bdd6c2d487f854851f408356e66880375bd6743301f0603551d230418301680143bdd6c2d487f854851f408356e66880375bd6743300f0603551d130101ff040530030101ff30140603551d11040d300b82096c6f63616c686f7374300a06082a8648ce3d04030203470030440220365bd112f9b8faec50c9b4a2cf7ec487cc424901870b8156b349dba15e1cde8102200c1ec7f6eefec5bc9976f55a70608b07d669c78183fa08e9a863370d17e39df3", 812);
+_am_key = hex_decode("308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420666340f5e33734c31438ae0abd2370b72da193b44565625051bbc79a344535dda144034200040d7a46bc307511f24a53dcf973e0dfe2058db48d7db8b3941fa80176641ad78da12b801a12494d49312bf5b0ac312f3d50bca2282126fddd03652013bf8b49c5", 276);
+_am_ver12 = 0;
+test_app_phase_alerts();
+test_app_phase_records();
+test_client_handshake_sites();
+test_server_handshake_sites();
+test_wrapper();
+_am_ver12 = 1;
+test_app_phase_alerts();
+test_app_phase_records();
+test_client_handshake_sites();
+test_server_handshake_sites();
+test_wrapper();
+#endif
+var r = assert_summary();

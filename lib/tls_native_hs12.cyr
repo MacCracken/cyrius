@@ -1226,8 +1226,9 @@ fn tls_native_connect_12(ctx, sock_fd): i64 {
     var fdone = 0;
     while (fdone == 0) {
         var rl = _tn_sock_read_record_skip_ccs(sock_fd, inbuf, cap);
-        if (rl < 0) { return _tn_ctx_fail(ctx, TLS_ERR_IO); }
-        if ((load8(inbuf) & 0xFF) != TLS_CT_HANDSHAKE) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_RECORD); }
+        if (rl < 0) { return _tn_read_fail(ctx, rl); }
+        var hx_rec = _tn_hs_expect_ct(ctx, load8(inbuf) & 0xFF, TLS_CT_HANDSHAKE);
+        if (hx_rec != TLS_OK) { return hx_rec; }
         var paylen = rl - TLS_RECORD_HEADER_LEN;
         # A zero-length handshake record makes no progress; reject it so a peer
         # streaming empty records can't spin this loop forever. See CHANGELOG [6.0.83].
@@ -1280,13 +1281,14 @@ fn tls_native_connect_12(ctx, sock_fd): i64 {
     if (finreclen < 0) { return _tn_ctx_fail(ctx, finreclen); }
     if (_tn_sock_write_all(sock_fd, finrec, finreclen) < 0) { return _tn_ctx_fail(ctx, TLS_ERR_IO); }
     var srl = _tn_sock_read_record_skip_ccs(sock_fd, inbuf, cap);
-    if (srl < 0) { return _tn_ctx_fail(ctx, TLS_ERR_IO); }
+    if (srl < 0) { return _tn_read_fail(ctx, srl); }
     var sfin = _tn_alloc(ctx, 64);
     if (sfin == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var sct = 0;
     var sfinlen = tls_native_12_open(ctx, inbuf, srl, sfin, 64, &sct);
     if (sfinlen < 0) { return _tn_ctx_fail(ctx, sfinlen); }
-    if (sct != TLS_CT_HANDSHAKE) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_RECORD); }
+    var hx_sfin = _tn_hs_expect_ct(ctx, sct, TLS_CT_HANDSHAKE);
+    if (hx_sfin != TLS_OK) { return hx_sfin; }
     var vr = tls_native_12_verify_finished(ctx, sfin, sfinlen, "server finished");
     if (vr != TLS_OK) { return _tn_ctx_fail(ctx, vr); }
     store64(ctx + TLS_CTX_OFF_STATE, TLS_STATE_CONNECTED);
@@ -1346,8 +1348,9 @@ fn _tn_12_server_drive(ctx, sock_fd, ch_msg, ch_len): i64 {
     var inbuf = _tn_alloc(ctx, cap);
     if (inbuf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var rl = _tn_sock_read_record_skip_ccs(sock_fd, inbuf, cap);
-    if (rl < 0) { return _tn_ctx_fail(ctx, TLS_ERR_IO); }
-    if ((load8(inbuf) & 0xFF) != TLS_CT_HANDSHAKE) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_RECORD); }
+    if (rl < 0) { return _tn_read_fail(ctx, rl); }
+    var hx_rec = _tn_hs_expect_ct(ctx, load8(inbuf) & 0xFF, TLS_CT_HANDSHAKE);
+    if (hx_rec != TLS_OK) { return hx_rec; }
     var cke_msg = inbuf + TLS_RECORD_HEADER_LEN;
     var cke_len = rl - TLS_RECORD_HEADER_LEN;
     var client_pub = _tn_alloc(ctx, 32);
@@ -1365,13 +1368,14 @@ fn _tn_12_server_drive(ctx, sock_fd, ch_msg, ch_len): i64 {
     var dk = tls_native_12_derive_keys(ctx, pm, 32);
     if (dk != TLS_OK) { return _tn_ctx_fail(ctx, dk); }
     var crl = _tn_sock_read_record_skip_ccs(sock_fd, inbuf, cap);
-    if (crl < 0) { return _tn_ctx_fail(ctx, TLS_ERR_IO); }
+    if (crl < 0) { return _tn_read_fail(ctx, crl); }
     var cfin = _tn_alloc(ctx, 64);
     if (cfin == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var fct = 0;
     var cfinlen = tls_native_12_open(ctx, inbuf, crl, cfin, 64, &fct);
     if (cfinlen < 0) { return _tn_ctx_fail(ctx, cfinlen); }
-    if (fct != TLS_CT_HANDSHAKE) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_RECORD); }
+    var hx_cfin = _tn_hs_expect_ct(ctx, fct, TLS_CT_HANDSHAKE);
+    if (hx_cfin != TLS_OK) { return hx_cfin; }
     var vr = tls_native_12_verify_finished(ctx, cfin, cfinlen, "client finished");
     if (vr != TLS_OK) { return _tn_ctx_fail(ctx, vr); }
     var ccs = _tn_alloc(ctx, 8);
@@ -1401,8 +1405,9 @@ fn tls_native_accept_12(ctx, sock_fd): i64 {
     var inbuf = _tn_alloc(ctx, cap);
     if (inbuf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var rl = _tn_sock_read_record_skip_ccs(sock_fd, inbuf, cap);
-    if (rl < 0) { return _tn_ctx_fail(ctx, TLS_ERR_IO); }
-    if ((load8(inbuf) & 0xFF) != TLS_CT_HANDSHAKE) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_RECORD); }
+    if (rl < 0) { return _tn_read_fail(ctx, rl); }
+    var hx_rec = _tn_hs_expect_ct(ctx, load8(inbuf) & 0xFF, TLS_CT_HANDSHAKE);
+    if (hx_rec != TLS_OK) { return hx_rec; }
     return _tn_12_server_drive(ctx, sock_fd, inbuf + TLS_RECORD_HEADER_LEN, rl - TLS_RECORD_HEADER_LEN);
 }
 

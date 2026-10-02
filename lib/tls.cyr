@@ -34,8 +34,9 @@
 #   tls_available()            → 1 if libssl usable, 0 otherwise
 #   tls_init_main()            → warm the stack once, on the main thread (6.6.13) — 1 / 0
 #   tls_connect(sock, host)    → ctx on success, 0 on failure
-#   tls_write(ctx, buf, len)   → bytes written or -1
-#   tls_read(ctx, buf, maxlen) → bytes read or -1
+#   tls_write(ctx, buf, len)   → bytes written, or a negative TLS_ERR_* (-1 for ctx 0)
+#   tls_read(ctx, buf, maxlen) → bytes read, 0 at the peer's close_notify, or a negative
+#                                TLS_ERR_* (-1 for ctx 0) — the same codes on both backends
 #   tls_close(ctx)             → 0
 #
 # ctx layout (24 bytes):
@@ -69,6 +70,15 @@ include "lib/fdlopen.cyr"
 include "lib/tls_hostid.cyr"   # the host classifier both backends share (6.6.13)
 #ifndef CYRIUS_TLS_LIBSSL
 include "lib/tls_native.cyr"
+#endif
+#ifdef CYRIUS_TLS_LIBSSL
+# The TLS_ERR_* codes the libssl backend returns (_tls_ssl_io_ret), defined here only in a
+# libssl-only build: a default build gets them, with the same values, from lib/tls_native.cyr.
+# CHANGELOG [6.6.13]
+var TLS_ERR_WOULD_BLOCK = 0 - 9;
+var TLS_ERR_IO = 0 - 12;
+var TLS_ERR_ALERT = 0 - 17;
+var TLS_ERR_PROTOCOL = 0 - 19;
 #endif
 
 var TLS_BACKEND_LIBSSL = 0;
@@ -181,6 +191,10 @@ var _fn_SSL_write = 0;
 var _fn_SSL_read = 0;
 var _fn_SSL_shutdown = 0;
 var _fn_SSL_get_error = 0;
+# 6.6.13 (CVE-TBD(I2c)) — libcrypto's error queue, which tells a received alert from a local
+# failure (_tls_ssl_io_ret). Optional: without them a failed read or write is TLS_ERR_PROTOCOL.
+var _fn_ERR_peek_last_error = 0;
+var _fn_ERR_clear_error = 0;
 # 6.6.13 (CVE-TBD(I1)) — the identity binder's symbols. REQUIRED (in the bail list
 # below): a libssl that cannot bind the leaf to `host` reports tls_available() == 0
 # rather than connecting to whoever holds any chain-valid certificate.
@@ -275,6 +289,8 @@ fn _tls_init(): i64 {
     _fn_SSL_read                         = fncall2(fn_dlsym, h, "SSL_read");
     _fn_SSL_shutdown                     = fncall2(fn_dlsym, h, "SSL_shutdown");
     _fn_SSL_get_error                    = fncall2(fn_dlsym, h, "SSL_get_error");
+    _fn_ERR_peek_last_error              = fncall2(fn_dlsym, h, "ERR_peek_last_error");
+    _fn_ERR_clear_error                  = fncall2(fn_dlsym, h, "ERR_clear_error");
     # 6.6.13 (CVE-TBD(I1)) — host binding; the X509_VERIFY_PARAM_* three live in
     # libcrypto and resolve through the libssl handle under RTLD_GLOBAL.
     _fn_SSL_get0_param                   = fncall2(fn_dlsym, h, "SSL_get0_param");
@@ -1192,8 +1208,12 @@ fn tls_write(ctx, buf, len): i64 {
         return len;
     }
     #endif
+    if (len == 0) { return 0; }                 # nothing to send (the native answer too)
     var ssl = load64(ctx + 8);
-    return fncall3(_fn_SSL_write, ssl, buf, len);
+    if (_fn_ERR_clear_error != 0) { fncall0(_fn_ERR_clear_error); }
+    var sw = _tls_ssl_io_ret(ssl, fncall3(_fn_SSL_write, ssl, buf, len));
+    if (sw == 0) { return TLS_ERR_PROTOCOL; }   # a write never succeeds with 0 bytes: shut down
+    return sw;
 }
 
 # Read from TLS session
@@ -1203,7 +1223,54 @@ fn tls_read(ctx, buf, maxlen): i64 {
     if (_tls_backend == 1) { return tls_native_read(load64(ctx), buf, maxlen); }
     #endif
     var ssl = load64(ctx + 8);
-    return fncall3(_fn_SSL_read, ssl, buf, maxlen);
+    if (_fn_ERR_clear_error != 0) { fncall0(_fn_ERR_clear_error); }
+    return _tls_ssl_io_ret(ssl, fncall3(_fn_SSL_read, ssl, buf, maxlen));
+}
+
+# The libssl backend's answer for one SSL_read / SSL_write, in the native backend's terms: bytes
+# (> 0), 0 for the peer's close_notify, or a negative TLS_ERR_* (the read path's error table,
+# lib/tls_native_conn.cyr). `r` is the call's raw return.
+# ⛔ 6.6.13 (CVE-TBD(I2c)) — WHY. SSL_read / SSL_write return a C `int`, and fncall3 hands back
+# the whole register, which holds it ZERO-extended: -1 arrived as +4294967295, so a tampered
+# record (one bit flipped on the path, no key needed) made tls_read report ~4 GiB read, and a
+# caller doing `total = total + n` indexed past its buffer. And SSL_read's 0 is not only
+# close_notify: a received fatal alert and a stream cut mid-record are 0 too, so an attacked
+# stream read as a clean end. Both are decided here, from SSL_get_error and libcrypto's error
+# queue (cleared before every SSL_read / SSL_write, or a stale entry would decide it):
+#   SSL_ERROR_ZERO_RETURN (6), r == 0  -> 0 (close_notify read; libssl keeps returning it)
+#   SSL_ERROR_ZERO_RETURN (6), r < 0   -> TLS_ERR_PROTOCOL (a write after the peer shut down)
+#   SSL_ERROR_WANT_READ / _WRITE (2/3) -> TLS_ERR_WOULD_BLOCK
+#   SSL_ERROR_SYSCALL (5)              -> TLS_ERR_IO
+#   SSL_ERROR_SSL (1), a received alert (lib SSL, reason 1000 + description) -> TLS_ERR_ALERT
+#   SSL_ERROR_SSL, unexpected EOF (reason 294: the stream ended with no close_notify) -> TLS_ERR_IO
+#   SSL_ERROR_SSL, anything else (a bad record MAC, a protocol violation)    -> TLS_ERR_PROTOCOL
+#   anything else, or no SSL_get_error -> TLS_ERR_IO (never 0: fail closed)
+# Issue 2026-09-30-tls-client-memory-and-alert-gaps (c); CHANGELOG [6.6.13].
+fn _tls_ssl_io_ret(ssl, r): i64 {
+    var v = r & 0xFFFFFFFF;                     # the C int; the high half is not part of it
+    if (v > 0x7FFFFFFF) { v = v - 0x100000000; }   # sign-extend (`>>` is logical: no shift)
+    if (v > 0) { return v; }
+    if (_fn_SSL_get_error == 0) { return TLS_ERR_IO; }
+    var e = fncall2(_fn_SSL_get_error, ssl, v) & 0xFFFFFFFF;
+    if (e == 6) {
+        if (v == 0) { return 0; }
+        return TLS_ERR_PROTOCOL;
+    }
+    if (e == 2) { return TLS_ERR_WOULD_BLOCK; }
+    if (e == 3) { return TLS_ERR_WOULD_BLOCK; }
+    if (e == 5) { return TLS_ERR_IO; }
+    if (e != 1) { return TLS_ERR_IO; }
+    if (_fn_ERR_peek_last_error == 0) { return TLS_ERR_PROTOCOL; }
+    # OpenSSL 3 packs an error as lib << 23 | reason (23 bits); bit 31 marks a system errno.
+    var code = fncall0(_fn_ERR_peek_last_error) & 0xFFFFFFFF;
+    if ((code & 0x80000000) != 0) { return TLS_ERR_IO; }
+    if (((code >> 23) & 0xFF) != 20) { return TLS_ERR_PROTOCOL; }     # ERR_LIB_SSL
+    var reason = code & 0x7FFFFF;
+    if (reason >= 1000) {
+        if (reason < 1256) { return TLS_ERR_ALERT; }                   # SSL_AD_REASON_OFFSET + desc
+    }
+    if (reason == 294) { return TLS_ERR_IO; }                          # SSL_R_UNEXPECTED_EOF_WHILE_READING
+    return TLS_ERR_PROTOCOL;
 }
 
 # Close the TLS session. libssl: SSL_shutdown, then frees the SSL and the SSL_CTX. Native: sends

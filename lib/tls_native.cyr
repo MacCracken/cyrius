@@ -224,6 +224,13 @@ enum TlsAlertDescription {
     TLS_AD_NO_APPLICATION_PROTOCOL = 120;
 }
 
+# What a received alert means to the read path (_tn_alert_disposition, lib/tls_native_conn.cyr);
+# a negative disposition is the TLS_ERR_* it fails with. Private. CHANGELOG [6.6.13]
+enum TlsAlertDisposition {
+    _TN_ALERT_EOF = 0;          # warning-level close_notify: the end of the stream
+    _TN_ALERT_IGNORE = 1;       # warning-level user_canceled: dropped, the read goes on
+}
+
 # ================================================================
 # Connection role + state-machine state
 # ================================================================

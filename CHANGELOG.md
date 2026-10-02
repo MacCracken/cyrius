@@ -85,6 +85,44 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   rows), the hostflags dropped (the CN-only and partial-wildcard rows), one bail line removed (its
   symbol's leg: available, then SIGSEGV), `SSL_set1_host`-style routing (the `[::1]` rows), SNI for
   every host (the IP SNI rows).
+- **CVE-TBD(I2c) (P1) — the libssl backend's `tls_read` / `tls_write` returned a C `int`
+  zero-extended: one flipped bit on the wire read as ~4 GiB, and a fatal alert or a cut stream read
+  as a clean end.** (I2 (c), issue `2026-09-30-tls-client-memory-and-alert-gaps`; found by its
+  premise check.) `SSL_read` / `SSL_write` return an `int`, and `fncall3` hands back the whole
+  register with the int ZERO-extended in it, so libssl's -1 arrived as **+4294967295** (measured:
+  a bit-flipped record, a non-blocking read with nothing pending, a write to a closed peer or after
+  a fatal alert). A consumer doing `total = total + n` — abaco, whirl and sandhi all do — then
+  indexed and parsed past its buffer, from an on-path position with no key. And `SSL_read`'s 0 is
+  not only close_notify: a received fatal alert and a stream cut mid-record read 0 too, so an
+  attacked response read as complete. Reached by every `-D CYRIUS_TLS_LIBSSL` build and by a
+  default build after `tls_set_backend(TLS_BACKEND_LIBSSL)`, since the libssl wrapper's
+  introduction. **Root cause:** `tls_read` / `tls_write` (`lib/tls.cyr`) returned the raw call.
+  **Fix:** `_tls_ssl_io_ret(ssl, r)` masks the return to its 32 bits and sign-extends it (not with
+  `>>`, which is logical in cyrius), passes `r > 0` through, and maps everything else from
+  `SSL_get_error` and libcrypto's error queue onto the native backend's codes: close_notify → 0;
+  `WANT_READ` / `WANT_WRITE` → `TLS_ERR_WOULD_BLOCK`; `SYSCALL` → `TLS_ERR_IO`; a received alert (lib
+  SSL, reason 1000 + description) → `TLS_ERR_ALERT`; unexpected EOF (reason 294) → `TLS_ERR_IO`, as
+  native reports truncation; any other libssl failure, a bad record MAC included →
+  `TLS_ERR_PROTOCOL`; never 0 for a failure. `ERR_peek_last_error` / `ERR_clear_error` resolve in
+  `_tls_init` as OPTIONAL symbols, and the queue is cleared before every `SSL_read` / `SSL_write` so
+  a stale entry cannot decide the answer. `tls_write` answers a 0-byte write with 0 without calling
+  libssl and never returns 0 for a failed write (`SSL_write` after a fatal alert reports
+  `ZERO_RETURN` with -1: now `TLS_ERR_PROTOCOL`, not "0 bytes written" a write loop would spin on).
+  A libssl-only build gets the four `TLS_ERR_*` it returns from a `#ifdef CYRIUS_TLS_LIBSSL` block
+  in `lib/tls.cyr` (same values as `lib/tls_native.cyr`). ⚠ **Behaviour change (libssl only):**
+  negatives are `TLS_ERR_*` instead of a raw or zero-extended int, a fatal alert is
+  `TLS_ERR_ALERT` instead of 0, EOF without close_notify is `TLS_ERR_IO` instead of 0. Every
+  surveyed caller already treats `< 0` as an error and 0 as EOF (sandhi, whirl, abaco); none
+  compares `== -1`. Not changed: after a fatal alert a SECOND libssl read returns 0 — OpenSSL
+  reports `SSL_ERROR_ZERO_RETURN` once `SSL_RECEIVED_SHUTDOWN` is set, its `warn_alert` still 0 =
+  close_notify — though the record behind the alert is never delivered; the native backend stays
+  `TLS_ERR_ALERT` (reported for the backlog). **Test:**
+  `tests/tcyr/crypto/tls_libssl_read_errors.tcyr` (40 assertions, TLS 1.3 and 1.2, a libssl client
+  against a forked native server; named SKIP without libssl.so.3 or the dlopen-helper): each case
+  above, with a stale libcrypto error that reads as a received alert planted before the reads and
+  writes. 18 fail against the pre-fix lib. Mutants, each RED: no sign extension, the raw read, the
+  raw write, no `ERR_clear_error` before the read or before the write, the alert-reason row, the
+  unexpected-EOF row, `WANT_READ` → IO, `SYSCALL` → PROTOCOL, and a write's `ZERO_RETURN` read as 0.
 
 ### Fixed
 
@@ -195,6 +233,58 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (ecb, ach 128 = 128 + 0, pi 121 = 120 + 1; cass has no store). The 45 converted `alloc(` sites
   take `tests/gates/memory/stdlib_alloc_checked_census.sh`'s anti-vacuous alloc-site floor from
   200 to 150 (238 → 193 sites; they are still zero-checked, through `_tn_alloc`).
+
+- **Native TLS: a fatal alert left the connection usable, close_notify was not sticky, and every
+  handshake read site reported the peer's alert as a malformed record — one error table now decides
+  every read** (I2 part (c), issue `2026-09-30-tls-client-memory-and-alert-gaps`). Measured on 6.6.13
+  before the fix, TLS 1.3 and 1.2 alike: a sealed fatal alert returned `TLS_ERR_ALERT` once but left
+  the ctx CONNECTED with no `LAST_ERR`, so the next `tls_native_read` went back to the socket and
+  **delivered the record that followed the alert**; after close_notify the next read did the same
+  (EOF was not sticky); a fatal-level close_notify read as a clean EOF; a warning-level
+  user_canceled read as an error; a record header past the ciphertext ceiling read as `TLS_ERR_IO`;
+  a tampered record returned `TLS_ERR_DECRYPT` without failing the ctx; and a plaintext
+  `handshake_failure` in place of ServerHello made `tls_native_connect` return
+  `TLS_ERR_BAD_RECORD`. **Root cause:** `tls_native_read` (`lib/tls_native_conn.cyr`) returned
+  `_tn_open_record`'s errors without `_tn_ctx_fail` and `return 0` for any alert record it was
+  handed; `_tn_open_record` (`lib/tls_native_hs13.cyr`) classified an alert by its description
+  byte alone; every record read collapsed its error to `TLS_ERR_IO`; and the 12 handshake sites
+  tested `!= TLS_CT_HANDSHAKE` → `TLS_ERR_BAD_RECORD`. **Fix — one table** (documented once, above
+  `_tn_read_fail` in `lib/tls_native_conn.cyr`): `_tn_read_fail(ctx, rl)` is the only exit for a
+  failed record read at all 13 read sites (`BUFFER_FULL` — a header past the ceiling, the peer's
+  record_overflow — becomes `TLS_ERR_BAD_RECORD`; every other code is its own row; I8 extends it);
+  `_tn_alert_disposition(level, desc, len)` decides an alert after the handshake (RFC 8446 §6,
+  RFC 5246 §7.2): a warning-level close_notify is EOF, a warning-level user_canceled is dropped,
+  an alert that is not exactly 2 bytes is `TLS_ERR_BAD_RECORD`, and everything else —
+  every level that is not warning (fatal, or one no RFC defines) and every other description — is
+  `TLS_ERR_ALERT`; `_tn_hs_expect_ct(ctx, ct, want)` decides a handshake record at all 12 sites (a
+  plaintext record's outer type, or an opened record's inner type): an alert in place of a
+  handshake record is `TLS_ERR_ALERT` whatever its level, anything else `TLS_ERR_BAD_RECORD`.
+  `tls_native_read` now fails the ctx on every negative result and, in the ERROR state, returns
+  `LAST_ERR` instead of a generic `TLS_ERR_PROTOCOL`, so a fatal alert stays `TLS_ERR_ALERT` on
+  every re-read; a close_notify sets the new `TLS_CTX_OFF_PEER_CLOSED` (+528) and every later read
+  is 0 without touching the socket; a user_canceled is drained inside the existing
+  post-handshake bound. `tls_native_open_app` keeps its contract (0 for close_notify, now also for
+  user_canceled; `TLS_ERR_ALERT` for an error alert). ⚠ **Behaviour change:** close_notify EOF is
+  sticky; a failed ctx re-reads its own error; a fatal-level close_notify is `TLS_ERR_ALERT`; a
+  user_canceled is no longer an error; an over-length record is `TLS_ERR_BAD_RECORD`, not
+  `TLS_ERR_IO`; an alert during the handshake makes `tls_native_connect` / `tls_native_accept`
+  return `TLS_ERR_ALERT`, not `TLS_ERR_BAD_RECORD`. A plaintext alert where an ENCRYPTED handshake
+  record is due (a TLS 1.3 server reading the client's second flight, a 1.2 peer's Finished) still
+  fails to open as `TLS_ERR_BAD_RECORD` (reported for the backlog). **Test:**
+  `tests/tcyr/crypto/tls_native_alert_mapping.tcyr` (144 assertions; socketpair + fork; a peer
+  that must misbehave mid-handshake runs the REAL native driver with a transport write hook that
+  replaces its Nth record write — a plaintext alert, an over-length header, or an alert sealed under
+  the keys the driver just used — so every one of the 12 content-type sites and 13 record-read
+  sites is reached by a real handshake, TLS 1.3 and 1.2; mTLS rows for the client Certificate and
+  CertificateVerify sites; one row through `tls_read`; `tls_native_open_app` row by row; 5 s
+  receive timeouts, so a regression fails a row instead of hanging). 106 of the 144 fail against
+  the pre-fix lib. 39 mutants, each RED: each of the 13 read sites back to `TLS_ERR_IO`, each of
+  the 12 content-type sites back to `TLS_ERR_BAD_RECORD`, the `BUFFER_FULL` row, the level rule
+  narrowed to fatal-only (the undefined-level row) or dropped, the length row, user_canceled as an
+  error, the alert row of `_tn_hs_expect_ct`, the sticky check, the sticky store, an open error not
+  failing the ctx, the ERROR state answering `TLS_ERR_PROTOCOL`, user_canceled read as EOF, both
+  old `_tn_open_record` alert arms, and `tls_native_open_app`'s alert row. x86_64 and aarch64 under
+  qemu.
 
 ### Added
 

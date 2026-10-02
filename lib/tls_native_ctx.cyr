@@ -121,7 +121,7 @@ var TLS_CTX_OFF_READ_HOLD_OFF  = 504; # held bytes already delivered to the call
 # added by the change that first uses it, so no offset can be handed out twice:
 var TLS_CTX_OFF_READ_BUF       = 512; # record read buffer + its decrypt scratch, allocated on the first read
 var TLS_CTX_OFF_WRITE_BUF      = 520; # record seal buffer, allocated on the first write
-#   +528 PEER_CLOSED — 1 once close_notify was read (EOF is sticky)
+var TLS_CTX_OFF_PEER_CLOSED    = 528; # 1 once the peer's close_notify was read: every later tls_native_read is EOF
 var TLS_CTX_OFF_CA_SKIPPED     = 536; # blocks the last trust-root install could not use (tls_native_ca_skipped)
 #   +544..+568       — reserved: the read/write deadline and the CCS / peer-Finished state
 # CHANGELOG [6.6.13]
