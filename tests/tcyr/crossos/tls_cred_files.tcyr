@@ -1,0 +1,173 @@
+# tls_cred_files.tcyr — 6.6.14: the native mTLS file verbs read a file of its own size, from the
+# ctx's allocator, and refuse one they cannot read whole.
+#
+# ⛔ THE DEFECT. tls_ctx_use_certificate_file / tls_ctx_use_private_key_file (lib/tls.cyr, the
+# native arm) took alloc(65536) from the GLOBAL no-free heap on every call and kept it (measured on
+# 6.6.13: 88,888 B retained by one certificate load, 65,584 B by one key load), and read with
+# file_read_all, which stops at 64 KiB: a longer file was parsed CUT SHORT — a certificate past the
+# first 64 KiB was not found (0), and one before it was accepted from a truncated file. An
+# arena-backed ctx could not give the buffer back. The shape 6.6.13 removed from
+# tls_ctx_load_verify_locations (I2 (a)). Both verbs now read through _tls_read_file_in into a
+# buffer of exactly the file's size from the ctx's allocator, refuse a file over TLS_CREDFILE_MAX,
+# and refuse a server ctx before reading anything.
+#
+# Cross-OS because the read goes through each target's file_open / file_read. Fixtures are written
+# to per-process CWD-relative files (test_scratch) and removed.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/io.cyr"
+include "lib/tls.cyr"
+
+var _cf_cert = 0;            # DER, self-signed P-256, CN = SAN DNS = localhost (406 B)
+var _cf_cert_len = 406;
+var _cf_key = 0;             # its PKCS#8 private key (138 B)
+var _cf_key_len = 138;
+var _cf_pem = "-----BEGIN CERTIFICATE-----\nMIIBkjCCATmgAwIBAgIUN0FgSN+YtJ/VsnjbAOvQ4fh7bUAwCgYIKoZIzj0EAwIwFDESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTI2MDEwMTAwMDAwMFoXDTM2MDEwMTAwMDAwMFowFDESMBAGA1UEAwwJbG9jYWxob3N0MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEDXpGvDB1EfJKU9z5c+Df4gWNtI19uLOUH6gBdmQa142hK4AaEklNSTEr9bCsMS89ULyiKCEm/d0DZSATv4tJxaNpMGcwHQYDVR0OBBYEFDvdbC1If4VIUfQINW5miAN1vWdDMB8GA1UdIwQYMBaAFDvdbC1If4VIUfQINW5miAN1vWdDMA8GA1UdEwEB/wQFMAMBAf8wFAYDVR0RBA0wC4IJbG9jYWxob3N0MAoGCCqGSM49BAMCA0cAMEQCIDZb0RL5uPrsUMm0os9+xIfMQkkBhwuBVrNJ26FeHN6BAiAMHsf27v7FvJl29VpwYIsH1mnHgYP6COmoYzcNF+Od8w==\n-----END CERTIFICATE-----\n";
+
+# The global-heap bytes one allocation of `n` costs (the allocator's rounding included).
+fn _cf_alloc_cost(n): i64 {
+    var u0 = alloc_used();
+    alloc(n);
+    return alloc_used() - u0;
+}
+
+fn test_retained(cpath, kpath): i64 {
+    test_group("one load costs the file and its parse, not 64 KiB");
+    # Warm the X.509 / key-parse lazy tables once, so the measured calls see steady state.
+    var w = tls_native_new_client("localhost", 9);
+    tls_native_set_client_cert(w, _cf_cert, _cf_cert_len, 1);
+    tls_native_set_client_key(w, _cf_key, _cf_key_len);
+    # Reference: the same parse from memory, on a fresh ctx (made before the measurement).
+    var r1 = tls_native_new_client("localhost", 9);
+    var r2 = tls_native_new_client("localhost", 9);
+    var u0 = alloc_used();
+    tls_native_set_client_cert(r1, _cf_cert, _cf_cert_len, 1);
+    var ref_cert = alloc_used() - u0;
+    u0 = alloc_used();
+    tls_native_set_client_key(r2, _cf_key, _cf_key_len);
+    var ref_key = alloc_used() - u0;
+    var fcert = _cf_alloc_cost(_cf_cert_len);
+    var fkey = _cf_alloc_cost(_cf_key_len);
+    var c = tls_native_new_client("localhost", 9);
+    u0 = alloc_used();
+    assert_eq(tls_ctx_use_certificate_file(c, cpath, 2), 1, "use_certificate_file (DER) returns 1");
+    assert_eq(alloc_used() - u0, ref_cert + fcert, "retained: the parse plus ONE buffer of the file's size (was +65,536)");
+    u0 = alloc_used();
+    assert_eq(tls_ctx_use_private_key_file(c, kpath, 2), 1, "use_private_key_file (DER) returns 1");
+    assert_eq(alloc_used() - u0, ref_key + fkey, "retained: the parse plus ONE buffer of the file's size (was +65,536)");
+    assert_eq(load64(c + TLS_CTX_OFF_CREDS_LOADED), 1, "both halves in: the ctx's creds are loaded");
+    # Twenty loads, each on a fresh ctx: well under 64 KiB a call.
+    var calls = 20;
+    var ok = 0;
+    var k = 0;
+    var ctxs: i64[20];
+    while (k < calls) { ctxs[k] = tls_native_new_client("localhost", 9); k = k + 1; }
+    u0 = alloc_used();
+    k = 0;
+    while (k < calls) {
+        if (tls_ctx_use_certificate_file(ctxs[k], cpath, 2) == 1) { ok = ok + 1; }
+        if (tls_ctx_use_private_key_file(ctxs[k], kpath, 2) == 1) { ok = ok + 1; }
+        k = k + 1;
+    }
+    assert_eq(ok, 2 * calls, "every load returns 1");
+    assert_eq((alloc_used() - u0) / calls, ref_cert + fcert + ref_key + fkey, "every call costs the same: the files and their parse");
+    return 0;
+}
+
+fn test_arena(cpath, kpath): i64 {
+    test_group("an arena-backed ctx: 0 B of global heap, and reset_via gives the load back");
+    var a = arena_allocator(262144);
+    var c = tls_native_new_client("localhost", 9);
+    tls_native_set_alloc(c, a);
+    var u0 = alloc_used();
+    assert_eq(tls_ctx_use_certificate_file(c, cpath, 2), 1, "cert loads from the arena");
+    assert_eq(tls_ctx_use_private_key_file(c, kpath, 2), 1, "key loads from the arena");
+    var used1 = arena_used(allocator_state(a));
+    assert_eq(alloc_used() - u0, 0, "0 B of global heap");
+    assert_gt(used1, _cf_cert_len + _cf_key_len, "the arena holds both files");
+    var same = 0;
+    var k = 0;
+    while (k < 10) {
+        reset_via(a);
+        if (tls_ctx_use_certificate_file(c, cpath, 2) == 1) {
+            if (tls_ctx_use_private_key_file(c, kpath, 2) == 1) {
+                if (arena_used(allocator_state(a)) == used1) { same = same + 1; }
+            }
+        }
+        k = k + 1;
+    }
+    assert_eq(alloc_used() - u0, 0, "still 0 B of global heap after 10 reset_via rounds");
+    assert_eq(same, 10, "each round costs the same arena bytes (reset_via reclaims the load)");
+    return 0;
+}
+
+fn test_whole_file(ppath, farpath, bigpath): i64 {
+    test_group("the file is read whole, or refused — never cut short");
+    var c = tls_native_new_client("localhost", 9);
+    assert_eq(tls_ctx_use_certificate_file(c, ppath, 1), 1, "a PEM certificate loads");
+    var d = tls_native_new_client("localhost", 9);
+    assert_eq(tls_ctx_use_certificate_file(d, farpath, 1), 1,
+      "a PEM whose certificate begins past 64 KiB loads (was 0: the read stopped at 64 KiB)");
+    var e = tls_native_new_client("localhost", 9);
+    var u0 = alloc_used();
+    assert_eq(tls_ctx_use_certificate_file(e, bigpath, 1), 0,
+      "a file over TLS_CREDFILE_MAX is refused (was 1: its first 64 KiB were parsed)");
+    assert_eq(alloc_used() - u0, 0, "and allocates nothing");
+    u0 = alloc_used();
+    assert_eq(tls_ctx_use_private_key_file(e, bigpath, 1), 0, "the key verb refuses it too");
+    assert_eq(alloc_used() - u0, 0, "and allocates nothing");
+    var nx = test_scratch("tls_cred_missing.pem");
+    u0 = alloc_used();
+    assert_eq(tls_ctx_use_certificate_file(e, nx, 1), 0, "a missing file: 0");
+    assert_eq(tls_ctx_use_private_key_file(e, nx, 1), 0, "a missing key file: 0");
+    assert_eq(alloc_used() - u0, 0, "and nothing allocated");
+    assert_eq(tls_ctx_use_certificate_file(0, ppath, 1), 0 - 1, "handle 0: -1");
+    return 0;
+}
+
+fn test_server_ctx(ppath, kpath): i64 {
+    test_group("a server ctx: refused before the file is read");
+    var s = tls_native_new_server(_cf_cert, _cf_cert_len, _cf_key, _cf_key_len);
+    var u0 = alloc_used();
+    assert_eq(tls_ctx_use_certificate_file(s, ppath, 1), 0, "use_certificate_file on a server ctx: 0");
+    assert_eq(tls_ctx_use_private_key_file(s, kpath, 2), 0, "use_private_key_file on a server ctx: 0");
+    assert_eq(alloc_used() - u0, 0, "nothing read, nothing allocated");
+    return 0;
+}
+
+alloc_init();
+_cf_cert = hex_decode("3082019230820139a003020102021437416048df98b49fd5b278db00ebd0e1f87b6d40300a06082a8648ce3d04030230143112301006035504030c096c6f63616c686f7374301e170d3236303130313030303030305a170d3336303130313030303030305a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d030107034200040d7a46bc307511f24a53dcf973e0dfe2058db48d7db8b3941fa80176641ad78da12b801a12494d49312bf5b0ac312f3d50bca2282126fddd03652013bf8b49c5a3693067301d0603551d0e041604143bdd6c2d487f854851f408356e66880375bd6743301f0603551d230418301680143bdd6c2d487f854851f408356e66880375bd6743300f0603551d130101ff040530030101ff30140603551d11040d300b82096c6f63616c686f7374300a06082a8648ce3d04030203470030440220365bd112f9b8faec50c9b4a2cf7ec487cc424901870b8156b349dba15e1cde8102200c1ec7f6eefec5bc9976f55a70608b07d669c78183fa08e9a863370d17e39df3", 812);
+_cf_key = hex_decode("308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420666340f5e33734c31438ae0abd2370b72da193b44565625051bbc79a344535dda144034200040d7a46bc307511f24a53dcf973e0dfe2058db48d7db8b3941fa80176641ad78da12b801a12494d49312bf5b0ac312f3d50bca2282126fddd03652013bf8b49c5", 276);
+var cpath = test_scratch("tls_cred_cert.der");
+var kpath = test_scratch("tls_cred_key.der");
+var ppath = test_scratch("tls_cred_cert.pem");
+var farpath = test_scratch("tls_cred_far.pem");
+var bigpath = test_scratch("tls_cred_big.pem");
+var pl = strlen(_cf_pem);
+assert_eq(file_write_all(cpath, _cf_cert, _cf_cert_len), _cf_cert_len, "fixture: the DER certificate");
+assert_eq(file_write_all(kpath, _cf_key, _cf_key_len), _cf_key_len, "fixture: the DER key");
+assert_eq(file_write_all(ppath, _cf_pem, pl), pl, "fixture: the PEM certificate");
+# 70,000 bytes of text outside any PEM block, then the certificate: it begins past 64 KiB.
+var far = alloc(70000 + pl);
+memset(far, 35, 70000);
+store8(far + 69999, 10);
+memcpy(far + 70000, _cf_pem, pl);
+assert_eq(file_write_all(farpath, far, 70000 + pl), 70000 + pl, "fixture: the certificate past 64 KiB");
+# The certificate first, then filler to one byte over the cap.
+var bl = TLS_CREDFILE_MAX + 1;
+var big = alloc(bl);
+memset(big, 35, bl);
+memcpy(big, _cf_pem, pl);
+assert_eq(file_write_all(bigpath, big, bl), bl, "fixture: a file one byte over TLS_CREDFILE_MAX");
+test_retained(cpath, kpath);
+test_arena(cpath, kpath);
+test_whole_file(ppath, farpath, bigpath);
+test_server_ctx(ppath, kpath);
+xunlink(cpath);
+xunlink(kpath);
+xunlink(ppath);
+xunlink(farpath);
+xunlink(bigpath);
+assert_eq(file_exists(bigpath), 0, "the fixtures are removed");
+var r = assert_summary();
