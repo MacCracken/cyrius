@@ -1671,6 +1671,12 @@ _chk_gate "$ROOT/tests/gates/diagnostics/missing_helper_error_exits_1.sh"
 # (default and CYRIUS_MONOMORPH=0) keep compiling.
 _chk_gate "$ROOT/tests/gates/diagnostics/typed_array_elem_refusals.sh"
 
+# 6.6.13 (M3) — inside a closure, copying a captured struct copies its bytes
+# (tests/tcyr/crossos/closure_capture_struct_copy.tcyr runs the copies on every host). This pins
+# the compile-time half: a captured struct or vector of ANOTHER type is refused by name in the field
+# store, struct literal, assignment and declaration, as the local form is, and emits no binary.
+_chk_gate "$ROOT/tests/gates/diagnostics/closure_capture_struct_copy_mismatch.sh"
+
 # 6.6.9 (bite 3) — `return None();` (any nullary `: stack` variant) beside `return Some(v);` is
 # a whole variant, not a dropped tag: no mixed-return warning. The dropped-tag shapes still warn.
 _chk_gate "$ROOT/tests/gates/frontend/stack_enum_mixed_return_warning.sh"

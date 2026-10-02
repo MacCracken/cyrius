@@ -84,9 +84,14 @@ fn _STR_FROM_NOFF(S): i64 {
 # enclosing fn's locals survive. (n is the enclosing fn's GFLC at the closure site.)
 # 6.6.10: a fifth segment, n BYTES at buf + n*32, carries the untyped-float flags (_lfi_base),
 # so a closure's locals cannot leave the enclosing fn's `-c` warning wrong. CHANGELOG [6.6.10]
+# 6.6.13: an 8-aligned trailer WORD after them (`_cl_snap_ps_off`) holds the enclosing fn's
+# `_cur_fn_pslots`, read here because `_fnst_save` zeroes it right after. See `_cl_snap_is_sptr`.
+# CHANGELOG [6.6.13]
+fn _cl_snap_ps_off(n): i64 { return (n * 33 + 7) & (0 - 8); }
 fn _cl_save_locals(S, n): i64 {
     if (n <= 0) { return 0; }
-    var buf = alloc(n * 33);
+    var buf = alloc(_cl_snap_ps_off(n) + 8);
+    S64(buf + _cl_snap_ps_off(n), _cur_fn_pslots);
     var i = 0;
     while (i < n) {
         S64(buf + i * 8,          L64(S + 0x5D9D000 + i * 8));
@@ -158,6 +163,25 @@ fn _cl_snap_aew(esl): i64 {
 fn _cl_snap_type(esl): i64 {
     if (_cl_snap == 0) { return 0; }
     return L64(_cl_snap + _cl_snap_n * 16 + esl * 8);
+}
+# 6.6.13 — 1 when enclosing slot `esl` is an ADDRESS-PASSED by-value struct parameter of the
+# enclosing fn: its one captured word is the caller's struct's address, which a copy-init must
+# copy THROUGH, where a pointer-mode local's word (`var a: Pt = mk();`, a Str handle) is rebound.
+# The same discriminator as `_local_is_sptr_param` (parse_fn.cyr) — "slot below the enclosing
+# fn's parameter span" — asked of the snapshot, whose trailer word carries that span.
+# CHANGELOG [6.6.13]
+fn _cl_snap_is_sptr(S, esl): i64 {
+    if (_cl_snap == 0) { return 0; }
+    if (esl < 0) { return 0; }
+    if (esl >= L64(_cl_snap + _cl_snap_ps_off(_cl_snap_n))) { return 0; }
+    if (_cl_snap_span(esl) != 0) { return 0; }
+    var t = _cl_snap_type(esl);
+    if (t >= 0) { return 0; }
+    if (t <= 0 - 2048) { return 0; }
+    var sid = 0 - t;
+    if (STRUCTSZ(S, sid - 1) <= 8) { return 0; }
+    if (_classify_param_type(S, L64(S + 0x1A6018 + (sid - 1) * 8)) != 0) { return 0; }
+    return 1;
 }
 # Word offset of capture `capi` inside the env object (slot 0 is the fn pointer).
 fn _cl_cap_woff(capi): i64 {

@@ -80,6 +80,58 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   seven-argument helper failed seed-derive with a bare `syntax error`), and again after the
   whole-name check. `build/cycc` 1,470,944 → **1,479,480 B** (`.text` 1,297,392 → 1,302,680,
   +5,288 B); unreachable fns stay 73.
+- **M3 — inside a closure, copying a captured struct or vector copies its bytes; it used to store
+  the capture's ADDRESS.** `var p: Pt = Pt { 3, 4 }; var g = || { var b: Box; b.v = p; return
+  b.v.x * 10 + b.v.y; };` returned **80** on x86 and PE and **208** on aarch64 (want 34). The same
+  hole, measured on every backend: `b.v = p` for a 24 B struct, a pointer-mode `Pt = alloc(16)`
+  capture and a captured by-value parameter put an address in the field; `q = p;`, `GQ = p;`,
+  `q = a;` (a pointer-mode capture into an inline struct) and an `f32v4` `w = v;` stored the address
+  as one word; `var b = Box { p, 5 };` did not compile (`unexpected '}'`: the capture filled one
+  leaf); and `var q: Pt = p;` bound q as a pointer INTO the closure's env — `q.x = q.x + 1` returned
+  4 and then 5 across two calls — or, for a captured by-value parameter, into the CALLER's struct,
+  which the closure then wrote (`p.x` 3 became 9). A captured struct of a DIFFERENT type compiled to
+  that address store where the local form is refused by name. Silent wrong values, no out-of-bounds
+  write (every wrong store stayed inside its destination; neighbour fields were checked intact).
+  **Root cause:** the three name-based copy-source resolvers — `_fsc_name_src` (field store and a
+  struct literal's nested source), `_try_aggregate_copy_assign`'s source operand and
+  `_try_struct_copy_init` — went local, then global, with no rung for a closure capture, which is
+  neither; each fell back to the capture's scalar value, which is `&env[woff]` for an inline
+  (multi-word) capture and the struct's address for a one-word capture of a struct over 8 B. The
+  expression ladder (`PARSE_FACTOR`) has had the capture rung since 6.3.8; the field-store copy has
+  missed it since 6.6.10. **Fix:** one shared rung, `_fsc_cap_src` (`src/frontend/parse_decl.cyr`),
+  between the local and the global rung in all three resolvers (`_agc_src_operand` in
+  `src/frontend/parse.cyr` for the assignment, `_sci_cap_src` for the declaration). It records the
+  capture in the FIELD form with its capture-encoded index, so every byte-exact copy loop addresses
+  it through `_CL_CAP_BASE_RA` — the base the closure's own `p.x` reads use (the env words for an
+  inline capture, the loaded pointer for a one-word struct over 8 B). The declaration copies an
+  inline capture and a captured address-passed by-value PARAMETER, and keeps the pointer bind for a
+  captured POINTER-mode local or handle (`Str`, `Result` …), exactly as `var q: Pt = a;` does
+  outside a closure; the two one-word shapes are told apart by the enclosing fn's parameter span,
+  which `_cl_save_locals` now records in a trailer word of the closure's local snapshot
+  (`_cl_snap_is_sptr`, `src/frontend/parse_expr.cyr`) — the same discriminator
+  `_local_is_sptr_param` uses. A capture of another struct or vector type is refused by name in the
+  field store, the literal, the assignment and the declaration, as the local forms are; a global
+  named like an enclosing local no longer wins over the capture in these copy forms. Two
+  non-closure shapes met on the way are separate defects and were not changed (backlogged at the
+  6.6.13 premise check, (a) a pointer-mode local assigned into an inline struct, (b) a callee
+  writing through its by-value parameter). **Verified:** the new
+  `tests/tcyr/crossos/closure_capture_struct_copy.tcyr` (40 assertions, each against a literal value
+  and, where the non-closure form is right, its non-closure control: the filed repro; field store at
+  16 / 24 / 8 / 3 B, from a pointer-mode capture, a captured parameter and into a captured
+  destination, with the neighbour field checked; the struct literal; local, global and
+  pointer-mode-into-inline assignment and `f32v4`; the declaration's two-call persistence, the
+  caller-unchanged parameter case, the pointer-mode parity, `f32v4`; and a same-named global) fails
+  16 rows plus the two 16 B literal rows (which do not compile) on the 6.6.13-open compiler, and passes
+  on x86, qemu-aarch64, wine and cxvm and natively on ecb, ach, cass and pi (cross and native forks),
+  each host also self-hosting its own fork from this tree; the new
+  `tests/gates/diagnostics/closure_capture_struct_copy_mismatch.sh` (41 checks: the by-name refusal
+  and no binary for an inline capture, a captured parameter, a pointer-mode capture and a vector, in
+  all four shapes; the same shapes with the right type compile and copy) fails 34 on the open
+  compiler. Removing the rung from any one of the three resolvers turns its rows red in both. All
+  413 `tests/tcyr` files pass on x86 per file; under qemu-aarch64 the same five qemu-user failures as
+  before. Self-host fixpoint and seed → cybs → cycc GREEN after each of the three sites.
+  `build/cycc` stays **1,479,480 B** (`.text` 1,302,680 → 1,304,992, +2,312 B, inside the page
+  padding); unreachable fns stay 73.
 
 ### Downstream
 
