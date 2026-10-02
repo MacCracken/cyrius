@@ -2,7 +2,7 @@
 
 **Scope:** the untrusted-source-input surface. Previous full audit:
 `docs/audit/2026-07-27-security-audit.md` (CVE-32…CVE-36) at cycc 6.4.82.
-**Next free identifier after this document: CVE-59.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
+**Next free identifier after this document: CVE-60.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
 document are **withdrawn** but still consume their ids.) CVE-43 was consumed at 6.6.5,
 **CVE-44 and CVE-45 at 6.6.6** — the release installer's fixed `/tmp` staging, and a forged `#@file` from an included file —
 **CVE-46, CVE-47 and CVE-48 at 6.6.7** (a `secret var` inside a closure was never zeroised; a `secret var` in a
@@ -13,10 +13,10 @@ predictable shared `/tmp` names; `lib/http.cyr` wrote a long URL past its 2048-b
 `rdx`; the lexer silently dropped any `@` that did not spell `@unsafe`; `lib/ws.cyr`'s `ws_recv_frame` let a
 remote peer choose its allocation size and read frames it had not received), and **CVE-54 and CVE-55 at 6.6.11**
 (on Windows, `net_resolve_ipv4` read a drive-relative `C:\etc\hosts` that any local user can plant; a multi-line
-string literal shifted file attribution, so a call to another file's `private` fn compiled); **CVE-56 at 6.6.12** (`lib/log.cyr`'s `log_info_kv` / `log_info_int` built a log line past a 512-byte stack buffer); **CVE-57 at 6.6.12** (on Windows, the folded sandhi resolver read a drive-relative `C:\etc\resolv.conf` any local user can plant); **CVE-58 at 6.6.12** (cxvm let guest bytecode read and write the interpreter's own host memory); all sixteen are appended below.
+string literal shifted file attribution, so a call to another file's `private` fn compiled); **CVE-56 at 6.6.12** (`lib/log.cyr`'s `log_info_kv` / `log_info_int` built a log line past a 512-byte stack buffer); **CVE-57 at 6.6.12** (on Windows, the folded sandhi resolver read a drive-relative `C:\etc\resolv.conf` any local user can plant); **CVE-58 at 6.6.12** (cxvm let guest bytecode read and write the interpreter's own host memory); **CVE-59 at 6.6.13** (the libssl TLS backend never bound the server's certificate to the host, so any chain-valid certificate verified any host); all seventeen are appended below.
 ⚠ **This line read "next free: CVE-42" while CLAUDE.md read "the next CVE number is 43" and this document ran 39-41.**
 Two authorities, two answers, and nothing reconciled them. CLAUDE.md is the one every closeout reads, so **42 is
-retired unused** and CVE-43 is the entry appended below. Anything below 59 now collides.
+retired unused** and CVE-43 is the entry appended below. Anything below 60 now collides.
 
 Run as part of the band K closeout, as nine parallel audit dimensions over the v6.5.x minor with
 an adversarial verification pass over the highest-severity findings. Everything recorded here was
@@ -1155,3 +1155,27 @@ cxvm is still not a sandbox (`docs/platform-status.md`, "cyrius-x guest contract
 **Verified.** `tests/gates/codegen/cx_tailcall_and_vm_traps.sh` (24 rows, every trap
 mutation-proven); its 23 cxvm cases run 23/23 on real pi, ecb, ach and cass (a cxvm cross-built per
 host) and under qemu-aarch64 and wine.
+
+## CVE-59 — the libssl TLS backend never bound the server's certificate to the host: any chain-valid certificate verified any host
+
+*Appended 2026-10-01 (cyrius 6.6.13, bite I1). Found by: abaco 2.4.9 TLS study (2026-09-30); issue `docs/development/issues/2026-09-30-tls-libssl-backend-no-hostname-verification.md`. The CN-only / partial-wildcard / IP / NULL-host widening was found by the 6.6.13 I1 premise check. Not part of the 2026-09-03 sweep: recorded here because this is the live ledger. 6.6.13 spends CVE-59 … CVE-63.*
+
+| | |
+|---|---|
+| **Severity** | P1 (High) — man-in-the-middle, silent (the handshake reports success). Anyone holding a certificate that chains to a trusted root — any public-CA certificate for any domain they control — impersonates every server a libssl-backed client talks to. The libssl twin of CVE-18 (native, v6.1.36). |
+| **Class** | Identity verification (RFC 9525 §6.3 / RFC 6125 §6): chain checked, reference identity never compared. |
+| **Affected** | The libssl client path of `tls_connect`, `tls_connect_with_ctx_hook` and `tls_connect_alloc`/`tls_connect_complete`, in every `-D CYRIUS_TLS_LIBSSL` build (hoosh's remote HTTPS uses one) and in a default build after `tls_set_backend(TLS_BACKEND_LIBSSL)`; from the libssl wrapper's introduction (4.9.3, 2026-04-15) through 6.6.12. The native backend is not affected (CVE-18). |
+| **Files** | `lib/tls.cyr` — `tls_connect_alloc` (set `SSL_VERIFY_PEER` + SNI only), `_tls_init` (resolved no binding symbol); fixed by the new `_tls_libssl_bind_host` and the shared classifier `lib/tls_hostid.cyr` |
+| **Fixed** | 6.6.13 |
+
+**Vector.** A server (or on-path attacker) presents a leaf that chains to a root the client trusts but names a different host: `DNS:localhost` verified `www.example.com`, `127.0.0.1` and `host == 0`; a CN-only leaf (no SAN) and a partial wildcard (`DNS:f*.example.com` for `foo.example.com`) verified too, as did an IP host against a dNSName-only leaf. Measured against OpenSSL 3.6.5 `s_server`.
+
+**Impact.** Full impersonation of any TLS server to a libssl-backed cyrius client: confidentiality and integrity of the session lost.
+
+**Fix.** `tls_connect_alloc` calls `_tls_libssl_bind_host(ssl, host)` after the hook and `SSL_new`. The host is classified by the native stack's own code (`_tn_parse_ip_literal`, moved unchanged from `lib/tls_native_conn.cyr` into `lib/tls_hostid.cyr`, included by both `lib/tls.cyr` and `lib/tls_native.cyr`). An IP literal → `X509_VERIFY_PARAM_set1_ip_asc` (iPAddress SANs only), no SNI. A DNS name → hostflags `X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS | X509_CHECK_FLAG_NEVER_CHECK_SUBJECT`, `X509_VERIFY_PARAM_set1_host` (dNSName SANs only), SNI. Host 0 / `""` / a `:`-bearing non-literal → `tls_connect_alloc` returns 0 under `SSL_VERIFY_PEER`; after a hook's `tls_set_verify(h, 0, 0)` nothing is bound (parity with native's `TLS_VERIFY_NONE`). `SSL_set1_host` deliberately not used (OpenSSL ≥ 3.0 re-parses the name as an IP with its own parser — the libssl version would decide the classification). The five symbols (`SSL_get0_param`, `SSL_get_verify_mode`, `X509_VERIFY_PARAM_set1_host`, `X509_VERIFY_PARAM_set_hostflags`, `X509_VERIFY_PARAM_set1_ip_asc`) are REQUIRED in `_tls_init`'s bail list: one missing → `tls_available()` 0 and every libssl connect returns 0 (fail closed). `docs/development/lib-tls-contract.md` gains a "Server identity" section. No public API change.
+
+**Behaviour change.** libssl only: `host == 0` under `SSL_VERIFY_PEER` now fails (it always did on native); CN-only and partial-wildcard certificates are refused; no SNI for an IP-literal host. Ecosystem survey (hoosh, sandhi, abaco, chakshu): no caller passes `host == 0` or relies on a CN fallback.
+
+**Verified.** Filed repro `docs/development/issues/repros/2026-09-30-tls-libssl-no-hostname-verification.sh` exits 0 under both builds (2 on 6.6.12; re-measured 2 → 0 with the pre-fix and fixed lib in one harness). `tests/gates/platform/tls_libssl_hostname_binding.sh` (registered in `programs/checks/main.cyr`): 24 rows × native / libssl-via-`tls_set_backend` / `CYRIUS_TLS_LIBSSL` build against OpenSSL `s_server`, 5 SNI rows (`-servername_fatal`), 4 hook-pin rows × 2 builds (a name / IP a hook pinned on the `SSL_CTX` param is replaced by `host` when of the same kind, kept when of the other kind — documented in the contract), 5 bogus-symbol fail-closed legs; 95 rows pass, 42 RED against the pre-fix lib; mutation-proven five ways (bind call deleted, hostflags dropped, a bail line removed, SSL_set1_host-style routing, SNI for every host).
+
+**Not covered.** The native client still sends an IP literal as SNI (backlog (d)). Native accepts a wildcard directly over a single label (`*.com` for `a.com`) where libssl refuses — a remaining divergence, reported for the backlog. The libssl backend cannot be exercised off x86_64 Linux (no libssl.so.3 on macOS/Windows, no dlopen-helper on pi).

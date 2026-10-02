@@ -1,5 +1,5 @@
 #!/bin/sh
-# tls_libssl_hostname_binding.sh — 6.6.13 (I1, CVE-TBD(I1)). The libssl TLS backend binds the
+# tls_libssl_hostname_binding.sh — 6.6.13 (I1, CVE-59). The libssl TLS backend binds the
 # server's leaf certificate to `host`, and answers EXACTLY as the native backend does, against an
 # independent peer (OpenSSL's s_server — a peer that shared our code could share the defect).
 #

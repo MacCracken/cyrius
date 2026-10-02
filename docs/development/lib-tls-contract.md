@@ -103,7 +103,7 @@ handshake), from the hook's final verify mode:
 - SNI set from `host` (libssl: for a DNS-name host only — never for an IP literal
   or a host with no identity; native: from `host`, an IP literal included — see the SNI bullet below)
 
-#### Server identity (hostname binding) — 6.6.13, CVE-TBD(I1)
+#### Server identity (hostname binding) — 6.6.13, CVE-59
 
 Every client connect verifies the chain to a trusted root **and** binds the
 leaf certificate to `host`, on **both** backends, with the same answers. Before

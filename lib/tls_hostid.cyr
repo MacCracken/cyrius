@@ -7,7 +7,7 @@
 # 4 / 16 an IPv4 / IPv6 literal (compared with iPAddress SANs only), 0 a DNS name
 # (dNSName SANs only), -1 a ':'-bearing host that is no literal (no identity at all).
 # Builtins only (load8 / store8), no includes. The `_tn_` names are the native stack's,
-# kept so its callers and tests did not move. CHANGELOG [6.6.13] (CVE-TBD(I7), CVE-TBD(I1)).
+# kept so its callers and tests did not move. CHANGELOG [6.6.13] (CVE-TBD(I7), CVE-59).
 
 # Hex digit value (0-15) or -1. CVE-18: used by the IPv6 literal parser.
 fn _tn_hexval(c): i64 {

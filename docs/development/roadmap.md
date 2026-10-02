@@ -60,7 +60,7 @@ CHANGELOG; do not re-add shipped slots here.
 **v6.6.7–v6.6.12 were the repair batch** (2026-09-27 → 2026-09-30, CLOSED): the 30 issues filed after
 6.6.6, split by the user across three releases, then each release's own review finds, which the user
 placed into 6.6.10–6.6.12 — and 6.6.12 also took the backlog's repair items and every sibling follow-up.
-It spent **CVE-46 … CVE-58** (the next free id is 59) and shipped each release together with the sibling
+It spent **CVE-46 … CVE-58** (the next free id is 60) and shipped each release together with the sibling
 patch releases it needed. Per-release detail is in the CHANGELOG; the process rules it settled are in
 *Standing notes* below.
 

@@ -91,7 +91,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `net_parse_ipv4` over ten inputs. 41 of them fail on 6.6.12; the file passes 532/532 on x86_64 and
   on aarch64 under qemu. The native client still sends an IP literal as SNI (RFC 6066 §3); that is
   backlogged separately.
-- **CVE-TBD(I1) (P1) — the libssl TLS backend never bound the server's certificate to the host:
+- **CVE-59 (P1) — the libssl TLS backend never bound the server's certificate to the host:
   any chain-valid certificate verified any host.** (I1.) A certificate for `DNS:localhost` verified
   `www.example.com`, `127.0.0.1` and `host == 0`; a CN-only leaf and a partial wildcard
   (`f*.example.com`) verified too. Man-in-the-middle, silent: the handshake reported success. The
