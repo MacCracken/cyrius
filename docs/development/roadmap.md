@@ -336,6 +336,8 @@ priority surfaces. **These are technical items → they stay in the 6.x cycle, n
     X25519 by its own preference fails the handshake where 6.6.13 connected (pinned by
     `tls_native_client_auth_openssl.sh`). Remedy: ECDHE on P-256 / P-384 in the 1.2 client, which wants a
     constant-time ECDH primitive in sigil (its P-256 / P-384 scalar multiplications are public-scalar, non-CT).
+    **Placed (user, 2026-10-02): sigil is updated after 6.6.14 ships, and refolded in 6.6.15** (with the
+    1.2 client's P-256 / P-384 ECDHE).
   - TLS — `_tn_verify_sig_scheme` (`lib/tls_native_hs13.cyr` ~284) calls `ed25519_verify` without checking
     `sig_len == 64`, and binds the ECDSA curve to the scheme for the 1.2 ServerKeyExchange, where 1.2 allows a
     P-384 key with SHA-256.
@@ -356,10 +358,12 @@ priority surfaces. **These are technical items → they stay in the 6.x cycle, n
   - TLS, agnos — a native write can overshoot the caller's deadline by one `sock_send#48` stall (~8 s):
     agnos's #48 hard-codes `TCP_PROGRESS_US`. It needs #48 to honour a time bound (`tcp_send_ex` already
     takes one) — an agnos ABI change, then the stdlib passes the time left (CVE-61's *Not covered*).
+    **Filed in agnos** (user, 2026-10-02): `agnos/docs/development/issues/2026-10-02-sock-send-ignores-the-caller-deadline.md`.
   - kavach — its `basic` seccomp profile allows `write` but not `sendto` (nor `poll` / `fcntl`), so a
     sandboxed native TLS writer on Linux is killed (SIGSYS) from 6.6.14 (CVE-66's `MSG_NOSIGNAL`), and was
     already whenever it set a deadline. Whether `basic` admits `sendto` (e.g. with a NULL destination only)
-    is kavach's call.
+    is kavach's call. **Filed in kavach** (user, 2026-10-02):
+    `kavach/docs/development/issues/2026-10-02-basic-seccomp-kills-native-tls-writes.md`.
   - `lib/net.cyr`'s plain writers (`sock_send`, `sock_send_all`, `lib/http.cyr`, `lib/ws.cyr`) are flagless
     `write`s on Linux and macOS: a reset peer still raises SIGPIPE there (CVE-66's class for plain sockets).
   - `lib/syscalls_windows.cyr` `fd_wait_ready` (~880, also ~949/955/965) returns `0 - WSAGetLastError`

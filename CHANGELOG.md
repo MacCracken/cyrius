@@ -10,7 +10,7 @@ The TLS follow-ups (user, 2026-10-02: "6.6.14 - all the remaining noted tls issu
 defect 6.6.13 noted and did not fix — its *6.6.14 candidates*, the *Not covered* lines of CVE-59 …
 CVE-63, the two TLS gaps its CHANGELOG reported for the backlog, and the TLS gates' port race — over
 five lanes, cut from the slot bump `bcdd1818`. **CVE-64 … CVE-67**; the next free id is **68**.
-⛔ **sigil 3.13.7 must be tagged before this release** (the lenient trust-bundle decode it folds).
+Folds **sigil 3.13.7** (tagged at `2c8edf8`, before this release): the lenient trust-bundle decode.
 No `src/` change: `build/cycc` differs from 6.6.13 only by its version string.
 
 ### Security
@@ -546,6 +546,49 @@ No `src/` change: `build/cycc` differs from 6.6.13 only by its version string.
   RED, the tcyr 3 assertions RED; the three old repros fail (exit 1 / 4 / 8) under an `openssl` shim
   whose first s_server dies on its bind, and pass (0) after.
 
+- **One malformed PEM block no longer installs ZERO trust roots.** (sigil 3.13.7; recorded by the
+  6.6.13 I2 review.) The native backend's trust-root install — `tls_native_set_ca_bundle`,
+  `tls_native_set_ca_system` and `tls_ctx_load_verify_locations` alike, all through
+  `_tn_ca_parse_set` — decoded the bundle with sigil's `pem_decode_certs_into`, which is
+  all-or-nothing: one unmatched `-----BEGIN CERTIFICATE-----` or one block of bad base64 anywhere in
+  the file failed the whole decode, so a system store with one corrupt block (a truncated download,
+  a bad merge into `/etc/ssl/cert.pem`) left every native client with no roots and every verifying
+  connect failed `TLS_ERR_CERT_INVALID`. 6.6.13 at least made it visible — `tls_native_ca_skipped`
+  reported every block — but the store still installed nothing. Fail-closed throughout: no
+  certificate was ever accepted that should not have been. **Root cause:** the strict decode is the
+  right one for an attestation chain (every certificate is needed) and the wrong one for a bundle of
+  independent roots, and it was the only one sigil had. **Fix, at the source** (sigil 3.13.7,
+  `2c8edf8`): `pem_decode_certs_lenient_into` skips a malformed block, decodes every other one and
+  counts the skips; after a failed block it resumes at the NEXT BEGIN, never after the END an
+  unmatched BEGIN's body ran into (the strict walk took the next block's END, so a resync there would
+  lose that certificate too); a well-formed block that finds no room is -1, never a skip.
+  `pem_count_cert_blocks` is the walk's own block count. Folded byte-identical to the tag's
+  `dist/sigil.cyr`. In cyrius, `_tn_ca_parse_set` (`lib/tls_native_hs12.cyr`) now calls the lenient
+  decode, takes `blocks` from `pem_count_cert_blocks` (`_tn_pem_block_count`, a second copy of the
+  same marker rule, is deleted), and records `blocks − stored` as skipped — the decode's skips plus
+  the parse's (a P-521 root), so installed + skipped == the bundle's PEM blocks still holds. The
+  strict decode stays where a SPECIFIC certificate is wanted: `tls_native_set_client_cert` takes the
+  first block as the client's leaf, and skipping a bad first block there would present the next
+  certificate instead. `docs/api-surface.snapshot` gains `sigil::pem_count_cert_blocks/2` and
+  `sigil::pem_decode_certs_lenient_into/7`; `docs/ecosystem.md`'s sigil row names 3.13.7.
+  ⚠ **Behaviour change:** a bundle with a malformed block now installs its good roots and returns
+  `TLS_OK` (`tls_ctx_load_verify_locations` 1) instead of `TLS_ERR_CERT_INVALID` (0), and
+  `tls_native_ca_skipped` counts the malformed blocks among the skipped. A bundle in which every
+  block is malformed or unparseable is still `TLS_ERR_CERT_INVALID`, and the ctx keeps any set it
+  had. **Test:** `tests/tcyr/crossos/tls_ca_store.tcyr` 44 → 56 — the three assertions that pinned
+  the old refusal are replaced by `test_malformed_blocks_skipped` (15): a bad-base64 block first,
+  then an unmatched BEGIN directly before the P-256 root — the one root in the bundle that installs,
+  so a decode that resynced after the END the unmatched BEGIN ran into would lose it — then the
+  P-521 root (1 installed, 3 skipped, installed + skipped == the test's own BEGIN count), a bad block
+  last (1 / 1), an all-malformed bundle
+  (`TLS_ERR_CERT_INVALID`, both counted, the ctx keeps its set), and the first bundle again through
+  `tls_ctx_load_verify_locations`. Against the 6.6.13 code — and against the 3.13.7 fold without the
+  switch — 9 of them fail (`-6`, 0 installed); a fold whose lenient decode resyncs after that END
+  fails 6 (`-6`, 0 installed, 4 skipped, on the bundle and the file legs); with the fold and the
+  switch, 56/56 on x86_64, the pi, ecb and ach, and 54/54 on cass (no system store). The 27 other
+  TLS / sigil tests that compile standalone give the same results before and after. sigil's own
+  suite: `pem.tcyr` 39 → 158 (does not compile on 3.13.6; 17 mutants red), on x86_64, the pi, ecb,
+  ach and cass.
 - **libssl's init latches: a claim inherited through `fork()` fails closed instead of spinning.**
   (Integration; found by the client lane's review.) The new 0 → 1 → 2 claim/publish of `_tls_init`
   and `_tls_resolve_introspect` made a caller that found the claim held wait for 2. Only the main
