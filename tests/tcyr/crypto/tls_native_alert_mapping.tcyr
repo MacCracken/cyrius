@@ -324,6 +324,9 @@ fn _am_client_peer(cfd, with_cert): i64 {
     return 0;
 }
 
+# The server-under-test's pinned wall clock: 2030-01-01 UTC (tls_native_set_transport's now hook).
+fn _am_now(): i64 { return 1893456000; }
+
 # One server-under-test row: returns the accept result; *out_le gets the ctx's last error.
 fn _am_server_row(verify, with_cert, use_accept12, out_le): i64 {
     var sfd = 0;
@@ -339,10 +342,15 @@ fn _am_server_row(verify, with_cert, use_accept12, out_le): i64 {
     var srv = tls_native_new_server(_am_cert, _am_cert_len, _am_key, _am_key_len);
     tls_native_server_load_creds(srv);
     tls_native_set_verify(srv, verify);
+    # 6.6.14 (CVE-64): a client certificate must chain to the server's roots — the self-signed
+    # test cert is its own — at a pinned clock inside its window (2026..2036).
+    tls_native_set_ca_bundle(srv, _am_cert, _am_cert_len, 1);
+    tls_native_set_transport(0, 0, &_am_now);
     if (_am_ver12 == 1) { tls_native_set_version_range(srv, TLS_VERSION_1_2, TLS_VERSION_1_2); }
     var rc = 0;
     if (use_accept12 == 1) { rc = tls_native_accept_12(srv, sfd); }
     else { rc = tls_native_accept(srv, sfd); }
+    tls_native_set_transport(0, 0, 0);
     store64(out_le, tls_native_get_last_error(srv));
     sys_close(sfd);
     var st[4];

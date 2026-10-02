@@ -488,6 +488,9 @@ fn _cd_server_row(nccs, out_srv): i64 {
     return rc;
 }
 
+# The mTLS rows' pinned server clock: 2030-01-01 UTC (tls_native_set_transport's now hook).
+fn _cd_now(): i64 { return 1893456000; }
+
 # A server-under-test row whose client (forked) is hooked at write `at` with `mode`; `cert` 1 makes
 # it an mTLS client and the server VERIFY_PEER. Returns the accept result; out[0] = the server ctx.
 fn _cd_server_hooked(at, mode, cert, use12, out): i64 {
@@ -515,10 +518,17 @@ fn _cd_server_hooked(at, mode, cert, use12, out): i64 {
     sys_close(cfd);
     sock_set_recv_timeout(sfd, CD_TIMEOUT_S, 0);
     var srv = _cd_server_ctx();
-    if (cert == 1) { tls_native_set_verify(srv, TLS_VERIFY_PEER); }
+    if (cert == 1) {
+        tls_native_set_verify(srv, TLS_VERIFY_PEER);
+        # 6.6.14 (CVE-64): the client's certificate must chain to the server's roots — the
+        # self-signed test cert is its own — at a pinned clock inside its window (2026..2036).
+        tls_native_set_ca_bundle(srv, _cd_cert, _cd_cert_len, 1);
+        tls_native_set_transport(0, 0, &_cd_now);
+    }
     var rc = 0;
     if (use12 == 1) { rc = tls_native_accept_12(srv, sfd); }
     else { rc = tls_native_accept(srv, sfd); }
+    if (cert == 1) { tls_native_set_transport(0, 0, 0); }
     store64(out, srv);
     sys_close(sfd);
     _cd_kill(pid);

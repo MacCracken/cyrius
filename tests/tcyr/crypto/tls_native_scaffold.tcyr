@@ -984,18 +984,44 @@ assert_eq(tls_native_server_recv_client_finished(sW, &finW, 4 + hlN), TLS_ERR_AU
 tls_native_server_transition(sP, TLS_EV_START);
 tls_native_server_transition(sP, TLS_EV_RECV_CH);
 assert_eq(tls_native_get_state(sP), TLS_STATE_WAIT_CLIENT_FLIGHT2, "auth → WAIT_CLIENT_FLIGHT2");
+# 6.6.14 (CVE-64): a presented client certificate must CHAIN to the server's trust roots — it
+# used to be parsed and accepted on possession alone. `cca` is a self-signed CA:TRUE P-256 cert
+# with no keyUsage / extendedKeyUsage (a copy of cert23, declared further down), so trusting it
+# makes it a valid client identity; the wall clock is pinned inside its window (2026-06-01 ..
+# 2036-05-29) through the transport's now hook, then given back.
+fn _sc_now(): i64 { return 1830297600; }           # 2028-01-01 UTC
+var cca = hex_decode("3082017d30820123a0030201020214561cee528775ffec8d05834b308f1ad80d7e7dbe300a06082a8648ce3d04030230143112301006035504030c096c6f63616c686f7374301e170d3236303630313138343930365a170d3336303532393138343930365a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d030107034200049167a2981f570fdbd8d94bf20fb4f5c89d77aa5b58cf4ed416bafa0256a2561a04f1e71d57537fc532fc87ca980eb8ba1f8f8704fc7f6a793ba6598b97bb3275a3533051301d0603551d0e04160414e6e9022c5ba23153aa7b2a0004574c417dfbf42e301f0603551d23041830168014e6e9022c5ba23153aa7b2a0004574c417dfbf42e300f0603551d130101ff040530030101ff300a06082a8648ce3d04030203480030450220274b9132990767c26d383d8712024a2c8cdb63e38af642893d1a59ab44a29758022100a57e61df420d2425c712ad284d0ad53ef9c8cdbfd07ba65c952eaead0dc13729", 770);
+fn _sc_cert_msg(out, der, der_len): i64 {           # a 1.3 Certificate message carrying `der`
+    var b = out + 4;
+    store8(b, 0);                                   # certificate_request_context<0>
+    var entry_len = 3 + der_len + 2;
+    _tn_be24_w(b + 1, entry_len);                   # certificate_list length
+    _tn_be24_w(b + 4, der_len);                     # cert_data length
+    memcpy(b + 7, der, der_len);
+    _tn_be16_w(b + 7 + der_len, 0);                 # entry extensions<0>
+    tls_native_handshake_write_header(out, TLS_HS_CERTIFICATE, 1 + 3 + entry_len);
+    return 4 + 1 + 3 + entry_len;
+}
+tls_native_set_transport(0, 0, &_sc_now);
 var ccert[512];
-var cbody = &ccert + 4;
-store8(cbody, 0);                                   # certificate_request_context<0>
-var c_entry_len = 3 + 413 + 2;
-_tn_be24_w(cbody + 1, c_entry_len);                 # certificate_list length
-_tn_be24_w(cbody + 4, 413);                         # cert_data length
-memcpy(cbody + 7, leaf_cert, 413);
-_tn_be16_w(cbody + 7 + 413, 0);                     # entry extensions<0>
-var cbody_len = 1 + 3 + c_entry_len;
-tls_native_handshake_write_header(&ccert, TLS_HS_CERTIFICATE, cbody_len);
-assert_eq(tls_native_server_recv_client_certificate(sP, &ccert, 4 + cbody_len), TLS_OK, "client Certificate parsed");
+var cmsg_n = _sc_cert_msg(&ccert, leaf_cert, 413);
+var sQ = tls_native_new_server(leaf_cert, 413, ed_key, 48);
+tls_native_set_verify(sQ, TLS_VERIFY_PEER);
+assert_eq(tls_native_server_recv_client_certificate(sQ, &ccert, cmsg_n), TLS_ERR_CERT_INVALID,
+  "client Certificate with NO trust roots on the server: CERT_INVALID (fail closed)");
+var sQ2 = tls_native_new_server(leaf_cert, 413, ed_key, 48);
+tls_native_set_verify(sQ2, TLS_VERIFY_PEER);
+tls_native_set_ca_bundle(sQ2, cca, 385, 1);
+assert_eq(tls_native_server_recv_client_certificate(sQ2, &ccert, cmsg_n), TLS_ERR_CERT_INVALID,
+  "client Certificate that does not chain to the trusted root: CERT_INVALID");
+assert_eq(load64(sQ2 + TLS_CTX_OFF_CLIENT_CERT), 0, "  …and no client identity is kept");
+assert_eq(tls_native_set_ca_bundle(sP, cca, 385, 1), TLS_OK, "server trusts the client's root");
+cmsg_n = _sc_cert_msg(&ccert, cca, 385);
+assert_eq(tls_native_server_recv_client_certificate(sP, &ccert, cmsg_n), TLS_OK, "client Certificate parsed + chain verified");
 assert_eq(tls_native_get_state(sP), TLS_STATE_WAIT_CLIENT_FLIGHT2, "stays WAIT_CLIENT_FLIGHT2 after Cert");
+var gp[512];
+assert_eq(tls_native_get_peer_cert_der(sP, &gp, 512), 385, "the server's peer getter answers the client's leaf");
+tls_native_set_transport(0, 0, 0);
 
 var ccv[128];
 var cvbody = &ccv + 4;

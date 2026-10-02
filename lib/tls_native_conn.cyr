@@ -840,6 +840,28 @@ fn _tn_send_fatal_alert(ctx, fd, desc): i64 {
     return 0;
 }
 
+# A server refusing the client's authentication (6.6.14, CVE-64): tell the client why with a fatal
+# alert (best effort, _tn_send_fatal_alert) and fail the ctx with `rc`, which is returned.
+# `empty` = 1 when the client presented no certificate under TLS_VERIFY_FAIL_IF_NO_PEER_CERT:
+# certificate_required in TLS 1.3 (`is13`, RFC 8446 §4.4.2.4), handshake_failure in 1.2 (RFC 5246
+# §7.4.6). Otherwise by `rc`: a chain that does not verify is bad_certificate, a malformed
+# message decode_error, a signature that does not verify decrypt_error, a scheme we did not offer
+# illegal_parameter.
+fn _tn_client_auth_alert(ctx, fd, rc, empty, is13): i64 {
+    var desc = TLS_AD_INTERNAL_ERROR;
+    if (rc == TLS_ERR_CERT_INVALID) { desc = TLS_AD_BAD_CERTIFICATE; }
+    if (rc == TLS_ERR_BAD_HANDSHAKE) { desc = TLS_AD_DECODE_ERROR; }
+    if (rc == TLS_ERR_AUTHN) { desc = TLS_AD_DECRYPT_ERROR; }
+    if (rc == TLS_ERR_KEY_UNSUPPORTED) { desc = TLS_AD_ILLEGAL_PARAMETER; }
+    if (rc == TLS_ERR_PROTOCOL) { desc = TLS_AD_UNEXPECTED_MESSAGE; }
+    if (empty == 1) {
+        desc = TLS_AD_HANDSHAKE_FAILURE;
+        if (is13 == 1) { desc = TLS_AD_CERTIFICATE_REQUIRED; }
+    }
+    _tn_send_fatal_alert(ctx, fd, desc);
+    return _tn_ctx_fail(ctx, rc);
+}
+
 # Server-side: drive the TLS 1.3 handshake over `sock_fd` (a connected,
 # caller-managed socket — already accept()'d, or one end of a
 # socketpair). Reads the ClientHello, sends a plaintext ServerHello,
@@ -919,9 +941,10 @@ fn tls_native_accept(ctx, sock_fd): i64 {
     # v6.2.8: mTLS client-auth receive. When we requested a client cert
     # (VERIFY != NONE → CertificateRequest in our flight), the client's second
     # flight is [Certificate, CertificateVerify,] Finished — each its own
-    # record. Read + verify the Certificate (+ CertificateVerify when the client
-    # presented a non-empty cert) before the Finished. With VERIFY == NONE this
-    # block is skipped and the flight is Finished-only (byte-identical to before).
+    # record. Read + verify the Certificate — its chain to our trust roots since
+    # 6.6.14 (CVE-64) — (+ CertificateVerify when the client presented a non-empty
+    # cert) before the Finished; a refused client is told why (_tn_client_auth_alert).
+    # With VERIFY == NONE this block is skipped and the flight is Finished-only.
     if (load64(ctx + TLS_CTX_OFF_VERIFY) != TLS_VERIFY_NONE) {
         var ccrl = _tn_read_rec(ctx, sock_fd, inbuf, cap, _TN_CCS_MAY);
         if (ccrl < 0) { return _tn_read_fail(ctx, ccrl); }
@@ -933,7 +956,11 @@ fn tls_native_accept(ctx, sock_fd): i64 {
         var hx_cc = _tn_hs_expect_ct(ctx, ccct, TLS_CT_HANDSHAKE);
         if (hx_cc != TLS_OK) { return hx_cc; }
         var rcc = tls_native_server_recv_client_certificate(ctx, cmsg, cmsg_len);
-        if (rcc != TLS_OK) { return rcc; }
+        if (rcc != TLS_OK) {
+            var cempty = 0;
+            if (_tn_cert_msg_list_len(cmsg, cmsg_len, 1) == 0) { cempty = 1; }
+            return _tn_client_auth_alert(ctx, sock_fd, rcc, cempty, 1);
+        }
         # CertificateVerify only if the client presented a non-empty cert
         # (recv_client_certificate stores the leaf at CLIENT_CERT, else leaves 0).
         if (load64(ctx + TLS_CTX_OFF_CLIENT_CERT) != 0) {
@@ -947,7 +974,7 @@ fn tls_native_accept(ctx, sock_fd): i64 {
             var hx_cv = _tn_hs_expect_ct(ctx, cvct, TLS_CT_HANDSHAKE);
             if (hx_cv != TLS_OK) { return hx_cv; }
             var rcv = tls_native_server_recv_client_certverify(ctx, cvmsg, cvmsg_len);
-            if (rcv != TLS_OK) { return rcv; }
+            if (rcv != TLS_OK) { return _tn_client_auth_alert(ctx, sock_fd, rcv, 0, 1); }
         }
     }
     # Read + open the client's (encrypted) Finished.
@@ -1164,13 +1191,27 @@ fn tls_native_get_alpn_selected(ctx, buf, bufmax): i64 {
     return plen;
 }
 
-# Get the peer's leaf certificate in DER form. Writes to `buf` (up
+# The peer's parsed leaf, or 0: the server's on a client ctx; on a server ctx the client's — kept
+# once its chain verified, and answered only while the ctx has not failed, so a handshake that
+# went on to fail (a CertificateVerify that did not verify, say) exposes no client identity.
+# 6.6.14 (CVE-64): a server read the client-side SERVER_CERT slot, which it never fills, so every
+# getter answered 0 on a server.
+fn _tn_peer_leaf(ctx): i64 {
+    if (load64(ctx + TLS_CTX_OFF_ROLE) == TLS_ROLE_SERVER) {
+        if (load64(ctx + TLS_CTX_OFF_STATE) == TLS_STATE_ERROR) { return 0; }
+        return load64(ctx + TLS_CTX_OFF_CLIENT_CERT);
+    }
+    return load64(ctx + TLS_CTX_OFF_SERVER_CERT);
+}
+
+# Get the peer's leaf certificate in DER form — on a server ctx the client's, which mTLS has
+# verified (6.6.14). Writes to `buf` (up
 # to `bufmax`); returns DER length, 0 if no peer cert was sent, or
 # negative TLS_ERR_BUFFER_FULL if bufmax is too small. The leaf's DER
 # ptr+len live in sigil's parsed x509 struct (`+0`/`+8`).
 fn tls_native_get_peer_cert_der(ctx, buf, bufmax): i64 {
     if (ctx == 0) { return 0; }
-    var leaf = load64(ctx + TLS_CTX_OFF_SERVER_CERT);
+    var leaf = _tn_peer_leaf(ctx);
     if (leaf == 0) { return 0; }
     var der = load64(leaf);
     var der_len = load64(leaf + 8);
@@ -1182,14 +1223,15 @@ fn tls_native_get_peer_cert_der(ctx, buf, bufmax): i64 {
 }
 
 # Get the peer leaf's SubjectPublicKeyInfo (SPKI) in DER form — the HPKP
-# pin target (consumers SHA-256 it). Writes to `buf` (up to `bufmax`);
+# pin target (consumers SHA-256 it); on a server ctx the verified client's
+# (6.6.14). Writes to `buf` (up to `bufmax`);
 # returns SPKI length, 0 on no cert / parse failure, or TLS_ERR_BUFFER_FULL.
 # The SPKI is the TLV immediately after the subject in the TBSCertificate;
 # sigil's parsed x509 struct stores the subject span at `+64`/`+72`, and we
 # walk one SEQUENCE past it with sigil's der_walk.
 fn tls_native_get_peer_spki_der(ctx, buf, bufmax): i64 {
     if (ctx == 0) { return 0; }
-    var leaf = load64(ctx + TLS_CTX_OFF_SERVER_CERT);
+    var leaf = _tn_peer_leaf(ctx);
     if (leaf == 0) { return 0; }
     var der = load64(leaf);
     var der_len = load64(leaf + 8);
