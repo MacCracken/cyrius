@@ -72,7 +72,8 @@ assert_eq(TLS_ERR_PROTOCOL, 0 - 19, "TLS_ERR_PROTOCOL = -19 (last in ladder)");
 assert_eq(TLS_ERR_RECORD_OVERFLOW, 0 - 20, "TLS_ERR_RECORD_OVERFLOW = -20");
 assert_eq(TLS_ERR_KEY_UNSUPPORTED, 0 - 21, "TLS_ERR_KEY_UNSUPPORTED = -21");
 assert_eq(TLS_ERR_TIMEOUT, 0 - 22, "TLS_ERR_TIMEOUT = -22");
-var _errs: i64[22];
+assert_eq(TLS_ERR_WRONG_THREAD, 0 - 23, "TLS_ERR_WRONG_THREAD = -23 (6.6.14, the libssl backend off main)");
+var _errs: i64[23];
 _errs[0] = TLS_ERR_NOT_IMPLEMENTED;  _errs[1] = TLS_ERR_HANDSHAKE_FAILED;
 _errs[2] = TLS_ERR_BAD_RECORD;       _errs[3] = TLS_ERR_BAD_HANDSHAKE;
 _errs[4] = TLS_ERR_CIPHER_NOT_SUPPORTED; _errs[5] = TLS_ERR_CERT_INVALID;
@@ -84,17 +85,18 @@ _errs[14] = TLS_ERR_DECRYPT;         _errs[15] = TLS_ERR_AUTHN;
 _errs[16] = TLS_ERR_ALERT;           _errs[17] = TLS_ERR_BUFFER_FULL;
 _errs[18] = TLS_ERR_PROTOCOL;        _errs[19] = TLS_ERR_TIMEOUT;
 _errs[20] = TLS_ERR_KEY_UNSUPPORTED; _errs[21] = TLS_ERR_RECORD_OVERFLOW;
+_errs[22] = TLS_ERR_WRONG_THREAD;
 var _dup = 0;
 var _ei = 0;
-while (_ei < 22) {
+while (_ei < 23) {
     var _ej = _ei + 1;
-    while (_ej < 22) {
+    while (_ej < 23) {
         if (_errs[_ei] == _errs[_ej]) { _dup = _dup + 1; }
         _ej = _ej + 1;
     }
     _ei = _ei + 1;
 }
-assert_eq(_dup, 0, "the 22 TLS_ERR_* codes are pairwise distinct");
+assert_eq(_dup, 0, "the 23 TLS_ERR_* codes are pairwise distinct");
 
 # Record-layer wire values per RFC 8446 §5.1
 assert_eq(TLS_CT_CHANGE_CIPHER_SPEC, 20, "ContentType change_cipher_spec wire = 20");

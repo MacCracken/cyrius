@@ -1,0 +1,302 @@
+# tls_libssl_worker_thread.tcyr — 6.6.14 (roadmap backlog (i)): the libssl backend refuses every
+# call from a thread other than the main thread, instead of crashing or hanging.
+#
+# ⛔ THE DEFECT. The glibc that lib/fdlopen.cyr bootstraps — and with it every libssl call — needs a
+# glibc thread block on the calling thread; a cyrius thread_create worker is a raw CLONE_THREAD
+# clone whose thread pointer holds cyrius's own block. Measured on 6.6.13: tls_available() on main,
+# then one fetch on a worker, was a SIGSEGV (signal 11); a worker's COLD first use hung. Every
+# libssl verb now asks _tls_libssl_thread_ok() (gettid == getpid) and, off the main thread,
+# returns its own failure value without touching libssl: TLS_ERR_WRONG_THREAD (-23) from
+# tls_read / tls_write / tls_set_deadline, 0 / -1 / NOT_SENT from the rest.
+#
+# Each scenario runs in a forked child under a 30 s bound, so the pre-fix crash or hang is a
+# FAILED row, not a dead test. A worker's refusals use bogus handles where a real call would
+# dereference them (a session pointer of 1, a NULL SSL_CTX), so a call that reached libssl would
+# crash the child instead of passing. A forked child's main thread still passes the guard.
+# libssl is a Linux x86_64 fdlopen bridge: a named SKIP elsewhere or without it.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/io.cyr"
+include "lib/net.cyr"
+include "lib/chrono.cyr"
+include "lib/thread.cyr"
+include "lib/tls.cyr"
+
+var _wt_cert = 0;          # DER, self-signed P-256, CN = SAN DNS = localhost
+var _wt_key = 0;
+var _wt_ctx = 0;           # a connected libssl shim the main thread made
+var _wt_fd = 0 - 1;        # a spare socket for the worker's connect / accept attempts
+var _wt_got = 0;           # what each worker call returned: 35 i64 slots in a MAP_SHARED page,
+                           # so the parent reads them even if the child dies part-way
+var _wt_n = 0;
+
+fn _wt_noverify(h, handle): i64 {
+    tls_set_verify(handle, 0, 0);
+    return 0;
+}
+
+# A native server on `sfd`: accept, then echo one byte at a time until EOF.
+fn _wt_server(sfd): i64 {
+    var srv = tls_native_new_server(_wt_cert, 406, _wt_key, 138);
+    if (tls_native_server_load_creds(srv) != TLS_OK) { return 2; }
+    if (tls_native_accept(srv, sfd) != TLS_OK) { return 3; }
+    var b[8];
+    while (tls_native_read(srv, &b, 1) == 1) { tls_native_write(srv, &b, 1); }
+    return 0;
+}
+
+# A connected libssl client against a forked native server, on the calling (main) thread.
+fn _wt_connect(): i64 {
+    var fds[8];
+    sys_socketpair(1, 1, 0, &fds);
+    var fdp = load64(&fds);
+    var sfd = fdp & 0xFFFFFFFF;
+    var cfd = (fdp >> 32) & 0xFFFFFFFF;
+    var pid = sys_fork();
+    if (pid == 0) { sys_close(cfd); sys_exit(_wt_server(sfd)); }
+    sys_close(sfd);
+    sock_set_recv_timeout(cfd, 10, 0);
+    return tls_connect_with_ctx_hook(cfd, "localhost", &_wt_noverify, 0);
+}
+
+fn _wt_note(v): i64 {
+    store64(_wt_got + _wt_n * 8, v);
+    _wt_n = _wt_n + 1;
+    return 0;
+}
+
+# Every libssl verb, called from a worker. Each result is recorded in order (see _wt_expect).
+fn _wt_worker_all(arg): i64 {
+    var c = _wt_ctx;
+    var h = load64(c);                                    # the connection's SSL_CTX*
+    var b[16];
+    _wt_note(_tls_libssl_thread_ok());
+    _wt_note(tls_available());
+    _wt_note(tls_init_main());
+    _wt_note(tls_dlsym("SSL_new"));
+    _wt_note(tls_connect_alloc(_wt_fd, "localhost", 0, 0));
+    _wt_note(tls_connect_alloc_in(0, _wt_fd, "localhost", 0, 0));
+    _wt_note(tls_connect(_wt_fd, "localhost"));
+    var creds: i64[4];
+    creds[0] = _wt_cert; creds[1] = 406; creds[2] = _wt_key; creds[3] = 138;
+    _wt_note(tls_accept_alloc(_wt_fd, &creds, 0, 0));
+    _wt_note(tls_accept_alloc_in(0, _wt_fd, &creds, 0, 0));
+    _wt_note(tls_connect_complete(c));
+    _wt_note(tls_accept_complete(c));
+    _wt_note(tls_read(c, &b, 16));
+    _wt_note(tls_write(c, "w", 1));
+    _wt_note(tls_set_deadline(c, clock_now_ns() + 1000000000));
+    _wt_note(tls_get_alpn_selected(c, &b, 16));
+    _wt_note(tls_get_peer_spki_der(c, &b, 16));
+    _wt_note(tls_set_alpn(h, "h2", 2));
+    _wt_note(tls_set_verify(h, 0, 0));
+    _wt_note(tls_ctx_load_verify_locations(h, "/nonexistent.pem", 0));
+    _wt_note(tls_ctx_set_verify_paths(h));
+    _wt_note(tls_ctx_use_certificate_file(h, "/nonexistent.pem", 1));
+    _wt_note(tls_ctx_use_private_key_file(h, "/nonexistent.pem", 1));
+    _wt_note(tls_get_session(c));
+    _wt_note(tls_set_session(c, 1));
+    _wt_note(tls_session_free(1));                       # a bogus session: freeing it would crash
+    _wt_note(tls_ctx_set_session_new_cb(h, 0));
+    _wt_note(tls_ctx_set_session_remove_cb(h, 0));
+    _wt_note(tls_ctx_set_session_get_cb(h, 0));
+    _wt_note(tls_ctx_set_session_cache_mode(0, SSL_SESS_CACHE_CLIENT));   # NULL SSL_CTX
+    _wt_note(tls_ctx_set_max_early_data(0, 16384));                       # NULL SSL_CTX
+    _wt_note(tls_write_early_data(c, "e", 1));
+    _wt_note(tls_read_early_data(c, &b, 16));
+    _wt_note(tls_get_early_data_status(c));
+    _wt_note(tls_session_get_max_early_data(1));         # a bogus session
+    _wt_note(tls_close(c));                              # touches nothing off main
+    return 0;
+}
+
+# The expected value of each _wt_worker_all row, with its label.
+fn _wt_expect(i): i64 {
+    if (i == 11) { return TLS_ERR_WRONG_THREAD; }        # tls_read
+    if (i == 12) { return TLS_ERR_WRONG_THREAD; }        # tls_write
+    if (i == 13) { return TLS_ERR_WRONG_THREAD; }        # tls_set_deadline
+    if (i >= 16) { if (i <= 21) { return 0 - 1; } }      # the SSL_CTX config verbs
+    if (i == 30) { return 0 - 1; }                       # tls_write_early_data
+    if (i == 31) { return 0 - 1; }                       # tls_read_early_data
+    if (i == 32) { return TLS_EARLY_DATA_NOT_SENT; }
+    return 0;
+}
+
+var _wt_names = 0;
+fn _wt_name(i): i64 {
+    return load64(_wt_names + i * 8);
+}
+
+# Child: main warms libssl and connects; a worker calls every verb; main then uses the ctx.
+fn _wt_case_warm(arg): i64 {
+    if (tls_available() != 1) { return 50; }
+    _wt_ctx = _wt_connect();
+    if (_wt_ctx == 0) { return 51; }
+    var sp[8];
+    sys_socketpair(1, 1, 0, &sp);
+    _wt_fd = load64(&sp) & 0xFFFFFFFF;
+    var t = thread_create(&_wt_worker_all, 0);
+    if (t == 0) { return 52; }
+    thread_join(t);
+    if (_wt_n != 35) { return 53; }
+    # The main thread's connection is intact: the worker touched none of it.
+    if (tls_write(_wt_ctx, "q", 1) != 1) { return 55; }
+    var b[8];
+    if (tls_read(_wt_ctx, &b, 1) != 1) { return 56; }
+    if (load8(&b) != 113) { return 57; }
+    tls_close(_wt_ctx);
+    return 0;
+}
+
+var _wt_cold_avail = 0 - 99;
+fn _wt_worker_cold(arg): i64 {
+    _wt_cold_avail = tls_available();
+    return 0;
+}
+
+# Child: the worker's use is the process's FIRST libssl use; main initialises afterwards.
+fn _wt_case_cold(arg): i64 {
+    var t = thread_create(&_wt_worker_cold, 0);
+    if (t == 0) { return 60; }
+    thread_join(t);
+    if (_wt_cold_avail != 0) { return 61; }
+    if (_tls_init_state != 0) { return 62; }             # the worker claimed nothing
+    if (tls_available() != 1) { return 63; }             # main can still initialise
+    var c = _wt_connect();
+    if (c == 0) { return 64; }
+    if (tls_write(c, "q", 1) != 1) { return 65; }
+    var b[8];
+    if (tls_read(c, &b, 1) != 1) { return 66; }
+    tls_close(c);
+    return 0;
+}
+
+# Child: a forked process's main thread is a main thread.
+fn _wt_case_fork(arg): i64 {
+    if (tls_available() != 1) { return 70; }
+    var pid = sys_fork();
+    if (pid == 0) {
+        if (_tls_libssl_thread_ok() != 1) { sys_exit(71); }
+        if (tls_available() != 1) { sys_exit(72); }
+        var c = _wt_connect();
+        if (c == 0) { sys_exit(73); }
+        if (tls_write(c, "q", 1) != 1) { sys_exit(74); }
+        var b[8];
+        if (tls_read(c, &b, 1) != 1) { sys_exit(75); }
+        tls_close(c);
+        sys_exit(0);
+    }
+    var st[8];
+    sys_waitpid(pid, &st, 0);
+    return (load64(&st) >> 8) & 0xFF;
+}
+
+# Run `fp` in a forked child under a 30 s bound: its wait status, or -1 if it had to be killed.
+fn _wt_bounded(fp): i64 {
+    var pid = sys_fork();
+    if (pid == 0) { sys_exit(fncall1(fp, 0)); }
+    var st[8];
+    store64(&st, 0);
+    var waited = 0;
+    while (waited < 3000) {
+        if (sys_waitpid(pid, &st, 1) == pid) { return load64(&st) & 0xFFFF; }   # WNOHANG
+        sleep_ms(10);
+        waited = waited + 1;
+    }
+    sys_kill(pid, 9);
+    sys_waitpid(pid, &st, 0);
+    return 0 - 1;
+}
+
+fn _wt_report(st, label): i64 {
+    if (st == 0 - 1) { println("    (hung: killed at 30 s)"); }
+    if (st > 0) {
+        if ((st & 0x7F) != 0) {
+            syscall(1, 1, "    (killed by signal ", 22); fmt_int(st & 0x7F); println(")");
+        } else {
+            syscall(1, 1, "    (exit ", 10); fmt_int((st >> 8) & 0xFF); println(")");
+        }
+    }
+    assert_eq(st, 0, label);
+    return 0;
+}
+
+fn test_worker_refused(): i64 {
+    test_group("libssl backend off the main thread: every verb refuses, nothing crashes or hangs");
+    var i = 0;
+    while (i < 35) { store64(_wt_got + i * 8, 0 - 99); i = i + 1; }
+    _wt_report(_wt_bounded(&_wt_case_warm),
+      "warm: tls_available() on main, then every verb on a worker, then main's ctx still works (was SIGSEGV)");
+    i = 0;
+    while (i < 35) {
+        assert_eq(load64(_wt_got + i * 8), _wt_expect(i), _wt_name(i));
+        i = i + 1;
+    }
+    _wt_report(_wt_bounded(&_wt_case_cold),
+      "cold: a worker's first use -> tls_available() 0, nothing claimed; main still initialises (was a hang)");
+    _wt_report(_wt_bounded(&_wt_case_fork), "a forked child's main thread passes the guard and connects");
+    return 0;
+}
+
+# Runs everywhere: the guard itself, on the main thread and (where threads are real) on a worker.
+var _wt_guard_worker = 0 - 99;
+fn _wt_guard_body(arg): i64 {
+    _wt_guard_worker = _tls_libssl_thread_ok();
+    return 0;
+}
+fn test_guard(): i64 {
+    test_group("_tls_libssl_thread_ok: 1 on the main thread, 0 on a thread_create worker");
+    assert_eq(_tls_libssl_thread_ok(), 1, "the main thread passes");
+    assert_eq(TLS_ERR_WRONG_THREAD, 0 - 23, "TLS_ERR_WRONG_THREAD = -23");
+    #ifdef CYRIUS_TARGET_LINUX
+    #ifdef CYRIUS_ARCH_X86
+    var t = thread_create(&_wt_guard_body, 0);
+    if (t != 0) {
+        thread_join(t);
+        assert_eq(_wt_guard_worker, 0, "a worker does not");
+    }
+    #endif
+    #endif
+    return 0;
+}
+
+alloc_init();
+_wt_got = cyr_mmap(0, 4096, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, 0 - 1, 0);
+_wt_names = alloc(35 * 8);
+var _wt_nm = "  worker: _tls_libssl_thread_ok|  worker: tls_available|  worker: tls_init_main|  worker: tls_dlsym|  worker: tls_connect_alloc|  worker: tls_connect_alloc_in|  worker: tls_connect|  worker: tls_accept_alloc|  worker: tls_accept_alloc_in|  worker: tls_connect_complete|  worker: tls_accept_complete|  worker: tls_read|  worker: tls_write|  worker: tls_set_deadline|  worker: tls_get_alpn_selected|  worker: tls_get_peer_spki_der|  worker: tls_set_alpn|  worker: tls_set_verify|  worker: tls_ctx_load_verify_locations|  worker: tls_ctx_set_verify_paths|  worker: tls_ctx_use_certificate_file|  worker: tls_ctx_use_private_key_file|  worker: tls_get_session|  worker: tls_set_session|  worker: tls_session_free|  worker: tls_ctx_set_session_new_cb|  worker: tls_ctx_set_session_remove_cb|  worker: tls_ctx_set_session_get_cb|  worker: tls_ctx_set_session_cache_mode|  worker: tls_ctx_set_max_early_data|  worker: tls_write_early_data|  worker: tls_read_early_data|  worker: tls_get_early_data_status|  worker: tls_session_get_max_early_data|  worker: tls_close";
+var _wt_k = 0;
+var _wt_p = 0;
+var _wt_len = strlen(_wt_nm);
+while (_wt_k < 35) {
+    var _wt_q = _wt_p;
+    while (_wt_q < _wt_len && load8(_wt_nm + _wt_q) != 124) { _wt_q = _wt_q + 1; }
+    var _wt_s = alloc(_wt_q - _wt_p + 1);
+    memcpy(_wt_s, _wt_nm + _wt_p, _wt_q - _wt_p);
+    store8(_wt_s + _wt_q - _wt_p, 0);
+    store64(_wt_names + _wt_k * 8, _wt_s);
+    _wt_p = _wt_q + 1;
+    _wt_k = _wt_k + 1;
+}
+_wt_cert = hex_decode("3082019230820139a003020102021437416048df98b49fd5b278db00ebd0e1f87b6d40300a06082a8648ce3d04030230143112301006035504030c096c6f63616c686f7374301e170d3236303130313030303030305a170d3336303130313030303030305a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d030107034200040d7a46bc307511f24a53dcf973e0dfe2058db48d7db8b3941fa80176641ad78da12b801a12494d49312bf5b0ac312f3d50bca2282126fddd03652013bf8b49c5a3693067301d0603551d0e041604143bdd6c2d487f854851f408356e66880375bd6743301f0603551d230418301680143bdd6c2d487f854851f408356e66880375bd6743300f0603551d130101ff040530030101ff30140603551d11040d300b82096c6f63616c686f7374300a06082a8648ce3d04030203470030440220365bd112f9b8faec50c9b4a2cf7ec487cc424901870b8156b349dba15e1cde8102200c1ec7f6eefec5bc9976f55a70608b07d669c78183fa08e9a863370d17e39df3", 812);
+_wt_key = hex_decode("308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420666340f5e33734c31438ae0abd2370b72da193b44565625051bbc79a344535dda144034200040d7a46bc307511f24a53dcf973e0dfe2058db48d7db8b3941fa80176641ad78da12b801a12494d49312bf5b0ac312f3d50bca2282126fddd03652013bf8b49c5", 276);
+test_guard();
+tls_set_backend(TLS_BACKEND_LIBSSL);
+# The probe runs in a child, so the parent's own libssl state stays cold for the scenarios.
+var _wt_have = 0;
+#ifdef CYRIUS_TARGET_LINUX
+#ifdef CYRIUS_ARCH_X86
+var _wt_pp = sys_fork();
+if (_wt_pp == 0) { sys_exit(tls_available()); }
+var _wt_ps[8];
+sys_waitpid(_wt_pp, &_wt_ps, 0);
+if (((load64(&_wt_ps) >> 8) & 0xFF) == 1) { _wt_have = 1; }
+#endif
+#endif
+if (_wt_have == 1) {
+    test_worker_refused();
+} else {
+    var _skip = "  SKIP: libssl.so.3 or the fdlopen helper ($HOME/.cyrius/dlopen-helper) is not available (libssl runs on Linux x86_64 only)\n";
+    sys_write(1, _skip, strlen(_skip));
+}
+var r = assert_summary();

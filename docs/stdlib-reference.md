@@ -1466,7 +1466,7 @@ TLS client + server façade over two backends: the sovereign stack in `tls_nativ
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `tls_available` | `tls_available() → 1/0` | Is the active backend usable (native always; libssl checks dlopen) |
-| `tls_init_main` | `tls_init_main() → 1/0` | Warm the stack once on the main thread before spawning TLS workers (6.6.13): crypto block + every lazy table + the CA cache. Recommended, not required; idempotent; libssl is main-thread only — see `docs/development/lib-tls-contract.md` "Thread safety" |
+| `tls_init_main` | `tls_init_main() → 1/0` | Warm the stack once on the main thread before spawning TLS workers (6.6.13): crypto block + every lazy table + the CA cache. Recommended, not required; idempotent; libssl is main-thread only and refuses every call from another thread (6.6.14: `TLS_ERR_WRONG_THREAD` from `tls_read` / `tls_write`) — see `docs/development/lib-tls-contract.md` "Thread safety" |
 | `tls_set_backend` | `tls_set_backend(backend) → 0/-1` | Select `TLS_BACKEND_LIBSSL` or `TLS_BACKEND_NATIVE` |
 | `tls_get_backend` | `tls_get_backend() → backend` | Active backend |
 | `tls_connect` | `tls_connect(sock, host) → ctx/0` | Wrap a connected socket in a TLS session (SNI = host) |

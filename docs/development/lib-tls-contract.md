@@ -230,6 +230,7 @@ above `_tn_read_fail` in `lib/tls_native_conn.cyr` (native) and `_tls_ssl_io_ret
 | `TLS_ERR_PROTOCOL` | -19 | Native: a ChangeCipherSpec after the handshake (see "ChangeCipherSpec"); 32 records with no application data in one read; a read or write on a ctx that was never connected or is closed, and a write on a failed one. libssl: any libssl failure not above — a bad record MAC and a protocol violation included — and a write after the peer shut down. | both |
 | `TLS_ERR_DECRYPT` | -15 | A record failed authentication (bad_record_mac: tampered or misdirected). libssl reports it as `TLS_ERR_PROTOCOL`. | native |
 | `TLS_ERR_BAD_RECORD` | -3 | A malformed record: a header declaring more than the 16,640-byte ciphertext ceiling (record_overflow), a frame too short to open, an alert that is not exactly 2 bytes. | native |
+| `TLS_ERR_WRONG_THREAD` | -23 | The call came from a thread other than the main thread (6.6.14). It was refused without touching libssl and the connection is unchanged: make it on the main thread (see "Thread safety"). Not a connection failure. | libssl |
 | `TLS_ERR_WOULD_BLOCK` | -9 | A non-blocking socket had nothing ready (`WANT_READ` / `WANT_WRITE`) and no deadline is set: call again. The native backend needs a BLOCKING socket — there `EAGAIN` reads as `TLS_ERR_IO` and fails the connection; bound a native read with `tls_set_deadline` instead. | libssl |
 | `TLS_ERR_OOM` | -11 | The ctx's record buffer could not be allocated (the first read or write, from an exhausted arena). | native |
 | `TLS_ERR_INVALID_PARAM` | -10 | `tls_read` with `maxlen <= 0` (does not fail the ctx). | native |
@@ -249,7 +250,8 @@ error). Until 6.6.14 a SECOND libssl read after a fatal alert returned 0 — Ope
 `SSL_ERROR_ZERO_RETURN` once it has seen the peer's shutdown — so the re-read looked like a clean
 end. Either way: `tls_close`. A libssl-only build
 (`-D CYRIUS_TLS_LIBSSL`) defines only the codes its backend returns — `TLS_ERR_NOT_IMPLEMENTED`,
-`_WOULD_BLOCK`, `_INVALID_PARAM`, `_IO`, `_ALERT`, `_PROTOCOL`, `_TIMEOUT` — with the same values;
+`_WOULD_BLOCK`, `_INVALID_PARAM`, `_IO`, `_ALERT`, `_PROTOCOL`, `_TIMEOUT`, `_WRONG_THREAD` — with
+the same values;
 a consumer naming any other code compiles against the default build only.
 
 #### ChangeCipherSpec (native, 6.6.13)
@@ -498,18 +500,33 @@ libssl rule is a limit, not a guarantee.
   Reuse workers rather than retiring them, or cap the pool.
 
 **libssl backend (`-D CYRIUS_TLS_LIBSSL`, or `tls_set_backend(TLS_BACKEND_LIBSSL)`): MAIN THREAD
-ONLY.**
+ONLY, and it FAILS CLOSED off it (6.6.14).**
 
-- Every libssl call — first use, connect, accept, read, write, close — must be made on the main
-  thread, and a libssl ctx must not migrate to a worker. The glibc that `fdlopen` bootstraps
-  needs a glibc TCB; a cyrius `thread_create` worker's thread pointer holds cyrius's own
-  thread-local block instead. Measured on x86_64 at 6.6.13: `_tls_init` on main then one fetch
-  from a worker is a SIGSEGV; a worker's cold first use hangs; the threaded repro under libssl
-  aborts with `*** stack smashing detected ***`. A main-thread-only program is unaffected.
-- **Not guarded in 6.6.13**: the verbs do not detect an off-main call and do not fail closed
-  there — the program crashes or hangs. Tracked in the roadmap backlog (libssl from worker
-  threads). `_tls_init` is an attempt latch, not a once-guard, so libssl first use must also be
-  single-threaded.
+- Every libssl call — first use, connect, accept, read, write, close, the hook-time config verbs,
+  introspection, sessions and 0-RTT, `tls_dlsym` — must be made on the main thread, and a libssl
+  ctx must not migrate to a worker. The glibc that `fdlopen` bootstraps needs a glibc TCB; a cyrius
+  `thread_create` worker's thread pointer holds cyrius's own thread-local block instead.
+- **Off the main thread every libssl verb refuses, without touching libssl**, with its own failure
+  value: `tls_read` / `tls_write` / `tls_set_deadline` return `TLS_ERR_WRONG_THREAD` (-23);
+  `tls_available` / `tls_init_main` / `tls_connect_alloc(_in)` / `tls_connect` /
+  `tls_accept_alloc(_in)` / `tls_accept` / the `*_complete` verbs / `tls_dlsym` /
+  `tls_get_alpn_selected` / `tls_get_peer_spki_der` / the session and cache verbs return 0;
+  `tls_set_alpn` / `tls_set_verify` / `tls_ctx_load_verify_locations` / `tls_ctx_set_verify_paths` /
+  `tls_ctx_use_*_file` / `tls_write_early_data` / `tls_read_early_data` return -1;
+  `tls_get_early_data_status` returns `TLS_EARLY_DATA_NOT_SENT`; `tls_close` returns 0 and frees
+  nothing (the `SSL` and `SSL_CTX` leak — close the ctx on the main thread). A refusal changes no
+  state: the same call made on the main thread afterwards works, and a worker's first use does not
+  claim the one-time initialisation. Through 6.6.13 the call crashed or hung instead (measured on
+  x86_64: `tls_available()` on main then one fetch on a worker was a SIGSEGV; a worker's cold first
+  use hung).
+- "The main thread" is the thread whose id is the process id (`gettid() == getpid()`, two syscalls
+  per libssl call, read fresh — a cached pid is wrong in a forked child): a forked child's main
+  thread is one. The cost, measured on x86_64 Linux with the kernel's speculation mitigations on
+  (~0.3 µs a syscall): 0.6–0.8 µs per libssl call. With the SIGPIPE hold (three more syscalls, see
+  "SIGPIPE on the libssl backend") a 16-byte `tls_write` goes from 2.1 to 3.8 µs and a 16 KiB one
+  from 7.3 to 9.0 µs; the native backend pays neither.
+- `_tls_init` and the introspection-symbol resolution are 0 → 1 → 2 claim / publish latches (one
+  caller resolves, the others wait), so a concurrent first use cannot read a half-resolved table.
 
 ## Escape hatch (non-contract)
 
