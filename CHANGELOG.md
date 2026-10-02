@@ -111,7 +111,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (`_cl_snap_is_sptr`, `src/frontend/parse_expr.cyr`) — the same discriminator
   `_local_is_sptr_param` uses. A capture of another struct or vector type is refused by name in the
   field store, the literal, the assignment and the declaration, as the local forms are; a global
-  named like an enclosing local no longer wins over the capture in these copy forms. Two
+  named like an enclosing struct or vector local no longer wins over the capture in these copy
+  forms (a scalar capture named like a struct global still does — not a struct copy, not this fix). Two
   non-closure shapes met on the way are separate defects and were not changed (backlogged at the
   6.6.13 premise check, (a) a pointer-mode local assigned into an inline struct, (b) a callee
   writing through its by-value parameter). **Verified:** the new

@@ -251,7 +251,7 @@ fn dc16(): i64 {
 fn dc16c(): i64 { var p: Pt = Pt { 3, 4 }; var q: Pt = p; q.x = q.x + 1; return q.x * 10 + p.x; }
 fn dc24(): i64 {
     var p = P3 { 1, 2, 3 };
-    var g = || { var q: P3 = p; q.z = 0; return q.x * 100 + q.y * 10 + q.z; };
+    var g = || { var q: P3 = p; var z = q.z; q.z = 0; return q.x * 100 + q.y * 10 + z; };
     var r1 = callptr(g);
     var r2 = callptr(g);
     return r1 * 1000 + r2;
@@ -364,7 +364,7 @@ assert_eq(asvecc(), 1234, "assign w = v, f32v4: non-closure control");
 
 assert_eq(dc16(), 44, "decl var q: Pt = p is a copy: 4 on the first AND the second call");
 assert_eq(dc16c(), 43, "decl copy: non-closure control (p.x stays 3)");
-assert_eq(dc24(), 120120, "decl var q: P3 = p is a copy: q.z = 0 does not persist");
+assert_eq(dc24(), 123123, "decl var q: P3 = p is a copy: the second call reads z = 3, not the 0 the first wrote");
 assert_eq(dcprm(), 39, "decl from a captured by-value parameter leaves the caller's p.x at 3");
 assert_eq(dcprmc(), 39, "decl from a by-value parameter: non-closure control");
 assert_eq(dcptr(), 74, "decl from a captured pointer-mode local is a pointer bind (writes reach h)");
