@@ -1023,6 +1023,99 @@ var gp[512];
 assert(load64(sP + TLS_CTX_OFF_CLIENT_CERT) != 0, "  …the verified leaf is kept");
 assert_eq(tls_native_get_peer_cert_der(sP, &gp, 512), 0,
   "  …but the server's peer getter names nobody before the handshake completes (6.6.14)");
+
+# 6.6.14 (CVE-64): the framing of the client's Certificate and CertificateVerify. Each malformed
+# message below is the trusted `cca` message altered one way, so a parser that skipped the check
+# would accept it (or, for the CertificateVerify, reach the signature and answer AUTHN instead).
+# MUTATIONS measured RED (6.6.14), each check dropped or loosened to `>` alone: the 1.3 request
+# context (2 assertions), the 1.3 list filling the message (2), the 1.3 CertificateVerify length
+# (1), the 1.2 CertificateRequest's ecdsa_sign gate (1) and its fill check (1), the 1.2 server's
+# Certificate fill check (2) and CertificateVerify length (1).
+fn _sc_auth_srv(): i64 {                            # a 1.3 server waiting for the client's flight
+    var s = tls_native_new_server(leaf_cert, 413, ed_key, 48);
+    tls_native_server_load_creds(s);
+    tls_native_set_verify(s, TLS_VERIFY_PEER);
+    tls_native_set_ca_bundle(s, cca, 385, 1);
+    var sh[256];
+    tls_native_server_respond_hello(s, &ch, ch_total, &sh, 256);
+    var fl[2048];
+    tls_native_server_build_flight(s, &fl, 2048);
+    tls_native_server_transition(s, TLS_EV_START);
+    tls_native_server_transition(s, TLS_EV_RECV_CH);
+    return s;
+}
+var fxm[512];
+var fxm_n = _sc_cert_msg(&fxm, cca, 385);
+var fx1 = _sc_auth_srv();
+store8(&fxm + 4, 1);                                # certificate_request_context length 1, not ours
+assert_eq(tls_native_server_recv_client_certificate(fx1, &fxm, fxm_n), TLS_ERR_BAD_HANDSHAKE,
+  "client Certificate with a request context we did not send: BAD_HANDSHAKE");
+assert_eq(load64(fx1 + TLS_CTX_OFF_CLIENT_CERT), 0, "  …and no client identity is kept");
+store8(&fxm + 4, 0);
+var fx2 = _sc_auth_srv();
+store16(&fxm + fxm_n, 0);                           # two bytes past the certificate_list
+tls_native_handshake_write_header(&fxm, TLS_HS_CERTIFICATE, fxm_n - 4 + 2);
+assert_eq(tls_native_server_recv_client_certificate(fx2, &fxm, fxm_n + 2), TLS_ERR_BAD_HANDSHAKE,
+  "client Certificate with bytes after its certificate_list: BAD_HANDSHAKE");
+assert_eq(load64(fx2 + TLS_CTX_OFF_CLIENT_CERT), 0, "  …and no client identity is kept");
+tls_native_handshake_write_header(&fxm, TLS_HS_CERTIFICATE, fxm_n - 4);
+var fx3 = _sc_auth_srv();
+assert_eq(tls_native_server_recv_client_certificate(fx3, &fxm, fxm_n), TLS_OK, "the same Certificate, well formed: TLS_OK");
+var fxv[128];
+tls_native_handshake_write_header(&fxv, TLS_HS_CERTIFICATE_VERIFY, 4 + 64 + 1);
+_tn_be16_w(&fxv + 4, TLS_SIG_ECDSA_SECP256R1_SHA256);
+_tn_be16_w(&fxv + 6, 64);                           # sig_len 64, and one byte more in the body
+memset(&fxv + 8, 0xAA, 65);
+assert_eq(tls_native_server_recv_client_certverify(fx3, &fxv, 4 + 4 + 64 + 1), TLS_ERR_BAD_HANDSHAKE,
+  "client CertificateVerify with a byte after its signature: BAD_HANDSHAKE (not AUTHN)");
+
+# The TLS 1.2 client's CertificateRequest parse (_tn_12_parse_cert_request): every field inside
+# the body and filling it, and a certificate answered only when the request admits ecdsa_sign.
+var crc = tls_native_new_client("localhost", 9);
+tls_native_set_client_cert(crc, leaf_cert, 413, 1);
+tls_native_set_client_key(crc, ed_key, 48);         # an Ed25519 key: our scheme is ed25519
+var crb[16];
+store8(&crb, 1);
+store8(&crb + 1, TLS12_CERT_TYPE_ECDSA_SIGN);
+_tn_be16_w(&crb + 2, 2);
+_tn_be16_w(&crb + 4, TLS_SIG_ED25519);
+_tn_be16_w(&crb + 6, 0);                            # certificate_authorities: empty
+assert_eq(_tn_12_parse_cert_request(crc, &crb, 8), TLS_OK, "1.2 CertificateRequest (ecdsa_sign, ed25519): TLS_OK");
+assert_eq(load64(crc + TLS_CTX_OFF_CLIENT_SIG_SCHEME), TLS_SIG_ED25519, "  …our CertificateVerify will sign ed25519");
+store8(&crb + 1, 1);                                # rsa_sign only
+assert_eq(_tn_12_parse_cert_request(crc, &crb, 8), TLS_OK, "1.2 CertificateRequest asking for rsa_sign only: TLS_OK");
+assert_eq(load64(crc + TLS_CTX_OFF_CLIENT_SIG_SCHEME), 0, "  …and the client answers with an empty Certificate");
+store8(&crb + 1, TLS12_CERT_TYPE_ECDSA_SIGN);
+store8(&crb + 8, 0);
+assert_eq(_tn_12_parse_cert_request(crc, &crb, 9), TLS_ERR_BAD_HANDSHAKE,
+  "1.2 CertificateRequest with a byte after certificate_authorities: BAD_HANDSHAKE");
+
+# The TLS 1.2 server's reads of the client's Certificate and CertificateVerify: the list filling
+# the message, the signature filling the body. fd -1: the refusal's alert has nowhere to go.
+fn _sc_12_cert_msg(out, der, der_len): i64 {        # a 1.2 Certificate message carrying `der`
+    tls_native_handshake_write_header(out, TLS_HS_CERTIFICATE, 3 + 3 + der_len);
+    _tn_be24_w(out + 4, 3 + der_len);               # certificate_list length
+    _tn_be24_w(out + 7, der_len);
+    memcpy(out + 10, der, der_len);
+    return 10 + der_len;
+}
+var f12 = tls_native_new_server(leaf_cert, 413, ed_key, 48);
+tls_native_set_verify(f12, TLS_VERIFY_PEER);
+tls_native_set_ca_bundle(f12, cca, 385, 1);
+var f12m[512];
+var f12m_n = _sc_12_cert_msg(&f12m, cca, 385);
+store16(&f12m + f12m_n, 0);
+tls_native_handshake_write_header(&f12m, TLS_HS_CERTIFICATE, f12m_n - 4 + 2);
+assert_eq(_tn_12_srv_client_cert(f12, 0 - 1, &f12m, f12m_n + 2), TLS_ERR_BAD_HANDSHAKE,
+  "1.2 server: a client Certificate with bytes after its certificate_list: BAD_HANDSHAKE");
+assert_eq(load64(f12 + TLS_CTX_OFF_CLIENT_CERT), 0, "  …and no client identity is kept");
+var f12b = tls_native_new_server(leaf_cert, 413, ed_key, 48);
+tls_native_set_verify(f12b, TLS_VERIFY_PEER);
+tls_native_set_ca_bundle(f12b, cca, 385, 1);
+f12m_n = _sc_12_cert_msg(&f12m, cca, 385);
+assert_eq(_tn_12_srv_client_cert(f12b, 0 - 1, &f12m, f12m_n), TLS_OK, "1.2 server: the same Certificate, well formed: TLS_OK");
+assert_eq(_tn_12_srv_client_cv(f12b, 0 - 1, &fxv, 4 + 4 + 64 + 1, "content", 7), TLS_ERR_BAD_HANDSHAKE,
+  "1.2 server: a client CertificateVerify with a byte after its signature: BAD_HANDSHAKE (not AUTHN)");
 tls_native_set_transport(0, 0, 0);
 
 var ccv[128];
