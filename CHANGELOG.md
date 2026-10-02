@@ -28,6 +28,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   isolated at its 6.6.9 pin (17/17); the new `lazy_init_race.tcyr` and `cbank_main_lane.tcyr` fail
   on 3.13.5. The cyrius halves (`tls_native_set_ca_system`'s cache, `tls_init_main()`, the skipped
   count) are bites I3 and I2 below.
+- **bayan 1.5.11 folded (`lib/bayan.cyr`, bayan commit `aeb13d2`) — cut for this release.**
+  `bayan_pdf_use_font` passed `str_data(name)` to a `key: cstring` parameter, which I11's rule (below)
+  warns on in every build that includes bayan, `tls.cyr` or `tls_native.cyr`; the font now keeps the
+  NUL-terminated buffer it built and the key is set from it (output byte-identical). A refused
+  allocation while decoding a TOML string was reported as an empty string from the DEFAULT allocator;
+  `bayan_toml_parse` / `_inline_parse_a` / `_unescape_a` (and their wrappers) now return 0 and
+  `bayan_toml_parse_file_r` returns `Err(TomlIoErr)`. `_d_init_tables` (`src/dtoa.cyr`) was a
+  check-then-set with no publish barrier — on aarch64 a second thread could parse against zero
+  significands — and is now an atomic claim and publish (I3's class); the `.deps` sidecar lists
+  `atomic` (every includer already has it through `lib/alloc.cyr`). bayan's full CI ran isolated
+  (sibci rc=0, 33 ok); the 40 cyrius tests that include the fold pass. Pin stays 6.6.12.
 - **ganita 1.2.11 folded (`lib/ganita.cyr`, ganita commit `6788e28`; 1.2.10 was never folded) — six
   filings closed, `tan` added.** `ganita_binomial` returns −1 exactly when C(n, k) > i64_MAX (it
   refused representable values since 1.2.3); `atan2` gets signed zeros, a NaN `y` at `x = ±0` and
