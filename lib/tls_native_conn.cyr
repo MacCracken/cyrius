@@ -1216,13 +1216,15 @@ fn tls_native_get_alpn_selected(ctx, buf, bufmax): i64 {
 }
 
 # The peer's parsed leaf, or 0: the server's on a client ctx; on a server ctx the client's — kept
-# once its chain verified, and answered only while the ctx has not failed, so a handshake that
-# went on to fail (a CertificateVerify that did not verify, say) exposes no client identity.
+# once its chain verified, and answered once the handshake COMPLETED (TLS_CTX_OFF_HS_DONE): a
+# handshake that went on to fail (a CertificateVerify that did not verify, say) exposes no client
+# identity, and a connection error after a completed handshake (the client gone without
+# close_notify) does not take the verified identity away — libssl's behaviour.
 # 6.6.14 (CVE-64): a server read the client-side SERVER_CERT slot, which it never fills, so every
 # getter answered 0 on a server.
 fn _tn_peer_leaf(ctx): i64 {
     if (load64(ctx + TLS_CTX_OFF_ROLE) == TLS_ROLE_SERVER) {
-        if (load64(ctx + TLS_CTX_OFF_STATE) == TLS_STATE_ERROR) { return 0; }
+        if (load64(ctx + TLS_CTX_OFF_HS_DONE) == 0) { return 0; }
         return load64(ctx + TLS_CTX_OFF_CLIENT_CERT);
     }
     return load64(ctx + TLS_CTX_OFF_SERVER_CERT);

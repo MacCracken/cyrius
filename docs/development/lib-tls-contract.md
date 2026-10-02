@@ -208,7 +208,9 @@ then authenticate the client the same way:
   decrypt_error, illegal_parameter (a scheme not offered) or decode_error otherwise.
 - **The identity.** After a successful handshake `tls_get_peer_spki_der(ctx, …)` (and natively
   `tls_native_get_peer_cert_der`) return the CLIENT's verified leaf on a server ctx; 0 when the
-  client presented none, and 0 on a ctx whose handshake failed.
+  client presented none, and 0 on a ctx whose handshake did not complete (one that failed after the
+  certificate verified — its CertificateVerify, say — included). A connection error AFTER a
+  completed handshake (the client gone without close_notify) does not clear it, as on libssl.
 - **The `mode` mapping is never looser than asked.** `SSL_VERIFY_FAIL_IF_NO_PEER_CERT` without
   `SSL_VERIFY_PEER` is FAIL natively — stricter than OpenSSL, which ignores the bit without PEER.
   ⚠ Until 6.6.13 every non-zero mode became `TLS_VERIFY_PEER` (bit 2 was dropped), the 1.3 server
@@ -346,7 +348,7 @@ an earlier `tls_dlsym` + `fncall*` call site. New consumers MUST use these in pr
 | Verb | Signature | Returns | Contract |
 |------|-----------|---------|----------|
 | `tls_get_alpn_selected(ctx, buf, bufmax)` | (i64, i64, i64) → i64 | length / 0 | Copies the negotiated ALPN protocol into `buf`. 0 when none was negotiated, `bufmax` is too small, or ctx is null. Both backends. |
-| `tls_get_peer_spki_der(ctx, buf, bufmax)` | (i64, i64, i64) → i64 | length / 0 / `TLS_ERR_BUFFER_FULL` | Copies the PEER leaf's SubjectPublicKeyInfo DER — the HPKP pin target; consumers SHA-256 it. On a client ctx the server's; on a server ctx the client's verified certificate (natively since 6.6.14: it read the server's own empty slot and answered 0; 0 also after a failed handshake). 0 on no certificate, a parse failure or a null ctx. A `bufmax` too small: 0 on libssl, `TLS_ERR_BUFFER_FULL` (-18) on native. |
+| `tls_get_peer_spki_der(ctx, buf, bufmax)` | (i64, i64, i64) → i64 | length / 0 / `TLS_ERR_BUFFER_FULL` | Copies the PEER leaf's SubjectPublicKeyInfo DER — the HPKP pin target; consumers SHA-256 it. On a client ctx the server's; on a server ctx the client's verified certificate (natively since 6.6.14: it read the server's own empty slot and answered 0; 0 also when the handshake did not complete, and kept through a later connection error). 0 on no certificate, a parse failure or a null ctx. A `bufmax` too small: 0 on libssl, `TLS_ERR_BUFFER_FULL` (-18) on native. |
 
 ### Session resumption (libssl only)
 

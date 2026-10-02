@@ -1020,7 +1020,9 @@ cmsg_n = _sc_cert_msg(&ccert, cca, 385);
 assert_eq(tls_native_server_recv_client_certificate(sP, &ccert, cmsg_n), TLS_OK, "client Certificate parsed + chain verified");
 assert_eq(tls_native_get_state(sP), TLS_STATE_WAIT_CLIENT_FLIGHT2, "stays WAIT_CLIENT_FLIGHT2 after Cert");
 var gp[512];
-assert_eq(tls_native_get_peer_cert_der(sP, &gp, 512), 385, "the server's peer getter answers the client's leaf");
+assert(load64(sP + TLS_CTX_OFF_CLIENT_CERT) != 0, "  …the verified leaf is kept");
+assert_eq(tls_native_get_peer_cert_der(sP, &gp, 512), 0,
+  "  …but the server's peer getter names nobody before the handshake completes (6.6.14)");
 tls_native_set_transport(0, 0, 0);
 
 var ccv[128];
@@ -1032,6 +1034,7 @@ while (g < 64) { store8(cvbody + 4 + g, 0xAA); g = g + 1; }   # garbage signatur
 tls_native_handshake_write_header(&ccv, TLS_HS_CERTIFICATE_VERIFY, 4 + 64);
 assert_eq(tls_native_server_recv_client_certverify(sP, &ccv, 4 + 4 + 64), TLS_ERR_AUTHN, "garbage client CertVerify → AUTHN");
 assert_eq(tls_native_get_state(sP), TLS_STATE_ERROR, "bad client CV → ctx ERROR");
+assert_eq(tls_native_get_peer_cert_der(sP, &gp, 512), 0, "  …and the failed handshake exposes no client identity");
 
 # Null guards.
 assert_eq(tls_native_server_recv_client_finished(0, &finN, 4 + hlN), TLS_ERR_INVALID_PARAM, "recv_client_finished(null)");

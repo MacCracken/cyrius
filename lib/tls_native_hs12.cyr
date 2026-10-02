@@ -1697,8 +1697,7 @@ fn _tn_12_server_drive(ctx, sock_fd, ch_msg, ch_len): i64 {
     if (finreclen < 0) { return _tn_ctx_fail(ctx, finreclen); }
     var fw = _tn_io_write_all(ctx, sock_fd, finrec, finreclen);
     if (fw < 0) { return _tn_ctx_fail(ctx, fw); }
-    store64(ctx + TLS_CTX_OFF_STATE, TLS_STATE_CONNECTED);
-    return TLS_OK;
+    return _tn_server_connected(ctx);
 }
 
 # Server-side TLS 1.2 handshake driver: read the ClientHello record,

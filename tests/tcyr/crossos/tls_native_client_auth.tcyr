@@ -24,7 +24,9 @@
 # side byte-identical on its common prefix, so each round moves the handshake one flight further,
 # and the row ends at the first round in which neither side read past the other's log (that round
 # replays itself exactly) or neither log grew. The client then sends "ping" and the server answers
-# "pong", so a row that completes proves both ends hold the same keys.
+# "pong", so a row that completes proves both ends hold the same keys; the server then reads once
+# more, past the end of the client's log (a client gone without close_notify), and its getters
+# must still name the client the completed handshake authenticated.
 #
 # ROWS, each in TLS 1.3 and with the client pinned to TLS 1.2 (the server keeps 1.2..1.3): no
 # certificate under PEER (accepted, no identity) and under FAIL_IF_NO_PEER_CERT; P-256, Ed25519
@@ -38,7 +40,8 @@
 # branch disabled (37), the getters reading SERVER_CERT (12), the clientAuth EKU check dropped
 # (8), the client keyUsage check dropped (8), the 1.2 CertificateVerify verdict ignored (4), the
 # 1.2 CertificateVerify not read (21), the 1.2 leftover-message check dropped (1), the 1.2
-# FAIL_IF_NO_PEER_CERT check disabled (2). The 6.6.13 lib fails 49 of the 206.
+# FAIL_IF_NO_PEER_CERT check disabled (2), the getters gated on the ctx state instead of the
+# completed handshake (12), the getters not gated at all (6). The 6.6.13 lib fails 55 of the 236.
 #
 # The fixtures (P-256 CA "mtls-ca", every leaf valid 2025-01-01 .. 2049-12-31 except the expired
 # one, notAfter 2027-01-01) are read at a pinned clock of 2030-01-01, so no row is a time bomb.
@@ -273,8 +276,11 @@ var _mx_h_root_n = 0;
 # Observations: [0] client tls_native_connect, [1] client read after "ping" (-99 when not run),
 # [2] server accept (TLS_OK or its LAST_ERR), [3] server read (-99), [4] tls_native_get_peer_cert_der
 # on the server, [5] tls_get_peer_spki_der on the server's shim, [6] rounds to the fixed point (0 =
-# never settled), [7] the client's TLS_CTX_OFF_CERT_REQUESTED.
-var _mx_obs: i64[8];
+# never settled), [7] the client's TLS_CTX_OFF_CERT_REQUESTED, and after the server's "pong" a
+# second server read that meets the end of the client's log (a client gone without close_notify):
+# [8] that read, [9] tls_native_get_peer_cert_der and [10] tls_get_peer_spki_der after it (-99
+# when not run).
+var _mx_obs: i64[11];
 var _mx_c_eof = 0;       # the last client run read past the end of the server's log
 var _mx_s_eof = 0;       # the last server run, of the client's
 
@@ -337,6 +343,9 @@ fn _mx_server_run(): i64 {
     _mx_obs[3] = 0 - 99;
     _mx_obs[4] = 0 - 99;
     _mx_obs[5] = 0 - 99;
+    _mx_obs[8] = 0 - 99;
+    _mx_obs[9] = 0 - 99;
+    _mx_obs[10] = 0 - 99;
     if (sh != 0) {
         var nctx = load64(sh);
         if (tls_accept_complete(sh) == 1) {
@@ -357,6 +366,17 @@ fn _mx_server_run(): i64 {
         var g = alloc(4096);
         _mx_obs[4] = tls_native_get_peer_cert_der(nctx, g, 4096);
         _mx_obs[5] = tls_get_peer_spki_der(sh, g, 4096);
+        if (_mx_obs[3] == 4) {
+            # The client is gone without a close_notify: the read fails the connection AFTER a
+            # completed handshake, and the identity it authenticated must outlive that (as it
+            # does on libssl). Deliberate, so it does not count as reading past the log.
+            var e = _mx_eof;
+            var b2[64];
+            _mx_obs[8] = tls_read(sh, &b2, 64);
+            _mx_eof = e;
+            _mx_obs[9] = tls_native_get_peer_cert_der(nctx, g, 4096);
+            _mx_obs[10] = tls_get_peer_spki_der(sh, g, 4096);
+        }
     }
     _mx_s_eof = _mx_eof;
     var t = _mx_sc;
@@ -421,6 +441,9 @@ fn _mx_ok(label, der_n): i64 {
     assert_eq(_mx_obs[4], der_n, "  tls_native_get_peer_cert_der on the server: the client's leaf");
     if (der_n > 0) { assert(_mx_obs[5] > 0, "  tls_get_peer_spki_der on the server: the client's key"); }
     else { assert_eq(_mx_obs[5], 0, "  tls_get_peer_spki_der on the server: none"); }
+    assert(_mx_obs[8] < 0, "  the client then leaves without close_notify: the server's next read fails");
+    assert_eq(_mx_obs[9], der_n, "  …and tls_native_get_peer_cert_der still names whom the handshake authenticated");
+    assert_eq(_mx_obs[10], _mx_obs[5], "  …and so does tls_get_peer_spki_der");
     return 0;
 }
 
