@@ -263,20 +263,29 @@ fn _ts_names_server(n): i64 {
     return 0;
 }
 
+# 1 when `cc` carries the dated distrust property `d` (104 Disable, 126 NotBefore) and its purpose
+# scope `e` (122, 127) is absent — every purpose — or names serverAuth / anyExtendedKeyUsage.
+fn _ts_dated(fns, cc, d, e): i64 {
+    var nd = _ts_prop(fns, cc, d);
+    if (nd == 0 - 1) { return 0; }
+    if (nd == 0 - 2) { return 1; }
+    var ne = _ts_prop(fns, cc, e);
+    if (ne < 0) { return 1; }
+    if (_ts_names_server(ne) == 1) { return 1; }
+    return 0;
+}
+
 # What Windows' root-program properties say about `cc` for TLS: 1 an anchor, 0 not a TLS root,
-# 2 trusted only for certificates issued before a date (the library refuses those).
+# 2 distrusted by a date that covers TLS — Disable (104 / 122) or NotBefore (126 / 127) — which the
+# library refuses.
 fn _ts_expect(fns, cc): i64 {
     var n = _ts_prop(fns, cc, 9);
     if (n == 0 - 2) { return 0; }
     if (n >= 0) {
         if (_ts_names_server(n) == 0) { return 0; }
     }
-    var nb = _ts_prop(fns, cc, 104);
-    if (nb == 0 - 1) { return 1; }
-    if (nb == 0 - 2) { return 2; }
-    var ne = _ts_prop(fns, cc, 122);
-    if (ne < 0) { return 2; }
-    if (_ts_names_server(ne) == 1) { return 2; }
+    if (_ts_dated(fns, cc, 104, 122) == 1) { return 2; }
+    if (_ts_dated(fns, cc, 126, 127) == 1) { return 2; }
     return 1;
 }
 
@@ -326,6 +335,8 @@ fn test_store_policy(): i64 {
     var want_ref = 0;
     var not_tls = 0;
     var wrong = 0;
+    var nb_tls = 0;                     # roots whose NotBefore distrust (126 / 127) covers TLS
+    var nb_in = 0;                      # ... that are in the bundle anyway
     var pem = alloc(65536);
     c = callptr(en, root, 0);
     while (c != 0) {
@@ -347,6 +358,10 @@ fn test_store_policy(): i64 {
         if (x == 1) {
             if (got != 1) { wrong = wrong + 1; }
         }
+        if (_ts_dated(&fns, c, 126, 127) == 1) {
+            nb_tls = nb_tls + 1;
+            if (got != 0) { nb_in = nb_in + 1; }
+        }
         if (x != 1) {
             if (got != 0) { wrong = wrong + 1; }
         }
@@ -362,14 +377,17 @@ fn test_store_policy(): i64 {
     fmt_int(not_tls);
     syscall(1, 1, " not for TLS, ", 14);
     fmt_int(want_ref);
-    syscall(1, 1, " date-distrusted, ", 18);
+    syscall(1, 1, " refused by a date, ", 20);
     fmt_int(nd);
-    syscall(1, 1, " in Disallowed\n", 15);
+    syscall(1, 1, " in Disallowed; ", 16);
+    fmt_int(nb_tls);
+    syscall(1, 1, " with a NotBefore distrust covering TLS\n", 40);
     assert_gt(total, 0, "the ROOT store has certificates");
     assert_gt(want_in, 0, "some are TLS roots");
     assert_eq(wrong, 0, "each ROOT certificate is in the bundle exactly when Windows trusts it for TLS");
     assert_eq(_ts_blocks(_tn_ca_buf, _tn_ca_len), want_in, "the bundle holds exactly those");
-    assert_eq(_tn_ca_sys_refused, want_ref, "the date-distrusted roots are the refused count");
+    assert_eq(nb_in, 0, "no root whose NotBefore distrust (126 / 127) covers TLS is in the bundle");
+    assert_eq(_tn_ca_sys_refused, want_ref, "the roots refused by a date are the refused count");
     return 0;
 }
 
@@ -518,6 +536,29 @@ fn test_policy_rows(): i64 {
     assert_eq(_tm_run(&fns, 0, cap), 1, "a purpose scope with no date carries no distrust: exported");
     _tm_with(104, _TM_DATE);
     assert_eq(_tm_run(&fns, 1, cap), 0, "refused by date AND in Disallowed: excluded, not counted");
+    # The NotBefore date (prop 126: certificates issued after it are not trusted), scoped by 127.
+    _tm_with(126, _TM_DATE);
+    assert_eq(_tm_run(&fns, 0, cap), 2, "a NotBefore date for every purpose: refused, counted");
+    _tm_with(126, "");
+    assert_eq(_tm_run(&fns, 0, cap), 2, "an EMPTY NotBefore date: refused");
+    _tm_with(126, _TM_DATE);
+    _tm_with(127, _TM_SA);
+    assert_eq(_tm_run(&fns, 0, cap), 2, "a NotBefore date for [serverAuth]: refused");
+    _tm_with(126, _TM_DATE);
+    _tm_with(127, _TM_CS_SA);
+    assert_eq(_tm_run(&fns, 0, cap), 2, "a NotBefore date for [codeSigning, serverAuth] (Entrust's shape): refused");
+    _tm_with(126, _TM_DATE);
+    _tm_with(127, _TM_ANY);
+    assert_eq(_tm_run(&fns, 0, cap), 2, "a NotBefore date for [anyExtendedKeyUsage]: refused");
+    _tm_with(126, _TM_DATE);
+    _tm_with(127, _TM_CS);
+    assert_eq(_tm_run(&fns, 0, cap), 1, "a NotBefore date for [codeSigning] only (DigiCert G2's shape): exported");
+    _tm_with(127, _TM_SA);
+    assert_eq(_tm_run(&fns, 0, cap), 1, "a NotBefore scope with no date carries no distrust: exported");
+    _tm_with(104, _TM_DATE);
+    _tm_with(122, _TM_CS);
+    _tm_with(126, _TM_DATE);
+    assert_eq(_tm_run(&fns, 0, cap), 2, "a Disable date for [codeSigning] but NotBefore for all: refused");
     # A block that does not fit the buffer is refused and counted, never silently dropped.
     assert_eq(_tm_run(&fns, 0, 300), 2, "a root that does not fit the buffer: refused, counted");
     return 0;
