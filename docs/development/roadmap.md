@@ -77,13 +77,14 @@ The language list that was Phase 3 moved to **v6.7.x**, which RISC-V vacates for
 |---|---|---|
 | **1 — Repair window** | `.2` – `.6` | ✅ **CLOSED at 6.6.6.** |
 | **1b — the repair batch** | `.7` – `.12` | ✅ **CLOSED at 6.6.12** (summary in *Where we are*). |
-| **1c — memory + reported-issue repair** | `.13` | ✅ **Merged 2026-10-01, release gate GREEN**: the three silent memory-corruption finds, the open issues I1–I11, and the ganita / bayan / sigil folds; awaiting the tag. See *6.6.13* below. |
-| **2 — Tooling round-out** | after `.13`, to the minor's close | The tooling proposals P1, P2, P4, P5, P6, alongside the DCE compaction arc and, last, macOS concurrency ordering (*Open questions* 3). Then the closeout pass. |
+| **1c — memory + reported-issue repair** | `.13` | ✅ **SHIPPED 2026-10-02** (tag `6.6.13`): the three silent memory-corruption finds, the open issues I1–I11, and the ganita / bayan / sigil folds. See *6.6.13* below. |
+| **1d — the TLS follow-ups** | `.14` | Every remaining noted TLS issue (user, 2026-10-02) — see *6.6.14* below. |
+| **2 — Tooling round-out** | after `.14`, to the minor's close | The tooling proposals P1, P2, P4, P5, P6, alongside the DCE compaction arc and, last, macOS concurrency ordering (*Open questions* 3). Then the closeout pass. |
 | ~~**3 — Committed ergonomics**~~ | — | **Moved to v6.7.x** with P3 `const fn` (user, 2026-10-01) — see [roadmap_6.md](roadmap_6.md). |
 
 ---
 
-## 6.6.13 — memory fixes + reported-issue repair (CLOSING 2026-10-01: merged, release gate GREEN, awaiting the tag)
+## 6.6.13 — memory fixes + reported-issue repair (SHIPPED 2026-10-02, tag `6.6.13`)
 
 All fourteen items landed over six lanes and are merged on `main`. **Detail is in CHANGELOG [6.6.13]; the
 eleven issue files are archived.**
@@ -105,36 +106,42 @@ The in-passing finds of the premise check and the lanes' reviews are in *Potenti
 
 ---
 
-## 6.6.14 — candidates: the TLS follow-ups (to CONSIDER with the other 6.6.14 work)
+## 6.6.14 — the TLS follow-ups (OPEN 2026-10-02)
 
-**User, 2026-10-02:** "for tls follow ups we will consider to pick up with other 6.6.14 work". These are the
-TLS finds from the 6.6.13 premise check and lane reviews — NOT committed to 6.6.14 yet. The user decides
-which ride along when 6.6.14 is planned. Two are security defects with no id yet (the next is **CVE-64**).
+**User, 2026-10-02:** "6.6.14 - all the remaining noted tls issues". That is every TLS item noted by 6.6.13 — the
+candidates this section listed, the *Not covered* lines of CVE-59 … CVE-63, the two TLS gaps the 6.6.13 CHANGELOG
+reported for the backlog, and the TLS port-race flake from the lanes' reviews. Five lanes, cut from the slot bump
+`bcdd1818`. CVE ids are reserved per lane and spent at integration (the next free id is **64**).
 
-- ⚠ The native TLS 1.2 SERVER never sends a CertificateRequest and ignores `TLS_CTX_OFF_VERIFY`
-  (`_tn_12_server_drive`): a server that requires mTLS through `tls_set_verify` accepts an unauthenticated
-  client that offers only TLS 1.2 — an mTLS bypass by downgrade. Related: every non-zero OpenSSL mode
-  maps to `TLS_VERIFY_PEER`, so `SSL_VERIFY_FAIL_IF_NO_PEER_CERT` never reaches native and an empty client
-  Certificate is accepted; the 1.3 server checks possession, not a chain.
-- ⚠ On Windows, `_tn_ca_read` (`lib/tls_native_hs12.cyr`) opens `/etc/ssl/cert.pem` and three sibling POSIX
-  paths, which resolve drive-relative (`C:\etc\ssl\cert.pem`): any local user can plant trust anchors —
-  CVE-54 / CVE-57's class. Not reachable through Winsock today (backlog (j) below), but live for a custom
-  transport.
-- (j) Native TLS cannot run over `net.cyr` sockets on Windows: the default transport's `sys_read` /
-  `sys_write` (ReadFile/WriteFile) return 0 on a Winsock socket, so `tls_native_connect` fails `TLS_ERR_IO`
-  in ~8 ms (measured on cass). No `crossos/` test covers TLS. I8's Windows rows SKIP by name until it lands.
-- (i) The libssl backend SIGSEGVs or hangs when used from a `thread_create` worker (raw clone threads
-  carry no pthread state), even after `_tls_init` ran on main. A fail-closed off-main guard was designed
-  for I3 and not taken; I3's contract states the limit.
-- (d) The native TLS client sends an IP-literal host as SNI (RFC 6066 §3 forbids it); I1 stops it on libssl.
-- (e) `tls_ctx_use_certificate_file` / `tls_ctx_use_private_key_file` retain 64 KiB per call (I2 (a)'s
-  shape, in the server-side loaders).
-- (f) A libssl-backend client dies of SIGPIPE when libssl writes an alert to a peer-closed socket.
-- Native TLS accepts a wildcard directly over a single label (`*.com` for `a.com`) where libssl refuses — a
-  remaining divergence between the backends, noted by the I1 review (CVE-59's register entry, *Not
-  covered*).
-- sigil's `pem_decode_certs_into` fails a whole bundle on one malformed block: recorded in sigil's own
-  roadmap (2026-10-02); 6.6.13 already counts each refused block (`tls_native_ca_skipped`).
+- **auth** — **CVE-64**, the mTLS bypass:
+  - the native TLS 1.2 SERVER never sent a CertificateRequest and ignored `TLS_CTX_OFF_VERIFY`
+    (`_tn_12_server_drive`), so a server requiring client auth accepted an unauthenticated 1.2-only client;
+  - `tls_set_verify` mapped every non-zero OpenSSL mode to `TLS_VERIFY_PEER`, so
+    `SSL_VERIFY_FAIL_IF_NO_PEER_CERT` never reached native;
+  - the 1.3 server checked possession, not a chain;
+  - the native 1.2 client's handling of a CertificateRequest (the mirror, premise-checked in the lane).
+  - Also: a plaintext alert where an encrypted handshake record is due fails `TLS_ERR_BAD_RECORD`, not
+    `TLS_ERR_ALERT` (6.6.13 CHANGELOG).
+- **io** — the native default transport:
+  - (j) Winsock: `ReadFile` / `WriteFile` return 0 on a SOCKET; the deadline is real on Windows; I8's Windows
+    rows un-SKIP; the first `crossos/` TLS-over-sockets test;
+  - (f, native half — **CVE-66**) every native write is a flagless `write()`, so a peer's reset raises SIGPIPE
+    and kills the process;
+  - the agnos write that can overshoot the deadline by one `sock_send#48` stall (CVE-61, *Not covered*).
+- **client** — the libssl backend and the native client's identity edges:
+  - (i) libssl fails closed off the main thread, and its init latches become claim/publish;
+  - (f, libssl half — **CVE-66**);
+  - a fatal alert's second libssl read returns 0 (CVE-60, *Not covered*) — make it sticky;
+  - (e) the 64 KiB cert/key file loaders;
+  - (d) IP-literal SNI;
+  - the `*.com` single-label wildcard (**CVE-67** reserved; CVE-59, *Not covered*);
+  - the TLS gates' random-port race.
+- **wintrust** — **CVE-65**: on Windows `_tn_ca_read` read four drive-relative POSIX paths (a plantable trust
+  store). Windows gets its real ROOT store through crypt32. The only lane allowed to touch `src/` (a crypt32
+  import, if the PE backend needs one).
+- **sigil** — `pem_decode_certs_into` failed a whole bundle on one malformed block. The fix lands in **sigil
+  3.13.7**: ⛔ the user tags it BEFORE cyrius 6.6.14. The cyrius side is folded at integration
+  (`_tn_ca_parse_set` takes the lenient decode; the skipped count becomes `blocks − stored`).
 
 ---
 
@@ -184,7 +191,7 @@ tooling proposals (Phase 2). It is backend work, not language work, so it did no
 
 ---
 
-## Phase 2 — the tooling round-out (after 6.6.13, to the minor's close)
+## Phase 2 — the tooling round-out (after 6.6.14, to the minor's close)
 
 **Set 2026-10-01 (user): v6.6.x finishes on tooling.** Five of the six open proposals are tooling and
 stay here, sequenced by their own stated prerequisites rather than by size. P3 `const fn` is language,
@@ -322,7 +329,7 @@ Real 6.x-line work without a committed slot; pulled into a release the moment a 
 priority surfaces. **These are technical items → they stay in the 6.x cycle, never 7.x.**
 
 - **Found by the 6.6.13 lanes' reviews (2026-10-01; backlog, not placed — only the user promotes).** The TLS
-  finds moved to *6.6.14 — candidates* above.
+  finds are 6.6.14's scope (*6.6.14* above).
   - `cyrius deps` joins the `tag` value into `<home>/deps/<name>/<tag>` unchecked: `tag = "../../../x"`
     exits 1 (git refuses the ref) but leaves an empty directory outside the dep cache — CVE-62's class on
     the tag field.
@@ -340,7 +347,7 @@ priority surfaces. **These are technical items → they stay in the 6.x cycle, n
     foreign listener on the port before `s_server` dies on bind).
 - **Found by the 6.6.13 premise check (2026-10-01; backlog, not placed — only the user promotes).** Met in
   passing while planning M1–M3 and I1–I11, not swept for. ⚠ (a)–(c) are silent miscompiles. The TLS finds
-  (d), (e), (f), (i), (j) moved to *6.6.14 — candidates* above; the letters are kept for reference.
+  (d), (e), (f), (i), (j) are 6.6.14's scope (*6.6.14* above); the letters are kept for reference.
   - (a) A pointer-mode struct local assigned into an inline struct stores its address
     (`var a: Pt = alloc(16); var q: Pt; q = a;`): `_try_aggregate_copy_assign` (`parse.cyr` ~2457) gets 0
     from `_agc_operand` for a non-parameter pointer-mode local and falls to the 8-byte store.
