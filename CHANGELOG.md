@@ -182,7 +182,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   length is bounded by `bufmax` — `tests/tcyr/crypto/tls_libssl_spki_int_return.tcyr` (red on the 6.6.12
   code, green on x86_64 and qemu-aarch64; found by the I2 (c) review).
 
-- **CVE-TBD(I8) (P2) — the native TLS stack skipped plaintext ChangeCipherSpec records without
+- **CVE-61 (P2) — the native TLS stack skipped plaintext ChangeCipherSpec records without
   limit and took no deadline: anyone on the path, with no key, held a client for ever.** (I8, issue
   `2026-10-01-tls-native-no-deadline`; found by the abaco 2.4.12 HTTPS review.) Every record read
   went through `_tn_sock_read_record_skip_ccs`, which dropped ANY number of CCS records
@@ -472,7 +472,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **`tls_native_set_deadline(ctx, abs_ns)` (`lib/tls_native_conn.cyr`), `tls_set_deadline(ctx,
   abs_ns)` (`lib/tls.cyr`) and `TLS_ERR_TIMEOUT` (-22) — a per-connection deadline for the handshake
-  and every later read and write** (I8, CVE-TBD(I8) above). `abs_ns` is absolute, on lib/chrono's
+  and every later read and write** (I8, CVE-61 above). `abs_ns` is absolute, on lib/chrono's
   monotonic `clock_now_ns()` scale; 0 clears it; it may be set before connect / accept and changed
   between reads. Past it the read or write in progress returns `TLS_ERR_TIMEOUT` and the native ctx
   fails with it (plaintext already held from a record is still delivered). On the shim, set it

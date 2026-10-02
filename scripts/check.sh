@@ -1484,7 +1484,7 @@ _chk_gate "$ROOT/tests/gates/platform/agnos_sock_recv_bound.sh"
 # stall bound. agnos has no poll, so this is native TLS's write deadline there. Fake kernel.
 _chk_gate "$ROOT/tests/gates/platform/agnos_sock_send_deadline.sh"
 
-# 6.6.13 (I8, CVE-TBD(I8)) — native TLS's per-connection deadline on agnos: a record read hands the
+# 6.6.13 (I8, CVE-61) — native TLS's per-connection deadline on agnos: a record read hands the
 # time left to sock_recv's poll, a record write to _agnos_sock_send_dl(rearm=0), so the CALLER's
 # deadline (not the socket's 30 s default, not a re-armed stall bound) ends them with
 # TLS_ERR_TIMEOUT; no deadline, no change. Fake kernel (agnos has no poll and no SSH host).

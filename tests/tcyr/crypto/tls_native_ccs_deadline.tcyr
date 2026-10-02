@@ -1,4 +1,4 @@
-# tls_native_ccs_deadline.tcyr — 6.6.13 (CVE-TBD(I8)): ChangeCipherSpec records are bounded by
+# tls_native_ccs_deadline.tcyr — 6.6.13 (CVE-61): ChangeCipherSpec records are bounded by
 # the RFC window, and a per-connection deadline bounds every TLS read and write, end to end.
 #
 # ⛔ THE DEFECT (issue 2026-10-01-tls-native-no-deadline). Every native record read skipped ANY

@@ -228,7 +228,7 @@ enum TlsAlertDisposition {
 
 # What a record read may meet in place of the record it wants: a plaintext ChangeCipherSpec
 # (_tn_read_rec, lib/tls_native_conn.cyr). Each read site names its policy. Private.
-# CHANGELOG [6.6.13] (CVE-TBD(I8))
+# CHANGELOG [6.6.13] (CVE-61)
 enum TlsCcsPolicy {
     _TN_CCS_REFUSE = 0;         # no CCS here: before the first ClientHello, or after the peer's Finished
     _TN_CCS_MAY = 1;            # TLS 1.3 middlebox compatibility: one CCS per connection, dropped

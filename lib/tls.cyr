@@ -1023,7 +1023,7 @@ fn tls_connect_complete(ctx): i64 {
     return 1;
 }
 
-# 6.6.13 (CVE-TBD(I8)) — an absolute deadline for the connection: the handshake and every later
+# 6.6.13 (CVE-61) — an absolute deadline for the connection: the handshake and every later
 # tls_read / tls_write. `abs_ns` is on lib/chrono's monotonic clock_now_ns() scale; 0 clears it.
 # Set it between the two staged-connect phases so it bounds the handshake too:
 #
@@ -1348,7 +1348,7 @@ fn _tls_ssl_call(op, ssl, buf, n): i64 {
 # what tls_read / tls_write return (bytes, 0, or a TLS_ERR_* — _tls_ssl_io_ret's mapping, or
 # TLS_ERR_TIMEOUT once the deadline passes, or TLS_ERR_IO if the socket cannot be made
 # non-blocking or waited on); for CONNECT / ACCEPT, 1 on a completed handshake, else 0.
-# ⛔ 6.6.13 (CVE-TBD(I8)) — WHY. The libssl calls ran on the caller's blocking socket: a peer, or
+# ⛔ 6.6.13 (CVE-61) — WHY. The libssl calls ran on the caller's blocking socket: a peer, or
 # anyone on the path, holding back the next byte held the thread for ever, and the shim had no
 # deadline to give. Issue 2026-10-01-tls-native-no-deadline; CHANGELOG [6.6.13].
 fn _tls_ssl_io(ctx, op, buf, n): i64 {

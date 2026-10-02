@@ -493,7 +493,7 @@ fn _tn_hs_expect_ct(ctx, ct, want): i64 {
 # loops, reading no clock. The ctx-less _tn_sock_* names are their ctx == 0 forms. v6.2.4: the
 # leaves are the transport vtable's — _tn_tx_read / _tn_tx_write if installed, else sys_read /
 # sys_write. `fd` is the per-conn handle.
-# ⛔ 6.6.13 (CVE-TBD(I8)) — WHY. A record read looped read(2) until the record was complete, with
+# ⛔ 6.6.13 (CVE-61) — WHY. A record read looped read(2) until the record was complete, with
 # no clock: a peer that sent one byte just inside SO_RCVTIMEO held a 16 KB record read for days,
 # and nothing in the client took a deadline (the transport vtable is process-global, so a caller
 # could not install a per-connection one either). Issue 2026-10-01-tls-native-no-deadline (b);
@@ -750,7 +750,7 @@ fn _tn_sock_write_all(fd, buf, len): i64 { return _tn_io_write_all(0, fd, buf, l
 #   both        tls_native_read, after the handshake                    _TN_CCS_REFUSE
 # The window closes at the read that carries the peer's Finished; the native 1.3 client refuses a
 # HelloRetryRequest, so one CCS is always enough. ctx CCS_STATE bit0 records the peer's CCS.
-# ⛔ 6.6.13 (CVE-TBD(I8)) — WHY. Every read went through one helper that dropped ANY number of CCS
+# ⛔ 6.6.13 (CVE-61) — WHY. Every read went through one helper that dropped ANY number of CCS
 # records, during the handshake and after it: one CCS more often than the read timeout — from
 # anyone on the path, no key needed — held a client thread for ever, even inside a verified
 # session. That helper is deleted; no read skips a CCS outside this policy. Issue
