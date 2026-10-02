@@ -23,8 +23,15 @@
 # Finished in either direction — is TLS_ERR_ALERT (_tn_hs_plain_alert); it failed to open as
 # TLS_ERR_BAD_RECORD. The control rows put a plaintext HANDSHAKE record and a 3-byte plaintext
 # alert at the same sites: still refused (TLS_ERR_DECRYPT / TLS_ERR_BAD_RECORD), and at the 1.3
-# sites the open error now fails the ctx too (LAST_ERR said 0). The mTLS server rows trust the
-# test certificate as a root (a client certificate must chain since 6.6.14, CVE-64).
+# sites the open error now fails the ctx too (LAST_ERR said 0). The 1.3 client is also reached
+# where a CONTINUATION record of the server's flight is due (a sealed partial record first), and
+# the 1.3 server with a plaintext handshake record in place of the client's Certificate and its
+# CertificateVerify. The mTLS server rows trust the test certificate as a root (a client
+# certificate must chain since 6.6.14, CVE-64). MUTATIONS measured RED (6.6.14), each site's check
+# dropped alone: the plaintext-alert check at the first flight record, a continuation record, the
+# client's Certificate, its CertificateVerify, either Finished; the open error not failing the ctx
+# at a continuation record, the client's Certificate, its CertificateVerify. The 6.6.13 lib fails
+# 22 of the 182.
 include "lib/assert.cyr"
 include "lib/alloc.cyr"
 include "lib/string.cyr"
@@ -79,6 +86,7 @@ var _am_at = 0;                # which of its record writes to replace (1-based)
 var _am_kind = 0;
 var _am_keep = 0;              # leading records of the replaced write kept (sealed + overlong kinds)
 var _am_then_overlong = 0;     # AM_PARTIAL13: an over-length header instead of the sealed alert
+var _am_then_plain = 0;        # AM_PARTIAL13: this PLAINTEXT kind instead of the sealed alert (6.6.14)
 var _am_writes = 0;
 
 # A client-under-test row's observations: [connect rc, read 1, read 2, read 3, state, last error,
@@ -106,6 +114,24 @@ fn _am_overlong_hdr(p, ct): i64 {
     return TLS_RECORD_HEADER_LEN;
 }
 
+# One plaintext record of `kind` (AM_PLAIN_ALERT / AM_PLAIN_ALERT3: the alert under test;
+# AM_PLAIN_HS: a 40-byte Finished-typed handshake record), written to `fd`.
+fn _am_plain(fd, kind): i64 {
+    var rec[64];
+    memset(&rec, 0, 64);
+    if (kind == AM_PLAIN_HS) {
+        tls_native_record_write_header(&rec, TLS_CT_HANDSHAKE, 0x0303, 40);
+        tls_native_handshake_write_header(&rec + TLS_RECORD_HEADER_LEN, TLS_HS_FINISHED, 36);
+        return _am_write_all(fd, &rec, TLS_RECORD_HEADER_LEN + 40);
+    }
+    var al_n = 2;
+    if (kind == AM_PLAIN_ALERT3) { al_n = 3; }
+    tls_native_record_write_header(&rec, TLS_CT_ALERT, 0x0303, al_n);
+    store8(&rec + TLS_RECORD_HEADER_LEN, _am_level);
+    store8(&rec + TLS_RECORD_HEADER_LEN + 1, _am_desc);
+    return _am_write_all(fd, &rec, TLS_RECORD_HEADER_LEN + al_n);
+}
+
 # Replace one record write of the driver (`buf`, `n` bytes: one or more records) with the record
 # under test. The sealed kinds keep the first _am_keep records and seal the alert at the sequence
 # number the next record would have had.
@@ -124,23 +150,9 @@ fn _am_substitute(fd, buf, n): i64 {
     if (off > 0) { _am_write_all(fd, buf, off); }
     # The plaintext kinds (6.6.14: after the kept records too, so one can stand in place of a
     # record in the middle of a flight).
-    if (_am_kind == AM_PLAIN_ALERT) {
-        tls_native_record_write_header(&rec, TLS_CT_ALERT, 0x0303, 2);
-        memcpy(&rec + TLS_RECORD_HEADER_LEN, &al, 2);
-        return _am_write_all(fd, &rec, 7);
-    }
-    if (_am_kind == AM_PLAIN_ALERT3) {
-        tls_native_record_write_header(&rec, TLS_CT_ALERT, 0x0303, 3);
-        memcpy(&rec + TLS_RECORD_HEADER_LEN, &al, 2);
-        store8(&rec + TLS_RECORD_HEADER_LEN + 2, 0);
-        return _am_write_all(fd, &rec, 8);
-    }
-    if (_am_kind == AM_PLAIN_HS) {
-        memset(&rec, 0, 160);
-        tls_native_record_write_header(&rec, TLS_CT_HANDSHAKE, 0x0303, 40);
-        tls_native_handshake_write_header(&rec + TLS_RECORD_HEADER_LEN, TLS_HS_FINISHED, 36);
-        return _am_write_all(fd, &rec, TLS_RECORD_HEADER_LEN + 40);
-    }
+    if (_am_kind == AM_PLAIN_ALERT) { return _am_plain(fd, AM_PLAIN_ALERT); }
+    if (_am_kind == AM_PLAIN_ALERT3) { return _am_plain(fd, AM_PLAIN_ALERT3); }
+    if (_am_kind == AM_PLAIN_HS) { return _am_plain(fd, AM_PLAIN_HS); }
     if (_am_kind == AM_OVERLONG) {
         _am_overlong_hdr(&rec, TLS_CT_HANDSHAKE);
         return _am_write_all(fd, &rec, TLS_RECORD_HEADER_LEN);
@@ -179,6 +191,7 @@ fn _am_substitute(fd, buf, n): i64 {
             _am_overlong_hdr(&rec, TLS_CT_APPLICATION_DATA);
             return _am_write_all(fd, &rec, TLS_RECORD_HEADER_LEN);
         }
+        if (_am_then_plain != 0) { return _am_plain(fd, _am_then_plain); }
     }
     var ns = tls_native_record_seal(cipher, key, iv, c + so, TLS_CT_ALERT, &al, 2, &rec, 160);
     if (ns <= 0) { return 0 - 1; }
@@ -527,6 +540,18 @@ fn test_client_handshake_sites(): i64 {
           "  …while a plaintext HANDSHAKE record there still fails to open (DECRYPT)");
         _am_hs_client(2, AM_PLAIN_ALERT3, 0, TLS_ERR_BAD_RECORD,
           "  …and a 3-byte plaintext alert there is BAD_RECORD");
+        # The same three where a CONTINUATION record of the flight is due: a sealed partial record
+        # first, so the client is reading the flight's second record (tls_native_client_recv_flight).
+        _am_then_plain = AM_PLAIN_ALERT;
+        _am_hs_client(2, AM_PARTIAL13, 0, TLS_ERR_ALERT,
+          "a PLAINTEXT alert after a partial flight record: TLS_ERR_ALERT (6.6.14)");
+        _am_then_plain = AM_PLAIN_HS;
+        _am_hs_client(2, AM_PARTIAL13, 0, TLS_ERR_DECRYPT,
+          "  …while a plaintext HANDSHAKE record there fails to open (DECRYPT) and fails the ctx");
+        _am_then_plain = AM_PLAIN_ALERT3;
+        _am_hs_client(2, AM_PARTIAL13, 0, TLS_ERR_BAD_RECORD,
+          "  …and a 3-byte plaintext alert there is BAD_RECORD");
+        _am_then_plain = 0;
     } else {
         _am_hs_client(3, AM_SEALED12, 0, TLS_ERR_ALERT, "an alert sealed in place of the server's Finished");
         _am_hs_client(3, AM_OVERLONG, 0, TLS_ERR_BAD_RECORD,
@@ -587,6 +612,10 @@ fn test_server_handshake_sites(): i64 {
           "mTLS: a PLAINTEXT alert in place of the client's CertificateVerify: TLS_ERR_ALERT (6.6.14)");
         _am_hs_server(2, AM_PLAIN_HS, 0, vn, 0, 0, TLS_ERR_DECRYPT,
           "  …while a plaintext HANDSHAKE record in place of the Finished still fails to open (DECRYPT)");
+        _am_hs_server(2, AM_PLAIN_HS, 0, vp, 0, 0, TLS_ERR_DECRYPT,
+          "mTLS: a plaintext HANDSHAKE record in place of the client's Certificate: DECRYPT, ctx failed");
+        _am_hs_server(2, AM_PLAIN_HS, 1, vp, 1, 0, TLS_ERR_DECRYPT,
+          "mTLS: a plaintext HANDSHAKE record in place of the CertificateVerify: DECRYPT, ctx failed");
         _am_hs_server(2, AM_PLAIN_ALERT3, 0, vn, 0, 0, TLS_ERR_BAD_RECORD,
           "  …and a 3-byte plaintext alert there is BAD_RECORD");
     } else {
