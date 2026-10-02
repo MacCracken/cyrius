@@ -58,6 +58,7 @@ identical for both. Consumers MUST treat the transport as **opaque**:
 | Verb | Returns | Contract |
 |------|---------|----------|
 | `tls_available()` | 1 / 0 | Returns 1 once libssl has been successfully bootstrapped via fdlopen and the critical-symbol set has resolved — since 6.6.13 that set includes the five host-binding symbols (see "Server identity" below), so a libssl that cannot bind the leaf to `host` reads 0 rather than connecting unverified. Idempotent; runs `_tls_init` lazily. Returns 0 forever within the process once init has failed (no retry). Safe to call before any other verb. (Native backend: always 1.) |
+| `tls_init_main()` | 1 / 0 | **6.6.13.** Warm the stack once — call it on the MAIN thread before spawning TLS workers. Returns `tls_available()`'s verdict. Native: installs the main thread's crypto block and builds every lazy table a handshake reaches (SHA-256/-384/-512, AES-GCM, Ed25519, the P-256 and P-384 sign/verify tables, the X.509 OID and PEM tables) plus the system CA bundle cache. Recommended, not required (see "Thread safety"). Idempotent; once warmed a call allocates nothing; harmless on a worker (it installs nothing over the worker's own thread-local block). libssl: runs `_tls_init` — main thread only. |
 | `tls_supports_session_resumption()` | 1 / 0 | Returns 1 iff the linked libssl exposes `SSL_get1_session` + `SSL_set_session` + `SSL_SESSION_free` + `SSL_CTX_set_session_cache_mode`. Probe BEFORE installing session callbacks. |
 | `tls_supports_early_data()` | 1 / 0 | Returns 1 iff the linked libssl exposes the FULL 0-RTT client-correctness surface (write + read + max_early_data setter + get_early_data_status + SESSION_get_max_early_data). Probe BEFORE attempting any 0-RTT send/recv. |
 
@@ -257,6 +258,52 @@ window.
   returns the documented error sentinel (-1 / -2 / 0 / NOT_SENT) per
   table above. Consumers MUST probe `tls_supports_early_data` before
   attempting an early-data flow.
+
+## Thread safety
+
+Added 6.6.13 (issue `2026-09-30-tls-first-use-thread-race`). The two backends differ, and the
+libssl rule is a limit, not a guarantee.
+
+**Native backend (the default).**
+
+- Client and server verbs may run concurrently on any number of threads, each on its **own**
+  ctx. A ctx is single-threaded: one ctx's `tls_read` / `tls_write` / `tls_close` must not run
+  on two threads at once unless the caller holds its own lock.
+- **First use is race-free from any thread**, with no preparation. sigil ≥ 3.13.6 builds each
+  lazy table under a 0 → 1 → 2 once-guard and installs the main thread's crypto block only on a
+  thread that has none; the system CA bundle (`tls_native_set_ca_system`, reached by every
+  connect) is read once per process and published fenced. Measured with the filed repro on
+  x86_64 and natively on aarch64, for P-256, RSA-2048 and Ed25519 chains: two threads whose
+  first connects overlap, a later third thread, and a worker-then-main first use all succeed.
+  Through 6.6.12 the first two failed every handshake and the third was a SIGSEGV.
+- **`tls_init_main()` on the main thread before spawning TLS workers is recommended, not
+  required.** It moves the first-use cost (about 1.3 MB of sigil tables, the P-256 / P-384 comb
+  among them, and the bundle read) off the first handshake, and it ends the thread-pointer probe
+  sigil's `cbank()` makes on every call until the main thread's block exists — two syscalls per
+  call on an x86 kernel without FSGSBASE. Idempotent; calling it again, or from a worker, is safe.
+  The 6.6.12 workaround (`crypto_tls_main_init(); ecdsa_p256_warm(); ecdsa_p384_warm();`) stays
+  valid; `tls_init_main()` covers it and more.
+- **Process-global configuration is set once, before any thread connects**: `tls_set_backend`,
+  `tls_native_set_transport`, `tls_native_set_entropy`. They are plain stores, not per-ctx state.
+- **Lane bound.** sigil hands each crypto-touching thread a scratch lane on its first use and
+  never takes it back: after **63 lifetime** crypto threads lanes are shared and
+  `crypto_banks_exhausted()` reads 1. Two threads in one lane can corrupt each other's digest or
+  handshake — fail-closed noise, not a forged acceptance (the asymmetric stack is stack-local).
+  Reuse workers rather than retiring them, or cap the pool.
+
+**libssl backend (`-D CYRIUS_TLS_LIBSSL`, or `tls_set_backend(TLS_BACKEND_LIBSSL)`): MAIN THREAD
+ONLY.**
+
+- Every libssl call — first use, connect, accept, read, write, close — must be made on the main
+  thread, and a libssl ctx must not migrate to a worker. The glibc that `fdlopen` bootstraps
+  needs a glibc TCB; a cyrius `thread_create` worker's thread pointer holds cyrius's own
+  thread-local block instead. Measured on x86_64 at 6.6.13: `_tls_init` on main then one fetch
+  from a worker is a SIGSEGV; a worker's cold first use hangs; the threaded repro under libssl
+  aborts with `*** stack smashing detected ***`. A main-thread-only program is unaffected.
+- **Not guarded in 6.6.13**: the verbs do not detect an off-main call and do not fail closed
+  there — the program crashes or hangs. Tracked in the roadmap backlog (libssl from worker
+  threads). `_tls_init` is an attempt latch, not a once-guard, so libssl first use must also be
+  single-threaded.
 
 ## Escape hatch (non-contract)
 

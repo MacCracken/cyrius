@@ -86,6 +86,54 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   symbol's leg: available, then SIGSEGV), `SSL_set1_host`-style routing (the `[::1]` rows), SNI for
   every host (the IP SNI rows).
 
+### Fixed
+
+- **Native TLS: concurrent first connects each loaded the system CA bundle, unordered on aarch64**
+  (I3, issue `2026-09-30-tls-first-use-thread-race`). `tls_native_set_ca_system`
+  (`lib/tls_native_hs12.cyr`), reached by every native connect, cached the bundle with a
+  check-then-set on `_tn_ca_len` and published it as two plain stores. Threads whose first connects
+  overlapped each saw "not loaded", each allocated a megabyte that is never freed and read the
+  file (8 racers: 7-8 loads on x86, 2-7 on real aarch64); on aarch64 nothing ordered the buffer
+  pointer and its bytes before the length, so a reader could see a length with no bundle behind it
+  (fail-closed: zero roots). **Fix:** one 0 → 1 → 2 publish, `_tn_ca_state` — one thread claims
+  and loads (`_tn_ca_load`), every other caller waits for 2, the publish is fenced on aarch64 with
+  an acquire fence on the reader side (x86 is TSO: no fence, the `lib/freelist.cyr` rule). The
+  "none readable" result is still cached; an OOM is not (the claim rolls back to 0, so a later
+  caller retries). Return codes are unchanged. The sigil half of the issue (lazy tables,
+  the main thread's block) shipped in the sigil 3.13.6 fold below; with both halves the filed repro
+  exits 0 (3 on 6.6.12: A 10/10 and B 5/5 handshakes failed, C SIGSEGV), on x86_64 and natively on
+  aarch64, also against RSA-2048 and Ed25519 chains. **Tests:**
+  `tests/tcyr/crossos/tls_first_use_threads.tcyr` (no network, every cross-OS host): K workers make
+  their cold first use together — a client ctx with the system roots, SHA-256 known answer,
+  ECDSA P-256 sign + verify — then the main thread does the same (the issue's scenario C without
+  sockets); every return code and the RFC 6979 signature must agree; then K racers on a cache
+  forced cold must cost EXACTLY one load more than a warm round (the no-claim mutant costs 3-4).
+  It branches on `THREADS_CONCURRENT`: a start barrier where threads are real, sequential inline
+  workers and the same assertions where `thread_create` runs the body inline (Windows, x86-macOS,
+  agnos), where a barrier would spin forever. Hosts with no bundle (cass) assert `TLS_ERR_IO` from
+  every caller. New gate `tests/gates/concurrency/tls_first_use_thread_race.sh` builds the filed
+  repro verbatim with `build/cycc` and runs it against P-256, RSA-2048 and Ed25519 chains (named
+  SKIP 77 without openssl); against the pre-fold sigil it is RED (P-256 exit 3, the others exit 1).
+
+### Added
+
+- **`tls_init_main()` (`lib/tls.cyr`) — warm the TLS stack once, on the main thread** (I3). Returns
+  `tls_available()`'s verdict. Native: `crypto_tls_main_init()` (only a thread without a block gets
+  one), then every lazy table a handshake reaches — SHA-256/-512, AES-GCM, Ed25519,
+  `ecdsa_p256_warm`/`ecdsa_p384_warm`, the X.509 OID and PEM tables through their public entry
+  points — and the CA bundle cache, under its own 0 → 1 → 2 latch: idempotent, a warmed call
+  allocates nothing, harmless on a worker. Recommended, not required: since sigil 3.13.6 first use
+  is race-free; the verb moves about 1.3 MB of table builds and the bundle read off the first
+  handshake and ends sigil's per-`cbank()` thread-pointer probe until main's block exists. The
+  6.6.12 workaround (`crypto_tls_main_init(); ecdsa_p256_warm(); ecdsa_p384_warm();`) stays valid.
+  libssl: `_tls_init()`. `docs/development/lib-tls-contract.md` gains the verb row and a
+  **"Thread safety"** section: native verbs are safe concurrently on distinct ctxs, a ctx is
+  single-threaded, first use is race-free, process-global setters (`tls_set_backend`,
+  `tls_native_set_transport`, `tls_native_set_entropy`) are set once before any thread connects,
+  the 63-lifetime-thread lane bound; and the libssl backend is MAIN THREAD ONLY — a libssl call
+  from a `thread_create` worker SIGSEGVs or hangs (measured at 6.6.13) and is NOT guarded in this
+  release (backlogged).
+
 ### Downstream
 
 #### Folded — ⛔ each tagged BEFORE cyrius 6.6.13

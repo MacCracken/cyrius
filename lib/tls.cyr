@@ -32,6 +32,7 @@
 #
 # Interface:
 #   tls_available()            → 1 if libssl usable, 0 otherwise
+#   tls_init_main()            → warm the stack once, on the main thread (6.6.13) — 1 / 0
 #   tls_connect(sock, host)    → ctx on success, 0 on failure
 #   tls_write(ctx, buf, len)   → bytes written or -1
 #   tls_read(ctx, buf, maxlen) → bytes read or -1
@@ -371,6 +372,30 @@ fn _tls_native_alloc(sock, host, hook_fp, hook_ctx): i64 {
     return ctx;
 }
 
+# tls_init_main's native warm: 0 / 1 warming / 2 warmed.
+var _tls_main_state = 0;
+
+# Build every lazy table a native handshake reaches, then the CA bundle cache. Each step is its
+# own once-guarded init, so a racing caller can only repeat work, never corrupt it. Returns 0.
+fn _tls_native_warm(): i64 {
+    sha256_global_init();
+    sha512_global_init();                       # SHA-384 rides on it
+    aes_gcm_global_init();
+    ed25519_init();
+    ecdsa_p256_warm();                          # P-256 sign + verify tables (ECDHE shares them)
+    ecdsa_p384_warm();
+    # X.509 + PEM through their public entry points; neither input is a certificate. The parse
+    # fails at its first DER walk, AFTER the OID table is built; the PEM decode of an empty
+    # buffer finds no BEGIN marker, AFTER the base64 table is built. That is all a warm wants.
+    var junk[16];
+    memset(&junk, 0, 16);
+    var c = x509_cert_alloc();
+    if (c != 0) { x509_parse(&junk, 2, c); }
+    pem_decode_certs_into(&junk, 0, &junk, 1, &junk, 0);
+    _tn_ca_load();
+    return 0;
+}
+
 fn _tls_native_complete(ctx): i64 {
     var nctx = load64(ctx);
     # CVE-18 (v6.1.36): tls_native_connect is now fail-closed — it verifies the
@@ -387,6 +412,40 @@ fn _tls_native_complete(ctx): i64 {
 fn tls_available(): i64 {
     #ifndef CYRIUS_TLS_LIBSSL
     if (_tls_backend == 1) { return 1; }   # native is always available
+    #endif
+    _tls_init();
+    return _tls_ok;
+}
+
+# 6.6.13 — warm the TLS stack once, ideally on the MAIN thread before any thread connects.
+# Returns tls_available()'s verdict: 1 if the active backend is usable, 0 if not.
+#
+# Native backend: installs the main thread's crypto block (`crypto_tls_main_init` — a thread
+# that already has one, i.e. every worker, is left alone), then builds every lazy table a
+# handshake reaches and loads the system CA bundle cache (`_tls_native_warm`).
+# RECOMMENDED, NOT REQUIRED: since sigil 3.13.6 each of those inits is race-free and the CA cache
+# publishes once, so concurrent first use from workers is correct without this. What it buys is
+# the first handshake's latency (the P-256 comb, the bundle read) and an end to the thread-pointer
+# probe every `cbank()` makes until the main thread's block exists (two syscalls per call on an
+# x86 kernel without FSGSBASE). Idempotent and safe from any thread; once warmed a call allocates
+# nothing.
+# libssl backend: `_tls_init()`. That backend is MAIN-THREAD ONLY — see the contract's Thread
+# safety section. Issue 2026-09-30-tls-first-use-thread-race; CHANGELOG [6.6.13].
+fn tls_init_main(): i64 {
+    #ifndef CYRIUS_TLS_LIBSSL
+    if (_tls_backend == 1) {
+        crypto_tls_main_init();
+        if (atomic_load(&_tls_main_state) != 2) {
+            # No fence on either side of this state: it guards no data of its own — every table
+            # the warm builds is published, and read, behind that table's own once-flag.
+            if (atomic_cas(&_tls_main_state, 0, 1) == 1) {
+                _tls_native_warm();             # no return between the claim and the publish
+                atomic_store(&_tls_main_state, 2);
+            }
+            while (atomic_load(&_tls_main_state) != 2) { }
+        }
+        return 1;
+    }
     #endif
     _tls_init();
     return _tls_ok;

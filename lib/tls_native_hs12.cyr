@@ -1605,17 +1605,72 @@ fn tls_native_set_ca_bundle(ctx, pem_bundle, bundle_len, is_der): i64 {
 # no readable bundle", which is a different state from "not looked yet" (0). Without that, a
 # machine with no trust store re-walks all four candidate paths on every single connect —
 # four failed opens per connect, forever.
-var _tn_ca_buf = 0;      # cached bundle bytes
-var _tn_ca_len = 0;      # 0 = not loaded · >0 = bytes · -1 = looked, none readable
+#
+# ⛔ 6.6.13 — THE CACHE IS PUBLISHED ONCE, 0 -> 1 -> 2 (`_tn_ca_state`). It was check-then-set
+# on `_tn_ca_len`, published as two plain stores (`_tn_ca_buf`, then `_tn_ca_len`). Threads whose
+# first connects overlapped each saw 0, each allocated a megabyte and read the file (8 racers
+# made 7-8 loads on x86, 2-7 on aarch64), and on aarch64 nothing ordered the pointer and the
+# bytes before the length, so a reader could see a length with no bundle behind it. Now ONE
+# thread claims (0 -> 1) and loads, every other caller waits for 2, and on aarch64 the publish
+# and the read of it are fenced.
+# `_tn_ca_buf` / `_tn_ca_len` are DATA, valid only once the state reads 2.
+# Issue 2026-09-30-tls-first-use-thread-race; CHANGELOG [6.6.13].
+var _tn_ca_state = 0;    # 0 = not loaded · 1 = one thread loading · 2 = published
+var _tn_ca_buf = 0;      # cached bundle bytes                              } valid only
+var _tn_ca_len = 0;      # >0 = bytes · -1 = looked, none readable (cached) } at state 2
+
+# Load the bundle once per process: returns TLS_OK once `_tn_ca_buf`/`_tn_ca_len` are published
+# (a cached "none readable" included), or TLS_ERR_OOM, which is NOT cached — the claim is rolled
+# back to 0 so a later caller tries again. Safe from any thread.
+#
+# ⚠ Nothing between the claim and the publish may `return`: the state would stay 1 and every later
+# connect would spin forever. The build lives in `_tn_ca_read`; the only exit here is the OOM
+# rollback, which releases the claim itself.
+fn _tn_ca_load(): i64 {
+    var s = atomic_load(&_tn_ca_state);
+    while (s != 2) {
+        if (s == 0) {
+            if (atomic_cas(&_tn_ca_state, 0, 1) == 1) {
+                var cap = 1048576;              # 1 MiB; system bundles are ~250 KB
+                var buf = alloc(cap);
+                if (buf == 0) {
+                    atomic_store(&_tn_ca_state, 0);
+                    return TLS_ERR_OOM;
+                }
+                var total = _tn_ca_read(buf, cap);
+                _tn_ca_buf = buf;
+                _tn_ca_len = total;
+                # Release half: the bytes, the pointer and the length before the 2. aarch64 only
+                # — x86 (TSO) keeps store order, so a fence there is pure tax (lib/freelist.cyr).
+                #ifdef CYRIUS_ARCH_AARCH64
+                atomic_fence();
+                #endif
+                atomic_store(&_tn_ca_state, 2);
+                return TLS_OK;
+            }
+        }
+        s = atomic_load(&_tn_ca_state);
+    }
+    # Acquire half: on aarch64 the loads of `_tn_ca_buf`/`_tn_ca_len` and the bundle bytes must
+    # not be satisfied before the state load that saw 2. x86 (TSO) never reorders loads.
+    #ifdef CYRIUS_ARCH_AARCH64
+    atomic_fence();
+    #endif
+    return TLS_OK;
+}
 
 # Install the platform's system CA bundle (cached per process) — see the block above.
 fn tls_native_set_ca_system(ctx): i64 {
     if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
-    if (_tn_ca_len == (0 - 1)) { return TLS_ERR_IO; }
-    if (_tn_ca_len > 0) { return tls_native_set_ca_bundle(ctx, _tn_ca_buf, _tn_ca_len, 0); }
-    var cap = 1048576;                          # 1 MiB; system bundles are ~250 KB
-    var buf = alloc(cap);
-    if (buf == 0) { return TLS_ERR_OOM; }
+    var lr = _tn_ca_load();
+    if (lr != TLS_OK) { return lr; }
+    if (_tn_ca_len < 0) { return TLS_ERR_IO; }
+    return tls_native_set_ca_bundle(ctx, _tn_ca_buf, _tn_ca_len, 0);
+}
+
+# Read the first readable system bundle into `buf` (`cap` bytes). Returns the byte count, or -1
+# when no candidate is readable (the caller caches that). Called only by the claim holder.
+fn _tn_ca_read(buf, cap): i64 {
     # v6.2.23: open through io.cyr's `file_open` per-target bridge, NOT raw
     # `sys_open`. On CYRIUS_TARGET_AGNOS sys_open is (name, namelen, flags) —
     # a raw `sys_open(path, 0, 0)` reads the `0` as namelen=0, opens a
@@ -1628,7 +1683,7 @@ fn tls_native_set_ca_system(ctx): i64 {
     if (fd < 0) { fd = file_open("/etc/ssl/certs/ca-certificates.crt", 0, 0); }   # Debian/Ubuntu
     if (fd < 0) { fd = file_open("/etc/pki/tls/certs/ca-bundle.crt", 0, 0); }     # RHEL/Fedora
     if (fd < 0) { fd = file_open("/etc/ssl/ca-bundle.pem", 0, 0); }               # openSUSE
-    if (fd < 0) { _tn_ca_len = 0 - 1; return TLS_ERR_IO; }
+    if (fd < 0) { return 0 - 1; }
     var total = 0;
     var rdone = 0;
     while (rdone == 0) {
@@ -1638,10 +1693,8 @@ fn tls_native_set_ca_system(ctx): i64 {
         if (total >= cap) { rdone = 1; }
     }
     sys_close(fd);
-    if (total <= 0) { _tn_ca_len = 0 - 1; return TLS_ERR_IO; }
-    _tn_ca_buf = buf;
-    _tn_ca_len = total;
-    return tls_native_set_ca_bundle(ctx, buf, total, 0);
+    if (total <= 0) { return 0 - 1; }
+    return total;
 }
 
 # v6.2.8: mTLS client-auth — install the CLIENT's own certificate so it can

@@ -1,0 +1,225 @@
+# tls_first_use_threads.tcyr — 6.6.13: the native TLS stack's FIRST use is thread-safe.
+#
+# Issue 2026-09-30-tls-first-use-thread-race (abaco 2.4.9): two threads whose first TLS connects
+# overlapped failed every handshake for the life of the process, and a first use on a worker
+# followed by one on the main thread was a SIGSEGV. The sigil half (race-free lazy inits, the
+# main thread's crypto block) landed with the sigil 3.13.6 fold; this file pins it on every
+# target together with cyrius's own half:
+#   - the system-CA bundle cache publishes ONCE (`_tn_ca_state` 0 -> 1 -> 2). It was
+#     check-then-set: every racing first caller allocated a megabyte and read the file
+#     (7-8 loads from 8 racers on x86, 2-7 on aarch64), unordered on aarch64;
+#   - `tls_init_main()`, the warm verb: idempotent, allocation-free once warmed, harmless on a
+#     worker thread.
+# No network and no fork: one cold process, so it runs on every cross-OS host.
+#
+# ⚠ BRANCHES ON THREADS_CONCURRENT, NOT ON THE TARGET NAME. Where thread_create runs the body
+# INLINE (Windows, x86-macOS, agnos) a start barrier would spin forever — the first "worker"
+# waits for a release the main thread can only give after thread_create returns. There the K
+# workers run sequentially with no barrier, and the assertions are the same ones: identical
+# return codes, correct results, exactly one bundle load. Where threads are real (Linux,
+# arm64-macOS) the workers park at the barrier and are released together, so their first uses
+# overlap. Every spin is BOUNDED so a broken barrier fails a test instead of hanging the leg.
+#
+# Hosts with no system bundle (cass) answer TLS_ERR_IO — consistently, from every caller; that
+# is the cached "looked, none readable" and is asserted as such, not skipped.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/thread.cyr"
+include "lib/thread_local.cyr"
+include "lib/tls.cyr"
+
+enum FirstUseK {
+    FT_K = 4;              # workers per round
+    FT_REC = 128;          # per-worker record, bytes (see _ft_first_use)
+    FT_SPIN = 400000000;   # barrier bound: a FAIL, never a hang
+}
+
+var _ft_arrived = 0;
+var _ft_go = 0;
+var _ft_G = 0;             # P-256 base point G (x || y, 64 bytes): the public key for d = 1
+var _ft_d1 = 0;            # the private scalar 1, 32 bytes big-endian
+var _ft_abc = 0;           # SHA-256("abc"), FIPS 180-2 B.1
+
+# Park until the round is released. Serial backends never park (see the header).
+fn _ft_barrier(rec): i64 {
+    if (THREADS_CONCURRENT == 0) { return 0; }
+    atomic_fetch_add(&_ft_arrived, 1);
+    var i = 0;
+    while (atomic_load(&_ft_go) == 0) {
+        i = i + 1;
+        if (i > FT_SPIN) { store64(rec + 120, 1); return 0; }
+    }
+    return 0;
+}
+
+# Cold first use, as a TLS client meets it: a client ctx with the system roots, a hash, and an
+# ECDSA P-256 sign + verify. Record: +0 set_ca_system rc · +8 SHA-256 KAT ok · +16 sign rc ·
+# +24 verify(signed msg) · +32 verify(other msg) · +40..+104 the signature · +120 barrier timeout.
+fn _ft_first_use(rec): i64 {
+    _ft_barrier(rec);
+    var c = tls_native_new_client("localhost", 9);
+    store64(rec, tls_native_set_ca_system(c));
+    var dg[32];
+    sha256("abc", 3, &dg);
+    store64(rec + 8, memeq(&dg, _ft_abc, 32));
+    store64(rec + 16, ecdsa_p256_sign(_ft_d1, "first use", 9, rec + 40));
+    store64(rec + 24, ecdsa_p256_verify(_ft_G, "first use", 9, rec + 40));
+    store64(rec + 32, ecdsa_p256_verify(_ft_G, "first usf", 9, rec + 40));
+    return 0;
+}
+
+# Only the CA path: a client ctx with the system roots. Record: +0 rc · +120 barrier timeout.
+fn _ft_ca_only(rec): i64 {
+    _ft_barrier(rec);
+    var c = tls_native_new_client("localhost", 9);
+    store64(rec, tls_native_set_ca_system(c));
+    return 0;
+}
+
+# tls_init_main on a worker. Record: +0 its result · +8 a thread-local slot written before the
+# call, read after it (a block installed over this thread's would read 0) · +16 CA state after.
+fn _ft_init_on_worker(rec): i64 {
+    var slot = load64(rec + 24);
+    thread_local_set(slot, 0x5A5A);
+    store64(rec, tls_init_main());
+    store64(rec + 8, thread_local_get(slot));
+    store64(rec + 16, atomic_load(&_tn_ca_state));
+    return 0;
+}
+
+# One round: K workers on `body`, released together where threads are real.
+fn _ft_round(body, recs): i64 {
+    atomic_store(&_ft_arrived, 0);
+    atomic_store(&_ft_go, 0);
+    var t: i64[4];
+    var i = 0;
+    while (i < FT_K) {
+        memset(recs + i * FT_REC, 0, FT_REC);
+        t[i] = thread_create(body, recs + i * FT_REC);
+        i = i + 1;
+    }
+    if (THREADS_CONCURRENT == 1) {
+        var n = 0;
+        while (atomic_load(&_ft_arrived) < FT_K) {
+            n = n + 1;
+            if (n > FT_SPIN) { break; }
+        }
+        atomic_store(&_ft_go, 1);
+    }
+    i = 0;
+    while (i < FT_K) { thread_join(t[i]); i = i + 1; }
+    return 0;
+}
+
+# Test-only: forget the process's CA bundle cache so the next caller loads it cold. Reaches the
+# private state of lib/tls_native_hs12.cyr on purpose — the load count is what is under test.
+fn _ft_ca_forget(): i64 {
+    _tn_ca_state = 0;
+    _tn_ca_buf = 0;
+    _tn_ca_len = 0;
+    return 0;
+}
+
+fn _ft_rc_ok(rc): i64 {
+    if (rc == TLS_OK) { return 1; }
+    if (rc == TLS_ERR_IO) { return 1; }   # no system bundle on this host (cass)
+    return 0;
+}
+
+fn test_concurrent_cold_first_use(recs, main_rec): i64 {
+    test_group("cold first use from K workers, then from the main thread");
+    _ft_round(&_ft_first_use, recs);
+    var rc0 = load64(recs);
+    assert_eq(_ft_rc_ok(rc0), 1, "set_ca_system: TLS_OK, or TLS_ERR_IO where the host has no bundle");
+    var i = 0;
+    while (i < FT_K) {
+        var r = recs + i * FT_REC;
+        assert_eq(load64(r + 120), 0, "the worker was released (barrier did not time out)");
+        assert_eq(load64(r), rc0, "every worker gets the same set_ca_system rc");
+        assert_eq(load64(r + 8), 1, "SHA-256(abc) is the FIPS 180-2 digest on every worker");
+        assert_eq(load64(r + 16), 0, "ecdsa_p256_sign succeeds on every worker");
+        assert_eq(load64(r + 24), 1, "the signature verifies on every worker");
+        assert_eq(load64(r + 32), 0, "a different message is refused on every worker");
+        assert_eq(memeq(r + 40, recs + 40, 64), 1, "every worker made the same RFC 6979 signature");
+        i = i + 1;
+    }
+    # Scenario C of the issue without the sockets: the main thread's first crypto after the
+    # workers'. On 6.6.12 this was a SIGSEGV (main had no thread-local block).
+    memset(main_rec, 0, FT_REC);
+    _ft_first_use(main_rec);
+    assert_eq(load64(main_rec), rc0, "main thread, after the workers: same set_ca_system rc");
+    assert_eq(load64(main_rec + 8), 1, "main thread: SHA-256 KAT");
+    assert_eq(load64(main_rec + 16), 0, "main thread: sign succeeds");
+    assert_eq(load64(main_rec + 24), 1, "main thread: the signature verifies");
+    assert_eq(load64(main_rec + 32), 0, "main thread: a different message is refused");
+    assert_eq(memeq(main_rec + 40, recs + 40, 64), 1, "main thread: the same signature as the workers");
+    return 0;
+}
+
+fn test_bundle_loaded_once(recs): i64 {
+    test_group("K racing cold CA callers make exactly ONE bundle load");
+    # Round A: cache forced cold, K workers race. Round B: the same, cache warm. Everything
+    # else is warm by now, so the difference between the rounds is the bundle loads alone.
+    _ft_ca_forget();
+    var a0 = alloc_used();
+    _ft_round(&_ft_ca_only, recs);
+    var cold = alloc_used() - a0;
+    var rc0 = load64(recs);
+    var i = 0;
+    while (i < FT_K) {
+        assert_eq(load64(recs + i * FT_REC + 120), 0, "the worker was released (barrier did not time out)");
+        assert_eq(load64(recs + i * FT_REC), rc0, "every racing caller gets the same rc");
+        i = i + 1;
+    }
+    assert_eq(_ft_rc_ok(rc0), 1, "racing callers: TLS_OK, or TLS_ERR_IO where the host has no bundle");
+    assert_eq(atomic_load(&_tn_ca_state), 2, "the cache is published (state 2) after the race");
+    var b0 = alloc_used();
+    _ft_round(&_ft_ca_only, recs);
+    var warm = alloc_used() - b0;
+    # The cost of ONE load, measured alone on this thread.
+    _ft_ca_forget();
+    var l0 = alloc_used();
+    _tn_ca_load();
+    var one = alloc_used() - l0;
+    assert_gt(one, 0, "a cold load allocates its buffer");
+    assert_eq(cold - warm, one, "the racing round cost exactly one bundle load more than the warm round");
+    return 0;
+}
+
+fn test_init_main(recs): i64 {
+    test_group("tls_init_main: harmless on a worker, idempotent, allocation-free once warm");
+    _ft_ca_forget();
+    var r = recs;
+    memset(r, 0, FT_REC);
+    store64(r + 24, thread_local_alloc());
+    var t = thread_create(&_ft_init_on_worker, r);
+    thread_join(t);
+    assert_eq(load64(r), 1, "tls_init_main on a worker returns 1 (native backend)");
+    assert_eq(load64(r + 8), 0x5A5A, "it installed no thread-local block over the worker's own");
+    assert_eq(load64(r + 16), 2, "it loaded the CA bundle cache");
+    assert_eq(tls_init_main(), 1, "tls_init_main on the main thread returns 1");
+    var a0 = alloc_used();
+    assert_eq(tls_init_main(), 1, "a second call returns 1");
+    assert_eq(alloc_used() - a0, 0, "a second call allocates nothing");
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    _ft_G = alloc(64);     # SEC 2 / FIPS 186-4 D.1.2.3: Gx || Gy
+    hex_decode_into("6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296", 64, _ft_G);
+    hex_decode_into("4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5", 64, _ft_G + 32);
+    _ft_d1 = hex_decode("0000000000000000000000000000000000000000000000000000000000000001", 64);
+    _ft_abc = hex_decode("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", 64);
+    var recs = alloc(FT_K * FT_REC);
+    var main_rec = alloc(FT_REC);
+    test_concurrent_cold_first_use(recs, main_rec);
+    test_bundle_loaded_once(recs);
+    test_init_main(recs);
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);

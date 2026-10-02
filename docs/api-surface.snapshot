@@ -5098,6 +5098,7 @@ tls::tls_get_backend/0
 tls::tls_get_early_data_status/1
 tls::tls_get_peer_spki_der/3
 tls::tls_get_session/1
+tls::tls_init_main/0
 tls::tls_read/3
 tls::tls_read_early_data/3
 tls::tls_session_free/1
