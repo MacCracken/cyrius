@@ -337,7 +337,7 @@ fn tls_native_client_recv_flight(ctx, record, record_len): i64 {
         if (plen >= pcap) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }   # flight too large
         if (inbuf == 0) { inbuf = _tn_alloc(ctx, rcap); }
         if (inbuf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
-        var rl = _tn_sock_read_record_skip_ccs(fd, inbuf, rcap);
+        var rl = _tn_read_rec(ctx, fd, inbuf, rcap, _TN_CCS_MAY);
         if (rl < 0) { return _tn_read_fail(ctx, rl); }
         var ct2 = 0;
         var more = tls_native_client_open_handshake(ctx, inbuf, rl, plain + plen, pcap - plen, &ct2);
@@ -854,7 +854,8 @@ fn _tn_send_key_update(ctx, request_update): i64 {
     if (rec == 0) { return TLS_ERR_OOM; }
     var rn = _tn_seal_ct(ctx, TLS_CT_HANDSHAKE, &msg, TLS_HANDSHAKE_HEADER_LEN + 1, rec, 64);
     if (rn < 0) { return rn; }
-    if (_tn_sock_write_all(fd, rec, rn) < 0) { return TLS_ERR_IO; }
+    var w = _tn_io_write_all(ctx, fd, rec, rn);
+    if (w < 0) { return w; }
     return _tn_rotate_send_keys(ctx);
 }
 

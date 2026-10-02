@@ -104,6 +104,7 @@ var TLS_ERR_AUTHN = 0 - 16;              # signature verification failed
 var TLS_ERR_ALERT = 0 - 17;              # peer sent a fatal alert
 var TLS_ERR_BUFFER_FULL = 0 - 18;        # output buffer too small
 var TLS_ERR_PROTOCOL = 0 - 19;           # state-machine violation
+var TLS_ERR_TIMEOUT = 0 - 20;            # the caller's deadline passed (tls_native_set_deadline, 6.6.13)
 
 # ================================================================
 # Record-layer types (RFC 8446 §5.1, RFC 5246 §6.2)
@@ -229,6 +230,15 @@ enum TlsAlertDescription {
 enum TlsAlertDisposition {
     _TN_ALERT_EOF = 0;          # warning-level close_notify: the end of the stream
     _TN_ALERT_IGNORE = 1;       # warning-level user_canceled: dropped, the read goes on
+}
+
+# What a record read may meet in place of the record it wants: a plaintext ChangeCipherSpec
+# (_tn_read_rec, lib/tls_native_conn.cyr). Each read site names its policy. Private.
+# CHANGELOG [6.6.13] (CVE-TBD(I8))
+enum TlsCcsPolicy {
+    _TN_CCS_REFUSE = 0;         # no CCS here: before the first ClientHello, or after the peer's Finished
+    _TN_CCS_MAY = 1;            # TLS 1.3 middlebox compatibility: one CCS per connection, dropped
+    _TN_CCS_MUST = 2;           # TLS 1.2: exactly one CCS, directly before the peer's Finished
 }
 
 # ================================================================

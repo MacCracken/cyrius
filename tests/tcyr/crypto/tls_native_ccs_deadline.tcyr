@@ -1,0 +1,775 @@
+# tls_native_ccs_deadline.tcyr — 6.6.13 (CVE-TBD(I8)): ChangeCipherSpec records are bounded by
+# the RFC window, and a per-connection deadline bounds every TLS read and write, end to end.
+#
+# ⛔ THE DEFECT (issue 2026-10-01-tls-native-no-deadline). Every native record read skipped ANY
+# number of plaintext CCS records, during the handshake and after it, and nothing in the client
+# took a deadline: anyone on the path, with no key, held a client thread for ever by sending one
+# CCS record more often than the read timeout (the filed repro: both clients still blocked at 10 s
+# under a 2 s SO_RCVTIMEO), and a peer dripping one byte at a time held a single record read for
+# days. Now (lib/tls_native_conn.cyr, "ChangeCipherSpec: one policy per record read site"):
+#   * TLS 1.3 — at most ONE CCS, before the peer's Finished; TLS 1.2 — exactly one, directly
+#     before the peer's Finished; anything else is TLS_ERR_PROTOCOL after an unexpected_message
+#     alert, plaintext or sealed under our current write keys;
+#   * tls_native_set_deadline / tls_set_deadline bound the handshake and every later read and
+#     write with TLS_ERR_TIMEOUT, on both backends (libssl through SSL_get_error's WANT_READ /
+#     WANT_WRITE on a non-blocking socket).
+#
+# The end under test runs in this process; its peer is a forked native endpoint (socketpair) that
+# misbehaves on cue — a raw writer, or the REAL native driver with a transport write hook
+# (tls_native_set_transport, in the child only) that drops or prefixes one of its record writes —
+# or OpenSSL's s_server. Every end reads under a receive timeout, so a regression fails a row
+# instead of hanging the run. The cross-host rows (no fork) are tests/tcyr/crossos/tls_native_deadline_ccs.tcyr.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/io.cyr"
+include "lib/net.cyr"
+include "lib/chrono.cyr"
+include "lib/tls.cyr"
+
+#ifdef CYRIUS_TARGET_AGNOS
+# The agnos deadline is tests/gates/platform/agnos_tls_deadline.sh (fake kernel).
+var _agnos_skip = "  SKIP (agnos): a socketpair + fork run (no socketpair; 1-arg waitpid)\n";
+sys_write(1, _agnos_skip, strlen(_agnos_skip));
+#endif
+#ifdef CYRIUS_TARGET_WIN
+var _win_skip = "  SKIP (windows): socketpair + fork, and no native TLS over Winsock (roadmap backlog j)\n";
+sys_write(1, _win_skip, strlen(_win_skip));
+#endif
+#ifndef CYRIUS_TARGET_AGNOS
+#ifndef CYRIUS_TARGET_WIN
+
+enum CcsDeadlineLimits { CD_TIMEOUT_S = 5; }
+
+var _cd_cert = 0;              # DER, self-signed P-256, CN = SAN DNS = localhost, CA:TRUE
+var _cd_cert_len = 406;
+var _cd_key = 0;               # PKCS#8 DER
+var _cd_key_len = 138;
+var _cd_ver12 = 0;             # 1: the native ends are pinned to TLS 1.2
+
+# The child's write hook: write number _cd_hook_at (and _cd_hook_at2) is dropped (_cd_hook_mode 0),
+# sent after _cd_hook_mode CCS records (1, 2), sent with one CCS after its first k records
+# (CD_AFTER + k: the client's mTLS second flight is Certificate, CertificateVerify, Finished in one
+# write), or (CD_SPLIT, a 1.3 server's flight) replaced by a sealed, incomplete handshake message,
+# one CCS, then a sealed alert — so the client's flight continuation read meets the CCS. Every
+# other write passes through.
+var _cd_hook_at = 0;
+var _cd_hook_at2 = 0;
+var _cd_hook_mode = 0;
+var _cd_writes = 0;
+var _cd_peer = 0;              # the child's native ctx (CD_SPLIT seals with its keys)
+enum CcsDeadlineHook { CD_SPLIT = 9; CD_AFTER = 20; }
+
+fn _cd_write_all(fd, buf, n): i64 {
+    var off = 0;
+    while (off < n) {
+        var w = sys_write(fd, buf + off, n - off);
+        if (w <= 0) { return 0 - 1; }
+        off = off + w;
+    }
+    return n;
+}
+
+fn _cd_ccs(fd): i64 { return _cd_write_all(fd, "\x14\x03\x03\x00\x01\x01", 6); }
+
+# CD_SPLIT: the server flight replaced, under the server's handshake keys from sequence 0.
+fn _cd_split_flight(fd): i64 {
+    var c = _cd_peer;
+    var cipher = load64(c + TLS_CTX_OFF_CIPHER);
+    var key = load64(c + TLS_CTX_OFF_SRV_HS_KEY);
+    var iv = load64(c + TLS_CTX_OFF_SRV_HS_IV);
+    _tn_be64_w(c + TLS_CTX_OFF_SRV_SEQ, 0);
+    var rec[160];
+    var part[8];
+    store8(&part, TLS_HS_ENCRYPTED_EXTENSIONS);       # a 16-byte message, none of its body sent
+    store8(&part + 1, 0);
+    store8(&part + 2, 0);
+    store8(&part + 3, 16);
+    var np = tls_native_record_seal(cipher, key, iv, c + TLS_CTX_OFF_SRV_SEQ, TLS_CT_HANDSHAKE, &part, 4, &rec, 160);
+    if (np <= 0) { return 0 - 1; }
+    _cd_write_all(fd, &rec, np);
+    _cd_ccs(fd);
+    var al[2];
+    store8(&al, TLS_ALERT_FATAL);
+    store8(&al + 1, TLS_AD_HANDSHAKE_FAILURE);
+    var na = tls_native_record_seal(cipher, key, iv, c + TLS_CTX_OFF_SRV_SEQ, TLS_CT_ALERT, &al, 2, &rec, 160);
+    if (na <= 0) { return 0 - 1; }
+    return _cd_write_all(fd, &rec, na);
+}
+
+fn _cd_hook(fd, buf, n): i64 {
+    _cd_writes = _cd_writes + 1;
+    if (_cd_writes == _cd_hook_at || _cd_writes == _cd_hook_at2) {
+        if (_cd_hook_mode == 0) { return n; }               # dropped
+        if (_cd_hook_mode == CD_SPLIT) { _cd_split_flight(fd); return n; }
+        if (_cd_hook_mode >= CD_AFTER) {
+            var off = 0;
+            var r = 0;
+            while (r < _cd_hook_mode - CD_AFTER) {
+                off = off + TLS_RECORD_HEADER_LEN + _tn_be16_r(buf + off + 3);
+                r = r + 1;
+            }
+            if (off > n) { off = n; }
+            if (off > 0) { _cd_write_all(fd, buf, off); }
+            _cd_ccs(fd);
+            if (n > off) { _cd_write_all(fd, buf + off, n - off); }
+            return n;
+        }
+        var k = 0;
+        while (k < _cd_hook_mode) { _cd_ccs(fd); k = k + 1; }
+    }
+    return _cd_write_all(fd, buf, n);
+}
+
+fn _cd_hold(fd): i64 {
+    var drain[64];
+    while (sys_read(fd, &drain, 64) > 0) { }
+    return 0;
+}
+
+fn _cd_ms(t0): i64 { return (clock_now_ns() - t0) / 1000000; }
+
+# O_NONBLOCK on this target (Darwin 4, Linux 2048).
+fn _cd_nb(): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    return 4;
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
+    return 2048;
+    #endif
+}
+
+# A socketpair: out[0] = the server end, out[8] = the client end.
+fn _cd_pair(out): i64 {
+    var fds[8];
+    sys_socketpair(1, 1, 0, &fds);
+    var fdp = load64(&fds);
+    store64(out, fdp & 0xFFFFFFFF);
+    store64(out + 8, (fdp >> 32) & 0xFFFFFFFF);
+    return 0;
+}
+
+fn _cd_server_ctx(): i64 {
+    var srv = tls_native_new_server(_cd_cert, _cd_cert_len, _cd_key, _cd_key_len);
+    tls_native_server_load_creds(srv);
+    if (_cd_ver12 == 1) { tls_native_set_version_range(srv, TLS_VERSION_1_2, TLS_VERSION_1_2); }
+    return srv;
+}
+
+fn _cd_client_ctx(): i64 {
+    var c = tls_native_new_client("localhost", 9);
+    tls_native_set_verify(c, TLS_VERIFY_NONE);
+    if (_cd_ver12 == 1) { tls_native_set_version_range(c, TLS_VERSION_1_2, TLS_VERSION_1_2); }
+    return c;
+}
+
+fn _cd_noverify(hctx, handle): i64 {
+    tls_set_verify(handle, 0, 0);
+    if (_cd_ver12 == 1) { tls_native_set_version_range(handle, TLS_VERSION_1_2, TLS_VERSION_1_2); }
+    return 0;
+}
+
+fn _cd_wait(pid): i64 {
+    var st[4];
+    store64(&st, 0);
+    sys_waitpid(pid, &st, 0);
+    return load64(&st) & 0xFFFF;
+}
+
+fn _cd_kill(pid): i64 {
+    sys_kill(pid, 9);
+    return _cd_wait(pid);
+}
+
+# ── The forked servers ─────────────────────────────────────────────────────────────────────────
+enum CcsDeadlineScript {
+    CS_RAW_CCS_FLOOD = 1;     # read the ClientHello, then a CCS every 100 ms (the filed repro, case 1)
+    CS_POST_CCS = 2;          # handshake, read the request, one CCS; then expect the client's sealed alert
+    CS_RAW_DRIP = 3;          # read the ClientHello, then a 100-byte record header and 1 byte per 100 ms
+    CS_POST_DRIP = 4;         # handshake, then an app record header and 1 byte per 100 ms
+    CS_HOLD = 5;              # handshake, then read nothing
+    CS_RAW_HOLD = 6;          # read the ClientHello, then nothing
+    CS_HOOKED = 7;            # handshake with the write hook armed, then expect the client's sealed alert
+    CS_HOOKED_HS = 8;         # handshake with the write hook armed (its result is the client's row), then hold
+}
+
+fn _cd_drip(fd, n): i64 {
+    var k = 0;
+    while (k < n) {
+        if (sys_write(fd, "x", 1) != 1) { return 0; }
+        sleep_ms(100);
+        k = k + 1;
+    }
+    return 0;
+}
+
+fn _cd_serve(sfd, script): i64 {
+    sock_set_recv_timeout(sfd, CD_TIMEOUT_S, 0);
+    var b = alloc(4096);
+    if (script == CS_RAW_CCS_FLOOD || script == CS_RAW_DRIP || script == CS_RAW_HOLD) {
+        sys_read(sfd, b, 4096);
+        if (script == CS_RAW_CCS_FLOOD) {
+            var k = 0;
+            while (k < 40) {
+                if (_cd_ccs(sfd) != 6) { return 0; }
+                sleep_ms(100);
+                k = k + 1;
+            }
+        }
+        if (script == CS_RAW_DRIP) {
+            _cd_write_all(sfd, "\x16\x03\x03\x00\x64", 5);
+            _cd_drip(sfd, 40);
+        }
+        sleep_ms(3000);
+        return 0;
+    }
+    var srv = _cd_server_ctx();
+    _cd_peer = srv;
+    if (script == CS_HOOKED || script == CS_HOOKED_HS) { tls_native_set_transport(0, &_cd_hook, 0); }
+    var ar = tls_native_accept(srv, sfd);
+    if (script == CS_HOOKED_HS) { _cd_hold(sfd); return 0; }
+    if (ar != TLS_OK) { return 3; }
+    if (script == CS_HOLD) { sleep_ms(3000); return 0; }
+    if (script == CS_POST_DRIP) {
+        _cd_write_all(sfd, "\x17\x03\x03\x00\x64", 5);
+        _cd_drip(sfd, 40);
+        return 0;
+    }
+    if (script == CS_POST_CCS) {
+        if (tls_native_read(srv, b, 256) <= 0) { return 4; }
+        if (_cd_ccs(sfd) != 6) { return 5; }
+    }
+    # The client's answer: an unexpected_message alert sealed under its write keys, which this
+    # end must open as the peer's fatal alert.
+    var r = tls_native_read(srv, b, 64);
+    if (r != TLS_ERR_ALERT) { return 20; }
+    return 0;
+}
+
+# Fork `script`'s server; the client end is returned and *out_pid holds the child.
+fn _cd_spawn(script, out_pid): i64 {
+    var p = alloc(16);
+    _cd_pair(p);
+    var sfd = load64(p);
+    var cfd = load64(p + 8);
+    var pid = sys_fork();
+    if (pid == 0) {
+        sys_close(cfd);
+        sys_exit(_cd_serve(sfd, script));
+    }
+    sys_close(sfd);
+    sock_set_recv_timeout(cfd, 2, 0);
+    store64(out_pid, pid);
+    return cfd;
+}
+
+fn _cd_v(): i64 {
+    if (_cd_ver12 == 1) { println("  (TLS 1.2)"); return 0; }
+    println("  (TLS 1.3)");
+    return 0;
+}
+
+# ── The filed repro's two cases, asserted by code ──────────────────────────────────────────────
+fn test_repro_cases(): i64 {
+    test_group("the filed repro's cases: a CCS flood in the handshake, a CCS after it");
+    var pid = 0;
+    var cfd = _cd_spawn(CS_RAW_CCS_FLOOD, &pid);
+    var c = _cd_client_ctx();
+    var t0 = clock_now_ns();
+    assert_eq(tls_native_connect(c, cfd), TLS_ERR_PROTOCOL,
+      "a CCS every 100 ms in place of the ServerHello: TLS_ERR_PROTOCOL at the second (was: blocked for ever)");
+    assert(_cd_ms(t0) < 1000, "…in < 1 s");
+    sys_close(cfd);
+    _cd_kill(pid);
+
+    cfd = _cd_spawn(CS_POST_CCS, &pid);
+    c = _cd_client_ctx();
+    assert_eq(tls_native_connect(c, cfd), TLS_OK, "handshake");
+    assert_eq(tls_native_write(c, "GET / HTTP/1.0\r\n\r\n", 18), 18, "request written");
+    var b[64];
+    t0 = clock_now_ns();
+    assert_eq(tls_native_read(c, &b, 64), TLS_ERR_PROTOCOL,
+      "a CCS after the handshake: tls_native_read is TLS_ERR_PROTOCOL (was: dropped, the read blocked)");
+    assert(_cd_ms(t0) < 1000, "…in < 1 s");
+    assert_eq(tls_native_read(c, &b, 64), TLS_ERR_PROTOCOL, "the ctx stays failed");
+    sys_close(cfd);
+    assert_eq(_cd_wait(pid), 0, "the server opened the client's SEALED unexpected_message alert (child exit 0)");
+    return 0;
+}
+
+# ── TLS 1.3 client: at most one CCS, before the server's Finished, wherever it falls ─────────
+fn _cd_hooked_client(at, at2, mode): i64 {
+    _cd_hook_at = at;
+    _cd_hook_at2 = at2;
+    _cd_hook_mode = mode;
+    _cd_writes = 0;
+    var pid = 0;
+    var cfd = _cd_spawn(CS_HOOKED_HS, &pid);
+    var c = _cd_client_ctx();
+    var rc = tls_native_connect(c, cfd);
+    sys_close(cfd);
+    _cd_wait(pid);
+    _cd_hook_at = 0;
+    _cd_hook_at2 = 0;
+    _cd_hook_mode = 0;
+    return rc;
+}
+
+fn test_tls13_client_window(): i64 {
+    test_group("TLS 1.3 client: one CCS is dropped wherever it falls before the Finished; a second is refused");
+    # The server's record writes: ServerHello (1), its encrypted flight (2).
+    assert_eq(_cd_hooked_client(1, 0, 1), TLS_OK, "one CCS before the ServerHello: CONNECTED");
+    assert_eq(_cd_hooked_client(2, 0, 1), TLS_OK,
+      "one CCS between the ServerHello and the flight (OpenSSL's place): CONNECTED");
+    assert_eq(_cd_hooked_client(1, 2, 1), TLS_ERR_PROTOCOL,
+      "one before the ServerHello AND one before the flight: TLS_ERR_PROTOCOL (one per connection)");
+    assert_eq(_cd_hooked_client(2, 0, CD_SPLIT), TLS_ERR_ALERT,
+      "a CCS between two records of the flight is dropped too: the sealed alert after it is read (TLS_ERR_ALERT)");
+    return 0;
+}
+
+# ── The deadline ───────────────────────────────────────────────────────────────────────────────
+fn test_deadline_native(): i64 {
+    test_group("tls_native_set_deadline: a one-byte drip cannot outlive the deadline");
+    _cd_v();
+    var pid = 0;
+    var cfd = _cd_spawn(CS_RAW_DRIP, &pid);
+    sock_set_recv_timeout(cfd, 1, 0);
+    var c = _cd_client_ctx();
+    var t0 = clock_now_ns();
+    tls_native_set_deadline(c, t0 + 800000000);
+    assert_eq(tls_native_connect(c, cfd), TLS_ERR_TIMEOUT,
+      "handshake: 1 byte per 100 ms under SO_RCVTIMEO 1 s and a +800 ms deadline: TLS_ERR_TIMEOUT");
+    var el = _cd_ms(t0);
+    assert(el >= 750, "…at about the deadline (>= 750 ms)");
+    assert(el < 2000, "…not after the drip (< 2 s)");
+    assert_eq(tls_native_get_last_error(c), TLS_ERR_TIMEOUT, "get_last_error agrees");
+    sys_close(cfd);
+    _cd_kill(pid);
+
+    cfd = _cd_spawn(CS_POST_DRIP, &pid);
+    sock_set_recv_timeout(cfd, 1, 0);
+    c = _cd_client_ctx();
+    assert_eq(tls_native_connect(c, cfd), TLS_OK, "handshake, no deadline");
+    var b[64];
+    t0 = clock_now_ns();
+    tls_native_set_deadline(c, t0 + 800000000);
+    assert_eq(tls_native_read(c, &b, 64), TLS_ERR_TIMEOUT,
+      "after it: the same drip inside one app record: TLS_ERR_TIMEOUT");
+    el = _cd_ms(t0);
+    assert(el >= 750, "…at about the deadline (>= 750 ms)");
+    assert(el < 2000, "…(< 2 s)");
+    t0 = clock_now_ns();
+    assert_eq(tls_native_read(c, &b, 64), TLS_ERR_TIMEOUT,
+      "a re-read: TLS_ERR_TIMEOUT again, at once (the ctx failed)");
+    assert(_cd_ms(t0) < 100, "…(< 100 ms)");
+    sys_close(cfd);
+    _cd_kill(pid);
+
+    test_group("tls_native_set_deadline: writes to a peer that stopped reading");
+    cfd = _cd_spawn(CS_HOLD, &pid);
+    c = _cd_client_ctx();
+    assert_eq(tls_native_connect(c, cfd), TLS_OK, "handshake");
+    var fl0 = sys_fcntl(cfd, 3, 0);                      # after the handshake's writes
+    var big = alloc(16384);
+    t0 = clock_now_ns();
+    tls_native_set_deadline(c, t0 + 300000000);
+    var w = 16384;
+    var nrec = 0;
+    while (w == 16384) {
+        w = tls_native_write(c, big, 16384);
+        nrec = nrec + 1;
+        if (nrec > 100000) { w = 0 - 999; }
+    }
+    assert_eq(w, TLS_ERR_TIMEOUT, "16 KiB records until the socket buffer is full: TLS_ERR_TIMEOUT");
+    assert(_cd_ms(t0) < 2000, "…in < 2 s");
+    assert(nrec > 1, "  (some records were written first)");
+    assert_eq(sys_fcntl(cfd, 3, 0), fl0, "the socket's F_GETFL flags are restored");
+    sys_close(cfd);
+    _cd_kill(pid);
+    return 0;
+}
+
+# ── TLS 1.2: exactly one CCS, directly before the Finished ─────────────────────────────────────
+fn test_tls12_ccs(): i64 {
+    test_group("TLS 1.2: one CCS per direction, and none after the handshake");
+    _cd_ver12 = 1;
+    var pid = 0;
+    var cfd = _cd_spawn(CS_POST_CCS, &pid);
+    var c = _cd_client_ctx();
+    assert_eq(tls_native_connect(c, cfd), TLS_OK, "native <-> native TLS 1.2 still connects");
+    assert_eq(load64(c + TLS_CTX_OFF_CCS_STATE) & 3, 3, "the client read the server's CCS and sent its own");
+    assert_eq(tls_native_write(c, "GET", 3), 3, "request written");
+    var b[64];
+    assert_eq(tls_native_read(c, &b, 64), TLS_ERR_PROTOCOL, "a CCS after the 1.2 handshake: TLS_ERR_PROTOCOL");
+    sys_close(cfd);
+    assert_eq(_cd_wait(pid), 0, "the server opened the client's alert, sealed under the 1.2 keys (child exit 0)");
+
+    test_group("TLS 1.2: a Finished with no CCS before it is refused, both ways");
+    # The server's record writes: flight (1), CCS (2), Finished (3). Drop the CCS.
+    _cd_hook_at = 2;
+    _cd_hook_mode = 0;
+    _cd_writes = 0;
+    cfd = _cd_spawn(CS_HOOKED, &pid);
+    c = _cd_client_ctx();
+    assert_eq(tls_native_connect(c, cfd), TLS_ERR_PROTOCOL,
+      "client: the server's Finished with no CCS: TLS_ERR_PROTOCOL");
+    sys_close(cfd);
+    assert_eq(_cd_wait(pid), 0, "  the server opened the client's sealed alert (child exit 0)");
+    # The client's record writes: ClientHello (1), ClientKeyExchange (2), CCS (3), Finished (4).
+    var p = alloc(16);
+    _cd_pair(p);
+    var sfd = load64(p);
+    cfd = load64(p + 8);
+    pid = sys_fork();
+    if (pid == 0) {
+        sys_close(sfd);
+        sock_set_recv_timeout(cfd, CD_TIMEOUT_S, 0);
+        _cd_hook_at = 3;
+        _cd_hook_mode = 0;
+        _cd_writes = 0;
+        tls_native_set_transport(0, &_cd_hook, 0);
+        var cc = _cd_client_ctx();
+        # The server answers with a PLAINTEXT unexpected_message: it has not sent its own CCS.
+        if (tls_native_connect(cc, cfd) != TLS_ERR_ALERT) { sys_exit(30); }
+        sys_exit(0);
+    }
+    sys_close(cfd);
+    sock_set_recv_timeout(sfd, CD_TIMEOUT_S, 0);
+    var srv = _cd_server_ctx();
+    assert_eq(tls_native_accept(srv, sfd), TLS_ERR_PROTOCOL,
+      "server: the client's Finished with no CCS: TLS_ERR_PROTOCOL");
+    sys_close(sfd);
+    assert_eq(_cd_wait(pid), 0, "  the client read the server's plaintext alert as TLS_ERR_ALERT (child exit 0)");
+    _cd_hook_at = 0;
+    _cd_ver12 = 0;
+    return 0;
+}
+
+# ── TLS 1.3 server: one CCS before the client's second flight ─────────────────────────────────
+fn _cd_server_row(nccs, out_srv): i64 {
+    var p = alloc(16);
+    _cd_pair(p);
+    var sfd = load64(p);
+    var cfd = load64(p + 8);
+    var pid = sys_fork();
+    if (pid == 0) {
+        sys_close(sfd);
+        sock_set_recv_timeout(cfd, CD_TIMEOUT_S, 0);
+        # The client's record writes: ClientHello (1), its second flight (2) — CCS records first.
+        _cd_hook_at = 2;
+        _cd_hook_mode = nccs;
+        _cd_writes = 0;
+        tls_native_set_transport(0, &_cd_hook, 0);
+        var cc = _cd_client_ctx();
+        if (tls_native_connect(cc, cfd) != TLS_OK) { sys_exit(40); }
+        if (nccs < 2) { _cd_hold(cfd); sys_exit(0); }
+        var b[64];
+        if (tls_native_read(cc, &b, 64) != TLS_ERR_ALERT) { sys_exit(41); }
+        sys_exit(0);
+    }
+    sys_close(cfd);
+    sock_set_recv_timeout(sfd, CD_TIMEOUT_S, 0);
+    var srv = _cd_server_ctx();
+    var rc = tls_native_accept(srv, sfd);
+    store64(out_srv, srv);
+    sys_close(sfd);
+    store64(out_srv + 8, _cd_wait(pid));
+    return rc;
+}
+
+# A server-under-test row whose client (forked) is hooked at write `at` with `mode`; `cert` 1 makes
+# it an mTLS client and the server VERIFY_PEER. Returns the accept result; out[0] = the server ctx.
+fn _cd_server_hooked(at, mode, cert, use12, out): i64 {
+    var p = alloc(16);
+    _cd_pair(p);
+    var sfd = load64(p);
+    var cfd = load64(p + 8);
+    var pid = sys_fork();
+    if (pid == 0) {
+        sys_close(sfd);
+        sock_set_recv_timeout(cfd, CD_TIMEOUT_S, 0);
+        _cd_hook_at = at;
+        _cd_hook_mode = mode;
+        _cd_writes = 0;
+        tls_native_set_transport(0, &_cd_hook, 0);
+        var cc = _cd_client_ctx();
+        if (cert == 1) {
+            tls_native_set_client_cert(cc, _cd_cert, _cd_cert_len, 1);
+            tls_native_set_client_key(cc, _cd_key, _cd_key_len);
+        }
+        tls_native_connect(cc, cfd);
+        _cd_hold(cfd);
+        sys_exit(0);
+    }
+    sys_close(cfd);
+    sock_set_recv_timeout(sfd, CD_TIMEOUT_S, 0);
+    var srv = _cd_server_ctx();
+    if (cert == 1) { tls_native_set_verify(srv, TLS_VERIFY_PEER); }
+    var rc = 0;
+    if (use12 == 1) { rc = tls_native_accept_12(srv, sfd); }
+    else { rc = tls_native_accept(srv, sfd); }
+    store64(out, srv);
+    sys_close(sfd);
+    _cd_kill(pid);
+    return rc;
+}
+
+fn test_tls13_server_ccs(): i64 {
+    test_group("TLS 1.3 server: one middlebox CCS from the client is dropped, a second is refused");
+    var o = alloc(16);
+    assert_eq(_cd_server_row(1, o), TLS_OK, "one CCS before the client's second flight: TLS_OK");
+    assert_eq(load64(load64(o) + TLS_CTX_OFF_CCS_STATE) & 1, 1, "  (the server saw it)");
+    assert_eq(load64(o + 8), 0, "  the client connected (child exit 0)");
+    assert_eq(_cd_server_row(2, o), TLS_ERR_PROTOCOL, "two: TLS_ERR_PROTOCOL");
+    assert_eq(load64(o + 8), 0, "  the client opened the server's alert, sealed under its app keys (child exit 0)");
+    # mTLS: the client's second flight is Certificate, CertificateVerify, Finished — each its own read.
+    assert_eq(_cd_server_hooked(2, CD_AFTER, 1, 0, o), TLS_OK,
+      "mTLS: one CCS before the client's Certificate: CONNECTED");
+    assert_eq(_cd_server_hooked(2, CD_AFTER + 1, 1, 0, o), TLS_OK,
+      "mTLS: one CCS before its CertificateVerify: CONNECTED");
+    assert_eq(_cd_server_hooked(2, CD_AFTER + 2, 1, 0, o), TLS_OK, "mTLS: one CCS before its Finished: CONNECTED");
+    return 0;
+}
+
+fn test_tls12_server_refuse(): i64 {
+    test_group("TLS 1.2 server: no CCS before the ClientHello or the ClientKeyExchange");
+    _cd_ver12 = 1;
+    var o = alloc(16);
+    # The client's record writes: ClientHello (1), ClientKeyExchange (2), CCS (3), Finished (4).
+    assert_eq(_cd_server_hooked(1, 1, 0, 1, o), TLS_ERR_PROTOCOL,
+      "tls_native_accept_12: a CCS before the ClientHello: TLS_ERR_PROTOCOL");
+    assert_eq(load64(load64(o) + TLS_CTX_OFF_CCS_STATE) & 1, 0,
+      "  …refused where it arrived (not taken as the client's CCS)");
+    assert_eq(_cd_server_hooked(2, 1, 0, 0, o), TLS_ERR_PROTOCOL,
+      "a CCS before the ClientKeyExchange: TLS_ERR_PROTOCOL");
+    assert_eq(load64(load64(o) + TLS_CTX_OFF_CCS_STATE) & 1, 0, "  …refused where it arrived");
+    _cd_ver12 = 0;
+    return 0;
+}
+
+# ── The shim: tls_set_deadline ─────────────────────────────────────────────────────────────────
+fn _cd_shim_rows(name): i64 {
+    var pid = 0;
+    var cfd = _cd_spawn(CS_RAW_HOLD, &pid);
+    # The baseline follows one plain write (Darwin's F_GETFL gains a status bit at a socket's first
+    # write); this server reads raw bytes, so the extra byte is harmless.
+    _cd_write_all(cfd, "x", 1);
+    var fl0 = sys_fcntl(cfd, 3, 0);
+    var c = tls_connect_alloc(cfd, "localhost", &_cd_noverify, 0);
+    assert(c != 0, name);
+    var t0 = clock_now_ns();
+    assert_eq(tls_set_deadline(c, t0 + 300000000), 0, "  tls_set_deadline(+300 ms) between alloc and complete: 0");
+    assert_eq(tls_connect_complete(c), 0, "  a peer that never answers the ClientHello: tls_connect_complete is 0…");
+    var el = _cd_ms(t0);
+    assert(el >= 250, "  …at about the deadline (>= 250 ms)");
+    assert(el < 2000, "  …not after the 2 s read timeout (< 2 s)");
+    assert_eq(sys_fcntl(cfd, 3, 0) & _cd_nb(), 0, "  O_NONBLOCK was taken back off");
+    assert_eq(sys_fcntl(cfd, 3, 0), fl0, "  the socket's F_GETFL flags are restored");
+    tls_close(c);
+    sys_close(cfd);
+    _cd_kill(pid);
+
+    cfd = _cd_spawn(CS_POST_DRIP, &pid);
+    c = tls_connect_alloc(cfd, "localhost", &_cd_noverify, 0);
+    assert_eq(tls_set_deadline(c, clock_now_ns() + 5000000000), 0, "  a 5 s deadline for the handshake");
+    assert_eq(tls_connect_complete(c), 1, "  …which completes inside it");
+    fl0 = sys_fcntl(cfd, 3, 0);
+    assert_eq(fl0 & _cd_nb(), 0, "  O_NONBLOCK was taken back off after the handshake");
+    var b[64];
+    t0 = clock_now_ns();
+    assert_eq(tls_set_deadline(c, t0 + 800000000), 0, "  then +800 ms for the read");
+    assert_eq(tls_read(c, &b, 64), TLS_ERR_TIMEOUT,
+      "  a 1-byte-per-100-ms drip inside one record: tls_read is TLS_ERR_TIMEOUT");
+    el = _cd_ms(t0);
+    assert(el >= 750, "  …at about the deadline (>= 750 ms)");
+    assert(el < 2000, "  …(< 2 s)");
+    assert_eq(sys_fcntl(cfd, 3, 0), fl0, "  the socket's F_GETFL flags are restored");
+    tls_close(c);
+    sys_close(cfd);
+    _cd_kill(pid);
+    return 0;
+}
+
+fn test_shim(): i64 {
+    test_group("tls_set_deadline through lib/tls.cyr — native backend");
+    tls_set_backend(TLS_BACKEND_NATIVE);
+    assert_eq(tls_set_deadline(0, 1), TLS_ERR_INVALID_PARAM, "ctx 0: TLS_ERR_INVALID_PARAM");
+    var pid = 0;
+    var cfd = _cd_spawn(CS_RAW_HOLD, &pid);
+    var c = tls_connect_alloc(cfd, "localhost", &_cd_noverify, 0);
+    assert_eq(tls_set_deadline(c, 0 - 1), TLS_ERR_INVALID_PARAM, "abs_ns < 0: TLS_ERR_INVALID_PARAM");
+    assert_eq(tls_set_deadline(c, clock_now_ns() + 300000000), 0, "the native shim forwards the deadline…");
+    var ndl = load64(load64(c) + TLS_CTX_OFF_DEADLINE);
+    assert(ndl > 0, "  …to the native ctx");
+    assert_eq(tls_connect_complete(c), 0, "a silent peer: tls_connect_complete is 0");
+    assert_eq(tls_native_get_last_error(load64(c)), TLS_ERR_TIMEOUT,
+      "  tls_native_get_last_error says TLS_ERR_TIMEOUT");
+    tls_close(c);
+    sys_close(cfd);
+    _cd_kill(pid);
+    _cd_shim_rows("native shim allocated");
+
+    test_group("tls_set_deadline through lib/tls.cyr — libssl backend");
+    tls_set_backend(TLS_BACKEND_LIBSSL);
+    if (tls_available() != 1) {
+        var _skip = "  SKIP: libssl.so.3 or the fdlopen helper ($HOME/.cyrius/dlopen-helper) is not available here\n";
+        sys_write(1, _skip, strlen(_skip));
+    } else {
+        _cd_shim_rows("libssl shim allocated");
+    }
+    tls_set_backend(TLS_BACKEND_NATIVE);
+    return 0;
+}
+
+# ── OpenSSL s_server: one middlebox CCS (1.3), the 1.2 CCS ─────────────────────────────────────
+fn _cd_free_port(): i64 {
+    var lt, lfd = tcp_socket();
+    if (is_err_result(lt) == 1) { return 0 - 1; }
+    sock_bind(lfd, INADDR_LOOPBACK(), 0);
+    sock_listen(lfd, 1);
+    var sa[16];
+    var sl[8];
+    store64(&sl, 16);
+    sys_getsockname(lfd, &sa, &sl);
+    sock_close(lfd);
+    return ((load8(&sa + 2) & 0xFF) << 8) | (load8(&sa + 3) & 0xFF);
+}
+
+# Run /usr/bin/openssl with argv `av` (stdio on /dev/null) and wait: its exit status.
+fn _cd_openssl(av): i64 {
+    var pid = sys_fork();
+    if (pid == 0) {
+        var nf = xopen("/dev/null", 2);
+        sys_dup2(nf, 0); sys_dup2(nf, 1); sys_dup2(nf, 2);
+        var ev[8];
+        store64(&ev, 0);
+        sys_execve("/usr/bin/openssl", av, &ev);
+        sys_exit(127);
+    }
+    return _cd_wait(pid);
+}
+
+# One s_server row: `flag` (-tls1_3 / -tls1_2) with the cert/key at `cert`/`key` in `form`.
+fn _cd_s_server_row(flag, cert, key, form, ver12, name): i64 {
+    var port = _cd_free_port();
+    var ps = alloc(16);
+    fmt_int_buf(port, ps);
+    var pid = sys_fork();
+    if (pid == 0) {
+        var nf = xopen("/dev/null", 2);
+        sys_dup2(nf, 0); sys_dup2(nf, 1); sys_dup2(nf, 2);
+        var av: i64[16];
+        av[0] = "openssl"; av[1] = "s_server"; av[2] = "-quiet"; av[3] = "-www";
+        av[4] = "-accept"; av[5] = ps; av[6] = "-cert"; av[7] = cert; av[8] = "-certform"; av[9] = form;
+        av[10] = "-key"; av[11] = key; av[12] = "-keyform"; av[13] = form; av[14] = flag; av[15] = 0;
+        var ev[8];
+        store64(&ev, 0);
+        sys_execve("/usr/bin/openssl", &av, &ev);
+        sys_exit(127);
+    }
+    # Wait until s_server accepts (a probe connection of its own), up to 5 s.
+    var up = 0;
+    var tries = 0;
+    var fd = 0 - 1;
+    while (up == 0 && tries < 50) {
+        var ft, f = tcp_socket();
+        var kt, kv = sock_connect(f, INADDR_LOOPBACK(), port);
+        if (is_err_result(kt) == 0) { up = 1; fd = f; }
+        else { sock_close(f); sleep_ms(100); }
+        tries = tries + 1;
+    }
+    assert_eq(up, 1, name);
+    if (up == 1) {
+        sock_set_recv_timeout(fd, CD_TIMEOUT_S, 0);
+        var c = tls_native_new_client("localhost", 9);
+        tls_native_set_verify(c, TLS_VERIFY_NONE);
+        if (ver12 == 1) { tls_native_set_version_range(c, TLS_VERSION_1_2, TLS_VERSION_1_2); }
+        assert_eq(tls_native_connect(c, fd), TLS_OK, "  the native client reaches CONNECTED");
+        assert_eq(load64(c + TLS_CTX_OFF_CCS_STATE) & 1, 1, "  …having read the server's one CCS");
+        tls_native_close(c);
+        sock_close(fd);
+    }
+    _cd_kill(pid);
+    return 0;
+}
+
+fn test_openssl_peer(): i64 {
+    test_group("interop: OpenSSL s_server sends its CCS, the native client still connects");
+    if (sys_access("/usr/bin/openssl", 0) != 0) {
+        var _skip = "  SKIP: /usr/bin/openssl is not installed here\n";
+        sys_write(1, _skip, strlen(_skip));
+        return 0;
+    }
+    var cert = test_scratch("tls_ccs_deadline_cert.der");
+    var key = test_scratch("tls_ccs_deadline_key.der");
+    file_write_all(cert, _cd_cert, _cd_cert_len);
+    file_write_all(key, _cd_key, _cd_key_len);
+    _cd_s_server_row("-tls1_3", cert, key, "DER", 0,
+      "s_server -tls1_3 is up (one middlebox CCS after its ServerHello)");
+    xunlink(cert);
+    xunlink(key);
+    # TLS 1.2 against an RSA-2048 certificate: the native 1.2 client offers only x25519, and OpenSSL
+    # will not use a P-256 ECDSA certificate with a client that does not list P-256.
+    var rcert = test_scratch("tls_ccs_deadline_rsa_cert.pem");
+    var rkey = test_scratch("tls_ccs_deadline_rsa_key.pem");
+    var av: i64[16];
+    av[0] = "openssl"; av[1] = "req"; av[2] = "-x509"; av[3] = "-newkey"; av[4] = "rsa:2048";
+    av[5] = "-nodes"; av[6] = "-keyout"; av[7] = rkey; av[8] = "-out"; av[9] = rcert;
+    av[10] = "-days"; av[11] = "2"; av[12] = "-subj"; av[13] = "/CN=localhost"; av[14] = 0;
+    assert_eq(_cd_openssl(&av), 0, "openssl req made an RSA-2048 certificate");
+    _cd_s_server_row("-tls1_2", rcert, rkey, "PEM", 1, "s_server -tls1_2 is up (its CCS directly before its Finished)");
+    xunlink(rcert);
+    xunlink(rkey);
+    return 0;
+}
+
+fn test_old_reader_gone(): i64 {
+    test_group("the CCS-skipping reader is deleted from lib/");
+    var n = 0;
+    var bufsz = 262144;
+    var buf = alloc(bufsz);
+    var files: i64[3];
+    files[0] = "lib/tls_native_conn.cyr";
+    files[1] = "lib/tls_native_hs12.cyr";
+    files[2] = "lib/tls_native_hs13.cyr";
+    var needle = "_tn_sock_read_record_skip_";
+    var nl = strlen(needle);
+    var i = 0;
+    var read_all = 1;
+    while (i < 3) {
+        var got = file_read_all(files[i], buf, bufsz);
+        if (got <= 0) { read_all = 0; }
+        var j = 0;
+        while (j + nl <= got) {
+            if (memeq(buf + j, needle, nl) == 1) { n = n + 1; }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    assert_eq(read_all, 1, "the three record-layer files were read (run from the repo root)");
+    assert_eq(n, 0, "0 occurrences of the old CCS-skipping reader's name");
+    return 0;
+}
+
+alloc_init();
+_cd_cert = hex_decode("3082019230820139a003020102021437416048df98b49fd5b278db00ebd0e1f87b6d40300a06082a8648ce3d04030230143112301006035504030c096c6f63616c686f7374301e170d3236303130313030303030305a170d3336303130313030303030305a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d030107034200040d7a46bc307511f24a53dcf973e0dfe2058db48d7db8b3941fa80176641ad78da12b801a12494d49312bf5b0ac312f3d50bca2282126fddd03652013bf8b49c5a3693067301d0603551d0e041604143bdd6c2d487f854851f408356e66880375bd6743301f0603551d230418301680143bdd6c2d487f854851f408356e66880375bd6743300f0603551d130101ff040530030101ff30140603551d11040d300b82096c6f63616c686f7374300a06082a8648ce3d04030203470030440220365bd112f9b8faec50c9b4a2cf7ec487cc424901870b8156b349dba15e1cde8102200c1ec7f6eefec5bc9976f55a70608b07d669c78183fa08e9a863370d17e39df3", 812);
+_cd_key = hex_decode("308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420666340f5e33734c31438ae0abd2370b72da193b44565625051bbc79a344535dda144034200040d7a46bc307511f24a53dcf973e0dfe2058db48d7db8b3941fa80176641ad78da12b801a12494d49312bf5b0ac312f3d50bca2282126fddd03652013bf8b49c5", 276);
+signal_ignore(SIGPIPE);
+crypto_tls_main_init();
+test_repro_cases();
+test_tls13_client_window();
+_cd_ver12 = 0;
+test_deadline_native();
+_cd_ver12 = 1;
+test_deadline_native();
+_cd_ver12 = 0;
+test_tls12_ccs();
+test_tls13_server_ccs();
+test_tls12_server_refuse();
+test_shim();
+test_openssl_peer();
+test_old_reader_gone();
+#endif
+#endif
+var r = assert_summary();

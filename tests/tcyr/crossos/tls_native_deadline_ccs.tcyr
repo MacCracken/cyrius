@@ -1,0 +1,329 @@
+# tls_native_deadline_ccs.tcyr — 6.6.13: the native TLS client's ChangeCipherSpec rule, its
+# per-connection deadline and its record-read error codes, on every host target.
+#
+# Issue 2026-10-01-tls-native-no-deadline (CVE-TBD(I8)):
+#   (a) every record read skipped ANY number of plaintext CCS records, in the handshake and after
+#       it, so anyone on the path could hold a client for ever with one CCS per read timeout. Now
+#       a TLS 1.3 peer may send ONE, before its Finished; anything else is TLS_ERR_PROTOCOL after
+#       an unexpected_message alert (`15 03 03 00 02 02 0a` while the client still writes
+#       plaintext).
+#   (b) there was no deadline: a peer dripping one byte just inside SO_RCVTIMEO held a record read
+#       for days. tls_native_set_deadline(ctx, abs_ns) bounds every read and write; it fails with
+#       TLS_ERR_TIMEOUT.
+#   (c) every record-read failure read as TLS_ERR_IO: a header announcing more than 16640 bytes is
+#       now TLS_ERR_BAD_RECORD (record_overflow).
+# Cross-OS because the deadline is a different mechanism per target: poll(7) on Linux x86_64,
+# ppoll on aarch64-Linux, BSD poll(230) on both Macs, and the non-blocking write's EAGAIN is 11
+# on Linux and 35 on Darwin, restored with each target's F_SETFL.
+#
+# SINGLE-THREADED, so it runs as-is where threads run inline (Windows, Intel-Mac): each row opens
+# a loopback TCP pair, PRELOADS the server end with the bytes under test, then runs the native
+# client on the other end. The client's ClientHello lands in the server end's receive buffer,
+# unread until the row inspects it. A 5 s SO_RCVTIMEO on both ends is a safety net: a regression
+# fails the row instead of hanging the run.
+#
+# ⚠ Windows (named SKIP rows): the native transport's read/write leaves are ReadFile/WriteFile,
+# which return 0 on a Winsock socket, so native TLS does not run over net.cyr sockets there at all
+# (roadmap backlog j). The rows that need no socket I/O — an expired deadline writes nothing, and
+# the parameter checks — run there too.
+include "lib/syscalls.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/str.cyr"
+include "lib/vec.cyr"
+include "lib/tagged.cyr"
+include "lib/io.cyr"
+include "lib/net.cyr"
+include "lib/chrono.cyr"
+include "lib/tls_native.cyr"
+include "lib/assert.cyr"
+
+#ifndef CYRIUS_TARGET_AGNOS
+var _dc_pair = 0;        # [client fd, accepted fd] of the current row
+
+# The port (host order) socket `fd` is bound to, or -1.
+fn _dc_port(fd): i64 {
+    var sa[16];
+    var sl[8];
+    store64(&sl, 16);
+    if (sys_getsockname(fd, &sa, &sl) != 0) { return 0 - 1; }
+    return ((load8(&sa + 2) & 0xFF) << 8) | (load8(&sa + 3) & 0xFF);
+}
+
+# A connected loopback TCP pair into _dc_pair: [0] the client fd, [8] the accepted fd. 0 or -1.
+fn _dc_open(): i64 {
+    if (_dc_pair == 0) { _dc_pair = alloc(16); }
+    var lt, lfd = tcp_socket();
+    if (is_err_result(lt) == 1) { assert(0 == 1, "listener tcp_socket"); return 0 - 1; }
+    var bt, bv = sock_bind(lfd, INADDR_LOOPBACK(), 0);
+    var st, sv = sock_listen(lfd, 4);
+    var ct, cfd = tcp_socket();
+    var kt, kv = sock_connect(cfd, INADDR_LOOPBACK(), _dc_port(lfd));
+    if (is_err_result(kt) == 1) {
+        assert(0 == 1, "connect to the listener");
+        sock_close(cfd);
+        sock_close(lfd);
+        return 0 - 1;
+    }
+    var at, afd = sock_accept(lfd);
+    sock_close(lfd);
+    if (is_err_result(at) == 1) { assert(0 == 1, "accept"); sock_close(cfd); return 0 - 1; }
+    sock_set_recv_timeout(cfd, 5, 0);
+    sock_set_recv_timeout(afd, 5, 0);
+    store64(_dc_pair, cfd);
+    store64(_dc_pair + 8, afd);
+    return 0;
+}
+
+fn _dc_cfd(): i64 { return load64(_dc_pair); }
+fn _dc_afd(): i64 { return load64(_dc_pair + 8); }
+
+fn _dc_close(): i64 {
+    sock_close(_dc_cfd());
+    sock_close(_dc_afd());
+    return 0;
+}
+
+# Preload the server end with `n` bytes of `p`.
+fn _dc_preload(p, n): i64 { return sock_send_all(_dc_afd(), p, n); }
+
+# A 5-byte record header (+ `nbody` bytes of `body`) into the server end.
+fn _dc_record(ct, len, body, nbody): i64 {
+    var h[8];
+    store8(&h, ct);
+    store8(&h + 1, 3);
+    store8(&h + 2, 3);
+    store8(&h + 3, (len >> 8) & 0xFF);
+    store8(&h + 4, len & 0xFF);
+    _dc_preload(&h, 5);
+    if (nbody > 0) { _dc_preload(body, nbody); }
+    return 0;
+}
+
+# One well-formed CCS record: 14 03 03 00 01 01.
+fn _dc_ccs(): i64 { return _dc_record(TLS_CT_CHANGE_CIPHER_SPEC, 1, "\x01", 1); }
+
+# A fresh 1.3-capable client ctx, no peer verification (no handshake completes in these rows).
+fn _dc_client(): i64 {
+    var c = tls_native_new_client(0, 0);
+    tls_native_set_verify(c, TLS_VERIFY_NONE);
+    return c;
+}
+
+fn _dc_ms_since(t0): i64 { return (clock_now_ns() - t0) / 1000000; }
+
+# O_NONBLOCK on this target (Darwin 4, Linux 2048).
+fn _dc_o_nonblock(): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    return 4;
+    #endif
+    #ifndef CYRIUS_TARGET_MACOS
+    return 2048;
+    #endif
+}
+
+# Read exactly `n` bytes from the server end into `buf`; 1 on success.
+fn _dc_server_read(buf, n): i64 {
+    var got = 0;
+    while (got < n) {
+        var rt, rv = sock_recv(_dc_afd(), buf + got, n - got);
+        if (is_err_result(rt) == 1) { return 0; }
+        if (rv <= 0) { return 0; }
+        got = got + rv;
+    }
+    return 1;
+}
+
+# Skip the client's ClientHello record on the server end; 1 when one was there.
+fn _dc_skip_client_hello(): i64 {
+    var h[8];
+    if (_dc_server_read(&h, 5) != 1) { return 0; }
+    if ((load8(&h) & 0xFF) != TLS_CT_HANDSHAKE) { return 0; }
+    var len = ((load8(&h + 3) & 0xFF) << 8) | (load8(&h + 4) & 0xFF);
+    var body = alloc(len + 1);
+    return _dc_server_read(body, len);
+}
+
+# 1 when the next 7 bytes on the server end are the plaintext fatal unexpected_message alert.
+fn _dc_alert_follows(): i64 {
+    var a[8];
+    if (_dc_server_read(&a, 7) != 1) { return 0; }
+    return memeq(&a, "\x15\x03\x03\x00\x02\x02\x0a", 7);
+}
+
+#ifndef CYRIUS_TARGET_WIN
+fn _dc_ccs_rows(): i64 {
+    test_group("6.6.13 — CCS (a): a second CCS ends the 1.3 handshake, with an unexpected_message alert");
+    if (_dc_open() != 0) { return 0; }
+    _dc_ccs();
+    _dc_ccs();
+    var c = _dc_client();
+    var t0 = clock_now_ns();
+    assert_eq(tls_native_connect(c, _dc_cfd()), TLS_ERR_PROTOCOL, "two CCS before the ServerHello: TLS_ERR_PROTOCOL");
+    assert(_dc_ms_since(t0) < 1000, "…at once (< 1 s), not after the read timeout");
+    assert_eq(tls_native_get_last_error(c), TLS_ERR_PROTOCOL, "get_last_error agrees");
+    assert_eq(tls_native_get_state(c), TLS_STATE_ERROR, "the ctx is failed");
+    assert_eq(_dc_skip_client_hello(), 1, "the server end holds the ClientHello…");
+    assert_eq(_dc_alert_follows(), 1, "…then the plaintext fatal alert 15 03 03 00 02 02 0a");
+    _dc_close();
+
+    test_group("6.6.13 — CCS (a): ONE CCS is still dropped (TLS 1.3 middlebox compatibility)");
+    if (_dc_open() != 0) { return 0; }
+    _dc_ccs();
+    sock_shutdown(_dc_afd(), 1);                       # SHUT_WR: EOF after the one CCS
+    c = _dc_client();
+    assert_eq(tls_native_connect(c, _dc_cfd()), TLS_ERR_IO,
+      "one CCS then EOF: TLS_ERR_IO (the CCS was dropped), not PROTOCOL");
+    _dc_close();
+    if (_dc_open() != 0) { return 0; }
+    _dc_ccs();
+    _dc_record(TLS_CT_ALERT, 2, "\x02\x28", 2);       # handshake_failure, in place of the ServerHello
+    c = _dc_client();
+    assert_eq(tls_native_connect(c, _dc_cfd()), TLS_ERR_ALERT,
+      "one CCS then a plaintext alert: the alert is read (TLS_ERR_ALERT)");
+    _dc_close();
+
+    test_group("6.6.13 — CCS (a): a malformed CCS is refused");
+    if (_dc_open() != 0) { return 0; }
+    _dc_record(TLS_CT_CHANGE_CIPHER_SPEC, 1, "\x02", 1);
+    c = _dc_client();
+    assert_eq(tls_native_connect(c, _dc_cfd()), TLS_ERR_PROTOCOL, "a CCS whose byte is 2: TLS_ERR_PROTOCOL");
+    assert_eq(_dc_skip_client_hello(), 1, "  (ClientHello sent)");
+    assert_eq(_dc_alert_follows(), 1, "  …and the alert after it");
+    _dc_close();
+    if (_dc_open() != 0) { return 0; }
+    _dc_record(TLS_CT_CHANGE_CIPHER_SPEC, 2, "\x01\x01", 2);
+    c = _dc_client();
+    assert_eq(tls_native_connect(c, _dc_cfd()), TLS_ERR_PROTOCOL, "a 2-byte CCS: TLS_ERR_PROTOCOL");
+    _dc_close();
+
+    test_group("6.6.13 — CCS (a): no CCS where none may come");
+    if (_dc_open() != 0) { return 0; }
+    _dc_ccs();
+    c = _dc_client();
+    tls_native_set_version_range(c, TLS_VERSION_1_2, TLS_VERSION_1_2);
+    assert_eq(tls_native_connect(c, _dc_cfd()), TLS_ERR_PROTOCOL,
+      "TLS 1.2 client: a CCS before the server flight is TLS_ERR_PROTOCOL");
+    assert_eq(_dc_skip_client_hello(), 1, "  (ClientHello sent)");
+    assert_eq(_dc_alert_follows(), 1, "  …and the plaintext alert after it");
+    _dc_close();
+    # Server side: a CCS before the ClientHello (RFC 8446 §5: only AFTER the first ClientHello).
+    if (_dc_open() != 0) { return 0; }
+    sock_send_all(_dc_cfd(), "\x14\x03\x03\x00\x01\x01", 6);
+    var sv = tls_native_new_server("c", 1, "k", 1);  # the ClientHello read comes before the creds
+    assert_eq(tls_native_accept(sv, _dc_afd()), TLS_ERR_PROTOCOL,
+      "server: a CCS before the ClientHello is TLS_ERR_PROTOCOL");
+    var sa[8];
+    var srt, srv = sock_recv(_dc_cfd(), &sa, 7);
+    assert_eq(srv, 7, "  the client end receives a 7-byte record…");
+    assert_eq(memeq(&sa, "\x15\x03\x03\x00\x02\x02\x0a", 7), 1, "  …the plaintext fatal unexpected_message alert");
+    _dc_close();
+    return 0;
+}
+
+fn _dc_overflow_rows(): i64 {
+    test_group("6.6.13 — (c): a record header over the 16640-byte ceiling is TLS_ERR_BAD_RECORD, not IO");
+    if (_dc_open() != 0) { return 0; }
+    _dc_record(TLS_CT_HANDSHAKE, 0x4200, 0, 0);
+    var c = _dc_client();
+    assert_eq(tls_native_connect(c, _dc_cfd()), TLS_ERR_BAD_RECORD, "header length 0x4200: TLS_ERR_BAD_RECORD");
+    assert_eq(tls_native_get_last_error(c), TLS_ERR_BAD_RECORD, "get_last_error agrees");
+    _dc_close();
+    return 0;
+}
+
+fn _dc_deadline_rows(): i64 {
+    test_group("6.6.13 — (b): a deadline ends a stalled record read with TLS_ERR_TIMEOUT");
+    if (_dc_open() != 0) { return 0; }
+    _dc_record(TLS_CT_HANDSHAKE, 100, "\x02", 1);       # 100 announced, 1 sent, then silence
+    var c = _dc_client();
+    var t0 = clock_now_ns();
+    assert_eq(tls_native_set_deadline(c, t0 + 300000000), TLS_OK, "deadline now + 300 ms");
+    assert_eq(tls_native_connect(c, _dc_cfd()), TLS_ERR_TIMEOUT,
+      "header + 1 of 100 bytes, then silence: TLS_ERR_TIMEOUT");
+    var el = _dc_ms_since(t0);
+    assert(el >= 250, "…after about the deadline (>= 250 ms)");
+    assert(el < 2000, "…not the 5 s read timeout (< 2 s)");
+    assert_eq(tls_native_get_last_error(c), TLS_ERR_TIMEOUT, "get_last_error agrees");
+    _dc_close();
+
+    test_group("6.6.13 — (b): a far deadline changes nothing about a record that arrives");
+    if (_dc_open() != 0) { return 0; }
+    _dc_record(TLS_CT_ALERT, 2, "\x02\x28", 2);
+    c = _dc_client();
+    tls_native_set_deadline(c, clock_now_ns() + 5000000000);
+    assert_eq(tls_native_connect(c, _dc_cfd()), TLS_ERR_ALERT,
+      "a plaintext alert under a 5 s deadline: TLS_ERR_ALERT, at once");
+    _dc_close();
+
+    test_group("6.6.13 — (b): a deadline bounds a write to a peer that never reads; the fd flags are restored");
+    if (_dc_open() != 0) { return 0; }
+    c = _dc_client();
+    var n = 64 * 1048576;
+    var big = alloc(n);
+    # The baseline is taken after one plain write: Darwin's F_GETFL gains a status bit (0x10000) at
+    # a socket's first write, whoever sets O_NONBLOCK.
+    sock_send_all(_dc_cfd(), "x", 1);
+    var fl0 = sys_fcntl(_dc_cfd(), 3, 0);
+    t0 = clock_now_ns();
+    tls_native_set_deadline(c, t0 + 300000000);
+    assert_eq(_tn_io_write_all(c, _dc_cfd(), big, n), TLS_ERR_TIMEOUT,
+      "64 MiB to a never-reading peer under a 300 ms deadline: TLS_ERR_TIMEOUT");
+    assert(_dc_ms_since(t0) < 2000, "…in < 2 s");
+    assert(fl0 >= 0, "F_GETFL before");
+    var fl1 = sys_fcntl(_dc_cfd(), 3, 0);
+    assert_eq(fl1 & _dc_o_nonblock(), 0, "O_NONBLOCK was taken back off");
+    assert_eq(fl1, fl0, "F_GETFL after == before");
+    _dc_close();
+    return 0;
+}
+#endif
+
+fn _dc_expired_rows(): i64 {
+    test_group("6.6.13 — (b): an expired deadline fails at once and writes nothing");
+    if (_dc_open() != 0) { return 0; }
+    var c = _dc_client();
+    var t0 = clock_now_ns();
+    assert_eq(tls_native_set_deadline(c, t0 - 1), TLS_OK, "deadline now - 1");
+    assert_eq(tls_native_connect(c, _dc_cfd()), TLS_ERR_TIMEOUT, "connect: TLS_ERR_TIMEOUT");
+    assert(_dc_ms_since(t0) < 100, "…at once (< 100 ms)");
+    assert_eq(fd_wait_ready(_dc_afd(), 0, 0), 0,
+      "the ClientHello was never written (the server end has nothing to read)");
+    _dc_close();
+    return 0;
+}
+
+fn _dc_param_rows(): i64 {
+    test_group("6.6.13 — tls_native_set_deadline parameters");
+    var c = _dc_client();
+    assert_eq(tls_native_set_deadline(0, 1), TLS_ERR_INVALID_PARAM, "ctx 0: TLS_ERR_INVALID_PARAM");
+    assert_eq(tls_native_set_deadline(c, 0 - 1), TLS_ERR_INVALID_PARAM, "abs_ns < 0: TLS_ERR_INVALID_PARAM");
+    assert_eq(tls_native_set_deadline(c, 0), TLS_OK, "0 (clear): TLS_OK");
+    assert_eq(TLS_ERR_TIMEOUT, 0 - 20, "TLS_ERR_TIMEOUT is -20");
+    return 0;
+}
+#endif
+
+fn _dc_run(): i64 {
+    #ifdef CYRIUS_TARGET_AGNOS
+    # The deadline's agnos path is gated by tests/gates/platform/agnos_tls_deadline.sh (fake kernel).
+    test_group("6.6.13 — agnos: SKIP (no host to run on; see tests/gates/platform/agnos_tls_deadline.sh)");
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    #ifdef CYRIUS_TARGET_WIN
+    test_group("6.6.13 — Windows: SKIP the socket rows (Winsock + ReadFile/WriteFile = 0, roadmap backlog j)");
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    _dc_ccs_rows();
+    _dc_overflow_rows();
+    _dc_deadline_rows();
+    #endif
+    _dc_expired_rows();
+    _dc_param_rows();
+    #endif
+    return 0;
+}
+
+alloc_init();
+_dc_run();
+var r = assert_summary();

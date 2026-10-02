@@ -124,6 +124,84 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   raw write, no `ERR_clear_error` before the read or before the write, the alert-reason row, the
   unexpected-EOF row, `WANT_READ` → IO, `SYSCALL` → PROTOCOL, and a write's `ZERO_RETURN` read as 0.
 
+- **CVE-TBD(I8) (P2) — the native TLS stack skipped plaintext ChangeCipherSpec records without
+  limit and took no deadline: anyone on the path, with no key, held a client for ever.** (I8, issue
+  `2026-10-01-tls-native-no-deadline`; found by the abaco 2.4.12 HTTPS review.) Every record read
+  went through `_tn_sock_read_record_skip_ccs`, which dropped ANY number of CCS records
+  (`14 03 03 00 01 01` — plaintext, unauthenticated) during the handshake AND inside a verified
+  session; one CCS more often than the read timeout pinned the thread (the filed repro: both clients
+  still blocked at 10 s under a 2 s `SO_RCVTIMEO`). And nothing bounded a record read: it looped
+  `read(2)` until the record was complete, so a peer dripping one byte just inside the timeout held a
+  16 KB record for days, and the transport vtable is process-global, so a caller could not install a
+  per-connection bound. Same availability class as CVE-30. **Fix (a) — one CCS policy per read
+  site** (`_tn_read_rec(ctx, fd, buf, cap, policy)`, `lib/tls_native_conn.cyr`; the old reader is
+  deleted and `lib/` holds 0 occurrences of its name): TLS 1.3 allows ONE CCS per connection, before
+  the peer's Finished, and drops it (RFC 8446 §5; `_TN_CCS_MAY` at the client's ServerHello, server
+  flight and flight-continuation reads, and the server's client-Certificate / CertificateVerify /
+  Finished reads); TLS 1.2 requires exactly one, directly before the peer's Finished (RFC 5246 §7.1;
+  `_TN_CCS_MUST` at both Finished reads); none is allowed before a ClientHello, in the 1.2 server
+  flight or ClientKeyExchange, or after the handshake (`_TN_CCS_REFUSE`, `tls_native_read` included).
+  A CCS must be exactly the byte 1. Any violation — a second CCS, a malformed one, one outside the
+  window, a 1.2 Finished with no CCS before it — fails the ctx with `TLS_ERR_PROTOCOL` after a
+  best-effort fatal `unexpected_message` alert (`_tn_send_fatal_alert`): plaintext
+  `15 03 03 00 02 02 0a` while our writes still are, else sealed under our TLS 1.3 application keys
+  or, once our own 1.2 CCS is out (ctx `TLS_CTX_OFF_CCS_STATE` bit 1), the 1.2 keys. A plaintext alert
+  where the 1.2 peer's CCS is due is that peer's alert (`TLS_ERR_ALERT`, not answered) — the 1.2 half
+  of the "plaintext alert where an encrypted record is due" case I2 (c) left for the backlog. **(b) a
+  per-connection deadline** — `tls_native_set_deadline(ctx, abs_ns)` / `tls_set_deadline(ctx, abs_ns)`
+  (Added, below; `TLS_ERR_TIMEOUT` = -20): on Linux and macOS each read waits for readiness with the
+  time left (`fd_wait_ready`) and then reads once, so every byte costs a clock check, and a write runs
+  the fd non-blocking for the call (EAGAIN 11 / Darwin 35 waits for writability; the fd's status
+  flags are restored on every exit); on agnos a tagged socket's recv / send take the time left
+  themselves (`_agnos_sock_send_dl` rearm 0: the whole transfer); a custom transport is checked
+  between its calls (it is an opaque handle). On the libssl backend the shim keeps the deadline at
+  +24 (24 → 32 B) and `_tls_ssl_io` drives `SSL_connect` / `SSL_accept` / `SSL_read` / `SSL_write`
+  non-blocking from `SSL_get_error`'s WANT_READ / WANT_WRITE, so a drip is bounded there too. With no
+  deadline set nothing changes and no clock is read. **(c) the record reader's own codes pass
+  through**: `_tn_io_read_record` answers a header past the 16,640-byte ceiling with
+  `TLS_ERR_BAD_RECORD` (record_overflow) itself and passes the reader's `TLS_ERR_IO` /
+  `TLS_ERR_TIMEOUT` through; every record write site passes its writer's code through
+  (`_tn_ctx_fail(ctx, w)`, no longer `TLS_ERR_IO`); the error table above `_tn_read_fail` gains the
+  `TLS_ERR_TIMEOUT` and `TLS_ERR_PROTOCOL` rows. An expired `SO_RCVTIMEO` with no deadline set stays
+  `TLS_ERR_IO`. ⚠ **Behaviour change:** a peer sending two CCS in TLS 1.3, or a 1.2 Finished with no
+  CCS, now fails where it used to pass (OpenSSL, BoringSSL and the native stack send exactly one —
+  the `openssl s_server -tls1_3` / `-tls1_2` rows below); after `TLS_ERR_TIMEOUT` the native ctx is
+  failed. ⚠ **Windows:** native TLS does not run over `net.cyr` sockets at all — the default
+  transport's `ReadFile` / `WriteFile` return 0 on a Winsock socket (roadmap backlog j) — so there the
+  deadline is checked between calls and the socket rows of the new cross-host test SKIP by name.
+  **Tests:** `tests/tcyr/crossos/tls_native_deadline_ccs.tcyr` (39 assertions, single-threaded,
+  loopback pairs preloaded before the client runs): two CCS →
+  PROTOCOL in < 1 s with the ClientHello then `15 03 03 00 02 02 0a` on the wire; one CCS then EOF →
+  IO, one CCS then an alert → ALERT; a CCS byte 2 / a 2-byte CCS → PROTOCOL; a 1.2 client's CCS before
+  the server flight and a server's CCS before the ClientHello → PROTOCOL plus the plaintext alert;
+  header 0x4200 → BAD_RECORD; header + 1 of 100 bytes under +300 ms → TIMEOUT in [250, 2000) ms; a
+  far deadline changes nothing; 64 MiB to a never-reading peer under +300 ms → TIMEOUT in < 2 s with
+  `F_GETFL` restored; an expired deadline → TIMEOUT in < 100 ms with nothing written; the parameter
+  rows. x86_64, qemu-aarch64 and natively on pi, ecb and ach 39/39; cass 8/8 (the no-I/O rows; the
+  socket rows SKIP by name). Against the pre-fix lib (the new verbs stubbed) 15 of its first 27
+  assertions fail and it then hangs at the write row. `tests/tcyr/crypto/tls_native_ccs_deadline.tcyr`
+  (108 assertions; socketpair + fork; named SKIP on Windows and agnos): the filed repro's two cases
+  by code (a CCS every 100 ms in the handshake → PROTOCOL at the second; a post-handshake CCS →
+  `tls_native_read` PROTOCOL, the server opening the client's sealed alert); one CCS dropped wherever
+  it falls before the 1.3 server's Finished (before the ServerHello, before the flight, between two
+  flight records) and a second refused; the 1.2 rules both ways, through a transport write hook in
+  the child that drops or prefixes one record write; the 1.3 server's mTLS Certificate /
+  CertificateVerify / Finished sites; the 1.2 server's ClientHello / ClientKeyExchange; a 1-byte /
+  100 ms drip under `SO_RCVTIMEO` 1 s and +800 ms → TIMEOUT in < 2 s, in the handshake and after it,
+  TLS 1.3 and 1.2; writes to a peer that stopped reading; `tls_set_deadline` on both backends (libssl
+  row guarded by `tls_available()`); `openssl s_server -tls1_3` and `-tls1_2` reach CONNECTED having
+  read the server's one CCS (named SKIP without `/usr/bin/openssl`); 0 occurrences of the old reader
+  in `lib/`. 45 of 108 fail against the pre-fix lib. 34 mutants, each RED: each of the 13 read sites'
+  policy flipped, one-per-connection, value, length, MUST unchecked, the MUST alert row, no alert,
+  plaintext-only alert, no CCS-sent bit, the read deadline ignored, no poll, no non-blocking write,
+  flags not restored, EAGAIN read as IO, the header / body / write-site codes collapsed to IO, and the
+  libssl deadline not stored / not restored / not waited on. `tests/gates/platform/agnos_tls_deadline.sh`
+  (new, registered in `scripts/check.sh`): the agnos read and write paths against the fake kernel —
+  a +1 s deadline ends a read after 7 clock reads (the 30 s default is 121) and a write after 2
+  `sock_send#48` calls even while bytes trickle; EOF stays IO; no deadline, no change; an expired
+  deadline makes no socket call; 5 mutants, each RED. The existing TLS suite stays green unchanged,
+  OpenSSL `s_client` interop included (46 files, x86_64 and qemu-aarch64).
+
 ### Fixed
 
 - **Native TLS: concurrent first connects each loaded the system CA bundle, unordered on aarch64**
@@ -327,6 +405,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `tls_close`'s comment now says what it does on native (frees nothing; `reset_via` does).
   `docs/stdlib-reference.md` rows; api-surface snapshot `+tls::tls_connect_alloc_in/5`,
   `+tls_native_ctx::tls_native_new_client_in/3`.
+
+- **`tls_native_set_deadline(ctx, abs_ns)` (`lib/tls_native_conn.cyr`), `tls_set_deadline(ctx,
+  abs_ns)` (`lib/tls.cyr`) and `TLS_ERR_TIMEOUT` (-20) — a per-connection deadline for the handshake
+  and every later read and write** (I8, CVE-TBD(I8) above). `abs_ns` is absolute, on lib/chrono's
+  monotonic `clock_now_ns()` scale; 0 clears it; it may be set before connect / accept and changed
+  between reads. Past it the read or write in progress returns `TLS_ERR_TIMEOUT` and the native ctx
+  fails with it (plaintext already held from a record is still delivered). On the shim, set it
+  between `tls_connect_alloc` and `tls_connect_complete` (likewise for accept) so it covers the
+  handshake; `*_complete` returns 0 and `tls_native_get_last_error` says `TLS_ERR_TIMEOUT`. Returns
+  `TLS_OK` / 0, `TLS_ERR_INVALID_PARAM` for ctx 0 or a negative deadline, and on a libssl without
+  `SSL_get_error` `TLS_ERR_NOT_IMPLEMENTED` — a deadline it could not honour is refused, never
+  ignored. A libssl-only build gets `TLS_ERR_TIMEOUT`, `TLS_ERR_INVALID_PARAM` and
+  `TLS_ERR_NOT_IMPLEMENTED` from `lib/tls.cyr`'s `#ifdef CYRIUS_TLS_LIBSSL` block, and `lib/tls.cyr`
+  now includes `lib/chrono.cyr` itself. Internals: ctx `TLS_CTX_OFF_DEADLINE` (+544) and
+  `TLS_CTX_OFF_CCS_STATE` (+552) from I2's reserve (`TLS_CTX_LEN` stays 576); the ctx-less
+  `_tn_sock_read_full` / `_tn_sock_read_record` / `_tn_sock_write_all` stay, as ctx == 0 forms of the
+  new `_tn_io_*`. `tls_native_set_transport`'s comment states that a custom transport is bounded
+  only between calls. `docs/stdlib-reference.md` rows; api-surface snapshot `+tls::tls_set_deadline/2`,
+  `+tls_native_conn::tls_native_set_deadline/2`.
 ### Added
 
 - **`fd_wait_ready(fd, want_write, timeout_ms)` — one bounded readiness wait on a caller-owned fd,

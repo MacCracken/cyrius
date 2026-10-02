@@ -123,7 +123,9 @@ var TLS_CTX_OFF_READ_BUF       = 512; # record read buffer + its decrypt scratch
 var TLS_CTX_OFF_WRITE_BUF      = 520; # record seal buffer, allocated on the first write
 var TLS_CTX_OFF_PEER_CLOSED    = 528; # 1 once the peer's close_notify was read: every later tls_native_read is EOF
 var TLS_CTX_OFF_CA_SKIPPED     = 536; # blocks the last trust-root install could not use (tls_native_ca_skipped)
-#   +544..+568       — reserved: the read/write deadline and the CCS / peer-Finished state
+var TLS_CTX_OFF_DEADLINE       = 544; # absolute clock_now_ns() deadline for every read and write; 0 = none
+var TLS_CTX_OFF_CCS_STATE      = 552; # bit0: the peer's CCS was read; bit1: our TLS 1.2 CCS was sent
+#   +560..+568       — reserved
 # CHANGELOG [6.6.13]
 
 # Handshake state-machine events. The protocol-message build/parse

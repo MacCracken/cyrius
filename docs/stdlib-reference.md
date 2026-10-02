@@ -1466,6 +1466,7 @@ TLS client façade. Default backend wraps `libssl.so.3` (loaded via `fdlopen`-bo
 | `tls_connect` | `tls_connect(sock, host) → ctx/0` | Wrap a connected socket in a TLS session (SNI = host) |
 | `tls_connect_with_ctx_hook` | `tls_connect_with_ctx_hook(sock, host, hook_fp, hook_ctx) → ctx/0` | Connect with a pre-handshake hook (ALPN / verify customization) |
 | `tls_connect_alloc_in` | `tls_connect_alloc_in(a, sock, host, hook_fp, hook_ctx) → ctx/0` | Staged connect drawing the native ctx, shim, handshake and record buffers from Allocator `a` (an `arena_allocator`), so `tls_close` + `reset_via(a)` reclaims a connection (6.6.13); `a == 0` is `tls_connect_alloc`; libssl ignores `a` |
+| `tls_set_deadline` | `tls_set_deadline(ctx, abs_ns) → 0/err` | Bound the handshake and every later `tls_read`/`tls_write` by an absolute `clock_now_ns()` deadline (0 clears): set it between `tls_connect_alloc` and `tls_connect_complete`; past it, reads/writes return `TLS_ERR_TIMEOUT` (-20) and `*_complete` 0 (6.6.13). Both backends (libssl: non-blocking + `fd_wait_ready`, flags restored); `TLS_ERR_NOT_IMPLEMENTED` on a libssl without `SSL_get_error` |
 | `tls_write` | `tls_write(ctx, buf, len) → n/-1` | Write plaintext through TLS |
 | `tls_read` | `tls_read(ctx, buf, maxlen) → n/-1` | Read plaintext from TLS |
 | `tls_close` | `tls_close(ctx) → 0` | Shut down the session (libssl frees it; native frees nothing — its ctx lives in the allocator it came from, see `tls_connect_alloc_in`) |
@@ -1506,6 +1507,7 @@ Sovereign TLS 1.2 + 1.3 stack — no OpenSSL. ECDSA (P-256/P-384) / RSA (PSS, PK
 | `tls_native_set_ca_system` | `tls_native_set_ca_system(ctx) → TLS_OK/err` | Install the system CA trust store — one immutable root set per process, parsed once and shared (6.6.13: 0 B per further ctx) |
 | `tls_native_ca_skipped` | `tls_native_ca_skipped(ctx) → count/err` | Certificate blocks the last trust-root install could not use (6.6.13): installed + skipped == the bundle's PEM block count; 0 before any install |
 | `tls_native_set_version_range` | `tls_native_set_version_range(ctx, min, max) → TLS_OK/err` | Constrain negotiated version to [min, max] |
+| `tls_native_set_deadline` | `tls_native_set_deadline(ctx, abs_ns) → TLS_OK/err` | Absolute `clock_now_ns()` deadline for the handshake and every later read/write (0 clears; may change between reads); past it they fail `TLS_ERR_TIMEOUT` (-20) and the ctx fails (6.6.13). Linux/macOS poll before each read and write non-blocking (flags restored); agnos sockets take the time left; a custom transport and Windows are checked between calls |
 
 **Introspection (post-handshake):**
 

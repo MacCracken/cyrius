@@ -1210,9 +1210,8 @@ fn tls_native_connect_12(ctx, sock_fd): i64 {
     if (chrec == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     tls_native_record_write_header(chrec, TLS_CT_HANDSHAKE, 0x0303, chn);
     memcpy(chrec + TLS_RECORD_HEADER_LEN, ch, chn);
-    if (_tn_sock_write_all(sock_fd, chrec, chn + TLS_RECORD_HEADER_LEN) < 0) {
-        return _tn_ctx_fail(ctx, TLS_ERR_IO);
-    }
+    var chw = _tn_io_write_all(ctx, sock_fd, chrec, chn + TLS_RECORD_HEADER_LEN);
+    if (chw < 0) { return _tn_ctx_fail(ctx, chw); }
     var cap = TLS_RECORD_MAX_CIPHERTEXT + TLS_RECORD_HEADER_LEN;
     var inbuf = _tn_alloc(ctx, cap);
     if (inbuf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
@@ -1225,7 +1224,7 @@ fn tls_native_connect_12(ctx, sock_fd): i64 {
     var flen = 0;
     var fdone = 0;
     while (fdone == 0) {
-        var rl = _tn_sock_read_record_skip_ccs(sock_fd, inbuf, cap);
+        var rl = _tn_read_rec(ctx, sock_fd, inbuf, cap, _TN_CCS_REFUSE);
         if (rl < 0) { return _tn_read_fail(ctx, rl); }
         var hx_rec = _tn_hs_expect_ct(ctx, load8(inbuf) & 0xFF, TLS_CT_HANDSHAKE);
         if (hx_rec != TLS_OK) { return hx_rec; }
@@ -1264,13 +1263,15 @@ fn tls_native_connect_12(ctx, sock_fd): i64 {
     if (ckerec == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     tls_native_record_write_header(ckerec, TLS_CT_HANDSHAKE, 0x0303, cken);
     memcpy(ckerec + TLS_RECORD_HEADER_LEN, cke, cken);
-    if (_tn_sock_write_all(sock_fd, ckerec, cken + TLS_RECORD_HEADER_LEN) < 0) {
-        return _tn_ctx_fail(ctx, TLS_ERR_IO);
-    }
+    var ckw = _tn_io_write_all(ctx, sock_fd, ckerec, cken + TLS_RECORD_HEADER_LEN);
+    if (ckw < 0) { return _tn_ctx_fail(ctx, ckw); }
     var ccs = _tn_alloc(ctx, 8);
     if (ccs == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var ccsn = tls_native_ccs_record_write(ccs);
-    if (_tn_sock_write_all(sock_fd, ccs, ccsn) < 0) { return _tn_ctx_fail(ctx, TLS_ERR_IO); }
+    var ccw = _tn_io_write_all(ctx, sock_fd, ccs, ccsn);
+    if (ccw < 0) { return _tn_ctx_fail(ctx, ccw); }
+    # Our CCS is out: from here our alerts are sealed under the 1.2 write keys (_tn_send_fatal_alert).
+    store64(ctx + TLS_CTX_OFF_CCS_STATE, load64(ctx + TLS_CTX_OFF_CCS_STATE) | 2);
     var fin = _tn_alloc(ctx, 64);
     if (fin == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var finn = tls_native_12_build_finished(ctx, "client finished", fin, 64);
@@ -1279,8 +1280,9 @@ fn tls_native_connect_12(ctx, sock_fd): i64 {
     if (finrec == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var finreclen = tls_native_12_seal(ctx, TLS_CT_HANDSHAKE, fin, finn, finrec, finn + 64);
     if (finreclen < 0) { return _tn_ctx_fail(ctx, finreclen); }
-    if (_tn_sock_write_all(sock_fd, finrec, finreclen) < 0) { return _tn_ctx_fail(ctx, TLS_ERR_IO); }
-    var srl = _tn_sock_read_record_skip_ccs(sock_fd, inbuf, cap);
+    var fw = _tn_io_write_all(ctx, sock_fd, finrec, finreclen);
+    if (fw < 0) { return _tn_ctx_fail(ctx, fw); }
+    var srl = _tn_read_rec(ctx, sock_fd, inbuf, cap, _TN_CCS_MUST);
     if (srl < 0) { return _tn_read_fail(ctx, srl); }
     var sfin = _tn_alloc(ctx, 64);
     if (sfin == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
@@ -1341,13 +1343,12 @@ fn _tn_12_server_drive(ctx, sock_fd, ch_msg, ch_len): i64 {
     if (flrec == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     tls_native_record_write_header(flrec, TLS_CT_HANDSHAKE, 0x0303, fl);
     memcpy(flrec + TLS_RECORD_HEADER_LEN, flight, fl);
-    if (_tn_sock_write_all(sock_fd, flrec, fl + TLS_RECORD_HEADER_LEN) < 0) {
-        return _tn_ctx_fail(ctx, TLS_ERR_IO);
-    }
+    var flw = _tn_io_write_all(ctx, sock_fd, flrec, fl + TLS_RECORD_HEADER_LEN);
+    if (flw < 0) { return _tn_ctx_fail(ctx, flw); }
     var cap = TLS_RECORD_MAX_CIPHERTEXT + TLS_RECORD_HEADER_LEN;
     var inbuf = _tn_alloc(ctx, cap);
     if (inbuf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
-    var rl = _tn_sock_read_record_skip_ccs(sock_fd, inbuf, cap);
+    var rl = _tn_read_rec(ctx, sock_fd, inbuf, cap, _TN_CCS_REFUSE);
     if (rl < 0) { return _tn_read_fail(ctx, rl); }
     var hx_rec = _tn_hs_expect_ct(ctx, load8(inbuf) & 0xFF, TLS_CT_HANDSHAKE);
     if (hx_rec != TLS_OK) { return hx_rec; }
@@ -1367,7 +1368,7 @@ fn _tn_12_server_drive(ctx, sock_fd, ch_msg, ch_len): i64 {
     if (pr2 != TLS_OK) { return _tn_ctx_fail(ctx, pr2); }
     var dk = tls_native_12_derive_keys(ctx, pm, 32);
     if (dk != TLS_OK) { return _tn_ctx_fail(ctx, dk); }
-    var crl = _tn_sock_read_record_skip_ccs(sock_fd, inbuf, cap);
+    var crl = _tn_read_rec(ctx, sock_fd, inbuf, cap, _TN_CCS_MUST);
     if (crl < 0) { return _tn_read_fail(ctx, crl); }
     var cfin = _tn_alloc(ctx, 64);
     if (cfin == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
@@ -1381,7 +1382,9 @@ fn _tn_12_server_drive(ctx, sock_fd, ch_msg, ch_len): i64 {
     var ccs = _tn_alloc(ctx, 8);
     if (ccs == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var ccsn = tls_native_ccs_record_write(ccs);
-    if (_tn_sock_write_all(sock_fd, ccs, ccsn) < 0) { return _tn_ctx_fail(ctx, TLS_ERR_IO); }
+    var ccw = _tn_io_write_all(ctx, sock_fd, ccs, ccsn);
+    if (ccw < 0) { return _tn_ctx_fail(ctx, ccw); }
+    store64(ctx + TLS_CTX_OFF_CCS_STATE, load64(ctx + TLS_CTX_OFF_CCS_STATE) | 2);   # alerts sealed from here
     var fin = _tn_alloc(ctx, 64);
     if (fin == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var finn = tls_native_12_build_finished(ctx, "server finished", fin, 64);
@@ -1390,7 +1393,8 @@ fn _tn_12_server_drive(ctx, sock_fd, ch_msg, ch_len): i64 {
     if (finrec == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var finreclen = tls_native_12_seal(ctx, TLS_CT_HANDSHAKE, fin, finn, finrec, finn + 64);
     if (finreclen < 0) { return _tn_ctx_fail(ctx, finreclen); }
-    if (_tn_sock_write_all(sock_fd, finrec, finreclen) < 0) { return _tn_ctx_fail(ctx, TLS_ERR_IO); }
+    var fw = _tn_io_write_all(ctx, sock_fd, finrec, finreclen);
+    if (fw < 0) { return _tn_ctx_fail(ctx, fw); }
     store64(ctx + TLS_CTX_OFF_STATE, TLS_STATE_CONNECTED);
     return TLS_OK;
 }
@@ -1404,7 +1408,7 @@ fn tls_native_accept_12(ctx, sock_fd): i64 {
     var cap = TLS_RECORD_MAX_CIPHERTEXT + TLS_RECORD_HEADER_LEN;
     var inbuf = _tn_alloc(ctx, cap);
     if (inbuf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
-    var rl = _tn_sock_read_record_skip_ccs(sock_fd, inbuf, cap);
+    var rl = _tn_read_rec(ctx, sock_fd, inbuf, cap, _TN_CCS_REFUSE);
     if (rl < 0) { return _tn_read_fail(ctx, rl); }
     var hx_rec = _tn_hs_expect_ct(ctx, load8(inbuf) & 0xFF, TLS_CT_HANDSHAKE);
     if (hx_rec != TLS_OK) { return hx_rec; }
