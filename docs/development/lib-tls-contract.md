@@ -182,14 +182,19 @@ handshake: the caller keeps them alive through `tls_accept_complete`.
 
 **Client certificates (mTLS) on a server.** A hook asks for one with `tls_set_verify(handle,
 mode, 0)` and a non-zero `mode`, and installs the roots a client certificate must chain to
-(`tls_ctx_load_verify_locations`, or `tls_ctx_set_verify_paths` for the OS store). Both backends
-then authenticate the client the same way:
+(`tls_ctx_load_verify_locations`, or `tls_ctx_set_verify_paths` for the OS store). With
+`SSL_VERIFY_PEER` (1) in `mode` both backends authenticate the client the same way. Without it they
+differ: libssl applies OpenSSL's `SSL_CTX_set_verify`, which ignores `SSL_VERIFY_FAIL_IF_NO_PEER_CERT`
+(2), `SSL_VERIFY_CLIENT_ONCE` (4) and `SSL_VERIFY_POST_HANDSHAKE` (8) unless PEER is set — no
+CertificateRequest is sent — while native is never looser than asked and requests one:
 
-| `mode` (OpenSSL bits) | native mode | an empty client Certificate | a presented certificate |
-|---|---|---|---|
-| `0` | `TLS_VERIFY_NONE` | — (no CertificateRequest is sent) | — |
-| `SSL_VERIFY_PEER` (1), and any other mode without bit 2 | `TLS_VERIFY_PEER` | accepted, no identity | MUST verify |
-| any mode with `SSL_VERIFY_FAIL_IF_NO_PEER_CERT` (2) | `TLS_VERIFY_FAIL_IF_NO_PEER_CERT` | refused | MUST verify |
+| `mode` (OpenSSL bits) | native mode | native: an empty client Certificate | native: a presented certificate | libssl |
+|---|---|---|---|---|
+| `0` | `TLS_VERIFY_NONE` | — (no CertificateRequest is sent) | — | the same |
+| `SSL_VERIFY_PEER` (1), alone or with 4 / 8 | `TLS_VERIFY_PEER` | accepted, no identity | MUST verify | the same |
+| `SSL_VERIFY_PEER` \| `SSL_VERIFY_FAIL_IF_NO_PEER_CERT` (3), alone or with 4 / 8 | `TLS_VERIFY_FAIL_IF_NO_PEER_CERT` | refused | MUST verify | the same |
+| `SSL_VERIFY_FAIL_IF_NO_PEER_CERT` (2) without PEER | `TLS_VERIFY_FAIL_IF_NO_PEER_CERT` | refused | MUST verify | no CertificateRequest |
+| `SSL_VERIFY_CLIENT_ONCE` (4) or `SSL_VERIFY_POST_HANDSHAKE` (8) without PEER | `TLS_VERIFY_PEER` | accepted, no identity | MUST verify | no CertificateRequest |
 
 - **What "verify" is (native, 6.6.14 — CVE-64).** The client's certificate_list — its leaf and any
   intermediates it sends — must chain to a trusted, in-window CA root of the server ctx, with
@@ -212,7 +217,9 @@ then authenticate the client the same way:
   certificate verified — its CertificateVerify, say — included). A connection error AFTER a
   completed handshake (the client gone without close_notify) does not clear it, as on libssl.
 - **The `mode` mapping is never looser than asked.** `SSL_VERIFY_FAIL_IF_NO_PEER_CERT` without
-  `SSL_VERIFY_PEER` is FAIL natively — stricter than OpenSSL, which ignores the bit without PEER.
+  `SSL_VERIFY_PEER` is FAIL natively, and `SSL_VERIFY_CLIENT_ONCE` / `SSL_VERIFY_POST_HANDSHAKE`
+  alone are PEER — stricter than OpenSSL, which ignores those bits without PEER (the table's last
+  two rows; on libssl they request no certificate).
   ⚠ Until 6.6.13 every non-zero mode became `TLS_VERIFY_PEER` (bit 2 was dropped), the 1.3 server
   checked POSSESSION only (any self-signed, expired or foreign leaf was an identity, and a server
   with no roots accepted every client), the 1.2 server sent no CertificateRequest at all (a client
