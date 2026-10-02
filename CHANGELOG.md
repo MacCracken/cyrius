@@ -62,6 +62,429 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   every expected byte and commit taken from the origin; mutation ledger in the file — the
   6.6.12 resolver reds D1 D2 D3 D3b D4 D6 D8). Documented in the guide's *Dependencies*
   section, with `modules = []` as the declared-not-linked opt-out.
+- **CVE-TBD(I7) (P3) — the native TLS client verified an IP-literal host against dNSName SAN
+  entries, wildcards included.** (I7.) A certificate whose only SAN was `DNS:127.0.0.1`, or
+  `DNS:*.0.0.1`, verified `https://127.0.0.1`. RFC 9525 §6.3, the rule CVE-18 cites, compares an IP
+  literal with iPAddress entries only. **Root cause:** `_tn_cert_san_match`
+  (`lib/tls_native_conn.cyr`) ran `_tn_host_match` on every dNSName whatever the host was, and
+  parsed the host as an address only inside the iPAddress branch. Three parser defects fed the same
+  function: `_tn_parse_ipv4` took leading zeros (`010.0.0.1`), which `net_parse_ipv4` — the
+  resolver's rule — refuses and sends to DNS as a name; a `:`-bearing host that failed the IPv6
+  parse (`[::1]`, `fe80::1%eth0`, and `::ffff:1.2.3.4`, whose embedded-IPv4 form was not parsed)
+  fell through to dNSName matching; and the IPv6 parser took a trailing `:`, a `::` standing for no
+  group and 5-digit groups (`1:2:3:4::5:6:7:8`, `00001::`). **Fix:** the host is classified once, up
+  front. A DNS name meets dNSName entries only, an IP literal iPAddress entries only, and a
+  `:`-bearing host that is no well-formed IPv6 literal matches nothing (no DNS name holds a `:`).
+  `_tn_parse_ipv4` refuses leading zeros exactly as `net_parse_ipv4` does. IPv6 literals follow
+  RFC 4291 §2.2: 1-4 hex digits per group, `::` for at least one group, an optional dotted-quad
+  tail — so `::ffff:1.2.3.4` now verifies against its iPAddress entry. ⚠ **Behaviour change:** a
+  client that connects by IP to a server whose certificate spells that IP only as a dNSName (some
+  self-signed development certs) now fails with `TLS_ERR_CERT_HOSTNAME_MISMATCH`; reissue the
+  certificate with an `IP:` SAN. Exploiting the defect needs a CA the client trusts to issue such a
+  dNSName, which public CAs may not do, so private and enterprise CAs are the exposure. abaco
+  2.4.12's consumer-side IP-SAN post-check becomes redundant. **Tests:** the filed repro
+  `docs/development/issues/repros/2026-10-01-tls-ip-literal-dnsname.sh` exits 0 (2 on 6.6.12). A new
+  group in `tests/tcyr/crypto/tls_native_scaffold.tcyr` adds 83 assertions: six self-signed leaves
+  (DNS-spelled IPv4 and IPv6, a wildcard over an address, a mixed IP/DNS leaf and its IP-only twin,
+  and a leaf whose dNSName entries spell each malformed host verbatim while its iPAddress entries
+  hold what a lax parser reads them as), the literal classifier, and `_tn_parse_ipv4` against
+  `net_parse_ipv4` over ten inputs. 41 of them fail on 6.6.12; the file passes 532/532 on x86_64 and
+  on aarch64 under qemu. The native client still sends an IP literal as SNI (RFC 6066 §3); that is
+  backlogged separately.
+- **CVE-TBD(I1) (P1) — the libssl TLS backend never bound the server's certificate to the host:
+  any chain-valid certificate verified any host.** (I1.) A certificate for `DNS:localhost` verified
+  `www.example.com`, `127.0.0.1` and `host == 0`; a CN-only leaf and a partial wildcard
+  (`f*.example.com`) verified too. Man-in-the-middle, silent: the handshake reported success. The
+  libssl twin of CVE-18. Reached by every `-D CYRIUS_TLS_LIBSSL` build (hoosh's remote HTTPS) and
+  by a default build after `tls_set_backend(TLS_BACKEND_LIBSSL)`. **Root cause:**
+  `tls_connect_alloc` (`lib/tls.cyr`) set `SSL_VERIFY_PEER` and SNI and nothing else.
+  `SSL_VERIFY_PEER` checks the chain; OpenSSL checks an identity only when one is put in the SSL's
+  `X509_VERIFY_PARAM`, and SNI is what the client asks for, not what the certificate is checked
+  against. `_tls_init` never resolved a binding symbol. **Fix:** `_tls_libssl_bind_host`, run in
+  `tls_connect_alloc` after the hook and `SSL_new` (so the hook's final verify mode is read and the
+  binding lands on the per-`SSL` param; the staged alloc → `tls_set_session` → complete path is
+  bound too). The host is classified by the native backend's OWN code — I7's classifier moves
+  unchanged from `lib/tls_native_conn.cyr` into a new peer module, `lib/tls_hostid.cyr`, included by
+  `lib/tls.cyr` and `lib/tls_native.cyr`, because a libssl-only build carries no native stack. An IP
+  literal is bound with `X509_VERIFY_PARAM_set1_ip_asc` and sends no SNI (RFC 6066 §3). A DNS name
+  gets hostflags `NO_PARTIAL_WILDCARDS | NEVER_CHECK_SUBJECT` (without them OpenSSL still took the
+  CN-only leaf and the partial wildcard native refuses), `X509_VERIFY_PARAM_set1_host` and SNI.
+  `host == 0`, `""` or a `:`-bearing non-literal (`[::1]`) makes `tls_connect_alloc` return 0
+  under `SSL_VERIFY_PEER`, as native refuses it; after a hook's `tls_set_verify(h, 0, 0)` nothing is
+  bound, as under native's `TLS_VERIFY_NONE`. `SSL_set1_host` is deliberately NOT used: from OpenSSL
+  3.0 it first re-parses the name as an IP address with OpenSSL's own parser, so the libssl version
+  would decide whether `010.0.0.1` is a name or an address. The five symbols (`SSL_get0_param`,
+  `SSL_get_verify_mode`, `X509_VERIFY_PARAM_set1_host`, `_set_hostflags`, `_set1_ip_asc`) are
+  REQUIRED: one missing leaves `tls_available()` 0 and every libssl connect returns 0. The int
+  returns are masked to 32 bits before `== 1`. `docs/development/lib-tls-contract.md` gains a
+  "Server identity" section stating the binding for both backends, the `host == 0` rule and that a
+  hook which relaxes verification owns the consequence. ⚠ **Behaviour change (libssl only):** a
+  consumer that passed `host == 0` under `SSL_VERIFY_PEER`, or relied on a CN-only or
+  partial-wildcard certificate, now fails closed, as it always did on native; no IP-literal SNI is
+  sent; `host` is the identity, so a name (for a DNS-name host) or an IP (for a literal host) that
+  a hook pinned on the `SSL_CTX`'s `X509_VERIFY_PARAM` is replaced by it (a pin of the other kind
+  is kept and must match too) — to verify a different name, pass it as `host`. No ecosystem caller passes `host == 0` (hoosh, sandhi, abaco surveyed). **Tests:** the
+  filed repro `docs/development/issues/repros/2026-09-30-tls-libssl-no-hostname-verification.sh`
+  exits 0 under both builds (2 on 6.6.12). New gate
+  `tests/gates/platform/tls_libssl_hostname_binding.sh` runs 24 rows against OpenSSL's `s_server`
+  on native, on libssl via `tls_set_backend` and in a `CYRIUS_TLS_LIBSSL` build — DNS, IP and
+  wildcard leaves, a CN-only leaf, a partial wildcard, an untrusted CA, the classifier's bait
+  (`010.0.0.1` is a name, `[::1]` has no identity), `host == 0` / `""` and the verify-NONE hook —
+  plus five SNI rows (`-servername_fatal`: an IP host sends none, a DNS host does), four hook-pin
+  rows (a same-kind pin is replaced, an other-kind pin is kept) and five
+  required-symbol legs (a libssl-only build whose `lib/tls.cyr` asks `dlsym` for a bogus name in
+  place of each symbol reads `tls_available()` 0 and `tls_connect_alloc` 0); named SKIP 77
+  without openssl, the dlopen-helper or libssl.so.3, anti-vacuous floors otherwise. All 95 rows
+  pass; against the pre-fix lib 42 are RED. Mutations, each RED: the bind call deleted (36
+  rows), the hostflags dropped (the CN-only and partial-wildcard rows), one bail line removed (its
+  symbol's leg: available, then SIGSEGV), `SSL_set1_host`-style routing (the `[::1]` rows), SNI for
+  every host (the IP SNI rows).
+- **CVE-TBD(I2c) (P1) — the libssl backend's `tls_read` / `tls_write` returned a C `int`
+  zero-extended: one flipped bit on the wire read as ~4 GiB, and a fatal alert or a cut stream read
+  as a clean end.** (I2 (c), issue `2026-09-30-tls-client-memory-and-alert-gaps`; found by its
+  premise check.) `SSL_read` / `SSL_write` return an `int`, and `fncall3` hands back the whole
+  register with the int ZERO-extended in it, so libssl's -1 arrived as **+4294967295** (measured:
+  a bit-flipped record, a non-blocking read with nothing pending, a write to a closed peer or after
+  a fatal alert). A consumer doing `total = total + n` — abaco, whirl and sandhi all do — then
+  indexed and parsed past its buffer, from an on-path position with no key. And `SSL_read`'s 0 is
+  not only close_notify: a received fatal alert and a stream cut mid-record read 0 too, so an
+  attacked response read as complete. Reached by every `-D CYRIUS_TLS_LIBSSL` build and by a
+  default build after `tls_set_backend(TLS_BACKEND_LIBSSL)`, since the libssl wrapper's
+  introduction. **Root cause:** `tls_read` / `tls_write` (`lib/tls.cyr`) returned the raw call.
+  **Fix:** `_tls_ssl_io_ret(ssl, r)` masks the return to its 32 bits and sign-extends it (not with
+  `>>`, which is logical in cyrius), passes `r > 0` through, and maps everything else from
+  `SSL_get_error` and libcrypto's error queue onto the native backend's codes: close_notify → 0;
+  `WANT_READ` / `WANT_WRITE` → `TLS_ERR_WOULD_BLOCK`; `SYSCALL` → `TLS_ERR_IO`; a received alert (lib
+  SSL, reason 1000 + description) → `TLS_ERR_ALERT`; unexpected EOF (reason 294) → `TLS_ERR_IO`, as
+  native reports truncation; any other libssl failure, a bad record MAC included →
+  `TLS_ERR_PROTOCOL`; never 0 for a failure. `ERR_peek_last_error` / `ERR_clear_error` resolve in
+  `_tls_init` as OPTIONAL symbols, and the queue is cleared before every `SSL_read` / `SSL_write` so
+  a stale entry cannot decide the answer. `tls_write` answers a 0-byte write with 0 without calling
+  libssl and never returns 0 for a failed write (`SSL_write` after a fatal alert reports
+  `ZERO_RETURN` with -1: now `TLS_ERR_PROTOCOL`, not "0 bytes written" a write loop would spin on).
+  A libssl-only build gets the four `TLS_ERR_*` it returns from a `#ifdef CYRIUS_TLS_LIBSSL` block
+  in `lib/tls.cyr` (same values as `lib/tls_native.cyr`). ⚠ **Behaviour change (libssl only):**
+  negatives are `TLS_ERR_*` instead of a raw or zero-extended int, a fatal alert is
+  `TLS_ERR_ALERT` instead of 0, EOF without close_notify is `TLS_ERR_IO` instead of 0. Every
+  surveyed caller already treats `< 0` as an error and 0 as EOF (sandhi, whirl, abaco); none
+  compares `== -1`. Not changed: after a fatal alert a SECOND libssl read returns 0 — OpenSSL
+  reports `SSL_ERROR_ZERO_RETURN` once `SSL_RECEIVED_SHUTDOWN` is set, its `warn_alert` still 0 =
+  close_notify — though the record behind the alert is never delivered; the native backend stays
+  `TLS_ERR_ALERT` (reported for the backlog). **Test:**
+  `tests/tcyr/crypto/tls_libssl_read_errors.tcyr` (40 assertions, TLS 1.3 and 1.2, a libssl client
+  against a forked native server; named SKIP without libssl.so.3 or the dlopen-helper): each case
+  above, with a stale libcrypto error that reads as a received alert planted before the reads and
+  writes. 18 fail against the pre-fix lib. Mutants, each RED: no sign extension, the raw read, the
+  raw write, no `ERR_clear_error` before the read or before the write, the alert-reason row, the
+  unexpected-EOF row, `WANT_READ` → IO, `SYSCALL` → PROTOCOL, and a write's `ZERO_RETURN` read as 0.
+
+- **CVE-TBD(I8) (P2) — the native TLS stack skipped plaintext ChangeCipherSpec records without
+  limit and took no deadline: anyone on the path, with no key, held a client for ever.** (I8, issue
+  `2026-10-01-tls-native-no-deadline`; found by the abaco 2.4.12 HTTPS review.) Every record read
+  went through `_tn_sock_read_record_skip_ccs`, which dropped ANY number of CCS records
+  (`14 03 03 00 01 01` — plaintext, unauthenticated) during the handshake AND inside a verified
+  session; one CCS more often than the read timeout pinned the thread (the filed repro: both clients
+  still blocked at 10 s under a 2 s `SO_RCVTIMEO`). And nothing bounded a record read: it looped
+  `read(2)` until the record was complete, so a peer dripping one byte just inside the timeout held a
+  16 KB record for days, and the transport vtable is process-global, so a caller could not install a
+  per-connection bound. Same availability class as CVE-30. **Fix (a) — one CCS policy per read
+  site** (`_tn_read_rec(ctx, fd, buf, cap, policy)`, `lib/tls_native_conn.cyr`; the old reader is
+  deleted and `lib/` holds 0 occurrences of its name): TLS 1.3 allows ONE CCS per connection, before
+  the peer's Finished, and drops it (RFC 8446 §5; `_TN_CCS_MAY` at the client's ServerHello, server
+  flight and flight-continuation reads, and the server's client-Certificate / CertificateVerify /
+  Finished reads); TLS 1.2 requires exactly one, directly before the peer's Finished (RFC 5246 §7.1;
+  `_TN_CCS_MUST` at both Finished reads); none is allowed before a ClientHello, in the 1.2 server
+  flight or ClientKeyExchange, or after the handshake (`_TN_CCS_REFUSE`, `tls_native_read` included).
+  A CCS must be exactly the byte 1. Any violation — a second CCS, a malformed one, one outside the
+  window, a 1.2 Finished with no CCS before it — fails the ctx with `TLS_ERR_PROTOCOL` after a
+  best-effort fatal `unexpected_message` alert (`_tn_send_fatal_alert`): plaintext
+  `15 03 03 00 02 02 0a` while our writes still are, else sealed under our current write keys
+  (RFC 8446 §6): in TLS 1.3 our application keys, or before them our handshake-traffic keys (the
+  client's state from the ServerHello to its own Finished); in TLS 1.2 our keys once our own CCS is
+  out (ctx `TLS_CTX_OFF_CCS_STATE` bit 1). A plaintext alert
+  where the 1.2 peer's CCS is due is that peer's alert (`TLS_ERR_ALERT`, not answered) — the 1.2 half
+  of the "plaintext alert where an encrypted record is due" case I2 (c) left for the backlog. **(b) a
+  per-connection deadline** — `tls_native_set_deadline(ctx, abs_ns)` / `tls_set_deadline(ctx, abs_ns)`
+  (Added, below; `TLS_ERR_TIMEOUT` = -20): on Linux and macOS each read waits for readiness with the
+  time left (`fd_wait_ready`) and then reads once, so every byte costs a clock check, and a write runs
+  the fd non-blocking for the call (EAGAIN 11 / Darwin 35 waits for writability; the fd's status
+  flags are restored on every exit); on agnos a tagged socket's recv / send take the time left
+  themselves (`_agnos_sock_send_dl` rearm 0: the whole transfer); a custom transport is checked
+  between its calls (it is an opaque handle). On the libssl backend the shim keeps the deadline at
+  +24 (24 → 32 B) and `_tls_ssl_io` drives `SSL_connect` / `SSL_accept` / `SSL_read` / `SSL_write`
+  non-blocking from `SSL_get_error`'s WANT_READ / WANT_WRITE, so a drip is bounded there too. With no
+  deadline set nothing changes and no clock is read. **(c) the record reader's own codes pass
+  through**: `_tn_io_read_record` answers a header past the 16,640-byte ceiling with
+  `TLS_ERR_BAD_RECORD` (record_overflow) itself and passes the reader's `TLS_ERR_IO` /
+  `TLS_ERR_TIMEOUT` through; every record write site passes its writer's code through
+  (`_tn_ctx_fail(ctx, w)`, no longer `TLS_ERR_IO`); the error table above `_tn_read_fail` gains the
+  `TLS_ERR_TIMEOUT` and `TLS_ERR_PROTOCOL` rows. An expired `SO_RCVTIMEO` with no deadline set stays
+  `TLS_ERR_IO`. `TLS_ERR_RECORD_OVERFLOW` (`lib/tls_native_lowlevel.cyr`) moves from -20 to **-22**:
+  it had held -20 since the record layer landed, so with `TLS_ERR_TIMEOUT` at -20 an authenticated
+  record whose plaintext exceeds 2^14 bytes, passed through by `tls_native_read`, read as a deadline
+  expiry (in `tls_read` and in a failed handshake's last error). -21 is `TLS_ERR_KEY_UNSUPPORTED`;
+  `tls_native_scaffold.tcyr` now pins all 22 `TLS_ERR_*` values pairwise distinct. A consumer that
+  compares against the name is unaffected; one that hard-coded -20 for it was already wrong. ⚠ **Behaviour change:** a peer sending two CCS in TLS 1.3, or a 1.2 Finished with no
+  CCS, now fails where it used to pass (OpenSSL, BoringSSL and the native stack send exactly one —
+  the `openssl s_server -tls1_3` / `-tls1_2` rows below); after `TLS_ERR_TIMEOUT` the native ctx is
+  failed. ⚠ **Windows:** native TLS does not run over `net.cyr` sockets at all — the default
+  transport's `ReadFile` / `WriteFile` return 0 on a Winsock socket (roadmap backlog j) — so there the
+  deadline is checked between calls and the socket rows of the new cross-host test SKIP by name.
+  **Tests:** `tests/tcyr/crossos/tls_native_deadline_ccs.tcyr` (39 assertions, single-threaded,
+  loopback pairs preloaded before the client runs): two CCS →
+  PROTOCOL in < 1 s with the ClientHello then `15 03 03 00 02 02 0a` on the wire; one CCS then EOF →
+  IO, one CCS then an alert → ALERT; a CCS byte 2 / a 2-byte CCS → PROTOCOL; a 1.2 client's CCS before
+  the server flight and a server's CCS before the ClientHello → PROTOCOL plus the plaintext alert;
+  header 0x4200 → BAD_RECORD; header + 1 of 100 bytes under +300 ms → TIMEOUT in [250, 2000) ms; a
+  far deadline changes nothing; 64 MiB to a never-reading peer under +300 ms → TIMEOUT in < 2 s with
+  `F_GETFL` restored; an expired deadline → TIMEOUT in < 100 ms with nothing written; the parameter
+  rows. x86_64, qemu-aarch64 and natively on pi, ecb and ach 39/39; cass 8/8 (the no-I/O rows; the
+  socket rows SKIP by name). Against the pre-fix lib (the new verbs stubbed) 15 of its first 27
+  assertions fail and it then hangs at the write row. `tests/tcyr/crypto/tls_native_ccs_deadline.tcyr`
+  (108 assertions; socketpair + fork; named SKIP on Windows and agnos): the filed repro's two cases
+  by code (a CCS every 100 ms in the handshake → PROTOCOL at the second; a post-handshake CCS →
+  `tls_native_read` PROTOCOL, the server opening the client's sealed alert); one CCS dropped wherever
+  it falls before the 1.3 server's Finished (before the ServerHello, before the flight, between two
+  flight records) and a second refused; the 1.2 rules both ways, through a transport write hook in
+  the child that drops or prefixes one record write; the 1.3 server's mTLS Certificate /
+  CertificateVerify / Finished sites; the 1.2 server's ClientHello / ClientKeyExchange; a 1-byte /
+  100 ms drip under `SO_RCVTIMEO` 1 s and +800 ms → TIMEOUT in < 2 s, in the handshake and after it,
+  TLS 1.3 and 1.2; writes to a peer that stopped reading; `tls_set_deadline` on both backends (libssl
+  row guarded by `tls_available()`); `openssl s_server -tls1_3` and `-tls1_2` reach CONNECTED having
+  read the server's one CCS (named SKIP without `/usr/bin/openssl`); 0 occurrences of the old reader
+  in `lib/`. 45 of 108 fail against the pre-fix lib. 34 mutants, each RED: each of the 13 read sites'
+  policy flipped, one-per-connection, value, length, MUST unchecked, the MUST alert row, no alert,
+  plaintext-only alert, no CCS-sent bit, the read deadline ignored, no poll, no non-blocking write,
+  flags not restored, EAGAIN read as IO, the header / body / write-site codes collapsed to IO, and the
+  libssl deadline not stored / not restored / not waited on. `tests/gates/platform/agnos_tls_deadline.sh`
+  (new, registered in `scripts/check.sh`): the agnos read and write paths against the fake kernel —
+  a +1 s deadline ends a read after 7 clock reads (the 30 s default is 121) and a write after 2
+  `sock_send#48` calls even while bytes trickle; EOF stays IO; no deadline, no change; an expired
+  deadline makes no socket call; 5 mutants, each RED. The existing TLS suite stays green unchanged,
+  OpenSSL `s_client` interop included (46 files, x86_64 and qemu-aarch64).
+
+### Fixed
+
+- **Native TLS: concurrent first connects each loaded the system CA bundle, unordered on aarch64**
+  (I3, issue `2026-09-30-tls-first-use-thread-race`). `tls_native_set_ca_system`
+  (`lib/tls_native_hs12.cyr`), reached by every native connect, cached the bundle with a
+  check-then-set on `_tn_ca_len` and published it as two plain stores. Threads whose first connects
+  overlapped each saw "not loaded", each allocated a megabyte that is never freed and read the
+  file (8 racers: 7-8 loads on x86, 2-7 on real aarch64); on aarch64 nothing ordered the buffer
+  pointer and its bytes before the length, so a reader could see a length with no bundle behind it
+  (fail-closed: zero roots). **Fix:** one 0 → 1 → 2 publish, `_tn_ca_state` — one thread claims
+  and loads (`_tn_ca_load`), every other caller waits for 2, the publish is fenced on aarch64 with
+  an acquire fence on the reader side (x86 is TSO: no fence, the `lib/freelist.cyr` rule). The
+  "none readable" result is still cached; an OOM is not (the claim rolls back to 0, so a later
+  caller retries). Return codes are unchanged. The sigil half of the issue (lazy tables,
+  the main thread's block) shipped in the sigil 3.13.6 fold below; with both halves the filed repro
+  exits 0 (3 on 6.6.12: A 10/10 and B 5/5 handshakes failed, C SIGSEGV), on x86_64 and natively on
+  aarch64, also against RSA-2048 and Ed25519 chains. **Tests:**
+  `tests/tcyr/crossos/tls_first_use_threads.tcyr` (no network, every cross-OS host): K workers make
+  their cold first use together — a client ctx with the system roots, SHA-256 known answer,
+  ECDSA P-256 sign + verify — then the main thread does the same (the issue's scenario C without
+  sockets); every return code and the RFC 6979 signature must agree; then K racers on a cache
+  forced cold must cost EXACTLY one load more than a warm round (the no-claim mutant costs 3-4).
+  It branches on `THREADS_CONCURRENT`: a start barrier where threads are real, sequential inline
+  workers and the same assertions where `thread_create` runs the body inline (Windows, x86-macOS,
+  agnos), where a barrier would spin forever. Hosts with no bundle (cass) assert `TLS_ERR_IO` from
+  every caller. New gate `tests/gates/concurrency/tls_first_use_thread_race.sh` builds the filed
+  repro verbatim with `build/cycc` and runs it against P-256, RSA-2048 and Ed25519 chains (named
+  SKIP 77 without openssl); against the pre-fold sigil it is RED (P-256 exit 3, the others exit 1).
+
+- **Native TLS: `tls_ctx_load_verify_locations` kept a megabyte per call, and trust roots the
+  parser refused were dropped without a count** (I2 parts (a) and (e), issue
+  `2026-09-30-tls-client-memory-and-alert-gaps`). (a) The native branch did `alloc(1048576)` on
+  every call and never released it: **1,054,864 B retained per call** for a one-cert CA (the filed
+  repro, 6.6.12) — the per-call twin of the system-bundle leak 6.5.36 fixed. (e)
+  `tls_native_set_ca_bundle` counted only the roots it installed, so the ones sigil could not parse
+  vanished: on Arch's `/etc/ssl/cert.pem` 8 of 121 blocks before the sigil 3.13.6 fold, 1 after it
+  (block #115, Microsec e-Szigno TLS Root CA 2023, a P-521 key — a curve sigil does not have), and a
+  server chaining to one failed `TLS_ERR_CERT_INVALID` with nothing pointing at the store. It also
+  used a fixed 300-entry chain scratch (a bundle with more blocks was refused whole), a global
+  `x509_cert_alloc` per block, failures included, and `pem_decode_certs`' global pool. **Fix:**
+  `_tls_read_file_in(a, path, max, out_len)` (`lib/tls.cyr`) reads the file into a buffer of
+  EXACTLY its size from the ctx's allocator — two passes over `file_open`/`file_read`/`file_close`
+  (count, then read at most the count), no new syscall, refused above 16 MiB (`TLS_CAFILE_MAX`).
+  The parse moved to `_tn_ca_parse_set(arena, alc, pem, len, is_der, out_skipped)`
+  (`lib/tls_native_hs12.cyr`): chain scratch sized from the bundle's BEGIN-marker count, the DER
+  pool, the set and every cert from the ctx's allocator / arena (`pem_decode_certs_into`,
+  `x509_cert_alloc_into`, `x509_parse_into`), the next cert allocated only after a parse used the
+  last one, the set layout `[count][roots…]` unchanged. It records `skipped = blocks − installed` in
+  a new ctx slot, also when nothing installs (`TLS_ERR_CERT_INVALID`; the ctx keeps any set it
+  already had). The filed repro now exits 0: **2,144 B retained per call** (a fresh ctx included);
+  an arena-backed ctx (`tls_native_set_alloc`) retains 0 B of global heap and gives it all back on
+  `reset_via`. `TLS_CTX_LEN` grows 512 → 576: +536 is the skipped count, +512..+528 are allocated to
+  the per-ctx read/write buffers and the sticky-EOF flag, +544..+568 are reserved for the
+  read/write deadline and the CCS state. **Test:** `tests/tcyr/crossos/tls_ca_store.tcyr` (42
+  assertions, every cross-OS host): a fixture of the P-256 CA `tls_native_scaffold.tcyr` serves plus
+  the public e-Szigno P-521 root, written to a per-process CWD file and removed — 1 installed + 1
+  skipped (PEM and DER), a P-521-only bundle refused with its count recorded, a malformed block
+  counting every block; the sized read exact to the byte and the allocation, over-max and missing
+  files refused with 0 B allocated, 20 loads under 64 KiB each, 20 arena loads with 0 B of global
+  heap; and the system store's installed + skipped == its PEM blocks — Arch 121 = 120 + 1, pi
+  121 = 120 + 1, ecb and ach 128 = 128 + 0, cass no store (`TLS_ERR_IO`, the second look 0 B).
+  Mutants (the old 1 MiB read; the count never stored; the parse on the global heap) each turn it
+  RED.
+
+- **Native TLS client: every connect re-parsed the system trust store, every read and write
+  allocated a fresh record buffer, and nothing a client allocated could be given back** (I2 part
+  (b), issue `2026-09-30-tls-client-memory-and-alert-gaps`). Measured on 6.6.13 before the fix, all
+  on the global no-free heap: 271,928 B per connect for the ctx and a full re-parse of the system
+  store into it (`tls_native_set_ca_system` cached the file's bytes, not the parse), 86-108 KB of
+  handshake state, and **33,424 B per `tls_read` / `tls_write` / `tls_close` CALL** — so a
+  long-lived stream grew without bound — with no allocator-aware client connect to reclaim any of
+  it (the server has had `tls_accept_alloc_in` since 6.2.25). **Fix:** (1) one immutable root set
+  per process: the claim holder of I3's `_tn_ca_state` 0 → 1 → 2 publish parses the bundle
+  (`_tn_ca_parse_set(0, 0, …)`) onto the GLOBAL heap — never a caller's allocator, since it must
+  outlive any `reset_via` — and publishes it with the bytes; `tls_native_set_ca_system` then
+  stores the pointer (and its skipped count) and allocates nothing. An OOM in the parse rolls the
+  claim back like the read's; an unusable bundle is cached as `TLS_ERR_CERT_INVALID`. (2) Per-ctx
+  record buffers (`TLS_CTX_OFF_READ_BUF` +512, `TLS_CTX_OFF_WRITE_BUF` +520), allocated on first
+  use from the ctx's allocator and reused; `tls_native_close` seals its close_notify on the stack.
+  (3) Every client handshake allocation goes through the ctx's allocator — the 1.3 hello,
+  ServerHello (transcript and key schedule via their `_in` forms), server flight (leaf and
+  intermediates via `x509_cert_alloc_into` / `x509_parse_into(…, _tn_arena(ctx))`, the record buffer
+  hoisted out of the reassembly loop), Finished and `tls_native_connect`; the 1.2 hello,
+  ServerHello, Certificate, ServerKeyExchange, flight transcript and `tls_native_connect_12`;
+  `tls_native_set_alpn`, the stored ALPN selection and `tls_native_set_client_cert`'s PEM decode
+  (`pem_decode_certs_into`, its pool from the ctx). Results: the filed repro's set_ca_system info
+  line drops from 271,888 to **592 B per call — the fresh ctx alone** (121 blocks / 120 roots,
+  exit 0); `tls_connect_alloc` (a == 0) costs **1,016 B** on a warm process, and reads, writes, EOF
+  and close after the first retain **0 B**; on an arena a connection is 175,208 B (TLS 1.3) /
+  153,128 B (1.2), constant, with **0 B of global heap** from the second connect on; live against
+  1.1.1.1 with the shared system roots, 158,824 B per connection and 0 B of global heap while
+  reading 57 KB. **Test:** `tests/tcyr/crypto/tls_client_alloc_in.tcyr` (153 assertions; socketpair
+  + fork against a native server, verification ON — the hook trusts the server's self-signed CA,
+  SAN `DNS:localhost`, through the ctx's allocator and offers ALPN): 5 arena connects per version,
+  each with 21 writes and 200 one-byte reads — writes and reads after the first cost 0 B of arena,
+  `reset_via` rewinds the arena to its base, global heap flat from connect 2; the a == 0 path
+  (reads/writes/EOF/close 0 B, connect_alloc < 8 KiB); the system set shared by every ctx, 0 B per
+  further install, and still intact after the arena of the ctx that FIRST installed it is reset
+  and overwritten; a PEM client certificate decoded with 0 B of global heap; and the libssl arm of
+  `tls_connect_alloc_in` in a forked child under a 30 s bound. x86, qemu-aarch64 and natively on
+  pi, ecb and ach (libssl absent there: the row's named note). Mutants, each RED: per-call read or
+  write buffer, a heap close record, the host copy / shim / ctor / server-flight buffer / leaf /
+  key schedule / 1.2 flight buffer, transcript, server random, peer key / ALPN offer / ALPN
+  selection / PEM pool on the global heap, the per-ctx store re-parse (81 failures), the set built
+  in its first caller's arena (4), and the libssl arm calling the a == 0 wrapper (a HANG, caught by
+  the bound). `tests/tcyr/crossos/tls_ca_store.tcyr` gains the "second ctx: 0 B, the same set" rows
+  (ecb, ach 128 = 128 + 0, pi 121 = 120 + 1; cass has no store). The 45 converted `alloc(` sites
+  take `tests/gates/memory/stdlib_alloc_checked_census.sh`'s anti-vacuous alloc-site floor from
+  200 to 150 (238 → 193 sites; they are still zero-checked, through `_tn_alloc`).
+
+- **Native TLS: a fatal alert left the connection usable, close_notify was not sticky, and every
+  handshake read site reported the peer's alert as a malformed record — one error table now decides
+  every read** (I2 part (c), issue `2026-09-30-tls-client-memory-and-alert-gaps`). Measured on 6.6.13
+  before the fix, TLS 1.3 and 1.2 alike: a sealed fatal alert returned `TLS_ERR_ALERT` once but left
+  the ctx CONNECTED with no `LAST_ERR`, so the next `tls_native_read` went back to the socket and
+  **delivered the record that followed the alert**; after close_notify the next read did the same
+  (EOF was not sticky); a fatal-level close_notify read as a clean EOF; a warning-level
+  user_canceled read as an error; a record header past the ciphertext ceiling read as `TLS_ERR_IO`;
+  a tampered record returned `TLS_ERR_DECRYPT` without failing the ctx; and a plaintext
+  `handshake_failure` in place of ServerHello made `tls_native_connect` return
+  `TLS_ERR_BAD_RECORD`. **Root cause:** `tls_native_read` (`lib/tls_native_conn.cyr`) returned
+  `_tn_open_record`'s errors without `_tn_ctx_fail` and `return 0` for any alert record it was
+  handed; `_tn_open_record` (`lib/tls_native_hs13.cyr`) classified an alert by its description
+  byte alone; every record read collapsed its error to `TLS_ERR_IO`; and the 12 handshake sites
+  tested `!= TLS_CT_HANDSHAKE` → `TLS_ERR_BAD_RECORD`. **Fix — one table** (documented once, above
+  `_tn_read_fail` in `lib/tls_native_conn.cyr`): `_tn_read_fail(ctx, rl)` is the only exit for a
+  failed record read at all 13 read sites (`BUFFER_FULL` — a header past the ceiling, the peer's
+  record_overflow — becomes `TLS_ERR_BAD_RECORD`; every other code is its own row; I8 extends it);
+  `_tn_alert_disposition(level, desc, len)` decides an alert after the handshake (RFC 8446 §6,
+  RFC 5246 §7.2): a warning-level close_notify is EOF, a warning-level user_canceled is dropped,
+  an alert that is not exactly 2 bytes is `TLS_ERR_BAD_RECORD`, and everything else —
+  every level that is not warning (fatal, or one no RFC defines) and every other description — is
+  `TLS_ERR_ALERT`; `_tn_hs_expect_ct(ctx, ct, want)` decides a handshake record at all 12 sites (a
+  plaintext record's outer type, or an opened record's inner type): an alert in place of a
+  handshake record is `TLS_ERR_ALERT` whatever its level, anything else `TLS_ERR_BAD_RECORD`.
+  `tls_native_read` now fails the ctx on every negative result and, in the ERROR state, returns
+  `LAST_ERR` instead of a generic `TLS_ERR_PROTOCOL`, so a fatal alert stays `TLS_ERR_ALERT` on
+  every re-read; a close_notify sets the new `TLS_CTX_OFF_PEER_CLOSED` (+528) and every later read
+  is 0 without touching the socket; a user_canceled is drained inside the existing
+  post-handshake bound. `tls_native_open_app` keeps its contract (0 for close_notify, now also for
+  user_canceled; `TLS_ERR_ALERT` for an error alert). ⚠ **Behaviour change:** close_notify EOF is
+  sticky; a failed ctx re-reads its own error; a fatal-level close_notify is `TLS_ERR_ALERT`; a
+  user_canceled is no longer an error; an over-length record is `TLS_ERR_BAD_RECORD`, not
+  `TLS_ERR_IO`; an alert during the handshake makes `tls_native_connect` / `tls_native_accept`
+  return `TLS_ERR_ALERT`, not `TLS_ERR_BAD_RECORD`. A plaintext alert where an ENCRYPTED handshake
+  record is due (a TLS 1.3 server reading the client's second flight, a 1.2 peer's Finished) still
+  fails to open as `TLS_ERR_BAD_RECORD` (reported for the backlog). **Test:**
+  `tests/tcyr/crypto/tls_native_alert_mapping.tcyr` (144 assertions; socketpair + fork; a peer
+  that must misbehave mid-handshake runs the REAL native driver with a transport write hook that
+  replaces its Nth record write — a plaintext alert, an over-length header, or an alert sealed under
+  the keys the driver just used — so every one of the 12 content-type sites and 13 record-read
+  sites is reached by a real handshake, TLS 1.3 and 1.2; mTLS rows for the client Certificate and
+  CertificateVerify sites; one row through `tls_read`; `tls_native_open_app` row by row; 5 s
+  receive timeouts, so a regression fails a row instead of hanging). 106 of the 144 fail against
+  the pre-fix lib. 39 mutants, each RED: each of the 13 read sites back to `TLS_ERR_IO`, each of
+  the 12 content-type sites back to `TLS_ERR_BAD_RECORD`, the `BUFFER_FULL` row, the level rule
+  narrowed to fatal-only (the undefined-level row) or dropped, the length row, user_canceled as an
+  error, the alert row of `_tn_hs_expect_ct`, the sticky check, the sticky store, an open error not
+  failing the ctx, the ERROR state answering `TLS_ERR_PROTOCOL`, user_canceled read as EOF, both
+  old `_tn_open_record` alert arms, and `tls_native_open_app`'s alert row. x86_64 and aarch64 under
+  qemu.
+
+### Added
+
+- **`tls_init_main()` (`lib/tls.cyr`) — warm the TLS stack once, on the main thread** (I3). Returns
+  `tls_available()`'s verdict. Native: `crypto_tls_main_init()` (only a thread without a block gets
+  one), then every lazy table a handshake reaches — SHA-256/-512, AES-GCM, Ed25519,
+  `ecdsa_p256_warm`/`ecdsa_p384_warm`, the X.509 OID and PEM tables through their public entry
+  points, the X.509 validity-date table (`_x509_init_mdays`) — and the CA bundle cache, under its own 0 → 1 → 2 latch: idempotent, a warmed call
+  allocates nothing, harmless on a worker. Recommended, not required: since sigil 3.13.6 first use
+  is race-free; the verb moves about 1.3 MB of table builds and the bundle read off the first
+  handshake and ends sigil's per-`cbank()` thread-pointer probe until main's block exists. The
+  6.6.12 workaround (`crypto_tls_main_init(); ecdsa_p256_warm(); ecdsa_p384_warm();`) stays valid.
+  libssl: `_tls_init()`. `docs/development/lib-tls-contract.md` gains the verb row and a
+  **"Thread safety"** section: native verbs are safe concurrently on distinct ctxs, a ctx is
+  single-threaded, first use is race-free, process-global setters (`tls_set_backend`,
+  `tls_native_set_transport`, `tls_native_set_entropy`) are set once before any thread connects,
+  the 63-lifetime-thread lane bound; and the libssl backend is MAIN THREAD ONLY — a libssl call
+  from a `thread_create` worker SIGSEGVs or hangs (measured at 6.6.13) and is NOT guarded in this
+  release (backlogged).
+
+- **`tls_native_ca_skipped(ctx)` (`lib/tls_native_hs12.cyr`) — how many certificate blocks the
+  ctx's last trust-root install could not use** (I2 (e)): `tls_native_set_ca_bundle`,
+  `tls_native_set_ca_system` or `tls_ctx_load_verify_locations`. After a successful install,
+  installed + skipped == the bundle's PEM block count; after one that failed
+  `TLS_ERR_CERT_INVALID` it is that bundle's count. Returns >= 0 (0 before any install), or
+  `TLS_ERR_INVALID_PARAM` for ctx 0. A P-521 root is counted and skipped; adding the curve is
+  sigil's. `docs/stdlib-reference.md` row; api-surface snapshot `+tls_native_hs12::tls_native_ca_skipped/1`.
+
+- **`tls_connect_alloc_in(a, sock, host, hook_fp, hook_ctx)` (`lib/tls.cyr`) and
+  `tls_native_new_client_in(a, host, host_len)` (`lib/tls_native_ctx.cyr`) — the allocator-aware
+  client connect, the mirror of `tls_accept_alloc_in`** (I2 (b)). On the native backend the ctx,
+  the 40-byte shim, the handshake, a hook's trust store and ALPN list, and the per-ctx record
+  buffers all come from Allocator `a`, so a long-lived client reclaims a whole connection with
+  `tls_close(c); reset_via(a);`. `a` must be an `arena_allocator`, created once (sigil's X.509 parse
+  takes the raw arena behind it — the same rule as the server side), sized for one connection
+  (175,208 B for TLS 1.3 against a one-certificate P-256 server). `tls_connect_alloc` and
+  `tls_native_new_client` are now the a == 0 wrappers, behaviour unchanged. On the libssl backend
+  `a` does not apply: `tls_connect_alloc_in` runs the libssl body directly
+  (`_tls_libssl_connect_alloc`), NOT the a == 0 wrapper, which would call it back forever.
+  `tls_close`'s comment now says what it does on native (frees nothing; `reset_via` does).
+  `docs/stdlib-reference.md` rows; api-surface snapshot `+tls::tls_connect_alloc_in/5`,
+  `+tls_native_ctx::tls_native_new_client_in/3`.
+
+- **`tls_native_set_deadline(ctx, abs_ns)` (`lib/tls_native_conn.cyr`), `tls_set_deadline(ctx,
+  abs_ns)` (`lib/tls.cyr`) and `TLS_ERR_TIMEOUT` (-20) — a per-connection deadline for the handshake
+  and every later read and write** (I8, CVE-TBD(I8) above). `abs_ns` is absolute, on lib/chrono's
+  monotonic `clock_now_ns()` scale; 0 clears it; it may be set before connect / accept and changed
+  between reads. Past it the read or write in progress returns `TLS_ERR_TIMEOUT` and the native ctx
+  fails with it (plaintext already held from a record is still delivered). On the shim, set it
+  between `tls_connect_alloc` and `tls_connect_complete` (likewise for accept) so it covers the
+  handshake; `*_complete` returns 0 and `tls_native_get_last_error` says `TLS_ERR_TIMEOUT`. Returns
+  `TLS_OK` / 0, `TLS_ERR_INVALID_PARAM` for ctx 0 or a negative deadline, and on a libssl without
+  `SSL_get_error` `TLS_ERR_NOT_IMPLEMENTED` — a deadline it could not honour is refused, never
+  ignored. A libssl-only build gets `TLS_ERR_TIMEOUT`, `TLS_ERR_INVALID_PARAM` and
+  `TLS_ERR_NOT_IMPLEMENTED` from `lib/tls.cyr`'s `#ifdef CYRIUS_TLS_LIBSSL` block, and `lib/tls.cyr`
+  now includes `lib/chrono.cyr` itself. Internals: ctx `TLS_CTX_OFF_DEADLINE` (+544) and
+  `TLS_CTX_OFF_CCS_STATE` (+552) from I2's reserve (`TLS_CTX_LEN` stays 576); the ctx-less
+  `_tn_sock_read_full` / `_tn_sock_read_record` / `_tn_sock_write_all` stay, as ctx == 0 forms of the
+  new `_tn_io_*`. `tls_native_set_transport`'s comment states that a custom transport is bounded
+  only between calls. `docs/stdlib-reference.md` rows; api-surface snapshot `+tls::tls_set_deadline/2`,
+  `+tls_native_conn::tls_native_set_deadline/2`.
 ### Added
 
 - **`fd_wait_ready(fd, want_write, timeout_ms)` — one bounded readiness wait on a caller-owned fd,
@@ -466,6 +889,37 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `$HOME/.cyrius/versions/<its VERSION>/lib` and never `CYRIUS_HOME`, so a re-added `math` leaf came
   from the LIVE store's in-flight 6.6.13 slot (pre-I5, still defining `f64_le`) and failed to compile —
   the gate now pins `HOME` to a throwaway whose `.cyrius` is the home under test.
+### Changed
+
+- **`docs/development/lib-tls-contract.md` re-pinned to the 6.6.13 surface** (I2 part (d), issue
+  `2026-09-30-tls-client-memory-and-alert-gaps`, with the I8 rows). It had stayed pinned at
+  v5.10.42 for a whole major: libssl's defaults only, `tls_read` "bytes-read or -1", and none of
+  the 6.2.8 trust-store / mTLS verbs or the 6.2.24 / 6.2.25 server verbs. It now lists every public
+  `tls_*` verb in `lib/tls.cyr` (40, each grep >= 1): backend selection (`tls_set_backend`,
+  `tls_get_backend`); the native defaults beside libssl's (verify PEER, the OS store as one shared
+  root set, the in-handshake hostname binding, CVE-17 / CVE-18); `tls_connect_alloc_in`; the
+  server verbs and what native client-certificate checking does (possession, not a chain — an empty
+  Certificate passes under `tls_set_verify` — and TLS 1.3 only: the native 1.2 server never requests
+  a certificate, so a client offering only 1.2 is accepted unauthenticated unless the hook pins the
+  server to 1.3 with `tls_native_set_version_range`, which the contract now says); `tls_ctx_*` (native REPLACES the ctx's roots where
+  libssl ADDS, and `tls_native_ca_skipped`); ONE table of what `tls_read` / `tls_write` return on
+  both backends and what a negative result leaves behind (a failed native ctx; libssl's second read
+  after an alert is 0); the ChangeCipherSpec rule; `tls_set_deadline` / `tls_native_set_deadline`
+  and how each transport bounds a call; the allocator lifecycle (`tls_close`, then `reset_via(a)`,
+  with the measured capacities); a corrected Failure section (native frees nothing; `tls_close`
+  never closes the socket). **Contract amendment:** `tls_close` is no longer documented idempotent —
+  the v5.10.42 row said it was, which was never true: a second call on the libssl backend frees the
+  `SSL` and `SSL_CTX` again (a double free); native's second call is a no-op only until
+  `reset_via(a)`. Call it once per ctx; and that the session / 0-RTT verbs are libssl-only and do not check the
+  backend. The I1 "Server identity" and I3 "Thread safety" sections are carried verbatim.
+  `lib/tls_native.cyr`'s header loses its KNOWN HOLES / IN PROGRESS / NOT YET DONE block (it
+  listed `tls_native_set_alpn`, `_set_version_range` and `_close` as `TLS_ERR_NOT_IMPLEMENTED`, all
+  three long implemented, and the TLS 1.2 backport as in progress) for one status paragraph; the
+  `tls_native_close` comment now says when the close_notify is sent (CONNECTED only, under the
+  deadline) and that `tls_close` frees nothing either, and `lib/tls_native_ctx.cyr`'s handle comment
+  no longer says closing frees the ctx. `docs/stdlib-reference.md`'s `tls_read` / `tls_write` rows
+  (`→ n/-1`) and its "libssl is the default backend" line are corrected and point at the contract.
+  Docs and comments only.
 
 ### Downstream
 

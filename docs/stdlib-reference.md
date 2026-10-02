@@ -1461,24 +1461,27 @@ Layered on `net.cyr`/`http.cyr` (above). TLS has a libssl façade + a sovereign 
 
 ### tls.cyr
 
-TLS client façade. Default backend wraps `libssl.so.3` (loaded via `fdlopen`-bootstrapped glibc `dlopen`); `tls_set_backend(TLS_BACKEND_NATIVE)` flips to the sovereign stack in `tls_native.cyr` (no OpenSSL). Includes: tls_native, fdlopen (which brings dynlib + mmap).
+TLS client + server façade over two backends: the sovereign stack in `tls_native.cyr` (no OpenSSL) is the default since v6.1.21; `libssl.so.3` (loaded via `fdlopen`-bootstrapped glibc `dlopen`) is the opt-out — `-D CYRIUS_TLS_LIBSSL` at build time or `tls_set_backend(TLS_BACKEND_LIBSSL)` at runtime. The full surface, its return codes and lifecycle are the contract in `docs/development/lib-tls-contract.md`. Includes: tls_native, fdlopen (which brings dynlib + mmap).
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `tls_available` | `tls_available() → 1/0` | Is the active backend usable (native always; libssl checks dlopen) |
+| `tls_init_main` | `tls_init_main() → 1/0` | Warm the stack once on the main thread before spawning TLS workers (6.6.13): crypto block + every lazy table + the CA cache. Recommended, not required; idempotent; libssl is main-thread only — see `docs/development/lib-tls-contract.md` "Thread safety" |
 | `tls_set_backend` | `tls_set_backend(backend) → 0/-1` | Select `TLS_BACKEND_LIBSSL` or `TLS_BACKEND_NATIVE` |
 | `tls_get_backend` | `tls_get_backend() → backend` | Active backend |
 | `tls_connect` | `tls_connect(sock, host) → ctx/0` | Wrap a connected socket in a TLS session (SNI = host) |
 | `tls_connect_with_ctx_hook` | `tls_connect_with_ctx_hook(sock, host, hook_fp, hook_ctx) → ctx/0` | Connect with a pre-handshake hook (ALPN / verify customization) |
-| `tls_write` | `tls_write(ctx, buf, len) → n/-1` | Write plaintext through TLS |
-| `tls_read` | `tls_read(ctx, buf, maxlen) → n/-1` | Read plaintext from TLS |
-| `tls_close` | `tls_close(ctx) → 0` | Shut down and free the session |
+| `tls_connect_alloc_in` | `tls_connect_alloc_in(a, sock, host, hook_fp, hook_ctx) → ctx/0` | Staged connect drawing the native ctx, shim, handshake and record buffers from Allocator `a` (an `arena_allocator`), so `tls_close` + `reset_via(a)` reclaims a connection (6.6.13); `a == 0` is `tls_connect_alloc`; libssl ignores `a` |
+| `tls_set_deadline` | `tls_set_deadline(ctx, abs_ns) → 0/err` | Bound the handshake and every later `tls_read`/`tls_write` by an absolute `clock_now_ns()` deadline (0 clears): set it between `tls_connect_alloc` and `tls_connect_complete`; past it, reads/writes return `TLS_ERR_TIMEOUT` (-20) and `*_complete` 0 (6.6.13). Both backends (libssl: non-blocking + `fd_wait_ready`, flags restored); `TLS_ERR_NOT_IMPLEMENTED` on a libssl without `SSL_get_error` |
+| `tls_write` | `tls_write(ctx, buf, len) → n/TLS_ERR_*` | Write plaintext through TLS: `len` on success, 0 only for `len == 0`, else a negative `TLS_ERR_*` (-1 for ctx 0) — the contract's I/O table |
+| `tls_read` | `tls_read(ctx, buf, maxlen) → n/0/TLS_ERR_*` | Read plaintext from TLS: bytes, 0 at the peer's close_notify (sticky), or a negative `TLS_ERR_*` (-1 for ctx 0) — the contract's I/O table |
+| `tls_close` | `tls_close(ctx) → 0` | Shut down the session (libssl frees it; native frees nothing — its ctx lives in the allocator it came from, see `tls_connect_alloc_in`) |
 | `tls_set_alpn` | `tls_set_alpn(handle, protos, len) → 0/-1` | Set ALPN advertise list (OpenSSL wire format; call in the hook) |
 | `tls_set_verify` | `tls_set_verify(handle, mode, cb) → 0/-1` | Override peer-verification mode |
 | `tls_get_alpn_selected` | `tls_get_alpn_selected(ctx, buf, max) → len` | Negotiated ALPN protocol |
 | `tls_get_peer_spki_der` | `tls_get_peer_spki_der(ctx, buf, max) → len` | Peer SubjectPublicKeyInfo DER (HPKP pin target) |
 
-The façade also exposes **session resumption** (`tls_connect_alloc`/`tls_connect_complete`, `tls_get_session`/`tls_set_session`/`tls_session_free`, `tls_ctx_set_session_*_cb`, `tls_ctx_set_session_cache_mode`) and **TLS 1.3 0-RTT** (`tls_write_early_data`/`tls_read_early_data`/`tls_get_early_data_status`/`tls_ctx_set_max_early_data`, gated by `tls_supports_early_data`) — see the source for the full surface.
+The façade also exposes **session resumption** (`tls_connect_alloc`/`tls_connect_complete`, `tls_get_session`/`tls_set_session`/`tls_session_free`, `tls_ctx_set_session_*_cb`, `tls_ctx_set_session_cache_mode`) and **TLS 1.3 0-RTT** (`tls_write_early_data`/`tls_read_early_data`/`tls_get_early_data_status`/`tls_ctx_set_max_early_data`, gated by `tls_supports_early_data`) — the session and 0-RTT verbs are libssl-only; the staged connect serves both backends. The trust-store / mTLS verbs (`tls_ctx_load_verify_locations`, `tls_ctx_set_verify_paths`, `tls_ctx_use_certificate_file`, `tls_ctx_use_private_key_file`) and the server verbs (`tls_accept_alloc`, `tls_accept_alloc_in`, `tls_accept_complete`, `tls_accept`) are in `docs/development/lib-tls-contract.md`.
 
 ### tls_native.cyr
 
@@ -1490,6 +1493,7 @@ Sovereign TLS 1.2 + 1.3 stack — no OpenSSL. ECDSA (P-256/P-384) / RSA (PSS, PK
 |----------|-----------|-------------|
 | `tls_native_available` | `tls_native_available() → 1` | Capability check (compile-time available) |
 | `tls_native_new_client` | `tls_native_new_client(host, host_len) → ctx` | Client context (SNI + hostname verification) |
+| `tls_native_new_client_in` | `tls_native_new_client_in(a, host, host_len) → ctx` | Client context whose ctx and every connection allocation come from Allocator `a` (an `arena_allocator`; 0 = global heap) — reclaim with `reset_via(a)` (6.6.13) |
 | `tls_native_new_server` | `tls_native_new_server(cert_chain, cert_len, key, key_len) → ctx` | Server context (cert chain + private key) |
 | `tls_native_connect` | `tls_native_connect(ctx, fd) → TLS_OK/err` | TLS 1.3 client handshake |
 | `tls_native_connect_12` | `tls_native_connect_12(ctx, fd) → TLS_OK/err` | TLS 1.2 client handshake |
@@ -1506,8 +1510,10 @@ Sovereign TLS 1.2 + 1.3 stack — no OpenSSL. ECDSA (P-256/P-384) / RSA (PSS, PK
 | `tls_native_set_alpn` | `tls_native_set_alpn(ctx, protos, len) → TLS_OK/err` | ALPN advertise list (OpenSSL wire format) |
 | `tls_native_set_verify` | `tls_native_set_verify(ctx, mode) → TLS_OK/err` | Peer-verification mode (`TLS_VERIFY_NONE`/`PEER`) |
 | `tls_native_set_ca_bundle` | `tls_native_set_ca_bundle(ctx, pem, len, is_der) → TLS_OK/err` | Install a custom CA bundle (PEM or DER) |
-| `tls_native_set_ca_system` | `tls_native_set_ca_system(ctx) → TLS_OK/err` | Load the system CA trust store |
+| `tls_native_set_ca_system` | `tls_native_set_ca_system(ctx) → TLS_OK/err` | Install the system CA trust store — one immutable root set per process, parsed once and shared (6.6.13: 0 B per further ctx) |
+| `tls_native_ca_skipped` | `tls_native_ca_skipped(ctx) → count/err` | Certificate blocks the last trust-root install could not use (6.6.13): installed + skipped == the bundle's PEM block count; 0 before any install |
 | `tls_native_set_version_range` | `tls_native_set_version_range(ctx, min, max) → TLS_OK/err` | Constrain negotiated version to [min, max] |
+| `tls_native_set_deadline` | `tls_native_set_deadline(ctx, abs_ns) → TLS_OK/err` | Absolute `clock_now_ns()` deadline for the handshake and every later read/write (0 clears; may change between reads); past it they fail `TLS_ERR_TIMEOUT` (-20) and the ctx fails (6.6.13). Linux/macOS poll before each read and write non-blocking (flags restored); agnos sockets take the time left; a custom transport and Windows are checked between calls |
 
 **Introspection (post-handshake):**
 

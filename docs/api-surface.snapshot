@@ -5081,6 +5081,7 @@ tls::tls_available/0
 tls::tls_close/1
 tls::tls_connect/2
 tls::tls_connect_alloc/4
+tls::tls_connect_alloc_in/5
 tls::tls_connect_complete/1
 tls::tls_connect_with_ctx_hook/4
 tls::tls_ctx_load_verify_locations/3
@@ -5098,12 +5099,14 @@ tls::tls_get_backend/0
 tls::tls_get_early_data_status/1
 tls::tls_get_peer_spki_der/3
 tls::tls_get_session/1
+tls::tls_init_main/0
 tls::tls_read/3
 tls::tls_read_early_data/3
 tls::tls_session_free/1
 tls::tls_session_get_max_early_data/1
 tls::tls_set_alpn/3
 tls::tls_set_backend/1
+tls::tls_set_deadline/2
 tls::tls_set_session/2
 tls::tls_set_verify/3
 tls::tls_supports_early_data/0
@@ -5122,12 +5125,14 @@ tls_native_conn::tls_native_get_peer_spki_der/3
 tls_native_conn::tls_native_get_state/1
 tls_native_conn::tls_native_get_version/1
 tls_native_conn::tls_native_read/3
+tls_native_conn::tls_native_set_deadline/2
 tls_native_conn::tls_native_set_entropy/1
 tls_native_conn::tls_native_set_transport/3
 tls_native_conn::tls_native_set_version_range/3
 tls_native_conn::tls_native_write/3
 tls_native_ctx::tls_native_available/0
 tls_native_ctx::tls_native_new_client/2
+tls_native_ctx::tls_native_new_client_in/3
 tls_native_ctx::tls_native_server_transition/2
 tls_native_ctx::tls_native_set_alloc/2
 tls_native_hs12::tls_native_12_build_client_hello/3
@@ -5151,6 +5156,7 @@ tls_native_hs12::tls_native_12_verify_data/7
 tls_native_hs12::tls_native_12_verify_finished/4
 tls_native_hs12::tls_native_accept_12/2
 tls_native_hs12::tls_native_aead_nonce_12_gcm/3
+tls_native_hs12::tls_native_ca_skipped/1
 tls_native_hs12::tls_native_ccs_record_write/1
 tls_native_hs12::tls_native_cipher_iv_len_12/1
 tls_native_hs12::tls_native_client_parse_server_hello_12/3

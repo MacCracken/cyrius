@@ -26,6 +26,7 @@ include "lib/str.cyr"
 include "lib/chrono.cyr"
 include "lib/random.cyr"
 include "lib/tls_native.cyr"
+include "lib/net.cyr"           # net_parse_ipv4: the resolver rule the 6.6.13 IP-ID group pins
 include "lib/assert.cyr"
 
 test_group("tls_native v6.0.10 scaffold API surface");
@@ -64,6 +65,35 @@ test_group("v6.0.10 enum / const sanity");
 assert_eq(TLS_OK, 0, "TLS_OK = 0");
 assert_eq(TLS_ERR_NOT_IMPLEMENTED, 0 - 1, "TLS_ERR_NOT_IMPLEMENTED = -1");
 assert_eq(TLS_ERR_PROTOCOL, 0 - 19, "TLS_ERR_PROTOCOL = -19 (last in ladder)");
+
+# 6.6.13: every TLS_ERR_* is its own value. TLS_ERR_RECORD_OVERFLOW sat at -20 when
+# TLS_ERR_TIMEOUT took -20, so a read could not tell an over-long record from a deadline.
+assert_eq(TLS_ERR_TIMEOUT, 0 - 20, "TLS_ERR_TIMEOUT = -20");
+assert_eq(TLS_ERR_KEY_UNSUPPORTED, 0 - 21, "TLS_ERR_KEY_UNSUPPORTED = -21");
+assert_eq(TLS_ERR_RECORD_OVERFLOW, 0 - 22, "TLS_ERR_RECORD_OVERFLOW = -22");
+var _errs: i64[22];
+_errs[0] = TLS_ERR_NOT_IMPLEMENTED;  _errs[1] = TLS_ERR_HANDSHAKE_FAILED;
+_errs[2] = TLS_ERR_BAD_RECORD;       _errs[3] = TLS_ERR_BAD_HANDSHAKE;
+_errs[4] = TLS_ERR_CIPHER_NOT_SUPPORTED; _errs[5] = TLS_ERR_CERT_INVALID;
+_errs[6] = TLS_ERR_CERT_HOSTNAME_MISMATCH; _errs[7] = TLS_ERR_PEER_CLOSED;
+_errs[8] = TLS_ERR_WOULD_BLOCK;      _errs[9] = TLS_ERR_INVALID_PARAM;
+_errs[10] = TLS_ERR_OOM;             _errs[11] = TLS_ERR_IO;
+_errs[12] = TLS_ERR_INTERNAL;        _errs[13] = TLS_ERR_VERSION;
+_errs[14] = TLS_ERR_DECRYPT;         _errs[15] = TLS_ERR_AUTHN;
+_errs[16] = TLS_ERR_ALERT;           _errs[17] = TLS_ERR_BUFFER_FULL;
+_errs[18] = TLS_ERR_PROTOCOL;        _errs[19] = TLS_ERR_TIMEOUT;
+_errs[20] = TLS_ERR_KEY_UNSUPPORTED; _errs[21] = TLS_ERR_RECORD_OVERFLOW;
+var _dup = 0;
+var _ei = 0;
+while (_ei < 22) {
+    var _ej = _ei + 1;
+    while (_ej < 22) {
+        if (_errs[_ei] == _errs[_ej]) { _dup = _dup + 1; }
+        _ej = _ej + 1;
+    }
+    _ei = _ei + 1;
+}
+assert_eq(_dup, 0, "the 22 TLS_ERR_* codes are pairwise distinct");
 
 # Record-layer wire values per RFC 8446 §5.1
 assert_eq(TLS_CT_CHANGE_CIPHER_SPEC, 20, "ContentType change_cipher_spec wire = 20");
@@ -1822,6 +1852,153 @@ x509_parse(cert23, 385, c23v);
 store64(cv3 + TLS_CTX_OFF_SERVER_CERT, c23v);
 tls_native_set_ca_bundle(cv3, cert23, 385, 1);   # self-signed cert trusts itself
 assert_eq(_tn_connect_verify(cv3), TLS_ERR_CERT_HOSTNAME_MISMATCH, "verify=PEER + chain OK + host==0 → reject (no identity to bind)");
+
+# ================================================================
+# 6.6.13 (CVE-TBD(I7)) — RFC 9525 §6.3: an IP-ID never meets a DNS-ID
+# ================================================================
+# _tn_cert_san_match classifies the host ONCE: a DNS name is compared with the
+# dNSName entries only, an IP literal with the iPAddress entries only, and a
+# ':'-bearing host that is no well-formed IPv6 literal with nothing. Before
+# 6.6.13 every dNSName was tried whatever the host was, so DNS:127.0.0.1 and
+# DNS:*.0.0.1 verified https://127.0.0.1; _tn_parse_ipv4 took the leading-zero
+# "010.0.0.1" that net_parse_ipv4 (the resolver) sends to DNS as a name; and the
+# IPv6 parser took a trailing ':', a "::" standing for no group and 5-digit
+# groups. Fixtures: self-signed P-256 leaves (openssl req -x509), SAN only.
+test_group("RFC 9525 IP-ID vs DNS-ID (6.6.13)");
+
+fn _i7_verify(cert, host): i64 {
+    var h = tls_native_new_client(host, strlen(host));
+    store64(h + TLS_CTX_OFF_SERVER_CERT, cert);
+    return tls_native_client_verify_hostname(h);
+}
+fn _i7_lit(host): i64 {
+    var b[16];
+    return _tn_parse_ip_literal(host, strlen(host), &b);
+}
+fn _i7_tn_v4_ok(s): i64 {
+    var b[16];
+    if (_tn_parse_ipv4(s, strlen(s), &b) == 4) { return 1; }
+    return 0;
+}
+fn _i7_net_v4_ok(s): i64 {
+    if (net_parse_ipv4(s) == 0 - 1) { return 0; }
+    return 1;
+}
+
+# SAN = DNS:127.0.0.1
+var i7_dns_ip4_der = hex_decode("3082016430820109a00302010202141df92b586bbd62d4c10981d3901c9fa98bace6fb300a06082a8648ce3d04030230153113301106035504030c0a69372d646e732d697034301e170d3236313030313233333835395a170d3336303932383233333835395a30153113301106035504030c0a69372d646e732d6970343059301306072a8648ce3d020106082a8648ce3d0301070342000449259cdc6202b47df77568d766ba2c9c777375533ac822bd3b2fb8920931c7a5930ff5da4468fa768357f08da55dd9c34993995d5c1c7623aa6c37839ace2130a337303530140603551d11040d300b82093132372e302e302e31301d0603551d0e0416041496bc061972e0cce6cc4dbe183ea4d3cbfd6d42d6300a06082a8648ce3d0403020349003046022100c3c458970e07b56fc7c7e116b50bafb996e8f5cd7ac69a288afab03b9b9f47de022100e93e4e36a6bd0b5ffad1631a84ca2387742ea8de5e1a3f3fb4c402d40231f226", 720);
+var i7_dns_ip4 = x509_cert_alloc();
+assert_eq(x509_parse(i7_dns_ip4_der, 360, i7_dns_ip4), 1, "i7_dns_ip4 parses");
+assert_eq(_i7_verify(i7_dns_ip4, "127.0.0.1"), TLS_ERR_CERT_HOSTNAME_MISMATCH, "DNS:127.0.0.1 does not verify host 127.0.0.1");
+
+# SAN = DNS:*.0.0.1
+var i7_dns_wc_der = hex_decode("3082015e30820105a00302010202147e191af77f9a7ca9534a1905228b898993c7ae7a300a06082a8648ce3d04030230143112301006035504030c0969372d646e732d7763301e170d3236313030313233333835395a170d3336303932383233333835395a30143112301006035504030c0969372d646e732d77633059301306072a8648ce3d020106082a8648ce3d0301070342000449259cdc6202b47df77568d766ba2c9c777375533ac822bd3b2fb8920931c7a5930ff5da4468fa768357f08da55dd9c34993995d5c1c7623aa6c37839ace2130a335303330120603551d11040b300982072a2e302e302e31301d0603551d0e0416041496bc061972e0cce6cc4dbe183ea4d3cbfd6d42d6300a06082a8648ce3d0403020347003044022041fcfcb4be382329906310f2fc2afa4bdfc082c4a5f27c9fb7c3f0e6c13ae09e0220766961c42e72beecfaf44a59397a1572b2a518cd5602329284e3e49657246736", 708);
+var i7_dns_wc = x509_cert_alloc();
+assert_eq(x509_parse(i7_dns_wc_der, 354, i7_dns_wc), 1, "i7_dns_wc parses");
+assert_eq(_i7_verify(i7_dns_wc, "127.0.0.1"), TLS_ERR_CERT_HOSTNAME_MISMATCH, "DNS:*.0.0.1 does not verify host 127.0.0.1 (no wildcard over an IP)");
+assert_eq(_i7_verify(i7_dns_wc, "a.0.0.1"), TLS_OK, "DNS:*.0.0.1 still verifies the DNS name a.0.0.1");
+
+# SAN = DNS:::1
+var i7_dns_ip6_der = hex_decode("3082015d30820103a003020102021424e7b735cd5581c40c1f2a6de8662426309d72bb300a06082a8648ce3d04030230153113301106035504030c0a69372d646e732d697036301e170d3236313030313233333835395a170d3336303932383233333835395a30153113301106035504030c0a69372d646e732d6970363059301306072a8648ce3d020106082a8648ce3d0301070342000449259cdc6202b47df77568d766ba2c9c777375533ac822bd3b2fb8920931c7a5930ff5da4468fa768357f08da55dd9c34993995d5c1c7623aa6c37839ace2130a331302f300e0603551d110407300582033a3a31301d0603551d0e0416041496bc061972e0cce6cc4dbe183ea4d3cbfd6d42d6300a06082a8648ce3d040302034800304502210082f7acd5ba23247c985a300fb790f3acfa78d293ca61a4112d756ac1e860fc4b02202dd4b7249b652adae343d6bdb843681c6337d325f5da6425bb463a98800b63cc", 706);
+var i7_dns_ip6 = x509_cert_alloc();
+assert_eq(x509_parse(i7_dns_ip6_der, 353, i7_dns_ip6), 1, "i7_dns_ip6 parses");
+assert_eq(_i7_verify(i7_dns_ip6, "::1"), TLS_ERR_CERT_HOSTNAME_MISMATCH, "DNS:::1 does not verify host ::1");
+assert_eq(_i7_verify(ipsan_cert, "::1"), TLS_OK, "IP:::1 verifies host ::1 (CVE-18 fixture)");
+
+# SAN = IP:::ffff:1.2.3.4, DNS:::ffff:1.2.3.4, DNS:010.0.0.1, IP:10.0.0.1
+var i7_mixed_der = hex_decode("308201873082012da003020102021454b2a6334340a88058d3380abfb1c6a517fa4ef0300a06082a8648ce3d04030230133111300f06035504030c0869372d6d69786564301e170d3236313030313233333835395a170d3336303932383233333835395a30133111300f06035504030c0869372d6d697865643059301306072a8648ce3d020106082a8648ce3d0301070342000449259cdc6202b47df77568d766ba2c9c777375533ac822bd3b2fb8920931c7a5930ff5da4468fa768357f08da55dd9c34993995d5c1c7623aa6c37839ace2130a35f305d303c0603551d1104353033871000000000000000000000ffff01020304820e3a3a666666663a312e322e332e3482093031302e302e302e3187040a000001301d0603551d0e0416041496bc061972e0cce6cc4dbe183ea4d3cbfd6d42d6300a06082a8648ce3d0403020348003045022100a74686efc6949bc9a2a8ed601b97ddbad0a8466e4c2c64a2d1f9c2ca124701b0022005e06f1681ccc3e0e0e79eac157324a2d3e65e9720d8994545cf941a306a61b5", 790);
+var i7_mixed = x509_cert_alloc();
+assert_eq(x509_parse(i7_mixed_der, 395, i7_mixed), 1, "i7_mixed parses");
+assert_eq(_i7_verify(i7_mixed, "::ffff:1.2.3.4"), TLS_OK, "::ffff:1.2.3.4 verifies via the iPAddress entry");
+assert_eq(_i7_verify(i7_mixed, "010.0.0.1"), TLS_OK, "010.0.0.1 is a DNS name: verifies via DNS:010.0.0.1");
+assert_eq(_i7_verify(i7_mixed, "10.0.0.1"), TLS_OK, "10.0.0.1 verifies via IP:10.0.0.1");
+
+# SAN = IP:10.0.0.1, DNS:::ffff:1.2.3.4 (the dNSName spellings of the mixed leaf removed)
+var i7_iponly_der = hex_decode("3082016e30820114a003020102021456818ff8ae05d19c85f6131c5a2edad0afc22c8f300a06082a8648ce3d04030230153113301106035504030c0a69372d69702d6f6e6c79301e170d3236313030313233333835395a170d3336303932383233333835395a30153113301106035504030c0a69372d69702d6f6e6c793059301306072a8648ce3d020106082a8648ce3d0301070342000449259cdc6202b47df77568d766ba2c9c777375533ac822bd3b2fb8920931c7a5930ff5da4468fa768357f08da55dd9c34993995d5c1c7623aa6c37839ace2130a3423040301f0603551d110418301687040a000001820e3a3a666666663a312e322e332e34301d0603551d0e0416041496bc061972e0cce6cc4dbe183ea4d3cbfd6d42d6300a06082a8648ce3d0403020348003045022100bdea0936b6ea84b34982ad785fea032f1129b2fb2bd024426ded7575805dbd2b022004edcc76817dd2aed06e3f159b78c572bb3ea17fdeef43efd76965a69707b457", 740);
+var i7_iponly = x509_cert_alloc();
+assert_eq(x509_parse(i7_iponly_der, 370, i7_iponly), 1, "i7_iponly parses");
+assert_eq(_i7_verify(i7_iponly, "010.0.0.1"), TLS_ERR_CERT_HOSTNAME_MISMATCH, "010.0.0.1 is a DNS name: IP:10.0.0.1 does not verify it");
+assert_eq(_i7_verify(i7_iponly, "::ffff:1.2.3.4"), TLS_ERR_CERT_HOSTNAME_MISMATCH, "DNS:::ffff:1.2.3.4 does not verify host ::ffff:1.2.3.4");
+assert_eq(_i7_verify(i7_iponly, "10.0.0.1"), TLS_OK, "10.0.0.1 verifies via IP:10.0.0.1");
+
+# Every malformed host below is spelled verbatim by a dNSName of this leaf, and
+# the address a lax parser reads it as is an iPAddress entry. None may verify.
+# SAN = IP:1:2:3:4:5:6:7:8, IP:1::, IP:::1, DNS:1:2:3:4:5:6:7:8:, DNS:1:2:3:4:5:6:7:8::,
+#       DNS:1:2:3:4::5:6:7:8, DNS:00001::, DNS:::1:, DNS:[::1], DNS:fe80::1%eth0
+var i7_bait_der = hex_decode("308201e83082018ea00302010202141d9bd328415a946c5216339c3a221746d237f239300a06082a8648ce3d04030230123110300e06035504030c0769372d62616974301e170d3236313030313233333835395a170d3336303932383233333835395a30123110300e06035504030c0769372d626169743059301306072a8648ce3d020106082a8648ce3d0301070342000449259cdc6202b47df77568d766ba2c9c777375533ac822bd3b2fb8920931c7a5930ff5da4468fa768357f08da55dd9c34993995d5c1c7623aa6c37839ace2130a381c13081be30819c0603551d110481943081918710000100020003000400050006000700088710000100000000000000000000000000008710000000000000000000000000000000018210313a323a333a343a353a363a373a383a8211313a323a333a343a353a363a373a383a3a8210313a323a333a343a3a353a363a373a38820730303030313a3a82043a3a313a82055b3a3a315d820c666538303a3a312565746830301d0603551d0e0416041496bc061972e0cce6cc4dbe183ea4d3cbfd6d42d6300a06082a8648ce3d040302034800304502206a0f4c06e3e0942cbae1371bdaa1a362c928693a3f856c9171eb441d0b1b3841022100e90c849d6b56d2108095f800d7918996c1c3035996291ce412f131b0d3d4e3fb", 984);
+var i7_bait = x509_cert_alloc();
+assert_eq(x509_parse(i7_bait_der, 492, i7_bait), 1, "i7_bait parses");
+assert_eq(_i7_verify(i7_bait, "1:2:3:4:5:6:7:8:"), TLS_ERR_CERT_HOSTNAME_MISMATCH, "malformed 1:2:3:4:5:6:7:8: (trailing colon) matches no SAN of any type");
+assert_eq(_i7_verify(i7_bait, "1:2:3:4:5:6:7:8::"), TLS_ERR_CERT_HOSTNAME_MISMATCH, "malformed 1:2:3:4:5:6:7:8:: (a :: standing for no group) matches no SAN of any type");
+assert_eq(_i7_verify(i7_bait, "1:2:3:4::5:6:7:8"), TLS_ERR_CERT_HOSTNAME_MISMATCH, "malformed 1:2:3:4::5:6:7:8 (a :: standing for no group) matches no SAN of any type");
+assert_eq(_i7_verify(i7_bait, "00001::"), TLS_ERR_CERT_HOSTNAME_MISMATCH, "malformed 00001:: (a 5-digit group) matches no SAN of any type");
+assert_eq(_i7_verify(i7_bait, "::1:"), TLS_ERR_CERT_HOSTNAME_MISMATCH, "malformed ::1: (trailing colon) matches no SAN of any type");
+assert_eq(_i7_verify(i7_bait, "[::1]"), TLS_ERR_CERT_HOSTNAME_MISMATCH, "malformed [::1] (brackets) matches no SAN of any type");
+assert_eq(_i7_verify(i7_bait, "fe80::1%eth0"), TLS_ERR_CERT_HOSTNAME_MISMATCH, "malformed fe80::1%eth0 (zone id) matches no SAN of any type");
+assert_eq(_i7_verify(i7_bait, "1:2:3:4:5:6:7:8"), TLS_OK, "control: 1:2:3:4:5:6:7:8 verifies via its iPAddress entry");
+assert_eq(_i7_verify(i7_bait, "1::"), TLS_OK, "control: 1:: verifies via its iPAddress entry");
+assert_eq(_i7_verify(i7_bait, "0:0:0:0:0:0:0:1"), TLS_OK, "control: 0:0:0:0:0:0:0:1 verifies via IP:::1");
+
+# --- _tn_parse_ip_literal: 4 / 16 literal, 0 DNS name, -1 no identity ---
+var i7b[16];
+assert_eq(_tn_parse_ip_literal("::ffff:1.2.3.4", 14, &i7b), 16, "parse_ip_literal ::ffff:1.2.3.4 → 16 (RFC 4291 form 3)");
+assert_eq(load64(&i7b), 0, "  bytes 0-7 = 0");
+assert_eq(load8(&i7b + 8) & 0xFF, 0, "  byte8 = 0");
+assert_eq(load8(&i7b + 9) & 0xFF, 0, "  byte9 = 0");
+assert_eq(load8(&i7b + 10) & 0xFF, 0xFF, "  byte10 = 0xff");
+assert_eq(load8(&i7b + 11) & 0xFF, 0xFF, "  byte11 = 0xff");
+assert_eq(load8(&i7b + 12) & 0xFF, 1, "  byte12 = 1");
+assert_eq(load8(&i7b + 13) & 0xFF, 2, "  byte13 = 2");
+assert_eq(load8(&i7b + 14) & 0xFF, 3, "  byte14 = 3");
+assert_eq(load8(&i7b + 15) & 0xFF, 4, "  byte15 = 4");
+assert_eq(_tn_parse_ip_literal("1:2:3:4:5:6:9.8.7.6", 19, &i7b), 16, "parse_ip_literal 1:2:3:4:5:6:9.8.7.6 → 16 (no ::)");
+assert_eq(load8(&i7b + 11) & 0xFF, 6, "  byte11 = 6");
+assert_eq(load8(&i7b + 12) & 0xFF, 9, "  byte12 = 9");
+assert_eq(load8(&i7b + 15) & 0xFF, 6, "  byte15 = 6");
+assert_eq(_i7_lit("::1.2.3.4"), 16, "parse_ip_literal ::1.2.3.4 → 16");
+assert_eq(_i7_lit("::"), 16, "parse_ip_literal :: → 16 (unspecified)");
+assert_eq(_i7_lit("1::"), 16, "parse_ip_literal 1:: → 16");
+assert_eq(_i7_lit("1:2:3:4:5:6:7::"), 16, "parse_ip_literal 1:2:3:4:5:6:7:: → 16 (:: for one group)");
+assert_eq(_i7_lit("::2:3:4:5:6:7:8"), 16, "parse_ip_literal ::2:3:4:5:6:7:8 → 16");
+assert_eq(_i7_lit("ABCD:ef01:0:0:0:0:0:1"), 16, "parse_ip_literal mixed-case hex → 16");
+assert_eq(_i7_lit("[::1]"), 0 - 1, "parse_ip_literal [::1] → -1 (brackets)");
+assert_eq(_i7_lit("fe80::1%eth0"), 0 - 1, "parse_ip_literal fe80::1%eth0 → -1 (zone id)");
+assert_eq(_i7_lit("1:2:3:4:5:6:7:8:"), 0 - 1, "parse_ip_literal 1:2:3:4:5:6:7:8: → -1 (trailing colon)");
+assert_eq(_i7_lit("1:2:3:4:5:6:7:8::"), 0 - 1, "parse_ip_literal 1:2:3:4:5:6:7:8:: → -1 (:: for no group)");
+assert_eq(_i7_lit("1:2:3:4::5:6:7:8"), 0 - 1, "parse_ip_literal 1:2:3:4::5:6:7:8 → -1 (:: for no group)");
+assert_eq(_i7_lit("00001::"), 0 - 1, "parse_ip_literal 00001:: → -1 (5-digit group)");
+assert_eq(_i7_lit("::1:"), 0 - 1, "parse_ip_literal ::1: → -1 (trailing colon)");
+assert_eq(_i7_lit(":::1"), 0 - 1, "parse_ip_literal :::1 → -1");
+assert_eq(_i7_lit(":1:2:3:4:5:6:7:8"), 0 - 1, "parse_ip_literal leading single colon → -1");
+assert_eq(_i7_lit("1:2:3:4:5:6:7"), 0 - 1, "parse_ip_literal seven groups, no :: → -1");
+assert_eq(_i7_lit("1:2:3:4:5:6:7:1.2.3.4"), 0 - 1, "parse_ip_literal 7 groups + dotted quad → -1 (too long)");
+assert_eq(_i7_lit("1.2.3.4::"), 0 - 1, "parse_ip_literal dotted quad before :: → -1");
+assert_eq(_i7_lit("::ffff:01.2.3.4"), 0 - 1, "parse_ip_literal ::ffff:01.2.3.4 → -1 (leading zero in the quad)");
+assert_eq(_i7_lit("::1.2.3"), 0 - 1, "parse_ip_literal ::1.2.3 → -1 (short quad)");
+assert_eq(_i7_lit("010.0.0.1"), 0, "parse_ip_literal 010.0.0.1 → 0 (a DNS name, as for the resolver)");
+assert_eq(_i7_lit("example.com"), 0, "parse_ip_literal example.com → 0");
+
+# --- _tn_parse_ipv4 agrees with net_parse_ipv4 (the resolver's literal rule) ---
+assert_eq(_i7_tn_v4_ok("0.0.0.0"), 1, "_tn_parse_ipv4 0.0.0.0: accepted");
+assert_eq(_i7_net_v4_ok("0.0.0.0"), 1, "net_parse_ipv4 0.0.0.0: accepted (agrees)");
+assert_eq(_i7_tn_v4_ok("127.0.0.1"), 1, "_tn_parse_ipv4 127.0.0.1: accepted");
+assert_eq(_i7_net_v4_ok("127.0.0.1"), 1, "net_parse_ipv4 127.0.0.1: accepted (agrees)");
+assert_eq(_i7_tn_v4_ok("255.255.255.255"), 1, "_tn_parse_ipv4 255.255.255.255: accepted");
+assert_eq(_i7_net_v4_ok("255.255.255.255"), 1, "net_parse_ipv4 255.255.255.255: accepted (agrees)");
+assert_eq(_i7_tn_v4_ok("010.0.0.1"), 0, "_tn_parse_ipv4 010.0.0.1: refused");
+assert_eq(_i7_net_v4_ok("010.0.0.1"), 0, "net_parse_ipv4 010.0.0.1: refused (agrees)");
+assert_eq(_i7_tn_v4_ok("00.0.0.1"), 0, "_tn_parse_ipv4 00.0.0.1: refused");
+assert_eq(_i7_net_v4_ok("00.0.0.1"), 0, "net_parse_ipv4 00.0.0.1: refused (agrees)");
+assert_eq(_i7_tn_v4_ok("1.2.3.04"), 0, "_tn_parse_ipv4 1.2.3.04: refused");
+assert_eq(_i7_net_v4_ok("1.2.3.04"), 0, "net_parse_ipv4 1.2.3.04: refused (agrees)");
+assert_eq(_i7_tn_v4_ok("256.1.1.1"), 0, "_tn_parse_ipv4 256.1.1.1: refused");
+assert_eq(_i7_net_v4_ok("256.1.1.1"), 0, "net_parse_ipv4 256.1.1.1: refused (agrees)");
+assert_eq(_i7_tn_v4_ok("1.2.3"), 0, "_tn_parse_ipv4 1.2.3: refused");
+assert_eq(_i7_net_v4_ok("1.2.3"), 0, "net_parse_ipv4 1.2.3: refused (agrees)");
+assert_eq(_i7_tn_v4_ok("1.2.3.4."), 0, "_tn_parse_ipv4 1.2.3.4.: refused");
+assert_eq(_i7_net_v4_ok("1.2.3.4."), 0, "net_parse_ipv4 1.2.3.4.: refused (agrees)");
+assert_eq(_i7_tn_v4_ok("1..2.3"), 0, "_tn_parse_ipv4 1..2.3: refused");
+assert_eq(_i7_net_v4_ok("1..2.3"), 0, "net_parse_ipv4 1..2.3: refused (agrees)");
 
 # ================================================================
 # CVE-17 (v6.1.36) — keyUsage / EKU / keyCertSign chain enforcement

@@ -1,0 +1,270 @@
+# tls_libssl_read_errors.tcyr — 6.6.13 (CVE-TBD(I2c)): the libssl backend's tls_read / tls_write
+# return the native backend's codes, and never a zero-extended C int.
+#
+# ⛔ THE DEFECT. lib/tls.cyr's libssl branch returned SSL_read / SSL_write's raw `int`. fncall3 hands
+# the whole register back and the int sits in it ZERO-extended, so SSL_read's -1 arrived as
+# +4294967295: one bit flipped on the path (no key needed) made tls_read report ~4 GiB read, and a
+# caller doing `total = total + n` indexed past its buffer. tls_write had the same return. And
+# SSL_read's 0 is not only close_notify: a received fatal alert and a stream cut mid-record read 0
+# too, so an attacked stream looked like a clean end. Now _tls_ssl_io_ret sign-extends the int and
+# maps SSL_get_error + libcrypto's error queue to: > 0 bytes, 0 close_notify, TLS_ERR_WOULD_BLOCK,
+# TLS_ERR_IO (socket error / EOF with no close_notify), TLS_ERR_ALERT (a received alert),
+# TLS_ERR_PROTOCOL (any other libssl failure, a bad record MAC included).
+#
+# A libssl-backend client (this process) against a forked native server that misbehaves on cue.
+# A named SKIP when libssl.so.3 or the fdlopen helper is missing. SIGPIPE is ignored here: the
+# tls_write row writes to a closed peer on purpose, and libssl's own SIGPIPE exposure is a separate
+# backlog item, not this test's subject.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/io.cyr"
+include "lib/net.cyr"
+include "lib/tls.cyr"
+
+#ifdef CYRIUS_TARGET_AGNOS
+var _agnos_skip = "  SKIP (agnos): libssl is a Linux fdlopen bridge, and this is a socketpair + fork run\n";
+sys_write(1, _agnos_skip, strlen(_agnos_skip));
+#endif
+#ifndef CYRIUS_TARGET_AGNOS
+
+enum LibsslReadErr {
+    LR_TIMEOUT_S = 10;
+    LR_MAXLEN = 64;
+}
+
+# What the native server does after it reads the client's "g".
+enum LibsslScript {
+    LS_FATAL_ALERT = 1;      # sealed fatal bad_record_mac, then a sealed "late" record
+    LS_CLOSE_NOTIFY = 2;     # sealed warning close_notify, then a sealed "late" record
+    LS_BITFLIP = 3;          # a sealed "hello" with one ciphertext bit flipped
+    LS_TRUNCATED = 4;        # a sealed "hello" short its last 3 bytes, then FIN
+    LS_FIN = 5;              # FIN, no close_notify
+    LS_CLOSE = 6;            # close the socket outright (the tls_write row)
+}
+
+var _lr_cert = 0;              # DER, self-signed P-256, CN = SAN DNS = localhost
+var _lr_cert_len = 406;
+var _lr_key = 0;
+var _lr_key_len = 138;
+var _lr_ver12 = 0;
+
+fn _lr_write_all(fd, buf, n): i64 {
+    var off = 0;
+    while (off < n) {
+        var w = sys_write(fd, buf + off, n - off);
+        if (w <= 0) { return 0 - 1; }
+        off = off + w;
+    }
+    return n;
+}
+
+fn _lr_hold(fd): i64 {
+    var drain[64];
+    while (sys_read(fd, &drain, 64) > 0) { }
+    return 0;
+}
+
+# The forked native server. Exit 0 / the step that failed.
+fn _lr_serve(sfd, script): i64 {
+    var srv = tls_native_new_server(_lr_cert, _lr_cert_len, _lr_key, _lr_key_len);
+    if (tls_native_server_load_creds(srv) != TLS_OK) { return 2; }
+    if (_lr_ver12 == 1) { tls_native_set_version_range(srv, TLS_VERSION_1_2, TLS_VERSION_1_2); }
+    if (tls_native_accept(srv, sfd) != TLS_OK) { return 3; }
+    var g[8];
+    if (tls_native_read(srv, &g, 1) != 1) { return 4; }   # the client's "go"
+    var rec[128];
+    var al[2];
+    if (script == LS_FATAL_ALERT) {
+        store8(&al, TLS_ALERT_FATAL);
+        store8(&al + 1, TLS_AD_BAD_RECORD_MAC);
+    } else {
+        store8(&al, TLS_ALERT_WARNING);
+        store8(&al + 1, TLS_AD_CLOSE_NOTIFY);
+    }
+    if (script <= LS_CLOSE_NOTIFY) {
+        var an = _tn_seal_ct(srv, TLS_CT_ALERT, &al, 2, &rec, 128);
+        if (_lr_write_all(sfd, &rec, an) != an) { return 5; }
+        if (tls_native_write(srv, "late", 4) != 4) { return 6; }
+    }
+    if (script == LS_BITFLIP) {
+        var bn = tls_native_seal_app(srv, "hello", 5, &rec, 128);
+        store8(&rec + 8, load8(&rec + 8) ^ 1);
+        if (_lr_write_all(sfd, &rec, bn) != bn) { return 7; }
+    }
+    if (script == LS_TRUNCATED) {
+        var tn = tls_native_seal_app(srv, "hello", 5, &rec, 128);
+        if (_lr_write_all(sfd, &rec, tn - 3) != tn - 3) { return 8; }
+        sock_shutdown(sfd, 1);
+    }
+    if (script == LS_FIN) { sock_shutdown(sfd, 1); }
+    if (script == LS_CLOSE) {
+        sys_close(sfd);
+        return 0;
+    }
+    _lr_hold(sfd);                 # keep the read side open: the client may answer with an alert
+    return 0;
+}
+
+fn _lr_noverify(hctx, handle): i64 {
+    tls_set_verify(handle, 0, 0);
+    return 0;
+}
+
+# [r1, r2, write after, child status, connected, would-block read, stale errors planted]
+var _lr_obs: i64[7];
+
+# Leave a libcrypto error queued on this thread, as any earlier failed libssl call does — here one
+# that reads as a received handshake_failure alert (lib SSL, reason 1000 + 40), pushed with
+# ERR_new + ERR_vset_error (the non-variadic setter; fmt 0 leaves the va_list untouched).
+# SSL_get_error and _tls_ssl_io_ret both read the queue, so tls_read / tls_write must clear it
+# first or this stale entry decides their answer. Returns 1 when it is queued (anti-vacuity).
+var _lr_err_new = 0;
+var _lr_err_vset = 0;
+var _lr_err_peek = 0;
+fn _lr_plant_stale(): i64 {
+    if (_lr_err_new == 0) { _lr_err_new = tls_dlsym("ERR_new"); }
+    if (_lr_err_vset == 0) { _lr_err_vset = tls_dlsym("ERR_vset_error"); }
+    if (_lr_err_peek == 0) { _lr_err_peek = tls_dlsym("ERR_peek_last_error"); }
+    if (_lr_err_new == 0) { return 0; }
+    if (_lr_err_vset == 0) { return 0; }
+    if (_lr_err_peek == 0) { return 0; }
+    fncall0(_lr_err_new);
+    fncall4(_lr_err_vset, 20, 1040, 0, 0);
+    if ((fncall0(_lr_err_peek) & 0x7FFFFF) != 1040) { return 0; }
+    return 1;
+}
+
+fn _lr_row(script): i64 {
+    var i = 0;
+    while (i < 7) { _lr_obs[i] = 0 - 99; i = i + 1; }
+    var fds[8];
+    sys_socketpair(1, 1, 0, &fds);
+    var fdp = load64(&fds);
+    var sfd = fdp & 0xFFFFFFFF;
+    var cfd = (fdp >> 32) & 0xFFFFFFFF;
+    var pid = sys_fork();
+    if (pid == 0) {
+        sys_close(cfd);
+        sys_exit(_lr_serve(sfd, script));
+    }
+    sys_close(sfd);
+    sock_set_recv_timeout(cfd, LR_TIMEOUT_S, 0);
+    var c = tls_connect_with_ctx_hook(cfd, "localhost", &_lr_noverify, 0);
+    _lr_obs[4] = 0;
+    if (c != 0) {
+        _lr_obs[4] = 1;
+        var b[64];
+        # Nothing has been sent yet: a non-blocking read must say WOULD_BLOCK, not 4294967295.
+        var saved = fd_set_nonblocking(cfd);
+        _lr_obs[6] = _lr_plant_stale();
+        _lr_obs[5] = tls_read(c, &b, LR_MAXLEN);
+        fd_restore_flags(cfd, saved);
+        if (tls_write(c, "g", 1) == 1) {
+            if (script == LS_CLOSE) {
+                var st0[4];
+                sys_waitpid(pid, &st0, 0);       # the server has read "g" and closed
+                _lr_obs[3] = load64(&st0) & 0xFFFF;
+                pid = 0;
+                _lr_obs[6] = _lr_obs[6] + _lr_plant_stale();
+                _lr_obs[2] = tls_write(c, "x", 1);
+            } else {
+                _lr_obs[0] = tls_read(c, &b, LR_MAXLEN);
+                _lr_obs[1] = tls_read(c, &b, LR_MAXLEN);
+                _lr_obs[6] = _lr_obs[6] + _lr_plant_stale();
+                _lr_obs[2] = tls_write(c, "x", 1);
+            }
+        }
+        tls_close(c);
+    }
+    sys_close(cfd);
+    if (pid != 0) {
+        var st[4];
+        sys_waitpid(pid, &st, 0);
+        _lr_obs[3] = load64(&st) & 0xFFFF;
+    }
+    return 0;
+}
+
+fn _lr_v(): i64 {
+    if (_lr_ver12 == 1) { println("  (TLS 1.2)"); return 0; }
+    println("  (TLS 1.3)");
+    return 0;
+}
+
+fn test_libssl_reads(): i64 {
+    test_group("tls_read / tls_write on the libssl backend: the native backend's codes");
+    _lr_v();
+    _lr_row(LS_FATAL_ALERT);
+    assert_eq(_lr_obs[4], 1, "the handshake completes");
+    assert_eq(_lr_obs[6], 2,
+      "a stale libcrypto error (a handshake_failure alert) is queued before the read and the write");
+    assert_eq(_lr_obs[5], TLS_ERR_WOULD_BLOCK,
+      "a read with nothing to read on a non-blocking socket: TLS_ERR_WOULD_BLOCK, not the stale error");
+    assert_eq(_lr_obs[0], TLS_ERR_ALERT, "a sealed fatal alert: TLS_ERR_ALERT (was 0, a clean EOF)");
+    # libssl answers a read after a fatal alert with SSL_ERROR_ZERO_RETURN (it sets
+    # RECEIVED_SHUTDOWN and leaves warn_alert at 0 = close_notify), so the re-read is 0, not the
+    # native backend's sticky TLS_ERR_ALERT — but the record behind the alert is never delivered.
+    assert_lte(_lr_obs[1], 0, "a re-read never delivers the record behind the alert");
+    assert_eq(_lr_obs[2], TLS_ERR_PROTOCOL,
+      "tls_write after the fatal alert: TLS_ERR_PROTOCOL (was +4294967295; never 0)");
+    assert_eq(_lr_obs[3], 0, "the server sent the row (child exit 0)");
+
+    _lr_row(LS_CLOSE_NOTIFY);
+    assert_eq(_lr_obs[0], 0, "close_notify: 0");
+    assert_eq(_lr_obs[1], 0, "re-read with an app record behind it on the wire: still 0");
+    assert_eq(_lr_obs[2], 1, "tls_write after the peer's close_notify: libssl still sends (half-close)");
+    assert_eq(_lr_obs[3], 0, "the server sent the row (child exit 0)");
+
+    _lr_row(LS_BITFLIP);
+    assert_lt(_lr_obs[0], 0, "a tampered record: negative (was +4294967295)");
+    assert_lte(_lr_obs[0], LR_MAXLEN, "never more than maxlen");
+    assert_eq(_lr_obs[0], TLS_ERR_PROTOCOL, "TLS_ERR_PROTOCOL");
+    assert_eq(_lr_obs[3], 0, "the server sent the row (child exit 0)");
+
+    _lr_row(LS_TRUNCATED);
+    assert_eq(_lr_obs[0], TLS_ERR_IO, "a record cut short, then FIN: TLS_ERR_IO (was 0, a clean EOF)");
+
+    _lr_row(LS_FIN);
+    assert_eq(_lr_obs[0], TLS_ERR_IO, "FIN with no close_notify: TLS_ERR_IO (was 0, a clean EOF)");
+
+    _lr_row(LS_CLOSE);
+    assert_eq(_lr_obs[3], 0, "the server read \"g\" and closed (child exit 0)");
+    assert_eq(_lr_obs[6], 2, "stale libcrypto errors are queued before the read and the write");
+    assert_eq(_lr_obs[2], TLS_ERR_IO, "tls_write to a closed peer: TLS_ERR_IO (was +4294967295)");
+    return 0;
+}
+
+# Runs everywhere, libssl or not — and BEFORE the backend loads, so SSL_get_error is still
+# unresolved and _tls_ssl_io_ret answers from the C int alone. That is the sign-extension half of
+# the fix, and it needs no peer. Without this group the file had no assertion on a host (or in
+# check.sh's empty environment, which has no $HOME and so no helper) where libssl is absent,
+# and the corpus rule grades a 0-assertion summary as a failure.
+fn test_int_sign_extension(): i64 {
+    test_group("_tls_ssl_io_ret: SSL_read / SSL_write's C int is sign-extended first");
+    assert_eq(_fn_SSL_get_error, 0, "precondition: libssl is unloaded here");
+    assert_eq(_tls_ssl_io_ret(0, 5), 5, "a positive count passes through");
+    assert_eq(_tls_ssl_io_ret(0, 0xDEAD00000005), 5, "the register's high half is not part of the int");
+    assert_eq(_tls_ssl_io_ret(0, 0xFFFFFFFF), TLS_ERR_IO, "-1 zero-extended: an error, not +4294967295");
+    assert_eq(_tls_ssl_io_ret(0, 0x80000000), TLS_ERR_IO, "INT_MIN: an error, not +2147483648");
+    assert_eq(_tls_ssl_io_ret(0, 0x7FFFFFFF), 0x7FFFFFFF, "INT_MAX is still a count");
+    return 0;
+}
+
+alloc_init();
+test_int_sign_extension();
+_lr_cert = hex_decode("3082019230820139a003020102021437416048df98b49fd5b278db00ebd0e1f87b6d40300a06082a8648ce3d04030230143112301006035504030c096c6f63616c686f7374301e170d3236303130313030303030305a170d3336303130313030303030305a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d030107034200040d7a46bc307511f24a53dcf973e0dfe2058db48d7db8b3941fa80176641ad78da12b801a12494d49312bf5b0ac312f3d50bca2282126fddd03652013bf8b49c5a3693067301d0603551d0e041604143bdd6c2d487f854851f408356e66880375bd6743301f0603551d230418301680143bdd6c2d487f854851f408356e66880375bd6743300f0603551d130101ff040530030101ff30140603551d11040d300b82096c6f63616c686f7374300a06082a8648ce3d04030203470030440220365bd112f9b8faec50c9b4a2cf7ec487cc424901870b8156b349dba15e1cde8102200c1ec7f6eefec5bc9976f55a70608b07d669c78183fa08e9a863370d17e39df3", 812);
+_lr_key = hex_decode("308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420666340f5e33734c31438ae0abd2370b72da193b44565625051bbc79a344535dda144034200040d7a46bc307511f24a53dcf973e0dfe2058db48d7db8b3941fa80176641ad78da12b801a12494d49312bf5b0ac312f3d50bca2282126fddd03652013bf8b49c5", 276);
+tls_set_backend(TLS_BACKEND_LIBSSL);
+if (tls_available() != 1) {
+    var _skip = "  SKIP: libssl.so.3 or the fdlopen helper ($HOME/.cyrius/dlopen-helper) is not available here\n";
+    sys_write(1, _skip, strlen(_skip));
+} else {
+    signal_ignore(SIGPIPE);
+    _lr_ver12 = 0;
+    test_libssl_reads();
+    _lr_ver12 = 1;
+    test_libssl_reads();
+}
+#endif
+var r = assert_summary();
