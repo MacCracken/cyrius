@@ -190,7 +190,7 @@ enum CcsDeadlineScript {
     CS_HOLD = 5;              # handshake, then read nothing
     CS_RAW_HOLD = 6;          # read the ClientHello, then nothing
     CS_HOOKED = 7;            # handshake with the write hook armed, then expect the client's sealed alert
-    CS_HOOKED_HS = 8;         # handshake with the write hook armed (its result is the client's row), then hold
+    CS_HOOKED_HS = 8;         # hooked handshake, then hold: exit 0 CONNECTED, 1 TLS_ERR_ALERT, 2 other
 }
 
 fn _cd_drip(fd, n): i64 {
@@ -227,7 +227,12 @@ fn _cd_serve(sfd, script): i64 {
     _cd_peer = srv;
     if (script == CS_HOOKED || script == CS_HOOKED_HS) { tls_native_set_transport(0, &_cd_hook, 0); }
     var ar = tls_native_accept(srv, sfd);
-    if (script == CS_HOOKED_HS) { _cd_hold(sfd); return 0; }
+    if (script == CS_HOOKED_HS) {
+        _cd_hold(sfd);
+        if (ar == TLS_OK) { return 0; }
+        if (ar == TLS_ERR_ALERT) { return 1; }
+        return 2;
+    }
     if (ar != TLS_OK) { return 3; }
     if (script == CS_HOLD) { sleep_ms(3000); return 0; }
     if (script == CS_POST_DRIP) {
@@ -298,6 +303,7 @@ fn test_repro_cases(): i64 {
 }
 
 # ── TLS 1.3 client: at most one CCS, before the server's Finished, wherever it falls ─────────
+var _cd_hs_srv = 0;            # the CS_HOOKED_HS server's exit code for the last row
 fn _cd_hooked_client(at, at2, mode): i64 {
     _cd_hook_at = at;
     _cd_hook_at2 = at2;
@@ -308,7 +314,7 @@ fn _cd_hooked_client(at, at2, mode): i64 {
     var c = _cd_client_ctx();
     var rc = tls_native_connect(c, cfd);
     sys_close(cfd);
-    _cd_wait(pid);
+    _cd_hs_srv = _cd_wait(pid) >> 8;
     _cd_hook_at = 0;
     _cd_hook_at2 = 0;
     _cd_hook_mode = 0;
@@ -323,6 +329,9 @@ fn test_tls13_client_window(): i64 {
       "one CCS between the ServerHello and the flight (OpenSSL's place): CONNECTED");
     assert_eq(_cd_hooked_client(1, 2, 1), TLS_ERR_PROTOCOL,
       "one before the ServerHello AND one before the flight: TLS_ERR_PROTOCOL (one per connection)");
+    # The client writes under its handshake-traffic key here (RFC 8446 §6): the server opens the
+    # alert where it expects the client's Finished; a plaintext one fails to open (BAD_RECORD).
+    assert_eq(_cd_hs_srv, 1, "  the server opened the client's alert, sealed under its handshake keys (child exit 1)");
     assert_eq(_cd_hooked_client(2, 0, CD_SPLIT), TLS_ERR_ALERT,
       "a CCS between two records of the flight is dropped too: the sealed alert after it is read (TLS_ERR_ALERT)");
     return 0;
@@ -371,17 +380,18 @@ fn test_deadline_native(): i64 {
     c = _cd_client_ctx();
     assert_eq(tls_native_connect(c, cfd), TLS_OK, "handshake");
     var fl0 = sys_fcntl(cfd, 3, 0);                      # after the handshake's writes
-    var big = alloc(16384);
+    # 2 KiB records: a Darwin socketpair buffers 8 KiB, so a 16 KiB record never fits whole there.
+    var big = alloc(2048);
     t0 = clock_now_ns();
     tls_native_set_deadline(c, t0 + 300000000);
-    var w = 16384;
+    var w = 2048;
     var nrec = 0;
-    while (w == 16384) {
-        w = tls_native_write(c, big, 16384);
+    while (w == 2048) {
+        w = tls_native_write(c, big, 2048);
         nrec = nrec + 1;
         if (nrec > 100000) { w = 0 - 999; }
     }
-    assert_eq(w, TLS_ERR_TIMEOUT, "16 KiB records until the socket buffer is full: TLS_ERR_TIMEOUT");
+    assert_eq(w, TLS_ERR_TIMEOUT, "2 KiB records until the socket buffer is full: TLS_ERR_TIMEOUT");
     assert(_cd_ms(t0) < 2000, "…in < 2 s");
     assert(nrec > 1, "  (some records were written first)");
     assert_eq(sys_fcntl(cfd, 3, 0), fl0, "the socket's F_GETFL flags are restored");
@@ -636,6 +646,34 @@ fn _cd_free_port(): i64 {
     return ((load8(&sa + 2) & 0xFF) << 8) | (load8(&sa + 3) & 0xFF);
 }
 
+# 1 when /usr/bin/openssl is LibreSSL (macOS): `openssl version` starts "LibreSSL".
+var _cd_libressl = 0;
+fn _cd_detect_libressl(): i64 {
+    var fds[8];
+    if (sys_pipe(&fds) != 0) { return 0; }
+    var rfd = load32(&fds);
+    var wfd = load32(&fds + 4);
+    var pid = sys_fork();
+    if (pid == 0) {
+        sys_close(rfd);
+        var nf = xopen("/dev/null", 2);
+        sys_dup2(nf, 0); sys_dup2(wfd, 1); sys_dup2(nf, 2);
+        var av: i64[3];
+        av[0] = "openssl"; av[1] = "version"; av[2] = 0;
+        var ev[8];
+        store64(&ev, 0);
+        sys_execve("/usr/bin/openssl", &av, &ev);
+        sys_exit(127);
+    }
+    sys_close(wfd);
+    var out[16];
+    var n = sys_read(rfd, &out, 8);
+    sys_close(rfd);
+    _cd_wait(pid);
+    if (n == 8 && memeq(&out, "LibreSSL", 8) == 1) { return 1; }
+    return 0;
+}
+
 # Run /usr/bin/openssl with argv `av` (stdio on /dev/null) and wait: its exit status.
 fn _cd_openssl(av): i64 {
     var pid = sys_fork();
@@ -686,7 +724,14 @@ fn _cd_s_server_row(flag, cert, key, form, ver12, name): i64 {
         tls_native_set_verify(c, TLS_VERIFY_NONE);
         if (ver12 == 1) { tls_native_set_version_range(c, TLS_VERSION_1_2, TLS_VERSION_1_2); }
         assert_eq(tls_native_connect(c, fd), TLS_OK, "  the native client reaches CONNECTED");
-        assert_eq(load64(c + TLS_CTX_OFF_CCS_STATE) & 1, 1, "  …having read the server's one CCS");
+        if (ver12 == 0 && _cd_libressl == 1) {
+            # LibreSSL's 1.3 server sends its middlebox CCS only to a client that offered a
+            # legacy_session_id (RFC 8446 D.4); the native client offers none.
+            var _ls = "  SKIP (LibreSSL s_server): no 1.3 middlebox CCS to an empty legacy_session_id\n";
+            sys_write(1, _ls, strlen(_ls));
+        } else {
+            assert_eq(load64(c + TLS_CTX_OFF_CCS_STATE) & 1, 1, "  …having read the server's one CCS");
+        }
         tls_native_close(c);
         sock_close(fd);
     }
@@ -701,6 +746,7 @@ fn test_openssl_peer(): i64 {
         sys_write(1, _skip, strlen(_skip));
         return 0;
     }
+    _cd_libressl = _cd_detect_libressl();
     var cert = test_scratch("tls_ccs_deadline_cert.der");
     var key = test_scratch("tls_ccs_deadline_key.der");
     file_write_all(cert, _cd_cert, _cd_cert_len);
@@ -713,10 +759,12 @@ fn test_openssl_peer(): i64 {
     # will not use a P-256 ECDSA certificate with a client that does not list P-256.
     var rcert = test_scratch("tls_ccs_deadline_rsa_cert.pem");
     var rkey = test_scratch("tls_ccs_deadline_rsa_key.pem");
-    var av: i64[16];
+    var av: i64[18];
     av[0] = "openssl"; av[1] = "req"; av[2] = "-x509"; av[3] = "-newkey"; av[4] = "rsa:2048";
     av[5] = "-nodes"; av[6] = "-keyout"; av[7] = rkey; av[8] = "-out"; av[9] = rcert;
-    av[10] = "-days"; av[11] = "2"; av[12] = "-subj"; av[13] = "/CN=localhost"; av[14] = 0;
+    av[10] = "-days"; av[11] = "2"; av[12] = "-subj"; av[13] = "/CN=localhost";
+    # An X.509 v3 certificate: LibreSSL's req -x509 makes a v1 one (no extensions) without -addext.
+    av[14] = "-addext"; av[15] = "basicConstraints=critical,CA:TRUE"; av[16] = 0;
     assert_eq(_cd_openssl(&av), 0, "openssl req made an RSA-2048 certificate");
     _cd_s_server_row("-tls1_2", rcert, rkey, "PEM", 1, "s_server -tls1_2 is up (its CCS directly before its Finished)");
     xunlink(rcert);

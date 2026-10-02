@@ -144,8 +144,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   A CCS must be exactly the byte 1. Any violation — a second CCS, a malformed one, one outside the
   window, a 1.2 Finished with no CCS before it — fails the ctx with `TLS_ERR_PROTOCOL` after a
   best-effort fatal `unexpected_message` alert (`_tn_send_fatal_alert`): plaintext
-  `15 03 03 00 02 02 0a` while our writes still are, else sealed under our TLS 1.3 application keys
-  or, once our own 1.2 CCS is out (ctx `TLS_CTX_OFF_CCS_STATE` bit 1), the 1.2 keys. A plaintext alert
+  `15 03 03 00 02 02 0a` while our writes still are, else sealed under our current write keys
+  (RFC 8446 §6): in TLS 1.3 our application keys, or before them our handshake-traffic keys (the
+  client's state from the ServerHello to its own Finished); in TLS 1.2 our keys once our own CCS is
+  out (ctx `TLS_CTX_OFF_CCS_STATE` bit 1). A plaintext alert
   where the 1.2 peer's CCS is due is that peer's alert (`TLS_ERR_ALERT`, not answered) — the 1.2 half
   of the "plaintext alert where an encrypted record is due" case I2 (c) left for the backlog. **(b) a
   per-connection deadline** — `tls_native_set_deadline(ctx, abs_ns)` / `tls_set_deadline(ctx, abs_ns)`
