@@ -71,6 +71,9 @@ fn _dump(path, buf, n): i64 {
 var mtls_cert_path = _scratch("_mtls_c", ".der");
 var mtls_key_path = _scratch("_mtls_k", ".der");
 
+# The server's pinned wall clock (tls_native_set_transport's now hook): 2026-06-11 12:00 UTC.
+fn _mtls_now(): i64 { return 1781179200; }
+
 # Client hook (fires on the native ctx pre-handshake): accept the self-signed
 # SERVER cert + present our own client cert via the typed wrappers.
 fn chook(hctx, handle): i64 {
@@ -115,8 +118,13 @@ if (pid == 0) {
 }
 
 sys_close(cfd);
+# 6.6.14 (CVE-64): a server verifies the client's CHAIN to its own trust roots, not possession
+# alone, so the server trusts this self-signed CA:TRUE cert as a root, and its clock is pinned
+# inside the cert's one-day window (2026-06-11/12) through the transport's now hook.
+tls_native_set_transport(0, 0, &_mtls_now);
 var srv = tls_native_new_server(cert, 320, key, 48);
 tls_native_set_verify(srv, TLS_VERIFY_PEER);   # request + verify a client cert
+assert_eq(tls_native_set_ca_bundle(srv, cert, 320, 1), TLS_OK, "server trusts the client's self-signed root");
 tls_native_server_load_creds(srv);
 assert_eq(tls_native_accept(srv, sfd), TLS_OK, "server accepts (client presented + signed its cert)");
 assert_neq(load64(srv + TLS_CTX_OFF_CLIENT_CERT), 0, "server captured the client leaf cert (mTLS)");
