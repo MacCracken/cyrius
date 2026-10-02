@@ -206,8 +206,8 @@ else
 fi
 if [ "$LIBSSL" = 1 ]; then
     # ANTI-VACUITY: helper + libssl present => the backend MUST come up, in both builds.
-    $TO "$T/pd" avail; a=$?
-    $TO "$T/pl" avail; b=$?
+    a=0; $TO "$T/pd" avail || a=$?
+    b=0; $TO "$T/pl" avail || b=$?
     if [ "$a" != 11 ] || [ "$b" != 11 ]; then
         echo "  FAIL: helper and libssl.so.3 are present but tls_available() under libssl is not 1 (default build exit $a, libssl-only build exit $b; 11 = available) — a required symbol did not resolve, or the bootstrap broke"
         exit 1
@@ -234,12 +234,12 @@ serve() {  # <leaf> [extra s_server args...]
             sleep 0.1
             i=$((i + 1))
         done
-        kill "$SP" 2>/dev/null; wait "$SP" 2>/dev/null; SP=0
+        kill "$SP" 2>/dev/null; wait "$SP" 2>/dev/null || true; SP=0
         tries=$((tries + 1))
     done
     echo "FAIL: $G: s_server for leaf '$c' never accepted (3 ports tried)"; tail -3 "$T/sv.log"; exit 1
 }
-stop() { [ "$SP" -ne 0 ] && { kill "$SP" 2>/dev/null; wait "$SP" 2>/dev/null; }; SP=0; }
+stop() { [ "$SP" -ne 0 ] && { kill "$SP" 2>/dev/null; wait "$SP" 2>/dev/null || true; }; SP=0; }
 
 # A = accepted (10); R = refused, at alloc or handshake (30|20); R0 = tls_connect_alloc returned 0
 # without a handshake (30); RH = the handshake refused (20).
@@ -248,7 +248,7 @@ _want() {  # <want> <rc> -> 0 if rc satisfies want
     return 1
 }
 one() {  # <leg> <binary> <backend> <host> <verify> <cafile> <want> <label>
-    $TO "$2" "$3" "$PORT" "$6" "$4" "$5" >/dev/null 2>&1; rc=$?
+    rc=0; $TO "$2" "$3" "$PORT" "$6" "$4" "$5" >/dev/null 2>&1 || rc=$?
     if _want "$7" "$rc"; then
         echo "  ok: [$1] $8 -> $7"
     else
@@ -281,7 +281,7 @@ srow() {
 prow() {
     if [ "$LIBSSL" = 1 ]; then
         for pb in pd pl; do
-            $TO "$T/$pb" libssl "$PORT" "$T/ca.crt" "$1" "$2" "$3" >/dev/null 2>&1; rc=$?
+            rc=0; $TO "$T/$pb" libssl "$PORT" "$T/ca.crt" "$1" "$2" "$3" >/dev/null 2>&1 || rc=$?
             if _want "$4" "$rc"; then echo "  ok: [P/$pb] $5 -> $4"
             else
                 echo "  FAIL: [P/$pb] $5 — want $4, probe exit $rc (10 accepted, 20 handshake refused, 30 alloc refused)"
@@ -372,7 +372,7 @@ if [ "$LIBSSL" = 1 ]; then
     cp "$ROOT/lib/tls.cyr" "$T/mut/lib/tls.cyr" || { echo "FAIL: $G: cannot copy tls.cyr into $T/mut"; exit 1; }
     serve dns
     (cd "$T/mut" && { echo '#define CYRIUS_TLS_LIBSSL'; cat "$T/probe.cyr"; } | "$CC" > "$T/px" 2>/dev/null) && chmod +x "$T/px"
-    $TO "$T/px" avail; rc=$?
+    rc=0; $TO "$T/px" avail || rc=$?
     if [ "$rc" = 11 ]; then echo "  ok: [X] control: the unmutated copy reads available"
     else echo "  FAIL: [X] control: the unmutated lib/ copy reads exit $rc, want 11 — the X leg cannot measure"; FAILS=$((FAILS + 1)); fi
     NX=0
@@ -386,8 +386,8 @@ if [ "$LIBSSL" = 1 ]; then
         sed "s/\"$sym\"/\"cyrius_bogus_$sym\"/" "$ROOT/lib/tls.cyr" > "$T/mut/lib/tls.cyr"
         (cd "$T/mut" && { echo '#define CYRIUS_TLS_LIBSSL'; cat "$T/probe.cyr"; } | "$CC" > "$T/px" 2>/dev/null) && chmod +x "$T/px" || {
             echo "  FAIL: [X] $sym: the mutated probe did not compile"; FAILS=$((FAILS + 1)); continue; }
-        $TO "$T/px" avail; a=$?
-        $TO "$T/px" libssl0 "$PORT" "$CA" localhost peer; b=$?
+        a=0; $TO "$T/px" avail || a=$?
+        b=0; $TO "$T/px" libssl0 "$PORT" "$CA" localhost peer || b=$?
         if [ "$a" = 12 ] && [ "$b" = 30 ]; then
             echo "  ok: [X] $sym unresolvable -> tls_available() 0, tls_connect_alloc 0"
         else
