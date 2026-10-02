@@ -616,6 +616,18 @@ refused — the Winsock transport and the Windows store, two lanes, working toge
   `tests/tcyr/crossos/tls_system_trust_store.tcyr` gains a last row, on every target, that injects the
   published state (no bundle, 7 skipped) and restores it (19/19; 18/19 on the merged pre-fix lib).
 
+- **Three TLS tests raced their peer or assumed their environment (found by CI at the handoff).**
+  `tls_libssl_sigpipe.tcyr` took its SIGPIPE disposition from its parent, and GitHub's runner starts
+  steps with SIGPIPE ignored, so its "the disposition was never touched" rows read 1 (Test (ubuntu), 2
+  failed): it now sets SIG_DFL itself. `tls_native_alert_mapping.tcyr`'s forked server and
+  `tls_native_ccs_deadline.tcyr`'s write hook sent records in separate writes while the end under test
+  refuses, alerts and closes after reading the first — a peer descheduled between its writes met the
+  closed socket (a rare SIGPIPE kill before CVE-66, `TLS_ERR_IO` since; aarch64 native, 1 failed; a
+  loaded pi failed 4 of 20 and 3 of 3 runs): each now builds the records into one buffer and writes it
+  once (0 of 20 and 0 of 12 after). Reproduced CI's conditions with `perl -e '$SIG{PIPE}="IGNORE"; exec'`,
+  piped output and busy-loops on pi; a stress sweep of the other forked-peer TLS / socket tests (8 runs
+  each, x86_64 and pi) found nothing more.
+
 ### Added
 
 - **`TLS_ERR_WRONG_THREAD` (-23)** (`lib/tls_native.cyr`, and the libssl-only block of `lib/tls.cyr`) —
