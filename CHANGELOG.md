@@ -52,6 +52,53 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Self-host fixpoint and seed-derive green; cycc self-hosts byte-identical on real pi, ecb, ach and
   cass, and all 154 `tests/tcyr/crossos/` files pass on each.
 
+- **arm64 macOS: a thread created in a `fork()` child killed the child with SIGSEGV (I6).** Found
+  preparing sigil 3.13.6, whose fork-per-trial tests died on every trial on ecb; a probe with no sigil
+  code reproduces it (`docs/development/issues/repros/2026-10-01-macos-arm64-thread-create-in-fork-child-sigsegv.cyr`:
+  the child prints "before thread_create" and never "thread_create returned"; cases 1 and 2 report
+  111 = 100 + SIGSEGV, exit 2). Affects every arm64-macOS program that forks without exec and then
+  creates a thread — a daemon that forks and starts a worker pool, a harness that forks per trial —
+  since 6.5.44 made `thread_create` a real libSystem `pthread_create`. **Root cause:** on arm64 macOS
+  the stdlib uses the aarch64 peer, whose `sys_fork` is `clone(SIGCHLD, ...)`; the Mach-O translation
+  turns that into Darwin's RAW BSD fork (`_esx_arm(S, 220, 2)` plus the x1 child fixup). That makes
+  the child behind libSystem's back: no atfork handlers and no libpthread child re-initialisation
+  (thread list reset to the caller, per-process state such as the cached task port), so the child's
+  first `pthread_create` (`__got[5]`) ran on state that still described the parent and faulted. A C
+  probe on ecb with no cyrius code shows the same split: raw `svc` fork + `pthread_create` → SIGSEGV,
+  libSystem `fork()` + `pthread_create` → exit 0. **Fix:** `sys_fork` spells `syscall(1701)` under
+  `CYRIUS_TARGET_MACOS` (`lib/syscalls_aarch64_linux.cyr`; real aarch64 Linux stays on `clone`), and
+  the compiler lowers 1701 at argc 1 — the second routine in the 1700+ "__got-bound libSystem routine"
+  sub-band, after `pthread_create` — to libSystem `fork()` (`EMACHO_FORK_ARM`, reroute in
+  `parse_expr.cyr`'s `_TARGET_MACHO == 2` block, `_macho_reroute_argc` and `_macho_arm_routes` claim
+  it, return-0 stubs on the x86 and cx backends). The Mach-O arm64 writer binds two more imports,
+  APPENDED so slots 0-6 keep their indices: `__got[7] = _fork`, `__got[8] = ___error` (GOT 56 → 72 B,
+  bind opcodes 96 → 112 B, symtab 9 → 11 entries, strtab 104 → 120 B, indirect table 7 → 9,
+  LC_DYSYMTAB nundefsym / nindirectsyms 7 → 9). The emitter sign-extends the `pid_t` (`sxtw x0, w0`:
+  AAPCS64 leaves the upper half of x0 unspecified for an `int`, and a -1 read as 4294967295 is a
+  "parent" with a bogus pid) and, on -1, returns `-errno` read through `___error`, so the failure
+  shape `lib/process.cyr`'s `Err(0 - pid)` relies on is unchanged (measured -35, EAGAIN, under
+  `ulimit -u 1` on ecb before and after). The raw clone → fork row and its x1 fixup stay for code that
+  spells the number itself (none in-tree). x86 macOS (ach) is untouched: its static no-libSystem
+  Mach-O has no `__got`, and its threads run inline. ⚠ Every arm64 Mach-O binary changes layout
+  (__LINKEDIT + 72 B); the native ecb self-host is a fixpoint on the new layout. **Verification:**
+  the filed repro, unmodified, exits 0 on ecb with "B: thread_create returned" in cases 1 and 2,
+  built both by the cross compiler and by `CYRIUS_MACHO_ARM=1 cyrius build --aarch64`; the same
+  binary from the pre-fix compiler still exits 2 there. New `tests/tcyr/crossos/fork_then_thread.tcyr`
+  (the repro's three cases as assertions, the child's verdict decoded from its wait status so a crash
+  reads as 100 + the signal; a Windows arm asserts the no-fork premise) fails 2 of 7 on ecb with the
+  pre-fix compiler and passes 7/7 after, and passes on x86, under qemu-aarch64 and wine. `otool`-style
+  listing (`llvm-objdump --macho --bind / --indirect-symbols`) shows all nine binds with `_fork` and
+  `___error` at `__got[7]` / `__got[8]`. New gate `tests/gates/platform/macos_arm64_libsystem_fork.sh`
+  holds the reroute guard and arity, the emitter's slots against the writer's bind order, the
+  writer's parallel tables against each other (every strx against the strtab offset of the name bound
+  at that slot — a one-byte drift is a dyld "Symbol not found"), the stubs, the route claim, both arms
+  of `sys_fork`, and the sxtw / -errno / branch-offset shape; each of its 28 mutations goes red.
+  `macho_route_parity.sh` axis 3 now expects the three `__got` literals `228 1700 1701`. ELF-aarch64,
+  x86 ELF, x86 Mach-O and PE output is byte-identical before and after for all 155
+  `tests/tcyr/crossos/` files (620 of 620). Self-host fixpoint and seed-derive green (cycc 1,470,944
+  → 1,470,960 B); cycc self-hosts byte-identical on real ecb, ach, pi and cass, and the 155
+  `tests/tcyr/crossos/` files pass on each.
+
 ### Downstream
 
 #### Folded — ⛔ each tagged BEFORE cyrius 6.6.13

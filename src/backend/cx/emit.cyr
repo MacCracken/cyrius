@@ -1808,6 +1808,7 @@ fn EWAIT_PE(S): i64 { return 0; }
 fn EWRITE_PE(S): i64 { return 0; }
 fn _macho_x86_routes(n): i64 { return 1; }   # v6.5.43: not the x86 Mach-O backend — never warn from here.
 fn EMACHO_PTHREAD_CREATE_ARM(S): i64 { return 0; }   # v6.5.44: arm64-macOS only; parse_expr references it in every fork.
+fn EMACHO_FORK_ARM(S): i64 { return 0; }   # 6.6.13: arm64-macOS only (libSystem fork); same reason.
 fn _macho_arm_routes(n): i64 { return 0; }
 
 # v6.5.51 — the ELF-aarch64 raw-syscall-number diagnostic is aarch64-only; these stubs

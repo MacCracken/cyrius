@@ -515,7 +515,8 @@ fn _PE_ROUTE_PERFCOUNTER(S, sc_num, argc): i64 {
 
 # v6.6.8 — the arity each Mach-O PARSE-TIME reroute fires at, or 0 if `n` is not one. `argc`
 # counts the number itself, as the reroute blocks in the syscall() parse do: 228 (clock) and 35
-# (nanosleep) at 3, and 1700 (pthread_create, arm64 only) at 5. MUST mirror those blocks; the
+# (nanosleep) at 3, 1700 (pthread_create, arm64 only) at 5, and 1701 (libSystem fork, arm64
+# only; 6.6.13) at 1. MUST mirror those blocks; the
 # Darwin syscall gate probes every in-tree literal site at its real argc through this diagnostic.
 # 6.6.10: 35 on BOTH backends. arm64 reroutes it inside ESYSXLAT (EMACHO_NANOSLEEP_ARM), which
 # used to fire at ANY arity — at argc 1 it dereferenced x0 = the number (SIGSEGV, no warning) —
@@ -524,6 +525,7 @@ fn _macho_reroute_argc(tgt, n): i64 {
     if (n == 228) { return 3; }
     if (n == 35) { return 3; }
     if (tgt == 2) { if (n == 1700) { return 5; } }
+    if (tgt == 2) { if (n == 1701) { return 1; } }
     return 0;
 }
 
@@ -2079,6 +2081,18 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             if (sc_num == 1700) {
                 if (argc == 5) {
                     EMACHO_PTHREAD_CREATE_ARM(S);
+                    _cfo = 0;
+                    return 0;
+                }
+            }
+            # 1701 = libSystem fork (__got[7]), the second routine in the 1700+ sub-band.
+            # 6.6.13: syscall(1701) → libSystem `fork()` (errno via __got[8] ___error), so the
+            # child gets libSystem's own fork handling. The raw BSD fork the clone row still
+            # translates to skips it, and the child's first pthread_create then SIGSEGVs. See
+            # EMACHO_FORK_ARM (src/backend/aarch64/emit.cyr). CHANGELOG [6.6.13]
+            if (sc_num == 1701) {
+                if (argc == 1) {
+                    EMACHO_FORK_ARM(S);
                     _cfo = 0;
                     return 0;
                 }

@@ -34,16 +34,19 @@ args from the Darwin ABI entry registers, and call out to
 ### libSystem import layer (v5.5.11–14)
 
 `EMITMACHO_ARM64` embeds a `__DATA_CONST` segment with a `__got`
-section holding six slots — bound by dyld at load time to:
+section holding nine slots — bound by dyld at load time to:
 
-| slot | libSystem symbol   | use                                 |
-|------|--------------------|-------------------------------------|
-| 0    | `_exit`            | `syscall(60, code)` tail-call       |
-| 1    | `_write`           | `syscall(1, fd, buf, len)` reroute  |
-| 2    | `_read`            | `syscall(0, fd, buf, len)` reroute  |
-| 3    | `_malloc`          | imports-only (reserved for C FFI)   |
-| 4    | `_fopen`           | imports-only                        |
-| 5    | `_pthread_create`  | imports-only                        |
+| slot | libSystem symbol          | use                                          |
+|------|---------------------------|----------------------------------------------|
+| 0    | `_exit`                   | `syscall(60, code)` tail-call                |
+| 1    | `_write`                  | `syscall(1, fd, buf, len)` reroute           |
+| 2    | `_read`                   | `syscall(0, fd, buf, len)` reroute           |
+| 3    | `_malloc`                 | imports-only (reserved for C FFI)            |
+| 4    | `_fopen`                  | imports-only                                 |
+| 5    | `_pthread_create`         | `syscall(1700, ...)` — `thread_create`       |
+| 6    | `_clock_gettime_nsec_np`  | `syscall(228, id, buf)` reroute              |
+| 7    | `_fork`                   | `syscall(1701)` — `sys_fork` (6.6.13)        |
+| 8    | `___error`                | errno for a failed `_fork` (6.6.13)          |
 
 Reroutes compile to `adrp x16, __got@PAGE; ldr x16, [x16, #slot*8]; br/blr x16`.
 `FIXUP_ADRP_LDR` (v5.5.14) scales the LDR imm12 field by /8 for
@@ -100,6 +103,5 @@ Tool binaries ship pre-built in this tarball:
   compiles FROM Linux TO Mach-O).
 - `envp` / `apple[]` are not exposed by `lib/args_macos.cyr`.
   Trivial follow-up: grow the entry prologue to push x2/x3 too.
-- `_malloc` / `_fopen` / `_pthread_create` are bound at load but
-  have no `syscall()`-shape reroute. Reserved for future C-FFI
-  calls.
+- `_malloc` / `_fopen` are bound at load but have no
+  `syscall()`-shape reroute. Reserved for future C-FFI calls.
