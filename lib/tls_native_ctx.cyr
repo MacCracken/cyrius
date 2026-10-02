@@ -20,9 +20,10 @@
 # control block; +136..+255 is reserved for the read/write key
 # material, sequence numbers, and I/O buffers Mini-arcs B-D append.
 
-# 512 = 64 i64 slots: +3 record partial-read hold buffer, +1 (v6.2.25) ALLOC,
-# +1 (v6.2.8) CERT_REQUESTED.
-var TLS_CTX_LEN          = 512;
+# 576 = 72 i64 slots. 512 held +3 record partial-read hold buffer, +1 (v6.2.25) ALLOC,
+# +1 (v6.2.8) CERT_REQUESTED; 6.6.13 added +512..+568 (see the block after READ_HOLD_OFF).
+# Nothing outside _tn_ctx_new_in reads this; a new slot goes INSIDE it, never past it.
+var TLS_CTX_LEN          = 576;
 var TLS_CTX_OFF_ROLE       = 0;   # TlsRole (CLIENT/SERVER)
 var TLS_CTX_OFF_STATE      = 8;   # TlsState
 var TLS_CTX_OFF_VERSION    = 16;  # negotiated TlsProtocolVersion (0 until SH)
@@ -85,7 +86,7 @@ var TLS_CTX_OFF_MASTER12      = 416; # TLS 1.2: ptr to the 48-byte master_secret
 # — 1.2 has no HKDF keysched object, so both
 # Finished verify_data computations need a home
 # for the master here. (Offsets continue contiguously
-# below to CERT_REQUESTED=472; ALLOC=480; TLS_CTX_LEN=488.)
+# below; the last slot and TLS_CTX_LEN are at the end of the list.)
 var TLS_CTX_OFF_USE_EMS       = 424; # TLS 1.2 Extended Master Secret (RFC 7627, .77):
 # 1 = EMS negotiated, 0 = legacy. READ by
 # derive_keys; SET/cleared by the CH/SH parsers.
@@ -116,6 +117,14 @@ var TLS_CTX_OFF_ALLOC          = 480; # v6.2.25 Allocator handle for per-connect
 var TLS_CTX_OFF_READ_HOLD      = 488; # ptr to held-plaintext buffer (TLS_RECORD_MAX_PLAINTEXT, reused), 0 = none
 var TLS_CTX_OFF_READ_HOLD_LEN  = 496; # total valid held bytes (0 = nothing held)
 var TLS_CTX_OFF_READ_HOLD_OFF  = 504; # held bytes already delivered to the caller
+# 6.6.13 — TLS_CTX_LEN 512 -> 576. The offsets of +512..+568 are ALLOCATED here, each `var` is
+# added by the change that first uses it, so no offset can be handed out twice:
+#   +512 READ_BUF    — per-ctx record read buffer, allocated on first read
+#   +520 WRITE_BUF   — per-ctx record seal buffer
+#   +528 PEER_CLOSED — 1 once close_notify was read (EOF is sticky)
+var TLS_CTX_OFF_CA_SKIPPED     = 536; # blocks the last trust-root install could not use (tls_native_ca_skipped)
+#   +544..+568       — reserved: the read/write deadline and the CCS / peer-Finished state
+# CHANGELOG [6.6.13]
 
 # Handshake state-machine events. The protocol-message build/parse
 # that fires each event lands in .16-.19; this slot validates the

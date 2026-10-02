@@ -5152,6 +5152,7 @@ tls_native_hs12::tls_native_12_verify_data/7
 tls_native_hs12::tls_native_12_verify_finished/4
 tls_native_hs12::tls_native_accept_12/2
 tls_native_hs12::tls_native_aead_nonce_12_gcm/3
+tls_native_hs12::tls_native_ca_skipped/1
 tls_native_hs12::tls_native_ccs_record_write/1
 tls_native_hs12::tls_native_cipher_iv_len_12/1
 tls_native_hs12::tls_native_client_parse_server_hello_12/3

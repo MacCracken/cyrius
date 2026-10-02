@@ -1496,6 +1496,7 @@ Sovereign TLS 1.2 + 1.3 stack — no OpenSSL. ECDSA (P-256/P-384) / RSA (PSS, PK
 | `tls_native_set_verify` | `tls_native_set_verify(ctx, mode) → TLS_OK/err` | Peer-verification mode (`TLS_VERIFY_NONE`/`PEER`) |
 | `tls_native_set_ca_bundle` | `tls_native_set_ca_bundle(ctx, pem, len, is_der) → TLS_OK/err` | Install a custom CA bundle (PEM or DER) |
 | `tls_native_set_ca_system` | `tls_native_set_ca_system(ctx) → TLS_OK/err` | Load the system CA trust store |
+| `tls_native_ca_skipped` | `tls_native_ca_skipped(ctx) → count/err` | Certificate blocks the last trust-root install could not use (6.6.13): installed + skipped == the bundle's PEM block count; 0 before any install |
 | `tls_native_set_version_range` | `tls_native_set_version_range(ctx, min, max) → TLS_OK/err` | Constrain negotiated version to [min, max] |
 
 **Introspection (post-handshake):**

@@ -1538,49 +1538,120 @@ fn tls_native_set_verify(ctx, mode): i64 {
 # (Linux: /etc/ssl/certs/ca-certificates.crt or platform equivalent).
 # CA_ROOT holds a trust-anchor SET: a ptr to [count][root0 ptr]...[rootN-1 ptr].
 # (.78: was a single root; now a set so system bundles + multi-root PEM work.)
+# TLS_CA_MAX_ROOTS now bounds only tls_native_set_client_cert's leaf decode; a trust bundle's
+# chain scratch is sized from its own block count (6.6.13, see _tn_ca_parse_set).
 var TLS_CA_MAX_ROOTS = 300;
 
-# Install the trust-root set from a PEM (or DER, is_der != 0) bundle — see the block above.
-fn tls_native_set_ca_bundle(ctx, pem_bundle, bundle_len, is_der): i64 {
-    if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
-    if (pem_bundle == 0) { return TLS_ERR_INVALID_PARAM; }
-    if (bundle_len <= 0) { return TLS_ERR_INVALID_PARAM; }
-    if (is_der != 0) {
-        # Single DER trust anchor → a one-element set.
-        var root = x509_cert_alloc();
-        if (root == 0) { return TLS_ERR_OOM; }
-        if (x509_parse(pem_bundle, bundle_len, root) != 1) { return TLS_ERR_CERT_INVALID; }
-        var set1 = alloc(16);
-        if (set1 == 0) { return TLS_ERR_OOM; }
-        store64(set1, 1);
-        store64(set1 + 8, root);
-        store64(ctx + TLS_CTX_OFF_CA_ROOT, set1);
-        return TLS_OK;
-    }
-    # PEM bundle: decode EVERY certificate as a trust anchor (OS stores carry
-    # hundreds). A cert sigil can't parse is skipped, not fatal.
-    var chain = alloc(TLS_CA_MAX_ROOTS * 16);
-    if (chain == 0) { return TLS_ERR_OOM; }
-    var n = pem_decode_certs(pem_bundle, bundle_len, chain, TLS_CA_MAX_ROOTS);
-    if (n < 1) { return TLS_ERR_CERT_INVALID; }
-    var set = alloc(8 + n * 8);
-    if (set == 0) { return TLS_ERR_OOM; }
+# The number of PEM certificate blocks in `pem[0..len)`: occurrences of the BEGIN marker sigil's
+# pem_decode_certs_into walks, so a decode that succeeds returns exactly this many.
+fn _tn_pem_block_count(pem, len): i64 {
+    var n = 0;
     var i = 0;
-    var stored = 0;
-    while (i < n) {
-        var r = x509_cert_alloc();
-        if (r != 0) {
-            if (x509_parse(load64(chain + i * 16), load64(chain + i * 16 + 8), r) == 1) {
-                store64(set + 8 + stored * 8, r);
-                stored = stored + 1;
+    while (i + 27 <= len) {
+        if (load8(pem + i) == 45) {
+            if (memeq(pem + i, "-----BEGIN CERTIFICATE-----", 27) == 1) {
+                n = n + 1;
+                i = i + 26;
             }
         }
         i = i + 1;
     }
+    return n;
+}
+
+# Parse a trust bundle into a root set [count][root ptrs...] — the layout verify_chain reads.
+# Every allocation comes from Allocator `alc` (0 = the global heap) and sigil's per-cert scratch
+# from the raw arena `arena` (0 = the global heap), so a ctx's roots live and die with the ctx.
+# PEM (`is_der == 0`): every block is decoded and parsed; a block sigil cannot parse (today: a
+# P-521 root) is SKIPPED, not fatal. DER: one certificate. Writes the skipped count through
+# `out_skipped` (blocks not installed: n - stored; 0 for a DER cert that parsed). Returns the set,
+# or a negative TLS_ERR_*: CERT_INVALID when nothing installs (the count is written first),
+# OOM, INVALID_PARAM.
+# ⛔ 6.6.13 — WHY THIS EXISTS. The loop lived inline in tls_native_set_ca_bundle, which counted
+# successes only: on Arch's /etc/ssl/cert.pem 8 of 121 roots were dropped (1 since sigil 3.13.6)
+# with no count anywhere, and a server chaining to one failed CERT_INVALID with nothing pointing
+# at the store. It also took a fixed 300-entry chain scratch (a bundle with more blocks failed
+# whole), a global x509_cert_alloc per block (failures included) and pem_decode_certs' global
+# pool. Issue 2026-09-30-tls-client-memory-and-alert-gaps (e); CHANGELOG [6.6.13].
+fn _tn_ca_parse_set(arena, alc, pem, len, is_der, out_skipped): i64 {
+    store64(out_skipped, 0);
+    if (pem == 0) { return TLS_ERR_INVALID_PARAM; }
+    if (len <= 0) { return TLS_ERR_INVALID_PARAM; }
+    if (is_der != 0) {
+        var root = x509_cert_alloc_into(arena);
+        if (root == 0) { return TLS_ERR_OOM; }
+        if (x509_parse_into(pem, len, root, arena) != 1) {
+            store64(out_skipped, 1);
+            return TLS_ERR_CERT_INVALID;
+        }
+        var set1 = _tn_alloc_a(alc, 16);
+        if (set1 == 0) { return TLS_ERR_OOM; }
+        store64(set1, 1);
+        store64(set1 + 8, root);
+        return set1;
+    }
+    var blocks = _tn_pem_block_count(pem, len);
+    if (blocks < 1) { return TLS_ERR_CERT_INVALID; }
+    var chain = _tn_alloc_a(alc, blocks * 16);
+    if (chain == 0) { return TLS_ERR_OOM; }
+    var pool = _tn_alloc_a(alc, len);   # DER <= 3/4 of its base64; the bundle bounds the pool
+    if (pool == 0) { return TLS_ERR_OOM; }
+    var n = pem_decode_certs_into(pem, len, chain, blocks, pool, len);
+    if (n < 1) {
+        # A malformed block fails sigil's whole decode: nothing installs, every block is skipped.
+        store64(out_skipped, blocks);
+        return TLS_ERR_CERT_INVALID;
+    }
+    var set = _tn_alloc_a(alc, 8 + n * 8);
+    if (set == 0) { return TLS_ERR_OOM; }
+    var i = 0;
+    var stored = 0;
+    var r = 0;                          # the next cert: allocated only after a success used one
+    while (i < n) {
+        if (r == 0) { r = x509_cert_alloc_into(arena); }
+        if (r == 0) { return TLS_ERR_OOM; }
+        if (x509_parse_into(load64(chain + i * 16), load64(chain + i * 16 + 8), r, arena) == 1) {
+            store64(set + 8 + stored * 8, r);
+            stored = stored + 1;
+            r = 0;
+        }
+        i = i + 1;
+    }
+    store64(out_skipped, n - stored);
     if (stored < 1) { return TLS_ERR_CERT_INVALID; }
     store64(set, stored);
+    return set;
+}
+
+# Install the trust-root set from a PEM (or DER, is_der != 0) bundle — see the block above. Parsed
+# through the ctx's allocator (tls_native_set_alloc / an `_in` constructor), so an arena-backed
+# ctx's roots are reclaimed with its arena. Records the skipped count for tls_native_ca_skipped —
+# also when nothing installs (TLS_ERR_CERT_INVALID; the ctx keeps any set it already had).
+fn tls_native_set_ca_bundle(ctx, pem_bundle, bundle_len, is_der): i64 {
+    if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
+    if (pem_bundle == 0) { return TLS_ERR_INVALID_PARAM; }
+    if (bundle_len <= 0) { return TLS_ERR_INVALID_PARAM; }
+    var skipped = 0;
+    var set = _tn_ca_parse_set(_tn_arena(ctx), load64(ctx + TLS_CTX_OFF_ALLOC), pem_bundle,
+      bundle_len, is_der, &skipped);
+    if (set == TLS_ERR_OOM) { return TLS_ERR_OOM; }
+    store64(ctx + TLS_CTX_OFF_CA_SKIPPED, skipped);
+    if (set < 0) { return set; }
     store64(ctx + TLS_CTX_OFF_CA_ROOT, set);
     return TLS_OK;
+}
+
+# 6.6.13 — how many certificate blocks the ctx's most recent trust-root install could not use:
+# tls_native_set_ca_bundle / tls_native_set_ca_system / tls_ctx_load_verify_locations. After a
+# successful install, installed + skipped == the bundle's PEM block count; a server chaining to a
+# skipped root fails TLS_ERR_CERT_INVALID, and this is the count that points at the store (on
+# Arch's /etc/ssl/cert.pem: 1, the e-Szigno P-521 root, a curve sigil does not have). After an
+# install that failed TLS_ERR_CERT_INVALID it is that bundle's count (every block). Returns >= 0;
+# 0 before any install; TLS_ERR_INVALID_PARAM for ctx == 0.
+# Issue 2026-09-30-tls-client-memory-and-alert-gaps (e); CHANGELOG [6.6.13].
+fn tls_native_ca_skipped(ctx): i64 {
+    if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
+    return load64(ctx + TLS_CTX_OFF_CA_SKIPPED);
 }
 
 # Load the OS trust store — a single concatenated-PEM CA bundle — as the ctx's

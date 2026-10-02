@@ -1,0 +1,241 @@
+# tls_ca_store.tcyr — 6.6.13: the native TLS trust-root install on every target.
+#
+# Issue 2026-09-30-tls-client-memory-and-alert-gaps, parts (a) and (e):
+#   (a) tls_ctx_load_verify_locations kept a fresh 1 MiB read buffer per call (1,054,864 B
+#       retained per call for a one-cert CA, measured on 6.6.12). The file is now read into a
+#       buffer of its own size, from the ctx's allocator, and the roots are parsed into it too.
+#   (e) a root sigil cannot parse was dropped with no count anywhere. tls_native_ca_skipped(ctx)
+#       now reports it: installed + skipped == the bundle's PEM block count.
+# Cross-OS because the system store is a different file with different contents on every host
+# (Arch 121 blocks / 1 skipped, Intel-Mac 128 / 0, Windows has none), and the sized read goes
+# through each target's file_open / file_read.
+#
+# The fixture is two real roots: a self-signed P-256 CA (CN=localhost, the one
+# tls_native_scaffold.tcyr serves) and the public Microsec "e-Szigno TLS Root CA 2023", a P-521
+# root from the OS stores that sigil skips (it has no P-521). It is written to a per-process
+# CWD-relative file (test_scratch, so it works on Windows) and removed at the end.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/fmt.cyr"
+include "lib/io.cyr"
+include "lib/tls.cyr"
+
+var _cs_p256 = 0;          # DER, 385 bytes
+var _cs_p256_len = 385;
+var _cs_p521 = 0;          # DER, 723 bytes
+var _cs_p521_len = 723;
+
+# Base64 (RFC 4648) of src[0..n) into out; returns the length written.
+fn _cs_b64(src, n, out): i64 {
+    var tbl = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    var i = 0;
+    var o = 0;
+    while (i + 3 <= n) {
+        var v = ((load8(src + i) & 0xFF) << 16) | ((load8(src + i + 1) & 0xFF) << 8) | (load8(src + i + 2) & 0xFF);
+        store8(out + o, load8(tbl + ((v >> 18) & 63)));
+        store8(out + o + 1, load8(tbl + ((v >> 12) & 63)));
+        store8(out + o + 2, load8(tbl + ((v >> 6) & 63)));
+        store8(out + o + 3, load8(tbl + (v & 63)));
+        i = i + 3;
+        o = o + 4;
+    }
+    var rem = n - i;
+    if (rem > 0) {
+        var w = (load8(src + i) & 0xFF) << 16;
+        if (rem == 2) { w = w | ((load8(src + i + 1) & 0xFF) << 8); }
+        store8(out + o, load8(tbl + ((w >> 18) & 63)));
+        store8(out + o + 1, load8(tbl + ((w >> 12) & 63)));
+        store8(out + o + 2, 61);
+        if (rem == 2) { store8(out + o + 2, load8(tbl + ((w >> 6) & 63))); }
+        store8(out + o + 3, 61);
+        o = o + 4;
+    }
+    return o;
+}
+
+# Append one PEM certificate block (64-column body, as OS stores write them) at buf+pos.
+fn _cs_pem_append(buf, pos, der, dlen): i64 {
+    memcpy(buf + pos, "-----BEGIN CERTIFICATE-----\n", 28);
+    pos = pos + 28;
+    var b = alloc(dlen * 2 + 8);
+    var bl = _cs_b64(der, dlen, b);
+    var i = 0;
+    while (i < bl) {
+        var k = bl - i;
+        if (k > 64) { k = 64; }
+        memcpy(buf + pos, b + i, k);
+        pos = pos + k;
+        store8(buf + pos, 10);
+        pos = pos + 1;
+        i = i + k;
+    }
+    memcpy(buf + pos, "-----END CERTIFICATE-----\n", 26);
+    return pos + 26;
+}
+
+# The test's own count of BEGIN markers — independent of the library's.
+fn _cs_blocks(pem, len): i64 {
+    var n = 0;
+    var i = 0;
+    while (i + 27 <= len) {
+        if (memeq(pem + i, "-----BEGIN CERTIFICATE-----", 27) == 1) { n = n + 1; }
+        i = i + 1;
+    }
+    return n;
+}
+
+fn _cs_installed(ctx): i64 {
+    var set = load64(ctx + TLS_CTX_OFF_CA_ROOT);
+    if (set == 0) { return 0; }
+    return load64(set);
+}
+
+fn test_skipped_counts(pem, plen, p521pem, p521len): i64 {
+    test_group("tls_native_ca_skipped: a P-521 root is counted, not dropped silently");
+    assert_eq(tls_native_ca_skipped(0), TLS_ERR_INVALID_PARAM, "ctx 0 is TLS_ERR_INVALID_PARAM");
+    var c = tls_native_new_client("localhost", 9);
+    assert_eq(tls_native_ca_skipped(c), 0, "a fresh ctx reports 0");
+    assert_eq(tls_native_set_ca_bundle(c, pem, plen, 0), TLS_OK, "P-256 + P-521 bundle installs");
+    assert_eq(_cs_installed(c), 1, "one root installed (the P-256 CA)");
+    assert_eq(tls_native_ca_skipped(c), 1, "one block skipped (the P-521 root)");
+    assert_eq(_cs_installed(c) + tls_native_ca_skipped(c), _cs_blocks(pem, plen), "installed + skipped == PEM blocks");
+    var set = load64(c + TLS_CTX_OFF_CA_ROOT);
+    var rc = tls_native_set_ca_bundle(c, p521pem, p521len, 0);
+    assert_eq(rc, TLS_ERR_CERT_INVALID, "a bundle of only unusable roots is TLS_ERR_CERT_INVALID");
+    assert_eq(tls_native_ca_skipped(c), 1, "and its count is still recorded");
+    assert_eq(load64(c + TLS_CTX_OFF_CA_ROOT), set, "the ctx keeps the set it already had");
+    # DER: one certificate.
+    var d = tls_native_new_client("localhost", 9);
+    assert_eq(tls_native_set_ca_bundle(d, _cs_p256, _cs_p256_len, 1), TLS_OK, "DER P-256 root installs");
+    assert_eq(_cs_installed(d), 1, "DER: one root installed");
+    assert_eq(tls_native_ca_skipped(d), 0, "DER: nothing skipped");
+    rc = tls_native_set_ca_bundle(d, _cs_p521, _cs_p521_len, 1);
+    assert_eq(rc, TLS_ERR_CERT_INVALID, "DER P-521 root is TLS_ERR_CERT_INVALID");
+    assert_eq(tls_native_ca_skipped(d), 1, "DER: the refused cert is counted");
+    # A malformed block fails sigil's whole decode: nothing installs, every block is skipped.
+    var bad = alloc(plen + 128);
+    var bl = _cs_pem_append(bad, 0, _cs_p256, _cs_p256_len);
+    memcpy(bad + bl, "-----BEGIN CERTIFICATE-----\n!!!!\n-----END CERTIFICATE-----\n", 59);
+    bl = bl + 59;
+    var e = tls_native_new_client("localhost", 9);
+    assert_eq(tls_native_set_ca_bundle(e, bad, bl, 0), TLS_ERR_CERT_INVALID, "a malformed block refuses the bundle");
+    assert_eq(tls_native_ca_skipped(e), 2, "both blocks counted as skipped");
+    assert_eq(_cs_installed(e), 0, "nothing installed");
+    return 0;
+}
+
+fn test_sized_read(path, pem, plen): i64 {
+    test_group("tls_ctx_load_verify_locations: a buffer the file's size, from the ctx's allocator");
+    # The helper alone: exact size, exact bytes, exactly one allocation of that size.
+    var n = 0;
+    var r0 = alloc_used();
+    alloc(plen);
+    var ref = alloc_used() - r0;
+    var u0 = alloc_used();
+    var buf = _tls_read_file_in(0, path, TLS_CAFILE_MAX, &n);
+    assert_neq(buf, 0, "the file reads");
+    assert_eq(n, plen, "the whole file");
+    assert_eq(memeq(buf, pem, plen), 1, "byte for byte");
+    assert_eq(alloc_used() - u0, ref, "one allocation of exactly the file's size");
+    u0 = alloc_used();
+    assert_eq(_tls_read_file_in(0, path, plen - 1, &n), 0, "a file over max is refused");
+    assert_eq(n, 0, "with length 0");
+    assert_eq(alloc_used() - u0, 0, "and allocates nothing");
+    var nx = test_scratch("tls_ca_store_missing.pem");
+    u0 = alloc_used();
+    assert_eq(_tls_read_file_in(0, nx, TLS_CAFILE_MAX, &n), 0, "a missing file is refused");
+    assert_eq(alloc_used() - u0, 0, "and allocates nothing");
+    # The verb, on fresh ctxs (the filed repro's shape): the per-call cost is the file, not 1 MiB.
+    var w = tls_native_new_client("localhost", 9);
+    assert_eq(tls_ctx_load_verify_locations(w, path, 0), 1, "load_verify_locations returns 1");
+    assert_eq(tls_native_ca_skipped(w), 1, "it counts the P-521 root as skipped");
+    assert_eq(_cs_installed(w), 1, "and installs the P-256 root");
+    var calls = 20;
+    var ok = 0;
+    u0 = alloc_used();
+    var k = 0;
+    while (k < calls) {
+        var c = tls_native_new_client("localhost", 9);
+        if (tls_ctx_load_verify_locations(c, path, 0) == 1) { ok = ok + 1; }
+        k = k + 1;
+    }
+    var per = (alloc_used() - u0) / calls;
+    assert_eq(ok, calls, "every call returns 1");
+    assert_lt(per, 65536, "retained per call (new ctx + load) is under 64 KiB (was 1,054,864 B)");
+    # An arena-backed ctx: nothing reaches the global heap, and reset_via gives it all back.
+    var a = arena_allocator(262144);
+    var ac = tls_native_new_client("localhost", 9);
+    tls_native_set_alloc(ac, a);
+    tls_ctx_load_verify_locations(ac, path, 0);
+    var used1 = arena_used(allocator_state(a));
+    assert_gt(used1, plen, "the arena holds the file and its roots");
+    ok = 0;
+    var same = 0;
+    u0 = alloc_used();
+    k = 0;
+    while (k < calls) {
+        reset_via(a);
+        if (tls_ctx_load_verify_locations(ac, path, 0) == 1) { ok = ok + 1; }
+        if (arena_used(allocator_state(a)) == used1) { same = same + 1; }
+        k = k + 1;
+    }
+    assert_eq(alloc_used() - u0, 0, "arena ctx: 0 B of global heap across the calls");
+    assert_eq(ok, calls, "arena ctx: every call returns 1");
+    assert_eq(same, calls, "arena ctx: every call costs the same arena bytes (reset_via reclaims it)");
+    assert_eq(tls_native_ca_skipped(ac), 1, "arena ctx: the P-521 root is counted");
+    return 0;
+}
+
+fn test_system_store(): i64 {
+    test_group("tls_native_set_ca_system: installed + skipped == the store's PEM blocks");
+    var c = tls_native_new_client("localhost", 9);
+    var rc = tls_native_set_ca_system(c);
+    if (rc == TLS_OK) {
+        var blocks = _cs_blocks(_tn_ca_buf, _tn_ca_len);
+        var inst = _cs_installed(c);
+        var sk = tls_native_ca_skipped(c);
+        syscall(1, 1, "  system store: ", 16);
+        fmt_int(blocks);
+        syscall(1, 1, " blocks, ", 9);
+        fmt_int(inst);
+        syscall(1, 1, " installed, ", 12);
+        fmt_int(sk);
+        syscall(1, 1, " skipped\n", 9);
+        assert_gt(inst, 0, "the store installs at least one root");
+        assert_eq(inst + sk, blocks, "installed + skipped == PEM blocks in the store");
+        var d = tls_native_new_client("localhost", 9);
+        assert_eq(tls_native_set_ca_system(d), TLS_OK, "a second ctx installs too");
+        assert_eq(tls_native_ca_skipped(d), sk, "with the same skipped count");
+        return 0;
+    }
+    # No readable store (Windows): the failure is cached, and the skipped count stays 0.
+    assert_eq(rc, TLS_ERR_IO, "no system store: TLS_ERR_IO");
+    var d2 = tls_native_new_client("localhost", 9);
+    var u1 = alloc_used();
+    assert_eq(tls_native_set_ca_system(d2), TLS_ERR_IO, "and TLS_ERR_IO again");
+    assert_eq(alloc_used() - u1, 0, "the second look allocates nothing");
+    assert_eq(tls_native_ca_skipped(d2), 0, "no install, nothing skipped");
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    _cs_p256 = hex_decode("3082017d30820123a0030201020214561cee528775ffec8d05834b308f1ad80d7e7dbe300a06082a8648ce3d04030230143112301006035504030c096c6f63616c686f7374301e170d3236303630313138343930365a170d3336303532393138343930365a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d030107034200049167a2981f570fdbd8d94bf20fb4f5c89d77aa5b58cf4ed416bafa0256a2561a04f1e71d57537fc532fc87ca980eb8ba1f8f8704fc7f6a793ba6598b97bb3275a3533051301d0603551d0e04160414e6e9022c5ba23153aa7b2a0004574c417dfbf42e301f0603551d23041830168014e6e9022c5ba23153aa7b2a0004574c417dfbf42e300f0603551d130101ff040530030101ff300a06082a8648ce3d04030203480030450220274b9132990767c26d383d8712024a2c8cdb63e38af642893d1a59ab44a29758022100a57e61df420d2425c712ad284d0ad53ef9c8cdbfd07ba65c952eaead0dc13729", 770);
+    _cs_p521 = hex_decode("308202cf30820231a003020102020d00e86f187bd6396b984a49980a300a06082a8648ce3d0403043075310b30090603550406130248553111300f06035504070c08427564617065737431163014060355040a0c0d4d6963726f736563204c74642e3117301506035504610c0e56415448552d32333538343439373122302006035504030c19652d537a69676e6f20544c5320526f6f742043412032303233301e170d3233303731373134303030305a170d3338303731373134303030305a3075310b30090603550406130248553111300f06035504070c08427564617065737431163014060355040a0c0d4d6963726f736563204c74642e3117301506035504610c0e56415448552d32333538343439373122302006035504030c19652d537a69676e6f20544c5320526f6f74204341203230323330819b301006072a8648ce3d020106052b81040023038186000400680fdfa27c3caa7488610a8dc24ca5012214d4f76077429c0a3860a18c673eb363e9fa91b08b4be639df02c230015200bfdf8ced59ad3265ab095950b519c2681c00e0055fda50261cc3ac0422c53a4defe9575836a3c11953100ad1cd3fef4b351a438f42134cb92c1a9cbe30b6c4dedc4b9de4a43ccb2ed9addfdf7d09df2e92ffa1a3633061300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106301d0603551d0e04160414598402625a4678f55ddc8f0a102823dcd5d6fb45301f0603551d23041830168014598402625a4678f55ddc8f0a102823dcd5d6fb45300a06082a8648ce3d04030403818b003081870242012ddaaef52e78b666b89fb6707f6674cfec8e7cfec001799ace5202e7c3d10c7a6dcbb55eee17a49bdb0476ee2929e8affbadac52f4d72bd6778410bdc5d2286834024135765a75f3928608f5b21e0af6650bda76c752ff0b1e80702230c333db18ed84d78becedd3a86381b5567c47c756309468736bd22ea9b9d92c1c29bd0cbab9658b", 1446);
+    var pem = alloc(8192);
+    var plen = _cs_pem_append(pem, 0, _cs_p256, _cs_p256_len);
+    plen = _cs_pem_append(pem, plen, _cs_p521, _cs_p521_len);
+    var p521pem = alloc(4096);
+    var p521len = _cs_pem_append(p521pem, 0, _cs_p521, _cs_p521_len);
+    var path = test_scratch("tls_ca_store.pem");
+    assert_eq(file_write_all(path, pem, plen), plen, "the fixture PEM is written");
+    test_skipped_counts(pem, plen, p521pem, p521len);
+    test_sized_read(path, pem, plen);
+    xunlink(path);
+    assert_eq(file_exists(path), 0, "the fixture is removed");
+    test_system_store();
+    return assert_summary();
+}
+var ec = main();
+syscall(60, ec);

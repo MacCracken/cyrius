@@ -372,6 +372,57 @@ fn _tls_native_alloc(sock, host, hook_fp, hook_ctx): i64 {
     return ctx;
 }
 
+# Read the whole file at `path` into a buffer of EXACTLY its size, drawn from Allocator `a` (0 = the
+# global heap). Returns the buffer and writes the byte count through `out_len`, or returns 0 (and
+# writes 0) when the file cannot be opened or read, is empty, or is larger than `max` bytes.
+# Two passes over file_open / file_read / file_close, no stat: the first counts the bytes through
+# a stack scratch (and stops at `max + 1`), the second reads at most that many into the buffer —
+# so a file that grows between the passes is cut at the counted size, never overruns it, and one
+# that shrinks returns what is there.
+# ⛔ 6.6.13 — WHY. tls_ctx_load_verify_locations took `alloc(1048576)` on every call and kept it
+# (1,054,864 B retained per call for a one-cert CA, measured); the buffer is now the file's size
+# and comes from the ctx's allocator, so an arena-backed ctx gives it back on reset_via.
+# Issue 2026-09-30-tls-client-memory-and-alert-gaps (a); CHANGELOG [6.6.13].
+fn _tls_read_file_in(a, path, max, out_len): i64 {
+    store64(out_len, 0);
+    if (path == 0) { return 0; }
+    var fd = file_open(path, 0, 0);
+    if (fd < 0) { return 0; }
+    var scratch[4096];
+    var size = 0;
+    var more = 1;
+    while (more == 1) {
+        var r = file_read(fd, &scratch, 4096);
+        if (r < 0) { file_close(fd); return 0; }
+        if (r == 0) { more = 0; }
+        size = size + r;
+        if (size > max) { more = 0; }
+    }
+    file_close(fd);
+    if (size <= 0) { return 0; }
+    if (size > max) { return 0; }
+    var buf = _tn_alloc_a(a, size);
+    if (buf == 0) { return 0; }
+    fd = file_open(path, 0, 0);
+    if (fd < 0) { return 0; }
+    var total = 0;
+    more = 1;
+    while (more == 1) {
+        var n = file_read(fd, buf + total, size - total);
+        if (n < 0) { file_close(fd); return 0; }
+        if (n == 0) { more = 0; }
+        total = total + n;
+        if (total >= size) { more = 0; }
+    }
+    file_close(fd);
+    if (total <= 0) { return 0; }
+    store64(out_len, total);
+    return buf;
+}
+
+# The largest trust bundle tls_ctx_load_verify_locations reads (an OS store is ~250 KB).
+var TLS_CAFILE_MAX = 16777216;
+
 # tls_init_main's native warm: 0 / 1 warming / 2 warmed.
 var _tls_main_state = 0;
 
@@ -518,16 +569,18 @@ fn tls_set_verify(handle, mode, callback): i64 {
 
 # Load a custom CA trust store from `cafile` (PEM). `capath` (per-directory
 # store) is honoured only under libssl — native has no directory store, so the
-# native path slurps `cafile` and installs it via the CA bundle. Returns 1/0/-1.
+# native path reads `cafile` (at most TLS_CAFILE_MAX bytes) and installs it via the CA bundle.
+# Native: the file buffer and the parsed roots come from the ctx's allocator, so a call retains
+# about twice the file's size plus 272 B per root — not the megabyte it kept per call before 6.6.13
+# — and an arena-backed ctx returns all of it on reset_via. tls_native_ca_skipped(handle) counts
+# the blocks it could not use. Returns 1/0/-1.
 fn tls_ctx_load_verify_locations(handle, cafile, capath): i64 {
     if (handle == 0) { return 0 - 1; }
     #ifndef CYRIUS_TLS_LIBSSL
     if (_tls_backend == 1) {
-        var cap = 1048576;
-        var buf = alloc(cap);
+        var n = 0;
+        var buf = _tls_read_file_in(load64(handle + TLS_CTX_OFF_ALLOC), cafile, TLS_CAFILE_MAX, &n);
         if (buf == 0) { return 0; }
-        var n = file_read_all(cafile, buf, cap);
-        if (n <= 0) { return 0; }
         if (tls_native_set_ca_bundle(handle, buf, n, 0) == TLS_OK) { return 1; }
         return 0;
     }

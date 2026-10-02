@@ -115,6 +115,41 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   repro verbatim with `build/cycc` and runs it against P-256, RSA-2048 and Ed25519 chains (named
   SKIP 77 without openssl); against the pre-fold sigil it is RED (P-256 exit 3, the others exit 1).
 
+- **Native TLS: `tls_ctx_load_verify_locations` kept a megabyte per call, and trust roots the
+  parser refused were dropped without a count** (I2 parts (a) and (e), issue
+  `2026-09-30-tls-client-memory-and-alert-gaps`). (a) The native branch did `alloc(1048576)` on
+  every call and never released it: **1,054,864 B retained per call** for a one-cert CA (the filed
+  repro, 6.6.12) — the per-call twin of the system-bundle leak 6.5.36 fixed. (e)
+  `tls_native_set_ca_bundle` counted only the roots it installed, so the ones sigil could not parse
+  vanished: on Arch's `/etc/ssl/cert.pem` 8 of 121 blocks before the sigil 3.13.6 fold, 1 after it
+  (block #115, Microsec e-Szigno TLS Root CA 2023, a P-521 key — a curve sigil does not have), and a
+  server chaining to one failed `TLS_ERR_CERT_INVALID` with nothing pointing at the store. It also
+  used a fixed 300-entry chain scratch (a bundle with more blocks was refused whole), a global
+  `x509_cert_alloc` per block, failures included, and `pem_decode_certs`' global pool. **Fix:**
+  `_tls_read_file_in(a, path, max, out_len)` (`lib/tls.cyr`) reads the file into a buffer of
+  EXACTLY its size from the ctx's allocator — two passes over `file_open`/`file_read`/`file_close`
+  (count, then read at most the count), no new syscall, refused above 16 MiB (`TLS_CAFILE_MAX`).
+  The parse moved to `_tn_ca_parse_set(arena, alc, pem, len, is_der, out_skipped)`
+  (`lib/tls_native_hs12.cyr`): chain scratch sized from the bundle's BEGIN-marker count, the DER
+  pool, the set and every cert from the ctx's allocator / arena (`pem_decode_certs_into`,
+  `x509_cert_alloc_into`, `x509_parse_into`), the next cert allocated only after a parse used the
+  last one, the set layout `[count][roots…]` unchanged. It records `skipped = blocks − installed` in
+  a new ctx slot, also when nothing installs (`TLS_ERR_CERT_INVALID`; the ctx keeps any set it
+  already had). The filed repro now exits 0: **2,144 B retained per call** (a fresh ctx included);
+  an arena-backed ctx (`tls_native_set_alloc`) retains 0 B of global heap and gives it all back on
+  `reset_via`. `TLS_CTX_LEN` grows 512 → 576: +536 is the skipped count, +512..+528 are allocated to
+  the per-ctx read/write buffers and the sticky-EOF flag, +544..+568 are reserved for the
+  read/write deadline and the CCS state. **Test:** `tests/tcyr/crossos/tls_ca_store.tcyr` (42
+  assertions, every cross-OS host): a fixture of the P-256 CA `tls_native_scaffold.tcyr` serves plus
+  the public e-Szigno P-521 root, written to a per-process CWD file and removed — 1 installed + 1
+  skipped (PEM and DER), a P-521-only bundle refused with its count recorded, a malformed block
+  counting every block; the sized read exact to the byte and the allocation, over-max and missing
+  files refused with 0 B allocated, 20 loads under 64 KiB each, 20 arena loads with 0 B of global
+  heap; and the system store's installed + skipped == its PEM blocks — Arch 121 = 120 + 1, pi
+  121 = 120 + 1, ecb and ach 128 = 128 + 0, cass no store (`TLS_ERR_IO`, the second look 0 B).
+  Mutants (the old 1 MiB read; the count never stored; the parse on the global heap) each turn it
+  RED.
+
 ### Added
 
 - **`tls_init_main()` (`lib/tls.cyr`) — warm the TLS stack once, on the main thread** (I3). Returns
@@ -133,6 +168,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the 63-lifetime-thread lane bound; and the libssl backend is MAIN THREAD ONLY — a libssl call
   from a `thread_create` worker SIGSEGVs or hangs (measured at 6.6.13) and is NOT guarded in this
   release (backlogged).
+
+- **`tls_native_ca_skipped(ctx)` (`lib/tls_native_hs12.cyr`) — how many certificate blocks the
+  ctx's last trust-root install could not use** (I2 (e)): `tls_native_set_ca_bundle`,
+  `tls_native_set_ca_system` or `tls_ctx_load_verify_locations`. After a successful install,
+  installed + skipped == the bundle's PEM block count; after one that failed
+  `TLS_ERR_CERT_INVALID` it is that bundle's count. Returns >= 0 (0 before any install), or
+  `TLS_ERR_INVALID_PARAM` for ctx 0. A P-521 root is counted and skipped; adding the curve is
+  sigil's. `docs/stdlib-reference.md` row; api-surface snapshot `+tls_native_hs12::tls_native_ca_skipped/1`.
 
 ### Downstream
 
