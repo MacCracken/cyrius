@@ -293,7 +293,12 @@ first write (a socket that refuses it — xnu does once the connection is reset 
 with `TLS_ERR_IO` instead of writing); Windows and agnos raise no such signal. The process-wide
 signal disposition is never touched. A pipe or a file used as the transport keeps `write(2)`'s
 SIGPIPE — neither OS has a per-call flag for one — and so does a custom transport
-(`tls_native_set_transport`), whose writes are its own.
+(`tls_native_set_transport`), whose writes are its own. ⚠ This changes the syscalls a native TLS
+writer makes: on Linux a socket is written with `sendto(2)` (44 on x86_64, 206 on aarch64;
+`write(2)` only for an fd that is not a socket), and on macOS each connection adds one
+`setsockopt(2)`. A seccomp allowlist around a native TLS writer must permit them — one that
+permits `write` but not `sendto` kills the process on its first record write. (A deadline adds
+`fcntl` and `poll`, as it has since 6.6.13.)
 
 ### Trust store and client certificates (v6.2.8)
 
