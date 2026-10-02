@@ -235,7 +235,24 @@ fn test_libssl_reads(): i64 {
     return 0;
 }
 
+# Runs everywhere, libssl or not — and BEFORE the backend loads, so SSL_get_error is still
+# unresolved and _tls_ssl_io_ret answers from the C int alone. That is the sign-extension half of
+# the fix, and it needs no peer. Without this group the file had no assertion on a host (or in
+# check.sh's empty environment, which has no $HOME and so no helper) where libssl is absent,
+# and the corpus rule grades a 0-assertion summary as a failure.
+fn test_int_sign_extension(): i64 {
+    test_group("_tls_ssl_io_ret: SSL_read / SSL_write's C int is sign-extended first");
+    assert_eq(_fn_SSL_get_error, 0, "precondition: libssl is unloaded here");
+    assert_eq(_tls_ssl_io_ret(0, 5), 5, "a positive count passes through");
+    assert_eq(_tls_ssl_io_ret(0, 0xDEAD00000005), 5, "the register's high half is not part of the int");
+    assert_eq(_tls_ssl_io_ret(0, 0xFFFFFFFF), TLS_ERR_IO, "-1 zero-extended: an error, not +4294967295");
+    assert_eq(_tls_ssl_io_ret(0, 0x80000000), TLS_ERR_IO, "INT_MIN: an error, not +2147483648");
+    assert_eq(_tls_ssl_io_ret(0, 0x7FFFFFFF), 0x7FFFFFFF, "INT_MAX is still a count");
+    return 0;
+}
+
 alloc_init();
+test_int_sign_extension();
 _lr_cert = hex_decode("3082019230820139a003020102021437416048df98b49fd5b278db00ebd0e1f87b6d40300a06082a8648ce3d04030230143112301006035504030c096c6f63616c686f7374301e170d3236303130313030303030305a170d3336303130313030303030305a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d030107034200040d7a46bc307511f24a53dcf973e0dfe2058db48d7db8b3941fa80176641ad78da12b801a12494d49312bf5b0ac312f3d50bca2282126fddd03652013bf8b49c5a3693067301d0603551d0e041604143bdd6c2d487f854851f408356e66880375bd6743301f0603551d230418301680143bdd6c2d487f854851f408356e66880375bd6743300f0603551d130101ff040530030101ff30140603551d11040d300b82096c6f63616c686f7374300a06082a8648ce3d04030203470030440220365bd112f9b8faec50c9b4a2cf7ec487cc424901870b8156b349dba15e1cde8102200c1ec7f6eefec5bc9976f55a70608b07d669c78183fa08e9a863370d17e39df3", 812);
 _lr_key = hex_decode("308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420666340f5e33734c31438ae0abd2370b72da193b44565625051bbc79a344535dda144034200040d7a46bc307511f24a53dcf973e0dfe2058db48d7db8b3941fa80176641ad78da12b801a12494d49312bf5b0ac312f3d50bca2282126fddd03652013bf8b49c5", 276);
 tls_set_backend(TLS_BACKEND_LIBSSL);
