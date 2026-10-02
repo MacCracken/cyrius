@@ -76,6 +76,7 @@ fn _arr_gdesc(S, vi): i64 {
 # refused — its stride cannot disagree with this size. CHANGELOG [6.6.13]
 fn _arr_ebytes(S, ew, flt, tsc, ann_ti): i64 {
     if (ann_ti == 0) { return 0; }
+    if (_arr_prefix_wrong(S, ew, flt, ann_ti) == 1) { return _arr_whole_ebytes(S, ann_ti); }
     if (ew > 0) { return ew; }
     if (flt == F64_TYID) { return 8; }
     if (flt == F32_TYID) { return 4; }
@@ -115,6 +116,44 @@ fn _arr_name_ebytes(S, ti): i64 {
     STI(S, sv);
     _panic = 0;
     return 8;
+}
+# Both annotation ladders match a scalar by its name's PREFIX (`ltname & 0xFFFF == "i8"`) and ask
+# FINDSTRUCT only after, so `struct u8pair` / `struct f64pair` arrived as u8 / f64 and an array
+# of it was sized 1 or 8 per element (in a fn `u8pair[2]` held 8 of 32 bytes, with a 1-byte
+# subscript stride). In the ARRAY path the WHOLE name decides: 1 when the ladder's integer width
+# `ew` or float `flt` came from a prefix of a longer name. A type parameter the default build
+# bound to its argument (`_tp_resolve`) is the ladder's own answer and stands. The callers also
+# drop the integer descriptor then, so `a[i]` is refused like any non-integer element.
+fn _arr_prefix_wrong(S, ew, flt, ti): i64 {
+    if (ti == 0) { return 0; }
+    if (TOKTYP(S, ti) != 2) { return 0; }
+    var want = 0;
+    if (flt != 0) { want = 3; }
+    elif (ew == 1) { want = 2; }
+    elif (ew == 2 || ew == 4 || ew == 8) { want = 3; }
+    if (want == 0) { return 0; }
+    var noff = TOKVAL(S, ti);
+    if (_tp_c0 != 0) { if (_tp_resolve(S, noff) != 0) { return 0; } }
+    if (load8(S + 0xEC00000 + noff + want) == 0) { return 0; }
+    return 1;
+}
+# The element a prefix-matched name really spells: a struct or union (a generic one through its
+# instance, built as _gen_ann_sid builds it from the `<..>` after the name), else the by-name
+# resolution above (an enum, a type declared after the array, or refused).
+fn _arr_whole_ebytes(S, ti): i64 {
+    var sid = FINDSTRUCT(S, TOKVAL(S, ti));
+    if (sid > 0) {
+        if (TOKTYP(S, ti + 1) == 19) {
+            var sv = GTI(S);
+            var sv_gt = _ta_pending_gt;
+            STI(S, ti + 1);
+            sid = _gen_ann_sid(S, sid);
+            STI(S, sv);
+            _ta_pending_gt = sv_gt;
+        }
+        return STRUCTSZ(S, sid - 1);
+    }
+    return _arr_name_ebytes(S, ti);
 }
 # Is `noff` a type parameter of the generic fn whose body holds token `ti`? The default build binds
 # every T (to i64 in the base, to its argument in an instance) and PARSE_VAR's ladder resolves it,
@@ -252,6 +291,8 @@ fn PARSE_ARRAY(S, noff, ew, sgn, eb): i64 {
     # 6.6.13 (M2): sized by `eb`, the bytes per element (_arr_ebytes), not by the integer
     # descriptor `ew` — which is 0 for f64/f32/struct/`*T`/vector/bool/enum elements and sized
     # them like a bare array. For an integer element eb == ew, so those sizes are unchanged.
+    # The integer descriptor stands only for an element of exactly that width (as PARSE_GVAR_ARR).
+    if (eb != ew) { ew = 0; sgn = 0; }
     var aligned = (asz + 7) & (0 - 8);
     if (eb > 0) { aligned = (asz * eb + 7) & (0 - 8); }
     # v6.4.10 (P1 fix, kernel blocker) — a BARE top-level `var X[N]` (ew==0, NOT a
@@ -2761,7 +2802,9 @@ fn PARSE_GVAR_REG(S): i64 {
     # gvar_toks so EMIT_GVAR_INITS replays it at top-level emit time
     # (pass-1 emits get skipped by the entry-jmp patch).
     if (PEEKT(S) == 28) {
-        PARSE_GVAR_ARR(S, noff, sti, ann_scalar, ann_signed, _gvar_ebytes(S, ann_scalar, ann_float, ann_sid, psc, ann_ti));   # 6.6.13 (M2)
+        var ann_eb = _gvar_ebytes(S, ann_scalar, ann_float, ann_sid, psc, ann_ti);   # 6.6.13 (M2)
+        if (_arr_prefix_wrong(S, ann_scalar, ann_float, ann_ti) == 1) { ann_scalar = 0; ann_signed = 0; }
+        PARSE_GVAR_ARR(S, noff, sti, ann_scalar, ann_signed, ann_eb);
         return 0;
     }
     # Check for struct init after =: var p = StructName { ... }
@@ -4456,7 +4499,9 @@ fn PARSE_VAR(S): i64 {
     # element width via scalar_type so i64[N] reserves N slots, etc.;
     # bare `var buf[N]` has scalar_type==0 → legacy byte sizing.)
     if (PEEKT(S) == 28) {
-        PARSE_ARRAY(S, noff, scalar_type, scalar_signed, _arr_ebytes(S, scalar_type, lfloat, pscale, ann_ti));   # 6.6.13 (M2)
+        var arr_eb = _arr_ebytes(S, scalar_type, lfloat, pscale, ann_ti);   # 6.6.13 (M2)
+        if (_arr_prefix_wrong(S, scalar_type, lfloat, ann_ti) == 1) { scalar_type = 0; scalar_signed = 0; }
+        PARSE_ARRAY(S, noff, scalar_type, scalar_signed, arr_eb);
         return 0;
     }
     # expect EQ

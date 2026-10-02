@@ -16,6 +16,8 @@
 #   axis 2  an element type that names nothing is refused BY NAME: an unknown name (local, both
 #           global zones), a struct declared BELOW a declaration-zone array (it was silently 8
 #           bytes per element), and every bad array of a file is reported, not only the first.
+#           The WHOLE name decides, not the prefix the scalar ladders match: `i8x` is unknown and
+#           `u8late` (declared below) is late, where both used to be a silent u8 / i8 element.
 #   axis 3  N * sizeof(T) must not wrap (a wrapped product is the same silent under-size): over
 #           2 GiB is refused, typed and bare.
 #   axis 4  what must KEEP compiling, and run: bool, an enum declared above or below, cstring,
@@ -32,8 +34,15 @@
 #                                                     (the default build binds T, so only the
 #                                                     unbound mode reaches the token reader)
 #   drop PARSE_ARRAY's _arr_size_ok call            -> axis 3's local and post-statement rows RED
-# The 6.6.13-open compiler fails 45 checks here (every axis-2 and axis-3 row, the decl-zone
-# integer-vector subscripts, and the generic sizes).
+#   _arr_prefix_wrong returns 0                     -> the eight prefix-named rows RED, 25 checks
+#                                                     (`u8pair`, `i64one`, `u8kind`, `u8late`,
+#                                                     `i8x`, `f64thing` sized or typed as the
+#                                                     scalar their name starts with, rc 0)
+#   drop its two call-site descriptor clears        -> loc_i64one + dz_i64one RED, 6 checks
+#                                                     (PARSE_ARRAY / PARSE_GVAR_ARR's `eb != ew`
+#                                                     covers every other prefix-named struct)
+# The 6.6.13-open compiler fails 70 checks here (every axis-2 and axis-3 row, the decl-zone
+# integer-vector subscripts, the prefix-named struct subscripts, and the generic sizes).
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CC=${CYCC:-"$ROOT/build/cycc"}
@@ -92,6 +101,17 @@ refused loc_ptr        'fn f(): i64 {\n    var a: *i64[4];\n    return a[1];\n}\
 refused loc_bool       'fn f(): i64 {\n    var a: bool[4];\n    return a[1];\n}\nsyscall(60, f());\n' "$SUB"
 refused loc_vec        'fn f(): i64 {\n    var a: f32v8[2];\n    return a[1];\n}\nsyscall(60, f());\n' "$SUB"
 refused loc_generic    "${PT}struct Box<T> { v: T; n; }\nfn f(): i64 {\n    var a: Box<Pt>[2];\n    return a[1];\n}\nsyscall(60, f());\n" "$SUB"
+# A struct NAMED like a scalar is a struct: the prefix ladders read `u8pair` as a u8 and gave its
+# array a 1-byte subscript stride. `i64one` is one field, 8 bytes: the i64 descriptor its prefix
+# gives it has the element's own width, so only the whole-name check refuses its subscript.
+U8P='struct u8pair { a; b; }\n'
+I1='struct i64one { v; }\n'
+refused loc_u8pair     "${U8P}fn f(): i64 {\n    var a: u8pair[2];\n    a[1] = 3;\n    return a[1];\n}\nsyscall(60, f());\n" "$SUB" "$NOTINT"
+refused loc_i64one     "${I1}fn f(): i64 {\n    var a: i64one[3];\n    return a[1];\n}\nsyscall(60, f());\n" "$SUB"
+refused loc_u8kind     'enum u8kind { K0 = 0; K1 = 1; }\nfn f(): i64 {\n    var a: u8kind[3];\n    return a[1];\n}\nsyscall(60, f());\n' "$SUB"
+refused dz_u8pair      "${U8P}var a: u8pair[2];\nfn f(): i64 { return a[1]; }\nsyscall(60, f());\n" "$SUB"
+refused dz_i64one      "${I1}var a: i64one[3];\nfn f(): i64 { return a[1]; }\nsyscall(60, f());\n" "$SUB"
+refused pp_f64pair     'struct f64pair { x; y; }\nsyscall(0, 0, 0, 0);\nvar a: f64pair[2];\nsyscall(60, a[1]);\n' "$SUB"
 
 echo "axis 2 - an element type that names nothing is refused by name:"
 refused dz_forward_struct "var g: P3[2];\nvar s = 1;\n${P3}syscall(60, s);\n" \
@@ -102,6 +122,11 @@ refused loc_unknown    'fn f(): i64 {\n    var a: Nope[3];\n    return 0;\n}\nsy
     "error:<source>:2:12: unknown array element type 'Nope'"
 refused loc_unknown_note 'fn f(): i64 {\n    var a: Nope[3];\n    return 0;\n}\nsyscall(60, f());\n' \
     "note: an element is i8..i64, u8..u64, u128, f32, f64, bool, cstring, an enum"
+refused dz_forward_u8   "var g: u8late[2];\nvar s = 1;\nstruct u8late { a; b; }\nsyscall(60, s);\n" \
+    "array element type 'u8late' is declared after the array"
+refused dz_prefix_unknown 'var g: i8x[3];\nsyscall(60, 0);\n' "unknown array element type 'i8x'"
+refused loc_prefix_unknown 'fn f(): i64 {\n    var a: f64thing[3];\n    return 0;\n}\nsyscall(60, f());\n' \
+    "unknown array element type 'f64thing'"
 refused two_bad        'var g: Nope1[3];\nfn f(): i64 {\n    var a: Nope2[3];\n    return 0;\n}\nsyscall(60, f());\n' \
     "unknown array element type 'Nope1'" "unknown array element type 'Nope2'"
 
@@ -124,6 +149,10 @@ runs gen_instance "${GEN}syscall(60, sz<P3>(0));\n" 56
 runs gen_scalar   "${GEN}syscall(60, sz<i64>(0));\n" 24
 runs gen_mono0    "${GEN}syscall(60, sz(0));\n" 24 CYRIUS_MONOMORPH=0
 GEN2='fn two<A, B>(p: A, q: B): i64 {\n    var x = 7;\n    var px = &x;\n    var a: B[3];\n    var c = || {\n        var d: A[2];\n        return 0;\n    };\n    return px - &a;\n}\n'
+# A bound type parameter is the ladder's own answer, not a prefix: `T = i32` keeps i32's 4-byte
+# size AND its integer subscript. (Values stay non-negative: the instance's subscript reads the
+# name `T`, not its argument, for the sign — a separate defect, outside this gate.)
+runs gen_int_subscript 'fn g<T>(p: T): i64 {\n    var x = 7;\n    var px = &x;\n    var a: T[4];\n    a[3] = 0x7FFFFFFF;\n    a[2] = 9;\n    if (a[3] != 0x7FFFFFFF) { return 1; }\n    if (a[2] != 9) { return 2; }\n    if (px - &a < 8 + 16) { return 3; }\n    return 0;\n}\nsyscall(60, g<i32>(0));\n' 0
 runs gen_closure       "${GEN2}syscall(60, two(1, 2));\n" 32
 runs gen_closure_mono0 "${GEN2}syscall(60, two(1, 2));\n" 32 CYRIUS_MONOMORPH=0
 printf '%b' 'fn f(): i64 {\n    var a: Nope[3];\n    return 0;\n}\nsyscall(60, f());\n' > "$T/so.cyr"

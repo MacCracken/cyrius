@@ -22,9 +22,14 @@
 # array through `a[i]` and count the bytes it wrote: the stride the subscript uses and the size the
 # declaration reserves must agree. f32 is packed at 4 bytes (`store32(&a + i * 4, ..)`).
 #
-# Mutation ledger: the 6.6.13-open compiler fails 53 rows here on x86 — every local non-integer
-# element, the struct / union / generic-instance / vector rows of both global zones, the generic
-# fn's struct instances and the static fallback — and passes every integer control (plus the
+# A struct, union or enum whose NAME starts with a scalar's (`u8pair`, `f64pair`, `i32one`,
+# `u8kind`, the generic `u8box<T>`) is sized as that type, not as the scalar its prefix spells:
+# both annotation ladders match a scalar by prefix, so these were 1 or 8 bytes per element.
+#
+# Mutation ledger: the 6.6.13-open compiler fails 66 rows here on x86 — every local non-integer
+# element, the struct / union / generic-instance / vector rows of both global zones, the
+# prefix-named struct / enum rows of all three zones, the generic fn's struct instances and the
+# static fallback — and passes every integer control (plus the
 # global f64 / f32 / bool / enum / pointer rows, whose 8 bytes per element were right, or over,
 # by accident).
 include "lib/syscalls.cyr"
@@ -38,6 +43,11 @@ struct P3 { a; b; c; }
 struct G9 { d: f64; c: i8; }   # 9 bytes: STRUCTSZ is unpadded, and so is the stride
 union U2 { a; b: Pt; }
 struct Box<T> { v: T; n; }
+struct u8pair { a; b; }        # 16 B, not a u8
+struct f64pair { x; y; }       # 16 B, not an f64
+struct i32one { v; }           # 8 B, not an i32
+enum u8kind { UK0 = 0; UK1 = 1; }   # an enum: 8 B per element, not a u8
+struct u8box<T> { v: T; n; }   # generic, named like a u8
 
 var SENT = 0x5AC3A55A3CA55AC3;
 
@@ -110,6 +120,11 @@ fn l_u8(): i64 { var s = SENT; var a: u8[5]; return row(&s, &a, 5, "control: loc
 fn l_i32(): i64 { var s = SENT; var a: i32[3]; return row(&s, &a, 3 * 4, "control: local i32[3] = 12 B"); }
 fn l_u128(): i64 { var s = SENT; var a: u128[2]; return row(&s, &a, 2 * 16, "control: local u128[2] = 32 B"); }
 fn l_slice(): i64 { var s = SENT; var a: [u8][2]; return row(&s, &a, 2 * 16, "control: local [u8][2] = 32 B"); }
+fn l_u8pair(): i64 { var s = SENT; var a: u8pair[2]; return row(&s, &a, 2 * sizeof(u8pair), "local u8pair[2] = 32 B (a struct, not a u8)"); }
+fn l_f64pair(): i64 { var s = SENT; var a: f64pair[2]; return row(&s, &a, 2 * sizeof(f64pair), "local f64pair[2] = 32 B (a struct, not an f64)"); }
+fn l_i32one(): i64 { var s = SENT; var a: i32one[3]; return row(&s, &a, 3 * sizeof(i32one), "local i32one[3] = 24 B (a struct, not an i32)"); }
+fn l_u8kind(): i64 { var s = SENT; var a: u8kind[3]; return row(&s, &a, 3 * 8, "local u8kind[3] = 24 B (an enum, not a u8)"); }
+fn l_u8box(): i64 { var s = SENT; var a: u8box<P3>[2]; return row(&s, &a, 2 * (sizeof(P3) + 8), "local u8box<P3>[2] = 64 B (the instance, not a u8)"); }
 fn l_bare(): i64 { var s = SENT; var a[12]; return row(&s, &a, 12, "control: local bare a[12] = 12 B"); }
 
 # ---- the generic fn's own `T[N]`: the instance is sized by its type argument ----
@@ -219,6 +234,16 @@ var d_i64: i64[4];
 var d_i64_s = 0x5AC3A55A3CA55AC3;
 var d_u16: u16[5];
 var d_u16_s = 0x5AC3A55A3CA55AC3;
+var d_u8pair: u8pair[2];
+var d_u8pair_s = 0x5AC3A55A3CA55AC3;
+var d_f64pair: f64pair[2];
+var d_f64pair_s = 0x5AC3A55A3CA55AC3;
+var d_i32one: i32one[3];
+var d_i32one_s = 0x5AC3A55A3CA55AC3;
+var d_u8kind: u8kind[3];
+var d_u8kind_s = 0x5AC3A55A3CA55AC3;
+var d_u8box: u8box<P3>[2];
+var d_u8box_s = 0x5AC3A55A3CA55AC3;
 var d_bare[3];
 var d_bare_s = 0x5AC3A55A3CA55AC3;
 enum Late { L0 = 0; L1 = 1; }
@@ -251,6 +276,11 @@ fn check_decl_zone(): i64 {
     row(&d_u64v2_s, &d_u64v2, 2 * 16, "decl-zone u64v2[2] = 32 B (was read as u64)");
     row(&d_i64_s, &d_i64, 4 * 8, "control: decl-zone i64[4] = 32 B");
     row(&d_u16_s, &d_u16, 5 * 2, "control: decl-zone u16[5] = 10 B");
+    row(&d_u8pair_s, &d_u8pair, 2 * sizeof(u8pair), "decl-zone u8pair[2] = 32 B (a struct, not a u8)");
+    row(&d_f64pair_s, &d_f64pair, 2 * sizeof(f64pair), "decl-zone f64pair[2] = 32 B (a struct, not an f64)");
+    row(&d_i32one_s, &d_i32one, 3 * sizeof(i32one), "decl-zone i32one[3] = 24 B (a struct, not an i32)");
+    row(&d_u8kind_s, &d_u8kind, 3 * 8, "decl-zone u8kind[3] = 24 B (an enum, not a u8)");
+    row(&d_u8box_s, &d_u8box, 2 * (sizeof(P3) + 8), "decl-zone u8box<P3>[2] = 64 B (the instance, not a u8)");
     row(&d_bare_s, &d_bare, 3 * 8, "control: decl-zone bare g[3] = 3 slots");
     fillb(&d_u16, &d_u16_s - &d_u16, 0);
     var i = 0; while (i < 5) { d_u16[i] = 0xFFFF; i = i + 1; }
@@ -284,6 +314,12 @@ var p_i8v16: i8v16[2];
 var p_i8v16_s = 0x5AC3A55A3CA55AC3;
 var p_i64v2: i64v2[2];
 var p_i64v2_s = 0x5AC3A55A3CA55AC3;
+var p_u8pair: u8pair[2];
+var p_u8pair_s = 0x5AC3A55A3CA55AC3;
+var p_f64pair: f64pair[2];
+var p_f64pair_s = 0x5AC3A55A3CA55AC3;
+var p_u8box: u8box<P3>[2];
+var p_u8box_s = 0x5AC3A55A3CA55AC3;
 var p_i32: i32[3];
 var p_i32_s = 0x5AC3A55A3CA55AC3;
 row(&p_f64_s, &p_f64, 4 * 8, "post-statement f64[4] = 32 B");
@@ -297,12 +333,16 @@ row(&p_enum_s, &p_enum, 4 * 8, "post-statement Color[4] = 32 B");
 row(&p_f32v8_s, &p_f32v8, 2 * 32, "post-statement f32v8[2] = 64 B");
 row(&p_i8v16_s, &p_i8v16, 2 * 16, "post-statement i8v16[2] = 32 B");
 row(&p_i64v2_s, &p_i64v2, 2 * 16, "post-statement i64v2[2] = 32 B");
+row(&p_u8pair_s, &p_u8pair, 2 * sizeof(u8pair), "post-statement u8pair[2] = 32 B (a struct, not a u8)");
+row(&p_f64pair_s, &p_f64pair, 2 * sizeof(f64pair), "post-statement f64pair[2] = 32 B (a struct, not an f64)");
+row(&p_u8box_s, &p_u8box, 2 * (sizeof(P3) + 8), "post-statement u8box<P3>[2] = 64 B (the instance, not a u8)");
 row(&p_i32_s, &p_i32, 3 * 4, "control: post-statement i32[3] = 12 B");
 
 l_f64(); l_f32(); l_pt(); l_p3(); l_g9(); l_u2(); l_str(); l_box();
 l_pi64(); l_pi8(); l_ppt(); l_bool(); l_enum(); l_cstr();
 l_f64v2(); l_f64v4(); l_f32v4(); l_f32v8();
 l_i8v16(); l_u8v16(); l_i16v8(); l_u16v8(); l_i32v4(); l_u32v4(); l_i64v2(); l_u64v2();
+l_u8pair(); l_f64pair(); l_i32one(); l_u8kind(); l_u8box();
 l_i64(); l_u8(); l_i32(); l_u128(); l_slice(); l_bare();
 gen_arr<P3>(0, 3 * sizeof(P3), "generic T[3], T = P3: 72 B (the instance)");
 gen_arr<Pt>(0, 3 * sizeof(Pt), "generic T[3], T = Pt: 48 B (the instance)");

@@ -50,28 +50,36 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   integer-only, so a non-integer element has no stride that could disagree with its new size. An
   element type that names nothing is now refused by name (`unknown array element type 'Nope'`), as
   is a struct used as the element of a top-level array declared above it (it was silently 8 bytes
-  per element); an enum may sit on either side. A generic fn's own `var a: T[N]` keeps compiling —
+  per element); an enum may sit on either side. The scalar ladders match a name by its PREFIX
+  before they look for a struct, so `struct u8pair { a; b; }` arrived as a u8 (`u8pair[2]` held 8
+  of 32 bytes in a fn, with a 1-byte `a[i]` stride) and `struct f64pair` as an f64; in the array
+  path the WHOLE name now decides (`_arr_prefix_wrong`): such a name is sized as the struct, union,
+  generic instance (`u8box<P3>[2]`) or enum it names, its subscript is refused like any other
+  non-integer element, and a name that spells nothing (`i8x`, `f64thing`) or a struct declared
+  below the array is refused by name. A generic fn's own `var a: T[N]` keeps compiling —
   sized by the type argument in an instance (`T = P3` gives `N * 24`), 8 per element in the i64
   base, and under `CYRIUS_MONOMORPH=0` (which binds nothing) recognised as the enclosing fn's type
   parameter from its tokens. `N * sizeof(T)` over 2 GiB is refused (`array too large`) instead of
   wrapping to a small size; the decl-zone 8-byte floor stays. Integer and bare arrays are unchanged.
-  **Verified:** the new `tests/tcyr/crossos/typed_array_elem_size.tcyr` (240 assertions: every
+  **Verified:** the new `tests/tcyr/crossos/typed_array_elem_size.tcyr` (279 assertions: every
   element type in a fn, in the declaration block and after the first statement, each against an
   address-taken sentinel directly above it and with a full byte fill; the generic fn's instances;
   a fn-local array over the frame budget (static fallback); and `a[i]` filling exactly
-  `N * sizeof(T)` bytes for the integer elements) fails 53 rows on the 6.6.13-open compiler and
+  `N * sizeof(T)` bytes for the integer elements; struct / enum elements named like a scalar)
+  fails 66 rows on the 6.6.13-open compiler and
   passes on x86, qemu-aarch64 and wine, and natively on pi (cross and native forks), ecb, ach and
   cass, each host also self-hosting its own fork from this tree; the new
-  `tests/gates/diagnostics/typed_array_elem_refusals.sh` (104 checks: the non-integer subscript
+  `tests/gates/diagnostics/typed_array_elem_refusals.sh` (134 checks: the non-integer subscript
   refusals in both global zones and in a fn, the unknown / later-declared element refusals with
   every bad array reported, the size guard, and bool / enum-below / cstring / generic `T[N]` in both
-  monomorph modes compiling and running) fails 45 on the open compiler; four mutants of the fix each
-  turn their axis red. All 412 `tests/tcyr` files pass on x86 per file, unchanged except the new
+  monomorph modes compiling and running, a bound `T = i32` keeping its integer subscript) fails 70
+  on the open compiler; six mutants of the fix each turn their axis red. All 412 `tests/tcyr` files pass on x86 per file, unchanged except the new
   one; under qemu-aarch64 407 pass and the other five are the same qemu-user failures (exec, wait,
   namespaces, thread detach) the pre-M2 compiler shows; the new file also passes on cxvm. Self-host fixpoint and seed → cybs → cycc GREEN after the locals and again after the
   declaration-block half (cybs refuses a call with more than six arguments — the first cut's
-  seven-argument helper failed seed-derive with a bare `syntax error`). `build/cycc` 1,470,944 →
-  **1,475,384 B** (`.text` 1,297,392 → 1,301,240, +3,848 B); unreachable fns stay 73.
+  seven-argument helper failed seed-derive with a bare `syntax error`), and again after the
+  whole-name check. `build/cycc` 1,470,944 → **1,479,480 B** (`.text` 1,297,392 → 1,302,680,
+  +5,288 B); unreachable fns stay 73.
 
 ### Downstream
 

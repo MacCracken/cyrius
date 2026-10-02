@@ -166,7 +166,11 @@ An element type that names nothing is refused by name — `unknown array
 element type 'Nope'` — and so is a struct or union used as the element of a
 top-level array declared **above** it (`array element type 'P3' is declared
 after the array`; it was silently 8 bytes per element). An enum may be
-declared on either side (its values are i64). Inside a generic fn,
+declared on either side (its values are i64). The element is the type
+the WHOLE name spells: `struct u8pair { a; b; }` is a 16-byte struct, so
+`u8pair[2]` is 32 bytes and refuses `a[i]` (before 6.6.13 its name's `u8`
+prefix made it a 1-byte element), and `i8x`, which names nothing, is
+refused rather than read as an `i8`. Inside a generic fn,
 `var a: T[N]` is sized by the type argument (`T = P3` gives `N * 24`; the
 `i64` base gives `N * 8`). `N * sizeof(T)` over 2 GiB is refused
 (`array too large`) rather than wrapped to a small size.
