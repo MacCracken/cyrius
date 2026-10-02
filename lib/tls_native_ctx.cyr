@@ -21,11 +21,11 @@
 # after it hold the parsed credentials, the traffic keys and sequence
 # numbers, the record buffers and the 6.6.13 additions, up to TLS_CTX_LEN.
 
-# 576 = 72 i64 slots. 512 held +3 record partial-read hold buffer, +1 (v6.2.25) ALLOC,
+# 584 = 73 i64 slots. 512 held +3 record partial-read hold buffer, +1 (v6.2.25) ALLOC,
 # +1 (v6.2.8) CERT_REQUESTED; 6.6.13 added +512..+568 (see the block after READ_HOLD_OFF), 6.6.14
-# filled +560 and +568.
+# filled +560 and +568 and added +576 (NOSIGPIPE).
 # Nothing outside _tn_ctx_new_in reads this; a new slot goes INSIDE it, never past it.
-var TLS_CTX_LEN          = 576;
+var TLS_CTX_LEN          = 584;
 var TLS_CTX_OFF_ROLE       = 0;   # TlsRole (CLIENT/SERVER)
 var TLS_CTX_OFF_STATE      = 8;   # TlsState
 var TLS_CTX_OFF_VERSION    = 16;  # negotiated TlsProtocolVersion (0 until SH)
@@ -134,6 +134,9 @@ var TLS_CTX_OFF_CLIENT_SIG_SCHEME = 560; # 1.2 client: the SignatureScheme our C
 var TLS_CTX_OFF_HS_DONE = 568;           # server: 1 once the handshake COMPLETED (_tn_server_connected), never
 #                                          cleared — the client identity it authenticated outlives a later
 #                                          connection error (_tn_peer_leaf)
+# 6.6.14 — +576: the default transport's per-connection SIGPIPE guard (lib/tls_native_conn.cyr).
+var TLS_CTX_OFF_NOSIGPIPE      = 576; # macOS: fd + 1 of the socket SO_NOSIGPIPE was set on (_tn_nosigpipe); 0 = not yet
+# CHANGELOG [6.6.14]
 
 # Handshake state-machine events. The protocol-message build/parse
 # that fires each event lands in .16-.19; this slot validates the

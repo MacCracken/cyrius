@@ -33,7 +33,7 @@ var _agnos_skip = "  SKIP (agnos): a socketpair + fork run (no socketpair; 1-arg
 sys_write(1, _agnos_skip, strlen(_agnos_skip));
 #endif
 #ifdef CYRIUS_TARGET_WIN
-var _win_skip = "  SKIP (windows): socketpair + fork, and no native TLS over Winsock (roadmap backlog j)\n";
+var _win_skip = "  SKIP (windows): socketpair + fork (POSIX-only; native TLS over Winsock is tests/tcyr/crossos/tls_native_socket_transport.tcyr)\n";
 sys_write(1, _win_skip, strlen(_win_skip));
 #endif
 #ifndef CYRIUS_TARGET_AGNOS

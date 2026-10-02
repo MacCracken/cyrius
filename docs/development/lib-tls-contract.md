@@ -327,14 +327,30 @@ On a bare native ctx (no shim) the same verb is `tls_native_set_deadline(ctx, ab
 
 | Transport | Bound |
 |---|---|
-| Native, default transport, Linux and macOS | A read waits for readiness with the time left (`fd_wait_ready`) and then reads once, so every byte costs a clock check; a write runs the fd non-blocking for the call and waits for writability, and the fd's status flags are restored on every exit. |
-| Native, agnos, a tagged socket | `sock_recv` / `sock_send` take the time left themselves; a send can overshoot by one `sock_send` stall (~8 s). |
-| Native, a custom transport (`tls_native_set_transport`), an agnos fd that is not a socket, Windows | Checked BETWEEN calls only: a single call is bounded by the transport itself. |
+| Native, default transport, Linux, macOS and Windows (6.6.14) | A read waits for readiness with the time left (`fd_wait_ready`: poll, or `WSAPoll` on Windows) and then reads once, so every byte costs a clock check; a write runs the socket non-blocking for the call (`O_NONBLOCK`, or `ioctlsocket(FIONBIO)` on Windows) and waits for writability, and the fd is restored on every exit — its status flags on Linux and macOS; a Windows socket is left **blocking**, the mode `lib/net.cyr` creates it in, because Windows cannot read `FIONBIO` back. |
+| Native, agnos, a tagged socket | `sock_recv` / `sock_send` take the time left themselves; a send can overshoot by one `sock_send` stall (~8 s): the kernel waits for each segment's ACK inside the call and `sock_send#48` takes no time bound, so closing it needs a bounded send in agnos. |
+| Native, a custom transport (`tls_native_set_transport`), an agnos fd that is not a socket, a Windows HANDLE that is not a socket (a pipe, a file) | Checked BETWEEN calls only: a single call is bounded by the transport itself. |
 | libssl | Every `SSL_connect` / `SSL_accept` / `SSL_read` / `SSL_write` runs with the socket non-blocking, driven by `SSL_get_error`'s `WANT_READ` / `WANT_WRITE` and `fd_wait_ready`; the socket's status flags are restored after each call. |
 
-⚠ **Windows, native:** the default transport's `ReadFile` / `WriteFile` return 0 on a Winsock
-socket, so native TLS does not run over `lib/net.cyr` sockets on Windows at all (roadmap backlog
-item j).
+**Windows, native (6.6.14):** the default transport reads and writes a Winsock socket with
+`ws2_32` `recv` / `send` — it used `ReadFile` / `WriteFile`, which fail on a socket, so until
+6.6.14 native TLS did not run over `lib/net.cyr` sockets on Windows at all (roadmap backlog j). A
+HANDLE that is not a socket still goes through `ReadFile` / `WriteFile`.
+
+**SIGPIPE, native (6.6.14, CVE-66):** a record write — `tls_write`, a handshake flight, the
+close_notify `tls_close` sends, a fatal alert — to a peer that has reset the connection fails with
+`TLS_ERR_IO`; it never raises SIGPIPE, so it cannot kill a process that has not ignored the signal.
+Linux sends with `MSG_NOSIGNAL`; macOS sets `SO_NOSIGPIPE` on the socket before the connection's
+first write (a socket that refuses it — xnu does once the connection is reset — fails the write
+with `TLS_ERR_IO` instead of writing); Windows and agnos raise no such signal. The process-wide
+signal disposition is never touched. A pipe or a file used as the transport keeps `write(2)`'s
+SIGPIPE — neither OS has a per-call flag for one — and so does a custom transport
+(`tls_native_set_transport`), whose writes are its own. ⚠ This changes the syscalls a native TLS
+writer makes: on Linux a socket is written with `sendto(2)` (44 on x86_64, 206 on aarch64;
+`write(2)` only for an fd that is not a socket), and on macOS each connection adds one
+`setsockopt(2)`. A seccomp allowlist around a native TLS writer must permit them — one that
+permits `write` but not `sendto` kills the process on its first record write. (A deadline adds
+`fcntl` and `poll`, as it has since 6.6.13.)
 
 ### Trust store and client certificates (v6.2.8)
 
@@ -577,7 +593,7 @@ is a contract amendment — it amends this file in the same patch and says so in
 entry.
 
 Internal implementation details — the shim's layout (32 bytes on libssl: `SSL_CTX*`, `SSL*`,
-socket, deadline; 40 bytes on native), the native ctx layout (`TLS_CTX_LEN`, 576 bytes at 6.6.13),
+socket, deadline; 40 bytes on native), the native ctx layout (`TLS_CTX_LEN`, 584 bytes at 6.6.14),
 the `_fn_*` symbol cache, `_tls_libssl_handle`, the fdlopen bootstrap sequence — are NOT contract.
 Stdlib maintainers may restructure them freely so long as the public behaviour above is preserved.
 

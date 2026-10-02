@@ -509,8 +509,8 @@ fn _tn_hs_plain_alert(ctx, rec, rl): i64 {
 # Every record read and write of a connection goes through the ctx forms below (_tn_io_*), which
 # honour the ctx's deadline (tls_native_set_deadline); with no deadline they are the pre-6.6.13
 # loops, reading no clock. The ctx-less _tn_sock_* names are their ctx == 0 forms. v6.2.4: the
-# leaves are the transport vtable's — _tn_tx_read / _tn_tx_write if installed, else sys_read /
-# sys_write. `fd` is the per-conn handle.
+# leaves are the transport vtable's — _tn_tx_read / _tn_tx_write if installed, else the default
+# transport's _tn_os_read / _tn_os_write (6.6.14, below). `fd` is the per-conn handle.
 # ⛔ 6.6.13 (CVE-61) — WHY. A record read looped read(2) until the record was complete, with
 # no clock: a peer that sent one byte just inside SO_RCVTIMEO held a 16 KB record read for days,
 # and nothing in the client took a deadline (the transport vtable is process-global, so a caller
@@ -525,16 +525,18 @@ fn _tn_hs_plain_alert(ctx, rec, rl): i64 {
 # record is still delivered after the deadline — that needs no I/O — until a read must touch the
 # socket.
 # How it bounds, by transport:
-#   - the default transport (Linux, macOS): a read waits for readiness with the time left
-#     (fd_wait_ready) and then reads once, so every byte costs a clock check; a write switches the
-#     fd to non-blocking for the call, waits for writability with the time left, and restores the
-#     fd's status flags on every exit;
+#   - the default transport (Linux, macOS, Windows): a read waits for readiness with the time left
+#     (fd_wait_ready — poll, or WSAPoll on Windows) and then reads once, so every byte costs a clock
+#     check; a write switches the fd to non-blocking for the call (O_NONBLOCK, or FIONBIO on a
+#     Windows socket), waits for writability with the time left, and restores the fd on every exit
+#     — its status flags on Linux / macOS; a Windows socket is left BLOCKING, because Windows cannot
+#     read FIONBIO back (the mode lib/net.cyr creates sockets in, as net_connect_sa_nb leaves them);
 #   - agnos, a tagged socket: sock_recv / sock_send take the time left themselves; a send can
-#     overshoot by one sock_send#48 stall (~8 s);
-#   - a custom transport (tls_native_set_transport), an agnos fd that is not a socket, and Windows:
-#     the clock is checked BETWEEN calls only, so one call is bounded by the transport itself.
-#     ⚠ On Windows the default leaves are ReadFile / WriteFile, which return 0 on a Winsock socket:
-#     native TLS does not run over net.cyr sockets there at all (roadmap backlog j).
+#     overshoot by one sock_send#48 stall (~8 s: the kernel waits for each segment's ACK inside the
+#     call and #48 takes no time bound — agnos needs a bounded send to close it);
+#   - a custom transport (tls_native_set_transport), an agnos fd that is not a socket, and a
+#     Windows HANDLE that is not a socket (a pipe, a file): the clock is checked BETWEEN calls only,
+#     so one call is bounded by the transport itself.
 # Returns TLS_OK, or TLS_ERR_INVALID_PARAM for ctx 0 or abs_ns < 0.
 fn tls_native_set_deadline(ctx, abs_ns): i64 {
     if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
@@ -568,20 +570,122 @@ fn _tn_wait(fd, want_write, dl): i64 {
     return 0;
 }
 
-# 1 when the default read/write leaves can be waited on with fd_wait_ready before each call (Linux,
-# macOS), else 0 (see tls_native_set_deadline: agnos and Windows are bounded between calls).
+# 1 when the default read/write leaves can be waited on with fd_wait_ready before each call
+# (Linux, macOS, Windows), else 0 (agnos: bounded by the peer's own deadline-taking calls).
 fn _tn_can_poll(): i64 {
     #ifdef CYRIUS_TARGET_AGNOS
     return 0;
     #endif
-    #ifdef CYRIUS_TARGET_WIN
-    return 0;
-    #endif
     #ifndef CYRIUS_TARGET_AGNOS
-    #ifndef CYRIUS_TARGET_WIN
     return 1;
     #endif
+}
+
+# ----------------------------------------------------------------
+# The default transport's leaves (6.6.14)
+# ----------------------------------------------------------------
+# One read / one write of the default transport (no tls_native_set_transport), per target:
+#   Linux    read(2); send(fd, buf, n, MSG_NOSIGNAL) — write(2) for an fd that is not a socket
+#   macOS    read(2) / write(2), the socket set SO_NOSIGPIPE once per connection (_tn_nosigpipe)
+#   Windows  ws2_32 recv / send — ReadFile / WriteFile for a HANDLE that is not a socket
+#   agnos    read / write: the peer routes a tagged socket fd to sock_recv#49 / sock_send#48, and
+#            agnos raises no signal for a dead connection (#48 answers -1)
+# Each returns the byte count, 0 (read: end of stream), or a negative error: -errno, or on
+# Windows -WSAGetLastError (_tn_eagain and _tn_is_notsock read those).
+# ⛔ 6.6.14 — WHY. (a) The leaves were sys_read / sys_write on every target, and on Windows those
+# are ReadFile / WriteFile, which fail on a Winsock SOCKET: native TLS could not run over a
+# lib/net.cyr socket there at all (roadmap backlog j). (b) A flagless write(2) to a peer that had
+# reset the connection raised SIGPIPE, which KILLED a native TLS client or server that had not
+# ignored it — any peer could end the process (CVE-66). The process-global signal disposition is
+# left alone: the protection is per write (Linux) or per socket (macOS). A pipe or a file keeps
+# write(2)'s SIGPIPE — neither OS has a per-call flag for one. CHANGELOG [6.6.14]
+
+# _tn_nb_write_all's answer for a Windows HANDLE that is not a socket (FIONBIO refused it): the
+# caller writes it through the between-calls loop instead. Private; no TLS_ERR_* value.
+var _TN_NB_NOT_SOCK = 0 - 4096;
+
+#ifdef CYRIUS_TARGET_WIN
+# The calling thread's last Winsock error, negated; never 0 (cf. lib/net.cyr's _net_wsa_err —
+# tls_native does not include net.cyr).
+fn _tn_win_sockerr(): i64 {
+    var e = syscall(0xF024) & 0xFFFFFFFF;          # WSAGetLastError
+    if (e == 0) { return 0 - 1; }
+    return 0 - e;
+}
+#endif
+
+# 1 when `e` (a leaf's or a wait's negative result) says `fd` is not a socket at all, so the
+# default transport falls back to the HANDLE path: Windows only (WSAENOTSOCK, or
+# WSANOTINITIALISED — no socket exists in a process that never started Winsock).
+fn _tn_is_notsock(e): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    var code = (0 - e) & 0xFFFFFFFF;                 # only eax is defined by WSAGetLastError
+    if (code == 10038) { return 1; }                 # WSAENOTSOCK
+    if (code == 10093) { return 1; }                 # WSANOTINITIALISED
     #endif
+    return 0;
+}
+
+# Read up to `n` bytes from `fd`.
+fn _tn_os_read(fd, buf, n): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    var len = n;
+    if (len > 0x7FFFFFFF) { len = 0x7FFFFFFF; }       # recv takes an int length
+    var r = syscall(0xF048, fd, buf, len, 0);        # recv
+    if (r >= 0) { return r; }
+    var e = _tn_win_sockerr();
+    if (_tn_is_notsock(e) == 1) { return sys_read(fd, buf, n); }    # a pipe / file HANDLE
+    return e;
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    return sys_read(fd, buf, n);
+    #endif
+}
+
+# Write up to `n` bytes to `fd`, never raising SIGPIPE on a socket (see the block above).
+fn _tn_os_write(fd, buf, n): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    var len = n;
+    if (len > 0x7FFFFFFF) { len = 0x7FFFFFFF; }       # send takes an int length; a short write is legal
+    var w = syscall(0xF047, fd, buf, len, 0);        # send
+    if (w >= 0) { return w; }
+    var e = _tn_win_sockerr();
+    if (_tn_is_notsock(e) == 1) { return sys_write(fd, buf, n); }   # a pipe / file HANDLE
+    return e;
+    #endif
+    #ifdef CYRIUS_TARGET_LINUX
+    var s = sys_sendto(fd, buf, n, 0x4000, 0, 0);    # MSG_NOSIGNAL: EPIPE, never SIGPIPE
+    if (s == 0 - 88) { return sys_write(fd, buf, n); }   # ENOTSOCK: a pipe / file fd
+    return s;
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    #ifndef CYRIUS_TARGET_LINUX
+    return sys_write(fd, buf, n);                    # macOS (SO_NOSIGPIPE: _tn_nosigpipe), agnos
+    #endif
+    #endif
+}
+
+# macOS has no MSG_NOSIGNAL: SO_NOSIGPIPE (SOL_SOCKET 0xFFFF, 0x1022) makes every write on the
+# socket answer EPIPE instead of raising SIGPIPE. Set once per connection, before its first write
+# — the ctx remembers the fd it covered (TLS_CTX_OFF_NOSIGPIPE = fd + 1); a ctx-less write sets
+# it every time. Returns 0, or the setsockopt error: anything but ENOTSOCK (38: a pipe or a file,
+# which keeps write(2)'s SIGPIPE) fails the write CLOSED, because a socket we could not protect may
+# be written into a reset — xnu answers EINVAL for a socket already shut down both ways, which is
+# what an RST leaves. Every other target: 0, nothing to do.
+fn _tn_nosigpipe(ctx, fd): i64 {
+    #ifdef CYRIUS_TARGET_MACOS
+    if (ctx != 0) {
+        if (load64(ctx + TLS_CTX_OFF_NOSIGPIPE) == fd + 1) { return 0; }
+    }
+    var one[8];
+    store64(&one, 1);
+    var r = sys_setsockopt(fd, 0xFFFF, 0x1022, &one, 4);    # SOL_SOCKET, SO_NOSIGPIPE
+    if (r < 0) {
+        if (r != 0 - 38) { return r; }               # ENOTSOCK is the only failure that is not one
+    }
+    if (ctx != 0) { store64(ctx + TLS_CTX_OFF_NOSIGPIPE, fd + 1); }
+    #endif
+    return 0;
 }
 
 # Read exactly `n` bytes from `fd` into `buf` (loops over partial reads) under ctx's deadline.
@@ -591,7 +695,7 @@ fn _tn_io_read_full(ctx, fd, buf, n): i64 {
     var rf = _tn_tx_read;
     var poll = 0;
     if (rf == 0) {
-        rf = &sys_read;
+        rf = &_tn_os_read;
         poll = _tn_can_poll();
         #ifdef CYRIUS_TARGET_AGNOS
         if (dl != 0) {
@@ -605,7 +709,11 @@ fn _tn_io_read_full(ctx, fd, buf, n): i64 {
             if (poll == 1) {
                 var wr = _tn_wait(fd, 0, dl);
                 if (wr == 0) { return TLS_ERR_TIMEOUT; }
-                if (wr < 0) { return TLS_ERR_IO; }
+                if (wr < 0) {
+                    if (_tn_is_notsock(wr) == 0) { return TLS_ERR_IO; }
+                    poll = 0;                        # a Windows HANDLE: bounded between calls
+                    if (clock_now_ns() >= dl) { return TLS_ERR_TIMEOUT; }
+                }
             } else {
                 if (clock_now_ns() >= dl) { return TLS_ERR_TIMEOUT; }
             }
@@ -619,20 +727,26 @@ fn _tn_io_read_full(ctx, fd, buf, n): i64 {
 
 # Write all `len` bytes of `buf` to `fd` (loops over partial writes) under ctx's deadline.
 # Returns len, TLS_ERR_TIMEOUT when the deadline passes first (an expired one before any I/O), or
-# TLS_ERR_IO.
+# TLS_ERR_IO — a peer that reset the connection included (no SIGPIPE: _tn_os_write).
 fn _tn_io_write_all(ctx, fd, buf, len): i64 {
     var dl = _tn_deadline(ctx);
     var wf = _tn_tx_write;
     if (dl != 0) {
         if (clock_now_ns() >= dl) { return TLS_ERR_TIMEOUT; }
-        if (wf == 0) {
+    }
+    if (wf == 0) {
+        if (_tn_nosigpipe(ctx, fd) < 0) { return TLS_ERR_IO; }
+        if (dl != 0) {
             #ifdef CYRIUS_TARGET_AGNOS
             if (_agnos_is_sock_fd(fd) == 1) { return _tn_agnos_write_all(fd, buf, len, dl); }
             #endif
-            if (_tn_can_poll() == 1) { return _tn_nb_write_all(fd, buf, len, dl); }
+            if (_tn_can_poll() == 1) {
+                var nb = _tn_nb_write_all(fd, buf, len, dl);
+                if (nb != _TN_NB_NOT_SOCK) { return nb; }
+            }
         }
+        wf = &_tn_os_write;
     }
-    if (wf == 0) { wf = &sys_write; }
     var sent = 0;
     while (sent < len) {
         if (dl != 0) {
@@ -645,29 +759,66 @@ fn _tn_io_write_all(ctx, fd, buf, len): i64 {
     return len;
 }
 
-# EAGAIN on this target: Darwin 35, Linux 11 — a literal, because a program-wide enum may
-# redefine the name (cf. _fd_o_nonblock).
+# The would-block error the default write leaf answers on this target, as a positive number:
+# EAGAIN — Darwin 35, Linux 11 — or WSAEWOULDBLOCK (10035) on Windows. Literals, because a
+# program-wide enum may redefine the names (cf. _fd_o_nonblock).
 fn _tn_eagain(): i64 {
     #ifdef CYRIUS_TARGET_MACOS
     return 35;
     #endif
+    #ifdef CYRIUS_TARGET_WIN
+    return 10035;
+    #endif
     #ifndef CYRIUS_TARGET_MACOS
+    #ifndef CYRIUS_TARGET_WIN
     return 11;
+    #endif
     #endif
 }
 
-# The default transport's deadline-bounded write (Linux, macOS): the fd is non-blocking for the
-# duration — a write either moves bytes or answers EAGAIN, which waits for writability with the
-# time left — and its status flags are restored on every exit. The clock is re-checked after each
-# partial write too, so a peer that reads a trickle cannot stretch the call past the deadline.
+# Make `fd` non-blocking for one write: the state to hand _tn_nb_off, or a negative error.
+# Linux / macOS: O_NONBLOCK (the saved status flags). Windows: ioctlsocket(FIONBIO, 1) — 0.
+fn _tn_nb_on(fd): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    var v[8];
+    store64(&v, 1);
+    if (syscall(0xF049, fd, 0x8004667E, &v) != 0) { return _tn_win_sockerr(); }   # FIONBIO
+    return 0;
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    return fd_set_nonblocking(fd);
+    #endif
+}
+
+# Undo _tn_nb_on. Windows cannot read FIONBIO back, so a socket is left BLOCKING there.
+fn _tn_nb_off(fd, saved): i64 {
+    #ifdef CYRIUS_TARGET_WIN
+    var v[8];
+    store64(&v, 0);
+    syscall(0xF049, fd, 0x8004667E, &v);             # FIONBIO 0
+    return 0;
+    #endif
+    #ifndef CYRIUS_TARGET_WIN
+    return fd_restore_flags(fd, saved);
+    #endif
+}
+
+# The default transport's deadline-bounded write (Linux, macOS, Windows): the fd is non-blocking
+# for the duration — a write either moves bytes or answers would-block, which waits for
+# writability with the time left — and it is restored on every exit (_tn_nb_off). The clock is
+# re-checked after each partial write too, so a peer that reads a trickle cannot stretch the call
+# past the deadline. _TN_NB_NOT_SOCK for a Windows HANDLE that is not a socket.
 fn _tn_nb_write_all(fd, buf, len, dl): i64 {
-    var saved = fd_set_nonblocking(fd);
-    if (saved < 0) { return TLS_ERR_IO; }
+    var saved = _tn_nb_on(fd);
+    if (saved < 0) {
+        if (_tn_is_notsock(saved) == 1) { return _TN_NB_NOT_SOCK; }
+        return TLS_ERR_IO;
+    }
     var res = len;
     var sent = 0;
     var more = 1;
     while (more == 1) {
-        var w = sys_write(fd, buf + sent, len - sent);
+        var w = _tn_os_write(fd, buf + sent, len - sent);
         if (w > 0) {
             sent = sent + w;
             if (sent >= len) { more = 0; }
@@ -684,7 +835,7 @@ fn _tn_nb_write_all(fd, buf, len, dl): i64 {
             }
         }
     }
-    fd_restore_flags(fd, saved);
+    _tn_nb_off(fd, saved);
     return res;
 }
 
