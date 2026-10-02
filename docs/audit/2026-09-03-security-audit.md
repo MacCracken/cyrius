@@ -1180,6 +1180,8 @@ host) and under qemu-aarch64 and wine.
 
 **Not covered.** The native client still sends an IP literal as SNI (backlog (d)). Native accepts a wildcard directly over a single label (`*.com` for `a.com`) where libssl refuses — a remaining divergence, reported for the backlog. The libssl backend cannot be exercised off x86_64 Linux (no libssl.so.3 on macOS/Windows, no dlopen-helper on pi).
 
+**Update (6.6.14).** Both closed: the native client sends no SNI for an IP literal (C5, the backends now agree), and a single-label wildcard such as `*.com` — with the rest of OpenSSL's wildcard refusals — is refused natively (**CVE-67**), pinned by a differential host-verdict test across both backends.
+
 ## CVE-60 — the libssl TLS backend's `tls_read` / `tls_write` returned a C `int` zero-extended: a tampered record read as ~4 GiB read, and a fatal alert or a truncated stream read as a clean end of stream
 
 *Appended 2026-10-01 (cyrius 6.6.13, bite I2c). Found by: The 6.6.13 I2 (c) premise check (measuring how libssl reports alerts for issue `2026-09-30-tls-client-memory-and-alert-gaps` (c)). Not part of the 2026-09-03 sweep: recorded here because this is the live ledger. 6.6.13 spends CVE-59 … CVE-63.*
@@ -1204,6 +1206,8 @@ host) and under qemu-aarch64 and wine.
 
 **Not covered.** After a fatal alert, a SECOND libssl `tls_read` returns 0: OpenSSL reports `SSL_ERROR_ZERO_RETURN` once `SSL_RECEIVED_SHUTDOWN` is set, because `warn_alert` stays 0 (= close_notify) for a fatal alert. The first read reports `TLS_ERR_ALERT` and the record behind the alert is never delivered; native re-reads stay `TLS_ERR_ALERT`. Making libssl sticky needs a shim slot (I8 plans +24 of the libssl shim for its deadline) — reported for the backlog. libssl's SIGPIPE exposure on a write to a closed peer is backlog (f); the test ignores SIGPIPE.
 
+**Update (6.6.14).** Both closed: a failed libssl read or write is now sticky — every later `tls_read` returns the stored error (writes `TLS_ERR_PROTOCOL`, the native rule) without touching SSL, the error kept at libssl shim `+32`; and libssl's SIGPIPE on a write to a closed peer is **CVE-66** (held and consumed per call, never `SIG_IGN`).
+
 ## CVE-61 — the native TLS stack skipped plaintext ChangeCipherSpec records without limit and had no deadline: anyone on the path held a client (or server) thread for ever, with no key
 
 *Appended 2026-10-01 (cyrius 6.6.13, bite I8). Found by: The abaco 2.4.12 HTTPS review (2026-10-01). Not part of the 2026-09-03 sweep: recorded here because this is the live ledger. 6.6.13 spends CVE-59 … CVE-63.*
@@ -1227,6 +1231,8 @@ host) and under qemu-aarch64 and wine.
 **Verified.** `tests/tcyr/crossos/tls_native_deadline_ccs.tcyr` (39 assertions, single-threaded, preloaded loopback pairs; x86_64, qemu-aarch64, pi, ecb, ach 39/39; cass 8/8 with the socket rows SKIPped by name, backlog j). `tests/tcyr/crypto/tls_native_ccs_deadline.tcyr` (108 assertions, socketpair + fork with transport write hooks; the filed repro's two cases by code, every read site's policy, 1.3 and 1.2 both directions, mTLS sites, drips under `SO_RCVTIMEO`, write deadline, both shim backends, OpenSSL `s_server` 1.3 / 1.2; 45 of 108 fail on the pre-fix lib). `tests/gates/platform/agnos_tls_deadline.sh` (fake-kernel agnos read / write paths). 34 + 5 mutants, each RED. The filed repro `docs/development/issues/repros/2026-10-01-tls-native-no-deadline.sh` exits 0 unmodified (was 2): case 1's client returns 4 (handshake refused at the second CCS), case 2's returns 5 (`tls_read` → `TLS_ERR_PROTOCOL`), each well inside 10 s.
 
 **Not covered.** Windows: native TLS over `net.cyr` sockets (the transport leaves are `ReadFile` / `WriteFile`, which return 0 on Winsock) — backlog j; the deadline there is checked between calls. A custom transport is bounded only between its calls (documented on `tls_native_set_transport`). On agnos a write can overshoot the deadline by one `sock_send#48` stall (~8 s). Writing the fatal alert to a peer that already reset the connection can raise SIGPIPE in a process that does not ignore it — the same exposure every native TLS write (`tls_native_write`, `tls_native_close`'s close_notify, the handshake's own writes) already has.
+
+**Update (6.6.14).** Windows: native TLS runs over `net.cyr`'s Winsock sockets and the deadline bounds each read and write for real there (`WSAPoll`, `FIONBIO`; backlog j). SIGPIPE on a write to a reset peer is **CVE-66** (Linux `MSG_NOSIGNAL`, macOS `SO_NOSIGPIPE`). Still open: the agnos write overshoot by one `sock_send#48` stall — it needs agnos's #48 to honour a time bound (its `tcp_send_ex` already takes one as a parameter); recorded in the roadmap.
 
 ## CVE-62 — a `[deps.NAME]` header was used as a path unchecked: `cyrius deps` created directories and git-cloned outside the dep cache (a CVE-32 residual)
 
@@ -1271,6 +1277,8 @@ host) and under qemu-aarch64 and wine.
 **Verified.** Filed repro `docs/development/issues/repros/2026-10-01-tls-ip-literal-dnsname.sh` exits 0 (2 on 6.6.12). `tests/tcyr/crypto/tls_native_scaffold.tcyr` group "RFC 9525 IP-ID vs DNS-ID (6.6.13)": 83 assertions over six self-signed P-256 leaves, the literal classifier and `_tn_parse_ipv4` vs `net_parse_ipv4` agreement; 41 fail against the 6.6.12 lib; 532/532 on x86_64 and aarch64 (qemu).
 
 **Not covered.** The native client still sends an IP literal as SNI (RFC 6066 §3) — backlogged (6.6.13 roadmap backlog item d).
+
+**Update (6.6.14).** Closed: neither ClientHello builder sends `server_name` for an IPv4 / IPv6 literal (`_tn_sni_len`, the shared classifier); the host still binds the certificate's iPAddress entries.
 
 ## CVE-64 — a native TLS server that required client certificates authenticated nobody: a TLS 1.2 client connected with none, a TLS 1.3 client on possession of any leaf, and `tls_set_verify` dropped FAIL_IF_NO_PEER_CERT
 
