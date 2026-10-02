@@ -1525,6 +1525,52 @@ fn _tn_build_empty_certificate(out, out_max): i64 {
     return total;
 }
 
+# Sign `msg` (`msg_len` bytes) with the ctx's own private key (KEY_ALGO / KEY_MAT, loaded by
+# tls_native_server_load_creds or tls_native_set_client_key): ECDSA P-256 / P-384 give a DER
+# signature over SHA-256 / SHA-384 of msg (sigil hashes internally), Ed25519 a 64-byte PureEdDSA
+# signature over msg itself. Writes the TLS SignatureScheme through `scheme_out`; returns the
+# signature length (> 0), or TLS_ERR_KEY_UNSUPPORTED (no key, or RSA), TLS_ERR_OOM or
+# TLS_ERR_AUTHN (the signer failed). The one signer of the 1.3 CertificateVerify, the 1.2
+# ServerKeyExchange and the 1.2 client CertificateVerify (6.6.14 — it was two copies of this
+# switch). CHANGELOG [6.6.14]
+fn _tn_sign(ctx, msg, msg_len, sig_out, sig_max, scheme_out): i64 {
+    var algo = load64(ctx + TLS_CTX_OFF_KEY_ALGO);
+    var kmat = load64(ctx + TLS_CTX_OFF_KEY_MAT);
+    if (kmat == 0) { return TLS_ERR_KEY_UNSUPPORTED; }
+    var sig_len = 0;
+    if (algo == SIG_PRIVKEY_ECDSA_P256) {
+        sig_len = ecdsa_p256_sign_der(kmat, msg, msg_len, sig_out, sig_max);
+        store64(scheme_out, TLS_SIG_ECDSA_SECP256R1_SHA256);
+    } elif (algo == SIG_PRIVKEY_ECDSA_P384) {
+        sig_len = ecdsa_p384_sign_der(kmat, msg, msg_len, sig_out, sig_max);
+        store64(scheme_out, TLS_SIG_ECDSA_SECP384R1_SHA384);
+    } elif (algo == SIG_PRIVKEY_ED25519) {
+        if (sig_max < 64) { return TLS_ERR_BUFFER_FULL; }
+        var sk64 = _tn_alloc(ctx, 64);
+        var pk32 = _tn_alloc(ctx, 32);
+        if (sk64 == 0) { return TLS_ERR_OOM; }
+        if (pk32 == 0) { return TLS_ERR_OOM; }
+        ed25519_keypair(kmat, sk64, pk32);
+        if (ed25519_sign(sk64, msg, msg_len, sig_out) != 0) { return TLS_ERR_AUTHN; }
+        sig_len = 64;
+        store64(scheme_out, TLS_SIG_ED25519);
+    } else {
+        return TLS_ERR_KEY_UNSUPPORTED;   # RSA signing awaits sigil
+    }
+    if (sig_len <= 0) { return TLS_ERR_AUTHN; }
+    return sig_len;
+}
+
+# The SignatureScheme `_tn_sign` makes with the ctx's key, or 0 for none (no key, or RSA).
+fn _tn_key_scheme(ctx): i64 {
+    if (load64(ctx + TLS_CTX_OFF_KEY_MAT) == 0) { return 0; }
+    var algo = load64(ctx + TLS_CTX_OFF_KEY_ALGO);
+    if (algo == SIG_PRIVKEY_ECDSA_P256) { return TLS_SIG_ECDSA_SECP256R1_SHA256; }
+    if (algo == SIG_PRIVKEY_ECDSA_P384) { return TLS_SIG_ECDSA_SECP384R1_SHA384; }
+    if (algo == SIG_PRIVKEY_ED25519) { return TLS_SIG_ED25519; }
+    return 0;
+}
+
 # Build CertificateVerify (RFC 8446 §4.4.3): sign the transcript hash
 # (CH..Certificate) with the server key. content = 0x20*64 ++
 # "TLS 1.3, server CertificateVerify" ++ 0x00 ++ Transcript-Hash.
@@ -1532,10 +1578,8 @@ fn _tn_build_empty_certificate(out, out_max): i64 {
 # scheme's hash); Ed25519 → 64-byte PureEdDSA over the content.
 fn _tn_build_cert_verify(ctx, out, out_max, label, label_len): i64 {
     var ts = load64(ctx + TLS_CTX_OFF_TRANSCRIPT);
-    var algo = load64(ctx + TLS_CTX_OFF_KEY_ALGO);
-    var kmat = load64(ctx + TLS_CTX_OFF_KEY_MAT);
     if (ts == 0) { return TLS_ERR_PROTOCOL; }
-    if (kmat == 0) { return TLS_ERR_KEY_UNSUPPORTED; }
+    if (load64(ctx + TLS_CTX_OFF_KEY_MAT) == 0) { return TLS_ERR_KEY_UNSUPPORTED; }
     var hash_algo = load64(ts);
     var hlen = _tn_hash_len(hash_algo);
     # Build the signed content: 0x20*64 ++ label ++ 0x00 ++ Transcript-Hash.
@@ -1552,36 +1596,11 @@ fn _tn_build_cert_verify(ctx, out, out_max, label, label_len): i64 {
     tls_native_transcript_digest(ts, th);
     memcpy(content + 64 + label_len + 1, th, hlen);
     var content_len = 64 + label_len + 1 + hlen;
-    # Sign per key algorithm.
     var sig = _tn_alloc(ctx, 128);
     if (sig == 0) { return TLS_ERR_OOM; }
-    var sig_len = 0;
     var scheme = 0;
-    if (algo == SIG_PRIVKEY_ECDSA_P256) {
-        sig_len = ecdsa_p256_sign_der(kmat, content, content_len, sig, 128);
-        scheme = TLS_SIG_ECDSA_SECP256R1_SHA256;
-    } else {
-        if (algo == SIG_PRIVKEY_ECDSA_P384) {
-            sig_len = ecdsa_p384_sign_der(kmat, content, content_len, sig, 128);
-            scheme = TLS_SIG_ECDSA_SECP384R1_SHA384;
-        } else {
-            if (algo == SIG_PRIVKEY_ED25519) {
-                var sk64 = _tn_alloc(ctx, 64);
-                var pk32 = _tn_alloc(ctx, 32);
-                if (sk64 == 0) { return TLS_ERR_OOM; }
-                if (pk32 == 0) { return TLS_ERR_OOM; }
-                ed25519_keypair(kmat, sk64, pk32);
-                if (ed25519_sign(sk64, content, content_len, sig) != 0) {
-                    return TLS_ERR_AUTHN;
-                }
-                sig_len = 64;
-                scheme = TLS_SIG_ED25519;
-            } else {
-                return TLS_ERR_KEY_UNSUPPORTED;   # RSA-PSS awaits sigil
-            }
-        }
-    }
-    if (sig_len <= 0) { return TLS_ERR_AUTHN; }
+    var sig_len = _tn_sign(ctx, content, content_len, sig, 128, &scheme);
+    if (sig_len < 0) { return sig_len; }
     var body_len = 2 + 2 + sig_len;
     var total = TLS_HANDSHAKE_HEADER_LEN + body_len;
     if (total > out_max) { return TLS_ERR_BUFFER_FULL; }

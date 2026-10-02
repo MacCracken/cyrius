@@ -620,34 +620,7 @@ fn _tn_12_sign_kex_params(ctx, params36, sig_out, sig_max, scheme_out): i64 {
     memcpy(content,      load64(ctx + TLS_CTX_OFF_CLIENT_RANDOM), 32);
     memcpy(content + 32, load64(ctx + TLS_CTX_OFF_SERVER_RANDOM), 32);
     memcpy(content + 64, params36, 36);
-    var algo = load64(ctx + TLS_CTX_OFF_KEY_ALGO);
-    var kmat = load64(ctx + TLS_CTX_OFF_KEY_MAT);
-    if (kmat == 0) { return TLS_ERR_KEY_UNSUPPORTED; }
-    var sig_len = 0;
-    if (algo == SIG_PRIVKEY_ECDSA_P256) {
-        sig_len = ecdsa_p256_sign_der(kmat, content, 100, sig_out, sig_max);
-        store64(scheme_out, TLS_SIG_ECDSA_SECP256R1_SHA256);
-    } else {
-        if (algo == SIG_PRIVKEY_ECDSA_P384) {
-            sig_len = ecdsa_p384_sign_der(kmat, content, 100, sig_out, sig_max);
-            store64(scheme_out, TLS_SIG_ECDSA_SECP384R1_SHA384);
-        } else {
-            if (algo == SIG_PRIVKEY_ED25519) {
-                var sk64 = _tn_alloc(ctx, 64);
-                var pk32 = _tn_alloc(ctx, 32);
-                if (sk64 == 0) { return TLS_ERR_OOM; }
-                if (pk32 == 0) { return TLS_ERR_OOM; }
-                ed25519_keypair(kmat, sk64, pk32);
-                if (ed25519_sign(sk64, content, 100, sig_out) != 0) { return TLS_ERR_AUTHN; }
-                sig_len = 64;
-                store64(scheme_out, TLS_SIG_ED25519);
-            } else {
-                return TLS_ERR_KEY_UNSUPPORTED;   # RSA-PSS awaits sigil
-            }
-        }
-    }
-    if (sig_len <= 0) { return TLS_ERR_AUTHN; }
-    return sig_len;
+    return _tn_sign(ctx, content, 100, sig_out, sig_max, scheme_out);
 }
 
 # Build a TLS 1.2 ECDHE ServerKeyExchange (RFC 8422 §5.4). Body =
