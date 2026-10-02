@@ -51,29 +51,89 @@ fn _tn_ci_eq(a, b, n): i64 {
     return 1;
 }
 
-# Match one dNSName (`dns`/`dns_len`) against `host` (RFC 6125): exact
-# case-insensitive, or a leftmost wildcard "*.domain" that matches
-# exactly one extra label (no embedded dot in the host's first label).
-fn _tn_host_match(dns, dns_len, host, host_len): i64 {
-    if (dns_len >= 2) {
-        if ((load8(dns) & 0xFF) == 0x2A) {
-            if ((load8(dns + 1) & 0xFF) == 0x2E) {
-                var suffix = dns + 1;            # ".domain.tld"
-                var suffix_len = dns_len - 1;
-                if (host_len <= suffix_len) { return 0; }
-                var firstdot = 0 - 1;
-                var i = 0;
-                while (i < host_len) {
-                    if ((load8(host + i) & 0xFF) == 0x2E) { firstdot = i; i = host_len; }
-                    else { i = i + 1; }
-                }
-                if (firstdot < 0) { return 0; }
-                if (host_len - firstdot != suffix_len) { return 0; }
-                return _tn_ci_eq(host + firstdot, suffix, suffix_len);
+# Is the presented dNSName `dns`/`dns_len` a wildcard pattern? OpenSSL's valid_star under the
+# X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS the libssl binder sets (lib/tls.cyr _TLS_LIBSSL_HOSTFLAGS):
+# "*." then at least two more labels — so the star stands over a label of a name with two or more
+# labels of its own ("*.com", "*." are not wildcards) — each label 1+ of [A-Za-z0-9-], not starting
+# or ending in '-', no second '*', no empty label and no trailing dot. 1 / 0. A dNSName this
+# refuses is compared LITERALLY (as OpenSSL does), so "*.com" matches only the host "*.com".
+# ⛔ 6.6.14 (CVE-67) — WHY. Native took any "*." prefix as a wildcard over the host's first label,
+# so a certificate for "*.com" verified every .com host, and "*.example.com.", "*.a_b.com" and
+# "*.*.example.com" matched names libssl refuses — the backends disagreed on what a certificate
+# binds. CHANGELOG [6.6.14]
+fn _tn_wildcard_ok(dns, dns_len): i64 {
+    if (dns_len < 2) { return 0; }
+    if ((load8(dns) & 0xFF) != 0x2A) { return 0; }          # '*'
+    if ((load8(dns + 1) & 0xFF) != 0x2E) { return 0; }      # '.'
+    var dots = 1;
+    var start = 1;                                          # at a label's first byte
+    var hyphen = 0;                                         # the last byte was '-'
+    var i = 2;
+    while (i < dns_len) {
+        var c = load8(dns + i) & 0xFF;
+        if (c == 0x2E) {
+            if (start == 1) { return 0; }                   # an empty label
+            if (hyphen == 1) { return 0; }                  # a label ending in '-'
+            start = 1;
+            dots = dots + 1;
+        } else {
+            if (c == 0x2D) {
+                if (start == 1) { return 0; }               # a label starting with '-'
+                hyphen = 1;
+            } else {
+                if (_tn_ldh_alnum(c) == 0) { return 0; }    # '*', '_', a NUL, any other byte
+                hyphen = 0;
             }
+            start = 0;
         }
+        i = i + 1;
+    }
+    if (start == 1) { return 0; }                           # a trailing dot
+    if (hyphen == 1) { return 0; }
+    if (dots < 2) { return 0; }
+    return 1;
+}
+
+# 1 for an ASCII letter or digit.
+fn _tn_ldh_alnum(c): i64 {
+    if (c >= 0x30) { if (c <= 0x39) { return 1; } }
+    if (c >= 0x41) { if (c <= 0x5A) { return 1; } }
+    if (c >= 0x61) { if (c <= 0x7A) { return 1; } }
+    return 0;
+}
+
+# Match one dNSName (`dns`/`dns_len`) against a DNS-name `host` exactly as OpenSSL's
+# X509_check_host does under the libssl binder's flags (NO_PARTIAL_WILDCARDS |
+# NEVER_CHECK_SUBJECT): a wildcard pattern (_tn_wildcard_ok) matches a host whose labels after the
+# first equal its own, case-insensitively, where that first label is non-empty and either the
+# single byte '*' or only [A-Za-z0-9-] (so one label, never two). Anything else is an exact
+# case-insensitive compare, and a dNSName holding a NUL byte never matches. CHANGELOG [6.6.14]
+fn _tn_host_match(dns, dns_len, host, host_len): i64 {
+    if (_tn_wildcard_ok(dns, dns_len) == 1) {
+        var suffix = dns + 1;                               # ".domain.tld"
+        var suffix_len = dns_len - 1;
+        var wl = host_len - suffix_len;                     # the bytes the star stands for
+        if (wl <= 0) { return 0; }
+        if (_tn_ci_eq(host + wl, suffix, suffix_len) == 0) { return 0; }
+        if (wl == 1) {
+            if ((load8(host) & 0xFF) == 0x2A) { return 1; }   # the literal "*" label
+        }
+        var i = 0;
+        while (i < wl) {
+            var c = load8(host + i) & 0xFF;
+            if (c != 0x2D) {
+                if (_tn_ldh_alnum(c) == 0) { return 0; }    # '.', '_', any non-LDH byte
+            }
+            i = i + 1;
+        }
+        return 1;
     }
     if (dns_len != host_len) { return 0; }
+    var k = 0;
+    while (k < dns_len) {
+        if ((load8(dns + k) & 0xFF) == 0) { return 0; }
+        k = k + 1;
+    }
     return _tn_ci_eq(dns, host, dns_len);
 }
 

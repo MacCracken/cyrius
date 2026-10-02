@@ -803,7 +803,8 @@ fn tls_dlsym(name): i64 {
 #   - DNS name (0): hostflags NO_PARTIAL_WILDCARDS | NEVER_CHECK_SUBJECT, then
 #     X509_VERIFY_PARAM_set1_host — dNSName SANs only, case-insensitive, a full
 #     leftmost-label "*." wildcard, no subject-CN fallback — and SNI.
-#   - host 0, "" or a ':'-bearing non-literal (-1): no reference identity.
+#   - host 0, "", a ':'-bearing non-literal or (6.6.14, CVE-67) a host starting with '.'
+#     (-1): no reference identity — OpenSSL would read ".example.com" as "any subdomain".
 # Under SSL_VERIFY_PEER (the default) a host with no identity is REFUSED, as
 # native's tls_native_client_verify_hostname refuses it. A hook that cleared
 # SSL_VERIFY_PEER (tls_set_verify(h, 0, 0)) opted out of verification: nothing is

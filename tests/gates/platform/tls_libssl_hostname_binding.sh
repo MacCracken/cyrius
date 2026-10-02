@@ -50,6 +50,8 @@
 # 6.6.14:
 #   MI6 the native ClientHello builders before _tn_sni_len (SNI for every host) -> the three
 #       native S rows for 127.0.0.1 / ::1 (the fatal-on-mismatch server refuses the literal)
+#   MI7 the native matcher before _tn_wildcard_ok (any "*." a wildcard, any byte under the star)
+#       -> the N rows a_b.example.com, a.com and example.com vs *.com (CVE-67)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 1
@@ -92,6 +94,7 @@ leaf cn localhost ""
 leaf pw pw-leaf "DNS:f*.example.com"
 leaf bait bait-leaf "DNS:010.0.0.1,DNS:[::1],IP:10.0.0.1,IP:::1"
 leaf ip10 ip10-leaf "IP:10.0.0.1"
+leaf tld tld-leaf "DNS:*.com"
 
 # ── the probe ──
 # probe <native|libssl|libssl0> <port> <cafile> <host|@0|@empty> <peer|none|pinhost N|pinip A>;
@@ -326,6 +329,12 @@ serve wc
 row a.example.com   peer "$CA"            A  A  "a.example.com: one label under the wildcard"
 row example.com     peer "$CA"            R  R  "example.com: the wildcard needs a label"
 row a.b.example.com peer "$CA"            R  R  "a.b.example.com: the wildcard covers ONE label"
+row a_b.example.com peer "$CA"            R  R  "a_b.example.com: the star stands for LDH bytes only (6.6.14)"
+stop
+echo "leaf DNS:*.com (6.6.14, CVE-67)"
+serve tld
+row a.com           peer "$CA"            R  R  "a.com vs *.com: one label after the star is no wildcard"
+row example.com     peer "$CA"            R  R  "example.com vs *.com"
 stop
 echo "leaf CN=localhost, no SAN"
 serve cn
@@ -407,12 +416,12 @@ if [ "$LIBSSL" = 1 ]; then
 fi
 
 echo "rows: $NNAT native, $NLIB libssl"
-# 24 rows + 5 SNI rows (6.6.14)
-[ "$NNAT" -ge 29 ] || { echo "  FAIL: only $NNAT native rows ran (floor 29)"; FAILS=$((FAILS + 1)); }
+# 27 rows + 5 SNI rows (6.6.14)
+[ "$NNAT" -ge 32 ] || { echo "  FAIL: only $NNAT native rows ran (floor 32)"; FAILS=$((FAILS + 1)); }
 if [ "$LIBSSL" = 1 ]; then
-    # 24 rows x 2 libssl legs (B, L) + 5 SNI rows x 2 builds + 4 pin rows x 2 builds
+    # 27 rows x 2 libssl legs (B, L) + 5 SNI rows x 2 builds + 4 pin rows x 2 builds
     # + 5 required-symbol legs
-    [ "$NLIB" -ge 71 ] || { echo "  FAIL: only $NLIB libssl rows ran (floor 71)"; FAILS=$((FAILS + 1)); }
+    [ "$NLIB" -ge 77 ] || { echo "  FAIL: only $NLIB libssl rows ran (floor 77)"; FAILS=$((FAILS + 1)); }
 fi
 if [ "$FAILS" -ne 0 ]; then echo "FAIL: $G: $FAILS row(s)"; exit 1; fi
 if [ "$LIBSSL" != 1 ]; then echo "SKIP: $G: the libssl legs could not run ($WHY); native rows PASS"; exit 77; fi

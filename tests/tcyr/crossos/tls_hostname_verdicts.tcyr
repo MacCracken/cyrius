@@ -1,0 +1,238 @@
+# tls_hostname_verdicts.tcyr — 6.6.14 (CVE-67): one SAN / host table, and both TLS backends'
+# verdicts on it, so the native matcher and libssl cannot drift apart again.
+#
+# ⛔ THE DEFECT. The native matcher (_tn_host_match, lib/tls_native_conn.cyr) took ANY dNSName
+# beginning "*." as a wildcard over the host's first label: a certificate for "*.com" verified
+# a.com, b.com and every other .com host; "*.example.com.", "*.a_b.com", "*.*.example.com" and
+# "*." matched names OpenSSL refuses, and the star stood for bytes ("a_b") OpenSSL does not let it.
+# The libssl binder (6.6.13, CVE-59) hands the same host to OpenSSL's X509_check_host with
+# NO_PARTIAL_WILDCARDS | NEVER_CHECK_SUBJECT, which refuses every one of those. And OpenSSL reads a
+# host that STARTS with '.' as a subdomain pattern (".example.com" matches a.example.com), which
+# native never did. Now native implements OpenSSL's valid_star + wildcard_match exactly, and the
+# shared classifier (lib/tls_hostid.cyr) gives a leading-dot host no identity on both backends.
+#
+# THE TABLE. Each row is a certificate (built here, DER, with the row's SubjectAltName entries),
+# a host, and the verdict OpenSSL gives through the libssl binder's routing (an IP literal against
+# iPAddress SANs with X509_check_ip_asc, a DNS name against dNSName SANs with X509_check_host and
+# the binder's own _TLS_LIBSSL_HOSTFLAGS, a host with no identity refused). Every host checks the
+# NATIVE verdict against that column — pure functions, so this runs on every cross-OS host. Where
+# libssl is reachable (Linux x86_64 with libssl.so.3 and the dlopen-helper) every row ALSO asks
+# OpenSSL itself, so the column is OpenSSL's live answer, not a transcription: a row where the two
+# backends disagree fails on one side or the other.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/io.cyr"
+include "lib/tls.cyr"
+
+var _hv_der = 0;             # the certificate under construction
+var _hv_len = 0;
+var _hv_libssl = 0;          # 1 when OpenSSL answers too
+var _hv_d2i = 0;
+var _hv_check_host = 0;
+var _hv_check_ip = 0;
+var _hv_x509_free = 0;
+var _hv_rows = 0;
+var _hv_lrows = 0;
+
+# DER length octets for `n` at `out`; returns the count.
+fn _hv_len_oct(out, n): i64 {
+    if (n < 128) { store8(out, n); return 1; }
+    if (n < 256) { store8(out, 0x81); store8(out + 1, n); return 2; }
+    store8(out, 0x82); store8(out + 1, (n >> 8) & 0xFF); store8(out + 2, n & 0xFF);
+    return 3;
+}
+
+# Wrap content[0..clen) in a TLV with `tag` at `out`; returns the bytes written.
+fn _hv_tlv(out, tag, content, clen): i64 {
+    store8(out, tag);
+    var h = 1 + _hv_len_oct(out + 1, clen);
+    memcpy(out + h, content, clen);
+    return h + clen;
+}
+
+# Build a certificate whose SubjectAltName holds the entries in `spec`: "D:<name>" a dNSName,
+# "I:<hex octets>" an iPAddress, separated by '|'; spec "" builds a SAN with one empty dNSName.
+# The signature is a placeholder: X509_check_host and the native SAN walk read names, not trust.
+fn _hv_build(spec): i64 {
+    var gn = alloc(2048);
+    var gl = 0;
+    var sl = strlen(spec);
+    var i = 0;
+    while (i <= sl) {
+        var j = i;
+        while (j < sl && load8(spec + j) != 124) { j = j + 1; }        # '|'
+        if (j - i >= 2) {
+            var kind = load8(spec + i);
+            if (kind == 68) {                                           # 'D'
+                gl = gl + _hv_tlv(gn + gl, 0x82, spec + i + 2, j - i - 2);
+            } else {
+                var oct = hex_decode(spec + i + 2, j - i - 2);
+                gl = gl + _hv_tlv(gn + gl, 0x87, oct, (j - i - 2) / 2);
+            }
+        } else {
+            if (sl == 0) { gl = gl + _hv_tlv(gn + gl, 0x82, spec, 0); }
+        }
+        i = j + 1;
+    }
+    var t1 = alloc(4096);
+    var t2 = alloc(4096);
+    var n = _hv_tlv(t1, 0x30, gn, gl);                                  # GeneralNames
+    var on = _hv_tlv(t2, 0x04, t1, n);                                  # extnValue OCTET STRING
+    memcpy(t1, hex_decode("0603551d11", 10), 5);                        # subjectAltName OID
+    memcpy(t1 + 5, t2, on);
+    n = _hv_tlv(t2, 0x30, t1, 5 + on);                                  # Extension
+    on = _hv_tlv(t1, 0x30, t2, n);                                      # Extensions
+    var exts = alloc(4096);
+    var el = _hv_tlv(exts, 0xA3, t1, on);                               # [3] EXPLICIT
+    # version v3, serial 1, ecdsa-with-SHA256, issuer CN=t, 2026..2036, subject CN=t, P-256 key G
+    var head = hex_decode("a003020102020101300a06082a8648ce3d040302300c310a300806035504030c0174301e170d3236303130313030303030305a170d3336303130313030303030305a300c310a300806035504030c01743059301306072a8648ce3d020106082a8648ce3d030107034200046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5", 342);
+    var hl = 171;
+    memcpy(t1, head, hl);
+    memcpy(t1 + hl, exts, el);
+    n = _hv_tlv(t2, 0x30, t1, hl + el);                                 # TBSCertificate
+    var tail = hex_decode("300a06082a8648ce3d0403020309003006020101020101", 46);
+    memcpy(t2 + n, tail, 23);
+    _hv_len = _hv_tlv(_hv_der, 0x30, t2, n + 23);                       # Certificate
+    return _hv_len;
+}
+
+# OpenSSL's verdict through the binder's routing (lib/tls.cyr _tls_libssl_bind_host): 1 / 0.
+fn _hv_openssl(host): i64 {
+    var pp[8];
+    store64(&pp, _hv_der);
+    var x = fncall3(_hv_d2i, 0, &pp, _hv_len);
+    if (x == 0) { return 0 - 1; }
+    var hl = strlen(host);
+    var ipb[16];
+    var kind = 0 - 1;
+    if (hl > 0) { kind = _tn_parse_ip_literal(host, hl, &ipb); }
+    var v = 0;
+    if (kind == 0) { v = fncall5(_hv_check_host, x, host, 0, _TLS_LIBSSL_HOSTFLAGS, 0) & 0xFFFFFFFF; }
+    if (kind > 0) { v = fncall3(_hv_check_ip, x, host, _TLS_LIBSSL_HOSTFLAGS) & 0xFFFFFFFF; }
+    fncall1(_hv_x509_free, x);
+    if (v == 1) { return 1; }
+    return 0;
+}
+
+# OpenSSL's RAW X509_check_host verdict, no classifier in front of it.
+fn _hv_openssl_raw(host): i64 {
+    var pp[8];
+    store64(&pp, _hv_der);
+    var x = fncall3(_hv_d2i, 0, &pp, _hv_len);
+    if (x == 0) { return 0 - 1; }
+    var v = fncall5(_hv_check_host, x, host, 0, _TLS_LIBSSL_HOSTFLAGS, 0) & 0xFFFFFFFF;
+    fncall1(_hv_x509_free, x);
+    if (v == 1) { return 1; }
+    return 0;
+}
+
+# One row: certificate `spec`, `host`, the verdict `want` (1 match / 0 none).
+fn _hv_row(spec, host, want, label): i64 {
+    _hv_build(spec);
+    var nv = _tn_cert_san_match(_hv_der, _hv_len, host, strlen(host));
+    assert_eq(nv, want, label);
+    _hv_rows = _hv_rows + 1;
+    if (_hv_libssl == 1) {
+        assert_eq(_hv_openssl(host), want, "  OpenSSL (X509_check_host / _ip_asc) agrees");
+        _hv_lrows = _hv_lrows + 1;
+    }
+    return 0;
+}
+
+fn test_wildcards(): i64 {
+    test_group("dNSName wildcards: native answers as OpenSSL does under NO_PARTIAL_WILDCARDS");
+    _hv_row("D:*.example.com", "a.example.com", 1, "*.example.com / a.example.com");
+    _hv_row("D:*.example.com", "A.EXAMPLE.COM", 1, "*.example.com / A.EXAMPLE.COM: case-insensitive");
+    _hv_row("D:*.EXAMPLE.com", "foo-bar.example.COM", 1, "*.EXAMPLE.com / foo-bar.example.COM");
+    _hv_row("D:*.example.com", "-a.example.com", 1, "*.example.com / -a.example.com: '-' is LDH");
+    _hv_row("D:*.example.com", "xn--bcher-kva.example.com", 1, "*.example.com / an A-label under a full-label star");
+    _hv_row("D:*.xn--fiqs8s.example", "a.xn--fiqs8s.example", 1, "*.xn--fiqs8s.example: an A-label after the star");
+    _hv_row("D:*.example.com", "*.example.com", 1, "*.example.com / *.example.com: the star may match a literal '*'");
+    _hv_row("D:*.co.uk", "a.co.uk", 1, "*.co.uk / a.co.uk: two labels after the star (no public-suffix list on either side)");
+    _hv_row("D:*.example.com", "example.com", 0, "*.example.com / example.com: the star needs a label");
+    _hv_row("D:*.example.com", "a.b.example.com", 0, "*.example.com / a.b.example.com: ONE label");
+    _hv_row("D:*.example.com", "a_b.example.com", 0, "*.example.com / a_b.example.com: the star stands for LDH bytes only");
+    _hv_row("D:*.com", "a.com", 0, "*.com / a.com: one label after the star is no wildcard (the CVE-67 row)");
+    _hv_row("D:*.com", "com", 0, "*.com / com");
+    _hv_row("D:*.com", "*.com", 1, "*.com / *.com: compared literally");
+    _hv_row("D:*.", "a.", 0, "*. / a.");
+    _hv_row("D:*", "a", 0, "* / a: a bare star is literal");
+    _hv_row("D:*", "*", 1, "* / *: literally equal");
+    _hv_row("D:*.*.example.com", "a.b.example.com", 0, "*.*.example.com / a.b.example.com: one star at most");
+    _hv_row("D:*.*.example.com", "a.*.example.com", 0, "*.*.example.com / a.*.example.com: no second star, and not literal");
+    _hv_row("D:**.example.com", "a.example.com", 0, "**.example.com / a.example.com");
+    _hv_row("D:*.example.com.", "a.example.com.", 0, "*.example.com. / a.example.com.: a trailing dot makes it literal");
+    _hv_row("D:*.a_b.com", "x.a_b.com", 0, "*.a_b.com / x.a_b.com: a non-LDH byte after the star");
+    _hv_row("D:*.-a.com", "x.-a.com", 0, "*.-a.com / x.-a.com: a label starting with '-'");
+    _hv_row("D:*.a-.com", "x.a-.com", 0, "*.a-.com / x.a-.com: a label ending with '-'");
+    _hv_row("D:*..com", "x..com", 0, "*..com / x..com: an empty label");
+    _hv_row("D:f*.example.com", "foo.example.com", 0, "f*.example.com / foo.example.com: no partial wildcard");
+    _hv_row("D:*f.example.com", "of.example.com", 0, "*f.example.com / of.example.com: no partial wildcard");
+    _hv_row("D:xn--*.example.com", "xn--a.example.com", 0, "xn--*.example.com: no star in an A-label");
+    _hv_row("D:a.*.example.com", "a.b.example.com", 0, "a.*.example.com: the star only in the first label");
+    _hv_row("D:*.com|D:a.com", "a.com", 1, "*.com then a.com / a.com: the second entry matches");
+    return 0;
+}
+
+fn test_literals(): i64 {
+    test_group("dNSName literals, iPAddress SANs and hosts with no identity");
+    _hv_row("D:example.com", "example.com", 1, "example.com / example.com");
+    _hv_row("D:EXAMPLE.com", "example.COM", 1, "EXAMPLE.com / example.COM");
+    _hv_row("D:example.com", "example.com.", 0, "example.com / example.com.: a trailing dot is not equal");
+    _hv_row("D:a_b.example.com", "a_b.example.com", 1, "a_b.example.com: a literal is not LDH-checked");
+    _hv_row("D:example.com", "www.example.com", 0, "example.com / www.example.com");
+    _hv_row("", "example.com", 0, "an empty dNSName matches nothing");
+    _hv_row("D:.example.com", ".example.com", 0, ".example.com: a leading-dot host has no identity on either backend");
+    _hv_row("D:a.example.com", ".example.com", 0, "a.example.com / .example.com: OpenSSL's subdomain reading is refused");
+    _hv_row("D:*.example.com", ".example.com", 0, "*.example.com / .example.com");
+    _hv_row("I:7f000001", "127.0.0.1", 1, "IP 127.0.0.1 / 127.0.0.1");
+    _hv_row("D:127.0.0.1", "127.0.0.1", 0, "DNS:127.0.0.1 / 127.0.0.1: an IP host never matches a dNSName");
+    _hv_row("D:*.0.0.1", "127.0.0.1", 0, "DNS:*.0.0.1 / 127.0.0.1");
+    _hv_row("I:7f000001", "localhost", 0, "IP 127.0.0.1 / localhost");
+    _hv_row("I:00000000000000000000000000000001", "::1", 1, "IP ::1 / ::1");
+    _hv_row("I:00000000000000000000000000000001", "[::1]", 0, "IP ::1 / [::1]: a bracketed host has no identity");
+    _hv_row("D:010.0.0.1|I:0a000001", "010.0.0.1", 1, "010.0.0.1 is a name: its dNSName");
+    _hv_row("I:0a000001", "010.0.0.1", 0, "010.0.0.1 never reaches IP 10.0.0.1");
+    return 0;
+}
+
+# Where libssl answers: the row the classifier exists for, measured against raw OpenSSL.
+fn test_openssl_subdomain_reading(): i64 {
+    if (_hv_libssl == 0) { return 0; }
+    test_group("why a leading-dot host has no identity: raw X509_check_host reads it as 'any subdomain'");
+    _hv_build("D:a.example.com");
+    assert_eq(_hv_openssl_raw(".example.com"), 1, "raw OpenSSL: .example.com matches a.example.com");
+    _hv_build("D:*.example.com");
+    assert_eq(_hv_openssl_raw(".example.com"), 1, "raw OpenSSL: .example.com matches *.example.com");
+    _hv_build("D:*.com");
+    assert_eq(_hv_openssl_raw("a.com"), 0, "raw OpenSSL: *.com does not match a.com");
+    return 0;
+}
+
+alloc_init();
+_hv_der = alloc(8192);
+#ifdef CYRIUS_TARGET_LINUX
+#ifdef CYRIUS_ARCH_X86
+tls_set_backend(TLS_BACKEND_LIBSSL);
+if (tls_available() == 1) {
+    _hv_d2i = tls_dlsym("d2i_X509");
+    _hv_check_host = tls_dlsym("X509_check_host");
+    _hv_check_ip = tls_dlsym("X509_check_ip_asc");
+    _hv_x509_free = tls_dlsym("X509_free");
+    if (_hv_d2i != 0 && _hv_check_host != 0 && _hv_check_ip != 0 && _hv_x509_free != 0) { _hv_libssl = 1; }
+}
+tls_set_backend(TLS_BACKEND_NATIVE);
+#endif
+#endif
+if (_hv_libssl == 1) {
+    println("  libssl reachable: every row is asked of OpenSSL as well");
+} else {
+    println("  libssl not reachable here: the native verdicts are checked against the table alone");
+}
+test_wildcards();
+test_literals();
+test_openssl_subdomain_reading();
+assert_gte(_hv_rows, 47, "every row ran (anti-vacuity)");
+if (_hv_libssl == 1) { assert_eq(_hv_lrows, _hv_rows, "and OpenSSL answered every one"); }
+var r = assert_summary();

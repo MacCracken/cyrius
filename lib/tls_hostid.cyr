@@ -5,8 +5,8 @@
 # (`_tls_libssl_bind_host`, tls.cyr), which is compiled in a `-D CYRIUS_TLS_LIBSSL`
 # build that carries no native stack. `_tn_parse_ip_literal` is the one entry point:
 # 4 / 16 an IPv4 / IPv6 literal (compared with iPAddress SANs only), 0 a DNS name
-# (dNSName SANs only), -1 a ':'-bearing host that is no literal (no identity at all).
-# `_tn_sni_len` asks it whether the host goes out as SNI (a DNS name only; 6.6.14).
+# (dNSName SANs only), -1 a ':'-bearing host that is no literal, or one starting with '.'
+# (no identity at all). `_tn_sni_len` asks it whether the host goes out as SNI (a DNS name only; 6.6.14).
 # Builtins only (load8 / store8), no includes. The `_tn_` names are the native stack's,
 # kept so its callers and tests did not move. CHANGELOG [6.6.13] (CVE-63, CVE-59).
 
@@ -167,7 +167,14 @@ fn _tn_parse_ipv6(host, host_len, out): i64 {
 # "fe80::1%eth0", "1:2:3:4:5:6:7:8:"). No DNS name holds a ':', so a -1 host
 # has no reference identity and matches nothing. CHANGELOG [6.6.13]
 # (CVE-63).
+# 6.6.14 (CVE-67): a host that starts with '.' is -1 too. No DNS name does, and
+# OpenSSL's X509_check_host reads one as a SUBDOMAIN pattern (".example.com"
+# matched a certificate for any name under example.com) — so the libssl binder
+# would have bound it to every subdomain while native bound it to nothing.
 fn _tn_parse_ip_literal(host, host_len, out): i64 {
+    if (host_len > 0) {
+        if ((load8(host) & 0xFF) == 0x2E) { return 0 - 1; }
+    }
     var has_colon = 0;
     var i = 0;
     while (i < host_len) {
