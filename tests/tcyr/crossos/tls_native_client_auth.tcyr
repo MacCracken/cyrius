@@ -22,7 +22,8 @@
 # server from scratch against everything the client just wrote; a read past the end of the log is
 # EOF. Determinism (seeded entropy per role, RFC 6979 ECDSA, PureEdDSA) makes every replay of a
 # side byte-identical on its common prefix, so each round moves the handshake one flight further,
-# and the row ends when neither log grows. The client then sends "ping" and the server answers
+# and the row ends at the first round in which neither side read past the other's log (that round
+# replays itself exactly) or neither log grew. The client then sends "ping" and the server answers
 # "pong", so a row that completes proves both ends hold the same keys.
 #
 # ROWS, each in TLS 1.3 and with the client pinned to TLS 1.2 (the server keeps 1.2..1.3): no
@@ -55,6 +56,10 @@ var _mx_ca = 0;
 var _mx_ca_n = 363;
 var _mx_ca_key = 0;
 var _mx_ca_key_n = 138;
+var _mx_srvEd = 0;
+var _mx_srvEd_n = 390;
+var _mx_srvEd_key = 0;
+var _mx_srvEd_key_n = 48;
 var _mx_srv = 0;
 var _mx_srv_n = 439;
 var _mx_srv_key = 0;
@@ -91,6 +96,8 @@ var _mx_cliSrvEku_key_n = 138;
 fn _mx_fixtures(): i64 {
     _mx_ca = hex_decode("308201673082010ea00302010202142d30966ec73d44673b1b19a05ddd4cb4e46e3379300a06082a8648ce3d04030230123110300e06035504030c076d746c732d6361301e170d3235303130313030303030305a170d3439313233313030303030305a30123110300e06035504030c076d746c732d63613059301306072a8648ce3d020106082a8648ce3d03010703420004431236818f70a0a845db41b1eacde77db534414353c6db5d825b2baab3e2b265ddd3f493b2b9b09e25a47e194ea086a3fbeb8a2649ba44af6f0002a9bfdb6b38a3423040300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106301d0603551d0e041604140974887636a5881b8b22a95ab5e91f30e1a6bd06300a06082a8648ce3d040302034700304402207ccbb84ac61e6f6a78fac625ce49a86c4da2eaad993f99591c75cfc154f5686b02203934af5b1e13cc0c07c2d93036ec92d2aa2bd50a19d968fa37e571b042283cc4", 726);
     _mx_ca_key = hex_decode("308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420b40d8e0187d6a902e02b63c10c2f26eff674e0a302f2d2f94ba472bca461b2efa14403420004431236818f70a0a845db41b1eacde77db534414353c6db5d825b2baab3e2b265ddd3f493b2b9b09e25a47e194ea086a3fbeb8a2649ba44af6f0002a9bfdb6b38", 276);
+    _mx_srvEd = hex_decode("3082018230820129a003020102021455467366670d68f3ddcf3863ab923cb68bb65275300a06082a8648ce3d04030230123110300e06035504030c076d746c732d6361301e170d3235303130313030303030305a170d3439313233313030303030305a30143112301006035504030c096c6f63616c686f7374302a300506032b6570032100e54ac0a169b5a2da02b48d72c991f6f457561be97814bfc3b74856c252d971b6a3818930818630090603551d1304023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b0601050507030130140603551d11040d300b82096c6f63616c686f7374301d0603551d0e041604146d64c07cd77ab766983ee8fd882a3593429b6587301f0603551d230418301680140974887636a5881b8b22a95ab5e91f30e1a6bd06300a06082a8648ce3d040302034700304402201fd03c6ae8c91130773c40afb9a03de1d0589bc2d653a4d8b65ed067905e88c002207b481eaf728021c90c7c14fb2cbed080c7bf3257e077a0ff6146a1aef2931ee0", 780);
+    _mx_srvEd_key = hex_decode("302e020100300506032b657004220420ed9a9377220c90b1593bd983cfe617e2b8954b85724eaa167ebe90d40c657c81", 96);
     _mx_srv = hex_decode("308201b330820158a003020102021455467366670d68f3ddcf3863ab923cb68bb65274300a06082a8648ce3d04030230123110300e06035504030c076d746c732d6361301e170d3235303130313030303030305a170d3439313233313030303030305a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d03010703420004a0e41eb7cb2a8d46dd7440fb89b5cec545b01100fb68a0372bb1f80151a15b16beb6d2718328b4ac9cef4a18f408677393ad858bebb5c6d897d235cce8b8f4b0a3818930818630090603551d1304023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b0601050507030130140603551d11040d300b82096c6f63616c686f7374301d0603551d0e0416041440e27d855342c23b0e788074331c8a5040ff7cfc301f0603551d230418301680140974887636a5881b8b22a95ab5e91f30e1a6bd06300a06082a8648ce3d0403020349003046022100ec1305f129caabfa468da2cdf004f4b60308d1154ea35edd9e01c2c1f55e904a02210099a5d1f34484c676a2e126720cf5534c1502ac98a6ef1fd188812ebdff4c6875", 878);
     _mx_srv_key = hex_decode("308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420ed0735a3ad60be213f0651d7d5983db819d0623e9ad19828b5eb47fb282e719da14403420004a0e41eb7cb2a8d46dd7440fb89b5cec545b01100fb68a0372bb1f80151a15b16beb6d2718328b4ac9cef4a18f408677393ad858bebb5c6d897d235cce8b8f4b0", 276);
     _mx_cli = hex_decode("3082019a30820141a003020102021455467366670d68f3ddcf3863ab923cb68bb6526f300a06082a8648ce3d04030230123110300e06035504030c076d746c732d6361301e170d3235303130313030303030305a170d3439313233313030303030305a30153113301106035504030c0a636c69656e742d6f6e653059301306072a8648ce3d020106082a8648ce3d03010703420004fc20cb7eca3b0cc1f675cc405a8c7b221bd0e166a21c727dfaff0a4a5fd5ff7a9a360a86edad70a4fea87b60b20729e28a4ae824400137f4fcfe2fbf3da78902a372307030090603551d1304023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b06010505070302301d0603551d0e0416041443be96c0addbff4bc1e3db7b3e0f27a52f0ec81d301f0603551d230418301680140974887636a5881b8b22a95ab5e91f30e1a6bd06300a06082a8648ce3d04030203470030440220695d693f37c21c5ce66e702b7777a66f1956454dce06d1f8a3adb22b33ebe5e602206adc0c91c7afa344abed20a7b51060600f9e3a43cc6d233bb173b8e2feccfa2b", 828);
@@ -122,6 +129,7 @@ var _mx_sc_next_len = 0;
 var _mx_cs_rd = 0;       # the server's read cursor into _mx_cs
 var _mx_sc_rd = 0;       # the client's read cursor into _mx_sc
 var _mx_overflow = 0;
+var _mx_eof = 0;         # the running side read past the end of the other's log
 
 fn _mx_read(h, buf, n): i64 {
     var src = _mx_sc;
@@ -133,7 +141,10 @@ fn _mx_read(h, buf, n): i64 {
         cur = _mx_cs_rd;
     }
     var avail = len - cur;
-    if (avail <= 0) { return 0; }                       # EOF: the other side has not got here yet
+    if (avail <= 0) {                                   # EOF: the other side has not got here yet
+        _mx_eof = 1;
+        return 0;
+    }
     var k = n;
     if (k > avail) { k = avail; }
     memcpy(buf, src + cur, k);
@@ -257,6 +268,8 @@ var _mx_h_root_n = 0;
 # on the server, [5] tls_get_peer_spki_der on the server's shim, [6] rounds to the fixed point (0 =
 # never settled), [7] the client's TLS_CTX_OFF_CERT_REQUESTED.
 var _mx_obs: i64[8];
+var _mx_c_eof = 0;       # the last client run read past the end of the server's log
+var _mx_s_eof = 0;       # the last server run, of the client's
 
 fn _mx_srv_hook(hctx, handle): i64 {
     if (tls_set_verify(handle, _mx_h_mode, 0) != 0) { return 1; }
@@ -269,6 +282,7 @@ fn _mx_srv_hook(hctx, handle): i64 {
 fn _mx_client_run(v12, ccert, cclen, ckey, cklen): i64 {
     reset_via(_mx_ca_arena);
     _mx_seed(0x2468ACE1);
+    _mx_eof = 0;
     _mx_sc_rd = 0;
     _mx_cs_next_len = 0;
     var c = tls_native_new_client_in(_mx_ca_arena, 0, 0);
@@ -292,6 +306,7 @@ fn _mx_client_run(v12, ccert, cclen, ckey, cklen): i64 {
         }
     }
     _mx_obs[7] = load64(c + TLS_CTX_OFF_CERT_REQUESTED);
+    _mx_c_eof = _mx_eof;
     var t = _mx_cs;
     _mx_cs = _mx_cs_next;
     _mx_cs_next = t;
@@ -302,13 +317,14 @@ fn _mx_client_run(v12, ccert, cclen, ckey, cklen): i64 {
 fn _mx_server_run(): i64 {
     reset_via(_mx_sv_arena);
     _mx_seed(0x13579BDF);
+    _mx_eof = 0;
     _mx_cs_rd = 0;
     _mx_sc_next_len = 0;
     var creds: i64[4];
-    store64(&creds, _mx_srv);
-    store64(&creds + 8, _mx_srv_n);
-    store64(&creds + 16, _mx_srv_key);
-    store64(&creds + 24, _mx_srv_key_n);
+    store64(&creds, _mx_srvEd);                         # Ed25519: the cheapest server signature to replay
+    store64(&creds + 8, _mx_srvEd_n);
+    store64(&creds + 16, _mx_srvEd_key);
+    store64(&creds + 24, _mx_srvEd_key_n);
     var sh = tls_accept_alloc_in(_mx_sv_arena, MX_SERVER, &creds, &_mx_srv_hook, 0);
     _mx_obs[2] = 0 - 999;
     _mx_obs[3] = 0 - 99;
@@ -335,6 +351,7 @@ fn _mx_server_run(): i64 {
         _mx_obs[4] = tls_native_get_peer_cert_der(nctx, g, 4096);
         _mx_obs[5] = tls_get_peer_spki_der(sh, g, 4096);
     }
+    _mx_s_eof = _mx_eof;
     var t = _mx_sc;
     _mx_sc = _mx_sc_next;
     _mx_sc_next = t;
@@ -361,6 +378,12 @@ fn _mx_row(v12, ccert, cclen, ckey, cklen, smode, root, root_n): i64 {
             _mx_client_run(v12, ccert, cclen, ckey, cklen);
             _mx_server_run();
             r = r + 1;
+            # Settled: a round in which neither run read past the other's log replays itself
+            # exactly (each side consumed only bytes the other's next run writes again), or one in
+            # which neither log grew.
+            if (_mx_c_eof == 0) {
+                if (_mx_s_eof == 0) { settled = 1; }
+            }
             if (_mx_cs_len == pc) {
                 if (_mx_sc_len == ps) { settled = 1; }
             }
