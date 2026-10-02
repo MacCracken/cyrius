@@ -408,7 +408,7 @@ fn _tls_init_resolve(): i64 {
     # why this copies `lib/freelist.cyr` and not `lib/alloc.cyr`.
     # (6.6.14: the attempt latch the lazy-init proposal named is now `_tls_init_state`, a
     # 0 -> 1 -> 2 claim; its publish happens after this one, through atomic_store.)
-    # atomic.cyr is already in scope transitively (tls_native.cyr -> alloc.cyr).
+    # atomic.cyr is included at the top of this file (6.6.14; it used to arrive transitively).
     #ifdef CYRIUS_ARCH_AARCH64
     atomic_fence();
     #endif
