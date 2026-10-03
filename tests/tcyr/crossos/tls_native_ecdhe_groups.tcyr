@@ -34,7 +34,7 @@
 # point; a low-order x25519 key; 1.2: no shared group, an off-curve or short ClientKeyExchange);
 # every row checks that neither side holds a byte of its ephemeral private key or shared secret
 # afterwards, failed handshakes and failed writes included; tls_native_set_groups and the
-# ClientHellos it shapes.
+# ClientHellos it shapes; a deterministic mutation pass over the new parsers.
 #
 # MUTATIONS measured RED: see the ledger at the end of this file.
 include "lib/assert.cyr"
@@ -243,7 +243,6 @@ fn _gx_srv_hook(hctx, handle): i64 {
     }
     return 0;
 }
-
 
 fn _gx_client_run(): i64 {
     reset_via(_gx_ca_arena);
@@ -1222,6 +1221,104 @@ fn test_accept12_direct(): i64 {
     return 0;
 }
 
+# The parsers this work added read untrusted bytes: the server's ClientHello key_share walk (first
+# and second ClientHello) and the client's HelloRetryRequest / ServerHello checks. A deterministic
+# mutation pass over valid messages — 1 to 4 random bytes overwritten, or the message truncated —
+# on every host: every call must come back with TLS_OK, a length, or a TLS_ERR_* code, never a
+# fault. (fuzz/tls_client_hello.fcyr, compiled only, rarely reaches the extension block.)
+var _gf_rng = 88172645463325252;
+fn _gf_next(): i64 {
+    var x = _gf_rng;
+    x = x ^ (x << 13);
+    x = x ^ (x >> 7);
+    x = x ^ (x << 17);
+    _gf_rng = x;
+    return (x >> 8) & 0x7FFFFFFF;
+}
+
+# Copy `n` bytes of `src` to `dst` and mutate them; returns the mutated length (<= n).
+fn _gf_mutate(dst, src, n): i64 {
+    memcpy(dst, src, n);
+    var len = n;
+    if (_gf_next() % 5 == 0) { len = _gf_next() % n; }
+    var k = 1 + _gf_next() % 4;
+    var i = 0;
+    while (i < k) {
+        if (len > 0) { store8(dst + (_gf_next() % len), _gf_next() & 0xFF); }
+        i = i + 1;
+    }
+    return len;
+}
+
+fn _gf_sane(rc): i64 {
+    if (rc >= 0) { return 1; }
+    if (rc >= 0 - 23) { return 1; }
+    return 0;
+}
+
+fn test_parser_mutations(): i64 {
+    test_group("6.6.15 — the new parsers under mutated input (no fault, a defined result)");
+    var base = alloc(4096);
+    var m = alloc(4096);
+    var out = alloc(8192);
+    # A first ClientHello (shares on x25519 and P-256), a second one (P-256), an HRR, a ServerHello.
+    _gb_start(base);
+    _gx_put_ch13(0, 0, TLS_AES_256_GCM_SHA384, TLS_CHACHA20_POLY1305_SHA256, 1, GX_X, GX_256, GX_384,
+      2, GX_X, _gk_x, 32, GX_256, _gk_256, 65);
+    var ch1 = base + 5;
+    var ch1n = _gbn - 5;
+    var b2 = base + 1024;
+    _gb_start(b2);
+    _gx_put_ch13(0, 0, TLS_AES_256_GCM_SHA384, 0, 1, GX_256, GX_384, 0, 1, GX_256, _gk_256, 65, 0, 0, 0);
+    var ch2 = b2 + 5;
+    var ch2n = _gbn - 5;
+    var b3 = base + 2048;
+    _gb_start(b3);
+    _gx_put_shr(1, TLS_AES_256_GCM_SHA384, 0, 1, GX_256, 0, 0, 24, 0);
+    var hrr = b3 + 5;
+    var hrrn = _gbn - 5;
+    var b4 = base + 3072;
+    _gb_start(b4);
+    _gx_put_shr(0, TLS_AES_256_GCM_SHA384, 0, 1, GX_X, _gk_x, 32, 0, 0);
+    var sh = b4 + 5;
+    var shn = _gbn - 5;
+    var prefs[4];
+    _tn_be16_w(&prefs,     TLS_AES_256_GCM_SHA384);
+    _tn_be16_w(&prefs + 2, TLS_CHACHA20_POLY1305_SHA256);
+    var bad = 0;
+    var runs = 0;
+    var it = 0;
+    while (it < 120) {
+        reset_via(_gx_sv_arena);
+        # the server's first ClientHello parse (no ECDH: _tn_parse_client_hello alone)
+        var s1 = tls_native_new_server_in(_gx_sv_arena, _gx_srvEd, _gx_srvEd_n, _gx_srvEd_key, _gx_srvEd_key_n);
+        var n1 = _gf_mutate(m, ch1, ch1n);
+        if (_gf_sane(_tn_parse_client_hello(s1, m + 4, n1 - 4, &prefs, 2)) == 0) { bad = bad + 1; }
+        # the second ClientHello, against a server that sent a HelloRetryRequest for P-256
+        var s2 = tls_native_new_server_in(_gx_sv_arena, _gx_srvEd, _gx_srvEd_n, _gx_srvEd_key, _gx_srvEd_key_n);
+        store64(s2 + TLS_CTX_OFF_HRR, 1);
+        store64(s2 + TLS_CTX_OFF_GROUP, GX_256);
+        store64(s2 + TLS_CTX_OFF_CIPHER, TLS_AES_256_GCM_SHA384);
+        var n2 = _gf_mutate(m, ch2, ch2n);
+        if (_gf_sane(_tn_parse_client_hello(s2, m + 4, n2 - 4, &prefs, 2)) == 0) { bad = bad + 1; }
+        # the client's HelloRetryRequest and ServerHello parses
+        reset_via(_gx_ca_arena);
+        var c1 = tls_native_new_client_in(_gx_ca_arena, 0, 0);
+        tls_native_client_build_hello(c1, out, 8192);
+        var n3 = _gf_mutate(m, hrr, hrrn);
+        if (_gf_sane(tls_native_client_process_hrr(c1, m, n3, out, 8192)) == 0) { bad = bad + 1; }
+        var c2 = tls_native_new_client_in(_gx_ca_arena, 0, 0);
+        tls_native_client_build_hello(c2, out, 8192);
+        var n4 = _gf_mutate(m, sh, shn);
+        if (_gf_sane(tls_native_client_parse_server_hello(c2, m, n4)) == 0) { bad = bad + 1; }
+        runs = runs + 1;
+        it = it + 1;
+    }
+    assert_eq(runs, 120, "120 rounds of four mutated parses each ran to the end (no fault)");
+    assert_eq(bad, 0, "  every result was TLS_OK, a length or a TLS_ERR_* code");
+    return 0;
+}
+
 fn _gx_all(): i64 {
     alloc_init();
     GX_X = TLS_GROUP_X25519;
@@ -1245,14 +1342,17 @@ fn _gx_all(): i64 {
     test_client_refusals();
     test_server_refusals();
     test_failed_writes();
+    test_parser_mutations();
     tls_native_set_entropy(0);
     tls_native_set_transport(0, 0, 0);
     return 0;
 }
 
 # MUTATION LEDGER (6.6.15). eac97bb2's lib — the lane before this work, with the symbols this file
-# needs stubbed (tls_native_set_groups a no-op) — fails 281 of the 573 assertions. Each mutant below
-# measured RED against them (tls_native_scaffold.tcyr pins MW1-MW4 at the primitive level too):
+# needs stubbed (tls_native_set_groups a no-op) — fails 281 of the 573 assertions outside the
+# parser-mutation group (which calls tls_native_client_process_hrr, absent there). Each mutant
+# below measured RED against those 573 (tls_native_scaffold.tcyr pins MW1-MW4 at the primitive
+# level too):
 #   MG1  supported_groups written with one group           MG14 the 1.2 server ignores supported_groups
 #   MG2  an HRR for the group already shared accepted       MG15 2nd CH: another cipher accepted
 #   MG3  an HRR for a group never listed accepted           MG16/17 2nd CH: another session id accepted
