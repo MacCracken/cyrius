@@ -158,6 +158,106 @@ RFC 9525 §6.3):
 - Pinned end to end by `tests/gates/platform/tls_libssl_hostname_binding.sh` (both
   backends against OpenSSL's `s_server`).
 
+#### Key exchange (native, 6.6.15)
+
+The native stack does ECDHE on **x25519, secp256r1 and secp384r1**, in TLS 1.3 and TLS 1.2, as
+client and as server — sigil's constant-time `ecdh_p256_*` / `ecdh_p384_*` for the NIST curves,
+every key drawn through the `tls_native_set_entropy` hook, the peer's point validated by sigil
+(0x04 prefix, coordinates below p, on the curve) and an all-zero x25519 secret refused (RFC 8446
+§7.4.2, RFC 8422 §5.11), the shared secret the x-coordinate at full field length (RFC 8446 §7.4.2,
+RFC 8422 §5.10). `tls_native_get_group` reports the negotiated group (29 / 23 / 24) on both roles.
+
+- **The groups a ctx offers or accepts** are, in preference order, x25519, secp256r1, secp384r1 —
+  or the list `tls_native_set_groups(ctx, groups, n)` installed (`groups` points at 1 to 3 i64
+  `TLS_GROUP_*` values, none twice; `TLS_ERR_INVALID_PARAM` otherwise, the ctx unchanged). Native
+  only — the hook's `handle` is the native ctx — and set before the handshake (a server's in its
+  accept hook). The OpenSSL analogue is `SSL_set1_groups`.
+- **TLS 1.3 client.** supported_groups lists the ctx's groups and the key_share carries ONE share,
+  for the first of them — x25519 by default. A P-256 share up front would cost a second key pair
+  on every connection (2.7 ms here against x25519's 2.4 ms; P-384 7.3 ms) to save a round trip only
+  to a server without X25519, which is OpenSSL's and the browsers' choice too; a caller whose
+  server prefers a NIST curve lists it first and gets that share instead. A server taking none of
+  the share's group answers with a **HelloRetryRequest** (RFC 8446 §4.1.4), which the client takes
+  ONCE: it sends the same ClientHello with a share on the requested group and the cookie echoed,
+  and its transcript starts with message_hash(ClientHello1) (§4.4.1). Refused with RFC 8446's
+  alert: a second HelloRetryRequest (unexpected_message, `TLS_ERR_PROTOCOL`); one for a group the
+  client did not list, for the group it already shared, or changing nothing, one naming a cipher
+  suite or session id it did not send, a non-null compression method, a supported_versions other
+  than 0x0304, or any extension twice (illegal_parameter); a cookie whose length disagrees with its
+  extension, an empty cookie (cookie<1..2^16-1>), a supported_versions or key_share that is not
+  2 bytes, or bytes after the extensions (decode_error); an extension other than
+  supported_versions / key_share / cookie — unsupported_extension when the ClientHello did not
+  carry it, illegal_parameter when it did (supported_groups, signature_algorithms, server_name
+  after SNI, ALPN when offered: RFC 8446 §4.1.4 / §4.2); a ServerHello after it on another cipher
+  or group (illegal_parameter). One middlebox CCS may come after the HelloRetryRequest — still one
+  per connection. Any ServerHello must echo the client's empty session id, carry compression method
+  0, a cipher suite the client offered, no TLS 1.2 DOWNGRD random (RFC 8446 §4.1.3) and a
+  supported_versions of 0x0304 (illegal_parameter; with no supported_versions, protocol_version),
+  and a key_share — missing_extension without one — on the client's group whose key is exactly
+  that group's length (illegal_parameter; a byte after the key is decode_error).
+- **TLS 1.3 server.** It takes the first of its groups the client sent a usable share for — a
+  usable x25519 share is taken over asking for a group it prefers, which would cost a round trip —
+  and otherwise sends ONE HelloRetryRequest for the first of its groups the client lists, reads the
+  second ClientHello (one middlebox CCS may precede it) and requires there the share it asked for,
+  the same legacy_session_id and the same cipher suite (illegal_parameter otherwise — never a
+  second HelloRetryRequest). It refuses, with the alert, a key_share without supported_groups
+  or supported_groups without a key_share (missing_extension, RFC 8446 §9.2 — as OpenSSL does), a
+  share for a group the client did not list, two shares for one group, a share of the wrong length
+  (x25519's is not validated as a point, so its length is the check), a point sigil refuses
+  (illegal_parameter), a supported_groups list that is odd-length, empty or not its extension's
+  length, a client_shares list that is not its extension's length, an empty key_exchange, a
+  legacy_session_id over 32 bytes (decode_error), no cipher suite in common and no shared group
+  (handshake_failure). A second ClientHello that no longer offers TLS 1.3 is illegal_parameter.
+  **Which version a ClientHello asks for is its supported_versions' alone** (RFC 8446 §4.2.1): one
+  listing 0x0304 is TLS 1.3; one without it, or without the extension, is TLS 1.2 — a key_share
+  does not make it 1.3 (until 6.6.15 it did, so the server negotiated 1.3 with a client that had
+  not offered it). A TLS 1.2 hello to a ctx pinned to TLS 1.3 is refused with protocol_version
+  (RFC 8446 §4.2.1; `TLS_ERR_PROTOCOL`, as before, but until 6.6.15 with no alert), and a
+  malformed one with decode_error. **Middlebox compatibility** (RFC 8446 §D.4): when the client's legacy_session_id
+  is not empty, the server sends one dummy ChangeCipherSpec directly after its first handshake
+  message — the HelloRetryRequest, else the ServerHello — in the same write; with an empty one,
+  none (until 6.6.15 it never sent it; OpenSSL tolerates the absence).
+- **TLS 1.2 client.** It offers the ctx's groups — x25519 first by default, with or without a
+  client certificate — and does ECDHE on whichever the server's ServerKeyExchange names, which must
+  be one of them. A ServerKeyExchange signed with an ECDSA scheme is read as TLS 1.2 defines it —
+  the scheme names the hash, the key names the curve — so a P-384 server certificate that signs
+  SHA-256 verifies.
+- **TLS 1.2 server.** It picks the first of its groups the client's supported_groups lists, its
+  own first group when the client sends none (RFC 8422 §4), and refuses a client listing none of
+  them with handshake_failure. A ClientKeyExchange point sigil refuses, or whose length byte is not
+  the group's point length, is illegal_parameter; one of another size or handshake type is
+  decode_error. The group never depends on the certificate: a P-384 certificate signs a secp256r1
+  exchange when the client lists both. But in TLS 1.2 the client's list also bounds an ECDSA
+  certificate's curve (RFC 8422 §5.1), so a client whose supported_groups omits it is refused with
+  handshake_failure — the server's refusal, where until 6.6.15 the client refused the certificate
+  ("wrong curve").
+  An Ed25519 certificate is not bound by the list. The suite is the first the client offers that
+  the server can answer — ECDHE_ECDSA with AES-256-GCM-SHA384 or ChaCha20-Poly1305 (the server's
+  key is ECDSA or Ed25519); none of those is handshake_failure. Until 6.6.15 an ECDHE_RSA offer was
+  answered with an ECDHE_ECDSA suite the client never offered ("wrong cipher returned") and
+  ECDHE-ECDSA-AES128-GCM-SHA256 alone failed with no alert.
+- **Ephemeral secrets.** On every side the ephemeral private key is zeroised as soon as the shared
+  secret exists (and a 1.3 client's first share's key when a HelloRetryRequest replaces it), the
+  shared secret / premaster as soon as the handshake (1.3) or master (1.2) secret is derived — so
+  each side's next flight already leaves without them — and every handshake driver
+  (`tls_native_connect`, `tls_native_accept`, `tls_native_accept_12`) wipes both again on its way
+  out, success or failure.
+- **Memory.** A HelloRetryRequest adds about 2.8 KB to a client's handshake and 0.4 KB to a
+  server's (measured at 6.6.15 against an Ed25519 server); the capacities under "Memory" hold.
+
+⚠ **Until 6.6.15** only the 1.2 CLIENT (earlier in 6.6.15) did a NIST curve. The 1.3 client offered
+x25519 alone and failed every HelloRetryRequest (`s_server -tls1_3 -groups P-256`: an alert,
+`TLS_ERR_ALERT`); the 1.3 server took an x25519 share or nothing (a client without one failed
+with `TLS_ERR_HANDSHAKE_FAILED` and no alert — even `s_client -groups P-256:X25519`, whose
+HelloRetryRequest `tls_native_accept` refused to send); the 1.2 server sent every client an x25519
+ServerKeyExchange (`s_client -tls1_2 -groups P-256`: "wrong curve"); neither 1.3 side checked for an
+all-zero x25519 secret; and neither 1.3 side nor the 1.2 server ever zeroised its ephemeral key or
+shared secret. 6.6.14's listing of a P-256 / P-384 client certificate's curve with x25519 the
+only key exchange (a server ranking that curve first failed it) is gone too. Pinned by
+`tests/tcyr/crossos/tls_native_ecdhe_groups.tcyr` (native↔native, every host),
+`tests/tcyr/crossos/tls12_client_ecdhe.tcyr` and `tests/gates/platform/tls_native_client_auth_openssl.sh`
+(its E, H and G legs, against OpenSSL).
+
 ### Connect — staged (resumption-aware, allocator-aware)
 
 The v5.10.27 staged-connect surface exists to inject a cached session between `SSL_new` and
@@ -239,20 +339,11 @@ CertificateRequest is sent — while native is never looser than asked and reque
 - **The client side.** A native client presents the certificate and key a hook installed
   (`tls_ctx_use_certificate_file` / `_private_key_file`) when a TLS 1.3 OR TLS 1.2 server asks,
   and an empty Certificate when it holds none (or none the server's CertificateRequest accepts).
-  It presents its leaf alone, not a chain. In TLS 1.2 a client holding a P-256 / P-384 certificate
-  lists that curve in supported_groups after x25519 (OpenSSL refuses an ECDSA client certificate
-  on a curve the client did not list); its key exchange stays x25519. Until 6.6.13 the 1.2 client
-  failed any server that asked (`TLS_ERR_BAD_HANDSHAKE`).
-  ⚠ **The trade-off (6.6.14).** RFC 8422 reads that list as the curves the client can do ECDHE on
-  too, and the native 1.2 client cannot do ECDHE on P-256 / P-384. So a 1.2-pinned (or 1.2-only
-  server's) client holding a P-256 / P-384 certificate now FAILS with `TLS_ERR_HANDSHAKE_FAILED`
-  against a TLS 1.2 server that ranks that curve ABOVE X25519 for the key exchange (server
-  preference) — whether or not the server asks for a certificate; before 6.6.14 that connection
-  worked when it did not ask. A server that ranks X25519 first (OpenSSL's default list does), or
-  follows the client's order, connects; a client with no certificate, or an Ed25519 one, lists
-  x25519 alone as before. The remedy is ECDHE on P-256 / P-384 in the 1.2 client. Pinned by
-  `tests/gates/platform/tls_native_client_auth_openssl.sh` (`s_server -groups P-256:X25519
-  -serverpref`).
+  It presents its leaf alone, not a chain. Until 6.6.13 the 1.2 client failed any server that asked
+  (`TLS_ERR_BAD_HANDSHAKE`). A P-256 / P-384 certificate's curve is in the 1.2 client's
+  supported_groups because every NIST curve it does ECDHE on is (6.6.15 — "Key exchange" under
+  Connect); the 6.6.14 trade-off this paragraph documented, a server ranking that curve above
+  X25519 failing the handshake, is gone.
 - **Memory.** Measured at 6.6.14 (P-256 server, one-certificate client): an mTLS handshake fits
   88,784 B of a server's arena in TLS 1.3 and 108,480 B in TLS 1.2 — both inside the 131,072 B
   below. A client's three TLS 1.2 messages before its CCS are bounded at 16 KiB on the server, and
@@ -317,9 +408,15 @@ A ChangeCipherSpec is a plaintext, unauthenticated record (`14 03 03 00 01 01`).
 backend accepts exactly what the RFCs allow, and nothing else:
 
 - TLS 1.3: at most ONE per connection, after the first ClientHello and before the peer's Finished
-  (middlebox compatibility, RFC 8446 §5); it is dropped.
+  (middlebox compatibility, RFC 8446 §5); it is dropped. A HelloRetryRequest opens no second
+  window: the peer's one CCS comes after the HelloRetryRequest / before the second ClientHello,
+  or after the ServerHello / before its encrypted flight (RFC 8446 §D.4), never both (6.6.15).
 - TLS 1.2: exactly one, directly before the peer's Finished (RFC 5246 §7.1).
 - The record must be the single byte 1.
+
+What it SENDS: in TLS 1.3 the native server sends one after its first handshake message when the
+client's legacy_session_id is not empty (RFC 8446 §D.4 — a MUST in compatibility mode; 6.6.15),
+none otherwise; the native client sends an empty legacy_session_id and no CCS.
 
 Anything else — a second CCS, a malformed one, one before the ClientHello or after the handshake, a
 1.2 Finished with no CCS before it — fails the connection with `TLS_ERR_PROTOCOL` (from the

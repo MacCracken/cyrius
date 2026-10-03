@@ -1513,6 +1513,7 @@ Sovereign TLS 1.2 + 1.3 stack — no OpenSSL. ECDSA (P-256/P-384) / RSA (PSS, PK
 | `tls_native_set_ca_system` | `tls_native_set_ca_system(ctx) → TLS_OK/err` | Install the system CA trust store — one immutable root set per process, parsed once and shared (6.6.13: 0 B per further ctx) |
 | `tls_native_ca_skipped` | `tls_native_ca_skipped(ctx) → count/err` | Certificate blocks the last trust-root install could not use (6.6.13; since 6.6.14 a malformed block is counted and the rest install): installed + skipped == the bundle's PEM block count; 0 before any install |
 | `tls_native_set_version_range` | `tls_native_set_version_range(ctx, min, max) → TLS_OK/err` | Constrain negotiated version to [min, max] |
+| `tls_native_set_groups` | `tls_native_set_groups(ctx, groups, n) → TLS_OK/err` | The ECDHE groups the ctx offers (client) or accepts (server), preference order: `groups` points at 1-3 i64 `TLS_GROUP_X25519` / `_SECP256R1` / `_SECP384R1`, none twice (default: all three, x25519 first). A 1.3 client shares the first (6.6.15) |
 | `tls_native_set_deadline` | `tls_native_set_deadline(ctx, abs_ns) → TLS_OK/err` | Absolute `clock_now_ns()` deadline for the handshake and every later read/write (0 clears; may change between reads); past it they fail `TLS_ERR_TIMEOUT` (-22) and the ctx fails (6.6.13). Linux/macOS/Windows wait for readiness (poll / WSAPoll) before each read and write non-blocking (flags restored; a Windows socket is left blocking, 6.6.14); agnos sockets take the time left; a custom transport and a Windows HANDLE that is not a socket are checked between calls |
 
 **Introspection (post-handshake):**
@@ -1527,7 +1528,7 @@ Sovereign TLS 1.2 + 1.3 stack — no OpenSSL. ECDSA (P-256/P-384) / RSA (PSS, PK
 | `tls_native_get_peer_spki_der` | `tls_native_get_peer_spki_der(ctx, buf, max) → len` | Peer SubjectPublicKeyInfo DER |
 | `tls_native_get_last_error` | `tls_native_get_last_error(ctx) → code` | Last error (`TLS_ERR_*`) |
 | `tls_native_get_key_algo` | `tls_native_get_key_algo(ctx) → algo` | Peer's signature algorithm (ECDSA/RSA/Ed25519) |
-| `tls_native_get_group` | `tls_native_get_group(ctx) → group` | Selected ECDH group |
+| `tls_native_get_group` | `tls_native_get_group(ctx) → group` | Selected ECDH group — x25519, secp256r1 or secp384r1, both versions and roles (6.6.15; a TLS 1.2 client: the ServerKeyExchange's) |
 
 **Record layer:**
 
@@ -1605,15 +1606,15 @@ Sovereign TLS 1.2 + 1.3 stack — no OpenSSL. ECDSA (P-256/P-384) / RSA (PSS, PK
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `tls_native_12_build_client_hello` | `tls_native_12_build_client_hello(ctx, out, out_max) → len/err` | Build ClientHello with extensions + ciphersuites |
+| `tls_native_12_build_client_hello` | `tls_native_12_build_client_hello(ctx, out, out_max) → len/err` | Build ClientHello with extensions + ciphersuites; supported_groups the ctx's groups (default x25519, secp256r1, secp384r1 — 6.6.15) |
 | `tls_native_12_verify_data` | `tls_native_12_verify_data(cipher, master48, label, label_len, handshake_hash, hh_len, out12) → 12/err` | Compute 12-byte verify_data for Finished message |
 | `tls_native_12_build_finished` | `tls_native_12_build_finished(ctx, label, out, out_max) → len/err` | Build Finished message with master secret + transcript hash |
 | `tls_native_12_verify_finished` | `tls_native_12_verify_finished(ctx, msg, msg_len, label) → TLS_OK/err` | Verify peer Finished message constant-time |
 | `tls_native_12_build_server_hello_done` | `tls_native_12_build_server_hello_done(out, out_max) → len/err` | Build ServerHelloDone (0-byte body handshake message) |
 | `tls_native_12_parse_server_hello_done` | `tls_native_12_parse_server_hello_done(msg, msg_len) → TLS_OK/err` | Parse ServerHelloDone (validates empty body) |
-| `tls_native_12_build_client_key_exchange` | `tls_native_12_build_client_key_exchange(client_eph_pub, out, out_max) → len/err` | Build ClientKeyExchange (ECDHE public key) |
-| `tls_native_12_parse_client_key_exchange` | `tls_native_12_parse_client_key_exchange(msg, msg_len, peer_pub_out32) → 32/err` | Parse ClientKeyExchange, extract peer's ECDHE public key |
-| `tls_native_12_compute_premaster` | `tls_native_12_compute_premaster(ctx, peer_eph_pub32, out32) → 32/err` | Derive pre-master secret (ECDHE shared secret) |
+| `tls_native_12_build_client_key_exchange` | `tls_native_12_build_client_key_exchange(client_eph_pub, out, out_max) → 37/err` | Build an x25519 ClientKeyExchange (32-byte public key; the 1.2 client builds a secp256r1 / secp384r1 one itself) |
+| `tls_native_12_parse_client_key_exchange` | `tls_native_12_parse_client_key_exchange(msg, msg_len, peer_pub_out32) → TLS_OK/err` | Parse an x25519 ClientKeyExchange, extract the peer's 32-byte key (the 1.2 server parses a secp256r1 / secp384r1 one itself, 6.6.15) |
+| `tls_native_12_compute_premaster` | `tls_native_12_compute_premaster(ctx, peer_pub, out) → TLS_OK/err` | Derive the pre-master secret on the ctx's group: x25519 (32 B; group 0 too), or sigil's constant-time ECDH on secp256r1 / secp384r1 (the x-coordinate, 32 / 48 B — `out` holds 48; the peer's uncompressed point is validated, TLS_ERR_HANDSHAKE_FAILED if refused) |
 | `tls_native_12_derive_keys` | `tls_native_12_derive_keys(ctx, premaster, pm_len) → TLS_OK/err` | Derive master secret, key block, and install keys |
 | `tls_native_12_seal` | `tls_native_12_seal(ctx, ct, plain, plain_len, out, out_max) → len/err` | Encrypt + MAC plaintext into TLS 1.2 record |
 | `tls_native_12_open` | `tls_native_12_open(ctx, record, record_len, out, out_max, out_ct) → len/err` | Decrypt + verify TLS 1.2 record, extract plaintext + type |
@@ -1623,8 +1624,9 @@ Sovereign TLS 1.2 + 1.3 stack — no OpenSSL. ECDSA (P-256/P-384) / RSA (PSS, PK
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `tls_native_client_build_hello` | `tls_native_client_build_hello(ctx, out, out_max) → len/err` | Build ClientHello with x25519 + ECDSA/Ed25519 sig algs |
-| `tls_native_client_parse_server_hello` | `tls_native_client_parse_server_hello(ctx, sh, sh_len) → TLS_OK/err` | Parse ServerHello, derive handshake secrets (no HelloRetryRequest yet) |
+| `tls_native_client_build_hello` | `tls_native_client_build_hello(ctx, out, out_max) → len/err` | Build the 1.3 ClientHello: supported_groups the ctx's groups, ONE key_share on the first (x25519 by default), ECDSA / RSA-PSS / Ed25519 sig algs (6.6.15) |
+| `tls_native_client_process_hrr` | `tls_native_client_process_hrr(ctx, hrr, hrr_len, out, out_max) → len/err` | Take a HelloRetryRequest (once; RFC 8446 §4.1.4 checks, alert recorded on refusal) and build the second ClientHello — new share, cookie echoed, message_hash transcript (6.6.15) |
+| `tls_native_client_parse_server_hello` | `tls_native_client_parse_server_hello(ctx, sh, sh_len) → TLS_OK/err` | Parse the ServerHello (on our share's group; after a HelloRetryRequest its cipher), ECDHE, derive handshake secrets; zeroises the ephemeral key and shared secret (6.6.15) |
 | `tls_native_client_open_handshake` | `tls_native_client_open_handshake(ctx, record, record_len, out, out_max, out_ct) → len/err` | Decrypt server handshake flight with handshake key |
 | `tls_native_client_recv_flight` | `tls_native_client_recv_flight(ctx, record, record_len) → TLS_OK/err` | Process server flight record (accumulate for reassembly) |
 | `tls_native_client_seal_handshake` | `tls_native_client_seal_handshake(ctx, inner, inner_len, out, out_max) → len/err` | Encrypt client handshake message with handshake key |
@@ -1638,7 +1640,7 @@ Sovereign TLS 1.2 + 1.3 stack — no OpenSSL. ECDSA (P-256/P-384) / RSA (PSS, PK
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `tls_native_server_load_creds` | `tls_native_server_load_creds(ctx) → TLS_OK/err` | Validate certificate chain + private key before accepting |
-| `tls_native_server_respond_hello` | `tls_native_server_respond_hello(ctx, ch_msg, ch_len, out, out_max) → len/err` | Build ServerHello (or HelloRetryRequest) in response to ClientHello |
+| `tls_native_server_respond_hello` | `tls_native_server_respond_hello(ctx, ch_msg, ch_len, out, out_max) → len/err` | Build ServerHello (or ONE HelloRetryRequest; call again with the second ClientHello) in response to ClientHello — x25519 / secp256r1 / secp384r1 (6.6.15) |
 | `tls_native_server_sent_hrr` | `tls_native_server_sent_hrr(ctx) → 0/1` | Check if last respond_hello was HelloRetryRequest (vs ServerHello) |
 | `tls_native_server_derive_handshake` | `tls_native_server_derive_handshake(ctx) → TLS_OK/err` | Derive handshake secrets from ECDHE + CH..SH transcript |
 | `tls_native_server_build_flight` | `tls_native_server_build_flight(ctx, out, out_max) → len/err` | Build server flight (EncryptedExtensions + Certificate + Finished) |

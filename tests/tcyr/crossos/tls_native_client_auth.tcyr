@@ -43,6 +43,12 @@
 # FAIL_IF_NO_PEER_CERT check disabled (2), the getters gated on the ctx state instead of the
 # completed handshake (12), the getters not gated at all (6). The 6.6.13 lib fails 55 of the 236.
 #
+# 6.6.15: a TLS 1.2 client that connected must hold no byte of its ephemeral private key or its
+# premaster (10 assertions; RED with either memset in tls_native_connect_12 removed). And one that
+# FAILS between its premaster and its master secret must not either: a client allocator that
+# refuses the first allocation made once the premaster buffer exists (the flight buffer `hm`)
+# drives tls_native_connect_12 down _tn_12_fail_pm (RED with its memset removed).
+#
 # The fixtures (P-256 CA "mtls-ca", every leaf valid 2025-01-01 .. 2049-12-31 except the expired
 # one, notAfter 2027-01-01) are read at a pinned clock of 2030-01-01, so no row is a time bomb.
 include "lib/assert.cyr"
@@ -279,8 +285,46 @@ var _mx_h_root_n = 0;
 # never settled), [7] the client's TLS_CTX_OFF_CERT_REQUESTED, and after the server's "pong" a
 # second server read that meets the end of the client's log (a client gone without close_notify):
 # [8] that read, [9] tls_native_get_peer_cert_der and [10] tls_get_peer_spki_der after it (-99
-# when not run).
-var _mx_obs: i64[11];
+# when not run). A TLS 1.2 client that connected: [11] 1 when its ephemeral private key (32 B)
+# and [12] 1 when its premaster buffer (48 B, TLS_CTX_OFF_SHARED) hold no byte (6.6.15; -99
+# otherwise).
+var _mx_obs: i64[13];
+var _mx_v12 = 0;         # the row's client is pinned to TLS 1.2
+
+# 1 if every one of n bytes at p is zero (0 for a null pointer).
+fn _mx_zero(p, n): i64 {
+    if (p == 0) { return 0; }
+    var acc = 0;
+    var i = 0;
+    while (i < n) { acc = acc | (load8(p + i) & 0xFF); i = i + 1; }
+    if (acc == 0) { return 1; }
+    return 0;
+}
+# The fault-injecting client Allocator (6.6.15): the same arena as _mx_ca_arena (so _tn_arena, the
+# raw arena sigil's X.509 parse takes, is unchanged), but while _mx_fault is 1 it refuses the
+# first allocation made once _mx_fault_ctx's premaster buffer (TLS_CTX_OFF_SHARED) exists — in
+# tls_native_connect_12 that is the flight buffer `hm`, so the connect fails down _tn_12_fail_pm.
+var _mx_ca_fault = 0;
+var _mx_fault = 0;
+var _mx_fault_ctx = 0;   # the client ctx under test (0 while tls_native_new_client_in builds it)
+var _mx_fault_size = 0;  # the size of the refused allocation, 0 = none was refused
+var _mx_fault_pm = 0;    # [0] 1 when the premaster buffer holds no byte after the failed connect
+var _mx_fault_priv = 0;  # [0] 1 when the ephemeral private key holds no byte
+
+fn _mx_fault_alloc(state, size): i64 {
+    if (_mx_fault == 1) {
+        if (_mx_fault_ctx != 0) {
+            if (load64(_mx_fault_ctx + TLS_CTX_OFF_SHARED) != 0) {
+                if (_mx_fault_size == 0) {
+                    _mx_fault_size = size;
+                    return 0;
+                }
+            }
+        }
+    }
+    return arena_alloc(state, size);
+}
+
 var _mx_c_eof = 0;       # the last client run read past the end of the server's log
 var _mx_s_eof = 0;       # the last server run, of the client's
 
@@ -298,7 +342,12 @@ fn _mx_client_run(v12, ccert, cclen, ckey, cklen): i64 {
     _mx_eof = 0;
     _mx_sc_rd = 0;
     _mx_cs_next_len = 0;
-    var c = tls_native_new_client_in(_mx_ca_arena, 0, 0);
+    var ca = _mx_ca_arena;
+    if (_mx_fault == 1) { ca = _mx_ca_fault; }
+    _mx_fault_ctx = 0;
+    _mx_fault_size = 0;
+    var c = tls_native_new_client_in(ca, 0, 0);
+    _mx_fault_ctx = c;
     tls_native_set_verify(c, TLS_VERIFY_NONE);            # the server's own chain is not under test
     if (v12 == 1) { tls_native_set_version_range(c, TLS_VERSION_1_2, TLS_VERSION_1_2); }
     if (ccert != 0) {
@@ -308,6 +357,19 @@ fn _mx_client_run(v12, ccert, cclen, ckey, cklen): i64 {
     var rc = tls_native_connect(c, MX_CLIENT);
     _mx_obs[0] = rc;
     _mx_obs[1] = 0 - 99;
+    _mx_obs[11] = 0 - 99;
+    _mx_obs[12] = 0 - 99;
+    if (v12 == 1) {
+        if (rc == TLS_OK) {
+            _mx_obs[11] = _mx_zero(load64(c + TLS_CTX_OFF_EPH_PRIV), 32);
+            _mx_obs[12] = _mx_zero(load64(c + TLS_CTX_OFF_SHARED), 48);
+        }
+    }
+    if (_mx_fault == 1) {
+        _mx_fault_pm = _mx_zero(load64(c + TLS_CTX_OFF_SHARED), 48);
+        _mx_fault_priv = _mx_zero(load64(c + TLS_CTX_OFF_EPH_PRIV), 32);
+    }
+    _mx_fault_ctx = 0;
     if (rc == TLS_OK) {
         tls_native_write(c, "ping", 4);
         var b[64];
@@ -389,6 +451,7 @@ fn _mx_server_run(): i64 {
 # Replay one row to its fixed point. `v12` pins the CLIENT to TLS 1.2 (the server keeps its default
 # 1.2..1.3 range and routes on the ClientHello — the downgrade a 1.2-only client chooses).
 fn _mx_row(v12, ccert, cclen, ckey, cklen, smode, root, root_n): i64 {
+    _mx_v12 = v12;
     _mx_h_mode = smode;
     _mx_h_root = root;
     _mx_h_root_n = root_n;
@@ -444,6 +507,10 @@ fn _mx_ok(label, der_n): i64 {
     assert(_mx_obs[8] < 0, "  the client then leaves without close_notify: the server's next read fails");
     assert_eq(_mx_obs[9], der_n, "  …and tls_native_get_peer_cert_der still names whom the handshake authenticated");
     assert_eq(_mx_obs[10], _mx_obs[5], "  …and so does tls_get_peer_spki_der");
+    if (_mx_v12 == 1) {
+        assert_eq(_mx_obs[11], 1, "  the 1.2 client's ephemeral private key is zeroised (6.6.15)");
+        assert_eq(_mx_obs[12], 1, "  …and so is its premaster");
+    }
     return 0;
 }
 
@@ -532,6 +599,33 @@ fn test_matrix(v12): i64 {
     return 0;
 }
 
+# 6.6.15: a 1.2 client that fails AFTER its premaster exists and BEFORE the master secret replaces
+# it (tls_native_connect_12's _tn_12_fail_pm paths) leaves no byte of either secret behind. The
+# fault allocator refuses the flight buffer `hm`: 512 bytes with no client certificate in play,
+# 512 + the certificate's length when the server asked and the client holds one.
+fn test_fail_after_premaster(): i64 {
+    test_group("6.6.15 — a 1.2 client failing between its premaster and its master secret");
+    _mx_v(1);
+    _mx_fault = 1;
+    _mx_row(1, 0, 0, 0, 0, 0, _mx_ca, _mx_ca_n);
+    _mx_fault = 0;
+    assert_eq(_mx_obs[0], TLS_ERR_OOM, "the flight buffer is refused: connect fails TLS_ERR_OOM");
+    assert_eq(_mx_fault_size, 512, "  the refused allocation is the flight buffer (512 B, no certificate)");
+    assert_eq(_mx_fault_pm, 1, "  the premaster buffer holds no byte");
+    assert_eq(_mx_fault_priv, 1, "  …nor does the ephemeral private key");
+    assert(_mx_obs[2] != TLS_OK, "  the server does not complete");
+    _mx_fault = 1;
+    _mx_row(1, _mx_cli, _mx_cli_n, _mx_cli_key, _mx_cli_key_n, 1, _mx_ca, _mx_ca_n);
+    _mx_fault = 0;
+    assert_eq(_mx_obs[0], TLS_ERR_OOM, "asked for a certificate, holding a P-256 one: TLS_ERR_OOM");
+    assert_eq(_mx_fault_size, 512 + _mx_cli_n,
+      "  the refused allocation is the flight buffer (512 B + the certificate)");
+    assert_eq(_mx_fault_pm, 1, "  the premaster buffer holds no byte");
+    assert_eq(_mx_fault_priv, 1, "  …nor does the ephemeral private key");
+    assert(_mx_obs[2] != TLS_OK, "  the server does not complete");
+    return 0;
+}
+
 # A2 at the API: the OpenSSL bitmask -> native mode, never less strict than asked.
 fn test_set_verify_modes(): i64 {
     test_group("6.6.14 — tls_set_verify maps SSL_VERIFY_FAIL_IF_NO_PEER_CERT through");
@@ -562,11 +656,14 @@ fn _mx_all(): i64 {
     _mx_tbuf = alloc(MX_LOG_CAP);
     _mx_ca_arena = arena_allocator(2097152);
     _mx_sv_arena = arena_allocator(2097152);
+    _mx_ca_fault = allocator_new(&_mx_fault_alloc, &_arena_realloc, &_alloc_free_noop, &arena_reset,
+      allocator_state(_mx_ca_arena));
     tls_native_set_transport(&_mx_read, &_mx_write, &_mx_now);
     tls_native_set_entropy(&_mx_rand);
     test_set_verify_modes();
     test_matrix(0);
     test_matrix(1);
+    test_fail_after_premaster();
     tls_native_set_entropy(0);
     tls_native_set_transport(0, 0, 0);
     return 0;
