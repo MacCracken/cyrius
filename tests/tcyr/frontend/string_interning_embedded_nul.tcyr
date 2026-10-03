@@ -1,0 +1,106 @@
+# string_interning_embedded_nul.tcyr — 6.6.15 (B0a): string-literal interning never aliases a
+# literal onto bytes that differ from its own.
+#
+# ⛔ The lexer interns a literal by comparing its bytes (and terminator) against each entry of the
+# string pool, walking entries NUL to NUL. A literal holding an embedded NUL could match an entry
+# whose comparison window ran PAST the end of the committed pool into the literal's own,
+# uncommitted copy — which the next literal then overwrote. The filed repro (below, verbatim)
+# read `z` where it wrote `a`: X was aliased onto A's storage and its tail was B's bytes.
+#
+# Each row is three consecutive literals — a tail that sets up the pool, the NUL-bearing literal,
+# and a follower that is appended over its uncommitted copy — so the rows are DECLARED together,
+# here, before anything else adds a literal between them; the assertions come after.
+
+# The filed repro, verbatim, first in the file so nothing interned earlier changes the pool tail
+# it needs (a CLI build prepends stdlib includes above it — the rows below use literals no
+# library holds, so they do not depend on being first).
+var A = "a"; var X = "a\0a"; var B = "zzzz";
+
+# Embedded NUL in the middle (the repro's shape, unique bytes).
+var P1 = "~i1~"; var X1 = "~i1~\0~i1~"; var B1 = "zzzzzzzzz1";
+# NUL first (and every byte NUL): the pool tail is the previous literal's terminator.
+var P2 = "~w2\0"; var X2 = "\0\0\0"; var B2 = "zzzzzzzzz2";
+# NUL last: the previous literal's embedded NUL and terminator are the head of this one.
+var P3 = "~3\0"; var X3 = "~3\0\0~3\0"; var B3 = "zzzzzzzzz3";
+# NUL first and last, a period of four.
+var P4 = "~p4\0\0~4"; var X4 = "\0~4\0\0~4\0"; var B4 = "zzzzzzzzz4";
+# The same bytes spelled \x00 and \u{0}.
+var P5 = "~x5"; var X5 = "~x5\x00~x5"; var B5 = "zzzzzzzzz5";
+var P6 = "~u6"; var X6 = "~u6\u{0}~u6"; var B6 = "zzzzzzzzz6";
+# A literal that is a prefix of another, both orders: never aliased (the terminator differs).
+var Q7a = "~pre7"; var Q7b = "~pre7xyz";
+var Q8a = "~pre8xyz"; var Q8b = "~pre8";
+# Identical literals are still shared — with and without an embedded NUL.
+var S9a = "~same9\0tail9"; var S9b = "~same9\0tail9";
+var S10a = "~same10"; var S10b = "~same10";
+# A literal equal to the committed bytes after another literal's embedded NUL may share them.
+var H11 = "~h11\0~t11"; var T11 = "~t11";
+
+include "lib/string.cyr"
+include "lib/assert.cyr"
+
+# 1 iff the `n` bytes at `p` and the terminator after them are `want` (n bytes) and 0.
+fn _bytes_are(p, want, n): i64 {
+    var i = 0;
+    while (i < n) {
+        if (load8(p + i) != load8(want + i)) { return 0; }
+        i = i + 1;
+    }
+    if (load8(p + n) != 0) { return 0; }
+    return 1;
+}
+fn _all_zero(p, n): i64 {
+    var i = 0;
+    while (i <= n) { if (load8(p + i) != 0) { return 0; } i = i + 1; }
+    return 1;
+}
+
+fn main(): i64 {
+    test_group("the filed repro");
+    assert_eq(load8(X + 2), 97, "\"a\\0a\" after \"a\": byte 2 is 'a' (was 'z' from \"zzzz\")");
+    assert_eq(load8(X) * 256 + load8(X + 1), 97 * 256, "\"a\\0a\": bytes 0-1");
+    assert_eq(load8(X + 3), 0, "\"a\\0a\": terminated");
+    assert_eq(load8(B), 122, "\"zzzz\" itself");
+
+    test_group("an embedded NUL never aliases onto different bytes");
+    # Each want-string is built from bytes, not literals, so it cannot share the defect.
+    var w = alloc(32);
+    store8(w, 126); store8(w + 1, 105); store8(w + 2, 49); store8(w + 3, 126); store8(w + 4, 0);
+    store8(w + 5, 126); store8(w + 6, 105); store8(w + 7, 49); store8(w + 8, 126);
+    assert_eq(_bytes_are(X1, w, 9), 1, "middle NUL: \"~i1~\\0~i1~\" intact and terminated");
+    assert_eq(load8(X1 + 5), 126, "middle NUL: byte 5 (was 'z')");
+    assert_eq(_all_zero(X2, 3), 1, "NUL first: \"\\0\\0\\0\" is four zero bytes with its terminator");
+    store8(w, 126); store8(w + 1, 51); store8(w + 2, 0); store8(w + 3, 0);
+    store8(w + 4, 126); store8(w + 5, 51); store8(w + 6, 0);
+    assert_eq(_bytes_are(X3, w, 7), 1, "NUL last: \"~3\\0\\0~3\\0\" intact and terminated");
+    store8(w, 0); store8(w + 1, 126); store8(w + 2, 52); store8(w + 3, 0);
+    store8(w + 4, 0); store8(w + 5, 126); store8(w + 6, 52); store8(w + 7, 0);
+    assert_eq(_bytes_are(X4, w, 8), 1, "NUL first and last: \"\\0~4\\0\\0~4\\0\" intact and terminated");
+    store8(w, 126); store8(w + 1, 120); store8(w + 2, 53); store8(w + 3, 0);
+    store8(w + 4, 126); store8(w + 5, 120); store8(w + 6, 53);
+    assert_eq(_bytes_are(X5, w, 7), 1, "\\x00 spelling: \"~x5\\x00~x5\" intact and terminated");
+    store8(w, 126); store8(w + 1, 117); store8(w + 2, 54); store8(w + 3, 0);
+    store8(w + 4, 126); store8(w + 5, 117); store8(w + 6, 54);
+    assert_eq(_bytes_are(X6, w, 7), 1, "\\u{0} spelling: \"~u6\\u{0}~u6\" intact and terminated");
+    # The rows' tails and followers are untouched.
+    assert_eq(load8(P1) + load8(P2 + 3) + load8(P3 + 2), 126, "row tails keep their bytes");
+    var fz = load8(B1) + load8(B2) + load8(B3) + load8(B4) + load8(B5) + load8(B6);
+    assert_eq(fz, 6 * 122, "row followers keep their bytes");
+
+    test_group("prefixes are distinct, identical literals still shared");
+    assert_eq(Q7a != Q7b, 1, "\"~pre7\" then \"~pre7xyz\": distinct");
+    assert_eq(strlen(Q7a) * 100 + strlen(Q7b), 508, "\"~pre7\" / \"~pre7xyz\" lengths");
+    assert_eq(Q8a != Q8b, 1, "\"~pre8xyz\" then \"~pre8\": distinct");
+    assert_eq(strlen(Q8a) * 100 + strlen(Q8b), 805, "\"~pre8xyz\" / \"~pre8\" lengths");
+    assert_eq(S9a == S9b, 1, "identical literals with an embedded NUL: one copy");
+    assert_eq(S10a == S10b, 1, "identical literals: one copy");
+    assert_eq(load8(S9a + 7) * 1000 + load8(S9a + 11), 116 * 1000 + 57, "the shared copy holds the tail after its NUL");
+    store8(w, 126); store8(w + 1, 116); store8(w + 2, 49); store8(w + 3, 49);
+    assert_eq(_bytes_are(T11, w, 4), 1, "a literal equal to the bytes after another's NUL: intact");
+    assert_eq(load8(H11) * 1000 + load8(H11 + 5), 126 * 1000 + 126, "...and the literal it may share with is intact");
+
+    var r = assert_summary();
+    return r;
+}
+var ec = main();
+syscall(60, ec);
