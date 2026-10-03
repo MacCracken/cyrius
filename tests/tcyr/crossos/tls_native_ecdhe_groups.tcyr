@@ -1691,5 +1691,13 @@ fn _gx_all(): i64 {
 #   N5  the HRR's supported_versions value unchecked            refused (decode_error)
 #   N6  a second key_share in the HRR taken                 N15 the SH read after an HRR refusing the
 #   N7  the HRR cookie's inner length unchecked                 server's middlebox CCS
+# …and the defects that pass fixed, each RED on its pre-fix form (assertion failures in brackets):
+#   V1  a key_share alone makes a ClientHello TLS 1.3 again, before supported_versions is read [9]
+#   X1  every HelloRetryRequest extension unsupported_extension again, offered or not [4]
+#   X2  server_name taken as offered by a client that sent no SNI [1]
+#   C1  the server's RFC 8446 §D.4 CCS never sent [3]   C2 sent after the HRR AND the SH [1]
+#   C3  sent for an empty session id too [12]
+#   D1  the 1.2 server's suite chosen by tls_native_12_cipher_supported again (ECDHE_RSA, AES128) [5]
+#   D2  the 1.2 server not bounding an ECDSA certificate's curve by supported_groups [8]
 _gx_all();
 var r = assert_summary();
