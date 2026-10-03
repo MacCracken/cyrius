@@ -2590,6 +2590,11 @@ fn _PARSE_DEFER(S): i64 {
     if (GINFN(S) != 1) {
         ERR_MSG(S, "defer only allowed inside a function", 36);
     }
+    # A #naked fn has no epilogue (its body ends in its own asm return) and no frame: the walker
+    # emitted after the body is unreachable, so the block never ran. Refused. CHANGELOG [6.6.15]
+    if (_cur_fn_naked == 1) {
+        ERR_MSG(S, "defer is not allowed in a #naked fn (it has no epilogue to run the block)", 73);
+    }
     STI(S, GTI(S) + 1);
     if (PEEKT(S) != 13) { ERR_EXPECT(S, 13); }
     # Allocate hidden local for defer flag (initialized to 0 in prologue)
@@ -2897,6 +2902,10 @@ fn _PARSE_STMT_IMPL(S): i64 {
     if (typ == 108) {
         if (GINFN(S) != 1) {
             ERR_MSG(S, "secret var only allowed inside a function", 41);
+        }
+        # A #naked fn has no epilogue to zeroise from: the wipe never ran. Refused. CHANGELOG [6.6.15]
+        if (_cur_fn_naked == 1) {
+            ERR_MSG(S, "secret var is not allowed in a #naked fn (it has no epilogue to zeroise it)", 75);
         }
         STI(S, GTI(S) + 1);
         if (PEEKT(S) != 3) { ERR_EXPECT(S, 3); }
