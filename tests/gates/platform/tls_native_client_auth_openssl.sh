@@ -563,13 +563,16 @@ grow() {
                 case "$_s" in *"hrr=$7 "*) : ;; *) _fail "$8 — expected hrr=$7: $_s" ;; esac
             fi
             if [ "$1" = "13" ]; then
+                # The content type of every record s_client received, in order, from the header
+                # bytes -msg dumps under each "<<< ... RecordHeader" line (OpenSSL 3.0 prints no
+                # "ChangeCipherSpec" line for a TLS 1.3 CCS it drops; 3.6 does — the header is in both).
+                _rt=$(awk '/^<<< .*RecordHeader/ { getline; print $1 }' "$T/sc.out" | tr '\n' ' ')
                 _wccs=1
                 case "${9:-}" in *-no_middlebox*) _wccs=0 ;; esac
-                _nccs=$(grep -c '^<<< .*ChangeCipherSpec' "$T/sc.out" || true)
-                [ "$_nccs" = "$_wccs" ] || _fail "$8 — s_client received $_nccs CCS from the server, expected $_wccs (RFC 8446 §D.4)"
+                _nccs=$(echo "$_rt" | tr ' ' '\n' | grep -c '^14$' || true)
+                [ "$_nccs" = "$_wccs" ] || _fail "$8 — s_client received $_nccs CCS from the server, expected $_wccs (RFC 8446 §D.4): records $_rt"
                 if [ "$_wccs" = 1 ]; then
-                    _m2=$(grep '^<<< ' "$T/sc.out" | grep -v RecordHeader | sed -n 2p || true)
-                    case "$_m2" in *ChangeCipherSpec*) : ;; *) _fail "$8 — the server's second message is not its CCS: $_m2" ;; esac
+                    case "$_rt" in "16 14 "*) : ;; *) _fail "$8 — the CCS is not the server's 2nd record: $_rt" ;; esac
                 fi
             fi
             ;;
