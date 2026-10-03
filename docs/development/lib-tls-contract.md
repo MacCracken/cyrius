@@ -203,7 +203,9 @@ RFC 8422 §5.10). `tls_native_get_group` reports the negotiated group (29 / 23 /
   **Which version a ClientHello asks for is its supported_versions' alone** (RFC 8446 §4.2.1): one
   listing 0x0304 is TLS 1.3; one without it, or without the extension, is TLS 1.2 — a key_share
   does not make it 1.3 (until 6.6.15 it did, so the server negotiated 1.3 with a client that had
-  not offered it). **Middlebox compatibility** (RFC 8446 §D.4): when the client's legacy_session_id
+  not offered it). A TLS 1.2 hello to a ctx pinned to TLS 1.3 is refused with protocol_version
+  (RFC 8446 §4.2.1; `TLS_ERR_PROTOCOL`, as before, but until 6.6.15 with no alert), and a
+  malformed one with decode_error. **Middlebox compatibility** (RFC 8446 §D.4): when the client's legacy_session_id
   is not empty, the server sends one dummy ChangeCipherSpec directly after its first handshake
   message — the HelloRetryRequest, else the ServerHello — in the same write; with an empty one,
   none (until 6.6.15 it never sent it; OpenSSL tolerates the absence).
