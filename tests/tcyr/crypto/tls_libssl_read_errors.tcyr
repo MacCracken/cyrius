@@ -96,9 +96,14 @@ fn _lr_serve(sfd, script): i64 {
         store8(&al + 1, TLS_AD_CLOSE_NOTIFY);
     }
     if (script <= LS_CLOSE_NOTIFY) {
+        # The alert and the "late" record go out in ONE write: written apart, the client could read
+        # the alert, fail and close before the second write, which then failed (child exit 6) —
+        # 12 to 18 of 60 runs under load, the race 6.6.14 closed in tls_native_alert_mapping.tcyr.
         var an = _tn_seal_ct(srv, TLS_CT_ALERT, &al, 2, &rec, 128);
-        if (_lr_write_all(sfd, &rec, an) != an) { return 5; }
-        if (tls_native_write(srv, "late", 4) != 4) { return 6; }
+        if (an <= 0) { return 5; }
+        var ln = tls_native_seal_app(srv, "late", 4, &rec + an, 128 - an);
+        if (ln <= 0) { return 6; }
+        if (_lr_write_all(sfd, &rec, an + ln) != an + ln) { return 5; }
     }
     if (script == LS_BITFLIP) {
         var bn = tls_native_seal_app(srv, "hello", 5, &rec, 128);
