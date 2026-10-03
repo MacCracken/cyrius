@@ -3,7 +3,9 @@
 # directions, against an INDEPENDENT peer: OpenSSL's s_client presenting certificates to the
 # native server, and the native TLS 1.2 client answering s_server's CertificateRequest. A peer
 # that shared our code could share the defect; the native<->native matrix on every host is
-# tests/tcyr/crossos/tls_native_client_auth.tcyr.
+# tests/tcyr/crossos/tls_native_client_auth.tcyr. 6.6.15 adds the key exchange — ECDHE on
+# secp256r1 / secp384r1 in both roles and versions and the HelloRetryRequest both ways (legs E, H
+# and G); its native<->native matrix is tests/tcyr/crossos/tls_native_ecdhe_groups.tcyr.
 #
 # ⛔ THE DEFECTS (6.6.13, each reproduced before the fix):
 #   - the native TLS 1.2 server sent no CertificateRequest and ignored the verify mode, so
@@ -40,6 +42,19 @@
 #      and — where s_server has -no_ems (3.6 does; 3.0, Ubuntu 24.04 / Debian 12, rejects it as an
 #      unknown option, so there that one row is SKIPPED by name and the floor drops by one) — with
 #      the legacy master secret.
+#   H  (6.6.15) the native TLS 1.3 client against `s_server -tls1_3 -groups ...`, each row asserting
+#      the group it negotiated and whether it took a HelloRetryRequest: P-256 only and P-384 only
+#      (a HelloRetryRequest each — the client shares x25519), P-256:X25519 (no round trip: OpenSSL
+#      takes the x25519 share), X448:P-384, -no_middlebox (no CCS after the HelloRetryRequest), ECDSA
+#      P-384 and RSA server certificates on the other curve, mTLS with a P-384 client certificate
+#      after a HelloRetryRequest, and P-521 only (no shared group: s_server's alert).
+#   G  (6.6.15) the native SERVER against `s_client -tls1_3 | -tls1_2 -groups ...`, asserting the
+#      server's group and HelloRetryRequest: P-256 only, P-384 only, P-521 only (handshake_failure,
+#      both versions), P-256:X25519 (1.3: the P-256 share taken; 1.2: the server's x25519), the
+#      HelloRetryRequest from the native side (s_client X448:P-256, secp521r1:P-384, and a server
+#      restricted to P-384 — tls_native_set_groups in the probe's hook), a server preferring P-384,
+#      and ECDSA certificates on the other curve. An Ed25519 server certificate unless named:
+#      OpenSSL's 1.2 client refuses an ECDSA certificate whose curve is missing from its own -groups.
 # SKIP (exit 77, named): openssl(1) missing. ANTI-VACUITY: the rows run are counted and floored.
 #
 # MUTATION LEDGER (6.6.14, each measured RED here; the pre-fix 6.6.13 lib fails 22 of the 27 rows —
@@ -67,6 +82,13 @@
 #       handshake, x25519 included (the builder is shared)
 #   ME6 (measured on all 39) secp384r1's premaster length taken as 32 -> the 6 rows negotiating
 #       secp384r1, the SHA-384 PRF row and the legacy-master row among them
+# MUTATION LEDGER (6.6.15, the H and G legs; eac97bb2's lib fails 21 of their 24 rows — all but
+# the three that negotiate x25519 or end in s_server's alert — and the 39 rows above stay green):
+#   MH1 the transcript after a HelloRetryRequest starts with ClientHello1 itself, not message_hash
+#       (RFC 8446 §4.4.1; both native sides share the helper, so only an independent peer sees
+#       it) -> the 10 rows with a HelloRetryRequest
+#   MH2 the server reads the second ClientHello refusing a CCS -> the 3 G rows with a native
+#       HelloRetryRequest (s_client sends its middlebox CCS before the second ClientHello)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 1
@@ -144,8 +166,9 @@ mkcert srvrsa rsa localhost ca srv.ext
 selfsigned self client-self cli.ext
 
 # ── probes ──
-# srv <portfile> <cert.der> <key.der> <ca.pem> <openssl verify mode>: one native accept through
-# lib/tls.cyr. Prints `accept=<1|0> err=<LAST_ERR> spki=<n> read=<n>`.
+# srv <portfile> <cert.der> <key.der> <ca.pem> <openssl verify mode> [<groups: "23,24" | ->]: one
+# native accept through lib/tls.cyr; the hook installs the groups with tls_native_set_groups.
+# Prints `accept=<1|0> err=<LAST_ERR> group=<TlsNamedGroup> hrr=<1|0> spki=<n> read=<n>`.
 cat > "$T/srv.cyr" <<'EOF'
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
@@ -158,10 +181,30 @@ include "lib/tls.cyr"
 
 var G_CA = 0;
 var G_MODE = 0;
+var G_GROUPS: i64[3];
+var G_NG = 0;
 
 fn _hook(hctx, handle): i64 {
     if (tls_set_verify(handle, G_MODE, 0) != 0) { return 1; }
     if (tls_ctx_load_verify_locations(handle, G_CA, 0) != 1) { return 1; }
+    if (G_NG > 0) {
+        if (tls_native_set_groups(handle, &G_GROUPS, G_NG) != TLS_OK) { return 1; }
+    }
+    return 0;
+}
+
+# "23,24" -> G_GROUPS / G_NG (decimal TlsNamedGroup values; "-" = the default list)
+fn _groups(s): i64 {
+    if (load8(s) == 45) { return 0; }
+    var v = 0;
+    var i = 0;
+    while (1 == 1) {
+        var ch = load8(s + i);
+        if (ch == 44) { G_GROUPS[G_NG] = v; G_NG = G_NG + 1; v = 0; }
+        elif (ch == 0) { G_GROUPS[G_NG] = v; G_NG = G_NG + 1; return 0; }
+        else { v = v * 10 + (ch - 48); }
+        i = i + 1;
+    }
     return 0;
 }
 
@@ -190,6 +233,7 @@ fn main(): i64 {
     kl = file_read_all(argv(3), key, 65536);
     G_CA = argv(4);
     G_MODE = _num(argv(5));
+    if (argc() > 6) { _groups(argv(6)); }
     var lt, lfd = tcp_socket();
     if (is_err_result(lt) == 1) { return 40; }
     var bt, bv = sock_bind(lfd, INADDR_LOOPBACK(), 0);
@@ -216,6 +260,8 @@ fn main(): i64 {
     var ok = tls_accept_complete(sh);
     _kv("accept=", ok);
     _kv("err=", tls_native_get_last_error(load64(sh)));
+    _kv("group=", tls_native_get_group(load64(sh)));
+    _kv("hrr=", load64(load64(sh) + TLS_CTX_OFF_HRR));
     var g = alloc(4096);
     _kv("spki=", tls_get_peer_spki_der(sh, g, 4096));
     var rd = 0 - 99;
@@ -234,7 +280,8 @@ var r = main();
 sys_exit(r);
 EOF
 # cli <port> <12|13> <cert.der|-> <key.der|->: one native connect (no server verification: the
-# server's chain is not under test). Prints `connect=<rc> group=<TlsNamedGroup> read=<n> echo=<1|0>`.
+# server's chain is not under test). Prints `connect=<rc> group=<TlsNamedGroup> hrr=<1|0> read=<n>
+# echo=<1|0>`.
 cat > "$T/cli.cyr" <<'EOF'
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
@@ -282,6 +329,7 @@ fn main(): i64 {
     var rc = tls_native_connect(c, fd);
     _kv("connect=", rc);
     _kv("group=", tls_native_get_group(c));
+    _kv("hrr=", load64(c + TLS_CTX_OFF_HRR));
     var rd = 0 - 99;
     var echo = 0;
     if (rc == TLS_OK) {
@@ -359,7 +407,8 @@ for V in 13 12; do
 done
 
 # crow <12|13> <-verify|-Verify|-> <cert|-> <want: ok|alert|hsfail> "<label>" [<s_server flags>
-#      [<group the client must report, decimal, or -> [<server certificate, default srved>]]]
+#      [<group the client must report, decimal, or -> [<server certificate, default srved>
+#      [<1|0: the client took a HelloRetryRequest, or ->]]]]
 # (`-` for the verify flag: s_server asks for no certificate.)
 crow() {
     NROWS=$((NROWS + 1))
@@ -398,6 +447,9 @@ crow() {
             case "$_c" in *"echo=1 "*) : ;; *) _fail "$5 — no reversed echo from s_server: $_c" ;; esac
             if [ "${7:--}" != "-" ]; then
                 case "$_c" in *"group=$7 "*) : ;; *) _fail "$5 — expected group $7: $_c" ;; esac
+            fi
+            if [ "${9:--}" != "-" ]; then
+                case "$_c" in *"hrr=$9 "*) : ;; *) _fail "$5 — expected hrr=$9: $_c" ;; esac
             fi
             if [ "$3" != "-" ] && [ "$2" != "-" ]; then
                 _cn=$(openssl x509 -in "$T/$3.crt" -noout -subject | sed 's/.*CN *= *//')
@@ -455,7 +507,77 @@ else
         "-groups P-384 -no_ems -cipher ECDHE-ECDSA-AES256-GCM-SHA384" 24 srv384
 fi
 
-FLOOR=$((39 - NOEMS_SKIP))
+echo "== H: the native TLS 1.3 client's groups and HelloRetryRequest, OpenSSL s_server choosing (6.6.15) =="
+# ⛔ 6.6.14 / eac97bb2: every row asking for P-256 or P-384 failed — the 1.3 client offered x25519
+# alone and refused every HelloRetryRequest (s_server: "no suitable key share"; connect -17).
+crow 13 -      -      ok "TLS 1.3, s_server taking only P-256: a HelloRetryRequest, then P-256" "-groups P-256" 23 srved 1
+crow 13 -      -      ok "TLS 1.3, s_server taking only P-384: a HelloRetryRequest, then P-384" "-groups P-384" 24 srved 1
+crow 13 -      -      ok "TLS 1.3, s_server P-256:X25519 takes the client's x25519 share (no round trip)" "-groups P-256:X25519" 29 srved 0
+crow 13 -      -      ok "TLS 1.3, s_server X448:P-384: a HelloRetryRequest for P-384" "-groups X448:P-384" 24 srved 1
+crow 13 -      -      ok "TLS 1.3, a HelloRetryRequest without middlebox CCS (-no_middlebox)" "-groups P-256 -no_middlebox" 23 srved 1
+crow 13 -      -      ok "TLS 1.3, an ECDSA P-384 server certificate, ECDHE on P-256 after a HelloRetryRequest" "-groups P-256" 23 srv384 1
+crow 13 -      -      ok "TLS 1.3, an RSA-2048 server certificate (RSA-PSS), ECDHE on P-384" "-groups P-384" 24 srvrsa 1
+crow 13 -Verify cli384 ok "TLS 1.3, REQUIRED: a P-384 client certificate, ECDHE on P-384 after a HelloRetryRequest" "-groups P-384" 24 srved 1
+crow 13 -      -      alert "TLS 1.3, s_server taking only P-521: the client's groups share none" "-groups P-521"
+
+# grow <13|12> "<s_client -groups>" <server cert> <server groups: "23,24" | -> <want: ok|fail> <group> <hrr: 1|0|-> "<label>"
+# The native server (no client authentication) against `openssl s_client -tls1_N -groups ...`.
+grow() {
+    NROWS=$((NROWS + 1))
+    _rf=$FAILS
+    rm -f "$T/port" "$T/s.out" "$T/sc.out"
+    $TO "$T/srv" "$T/port" "$T/$3.der" "$T/$3.key.der" "$T/ca.crt" 0 "$4" > "$T/s.out" 2>&1 &
+    _sp=$!
+    BGP="$BGP $_sp"
+    _w=0
+    while [ ! -s "$T/port" ] && [ "$_w" -lt 50 ]; do sleep 0.1; _w=$((_w + 1)); done
+    _port=$(cat "$T/port" 2>/dev/null || true)
+    if [ -z "$_port" ]; then _fail "$8 — the native server published no port"; return 0; fi
+    printf 'ping\n' | $TO openssl s_client -connect "127.0.0.1:$_port" "-tls1_$(echo "$1" | cut -c2)" \
+        -groups "$2" -ign_eof > "$T/sc.out" 2>&1 || true
+    wait "$_sp" 2>/dev/null || true
+    _s=$(cat "$T/s.out" 2>/dev/null || true)
+    case "$5" in
+        ok)
+            case "$_s" in *"accept=1 "*) : ;; *) _fail "$8 — the server failed: $_s"; return 0 ;; esac
+            case "$_s" in *"read=5 "*) : ;; *) _fail "$8 — no \"ping\" after the handshake: $_s" ;; esac
+            case "$_s" in *"group=$6 "*) : ;; *) _fail "$8 — expected group $6: $_s" ;; esac
+            if [ "$7" != "-" ]; then
+                case "$_s" in *"hrr=$7 "*) : ;; *) _fail "$8 — expected hrr=$7: $_s" ;; esac
+            fi
+            ;;
+        fail)
+            case "$_s" in *"accept=0 err=-2 "*) : ;; *) _fail "$8 — expected TLS_ERR_HANDSHAKE_FAILED: $_s"; return 0 ;; esac
+            grep -q "alert handshake failure" "$T/sc.out" || _fail "$8 — s_client saw no handshake_failure alert"
+            ;;
+    esac
+    [ "$FAILS" = "$_rf" ] && echo "  ok: G $8"
+    return 0
+}
+
+echo "== G: the native server's groups and HelloRetryRequest, OpenSSL s_client choosing (6.6.15) =="
+# ⛔ 6.6.14 / eac97bb2: the 1.2 server sent x25519 to every client (s_client -groups P-256: "wrong
+# curve", accept -17) and the 1.3 server refused any client without an x25519 share (accept -2,
+# no alert) — even -groups P-256:X25519, whose HelloRetryRequest the driver refused to send.
+# Groups by number: x25519 29, secp256r1 23, secp384r1 24. An Ed25519 server certificate unless
+# named: OpenSSL's TLS 1.2 client also refuses an ECDSA certificate whose curve is not in its own
+# -groups ("wrong curve", RFC 8422 §5.1.1), which is about the certificate, not the key exchange.
+for V in 13 12; do
+    grow "$V" P-256         srved - ok 23 0 "TLS 1.$(echo $V | cut -c2): s_client P-256 only"
+    grow "$V" P-384         srved - ok 24 0 "TLS 1.$(echo $V | cut -c2): s_client P-384 only"
+    grow "$V" P-521         srved - fail 0 - "TLS 1.$(echo $V | cut -c2): s_client P-521 only: handshake_failure"
+done
+grow 13 P-256:X25519   srved - ok 23 0 "TLS 1.3: s_client P-256:X25519 shares P-256, which the server takes (6.6.14: accept -2)"
+grow 12 P-256:X25519   srved - ok 29 - "TLS 1.2: s_client P-256:X25519, the server's preference: x25519"
+grow 13 X448:P-256     srved - ok 23 1 "TLS 1.3: s_client X448:P-256 shares X448: the server's HelloRetryRequest, then P-256"
+grow 13 secp521r1:P-384 srved - ok 24 1 "TLS 1.3: s_client secp521r1:P-384: a HelloRetryRequest for P-384"
+grow 13 P-256:P-384    srved 24 ok 24 1 "TLS 1.3: a server taking only P-384, s_client sharing P-256: a HelloRetryRequest"
+grow 12 P-256:P-384    srved 24,23 ok 24 - "TLS 1.2: a server preferring P-384: P-384"
+grow 13 P-256          srv384 - ok 23 0 "TLS 1.3: an ECDSA P-384 server certificate, ECDHE on P-256"
+grow 12 P-256:P-384    srv384 - ok 23 - "TLS 1.2: an ECDSA P-384 server certificate signs a P-256 ServerKeyExchange"
+grow 12 P-384:P-256    srv    - ok 23 - "TLS 1.2: an ECDSA P-256 server certificate, P-384 listed first: P-256 (server preference)"
+
+FLOOR=$((39 + 9 + 15 - NOEMS_SKIP))
 if [ "$NROWS" -lt "$FLOOR" ]; then
     echo "  FAIL: $G: only $NROWS rows ran (floor $FLOOR)"; FAILS=$((FAILS + 1)); fi
 if [ "$FAILS" -ne 0 ]; then echo "FAIL: $G: $FAILS failure(s) in $NROWS rows"; exit 1; fi
