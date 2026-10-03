@@ -8,8 +8,9 @@
 # the message — the transcript hash can't be initialised until the
 # ServerHello reveals the cipher (hence the hash), so .25 replays the
 # buffered CH then the SH. Returns the message length or a negative
-# TLS_ERR_*. Offers x25519 only (no P-256 ECDH in sigil yet) and
-# ECDSA/Ed25519 sig algs only (RSA verify lands with sigil 3.5.10).
+# TLS_ERR_*. Offers x25519 only, in supported_groups and key_share — the
+# TLS 1.2 client also does ECDHE on secp256r1 / secp384r1 (6.6.15), this one
+# does not — and the ECDSA, RSA-PSS and Ed25519 signature schemes.
 fn tls_native_client_build_hello(ctx, out, out_max): i64 {
     if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
     if (load64(ctx + TLS_CTX_OFF_ROLE) != TLS_ROLE_CLIENT) {
@@ -1813,6 +1814,29 @@ fn _tn_ecdsa_p384_verify_digest_der(pk, digest, digest_len, sig_der, sig_der_len
     return _ecdsa_p384_verify_digest(pk, digest, digest_len, &raw);
 }
 
+# Verify a TLS 1.2 ECDSA signature `sig` (DER, `sig_len` bytes) over `content` with `leaf`'s key.
+# In TLS 1.2 an ECDSA SignatureAndHashAlgorithm names only the HASH (RFC 5246 §7.4.1.4.1;
+# ecdsa_secp256r1_sha256 is "SHA-256 with ECDSA" on any curve), so the digest is the scheme's and
+# the curve is the key's: a P-384 key may sign SHA-256, and OpenSSL's does when the peer lists
+# 0x0403 first. Used for the client's CertificateVerify (6.6.14) and the server's
+# ServerKeyExchange (6.6.15). `scheme` must be one of the two ECDSA schemes. Returns 1 (valid) or
+# 0 (invalid, a key that is neither P-256 nor P-384 included). CHANGELOG [6.6.15]
+fn _tn_ecdsa_verify_12(scheme, leaf, content, content_len, sig, sig_len): i64 {
+    var curve = x509_cert_curve(leaf);
+    var pk = x509_cert_pubkey(leaf);
+    var dg[48];
+    var dl = 32;
+    if (scheme == TLS_SIG_ECDSA_SECP384R1_SHA384) {
+        sha384(content, content_len, &dg);
+        dl = 48;
+    } else {
+        sha256(content, content_len, &dg);
+    }
+    if (curve == X509_CURVE_P256) { return _ecdsa_p256_verify_digest_der(pk, &dg, dl, sig, sig_len); }
+    if (curve == X509_CURVE_P384) { return _tn_ecdsa_p384_verify_digest_der(pk, &dg, dl, sig, sig_len); }
+    return 0;
+}
+
 # Server: verify a client CertificateVerify signature `sig` (`sig_len` bytes) over `content` with
 # the client's leaf, for the three schemes our CertificateRequest offers in TLS 1.3 and 1.2 alike:
 # ecdsa_secp256r1_sha256, ecdsa_secp384r1_sha384 and ed25519 (64 bytes, from an Ed25519 key). In
@@ -1831,16 +1855,7 @@ fn _tn_verify_client_sig(scheme, leaf, content, content_len, sig, sig_len, is12)
     if (scheme == TLS_SIG_ECDSA_SECP384R1_SHA384) { ecdsa = 1; }
     if (ecdsa == 1) {
         if (is12 == 1) {
-            var dg[48];
-            var dl = 32;
-            if (scheme == TLS_SIG_ECDSA_SECP384R1_SHA384) {
-                sha384(content, content_len, &dg);
-                dl = 48;
-            } else {
-                sha256(content, content_len, &dg);
-            }
-            if (curve == X509_CURVE_P256) { ok = _ecdsa_p256_verify_digest_der(pk, &dg, dl, sig, sig_len); }
-            if (curve == X509_CURVE_P384) { ok = _tn_ecdsa_p384_verify_digest_der(pk, &dg, dl, sig, sig_len); }
+            ok = _tn_ecdsa_verify_12(scheme, leaf, content, content_len, sig, sig_len);
         } elif (scheme == TLS_SIG_ECDSA_SECP256R1_SHA256) {
             if (curve == X509_CURVE_P256) { ok = ecdsa_p256_verify_der(pk, content, content_len, sig, sig_len); }
         } else {

@@ -1,0 +1,441 @@
+# tls12_client_ecdhe.tcyr — 6.6.15: the native TLS 1.2 client does ECDHE on secp256r1 and
+# secp384r1, not x25519 alone.
+#
+# ⛔ THE DEFECT (6.6.14). tls_native_12_build_client_hello offered x25519 in supported_groups (and,
+# since 6.6.14, a P-256 / P-384 client certificate's curve after it); _tn_12_parse_server_kex
+# refused any ServerKeyExchange that did not name x25519, and the ClientKeyExchange and premaster
+# were x25519-only. So a server ranking P-256 above X25519 failed a client holding a P-256
+# certificate (TLS_ERR_HANDSHAKE_FAILED), a server offering only P-256 / P-384 failed every native
+# client, and an OpenSSL TLS 1.2 server with an ECDSA certificate answered "no shared cipher" — its
+# certificate's curve was never listed. Behind that sat a second defect, reachable only once the
+# curves were listed: the ServerKeyExchange signature was read as TLS 1.3 reads a SignatureScheme
+# (curve bound to it), but in TLS 1.2 an ECDSA scheme names only the HASH, and OpenSSL's P-384
+# server key signs SHA-256 when the client lists 0x0403 first — every P-384 server certificate
+# failed with TLS_ERR_AUTHN.
+#
+# THE ORACLES are independent of our code: RFC 5903 §8.1 / §8.2 (the ECDH key pairs and shared
+# secrets, re-derived with a separate big-integer model before they were written here), and two
+# ServerKeyExchange signatures made by OpenSSL 3.6.5 (`openssl dgst -sha256 -sign` with a P-384
+# key, `-sha384` with a P-256 key) over fixed randoms. The client's key comes through the
+# tls_native_set_entropy hook: FIPS 186-5 A.2.1 keygen (sigil) maps 8 zero bytes ‖ (d - 1) to the
+# scalar d exactly, so the RFC's own private key is the one under test.
+#
+# Pure functions — no socket, no peer, no clock — so it runs on every cross-OS host. The OpenSSL
+# interop legs are tests/gates/platform/tls_native_client_auth_openssl.sh.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/io.cyr"
+include "lib/tls.cyr"
+
+# The P-256 server certificate + PKCS#8 key the other TLS 1.2 unit tests use: the in-process
+# signer of every ServerKeyExchange this file builds itself, and OpenSSL's SHA-384 signer below.
+var CERT23 = "3082017d30820123a0030201020214561cee528775ffec8d05834b308f1ad80d7e7dbe300a06082a8648ce3d04030230143112301006035504030c096c6f63616c686f7374301e170d3236303630313138343930365a170d3336303532393138343930365a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d030107034200049167a2981f570fdbd8d94bf20fb4f5c89d77aa5b58cf4ed416bafa0256a2561a04f1e71d57537fc532fc87ca980eb8ba1f8f8704fc7f6a793ba6598b97bb3275a3533051301d0603551d0e04160414e6e9022c5ba23153aa7b2a0004574c417dfbf42e301f0603551d23041830168014e6e9022c5ba23153aa7b2a0004574c417dfbf42e300f0603551d130101ff040530030101ff300a06082a8648ce3d04030203480030450220274b9132990767c26d383d8712024a2c8cdb63e38af642893d1a59ab44a29758022100a57e61df420d2425c712ad284d0ad53ef9c8cdbfd07ba65c952eaead0dc13729";
+var KEY23 = "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420b19108bb3950b49995a9c770e12613b12d96dc2409a464fdc43c63a41b1d4668a144034200049167a2981f570fdbd8d94bf20fb4f5c89d77aa5b58cf4ed416bafa0256a2561a04f1e71d57537fc532fc87ca980eb8ba1f8f8704fc7f6a793ba6598b97bb3275";
+# A self-signed P-384 certificate (OpenSSL 3.6.5) whose key made SIG_A.
+var CERT384 = "308201973082011da003020102020107300a06082a8648ce3d040302300c310a300806035504030c0173301e170d3236313030333035333832385a170d3336303933303035333832385a300c310a300806035504030c01733076301006072a8648ce3d020106052b8104002203620004665a31f9782e4c809c4bac9eb99631009d9003a586977347ec70e27b42d3bbf5758ec35aab3ff6bba648a9f8e890015e8880aa5f900faad71b58ad95b639b5650f267636f0b97ced0664ca7691dd1d23f1cfa658e326ee6dc05f8416c1adb122a3533051301d0603551d0e04160414935d4d4eb66f6225cad97c6d397f5581df31f0b4301f0603551d23041830168014935d4d4eb66f6225cad97c6d397f5581df31f0b4300f0603551d130101ff040530030101ff300a06082a8648ce3d04030203680030650230683e7b0591c3bc97c9b7c84f60e8e6b4d84d4aaad2dd18433bf13e85ce13234c3e03de379182d3adffcff1a12c5fd3bb023100b69224d81f0d10a9a6271c886f48e23a5133b7c05a7708bb4e55a5499bcd53199659038fb59b94df8d0c83a3f256bb99";
+# OpenSSL: SHA-256 with the P-384 key over CR ‖ SR ‖ the secp256r1 params carrying RFC 5903's g^r.
+var SIG_A = "306602310088511f29904569b82aa4b40fbd5e0aa786bc39884f8944cd821ef1473759494748ff76d98144d1dd7fcd9f7bea61467c023100bf26034e7408433c2f1868e807bd04e36b7cf69fa337a93a5f8dc8fc325e7f723dbd638073a52f2e7d228c1b707897c6";
+# OpenSSL: SHA-384 with the P-256 key (KEY23) over CR ‖ SR ‖ the secp384r1 params carrying g^r.
+var SIG_B = "3046022100abca3b2e60bb9e8f64f609c38b89d22a584e3cafbf5ed022e0119469776e58ca022100f2e7a4a1864e8322cd18f728d54664ec3a716111ef1b48d31744944e9f124fa7";
+
+# RFC 5903 §8.1 (P-256): our scalar i, its public point g^i, the server's point g^r, and the
+# shared secret's x-coordinate g^ir.
+var I256  = "c88f01f510d9ac3f70a292daa2316de544e9aab8afe84049c62a9c57862d1433";
+var R256  = "c6ef9c5d78ae012a011164acb397ce2088685d8f06bf9be0b283ab46476bee53";
+var GI256 = "04dad0b65394221cf9b051e1feca5787d098dfe637fc90b9ef945d0c37725811805271a0461cdb8252d61f1c456fa3e59ab1f45b33accf5f58389e0577b8990bb3";
+var GR256 = "04d12dfb5289c8d4f81208b70270398c342296970a0bccb74c736fc7554494bf6356fbf3ca366cc23e8157854c13c58d6aac23f046ada30f8353e74f33039872ab";
+var Z256  = "d6840f6b42f6edafd13116e0e12565202fef8e9ece7dce03812464d04b9442de";
+# RFC 5903 §8.2 (P-384).
+var I384  = "099f3c7034d4a2c699884d73a375a67f7624ef7c6b3c0f160647b67414dce655e35b538041e649ee3faef896783ab194";
+var R384  = "41cb0779b4bdb85d47846725fbec3c9430fab46cc8dc5060855cc9bda0aa2942e0308312916b8ed2960e4bd55a7448fc";
+var GI384 = "04667842d7d180ac2cde6f74f37551f55755c7645c20ef73e31634fe72b4c55ee6de3ac808acb4bdb4c88732aee95f41aa9482ed1fc0eeb9cafc4984625ccfc23f65032149e0e144ada024181535a0f38eeb9fcff3c2c947dae69b4c634573a81c";
+var GR384 = "04e558dbef53eecde3d3fccfc1aea08a89a987475d12fd950d83cfa41732bc509d0d1ac43a0336def96fda41d0774a3571dcfbec7aacf3196472169e838430367f66eebe3c6e70c416dd5f0c68759dd1fff83fa40142209dff5eaad96db9e6386c";
+var Z384  = "11187331c279962d93d604243fd592cb9d0a926f422e47187521287e7156c5c4d603135569b9e9d09cf5d4a270f59746";
+# Each field prime, big-endian: an X coordinate equal to p is out of range.
+var P256  = "ffffffff00000001000000000000000000000000ffffffffffffffffffffffff";
+var P384  = "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeffffffff0000000000000000ffffffff";
+
+var G_CR = 0;    # client_random: bytes 0x00..0x1f (the OpenSSL signatures cover these)
+var G_SR = 0;    # server_random: bytes 0x20..0x3f
+var G_SRV = 0;   # the P-256 server ctx that signs the ServerKeyExchanges built here
+var G_C23 = 0;   # CERT23 / CERT384 decoded
+var G_C384 = 0;
+
+fn _h(s): i64 { return hex_decode(s, strlen(s)); }
+fn _hn(s): i64 { return strlen(s) / 2; }
+
+# 1 if every one of n bytes at p is zero.
+fn _all_zero(p, n): i64 {
+    var acc = 0;
+    var i = 0;
+    while (i < n) { acc = acc | (load8(p + i) & 0xFF); i = i + 1; }
+    if (acc == 0) { return 1; }
+    return 0;
+}
+
+# ── the deterministic entropy source: exactly G_RND_LEN bytes, once per install ──
+var G_RND = 0;
+var G_RND_LEN = 0;
+var G_RND_CALLS = 0;
+fn _fixed_rand(buf, n): i64 {
+    G_RND_CALLS = G_RND_CALLS + 1;
+    if (n != G_RND_LEN) { return 0; }       # a draw of the wrong size fails the keygen
+    memcpy(buf, G_RND, n);
+    return n;
+}
+
+# Install randomness that FIPS 186-5 A.2.1 keygen (d = (c mod (n - 1)) + 1, c the 8 + w bytes)
+# turns into the scalar d_hex exactly: c = 8 zero bytes ‖ (d - 1), big-endian.
+fn _entropy_for_scalar(d_hex): i64 {
+    var w = _hn(d_hex);
+    var d = _h(d_hex);
+    var b = alloc(8 + w);
+    memset(b, 0, 8);
+    memcpy(b + 8, d, w);
+    var i = 8 + w - 1;
+    var borrow = 1;
+    while (borrow == 1) {                   # d - 1 (d is never zero)
+        var v = load8(b + i) & 0xFF;
+        if (v == 0) { store8(b + i, 0xFF); i = i - 1; }
+        else { store8(b + i, v - 1); borrow = 0; }
+    }
+    G_RND = b;
+    G_RND_LEN = 8 + w;
+    G_RND_CALLS = 0;
+    tls_native_set_entropy(&_fixed_rand);
+    return 0;
+}
+
+# A TLS 1.2 client ctx ready for a ServerKeyExchange: the fixed randoms and a parsed server leaf.
+fn _client(cert, cert_len): i64 {
+    var c = tls_native_new_client(0, 0);
+    store64(c + TLS_CTX_OFF_CLIENT_RANDOM, G_CR);
+    store64(c + TLS_CTX_OFF_SERVER_RANDOM, G_SR);
+    var body = alloc(6 + cert_len);
+    _tn_be24_w(body, 3 + cert_len);
+    _tn_be24_w(body + 3, cert_len);
+    memcpy(body + 6, cert, cert_len);
+    if (_tn_parse_certificate_12(c, body, 6 + cert_len) != TLS_OK) { return 0; }
+    return c;
+}
+
+# ServerECDHParams { named_curve(3), group, ECPoint<1-byte len> } into out; returns its length.
+fn _params(group, point, point_len, out): i64 {
+    store8(out, 3);
+    _tn_be16_w(out + 1, group);
+    store8(out + 3, point_len);
+    memcpy(out + 4, point, point_len);
+    return 4 + point_len;
+}
+
+# A ServerKeyExchange body: params ‖ scheme ‖ sig<2>, signed by G_SRV (P-256, ecdsa_secp256r1_sha256)
+# over CR ‖ SR ‖ params. Returns the body length.
+fn _ske_signed(params, plen, out): i64 {
+    var content = alloc(64 + plen);
+    memcpy(content, G_CR, 32);
+    memcpy(content + 32, G_SR, 32);
+    memcpy(content + 64, params, plen);
+    var sig = alloc(160);
+    var scheme = 0;
+    var sl = _tn_sign(G_SRV, content, 64 + plen, sig, 160, &scheme);
+    if (sl <= 0) { return 0; }
+    memcpy(out, params, plen);
+    _tn_be16_w(out + plen, scheme);
+    _tn_be16_w(out + plen + 2, sl);
+    memcpy(out + plen + 4, sig, sl);
+    return plen + 4 + sl;
+}
+
+# params ‖ scheme ‖ a given DER signature (the OpenSSL vectors).
+fn _ske_with_sig(params, plen, scheme, sig_hex, out): i64 {
+    memcpy(out, params, plen);
+    _tn_be16_w(out + plen, scheme);
+    _tn_be16_w(out + plen + 2, _hn(sig_hex));
+    memcpy(out + plen + 4, _h(sig_hex), _hn(sig_hex));
+    return plen + 4 + _hn(sig_hex);
+}
+
+# The supported_groups extension data of a ClientHello message, or 0 when absent or when any
+# length field fails to close (every field is walked, so the hello must stay well-formed).
+fn _ch_groups(m, mlen): i64 {
+    if (mlen < 4 + 2 + 32 + 1) { return 0; }
+    if (_tn_be24_r(m + 1) + 4 != mlen) { return 0; }
+    var p = 4 + 2 + 32;
+    p = p + 1 + (load8(m + p) & 0xFF);
+    p = p + 2 + _tn_be16_r(m + p);
+    p = p + 1 + (load8(m + p) & 0xFF);
+    if (p + 2 > mlen) { return 0; }
+    var end = p + 2 + _tn_be16_r(m + p);
+    if (end != mlen) { return 0; }
+    p = p + 2;
+    var found = 0;
+    while (p < end) {
+        if (p + 4 > end) { return 0; }
+        var t = _tn_be16_r(m + p);
+        var l = _tn_be16_r(m + p + 2);
+        if (p + 4 + l > end) { return 0; }
+        if (t == TLS_EXT_SUPPORTED_GROUPS) { found = m + p + 2; }   # points at its length field
+        p = p + 4 + l;
+    }
+    return found;
+}
+
+fn _expect_groups(c, label): i64 {
+    var m = alloc(2048);
+    var n = tls_native_12_build_client_hello(c, m, 2048);
+    assert_gt(n, 0, label);
+    var g = _ch_groups(m, n);
+    assert_neq(g, 0, "  ...the hello closes and carries supported_groups");
+    if (g == 0) { return 0; }
+    assert_eq(_tn_be16_r(g), 8, "  ...extension_data is 8 bytes");
+    assert_eq(_tn_be16_r(g + 2), 6, "  ...named_curve_list is three groups");
+    assert_eq(_tn_be16_r(g + 4), TLS_GROUP_X25519, "  ...x25519 first");
+    assert_eq(_tn_be16_r(g + 6), TLS_GROUP_SECP256R1, "  ...then secp256r1");
+    assert_eq(_tn_be16_r(g + 8), TLS_GROUP_SECP384R1, "  ...then secp384r1");
+    return 0;
+}
+
+fn test_client_hello_groups(): i64 {
+    test_group("the 1.2 ClientHello offers x25519, secp256r1 and secp384r1");
+    _expect_groups(tls_native_new_client("localhost", 9), "no client certificate");
+    var c = tls_native_new_client("localhost", 9);
+    assert_eq(tls_native_set_client_cert(c, G_C23, _hn(CERT23), 1), TLS_OK, "a P-256 client certificate installs");
+    assert_eq(tls_native_set_client_key(c, _h(KEY23), _hn(KEY23)), TLS_OK, "  ...and its key");
+    _expect_groups(c, "with a P-256 client certificate: the same list");
+    return 0;
+}
+
+# The whole client side of one curve: the ServerKeyExchange names it, our key is the RFC's i, the
+# premaster is the RFC's g^ir, the ClientKeyExchange carries g^i, and the private key is gone.
+fn _curve_kat(group, gr_hex, i_hex, gi_hex, z_hex, priv_len, pt_len, label): i64 {
+    test_group(label);
+    var c = _client(G_C23, _hn(CERT23));
+    assert_neq(c, 0, "client ctx with the server's leaf");
+    var pb = alloc(128);
+    var plen = _params(group, _h(gr_hex), pt_len, pb);
+    var ske = alloc(512);
+    var sn = _ske_signed(pb, plen, ske);
+    assert_gt(sn, 0, "ServerKeyExchange signed");
+    var pr = _tn_12_parse_server_kex(c, ske, sn);
+    assert_eq(pr, TLS_OK, "the ServerKeyExchange parses and its signature verifies");
+    if (pr != TLS_OK) { return 0; }
+    assert_eq(tls_native_get_group(c), group, "  ...its group is recorded");
+    assert_eq(memeq(load64(c + TLS_CTX_OFF_PEER_PUB), _h(gr_hex), pt_len), 1, "  ...and the server's point, owned");
+    _entropy_for_scalar(i_hex);
+    var pml = _tn_12_client_premaster(c);
+    tls_native_set_entropy(0);
+    assert_eq(pml, _hn(z_hex), "the premaster is the curve's field length");
+    if (pml < 0) { return 0; }
+    assert_eq(G_RND_CALLS, 1, "  ...from ONE draw of the keygen's randomness through the entropy hook");
+    assert_eq(memeq(load64(c + TLS_CTX_OFF_EPH_PUB), _h(gi_hex), pt_len), 1, "  ...our public key is the RFC's g^i");
+    assert_eq(memeq(load64(c + TLS_CTX_OFF_SHARED), _h(z_hex), pml), 1, "  ...the premaster is the RFC's g^ir x-coordinate");
+    assert_eq(_all_zero(load64(c + TLS_CTX_OFF_EPH_PRIV), priv_len), 1, "  ...and our private key is zeroised once used");
+    var cke = alloc(256);
+    var cn = _tn_12_build_client_kex(load64(c + TLS_CTX_OFF_EPH_PUB), _tn_12_point_len(group), cke, 256);
+    assert_eq(cn, 4 + 1 + pt_len, "ClientKeyExchange = header + 1-byte length + the point");
+    assert_eq(load8(cke), TLS_HS_CLIENT_KEY_EXCHANGE, "  ...type 16");
+    assert_eq(_tn_be24_r(cke + 1), 1 + pt_len, "  ...body length");
+    assert_eq(load8(cke + 4), pt_len, "  ...ECPoint length (RFC 8422 §5.7)");
+    assert_eq(memeq(cke + 5, _h(gi_hex), pt_len), 1, "  ...the uncompressed g^i");
+    return 0;
+}
+
+# The server's side of the same exchange through tls_native_12_compute_premaster: r with g^i.
+fn _curve_server_view(group, r_hex, gi_hex, z_hex, label): i64 {
+    var c = tls_native_new_client(0, 0);
+    store64(c + TLS_CTX_OFF_GROUP, group);
+    store64(c + TLS_CTX_OFF_EPH_PRIV, _h(r_hex));
+    var out = alloc(48);
+    assert_eq(tls_native_12_compute_premaster(c, _h(gi_hex), out), TLS_OK, label);
+    assert_eq(memeq(out, _h(z_hex), _hn(z_hex)), 1, "  ...the same g^ir from the other key pair");
+    return 0;
+}
+
+fn test_curves(): i64 {
+    _curve_kat(TLS_GROUP_SECP256R1, GR256, I256, GI256, Z256, 32, 65, "secp256r1: RFC 5903 §8.1 end to end");
+    _curve_server_view(TLS_GROUP_SECP256R1, R256, GI256, Z256, "secp256r1: compute_premaster(r, g^i)");
+    _curve_kat(TLS_GROUP_SECP384R1, GR384, I384, GI384, Z384, 48, 97, "secp384r1: RFC 5903 §8.2 end to end");
+    _curve_server_view(TLS_GROUP_SECP384R1, R384, GI384, Z384, "secp384r1: compute_premaster(r, g^i)");
+    return 0;
+}
+
+fn test_x25519_unchanged(): i64 {
+    test_group("x25519: the ServerKeyExchange, our key and the premaster as before");
+    var srv = tls_native_new_server(G_C23, _hn(CERT23), _h(KEY23), _hn(KEY23));
+    assert_eq(tls_native_server_load_creds(srv), TLS_OK, "server creds");
+    store64(srv + TLS_CTX_OFF_CLIENT_RANDOM, G_CR);
+    store64(srv + TLS_CTX_OFF_SERVER_RANDOM, G_SR);
+    _tn_gen_ephemeral_x25519_pub_only(srv);
+    var ske = alloc(256);
+    var sn = _tn_12_build_server_kex(srv, ske, 256);
+    assert_gt(sn, 0, "the native server's x25519 ServerKeyExchange");
+    var c = _client(G_C23, _hn(CERT23));
+    assert_eq(_tn_12_parse_server_kex(c, ske + 4, sn - 4), TLS_OK, "parses and verifies");
+    assert_eq(tls_native_get_group(c), TLS_GROUP_X25519, "  ...group x25519");
+    var k = alloc(32);
+    var i = 0;
+    while (i < 32) { store8(k + i, 0x40 + i); i = i + 1; }
+    G_RND = k;
+    G_RND_LEN = 32;
+    G_RND_CALLS = 0;
+    tls_native_set_entropy(&_fixed_rand);
+    var pml = _tn_12_client_premaster(c);
+    tls_native_set_entropy(0);
+    assert_eq(pml, 32, "premaster 32 bytes");
+    var want = alloc(32);
+    x25519(k, load64(srv + TLS_CTX_OFF_EPH_PUB), want);
+    assert_eq(memeq(load64(c + TLS_CTX_OFF_SHARED), want, 32), 1, "  ...x25519(our key, the server's)");
+    var srvpm = alloc(32);
+    assert_eq(tls_native_12_compute_premaster(srv, load64(c + TLS_CTX_OFF_EPH_PUB), srvpm), TLS_OK, "  ...the server computes it too");
+    assert_eq(memeq(srvpm, want, 32), 1, "  ...the same premaster");
+    assert_eq(_all_zero(load64(c + TLS_CTX_OFF_EPH_PRIV), 32), 1, "  ...our private key zeroised");
+    var cke = alloc(64);
+    assert_eq(_tn_12_build_client_kex(load64(c + TLS_CTX_OFF_EPH_PUB), _tn_12_point_len(TLS_GROUP_X25519), cke, 64), 37,
+      "x25519 ClientKeyExchange is still 37 bytes");
+    return 0;
+}
+
+fn test_tls12_hash_not_curve(): i64 {
+    test_group("a TLS 1.2 ECDSA scheme names the hash, not the curve (OpenSSL signatures)");
+    var pa = alloc(128);
+    var pal = _params(TLS_GROUP_SECP256R1, _h(GR256), 65, pa);
+    var ske = alloc(512);
+    var sn = _ske_with_sig(pa, pal, TLS_SIG_ECDSA_SECP256R1_SHA256, SIG_A, ske);
+    var c = _client(G_C384, _hn(CERT384));
+    assert_neq(c, 0, "a P-384 server leaf");
+    assert_eq(_tn_12_parse_server_kex(c, ske, sn), TLS_OK, "a P-384 key signing SHA-256 (0x0403) verifies");
+    store8(ske + sn - 1, (load8(ske + sn - 1) & 0xFF) ^ 1);
+    var c2 = _client(G_C384, _hn(CERT384));
+    assert_eq(_tn_12_parse_server_kex(c2, ske, sn), TLS_ERR_AUTHN, "  ...and one flipped bit does not");
+    var pb = alloc(128);
+    var pbl = _params(TLS_GROUP_SECP384R1, _h(GR384), 97, pb);
+    var ske2 = alloc(512);
+    var sn2 = _ske_with_sig(pb, pbl, TLS_SIG_ECDSA_SECP384R1_SHA384, SIG_B, ske2);
+    var c3 = _client(G_C23, _hn(CERT23));
+    assert_eq(_tn_12_parse_server_kex(c3, ske2, sn2), TLS_OK, "a P-256 key signing SHA-384 (0x0503) verifies");
+    var c4 = _client(G_C23, _hn(CERT23));
+    _tn_be16_w(ske2 + pbl, TLS_SIG_ECDSA_SECP256R1_SHA256);
+    assert_eq(_tn_12_parse_server_kex(c4, ske2, sn2), TLS_ERR_AUTHN, "  ...but not read as SHA-256");
+    return 0;
+}
+
+# A ServerKeyExchange refused at parse: the code and nothing recorded.
+fn _refused_parse(group, point, point_len, curve_type, want, label): i64 {
+    var pb = alloc(160);
+    var plen = _params(group, point, point_len, pb);
+    store8(pb, curve_type);
+    var ske = alloc(512);
+    var sn = _ske_signed(pb, plen, ske);
+    var c = _client(G_C23, _hn(CERT23));
+    assert_eq(_tn_12_parse_server_kex(c, ske, sn), want, label);
+    assert_eq(tls_native_get_group(c), 0, "  ...no group recorded");
+    assert_eq(load64(c + TLS_CTX_OFF_PEER_PUB), 0, "  ...no point recorded");
+    return 0;
+}
+
+# A signed ServerKeyExchange whose point sigil refuses: it parses, the premaster is refused, and
+# neither the premaster buffer nor our private key keeps a byte.
+fn _refused_point(group, point, point_len, priv_hex, label): i64 {
+    var pb = alloc(160);
+    var plen = _params(group, point, point_len, pb);
+    var ske = alloc(512);
+    var sn = _ske_signed(pb, plen, ske);
+    var c = _client(G_C23, _hn(CERT23));
+    assert_eq(_tn_12_parse_server_kex(c, ske, sn), TLS_OK, label);
+    _entropy_for_scalar(priv_hex);
+    var r = _tn_12_client_premaster(c);
+    tls_native_set_entropy(0);
+    assert_eq(r, TLS_ERR_HANDSHAKE_FAILED, "  ...the premaster is refused");
+    assert_eq(_all_zero(load64(c + TLS_CTX_OFF_SHARED), 48), 1, "  ...the premaster buffer is zero");
+    assert_eq(_all_zero(load64(c + TLS_CTX_OFF_EPH_PRIV), _hn(priv_hex)), 1, "  ...and our private key zeroised");
+    return 0;
+}
+
+fn test_refusals(): i64 {
+    test_group("groups and points the 1.2 client refuses");
+    var g256 = _h(GR256);
+    var g384 = _h(GR384);
+    _refused_parse(0x0019, g256, 65, 3, TLS_ERR_HANDSHAKE_FAILED, "secp521r1 (not offered)");
+    _refused_parse(TLS_GROUP_SECP256R1, g256, 65, 1, TLS_ERR_HANDSHAKE_FAILED, "curve_type explicit_prime(1)");
+    _refused_parse(TLS_GROUP_SECP256R1, g256, 33, 3, TLS_ERR_HANDSHAKE_FAILED, "secp256r1, a 33-byte (compressed-length) point");
+    _refused_parse(TLS_GROUP_SECP256R1, g256, 32, 3, TLS_ERR_HANDSHAKE_FAILED, "secp256r1, an x25519-length point");
+    _refused_parse(TLS_GROUP_SECP384R1, g256, 65, 3, TLS_ERR_HANDSHAKE_FAILED, "secp384r1, a secp256r1-length point");
+    _refused_parse(TLS_GROUP_X25519, g256, 65, 3, TLS_ERR_HANDSHAKE_FAILED, "x25519, a 65-byte point");
+    # The params intact, the signature cut off.
+    var pb = alloc(128);
+    var plen = _params(TLS_GROUP_SECP256R1, g256, 65, pb);
+    var c = _client(G_C23, _hn(CERT23));
+    assert_eq(_tn_12_parse_server_kex(c, pb, plen + 2), TLS_ERR_BAD_HANDSHAKE, "params with no signature");
+    # A bad signature over a good point records nothing.
+    var ske = alloc(512);
+    var sn = _ske_signed(pb, plen, ske);
+    store8(ske + sn - 1, (load8(ske + sn - 1) & 0xFF) ^ 0x80);
+    var c2 = _client(G_C23, _hn(CERT23));
+    assert_eq(_tn_12_parse_server_kex(c2, ske, sn), TLS_ERR_AUTHN, "a forged signature");
+    assert_eq(tls_native_get_group(c2), 0, "  ...no group recorded");
+    assert_eq(load64(c2 + TLS_CTX_OFF_PEER_PUB), 0, "  ...no point recorded");
+
+    test_group("points sigil refuses: the premaster fails closed");
+    var off = alloc(65);
+    memcpy(off, g256, 65);
+    store8(off + 64, (load8(off + 64) & 0xFF) ^ 1);
+    _refused_point(TLS_GROUP_SECP256R1, off, 65, I256, "secp256r1, off the curve (y + 1)");
+    var cmp = alloc(65);
+    memcpy(cmp, g256, 65);
+    store8(cmp, 0x02);
+    _refused_point(TLS_GROUP_SECP256R1, cmp, 65, I256, "secp256r1, prefix 0x02");
+    var xp = alloc(65);
+    memcpy(xp, g256, 65);
+    memcpy(xp + 1, _h(P256), 32);
+    _refused_point(TLS_GROUP_SECP256R1, xp, 65, I256, "secp256r1, x = p");
+    var off4 = alloc(97);
+    memcpy(off4, g384, 97);
+    store8(off4 + 96, (load8(off4 + 96) & 0xFF) ^ 1);
+    _refused_point(TLS_GROUP_SECP384R1, off4, 97, I384, "secp384r1, off the curve (y + 1)");
+    var xp4 = alloc(97);
+    memcpy(xp4, g384, 97);
+    memcpy(xp4 + 1, _h(P384), 48);
+    _refused_point(TLS_GROUP_SECP384R1, xp4, 97, I384, "secp384r1, x = p");
+
+    test_group("keygen and premaster failures");
+    var c3 = _client(G_C23, _hn(CERT23));
+    var ske3 = alloc(512);
+    var sn3 = _ske_signed(pb, plen, ske3);
+    assert_eq(_tn_12_parse_server_kex(c3, ske3, sn3), TLS_OK, "secp256r1 ServerKeyExchange");
+    G_RND = alloc(64);
+    G_RND_LEN = 39;                          # one byte short of ECDH_P256_RAND_LEN
+    tls_native_set_entropy(&_fixed_rand);
+    var r3 = _tn_12_client_premaster(c3);
+    tls_native_set_entropy(0);
+    assert_eq(r3, TLS_ERR_INTERNAL, "  ...an entropy source that cannot fill the draw fails the keygen");
+    var c4 = tls_native_new_client(0, 0);
+    store64(c4 + TLS_CTX_OFF_GROUP, 0x0019);
+    store64(c4 + TLS_CTX_OFF_EPH_PRIV, _h(I256));
+    var o4 = alloc(48);
+    assert_eq(tls_native_12_compute_premaster(c4, g256, o4), TLS_ERR_HANDSHAKE_FAILED, "compute_premaster on a group we do not offer");
+    store64(c4 + TLS_CTX_OFF_GROUP, TLS_GROUP_SECP256R1);
+    store64(c4 + TLS_CTX_OFF_EPH_PRIV, _h(P256));
+    assert_eq(tls_native_12_compute_premaster(c4, g256, o4), TLS_ERR_HANDSHAKE_FAILED, "  ...or with a private scalar >= n");
+    return 0;
+}
+
+fn _ecdhe_all(): i64 {
+    alloc_init();
+    G_CR = alloc(32);
+    G_SR = alloc(32);
+    var i = 0;
+    while (i < 32) { store8(G_CR + i, i); store8(G_SR + i, 0x20 + i); i = i + 1; }
+    G_C23 = _h(CERT23);
+    G_C384 = _h(CERT384);
+    G_SRV = tls_native_new_server(G_C23, _hn(CERT23), _h(KEY23), _hn(KEY23));
+    assert_eq(tls_native_server_load_creds(G_SRV), TLS_OK, "the P-256 signer loads");
+    test_client_hello_groups();
+    test_curves();
+    test_x25519_unchanged();
+    test_tls12_hash_not_curve();
+    test_refusals();
+    return 0;
+}
+_ecdhe_all();
+var r = assert_summary();
