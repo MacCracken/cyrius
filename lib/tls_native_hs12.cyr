@@ -267,7 +267,8 @@ fn tls_native_12_verify_data(cipher, master48, label, label_len, handshake_hash,
 # full 32-byte random (no gmt_unix_time split), empty session_id, the
 # supported 1.2 wire ciphersuites (descending), null compression, and
 # the extensions a 1.2 ECDHE handshake needs: SNI (when the host is a
-# DNS name), supported_groups(x25519, secp256r1, secp384r1), ec_point_formats(uncompressed), and
+# DNS name), supported_groups (by default x25519, secp256r1, secp384r1 — tls_native_set_groups),
+# ec_point_formats(uncompressed), and
 # signature_algorithms. NO supported_versions / key_share (those are
 # 1.3 — and the client's ECDHE share rides ClientKeyExchange, not the
 # hello). Buffers the message into CH_BUF/CH_LEN for the retroactive
@@ -289,7 +290,7 @@ fn tls_native_12_build_client_hello(ctx, out, out_max): i64 {
     var host_len = _tn_sni_len(host, load64(ctx + TLS_CTX_OFF_HOST_LEN));
     var sni_ext = 0;
     if (host_len > 0) { sni_ext = 4 + 2 + 1 + 2 + host_len; }
-    # ext_block = SNI + supported_groups(12, three groups) + ec_point_formats(6)
+    # ext_block = SNI + supported_groups(6 + 2 per group) + ec_point_formats(6)
     #           + signature_algorithms(20, seven schemes — .83 added RSA PSS+PKCS1)
     #           + renegotiation_info(5, empty — RFC 5746 §3.4)
     #           + extended_master_secret(4, empty — RFC 7627 §5.1)
@@ -298,14 +299,16 @@ fn tls_native_12_build_client_hello(ctx, out, out_max): i64 {
     var apl = 0;
     var alpn_ext = 0;
     if (alpn != 0) { apl = _tn_be16_r(alpn); alpn_ext = 6 + apl; }
-    # supported_groups lists every curve the 1.2 client does ECDHE on (RFC 8422 §5.1.1): x25519
-    # first, then secp256r1 and secp384r1 (sigil's constant-time ECDH), with or without a client
-    # certificate — the list is also the curves a server may accept an ECDSA client certificate
-    # on, and the curves an ECDSA server certificate may use. 6.6.14 listed a P-256 / P-384
-    # client certificate's curve while the key exchange was x25519 only, so a server ranking that
-    # curve first failed the handshake; without a certificate the hello offered x25519 alone and
-    # an OpenSSL server with an ECDSA certificate answered "no shared cipher". CHANGELOG [6.6.15]
-    var ext_block = sni_ext + 12 + 6 + 20 + 5 + 4 + alpn_ext;
+    # supported_groups lists every curve the 1.2 client does ECDHE on (RFC 8422 §5.1.1) — by
+    # default x25519 first, then secp256r1 and secp384r1 (sigil's constant-time ECDH; the list
+    # tls_native_set_groups installed, if any), with or without a client certificate — the list is
+    # also the curves a server may accept an ECDSA client certificate on, and the curves an ECDSA
+    # server certificate may use. 6.6.14 listed a P-256 / P-384 client certificate's curve while
+    # the key exchange was x25519 only, so a server ranking that curve first failed the handshake;
+    # without a certificate the hello offered x25519 alone and an OpenSSL server with an ECDSA
+    # certificate answered "no shared cipher". CHANGELOG [6.6.15]
+    var sg_ext = 6 + 2 * _tn_groups_n(_tn_groups(ctx));
+    var ext_block = sni_ext + sg_ext + 6 + 20 + 5 + 4 + alpn_ext;
     # cipher_suites = 2-byte len + six supported suites (12 bytes; .83 added RSA + AES-128)
     var body_len = 2 + 32 + 1 + 2 + 12 + 2 + 2 + ext_block;
     var total = TLS_HANDSHAKE_HEADER_LEN + body_len;
@@ -332,12 +335,7 @@ fn tls_native_12_build_client_hello(ctx, out, out_max): i64 {
         _tn_be16_w(p, host_len); p = p + 2;
         memcpy(p, host, host_len); p = p + host_len;
     }
-    _tn_be16_w(p, TLS_EXT_SUPPORTED_GROUPS); p = p + 2;
-    _tn_be16_w(p, 8); p = p + 2;
-    _tn_be16_w(p, 6); p = p + 2;                       # named_curve_list length (3 groups)
-    _tn_be16_w(p, TLS_GROUP_X25519); p = p + 2;
-    _tn_be16_w(p, TLS_GROUP_SECP256R1); p = p + 2;
-    _tn_be16_w(p, TLS_GROUP_SECP384R1); p = p + 2;
+    p = p + _tn_write_supported_groups(ctx, p);
     _tn_be16_w(p, TLS_EXT_EC_POINT_FORMATS); p = p + 2;
     _tn_be16_w(p, 2); p = p + 2;
     store8(p, 1); p = p + 1;                           # ec_point_format_list length (1 BYTE)
@@ -661,50 +659,21 @@ fn _tn_12_build_server_kex(ctx, out, out_max): i64 {
     return TLS_HANDSHAKE_HEADER_LEN + body_len;
 }
 
-# The ECPoint length of a 1.2 ECDHE group on the wire (RFC 8422 §5.4 / §5.7): x25519's 32-byte
-# u-coordinate (RFC 8422 §5.11), or an uncompressed SEC 1 point 0x04 || X || Y — 65 bytes on
-# secp256r1, 97 on secp384r1 (the only point format we offer, ec_point_formats(uncompressed)).
-# 0 for a group the 1.2 client does not offer. CHANGELOG [6.6.15]
-fn _tn_12_point_len(group): i64 {
-    if (group == TLS_GROUP_X25519) { return 32; }
-    if (group == TLS_GROUP_SECP256R1) { return ECDH_P256_PUB_LEN; }
-    if (group == TLS_GROUP_SECP384R1) { return ECDH_P384_PUB_LEN; }
-    return 0;
-}
-
-# The premaster secret's length for a 1.2 ECDHE group: x25519's 32 bytes, or the x-coordinate of
-# the shared point, the curve's full field length with leading zeros kept (RFC 8422 §5.10) —
-# 32 on secp256r1, 48 on secp384r1. 0 for a group we do not offer. CHANGELOG [6.6.15]
-fn _tn_12_premaster_len(group): i64 {
-    if (group == TLS_GROUP_X25519) { return 32; }
-    if (group == TLS_GROUP_SECP256R1) { return ECDH_P256_SECRET_LEN; }
-    if (group == TLS_GROUP_SECP384R1) { return ECDH_P384_SECRET_LEN; }
-    return 0;
-}
-
-# Our ephemeral private key's length on a 1.2 ECDHE group: 32 bytes (x25519, secp256r1), 48
-# (secp384r1); 0 for a group we do not offer. CHANGELOG [6.6.15]
-fn _tn_12_eph_priv_len(group): i64 {
-    if (group == TLS_GROUP_X25519) { return 32; }
-    if (group == TLS_GROUP_SECP256R1) { return ECDH_P256_PRIV_LEN; }
-    if (group == TLS_GROUP_SECP384R1) { return ECDH_P384_PRIV_LEN; }
-    return 0;
-}
-
 # Client: parse + verify a TLS 1.2 ECDHE ServerKeyExchange body (header stripped).
 # ServerECDHParams { curve_type=named_curve(3), namedcurve, ECPoint<1-byte len> }: the
-# namedcurve must be one we offered (x25519, secp256r1, secp384r1 — 6.6.15) and the point
-# exactly that group's length (_tn_12_point_len). The signed content is client_random ‖
+# namedcurve must be one we offered (_tn_groups: x25519, secp256r1, secp384r1 — 6.6.15) and the
+# point exactly that group's length (_tn_group_point_len). The signed content is client_random ‖
 # server_random ‖ the params exactly as sent (RFC 8422 §5.4), verified against the parsed
 # server-cert key per the SKE's SignatureScheme. Once it verifies, the group goes to OFF_GROUP
 # and the point into OWNED storage at OFF_PEER_PUB (the record buffer is transient). An EC
 # point's validity — prefix 0x04, both coordinates below p, on the curve — is sigil's check, in
-# tls_native_12_compute_premaster. Returns TLS_OK or a negative TLS_ERR_*.
+# _tn_ecdhe_shared. Returns TLS_OK or a negative TLS_ERR_*.
 fn _tn_12_parse_server_kex(ctx, body, body_len): i64 {
     if (body_len < 4) { return TLS_ERR_BAD_HANDSHAKE; }
     if ((load8(body) & 0xFF) != 3) { return TLS_ERR_HANDSHAKE_FAILED; }
     var group = _tn_be16_r(body + 1);
-    var want = _tn_12_point_len(group);
+    if (_tn_groups_has(_tn_groups(ctx), group) != 1) { return TLS_ERR_HANDSHAKE_FAILED; }
+    var want = _tn_group_point_len(group);
     if (want == 0) { return TLS_ERR_HANDSHAKE_FAILED; }
     var point_len = load8(body + 3) & 0xFF;
     if (point_len != want) { return TLS_ERR_HANDSHAKE_FAILED; }
@@ -1036,128 +1005,67 @@ fn tls_native_ccs_record_write(out): i64 {
 # TLS 1.2 key-schedule glue (.74)
 # ----------------------------------------------------------------
 
-# Generate an ephemeral x25519 keypair, storing priv + pub in the ctx
-# but computing NO shared secret (unlike _tn_gen_ephemeral_x25519,
-# which eagerly DHs against PEER_PUB). The 1.2 ordering needs this: the
-# server makes its keypair at ServerKeyExchange (before the client's
-# pub is known) and the client at ClientKeyExchange (server pub known
-# but the DH happens later, in compute_premaster). Returns TLS_OK or an error.
+# Generate an ephemeral x25519 keypair, storing priv + pub in the ctx but computing NO shared
+# secret. The 1.2 ordering needs this: the server makes its keypair at ServerKeyExchange (before
+# the client's pub is known) and the client at ClientKeyExchange (server pub known but the DH
+# happens later, in compute_premaster). _tn_ephemeral_keygen on x25519 (6.6.15: every group's key
+# pair comes from there). Returns TLS_OK or an error.
 fn _tn_gen_ephemeral_x25519_pub_only(ctx): i64 {
-    var priv = _tn_alloc(ctx, 32);
-    var epub = _tn_alloc(ctx, 32);
-    if (priv == 0) { return TLS_ERR_OOM; }
-    if (epub == 0) { return TLS_ERR_OOM; }
-    if (_tn_rand_bytes(priv, 32) != 32) { return TLS_ERR_INTERNAL; }
-    x25519_base(priv, epub);
-    store64(ctx + TLS_CTX_OFF_EPH_PRIV, priv);
-    store64(ctx + TLS_CTX_OFF_EPH_PUB, epub);
-    return TLS_OK;
-}
-
-# The 1.2 client's ephemeral key pair on the group the ServerKeyExchange named (OFF_GROUP),
-# storing priv + pub in the ctx (no shared secret yet — tls_native_12_compute_premaster). x25519
-# is _tn_gen_ephemeral_x25519_pub_only. secp256r1 / secp384r1 take sigil's constant-time
-# ecdh_p256_keygen / ecdh_p384_keygen (FIPS 186-5 A.2.1: d from 40 / 56 random bytes, no
-# rejection loop), the bytes drawn through _tn_rand_bytes — the tls_native_set_entropy hook when
-# one is installed, as x25519's are — into a `secret var` buffer that is zeroised on return. The
-# public key is the uncompressed point 0x04 || X || Y. Returns TLS_OK or a negative TLS_ERR_*.
-# CHANGELOG [6.6.15]
-fn _tn_12_client_ephemeral(ctx): i64 {
-    var group = load64(ctx + TLS_CTX_OFF_GROUP);
-    if (group == TLS_GROUP_X25519) { return _tn_gen_ephemeral_x25519_pub_only(ctx); }
-    var rn = 0;
-    var dl = 0;
-    if (group == TLS_GROUP_SECP256R1) { rn = ECDH_P256_RAND_LEN; dl = ECDH_P256_PRIV_LEN; }
-    if (group == TLS_GROUP_SECP384R1) { rn = ECDH_P384_RAND_LEN; dl = ECDH_P384_PRIV_LEN; }
-    if (rn == 0) { return TLS_ERR_HANDSHAKE_FAILED; }
-    var priv = _tn_alloc(ctx, dl);
-    var epub = _tn_alloc(ctx, _tn_12_point_len(group));
-    if (priv == 0) { return TLS_ERR_OOM; }
-    if (epub == 0) { return TLS_ERR_OOM; }
-    secret var rnd[56];
-    if (_tn_rand_bytes(&rnd, rn) != rn) { return TLS_ERR_INTERNAL; }
-    var kr = 0;
-    if (group == TLS_GROUP_SECP256R1) { kr = ecdh_p256_keygen(&rnd, rn, priv, epub); }
-    if (group == TLS_GROUP_SECP384R1) { kr = ecdh_p384_keygen(&rnd, rn, priv, epub); }
-    if (kr != 0) { return TLS_ERR_INTERNAL; }
-    store64(ctx + TLS_CTX_OFF_EPH_PRIV, priv);
-    store64(ctx + TLS_CTX_OFF_EPH_PUB, epub);
-    return TLS_OK;
+    return _tn_ephemeral_keygen(ctx, TLS_GROUP_X25519);
 }
 
 # The 1.2 client's side of the key exchange, once the ServerKeyExchange is verified: our
-# ephemeral key on the group it named — x25519, secp256r1 or secp384r1 (6.6.15) — and the
-# premaster against its point, in a 48-byte ctx buffer at OFF_SHARED. The private key's only use
-# is then behind us, so it is zeroised whatever the outcome; the caller zeroises the premaster
-# once the master secret is derived (tls_native_connect_12). Returns the premaster's length (32,
-# or 48 on secp384r1) or a negative TLS_ERR_*. CHANGELOG [6.6.15]
+# ephemeral key on the group it named — x25519, secp256r1 or secp384r1 (6.6.15,
+# _tn_ephemeral_keygen) — and the premaster against its point, in a _TN_EPH_MAX-byte ctx buffer at
+# OFF_SHARED. The private key's only use is then behind us, so it is zeroised whatever the outcome;
+# the caller zeroises the premaster once the master secret is derived (tls_native_connect_12).
+# Returns the premaster's length (32, or 48 on secp384r1) or a negative TLS_ERR_*.
+# CHANGELOG [6.6.15]
 fn _tn_12_client_premaster(ctx): i64 {
     var group = load64(ctx + TLS_CTX_OFF_GROUP);
-    var er = _tn_12_client_ephemeral(ctx);
-    if (er != TLS_OK) { return er; }
-    var pm = _tn_alloc(ctx, 48);
+    var er = _tn_ephemeral_keygen(ctx, group);
+    if (er != TLS_OK) {
+        _tn_wipe_priv(ctx);
+        return er;
+    }
+    var pm = _tn_alloc(ctx, _TN_EPH_MAX);
     if (pm == 0) {
-        memset(load64(ctx + TLS_CTX_OFF_EPH_PRIV), 0, _tn_12_eph_priv_len(group));
+        _tn_wipe_priv(ctx);
         return TLS_ERR_OOM;
     }
     store64(ctx + TLS_CTX_OFF_SHARED, pm);
     var pr = tls_native_12_compute_premaster(ctx, load64(ctx + TLS_CTX_OFF_PEER_PUB), pm);
-    memset(load64(ctx + TLS_CTX_OFF_EPH_PRIV), 0, _tn_12_eph_priv_len(group));
+    _tn_wipe_priv(ctx);
     if (pr != TLS_OK) {
-        memset(pm, 0, 48);
+        memset(pm, 0, _TN_EPH_MAX);
         return pr;
     }
-    return _tn_12_premaster_len(group);
+    return _tn_group_secret_len(group);
 }
 
 # Fail the ctx with `err` (tls_native_connect_12, between the premaster and the master secret),
-# zeroising the 48-byte premaster buffer first. Returns `err`.
+# zeroising the premaster buffer first. Returns `err`.
 fn _tn_12_fail_pm(ctx, pm, err): i64 {
-    memset(pm, 0, 48);
+    memset(pm, 0, _TN_EPH_MAX);
     return _tn_ctx_fail(ctx, err);
 }
 
 # Compute the TLS 1.2 ECDHE pre-master secret from our EPH_PRIV and the peer's ephemeral public
-# key, on the ctx's group (OFF_GROUP; 0 — never set — is x25519, the group every 1.2 server and
-# the pre-6.6.15 client used). Writes _tn_12_premaster_len(group) bytes to `out` — 32, or 48 on
-# secp384r1, so `out` must hold 48:
+# key, on the ctx's group (OFF_GROUP; 0 — never set — is x25519, the group every 1.2 peer used
+# before 6.6.15). Writes _tn_group_secret_len(group) bytes to `out` — 32, or 48 on secp384r1:
 #   x25519     x25519(EPH_PRIV, peer 32 B) used directly, no truncation/hash (RFC 8422 §5.11).
-#              MUST reject the all-zero shared secret (sigil's x25519 always returns 0 and never
-#              signals a contributory-behavior failure, so the check is ours).
+#              The all-zero shared secret (a low-order point) is refused.
 #   secp256r1  sigil's ecdh_p256_shared / ecdh_p384_shared: `peer` is the 65 / 97-byte
-#   secp384r1  uncompressed point the ServerKeyExchange carried; sigil refuses (and zeroes `out`)
-#              a point not 0x04-prefixed, with a coordinate >= p, off the curve, or a result at
-#              infinity. The premaster is the x-coordinate, leading zeros kept (RFC 8422 §5.10).
-# Returns TLS_OK, TLS_ERR_HANDSHAKE_FAILED (a refused point / an all-zero x25519 result / a group
-# we do not offer) or TLS_ERR_PROTOCOL (no ephemeral key). CHANGELOG [6.6.15]
+#   secp384r1  uncompressed point; sigil refuses (and zeroes `out`) a point not 0x04-prefixed,
+#              with a coordinate >= p, off the curve, or a result at infinity. The premaster is
+#              the x-coordinate, leading zeros kept (RFC 8422 §5.10). `out` must hold 48.
+# _tn_ecdhe_shared (6.6.15) is the computation. Returns TLS_OK, TLS_ERR_HANDSHAKE_FAILED (a
+# refused point / an all-zero x25519 result / a group we do not do) or TLS_ERR_PROTOCOL (no
+# ephemeral key).
 fn tls_native_12_compute_premaster(ctx, peer_pub, out): i64 {
-    var priv = load64(ctx + TLS_CTX_OFF_EPH_PRIV);
-    if (priv == 0) { return TLS_ERR_PROTOCOL; }
     var group = load64(ctx + TLS_CTX_OFF_GROUP);
-    if (group == TLS_GROUP_SECP256R1) {
-        if (ecdh_p256_shared(priv, peer_pub, ECDH_P256_PUB_LEN, out) != 0) {
-            return TLS_ERR_HANDSHAKE_FAILED;
-        }
-        return TLS_OK;
-    }
-    if (group == TLS_GROUP_SECP384R1) {
-        if (ecdh_p384_shared(priv, peer_pub, ECDH_P384_PUB_LEN, out) != 0) {
-            return TLS_ERR_HANDSHAKE_FAILED;
-        }
-        return TLS_OK;
-    }
-    if (group != 0) {
-        if (group != TLS_GROUP_X25519) { return TLS_ERR_HANDSHAKE_FAILED; }
-    }
-    x25519(priv, peer_pub, out);
-    var acc = 0;
-    var i = 0;
-    while (i < 32) {
-        acc = acc | (load8(out + i) & 0xFF);
-        i = i + 1;
-    }
-    if (acc == 0) { return TLS_ERR_HANDSHAKE_FAILED; }
-    return TLS_OK;
+    if (group == 0) { group = TLS_GROUP_X25519; }
+    return _tn_ecdhe_shared(ctx, group, peer_pub, _tn_group_point_len(group), out);
 }
 
 # Derive + install the full TLS 1.2 key material from the pre-master
@@ -1629,13 +1537,13 @@ fn tls_native_connect_12(ctx, sock_fd): i64 {
     # record-wrap + socket-send stay below (the wire bytes are order-independent).
     # The server (_tn_12_server_drive) already feeds CKE before deriving — it
     # needs no reorder.
-    var cken = _tn_12_build_client_kex(load64(ctx + TLS_CTX_OFF_EPH_PUB), _tn_12_point_len(group),
+    var cken = _tn_12_build_client_kex(load64(ctx + TLS_CTX_OFF_EPH_PUB), _tn_group_point_len(group),
       hm + hn, hcap - hn);
     if (cken < 0) { return _tn_12_fail_pm(ctx, pm, cken); }
     tls_native_transcript_update(ts, hm + hn, cken);
     hn = hn + cken;
     var dk = tls_native_12_derive_keys(ctx, pm, pm_len);
-    memset(pm, 0, 48);                                 # the master secret replaces it
+    memset(pm, 0, _TN_EPH_MAX);                        # the master secret replaces it
     if (dk != TLS_OK) { return _tn_ctx_fail(ctx, dk); }
     if (creq == 1) {
         if (cscheme != 0) {

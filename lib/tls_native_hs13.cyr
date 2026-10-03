@@ -1262,6 +1262,132 @@ fn _tn_parse_client_hello(ctx, body, body_len, server_prefs, n_prefs): i64 {
     return TLS_ERR_HANDSHAKE_FAILED;
 }
 
+# ----------------------------------------------------------------
+# ECDHE groups (6.6.15): x25519, secp256r1, secp384r1 — both versions, both roles
+# ----------------------------------------------------------------
+# One set of primitives for every key exchange the native stack does. On the wire a group's key is
+# x25519's 32-byte u-coordinate (RFC 7748; RFC 8446 §4.2.8.2, RFC 8422 §5.11) or the SEC 1
+# uncompressed point 0x04 || X || Y — 65 bytes on secp256r1, 97 on secp384r1 (the only form
+# TLS 1.3 allows and the only point format we offer in 1.2). The shared secret is x25519's 32-byte
+# output, or the x-coordinate of the shared point at full field length — 32 / 48 bytes (RFC 8446
+# §7.4.2, RFC 8422 §5.10). The NIST curves are sigil's constant-time ecdh_p256_* / ecdh_p384_*,
+# which validate the peer's point (prefix, coordinates below p, on the curve).
+# Every EPH_PRIV and SHARED buffer the library allocates is _TN_EPH_MAX bytes, so one wipe
+# (_tn_wipe_ephemeral) fits every group. CHANGELOG [6.6.15]
+var _TN_EPH_MAX = 48;
+
+# The wire length of a key on `group` (above); 0 for a group we do not do.
+fn _tn_group_point_len(group): i64 {
+    if (group == TLS_GROUP_X25519) { return TLS_X25519_KEY_LEN; }
+    if (group == TLS_GROUP_SECP256R1) { return ECDH_P256_PUB_LEN; }
+    if (group == TLS_GROUP_SECP384R1) { return ECDH_P384_PUB_LEN; }
+    return 0;
+}
+
+# The shared secret's length on `group`: 32 (x25519, secp256r1) or 48 (secp384r1); 0 otherwise.
+fn _tn_group_secret_len(group): i64 {
+    if (group == TLS_GROUP_X25519) { return 32; }
+    if (group == TLS_GROUP_SECP256R1) { return ECDH_P256_SECRET_LEN; }
+    if (group == TLS_GROUP_SECP384R1) { return ECDH_P384_SECRET_LEN; }
+    return 0;
+}
+
+# Write the ctx's supported_groups extension (RFC 8446 §4.2.7 / RFC 8422 §5.1.1) at `p`: type,
+# length, and the groups of _tn_groups(ctx) in preference order. Returns the bytes written, 6 + 2n.
+fn _tn_write_supported_groups(ctx, p): i64 {
+    var g = _tn_groups(ctx);
+    var n = _tn_groups_n(g);
+    _tn_be16_w(p, TLS_EXT_SUPPORTED_GROUPS);
+    _tn_be16_w(p + 2, 2 + 2 * n);
+    _tn_be16_w(p + 4, 2 * n);                          # named_group_list length
+    var i = 0;
+    while (i < n) {
+        _tn_be16_w(p + 6 + 2 * i, (g >> (16 * i)) & 0xFFFF);
+        i = i + 1;
+    }
+    return 6 + 2 * n;
+}
+
+# Our ephemeral key pair on `group`: a fresh _TN_EPH_MAX-byte EPH_PRIV and the public key at
+# EPH_PUB (no shared secret yet — _tn_ecdhe_shared). x25519 takes 32 random bytes; secp256r1 /
+# secp384r1 take sigil's ecdh_p256_keygen / ecdh_p384_keygen (FIPS 186-5 A.2.1: d from 40 / 56
+# random bytes, no rejection loop) through a `secret var` that is zeroised on return. Every byte is
+# drawn through _tn_rand_bytes — the tls_native_set_entropy hook when one is installed. EPH_PRIV
+# is recorded before it is filled, so a driver's wipe covers a failure part-way. Returns TLS_OK or a
+# negative TLS_ERR_* (TLS_ERR_HANDSHAKE_FAILED for a group we do not do).
+fn _tn_ephemeral_keygen(ctx, group): i64 {
+    secret var rnd[56];
+    var plen = _tn_group_point_len(group);
+    if (plen == 0) { return TLS_ERR_HANDSHAKE_FAILED; }
+    var priv = _tn_alloc(ctx, _TN_EPH_MAX);
+    var epub = _tn_alloc(ctx, plen);
+    if (priv == 0) { return TLS_ERR_OOM; }
+    if (epub == 0) { return TLS_ERR_OOM; }
+    memset(priv, 0, _TN_EPH_MAX);
+    store64(ctx + TLS_CTX_OFF_EPH_PRIV, priv);
+    if (group == TLS_GROUP_X25519) {
+        if (_tn_rand_bytes(priv, 32) != 32) { return TLS_ERR_INTERNAL; }
+        x25519_base(priv, epub);
+    } else {
+        var rn = ECDH_P256_RAND_LEN;
+        if (group == TLS_GROUP_SECP384R1) { rn = ECDH_P384_RAND_LEN; }
+        if (_tn_rand_bytes(&rnd, rn) != rn) { return TLS_ERR_INTERNAL; }
+        var kr = 0;
+        if (group == TLS_GROUP_SECP256R1) { kr = ecdh_p256_keygen(&rnd, rn, priv, epub); }
+        if (group == TLS_GROUP_SECP384R1) { kr = ecdh_p384_keygen(&rnd, rn, priv, epub); }
+        if (kr != 0) { return TLS_ERR_INTERNAL; }
+    }
+    store64(ctx + TLS_CTX_OFF_EPH_PUB, epub);
+    return TLS_OK;
+}
+
+# The ECDHE shared secret of our EPH_PRIV and the peer's key `peer` (`peer_len` bytes) on `group`,
+# written to `out` (_tn_group_secret_len(group) bytes; `out` must hold _TN_EPH_MAX). x25519 refuses
+# a wrong length and the all-zero result (RFC 8446 §7.4.2, RFC 8422 §5.11 — a low-order point;
+# sigil's x25519 never signals it, so the check is ours); the NIST curves refuse whatever sigil
+# refuses (`out` zeroed). Returns TLS_OK, TLS_ERR_HANDSHAKE_FAILED (a refused key, a group we do not
+# do) or TLS_ERR_PROTOCOL (no ephemeral key).
+fn _tn_ecdhe_shared(ctx, group, peer, peer_len, out): i64 {
+    var priv = load64(ctx + TLS_CTX_OFF_EPH_PRIV);
+    if (priv == 0) { return TLS_ERR_PROTOCOL; }
+    if (peer_len != _tn_group_point_len(group)) { return TLS_ERR_HANDSHAKE_FAILED; }
+    if (group == TLS_GROUP_SECP256R1) {
+        if (ecdh_p256_shared(priv, peer, peer_len, out) != 0) { return TLS_ERR_HANDSHAKE_FAILED; }
+        return TLS_OK;
+    }
+    if (group == TLS_GROUP_SECP384R1) {
+        if (ecdh_p384_shared(priv, peer, peer_len, out) != 0) { return TLS_ERR_HANDSHAKE_FAILED; }
+        return TLS_OK;
+    }
+    if (group != TLS_GROUP_X25519) { return TLS_ERR_HANDSHAKE_FAILED; }
+    x25519(priv, peer, out);
+    var acc = 0;
+    var i = 0;
+    while (i < 32) {
+        acc = acc | (load8(out + i) & 0xFF);
+        i = i + 1;
+    }
+    if (acc == 0) { return TLS_ERR_HANDSHAKE_FAILED; }
+    return TLS_OK;
+}
+
+# Zeroise our ephemeral private key (EPH_PRIV) — once its one use, the shared secret, is behind us.
+fn _tn_wipe_priv(ctx): i64 {
+    var p = load64(ctx + TLS_CTX_OFF_EPH_PRIV);
+    if (p != 0) { memset(p, 0, _TN_EPH_MAX); }
+    return 0;
+}
+
+# Zeroise our ephemeral private key and the shared secret / premaster (EPH_PRIV, SHARED). Every
+# handshake driver runs this on its way out, success or failure, so no exit leaves either behind;
+# the steps that use them wipe each as soon as it is used, too. Idempotent.
+fn _tn_wipe_ephemeral(ctx): i64 {
+    _tn_wipe_priv(ctx);
+    var s = load64(ctx + TLS_CTX_OFF_SHARED);
+    if (s != 0) { memset(s, 0, _TN_EPH_MAX); }
+    return 0;
+}
+
 # Generate our ephemeral x25519 keypair (kernel CSPRNG) and compute
 # the ECDHE shared secret against the client's pubkey (PEER_PUB).
 # Stores EPH_PRIV / EPH_PUB / SHARED. Returns TLS_OK or an error.

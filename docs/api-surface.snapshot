@@ -5141,6 +5141,7 @@ tls_native_ctx::tls_native_new_client/2
 tls_native_ctx::tls_native_new_client_in/3
 tls_native_ctx::tls_native_server_transition/2
 tls_native_ctx::tls_native_set_alloc/2
+tls_native_ctx::tls_native_set_groups/3
 tls_native_hs12::tls_native_12_build_client_hello/3
 tls_native_hs12::tls_native_12_build_client_key_exchange/3
 tls_native_hs12::tls_native_12_build_finished/4

@@ -236,7 +236,7 @@ fn _curve_kat(group, gr_hex, i_hex, gi_hex, z_hex, priv_len, pt_len, label): i64
     assert_eq(_all_zero(load64(c + TLS_CTX_OFF_EPH_PRIV), priv_len), 1,
       "  ...and our private key is zeroised once used");
     var cke = alloc(256);
-    var cn = _tn_12_build_client_kex(load64(c + TLS_CTX_OFF_EPH_PUB), _tn_12_point_len(group), cke, 256);
+    var cn = _tn_12_build_client_kex(load64(c + TLS_CTX_OFF_EPH_PUB), _tn_group_point_len(group), cke, 256);
     assert_eq(cn, 4 + 1 + pt_len, "ClientKeyExchange = header + 1-byte length + the point");
     assert_eq(load8(cke), TLS_HS_CLIENT_KEY_EXCHANGE, "  ...type 16");
     assert_eq(_tn_be24_r(cke + 1), 1 + pt_len, "  ...body length");
@@ -296,7 +296,7 @@ fn test_x25519_unchanged(): i64 {
     assert_eq(memeq(srvpm, want, 32), 1, "  ...the same premaster");
     assert_eq(_all_zero(load64(c + TLS_CTX_OFF_EPH_PRIV), 32), 1, "  ...our private key zeroised");
     var cke = alloc(64);
-    assert_eq(_tn_12_build_client_kex(load64(c + TLS_CTX_OFF_EPH_PUB), _tn_12_point_len(TLS_GROUP_X25519), cke, 64), 37,
+    assert_eq(_tn_12_build_client_kex(load64(c + TLS_CTX_OFF_EPH_PUB), _tn_group_point_len(TLS_GROUP_X25519), cke, 64), 37,
       "x25519 ClientKeyExchange is still 37 bytes");
     return 0;
 }
