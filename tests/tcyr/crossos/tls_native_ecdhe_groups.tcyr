@@ -179,6 +179,7 @@ var _gx_cgroups: i64[3]; # the client's tls_native_set_groups list; _gx_cn == 0 
 var _gx_cn = 0;
 var _gx_sgroups: i64[3]; # the server's (its accept hook installs it)
 var _gx_sn = 0;
+var _gx_s13only = 0;     # 1: the server's accept hook pins it to TLS 1.3
 var _gx_cert = 0;        # the server certificate: 0 Ed25519, 1 ECDSA P-256, 2 ECDSA P-384
 var _gx_v12 = 0;         # the client is pinned to TLS 1.2
 var _gx_chost = 0;       # the client's host (0: none, so no SNI)
@@ -265,6 +266,9 @@ fn _gx_ccs_scan(log, len, cnt_out): i64 {
 }
 
 fn _gx_srv_hook(hctx, handle): i64 {
+    if (_gx_s13only == 1) {
+        if (tls_native_set_version_range(handle, TLS_VERSION_1_3, TLS_VERSION_1_3) != TLS_OK) { return 1; }
+    }
     if (_gx_sn > 0) {
         if (tls_native_set_groups(handle, &_gx_sgroups, _gx_sn) != TLS_OK) { return 1; }
     }
@@ -1300,6 +1304,25 @@ fn test_server_refusals(): i64 {
     _gx_vs_script_client();
     assert_eq(_gx_obs[15], TLS_VERSION_1_2, "a key_share and no supported_versions: TLS 1.2");
     assert_eq(_gx_ske_group(_gx_sc, _gx_sc_len), GX_256, "  with a P-256 ServerKeyExchange");
+    _gx_s13only = 1;
+    _gb_start(_gx_cs);
+    _gx_ch_ver = 0;
+    _gx_put_ch13(0, 0, A256, 0, 1, GX_256, 0, 0, 1, GX_256, _gk_256, 65, 0, 0, 0);
+    _gx_vs_script_client();
+    _gx_srefused("…to a TLS 1.3-only server: protocol_version (RFC 8446 §4.2.1)", TLS_ERR_PROTOCOL,
+      TLS_AD_PROTOCOL_VERSION, 0);
+    _gb_start(_gx_cs);
+    _gx_put_ch12(1, GX_256, 0);
+    _gx_vs_script_client();
+    _gx_srefused("a TLS 1.2 ClientHello to a TLS 1.3-only server: protocol_version", TLS_ERR_PROTOCOL,
+      TLS_AD_PROTOCOL_VERSION, 0);
+    _gx_s13only = 0;
+    _gb_start(_gx_cs);
+    _gx_put_ch13(0, 0, A256, 0, 1, GX_256, 0, 0, 1, GX_256, _gk_256, 65, 0, 0, 0);
+    store8(_gx_cs + 5 + 4 + 2 + 32, 0xFF);            # legacy_session_id length 255: past the hello's end
+    _gx_vs_script_client();
+    _gx_srefused("a ClientHello whose session id runs past its end: decode_error", TLS_ERR_BAD_HANDSHAKE,
+      TLS_AD_DECODE_ERROR, 0);
 
     test_group("6.6.15 — the TLS 1.2 server picks from supported_groups, and refuses");
     _gx_v12 = 1;
@@ -1699,5 +1722,6 @@ fn _gx_all(): i64 {
 #   C3  sent for an empty session id too [12]
 #   D1  the 1.2 server's suite chosen by tls_native_12_cipher_supported again (ECDHE_RSA, AES128) [5]
 #   D2  the 1.2 server not bounding an ECDSA certificate's curve by supported_groups [8]
+#   P1  the dispatcher's refusals without their alert again (protocol_version, decode_error) [3]
 _gx_all();
 var r = assert_summary();
