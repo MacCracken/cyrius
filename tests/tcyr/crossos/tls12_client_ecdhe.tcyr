@@ -65,8 +65,10 @@ var G_C384 = 0;
 fn _h(s): i64 { return hex_decode(s, strlen(s)); }
 fn _hn(s): i64 { return strlen(s) / 2; }
 
-# 1 if every one of n bytes at p is zero.
+# 1 if every one of n bytes at p is zero. A missing buffer (p == 0) is 0, so a
+# regression that never allocates the slot fails WITH A COUNT, never a signal.
 fn _all_zero(p, n): i64 {
+    if (p == 0) { return 0; }
     var acc = 0;
     var i = 0;
     while (i < n) { acc = acc | (load8(p + i) & 0xFF); i = i + 1; }
