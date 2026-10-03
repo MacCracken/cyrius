@@ -1,0 +1,1274 @@
+# tls_native_ecdhe_groups.tcyr — 6.6.15: the native TLS stack's key exchange on x25519, secp256r1
+# and secp384r1, in TLS 1.3 and TLS 1.2, as client and as server, and the HelloRetryRequest both
+# ways — on every host target.
+#
+# THE DEFECTS (premise-checked at eac97bb2, against OpenSSL 3.6 and natively):
+#   1. the TLS 1.3 client offered x25519 alone (supported_groups and key_share) and answered every
+#      HelloRetryRequest with TLS_ERR_HANDSHAKE_FAILED — `s_server -tls1_3 -groups P-256` / P-384
+#      refused it ("no suitable key share");
+#   2. the TLS 1.3 server took an x25519 key_share or nothing: a client sharing only P-256 / P-384
+#      failed (TLS_ERR_HANDSHAKE_FAILED, no alert), and one that listed X25519 without sharing it
+#      got a HelloRetryRequest that tls_native_accept refused to send;
+#   3. the TLS 1.2 server ignored supported_groups and sent every client an x25519
+#      ServerKeyExchange (`s_client -tls1_2 -groups P-256`: "wrong curve");
+#   4. neither 1.3 side nor the 1.2 server ever zeroised its ephemeral private key or its shared
+#      secret / premaster, and the 1.3 sides accepted an all-zero x25519 secret (RFC 8446 §7.4.2).
+#
+# HOW IT RUNS EVERYWHERE, SINGLE-THREADED: tls_native_client_auth.tcyr's replay technique. Both
+# ends are the REAL drivers — tls_native_connect, and lib/tls.cyr's tls_accept_alloc_in +
+# tls_accept_complete with a consumer's hook calling tls_native_set_groups — over an in-memory
+# transport with seeded entropy and a pinned clock; each round runs the client from scratch
+# against the server's last log, then the server against the client's, until a round replays
+# itself. A SCRIPTED peer is a log written ahead of the one real side's single run: everything it
+# sends is in that one log before the side under test reads a byte, so nothing races.
+#
+# ROWS: every client-list x server-list combination that decides a group — TLS 1.3 with and
+# without a HelloRetryRequest, TLS 1.2 — on an Ed25519 server certificate, and ECDSA P-256 / P-384
+# certificates on a group of the other curve; no shared group (an alert, both versions); refusals
+# by the client (a HelloRetryRequest for a group it did not offer, for the group it already shared,
+# one that changes nothing, a second one, an unknown extension in it, a cipher / session id it did
+# not send; a ServerHello after it with another cipher or group; an all-zero x25519 share) and by
+# the server (a share for a group not in supported_groups, two shares for one group, a share of the
+# wrong length, no supported_groups, a second ClientHello without the share the HelloRetryRequest
+# asked for — never a second HelloRetryRequest —, with another cipher or session id; an off-curve
+# point; a low-order x25519 key; 1.2: no shared group, an off-curve or short ClientKeyExchange);
+# every row checks that neither side holds a byte of its ephemeral private key or shared secret
+# afterwards, failed handshakes and failed writes included; tls_native_set_groups and the
+# ClientHellos it shapes.
+#
+# MUTATIONS measured RED: see the ledger at the end of this file.
+include "lib/assert.cyr"
+include "lib/alloc.cyr"
+include "lib/string.cyr"
+include "lib/io.cyr"
+include "lib/tls.cyr"
+
+enum GxHandle { GX_CLIENT = 1; GX_SERVER = 2; }
+var GX_LOG_CAP = 262144;
+var GX_ROUNDS_MAX = 10;
+var GX_P521 = 0x0019;                # secp521r1: a group the native stack does not do
+
+# Fixtures (DER certificate + PKCS#8 key, generated with openssl for these tests): an Ed25519 and
+# a P-256 server certificate (tls_native_client_auth.tcyr's), and a self-signed P-384 one.
+var _gx_srvEd = 0;
+var _gx_srvEd_n = 390;
+var _gx_srvEd_key = 0;
+var _gx_srvEd_key_n = 48;
+var _gx_srv256 = 0;
+var _gx_srv256_n = 439;
+var _gx_srv256_key = 0;
+var _gx_srv256_key_n = 138;
+var _gx_srv384 = 0;
+var _gx_srv384_n = 447;
+var _gx_srv384_key = 0;
+var _gx_srv384_key_n = 185;
+
+fn _gx_fixtures(): i64 {
+    _gx_srvEd = hex_decode("3082018230820129a003020102021455467366670d68f3ddcf3863ab923cb68bb65275300a06082a8648ce3d04030230123110300e06035504030c076d746c732d6361301e170d3235303130313030303030305a170d3439313233313030303030305a30143112301006035504030c096c6f63616c686f7374302a300506032b6570032100e54ac0a169b5a2da02b48d72c991f6f457561be97814bfc3b74856c252d971b6a3818930818630090603551d1304023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b0601050507030130140603551d11040d300b82096c6f63616c686f7374301d0603551d0e041604146d64c07cd77ab766983ee8fd882a3593429b6587301f0603551d230418301680140974887636a5881b8b22a95ab5e91f30e1a6bd06300a06082a8648ce3d040302034700304402201fd03c6ae8c91130773c40afb9a03de1d0589bc2d653a4d8b65ed067905e88c002207b481eaf728021c90c7c14fb2cbed080c7bf3257e077a0ff6146a1aef2931ee0", 780);
+    _gx_srvEd_key = hex_decode("302e020100300506032b657004220420ed9a9377220c90b1593bd983cfe617e2b8954b85724eaa167ebe90d40c657c81", 96);
+    _gx_srv256 = hex_decode("308201b330820158a003020102021455467366670d68f3ddcf3863ab923cb68bb65274300a06082a8648ce3d04030230123110300e06035504030c076d746c732d6361301e170d3235303130313030303030305a170d3439313233313030303030305a30143112301006035504030c096c6f63616c686f73743059301306072a8648ce3d020106082a8648ce3d03010703420004a0e41eb7cb2a8d46dd7440fb89b5cec545b01100fb68a0372bb1f80151a15b16beb6d2718328b4ac9cef4a18f408677393ad858bebb5c6d897d235cce8b8f4b0a3818930818630090603551d1304023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b0601050507030130140603551d11040d300b82096c6f63616c686f7374301d0603551d0e0416041440e27d855342c23b0e788074331c8a5040ff7cfc301f0603551d230418301680140974887636a5881b8b22a95ab5e91f30e1a6bd06300a06082a8648ce3d0403020349003046022100ec1305f129caabfa468da2cdf004f4b60308d1154ea35edd9e01c2c1f55e904a02210099a5d1f34484c676a2e126720cf5534c1502ac98a6ef1fd188812ebdff4c6875", 878);
+    _gx_srv256_key = hex_decode("308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420ed0735a3ad60be213f0651d7d5983db819d0623e9ad19828b5eb47fb282e719da14403420004a0e41eb7cb2a8d46dd7440fb89b5cec545b01100fb68a0372bb1f80151a15b16beb6d2718328b4ac9cef4a18f408677393ad858bebb5c6d897d235cce8b8f4b0", 276);
+    _gx_srv384 = hex_decode("308201bb30820142a0030201020214105f0f98fa3a23e60adecf179bccdba06a76eb27300a06082a8648ce3d04030230143112301006035504030c096c6f63616c686f73743020170d3236313030333136353433385a180f32303531303532353136353433385a30143112301006035504030c096c6f63616c686f73743076301006072a8648ce3d020106052b81040022036200041b0a887828c7445b778527f592b0e5ac1ad29d4911c04677c92ed42fd2de35f5aa2c932e1812ff15e03298d0c65444f11c6637656eb330610097bc60588aaf3d6bacc1e1ded4cc0e0132f2251165ee18df6711ea214ff2617805cad82530295ca3533051301d0603551d0e041604148fa3a0c8b1229247ff22d9ad27408e02c6bbe4af301f0603551d230418301680148fa3a0c8b1229247ff22d9ad27408e02c6bbe4af300f0603551d130101ff040530030101ff300a06082a8648ce3d040302036700306402301434a331f84d083cdd4d59ef26e6142f4a5a22bd40d09533658f02f514fcedfa40a5bdb30436a4142859dd5caf5d670502307c3b6a2832dd72fd287da9d7bd01c8787da3bba39b7aae958327ac9a117c87ce5d3d8ed71c0e7e8c157b8a8d394b265f", 894);
+    _gx_srv384_key = hex_decode("3081b6020100301006072a8648ce3d020106052b8104002204819e30819b0201010430200cbe93514dc67832647da0ea566182763a9dc394830e10ade49ce29315201ed9043bf17b572d8ea75b4aa5c7d13b2ea164036200041b0a887828c7445b778527f592b0e5ac1ad29d4911c04677c92ed42fd2de35f5aa2c932e1812ff15e03298d0c65444f11c6637656eb330610097bc60588aaf3d6bacc1e1ded4cc0e0132f2251165ee18df6711ea214ff2617805cad82530295c", 370);
+    return 0;
+}
+
+# ---- the in-memory transport: two logs, each written by one side's latest run ----
+var _gx_cs = 0;          # client -> server bytes the server reads (the client's last run, or a script)
+var _gx_cs_len = 0;
+var _gx_cs_next = 0;     # what the running client writes
+var _gx_cs_next_len = 0;
+var _gx_sc = 0;          # server -> client
+var _gx_sc_len = 0;
+var _gx_sc_next = 0;
+var _gx_sc_next_len = 0;
+var _gx_cs_rd = 0;       # the server's read cursor into _gx_cs
+var _gx_sc_rd = 0;       # the client's read cursor into _gx_sc
+var _gx_overflow = 0;
+var _gx_eof = 0;         # the running side read past the end of the other's log
+var _gx_last_client = 0; # the client ctx of the running / last run
+var _gx_last_server = 0; # the server's native ctx
+var _gx_wfail_c = 0;     # fail the client's N-th write of a run (1-based); 0 = never
+var _gx_wfail_s = 0;     # the server's
+var _gx_wn = 0;          # writes the running side has made
+
+fn _gx_read(h, buf, n): i64 {
+    var src = _gx_sc;
+    var len = _gx_sc_len;
+    var cur = _gx_sc_rd;
+    if (h == GX_SERVER) {
+        src = _gx_cs;
+        len = _gx_cs_len;
+        cur = _gx_cs_rd;
+    }
+    var avail = len - cur;
+    if (avail <= 0) {                                   # EOF: the other side has not got here yet
+        _gx_eof = 1;
+        return 0;
+    }
+    var k = n;
+    if (k > avail) { k = avail; }
+    memcpy(buf, src + cur, k);
+    if (h == GX_SERVER) { _gx_cs_rd = cur + k; }
+    else { _gx_sc_rd = cur + k; }
+    return k;
+}
+
+# For each of a run's first 8 writes, 1 if the writing side's ctx then held no byte of its
+# ephemeral private key or shared secret (-1: no such write). The handshake steps zeroise each
+# secret as soon as it is used — before the side's NEXT flight goes out, not only when its
+# driver returns — and this is where that shows.
+var _gx_wzc: i64[8];
+var _gx_wzs: i64[8];
+var _gx_cpriv0 = 0;      # the client's EPH_PRIV buffer when its first ClientHello went out
+
+fn _gx_write(h, buf, n): i64 {
+    _gx_wn = _gx_wn + 1;
+    if (_gx_wn <= 8) {
+        if (h == GX_SERVER) {
+            if (_gx_last_server != 0) { _gx_wzs[_gx_wn - 1] = _gx_no_secrets(_gx_last_server); }
+        } else {
+            if (_gx_last_client != 0) {
+                _gx_wzc[_gx_wn - 1] = _gx_no_secrets(_gx_last_client);
+                if (_gx_wn == 1) { _gx_cpriv0 = load64(_gx_last_client + TLS_CTX_OFF_EPH_PRIV); }
+            }
+        }
+    }
+    if (h == GX_SERVER) {
+        if (_gx_wfail_s == _gx_wn) { return 0 - 1; }
+        if (_gx_sc_next_len + n > GX_LOG_CAP) { _gx_overflow = 1; return 0 - 1; }
+        memcpy(_gx_sc_next + _gx_sc_next_len, buf, n);
+        _gx_sc_next_len = _gx_sc_next_len + n;
+        return n;
+    }
+    if (_gx_wfail_c == _gx_wn) { return 0 - 1; }
+    if (_gx_cs_next_len + n > GX_LOG_CAP) { _gx_overflow = 1; return 0 - 1; }
+    memcpy(_gx_cs_next + _gx_cs_next_len, buf, n);
+    _gx_cs_next_len = _gx_cs_next_len + n;
+    return n;
+}
+
+fn _gx_now(): i64 { return 1893456000; }                 # 2030-01-01 00:00 UTC
+
+# Deterministic entropy (xorshift64), reseeded at the start of every run of a side.
+var _gx_rng = 1;
+fn _gx_seed(s): i64 { _gx_rng = s; return 0; }
+fn _gx_rand(buf, n, fl): i64 {
+    var i = 0;
+    while (i < n) {
+        var x = _gx_rng;
+        x = x ^ (x << 13);
+        x = x ^ (x >> 7);
+        x = x ^ (x << 17);
+        _gx_rng = x;
+        store8(buf + i, (x >> 24) & 0xFF);
+        i = i + 1;
+    }
+    return n;
+}
+
+# ---- one row ----
+var _gx_ca_arena = 0;    # the client's Allocator, reset every run
+var _gx_sv_arena = 0;    # the server's
+var _gx_cgroups: i64[3]; # the client's tls_native_set_groups list; _gx_cn == 0 = the default
+var _gx_cn = 0;
+var _gx_sgroups: i64[3]; # the server's (its accept hook installs it)
+var _gx_sn = 0;
+var _gx_cert = 0;        # the server certificate: 0 Ed25519, 1 ECDSA P-256, 2 ECDSA P-384
+var _gx_v12 = 0;         # the client is pinned to TLS 1.2
+# Observations: [0] client tls_native_connect, [1] the client's read after "ping" (4 = "pong",
+# -99 not run), [2] server accept (TLS_OK or its LAST_ERR; -999 no ctx), [3] the server's read
+# (4 = "ping"), [4] client group, [5] server group, [6] client TLS_CTX_OFF_HRR, [7] server's,
+# [8] 1 when the client holds no byte of its ephemeral private key or shared secret (48 B each —
+# the key of its FIRST ClientHello's share included, which a HelloRetryRequest replaces),
+# [9] the same for the server, [10] rounds to the fixed point (0 = never settled), [11]
+# HelloRetryRequests in the server's log, [12] the first alert description in the server's log
+# (-1 none), [13] in the client's, [14] client version, [15] server version.
+var _gx_obs: i64[16];
+var _gx_c_eof = 0;
+var _gx_s_eof = 0;
+
+fn _gx_wz_reset(a): i64 {
+    var i = 0;
+    while (i < 8) { store64(a + i * 8, 0 - 1); i = i + 1; }
+    return 0;
+}
+
+# 1 if every one of n bytes at p is zero (a buffer never allocated holds no secret either).
+fn _gx_zero(p, n): i64 {
+    if (p == 0) { return 1; }
+    var acc = 0;
+    var i = 0;
+    while (i < n) { acc = acc | (load8(p + i) & 0xFF); i = i + 1; }
+    if (acc == 0) { return 1; }
+    return 0;
+}
+
+# 1 if the ctx holds no byte of its ephemeral private key or its shared secret / premaster.
+fn _gx_no_secrets(ctx): i64 {
+    if (_gx_zero(load64(ctx + TLS_CTX_OFF_EPH_PRIV), 48) != 1) { return 0; }
+    if (_gx_zero(load64(ctx + TLS_CTX_OFF_SHARED), 48) != 1) { return 0; }
+    return 1;
+}
+
+# Walk a log of records: the first fatal alert's description (-1 none), and through *hrr_out the
+# number of HelloRetryRequests in its plaintext handshake records.
+fn _gx_scan(log, len, hrr_out): i64 {
+    var alert = 0 - 1;
+    var hrrs = 0;
+    var p = 0;
+    while (p + 5 <= len) {
+        var ct = load8(log + p) & 0xFF;
+        var rl = ((load8(log + p + 3) & 0xFF) << 8) | (load8(log + p + 4) & 0xFF);
+        if (p + 5 + rl > len) { p = len; }
+        else {
+            if (ct == TLS_CT_ALERT) {
+                if (rl == 2) {
+                    if (alert < 0) { alert = load8(log + p + 6) & 0xFF; }
+                }
+            }
+            if (ct == TLS_CT_HANDSHAKE) {
+                if (_tn_sh_is_hrr(log + p + 5, rl) == 1) { hrrs = hrrs + 1; }
+            }
+            p = p + 5 + rl;
+        }
+    }
+    if (hrr_out != 0) { store64(hrr_out, hrrs); }
+    return alert;
+}
+
+fn _gx_srv_hook(hctx, handle): i64 {
+    if (_gx_sn > 0) {
+        if (tls_native_set_groups(handle, &_gx_sgroups, _gx_sn) != TLS_OK) { return 1; }
+    }
+    return 0;
+}
+
+
+fn _gx_client_run(): i64 {
+    reset_via(_gx_ca_arena);
+    _gx_seed(0x2468ACE1);
+    _gx_eof = 0;
+    _gx_sc_rd = 0;
+    _gx_cs_next_len = 0;
+    _gx_wn = 0;
+    _gx_wz_reset(&_gx_wzc);
+    _gx_last_client = 0;
+    _gx_cpriv0 = 0;
+    var c = tls_native_new_client_in(_gx_ca_arena, 0, 0);
+    _gx_last_client = c;
+    tls_native_set_verify(c, TLS_VERIFY_NONE);            # the server's chain is not under test
+    if (_gx_v12 == 1) { tls_native_set_version_range(c, TLS_VERSION_1_2, TLS_VERSION_1_2); }
+    if (_gx_cn > 0) { tls_native_set_groups(c, &_gx_cgroups, _gx_cn); }
+    var rc = tls_native_connect(c, GX_CLIENT);
+    _gx_obs[0] = rc;
+    _gx_obs[1] = 0 - 99;
+    _gx_obs[4] = tls_native_get_group(c);
+    _gx_obs[6] = load64(c + TLS_CTX_OFF_HRR);
+    _gx_obs[8] = _gx_no_secrets(c);
+    if (_gx_zero(_gx_cpriv0, 48) != 1) { _gx_obs[8] = 0; }   # the first share's key, if replaced
+    _gx_obs[14] = tls_native_get_version(c);
+    if (rc == TLS_OK) {
+        tls_native_write(c, "ping", 4);
+        var b[64];
+        store64(&b, 0);
+        var n = tls_native_read(c, &b, 64);
+        _gx_obs[1] = n;
+        if (n == 4) {
+            if (memeq(&b, "pong", 4) != 1) { _gx_obs[1] = 0 - 98; }
+        }
+    }
+    _gx_c_eof = _gx_eof;
+    var t = _gx_cs;
+    _gx_cs = _gx_cs_next;
+    _gx_cs_next = t;
+    _gx_cs_len = _gx_cs_next_len;
+    return 0;
+}
+
+fn _gx_server_run(): i64 {
+    reset_via(_gx_sv_arena);
+    _gx_seed(0x13579BDF);
+    _gx_eof = 0;
+    _gx_cs_rd = 0;
+    _gx_sc_next_len = 0;
+    _gx_wn = 0;
+    _gx_wz_reset(&_gx_wzs);
+    _gx_last_server = 0;
+    var creds: i64[4];
+    store64(&creds, _gx_srvEd);
+    store64(&creds + 8, _gx_srvEd_n);
+    store64(&creds + 16, _gx_srvEd_key);
+    store64(&creds + 24, _gx_srvEd_key_n);
+    if (_gx_cert == 1) {
+        store64(&creds, _gx_srv256);
+        store64(&creds + 8, _gx_srv256_n);
+        store64(&creds + 16, _gx_srv256_key);
+        store64(&creds + 24, _gx_srv256_key_n);
+    }
+    if (_gx_cert == 2) {
+        store64(&creds, _gx_srv384);
+        store64(&creds + 8, _gx_srv384_n);
+        store64(&creds + 16, _gx_srv384_key);
+        store64(&creds + 24, _gx_srv384_key_n);
+    }
+    var sh = tls_accept_alloc_in(_gx_sv_arena, GX_SERVER, &creds, &_gx_srv_hook, 0);
+    _gx_obs[2] = 0 - 999;
+    _gx_obs[3] = 0 - 99;
+    if (sh != 0) {
+        var nctx = load64(sh);
+        _gx_last_server = nctx;
+        if (tls_accept_complete(sh) == 1) {
+            _gx_obs[2] = TLS_OK;
+            var b[64];
+            store64(&b, 0);
+            var n = tls_read(sh, &b, 64);
+            _gx_obs[3] = n;
+            if (n == 4) {
+                if (memeq(&b, "ping", 4) == 1) { tls_write(sh, "pong", 4); }
+                else { _gx_obs[3] = 0 - 98; }
+            }
+        } else {
+            var le = tls_native_get_last_error(nctx);
+            if (le == 0) { le = 0 - 777; }              # a failure with no error recorded never reads as TLS_OK
+            _gx_obs[2] = le;
+        }
+        _gx_obs[5] = tls_native_get_group(nctx);
+        _gx_obs[7] = load64(nctx + TLS_CTX_OFF_HRR);
+        _gx_obs[9] = _gx_no_secrets(nctx);
+        _gx_obs[15] = tls_native_get_version(nctx);
+    }
+    _gx_s_eof = _gx_eof;
+    var t = _gx_sc;
+    _gx_sc = _gx_sc_next;
+    _gx_sc_next = t;
+    _gx_sc_len = _gx_sc_next_len;
+    return 0;
+}
+
+fn _gx_scan_logs(): i64 {
+    var h = 0;
+    _gx_obs[12] = _gx_scan(_gx_sc, _gx_sc_len, &h);
+    _gx_obs[11] = h;
+    _gx_obs[13] = _gx_scan(_gx_cs, _gx_cs_len, 0);
+    return 0;
+}
+
+# The client's and the server's group lists for the next row (0 = unused; all 0 = the default).
+fn _gx_cl(g0, g1, g2): i64 {
+    _gx_cgroups[0] = g0;
+    _gx_cgroups[1] = g1;
+    _gx_cgroups[2] = g2;
+    _gx_cn = 0;
+    if (g0 != 0) { _gx_cn = 1; }
+    if (g1 != 0) { _gx_cn = 2; }
+    if (g2 != 0) { _gx_cn = 3; }
+    return 0;
+}
+fn _gx_sl(g0, g1, g2): i64 {
+    _gx_sgroups[0] = g0;
+    _gx_sgroups[1] = g1;
+    _gx_sgroups[2] = g2;
+    _gx_sn = 0;
+    if (g0 != 0) { _gx_sn = 1; }
+    if (g1 != 0) { _gx_sn = 2; }
+    if (g2 != 0) { _gx_sn = 3; }
+    return 0;
+}
+
+# Replay one native<->native row to its fixed point.
+fn _gx_row(v12, cert): i64 {
+    _gx_v12 = v12;
+    _gx_cert = cert;
+    _gx_cs_len = 0;
+    _gx_sc_len = 0;
+    _gx_overflow = 0;
+    var pc = 0 - 1;
+    var ps = 0 - 1;
+    var r = 0;
+    var settled = 0;
+    while (settled == 0) {
+        if (r >= GX_ROUNDS_MAX) { settled = 2; }
+        if (settled == 0) {
+            _gx_client_run();
+            _gx_server_run();
+            r = r + 1;
+            if (_gx_c_eof == 0) {
+                if (_gx_s_eof == 0) { settled = 1; }
+            }
+            if (_gx_cs_len == pc) {
+                if (_gx_sc_len == ps) { settled = 1; }
+            }
+            pc = _gx_cs_len;
+            ps = _gx_sc_len;
+        }
+    }
+    _gx_obs[10] = 0;
+    if (settled == 1) { _gx_obs[10] = r; }
+    _gx_scan_logs();
+    assert(_gx_obs[10] > 0, "  the replay settled");
+    assert_eq(_gx_overflow, 0, "  no log overflowed");
+    return 0;
+}
+
+# A row that completes on `group`, with (`hrr` 1) or without a HelloRetryRequest.
+fn _gx_ok(label, group, hrr): i64 {
+    assert_eq(_gx_obs[2], TLS_OK, label);
+    assert_eq(_gx_obs[0], TLS_OK, "  client connect: TLS_OK");
+    assert_eq(_gx_obs[3], 4, "  the server reads \"ping\"");
+    assert_eq(_gx_obs[1], 4, "  the client reads \"pong\" (both ends hold the same keys)");
+    assert_eq(_gx_obs[4], group, "  the client's group");
+    assert_eq(_gx_obs[5], group, "  the server's group");
+    assert_eq(_gx_obs[11], hrr, "  HelloRetryRequests on the wire");
+    assert_eq(_gx_obs[6], hrr, "  the client's HRR latch");
+    assert_eq(_gx_obs[7], hrr, "  the server's HRR latch");
+    assert_eq(_gx_obs[12], 0 - 1, "  no alert from the server");
+    assert_eq(_gx_obs[13], 0 - 1, "  no alert from the client");
+    assert_eq(_gx_obs[8], 1, "  the client holds no byte of its ephemeral key or shared secret");
+    assert_eq(_gx_obs[9], 1, "  nor does the server");
+    # The flight after the one carrying our key share (TLS 1.3: the client's Finished, the server's
+    # encrypted flight; TLS 1.2: the client's ClientKeyExchange flight, the server's CCS) goes out
+    # with both secrets already gone. A HelloRetryRequest puts one more write before it.
+    assert_eq(_gx_wzc[1 + hrr], 1, "  the client's next flight leaves with its ephemeral secrets zeroised");
+    assert_eq(_gx_wzs[1 + hrr], 1, "  so does the server's");
+    var ver = TLS_VERSION_1_3;
+    if (_gx_v12 == 1) { ver = TLS_VERSION_1_2; }
+    assert_eq(_gx_obs[14], ver, "  the client's version");
+    assert_eq(_gx_obs[15], ver, "  the server's version");
+    return 0;
+}
+
+# A row with no shared group: the server refuses with handshake_failure and the client reads it.
+fn _gx_none(label): i64 {
+    assert_eq(_gx_obs[2], TLS_ERR_HANDSHAKE_FAILED, label);
+    assert_eq(_gx_obs[12], TLS_AD_HANDSHAKE_FAILURE, "  the server's alert: handshake_failure");
+    assert_eq(_gx_obs[0], TLS_ERR_ALERT, "  the client reads it: TLS_ERR_ALERT");
+    assert_eq(_gx_obs[11], 0, "  no HelloRetryRequest");
+    assert_eq(_gx_obs[8], 1, "  the client holds no ephemeral secret");
+    assert_eq(_gx_obs[9], 1, "  nor does the server");
+    return 0;
+}
+
+# ---- the native<->native matrix ----
+var GX_X = 0;
+var GX_256 = 0;
+var GX_384 = 0;
+
+fn test_matrix13(): i64 {
+    test_group("6.6.15 — TLS 1.3, native client <-> native server: the group each pair agrees on");
+    _gx_cl(0, 0, 0); _gx_sl(0, 0, 0);
+    _gx_row(0, 0);
+    _gx_ok("defaults: x25519, no HelloRetryRequest", GX_X, 0);
+    _gx_cl(GX_256, 0, 0); _gx_sl(0, 0, 0);
+    _gx_row(0, 0);
+    _gx_ok("a client listing only P-256 shares it and the server takes it", GX_256, 0);
+    _gx_cl(GX_384, 0, 0); _gx_sl(0, 0, 0);
+    _gx_row(0, 0);
+    _gx_ok("a client listing only P-384", GX_384, 0);
+    _gx_cl(GX_256, GX_X, 0); _gx_sl(0, 0, 0);
+    _gx_row(0, 0);
+    _gx_ok("client P-256 first (its share), server preferring x25519: the share is taken, no round trip", GX_256, 0);
+    _gx_cl(0, 0, 0); _gx_sl(GX_256, 0, 0);
+    _gx_row(0, 0);
+    _gx_ok("a server taking only P-256: HelloRetryRequest, then P-256", GX_256, 1);
+    _gx_cl(0, 0, 0); _gx_sl(GX_384, 0, 0);
+    _gx_row(0, 0);
+    _gx_ok("a server taking only P-384: HelloRetryRequest, then P-384", GX_384, 1);
+    _gx_cl(0, 0, 0); _gx_sl(GX_384, GX_256, 0);
+    _gx_row(0, 0);
+    _gx_ok("server P-384 before P-256: the HelloRetryRequest asks for P-384", GX_384, 1);
+    _gx_cl(GX_256, GX_384, 0); _gx_sl(GX_384, 0, 0);
+    _gx_row(0, 0);
+    _gx_ok("client P-256 (shared) then P-384, server P-384 only: HelloRetryRequest for P-384", GX_384, 1);
+    _gx_cl(GX_X, 0, 0); _gx_sl(GX_256, GX_384, 0);
+    _gx_row(0, 0);
+    _gx_none("client x25519 only, server P-256 / P-384: no shared group");
+
+    test_group("6.6.15 — TLS 1.3: the group is independent of an ECDSA certificate's curve");
+    _gx_cl(0, 0, 0); _gx_sl(GX_256, 0, 0);
+    _gx_row(0, 2);
+    _gx_ok("a P-384 certificate, the key exchange on P-256 (via a HelloRetryRequest)", GX_256, 1);
+    _gx_cl(GX_384, 0, 0); _gx_sl(0, 0, 0);
+    _gx_row(0, 1);
+    _gx_ok("a P-256 certificate, the key exchange on P-384", GX_384, 0);
+    _gx_cl(0, 0, 0); _gx_sl(0, 0, 0);
+    _gx_row(0, 2);
+    _gx_ok("a P-384 certificate on x25519", GX_X, 0);
+    return 0;
+}
+
+fn test_matrix12(): i64 {
+    test_group("6.6.15 — TLS 1.2, native client <-> native server: the server picks from supported_groups");
+    _gx_cl(0, 0, 0); _gx_sl(0, 0, 0);
+    _gx_row(1, 0);
+    _gx_ok("defaults: x25519", GX_X, 0);
+    _gx_cl(GX_256, 0, 0); _gx_sl(0, 0, 0);
+    _gx_row(1, 0);
+    _gx_ok("a client listing only P-256", GX_256, 0);
+    _gx_cl(GX_384, 0, 0); _gx_sl(0, 0, 0);
+    _gx_row(1, 0);
+    _gx_ok("a client listing only P-384", GX_384, 0);
+    _gx_cl(GX_256, GX_X, 0); _gx_sl(0, 0, 0);
+    _gx_row(1, 0);
+    _gx_ok("client P-256 before x25519: the server's preference wins, x25519", GX_X, 0);
+    _gx_cl(0, 0, 0); _gx_sl(GX_256, 0, 0);
+    _gx_row(1, 0);
+    _gx_ok("a server taking only P-256", GX_256, 0);
+    _gx_cl(0, 0, 0); _gx_sl(GX_384, GX_256, 0);
+    _gx_row(1, 0);
+    _gx_ok("server P-384 before P-256", GX_384, 0);
+    _gx_cl(GX_X, 0, 0); _gx_sl(GX_384, 0, 0);
+    _gx_row(1, 0);
+    _gx_none("client x25519 only, server P-384 only: no shared group");
+
+    test_group("6.6.15 — TLS 1.2: the group is independent of an ECDSA certificate's curve");
+    _gx_cl(GX_256, 0, 0); _gx_sl(0, 0, 0);
+    _gx_row(1, 2);
+    _gx_ok("a P-384 certificate signs a P-256 ServerKeyExchange", GX_256, 0);
+    _gx_cl(GX_384, 0, 0); _gx_sl(0, 0, 0);
+    _gx_row(1, 1);
+    _gx_ok("a P-256 certificate signs a P-384 ServerKeyExchange", GX_384, 0);
+    _gx_cl(0, 0, 0); _gx_sl(0, 0, 0);
+    _gx_row(1, 2);
+    _gx_ok("a P-384 certificate on x25519", GX_X, 0);
+    return 0;
+}
+
+# ---- scripted peers: a byte builder ----
+var _gb = 0;
+var _gbn = 0;
+fn _gb_start(buf): i64 { _gb = buf; _gbn = 0; return 0; }
+fn _gb8(v): i64 { store8(_gb + _gbn, v & 0xFF); _gbn = _gbn + 1; return 0; }
+fn _gb16(v): i64 { _gb8(v >> 8); _gb8(v); return 0; }
+fn _gb24(v): i64 { _gb8(v >> 16); _gb8(v >> 8); _gb8(v); return 0; }
+fn _gbmem(p, n): i64 { memcpy(_gb + _gbn, p, n); _gbn = _gbn + n; return 0; }
+fn _gbfill(v, n): i64 {
+    var i = 0;
+    while (i < n) { _gb8(v); i = i + 1; }
+    return 0;
+}
+fn _gb_put16(at, v): i64 {
+    store8(_gb + at, (v >> 8) & 0xFF);
+    store8(_gb + at + 1, v & 0xFF);
+    return 0;
+}
+# A length field opened at the cursor (2 bytes, or a handshake / record header) and closed later.
+fn _gb_len16(): i64 { var at = _gbn; _gb16(0); return at; }
+fn _gb_end16(at): i64 { _gb_put16(at, _gbn - at - 2); return 0; }
+fn _gb_rec(ct): i64 { var at = _gbn; _gb8(ct); _gb16(0x0303); _gb16(0); return at; }
+fn _gb_rec_end(at): i64 { _gb_put16(at + 3, _gbn - at - 5); return 0; }
+fn _gb_hs(t): i64 { var at = _gbn; _gb8(t); _gb24(0); return at; }
+fn _gb_hs_end(at): i64 {
+    var n = _gbn - at - 4;
+    store8(_gb + at + 1, (n >> 16) & 0xFF);
+    store8(_gb + at + 2, (n >> 8) & 0xFF);
+    store8(_gb + at + 3, n & 0xFF);
+    return 0;
+}
+
+# Keys for scripted shares: a real x25519 / P-256 / P-384 public key, an all-zero x25519 u
+# (low-order: its shared secret is all zero), an off-curve P-256 point (0x04 || 0x01.. || 0x02..).
+var _gk_x = 0;
+var _gk_256 = 0;
+var _gk_384 = 0;
+var _gk_zero = 0;
+var _gk_bad256 = 0;
+fn _gx_keys(): i64 {
+    var rnd[64];
+    var i = 0;
+    while (i < 64) { store8(&rnd + i, 0x30 + i); i = i + 1; }
+    var priv[48];
+    _gk_x = alloc(32);
+    x25519_base(&rnd, _gk_x);
+    _gk_256 = alloc(65);
+    ecdh_p256_keygen(&rnd, 40, &priv, _gk_256);
+    _gk_384 = alloc(97);
+    ecdh_p384_keygen(&rnd, 56, &priv, _gk_384);
+    _gk_zero = alloc(32);
+    memset(_gk_zero, 0, 32);
+    _gk_bad256 = alloc(65);
+    store8(_gk_bad256, 4);
+    memset(_gk_bad256 + 1, 1, 32);
+    memset(_gk_bad256 + 33, 2, 32);
+    return 0;
+}
+
+# A record holding a 1.3 HelloRetryRequest (or, `hrr` 0, a ServerHello with key_share `kg` /
+# `kp` / `kn`): `cipher`, a legacy_session_id_echo of `sid` bytes, supported_versions 0x0304 when
+# `sv` is 1, a key_share naming `kg` (0: none), a cookie of `cookie_n` bytes (0: none), and an
+# empty extension of type `extra` (0: none).
+fn _gx_put_shr(hrr, cipher, sid, sv, kg, kp, kn, cookie_n, extra): i64 {
+    var rec = _gb_rec(TLS_CT_HANDSHAKE);
+    var hs = _gb_hs(TLS_HS_SERVER_HELLO);
+    _gb16(0x0303);
+    if (hrr == 1) {
+        var r[32];
+        _tn_hrr_random(&r);
+        _gbmem(&r, 32);
+    } else {
+        _gbfill(0x5A, 32);
+    }
+    _gb8(sid);
+    _gbfill(0x11, sid);
+    _gb16(cipher);
+    _gb8(0);
+    var eb = _gb_len16();
+    if (sv == 1) {
+        _gb16(TLS_EXT_SUPPORTED_VERSIONS); _gb16(2); _gb16(0x0304);
+    }
+    if (kg != 0) {
+        _gb16(TLS_EXT_KEY_SHARE);
+        if (hrr == 1) {
+            _gb16(2); _gb16(kg);
+        } else {
+            _gb16(4 + kn); _gb16(kg); _gb16(kn); _gbmem(kp, kn);
+        }
+    }
+    if (cookie_n > 0) {
+        _gb16(TLS_EXT_COOKIE); _gb16(2 + cookie_n); _gb16(cookie_n);
+        var ci = 0;
+        while (ci < cookie_n) { _gb8(0xC0 + ci); ci = ci + 1; }
+    }
+    if (extra != 0) { _gb16(extra); _gb16(0); }
+    _gb_end16(eb);
+    _gb_hs_end(hs);
+    _gb_rec_end(rec);
+    return 0;
+}
+
+# A record holding a 1.3 ClientHello: a `sid`-byte legacy_session_id of `sidb`, cipher suites
+# `c0` [`c1`], supported_versions 1.3, supported_groups `g0` `g1` `g2` (0 ends the list; `nsg`
+# -1: no supported_groups at all), signature_algorithms (Ed25519, ECDSA P-256), and a key_share of
+# `nks` (0..2) entries (`k0g`, `k0p`, `k0n`), (`k1g`, `k1p`, `k1n`) (`nks` -1: no key_share).
+fn _gx_put_ch13(sid, sidb, c0, c1, nsg, g0, g1, g2, nks, k0g, k0p, k0n, k1g, k1p, k1n): i64 {
+    var rec = _gb_rec(TLS_CT_HANDSHAKE);
+    var hs = _gb_hs(TLS_HS_CLIENT_HELLO);
+    _gb16(0x0303);
+    _gbfill(0x55, 32);
+    _gb8(sid);
+    _gbfill(sidb, sid);
+    if (c1 != 0) { _gb16(4); _gb16(c0); _gb16(c1); }
+    else { _gb16(2); _gb16(c0); }
+    _gb8(1); _gb8(0);
+    var eb = _gb_len16();
+    _gb16(TLS_EXT_SUPPORTED_VERSIONS); _gb16(3); _gb8(2); _gb16(0x0304);
+    _gb16(TLS_EXT_SIGNATURE_ALGORITHMS); _gb16(6); _gb16(4);
+    _gb16(TLS_SIG_ED25519); _gb16(TLS_SIG_ECDSA_SECP256R1_SHA256);
+    if (nsg >= 0) {
+        _gb16(TLS_EXT_SUPPORTED_GROUPS);
+        var sl = _gb_len16();
+        var gl = _gb_len16();
+        if (g0 != 0) { _gb16(g0); }
+        if (g1 != 0) { _gb16(g1); }
+        if (g2 != 0) { _gb16(g2); }
+        _gb_end16(gl);
+        _gb_end16(sl);
+    }
+    if (nks >= 0) {
+        _gb16(TLS_EXT_KEY_SHARE);
+        var kl = _gb_len16();
+        var cl = _gb_len16();
+        if (nks >= 1) { _gb16(k0g); _gb16(k0n); _gbmem(k0p, k0n); }
+        if (nks >= 2) { _gb16(k1g); _gb16(k1n); _gbmem(k1p, k1n); }
+        _gb_end16(cl);
+        _gb_end16(kl);
+    }
+    _gb_end16(eb);
+    _gb_hs_end(hs);
+    _gb_rec_end(rec);
+    return 0;
+}
+
+# A record holding a TLS 1.2 ClientHello: ECDHE-ECDSA suites, supported_groups `g0` [`g1`] (`nsg`
+# -1: none), ec_point_formats, signature_algorithms (Ed25519, ECDSA P-256 / P-384).
+fn _gx_put_ch12(nsg, g0, g1): i64 {
+    var rec = _gb_rec(TLS_CT_HANDSHAKE);
+    var hs = _gb_hs(TLS_HS_CLIENT_HELLO);
+    _gb16(0x0303);
+    _gbfill(0x66, 32);
+    _gb8(0);
+    _gb16(4); _gb16(TLS12_ECDHE_ECDSA_AES256_GCM_SHA384); _gb16(TLS12_ECDHE_ECDSA_CHACHA20_SHA256);
+    _gb8(1); _gb8(0);
+    var eb = _gb_len16();
+    if (nsg >= 0) {
+        _gb16(TLS_EXT_SUPPORTED_GROUPS);
+        var sl = _gb_len16();
+        var gl = _gb_len16();
+        if (g0 != 0) { _gb16(g0); }
+        if (g1 != 0) { _gb16(g1); }
+        _gb_end16(gl);
+        _gb_end16(sl);
+    }
+    _gb16(TLS_EXT_EC_POINT_FORMATS); _gb16(2); _gb8(1); _gb8(0);
+    _gb16(TLS_EXT_SIGNATURE_ALGORITHMS); _gb16(8); _gb16(6);
+    _gb16(TLS_SIG_ED25519); _gb16(TLS_SIG_ECDSA_SECP256R1_SHA256); _gb16(TLS_SIG_ECDSA_SECP384R1_SHA384);
+    _gb_end16(eb);
+    _gb_hs_end(hs);
+    _gb_rec_end(rec);
+    return 0;
+}
+
+# A record holding a TLS 1.2 ClientKeyExchange with an `n`-byte point.
+fn _gx_put_cke(p, n): i64 {
+    var rec = _gb_rec(TLS_CT_HANDSHAKE);
+    var hs = _gb_hs(TLS_HS_CLIENT_KEY_EXCHANGE);
+    _gb8(n);
+    _gbmem(p, n);
+    _gb_hs_end(hs);
+    _gb_rec_end(rec);
+    return 0;
+}
+
+fn _gx_put_ccs(): i64 {
+    var rec = _gb_rec(TLS_CT_CHANGE_CIPHER_SPEC);
+    _gb8(1);
+    _gb_rec_end(rec);
+    return 0;
+}
+
+# Run the real CLIENT once against the scripted server log built in _gx_sc (_gb_start(_gx_sc), the
+# _gx_put_* calls, then this).
+fn _gx_vs_script_server(): i64 {
+    _gx_sc_len = _gbn;
+    _gx_cs_len = 0;
+    _gx_overflow = 0;
+    _gx_client_run();
+    _gx_obs[13] = _gx_scan(_gx_cs, _gx_cs_len, 0);
+    return 0;
+}
+
+# Run the real SERVER once against the scripted client log built in _gx_cs.
+fn _gx_vs_script_client(): i64 {
+    _gx_cs_len = _gbn;
+    _gx_sc_len = 0;
+    _gx_overflow = 0;
+    _gx_server_run();
+    var h = 0;
+    _gx_obs[12] = _gx_scan(_gx_sc, _gx_sc_len, &h);
+    _gx_obs[11] = h;
+    return 0;
+}
+
+# The client refused a scripted server: TLS 1.3 return `rc`, alert `desc` sent, no secret kept.
+fn _gx_crefused(label, rc, desc): i64 {
+    assert_eq(_gx_obs[0], rc, label);
+    assert_eq(_gx_obs[13], desc, "  the client's alert");
+    assert_eq(_gx_obs[8], 1, "  the client holds no byte of its ephemeral key or shared secret");
+    return 0;
+}
+
+# The server refused a scripted client.
+fn _gx_srefused(label, rc, desc, hrrs): i64 {
+    assert_eq(_gx_obs[2], rc, label);
+    assert_eq(_gx_obs[12], desc, "  the server's alert");
+    assert_eq(_gx_obs[11], hrrs, "  HelloRetryRequests the server sent");
+    assert_eq(_gx_obs[9], 1, "  the server holds no byte of its ephemeral key or shared secret");
+    return 0;
+}
+
+fn test_client_refusals(): i64 {
+    var A256 = TLS_AES_256_GCM_SHA384;
+    test_group("6.6.15 — the TLS 1.3 client refuses a HelloRetryRequest it cannot take (RFC 8446 §4.1.4)");
+    _gx_cl(0, 0, 0); _gx_v12 = 0;
+    _gb_start(_gx_sc);
+    _gx_put_shr(1, A256, 0, 1, GX_P521, 0, 0, 0, 0);
+    _gx_vs_script_server();
+    _gx_crefused("a HelloRetryRequest for secp521r1, a group it never offered", TLS_ERR_HANDSHAKE_FAILED,
+      TLS_AD_ILLEGAL_PARAMETER);
+    _gb_start(_gx_sc);
+    _gx_put_shr(1, A256, 0, 1, GX_X, 0, 0, 0, 0);
+    _gx_vs_script_server();
+    _gx_crefused("a HelloRetryRequest for x25519, the group it already sent a share for",
+      TLS_ERR_HANDSHAKE_FAILED, TLS_AD_ILLEGAL_PARAMETER);
+    _gb_start(_gx_sc);
+    _gx_put_shr(1, A256, 0, 1, 0, 0, 0, 0, 0);
+    _gx_vs_script_server();
+    _gx_crefused("a HelloRetryRequest with neither key_share nor cookie (it would change nothing)",
+      TLS_ERR_HANDSHAKE_FAILED, TLS_AD_ILLEGAL_PARAMETER);
+    _gb_start(_gx_sc);
+    _gx_put_shr(1, A256, 0, 1, GX_256, 0, 0, 0, TLS_EXT_ALPN);
+    _gx_vs_script_server();
+    _gx_crefused("a HelloRetryRequest carrying an extension other than supported_versions / key_share / cookie",
+      TLS_ERR_HANDSHAKE_FAILED, TLS_AD_UNSUPPORTED_EXTENSION);
+    _gb_start(_gx_sc);
+    _gx_put_shr(1, 0x1304, 0, 1, GX_256, 0, 0, 0, 0);
+    _gx_vs_script_server();
+    _gx_crefused("a HelloRetryRequest naming a cipher suite it never offered", TLS_ERR_CIPHER_NOT_SUPPORTED,
+      TLS_AD_ILLEGAL_PARAMETER);
+    _gb_start(_gx_sc);
+    _gx_put_shr(1, A256, 32, 1, GX_256, 0, 0, 0, 0);
+    _gx_vs_script_server();
+    _gx_crefused("a HelloRetryRequest echoing a session id it never sent", TLS_ERR_HANDSHAKE_FAILED,
+      TLS_AD_ILLEGAL_PARAMETER);
+    _gb_start(_gx_sc);
+    _gx_put_shr(1, A256, 0, 0, GX_256, 0, 0, 0, 0);
+    _gx_vs_script_server();
+    _gx_crefused("a HelloRetryRequest without supported_versions", TLS_ERR_VERSION, TLS_AD_MISSING_EXTENSION);
+    assert_eq(_gx_obs[6], 0, "  …and none of them is taken (the HRR latch stays clear)");
+
+    test_group("6.6.15 — the TLS 1.3 client takes ONE HelloRetryRequest");
+    _gb_start(_gx_sc);
+    _gx_put_shr(1, A256, 0, 1, GX_256, 0, 0, 0, 0);
+    _gx_put_shr(1, A256, 0, 1, GX_384, 0, 0, 0, 0);
+    _gx_vs_script_server();
+    _gx_crefused("a second HelloRetryRequest", TLS_ERR_PROTOCOL, TLS_AD_UNEXPECTED_MESSAGE);
+    assert_eq(_gx_obs[6], 1, "  the first was taken");
+    assert_eq(_gx_ch_count(_gx_cs, _gx_cs_len), 2, "  the client sent exactly two ClientHellos");
+    _gb_start(_gx_sc);
+    _gx_put_shr(1, A256, 0, 1, GX_256, 0, 0, 0, 0);
+    _gx_put_shr(0, TLS_CHACHA20_POLY1305_SHA256, 0, 1, GX_256, _gk_256, 65, 0, 0);
+    _gx_vs_script_server();
+    _gx_crefused("a ServerHello whose cipher is not the HelloRetryRequest's", TLS_ERR_HANDSHAKE_FAILED,
+      TLS_AD_ILLEGAL_PARAMETER);
+    _gb_start(_gx_sc);
+    _gx_put_shr(1, A256, 0, 1, GX_256, 0, 0, 0, 0);
+    _gx_put_shr(0, A256, 0, 1, GX_X, _gk_x, 32, 0, 0);
+    _gx_vs_script_server();
+    _gx_crefused("a ServerHello whose share is not on the group the HelloRetryRequest named",
+      TLS_ERR_HANDSHAKE_FAILED, TLS_AD_ILLEGAL_PARAMETER);
+
+    test_group("6.6.15 — the second ClientHello is the first with the new share and the cookie");
+    _gb_start(_gx_sc);
+    _gx_put_shr(1, A256, 0, 1, GX_384, 0, 0, 40, 0);
+    _gx_vs_script_server();
+    assert_eq(_gx_obs[0], TLS_ERR_IO,
+      "a HelloRetryRequest for P-384 with a cookie, then the server is gone: TLS_ERR_IO");
+    assert_eq(_gx_obs[6], 1, "  the HelloRetryRequest was taken");
+    assert_eq(_gx_obs[8], 1, "  the client holds no byte of its (P-384) ephemeral key");
+    assert_eq(_gx_ch_count(_gx_cs, _gx_cs_len), 2, "  two ClientHellos");
+    var ch1 = _gx_cs + 5;
+    var ch2 = _gx_cs + 5 + _gx_hs_len(ch1);
+    ch2 = ch2 + 5;
+    assert_eq(memeq(ch1 + 6, ch2 + 6, 32), 1, "  the same random");
+    assert_eq(_gx_share_group(ch1), GX_X, "  the first carried an x25519 share");
+    assert_eq(_gx_share_group(ch2), GX_384, "  the second a P-384 share");
+    assert_eq(_gx_share_len(ch2), 97, "  …of 97 bytes (0x04 || X || Y)");
+    assert_eq(_gx_cookie_ok(ch2, 40), 1, "  the cookie echoed byte for byte");
+    assert_eq(_gx_cookie_ok(ch1, 40), 0, "  (the first had none)");
+
+    test_group("6.6.15 — the TLS 1.3 client refuses a key the ServerHello carries");
+    _gb_start(_gx_sc);
+    _gx_put_shr(0, A256, 0, 1, GX_X, _gk_zero, 32, 0, 0);
+    _gx_vs_script_server();
+    _gx_crefused("an all-zero x25519 share (a low-order point: the shared secret is zero, RFC 8446 §7.4.2)",
+      TLS_ERR_HANDSHAKE_FAILED, TLS_AD_ILLEGAL_PARAMETER);
+    _gb_start(_gx_sc);
+    _gx_put_shr(0, A256, 0, 1, GX_256, _gk_256, 65, 0, 0);
+    _gx_vs_script_server();
+    _gx_crefused("a P-256 share answering an x25519 one", TLS_ERR_HANDSHAKE_FAILED, TLS_AD_ILLEGAL_PARAMETER);
+    _gx_cl(GX_256, 0, 0);
+    _gb_start(_gx_sc);
+    _gx_put_shr(0, A256, 0, 1, GX_256, _gk_bad256, 65, 0, 0);
+    _gx_vs_script_server();
+    _gx_crefused("a P-256 point off the curve", TLS_ERR_HANDSHAKE_FAILED, TLS_AD_ILLEGAL_PARAMETER);
+    _gx_cl(0, 0, 0);
+    return 0;
+}
+
+# The number of ClientHello records in a log.
+fn _gx_ch_count(log, len): i64 {
+    var n = 0;
+    var p = 0;
+    while (p + 5 <= len) {
+        var rl = ((load8(log + p + 3) & 0xFF) << 8) | (load8(log + p + 4) & 0xFF);
+        if ((load8(log + p) & 0xFF) == TLS_CT_HANDSHAKE) {
+            if ((load8(log + p + 5) & 0xFF) == TLS_HS_CLIENT_HELLO) { n = n + 1; }
+        }
+        p = p + 5 + rl;
+    }
+    return n;
+}
+
+# A handshake message's length, header included.
+fn _gx_hs_len(m): i64 {
+    return 4 + (((load8(m + 1) & 0xFF) << 16) | ((load8(m + 2) & 0xFF) << 8) | (load8(m + 3) & 0xFF));
+}
+
+# The extension `t` of a ClientHello message `ch` (data pointer through *dp, length returned;
+# -1 absent).
+fn _gx_ch_ext(ch, t, dp): i64 {
+    var body = ch + 4;
+    var blen = _gx_hs_len(ch) - 4;
+    var p = 2 + 32;
+    p = p + 1 + (load8(body + p) & 0xFF);
+    p = p + 2 + _tn_be16_r(body + p);
+    p = p + 1 + (load8(body + p) & 0xFF);
+    var et = _tn_be16_r(body + p);
+    p = p + 2;
+    var end = p + et;
+    if (end > blen) { return 0 - 1; }
+    while (p + 4 <= end) {
+        var ty = _tn_be16_r(body + p);
+        var el = _tn_be16_r(body + p + 2);
+        if (ty == t) {
+            store64(dp, body + p + 4);
+            return el;
+        }
+        p = p + 4 + el;
+    }
+    return 0 - 1;
+}
+
+fn _gx_share_group(ch): i64 {
+    var d = 0;
+    if (_gx_ch_ext(ch, TLS_EXT_KEY_SHARE, &d) < 6) { return 0 - 1; }
+    return _tn_be16_r(d + 2);
+}
+
+fn _gx_share_len(ch): i64 {
+    var d = 0;
+    if (_gx_ch_ext(ch, TLS_EXT_KEY_SHARE, &d) < 6) { return 0 - 1; }
+    return _tn_be16_r(d + 4);
+}
+
+# 1 when the ClientHello carries the scripted cookie of n bytes (0xC0, 0xC1, ...).
+fn _gx_cookie_ok(ch, n): i64 {
+    var d = 0;
+    var el = _gx_ch_ext(ch, TLS_EXT_COOKIE, &d);
+    if (el != 2 + n) { return 0; }
+    if (_tn_be16_r(d) != n) { return 0; }
+    var i = 0;
+    while (i < n) {
+        if ((load8(d + 2 + i) & 0xFF) != ((0xC0 + i) & 0xFF)) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+fn test_server_refusals(): i64 {
+    var A256 = TLS_AES_256_GCM_SHA384;
+    var CHA = TLS_CHACHA20_POLY1305_SHA256;
+    _gx_sl(0, 0, 0);
+    _gx_cert = 0;
+    test_group("6.6.15 — the TLS 1.3 server refuses a key_share RFC 8446 §4.2.8 forbids");
+    _gb_start(_gx_cs);
+    _gx_put_ch13(0, 0, A256, 0, 1, GX_256, 0, 0, 1, GX_X, _gk_x, 32, 0, 0, 0);
+    _gx_vs_script_client();
+    _gx_srefused("an x25519 share from a client listing only P-256", TLS_ERR_HANDSHAKE_FAILED,
+      TLS_AD_ILLEGAL_PARAMETER, 0);
+    _gb_start(_gx_cs);
+    _gx_put_ch13(0, 0, A256, 0, 1, GX_X, GX_256, 0, 2, GX_X, _gk_x, 32, GX_X, _gk_x, 32);
+    _gx_vs_script_client();
+    _gx_srefused("two x25519 shares", TLS_ERR_HANDSHAKE_FAILED, TLS_AD_ILLEGAL_PARAMETER, 0);
+    _gb_start(_gx_cs);
+    _gx_put_ch13(0, 0, A256, 0, 1, GX_256, 0, 0, 1, GX_256, _gk_256, 64, 0, 0, 0);
+    _gx_vs_script_client();
+    _gx_srefused("a P-256 share of 64 bytes", TLS_ERR_HANDSHAKE_FAILED, TLS_AD_ILLEGAL_PARAMETER, 0);
+    _gb_start(_gx_cs);
+    _gx_put_ch13(0, 0, A256, 0, 0 - 1, 0, 0, 0, 1, GX_X, _gk_x, 32, 0, 0, 0);
+    _gx_vs_script_client();
+    _gx_srefused("a key_share with no supported_groups (RFC 8446 §9.2)", TLS_ERR_HANDSHAKE_FAILED,
+      TLS_AD_MISSING_EXTENSION, 0);
+    _gb_start(_gx_cs);
+    _gx_put_ch13(0, 0, A256, 0, 1, GX_P521, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    _gx_vs_script_client();
+    _gx_srefused("a client listing only secp521r1: no shared group", TLS_ERR_HANDSHAKE_FAILED,
+      TLS_AD_HANDSHAKE_FAILURE, 0);
+    _gb_start(_gx_cs);
+    _gx_put_ch13(0, 0, A256, 0, 1, GX_256, 0, 0, 1, GX_256, _gk_bad256, 65, 0, 0, 0);
+    _gx_vs_script_client();
+    _gx_srefused("a P-256 point off the curve", TLS_ERR_HANDSHAKE_FAILED, TLS_AD_ILLEGAL_PARAMETER, 0);
+    _gb_start(_gx_cs);
+    _gx_put_ch13(0, 0, A256, 0, 1, GX_X, 0, 0, 1, GX_X, _gk_zero, 32, 0, 0, 0);
+    _gx_vs_script_client();
+    _gx_srefused("an all-zero x25519 share (low-order: a zero shared secret)", TLS_ERR_HANDSHAKE_FAILED,
+      TLS_AD_ILLEGAL_PARAMETER, 0);
+
+    test_group("6.6.15 — the TLS 1.3 server's second ClientHello: ONE HelloRetryRequest, then the share it asked for");
+    _gb_start(_gx_cs);
+    _gx_put_ch13(0, 0, A256, 0, 1, GX_256, GX_384, 0, 0, 0, 0, 0, 0, 0, 0);
+    _gx_put_ch13(0, 0, A256, 0, 1, GX_256, GX_384, 0, 0, 0, 0, 0, 0, 0, 0);
+    _gx_vs_script_client();
+    _gx_srefused("a second ClientHello still without a share: refused, never a second HelloRetryRequest",
+      TLS_ERR_HANDSHAKE_FAILED, TLS_AD_ILLEGAL_PARAMETER, 1);
+    _gb_start(_gx_cs);
+    _gx_put_ch13(0, 0, A256, 0, 1, GX_256, GX_384, 0, 0, 0, 0, 0, 0, 0, 0);
+    _gx_put_ch13(0, 0, A256, 0, 1, GX_256, GX_384, 0, 1, GX_384, _gk_384, 97, 0, 0, 0);
+    _gx_vs_script_client();
+    _gx_srefused("a second ClientHello sharing P-384 where P-256 was asked for", TLS_ERR_HANDSHAKE_FAILED,
+      TLS_AD_ILLEGAL_PARAMETER, 1);
+    _gb_start(_gx_cs);
+    _gx_put_ch13(0, 0, A256, CHA, 1, GX_256, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    _gx_put_ch13(0, 0, CHA, 0, 1, GX_256, 0, 0, 1, GX_256, _gk_256, 65, 0, 0, 0);
+    _gx_vs_script_client();
+    _gx_srefused("a second ClientHello that moves the server to another cipher suite",
+      TLS_ERR_HANDSHAKE_FAILED, TLS_AD_ILLEGAL_PARAMETER, 1);
+    _gb_start(_gx_cs);
+    _gx_put_ch13(32, 0x11, A256, 0, 1, GX_256, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    _gx_put_ch13(32, 0x22, A256, 0, 1, GX_256, 0, 0, 1, GX_256, _gk_256, 65, 0, 0, 0);
+    _gx_vs_script_client();
+    _gx_srefused("a second ClientHello with another legacy_session_id", TLS_ERR_HANDSHAKE_FAILED,
+      TLS_AD_ILLEGAL_PARAMETER, 1);
+    _gb_start(_gx_cs);
+    _gx_put_ch13(32, 0x11, A256, 0, 1, GX_256, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    _gx_put_ch13(0, 0, A256, 0, 1, GX_256, 0, 0, 1, GX_256, _gk_256, 65, 0, 0, 0);
+    _gx_vs_script_client();
+    _gx_srefused("a second ClientHello that drops the legacy_session_id", TLS_ERR_HANDSHAKE_FAILED,
+      TLS_AD_ILLEGAL_PARAMETER, 1);
+    _gb_start(_gx_cs);
+    _gx_put_ch13(32, 0x11, A256, 0, 1, GX_256, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    _gx_put_ccs();
+    _gx_put_ch13(32, 0x11, A256, 0, 1, GX_256, 0, 0, 1, GX_256, _gk_256, 65, 0, 0, 0);
+    _gx_vs_script_client();
+    assert_eq(_gx_obs[11], 1,
+      "a middlebox CCS, then the second ClientHello with the P-256 share: one HelloRetryRequest");
+    assert_eq(_gx_obs[5], GX_256, "  the server answers on P-256");
+    assert_eq(_gx_obs[2], TLS_ERR_IO, "  and reads on to the client's Finished (the script ends there: TLS_ERR_IO)");
+    assert_eq(_gx_obs[12], 0 - 1, "  no alert");
+    assert_eq(_gx_obs[9], 1, "  the server holds no byte of its ephemeral key or shared secret");
+    _gb_start(_gx_cs);
+    _gx_put_ch13(0, 0, A256, 0, 1, GX_256, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    _gx_put_ccs();
+    _gx_put_ccs();
+    _gx_put_ch13(0, 0, A256, 0, 1, GX_256, 0, 0, 1, GX_256, _gk_256, 65, 0, 0, 0);
+    _gx_vs_script_client();
+    _gx_srefused("two CCS before the second ClientHello (one per connection, 6.6.13)", TLS_ERR_PROTOCOL,
+      TLS_AD_UNEXPECTED_MESSAGE, 1);
+
+    test_group("6.6.15 — the TLS 1.2 server picks from supported_groups, and refuses");
+    _gx_v12 = 1;
+    _gb_start(_gx_cs);
+    _gx_put_ch12(1, GX_P521, 0);
+    _gx_vs_script_client();
+    _gx_srefused("a 1.2 client listing only secp521r1: handshake_failure", TLS_ERR_HANDSHAKE_FAILED,
+      TLS_AD_HANDSHAKE_FAILURE, 0);
+    _gb_start(_gx_cs);
+    _gx_put_ch12(0 - 1, 0, 0);
+    _gx_vs_script_client();
+    assert_eq(_gx_obs[5], GX_X, "a 1.2 client with no supported_groups gets the server's first group (x25519)");
+    assert_eq(_gx_ske_group(_gx_sc, _gx_sc_len), GX_X, "  …in its ServerKeyExchange");
+    assert_eq(_gx_obs[9], 1, "  the server, failing at the missing ClientKeyExchange, holds no ephemeral secret");
+    _gx_sl(GX_384, GX_256, 0);
+    _gb_start(_gx_cs);
+    _gx_put_ch12(0 - 1, 0, 0);
+    _gx_vs_script_client();
+    assert_eq(_gx_ske_group(_gx_sc, _gx_sc_len), GX_384, "  (a server listing P-384 first: P-384)");
+    _gx_sl(0, 0, 0);
+    _gb_start(_gx_cs);
+    _gx_put_ch12(1, GX_256, 0);
+    _gx_put_cke(_gk_bad256, 65);
+    _gx_vs_script_client();
+    _gx_srefused("a ClientKeyExchange with a P-256 point off the curve", TLS_ERR_HANDSHAKE_FAILED,
+      TLS_AD_ILLEGAL_PARAMETER, 0);
+    _gb_start(_gx_cs);
+    _gx_put_ch12(1, GX_256, 0);
+    _gx_put_cke(_gk_x, 32);
+    _gx_vs_script_client();
+    _gx_srefused("a 32-byte ClientKeyExchange on P-256", TLS_ERR_BAD_HANDSHAKE, TLS_AD_DECODE_ERROR, 0);
+    _gb_start(_gx_cs);
+    _gx_put_ch12(1, GX_X, 0);
+    _gx_put_cke(_gk_zero, 32);
+    _gx_vs_script_client();
+    _gx_srefused("an all-zero x25519 ClientKeyExchange", TLS_ERR_HANDSHAKE_FAILED, TLS_AD_ILLEGAL_PARAMETER, 0);
+    _gx_v12 = 0;
+    return 0;
+}
+
+# The namedcurve of the first ServerKeyExchange in a log of plaintext records (-1 none).
+fn _gx_ske_group(log, len): i64 {
+    var p = 0;
+    while (p + 5 <= len) {
+        var rl = ((load8(log + p + 3) & 0xFF) << 8) | (load8(log + p + 4) & 0xFF);
+        if ((load8(log + p) & 0xFF) == TLS_CT_HANDSHAKE) {
+            var q = p + 5;
+            while (q + 4 <= p + 5 + rl) {
+                var m = log + q;
+                if ((load8(m) & 0xFF) == TLS_HS_SERVER_KEY_EXCHANGE) { return _tn_be16_r(m + 5); }
+                q = q + _gx_hs_len(m);
+            }
+        }
+        p = p + 5 + rl;
+    }
+    return 0 - 1;
+}
+
+# Failures part-way: every exit of every driver leaves no ephemeral secret behind.
+fn test_failed_writes(): i64 {
+    test_group("6.6.15 — a handshake that fails on a write keeps no ephemeral secret");
+    _gx_cl(0, 0, 0); _gx_sl(0, 0, 0);
+    _gx_wfail_c = 1;
+    _gx_row(0, 0);
+    _gx_wfail_c = 0;
+    assert_eq(_gx_obs[0], TLS_ERR_IO, "TLS 1.3 client, its ClientHello write fails: TLS_ERR_IO");
+    assert_eq(_gx_obs[8], 1, "  the client holds no byte of the key it generated for that ClientHello");
+    _gx_wfail_s = 1;
+    _gx_row(0, 0);
+    _gx_wfail_s = 0;
+    assert_eq(_gx_obs[2], TLS_ERR_IO, "TLS 1.3 server, its ServerHello write fails: TLS_ERR_IO");
+    assert_eq(_gx_obs[9], 1, "  the server holds no byte of the shared secret it had computed");
+    _gx_wfail_s = 1;
+    _gx_row(1, 0);
+    _gx_wfail_s = 0;
+    assert_eq(_gx_obs[2], TLS_ERR_IO, "TLS 1.2 server, its flight write fails: TLS_ERR_IO");
+    assert_eq(_gx_obs[9], 1, "  the server holds no byte of its ephemeral key");
+    _gx_sl(GX_256, 0, 0);
+    _gx_wfail_s = 2;
+    _gx_row(0, 0);
+    _gx_wfail_s = 0;
+    assert_eq(_gx_obs[7], 1, "TLS 1.3 server after a HelloRetryRequest, its ServerHello write fails");
+    assert_eq(_gx_obs[2], TLS_ERR_IO, "  TLS_ERR_IO");
+    assert_eq(_gx_obs[9], 1, "  the server holds no byte of its P-256 shared secret");
+    _gx_sl(0, 0, 0);
+    return 0;
+}
+
+fn test_set_groups(): i64 {
+    test_group("6.6.15 — tls_native_set_groups");
+    var c = tls_native_new_client(0, 0);
+    var g: i64[4];
+    assert_eq(_tn_groups(c), GX_X | (GX_256 << 16) | (GX_384 << 32), "the default: x25519, secp256r1, secp384r1");
+    g[0] = GX_384; g[1] = GX_X;
+    assert_eq(tls_native_set_groups(c, &g, 2), TLS_OK, "P-384, x25519");
+    assert_eq(_tn_groups(c), GX_384 | (GX_X << 16), "  stored in that order");
+    assert_eq(tls_native_set_groups(c, &g, 0), TLS_ERR_INVALID_PARAM, "n = 0: INVALID_PARAM");
+    g[2] = GX_256; g[3] = GX_X;
+    assert_eq(tls_native_set_groups(c, &g, 4), TLS_ERR_INVALID_PARAM, "n = 4: INVALID_PARAM");
+    g[1] = GX_P521;
+    assert_eq(tls_native_set_groups(c, &g, 2), TLS_ERR_INVALID_PARAM, "secp521r1: INVALID_PARAM");
+    g[1] = GX_384;
+    assert_eq(tls_native_set_groups(c, &g, 2), TLS_ERR_INVALID_PARAM, "a group twice: INVALID_PARAM");
+    assert_eq(tls_native_set_groups(0, &g, 1), TLS_ERR_INVALID_PARAM, "ctx 0: INVALID_PARAM");
+    assert_eq(tls_native_set_groups(c, 0, 1), TLS_ERR_INVALID_PARAM, "groups 0: INVALID_PARAM");
+    assert_eq(_tn_groups(c), GX_384 | (GX_X << 16), "  a refused call leaves the list unchanged");
+
+    # The TLS 1.3 ClientHello: supported_groups is the list, the key_share is its first group.
+    g[0] = GX_384; g[1] = GX_X;
+    tls_native_set_groups(c, &g, 2);
+    var ch = alloc(2048);
+    var n = tls_native_client_build_hello(c, ch, 2048);
+    assert(n > 0, "a 1.3 ClientHello from the list P-384, x25519");
+    var d = 0;
+    assert_eq(_gx_ch_ext(ch, TLS_EXT_SUPPORTED_GROUPS, &d), 6, "  supported_groups: two groups");
+    assert_eq(_tn_be16_r(d + 2), GX_384, "  P-384 first");
+    assert_eq(_tn_be16_r(d + 4), GX_X, "  then x25519");
+    assert_eq(_gx_share_group(ch), GX_384, "  one key_share, on P-384");
+    assert_eq(_gx_share_len(ch), 97, "  …97 bytes");
+    var c2 = tls_native_new_client(0, 0);
+    n = tls_native_client_build_hello(c2, ch, 2048);
+    assert_eq(_gx_ch_ext(ch, TLS_EXT_SUPPORTED_GROUPS, &d), 8, "by default supported_groups lists three groups");
+    assert_eq(_tn_be16_r(d + 2), GX_X, "  x25519 first");
+    assert_eq(_tn_be16_r(d + 4), GX_256, "  secp256r1");
+    assert_eq(_tn_be16_r(d + 6), GX_384, "  secp384r1");
+    assert_eq(_gx_share_group(ch), GX_X, "  and the one key_share is x25519's");
+    assert_eq(_gx_share_len(ch), 32, "  …32 bytes");
+    # The TLS 1.2 ClientHello lists the same groups; its ServerKeyExchange must name one of them.
+    var c3 = tls_native_new_client(0, 0);
+    g[0] = GX_256;
+    tls_native_set_groups(c3, &g, 1);
+    n = tls_native_12_build_client_hello(c3, ch, 2048);
+    assert_eq(_gx_ch_ext(ch, TLS_EXT_SUPPORTED_GROUPS, &d), 4, "a 1.2 ClientHello from the list P-256: one group");
+    assert_eq(_tn_be16_r(d + 2), GX_256, "  P-256");
+    var srnd[32];
+    memset(&srnd, 7, 32);
+    store64(c3 + TLS_CTX_OFF_SERVER_RANDOM, &srnd);       # so a parse that went on would fail cleanly
+    var ske[64];
+    store8(&ske, 3);
+    _tn_be16_w(&ske + 1, GX_X);
+    store8(&ske + 3, 32);
+    memset(&ske + 4, 9, 32);
+    _tn_be16_w(&ske + 36, TLS_SIG_ED25519);
+    _tn_be16_w(&ske + 38, 0);
+    assert_eq(_tn_12_parse_server_kex(c3, &ske, 40), TLS_ERR_HANDSHAKE_FAILED,
+      "  a ServerKeyExchange naming x25519, not in the list: HANDSHAKE_FAILED");
+    return 0;
+}
+
+# RFC 8446 §4.4.1: after a HelloRetryRequest the transcript starts with message_hash — the byte
+# 254, 00 00, Hash.length, Hash(ClientHello1) — not with ClientHello1. Both native sides share
+# _tn_transcript_after_hrr, so a native<->native handshake cannot tell a wrong construction from
+# the right one (both ends agree on it); this checks it against the RFC directly, on both hashes.
+fn test_message_hash(): i64 {
+    test_group("6.6.15 — the transcript after a HelloRetryRequest (RFC 8446 §4.4.1)");
+    var c = tls_native_new_client(0, 0);
+    var ch1 = "ClientHello1 bytes, any bytes";
+    var n1 = strlen(ch1);
+    var mh[64];
+    var want[48];
+    var got[48];
+    var ts = _tn_transcript_after_hrr(c, TLS_HASH_SHA256, ch1, n1);
+    store8(&mh, 254); store8(&mh + 1, 0); store8(&mh + 2, 0); store8(&mh + 3, 32);
+    sha256(ch1, n1, &mh + 4);
+    sha256(&mh, 36, &want);
+    tls_native_transcript_digest(ts, &got);
+    assert_eq(memeq(&got, &want, 32), 1, "SHA-256: Hash(254 || 00 00 || 32 || SHA-256(ClientHello1))");
+    ts = _tn_transcript_after_hrr(c, TLS_HASH_SHA384, ch1, n1);
+    store8(&mh + 3, 48);
+    sha384(ch1, n1, &mh + 4);
+    sha384(&mh, 52, &want);
+    tls_native_transcript_digest(ts, &got);
+    assert_eq(memeq(&got, &want, 48), 1, "SHA-384: Hash(254 || 00 00 || 48 || SHA-384(ClientHello1))");
+    return 0;
+}
+
+# tls_native_accept_12, the 1.2-only server entry, is a driver of its own: its exits wipe too.
+fn test_accept12_direct(): i64 {
+    test_group("6.6.15 — tls_native_accept_12 called directly keeps no ephemeral secret");
+    _gb_start(_gx_cs);
+    _gx_put_ch12(1, GX_256, 0);
+    _gx_cs_len = _gbn;
+    _gx_sc_len = 0;
+    reset_via(_gx_sv_arena);
+    _gx_seed(0x13579BDF);
+    _gx_eof = 0;
+    _gx_cs_rd = 0;
+    _gx_sc_next_len = 0;
+    _gx_wn = 0;
+    var s = tls_native_new_server_in(_gx_sv_arena, _gx_srvEd, _gx_srvEd_n, _gx_srvEd_key, _gx_srvEd_key_n);
+    assert_eq(tls_native_server_load_creds(s), TLS_OK, "a 1.2-only server");
+    var rc = tls_native_accept_12(s, GX_SERVER);
+    assert_eq(rc, TLS_ERR_IO, "  a P-256 ClientHello, then the client is gone before its ClientKeyExchange");
+    assert_eq(tls_native_get_group(s), GX_256, "  the server had chosen P-256");
+    assert_eq(_gx_no_secrets(s), 1, "  and holds no byte of its ephemeral key");
+    return 0;
+}
+
+fn _gx_all(): i64 {
+    alloc_init();
+    GX_X = TLS_GROUP_X25519;
+    GX_256 = TLS_GROUP_SECP256R1;
+    GX_384 = TLS_GROUP_SECP384R1;
+    _gx_fixtures();
+    _gx_keys();
+    _gx_cs = alloc(GX_LOG_CAP);
+    _gx_cs_next = alloc(GX_LOG_CAP);
+    _gx_sc = alloc(GX_LOG_CAP);
+    _gx_sc_next = alloc(GX_LOG_CAP);
+    _gx_ca_arena = arena_allocator(2097152);
+    _gx_sv_arena = arena_allocator(2097152);
+    tls_native_set_transport(&_gx_read, &_gx_write, &_gx_now);
+    tls_native_set_entropy(&_gx_rand);
+    test_set_groups();
+    test_message_hash();
+    test_accept12_direct();
+    test_matrix13();
+    test_matrix12();
+    test_client_refusals();
+    test_server_refusals();
+    test_failed_writes();
+    tls_native_set_entropy(0);
+    tls_native_set_transport(0, 0, 0);
+    return 0;
+}
+
+# MUTATION LEDGER (6.6.15). eac97bb2's lib — the lane before this work, with the symbols this file
+# needs stubbed (tls_native_set_groups a no-op) — fails 281 of the 573 assertions. Each mutant below
+# measured RED against them (tls_native_scaffold.tcyr pins MW1-MW4 at the primitive level too):
+#   MG1  supported_groups written with one group           MG14 the 1.2 server ignores supported_groups
+#   MG2  an HRR for the group already shared accepted       MG15 2nd CH: another cipher accepted
+#   MG3  an HRR for a group never listed accepted           MG16/17 2nd CH: another session id accepted
+#   MG4  a 2nd HRR reported as HANDSHAKE_FAILED             MG18 the cookie not echoed
+#   MG5  message_hash replaced by ClientHello1 (§4.4.1)     MG19 an unknown HRR extension accepted
+#   MG6  2nd CH: the share the HRR asked for not required   MG20 SH after HRR: another cipher accepted
+#   MG7  a share for a group not in supported_groups        MG21 SH share on another group accepted
+#   MG8  two shares for one group                           MG22 the server picks in the client's order
+#   MG9  no supported_groups with a key_share accepted      MG23 the 2nd CH read refuses a CCS
+#   MG10 the all-zero x25519 secret accepted                MG24 1.2 SKE on a group not in the list
+#   MG11 tls_native_connect does not wipe on its way out    MG25 an HRR changing nothing accepted
+#   MG12 tls_native_accept does not wipe                    MG26 an HRR without supported_versions
+#   MG13 _tn_12_server_drive does not wipe                  MG27/28 the client / server alert not sent
+#   MW1  respond_hello keeps the server's private key       MW5  1.2 server keeps its private key
+#   MW2  derive_handshake keeps the shared secret           MW6  1.2 server keeps the premaster
+#   MW3  parse_server_hello keeps the client's private key  MW7  the 1st share's key kept after an HRR
+#   MW4  parse_server_hello keeps the shared secret
+_gx_all();
+var r = assert_summary();
