@@ -967,18 +967,21 @@ fn _tn_sock_write_all(fd, buf, len): i64 { return _tn_io_write_all(0, fd, buf, l
 # peer send ONE, for middlebox compatibility, after the first ClientHello and before its Finished,
 # and it is dropped; TLS 1.2 (RFC 5246 §7.1) has exactly one per direction, directly before the
 # Finished. Any other CCS — and a CCS that is not exactly the byte 1 — ends the connection with
-# TLS_ERR_PROTOCOL after an unexpected_message alert. The 13 record read sites:
+# TLS_ERR_PROTOCOL after an unexpected_message alert. The 14 record read sites:
 #   1.3 client  ServerHello, server flight (tls_native_connect x2,
 #               tls_native_client_recv_flight)                          _TN_CCS_MAY
 #   1.3 server  ClientHello (tls_native_accept)                         _TN_CCS_REFUSE
+#   1.3 server  the second ClientHello, after our HelloRetryRequest     _TN_CCS_MAY
 #   1.3 server  client Certificate, CertificateVerify, Finished         _TN_CCS_MAY
 #   1.2 client  server flight (tls_native_connect_12)                   _TN_CCS_REFUSE
 #   1.2 client  server Finished                                         _TN_CCS_MUST
 #   1.2 server  ClientHello (tls_native_accept_12), ClientKeyExchange   _TN_CCS_REFUSE
 #   1.2 server  client Finished (_tn_12_server_drive)                   _TN_CCS_MUST
 #   both        tls_native_read, after the handshake                    _TN_CCS_REFUSE
-# The window closes at the read that carries the peer's Finished; the native 1.3 client refuses a
-# HelloRetryRequest, so one CCS is always enough. ctx CCS_STATE bit0 records the peer's CCS.
+# The window closes at the read that carries the peer's Finished. A HelloRetryRequest opens no
+# second window: the peer's one CCS comes after the HelloRetryRequest / before the second
+# ClientHello or after the ServerHello / before its encrypted flight (RFC 8446 §D.4), never both
+# (6.6.15). ctx CCS_STATE bit0 records the peer's CCS.
 # ⛔ 6.6.13 (CVE-61) — WHY. Every read went through one helper that dropped ANY number of CCS
 # records, during the handshake and after it: one CCS more often than the read timeout — from
 # anyone on the path, no key needed — held a client thread for ever, even inside a verified
@@ -1108,11 +1111,24 @@ fn _tn_client_auth_alert(ctx, fd, rc, empty, is13): i64 {
 # flight (EE/Cert/CertVerify/Finished), then reads + verifies the
 # client's (encrypted) Finished → CONNECTED. Returns TLS_OK on a
 # completed handshake, or a negative TLS_ERR_* (ctx → ERROR).
-# Note: ChangeCipherSpec (middlebox compat) + HelloRetryRequest loops
-# are .23 (OpenSSL interop) — this clean TLS 1.3 path serves the
-# cyrius-native loopback.
+# A client with no usable key_share gets ONE HelloRetryRequest and its second ClientHello is read
+# (6.6.15; one middlebox CCS may precede it, RFC 8446 §D.4). A ClientHello the server refuses is
+# answered with the alert the refusal recorded (_tn_send_hs_alert). Every exit, success or
+# failure, zeroises our ephemeral private key and the shared secret (_tn_wipe_ephemeral) — the
+# steps that use them already have on the paths that reach them. Every server entry path comes
+# here: tls_accept_complete (lib/tls.cyr) calls it, and a TLS 1.2 ClientHello is routed on to
+# _tn_12_server_drive.
+# ⛔ 6.6.15 — WHY. A HelloRetryRequest was built and then refused here (TLS_ERR_HANDSHAKE_FAILED,
+# nothing sent), so every client that listed a group we take without sending a share for it
+# failed with no alert. CHANGELOG [6.6.15]
 fn tls_native_accept(ctx, sock_fd): i64 {
     if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
+    var rc = _tn_accept_hs(ctx, sock_fd);
+    _tn_wipe_ephemeral(ctx);
+    return rc;
+}
+
+fn _tn_accept_hs(ctx, sock_fd): i64 {
     store64(ctx + TLS_CTX_OFF_SOCK_FD, sock_fd);
     var cap = TLS_RECORD_MAX_CIPHERTEXT + TLS_RECORD_HEADER_LEN;
     var inbuf = _tn_alloc(ctx, cap);
@@ -1142,8 +1158,38 @@ fn tls_native_accept(ctx, sock_fd): i64 {
     var sh = _tn_alloc(ctx, 2048);
     if (sh == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     var sh_len = tls_native_server_respond_hello(ctx, ch_msg, ch_len, sh, 2048);
-    if (sh_len < 0) { return sh_len; }
-    if (tls_native_server_sent_hrr(ctx) == 1) { return _tn_ctx_fail(ctx, TLS_ERR_HANDSHAKE_FAILED); }
+    if (sh_len < 0) {
+        _tn_send_hs_alert(ctx, sock_fd);
+        return sh_len;
+    }
+    if (tls_native_server_sent_hrr(ctx) == 1) {
+        var hrrec = _tn_alloc(ctx, sh_len + TLS_RECORD_HEADER_LEN);
+        if (hrrec == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+        tls_native_record_write_header(hrrec, TLS_CT_HANDSHAKE, 0x0303, sh_len);
+        memcpy(hrrec + TLS_RECORD_HEADER_LEN, sh, sh_len);
+        var hrw = _tn_io_write_all(ctx, sock_fd, hrrec, sh_len + TLS_RECORD_HEADER_LEN);
+        if (hrw < 0) { return _tn_ctx_fail(ctx, hrw); }
+        # The second ClientHello (plaintext; the client may send its one CCS first).
+        var rl2 = _tn_read_rec(ctx, sock_fd, inbuf, cap, _TN_CCS_MAY);
+        if (rl2 < 0) { return _tn_read_fail(ctx, rl2); }
+        var hx_ch2 = _tn_hs_expect_ct(ctx, load8(inbuf) & 0xFF, TLS_CT_HANDSHAKE);
+        if (hx_ch2 != TLS_OK) { return hx_ch2; }
+        var ch2 = inbuf + TLS_RECORD_HEADER_LEN;
+        var ch2_len = rl2 - TLS_RECORD_HEADER_LEN;
+        var v2 = _tn_ch_is_tls13(ch2, ch2_len);
+        if (v2 != 1) {                                 # it must still offer TLS 1.3
+            var vd = TLS_AD_ILLEGAL_PARAMETER;
+            if (v2 < 0) { vd = TLS_AD_DECODE_ERROR; }
+            _tn_send_fatal_alert(ctx, sock_fd, vd);
+            return _tn_ctx_fail(ctx, TLS_ERR_HANDSHAKE_FAILED);
+        }
+        sh_len = tls_native_server_respond_hello(ctx, ch2, ch2_len, sh, 2048);
+        if (sh_len < 0) {
+            _tn_send_hs_alert(ctx, sock_fd);
+            return sh_len;
+        }
+        if (tls_native_server_sent_hrr(ctx) == 1) { return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL); }
+    }
     # Send ServerHello as a plaintext handshake record.
     var shrec = _tn_alloc(ctx, sh_len + TLS_RECORD_HEADER_LEN);
     if (shrec == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
