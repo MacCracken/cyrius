@@ -1417,7 +1417,8 @@ fn tls_native_server_respond_hello(ctx, ch_msg, ch_len, out, out_max): i64 {
 }
 
 # Get the negotiated key-exchange group (TlsNamedGroup; 0 until a
-# ServerHello/HRR has been produced). Diagnostic.
+# ServerHello/HRR has been produced — on a TLS 1.2 client, until the
+# ServerKeyExchange verifies). Diagnostic.
 fn tls_native_get_group(ctx): i64 {
     if (ctx == 0) { return 0; }
     return load64(ctx + TLS_CTX_OFF_GROUP);
