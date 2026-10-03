@@ -122,6 +122,10 @@ anywhere. One authority per active minor.
 "Phase 3"), together with proposal P3 `const fn`, moved on again — to **v6.7.x, below**. v6.6.x finishes
 with 6.6.13 (memory fixes and the reported issues) and then the tooling proposals.
 
+**Sequenced 2026-10-02 (user accepted the tail plan, roadmap.md § *The 6.6.x tail*):** 6.6.15 – 6.6.19 carry
+the curves work, a repair release and the tooling proposals; **6.6.20 is the closeout pass**, done like every
+minor's before any v6.7.x work (user, 2026-10-02); **v6.7.0 opens after it.**
+
 ---
 
 ## v6.7.x — Language: real traits, the missing common features, and the carried 6.6.x list
@@ -208,13 +212,20 @@ the word as an identifier. Survey the ecosystem ONCE at the open for all of them
 
 1. **`const fn`** ([`proposals/2026-07-05-const-eval-comptime.md`](proposals/2026-07-05-const-eval-comptime.md)).
    The rung was chosen 2026-07-07: option 1 `const fn` is primary, option 3 `#phf` is the fallback, and
-   option 4 (a general const-eval VM) is declined. ⚠ It reuses the `ir_const_fold` fixpoint
-   (`src/common/ir.cyr`), so it lands after any work that rewrites that pass, or the churn is paid twice.
+   option 4 (a general const-eval VM) is declined. ⚠ **Corrected 2026-10-02 (premise check, archived memo):**
+   its base is the parse-time folder `_CF_TRY`, NOT `ir_const_fold` — that is an x86-ELF peephole that runs
+   only under opt-in `CYRIUS_IR=3`; and the proposal's "a computed initializer is folded" is false (an image
+   scan shows a deferred runtime store). Size ~800–1,500 src lines, 1–2 releases, after B1 `const` and B3
+   the if-expression. Rung 1 does not meet shabdakosh's phf need; a hash-and-displace table from its own
+   generator does, today — so no `#phf` builtin.
 2. **Opt-in bounds-checked memory mode** (`CYRIUS_BOUNDS` / `#bounds`). It was designed in the v6.3.x
    plan and never shipped: `CYRIUS_BOUNDS`, `#bounds` and `_bounds_check` had **0** hits in `src/` at
    6.6.12 (re-check at the open). **OFF by default**: raw stores stay raw in release builds. 6.6.12
    shipped the unchecked half for integer-element `var a: T[N]` (R4). Still to do: `*T` pointer
    subscripts, slice writes, and the checked mode itself.
+   **Placed with it (2026-10-02):** proposal P5's execution half (coverage over RUN programs) shares C2's
+   insertion point and build-flag plumbing, so it is designed together with C2; P1 (6.6.17) gives both a
+   `[build]` key with a defined precedence first.
 3. **Trait-bounded generics.** No longer demand-gated: A is its prerequisite, and it is the minor's
    theme. `<T: Show>` parses as a bound (today it mints a second type parameter named `Show`), and an
    instantiation whose `T` has no `impl Show` is an error. ⚠ Fix the **multi-type-param struct-type-arg
@@ -236,6 +247,15 @@ the word as an identifier. Survey the ecosystem ONCE at the open for all of them
 - **Every new syntax ships with** a `tests/tcyr/crossos/` file (it runs on ecb / ach / cass / pi), a guide
   section and a vidya entry.
 
+
+## Between v6.7.x and RISC-V — the DCE compaction arc and the net migration (placed 2026-10-02)
+
+Still 6.x, never 7.x. Moved out of the 6.6.x tail with the accepted plan: **the DCE compaction arc**
+(aarch64 first — its own repair model, which rv64 reuses, cheaper after 6.6.18's ESYSXLAT fold — then PE /
+x86 Mach-O, which have no consumer today; spec in roadmap.md § *Open arc — DCE*), **`lib/net.cyr` §4
+per-arch socket peers**, the remaining syscall families, and **AF_UNIX** (default yes; 19 repos hand-roll
+it). About 3–5 releases. Whether they form the tail of v6.7.x or the head of the RISC-V minor is decided at
+the v6.7.x close.
 
 ## v6.8.x or v6.9.x — Platform: RISC-V rv64
 

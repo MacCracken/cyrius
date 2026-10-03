@@ -78,9 +78,61 @@ The language list that was Phase 3 moved to **v6.7.x**, which RISC-V vacates for
 | **1 — Repair window** | `.2` – `.6` | ✅ **CLOSED at 6.6.6.** |
 | **1b — the repair batch** | `.7` – `.12` | ✅ **CLOSED at 6.6.12** (summary in *Where we are*). |
 | **1c — memory + reported-issue repair** | `.13` | ✅ **SHIPPED 2026-10-02** (tag `6.6.13`): the three silent memory-corruption finds, the open issues I1–I11, and the ganita / bayan / sigil folds. See *6.6.13* below. |
-| **1d — the TLS follow-ups** | `.14` | ✅ **Merged 2026-10-02, release gate GREEN**: every remaining noted TLS issue (user, 2026-10-02) and the sigil 3.13.7 fold; awaiting the tag. See *6.6.14* below. |
-| **2 — Tooling round-out** | after `.14`, to the minor's close | The tooling proposals P1, P2, P4, P5, P6, alongside the DCE compaction arc and, last, macOS concurrency ordering (*Open questions* 3). Then the closeout pass. |
-| ~~**3 — Committed ergonomics**~~ | — | **Moved to v6.7.x** with P3 `const fn` (user, 2026-10-01) — see [roadmap_6.md](roadmap_6.md). |
+| **1d — the TLS follow-ups** | `.14` | ✅ **SHIPPED 2026-10-02** (tag `6.6.14`): every remaining noted TLS issue and the sigil 3.13.7 fold. See *6.6.14* below. |
+| **2 — the 6.6.x tail** | `.15` – `.19` | The release sequence ACCEPTED 2026-10-02 (see *The 6.6.x tail*): `.15` curves + the compiler leaks, `.16` repair, `.17` manifest, `.18` distlib + poison, `.19` embed + macOS threads. |
+| **3 — closeout** | `.20` | The full closeout pass, like every minor (user, 2026-10-02: done before any v6.7.x work). Then **v6.7.0**. |
+| ~~**Committed ergonomics**~~ | — | **Moved to v6.7.x** with P3 `const fn` (user, 2026-10-01) — see [roadmap_6.md](roadmap_6.md). |
+
+---
+
+## The 6.6.x tail — release sequence (ACCEPTED by the user 2026-10-02)
+
+**Question (user, 2026-10-02):** which proposals can be accomplished, how to coordinate the remaining
+6.6.x items, and whether to do the proposals before v6.7.x or after. **Answer, accepted:** the tooling
+proposals come BEFORE v6.7.x (except P3 `const fn` and P5's execution half, which belong to the
+language arc); the DCE compaction arc moves AFTER v6.7.x, before the RISC-V minors (still 6.x). The
+proposals and the language arc share no dependency — the only coupling is P1 into v6.7.x (C2's
+bounds-checked mode wants a `[build]` key, so P1's precedence order should exist first) — and sibling
+regeneration waves cost less run one after the other than overlapping. Evidence: eight premise-checked
+reviews and a synthesis, archived at
+[`archive/2026-10-02-6.6.x-tail-sequencing-memo.md`](archive/2026-10-02-6.6.x-tail-sequencing-memo.md).
+
+| Release | Contents |
+|---|---|
+| **6.6.15** | sigil **3.13.8** fold (constant-time P-256 / P-384 ECDH; ECDSA signing made constant-time — **CVE-68**); TLS ECDHE on P-256 / P-384 everywhere (1.2 client, 1.3 client with HelloRetryRequest, native server group negotiation, ephemeral-key zeroing); the `secret var` epilogue leak (**CVE-69**); B0a string interning (a NUL-bearing literal aliased another literal, silently). See *6.6.15* below. |
+| **6.6.16** repair | **Compiler:** the silent miscompiles — module-scope `var T: i64[3] = {…}` stores bytes, pointer-mode struct `q = a` / `G = a` / `a = q`, overload dispatch on a `Str` global, `g<i32>(..)?` (139) and `var v = g<i32>(..)` dropping the payload, a nested fn (SIGILL → a named error), a kmode global initialiser naming an enum; the named >8 B struct argument becomes a COPY (decided, *Open questions* 4); one shared type-name resolver (sizeof for u*/f*/bool; annotations stop prefix-matching); the `#deprecated` gaps; the cycc include fallback honouring `CYRIUS_HOME`. **Net / TLS / security:** plain-socket SIGPIPE (`sock_send*`, http, ws — CVE-66's class, a CVE; kavach's `basic` profile must admit `sendto` first — its issue is filed), `cyrius deps` tag-field traversal (CVE-62's class), the Ed25519 `sig_len == 64` check and the ServerKeyExchange curve binding, CA EKU, Windows accept inheriting `FIONBIO`, `fd_wait_ready`'s error mask, libssl session cache (`SSL_CTX_ctrl`) and the failed-`*_complete` sticky error, Windows `THREADS_CONCURRENT=1`, the agnos `setsockopt` stub. **Plus:** cwd-independent gates, the guide's `fn use()` example, the `element_typed_array` sentinel, the PE size gate's private wine prefix, the sit-fsck lookup, the stale premises in P2/P3/C1 and the syscall-families entry. |
+| **6.6.17** manifest | **P1** (the single manifest reader + `--print-config`; `[build] test` WIRED after measuring the repos with named deps; `defines` / `strict` wired; a `dce` key; `features` dropped, `target` held; profiles → backlog); **P5-A** (text corpus + per-entry view; P5 stays OPEN for its execution half); DRY the pass-1 top-level scanners across the 7 forks; LSP read sized by fstat; `lib sync --full` re-locking; `_toml_key_at`'s hyphen boundary. |
+| **6.6.18** distlib + poison | **P4** option 2 (the compile-verify fixpoint is the authority; one sibling regeneration wave); **P6** widened (`poison_allocator()`, leading redzone, live-block sweep, settable fill byte, `alloc()` / arena redzones; guard pages → backlog); the log / ws / ws_server fold bundles; the ESYSXLAT compile-time fold (~593 KB of `cycc-native-aarch64`); DCE's honest "compaction declined: <why>" note; the missing `sxtw`. |
+| **6.6.19** | **P2** `[embed]` (generated in cbt before `#@srcline` — never an in-band marker that reads files, the CVE-45 class; `[lib.PROFILE]` scoping; the interning perf fix B0b); x86-macOS real threads + `async_await_readable_ms` on macOS / agnos / Windows (*Open questions* 3). The release to trim if 6.7.0 should come sooner. |
+| **6.6.20** closeout | The full closeout pass (CLAUDE.md § Closeout, [cycle-discipline.md](cycle-discipline.md)): the release gate, heap / dead-code / refactor / code-review / cleanup passes, a security re-scan, the downstream check, vidya (`types.cyml` still stamps 6.6.1), the backlog re-triage, `verify-store`. |
+| **6.7.0** | The language arc ([roadmap_6.md](roadmap_6.md)): traits first, with the ADR and the one reserved-word survey at the open; P3 `const fn` after `const` and the if-expression; P5's execution half designed with C2. |
+| **after v6.7.x, before RISC-V** | The DCE compaction arc (aarch64 first, then PE / Mach-O — see its section), `lib/net.cyr` §4 per-arch socket peers, the remaining syscall families, AF_UNIX (default yes). |
+
+Defaults taken with the plan (the memo's): P4 option 2 (reverses the v6.5.10 "union" stance); P6 widened to
+`alloc()` redzones; `output` stays a default and `init --bin` writes `build/{PROJ}`; DCE stays opt-in (so the
+`dce` key earns its place); shabdakosh's phf is its own generator, no `#phf` builtin. Sibling follow-ups
+once these tag: rekha drops its prelude and CI pin (after P4) and adopts the poison pack (after P6); kriya's and
+puka's `--poison` runs check something real (after P6); agnosai, agnostic, rekha and sankoch retire their embed
+generators (after P2); sankoch retires its interning proof (after B0a, in 6.6.15).
+
+---
+
+## 6.6.15 — curves and the compiler's secret leaks (OPEN 2026-10-02)
+
+**User, 2026-10-02:** the sigil work marked for after 6.6.14, then (scope answers the same day) the
+`secret var` epilogue fix, B0a, and TLS 1.3 / native-server P-256 with ephemeral-key zeroing.
+- **sigil 3.13.8** (⛔ the user tags it before cyrius 6.6.15): constant-time P-256 / P-384 ECDH
+  (`ecdh_p256_*` / `ecdh_p384_*`, SP 800-56A peer-key validation); ECDSA signing moved onto a
+  constant-time EC engine — every field operation on the secret-nonce path branched on secret data since
+  3.5.9 (a Welch t-test: |t| 6.34 before, 0.69 after) — **CVE-68**; the pin moves 6.6.9 → 6.6.14 (CVE-51
+  broke its Intel-Mac timing tests), TPM helpers fail closed on Windows, per-run temp names.
+- **cyrius:** the TLS 1.2 client's ECDHE on P-256 / P-384 (the 6.6.14 supported_groups trade-off and the
+  "no shared cipher" against ECDSA servers both gone); the TLS 1.3 client lists P-256 / P-384 and handles
+  HelloRetryRequest; the native server negotiates the group (1.2 by supported_groups, 1.3 by key_share or
+  an HRR); every ephemeral private key and shared secret is zeroed. The `secret var` epilogue leak —
+  the defer walker saved the return registers to dead stack after the wipe and never cleared them; in sigil
+  3.13.7 that left the ECDSA nonce k behind (**CVE-69**). B0a — string interning aliased a NUL-bearing
+  literal onto another literal's storage (`"a\0a"` after `"a"` read `'z'`), silently.
 
 ---
 
@@ -106,52 +158,27 @@ The in-passing finds of the premise check and the lanes' reviews are in *Potenti
 
 ---
 
-## 6.6.14 — the TLS follow-ups (MERGED 2026-10-02: release gate GREEN, awaiting the tag)
+## 6.6.14 — the TLS follow-ups (SHIPPED 2026-10-02, tag `6.6.14`)
 
-**User, 2026-10-02:** "6.6.14 - all the remaining noted tls issues". That is every TLS item noted by 6.6.13 — the
-candidates this section listed, the *Not covered* lines of CVE-59 … CVE-63, the two TLS gaps the 6.6.13 CHANGELOG
-reported for the backlog, and the TLS port-race flake from the lanes' reviews. Five lanes, cut from the slot bump
-`bcdd1818`. CVE ids are reserved per lane and spent at integration (the next free id is **68**).
-
-- **auth** — **CVE-64**, the mTLS bypass:
-  - the native TLS 1.2 SERVER never sent a CertificateRequest and ignored `TLS_CTX_OFF_VERIFY`
-    (`_tn_12_server_drive`), so a server requiring client auth accepted an unauthenticated 1.2-only client;
-  - `tls_set_verify` mapped every non-zero OpenSSL mode to `TLS_VERIFY_PEER`, so
-    `SSL_VERIFY_FAIL_IF_NO_PEER_CERT` never reached native;
-  - the 1.3 server checked possession, not a chain;
-  - the native 1.2 client's handling of a CertificateRequest (the mirror, premise-checked in the lane).
-  - Also: a plaintext alert where an encrypted handshake record is due fails `TLS_ERR_BAD_RECORD`, not
-    `TLS_ERR_ALERT` (6.6.13 CHANGELOG).
-- **io** — the native default transport:
-  - (j) Winsock: `ReadFile` / `WriteFile` return 0 on a SOCKET; the deadline is real on Windows; I8's Windows
-    rows un-SKIP; the first `crossos/` TLS-over-sockets test;
-  - (f, native half — **CVE-66**) every native write is a flagless `write()`, so a peer's reset raises SIGPIPE
-    and kills the process;
-  - the agnos write that can overshoot the deadline by one `sock_send#48` stall (CVE-61, *Not covered*).
-- **client** — the libssl backend and the native client's identity edges:
-  - (i) libssl fails closed off the main thread, and its init latches become claim/publish;
-  - (f, libssl half — **CVE-66**);
-  - a fatal alert's second libssl read returns 0 (CVE-60, *Not covered*) — make it sticky;
-  - (e) the 64 KiB cert/key file loaders;
-  - (d) IP-literal SNI;
-  - the `*.com` single-label wildcard (**CVE-67** reserved; CVE-59, *Not covered*);
-  - the TLS gates' random-port race.
-- **wintrust** — **CVE-65**: on Windows `_tn_ca_read` read four drive-relative POSIX paths (a plantable trust
-  store). Windows gets its real ROOT store through crypt32. The only lane allowed to touch `src/` (a crypt32
-  import, if the PE backend needs one).
-- **sigil** — `pem_decode_certs_into` failed a whole bundle on one malformed block. Fixed in **sigil 3.13.7**
-  (tagged at `2c8edf8`) and folded: `_tn_ca_parse_set` takes the lenient decode; the skipped count is
-  `blocks − stored`.
-
-**Status 2026-10-02:** every item landed and is merged, CVE-64 … CVE-67 spent (next free id **68**), release gate
-GREEN, per-file `.tcyr` loop 435/435; detail in CHANGELOG [6.6.14]. Not fixed here: the agnos write bound (an
-agnos ABI change — filed in agnos) and kavach's `basic` seccomp profile (kavach's call — filed in kavach). The
-lanes' in-passing finds are in *Potential backlog*; the native 1.2 client's P-256 / P-384 ECDHE is placed for
-6.6.15 (user).
+Every remaining noted TLS issue (user, 2026-10-02) over five lanes, plus the sigil 3.13.7 fold. **Detail is in
+CHANGELOG [6.6.14].**
+- **CVE-64** native mTLS authenticated nobody (1.2 server, 1.3 chain, `tls_set_verify`); **CVE-65** Windows'
+  plantable trust store (now the CurrentUser ROOT store); **CVE-66** SIGPIPE on a reset peer, both backends;
+  **CVE-67** the `*.com` wildcard.
+- Native TLS over Winsock with a real deadline; libssl fails closed off the main thread, errors stick; the
+  credential loaders; no IP-literal SNI; the port-race gates; sigil 3.13.7's lenient trust-bundle decode.
+- CI at the first push caught three test defects (an inherited SIGPIPE ignore; two-write peer races), fixed
+  before the tag. Filed in their repos (user): the agnos #48 write deadline, kavach's `basic` seccomp vs `sendto`.
 
 ---
 
 ## Open arc — DCE cannot compact on PE, x86 Mach-O or aarch64 (the rip-relative repair)
+
+> **Re-placed 2026-10-02 (user accepted the tail plan): AFTER v6.7.x, before the RISC-V minors — still 6.x.**
+> The PE / x86 Mach-O half has no consumer today (the 18 repos that use DCE build aarch64); aarch64 needs its
+> own repair model, which rv64 will reuse, and it is cheaper after the ESYSXLAT fold (6.6.18). Every target is
+> correct today (the unsupported ones only skip the shrink); 6.6.18 ships the honest "compaction declined:
+> <why>" note. Order: aarch64 first, then PE / Mach-O.
 
 **Arrived from v6.6.1.** `CYRIUS_DCE=1` now declines the whole-program compaction on PE and x86
 Mach-O, exactly as it already declines under `_pie_mode`, because both reach a live import/stub
@@ -199,13 +226,14 @@ tooling proposals (Phase 2). It is backend work, not language work, so it did no
 
 ## Phase 2 — the tooling round-out (after 6.6.14, to the minor's close)
 
-**Set 2026-10-01 (user): v6.6.x finishes on tooling.** Five of the six open proposals are tooling and
-stay here, sequenced by their own stated prerequisites rather than by size. P3 `const fn` is language,
-so it moved to v6.7.x with the rest of the language list. The DCE compaction arc (above) and macOS
-concurrency ordering (*Open questions* 3) are the minor's other open items.
+**Set 2026-10-01 (user): v6.6.x finishes on tooling. Placed 2026-10-02 (accepted):** P1 + P5-A → 6.6.17,
+P4 + P6 → 6.6.18, P2 → 6.6.19, P3 and P5's execution half → v6.7.x — see *The 6.6.x tail*. Each proposal
+below carries its placement; the detail of each premise check is in the archived memo.
 
 ### P1 — `cyrius.cyml` as the build tool's actual configuration
 [`proposals/2026-09-04-build-tool-manifest-integration.md`](proposals/2026-09-04-build-tool-manifest-integration.md)
+
+**Placed: 6.6.17** (2026-10-02). Still needed: only the v6.5.49 path fallback shipped — `[build] test` and `defines` are inert (41 manifests and two sibling CIs rely on `test`; kashi's 393 assertions have never run in CI), `[build]` past 32,767 B is invisible, `--print-config` does not exist. Build the single reader and its precedence (argument > environment > manifest > default) first: P2, P4 and P5 add manifest keys. Keys by measured demand: add `dce`, wire `defines` / `strict`, wire `test` after measuring the repos with named deps, drop `features`, hold `target`; named profiles → backlog.
 
 Filed 2026-09-04, 🟡 OPEN. **Sequence it first, and adjacent to `.2`** — both are about the CLI
 honouring its own manifest, and `.2`'s guard needs to read the declared `src`/`entry` key, which
@@ -221,6 +249,8 @@ share the implementation's assumptions.
 
 ### P2 — Embed data files as source strings (`[embed]` / assets manifest)
 [`proposals/2026-08-10-embed-data-files-as-source-strings.md`](proposals/2026-08-10-embed-data-files-as-source-strings.md)
+
+**Placed: 6.6.19** (2026-10-02). Still needed (the section is silently ignored; 4 repos run python generators; nobody is blocked). It does NOT want `const fn`: bytes in, cbt writes escaped literals (a 1.9 MB blob already round-trips on all five targets). Generate in cbt before `#@srcline` — never a compiler-side marker that reads files (the CVE-45 class); `[lib.PROFILE]` scoping (rekha and sankoch are libraries); the interning perf fix B0b. Its "zero newlines" constraint is obsolete since `#@srcline` (v6.5.24).
 
 Ergonomics, not capability — the generated-`.cyr` idiom already works and is fleet-wide, and
 agnosai ships its own generator, so nothing is blocked. **Its prerequisite has cleared**:
@@ -240,6 +270,8 @@ chosen 2026-07-07 and the `ir_const_fold` ordering constraint — is now [roadma
 
 ### P4 — test-only stdlib leaves, instead of hiding them from the umbrella scan
 [`proposals/2026-09-16-declare-test-only-stdlib-leaves-instead-of-hiding-them-from-the-umbrella-scan.md`](proposals/2026-09-16-declare-test-only-stdlib-leaves-instead-of-hiding-them-from-the-umbrella-scan.md)
+
+**Placed: 6.6.18** (2026-10-02), **option 2**: the compile-verify fixpoint is the only authority (simulated on 7 producers × 4 targets, 0 undefined). Fleet-wide: 73 of 76 published sidecars name an unused `assert`, 53 of 53 an unused `bench` (+35 % consumer binary). Drop the `dev-stdlib` key and `[lib] umbrella` shapes. Reverses the v6.5.10 "union" stance.
 
 Filed 2026-09-16 by **rekha 0.4.4**, 🟡 OPEN. Nothing is blocked — rekha shipped the workaround —
 so rank it by appetite, though it is **adjacent to P1**: it is the same complaint, that a
@@ -271,6 +303,8 @@ quieter, not safer.
 ### P5 — `cyrius coverage` over RUN programs, not only `.tcyr` suites
 [`proposals/2026-09-20-coverage-should-accept-run-programs-as-a-corpus.md`](proposals/2026-09-20-coverage-should-accept-run-programs-as-a-corpus.md)
 
+**Placed: A (text corpus + per-entry view) 6.6.17; B (execution) v6.7.x with C2** (2026-10-02) — it shares C2's insertion point and build-flag plumbing. P5 stays OPEN after A: archiving it then would narrow the filing silently. rekha, sadish, dhancha, setu and mishran all read 0 % today.
+
 Filed 2026-09-20 by **rekha 0.4.12** (25 self-checking `programs/*_test.cyr`, ~13,000 lines of assertions,
 coverage reported as ~0 %). ⚠ **Its prerequisite ships first**: 6.6.8 bite 9 fixes how coverage COUNTS
 (substring and comment matches, a denominator that drops public fns), and extending the corpus before that
@@ -279,6 +313,8 @@ execution/branch coverage — is the proposal's, and gets asked when this slot o
 
 ### P6 — `cyrius fuzz --poison` through a custom allocator seam
 [`proposals/2026-09-20-fuzz-poison-should-follow-a-custom-allocator-seam.md`](proposals/2026-09-20-fuzz-poison-should-follow-a-custom-allocator-seam.md)
+
+**Placed: 6.6.18** (2026-10-02), widened: `alloc()` is never poisoned and 60 of 95 fuzzing repos get nothing. Pack S1–S6 + `poison_allocator()`: a leading redzone, a live-block sweep, a settable fill byte with an A/B run, `alloc()` / arena redzones (`lib/alloc.cyr` is compiler source — full gate). Drop the manifest / interposition shape; guard pages → backlog.
 
 Filed 2026-09-20 by **rekha 0.4.12**, which parses untrusted font bytes through sadish's `sd_alloc` seam and
 hand-built a 2,100-line substitute because `--poison` only redzones the freelist. The overlapping piece —
@@ -320,7 +356,6 @@ kriya's was already there. Every repo that bumps to 6.6.13 must re-vendor `lib/m
   add `modules = []` before pinning ≥ 6.6.13.
 - sigil can drop its in-process cold-trial workaround for arm64 macOS once it pins ≥ 6.6.13 (I6).
 - mabda still names `_sk_info_cstr` in sakshi's `_sk_` namespace (no collision today).
-- sakshi's "Run under qemu" step calls `qemu-aarch64-static`, which exists only after its apt step.
 - bote still commits live `path = "../libro"` / `"../majra"` lines (the dhvani/libro shape 6.6.12 removed).
 - aethersafha: 21 files not `cyrius fmt`-clean on 6.6.11 (its CI has no fmt step); duplicate-fn warnings
   between sigil and the agnostik / agnodrm bundles (`_hex_nibble`, `result_print_err`, …).
@@ -332,7 +367,15 @@ kriya's was already there. Every repo that bumps to 6.6.13 must re-vendor `lib/m
 ## Potential backlog — 6.x-cycle, unscheduled (NOT parked to 7.x)
 
 Real 6.x-line work without a committed slot; pulled into a release the moment a consumer or
-priority surfaces. **These are technical items → they stay in the 6.x cycle, never 7.x.**
+priority surfaces.
+
+> **Placed 2026-10-02 (the tail plan, accepted):** items named in *The 6.6.x tail* are scheduled there and
+> stay listed below only until their release ships. **Removed 2026-10-02** with the evidence in the archived
+> memo §3(d): the `ir_dce` / `CLASSIFY_CF` line (the wrappers were deleted at 6.5.50, `374f361d`; CLASSIFY_CF
+> is wired through RA_SCAN_LOOPS), the bare `var a[N]` question (subscripting one is a hard error naming the
+> typed spelling; overrun checks go to C2), the I7 / race-gate port flake (shipped in 6.6.14), the Rosetta
+> timebase item (no Rosetta host — an unsupported configuration) and sakshi's qemu-static item (does not
+> reproduce in CI). **These are technical items → they stay in the 6.x cycle, never 7.x.**
 
 - **Found by the 6.6.14 lanes (2026-10-02; backlog, not placed — only the user promotes).** Met in passing or
   left by a lane with its reason; not swept for.
@@ -400,8 +443,6 @@ priority surfaces. **These are technical items → they stay in the 6.x cycle, n
     (`fn outer(): i64 { fn inner(): i64 { return 3; } return inner(); }` → rc 139).
   - `tests/tcyr/lang/element_typed_array.tcyr`'s sentinel sits BELOW the array, where an overrun cannot reach
     it (the new `crossos/typed_array_elem_size.tcyr` covers the shape).
-  - The I7 repro and `tls_first_use_thread_race.sh` can flake on a random-port race (a fixed `sleep 0.5`; a
-    foreign listener on the port before `s_server` dies on bind).
 - **Found by the 6.6.13 premise check (2026-10-01; backlog, not placed — only the user promotes).** Met in
   passing while planning M1–M3 and I1–I11, not swept for. ⚠ (a)–(c) are silent miscompiles. The TLS finds
   (d), (e), (f), (i), (j) are 6.6.14's scope (*6.6.14* above); the letters are kept for reference.
@@ -439,7 +480,6 @@ priority surfaces. **These are technical items → they stay in the 6.x cycle, n
     fails to build for agnos (yantra 1.0.7 carries an agnos arm).
   - `async_await_readable_ms` is defined only in `lib/async.cyr`'s Linux branch (sandhi's cooperative
     server loop on macOS is unexercised).
-  - x86-macOS `clock_now_ns` assumes the Intel 1:1 mach timebase; unverified under Rosetta (no host).
   - `cyrius lib sync --full` does not re-lock `cyrius.lock`, so rows for files a repo does not vendor keep
     stale hashes until a lock is regenerated from empty (kriya and yantra both hit it).
   - `tests/gates/codegen/cx_forward_read_constant_global.sh` builds relative to the cwd (green only from
@@ -479,11 +519,6 @@ priority surfaces. **These are technical items → they stay in the 6.x cycle, n
   threshold. ⚠ Read the trend with care: the same binary has measured a 52 ms spread across three
   consecutive runs — **wider than most release-over-release deltas** — so a single number carries
   no signal. Every release's mandatory bench run IS the report.
-- **`ir_dce` / `ir_dead_store` uncapped wrappers and `CLASSIFY_CF` / `CF_TARGET`** — decide
-  wire-or-delete. Leaving a third option open is how they survived two closeouts.
-- **Bare `var a[N]` byte-vs-slot convention** — a design decision, not an arc. The typed spelling
-  `var a: T[N]` shipped v6.2.1 and resolved the common case; what stays undecided is whether to
-  lint the address-taken bare-local per-slot idiom.
 - **Reclaim the FREED compiler-state scalar holes** (fill-as-you-go, not a slot). Policy: the
   next new compiler-state scalar goes into a hole rather than growing the band. **Cite the live
   count** (`grep -n FREED src/main.cyr`) and the heap map; do not maintain an enumerated list that
@@ -554,10 +589,13 @@ whereupon it became 43 derived rows and shipped at `.51`. Assume the same of any
    re-review WITH item 1's performance track**, the two being the same subject. Explicitly *not*
    silently dropped — parked against that track's opening review, which decides whether it still
    earns a bite. Record the outcome here either way.
-3. **macOS concurrency ordering.** Real platform work with a genuinely broken verb on a gate
-   host, so it cannot be dropped — but it has **no consumer waiting**, it mirrors an
-   already-shipped split (`thread_win`), and the crossos guards mean it cannot rot silently.
-   **Default: keep it last in the minor**; pull it forward if a consumer appears.
+3. **macOS concurrency ordering — PLACED 6.6.19** (2026-10-02, with the tail plan): x86-macOS real
+   threads and `async_await_readable_ms` on macOS / agnos / Windows. Real platform work with a
+   genuinely broken verb on a gate host; no consumer waiting; it mirrors `thread_win`.
+4. **A named struct argument over 8 bytes — DECIDED 2026-10-02 (user accepted): it is a COPY**,
+   matching 6.6.12's field-argument copy and fixing a callee that mutates the caller's struct
+   (`bump(p)` twice gave 4 then 5). Settled before v6.7.x's traits inherit the convention; lands in
+   6.6.16. The blast radius is cyrius's own tests and the guide (which documents the alias today).
 
 *(Former item 3 — per-item `private` — was never a question. It is a live defect and is now
 slot `.3` above. Former item 2, the bare-metal forbidden-module check, SHIPPED at v6.5.24 after
