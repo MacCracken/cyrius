@@ -184,21 +184,29 @@ RFC 8422 §5.10). `tls_native_get_group` reports the negotiated group (29 / 23 /
   client did not list, for the group it already shared, or changing nothing, one naming a cipher
   suite or session id it did not send, a non-null compression method, a supported_versions other
   than 0x0304, or any extension twice (illegal_parameter); a cookie whose length disagrees with its
-  extension (decode_error); an extension other than supported_versions / key_share / cookie —
-  unsupported_extension when the ClientHello did not carry it, illegal_parameter when it did
-  (supported_groups, signature_algorithms, server_name after SNI, ALPN when offered: RFC 8446
-  §4.1.4 / §4.2); a ServerHello after it on another cipher or group (illegal_parameter). One
-  middlebox CCS may come after the HelloRetryRequest — still one per connection. Any ServerHello
-  must echo the client's empty session id and carry compression method 0 (illegal_parameter).
+  extension, an empty cookie (cookie<1..2^16-1>), a supported_versions or key_share that is not
+  2 bytes, or bytes after the extensions (decode_error); an extension other than
+  supported_versions / key_share / cookie — unsupported_extension when the ClientHello did not
+  carry it, illegal_parameter when it did (supported_groups, signature_algorithms, server_name
+  after SNI, ALPN when offered: RFC 8446 §4.1.4 / §4.2); a ServerHello after it on another cipher
+  or group (illegal_parameter). One middlebox CCS may come after the HelloRetryRequest — still one
+  per connection. Any ServerHello must echo the client's empty session id, carry compression method
+  0, a cipher suite the client offered, no TLS 1.2 DOWNGRD random (RFC 8446 §4.1.3) and a
+  supported_versions of 0x0304 (illegal_parameter; with no supported_versions, protocol_version),
+  and a key_share — missing_extension without one — on the client's group whose key is exactly
+  that group's length (illegal_parameter; a byte after the key is decode_error).
 - **TLS 1.3 server.** It takes the first of its groups the client sent a usable share for — a
   usable x25519 share is taken over asking for a group it prefers, which would cost a round trip —
   and otherwise sends ONE HelloRetryRequest for the first of its groups the client lists, reads the
   second ClientHello (one middlebox CCS may precede it) and requires there the share it asked for,
   the same legacy_session_id and the same cipher suite (illegal_parameter otherwise — never a
   second HelloRetryRequest). It refuses, with the alert, a key_share without supported_groups
-  (missing_extension, RFC 8446 §9.2 — as OpenSSL does), a share for a group the client did not
-  list, two shares for one group, a share of the wrong length, a point sigil refuses
-  (illegal_parameter), a malformed supported_groups (decode_error), and no shared group
+  or supported_groups without a key_share (missing_extension, RFC 8446 §9.2 — as OpenSSL does), a
+  share for a group the client did not list, two shares for one group, a share of the wrong length
+  (x25519's is not validated as a point, so its length is the check), a point sigil refuses
+  (illegal_parameter), a supported_groups list that is odd-length, empty or not its extension's
+  length, a client_shares list that is not its extension's length, an empty key_exchange, a
+  legacy_session_id over 32 bytes (decode_error), no cipher suite in common and no shared group
   (handshake_failure). A second ClientHello that no longer offers TLS 1.3 is illegal_parameter.
   **Which version a ClientHello asks for is its supported_versions' alone** (RFC 8446 §4.2.1): one
   listing 0x0304 is TLS 1.3; one without it, or without the extension, is TLS 1.2 — a key_share
@@ -216,11 +224,13 @@ RFC 8422 §5.10). `tls_native_get_group` reports the negotiated group (29 / 23 /
   SHA-256 verifies.
 - **TLS 1.2 server.** It picks the first of its groups the client's supported_groups lists, its
   own first group when the client sends none (RFC 8422 §4), and refuses a client listing none of
-  them with handshake_failure. A ClientKeyExchange point sigil refuses is illegal_parameter. The
-  group never depends on the certificate: a P-384 certificate signs a secp256r1 exchange when the
-  client lists both. But in TLS 1.2 the client's list also bounds an ECDSA certificate's curve
-  (RFC 8422 §5.1), so a client whose supported_groups omits it is refused with handshake_failure
-  — the server's refusal, where until 6.6.15 the client refused the certificate ("wrong curve").
+  them with handshake_failure. A ClientKeyExchange point sigil refuses, or whose length byte is not
+  the group's point length, is illegal_parameter; one of another size or handshake type is
+  decode_error. The group never depends on the certificate: a P-384 certificate signs a secp256r1
+  exchange when the client lists both. But in TLS 1.2 the client's list also bounds an ECDSA
+  certificate's curve (RFC 8422 §5.1), so a client whose supported_groups omits it is refused with
+  handshake_failure — the server's refusal, where until 6.6.15 the client refused the certificate
+  ("wrong curve").
   An Ed25519 certificate is not bound by the list. The suite is the first the client offers that
   the server can answer — ECDHE_ECDSA with AES-256-GCM-SHA384 or ChaCha20-Poly1305 (the server's
   key is ECDSA or Ed25519); none of those is handshake_failure. Until 6.6.15 an ECDHE_RSA offer was
