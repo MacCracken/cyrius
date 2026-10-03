@@ -21,12 +21,12 @@
 # after it hold the parsed credentials, the traffic keys and sequence
 # numbers, the record buffers and the 6.6.13 additions, up to TLS_CTX_LEN.
 
-# 592 = 74 i64 slots. 512 held +3 record partial-read hold buffer, +1 (v6.2.25) ALLOC,
+# 600 = 75 i64 slots. 512 held +3 record partial-read hold buffer, +1 (v6.2.25) ALLOC,
 # +1 (v6.2.8) CERT_REQUESTED; 6.6.13 added +512..+568 (see the block after READ_HOLD_OFF), 6.6.14
 # filled +560 and +568 and added +576 (NOSIGPIPE), 6.6.15 the key-exchange block from +584 (at the
 # end of the list).
 # Nothing outside _tn_ctx_new_in reads this; a new slot goes INSIDE it, never past it.
-var TLS_CTX_LEN          = 592;
+var TLS_CTX_LEN          = 600;
 var TLS_CTX_OFF_ROLE       = 0;   # TlsRole (CLIENT/SERVER)
 var TLS_CTX_OFF_STATE      = 8;   # TlsState
 var TLS_CTX_OFF_VERSION    = 16;  # negotiated TlsProtocolVersion (0 until SH)
@@ -143,6 +143,8 @@ var TLS_CTX_OFF_NOSIGPIPE      = 576; # macOS: fd + 1 of the socket SO_NOSIGPIPE
 var TLS_CTX_OFF_GROUPS         = 584; # the groups this ctx offers (client) or accepts (server), in preference order,
 #                                       16 bits each from the low end; 0 = the default x25519, secp256r1,
 #                                       secp384r1 (tls_native_set_groups)
+var TLS_CTX_OFF_HS_ALERT       = 592; # the fatal alert description a refusing handshake step asks its driver to send
+#                                       (_tn_hs_fail sets it, _tn_send_hs_alert sends it once); 0 = none
 # CHANGELOG [6.6.15]
 
 # Handshake state-machine events. The protocol-message build/parse
@@ -282,6 +284,16 @@ fn tls_native_set_groups(ctx, groups, n): i64 {
 fn _tn_ctx_fail(ctx, err): i64 {
     store64(ctx + TLS_CTX_OFF_LAST_ERR, err);
     store64(ctx + TLS_CTX_OFF_STATE, TLS_STATE_ERROR);
+    return err;
+}
+
+# A handshake step refusing its peer: record the fatal alert `desc` (TLS_AD_*) the step's driver is
+# to send — a step that parses a message never writes to the socket, its driver does
+# (_tn_send_hs_alert) — and return `err`, which the caller fails the ctx with as before. RFC 8446
+# §6.2 / RFC 5246 §7.2 name the alert for each refusal; 0 (close_notify) is never one, so 0 means
+# none recorded. CHANGELOG [6.6.15]
+fn _tn_hs_fail(ctx, desc, err): i64 {
+    store64(ctx + TLS_CTX_OFF_HS_ALERT, desc);
     return err;
 }
 

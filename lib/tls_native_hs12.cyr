@@ -614,47 +614,54 @@ fn _tn_parse_certificate_12(ctx, body, blen): i64 {
     return TLS_OK;
 }
 
-# Sign the ServerKeyExchange ECDHE params. The signed content is the
-# RAW concatenation client_random ‖ server_random ‖ ServerECDHParams
-# (`params36`, the exact 36 wire bytes) = 100 bytes (RFC 8422 §5.4) —
-# NOT a transcript hash and NOT the 1.3 CertificateVerify content (no
-# 0x20*64 prefix, no context string). Dispatches on the loaded private
-# key algorithm (ECDSA → DER sig, sigil hashes internally; Ed25519 →
-# 64-byte PureEdDSA). Writes the TLS SignatureScheme via `scheme_out`;
-# returns the signature length (>0) or a negative TLS_ERR_*.
-fn _tn_12_sign_kex_params(ctx, params36, sig_out, sig_max, scheme_out): i64 {
-    var content = _tn_alloc(ctx, 100);
+# Sign the ServerKeyExchange ECDHE params. The signed content is the RAW concatenation
+# client_random ‖ server_random ‖ ServerECDHParams (`params`, its exact `params_len` wire bytes:
+# 4 + the point — 36 on x25519, 69 / 101 on secp256r1 / secp384r1) (RFC 8422 §5.4) — NOT a
+# transcript hash and NOT the 1.3 CertificateVerify content (no 0x20*64 prefix, no context
+# string). _tn_sign signs with the loaded key (ECDSA → DER, sigil hashes internally; Ed25519 →
+# 64-byte PureEdDSA) and writes the TLS SignatureScheme via `scheme_out`; returns the signature
+# length (>0) or a negative TLS_ERR_*.
+fn _tn_12_sign_kex_params(ctx, params, params_len, sig_out, sig_max, scheme_out): i64 {
+    var content = _tn_alloc(ctx, 64 + params_len);
     if (content == 0) { return TLS_ERR_OOM; }
     memcpy(content,      load64(ctx + TLS_CTX_OFF_CLIENT_RANDOM), 32);
     memcpy(content + 32, load64(ctx + TLS_CTX_OFF_SERVER_RANDOM), 32);
-    memcpy(content + 64, params36, 36);
-    return _tn_sign(ctx, content, 100, sig_out, sig_max, scheme_out);
+    memcpy(content + 64, params, params_len);
+    return _tn_sign(ctx, content, 64 + params_len, sig_out, sig_max, scheme_out);
 }
 
-# Build a TLS 1.2 ECDHE ServerKeyExchange (RFC 8422 §5.4). Body =
-# ServerECDHParams { curve_type=named_curve(3), namedcurve=x25519,
-# ECPoint{ len=32, EPH_PUB } } (36 bytes) ‖ SignatureScheme(2) ‖
-# signature<2-byte len>. Requires EPH_PUB + the randoms + loaded
-# creds. Returns the message length or a negative TLS_ERR_*.
+# Build a TLS 1.2 ECDHE ServerKeyExchange (RFC 8422 §5.4). Body = ServerECDHParams
+# { curve_type=named_curve(3), namedcurve, ECPoint{ len, EPH_PUB } } ‖ SignatureScheme(2) ‖
+# signature<2-byte len>, on the ctx's group (OFF_GROUP — the server picked it from the client's
+# supported_groups, _tn_12_parse_client_hello; 0, never set, is x25519): x25519's raw 32-byte
+# u-coordinate, or the 65 / 97-byte uncompressed point (6.6.15). The group is independent of the
+# certificate: a P-384 certificate signs a secp256r1 exchange as readily as an x25519 one.
+# Requires EPH_PUB on that group + the randoms + loaded creds. Returns the message length or a
+# negative TLS_ERR_*.
 fn _tn_12_build_server_kex(ctx, out, out_max): i64 {
-    # Worst case: 4 (hdr) + 36 (params) + 2 (scheme) + 2 (siglen) + 128 (sig cap).
-    if (TLS_HANDSHAKE_HEADER_LEN + 40 + 128 > out_max) { return TLS_ERR_BUFFER_FULL; }
+    var group = load64(ctx + TLS_CTX_OFF_GROUP);
+    if (group == 0) { group = TLS_GROUP_X25519; }
+    var plen = _tn_group_point_len(group);
+    if (plen == 0) { return TLS_ERR_HANDSHAKE_FAILED; }
+    var params_len = 4 + plen;
+    # Worst case: 4 (hdr) + params + 2 (scheme) + 2 (siglen) + 128 (sig cap).
+    if (TLS_HANDSHAKE_HEADER_LEN + params_len + 4 + 128 > out_max) { return TLS_ERR_BUFFER_FULL; }
     var epub = load64(ctx + TLS_CTX_OFF_EPH_PUB);
     if (epub == 0) { return TLS_ERR_PROTOCOL; }
     var body = out + TLS_HANDSHAKE_HEADER_LEN;
     store8(body, 3);                                   # curve_type named_curve(3)
-    _tn_be16_w(body + 1, TLS_GROUP_X25519);            # namedcurve
-    store8(body + 3, 32);                              # ECPoint length
-    memcpy(body + 4, epub, 32);                        # raw 32-byte u-coord
+    _tn_be16_w(body + 1, group);                       # namedcurve
+    store8(body + 3, plen);                            # ECPoint length (1 byte)
+    memcpy(body + 4, epub, plen);
     var sig = _tn_alloc(ctx, 128);
     if (sig == 0) { return TLS_ERR_OOM; }
     var scheme = 0;
-    var sig_len = _tn_12_sign_kex_params(ctx, body, sig, 128, &scheme);
+    var sig_len = _tn_12_sign_kex_params(ctx, body, params_len, sig, 128, &scheme);
     if (sig_len < 0) { return sig_len; }
-    var body_len = 36 + 2 + 2 + sig_len;
-    _tn_be16_w(body + 36, scheme);
-    _tn_be16_w(body + 38, sig_len);
-    memcpy(body + 40, sig, sig_len);
+    var body_len = params_len + 2 + 2 + sig_len;
+    _tn_be16_w(body + params_len, scheme);
+    _tn_be16_w(body + params_len + 2, sig_len);
+    memcpy(body + params_len + 4, sig, sig_len);
     tls_native_handshake_write_header(out, TLS_HS_SERVER_KEY_EXCHANGE, body_len);
     return TLS_HANDSHAKE_HEADER_LEN + body_len;
 }
@@ -756,21 +763,29 @@ fn tls_native_12_build_client_key_exchange(client_eph_pub, out, out_max): i64 {
     return _tn_12_build_client_kex(client_eph_pub, 32, out, out_max);
 }
 
-# Server: parse a TLS 1.2 ECDHE ClientKeyExchange. Requires type 16
-# and a body of EXACTLY 1 + 32 = 33 bytes (rejects trailing garbage),
-# with a 32-byte point. Copies the client's ephemeral pubkey to
-# `peer_pub_out32`. Returns TLS_OK or a negative TLS_ERR_*.
-fn tls_native_12_parse_client_key_exchange(msg, msg_len, peer_pub_out32): i64 {
+# Server: parse a TLS 1.2 ECDHE ClientKeyExchange carrying a `point_len`-byte ECPoint (RFC 8422
+# §5.7: a 1-byte length, then the point). Requires type 16 and a body of EXACTLY 1 + point_len
+# bytes (rejects trailing garbage) whose length byte is point_len. Copies the point to `out`.
+# Returns TLS_OK, TLS_ERR_BAD_HANDSHAKE (malformed) or TLS_ERR_HANDSHAKE_FAILED (a point of
+# another length). CHANGELOG [6.6.15]
+fn _tn_12_parse_client_kex(msg, msg_len, point_len, out): i64 {
     var ht = 0;
     var blen = 0;
     if (tls_native_handshake_read_header(msg, msg_len, &ht, &blen) < 0) { return TLS_ERR_BAD_HANDSHAKE; }
     if (ht != TLS_HS_CLIENT_KEY_EXCHANGE) { return TLS_ERR_BAD_HANDSHAKE; }
     if (TLS_HANDSHAKE_HEADER_LEN + blen > msg_len) { return TLS_ERR_BAD_HANDSHAKE; }
-    if (blen != 33) { return TLS_ERR_BAD_HANDSHAKE; }
+    if (blen != 1 + point_len) { return TLS_ERR_BAD_HANDSHAKE; }
     var body = msg + TLS_HANDSHAKE_HEADER_LEN;
-    if ((load8(body) & 0xFF) != 32) { return TLS_ERR_HANDSHAKE_FAILED; }
-    memcpy(peer_pub_out32, body + 1, 32);
+    if ((load8(body) & 0xFF) != point_len) { return TLS_ERR_HANDSHAKE_FAILED; }
+    memcpy(out, body + 1, point_len);
     return TLS_OK;
+}
+
+# Server: parse an x25519 ClientKeyExchange — a body of EXACTLY 1 + 32 = 33 bytes with a 32-byte
+# point, copied to `peer_pub_out32`. Returns TLS_OK or a negative TLS_ERR_*. (The 1.2 server
+# parses the ClientKeyExchange of whichever group it chose through _tn_12_parse_client_kex.)
+fn tls_native_12_parse_client_key_exchange(msg, msg_len, peer_pub_out32): i64 {
+    return _tn_12_parse_client_kex(msg, msg_len, 32, peer_pub_out32);
 }
 
 # ----------------------------------------------------------------
@@ -1295,12 +1310,17 @@ fn _tn_ch_is_tls13(ch_msg, ch_len): i64 {
     return 0;
 }
 
-# Server: parse a TLS 1.2 ClientHello body — capture client_random and
-# pick the first offered ciphersuite we support, storing its AEAD
-# identity at OFF_CIPHER. (The 1.2 server's ECDHE is x25519 alone and the
-# client's supported_groups is not read: a client that did not list x25519
-# refuses our ServerKeyExchange — OpenSSL's "wrong curve".) Returns the chosen
-# WIRE ciphersuite (>0) or a negative TLS_ERR_*.
+# Server: parse a TLS 1.2 ClientHello body — capture client_random, pick the first offered
+# ciphersuite we support (its AEAD identity to OFF_CIPHER) and the ECDHE group (OFF_GROUP): the
+# first of the server's groups (_tn_groups: x25519, then secp256r1, then secp384r1 by default)
+# the client's supported_groups lists (RFC 8422 §5.1.1). A client that sends no supported_groups
+# gets the server's first group — the extension is how a client restricts the curve, and without
+# it the server may choose (RFC 8422 §4); one whose list shares none of ours is refused with
+# handshake_failure. The group never depends on the certificate. Returns the chosen WIRE
+# ciphersuite (>0) or a negative TLS_ERR_* with the alert recorded (_tn_hs_fail).
+# ⛔ 6.6.15 — WHY. The 1.2 server never read supported_groups and sent an x25519
+# ServerKeyExchange to every client, so a client offering only P-256 or P-384 refused it
+# (OpenSSL's s_client: "wrong curve"). CHANGELOG [6.6.15]
 fn _tn_12_parse_client_hello(ctx, body, blen): i64 {
     if (blen < 2 + 32 + 1) { return TLS_ERR_BAD_HANDSHAKE; }
     var crand = _tn_alloc(ctx, TLS_RANDOM_LEN);
@@ -1331,6 +1351,7 @@ fn _tn_12_parse_client_hello(ctx, body, blen): i64 {
     # block leaves EMS=0 and never fails the handshake. (The cipher loop used
     # pos+j indexing and did not mutate pos, so pos is still at cipher_suites.)
     pos = pos + cs_len;
+    var group = 0;
     if (pos + 1 <= blen) {
         var cm_len = load8(body + pos) & 0xFF;
         pos = pos + 1 + cm_len;
@@ -1345,10 +1366,19 @@ fn _tn_12_parse_client_hello(ctx, body, blen): i64 {
                 # ALPN (RFC 7301): negotiate against the server's configured
                 # list; _tn_build_server_hello_12 emits the result. Lenient.
                 _tn_server_negotiate_alpn(ctx, body + pos, ext_total);
+                var sgp = 0;
+                var sgl = 0;
+                if (_tn_find_ext(body + pos, ext_total, TLS_EXT_SUPPORTED_GROUPS, &sgp, &sgl) == 1) {
+                    group = _tn_pick_group(ctx, sgp, sgl);
+                    if (group < 0) { return _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
+                    if (group == 0) { return _tn_hs_fail(ctx, TLS_AD_HANDSHAKE_FAILURE, TLS_ERR_HANDSHAKE_FAILED); }
+                }
             }
         }
     }
-    if (chosen == 0) { return TLS_ERR_HANDSHAKE_FAILED; }
+    if (chosen == 0) { return _tn_hs_fail(ctx, TLS_AD_HANDSHAKE_FAILURE, TLS_ERR_HANDSHAKE_FAILED); }
+    if (group == 0) { group = _tn_groups(ctx) & 0xFFFF; }    # no supported_groups: our first
+    store64(ctx + TLS_CTX_OFF_GROUP, group);
     store64(ctx + TLS_CTX_OFF_CIPHER, tls_native_12_cipher_aead_identity(chosen));
     return chosen;
 }
@@ -1607,8 +1637,17 @@ fn tls_native_connect_12(ctx, sock_fd): i64 {
 # coalesced flight (SH+Cert+SKE+SHD), reads ClientKeyExchange, derives
 # keys, verifies the client's sealed Finished, then sends its own
 # ChangeCipherSpec + sealed Finished → CONNECTED. Returns TLS_OK or a
-# negative TLS_ERR_*.
+# negative TLS_ERR_*. Our ephemeral private key and the premaster are zeroised on the way out,
+# whatever the outcome (_tn_wipe_ephemeral), as well as by the steps that use them.
+# ⛔ 6.6.15 — WHY. Neither was ever zeroised: a server kept every connection's ephemeral key and
+# premaster in its heap or arena until the memory was reused. CHANGELOG [6.6.15]
 fn _tn_12_server_drive(ctx, sock_fd, ch_msg, ch_len): i64 {
+    var rc = _tn_12_server_hs(ctx, sock_fd, ch_msg, ch_len);
+    _tn_wipe_ephemeral(ctx);
+    return rc;
+}
+
+fn _tn_12_server_hs(ctx, sock_fd, ch_msg, ch_len): i64 {
     store64(ctx + TLS_CTX_OFF_SOCK_FD, sock_fd);
     if (load64(ctx + TLS_CTX_OFF_CREDS_LOADED) != 1) {
         var lr = tls_native_server_load_creds(ctx);
@@ -1622,16 +1661,19 @@ fn _tn_12_server_drive(ctx, sock_fd, ch_msg, ch_len): i64 {
     if (ht != TLS_HS_CLIENT_HELLO) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
     if (TLS_HANDSHAKE_HEADER_LEN + blen > ch_len) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
     var chosen = _tn_12_parse_client_hello(ctx, ch_msg + TLS_HANDSHAKE_HEADER_LEN, blen);
-    if (chosen < 0) { return _tn_ctx_fail(ctx, chosen); }
+    if (chosen < 0) {
+        _tn_send_hs_alert(ctx, sock_fd);
+        return _tn_ctx_fail(ctx, chosen);
+    }
     store64(ctx + TLS_CTX_OFF_VERSION, TLS_VERSION_1_2);
-    store64(ctx + TLS_CTX_OFF_GROUP, TLS_GROUP_X25519);
+    var group = load64(ctx + TLS_CTX_OFF_GROUP);       # chosen from the client's supported_groups
     var srand = _tn_alloc(ctx, TLS_RANDOM_LEN);
     if (srand == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     if (_tn_rand_bytes(srand, TLS_RANDOM_LEN) != TLS_RANDOM_LEN) {
         return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL);
     }
     store64(ctx + TLS_CTX_OFF_SERVER_RANDOM, srand);
-    var er = _tn_gen_ephemeral_x25519_pub_only(ctx);
+    var er = _tn_ephemeral_keygen(ctx, group);
     if (er != TLS_OK) { return _tn_ctx_fail(ctx, er); }
     var identity = load64(ctx + TLS_CTX_OFF_CIPHER);
     var ts = tls_native_transcript_init_in(load64(ctx + TLS_CTX_OFF_ALLOC), tls_native_cipher_hash_algo(identity));
@@ -1680,16 +1722,30 @@ fn _tn_12_server_drive(ctx, sock_fd, ch_msg, ch_len): i64 {
     var cke_len = _tn_12_srv_next_msg(ctx, sock_fd, inbuf, cap, hb, hcap, &hlen, &hpos);
     if (cke_len < 0) { return cke_len; }
     var cke_msg = hb + hpos - cke_len;
-    var client_pub = _tn_alloc(ctx, 32);
+    var cpl = _tn_group_point_len(group);
+    var client_pub = _tn_alloc(ctx, cpl);
     if (client_pub == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
-    var cr2 = tls_native_12_parse_client_key_exchange(cke_msg, cke_len, client_pub);
-    if (cr2 != TLS_OK) { return _tn_ctx_fail(ctx, cr2); }
+    var cr2 = _tn_12_parse_client_kex(cke_msg, cke_len, cpl, client_pub);
+    if (cr2 != TLS_OK) {
+        var cdesc = TLS_AD_DECODE_ERROR;
+        if (cr2 == TLS_ERR_HANDSHAKE_FAILED) { cdesc = TLS_AD_ILLEGAL_PARAMETER; }
+        _tn_send_fatal_alert(ctx, sock_fd, cdesc);
+        return _tn_ctx_fail(ctx, cr2);
+    }
     tls_native_transcript_update(ts, cke_msg, cke_len);
-    var pm = _tn_alloc(ctx, 32);
+    var pm = _tn_alloc(ctx, _TN_EPH_MAX);
     if (pm == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    store64(ctx + TLS_CTX_OFF_SHARED, pm);
     var pr2 = tls_native_12_compute_premaster(ctx, client_pub, pm);
-    if (pr2 != TLS_OK) { return _tn_ctx_fail(ctx, pr2); }
-    var dk = tls_native_12_derive_keys(ctx, pm, 32);
+    _tn_wipe_priv(ctx);                                # its one use is behind us
+    if (pr2 != TLS_OK) {
+        # A point sigil refused (off the curve, a coordinate >= p) or a low-order x25519 key:
+        # illegal_parameter (RFC 8422 §5.7). The premaster buffer was zeroed with the refusal.
+        _tn_send_fatal_alert(ctx, sock_fd, TLS_AD_ILLEGAL_PARAMETER);
+        return _tn_ctx_fail(ctx, pr2);
+    }
+    var dk = tls_native_12_derive_keys(ctx, pm, _tn_group_secret_len(group));
+    memset(pm, 0, _TN_EPH_MAX);                        # the master secret replaces it
     if (dk != TLS_OK) { return _tn_ctx_fail(ctx, dk); }
     if (load64(ctx + TLS_CTX_OFF_CLIENT_CERT) != 0) {
         # A presented (and verified) certificate: its CertificateVerify signs every handshake

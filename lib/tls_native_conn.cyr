@@ -1069,6 +1069,16 @@ fn _tn_send_fatal_alert(ctx, fd, desc): i64 {
     return 0;
 }
 
+# Send the alert a refusing handshake step recorded (_tn_hs_fail; TLS_CTX_OFF_HS_ALERT), best effort
+# and at most once, then clear it. Nothing recorded sends nothing. Returns 0. CHANGELOG [6.6.15]
+fn _tn_send_hs_alert(ctx, fd): i64 {
+    var desc = load64(ctx + TLS_CTX_OFF_HS_ALERT);
+    if (desc == 0) { return 0; }
+    store64(ctx + TLS_CTX_OFF_HS_ALERT, 0);
+    _tn_send_fatal_alert(ctx, fd, desc);
+    return 0;
+}
+
 # A server refusing the client's authentication (6.6.14, CVE-64): tell the client why with a fatal
 # alert (best effort, _tn_send_fatal_alert) and fail the ctx with `rc`, which is returned.
 # `empty` = 1 when the client presented no certificate under TLS_VERIFY_FAIL_IF_NO_PEER_CERT:
