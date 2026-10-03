@@ -24,15 +24,17 @@
 #      server reports its result, the client's identity through tls_get_peer_spki_der, and the
 #      "ping" s_client sends after the handshake.
 #   C  the native client (TLS 1.2, and 1.3 as the control) against `openssl s_server -Verify 1`
-#      (a certificate REQUIRED; -verify 1 = requested) with an Ed25519 server certificate (the
-#      native 1.2 client offers x25519 only, and OpenSSL refuses an ECDSA certificate on a curve
-#      the client did not list — see the CHANGELOG): its P-256 / Ed25519 / P-384 certificate is
-#      verified by s_server ("verify return:1" for its CN), the -rev echo comes back, and with no
-#      certificate it reads s_server's alert (TLS_ERR_ALERT) — or completes when it was only asked.
-#      Then the trade-off the 1.2 client's supported_groups makes, pinned at its boundary: holding a
-#      P-256 certificate it fails (TLS_ERR_HANDSHAKE_FAILED) a server not asking for one that ranks
-#      P-256 above X25519 (`-groups P-256:X25519 -serverpref`), and connects when X25519 ranks first
-#      or when it holds no certificate.
+#      (a certificate REQUIRED; -verify 1 = requested) with an Ed25519 server certificate: its
+#      P-256 / Ed25519 / P-384 certificate is verified by s_server ("verify return:1" for its CN),
+#      the -rev echo comes back, and with no certificate it reads s_server's alert (TLS_ERR_ALERT)
+#      — or completes when it was only asked.
+#   E  (6.6.15) the native TLS 1.2 client's ECDHE on secp256r1 / secp384r1, each row asserting the
+#      group it negotiated (tls_native_get_group): a server ranking P-256 above X25519, with and
+#      without a client certificate held (6.6.14 FAILED the first — the documented trade-off this
+#      gate pinned); servers offering only P-256 or only P-384; ECDSA P-256 and P-384 SERVER
+#      certificates (6.6.14: "no shared cipher" — the curve was never listed), on X25519 and on
+#      their own curve, the P-384 one signing its ServerKeyExchange with SHA-256 (0x0403, which in
+#      TLS 1.2 names only the hash); and mTLS over P-384 end to end.
 # SKIP (exit 77, named): openssl(1) missing. ANTI-VACUITY: the rows run are counted and floored.
 #
 # MUTATION LEDGER (6.6.14, each measured RED here; the pre-fix 6.6.13 lib fails 22 of the 27 rows —
@@ -44,8 +46,19 @@
 #   MA5 _tn_peer_leaf reading SERVER_CERT on a server again -> the 8 S identity rows
 #   MA6 the 1.2 client signature checked as 1.3 (curve bound to the scheme) -> S 1.2 P-384
 #   MA7 the client certificate's curve left out of the 1.2 supported_groups -> C 1.2 P-256 / P-384
+#       (6.6.15: the list no longer depends on the certificate — ME1 is its successor)
 #   MA8 the 1.2 server's FAIL_IF_NO_PEER_CERT check disabled -> S 1.2 PEER|FAIL no-certificate
 #   MA9 _tn_leaf_purpose_ok's keyUsage test skipped for the client purpose -> the 2 keyEncipherment rows
+# MUTATION LEDGER (6.6.15, each measured RED here; the 6.6.14 lib fails 9 of the 34 rows — every E
+# row except "X25519 ranked first"):
+#   ME1 the 1.2 supported_groups back to x25519 alone -> 11 rows: those 9, and the two C 1.2
+#       REQUIRED rows holding a P-256 / P-384 certificate (OpenSSL: "wrong curve")
+#   ME2 _tn_12_parse_server_kex x25519-only again -> the 7 E rows negotiating secp256r1 / secp384r1
+#   ME3 the SKE signature read as 1.3 reads it (curve bound to the scheme) -> the 3 P-384
+#       server-certificate rows
+#   ME4 secp384r1's premaster computed on P-256 -> the 3 rows negotiating secp384r1
+#   ME5 the ClientKeyExchange point length off by one -> 14 rows: every 1.2 row that completes a
+#       handshake, x25519 included (the builder is shared)
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 1
@@ -116,6 +129,7 @@ mkcert cli384 p384 client-p384 ca cli.ext
 mkcert cliexp p256 client-expired ca cli.ext 200101000000Z 210101000000Z
 mkcert cliku p256 client-keyencipherment ca cliku.ext
 mkcert srv p256 localhost ca srv.ext
+mkcert srv384 p384 localhost ca srv.ext
 mkcert srved ed localhost ca srv.ext
 selfsigned self client-self cli.ext
 
@@ -210,7 +224,7 @@ var r = main();
 sys_exit(r);
 EOF
 # cli <port> <12|13> <cert.der|-> <key.der|->: one native connect (no server verification: the
-# server's chain is not under test). Prints `connect=<rc> read=<n> echo=<1|0>`.
+# server's chain is not under test). Prints `connect=<rc> group=<TlsNamedGroup> read=<n> echo=<1|0>`.
 cat > "$T/cli.cyr" <<'EOF'
 include "lib/syscalls.cyr"
 include "lib/alloc.cyr"
@@ -257,6 +271,7 @@ fn main(): i64 {
     }
     var rc = tls_native_connect(c, fd);
     _kv("connect=", rc);
+    _kv("group=", tls_native_get_group(c));
     var rd = 0 - 99;
     var echo = 0;
     if (rc == TLS_OK) {
@@ -333,7 +348,8 @@ for V in 13 12; do
     srow "$V" 1 cliku  -   refused none "TLS 1.$(echo $V | cut -c2): PEER, a keyEncipherment-only leaf (no digitalSignature)"
 done
 
-# crow <12|13> <-verify|-Verify|-> <cert|-> <want: ok|alert|hsfail> "<label>" [<s_server flags>]
+# crow <12|13> <-verify|-Verify|-> <cert|-> <want: ok|alert|hsfail> "<label>" [<s_server flags>
+#      [<group the client must report, decimal, or -> [<server certificate, default srved>]]]
 # (`-` for the verify flag: s_server asks for no certificate.)
 crow() {
     NROWS=$((NROWS + 1))
@@ -345,7 +361,7 @@ crow() {
     # killing it leaves nothing behind (a `sleep | s_server` subshell left its sleep running).
     # shellcheck disable=SC2086
     $TO openssl s_server -accept 127.0.0.1:0 "-tls1_$(echo "$1" | cut -c2)" \
-        -cert "$T/srved.crt" -key "$T/srved.key" -CAfile "$T/ca.crt" $_vf ${6:-} -naccept 1 -rev \
+        -cert "$T/${8:-srved}.crt" -key "$T/${8:-srved}.key" -CAfile "$T/ca.crt" $_vf ${6:-} -naccept 1 -rev \
         < /dev/null > "$T/ss.out" 2>&1 &
     _sp=$!
     BGP="$BGP $_sp"
@@ -370,6 +386,9 @@ crow() {
         ok)
             case "$_c" in *"connect=0 "*) : ;; *) _fail "$5 — the native client failed: $_c"; return 0 ;; esac
             case "$_c" in *"echo=1 "*) : ;; *) _fail "$5 — no reversed echo from s_server: $_c" ;; esac
+            if [ "${7:--}" != "-" ]; then
+                case "$_c" in *"group=$7 "*) : ;; *) _fail "$5 — expected group $7: $_c" ;; esac
+            fi
             if [ "$3" != "-" ] && [ "$2" != "-" ]; then
                 _cn=$(openssl x509 -in "$T/$3.crt" -noout -subject | sed 's/.*CN *= *//')
                 grep -q "CN *= *$_cn" "$T/ss.out" || _fail "$5 — s_server did not verify the client's $_cn"
@@ -394,17 +413,23 @@ crow 12 -Verify cli384 ok    "TLS 1.2, REQUIRED: a P-384 certificate"
 crow 12 -Verify -      alert "TLS 1.2, REQUIRED, the native client has none: it reads s_server's alert"
 crow 12 -verify -      ok    "TLS 1.2, REQUESTED, none: the empty Certificate completes"
 crow 13 -Verify cli    ok    "TLS 1.3 control, REQUIRED: the native P-256 certificate"
-# ⚠ The documented trade-off (lib-tls-contract.md, "The client side"): a 1.2 client holding a P-256
-# certificate lists P-256 in supported_groups after x25519, but its ECDHE is x25519 only. A server
-# that ranks P-256 FIRST for the key exchange (server preference) therefore fails it — asked for a
-# certificate or not — while one that ranks X25519 first, or a client with no certificate, connects.
-# These rows pin that exact boundary: when the 1.2 client learns ECDHE on P-256 the hsfail row
-# turns RED, and the contract changes with it.
-crow 12 -      cli    ok     "TLS 1.2, not asked, P-256 certificate held: X25519 ranked first by the server" "-groups X25519:P-256 -serverpref"
-crow 12 -      cli    hsfail "TLS 1.2, not asked, P-256 certificate held: P-256 ranked first fails (documented)" "-groups P-256:X25519 -serverpref"
-crow 12 -      -      ok     "TLS 1.2, not asked, no certificate: P-256 ranked first still picks X25519" "-groups P-256:X25519 -serverpref"
 
-FLOOR=27
+echo "== E: the native TLS 1.2 client's ECDHE on secp256r1 / secp384r1 (6.6.15) =="
+# Groups by number: x25519 29, secp256r1 23, secp384r1 24.
+# ⛔ 6.6.14 pinned the first row as hsfail — the documented trade-off: the client listed its P-256
+# certificate's curve but did ECDHE on x25519 alone, so a server ranking P-256 first failed it.
+crow 12 -      cli    ok "TLS 1.2, not asked, P-256 certificate held: P-256 ranked first negotiates secp256r1" "-groups P-256:X25519 -serverpref" 23
+crow 12 -      -      ok "TLS 1.2, no certificate: P-256 ranked first negotiates secp256r1" "-groups P-256:X25519 -serverpref" 23
+crow 12 -      cli    ok "TLS 1.2, P-256 certificate held: X25519 ranked first still negotiates x25519" "-groups X25519:P-256 -serverpref" 29
+crow 12 -      -      ok "TLS 1.2, a server offering only P-256" "-groups P-256" 23
+crow 12 -      -      ok "TLS 1.2, a server offering only P-384" "-groups P-384" 24
+crow 12 -      -      ok "TLS 1.2, an ECDSA P-256 server certificate (6.6.14: no shared cipher)" "" 29 srv
+crow 12 -      -      ok "TLS 1.2, an ECDSA P-256 server certificate, ECDHE on P-256" "-groups P-256" 23 srv
+crow 12 -      -      ok "TLS 1.2, an ECDSA P-384 server certificate (its SKE signs SHA-256: 0x0403)" "" 29 srv384
+crow 12 -      -      ok "TLS 1.2, an ECDSA P-384 server certificate, ECDHE on P-384" "-groups P-384" 24 srv384
+crow 12 -Verify cli384 ok "TLS 1.2, REQUIRED: P-384 client and server certificates, ECDHE on P-384" "-groups P-384" 24 srv384
+
+FLOOR=34
 if [ "$NROWS" -lt "$FLOOR" ]; then
     echo "  FAIL: $G: only $NROWS rows ran (floor $FLOOR)"; FAILS=$((FAILS + 1)); fi
 if [ "$FAILS" -ne 0 ]; then echo "FAIL: $G: $FAILS failure(s) in $NROWS rows"; exit 1; fi
