@@ -35,6 +35,10 @@ var S9a = "~same9\0tail9"; var S9b = "~same9\0tail9";
 var S10a = "~same10"; var S10b = "~same10";
 # A literal equal to the committed bytes after another literal's embedded NUL may share them.
 var H11 = "~h11\0~t11"; var T11 = "~t11";
+# The boundary itself: a window whose LAST byte (the terminator) would sit AT the pool end is
+# not committed either. X12 matches P12 + 3 for every byte but its terminator, which there is
+# X12's own first byte (a NUL) — so a bound of `<=` aliased it and F12 overwrote that byte.
+var P12 = "~r\0\0Q12"; var X12 = "\0Q12\0"; var F12 = "zzzz12";
 
 include "lib/string.cyr"
 include "lib/assert.cyr"
@@ -98,6 +102,12 @@ fn main(): i64 {
     store8(w, 126); store8(w + 1, 116); store8(w + 2, 49); store8(w + 3, 49);
     assert_eq(_bytes_are(T11, w, 4), 1, "a literal equal to the bytes after another's NUL: intact");
     assert_eq(load8(H11) * 1000 + load8(H11 + 5), 126 * 1000 + 126, "...and the literal it may share with is intact");
+
+    test_group("a window ending exactly at the pool end");
+    assert_eq(load8(X12 + 5), 0, "\"\\0Q12\\0\": the terminator is kept (was 'z' from \"zzzz12\")");
+    assert_eq(X12 - P12 != 3, 1, "\"\\0Q12\\0\" is not aliased onto \"~r\\0\\0Q12\" + 3");
+    assert_eq(load8(X12 + 1) * 1000 + load8(X12 + 4), 81 * 1000, "\"\\0Q12\\0\": bytes 1 and 4");
+    assert_eq(load8(F12) + load8(P12 + 4), 122 + 81, "the row's tail and follower keep their bytes");
 
     var r = assert_summary();
     return r;
