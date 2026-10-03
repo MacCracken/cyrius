@@ -34,7 +34,12 @@
 #      gate pinned); servers offering only P-256 or only P-384; ECDSA P-256 and P-384 SERVER
 #      certificates (6.6.14: "no shared cipher" — the curve was never listed), on X25519 and on
 #      their own curve, the P-384 one signing its ServerKeyExchange with SHA-256 (0x0403, which in
-#      TLS 1.2 names only the hash); and mTLS over P-384 end to end.
+#      TLS 1.2 names only the hash); and mTLS over P-384 end to end. An RSA-2048 SERVER certificate
+#      (ECDHE-RSA, the commonest 1.2 deployment) on X25519, P-256 and P-384; the SHA-384 PRF with
+#      secp384r1's 48-byte premaster (ECDHE-ECDSA-AES256-GCM-SHA384), with extended master secret
+#      and — where s_server has -no_ems (3.6 does; 3.0, Ubuntu 24.04 / Debian 12, rejects it as an
+#      unknown option, so there that one row is SKIPPED by name and the floor drops by one) — with
+#      the legacy master secret.
 # SKIP (exit 77, named): openssl(1) missing. ANTI-VACUITY: the rows run are counted and floored.
 #
 # MUTATION LEDGER (6.6.14, each measured RED here; the pre-fix 6.6.13 lib fails 22 of the 27 rows —
@@ -49,8 +54,9 @@
 #       (6.6.15: the list no longer depends on the certificate — ME1 is its successor)
 #   MA8 the 1.2 server's FAIL_IF_NO_PEER_CERT check disabled -> S 1.2 PEER|FAIL no-certificate
 #   MA9 _tn_leaf_purpose_ok's keyUsage test skipped for the client purpose -> the 2 keyEncipherment rows
-# MUTATION LEDGER (6.6.15, each measured RED here; the 6.6.14 lib fails 9 of the 34 rows — every E
-# row except "X25519 ranked first"):
+# MUTATION LEDGER (6.6.15, each measured RED here against the first 34 rows; the 6.6.14 lib fails
+# 9 of them — every E row except "X25519 ranked first" — and 4 of the 5 rows the fix pass added,
+# all but the RSA certificate on X25519):
 #   ME1 the 1.2 supported_groups back to x25519 alone -> 11 rows: those 9, and the two C 1.2
 #       REQUIRED rows holding a P-256 / P-384 certificate (OpenSSL: "wrong curve")
 #   ME2 _tn_12_parse_server_kex x25519-only again -> the 7 E rows negotiating secp256r1 / secp384r1
@@ -59,6 +65,8 @@
 #   ME4 secp384r1's premaster computed on P-256 -> the 3 rows negotiating secp384r1
 #   ME5 the ClientKeyExchange point length off by one -> 14 rows: every 1.2 row that completes a
 #       handshake, x25519 included (the builder is shared)
+#   ME6 (measured on all 39) secp384r1's premaster length taken as 32 -> the 6 rows negotiating
+#       secp384r1, the SHA-384 PRF row and the legacy-master row among them
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 1
@@ -88,6 +96,7 @@ mkkey() {  # <name> <p256|p384|ed>
         p256) q openssl ecparam -name prime256v1 -genkey -noout -out "$T/$1.key" ;;
         p384) q openssl ecparam -name secp384r1 -genkey -noout -out "$T/$1.key" ;;
         ed) q openssl genpkey -algorithm ed25519 -out "$T/$1.key" ;;
+        rsa) q openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$T/$1.key" ;;
     esac
 }
 # A certificate with a chosen validity window (the expired leaf) is issued by `openssl ca`, whose
@@ -131,6 +140,7 @@ mkcert cliku p256 client-keyencipherment ca cliku.ext
 mkcert srv p256 localhost ca srv.ext
 mkcert srv384 p384 localhost ca srv.ext
 mkcert srved ed localhost ca srv.ext
+mkcert srvrsa rsa localhost ca srv.ext
 selfsigned self client-self cli.ext
 
 # ── probes ──
@@ -428,8 +438,24 @@ crow 12 -      -      ok "TLS 1.2, an ECDSA P-256 server certificate, ECDHE on P
 crow 12 -      -      ok "TLS 1.2, an ECDSA P-384 server certificate (its SKE signs SHA-256: 0x0403)" "" 29 srv384
 crow 12 -      -      ok "TLS 1.2, an ECDSA P-384 server certificate, ECDHE on P-384" "-groups P-384" 24 srv384
 crow 12 -Verify cli384 ok "TLS 1.2, REQUIRED: P-384 client and server certificates, ECDHE on P-384" "-groups P-384" 24 srv384
+crow 12 -      -      ok "TLS 1.2, an RSA-2048 server certificate (ECDHE-RSA) on X25519" "" 29 srvrsa
+crow 12 -      -      ok "TLS 1.2, an RSA-2048 server certificate, ECDHE on P-256" "-groups P-256" 23 srvrsa
+crow 12 -      -      ok "TLS 1.2, an RSA-2048 server certificate, ECDHE on P-384" "-groups P-384" 24 srvrsa
+crow 12 -      -      ok "TLS 1.2, the SHA-384 PRF over secp384r1's 48-byte premaster (AES256-GCM-SHA384)" \
+    "-groups P-384 -cipher ECDHE-ECDSA-AES256-GCM-SHA384" 24 srv384
+# s_server -no_ems: OpenSSL 3.0 (Ubuntu 24.04, Debian 12) rejects it as an unknown option. Probed into
+# a file, not a pipe: `s_server -help | grep -q` under pipefail reads a SIGPIPE'd s_server as "absent".
+NOEMS_SKIP=0
+openssl s_server -no_ems -help > "$T/noems.out" 2>&1 || true
+if grep -q "Unknown option" "$T/noems.out"; then
+    NOEMS_SKIP=1
+    echo "  skip: C TLS 1.2, the legacy master secret over secp384r1 — $(openssl version | cut -d' ' -f1-2) has no s_server -no_ems"
+else
+    crow 12 -      -      ok "TLS 1.2, the legacy master secret (no EMS) over secp384r1's 48-byte premaster, SHA-384 PRF" \
+        "-groups P-384 -no_ems -cipher ECDHE-ECDSA-AES256-GCM-SHA384" 24 srv384
+fi
 
-FLOOR=34
+FLOOR=$((39 - NOEMS_SKIP))
 if [ "$NROWS" -lt "$FLOOR" ]; then
     echo "  FAIL: $G: only $NROWS rows ran (floor $FLOOR)"; FAILS=$((FAILS + 1)); fi
 if [ "$FAILS" -ne 0 ]; then echo "FAIL: $G: $FAILS failure(s) in $NROWS rows"; exit 1; fi
