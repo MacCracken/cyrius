@@ -181,6 +181,8 @@ var _gx_sgroups: i64[3]; # the server's (its accept hook installs it)
 var _gx_sn = 0;
 var _gx_cert = 0;        # the server certificate: 0 Ed25519, 1 ECDSA P-256, 2 ECDSA P-384
 var _gx_v12 = 0;         # the client is pinned to TLS 1.2
+var _gx_chost = 0;       # the client's host (0: none, so no SNI)
+var _gx_calpn = 0;       # 1: the client offers ALPN "h2"
 # Observations: [0] client tls_native_connect, [1] the client's read after "ping" (4 = "pong",
 # -99 not run), [2] server accept (TLS_OK or its LAST_ERR; -999 no ctx), [3] the server's read
 # (4 = "ping"), [4] client group, [5] server group, [6] client TLS_CTX_OFF_HRR, [7] server's,
@@ -259,9 +261,14 @@ fn _gx_client_run(): i64 {
     _gx_wz_reset(&_gx_wzc);
     _gx_last_client = 0;
     _gx_cpriv0 = 0;
-    var c = tls_native_new_client_in(_gx_ca_arena, 0, 0);
+    var c = tls_native_new_client_in(_gx_ca_arena, _gx_chost, 0);
     _gx_last_client = c;
     tls_native_set_verify(c, TLS_VERIFY_NONE);            # the server's chain is not under test
+    if (_gx_calpn == 1) {
+        var ap[8];
+        store8(&ap, 2); store8(&ap + 1, 104); store8(&ap + 2, 50);   # "h2"
+        tls_native_set_alpn(c, &ap, 3);
+    }
     if (_gx_v12 == 1) { tls_native_set_version_range(c, TLS_VERSION_1_2, TLS_VERSION_1_2); }
     if (_gx_cn > 0) { tls_native_set_groups(c, &_gx_cgroups, _gx_cn); }
     var rc = tls_native_connect(c, GX_CLIENT);
@@ -604,6 +611,7 @@ var _gx_shr_comp = 0;
 var _gx_shr_ver = 0x0304;
 var _gx_shr_ks2 = 0;
 var _gx_shr_ck_off = 0;
+var _gx_shr_sni = 0;     # 1: an empty server_name extension (type 0, which `extra` cannot name)
 
 # A record holding a 1.3 HelloRetryRequest (or, `hrr` 0, a ServerHello with key_share `kg` /
 # `kp` / `kn`): `cipher`, a legacy_session_id_echo of `sid` bytes, supported_versions 0x0304 when
@@ -645,9 +653,11 @@ fn _gx_put_shr(hrr, cipher, sid, sv, kg, kp, kn, cookie_n, extra): i64 {
         while (ci < cookie_n) { _gb8(0xC0 + ci); ci = ci + 1; }
     }
     if (extra != 0) { _gb16(extra); _gb16(0); }
+    if (_gx_shr_sni == 1) { _gb16(TLS_EXT_SERVER_NAME); _gb16(0); }
     _gb_end16(eb);
     _gb_hs_end(hs);
     _gb_rec_end(rec);
+    _gx_shr_sni = 0;
     _gx_shr_comp = 0;
     _gx_shr_ver = 0x0304;
     _gx_shr_ks2 = 0;
@@ -821,6 +831,39 @@ fn test_client_refusals(): i64 {
     _gx_put_shr(1, A256, 0, 1, GX_256, 0, 0, 0, TLS_EXT_ALPN);
     _gx_vs_script_server();
     _gx_crefused("a HelloRetryRequest carrying an extension other than supported_versions / key_share / cookie",
+      TLS_ERR_HANDSHAKE_FAILED, TLS_AD_UNSUPPORTED_EXTENSION);
+    # …unsupported_extension when we did not offer it (above: ALPN, which this client does not send);
+    # illegal_parameter when we did, for a HelloRetryRequest may not carry it (RFC 8446 §4.2).
+    _gb_start(_gx_sc);
+    _gx_put_shr(1, A256, 0, 1, GX_256, 0, 0, 0, TLS_EXT_SUPPORTED_GROUPS);
+    _gx_vs_script_server();
+    _gx_crefused("a HelloRetryRequest carrying supported_groups, which we offered: illegal_parameter",
+      TLS_ERR_HANDSHAKE_FAILED, TLS_AD_ILLEGAL_PARAMETER);
+    _gb_start(_gx_sc);
+    _gx_put_shr(1, A256, 0, 1, GX_256, 0, 0, 0, TLS_EXT_SIGNATURE_ALGORITHMS);
+    _gx_vs_script_server();
+    _gx_crefused("…carrying signature_algorithms: illegal_parameter", TLS_ERR_HANDSHAKE_FAILED,
+      TLS_AD_ILLEGAL_PARAMETER);
+    _gx_calpn = 1;
+    _gb_start(_gx_sc);
+    _gx_put_shr(1, A256, 0, 1, GX_256, 0, 0, 0, TLS_EXT_ALPN);
+    _gx_vs_script_server();
+    _gx_calpn = 0;
+    _gx_crefused("…carrying ALPN to a client that offered ALPN: illegal_parameter", TLS_ERR_HANDSHAKE_FAILED,
+      TLS_AD_ILLEGAL_PARAMETER);
+    _gx_chost = "localhost";
+    _gb_start(_gx_sc);
+    _gx_shr_sni = 1;
+    _gx_put_shr(1, A256, 0, 1, GX_256, 0, 0, 0, 0);
+    _gx_vs_script_server();
+    _gx_chost = 0;
+    _gx_crefused("…carrying server_name to a client that sent SNI: illegal_parameter", TLS_ERR_HANDSHAKE_FAILED,
+      TLS_AD_ILLEGAL_PARAMETER);
+    _gb_start(_gx_sc);
+    _gx_shr_sni = 1;
+    _gx_put_shr(1, A256, 0, 1, GX_256, 0, 0, 0, 0);
+    _gx_vs_script_server();
+    _gx_crefused("…carrying server_name to a client that sent none: unsupported_extension",
       TLS_ERR_HANDSHAKE_FAILED, TLS_AD_UNSUPPORTED_EXTENSION);
     _gb_start(_gx_sc);
     _gx_put_shr(1, 0x1304, 0, 1, GX_256, 0, 0, 0, 0);

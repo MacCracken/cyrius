@@ -143,8 +143,10 @@ fn _tn_sh_is_hrr(msg, len): i64 {
 #   a legacy_session_id_echo that is not our empty one, a cipher suite we did not offer, a
 #   non-null compression method (illegal_parameter);
 #   supported_versions missing (missing_extension) or not 0x0304 (illegal_parameter);
-#   an extension other than supported_versions, key_share and cookie (unsupported_extension — a
-#   HelloRetryRequest may carry nothing we did not offer, the cookie excepted), or one twice
+#   an extension other than supported_versions, key_share and cookie: unsupported_extension when
+#   our ClientHello did not carry it (§4.1.4 — a HelloRetryRequest may carry nothing we did not
+#   offer, the cookie excepted), illegal_parameter when it did (§4.2: an extension we offered that
+#   a HelloRetryRequest may not carry — _tn_client_offered_ext); any of them twice
 #   (illegal_parameter);
 #   a key_share naming a group we did not list, or the group we already sent a share for, or a
 #   HelloRetryRequest with neither a key_share nor a cookie — one that would not change the
@@ -236,7 +238,9 @@ fn tls_native_client_process_hrr(ctx, hrr, hrr_len, out, out_max): i64 {
             cookie_len = el;
         }
         if (known == 0) {
-            return _tn_hs_refuse(ctx, TLS_AD_UNSUPPORTED_EXTENSION, TLS_ERR_HANDSHAKE_FAILED);
+            var xad = TLS_AD_UNSUPPORTED_EXTENSION;
+            if (_tn_client_offered_ext(ctx, et) == 1) { xad = TLS_AD_ILLEGAL_PARAMETER; }
+            return _tn_hs_refuse(ctx, xad, TLS_ERR_HANDSHAKE_FAILED);
         }
         q = q + el;
     }
@@ -280,6 +284,30 @@ fn tls_native_client_process_hrr(ctx, hrr, hrr_len, out, out_max): i64 {
     store64(ctx + TLS_CTX_OFF_CH_BUF, chbuf);
     store64(ctx + TLS_CTX_OFF_CH_LEN, total);
     return total;
+}
+
+# 1 if our buffered ClientHello (TLS_CTX_OFF_CH_BUF — the one a HelloRetryRequest answers)
+# carried an extension of type `et`, else 0. Read from the bytes we sent, not from a list of what
+# _tn_client_hello_write writes, so the two cannot drift. CHANGELOG [6.6.15]
+fn _tn_client_offered_ext(ctx, et): i64 {
+    var ch = load64(ctx + TLS_CTX_OFF_CH_BUF);
+    var n = load64(ctx + TLS_CTX_OFF_CH_LEN);
+    if (ch == 0) { return 0; }
+    var p = TLS_HANDSHAKE_HEADER_LEN + 2 + 32;         # legacy_version, random
+    if (p + 1 > n) { return 0; }
+    p = p + 1 + (load8(ch + p) & 0xFF);                # legacy_session_id
+    if (p + 2 > n) { return 0; }
+    p = p + 2 + _tn_be16_r(ch + p);                    # cipher_suites
+    if (p + 1 > n) { return 0; }
+    p = p + 1 + (load8(ch + p) & 0xFF);                # legacy_compression_methods
+    if (p + 2 > n) { return 0; }
+    var et_total = _tn_be16_r(ch + p);
+    p = p + 2;
+    if (p + et_total > n) { return 0; }
+    var dp = 0;
+    var dl = 0;
+    if (_tn_find_ext(ch + p, et_total, et, &dp, &dl) == 1) { return 1; }
+    return 0;
 }
 
 # Client: parse a ServerHello (.25, RFC 8446 §4.1.3) and set up the client's handshake keys.
