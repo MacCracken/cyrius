@@ -18,6 +18,9 @@
 #   break/continue in a closure   targeted the ENCLOSING fn's loop from inside the closure
 # and a `defer` in a coroutine never ran at all: its flag was SET in the heap frame and TESTED
 # on the stack frame, because the coroutine mode was cleared before the epilogue.
+# 6.6.15: a `defer` or `secret var` in a `#naked` fn is refused too. A naked fn has no epilogue
+# (its body ends in its own asm return), so the walker emitted after the body was unreachable:
+# the defer block never ran (the probe below exited 0, want 5) and the secret was never zeroised.
 #
 # ⚠ A SHELL gate, not a .tcyr: refusals are compile-time (a .tcyr can only run what compiled),
 # and `async`/`await` are gated behind CYRIUS_ASYNC=1, which the tcyr runner cannot set. The
@@ -101,6 +104,14 @@ printf 'var c = 0;\nfn k(): i64 { defer { var j = 0; while (j < 3) { j = j + 1; 
 runs "control: a loop OPENED inside a defer body breaks normally" 2
 printf 'var c = 0;\nfn k(x): i64 { defer { switch (x) { case 1: c = 5; break; default: c = 9; } } return 1; }\nvar z = k(1);\nsyscall(60, c);\n' > "$T/r.cyr"
 runs "control: a switch opened inside a defer body breaks normally" 5
+
+# ── #naked: no epilogue, so nothing an epilogue runs ─────────────────────────────────────
+printf 'var g = 0;\n#naked\nfn f() { defer { g = 5; } asm { 0xC3; } }\nfn main(): i64 { f(); return g; }\nvar r = main();\nsyscall(60, r);\n' > "$T/r.cyr"
+refuse "defer in a #naked fn" "defer is not allowed in a #naked fn"
+printf '#naked\nfn f(): i64 {\n    secret var k[16];\n    asm { 0xC3; }\n}\nsyscall(60, 0);\n' > "$T/r.cyr"
+refuse "secret var in a #naked fn" "secret var is not allowed in a #naked fn"
+printf 'var g = 0;\n#naked\nfn nk() { asm { 0xC3; } }\nfn f(): i64 { secret var k[16]; defer { g = 5; } nk(); return 0; }\nvar z = f();\nsyscall(60, g);\n' > "$T/r.cyr"
+runs "control: a #naked fn beside a fn with a secret var and a defer" 5
 
 # ── break / continue with nothing to leave in THIS fn ────────────────────────────────────
 printf 'fn f(x): i64 { if (x > 0) { break; } return 3; }\nvar r = f(1);\nsyscall(60, r);\n' > "$T/r.cyr"

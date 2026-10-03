@@ -2493,9 +2493,14 @@ fn LEX(S): i64 {
                                                                                                                                     # String interning: check if an identical string already
                                                                                                                                     # exists in str_data. If so, reuse its offset — deduplicates string
                                                                                                                                     # literals so pointer-identity comparison works.
+                                                                                                                                    # ⛔ The window compared at `si` (slen + 1 bytes) must lie wholly in the COMMITTED pool,
+                                                                                                                                    # below sstart: past it is this literal's own copy, which the next literal overwrites once
+                                                                                                                                    # this one is interned. A literal holding a NUL matched there and aliased onto bytes that
+                                                                                                                                    # were not its own (`"a"`, `"a\0a"`, `"zzzz"`: X+2 read 'z'). A NUL-free literal never
+                                                                                                                                    # reaches sstart (the byte before it is a terminator), so it is unaffected. CHANGELOG [6.6.15]
                                                                                                                                     var interned = 0 - 1;
                                                                                                                                     var si = 0;
-                                                                                                                                    while (si < sstart) {
+                                                                                                                                    while (si + slen < sstart) {
                                                                                                                                         var eq = 1;
                                                                                                                                         var sk = 0;
                                                                                                                                         while (sk <= slen) {

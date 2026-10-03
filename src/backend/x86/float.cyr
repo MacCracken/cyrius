@@ -66,6 +66,11 @@ fn EDEFER_SAVE(S): i64 {
     _EBN(S, 0x30244C7F0FF3, 6);         # movdqu [rsp+48], xmm1
     return 0;
 }
+# ⛔ THE AREA IS CLEARED BEFORE IT IS RELEASED. It runs AFTER the blocks — a `secret var` wipe
+# among them — so leaving it behind wrote every return register into dead stack after the wipe:
+# sigil 3.13.7's signer left the ECDSA nonce k there (xmm1 held the DRBG's last SHA state). The
+# clear uses immediate stores, so it touches no register the convention returns in; r11 carries
+# the entry rsp out of slot [24] before that slot is zeroed. CHANGELOG [6.6.15] (CVE-69)
 fn EDEFER_RESTORE(S): i64 {
     _IR_REC0(S, IR_RAW_EMIT);
     _EBN(S, 0x30244C6F0FF3, 6);         # movdqu xmm1, [rsp+48]
@@ -73,7 +78,16 @@ fn EDEFER_RESTORE(S): i64 {
     _EBN(S, 0x1024448B4C, 5);           # mov r8, [rsp+16]
     _EBN(S, 0x0824548B48, 5);           # mov rdx, [rsp+8]
     _EBN(S, 0x24048B48, 4);             # mov rax, [rsp]
-    _EBN(S, 0x1824648B48, 5);           # mov rsp, [rsp+24]
+    _EBN(S, 0x18245C8B4C, 5);           # mov r11, [rsp+24]   (the entry rsp)
+    _EBN(S, 0x2404C748, 4);             # mov qword [rsp], 0
+    _EBN(S, 0, 4);
+    var d = 8;
+    while (d < 64) {
+        _EBN(S, 0x2444C748 | (d << 32), 5);   # mov qword [rsp+d], 0
+        _EBN(S, 0, 4);
+        d = d + 8;
+    }
+    _EBN(S, 0xDC894C, 3);               # mov rsp, r11
     _flags_reflect_rax = 0;
     return 0;
 }

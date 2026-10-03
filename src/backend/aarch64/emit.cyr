@@ -316,10 +316,17 @@ fn EDEFER_SAVE(S): i64 {
     EW(S, 0xAD0107E0);   # stp q0, q1, [sp, #32]
     return 0;
 }
+# ⛔ Cleared (xzr pairs) before the `add` releases it: the area outlives the blocks — the
+# `secret var` wipe among them — so it held every return register in dead stack after the wipe.
+# See x86 float.cyr `EDEFER_RESTORE`. CHANGELOG [6.6.15] (CVE-69)
 fn EDEFER_RESTORE(S): i64 {
     EW(S, 0xAD4107E0);   # ldp q0, q1, [sp, #32]
     EW(S, 0xA9410FE2);   # ldp x2, x3, [sp, #16]
     EW(S, 0xA94007E0);   # ldp x0, x1, [sp]
+    EW(S, 0xA9007FFF);   # stp xzr, xzr, [sp]
+    EW(S, 0xA9017FFF);   # stp xzr, xzr, [sp, #16]
+    EW(S, 0xA9027FFF);   # stp xzr, xzr, [sp, #32]
+    EW(S, 0xA9037FFF);   # stp xzr, xzr, [sp, #48]
     EW(S, 0x910103FF);   # add sp, sp, #64
     return 0;
 }
