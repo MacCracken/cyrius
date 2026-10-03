@@ -27,19 +27,26 @@
 # certificates on a group of the other curve; no shared group (an alert, both versions); refusals
 # by the client (a HelloRetryRequest for a group it did not offer, for the group it already shared,
 # one that changes nothing, a second one, an unknown extension in it, a cipher / session id it did
-# not send, a compression method, a supported_versions other than 0x0304, key_share twice, a
-# mis-sized cookie; a ServerHello after it with another cipher or group, or after two CCS; a
-# ServerHello with a compression method or a session-id echo we did not send; an all-zero x25519
-# share) and by the server (a share for a group not in supported_groups, two shares for one group,
-# a share of the wrong length, no supported_groups, supported_groups with no key_share, an
-# odd-length supported_groups, a second ClientHello without the share the HelloRetryRequest asked
-# for — never a second HelloRetryRequest —, with another cipher or session id, or no longer
-# offering TLS 1.3; an off-curve point; a low-order x25519 key; 1.2: no shared group, a malformed
-# supported_groups, an off-curve or short ClientKeyExchange); the client taking one server CCS
-# between a HelloRetryRequest and the ServerHello;
-# every row checks that neither side holds a byte of its ephemeral private key or shared secret
-# afterwards, failed handshakes and failed writes included; tls_native_set_groups and the
-# ClientHellos it shapes; a deterministic mutation pass over the new parsers.
+# not send, a compression method, a supported_versions other than 0x0304, supported_versions /
+# key_share / cookie twice, a supported_versions or key_share of the wrong size, a mis-sized or
+# empty cookie, a byte after its extensions; a ServerHello after it with another cipher or group,
+# or after two CCS; a ServerHello with a compression method, a session-id echo we did not send, a
+# DOWNGRD random, no or another supported_versions, a cipher we did not offer, no key_share, a
+# share of the wrong length or a byte after it; an all-zero x25519 share; and, called directly,
+# each step handed the other's message) and by the server (a share for a group not in
+# supported_groups, two shares for one group, a share of the wrong length or an empty one, a
+# client_shares length that is not its extension's, no supported_groups, supported_groups with no
+# key_share, an odd-length, short or empty supported_groups list, a session id over 32 bytes, no
+# cipher suite in common, a second ClientHello without the share the HelloRetryRequest asked for —
+# never a second HelloRetryRequest —, with another cipher or session id, or no longer offering
+# TLS 1.3; an off-curve point; a low-order x25519 key; 1.2: no shared group, a malformed
+# supported_groups, an off-curve or short ClientKeyExchange, one under another handshake type or
+# whose length byte is not its point's); the client taking one server CCS between a
+# HelloRetryRequest and the ServerHello;
+# every row run through a driver checks that neither side holds a byte of its ephemeral private
+# key or shared secret afterwards, failed handshakes and failed writes included;
+# tls_native_set_groups and the ClientHellos it shapes; a deterministic mutation pass over the new
+# parsers.
 #
 # MUTATIONS measured RED: see the ledger at the end of this file.
 include "lib/assert.cyr"
@@ -653,6 +660,13 @@ var _gx_shr_ver = 0x0304;
 var _gx_shr_ks2 = 0;
 var _gx_shr_ck_off = 0;
 var _gx_shr_sni = 0;     # 1: an empty server_name extension (type 0, which `extra` cannot name)
+var _gx_shr_sv2 = 0;     # 1: supported_versions written twice, both well formed
+var _gx_shr_ck2 = 0;     # 1: the cookie written twice, both well formed
+var _gx_shr_ck0 = 0;     # 1: an empty cookie (cookie<1..2^16-1> forbids it), well framed
+var _gx_shr_sv_pad = 0;  # zero bytes appended inside supported_versions (its length grows by as many)
+var _gx_shr_ks_pad = 0;  # …inside the key_share: after the group (HelloRetryRequest) or the key
+var _gx_shr_dg = 0;      # 1: the random ends with RFC 8446 §4.1.3's TLS 1.2 DOWNGRD marker
+var _gx_shr_tail = 0;    # zero bytes after the extension block, inside the handshake message
 
 # A record holding a 1.3 HelloRetryRequest (or, `hrr` 0, a ServerHello with key_share `kg` /
 # `kp` / `kn`): `cipher`, a legacy_session_id_echo of `sid` bytes, supported_versions 0x0304 when
@@ -667,35 +681,51 @@ fn _gx_put_shr(hrr, cipher, sid, sv, kg, kp, kn, cookie_n, extra): i64 {
         _tn_hrr_random(&r);
         _gbmem(&r, 32);
     } else {
-        _gbfill(0x5A, 32);
+        if (_gx_shr_dg == 1) {
+            _gbfill(0x5A, 24);
+            _gbmem("DOWNGRD", 7);
+            _gb8(1);
+        } else {
+            _gbfill(0x5A, 32);
+        }
     }
     _gb8(sid);
     _gbfill(0x11, sid);
     _gb16(cipher);
     _gb8(_gx_shr_comp);
     var eb = _gb_len16();
-    if (sv == 1) {
-        _gb16(TLS_EXT_SUPPORTED_VERSIONS); _gb16(2); _gb16(_gx_shr_ver);
+    var svn = 0;
+    if (sv == 1) { svn = 1 + _gx_shr_sv2; }
+    while (svn > 0) {
+        _gb16(TLS_EXT_SUPPORTED_VERSIONS); _gb16(2 + _gx_shr_sv_pad); _gb16(_gx_shr_ver);
+        _gbfill(0, _gx_shr_sv_pad);
+        svn = svn - 1;
     }
     var ksn = 0;
     if (kg != 0) { ksn = 1 + _gx_shr_ks2; }
     while (ksn > 0) {
         _gb16(TLS_EXT_KEY_SHARE);
         if (hrr == 1) {
-            _gb16(2); _gb16(kg);
+            _gb16(2 + _gx_shr_ks_pad); _gb16(kg);
         } else {
-            _gb16(4 + kn); _gb16(kg); _gb16(kn); _gbmem(kp, kn);
+            _gb16(4 + kn + _gx_shr_ks_pad); _gb16(kg); _gb16(kn); _gbmem(kp, kn);
         }
+        _gbfill(0, _gx_shr_ks_pad);
         ksn = ksn - 1;
     }
-    if (cookie_n > 0) {
+    var ckn = 0;
+    if (cookie_n > 0) { ckn = 1 + _gx_shr_ck2; }
+    while (ckn > 0) {
         _gb16(TLS_EXT_COOKIE); _gb16(2 + cookie_n); _gb16(cookie_n + _gx_shr_ck_off);
         var ci = 0;
         while (ci < cookie_n) { _gb8(0xC0 + ci); ci = ci + 1; }
+        ckn = ckn - 1;
     }
+    if (_gx_shr_ck0 == 1) { _gb16(TLS_EXT_COOKIE); _gb16(2); _gb16(0); }
     if (extra != 0) { _gb16(extra); _gb16(0); }
     if (_gx_shr_sni == 1) { _gb16(TLS_EXT_SERVER_NAME); _gb16(0); }
     _gb_end16(eb);
+    _gbfill(0, _gx_shr_tail);
     _gb_hs_end(hs);
     _gb_rec_end(rec);
     _gx_shr_sni = 0;
@@ -703,14 +733,25 @@ fn _gx_put_shr(hrr, cipher, sid, sv, kg, kp, kn, cookie_n, extra): i64 {
     _gx_shr_ver = 0x0304;
     _gx_shr_ks2 = 0;
     _gx_shr_ck_off = 0;
+    _gx_shr_sv2 = 0;
+    _gx_shr_ck2 = 0;
+    _gx_shr_ck0 = 0;
+    _gx_shr_sv_pad = 0;
+    _gx_shr_ks_pad = 0;
+    _gx_shr_dg = 0;
+    _gx_shr_tail = 0;
     return 0;
 }
 
 # One-shot shapes for the NEXT _gx_put_ch13 / _gx_put_ch12: the one version its
 # supported_versions lists (0: no supported_versions at all; _gx_put_ch13 only), and a stray
-# byte that leaves its supported_groups list odd-length.
+# byte that leaves its supported_groups list odd-length; for _gx_put_ch13 only, an amount added to
+# the supported_groups list's length field and to the key_share's client_shares length field
+# (each then disagrees with the bytes its extension holds).
 var _gx_ch_ver = 0x0304;
 var _gx_ch_sg_odd = 0;
+var _gx_ch_sg_off = 0;
+var _gx_ch_ks_off = 0;
 
 # A record holding a 1.3 ClientHello: a `sid`-byte legacy_session_id of `sidb`, cipher suites
 # `c0` [`c1`], supported_versions 1.3, supported_groups `g0` `g1` `g2` (0 ends the list; `nsg`
@@ -740,7 +781,7 @@ fn _gx_put_ch13(sid, sidb, c0, c1, nsg, g0, g1, g2, nks, k0g, k0p, k0n, k1g, k1p
         if (g1 != 0) { _gb16(g1); }
         if (g2 != 0) { _gb16(g2); }
         if (_gx_ch_sg_odd == 1) { _gb8(0); }
-        _gb_end16(gl);
+        _gb_put16(gl, _gbn - gl - 2 + _gx_ch_sg_off);
         _gb_end16(sl);
     }
     if (nks >= 0) {
@@ -749,7 +790,7 @@ fn _gx_put_ch13(sid, sidb, c0, c1, nsg, g0, g1, g2, nks, k0g, k0p, k0n, k1g, k1p
         var cl = _gb_len16();
         if (nks >= 1) { _gb16(k0g); _gb16(k0n); _gbmem(k0p, k0n); }
         if (nks >= 2) { _gb16(k1g); _gb16(k1n); _gbmem(k1p, k1n); }
-        _gb_end16(cl);
+        _gb_put16(cl, _gbn - cl - 2 + _gx_ch_ks_off);
         _gb_end16(kl);
     }
     _gb_end16(eb);
@@ -757,6 +798,8 @@ fn _gx_put_ch13(sid, sidb, c0, c1, nsg, g0, g1, g2, nks, k0g, k0p, k0n, k1g, k1p
     _gb_rec_end(rec);
     _gx_ch_ver = 0x0304;
     _gx_ch_sg_odd = 0;
+    _gx_ch_sg_off = 0;
+    _gx_ch_ks_off = 0;
     return 0;
 }
 
@@ -819,14 +862,23 @@ fn _gx_sh_cipher(log, len): i64 {
     return 0 - 1;
 }
 
+# One-shot shapes for the NEXT _gx_put_cke: its handshake type (0: ClientKeyExchange), and an
+# amount added to the point's length byte (the body keeps the point's own length).
+var _gx_cke_type = 0;
+var _gx_cke_lb_off = 0;
+
 # A record holding a TLS 1.2 ClientKeyExchange with an `n`-byte point.
 fn _gx_put_cke(p, n): i64 {
     var rec = _gb_rec(TLS_CT_HANDSHAKE);
-    var hs = _gb_hs(TLS_HS_CLIENT_KEY_EXCHANGE);
-    _gb8(n);
+    var t = TLS_HS_CLIENT_KEY_EXCHANGE;
+    if (_gx_cke_type != 0) { t = _gx_cke_type; }
+    var hs = _gb_hs(t);
+    _gb8(n + _gx_cke_lb_off);
     _gbmem(p, n);
     _gb_hs_end(hs);
     _gb_rec_end(rec);
+    _gx_cke_type = 0;
+    _gx_cke_lb_off = 0;
     return 0;
 }
 
@@ -979,6 +1031,49 @@ fn test_client_refusals(): i64 {
     _gx_crefused("a HelloRetryRequest cookie whose length is not its extension's", TLS_ERR_BAD_HANDSHAKE,
       TLS_AD_DECODE_ERROR);
     assert_eq(_gx_obs[6], 0, "  not taken");
+    # Each of the next rows is a HelloRetryRequest the client would TAKE without the one check it
+    # names (measured: rc TLS_ERR_IO, the latch set, no alert) — so each shape is otherwise well formed.
+    _gb_start(_gx_sc);
+    _gx_shr_sv2 = 1;
+    _gx_put_shr(1, A256, 0, 1, GX_256, 0, 0, 0, 0);
+    _gx_vs_script_server();
+    _gx_crefused("a HelloRetryRequest carrying supported_versions twice, both 0x0304 (RFC 8446 §4.2)",
+      TLS_ERR_HANDSHAKE_FAILED, TLS_AD_ILLEGAL_PARAMETER);
+    assert_eq(_gx_obs[6], 0, "  not taken");
+    _gb_start(_gx_sc);
+    _gx_shr_ck2 = 1;
+    _gx_put_shr(1, A256, 0, 1, GX_256, 0, 0, 4, 0);
+    _gx_vs_script_server();
+    _gx_crefused("a HelloRetryRequest carrying the cookie twice, both 4 well-formed bytes", TLS_ERR_HANDSHAKE_FAILED,
+      TLS_AD_ILLEGAL_PARAMETER);
+    assert_eq(_gx_obs[6], 0, "  not taken");
+    _gb_start(_gx_sc);
+    _gx_shr_ck0 = 1;
+    _gx_put_shr(1, A256, 0, 1, GX_256, 0, 0, 0, 0);
+    _gx_vs_script_server();
+    _gx_crefused("a HelloRetryRequest with an empty cookie (cookie<1..2^16-1>)", TLS_ERR_BAD_HANDSHAKE,
+      TLS_AD_DECODE_ERROR);
+    assert_eq(_gx_obs[6], 0, "  not taken");
+    _gb_start(_gx_sc);
+    _gx_shr_sv_pad = 2;
+    _gx_put_shr(1, A256, 0, 1, GX_256, 0, 0, 0, 0);
+    _gx_vs_script_server();
+    _gx_crefused("a HelloRetryRequest whose supported_versions is 4 bytes (0x0304, then two more)",
+      TLS_ERR_BAD_HANDSHAKE, TLS_AD_DECODE_ERROR);
+    assert_eq(_gx_obs[6], 0, "  not taken");
+    _gb_start(_gx_sc);
+    _gx_shr_ks_pad = 2;
+    _gx_put_shr(1, A256, 0, 1, GX_256, 0, 0, 0, 0);
+    _gx_vs_script_server();
+    _gx_crefused("a HelloRetryRequest whose key_share is 4 bytes (P-256, then two more)", TLS_ERR_BAD_HANDSHAKE,
+      TLS_AD_DECODE_ERROR);
+    assert_eq(_gx_obs[6], 0, "  not taken");
+    _gb_start(_gx_sc);
+    _gx_shr_tail = 1;
+    _gx_put_shr(1, A256, 0, 1, GX_256, 0, 0, 0, 0);
+    _gx_vs_script_server();
+    _gx_crefused("a HelloRetryRequest with a byte after its extensions", TLS_ERR_BAD_HANDSHAKE, TLS_AD_DECODE_ERROR);
+    assert_eq(_gx_obs[6], 0, "  not taken");
     _gb_start(_gx_sc);
     _gx_shr_comp = 1;
     _gx_put_shr(0, A256, 0, 1, GX_X, _gk_x, 32, 0, 0);
@@ -990,6 +1085,47 @@ fn test_client_refusals(): i64 {
     _gx_vs_script_server();
     _gx_crefused("a ServerHello echoing a 32-byte session id (the client sent an empty one)",
       TLS_ERR_HANDSHAKE_FAILED, TLS_AD_ILLEGAL_PARAMETER);
+    # Each of the next ServerHellos the client would take without the one check it names.
+    _gb_start(_gx_sc);
+    _gx_shr_dg = 1;
+    _gx_put_shr(0, A256, 0, 1, GX_X, _gk_x, 32, 0, 0);
+    _gx_vs_script_server();
+    _gx_crefused("a ServerHello whose random ends with the DOWNGRD marker (RFC 8446 §4.1.3)", TLS_ERR_VERSION,
+      TLS_AD_ILLEGAL_PARAMETER);
+    _gb_start(_gx_sc);
+    _gx_put_shr(0, A256, 0, 0, GX_X, _gk_x, 32, 0, 0);
+    _gx_vs_script_server();
+    _gx_crefused("a ServerHello without supported_versions: protocol_version", TLS_ERR_VERSION,
+      TLS_AD_PROTOCOL_VERSION);
+    _gb_start(_gx_sc);
+    _gx_shr_ver = 0x0303;
+    _gx_put_shr(0, A256, 0, 1, GX_X, _gk_x, 32, 0, 0);
+    _gx_vs_script_server();
+    _gx_crefused("a ServerHello whose supported_versions names 0x0303", TLS_ERR_VERSION, TLS_AD_ILLEGAL_PARAMETER);
+    _gb_start(_gx_sc);
+    _gx_put_shr(0, 0x1304, 0, 1, GX_X, _gk_x, 32, 0, 0);
+    _gx_vs_script_server();
+    _gx_crefused("a ServerHello naming a cipher suite the client never offered", TLS_ERR_CIPHER_NOT_SUPPORTED,
+      TLS_AD_ILLEGAL_PARAMETER);
+    _gb_start(_gx_sc);
+    _gx_put_shr(0, A256, 0, 1, 0, 0, 0, 0, 0);
+    _gx_vs_script_server();
+    _gx_crefused("a ServerHello without a key_share: missing_extension", TLS_ERR_HANDSHAKE_FAILED,
+      TLS_AD_MISSING_EXTENSION);
+    _gb_start(_gx_sc);
+    _gx_put_shr(0, A256, 0, 1, GX_X, _gk_x, 31, 0, 0);
+    _gx_vs_script_server();
+    _gx_crefused("a ServerHello x25519 share of 31 bytes", TLS_ERR_BAD_HANDSHAKE, TLS_AD_ILLEGAL_PARAMETER);
+    _gb_start(_gx_sc);
+    _gx_put_shr(0, A256, 0, 1, GX_X, _gk_384, 33, 0, 0);
+    _gx_vs_script_server();
+    _gx_crefused("a ServerHello x25519 share of 33 bytes", TLS_ERR_BAD_HANDSHAKE, TLS_AD_ILLEGAL_PARAMETER);
+    _gb_start(_gx_sc);
+    _gx_shr_ks_pad = 1;
+    _gx_put_shr(0, A256, 0, 1, GX_X, _gk_x, 32, 0, 0);
+    _gx_vs_script_server();
+    _gx_crefused("a ServerHello key_share with a byte after its 32-byte x25519 key", TLS_ERR_BAD_HANDSHAKE,
+      TLS_AD_DECODE_ERROR);
 
     test_group("6.6.15 — the TLS 1.3 client takes ONE HelloRetryRequest");
     _gb_start(_gx_sc);
@@ -1066,6 +1202,35 @@ fn test_client_refusals(): i64 {
     _gx_vs_script_server();
     _gx_crefused("a P-256 point off the curve", TLS_ERR_HANDSHAKE_FAILED, TLS_AD_ILLEGAL_PARAMETER);
     _gx_cl(0, 0, 0);
+    return 0;
+}
+
+# The two refusals tls_native_connect cannot reach: it hands every HelloRetryRequest to
+# tls_native_client_process_hrr and reads the record after one with
+# tls_native_client_parse_server_hello, so each public step's own guard against the other's
+# message shows only when the step is called directly.
+fn test_client_direct_refusals(): i64 {
+    test_group("6.6.15 — the client's HelloRetryRequest and ServerHello steps, called directly");
+    var buf = alloc(1024);
+    var out = alloc(8192);
+    _gb_start(buf);
+    _gx_put_shr(1, TLS_AES_256_GCM_SHA384, 0, 1, GX_256, 0, 0, 0, 0);
+    var hrr = buf + 5;
+    var hrrn = _gbn - 5;
+    reset_via(_gx_ca_arena);
+    var c = tls_native_new_client_in(_gx_ca_arena, 0, 0);
+    assert(tls_native_client_build_hello(c, out, 8192) > 0, "a ClientHello");
+    assert(tls_native_client_process_hrr(c, hrr, hrrn, out, 8192) > 0, "a HelloRetryRequest for P-256: taken");
+    assert_eq(tls_native_client_process_hrr(c, hrr, hrrn, out, 8192), TLS_ERR_PROTOCOL,
+      "the same HelloRetryRequest again: TLS_ERR_PROTOCOL (one per connection)");
+    assert_eq(load64(c + TLS_CTX_OFF_HS_ALERT), TLS_AD_UNEXPECTED_MESSAGE, "  the alert recorded: unexpected_message");
+    var c2 = tls_native_new_client_in(_gx_ca_arena, 0, 0);
+    tls_native_client_build_hello(c2, out, 8192);
+    assert_eq(tls_native_client_parse_server_hello(c2, hrr, hrrn), TLS_ERR_HANDSHAKE_FAILED,
+      "a HelloRetryRequest handed to the ServerHello step: TLS_ERR_HANDSHAKE_FAILED");
+    assert_eq(load64(c2 + TLS_CTX_OFF_HS_ALERT), TLS_AD_UNEXPECTED_MESSAGE, "  the alert recorded: unexpected_message");
+    _tn_wipe_ephemeral(c);
+    _tn_wipe_ephemeral(c2);
     return 0;
 }
 
@@ -1191,6 +1356,49 @@ fn test_server_refusals(): i64 {
     _gx_put_ch13(0, 0, A256, 0, 1, GX_X, 0, 0, 1, GX_X, _gk_x, 32, 0, 0, 0);
     _gx_vs_script_client();
     _gx_srefused("a supported_groups list of odd length", TLS_ERR_BAD_HANDSHAKE, TLS_AD_DECODE_ERROR, 0);
+    # Each of the next ClientHellos the server would take without the one check it names (measured:
+    # accept TLS_ERR_IO at the script's end, no alert) — x25519's share is not validated as a point,
+    # so its LENGTH is all that stands between a short or long share and a handshake.
+    _gb_start(_gx_cs);
+    _gx_put_ch13(0, 0, A256, 0, 1, GX_X, 0, 0, 1, GX_X, _gk_x, 31, 0, 0, 0);
+    _gx_vs_script_client();
+    _gx_srefused("an x25519 share of 31 bytes", TLS_ERR_HANDSHAKE_FAILED, TLS_AD_ILLEGAL_PARAMETER, 0);
+    _gb_start(_gx_cs);
+    _gx_put_ch13(0, 0, A256, 0, 1, GX_X, 0, 0, 1, GX_X, _gk_384, 33, 0, 0, 0);
+    _gx_vs_script_client();
+    _gx_srefused("an x25519 share of 33 bytes", TLS_ERR_HANDSHAKE_FAILED, TLS_AD_ILLEGAL_PARAMETER, 0);
+    _gb_start(_gx_cs);
+    _gx_ch_sg_off = 0 - 2;
+    _gx_put_ch13(0, 0, A256, 0, 1, GX_X, GX_256, 0, 1, GX_X, _gk_x, 32, 0, 0, 0);
+    _gx_vs_script_client();
+    _gx_srefused("a supported_groups list shorter than its extension", TLS_ERR_BAD_HANDSHAKE,
+      TLS_AD_DECODE_ERROR, 0);
+    _gb_start(_gx_cs);
+    _gx_put_ch13(0, 0, A256, 0, 1, 0, 0, 0, 1, GX_X, _gk_x, 32, 0, 0, 0);
+    _gx_vs_script_client();
+    _gx_srefused("an empty supported_groups list (named_group_list<2..2^16-1>)", TLS_ERR_BAD_HANDSHAKE,
+      TLS_AD_DECODE_ERROR, 0);
+    _gb_start(_gx_cs);
+    _gx_ch_ks_off = 1;
+    _gx_put_ch13(0, 0, A256, 0, 1, GX_X, 0, 0, 1, GX_X, _gk_x, 32, 0, 0, 0);
+    _gx_vs_script_client();
+    _gx_srefused("a key_share whose client_shares length is not its extension's", TLS_ERR_BAD_HANDSHAKE,
+      TLS_AD_DECODE_ERROR, 0);
+    _gb_start(_gx_cs);
+    _gx_put_ch13(0, 0, A256, 0, 1, GX_X, 0, 0, 1, GX_X, _gk_x, 0, 0, 0, 0);
+    _gx_vs_script_client();
+    _gx_srefused("an x25519 share with an empty key_exchange (key_exchange<1..2^16-1>)", TLS_ERR_BAD_HANDSHAKE,
+      TLS_AD_DECODE_ERROR, 0);
+    _gb_start(_gx_cs);
+    _gx_put_ch13(0, 0, 0x1304, 0, 1, GX_X, 0, 0, 1, GX_X, _gk_x, 32, 0, 0, 0);
+    _gx_vs_script_client();
+    _gx_srefused("a ClientHello offering only a cipher suite the server does not do: handshake_failure",
+      TLS_ERR_CIPHER_NOT_SUPPORTED, TLS_AD_HANDSHAKE_FAILURE, 0);
+    _gb_start(_gx_cs);
+    _gx_put_ch13(33, 0x11, A256, 0, 1, GX_X, 0, 0, 1, GX_X, _gk_x, 32, 0, 0, 0);
+    _gx_vs_script_client();
+    _gx_srefused("a 33-byte legacy_session_id (legacy_session_id<0..32>)", TLS_ERR_BAD_HANDSHAKE,
+      TLS_AD_DECODE_ERROR, 0);
 
     test_group("6.6.15 — the TLS 1.3 server's second ClientHello: ONE HelloRetryRequest, then the share it asked for");
     _gb_start(_gx_cs);
@@ -1394,6 +1602,20 @@ fn test_server_refusals(): i64 {
     _gx_put_cke(_gk_zero, 32);
     _gx_vs_script_client();
     _gx_srefused("an all-zero x25519 ClientKeyExchange", TLS_ERR_HANDSHAKE_FAILED, TLS_AD_ILLEGAL_PARAMETER, 0);
+    _gb_start(_gx_cs);
+    _gx_put_ch12(1, GX_256, 0);
+    _gx_cke_type = TLS_HS_CERTIFICATE_VERIFY;
+    _gx_put_cke(_gk_256, 65);
+    _gx_vs_script_client();
+    _gx_srefused("a valid P-256 ClientKeyExchange body under handshake type 15, not 16: decode_error",
+      TLS_ERR_BAD_HANDSHAKE, TLS_AD_DECODE_ERROR, 0);
+    _gb_start(_gx_cs);
+    _gx_put_ch12(1, GX_256, 0);
+    _gx_cke_lb_off = 0 - 1;
+    _gx_put_cke(_gk_256, 65);
+    _gx_vs_script_client();
+    _gx_srefused("a P-256 ClientKeyExchange whose point length byte says 64 (the body holds 65)",
+      TLS_ERR_HANDSHAKE_FAILED, TLS_AD_ILLEGAL_PARAMETER, 0);
     _gx_v12 = 0;
     return 0;
 }
@@ -1675,6 +1897,7 @@ fn _gx_all(): i64 {
     test_matrix13();
     test_matrix12();
     test_client_refusals();
+    test_client_direct_refusals();
     test_server_refusals();
     test_failed_writes();
     test_parser_mutations();
@@ -1723,5 +1946,32 @@ fn _gx_all(): i64 {
 #   D1  the 1.2 server's suite chosen by tls_native_12_cipher_supported again (ECDHE_RSA, AES128) [5]
 #   D2  the 1.2 server not bounding an ECDSA certificate's curve by supported_groups [8]
 #   P1  the dispatcher's refusals without their alert again (protocol_version, decode_error) [3]
+# The second review (an independent verifier) found four refusals the contract and this file
+# document that still had no row: each deleted, all 37 tls*.tcyr stayed green (R1-R4). A sweep then
+# deleted every refusal statement in the functions this work wrote or rewrote, one per build (144:
+# the HelloRetryRequest / ServerHello / ClientHello / ClientKeyExchange parsers, _tn_sg_has,
+# _tn_ecdhe_shared, the drivers' alert sends) — 52 RED on the 738 assertions before these rows.
+# Every survivor that is a refusal the docs name got a row; each deletion below is RED on the 832
+# (its row's return code, alert or HRR latch; most were TAKEN — rc TLS_ERR_IO, no alert):
+#   R1  HRR: supported_versions twice, both 0x0304         R13 SH: supported_versions 0x0303
+#   R2  HRR: the cookie twice, both 4 bytes                R14 SH: no key_share (missing_extension)
+#   R3  HRR: an empty cookie                               R15 SH: an x25519 share of 31 / 33 bytes
+#   R4  server: an x25519 share of 31 / 33 bytes           R16 SH: a byte after the share's key
+#   R5  HRR: a 4-byte supported_versions                   R17 server: no cipher suite in common
+#   R6  HRR: a 4-byte key_share                            R18 server: a 33-byte session id
+#   R7  HRR: a byte after its extensions                   R19 server: client_shares' length
+#   R8  process_hrr called again on a taken HRR            R20 server: an empty key_exchange
+#   R9  parse_server_hello handed an HRR                   R21 server: a short supported_groups list
+#   R10 SH: the DOWNGRD marker                             R22 server: an empty supported_groups list
+#   R11 SH: a cipher suite never offered                   R23 1.2 server: a CKE of handshake type 15
+#   R12 SH: no supported_versions (protocol_version)       R24 1.2 server: the CKE's point length byte
+# The sweep's 68 survivors are no refusal the docs name: a step's role guard (a client step given a
+# server ctx); framing the driver checked before calling the step (the handshake header and type,
+# the HelloRetryRequest sentinel; the dispatcher's decode_error return, which respond_hello
+# repeats); _tn_ecdhe_shared's guards, which its callers make unreachable, and the 1.2 client's
+# `want == 0`, which its group check does; length checks whose input a later check refuses with the
+# same alert, or that only bound a read (the parser-mutation group asserts no such input faults);
+# and checks this work did not write (the rest of the 1.2 client's ServerKeyExchange parse, the
+# 1.2 server's client-certificate reads).
 _gx_all();
 var r = assert_summary();
