@@ -158,6 +158,30 @@ RFC 9525 §6.3):
 - Pinned end to end by `tests/gates/platform/tls_libssl_hostname_binding.sh` (both
   backends against OpenSSL's `s_server`).
 
+#### Key exchange (native TLS 1.2 client, 6.6.15)
+
+The native TLS 1.2 client offers x25519, secp256r1 and secp384r1 in supported_groups — x25519
+first, always all three, with or without a client certificate — and does ECDHE on whichever the server's ServerKeyExchange names: sigil's constant-time
+`ecdh_p256_*` / `ecdh_p384_*` for the NIST curves, the key drawn through the
+`tls_native_set_entropy` hook, the server's uncompressed point validated by sigil (0x04 prefix,
+coordinates below p, on the curve — `TLS_ERR_HANDSHAKE_FAILED` otherwise), the premaster the
+shared point's x-coordinate (RFC 8422 §5.10). The private key and the premaster are zeroised as
+soon as each has been used. `tls_native_get_group` reports the negotiated group. A
+ServerKeyExchange signed with an ECDSA scheme is read as TLS 1.2 defines it — the scheme names
+the hash, the key names the curve — so a P-384 server certificate that signs SHA-256 verifies.
+⚠ **Until 6.6.15** the 1.2 client's ECDHE was x25519 alone: an OpenSSL 1.2 server with an ECDSA
+server certificate, or offering only P-256 / P-384, refused it ("no shared cipher"), and 6.6.14's
+listing of a P-256 / P-384 client certificate's curve (needed so OpenSSL accepts that
+certificate) made a server ranking that curve above X25519 fail it with
+`TLS_ERR_HANDSHAKE_FAILED`. That trade-off is gone. Pinned by
+`tests/gates/platform/tls_native_client_auth_openssl.sh` (its E leg) and
+`tests/tcyr/crossos/tls12_client_ecdhe.tcyr`.
+⚠ **Not yet:** the native TLS 1.3 client offers x25519 alone (supported_groups and key_share)
+and fails a server that does not take X25519 (`s_server -tls1_3 -groups P-256`: an alert,
+`TLS_ERR_ALERT`); the native SERVER does ECDHE on x25519 alone in both versions — a 1.2 client
+that did not list x25519 refuses its ServerKeyExchange, and a 1.3 client without an x25519
+key_share fails (`TLS_ERR_HANDSHAKE_FAILED`, no HelloRetryRequest over a socket).
+
 ### Connect — staged (resumption-aware, allocator-aware)
 
 The v5.10.27 staged-connect surface exists to inject a cached session between `SSL_new` and
@@ -239,20 +263,11 @@ CertificateRequest is sent — while native is never looser than asked and reque
 - **The client side.** A native client presents the certificate and key a hook installed
   (`tls_ctx_use_certificate_file` / `_private_key_file`) when a TLS 1.3 OR TLS 1.2 server asks,
   and an empty Certificate when it holds none (or none the server's CertificateRequest accepts).
-  It presents its leaf alone, not a chain. In TLS 1.2 a client holding a P-256 / P-384 certificate
-  lists that curve in supported_groups after x25519 (OpenSSL refuses an ECDSA client certificate
-  on a curve the client did not list); its key exchange stays x25519. Until 6.6.13 the 1.2 client
-  failed any server that asked (`TLS_ERR_BAD_HANDSHAKE`).
-  ⚠ **The trade-off (6.6.14).** RFC 8422 reads that list as the curves the client can do ECDHE on
-  too, and the native 1.2 client cannot do ECDHE on P-256 / P-384. So a 1.2-pinned (or 1.2-only
-  server's) client holding a P-256 / P-384 certificate now FAILS with `TLS_ERR_HANDSHAKE_FAILED`
-  against a TLS 1.2 server that ranks that curve ABOVE X25519 for the key exchange (server
-  preference) — whether or not the server asks for a certificate; before 6.6.14 that connection
-  worked when it did not ask. A server that ranks X25519 first (OpenSSL's default list does), or
-  follows the client's order, connects; a client with no certificate, or an Ed25519 one, lists
-  x25519 alone as before. The remedy is ECDHE on P-256 / P-384 in the 1.2 client. Pinned by
-  `tests/gates/platform/tls_native_client_auth_openssl.sh` (`s_server -groups P-256:X25519
-  -serverpref`).
+  It presents its leaf alone, not a chain. Until 6.6.13 the 1.2 client failed any server that asked
+  (`TLS_ERR_BAD_HANDSHAKE`). A P-256 / P-384 certificate's curve is in the 1.2 client's
+  supported_groups because every NIST curve it does ECDHE on is (6.6.15 — "Key exchange" under
+  Connect); the 6.6.14 trade-off this paragraph documented, a server ranking that curve above
+  X25519 failing the handshake, is gone.
 - **Memory.** Measured at 6.6.14 (P-256 server, one-certificate client): an mTLS handshake fits
   88,784 B of a server's arena in TLS 1.3 and 108,480 B in TLS 1.2 — both inside the 131,072 B
   below. A client's three TLS 1.2 messages before its CCS are bounded at 16 KiB on the server, and
