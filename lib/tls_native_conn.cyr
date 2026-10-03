@@ -1185,9 +1185,9 @@ fn _tn_accept_hs(ctx, sock_fd): i64 {
     var ch_msg = inbuf + TLS_RECORD_HEADER_LEN;
     var ch_len = rl - TLS_RECORD_HEADER_LEN;
     # Version dispatch: route to the TLS 1.2 server when the ClientHello
-    # is a 1.2 hello (no key_share / supported_versions), or when this
-    # ctx is pinned to max 1.2. A 1.3-only ctx (min_ver 1.3) rejects a
-    # 1.2 client.
+    # is a 1.2 hello (its supported_versions, if any, does not list 0x0304;
+    # _tn_ch_is_tls13), or when this ctx is pinned to max 1.2. A 1.3-only
+    # ctx (min_ver 1.3) rejects a 1.2 client.
     var is13 = _tn_ch_is_tls13(ch_msg, ch_len);
     if (is13 == 0 - 1) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
     if (is13 == 0) {
