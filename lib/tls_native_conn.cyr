@@ -337,7 +337,7 @@ fn tls_native_set_transport(read_fn, write_fn, now_fn): i64 {
 # transport vtable covers read/write/now; this covers randomness). SEPARATE from
 # tls_native_set_transport so the existing 3-arg signature + its lib/tls.cyr
 # callers + vidya examples stay stable. rand_fn(buf, n) must fill n bytes and
-# return n on success (the getrandom contract; the 11 handshake call sites check
+# return n on success (the getrandom contract; every handshake call site checks
 # `!= n`). A bare-metal kernel installs its CSPRNG here at init; default 0 routes
 # to the platform sys_getrandom. Set ONCE before connect/accept. Returns TLS_OK.
 fn tls_native_set_entropy(rand_fn): i64 {

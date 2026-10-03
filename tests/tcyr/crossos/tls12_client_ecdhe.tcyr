@@ -229,8 +229,10 @@ fn _curve_kat(group, gr_hex, i_hex, gi_hex, z_hex, priv_len, pt_len, label): i64
     if (pml < 0) { return 0; }
     assert_eq(G_RND_CALLS, 1, "  ...from ONE draw of the keygen's randomness through the entropy hook");
     assert_eq(memeq(load64(c + TLS_CTX_OFF_EPH_PUB), _h(gi_hex), pt_len), 1, "  ...our public key is the RFC's g^i");
-    assert_eq(memeq(load64(c + TLS_CTX_OFF_SHARED), _h(z_hex), pml), 1, "  ...the premaster is the RFC's g^ir x-coordinate");
-    assert_eq(_all_zero(load64(c + TLS_CTX_OFF_EPH_PRIV), priv_len), 1, "  ...and our private key is zeroised once used");
+    assert_eq(memeq(load64(c + TLS_CTX_OFF_SHARED), _h(z_hex), pml), 1,
+      "  ...the premaster is the RFC's g^ir x-coordinate");
+    assert_eq(_all_zero(load64(c + TLS_CTX_OFF_EPH_PRIV), priv_len), 1,
+      "  ...and our private key is zeroised once used");
     var cke = alloc(256);
     var cn = _tn_12_build_client_kex(load64(c + TLS_CTX_OFF_EPH_PUB), _tn_12_point_len(group), cke, 256);
     assert_eq(cn, 4 + 1 + pt_len, "ClientKeyExchange = header + 1-byte length + the point");
@@ -287,7 +289,8 @@ fn test_x25519_unchanged(): i64 {
     x25519(k, load64(srv + TLS_CTX_OFF_EPH_PUB), want);
     assert_eq(memeq(load64(c + TLS_CTX_OFF_SHARED), want, 32), 1, "  ...x25519(our key, the server's)");
     var srvpm = alloc(32);
-    assert_eq(tls_native_12_compute_premaster(srv, load64(c + TLS_CTX_OFF_EPH_PUB), srvpm), TLS_OK, "  ...the server computes it too");
+    assert_eq(tls_native_12_compute_premaster(srv, load64(c + TLS_CTX_OFF_EPH_PUB), srvpm), TLS_OK,
+      "  ...the server computes it too");
     assert_eq(memeq(srvpm, want, 32), 1, "  ...the same premaster");
     assert_eq(_all_zero(load64(c + TLS_CTX_OFF_EPH_PRIV), 32), 1, "  ...our private key zeroised");
     var cke = alloc(64);
@@ -358,7 +361,8 @@ fn test_refusals(): i64 {
     var g384 = _h(GR384);
     _refused_parse(0x0019, g256, 65, 3, TLS_ERR_HANDSHAKE_FAILED, "secp521r1 (not offered)");
     _refused_parse(TLS_GROUP_SECP256R1, g256, 65, 1, TLS_ERR_HANDSHAKE_FAILED, "curve_type explicit_prime(1)");
-    _refused_parse(TLS_GROUP_SECP256R1, g256, 33, 3, TLS_ERR_HANDSHAKE_FAILED, "secp256r1, a 33-byte (compressed-length) point");
+    _refused_parse(TLS_GROUP_SECP256R1, g256, 33, 3, TLS_ERR_HANDSHAKE_FAILED,
+      "secp256r1, a 33-byte (compressed-length) point");
     _refused_parse(TLS_GROUP_SECP256R1, g256, 32, 3, TLS_ERR_HANDSHAKE_FAILED, "secp256r1, an x25519-length point");
     _refused_parse(TLS_GROUP_SECP384R1, g256, 65, 3, TLS_ERR_HANDSHAKE_FAILED, "secp384r1, a secp256r1-length point");
     _refused_parse(TLS_GROUP_X25519, g256, 65, 3, TLS_ERR_HANDSHAKE_FAILED, "x25519, a 65-byte point");
@@ -413,10 +417,12 @@ fn test_refusals(): i64 {
     store64(c4 + TLS_CTX_OFF_GROUP, 0x0019);
     store64(c4 + TLS_CTX_OFF_EPH_PRIV, _h(I256));
     var o4 = alloc(48);
-    assert_eq(tls_native_12_compute_premaster(c4, g256, o4), TLS_ERR_HANDSHAKE_FAILED, "compute_premaster on a group we do not offer");
+    assert_eq(tls_native_12_compute_premaster(c4, g256, o4), TLS_ERR_HANDSHAKE_FAILED,
+      "compute_premaster on a group we do not offer");
     store64(c4 + TLS_CTX_OFF_GROUP, TLS_GROUP_SECP256R1);
     store64(c4 + TLS_CTX_OFF_EPH_PRIV, _h(P256));
-    assert_eq(tls_native_12_compute_premaster(c4, g256, o4), TLS_ERR_HANDSHAKE_FAILED, "  ...or with a private scalar >= n");
+    assert_eq(tls_native_12_compute_premaster(c4, g256, o4), TLS_ERR_HANDSHAKE_FAILED,
+      "  ...or with a private scalar >= n");
     return 0;
 }
 
