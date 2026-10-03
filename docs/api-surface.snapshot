@@ -3496,6 +3496,10 @@ sigil::dmverity_verify/3
 sigil::dv_len/1
 sigil::dv_new/2
 sigil::dv_ptr/1
+sigil::ecdh_p256_keygen/4
+sigil::ecdh_p256_shared/4
+sigil::ecdh_p384_keygen/4
+sigil::ecdh_p384_shared/4
 sigil::ecdsa_p256_privkey_from_der/3
 sigil::ecdsa_p256_sign/4
 sigil::ecdsa_p256_sign_der/5
