@@ -5185,6 +5185,7 @@ tls_native_hs13::tls_native_client_build_hello/3
 tls_native_hs13::tls_native_client_finish/3
 tls_native_hs13::tls_native_client_open_handshake/6
 tls_native_hs13::tls_native_client_parse_server_hello/3
+tls_native_hs13::tls_native_client_process_hrr/5
 tls_native_hs13::tls_native_client_recv_flight/3
 tls_native_hs13::tls_native_client_seal_handshake/5
 tls_native_hs13::tls_native_get_group/1

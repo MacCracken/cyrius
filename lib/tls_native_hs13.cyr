@@ -1,35 +1,58 @@
 # ================================================================
 # TLS 1.3 client — ClientHello (.24, RFC 8446 §4.1.2)
 # ================================================================
-# Build a ClientHello into `out`: generate the client's x25519
-# ephemeral keypair + random, serialize the message (SNI when the host
-# is a DNS name, supported_versions=1.3, supported_groups=x25519,
-# signature_algorithms ECDSA/Ed25519, key_share x25519), and buffer
-# the message — the transcript hash can't be initialised until the
-# ServerHello reveals the cipher (hence the hash), so .25 replays the
-# buffered CH then the SH. Returns the message length or a negative
-# TLS_ERR_*. Offers x25519 only, in supported_groups and key_share — the
-# TLS 1.2 client also does ECDHE on secp256r1 / secp384r1 (6.6.15), this one
-# does not — and the ECDSA, RSA-PSS and Ed25519 signature schemes.
+# Build a ClientHello into `out`: generate the client's ephemeral key pair on the FIRST of its
+# groups (_tn_groups — x25519 by default) + the random, serialize the message
+# (_tn_client_hello_write) and buffer it — the transcript hash can't be initialised until the
+# ServerHello (or HelloRetryRequest) reveals the cipher (hence the hash), so .25 replays the
+# buffered CH then the SH. Returns the message length or a negative TLS_ERR_*.
+# supported_groups lists every group of the ctx (by default x25519, secp256r1, secp384r1) and the
+# key_share carries ONE share, for the first of them. A server that takes none of the share's
+# group but another listed one answers with a HelloRetryRequest (tls_native_client_process_hrr).
+# One share, not one per group: a P-256 key pair costs as much as the x25519 one (2.7 ms against
+# 2.4 ms here, P-384 7.3 ms) on EVERY connection, to save a round trip only to a server that does
+# not do X25519 — OpenSSL's and the browsers' choice too. A caller who knows its server prefers a
+# NIST curve puts it first (tls_native_set_groups) and gets that share instead. CHANGELOG [6.6.15]
 fn tls_native_client_build_hello(ctx, out, out_max): i64 {
     if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
     if (load64(ctx + TLS_CTX_OFF_ROLE) != TLS_ROLE_CLIENT) {
         return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL);
     }
-    var priv = _tn_alloc(ctx, 32);
-    var epub = _tn_alloc(ctx, 32);
-    if (priv == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
-    if (epub == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
-    if (_tn_rand_bytes(priv, 32) != 32) { return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL); }
-    x25519_base(priv, epub);
-    store64(ctx + TLS_CTX_OFF_EPH_PRIV, priv);
-    store64(ctx + TLS_CTX_OFF_EPH_PUB, epub);
+    var group = _tn_groups(ctx) & 0xFFFF;
+    var er = _tn_ephemeral_keygen(ctx, group);
+    if (er != TLS_OK) {
+        _tn_wipe_priv(ctx);
+        return _tn_ctx_fail(ctx, er);
+    }
+    store64(ctx + TLS_CTX_OFF_KS_GROUP, group);
     var crand = _tn_alloc(ctx, TLS_RANDOM_LEN);
     if (crand == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     if (_tn_rand_bytes(crand, TLS_RANDOM_LEN) != TLS_RANDOM_LEN) {
         return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL);
     }
     store64(ctx + TLS_CTX_OFF_CLIENT_RANDOM, crand);
+    var total = _tn_client_hello_write(ctx, out, out_max, 0, 0);
+    if (total < 0) { return _tn_ctx_fail(ctx, total); }
+    var chbuf = _tn_alloc(ctx, total);
+    if (chbuf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    memcpy(chbuf, out, total);
+    store64(ctx + TLS_CTX_OFF_CH_BUF, chbuf);
+    store64(ctx + TLS_CTX_OFF_CH_LEN, total);
+    return total;
+}
+
+# Serialize the 1.3 ClientHello from the ctx: CLIENT_RANDOM, an empty legacy_session_id, the three
+# cipher suites, SNI when the host is a DNS name, supported_versions = 1.3, supported_groups (the
+# ctx's list), signature_algorithms (ECDSA, RSA-PSS, Ed25519), a key_share with our key on
+# KS_GROUP (EPH_PUB), a cookie extension echoing `cookie` (`cookie_len` bytes of the
+# HelloRetryRequest's cookie extension data) when non-zero, and ALPN when offered. The first and
+# the second ClientHello both come from here, so the second differs from the first only in its
+# key_share and cookie (RFC 8446 §4.1.2). Returns the message length or TLS_ERR_BUFFER_FULL.
+fn _tn_client_hello_write(ctx, out, out_max, cookie, cookie_len): i64 {
+    var crand = load64(ctx + TLS_CTX_OFF_CLIENT_RANDOM);
+    var ksg = load64(ctx + TLS_CTX_OFF_KS_GROUP);
+    var klen = _tn_group_point_len(ksg);
+    if (klen == 0) { return TLS_ERR_INTERNAL; }
     var host = load64(ctx + TLS_CTX_OFF_HOST);
     # SNI only for a DNS name: an IP literal is not a HostName (RFC 6066 §3). The host still binds
     # the certificate (tls_native_client_verify_hostname). CHANGELOG [6.6.14]
@@ -40,10 +63,15 @@ fn tls_native_client_build_hello(ctx, out, out_max): i64 {
     var apl = 0;
     var alpn_ext = 0;
     if (alpn != 0) { apl = _tn_be16_r(alpn); alpn_ext = 6 + apl; }   # 4 hdr + 2 list-len + protos
-    var ext_block = 7 + 8 + 16 + 42 + sni_ext + alpn_ext;   # sv+sg+sa(5)+key_share+SNI+ALPN; CHANGELOG [6.0.83]
+    var sg_ext = 6 + 2 * _tn_groups_n(_tn_groups(ctx));
+    var ks_ext = 4 + 2 + 4 + klen;                     # hdr + client_shares len + entry hdr + key
+    var ck_ext = 0;
+    if (cookie != 0) { ck_ext = 4 + cookie_len; }
+    # sv(7) + sg + sa(16, 5 schemes; CHANGELOG [6.0.83]) + key_share + cookie + SNI + ALPN
+    var ext_block = 7 + sg_ext + 16 + ks_ext + ck_ext + sni_ext + alpn_ext;
     var body_len = 2 + 32 + 1 + 2 + 6 + 2 + 2 + ext_block;
     var total = TLS_HANDSHAKE_HEADER_LEN + body_len;
-    if (total > out_max) { return _tn_ctx_fail(ctx, TLS_ERR_BUFFER_FULL); }
+    if (total > out_max) { return TLS_ERR_BUFFER_FULL; }
     tls_native_handshake_write_header(out, TLS_HS_CLIENT_HELLO, body_len);
     var p = out + TLS_HANDSHAKE_HEADER_LEN;
     _tn_be16_w(p, 0x0303); p = p + 2;
@@ -67,10 +95,7 @@ fn tls_native_client_build_hello(ctx, out, out_max): i64 {
     _tn_be16_w(p, 3); p = p + 2;
     store8(p, 2); p = p + 1;                           # versions list length
     _tn_be16_w(p, 0x0304); p = p + 2;
-    _tn_be16_w(p, TLS_EXT_SUPPORTED_GROUPS); p = p + 2;
-    _tn_be16_w(p, 4); p = p + 2;
-    _tn_be16_w(p, 2); p = p + 2;                       # groups list length
-    _tn_be16_w(p, TLS_GROUP_X25519); p = p + 2;
+    p = p + _tn_write_supported_groups(ctx, p);
     _tn_be16_w(p, 13); p = p + 2;                      # signature_algorithms
     _tn_be16_w(p, 12); p = p + 2;                      # ext_data len (2 + 5*2); see CHANGELOG [6.0.83]
     _tn_be16_w(p, 10); p = p + 2;                      # sig algs list length (5 schemes)
@@ -80,17 +105,175 @@ fn tls_native_client_build_hello(ctx, out, out_max): i64 {
     _tn_be16_w(p, TLS_SIG_RSA_PSS_RSAE_SHA384); p = p + 2;
     _tn_be16_w(p, TLS_SIG_ED25519); p = p + 2;
     _tn_be16_w(p, TLS_EXT_KEY_SHARE); p = p + 2;
-    _tn_be16_w(p, 38); p = p + 2;
-    _tn_be16_w(p, 36); p = p + 2;                      # client_shares length
-    _tn_be16_w(p, TLS_GROUP_X25519); p = p + 2;
-    _tn_be16_w(p, 32); p = p + 2;
-    memcpy(p, epub, 32); p = p + 32;
+    _tn_be16_w(p, 2 + 4 + klen); p = p + 2;
+    _tn_be16_w(p, 4 + klen); p = p + 2;                # client_shares length (one share)
+    _tn_be16_w(p, ksg); p = p + 2;
+    _tn_be16_w(p, klen); p = p + 2;
+    memcpy(p, load64(ctx + TLS_CTX_OFF_EPH_PUB), klen); p = p + klen;
+    if (cookie != 0) {
+        _tn_be16_w(p, TLS_EXT_COOKIE); p = p + 2;
+        _tn_be16_w(p, cookie_len); p = p + 2;
+        memcpy(p, cookie, cookie_len); p = p + cookie_len;
+    }
     if (alpn != 0) {
         _tn_be16_w(p, TLS_EXT_ALPN); p = p + 2;
         _tn_be16_w(p, 2 + apl); p = p + 2;             # extension_data length
         _tn_be16_w(p, apl); p = p + 2;                  # ProtocolNameList length
         memcpy(p, alpn + 2, apl); p = p + apl;          # the offered protocols
     }
+    return total;
+}
+
+# 1 if `msg` (`len` bytes, header included) is a ServerHello carrying the HelloRetryRequest
+# sentinel random (RFC 8446 §4.1.3), else 0 — a malformed message included (its parser reports it).
+fn _tn_sh_is_hrr(msg, len): i64 {
+    if (len < TLS_HANDSHAKE_HEADER_LEN + 2 + 32) { return 0; }
+    if ((load8(msg) & 0xFF) != TLS_HS_SERVER_HELLO) { return 0; }
+    var hrr[32];
+    _tn_hrr_random(&hrr);
+    return _tn_ct_eq(msg + TLS_HANDSHAKE_HEADER_LEN + 2, &hrr, 32);
+}
+
+# Client: process a HelloRetryRequest (`hrr`, `hrr_len` bytes, header included; RFC 8446 §4.1.4)
+# and build the second ClientHello into `out` (size it for the HelloRetryRequest's cookie: up to
+# hrr_len bytes more than the first). Returns the second ClientHello's length, or a negative
+# TLS_ERR_* with the ctx failed and the alert for the server recorded (_tn_hs_fail — the driver
+# sends it). Refused, each with RFC 8446's alert:
+#   a second HelloRetryRequest (unexpected_message, TLS_ERR_PROTOCOL);
+#   a legacy_session_id_echo that is not our empty one, a cipher suite we did not offer, a
+#   non-null compression method (illegal_parameter);
+#   supported_versions missing (missing_extension) or not 0x0304 (illegal_parameter);
+#   an extension other than supported_versions, key_share and cookie (unsupported_extension — a
+#   HelloRetryRequest may carry nothing we did not offer, the cookie excepted), or one twice
+#   (illegal_parameter);
+#   a key_share naming a group we did not list, or the group we already sent a share for, or a
+#   HelloRetryRequest with neither a key_share nor a cookie — one that would not change the
+#   ClientHello (illegal_parameter);
+#   anything malformed (decode_error, TLS_ERR_BAD_HANDSHAKE).
+# Accepted: the cipher suite is recorded (the ServerHello must name the same), TLS_CTX_OFF_HRR
+# latches, the transcript becomes message_hash(ClientHello1) + HelloRetryRequest
+# (_tn_transcript_after_hrr), a key_share's group gets our new key pair (the old private key is
+# zeroised first) and KS_GROUP, and the second ClientHello — the first with that key_share and the
+# cookie echoed — is built and fed into the transcript. CHANGELOG [6.6.15]
+fn tls_native_client_process_hrr(ctx, hrr, hrr_len, out, out_max): i64 {
+    if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
+    if (load64(ctx + TLS_CTX_OFF_ROLE) != TLS_ROLE_CLIENT) {
+        return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL);
+    }
+    if (load64(ctx + TLS_CTX_OFF_HRR) == 1) {
+        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_UNEXPECTED_MESSAGE, TLS_ERR_PROTOCOL));
+    }
+    var ht = 0;
+    var blen = 0;
+    if (tls_native_handshake_read_header(hrr, hrr_len, &ht, &blen) < 0) {
+        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE));
+    }
+    if (ht != TLS_HS_SERVER_HELLO) {
+        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_UNEXPECTED_MESSAGE, TLS_ERR_BAD_HANDSHAKE));
+    }
+    if (TLS_HANDSHAKE_HEADER_LEN + blen > hrr_len) {
+        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE));
+    }
+    if (_tn_sh_is_hrr(hrr, hrr_len) != 1) {
+        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_UNEXPECTED_MESSAGE, TLS_ERR_BAD_HANDSHAKE));
+    }
+    var body = hrr + TLS_HANDSHAKE_HEADER_LEN;
+    var pos = 2 + 32;
+    if (pos + 1 > blen) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE)); }
+    if ((load8(body + pos) & 0xFF) != 0) {             # we sent an empty legacy_session_id
+        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_HANDSHAKE_FAILED));
+    }
+    pos = pos + 1;
+    if (pos + 2 + 1 + 2 > blen) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE)); }
+    var cipher = _tn_be16_r(body + pos);
+    pos = pos + 2;
+    if (tls_native_cipher_supported(cipher) != 1) {
+        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_CIPHER_NOT_SUPPORTED));
+    }
+    if ((load8(body + pos) & 0xFF) != 0) {             # legacy_compression_method
+        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_HANDSHAKE_FAILED));
+    }
+    pos = pos + 1;
+    var ext_total = _tn_be16_r(body + pos);
+    pos = pos + 2;
+    if (pos + ext_total != blen) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE)); }
+    var ep = body + pos;
+    var sv = 0;                                        # each: 0 absent, else seen
+    var sel = 0;
+    var has_ks = 0;
+    var cookie = 0;
+    var cookie_len = 0;
+    var q = 0;
+    while (q < ext_total) {
+        if (q + 4 > ext_total) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE)); }
+        var et = _tn_be16_r(ep + q);
+        var el = _tn_be16_r(ep + q + 2);
+        q = q + 4;
+        if (q + el > ext_total) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE)); }
+        var ed = ep + q;
+        var known = 0;
+        if (et == TLS_EXT_SUPPORTED_VERSIONS) {
+            known = 1;
+            if (sv != 0) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_HANDSHAKE_FAILED)); }
+            if (el != 2) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE)); }
+            if (_tn_be16_r(ed) != 0x0304) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_VERSION)); }
+            sv = 1;
+        }
+        if (et == TLS_EXT_KEY_SHARE) {
+            known = 1;
+            if (has_ks != 0) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_HANDSHAKE_FAILED)); }
+            if (el != 2) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE)); }
+            sel = _tn_be16_r(ed);
+            has_ks = 1;
+        }
+        if (et == TLS_EXT_COOKIE) {
+            known = 1;
+            if (cookie != 0) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_HANDSHAKE_FAILED)); }
+            # Cookie: opaque cookie<1..2^16-1>, filling the extension.
+            if (el < 3) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE)); }
+            if (2 + _tn_be16_r(ed) != el) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE)); }
+            cookie = ed;
+            cookie_len = el;
+        }
+        if (known == 0) {
+            return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_UNSUPPORTED_EXTENSION, TLS_ERR_HANDSHAKE_FAILED));
+        }
+        q = q + el;
+    }
+    if (sv == 0) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_MISSING_EXTENSION, TLS_ERR_VERSION)); }
+    if (has_ks == 0) {
+        if (cookie == 0) {                             # it would not change the ClientHello
+            return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_HANDSHAKE_FAILED));
+        }
+    }
+    if (has_ks == 1) {
+        if (_tn_groups_has(_tn_groups(ctx), sel) != 1) {        # a group we did not list
+            return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_HANDSHAKE_FAILED));
+        }
+        if (sel == load64(ctx + TLS_CTX_OFF_KS_GROUP)) {        # the one we sent a share for
+            return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_HANDSHAKE_FAILED));
+        }
+    }
+    # Accepted: from here the second ClientHello is the only way on.
+    store64(ctx + TLS_CTX_OFF_CIPHER, cipher);
+    store64(ctx + TLS_CTX_OFF_HRR, 1);
+    var ts = _tn_transcript_after_hrr(ctx, tls_native_cipher_hash_algo(cipher),
+      load64(ctx + TLS_CTX_OFF_CH_BUF), load64(ctx + TLS_CTX_OFF_CH_LEN));
+    if (ts == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
+    tls_native_transcript_update(ts, hrr, TLS_HANDSHAKE_HEADER_LEN + blen);
+    store64(ctx + TLS_CTX_OFF_TRANSCRIPT, ts);
+    if (has_ks == 1) {
+        _tn_wipe_priv(ctx);                            # the first share's key is never used
+        var er = _tn_ephemeral_keygen(ctx, sel);
+        if (er != TLS_OK) {
+            _tn_wipe_priv(ctx);
+            return _tn_ctx_fail(ctx, er);
+        }
+        store64(ctx + TLS_CTX_OFF_KS_GROUP, sel);
+    }
+    var total = _tn_client_hello_write(ctx, out, out_max, cookie, cookie_len);
+    if (total < 0) { return _tn_ctx_fail(ctx, total); }
+    tls_native_transcript_update(ts, out, total);
     var chbuf = _tn_alloc(ctx, total);
     if (chbuf == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     memcpy(chbuf, out, total);
@@ -99,16 +282,26 @@ fn tls_native_client_build_hello(ctx, out, out_max): i64 {
     return total;
 }
 
-# Client: parse a ServerHello (.25, RFC 8446 §4.1.3) and set up the
-# client's handshake keys. Validates the negotiated cipher, enforces
-# downgrade protection (HRR sentinel + the §4.1.3 DOWNGRD markers +
-# supported_versions=0x0304), extracts the server's x25519 key_share,
-# retroactively initialises the transcript (buffered ClientHello then
-# this ServerHello), computes the ECDHE shared secret, derives the
-# handshake secret, and installs the handshake-traffic keys. After
-# this the client can decrypt the server's flight (.26). Returns
-# TLS_OK or a negative TLS_ERR_* (ctx → ERROR). HelloRetryRequest
-# (retry loop) is not yet handled — returns TLS_ERR_HANDSHAKE_FAILED.
+# Client: parse a ServerHello (.25, RFC 8446 §4.1.3) and set up the client's handshake keys.
+# Validates the negotiated cipher, enforces downgrade protection (the §4.1.3 DOWNGRD markers +
+# supported_versions=0x0304), takes the server's key_share — on the group of OUR key_share
+# (KS_GROUP: x25519, or the group a HelloRetryRequest asked for), exactly its length — extends
+# the transcript (after a HelloRetryRequest) or starts it (the buffered ClientHello, then this
+# ServerHello), computes the ECDHE shared secret (_tn_ecdhe_shared: x25519's all-zero result and
+# any point sigil refuses are refused), derives the handshake secret and installs the
+# handshake-traffic keys. Our private key is zeroised once the shared secret exists and the shared
+# secret once the handshake secret is derived, whatever the outcome. After this the client can
+# decrypt the server's flight (.26). Returns TLS_OK or a negative TLS_ERR_* (ctx → ERROR) with the
+# alert for the server recorded (_tn_hs_fail): a HelloRetryRequest here is unexpected_message
+# (tls_native_client_process_hrr takes the first; a second is TLS_ERR_PROTOCOL); a
+# legacy_session_id_echo that is not our empty one, a cipher other than the HelloRetryRequest's, a
+# non-null compression method, a key_share on another group, a refused key, a DOWNGRD random
+# (illegal_parameter); no supported_versions (protocol_version); malformed (decode_error).
+# ⛔ 6.6.15 — WHY. The 1.3 client offered and took x25519 alone and failed every HelloRetryRequest
+# (TLS_ERR_HANDSHAKE_FAILED): OpenSSL's `s_server -tls1_3 -groups P-256` / `P-384` refused it ("no
+# suitable key share", TLS_ERR_ALERT). It never refused an all-zero x25519 secret (RFC 8446 §7.4.2
+# MUST), checked neither the session-id echo nor the compression method, and zeroised neither
+# secret. CHANGELOG [6.6.15]
 fn tls_native_client_parse_server_hello(ctx, sh, sh_len): i64 {
     if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
     if (load64(ctx + TLS_CTX_OFF_ROLE) != TLS_ROLE_CLIENT) {
@@ -117,74 +310,110 @@ fn tls_native_client_parse_server_hello(ctx, sh, sh_len): i64 {
     var ht = 0;
     var blen = 0;
     if (tls_native_handshake_read_header(sh, sh_len, &ht, &blen) < 0) {
-        return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE);
+        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE));
     }
-    if (ht != TLS_HS_SERVER_HELLO) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
-    if (TLS_HANDSHAKE_HEADER_LEN + blen > sh_len) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
+    if (ht != TLS_HS_SERVER_HELLO) {
+        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_UNEXPECTED_MESSAGE, TLS_ERR_BAD_HANDSHAKE));
+    }
+    if (TLS_HANDSHAKE_HEADER_LEN + blen > sh_len) {
+        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE));
+    }
     var body = sh + TLS_HANDSHAKE_HEADER_LEN;
-    if (2 + 32 + 1 > blen) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
+    if (2 + 32 + 1 > blen) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE)); }
+    var again = load64(ctx + TLS_CTX_OFF_HRR);
     var pos = 2;                                       # skip legacy_version
     var rnd = body + pos;
-    var hrr[32];
-    _tn_hrr_random(&hrr);
-    if (_tn_ct_eq(rnd, &hrr, 32) == 1) {
-        return _tn_ctx_fail(ctx, TLS_ERR_HANDSHAKE_FAILED);   # HRR retry not implemented
+    if (_tn_sh_is_hrr(sh, sh_len) == 1) {
+        if (again == 1) {                              # a second HelloRetryRequest
+            return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_UNEXPECTED_MESSAGE, TLS_ERR_PROTOCOL));
+        }
+        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_UNEXPECTED_MESSAGE, TLS_ERR_HANDSHAKE_FAILED));
     }
     if (_tn_ct_eq(rnd + 24, "DOWNGRD", 7) == 1) {
-        return _tn_ctx_fail(ctx, TLS_ERR_VERSION);            # §4.1.3 downgrade sentinel
+        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_VERSION));   # §4.1.3
     }
     pos = pos + 32;
-    var sid_len = load8(body + pos) & 0xFF;
-    pos = pos + 1 + sid_len;
-    if (pos + 2 + 1 + 2 > blen) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
+    if ((load8(body + pos) & 0xFF) != 0) {             # we sent an empty legacy_session_id
+        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_HANDSHAKE_FAILED));
+    }
+    pos = pos + 1;
+    if (pos + 2 + 1 + 2 > blen) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE)); }
     var cipher = _tn_be16_r(body + pos);
     pos = pos + 2;
     if (tls_native_cipher_supported(cipher) != 1) {
-        return _tn_ctx_fail(ctx, TLS_ERR_CIPHER_NOT_SUPPORTED);
+        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_CIPHER_NOT_SUPPORTED));
+    }
+    if (again == 1) {
+        if (cipher != load64(ctx + TLS_CTX_OFF_CIPHER)) {   # RFC 8446 §4.1.4: the HelloRetryRequest's
+            return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_HANDSHAKE_FAILED));
+        }
     }
     store64(ctx + TLS_CTX_OFF_CIPHER, cipher);
-    pos = pos + 1;                                     # legacy_compression
+    if ((load8(body + pos) & 0xFF) != 0) {             # legacy_compression_method
+        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_HANDSHAKE_FAILED));
+    }
+    pos = pos + 1;
     var ext_total = _tn_be16_r(body + pos);
     pos = pos + 2;
-    if (pos + ext_total > blen) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
+    if (pos + ext_total > blen) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE)); }
     var ext_ptr = body + pos;
     var sv_dp = 0;
     var sv_dl = 0;
     if (_tn_find_ext(ext_ptr, ext_total, TLS_EXT_SUPPORTED_VERSIONS, &sv_dp, &sv_dl) != 1) {
-        return _tn_ctx_fail(ctx, TLS_ERR_VERSION);
+        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_PROTOCOL_VERSION, TLS_ERR_VERSION));
     }
-    if (sv_dl < 2) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
-    if (_tn_be16_r(sv_dp) != 0x0304) { return _tn_ctx_fail(ctx, TLS_ERR_VERSION); }
+    if (sv_dl < 2) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE)); }
+    if (_tn_be16_r(sv_dp) != 0x0304) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_VERSION)); }
     store64(ctx + TLS_CTX_OFF_VERSION, TLS_VERSION_1_3);
     var ks_dp = 0;
     var ks_dl = 0;
     if (_tn_find_ext(ext_ptr, ext_total, TLS_EXT_KEY_SHARE, &ks_dp, &ks_dl) != 1) {
-        return _tn_ctx_fail(ctx, TLS_ERR_HANDSHAKE_FAILED);
+        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_MISSING_EXTENSION, TLS_ERR_HANDSHAKE_FAILED));
     }
-    if (ks_dl < 4) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
-    if (_tn_be16_r(ks_dp) != TLS_GROUP_X25519) { return _tn_ctx_fail(ctx, TLS_ERR_HANDSHAKE_FAILED); }
-    if (_tn_be16_r(ks_dp + 2) != TLS_X25519_KEY_LEN) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
-    if (4 + TLS_X25519_KEY_LEN > ks_dl) { return _tn_ctx_fail(ctx, TLS_ERR_BAD_HANDSHAKE); }
-    store64(ctx + TLS_CTX_OFF_GROUP, TLS_GROUP_X25519);
+    if (ks_dl < 4) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE)); }
+    var group = _tn_be16_r(ks_dp);
+    if (group != load64(ctx + TLS_CTX_OFF_KS_GROUP)) {      # §4.2.8: a group we sent a share for
+        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_HANDSHAKE_FAILED));
+    }
+    var klen = _tn_group_point_len(group);
+    if (_tn_be16_r(ks_dp + 2) != klen) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_BAD_HANDSHAKE)); }
+    if (4 + klen != ks_dl) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE)); }
+    store64(ctx + TLS_CTX_OFF_GROUP, group);
     var server_pub = ks_dp + 4;
     store64(ctx + TLS_CTX_OFF_PEER_PUB, server_pub);
-    # Retroactive transcript: now the cipher (hence hash) is known.
+    # The transcript: after a HelloRetryRequest it holds message_hash(CH1) + HRR + CH2; else it
+    # starts now that the cipher (hence hash) is known: the buffered ClientHello, then this.
     var hash_algo = tls_native_cipher_hash_algo(cipher);
-    var ts = tls_native_transcript_init_in(load64(ctx + TLS_CTX_OFF_ALLOC), hash_algo);
+    var ts = load64(ctx + TLS_CTX_OFF_TRANSCRIPT);
+    if (again != 1) {
+        ts = tls_native_transcript_init_in(load64(ctx + TLS_CTX_OFF_ALLOC), hash_algo);
+        if (ts == 0) { return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL); }
+        tls_native_transcript_update(ts, load64(ctx + TLS_CTX_OFF_CH_BUF), load64(ctx + TLS_CTX_OFF_CH_LEN));
+        store64(ctx + TLS_CTX_OFF_TRANSCRIPT, ts);
+    }
     if (ts == 0) { return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL); }
-    tls_native_transcript_update(ts, load64(ctx + TLS_CTX_OFF_CH_BUF), load64(ctx + TLS_CTX_OFF_CH_LEN));
     tls_native_transcript_update(ts, sh, TLS_HANDSHAKE_HEADER_LEN + blen);
-    store64(ctx + TLS_CTX_OFF_TRANSCRIPT, ts);
     # Client ECDHE + handshake secret + traffic keys.
-    var dhe = _tn_alloc(ctx, 32);
-    if (dhe == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
-    x25519(load64(ctx + TLS_CTX_OFF_EPH_PRIV), server_pub, dhe);
+    var dhe = _tn_alloc(ctx, _TN_EPH_MAX);
+    if (dhe == 0) {
+        _tn_wipe_priv(ctx);
+        return _tn_ctx_fail(ctx, TLS_ERR_OOM);
+    }
     store64(ctx + TLS_CTX_OFF_SHARED, dhe);
+    var sr = _tn_ecdhe_shared(ctx, group, server_pub, klen, dhe);
+    _tn_wipe_priv(ctx);                                # its one use is behind us
+    if (sr != TLS_OK) {
+        memset(dhe, 0, _TN_EPH_MAX);
+        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_ILLEGAL_PARAMETER, sr));
+    }
     var ks = tls_native_keysched_new_in(load64(ctx + TLS_CTX_OFF_ALLOC), hash_algo);
-    if (ks == 0) { return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL); }
-    if (tls_native_keysched_derive_handshake(ks, dhe, TLS_X25519_KEY_LEN, ts) != TLS_OK) {
+    if (ks == 0) {
+        memset(dhe, 0, _TN_EPH_MAX);
         return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL);
     }
+    var dh = tls_native_keysched_derive_handshake(ks, dhe, _tn_group_secret_len(group), ts);
+    memset(dhe, 0, _TN_EPH_MAX);                       # the handshake secret replaces it
+    if (dh != TLS_OK) { return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL); }
     store64(ctx + TLS_CTX_OFF_KEYSCHED, ks);
     # install_handshake_keys is role-agnostic (derives both server- +
     # client-side traffic key/IV); the client reads with the server key
@@ -1058,6 +1287,7 @@ var TLS_EXT_SIGNATURE_ALGORITHMS = 13;
 var TLS_EXT_SUPPORTED_VERSIONS = 43;
 var TLS_EXT_KEY_SHARE          = 51;
 var TLS_EXT_ALPN               = 16;   # 0x0010, RFC 7301 application_layer_protocol_negotiation
+var TLS_EXT_COOKIE             = 44;   # RFC 8446 §4.2.2 — a HelloRetryRequest's, echoed in the 2nd CH
 var TLS_EXT_RENEGOTIATION_INFO = 0xFF01;   # RFC 5746 (empty in initial 1.2 SH)
 var TLS_EXT_EXTENDED_MASTER_SECRET = 23;   # 0x0017, RFC 7627 §5.1 — empty ext. The
 # value coincides with TLS_GROUP_SECP256R1
