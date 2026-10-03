@@ -301,6 +301,11 @@ fn _tn_hs_fail(ctx, desc, err): i64 {
     return err;
 }
 
+# _tn_hs_fail, and the ctx failed with `err` (_tn_ctx_fail). Returns `err`.
+fn _tn_hs_refuse(ctx, desc, err): i64 {
+    return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, desc, err));
+}
+
 # Server-side handshake state machine (RFC 8446 §A.2). Drives one
 # transition per event:
 #   INIT --START--> WAIT_CH

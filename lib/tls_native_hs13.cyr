@@ -161,42 +161,42 @@ fn tls_native_client_process_hrr(ctx, hrr, hrr_len, out, out_max): i64 {
         return _tn_ctx_fail(ctx, TLS_ERR_PROTOCOL);
     }
     if (load64(ctx + TLS_CTX_OFF_HRR) == 1) {
-        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_UNEXPECTED_MESSAGE, TLS_ERR_PROTOCOL));
+        return _tn_hs_refuse(ctx, TLS_AD_UNEXPECTED_MESSAGE, TLS_ERR_PROTOCOL);
     }
     var ht = 0;
     var blen = 0;
     if (tls_native_handshake_read_header(hrr, hrr_len, &ht, &blen) < 0) {
-        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE));
+        return _tn_hs_refuse(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE);
     }
     if (ht != TLS_HS_SERVER_HELLO) {
-        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_UNEXPECTED_MESSAGE, TLS_ERR_BAD_HANDSHAKE));
+        return _tn_hs_refuse(ctx, TLS_AD_UNEXPECTED_MESSAGE, TLS_ERR_BAD_HANDSHAKE);
     }
     if (TLS_HANDSHAKE_HEADER_LEN + blen > hrr_len) {
-        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE));
+        return _tn_hs_refuse(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE);
     }
     if (_tn_sh_is_hrr(hrr, hrr_len) != 1) {
-        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_UNEXPECTED_MESSAGE, TLS_ERR_BAD_HANDSHAKE));
+        return _tn_hs_refuse(ctx, TLS_AD_UNEXPECTED_MESSAGE, TLS_ERR_BAD_HANDSHAKE);
     }
     var body = hrr + TLS_HANDSHAKE_HEADER_LEN;
     var pos = 2 + 32;
-    if (pos + 1 > blen) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE)); }
+    if (pos + 1 > blen) { return _tn_hs_refuse(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
     if ((load8(body + pos) & 0xFF) != 0) {             # we sent an empty legacy_session_id
-        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_HANDSHAKE_FAILED));
+        return _tn_hs_refuse(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_HANDSHAKE_FAILED);
     }
     pos = pos + 1;
-    if (pos + 2 + 1 + 2 > blen) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE)); }
+    if (pos + 2 + 1 + 2 > blen) { return _tn_hs_refuse(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
     var cipher = _tn_be16_r(body + pos);
     pos = pos + 2;
     if (tls_native_cipher_supported(cipher) != 1) {
-        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_CIPHER_NOT_SUPPORTED));
+        return _tn_hs_refuse(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_CIPHER_NOT_SUPPORTED);
     }
     if ((load8(body + pos) & 0xFF) != 0) {             # legacy_compression_method
-        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_HANDSHAKE_FAILED));
+        return _tn_hs_refuse(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_HANDSHAKE_FAILED);
     }
     pos = pos + 1;
     var ext_total = _tn_be16_r(body + pos);
     pos = pos + 2;
-    if (pos + ext_total != blen) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE)); }
+    if (pos + ext_total != blen) { return _tn_hs_refuse(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
     var ep = body + pos;
     var sv = 0;                                        # each: 0 absent, else seen
     var sel = 0;
@@ -205,53 +205,53 @@ fn tls_native_client_process_hrr(ctx, hrr, hrr_len, out, out_max): i64 {
     var cookie_len = 0;
     var q = 0;
     while (q < ext_total) {
-        if (q + 4 > ext_total) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE)); }
+        if (q + 4 > ext_total) { return _tn_hs_refuse(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
         var et = _tn_be16_r(ep + q);
         var el = _tn_be16_r(ep + q + 2);
         q = q + 4;
-        if (q + el > ext_total) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE)); }
+        if (q + el > ext_total) { return _tn_hs_refuse(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
         var ed = ep + q;
         var known = 0;
         if (et == TLS_EXT_SUPPORTED_VERSIONS) {
             known = 1;
-            if (sv != 0) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_HANDSHAKE_FAILED)); }
-            if (el != 2) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE)); }
-            if (_tn_be16_r(ed) != 0x0304) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_VERSION)); }
+            if (sv != 0) { return _tn_hs_refuse(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_HANDSHAKE_FAILED); }
+            if (el != 2) { return _tn_hs_refuse(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
+            if (_tn_be16_r(ed) != 0x0304) { return _tn_hs_refuse(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_VERSION); }
             sv = 1;
         }
         if (et == TLS_EXT_KEY_SHARE) {
             known = 1;
-            if (has_ks != 0) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_HANDSHAKE_FAILED)); }
-            if (el != 2) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE)); }
+            if (has_ks != 0) { return _tn_hs_refuse(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_HANDSHAKE_FAILED); }
+            if (el != 2) { return _tn_hs_refuse(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
             sel = _tn_be16_r(ed);
             has_ks = 1;
         }
         if (et == TLS_EXT_COOKIE) {
             known = 1;
-            if (cookie != 0) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_HANDSHAKE_FAILED)); }
+            if (cookie != 0) { return _tn_hs_refuse(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_HANDSHAKE_FAILED); }
             # Cookie: opaque cookie<1..2^16-1>, filling the extension.
-            if (el < 3) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE)); }
-            if (2 + _tn_be16_r(ed) != el) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE)); }
+            if (el < 3) { return _tn_hs_refuse(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
+            if (2 + _tn_be16_r(ed) != el) { return _tn_hs_refuse(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
             cookie = ed;
             cookie_len = el;
         }
         if (known == 0) {
-            return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_UNSUPPORTED_EXTENSION, TLS_ERR_HANDSHAKE_FAILED));
+            return _tn_hs_refuse(ctx, TLS_AD_UNSUPPORTED_EXTENSION, TLS_ERR_HANDSHAKE_FAILED);
         }
         q = q + el;
     }
-    if (sv == 0) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_MISSING_EXTENSION, TLS_ERR_VERSION)); }
+    if (sv == 0) { return _tn_hs_refuse(ctx, TLS_AD_MISSING_EXTENSION, TLS_ERR_VERSION); }
     if (has_ks == 0) {
         if (cookie == 0) {                             # it would not change the ClientHello
-            return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_HANDSHAKE_FAILED));
+            return _tn_hs_refuse(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_HANDSHAKE_FAILED);
         }
     }
     if (has_ks == 1) {
         if (_tn_groups_has(_tn_groups(ctx), sel) != 1) {        # a group we did not list
-            return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_HANDSHAKE_FAILED));
+            return _tn_hs_refuse(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_HANDSHAKE_FAILED);
         }
         if (sel == load64(ctx + TLS_CTX_OFF_KS_GROUP)) {        # the one we sent a share for
-            return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_HANDSHAKE_FAILED));
+            return _tn_hs_refuse(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_HANDSHAKE_FAILED);
         }
     }
     # Accepted: from here the second ClientHello is the only way on.
@@ -310,74 +310,74 @@ fn tls_native_client_parse_server_hello(ctx, sh, sh_len): i64 {
     var ht = 0;
     var blen = 0;
     if (tls_native_handshake_read_header(sh, sh_len, &ht, &blen) < 0) {
-        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE));
+        return _tn_hs_refuse(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE);
     }
     if (ht != TLS_HS_SERVER_HELLO) {
-        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_UNEXPECTED_MESSAGE, TLS_ERR_BAD_HANDSHAKE));
+        return _tn_hs_refuse(ctx, TLS_AD_UNEXPECTED_MESSAGE, TLS_ERR_BAD_HANDSHAKE);
     }
     if (TLS_HANDSHAKE_HEADER_LEN + blen > sh_len) {
-        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE));
+        return _tn_hs_refuse(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE);
     }
     var body = sh + TLS_HANDSHAKE_HEADER_LEN;
-    if (2 + 32 + 1 > blen) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE)); }
+    if (2 + 32 + 1 > blen) { return _tn_hs_refuse(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
     var again = load64(ctx + TLS_CTX_OFF_HRR);
     var pos = 2;                                       # skip legacy_version
     var rnd = body + pos;
     if (_tn_sh_is_hrr(sh, sh_len) == 1) {
         if (again == 1) {                              # a second HelloRetryRequest
-            return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_UNEXPECTED_MESSAGE, TLS_ERR_PROTOCOL));
+            return _tn_hs_refuse(ctx, TLS_AD_UNEXPECTED_MESSAGE, TLS_ERR_PROTOCOL);
         }
-        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_UNEXPECTED_MESSAGE, TLS_ERR_HANDSHAKE_FAILED));
+        return _tn_hs_refuse(ctx, TLS_AD_UNEXPECTED_MESSAGE, TLS_ERR_HANDSHAKE_FAILED);
     }
     if (_tn_ct_eq(rnd + 24, "DOWNGRD", 7) == 1) {
-        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_VERSION));   # §4.1.3
+        return _tn_hs_refuse(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_VERSION);   # §4.1.3
     }
     pos = pos + 32;
     if ((load8(body + pos) & 0xFF) != 0) {             # we sent an empty legacy_session_id
-        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_HANDSHAKE_FAILED));
+        return _tn_hs_refuse(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_HANDSHAKE_FAILED);
     }
     pos = pos + 1;
-    if (pos + 2 + 1 + 2 > blen) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE)); }
+    if (pos + 2 + 1 + 2 > blen) { return _tn_hs_refuse(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
     var cipher = _tn_be16_r(body + pos);
     pos = pos + 2;
     if (tls_native_cipher_supported(cipher) != 1) {
-        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_CIPHER_NOT_SUPPORTED));
+        return _tn_hs_refuse(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_CIPHER_NOT_SUPPORTED);
     }
     if (again == 1) {
         if (cipher != load64(ctx + TLS_CTX_OFF_CIPHER)) {   # RFC 8446 §4.1.4: the HelloRetryRequest's
-            return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_HANDSHAKE_FAILED));
+            return _tn_hs_refuse(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_HANDSHAKE_FAILED);
         }
     }
     store64(ctx + TLS_CTX_OFF_CIPHER, cipher);
     if ((load8(body + pos) & 0xFF) != 0) {             # legacy_compression_method
-        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_HANDSHAKE_FAILED));
+        return _tn_hs_refuse(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_HANDSHAKE_FAILED);
     }
     pos = pos + 1;
     var ext_total = _tn_be16_r(body + pos);
     pos = pos + 2;
-    if (pos + ext_total > blen) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE)); }
+    if (pos + ext_total > blen) { return _tn_hs_refuse(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
     var ext_ptr = body + pos;
     var sv_dp = 0;
     var sv_dl = 0;
     if (_tn_find_ext(ext_ptr, ext_total, TLS_EXT_SUPPORTED_VERSIONS, &sv_dp, &sv_dl) != 1) {
-        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_PROTOCOL_VERSION, TLS_ERR_VERSION));
+        return _tn_hs_refuse(ctx, TLS_AD_PROTOCOL_VERSION, TLS_ERR_VERSION);
     }
-    if (sv_dl < 2) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE)); }
-    if (_tn_be16_r(sv_dp) != 0x0304) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_VERSION)); }
+    if (sv_dl < 2) { return _tn_hs_refuse(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
+    if (_tn_be16_r(sv_dp) != 0x0304) { return _tn_hs_refuse(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_VERSION); }
     store64(ctx + TLS_CTX_OFF_VERSION, TLS_VERSION_1_3);
     var ks_dp = 0;
     var ks_dl = 0;
     if (_tn_find_ext(ext_ptr, ext_total, TLS_EXT_KEY_SHARE, &ks_dp, &ks_dl) != 1) {
-        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_MISSING_EXTENSION, TLS_ERR_HANDSHAKE_FAILED));
+        return _tn_hs_refuse(ctx, TLS_AD_MISSING_EXTENSION, TLS_ERR_HANDSHAKE_FAILED);
     }
-    if (ks_dl < 4) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE)); }
+    if (ks_dl < 4) { return _tn_hs_refuse(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
     var group = _tn_be16_r(ks_dp);
     if (group != load64(ctx + TLS_CTX_OFF_KS_GROUP)) {      # §4.2.8: a group we sent a share for
-        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_HANDSHAKE_FAILED));
+        return _tn_hs_refuse(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_HANDSHAKE_FAILED);
     }
     var klen = _tn_group_point_len(group);
-    if (_tn_be16_r(ks_dp + 2) != klen) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_BAD_HANDSHAKE)); }
-    if (4 + klen != ks_dl) { return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE)); }
+    if (_tn_be16_r(ks_dp + 2) != klen) { return _tn_hs_refuse(ctx, TLS_AD_ILLEGAL_PARAMETER, TLS_ERR_BAD_HANDSHAKE); }
+    if (4 + klen != ks_dl) { return _tn_hs_refuse(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
     store64(ctx + TLS_CTX_OFF_GROUP, group);
     var server_pub = ks_dp + 4;
     store64(ctx + TLS_CTX_OFF_PEER_PUB, server_pub);
@@ -404,7 +404,7 @@ fn tls_native_client_parse_server_hello(ctx, sh, sh_len): i64 {
     _tn_wipe_priv(ctx);                                # its one use is behind us
     if (sr != TLS_OK) {
         memset(dhe, 0, _TN_EPH_MAX);
-        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_ILLEGAL_PARAMETER, sr));
+        return _tn_hs_refuse(ctx, TLS_AD_ILLEGAL_PARAMETER, sr);
     }
     var ks = tls_native_keysched_new_in(load64(ctx + TLS_CTX_OFF_ALLOC), hash_algo);
     if (ks == 0) {
@@ -1801,13 +1801,13 @@ fn tls_native_server_respond_hello(ctx, ch_msg, ch_len, out, out_max): i64 {
     var ht = 0;
     var blen = 0;
     if (tls_native_handshake_read_header(ch_msg, ch_len, &ht, &blen) < 0) {
-        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE));
+        return _tn_hs_refuse(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE);
     }
     if (ht != TLS_HS_CLIENT_HELLO) {
-        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_UNEXPECTED_MESSAGE, TLS_ERR_BAD_HANDSHAKE));
+        return _tn_hs_refuse(ctx, TLS_AD_UNEXPECTED_MESSAGE, TLS_ERR_BAD_HANDSHAKE);
     }
     if (TLS_HANDSHAKE_HEADER_LEN + blen > ch_len) {
-        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE));
+        return _tn_hs_refuse(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE);
     }
     var body = ch_msg + TLS_HANDSHAKE_HEADER_LEN;
     var again = load64(ctx + TLS_CTX_OFF_HRR);
@@ -1871,7 +1871,7 @@ fn tls_native_server_respond_hello(ctx, ch_msg, ch_len, out, out_max): i64 {
     _tn_wipe_priv(ctx);                               # its one use is behind us
     if (sr != TLS_OK) {
         memset(dhe, 0, _TN_EPH_MAX);
-        return _tn_ctx_fail(ctx, _tn_hs_fail(ctx, TLS_AD_ILLEGAL_PARAMETER, sr));
+        return _tn_hs_refuse(ctx, TLS_AD_ILLEGAL_PARAMETER, sr);
     }
     # Build ServerHello + feed it into the transcript.
     var slen = _tn_build_server_hello(ctx, out, out_max, 0);
