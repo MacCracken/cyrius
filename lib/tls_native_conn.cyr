@@ -1162,9 +1162,13 @@ fn _tn_client_auth_alert(ctx, fd, rc, empty, is13): i64 {
 # steps that use them already have on the paths that reach them. Every server entry path comes
 # here: tls_accept_complete (lib/tls.cyr) calls it, and a TLS 1.2 ClientHello is routed on to
 # _tn_12_server_drive.
+# A client that sent a non-empty legacy_session_id asked for middlebox compatibility mode, and the
+# server MUST then send one dummy ChangeCipherSpec directly after its first handshake message — the
+# HelloRetryRequest, else the ServerHello (RFC 8446 §D.4); it goes out in the same write.
 # ⛔ 6.6.15 — WHY. A HelloRetryRequest was built and then refused here (TLS_ERR_HANDSHAKE_FAILED,
 # nothing sent), so every client that listed a group we take without sending a share for it
-# failed with no alert. CHANGELOG [6.6.15]
+# failed with no alert. And the server never sent the §D.4 CCS (OpenSSL tolerates its absence, so
+# no interop row saw it). CHANGELOG [6.6.15]
 fn tls_native_accept(ctx, sock_fd): i64 {
     if (ctx == 0) { return TLS_ERR_INVALID_PARAM; }
     var rc = _tn_accept_hs(ctx, sock_fd);
@@ -1206,13 +1210,19 @@ fn _tn_accept_hs(ctx, sock_fd): i64 {
         _tn_send_hs_alert(ctx, sock_fd);
         return sh_len;
     }
+    # Middlebox compatibility (RFC 8446 §D.4): the CCS record after our first handshake message,
+    # when the client's legacy_session_id (echoed by both hellos) is not empty.
+    var ccs_n = 0;
+    if (load64(ctx + TLS_CTX_OFF_SESSION_ID_LEN) > 0) { ccs_n = TLS_RECORD_HEADER_LEN + 1; }
     if (tls_native_server_sent_hrr(ctx) == 1) {
-        var hrrec = _tn_alloc(ctx, sh_len + TLS_RECORD_HEADER_LEN);
+        var hrrec = _tn_alloc(ctx, sh_len + TLS_RECORD_HEADER_LEN + ccs_n);
         if (hrrec == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
         tls_native_record_write_header(hrrec, TLS_CT_HANDSHAKE, 0x0303, sh_len);
         memcpy(hrrec + TLS_RECORD_HEADER_LEN, sh, sh_len);
-        var hrw = _tn_io_write_all(ctx, sock_fd, hrrec, sh_len + TLS_RECORD_HEADER_LEN);
+        if (ccs_n > 0) { tls_native_ccs_record_write(hrrec + TLS_RECORD_HEADER_LEN + sh_len); }
+        var hrw = _tn_io_write_all(ctx, sock_fd, hrrec, sh_len + TLS_RECORD_HEADER_LEN + ccs_n);
         if (hrw < 0) { return _tn_ctx_fail(ctx, hrw); }
+        ccs_n = 0;                                     # it went after the HelloRetryRequest
         # The second ClientHello (plaintext; the client may send its one CCS first).
         var rl2 = _tn_read_rec(ctx, sock_fd, inbuf, cap, _TN_CCS_MAY);
         if (rl2 < 0) { return _tn_read_fail(ctx, rl2); }
@@ -1234,12 +1244,13 @@ fn _tn_accept_hs(ctx, sock_fd): i64 {
         }
         if (tls_native_server_sent_hrr(ctx) == 1) { return _tn_ctx_fail(ctx, TLS_ERR_INTERNAL); }
     }
-    # Send ServerHello as a plaintext handshake record.
-    var shrec = _tn_alloc(ctx, sh_len + TLS_RECORD_HEADER_LEN);
+    # Send ServerHello as a plaintext handshake record (and the §D.4 CCS, if not sent already).
+    var shrec = _tn_alloc(ctx, sh_len + TLS_RECORD_HEADER_LEN + ccs_n);
     if (shrec == 0) { return _tn_ctx_fail(ctx, TLS_ERR_OOM); }
     tls_native_record_write_header(shrec, TLS_CT_HANDSHAKE, 0x0303, sh_len);
     memcpy(shrec + TLS_RECORD_HEADER_LEN, sh, sh_len);
-    var shw = _tn_io_write_all(ctx, sock_fd, shrec, sh_len + TLS_RECORD_HEADER_LEN);
+    if (ccs_n > 0) { tls_native_ccs_record_write(shrec + TLS_RECORD_HEADER_LEN + sh_len); }
+    var shw = _tn_io_write_all(ctx, sock_fd, shrec, sh_len + TLS_RECORD_HEADER_LEN + ccs_n);
     if (shw < 0) { return _tn_ctx_fail(ctx, shw); }
     # Derive + install handshake-traffic keys (transcript is at CH..SH).
     var dr = tls_native_server_derive_handshake(ctx);

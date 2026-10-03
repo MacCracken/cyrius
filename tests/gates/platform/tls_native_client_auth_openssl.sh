@@ -55,6 +55,9 @@
 #      restricted to P-384 — tls_native_set_groups in the probe's hook), a server preferring P-384,
 #      and ECDSA certificates on the other curve. An Ed25519 server certificate unless named:
 #      OpenSSL's 1.2 client refuses an ECDSA certificate whose curve is missing from its own -groups.
+#      Every TLS 1.3 row that completes also checks the server's middlebox-compatibility CCS (RFC
+#      8446 §D.4) through s_client -msg: exactly one, right after its first handshake message, and
+#      none for s_client -no_middlebox (an empty session id).
 # SKIP (exit 77, named): openssl(1) missing. ANTI-VACUITY: the rows run are counted and floored.
 #
 # MUTATION LEDGER (6.6.14, each measured RED here; the pre-fix 6.6.13 lib fails 22 of the 27 rows —
@@ -89,6 +92,9 @@
 #       it) -> the 10 rows with a HelloRetryRequest
 #   MH2 the server reads the second ClientHello refusing a CCS -> the 3 G rows with a native
 #       HelloRetryRequest (s_client sends its middlebox CCS before the second ClientHello)
+# MUTATION LEDGER (6.6.15 review pass, the G rows it added and the CCS check every G 1.3 row makes):
+#   MH3 the server's RFC 8446 §D.4 CCS never sent -> the 7 G TLS 1.3 rows that complete, all but
+#       the -no_middlebox one
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 1
@@ -521,7 +527,12 @@ crow 13 -Verify cli384 ok "TLS 1.3, REQUIRED: a P-384 client certificate, ECDHE 
 crow 13 -      -      alert "TLS 1.3, s_server taking only P-521: the client's groups share none" "-groups P-521"
 
 # grow <13|12> "<s_client -groups>" <server cert> <server groups: "23,24" | -> <want: ok|fail> <group> <hrr: 1|0|-> "<label>"
-# The native server (no client authentication) against `openssl s_client -tls1_N -groups ...`.
+#      [<more s_client flags>]
+# The native server (no client authentication) against `openssl s_client -tls1_N -groups ... -msg`.
+# A TLS 1.3 row that completes also checks the server's middlebox-compatibility CCS (RFC 8446
+# §D.4): s_client sends a 32-byte legacy_session_id unless -no_middlebox, and then must receive
+# exactly one CCS, directly after the server's first handshake message (the HelloRetryRequest or
+# the ServerHello); with -no_middlebox, none.
 grow() {
     NROWS=$((NROWS + 1))
     _rf=$FAILS
@@ -533,8 +544,9 @@ grow() {
     while [ ! -s "$T/port" ] && [ "$_w" -lt 50 ]; do sleep 0.1; _w=$((_w + 1)); done
     _port=$(cat "$T/port" 2>/dev/null || true)
     if [ -z "$_port" ]; then _fail "$8 — the native server published no port"; return 0; fi
+    # shellcheck disable=SC2086
     printf 'ping\n' | $TO openssl s_client -connect "127.0.0.1:$_port" "-tls1_$(echo "$1" | cut -c2)" \
-        -groups "$2" -ign_eof > "$T/sc.out" 2>&1 || true
+        -groups "$2" -msg ${9:-} -ign_eof > "$T/sc.out" 2>&1 || true
     wait "$_sp" 2>/dev/null || true
     _s=$(cat "$T/s.out" 2>/dev/null || true)
     case "$5" in
@@ -544,6 +556,16 @@ grow() {
             case "$_s" in *"group=$6 "*) : ;; *) _fail "$8 — expected group $6: $_s" ;; esac
             if [ "$7" != "-" ]; then
                 case "$_s" in *"hrr=$7 "*) : ;; *) _fail "$8 — expected hrr=$7: $_s" ;; esac
+            fi
+            if [ "$1" = "13" ]; then
+                _wccs=1
+                case "${9:-}" in *-no_middlebox*) _wccs=0 ;; esac
+                _nccs=$(grep -c '^<<< .*ChangeCipherSpec' "$T/sc.out" || true)
+                [ "$_nccs" = "$_wccs" ] || _fail "$8 — s_client received $_nccs CCS from the server, expected $_wccs (RFC 8446 §D.4)"
+                if [ "$_wccs" = 1 ]; then
+                    _m2=$(grep '^<<< ' "$T/sc.out" | grep -v RecordHeader | sed -n 2p || true)
+                    case "$_m2" in *ChangeCipherSpec*) : ;; *) _fail "$8 — the server's second message is not its CCS: $_m2" ;; esac
+                fi
             fi
             ;;
         fail)
@@ -576,8 +598,10 @@ grow 12 P-256:P-384    srved 24,23 ok 24 - "TLS 1.2: a server preferring P-384: 
 grow 13 P-256          srv384 - ok 23 0 "TLS 1.3: an ECDSA P-384 server certificate, ECDHE on P-256"
 grow 12 P-256:P-384    srv384 - ok 23 - "TLS 1.2: an ECDSA P-384 server certificate signs a P-256 ServerKeyExchange"
 grow 12 P-384:P-256    srv    - ok 23 - "TLS 1.2: an ECDSA P-256 server certificate, P-384 listed first: P-256 (server preference)"
+grow 13 P-256          srved - ok 23 0 "TLS 1.3: s_client -no_middlebox (an empty session id): no CCS from the server" \
+    "-no_middlebox"
 
-FLOOR=$((39 + 9 + 15 - NOEMS_SKIP))
+FLOOR=$((39 + 9 + 16 - NOEMS_SKIP))
 if [ "$NROWS" -lt "$FLOOR" ]; then
     echo "  FAIL: $G: only $NROWS rows ran (floor $FLOOR)"; FAILS=$((FAILS + 1)); fi
 if [ "$FAILS" -ne 0 ]; then echo "FAIL: $G: $FAILS failure(s) in $NROWS rows"; exit 1; fi

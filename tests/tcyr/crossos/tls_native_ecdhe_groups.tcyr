@@ -244,6 +244,26 @@ fn _gx_scan(log, len, hrr_out): i64 {
     return alert;
 }
 
+# The 1-based index of the first ChangeCipherSpec record in a log (0: none), and through *cnt_out
+# how many there are.
+fn _gx_ccs_scan(log, len, cnt_out): i64 {
+    var first = 0;
+    var cnt = 0;
+    var idx = 0;
+    var p = 0;
+    while (p + 5 <= len) {
+        idx = idx + 1;
+        var rl = ((load8(log + p + 3) & 0xFF) << 8) | (load8(log + p + 4) & 0xFF);
+        if ((load8(log + p) & 0xFF) == TLS_CT_CHANGE_CIPHER_SPEC) {
+            cnt = cnt + 1;
+            if (first == 0) { first = idx; }
+        }
+        p = p + 5 + rl;
+    }
+    store64(cnt_out, cnt);
+    return first;
+}
+
 fn _gx_srv_hook(hctx, handle): i64 {
     if (_gx_sn > 0) {
         if (tls_native_set_groups(handle, &_gx_sgroups, _gx_sn) != TLS_OK) { return 1; }
@@ -444,6 +464,11 @@ fn _gx_ok(label, group, hrr): i64 {
     assert_eq(_gx_wzs[1 + hrr], 1, "  so does the server's");
     var ver = TLS_VERSION_1_3;
     if (_gx_v12 == 1) { ver = TLS_VERSION_1_2; }
+    if (_gx_v12 == 0) {
+        var nccs = 0;
+        _gx_ccs_scan(_gx_sc, _gx_sc_len, &nccs);
+        assert_eq(nccs, 0, "  no CCS from the server (the client's legacy_session_id is empty, RFC 8446 §D.4)");
+    }
     assert_eq(_gx_obs[14], ver, "  the client's version");
     assert_eq(_gx_obs[15], ver, "  the server's version");
     return 0;
@@ -1165,6 +1190,30 @@ fn test_server_refusals(): i64 {
     assert_eq(_gx_obs[2], TLS_ERR_IO, "  and reads on to the client's Finished (the script ends there: TLS_ERR_IO)");
     assert_eq(_gx_obs[12], 0 - 1, "  no alert");
     assert_eq(_gx_obs[9], 1, "  the server holds no byte of its ephemeral key or shared secret");
+    var sccs = 0;
+    assert_eq(_gx_ccs_scan(_gx_sc, _gx_sc_len, &sccs), 2,
+      "  a 32-byte session id: the server's CCS is its 2nd record, right after the HelloRetryRequest (RFC 8446 §D.4)");
+    assert_eq(sccs, 1, "  and the only one (none after the ServerHello)");
+
+    test_group("6.6.15 — the TLS 1.3 server's middlebox-compatibility CCS (RFC 8446 §D.4)");
+    _gb_start(_gx_cs);
+    _gx_put_ch13(32, 0x11, A256, 0, 1, GX_256, 0, 0, 1, GX_256, _gk_256, 65, 0, 0, 0);
+    _gx_vs_script_client();
+    assert_eq(_gx_obs[11], 0, "a 32-byte session id and a usable share: no HelloRetryRequest");
+    assert_eq(_gx_obs[2], TLS_ERR_IO, "  the server reads on to the client's Finished (the script ends there)");
+    assert_eq(_gx_ccs_scan(_gx_sc, _gx_sc_len, &sccs), 2, "  its CCS is its 2nd record, right after the ServerHello");
+    assert_eq(sccs, 1, "  and the only one");
+    _gb_start(_gx_cs);
+    _gx_put_ch13(0, 0, A256, 0, 1, GX_256, 0, 0, 1, GX_256, _gk_256, 65, 0, 0, 0);
+    _gx_vs_script_client();
+    assert_eq(_gx_obs[2], TLS_ERR_IO, "an empty session id: the server reads on to the client's Finished");
+    assert_eq(_gx_ccs_scan(_gx_sc, _gx_sc_len, &sccs), 0, "  and sends no CCS");
+    _gb_start(_gx_cs);
+    _gx_put_ch13(32, 0x11, A256, 0, 1, GX_256, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    _gx_vs_script_client();
+    assert_eq(_gx_obs[11], 1, "a 32-byte session id, no share: a HelloRetryRequest");
+    assert_eq(_gx_ccs_scan(_gx_sc, _gx_sc_len, &sccs), 2, "  then its CCS (in the same write), the client gone after");
+    assert_eq(sccs, 1, "  one");
     _gb_start(_gx_cs);
     _gx_put_ch13(0, 0, A256, 0, 1, GX_256, 0, 0, 0, 0, 0, 0, 0, 0, 0);
     _gx_put_ccs();
