@@ -558,15 +558,27 @@ fn test_matrix12(): i64 {
     _gx_none("client x25519 only, server P-384 only: no shared group");
 
     test_group("6.6.15 — TLS 1.2: the group is independent of an ECDSA certificate's curve");
-    _gx_cl(GX_256, 0, 0); _gx_sl(0, 0, 0);
+    _gx_cl(GX_256, GX_384, 0); _gx_sl(0, 0, 0);
     _gx_row(1, 2);
-    _gx_ok("a P-384 certificate signs a P-256 ServerKeyExchange", GX_256, 0);
-    _gx_cl(GX_384, 0, 0); _gx_sl(0, 0, 0);
+    _gx_ok("a P-384 certificate signs a P-256 ServerKeyExchange (the client lists both curves)", GX_256, 0);
+    _gx_cl(GX_384, GX_256, 0); _gx_sl(GX_384, GX_256, 0);
     _gx_row(1, 1);
     _gx_ok("a P-256 certificate signs a P-384 ServerKeyExchange", GX_384, 0);
     _gx_cl(0, 0, 0); _gx_sl(0, 0, 0);
     _gx_row(1, 2);
     _gx_ok("a P-384 certificate on x25519", GX_X, 0);
+
+    test_group("6.6.15 — TLS 1.2: but the client's supported_groups bounds the certificate's curve (RFC 8422 §5.1)");
+    _gx_cl(GX_256, 0, 0); _gx_sl(0, 0, 0);
+    _gx_row(1, 2);
+    _gx_none("a P-384 certificate, a client listing only P-256: no suite to negotiate");
+    _gx_cl(GX_X, GX_384, 0); _gx_sl(0, 0, 0);
+    _gx_row(1, 1);
+    _gx_none("a P-256 certificate, a client listing x25519 and P-384");
+    _gx_cl(GX_256, 0, 0); _gx_sl(0, 0, 0);
+    _gx_row(1, 0);
+    _gx_ok("an Ed25519 certificate is not bound by the list (a client listing only P-256)", GX_256, 0);
+    _gx_cl(0, 0, 0);
     return 0;
 }
 
@@ -744,6 +756,10 @@ fn _gx_put_ch13(sid, sidb, c0, c1, nsg, g0, g1, g2, nks, k0g, k0p, k0n, k1g, k1p
     return 0;
 }
 
+# One-shot cipher suites for the NEXT _gx_put_ch12 (0 0: the default pair; `_gx_ch12_cs1` 0: one).
+var _gx_ch12_cs0 = 0;
+var _gx_ch12_cs1 = 0;
+
 # A record holding a TLS 1.2 ClientHello: ECDHE-ECDSA suites, supported_groups `g0` [`g1`] (`nsg`
 # -1: none), ec_point_formats, signature_algorithms (Ed25519, ECDSA P-256 / P-384).
 fn _gx_put_ch12(nsg, g0, g1): i64 {
@@ -752,7 +768,12 @@ fn _gx_put_ch12(nsg, g0, g1): i64 {
     _gb16(0x0303);
     _gbfill(0x66, 32);
     _gb8(0);
-    _gb16(4); _gb16(TLS12_ECDHE_ECDSA_AES256_GCM_SHA384); _gb16(TLS12_ECDHE_ECDSA_CHACHA20_SHA256);
+    if (_gx_ch12_cs0 == 0) {
+        _gb16(4); _gb16(TLS12_ECDHE_ECDSA_AES256_GCM_SHA384); _gb16(TLS12_ECDHE_ECDSA_CHACHA20_SHA256);
+    } else {
+        if (_gx_ch12_cs1 == 0) { _gb16(2); _gb16(_gx_ch12_cs0); }
+        else { _gb16(4); _gb16(_gx_ch12_cs0); _gb16(_gx_ch12_cs1); }
+    }
     _gb8(1); _gb8(0);
     var eb = _gb_len16();
     if (nsg >= 0) {
@@ -772,7 +793,26 @@ fn _gx_put_ch12(nsg, g0, g1): i64 {
     _gb_hs_end(hs);
     _gb_rec_end(rec);
     _gx_ch_sg_odd = 0;
+    _gx_ch12_cs0 = 0;
+    _gx_ch12_cs1 = 0;
     return 0;
+}
+
+# The cipher_suite of the first ServerHello in a log of plaintext records (-1 none).
+fn _gx_sh_cipher(log, len): i64 {
+    var p = 0;
+    while (p + 5 <= len) {
+        var rl = ((load8(log + p + 3) & 0xFF) << 8) | (load8(log + p + 4) & 0xFF);
+        if ((load8(log + p) & 0xFF) == TLS_CT_HANDSHAKE) {
+            var m = log + p + 5;
+            if ((load8(m) & 0xFF) == TLS_HS_SERVER_HELLO) {
+                var sl = load8(m + 4 + 2 + 32) & 0xFF;
+                return _tn_be16_r(m + 4 + 2 + 32 + 1 + sl);
+            }
+        }
+        p = p + 5 + rl;
+    }
+    return 0 - 1;
 }
 
 # A record holding a TLS 1.2 ClientKeyExchange with an `n`-byte point.
@@ -1274,6 +1314,35 @@ fn test_server_refusals(): i64 {
     _gx_vs_script_client();
     _gx_srefused("a 1.2 supported_groups list of odd length: decode_error", TLS_ERR_BAD_HANDSHAKE,
       TLS_AD_DECODE_ERROR, 0);
+
+    test_group("6.6.15 — the TLS 1.2 server negotiates only a suite it can answer");
+    _gb_start(_gx_cs);
+    _gx_ch12_cs0 = TLS12_ECDHE_RSA_AES256_GCM_SHA384;
+    _gx_put_ch12(1, GX_256, 0);
+    _gx_vs_script_client();
+    _gx_srefused("ECDHE_RSA only, to a server with no RSA key: handshake_failure (not an ECDSA suite never offered)",
+      TLS_ERR_HANDSHAKE_FAILED, TLS_AD_HANDSHAKE_FAILURE, 0);
+    _gb_start(_gx_cs);
+    _gx_ch12_cs0 = TLS12_ECDHE_ECDSA_AES128_GCM_SHA256;
+    _gx_put_ch12(1, GX_256, 0);
+    _gx_vs_script_client();
+    _gx_srefused("ECDHE_ECDSA_AES128_GCM_SHA256 only (the ServerHello cannot name it): handshake_failure",
+      TLS_ERR_HANDSHAKE_FAILED, TLS_AD_HANDSHAKE_FAILURE, 0);
+    _gb_start(_gx_cs);
+    _gx_ch12_cs0 = TLS12_ECDHE_RSA_AES256_GCM_SHA384;
+    _gx_ch12_cs1 = TLS12_ECDHE_ECDSA_CHACHA20_SHA256;
+    _gx_put_ch12(1, GX_256, 0);
+    _gx_vs_script_client();
+    assert_eq(_gx_sh_cipher(_gx_sc, _gx_sc_len), TLS12_ECDHE_ECDSA_CHACHA20_SHA256,
+      "ECDHE_RSA_AES256 then ECDHE_ECDSA_CHACHA20: the ServerHello names CHACHA20, the one it can do");
+    assert_eq(_gx_obs[12], 0 - 1, "  no alert");
+    _gx_cert = 2;
+    _gb_start(_gx_cs);
+    _gx_put_ch12(1, GX_256, 0);
+    _gx_vs_script_client();
+    _gx_cert = 0;
+    _gx_srefused("a P-384 certificate, a client listing only P-256: handshake_failure (RFC 8422 §5.1)",
+      TLS_ERR_HANDSHAKE_FAILED, TLS_AD_HANDSHAKE_FAILURE, 0);
     _gb_start(_gx_cs);
     _gx_put_ch12(0 - 1, 0, 0);
     _gx_vs_script_client();

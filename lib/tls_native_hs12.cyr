@@ -1309,16 +1309,25 @@ fn _tn_ch_is_tls13(ch_msg, ch_len): i64 {
 }
 
 # Server: parse a TLS 1.2 ClientHello body — capture client_random, pick the first offered
-# ciphersuite we support (its AEAD identity to OFF_CIPHER) and the ECDHE group (OFF_GROUP): the
-# first of the server's groups (_tn_groups: x25519, then secp256r1, then secp384r1 by default)
-# the client's supported_groups lists (RFC 8422 §5.1.1). A client that sends no supported_groups
-# gets the server's first group — the extension is how a client restricts the curve, and without
-# it the server may choose (RFC 8422 §4); one whose list shares none of ours is refused with
-# handshake_failure. The group never depends on the certificate. Returns the chosen WIRE
-# ciphersuite (>0) or a negative TLS_ERR_* with the alert recorded (_tn_hs_fail).
+# ciphersuite we can answer (_tn_12_server_suite_ok; its AEAD identity to OFF_CIPHER) and the
+# ECDHE group (OFF_GROUP): the first of the server's groups (_tn_groups: x25519, then secp256r1,
+# then secp384r1 by default) the client's supported_groups lists (RFC 8422 §5.1.1). A client that
+# sends no supported_groups gets the server's first group — the extension is how a client
+# restricts the curve, and without it the server may choose (RFC 8422 §4); one whose list shares
+# none of ours is refused with handshake_failure. The group never depends on the certificate, but
+# in TLS 1.2 the client's list also bounds an ECDSA certificate's curve (RFC 8422 §5.1: an ECC
+# suite only if the handshake completes within the client's curves), so a list without it leaves
+# no suite to negotiate: handshake_failure. (An Ed25519 certificate is not bound by the list.)
+# Returns the chosen WIRE ciphersuite (>0) or a negative TLS_ERR_* with the alert recorded
+# (_tn_hs_fail).
 # ⛔ 6.6.15 — WHY. The 1.2 server never read supported_groups and sent an x25519
 # ServerKeyExchange to every client, so a client offering only P-256 or P-384 refused it
-# (OpenSSL's s_client: "wrong curve"). CHANGELOG [6.6.15]
+# (OpenSSL's s_client: "wrong curve"). It negotiated an ECDHE_ECDSA suite on a certificate whose
+# curve the client had not listed (the client refused it: "wrong curve"); and it took the first
+# suite tls_native_12_cipher_supported knew — an ECDHE_RSA one, on a server with no RSA key,
+# was answered with an ECDHE_ECDSA suite the client never offered ("wrong cipher returned"), and
+# ECDHE_ECDSA_AES128_GCM_SHA256 failed with no alert (the ServerHello cannot name it).
+# CHANGELOG [6.6.15]
 fn _tn_12_parse_client_hello(ctx, body, blen): i64 {
     if (blen < 2 + 32 + 1) { return TLS_ERR_BAD_HANDSHAKE; }
     var crand = _tn_alloc(ctx, TLS_RANDOM_LEN);
@@ -1336,7 +1345,7 @@ fn _tn_12_parse_client_hello(ctx, body, blen): i64 {
     var j = 0;
     while (j + 2 <= cs_len) {
         var w = _tn_be16_r(body + pos + j);
-        if (tls_native_12_cipher_supported(w) == 1) {
+        if (_tn_12_server_suite_ok(w) == 1) {
             chosen = w;
             j = cs_len;
         } else {
@@ -1370,6 +1379,10 @@ fn _tn_12_parse_client_hello(ctx, body, blen): i64 {
                     group = _tn_pick_group(ctx, sgp, sgl);
                     if (group < 0) { return _tn_hs_fail(ctx, TLS_AD_DECODE_ERROR, TLS_ERR_BAD_HANDSHAKE); }
                     if (group == 0) { return _tn_hs_fail(ctx, TLS_AD_HANDSHAKE_FAILURE, TLS_ERR_HANDSHAKE_FAILED); }
+                    var kc = _tn_12_key_curve(ctx);
+                    if (kc != 0) {
+                        if (_tn_sg_has(sgp, sgl, kc) != 1) { chosen = 0; }   # no ECDSA suite on this certificate
+                    }
                 }
             }
         }
@@ -1379,6 +1392,26 @@ fn _tn_12_parse_client_hello(ctx, body, blen): i64 {
     store64(ctx + TLS_CTX_OFF_GROUP, group);
     store64(ctx + TLS_CTX_OFF_CIPHER, tls_native_12_cipher_aead_identity(chosen));
     return chosen;
+}
+
+# 1 if the TLS 1.2 server can negotiate wire suite `w`: an ECDHE suite whose ServerHello it can
+# write back — the server's key is Ed25519 or ECDSA, so an ECDHE_ECDSA suite that
+# tls_native_aead_to_wire_12 maps to itself (AES256-GCM-SHA384, CHACHA20-POLY1305). Never an
+# ECDHE_RSA suite (no RSA server key) nor AES128-GCM (the ServerHello cannot name it).
+# CHANGELOG [6.6.15]
+fn _tn_12_server_suite_ok(w): i64 {
+    if (tls_native_12_cipher_supported(w) != 1) { return 0; }
+    if (tls_native_aead_to_wire_12(tls_native_12_cipher_aead_identity(w), TLS12_AUTH_ECDSA) != w) { return 0; }
+    return 1;
+}
+
+# The NamedGroup of the server's ECDSA key (secp256r1 / secp384r1), 0 for any other key — the
+# curve a TLS 1.2 client's supported_groups must list (RFC 8422 §5.1). CHANGELOG [6.6.15]
+fn _tn_12_key_curve(ctx): i64 {
+    var ka = load64(ctx + TLS_CTX_OFF_KEY_ALGO);
+    if (ka == SIG_PRIVKEY_ECDSA_P256) { return TLS_GROUP_SECP256R1; }
+    if (ka == SIG_PRIVKEY_ECDSA_P384) { return TLS_GROUP_SECP384R1; }
+    return 0;
 }
 
 # Server: build the coalesced flight ServerHello ‖ Certificate ‖

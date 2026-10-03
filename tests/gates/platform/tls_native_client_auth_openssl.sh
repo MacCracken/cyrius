@@ -54,10 +54,12 @@
 #      HelloRetryRequest from the native side (s_client X448:P-256, secp521r1:P-384, and a server
 #      restricted to P-384 — tls_native_set_groups in the probe's hook), a server preferring P-384,
 #      and ECDSA certificates on the other curve. An Ed25519 server certificate unless named:
-#      OpenSSL's 1.2 client refuses an ECDSA certificate whose curve is missing from its own -groups.
-#      Every TLS 1.3 row that completes also checks the server's middlebox-compatibility CCS (RFC
-#      8446 §D.4) through s_client -msg: exactly one, right after its first handshake message, and
-#      none for s_client -no_middlebox (an empty session id).
+#      OpenSSL's 1.2 client refuses an ECDSA certificate whose curve is missing from its own -groups,
+#      and since 6.6.15 the native server refuses first (handshake_failure, RFC 8422 §5.1). The 1.2
+#      server's suite choice: an ECDHE_RSA or ECDHE_ECDSA_AES128 offer it cannot answer. Every TLS
+#      1.3 row that completes also checks the server's middlebox-compatibility CCS (RFC 8446 §D.4)
+#      through s_client -msg: exactly one, right after its first handshake message, and none for
+#      s_client -no_middlebox (an empty session id).
 # SKIP (exit 77, named): openssl(1) missing. ANTI-VACUITY: the rows run are counted and floored.
 #
 # MUTATION LEDGER (6.6.14, each measured RED here; the pre-fix 6.6.13 lib fails 22 of the 27 rows —
@@ -95,6 +97,9 @@
 # MUTATION LEDGER (6.6.15 review pass, the G rows it added and the CCS check every G 1.3 row makes):
 #   MH3 the server's RFC 8446 §D.4 CCS never sent -> the 7 G TLS 1.3 rows that complete, all but
 #       the -no_middlebox one
+#   MH4 the 1.2 server choosing suites by tls_native_12_cipher_supported again -> the 3 -cipher rows
+#   MH5 the 1.2 server not bounding an ECDSA certificate's curve by supported_groups -> the P-384
+#       certificate / P-256-only row
 set -u
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT" || exit 1
@@ -600,8 +605,19 @@ grow 12 P-256:P-384    srv384 - ok 23 - "TLS 1.2: an ECDSA P-384 server certific
 grow 12 P-384:P-256    srv    - ok 23 - "TLS 1.2: an ECDSA P-256 server certificate, P-384 listed first: P-256 (server preference)"
 grow 13 P-256          srved - ok 23 0 "TLS 1.3: s_client -no_middlebox (an empty session id): no CCS from the server" \
     "-no_middlebox"
+# The certificate and the suite (6.6.15): the native 1.2 server negotiated an ECDHE_ECDSA suite on a
+# P-384 certificate for a client listing only P-256 (s_client: "wrong curve"), answered an ECDHE_RSA
+# suite — it has no RSA key — with an ECDHE_ECDSA one the client never offered ("wrong cipher
+# returned"), and failed ECDHE-ECDSA-AES128-GCM-SHA256 with no alert (its ServerHello cannot name it).
+grow 12 P-256          srv384 - fail 0 - "TLS 1.2: an ECDSA P-384 certificate, s_client listing only P-256: handshake_failure (RFC 8422 §5.1)"
+grow 12 P-256          srved - fail 0 - "TLS 1.2: ECDHE-RSA only, to a server with no RSA key: handshake_failure" \
+    "-cipher ECDHE-RSA-AES256-GCM-SHA384"
+grow 12 P-256          srved - fail 0 - "TLS 1.2: ECDHE-ECDSA-AES128-GCM-SHA256 only: handshake_failure" \
+    "-cipher ECDHE-ECDSA-AES128-GCM-SHA256"
+grow 12 P-256          srved - ok 23 - "TLS 1.2: ECDHE-RSA listed before ECDHE-ECDSA-CHACHA20: the server takes the suite it can do" \
+    "-cipher ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305"
 
-FLOOR=$((39 + 9 + 16 - NOEMS_SKIP))
+FLOOR=$((39 + 9 + 20 - NOEMS_SKIP))
 if [ "$NROWS" -lt "$FLOOR" ]; then
     echo "  FAIL: $G: only $NROWS rows ran (floor $FLOOR)"; FAILS=$((FAILS + 1)); fi
 if [ "$FAILS" -ne 0 ]; then echo "FAIL: $G: $FAILS failure(s) in $NROWS rows"; exit 1; fi
