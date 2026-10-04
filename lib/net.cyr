@@ -298,6 +298,12 @@ fn _net_wsa_nbio(fd, on): i64 {
 #endif
 
 # Send up to `len` bytes on socket `fd`: the count, or -errno.
+# ⛔ WHY the POSIX arm is not a plain sys_write: a write(2) to a peer that has reset the connection
+# raises SIGPIPE, which by default KILLS the process — every sock_send / sock_send_all / sock_send_a
+# caller (http, ws, ws_server, yantra, sandhi's client paths) was one reset peer away from a remote,
+# unauthenticated kill. lib/syscalls.cyr's _fd_write_nosigpipe answers -EPIPE instead (MSG_NOSIGNAL
+# on Linux, SO_NOSIGPIPE on macOS) and keeps write(2) for an fd that is not a socket; on agnos it
+# is the same sys_write as before (the peer routes a tagged fd to #48). CHANGELOG [6.6.16]
 fn _net_os_send(fd, buf, len): i64 {
     #ifdef CYRIUS_TARGET_WIN
     if (len > 0x7FFFFFFF) { len = 0x7FFFFFFF; }    # send() takes an int length; a short write is legal
@@ -306,7 +312,7 @@ fn _net_os_send(fd, buf, len): i64 {
     return n;
     #endif
     #ifndef CYRIUS_TARGET_WIN
-    return sys_write(fd, buf, len);                # agnos: the peer routes a tagged fd to #48
+    return _fd_write_nosigpipe(fd, buf, len);      # never SIGPIPE on a socket (CVE-TBD(N1))
     #endif
 }
 
