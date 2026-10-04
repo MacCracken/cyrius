@@ -3132,6 +3132,9 @@ fn _PARSE_FACTOR_IMPL(S): i64 {
             _cl_env_lidx = cl_env_slot;
         }
         # Parse params until | (a zero-param `||` closure has no param list)
+        # ⚠ The pair scans (parse.cyr `_tok_is_closure_body`) recognise a closure BODY as a `{`
+        # immediately preceded by the closing `|` or by `||`. Typed params or a return annotation
+        # between the bars and the body would break that predicate — move it with the grammar.
         # v6.5.46: remember the first param's local index — the deferred stack-param pass
         # below needs it, and inside the loop `cpli` is re-read each iteration.
         var cl_p0 = GFLC(S);

@@ -1692,6 +1692,11 @@ _chk_gate "$ROOT/tests/gates/diagnostics/closure_capture_struct_copy_mismatch.sh
 # a whole variant, not a dropped tag: no mixed-return warning. The dropped-tag shapes still warn.
 _chk_gate "$ROOT/tests/gates/frontend/stack_enum_mixed_return_warning.sh"
 
+# 6.6.16 (H2) — a closure's `return <: stack call>` belongs to the CLOSURE: the pair scans skip a
+# closure body, so the enclosing fn is neither refused "bind both" nor warned. The filed hisab
+# repro runs verbatim against the tree through a throwaway home; real mixed returns still warn.
+_chk_gate "$ROOT/tests/gates/frontend/stack_enum_closure_return_scope.sh"
+
 # 6.6.9 (bite 3) — a second struct/union with a different layout (the first silently won) and
 # an enum constant over a zero/computed global of the same name are warned, not silent.
 _chk_gate "$ROOT/tests/gates/frontend/redefinition_layout_and_enum_over_var.sh"

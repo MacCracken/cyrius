@@ -90,16 +90,56 @@ var _inline_pending = 0;
 # IDENT is already flagged. Repeat until nothing changes, bounded — a chain of forwarding
 # wrappers needs one round per link.
 #
-# ⚠ NESTED fn BODIES ARE SKIPPED. A closure defined inside the body has its own `return`, and
-# counting it would flag the OUTER fn as pair-returning — over-flagging is worse than
-# under-flagging here, because it routes a non-pair call into the two-register receive and reads
-# a garbage rdx.
+# ⚠ NESTED fn BODIES AND CLOSURE BODIES ARE SKIPPED. A nested fn or a closure defined inside the
+# body has its own `return`, and counting it would flag the OUTER fn as pair-returning —
+# over-flagging is worse than under-flagging here, because it routes a non-pair call into the
+# two-register receive and reads a garbage rdx. A closure literal (`|x| { .. }`, `|| { .. }`) has
+# NO `fn` token, so a skip keyed on `fn` alone booked its `return h(..)` to the enclosing fn: a
+# false "bind both" refusal at every single-variable bind of that fn's result, and the
+# mixed-return warning aimed at its own plain return. The closure's own pair-ness is unaffected —
+# its fn entry is flagged while its body is parsed. CHANGELOG [6.6.16]
 # ⚠ INVALIDATED whenever a `: stack` constructor is flagged (parse_types.cyr). The prescan is
 # demand-driven, and the first demand can arrive BEFORE the enum declaration has been reached —
 # measured: the pass ran with a complete 3,498-token stream and flagged nothing, because no
 # constructor carried the flag yet for it to propagate FROM. Re-running on each new stack enum
 # is cheap (enum declarations are few) and is what makes the propagation order-independent.
 var _pair_prescan_done = 0;
+
+# Token-stream skip helpers shared by the two pair scans (`_pair_prescan`,
+# `_warn_mixed_pair_returns`). Separate small fns, not inline loops: cybs (the seed-built
+# bootstrap compiler) fails SILENTLY on too many references in one fn.
+#
+# Does the `{` at token k open a CLOSURE body? Call only when TOKTYP(S, k) == 13. Closure grammar
+# is `|` IDENT (`,` IDENT)* `|` or `||`, then the body — untyped params, no return annotation
+# (parse_expr.cyr, the `typ == 35 || typ == 54` factor arm) — and `{` never begins an expression,
+# so a `{` right after `|` (35) or `||` (54) can only be a closure block body, never `a | b` /
+# `a || b`. ⚠ If closure params or a return type ever gain annotations, this must scan the param
+# list instead. A brace-less closure (`|x| h(x)`) needs no skip: an expression holds no `return`.
+fn _tok_is_closure_body(S, k): i64 {
+    if (k < 1) { return 0; }
+    var p = TOKTYP(S, k - 1);
+    if (p == 35) { return 1; }
+    if (p == 54) { return 1; }
+    return 0;
+}
+
+# Index of the `}` that closes the first `{` at or after token k (n when the stream ends first).
+# Entered AT a `{` it is that brace's match; entered at a nested `fn` token it skips the header
+# and then the body, exactly as the scans' inline nested-fn loops do.
+fn _tok_skip_block(S, k, n): i64 {
+    var d = 0;
+    var started = 0;
+    while (k < n) {
+        var t = TOKTYP(S, k);
+        if (t == 13) { d = d + 1; started = 1; }
+        if (t == 14) {
+            d = d - 1;
+            if (d == 0) { if (started == 1) { return k; } }
+        }
+        k = k + 1;
+    }
+    return k;
+}
 
 fn _pair_prescan(S): i64 {
     var n = GTCNT(S);
@@ -150,7 +190,11 @@ fn _pair_prescan(S): i64 {
                                             if (k >= n) { go = 0; }
                                             else {
                                                 var t = TOKTYP(S, k);
-                                                if (t == 13) { bd = bd + 1; }
+                                                if (t == 13) {
+                                                    # a closure body — its returns are its own
+                                                    if (_tok_is_closure_body(S, k) == 1) { k = _tok_skip_block(S, k, n); }
+                                                    else { bd = bd + 1; }
+                                                }
                                                 elif (t == 14) {
                                                     bd = bd - 1;
                                                     if (bd == 0) { go = 0; }
@@ -287,7 +331,11 @@ fn _warn_mixed_pair_returns(S): i64 {
                                         if (k >= n) { go = 0; }
                                         else {
                                             var t = TOKTYP(S, k);
-                                            if (t == 13) { bd = bd + 1; }
+                                            if (t == 13) {
+                                                # a closure body — its returns are its own
+                                                if (_tok_is_closure_body(S, k) == 1) { k = _tok_skip_block(S, k, n); }
+                                                else { bd = bd + 1; }
+                                            }
                                             elif (t == 14) {
                                                 bd = bd - 1;
                                                 if (bd == 0) { go = 0; }
