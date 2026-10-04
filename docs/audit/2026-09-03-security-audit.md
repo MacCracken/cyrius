@@ -2,7 +2,7 @@
 
 **Scope:** the untrusted-source-input surface. Previous full audit:
 `docs/audit/2026-07-27-security-audit.md` (CVE-32…CVE-36) at cycc 6.4.82.
-**Next free identifier after this document: CVE-72.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
+**Next free identifier after this document: CVE-73.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
 document are **withdrawn** but still consume their ids.) CVE-43 was consumed at 6.6.5,
 **CVE-44 and CVE-45 at 6.6.6** — the release installer's fixed `/tmp` staging, and a forged `#@file` from an included file —
 **CVE-46, CVE-47 and CVE-48 at 6.6.7** (a `secret var` inside a closure was never zeroised; a `secret var` in a
@@ -13,7 +13,7 @@ predictable shared `/tmp` names; `lib/http.cyr` wrote a long URL past its 2048-b
 `rdx`; the lexer silently dropped any `@` that did not spell `@unsafe`; `lib/ws.cyr`'s `ws_recv_frame` let a
 remote peer choose its allocation size and read frames it had not received), and **CVE-54 and CVE-55 at 6.6.11**
 (on Windows, `net_resolve_ipv4` read a drive-relative `C:\etc\hosts` that any local user can plant; a multi-line
-string literal shifted file attribution, so a call to another file's `private` fn compiled); **CVE-56 at 6.6.12** (`lib/log.cyr`'s `log_info_kv` / `log_info_int` built a log line past a 512-byte stack buffer); **CVE-57 at 6.6.12** (on Windows, the folded sandhi resolver read a drive-relative `C:\etc\resolv.conf` any local user can plant); **CVE-58 at 6.6.12** (cxvm let guest bytecode read and write the interpreter's own host memory); **CVE-59 at 6.6.13** (the libssl TLS backend never bound the server's certificate to the host, so any chain-valid certificate verified any host); **CVE-60 at 6.6.13** (the libssl backend's `tls_read` / `tls_write` (and `tls_get_peer_spki_der`) returned a C `int` zero-extended, so a tampered record read as ~4 GiB read); **CVE-61 at 6.6.13** (the native TLS stack skipped plaintext ChangeCipherSpec records without limit and had no deadline, so anyone on the path held a thread for ever); **CVE-62 at 6.6.13** (a `[deps.NAME]` header holding `..` made `cyrius deps` create directories and git-clone outside the dep cache — a CVE-32 residual); **CVE-63 at 6.6.13** (the native TLS client verified an IP-literal host against dNSName SAN entries, wildcards included); **CVE-64 at 6.6.14** (a native TLS server that required client certificates authenticated nobody: a TLS 1.2 client connected with none, a TLS 1.3 client with any leaf, and `tls_set_verify` dropped FAIL_IF_NO_PEER_CERT); **CVE-65 at 6.6.14** (on Windows, the native TLS client read its trust roots from a drive-relative `C:\etc\ssl\cert.pem` any local user can plant); **CVE-66 at 6.6.14** (a TLS write to a peer that had reset the connection raised SIGPIPE, so any peer could kill a native- or libssl-backed TLS client or server process); **CVE-67 at 6.6.14** (the native TLS client took any `*.` dNSName as a wildcard, so a certificate for `*.com` verified every `.com` host); **CVE-68 at 6.6.15** (folded sigil's ECDSA P-256 / P-384 signing leaked its secret nonce and key through timing, and left the nonce in dead stack and a vector register); **CVE-69 at 6.6.15** (a `secret var` fn's epilogue wrote its return registers into dead stack after its own wipe); **CVE-70 at 6.6.15** (the native TLS stack never zeroed its ephemeral ECDHE private keys or shared secrets); **CVE-71 at 6.6.15** (native TLS 1.3 accepted an all-zero x25519 shared secret); all twenty-nine are appended below.
+string literal shifted file attribution, so a call to another file's `private` fn compiled); **CVE-56 at 6.6.12** (`lib/log.cyr`'s `log_info_kv` / `log_info_int` built a log line past a 512-byte stack buffer); **CVE-57 at 6.6.12** (on Windows, the folded sandhi resolver read a drive-relative `C:\etc\resolv.conf` any local user can plant); **CVE-58 at 6.6.12** (cxvm let guest bytecode read and write the interpreter's own host memory); **CVE-59 at 6.6.13** (the libssl TLS backend never bound the server's certificate to the host, so any chain-valid certificate verified any host); **CVE-60 at 6.6.13** (the libssl backend's `tls_read` / `tls_write` (and `tls_get_peer_spki_der`) returned a C `int` zero-extended, so a tampered record read as ~4 GiB read); **CVE-61 at 6.6.13** (the native TLS stack skipped plaintext ChangeCipherSpec records without limit and had no deadline, so anyone on the path held a thread for ever); **CVE-62 at 6.6.13** (a `[deps.NAME]` header holding `..` made `cyrius deps` create directories and git-clone outside the dep cache — a CVE-32 residual); **CVE-63 at 6.6.13** (the native TLS client verified an IP-literal host against dNSName SAN entries, wildcards included); **CVE-64 at 6.6.14** (a native TLS server that required client certificates authenticated nobody: a TLS 1.2 client connected with none, a TLS 1.3 client with any leaf, and `tls_set_verify` dropped FAIL_IF_NO_PEER_CERT); **CVE-65 at 6.6.14** (on Windows, the native TLS client read its trust roots from a drive-relative `C:\etc\ssl\cert.pem` any local user can plant); **CVE-66 at 6.6.14** (a TLS write to a peer that had reset the connection raised SIGPIPE, so any peer could kill a native- or libssl-backed TLS client or server process); **CVE-67 at 6.6.14** (the native TLS client took any `*.` dNSName as a wildcard, so a certificate for `*.com` verified every `.com` host); **CVE-68 at 6.6.15** (folded sigil's ECDSA P-256 / P-384 signing leaked its secret nonce and key through timing, and left the nonce in dead stack and a vector register); **CVE-69 at 6.6.15** (a `secret var` fn's epilogue wrote its return registers into dead stack after its own wipe); **CVE-70 at 6.6.15** (the native TLS stack never zeroed its ephemeral ECDHE private keys or shared secrets); **CVE-71 at 6.6.15** (native TLS 1.3 accepted an all-zero x25519 shared secret); **CVE-72 at 6.6.15** (a `secret var` or `defer` in a `#naked` fn compiled clean and never ran); all thirty are appended below.
 ⚠ **This line read "next free: CVE-42" while CLAUDE.md read "the next CVE number is 43" and this document ran 39-41.**
 Two authorities, two answers, and nothing reconciled them. CLAUDE.md is the one every closeout reads, so **42 is
 retired unused** and CVE-43 is the entry appended below. Anything below 64 now collides.
@@ -1564,3 +1564,55 @@ of an HMAC-SHA256 / HMAC-SHA384 key longer than the block (64 / 128 bytes) in th
 **Verified.** `tests/tcyr/crossos/tls_native_ecdhe_groups.tcyr`: an all-zero x25519 share is refused with illegal_parameter by the 1.3 client (ServerHello), the 1.3 server (ClientHello) and the 1.2 server (ClientKeyExchange); mutant MG10 RED on all three. Cross-OS: pi, ecb, ach and cass.
 
 **Not covered.** X448 (not implemented).
+
+## CVE-72 — a `secret var` (or `defer`) in a `#naked` fn compiled clean and never ran: a naked fn has no epilogue for the walker
+
+*Appended 2026-10-03 (cyrius 6.6.15, lane src, fix pass). A CVE-47 residual: the same "the wipe is skipped" shape on a different return path. Found by: the 6.6.15 review of CVE-69's epilogue survey. Not part of the 2026-09-03 sweep: recorded here because this is the live ledger. 6.6.15 spends CVE-68 … CVE-73.*
+
+| | |
+|---|---|
+| **Severity** | **Low (P3)** — the CVE-46 / CVE-47 guarantee (key material does not outlive its scope) broken silently, but only on a construct no one in `~/Repos` writes: a `secret var` inside a `#naked` fn (a hand-written asm body, normally an ISR or setjmp). Not attacker-triggered |
+| **Affected** | `src/frontend/parse.cyr` (`_PARSE_DEFER`, the `secret var` branch of the statement parser), every native target (x86_64 ELF / PE / both Mach-O, aarch64 ELF / Mach-O). Not cx: `#naked` is inert there (the fn is framed and its epilogue runs). Since `#naked` landed (6.2.27) through 6.6.14 |
+| **Vector** | `#naked fn f() { secret var k[16]; ... asm { ... ret ... } }` — or a `defer { ... }` in the same position |
+| **Fixed in** | 6.6.15 |
+
+### What it is
+
+A `#naked` fn gets no prologue, no frame and no epilogue: its body ends in its own asm return
+(`ret` / `iretq` / `eret`). `PARSE_RETURN` already refused `return` there, because the epilogue a
+`return` jumps to does not exist. But `secret var` and `defer` register blocks that ONLY the
+epilogue's defer walker runs, and nothing refused them: the walker was emitted after the body,
+unreachable, so the `secret var`'s zeroise never ran and a `defer` block never ran. Both
+compiled with exit 0 and no diagnostic. A naked fn also has no frame, so the defer's reached-flag
+and the secret array's slots were addressed through the CALLER's rbp.
+
+Measured on 6.6.14 / the 6.6.15 base: `#naked fn f(): i64 { secret var k[16]; asm { 0xC3; } }`
+compiles (rc 0, no diagnostic); `var _g = 0; #naked fn f() { defer { _g = 5; } asm { 0xC3; } }`
+called from `main`, then `return _g;`, exits **0** (want 5).
+
+### Fix
+
+`_PARSE_DEFER` and the `secret var` branch refuse their statement when `_cur_fn_naked == 1`,
+mirroring `PARSE_RETURN`: `defer is not allowed in a #naked fn (it has no epilogue to run the
+block)` / `secret var is not allowed in a #naked fn (it has no epilogue to zeroise it)`, no
+binary. A closure body inside a naked fn is its own framed fn (the nested-fn snapshot resets
+`_cur_fn_naked`), so it is unaffected; on cx `#naked` is never armed, so a `defer` there still
+runs (probe: exit 5). Survey: no `#naked` fn in `~/Repos` (57 files carry `#naked`) holds a
+`defer` or `secret var`.
+
+### Verified
+
+`tests/gates/diagnostics/defer_misuse_refused.sh`: two refusal rows (the two probes above) and a
+control (a `#naked` fn beside a fn whose `secret var` and `defer` still run, exit 5). Against the
+pre-fix `parse.cyr`: 28 passed, 2 failed; after: 30 passed. Refused on the x86_64, aarch64
+(cross and native, the latter under qemu-aarch64) and PE forks. Self-host fixpoint,
+`seed-derive-cycc.sh` GREEN, `build/cycc-native-aarch64` regenerated, `cross-os-selfhost.sh
+<host> crossos` on pi, ecb, ach and cass.
+
+### Not covered
+
+A plain `var` in a `#naked` fn is still accepted and, with no frame, stores through the caller's
+rbp (`#naked fn f() { var q = 7; asm { 0xC3; } }` emits `mov [rbp-8], rax; ret` — a write into
+the caller's frame). That is not a zeroisation defect and it is outside this finding; no `#naked`
+fn in `~/Repos` declares a `var`, so refusing it would break nothing measured. Reported to the
+integrator for the backlog, not changed here.
