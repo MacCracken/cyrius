@@ -2,7 +2,7 @@
 
 **Scope:** the untrusted-source-input surface. Previous full audit:
 `docs/audit/2026-07-27-security-audit.md` (CVE-32…CVE-36) at cycc 6.4.82.
-**Next free identifier after this document: CVE-68.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
+**Next free identifier after this document: CVE-69.** (CVE-41 is fixed at 6.5.47; see its entry.) (CVE-37 and CVE-38 in the previous
 document are **withdrawn** but still consume their ids.) CVE-43 was consumed at 6.6.5,
 **CVE-44 and CVE-45 at 6.6.6** — the release installer's fixed `/tmp` staging, and a forged `#@file` from an included file —
 **CVE-46, CVE-47 and CVE-48 at 6.6.7** (a `secret var` inside a closure was never zeroised; a `secret var` in a
@@ -13,7 +13,7 @@ predictable shared `/tmp` names; `lib/http.cyr` wrote a long URL past its 2048-b
 `rdx`; the lexer silently dropped any `@` that did not spell `@unsafe`; `lib/ws.cyr`'s `ws_recv_frame` let a
 remote peer choose its allocation size and read frames it had not received), and **CVE-54 and CVE-55 at 6.6.11**
 (on Windows, `net_resolve_ipv4` read a drive-relative `C:\etc\hosts` that any local user can plant; a multi-line
-string literal shifted file attribution, so a call to another file's `private` fn compiled); **CVE-56 at 6.6.12** (`lib/log.cyr`'s `log_info_kv` / `log_info_int` built a log line past a 512-byte stack buffer); **CVE-57 at 6.6.12** (on Windows, the folded sandhi resolver read a drive-relative `C:\etc\resolv.conf` any local user can plant); **CVE-58 at 6.6.12** (cxvm let guest bytecode read and write the interpreter's own host memory); **CVE-59 at 6.6.13** (the libssl TLS backend never bound the server's certificate to the host, so any chain-valid certificate verified any host); **CVE-60 at 6.6.13** (the libssl backend's `tls_read` / `tls_write` (and `tls_get_peer_spki_der`) returned a C `int` zero-extended, so a tampered record read as ~4 GiB read); **CVE-61 at 6.6.13** (the native TLS stack skipped plaintext ChangeCipherSpec records without limit and had no deadline, so anyone on the path held a thread for ever); **CVE-62 at 6.6.13** (a `[deps.NAME]` header holding `..` made `cyrius deps` create directories and git-clone outside the dep cache — a CVE-32 residual); **CVE-63 at 6.6.13** (the native TLS client verified an IP-literal host against dNSName SAN entries, wildcards included); **CVE-64 at 6.6.14** (a native TLS server that required client certificates authenticated nobody: a TLS 1.2 client connected with none, a TLS 1.3 client with any leaf, and `tls_set_verify` dropped FAIL_IF_NO_PEER_CERT); **CVE-65 at 6.6.14** (on Windows, the native TLS client read its trust roots from a drive-relative `C:\etc\ssl\cert.pem` any local user can plant); **CVE-66 at 6.6.14** (a TLS write to a peer that had reset the connection raised SIGPIPE, so any peer could kill a native- or libssl-backed TLS client or server process); **CVE-67 at 6.6.14** (the native TLS client took any `*.` dNSName as a wildcard, so a certificate for `*.com` verified every `.com` host); all twenty-five are appended below.
+string literal shifted file attribution, so a call to another file's `private` fn compiled); **CVE-56 at 6.6.12** (`lib/log.cyr`'s `log_info_kv` / `log_info_int` built a log line past a 512-byte stack buffer); **CVE-57 at 6.6.12** (on Windows, the folded sandhi resolver read a drive-relative `C:\etc\resolv.conf` any local user can plant); **CVE-58 at 6.6.12** (cxvm let guest bytecode read and write the interpreter's own host memory); **CVE-59 at 6.6.13** (the libssl TLS backend never bound the server's certificate to the host, so any chain-valid certificate verified any host); **CVE-60 at 6.6.13** (the libssl backend's `tls_read` / `tls_write` (and `tls_get_peer_spki_der`) returned a C `int` zero-extended, so a tampered record read as ~4 GiB read); **CVE-61 at 6.6.13** (the native TLS stack skipped plaintext ChangeCipherSpec records without limit and had no deadline, so anyone on the path held a thread for ever); **CVE-62 at 6.6.13** (a `[deps.NAME]` header holding `..` made `cyrius deps` create directories and git-clone outside the dep cache — a CVE-32 residual); **CVE-63 at 6.6.13** (the native TLS client verified an IP-literal host against dNSName SAN entries, wildcards included); **CVE-64 at 6.6.14** (a native TLS server that required client certificates authenticated nobody: a TLS 1.2 client connected with none, a TLS 1.3 client with any leaf, and `tls_set_verify` dropped FAIL_IF_NO_PEER_CERT); **CVE-65 at 6.6.14** (on Windows, the native TLS client read its trust roots from a drive-relative `C:\etc\ssl\cert.pem` any local user can plant); **CVE-66 at 6.6.14** (a TLS write to a peer that had reset the connection raised SIGPIPE, so any peer could kill a native- or libssl-backed TLS client or server process); **CVE-67 at 6.6.14** (the native TLS client took any `*.` dNSName as a wildcard, so a certificate for `*.com` verified every `.com` host); **CVE-68 at 6.6.15** (folded sigil's ECDSA P-256 / P-384 signing leaked its secret nonce and key through timing, and left the nonce in dead stack and a vector register); all twenty-six are appended below.
 ⚠ **This line read "next free: CVE-42" while CLAUDE.md read "the next CVE number is 43" and this document ran 39-41.**
 Two authorities, two answers, and nothing reconciled them. CLAUDE.md is the one every closeout reads, so **42 is
 retired unused** and CVE-43 is the entry appended below. Anything below 64 now collides.
@@ -1412,3 +1412,87 @@ A write into a reset connection is `TLS_ERR_IO` and fails the ctx, as any other 
 **Verified.** `tests/tcyr/crossos/tls_hostname_verdicts.tcyr` (99 assertions): 47 SAN / host rows — the wildcard rows above, literals, iPAddress rows, hosts with no identity — each checked against the table's verdict on the NATIVE matcher everywhere, and, where libssl is reachable (Linux x86_64 with libssl.so.3 and the dlopen-helper), asked of OpenSSL live (`d2i_X509` of the same DER, then `X509_check_host` with `_TLS_LIBSSL_HOSTFLAGS` or `X509_check_ip_asc`, routed exactly as `_tls_libssl_bind_host` routes) — so the column is OpenSSL's answer, not a transcription, and a future divergence fails one side; plus three rows showing raw `X509_check_host`'s subdomain reading of `.example.com`. 13 fail against the pre-fix matcher and classifier (10 native rows, 3 libssl leading-dot rows). x86_64 (libssl live), and natively on pi, ecb, ach and cass (native table). `tests/gates/platform/tls_libssl_hostname_binding.sh`: a `DNS:*.com` leaf (`a.com`, `example.com`) and `a_b.example.com` against `DNS:*.example.com`, end to end against OpenSSL `s_server` on native, libssl via `tls_set_backend` and a libssl-only build — refused by all three; the pre-fix matcher accepts the 3 native rows.
 
 **Not covered.** Neither backend consults a public-suffix list, so a wildcard over a two-label public suffix (`*.co.uk` for `a.co.uk`) still verifies on both, as on OpenSSL — the table pins that agreement; the policy is unchanged. Neither backend maps IDNA U-labels: both compare A-labels byte-wise.
+
+## CVE-68 — ECDSA P-256 / P-384 signing (sigil, folded as `lib/sigil.cyr`) leaked its secret nonce and key: through timing, and in dead stack and a vector register after signing
+
+*Appended 2026-10-03 (cyrius 6.6.15, sigil 3.13.8 + 3.13.9 refold). Found by: the sigil 3.13.8 premise check for
+constant-time ECDH (could the signing ladder serve as the ECDH primitive?). Part B by the review of the first sigil 3.13.8 draft. Not part of the 2026-09-03 sweep: recorded here because this is the live ledger. 6.6.15 spends CVE-68 … CVE-73.*
+
+| | |
+|---|---|
+| **Severity** | P1 (High) — timing side channel on secret data. Signing time depends on the per-signature nonce k and on the private key d through data-dependent branches in the field and scalar arithmetic. A fixed-vs-random-scalar Welch t-test on the 3.13.7 signing entry separates k = 1 from random k at \|t\| = 6.3 with 400 samples (dudect threshold 4.5). The class is Minerva / TPM-Fail / LadderLeak: partial nonce information over many timed signatures recovers d by lattice reduction. The per-call difference is small (~0.4%), so exploitation needs many signatures and a quiet timing source; a native TLS server signs one CertificateVerify per handshake for any client that connects. |
+| **Class** | Observable timing discrepancy (CWE-208); use of a non-constant-time algorithm on secret data (CWE-385, covert timing channel). |
+| **Affected** | `ecdsa_p256_sign` / `ecdsa_p384_sign` and every caller — `ecdsa_p256_sign_der` / `ecdsa_p384_sign_der`, the Authenticode ECDSA signer, and cyrius's native TLS CertificateVerify (`_tn_sign`, ECDSA P-256 / P-384 server and client certificates) — in every sigil release with signing (3.5.9 through 3.13.7), i.e. every cyrius `lib/sigil.cyr` that carried it, through cyrius 6.6.14. Ed25519, RSA, X25519 and all verification are not affected. |
+| **Files** | sigil `src/ecdsa_p256.cyr` (`fp_p256_add` / `_sub`, `_p256_sol_red1`, `_pt_ladder`, `pt_add`, `pt_double`, `fp_p256_inv`, `n_reduce`, `fn_p256_mul`, `fn_p256_inv`), `src/ecdsa_p384.cyr` (the `u384_*` / `fp_p384_*` / `n384_reduce` twins), `src/bigint_ext.cyr` (`u256_mul_full`, `_u256k_mul128` carry fix-ups), `src/mul64.cyr` (`_nmul64_hi_sw`, aarch64), `src/ecdsa_sign.cyr` (`_ecs_addmod_n_*`, the RFC 6979 candidate compare) |
+| **Fixed** | sigil 3.13.8 (cyrius 6.6.15 refold) |
+
+**Vector.** The signer computed R = k·G on a Montgomery ladder whose field operations branch on
+their operands — conditional final subtracts in the modular add / subtract and the Solinas
+reduction, carry fix-ups written as `if` in the 256-bit Karatsuba and 384-bit schoolbook
+multiplies, early-exit compares, and on aarch64 two value-dependent branches in every 64×64
+product — and then inverted the secret-derived Z, computed k^-1 mod n and r·d mod n on a
+bit-serial long-division reduction with a conditional subtract per bit. sigil 3.13.0 (fixed-length
+k_hat) and 3.13.1 (blinded ladder input) removed the coarse leaks, not these; sigil's 3.7.0 /
+3.7.17 audits had recorded the arithmetic as an accepted INFO residual. An attacker who can time
+signatures (a TLS client timing a native server's handshakes, or a co-located process) collects
+signatures with timings and runs the standard hidden-number-problem lattice attack.
+
+**Impact.** Recovery of an ECDSA P-256 / P-384 private key (a TLS server or client certificate
+key, an Authenticode signing key) from enough timed signatures. Not demonstrated end to end; the
+leak is measured, and the attack class is published and practical against comparable leaks.
+
+**Fix.** sigil 3.13.8 runs every secret elliptic-curve operation on a new constant-time engine
+(`src/ec_ct.cyr`): Montgomery field and scalar arithmetic with branch-free carries, borrows and
+selects; complete Renes–Costello–Batina projective formulas for a = -3 (no special cases);
+a fixed 4-bit window over every window of the scalar with a full-table masked lookup; Fermat
+inversion with public exponents. `_nmul64_hi_sw` is branch-free. The RFC 6979 candidate test is
+computed without a branch. Every conditional branch in the compiled engine (x86_64 and aarch64,
+checked by disassembly with `CYRIUS_SYMS`) is a loop bound, a public exponent bit or a public
+verdict. Signatures are byte-identical; signing got faster (P-256 13.3 → 2.7 ms, P-384
+30.1 → 7.9 ms on the x86_64 dev host).
+
+**Verified.** Welch t on the 3.13.8 entry: \|t\| = 0.7 at 1200 samples. sigil
+`tests/tcyr/ecdsa_sign_timing.tcyr` (142: the engine against the reference ladder for edge and
+random scalars, RFC 6979 KATs, interleaved-median timing of the scalar multiply and of the whole
+signing core with (k, d) = (1, 1) vs (n - 1, n - 1)); `ecdsa_sign.tcyr` (90 at the final code: the
+RFC 6979 KATs plus the residue groups of the second entry below); both on x86_64, the pi, ecb,
+ach and cass. Every conditional branch of the compiled engine and of the signers (x86_64 and
+aarch64) accounted for in sigil's audit §F2.
+
+**Not covered.** Power / EM analysis of single traces (the engine does no coordinate or scalar
+randomization). Operand-value-dependent timing through power and frequency (the Hertzbleed
+class): no branch or address depends on a secret, but zero-heavy operands run measurably faster
+in the fastest samples (a reviewer's dudect run on `ecdh_p256_shared`: \|t\| = 5.6 for d = 1 vs
+random d with the fastest 20% kept, ≤ 1.3 uncropped; a fixed random-looking d stays ≤ 2.4), so
+it follows operand values, not a code path; ephemeral ECDH scalars and RFC 6979 nonces are
+uniform, so exposure is low. The RFC 6979 accept / reject branch (reveals only that a candidate
+was discarded).
+
+**Part B — the nonce survived signing (same refold).** P2 (Medium) — sensitive data left in memory (the per-signature nonce). Exploitation needs a second primitive that reads dead stack or registers (an uninitialised-memory disclosure, a core dump, swap); given one, a single signature and its k give the private key, d = r^-1(s·k − e). Pre-existing: sigil 3.13.7 leaves the same residue. The register-spill half was a cyrius defect, **CVE-69**; the rest (HMAC contexts, SHA-NI register state, the burn's size and order) was sigil's.
+
+**Part B — Vector.** After a signature, the HMAC_DRBG's last HMAC context (whose final state is k) sat in
+dead stack ~43 KB below the caller — HMAC never wiped its context — and xmm1 still held the
+SHA-NI state of that round; the signer's own `secret var` epilogue, which ran after its 8 KB
+stack burn, spilled xmm1 into the 64 bytes below its frame. A reviewer's probe found all eight
+32-bit words of k at 42 664–42 720 bytes and words 0–3 at 212–224 bytes; sigil's new test finds
+17 / 30 words of k and d (P-256 / P-384) on the 3.13.7 sources.
+
+**Part B — Fix.** Both HMACs wipe their context and inner hash, and SHA-384's finalize its scratch; the
+SHA-NI asm block clears xmm0–xmm7, its scratch and edx (the AES-NI block clears xmm0); each signer
+is a plain wrapper around a callee holding the `secret var` block and burns 128 KB (P-256) /
+160 KB (P-384) after the callee — epilogue included — has returned (`_ect_burn_stack` covers any
+size with 8-byte stores, so signing time is unchanged; a short HMAC got faster).
+
+**Part B — Verified.** sigil `tests/tcyr/ecdsa_sign.tcyr`: after each signer (and a `secret var` function
+called right after it, so a register still holding k is spilled into the scanned region), no
+32-bit word of k or d at any byte offset of 192 KB of dead stack, and nothing the signer wrote
+survives past its burn; neither HMAC leaves its context, finalize scratch or inner hash. Red on
+the first draft (21 / 24 words), on 3.13.7 (17 / 30), with only the SHA-NI clear removed (4), and
+with an undersized burn. `tests/tcyr/ecdh.tcyr` scans 64 KB past ECDH's 8 KB burn the same way.
+On x86_64, the pi, ecb, ach and cass.
+
+**Part B — Not covered.** sigil's other `secret var` functions (Ed25519, X25519, HKDF, key parsers) until
+the cyrius `EDEFER_RESTORE` fix lands; SHA compression frames below an HMAC / HKDF called
+outside the signers (message schedule, working variables, a finalize temporary); the hashed key
+of an HMAC-SHA256 / HMAC-SHA384 key longer than the block (64 / 128 bytes) in the one-shot
+`sha256()` / `sha384()` dead frame.
