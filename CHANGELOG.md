@@ -4,6 +4,8 @@ All notable changes to Cyrius are documented here.
 This is the **source of truth** for all work done.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [6.6.16] — 2026-10-04
+
 ## [6.6.15] — 2026-10-03
 
 The curves and the compiler's secret leaks (user, 2026-10-02; scope set the same day): the sigil work

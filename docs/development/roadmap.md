@@ -39,10 +39,10 @@ unscheduled 6.x backlog. Whole-cycle framing, the v6.7.x language arc and v6.8.x
 
 ## Where we are
 
-**Current head: v6.6.15** (2026-10-03) — cycc **1,492,144 B** (`.text` **1,315,016**) ·
+**Current head: v6.6.16** (2026-10-04) — cycc **1,492,144 B** (`.text` **1,315,016**) ·
 seed-derive **GREEN** · cross-OS **GREEN** on ecb/ach/cass/pi · self_compile **876 ms** ·
 **439** `.tcyr` (**173** in `crossos/`) · **105** `lib/*.cyr` · **326** shell gates under
-`tests/gates/<bucket>/` · **0 open issues** · **6 open proposals**.
+`tests/gates/<bucket>/` · **2 open issues** (the hisab filings, 6.6.16) · **6 open proposals**.
 
 > ⚠ **Every figure above was DERIVED on the day, not carried** (re-derived 2026-09-27 at the 6.6.7 open).
 > `version-bump.sh` rewrites the version token, replaces the `(…)` after it with the bump date, and

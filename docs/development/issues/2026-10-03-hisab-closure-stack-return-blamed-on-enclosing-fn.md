@@ -4,7 +4,7 @@
 exits 3 on each, and its three controls pass on each. The cited code in
 `src/frontend/parse.cyr` and `parse_decl.cyr` is identical between the 6.6.14 tag and the 6.6.15
 working tree (`git diff 6.6.14 HEAD` on both is empty).
-**Placement:** unpinned — 6.6.x line (frontend diagnostics, never 7.x). Filed for triage.
+**Placement:** **6.6.16** (placed 2026-10-04 at the slot open; the user listed the open issues for this release).
 **Discovered:** 2026-09-30 from hisab during its 3.3.1 work. hisab's autodiff × optimizer recipe hit it,
 and it is tracked as hisab roadmap item D082. hisab's maintainer approved filing on 2026-10-03.
 **Severity:** Medium. Correct code is refused with a hard error inside a fn, and the error's own

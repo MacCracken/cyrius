@@ -3,9 +3,9 @@
 **Status:** 🟡 **OPEN** — reproduced 2026-10-03 on every installed pin 6.6.0 through 6.6.14 (exit 139),
 x86_64 ELF and `--aarch64` under qemu. The files cited below are identical between the 6.6.14 tag and
 the 6.6.15 working tree: `git diff 6.6.14 HEAD -- src/frontend/parse_expr.cyr lib/fnptr.cyr` is empty.
-**Placement:** unpinned — 6.6.x line (codegen, never 7.x). The crash is silent: the build prints no
-warning or error, so this probably wants a patch release rather than the backlog. That is for
-cyrius to decide.
+**Placement:** **6.6.16** (placed 2026-10-04 at the slot open; the user listed the open issues for this
+release). The crash is silent — the build prints no warning or error — so it is a patch-release fix,
+not backlog.
 **Discovered:** 2026-10-03 from hisab, during its 3.3.4 release work (the 6.6.12 → 6.6.14 bump).
 **Severity:** Medium. A documented feature (a capturing closure, returned from a fn) compiles clean
 and SIGSEGVs at run time, with no diagnostic. A workaround exists (call it from inside any fn).
